@@ -77,9 +77,16 @@ type VideoEncoder struct {
 	wavefrontLanes int
 	lf             loopFilterApplier
 	cdefApp        cdefApplier
-	hme            hmeState
-	singleThread   bool
-	effortLevel    int8
+	// cdefSearch is the SVT CDEF strength search state; cdefRefLast and
+	// cdefRefT1 are the signaled strengths of the LAST and middle-layer
+	// reference slots (the reference objects' ref_cdef_strengths).
+	cdefSearch   cdefSearcher
+	cdefRefLast  svtCDEFRefStrengths
+	cdefRefT1    svtCDEFRefStrengths
+	cdefLogs     svtCDEFLogs
+	hme          hmeState
+	singleThread bool
+	effortLevel  int8
 
 	temporalLayers int
 	t2Recon        SourceFrame420
@@ -135,6 +142,7 @@ type VideoEncoder struct {
 		out     *SourceFrame420
 		lfLevel uint8
 		cdef    parser.CDEFParams
+		cdefIdx []uint8
 		// parallelMasks is snapshotted on the dispatch goroutine (which is
 		// serialized with config mutation) so the detached filter worker never
 		// reads e.tileColsLog2, which SetConfig may mutate concurrently.
@@ -223,6 +231,7 @@ type VideoEncoder struct {
 		tu            []byte
 		cntZeroMV     int
 		lpd1Ref       *lpd1Frame
+		cdefRef       svtCDEFRefStrengths
 		frameIndex    int
 	}
 }
@@ -1027,6 +1036,16 @@ func (e *VideoEncoder) Prewarm() error {
 		return err
 	}
 	e.prewarmPipeline(src)
+	// The CDEF search frames record their tile symbol streams; size the
+	// logs for real content (the black frames above barely use them).
+	sbCols := (e.width + 63) / 64
+	logTiles := min(max(1<<e.keyframeTileColsLog2, 1<<e.tileColsLog2), sbCols)
+	e.cdefLogs.reserve(e.width, e.height, logTiles)
+	// The black frames search to zero strengths, so the CDEF band workers
+	// would otherwise first start on a real frame.
+	if e.cdefApp.bound && !e.singleThread {
+		e.cdefApp.startWorkers()
+	}
 	e.haveKey = false
 	e.haveCtx = false
 	e.haveCtxT1 = false
@@ -1165,13 +1184,13 @@ func (e *VideoEncoder) startFilterWorker() {
 			// apply — never re-read e.singleThread or e.tileColsLog2 here, which
 			// SetConfig may be mutating concurrently; the single-tile-vs-multi-tile
 			// choice is snapshotted into filterParams on the dispatch goroutine.
-			done <- e.applyInLoopFilters(p.out, p.lfLevel, p.cdef, false, p.parallelMasks)
+			done <- e.applyInLoopFilters(p.out, p.lfLevel, p.cdef, p.cdefIdx, false, p.parallelMasks)
 		}
 	}()
 	e.filterStarted = true
 }
 
-func (e *VideoEncoder) applyInLoopFilters(out *SourceFrame420, lfLevel uint8, cdef parser.CDEFParams, singleThread, parallelMasks bool) error {
+func (e *VideoEncoder) applyInLoopFilters(out *SourceFrame420, lfLevel uint8, cdef parser.CDEFParams, cdefIdx []uint8, singleThread, parallelMasks bool) error {
 	lf := parser.LoopFilterParams{
 		LevelY: [2]uint8{lfLevel, lfLevel},
 		LevelU: lfLevel,
@@ -1209,7 +1228,7 @@ func (e *VideoEncoder) applyInLoopFilters(out *SourceFrame420, lfLevel uint8, cd
 			return fmt.Errorf("loop filter apply: %w", err)
 		}
 	}
-	if err := applyCDEF(out, cdef, &e.lf.filtMap); err != nil {
+	if err := applyCDEF(out, cdef, &e.lf.filtMap, cdefIdx); err != nil {
 		return fmt.Errorf("cdef apply: %w", err)
 	}
 	return nil
@@ -1339,7 +1358,16 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if !filterSupported {
 		header.CDEF = CDEFParams{}
 	}
-	if lfLevel > 0 {
+	// SVT-AV1 rtc CDEF (cdef_frame.go): the picture's cdef_search_level and
+	// the reference-derived filters, decided before the tiles so a
+	// searching picture records its tile symbol streams.
+	cdefRef := e.cdefRefLast
+	if afterT1 {
+		cdefRef = e.cdefRefT1
+	}
+	cdefPlan := planSVTCDEF(filterSupported && seq.EnableCDEF && !e.fastestRealtimeEffort() && src.Width*src.Height <= loopFilterMaxArea,
+		false, temporalID == 0, !droppable || isT1, e.svtScreen(), cdefRef)
+	if lfLevel > 0 || cdefPlan.on {
 		if !e.lf.bound {
 			if err := e.lf.init(src.Width, src.Height); err != nil {
 				return nil, fmt.Errorf("loop filter init: %w", err)
@@ -1352,9 +1380,8 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		header.LoopFilter.LevelY = [2]uint8{dlf, dlf}
 		header.LoopFilter.LevelU = dlf
 		header.LoopFilter.LevelV = dlf
-		// The q-derived CDEF strengths ride the same gate: the loop-filter
-		// records double as the index map and per-block skip source.
-		header.CDEF = cdefHeaderParams(effQ, false)
+		// The loop-filter records double as the CDEF index map and per-block
+		// skip source; the strengths are decided after the tiles.
 		if !e.cdefApp.bound {
 			if err := e.cdefApp.init(src.Width, src.Height, cdefParserParams(header.CDEF)); err != nil {
 				return nil, fmt.Errorf("cdef init: %w", err)
@@ -1425,7 +1452,12 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	for i := range payloads {
 		payloads[i] = TilePayload{}
 	}
-	if lfLevel > 0 {
+	var cdefCoders []*pframeCoder
+	if cdefPlan.search {
+		cdefCoders = e.interTileCoders(nTiles)
+		e.cdefLogs.arm(cdefCoders)
+	}
+	if lfLevel > 0 || cdefPlan.on {
 		e.pc.st.lfMap = &e.lf.filtMap
 		for t := range e.tilePCs {
 			e.tilePCs[t].st.lfMap = &e.lf.filtMap
@@ -1600,8 +1632,25 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			e.avgFrameLowMotion = (3*e.avgFrameLowMotion + pct) / 4
 		}
 	}
+	var cdefIdx []uint8
+	if cdefPlan.on {
+		cdefPlan.lambda = svtCDEFFullLambda(effQ, false, lpd1Setup.gfUpdate, lpd1Setup.tlFactor)
+		header.CDEF, cdefIdx = cdefPlan.decide(&e.cdefSearch, &src, out, &e.lf.filtMap, effQ)
+		if cdefPlan.search {
+			err := e.cdefLogs.replay(payloads, cdefCoders, header.Tile, uint16(src.Width/4), src.Height, cdefIdx, header.CDEF.Bits)
+			e.cdefLogs.disarm(cdefCoders)
+			if err != nil {
+				return nil, fmt.Errorf("cdef replay: %w", err)
+			}
+		}
+	}
+	if !droppable {
+		e.cdefRefLast = svtCDEFRefFromParams(header.CDEF)
+	} else if isT1 {
+		e.cdefRefT1 = svtCDEFRefFromParams(header.CDEF)
+	}
 	filterCDEF := cdefParserParams(header.CDEF)
-	if lfLevel > 0 && !e.singleThread {
+	if (lfLevel > 0 || cdefPlan.on) && !e.singleThread {
 		// The filters run behind the temporal-unit assembly and the next
 		// frame's source-only stages; everything reading the filtered
 		// planes or the applier state joins first.
@@ -1609,6 +1658,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		e.filterParams.out = out
 		e.filterParams.lfLevel = svtRTCDeblockLevel(lfLevel)
 		e.filterParams.cdef = filterCDEF
+		e.filterParams.cdefIdx = cdefIdx
 		// The dav1d-style deblocking bitmask apply is byte-identical to the
 		// edge-list sweep for BOTH single- and multi-tile frames: BuildFromMap
 		// derives each block's left/above tx-context directly from the shared
@@ -1624,8 +1674,8 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if err != nil {
 		return nil, err
 	}
-	if lfLevel > 0 && e.singleThread {
-		if err := e.applyInLoopFilters(out, svtRTCDeblockLevel(lfLevel), filterCDEF, true, false); err != nil {
+	if (lfLevel > 0 || cdefPlan.on) && e.singleThread {
+		if err := e.applyInLoopFilters(out, svtRTCDeblockLevel(lfLevel), filterCDEF, cdefIdx, true, false); err != nil {
 			return nil, err
 		}
 	}

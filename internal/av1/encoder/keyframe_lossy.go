@@ -234,8 +234,17 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 	if videoColorSupportsInLoopFilters(color) && src.Width*src.Height <= loopFilterMaxArea {
 		lfLevel = filterLevelFromQIndex(qIndex, true)
 	}
+	seq := losslessKeyframeSequence(seqWidth, seqHeight)
+	if tileOpts.stream != nil {
+		seq = tileOpts.stream.sequenceHeader(seqWidth, seqHeight)
+	}
+	// SVT-AV1 rtc CDEF on the I slice (cdef_frame.go): cdef_search_level 5,
+	// searched after the tiles, whose symbol streams are recorded.
+	screen := tileOpts.stream != nil && tileOpts.stream.svtScreen()
+	cdefPlan := planSVTCDEF(videoColorSupportsInLoopFilters(color) && seq.EnableCDEF && src.Width*src.Height <= loopFilterMaxArea,
+		true, true, true, screen, svtCDEFRefStrengths{})
 	var lfMap *threading.FrameWorkLoopFilterMap
-	if lfLevel > 0 {
+	if lfLevel > 0 || cdefPlan.on {
 		if lf == nil {
 			lf = &loopFilterApplier{}
 		}
@@ -248,10 +257,6 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 			return nil, SourceFrame420{}, fmt.Errorf("loop filter reset: %w", err)
 		}
 		lfMap = &lf.filtMap
-	}
-	seq := losslessKeyframeSequence(seqWidth, seqHeight)
-	if tileOpts.stream != nil {
-		seq = tileOpts.stream.sequenceHeader(seqWidth, seqHeight)
 	}
 	header := lossyKeyframeHeaderForSequence(seq, src.Width, src.Height, qIndex)
 	if tileOpts.stream != nil {
@@ -270,11 +275,10 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 		header.LoopFilter.LevelY = [2]uint8{}
 		header.LoopFilter.LevelU, header.LoopFilter.LevelV = 0, 0
 	}
-	if lfLevel > 0 {
+	if lfLevel > 0 || cdefPlan.on {
 		header.LoopFilter.LevelY = [2]uint8{dlf, dlf}
 		header.LoopFilter.LevelU = dlf
 		header.LoopFilter.LevelV = dlf
-		header.CDEF = cdefHeaderParams(qIndex, true)
 		if cdefApp == nil {
 			cdefApp = &cdefApplier{}
 		}
@@ -324,6 +328,18 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 		payloads:                payloads,
 		errs:                    errs,
 	}
+	// coders lists the tile coders in tile order for the cdef_idx replay.
+	var coders []*pframeCoder
+	var logs *svtCDEFLogs
+	if cdefPlan.search {
+		coders = keyframeTileCoders(tileOpts.stream, &tilePC, nTiles)
+		if tileOpts.stream != nil {
+			logs = &tileOpts.stream.cdefLogs
+		} else {
+			logs = new(svtCDEFLogs)
+		}
+		logs.arm(coders)
+	}
 	var err error
 	if tileOpts.stream != nil {
 		err = tileOpts.stream.runKeyframeTileWorkers(req)
@@ -334,7 +350,29 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 		return nil, SourceFrame420{}, err
 	}
 
-	if lfLevel > 0 {
+	var cdefIdx []uint8
+	if cdefPlan.on {
+		var searcher *cdefSearcher
+		if tileOpts.stream != nil {
+			searcher = &tileOpts.stream.cdefSearch
+		} else {
+			searcher = new(cdefSearcher)
+		}
+		cdefPlan.lambda = svtCDEFFullLambda(qIndex, true, false, 150)
+		header.CDEF, cdefIdx = cdefPlan.decide(searcher, &src, recon, lfMap, qIndex)
+		if cdefPlan.search {
+			err := logs.replay(payloads, coders, header.Tile, miCols, src.Height, cdefIdx, header.CDEF.Bits)
+			logs.disarm(coders)
+			if err != nil {
+				return nil, SourceFrame420{}, fmt.Errorf("cdef replay: %w", err)
+			}
+		}
+	}
+	if tileOpts.stream != nil {
+		ref := svtCDEFRefFromParams(header.CDEF)
+		tileOpts.stream.cdefRefLast, tileOpts.stream.cdefRefT1 = ref, ref
+	}
+	if lfLevel > 0 || cdefPlan.on {
 		lfParams := parser.LoopFilterParams{
 			LevelY: [2]uint8{dlf, dlf},
 			LevelU: dlf,
@@ -353,7 +391,7 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 				return nil, SourceFrame420{}, fmt.Errorf("loop filter apply: %w", err)
 			}
 		}
-		if err := applyCDEF(recon, cdefParserParams(header.CDEF), &lf.filtMap); err != nil {
+		if err := applyCDEF(recon, cdefParserParams(header.CDEF), &lf.filtMap, cdefIdx); err != nil {
 			return nil, SourceFrame420{}, fmt.Errorf("cdef apply: %w", err)
 		}
 	}
@@ -852,6 +890,7 @@ func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, re
 		pc.writerBuf = make([]byte, 1<<18)
 	}
 	pc.writer.Reset(pc.writerBuf[:0])
+	pc.armCDEFLog()
 	st.w = &pc.writer
 
 	miRows := uint16(src.Height / 4)

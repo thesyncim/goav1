@@ -17,7 +17,8 @@ import (
 // vectors. Re-pinned again for SVT's open-loop per-SB ME (HME levels 0/1,
 // sub-sampled 8x3 sweep) as the leaves' full-pel ME, and for light-PD1's
 // inter path (no interpolation filter search, md_subpel_me level 8, then
-// the per-SB sub-pel level with its zero-subpel override and full lambda).
+// the per-SB sub-pel level with its zero-subpel override and full lambda),
+// and for SVT's per-picture CDEF strength search (cdef_search.go).
 func TestPFrameReuseOptimizationsPreserveEncodedOutput(t *testing.T) {
 	const width, height, frameCount = 640, 360, 48
 	tests := []struct {
@@ -25,8 +26,8 @@ func TestPFrameReuseOptimizationsPreserveEncodedOutput(t *testing.T) {
 		stream  string
 		recon   string
 	}{
-		{1, "ba9b95734b29caec90ce07c8ea54eee60e5cbe4fe890a0bd15949a45ae5120ee", "a34d15ddf7aacc0ef4d487eb71fd11cf2809e3d6659b81a63d851bfff0142e9f"},
-		{4, "dba6c87817f5b1f0ff2c0400960d8707cd815424c5b6065719fa774575321320", "f925581238d2a81c0ed2d530995d0285ccbdd39b97713b28b22cc943cf41d1aa"},
+		{1, "e33f43f38a23b676b6f7fec818adde7f3b1b2d36338dfabf3a02f598591a1756", "62dfb27c37422938fbd1103f04f09196b7abcde850ceac34e82494d2c7e00bfe"},
+		{4, "f662cfc241848de504fb61321f0c6ed659bd32460bffd767c9a282706e2986d9", "192ca0689f3725956d27150bc77e1fb6e0d9b50a219337d9c83793efb2d86b8c"},
 	}
 
 	rng := rand.New(rand.NewSource(3))

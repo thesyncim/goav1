@@ -51,7 +51,7 @@ func cdefDiffMarkSkippedBlocks(m threading.FrameWorkLoopFilterMap) {
 
 func cdefDiffApplySerialSnapshot(t *testing.T, a *cdefApplier, recon *SourceFrame420, params parser.CDEFParams, lfMap *threading.FrameWorkLoopFilterMap) {
 	t.Helper()
-	active, err := a.bindApplyContext(recon, params, lfMap, true)
+	active, err := a.bindApplyContext(recon, params, lfMap, nil, true)
 	if err != nil {
 		t.Fatalf("bind snapshot: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestCDEFApplySerialU8InPlaceMatchesSnapshot(t *testing.T) {
 		t.Fatalf("in-place cdef init: %v", err)
 	}
 	defer inPlaceApply.close()
-	if err := inPlaceApply.applySerial(&inPlace, params, &lf.filtMap); err != nil {
+	if err := inPlaceApply.applySerial(&inPlace, params, &lf.filtMap, nil); err != nil {
 		t.Fatalf("in-place route: %v", err)
 	}
 
@@ -175,7 +175,7 @@ func TestCDEFApplyBandedU8InPlaceMatchesSnapshot(t *testing.T) {
 		t.Fatalf("in-place cdef init: %v", err)
 	}
 	defer inPlaceApply.close()
-	if err := inPlaceApply.apply(&inPlace, params, &lf.filtMap); err != nil {
+	if err := inPlaceApply.apply(&inPlace, params, &lf.filtMap, nil); err != nil {
 		t.Fatalf("banded in-place route: %v", err)
 	}
 
@@ -210,7 +210,7 @@ func TestCDEFApplySerialIsZeroAlloc(t *testing.T) {
 	out := lfDiffCopy(src)
 	allocs := testing.AllocsPerRun(16, func() {
 		cdefDiffCopyInto(&out, src)
-		if err := a.applySerial(&out, params, &lf.filtMap); err != nil {
+		if err := a.applySerial(&out, params, &lf.filtMap, nil); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -245,12 +245,12 @@ func TestCDEFApplyBandedIsZeroAlloc(t *testing.T) {
 
 	src := cdefDiffFrame(width, height)
 	out := lfDiffCopy(src)
-	if err := a.apply(&out, params, &lf.filtMap); err != nil {
+	if err := a.apply(&out, params, &lf.filtMap, nil); err != nil {
 		t.Fatal(err)
 	}
 	allocs := testing.AllocsPerRun(16, func() {
 		cdefDiffCopyInto(&out, src)
-		if err := a.apply(&out, params, &lf.filtMap); err != nil {
+		if err := a.apply(&out, params, &lf.filtMap, nil); err != nil {
 			t.Fatal(err)
 		}
 	})

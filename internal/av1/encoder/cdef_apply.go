@@ -1,7 +1,5 @@
-// Ported from libaom:
-//   av1/encoder/pickcdef.c (av1_pick_cdef_from_qp: the CDEF_PICK_FROM_Q
-//   quadratic fits from the AC quantizer to the primary/secondary strengths
-//   and the qindex-derived damping)
+// The CDEF applier the encoder runs over its reconstruction; the strengths
+// come from the SVT-AV1 search in cdef_search.go.
 //
 // SPDX-License-Identifier: BSD-2-Clause
 //
@@ -11,67 +9,14 @@ package encoder
 
 import (
 	"fmt"
-	"math"
 	"sync"
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/decoder"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
-	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 )
-
-// cdefStrengthsFromQIndex is av1_pick_cdef_from_qp at 8-bit depth without
-// the screen-content model: one strength set (cdef_bits = 0), the quadratic
-// strength fits, and damping 3 + (qindex >> 6). The returned strengths pack
-// primary*4 + secondary like the syntax expects.
-func cdefStrengthsFromQIndex(qIndex uint8, intra bool) (y uint8, uv uint8, damping uint8) {
-	quant, err := quantize.PlaneQuantizer(parser.QuantizationParams{}, qIndex, 8, quantize.PlaneY)
-	if err != nil {
-		return 0, 0, 3
-	}
-	q := float64(quant.AC)
-	clamp := func(v float64, hi int) int {
-		i := int(math.Round(v))
-		if i < 0 {
-			return 0
-		}
-		if i > hi {
-			return hi
-		}
-		return i
-	}
-	var yF1, yF2, uvF1, uvF2 int
-	if intra {
-		yF1 = clamp(q*q*0.0000033731974+q*0.008070594+0.0187634, 15)
-		yF2 = clamp(q*q*0.0000029167343+q*0.0027798624+0.0079405, 3)
-		uvF1 = clamp(q*q*-0.0000130790995+q*0.012892405-0.00748388, 15)
-		uvF2 = clamp(q*q*0.0000032651783+q*0.00035520183+0.00228092, 3)
-	} else {
-		yF1 = clamp(q*q*-0.0000023593946+q*0.0068615186+0.02709886, 15)
-		yF2 = clamp(q*q*-0.00000057629734+q*0.0013993345+0.03831067, 3)
-		uvF1 = clamp(q*q*-0.0000007095069+q*0.0034628846+0.00887099, 15)
-		uvF2 = clamp(q*q*0.00000023874085+q*0.00028223585+0.05576307, 3)
-	}
-	return uint8(yF1*4 + yF2), uint8(uvF1*4 + uvF2), 3 + (qIndex >> 6)
-}
-
-// cdefHeaderParams builds the frame-header view of the q-derived strengths.
-// Below the quantizer threshold the strengths zero out: fine-quantized
-// frames carry detail the deringing filter would smooth away, and the
-// damage compounds through the reference chain at high rates.
-const cdefMinQIndex = 96
-
-func cdefHeaderParams(qIndex uint8, intra bool) CDEFParams {
-	y, uv, damping := cdefStrengthsFromQIndex(qIndex, intra)
-	p := CDEFParams{Damping: damping, Bits: 0}
-	if qIndex >= cdefMinQIndex {
-		p.YStrength[0] = y
-		p.UVStrength[0] = uv
-	}
-	return p
-}
 
 // cdefParserParams is the parser-typed mirror the filtering context consumes.
 func cdefParserParams(p CDEFParams) parser.CDEFParams {
@@ -255,7 +200,7 @@ func (a *cdefApplier) init(width, height int, cdefParams parser.CDEFParams) erro
 // markFromLoopFilterMap derives the per-unit index-coded flags the decoder
 // reconstructs while parsing: a 64x64 unit codes (and therefore filters with)
 // strength set zero exactly when at least one of its blocks is not skipped.
-func (a *cdefApplier) markFromLoopFilterMap(m *threading.FrameWorkLoopFilterMap) {
+func (a *cdefApplier) markFromLoopFilterMap(m *threading.FrameWorkLoopFilterMap, fbIdx []uint8) {
 	for i := range a.idxRead[:a.idxCols*a.idxRows] {
 		a.idxRead[i] = false
 		a.idxValues[i] = 0
@@ -268,7 +213,11 @@ func (a *cdefApplier) markFromLoopFilterMap(m *threading.FrameWorkLoopFilterMap)
 		for miCol := 0; miCol < stride; miCol++ {
 			rec := &m.Records[base+miCol]
 			if rec.Valid && !rec.SkipTransform {
-				a.idxRead[unitRow*a.idxCols+miCol>>4] = true
+				u := unitRow*a.idxCols + miCol>>4
+				a.idxRead[u] = true
+				if fbIdx != nil {
+					a.idxValues[u] = fbIdx[u]
+				}
 			}
 		}
 	}
@@ -284,7 +233,7 @@ func (a *cdefApplier) close() {
 	a.started = false
 }
 
-func (a *cdefApplier) bindApplyContext(recon *SourceFrame420, cdefParams parser.CDEFParams, lfMap *threading.FrameWorkLoopFilterMap, loadSnapshot bool) (bool, error) {
+func (a *cdefApplier) bindApplyContext(recon *SourceFrame420, cdefParams parser.CDEFParams, lfMap *threading.FrameWorkLoopFilterMap, fbIdx []uint8, loadSnapshot bool) (bool, error) {
 	if !a.bound {
 		return false, fmt.Errorf("encoder: cdef applier not initialized")
 	}
@@ -298,7 +247,7 @@ func (a *cdefApplier) bindApplyContext(recon *SourceFrame420, cdefParams parser.
 	if zero {
 		return false, nil
 	}
-	a.markFromLoopFilterMap(lfMap)
+	a.markFromLoopFilterMap(lfMap, fbIdx)
 	a.output = frame.Frame{
 		Format: frame.Format{
 			Width: recon.Width, Height: recon.Height,
@@ -336,8 +285,8 @@ func (a *cdefApplier) bindApplyContext(recon *SourceFrame420, cdefParams parser.
 // apply runs the decoder's banded CDEF over the reconstruction with the
 // frame's signaled parameters, leaving recon equal to the decoder's
 // post-CDEF output.
-func (a *cdefApplier) apply(recon *SourceFrame420, cdefParams parser.CDEFParams, lfMap *threading.FrameWorkLoopFilterMap) error {
-	active, err := a.bindApplyContext(recon, cdefParams, lfMap, false)
+func (a *cdefApplier) apply(recon *SourceFrame420, cdefParams parser.CDEFParams, lfMap *threading.FrameWorkLoopFilterMap, fbIdx []uint8) error {
+	active, err := a.bindApplyContext(recon, cdefParams, lfMap, fbIdx, false)
 	if err != nil || !active {
 		return err
 	}
@@ -380,8 +329,8 @@ func (a *cdefApplier) apply(recon *SourceFrame420, cdefParams parser.CDEFParams,
 	return nil
 }
 
-func (a *cdefApplier) applySerial(recon *SourceFrame420, cdefParams parser.CDEFParams, lfMap *threading.FrameWorkLoopFilterMap) error {
-	active, err := a.bindApplyContext(recon, cdefParams, lfMap, false)
+func (a *cdefApplier) applySerial(recon *SourceFrame420, cdefParams parser.CDEFParams, lfMap *threading.FrameWorkLoopFilterMap, fbIdx []uint8) error {
+	active, err := a.bindApplyContext(recon, cdefParams, lfMap, fbIdx, false)
 	if err != nil || !active {
 		return err
 	}

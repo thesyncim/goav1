@@ -51,6 +51,7 @@ func WalkBlockLoopWrite(w *entropy.Writer, partCDFs *PartitionCDFs, scratch *Blo
 		}
 		for miCol := miColStart; miCol < miColEnd; miCol += rootSize {
 			rootColIndex := int((miCol - miColStart) / rootSize)
+			w.LogSuperblock()
 			if err := blockLoopLoadRootContextMotion(scratch, carrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, sbSizeMIB, keepMotion); err != nil {
 				return err
 			}

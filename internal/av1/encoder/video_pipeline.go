@@ -187,6 +187,7 @@ func (e *VideoEncoder) encodeOverlap(baseSrc SourceFrame420) (tu []byte, key boo
 	e.leafJob.refRecon = refRecon
 	e.leafJob.prevCtx = prevCtx
 	e.leafJob.lpd1Ref = e.lpd1Last
+	e.leafJob.cdefRef = e.cdefRefLast
 	e.leafJob.frameIndex = e.frameIndex
 	e.leafWork <- struct{}{}
 
@@ -298,7 +299,15 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 	if !filterSupported {
 		header.CDEF = CDEFParams{}
 	}
-	if lfLevel > 0 {
+	// The droppable leaf is a non-base picture: SVT cdef level 8 (7 on screen
+	// content) takes the reference-derived filters, never a search
+	// (cdef_frame.go), from the base reference snapshotted with the job.
+	cdefPlan := planSVTCDEF(filterSupported && seq.EnableCDEF && !e.fastestRealtimeEffort() && src.Width*src.Height <= loopFilterMaxArea,
+		false, false, false, e.svtScreen(), e.leafJob.cdefRef)
+	if cdefPlan.search {
+		return nil, 0, fmt.Errorf("encoder: pipelined leaf cannot run the CDEF search")
+	}
+	if lfLevel > 0 || cdefPlan.on {
 		if !e.leafLF.bound {
 			if err := e.leafLF.init(src.Width, src.Height); err != nil {
 				return nil, 0, fmt.Errorf("leaf loop filter init: %w", err)
@@ -311,7 +320,6 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 		header.LoopFilter.LevelY = [2]uint8{dlf, dlf}
 		header.LoopFilter.LevelU = dlf
 		header.LoopFilter.LevelV = dlf
-		header.CDEF = cdefHeaderParams(effQ, false)
 		if !e.leafCdefApp.bound {
 			if err := e.leafCdefApp.init(src.Width, src.Height, cdefParserParams(header.CDEF)); err != nil {
 				return nil, 0, fmt.Errorf("leaf cdef init: %w", err)
@@ -360,7 +368,8 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 	}
 	e.leafPC.wavefront = &e.leafWavefront
 	e.leafPC.wavefrontLanes = leafLanes
-	if lfLevel > 0 {
+	e.leafPC.cdefLog = nil
+	if lfLevel > 0 || cdefPlan.on {
 		e.leafPC.st.lfMap = &e.leafLF.filtMap
 	} else {
 		e.leafPC.st.lfMap = nil
@@ -383,7 +392,10 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 		return nil, 0, fmt.Errorf("encode leaf tile: %w", err)
 	}
 	e.leafPayloads[0] = TilePayload{Data: data}
-	if lfLevel > 0 {
+	if cdefPlan.on {
+		header.CDEF, _ = cdefPlan.decide(nil, &src, out, &e.leafLF.filtMap, effQ)
+	}
+	if lfLevel > 0 || cdefPlan.on {
 		if err := e.applyLeafFilters(out, svtRTCDeblockLevel(lfLevel), cdefParserParams(header.CDEF)); err != nil {
 			return nil, 0, err
 		}
@@ -409,7 +421,7 @@ func (e *VideoEncoder) applyLeafFilters(out *SourceFrame420, lfLevel uint8, cdef
 			return fmt.Errorf("leaf loop filter apply: %w", err)
 		}
 	}
-	if err := e.leafCdefApp.applySerial(out, cdef, &e.leafLF.filtMap); err != nil {
+	if err := e.leafCdefApp.applySerial(out, cdef, &e.leafLF.filtMap, nil); err != nil {
 		return fmt.Errorf("leaf cdef apply: %w", err)
 	}
 	return nil
