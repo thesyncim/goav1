@@ -20,7 +20,7 @@ func TestDecoderCompactLoopFilterSelectionAndWorkerFallback(t *testing.T) {
 
 	decodeFirst := func(workers int) (*Decoder, [md5.Size]byte) {
 		t.Helper()
-		dec, err := NewDecoderFromIVF(ivf, WithWorkers(workers))
+		dec, err := NewDecoderFromIVF(ivf, WithWorkers(workers), WithMaxFrameDelay(1))
 		if err != nil {
 			t.Fatalf("NewDecoderFromIVF workers=%d: %v", workers, err)
 		}

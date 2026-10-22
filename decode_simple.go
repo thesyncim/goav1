@@ -84,6 +84,10 @@ type Decoder struct {
 	// call returns them to their pool when no reference still holds them.
 	shownHeld    []shownSurface
 	shownHeldBuf [2 * (RefFrames + 1)]shownSurface
+
+	// fp is the frame-threading pipeline (dav1d n_fc > 1), or nil when frames
+	// decode one at a time.
+	fp *decoderFramePipeline
 }
 
 // shownSurface names one tracked output surface and the pool that owns it.
@@ -102,7 +106,8 @@ const (
 
 // decoderConfig holds resolved construction options.
 type decoderConfig struct {
-	workers int
+	workers       int
+	maxFrameDelay int
 }
 
 // Option configures a Decoder at construction time.
@@ -164,6 +169,9 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	if cfg.workers < 1 {
 		return nil, fmt.Errorf("goav1: workers must be >= 1, got %d", cfg.workers)
 	}
+	if cfg.maxFrameDelay < 0 {
+		return nil, fmt.Errorf("goav1: max frame delay must be >= 0, got %d", cfg.maxFrameDelay)
+	}
 	if source.len() == 0 {
 		return nil, errors.New("goav1: no payloads to decode")
 	}
@@ -214,7 +222,16 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		return nil, fmt.Errorf("goav1: frame format from stream plan: %w", err)
 	}
 
-	const surfaceCount = RefFrames + 1
+	// Frame threading keeps up to n_fc frames in flight beyond the reference
+	// set, each on its own surface.
+	frameContexts := 1
+	if kind == decoderPayloadLowOverhead {
+		frameContexts = decoderFrameContextCount(cfg.workers, cfg.maxFrameDelay)
+	}
+	surfaceCount := RefFrames + 1
+	if frameContexts > 1 {
+		surfaceCount += 2 * frameContexts
+	}
 	var useExternal bool
 	var outputFormat FrameFormat
 	switch kind {
@@ -361,6 +378,15 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		d.runner.EventRunner.compactBatchOwner = &d.batch
 		d.runner.EventRunner.compactSideOwner = &d.sideData
 	}
+	if frameContexts > 1 && !d.useExternal {
+		fp, err := newDecoderFramePipeline(d, frameContexts, plan, postArena, surfaceCount)
+		if err != nil {
+			workerPool.Close()
+			return nil, fmt.Errorf("goav1: frame threading: %w", err)
+		}
+		d.fp = fp
+		d.runner.EventRunner.fp = fp
+	}
 	return d, nil
 }
 
@@ -426,6 +452,9 @@ func (d *Decoder) DecodeNext() (frames []*Frame, ok bool, err error) {
 		return nil, false, errors.New("goav1: decoder closed")
 	}
 	d.releaseShownSurfaces()
+	if d.fp != nil {
+		return d.decodeNextFrameThreaded()
+	}
 	if d.next >= d.payloadSource.len() {
 		return nil, false, nil
 	}
@@ -604,6 +633,11 @@ func (d *Decoder) releaseShownSurfaces() {
 				break
 			}
 		}
+		if !held && d.fp != nil && d.fp.deferredRelease(h.surface) {
+			// An in-flight frame dropped it from the reference slots and
+			// returns it to the pool when it retires.
+			held = true
+		}
 		if !held {
 			// Tolerate already-released slots: a surface freed by the
 			// reference bookkeeping between calls is exactly the benign
@@ -657,6 +691,9 @@ func (d *Decoder) Reset() error {
 	if d.closed {
 		return errors.New("goav1: decoder closed")
 	}
+	if d.fp != nil {
+		d.fp.reset()
+	}
 	d.pool.Reset()
 	if d.useExternal {
 		d.outputPool.Reset()
@@ -684,6 +721,9 @@ func (d *Decoder) Close() {
 	}
 	d.closed = true
 	internalthreading.DeactivateFrameWorkLoopFilterCompactState(&d.compactLF)
+	if d.fp != nil {
+		d.fp.close()
+	}
 	if d.workerPool != nil {
 		d.workerPool.Close()
 		d.workerPool = nil

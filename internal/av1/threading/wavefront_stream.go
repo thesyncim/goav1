@@ -164,6 +164,11 @@ func (wf *frameWorkReconWavefront) startLanes(lanes chan<- wavefrontLaneTask, wo
 func (wf *frameWorkReconWavefront) runLane(w int, workers int, rowCount int) {
 	defer wf.wg.Done()
 	st := &wf.states[w]
+	if ft := wf.frameThread; ft != nil && !ft.waitReferences() {
+		wf.firstErr.CompareAndSwap(nil, &wavefrontError{err: ErrFrameThreadReference})
+		wf.abortProgress()
+		return
+	}
 	for row := w; row < rowCount; row += workers {
 		view, ok := wf.waitRows(row + 1)
 		if !ok {
@@ -227,6 +232,7 @@ func (c *frameWorkTileResidualLoopController) startReconStream() error {
 	if err := wf.ensureStates(workers, c); err != nil {
 		return err
 	}
+	wf.frameThread = c.batch.FrameThread
 	wf.startLanes(c.batch.wavefrontLanes, workers, rowCount)
 	c.streaming = true
 	return nil
@@ -278,6 +284,13 @@ func (c *frameWorkTileResidualLoopController) finishReconStream(parseErr error) 
 	if err := c.publishReconRows(wf.build.rowCount); err != nil {
 		wf.cancelLanes()
 		return err
+	}
+	if ft := wf.frameThread; ft != nil {
+		// Frame threading: the parse is done and every row is published; the
+		// lanes finish under the frame's tail (FrameThreadRecon.Join).
+		ft.wf = wf
+		ft.stats = c.stats
+		return nil
 	}
 	return wf.finishLanes(c.stats)
 }

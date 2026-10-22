@@ -271,6 +271,12 @@ type FrameWorkBatch struct {
 	WavefrontWorkers uint16
 	Jobs             []tile.Job
 
+	// FrameThread, when non-nil, selects the frame-threaded split: the tile job
+	// reconstructs through the wavefront lanes even on a single lane, returns
+	// once the parse finished, and leaves the lanes to FrameThread.Join. The
+	// lanes wait for the reference surfaces in FrameThread.RefProgress.
+	FrameThread *FrameThreadRecon
+
 	// geomCache optionally memoizes the job-constant JobRegion and per-plane
 	// JobOutputPlane windows for a single job index. It is caller-owned scratch
 	// installed by the per-job residual loop (which decodes thousands of

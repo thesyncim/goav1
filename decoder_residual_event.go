@@ -88,6 +88,11 @@ type DecoderFrameWorkResidualEventRunner struct {
 	compactPostOwner  *DecoderFrameWorkReusableSupportedPostFilterRunner
 	compactBatchOwner *DecoderFrameWorkBatchResidualRunner
 	compactSideOwner  *DecoderFrameWorkSideData
+
+	// fp, when set, runs frame-threadable events through the frame-threading
+	// pipeline and drains it before any other event; outputs then leave through
+	// the pipeline in submission order instead of Outputs.
+	fp *decoderFramePipeline
 }
 
 // DecoderFrameWorkResidualEventsResult summarizes a batch of parsed decoder
@@ -567,6 +572,24 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 	for i := range events {
 		sequence = decoderFrameWorkResidualEventSequence(sequence, &events[i])
 
+		if r.fp != nil {
+			if r.fp.eligible(sequence, &events[i]) {
+				step, err := r.fp.runFrame(sequence, &events[i])
+				if err != nil {
+					return result, err
+				}
+				result.Count++
+				result.Last = step
+				result.ExecutedTileWork++
+				result.CompletedFrames++
+				result.ReleaseCount += int(step.Run.ReleaseCount)
+				continue
+			}
+			if decoderFramePipelineEventNeedsDrain(&events[i]) {
+				r.fp.drain()
+			}
+		}
+
 		sidePtr := (*DecoderFrameWorkSideData)(nil)
 		if decoderFrameWorkResidualEventNeedsSideData(&events[i]) {
 			if r.SideData == nil {
@@ -627,6 +650,9 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 			result.ExecutedTileWork++
 		}
 		if decoderFrameWorkResidualResultOutputsFrame(&events[i], step) {
+			if r.fp != nil {
+				r.fp.ready = append(r.fp.ready, step.Output)
+			}
 			if r.Outputs != nil {
 				if result.OutputCount >= len(r.Outputs) {
 					return result, ErrFrameShortBuffer
