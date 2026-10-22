@@ -129,7 +129,7 @@ func (e *VideoEncoder) Drain() (tu []byte, key bool, produced bool, err error) {
 // scope is restricted to golden-disabled L1T2 single-tile 8-bit 4:2:0 streams
 // with scene-cut promotion off and no render padding.
 func (e *VideoEncoder) overlapEligible(forceKey bool) bool {
-	if forceKey || !e.haveKey || !e.pipeline {
+	if forceKey || !e.haveKey || !e.pipeline || e.rcEnabled {
 		return false
 	}
 	if e.temporalLayers != 2 || e.goldenEvery != 0 || e.sceneCutKeyframes {
@@ -285,7 +285,9 @@ func (e *VideoEncoder) startLeafWorker() {
 // single-tile, 8-bit 4:2:0, no padding).
 func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420, prevCtx *frameCDFs) ([]byte, int, error) {
 	color := e.parserColorConfig()
-	effQ := e.layerQIndex(1)
+	// Pipelining runs only without rate control (overlapEligible): SVT's
+	// shared controller needs each frame's feedback before the next q.
+	effQ := e.qIndex
 	seq := e.sequenceHeader(src.Width, src.Height)
 	header, refState := repeatPFrameHeader(src.Width, src.Height, effQ, 0)
 	e.leafRefState = refState

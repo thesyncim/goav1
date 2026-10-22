@@ -324,7 +324,8 @@ type VideoEncoderConfig struct {
 
 	// TargetBitrate, when positive, enables CBR rate control at this many
 	// bits per second; Framerate must then also be positive. MinQIndex and
-	// MaxQIndex bound the controller (defaults 20 and 200).
+	// MaxQIndex bound the controller (defaults 16 and 255, SVT-AV1's CBR
+	// min_qp_allowed 4 and max_qp_allowed 63).
 	TargetBitrate int
 	Framerate     int
 	MinQIndex     uint8
@@ -466,10 +467,10 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 			MaxQIndex:           cfg.MaxQIndex,
 		}
 		if rc.MinQIndex == 0 {
-			rc.MinQIndex = 20
+			rc.MinQIndex = 16
 		}
 		if rc.MaxQIndex == 0 {
-			rc.MaxQIndex = 200
+			rc.MaxQIndex = 255
 		}
 		enc, err = encoder.NewVideoEncoderCBR(cfg.Width, cfg.Height, rc)
 	} else {
@@ -990,10 +991,10 @@ func NewRTCEncoder(cfg VideoEncoderConfig) (*RTCEncoder, error) {
 		MaxQIndex:           cfg.MaxQIndex,
 	}
 	if rc.MinQIndex == 0 {
-		rc.MinQIndex = 20
+		rc.MinQIndex = 16
 	}
 	if rc.MaxQIndex == 0 {
-		rc.MaxQIndex = 200
+		rc.MaxQIndex = 255
 	}
 	layers := cfg.TemporalLayers
 	if layers == 0 {

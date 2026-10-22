@@ -31,17 +31,20 @@ type VideoEncoder struct {
 	rcEnabled      bool
 	rcTargetBits   int
 	rcFramesPerSec int
+	rcMinQ, rcMaxQ uint8
+	// rcPerFrameBits is avg_frame_bandwidth (target / frame rate).
 	rcPerFrameBits int
-	rcBuffer       int
-	// rcRecentBits holds the last two coded sizes for the single-layer
-	// controller; temporal SVC keeps the same state per temporal layer below.
-	rcRecentBits           [2]int
-	rcMinQ, rcMaxQ         uint8
-	rcTemporalQ            [WebRTCMaxTemporalLayers]uint8
-	rcTemporalBuffer       [WebRTCMaxTemporalLayers]int
-	rcTemporalRecentBits   [WebRTCMaxTemporalLayers][2]int
-	rcTemporalPerFrameBits [WebRTCMaxTemporalLayers]int
-	// cr is the cyclic refresh state of single-layer CBR streams.
+	// svtRC is SVT-AV1's one-pass CBR rate control shared by every
+	// temporal layer (svt_rc.go); svtRef holds the reference slots' RC facts
+	// (base_q_idx, temporal layer, intra) for LAST and the L1T3 middle layer,
+	// and svtCur / svtCurCR the picture being coded.
+	svtRC    svtRateControl
+	svtRef   [2]svtRCRef
+	svtCur   svtRCFrame
+	svtCurQ  uint8
+	svtCurCR svtCRStats
+	svtCurOn bool
+	// cr is the cyclic refresh state of CBR streams.
 	cr cyclicRefresh
 
 	pc        pframeCoder
@@ -570,146 +573,6 @@ func NewVideoEncoderCBR(width, height int, rc RateControlConfig) (*VideoEncoder,
 	return newVideoEncoderCBRWithColor(width, height, rc, defaultVideoColorConfig())
 }
 
-func newVideoEncoderCBRWithColor(width, height int, rc RateControlConfig, color SequenceColorConfig) (*VideoEncoder, error) {
-	perFrameBits, err := rateControlPerFrameBits(rc)
-	if err != nil {
-		return nil, err
-	}
-	e, err := newVideoEncoderWithColor(width, height, rc.MinQIndex/2+rc.MaxQIndex/2, color)
-	if err != nil {
-		return nil, err
-	}
-	e.rcEnabled = true
-	e.rcTargetBits = rc.TargetBitsPerSecond
-	e.rcFramesPerSec = rc.FramesPerSecond
-	e.rcPerFrameBits = perFrameBits
-	e.rcMinQ = rc.MinQIndex
-	e.rcMaxQ = rc.MaxQIndex
-	e.resetRCTemporalState()
-	e.cr.reset(e.rcMaxQ)
-	return e, nil
-}
-
-// SetQIndex switches future frames to fixed-quality encoding without
-// disturbing reference state.
-func (e *VideoEncoder) SetQIndex(qIndex uint8) error {
-	if e == nil {
-		return fmt.Errorf("encoder: nil video encoder")
-	}
-	if qIndex == 0 {
-		return fmt.Errorf("encoder: qindex must be non-zero")
-	}
-	e.rcEnabled = false
-	e.qIndex = qIndex
-	e.rcTargetBits = 0
-	e.rcFramesPerSec = 0
-	e.rcPerFrameBits = 0
-	e.rcBuffer = 0
-	e.rcRecentBits = [2]int{}
-	e.rcTemporalQ = [WebRTCMaxTemporalLayers]uint8{}
-	e.rcTemporalBuffer = [WebRTCMaxTemporalLayers]int{}
-	e.rcTemporalRecentBits = [WebRTCMaxTemporalLayers][2]int{}
-	e.rcTemporalPerFrameBits = [WebRTCMaxTemporalLayers]int{}
-	return nil
-}
-
-func rateControlPerFrameBits(rc RateControlConfig) (int, error) {
-	if rc.TargetBitsPerSecond <= 0 || rc.FramesPerSecond <= 0 {
-		return 0, fmt.Errorf("encoder: invalid rate control target %d bps @ %d fps", rc.TargetBitsPerSecond, rc.FramesPerSecond)
-	}
-	if rc.MinQIndex == 0 || rc.MaxQIndex <= rc.MinQIndex {
-		return 0, fmt.Errorf("encoder: invalid qindex range [%d, %d]", rc.MinQIndex, rc.MaxQIndex)
-	}
-	perFrameBits := rc.TargetBitsPerSecond / rc.FramesPerSecond
-	if perFrameBits <= 0 {
-		perFrameBits = 1
-	}
-	return perFrameBits, nil
-}
-
-// SetRateControlConfig atomically updates the CBR target used for future
-// frames without disturbing reference state.
-func (e *VideoEncoder) SetRateControlConfig(rc RateControlConfig) error {
-	if e == nil {
-		return fmt.Errorf("encoder: nil video encoder")
-	}
-	perFrameBits, err := rateControlPerFrameBits(rc)
-	if err != nil {
-		return err
-	}
-	e.rcEnabled = true
-	e.rcTargetBits = rc.TargetBitsPerSecond
-	e.rcFramesPerSec = rc.FramesPerSecond
-	e.rcPerFrameBits = perFrameBits
-	e.rcMinQ = rc.MinQIndex
-	e.rcMaxQ = rc.MaxQIndex
-	if e.qIndex < e.rcMinQ {
-		e.qIndex = e.rcMinQ
-	} else if e.qIndex > e.rcMaxQ {
-		e.qIndex = e.rcMaxQ
-	}
-	e.rcBuffer = 0
-	e.rcRecentBits = [2]int{}
-	e.resetRCTemporalState()
-	e.cr.reset(e.rcMaxQ)
-	return nil
-}
-
-// UpdateRateControlConfig changes compatible CBR settings while preserving the
-// controller's learned buffer and temporal-layer q state. Use SetRateControlConfig
-// for a hard controller reinitialization.
-func (e *VideoEncoder) UpdateRateControlConfig(rc RateControlConfig) error {
-	if e == nil {
-		return fmt.Errorf("encoder: nil video encoder")
-	}
-	if !e.rcEnabled {
-		return e.SetRateControlConfig(rc)
-	}
-	if err := applyRateControlConfigPreservingState(rc, e.temporalLayers, e.rcSurplusFrameLimit(), &e.qIndex, &e.rcTargetBits, &e.rcFramesPerSec, &e.rcPerFrameBits, &e.rcMinQ, &e.rcMaxQ, &e.rcBuffer, &e.rcTemporalQ, &e.rcTemporalBuffer, &e.rcTemporalPerFrameBits); err != nil {
-		return err
-	}
-	e.rcEnabled = true
-	return nil
-}
-
-func (e *VideoEncoder) resetRCTemporalState() {
-	resetRateControlTemporalState(e.qIndex, e.rcTargetBits, e.rcFramesPerSec, e.temporalLayers, e.rcPerFrameBits, &e.rcTemporalQ, &e.rcTemporalBuffer, &e.rcTemporalRecentBits, &e.rcTemporalPerFrameBits)
-}
-
-// rcUpdate feeds one frame's actual size into the layer-local leaky-bucket
-// controller and steps that layer's qindex toward its per-frame budget.
-func (e *VideoEncoder) rcUpdate(frameBits int, temporalID uint8) {
-	if !e.rcEnabled {
-		return
-	}
-	idx := rateControlTemporalLayerIndex(e.temporalLayers, temporalID)
-	if e.temporalLayers > 1 {
-		e.rcTemporalQ[idx] = rcUpdateState(frameBits, e.rcTemporalPerFrameBits[idx], e.rcSurplusFrameLimit(), e.rcMinQ, e.rcMaxQ, e.rcTemporalQ[idx], &e.rcTemporalBuffer[idx], &e.rcTemporalRecentBits[idx])
-		e.qIndex = e.rcTemporalQ[0]
-		return
-	}
-	e.qIndex = rcUpdateState(frameBits, e.rcPerFrameBits, e.rcSurplusFrameLimit(), e.rcMinQ, e.rcMaxQ, e.qIndex, &e.rcBuffer, &e.rcRecentBits)
-}
-
-func (e *VideoEncoder) rcSurplusFrameLimit() int {
-	if e.temporalLayers == 2 {
-		return 2
-	}
-	return 8
-}
-
-func (e *VideoEncoder) keyframeQIndex() uint8 {
-	qIndex := e.qIndex
-	perFrameBits := e.rcPerFrameBits
-	buffer := e.rcBuffer
-	if e.rcEnabled && e.temporalLayers > 1 {
-		qIndex = e.rcTemporalQ[0]
-		perFrameBits = e.rcTemporalPerFrameBits[0]
-		buffer = e.rcTemporalBuffer[0]
-	}
-	return rcKeyframeQIndex(qIndex, e.rcEnabled, perFrameBits, buffer, e.rcMinQ, e.rcMaxQ)
-}
-
 // QIndex reports the working qindex the next frame will use.
 func (e *VideoEncoder) QIndex() uint8 {
 	return e.qIndex
@@ -778,9 +641,6 @@ func (e *VideoEncoder) SetTemporalLayers(n int) error {
 		return nil
 	}
 	e.temporalLayers = n
-	if e.rcEnabled {
-		e.resetRCTemporalState()
-	}
 	return nil
 }
 
@@ -881,7 +741,7 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 	// transitively) from the key, so it earns a finer quantizer than the
 	// working point; rate control pays the debt back over the next frames
 	// through the buffer.
-	keyQ := e.keyframeQIndex()
+	keyQ := e.rcKeyQ(src.Width, src.Height, e.svtScreen())
 	tu, recon, err := encodeKeyframeFilteredTiles(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, nil, &e.cdefApp, e.keyframeTileColsLog2, keyframeTileOptions{
 		payloads:          e.payloads[:nTiles],
 		errs:              e.tileErrs[:nTiles],
@@ -962,7 +822,7 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 		refresh = 1 << settings.UpdateBuffer
 	}
 	seq := e.sequenceHeader(maxWidth, maxHeight)
-	effQ := e.layerQIndex(settings.TemporalID)
+	effQ := e.rcInterQ(settings.TemporalID, svtRefLast, e.frameIndex, src.Width, src.Height, e.svtScreen())
 	// This path signals no delta_q; drop any grid a previous frame left.
 	e.pc.st.sbQPending = nil
 	for t := range e.tilePCs {
@@ -1071,6 +931,7 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 	if settings.UpdateBufferSet {
 		e.recon = *out
 		e.reconIdx ^= 1
+		e.noteRCRefresh(svtRefLast, effQ, settings.TemporalID)
 	}
 	e.lpd1InvalidateRefs()
 	e.haveKey = true
@@ -1117,7 +978,8 @@ func (e *VideoEncoder) Prewarm() error {
 		Height:       e.renderHeight,
 	}
 	savedQ := e.qIndex
-	savedCREnd, savedCRQ := e.cr.sbEnd, e.cr.avgInterQ
+	savedCREnd := e.cr.sbEnd
+	savedRC, savedRef := e.svtRC, e.svtRef
 	// Size the assembly buffers for real content up front; the throwaway
 	// frame below is black and would leave them near-empty.
 	if bound := e.width * e.height; cap(e.tuScratch) < bound {
@@ -1158,9 +1020,9 @@ func (e *VideoEncoder) Prewarm() error {
 	e.frameIndex = 0
 	e.lastTemporalID = 0
 	e.qIndex = savedQ
-	e.cr.sbEnd, e.cr.avgInterQ = savedCREnd, savedCRQ
-	e.rcBuffer = 0
-	e.rcRecentBits = [2]int{}
+	e.cr.sbEnd = savedCREnd
+	e.svtRC, e.svtRef = savedRC, savedRef
+	e.svtCurOn = false
 	e.sinceGoldenFresh = 0
 	e.hme.havePrev = false
 	e.hme.fme.valid = false
@@ -1347,13 +1209,6 @@ func (e *VideoEncoder) joinFilter() error {
 	return err
 }
 
-func (e *VideoEncoder) layerQIndex(temporalID uint8) uint8 {
-	if e.rcEnabled && e.temporalLayers > 1 {
-		return rateControlTemporalLayerQIndex(e.rcTemporalQ, e.rcMinQ, e.rcMaxQ, e.temporalLayers, temporalID)
-	}
-	return e.qIndex
-}
-
 // Adaptive golden refresh, ported from libaom's one-pass realtime golden
 // update (av1/encoder/ratectrl.c): set_golden_update drops the interval to 16
 // display frames when avg_frame_low_motion < 40, and
@@ -1424,7 +1279,11 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		}
 	}
 	seq := e.sequenceHeader(src.Width, src.Height)
-	effQ := e.layerQIndex(temporalID)
+	rcRef := svtRefLast
+	if afterT1 {
+		rcRef = svtRefT1
+	}
+	effQ := e.rcInterQ(temporalID, rcRef, e.frameIndex+e.lpd1FrameBias, src.Width, src.Height, e.svtScreen())
 	header, refState := repeatPFrameHeader(src.Width, src.Height, effQ, refresh)
 	e.refState = refState
 	e.applyContentHintToFrameHeader(&header.Prefix)
@@ -1605,15 +1464,20 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	for t := range e.tilePCs {
 		e.tilePCs[t].st.lpd1Pending = lpd1Setup
 	}
-	// Cyclic refresh (cyclic_refresh.go): single-layer CBR inter frames
-	// lower the qindex of a sliding superblock window and signal it with
-	// delta_q (svt_aom_cyclic_refresh_init applies it to every flat-structure
-	// inter frame).
+	// Cyclic refresh (cyclic_refresh.go): CBR inter frames of the flat
+	// structure or the base layer lower the qindex of a sliding superblock
+	// window and signal it with delta_q (svt_aom_cyclic_refresh_init:
+	// apply_cyclic_refresh = use_flat_ipp || temporal_layer_index == 0).
 	var sbQ []uint8
-	if e.rcEnabled && e.temporalLayers <= 1 && videoColorIs420(color) && effQ > 0 &&
+	if e.rcEnabled && e.svtCurOn && videoColorIs420(color) && effQ > 0 &&
 		refRecon.Width == src.Width && refRecon.Height == src.Height {
-		sbQ = e.cr.plan(effQ, e.rcMinQ, e.rcMaxQ, src.Width, src.Height, &e.hme, e.frameIndex, e.avgFrameLowMotion)
-		e.cr.noteInterQ(effQ)
+		sbQ, e.svtCurCR = e.cr.plan(&e.svtRC, svtCRFrame{
+			screen:            e.svtScreen(),
+			flat:              e.temporalLayers <= 1,
+			temporalLayer:     int(temporalID),
+			hierLevels:        e.svtRCHierLevels(),
+			avgFrameLowMotion: e.avgFrameLowMotion,
+		}, effQ, src.Width, src.Height, &e.hme)
 	}
 	header.Delta = DeltaParams{DeltaQPresent: sbQ != nil}
 	sbQCols := (src.Width + 63) / 64
@@ -1731,6 +1595,12 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	}
 	if lpd1StatsEnabled {
 		dumpLPD1Stats(uint64(e.frameIndex))
+	}
+	// Rate-control facts of the refreshed reference slot.
+	if !droppable {
+		e.noteRCRefresh(svtRefLast, effQ, temporalID)
+	} else if isT1 {
+		e.noteRCRefresh(svtRefT1, effQ, temporalID)
 	}
 	// Publish the light-PD1 statistics with the refreshed reference slot
 	// (rest_process.c copy_statistics_to_ref_obj_ect).

@@ -22,7 +22,8 @@ func frozenPrewarmOracle(e *VideoEncoder) error {
 		Height:       e.renderHeight,
 	}
 	savedQ := e.qIndex
-	savedCREnd, savedCRQ := e.cr.sbEnd, e.cr.avgInterQ
+	savedCREnd := e.cr.sbEnd
+	savedRC, savedRef := e.svtRC, e.svtRef
 	// Size the assembly buffers for real content up front; the throwaway
 	// frame below is black and would leave them near-empty.
 	if bound := e.width * e.height; cap(e.tuScratch) < bound {
@@ -58,9 +59,9 @@ func frozenPrewarmOracle(e *VideoEncoder) error {
 	e.frameIndex = 0
 	e.lastTemporalID = 0
 	e.qIndex = savedQ
-	e.cr.sbEnd, e.cr.avgInterQ = savedCREnd, savedCRQ
-	e.rcBuffer = 0
-	e.rcRecentBits = [2]int{}
+	e.cr.sbEnd = savedCREnd
+	e.svtRC, e.svtRef = savedRC, savedRef
+	e.svtCurOn = false
 	e.sinceGoldenFresh = 0
 	e.hme.havePrev = false
 	e.hme.fme.valid = false
@@ -72,17 +73,14 @@ func frozenPrewarmOracle(e *VideoEncoder) error {
 func prewarmStateForOracle(e *VideoEncoder) any {
 	return struct {
 		HaveKey, HaveCtx, HaveCtxT1, HMEArmed bool
-		FrameIndex, ReconIdx, RCBuffer, SinceGolden, LowMotion   int
-		LastTemporalID, QIndex                                   uint8
-		RecentBits                                               [2]int
-		TemporalQ                                                [WebRTCMaxTemporalLayers]uint8
-		TemporalBuffer                                           [WebRTCMaxTemporalLayers]int
-		TemporalRecentBits                                       [WebRTCMaxTemporalLayers][2]int
-		Stats                                                    EncoderDecisionStats
+		FrameIndex, ReconIdx, SinceGolden, LowMotion int
+		LastTemporalID, QIndex                     uint8
+		RC                                         svtRateControl
+		Ref                                        [2]svtRCRef
+		Stats                                      EncoderDecisionStats
 	}{e.haveKey, e.haveCtx, e.haveCtxT1, e.hme.havePrev,
-		e.frameIndex, e.reconIdx, e.rcBuffer, e.sinceGoldenFresh, e.avgFrameLowMotion,
-		e.lastTemporalID, e.qIndex, e.rcRecentBits, e.rcTemporalQ, e.rcTemporalBuffer,
-		e.rcTemporalRecentBits, e.decisionStats}
+		e.frameIndex, e.reconIdx, e.sinceGoldenFresh, e.avgFrameLowMotion,
+		e.lastTemporalID, e.qIndex, e.svtRC, e.svtRef, e.decisionStats}
 }
 
 func equalPrewarmRecon(a, b SourceFrame420) bool {

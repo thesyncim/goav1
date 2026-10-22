@@ -5,49 +5,30 @@ import "github.com/thesyncim/goav1/internal/av1/quantize"
 // cyclic_refresh.go ports SVT-AV1's realtime CBR cyclic refresh
 // (Source/Lib/Codec/rc_aq.c svt_aom_cyclic_refresh_init and
 // cyclic_sb_qp_derivation, with svt_av1_compute_deltaq from rc_process.c):
-// each inter frame lowers the qindex of a sliding window of a quarter of the
-// 64x64 superblocks, signalled through delta_q, so static content converges
-// to a higher quality than the frame quantizer alone reaches. Superblocks in
-// the window whose motion-compensated distortion sits below the frame
-// average get the larger BOOST2 offset.
-//
-// Two inputs differ from upstream, both documented substitutions:
-//   - SVT's me_8x8_distortion per superblock is replaced by the sum of this
-//     encoder's hierarchical motion search region SADs (quarter resolution)
-//     covering the superblock; only its comparison against the frame average
-//     matters.
-//   - percent_refresh_adjustment and rate_ratio_qdelta_adjustment are driven
-//     by SVT's rate-correction feedback (av1_rc_update_rate_correction_factors);
-//     this encoder's controller has no correction factor, so they stay at
-//     their reset values (5 and 0.25).
+// inter frames lower the qindex of a sliding window of the 64x64
+// superblocks, signalled through delta_q, so static content converges to a
+// higher quality than the frame quantizer alone reaches. Superblocks in the
+// window whose ME distortion (me_8x8_distortion, hme.go) sits below the
+// frame average get the larger BOOST2 offset. The refresh percentage and
+// rate ratio adapt through the shared rate control
+// (svtRateControl.percentRefreshAdjustment / rateRatioQDeltaAdjustment,
+// driven by av1_rc_update_rate_correction_factors).
 
 const (
-	crPercentRefresh         = 20 + 5
-	crRateRatioAdjustment    = 0.25
-	crMaxQDeltaPerc          = 60
-	crRateBoostFac           = 15
-	crBoostMax               = 10
-	crMaxRateTargetRatio     = 4.0
-	crFlatHierarchicalLevels = 2
+	crMaxQDeltaPerc      = 60
+	crBoostMax           = 10
+	crMaxRateTargetRatio = 4.0
 )
 
-// cyclicRefresh is the per-stream state.
+// cyclicRefresh is the per-stream state (enc_ctx->cr_sb_end).
 type cyclicRefresh struct {
-	sbEnd     int
-	avgInterQ int
-	grid      []uint8
-	sbDist    []int64
+	sbEnd  int
+	grid   []uint8
+	sbDist []int64
 }
 
-func (cr *cyclicRefresh) reset(worstQ uint8) {
+func (cr *cyclicRefresh) reset() {
 	cr.sbEnd = 0
-	cr.avgInterQ = int(worstQ)
-}
-
-// noteInterQ is the avg_frame_qindex[INTER_FRAME] update of
-// svt_av1_rc_postencode_update.
-func (cr *cyclicRefresh) noteInterQ(q uint8) {
-	cr.avgInterQ = (3*cr.avgInterQ + int(q) + 2) >> 2
 }
 
 // cyclicQRealTable is svt_av1_convert_qindex_to_q at 8-bit (AC step / 4).
@@ -65,53 +46,83 @@ var cyclicQRealTable = func() (t [256]float64) {
 // cyclicComputeDeltaQ is svt_av1_compute_deltaq for a CBR inter frame:
 // svt_av1_compute_qdelta_by_rate over the svt_av1_rc_bits_per_mb model,
 // floored at -max_qdelta_perc% of q.
-func cyclicComputeDeltaQ(q int, ratio float64, bestQ, worstQ int) int {
-	base := int(1000000.0 / cyclicQRealTable[q])
-	target := int(ratio * float64(base))
-	low, high := bestQ, worstQ
-	for low < high {
-		mid := (low + high) >> 1
-		if int(1000000.0/cyclicQRealTable[mid]) > target {
-			low = mid + 1
-		} else {
-			high = mid
-		}
-	}
-	delta := low - q
+func cyclicComputeDeltaQ(rc *svtRateControl, q int, ratio float64, screen bool) int {
+	delta := rc.computeQDeltaByRate(svtFrameInter, q, ratio, screen)
 	return max(delta, -crMaxQDeltaPerc*q/100)
 }
 
-// plan fills cr.grid with the qindex of every 64x64 superblock of an inter
-// frame, or returns nil when cyclic refresh is off for the frame
-// (svt_aom_cyclic_refresh_init's gates). hme supplies the per-region
-// distortion; framesSinceKey counts inter frames since the last keyframe.
-func (cr *cyclicRefresh) plan(baseQ uint8, bestQ, worstQ uint8, width, height int, hme *hmeState, framesSinceKey int, avgFrameLowMotion int) []uint8 {
-	qpThresh := max(16, int(bestQ)+4)
-	qpMaxThresh := 118 * 255 >> 7
-	if cr.avgInterQ > qpMaxThresh || cr.avgInterQ < qpThresh {
-		return nil
+// svtCRFrame is the picture context cyclic refresh reads.
+type svtCRFrame struct {
+	key               bool
+	screen            bool
+	flat              bool
+	temporalLayer     int
+	hierLevels        int
+	avgFrameLowMotion int
+}
+
+// plan runs svt_aom_cyclic_refresh_init and cyclic_sb_qp_derivation for a
+// picture coded at baseQ: it fills cr.grid with every 64x64 superblock's
+// qindex, or returns nil when cyclic refresh is off for the picture, and the
+// segment statistics the rate-correction update weighs.
+func (cr *cyclicRefresh) plan(rc *svtRateControl, f svtCRFrame, baseQ uint8, width, height int, hme *hmeState) ([]uint8, svtCRStats) {
+	var stats svtCRStats
+	if f.key {
+		// Reset adaptive elements for intra only frames.
+		rc.percentRefreshAdjustment = 5
+		rc.rateRatioQDeltaAdjustment = 0.25
 	}
-	if avgFrameLowMotion > 0 && avgFrameLowMotion < 50 {
-		return nil
+	percent := 20 + rc.percentRefreshAdjustment
+	if f.screen {
+		percent += 5
+	}
+	stats.percentFresh = percent
+	apply := !f.key && (f.flat || f.temporalLayer == 0)
+	qpThresh := max(16, rc.bestQuality+4)
+	qpMaxThresh := 118 * 255 >> 7
+	if rc.avgFrameQIndex[svtFrameInter] > qpMaxThresh || rc.avgFrameQIndex[svtFrameInter] < qpThresh {
+		apply = false
+	}
+	if f.avgFrameLowMotion != 0 && f.avgFrameLowMotion < 50 {
+		apply = false
+	}
+	if !apply {
+		return nil, stats
 	}
 	cols := (width + 63) / 64
 	rows := (height + 63) / 64
 	sbCnt := cols * rows
 	if sbCnt == 0 {
-		return nil
+		return nil, stats
 	}
 	sbStart := cr.sbEnd
-	sbEnd := sbStart + sbCnt*crPercentRefresh/100
+	sbEnd := sbStart + sbCnt*percent/100
 	if sbEnd >= sbCnt {
 		cr.sbEnd = 0
 	} else {
 		cr.sbEnd = sbEnd
 	}
-	rateRatio := 1.15
-	if framesSinceKey < 4*(1<<crFlatHierarchicalLevels)*100/crPercentRefresh {
-		rateRatio = 1.50
+	var rateRatio float64
+	var boostFac int
+	if percent > 0 {
+		if !f.screen {
+			rateRatio = 1.15
+			if rc.framesSinceKey < 4*(1<<f.hierLevels)*100/percent {
+				rateRatio = 1.50
+			}
+			rateRatio += rc.rateRatioQDeltaAdjustment
+			boostFac = 15
+		} else {
+			fromSC := min(0.75, float64(rc.framesSinceKey/10)*0.1)
+			rateRatio = 2.25 + rc.rateRatioQDeltaAdjustment - fromSC
+			if rc.rc1Frame < 0 || rc.rc2Frame < 0 {
+				rateRatio -= 0.25
+			}
+			boostFac = 10
+		}
+	} else {
+		rateRatio = 1.50 + rc.rateRatioQDeltaAdjustment
 	}
-	rateRatio += crRateRatioAdjustment
 
 	if len(cr.grid) < sbCnt {
 		cr.grid = make([]uint8, sbCnt)
@@ -131,24 +142,25 @@ func (cr *cyclicRefresh) plan(baseQ uint8, bestQ, worstQ uint8, width, height in
 		avg /= int64(sbCnt)
 	}
 	inWindow := func(i int) bool { return i >= sbStart && i < sbEnd }
-	boostFac := crRateBoostFac
-	if haveDist && avg > 0 {
-		var seg2Dist int64
-		seg2 := 0
-		for i, d := range dist {
-			if inWindow(i) && d < avg {
-				seg2Dist += d
-				seg2++
-			}
+	var seg2Dist int64
+	for i, d := range dist {
+		if !inWindow(i) {
+			continue
 		}
-		if seg2 > 0 {
-			seg2Dist /= int64(seg2)
-			dev := (avg - seg2Dist) * 100 / avg
-			boostFac += int(crBoostMax * dev * dev / (100 * 100))
+		if haveDist && d < avg {
+			seg2Dist += d
+			stats.seg2++
+		} else {
+			stats.seg1++
 		}
 	}
-	delta1 := cyclicComputeDeltaQ(int(baseQ), rateRatio, int(bestQ), int(worstQ))
-	delta2 := cyclicComputeDeltaQ(int(baseQ), min(crMaxRateTargetRatio, 0.1*float64(boostFac)*rateRatio), int(bestQ), int(worstQ))
+	if !f.screen && stats.seg2 > 0 && avg > 0 {
+		seg2Dist /= int64(stats.seg2)
+		dev := (avg - seg2Dist) * 100 / avg
+		boostFac += int(crBoostMax * dev * dev / (100 * 100))
+	}
+	delta1 := cyclicComputeDeltaQ(rc, int(baseQ), rateRatio, f.screen)
+	delta2 := cyclicComputeDeltaQ(rc, int(baseQ), min(crMaxRateTargetRatio, 0.1*float64(boostFac)*rateRatio), f.screen)
 	for i := range grid {
 		offset := 0
 		if inWindow(i) {
@@ -159,5 +171,8 @@ func (cr *cyclicRefresh) plan(baseQ uint8, bestQ, worstQ uint8, width, height in
 		}
 		grid[i] = uint8(min(max(int(baseQ)+offset, 1), 255))
 	}
-	return grid
+	stats.apply = true
+	stats.sbCount = sbCnt
+	stats.delta1, stats.delta2 = delta1, delta2
+	return grid, stats
 }
