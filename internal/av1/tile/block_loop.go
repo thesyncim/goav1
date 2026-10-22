@@ -387,13 +387,16 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 	// per superblock row from the rows (dav1d_refmvs_save_tmvs) instead of
 	// per block.
 	saveTmvs := useRefmvs && req.CurrentMVFrame != nil
+	// The libaom-shaped neighbor-motion state has no readers while refmvs rows
+	// are bound; the goav1_refmvs_oracle build keeps it for its differential.
+	keepLegacyMotion := !useRefmvs || refmvsOracleEnabled
 	if saveTmvs {
 		if err := req.CurrentMVFrame.Validate(); err != nil {
 			return stats, err
 		}
 	}
 	for miRow := miRowStart; miRow < miRowEnd; miRow += rootSize {
-		if !intraOnlyContexts && !useRefmvs {
+		if !intraOnlyContexts && keepLegacyMotion {
 			promotePendingDiagonalCarriers(req.ContextCarrier)
 		}
 		if useRefmvs {
@@ -405,7 +408,7 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 			if intraOnlyContexts {
 				err = blockLoopLoadIntraRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB)
 			} else {
-				err = blockLoopLoadRootContextMotion(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB, !useRefmvs)
+				err = blockLoopLoadRootContextMotion(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB, keepLegacyMotion)
 			}
 			if err != nil {
 				return stats, err
@@ -509,12 +512,12 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 			if intraOnlyContexts {
 				err = blockLoopStoreIntraRootContext(scratch, req.ContextCarrier, rootColIndex)
 			} else {
-				err = blockLoopStoreRootContextMotion(scratch, req.ContextCarrier, rootColIndex, req.SBSizeMIB, !useRefmvs)
+				err = blockLoopStoreRootContextMotion(scratch, req.ContextCarrier, rootColIndex, req.SBSizeMIB, keepLegacyMotion)
 			}
 			if err != nil {
 				return stats, fmt.Errorf("store root context col=%d row=%d: %w", rootColIndex, miRow, err)
 			}
-			if !intraOnlyContexts && !useRefmvs {
+			if !intraOnlyContexts && keepLegacyMotion {
 				captureDiagonalCornerToPending(req.ContextCarrier, rootColIndex+1, &scratch.Mode, req.SBSizeMIB)
 			}
 		}
@@ -1406,7 +1409,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 						result.SubChromaInterValid = true
 					}
 				}
-				if err := ctx.markInterMotionAndFilters(block.Size, blockX4, blockY4, result.InterMotion, filters, hasChroma, rt == nil); err != nil {
+				if err := ctx.markInterMotionAndFilters(block.Size, blockX4, blockY4, result.InterMotion, filters, hasChroma, rt == nil || refmvsOracleEnabled); err != nil {
 					return err
 				}
 				if rt != nil {
@@ -1460,7 +1463,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 	if intraOnlyContexts {
 		err = ctx.markOwnedIntra(block.Size, blockX4, blockY4, mode)
 	} else {
-		err = ctx.markIntra(block.Size, blockX4, blockY4, true, mode, rt == nil)
+		err = ctx.markIntra(block.Size, blockX4, blockY4, true, mode, rt == nil || refmvsOracleEnabled)
 	}
 	if err != nil {
 		return err

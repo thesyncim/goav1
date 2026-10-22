@@ -835,11 +835,20 @@ func boolInt32(b bool) int32 {
 }
 
 // refmvsTopHasRight is dav1d's EDGE_I444_TOP_HAS_RIGHT intra-edge flag for a
-// block: blockHasTopRight plus the T_LEFT_SPLIT (VERT_A) rule that the
-// bottom-left square is decoded before the right-hand rectangle above-right of
-// it. The legacy grid path never needed the rule because that cell was still
-// marked invalid; the refmvs rows hold the previous superblock row there.
+// block, carried down the partition walk by the intra edge tree.
 func refmvsTopHasRight(sbSizeMIB uint8, block BlockVisit) bool {
+	has := block.Edge&edgeI444TopHasRight != 0
+	if refmvsOracleEnabled {
+		refmvsOracleTopHasRight(sbSizeMIB, block, has)
+	}
+	return has
+}
+
+// legacyRefmvsTopHasRight derives the same flag from the block position:
+// blockHasTopRight plus the T_LEFT_SPLIT (VERT_A) rule that the bottom-left
+// square is decoded before the right-hand rectangle above-right of it. The
+// goav1_refmvs_oracle build checks the edge tree against it.
+func legacyRefmvsTopHasRight(sbSizeMIB uint8, block BlockVisit) bool {
 	if !blockHasTopRight(sbSizeMIB, block) {
 		return false
 	}

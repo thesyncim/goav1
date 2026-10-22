@@ -16,3 +16,5 @@ func refmvsPoison([]refmvsBlock) {}
 
 func refmvsOracleCompare(*BlockModeContext, *refmvsTile, *refmvsResult, *BlockLoopRequest, BlockVisit, InterReferencesResult, [2]motion.Vector) {
 }
+
+func refmvsOracleTopHasRight(uint8, BlockVisit, bool) {}

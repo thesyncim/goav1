@@ -81,3 +81,16 @@ func refmvsOracleCompare(ctx *BlockModeContext, rt *refmvsTile, found *refmvsRes
 		}
 	}
 }
+
+func refmvsOracleTopHasRight(sbSizeMIB uint8, block BlockVisit, has bool) {
+	// Blocks wider or taller than 64 never use the flag (refmvs_find and
+	// find_matching_ref gate on size first) and blockHasTopRight rejects them.
+	dims := blockDimensions[block.Size]
+	if max(dims.W4, dims.H4) > 16 {
+		return
+	}
+	if want := legacyRefmvsTopHasRight(sbSizeMIB, block); want != has {
+		panic(fmt.Sprintf("refmvs oracle: top-has-right edge=%#x want %v at mi_row=%d mi_col=%d size=%d level=%d partition=%d",
+			block.Edge, want, block.MIRow, block.MICol, block.Size, block.Level, block.Partition))
+	}
+}
