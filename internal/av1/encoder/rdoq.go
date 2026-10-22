@@ -897,8 +897,8 @@ func (st *lossyEncodeState) svtLumaCoeffBits(qcoeff []int16, size tile.Transform
 // svtInterCoeffCost prices the coded alternative of the skip decision the
 // light-PD1 way (svtLumaCoeffBits per luma TXB, svtCoeffCost per chroma TXB),
 // scaled by full_lambda (lpd1FullLambda).
-func (st *lossyEncodeState) svtInterCoeffCost(txPlan realtimeInterTXPlan, lumaTX, chromaTX tile.TransformSize, hasChroma bool, lumaLvl0 bool, lambda int64) (int64, bool) {
-	var cost int64
+func (st *lossyEncodeState) svtInterCoeffCost(txPlan realtimeInterTXPlan, lumaTX, chromaTX tile.TransformSize, hasChroma bool, lumaLvl0 bool, lambda int64, extraBits int64) (int64, bool) {
+	cost := extraBits
 	if txPlan.Variable() {
 		leaf := txPlan.leafSize
 		area := leaf * leaf

@@ -672,6 +672,9 @@ type lossyEncodeState struct {
 	// pfN4 arms the N4_SHAPE partial-frequency forward transform for the
 	// following inter TXB (svt_aom_full_loop_chroma_light_pd1).
 	pfN4 bool
+	// svtDistShift scales the skip decision's TXB distortions like SVT's
+	// light-PD1 full loop (svtTXDist).
+	svtDistShift bool
 
 	// cntZeroMV accumulates the MI (4x4) area of inter blocks predicting
 	// from LAST with a sub-pixel-magnitude vector, exactly as libaom's

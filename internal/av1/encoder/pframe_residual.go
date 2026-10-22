@@ -2751,8 +2751,8 @@ func (st *lossyEncodeState) accumulateInterTXBStats(geo *txBlockGeometry, q quan
 		eDC := c - ((int64(v) * int64(q.DC)) >> geo.txScale)
 		dcode += eDC*eDC - eAC*eAC
 	}
-	st.rdDskip += dskip
-	st.rdDcode += dcode
+	st.rdDskip += st.svtTXDist(dskip, geo.txScale)
+	st.rdDcode += st.svtTXDist(dcode, geo.txScale)
 	st.rdRcode += rate
 	return allZero
 }
@@ -2808,7 +2808,7 @@ func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStr
 	// Keep the quantizer's loaded coefficients and levels for the following
 	// skip-only statistics when the architecture can fuse the two passes.
 	if diff, rate, handled := quantize.TryQuantizeBRowGroupsDiffTrusted(qcoeff[:geo.coeffCount], st.tranScratch[:geo.coeffCount], w, mask, q, geo.txScale); handled {
-		st.rdDskip += diff
+		st.rdDskip += st.svtTXDist(diff, geo.txScale)
 		st.rdRcode += rate
 		return rate == 0
 	}
@@ -2835,7 +2835,7 @@ func (st *lossyEncodeState) accumulateInterTXBStatsDiff(geo *txBlockGeometry, q 
 		eDC := c - ((int64(v) * int64(q.DC)) >> geo.txScale)
 		diff += eAC*eAC - eDC*eDC
 	}
-	st.rdDskip += diff
+	st.rdDskip += st.svtTXDist(diff, geo.txScale)
 	st.rdRcode += rate
 	return allZero
 }

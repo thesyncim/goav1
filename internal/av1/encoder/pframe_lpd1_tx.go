@@ -241,6 +241,7 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 	dctRdD := int64(0)
 	if !skip {
 		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
+		st.svtDistShift = lightPath
 		st.setRDOQArm(0)
 		lumaZero := true
 		if lumaBypass {
@@ -338,16 +339,27 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 				if hasChroma {
 					chromaTX, _ = tile.MaxTransformSize(block.Size, st.color, 1)
 				}
-				if r, ok := st.svtInterCoeffCost(txPlan, lumaTX, chromaTX, hasChroma, dec.coeffRateLvl0, st.lpd1FullLambda(dec)); ok {
+				// svt_aom_full_cost's blk_skip_decision: the coded side pays its
+				// coefficient bits plus skip_fac_bits[0][0] (TX_MODE_LARGEST at
+				// rtc p12 inter pictures: no tx size bits), the skip side
+				// skip_fac_bits[0][1]; distortions are svtTXDist-scaled.
+				if r, ok := st.svtInterCoeffCost(txPlan, lumaTX, chromaTX, hasChroma, dec.coeffRateLvl0, st.lpd1FullLambda(dec), st.lpd1SkipBits[0]); ok {
 					rate = r
 				}
-			} else if r, ok := st.exactInterCoeffCost(txPlan, bw, bh, cbw, cbh, hasChroma, lumaPX, lumaPY); ok {
-				rate = r
-			}
-			rdCode := rate + (st.rdDcode << 7)
-			rdSkip := st.rdDskip << 7
-			if rdSkip <= rdCode {
-				skip = true
+				rdCode := rate + (st.rdDcode << 7)
+				rdSkip := (st.rdDskip << 7) + ((st.lpd1SkipBits[1]*st.lpd1FullLambda(dec) + 256) >> 9)
+				if rdSkip < rdCode {
+					skip = true
+				}
+			} else {
+				if r, ok := st.exactInterCoeffCost(txPlan, bw, bh, cbw, cbh, hasChroma, lumaPX, lumaPY); ok {
+					rate = r
+				}
+				rdCode := rate + (st.rdDcode << 7)
+				rdSkip := st.rdDskip << 7
+				if rdSkip <= rdCode {
+					skip = true
+				}
 			}
 		}
 		if !skip && txPlan.Variable() {
@@ -364,6 +376,7 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 		bw == 8 && bh == 8 && st.qIndex <= 96 && videoColorIs420(st.color) {
 		txType = st.chooseInter8x8TXType(src, lumaPX, lumaPY, dctRdD)
 	}
+	st.svtDistShift = false
 	st.lpd1NoteBlock(lumaPX, lumaPY, bw, bh, false, !skip)
 	return skip, splitTX, txPlan, txType, nil
 }
@@ -641,4 +654,22 @@ func svtPFN4Zero(tran []int32, w, h, cw, ch int) {
 func svtPFN4Mask(mask uint8, h int) uint8 {
 	kh := max(h>>2, 1)
 	return mask & uint8(1<<((kh+3)>>2)-1)
+}
+
+// svtTXDist scales one TXB's transform-domain distortion the way SVT's
+// light-PD1 full loop does before RDCOST: RIGHT_SIGNED_SHIFT(dist,
+// (MAX_TX_SCALE - av1_get_tx_scale_tab[tx_size]) * 2), i.e. >> 2 for the
+// transforms up to 16x16 (scale 0), unchanged at scale 1 and << 2 for the
+// 64-point sizes. Only the light-PD1 path (st.svtDistShift) prices so.
+func (st *lossyEncodeState) svtTXDist(d int64, txScale uint8) int64 {
+	if !st.svtDistShift {
+		return d
+	}
+	switch txScale {
+	case 0:
+		return d >> 2
+	case 2:
+		return d << 2
+	}
+	return d
 }
