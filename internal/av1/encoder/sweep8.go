@@ -43,7 +43,7 @@ func svtPackMV(x, y int) uint32 {
 // sums of their four 16x16 rows (compute_4sad), the 64x64 SADs the sums of
 // the four 32x32s; each PU keeps its first strict minimum over the
 // positions.
-func (me *realtimeSBMultiSizeME) eightSAD32x32_64x64(sad16 *[16][8]uint32, mvX, mvY int) {
+func (me *realtimeSBMultiSizeME) eightSAD32x32_64x64Generic(sad16 *[16][8]uint32, mvX, mvY int) {
 	var sad32 [4][8]uint32
 	var sad64 [8]uint32
 	for q := range sad32 {
