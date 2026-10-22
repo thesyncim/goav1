@@ -111,30 +111,30 @@ func addRawTransformPlaneBlockSIMD(block planeBlock, bytesPerSample int, max uin
 	planeRaw16Wide(dp, block.stride, sp, 4*rawStride, max, width, h)
 }
 
-// planeLoadU64 and planeStoreU64 are exact-width unaligned 8-byte accesses.
-func planeLoadU64(p unsafe.Pointer) uint64     { return *(*uint64)(p) }
-func planeStoreU64(p unsafe.Pointer, v uint64) { *(*uint64)(p) = v }
-func planeLoadU32(p unsafe.Pointer) uint32     { return *(*uint32)(p) }
-func planeStoreU32(p unsafe.Pointer, v uint32) { *(*uint32)(p) = v }
-
-// planePairU64 returns the vector whose low 64 bits are a and high 64 bits b.
-func planePairU64(a, b uint64) archsimd.Uint64x2 {
-	t := [2]uint64{a, b}
-	return archsimd.LoadUint64x2Array(&t)
-}
+// The kernels access the exact-width 4- and 8-byte rows with direct unaligned
+// loads and stores, and pair two 8-byte rows through a [2]uint64 vector load,
+// written out at each use: through one-line helpers every access left an
+// inline-mark NOP.
 
 // planeRawRound returns sat16(floor((v + 8) / 16)) of the eight int32 samples
 // at p, in lane order.
 func planeRawRound(p unsafe.Pointer, c8, sh4 archsimd.Int32x4) archsimd.Int16x8 {
-	return planeRawRound4Pair(p, unsafe.Add(p, 16), c8, sh4)
+	// planeRawRound4Pair written out: a nested inlined call leaves an
+	// inline-mark NOP at every use.
+	lo := archsimd.LoadInt32x4Array((*[4]int32)(p)).AddSaturated(c8).Shift(sh4).SaturateToInt16().ToBits().ReshapeToUint64s().BitsToFloat64()
+	hi := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(p, 16))).AddSaturated(c8).Shift(sh4).SaturateToInt16().ToBits().ReshapeToUint64s().BitsToFloat64()
+	return lo.SetElem(1, hi.GetElem(0)).ToBits().ReshapeToUint16s().BitsToInt16()
 }
 
 // planeRawRound4Pair returns sat16(floor((v + 8) / 16)) of four int32 samples at
 // a in lanes 0-3 and four at b in lanes 4-7.
+//
+// The high half narrows as SQXTN2 (SetElem of the low 64 bits) rather than a
+// second SQXTN joined by ZIP1.
 func planeRawRound4Pair(a, b unsafe.Pointer, c8, sh4 archsimd.Int32x4) archsimd.Int16x8 {
-	lo := archsimd.LoadInt32x4Array((*[4]int32)(a)).AddSaturated(c8).Shift(sh4).SaturateToInt16()
-	hi := archsimd.LoadInt32x4Array((*[4]int32)(b)).AddSaturated(c8).Shift(sh4).SaturateToInt16()
-	return lo.ToBits().ReshapeToUint64s().InterleaveLo(hi.ToBits().ReshapeToUint64s()).ReshapeToUint16s().BitsToInt16()
+	lo := archsimd.LoadInt32x4Array((*[4]int32)(a)).AddSaturated(c8).Shift(sh4).SaturateToInt16().ToBits().ReshapeToUint64s().BitsToFloat64()
+	hi := archsimd.LoadInt32x4Array((*[4]int32)(b)).AddSaturated(c8).Shift(sh4).SaturateToInt16().ToBits().ReshapeToUint64s().BitsToFloat64()
+	return lo.SetElem(1, hi.GetElem(0)).ToBits().ReshapeToUint16s().BitsToInt16()
 }
 
 // planeAdd8 returns clamp(d + r, 0, 255) as eight bytes in the low 64 bits of
@@ -161,18 +161,18 @@ func planeResidual8x4(dp unsafe.Pointer, ds int, rp unsafe.Pointer, rs int, h in
 		pb := unsafe.Add(pa, ds)
 		ra := unsafe.Add(rp, y*rs)
 		rb := unsafe.Add(ra, rs)
-		d := archsimd.BroadcastUint64x2(uint64(planeLoadU32(pa)) | uint64(planeLoadU32(pb))<<32).ReshapeToUint8s()
-		r := planePairU64(planeLoadU64(ra), planeLoadU64(rb)).ReshapeToUint16s().BitsToInt16()
+		d := archsimd.BroadcastUint64x2(uint64(*(*uint32)(pa)) | uint64(*(*uint32)(pb))<<32).ReshapeToUint8s()
+		r := archsimd.LoadUint64x2Array(&[2]uint64{*(*uint64)(ra), *(*uint64)(rb)}).ReshapeToUint16s().BitsToInt16()
 		w := planeAdd8(d.InterleaveLo(zero), r).GetElem(0)
-		planeStoreU32(pa, uint32(w))
-		planeStoreU32(pb, uint32(w>>32))
+		*(*uint32)(pa) = uint32(w)
+		*(*uint32)(pb) = uint32(w >> 32)
 	}
 	if y < h {
 		pa := unsafe.Add(dp, y*ds)
 		ra := unsafe.Add(rp, y*rs)
-		d := archsimd.BroadcastUint64x2(uint64(planeLoadU32(pa))).ReshapeToUint8s()
-		r := archsimd.BroadcastUint64x2(planeLoadU64(ra)).ReshapeToUint16s().BitsToInt16()
-		planeStoreU32(pa, uint32(planeAdd8(d.InterleaveLo(zero), r).GetElem(0)))
+		d := archsimd.BroadcastUint64x2(uint64(*(*uint32)(pa))).ReshapeToUint8s()
+		r := archsimd.BroadcastUint64x2(*(*uint64)(ra)).ReshapeToUint16s().BitsToInt16()
+		*(*uint32)(pa) = uint32(planeAdd8(d.InterleaveLo(zero), r).GetElem(0))
 	}
 }
 
@@ -184,17 +184,17 @@ func planeResidual8x8(dp unsafe.Pointer, ds int, rp unsafe.Pointer, rs int, h in
 		pb := unsafe.Add(pa, ds)
 		ra := unsafe.Add(rp, y*rs)
 		rb := unsafe.Add(ra, rs)
-		d := planePairU64(planeLoadU64(pa), planeLoadU64(pb)).ReshapeToUint8s()
+		d := archsimd.LoadUint64x2Array(&[2]uint64{*(*uint64)(pa), *(*uint64)(pb)}).ReshapeToUint8s()
 		oa := planeAdd8(d.InterleaveLo(zero), archsimd.LoadInt16x8Array((*[8]int16)(ra)))
 		ob := planeAdd8(d.InterleaveHi(zero), archsimd.LoadInt16x8Array((*[8]int16)(rb)))
-		planeStoreU64(pa, oa.GetElem(0))
-		planeStoreU64(pb, ob.GetElem(0))
+		*(*uint64)(pa) = oa.GetElem(0)
+		*(*uint64)(pb) = ob.GetElem(0)
 	}
 	if y < h {
 		pa := unsafe.Add(dp, y*ds)
 		ra := unsafe.Add(rp, y*rs)
-		d := archsimd.BroadcastUint64x2(planeLoadU64(pa)).ReshapeToUint8s()
-		planeStoreU64(pa, planeAdd8(d.InterleaveLo(zero), archsimd.LoadInt16x8Array((*[8]int16)(ra))).GetElem(0))
+		d := archsimd.BroadcastUint64x2(*(*uint64)(pa)).ReshapeToUint8s()
+		*(*uint64)(pa) = planeAdd8(d.InterleaveLo(zero), archsimd.LoadInt16x8Array((*[8]int16)(ra))).GetElem(0)
 	}
 }
 
@@ -214,8 +214,8 @@ func planeResidual8Wide(dp unsafe.Pointer, ds int, rp unsafe.Pointer, rs int, wi
 		}
 		if x < width {
 			p := unsafe.Add(pa, x)
-			d := archsimd.BroadcastUint64x2(planeLoadU64(p)).ReshapeToUint8s()
-			planeStoreU64(p, planeAdd8(d.InterleaveLo(zero), archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(ra, 2*x)))).GetElem(0))
+			d := archsimd.BroadcastUint64x2(*(*uint64)(p)).ReshapeToUint8s()
+			*(*uint64)(p) = planeAdd8(d.InterleaveLo(zero), archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(ra, 2*x)))).GetElem(0)
 		}
 	}
 }
@@ -229,18 +229,18 @@ func planeResidual16x4(dp unsafe.Pointer, ds int, rp unsafe.Pointer, rs int, max
 		pb := unsafe.Add(pa, ds)
 		ra := unsafe.Add(rp, y*rs)
 		rb := unsafe.Add(ra, rs)
-		d := planePairU64(planeLoadU64(pa), planeLoadU64(pb)).ReshapeToUint16s()
-		r := planePairU64(planeLoadU64(ra), planeLoadU64(rb)).ReshapeToUint16s().BitsToInt16()
+		d := archsimd.LoadUint64x2Array(&[2]uint64{*(*uint64)(pa), *(*uint64)(pb)}).ReshapeToUint16s()
+		r := archsimd.LoadUint64x2Array(&[2]uint64{*(*uint64)(ra), *(*uint64)(rb)}).ReshapeToUint16s().BitsToInt16()
 		o := planeAdd16(d, r, bias, maxv).ReshapeToUint64s()
-		planeStoreU64(pa, o.GetElem(0))
-		planeStoreU64(pb, o.GetElem(1))
+		*(*uint64)(pa) = o.GetElem(0)
+		*(*uint64)(pb) = o.GetElem(1)
 	}
 	if y < h {
 		pa := unsafe.Add(dp, y*ds)
 		ra := unsafe.Add(rp, y*rs)
-		d := archsimd.BroadcastUint64x2(planeLoadU64(pa)).ReshapeToUint16s()
-		r := archsimd.BroadcastUint64x2(planeLoadU64(ra)).ReshapeToUint16s().BitsToInt16()
-		planeStoreU64(pa, planeAdd16(d, r, bias, maxv).ReshapeToUint64s().GetElem(0))
+		d := archsimd.BroadcastUint64x2(*(*uint64)(pa)).ReshapeToUint16s()
+		r := archsimd.BroadcastUint64x2(*(*uint64)(ra)).ReshapeToUint16s().BitsToInt16()
+		*(*uint64)(pa) = planeAdd16(d, r, bias, maxv).ReshapeToUint64s().GetElem(0)
 	}
 }
 
@@ -267,18 +267,17 @@ func planeRaw8x4(dp unsafe.Pointer, ds int, sp unsafe.Pointer, ss int, h int) {
 		pa := unsafe.Add(dp, y*ds)
 		pb := unsafe.Add(pa, ds)
 		sa := unsafe.Add(sp, y*ss)
-		r := planeRawRound4Pair(sa, unsafe.Add(sa, ss), c8, sh4)
-		d := archsimd.BroadcastUint64x2(uint64(planeLoadU32(pa)) | uint64(planeLoadU32(pb))<<32).ReshapeToUint8s()
-		w := planeAdd8(d.InterleaveLo(zero), r).GetElem(0)
-		planeStoreU32(pa, uint32(w))
-		planeStoreU32(pb, uint32(w>>32))
+		d := archsimd.BroadcastUint64x2(uint64(*(*uint32)(pa)) | uint64(*(*uint32)(pb))<<32).ReshapeToUint8s()
+		w := planeAdd8(d.InterleaveLo(zero), planeRawRound4Pair(sa, unsafe.Add(sa, ss), c8, sh4)).GetElem(0)
+		*(*uint32)(pa) = uint32(w)
+		*(*uint32)(pb) = uint32(w >> 32)
 	}
 	if y < h {
 		pa := unsafe.Add(dp, y*ds)
 		sa := unsafe.Add(sp, y*ss)
 		r := planeRawRound4Pair(sa, sa, c8, sh4)
-		d := archsimd.BroadcastUint64x2(uint64(planeLoadU32(pa))).ReshapeToUint8s()
-		planeStoreU32(pa, uint32(planeAdd8(d.InterleaveLo(zero), r).GetElem(0)))
+		d := archsimd.BroadcastUint64x2(uint64(*(*uint32)(pa))).ReshapeToUint8s()
+		*(*uint32)(pa) = uint32(planeAdd8(d.InterleaveLo(zero), r).GetElem(0))
 	}
 }
 
@@ -291,17 +290,17 @@ func planeRaw8x8(dp unsafe.Pointer, ds int, sp unsafe.Pointer, ss int, h int) {
 		pa := unsafe.Add(dp, y*ds)
 		pb := unsafe.Add(pa, ds)
 		sa := unsafe.Add(sp, y*ss)
-		ra := planeRawRound(sa, c8, sh4)
-		rb := planeRawRound(unsafe.Add(sa, ss), c8, sh4)
-		d := planePairU64(planeLoadU64(pa), planeLoadU64(pb)).ReshapeToUint8s()
-		planeStoreU64(pa, planeAdd8(d.InterleaveLo(zero), ra).GetElem(0))
-		planeStoreU64(pb, planeAdd8(d.InterleaveHi(zero), rb).GetElem(0))
+		// Each round feeds its add on the same line: alone on a line, the
+		// inlined call would leave an inline-mark NOP.
+		d := archsimd.LoadUint64x2Array(&[2]uint64{*(*uint64)(pa), *(*uint64)(pb)}).ReshapeToUint8s()
+		*(*uint64)(pa) = planeAdd8(d.InterleaveLo(zero), planeRawRound(sa, c8, sh4)).GetElem(0)
+		*(*uint64)(pb) = planeAdd8(d.InterleaveHi(zero), planeRawRound(unsafe.Add(sa, ss), c8, sh4)).GetElem(0)
 	}
 	if y < h {
 		pa := unsafe.Add(dp, y*ds)
 		r := planeRawRound(unsafe.Add(sp, y*ss), c8, sh4)
-		d := archsimd.BroadcastUint64x2(planeLoadU64(pa)).ReshapeToUint8s()
-		planeStoreU64(pa, planeAdd8(d.InterleaveLo(zero), r).GetElem(0))
+		d := archsimd.BroadcastUint64x2(*(*uint64)(pa)).ReshapeToUint8s()
+		*(*uint64)(pa) = planeAdd8(d.InterleaveLo(zero), r).GetElem(0)
 	}
 }
 
@@ -316,18 +315,18 @@ func planeRaw8Wide(dp unsafe.Pointer, ds int, sp unsafe.Pointer, ss int, width i
 		for ; x+16 <= width; x += 16 {
 			p := unsafe.Add(pa, x)
 			s := unsafe.Add(sa, 4*x)
-			rlo := planeRawRound(s, c8, sh4)
-			rhi := planeRawRound(unsafe.Add(s, 32), c8, sh4)
+			// The rounds feed the adds on their own lines (no inline-mark NOP), and
+			// the high half saturates as SQXTUN2 instead of SQXTUN + ZIP1.
 			d := archsimd.LoadUint8x16Array((*[16]uint8)(p))
-			lo := planeAdd8(d.InterleaveLo(zero), rlo)
-			hi := planeAdd8(d.InterleaveHi(zero), rhi)
-			lo.InterleaveLo(hi).ReshapeToUint8s().StoreArray((*[16]uint8)(p))
+			lo := planeAdd8(d.InterleaveLo(zero), planeRawRound(s, c8, sh4)).BitsToFloat64()
+			hi := planeAdd8(d.InterleaveHi(zero), planeRawRound(unsafe.Add(s, 32), c8, sh4)).BitsToFloat64()
+			lo.SetElem(1, hi.GetElem(0)).ToBits().ReshapeToUint8s().StoreArray((*[16]uint8)(p))
 		}
 		if x < width {
 			p := unsafe.Add(pa, x)
 			r := planeRawRound(unsafe.Add(sa, 4*x), c8, sh4)
-			d := archsimd.BroadcastUint64x2(planeLoadU64(p)).ReshapeToUint8s()
-			planeStoreU64(p, planeAdd8(d.InterleaveLo(zero), r).GetElem(0))
+			d := archsimd.BroadcastUint64x2(*(*uint64)(p)).ReshapeToUint8s()
+			*(*uint64)(p) = planeAdd8(d.InterleaveLo(zero), r).GetElem(0)
 		}
 	}
 }
@@ -343,17 +342,17 @@ func planeRaw16x4(dp unsafe.Pointer, ds int, sp unsafe.Pointer, ss int, max uint
 		pb := unsafe.Add(pa, ds)
 		sa := unsafe.Add(sp, y*ss)
 		r := planeRawRound4Pair(sa, unsafe.Add(sa, ss), c8, sh4)
-		d := planePairU64(planeLoadU64(pa), planeLoadU64(pb)).ReshapeToUint16s()
+		d := archsimd.LoadUint64x2Array(&[2]uint64{*(*uint64)(pa), *(*uint64)(pb)}).ReshapeToUint16s()
 		o := planeAdd16(d, r, bias, maxv).ReshapeToUint64s()
-		planeStoreU64(pa, o.GetElem(0))
-		planeStoreU64(pb, o.GetElem(1))
+		*(*uint64)(pa) = o.GetElem(0)
+		*(*uint64)(pb) = o.GetElem(1)
 	}
 	if y < h {
 		pa := unsafe.Add(dp, y*ds)
 		sa := unsafe.Add(sp, y*ss)
 		r := planeRawRound4Pair(sa, sa, c8, sh4)
-		d := archsimd.BroadcastUint64x2(planeLoadU64(pa)).ReshapeToUint16s()
-		planeStoreU64(pa, planeAdd16(d, r, bias, maxv).ReshapeToUint64s().GetElem(0))
+		d := archsimd.BroadcastUint64x2(*(*uint64)(pa)).ReshapeToUint16s()
+		*(*uint64)(pa) = planeAdd16(d, r, bias, maxv).ReshapeToUint64s().GetElem(0)
 	}
 }
 
