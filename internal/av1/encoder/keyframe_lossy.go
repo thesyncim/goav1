@@ -1456,13 +1456,24 @@ func (st *lossyEncodeState) encodeTXBPred(reconPlane []byte, srcPlane []byte, st
 // the written end of block. A 64-point extent codes its low 32 coefficients.
 func (st *lossyEncodeState) encodeTXBPredRect(reconPlane []byte, srcPlane []byte, stride int, px, py, w, h int, q quantize.Quantizer,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, pred []byte) error {
-
-	geo, err := txBlockGeometryForTransformSize(ctxReq.Size)
+	geo, _, err := st.prepareIntraTXB(srcPlane, stride, px, py, w, h, q, ctxReq.Size, pred, st.lumaQ[:])
 	if err != nil {
 		return err
 	}
-	if !geo.matchesDimensions(w, h) {
-		return tile.ErrInvalidDecodeState
+	return st.emitIntraTXB(reconPlane, pred, stride, px, py, w, h, q, ctxReq, coeffCtx, scan, afterSkip, st.lumaQ[:geo.coeffCount], geo)
+}
+
+// prepareIntraTXB is the transform/quantize half of encodeTXBPredRect: the
+// residual kernel, the trusted forward transform and the quantizer into
+// qcoeff. It reports whether every level is zero.
+func (st *lossyEncodeState) prepareIntraTXB(srcPlane []byte, stride int, px, py, w, h int, q quantize.Quantizer,
+	size tile.TransformSize, pred []byte, qcoeff []int16) (txBlockGeometry, bool, error) {
+	geo, err := txBlockGeometryForTransformSize(size)
+	if err != nil {
+		return geo, false, err
+	}
+	if !geo.matchesDimensions(w, h) || len(qcoeff) < geo.coeffCount {
+		return geo, false, tile.ErrInvalidDecodeState
 	}
 	n := geo.sampleCount
 	cn := geo.coeffCount
@@ -1470,17 +1481,32 @@ func (st *lossyEncodeState) encodeTXBPredRect(reconPlane []byte, srcPlane []byte
 	residualBlockImpl(residual[:n], srcPlane, py*stride+px, stride, pred, w, w, h)
 	tran := &st.tranScratch
 	if err := forwardTransformBlock8BitResidualTrusted(tran[:cn], residual[:n], st.dqScratch[:n], w, h, transform.TypeDCTDCT); err != nil {
-		return err
+		return geo, false, err
 	}
-	qcoeff := &st.lumaQ
 	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
-		return err
+		return geo, false, err
 	}
-	res, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff[:cn], scan, st.levels, afterSkip)
+	allZero := true
+	for _, v := range qcoeff[:cn] {
+		if v != 0 {
+			allZero = false
+			break
+		}
+	}
+	return geo, allZero, nil
+}
+
+// emitIntraTXB is the write/reconstruct half of encodeTXBPredRect: the
+// coefficient writer, then the decoder-exact reconstruction driven by the
+// written end of block.
+func (st *lossyEncodeState) emitIntraTXB(reconPlane, pred []byte, stride int, px, py, w, h int, q quantize.Quantizer,
+	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error,
+	qcoeff []int16, geo txBlockGeometry) error {
+	res, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff, scan, st.levels, afterSkip)
 	if err != nil {
 		return err
 	}
-	return st.reconInterTXBResult(reconPlane, pred, w, stride, px, py, w, h, q, qcoeff[:cn], geo, scan, transform.TypeDCTDCT, res)
+	return st.reconInterTXBResult(reconPlane, pred, w, stride, px, py, w, h, q, qcoeff, geo, scan, transform.TypeDCTDCT, res)
 }
 
 // dcPredictN is the decoder's DC predictor for one n x n block at pixel
