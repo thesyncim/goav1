@@ -1417,6 +1417,10 @@ func (st *lossyEncodeState) buildRealtimeVarPartitionSB(sb *realtimeVarPartSB, s
 		}
 	}
 	sb.force64 = realtimePartEvalAll
+	// The SB's open-loop ME (pframe_depth_removal.go): one 8x3 sweep with
+	// per-PU argmins, read by every leaf of the SB (pframe_motion.go) and by
+	// the depth-removal gates below.
+	st.realtimeSBMultiSizeMESweep(&sb.me, src, ref, px, py)
 
 	var wouldSplit16, proxyFired16 [4][4]bool
 	var pending32 [4]bool
@@ -1524,7 +1528,6 @@ func (st *lossyEncodeState) buildRealtimeVarPartitionSB(sb *realtimeVarPartSB, s
 	// stats attribution (the comparisons are free — the variance fills
 	// already happened).
 	if st.depthRemovalLevel != 0 && splitBelow16Pending {
-		st.realtimeSBMultiSizeMESweep(&sb.me, src, ref, px, py)
 		depthDec := realtimeDepthRemovalDecide(st.depthRemovalLevel, st.qIndex, &sb.me)
 		applied64 := depthDec.below64
 		applied32 := depthDec.below32

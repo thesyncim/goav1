@@ -157,6 +157,15 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 			}
 		}
 		if fullSAD < 0 {
+			// The SB's open-loop ME result for the PU covering this block.
+			if me := st.sbOpenLoopME(lumaPX, lumaPY); me != nil {
+				pu := svtMEBlockOffset(lumaPX&63, lumaPY&63, max(bw, bh))
+				dx, dy := int(me.bestMV[pu][0]), int(me.bestMV[pu][1])
+				mv = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}
+				fullSAD = sadRectDualBlock(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, ref.Y[(lumaPY+dy)*ref.YStride+lumaPX+dx:], ref.YStride, bw, bh)
+			}
+		}
+		if fullSAD < 0 {
 			seedDX, seedDY, reach := 0, 0, fullPelReach
 			if st.hme != nil {
 				var trusted bool
@@ -280,4 +289,44 @@ func (st *lossyEncodeState) pblockStack(mo *pblockMotion, block tile.BlockVisit,
 		return stack, fmt.Errorf("build ref mv stack: %w", err)
 	}
 	return stack, nil
+}
+
+// sbOpenLoopME returns the open-loop ME of the superblock containing luma
+// (px, py) when its sweep ran this frame (full superblocks over a
+// same-size LAST reference) with SVT's HME pyramid behind it, else nil:
+// without a previous source (the standalone P-frame API) there is no HME
+// center and the leaves keep their own seeded search.
+func (st *lossyEncodeState) sbOpenLoopME(px, py int) *realtimeSBMultiSizeME {
+	if st.varPartCols <= 0 || st.hme == nil || !st.hme.svt.ready() {
+		return nil
+	}
+	idx := (py/64)*st.varPartCols + px/64
+	if uint(idx) >= uint(len(st.varPartGrid)) {
+		return nil
+	}
+	sb := &st.varPartGrid[idx]
+	if !sb.ready || !sb.me.valid {
+		return nil
+	}
+	return &sb.me
+}
+
+// svtMEBlockOffset is svt_aom_get_me_block_offset
+// (Source/Lib/Codec/mode_decision.c) in realtimeSBMultiSizeME's PU layout: a
+// block reads the square PU of side max(width, height) that holds it.
+// (x, y) is the block origin within the superblock.
+func svtMEBlockOffset(x, y, side int) int {
+	switch {
+	case side >= 64:
+		return 0
+	case side >= 32:
+		return 1 + (y/32)*2 + x/32
+	}
+	q := (y/32)*2 + x/32
+	w := ((y&31)/16)*2 + (x&31)/16
+	if side >= 16 {
+		return 5 + q*4 + w
+	}
+	c := ((y&15)/8)*2 + (x&15)/8
+	return 21 + (q*4+w)*4 + c
 }

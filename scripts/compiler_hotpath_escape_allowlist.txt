@@ -303,6 +303,18 @@ internal/av1/encoder/subpel_cache.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/subpel_cache.go:*:*: new(subpelProbeCache) escapes to heap in (*lossyEncodeState).ensureSubpelProbeCache:
 internal/av1/encoder/subpel_svt.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/subpel_svt.go:*:*: new(subpelProbeCache) escapes to heap in (*lossyEncodeState).svtSubpelSearch:
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, hn) escapes to heap
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, hn) escapes to heap in (*svtPyramid).adoptCurFrom:
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, hn) escapes to heap in (*svtPyramid).ensure:
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, hn) escapes to heap in (*svtPyramid).primeFrom:
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, hw * hh) escapes to heap
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, hw * hh) escapes to heap in (*svtPyramid).build:
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, sn) escapes to heap
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, sn) escapes to heap in (*svtPyramid).adoptCurFrom:
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, sn) escapes to heap in (*svtPyramid).ensure:
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, sn) escapes to heap in (*svtPyramid).primeFrom:
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, sw * sh) escapes to heap
+internal/av1/encoder/svt_hme.go:*:*: make([]byte, sw * sh) escapes to heap in (*svtPyramid).build:
 internal/av1/encoder/video.go:*:*: func literal escapes to heap
 internal/av1/encoder/video.go:*:*: func literal escapes to heap in (*VideoEncoder).startFilterWorker:
 internal/av1/encoder/video.go:*:*: func literal escapes to heap in (*VideoEncoder).startTileWorkers:

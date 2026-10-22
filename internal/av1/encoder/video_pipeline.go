@@ -243,10 +243,12 @@ func (e *VideoEncoder) runLeafHME(leafSrc SourceFrame420) {
 	e.leafHME.qw, e.leafHME.qh = e.hme.qw, e.hme.qh
 	copy(e.leafHME.refQ[:n], e.hme.refQ[:n])
 	e.leafHME.armed = true
+	e.leafHME.svt.primeFrom(&e.hme.svt)
 	e.leafHME.runSerial(leafSrc)
 	// e.leafHME.refQ now holds the leaf's source quarter-plane; feed it to the
 	// base search's reference slot.
 	copy(e.hme.refQ[:n], e.leafHME.refQ[:n])
+	e.hme.svt.adoptCurFrom(&e.leafHME.svt)
 	e.hme.armed = true
 }
 

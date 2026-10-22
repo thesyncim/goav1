@@ -44,6 +44,10 @@ type hmeState struct {
 	// bandStatic counts regions whose zero-motion match was already below
 	// the search bar - the static-content signal for the layer offset.
 	bandStatic [hmeBands]int
+
+	// svt is SVT-AV1's source pyramid for the per-SB HME of the open-loop
+	// ME (svt_hme.go).
+	svt svtPyramid
 }
 
 // hmeBands is the row-band fan-out of the pyramid build and region search.
@@ -121,6 +125,7 @@ func (h *hmeState) prime(src SourceFrame420) {
 	}
 	h.qw, h.qh = qw, qh
 	buildQuarterPlane(h.refQ, src.Y, src.YStride, qw, qh)
+	h.svt.build(src, true)
 	h.armed = true
 }
 
@@ -149,6 +154,7 @@ func buildQuarterPlanePureGo(dst []byte, src []byte, stride, qw, qh int) {
 // runs the same exhaustive mesh primitive as the full-pel search over 8x8
 // quarter blocks (32x32 regions).
 func (h *hmeState) run(src SourceFrame420) {
+	h.svt.build(src, false)
 	w, ht := src.Width, src.Height
 	qw, qh := w/4, ht/4
 	if qw < 8 || qh < 8 || !h.armed {
@@ -198,6 +204,7 @@ func (h *hmeState) run(src SourceFrame420) {
 }
 
 func (h *hmeState) runSerial(src SourceFrame420) {
+	h.svt.build(src, false)
 	w, ht := src.Width, src.Height
 	qw, qh := w/4, ht/4
 	if qw < 8 || qh < 8 || !h.armed {

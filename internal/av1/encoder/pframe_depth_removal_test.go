@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-// bruteSAD is the scalar reference for an 8x8 SAD between arbitrary plane
-// positions.
+// bruteSAD is the scalar reference for SUB_SAD_SEARCH's n x n SAD between
+// arbitrary plane positions: even rows only, doubled.
 func bruteSAD(src []byte, srcStride, sx, sy int, ref []byte, refStride, rx, ry, n int) uint32 {
 	var total uint32
-	for r := 0; r < n; r++ {
+	for r := 0; r < n; r += 2 {
 		so := (sy+r)*srcStride + sx
 		ro := (ry+r)*refStride + rx
 		for c := 0; c < n; c++ {
@@ -20,7 +20,7 @@ func bruteSAD(src []byte, srcStride, sx, sy int, ref []byte, refStride, rx, ry, 
 			total += uint32(d)
 		}
 	}
-	return total
+	return total << 1
 }
 
 // sweepPUGeometry returns the SB-relative (x, y, size) of tier-zero PU index

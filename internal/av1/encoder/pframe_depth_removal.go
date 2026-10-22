@@ -22,13 +22,14 @@ package encoder
 //      (dev_16x16_to_8x8 < dev_th) with the me_8x8_cost_variance noise guard
 //      and QP scaling, at preset-12 levels 9 (base frames) / 14 (leaf frames).
 //
-// The sweep is full-SAD (not SVT's SUB_SAD subsampling) per the pinned
-// threshold-scale note: goav1 sweeps LAST's recon with full SADs while SVT
-// sweeps the open-loop pyramid; the deviation arms are ratio-based and
-// scale-free either way. Scalar Go + the existing batched SAD kernels for this
-// slice; the dedicated NEON sweep kernel is Phase 4.
-
-import "github.com/thesyncim/goav1/internal/av1/motion"
+// The sweep is THE full-pel ME of every full superblock of every inter
+// frame (SVT runs its open-loop ME once per SB and MD reads the per-PU
+// results; pframe_motion.go maps each leaf to its PU as
+// svt_aom_get_me_block_offset does). Its SADs are SVT's SUB_SAD_SEARCH
+// (svt_aom_sig_deriv_me sets me_search_method = SUB_SAD_SEARCH for every
+// non-TF picture): the even rows of each 8x8, doubled
+// (svt_ext_eight_sad_calculation_8x8_16x16). goav1 sweeps LAST's recon where
+// SVT sweeps the open-loop pyramid.
 
 // realtimeSBMultiSizeME holds one superblock's multi-size full-pel ME results:
 // an independent (bestSAD, bestMV) per PU in SVT's ME tier-zero layout
@@ -133,7 +134,10 @@ func (me *realtimeSBMultiSizeME) sweepSearchPoint4(src, ref []byte, stride int, 
 			yo := y16 + (c>>1)*8
 			so := srcBase + yo*stride + xo
 			ro := refBase + yo*stride + xo
-			s0, s1, s2, s3 := sad8x8x4(src[so:], ref[ro:], ref[ro+1:], ref[ro+2:], ref[ro+3:], stride)
+			// SUB_SAD_SEARCH (sig_deriv_me: me_search_method at every rtc preset):
+			// the even rows of the 8x8 block, doubled.
+			s0, s1, s2, s3 := sad8x4x4(src[so:], ref[ro:], ref[ro+1:], ref[ro+2:], ref[ro+3:], 2*stride)
+			s0, s1, s2, s3 = s0<<1, s1<<1, s2<<1, s3<<1
 			pu := 21 + n*4 + c
 			me.update(pu, uint32(s0), mvX, mvY)
 			me.update(pu, uint32(s1), mvX+1, mvY)
@@ -174,7 +178,7 @@ func (me *realtimeSBMultiSizeME) sweepSearchPoint1(src []byte, srcStride int, re
 		for c := range 4 {
 			xo := x16 + (c&1)*8
 			yo := y16 + (c>>1)*8
-			s := uint32(sad8x8Dual(src[srcBase+yo*srcStride+xo:], srcStride, ref[refBase+yo*refStride+xo:], refStride))
+			s := uint32(sad8x4DualPureGo(src[srcBase+yo*srcStride+xo:], 2*srcStride, ref[refBase+yo*refStride+xo:], 2*refStride)) << 1
 			me.update(21+n*4+c, s, mvX, mvY)
 			sum += s
 		}
@@ -198,11 +202,24 @@ func (me *realtimeSBMultiSizeME) sweepSearchPoint1(src []byte, srcStride int, re
 func (st *lossyEncodeState) realtimeSBMultiSizeMESweep(me *realtimeSBMultiSizeME, src, ref SourceFrame420, px, py int) {
 	me.reset()
 
-	// HME search center for this SB (the seeds are frame-start read-only, so
-	// wavefront lanes see identical values).
+	// init_zz_sad / get_zz_sad (motion_estimation.c): the SB's zero-motion
+	// SAD, row-subsampled and doubled.
+	srcOff := py*src.YStride + px
+	zeroOff := py*ref.YStride + px
+	zz := (sad32x32Dual(src.Y[srcOff:], src.YStride<<1, ref.Y[zeroOff:], ref.YStride<<1) +
+		sad32x32Dual(src.Y[srcOff+32:], src.YStride<<1, ref.Y[zeroOff+32:], ref.YStride<<1)) << 1
+
+	// HME search center (svt_hme.go): skipped, i.e. (0, 0), when the zz SAD
+	// is below me_early_exit_th >> 2 (hme_level0_b64 / hme_level1_b64). The
+	// pyramids are frame-start read-only, so wavefront lanes see identical
+	// values.
 	xc, yc := 0, 0
-	if st.hme != nil {
-		xc, yc, _ = st.hme.seedAt(px, py)
+	if zz >= realtimeSweepEarlyExitTH>>2 && st.hme != nil {
+		if st.hme.svt.ready() {
+			xc, yc = st.hme.svt.center(px, py)
+		} else {
+			xc, yc, _ = st.hme.seedAt(px, py)
+		}
 	}
 	// goav1's recon planes carry no out-of-frame padding (SVT's ME buffers
 	// do), so the center and the search window clamp to positions whose whole
@@ -211,10 +228,8 @@ func (st *lossyEncodeState) realtimeSBMultiSizeMESweep(me *realtimeSBMultiSizeME
 	yc = minInt(maxInt(yc, -py), src.Height-64-py)
 
 	// me_early_exit_th (enc_mode_config.c:914; preset-12 rtc = 64*64*12): a
-	// tiny zero-MV SB SAD collapses the search area to 1x1 and skips the
-	// zero-center arbitration (motion_estimation.c:1261-1266). The static-64
-	// bypass grid carries that zz-SAD when it hit (zero MV, full-SAD below
-	// the bypass threshold, which is below th/6 = 8192).
+	// zz SAD below me_early_exit_th / 6 collapses the search area to 1x1 and
+	// skips the zero-center arbitration (motion_estimation.c:1261-1266).
 	nx := src.Width - 64 + 1
 	if nx > realtimeSweepSearchW {
 		nx = realtimeSweepSearchW
@@ -223,16 +238,9 @@ func (st *lossyEncodeState) realtimeSBMultiSizeMESweep(me *realtimeSBMultiSizeME
 	if ny > realtimeSweepSearchH {
 		ny = realtimeSweepSearchH
 	}
-	earlyExit := false
-	if st.grid64Cols > 0 {
-		idx64 := (py/64)*st.grid64Cols + px/64
-		if uint(idx64) < uint(len(st.sad64Grid)) && uint(idx64) < uint(len(st.mv64Grid)) &&
-			sadCacheValid(st.sad64Grid[idx64], st.sadCacheEpoch) &&
-			st.mv64Grid[idx64] == (motion.Vector{}) &&
-			sadCacheValue(st.sad64Grid[idx64]) < realtimeSweepEarlyExitTH/6 {
-			nx, ny = 1, 1
-			earlyExit = true
-		}
+	earlyExit := zz < realtimeSweepEarlyExitTH/6
+	if earlyExit {
+		nx, ny = 1, 1
 	}
 	if !earlyExit && (xc != 0 || yc != 0) && st.depthRemovalIsRef {
 		// SVT gates check_00_center on me_ctx->is_ref (motion_estimation.c:
@@ -256,6 +264,9 @@ func (st *lossyEncodeState) realtimeSBMultiSizeMESweep(me *realtimeSBMultiSizeME
 		mvY := y0 + yi
 		rowBase := (py+mvY)*ref.YStride + px
 		xi := 0
+		if sameStride && nx == 8 && me.sweepSearchPoint8(src.Y, ref.Y, src.YStride, srcBase, rowBase+x0, x0, mvY) {
+			xi = 8
+		}
 		if sameStride {
 			for ; xi+4 <= nx; xi += 4 {
 				mvX := x0 + xi
