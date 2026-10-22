@@ -27,6 +27,11 @@ import "math/bits"
 type SBLUT struct {
 	E [MaxLevel + 1]uint8
 	I [MaxLevel + 1]uint8
+	// Sharp is dav1d Av1FilterLUT.sharp: the level shift (sharpness+3)>>2 and
+	// the limit cap 9-sharpness (0xff when sharpness is zero), from which the
+	// SIMD drivers derive I = max(min(L>>Sharp[0], Sharp[1]), 1) and
+	// E = 2*(L+2)+I across lanes, as dav1d lpf_func does.
+	Sharp [2]uint8
 }
 
 // NewSBLUT derives the limit tables for a frame's loop-filter sharpness exactly
@@ -40,6 +45,11 @@ func NewSBLUT(sharpness uint8) SBLUT {
 		}
 		lut.E[level] = th.BlockLimit
 		lut.I[level] = th.Limit
+	}
+	lut.Sharp[0] = (sharpness + 3) >> 2
+	lut.Sharp[1] = 0xff
+	if sharpness > 0 {
+		lut.Sharp[1] = 9 - sharpness
 	}
 	return lut
 }

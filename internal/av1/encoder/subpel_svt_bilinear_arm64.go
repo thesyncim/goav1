@@ -103,6 +103,7 @@ func svtSubpelVarianceArch(scratch *svtSubpelScratch, ref []byte, refStride int,
 	for x := 0; x < bw; x += 16 {
 		p := unsafe.Add(base, x)
 		s := unsafe.Add(sbase, x)
+		last := bh - 1
 		wide := x+16 <= bw
 		prev := svtBilRowH(p, xoff, fx0, fx1, bias)
 		for r := 0; r < bh; r++ {
@@ -122,7 +123,10 @@ func svtSubpelVarianceArch(scratch *svtSubpelScratch, ref []byte, refStride int,
 				prev = cur
 			}
 			sv := load16(s)
-			s = unsafe.Add(s, srcStride)
+			if r < last {
+				// Stepping past the last row would leave src under checkptr.
+				s = unsafe.Add(s, srcStride)
+			}
 			dl := out.ExtendLo8ToUint16().BitsToInt16().Sub(sv.ExtendLo8ToUint16().BitsToInt16())
 			if wide {
 				dh := widenHi8(out).BitsToInt16().Sub(widenHi8(sv).BitsToInt16())

@@ -242,7 +242,7 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 		if err != nil {
 			t.Fatalf("snapshot load: %v", err)
 		}
-		wu, wb, err := frameWorkApplyCDEFPlaneRows(tc.params, indexMap, skipMap, cols, rows, 0, rows, src, wantPlane, 1, input, unitDst, blockStorage[:], &wantDirs, &wantVars, wantDirGrid, wantVarGrid, plane, xDec, yDec, 0, chromaFiltering)
+		wu, wb, err := frameWorkApplyCDEFPlaneRows(tc.params, indexMap, skipMap, cols, rows, 0, rows, src, wantPlane, 1, input, unitDst, blockStorage[:], &wantDirs, &wantVars, wantDirGrid, wantVarGrid, plane, xDec, yDec, 0, chromaFiltering, nil)
 		if err != nil {
 			t.Fatalf("u16 walk: %v", err)
 		}

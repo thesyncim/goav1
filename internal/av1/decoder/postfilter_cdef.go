@@ -513,7 +513,12 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEF
 			return FrameWorkCDEFPostFilterResult{}, threading.ErrInvalidBatch
 		}
 	}
-	if useU8 && unitMaskCache.resetWithCompact(skipMap, ctx.LoopFilterMasks, ctx.compactLoopFilterState, rowStart, rowEnd, cols, compactUnitSource) {
+	if !compactActive && ctx.LoopFilterMasks.NoSkipUnitGrid(cols, rows) {
+		// dav1d reads the decode-time noskip_mask (cdef_apply_tmpl.c), so the
+		// record map was never marked for this frame.
+		unitMaskCache.resetNoSkip(ctx.LoopFilterMasks, rowStart, cols)
+		unitMasks = &unitMaskCache
+	} else if useU8 && unitMaskCache.resetWithCompact(skipMap, ctx.LoopFilterMasks, ctx.compactLoopFilterState, rowStart, rowEnd, cols, compactUnitSource) {
 		unitMasks = &unitMaskCache
 	} else if compactActive {
 		return FrameWorkCDEFPostFilterResult{}, threading.ErrInvalidBatch
@@ -563,7 +568,7 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEF
 			if len(req.SampleScratch[plane]) < lineNeed {
 				return FrameWorkCDEFPostFilterResult{}, frame.ErrShortBuffer
 			}
-			planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRowsHBD(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleScratch[plane][:lineNeed], FrameWorkCDEFPostFilterHBD16BandBoundary{}, req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, coeffShift, chromaFiltering)
+			planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRowsHBD(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleScratch[plane][:lineNeed], FrameWorkCDEFPostFilterHBD16BandBoundary{}, req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, coeffShift, chromaFiltering, unitMasks)
 			if err != nil {
 				return FrameWorkCDEFPostFilterResult{}, err
 			}
@@ -587,7 +592,7 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEF
 			}
 		}
 		xDec, yDec := xDec0, yDec0
-		planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRows(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, src, planeFrame, ctx.Output.Layout.BytesPerSample, req.InputScratch[:cdef.InputBufferSize], req.UnitDstScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec, yDec, coeffShift, chromaFiltering)
+		planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRows(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, src, planeFrame, ctx.Output.Layout.BytesPerSample, req.InputScratch[:cdef.InputBufferSize], req.UnitDstScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec, yDec, coeffShift, chromaFiltering, unitMasks)
 		if err != nil {
 			return FrameWorkCDEFPostFilterResult{}, err
 		}
@@ -709,10 +714,10 @@ func frameWorkCDEFIndexMapEmpty(indexMap FrameWorkCDEFIndexMap) bool {
 }
 
 func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, src frame.SamplePlane, dst frame.Plane, bytesPerSample int, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (uint32, uint32, error) {
-	return frameWorkApplyCDEFPlaneRows(params, indexMap, skipMap, cols, rows, 0, rows, src, dst, bytesPerSample, input, unitDst, blockStorage, directions, variances, directionGrid, varianceGrid, plane, xDec, yDec, coeffShift, forceLumaDirections)
+	return frameWorkApplyCDEFPlaneRows(params, indexMap, skipMap, cols, rows, 0, rows, src, dst, bytesPerSample, input, unitDst, blockStorage, directions, variances, directionGrid, varianceGrid, plane, xDec, yDec, coeffShift, forceLumaDirections, nil)
 }
 
-func frameWorkApplyCDEFPlaneRows(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, src frame.SamplePlane, dst frame.Plane, bytesPerSample int, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (uint32, uint32, error) {
+func frameWorkApplyCDEFPlaneRows(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, src frame.SamplePlane, dst frame.Plane, bytesPerSample int, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
 	var units uint32
 	var blocksTotal uint32
 	unitSizeX := cdef.BlockSize >> xDec
@@ -747,7 +752,7 @@ func frameWorkApplyCDEFPlaneRows(params parser.CDEFParams, indexMap FrameWorkCDE
 			if unitW <= 0 || unitH <= 0 {
 				continue
 			}
-			blocks := frameWorkCDEFBlockPositionsFiltered(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, unitRow, unitCol)
+			blocks := frameWorkCDEFUnitBlockList(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, unitMasks, unitRow, unitCol)
 			if len(blocks) == 0 {
 				continue
 			}
@@ -1240,6 +1245,7 @@ type frameWorkCDEFUnitMaskCache struct {
 	skipMap      *FrameWorkLoopFilterMap
 	compactMasks *threading.FrameWorkLoopFilterMasks
 	compactState *threading.FrameWorkLoopFilterCompactState
+	noskipMasks  *threading.FrameWorkLoopFilterMasks
 	direct       bool
 	rowStart     int
 	cols         int
@@ -1256,6 +1262,7 @@ func (c *frameWorkCDEFUnitMaskCache) resetWithCompact(skipMap *FrameWorkLoopFilt
 		c.skipMap = nil
 		c.compactMasks = masks
 		c.compactState = state
+		c.noskipMasks = nil
 		c.direct = true
 		c.rowStart = rowStart
 		c.cols = cols
@@ -1267,6 +1274,7 @@ func (c *frameWorkCDEFUnitMaskCache) resetWithCompact(skipMap *FrameWorkLoopFilt
 	c.skipMap = skipMap
 	c.compactMasks = nil
 	c.compactState = nil
+	c.noskipMasks = nil
 	c.direct = false
 	c.rowStart = rowStart
 	c.cols = cols
@@ -1274,7 +1282,22 @@ func (c *frameWorkCDEFUnitMaskCache) resetWithCompact(skipMap *FrameWorkLoopFilt
 	return true
 }
 
+// resetNoSkip reads unit masks straight from the decode-time dav1d noskip
+// words bound on masks.
+func (c *frameWorkCDEFUnitMaskCache) resetNoSkip(masks *threading.FrameWorkLoopFilterMasks, rowStart, cols int) {
+	c.skipMap = nil
+	c.compactMasks = nil
+	c.compactState = nil
+	c.noskipMasks = masks
+	c.direct = true
+	c.rowStart = rowStart
+	c.cols = cols
+}
+
 func (c *frameWorkCDEFUnitMaskCache) mask(unitRow, unitCol int) uint64 {
+	if c.noskipMasks != nil {
+		return c.noskipMasks.NoSkipUnitMask(unitRow, unitCol)
+	}
 	if c.direct {
 		mask, _ := threading.FrameWorkLoopFilterCompactUnitMask(c.compactMasks, c.compactState, unitRow, unitCol)
 		return mask
@@ -1287,6 +1310,15 @@ func (c *frameWorkCDEFUnitMaskCache) mask(unitRow, unitCol int) uint64 {
 	c.masks[i] = m
 	c.done[i>>6] |= 1 << uint(i&63)
 	return m
+}
+
+// frameWorkCDEFUnitBlockList lists one unit's filtered 8x8 blocks from the unit
+// mask cache when one is bound (dav1d noskip_mask), else from the record map.
+func frameWorkCDEFUnitBlockList(storage []cdef.BlockPosition, unitW, unitH, blockW, blockH int, skipMap *FrameWorkLoopFilterMap, unitMasks *frameWorkCDEFUnitMaskCache, unitRow, unitCol int) []cdef.BlockPosition {
+	if unitMasks != nil {
+		return frameWorkCDEFBlockPositionsFromMask(storage, unitMasks.mask(unitRow, unitCol), unitW, unitH, blockW, blockH)
+	}
+	return frameWorkCDEFBlockPositionsFiltered(storage, unitW, unitH, blockW, blockH, skipMap, unitRow, unitCol)
 }
 
 // frameWorkCDEFBlockPositionsFromMask is frameWorkCDEFBlockPositionsFiltered

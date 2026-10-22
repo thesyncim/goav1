@@ -75,7 +75,15 @@ type DecoderFrameWorkResidualEventRunner struct {
 
 	sideRunner DecoderFrameWorkSideDataRunner
 
-	compactState      *internalthreading.FrameWorkLoopFilterCompactState
+	compactState *internalthreading.FrameWorkLoopFilterCompactState
+	// lfLevels, when set, is bound per frame so the tile walk writes the
+	// loop-filter level cache at decode time (dav1d_create_lf_mask_*).
+	lfLevels *internalthreading.FrameWorkLoopFilterLevelTable
+	// lfTileEdges collects dav1d's tile-boundary context backups so multi-tile
+	// masks are fixed without re-deriving neighbours from the record map.
+	lfTileEdges *internalthreading.FrameWorkLoopFilterTileEdges
+	// lfNoSkip holds dav1d's CDEF noskip_mask written by the tile walk.
+	lfNoSkip          *internalthreading.FrameWorkLoopFilterNoSkip
 	compactNoSkip     []byte
 	compactPostOwner  *DecoderFrameWorkReusableSupportedPostFilterRunner
 	compactBatchOwner *DecoderFrameWorkBatchResidualRunner
@@ -579,6 +587,16 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 				*sidePtr, err = bindDecoderFrameWorkSideData(sequence, events[i].FrameSize, events[i].CDEF, events[i].Restoration, sideScratch, compact, r.compactNoSkip, &events[i])
 			} else {
 				*sidePtr, err = BindDecoderFrameWorkResidualEventSideData(sequence, &events[i], sideScratch)
+				if err == nil && r.lfLevels != nil && sidePtr.LoopFilterMasks.Valid() {
+					r.lfLevels.Bind(events[i].LoopFilter, events[i].Segmentation, events[i].Delta)
+					sidePtr.LoopFilterMasks.BindLevels(r.lfLevels)
+					sbLog2 := 4
+					if events[i].SequenceHeader.Use128x128Superblock {
+						sbLog2 = 5
+					}
+					sidePtr.LoopFilterMasks.BindTileEdges(r.lfTileEdges, events[i].TileInfo, sbLog2)
+					sidePtr.LoopFilterMasks.BindNoSkip(r.lfNoSkip)
+				}
 			}
 			if err != nil {
 				return result, err

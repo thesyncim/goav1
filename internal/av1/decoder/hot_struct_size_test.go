@@ -20,7 +20,9 @@ func TestHotStructSizes(t *testing.T) {
 		// Owned MV storage adds 20 bytes of handles, refcounts and flags plus
 		// 4 bytes of alignment on 64-bit targets. Its nine backing slices
 		// replace the previous eight slot slices and one current-frame slice.
-		{name: "FrameWorkState", size: unsafe.Sizeof(FrameWorkState{}), max: 566824},
+		// The loop-filter mask handle adds level-table, tile-edge and noskip
+		// pointers plus a single-tile flag.
+		{name: "FrameWorkState", size: unsafe.Sizeof(FrameWorkState{}), max: 566856},
 		{name: "FrameWorkLoopFilterPostFilterEdge", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterEdge{}), max: 16},
 		{name: "FrameWorkLoopFilterPostFilterLevelStats", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterLevelStats{}), max: 12},
 		{name: "FrameWorkLoopFilterPostFilterPlan", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterPlan{}), max: 136},

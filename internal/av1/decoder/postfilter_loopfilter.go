@@ -515,6 +515,16 @@ func (ctx *FrameWorkPostFilterContext) fixLoopFilterMaskTileBoundaries(filterMap
 	if tiles.Cols <= 1 && tiles.Rows <= 1 {
 		return
 	}
+	// dav1d fixes tile boundaries from the transform-context backups its tile
+	// walk saved (tx_lpf_right_edge and the per-tile-row above context).
+	if masks.TileEdgesBound() && masks.FixTileBoundariesFromEdges() == nil {
+		return
+	}
+	if masks.MapFree() {
+		// The record map was never marked for this frame; leave the masks
+		// unfixed so the apply fails closed instead of reading empty records.
+		return
+	}
 	if frameWorkLoopFilterMapEmpty(filterMap) && ctx.LoopFilterMap != nil {
 		filterMap = *ctx.LoopFilterMap
 	}

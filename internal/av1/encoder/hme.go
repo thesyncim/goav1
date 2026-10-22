@@ -1,65 +1,73 @@
 package encoder
 
-import (
-	"sync"
+import "sync"
 
-	"github.com/thesyncim/goav1/internal/av1/motion"
-)
+// hme.go is the encoder's frame-level motion estimation, SVT-AV1's ME
+// process (Source/Lib/Codec/motion_estimation.c svt_aom_motion_estimation_b64)
+// run once per inter frame before mode decision, on source pictures (open
+// loop) like SVT's pa_me:
+//
+//   - the source pyramid and the per-SB HME search center (svt_hme.go);
+//   - the zz SAD (init_zz_sad) and the per-SB full-pel sweep with per-PU
+//     argmins (pframe_depth_removal.go realtimeSBMultiSizeME) for EVERY
+//     superblock, partial edge ones included (SVT runs the ME on the padded
+//     picture; here partial SBs and search positions that leave the frame
+//     read edge-replicated windows, the padding SVT's buffers carry);
+//   - compute_distortion's per-SB statistics (me_8x8_distortion,
+//     me_8x8_cost_variance, dist_64x64...).
+//
+// Mode decision reads the per-PU vectors (pframe_motion.go), the partitioner
+// and depth removal read the statistics, and cyclic refresh reads
+// me_8x8_distortion as SVT's cyclic_sb_qp_derivation does.
 
-// hme.go is the hierarchical motion-estimation pre-pass: a quarter-resolution
-// coarse search per 32x32 region whose vector seeds the full-resolution
-// refinement windows. The full-pel diamond alone covers +-8px, so panning
-// faster than that loses motion compensation entirely; the quarter-res
-// search covers +-32px at a sixteenth of the SAD cost and the seeded window
-// recovers the exact vector.
-
-// hmeState owns the reusable pyramid planes and the per-region seed grid.
-// The reference pyramid is the previous frame's source pyramid (recycled by
-// swap): seeds only recenter the exact full-resolution search, so the
-// source-vs-reconstruction difference is irrelevant and each frame builds
-// one quarter plane instead of two.
+// hmeState owns the source pyramids, the previous source (the open-loop ME
+// reference), the frame's ME results and the band workers that compute them.
 type hmeState struct {
-	srcQ     []byte
-	refQ     []byte
-	qw       int
-	qh       int
-	seeds    []motion.Vector // full-pel even offsets per 32x32 region
-	seedSADs []int32         // best quarter-res SAD per region
-	cols     int
-	rows     int
-	armed    bool
+	svt svtPyramid
 
-	// bandCut counts regions per search band whose best quarter-res SAD
-	// stayed high - no match anywhere in the +-32px reach. A frame where
-	// most regions fail is a scene cut.
-	bandCut [hmeBands]int
+	// prevY is the previous source's luma at prevStride, the reference of
+	// the open-loop sweep and zz SAD.
+	prevY      []byte
+	prevStride int
+	prevW      int
+	prevH      int
+	havePrev   bool
 
-	// Persistent band workers: spawning goroutines per frame allocates a
-	// closure and often a fresh stack each time, so the four workers park
-	// on a job channel for the encoder's lifetime instead.
+	// fme is the current frame's ME result.
+	fme frameME
+
+	// win is per-band scratch for partial and edge superblocks.
+	win [hmeBands]meWindow
+
 	work     chan hmeJob
 	done     chan struct{}
 	started  bool
-	workerWG sync.WaitGroup // persistent helpers, separate from per-pass job completion
-	// bandStatic counts regions whose zero-motion match was already below
-	// the search bar - the static-content signal for the layer offset.
-	bandStatic [hmeBands]int
+	workerWG sync.WaitGroup
 }
 
-// hmeBands is the row-band fan-out of the pyramid build and region search.
+// frameME is one inter frame's open-loop ME, per 64x64 superblock in raster
+// order.
+type frameME struct {
+	cols, rows int
+	valid      bool
+	isRef      bool
+	sb         []realtimeSBMultiSizeME
+	// l1SAD is the HME center's level-1 SAD (0 when HME was skipped).
+	l1SAD []uint32
+	// me8x8Dist is compute_distortion's me_8x8_distortion: the per-PU 8x8
+	// best SAD sum normalized to a 64x64 area.
+	me8x8Dist []uint64
+}
+
+// hmeBands is the SB-row fan-out of the frame ME.
 const hmeBands = 4
 
-// hmeJob is one band's worth of work for the persistent workers: a build
-// slice of the quarter pyramid or a search slice of the region grid.
 type hmeJob struct {
-	build     bool
-	band      int
-	r0, r1    int
-	src       []byte
-	srcStride int
+	band   int
+	r0, r1 int
+	src    SourceFrame420
 }
 
-// startWorkers launches the persistent band workers once.
 func (h *hmeState) startWorkers() {
 	if h.started {
 		return
@@ -72,11 +80,7 @@ func (h *hmeState) startWorkers() {
 		go func() {
 			defer h.workerWG.Done()
 			for j := range work {
-				if j.build {
-					buildQuarterPlane(h.srcQ[j.r0*h.qw:], j.src[j.r0*4*j.srcStride:], j.srcStride, h.qw, j.r1-j.r0)
-				} else {
-					h.searchRows(j.band, j.r0, j.r1)
-				}
+				h.meRows(j.band, j.src, j.r0, j.r1)
 				done <- struct{}{}
 			}
 		}()
@@ -96,299 +100,120 @@ func (h *hmeState) close() {
 	h.started = false
 }
 
-// hmeCutRegionSAD marks a region as unmatched: ~25 per quarter-res sample
-// over an 8x8 block, far above textured-content match SADs.
-const hmeCutRegionSAD = 8 * 8 * 25
-
-// hmeTrustRegionSAD marks a region's seed as trusted: at or below ~4 per
-// quarter-res sample the coarse match is clean, so the true full-pel vector
-// sits within the seed's four-pel quantization and a narrowed refinement
-// window cannot lose it.
-const hmeTrustRegionSAD = 8 * 8 * 4
-
-// prime seeds the reference pyramid from a frame that has no predecessor
-// (the keyframe restarting the chain).
+// prime makes src the reference of the next inter frame (after a keyframe).
 func (h *hmeState) prime(src SourceFrame420) {
-	w, ht := src.Width, src.Height
-	qw, qh := w/4, ht/4
-	if qw < 8 || qh < 8 {
-		h.armed = false
-		return
-	}
-	if len(h.srcQ) < qw*qh {
-		h.srcQ = make([]byte, qw*qh)
-		h.refQ = make([]byte, qw*qh)
-	}
-	h.qw, h.qh = qw, qh
-	buildQuarterPlane(h.refQ, src.Y, src.YStride, qw, qh)
-	h.armed = true
+	h.svt.build(src, true)
+	h.keepPrev(src)
+	h.fme.valid = false
 }
 
-// buildQuarterPlane box-averages src 4:1 in both dimensions into dst.
-func buildQuarterPlane(dst []byte, src []byte, stride, qw, qh int) {
-	buildQuarterPlaneArch(dst, src, stride, qw, qh)
+// primeFromRecon seeds the open-loop reference with a reconstruction when no
+// previous source exists (the standalone P-frame API).
+func (h *hmeState) primeFromRecon(ref SourceFrame420) {
+	h.prime(ref)
 }
 
-func buildQuarterPlanePureGo(dst []byte, src []byte, stride, qw, qh int) {
-	for qy := 0; qy < qh; qy++ {
-		base := qy * 4 * stride
-		drow := qy * qw
-		for qx := 0; qx < qw; qx++ {
-			s := 0
-			for r := 0; r < 4; r++ {
-				row := base + r*stride + qx*4
-				s += int(src[row]) + int(src[row+1]) + int(src[row+2]) + int(src[row+3])
+func (h *hmeState) keepPrev(src SourceFrame420) {
+	n := src.YStride * src.Height
+	if len(h.prevY) < n {
+		h.prevY = make([]byte, n)
+	}
+	copy(h.prevY[:n], src.Y[:n])
+	h.prevStride, h.prevW, h.prevH = src.YStride, src.Width, src.Height
+	h.havePrev = true
+}
+
+// run is the frame's ME on the band workers; isRef is me_ctx->is_ref.
+func (h *hmeState) run(src SourceFrame420, isRef bool) {
+	h.prepare(src, isRef)
+	if h.fme.valid {
+		h.startWorkers()
+		jobs := 0
+		for b := range hmeBands {
+			r0 := b * h.fme.rows / hmeBands
+			r1 := (b + 1) * h.fme.rows / hmeBands
+			if r0 >= r1 {
+				continue
 			}
-			dst[drow+qx] = uint8((s + 8) >> 4)
+			h.work <- hmeJob{band: b, r0: r0, r1: r1, src: src}
+			jobs++
+		}
+		for range jobs {
+			<-h.done
 		}
 	}
+	h.keepPrev(src)
 }
 
-// run rebuilds the source pyramid, searches it against the previous frame's
-// (the reference pyramid), and fills the seed grid. The quarter-res search
-// runs the same exhaustive mesh primitive as the full-pel search over 8x8
-// quarter blocks (32x32 regions).
-func (h *hmeState) run(src SourceFrame420) {
-	w, ht := src.Width, src.Height
-	qw, qh := w/4, ht/4
-	if qw < 8 || qh < 8 || !h.armed {
-		h.cols, h.rows = 0, 0
+// runSerial is run on the calling goroutine.
+func (h *hmeState) runSerial(src SourceFrame420, isRef bool) {
+	h.prepare(src, isRef)
+	if h.fme.valid {
+		h.meRows(0, src, 0, h.fme.rows)
+	}
+	h.keepPrev(src)
+}
+
+func (h *hmeState) prepare(src SourceFrame420, isRef bool) {
+	h.svt.build(src, false)
+	f := &h.fme
+	f.valid = false
+	if !h.havePrev || h.prevW != src.Width || h.prevH != src.Height || h.prevStride != src.YStride ||
+		!h.svt.ready() || src.Width < 64 || src.Height < 64 {
 		return
 	}
-	cols := (w + 31) / 32
-	rows := (ht + 31) / 32
-	if len(h.seeds) < cols*rows {
-		h.seeds = make([]motion.Vector, cols*rows)
-		h.seedSADs = make([]int32, cols*rows)
+	f.cols, f.rows = (src.Width+63)/64, (src.Height+63)/64
+	n := f.cols * f.rows
+	if len(f.sb) < n {
+		f.sb = make([]realtimeSBMultiSizeME, n)
+		f.l1SAD = make([]uint32, n)
+		f.me8x8Dist = make([]uint64, n)
 	}
-	h.qw, h.qh, h.cols, h.rows = qw, qh, cols, rows
-	h.startWorkers()
-	// Build and search fan out over row bands: both passes write disjoint
-	// rows and the search reads only completed pyramid planes.
-	jobs := 0
-	for b := range hmeBands {
-		q0 := b * qh / hmeBands
-		q1 := (b + 1) * qh / hmeBands
-		if q0 >= q1 {
-			continue
-		}
-		h.work <- hmeJob{build: true, r0: q0, r1: q1, src: src.Y, srcStride: src.YStride}
-		jobs++
-	}
-	for range jobs {
-		<-h.done
-	}
-
-	jobs = 0
-	for b := range hmeBands {
-		r0 := b * rows / hmeBands
-		r1 := (b + 1) * rows / hmeBands
-		if r0 >= r1 {
-			continue
-		}
-		h.bandCut[b] = 0
-		h.bandStatic[b] = 0
-		h.work <- hmeJob{band: b, r0: r0, r1: r1}
-		jobs++
-	}
-	for range jobs {
-		<-h.done
-	}
-	h.srcQ, h.refQ = h.refQ, h.srcQ
+	f.isRef = isRef
+	f.valid = true
 }
 
-func (h *hmeState) runSerial(src SourceFrame420) {
-	w, ht := src.Width, src.Height
-	qw, qh := w/4, ht/4
-	if qw < 8 || qh < 8 || !h.armed {
-		h.cols, h.rows = 0, 0
-		return
-	}
-	cols := (w + 31) / 32
-	rows := (ht + 31) / 32
-	if len(h.seeds) < cols*rows {
-		h.seeds = make([]motion.Vector, cols*rows)
-		h.seedSADs = make([]int32, cols*rows)
-	}
-	h.qw, h.qh, h.cols, h.rows = qw, qh, cols, rows
-	buildQuarterPlane(h.srcQ, src.Y, src.YStride, qw, qh)
-	for b := range hmeBands {
-		h.bandCut[b] = 0
-		h.bandStatic[b] = 0
-		r0 := b * rows / hmeBands
-		r1 := (b + 1) * rows / hmeBands
-		if r0 < r1 {
-			h.searchRows(b, r0, r1)
+func (h *hmeState) meRows(band int, src SourceFrame420, r0, r1 int) {
+	f := &h.fme
+	for r := r0; r < r1; r++ {
+		for c := 0; c < f.cols; c++ {
+			i := r*f.cols + c
+			f.l1SAD[i], f.me8x8Dist[i] = h.motionEstimateSB(&f.sb[i], src, c*64, r*64, f.isRef, &h.win[band])
 		}
 	}
-	h.srcQ, h.refQ = h.refQ, h.srcQ
 }
 
-// cutDetected reports whether the last run looks like a scene cut: at least
-// sixty percent of the regions found no quarter-res match.
+// sbME returns the frame ME of the superblock containing luma (px, py).
+func (h *hmeState) sbME(px, py int) *realtimeSBMultiSizeME {
+	if h == nil || !h.fme.valid {
+		return nil
+	}
+	c, r := px/64, py/64
+	if c >= h.fme.cols || r >= h.fme.rows {
+		return nil
+	}
+	return &h.fme.sb[r*h.fme.cols+c]
+}
+
+// hmeCutSAD is the per-sample level-1 HME SAD above which a superblock found
+// no match; a frame where most superblocks found none is a scene cut.
+const hmeCutSAD = 25
+
+// cutDetected reports a scene cut: at least 60% of the superblocks' HME
+// centers left a level-1 SAD above hmeCutSAD per half-resolution sample.
+// SVT-AV1 at preset 12 rtc runs with scene-change detection off; this keeps
+// the encoder's opt-in scene-cut keyframes on the SVT HME data.
 func (h *hmeState) cutDetected() bool {
-	total := h.cols * h.rows
-	if total == 0 {
+	f := &h.fme
+	if !f.valid {
 		return false
 	}
+	n := f.cols * f.rows
 	cut := 0
-	for _, c := range h.bandCut {
-		cut += c
-	}
-	return cut*10 >= total*6
-}
-
-// searchRows fills the seed grid for region rows [r0, r1).
-func (h *hmeState) searchRows(band, r0, r1 int) {
-	qw, qh, cols := h.qw, h.qh, h.cols
-	for ry := r0; ry < r1; ry++ {
-		for rx := 0; rx < cols; rx++ {
-			// Clamp partial edge regions onto the last whole quarter block.
-			qx := min(rx*8, qw-8)
-			qy := min(ry*8, qh-8)
-			srcBlock := h.srcQ[qy*qw+qx:]
-			zero := sad8x8Dual(srcBlock, qw, h.refQ[qy*qw+qx:], qw)
-			bestDX, bestDY, bestSAD := hmeQuarterMeshSearch(srcBlock, h.refQ, qw, qw, qh, qx, qy)
-			if zero <= 8*8*2 {
-				h.bandStatic[band]++
-			}
-			// Quarter-pel offsets scale to multiples of four full pels,
-			// keeping the even-offset chroma alignment invariant.
-			h.seeds[ry*cols+rx] = motion.Vector{Row: int16(bestDY * 4), Col: int16(bestDX * 4)}
-			h.seedSADs[ry*cols+rx] = int32(bestSAD)
-			if bestSAD > hmeCutRegionSAD {
-				h.bandCut[band]++
-			}
+	for _, s := range f.l1SAD[:n] {
+		if s > 32*32*hmeCutSAD {
+			cut++
 		}
 	}
-}
-
-func hmeQuarterMeshSearch(srcBlock, ref []byte, stride, width, height, qx, qy int) (int, int, int) {
-	bestDX, bestDY, _ := hmeQuarterExhaustiveMeshSearch(srcBlock, ref, stride, width, height, qx, qy, 0, 0, 8, 2)
-	return hmeQuarterExhaustiveMeshSearch(srcBlock, ref, stride, width, height, qx, qy, bestDX, bestDY, 1, 1)
-}
-
-// Ported from libaom av1/encoder/mcomp.c exhaustive_mesh_search. HME supplies
-// the quarter-resolution mesh pattern used for realtime seed generation.
-func hmeQuarterExhaustiveMeshSearch(srcBlock, ref []byte, stride, width, height, qx, qy int, startDX, startDY, searchRange, step int) (int, int, int) {
-	if step < 1 {
-		step = 1
-	}
-	startDX = min(max(startDX, -qx), width-8-qx)
-	startDY = min(max(startDY, -qy), height-8-qy)
-	minDX, maxDX := -qx, width-8-qx
-	minDY, maxDY := -qy, height-8-qy
-
-	startCol := max(-searchRange, minDX-startDX)
-	endCol := min(searchRange, maxDX-startDX)
-	startRow := max(-searchRange, minDY-startDY)
-	endRow := min(searchRange, maxDY-startDY)
-
-	bestDX, bestDY := startDX, startDY
-	bestRawSAD := sad8x8Dual(srcBlock, stride, ref[(qy+startDY)*stride+qx+startDX:], stride)
-	bestCost := bestRawSAD + hmeQuarterMVCost(startDX, startDY, width, height)
-	colStep := step
-	if step <= 1 {
-		colStep = 4
-	}
-	for row := startRow; row <= endRow; row += step {
-		col := startCol
-		if step > 1 {
-			for ; col+3*step <= endCol; col += step * 4 {
-				dy := startDY + row
-				dx0 := startDX + col
-				dx1 := dx0 + step
-				dx2 := dx1 + step
-				dx3 := dx2 + step
-				ref0 := ref[(qy+dy)*stride+qx+dx0:]
-				ref1 := ref[(qy+dy)*stride+qx+dx1:]
-				ref2 := ref[(qy+dy)*stride+qx+dx2:]
-				ref3 := ref[(qy+dy)*stride+qx+dx3:]
-				s0, s1, s2, s3 := sad8x8x4(srcBlock, ref0, ref1, ref2, ref3, stride)
-				hmeQuarterUpdateBest(s0, dx0, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
-				hmeQuarterUpdateBest(s1, dx1, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
-				hmeQuarterUpdateBest(s2, dx2, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
-				hmeQuarterUpdateBest(s3, dx3, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
-			}
-			for ; col <= endCol; col += step {
-				dx, dy := startDX+col, startDY+row
-				s := sad8x8Dual(srcBlock, stride, ref[(qy+dy)*stride+qx+dx:], stride)
-				hmeQuarterUpdateBest(s, dx, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
-			}
-			continue
-		}
-		for ; col+3 <= endCol; col += colStep {
-			dy := startDY + row
-			dx0 := startDX + col
-			dx1 := dx0 + 1
-			dx2 := dx1 + 1
-			dx3 := dx2 + 1
-			ref0 := ref[(qy+dy)*stride+qx+dx0:]
-			ref1 := ref[(qy+dy)*stride+qx+dx1:]
-			ref2 := ref[(qy+dy)*stride+qx+dx2:]
-			ref3 := ref[(qy+dy)*stride+qx+dx3:]
-			s0, s1, s2, s3 := sad8x8x4(srcBlock, ref0, ref1, ref2, ref3, stride)
-			hmeQuarterUpdateBest(s0, dx0, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
-			hmeQuarterUpdateBest(s1, dx1, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
-			hmeQuarterUpdateBest(s2, dx2, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
-			hmeQuarterUpdateBest(s3, dx3, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
-		}
-		for i := 0; i < endCol-col; i++ {
-			dx, dy := startDX+col+i, startDY+row
-			s := sad8x8Dual(srcBlock, stride, ref[(qy+dy)*stride+qx+dx:], stride)
-			hmeQuarterUpdateBest(s, dx, dy, width, height, &bestCost, &bestRawSAD, &bestDX, &bestDY)
-		}
-	}
-	return bestDX, bestDY, bestRawSAD
-}
-
-func hmeQuarterUpdateBest(rawSAD, dx, dy, width, height int, bestCost, bestRawSAD, bestDX, bestDY *int) {
-	if rawSAD >= *bestCost {
-		return
-	}
-	cost := rawSAD + hmeQuarterMVCost(dx, dy, width, height)
-	if cost < *bestCost {
-		*bestCost, *bestRawSAD, *bestDX, *bestDY = cost, rawSAD, dx, dy
-	}
-}
-
-func hmeQuarterMVCost(dx, dy, width, height int) int {
-	minFrame := min(width, height) * 4
-	lambda := 32
-	if minFrame >= 720 {
-		lambda = 8
-	} else if minFrame >= 480 {
-		lambda = 15
-	}
-	// Libaom's MV_COST_L1_* mvsad cost is
-	// (lambda * GET_MV_SUBPEL(abs(row)+abs(col))) >> 3; in the quarter plane
-	// the searched offsets are full-pel already, so *8 and >>3 cancel.
-	return lambda * (abs(dx) + abs(dy))
-}
-
-// staticFraction reports the share of regions whose zero-motion match was
-// already clean in the last run, in 256ths.
-func (h *hmeState) staticFraction() int {
-	total := h.cols * h.rows
-	if total == 0 {
-		return 0
-	}
-	static := 0
-	for _, c := range h.bandStatic {
-		static += c
-	}
-	return static * 256 / total
-}
-
-// seedAt returns the full-pel seed for the 32x32 region containing (px, py)
-// and whether the quarter-res match was clean enough to trust the seed with
-// a narrowed refinement window.
-func (h *hmeState) seedAt(px, py int) (int, int, bool) {
-	if h.cols == 0 {
-		return 0, 0, false
-	}
-	rx := min(px/32, h.cols-1)
-	ry := min(py/32, h.rows-1)
-	s := h.seeds[ry*h.cols+rx]
-	return int(s.Col), int(s.Row), h.seedSADs[ry*h.cols+rx] <= hmeTrustRegionSAD
+	return cut*10 >= n*6
 }

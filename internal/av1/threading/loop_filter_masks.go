@@ -2,6 +2,7 @@ package threading
 
 import (
 	"github.com/thesyncim/goav1/internal/av1/lfmask"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
@@ -32,6 +33,88 @@ type FrameWorkLoopFilterMasks struct {
 	// frame's tile-start columns/rows, making a multi-tile frame's masks
 	// equivalent to a single carried-context build. Bind clears it per frame.
 	TileBoundariesFixed bool
+
+	// levels, when bound (BindLevels), makes the decode block walk write each
+	// block's resolved levels into LevelCache as dav1d_create_lf_mask_* does,
+	// so the post-filter consumer reads them directly instead of re-deriving
+	// them from the loop-filter record map.
+	levels *FrameWorkLoopFilterLevelTable
+
+	// tileEdges, when bound (BindTileEdges), collects dav1d's tile-boundary
+	// context backups during the block walk so FixTileBoundariesFromEdges can
+	// fix a multi-tile frame without the loop-filter record map.
+	tileEdges *FrameWorkLoopFilterTileEdges
+	// singleTile records that BindTileEdges saw a single-tile frame, which
+	// needs no tile-boundary fix.
+	singleTile bool
+	// noskip, when bound (BindNoSkip), is dav1d's CDEF noskip_mask written by
+	// the decode-time build (see MapFree).
+	noskip *FrameWorkLoopFilterNoSkip
+}
+
+// FrameWorkLoopFilterLevelTable is dav1d's frame loop-filter level table
+// f->lf.lvl (src/lf_mask.c dav1d_calc_lf_values with zero delta_lf) plus the
+// header snapshot needed to recompute a per-superblock table under delta_lf
+// (dav1d ts->lflvlmem). Caller owned; Bind it once per frame.
+type FrameWorkLoopFilterLevelTable struct {
+	params       lfmask.LFValueParams
+	lvl          lfmask.LFValues
+	deltaPresent bool
+}
+
+// Bind fills the frame level table from this frame's headers.
+func (t *FrameWorkLoopFilterLevelTable) Bind(lf parser.LoopFilterParams, seg parser.SegmentationParams, delta parser.DeltaParams) {
+	t.params = lfmask.NewLFValueParams(lf, seg, delta)
+	t.deltaPresent = delta.DeltaLFPresent
+	lfmask.CalcLFValues(&t.lvl, &t.params, [4]int8{})
+}
+
+// BindLevels attaches a bound level table so the decode-time build writes the
+// per-4x4 level cache (dav1d writes levels once per block at decode time).
+func (h *FrameWorkLoopFilterMasks) BindLevels(t *FrameWorkLoopFilterLevelTable) { h.levels = t }
+
+// LevelsAtDecode reports whether the decode block walk writes the level cache.
+func (h *FrameWorkLoopFilterMasks) LevelsAtDecode() bool { return h != nil && h.levels != nil }
+
+// blockLevels returns one block's four levels, dav1d decode.c's
+// lf_lvls = &ts->lflvl[seg_id][0][ref + 1][!is_globalmv] (intra:
+// [seg_id][0][0][0]); ts->lflvl is the frame table unless the superblock
+// carries a non-zero delta_lf, which reads the job's recomputed table.
+func (t *FrameWorkLoopFilterLevelTable) blockLevels(s *frameWorkLoopFilterMaskScratch, visit *tile.BlockLoopVisit, state *tile.DecodeState) (lfmask.Levels, error) {
+	refFrame, mode, err := frameWorkLoopFilterRefModePtr(visit)
+	if err != nil || refFrame < 0 || refFrame >= parser.RefFrames {
+		return lfmask.Levels{}, ErrInvalidBatch
+	}
+	lvl := &t.lvl
+	if t.deltaPresent {
+		var lfDelta [4]int8
+		if t.params.DeltaLFMulti {
+			lfDelta = state.DeltaLF
+		} else {
+			lfDelta[0] = state.DeltaLFFromBase
+		}
+		key := uint32(uint8(lfDelta[0])) | uint32(uint8(lfDelta[1]))<<8 | uint32(uint8(lfDelta[2]))<<16 | uint32(uint8(lfDelta[3]))<<24
+		if key != 0 {
+			if !s.lvlMemValid || key != s.lvlKey || s.lvlOwner != t {
+				lfmask.CalcLFValues(&s.lvlMem, &t.params, lfDelta)
+				s.lvlKey = key
+				s.lvlOwner = t
+				s.lvlMemValid = true
+			}
+			lvl = &s.lvlMem
+		}
+	}
+	seg := 0
+	if t.params.SegEnabled {
+		seg = int(visit.SegmentID & (parser.MaxSegments - 1))
+	}
+	lv := &lvl[seg]
+	return lfmask.Levels{
+		YVert: lv[0][refFrame][mode],
+		YHorz: lv[1][refFrame][mode],
+		U:     lv[2][refFrame][mode],
+		V:     lv[3][refFrame][mode],
+	}, nil
 }
 
 // FrameWorkLoopFilterMaskShape returns the 128x128 region grid dimensions for a
@@ -107,6 +190,18 @@ type frameWorkLoopFilterMaskScratch struct {
 
 	sbRow   int
 	started bool
+
+	// lvlMem is the per-job delta_lf level table (dav1d ts->lflvlmem), valid
+	// for delta_lf state lvlKey; reset invalidates it for each new frame.
+	lvlMem      lfmask.LFValues
+	lvlKey      uint32
+	lvlOwner    *FrameWorkLoopFilterLevelTable
+	lvlMemValid bool
+
+	// edges/tileCol/tileRow route this job's tile-boundary context backups
+	// (dav1d tx_lpf_right_edge and per-tile-row above context).
+	edges            *FrameWorkLoopFilterTileEdges
+	tileCol, tileRow int
 }
 
 // reset re-initialises the above-context arrays for a new tile job. It mirrors
@@ -132,6 +227,27 @@ func (s *frameWorkLoopFilterMaskScratch) reset(h *FrameWorkLoopFilterMasks) {
 		}
 	}
 	s.started = false
+	s.lvlMemValid = false
+	s.edges = h.tileEdges
+	s.tileCol, s.tileRow = 0, 0
+}
+
+// setTile records which tile this job decodes, validating it against the bound
+// tile-edge layout; an unexpected job geometry detaches the backups so the
+// decoder falls back to the record-map tile fix.
+func (s *frameWorkLoopFilterMaskScratch) setTile(region FrameWorkJobRegion) {
+	e := s.edges
+	if e == nil {
+		return
+	}
+	col, row := int(region.Col), int(region.Row)
+	if col >= e.tileCols || row >= e.tileRows ||
+		int(region.MIColStart) != e.colStart[col] || int(region.MIRowStart) != e.rowStart[row] {
+		e.broken.Store(true)
+		s.edges = nil
+		return
+	}
+	s.tileCol, s.tileRow = col, row
 }
 
 // resetLeft re-initialises the per-superblock-row left context (dav1d
@@ -151,9 +267,23 @@ func (s *frameWorkLoopFilterMaskScratch) resetLeft(hasChroma bool) {
 // decode order, maintaining the carried above/left tx-context. sbLog2 is the
 // superblock size in MI log2 (5 for 128px, 4 for 64px). It builds only edge
 // geometry (a nil level cache); resolved levels are filled by the consumer.
-func (h *FrameWorkLoopFilterMasks) build(s *frameWorkLoopFilterMaskScratch, visit *tile.BlockLoopVisit, sbLog2 int, intra bool) {
-	h.buildBlock(s, int(visit.Block.MICol), int(visit.Block.MIRow), visit.Block.Size,
-		visit.Coefficients.Tree, visit.Prefix.SkipTransform, intra, sbLog2)
+func (h *FrameWorkLoopFilterMasks) build(s *frameWorkLoopFilterMaskScratch, visit *tile.BlockLoopVisit, state *tile.DecodeState, sbLog2 int, intra bool) error {
+	if h.levels == nil {
+		h.buildBlock(s, int(visit.Block.MICol), int(visit.Block.MIRow), visit.Block.Size,
+			visit.Coefficients.Tree, visit.Prefix.SkipTransform, intra, sbLog2)
+		return nil
+	}
+	lv, err := h.levels.blockLevels(s, visit, state)
+	if err != nil {
+		return err
+	}
+	lc := lfmask.LevelCache{Cells: h.LevelCache, Stride: h.Cols}
+	h.buildBlockWithLevels(s, int(visit.Block.MICol), int(visit.Block.MIRow), visit.Block.Size,
+		visit.Coefficients.Tree, visit.Prefix.SkipTransform, intra, sbLog2, lc, lv)
+	if h.noskip != nil && !visit.Prefix.SkipTransform {
+		markFrameWorkLoopFilterNoSkip(h.noskip.buf, h.noskip.unitCols, int(visit.Block.MICol), int(visit.Block.MIRow), int(visit.Block.MIColEnd), int(visit.Block.MIRowEnd))
+	}
+	return nil
 }
 
 // OrderedBlock is one block for BuildFromOrderedBlocks (test-only): the record
@@ -195,6 +325,7 @@ func (h *FrameWorkLoopFilterMasks) buildBlock(s *frameWorkLoopFilterMaskScratch,
 func (h *FrameWorkLoopFilterMasks) buildBlockWithLevels(s *frameWorkLoopFilterMaskScratch, bx, by int, size tile.BlockSize, tree tile.TransformTreeResult, skipTransform, intra bool, sbLog2 int, lc lfmask.LevelCache, lv lfmask.Levels) {
 	sbRow := by >> sbLog2
 	if !s.started || sbRow != s.sbRow {
+		s.flushRightEdge()
 		s.resetLeft(h.HasChroma)
 		s.sbRow = sbRow
 		s.started = true
