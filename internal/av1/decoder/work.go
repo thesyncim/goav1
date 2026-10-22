@@ -929,8 +929,7 @@ func (s *FrameWorkState) prepareTemporalMotionField(event *Event) error {
 	s.mvReferences = refs
 
 	// The tile block loops project the references per superblock row
-	// (dav1d load_tmvs). The goav1_refmvs_oracle build also sets up the
-	// whole-frame field to check that projection against.
+	// (dav1d load_tmvs), so no whole-frame field is built here.
 	setup := tile.TemporalMotionSetupRequest{
 		EnableOrderHint:  s.Sequence.EnableOrderHint,
 		OrderHintBits:    s.Sequence.OrderHintBits,
@@ -941,24 +940,6 @@ func (s *FrameWorkState) prepareTemporalMotionField(event *Event) error {
 		return s.temporalMotionPrepareError(err)
 	}
 	s.temporalMVsDeferred = true
-	if !tile.TemporalProjectionOracle {
-		return nil
-	}
-	if cap(s.temporalMVsBack) < need {
-		s.temporalMVsBack = make([]tile.TemporalMotionEntry, need)
-	}
-	if err := s.temporalMVs.Init(miRows, miCols, s.temporalMVsBack[:need]); err != nil {
-		return s.temporalMotionPrepareError(err)
-	}
-	if _, err := s.temporalMVs.Setup(tile.TemporalMotionSetupRequest{
-		EnableOrderHint:  s.Sequence.EnableOrderHint,
-		OrderHintBits:    s.Sequence.OrderHintBits,
-		CurrentOrderHint: event.FrameHeader.OrderHint,
-		References:       s.mvReferences,
-	}); err != nil {
-		return s.temporalMotionPrepareError(err)
-	}
-	s.temporalMVsValid = true
 	return nil
 }
 

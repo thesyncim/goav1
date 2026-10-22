@@ -101,7 +101,10 @@ func (b *FrameWorkBatch) referenceMVFrameMIExtents() (miRows uint32, miCols uint
 // the block loops project per superblock row, or nil when the batch carries
 // a whole-frame TemporalMVs field instead.
 func (b *FrameWorkBatch) deferredTemporalReferences() *[parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame {
-	if !b.TileInfo.UseRefFrameMVS {
+	// A caller that set up its own TemporalMVs (and resolved its own
+	// ReferenceMVs) keeps that field; the deferred references belong to the
+	// frame decoder's MV store and would be stale for it.
+	if !b.TileInfo.UseRefFrameMVS || b.TemporalMVs != nil {
 		return nil
 	}
 	return b.DeferredTemporalReferences

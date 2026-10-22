@@ -917,6 +917,9 @@ func bindRefmvsForLoop(rt *refmvsTile, req *BlockLoopRequest) bool {
 		frame.projectTmvs = true
 		frame.mfmv.init(req.TemporalReferences, req.OrderHintBits, req.CurrentOrderHint, &req.ReferenceOrderHints,
 			int32(req.FrameMIRows)>>1, int32(req.FrameMICols)>>1)
+		if refmvsOracleEnabled {
+			frame.temporal = refmvsOracleWholeField(req)
+		}
 	}
 	for i := range 7 {
 		if req.RefSignBias[i] {

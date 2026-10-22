@@ -27,6 +27,11 @@ func refmvsPoison(buf []refmvsBlock) {
 func refmvsOracleCompare(ctx *BlockModeContext, rt *refmvsTile, found *refmvsResult, req *BlockLoopRequest, block BlockVisit, refs InterReferencesResult, globalMVs [2]motion.Vector) {
 	types := blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes)
 	stackReq := legacyReferenceMVStackRequest(*req, block, refs, globalMVs, types)
+	if stackReq.TemporalMVs == nil && rt.frame.projectTmvs {
+		// Deferred projection: the legacy stack reads the oracle's own
+		// whole-frame field.
+		stackReq.TemporalMVs = rt.frame.temporal
+	}
 	legacy, err := ctx.BuildReferenceMVStack(stackReq)
 	if err != nil {
 		panic(err)
@@ -115,7 +120,24 @@ func refmvsOracleTmvs(rt *refmvsTile, colStart8, colEnd8, rowStart8, rowEnd8 int
 	}
 }
 
-// TemporalProjectionOracle reports whether the goav1_refmvs_oracle build is
-// active, in which case frame decoders still set up the whole-frame temporal
-// field so the per-row load_tmvs projection can be checked against it.
-const TemporalProjectionOracle = true
+// refmvsOracleWholeField sets up the libaom-shaped whole-frame projection of
+// the deferred references, which loadTmvs then diffs each window against.
+func refmvsOracleWholeField(req *BlockLoopRequest) *TemporalMotionField {
+	need, err := ReferenceMVFrameEntries(uint32(req.FrameMIRows), uint32(req.FrameMICols))
+	if err != nil {
+		panic(err)
+	}
+	field := new(TemporalMotionField)
+	if err := field.Init(uint32(req.FrameMIRows), uint32(req.FrameMICols), make([]TemporalMotionEntry, need)); err != nil {
+		panic(err)
+	}
+	if _, err := field.Setup(TemporalMotionSetupRequest{
+		EnableOrderHint:  req.EnableOrderHint,
+		OrderHintBits:    req.OrderHintBits,
+		CurrentOrderHint: req.CurrentOrderHint,
+		References:       *req.TemporalReferences,
+	}); err != nil {
+		panic(err)
+	}
+	return field
+}
