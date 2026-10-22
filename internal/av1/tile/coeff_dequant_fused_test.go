@@ -414,7 +414,7 @@ func TestDecodeCoeffTXBDequantTargetLifecycleAndFallback(t *testing.T) {
 		typ       transform.Type
 		recordErr error
 	}{
-		{name: "horizontal-fallback", typ: transform.TypeHDCT},
+		{name: "horizontal-dequantized", typ: transform.TypeHDCT},
 		{name: "record-error", typ: transform.TypeDCTDCT, recordErr: errors.New("test recorder failure")},
 		{name: "record-success", typ: transform.TypeDCTDCT},
 	} {
@@ -446,15 +446,12 @@ func TestDecodeCoeffTXBDequantTargetLifecycleAndFallback(t *testing.T) {
 				t.Fatalf("fixture did not reach nonzero selected transform: candidate=%+v/%v baseline=%+v/%v", got.result, got.err, want.result, want.err)
 			}
 			assertCoeffDequantLifecycleStateEqual(t, got, want)
-			if tc.name == "record-success" {
+			if tc.recordErr == nil {
 				if !target.Ready || !target.decoded || target.ActiveRows <= 0 || target.TxScale != 0 {
 					t.Fatalf("successful record did not publish target metadata: %+v", target)
 				}
 			} else if target.Ready || target.decoded || target.ActiveRows != 0 || target.TxScale != 0 {
 				t.Fatalf("fallback/error retained stale target metadata: %+v", target)
-			}
-			if tc.name == "horizontal-fallback" && (!slices.Equal(got.coeffs, want.coeffs) || got.result != want.result) {
-				t.Fatal("horizontal fallback changed quantized coefficient output")
 			}
 		})
 	}
