@@ -89,12 +89,6 @@ func cdefPack2Rows(a, b archsimd.Int16x8) archsimd.Uint8x16 {
 	return a8.InterleaveLo(b8).ReshapeToUint8s()
 }
 
-// cdefHalvesU8 widens the two packed rows back to 16-bit lanes: lo is row r
-// (bytes 0..7), hi is row r+1 (bytes 8..15).
-func cdefHalvesU8(v archsimd.Uint8x16) (archsimd.Int16x8, archsimd.Int16x8) {
-	return v.ExtendLo8ToUint16().BitsToInt16(), v.HiToLo().ExtendLo8ToUint16().BitsToInt16()
-}
-
 // cdefConstrainU8 returns the tap value after constrain(), in byte lanes:
 // x + clamp(t-x, -lim, +lim) with lim = max(str - (|t-x| >> shift), 0),
 // written as min(max(t, x-lim), x+lim) with saturating bounds.
@@ -160,21 +154,23 @@ func cdefFilterBlock8InteriorSIMD(ctx *cdefSIMDCtx) {
 		d7 := cdefConstrainU8(s7, x, secStr, secSh)
 
 		// Widen to 16-bit halves and take the signed differences from x.
-		xl, xh := cdefHalvesU8(x)
-		ml, mh := cdefHalvesU8(mx)
-		nl, nh := cdefHalvesU8(mn)
-		c0l, c0h := cdefHalvesU8(c0)
-		c1l, c1h := cdefHalvesU8(c1)
-		c2l, c2h := cdefHalvesU8(c2)
-		c3l, c3h := cdefHalvesU8(c3)
-		d0l, d0h := cdefHalvesU8(d0)
-		d1l, d1h := cdefHalvesU8(d1)
-		d2l, d2h := cdefHalvesU8(d2)
-		d3l, d3h := cdefHalvesU8(d3)
-		d4l, d4h := cdefHalvesU8(d4)
-		d5l, d5h := cdefHalvesU8(d5)
-		d6l, d6h := cdefHalvesU8(d6)
-		d7l, d7h := cdefHalvesU8(d7)
+		// (UXTL / UXTL2 written out: through a two-result helper each widen
+		// left an inline-mark NOP in the row loop.)
+		xl, xh := x.ExtendLo8ToUint16().BitsToInt16(), x.HiToLo().ExtendLo8ToUint16().BitsToInt16()
+		ml, mh := mx.ExtendLo8ToUint16().BitsToInt16(), mx.HiToLo().ExtendLo8ToUint16().BitsToInt16()
+		nl, nh := mn.ExtendLo8ToUint16().BitsToInt16(), mn.HiToLo().ExtendLo8ToUint16().BitsToInt16()
+		c0l, c0h := c0.ExtendLo8ToUint16().BitsToInt16(), c0.HiToLo().ExtendLo8ToUint16().BitsToInt16()
+		c1l, c1h := c1.ExtendLo8ToUint16().BitsToInt16(), c1.HiToLo().ExtendLo8ToUint16().BitsToInt16()
+		c2l, c2h := c2.ExtendLo8ToUint16().BitsToInt16(), c2.HiToLo().ExtendLo8ToUint16().BitsToInt16()
+		c3l, c3h := c3.ExtendLo8ToUint16().BitsToInt16(), c3.HiToLo().ExtendLo8ToUint16().BitsToInt16()
+		d0l, d0h := d0.ExtendLo8ToUint16().BitsToInt16(), d0.HiToLo().ExtendLo8ToUint16().BitsToInt16()
+		d1l, d1h := d1.ExtendLo8ToUint16().BitsToInt16(), d1.HiToLo().ExtendLo8ToUint16().BitsToInt16()
+		d2l, d2h := d2.ExtendLo8ToUint16().BitsToInt16(), d2.HiToLo().ExtendLo8ToUint16().BitsToInt16()
+		d3l, d3h := d3.ExtendLo8ToUint16().BitsToInt16(), d3.HiToLo().ExtendLo8ToUint16().BitsToInt16()
+		d4l, d4h := d4.ExtendLo8ToUint16().BitsToInt16(), d4.HiToLo().ExtendLo8ToUint16().BitsToInt16()
+		d5l, d5h := d5.ExtendLo8ToUint16().BitsToInt16(), d5.HiToLo().ExtendLo8ToUint16().BitsToInt16()
+		d6l, d6h := d6.ExtendLo8ToUint16().BitsToInt16(), d6.HiToLo().ExtendLo8ToUint16().BitsToInt16()
+		d7l, d7h := d7.ExtendLo8ToUint16().BitsToInt16(), d7.HiToLo().ExtendLo8ToUint16().BitsToInt16()
 
 		// sum = primary taps (weights {p0,p1}) + secondary taps (weights {2,1}).
 		// sum = sum_i w_i*(t_i - x) = sum_i w_i*t_i - wtot*x, with wtot the sum of

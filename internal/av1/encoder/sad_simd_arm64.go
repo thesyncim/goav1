@@ -114,8 +114,16 @@ func sad16ColsDualPtr(sp unsafe.Pointer, srcStride int, rp unsafe.Pointer, refSt
 	even := archsimd.BroadcastUint16x8(0)
 	odd := archsimd.BroadcastUint16x8(0)
 	for row := 0; row < h; row += 2 {
-		even = absAcc16(even, load16(step(sp, row*srcStride)), load16(step(rp, row*refStride)))
-		odd = absAcc16(odd, load16(step(sp, (row+1)*srcStride)), load16(step(rp, (row+1)*refStride)))
+		// absAcc16 written out: its nested inlined helpers left five inline-mark
+		// NOPs per row pair.
+		s := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, row*srcStride)))
+		r := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(rp, row*refStride)))
+		d := s.Max(r).Sub(s.Min(r))
+		even = even.Add(d.ExtendLo8ToUint16().Add(d.HiToLo().ExtendLo8ToUint16()))
+		s = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, (row+1)*srcStride)))
+		r = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(rp, (row+1)*refStride)))
+		d = s.Max(r).Sub(s.Min(r))
+		odd = odd.Add(d.ExtendLo8ToUint16().Add(d.HiToLo().ExtendLo8ToUint16()))
 	}
 	if h == 16 {
 		// 16*16*255 = 65,280, so the horizontal uint16 sum is exact.
