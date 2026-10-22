@@ -132,3 +132,39 @@ func TestSVTHMEL0SearchArea(t *testing.T) {
 		}
 	}
 }
+
+func TestSVTSAD32xhx8MatchesScalar(t *testing.T) {
+	rng := rand.New(rand.NewSource(12))
+	const stride = 96
+	src := make([]byte, stride*40)
+	ref := make([]byte, stride*40)
+	for trial := 0; trial < 64; trial++ {
+		fillMEPattern(rng, src, trial)
+		fillMEPattern(rng, ref, trial/4)
+		if trial%5 == 0 { // the largest SADs: every difference 255
+			for i := range src {
+				src[i], ref[i] = 0, 255
+			}
+		}
+		for rows := 1; rows <= 16; rows++ {
+			so := rng.Intn(16)
+			ro := rng.Intn(16)
+			s := src[so : so+(rows-1)*2*stride+32]
+			r := ref[ro : ro+(rows-1)*stride+39]
+			var got [8]uint32
+			got[3] = 7 // accumulates
+			svtSAD32xhx8(&got, s, 2*stride, r, stride, rows)
+			a := svtSAD16xhx8Scalar(s, 2*stride, r, stride, rows)
+			b := svtSAD16xhx8Scalar(s[16:], 2*stride, r[16:], stride, rows)
+			for k := range a {
+				want := a[k] + b[k]
+				if k == 3 {
+					want += 7
+				}
+				if got[k] != want {
+					t.Fatalf("trial %d rows %d pos %d: got %d want %d", trial, rows, k, got[k], want)
+				}
+			}
+		}
+	}
+}
