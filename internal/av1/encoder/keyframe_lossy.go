@@ -242,7 +242,7 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 	// searched after the tiles, whose symbol streams are recorded.
 	screen := tileOpts.stream != nil && tileOpts.stream.svtScreen()
 	cdefPlan := planSVTCDEF(videoColorSupportsInLoopFilters(color) && seq.EnableCDEF && src.Width*src.Height <= loopFilterMaxArea,
-		true, true, true, screen, svtCDEFRefStrengths{})
+		true, true, true, screen, svtCDEFRefStrengths{}, 0)
 	var lfMap *threading.FrameWorkLoopFilterMap
 	if lfLevel > 0 || cdefPlan.on {
 		if lf == nil {

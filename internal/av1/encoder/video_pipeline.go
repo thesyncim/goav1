@@ -303,7 +303,7 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 	// content) takes the reference-derived filters, never a search
 	// (cdef_frame.go), from the base reference snapshotted with the job.
 	cdefPlan := planSVTCDEF(filterSupported && seq.EnableCDEF && !e.fastestRealtimeEffort() && src.Width*src.Height <= loopFilterMaxArea,
-		false, false, false, e.svtScreen(), e.leafJob.cdefRef)
+		false, false, false, e.svtScreen(), e.leafJob.cdefRef, lpd1RefSkipPerc(e.leafJob.lpd1Ref))
 	if cdefPlan.search {
 		return nil, 0, fmt.Errorf("encoder: pipelined leaf cannot run the CDEF search")
 	}
