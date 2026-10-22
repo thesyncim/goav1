@@ -625,7 +625,7 @@ func (b *FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Bloc
 }
 
 func (b *FrameWorkBatch) predictBlockChromaIntraTransformPtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, tx tile.TransformBlock, scratch *FrameWorkIntraPredictionScratch) error {
-	geom, present, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
+	geom, present, err := b.chromaIntraGeometry(index, &visit.Block, plane)
 	if err != nil || !present {
 		return err
 	}
