@@ -287,7 +287,11 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 			// the per-coefficient estimate remains only for layouts the
 			// trial counters do not cover.
 			rate := (st.rdRcode*st.rdMult + 256) >> 9
-			if r, ok := st.exactInterCoeffCost(txPlan, bw, bh, cbw, cbh, hasChroma, lumaPX, lumaPY); ok {
+			if st.rdoqBlock {
+				if r, ok := st.svtInterCoeffCost(txPlan, bw, bh, cbw, cbh, hasChroma); ok {
+					rate = r
+				}
+			} else if r, ok := st.exactInterCoeffCost(txPlan, bw, bh, cbw, cbh, hasChroma, lumaPX, lumaPY); ok {
 				rate = r
 			}
 			rdCode := rate + (st.rdDcode << 7)

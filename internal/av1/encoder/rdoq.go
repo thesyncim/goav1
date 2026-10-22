@@ -764,3 +764,99 @@ func rdoqEOBFromIScan(qcoeff []int16, iscan []int16) int {
 	}
 	return eob
 }
+
+// svtCoeffCost is svt_av1_cost_coeffs_txb without CDF updates for one n x n
+// DCT_DCT TXB of plane type plane (txb_skip_ctx 0 and dc_sign_ctx 0, as the
+// light-PD1 path passes), in 512-per-bit units. It overwrites st.levels.
+func (st *lossyEncodeState) svtCoeffCost(qcoeff []int16, n int, plane int) int64 {
+	g, ok := rdoqSquareGeometry(n, plane)
+	if !ok {
+		return 0
+	}
+	tc := &st.rdoq.coeff[g.txCtx][plane]
+	eob := rdoqEOBFromIScan(qcoeff[:g.area], st.rdoqIScanN[g.txCtx][:g.area])
+	if eob == 0 {
+		return int64(tc.txbSkip[0][1])
+	}
+	scan := st.rdoqScan(n)
+	levels := st.levels
+	_ = tile.CoeffInitLevels(qcoeff, g.size, levels)
+	cost := int64(tc.txbSkip[0][0])
+	cost += int64(g.eobCost(eob, &st.rdoq.eob[g.eobSel][plane], tc))
+	for c := eob - 1; c >= 0; c-- {
+		pos := int(scan[c])
+		v := int32(qcoeff[pos])
+		level := rdoqAbs(v)
+		if c == eob-1 {
+			cost += int64(tc.baseEOB[g.lowerLevelsCtxEOB(c)][min(level, 3)-1])
+		} else {
+			cost += int64(tc.base[g.lowerLevelsCtx(levels, pos)][min(level, 3)])
+		}
+		if v == 0 {
+			continue
+		}
+		if c == 0 {
+			sign := 0
+			if v < 0 {
+				sign = 1
+			}
+			cost += int64(tc.dcSign[0][sign])
+		} else {
+			cost += int64(rdoqCostLiteral(1))
+		}
+		if level > rdoqNumBaseLevels {
+			brCtx := 0
+			if eob != 1 {
+				brCtx = g.brCtx(levels, pos)
+			}
+			cost += int64(rdoqBRCost(level, &tc.lps[brCtx]))
+		}
+	}
+	return cost
+}
+
+// svtLumaCoeffBits is perform_dct_dct_tx_light_pd1's luma rate at
+// coeff_rate_est_lvl 2 (rate_est_level 4, the light-PD1 setting): the
+// 6000 + 1000*eob estimate for a TXB with eob below area/64, the table cost
+// otherwise.
+func (st *lossyEncodeState) svtLumaCoeffBits(qcoeff []int16, n int) int64 {
+	g, ok := rdoqSquareGeometry(n, 0)
+	if !ok {
+		return 0
+	}
+	eob := rdoqEOBFromIScan(qcoeff[:g.area], st.rdoqIScanN[g.txCtx][:g.area])
+	if eob < g.area>>6 {
+		return 6000 + int64(eob)*1000
+	}
+	return st.svtCoeffCost(qcoeff, n, 0)
+}
+
+// svtInterCoeffCost prices the coded alternative of the skip decision the
+// light-PD1 way (svtLumaCoeffBits per luma TXB, svtCoeffCost per chroma TXB),
+// scaled by the frame multiplier like txbBitsToRate.
+func (st *lossyEncodeState) svtInterCoeffCost(txPlan realtimeInterTXPlan, bw, bh, cbw, cbh int, hasChroma bool) (int64, bool) {
+	if hasChroma && (cbw != cbh || cbw > 32) {
+		return 0, false
+	}
+	var cost int64
+	if txPlan.Variable() {
+		leaf := txPlan.leafSize
+		area := leaf * leaf
+		if err := txPlan.ForEachLeaf(func(i, dx, dy int) error {
+			cost += st.svtLumaCoeffBits(st.lumaQ2[i*area:(i+1)*area], leaf)
+			return nil
+		}); err != nil {
+			return 0, false
+		}
+	} else {
+		if bw != bh || bw > 32 {
+			return 0, false
+		}
+		cost += st.svtLumaCoeffBits(st.lumaQ[:bw*bh], bw)
+	}
+	if hasChroma {
+		cost += st.svtCoeffCost(st.uQ[:cbw*cbh], cbw, 1)
+		cost += st.svtCoeffCost(st.vQ[:cbw*cbh], cbw, 1)
+	}
+	return (cost*st.rdMult + 256) >> 9, true
+}
