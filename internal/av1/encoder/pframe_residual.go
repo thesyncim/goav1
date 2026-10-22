@@ -1860,12 +1860,6 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 		pc.modeCDFs.EstimateRateTables(&st.mds0Rates)
 		st.mds0IntraOK = st.intraCDFs.EstimateIntraDCRateTables(&st.mds0IntraRates) == nil
 	}
-	// Freeze the switchable filter rate tables for the IFS combo loop (SVT
-	// md_rate_estimation.c switchable_interp_fac_bitss).
-	if st.interpSearch || st.interpShadow {
-		pc.interpCDFs.EstimateRateTables(&st.interpRates)
-	}
-	st.interpUsed = [3]uint32{}
 	st.decisionStats = nil
 	if pc.decisionStatsEnabled {
 		pc.decisionStats.Reset()
@@ -2536,41 +2530,14 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			return st.encodeIntraPBlock(src, recon, block, scratch)
 		}
 	}
-	// Switchable interpolation filter decision, run once the mode and vector
-	// are final like SVT-AV1's last-stage IFS (enc_inter_prediction.c
-	// interpolation_filter_search at interpolation_search_level 4 = IFS_MDS3;
-	// see pframe_ifs.go). ifsReq mirrors the decoder's read_mb_interp_filter
-	// inputs; blocks whose filters the decoder infers (GLOBALMV over the
-	// identity model) and compound blocks keep REGULAR.
+	// Light-PD1 runs no interpolation filter search: md_stage_0_light_pd1
+	// sets REGULAR on every candidate and svt_aom_inter_pu_prediction_av1_
+	// light_pd1 never calls interpolation_filter_search (IFS_OFF is a
+	// light-PD1 feature assumption, enc_dec_process.c
+	// exaustive_light_pd1_features). Every block is REGULAR, so P-frame
+	// headers carry the fixed EIGHTTAP filter instead of SWITCHABLE with
+	// all-REGULAR blocks (identical predictions, no per-block symbols).
 	blockFilters := motion.InterpFilters{}
-	var ifsReq tile.InterpFilterRequest
-	if st.interpSearch || st.interpShadow {
-		ifsReq = tile.InterpFilterRequest{
-			FrameFilter:      parser.InterpolationSwitchable,
-			EnableDualFilter: st.interpDual,
-			Size:             block.Size,
-			References:       refs,
-			Mode:             modeResult,
-			MotionMode:       tile.MotionModeTranslation,
-			X4:               block.X4,
-			Y4:               block.Y4,
-			HaveTop:          block.HaveTop,
-			HaveLeft:         block.HaveLeft,
-		}
-		if !refs.Compound && tile.InterpNeeded(ifsReq) &&
-			refPlanes.Width == src.Width && refPlanes.Height == src.Height {
-			searched := st.interpolationFilterSearch(src, refPlanes.Y, refPlanes.YStride, modeCtx, ifsReq, lumaPX, lumaPY, bw, bh, mv)
-			st.interpUsed[searched.Y]++
-			// Shadow frames only feed the fix_interp_filter statistics;
-			// their fixed EIGHTTAP header keeps every block on REGULAR.
-			if st.interpSearch {
-				blockFilters = searched
-				if st.decisionStats != nil {
-					st.decisionStats.noteInterpFilter(int(searched.Y))
-				}
-			}
-		}
-	}
 	// Materialize the three plane predictions with the decoder's convolve so
 	// residual coding and reconstruction agree with the decoder bit for bit.
 	if refs.Compound {
@@ -2628,6 +2595,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	}
 	st.lpd1NbrSkipCtx, _ = scratch.Mode.SkipContext(int(block.X4), int(block.Y4))
 	st.lpd1NoteIsInterRate(&scratch.Mode, block)
+	st.lpd1NoteMVP64(lumaPX, lumaPY, bw, bh, modeResult)
 	skip, splitTX, txPlan, txType, err := st.decideInterTXBlock(src, refPlanes, mv, block,
 		lumaPX, lumaPY, bw, bh, cbw, cbh, chromaPX, chromaPY, hasChroma, fullSAD)
 	st.predYKey.valid = false
@@ -2704,14 +2672,6 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		Precision:    tile.MVPrecision(false, st.forceIntegerMV),
 	}, motionResult); err != nil {
 		return fmt.Errorf("motion vector: %w", err)
-	}
-
-	// The interpolation filter pair follows the motion vector exactly where
-	// the decoder reads it (read_mb_interp_filter, before the motion marks).
-	if st.interpSearch {
-		if _, err := tile.WriteInterpFilters(st.w, interpCDFs, modeCtx, ifsReq, blockFilters); err != nil {
-			return fmt.Errorf("interp filters: %w", err)
-		}
 	}
 
 	if err := scratch.EncoderCommitInter(block, motionResult, blockFilters, hasChroma); err != nil {

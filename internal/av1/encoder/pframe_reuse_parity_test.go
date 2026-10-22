@@ -15,7 +15,9 @@ import (
 // which replaced the libaom sub-pel tree, and for the light-PD1 MDS0
 // candidate set without GLOBALMV (pframe_mds0.go); both change the coded
 // vectors. Re-pinned again for SVT's open-loop per-SB ME (HME levels 0/1,
-// sub-sampled 8x3 sweep) as the leaves' full-pel ME.
+// sub-sampled 8x3 sweep) as the leaves' full-pel ME, and for light-PD1's
+// inter path (no interpolation filter search, md_subpel_me level 8, then
+// the per-SB sub-pel level with its zero-subpel override and full lambda).
 func TestPFrameReuseOptimizationsPreserveEncodedOutput(t *testing.T) {
 	const width, height, frameCount = 640, 360, 48
 	tests := []struct {
@@ -23,8 +25,8 @@ func TestPFrameReuseOptimizationsPreserveEncodedOutput(t *testing.T) {
 		stream  string
 		recon   string
 	}{
-		{1, "0e71d9a888f6b8349abc238301ed212259c35cc0c51492dd53789b72f23d6567", "b4aedc9438b448ca79f66c5031a8c1433a6de7b7a82ab0aa30f3c40d087078e5"},
-		{4, "ee088ed306255aebc861f6210638d9601633b0e799d47c1f04e0e25a9400468a", "bbfcc483e4319f4954b3e02ec81ae307e69dccb7b249ddabd57a1b4ea4bb0bcd"},
+		{1, "45538701597a37867c186d53eaec416a26aa14292234b94901c99896428a2341", "aea2a3efa446e9f41daa3fa09515ceea831c40f9c7c90351d54b6247b94d5aa3"},
+		{4, "85dae837e68d5705144482003820a2b3f2eba3d5d642ff31ad7670bc02a31c15", "e6cb166d5a5c4d1ac18cd0cacf1365062711a89d319492de9aa2197f684dab63"},
 	}
 
 	rng := rand.New(rand.NewSource(3))

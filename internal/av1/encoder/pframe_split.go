@@ -423,33 +423,8 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 			return st.decideIntraPBlock(src, recon, block, scratch, rec)
 		}
 	}
-	// Switchable interpolation filter decision (SVT IFS_MDS3, see pframe_ifs.go).
+	// Light-PD1: every block REGULAR (see the fused path).
 	blockFilters := motion.InterpFilters{}
-	if st.interpSearch || st.interpShadow {
-		ifsReq := tile.InterpFilterRequest{
-			FrameFilter:      parser.InterpolationSwitchable,
-			EnableDualFilter: st.interpDual,
-			Size:             block.Size,
-			References:       refs,
-			Mode:             modeResult,
-			MotionMode:       tile.MotionModeTranslation,
-			X4:               block.X4,
-			Y4:               block.Y4,
-			HaveTop:          block.HaveTop,
-			HaveLeft:         block.HaveLeft,
-		}
-		if !refs.Compound && tile.InterpNeeded(ifsReq) &&
-			refPlanes.Width == src.Width && refPlanes.Height == src.Height {
-			searched := st.interpolationFilterSearch(src, refPlanes.Y, refPlanes.YStride, modeCtx, ifsReq, lumaPX, lumaPY, bw, bh, mv)
-			st.interpUsed[searched.Y]++
-			if st.interpSearch {
-				blockFilters = searched
-				if st.decisionStats != nil {
-					st.decisionStats.noteInterpFilter(int(searched.Y))
-				}
-			}
-		}
-	}
 	// Materialize the three plane predictions, identical to the fused path.
 	if refs.Compound {
 		if err := predictCompoundInto(st.predY[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, compoundMV[0], compoundMV[1], false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
@@ -505,6 +480,7 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	}
 	st.lpd1NbrSkipCtx, _ = scratch.Mode.SkipContext(int(block.X4), int(block.Y4))
 	st.lpd1NoteIsInterRate(&scratch.Mode, block)
+	st.lpd1NoteMVP64(lumaPX, lumaPY, bw, bh, modeResult)
 	skip, splitTX, txPlan, txType, err := st.decideInterTXBlock(src, refPlanes, mv, block,
 		lumaPX, lumaPY, bw, bh, cbw, cbh, chromaPX, chromaPY, hasChroma, fullSAD)
 	st.predYKey.valid = false
@@ -715,24 +691,6 @@ func (st *lossyEncodeState) writePBlock(block tile.BlockVisit, scratch *tile.Blo
 		Precision:    tile.MVPrecision(false, st.forceIntegerMV),
 	}, r.motion); err != nil {
 		return fmt.Errorf("motion vector: %w", err)
-	}
-
-	if st.interpSearch {
-		ifsReq := tile.InterpFilterRequest{
-			FrameFilter:      parser.InterpolationSwitchable,
-			EnableDualFilter: st.interpDual,
-			Size:             block.Size,
-			References:       refs,
-			Mode:             modeResult,
-			MotionMode:       tile.MotionModeTranslation,
-			X4:               block.X4,
-			Y4:               block.Y4,
-			HaveTop:          block.HaveTop,
-			HaveLeft:         block.HaveLeft,
-		}
-		if _, err := tile.WriteInterpFilters(st.w, interpCDFs, modeCtx, ifsReq, r.filters); err != nil {
-			return fmt.Errorf("interp filters: %w", err)
-		}
 	}
 
 	if err := modeCtx.MarkInterMotionAndFilters(block.Size, int(block.X4), int(block.Y4), r.motion, r.filters, hasChroma); err != nil {

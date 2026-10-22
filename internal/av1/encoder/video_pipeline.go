@@ -349,9 +349,6 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 		leafSetup.cur = e.lpd1Leaf
 	}
 	e.leafPC.st.lpd1Pending = leafSetup
-	e.leafPC.st.interpSearch = false
-	e.leafPC.st.interpShadow = false
-	e.leafPC.st.interpDual = seq.EnableDualFilter
 	e.leafPC.forceSplit = e.forceSplit
 	// Match the serial leaf's decision path so the bytes agree: when inter
 	// frames run the SB-row wavefront (SetMaxThreads>1), the serial leaf uses it

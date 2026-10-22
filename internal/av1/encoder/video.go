@@ -146,14 +146,7 @@ type VideoEncoder struct {
 	haveCtx      bool
 	prevLFDeltas LoopFilterDeltas
 
-	// interpOnlyRegular carries libaom's fix_interp_filter observation
-	// (av1/encoder/encoder_utils.c) one base frame forward: when a base
-	// frame's filter search lands every coded block on REGULAR, the next
-	// base frame collapses its header to the fixed EIGHTTAP filter and pays
-	// no per-block filter syntax; the shadow search on such frames re-arms
-	// SWITCHABLE as soon as any block would pick another filter.
-	interpOnlyRegular bool
-	refState          parser.ReferenceState
+	refState parser.ReferenceState
 
 	// Golden anchor: slot 1 holds an older high-quality reference refreshed
 	// every goldenEvery base-layer frames (0 disables block-level use). The
@@ -911,7 +904,6 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 	// The first inter frame after a keyframe starts from default contexts
 	// (primary_ref NONE); chaining arms from its own state.
 	e.haveCtx = false
-	e.interpOnlyRegular = false
 	e.haveCtxT1 = false
 	e.lastTemporalID = 0
 	// A shown keyframe refreshes every reference slot, so slot 1 (the GOLDEN
@@ -1017,18 +1009,12 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 	if !videoColorSupportsInLoopFilters(color) {
 		header.CDEF = CDEFParams{}
 	}
-	// This path codes a fixed EIGHTTAP frame filter; clear any switchable
-	// filter state a previous base frame left on the reused coders. Depth
-	// removal likewise stays off here (Phase 1 arms only the standard
+	// Depth removal stays off here (Phase 1 arms only the standard
 	// temporal-layer path in encodePReusing) so no stale level carries over.
-	e.pc.st.interpSearch = false
-	e.pc.st.interpShadow = false
 	e.pc.st.depthRemovalLevel = 0
 	e.pc.forceSplit = e.forceSplit
 	e.configurePCWavefront()
 	for t := range e.tilePCs {
-		e.tilePCs[t].st.interpSearch = false
-		e.tilePCs[t].st.interpShadow = false
 		e.tilePCs[t].st.depthRemovalLevel = 0
 		e.tilePCs[t].forceSplit = e.forceSplit
 	}
@@ -1090,7 +1076,6 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 	e.haveKey = true
 	e.frameIndex++
 	e.haveCtx = false
-	e.interpOnlyRegular = false
 	e.haveCtxT1 = false
 	e.lastTemporalID = settings.TemporalID
 	if !hmeArmed {
@@ -1169,7 +1154,6 @@ func (e *VideoEncoder) Prewarm() error {
 	e.prewarmPipeline(src)
 	e.haveKey = false
 	e.haveCtx = false
-	e.interpOnlyRegular = false
 	e.haveCtxT1 = false
 	e.frameIndex = 0
 	e.lastTemporalID = 0
@@ -1637,30 +1621,6 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	for t := range e.tilePCs {
 		e.tilePCs[t].st.sbQPending, e.tilePCs[t].st.sbQPendingCols = sbQ, sbQCols
 	}
-	// Base frames run the per-block switchable interpolation filter search,
-	// so their headers signal SWITCHABLE (SVT-AV1 enc_mode_config.c:
-	// interpolation_search_level stays 4 for is_base pictures at preset 12
-	// and frm_hdr->interpolation_filter = SWITCHABLE). Droppable leaves,
-	// integer-MV screen frames, scaled-reference frames, and non-420 paths
-	// keep the fixed EIGHTTAP header and code no filter symbols.
-	// A base frame whose predecessor used only REGULAR keeps the fixed
-	// EIGHTTAP header (libaom fix_interp_filter, av1/encoder/encoder_utils.c,
-	// applied with one frame of lag in this one-pass pipeline) and runs the
-	// search in shadow so a content change re-arms SWITCHABLE.
-	interpBase := !droppable && videoColorIs420(color) && !header.Prefix.ForceIntegerMV &&
-		refRecon.Width == src.Width && refRecon.Height == src.Height
-	interpSearch := interpBase && !e.interpOnlyRegular
-	if interpSearch {
-		header.Tile.InterpolationFilter = InterpolationSwitchable
-	}
-	e.pc.st.interpSearch = interpSearch
-	e.pc.st.interpShadow = interpBase && !interpSearch
-	e.pc.st.interpDual = seq.EnableDualFilter
-	for t := range e.tilePCs {
-		e.tilePCs[t].st.interpSearch = interpSearch
-		e.tilePCs[t].st.interpShadow = e.pc.st.interpShadow
-		e.tilePCs[t].st.interpDual = seq.EnableDualFilter
-	}
 	referenceMode := parser.ReferenceModeSingle
 	if golden != nil && compoundGoldenLikely(&e.pc.st, src, refRecon, golden) {
 		header.TransformRef.ReferenceMode = ReferenceModeSelect
@@ -1715,26 +1675,6 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 			if errs[t] != nil {
 				return nil, fmt.Errorf("encode tile %d: %w", t, errs[t])
 			}
-		}
-	}
-	// fix_interp_filter (libaom av1/encoder/encoder_utils.c): when a
-	// switchable (or shadow) base frame's search used only one filter and it
-	// is REGULAR, the next base frame codes the fixed EIGHTTAP header; any
-	// other winner re-arms SWITCHABLE. Frames with no searched blocks keep
-	// their current state, as libaom keeps SWITCHABLE on zero counts.
-	if interpBase {
-		var used [3]uint32
-		if nTiles == 1 {
-			used = e.pc.st.interpUsed
-		} else {
-			for t := 0; t < nTiles; t++ {
-				for f := range used {
-					used[f] += e.tilePCs[t].st.interpUsed[f]
-				}
-			}
-		}
-		if used[0]+used[1]+used[2] > 0 {
-			e.interpOnlyRegular = used[1] == 0 && used[2] == 0
 		}
 	}
 	// update_motion_stat (libaom av1/encoder/encoder.c): the percentage of

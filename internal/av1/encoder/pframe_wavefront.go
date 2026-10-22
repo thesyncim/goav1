@@ -85,7 +85,6 @@ func (w *pframeDecideWorker) adopt(src *lossyEncodeState) {
 	w.st.afterSkipInter = nil
 	w.st.afterSkipIntra = nil
 	w.st.cntZeroMV = 0
-	w.st.interpUsed = [3]uint32{}
 }
 
 // pframeWavefront owns the per-tile wavefront scheduling state and the parked
@@ -398,9 +397,6 @@ func (wf *pframeWavefront) join(pc *pframeCoder) error {
 			firstErr = w.err
 		}
 		pc.st.cntZeroMV += w.st.cntZeroMV
-		for f := range pc.st.interpUsed {
-			pc.st.interpUsed[f] += w.st.interpUsed[f]
-		}
 	}
 	if firstErr != nil {
 		return fmt.Errorf("wavefront decide: %w", firstErr)

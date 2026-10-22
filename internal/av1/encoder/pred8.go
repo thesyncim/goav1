@@ -120,3 +120,15 @@ func pred8SAD(src []byte, srcStride int, ref *frame.Plane, refX, refY, w, h, sub
 		unsafe.Pointer(&ref.Pix[refY*ref.Stride+refX]), ref.Stride, w, h, subX, subY,
 		&k[subX], &k[subY], im), true
 }
+
+// predictIntoFilters is predictInto with a caller-chosen interpolation filter
+// pair; the reference plane must match the current frame dimensions.
+func predictIntoFilters(dst []byte, refPlane []byte, stride, width, height, px, py, bw, bh int, mv motion.Vector, ssX, ssY bool, filters motion.InterpFilters, scratch *motion.ConvolveScratch) error {
+	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(px, py, mv, ssX, ssY)
+	if err != nil {
+		return err
+	}
+	dstPlane := frame.Plane{Pix: dst, Stride: bw, Width: bw, Height: bh}
+	ref := frame.Plane{Pix: refPlane, Stride: stride, Width: width, Height: height}
+	return motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSizeScratch(dstPlane, ref, 1, 8, 0, 0, refX, refY, bw, bh, bw, bh, subX, subY, filters, scratch)
+}

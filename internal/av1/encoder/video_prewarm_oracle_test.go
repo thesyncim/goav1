@@ -54,7 +54,6 @@ func frozenPrewarmOracle(e *VideoEncoder) error {
 	e.prewarmPipeline(src)
 	e.haveKey = false
 	e.haveCtx = false
-	e.interpOnlyRegular = false
 	e.haveCtxT1 = false
 	e.frameIndex = 0
 	e.lastTemporalID = 0
@@ -72,7 +71,7 @@ func frozenPrewarmOracle(e *VideoEncoder) error {
 
 func prewarmStateForOracle(e *VideoEncoder) any {
 	return struct {
-		HaveKey, HaveCtx, HaveCtxT1, InterpOnlyRegular, HMEArmed bool
+		HaveKey, HaveCtx, HaveCtxT1, HMEArmed bool
 		FrameIndex, ReconIdx, RCBuffer, SinceGolden, LowMotion   int
 		LastTemporalID, QIndex                                   uint8
 		RecentBits                                               [2]int
@@ -80,7 +79,7 @@ func prewarmStateForOracle(e *VideoEncoder) any {
 		TemporalBuffer                                           [WebRTCMaxTemporalLayers]int
 		TemporalRecentBits                                       [WebRTCMaxTemporalLayers][2]int
 		Stats                                                    EncoderDecisionStats
-	}{e.haveKey, e.haveCtx, e.haveCtxT1, e.interpOnlyRegular, e.hme.havePrev,
+	}{e.haveKey, e.haveCtx, e.haveCtxT1, e.hme.havePrev,
 		e.frameIndex, e.reconIdx, e.rcBuffer, e.sinceGoldenFresh, e.avgFrameLowMotion,
 		e.lastTemporalID, e.qIndex, e.rcRecentBits, e.rcTemporalQ, e.rcTemporalBuffer,
 		e.rcTemporalRecentBits, e.decisionStats}
