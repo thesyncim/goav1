@@ -661,11 +661,12 @@ var rdoqPlaneRDMult = [2]int64{17, 13}
 
 // rdoqLambda is optimize_b's rdmult: SVT's full lambda (svt_aom_compute_rd_mult
 // for a flat-IPP realtime inter frame: the inter rdmult times
-// rd_frame_type_factor[8-bit][ARF] = 180/128, following the superblock
-// quantizer through st.rdMult) scaled by
-// plane_rd_mult (rweight 100, rshift 2 at sharpness 0).
+// rd_frame_type_factor[8-bit][ARF_UPDATE] = 150/128, following the
+// superblock quantizer through st.rdMult) scaled by plane_rd_mult (rweight
+// 100, rshift 2 at sharpness 0). Preset 12 rtc runs RDOQ on intra pictures
+// only (pcs->rdoq_level = is_islice), so inter blocks never reach it.
 func (st *lossyEncodeState) rdoqLambda(plane int) int64 {
-	full := (st.rdMult * 180) >> 7
+	full := (st.rdMult * 150) >> 7
 	return (full*rdoqPlaneRDMult[plane] + 2) >> 2
 }
 
@@ -841,11 +842,12 @@ func (st *lossyEncodeState) svtCoeffCostEOB(qcoeff []int16, g *rdoqTXB, eob int)
 	return cost
 }
 
-// svtLumaCoeffBits is perform_dct_dct_tx_light_pd1's luma rate at
-// coeff_rate_est_lvl 2 (rate_est_level 4, the light-PD1 setting): the
-// 6000 + 1000*eob estimate for a TXB with eob below area/64, the table cost
-// otherwise.
-func (st *lossyEncodeState) svtLumaCoeffBits(qcoeff []int16, n int) int64 {
+// svtLumaCoeffBits is perform_dct_dct_tx_light_pd1's luma rate
+// (product_coding_loop.c:5268-5275): 6000 + 1000*eob for a TXB with eob
+// below area/64 at coeff_rate_est_lvl 2 (rate_est_level 4, LPD1_LVL_0) and
+// 0 (rate_est_level 0, LPD1_LVL_1 and above); otherwise the table cost at
+// level 2 and 6000 + 400*eob at level 0 (lvl0).
+func (st *lossyEncodeState) svtLumaCoeffBits(qcoeff []int16, n int, lvl0 bool) int64 {
 	g, ok := rdoqSquareGeometry(n, 0)
 	if !ok {
 		return 0
@@ -854,13 +856,16 @@ func (st *lossyEncodeState) svtLumaCoeffBits(qcoeff []int16, n int) int64 {
 	if eob < g.area>>6 {
 		return 6000 + int64(eob)*1000
 	}
+	if lvl0 {
+		return 6000 + int64(eob)*400
+	}
 	return st.svtCoeffCostEOB(qcoeff, g, eob)
 }
 
 // svtInterCoeffCost prices the coded alternative of the skip decision the
 // light-PD1 way (svtLumaCoeffBits per luma TXB, svtCoeffCost per chroma TXB),
-// scaled by the frame multiplier like txbBitsToRate.
-func (st *lossyEncodeState) svtInterCoeffCost(txPlan realtimeInterTXPlan, bw, bh, cbw, cbh int, hasChroma bool) (int64, bool) {
+// scaled by full_lambda (lpd1FullLambda).
+func (st *lossyEncodeState) svtInterCoeffCost(txPlan realtimeInterTXPlan, bw, bh, cbw, cbh int, hasChroma bool, lumaLvl0 bool, lambda int64) (int64, bool) {
 	if hasChroma && (cbw != cbh || cbw > 32) {
 		return 0, false
 	}
@@ -869,7 +874,7 @@ func (st *lossyEncodeState) svtInterCoeffCost(txPlan realtimeInterTXPlan, bw, bh
 		leaf := txPlan.leafSize
 		area := leaf * leaf
 		if err := txPlan.ForEachLeaf(func(i, dx, dy int) error {
-			cost += st.svtLumaCoeffBits(st.lumaQ2[i*area:(i+1)*area], leaf)
+			cost += st.svtLumaCoeffBits(st.lumaQ2[i*area:(i+1)*area], leaf, lumaLvl0)
 			return nil
 		}); err != nil {
 			return 0, false
@@ -878,11 +883,11 @@ func (st *lossyEncodeState) svtInterCoeffCost(txPlan realtimeInterTXPlan, bw, bh
 		if bw != bh || bw > 32 {
 			return 0, false
 		}
-		cost += st.svtLumaCoeffBits(st.lumaQ[:bw*bh], bw)
+		cost += st.svtLumaCoeffBits(st.lumaQ[:bw*bh], bw, lumaLvl0)
 	}
 	if hasChroma {
 		cost += st.svtCoeffCost(st.uQ[:cbw*cbh], cbw, 1)
 		cost += st.svtCoeffCost(st.vQ[:cbw*cbh], cbw, 1)
 	}
-	return (cost*st.rdMult + 256) >> 9, true
+	return (cost*lambda + 256) >> 9, true
 }

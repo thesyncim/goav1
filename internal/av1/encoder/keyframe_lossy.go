@@ -694,7 +694,29 @@ type lossyEncodeState struct {
 	deltaQCDF      entropy.CDF
 	mds0IntraOK    bool
 	mds0BestCost   int64
-	mds0BestVar    int64
+	// mds0BestRate is the MDS0 winner's luma rate (fast_luma_rate, 512 per
+	// bit; -1 when MDS0 did not pick the block's mode), the input of
+	// the light-PD1 TX bypass.
+	mds0BestRate int64
+	// lpd1 carries the picture's light-PD1 level setup and statistics
+	// (pframe_lpd1_level.go); lpd1Pending hands the next tile encode its
+	// setup the way sbQPending does. lpd1Dec caches the current SB's
+	// decision, lpd1TileSBCol0 is the tile's first SB column, and
+	// lpd1SkipBits the frame-frozen skip_fac_bits of skip_coeff_ctx 0.
+	lpd1           lpd1PictureSetup
+	lpd1Pending    lpd1PictureSetup
+	lpd1Dec        lpd1SBDecision
+	lpd1TileSBCol0 int
+	lpd1SkipBits   [2]int64
+	// lpd1NbrSkipCtx is the block's skip context: 2 when the left and
+	// above blocks are both available and coded skip (get_perform_tx_flag).
+	lpd1NbrSkipCtx int
+	// mds0BestSSE is the MDS0 winner's regular-filter luma SSE (full_dist)
+	// and lpd1IsInterBits its is_inter flag rate (intra_inter_fac_bits),
+	// part of fast_luma_rate.
+	mds0BestSSE     uint32
+	lpd1IsInterBits int64
+	mds0BestVar     int64
 
 	// depthRemovalLevel arms SVT-AV1's depth-removal signal chain for inter
 	// frames (set_depth_removal_level_controls, enc_mode_config.c; see

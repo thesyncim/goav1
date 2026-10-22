@@ -186,9 +186,13 @@ func (e *VideoEncoder) encodeOverlap(baseSrc SourceFrame420) (tu []byte, key boo
 	e.leafJob.src = leafSrc
 	e.leafJob.refRecon = refRecon
 	e.leafJob.prevCtx = prevCtx
+	e.leafJob.lpd1Ref = e.lpd1Last
+	e.leafJob.frameIndex = e.frameIndex
 	e.leafWork <- struct{}{}
 
+	e.lpd1FrameBias = 1
 	baseTU, berr := e.encodePReusing(baseSrc, 0)
+	e.lpd1FrameBias = 0
 
 	lerr := <-e.leafDone
 	if berr != nil {
@@ -331,7 +335,20 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 	e.leafPC.st.depthRemovalLevel = depthRemovalLevelForFrame(src.Width, src.Height, false)
 	e.leafPC.st.depthRemovalIsRef = false
 	// Droppable-leaf LPD1 TX shortcut controls, matching the serial leaf.
-	e.leafPC.st.setLPD1TxCtrls(true, false)
+	e.leafPC.st.setLPD1TxCtrls(true)
+	// Light-PD1 level setup of a droppable leaf (video.go encodePReusing),
+	// reading the base reference statistics snapshotted before the overlap.
+	leafSetup := lpd1PictureSetup{ref: e.leafJob.lpd1Ref, picLvl: lpd1PicLevel(false, false, header.Prefix.AllowScreenContentTools), armed: true}
+	leafSetup.tlFactor = 180 // the L1T2 leaf is the highest layer
+	leafSetup.gfUpdate = e.leafJob.frameIndex%lpd1MaxGFInterval == 0
+	if videoColorIs420(color) {
+		if e.lpd1Leaf == nil {
+			e.lpd1Leaf = new(lpd1Frame)
+		}
+		e.lpd1Leaf.begin(src.Width, src.Height, &e.leafHME, effQ)
+		leafSetup.cur = e.lpd1Leaf
+	}
+	e.leafPC.st.lpd1Pending = leafSetup
 	e.leafPC.st.interpSearch = false
 	e.leafPC.st.interpShadow = false
 	e.leafPC.st.interpDual = seq.EnableDualFilter

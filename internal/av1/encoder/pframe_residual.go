@@ -1850,6 +1850,7 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	st := &pc.st
 	st.sbQIndex, st.sbQCols = st.sbQPending, st.sbQPendingCols
 	st.sbQPending = nil
+	st.beginLPD1Tile(miColStart)
 	st.forceIntegerMV = forceIntegerMV
 	st.allowScreenContentTools = allowScreenContentTools
 	st.transformMode = parser.TransformModeSwitchable
@@ -2397,6 +2398,9 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		return fmt.Errorf("encoder: unexpected block %+v", block)
 	}
 	st.predStats.valid = false
+	// The MDS0 winner statistics belong to this block only (a block that
+	// left MDS0 for intra must not hand them to the next).
+	st.mds0BestRate = -1
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
 	if err := st.useSBQuant(lumaPX, lumaPY); err != nil {
@@ -2616,6 +2620,8 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		mv:      mv,
 		filters: blockFilters,
 	}
+	st.lpd1NbrSkipCtx, _ = scratch.Mode.SkipContext(int(block.X4), int(block.Y4))
+	st.lpd1NoteIsInterRate(&scratch.Mode, block)
 	skip, splitTX, txPlan, txType, err := st.decideInterTXBlock(src, refPlanes, mv, block,
 		lumaPX, lumaPY, bw, bh, cbw, cbh, chromaPX, chromaPY, hasChroma, fullSAD)
 	st.predYKey.valid = false
@@ -2951,6 +2957,7 @@ func (st *lossyEncodeState) classifyInterMode(src, refPlanes SourceFrame420, sta
 // y_mode CDFs, the decoder's MarkIntra/MarkChromaIntra context updates, then
 // the same DC-predicted TXB pipeline the lossy keyframe path uses.
 func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
+	st.lpd1NoteIntraBlock(block)
 	modeCtx := &scratch.Mode
 	coeffCtx := &scratch.CoeffCtx
 

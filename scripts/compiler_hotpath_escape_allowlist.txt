@@ -215,6 +215,16 @@ internal/av1/encoder/pframe_highbd.go:*:*: make([]uint16, len(src.Y)) escapes to
 internal/av1/encoder/pframe_highbd.go:*:*: make([]uint16, len(src.Y)) escapes to heap in EncodeHighBitDepth420PFrame:
 internal/av1/encoder/pframe_highbd.go:*:*: make([]uint16, len(src.Y)) escapes to heap in EncodeHighBitDepthMonochromePFrame:
 internal/av1/encoder/pframe_highbd.go:*:*: moved to heap: pc
+internal/av1/encoder/pframe_lpd1_level.go:*:*: make([]int16, n) escapes to heap
+internal/av1/encoder/pframe_lpd1_level.go:*:*: make([]int16, n) escapes to heap in (*lpd1Frame).begin:
+internal/av1/encoder/pframe_lpd1_level.go:*:*: make([]int16, n) escapes to heap in (*lpd1Frame).resize:
+internal/av1/encoder/pframe_lpd1_level.go:*:*: make([]int16, n) escapes to heap in (*lpd1Frame).setKey:
+internal/av1/encoder/pframe_lpd1_level.go:*:*: make([]lpd1SBStat, n) escapes to heap
+internal/av1/encoder/pframe_lpd1_level.go:*:*: make([]lpd1SBStat, n) escapes to heap in (*lpd1Frame).begin:
+internal/av1/encoder/pframe_lpd1_level.go:*:*: make([]lpd1SBStat, n) escapes to heap in (*lpd1Frame).resize:
+internal/av1/encoder/pframe_lpd1_level.go:*:*: make([]lpd1SBStat, n) escapes to heap in (*lpd1Frame).setKey:
+internal/av1/encoder/pframe_lpd1_level.go:*:*: new(lpd1Frame) escapes to heap
+internal/av1/encoder/pframe_lpd1_level.go:*:*: new(lpd1Frame) escapes to heap in (*VideoEncoder).lpd1KeyRefs:
 internal/av1/encoder/pframe_residual.go:*:*: func literal escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: func literal escapes to heap in (*pframeCoder).encodeLosslessIntraInterTile:
 internal/av1/encoder/pframe_residual.go:*:*: func literal escapes to heap in (*pframeCoder).encodeTileWithOptionsColor:
@@ -352,6 +362,8 @@ internal/av1/encoder/video.go:*:*: make([]pframeCoder, nTiles) escapes to heap
 internal/av1/encoder/video.go:*:*: make([]pframeCoder, nTiles) escapes to heap in (*VideoEncoder).encodeKeyWithSequenceMax:
 internal/av1/encoder/video.go:*:*: make([]pframeCoder, nTiles) escapes to heap in (*VideoEncoder).encodePReusing:
 internal/av1/encoder/video.go:*:*: make([]pframeCoder, nTiles) escapes to heap in (*VideoEncoder).encodeReferencePFrameWithSequenceMax:
+internal/av1/encoder/video.go:*:*: new(lpd1Frame) escapes to heap
+internal/av1/encoder/video.go:*:*: new(lpd1Frame) escapes to heap in (*VideoEncoder).encodePReusing:
 internal/av1/encoder/video_highbd_color.go:*:*: make([]TilePayload, nTiles) escapes to heap
 internal/av1/encoder/video_highbd_color.go:*:*: make([]TilePayload, nTiles) escapes to heap in (*HighBitDepth420VideoEncoder).encodeKeyTilePayloads:
 internal/av1/encoder/video_highbd_color.go:*:*: make([]TilePayload, nTiles) escapes to heap in (*HighBitDepth420VideoEncoder).encodePTilePayloads:
@@ -441,6 +453,8 @@ internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.Y)) escapes to 
 internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.Y)) escapes to heap in (*VideoEncoder).prewarmPipeline:
 internal/av1/encoder/video_pipeline.go:*:*: make([]byte, n) escapes to heap
 internal/av1/encoder/video_pipeline.go:*:*: make([]byte, n) escapes to heap in (*VideoEncoder).runLeafHME:
+internal/av1/encoder/video_pipeline.go:*:*: new(lpd1Frame) escapes to heap
+internal/av1/encoder/video_pipeline.go:*:*: new(lpd1Frame) escapes to heap in (*VideoEncoder).computeLeafTU:
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, descriptorBytes) escapes to heap
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, descriptorBytes) escapes to heap in (*WebRTCStream).Prewarm:
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, layerSize) escapes to heap

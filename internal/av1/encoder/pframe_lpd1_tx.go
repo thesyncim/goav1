@@ -7,31 +7,26 @@ package encoder
 //     forced to level 3 ("rtc forced to use lvl 3 because using the more
 //     aggressive levels for only non-base pictures causes concentrated bit
 //     allocation for flat rtc", enc_mode_config.c:7325-7338):
-//     zero_y_coeff_exit=1, use_mds3_shortcuts_th=30, use_neighbour_info=0.
-//     The chroma detector level is the ENC_M10+ override
-//     (enc_mode_config.c:7340-7355): 4 while lpd1_level <= LPD1_LVL_4 (base
-//     pictures, pic_lpd1_lvl=3 -> LPD1_LVL_1), 0 above it (droppable
-//     leaves, pic_lpd1_lvl=7 -> LPD1_LVL_5).
+//     zero_y_coeff_exit=1, skip_tx_th=30, use_mds3_shortcuts_th=30,
+//     use_neighbour_info=0. The chroma detector level, the TX bypass
+//     threshold, lpd1_skip_inter_tx_level, rdoq_level and rate_est_level
+//     follow the SB's light-PD1 level (pframe_lpd1_level.go
+//     lpd1SBDecision).
 //   - Detector: product_coding_loop.c lpd1_tx_shortcut_detector(). The MDS0
 //     winner's luma residual variance (fast_loop_core_light_pd1 stores
 //     fn_ptr->vf as luma_fast_dist) is compared against
-//     th * bwidth * bheight * qp_index / 100. use_neighbour_info=0 at level
-//     3, so the neighbour-multiplier arm is not ported.
-//   - Consumption: zero_y_coeff_exit + chroma_complexity_check() (skip the
-//     chroma TX when luma coded all-zero and chroma is not complex) and
-//     search_dct_dct_only() (skip the 8x8 TX-type trial, DCT_DCT only).
+//     th * bwidth * bheight * qp_index / 100 for use_tx_shortcuts_mds3 and
+//     lpd1_allow_skipping_tx. use_neighbour_info=0 at level 3, so the
+//     neighbour-multiplier arm is not ported.
+//   - Consumption: get_perform_tx_flag (lpd1PerformTX: the skip-inter-TX
+//     arms, then lpd1_bypass_tx_th), zero_y_coeff_exit +
+//     chroma_complexity_check() (skip the chroma TX when luma coded all-zero
+//     and chroma is not complex) and search_dct_dct_only() (skip the 8x8
+//     TX-type trial, DCT_DCT only).
 //
-// PINNED REVERTS (measured on the four-clip corpus, 2026-07-06):
-//   - get_perform_tx_flag's skip_tx_th=30 / lpd1_skip_inter_tx_level=1 arm
-//     (drop the leaf-frame luma TX when both neighbours coded skip) measured
-//     RED in the single-tile config: realB −0.29 dB rate-adjusted at −6.8%
-//     rate (skip cascades through the neighbour feedback frame-wide; SVT
-//     guards the arm with its per-SB LPD1 detector plus
-//     l0_was_skip/ref_skip_perc/me_8x8_cost_variance picture stats this
-//     encoder does not collect). Do not re-enable without those stats.
-//   - Pinning shortcut blocks to the largest square leaf (LPD1's tx_depth-0
-//     shape) moved realA/realB −0.17/−0.2 dB rate-adjusted; TX-size
-//     reduction is the separate flag-gated largest-TX experiment.
+// The skip-inter-TX arm measured red on 2026-07-06 without SVT's per-SB
+// level and its l0_was_skip/ref_skip_perc/me_8x8_cost_variance inputs; it
+// now runs with them, as SVT does.
 //
 import (
 	"fmt"
@@ -42,7 +37,8 @@ import (
 )
 
 // lpd1TxCtrls mirrors the consumed subset of SVT-AV1's Lpd1TxCtrls
-// (md_process.h). The zero value disables every shortcut.
+// (md_process.h). The zero value disables every shortcut. The chroma
+// detector level is per SB (lpd1SBDecision.chromaDetector).
 type lpd1TxCtrls struct {
 	enabled bool
 	// zeroYCoeffExit: skip chroma TX when the luma TXBs code all-zero
@@ -50,43 +46,43 @@ type lpd1TxCtrls struct {
 	zeroYCoeffExit bool
 	// useMds3ShortcutsTh: percentage threshold arming use_tx_shortcuts_mds3.
 	useMds3ShortcutsTh uint16
-	// chromaDetectorLevel selects chroma_complexity_check behaviour
-	// (0 = no detector: chroma dropped whenever luma is all-zero).
-	chromaDetectorLevel uint8
+	// skipTxTh: percentage threshold arming lpd1_allow_skipping_tx.
+	skipTxTh uint16
 }
 
-// setLPD1TxCtrls applies SVT-AV1 set_lpd1_tx_ctrls level 3 — the level rtc
-// pictures are forced to at every preset that runs LPD1 — with the picture
-// modulation derived from isBase (temporal layer 0 / referenced):
-// chroma_complexity_check level 4 on base pictures, 0 on droppable leaves.
-func (st *lossyEncodeState) setLPD1TxCtrls(enabled bool, isBase bool) {
+// setLPD1TxCtrls applies SVT-AV1 set_lpd1_tx_ctrls level 3, the level rtc
+// pictures are forced to at every preset that runs LPD1
+// (enc_mode_config.c:6238-6247): zero_y_coeff_exit, skip_tx_th 30,
+// use_mds3_shortcuts_th 30, use_neighbour_info 0. skip_nrst_nrst_luma_tx
+// only applies to NEAREST_NEARESTMV, a compound mode the light path here
+// never codes.
+func (st *lossyEncodeState) setLPD1TxCtrls(enabled bool) {
 	if !enabled {
 		st.lpd1Tx = lpd1TxCtrls{}
 		return
 	}
-	ctrls := lpd1TxCtrls{
+	st.lpd1Tx = lpd1TxCtrls{
 		enabled:            true,
 		zeroYCoeffExit:     true,
 		useMds3ShortcutsTh: 30,
+		skipTxTh:           30,
 	}
-	if isBase {
-		ctrls.chromaDetectorLevel = 4
-	} else {
-		ctrls.chromaDetectorLevel = 0
-	}
-	st.lpd1Tx = ctrls
 }
 
-// lpd1TxDetect is lpd1_tx_shortcut_detector's use_tx_shortcuts_mds3 arm
-// (product_coding_loop.c): compare the winner's luma residual variance
-// against th_normalizer = bheight * bwidth * qp_index. use_neighbour_info is
-// 0 at level 3, so the neighbour-multiplier refinement is not ported.
-func (st *lossyEncodeState) lpd1TxDetect(variance uint32, bw, bh int) bool {
+// lpd1TxDetect is lpd1_tx_shortcut_detector (product_coding_loop.c): the
+// winner's luma residual variance against th_normalizer = bheight * bwidth
+// * qp_index, where qp_index is the SB qindex (md_process.c
+// svt_aom_mode_decision_configure_sb). It returns use_tx_shortcuts_mds3 and
+// lpd1_allow_skipping_tx. use_neighbour_info is 0 at level 3, so the
+// neighbour-multiplier refinement is not ported.
+func (st *lossyEncodeState) lpd1TxDetect(variance uint32, bw, bh int) (useShortcuts, allowSkipTX bool) {
 	if !st.lpd1Tx.enabled {
-		return false
+		return false, false
 	}
-	thNormalizer := uint64(bw) * uint64(bh) * uint64(st.qIndex)
-	return 100*uint64(variance) < uint64(st.lpd1Tx.useMds3ShortcutsTh)*thNormalizer
+	thNormalizer := uint64(bw) * uint64(bh) * uint64(st.quantQ)
+	dist := 100 * uint64(variance)
+	return dist < uint64(st.lpd1Tx.useMds3ShortcutsTh)*thNormalizer,
+		dist < uint64(st.lpd1Tx.skipTxTh)*thNormalizer
 }
 
 // lpd1Component mirrors SVT's COMPONENT_TYPE subset the chroma detector
@@ -177,10 +173,10 @@ func lpd1SampledSAD(src, ref []byte, srcOff, refOff, srcStride, refStride, w, ro
 // construction. It quantizes all planes up front, takes the rate-priced skip
 // decision, and applies the light-PD1 TX shortcut detectors when armed:
 // zero_y_coeff_exit + the chroma complexity detector (drop the chroma TX
-// when luma coded all-zero) and search_dct_dct_only (skip the 8x8 TX-type
-// trial, DCT_DCT only; the TX-size plan stays on the calculate_tx_size
-// heuristic — see the pinned reverts in the file header). With st.lpd1Tx
-// disabled the flow is byte-identical to the pre-port encoder.
+// when luma coded all-zero), get_perform_tx_flag (drop the luma TX) and
+// search_dct_dct_only (skip the 8x8 TX-type trial, DCT_DCT only). The
+// light path codes tx_depth 0 with SVT's coefficient pricing; RDOQ follows
+// the SB's rdoq_level.
 //
 // detectMV is the winner's first motion vector (block_mi.mv[0]) and
 // refPlanes its first reference's planes, the chroma detector's inputs.
@@ -195,8 +191,12 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 	skip = fullSAD*4 <= bw*bh
 	st.rdoqBlock = false
 	useRealtimeTXPlan := videoColorIs420(st.color)
+	lumaBypass := false
 	lpd1UseShortcuts := false
+	lightPath := false
+	var dec *lpd1SBDecision
 	if useRealtimeTXPlan {
+		dec = st.lpd1SB(lumaPX, lumaPY)
 		sse, variance, ok := uint32(0), uint32(0), false
 		if st.predYKey.valid {
 			sse, variance, ok = st.predStats.lookup(st.predYKey.mv, st.predYKey.filters)
@@ -204,12 +204,24 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 		if !ok {
 			sse, variance = realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
 		}
+		// The TX detectors and the bypass read the MDS0 winner's
+		// regular-filter statistics (luma_fast_dist, full_dist = its vf sse),
+		// not the IFS-chosen prediction's.
+		mdsSSE, mdsVar := sse, variance
+		if st.mds0BestRate >= 0 {
+			mdsSSE, mdsVar = st.mds0BestSSE, uint32(st.mds0BestVar)
+		}
+		allowSkipTX := false
 		if st.lpd1Tx.enabled {
-			lpd1UseShortcuts = st.lpd1TxDetect(variance, bw, bh)
+			lpd1UseShortcuts, allowSkipTX = st.lpd1TxDetect(mdsVar, bw, bh)
 		}
 		txLevel := realtimeTXSizeLevelBasedOnQstep(src.Width, src.Height, st.effortLevel)
-		st.rdoqBlock = st.armRDOQ()
-		if leaf, ok := svtDepth0TXLeaf(block.Size); st.rdoqBlock && ok {
+		// The light-PD1 TX path (tx_depth 0, SVT coefficient pricing, the TX
+		// bypass) needs the RDOQ rate tables; RDOQ itself follows the SB's
+		// rdoq_level.
+		lightPath = st.armRDOQ()
+		st.rdoqBlock = lightPath && dec.rdoq
+		if leaf, ok := svtDepth0TXLeaf(block.Size); lightPath && ok {
 			txPlan, err = realtimeInterTXPlanForLeafSize(block.Size, leaf)
 		} else {
 			txPlan, err = realtimeInterTXPlanForBlock(block.Size, st.qIndex, st.yQuant.AC, txLevel, sse, variance)
@@ -217,13 +229,23 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 		if err != nil {
 			return false, false, txPlan, transform.TypeDCTDCT, err
 		}
+		// get_perform_tx_flag: perform_tx = 0 skips only the luma transform;
+		// chroma still runs (full_loop_core_light_pd1).
+		lumaBypass = lightPath && !skip && !st.lpd1PerformTX(dec, allowSkipTX, mdsSSE, bw, bh)
 	}
+	st.mds0BestRate = -1
 	dctRdD := int64(0)
 	if !skip {
 		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
 		st.setRDOQArm(0)
 		lumaZero := true
-		if txPlan.Variable() {
+		if lumaBypass {
+			if txPlan.Variable() {
+				clear(st.lumaQ2[:bw*bh])
+			} else {
+				clear(st.lumaQ[:bw*bh])
+			}
+		} else if txPlan.Variable() {
 			leafArea := txPlan.leafSize * txPlan.leafSize
 			if lerr := txPlan.ForEachLeaf(func(i, dx, dy int) error {
 				if !st.prepareInterTXBDecide(src.Y, st.predY[dy*bw+dx:], bw, src.YStride, lumaPX+dx, lumaPY+dy, txPlan.leafSize, txPlan.leafSize, st.yQuant, st.lumaQ2[i*leafArea:(i+1)*leafArea]) {
@@ -249,7 +271,7 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 			comp := lpd1ComponentChroma
 			if useRealtimeTXPlan && st.lpd1Tx.enabled && st.lpd1Tx.zeroYCoeffExit && lumaZero {
 				comp = lpd1ComponentLuma
-				if st.lpd1Tx.chromaDetectorLevel != 0 {
+				if dec.chromaDetector != 0 {
 					comp = st.lpd1ChromaComplexity(src, refPlanes, detectMV, lumaPX, lumaPY, cbw, cbh)
 				}
 				performChroma = comp != lpd1ComponentLuma
@@ -287,8 +309,10 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 			// the per-coefficient estimate remains only for layouts the
 			// trial counters do not cover.
 			rate := (st.rdRcode*st.rdMult + 256) >> 9
-			if st.rdoqBlock {
-				if r, ok := st.svtInterCoeffCost(txPlan, bw, bh, cbw, cbh, hasChroma); ok {
+			if lightPath {
+				// svt_aom_full_cost prices at full_lambda.
+				rate = (st.rdRcode*st.lpd1FullLambda(dec) + 256) >> 9
+				if r, ok := st.svtInterCoeffCost(txPlan, bw, bh, cbw, cbh, hasChroma, dec.coeffRateLvl0, st.lpd1FullLambda(dec)); ok {
 					rate = r
 				}
 			} else if r, ok := st.exactInterCoeffCost(txPlan, bw, bh, cbw, cbh, hasChroma, lumaPX, lumaPY); ok {
@@ -314,6 +338,7 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 		bw == 8 && bh == 8 && st.qIndex <= 96 && videoColorIs420(st.color) {
 		txType = st.chooseInter8x8TXType(src, lumaPX, lumaPY, dctRdD)
 	}
+	st.lpd1NoteBlock(lumaPX, lumaPY, bw, bh, false, !skip)
 	return skip, splitTX, txPlan, txType, nil
 }
 
@@ -450,4 +475,45 @@ func (st *lossyEncodeState) restoreSkipRateCDFs() {
 		c.EOBFlag1024[p] = b.EOBFlag1024[p]
 	}
 	st.skipRateDirty = 0
+}
+
+// lpd1InitBitEst is product_coding_loop.c INIT_BIT_EST.
+const lpd1InitBitEst = 6000
+
+// lpd1BypassTX is get_perform_tx_flag's lpd1_bypass_tx_th test: the block
+// skips the transform when the estimated skip cost of the MDS0 winner (its
+// luma rate plus the skip flag, its prediction SSE) is under th
+// (lpd1_bypass_tx_th, the SB's light-PD1 level; see pframe_lpd1_level.go)
+// percent of a one-unit-per-pixel coded cost, at SVT's full_lambda
+// (lpd1FullLambda); skip_coeff_ctx is 0 on the light-PD1
+// path (update_skip_coeff_ctx = 0) with frame-frozen skip_fac_bits.
+func (st *lossyEncodeState) lpd1BypassTX(sse uint32, bw, bh int, th, lambda int64) bool {
+	rate := st.mds0BestRate
+	if rate < 0 || th == 0 {
+		return false
+	}
+	// fast_luma_rate carries the is_inter flag (av1_inter_fast_cost_light).
+	rate += st.lpd1IsInterBits
+	skip0, skip1 := st.lpd1SkipBits[0], st.lpd1SkipBits[1]
+	est := rdoqCostRD(lambda, rate+skip1, int64(sse)<<4)
+	thCost := rdoqCostRD(lambda, rate+skip0+lpd1InitBitEst, int64(bw*bh)<<4)
+	return est*100 < th*thCost
+}
+
+// lpd1PerformTX is get_perform_tx_flag (product_coding_loop.c) for the
+// single-reference inter candidate the light path codes: with
+// lpd1_allow_skipping_tx, lpd1_skip_inter_tx_level 2 drops the luma TX of
+// every inter candidate and level 1 drops it when the left and above
+// blocks are available and both coded skip; otherwise lpd1_bypass_tx_th
+// decides. skip_nrst_nrst_luma_tx targets NEAREST_NEARESTMV only.
+func (st *lossyEncodeState) lpd1PerformTX(dec *lpd1SBDecision, allowSkipTX bool, sse uint32, bw, bh int) bool {
+	if allowSkipTX {
+		if dec.skipInterTxLevel == 2 {
+			return false
+		}
+		if st.lpd1NbrSkipCtx == 2 && dec.skipInterTxLevel == 1 {
+			return false
+		}
+	}
+	return !st.lpd1BypassTX(sse, bw, bh, dec.bypassTh, st.lpd1FullLambda(dec))
 }
