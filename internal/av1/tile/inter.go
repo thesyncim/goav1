@@ -727,6 +727,13 @@ func (c *BlockModeContext) markInterContext(size BlockSize, x4 int, y4 int, resu
 	h4 := int(dims.H4)
 	xEnd := x4 + w4
 	yEnd := y4 + h4
+	// dav1d decode_b resets the edge palette sizes for every inter block
+	// (pal_sz and, outside has_chroma, pal_sz_uv: aomedia bug 2183), so a
+	// later palette block's colour cache and context never see a stale palette.
+	clear(c.AbovePaletteY[x4:xEnd])
+	clear(c.AbovePaletteUV[x4:xEnd])
+	clear(c.LeftPaletteY[y4:yEnd])
+	clear(c.LeftPaletteUV[y4:yEnd])
 	clear(c.AboveIntra[x4:xEnd])
 	clear(c.AboveCompGroup[x4:xEnd])
 	clear(c.AboveInterIntra[x4:xEnd])

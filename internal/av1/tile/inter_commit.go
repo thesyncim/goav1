@@ -44,6 +44,8 @@ func (c *BlockModeContext) markInterMotionAndFilters(size BlockSize, x4, y4 int,
 		c.AboveIntra[x] = 0
 		c.AboveCompGroup[x] = 0
 		c.AboveInterIntra[x] = 0
+		c.AbovePaletteY[x] = paletteContext{}
+		c.AbovePaletteUV[x] = paletteContext{}
 		if hasChroma {
 			c.AboveChromaIntra[x] = 0
 			c.AboveChromaMode[x] = 0
@@ -60,6 +62,8 @@ func (c *BlockModeContext) markInterMotionAndFilters(size BlockSize, x4, y4 int,
 		c.LeftIntra[y] = 0
 		c.LeftCompGroup[y] = 0
 		c.LeftInterIntra[y] = 0
+		c.LeftPaletteY[y] = paletteContext{}
+		c.LeftPaletteUV[y] = paletteContext{}
 		if hasChroma {
 			c.LeftChromaIntra[y] = 0
 			c.LeftChromaMode[y] = 0

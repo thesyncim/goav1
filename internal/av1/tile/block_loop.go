@@ -1566,6 +1566,8 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 		ChromaMode:              result.ChromaMode,
 		ChromaModeValid:         result.ChromaModeValid,
 		HasChroma:               hasChroma,
+		VisibleW4:               block.VisibleW4,
+		VisibleH4:               block.VisibleH4,
 	}, &result.Palette, paletteMap); err != nil {
 		return err
 	}
