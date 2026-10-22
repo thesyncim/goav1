@@ -31,7 +31,7 @@ func svtBilinearReference(ref []byte, refStride, w, h, xoff, yoff int) []byte {
 func TestSVTBilinearPredictMatchesReference(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
 	const stride = 160
-	ref := make([]byte, stride*90)
+	ref := make([]byte, stride*110)
 	for i := range ref {
 		ref[i] = byte(rng.Intn(256))
 	}
@@ -48,6 +48,19 @@ func TestSVTBilinearPredictMatchesReference(t *testing.T) {
 					if scratch.pred[i] != want[i] {
 						t.Fatalf("%dx%d off (%d,%d): sample %d = %d, want %d", w, h, xoff, yoff, i, scratch.pred[i], want[i])
 					}
+				}
+				src := ref[40*stride+70:]
+				var sse, sum int64
+				for r := 0; r < h; r++ {
+					for c := 0; c < w; c++ {
+						d := int64(want[r*w+c]) - int64(src[r*stride+c])
+						sse += d * d
+						sum += d
+					}
+				}
+				wantVar := uint32(sse - sum*sum/int64(w*h))
+				if got := svtSubpelVarianceArch(&scratch, ref[off:], stride, src, stride, w, h, xoff, yoff); got != wantVar {
+					t.Fatalf("svf %dx%d off (%d,%d) = %d, want %d", w, h, xoff, yoff, got, wantVar)
 				}
 				svtBilinearPredict(&scratch, ref[off:], stride, w, h, xoff, yoff)
 				for i := range want {

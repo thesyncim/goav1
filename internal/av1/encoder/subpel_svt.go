@@ -307,9 +307,7 @@ func svtRefWindow(scratch *svtSubpelScratch, refPlane []byte, stride, width, hei
 func (st *lossyEncodeState) svtSubpelVariance(scratch *svtSubpelScratch, src []byte, srcStride int, refPlane []byte, stride, width, height, px, py, bw, bh int, mv motion.Vector) uint32 {
 	x, y := px+int(mv.Col>>3), py+int(mv.Row>>3)
 	ref, refStride := svtRefWindow(scratch, refPlane, stride, width, height, x, y, bw, bh)
-	svtBilinearPredictArch(scratch, ref, refStride, bw, bh, int(mv.Col&7), int(mv.Row&7))
-	_, v := realtimeInterResidualSSEVariance(scratch.pred[:], src, bw, srcStride, 0, 0, bw, bh)
-	return v
+	return svtSubpelVarianceArch(scratch, ref, refStride, src, srcStride, bw, bh, int(mv.Col&7), int(mv.Row&7))
 }
 
 // svtBilinearPredict writes the bw x bh bilinear prediction into
