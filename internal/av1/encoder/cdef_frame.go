@@ -29,14 +29,23 @@ type svtCDEFFramePlan struct {
 // cdef_recon_level 0 (zero_filter_strength_lvl 0 gives a zero threshold), the
 // skip detector is off at the rtc levels, and tune PSNR leaves the
 // sharpness CDEF switch off, so none of them can zero cdef_level here.
-func planSVTCDEF(enabled, islice, isBase, notHighestLayer, screen bool, ref svtCDEFRefStrengths) svtCDEFFramePlan {
+func planSVTCDEF(enabled, islice, isBase, notHighestLayer, screen bool, ref svtCDEFRefStrengths, refSkipPerc uint8) svtCDEFFramePlan {
 	if !enabled {
 		return svtCDEFFramePlan{}
 	}
 	level := svtRTCCDEFSearchLevel(islice, screen)
 	p := svtCDEFFramePlan{intra: islice, ctrls: setSVTCDEFSearchControls(level, isBase, notHighestLayer)}
 	p.on = p.ctrls.enabled
-	if !islice && p.on && (p.ctrls.useReferenceCDEFFS || p.ctrls.searchBestRefFS) {
+	// md_config_process.c: the skip detector (level 7 non-base pictures,
+	// screen content at rtc p12) turns CDEF off when more than 75% of the
+	// LAST reference was coded skip (rc_process.c get_ref_skip_percentage:
+	// the list-0 reference's skip_coded_area); otherwise the reference
+	// strengths feed update_cdef_filters_on_ref_info.
+	switch {
+	case islice || !p.on:
+	case refSkipPerc > 75 && p.ctrls.useSkipDetector:
+		p.on = false
+	case p.ctrls.useReferenceCDEFFS || p.ctrls.searchBestRefFS:
 		p.on = p.ctrls.updateOnRefInfo(ref)
 	}
 	p.search = p.on && !p.ctrls.useReferenceCDEFFS && !p.ctrls.useQPStrength
@@ -216,4 +225,13 @@ func (e *VideoEncoder) interTileCoders(nTiles int) []*pframeCoder {
 	}
 	e.cdefLogs.coders = c
 	return c
+}
+
+// lpd1RefSkipPerc is the reference's skip_coded_area (0 without one), the
+// statistic light-PD1 already publishes with each reference.
+func lpd1RefSkipPerc(ref *lpd1Frame) uint8 {
+	if ref == nil || !ref.valid {
+		return 0
+	}
+	return ref.skipPerc
 }

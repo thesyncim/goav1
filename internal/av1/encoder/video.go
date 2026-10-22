@@ -1361,12 +1361,12 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	// SVT-AV1 rtc CDEF (cdef_frame.go): the picture's cdef_search_level and
 	// the reference-derived filters, decided before the tiles so a
 	// searching picture records its tile symbol streams.
-	cdefRef := e.cdefRefLast
+	cdefRef, cdefRefStats := e.cdefRefLast, e.lpd1Last
 	if afterT1 {
-		cdefRef = e.cdefRefT1
+		cdefRef, cdefRefStats = e.cdefRefT1, e.lpd1T1
 	}
 	cdefPlan := planSVTCDEF(filterSupported && seq.EnableCDEF && !e.fastestRealtimeEffort() && src.Width*src.Height <= loopFilterMaxArea,
-		false, temporalID == 0, !droppable || isT1, e.svtScreen(), cdefRef)
+		false, temporalID == 0, !droppable || isT1, e.svtScreen(), cdefRef, lpd1RefSkipPerc(cdefRefStats))
 	if lfLevel > 0 || cdefPlan.on {
 		if !e.lf.bound {
 			if err := e.lf.init(src.Width, src.Height); err != nil {

@@ -51,11 +51,23 @@ func TestCDEFSearchMultiStrengthSignalsBitExact(t *testing.T) {
 		forced++
 	})
 	t.Cleanup(func() { encoder.SetCDEFDecisionTestHook(nil) })
-	for _, threads := range []int{1, 4} {
-		t.Run(fmt.Sprintf("threads%d", threads), func(t *testing.T) {
+	// Screen content runs cdef level 7, where the middle layer searches
+	// with search_best_ref_fs: the only non-base picture that records.
+	for _, cfg := range []struct {
+		threads int
+		screen  bool
+	}{{1, false}, {4, false}, {1, true}, {4, true}} {
+		threads := cfg.threads
+		t.Run(fmt.Sprintf("threads%d_screen%v", threads, cfg.screen), func(t *testing.T) {
 			enc, err := encoder.NewVideoEncoder(w, h, 60)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if cfg.screen {
+				enc.SetScreenContentSelection(true)
+				if err := enc.SetContentHint(encoder.ContentScreen); err != nil {
+					t.Fatal(err)
+				}
 			}
 			t.Cleanup(func() { _ = enc.Close() })
 			enc.SetMaxThreads(threads)
