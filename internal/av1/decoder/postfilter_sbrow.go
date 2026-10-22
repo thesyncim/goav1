@@ -1,6 +1,8 @@
 package decoder
 
 import (
+	"unsafe"
+
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/tile"
@@ -60,7 +62,37 @@ func (ctx *FrameWorkPostFilterContext) sbrowPostFilterEligible(req FrameWorkPost
 	if frameWorkRestorationBoundariesEmpty(boundaries) && ctx.RestorationFrameBuffers != nil {
 		boundaries = ctx.RestorationFrameBuffers.Boundaries
 	}
-	return !frameWorkRestorationBoundariesEmpty(boundaries)
+	if frameWorkRestorationBoundariesEmpty(boundaries) {
+		return false
+	}
+	// The whole-frame order lets each stage reuse memory the previous stage
+	// is done with; the pipeline keeps CDEF's line backups live across the
+	// restoration calls, so a caller that aliases them falls back.
+	lrs := req.Restoration
+	lrMem := [...][]uint16{lrs.DataScratch, lrs.Scratch.Unit.Wiener, lrs.Scratch.Boundary.Above, lrs.Scratch.Boundary.Below}
+	for _, c := range req.CDEF.SampleScratch {
+		for _, m := range lrMem {
+			if frameWorkU16Overlap(c, m) {
+				return false
+			}
+		}
+		for i := range boundaries {
+			if frameWorkU16Overlap(c, boundaries[i].Above) || frameWorkU16Overlap(c, boundaries[i].Below) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// frameWorkU16Overlap reports whether two slices share backing memory.
+func frameWorkU16Overlap(a, b []uint16) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	a0 := uintptr(unsafe.Pointer(unsafe.SliceData(a)))
+	b0 := uintptr(unsafe.Pointer(unsafe.SliceData(b)))
+	return a0 < b0+2*uintptr(len(b)) && b0 < a0+2*uintptr(len(a))
 }
 
 // applySbrowPostFilters runs deblock, CDEF and loop restoration as the
