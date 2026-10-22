@@ -331,16 +331,16 @@ type FrameWorkTileResidualScratch struct {
 	// final value arena are installed immediately before replay. All buffers
 	// retain capacity across tiles and are sliced to zero length per job by
 	// resetDeferredReconBuffers.
-	reconEvents     []frameWorkReconEvent
-	reconVisits     []tile.BlockLoopVisit
-	reconBlocks     []tile.BlockCoeffBlock
+	reconEvents []frameWorkReconEvent
+	reconVisits []tile.BlockLoopVisit
+	reconBlocks []tile.BlockCoeffBlock
 	// reconCF parallels reconBlocks: the dequantized coefficients of a TXB the
 	// dav1d block walk decoded into cfArena (dav1d's frame-thread cf), or a
 	// nil slice when the TXB carries quantized coefficients instead.
 	reconCF []frameWorkReconCF
 	cfArena []int32
 	// coefBuf is the fused path's dav1d t->cf coefficient buffer.
-	coefBuf tile.CoefBuffer
+	coefBuf         tile.CoefBuffer
 	coeffArena      []int16
 	paletteArena    []tile.PaletteModeScratch
 	paletteBindings []frameWorkReconPaletteBinding
@@ -413,6 +413,10 @@ type frameWorkReconWavefront struct {
 	lanes     int
 	wg        sync.WaitGroup
 	firstErr  atomic.Pointer[wavefrontError]
+
+	// frameThread is the frame-thread split this wavefront belongs to, or nil.
+	// Its lanes wait for the reference surfaces before the first row.
+	frameThread *FrameThreadRecon
 }
 
 type frameWorkReconWavefrontProgress struct {
@@ -1237,7 +1241,15 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 	if req.Predict == nil {
 		wavefrontWorkers = frameWorkWavefrontLanes(*b, index)
 	}
-	deferReconstruction := frameWorkDeferReconstruction || wavefrontWorkers > 1
+	// A frame-threaded tile always reconstructs through the lanes, even when the
+	// tile is too small to fill two of them: its parse must never predict, since
+	// the reference pixels may still be in flight.
+	streamRecon := wavefrontWorkers > 1
+	if b.FrameThread != nil && req.Predict == nil {
+		wavefrontWorkers = max(wavefrontWorkers, 1)
+		streamRecon = true
+	}
+	deferReconstruction := frameWorkDeferReconstruction || streamRecon
 	batchValue := *b
 	scratch.controller = frameWorkTileResidualLoopController{
 		batch:                  batchValue,
@@ -1278,7 +1290,7 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 		loopReq.BeforeSuperblock = scratch.beforeSuperblock
 	}
 
-	if scratch.controller.wavefrontWorkers > 1 {
+	if streamRecon {
 		if err := scratch.controller.startReconStream(); err != nil {
 			return scratch.stats, err
 		}
@@ -1337,7 +1349,7 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 	if req.LoopFilterMasks.Valid() {
 		scratch.lfMask.finishTileEdges()
 	}
-	if scratch.controller.deferReconstruction && scratch.controller.wavefrontWorkers <= 1 {
+	if scratch.controller.deferReconstruction && !streamRecon {
 		if err := scratch.finalizeDeferredPalettes(); err != nil {
 			return scratch.stats, err
 		}
