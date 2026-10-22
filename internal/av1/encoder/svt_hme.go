@@ -65,17 +65,21 @@ func (q *svtPlane) pad() {
 	b, s := q.border, q.stride
 	for y := 0; y < q.h; y++ {
 		row := q.pix[(b+y)*s : (b+y+1)*s]
-		l, r := row[b], row[b+q.w-1]
-		for x := 0; x < b; x++ {
-			row[x] = l
-			row[b+q.w+x] = r
-		}
+		fillBorder(row[:b], row[b])
+		fillBorder(row[b+q.w:b+q.w+b], row[b+q.w-1])
 	}
 	top := q.pix[b*s : (b+1)*s]
 	bot := q.pix[(b+q.h-1)*s : (b+q.h)*s]
 	for y := 0; y < b; y++ {
 		copy(q.pix[y*s:(y+1)*s], top)
 		copy(q.pix[(b+q.h+y)*s:(b+q.h+y+1)*s], bot)
+	}
+}
+
+// fillBorderScalar sets every byte of dst to v.
+func fillBorderScalar(dst []byte, v byte) {
+	for i := range dst {
+		dst[i] = v
 	}
 }
 
@@ -225,7 +229,11 @@ func svtHMESearch(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (bestSAD
 		if w%8 == 0 {
 			for ; x < w; x += 8 {
 				var t [8]uint32
-				for c := 0; c < bw; c += 16 {
+				c := 0
+				for ; c+32 <= bw; c += 32 {
+					svtSAD32xhx8(&t, s[c:], s2, ref.pix[base+x+c:], s2, rows)
+				}
+				for ; c < bw; c += 16 {
 					svtSAD16xhx8(&t, s[c:], s2, ref.pix[base+x+c:], s2, rows)
 				}
 				for k, v := range t {

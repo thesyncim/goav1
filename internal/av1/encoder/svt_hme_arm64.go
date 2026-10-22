@@ -125,3 +125,63 @@ func svtSAD16xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStri
 	archsimd.LoadUint32x4Array(lo).Add(t.ExtendLo4ToUint32()).StoreArray(lo)
 	archsimd.LoadUint32x4Array(hi).Add(t.HiToLo().ExtendLo4ToUint32()).StoreArray(hi)
 }
+
+// svtSAD32xhx8 is the eight-position step of
+// svt_sad_loop_kernel32xh_neon_dotprod (sad32xhx4d_neon_dotprod twice): the
+// SADs of the 32-wide, rows-tall source block against ref+0..ref+7, both
+// 16-column halves accumulating into the same byte-pair accumulators. The
+// two in-register folds keep every uint16 lane at most 2*16*4*255 = 65280,
+// so the S - 255*H correction is exact there and the last fold runs in
+// uint32. rows <= 16.
+func svtSAD32xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStride, rows int) {
+	_ = src[(rows-1)*srcStride+31]
+	_ = ref[(rows-1)*refStride+38]
+	sp := unsafe.Pointer(&src[0])
+	rp := unsafe.Pointer(&ref[0])
+	var s0, s1, s2, s3, s4, s5, s6, s7 archsimd.Uint16x8
+	var h0, h1, h2, h3, h4, h5, h6, h7 archsimd.Uint16x8
+	hiShift := archsimd.BroadcastInt16x8(-8)
+	for r := 0; r < rows; r++ {
+		for c := 0; c < 32; c += 16 {
+			s := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, r*srcStride+c)))
+			p := unsafe.Add(rp, r*refStride+c)
+			q := archsimd.LoadUint8x16Array((*[16]uint8)(p))
+			d := s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
+			s0, h0 = s0.Add(d), h0.Add(d.Shift(hiShift))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 1)))
+			d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
+			s1, h1 = s1.Add(d), h1.Add(d.Shift(hiShift))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 2)))
+			d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
+			s2, h2 = s2.Add(d), h2.Add(d.Shift(hiShift))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 3)))
+			d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
+			s3, h3 = s3.Add(d), h3.Add(d.Shift(hiShift))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 4)))
+			d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
+			s4, h4 = s4.Add(d), h4.Add(d.Shift(hiShift))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 5)))
+			d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
+			s5, h5 = s5.Add(d), h5.Add(d.Shift(hiShift))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 6)))
+			d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
+			s6, h6 = s6.Add(d), h6.Add(d.Shift(hiShift))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 7)))
+			d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
+			s7, h7 = s7.Add(d), h7.Add(d.Shift(hiShift))
+		}
+	}
+	// Two folds in uint16 (lane pairs of positions 2j, 2j+1), the exact
+	// correction, then the last fold in uint32.
+	shl8 := archsimd.BroadcastInt16x8(8)
+	sa := s0.ConcatAddPairs(s1).ConcatAddPairs(s2.ConcatAddPairs(s3))
+	ha := h0.ConcatAddPairs(h1).ConcatAddPairs(h2.ConcatAddPairs(h3))
+	sb := s4.ConcatAddPairs(s5).ConcatAddPairs(s6.ConcatAddPairs(s7))
+	hb := h4.ConcatAddPairs(h5).ConcatAddPairs(h6.ConcatAddPairs(h7))
+	ta := sa.Sub(ha.Shift(shl8)).Add(ha)
+	tb := sb.Sub(hb.Shift(shl8)).Add(hb)
+	lo := (*[4]uint32)(unsafe.Pointer(&acc[0]))
+	hi := (*[4]uint32)(unsafe.Pointer(&acc[4]))
+	archsimd.LoadUint32x4Array(lo).Add(ta.ExtendLo4ToUint32().ConcatAddPairs(ta.HiToLo().ExtendLo4ToUint32())).StoreArray(lo)
+	archsimd.LoadUint32x4Array(hi).Add(tb.ExtendLo4ToUint32().ConcatAddPairs(tb.HiToLo().ExtendLo4ToUint32())).StoreArray(hi)
+}

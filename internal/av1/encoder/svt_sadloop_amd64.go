@@ -39,3 +39,9 @@ func svtSAD16xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStri
 	acc[6] += uint32(sumU64(a6))
 	acc[7] += uint32(sumU64(a7))
 }
+
+// svtSAD32xhx8 is the 32-wide eight-position step: the two 16-column halves.
+func svtSAD32xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStride, rows int) {
+	svtSAD16xhx8(acc, src, srcStride, ref, refStride, rows)
+	svtSAD16xhx8(acc, src[16:], srcStride, ref[16:], refStride, rows)
+}
