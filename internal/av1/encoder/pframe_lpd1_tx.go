@@ -35,6 +35,7 @@ package encoder
 //
 import (
 	"fmt"
+	"github.com/thesyncim/goav1/internal/av1/entropy"
 
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/tile"
@@ -195,6 +196,7 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 	skip = fullSAD*4 <= bw*bh
 	st.rdoqBlock = false
 	useRealtimeTXPlan := videoColorIs420(st.color)
+	lumaBypass := false
 	lpd1UseShortcuts := false
 	if useRealtimeTXPlan {
 		sse, variance, ok := uint32(0), uint32(0), false
@@ -217,13 +219,23 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 		if err != nil {
 			return false, false, txPlan, transform.TypeDCTDCT, err
 		}
+		// lpd1_bypass_tx_th skips only the luma transform; chroma still runs
+		// (full_loop_core_light_pd1 with perform_tx = 0).
+		lumaBypass = st.rdoqBlock && !skip && st.lpd1BypassTX(sse, bw, bh)
 	}
+	st.mds0BestRate = -1
 	dctRdD := int64(0)
 	if !skip {
 		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
 		st.setRDOQArm(0)
 		lumaZero := true
-		if txPlan.Variable() {
+		if lumaBypass {
+			if txPlan.Variable() {
+				clear(st.lumaQ2[:bw*bh])
+			} else {
+				clear(st.lumaQ[:bw*bh])
+			}
+		} else if txPlan.Variable() {
 			leafArea := txPlan.leafSize * txPlan.leafSize
 			if lerr := txPlan.ForEachLeaf(func(i, dx, dy int) error {
 				if !st.prepareInterTXBDecide(src.Y, st.predY[dy*bw+dx:], bw, src.YStride, lumaPX+dx, lumaPY+dy, txPlan.leafSize, txPlan.leafSize, st.yQuant, st.lumaQ2[i*leafArea:(i+1)*leafArea]) {
@@ -450,4 +462,32 @@ func (st *lossyEncodeState) restoreSkipRateCDFs() {
 		c.EOBFlag1024[p] = b.EOBFlag1024[p]
 	}
 	st.skipRateDirty = 0
+}
+
+// lpd1BypassTXTh is lpd1_bypass_tx_th for rtc above LPD1_LVL_0
+// (enc_mode_config.c svt_aom_sig_deriv_enc_dec_light_pd1); the picture-level
+// light-PD1 level here is 4 (base) or 7, never level 0.
+const lpd1BypassTXTh = 200
+
+// lpd1InitBitEst is product_coding_loop.c INIT_BIT_EST.
+const lpd1InitBitEst = 6000
+
+// lpd1BypassTX is get_perform_tx_flag's lpd1_bypass_tx_th test: the block
+// skips the transform when the estimated skip cost of the MDS0 winner (its
+// luma rate plus the skip flag, its prediction SSE) is under
+// lpd1_bypass_tx_th percent of a one-unit-per-pixel coded cost. full_lambda
+// is SVT's (rdMult * 180/128, see rdoqLambda).
+func (st *lossyEncodeState) lpd1BypassTX(sse uint32, bw, bh int) bool {
+	rate := st.mds0BestRate
+	ctx := st.lpd1SkipCtx
+	if rate < 0 || ctx < 0 || ctx >= len(st.modeCDFs.Skip) {
+		return false
+	}
+	lambda := (st.rdMult * 180) >> 7
+	cdf := &st.modeCDFs.Skip[ctx]
+	skip1 := int64(entropy.CostSymbol(cdf, 1))
+	skip0 := int64(entropy.CostSymbol(cdf, 0))
+	est := rdoqCostRD(lambda, rate+skip1, int64(sse)<<4)
+	th := rdoqCostRD(lambda, rate+skip0+lpd1InitBitEst, int64(bw*bh)<<4)
+	return est*100 < lpd1BypassTXTh*th
 }

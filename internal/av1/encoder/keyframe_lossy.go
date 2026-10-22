@@ -694,7 +694,12 @@ type lossyEncodeState struct {
 	deltaQCDF      entropy.CDF
 	mds0IntraOK    bool
 	mds0BestCost   int64
-	mds0BestVar    int64
+	// mds0BestRate is the MDS0 winner's luma rate (fast_luma_rate, 512 per
+	// bit; -1 when MDS0 did not pick the block's mode) and lpd1SkipCtx its
+	// skip-flag context, the inputs of the light-PD1 TX bypass.
+	mds0BestRate int64
+	lpd1SkipCtx  int
+	mds0BestVar  int64
 
 	// depthRemovalLevel arms SVT-AV1's depth-removal signal chain for inter
 	// frames (set_depth_removal_level_controls, enc_mode_config.c; see

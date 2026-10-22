@@ -144,8 +144,10 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 
 	var dists [mds0MaxCands]int64
 	var sses [mds0MaxCands]uint32
+	st.mds0BestRate = -1
 	best := -1
 	bestCost := int64(0)
+	bestRate := int64(0)
 	bestMV := motion.Vector{}
 	for i := 0; i < n; i++ {
 		cand := &cands[i]
@@ -218,6 +220,7 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 				}
 			}
 			best, bestCost = i, cost
+			bestRate = rate
 			bestMV = cand.mv
 		}
 	}
@@ -228,6 +231,7 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	// variance << 4) for the later stages (pred_stats.go).
 	st.predStats.set(bestMV, motion.RegularFilters, sses[best], uint32(dists[best]>>4))
 	st.mds0BestCost, st.mds0BestVar = bestCost, dists[best]>>4
+	st.mds0BestRate = bestRate
 	return cands[best], true, predYValid && predYMV == bestMV
 }
 
