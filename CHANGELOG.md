@@ -20,6 +20,13 @@ The project has not published a release tag yet.
   explicit scratch sizing, and zero steady-state allocations.
 - Performance work remains active, with dav1d/libaom source-shaped scalar code,
   compiler/allocation guardrails, and initial SIMD dispatch/kernels.
+- With more than one worker, low-overhead decoders (NewDecoder,
+  NewDecoderFromIVF and the reader variants) run dav1d-style frame threading
+  by default: up to ceil(sqrt(workers)) frames are in flight, so DecodeNext can
+  return a frame a few calls after the payload that carried it, and the last
+  calls drain the pipeline. Output order and pixels are unchanged.
+  WithMaxFrameDelay(1) restores one-frame-per-call delivery (dav1d
+  max_frame_delay). RTP decoders are realtime and never frame-thread.
 
 ### Encoder Scope
 

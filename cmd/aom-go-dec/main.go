@@ -44,9 +44,10 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	out := fs.String("o", "", "write YUV output to this file (default: stdout)")
 	workers := fs.Int("workers", 1, "tile worker goroutine count")
+	frameDelay := fs.Int("framedelay", 0, "maximum frames in flight (dav1d --framedelay; 0 = auto, 1 = no frame threading)")
 	quiet := fs.Bool("quiet", false, "suppress per-frame timing on stderr")
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "usage: aom-go-dec [-o out.yuv] [-workers N] [-quiet] input.ivf\n\n")
+		fmt.Fprintf(stderr, "usage: aom-go-dec [-o out.yuv] [-workers N] [-framedelay N] [-quiet] input.ivf\n\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -83,7 +84,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	}
 	defer writer.Close()
 
-	dec, header, err := newDecoder(input, info.Size(), *workers)
+	dec, header, err := newDecoder(input, info.Size(), *workers, *frameDelay)
 	if err != nil {
 		return fmt.Errorf("decoder bind: %w", err)
 	}
