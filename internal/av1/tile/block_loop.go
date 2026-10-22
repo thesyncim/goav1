@@ -1177,18 +1177,23 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 		return nil
 	}
 	if !intraFlag.Intra {
-		refs, err := s.ReadInterReferences(cdfs.InterRef, ctx, InterReferenceRequest{
-			Size:                block.Size,
-			ReferenceMode:       req.ReferenceMode,
-			SkipMode:            prefix.SkipMode,
-			SkipModeRefs:        req.SkipModeRefs,
-			SegmentationEnabled: req.Segmentation.Enabled,
-			Segment:             segment,
-			X4:                  block.X4,
-			Y4:                  block.Y4,
-			HaveTop:             block.HaveTop,
-			HaveLeft:            block.HaveLeft,
-		})
+		var refs InterReferencesResult
+		if rt != nil {
+			refs, err = s.readInterRefsRefmvs(cdfs.InterRef, ctx, &req, block, prefix.SkipMode, &segment)
+		} else {
+			refs, err = s.ReadInterReferences(cdfs.InterRef, ctx, InterReferenceRequest{
+				Size:                block.Size,
+				ReferenceMode:       req.ReferenceMode,
+				SkipMode:            prefix.SkipMode,
+				SkipModeRefs:        req.SkipModeRefs,
+				SegmentationEnabled: req.Segmentation.Enabled,
+				Segment:             segment,
+				X4:                  block.X4,
+				Y4:                  block.Y4,
+				HaveTop:             block.HaveTop,
+				HaveLeft:            block.HaveLeft,
+			})
+		}
 		if err != nil {
 			return fmt.Errorf("read inter references: %w", err)
 		}
@@ -1360,20 +1365,26 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 					result.CompoundBlend = blend
 					result.CompoundBlendValid = true
 				}
-				filters, filterReads, err := s.ReadInterpFilters(cdfs.Interp, ctx, InterpFilterRequest{
-					FrameFilter:      req.InterpolationFilter,
-					EnableDualFilter: req.EnableDualFilter,
-					Size:             block.Size,
-					References:       refs,
-					Mode:             mode,
-					MotionMode:       motionMode,
-					GlobalTypes:      globalMotionTypes,
-					SkipMode:         prefix.SkipMode,
-					X4:               block.X4,
-					Y4:               block.Y4,
-					HaveTop:          block.HaveTop,
-					HaveLeft:         block.HaveLeft,
-				})
+				var filters motion.InterpFilters
+				var filterReads int
+				if rt != nil {
+					filters, filterReads, err = s.readInterpFiltersRefmvs(cdfs.Interp, ctx, &req, block, refs, mode, motionMode, globalMotionTypes, prefix.SkipMode)
+				} else {
+					filters, filterReads, err = s.ReadInterpFilters(cdfs.Interp, ctx, InterpFilterRequest{
+						FrameFilter:      req.InterpolationFilter,
+						EnableDualFilter: req.EnableDualFilter,
+						Size:             block.Size,
+						References:       refs,
+						Mode:             mode,
+						MotionMode:       motionMode,
+						GlobalTypes:      globalMotionTypes,
+						SkipMode:         prefix.SkipMode,
+						X4:               block.X4,
+						Y4:               block.Y4,
+						HaveTop:          block.HaveTop,
+						HaveLeft:         block.HaveLeft,
+					})
+				}
 				if err != nil {
 					return fmt.Errorf("read interp filters: %w", err)
 				}
