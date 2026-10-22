@@ -216,7 +216,10 @@ func TestOwnedMVPoolMatchesFrozenCopy(t *testing.T) {
 				t.Fatalf("frame %d mutated saved slot %d during prepare", n, i)
 			}
 		}
-		if s.temporalMVsValid != old.temporalMVsValid || !reflect.DeepEqual(s.temporalMVs, old.temporalMVs) {
+		// Production defers the projection to the tile loops (load_tmvs);
+		// the whole-frame field is only set up by the refmvs oracle build.
+		prepared := s.temporalMVsValid || s.temporalMVsDeferred
+		if prepared != old.temporalMVsValid || (s.temporalMVsValid && !reflect.DeepEqual(s.temporalMVs, old.temporalMVs)) {
 			t.Fatalf("frame %d temporal projection mismatch", n)
 		}
 		if event.TileInfo.UseRefFrameMVS {
@@ -224,6 +227,17 @@ func TestOwnedMVPoolMatchesFrozenCopy(t *testing.T) {
 				got, want := s.mvReferences[i], old.mvReferences[i]
 				if (got.Frame == nil) != (want.Frame == nil) || got.OrderHint != want.OrderHint || got.RefOrderHints != want.RefOrderHints || got.IntraOnly != want.IntraOnly {
 					t.Fatalf("frame %d reference %d metadata mismatch", n, i)
+				}
+			}
+			if !s.temporalMVsValid {
+				miCols := mvFrameMIExtent(event.FrameSize.CodedWidth)
+				miRows := mvFrameMIExtent(event.FrameSize.Height)
+				need, err := tile.ReferenceMVFrameEntries(miRows, miCols)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := s.temporalMVs.Init(miRows, miCols, make([]tile.TemporalMotionEntry, need)); err != nil {
+					t.Fatal(err)
 				}
 			}
 			req := tile.TemporalMotionSetupRequest{EnableOrderHint: true, OrderHintBits: 8, CurrentOrderHint: event.FrameHeader.OrderHint, References: s.mvReferences}

@@ -207,7 +207,11 @@ type BlockLoopRequest struct {
 	OrderHintBits               uint8
 	CurrentOrderHint            uint8
 	TemporalMVs                 *TemporalMotionField
-	CurrentMVFrame              *ReferenceMVFrame
+	// TemporalReferences, when set, are the references' saved MV_REF side data;
+	// the block loop then projects temporal samples per superblock row
+	// (dav1d load_tmvs) instead of reading TemporalMVs.
+	TemporalReferences *[referenceFrameCount]TemporalMotionReferenceFrame
+	CurrentMVFrame     *ReferenceMVFrame
 
 	// FrameMIRows and FrameMICols are the frame's MI grid extent
 	// (ALIGN_POWER_OF_TWO(dim, 3) >> MI_SIZE_LOG2), used to clamp ref-MV stack
@@ -382,6 +386,11 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 		ensureIntrabcDiagonalCarriers(req.ContextCarrier)
 	}
 	useRefmvs := !intraOnlyContexts && bindRefmvsForLoop(&scratch.Refmvs, &req)
+	if !useRefmvs && req.TemporalReferences != nil && req.TemporalMVs == nil && req.UseRefFrameMVS &&
+		(req.FrameType == parser.FrameTypeInter || req.FrameType == parser.FrameTypeSwitch) {
+		// Deferred temporal projection needs the refmvs rows.
+		return BlockLoopStats{}, ErrInvalidDecodeState
+	}
 	defer func() { scratch.Refmvs.bound = false }()
 	// With refmvs rows bound, the current frame's MV_REF side data is written
 	// per superblock row from the rows (dav1d_refmvs_save_tmvs) instead of
@@ -401,6 +410,9 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 		}
 		if useRefmvs {
 			scratch.Refmvs.sbrowInit(int32(miRow/rootSize), int32(rootSize))
+			if rt := &scratch.Refmvs; rt.frame.projectTmvs && rt.frame.mfmv.n > 0 {
+				rt.loadTmvs(rt.tileColStart>>1, rt.tileColEnd>>1, int32(miRow>>1), int32((miRow+rootSize)>>1))
+			}
 		}
 		for miCol := miColStart; miCol < miColEnd; miCol += rootSize {
 			rootColIndex := int((miCol - miColStart) / rootSize)

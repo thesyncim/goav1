@@ -18,3 +18,10 @@ func refmvsOracleCompare(*BlockModeContext, *refmvsTile, *refmvsResult, *BlockLo
 }
 
 func refmvsOracleTopHasRight(uint8, BlockVisit, bool) {}
+
+func refmvsOracleTmvs(*refmvsTile, int32, int32, int32, int32) {}
+
+// TemporalProjectionOracle reports whether the goav1_refmvs_oracle build is
+// active, in which case frame decoders still set up the whole-frame temporal
+// field so the per-row load_tmvs projection can be checked against it.
+const TemporalProjectionOracle = false

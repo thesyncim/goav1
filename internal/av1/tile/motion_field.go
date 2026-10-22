@@ -181,6 +181,31 @@ func (f *TemporalMotionField) Setup(req TemporalMotionSetupRequest) (TemporalMot
 	return stats, nil
 }
 
+// Validate reports the order-hint errors Setup would return, for callers that
+// defer the projection to the per-superblock-row load_tmvs port: the order
+// hint width and the current, reference and reference-of-reference hints of
+// every available reference must fit it.
+func (req TemporalMotionSetupRequest) Validate() error {
+	if !req.EnableOrderHint {
+		return nil
+	}
+	if _, err := motionFieldRelativeOrderHint(req.OrderHintBits, 0, req.CurrentOrderHint); err != nil {
+		return err
+	}
+	for _, ref := range req.References {
+		if ref.Frame == nil {
+			continue
+		}
+		if _, err := motionFieldRelativeOrderHint(req.OrderHintBits, ref.OrderHint, req.CurrentOrderHint); err != nil {
+			return err
+		}
+		if _, err := motionFieldRefOffsets(req.OrderHintBits, ref.OrderHint, ref.RefOrderHints); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ProjectReferenceFrame ports libaom's motion_field_projection() inner pass.
 // The field is not cleared; callers should Clear or Init once before applying
 // the ordered set of reference-frame projections for the current frame.

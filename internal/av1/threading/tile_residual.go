@@ -988,6 +988,7 @@ func (b *FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint
 		OrderHintBits:               b.Sequence.OrderHintBits,
 		CurrentOrderHint:            b.FrameHeader.OrderHint,
 		TemporalMVs:                 b.TemporalMVs,
+		TemporalReferences:          b.deferredTemporalReferences(),
 		CurrentMVFrame:              b.CurrentMVFrame,
 		FrameMIRows:                 uint16(frameMIRows),
 		FrameMICols:                 uint16(frameMICols),

@@ -85,6 +85,12 @@ type refmvsFrame struct {
 	useRefFrameMVs bool
 	temporal       *TemporalMotionField
 
+	// mfmv is the temporal projection setup of dav1d_refmvs_init_frame; when
+	// projectTmvs is set the tile projects each superblock row into rpProj
+	// (load_tmvs) instead of reading a whole-frame temporal field.
+	projectTmvs bool
+	mfmv        refmvsMfmv
+
 	allowHighPrecisionMV bool
 	forceIntegerMV       bool
 
@@ -115,6 +121,11 @@ type refmvsTile struct {
 	// the first 4x4 block of an 8x8 split, used for the top-left cell of the
 	// sub8x8 chroma prediction.
 	tl4x4Filter motion.InterpFilters
+
+	// rpProj is dav1d's rp_proj for this tile: 16 rows of projected
+	// temporal samples (8x8 units), rpStride entries per row.
+	rpProj   []TemporalMotionEntry
+	rpStride int32
 }
 
 // bindFrame sizes the row storage for a frame of the given coded width (in
@@ -129,6 +140,13 @@ func (rt *refmvsTile) bindFrame(frame refmvsFrame, codedWidth int32, tileColStar
 	}
 	rt.buf = rt.buf[:need]
 	rt.stride = stride
+	if frame.projectTmvs {
+		if need := int(rpStride) * 16; cap(rt.rpProj) < need {
+			rt.rpProj = make([]TemporalMotionEntry, need)
+		}
+		rt.rpProj = rt.rpProj[:int(rpStride)*16]
+		rt.rpStride = rpStride
+	}
 	rt.frame = frame
 	rt.tileColStart = tileColStart
 	rt.tileColEnd = min(tileColEnd, frame.iw4)
@@ -150,6 +168,9 @@ func PreallocBlockLoopRefmvsScratch(s *BlockLoopScratch, miCols int) {
 	stride := ((int32(miCols)*4 + 127) &^ 127) >> 3 * 2
 	if need := int(stride) * refmvsRowsPerBuffer; cap(s.Refmvs.buf) < need {
 		s.Refmvs.buf = make([]refmvsBlock, need)
+	}
+	if need := int(stride) / 2 * 16; cap(s.Refmvs.rpProj) < need {
+		s.Refmvs.rpProj = make([]TemporalMotionEntry, need)
 	}
 }
 
@@ -603,11 +624,9 @@ func (rt *refmvsTile) find(out *refmvsResult, ref [2]int8, size BlockSize, topHa
 
 	// temporal
 	globalMVCtx := boolInt32(rf.useRefFrameMVs)
-	if tmv := rf.temporal; tmv != nil {
-		stride := int32(tmv.Stride)
+	if entries, stride, rowBase := rt.temporalRows(by4 >> 1); entries != nil {
 		by8, bx8 := by4>>1, bx4>>1
-		entries := tmv.Entries
-		rbi := by8*stride + bx8
+		rbi := rowBase + bx8
 		rb := rbi
 		stepH, stepV := int32(1), int32(1)
 		if bw4 >= 16 {
@@ -893,6 +912,11 @@ func bindRefmvsForLoop(rt *refmvsTile, req *BlockLoopRequest) bool {
 	}
 	if req.UseRefFrameMVS && req.TemporalMVs != nil {
 		frame.temporal = req.TemporalMVs
+	}
+	if req.UseRefFrameMVS && req.TemporalReferences != nil {
+		frame.projectTmvs = true
+		frame.mfmv.init(req.TemporalReferences, req.OrderHintBits, req.CurrentOrderHint, &req.ReferenceOrderHints,
+			int32(req.FrameMIRows)>>1, int32(req.FrameMICols)>>1)
 	}
 	for i := range 7 {
 		if req.RefSignBias[i] {

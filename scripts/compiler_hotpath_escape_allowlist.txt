@@ -67,7 +67,6 @@ internal/av1/decoder/work.go:*:*: make([]tile.ReferenceMVEntry, need) escapes to
 internal/av1/decoder/work.go:*:*: make([]tile.ReferenceMVEntry, need) escapes to heap in (*FrameWorkState).publishTemporalMotionFrame:
 internal/av1/decoder/work.go:*:*: make([]tile.TemporalMotionEntry, need) escapes to heap
 internal/av1/decoder/work.go:*:*: make([]tile.TemporalMotionEntry, need) escapes to heap in (*FrameWorkState).PreallocTemporalMotionScratch:
-internal/av1/decoder/work.go:*:*: make([]tile.TemporalMotionEntry, need) escapes to heap in (*FrameWorkState).prepareTemporalMotionField:
 internal/av1/encoder/cdef_apply.go:*:*: func literal escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: func literal escapes to heap in (*cdefApplier).startWorkers:
 internal/av1/encoder/cdef_apply.go:*:*: make([][]uint16, 8) escapes to heap
@@ -486,6 +485,8 @@ internal/av1/threading/tile_residual.go:*:*: make([]int16, residualTotal) escape
 internal/av1/threading/tile_residual.go:*:*: make([]int16, residualTotal) escapes to heap in (*frameWorkReconWavefront).ensureStates:
 internal/av1/threading/tile_residual.go:*:*: make([]int32, int32Total) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]int32, int32Total) escapes to heap in (*frameWorkReconWavefront).ensureStates:
+internal/av1/threading/tile_residual.go:*:*: make([]tile.TemporalMotionEntry, tile.need) escapes to heap
+internal/av1/threading/tile_residual.go:*:*: make([]tile.TemporalMotionEntry, tile.need) escapes to heap in (*FrameWorkTileResidualScratch).PreallocLoopFilterMaskScratch:
 internal/av1/threading/tile_residual.go:*:*: make([]tile.refmvsBlock, tile.need) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]tile.refmvsBlock, tile.need) escapes to heap in (*FrameWorkTileResidualScratch).PreallocLoopFilterMaskScratch:
 internal/av1/threading/tile_residual.go:*:*: make([]uint8, cols) escapes to heap
@@ -530,10 +531,12 @@ internal/av1/tile/coeff.go:*:*: make([]entropy.CoeffScanContext, maxEOB) escapes
 internal/av1/tile/coeff.go:*:*: make([]entropy.CoeffScanContext, maxEOB) escapes to heap in init.N:
 internal/av1/tile/coeff.go:*:*: make([]uint8, maxEOB) escapes to heap
 internal/av1/tile/coeff.go:*:*: make([]uint8, maxEOB) escapes to heap in init.N:
+internal/av1/tile/refmvs.go:*:*: make([]TemporalMotionEntry, need) escapes to heap
+internal/av1/tile/refmvs.go:*:*: make([]TemporalMotionEntry, need) escapes to heap in (*refmvsTile).bindFrame:
+internal/av1/tile/refmvs.go:*:*: make([]TemporalMotionEntry, need) escapes to heap in PreallocBlockLoopRefmvsScratch:
 internal/av1/tile/refmvs.go:*:*: make([]refmvsBlock, need) escapes to heap
 internal/av1/tile/refmvs.go:*:*: make([]refmvsBlock, need) escapes to heap in (*refmvsTile).bindFrame:
 internal/av1/tile/refmvs.go:*:*: make([]refmvsBlock, need) escapes to heap in PreallocBlockLoopRefmvsScratch:
-internal/av1/tile/refmvs.go:*:*: make([]refmvsBlock, need) escapes to heap in bindRefmvsForLoop:
 internal/av1/transform/precompute.go:*:*: make([]int16, total) escapes to heap
 internal/av1/transform/precompute.go:*:*: make([]int16, total) escapes to heap in init.N:
 internal/av1/transform/precompute.go:*:*: make([]uint8, len(scan)) escapes to heap

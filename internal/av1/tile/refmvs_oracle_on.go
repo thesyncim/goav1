@@ -94,3 +94,28 @@ func refmvsOracleTopHasRight(sbSizeMIB uint8, block BlockVisit, has bool) {
 			block.Edge, want, block.MIRow, block.MICol, block.Size, block.Level, block.Partition))
 	}
 }
+
+// refmvsOracleTmvs diffs one load_tmvs window against the whole-frame
+// libaom-shaped projection when the caller also set that up.
+func refmvsOracleTmvs(rt *refmvsTile, colStart8, colEnd8, rowStart8, rowEnd8 int32) {
+	tmv := rt.frame.temporal
+	if tmv == nil {
+		return
+	}
+	stride := int32(tmv.Stride)
+	for y := rowStart8; y < min(rowEnd8, rt.frame.mfmv.ih8); y++ {
+		for x := colStart8; x < min(colEnd8, rt.frame.mfmv.iw8); x++ {
+			got := rt.rpProj[(y&15)*rt.rpStride+x]
+			want := tmv.Entries[y*stride+x]
+			if got.Valid != want.Valid || (got.Valid && got != want) {
+				panic(fmt.Sprintf("refmvs oracle: load_tmvs at y8=%d x8=%d got %+v want %+v (n_mfmvs=%d refs=%v)",
+					y, x, got, want, rt.frame.mfmv.n, rt.frame.mfmv.ref))
+			}
+		}
+	}
+}
+
+// TemporalProjectionOracle reports whether the goav1_refmvs_oracle build is
+// active, in which case frame decoders still set up the whole-frame temporal
+// field so the per-row load_tmvs projection can be checked against it.
+const TemporalProjectionOracle = true

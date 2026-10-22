@@ -43,7 +43,9 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "compoundModeContextMap", size: unsafe.Sizeof(compoundModeContextMap), max: 15},
 		{name: "Job", size: unsafe.Sizeof(Job{}), max: 24},
 		{name: "TileSpan", size: unsafe.Sizeof(parser.TileSpan{}), max: 12},
-		{name: "BlockLoopRequest", size: unsafe.Sizeof(BlockLoopRequest{}), max: 656},
+		// TemporalReferences (8 bytes) selects the per-superblock-row load_tmvs
+		// projection.
+		{name: "BlockLoopRequest", size: unsafe.Sizeof(BlockLoopRequest{}), max: 664},
 		{name: "BlockLoopSuperblockVisit", size: unsafe.Sizeof(BlockLoopSuperblockVisit{}), max: 6},
 		{name: "BlockModeRequest", size: unsafe.Sizeof(BlockModeRequest{}), max: 48},
 		{name: "BlockPredictionModeResult", size: unsafe.Sizeof(BlockPredictionModeResult{}), max: 784},
