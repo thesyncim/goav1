@@ -36,6 +36,10 @@ type hmeState struct {
 	refY     [hmeRefSlots]hmeRefLuma
 	prev     *svtPlane
 	havePrev bool
+	// dist is the picture distance to the reference the next run searches
+	// (get_me_reference's dist; 0 means 1), which sizes the HME level-0
+	// search area.
+	dist int
 
 	// fme is the current frame's ME result.
 	fme frameME
@@ -213,6 +217,7 @@ func (h *hmeState) finish(store int) {
 
 func (h *hmeState) prepare(src SourceFrame420, isRef bool, ref int) {
 	h.svt.build(src)
+	h.svt.setDistance(h.dist)
 	h.setCur(src)
 	h.selectRef(min(max(ref, 0), hmeRefSlots-1))
 	f := &h.fme

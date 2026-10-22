@@ -92,7 +92,7 @@ func BenchmarkSVTHMESearch(b *testing.B) {
 	fillMEPattern(rng, halfRef.pix, 0)
 	b.Run("L0", func(b *testing.B) {
 		for b.Loop() {
-			svtHMESearch(&cur, &ref, 160, 96, 16, 16, -16, -4, svtHMEL0RegionW, svtHMEL0RegionH)
+			svtHMESearch(&cur, &ref, 160, 96, 16, 16, -16, -4, 16, 4)
 		}
 	})
 	b.Run("L1", func(b *testing.B) {
@@ -117,6 +117,18 @@ func TestSVTHMECorrectArea(t *testing.T) {
 		ox, oy, w, h := svtHMECorrectArea(c.orgX, c.orgY, c.ox, c.oy, c.w, c.h, c.picW, c.picH, c.pad)
 		if ox != c.wx || oy != c.wy || w != c.ww || h != c.wh {
 			t.Errorf("%+v: got %d %d %d %d", c, ox, oy, w, h)
+		}
+	}
+}
+
+// TestSVTHMEL0SearchArea pins get_hme_l0_search_area's per-region size at
+// preset 12 rtc for the low-delay reference distances.
+func TestSVTHMEL0SearchArea(t *testing.T) {
+	for _, c := range []struct{ dist, w, h int }{{1, 16, 4}, {2, 16, 8}, {4, 16, 12}, {8, 32, 20}, {16, 48, 40}, {32, 48, 48}} {
+		var p svtPyramid
+		p.setDistance(c.dist)
+		if p.l0W != c.w || p.l0H != c.h {
+			t.Errorf("dist %d: %dx%d, want %dx%d", c.dist, p.l0W, p.l0H, c.w, c.h)
 		}
 	}
 }
