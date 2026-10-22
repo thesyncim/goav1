@@ -59,7 +59,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "OverlappableNeighborRequest", size: unsafe.Sizeof(OverlappableNeighborRequest{}), max: 8},
 		{name: "OverlappableNeighbor", size: unsafe.Sizeof(OverlappableNeighbor{}), max: 24},
 		{name: "OverlappableNeighborSet", size: unsafe.Sizeof(OverlappableNeighborSet{}), max: 248},
-		{name: "PaletteModeRequest", size: unsafe.Sizeof(PaletteModeRequest{}), max: 24},
+		{name: "PaletteModeRequest", size: unsafe.Sizeof(PaletteModeRequest{}), max: 26}, // +2: on-screen VisibleW4/H4
 		{name: "InterMotionResult", size: unsafe.Sizeof(InterMotionResult{}), max: 16},
 		{name: "DRLRequest", size: unsafe.Sizeof(DRLRequest{}), max: 7},
 		{name: "MVComponentResult", size: unsafe.Sizeof(MVComponentResult{}), max: 10},

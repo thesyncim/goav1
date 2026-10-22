@@ -42,6 +42,11 @@ func frozenMarkInterOracle(c *BlockModeContext, size BlockSize, x4, y4 int, resu
 	h4 := int(dims.H4)
 	xEnd := x4 + w4
 	yEnd := y4 + h4
+	// dav1d decode_b resets the edge palette sizes for inter blocks.
+	clear(c.AbovePaletteY[x4:xEnd])
+	clear(c.AbovePaletteUV[x4:xEnd])
+	clear(c.LeftPaletteY[y4:yEnd])
+	clear(c.LeftPaletteUV[y4:yEnd])
 	clear(c.AboveIntra[x4:xEnd])
 	clear(c.AboveCompGroup[x4:xEnd])
 	clear(c.AboveInterIntra[x4:xEnd])

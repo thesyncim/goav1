@@ -304,6 +304,10 @@ type PaletteModeRequest struct {
 	ChromaMode              ChromaIntraMode
 	ChromaModeValid         bool
 	HasChroma               bool
+	// VisibleW4 and VisibleH4 are the block's on-screen luma extent in 4x4
+	// units (BlockVisit); zero means the whole block is visible.
+	VisibleW4 uint8
+	VisibleH4 uint8
 }
 
 func (s *DecodeState) readPaletteModeUV(cdfs *IntraModeCDFs, ctx *BlockModeContext, req PaletteModeRequest, dst *PaletteModeResult, mapScratch *PaletteModeScratch) error {
@@ -560,41 +564,10 @@ func (s *DecodeState) readPaletteColorMapY(cdfs *IntraModeCDFs, req PaletteModeR
 	if !ok {
 		return ErrInvalidDecodeState
 	}
-	cols := int(dims.W4) * 4
-	rows := int(dims.H4) * 4
-	planeBlockWidth := cols
-	planeBlockHeight := rows
-	n := int(result.YSize)
-	first, err := s.Reader.ReadUniform(uint32(n))
-	if err != nil {
-		return err
-	}
-	mapScratch[0] = uint8(first)
-	for i := 1; i < rows+cols-1; i++ {
-		start := max(i-rows+1, 0)
-		end := min(cols-1, i)
-		for j := end; j >= start; j-- {
-			row := i - j
-			col := j
-			ctx, order, err := paletteColorIndexContext(mapScratch[:], planeBlockWidth, row, col, n)
-			if err != nil {
-				return err
-			}
-			cdf, err := cdfs.PaletteYColorIndexCDF(n, ctx)
-			if err != nil {
-				return err
-			}
-			sym, err := s.Reader.ReadCDF(cdf)
-			if err != nil {
-				return err
-			}
-			mapScratch[row*planeBlockWidth+col] = order[sym]
-		}
-	}
-	for row := rows; row < planeBlockHeight; row++ {
-		copy(mapScratch[row*planeBlockWidth:row*planeBlockWidth+planeBlockWidth], mapScratch[(rows-1)*planeBlockWidth:rows*planeBlockWidth])
-	}
-	return nil
+	bw4 := int(dims.W4)
+	bh4 := int(dims.H4)
+	w4, h4 := paletteOnscreen4(bw4, bh4, req.VisibleW4, req.VisibleH4, 0, 0)
+	return s.readPaletteIndices(cdfs, false, mapScratch, int(result.YSize), w4, h4, bw4, bh4)
 }
 
 func (s *DecodeState) readPaletteColorMapUV(cdfs *IntraModeCDFs, req PaletteModeRequest, result *PaletteModeResult, mapScratch *[MaxPalettePixels]uint8) error {
@@ -606,9 +579,35 @@ func (s *DecodeState) readPaletteColorMapUV(cdfs *IntraModeCDFs, req PaletteMode
 	if !ok {
 		return ErrInvalidDecodeState
 	}
-	cols := int(dims.W4) * 4
-	rows := int(dims.H4) * 4
-	n := int(result.UVSize)
+	bw4 := int(dims.W4)
+	bh4 := int(dims.H4)
+	w4, h4 := paletteOnscreen4(bw4, bh4, req.VisibleW4, req.VisibleH4, boolInt(req.Color.SubsamplingX), boolInt(req.Color.SubsamplingY))
+	return s.readPaletteIndices(cdfs, true, mapScratch, int(result.UVSize), w4, h4, bw4, bh4)
+}
+
+// paletteOnscreen4 is dav1d decode_b's visible palette extent in 4x4 units:
+// w4 = imin(bw4, f->bw - t->bx) for luma and cw4 = (w4 + ss_hor) >> ss_hor
+// for chroma, clamped to the plane block. A zero visible extent means the
+// whole block is on screen.
+func paletteOnscreen4(bw4, bh4 int, visibleW4, visibleH4 uint8, ssx, ssy int) (int, int) {
+	w4, h4 := bw4, bh4
+	if visibleW4 != 0 {
+		w4 = min(bw4, (int(visibleW4)+ssx)>>ssx)
+	}
+	if visibleH4 != 0 {
+		h4 = min(bh4, (int(visibleH4)+ssy)>>ssy)
+	}
+	return w4, h4
+}
+
+// readPaletteIndices is dav1d's read_pal_indices: the color indices of the
+// on-screen w4 x h4 part of a bw4 x bh4 block are read in wavefront order,
+// then pal_idx_finish replicates the last on-screen column and row across the
+// off-screen remainder (the spec's onscreenWidth / onscreenHeight extension).
+func (s *DecodeState) readPaletteIndices(cdfs *IntraModeCDFs, uv bool, mapScratch *[MaxPalettePixels]uint8, n, w4, h4, bw4, bh4 int) error {
+	stride := bw4 * 4
+	cols := w4 * 4
+	rows := h4 * 4
 	first, err := s.Reader.ReadUniform(uint32(n))
 	if err != nil {
 		return err
@@ -620,11 +619,16 @@ func (s *DecodeState) readPaletteColorMapUV(cdfs *IntraModeCDFs, req PaletteMode
 		for j := end; j >= start; j-- {
 			row := i - j
 			col := j
-			ctx, order, err := paletteColorIndexContext(mapScratch[:], cols, row, col, n)
+			ctx, order, err := paletteColorIndexContext(mapScratch[:], stride, row, col, n)
 			if err != nil {
 				return err
 			}
-			cdf, err := cdfs.PaletteUVColorIndexCDF(n, ctx)
+			var cdf *entropy.CDF
+			if uv {
+				cdf, err = cdfs.PaletteUVColorIndexCDF(n, ctx)
+			} else {
+				cdf, err = cdfs.PaletteYColorIndexCDF(n, ctx)
+			}
 			if err != nil {
 				return err
 			}
@@ -632,8 +636,20 @@ func (s *DecodeState) readPaletteColorMapUV(cdfs *IntraModeCDFs, req PaletteMode
 			if err != nil {
 				return err
 			}
-			mapScratch[row*cols+col] = order[sym]
+			mapScratch[row*stride+col] = order[sym]
 		}
+	}
+	if cols < stride {
+		for row := 0; row < rows; row++ {
+			line := mapScratch[row*stride : row*stride+stride]
+			v := line[cols-1]
+			for x := cols; x < stride; x++ {
+				line[x] = v
+			}
+		}
+	}
+	for row := rows; row < bh4*4; row++ {
+		copy(mapScratch[row*stride:row*stride+stride], mapScratch[(rows-1)*stride:rows*stride])
 	}
 	return nil
 }
