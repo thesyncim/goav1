@@ -22,13 +22,14 @@ package encoder
 //      (dev_16x16_to_8x8 < dev_th) with the me_8x8_cost_variance noise guard
 //      and QP scaling, at preset-12 levels 9 (base frames) / 14 (leaf frames).
 //
-// The sweep is full-SAD (not SVT's SUB_SAD subsampling) per the pinned
-// threshold-scale note: goav1 sweeps LAST's recon with full SADs while SVT
-// sweeps the open-loop pyramid; the deviation arms are ratio-based and
-// scale-free either way. Scalar Go + the existing batched SAD kernels for this
-// slice; the dedicated NEON sweep kernel is Phase 4.
-
-import "github.com/thesyncim/goav1/internal/av1/motion"
+// The sweep is THE full-pel ME of every full superblock of every inter
+// frame (SVT runs its open-loop ME once per SB and MD reads the per-PU
+// results; pframe_motion.go maps each leaf to its PU as
+// svt_aom_get_me_block_offset does). Its SADs are SVT's SUB_SAD_SEARCH
+// (svt_aom_sig_deriv_me sets me_search_method = SUB_SAD_SEARCH for every
+// non-TF picture): the even rows of each 8x8, doubled
+// (svt_ext_eight_sad_calculation_8x8_16x16). goav1 sweeps LAST's recon where
+// SVT sweeps the open-loop pyramid.
 
 // realtimeSBMultiSizeME holds one superblock's multi-size full-pel ME results:
 // an independent (bestSAD, bestMV) per PU in SVT's ME tier-zero layout
@@ -91,28 +92,6 @@ func (me *realtimeSBMultiSizeME) update(pu int, sad uint32, mvX, mvY int) {
 	}
 }
 
-// sweepCheck00Center ports check_00_center (motion_estimation.c:1059): the
-// HME search center survives only when its subsampled 64x64 SAD beats the
-// zero-MV SAD; ties collapse to zero motion. subsample_sad = 1 (every other
-// row, doubled) as upstream.
-func sweepCheck00Center(src, ref SourceFrame420, px, py, xc, yc int) (int, int) {
-	srcOff := py*src.YStride + px
-	srcStride2 := src.YStride << 1
-	refStride2 := ref.YStride << 1
-	zeroOff := py*ref.YStride + px
-	zeroSAD := (sad32x32Dual(src.Y[srcOff:], srcStride2, ref.Y[zeroOff:], refStride2) +
-		sad32x32Dual(src.Y[srcOff+32:], srcStride2, ref.Y[zeroOff+32:], refStride2)) << 1
-	hmeOff := (py+yc)*ref.YStride + (px + xc)
-	hmeSAD := (sad32x32Dual(src.Y[srcOff:], srcStride2, ref.Y[hmeOff:], refStride2) +
-		sad32x32Dual(src.Y[srcOff+32:], srcStride2, ref.Y[hmeOff+32:], refStride2)) << 1
-	// search_center_cost = MIN(zero_mv_cost, hme_mv_cost); equality selects
-	// the zero center.
-	if zeroSAD <= hmeSAD {
-		return 0, 0
-	}
-	return xc, yc
-}
-
 // sweepSearchPoint4 ports open_loop_me_get_eight_search_point_results_block
 // (motion_estimation.c:407) narrowed to a four-candidate group so the existing
 // batched sad8x8x4 kernels do the pixel work: it scores the 64 8x8 blocks of
@@ -133,7 +112,10 @@ func (me *realtimeSBMultiSizeME) sweepSearchPoint4(src, ref []byte, stride int, 
 			yo := y16 + (c>>1)*8
 			so := srcBase + yo*stride + xo
 			ro := refBase + yo*stride + xo
-			s0, s1, s2, s3 := sad8x8x4(src[so:], ref[ro:], ref[ro+1:], ref[ro+2:], ref[ro+3:], stride)
+			// SUB_SAD_SEARCH (sig_deriv_me: me_search_method at every rtc preset):
+			// the even rows of the 8x8 block, doubled.
+			s0, s1, s2, s3 := sad8x4x4(src[so:], ref[ro:], ref[ro+1:], ref[ro+2:], ref[ro+3:], 2*stride)
+			s0, s1, s2, s3 = s0<<1, s1<<1, s2<<1, s3<<1
 			pu := 21 + n*4 + c
 			me.update(pu, uint32(s0), mvX, mvY)
 			me.update(pu, uint32(s1), mvX+1, mvY)
@@ -174,7 +156,7 @@ func (me *realtimeSBMultiSizeME) sweepSearchPoint1(src []byte, srcStride int, re
 		for c := range 4 {
 			xo := x16 + (c&1)*8
 			yo := y16 + (c>>1)*8
-			s := uint32(sad8x8Dual(src[srcBase+yo*srcStride+xo:], srcStride, ref[refBase+yo*refStride+xo:], refStride))
+			s := uint32(sad8x4DualPureGo(src[srcBase+yo*srcStride+xo:], 2*srcStride, ref[refBase+yo*refStride+xo:], 2*refStride)) << 1
 			me.update(21+n*4+c, s, mvX, mvY)
 			sum += s
 		}
@@ -190,106 +172,188 @@ func (me *realtimeSBMultiSizeME) sweepSearchPoint1(src []byte, srcStride int, re
 	me.update(0, sad64, mvX, mvY)
 }
 
-// realtimeSBMultiSizeMESweep runs the shared per-SB full-pel sweep: the 8x3
-// preset-12 search area centered on the HME seed (after check_00_center) with
-// per-PU argmins, then the compute_distortion sums. src is the source frame,
-// ref is LAST's reconstruction; (px, py) must be a full 64x64 SB inside the
-// frame (the realtimeVarPartitionSB caller guarantees it).
-func (st *lossyEncodeState) realtimeSBMultiSizeMESweep(me *realtimeSBMultiSizeME, src, ref SourceFrame420, px, py int) {
-	me.reset()
+// meWindowStride is the row stride of the edge-replicated ME windows: wide
+// enough for a 64-sample block, the 8-position sweep and the kernels'
+// 16-byte over-read.
+const meWindowStride = 96
 
-	// HME search center for this SB (the seeds are frame-start read-only, so
-	// wavefront lanes see identical values).
-	xc, yc := 0, 0
-	if st.hme != nil {
-		xc, yc, _ = st.hme.seedAt(px, py)
-	}
-	// goav1's recon planes carry no out-of-frame padding (SVT's ME buffers
-	// do), so the center and the search window clamp to positions whose whole
-	// 64x64 reference block stays inside the frame.
-	xc = minInt(maxInt(xc, -px), src.Width-64-px)
-	yc = minInt(maxInt(yc, -py), src.Height-64-py)
+// meWindow holds edge-replicated copies of a superblock's source and of the
+// reference area its sweep reads, for superblocks or search positions that
+// leave the frame (SVT's ME buffers are padded).
+type meWindow struct {
+	src [64*meWindowStride + 32]byte
+	ref [(64+realtimeSweepSearchH)*meWindowStride + 32]byte
+}
 
-	// me_early_exit_th (enc_mode_config.c:914; preset-12 rtc = 64*64*12): a
-	// tiny zero-MV SB SAD collapses the search area to 1x1 and skips the
-	// zero-center arbitration (motion_estimation.c:1261-1266). The static-64
-	// bypass grid carries that zz-SAD when it hit (zero MV, full-SAD below
-	// the bypass threshold, which is below th/6 = 8192).
-	nx := src.Width - 64 + 1
-	if nx > realtimeSweepSearchW {
-		nx = realtimeSweepSearchW
-	}
-	ny := src.Height - 64 + 1
-	if ny > realtimeSweepSearchH {
-		ny = realtimeSweepSearchH
-	}
-	earlyExit := false
-	if st.grid64Cols > 0 {
-		idx64 := (py/64)*st.grid64Cols + px/64
-		if uint(idx64) < uint(len(st.sad64Grid)) && uint(idx64) < uint(len(st.mv64Grid)) &&
-			sadCacheValid(st.sad64Grid[idx64], st.sadCacheEpoch) &&
-			st.mv64Grid[idx64] == (motion.Vector{}) &&
-			sadCacheValue(st.sad64Grid[idx64]) < realtimeSweepEarlyExitTH/6 {
-			nx, ny = 1, 1
-			earlyExit = true
+// fillWindow copies the w x h area at (x, y) of plane into dst at stride
+// meWindowStride, replicating the plane edges.
+func fillWindow(dst []byte, plane []byte, stride, width, height, x, y, w, h int) {
+	for r := 0; r < h; r++ {
+		sy := min(max(y+r, 0), height-1)
+		row := plane[sy*stride:]
+		d := dst[r*meWindowStride : r*meWindowStride+w]
+		if x >= 0 && x+w <= width {
+			copy(d, row[x:x+w])
+			continue
+		}
+		for c := range d {
+			d[c] = row[min(max(x+c, 0), width-1)]
 		}
 	}
-	if !earlyExit && (xc != 0 || yc != 0) && st.depthRemovalIsRef {
-		// SVT gates check_00_center on me_ctx->is_ref (motion_estimation.c:
-		// 1267-1281): only pictures that will be referenced re-arbitrate the
-		// HME center against zero motion.
-		xc, yc = sweepCheck00Center(src, ref, px, py, xc, yc)
-	}
+}
 
-	// x/y_search_area_origin = center - (area >> 1) (motion_estimation.c:
-	// 1352-1354), then edge-corrected. SVT shrinks the area at picture edges;
-	// with unpadded references we shift the window instead so every full-area
-	// SB scores the same 8x3 = 24 positions.
-	x0 := minInt(maxInt(xc-(nx>>1), -px), src.Width-64-px-(nx-1))
-	y0 := minInt(maxInt(yc-(ny>>1), -py), src.Height-64-py-(ny-1))
-
-	srcBase := py*src.YStride + px
-	sameStride := src.YStride == ref.YStride
-	// open_loop_me_fullpel_search_sblock (motion_estimation.c:754): y outer,
-	// x inner in batches (batch width 4 here for the sad8x8x4 kernels).
-	for yi := 0; yi < ny; yi++ {
-		mvY := y0 + yi
-		rowBase := (py+mvY)*ref.YStride + px
-		xi := 0
-		if sameStride {
-			for ; xi+4 <= nx; xi += 4 {
-				mvX := x0 + xi
-				me.sweepSearchPoint4(src.Y, ref.Y, src.YStride, srcBase, rowBase+mvX, mvX, mvY)
+// subSADClamped is the row-subsampled, doubled SAD of the bw x bh source
+// block at (px, py) against the reference block at (px+dx, py+dy) with edge
+// replication (get_zz_sad / check_00_center on the padded picture).
+func subSADClamped(src []byte, srcStride int, ref []byte, refStride, width, height, px, py, dx, dy, bw, bh int) uint32 {
+	var sum uint32
+	for r := 0; r < bh; r += 2 {
+		sy := min(py+r, height-1)
+		ry := min(max(py+dy+r, 0), height-1)
+		for c := 0; c < bw; c++ {
+			sx := min(px+c, width-1)
+			rx := min(max(px+dx+c, 0), width-1)
+			d := int(src[sy*srcStride+sx]) - int(ref[ry*refStride+rx])
+			if d < 0 {
+				d = -d
 			}
-		}
-		for ; xi < nx; xi++ {
-			mvX := x0 + xi
-			me.sweepSearchPoint1(src.Y, src.YStride, ref.Y, ref.YStride, srcBase, rowBase+mvX, mvX, mvY)
+			sum += uint32(d)
 		}
 	}
+	return sum << 1
+}
 
-	// compute_distortion (motion_estimation.c:2739-2785): per-size sums of the
-	// per-PU best SADs plus the 8x8 cost variance.
-	me.dist64 = me.bestSAD[0]
-	var dist32, dist16, dist8 uint32
+// motionEstimateSB is svt_aom_motion_estimation_b64 for one superblock at
+// preset 12 rtc: init_zz_sad, the HME center (svt_hme.go), the 8x3 sweep with
+// per-PU argmins (open_loop_me_fullpel_search_sblock) and compute_distortion.
+// prev is the previous source (h.prevY). It returns the HME level-1 SAD and
+// me_8x8_distortion.
+func (h *hmeState) motionEstimateSB(me *realtimeSBMultiSizeME, src SourceFrame420, px, py int, isRef bool, win *meWindow) (uint32, uint64) {
+	me.reset()
+	prev, pstride := h.prevY, h.prevStride
+	width, height := src.Width, src.Height
+	bw, bh := min(64, width-px), min(64, height-py)
+	full := bw == 64 && bh == 64
+
+	// init_zz_sad / get_zz_sad: the SB's zero-motion SAD, row-subsampled and
+	// doubled, normalized for an incomplete SB.
+	var zz uint32
+	if full {
+		so := py*src.YStride + px
+		po := py*pstride + px
+		zz = uint32(sad32x32Dual(src.Y[so:], src.YStride<<1, prev[po:], pstride<<1)+
+			sad32x32Dual(src.Y[so+32:], src.YStride<<1, prev[po+32:], pstride<<1)) << 1
+	} else {
+		zz = subSADClamped(src.Y, src.YStride, prev, pstride, width, height, px, py, 0, 0, bw, bh)
+		zz = uint32(uint64(zz) * 64 * 64 / uint64(bw*bh))
+	}
+
+	// HME center, skipped below me_early_exit_th >> 2.
+	xc, yc := 0, 0
+	var l1 uint32
+	if zz >= realtimeSweepEarlyExitTH>>2 && h.svt.ready() {
+		xc, yc, l1 = h.svt.center(px, py)
+	}
+	// Keep the reference block within one superblock of the picture (SVT's
+	// search-area correction against its padding).
+	xc = min(max(xc, -px-63), width-1-px)
+	yc = min(max(yc, -py-63), height-1-py)
+
+	nx, ny := realtimeSweepSearchW, realtimeSweepSearchH
+	earlyExit := zz < realtimeSweepEarlyExitTH/6
+	if earlyExit {
+		nx, ny = 1, 1
+	}
+	if !earlyExit && (xc != 0 || yc != 0) && isRef {
+		xc, yc = h.check00Center(src, px, py, xc, yc, full)
+	}
+	// x/y_search_area_origin = center - (area >> 1).
+	x0, y0 := xc-(nx>>1), yc-(ny>>1)
+
+	inside := full && px+x0 >= 0 && py+y0 >= 0 && px+x0+nx-1+64 <= width && py+y0+ny-1+64 <= height
+	if inside && src.YStride == pstride {
+		me.sweepArea(src.Y, src.YStride, py*src.YStride+px, prev, px, py, x0, y0, nx, ny)
+	} else {
+		fillWindow(win.src[:], src.Y, src.YStride, width, height, px, py, 64, 64)
+		fillWindow(win.ref[:], prev, pstride, width, height, px+x0, py+y0, nx-1+64, ny-1+64)
+		me.sweepArea(win.src[:], meWindowStride, 0, win.ref[:], -x0, -y0, x0, y0, nx, ny)
+	}
+
+	// compute_distortion: per-size sums of the per-PU best SADs, normalized
+	// to the SB area, plus the 8x8 cost variance.
+	var dist32, dist16, dist8 uint64
 	for i := 1; i < 5; i++ {
-		dist32 += me.bestSAD[i]
+		dist32 += uint64(me.bestSAD[i])
 	}
 	for i := 5; i < 21; i++ {
-		dist16 += me.bestSAD[i]
+		dist16 += uint64(me.bestSAD[i])
 	}
 	for i := 21; i < 85; i++ {
-		dist8 += me.bestSAD[i]
+		dist8 += uint64(me.bestSAD[i])
 	}
-	me.dist32, me.dist16, me.dist8 = dist32, dist16, dist8
-	mean8 := uint64(dist8) / 64
+	mean8 := dist8 / 64
 	var sumOfSq uint64
 	for i := 21; i < 85; i++ {
 		diff := int64(me.bestSAD[i]) - int64(mean8)
 		sumOfSq += uint64(diff * diff)
 	}
 	me.me8x8CostVariance = uint32(sumOfSq / 64)
+	pix := uint64(bw * bh)
+	me.dist64 = uint32(uint64(me.bestSAD[0]) * 4096 / pix)
+	me.dist32 = uint32(dist32 * 4096 / pix)
+	me.dist16 = uint32(dist16 * 4096 / pix)
+	me.dist8 = uint32(dist8 * 4096 / pix)
 	me.valid = true
+	return l1, dist8 * 4096 / pix
+}
+
+// check00Center is check_00_center (motion_estimation.c): the HME center
+// survives only when its subsampled 64x64 SAD beats the zero-motion SAD;
+// ties collapse to zero motion.
+func (h *hmeState) check00Center(src SourceFrame420, px, py, xc, yc int, full bool) (int, int) {
+	prev, pstride := h.prevY, h.prevStride
+	var zeroSAD, hmeSAD uint32
+	if full && px+xc >= 0 && py+yc >= 0 && px+xc+64 <= src.Width && py+yc+64 <= src.Height && src.YStride == pstride {
+		zeroSAD = uint32(sweepSAD64Sub(src.Y, src.YStride, py*src.YStride+px, prev, py*pstride+px))
+		hmeSAD = uint32(sweepSAD64Sub(src.Y, src.YStride, py*src.YStride+px, prev, (py+yc)*pstride+px+xc))
+	} else {
+		zeroSAD = subSADClamped(src.Y, src.YStride, prev, pstride, src.Width, src.Height, px, py, 0, 0, 64, 64)
+		hmeSAD = subSADClamped(src.Y, src.YStride, prev, pstride, src.Width, src.Height, px, py, xc, yc, 64, 64)
+	}
+	if zeroSAD <= hmeSAD {
+		return 0, 0
+	}
+	return xc, yc
+}
+
+// sweepSAD64Sub is the subsampled 64x64 SAD of check_00_center.
+func sweepSAD64Sub(src []byte, stride, srcOff int, ref []byte, refOff int) int {
+	s2 := stride << 1
+	return (sad32x32Dual(src[srcOff:], s2, ref[refOff:], s2) + sad32x32Dual(src[srcOff+32:], s2, ref[refOff+32:], s2)) << 1
+}
+
+// sweepArea scores the nx x ny positions (x0+i, y0+j) of the SB whose source
+// block starts at src[srcBase] (stride) against ref, where the reference
+// block at motion (mx, my) starts at ref[(refOy+my)*stride + refOx + mx]
+// (source and reference share the stride). Positions run y outer, x inner
+// (open_loop_me_fullpel_search_sblock).
+func (me *realtimeSBMultiSizeME) sweepArea(src []byte, stride, srcBase int, ref []byte, refOx, refOy, x0, y0, nx, ny int) {
+	for yi := 0; yi < ny; yi++ {
+		mvY := y0 + yi
+		rowBase := (refOy+mvY)*stride + refOx
+		xi := 0
+		if nx == 8 && me.sweepSearchPoint8(src, ref, stride, srcBase, rowBase+x0, x0, mvY) {
+			xi = 8
+		}
+		for ; xi+4 <= nx; xi += 4 {
+			mvX := x0 + xi
+			me.sweepSearchPoint4(src, ref, stride, srcBase, rowBase+mvX, mvX, mvY)
+		}
+		for ; xi < nx; xi++ {
+			mvX := x0 + xi
+			me.sweepSearchPoint1(src, stride, ref, stride, srcBase, rowBase+mvX, mvX, mvY)
+		}
+	}
 }
 
 // depthRemovalCtrls carries the per-level parameters of

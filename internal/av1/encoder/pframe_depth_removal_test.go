@@ -5,22 +5,24 @@ import (
 	"testing"
 )
 
-// bruteSAD is the scalar reference for an 8x8 SAD between arbitrary plane
-// positions.
-func bruteSAD(src []byte, srcStride, sx, sy int, ref []byte, refStride, rx, ry, n int) uint32 {
+// bruteSAD is the scalar reference for SUB_SAD_SEARCH's n x n SAD between
+// arbitrary plane positions: even rows only, doubled, with the reference
+// edge-replicated (SVT's padded picture).
+func bruteSAD(src []byte, srcStride, sx, sy int, ref []byte, refStride, rx, ry, n, w, h int) uint32 {
 	var total uint32
-	for r := 0; r < n; r++ {
+	for r := 0; r < n; r += 2 {
 		so := (sy+r)*srcStride + sx
-		ro := (ry+r)*refStride + rx
+		qy := min(max(ry+r, 0), h-1)
 		for c := 0; c < n; c++ {
-			d := int(src[so+c]) - int(ref[ro+c])
+			qx := min(max(rx+c, 0), w-1)
+			d := int(src[so+c]) - int(ref[qy*refStride+qx])
 			if d < 0 {
 				d = -d
 			}
 			total += uint32(d)
 		}
 	}
-	return total
+	return total << 1
 }
 
 // sweepPUGeometry returns the SB-relative (x, y, size) of tier-zero PU index
@@ -60,22 +62,22 @@ func TestRealtimeSBMultiSizeMESweepMatchesBruteForce(t *testing.T) {
 	}
 	src, ref := mk(), mk()
 
-	var st lossyEncodeState
-	st.depthRemovalIsRef = true
+	hs := &hmeState{prevY: ref.Y, prevStride: w, prevW: w, prevH: h, havePrev: true}
+	var win meWindow
 
 	for _, sb := range [][2]int{{0, 0}, {64, 64}, {128, 96}, {64, 0}} {
 		px, py := sb[0], sb[1]
 		var me realtimeSBMultiSizeME
-		st.realtimeSBMultiSizeMESweep(&me, src, ref, px, py)
+		hs.motionEstimateSB(&me, src, px, py, true, &win)
 		if !me.valid {
 			t.Fatalf("sweep at (%d,%d) not valid", px, py)
 		}
 
-		// Recompute the swept window exactly as the sweep clamps it (hme is
-		// nil so the center is (0,0)).
+		// The swept window around a (0, 0) center (no pyramid, so no HME),
+		// edge-replicated where it leaves the frame.
 		nx, ny := realtimeSweepSearchW, realtimeSweepSearchH
-		x0 := minInt(maxInt(-(realtimeSweepSearchW>>1), -px), w-64-px-(nx-1))
-		y0 := minInt(maxInt(-(realtimeSweepSearchH>>1), -py), h-64-py-(ny-1))
+		x0 := -(realtimeSweepSearchW >> 1)
+		y0 := -(realtimeSweepSearchH >> 1)
 
 		for pu := 0; pu < 85; pu++ {
 			bx, by, n := sweepPUGeometry(pu)
@@ -84,7 +86,7 @@ func TestRealtimeSBMultiSizeMESweepMatchesBruteForce(t *testing.T) {
 			for yi := 0; yi < ny; yi++ {
 				for xi := 0; xi < nx; xi++ {
 					mvX, mvY := x0+xi, y0+yi
-					s := bruteSAD(src.Y, w, px+bx, py+by, ref.Y, w, px+bx+mvX, py+by+mvY, n)
+					s := bruteSAD(src.Y, w, px+bx, py+by, ref.Y, w, px+bx+mvX, py+by+mvY, n, w, h)
 					if s < bestSAD {
 						bestSAD = s
 						bestMV = [2]int16{int16(mvX), int16(mvY)}

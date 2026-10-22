@@ -199,6 +199,8 @@ type frameCDFs = threading.FrameWorkTileResidualCDFStorage
 // the superblock context carrier, and the entropy output buffer, so steady-
 // state frame encoding allocates nothing beyond the temporal-unit assembly.
 type pframeCoder struct {
+	// ownHME is the frame ME of coders not driven by a VideoEncoder.
+	ownHME               *hmeState
 	st                   lossyEncodeState
 	effortLevel          int8
 	partCDFs             tile.PartitionCDFs
@@ -1417,6 +1419,11 @@ func (st *lossyEncodeState) buildRealtimeVarPartitionSB(sb *realtimeVarPartSB, s
 		}
 	}
 	sb.force64 = realtimePartEvalAll
+	// The SB's open-loop ME statistics (hme.go) for the depth-removal gates
+	// below.
+	if me := st.hme.sbME(px, py); me != nil {
+		sb.me = *me
+	}
 
 	var wouldSplit16, proxyFired16 [4][4]bool
 	var pending32 [4]bool
@@ -1524,7 +1531,6 @@ func (st *lossyEncodeState) buildRealtimeVarPartitionSB(sb *realtimeVarPartSB, s
 	// stats attribution (the comparisons are free — the variance fills
 	// already happened).
 	if st.depthRemovalLevel != 0 && splitBelow16Pending {
-		st.realtimeSBMultiSizeMESweep(&sb.me, src, ref, px, py)
 		depthDec := realtimeDepthRemovalDecide(st.depthRemovalLevel, st.qIndex, &sb.me)
 		applied64 := depthDec.below64
 		applied32 := depthDec.below32
@@ -1948,6 +1954,17 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	st.prepareRealtimeSourceContent(src, ref, st.grid64Cols, grid64Rows, miColStart, miColEnd)
 	st.prepareStatic64MEBypass(src, ref, grid64Rows, miColStart, miColEnd)
 	st.prepareRealtimeVarPartitioning(st.grid64Cols, grid64Rows)
+	// Coders driven without a VideoEncoder frame ME (the standalone P-frame
+	// API, monochrome) run the open-loop ME here, with the reference
+	// reconstruction standing in for the previous source.
+	if !scaledReference && (st.hme == nil || st.hme == pc.ownHME) {
+		if pc.ownHME == nil {
+			pc.ownHME = new(hmeState)
+		}
+		pc.ownHME.primeFromRecon(ref)
+		pc.ownHME.runSerial(src, true)
+		st.hme = pc.ownHME
+	}
 	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 		partition, err := st.decideRealtimePartition(src, ref, scaledReference, level, miCol, miRow, haveRight, haveBottom)
 		if err == nil && st.decisionStats != nil {
@@ -3186,15 +3203,17 @@ func compoundGoldenLikely(st *lossyEncodeState, src, ref SourceFrame420, golden 
 	}
 	for py := 0; py+blockSize <= src.Height; py += step {
 		for px := 0; px+blockSize <= src.Width; px += step {
-			seedDX, seedDY, reach := 0, 0, fullPelReach
-			if st.hme != nil {
-				var trusted bool
-				seedDX, seedDY, trusted = st.hme.seedAt(px, py)
-				if trusted {
-					reach = fullPelReachTrusted
-				}
+			// LAST's vector from the frame's open-loop ME (hme.go).
+			var lmv motion.Vector
+			if me := st.hme.sbME(px, py); me != nil {
+				pu := svtMEBlockOffset(px&63, py&63, blockSize)
+				lmv = motion.Vector{Row: me.bestMV[pu][1] * 8, Col: me.bestMV[pu][0] * 8}
 			}
-			ldx, ldy, lastSAD := fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, px, py, blockSize, seedDX, seedDY, reach)
+			ldx, ldy := int(lmv.Col>>3), int(lmv.Row>>3)
+			if px+ldx < 0 || py+ldy < 0 || px+ldx+blockSize > ref.Width || py+ldy+blockSize > ref.Height {
+				continue
+			}
+			lastSAD := st.leafFullPelSAD(src, ref, px, py, blockSize, blockSize, lmv)
 			if lastSAD <= blockSize*blockSize*4 {
 				continue
 			}
@@ -4545,13 +4564,8 @@ func fullPelDiamondSearch(src, ref []byte, stride, width, height, px, py, n int)
 	return fullPelDiamondSearchSeeded(src, ref, stride, width, height, px, py, n, 0, 0, fullPelReach)
 }
 
-// fullPelReach is the largest libaom mesh-search radius around the seed;
-// trusted seeds (clean coarse matches, see hmeTrustRegionSAD) narrow it to the
-// seed's own four-pel quantization step.
-const (
-	fullPelReach        = 8
-	fullPelReachTrusted = 4
-)
+// fullPelReach is the libaom mesh-search radius of the golden probe.
+const fullPelReach = 8
 
 // goldenRefPruneMaxDevPct ports SVT-AV1's dist_based_ref_pruning
 // (svt_aom_set_dist_based_ref_pruning_controls + perform_md_reference_pruning,
@@ -4591,10 +4605,6 @@ const (
 // coarse-search seed (the hierarchical pre-pass vector).
 func fullPelDiamondSearchSeeded(src, ref []byte, stride, width, height, px, py, n int, seedDX, seedDY, reach int) (int, int, int) {
 	return fullPelLibaomMeshSearch(src, ref, stride, width, height, px, py, n, n, seedDX, seedDY, reach)
-}
-
-func fullPelDiamondSearchRectSeeded(src, ref []byte, stride, width, height, px, py, bw, bh int, seedDX, seedDY, reach int) (int, int, int) {
-	return fullPelLibaomMeshSearch(src, ref, stride, width, height, px, py, bw, bh, seedDX, seedDY, reach)
 }
 
 func fullPelLibaomMeshSearch(src, ref []byte, stride, width, height, px, py, bw, bh int, seedDX, seedDY, reach int) (int, int, int) {

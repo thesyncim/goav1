@@ -468,3 +468,38 @@ func sad8x8CompoundAvgBlockPureGo(src []byte, srcStride int, ref0 []byte, ref0St
 	}
 	return total
 }
+
+// sad8x4PureGo is svt_aom_compute8x4_sad_kernel_c with one shared stride.
+func sad8x4PureGo(src, ref []byte, stride int) int {
+	sum := 0
+	for r := 0; r < 4; r++ {
+		s := src[r*stride : r*stride+8]
+		f := ref[r*stride : r*stride+8]
+		for c := range s {
+			d := int(s[c]) - int(f[c])
+			if d < 0 {
+				d = -d
+			}
+			sum += d
+		}
+	}
+	return sum
+}
+
+// sad8x4DualPureGo is svt_aom_compute8x4_sad_kernel_c with independent
+// strides.
+func sad8x4DualPureGo(src []byte, srcStride int, ref []byte, refStride int) int {
+	sum := 0
+	for r := 0; r < 4; r++ {
+		s := src[r*srcStride : r*srcStride+8]
+		f := ref[r*refStride : r*refStride+8]
+		for c := range s {
+			d := int(s[c]) - int(f[c])
+			if d < 0 {
+				d = -d
+			}
+			sum += d
+		}
+	}
+	return sum
+}
