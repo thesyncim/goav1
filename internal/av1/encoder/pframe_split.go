@@ -329,6 +329,9 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 		return fmt.Errorf("encoder: unexpected block %+v", block)
 	}
 	st.predStats.valid = false
+	// The MDS0 winner statistics belong to this block only (a block that
+	// left MDS0 for intra must not hand them to the next).
+	st.mds0BestRate = -1
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
 	if err := st.useSBQuant(lumaPX, lumaPY); err != nil {
@@ -500,6 +503,8 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 		mv:      mv,
 		filters: blockFilters,
 	}
+	st.lpd1NbrSkipCtx, _ = scratch.Mode.SkipContext(int(block.X4), int(block.Y4))
+	st.lpd1NoteIsInterRate(&scratch.Mode, block)
 	skip, splitTX, txPlan, txType, err := st.decideInterTXBlock(src, refPlanes, mv, block,
 		lumaPX, lumaPY, bw, bh, cbw, cbh, chromaPX, chromaPY, hasChroma, fullSAD)
 	st.predYKey.valid = false
@@ -841,6 +846,7 @@ func (st *lossyEncodeState) writePBlock(block tile.BlockVisit, scratch *tile.Blo
 // fallback): mode selection against the reconstructed edges, quantization of
 // all three planes into the record arena, and reconstruction.
 func (st *lossyEncodeState) decideIntraPBlock(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, scratch *tile.BlockLoopScratch, rec *pframeSplitRecord) error {
+	st.lpd1NoteIntraBlock(block)
 	modeCtx := &scratch.Mode
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4

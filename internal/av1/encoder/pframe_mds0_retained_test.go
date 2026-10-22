@@ -19,7 +19,7 @@ func TestMDS0RetainedPredictionMatchesWinner(t *testing.T) {
 		meMV     motion.Vector
 		nearest  motion.Vector
 		near     motion.Vector
-		rdMult   int64
+		dcQ      int32 // luma DC quantizer: sets full_lambda (lpd1FullLambda)
 		rates    tile.InterModeRateTables
 		wantMode tile.InterMode
 		wantMV   motion.Vector
@@ -27,19 +27,19 @@ func TestMDS0RetainedPredictionMatchesWinner(t *testing.T) {
 		{
 			name:     "restore-overwritten-me-winner",
 			sourceMV: farMV, meMV: farMV, nearest: zero, near: onePixel,
-			rdMult: 512, wantMode: tile.InterModeNewMV, wantMV: farMV,
+			dcQ: 12, wantMode: tile.InterModeNewMV, wantMV: farMV,
 		},
 		{
 			name:     "copy-new-near-winner",
 			sourceMV: onePixel, meMV: farMV, nearest: zero, near: onePixel,
-			rdMult: 512, wantMode: tile.InterModeNearMV, wantMV: onePixel,
+			dcQ: 12, wantMode: tile.InterModeNearMV, wantMV: onePixel,
 		},
 		{
 			// No GLOBALMV candidate in light-PD1: the zero vector wins as
 			// NEARESTMV once rate dominates.
 			name:     "copy-nearest-rate-winner",
 			sourceMV: onePixel, meMV: farMV, nearest: zero, near: onePixel,
-			rdMult: 1 << 30,
+			dcQ: 30000,
 			rates: tile.InterModeRateTables{
 				NewMV: [tile.NewMVModeContexts][2]uint32{{50_000, 0}},
 				RefMV: [tile.RefMVModeContexts][2]uint32{{10_000, 20_000}},
@@ -71,7 +71,8 @@ func TestMDS0RetainedPredictionMatchesWinner(t *testing.T) {
 			stack.Stack.Count = 2
 			stack.Stack.Candidates[0].This = tc.nearest
 			stack.Stack.Candidates[1].This = tc.near
-			st := &lossyEncodeState{rdMult: tc.rdMult, mds0Rates: tc.rates}
+			st := &lossyEncodeState{mds0Rates: tc.rates}
+			st.yQuant.DC = tc.dcQ
 
 			winner, ok, retained := st.mds0PickInterMode(src, refPlane, width, stack, px, py, block, block, tc.meMV)
 			if !ok {

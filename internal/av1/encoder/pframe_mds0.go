@@ -12,7 +12,7 @@ import (
 //     inject_new_candidates_light_pd1 (Source/Lib/Codec/mode_decision.c):
 //     NEARESTMV, then up to near_count NEARMV DRL entries, then the ME NEWMV,
 //     deduplicated by vector (mv_is_already_injected). At preset 12 the
-//     candidate reduction level pins near_count to 1 (see mds0NearCount) and
+//     SB's candidate reduction level caps near_count (lpd1SBDecision) and
 //     choose_best_av1_mv_pred keeps NEWMV on DRL index 0
 //     (approx_inter_rate > 1 path).
 //   - Pricing: fast_loop_core_light_pd1
@@ -37,22 +37,13 @@ import (
 // reference frames buy the fuller decision; droppable leaves run a
 // detector-capped variant (see the gate in encodePBlock).
 
-// mds0NearCount is SVT-AV1's near_count at preset 12's actual light-PD1
-// operating point: pic_lpd1_lvl = is_base ? 4 : 7, and any lpd1 level above
-// LPD1_LVL_3 selects cand_reduction_level 5 (enc_mode_config.c:7251-7259),
-// whose near_count_ctrls.near_count is 1; inject_mvp_candidates_ii_light_pd1
-// caps the NEAR DRL loop with it (mode_decision.c:1400-1404). The previous
-// value 3 mis-cited the cand_reduction_level<=2 rows, which preset 12 never
-// runs on P frames. E2-c ladder (2026-07-06, SVT-MATCHED gate): near_count 1
-// = -2.2% realC single-thread cpu_total (interleaved medians 1.717 vs 1.756)
-// at realC -0.035 dB / realA -0.106 dB of the +0.5..+2.0 dB surplus, every
-// clip green vs SVT same-run; near_count 0 (the cand_reduction_level-6
-// stats-pass shape) buys ~2% more but drops realC to +0.14 dB over SVT at
-// +3.5% rate — not robust at matched rate, rejected.
-const mds0NearCount = 1
+// The NEAR DRL loop is capped by the SB's near_count_ctrls.near_count
+// (lpd1SBDecision.nearCount, set_cand_reduction_ctrls via the per-SB
+// light-PD1 level: 3 at LPD1_LVL_0, 1 above), as
+// inject_mvp_candidates_ii_light_pd1 does (mode_decision.c:1400-1404).
 
-// mds0MaxCands bounds NEAREST + 1 NEAR + NEW.
-const mds0MaxCands = 3
+// mds0MaxCands bounds NEAREST + 3 NEAR + NEW.
+const mds0MaxCands = 5
 
 type mds0Cand struct {
 	mode tile.InterMode
@@ -108,8 +99,8 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	// slots the stack actually holds (svt_aom_get_max_drl_index shape:
 	// NEARMV drl d needs ref_mv_count >= d+2).
 	maxNear := int(stack.Stack.Count) - 1
-	if maxNear > mds0NearCount {
-		maxNear = mds0NearCount
+	if nc := st.lpd1SB(lumaPX, lumaPY).nearCount; maxNear > nc {
+		maxNear = nc
 	}
 	for d := 0; d < maxNear; d++ {
 		r, rerr := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNearMV}, d, false, st.forceIntegerMV)
@@ -142,10 +133,14 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 		mvFactor = 20
 	}
 
+	// fast_loop_core_light_pd1 prices at full_lambda (lpd1FullLambda).
+	lambda := st.lpd1FullLambda(st.lpd1SB(lumaPX, lumaPY))
 	var dists [mds0MaxCands]int64
 	var sses [mds0MaxCands]uint32
+	st.mds0BestRate = -1
 	best := -1
 	bestCost := int64(0)
+	bestRate := int64(0)
 	bestMV := motion.Vector{}
 	for i := 0; i < n; i++ {
 		cand := &cands[i]
@@ -200,7 +195,7 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 		}
 		// RDCOST (SVT Source/Lib/Codec/rd_cost.h): (rate*lambda >> 9) +
 		// (dist << 7), the same shape the skip decision already uses.
-		cost := ((rate*st.rdMult + 256) >> 9) + (dist << 7)
+		cost := ((rate*lambda + 256) >> 9) + (dist << 7)
 		if best < 0 || cost < bestCost {
 			if !predYValid || predYMV != cand.mv {
 				switch source {
@@ -218,6 +213,7 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 				}
 			}
 			best, bestCost = i, cost
+			bestRate = rate
 			bestMV = cand.mv
 		}
 	}
@@ -228,6 +224,7 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	// variance << 4) for the later stages (pred_stats.go).
 	st.predStats.set(bestMV, motion.RegularFilters, sses[best], uint32(dists[best]>>4))
 	st.mds0BestCost, st.mds0BestVar = bestCost, dists[best]>>4
+	st.mds0BestRate, st.mds0BestSSE = bestRate, sses[best]
 	return cands[best], true, predYValid && predYMV == bestMV
 }
 
@@ -266,16 +263,12 @@ func fillIntraDCPred(pred []byte, reconPlane []byte, stride, px, py, n int, have
 	}
 }
 
-// mds0SkipDCTh is cand_elimination_ctrls.skip_dc_th at the cand reduction
-// level preset 12 runs (enc_mode_config.c set_cand_reduction_ctrls level 5,
-// is_not_last_layer: every flat-structure frame is a reference).
-const mds0SkipDCTh = 5
-
 // mds0IntraDCWins is the DC_PRED arm of SVT-AV1's light-PD1 MDS0
 // (mode_decision.c generate_md_stage_0_cand_light_pd1 inject_intra_candidates
 // with the DC-only intra level preset 12 sets): after the inter candidates,
 // DC is skipped when the best inter residual variance already sits under
-// skip_dc_th per sample (product_coding_loop.c fast_loop_core_light_pd1),
+// the SB's cand_elimination_ctrls.skip_dc_th (lpd1SBDecision.skipDCTh) per
+// sample (product_coding_loop.c fast_loop_core_light_pd1),
 // else priced like the inter candidates - residual variance << 4 plus
 // svt_aom_intra_fast_cost's rate - against the inter winner, which pays its
 // is_inter flag as av1_inter_fast_cost_light does. Square 16x16 and 32x32
@@ -284,7 +277,7 @@ func (st *lossyEncodeState) mds0IntraDCWins(src SourceFrame420, recon *SourceFra
 	if !st.mds0IntraOK || bw != bh || (bw != 16 && bw != 32) || st.color.MonoChrome {
 		return false
 	}
-	if st.mds0BestVar < int64(mds0SkipDCTh*bw*bh) {
+	if st.mds0BestVar < int64(st.lpd1SB(lumaPX, lumaPY).skipDCTh*bw*bh) {
 		return false
 	}
 	ctx, err := modeCtx.IntraContext(int(block.X4), int(block.Y4), block.HaveTop, block.HaveLeft)
@@ -311,8 +304,9 @@ func (st *lossyEncodeState) mds0IntraDCWins(src SourceFrame420, recon *SourceFra
 	rate := int64(st.mds0IntraRates.IntraFlag[ctx][0]) +
 		int64(st.mds0IntraRates.LumaDCBits(block.Size)) +
 		int64(st.mds0IntraRates.UVModeDC[cflAllowed])
-	intraCost := ((rate*st.rdMult + 256) >> 9) + (dist << 7)
-	interCost := st.mds0BestCost + ((int64(st.mds0IntraRates.IntraFlag[ctx][1])*st.rdMult + 256) >> 9)
+	lambda := st.lpd1FullLambda(st.lpd1SB(lumaPX, lumaPY))
+	intraCost := ((rate*lambda + 256) >> 9) + (dist << 7)
+	interCost := st.mds0BestCost + ((int64(st.mds0IntraRates.IntraFlag[ctx][1])*lambda + 256) >> 9)
 	return intraCost < interCost
 }
 

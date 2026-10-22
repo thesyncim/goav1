@@ -208,6 +208,14 @@ type VideoEncoder struct {
 	leafTuScratch    []byte
 	pipeLeafRecon    SourceFrame420
 	pipeLeafCtx      frameCDFs
+	// Light-PD1 per-SB statistics (pframe_lpd1_level.go): the picture being
+	// coded, the LAST and T1 references' published objects (swapped on
+	// refresh, like SVT's EbReferenceObject sb_* arrays), and the pipelined
+	// leaf's own picture object.
+	lpd1Cur, lpd1Last, lpd1T1, lpd1Leaf *lpd1Frame
+	// lpd1FrameBias corrects e.frameIndex for the pipelined base, coded
+	// before the counter advances past its leaf.
+	lpd1FrameBias int
 	// Persistent leaf worker (parked between frames; no per-frame closures).
 	leafWork     chan struct{}
 	leafDone     chan error
@@ -218,6 +226,8 @@ type VideoEncoder struct {
 		prevCtx       *frameCDFs
 		tu            []byte
 		cntZeroMV     int
+		lpd1Ref       *lpd1Frame
+		frameIndex    int
 	}
 }
 
@@ -895,6 +905,7 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 	e.hme.prime(src)
 	e.recon = recon
 	e.lastRecon = recon
+	e.lpd1KeyRefs(src.Width, src.Height)
 	e.haveKey = true
 	e.frameIndex = 1
 	// The first inter frame after a keyframe starts from default contexts
@@ -1075,6 +1086,7 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 		e.recon = *out
 		e.reconIdx ^= 1
 	}
+	e.lpd1InvalidateRefs()
 	e.haveKey = true
 	e.frameIndex++
 	e.haveCtx = false
@@ -1569,7 +1581,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	// rtc-forced level; see pframe_lpd1_tx.go). Base pictures keep the
 	// chroma detector armed; droppable leaves add the neighbour-gated
 	// skip-TX arm, mirroring pic_lpd1_lvl = is_base ? 3 : 7.
-	e.pc.st.setLPD1TxCtrls(true, !droppable)
+	e.pc.st.setLPD1TxCtrls(true)
 	e.pc.forceSplit = e.forceSplit
 	e.configurePCWavefront()
 	for t := range e.tilePCs {
@@ -1582,6 +1594,32 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	refRecon := e.recon
 	if afterT1 {
 		refRecon = e.t1Recon
+	}
+	// Light-PD1 level machinery (pframe_lpd1_level.go): pic_lpd1_lvl, the
+	// per-SB statistics and the reference whose statistics the detector reads.
+	lpd1Ref := e.lpd1Last
+	if afterT1 {
+		lpd1Ref = e.lpd1T1
+	}
+	lpd1Setup := lpd1PictureSetup{ref: lpd1Ref, picLvl: lpd1PicLevel(false, !droppable, header.Prefix.AllowScreenContentTools), notLastLayer: !droppable || isT1, armed: true}
+	// update_lambda: the highest temporal layer is LF_UPDATE (180), every
+	// other layer (flat IPP included) ARF or INTNL_ARF (150); low delay
+	// marks every MAX_GF_INTERVAL-th frame GF_UPDATE (set_frame_update_type).
+	lpd1Setup.tlFactor = 150
+	if e.temporalLayers > 1 && droppable && int(temporalID) == e.temporalLayers-1 {
+		lpd1Setup.tlFactor = 180
+	}
+	lpd1Setup.gfUpdate = (e.frameIndex+e.lpd1FrameBias)%lpd1MaxGFInterval == 0
+	if videoColorIs420(color) {
+		if e.lpd1Cur == nil {
+			e.lpd1Cur = new(lpd1Frame)
+		}
+		e.lpd1Cur.begin(src.Width, src.Height, &e.hme, effQ)
+		lpd1Setup.cur = e.lpd1Cur
+	}
+	e.pc.st.lpd1Pending = lpd1Setup
+	for t := range e.tilePCs {
+		e.tilePCs[t].st.lpd1Pending = lpd1Setup
 	}
 	// Cyclic refresh (cyclic_refresh.go): single-layer CBR inter frames
 	// lower the qindex of a sliding superblock window and signal it with
@@ -1750,6 +1788,16 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if depthRemovalStatsEnabled {
 		// Frame-serial: every tile and wavefront lane has joined by here.
 		dumpDepthRemovalStats(uint64(e.frameIndex))
+	}
+	if lpd1StatsEnabled {
+		dumpLPD1Stats(uint64(e.frameIndex))
+	}
+	// Publish the light-PD1 statistics with the refreshed reference slot
+	// (rest_process.c copy_statistics_to_ref_obj_ect).
+	if !droppable {
+		e.lpd1Last = e.publishLPD1(e.lpd1Last, lpd1Setup.cur != nil)
+	} else if isT1 {
+		e.lpd1T1 = e.publishLPD1(e.lpd1T1, lpd1Setup.cur != nil)
 	}
 	e.lastRecon = *out
 	if isT1 {
