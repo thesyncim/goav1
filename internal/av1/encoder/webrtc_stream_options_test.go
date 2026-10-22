@@ -1321,13 +1321,13 @@ func TestWebRTCStreamSetConfigControlsAllPixelEncoders(t *testing.T) {
 					return controlSnapshot{}
 				}
 				return controlSnapshot{
-					rcEnabled:              enc.rcEnabled,
-					rcTargetBits:           enc.rcTargetBits,
-					rcFramesPerSec:         enc.rcFramesPerSec,
-					rcPerFrameBits:         enc.rcPerFrameBits,
-					qIndex:                 enc.qIndex,
-					temporalLayers:         enc.temporalLayers,
-					sharedRC:               true,
+					rcEnabled:      enc.rcEnabled,
+					rcTargetBits:   enc.rcTargetBits,
+					rcFramesPerSec: enc.rcFramesPerSec,
+					rcPerFrameBits: enc.rcPerFrameBits,
+					qIndex:         enc.qIndex,
+					temporalLayers: enc.temporalLayers,
+					sharedRC:       true,
 				}
 			},
 		},

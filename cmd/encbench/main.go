@@ -95,7 +95,7 @@ func goldenLabel(interval int) string {
 func main() {
 	dump := flag.String("dump", "", "write the scene as raw I420 to this path and exit")
 	bitrate := flag.Int("bitrate", 6_000_000, "CBR target in bits per second")
-	layers := flag.Int("layers", 1, "temporal layers (1 flat, 2 or 3 layered)")
+	layers := flag.Int("layers", 0, "temporal layers (0 SVT-AV1 realtime default = 3, 1 flat, 2 or 3 layered)")
 	tiles := flag.Int("tiles", 0, "tile columns override (0 = default)")
 	golden := flag.Int("golden", 0, "golden refresh interval in base-layer frames (0 = encoder default, negative = disable)")
 	width := flag.Int("width", defaultWidth, "frame width in pixels")

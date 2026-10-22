@@ -277,7 +277,7 @@ func newVideoEncoderWithColor(width, height int, qIndex uint8, color SequenceCol
 		width: codedW, height: codedH,
 		renderWidth: width, renderHeight: height,
 		color:  color,
-		qIndex: qIndex, goldenEvery: 16, sceneCutKeyframes: true,
+		qIndex: qIndex, goldenEvery: 0, sceneCutKeyframes: true,
 	}
 	e.tileColsLog2 = defaultTileColsLog2(codedW)
 	e.keyframeTileColsLog2 = e.tileColsLog2
@@ -551,11 +551,24 @@ func (e *VideoEncoder) setDefaultTileColumns() {
 // me_ctx->is_ref: base pictures and the L1T3 middle layer are referenced.
 func (e *VideoEncoder) runHME(src SourceFrame420, temporalID uint8) {
 	isRef := temporalID == 0 || (e.temporalLayers == 3 && temporalID == 1)
+	// pa_me searches the frame's own reference: LAST (slot 0) for the base
+	// layer, the L1T2 leaf and the L1T3 middle layer and leaf after a base,
+	// the middle layer (slot 1) for the L1T3 leaf that follows it.
+	ref, store := 0, -1
+	if e.temporalLayers == 3 && temporalID == 2 && e.lastTemporalID == 1 {
+		ref = 1
+	}
+	switch {
+	case temporalID == 0:
+		store = 0
+	case e.temporalLayers == 3 && temporalID == 1:
+		store = 1
+	}
 	if e.singleThread {
-		e.hme.runSerial(src, isRef)
+		e.hme.runSerial(src, isRef, ref, store)
 		return
 	}
-	e.hme.run(src, isRef)
+	e.hme.run(src, isRef, ref, store)
 }
 
 func tileColumnsLog2(cols int) uint8 {
@@ -991,11 +1004,11 @@ func (e *VideoEncoder) Prewarm() error {
 	}
 	// Exercise every reconstruction buffer and the golden-refresh cadence so
 	// delayed scratch growth happens before the first externally visible frame.
-	frames := e.temporalLayers
-	if frames < 2 {
-		frames = 2
-	} else {
-		frames *= 2
+	// Two full temporal-layer periods: every layer, and both base-layer
+	// reconstruction buffers, code at least once.
+	frames := 2
+	if e.temporalLayers > 1 {
+		frames = 2 << (e.temporalLayers - 1)
 	}
 	if e.goldenEvery > 0 && frames < e.goldenEvery+1 {
 		frames = e.goldenEvery + 1
@@ -1027,6 +1040,10 @@ func (e *VideoEncoder) Prewarm() error {
 	e.hme.havePrev = false
 	e.hme.fme.valid = false
 	e.hme.svt.haveCur, e.hme.svt.havePrev = false, false
+	for s := range e.hme.refY {
+		e.hme.refY[s].valid = false
+	}
+	e.hme.svt.slotOK = [hmeRefSlots]bool{}
 	e.lastRecon = SourceFrame420{}
 	return nil
 }
@@ -1259,8 +1276,20 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	}
 	refresh := uint8(0x01)
 	refreshGolden := false
+	// SVT-AV1 preset 12 rtc low delay with three layers and one reference
+	// (mrp_level 0, ld_reduce_ref_buffs 2; pd_process.c LOW_DELAY CBR
+	// branch): TL0 refreshes slot 0 and clears 2..7 (1 << lay0_toggle |
+	// 0xfc), TL1 refreshes slot 1, TL2 refreshes nothing; every reference
+	// name points at the one picture the frame predicts from.
+	svtLD := e.temporalLayers == 3 && e.goldenEvery == 0
+	if svtLD && !droppable {
+		refresh = 0x01 | 0xfc
+	}
 	if isT1 {
 		refresh = 0x04 // slot 2 carries the middle layer for its T2 leaves
+		if svtLD {
+			refresh = 0x02
+		}
 	} else if droppable {
 		refresh = 0 // leaf-layer frames are never referenced
 	} else if e.goldenEvery > 0 {
@@ -1330,6 +1359,15 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if afterT1 {
 		// The trailing T2 predicts from the middle layer: LAST names slot 2.
 		header.Size.RefFrameIdx[0] = 2
+	}
+	if svtLD {
+		slot := uint8(0)
+		if afterT1 {
+			slot = 1
+		}
+		for i := range header.Size.RefFrameIdx {
+			header.Size.RefFrameIdx[i] = slot
+		}
 	}
 	var prevCtx *frameCDFs
 	contextChainSupported := videoColorIs420(color)
@@ -1404,15 +1442,11 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		e.lf.orderedMasks = true
 		e.pc.st.lfMaskBuilder = &e.lf.orderedBuilder
 	}
-	// The light-PD1 MDS0 candidate decision runs on every inter frame, with
-	// droppable leaves on the lighter detector-gated level, mirroring
-	// SVT-AV1 preset 12's temporal-layer modulation (enc_mode_config.c:
-	// pic_lpd1_lvl = is_base ? 4 : 7).
-	if droppable {
-		e.pc.st.mds0Level = 2
-	} else {
-		e.pc.st.mds0Level = 1
-	}
+	// The light-PD1 MDS0 candidate decision runs on every block of every
+	// inter frame, as SVT's generate_md_stage_0_cand_light_pd1 does; the
+	// temporal-layer modulation comes from the per-SB light-PD1 level
+	// (pframe_lpd1_level.go).
+	e.pc.st.mds0Level = 1
 	// Depth removal (SVT set_depth_removal_level_controls; see
 	// pframe_depth_removal.go) follows the same is_base modulation as
 	// mds0Level: base frames run level 9, droppable leaves 14 (preset-12

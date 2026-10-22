@@ -331,10 +331,11 @@ type VideoEncoderConfig struct {
 	MinQIndex     uint8
 	MaxQIndex     uint8
 
-	// TemporalLayers selects the layering mode: 0 or 1 for a flat stream,
-	// 2 for L1T2 with droppable odd frames, 3 for L1T3 (T0/T2/T1/T2 groups
-	// with a droppable top layer and a middle layer the trailing T2
-	// references).
+	// TemporalLayers selects the layering mode. Zero follows SVT-AV1's
+	// realtime default (preset 12, --rtc, low delay): three temporal layers
+	// in T0/T2/T1/T2 groups, one reference per frame, a droppable top layer
+	// and a middle layer the trailing T2 references. 1 selects a flat
+	// stream, 2 L1T2 with droppable odd frames, 3 the same L1T3 groups.
 	TemporalLayers int
 
 	// TileColumns overrides the tile-column count used for parallel inter
@@ -355,7 +356,8 @@ type VideoEncoderConfig struct {
 	Speed int8
 
 	// GoldenInterval is the number of base-layer frames between golden
-	// anchor refreshes; zero keeps the default (16) and a negative value
+	// anchor refreshes. Zero keeps the default, off: SVT-AV1 preset 12 rtc
+	// codes one reference per frame (mrp_level 0). A negative value also
 	// disables golden references.
 	GoldenInterval int
 
@@ -482,10 +484,14 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch cfg.TemporalLayers {
-	case 0, 1:
+	layers := cfg.TemporalLayers
+	if layers == 0 {
+		layers = defaultRealtimeTemporalLayers
+	}
+	switch layers {
+	case 1:
 	default:
-		if err := enc.SetTemporalLayers(cfg.TemporalLayers); err != nil {
+		if err := enc.SetTemporalLayers(layers); err != nil {
 			_ = enc.Close()
 			return nil, err
 		}
@@ -998,7 +1004,7 @@ func NewRTCEncoder(cfg VideoEncoderConfig) (*RTCEncoder, error) {
 	}
 	layers := cfg.TemporalLayers
 	if layers == 0 {
-		layers = 1
+		layers = defaultRealtimeTemporalLayers
 	}
 	stream, err := encoder.NewWebRTCStreamLayers(cfg.Width, cfg.Height, rc, layers)
 	if err != nil {
@@ -2746,3 +2752,8 @@ func rtcEncoderConfigIsNativeI444(cfg EncoderConfig) bool {
 		!cfg.ColorConfig.SubsamplingX &&
 		!cfg.ColorConfig.SubsamplingY
 }
+
+// defaultRealtimeTemporalLayers is SVT-AV1's realtime prediction structure
+// (--rtc 1 --pred-struct 1, hierarchical_levels AUTO -> 2 for low-delay
+// CBR): three temporal layers.
+const defaultRealtimeTemporalLayers = 3

@@ -1957,7 +1957,7 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 			pc.ownHME = new(hmeState)
 		}
 		pc.ownHME.primeFromRecon(ref)
-		pc.ownHME.runSerial(src, true)
+		pc.ownHME.runSerial(src, true, 0, -1)
 		st.hme = pc.ownHME
 	}
 	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
@@ -2503,15 +2503,8 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		// and at high q those are the blocks where a vector-free NEARESTMV
 		// undercuts NEWMV. Static superblocks keep the short path as
 		// libaom's realtime pick cuts its mode loop on zero source SAD
-		// (av1/encoder/nonrd_pickmode.c source-SAD shortcuts). Droppable
-		// leaves cap the loop to the moderate-distortion band: SVT keeps
-		// leaves on the highest lpd1 shortcut level (enc_mode_config.c:
-		// pic_lpd1_lvl = is_base ? 4 : 7, with lpd1_detector_post_pd0
-		// steering by block difficulty), and here the hard leaf blocks keep
-		// the single-candidate NEWMV path so leaf frames hold the realtime
-		// wall budget.
-		mds0Gate := st.mds0Level != 2 || fullSAD <= bw*bh*4
-		if st.mds0Level != 0 && mds0Gate && !scaledReference && refPlanes.Width == src.Width && refPlanes.Height == src.Height &&
+		// (av1/encoder/nonrd_pickmode.c source-SAD shortcuts).
+		if st.mds0Level != 0 && !scaledReference && refPlanes.Width == src.Width && refPlanes.Height == src.Height &&
 			st.realtimeContentStateForBlock(lumaPX, lumaPY).sourceSADNonRD != realtimeSourceSADZero {
 			if cand, ok, retained := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, &stack, lumaPX, lumaPY, bw, bh, mv); ok {
 				modeResult.Mode = cand.mode

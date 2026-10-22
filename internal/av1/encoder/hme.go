@@ -25,13 +25,16 @@ import "sync"
 type hmeState struct {
 	svt svtPyramid
 
-	// prevY is the previous source's luma at prevStride, the reference of
-	// the open-loop sweep and zz SAD.
+	// prevY is the active reference source's luma at prevStride (the
+	// reference of the open-loop sweep and zz SAD): a view of the source
+	// kept with the reference slot the frame predicts from (refY), the way
+	// SVT's pa_me searches each reference picture's input.
 	prevY      []byte
 	prevStride int
 	prevW      int
 	prevH      int
 	havePrev   bool
+	refY       [hmeRefSlots]hmeRefLuma
 
 	// fme is the current frame's ME result.
 	fme frameME
@@ -100,11 +103,45 @@ func (h *hmeState) close() {
 	h.started = false
 }
 
-// prime makes src the reference of the next inter frame (after a keyframe).
+// hmeRefSlots is the number of reference sources kept: LAST (slot 0) and
+// the L1T3 middle layer (slot 1).
+const hmeRefSlots = 2
+
+// hmeRefLuma is one reference slot's source luma.
+type hmeRefLuma struct {
+	y            []byte
+	stride, w, h int
+	valid        bool
+}
+
+// prime makes src (a keyframe) the reference source of every slot.
 func (h *hmeState) prime(src SourceFrame420) {
-	h.svt.build(src, true)
-	h.keepPrev(src)
+	h.svt.build(src)
+	for s := range h.refY {
+		h.storeRef(s, src)
+	}
+	h.selectRef(0)
 	h.fme.valid = false
+}
+
+// storeRef keeps src (whose pyramid is the current one) as slot s's
+// reference source.
+func (h *hmeState) storeRef(s int, src SourceFrame420) {
+	r := &h.refY[s]
+	n := src.YStride * src.Height
+	if len(r.y) < n {
+		r.y = make([]byte, n)
+	}
+	copy(r.y[:n], src.Y[:n])
+	r.stride, r.w, r.h, r.valid = src.YStride, src.Width, src.Height, true
+	h.svt.storeRef(s)
+}
+
+// selectRef makes slot s the active ME reference.
+func (h *hmeState) selectRef(s int) {
+	r := &h.refY[s]
+	h.prevY, h.prevStride, h.prevW, h.prevH, h.havePrev = r.y, r.stride, r.w, r.h, r.valid
+	h.svt.selectRef(s)
 }
 
 // primeFromRecon seeds the open-loop reference with a reconstruction when no
@@ -113,19 +150,11 @@ func (h *hmeState) primeFromRecon(ref SourceFrame420) {
 	h.prime(ref)
 }
 
-func (h *hmeState) keepPrev(src SourceFrame420) {
-	n := src.YStride * src.Height
-	if len(h.prevY) < n {
-		h.prevY = make([]byte, n)
-	}
-	copy(h.prevY[:n], src.Y[:n])
-	h.prevStride, h.prevW, h.prevH = src.YStride, src.Width, src.Height
-	h.havePrev = true
-}
-
-// run is the frame's ME on the band workers; isRef is me_ctx->is_ref.
-func (h *hmeState) run(src SourceFrame420, isRef bool) {
-	h.prepare(src, isRef)
+// run is the frame's ME on the band workers; isRef is me_ctx->is_ref,
+// ref the reference slot the frame predicts from and store the slot it
+// refreshes (-1 for a non-reference picture).
+func (h *hmeState) run(src SourceFrame420, isRef bool, ref, store int) {
+	h.prepare(src, isRef, ref)
 	if h.fme.valid {
 		h.startWorkers()
 		jobs := 0
@@ -142,20 +171,28 @@ func (h *hmeState) run(src SourceFrame420, isRef bool) {
 			<-h.done
 		}
 	}
-	h.keepPrev(src)
+	h.finish(src, store)
 }
 
 // runSerial is run on the calling goroutine.
-func (h *hmeState) runSerial(src SourceFrame420, isRef bool) {
-	h.prepare(src, isRef)
+func (h *hmeState) runSerial(src SourceFrame420, isRef bool, ref, store int) {
+	h.prepare(src, isRef, ref)
 	if h.fme.valid {
 		h.meRows(0, src, 0, h.fme.rows)
 	}
-	h.keepPrev(src)
+	h.finish(src, store)
 }
 
-func (h *hmeState) prepare(src SourceFrame420, isRef bool) {
-	h.svt.build(src, false)
+// finish keeps a reference picture's source in the slot it refreshes.
+func (h *hmeState) finish(src SourceFrame420, store int) {
+	if store >= 0 && store < hmeRefSlots {
+		h.storeRef(store, src)
+	}
+}
+
+func (h *hmeState) prepare(src SourceFrame420, isRef bool, ref int) {
+	h.svt.build(src)
+	h.selectRef(min(max(ref, 0), hmeRefSlots-1))
 	f := &h.fme
 	f.valid = false
 	if !h.havePrev || h.prevW != src.Width || h.prevH != src.Height || h.prevStride != src.YStride ||

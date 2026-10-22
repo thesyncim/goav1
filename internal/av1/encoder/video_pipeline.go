@@ -229,28 +229,24 @@ func (e *VideoEncoder) encodeOverlap(baseSrc SourceFrame420) (tu []byte, key boo
 }
 
 // runLeafHME runs the buffered leaf's frame ME on the isolated leafHME,
-// referencing the previous base's source (e.hme's latest source pyramid and
-// luma), then hands the leaf's own source back to e.hme so the base ME that
-// follows references it, reproducing the serial chain.
+// referencing the previous base's source (e.hme's LAST slot), as the serial
+// chain does; the leaf is not a reference, so e.hme keeps its slots.
 func (e *VideoEncoder) runLeafHME(leafSrc SourceFrame420) {
-	if !e.hme.havePrev {
-		// No primed reference (should not happen post-keyframe); the leaf
-		// coder runs without frame ME exactly as a serial leaf would.
-		e.leafHME.havePrev = false
-		e.leafHME.fme.valid = false
-		return
+	// The L1T2 leaf predicts from LAST (slot 0) and refreshes nothing.
+	r := &e.hme.refY[0]
+	l := &e.leafHME.refY[0]
+	if !r.valid {
+		l.valid = false
+	} else {
+		n := r.stride * r.h
+		if len(l.y) < n {
+			l.y = make([]byte, n)
+		}
+		copy(l.y[:n], r.y[:n])
+		l.stride, l.w, l.h, l.valid = r.stride, r.w, r.h, true
 	}
-	e.leafHME.svt.primeFrom(&e.hme.svt)
-	n := e.hme.prevStride * e.hme.prevH
-	if len(e.leafHME.prevY) < n {
-		e.leafHME.prevY = make([]byte, n)
-	}
-	copy(e.leafHME.prevY[:n], e.hme.prevY[:n])
-	e.leafHME.prevStride, e.leafHME.prevW, e.leafHME.prevH = e.hme.prevStride, e.hme.prevW, e.hme.prevH
-	e.leafHME.havePrev = true
-	e.leafHME.runSerial(leafSrc, false)
-	e.hme.svt.adoptCurFrom(&e.leafHME.svt)
-	e.hme.keepPrev(leafSrc)
+	e.leafHME.svt.copySlotFrom(&e.hme.svt, 0)
+	e.leafHME.runSerial(leafSrc, false, 0, -1)
 }
 
 // startLeafWorker launches the persistent leaf-encode worker once. It parks on
@@ -331,7 +327,7 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 	e.leafPC.effortLevel = e.effortLevel
 	e.leafPC.decisionStatsEnabled = e.decisionStatsEnabled
 	e.leafPC.st.hme = &e.leafHME
-	e.leafPC.st.mds0Level = 2
+	e.leafPC.st.mds0Level = 1
 	// Pipelined leaves mirror the serial droppable-leaf depth-removal config
 	// (video.go encodePReusing) so pipelining stays byte-identical.
 	e.leafPC.st.depthRemovalLevel = depthRemovalLevelForFrame(src.Width, src.Height, false)
