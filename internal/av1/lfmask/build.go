@@ -34,11 +34,6 @@ type LevelCache struct {
 	Stride int
 }
 
-// at returns the mutable level cell at luma 4x4 (bx, by).
-func (c LevelCache) at(bx, by int) *[4]uint8 {
-	return &c.Cells[by*c.Stride+bx]
-}
-
 // writesLevels reports whether this cache is populated. A zero LevelCache (nil
 // Cells) is used by the decode-time geometry build, which fills only the edge
 // bitmasks and leaves level resolution to the consumer; the level cells are
@@ -73,13 +68,7 @@ func (b *Builder) CreateIntra(m *FilterMask, lc LevelCache, lv Levels, bx, by, i
 
 	if bw4 > 0 && bh4 > 0 {
 		if lc.writesLevels() {
-			for y := 0; y < bh4; y++ {
-				for x := 0; x < bw4; x++ {
-					cell := lc.at(bx+x, by+y)
-					cell[0] = lv.YVert
-					cell[1] = lv.YHorz
-				}
-			}
+			lc.fill(bx, by, bw4, bh4, 0, lv.YVert, lv.YHorz)
 		}
 		maskEdgesIntra(&m.Y, by4, bx4, bw4, bh4, ytx, ay, ly)
 	}
@@ -97,13 +86,7 @@ func (b *Builder) CreateIntra(m *FilterMask, lc LevelCache, lv Levels, bx, by, i
 	cbx4 := bx4 >> ssHor
 	cby4 := by4 >> ssVer
 	if lc.writesLevels() {
-		for y := 0; y < cbh4; y++ {
-			for x := 0; x < cbw4; x++ {
-				cell := lc.at((bx>>ssHor)+x, (by>>ssVer)+y)
-				cell[2] = lv.U
-				cell[3] = lv.V
-			}
-		}
+		lc.fill(bx>>ssHor, by>>ssVer, cbw4, cbh4, 2, lv.U, lv.V)
 	}
 	maskEdgesChroma(&m.UV, cby4, cbx4, cbw4, cbh4, 0, uvtx, auv, luv, ssHor, ssVer)
 }
@@ -223,13 +206,7 @@ func (b *Builder) CreateInter(m *FilterMask, lc LevelCache, lv Levels, bx, by, i
 
 	if bw4 > 0 && bh4 > 0 {
 		if lc.writesLevels() {
-			for y := 0; y < bh4; y++ {
-				for x := 0; x < bw4; x++ {
-					cell := lc.at(bx+x, by+y)
-					cell[0] = lv.YVert
-					cell[1] = lv.YHorz
-				}
-			}
+			lc.fill(bx, by, bw4, bh4, 0, lv.YVert, lv.YHorz)
 		}
 		maskEdgesInter(&m.Y, by4, bx4, bw4, bh4, skip, maxYtx, txMasks, ay, ly, &b.txa)
 	}
@@ -247,13 +224,22 @@ func (b *Builder) CreateInter(m *FilterMask, lc LevelCache, lv Levels, bx, by, i
 	cbx4 := bx4 >> ssHor
 	cby4 := by4 >> ssVer
 	if lc.writesLevels() {
-		for y := 0; y < cbh4; y++ {
-			for x := 0; x < cbw4; x++ {
-				cell := lc.at((bx>>ssHor)+x, (by>>ssVer)+y)
-				cell[2] = lv.U
-				cell[3] = lv.V
-			}
-		}
+		lc.fill(bx>>ssHor, by>>ssVer, cbw4, cbh4, 2, lv.U, lv.V)
 	}
 	maskEdgesChroma(&m.UV, cby4, cbx4, cbw4, cbh4, skip, uvtx, auv, luv, ssHor, ssVer)
+}
+
+// fill writes one block's two level bytes (components comp and comp+1) over a
+// w x h rectangle of cells at (bx, by), dav1d_create_lf_mask_{intra,inter}'s
+// level_cache_ptr loops; each row is sliced once.
+func (c LevelCache) fill(bx, by, w, h, comp int, l0, l1 uint8) {
+	base := by*c.Stride + bx
+	for y := 0; y < h; y++ {
+		row := c.Cells[base : base+w]
+		for x := range row {
+			row[x][comp] = l0
+			row[x][comp+1] = l1
+		}
+		base += c.Stride
+	}
 }

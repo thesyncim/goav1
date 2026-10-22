@@ -16,7 +16,11 @@
 // Ported from dav1d src/lf_mask.c (pinned third_party/upstream/dav1d).
 package lfmask
 
-import "github.com/thesyncim/goav1/internal/av1/tile"
+import (
+	"encoding/binary"
+
+	"github.com/thesyncim/goav1/internal/av1/tile"
+)
 
 // FilterMask holds the dav1d Av1Filter edge bitmasks for one 128x128 region
 // (1 or 4 superblocks), pre-superres scaling. Each bit is one 4x4 edge.
@@ -120,28 +124,7 @@ func decompTx(txa *[2][2][32][32]uint8, yBase, xBase int, from tile.TransformSiz
 		}
 		return
 	}
-	lw := int(td.Log2W)
-	if lw > 2 {
-		lw = 2
-	}
-	lh := int(td.Log2H)
-	if lh > 2 {
-		lh = 2
-	}
-	w := int(td.W4)
-	h := int(td.H4)
-	for y := 0; y < h; y++ {
-		row0 := &txa[0][0][yBase+y]
-		row1 := &txa[1][0][yBase+y]
-		for x := 0; x < w; x++ {
-			row0[xBase+x] = uint8(lw)
-			row1[xBase+x] = uint8(lh)
-		}
-		txa[0][1][yBase+y][xBase] = uint8(w)
-	}
-	for x := 0; x < w; x++ {
-		txa[1][1][yBase][xBase+x] = uint8(h)
-	}
+	decompTxLeaf(txa, yBase, xBase, td)
 }
 
 // maskEdgesInter ORs one 128x128 block's inter luma edges into masks and updates
@@ -385,5 +368,59 @@ func maskEdgesChroma(masks *[2][32][2][2]uint16, cby4, cbx4, cw4, ch4, skipInter
 	}
 	for y := 0; y < ch4; y++ {
 		l[y] = uint8(twl4c)
+	}
+}
+
+// decompTxLeaf is the leaf of dav1d's decomp_tx (src/lf_mask.c): the rows of
+// one transform get its clamped width/height classes and step, and the first
+// row its height step. As dav1d's case_set_upto16 and dav1d_memset_pow2
+// (src/ctx.h) do, the transform width selects one fixed-width replicated
+// store per row instead of a per-byte loop.
+func decompTxLeaf(txa *[2][2][32][32]uint8, yBase, xBase int, td tile.TransformDimensions) {
+	lw := uint64(min(td.Log2W, 2))
+	lh := uint64(min(td.Log2H, 2))
+	w, h := int(td.W4), int(td.H4)
+	ys := txa[0][0][yBase : yBase+h]
+	hs := txa[1][0][yBase : yBase+h]
+	steps := txa[0][1][yBase : yBase+h]
+	switch td.Log2W {
+	case 0:
+		for y := range ys {
+			ys[y][xBase] = uint8(lw)
+			hs[y][xBase] = uint8(lh)
+			steps[y][xBase] = 1
+		}
+		txa[1][1][yBase][xBase] = uint8(h)
+	case 1:
+		for y := range ys {
+			binary.LittleEndian.PutUint16(ys[y][xBase:], uint16(lw*0x0101))
+			binary.LittleEndian.PutUint16(hs[y][xBase:], uint16(lh*0x0101))
+			steps[y][xBase] = 2
+		}
+		binary.LittleEndian.PutUint16(txa[1][1][yBase][xBase:], uint16(h)*0x0101)
+	case 2:
+		for y := range ys {
+			binary.LittleEndian.PutUint32(ys[y][xBase:], uint32(lw*0x01010101))
+			binary.LittleEndian.PutUint32(hs[y][xBase:], uint32(lh*0x01010101))
+			steps[y][xBase] = 4
+		}
+		binary.LittleEndian.PutUint32(txa[1][1][yBase][xBase:], uint32(h)*0x01010101)
+	case 3:
+		for y := range ys {
+			binary.LittleEndian.PutUint64(ys[y][xBase:], lw*0x0101010101010101)
+			binary.LittleEndian.PutUint64(hs[y][xBase:], lh*0x0101010101010101)
+			steps[y][xBase] = 8
+		}
+		binary.LittleEndian.PutUint64(txa[1][1][yBase][xBase:], uint64(h)*0x0101010101010101)
+	default:
+		for y := range ys {
+			binary.LittleEndian.PutUint64(ys[y][xBase:], lw*0x0101010101010101)
+			binary.LittleEndian.PutUint64(ys[y][xBase+8:], lw*0x0101010101010101)
+			binary.LittleEndian.PutUint64(hs[y][xBase:], lh*0x0101010101010101)
+			binary.LittleEndian.PutUint64(hs[y][xBase+8:], lh*0x0101010101010101)
+			steps[y][xBase] = uint8(w)
+		}
+		binary.LittleEndian.PutUint64(txa[1][1][yBase][xBase:], uint64(h)*0x0101010101010101)
+		binary.LittleEndian.PutUint64(txa[1][1][yBase][xBase+8:], uint64(h)*0x0101010101010101)
 	}
 }
