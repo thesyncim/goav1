@@ -26,8 +26,8 @@ func TestPFrameReuseOptimizationsPreserveEncodedOutput(t *testing.T) {
 		stream  string
 		recon   string
 	}{
-		{1, "d5a79535cf72852f4dad545e5cea358f8c03ea183358c6d2e812a56c514a170f", "db55b8553723987db0233fb920d2c1219f029af3929e5db78ea71c4b7616d48b"},
-		{4, "20f0185536dc06568f5679104488b3aedcbe0a256bead09518f8380e41254723", "88e080941a72b47ca6088382621038468d1dead30a1e1a8aebee415eab2ddec7"},
+		{1, "323f8de51ee9e435e01d9efdc6036648f9e8d18d6bc632d11b6ff6d3a0a37e48", "c2781062bad37fa84fcdf8f0eee1495001f8672270012ad5b1c5cdace7bd4410"},
+		{4, "733e9de566a3e52dc2165c98ad5046b248db3b26701d366b0a92094ed792b820", "a952c9fc1cef3eb7d2a49cbb5d9adaee620a00f65bca75f99fea6fa9336a07c8"},
 	}
 
 	rng := rand.New(rand.NewSource(3))

@@ -857,11 +857,13 @@ func (st *lossyEncodeState) decideIntraPBlock(src SourceFrame420, recon *SourceF
 		}
 	}
 
+	coeffStart := len(rec.coeffs)
 	// Luma: quantize against the chosen prediction, record, reconstruct.
 	if err := st.reconRecordedIntraTXB(rec, recon.Y, src.Y, src.YStride, lumaPX, lumaPY, n, n, st.yQuant, lumaTX, pred); err != nil {
 		return fmt.Errorf("intra luma txb: %w", err)
 	}
 	if !hasChroma {
+		st.noteIntraSkip(rec, r, modeCtx, block, coeffStart)
 		if st.decisionStats != nil {
 			st.decisionStats.noteIntraBlock(block.Size)
 		}
@@ -898,6 +900,7 @@ func (st *lossyEncodeState) decideIntraPBlock(src SourceFrame420, recon *SourceF
 			return fmt.Errorf("intra chroma %d txb: %w", plane, err)
 		}
 	}
+	st.noteIntraSkip(rec, r, modeCtx, block, coeffStart)
 	if st.decisionStats != nil {
 		st.decisionStats.noteIntraBlock(block.Size)
 	}
@@ -944,13 +947,13 @@ func (st *lossyEncodeState) writeIntraPBlock(block tile.BlockVisit, scratch *til
 	n, lumaTX, lumaScan := intraPBlockGeometry(st, block.Size)
 
 	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
-	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, false); err != nil {
+	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, r.skip); err != nil {
 		return fmt.Errorf("intra skip: %w", err)
 	}
-	if err := st.writeSBDeltaQ(block, false); err != nil {
+	if err := st.writeSBDeltaQ(block, r.skip); err != nil {
 		return fmt.Errorf("intra delta q: %w", err)
 	}
-	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{}); err != nil {
+	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{SkipTransform: r.skip}); err != nil {
 		return fmt.Errorf("intra mark prefix: %w", err)
 	}
 	modeCtx.TxNeighborValid = false
@@ -1009,16 +1012,20 @@ func (st *lossyEncodeState) writeIntraPBlock(block tile.BlockVisit, scratch *til
 		VisibleW4: block.VisibleW4, VisibleH4: block.VisibleH4,
 		HaveTop: block.HaveTop, HaveLeft: block.HaveLeft,
 		Color: st.color, TransformMode: st.transformMode,
+		SkipTransform: r.skip,
 	}, tile.TransformTreeResult{Y: lumaTX})
 	if err != nil {
 		return fmt.Errorf("intra transform tree: %w", err)
 	}
 	if st.lfMap != nil {
-		if err := st.markLoopFilterBlock(block, lfTree, false, true, 0, loopfilter.ModeDeltaClassZero); err != nil {
+		if err := st.markLoopFilterBlock(block, lfTree, r.skip, true, 0, loopfilter.ModeDeltaClassZero); err != nil {
 			return fmt.Errorf("mark intra loop filter: %w", err)
 		}
 	}
 
+	if r.skip {
+		return st.skipRecordedIntraPBlock(block, coeffCtx, rec, n, hasChroma)
+	}
 	st.intraTxTypeReq.Mode = mode
 	st.intraTxTypeReq.Size = lumaTX
 	lumaCoeffs, err := rec.nextCoeffs(min(n, 32) * min(n, 32))
@@ -1074,6 +1081,60 @@ func (st *lossyEncodeState) writeIntraPBlock(block tile.BlockVisit, scratch *til
 			Y4:         chromaY4,
 		}, transform.Class2D, qcoeff, chromaScan, st.levels, nil); err != nil {
 			return fmt.Errorf("intra chroma %d txb: %w", plane, err)
+		}
+	}
+	return nil
+}
+
+// noteIntraSkip records whether the intra block just decided codes no
+// coefficient: SVT signals such a block as skip (skip_txfm = !block_has_coeff),
+// so the skip context its neighbours read is re-marked.
+func (st *lossyEncodeState) noteIntraSkip(rec *pframeSplitRecord, r *pblockRecord, modeCtx *tile.BlockModeContext, block tile.BlockVisit, coeffStart int) {
+	r.skip = true
+	for _, v := range rec.coeffs[coeffStart:] {
+		if v != 0 {
+			r.skip = false
+			break
+		}
+	}
+	if r.skip {
+		_ = modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{SkipTransform: true})
+	}
+}
+
+// skipRecordedIntraPBlock replays a skip intra block's residual phase: it
+// consumes the block's (all-zero) recorded coefficients and resets the
+// coefficient contexts as the decoder does for skip blocks.
+func (st *lossyEncodeState) skipRecordedIntraPBlock(block tile.BlockVisit, coeffCtx *tile.CoeffEntropyContext, rec *pframeSplitRecord, n int, hasChroma bool) error {
+	if _, err := rec.nextCoeffs(min(n, 32) * min(n, 32)); err != nil {
+		return err
+	}
+	if err := coeffCtx.ResetBlock(0, block.Size, int(block.X4), int(block.Y4)); err != nil {
+		return fmt.Errorf("reset luma coeff ctx: %w", err)
+	}
+	if !hasChroma {
+		return nil
+	}
+	chromaBlock, err := tile.PlaneBlockSize(block.Size, st.color, 1)
+	if err != nil {
+		return fmt.Errorf("chroma plane block: %w", err)
+	}
+	chromaTX, err := tile.MaxTransformSize(block.Size, st.color, 1)
+	if err != nil {
+		return fmt.Errorf("chroma transform size: %w", err)
+	}
+	chromaGeo, err := txBlockGeometryForTransformSize(chromaTX)
+	if err != nil {
+		return err
+	}
+	chromaX4 := chromaX4ForColor(block.X4, st.color)
+	chromaY4 := chromaY4ForColor(block.Y4, st.color)
+	for plane := 1; plane <= 2; plane++ {
+		if _, err := rec.nextCoeffs(chromaGeo.coeffCount); err != nil {
+			return err
+		}
+		if err := coeffCtx.ResetBlock(plane, chromaBlock, int(chromaX4), int(chromaY4)); err != nil {
+			return fmt.Errorf("reset chroma %d coeff ctx: %w", plane, err)
 		}
 	}
 	return nil
