@@ -322,6 +322,12 @@ func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s
 		}
 		return result, nil
 	}
+	if readCoefBlocksSupported(&req) {
+		if err := readCoefBlocks(s, cdfs, coeffCtx, scratch, &req, tree, &chromaPrep, hasChroma, loopVisit, coeffController, &result); err != nil {
+			return result, fmt.Errorf("read coef blocks req=%+v tree=%+v: %w", req.Transform, tree, err)
+		}
+		return result, nil
+	}
 
 	const maxUnit4 = 16
 	visW := int(req.Transform.VisibleW4)
