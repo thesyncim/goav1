@@ -778,6 +778,10 @@ func (st *lossyEncodeState) prepareInterTXBDecideRDOQ(geo *txBlockGeometry, w in
 		mask = transform.ForwardDCT32x32RowSkip8BitTrusted((*[1024]int32)(st.tranScratch[:1024]), (*[1024]int16)(st.resScratch[:1024]), thr0, thr)
 	}
 	cn := geo.coeffCount
+	if st.pfN4 {
+		svtPFN4Zero(st.tranScratch[:cn], w, w, geo.coeffWidth, geo.coeffHeight)
+		mask = svtPFN4Mask(mask, w)
+	}
 	if mask == 0 {
 		clear(qcoeff[:cn])
 		return true

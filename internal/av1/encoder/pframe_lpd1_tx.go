@@ -48,6 +48,9 @@ type lpd1TxCtrls struct {
 	useMds3ShortcutsTh uint16
 	// skipTxTh: percentage threshold arming lpd1_allow_skipping_tx.
 	skipTxTh uint16
+	// useUVShortcutsOnYCoeffs: chroma takes the N4 transform when luma coded
+	// (almost) nothing (use_uv_shortcuts_on_y_coeffs).
+	useUVShortcutsOnYCoeffs bool
 }
 
 // setLPD1TxCtrls applies SVT-AV1 set_lpd1_tx_ctrls level 3, the level rtc
@@ -66,6 +69,7 @@ func (st *lossyEncodeState) setLPD1TxCtrls(enabled bool) {
 		zeroYCoeffExit:     true,
 		useMds3ShortcutsTh: 30,
 		skipTxTh:           30,
+		useUVShortcutsOnYCoeffs: true,
 	}
 }
 
@@ -269,26 +273,43 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 			// (full_loop_core_light_pd1's perform_chroma derivation).
 			performChroma := true
 			comp := lpd1ComponentChroma
+			// complexity is ctx->chroma_complexity: COMPONENT_LUMA unless a
+			// detector (level <= 3) flags a plane.
+			complexity := lpd1ComponentLuma
 			if useRealtimeTXPlan && st.lpd1Tx.enabled && st.lpd1Tx.zeroYCoeffExit && lumaZero {
 				comp = lpd1ComponentLuma
 				if dec.chromaDetector != 0 {
 					comp = st.lpd1ChromaComplexity(src, refPlanes, detectMV, lumaPX, lumaPY, cbw, cbh)
+					if dec.chromaDetector <= 3 {
+						complexity = comp
+					}
 				}
 				performChroma = comp != lpd1ComponentLuma
 			}
 			st.setRDOQArm(1)
 			if performChroma {
+				n4U, n4V := false, false
+				if lightPath && st.lpd1Tx.enabled {
+					if dec.chromaDetector != 0 && dec.chromaDetector <= 3 && complexity != lpd1ComponentChroma &&
+						(lpd1UseShortcuts || st.lpd1Tx.useUVShortcutsOnYCoeffs) {
+						complexity = st.lpd1ChromaComplexityPred(src, lumaPX, lumaPY, bw, chromaPX, chromaPY, cbw, cbh, complexity)
+					}
+					n4U, n4V = st.lpd1ChromaN4(block.Size, lpd1UseShortcuts, complexity, lumaZero, txPlan, lumaBypass)
+				}
 				uZero, vZero := true, true
 				if comp == lpd1ComponentChroma || comp == lpd1ComponentChromaCb {
+					st.pfN4 = n4U
 					uZero = st.prepareInterTXBDecide(src.U, st.predU[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.uQuant, st.uQ[:cbw*cbh])
 				} else {
 					clear(st.uQ[:cbw*cbh])
 				}
 				if comp == lpd1ComponentChroma || comp == lpd1ComponentChromaCr {
+					st.pfN4 = n4V
 					vZero = st.prepareInterTXBDecide(src.V, st.predV[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.vQuant, st.vQ[:cbw*cbh])
 				} else {
 					clear(st.vQ[:cbw*cbh])
 				}
+				st.pfN4 = false
 				skip = lumaZero && uZero && vZero
 			} else {
 				skip = lumaZero
@@ -521,4 +542,103 @@ func (st *lossyEncodeState) lpd1PerformTX(dec *lpd1SBDecision, allowSkipTX bool,
 		}
 	}
 	return !st.lpd1BypassTX(sse, bw, bh, dec.bypassTh, st.lpd1FullLambda(dec))
+}
+
+// lpd1ChromaComplexityPred is chroma_complexity_check_pred (use_var 0,
+// product_coding_loop.c): the source-vs-prediction SADs of each chroma plane
+// not yet flagged, against twice the SAD of the luma region of the same
+// (chroma) size at the block origin, rows subsampled by the chroma height
+// shift. predY has stride bw, predU/predV stride cbw.
+func (st *lossyEncodeState) lpd1ChromaComplexityPred(src SourceFrame420, lumaPX, lumaPY, bw, chromaPX, chromaPY, cbw, cbh int, cur lpd1Component) lpd1Component {
+	if cur == lpd1ComponentChroma {
+		return cur
+	}
+	shift := 0
+	if cbh > 8 {
+		shift = 2
+	} else if cbh > 4 {
+		shift = 1
+	}
+	rows := cbh >> shift
+	step := 1 << shift
+	yDist := lpd1SampledSAD(src.Y, st.predY[:], lumaPY*src.YStride+lumaPX, 0, src.YStride, bw, cbw, rows, step)
+	srcOff := chromaPY*src.ChromaStride + chromaPX
+	cbDist, crDist := 0, 0
+	if cur == lpd1ComponentLuma || cur == lpd1ComponentChromaCr {
+		cbDist = lpd1SampledSAD(src.U, st.predU[:], srcOff, 0, src.ChromaStride, cbw, cbw, rows, step)
+	}
+	if cur == lpd1ComponentLuma || cur == lpd1ComponentChromaCb {
+		crDist = lpd1SampledSAD(src.V, st.predV[:], srcOff, 0, src.ChromaStride, cbw, cbw, rows, step)
+	}
+	yDist <<= 1
+	switch {
+	case cbDist > yDist && crDist > yDist:
+		return lpd1ComponentChroma
+	case cbDist > yDist:
+		if cur == lpd1ComponentChromaCr {
+			return lpd1ComponentChroma
+		}
+		return lpd1ComponentChromaCb
+	case crDist > yDist:
+		if cur == lpd1ComponentChromaCb {
+			return lpd1ComponentChroma
+		}
+		return lpd1ComponentChromaCr
+	}
+	return cur
+}
+
+// lpd1ChromaN4 is svt_aom_full_loop_chroma_light_pd1's per-plane pf_shape:
+// a plane not detected as complex takes N4_SHAPE when use_tx_shortcuts_mds3
+// is set, or (use_uv_shortcuts_on_y_coeffs) when luma coded no coefficient or
+// fewer than (tx_w_uv >> 4) * (tx_h_uv >> 4) of them (cnt_nz_coeff is the
+// luma end of block).
+func (st *lossyEncodeState) lpd1ChromaN4(block tile.BlockSize, useShortcuts bool, complexity lpd1Component, lumaZero bool, txPlan realtimeInterTXPlan, lumaBypass bool) (n4U, n4V bool) {
+	cbOK := complexity == lpd1ComponentLuma || complexity == lpd1ComponentChromaCr
+	crOK := complexity == lpd1ComponentLuma || complexity == lpd1ComponentChromaCb
+	if useShortcuts {
+		return cbOK, crOK
+	}
+	if !st.lpd1Tx.useUVShortcutsOnYCoeffs || (!cbOK && !crOK) {
+		return false, false
+	}
+	cond := lumaZero || lumaBypass
+	if !cond {
+		chromaTX, err := tile.MaxTransformSize(block, st.color, 1)
+		if err != nil {
+			return false, false
+		}
+		dims, _ := chromaTX.Dimensions()
+		th := (int(dims.W4) * 4 >> 4) * (int(dims.H4) * 4 >> 4)
+		if th > 0 && !txPlan.Variable() {
+			bw, bh, _ := pframeBlockDims(block)
+			lumaTX, _ := st.interLumaTXAndScan(bw, bh)
+			g := rdoqGeometry(lumaTX, 0)
+			cond = rdoqEOBFromIScan(st.lumaQ[:g.area], g.iscan) < th
+		}
+	}
+	return cond && cbOK, cond && crOK
+}
+
+// svtPFN4Zero keeps only the low max(w/4, 1) x max(h/4, 1) coefficients of a
+// w x h transform in the coded cw x ch area (layout tran[col*ch+row]), the
+// output of SVT's N4_SHAPE forward transforms (av1_tranform_two_d_core_N4_c
+// computes the same low-frequency values and zeroes the rest).
+func svtPFN4Zero(tran []int32, w, h, cw, ch int) {
+	kw, kh := min(max(w>>2, 1), cw), min(max(h>>2, 1), ch)
+	for c := 0; c < cw; c++ {
+		col := tran[c*ch : c*ch+ch]
+		if c >= kw {
+			clear(col)
+			continue
+		}
+		clear(col[kh:])
+	}
+}
+
+// svtPFN4Mask restricts a row-skip kernel's live row-group mask (groups of
+// four coefficient rows) to the N4 rows.
+func svtPFN4Mask(mask uint8, h int) uint8 {
+	kh := max(h>>2, 1)
+	return mask & uint8(1<<((kh+3)>>2)-1)
 }
