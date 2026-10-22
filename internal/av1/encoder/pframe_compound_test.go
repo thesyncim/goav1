@@ -548,62 +548,6 @@ func TestRealtimeVarianceTreeMatchesLibaomVPartVarMath(t *testing.T) {
 	}
 }
 
-func TestRealtimeReduceMVPelPrecisionLowcomplexLevelMatchesSpeedFeatures(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		w, h   int
-		effort int8
-		want   int
-	}{
-		{name: "1080p speed8", w: 1920, h: 1080, effort: 0, want: 2},
-		{name: "1080p speed10", w: 1920, h: 1080, effort: WebRTCMinEffortLevel, want: 0},
-		{name: "720p speed7", w: 1280, h: 720, effort: 1, want: 2},
-		{name: "below360 speed10", w: 320, h: 180, effort: WebRTCMinEffortLevel, want: 1},
-		{name: "360p speed8", w: 640, h: 360, effort: 0, want: 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := realtimeReduceMVPelPrecisionLowcomplexLevel(tc.w, tc.h, tc.effort); got != tc.want {
-				t.Fatalf("level=%d want %d", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestRealtimeSubpelStopForBlockMatchesLibaomLowcomplexRule(t *testing.T) {
-	makeFrame := func(v0, v1 byte) SourceFrame420 {
-		f := SourceFrame420{Y: make([]byte, 1280*720), YStride: 1280, Width: 1280, Height: 720}
-		for y := 0; y < 720; y++ {
-			for x := 0; x < 1280; x++ {
-				if (x+y)&1 == 0 {
-					f.Y[y*1280+x] = v0
-				} else {
-					f.Y[y*1280+x] = v1
-				}
-			}
-		}
-		return f
-	}
-	for _, tc := range []struct {
-		name string
-		src  SourceFrame420
-		want realtimeSubpelStop
-	}{
-		{name: "flat-fullpel", src: makeFrame(128, 128), want: realtimeSubpelStopFull},
-		{name: "moderate-halfpel", src: makeFrame(80, 176), want: realtimeSubpelStopHalf},
-		{name: "high-quarterpel", src: makeFrame(0, 255), want: realtimeSubpelStopQuarter},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var st lossyEncodeState
-			st.qIndex = 72
-			st.effortLevel = 0
-			st.prepareRealtimeSourceContent(tc.src, tc.src, 20, 12, 0, uint16(tc.src.Width/4))
-			if got := st.realtimeSubpelStopForBlock(tc.src, 0, 0, 32); got != tc.want {
-				t.Fatalf("stop=%d want %d", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestStatic64MEBypassFillsExactZeroMVCaches(t *testing.T) {
 	src := SourceFrame420{Y: make([]byte, 64*64), YStride: 64, Width: 64, Height: 64}
 	ref := SourceFrame420{Y: make([]byte, 64*64), YStride: 64, Width: 64, Height: 64}

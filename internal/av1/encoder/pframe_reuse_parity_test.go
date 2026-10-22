@@ -11,6 +11,10 @@ import (
 // TestPFrameReuseOptimizationsPreserveEncodedOutput pins the AV1 bytes and
 // reconstructed planes produced by the pre-optimization encoder. Its serial
 // and multi-thread cases cover both fused and split P-frame residual paths.
+// Re-pinned for the SVT md_subpel_me level-6 sub-pel search (subpel_svt.go),
+// which replaced the libaom sub-pel tree, and for the light-PD1 MDS0
+// candidate set without GLOBALMV (pframe_mds0.go); both change the coded
+// vectors.
 func TestPFrameReuseOptimizationsPreserveEncodedOutput(t *testing.T) {
 	const width, height, frameCount = 640, 360, 48
 	tests := []struct {
@@ -18,8 +22,8 @@ func TestPFrameReuseOptimizationsPreserveEncodedOutput(t *testing.T) {
 		stream  string
 		recon   string
 	}{
-		{1, "048603179674d265c38cfbfc66fc5338819024a7cf447636161a2785487ef577", "04a2cce39c6bff995ff96dd650dce33b8eec30bcbc497ac9733bd1cca87ee957"},
-		{4, "3c625e81957ab909dbdde84f0941a123744e35ad880c91d8a15f932b1972066c", "ee94969676ef2b8f2e4b84111e8000a7ab552f729f7e26245d44e4503547ab68"},
+		{1, "61147883bb2838e3ab678d951a1aa545cf74ecb4f66ff63727b7a253fe83d398", "495af22bf9ba9aee00124e3eceace3e9d2f09ec224e6f05e333a1e7357f43e63"},
+		{4, "5f2e076b59106d1932691385aaff7e5857ce37a475b49ea3ace57b233bfb7e73", "2aec6fddb613c0daa7af221467b5f81e20ed475d8755e989b1192f08c8e7407a"},
 	}
 
 	rng := rand.New(rand.NewSource(3))

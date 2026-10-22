@@ -35,13 +35,16 @@ func TestMDS0RetainedPredictionMatchesWinner(t *testing.T) {
 			rdMult: 512, wantMode: tile.InterModeNearMV, wantMV: onePixel,
 		},
 		{
-			name:     "restore-duplicate-global-winner",
+			// No GLOBALMV candidate in light-PD1: the zero vector wins as
+			// NEARESTMV once rate dominates.
+			name:     "copy-nearest-rate-winner",
 			sourceMV: onePixel, meMV: farMV, nearest: zero, near: onePixel,
 			rdMult: 1 << 30,
 			rates: tile.InterModeRateTables{
-				RefMV: [tile.RefMVModeContexts][2]uint32{{20_000, 10_000}},
+				NewMV: [tile.NewMVModeContexts][2]uint32{{50_000, 0}},
+				RefMV: [tile.RefMVModeContexts][2]uint32{{10_000, 20_000}},
 			},
-			wantMode: tile.InterModeGlobalMV, wantMV: zero,
+			wantMode: tile.InterModeNearestMV, wantMV: zero,
 		},
 	}
 
