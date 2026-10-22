@@ -130,7 +130,7 @@ internal/av1/encoder/cyclic_refresh.go:*:*: make([]uint8, sbCnt) escapes to heap
 internal/av1/encoder/hme.go:*:*: func literal escapes to heap
 internal/av1/encoder/hme.go:*:*: func literal escapes to heap in (*hmeState).startWorkers:
 internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap
-internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap in (*hmeState).storeRef:
+internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap in padLuma:
 internal/av1/encoder/hme.go:*:*: make([]realtimeSBMultiSizeME, n) escapes to heap
 internal/av1/encoder/hme.go:*:*: make([]realtimeSBMultiSizeME, n) escapes to heap in (*hmeState).prepare:
 internal/av1/encoder/hme.go:*:*: make([]uint32, n) escapes to heap
@@ -358,8 +358,6 @@ internal/av1/encoder/subpel_svt.go:*:*: new(subpelProbeCache) escapes to heap in
 internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap
 internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in (*svtPlane).copyFrom:
 internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in (*svtPlane).size:
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in (*svtPyramid).copySlotFrom:
-internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in (*svtPyramid).storeRef:
 internal/av1/encoder/svt_hme.go:*:*: make([]byte, n) escapes to heap in buildPyramid:
 internal/av1/encoder/video.go:*:*: func literal escapes to heap
 internal/av1/encoder/video.go:*:*: func literal escapes to heap in (*VideoEncoder).startFilterWorker:
@@ -490,8 +488,6 @@ internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.Y)) escapes to 
 internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.Y)) escapes to heap in (*VideoEncoder).computeLeafTU:
 internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.Y)) escapes to heap in (*VideoEncoder).holdSource:
 internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.Y)) escapes to heap in (*VideoEncoder).prewarmPipeline:
-internal/av1/encoder/video_pipeline.go:*:*: make([]byte, n) escapes to heap
-internal/av1/encoder/video_pipeline.go:*:*: make([]byte, n) escapes to heap in (*VideoEncoder).runLeafHME:
 internal/av1/encoder/video_pipeline.go:*:*: new(lpd1Frame) escapes to heap
 internal/av1/encoder/video_pipeline.go:*:*: new(lpd1Frame) escapes to heap in (*VideoEncoder).computeLeafTU:
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, descriptorBytes) escapes to heap

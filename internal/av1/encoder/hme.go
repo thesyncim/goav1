@@ -10,9 +10,9 @@ import "sync"
 //   - the source pyramid and the per-SB HME search center (svt_hme.go);
 //   - the zz SAD (init_zz_sad) and the per-SB full-pel sweep with per-PU
 //     argmins (pframe_depth_removal.go realtimeSBMultiSizeME) for EVERY
-//     superblock, partial edge ones included (SVT runs the ME on the padded
-//     picture; here partial SBs and search positions that leave the frame
-//     read edge-replicated windows, the padding SVT's buffers carry);
+//     superblock, partial edge ones included: like SVT the ME reads padded
+//     pictures (svt_aom_generate_padding), so partial superblocks and search
+//     positions that leave the frame read the replicated border;
 //   - compute_distortion's per-SB statistics (me_8x8_distortion,
 //     me_8x8_cost_variance, dist_64x64...).
 //
@@ -20,27 +20,25 @@ import "sync"
 // and depth removal read the statistics, and cyclic refresh reads
 // me_8x8_distortion as SVT's cyclic_sb_qp_derivation does.
 
-// hmeState owns the source pyramids, the previous source (the open-loop ME
-// reference), the frame's ME results and the band workers that compute them.
+// hmeState owns the source pyramids, the padded current and reference source
+// lumas, the frame's ME results and the band workers that compute them.
 type hmeState struct {
 	svt svtPyramid
 
-	// prevY is the active reference source's luma at prevStride (the
-	// reference of the open-loop sweep and zz SAD): a view of the source
-	// kept with the reference slot the frame predicts from (refY), the way
-	// SVT's pa_me searches each reference picture's input.
-	prevY      []byte
-	prevStride int
-	prevW      int
-	prevH      int
-	havePrev   bool
-	refY       [hmeRefSlots]hmeRefLuma
+	// cur is the current source's luma padded by meBorder (SVT's padded
+	// input picture); curOK marks it as built from the frame being
+	// estimated. refY are the reference slots' padded source lumas: a
+	// reference picture's cur moves into the slot it refreshes, the way
+	// SVT's pa_me searches each reference picture's padded input. prev is the
+	// active slot (selectRef), the reference of the sweep and zz SAD.
+	cur      svtPlane
+	curOK    bool
+	refY     [hmeRefSlots]hmeRefLuma
+	prev     *svtPlane
+	havePrev bool
 
 	// fme is the current frame's ME result.
 	fme frameME
-
-	// win is per-band scratch for partial and edge superblocks.
-	win [hmeBands]meWindow
 
 	work     chan hmeJob
 	done     chan struct{}
@@ -66,7 +64,6 @@ type frameME struct {
 const hmeBands = 4
 
 type hmeJob struct {
-	band   int
 	r0, r1 int
 	src    SourceFrame420
 }
@@ -83,7 +80,7 @@ func (h *hmeState) startWorkers() {
 		go func() {
 			defer h.workerWG.Done()
 			for j := range work {
-				h.meRows(j.band, j.src, j.r0, j.r1)
+				h.meRows(j.src, j.r0, j.r1)
 				done <- struct{}{}
 			}
 		}()
@@ -107,40 +104,64 @@ func (h *hmeState) close() {
 // the L1T3 middle layer (slot 1).
 const hmeRefSlots = 2
 
-// hmeRefLuma is one reference slot's source luma.
+// hmeRefLuma is one reference slot's padded source luma.
 type hmeRefLuma struct {
-	y            []byte
-	stride, w, h int
-	valid        bool
+	pl    svtPlane
+	valid bool
+}
+
+// meBorder is the replicated border of the ME source pictures. The sweep
+// reads at most 64 + realtimeSweepSearchW/2 + 3 samples left of a frame
+// edge and 64 + 15 right of it (the search center stays within one
+// superblock of the picture, the batch reads eight positions with a
+// 16-byte over-read), and 64 above and below.
+const meBorder = 80
+
+// padLuma copies src's luma into q with meBorder replicated samples
+// (svt_aom_generate_padding on the input picture).
+func padLuma(q *svtPlane, src SourceFrame420) {
+	q.size(src.Width, src.Height, meBorder)
+	for y := 0; y < src.Height; y++ {
+		copy(q.pix[q.org+y*q.stride:q.org+y*q.stride+src.Width], src.Y[y*src.YStride:y*src.YStride+src.Width])
+	}
+	q.pad()
+}
+
+// setCur makes src (padded) the current picture.
+func (h *hmeState) setCur(src SourceFrame420) {
+	padLuma(&h.cur, src)
+	h.curOK = true
 }
 
 // prime makes src (a keyframe) the reference source of every slot.
 func (h *hmeState) prime(src SourceFrame420) {
 	h.svt.build(src)
-	for s := range h.refY {
-		h.storeRef(s, src)
+	h.setCur(src)
+	for s := 1; s < hmeRefSlots; s++ {
+		h.refY[s].pl.copyFrom(&h.cur)
+		h.refY[s].valid = true
+		h.svt.copyRef(s)
 	}
+	h.storeRef(0)
 	h.selectRef(0)
 	h.fme.valid = false
 }
 
-// storeRef keeps src (whose pyramid is the current one) as slot s's
-// reference source.
-func (h *hmeState) storeRef(s int, src SourceFrame420) {
+// storeRef moves the current padded source (and its pyramid) into slot s,
+// the reference picture SVT keeps in place; the slot's old buffers become
+// the next frame's scratch, so no two slots ever share one.
+func (h *hmeState) storeRef(s int) {
 	r := &h.refY[s]
-	n := src.YStride * src.Height
-	if len(r.y) < n {
-		r.y = make([]byte, n)
-	}
-	copy(r.y[:n], src.Y[:n])
-	r.stride, r.w, r.h, r.valid = src.YStride, src.Width, src.Height, true
+	r.pl, h.cur = h.cur, r.pl
+	r.valid = h.curOK
+	h.curOK = false
 	h.svt.storeRef(s)
 }
 
 // selectRef makes slot s the active ME reference.
 func (h *hmeState) selectRef(s int) {
 	r := &h.refY[s]
-	h.prevY, h.prevStride, h.prevW, h.prevH, h.havePrev = r.y, r.stride, r.w, r.h, r.valid
+	h.prev, h.havePrev = &r.pl, r.valid
 	h.svt.selectRef(s)
 }
 
@@ -164,38 +185,39 @@ func (h *hmeState) run(src SourceFrame420, isRef bool, ref, store int) {
 			if r0 >= r1 {
 				continue
 			}
-			h.work <- hmeJob{band: b, r0: r0, r1: r1, src: src}
+			h.work <- hmeJob{r0: r0, r1: r1, src: src}
 			jobs++
 		}
 		for range jobs {
 			<-h.done
 		}
 	}
-	h.finish(src, store)
+	h.finish(store)
 }
 
 // runSerial is run on the calling goroutine.
 func (h *hmeState) runSerial(src SourceFrame420, isRef bool, ref, store int) {
 	h.prepare(src, isRef, ref)
 	if h.fme.valid {
-		h.meRows(0, src, 0, h.fme.rows)
+		h.meRows(src, 0, h.fme.rows)
 	}
-	h.finish(src, store)
+	h.finish(store)
 }
 
 // finish keeps a reference picture's source in the slot it refreshes.
-func (h *hmeState) finish(src SourceFrame420, store int) {
+func (h *hmeState) finish(store int) {
 	if store >= 0 && store < hmeRefSlots {
-		h.storeRef(store, src)
+		h.storeRef(store)
 	}
 }
 
 func (h *hmeState) prepare(src SourceFrame420, isRef bool, ref int) {
 	h.svt.build(src)
+	h.setCur(src)
 	h.selectRef(min(max(ref, 0), hmeRefSlots-1))
 	f := &h.fme
 	f.valid = false
-	if !h.havePrev || h.prevW != src.Width || h.prevH != src.Height || h.prevStride != src.YStride ||
+	if !h.havePrev || h.prev.w != src.Width || h.prev.h != src.Height ||
 		!h.svt.ready() || src.Width < 64 || src.Height < 64 {
 		return
 	}
@@ -210,12 +232,12 @@ func (h *hmeState) prepare(src SourceFrame420, isRef bool, ref int) {
 	f.valid = true
 }
 
-func (h *hmeState) meRows(band int, src SourceFrame420, r0, r1 int) {
+func (h *hmeState) meRows(src SourceFrame420, r0, r1 int) {
 	f := &h.fme
 	for r := r0; r < r1; r++ {
 		for c := 0; c < f.cols; c++ {
 			i := r*f.cols + c
-			f.l1SAD[i], f.me8x8Dist[i] = h.motionEstimateSB(&f.sb[i], src, c*64, r*64, f.isRef, &h.win[band])
+			f.l1SAD[i], f.me8x8Dist[i] = h.motionEstimateSB(&f.sb[i], src.Width, src.Height, c*64, r*64, f.isRef)
 		}
 	}
 }

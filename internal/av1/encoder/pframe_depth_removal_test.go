@@ -11,11 +11,11 @@ import (
 func bruteSAD(src []byte, srcStride, sx, sy int, ref []byte, refStride, rx, ry, n, w, h int) uint32 {
 	var total uint32
 	for r := 0; r < n; r += 2 {
-		so := (sy+r)*srcStride + sx
+		sr := min(sy+r, h-1)
 		qy := min(max(ry+r, 0), h-1)
 		for c := 0; c < n; c++ {
 			qx := min(max(rx+c, 0), w-1)
-			d := int(src[so+c]) - int(ref[qy*refStride+qx])
+			d := int(src[sr*srcStride+min(sx+c, w-1)]) - int(ref[qy*refStride+qx])
 			if d < 0 {
 				d = -d
 			}
@@ -51,8 +51,15 @@ func sweepPUGeometry(pu int) (x, y, n int) {
 // the same window: every PU must report the minimum full SAD over the swept
 // positions with the earliest position (scan order) winning ties.
 func TestRealtimeSBMultiSizeMESweepMatchesBruteForce(t *testing.T) {
+	// 192x160 has only full superblocks; 200x150 adds partial ones at the
+	// right and bottom edges, which read the padded pictures.
+	checkSweepBruteForce(t, 192, 160, [][2]int{{0, 0}, {64, 64}, {128, 96}, {64, 0}})
+	checkSweepBruteForce(t, 200, 150, [][2]int{{0, 0}, {192, 0}, {64, 128}, {192, 128}, {128, 64}})
+}
+
+func checkSweepBruteForce(t *testing.T, w, h int, sbs [][2]int) {
+	t.Helper()
 	rng := rand.New(rand.NewSource(7))
-	const w, h = 192, 160
 	mk := func() SourceFrame420 {
 		y := make([]byte, w*h)
 		for i := range y {
@@ -62,13 +69,16 @@ func TestRealtimeSBMultiSizeMESweepMatchesBruteForce(t *testing.T) {
 	}
 	src, ref := mk(), mk()
 
-	hs := &hmeState{prevY: ref.Y, prevStride: w, prevW: w, prevH: h, havePrev: true}
-	var win meWindow
+	hs := &hmeState{}
+	padLuma(&hs.refY[0].pl, ref)
+	hs.refY[0].valid = true
+	hs.selectRef(0)
+	hs.setCur(src)
 
-	for _, sb := range [][2]int{{0, 0}, {64, 64}, {128, 96}, {64, 0}} {
+	for _, sb := range sbs {
 		px, py := sb[0], sb[1]
 		var me realtimeSBMultiSizeME
-		hs.motionEstimateSB(&me, src, px, py, true, &win)
+		hs.motionEstimateSB(&me, w, h, px, py, true)
 		if !me.valid {
 			t.Fatalf("sweep at (%d,%d) not valid", px, py)
 		}
@@ -99,6 +109,9 @@ func TestRealtimeSBMultiSizeMESweepMatchesBruteForce(t *testing.T) {
 			}
 		}
 
+		if px+64 > w || py+64 > h {
+			continue // partial: the sums are area-normalized
+		}
 		// compute_distortion sums.
 		var d32, d16, d8 uint32
 		for i := 1; i < 5; i++ {
