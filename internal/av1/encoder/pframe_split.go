@@ -1013,13 +1013,15 @@ func (st *lossyEncodeState) writeIntraPBlock(block tile.BlockVisit, scratch *til
 		st.intraTxTypeReq.Size = tile.TransformSize8x8
 		return err
 	}
-	_, err = tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, tile.CoeffContextRequest{
+	st.intraLumaDCT = true
+	_, err = st.writeIntraTXB(n, n, lumaCoeffs, tile.CoeffContextRequest{
 		Plane:      0,
 		PlaneBlock: block.Size,
 		Size:       lumaTX,
 		X4:         block.X4,
 		Y4:         block.Y4,
-	}, transform.Class2D, lumaCoeffs, lumaScan, st.levels, st.afterSkipIntra)
+	}, coeffCtx, lumaScan, st.afterSkipIntra)
+	st.intraLumaDCT = false
 	st.intraTxTypeReq.Size = tile.TransformSize8x8
 	if err != nil {
 		return fmt.Errorf("intra luma txb: %w", err)
@@ -1053,13 +1055,13 @@ func (st *lossyEncodeState) writeIntraPBlock(block tile.BlockVisit, scratch *til
 		if err != nil {
 			return err
 		}
-		if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, tile.CoeffContextRequest{
+		if _, err := st.writeIntraTXB(chromaGeo.width, chromaGeo.height, qcoeff, tile.CoeffContextRequest{
 			Plane:      uint8(plane),
 			PlaneBlock: chromaBlock,
 			Size:       chromaTX,
 			X4:         chromaX4,
 			Y4:         chromaY4,
-		}, transform.Class2D, qcoeff, chromaScan, st.levels, nil); err != nil {
+		}, coeffCtx, chromaScan, nil); err != nil {
 			return fmt.Errorf("intra chroma %d txb: %w", plane, err)
 		}
 	}

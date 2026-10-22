@@ -1879,6 +1879,7 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 
 	st.intraTxTypeReq.Mode = mode
 	st.intraTxTypeReq.Size = lumaTX
+	st.intraLumaDCT = true
 	err = st.emitIntraTXB(recon.Y, pred, src.YStride, lumaPX, lumaPY, n, n, st.yQuant, tile.CoeffContextRequest{
 		Plane:      0,
 		PlaneBlock: block.Size,
@@ -1886,6 +1887,7 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 		X4:         block.X4,
 		Y4:         block.Y4,
 	}, coeffCtx, lumaScan, st.afterSkipIntra, st.lumaQ[:lumaGeo.coeffCount], lumaGeo)
+	st.intraLumaDCT = false
 	st.intraTxTypeReq.Size = tile.TransformSize8x8
 	if err != nil {
 		return fmt.Errorf("intra luma txb: %w", err)
