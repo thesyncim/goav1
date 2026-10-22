@@ -148,6 +148,9 @@ type lpd1SBStat struct {
 	// 64x64 inter block coded with a predictor mode (not NEWMV).
 	mvp64    bool
 	skipArea uint32
+	// intraArea accumulates the area of the intra blocks
+	// (tot_intra_coded_area).
+	intraArea uint32
 	// minSq is sb_min_sq_size (coding_loop.c update_b): the smallest square
 	// block size coded in the SB, 128 before any block; 0xFF where the
 	// picture recorded none (keyframes, whose path does not note blocks).
@@ -174,6 +177,9 @@ type lpd1Frame struct {
 	valid         bool
 	sliceI        bool
 	skipPerc      uint8
+	// intraPerc is intra_coded_area: the percentage of the picture coded
+	// intra (0 for an I_SLICE, copy_statistics_to_ref_obj_ect).
+	intraPerc uint8
 	width, height int
 }
 
@@ -188,6 +194,7 @@ func (f *lpd1Frame) begin(w, h int, hme *hmeState, baseQ uint8) {
 	for i := range f.sb[:n] {
 		s := &f.sb[i]
 		s.intra, s.skip, s.skipArea, s.mvp64 = false, true, 0, false
+		s.intraArea = 0
 		s.minSq = 128
 		s.me64Dist, s.me8x8Var = 0, 0
 		if f.meArmed {
@@ -198,7 +205,7 @@ func (f *lpd1Frame) begin(w, h int, hme *hmeState, baseQ uint8) {
 	if f.meArmed {
 		f.buildMEQIndex()
 	}
-	f.valid, f.sliceI, f.skipPerc = false, false, 0
+	f.valid, f.sliceI, f.skipPerc, f.intraPerc = false, false, 0, 0
 }
 
 func (f *lpd1Frame) resize(w, h int) {
@@ -222,20 +229,22 @@ func (f *lpd1Frame) setKey(w, h int) {
 		s.minSq = 0xFF
 		s.me64Dist, s.me8x8Var = 0, 0
 	}
-	f.valid, f.sliceI, f.skipPerc = true, true, 0
+	f.valid, f.sliceI, f.skipPerc, f.intraPerc = true, true, 0, 0
 }
 
 // publish finalizes a coded inter picture as a reference: skip_coded_area
 // becomes the percentage of the 8-aligned picture area.
 func (f *lpd1Frame) publish() {
 	n := f.cols * f.rows
-	var area uint64
+	var area, intraArea uint64
 	for i := 0; i < n; i++ {
 		area += uint64(f.sb[i].skipArea)
+		intraArea += uint64(f.sb[i].intraArea)
 	}
 	aw := uint64((f.width + 7) &^ 7)
 	ah := uint64((f.height + 7) &^ 7)
 	f.skipPerc = uint8(100 * area / (aw * ah))
+	f.intraPerc = uint8(100 * intraArea / (aw * ah))
 	f.valid, f.sliceI = true, false
 }
 
@@ -365,6 +374,12 @@ type lpd1PictureSetup struct {
 	// the low-delay GF_UPDATE picture (every MAX_GF_INTERVAL frames).
 	tlFactor int64
 	gfUpdate bool
+	// skipIntra is pcs->skip_intra (enc_mode_config.c, rtc branch of
+	// svt_aom_sig_deriv_mode_decision_config): a non-reference picture whose
+	// LAST reference coded at most 50% of its area intra (an I_SLICE
+	// reference counts 0, rc_process.c get_ref_intra_percentage) runs
+	// intra_level 0, no intra candidate at all.
+	skipIntra bool
 	// armed marks a picture setup; coders without one (standalone tile
 	// paths, the external-reference SVC path) keep the base-picture level
 	// pic_lpd1_lvl 4 without per-SB statistics.
@@ -518,6 +533,7 @@ func (st *lossyEncodeState) lpd1NoteBlock(px, py, bw, bh int, intra, hasCoeff bo
 	}
 	if intra {
 		s.intra = true
+		s.intraArea += uint32(bw * bh)
 	}
 	if hasCoeff {
 		s.skip = false
@@ -752,4 +768,13 @@ func (st *lossyEncodeState) lpd1NoteMVP64(px, py, bw, bh int, mode tile.InterMod
 		return
 	}
 	f.sb[(py/64)*f.cols+px/64].mvp64 = true
+}
+
+// lpd1RefIntraPerc is get_ref_intra_percentage for a P picture: the LAST
+// reference's intra_coded_area, 0 for an I_SLICE (or missing) reference.
+func lpd1RefIntraPerc(ref *lpd1Frame) uint8 {
+	if ref == nil || !ref.valid || ref.sliceI {
+		return 0
+	}
+	return ref.intraPerc
 }

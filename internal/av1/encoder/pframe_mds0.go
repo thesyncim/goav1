@@ -277,7 +277,7 @@ func fillIntraDCPred(pred []byte, reconPlane []byte, stride, px, py, n int, have
 // 64x64 blocks (SVT injects DC below 128x128; 64x64 codes TX_64X64): 8x8
 // keeps its own fallback.
 func (st *lossyEncodeState) mds0IntraDCWins(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, modeCtx *tile.BlockModeContext, lumaPX, lumaPY, bw, bh int) bool {
-	if !st.mds0IntraOK || bw != bh || (bw != 16 && bw != 32 && bw != 64) || st.color.MonoChrome {
+	if !st.mds0IntraOK || st.lpd1.skipIntra || bw != bh || (bw != 16 && bw != 32 && bw != 64) || st.color.MonoChrome {
 		return false
 	}
 	if st.mds0BestVar < int64(st.lpd1SB(lumaPX, lumaPY).skipDCTh*bw*bh) {

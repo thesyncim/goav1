@@ -377,7 +377,7 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	compoundMV := mo.compoundMV
 
 	// Intra fallback (8x8 leaves only), identical to the fused path.
-	if bw == 8 && bh == 8 {
+	if bw == 8 && bh == 8 && !st.lpd1.skipIntra {
 		dc := dcPredictN(recon.Y, src.YStride, lumaPX, lumaPY, 8, block.HaveTop, block.HaveLeft)
 		intraSAD := 0
 		for r := range 8 {

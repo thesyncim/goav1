@@ -1540,6 +1540,9 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		lpd1Setup.tlFactor = 180
 	}
 	lpd1Setup.gfUpdate = (e.frameIndex+e.lpd1FrameBias)%lpd1MaxGFInterval == 0
+	// pcs->skip_intra = (is_ref || ref_intra_percentage > 50) ? 0 : 1 for
+	// preset 12 rtc inter pictures without a scene transition.
+	lpd1Setup.skipIntra = droppable && !isT1 && lpd1RefIntraPerc(lpd1Ref) <= 50
 	if videoColorIs420(color) {
 		if e.lpd1Cur == nil {
 			e.lpd1Cur = new(lpd1Frame)
