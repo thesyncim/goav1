@@ -520,13 +520,17 @@ func (ctx *FrameWorkPostFilterContext) applyLoopFilterMaskBandsParallel(filterMa
 	for i := range workers {
 		ctx.Parallel.lfPlan[i] = FrameWorkLoopFilterPostFilterPlan{}
 	}
-	if err := ctx.Parallel.runRanges(pool, frameWorkPostFilterParallelJob{
-		stage:        frameWorkPostFilterStageLoopFilterPopulate,
-		lfBands:      bands,
-		populateRows: populateRows,
-		rows:         miRows,
-	}, populateBands, workers); err != nil {
-		return FrameWorkLoopFilterPostFilterApplyResult{}, false, err
+	if bands.LevelsAtDecode() {
+		result.Plan.Cells = int32(masks.Cols * masks.Rows)
+	} else {
+		if err := ctx.Parallel.runRanges(pool, frameWorkPostFilterParallelJob{
+			stage:        frameWorkPostFilterStageLoopFilterPopulate,
+			lfBands:      bands,
+			populateRows: populateRows,
+			rows:         miRows,
+		}, populateBands, workers); err != nil {
+			return FrameWorkLoopFilterPostFilterApplyResult{}, false, err
+		}
 	}
 	for i := range workers {
 		stats := &ctx.Parallel.lfPlan[i]

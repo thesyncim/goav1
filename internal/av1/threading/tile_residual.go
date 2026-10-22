@@ -1208,6 +1208,13 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 	scratch.resetDeferredReconBuffers()
 	if req.LoopFilterMasks.Valid() {
 		scratch.lfMask.reset(req.LoopFilterMasks)
+		if scratch.lfMask.edges != nil {
+			region, err := b.JobRegion(index)
+			if err != nil {
+				return FrameWorkTileResidualStats{}, err
+			}
+			scratch.lfMask.setTile(region)
+		}
 	}
 	b.geomCache = &scratch.geomCache
 	if err := frameWorkPrimeLumaReconGeometry(b, index); err != nil {
@@ -1282,13 +1289,17 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 					return fmt.Errorf("build compact loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
 				}
 			} else {
-				if req.LoopFilterMap != nil {
+				// dav1d keeps no per-MI loop-filter record: once the masks carry
+				// levels, noskip and tile-edge backups, nothing reads the map.
+				if req.LoopFilterMap != nil && !req.LoopFilterMasks.MapFree() {
 					if err := req.LoopFilterMap.MarkBlockPtr(visit, state); err != nil {
 						return fmt.Errorf("mark loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
 					}
 				}
 				intra := !visit.Prediction.Valid || visit.Prediction.Intra
-				req.LoopFilterMasks.build(&scratch.lfMask, visit, sbLog2, intra)
+				if err := req.LoopFilterMasks.build(&scratch.lfMask, visit, state, sbLog2, intra); err != nil {
+					return fmt.Errorf("build loop filter masks block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
+				}
 			}
 		} else if req.LoopFilterMap != nil {
 			if err := req.LoopFilterMap.MarkBlockPtr(visit, state); err != nil {
@@ -1313,6 +1324,9 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 	}
 	if err != nil {
 		return scratch.stats, err
+	}
+	if req.LoopFilterMasks.Valid() {
+		scratch.lfMask.finishTileEdges()
 	}
 	if scratch.controller.deferReconstruction && scratch.controller.wavefrontWorkers <= 1 {
 		if err := scratch.finalizeDeferredPalettes(); err != nil {

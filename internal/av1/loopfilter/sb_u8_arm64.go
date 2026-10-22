@@ -11,41 +11,6 @@ import (
 	"unsafe"
 )
 
-// sbNibbleLanes[b] selects the four byte lanes of every unit in the four-unit
-// group whose bit is set in b (unit k owns lanes 4k..4k+3).
-var sbNibbleLanes = func() (t [16][16]uint8) {
-	for b := range t {
-		for k := 0; k < 4; k++ {
-			if b&(1<<k) != 0 {
-				for i := 0; i < 4; i++ {
-					t[b][4*k+i] = 0xff
-				}
-			}
-		}
-	}
-	return t
-}()
-
-// sbGroup holds the resolved per-lane parameters of one four-unit group: the
-// E/I/H limits replicated across each unit's four lanes and the unit masks for
-// "filter at all" (m4), "wider than 4" (gt4) and "width 16" (w16).
-type sbGroup struct {
-	e, i, h  [4]uint32
-	m4       uint32
-	gt4      uint32
-	w16      uint32
-	maxLevel uint8
-	applied  uint32
-}
-
-// setLimits fills one live unit while its level is already in a register.
-// The group's zero value supplies the limits for inactive units.
-func (g *sbGroup) setLimits(k int, L uint8, lut *SBLUT) {
-	g.e[k] = uint32(lut.E[L]) * 0x01010101
-	g.i[k] = uint32(lut.I[L]) * 0x01010101
-	g.h[k] = uint32(L>>4) * 0x01010101
-}
-
 func lpfLoad(p unsafe.Pointer, off int) archsimd.Uint8x16 {
 	return archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, off)))
 }
@@ -87,7 +52,9 @@ func lpfNarrow4(lo, hi archsimd.Uint16x8) archsimd.Uint8x16 {
 // masks select each lane's own width exactly as the C reference does.
 //
 //go:nocheckptr
-func lpf16U8(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) {
+func lpf16U8W[W lpfWidth](p unsafe.Pointer, stride int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) bool {
+	var wdT W
+	wd := int(unsafe.Sizeof(wdT))
 	p1 := lpfLoad(p, -2*stride)
 	p0 := lpfLoad(p, -stride)
 	q0 := lpfLoad(p, 0)
@@ -112,7 +79,7 @@ func lpf16U8(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd.Uint8x16,
 	sum := d00.AddSaturated(d00).AddSaturated(lpfAbsDiff(p1, q1).ShiftAllRight(1))
 	fm := iV.GreaterEqual(t).And(eV.GreaterEqual(sum)).And(m4)
 	if !lpfAny(fm) {
-		return
+		return false
 	}
 
 	one := archsimd.BroadcastUint8x16(1)
@@ -205,7 +172,7 @@ func lpf16U8(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd.Uint8x16,
 		lpfStore(p, -stride, o0)
 		lpfStore(p, 0, n0)
 		lpfStore(p, stride, n1)
-		return
+		return true
 	}
 
 	o2, n2 := p2, q2
@@ -265,6 +232,7 @@ func lpf16U8(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd.Uint8x16,
 	lpfStore(p, -stride, o0)
 	lpfStore(p, 0, n0)
 	lpfStore(p, stride, n1)
+	return true
 }
 
 // lpfFlat16U8 computes the 13-tap flat filter (dav1d wd16, AV1 filter14) on
@@ -327,23 +295,77 @@ func lpfFlat16Half(p6, p5, p4, p3, p2, p1, p0, q0, q1, q2, q3, q4, q5, q6 archsi
 	out[11] = s
 }
 
-// sbGroupMasks converts a resolved group into kernel operands.
-func sbGroupVectors(g *sbGroup) (eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) {
-	eV = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Pointer(&g.e)))
-	iV = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Pointer(&g.i)))
-	hV = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Pointer(&g.h)))
-	m4 = archsimd.LoadUint8x16Array(&sbNibbleLanes[g.m4]).BitsToInt8().ToMask()
-	mGt4 = archsimd.LoadUint8x16Array(&sbNibbleLanes[g.gt4]).BitsToInt8().ToMask()
-	m16 = archsimd.LoadUint8x16Array(&sbNibbleLanes[g.w16]).BitsToInt8().ToMask()
+// sbNibbleLanes[b] selects the four byte lanes of every unit in the four-unit
+// group whose bit is set in b (unit k owns lanes 4k..4k+3): dav1d lpf_func's
+// dup + cmtst of a vmask nibble against word_1248, as one table load.
+var sbNibbleLanes = func() (t [16][16]uint8) {
+	for b := range t {
+		for k := 0; k < 4; k++ {
+			if b&(1<<k) != 0 {
+				for i := 0; i < 4; i++ {
+					t[b][4*k+i] = 0xff
+				}
+			}
+		}
+	}
+	return t
+}()
+
+func sbNibbleMask(n uint32) archsimd.Mask8x16 {
+	return archsimd.LoadUint8x16Array(&sbNibbleLanes[n&15]).BitsToInt8().ToMask()
+}
+
+// sbAcc carries goav1's apply counters through a superblock call as vector
+// accumulators (one reduction per call instead of per group); dav1d keeps no
+// such counters.
+type sbAcc struct {
+	cnt, max archsimd.Uint8x16
+}
+
+func (a *sbAcc) stats() SBStats {
+	return SBStats{
+		Applied:  uint32(a.cnt.ReduceSum()) >> 2,
+		MaxLevel: uint8(a.max.BitsToInt8().ReduceMax()),
+	}
+}
+
+// sbGroupLimits is the per-group prologue of dav1d's lpf_{v,h}_sb_{y,uv}
+// drivers (src/arm/64/loopfilter.S lpf_func) across lanes, one unit per
+// 32-bit lane: cur and prev hold the units' own and fallback (left or above)
+// levels in the low byte; L = cur ? cur : prev is replicated over the unit's
+// four bytes, I = imax(imin(L >> sharp[0], sharp[1]), 1), E = 2*(L+2)+I and
+// H = L>>4 follow without a table, and the "wd >= 4" lane mask is the vmask
+// nibble restricted to L != 0. ok is false when no selected unit has a level
+// (dav1d "if (!L) continue"). The wider-width masks need no level test: the
+// kernel already ANDs them with fm, which includes m4.
+func sbGroupLimits(cur, prev archsimd.Uint32x4, nAll uint32, sharp0 uint64, sharp1 uint8, acc *sbAcc) (eV, iV, hV archsimd.Uint8x16, m4 archsimd.Mask8x16, ok bool) {
+	zero32 := archsimd.Uint32x4{}
+	L := prev.IfElse(cur.Equal(zero32), cur)
+	lr := L.Mul(archsimd.BroadcastUint32x4(0x01010101)).ReshapeToUint8s()
+	zero := archsimd.Uint8x16{}
+	act := archsimd.LoadUint8x16Array(&sbNibbleLanes[nAll&15]).AndNot(lr.Equal(zero).ToInt8x16().ToBits())
+	h := act.ReshapeToUint64s()
+	if h.GetElem(0)|h.GetElem(1) == 0 {
+		return
+	}
+	acc.cnt = acc.cnt.Sub(act)
+	acc.max = acc.max.Max(lr.And(act))
+	hV = lr.ShiftAllRight(4)
+	iV = lr.ShiftAllRight(sharp0).Min(archsimd.BroadcastUint8x16(sharp1)).Max(archsimd.BroadcastUint8x16(1))
+	e := lr.Add(archsimd.BroadcastUint8x16(2))
+	eV = e.Add(e).Add(iV)
+	m4 = act.BitsToInt8().ToMask()
+	ok = true
 	return
 }
 
-// sbGroupWidth picks the widest kernel variant the group's live units need.
-func sbGroupWidth(g *sbGroup, luma bool) int {
+// sbWidth is dav1d lpf_func's kernel choice from the raw vmask nibbles: the
+// per-lane masks narrow every lane to its own width inside the kernel.
+func sbWidth(nGt4, n16 uint32, luma bool) int {
 	switch {
-	case g.w16 != 0:
+	case n16 != 0:
 		return 16
-	case g.gt4 != 0:
+	case nGt4 != 0:
 		if luma {
 			return 8
 		}
@@ -353,48 +375,79 @@ func sbGroupWidth(g *sbGroup, luma bool) int {
 	}
 }
 
+// sbLevelsRow loads the levels of four consecutive units (horizontal edges:
+// dav1d lpf_v_sb ld1 of l[0] and l[-b4_stride]) with component comp moved to
+// the low byte of each lane.
+//
+//go:nocheckptr
+func sbLevelsRow(lvl [][4]uint8, u0, lvlStride, comp int, nAll uint32) (cur, prev archsimd.Uint32x4) {
+	ff := archsimd.BroadcastUint32x4(0xff)
+	sh := uint64(8 * comp)
+	if u0-lvlStride >= 0 && u0+4 <= len(lvl) {
+		base := unsafe.Pointer(unsafe.SliceData(lvl))
+		cur = archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(base, 4*u0))).ShiftAllRight(sh).And(ff)
+		prev = archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(base, 4*(u0-lvlStride)))).ShiftAllRight(sh).And(ff)
+		return
+	}
+	var c, p [4]uint32
+	for k := 0; k < 4; k++ {
+		if nAll&(1<<uint(k)) != 0 {
+			c[k] = uint32(lvl[u0+k][comp])
+			p[k] = uint32(lvl[u0+k-lvlStride][comp])
+		}
+	}
+	return archsimd.LoadUint32x4Array(&c), archsimd.LoadUint32x4Array(&p)
+}
+
+// sbLevelsCol loads the levels of four units stacked lvlStride cells apart
+// (vertical edges: dav1d lpf_h_sb ld2 of the l[-1], l[0] pairs) with
+// component comp moved to the low byte of each lane.
+//
+//go:nocheckptr
+func sbLevelsCol(lvl [][4]uint8, li, lvlStride, comp int, nAll uint32) (cur, prev archsimd.Uint32x4) {
+	ff := archsimd.BroadcastUint32x4(0xff)
+	sh := uint64(8 * comp)
+	if li-1 >= 0 && li+3*lvlStride < len(lvl) {
+		base := unsafe.Pointer(unsafe.SliceData(lvl))
+		var pr [4]uint64
+		pr[0] = *(*uint64)(unsafe.Add(base, 4*(li-1)))
+		pr[1] = *(*uint64)(unsafe.Add(base, 4*(li+lvlStride-1)))
+		pr[2] = *(*uint64)(unsafe.Add(base, 4*(li+2*lvlStride-1)))
+		pr[3] = *(*uint64)(unsafe.Add(base, 4*(li+3*lvlStride-1)))
+		a := archsimd.LoadUint64x2Array((*[2]uint64)(pr[0:2])).ReshapeToUint32s()
+		b := archsimd.LoadUint64x2Array((*[2]uint64)(pr[2:4])).ReshapeToUint32s()
+		prev = a.ConcatEven(b).ShiftAllRight(sh).And(ff)
+		cur = a.ConcatOdd(b).ShiftAllRight(sh).And(ff)
+		return
+	}
+	var c, p [4]uint32
+	for k := 0; k < 4; k++ {
+		if nAll&(1<<uint(k)) != 0 {
+			c[k] = uint32(lvl[li+k*lvlStride][comp])
+			p[k] = uint32(lvl[li+k*lvlStride-1][comp])
+		}
+	}
+	return archsimd.LoadUint32x4Array(&c), archsimd.LoadUint32x4Array(&p)
+}
+
 //go:nocheckptr
 func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	var st SBStats
+	var acc sbAcc
 	gt4All := vm[1] | vm[2]
 	all := vm[0] | gt4All
 	base := unsafe.Pointer(unsafe.SliceData(pix))
+	sharp0, sharp1 := uint64(lut.Sharp[0]), lut.Sharp[1]
 	for g := 0; g < 8 && all>>(4*uint(g)) != 0; g++ {
 		sh := 4 * uint(g)
 		nib := (all >> sh) & 0xf
 		if nib == 0 {
 			continue
 		}
-		var grp sbGroup
+		nGt4 := (gt4All >> sh) & 0xf
+		n16 := (vm[2] >> sh) & 0xf
+		wd := sbWidth(nGt4, n16, luma)
 		u0 := lvlOff + 4*g
-		for k := 0; k < 4; k++ {
-			if nib&(1<<uint(k)) == 0 {
-				continue
-			}
-			L := lvl[u0+k][comp]
-			if L == 0 {
-				L = lvl[u0+k-lvlStride][comp]
-			}
-			if L == 0 {
-				continue
-			}
-			grp.setLimits(k, L, lut)
-			grp.m4 |= 1 << uint(k)
-			grp.applied++
-			if L > grp.maxLevel {
-				grp.maxLevel = L
-			}
-		}
-		if grp.m4 == 0 {
-			continue
-		}
-		grp.gt4 = (gt4All >> sh) & grp.m4
-		grp.w16 = (vm[2] >> sh) & grp.m4
-		st.Applied += grp.applied
-		if grp.maxLevel > st.MaxLevel {
-			st.MaxLevel = grp.maxLevel
-		}
-		wd := sbGroupWidth(&grp, luma)
 		q0Off := off + 16*g
 		reach := 4
 		if wd == 16 {
@@ -405,88 +458,92 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 			for k := range sub {
 				sub[k] = (sub[k] >> sh) & 0xf
 			}
-			_ = filterSBHorizontal8Scalar(pix, q0Off, stride, sub, luma, lvl, u0, lvlStride, comp, lut)
+			st.Add(filterSBHorizontal8Scalar(pix, q0Off, stride, sub, luma, lvl, u0, lvlStride, comp, lut))
 			continue
 		}
-		eV, iV, hV, m4, mGt4, m16 := sbGroupVectors(&grp)
-		lpf16U8(unsafe.Add(base, q0Off), stride, wd, eV, iV, hV, m4, mGt4, m16)
+		cur, prev := sbLevelsRow(lvl, u0, lvlStride, comp, nib)
+		eV, iV, hV, m4, ok := sbGroupLimits(cur, prev, nib, sharp0, sharp1, &acc)
+		if !ok {
+			continue
+		}
+		q0 := unsafe.Add(base, q0Off)
+		mGt4, m16 := sbNibbleMask(nGt4), sbNibbleMask(n16)
+		switch wd {
+		case 16:
+			lpf16U8W[lpfW16](q0, stride, eV, iV, hV, m4, mGt4, m16)
+		case 8:
+			lpf16U8W[lpfW8](q0, stride, eV, iV, hV, m4, mGt4, m16)
+		case 6:
+			lpf16U8W[lpfW6](q0, stride, eV, iV, hV, m4, mGt4, m16)
+		default:
+			lpf16U8W[lpfW4](q0, stride, eV, iV, hV, m4, mGt4, m16)
+		}
 	}
+	st.Add(acc.stats())
 	return st
 }
 
 //go:nocheckptr
 func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	var st SBStats
+	var acc sbAcc
 	gt4All := vm[1] | vm[2]
 	all := vm[0] | gt4All
 	base := unsafe.Pointer(unsafe.SliceData(pix))
+	sharp0, sharp1 := uint64(lut.Sharp[0]), lut.Sharp[1]
 	for g := 0; g < 8 && all>>(4*uint(g)) != 0; g++ {
 		sh := 4 * uint(g)
 		nib := (all >> sh) & 0xf
 		if nib == 0 {
 			continue
 		}
-		var grp sbGroup
+		nGt4 := (gt4All >> sh) & 0xf
+		n16 := (vm[2] >> sh) & 0xf
+		wd := sbWidth(nGt4, n16, luma)
 		u0 := lvlOff + 4*g*lvlStride
-		for k := 0; k < 4; k++ {
-			if nib&(1<<uint(k)) == 0 {
-				continue
-			}
-			li := u0 + k*lvlStride
-			L := lvl[li][comp]
-			if L == 0 {
-				L = lvl[li-1][comp]
-			}
-			if L == 0 {
-				continue
-			}
-			grp.setLimits(k, L, lut)
-			grp.m4 |= 1 << uint(k)
-			grp.applied++
-			if L > grp.maxLevel {
-				grp.maxLevel = L
-			}
-		}
-		if grp.m4 == 0 {
-			continue
-		}
-		grp.gt4 = (gt4All >> sh) & grp.m4
-		grp.w16 = (vm[2] >> sh) & grp.m4
-		st.Applied += grp.applied
-		if grp.maxLevel > st.MaxLevel {
-			st.MaxLevel = grp.maxLevel
-		}
-		wd := sbGroupWidth(&grp, luma)
 		q0Off := off + 16*g*stride
 		lastRow := q0Off + 15*stride
 		if wd == 16 {
 			if q0Off-8 < 0 || lastRow+8 > len(pix) {
-				sbVerticalScalarGroup(pix, q0Off, stride, vm, sh, luma, lvl, u0, lvlStride, comp, lut)
+				st.Add(sbVerticalScalarGroup(pix, q0Off, stride, vm, sh, luma, lvl, u0, lvlStride, comp, lut))
 				continue
 			}
 		} else if q0Off-4 < 0 || lastRow+4 > len(pix) {
-			sbVerticalScalarGroup(pix, q0Off, stride, vm, sh, luma, lvl, u0, lvlStride, comp, lut)
+			st.Add(sbVerticalScalarGroup(pix, q0Off, stride, vm, sh, luma, lvl, u0, lvlStride, comp, lut))
 			continue
 		}
-		wide := wd != 16 && rowBytes >= 12 && lastRow+12 <= len(pix)
-		eV, iV, hV, m4, mGt4, m16 := sbGroupVectors(&grp)
+		cur, prev := sbLevelsCol(lvl, u0, lvlStride, comp, nib)
+		eV, iV, hV, m4, ok := sbGroupLimits(cur, prev, nib, sharp0, sharp1, &acc)
+		if !ok {
+			continue
+		}
 		if wd == 16 {
-			lpfVertical16x16U8(unsafe.Add(base, q0Off-8), stride, eV, iV, hV, m4, mGt4, m16)
-		} else if wide {
-			lpfVertical16x8U8Wide(unsafe.Add(base, q0Off-4), stride, wd, eV, iV, hV, m4, mGt4, m16)
+			lpfVertical16x16U8(unsafe.Add(base, q0Off-8), stride, eV, iV, hV, m4, sbNibbleMask(nGt4), sbNibbleMask(n16))
+		} else if rowBytes >= 12 && lastRow+12 <= len(pix) {
+			p3 := unsafe.Add(base, q0Off-4)
+			mGt4 := sbNibbleMask(nGt4)
+			switch wd {
+			case 8:
+				lpfVertical16x8U8WideW[lpfW8](p3, stride, eV, iV, hV, m4, mGt4)
+			case 6:
+				lpfVertical16x8U8WideW[lpfW6](p3, stride, eV, iV, hV, m4, mGt4)
+			default:
+				lpfVertical16x8U8WideW[lpfW4](p3, stride, eV, iV, hV, m4, mGt4)
+			}
 		} else {
-			lpfVertical16x8U8(unsafe.Add(base, q0Off-4), stride, wd, eV, iV, hV, m4, mGt4, m16)
+			lpfVertical16x8U8(unsafe.Add(base, q0Off-4), stride, wd, eV, iV, hV, m4, sbNibbleMask(nGt4), sbNibbleMask(n16))
 		}
 	}
+	st.Add(acc.stats())
 	return st
 }
 
-func sbVerticalScalarGroup(pix []byte, q0Off, stride int, vm [3]uint32, sh uint, luma bool, lvl [][4]uint8, u0, lvlStride, comp int, lut *SBLUT) {
+func sbVerticalScalarGroup(pix []byte, q0Off, stride int, vm [3]uint32, sh uint, luma bool, lvl [][4]uint8, u0, lvlStride, comp int, lut *SBLUT) SBStats {
 	sub := vm
 	for k := range sub {
 		sub[k] = (sub[k] >> sh) & 0xf
 	}
-	_ = filterSBVertical8Scalar(pix, q0Off, stride, sub, luma, lvl, u0, lvlStride, comp, lut)
+	return filterSBVertical8Scalar(pix, q0Off, stride, sub, luma, lvl, u0, lvlStride, comp, lut)
 }
 
 // lpfVertical16x8U8 filters a vertical edge across sixteen rows using eight
@@ -522,7 +579,9 @@ func lpfVertical16x8U8(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd
 	t5.StoreArray(&buf[5])
 	t6.StoreArray(&buf[6])
 	t7.StoreArray(&buf[7])
-	lpf16U8(unsafe.Pointer(&buf[4]), 16, wd, eV, iV, hV, m4, mGt4, m16)
+	if !lpf16U8(unsafe.Pointer(&buf[4]), 16, wd, eV, iV, hV, m4, mGt4, m16) {
+		return
+	}
 	a = archsimd.LoadUint8x16Array(&buf[0])
 	b = archsimd.LoadUint8x16Array(&buf[1])
 	c = archsimd.LoadUint8x16Array(&buf[2])
@@ -575,7 +634,9 @@ func lpfTranspose8x8Pairs(a, b, c, d, e, f, g, h archsimd.Uint8x16) (o0, o1, o2,
 func lpfVertical16x16U8(p unsafe.Pointer, stride int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) {
 	var buf [16][16]uint8
 	lpfTranspose16x16Store(p, stride, unsafe.Pointer(&buf), 16)
-	lpf16U8(unsafe.Pointer(&buf[8]), 16, 16, eV, iV, hV, m4, mGt4, m16)
+	if !lpf16U8(unsafe.Pointer(&buf[8]), 16, 16, eV, iV, hV, m4, mGt4, m16) {
+		return
+	}
 	lpfTranspose16x16Store(unsafe.Pointer(&buf), 16, p, stride)
 }
 
@@ -667,7 +728,7 @@ var lpfLowHalf = [16]uint8{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 // bit-select per row, avoiding the scalar gather/scatter through the stack.
 //
 //go:nocheckptr
-func lpfVertical16x8U8Wide(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) {
+func lpfVertical16x8U8WideW[W lpfWidth](p unsafe.Pointer, stride int, eV, iV, hV archsimd.Uint8x16, m4, mGt4 archsimd.Mask8x16) {
 	r0, r8 := lpfLoad(p, 0), lpfLoad(p, 8*stride)
 	r1, r9 := lpfLoad(p, stride), lpfLoad(p, 9*stride)
 	r2, r10 := lpfLoad(p, 2*stride), lpfLoad(p, 10*stride)
@@ -679,7 +740,12 @@ func lpfVertical16x8U8Wide(p unsafe.Pointer, stride int, wd int, eV, iV, hV arch
 	t0, t1, t2, t3, t4, t5, t6, t7 := lpfTranspose8x8Pairs(
 		lpfZipLo64(r0, r8), lpfZipLo64(r1, r9), lpfZipLo64(r2, r10), lpfZipLo64(r3, r11),
 		lpfZipLo64(r4, r12), lpfZipLo64(r5, r13), lpfZipLo64(r6, r14), lpfZipLo64(r7, r15))
-	t1, t2, t3, t4, t5, t6 = lpf16U8Regs(wd, t0, t1, t2, t3, t4, t5, t6, t7, eV, iV, hV, m4, mGt4)
+	var ok bool
+	t1, t2, t3, t4, t5, t6, ok = lpf16U8RegsW[W](t0, t1, t2, t3, t4, t5, t6, t7, eV, iV, hV, m4, mGt4)
+	if !ok {
+		// dav1d lpf_16_wd* x14 = 1: nothing filtered, nothing to store.
+		return
+	}
 	t0, t1, t2, t3, t4, t5, t6, t7 = lpfTranspose8x8Pairs(t0, t1, t2, t3, t4, t5, t6, t7)
 	lo := archsimd.LoadUint8x16Array(&lpfLowHalf).BitsToInt8().ToMask()
 	lpfStore(p, 0, t0.IfElse(lo, r0))
@@ -713,7 +779,9 @@ func lpfZipHi64(a, b archsimd.Uint8x16) archsimd.Uint8x16 {
 // p3..q3 in, the filtered p2..q2 out (p3/q3 never change at these widths).
 // Vector arguments and results travel in SIMD registers, so the transposed
 // vertical path filters without a stack round trip.
-func lpf16U8Regs(wd int, p3, p2, p1, p0, q0, q1, q2, q3, eV, iV, hV archsimd.Uint8x16, m4, mGt4 archsimd.Mask8x16) (o2, o1, o0, n0, n1, n2 archsimd.Uint8x16) {
+func lpf16U8RegsW[W lpfWidth](p3, p2, p1, p0, q0, q1, q2, q3, eV, iV, hV archsimd.Uint8x16, m4, mGt4 archsimd.Mask8x16) (o2, o1, o0, n0, n1, n2 archsimd.Uint8x16, ok bool) {
+	var wdT W
+	wd := int(unsafe.Sizeof(wdT))
 	o2, o1, o0, n0, n1, n2 = p2, p1, p0, q0, q1, q2
 	d10 := lpfAbsDiff(p1, p0)
 	dq := lpfAbsDiff(q1, q0)
@@ -732,6 +800,7 @@ func lpf16U8Regs(wd int, p3, p2, p1, p0, q0, q1, q2, q3, eV, iV, hV archsimd.Uin
 	if !lpfAny(fm) {
 		return
 	}
+	ok = true
 	mF4 := fm
 	var mFlat archsimd.Mask8x16
 	if wd >= 6 {
@@ -835,4 +904,33 @@ func lpf16U8Regs(wd int, p3, p2, p1, p0, q0, q1, q2, q3, eV, iV, hV archsimd.Uin
 	n1 = lpfNarrow3(aq1, bq1).IfElse(mFlat, n1)
 	n2 = lpfNarrow3(aq2, bq2).IfElse(mFlat, n2)
 	return
+}
+
+// lpfW4..lpfW16 select a width-specialized kernel instance, as dav1d's
+// loop_filter wd macro emits lpf_16_wd{4,6,8,16}_neon from one source: each
+// type's size is its filter width, so every stenciled body sees a constant
+// width and drops the code of the other widths.
+type (
+	lpfW4  [4]byte
+	lpfW6  [6]byte
+	lpfW8  [8]byte
+	lpfW16 [16]byte
+)
+
+type lpfWidth interface {
+	lpfW4 | lpfW6 | lpfW8 | lpfW16
+}
+
+// lpf16U8 dispatches to the width-specialized lpf16U8W instance.
+func lpf16U8(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) bool {
+	switch wd {
+	case 16:
+		return lpf16U8W[lpfW16](p, stride, eV, iV, hV, m4, mGt4, m16)
+	case 8:
+		return lpf16U8W[lpfW8](p, stride, eV, iV, hV, m4, mGt4, m16)
+	case 6:
+		return lpf16U8W[lpfW6](p, stride, eV, iV, hV, m4, mGt4, m16)
+	default:
+		return lpf16U8W[lpfW4](p, stride, eV, iV, hV, m4, mGt4, m16)
+	}
 }

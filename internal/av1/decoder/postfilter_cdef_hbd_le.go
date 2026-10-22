@@ -24,8 +24,8 @@ func frameWorkCDEFHBDPlaneViewAvailable(plane frame.Plane) bool {
 	return err == nil
 }
 
-func frameWorkApplyCDEFPlaneRowsHBD(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols, rows, rowStart, rowEnd int, dst frame.Plane, lineScratch []uint16, boundary FrameWorkCDEFPostFilterHBD16BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane, xDec, yDec, coeffShift int, forceLumaDirections bool) (uint32, uint32, error) {
-	return frameWorkApplyCDEFPlaneRowsHBDLE(params, indexMap, skipMap, cols, rows, rowStart, rowEnd, dst, lineScratch, boundary, input, blockStorage, directions, variances, directionGrid, varianceGrid, plane, xDec, yDec, coeffShift, forceLumaDirections)
+func frameWorkApplyCDEFPlaneRowsHBD(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols, rows, rowStart, rowEnd int, dst frame.Plane, lineScratch []uint16, boundary FrameWorkCDEFPostFilterHBD16BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane, xDec, yDec, coeffShift int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
+	return frameWorkApplyCDEFPlaneRowsHBDLE(params, indexMap, skipMap, cols, rows, rowStart, rowEnd, dst, lineScratch, boundary, input, blockStorage, directions, variances, directionGrid, varianceGrid, plane, xDec, yDec, coeffShift, forceLumaDirections, unitMasks)
 }
 
 // frameWorkApplyCDEFPlaneRowsHBDLE is the 10/12-bit in-place counterpart of
@@ -36,7 +36,7 @@ func frameWorkApplyCDEFPlaneRowsHBD(params parser.CDEFParams, indexMap FrameWork
 // by the caller before any bands mutate the frame. The CDEF kernel writes to a
 // short-lived LE uint16 view of the byte plane, so skipped blocks remain in
 // place and need neither UnitDst prefill nor a store-back pass.
-func frameWorkApplyCDEFPlaneRowsHBDLE(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols, rows, rowStart, rowEnd int, dst frame.Plane, lineScratch []uint16, boundary FrameWorkCDEFPostFilterHBD16BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane, xDec, yDec, coeffShift int, forceLumaDirections bool) (uint32, uint32, error) {
+func frameWorkApplyCDEFPlaneRowsHBDLE(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols, rows, rowStart, rowEnd int, dst frame.Plane, lineScratch []uint16, boundary FrameWorkCDEFPostFilterHBD16BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane, xDec, yDec, coeffShift int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
 	var units uint32
 	var blocksTotal uint32
 	if coeffShift <= 0 || coeffShift > 4 || dst.Stride%2 != 0 {
@@ -137,7 +137,7 @@ func frameWorkApplyCDEFPlaneRowsHBDLE(params parser.CDEFParams, indexMap FrameWo
 				prevFiltered = false
 				continue
 			}
-			blocks := frameWorkCDEFBlockPositionsFiltered(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, unitRow, unitCol)
+			blocks := frameWorkCDEFUnitBlockList(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, unitMasks, unitRow, unitCol)
 			if len(blocks) == 0 {
 				prevFiltered = false
 				continue

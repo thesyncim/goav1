@@ -26,45 +26,6 @@ var sbPairLanes16 = func() (t [4][8]uint16) {
 	return t
 }()
 
-// sbHalf16 holds one two-unit half group's limits (already scaled by the bit
-// depth, each unit's value replicated over its four lanes) and unit masks.
-type sbHalf16 struct {
-	e, i, h      [2]uint64
-	m4, gt4, w16 uint32
-}
-
-// sbRep16 replicates a 16-bit value over the four lanes of a uint64.
-const sbRep16 = 0x0001000100010001
-
-func (s *sbHalf16) set(k int, L uint8, lut *SBLUT, bd8 uint) {
-	s.e[k] = uint64(lut.E[L]) << bd8 * sbRep16
-	s.i[k] = uint64(lut.I[L]) << bd8 * sbRep16
-	s.h[k] = uint64(L>>4) << bd8 * sbRep16
-}
-
-func (s *sbHalf16) vectors() (eV, iV, hV archsimd.Uint16x8, m4, mGt4, m16 archsimd.Mask16x8) {
-	eV = archsimd.LoadUint64x2Array(&s.e).ReshapeToUint16s()
-	iV = archsimd.LoadUint64x2Array(&s.i).ReshapeToUint16s()
-	hV = archsimd.LoadUint64x2Array(&s.h).ReshapeToUint16s()
-	m4 = archsimd.LoadUint16x8Array(&sbPairLanes16[s.m4]).BitsToInt16().ToMask()
-	mGt4 = archsimd.LoadUint16x8Array(&sbPairLanes16[s.gt4]).BitsToInt16().ToMask()
-	m16 = archsimd.LoadUint16x8Array(&sbPairLanes16[s.w16]).BitsToInt16().ToMask()
-	return
-}
-
-func (s *sbHalf16) width(luma bool) int {
-	switch {
-	case s.w16 != 0:
-		return 16
-	case s.gt4 != 0:
-		if luma {
-			return 8
-		}
-		return 6
-	}
-	return 4
-}
-
 func lpf16Load(p unsafe.Pointer, off int) archsimd.Uint16x8 {
 	return archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(p, off)))
 }
@@ -391,55 +352,119 @@ func lpfVertical8x16U16(p unsafe.Pointer, stride int, bd8 uint, eV, iV, hV archs
 	lpfTransposeRows8U16(unsafe.Pointer(&buf[8]), 16, unsafe.Add(p, 16), stride)
 }
 
-// sbResolveHalf16 resolves the levels of units 2*half and 2*half+1 of the
-// nibble (lvlStep: level-index step between units, prevStep: fallback step).
-func sbResolveHalf16(s *sbHalf16, nib uint32, half int, u0, lvlStep, prevStep int, lvl [][4]uint8, comp int, lut *SBLUT, bd8 uint, st *SBStats) {
-	for k := 0; k < 2; k++ {
-		unit := 2*half + k
-		if nib&(1<<uint(unit)) == 0 {
-			continue
-		}
-		li := u0 + unit*lvlStep
-		L := lvl[li][comp]
-		if L == 0 {
-			L = lvl[li-prevStep][comp]
-		}
-		if L == 0 {
-			continue
-		}
-		s.set(k, L, lut, bd8)
-		s.m4 |= 1 << uint(k)
-		st.Applied++
-		if L > st.MaxLevel {
-			st.MaxLevel = L
+// sbHalf16Limits is the per-group prologue of dav1d's 16bpc
+// lpf_{v,h}_sb_{y,uv}_16bpc_neon drivers (src/arm/64/loopfilter16.S
+// lpf_func) for one two-unit group: lv holds the units' own levels in lanes 0
+// and 1 and their fallback (left or above) levels in lanes 2 and 3, component
+// in the low byte. L = cur ? cur : prev; I, E and H follow from L and
+// Av1FilterLUT.sharp on byte lanes, are widened to the units' four uint16
+// lanes (uxtl) and shifted left by bitdepth_min_8; the "wd >= 4" lane mask is
+// the vmask pair restricted to L != 0. ok is false when no selected unit has
+// a level.
+func sbHalf16Limits(lv archsimd.Uint32x4, pair uint32, sharp0 uint64, sharp1 uint8, bd8 uint64, acc *sbAcc16) (eV, iV, hV archsimd.Uint16x8, m4 archsimd.Mask16x8, ok bool) {
+	zero32 := archsimd.Uint32x4{}
+	prev := lv.ReshapeToUint64s().InterleaveHi(lv.ReshapeToUint64s()).ReshapeToUint32s()
+	L := prev.IfElse(lv.Equal(zero32), lv)
+	lr := L.Mul(archsimd.BroadcastUint32x4(0x01010101)).ReshapeToUint8s()
+	lw := lr.ExtendLo8ToUint16()
+	act := archsimd.LoadUint16x8Array(&sbPairLanes16[pair&3]).AndNot(lw.Equal(archsimd.Uint16x8{}).ToInt16x8().ToBits())
+	h := act.ReshapeToUint64s()
+	if h.GetElem(0)|h.GetElem(1) == 0 {
+		return
+	}
+	acc.cnt = acc.cnt.Sub(act)
+	acc.max = acc.max.Max(lw.And(act))
+	hB := lr.ShiftAllRight(4)
+	iB := lr.ShiftAllRight(sharp0).Min(archsimd.BroadcastUint8x16(sharp1)).Max(archsimd.BroadcastUint8x16(1))
+	e := lr.Add(archsimd.BroadcastUint8x16(2))
+	eB := e.Add(e).Add(iB)
+	hV = hB.ExtendLo8ToUint16().ShiftAllLeft(bd8)
+	iV = iB.ExtendLo8ToUint16().ShiftAllLeft(bd8)
+	eV = eB.ExtendLo8ToUint16().ShiftAllLeft(bd8)
+	m4 = act.BitsToInt16().ToMask()
+	ok = true
+	return
+}
+
+// sbAcc16 is sbAcc on uint16 lanes.
+type sbAcc16 struct {
+	cnt, max archsimd.Uint16x8
+}
+
+func (a *sbAcc16) stats() SBStats {
+	return SBStats{
+		Applied:  uint32(a.cnt.ReduceSum()) >> 2,
+		MaxLevel: uint8(a.max.BitsToInt16().ReduceMax()),
+	}
+}
+
+func sbPairMask16(n uint32) archsimd.Mask16x8 {
+	return archsimd.LoadUint16x8Array(&sbPairLanes16[n&3]).BitsToInt16().ToMask()
+}
+
+// sbLevels16Row loads two consecutive units' levels and their above
+// fallbacks (dav1d 16bpc lpf_v_sb ld1 {v0.8b}/{v1.8b}).
+//
+//go:nocheckptr
+func sbLevels16Row(lvl [][4]uint8, u0, lvlStride, comp int, pair uint32) archsimd.Uint32x4 {
+	var v [2]uint64
+	if u0-lvlStride >= 0 && u0+2 <= len(lvl) {
+		base := unsafe.Pointer(unsafe.SliceData(lvl))
+		v[0] = *(*uint64)(unsafe.Add(base, 4*u0))
+		v[1] = *(*uint64)(unsafe.Add(base, 4*(u0-lvlStride)))
+	} else {
+		for k := 0; k < 2; k++ {
+			if pair&(1<<uint(k)) != 0 {
+				v[0] |= uint64(lvl[u0+k][comp]) << (8*comp + 32*k)
+				v[1] |= uint64(lvl[u0+k-lvlStride][comp]) << (8*comp + 32*k)
+			}
 		}
 	}
+	return archsimd.LoadUint64x2Array(&v).ReshapeToUint32s().ShiftAllRight(uint64(8 * comp)).And(archsimd.BroadcastUint32x4(0xff))
+}
+
+// sbLevels16Col loads two vertically stacked units' levels and their left
+// fallbacks (dav1d 16bpc lpf_h_sb ld2 of the l[-1], l[0] pairs).
+//
+//go:nocheckptr
+func sbLevels16Col(lvl [][4]uint8, li, lvlStride, comp int, pair uint32) archsimd.Uint32x4 {
+	var v [2]uint64
+	if li-1 >= 0 && li+lvlStride < len(lvl) {
+		base := unsafe.Pointer(unsafe.SliceData(lvl))
+		x0 := *(*uint64)(unsafe.Add(base, 4*(li-1)))
+		x1 := *(*uint64)(unsafe.Add(base, 4*(li+lvlStride-1)))
+		v[0] = x0>>32 | x1&^0xffffffff
+		v[1] = x0&0xffffffff | x1<<32
+	} else {
+		for k := 0; k < 2; k++ {
+			if pair&(1<<uint(k)) != 0 {
+				v[0] |= uint64(lvl[li+k*lvlStride][comp]) << (8*comp + 32*k)
+				v[1] |= uint64(lvl[li+k*lvlStride-1][comp]) << (8*comp + 32*k)
+			}
+		}
+	}
+	return archsimd.LoadUint64x2Array(&v).ReshapeToUint32s().ShiftAllRight(uint64(8 * comp)).And(archsimd.BroadcastUint32x4(0xff))
 }
 
 //go:nocheckptr
 func filterSBHorizontal16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	var st SBStats
+	var acc sbAcc16
 	bd8 := uint(bitDepth - 8)
 	gt4All := vm[1] | vm[2]
 	all := vm[0] | gt4All
 	base := unsafe.Pointer(unsafe.SliceData(pix))
+	sharp0, sharp1 := uint64(lut.Sharp[0]), lut.Sharp[1]
 	for g := 0; g < 16 && all>>(2*uint(g)) != 0; g++ {
 		sh := 2 * uint(g)
 		pair := (all >> sh) & 3
 		if pair == 0 {
 			continue
 		}
-		var s sbHalf16
-		var gst SBStats
+		nGt4 := (gt4All >> sh) & 3
+		n16 := (vm[2] >> sh) & 3
+		wd := sbWidth(nGt4, n16, luma)
 		u0 := lvlOff + 2*g
-		sbResolveHalf16(&s, pair, 0, u0, 1, lvlStride, lvl, comp, lut, bd8, &gst)
-		if s.m4 == 0 {
-			continue
-		}
-		st.Add(gst)
-		s.gt4 = (gt4All >> sh) & s.m4
-		s.w16 = (vm[2] >> sh) & s.m4
-		wd := s.width(luma)
 		q0Off := off + 16*g
 		reach := 4
 		if wd == 16 {
@@ -450,39 +475,38 @@ func filterSBHorizontal16(pix []byte, off, stride, rowBytes int, bitDepth uint8,
 			for k := range sub {
 				sub[k] = (sub[k] >> sh) & 3
 			}
-			_ = filterSBHorizontal16Scalar(pix, q0Off, stride, bitDepth, sub, luma, lvl, u0, lvlStride, comp, lut)
+			st.Add(filterSBHorizontal16Scalar(pix, q0Off, stride, bitDepth, sub, luma, lvl, u0, lvlStride, comp, lut))
 			continue
 		}
-		eV, iV, hV, m4, mGt4, m16 := s.vectors()
-		lpf8U16(unsafe.Add(base, q0Off), stride, wd, bd8, eV, iV, hV, m4, mGt4, m16)
+		eV, iV, hV, m4, ok := sbHalf16Limits(sbLevels16Row(lvl, u0, lvlStride, comp, pair), pair, sharp0, sharp1, uint64(bd8), &acc)
+		if !ok {
+			continue
+		}
+		lpf8U16(unsafe.Add(base, q0Off), stride, wd, bd8, eV, iV, hV, m4, sbPairMask16(nGt4), sbPairMask16(n16))
 	}
+	st.Add(acc.stats())
 	return st
 }
 
 //go:nocheckptr
 func filterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	var st SBStats
+	var acc sbAcc16
 	bd8 := uint(bitDepth - 8)
 	gt4All := vm[1] | vm[2]
 	all := vm[0] | gt4All
 	base := unsafe.Pointer(unsafe.SliceData(pix))
+	sharp0, sharp1 := uint64(lut.Sharp[0]), lut.Sharp[1]
 	for g := 0; g < 16 && all>>(2*uint(g)) != 0; g++ {
 		sh := 2 * uint(g)
 		pair := (all >> sh) & 3
 		if pair == 0 {
 			continue
 		}
-		var s sbHalf16
-		var gst SBStats
+		nGt4 := (gt4All >> sh) & 3
+		n16 := (vm[2] >> sh) & 3
+		wd := sbWidth(nGt4, n16, luma)
 		u0 := lvlOff + 2*g*lvlStride
-		sbResolveHalf16(&s, pair, 0, u0, lvlStride, 1, lvl, comp, lut, bd8, &gst)
-		if s.m4 == 0 {
-			continue
-		}
-		st.Add(gst)
-		s.gt4 = (gt4All >> sh) & s.m4
-		s.w16 = (vm[2] >> sh) & s.m4
-		wd := s.width(luma)
 		q0Off := off + 8*g*stride
 		lastRow := q0Off + 7*stride
 		reach := 8 // bytes on each side: p3..q3
@@ -494,15 +518,19 @@ func filterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, v
 			for k := range sub {
 				sub[k] = (sub[k] >> sh) & 3
 			}
-			_ = filterSBVertical16Scalar(pix, q0Off, stride, bitDepth, sub, luma, lvl, u0, lvlStride, comp, lut)
+			st.Add(filterSBVertical16Scalar(pix, q0Off, stride, bitDepth, sub, luma, lvl, u0, lvlStride, comp, lut))
 			continue
 		}
-		eV, iV, hV, m4, mGt4, m16 := s.vectors()
+		eV, iV, hV, m4, ok := sbHalf16Limits(sbLevels16Col(lvl, u0, lvlStride, comp, pair), pair, sharp0, sharp1, uint64(bd8), &acc)
+		if !ok {
+			continue
+		}
 		if wd == 16 {
-			lpfVertical8x16U16(unsafe.Add(base, q0Off-16), stride, bd8, eV, iV, hV, m4, mGt4, m16)
+			lpfVertical8x16U16(unsafe.Add(base, q0Off-16), stride, bd8, eV, iV, hV, m4, sbPairMask16(nGt4), sbPairMask16(n16))
 		} else {
-			lpfVertical8x8U16(unsafe.Add(base, q0Off-8), stride, wd, bd8, eV, iV, hV, m4, mGt4)
+			lpfVertical8x8U16(unsafe.Add(base, q0Off-8), stride, wd, bd8, eV, iV, hV, m4, sbPairMask16(nGt4))
 		}
 	}
+	st.Add(acc.stats())
 	return st
 }
