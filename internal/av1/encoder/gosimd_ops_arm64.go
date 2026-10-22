@@ -12,7 +12,7 @@ import "simd/archsimd"
 
 // widenHi8 zero-extends bytes 8..15 of v to 16-bit lanes.
 func widenHi8(v archsimd.Uint8x16) archsimd.Uint16x8 {
-	return v.InterleaveHi(archsimd.BroadcastUint8x16(0)).ReshapeToUint16s()
+	return v.HiToLo().ExtendLo8ToUint16()
 }
 
 // hiInt16 moves 16-bit lanes 4..7 of v into lanes 0..3.
