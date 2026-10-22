@@ -42,9 +42,14 @@ func CostSymbol(cdf *CDF, symbol int) uint32 {
 	if symbol > 0 {
 		prev = int(vals[symbol-1])
 	}
-	// av1_cost_tokens_from_cdf: p15 = AOM_ICDF(cdf[i]) - prev_cdf, floored at
-	// EC_MIN_PROB; av1_cost_symbol clamps into [1, CDF_PROB_TOP-1].
-	p15 := prev - int(vals[symbol])
+	// av1_cost_tokens_from_cdf: p15 = AOM_ICDF(cdf[i]) - prev_cdf.
+	return CostProb15(prev - int(vals[symbol]))
+}
+
+// CostProb15 is av1_cost_symbol of a 15-bit probability mass, floored at
+// EC_MIN_PROB as av1_cost_tokens_from_cdf does and clamped into
+// [1, CDF_PROB_TOP-1].
+func CostProb15(p15 int) uint32 {
 	if p15 < ecMinProb {
 		p15 = ecMinProb
 	}
