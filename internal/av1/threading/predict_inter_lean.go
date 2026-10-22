@@ -59,6 +59,9 @@ func (b *FrameWorkBatch) interTarget(index int, block *tile.BlockVisit, plane Fr
 	if out == nil {
 		return false, ErrInvalidBatch
 	}
+	if bind := b.cachedInterBinding(index, plane, out); bind != nil {
+		return b.interTargetBound(block, plane, window, bind, x, y, width, height, ssX, ssY, t)
+	}
 	output, outputSubX, outputSubY, planeOK := frameWorkFramePlane(out, plane)
 	bps := out.Layout.BytesPerSample
 	if planeOK && frameWorkPlaneBlockStartsBeyondPlane(output, bps, x, y) {
@@ -95,6 +98,7 @@ func (b *FrameWorkBatch) interTarget(index int, block *tile.BlockVisit, plane Fr
 	t.codedW = output.Width
 	t.codedH = output.Height
 	t.output = frameWorkExtendPlaneToClipPtr(output, window, bps)
+	b.storeInterBinding(index, plane, out, output, t.output, bps, ssX, ssY)
 	t.x = x
 	t.y = y
 	t.width = width
@@ -197,4 +201,72 @@ func (b *FrameWorkBatch) referencePlaneViewInto(reference FrameWorkReference, pl
 	}
 	*ref = frame.Plane{Pix: p.Pix[:end], Stride: stride, Width: width, Height: height}
 	return true
+}
+
+// cachedInterBinding returns the job's bound output plane for plane when the
+// geometry cache holds one for index and out, or nil.
+func (b *FrameWorkBatch) cachedInterBinding(index int, plane FrameWorkPlane, out *frame.Frame) *frameWorkInterBinding {
+	c := b.geomCache
+	cacheIndex, ok := frameWorkJobCacheIndex(index)
+	if c == nil || !ok || plane > FrameWorkPlaneV || c.interOut != out ||
+		c.interMask&(1<<uint8(plane)) == 0 || c.planeIndex[plane] != cacheIndex ||
+		c.validMask&frameWorkJobGeometryPlaneMask(plane) == 0 {
+		return nil
+	}
+	return &c.inter[plane]
+}
+
+// storeInterBinding records the job-invariant output binding derived by a
+// full interTarget, so later blocks of the job skip deriving it again.
+func (b *FrameWorkBatch) storeInterBinding(index int, plane FrameWorkPlane, out *frame.Frame, raw, output frame.Plane, bps int, ssX, ssY bool) {
+	c := b.geomCache
+	cacheIndex, ok := frameWorkJobCacheIndex(index)
+	if c == nil || !ok || plane > FrameWorkPlaneV ||
+		c.validMask&frameWorkJobGeometryPlaneMask(plane) == 0 || c.planeIndex[plane] != cacheIndex {
+		return
+	}
+	if c.interOut != out {
+		c.interOut = out
+		c.interMask = 0
+	}
+	c.inter[plane] = frameWorkInterBinding{raw: raw, output: output, codedW: raw.Width, codedH: raw.Height, bps: bps, ssX: ssX, ssY: ssY}
+	c.interMask |= 1 << uint8(plane)
+}
+
+// interTargetBound is interTarget for a block of a job whose output binding is
+// already validated: it repeats only the per-block position, clip and extent
+// steps.
+func (b *FrameWorkBatch) interTargetBound(block *tile.BlockVisit, plane FrameWorkPlane, window *FrameWorkPlaneRegion, bind *frameWorkInterBinding, x, y, width, height int, ssX, ssY bool, t *frameWorkInterTarget) (bool, error) {
+	if bind.ssX != ssX || bind.ssY != ssY {
+		return false, ErrInvalidBatch
+	}
+	if frameWorkPlaneBlockStartsBeyondPlane(bind.raw, bind.bps, x, y) {
+		return false, nil
+	}
+	width, height, ok := frameWorkClipVisiblePixelsToWindowPtr(window, x, y, width, height)
+	if !ok {
+		return false, ErrInvalidBatch
+	}
+	writeW, writeH := width, height
+	fullW, fullH, err := frameWorkBlockPlanePredictionExtentPixelsPtr(block, &b.Sequence.ColorConfig, plane)
+	if err != nil {
+		return false, err
+	}
+	if cw, ch, ok := frameWorkClipVisiblePixelsToWindowPtr(window, x, y, fullW, fullH); ok {
+		writeW, writeH = cw, ch
+	}
+	if !frameWorkPredictionExtentValid(fullW) || !frameWorkPredictionExtentValid(fullH) ||
+		width > 128 || height > 128 || writeW <= 0 || writeW > 128 || writeH <= 0 || writeH > 128 {
+		return false, ErrInvalidBatch
+	}
+	*t = frameWorkInterTarget{
+		output: bind.output,
+		x:      x, y: y,
+		width: width, height: height,
+		writeW: writeW, writeH: writeH,
+		filterW: fullW, filterH: fullH,
+		codedW: bind.codedW, codedH: bind.codedH,
+		bps: bind.bps, ssX: ssX, ssY: ssY,
+	}
+	return true, nil
 }

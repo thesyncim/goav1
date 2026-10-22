@@ -296,6 +296,25 @@ type frameWorkJobGeometryCache struct {
 
 	planeIndex [3]uint16
 	plane      [3]FrameWorkPlaneRegion
+
+	// inter holds, per plane, the per-job output binding interTarget derives
+	// once (dav1d binds f->cur the same way): the output plane, extended to
+	// the writable clip window, plus its coded size. interOut records the
+	// output frame it was derived from; interMask has one bit per bound plane.
+	interMask uint8
+	interOut  *frame.Frame
+	inter     [3]frameWorkInterBinding
+}
+
+// frameWorkInterBinding is the job-invariant part of frameWorkInterTarget.
+type frameWorkInterBinding struct {
+	raw    frame.Plane // the output plane as stored in the frame
+	output frame.Plane // raw extended to the writable clip window
+	codedW int
+	codedH int
+	bps    int
+	ssX    bool
+	ssY    bool
 }
 
 const (
@@ -315,6 +334,7 @@ const (
 // job runs so a reused cache never serves stale geometry for a new index.
 func (c *frameWorkJobGeometryCache) reset() {
 	c.validMask = 0
+	c.interMask = 0
 }
 
 // Surface returns the frame-pool surface that this batch reconstructs into.
