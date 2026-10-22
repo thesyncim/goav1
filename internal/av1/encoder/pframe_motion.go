@@ -169,7 +169,7 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 		// NEWMV predictor of LAST's MVP table as the MV cost reference.
 		if st.allowSubpelRefinement() {
 			lastRefs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
-			stack, err := modeCtx.BuildReferenceMVStack(st.pblockStackRequest(block, walkReq, miCols, miRows, lastRefs))
+			stack, err := st.referenceMVStack(modeCtx, st.pblockStackRequest(block, walkReq, miCols, miRows, lastRefs), block)
 			if err != nil {
 				return out, fmt.Errorf("build ref mv stack: %w", err)
 			}
@@ -208,7 +208,7 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 			goldenRefPruned = int64(gsad)*100 > int64(lastSAD)*(100+goldenRefPruneMaxDevPct)
 			if st.allowSubpelRefinement() && !goldenRefPruned {
 				goldenRefs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameGolden, tile.ReferenceFrameNone}}
-				stack, err := modeCtx.BuildReferenceMVStack(st.pblockStackRequest(block, walkReq, miCols, miRows, goldenRefs))
+				stack, err := st.referenceMVStack(modeCtx, st.pblockStackRequest(block, walkReq, miCols, miRows, goldenRefs), block)
 				if err != nil {
 					return out, fmt.Errorf("build ref mv stack: %w", err)
 				}
@@ -267,7 +267,7 @@ func (st *lossyEncodeState) pblockStack(mo *pblockMotion, block tile.BlockVisit,
 	if mo.stackOK {
 		return mo.stack, nil
 	}
-	stack, err := modeCtx.BuildReferenceMVStack(st.pblockStackRequest(block, walkReq, miCols, miRows, mo.refs))
+	stack, err := st.referenceMVStack(modeCtx, st.pblockStackRequest(block, walkReq, miCols, miRows, mo.refs), block)
 	if err != nil {
 		return stack, fmt.Errorf("build ref mv stack: %w", err)
 	}

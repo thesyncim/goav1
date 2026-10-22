@@ -1983,7 +1983,10 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 		visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
 			return st.encodePBlock(src, ref, golden, recon, block, scratch, &pc.refCDFs, &pc.modeCDFs, &pc.interpCDFs, referenceMode, walkReq, miCols, miRows)
 		}
-		if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
+		st.bindRefmvs(scratch, walkReq, miCols, miRows)
+		err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit)
+		st.unbindRefmvs(scratch)
+		if err != nil {
 			return nil, err
 		}
 		return pc.writer.Finish()
@@ -2033,7 +2036,10 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 		visitDecide := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
 			return st.decidePBlock(src, ref, golden, recon, block, scratch, referenceMode, walkReq, miCols, miRows, &pc.splitRowRecs[int(block.MIRow)/sbSizeMIB])
 		}
-		if err := tile.WalkBlockLoopDecide(scratch, carrier, walkReq, sbSizeMIB, decideRecord, visitDecide); err != nil {
+		st.bindRefmvs(scratch, walkReq, miCols, miRows)
+		err := tile.WalkBlockLoopDecide(scratch, carrier, walkReq, sbSizeMIB, decideRecord, visitDecide)
+		st.unbindRefmvs(scratch)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -2708,7 +2714,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 	}
 
-	if err := modeCtx.MarkInterMotionAndFilters(block.Size, int(block.X4), int(block.Y4), motionResult, blockFilters, hasChroma); err != nil {
+	if err := scratch.EncoderCommitInter(block, motionResult, blockFilters, hasChroma); err != nil {
 		return err
 	}
 	if refs.Compound {
@@ -3012,7 +3018,7 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	}, mode); err != nil {
 		return fmt.Errorf("intra luma mode: %w", err)
 	}
-	if err := modeCtx.MarkIntra(block.Size, int(block.X4), int(block.Y4), true, mode); err != nil {
+	if err := scratch.EncoderCommitIntra(block, mode); err != nil {
 		return fmt.Errorf("mark intra: %w", err)
 	}
 	if err := tile.WriteIntraAngleDelta(st.w, &st.intraCDFs, tile.IntraAngleDeltaRequest{

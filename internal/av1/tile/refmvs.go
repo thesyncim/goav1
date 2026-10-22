@@ -274,6 +274,9 @@ type refmvsResult struct {
 	stack [8]refmvsCandidate
 	count int32
 	ctx   int32
+	// rawCtx is the packed (refmv_ctx << 4) | (globalmv_ctx << 3) | newmv_ctx
+	// mode context before the compound mapping (libaom's mode_context).
+	rawCtx int32
 }
 
 func addSpatialCandidate(stack *[8]refmvsCandidate, cnt *int32, weight int32, b *refmvsBlock, ref [2]int8, gmv *[2]refmvsMV, haveNewMVMatch *int32, haveRefMVMatch *int32) {
@@ -802,6 +805,7 @@ func (rt *refmvsTile) find(out *refmvsResult, ref [2]int8, size BlockSize, topHa
 			}
 		}
 
+		out.rawCtx = (refmvCtx << 4) | (globalMVCtx << 3) | newmvCtx
 		switch refmvCtx >> 1 {
 		case 0:
 			out.ctx = min(newmvCtx, 1)
@@ -843,6 +847,7 @@ func (rt *refmvsTile) find(out *refmvsResult, ref [2]int8, size BlockSize, topHa
 		stack[n].mv[0] = tgmv[0]
 	}
 	out.ctx = (refmvCtx << 4) | (globalMVCtx << 3) | newmvCtx
+	out.rawCtx = out.ctx
 	out.count = cnt
 }
 
