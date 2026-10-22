@@ -108,10 +108,7 @@ func WriteInterReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeC
 				return ErrInvalidDecodeState
 			}
 		case parser.ReferenceModeSelect:
-			context, err := ctx.ReferenceModeContext(req)
-			if err != nil {
-				return err
-			}
+			context := envCompCtx(ctx, int(req.X4), int(req.Y4), req.HaveTop, req.HaveLeft)
 			cdf, err := cdfs.CompInterCDF(context)
 			if err != nil {
 				return err
@@ -123,21 +120,24 @@ func WriteInterReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeC
 	} else if refs.Compound {
 		return ErrInvalidDecodeState
 	}
+	// The per-reference neighbour counts every ref context reads (env.h),
+	// gathered once.
+	n := envRefCounts(ctx, int(req.X4), int(req.Y4), req.HaveTop, req.HaveLeft)
 	if refs.Compound {
-		return writeCompoundReferences(w, cdfs, ctx, req, refs)
+		return writeCompoundReferences(w, cdfs, ctx, req, &n, refs)
 	}
-	return writeSingleReference(w, cdfs, ctx, req, refs.Ref[0])
+	return writeSingleReference(w, cdfs, ctx, req, &n, refs.Ref[0])
 }
 
 // writeSingleReference codes the single_ref bit tree, the exact inverse of
 // readSingleReference.
-func writeSingleReference(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, ref ReferenceFrame) error {
+func writeSingleReference(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, n *[referenceFrameCount]uint8, ref ReferenceFrame) error {
 	if !ref.Valid() {
 		return ErrInvalidDecodeState
 	}
 	p := singleRefWritePatterns[ref]
 	step0 := p.steps[0]
-	context, err := singleRefContext(ctx, req, int(step0.bit))
+	context, err := envSingleRefContext(n, int(step0.bit))
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func writeSingleReference(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeC
 	w.WriteBinaryCDFTrusted(cdf, int(step0.symbol))
 
 	step1 := p.steps[1]
-	context, err = singleRefContext(ctx, req, int(step1.bit))
+	context, err = envSingleRefContext(n, int(step1.bit))
 	if err != nil {
 		return err
 	}
@@ -162,7 +162,7 @@ func writeSingleReference(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeC
 	}
 
 	step2 := p.steps[2]
-	context, err = singleRefContext(ctx, req, int(step2.bit))
+	context, err = envSingleRefContext(n, int(step2.bit))
 	if err != nil {
 		return err
 	}
@@ -223,7 +223,7 @@ var compBwdRefWritePatterns = [3]interRefWritePattern{
 	{count: 1, steps: [3]interRefWriteStep{{0, 1}}},
 }
 
-func writeCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, refs InterReferencesResult) error {
+func writeCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, n *[referenceFrameCount]uint8, refs InterReferencesResult) error {
 	unidir, err := compoundReferencesUnidir(refs)
 	if err != nil {
 		return err
@@ -231,19 +231,16 @@ func writeCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockMo
 	if refs.Unidir != unidir {
 		return ErrInvalidDecodeState
 	}
-	context, err := ctx.CompoundReferenceTypeContext(req)
-	if err != nil {
-		return err
-	}
+	context := envCompDirCtx(ctx, int(req.X4), int(req.Y4), req.HaveTop, req.HaveLeft)
 	cdf, err := cdfs.CompRefTypeCDF(context)
 	if err != nil {
 		return err
 	}
 	w.WriteBinaryCDFTrusted(cdf, boolToSym(!unidir))
 	if unidir {
-		return writeUniCompoundReferences(w, cdfs, ctx, req, refs.Ref)
+		return writeUniCompoundReferences(w, cdfs, ctx, req, n, refs.Ref)
 	}
-	return writeBidirCompoundReferences(w, cdfs, ctx, req, refs.Ref)
+	return writeBidirCompoundReferences(w, cdfs, ctx, req, n, refs.Ref)
 }
 
 func compoundReferencesUnidir(refs InterReferencesResult) (bool, error) {
@@ -264,7 +261,7 @@ func compoundReferencesUnidir(refs InterReferencesResult) (bool, error) {
 	return false, ErrInvalidDecodeState
 }
 
-func writeUniCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, refs [2]ReferenceFrame) error {
+func writeUniCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, n *[referenceFrameCount]uint8, refs [2]ReferenceFrame) error {
 	if refs[0] < ReferenceFrameLast || refs[0] >= referenceFrameCount ||
 		refs[1] < ReferenceFrameLast || refs[1] >= referenceFrameCount {
 		return ErrInvalidDecodeState
@@ -275,7 +272,7 @@ func writeUniCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *Bloc
 	}
 
 	step0 := p.steps[0]
-	context, err := uniCompRefContext(ctx, req, int(step0.bit))
+	context, err := envUniCompRefContext(n, int(step0.bit))
 	if err != nil {
 		return err
 	}
@@ -289,7 +286,7 @@ func writeUniCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *Bloc
 	}
 
 	step1 := p.steps[1]
-	context, err = uniCompRefContext(ctx, req, int(step1.bit))
+	context, err = envUniCompRefContext(n, int(step1.bit))
 	if err != nil {
 		return err
 	}
@@ -303,7 +300,7 @@ func writeUniCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *Bloc
 	}
 
 	step2 := p.steps[2]
-	context, err = uniCompRefContext(ctx, req, int(step2.bit))
+	context, err = envUniCompRefContext(n, int(step2.bit))
 	if err != nil {
 		return err
 	}
@@ -315,7 +312,7 @@ func writeUniCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *Bloc
 	return nil
 }
 
-func writeBidirCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, refs [2]ReferenceFrame) error {
+func writeBidirCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, n *[referenceFrameCount]uint8, refs [2]ReferenceFrame) error {
 	fwd := int(refs[0])
 	bwd := int(refs[1]) - int(ReferenceFrameBWD)
 	if uint(fwd) > uint(ReferenceFrameGolden) || uint(bwd) >= uint(len(compBwdRefWritePatterns)) {
@@ -324,7 +321,7 @@ func writeBidirCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *Bl
 
 	p := compFwdRefWritePatterns[fwd]
 	step0 := p.steps[0]
-	context, err := compFwdRefContext(ctx, req, int(step0.bit))
+	context, err := envCompFwdRefContext(n, int(step0.bit))
 	if err != nil {
 		return err
 	}
@@ -335,7 +332,7 @@ func writeBidirCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *Bl
 	w.WriteBinaryCDFTrusted(cdf, int(step0.symbol))
 
 	step1 := p.steps[1]
-	context, err = compFwdRefContext(ctx, req, int(step1.bit))
+	context, err = envCompFwdRefContext(n, int(step1.bit))
 	if err != nil {
 		return err
 	}
@@ -347,7 +344,7 @@ func writeBidirCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *Bl
 
 	p = compBwdRefWritePatterns[bwd]
 	step0 = p.steps[0]
-	context, err = compBwdRefContext(ctx, req, int(step0.bit))
+	context, err = envCompBwdRefContext(n, int(step0.bit))
 	if err != nil {
 		return err
 	}
@@ -361,7 +358,7 @@ func writeBidirCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *Bl
 	}
 
 	step1 = p.steps[1]
-	context, err = compBwdRefContext(ctx, req, int(step1.bit))
+	context, err = envCompBwdRefContext(n, int(step1.bit))
 	if err != nil {
 		return err
 	}

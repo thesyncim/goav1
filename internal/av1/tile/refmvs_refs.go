@@ -330,3 +330,61 @@ func (s *DecodeState) readInterpFiltersRefmvs(cdfs *InterpFilterCDFs, c *BlockMo
 	cur.CommitStateTo(&s.Reader)
 	return motion.InterpFilters{X: x, Y: y}, reads, nil
 }
+
+// envSingleRefContext is the context of single_ref bit (decode_b's ref[0..5]
+// CDFs): av1_get_ref_ctx and av1_get_ref_2..6_ctx.
+func envSingleRefContext(n *[referenceFrameCount]uint8, bit int) (int, error) {
+	switch bit {
+	case 0:
+		return envRefCtx(n), nil
+	case 1:
+		return envBwdRefCtx(n), nil
+	case 2:
+		return envFwdRefCtx(n), nil
+	case 3:
+		return envFwdRef1Ctx(n), nil
+	case 4:
+		return envFwdRef2Ctx(n), nil
+	case 5:
+		return envBwdRef1Ctx(n), nil
+	}
+	return 0, ErrInvalidDecodeState
+}
+
+// envCompFwdRefContext is the context of comp_fwd_ref bit.
+func envCompFwdRefContext(n *[referenceFrameCount]uint8, bit int) (int, error) {
+	switch bit {
+	case 0:
+		return envFwdRefCtx(n), nil
+	case 1:
+		return envFwdRef1Ctx(n), nil
+	case 2:
+		return envFwdRef2Ctx(n), nil
+	}
+	return 0, ErrInvalidDecodeState
+}
+
+// envCompBwdRefContext is the context of comp_bwd_ref bit.
+func envCompBwdRefContext(n *[referenceFrameCount]uint8, bit int) (int, error) {
+	switch bit {
+	case 0:
+		return envBwdRefCtx(n), nil
+	case 1:
+		return envBwdRef1Ctx(n), nil
+	}
+	return 0, ErrInvalidDecodeState
+}
+
+// envUniCompRefContext is the context of comp_uni_ref bit
+// (av1_get_uni_p_ctx, av1_get_uni_p1_ctx, av1_get_uni_p2_ctx).
+func envUniCompRefContext(n *[referenceFrameCount]uint8, bit int) (int, error) {
+	switch bit {
+	case 0:
+		return envRefCtx(n), nil
+	case 1:
+		return envUniP1Ctx(n), nil
+	case 2:
+		return envFwdRef2Ctx(n), nil
+	}
+	return 0, ErrInvalidDecodeState
+}
