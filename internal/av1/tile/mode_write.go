@@ -31,7 +31,26 @@ func WriteSkipTransform(w *entropy.Writer, cdfs *BlockModeCDFs, ctx *BlockModeCo
 		return err
 	}
 	w.WriteBinaryCDFTrusted(cdf, boolToSym(skip))
+	if !skip && w.Logging() {
+		logCDEFUnits(w, req)
+	}
 	return nil
+}
+
+// logCDEFUnits marks read_cdef for a recording writer: cdef_idx follows
+// skip_transform (and the post-skip segment id, which this encoder never
+// codes) of a non-skip block, keyed by the block's top-left 64x64 unit and
+// the units it covers (spec read_cdef, libaom read_cdef).
+func logCDEFUnits(w *entropy.Writer, req BlockModeRequest) {
+	units, count, err := cdefUnitsForBlock(req.Size, int(req.X4), int(req.Y4))
+	if err != nil || count == 0 {
+		return
+	}
+	var mask uint8
+	for i := range count {
+		mask |= 1 << units[i]
+	}
+	w.LogCDEFUnits(units[0], mask)
 }
 
 // WriteLumaIntraMode codes one luma intra prediction mode, the forward of

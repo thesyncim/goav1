@@ -230,6 +230,12 @@ type pframeCoder struct {
 	// coder gets one: tile columns already parallelize the multi-tile path.
 	wavefront      *pframeWavefront
 	wavefrontLanes int
+
+	// cdefLog, when non-nil, makes the tile writer log its symbol stream
+	// there (entropy WriterLog) so the frame driver can splice in the
+	// cdef_idx literals the SVT CDEF search picks after the frame is
+	// reconstructed (cdef_frame.go). The driver owns the logs per tile.
+	cdefLog *entropy.WriterLog
 }
 
 const (
@@ -897,6 +903,7 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	}
 
 	pc.writer.Reset(pc.writerBuf[:0])
+	pc.armCDEFLog()
 	st.w = &pc.writer
 	st.interTxTypeReq = tile.InterTransformTypeRequest{
 		Size:        tile.TransformSize8x8,

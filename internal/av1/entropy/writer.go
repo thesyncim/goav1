@@ -37,6 +37,10 @@ import (
 // offs > 0 in propagate_carry_bwd).
 var ErrCarryUnderflow = errors.New("entropy: range coder carry underflow")
 
+// errCarryUnderflow is the sticky-error target: Writer keeps a pointer so
+// the struct (with its symbol-log pointer) stays one 64-byte cache line.
+var errCarryUnderflow = ErrCarryUnderflow
+
 // ErrCountOnlyFinish signals Finish on a count-only writer. Count-only writers
 // maintain exact range-coder state for Tell-based pricing, but intentionally do
 // not retain entropy bytes.
@@ -59,7 +63,10 @@ type Writer struct {
 	low  uint64 // od_ec_enc.low: low end of the current range (od_ec_enc_window)
 	rng  uint32 // od_ec_enc.rng: values in the current range, in [0x8000,0xFFFF]
 	cnt  int32  // od_ec_enc.cnt: number of bits of data in the current value
-	err  error  // od_ec_enc.error (sticky)
+	err  *error // od_ec_enc.error (sticky; points at the failure, nil while healthy)
+
+	// log, when non-nil, records every coded symbol (writer_log.go).
+	log *WriterLog
 }
 
 // BitCounter is the output-free range encoder used by exact encoder rate
@@ -119,6 +126,7 @@ func (w *Writer) Reset(dst []byte) {
 	w.rng = 0x8000
 	w.cnt = -9
 	w.err = nil
+	w.log = nil
 }
 
 func (w *BitCounter) Tell() int {
@@ -213,7 +221,7 @@ func (w *Writer) writeOut(output, carry uint64, numBytesReady uint32) {
 func (w *Writer) propagateCarry(offs int) {
 	for {
 		if offs < 0 {
-			w.err = ErrCarryUnderflow
+			w.err = &errCarryUnderflow
 			return
 		}
 		sum := uint16(w.buf[offs]) + 1
@@ -228,6 +236,9 @@ func (w *Writer) propagateCarry(offs int) {
 // encodeQ15 codes a symbol whose Q15 inverse-CDF interval is [fl, fh) at index s
 // of an nsyms-symbol alphabet. Port of od_ec_encode_q15.
 func (w *Writer) encodeQ15(fl, fh uint32, s, nsyms int) {
+	if w.log != nil {
+		w.log.sym(fl, fh, s, nsyms)
+	}
 	l := w.low
 	r := w.rng
 	n := uint32(nsyms - 1)
@@ -263,6 +274,9 @@ func (w *BitCounter) encodeQ15(fl, fh uint32, s, nsyms int) {
 // WriteBoolQ15 codes a single binary value val (0/1) where f is the Q15
 // probability that val is one. Port of od_ec_encode_bool_q15.
 func (w *Writer) WriteBoolQ15(val int, f uint32) {
+	if w.log != nil {
+		w.log.boolQ15(val, f)
+	}
 	if traceEntropyReads {
 		traceWriteBool(uint16(f))
 	}
@@ -301,6 +315,9 @@ func (w *BitCounter) WriteBoolQ15(val int, f uint32) {
 
 // WriteBit codes one equiprobable bit, matching WriteBoolQ15(val, 1<<14).
 func (w *Writer) WriteBit(val int) {
+	if w.log != nil {
+		w.log.boolQ15(val, 1<<14)
+	}
 	if traceEntropyReads {
 		traceWriteBool(1 << 14)
 	}
@@ -526,6 +543,9 @@ func (w *BitCounter) WriteCDF(cdf *CDF, s int) {
 // is the binary specialization of WriteCDF for hot boolean syntax paths whose
 // table shape has already been validated by the caller.
 func (w *Writer) WriteBinaryCDFTrusted(cdf *CDF, s int) {
+	if w.log != nil {
+		w.log.cdf(&cdf.values, s, 2)
+	}
 	values := &cdf.values
 	if traceEntropyReads {
 		traceWriteCDF(values[0], 2)
@@ -584,6 +604,9 @@ func (w *BitCounter) WriteBinaryCDFTrusted(cdf *CDF, s int) {
 // ternary specialization of WriteCDF for coefficient-base-EOB syntax whose
 // table shape is fixed by AV1 syntax.
 func (w *Writer) WriteCDF3(cdf *CDF, s int) {
+	if w.log != nil {
+		w.log.cdf(&cdf.values, s, 3)
+	}
 	values := &cdf.values
 	if traceEntropyReads {
 		traceWriteCDF(values[0], 3)
@@ -661,6 +684,9 @@ func (w *BitCounter) WriteCDF3(cdf *CDF, s int) {
 // quaternary specialization of WriteCDF for coefficient-base hot paths whose
 // table shape is fixed by AV1 syntax.
 func (w *Writer) WriteCDF4(cdf *CDF, s int) {
+	if w.log != nil {
+		w.log.cdf(&cdf.values, s, 4)
+	}
 	values := &cdf.values
 	if traceEntropyReads {
 		traceWriteCDF(values[0], 4)
@@ -757,6 +783,9 @@ func (w *BitCounter) WriteCDF4(cdf *CDF, s int) {
 
 // WriteCDF4Zero codes a known zero symbol in a four-symbol CDF.
 func (w *Writer) WriteCDF4Zero(cdf *CDF) {
+	if w.log != nil {
+		w.log.cdf(&cdf.values, 0, 4)
+	}
 	values := &cdf.values
 	if traceEntropyReads {
 		traceWriteCDF(values[0], 4)
@@ -806,6 +835,9 @@ func (w *BitCounter) WriteCDF4Zero(cdf *CDF) {
 // WriteCDF5 codes symbol s using a known five-symbol adaptive CDF. It covers
 // the fixed EOB-flag16 coefficient token CDF used by 4x4 TXBs.
 func (w *Writer) WriteCDF5(cdf *CDF, s int) {
+	if w.log != nil {
+		w.log.cdf(&cdf.values, s, 5)
+	}
 	values := &cdf.values
 	if traceEntropyReads {
 		traceWriteCDF(values[0], 5)
@@ -928,6 +960,9 @@ func (w *BitCounter) WriteCDF5(cdf *CDF, s int) {
 // WriteCDF7 codes symbol s using a known seven-symbol adaptive CDF. It covers
 // the fixed EOB-flag64 coefficient token CDF used by 8x8 TXBs.
 func (w *Writer) WriteCDF7(cdf *CDF, s int) {
+	if w.log != nil {
+		w.log.cdf(&cdf.values, s, 7)
+	}
 	values := &cdf.values
 	if traceEntropyReads {
 		traceWriteCDF(values[0], 7)
@@ -1134,7 +1169,7 @@ func (w *Writer) Finish() ([]byte, error) {
 		return nil, ErrCountOnlyFinish
 	}
 	if w.err != nil {
-		return nil, w.err
+		return nil, *w.err
 	}
 	l := w.low
 	c := w.cnt
@@ -1163,7 +1198,7 @@ func (w *Writer) Finish() ([]byte, error) {
 		}
 	}
 	if w.err != nil {
-		return nil, w.err
+		return nil, *w.err
 	}
 	return w.buf[:w.offs], nil
 }

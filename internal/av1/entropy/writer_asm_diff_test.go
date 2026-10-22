@@ -123,6 +123,13 @@ func writerDiffErrString(err error) string {
 	return err.Error()
 }
 
+func writerDiffErrPtrString(err *error) string {
+	if err == nil {
+		return ""
+	}
+	return writerDiffErrString(*err)
+}
+
 func writerDiffSnapshot(w *Writer) writerDiffWriterState {
 	return writerDiffWriterState{
 		buf:    append([]byte(nil), w.buf...),
@@ -133,7 +140,7 @@ func writerDiffSnapshot(w *Writer) writerDiffWriterState {
 		rng:    w.rng,
 		cnt:    w.cnt,
 		tell:   w.Tell(),
-		err:    writerDiffErrString(w.err),
+		err:    writerDiffErrPtrString(w.err),
 	}
 }
 
