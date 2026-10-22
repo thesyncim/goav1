@@ -16,16 +16,18 @@ func TestFrameWorkCoeffDequantProviderIsLazyAndKeyed(t *testing.T) {
 	req.Transforms = nil
 	req.UseDefaultTransforms = true
 	reconState := frameWorkReconState{batch: batch, int32Scratch: req.Int32Scratch}
+	var scratch FrameWorkTileResidualScratch
 	c := frameWorkTileResidualLoopController{
-		batch: batch,
-		state: state,
-		req:   req,
-		recon: reconState,
+		batch:   batch,
+		state:   state,
+		req:     req,
+		scratch: &scratch,
+		recon:   reconState,
 	}
 	c.reconHot = &c.recon
 	visit := tile.BlockLoopVisit{SegmentID: 0}
 	target := c.bindCoeffDequantTarget(&visit, false)
-	if target == nil || target.Provider != &c || len(target.Dst) == 0 || &target.Dst[0] != &reconState.int32Scratch[0] {
+	if target == nil || target.Provider != &c || target.Coef != &scratch.coefBuf {
 		t.Fatalf("target=%+v was not bound for the eligible default path", target)
 	}
 	if target.PreparedPlanes != 0 {
@@ -109,10 +111,11 @@ func TestFrameWorkCoeffDequantProviderIsLazyAndKeyed(t *testing.T) {
 	batch2.Quantization.YDCDelta += 23
 	recon2 := frameWorkReconState{batch: batch2, int32Scratch: req.Int32Scratch}
 	c2 := frameWorkTileResidualLoopController{
-		batch: batch2,
-		state: state,
-		req:   req,
-		recon: recon2,
+		batch:   batch2,
+		state:   state,
+		req:     req,
+		scratch: &scratch,
+		recon:   recon2,
 	}
 	c2.reconHot = &c2.recon
 	visit.SegmentID = 1
@@ -142,7 +145,7 @@ func TestFrameWorkCoeffDequantProviderIsLazyAndKeyed(t *testing.T) {
 }
 
 func TestFrameWorkCoeffDequantTargetRejectsFallbackOwnershipPaths(t *testing.T) {
-	for _, name := range []string{"deferred", "visitor", "custom-predictor", "custom-transforms", "qmatrix", "lossless", "skip-transform"} {
+	for _, name := range []string{"visitor", "custom-predictor", "custom-transforms", "qmatrix", "lossless", "skip-transform"} {
 		t.Run(name, func(t *testing.T) {
 			batch, state, _, _, req := testFrameWorkResidualDriver(t)
 			req.Transforms = nil
@@ -153,8 +156,6 @@ func TestFrameWorkCoeffDequantTargetRejectsFallbackOwnershipPaths(t *testing.T) 
 			visit := tile.BlockLoopVisit{SegmentID: 0}
 			lossless := false
 			switch name {
-			case "deferred":
-				c.deferReconstruction = true
 			case "visitor":
 				c.userCoeffVisitor = func(tile.BlockLoopVisit, tile.BlockCoeffBlock) error { return nil }
 			case "custom-predictor":
@@ -174,5 +175,21 @@ func TestFrameWorkCoeffDequantTargetRejectsFallbackOwnershipPaths(t *testing.T) 
 				t.Fatalf("unsupported ownership route received target: %+v", target)
 			}
 		})
+	}
+}
+
+// TestFrameWorkCoeffDequantTargetDeferredUsesArena checks that deferred
+// reconstruction binds the frame-thread cf arena rather than int32Scratch.
+func TestFrameWorkCoeffDequantTargetDeferredUsesArena(t *testing.T) {
+	batch, state, _, _, req := testFrameWorkResidualDriver(t)
+	req.Transforms = nil
+	req.UseDefaultTransforms = true
+	var scratch FrameWorkTileResidualScratch
+	c := frameWorkTileResidualLoopController{batch: batch, state: state, req: req, scratch: &scratch,
+		recon: frameWorkReconState{batch: batch, int32Scratch: req.Int32Scratch}, deferReconstruction: true}
+	c.reconHot = &c.recon
+	target := c.bindCoeffDequantTarget(&tile.BlockLoopVisit{}, false)
+	if target == nil || target.Arena != &scratch.cfArena || target.Dst != nil {
+		t.Fatalf("deferred target = %+v, want the scratch cf arena", target)
 	}
 }

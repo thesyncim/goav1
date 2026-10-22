@@ -28,7 +28,16 @@ type CoeffDequantProvider interface {
 // Factors are cached by the provider for the current quantization key; Ready,
 // ActiveRows, and TxScale describe only the most recently decoded TXB.
 type CoeffDequantTarget struct {
-	Dst            []int32
+	Dst []int32
+	// Arena, when set, switches the target to dav1d's frame-thread cf layout
+	// (ts->frame_thread[p].cf): each dequantized TXB is appended to *Arena and
+	// Dst is left pointing at its slot, so a deferred reconstruction pass can
+	// consume it later. Only the dav1d block walk (readCoefBlocks) fills it;
+	// the quantized readers ignore an arena target.
+	Arena *[]int32
+	// Coef, when set, is the zero-maintained t->cf buffer of the dav1d block
+	// walk; Dst is pointed at it after each TXB.
+	Coef           *CoefBuffer
 	Factors        [3][2]int32 // [Y/U/V][DC/AC]
 	ActiveRows     int
 	Provider       CoeffDequantProvider
@@ -319,6 +328,12 @@ func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s
 	if req.Transform.SkipTransform {
 		if err := coeffCtx.ResetBlock(0, req.Transform.Size, int(req.Transform.X4), int(req.Transform.Y4)); err != nil {
 			return result, err
+		}
+		return result, nil
+	}
+	if readCoefBlocksSupported(&req) {
+		if err := readCoefBlocks(s, cdfs, coeffCtx, scratch, &req, tree, &chromaPrep, hasChroma, loopVisit, coeffController, &result); err != nil {
+			return result, fmt.Errorf("read coef blocks req=%+v tree=%+v: %w", req.Transform, tree, err)
 		}
 		return result, nil
 	}

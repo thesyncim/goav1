@@ -20,13 +20,13 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "eobToPosLarge", size: unsafe.Sizeof(eobToPosLarge), max: 17},
 		{name: "eobMultiSizeTable", size: unsafe.Sizeof(eobMultiSizeTable), max: 19},
 		{name: "LumaCoeffStats", size: unsafe.Sizeof(LumaCoeffStats{}), max: 12},
-		{name: "LumaCoeffTreeScratch", size: unsafe.Sizeof(LumaCoeffTreeScratch{}), max: 9492},
+		{name: "LumaCoeffTreeScratch", size: unsafe.Sizeof(LumaCoeffTreeScratch{}), max: 10644},
 		{name: "TXBSkipRequest", size: unsafe.Sizeof(TXBSkipRequest{}), max: 2},
 		{name: "CoeffTokenRequest", size: unsafe.Sizeof(CoeffTokenRequest{}), max: 3},
 		// Keep request pointers grouped before scalar fields to leave the private
 		// fused-dequant target within one additional pointer-sized slot.
 		{name: "TXBDecodeRequest", size: unsafe.Sizeof(TXBDecodeRequest{}), max: 64},
-		{name: "CoeffDequantTarget", size: unsafe.Sizeof(CoeffDequantTarget{}), max: 80},
+		{name: "CoeffDequantTarget", size: unsafe.Sizeof(CoeffDequantTarget{}), max: 96},
 		{name: "BlockDeltaContext", size: unsafe.Sizeof(BlockDeltaContext{}), max: 8},
 		{name: "coeffGeometry", size: unsafe.Sizeof(coeffGeometry{}), max: 12},
 		{name: "coeffPos", size: unsafe.Sizeof(coeffPos{}), max: 6},

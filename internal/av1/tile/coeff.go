@@ -2058,8 +2058,17 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 }
 
 func prepareTrackedCoeffDequant(target *CoeffDequantTarget, plane uint8, geo *coeffGeometry) (*CoeffDequantTarget, uint8, int32) {
+	if target == nil || target.Arena != nil || target.Coef != nil || geo == nil || len(target.Dst) < int(geo.maxEOB) {
+		return nil, 0, 0
+	}
+	return prepareCoeffDequantFactors(target, plane, geo)
+}
+
+// prepareCoeffDequantFactors resolves the plane's dequant factors and the
+// TXB's dq shift and cf_max without checking where the coefficients go.
+func prepareCoeffDequantFactors(target *CoeffDequantTarget, plane uint8, geo *coeffGeometry) (*CoeffDequantTarget, uint8, int32) {
 	if target == nil || geo == nil || plane > 2 || geo.txCtx >= CoeffTxSizeContexts || target.Provider == nil ||
-		len(target.Dst) < int(geo.maxEOB) || int(geo.scanHeight) <= 0 {
+		int(geo.scanHeight) <= 0 {
 		return nil, 0, 0
 	}
 	switch target.BitDepth {

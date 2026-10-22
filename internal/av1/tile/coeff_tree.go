@@ -32,6 +32,10 @@ type LumaCoeffTreeScratch struct {
 	InverseScan [maxCoeffScanLen]int16
 	LevelDirty  [maxCoeffScanLen]int16
 	Levels      [maxCoeffScratchLen]uint8
+	// CoefLevels is dav1d's t->scratch.levels for decodeCoefTokens. It is
+	// cleared per TXB by the reader and is separate from Levels, whose dirty
+	// positions the quantized readers track.
+	CoefLevels [coefLevelsLen]uint8
 
 	coeffDirtyLen uint16
 	levelDirtyLen uint16
@@ -860,7 +864,10 @@ func (s *DecodeState) decodeCoeffTXBWithKnownContext(cdfs *CoeffCDFs, ctx *Coeff
 	req.levelDirtyScratch = &scratch.Levels
 	req.trustedScan = true
 	var result TXBDecodeResult
-	if selectedClass == transform.Class2D && !allZero && req.SkipAllZeroCoeffClear {
+	if !allZero && req.SkipAllZeroCoeffClear && req.dequant != nil && !coeffTraceEnabled &&
+		s.decodeCoefsDequantized(cdfs, &req, selected, selectedClass, scratch, geo, &result) {
+		// dav1d decode_coefs path: tokens, signs and dequantization in one pass.
+	} else if selectedClass == transform.Class2D && !allZero && req.SkipAllZeroCoeffClear {
 		result, err = s.readCoefficientsTXBTracked2DWithGeo(cdfs, req, coeffs, scan, levels, geo)
 	} else {
 		result, err = s.readCoefficientsTXBWithGeo(cdfs, req, coeffs, scan, levels, geo)

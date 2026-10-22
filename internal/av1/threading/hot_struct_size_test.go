@@ -29,7 +29,7 @@ func TestHotStructSizes(t *testing.T) {
 		// The tile refmvs state carries dav1d's mfmv setup and rp_proj window.
 		// The three restoration stripe-boundary handles each add a pixel-row
 		// (Bytes) flag, 8 bytes with alignment.
-		{name: "FrameWorkTileResidualScratch", size: unsafe.Sizeof(FrameWorkTileResidualScratch{}), max: 91288},
+		{name: "FrameWorkTileResidualScratch", size: unsafe.Sizeof(FrameWorkTileResidualScratch{}), max: 97760},
 		{name: "FrameWorkJobRegion", size: unsafe.Sizeof(FrameWorkJobRegion{}), max: 36},
 		{name: "FrameWorkCDEFIndexMap", size: unsafe.Sizeof(FrameWorkCDEFIndexMap{}), max: 56},
 		{name: "FrameWorkLoopFilterBlockRecord", size: unsafe.Sizeof(FrameWorkLoopFilterBlockRecord{}), max: 34},
@@ -47,7 +47,7 @@ func TestHotStructSizes(t *testing.T) {
 		// The wavefront is allocated once per scratch behind a pointer; it carries
 		// the parse-side span cursor and the published row snapshot the lanes
 		// read while the tile is still parsing.
-		{name: "frameWorkReconWavefront", size: unsafe.Sizeof(frameWorkReconWavefront{}), max: 472},
+		{name: "frameWorkReconWavefront", size: unsafe.Sizeof(frameWorkReconWavefront{}), max: 496},
 		{name: "frameWorkBlockCoeffGeometry", size: unsafe.Sizeof(frameWorkBlockCoeffGeometry{}), max: 88},
 		// The geometry cache also binds each job's inter-prediction output planes
 		// once (dav1d binds f->cur per frame); it lives in per-worker scratch.
