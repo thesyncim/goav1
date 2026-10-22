@@ -262,10 +262,18 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 		header.Size.RenderHeight = uint32(renderH)
 		header.Size.HaveRenderSize = true
 	}
+	// The video encoder follows SVT-AV1 preset 12 rtc: no deblocking
+	// (get_dlf_level_rtc returns dlf_level 0), CDEF still runs.
+	dlf := lfLevel
+	if tileOpts.stream != nil {
+		dlf = svtRTCDeblockLevel(lfLevel)
+		header.LoopFilter.LevelY = [2]uint8{}
+		header.LoopFilter.LevelU, header.LoopFilter.LevelV = 0, 0
+	}
 	if lfLevel > 0 {
-		header.LoopFilter.LevelY = [2]uint8{lfLevel, lfLevel}
-		header.LoopFilter.LevelU = lfLevel
-		header.LoopFilter.LevelV = lfLevel
+		header.LoopFilter.LevelY = [2]uint8{dlf, dlf}
+		header.LoopFilter.LevelU = dlf
+		header.LoopFilter.LevelV = dlf
 		header.CDEF = cdefHeaderParams(qIndex, true)
 		if cdefApp == nil {
 			cdefApp = &cdefApplier{}
@@ -328,9 +336,9 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 
 	if lfLevel > 0 {
 		lfParams := parser.LoopFilterParams{
-			LevelY: [2]uint8{lfLevel, lfLevel},
-			LevelU: lfLevel,
-			LevelV: lfLevel,
+			LevelY: [2]uint8{dlf, dlf},
+			LevelU: dlf,
+			LevelV: dlf,
 		}
 		applyLF := lf.apply
 		applyCDEF := cdefApp.apply
@@ -340,8 +348,10 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 			applyLF = lf.applySerialMasks
 			applyCDEF = cdefApp.applySerial
 		}
-		if err := applyLF(recon, lfParams); err != nil {
-			return nil, SourceFrame420{}, fmt.Errorf("loop filter apply: %w", err)
+		if dlf > 0 {
+			if err := applyLF(recon, lfParams); err != nil {
+				return nil, SourceFrame420{}, fmt.Errorf("loop filter apply: %w", err)
+			}
 		}
 		if err := applyCDEF(recon, cdefParserParams(header.CDEF), &lf.filtMap); err != nil {
 			return nil, SourceFrame420{}, fmt.Errorf("cdef apply: %w", err)

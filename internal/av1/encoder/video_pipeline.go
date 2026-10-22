@@ -307,9 +307,10 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 		if err := e.leafLF.reset(); err != nil {
 			return nil, 0, fmt.Errorf("leaf loop filter reset: %w", err)
 		}
-		header.LoopFilter.LevelY = [2]uint8{lfLevel, lfLevel}
-		header.LoopFilter.LevelU = lfLevel
-		header.LoopFilter.LevelV = lfLevel
+		dlf := svtRTCDeblockLevel(lfLevel)
+		header.LoopFilter.LevelY = [2]uint8{dlf, dlf}
+		header.LoopFilter.LevelU = dlf
+		header.LoopFilter.LevelV = dlf
 		header.CDEF = cdefHeaderParams(effQ, false)
 		if !e.leafCdefApp.bound {
 			if err := e.leafCdefApp.init(src.Width, src.Height, cdefParserParams(header.CDEF)); err != nil {
@@ -382,7 +383,7 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 	}
 	e.leafPayloads[0] = TilePayload{Data: data}
 	if lfLevel > 0 {
-		if err := e.applyLeafFilters(out, lfLevel, cdefParserParams(header.CDEF)); err != nil {
+		if err := e.applyLeafFilters(out, svtRTCDeblockLevel(lfLevel), cdefParserParams(header.CDEF)); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -402,8 +403,10 @@ func (e *VideoEncoder) applyLeafFilters(out *SourceFrame420, lfLevel uint8, cdef
 		LevelU: lfLevel,
 		LevelV: lfLevel,
 	}
-	if err := e.leafLF.applySerialMasks(out, lf); err != nil {
-		return fmt.Errorf("leaf loop filter apply: %w", err)
+	if lfLevel > 0 {
+		if err := e.leafLF.applySerialMasks(out, lf); err != nil {
+			return fmt.Errorf("leaf loop filter apply: %w", err)
+		}
 	}
 	if err := e.leafCdefApp.applySerial(out, cdef, &e.leafLF.filtMap); err != nil {
 		return fmt.Errorf("leaf cdef apply: %w", err)
