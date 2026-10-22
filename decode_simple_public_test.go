@@ -3709,3 +3709,87 @@ func decodedFrameMD5(f av1.DecodedFrame) [16]byte {
 	h.Sum(sum[:0])
 	return sum
 }
+
+// TestRealtimeDecodersKeepZeroFrameDelay pins the low-latency contract: like
+// realtime dav1d integrations (max_frame_delay = 1), the RTP decoder never
+// frame-threads, so with several workers every call returns exactly the frames
+// a single-worker decoder returns on that call. WithMaxFrameDelay(1) gives the
+// same per-call behaviour on the low-overhead path.
+func TestRealtimeDecodersKeepZeroFrameDelay(t *testing.T) {
+	rtpPayloads, _ := publicDecoderAllocRTPPayloads(t)
+	perCall := func(dec *av1.Decoder) []int {
+		t.Helper()
+		var counts []int
+		for {
+			frames, ok, err := dec.DecodeNext()
+			if err != nil {
+				t.Fatalf("DecodeNext: %v", err)
+			}
+			if !ok {
+				return counts
+			}
+			counts = append(counts, len(frames))
+		}
+	}
+	live := func(dec *av1.Decoder) []int {
+		t.Helper()
+		var counts []int
+		for i, p := range rtpPayloads {
+			frames, err := dec.DecodeRTPPayload(p)
+			if err != nil {
+				t.Fatalf("DecodeRTPPayload %d: %v", i, err)
+			}
+			counts = append(counts, len(frames))
+		}
+		return counts
+	}
+	newRTP := func(opts ...av1.Option) *av1.Decoder {
+		dec, err := av1.NewDecoderFromRTPPayloads(rtpPayloads, opts...)
+		if err != nil {
+			t.Fatalf("NewDecoderFromRTPPayloads: %v", err)
+		}
+		return dec
+	}
+	serial := newRTP(av1.WithWorkers(1))
+	wantNext := perCall(serial)
+	serial.Close()
+	serialLive := newRTP(av1.WithWorkers(1))
+	wantLive := live(serialLive)
+	serialLive.Close()
+	for _, workers := range []int{2, 4, 8} {
+		for _, delay := range []int{0, 4} {
+			dec := newRTP(av1.WithWorkers(workers), av1.WithMaxFrameDelay(delay))
+			if got := perCall(dec); fmt.Sprint(got) != fmt.Sprint(wantNext) {
+				t.Fatalf("RTP DecodeNext workers=%d delay=%d per-call outputs %v, want %v", workers, delay, got, wantNext)
+			}
+			dec.Close()
+			dec = newRTP(av1.WithWorkers(workers), av1.WithMaxFrameDelay(delay))
+			if got := live(dec); fmt.Sprint(got) != fmt.Sprint(wantLive) {
+				t.Fatalf("DecodeRTPPayload workers=%d delay=%d per-call outputs %v, want %v", workers, delay, got, wantLive)
+			}
+			dec.Close()
+		}
+	}
+
+	ivf, err := os.ReadFile("testdata/benchcorpus/p360_inter_q32.ivf")
+	if err != nil {
+		t.Skipf("corpus: %v", err)
+	}
+	newIVF := func(opts ...av1.Option) *av1.Decoder {
+		dec, err := av1.NewDecoderFromIVF(ivf, opts...)
+		if err != nil {
+			t.Fatalf("NewDecoderFromIVF: %v", err)
+		}
+		return dec
+	}
+	serialIVF := newIVF(av1.WithWorkers(1))
+	want := perCall(serialIVF)
+	serialIVF.Close()
+	for _, workers := range []int{2, 4, 8} {
+		dec := newIVF(av1.WithWorkers(workers), av1.WithMaxFrameDelay(1))
+		if got := perCall(dec); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("IVF workers=%d delay=1 per-call outputs differ from workers=1", workers)
+		}
+		dec.Close()
+	}
+}

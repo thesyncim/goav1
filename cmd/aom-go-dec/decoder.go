@@ -18,11 +18,14 @@ type decoder struct {
 	dec *av1.Decoder
 }
 
-func newDecoder(src io.ReaderAt, size int64, workers int) (*decoder, av1.IVFHeader, error) {
+func newDecoder(src io.ReaderAt, size int64, workers int, frameDelay int) (*decoder, av1.IVFHeader, error) {
 	if workers < 1 {
 		return nil, av1.IVFHeader{}, fmt.Errorf("workers must be >= 1, got %d", workers)
 	}
-	dec, header, err := av1.NewDecoderFromIVFReaderAt(src, size, av1.WithWorkers(workers))
+	if frameDelay < 0 {
+		return nil, av1.IVFHeader{}, fmt.Errorf("framedelay must be >= 0, got %d", frameDelay)
+	}
+	dec, header, err := av1.NewDecoderFromIVFReaderAt(src, size, av1.WithWorkers(workers), av1.WithMaxFrameDelay(frameDelay))
 	if err != nil {
 		return nil, header, err
 	}

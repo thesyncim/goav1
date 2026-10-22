@@ -21,7 +21,8 @@ import (
 //
 // 0 (the default) picks dav1d's automatic depth, ceil(sqrt(workers)) capped at
 // 8; 1 decodes each frame completely before DecodeNext returns. The depth never
-// exceeds the worker count, so a single-worker decoder is always serial.
+// exceeds the worker count, so a single-worker decoder is always serial. RTP
+// decoders (NewDecoderFromRTPPayloads) are realtime and always use a delay of 1.
 func WithMaxFrameDelay(n int) Option {
 	return func(c *decoderConfig) { c.maxFrameDelay = n }
 }

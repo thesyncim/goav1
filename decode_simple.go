@@ -31,8 +31,9 @@ import (
 // mutually valid until the following call.
 //
 // A Decoder is not safe for concurrent use; serialize calls. The worker count
-// (see WithWorkers) controls intra-frame tile parallelism inside the runner,
-// not concurrent use of the Decoder itself. GOAV1_SCALED_PRED is read when the
+// (see WithWorkers) controls the decoder's internal parallelism (tiles, SB-row
+// reconstruction, post-filter bands and, with WithMaxFrameDelay, frame
+// threading), not concurrent use of the Decoder itself. GOAV1_SCALED_PRED is read when the
 // Decoder is constructed, so changing it later does not change this decoder's
 // prediction policy.
 type Decoder struct {
@@ -116,8 +117,11 @@ type Option func(*decoderConfig)
 // WithWorkers sets the number of tile-worker goroutines the underlying runner
 // uses for intra-frame tile parallelism. It must be >= 1. The default is 1,
 // which reproduces the single-threaded conformance path exactly. Higher worker
-// counts do not change decoded output, only how tiles within a frame are split
-// across goroutines.
+// counts do not change decoded output, only how the work is split across
+// goroutines. With more than one worker the low-overhead decoders also run
+// dav1d-style frame threading by default, so DecodeNext returns frames up to
+// ceil(sqrt(n))-1 calls late; see WithMaxFrameDelay (1 restores one frame per
+// call).
 func WithWorkers(n int) Option {
 	return func(c *decoderConfig) { c.workers = n }
 }
@@ -156,6 +160,11 @@ func NewDecoder(payloads [][]byte, opts ...Option) (*Decoder, error) {
 // decoder can also drive caller-supplied live payloads with DecodeRTPPayload and
 // DecodeRTPPayloadAfterLoss; the construction payloads size the reusable arenas,
 // so later live payloads must fit those planned RTP/event capacities.
+//
+// RTP decoders are realtime decoders: like realtime dav1d integrations
+// (max_frame_delay = 1) they never frame-thread, whatever WithWorkers and
+// WithMaxFrameDelay say, so every frame is returned by the call whose payload
+// completes it.
 func NewDecoderFromRTPPayloads(payloads [][]byte, opts ...Option) (*Decoder, error) {
 	return newDecoderFromPayloadSourceKind(newSliceDecoderPayloadSource(payloads), decoderPayloadRTP, opts...)
 }
@@ -435,6 +444,12 @@ func ivfPayloads(ivf []byte) ([][]byte, error) {
 // the frame completes) or more than one (e.g. a show-existing-frame following a
 // coded frame). When all payloads have been consumed it returns
 // (nil, false, nil); subsequent calls keep returning that until Reset.
+//
+// With frame threading (WithWorkers > 1 and a frame delay above 1, the
+// default for low-overhead decoders) a call returns the frames that left the
+// in-flight ring, so a frame can arrive up to delay-1 calls after the payload
+// that carried it, and the final calls before (nil, false, nil) drain the ring.
+// Order and pixels are unchanged.
 //
 // The returned *Frame values alias the Decoder's reused output arena and remain
 // valid only until the next DecodeNext / DecodeAll call or Close. See the

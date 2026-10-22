@@ -164,13 +164,10 @@ func (p *Pool) ExecuteFrameWorkRunnerFrameThread(batch Batch, jobs []tile.Job, b
 	if err != nil {
 		return err
 	}
-	p.mu.Lock()
-	if p.closed {
-		p.mu.Unlock()
+	lanes := p.wavefrontLaneGroupLocked(laneNeed)
+	if lanes == nil {
 		return ErrPoolClosed
 	}
-	lanes := p.wavefrontLaneGroupLocked(laneNeed)
-	p.mu.Unlock()
 
 	ctx := &base.FrameThread.batch
 	*ctx = base

@@ -1007,10 +1007,14 @@ type Pool struct {
 	closed  bool
 
 	// lanes feeds the persistent wavefront lane goroutines; laneCount of them
-	// are running. Both are guarded by mu and grow only while a frame is
-	// dispatched, so steady-state frames reuse the same goroutines.
-	lanes     chan wavefrontLaneTask
-	laneCount int
+	// are running. They are guarded by laneMu (never held across a
+	// dispatch) and grow only while a frame is dispatched, so steady-state
+	// frames reuse the same goroutines. A frame-threaded parse sizes the group
+	// without taking mu, which a post-filter stage holds for its whole fan-out.
+	laneMu      sync.Mutex
+	lanes       chan wavefrontLaneTask
+	laneCount   int
+	lanesClosed bool
 }
 
 type poolWorker struct {
@@ -1518,9 +1522,12 @@ func (p *Pool) Close() {
 	for i := 0; i < len(p.workers); i++ {
 		close(p.workers[i].tasks)
 	}
+	p.laneMu.Lock()
 	if p.lanes != nil {
 		close(p.lanes)
 	}
+	p.lanesClosed = true
+	p.laneMu.Unlock()
 	p.mu.Unlock()
 }
 
@@ -1599,6 +1606,11 @@ type wavefrontLaneTask struct {
 // cannot wait on goroutines held by another tile.
 func (p *Pool) wavefrontLaneGroupLocked(need int) chan<- wavefrontLaneTask {
 	if need <= 0 {
+		return nil
+	}
+	p.laneMu.Lock()
+	defer p.laneMu.Unlock()
+	if p.lanesClosed {
 		return nil
 	}
 	if p.lanes == nil {
