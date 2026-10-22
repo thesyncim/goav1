@@ -94,6 +94,10 @@ func (p *FrameProgress) Init() {
 // waits for pixels.
 type FrameThreadRecon struct {
 	RefProgress [parser.InterRefsPerFrame]*FrameProgress
+	// Motion, when set, links the entropy pass to the saved MV_REF rows of
+	// this frame and its references, so the next frame's entropy pass can
+	// run concurrently a few superblock rows behind.
+	Motion *FrameThreadMotion
 
 	wf    *frameWorkReconWavefront
 	stats *FrameWorkTileResidualStats
@@ -106,6 +110,7 @@ type FrameThreadRecon struct {
 // Reset clears the frame's reference waits and any pending join.
 func (r *FrameThreadRecon) Reset() {
 	r.RefProgress = [parser.InterRefsPerFrame]*FrameProgress{}
+	r.Motion = nil
 	r.wf = nil
 	r.stats = nil
 }
@@ -179,4 +184,37 @@ func (p *Pool) ExecuteFrameWorkRunnerFrameThread(batch Batch, jobs []tile.Job, b
 		return ptr.RunPtr(ctx)
 	}
 	return runner.Run(*ctx)
+}
+
+// FrameThreadMotion is the entropy-progress side of a frame-threaded frame
+// (dav1d's Dav1dThreadPicture.progress[0], in 8x8 rows): Progress is the
+// frame's own saved MV_REF rows; RefProgress are the rows of the reference
+// grids its parse projects temporal samples from.
+type FrameThreadMotion struct {
+	Progress    *FrameProgress
+	RefProgress [parser.InterRefsPerFrame]*FrameProgress
+}
+
+// WaitReferenceRows implements tile.FrameMotionProgress.
+func (m *FrameThreadMotion) WaitReferenceRows(rowEnd8 int32) bool {
+	for _, p := range m.RefProgress {
+		if p != nil && !p.Wait(rowEnd8) {
+			return false
+		}
+	}
+	return true
+}
+
+// PublishRows implements tile.FrameMotionProgress.
+func (m *FrameThreadMotion) PublishRows(rowEnd8 int32) {
+	if m.Progress != nil {
+		m.Progress.Publish(rowEnd8)
+	}
+}
+
+func (b *FrameWorkBatch) frameThreadMotionProgress() tile.FrameMotionProgress {
+	if b.FrameThread == nil || b.FrameThread.Motion == nil {
+		return nil
+	}
+	return b.FrameThread.Motion
 }

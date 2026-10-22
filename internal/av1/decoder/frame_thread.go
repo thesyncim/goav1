@@ -67,6 +67,8 @@ type FrameThreadFrame struct {
 	temporal       bool
 	mvRefFrames    [parser.InterRefsPerFrame]tile.ReferenceMVFrame
 	mvRefs         [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
+	currentGrid    uint8
+	refGrids       [parser.InterRefsPerFrame]uint8
 	heldGrids      [1 + parser.InterRefsPerFrame]uint8
 	heldGridCount  int
 	published      bool
@@ -175,6 +177,8 @@ func (s *FrameWorkState) PublishFrameThreaded(refs *SurfaceReferences, event *Ev
 	ft.currentMV = s.currentMVFrame
 	ft.currentMVValid = s.currentMVFrameValid
 	ft.temporal = s.temporalMVsDeferred
+	ft.currentGrid = s.currentMVGrid
+	ft.refGrids = [parser.InterRefsPerFrame]uint8{}
 	ft.heldGridCount = 0
 	if s.currentMVGrid != 0 {
 		ft.heldGrids[0] = s.currentMVGrid
@@ -193,6 +197,7 @@ func (s *FrameWorkState) PublishFrameThreaded(refs *SurfaceReferences, event *Ev
 			slot := int(event.FrameSize.RefFrameIdx[ref])
 			if slot >= 0 && slot < parser.RefFrames {
 				s.holdMVGrid(ft, s.mvSlotGrid[slot])
+				ft.refGrids[ref] = s.mvSlotGrid[slot]
 			}
 		}
 	}
@@ -322,4 +327,22 @@ func EnableFrameThreadCDFPool(s *FrameWorkState) {
 	if s != nil && s.tileResidualCDFPoolExtra == nil {
 		s.tileResidualCDFPoolExtra = new([frameWorkCDFPoolEntries - (parser.RefFrames + 2)]threading.FrameWorkTileResidualCDFStorage)
 	}
+}
+
+// Pool capacities the frame-threading owner sizes its progress tables by.
+const (
+	FrameWorkMVGrids        = frameWorkMVGrids
+	FrameWorkCDFPoolEntries = frameWorkCDFPoolEntries
+)
+
+// MotionGrids reports the frame's own MV_REF grid handle and the grid handle
+// of each reference its entropy pass projects from (1-based; 0 means none).
+func (f *FrameThreadFrame) MotionGrids() (uint8, [parser.InterRefsPerFrame]uint8) {
+	return f.currentGrid, f.refGrids
+}
+
+// CDFEntries reports the frame's initial frame-context entry, its retained
+// entry, and whether its update tile fills the retained entry.
+func (f *FrameThreadFrame) CDFEntries() (initial int8, retained int8, willRetain bool) {
+	return f.initialCDF, f.retainedCDF, f.willRetain
 }

@@ -213,6 +213,13 @@ type BlockLoopRequest struct {
 	TemporalReferences *[referenceFrameCount]TemporalMotionReferenceFrame
 	CurrentMVFrame     *ReferenceMVFrame
 
+	// MotionProgress, when set, is a frame-threaded entropy pass's link to
+	// dav1d's per-sbrow entropy progress (Dav1dThreadPicture.progress[0]):
+	// before projecting a superblock row's temporal samples the loop waits
+	// until every reference saved its MV_REF rows that far, and after saving
+	// the row's own rows it publishes them for later frames.
+	MotionProgress FrameMotionProgress
+
 	// FrameMIRows and FrameMICols are the frame's MI grid extent
 	// (ALIGN_POWER_OF_TWO(dim, 3) >> MI_SIZE_LOG2), used to clamp ref-MV stack
 	// candidates to the frame boundary exactly as libaom's clamp_mv_ref.
@@ -411,6 +418,9 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 		if useRefmvs {
 			scratch.Refmvs.sbrowInit(int32(miRow/rootSize), int32(rootSize))
 			if rt := &scratch.Refmvs; rt.frame.projectTmvs && rt.frame.mfmv.n > 0 {
+				if req.MotionProgress != nil && !req.MotionProgress.WaitReferenceRows(int32((miRow+rootSize)>>1)) {
+					return stats, ErrInvalidDecodeState
+				}
 				rt.loadTmvs(rt.tileColStart>>1, rt.tileColEnd>>1, int32(miRow>>1), int32((miRow+rootSize)>>1))
 			}
 		}
@@ -535,6 +545,9 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 		}
 		if saveTmvs {
 			scratch.Refmvs.saveTmvs(req.CurrentMVFrame, &req.RefFrameSide, int32(miColStart>>1), int32(miColEnd>>1), int32(miRow>>1), int32((miRow+rootSize)>>1))
+			if req.MotionProgress != nil {
+				req.MotionProgress.PublishRows(int32((miRow + rootSize) >> 1))
+			}
 		}
 	}
 	return stats, nil

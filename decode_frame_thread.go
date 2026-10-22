@@ -6,6 +6,7 @@ package goav1
 
 import (
 	"fmt"
+	"sync"
 
 	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
@@ -67,13 +68,23 @@ type decoderFrameContext struct {
 
 	ft internaldecoder.FrameThreadFrame
 
+	// Entropy-pass inputs captured at submission; the context goroutine runs
+	// the pass after the submitting call returned.
+	payload    []byte
+	step       DecoderFrameWorkStep
+	target     *Frame
+	references []*Frame
+	show       bool
+	motion     internalthreading.FrameThreadMotion
+	cdfWait    *internalthreading.FrameProgress
+	cdfOut     *internalthreading.FrameProgress
+
 	// Tail hand-off. busy is owned by the decode goroutine; start and done
 	// order the tail goroutine's writes (output, tailErr) before the next read.
 	busy    bool
 	surface int
 	output  *Frame
 	tailErr error
-	parseErr error
 	start   chan struct{}
 	done    chan struct{}
 }
@@ -95,17 +106,43 @@ type decoderFramePipeline struct {
 	// stay at FrameProgressDone.
 	progress []internalthreading.FrameProgress
 
+	// mvProgress is the entropy progress of each MV_REF grid handle (dav1d
+	// progress[0], in 8x8 rows); cdfProgress marks each saved-CDF entry final
+	// (dav1d's cdf_thread progress). Both stay final unless a frame in flight
+	// is producing them.
+	mvProgress  []internalthreading.FrameProgress
+	cdfProgress []internalthreading.FrameProgress
+
+	// hookMu serializes submission with a test parse hook.
+	hookMu sync.Mutex
+
 	ready []*Frame
 	err   error
 }
 
 func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
 	for range fc.start {
-		err := fc.parseErr
+		err := p.parseFrame(fc)
+		// The entropy outputs are final: wake the frames whose entropy pass
+		// waits on this frame's CDFs or MV_REF rows.
+		entropy := internalthreading.FrameProgressDone
+		if err != nil {
+			entropy = internalthreading.FrameProgressError
+		}
+		if fc.motion.Progress != nil {
+			fc.motion.Progress.Publish(entropy)
+		}
+		if fc.cdfOut != nil {
+			fc.cdfOut.Publish(entropy)
+		}
 		if err != nil {
 			_ = fc.ft.Recon.Join()
 		} else {
 			err = fc.ft.Tail(&fc.postFilter)
+		}
+		fc.output = nil
+		if err == nil && fc.show {
+			fc.output = fc.target
 		}
 		if err == nil && fc.output != nil {
 			if out, ok := fc.postFilter.PostFilterOutput(); ok && out != nil {
@@ -218,6 +255,16 @@ func (p *decoderFramePipeline) retireOldest() bool {
 // post-filter to the context's tail.
 func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEvent) (DecoderFrameWorkEventResult, error) {
 	d := p.d
+	handed := false
+	if decoderFramePipelineParseHook != nil {
+		// Released by the hooked frame once its pass returned.
+		p.hookMu.Lock()
+		defer func() {
+			if !handed {
+				p.hookMu.Unlock()
+			}
+		}()
+	}
 	fc := &p.fcs[p.next]
 	p.next++
 	if p.next == len(p.fcs) {
@@ -229,6 +276,18 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 
 	fc.event = *src
 	fc.event.SequenceHeader = sequence
+	if fc.payload != nil && len(fc.event.Unit.Raw) != 0 {
+		// The source reuses its payload buffer on the next call, while this
+		// frame's entropy pass may still be reading it (dav1d keeps a
+		// reference on the tile data instead).
+		raw := fc.event.Unit.Raw
+		if len(raw) > len(fc.payload) || len(fc.event.Unit.Payload) > len(raw) {
+			return DecoderFrameWorkEventResult{}, ErrFrameShortBuffer
+		}
+		n := copy(fc.payload, raw)
+		fc.event.Unit.Raw = fc.payload[:n:n]
+		fc.event.Unit.Payload = fc.payload[n-len(src.Unit.Payload) : n : n]
+	}
 	event := &fc.event
 
 	side, err := BindDecoderFrameWorkResidualEventSideData(sequence, event, fc.sideScratch)
@@ -301,29 +360,40 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 		return DecoderFrameWorkEventResult{}, err
 	}
 	fc.surface = surface
+
+	// dav1d check_tile for DAV1D_TASK_TYPE_TILE_ENTROPY: the entropy pass
+	// waits only for its initial frame context (the primary reference's
+	// out_cdf) and, per superblock row, for the references' saved MV_REF
+	// rows (progress[0]); it never waits for reference pixels.
+	currentGrid, refGrids := fc.ft.MotionGrids()
+	fc.motion = internalthreading.FrameThreadMotion{}
+	if currentGrid != 0 {
+		p.mvProgress[currentGrid-1].Reset()
+		fc.motion.Progress = &p.mvProgress[currentGrid-1]
+	}
+	for i, g := range refGrids {
+		if g != 0 {
+			fc.motion.RefProgress[i] = &p.mvProgress[g-1]
+		}
+	}
+	fc.ft.Recon.Motion = &fc.motion
+	initialCDF, retainedCDF, willRetain := fc.ft.CDFEntries()
+	fc.cdfWait = &p.cdfProgress[initialCDF]
+	fc.cdfOut = nil
+	if willRetain {
+		p.cdfProgress[retainedCDF].Reset()
+		fc.cdfOut = &p.cdfProgress[retainedCDF]
+	}
+	fc.step = step
+	fc.target = output
+	fc.references = references
+	fc.show = event.FrameHeader.ShowFrame
+	handed = true
 	fc.busy = true
-	var afterParse func()
-	if decoderFramePipelineParseHook != nil {
-		afterParse = decoderFramePipelineParseHook(p, fc, references)
-	}
-	fc.parseErr = d.state.RunStepFrameThreaded(event, step, d.workerPool, output, references, fc.scratch.Jobs, fc.scratch.Batches, &fc.batch, &fc.ft, p.laneNeed)
-	if afterParse != nil {
-		afterParse()
-	}
-	fc.output = nil
-	if event.FrameHeader.ShowFrame && fc.parseErr == nil {
-		fc.output = output
-	}
-	// A failed parse still runs through the tail so its lanes are joined, its
-	// surface reports FrameProgressError to dependents, and retire returns
-	// the frame's holds and reports the error.
+	// The context goroutine runs the entropy pass, then the tail; the next
+	// frame can be submitted at once. A failed pass reports
+	// FrameProgressError to dependents and its error at retire.
 	fc.start <- struct{}{}
-	if fc.parseErr != nil {
-		err := fc.parseErr
-		p.retire(fc)
-		p.err = nil
-		return DecoderFrameWorkEventResult{}, err
-	}
 	return DecoderFrameWorkEventResult{
 		Step:           step,
 		Output:         output,
@@ -345,6 +415,11 @@ func (p *decoderFramePipeline) reset() {
 	p.next = 0
 	for i := range p.progress {
 		p.progress[i].Publish(internalthreading.FrameProgressDone)
+	}
+	for _, set := range [][]internalthreading.FrameProgress{p.mvProgress, p.cdfProgress} {
+		for i := range set {
+			set[i].Publish(internalthreading.FrameProgressDone)
+		}
 	}
 }
 
@@ -392,6 +467,14 @@ func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStr
 		p.progress[i].Init()
 		p.progress[i].Publish(internalthreading.FrameProgressDone)
 	}
+	p.mvProgress = make([]internalthreading.FrameProgress, internaldecoder.FrameWorkMVGrids)
+	p.cdfProgress = make([]internalthreading.FrameProgress, internaldecoder.FrameWorkCDFPoolEntries)
+	for _, set := range [][]internalthreading.FrameProgress{p.mvProgress, p.cdfProgress} {
+		for i := range set {
+			set[i].Init()
+			set[i].Publish(internalthreading.FrameProgressDone)
+		}
+	}
 	runtime := DecoderFrameWorkResidualEventRuntime{
 		State:      &d.state,
 		Refs:       &d.refs,
@@ -421,6 +504,9 @@ func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStr
 		fc.scratch.Spans = bound.Spans
 		fc.scratch.Jobs = bound.Jobs
 		fc.scratch.Batches = bound.Batches
+		if n := d.payloadSource.payloadBufferLen(); n > 0 {
+			fc.payload = make([]byte, n)
+		}
 		fc.start = make(chan struct{})
 		fc.done = make(chan struct{})
 		go p.tailLoop(fc)
@@ -495,4 +581,25 @@ func decoderFramePipelineEventNeedsDrain(event *DecoderEvent) bool {
 		return false
 	}
 	return true
+}
+
+// parseFrame runs a submitted frame's entropy pass on its context goroutine
+// (dav1d's DAV1D_TASK_TYPE_TILE_ENTROPY): it waits for the frame's initial
+// frame context, then decodes the tile; per superblock row the block loop
+// waits for the references' MV_REF rows and publishes its own.
+func (p *decoderFramePipeline) parseFrame(fc *decoderFrameContext) error {
+	d := p.d
+	if fc.cdfWait != nil && !fc.cdfWait.Wait(internalthreading.FrameProgressDone) {
+		return internalthreading.ErrFrameThreadReference
+	}
+	var afterParse func()
+	if decoderFramePipelineParseHook != nil {
+		afterParse = decoderFramePipelineParseHook(p, fc, fc.references)
+		defer p.hookMu.Unlock()
+	}
+	err := d.state.RunStepFrameThreaded(&fc.event, fc.step, d.workerPool, fc.target, fc.references, fc.scratch.Jobs, fc.scratch.Batches, &fc.batch, &fc.ft, p.laneNeed)
+	if afterParse != nil {
+		afterParse()
+	}
+	return err
 }
