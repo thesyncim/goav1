@@ -1,0 +1,283 @@
+package encoder
+
+import (
+	"fmt"
+
+	"github.com/thesyncim/goav1/internal/av1/motion"
+	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/tile"
+)
+
+// pframe_motion.go is the inter block's motion stage shared by the fused
+// (encodePBlock) and split (decidePBlock) walks: the full-pel ME vector, its
+// SVT light-PD1 sub-pel refinement per reference (subpel_svt.go), and the
+// LAST / GOLDEN / compound reference choice.
+
+// pblockMotion is the motion stage's result.
+type pblockMotion struct {
+	mv              motion.Vector
+	fullSAD         int
+	scaledReference bool
+	refs            tile.InterReferencesResult
+	refPlanes       SourceFrame420
+	compoundMV      [2]motion.Vector
+	// stack is the reference-MV stack for refs when stackOK; the sub-pel
+	// search builds it first for its MV cost reference (SVT generates the
+	// MVP table before read_refine_me_mvs_light_pd1).
+	stack   tile.ReferenceMVStackResult
+	stackOK bool
+}
+
+// pblockStackRequest is the reference-MV stack request for the block.
+func (st *lossyEncodeState) pblockStackRequest(block tile.BlockVisit, walkReq tile.BlockWalkRequest, miCols, miRows uint16, refs tile.InterReferencesResult) tile.ReferenceMVStackRequest {
+	return tile.ReferenceMVStackRequest{
+		MICol:          block.MICol,
+		MIRow:          block.MIRow,
+		TileMIColStart: walkReq.MIColStart,
+		TileMIRowStart: walkReq.MIRowStart,
+		TileMIColEnd:   walkReq.MIColEnd,
+		TileMIRowEnd:   walkReq.MIRowEnd,
+		FrameMIRows:    miRows,
+		FrameMICols:    miCols,
+		Size:           block.Size,
+		References:     refs,
+		X4:             block.X4,
+		Y4:             block.Y4,
+		HaveTop:        block.HaveTop,
+		HaveLeft:       block.HaveLeft,
+		HaveTopRight:   tile.BlockHasTopRight(16, block),
+		ForceIntegerMV: st.forceIntegerMV,
+	}
+}
+
+// svtNewMVPredictor is the NEWMV predictor svt_aom_choose_best_av1_mv_pred
+// returns at preset 12 (DRL 0, approx_inter_rate > 1): the MV cost reference
+// of the sub-pel search and of the MDS0 NEWMV rate.
+func (st *lossyEncodeState) svtNewMVPredictor(stack *tile.ReferenceMVStackResult) motion.Vector {
+	if r, err := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNewMV}, 0, false, st.forceIntegerMV); err == nil {
+		return r.Residual[0]
+	}
+	return motion.Vector{}
+}
+
+// pblockSubpel refines the full-pel vector mv on refPlane with the SVT
+// light-PD1 sub-pel search and returns the coded vector with its exact
+// regular-filter SAD (the later stages' gates and the SAD skip shortcut read
+// SAD, never the search's variance metric). For LAST the refined prediction
+// stays in predY (st.mePredY) for MDS0 to reuse.
+func (st *lossyEncodeState) pblockSubpel(src SourceFrame420, refPlane []byte, refStride, lumaPX, lumaPY, bw, bh int,
+	mv motion.Vector, fullSAD int, refMV motion.Vector, intoPredY bool) (motion.Vector, int) {
+	refined := st.svtSubpelSearch(src.Y, refPlane, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, refMV, &svtSubpelLevel6)
+	if refined == mv {
+		return mv, fullSAD
+	}
+	dst := st.sadScratch[:bw*bh]
+	if intoPredY {
+		dst = st.predY[:bw*bh]
+	}
+	if err := st.predictLuma(dst, refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, refined, motion.RegularFilters); err != nil {
+		return mv, fullSAD
+	}
+	sad := sadRectDualBlock(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, dst, bw, bw, bh)
+	if intoPredY {
+		st.mePredY = mePredYKey{valid: true, mv: refined}
+	}
+	return refined, sad
+}
+
+// mePredYKey records that predY holds LAST's regular-filter prediction at mv.
+type mePredYKey struct {
+	valid bool
+	mv    motion.Vector
+}
+
+// pblockMotionSearch runs the block's motion stage.
+func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *SourceFrame420, block tile.BlockVisit,
+	modeCtx *tile.BlockModeContext, referenceMode parser.ReferenceMode, walkReq tile.BlockWalkRequest, miCols, miRows uint16,
+	lumaPX, lumaPY, bw, bh int) (pblockMotion, error) {
+
+	st.mePredY.valid = false
+	n := bw
+	var out pblockMotion
+	scaledReference := ref.Width != src.Width || ref.Height != src.Height
+	out.scaledReference = scaledReference
+	var mv motion.Vector
+	fullSAD := -1
+	sadEpoch := st.sadCacheEpoch
+	if scaledReference {
+		if err := predictIntoScaled(st.sadScratch[:bw*bh], ref.Y, ref.YStride, ref.Width, ref.Height, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, &st.scaledScratch); err != nil {
+			return out, fmt.Errorf("scaled reference luma probe: %w", err)
+		}
+		fullSAD = sadRectDualBlock(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, st.sadScratch[:bw*bh], bw, bw, bh)
+	} else {
+		switch {
+		case bw != bh:
+			// Rect halves exist only where the partition decider proved the two
+			// child vectors equal; the shared vector and the summed child SADs
+			// describe the half exactly.
+			if bw >= 32 || bh >= 32 {
+				i0 := (lumaPY/16)*st.grid16Cols + lumaPX/16
+				i1 := i0 + 1
+				if bh > bw {
+					i1 = i0 + st.grid16Cols
+				}
+				if sadCacheValid(st.sad16Grid[i0], sadEpoch) && sadCacheValid(st.sad16Grid[i1], sadEpoch) {
+					mv = st.mv16Grid[i0]
+					fullSAD = sadCacheValue(st.sad16Grid[i0]) + sadCacheValue(st.sad16Grid[i1])
+				}
+				break
+			}
+			i0 := (lumaPY/8)*st.grid8Cols + lumaPX/8
+			i1 := i0 + 1
+			if bh > bw {
+				i1 = i0 + st.grid8Cols
+			}
+			if sadCacheValid(st.sad8Grid[i0], sadEpoch) && sadCacheValid(st.sad8Grid[i1], sadEpoch) {
+				mv = st.mv8Grid[i0]
+				fullSAD = sadCacheValue(st.sad8Grid[i0]) + sadCacheValue(st.sad8Grid[i1])
+			}
+		case n == 64:
+			idx := (lumaPY/64)*st.grid64Cols + lumaPX/64
+			if sadCacheValid(st.sad64Grid[idx], sadEpoch) {
+				mv, fullSAD = st.mv64Grid[idx], sadCacheValue(st.sad64Grid[idx])
+			}
+		case n == 32:
+			idx := (lumaPY/32)*st.grid32Cols + lumaPX/32
+			if sadCacheValid(st.sad32Grid[idx], sadEpoch) {
+				mv, fullSAD = st.mv32Grid[idx], sadCacheValue(st.sad32Grid[idx])
+			}
+		case n == 16:
+			idx := (lumaPY/16)*st.grid16Cols + lumaPX/16
+			if sadCacheValid(st.sad16Grid[idx], sadEpoch) {
+				mv, fullSAD = st.mv16Grid[idx], sadCacheValue(st.sad16Grid[idx])
+			}
+		default:
+			if idx := (lumaPY/8)*st.grid8Cols + lumaPX/8; sadCacheValid(st.sad8Grid[idx], sadEpoch) {
+				mv, fullSAD = st.mv8Grid[idx], sadCacheValue(st.sad8Grid[idx])
+			}
+		}
+		if fullSAD < 0 {
+			seedDX, seedDY, reach := 0, 0, fullPelReach
+			if st.hme != nil {
+				var trusted bool
+				seedDX, seedDY, trusted = st.hme.seedAt(lumaPX, lumaPY)
+				if trusted {
+					reach = fullPelReachTrusted
+				}
+			}
+			dx, dy, sad := 0, 0, 0
+			if bw == bh {
+				dx, dy, sad = fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, seedDX, seedDY, reach)
+			} else {
+				dx, dy, sad = fullPelDiamondSearchRectSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, seedDX, seedDY, reach)
+			}
+			mv, fullSAD = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}, sad
+		}
+		// read_refine_me_mvs_light_pd1: refine LAST's ME vector with the
+		// NEWMV predictor of LAST's MVP table as the MV cost reference.
+		if st.allowSubpelRefinement() {
+			lastRefs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+			stack, err := modeCtx.BuildReferenceMVStack(st.pblockStackRequest(block, walkReq, miCols, miRows, lastRefs))
+			if err != nil {
+				return out, fmt.Errorf("build ref mv stack: %w", err)
+			}
+			out.stack, out.stackOK = stack, true
+			mv, fullSAD = st.pblockSubpel(src, ref.Y, ref.YStride, lumaPX, lumaPY, bw, bh, mv, fullSAD, st.svtNewMVPredictor(&stack), true)
+		}
+	}
+
+	// Reference selection: when LAST left a poor match, probe the GOLDEN
+	// anchor; occluded-then-revealed content predicts from the older anchor
+	// when the previous frame cannot. Compound covers 8x8 and 16x16 leaves,
+	// which get a true golden motion search; larger blocks keep the cheap
+	// zero-motion anchor probe.
+	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+	refPlanes := ref
+	compound := false
+	var compoundMV [2]motion.Vector
+	goldenEligible := (bw == 8 && bh == 8) ||
+		(bw == 16 && bh == 16) || (bw == 32 && bh == 32) ||
+		(bw == 16 && bh == 8) || (bw == 8 && bh == 16) ||
+		(bw == 32 && bh == 16) || (bw == 16 && bh == 32) ||
+		(bw == 64 && bh == 16) || (bw == 16 && bh == 64)
+	if !scaledReference && golden != nil && golden.Y != nil && goldenEligible && fullSAD > bw*bh*4 {
+		lastMV, lastSAD := mv, fullSAD
+		var gmv motion.Vector
+		gsad := 1 << 30
+		compoundCapable := bw == bh && bw <= 16
+		goldenRefPruned := false
+		var goldenStack tile.ReferenceMVStackResult
+		goldenStackOK := false
+		if compoundCapable {
+			gdx, gdy, s := fullPelDiamondSearch(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw)
+			gmv, gsad = motion.Vector{Row: int16(gdy * 8), Col: int16(gdx * 8)}, s
+			// dist_based_ref_pruning: drop GOLDEN's subpel + compound MD work once
+			// its full-pel distortion is >30% worse than LAST (perform_md_reference_pruning).
+			goldenRefPruned = int64(gsad)*100 > int64(lastSAD)*(100+goldenRefPruneMaxDevPct)
+			if st.allowSubpelRefinement() && !goldenRefPruned {
+				goldenRefs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameGolden, tile.ReferenceFrameNone}}
+				stack, err := modeCtx.BuildReferenceMVStack(st.pblockStackRequest(block, walkReq, miCols, miRows, goldenRefs))
+				if err != nil {
+					return out, fmt.Errorf("build ref mv stack: %w", err)
+				}
+				goldenStack, goldenStackOK = stack, true
+				gmv, gsad = st.pblockSubpel(src, golden.Y, golden.YStride, lumaPX, lumaPY, bw, bh, gmv, gsad, st.svtNewMVPredictor(&stack), false)
+			}
+		} else {
+			base := lumaPY*src.YStride + lumaPX
+			gsad = sadRectBlock(src.Y, golden.Y, base, base, src.YStride, bw, bh, lastSAD)
+		}
+		if compoundCapable && !goldenRefPruned && referenceMode == parser.ReferenceModeSelect && gsad+32 >= lastSAD && gsad <= lastSAD+bw*bh*4 {
+			if err := predictCompoundInto(st.sadScratch[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, lastMV, gmv, false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err == nil {
+				srcBlock := src.Y[lumaPY*src.YStride+lumaPX:]
+				var compoundSAD int
+				if bw == 8 {
+					compoundSAD = sad8x8Dual(srcBlock, src.YStride, st.sadScratch[:64], 8)
+				} else {
+					compoundSAD = sad16x16Dual(srcBlock, src.YStride, st.sadScratch[:256], 16)
+				}
+				compoundBias := 64 + 12*st.sadPerBit
+				if compoundSAD+compoundBias < fullSAD {
+					compound = true
+					compoundMV = [2]motion.Vector{lastMV, gmv}
+					fullSAD = compoundSAD
+				}
+			}
+		}
+		// The anchor must win clearly: LAST keeps the cheaper ref symbol and
+		// denser MV predictors.
+		if !compound && gsad+32 < fullSAD {
+			refs.Ref[0] = tile.ReferenceFrameGolden
+			refPlanes = *golden
+			mv, fullSAD = gmv, gsad
+			out.stack, out.stackOK = goldenStack, goldenStackOK
+			st.mePredY.valid = false
+		}
+		if compound {
+			refs = tile.InterReferencesResult{
+				Ref:      [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameGolden},
+				Compound: true,
+				Unidir:   true,
+			}
+			out.stackOK = false
+			st.mePredY.valid = false
+		}
+	}
+	out.mv, out.fullSAD = mv, fullSAD
+	out.refs, out.refPlanes = refs, refPlanes
+	out.compoundMV = compoundMV
+	return out, nil
+}
+
+// pblockStack returns the reference-MV stack for the motion stage's refs,
+// reusing the one the sub-pel search built.
+func (st *lossyEncodeState) pblockStack(mo *pblockMotion, block tile.BlockVisit, modeCtx *tile.BlockModeContext, walkReq tile.BlockWalkRequest, miCols, miRows uint16) (tile.ReferenceMVStackResult, error) {
+	if mo.stackOK {
+		return mo.stack, nil
+	}
+	stack, err := modeCtx.BuildReferenceMVStack(st.pblockStackRequest(block, walkReq, miCols, miRows, mo.refs))
+	if err != nil {
+		return stack, fmt.Errorf("build ref mv stack: %w", err)
+	}
+	return stack, nil
+}

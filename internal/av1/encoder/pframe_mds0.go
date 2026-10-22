@@ -78,7 +78,13 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	meSSE := uint32(0)
 	predYValid := false
 	predYMV := motion.Vector{}
-	if perr := st.predictLuma(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, motion.RegularFilters); perr == nil {
+	// The sub-pel search already left the refined vector's prediction in
+	// predY (pframe_motion.go).
+	var perr error
+	if !st.mePredY.valid || st.mePredY.mv != meMV {
+		perr = st.predictLuma(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, motion.RegularFilters)
+	}
+	if perr == nil {
 		predYValid, predYMV = true, meMV
 		sse, meVar := realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
 		meSSE = sse

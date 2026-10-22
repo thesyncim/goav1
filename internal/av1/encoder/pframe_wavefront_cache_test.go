@@ -23,12 +23,12 @@ func TestPFrameDecideWorkerAdoptKeepsLaneSubpelCache(t *testing.T) {
 		}
 	}
 
-	workers[0].st.subpelCache.imValid[0] = true
+	workers[0].st.subpelCache.scratch[0] = 1
 	workers[0].adopt(src)
-	if !workers[0].st.subpelCache.imValid[0] {
+	if workers[0].st.subpelCache.scratch[0] != 1 {
 		t.Fatal("repeated adopt discarded lane-owned subpel cache state")
 	}
-	if ownerCache.imValid[0] {
+	if ownerCache.scratch[0] != 0 {
 		t.Fatal("lane cache mutation changed the owner cache")
 	}
 }

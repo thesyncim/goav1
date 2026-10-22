@@ -274,7 +274,6 @@ internal/av1/encoder/pframe_residual.go:*:*: moved to heap: pc
 internal/av1/encoder/pframe_residual.go:*:*: moved to heap: recon
 internal/av1/encoder/pframe_residual.go:*:*: moved to heap: recon420
 internal/av1/encoder/pframe_residual.go:*:*: new(subpelProbeCache) escapes to heap
-internal/av1/encoder/pframe_residual.go:*:*: new(subpelProbeCache) escapes to heap in (*lossyEncodeState).subpelRefineLibaomTree:
 internal/av1/encoder/pframe_residual.go:*:*: new(subpelProbeCache) escapes to heap in (*pframeCoder).reset:
 internal/av1/encoder/pframe_split.go:*:*: make([]int16, 0, maxCoeffs) escapes to heap
 internal/av1/encoder/pframe_split.go:*:*: make([]int16, 0, maxCoeffs) escapes to heap in (*pframeSplitRecord).reset:
@@ -303,6 +302,8 @@ internal/av1/encoder/pred8.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/pred8.go:*:*: new(subpelProbeCache) escapes to heap in (*lossyEncodeState).predictPlane:
 internal/av1/encoder/subpel_cache.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/subpel_cache.go:*:*: new(subpelProbeCache) escapes to heap in (*lossyEncodeState).ensureSubpelProbeCache:
+internal/av1/encoder/subpel_svt.go:*:*: new(subpelProbeCache) escapes to heap
+internal/av1/encoder/subpel_svt.go:*:*: new(subpelProbeCache) escapes to heap in (*lossyEncodeState).svtSubpelSearch:
 internal/av1/encoder/video.go:*:*: func literal escapes to heap
 internal/av1/encoder/video.go:*:*: func literal escapes to heap in (*VideoEncoder).startFilterWorker:
 internal/av1/encoder/video.go:*:*: func literal escapes to heap in (*VideoEncoder).startTileWorkers:

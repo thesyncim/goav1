@@ -630,11 +630,10 @@ type lossyEncodeState struct {
 	// avg_frame_low_motion statistic driving adaptive golden refresh.
 	cntZeroMV int
 
-	// prober hoists the subpel refinement's geometry validation per block;
-	// its convolve scratch is reused across blocks.
-	prober motion.LumaSubpelProber
-	// subpelCache evaluates subpel tree candidates with the fast predictor.
+	// subpelCache is the lane-owned motion-search scratch (subpel_cache.go).
 	subpelCache *subpelProbeCache
+	// mePredY says predY holds LAST's refined ME prediction (pframe_motion.go).
+	mePredY mePredYKey
 	// predStats and predYKey carry the luma prediction statistics of the
 	// current inter block between its stages (pred_stats.go).
 	predStats lumaPredStats

@@ -328,7 +328,6 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	if !ok {
 		return fmt.Errorf("encoder: unexpected block %+v", block)
 	}
-	n := bw // square tier size; rect blocks take dedicated paths below
 	st.predStats.valid = false
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
@@ -357,151 +356,15 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 		chromaHeight = chromaHeightForColor(src.Height, st.color)
 	}
 
-	// Motion estimation, identical to the fused path (see encodePBlock).
-	scaledReference := ref.Width != src.Width || ref.Height != src.Height
-	var mv motion.Vector
-	fullSAD := -1
-	sadEpoch := st.sadCacheEpoch
-	if scaledReference {
-		if err := predictIntoScaled(st.sadScratch[:bw*bh], ref.Y, ref.YStride, ref.Width, ref.Height, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, &st.scaledScratch); err != nil {
-			return fmt.Errorf("scaled reference luma probe: %w", err)
-		}
-		fullSAD = sadRectDualBlock(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, st.sadScratch[:bw*bh], bw, bw, bh)
-	} else {
-		switch {
-		case bw != bh:
-			if bw >= 32 || bh >= 32 {
-				i0 := (lumaPY/16)*st.grid16Cols + lumaPX/16
-				i1 := i0 + 1
-				if bh > bw {
-					i1 = i0 + st.grid16Cols
-				}
-				if sadCacheValid(st.sad16Grid[i0], sadEpoch) && sadCacheValid(st.sad16Grid[i1], sadEpoch) {
-					mv = st.mv16Grid[i0]
-					fullSAD = sadCacheValue(st.sad16Grid[i0]) + sadCacheValue(st.sad16Grid[i1])
-				}
-				break
-			}
-			i0 := (lumaPY/8)*st.grid8Cols + lumaPX/8
-			i1 := i0 + 1
-			if bh > bw {
-				i1 = i0 + st.grid8Cols
-			}
-			if sadCacheValid(st.sad8Grid[i0], sadEpoch) && sadCacheValid(st.sad8Grid[i1], sadEpoch) {
-				mv = st.mv8Grid[i0]
-				fullSAD = sadCacheValue(st.sad8Grid[i0]) + sadCacheValue(st.sad8Grid[i1])
-			}
-		case n == 64:
-			idx := (lumaPY/64)*st.grid64Cols + lumaPX/64
-			if sadCacheValid(st.sad64Grid[idx], sadEpoch) {
-				mv, fullSAD = st.mv64Grid[idx], sadCacheValue(st.sad64Grid[idx])
-			}
-		case n == 32:
-			idx := (lumaPY/32)*st.grid32Cols + lumaPX/32
-			if sadCacheValid(st.sad32Grid[idx], sadEpoch) {
-				mv, fullSAD = st.mv32Grid[idx], sadCacheValue(st.sad32Grid[idx])
-			}
-		case n == 16:
-			idx := (lumaPY/16)*st.grid16Cols + lumaPX/16
-			if sadCacheValid(st.sad16Grid[idx], sadEpoch) {
-				mv, fullSAD = st.mv16Grid[idx], sadCacheValue(st.sad16Grid[idx])
-			}
-		default:
-			if idx := (lumaPY/8)*st.grid8Cols + lumaPX/8; sadCacheValid(st.sad8Grid[idx], sadEpoch) {
-				mv, fullSAD = st.mv8Grid[idx], sadCacheValue(st.sad8Grid[idx])
-			}
-		}
-		if fullSAD < 0 {
-			seedDX, seedDY, reach := 0, 0, fullPelReach
-			if st.hme != nil {
-				var trusted bool
-				seedDX, seedDY, trusted = st.hme.seedAt(lumaPX, lumaPY)
-				if trusted {
-					reach = fullPelReachTrusted
-				}
-			}
-			dx, dy, sad := 0, 0, 0
-			if bw == bh {
-				dx, dy, sad = fullPelDiamondSearchSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, seedDX, seedDY, reach)
-			} else {
-				dx, dy, sad = fullPelDiamondSearchRectSeeded(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, seedDX, seedDY, reach)
-			}
-			mv, fullSAD = motion.Vector{Row: int16(dy * 8), Col: int16(dx * 8)}, sad
-		}
-		if st.allowSubpelRefinement() && bw == bh && fullSAD > n*n*2 {
-			fullMV := mv
-			subpelStop := st.realtimeSubpelStopForBlock(src, lumaPX, lumaPY, n)
-			mv, fullSAD = st.subpelRefineWithStop(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, mv, fullSAD, subpelStop)
-			if subpelStop != realtimeSubpelStopFull && fullSAD > n*n*2 && (fullMV.Row != 0 || fullMV.Col != 0) {
-				zeroSAD := sadBlock(src.Y, ref.Y, lumaPY*src.YStride+lumaPX, lumaPY*src.YStride+lumaPX, src.YStride, n, 1<<30)
-				if zeroSAD < fullSAD*2 {
-					if zmv, zsad := st.subpelRefineWithStop(src.Y, ref.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, n, motion.Vector{}, zeroSAD, subpelStop); zsad < fullSAD {
-						mv, fullSAD = zmv, zsad
-					}
-				}
-			}
-		}
+	// Motion stage, shared with the fused path (pframe_motion.go).
+	mo, err := st.pblockMotionSearch(src, ref, golden, block, modeCtx, referenceMode, walkReq, miCols, miRows, lumaPX, lumaPY, bw, bh)
+	if err != nil {
+		return err
 	}
-
-	// Reference selection (GOLDEN probe / compound), identical to the fused path.
-	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
-	refPlanes := ref
-	compound := false
-	var compoundMV [2]motion.Vector
-	goldenEligible := (bw == 8 && bh == 8) ||
-		(bw == 16 && bh == 16) || (bw == 32 && bh == 32) ||
-		(bw == 16 && bh == 8) || (bw == 8 && bh == 16) ||
-		(bw == 32 && bh == 16) || (bw == 16 && bh == 32) ||
-		(bw == 64 && bh == 16) || (bw == 16 && bh == 64)
-	if !scaledReference && golden != nil && golden.Y != nil && goldenEligible && fullSAD > bw*bh*4 {
-		lastMV, lastSAD := mv, fullSAD
-		var gmv motion.Vector
-		gsad := 1 << 30
-		compoundCapable := bw == bh && bw <= 16
-		goldenRefPruned := false
-		if compoundCapable {
-			gdx, gdy, s := fullPelDiamondSearch(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw)
-			gmv, gsad = motion.Vector{Row: int16(gdy * 8), Col: int16(gdx * 8)}, s
-			// dist_based_ref_pruning: drop GOLDEN's subpel + compound MD work once
-			// its full-pel distortion is >30% worse than LAST (perform_md_reference_pruning).
-			goldenRefPruned = int64(gsad)*100 > int64(lastSAD)*(100+goldenRefPruneMaxDevPct)
-			if st.allowSubpelRefinement() && gsad > bw*bh*2 && !goldenRefPruned {
-				gmv, gsad = st.subpelRefineWithStop(src.Y, golden.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, gmv, gsad, st.realtimeSubpelStopForBlock(src, lumaPX, lumaPY, bw))
-			}
-		} else {
-			base := lumaPY*src.YStride + lumaPX
-			gsad = sadRectBlock(src.Y, golden.Y, base, base, src.YStride, bw, bh, lastSAD)
-		}
-		if compoundCapable && !goldenRefPruned && referenceMode == parser.ReferenceModeSelect && gsad+32 >= lastSAD && gsad <= lastSAD+bw*bh*4 {
-			if err := predictCompoundInto(st.sadScratch[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, lastMV, gmv, false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err == nil {
-				srcBlock := src.Y[lumaPY*src.YStride+lumaPX:]
-				var compoundSAD int
-				if bw == 8 {
-					compoundSAD = sad8x8Dual(srcBlock, src.YStride, st.sadScratch[:64], 8)
-				} else {
-					compoundSAD = sad16x16Dual(srcBlock, src.YStride, st.sadScratch[:256], 16)
-				}
-				compoundBias := 64 + 12*st.sadPerBit
-				if compoundSAD+compoundBias < fullSAD {
-					compound = true
-					compoundMV = [2]motion.Vector{lastMV, gmv}
-					fullSAD = compoundSAD
-				}
-			}
-		}
-		if !compound && gsad+32 < fullSAD {
-			refs.Ref[0] = tile.ReferenceFrameGolden
-			refPlanes = *golden
-			mv, fullSAD = gmv, gsad
-		}
-		if compound {
-			refs = tile.InterReferencesResult{
-				Ref:      [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameGolden},
-				Compound: true,
-				Unidir:   true,
-			}
-		}
-	}
+	scaledReference := mo.scaledReference
+	mv, fullSAD := mo.mv, mo.fullSAD
+	refs, refPlanes := mo.refs, mo.refPlanes
+	compoundMV := mo.compoundMV
 
 	// Intra fallback (8x8 leaves only), identical to the fused path.
 	if bw == 8 && bh == 8 {
@@ -522,28 +385,9 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 		}
 	}
 
-	// Reference-MV stack and priced mode choice, identical to the fused path.
-	stackReq := tile.ReferenceMVStackRequest{
-		MICol:          block.MICol,
-		MIRow:          block.MIRow,
-		TileMIColStart: walkReq.MIColStart,
-		TileMIRowStart: walkReq.MIRowStart,
-		TileMIColEnd:   walkReq.MIColEnd,
-		TileMIRowEnd:   walkReq.MIRowEnd,
-		FrameMIRows:    miRows,
-		FrameMICols:    miCols,
-		Size:           block.Size,
-		References:     refs,
-		X4:             block.X4,
-		Y4:             block.Y4,
-		HaveTop:        block.HaveTop,
-		HaveLeft:       block.HaveLeft,
-		HaveTopRight:   tile.BlockHasTopRight(16, block),
-		ForceIntegerMV: st.forceIntegerMV,
-	}
-	stack, err := modeCtx.BuildReferenceMVStack(stackReq)
+	stack, err := st.pblockStack(&mo, block, modeCtx, walkReq, miCols, miRows)
 	if err != nil {
-		return fmt.Errorf("build ref mv stack: %w", err)
+		return err
 	}
 	modeResult := tile.InterModeResult{Mode: tile.InterModeGlobalMV}
 	if refs.Compound {
