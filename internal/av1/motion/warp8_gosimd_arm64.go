@@ -23,7 +23,12 @@ import (
 // Each row is 16 bytes so every filter row can be loaded as a full vector.
 // Only the first eight lanes are used. The source table itself has eight-byte
 // rows, which makes a full vector load at its last row unsafe.
-var warp8FilterPadded [warpedPixelPrecShifts*3 + 1][16]int8
+//
+// The table has 256 rows, of which the first warpedPixelPrecShifts*3 + 1 are
+// filters, so the kernels index it as [i&255] without a bounds check. Their
+// routing preconditions (warpHorizResidentOffsInRange, warpVertFullOffsInRange)
+// keep every index inside the filter rows, so the mask never changes a row.
+var warp8FilterPadded [256][16]int8
 
 func init() {
 	for i := range warpedFilterI8 {
@@ -89,14 +94,14 @@ func warpHorizontal8ResidentGoSIMD(tmp *warpTmp, ref frame.Plane, ix4, sx4, iy4,
 		// The resident 15-sample window fits; u8Bytes16 also handles the
 		// exact last-row case where the sixteenth byte is outside ref.Pix.
 		a := u8Bytes16(ref.Pix[rowByte:]).Xor(centre)
-		f0 := archsimd.LoadInt8x16(warp8FilterPadded[64+((sx+512)>>10)][:])
-		f1 := archsimd.LoadInt8x16(warp8FilterPadded[64+((sx+alpha+512)>>10)][:])
-		f2 := archsimd.LoadInt8x16(warp8FilterPadded[64+((sx+2*alpha+512)>>10)][:])
-		f3 := archsimd.LoadInt8x16(warp8FilterPadded[64+((sx+3*alpha+512)>>10)][:])
-		f4 := archsimd.LoadInt8x16(warp8FilterPadded[64+((sx+4*alpha+512)>>10)][:])
-		f5 := archsimd.LoadInt8x16(warp8FilterPadded[64+((sx+5*alpha+512)>>10)][:])
-		f6 := archsimd.LoadInt8x16(warp8FilterPadded[64+((sx+6*alpha+512)>>10)][:])
-		f7 := archsimd.LoadInt8x16(warp8FilterPadded[64+((sx+7*alpha+512)>>10)][:])
+		f0 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sx+512)>>10))&255][:])
+		f1 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sx+alpha+512)>>10))&255][:])
+		f2 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sx+2*alpha+512)>>10))&255][:])
+		f3 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sx+3*alpha+512)>>10))&255][:])
+		f4 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sx+4*alpha+512)>>10))&255][:])
+		f5 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sx+5*alpha+512)>>10))&255][:])
+		f6 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sx+6*alpha+512)>>10))&255][:])
+		f7 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sx+7*alpha+512)>>10))&255][:])
 		p0 := a.BitsToInt8().MulWidenLo(f0)
 		p1 := a.ConcatShiftBytesRight(a, 1).BitsToInt8().MulWidenLo(f1)
 		p2 := a.ConcatShiftBytesRight(a, 2).BitsToInt8().MulWidenLo(f2)
@@ -200,18 +205,22 @@ func warpVerticalGoSIMDCommon(dst frame.Plane, tmp *warpTmp, i, j, rowShift, col
 	load := func(off int) archsimd.Int16x8 {
 		lo := archsimd.LoadInt32x4((*[4]int32)(unsafe.Add(tmpBase, off*4))[:])
 		hi := archsimd.LoadInt32x4((*[4]int32)(unsafe.Add(tmpBase, (off+4)*4))[:])
-		return u8PackU16From32(lo, hi).BitsToInt16()
+		// u8PackU16From32 written out, with the second narrow as XTN2 into the
+		// high half: through the helper each load left an inline-mark NOP and
+		// joined two XTN results with a ZIP1.
+		n := lo.TruncToInt16().ToBits().ReshapeToUint64s().BitsToFloat64()
+		return n.SetElem(1, hi.TruncToInt16().ToBits().ReshapeToUint64s().BitsToFloat64().GetElem(0)).ToBits().ReshapeToUint16s().BitsToInt16()
 	}
 	for row := 0; row < 8; row++ {
 		sy := baseSY + delta*row + 512
-		f0 := archsimd.LoadInt8x16(warp8FilterPadded[64+(sy>>10)][:])
-		f1 := archsimd.LoadInt8x16(warp8FilterPadded[64+((sy+gamma)>>10)][:])
-		f2 := archsimd.LoadInt8x16(warp8FilterPadded[64+((sy+2*gamma)>>10)][:])
-		f3 := archsimd.LoadInt8x16(warp8FilterPadded[64+((sy+3*gamma)>>10)][:])
-		f4 := archsimd.LoadInt8x16(warp8FilterPadded[64+((sy+4*gamma)>>10)][:])
-		f5 := archsimd.LoadInt8x16(warp8FilterPadded[64+((sy+5*gamma)>>10)][:])
-		f6 := archsimd.LoadInt8x16(warp8FilterPadded[64+((sy+6*gamma)>>10)][:])
-		f7 := archsimd.LoadInt8x16(warp8FilterPadded[64+((sy+7*gamma)>>10)][:])
+		f0 := archsimd.LoadInt8x16(warp8FilterPadded[(64+(sy>>10))&255][:])
+		f1 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sy+gamma)>>10))&255][:])
+		f2 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sy+2*gamma)>>10))&255][:])
+		f3 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sy+3*gamma)>>10))&255][:])
+		f4 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sy+4*gamma)>>10))&255][:])
+		f5 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sy+5*gamma)>>10))&255][:])
+		f6 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sy+6*gamma)>>10))&255][:])
+		f7 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sy+7*gamma)>>10))&255][:])
 		a01 := f0.InterleaveLo(f1).ToBits().ReshapeToUint16s()
 		a23 := f2.InterleaveLo(f3).ToBits().ReshapeToUint16s()
 		a45 := f4.InterleaveLo(f5).ToBits().ReshapeToUint16s()
@@ -225,13 +234,13 @@ func warpVerticalGoSIMDCommon(dst frame.Plane, tmp *warpTmp, i, j, rowShift, col
 		c45 := b03hi.InterleaveLo(b47hi).ReshapeToUint8s()
 		c67 := b03hi.InterleaveHi(b47hi).ReshapeToUint8s()
 		t0 := c01.BitsToInt8().ExtendLo8ToInt16()
-		t1 := c01.ConcatShiftBytesRight(c01, 8).BitsToInt8().ExtendLo8ToInt16()
+		t1 := c01.BitsToInt8().HiToLo().ExtendLo8ToInt16()
 		t2 := c23.BitsToInt8().ExtendLo8ToInt16()
-		t3 := c23.ConcatShiftBytesRight(c23, 8).BitsToInt8().ExtendLo8ToInt16()
+		t3 := c23.BitsToInt8().HiToLo().ExtendLo8ToInt16()
 		t4 := c45.BitsToInt8().ExtendLo8ToInt16()
-		t5 := c45.ConcatShiftBytesRight(c45, 8).BitsToInt8().ExtendLo8ToInt16()
+		t5 := c45.BitsToInt8().HiToLo().ExtendLo8ToInt16()
 		t6 := c67.BitsToInt8().ExtendLo8ToInt16()
-		t7 := c67.ConcatShiftBytesRight(c67, 8).BitsToInt8().ExtendLo8ToInt16()
+		t7 := c67.BitsToInt8().HiToLo().ExtendLo8ToInt16()
 		p := row * warpedIntermediateColumns
 		lo, hi := u8WideMAC8(bias, bias, load(p), t0)
 		lo, hi = u8WideMAC8(lo, hi, load(p+8), t1)
