@@ -8,6 +8,7 @@ import (
 
 type txBlockGeometry struct {
 	size        transform.Size
+	tx          tile.TransformSize
 	coeffSize   transform.Size
 	width       int
 	height      int
@@ -34,6 +35,24 @@ func txBlockGeometryForDimensions(width, height int) (txBlockGeometry, error) {
 	return txBlockGeometryForSize(txSize)
 }
 
+// tileTransformSizes maps (log2 width - 2, log2 height - 2) to the tile
+// transform size; invalid shapes hold tile.TransformSize(255).
+var tileTransformSizes = func() (t [5][5]tile.TransformSize) {
+	for i := range t {
+		for j := range t[i] {
+			t[i][j] = 255
+		}
+	}
+	for s := tile.TransformSize4x4; s <= tile.TransformSize64x16; s++ {
+		dims, ok := s.Dimensions()
+		if !ok {
+			continue
+		}
+		t[dims.Log2W][dims.Log2H] = s
+	}
+	return t
+}()
+
 func txBlockGeometryForSize(size transform.Size) (txBlockGeometry, error) {
 	coeffSize, err := transform.ScanSize(size)
 	if err != nil {
@@ -47,8 +66,16 @@ func txBlockGeometryForSize(size transform.Size) (txBlockGeometry, error) {
 	coeffHeight := int(coeffSize.Height)
 	width := int(size.Width)
 	height := int(size.Height)
+	tx := tile.TransformSize(255)
+	if lw, lh := log2Exact(width), log2Exact(height); lw >= 2 && lw <= 6 && lh >= 2 && lh <= 6 {
+		tx = tileTransformSizes[lw-2][lh-2]
+	}
+	if tx == 255 {
+		return txBlockGeometry{}, transform.ErrInvalidTransform
+	}
 	return txBlockGeometry{
 		size:        size,
+		tx:          tx,
 		coeffSize:   coeffSize,
 		width:       width,
 		height:      height,
@@ -58,6 +85,19 @@ func txBlockGeometryForSize(size transform.Size) (txBlockGeometry, error) {
 		sampleCount: width * height,
 		txScale:     txScale,
 	}, nil
+}
+
+// log2Exact returns log2(n) for a power of two n, else -1.
+func log2Exact(n int) int {
+	if n <= 0 || n&(n-1) != 0 {
+		return -1
+	}
+	l := 0
+	for n > 1 {
+		n >>= 1
+		l++
+	}
+	return l
 }
 
 // Square geometries resolved once for hot paths.

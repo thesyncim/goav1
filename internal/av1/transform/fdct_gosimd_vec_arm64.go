@@ -30,6 +30,7 @@ var (
 	fwdShrNeg1  = archsimd.BroadcastInt32x4(-1)
 	fwdShrNeg2  = archsimd.BroadcastInt32x4(-2)
 	fwdShrNeg4  = archsimd.BroadcastInt32x4(-4)
+	fwdShrNeg10 = archsimd.BroadcastInt32x4(-10)
 	fwdShrNeg12 = archsimd.BroadcastInt32x4(-12)
 	fwdShrNeg13 = archsimd.BroadcastInt32x4(-13)
 	fwdShrNeg31 = archsimd.BroadcastInt32x4(-31)
@@ -46,6 +47,8 @@ func fwdShr(v fwdVec, n uint64) fwdVec {
 		return v.Shift(fwdShrNeg2)
 	case 4:
 		return v.Shift(fwdShrNeg4)
+	case 10:
+		return v.Shift(fwdShrNeg10)
 	case 12:
 		return v.Shift(fwdShrNeg12)
 	case 13:
@@ -159,3 +162,33 @@ func fwdHalfBtf13V(w0, a, w1, b fwdVec) fwdVec {
 func fwdHalfBtf12V(w0, a, w1, b fwdVec) fwdVec {
 	return fwdShr(b.MulAdd(w1, a.MulAdd(w0, fwdRound12)), 12)
 }
+
+// fwdLoadResRawAt is fwdLoadResAt without the shift[0] = 2 pre-scale (the
+// 64-point transforms take shift[0] = 0): i addresses the 8-sample chunk
+// containing column group g.
+func fwdLoadResRawAt(s []int16, i, g int) fwdVec {
+	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), i*2)
+	w := archsimd.LoadInt16x8Array((*[8]int16)(p))
+	if g&4 == 0 {
+		return w.ExtendLo4ToInt32()
+	}
+	return w.HiToLo().ExtendLo4ToInt32()
+}
+
+// fwdTransposeRect writes the transpose of the rows x cols row-major matrix
+// src into dst (dst[c*rows+r] = src[r*cols+c]); both are multiples of four.
+func fwdTransposeRect(dst, src []int32, rows, cols int) {
+	for bi := 0; bi < rows; bi += 4 {
+		for bj := 0; bj < cols; bj += 4 {
+			fwdTransposeBlock4(dst[bj*rows+bi:], rows, src[bi*cols+bj:], cols)
+		}
+	}
+}
+
+// fwdShift is a runtime arithmetic right-shift amount for fwdShrBy: the
+// negated count broadcast for the register-amount SSHL.
+type fwdShift = fwdVec
+
+func fwdMakeShift(n uint64) fwdShift { return archsimd.BroadcastInt32x4(-int32(n)) }
+
+func fwdShrBy(v fwdVec, s fwdShift) fwdVec { return v.Shift(s) }

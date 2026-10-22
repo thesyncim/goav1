@@ -282,8 +282,8 @@ internal/av1/encoder/pframe_residual.go:*:*: make([]int16, int(sq.n) * int(sq.n)
 internal/av1/encoder/pframe_residual.go:*:*: make([]int16, int(sq.n) * int(sq.n)) escapes to heap in (*lossyEncodeState).initScans:
 internal/av1/encoder/pframe_residual.go:*:*: make([]int16, total) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]int16, total) escapes to heap in (*lossyEncodeState).initScans:
-internal/av1/encoder/pframe_residual.go:*:*: make([]int32, 1024) escapes to heap
-internal/av1/encoder/pframe_residual.go:*:*: make([]int32, 1024) escapes to heap in (*lossyEncodeState).initScans:
+internal/av1/encoder/pframe_residual.go:*:*: make([]int32, 4096) escapes to heap
+internal/av1/encoder/pframe_residual.go:*:*: make([]int32, 4096) escapes to heap in (*lossyEncodeState).initScans:
 internal/av1/encoder/pframe_residual.go:*:*: make([]motion.Vector, st.grid16Cols * grid16Rows) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]motion.Vector, st.grid16Cols * grid16Rows) escapes to heap in (*pframeCoder).encodeTileWithOptionsColor:
 internal/av1/encoder/pframe_residual.go:*:*: make([]motion.Vector, st.grid32Cols * grid32Rows) escapes to heap
@@ -351,6 +351,9 @@ internal/av1/encoder/pframe_wavefront.go:*:*: new(subpelProbeCache) escapes to h
 internal/av1/encoder/pframe_wavefront.go:*:*: new(subpelProbeCache) escapes to heap in (*pframeDecideWorker).adopt:
 internal/av1/encoder/pred8.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/pred8.go:*:*: new(subpelProbeCache) escapes to heap in (*lossyEncodeState).predictPlane:
+internal/av1/encoder/rdoq.go:*:*: make([]int16, area) escapes to heap
+internal/av1/encoder/rdoq.go:*:*: make([]int16, area) escapes to heap in init.func3:
+internal/av1/encoder/rdoq.go:*:*: make([]int16, area) escapes to heap in init:
 internal/av1/encoder/subpel_cache.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/subpel_cache.go:*:*: new(subpelProbeCache) escapes to heap in (*lossyEncodeState).ensureSubpelProbeCache:
 internal/av1/encoder/subpel_svt.go:*:*: new(subpelProbeCache) escapes to heap

@@ -769,7 +769,7 @@ func (st *lossyEncodeState) initScans() error {
 		return err
 	}
 	st.levels = make([]uint8, scratchLen)
-	st.invScratch = make([]int32, 1024)
+	st.invScratch = make([]int32, 4096)
 	return nil
 }
 
@@ -781,7 +781,7 @@ func (st *lossyEncodeState) scanForTransformSize(size tile.TransformSize) ([]int
 		return st.scan8, true
 	case tile.TransformSize16x16:
 		return st.scan16, true
-	case tile.TransformSize32x32:
+	case tile.TransformSize32x32, tile.TransformSize64x64, tile.TransformSize64x32, tile.TransformSize32x64:
 		return st.scan32, true
 	case tile.TransformSize16x8:
 		return st.scan16x8, true
@@ -1758,25 +1758,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	}
 
 	// Residual: luma with source-shaped realtime TX partitioning, then chroma.
-	lumaTX, lumaScan := tile.TransformSize8x8, st.scan8
-	switch {
-	case bw == 16 && bh == 16:
-		lumaTX, lumaScan = tile.TransformSize16x16, st.scan16
-	case bw == 32 && bh == 32:
-		lumaTX, lumaScan = tile.TransformSize32x32, st.scan32
-	case bw == 16 && bh == 8:
-		lumaTX, lumaScan = tile.TransformSize16x8, st.scan16x8
-	case bw == 8 && bh == 16:
-		lumaTX, lumaScan = tile.TransformSize8x16, st.scan8x16
-	case bw == 32 && bh == 16:
-		lumaTX, lumaScan = tile.TransformSize32x16, st.scan32x16
-	case bw == 16 && bh == 32:
-		lumaTX, lumaScan = tile.TransformSize16x32, st.scan16x32
-	case bw == 64 && bh == 16:
-		lumaTX, lumaScan = tile.TransformSize64x16, st.scan64x16
-	case bw == 16 && bh == 64:
-		lumaTX, lumaScan = tile.TransformSize16x64, st.scan16x64
-	}
+	lumaTX, lumaScan := st.interLumaTXAndScan(bw, bh)
 	chromaTX, chromaScan := tile.TransformSize4x4, st.scan4
 	if hasChroma {
 		var err error
@@ -2346,6 +2328,8 @@ func realtimeInterTXPlanBuild(block tile.BlockSize, leafSize int) (realtimeInter
 		leafTX = tile.TransformSize16x16
 	case 32:
 		leafTX = tile.TransformSize32x32
+	case 64:
+		leafTX = tile.TransformSize64x64
 	default:
 		return realtimeInterTXPlan{}, fmt.Errorf("encoder: invalid realtime tx leaf %d", leafSize)
 	}
@@ -2739,11 +2723,9 @@ func (st *lossyEncodeState) prepareInterTXBTyped(srcPlane, pred []byte, predStri
 func (st *lossyEncodeState) quantizeInterTXBStats(geo *txBlockGeometry, q quantize.Quantizer, qcoeff []int16) bool {
 	cn := geo.coeffCount
 	tran := &st.tranScratch
-	if st.rdoqArm != 0 && geo.width == geo.height {
-		if scan := st.rdoqScan(geo.width); scan != nil {
-			st.rdoqQuantize(tran[:cn], qcoeff[:cn], geo.width, int(st.rdoqArm-1), q, scan)
-			return st.accumulateInterTXBStats(geo, q, qcoeff)
-		}
+	if st.rdoqArm != 0 {
+		st.rdoqQuantizeTX(tran[:cn], qcoeff[:cn], rdoqGeometry(geo.tx, int(st.rdoqArm-1)), q)
+		return st.accumulateInterTXBStats(geo, q, qcoeff)
 	}
 	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
 		return false
@@ -3408,7 +3390,7 @@ func forwardTransformBlock(tran []int32, residual []int16, scratch []int32, w, h
 // their defensive full-block range scan.
 func forwardTransformBlock8BitResidualTrusted(tran []int32, residual []int16, scratch []int32, w, h int, typ transform.Type) error {
 	return transform.ForwardBlock8BitResidualTrusted(
-		tran, h, residual, w, scratch,
+		tran, min(h, 32), residual, w, scratch,
 		transform.Size{Width: uint8(w), Height: uint8(h)}, typ,
 	)
 }
@@ -3543,6 +3525,12 @@ func forwardDCTBlock(tran []int32, residual []int16, w, h int) error {
 		return transform.ForwardBlock(tran, 32, residual, 16, tran, transform.Size{Width: 16, Height: 64}, transform.TypeDCTDCT)
 	case w == 64 && h == 16:
 		return transform.ForwardBlock(tran, 16, residual, 64, tran, transform.Size{Width: 64, Height: 16}, transform.TypeDCTDCT)
+	case w == 64 && h == 64:
+		return transform.ForwardDCT64x64(tran, 32, residual, 64)
+	case w == 64 && h == 32:
+		return transform.ForwardDCT64x32(tran, 32, residual, 64)
+	case w == 32 && h == 64:
+		return transform.ForwardDCT32x64(tran, 32, residual, 32)
 	}
 	return transform.ErrInvalidTransform
 }

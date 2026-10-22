@@ -600,7 +600,6 @@ type lossyEncodeState struct {
 	rdoqDQ         [1024]int32
 	rdoqArm        int8
 	rdoqBlock      bool
-	rdoqIScanN     [4][1024]int16
 	trial8x8CDFs   coeffTrial8x8Snapshot
 	trialIntraSnap coeffTrial8x8Snapshot
 	// trialBlockLocal keeps the throwaway trial contexts at their frame-start
@@ -653,10 +652,10 @@ type lossyEncodeState struct {
 	// Transform/quant scratch for the inter TXB pipeline (residual in,
 	// forward transform out, dequant + inverse residual back), state-owned so
 	// the per-block helpers stay allocation-free at 16x16 sizes.
-	resScratch  [1024]int16
+	resScratch  [4096]int16
 	tranScratch [1024]int32
-	dqScratch   [1024]int32
-	invResidual [1024]int16
+	dqScratch   [4096]int32
+	invResidual [4096]int16
 
 	// rdMult prices coefficient rate against transform-domain distortion for
 	// the skip decision (av1_compute_rd_mult's inter shape at the working
@@ -1441,68 +1440,15 @@ func (st *lossyEncodeState) encodeTXBAvailRect(reconPlane []byte, srcPlane []byt
 // decoder's own dequant + inverse transform.
 func (st *lossyEncodeState) encodeTXBPred(reconPlane []byte, srcPlane []byte, stride int, px, py, n int, q quantize.Quantizer,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, pred []byte) error {
-
-	residual := &st.resScratch
-	for r := range n {
-		row := (py+r)*stride + px
-		for c := range n {
-			residual[r*n+c] = int16(srcPlane[row+c]) - int16(pred[r*n+c])
-		}
-	}
-	tran := &st.tranScratch
-	qcoeff := &st.lumaQ
-	switch n {
-	case 4:
-		if err := transform.ForwardDCT4x4(tran[:16], 4, residual[:16], 4); err != nil {
-			return err
-		}
-	case 8:
-		if err := transform.ForwardDCT8x8(tran[:64], 8, residual[:64], 8); err != nil {
-			return err
-		}
-	case 16:
-		if err := transform.ForwardDCT16x16(tran[:256], 16, residual[:256], 16); err != nil {
-			return err
-		}
-	case 32:
-		if err := transform.ForwardDCT32x32(tran[:1024], 32, residual[:1024], 32); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("encoder: unsupported txb size %d", n)
-	}
-	if err := quantize.QuantizeBlockScaledB(qcoeff[:n*n], n, tran[:n*n], n, n, n, q, txScaleForSize(n)); err != nil {
-		return err
-	}
-	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff[:n*n], scan, st.levels, afterSkip); err != nil {
-		return err
-	}
-
-	// Reconstruct exactly as the decoder will: dequantize, inverse transform,
-	// add to the prediction, clip to 8 bits.
-	dq := &st.dqScratch
-	if err := quantize.DequantizeBlockScaledBitDepth(dq[:n*n], n, qcoeff[:n*n], n, n, n, q, txScaleForSize(n), 8); err != nil {
-		return err
-	}
-	res := &st.invResidual
-	if err := transform.InverseDCTBlock(res[:n*n], n, dq[:n*n], n, st.invScratch[:n*n], transform.Size{Width: uint8(n), Height: uint8(n)}); err != nil {
-		return err
-	}
-	for r := range n {
-		row := (py+r)*stride + px
-		for c := range n {
-			v := int(pred[r*n+c]) + int(res[r*n+c])
-			if v < 0 {
-				v = 0
-			} else if v > 255 {
-				v = 255
-			}
-			reconPlane[row+c] = uint8(v)
-		}
-	}
-	return nil
+	return st.encodeTXBPredRect(reconPlane, srcPlane, stride, px, py, n, n, q, ctxReq, coeffCtx, scan, afterSkip, pred)
 }
 
+// encodeTXBPredRect codes one w x h DCT_DCT transform block against a
+// materialized prediction (stride w) in the shape of SVT-AV1's light-PD1 TX
+// path (perform_dct_dct_tx_light_pd1 then the inv_transform_recon8bit
+// reconstruction): residual kernel, forward transform, quantize, write, then
+// the decoder-exact dequant + inverse + add of reconInterTXBResult driven by
+// the written end of block. A 64-point extent codes its low 32 coefficients.
 func (st *lossyEncodeState) encodeTXBPredRect(reconPlane []byte, srcPlane []byte, stride int, px, py, w, h int, q quantize.Quantizer,
 	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, pred []byte) error {
 
@@ -1518,38 +1464,18 @@ func (st *lossyEncodeState) encodeTXBPredRect(reconPlane []byte, srcPlane []byte
 	residual := &st.resScratch
 	residualBlockImpl(residual[:n], srcPlane, py*stride+px, stride, pred, w, w, h)
 	tran := &st.tranScratch
-	if err := forwardDCTBlock(tran[:cn], residual[:n], w, h); err != nil {
+	if err := forwardTransformBlock8BitResidualTrusted(tran[:cn], residual[:n], st.dqScratch[:n], w, h, transform.TypeDCTDCT); err != nil {
 		return err
 	}
 	qcoeff := &st.lumaQ
 	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
 		return err
 	}
-	if _, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff[:cn], scan, st.levels, afterSkip); err != nil {
+	res, err := tile.WriteCoefficientsTXBWithContextHook(st.w, &st.coeffCDFs, coeffCtx, ctxReq, transform.Class2D, qcoeff[:cn], scan, st.levels, afterSkip)
+	if err != nil {
 		return err
 	}
-
-	dq := &st.dqScratch
-	if err := quantize.DequantizeBlockScaledBitDepth(dq[:cn], geo.coeffHeight, qcoeff[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale, 8); err != nil {
-		return err
-	}
-	res := &st.invResidual
-	if err := transform.InverseDCTBlock(res[:n], w, dq[:cn], geo.coeffHeight, st.invScratch[:n], geo.size); err != nil {
-		return err
-	}
-	for r := range h {
-		row := (py+r)*stride + px
-		for c := range w {
-			v := int(pred[r*w+c]) + int(res[r*w+c])
-			if v < 0 {
-				v = 0
-			} else if v > 255 {
-				v = 255
-			}
-			reconPlane[row+c] = uint8(v)
-		}
-	}
-	return nil
+	return st.reconInterTXBResult(reconPlane, pred, w, stride, px, py, w, h, q, qcoeff[:cn], geo, scan, transform.TypeDCTDCT, res)
 }
 
 // dcPredictN is the decoder's DC predictor for one n x n block at pixel

@@ -312,7 +312,12 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 			if lightPath {
 				// svt_aom_full_cost prices at full_lambda.
 				rate = (st.rdRcode*st.lpd1FullLambda(dec) + 256) >> 9
-				if r, ok := st.svtInterCoeffCost(txPlan, bw, bh, cbw, cbh, hasChroma, dec.coeffRateLvl0, st.lpd1FullLambda(dec)); ok {
+				lumaTX, _ := st.interLumaTXAndScan(bw, bh)
+				chromaTX := tile.TransformSize4x4
+				if hasChroma {
+					chromaTX, _ = tile.MaxTransformSize(block.Size, st.color, 1)
+				}
+				if r, ok := st.svtInterCoeffCost(txPlan, lumaTX, chromaTX, hasChroma, dec.coeffRateLvl0, st.lpd1FullLambda(dec)); ok {
 					rate = r
 				}
 			} else if r, ok := st.exactInterCoeffCost(txPlan, bw, bh, cbw, cbh, hasChroma, lumaPX, lumaPY); ok {

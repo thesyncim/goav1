@@ -20,6 +20,7 @@ var forwardDCT4x4Trusted8BitImpl = forwardDCT4x4SIMDCore
 var forwardDCT8x8Trusted8BitImpl = forwardDCT8x8SIMD
 var forwardDCT16x16Trusted8BitImpl = forwardDCT16x16SIMD
 var forwardDCT32x32Trusted8BitImpl = forwardDCT32x32SIMD
+var forwardDCT64x64Trusted8BitImpl = forwardDCT64x64SIMD
 
 // Pre-broadcast fdct4 twiddle vectors, kept as package-level (rodata) arrays so
 // each loads with a single instruction instead of a per-call stack fill. This

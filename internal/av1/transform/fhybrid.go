@@ -91,6 +91,14 @@ func forwardDCTBySize8BitResidualTrusted(coeff []int32, coeffStride int, residua
 			return ErrInvalidTransform
 		}
 		forwardDCT32x32Trusted8BitImpl(coeff, coeffStride, residual, residualStride)
+	case Size{Width: 64, Height: 64}:
+		// TX_64X64 codes its low 32x32 coefficients (coeffStride >= 32).
+		if coeffStride < 32 || residualStride < 64 ||
+			!blockFits(len(residual), residualStride, 64, 64) ||
+			!coeffBlockFits(len(coeff), coeffStride, 32, 32) {
+			return ErrInvalidTransform
+		}
+		forwardDCT64x64Trusted8BitImpl(coeff, coeffStride, residual, residualStride)
 	default:
 		// Other DCT dimensions use range-independent scalar kernels today.
 		return forwardDCTBySize(coeff, coeffStride, residual, residualStride, size)
