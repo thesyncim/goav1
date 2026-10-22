@@ -142,8 +142,11 @@ type lpd1SBStat struct {
 	// intra / skip are update_b's sb_intra (any intra block) and sb_skip
 	// (no block with coefficients); skipArea accumulates the area of the
 	// coefficient-free blocks (tot_skip_coded_area).
-	intra    bool
-	skip     bool
+	intra bool
+	skip  bool
+	// mvp64 is sb_64x64_mvp (coding_loop.c update_b): the SB is one
+	// 64x64 inter block coded with a predictor mode (not NEWMV).
+	mvp64    bool
 	skipArea uint32
 }
 
@@ -177,7 +180,7 @@ func (f *lpd1Frame) begin(w, h int, hme *hmeState, baseQ uint8) {
 	n := f.cols * f.rows
 	for i := range f.sb[:n] {
 		s := &f.sb[i]
-		s.intra, s.skip, s.skipArea = false, true, 0
+		s.intra, s.skip, s.skipArea, s.mvp64 = false, true, 0, false
 		s.me64Dist, s.me8x8Var = 0, 0
 		if f.meArmed {
 			me := &hme.fme.sb[i]
@@ -207,7 +210,7 @@ func (f *lpd1Frame) setKey(w, h int) {
 	f.resize(w, h)
 	for i := range f.sb[:f.cols*f.rows] {
 		s := &f.sb[i]
-		s.intra, s.skip, s.skipArea = true, false, 0
+		s.intra, s.skip, s.skipArea, s.mvp64 = true, false, 0, false
 		s.me64Dist, s.me8x8Var = 0, 0
 	}
 	f.valid, f.sliceI, f.skipPerc = true, true, 0
@@ -264,6 +267,9 @@ type lpd1SBDecision struct {
 	// meQFactor is update_lambda's stats_based_sb_lambda_modulation
 	// factor for the SB (rc_process.c, rtc branch).
 	meQFactor int64
+	// subpelLevel is me_subpel_level (svt_aom_sig_deriv_enc_dec_light_pd1):
+	// 0 (no sub-pel), 7, 8 or 10 (svtLPD1SubpelLevel).
+	subpelLevel uint8
 }
 
 // lpd1SBInfo is the reference information light-PD1's signal derivation
@@ -273,6 +279,7 @@ type lpd1SBDecision struct {
 type lpd1SBInfo struct {
 	me8x8Var, me64Dist uint32
 	l0WasSkip          bool
+	l0Was64x64MVP      bool
 	refSkipPerc        uint8
 }
 
@@ -330,10 +337,11 @@ func (st *lossyEncodeState) lpd1SBInfoFor(f *lpd1Frame, idx int) lpd1SBInfo {
 	}
 	cur := f.meStats(idx)
 	return lpd1SBInfo{
-		me8x8Var:    cur.me8x8Var,
-		me64Dist:    cur.me64Dist,
-		l0WasSkip:   ref.sb[idx].skip,
-		refSkipPerc: ref.skipPerc,
+		me8x8Var:      cur.me8x8Var,
+		me64Dist:      cur.me64Dist,
+		l0WasSkip:     ref.sb[idx].skip,
+		l0Was64x64MVP: ref.sb[idx].mvp64,
+		refSkipPerc:   ref.skipPerc,
 	}
 }
 
@@ -369,6 +377,7 @@ func (st *lossyEncodeState) lpd1SB(px, py int) *lpd1SBDecision {
 			st.lpd1Dec = lpd1DecisionForLevel(lpd1CtrlsTable[lvl].pd1Level, lpd1NoSBInfo, uint32(st.qIndex)>>2, true)
 			st.lpd1Dec.idx = -2
 			st.lpd1Dec.meQFactor = 128
+			st.lpd1Dec.subpelLevel = svtLPD1SubpelLevel(st.lpd1Dec.level, lpd1NoSBInfo, uint32(st.qIndex)>>2, true, st.keyVisW*st.keyVisH)
 		}
 		return &st.lpd1Dec
 	}
@@ -381,6 +390,7 @@ func (st *lossyEncodeState) lpd1SB(px, py int) *lpd1SBDecision {
 	st.lpd1Dec = lpd1DecisionForLevel(level, st.lpd1SBInfoFor(f, idx), uint32(st.qIndex)>>2, st.lpd1.notLastLayer)
 	st.lpd1Dec.idx = idx
 	st.lpd1Dec.meQFactor = lpd1MEQLambdaFactor(f.meQDiff(idx))
+	st.lpd1Dec.subpelLevel = svtLPD1SubpelLevel(level, st.lpd1SBInfoFor(f, idx), uint32(st.qIndex)>>2, st.lpd1.notLastLayer, f.width*f.height)
 	if lpd1StatsEnabled {
 		noteLPD1SBLevel(level)
 	}
@@ -671,4 +681,62 @@ func (st *lossyEncodeState) lpd1NoteIsInterRate(modeCtx *tile.BlockModeContext, 
 	if err == nil && ctx >= 0 && ctx < len(st.mds0IntraRates.IntraFlag) {
 		st.lpd1IsInterBits = int64(st.mds0IntraRates.IntraFlag[ctx][1])
 	}
+}
+
+// svtLPD1SubpelLevel is me_subpel_level in svt_aom_sig_deriv_enc_dec_light_pd1
+// (enc_mode_config.c) at preset 12 rtc (non-flat IPP, above ENC_M11):
+//
+//   - LPD1_LVL_0: 7 up to 1080p, else 10;
+//   - above: up to 480p 7 (not-last layer) or 8, up to 1080p 8, else 10, and
+//     0 (no sub-pel) when ((l0_was_skip && l1_was_skip && ref_skip_perc > 50)
+//     || (l0_was_64x64_mvp && l1_was_64x64_mvp)) && me_8x8_cost_variance <
+//     200 * picture_qp && me_64x64_distortion < 200 * picture_qp. P pictures
+//     have no list 1, so l1_was_skip and l1_was_64x64_mvp are 1.
+//
+// numPixels picks svt_aom_derive_input_resolution's range.
+func svtLPD1SubpelLevel(level lpd1PD1Level, info lpd1SBInfo, pictureQP uint32, notLastLayer bool, numPixels int) uint8 {
+	const (
+		inputSize480pTH  = 0xA1400  // INPUT_SIZE_480p_TH
+		inputSize1080pTH = 0x535200 // INPUT_SIZE_1080p_TH
+	)
+	if level <= 0 {
+		if numPixels < inputSize1080pTH {
+			return 7
+		}
+		return 10
+	}
+	var sub uint8
+	switch {
+	case numPixels < inputSize480pTH:
+		sub = 8
+		if notLastLayer {
+			sub = 7
+		}
+	case numPixels < inputSize1080pTH:
+		sub = 8
+	default:
+		sub = 10
+	}
+	if ((info.l0WasSkip && info.refSkipPerc > 50) || info.l0Was64x64MVP) &&
+		info.me8x8Var < 200*pictureQP && info.me64Dist < 200*pictureQP {
+		sub = 0
+	}
+	return sub
+}
+
+// lpd1NoteMVP64 records sb_64x64_mvp (coding_loop.c update_b): an inter block
+// spanning the whole 64x64 SB coded with a mode other than NEWMV/NEW_NEWMV.
+func (st *lossyEncodeState) lpd1NoteMVP64(px, py, bw, bh int, mode tile.InterModeResult) {
+	f := st.lpd1.cur
+	if f == nil || max(bw, bh) != 64 { // blk_geom->sq_size == sb_size
+		return
+	}
+	if mode.Compound {
+		if mode.CompoundMode == tile.CompoundInterModeNewNew {
+			return
+		}
+	} else if mode.Mode == tile.InterModeNewMV {
+		return
+	}
+	f.sb[(py/64)*f.cols+px/64].mvp64 = true
 }

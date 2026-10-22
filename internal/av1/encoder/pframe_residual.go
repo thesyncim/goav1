@@ -2595,6 +2595,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	}
 	st.lpd1NbrSkipCtx, _ = scratch.Mode.SkipContext(int(block.X4), int(block.Y4))
 	st.lpd1NoteIsInterRate(&scratch.Mode, block)
+	st.lpd1NoteMVP64(lumaPX, lumaPY, bw, bh, modeResult)
 	skip, splitTX, txPlan, txType, err := st.decideInterTXBlock(src, refPlanes, mv, block,
 		lumaPX, lumaPY, bw, bh, cbw, cbh, chromaPX, chromaPY, hasChroma, fullSAD)
 	st.predYKey.valid = false

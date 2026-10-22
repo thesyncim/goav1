@@ -67,7 +67,14 @@ func (st *lossyEncodeState) svtNewMVPredictor(stack *tile.ReferenceMVStackResult
 // stays in predY (st.mePredY) for MDS0 to reuse.
 func (st *lossyEncodeState) pblockSubpel(src SourceFrame420, refPlane []byte, refStride, lumaPX, lumaPY, bw, bh int,
 	mv motion.Vector, fullSAD int, refMV motion.Vector, intoPredY bool) (motion.Vector, int) {
-	refined := st.svtSubpelSearch(src.Y, refPlane, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, refMV, &svtSubpelLevel8)
+	// The SB's me_subpel_level (svtLPD1SubpelLevel); level 0 disables the
+	// search, skip_zz_mv skips it from a zero vector (md_subpel_search).
+	dec := st.lpd1SB(lumaPX, lumaPY)
+	ctrls := svtSubpelCtrlsFor(dec.subpelLevel)
+	if ctrls == nil || (ctrls.skipZeroMV && mv == (motion.Vector{})) {
+		return mv, fullSAD
+	}
+	refined := st.svtSubpelSearch(src.Y, refPlane, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, refMV, ctrls, st.lpd1FullLambda(dec))
 	if refined == mv {
 		return mv, fullSAD
 	}

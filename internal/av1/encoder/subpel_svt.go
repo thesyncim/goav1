@@ -24,13 +24,16 @@ import (
 //     Source/Lib/Codec/filter.h). The pruned tree never calls the upsampled
 //     (USE_4_TAPS) predictor: is_scaled is 0, so svt_check_better_fast takes
 //     svt_estimated_pref_error.
-//   - Source/Lib/Codec/enc_mode_config.c md_subpel_me_controls level 8, the
-//     level svt_aom_sig_deriv_enc_dec_light_pd1 selects at 720p/1080p for
-//     light-PD1 levels above LPD1_LVL_0 (preset 12 rtc pictures run
-//     pic_lpd1_lvl 4 / 7, i.e. LPD1_LVL_1 / LPD1_LVL_5): quarter-pel max
-//     precision, one iteration per step, pred_variance_th 100, abs_th_mult 8,
-//     round_dev_th -15, skip_diag_refinement 4, bias_fp 110. Light-PD1 runs
-//     no interpolation filter search, so every block predicts with REGULAR.
+//   - Source/Lib/Codec/enc_mode_config.c md_subpel_me_controls at the
+//     per-SB me_subpel_level svt_aom_sig_deriv_enc_dec_light_pd1 derives
+//     (svtLPD1SubpelLevel): level 8 at 720p/1080p above LPD1_LVL_0
+//     (quarter-pel max precision, one iteration per step, pred_variance_th
+//     100, abs_th_mult 8, round_dev_th -15, skip_diag_refinement 4, bias_fp
+//     110), level 7 at LPD1_LVL_0, and 0 (no sub-pel) on SBs whose reference
+//     SB was skip / a 64x64 predictor block with low ME statistics. The MV
+//     cost's error_per_bit comes from the SB's full lambda
+//     (lpd1FullLambda). Light-PD1 runs no interpolation filter search, so
+//     every block predicts with REGULAR.
 //
 // With skip_diag_refinement >= 4 org_error is 0, so first_level_check_fast
 // returns before the diagonal probe and two_level_checks_fast never reaches
@@ -48,18 +51,35 @@ type svtSubpelCtrls struct {
 	roundDevTh     int64  // round_dev_th
 	skipDiag       uint8  // skip_diag_refinement
 	biasFP         uint64 // bias_fp
+	skipZeroMV     bool   // skip_zz_mv: no search from a zero vector
 }
 
-// svtSubpelLevel8 is md_subpel_me_controls(ctx, 8). Quarter-pel max
-// precision with allow_high_precision_mv off gives two rounds (half,
-// quarter).
-var svtSubpelLevel8 = svtSubpelCtrls{
-	rounds:         2,
-	predVarianceTh: 100,
-	absThMult:      8,
-	roundDevTh:     -15,
-	skipDiag:       4,
-	biasFP:         110,
+// svtSubpelLevels are md_subpel_me_controls(ctx, level) for the levels light
+// PD1 selects (svtLPD1SubpelLevel): quarter-pel max precision with
+// allow_high_precision_mv off gives two rounds (half, quarter), HALF_PEL one.
+var (
+	svtSubpelLevel7 = svtSubpelCtrls{
+		rounds: 2, predVarianceTh: 50, absThMult: 8, roundDevTh: 1<<31 - 1, skipDiag: 3, biasFP: 110,
+	}
+	svtSubpelLevel8 = svtSubpelCtrls{
+		rounds: 2, predVarianceTh: 100, absThMult: 8, roundDevTh: -15, skipDiag: 4, biasFP: 110,
+	}
+	svtSubpelLevel10 = svtSubpelCtrls{
+		rounds: 1, predVarianceTh: 100, absThMult: 8, roundDevTh: -25, skipDiag: 4, skipZeroMV: true, biasFP: 110,
+	}
+)
+
+// svtSubpelCtrlsFor returns level's controls, nil for level 0 (disabled).
+func svtSubpelCtrlsFor(level uint8) *svtSubpelCtrls {
+	switch level {
+	case 7:
+		return &svtSubpelLevel7
+	case 8:
+		return &svtSubpelLevel8
+	case 10:
+		return &svtSubpelLevel10
+	}
+	return nil
 }
 
 // svtSubpelScratch holds the bilinear passes' buffers (variance.c SUBPIX_VAR
@@ -85,13 +105,14 @@ var svtBilinearFilters2T = [8][2]uint32{
 // plane must match the source dimensions. startMV is the full-pel ME vector,
 // refMV the NEWMV predictor the MV cost is measured from. It returns the
 // refined vector; when it differs from startMV it is a sub-pel vector.
+// fullLambda is full_lambda_md[EB_8_BIT_MD], the MV cost's rdmult.
 func (st *lossyEncodeState) svtSubpelSearch(src, refPlane []byte, stride, width, height, px, py, bw, bh int,
-	startMV, refMV motion.Vector, ctrls *svtSubpelCtrls) motion.Vector {
+	startMV, refMV motion.Vector, ctrls *svtSubpelCtrls, fullLambda int64) motion.Vector {
 
 	st.ensureSubpelProbeCache()
 	scratch := &st.subpelCache.svt
 	qp := uint64(st.qIndex) >> 2 // pcs->ppcs->picture_qp
-	epb := st.rdMult >> 6        // error_per_bit = AOMMAX(rdmult >> RD_EPB_SHIFT, 1)
+	epb := fullLambda >> 6       // error_per_bit = AOMMAX(rdmult >> RD_EPB_SHIFT, 1)
 	if epb < 1 {
 		epb = 1
 	}
