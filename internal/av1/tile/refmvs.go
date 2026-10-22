@@ -110,6 +110,11 @@ type refmvsTile struct {
 
 	frame refmvsFrame
 	bound bool
+
+	// tl4x4Filter is dav1d's t->tl_4x4_filter: the interpolation filters of
+	// the first 4x4 block of an 8x8 split, used for the top-left cell of the
+	// sub8x8 chroma prediction.
+	tl4x4Filter motion.InterpFilters
 }
 
 // bindFrame sizes the row storage for a frame of the given coded width (in

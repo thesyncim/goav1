@@ -384,7 +384,7 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 	useRefmvs := !intraOnlyContexts && bindRefmvsForLoop(&scratch.Refmvs, &req)
 	defer func() { scratch.Refmvs.bound = false }()
 	for miRow := miRowStart; miRow < miRowEnd; miRow += rootSize {
-		if !intraOnlyContexts {
+		if !intraOnlyContexts && !useRefmvs {
 			promotePendingDiagonalCarriers(req.ContextCarrier)
 		}
 		if useRefmvs {
@@ -396,7 +396,7 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 			if intraOnlyContexts {
 				err = blockLoopLoadIntraRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB)
 			} else {
-				err = blockLoopLoadRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB)
+				err = blockLoopLoadRootContextMotion(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB, !useRefmvs)
 			}
 			if err != nil {
 				return stats, err
@@ -500,12 +500,12 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 			if intraOnlyContexts {
 				err = blockLoopStoreIntraRootContext(scratch, req.ContextCarrier, rootColIndex)
 			} else {
-				err = blockLoopStoreRootContext(scratch, req.ContextCarrier, rootColIndex, req.SBSizeMIB)
+				err = blockLoopStoreRootContextMotion(scratch, req.ContextCarrier, rootColIndex, req.SBSizeMIB, !useRefmvs)
 			}
 			if err != nil {
 				return stats, fmt.Errorf("store root context col=%d row=%d: %w", rootColIndex, miRow, err)
 			}
-			if !intraOnlyContexts {
+			if !intraOnlyContexts && !useRefmvs {
 				captureDiagonalCornerToPending(req.ContextCarrier, rootColIndex+1, &scratch.Mode, req.SBSizeMIB)
 			}
 		}
@@ -514,6 +514,14 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 }
 
 func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8) error {
+	return blockLoopLoadRootContextMotion(scratch, carrier, rootColIndex, haveTop, haveLeft, sbSizeMIB, true)
+}
+
+// blockLoopLoadRootContextMotion loads one root's edge contexts. keepMotion
+// false skips the libaom-shaped neighbor-motion arrays and cross-SB motion
+// snapshots, which have no readers while the frame decoder keeps neighbor
+// motion in the dav1d refmvs rows.
+func blockLoopLoadRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8, keepMotion bool) error {
 	scratch.Partition = PartitionContext{}
 	scratch.Mode.resetForSuperblock()
 	scratch.CDEF.Reset()
@@ -541,15 +549,17 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.AboveCompGroup = above.mode.CompGroup
 		scratch.Mode.AboveCompIndex = above.mode.CompIndex
 		scratch.Mode.AboveInterIntra = above.mode.InterIntra
-		scratch.Mode.AboveInterMotion = above.mode.InterMotion
-		scratch.Mode.AboveMotionValid = above.mode.MotionValid
-		scratch.Mode.SBTopInterMotion = above.mode.InterMotion
-		scratch.Mode.SBTopMotionValid = above.mode.MotionValid
-		scratch.Mode.SBTopBlockSize = above.mode.BlockSize
-		copy(scratch.Mode.SBTopInterMotionGrid[:], above.mode.InterMotionHistory[:])
-		scratch.Mode.SBTopMotionValidGrid = above.mode.MotionValidHistory
-		scratch.Mode.SBTopBlockSizeGrid = above.mode.BlockSizeHistory
-		scratch.Mode.SBTopBlockSizeVisitedGrid = above.mode.BlockSizeVisitedHistory
+		if keepMotion {
+			scratch.Mode.AboveInterMotion = above.mode.InterMotion
+			scratch.Mode.AboveMotionValid = above.mode.MotionValid
+			scratch.Mode.SBTopInterMotion = above.mode.InterMotion
+			scratch.Mode.SBTopMotionValid = above.mode.MotionValid
+			scratch.Mode.SBTopBlockSize = above.mode.BlockSize
+			copy(scratch.Mode.SBTopInterMotionGrid[:], above.mode.InterMotionHistory[:])
+			scratch.Mode.SBTopMotionValidGrid = above.mode.MotionValidHistory
+			scratch.Mode.SBTopBlockSizeGrid = above.mode.BlockSizeHistory
+			scratch.Mode.SBTopBlockSizeVisitedGrid = above.mode.BlockSizeVisitedHistory
+		}
 		scratch.Mode.AboveInterp = above.mode.Interp
 		scratch.Mode.AboveInterpValid = above.mode.InterpValid
 		scratch.Mode.AboveBlockSize = above.mode.BlockSize
@@ -563,7 +573,9 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		// such as topright (which reads frame mi col >= mi_col + W4) and outer
 		// row scans extending past column SBSizeMIB-1 see libaom's frame-wide
 		// mi grid content rather than zeroed slots from a smaller SB layout.
-		extendAboveContextFromRightCarrier(&scratch.Mode, carrier, rootColIndex+1, sbSizeMIB)
+		if keepMotion {
+			extendAboveContextFromRightCarrier(&scratch.Mode, carrier, rootColIndex+1, sbSizeMIB)
+		}
 	}
 	if haveLeft {
 		left := &carrier.Left
@@ -582,15 +594,17 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 		scratch.Mode.LeftCompGroup = left.mode.CompGroup
 		scratch.Mode.LeftCompIndex = left.mode.CompIndex
 		scratch.Mode.LeftInterIntra = left.mode.InterIntra
-		scratch.Mode.LeftInterMotion = left.mode.InterMotion
-		scratch.Mode.LeftMotionValid = left.mode.MotionValid
-		scratch.Mode.SBLeftInterMotion = left.mode.InterMotion
-		scratch.Mode.SBLeftMotionValid = left.mode.MotionValid
-		scratch.Mode.SBLeftBlockSize = left.mode.BlockSize
-		copy(scratch.Mode.SBLeftInterMotionGrid[:], left.mode.InterMotionHistory[:])
-		scratch.Mode.SBLeftMotionValidGrid = left.mode.MotionValidHistory
-		scratch.Mode.SBLeftBlockSizeGrid = left.mode.BlockSizeHistory
-		scratch.Mode.SBLeftBlockSizeVisitedGrid = left.mode.BlockSizeVisitedHistory
+		if keepMotion {
+			scratch.Mode.LeftInterMotion = left.mode.InterMotion
+			scratch.Mode.LeftMotionValid = left.mode.MotionValid
+			scratch.Mode.SBLeftInterMotion = left.mode.InterMotion
+			scratch.Mode.SBLeftMotionValid = left.mode.MotionValid
+			scratch.Mode.SBLeftBlockSize = left.mode.BlockSize
+			copy(scratch.Mode.SBLeftInterMotionGrid[:], left.mode.InterMotionHistory[:])
+			scratch.Mode.SBLeftMotionValidGrid = left.mode.MotionValidHistory
+			scratch.Mode.SBLeftBlockSizeGrid = left.mode.BlockSizeHistory
+			scratch.Mode.SBLeftBlockSizeVisitedGrid = left.mode.BlockSizeVisitedHistory
+		}
 		scratch.Mode.LeftInterp = left.mode.Interp
 		scratch.Mode.LeftInterpValid = left.mode.InterpValid
 		scratch.Mode.LeftBlockSize = left.mode.BlockSize
@@ -600,7 +614,7 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 			scratch.CoeffCtx.Left[plane] = left.Coeff[plane]
 		}
 	}
-	if haveTop && haveLeft && rootColIndex >= 0 && rootColIndex < len(carrier.Diagonal) {
+	if haveTop && haveLeft && keepMotion && rootColIndex >= 0 && rootColIndex < len(carrier.Diagonal) {
 		scratch.Mode.SBDiagonalInterMotionGrid = carrier.Diagonal[rootColIndex].InterMotion
 		scratch.Mode.SBDiagonalMotionValidGrid = carrier.Diagonal[rootColIndex].MotionValid
 		scratch.Mode.SBDiagonalBlockSizeGrid = carrier.Diagonal[rootColIndex].BlockSize
@@ -610,6 +624,12 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 }
 
 func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, sbSizeMIB uint8) error {
+	return blockLoopStoreRootContextMotion(scratch, carrier, rootColIndex, sbSizeMIB, true)
+}
+
+// blockLoopStoreRootContextMotion is the store side of
+// blockLoopLoadRootContextMotion.
+func blockLoopStoreRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, sbSizeMIB uint8, keepMotion bool) error {
 	if carrier == nil {
 		return nil
 	}
@@ -632,14 +652,18 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	above.mode.CompGroup = scratch.Mode.AboveCompGroup
 	above.mode.CompIndex = scratch.Mode.AboveCompIndex
 	above.mode.InterIntra = scratch.Mode.AboveInterIntra
-	above.mode.InterMotion = scratch.Mode.AboveInterMotion
-	above.mode.MotionValid = scratch.Mode.AboveMotionValid
+	if keepMotion {
+		above.mode.InterMotion = scratch.Mode.AboveInterMotion
+		above.mode.MotionValid = scratch.Mode.AboveMotionValid
+	}
 	above.mode.Interp = scratch.Mode.AboveInterp
 	above.mode.InterpValid = scratch.Mode.AboveInterpValid
 	above.mode.BlockSize = scratch.Mode.AboveBlockSize
 	above.mode.PaletteY = scratch.Mode.AbovePaletteY
 	above.mode.PaletteUV = scratch.Mode.AbovePaletteUV
-	captureAboveCrossSBHistory(&above.mode, &scratch.Mode, sbSizeMIB)
+	if keepMotion {
+		captureAboveCrossSBHistory(&above.mode, &scratch.Mode, sbSizeMIB)
+	}
 	for plane := range 3 {
 		above.Coeff[plane] = scratch.CoeffCtx.Above[plane]
 	}
@@ -660,14 +684,18 @@ func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopCont
 	left.mode.CompGroup = scratch.Mode.LeftCompGroup
 	left.mode.CompIndex = scratch.Mode.LeftCompIndex
 	left.mode.InterIntra = scratch.Mode.LeftInterIntra
-	left.mode.InterMotion = scratch.Mode.LeftInterMotion
-	left.mode.MotionValid = scratch.Mode.LeftMotionValid
+	if keepMotion {
+		left.mode.InterMotion = scratch.Mode.LeftInterMotion
+		left.mode.MotionValid = scratch.Mode.LeftMotionValid
+	}
 	left.mode.Interp = scratch.Mode.LeftInterp
 	left.mode.InterpValid = scratch.Mode.LeftInterpValid
 	left.mode.BlockSize = scratch.Mode.LeftBlockSize
 	left.mode.PaletteY = scratch.Mode.LeftPaletteY
 	left.mode.PaletteUV = scratch.Mode.LeftPaletteUV
-	captureLeftCrossSBHistory(&left.mode, &scratch.Mode, sbSizeMIB)
+	if keepMotion {
+		captureLeftCrossSBHistory(&left.mode, &scratch.Mode, sbSizeMIB)
+	}
 	for plane := range 3 {
 		left.Coeff[plane] = scratch.CoeffCtx.Left[plane]
 	}
@@ -1183,69 +1211,76 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 					}
 				}
 				if req.DecodeMotionModes {
-					overlappableNeighbors, err := ctx.CollectOverlappableNeighbors(OverlappableNeighborRequest{
-						Size:         block.Size,
-						X4:           block.X4,
-						Y4:           block.Y4,
-						VisibleW4:    block.VisibleW4,
-						VisibleH4:    block.VisibleH4,
-						HaveTop:      block.HaveTop,
-						HaveLeft:     block.HaveLeft,
-						HaveTopRight: blockHasTopRight(req.SBSizeMIB, block),
-					})
-					if err != nil {
-						return fmt.Errorf("collect overlappable neighbors: %w", err)
-					}
-					// libaom's av1_findSamples scans the full above row and
-					// left column past the OBMC neighbor cap (commit 0e64960
-					// landed the wider scan as WarpProjectionWithContext for the
-					// actual warp projection). Use the same wider scan here so
-					// num_proj_ref matches libaom — the OBMC-capped count
-					// undershoots for blocks with many short left neighbors,
-					// which steers ReadMotionMode into the OBMC CDF when libaom
-					// reads the 3-symbol WARP CDF.
-					// WarpSampleCountWithContext now resolves top-left/top-right
-					// corner neighbors across the superblock boundary (via
-					// warpSampleGrid -> crossSBInterGridInterMotion), matching
-					// libaom's frame-wide av1_findSamples scan, so no separate
-					// SB-diagonal corner augmentation is needed here.
-					numProjRef, err := ctx.WarpSampleCountWithContext(block, refs.Ref[0], req.SBSizeMIB)
-					if err != nil {
-						return fmt.Errorf("count warp samples: %w", err)
-					}
-					motionMode, err = s.ReadMotionMode(cdfs.Motion, MotionModeRequest{
-						Size:                  block.Size,
-						Mode:                  mode.Mode,
-						Compound:              refs.Compound,
-						SkipMode:              prefix.SkipMode,
-						InterIntra:            result.InterIntra.Enabled,
-						SwitchableMotionMode:  req.SwitchableMotionMode,
-						AllowWarpedMotion:     req.AllowWarpedMotion,
-						ForceIntegerMV:        req.ForceIntegerMV,
-						GlobalMotionType:      blockReferenceGlobalMotionType(refs, req.GlobalMotionTypes),
-						ScaledReference:       blockReferenceScaled(refs, req.ScaledReferences),
-						OverlappableNeighbors: uint8(overlappableNeighbors.MotionModeCount()),
-						NumProjRef:            uint8(numProjRef),
-					})
-					if err != nil {
-						return fmt.Errorf("read motion mode: %w", err)
-					}
-					result.MotionMode = motionMode
-					result.MotionModeValid = true
-					if motionMode == MotionModeWarp {
-						model, invalid, err := ctx.WarpProjectionWithContext(block, refs.Ref[0], result.InterMotion.MV[0], req.SBSizeMIB)
+					if rt != nil {
+						motionMode, err = s.decodeMotionModeRefmvs(cdfs.Motion, ctx, rt, &req, block, refs, prefix.SkipMode, result)
 						if err != nil {
-							return fmt.Errorf("project warped motion: %w", err)
+							return err
 						}
-						result.WarpedMotionInvalid = invalid
-						if !invalid {
-							result.WarpedMotion = model
-							result.WarpedMotionValid = true
+					} else {
+						overlappableNeighbors, err := ctx.CollectOverlappableNeighbors(OverlappableNeighborRequest{
+							Size:         block.Size,
+							X4:           block.X4,
+							Y4:           block.Y4,
+							VisibleW4:    block.VisibleW4,
+							VisibleH4:    block.VisibleH4,
+							HaveTop:      block.HaveTop,
+							HaveLeft:     block.HaveLeft,
+							HaveTopRight: blockHasTopRight(req.SBSizeMIB, block),
+						})
+						if err != nil {
+							return fmt.Errorf("collect overlappable neighbors: %w", err)
 						}
-					}
-					if motionMode == MotionModeOBMC || motionMode == MotionModeWarp {
-						result.OverlappableNeighbors = overlappableNeighbors
-						result.OverlappableNeighborsValid = true
+						// libaom's av1_findSamples scans the full above row and
+						// left column past the OBMC neighbor cap (commit 0e64960
+						// landed the wider scan as WarpProjectionWithContext for the
+						// actual warp projection). Use the same wider scan here so
+						// num_proj_ref matches libaom — the OBMC-capped count
+						// undershoots for blocks with many short left neighbors,
+						// which steers ReadMotionMode into the OBMC CDF when libaom
+						// reads the 3-symbol WARP CDF.
+						// WarpSampleCountWithContext now resolves top-left/top-right
+						// corner neighbors across the superblock boundary (via
+						// warpSampleGrid -> crossSBInterGridInterMotion), matching
+						// libaom's frame-wide av1_findSamples scan, so no separate
+						// SB-diagonal corner augmentation is needed here.
+						numProjRef, err := ctx.WarpSampleCountWithContext(block, refs.Ref[0], req.SBSizeMIB)
+						if err != nil {
+							return fmt.Errorf("count warp samples: %w", err)
+						}
+						motionMode, err = s.ReadMotionMode(cdfs.Motion, MotionModeRequest{
+							Size:                  block.Size,
+							Mode:                  mode.Mode,
+							Compound:              refs.Compound,
+							SkipMode:              prefix.SkipMode,
+							InterIntra:            result.InterIntra.Enabled,
+							SwitchableMotionMode:  req.SwitchableMotionMode,
+							AllowWarpedMotion:     req.AllowWarpedMotion,
+							ForceIntegerMV:        req.ForceIntegerMV,
+							GlobalMotionType:      blockReferenceGlobalMotionType(refs, req.GlobalMotionTypes),
+							ScaledReference:       blockReferenceScaled(refs, req.ScaledReferences),
+							OverlappableNeighbors: uint8(overlappableNeighbors.MotionModeCount()),
+							NumProjRef:            uint8(numProjRef),
+						})
+						if err != nil {
+							return fmt.Errorf("read motion mode: %w", err)
+						}
+						result.MotionMode = motionMode
+						result.MotionModeValid = true
+						if motionMode == MotionModeWarp {
+							model, invalid, err := ctx.WarpProjectionWithContext(block, refs.Ref[0], result.InterMotion.MV[0], req.SBSizeMIB)
+							if err != nil {
+								return fmt.Errorf("project warped motion: %w", err)
+							}
+							result.WarpedMotionInvalid = invalid
+							if !invalid {
+								result.WarpedMotion = model
+								result.WarpedMotionValid = true
+							}
+						}
+						if motionMode == MotionModeOBMC || motionMode == MotionModeWarp {
+							result.OverlappableNeighbors = overlappableNeighbors
+							result.OverlappableNeighborsValid = true
+						}
 					}
 					// libaom promotes GLOBALMV/GLOBAL_GLOBALMV blocks with a
 					// non-translational frame-level warp model and a block
@@ -1329,6 +1364,9 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 				}
 				result.InterpFilters = filters
 				result.InterpFiltersValid = true
+				if rt != nil && block.Size == BlockSize4x4 && block.MICol&1 == 0 && block.MIRow&1 == 0 {
+					rt.tl4x4Filter = filters
+				}
 				result.InterpFilterReads = uint8(filterReads)
 				// libaom's build_inter_predictors_sub8x8 path runs at the
 				// chroma anchor of any inter block whose luma block has
@@ -1340,7 +1378,14 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 				// cells come straight off the grid).
 				hasChroma := hasChromaForBlock(block.Size, blockX4, blockY4, req.Color)
 				if hasChroma {
-					if sub, ok := ctx.CollectSubChromaInterCells(block.Size, blockX4, blockY4, req.Color.SubsamplingX, req.Color.SubsamplingY, filters); ok {
+					var sub SubChromaInterResult
+					var ok bool
+					if rt != nil {
+						sub, ok = rt.subChromaCells(ctx, block, req.Color.SubsamplingX, req.Color.SubsamplingY, filters)
+					} else {
+						sub, ok = ctx.CollectSubChromaInterCells(block.Size, blockX4, blockY4, req.Color.SubsamplingX, req.Color.SubsamplingY, filters)
+					}
+					if ok {
 						selfCell := &sub.Cells[int(sub.Count)-1]
 						selfCell.MV = result.InterMotion.MV[0]
 						selfCell.Reference = refs.Ref[0]
@@ -1349,7 +1394,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 						result.SubChromaInterValid = true
 					}
 				}
-				if err := ctx.MarkInterMotionAndFilters(block.Size, blockX4, blockY4, result.InterMotion, filters, hasChroma); err != nil {
+				if err := ctx.markInterMotionAndFilters(block.Size, blockX4, blockY4, result.InterMotion, filters, hasChroma, rt == nil); err != nil {
 					return err
 				}
 				if rt != nil {
@@ -1403,7 +1448,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs BlockLoopCDFs, ctx *Blo
 	if intraOnlyContexts {
 		err = ctx.markOwnedIntra(block.Size, blockX4, blockY4, mode)
 	} else {
-		err = ctx.MarkIntra(block.Size, blockX4, blockY4, true, mode)
+		err = ctx.markIntra(block.Size, blockX4, blockY4, true, mode, rt == nil)
 	}
 	if err != nil {
 		return err

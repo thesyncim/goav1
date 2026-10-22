@@ -1,6 +1,8 @@
 package tile
 
 import (
+	"fmt"
+
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -70,6 +72,54 @@ func readMVResidualRefmvs(c *entropy.Cursor, cdfs *MVCDFs, ref refmvsMV, mvPrec 
 	}
 	ok := row > MVLower && row < MVUpper && col > MVLower && col < MVUpper
 	return makeRefmvsMV(row, col), ok
+}
+
+// decodeMotionModeRefmvs ports decode_b's "motion variation" section: the
+// OBMC/warp gate (switchable motion mode, no inter-intra, min side >= 8 px,
+// not a warped GLOBALMV, has overlappable neighbours), find_matching_ref,
+// the motion_mode / obmc symbol and derive_warpmv. It fills the motion-mode,
+// warp and OBMC-neighbor fields of result.
+func (s *DecodeState) decodeMotionModeRefmvs(cdfs *MotionModeCDFs, c *BlockModeContext, rt *refmvsTile, req *BlockLoopRequest, block BlockVisit, refs InterReferencesResult, skipMode bool, result *BlockPredictionModeResult) (MotionMode, error) {
+	result.MotionMode = MotionModeTranslation
+	result.MotionModeValid = true
+	dims := blockDimensions[block.Size]
+	ref := refs.Ref[0]
+	if refs.Compound || skipMode || !req.SwitchableMotionMode || result.InterIntra.Enabled ||
+		min(dims.W4, dims.H4) < 2 ||
+		(!req.ForceIntegerMV && result.InterMode.Mode == InterModeGlobalMV && req.GlobalMotionTypes[ref] > parser.GlobalMotionTranslation) ||
+		!c.hasOverlappableNeighbours(block) {
+		return MotionModeTranslation, nil
+	}
+	var masks [2]uint64
+	topHasRight := refmvsTopHasRight(req.SBSizeMIB, block)
+	rt.findMatchingRef(block, topHasRight, ref, &masks)
+	allowWarp := !req.ScaledReferences[ref] && !req.ForceIntegerMV && req.AllowWarpedMotion && masks[0]|masks[1] != 0
+
+	cur := s.Reader.Cursor()
+	var mode MotionMode
+	if allowWarp {
+		mode = MotionMode(cur.ReadCDF3Unchecked(&cdfs.MotionMode[block.Size]))
+	} else {
+		mode = MotionMode(cur.ReadBinaryCDFUnchecked(&cdfs.OBMC[block.Size]))
+	}
+	cur.CommitStateTo(&s.Reader)
+	result.MotionMode = mode
+	if mode == MotionModeWarp {
+		model, invalid, err := rt.deriveWarpMV(block, &masks, result.InterMotion.MV[0])
+		if err != nil {
+			return 0, fmt.Errorf("project warped motion: %w", err)
+		}
+		result.WarpedMotionInvalid = invalid
+		if !invalid {
+			result.WarpedMotion = model
+			result.WarpedMotionValid = true
+		}
+	}
+	if mode != MotionModeTranslation {
+		result.OverlappableNeighbors = rt.obmcNeighbors(c, block)
+		result.OverlappableNeighborsValid = true
+	}
+	return mode, nil
 }
 
 var compoundModeHasNear = [compoundInterModeCount]bool{
