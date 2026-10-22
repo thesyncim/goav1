@@ -26,8 +26,8 @@ type coefBlock struct {
 
 	// bx4/by4 and w4/h4 are the block's superblock-local luma origin and its
 	// frame-clipped size in 4x4 units (dav1d's t->bx & 31 and w4/h4).
-	bx4, by4 int
-	w4, h4   int
+	bx4, by4  int
+	w4, h4    int
 	blockDims [3]BlockDimensions
 	planeBlk  [3]BlockSize
 
@@ -262,8 +262,11 @@ func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T,
 		}
 		target, txScale, dqMax := prepareCoeffDequantFactors(b.dequant, plane, geo)
 		var cf *[1024]int32
+		cfZeroed := false
 		if target != nil {
-			if target.Arena != nil {
+			if target.Coef != nil {
+				cf, cfZeroed = target.Coef.take(), true
+			} else if target.Arena != nil {
 				cf = target.arenaSlot()
 			} else if len(target.Dst) >= 1024 {
 				cf = (*[1024]int32)(target.Dst)
@@ -276,7 +279,7 @@ func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T,
 		} else {
 			factors := &target.Factors[plane]
 			c := s.Reader.Cursor()
-			r := decodeCoefTokens(&c, b.cdfs, size, geo, coeffPlane, txtp, class, txbCtx.DCSignContext, cf, &b.scratch.Coeff.CoefLevels, coefDequant{
+			r := decodeCoefTokens(&c, b.cdfs, size, geo, coeffPlane, txtp, class, txbCtx.DCSignContext, cf, cfZeroed, &b.scratch.Coeff.CoefLevels, coefDequant{
 				dc:    uint32(factors[0]),
 				ac:    uint32(factors[1]),
 				shift: txScale,
@@ -287,7 +290,10 @@ func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T,
 			target.TxScale = txScale
 			target.Ready = true
 			result = TXBDecodeResult{EOB: uint16(r.eob + 1), CulLevel: r.culLevel}
-			if target.Arena != nil {
+			if target.Coef != nil {
+				target.Coef.used(r.activeRows, r.activeCols, int(geo.scanHeight))
+				target.Dst = target.Coef.CF[:geo.maxEOB:geo.maxEOB]
+			} else if target.Arena != nil {
 				target.commitArenaSlot(int(geo.maxEOB))
 			}
 		}
@@ -424,4 +430,28 @@ func (t *CoeffDequantTarget) commitArenaSlot(area int) {
 //go:noinline
 func growCoefArena(a []int32) []int32 {
 	return append(a[:cap(a)], make([]int32, 1024+cap(a)/2)...)[:len(a)]
+}
+
+// CoefBuffer is dav1d's t->cf: the coefficient buffer the synchronous
+// reconstruction reads right after each TXB is decoded. dav1d's inverse
+// transforms zero the coefficients they consumed so decode_coefs can rely on
+// a zero buffer; here the next take clears the region the last TXB could have
+// left nonzero, its activeCols columns times activeRows rows.
+type CoefBuffer struct {
+	CF                    [1024]int32
+	rows, cols, colStride uint8
+}
+
+func (b *CoefBuffer) take() *[1024]int32 {
+	// One contiguous clear through the last active row of the last active
+	// column; per-column clears of the active rows measured slower.
+	if n := (int(b.cols)-1)*int(b.colStride) + int(b.rows); n > 0 {
+		clear(b.CF[:n])
+	}
+	b.rows, b.cols = 0, 0
+	return &b.CF
+}
+
+func (b *CoefBuffer) used(rows, cols, stride int) {
+	b.rows, b.cols, b.colStride = uint8(rows), uint8(cols), uint8(stride)
 }

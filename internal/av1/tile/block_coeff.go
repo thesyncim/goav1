@@ -28,13 +28,16 @@ type CoeffDequantProvider interface {
 // Factors are cached by the provider for the current quantization key; Ready,
 // ActiveRows, and TxScale describe only the most recently decoded TXB.
 type CoeffDequantTarget struct {
-	Dst            []int32
+	Dst []int32
 	// Arena, when set, switches the target to dav1d's frame-thread cf layout
 	// (ts->frame_thread[p].cf): each dequantized TXB is appended to *Arena and
 	// Dst is left pointing at its slot, so a deferred reconstruction pass can
 	// consume it later. Only the dav1d block walk (readCoefBlocks) fills it;
 	// the quantized readers ignore an arena target.
-	Arena          *[]int32
+	Arena *[]int32
+	// Coef, when set, is the zero-maintained t->cf buffer of the dav1d block
+	// walk; Dst is pointed at it after each TXB.
+	Coef           *CoefBuffer
 	Factors        [3][2]int32 // [Y/U/V][DC/AC]
 	ActiveRows     int
 	Provider       CoeffDequantProvider

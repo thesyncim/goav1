@@ -47,6 +47,7 @@ type coefDecodeResult struct {
 	eob        int
 	culLevel   uint8 // libaom-layout coefficient context byte
 	activeRows int
+	activeCols int
 }
 
 // readCoefGolomb is dav1d's read_golomb (src/recon_tmpl.c).
@@ -92,7 +93,7 @@ func coefHiCtx(mag uint) uint {
 // entry; it receives the dequantized coefficients in raster scan order
 // (rc = x * scanHeight + y). During the token pass cf doubles as dav1d's
 // token/next-rc chain: cf[rc] = tok << 11 | rc of the previous nonzero.
-func decodeCoefTokens(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, geo *coeffGeometry, plane CoeffPlaneType, txtp transform.Type, class transform.Class, dcSignCtx uint8, cf *[1024]int32, levels *[coefLevelsLen]uint8, dq coefDequant) coefDecodeResult {
+func decodeCoefTokens(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, geo *coeffGeometry, plane CoeffPlaneType, txtp transform.Type, class transform.Class, dcSignCtx uint8, cf *[1024]int32, cfZeroed bool, levels *[coefLevelsLen]uint8, dq coefDequant) coefDecodeResult {
 	txCtx := int(geo.txCtx)
 	scanW := uint(geo.scanWidth)
 	scanH := uint(geo.scanHeight)
@@ -110,9 +111,10 @@ func decodeCoefTokens(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, ge
 		eob = ((eobHiBit | 2) << uint(eobBin)) | int(c.ReadBitsTrusted(uint8(eobBin)))
 	}
 	// dav1d keeps cf zero between TXBs because its inverse transforms clear
-	// what they read. goav1's consumers do not, so clear the scan area here;
-	// a DCT_DCT DC-only TXB is reconstructed from cf[0] alone.
-	if eob != 0 || txtp != transform.TypeDCTDCT {
+	// what they read; cfZeroed callers (coefBuffer) keep that contract. For
+	// the others clear the scan area here; a DCT_DCT DC-only TXB is
+	// reconstructed from cf[0] alone.
+	if !cfZeroed && (eob != 0 || txtp != transform.TypeDCTDCT) {
 		clear(cf[:scanW*scanH])
 	}
 
@@ -150,7 +152,8 @@ func decodeCoefTokens(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, ge
 
 	// residual and sign
 	rowMask := scanH - 1
-	activeRows := uint(0)
+	colShift := uint(log2Coef[scanH])
+	activeRows, activeCols := uint(0), uint(0)
 	var culLevel uint
 	dcSignLevel := uint8(0)
 	if dcTok != 0 {
@@ -175,7 +178,7 @@ func decodeCoefTokens(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, ge
 		} else {
 			cf[0] = int32(dcDQ)
 		}
-		activeRows = 1
+		activeRows, activeCols = 1, 1
 	}
 	if rc != 0 {
 		acDQ := dq.ac
@@ -204,6 +207,7 @@ func decodeCoefTokens(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, ge
 				cf[rc&1023] = int32(v)
 			}
 			activeRows = max(activeRows, (rc&rowMask)+1)
+			activeCols = max(activeCols, (rc>>colShift)+1)
 			rc = rcTok & 0x3ff
 			if rc == 0 {
 				break
@@ -215,6 +219,7 @@ func decodeCoefTokens(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, ge
 		eob:        eob,
 		culLevel:   uint8(min(culLevel, CoeffContextMask)) + dcSignLevel,
 		activeRows: int(activeRows),
+		activeCols: int(activeCols),
 	}
 }
 
@@ -348,7 +353,7 @@ func (s *DecodeState) decodeCoefsDequantized(cdfs *CoeffCDFs, req *TXBDecodeRequ
 	}
 	factors := &target.Factors[req.dequantPlane]
 	c := s.Reader.Cursor()
-	r := decodeCoefTokens(&c, cdfs, req.Size, geo, req.Plane, txtp, class, req.DCSignContext, (*[1024]int32)(target.Dst), &scratch.CoefLevels, coefDequant{
+	r := decodeCoefTokens(&c, cdfs, req.Size, geo, req.Plane, txtp, class, req.DCSignContext, (*[1024]int32)(target.Dst), false, &scratch.CoefLevels, coefDequant{
 		dc:    uint32(factors[0]),
 		ac:    uint32(factors[1]),
 		shift: txScale,

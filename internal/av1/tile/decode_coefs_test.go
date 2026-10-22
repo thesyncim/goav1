@@ -120,7 +120,7 @@ func runDecodeCoefTokensDiff(t *testing.T, rng *rand.Rand, size TransformSize, g
 			coefLevels[i] = byte(rng.Uint32())
 		}
 		c := newState.Reader.Cursor()
-		r := decodeCoefTokens(&c, &newCDFs, size, geo, plane, typ, class, dcSignCtx, cf, &coefLevels, coefDequant{
+		r := decodeCoefTokens(&c, &newCDFs, size, geo, plane, typ, class, dcSignCtx, cf, false, &coefLevels, coefDequant{
 			dc: uint32(dcFactor), ac: uint32(acFactor), shift: txScale, cfMax: uint32(dqMax),
 		})
 		c.CommitStateTo(&newState.Reader)

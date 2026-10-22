@@ -339,6 +339,8 @@ type FrameWorkTileResidualScratch struct {
 	// nil slice when the TXB carries quantized coefficients instead.
 	reconCF []frameWorkReconCF
 	cfArena []int32
+	// coefBuf is the fused path's dav1d t->cf coefficient buffer.
+	coefBuf tile.CoefBuffer
 	coeffArena      []int16
 	paletteArena    []tile.PaletteModeScratch
 	paletteBindings []frameWorkReconPaletteBinding
@@ -1806,7 +1808,8 @@ func (c *frameWorkTileResidualLoopController) bindCoeffDequantTarget(visit *tile
 			// so they go to the frame-thread cf arena instead of int32Scratch.
 			c.dequantTarget.Arena = &c.scratch.cfArena
 		} else {
-			c.dequantTarget.Dst = recon.int32Scratch
+			// dav1d's t->cf: a dedicated buffer kept zero between TXBs.
+			c.dequantTarget.Coef = &c.scratch.coefBuf
 		}
 		// The controller and its reconstruction state are job-owned and stable;
 		// this exact slice is consumed by the synchronous reconstruction path.
@@ -1879,7 +1882,7 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.Blo
 		if recon == nil {
 			recon = c.fusedReconState()
 		}
-		if err := recon.reconstructTXBWithDequantized(visit, block, recon.int32Scratch, activeRows, dcOnly); err != nil {
+		if err := recon.reconstructTXBWithDequantized(visit, block, c.dequantTarget.Dst, activeRows, dcOnly); err != nil {
 			return err
 		}
 	} else if c.deferReconstruction {

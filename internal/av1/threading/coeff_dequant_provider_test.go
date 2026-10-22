@@ -16,16 +16,18 @@ func TestFrameWorkCoeffDequantProviderIsLazyAndKeyed(t *testing.T) {
 	req.Transforms = nil
 	req.UseDefaultTransforms = true
 	reconState := frameWorkReconState{batch: batch, int32Scratch: req.Int32Scratch}
+	var scratch FrameWorkTileResidualScratch
 	c := frameWorkTileResidualLoopController{
-		batch: batch,
-		state: state,
-		req:   req,
-		recon: reconState,
+		batch:   batch,
+		state:   state,
+		req:     req,
+		scratch: &scratch,
+		recon:   reconState,
 	}
 	c.reconHot = &c.recon
 	visit := tile.BlockLoopVisit{SegmentID: 0}
 	target := c.bindCoeffDequantTarget(&visit, false)
-	if target == nil || target.Provider != &c || len(target.Dst) == 0 || &target.Dst[0] != &reconState.int32Scratch[0] {
+	if target == nil || target.Provider != &c || target.Coef != &scratch.coefBuf {
 		t.Fatalf("target=%+v was not bound for the eligible default path", target)
 	}
 	if target.PreparedPlanes != 0 {
@@ -109,10 +111,11 @@ func TestFrameWorkCoeffDequantProviderIsLazyAndKeyed(t *testing.T) {
 	batch2.Quantization.YDCDelta += 23
 	recon2 := frameWorkReconState{batch: batch2, int32Scratch: req.Int32Scratch}
 	c2 := frameWorkTileResidualLoopController{
-		batch: batch2,
-		state: state,
-		req:   req,
-		recon: recon2,
+		batch:   batch2,
+		state:   state,
+		req:     req,
+		scratch: &scratch,
+		recon:   recon2,
 	}
 	c2.reconHot = &c2.recon
 	visit.SegmentID = 1
