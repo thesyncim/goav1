@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -44,6 +45,21 @@ func (d *decoder) Decode(dst io.Writer, quiet bool, log io.Writer) (int64, int, 
 	if d == nil || d.dec == nil {
 		return 0, 0, errors.New("decoder closed")
 	}
+	// dav1d's yuv muxer writes each plane row with fwrite through a buffered
+	// stdio stream (tools/output/yuv.c); buffer the same way so the rows reach
+	// the file in large writes instead of one write call per row.
+	buf := bufio.NewWriterSize(dst, decodeOutputBufferSize)
+	totalBytes, completed, err := d.decodeTo(buf, quiet, log)
+	if flushErr := buf.Flush(); err == nil && flushErr != nil {
+		err = fmt.Errorf("flush output: %w", flushErr)
+	}
+	return totalBytes, completed, err
+}
+
+// decodeOutputBufferSize matches a typical stdio file buffer.
+const decodeOutputBufferSize = 64 << 10
+
+func (d *decoder) decodeTo(dst io.Writer, quiet bool, log io.Writer) (int64, int, error) {
 	if err := d.dec.Reset(); err != nil {
 		return 0, 0, fmt.Errorf("decoder reset: %w", err)
 	}
