@@ -1,7 +1,6 @@
 package encoder
 
 import (
-	"math/bits"
 	"math/rand"
 	"testing"
 
@@ -183,98 +182,6 @@ func TestRealtimeTXSizeLevelBasedOnQstepMatchesSpeedFeatures(t *testing.T) {
 				t.Fatalf("level=%d want %d", got, tc.level)
 			}
 		})
-	}
-}
-
-func TestRealtimeSourceContentSBMatchesLibaomThresholds(t *testing.T) {
-	makePair := func(delta byte) (SourceFrame420, SourceFrame420) {
-		src := SourceFrame420{Y: make([]byte, 64*64), YStride: 64, Width: 64, Height: 64}
-		last := SourceFrame420{Y: make([]byte, 64*64), YStride: 64, Width: 64, Height: 64}
-		for i := range src.Y {
-			last.Y[i] = 80
-			src.Y[i] = 80 + delta
-		}
-		return src, last
-	}
-	for _, tc := range []struct {
-		name         string
-		delta        byte
-		wantNonRD    realtimeSourceSAD
-		wantRD       realtimeSourceSAD
-		wantLighting bool
-		wantLowSum   bool
-	}{
-		{name: "zero", delta: 0, wantNonRD: realtimeSourceSADZero, wantRD: realtimeSourceSADLow},
-		{name: "very-low", delta: 1, wantNonRD: realtimeSourceSADVeryLow, wantRD: realtimeSourceSADLow, wantLowSum: true},
-		{name: "low", delta: 3, wantNonRD: realtimeSourceSADLow, wantRD: realtimeSourceSADMed, wantLighting: true},
-		{name: "high", delta: 16, wantNonRD: realtimeSourceSADHigh, wantRD: realtimeSourceSADMed, wantLighting: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			src, last := makePair(tc.delta)
-			got := realtimeSourceContentSB(src, last, 0, 0, false)
-			if got.sourceSADNonRD != tc.wantNonRD || got.sourceSADRD != tc.wantRD ||
-				got.lightingChange != tc.wantLighting || got.lowSumDiff != tc.wantLowSum {
-				t.Fatalf("content=%+v want nonrd=%d rd=%d lighting=%v lowSum=%v",
-					got, tc.wantNonRD, tc.wantRD, tc.wantLighting, tc.wantLowSum)
-			}
-		})
-	}
-}
-
-func TestRealtimeSourceVariancePerPixelMatchesAV1VarOffs(t *testing.T) {
-	src := make([]byte, 8*8)
-	for y := 0; y < 8; y++ {
-		for x := 0; x < 8; x++ {
-			if (x+y)&1 == 0 {
-				src[y*8+x] = 80
-			} else {
-				src[y*8+x] = 176
-			}
-		}
-	}
-	total, sum := 0, 0
-	for _, px := range src {
-		d := int(px) - 128
-		sum += d
-		total += d * d
-	}
-	variance := uint32(total) - uint32((int64(sum)*int64(sum))>>6)
-	want := (variance + 32) >> 6
-	if got := realtimeSourceVariancePerPixel(src, 8, 8, 8); got != want {
-		t.Fatalf("source variance=%d want %d", got, want)
-	}
-}
-
-func TestRealtimeSourceVarianceAgainstAV1VarOffsMatchesScalar(t *testing.T) {
-	rng := rand.New(rand.NewSource(9102))
-	const (
-		stride = 160
-		height = 96
-	)
-	src := make([]byte, stride*height)
-	for i := range src {
-		src[i] = uint8(rng.Intn(256))
-	}
-	for _, size := range []int{8, 16, 32, 64} {
-		for range 200 {
-			x := rng.Intn(stride - size)
-			y := rng.Intn(height - size)
-			off := y*stride + x
-			sse, sum := pixelStats128PureGo(src[off:], stride, size, size)
-			shift := uint(bits.TrailingZeros(uint(size * size)))
-			want := varianceFromStats(sse, sum, shift)
-			got, ok := realtimeSourceVarianceAgainstAV1VarOffs(src[off:], stride, size, size)
-			if !ok {
-				t.Fatalf("%dx%d AV1 var offsets path disabled", size, size)
-			}
-			if got != want {
-				t.Fatalf("%dx%d off=%d variance=%d want %d", size, size, off, got, want)
-			}
-			want = roundPowerOfTwoUint32(want, shift)
-			if got := realtimeSourceVariancePerPixel(src[off:], stride, size, size); got != want {
-				t.Fatalf("%dx%d off=%d perpixel variance=%d want %d", size, size, off, got, want)
-			}
-		}
 	}
 }
 

@@ -296,16 +296,12 @@ internal/av1/encoder/pframe_residual.go:*:*: make([]motion.Vector, st.grid8Cols 
 internal/av1/encoder/pframe_residual.go:*:*: make([]motion.Vector, st.grid8Cols * grid8Rows) escapes to heap in (*pframeCoder).encodeTileWithOptionsColor:
 internal/av1/encoder/pframe_residual.go:*:*: make([]pframeSplitRecord, rows) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]pframeSplitRecord, rows) escapes to heap in (*pframeCoder).encodeTileWithOptionsColor:
-internal/av1/encoder/pframe_residual.go:*:*: make([]realtimeContentStateSB, need) escapes to heap
-internal/av1/encoder/pframe_residual.go:*:*: make([]realtimeContentStateSB, need) escapes to heap in (*lossyEncodeState).prepareRealtimeSourceContent:
 internal/av1/encoder/pframe_residual.go:*:*: make([]svtPD0SB, need) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]svtPD0SB, need) escapes to heap in (*pframeCoder).encodeTileWithOptionsColor:
 internal/av1/encoder/pframe_residual.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in (*pframeCoder).encodeTileWithOptionsColor:
 internal/av1/encoder/pframe_residual.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in (*pframeCoder).reset:
 internal/av1/encoder/pframe_residual.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in (*pframeCoder).resetCarrierEdges:
-internal/av1/encoder/pframe_residual.go:*:*: make([]uint32, need) escapes to heap
-internal/av1/encoder/pframe_residual.go:*:*: make([]uint32, need) escapes to heap in (*lossyEncodeState).prepareRealtimeSourceContent:
 internal/av1/encoder/pframe_residual.go:*:*: make([]uint32, st.grid16Cols * grid16Rows) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]uint32, st.grid16Cols * grid16Rows) escapes to heap in (*pframeCoder).encodeTileWithOptionsColor:
 internal/av1/encoder/pframe_residual.go:*:*: make([]uint32, st.grid32Cols * grid32Rows) escapes to heap
