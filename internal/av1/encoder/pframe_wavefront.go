@@ -96,10 +96,12 @@ type pframeWavefront struct {
 	wg       sync.WaitGroup // per-frame jobs
 	workerWG sync.WaitGroup // persistent helper goroutines
 
-	carriers  tile.BlockLoopWavefrontCarriers
-	doneAlloc []atomic.Int32
-	done      []atomic.Int32
-	nextRow   atomic.Int32
+	carriers tile.BlockLoopWavefrontCarriers
+	// refmvsRows is the frame-tall dav1d refmvs store the lanes share.
+	refmvsRows tile.EncoderRefmvsRows
+	doneAlloc  []atomic.Int32
+	done       []atomic.Int32
+	nextRow    atomic.Int32
 
 	mu       sync.Mutex
 	cond     *sync.Cond
@@ -365,10 +367,12 @@ func (wf *pframeWavefront) start(pc *pframeCoder, n int, src, ref SourceFrame420
 	for r := 0; r < rows; r++ {
 		wf.done[r].Store(0)
 	}
+	wf.refmvsRows.Prepare(miCols, miRows)
 	for i := range wf.workers {
 		w := &wf.workers[i]
 		w.err = nil
 		w.adopt(&pc.st)
+		w.st.bindRefmvsShared(&w.scratch, walkReq, miCols, miRows, &wf.refmvsRows)
 	}
 	wf.launched = len(wf.workers)
 	wf.wg.Add(wf.launched)
@@ -393,6 +397,7 @@ func (wf *pframeWavefront) join(pc *pframeCoder) error {
 	var firstErr error
 	for i := range wf.workers {
 		w := &wf.workers[i]
+		w.st.unbindRefmvs(&w.scratch)
 		if w.err != nil && firstErr == nil {
 			firstErr = w.err
 		}

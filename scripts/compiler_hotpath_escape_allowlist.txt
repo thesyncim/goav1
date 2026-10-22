@@ -308,6 +308,8 @@ internal/av1/encoder/pframe_wavefront.go:*:*: make([]tile.BlockLoopRootAboveCont
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]tile.BlockLoopRootAboveContext, tile.rootCols) escapes to heap in (*pframeWavefront).start:
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]tile.diagonalCornerSlot, tile.rootCols) escapes to heap
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]tile.diagonalCornerSlot, tile.rootCols) escapes to heap in (*pframeWavefront).start:
+internal/av1/encoder/pframe_wavefront.go:*:*: make([]tile.refmvsBlock, tile.need) escapes to heap
+internal/av1/encoder/pframe_wavefront.go:*:*: make([]tile.refmvsBlock, tile.need) escapes to heap in (*pframeWavefront).start:
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]uint8, len(src.levels)) escapes to heap
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]uint8, len(src.levels)) escapes to heap in (*pframeDecideWorker).adopt:
 internal/av1/encoder/pframe_wavefront.go:*:*: new(subpelProbeCache) escapes to heap
@@ -564,6 +566,8 @@ internal/av1/tile/refmvs.go:*:*: make([]TemporalMotionEntry, need) escapes to he
 internal/av1/tile/refmvs.go:*:*: make([]refmvsBlock, need) escapes to heap
 internal/av1/tile/refmvs.go:*:*: make([]refmvsBlock, need) escapes to heap in (*refmvsTile).bindFrame:
 internal/av1/tile/refmvs.go:*:*: make([]refmvsBlock, need) escapes to heap in PreallocBlockLoopRefmvsScratch:
+internal/av1/tile/refmvs_encoder.go:*:*: make([]refmvsBlock, need) escapes to heap
+internal/av1/tile/refmvs_encoder.go:*:*: make([]refmvsBlock, need) escapes to heap in (*EncoderRefmvsRows).Prepare:
 internal/av1/transform/precompute.go:*:*: make([]int16, total) escapes to heap
 internal/av1/transform/precompute.go:*:*: make([]int16, total) escapes to heap in init.N:
 internal/av1/transform/precompute.go:*:*: make([]uint8, len(scan)) escapes to heap

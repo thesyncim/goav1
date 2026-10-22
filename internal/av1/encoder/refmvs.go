@@ -31,3 +31,15 @@ func (st *lossyEncodeState) referenceMVStack(modeCtx *tile.BlockModeContext, req
 	}
 	return modeCtx.BuildReferenceMVStack(req)
 }
+
+// bindRefmvsShared binds a wavefront lane's scratch to the lanes' shared
+// frame-tall refmvs store.
+func (st *lossyEncodeState) bindRefmvsShared(scratch *tile.BlockLoopScratch, walkReq tile.BlockWalkRequest, miCols, miRows uint16, rows *tile.EncoderRefmvsRows) {
+	tile.BindEncoderRefmvsShared(scratch, tile.EncoderRefmvsFrame{
+		FrameMICols:    miCols,
+		FrameMIRows:    miRows,
+		Tile:           walkReq,
+		ForceIntegerMV: st.forceIntegerMV,
+	}, rows)
+	st.refmvsScratch = scratch
+}
