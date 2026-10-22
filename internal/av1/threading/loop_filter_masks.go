@@ -44,6 +44,12 @@ type FrameWorkLoopFilterMasks struct {
 	// context backups during the block walk so FixTileBoundariesFromEdges can
 	// fix a multi-tile frame without the loop-filter record map.
 	tileEdges *FrameWorkLoopFilterTileEdges
+	// singleTile records that BindTileEdges saw a single-tile frame, which
+	// needs no tile-boundary fix.
+	singleTile bool
+	// noskip, when bound (BindNoSkip), is dav1d's CDEF noskip_mask written by
+	// the decode-time build (see MapFree).
+	noskip *FrameWorkLoopFilterNoSkip
 }
 
 // FrameWorkLoopFilterLevelTable is dav1d's frame loop-filter level table
@@ -274,6 +280,9 @@ func (h *FrameWorkLoopFilterMasks) build(s *frameWorkLoopFilterMaskScratch, visi
 	lc := lfmask.LevelCache{Cells: h.LevelCache, Stride: h.Cols}
 	h.buildBlockWithLevels(s, int(visit.Block.MICol), int(visit.Block.MIRow), visit.Block.Size,
 		visit.Coefficients.Tree, visit.Prefix.SkipTransform, intra, sbLog2, lc, lv)
+	if h.noskip != nil && !visit.Prefix.SkipTransform {
+		markFrameWorkLoopFilterNoSkip(h.noskip.buf, h.noskip.unitCols, int(visit.Block.MICol), int(visit.Block.MIRow), int(visit.Block.MIColEnd), int(visit.Block.MIRowEnd))
+	}
 	return nil
 }
 

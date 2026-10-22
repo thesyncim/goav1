@@ -1289,7 +1289,9 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 					return fmt.Errorf("build compact loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
 				}
 			} else {
-				if req.LoopFilterMap != nil {
+				// dav1d keeps no per-MI loop-filter record: once the masks carry
+				// levels, noskip and tile-edge backups, nothing reads the map.
+				if req.LoopFilterMap != nil && !req.LoopFilterMasks.MapFree() {
 					if err := req.LoopFilterMap.MarkBlockPtr(visit, state); err != nil {
 						return fmt.Errorf("mark loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
 					}

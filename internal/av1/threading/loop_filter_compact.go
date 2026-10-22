@@ -56,29 +56,7 @@ func BindFrameWorkLoopFilterCompactState(h *FrameWorkLoopFilterMasks, state *Fra
 	state.noskip = noSkip[:unitBytes]
 	_ = monoChrome
 	state.levels.Bind(loopFilter, segmentation, delta)
-	clear(state.noskip)
-	// Frame MI extents are even. Only the final 8x8 block column/row can
-	// contain padding, so preserve legacy out-of-map bits without scanning the
-	// full unit grid after clearing it.
-	validCols := h.Cols >> 1
-	validRows := h.Rows >> 1
-	if tail := validCols & 7; tail != 0 {
-		rightMask := uint8(0xff << uint(tail))
-		for unitY := 0; unitY < unitRows; unitY++ {
-			base := (unitY*unitCols + unitCols - 1) * 8
-			for by := 0; by < 8; by++ {
-				state.noskip[base+by] |= rightMask
-			}
-		}
-	}
-	if tail := validRows & 7; tail != 0 {
-		for unitX := 0; unitX < unitCols; unitX++ {
-			base := ((unitRows-1)*unitCols + unitX) * 8
-			for by := tail; by < 8; by++ {
-				state.noskip[base+by] = 0xff
-			}
-		}
-	}
+	initFrameWorkLoopFilterNoSkip(state.noskip, h.Cols, h.Rows, unitCols, unitRows)
 	return nil
 }
 
@@ -235,19 +213,5 @@ func (h *FrameWorkLoopFilterMasks) buildCompact(compact *FrameWorkLoopFilterComp
 }
 
 func (s *FrameWorkLoopFilterCompactState) markNoSkip(miColStart, miRowStart, miColEnd, miRowEnd int) {
-	startX := miColStart >> 1
-	startY := miRowStart >> 1
-	endX := (miColEnd + 1) >> 1
-	endY := (miRowEnd + 1) >> 1
-	for y := startY; y < endY; y++ {
-		unitY := y >> 3
-		localY := y & 7
-		for x := startX; x < endX; x++ {
-			unitX := x >> 3
-			off := (unitY*s.unitCols+unitX)*8 + localY
-			if off >= 0 && off < len(s.noskip) {
-				s.noskip[off] |= 1 << uint(x&7)
-			}
-		}
-	}
+	markFrameWorkLoopFilterNoSkip(s.noskip, s.unitCols, miColStart, miRowStart, miColEnd, miRowEnd)
 }

@@ -81,7 +81,9 @@ type DecoderFrameWorkResidualEventRunner struct {
 	lfLevels *internalthreading.FrameWorkLoopFilterLevelTable
 	// lfTileEdges collects dav1d's tile-boundary context backups so multi-tile
 	// masks are fixed without re-deriving neighbours from the record map.
-	lfTileEdges       *internalthreading.FrameWorkLoopFilterTileEdges
+	lfTileEdges *internalthreading.FrameWorkLoopFilterTileEdges
+	// lfNoSkip holds dav1d's CDEF noskip_mask written by the tile walk.
+	lfNoSkip          *internalthreading.FrameWorkLoopFilterNoSkip
 	compactNoSkip     []byte
 	compactPostOwner  *DecoderFrameWorkReusableSupportedPostFilterRunner
 	compactBatchOwner *DecoderFrameWorkBatchResidualRunner
@@ -593,6 +595,7 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 						sbLog2 = 5
 					}
 					sidePtr.LoopFilterMasks.BindTileEdges(r.lfTileEdges, events[i].TileInfo, sbLog2)
+					sidePtr.LoopFilterMasks.BindNoSkip(r.lfNoSkip)
 				}
 			}
 			if err != nil {

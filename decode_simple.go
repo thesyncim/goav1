@@ -50,6 +50,7 @@ type Decoder struct {
 	compactLF     internalthreading.FrameWorkLoopFilterCompactState
 	lfLevels      internalthreading.FrameWorkLoopFilterLevelTable
 	lfTileEdges   internalthreading.FrameWorkLoopFilterTileEdges
+	lfNoSkip      internalthreading.FrameWorkLoopFilterNoSkip
 	compactNoSkip []byte
 
 	refSurface [InterRefsPerFrame]int
@@ -290,6 +291,8 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	}
 	d.scratch = newDecoderStreamScratch(plan.Size, &arena)
 	d.compactNoSkip = arena.takeBytes(decoderCompactNoSkipBytes(plan.Size.Event.SideData.CDEFIndexMap))
+	d.lfNoSkip.Preseed(arena.takeBytes(decoderCompactNoSkipBytes(plan.Size.Event.SideData.CDEFIndexMap)))
+	d.lfTileEdges.Preseed(arena.takeBytes(decoderLoopFilterTileEdgeBytes(plan.Size.Event.SideData.LoopFilterMasks)))
 	if cap(d.scratch.Outputs) > 0 {
 		d.visible = d.scratch.Outputs[:0]
 	} else {
@@ -347,6 +350,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	d.runner = runner
 	d.runner.EventRunner.lfLevels = &d.lfLevels
 	d.runner.EventRunner.lfTileEdges = &d.lfTileEdges
+	d.runner.EventRunner.lfNoSkip = &d.lfNoSkip
 	if !d.useExternal && d.workerPool.WorkerCount() == 1 {
 		d.batch.compactState = &d.compactLF
 		d.batch.compactOwner = &d.batch
@@ -866,6 +870,14 @@ func decoderArenaSizeFor(format FrameFormat, outputFormat FrameFormat, useExtern
 	if err := size.addBytes(noSkipBytes); err != nil {
 		return decoderArenaSize{}, err
 	}
+	// dav1d noskip_mask and tile-edge backups for the non-compact paths,
+	// preallocated so a cold first frame stays allocation-free.
+	if err := size.addBytes(noSkipBytes); err != nil {
+		return decoderArenaSize{}, err
+	}
+	if err := size.addBytes(decoderLoopFilterTileEdgeBytes(stream.Event.SideData.LoopFilterMasks)); err != nil {
+		return decoderArenaSize{}, err
+	}
 	postCopies := 1
 	if useExternal {
 		postCopies = 2
@@ -876,6 +888,18 @@ func decoderArenaSizeFor(format FrameFormat, outputFormat FrameFormat, useExtern
 		}
 	}
 	return size, nil
+}
+
+// decoderLoopFilterTileEdgeBytes bounds the four tile-edge backup buffers:
+// tile columns never exceed two per 128-pixel region column (64-pixel
+// superblocks) and a region holds 32 MI rows, so tileCols*rows (and likewise
+// tileRows*cols, and the chroma counterparts) is at most 64 per region.
+func decoderLoopFilterTileEdgeBytes(regions int) int {
+	n, ok := decoderArenaMultiply(regions, 4*64)
+	if !ok {
+		return 0
+	}
+	return n
 }
 
 func decoderCompactNoSkipBytes(cdefUnits int) int {

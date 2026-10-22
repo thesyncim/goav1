@@ -463,6 +463,8 @@ internal/av1/motion/scale_scratch.go:*:*: new(scaledHighBDIM) escapes to heap
 internal/av1/motion/scale_scratch.go:*:*: new(scaledHighBDIM) escapes to heap in init.func1:
 internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes to heap
 internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes to heap in (*frameWorkLoopFilterMaskScratch).reset:
+internal/av1/threading/loop_filter_noskip.go:*:*: make([]uint8, n) escapes to heap
+internal/av1/threading/loop_filter_noskip.go:*:*: make([]uint8, n) escapes to heap in (*FrameWorkLoopFilterMasks).BindNoSkip:
 internal/av1/threading/loop_filter_tile_edges.go:*:*: make([]uint8, n) escapes to heap
 internal/av1/threading/loop_filter_tile_edges.go:*:*: make([]uint8, n) escapes to heap in (*FrameWorkLoopFilterMasks).BindTileEdges:
 internal/av1/threading/loop_filter_tile_edges.go:*:*: make([]uint8, n) escapes to heap in growBytes:

@@ -796,7 +796,7 @@ func (ctx *FrameWorkPostFilterContext) applySupportedPostFiltersInPlace(req Fram
 	if remaining.Has(FrameWorkPostFilterLoopFilter) {
 		var loopFilterResult FrameWorkLoopFilterPostFilterApplyResult
 		var err error
-		if banding.LoopFilterMIRows <= 0 {
+		if banding.LoopFilterMIRows <= 0 || ctx.LoopFilterMasks.MapFree() {
 			ctx.fixLoopFilterMaskTileBoundaries(req.LoopFilter.Map)
 		}
 		switch {

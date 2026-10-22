@@ -520,6 +520,11 @@ func (ctx *FrameWorkPostFilterContext) fixLoopFilterMaskTileBoundaries(filterMap
 	if masks.TileEdgesBound() && masks.FixTileBoundariesFromEdges() == nil {
 		return
 	}
+	if masks.MapFree() {
+		// The record map was never marked for this frame; leave the masks
+		// unfixed so the apply fails closed instead of reading empty records.
+		return
+	}
 	if frameWorkLoopFilterMapEmpty(filterMap) && ctx.LoopFilterMap != nil {
 		filterMap = *ctx.LoopFilterMap
 	}

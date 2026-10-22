@@ -40,6 +40,16 @@ type FrameWorkLoopFilterTileEdges struct {
 	broken atomic.Bool
 }
 
+// Preseed splits caller-owned backing storage into the four backup buffers
+// (each a quarter of buf) so binding never allocates for frames that fit.
+func (e *FrameWorkLoopFilterTileEdges) Preseed(buf []byte) {
+	q := len(buf) / 4
+	e.rightY = buf[0:0:q]
+	e.rightUV = buf[q : q : 2*q]
+	e.bottomY = buf[2*q : 2*q : 3*q]
+	e.bottomUV = buf[3*q : 3*q : 4*q]
+}
+
 func growBytes(b []uint8, n int) []uint8 {
 	if cap(b) < n {
 		return make([]uint8, n)
@@ -52,6 +62,7 @@ func growBytes(b []uint8, n int) []uint8 {
 // superblock size in MI log2 (4 or 5).
 func (h *FrameWorkLoopFilterMasks) BindTileEdges(e *FrameWorkLoopFilterTileEdges, tiles parser.TileInfo, sbLog2 int) {
 	h.tileEdges = nil
+	h.singleTile = h.Valid() && tiles.Cols <= 1 && tiles.Rows <= 1
 	if e == nil || !h.Valid() || (tiles.Cols <= 1 && tiles.Rows <= 1) ||
 		int(tiles.Cols) > parser.MaxTileCols || int(tiles.Rows) > parser.MaxTileRows {
 		return
