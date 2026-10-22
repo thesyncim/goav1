@@ -1908,6 +1908,9 @@ func webRTCStreamLayerReconstruction(enc *VideoEncoder) (SourceFrame420, error) 
 	if err := enc.joinFilter(); err != nil {
 		return SourceFrame420{}, err
 	}
+	if err := enc.finishLazyCDEF(); err != nil {
+		return SourceFrame420{}, err
+	}
 	recon := enc.lastRecon
 	if recon.Y == nil {
 		recon = enc.recon

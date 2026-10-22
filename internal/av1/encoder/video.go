@@ -80,10 +80,12 @@ type VideoEncoder struct {
 	// cdefSearch is the SVT CDEF strength search state; cdefRefLast and
 	// cdefRefT1 are the signaled strengths of the LAST and middle-layer
 	// reference slots (the reference objects' ref_cdef_strengths).
-	cdefSearch   cdefSearcher
-	cdefRefLast  svtCDEFRefStrengths
-	cdefRefT1    svtCDEFRefStrengths
-	cdefLogs     svtCDEFLogs
+	cdefSearch  cdefSearcher
+	cdefRefLast svtCDEFRefStrengths
+	cdefRefT1   svtCDEFRefStrengths
+	cdefLogs    svtCDEFLogs
+	// lazyCDEF is the deferred CDEF pass of a non-reference picture.
+	lazyCDEF     lazyCDEFPass
 	hme          hmeState
 	singleThread bool
 	effortLevel  int8
@@ -759,6 +761,7 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 	if err := e.joinFilter(); err != nil {
 		return nil, err
 	}
+	e.lazyCDEF.pending = false
 	// Keyframe quality boost: every later frame predicts (directly or
 	// transitively) from the key, so it earns a finer quantizer than the
 	// working point; rate control pays the debt back over the next frames
@@ -815,6 +818,7 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 	if err := e.joinFilter(); err != nil {
 		return nil, err
 	}
+	e.lazyCDEF.pending = false
 
 	hmeArmed := e.hme.havePrev
 	e.runHME(src, settings.TemporalID)
@@ -1270,6 +1274,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if err := e.joinFilter(); err != nil {
 		return nil, err
 	}
+	e.lazyCDEF.pending = false
 	droppable := temporalID > 0
 	// L1T3: the middle layer (T1) is referenced by the following T2, so it
 	// saves its reconstruction to slot 2 and exports a context for that T2
@@ -1650,7 +1655,17 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		e.cdefRefT1 = svtCDEFRefFromParams(header.CDEF)
 	}
 	filterCDEF := cdefParserParams(header.CDEF)
-	if (lfLevel > 0 || cdefPlan.on) && !e.singleThread {
+	// SVT applies CDEF to a picture'"'"'s reconstruction only when something
+	// reads it (cdef_process.c: ppcs->is_ref || recon_enabled). A
+	// non-reference picture (refresh_frame_flags 0) is read only through
+	// Recon(), so its filter pass is deferred to that call (lazyCDEF) and
+	// dropped if the next frame is encoded first. Deblocking is off here.
+	filtersOn := lfLevel > 0 || cdefPlan.on
+	if filtersOn && droppable && !isT1 && svtRTCDeblockLevel(lfLevel) == 0 {
+		filtersOn = false
+		e.lazyCDEF = lazyCDEFPass{out: out, cdef: filterCDEF, idx: cdefIdx, pending: true}
+	}
+	if filtersOn && !e.singleThread {
 		// The filters run behind the temporal-unit assembly and the next
 		// frame's source-only stages; everything reading the filtered
 		// planes or the applier state joins first.
@@ -1674,7 +1689,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if err != nil {
 		return nil, err
 	}
-	if (lfLevel > 0 || cdefPlan.on) && e.singleThread {
+	if filtersOn && e.singleThread {
 		if err := e.applyInLoopFilters(out, svtRTCDeblockLevel(lfLevel), filterCDEF, cdefIdx, true, false); err != nil {
 			return nil, err
 		}
@@ -1756,6 +1771,10 @@ func (e *VideoEncoder) Recon() SourceFrame420 {
 	// A backgrounded filter pass may still be writing these planes; a
 	// failure here resurfaces on the next encode call.
 	if err := e.joinFilter(); err != nil {
+		e.filterErr = err
+		return SourceFrame420{}
+	}
+	if err := e.finishLazyCDEF(); err != nil {
 		e.filterErr = err
 		return SourceFrame420{}
 	}
