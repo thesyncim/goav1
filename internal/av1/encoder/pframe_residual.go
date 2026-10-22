@@ -1125,46 +1125,36 @@ func (st *lossyEncodeState) decideRealtimePartition(src, ref SourceFrame420, sca
 	if scaledReference {
 		return tile.PartitionSplit, nil
 	}
-	if !haveRight || !haveBottom {
-		return tile.PartitionSplit, nil
-	}
 	px, py := int(miCol)*4, int(miRow)*4
-	if px+64 > src.Width || py+64 > src.Height {
-		if level == tile.BlockLevel64x64 {
-			return tile.PartitionSplit, nil
-		}
-	}
 	sbPX, sbPY := (px/64)*64, (py/64)*64
-	// disallow_8x8 (svt_aom_get_disallow_8x8_rtc, enc_mode_config.c:8080):
-	// above M10 rtc never tests 8x8 blocks unless the SB's dimensions need
-	// them, so a 16x16 that the AV1 syntax lets stay whole is never split
-	// (set_blocks_to_be_tested min_sq_size = 16).
-	if level == tile.BlockLevel16x16 && px+16 <= src.Width && py+16 <= src.Height &&
-		!svtDimensionsRequire8x8(min(64, src.Width-sbPX), min(64, src.Height-sbPY)) {
-		return tile.PartitionNone, nil
-	}
 	sb, err := st.svtPD0ForSB(src, ref, sbPX, sbPY)
 	if err != nil {
 		return tile.PartitionSplit, err
 	}
-	if sb == nil {
-		// Incomplete superblocks have no VLPD0 tree here (SVT tests PART_H /
-		// PART_V there, which this encoder does not code): nodes that cross
-		// the frame edge split, and 16x16 blocks that fit stay whole.
-		if level == tile.BlockLevel16x16 && px+16 <= src.Width && py+16 <= src.Height {
-			return tile.PartitionNone, nil
+	n := 64
+	if level == tile.BlockLevel32x32 {
+		n = 32
+	} else if level == tile.BlockLevel16x16 {
+		n = 16
+	}
+	part := svtPD0Fallback(px, py, n, src.Width, src.Height)
+	if sb != nil {
+		relX, relY := px-sbPX, py-sbPY
+		switch level {
+		case tile.BlockLevel64x64:
+			part = sb.part64
+		case tile.BlockLevel32x32:
+			part = sb.part32[(relY/32)*2+relX/32]
+		case tile.BlockLevel16x16:
+			part = sb.part16[(relY/16)*4+relX/16]
 		}
+	}
+	// A node missing its lower (right) half codes only HORZ (VERT) or SPLIT.
+	if (!haveBottom && part != tile.PartitionH && part != tile.PartitionSplit) ||
+		(!haveRight && part != tile.PartitionV && part != tile.PartitionSplit) {
 		return tile.PartitionSplit, nil
 	}
-	switch level {
-	case tile.BlockLevel64x64:
-		return sb.part64, nil
-	case tile.BlockLevel32x32:
-		relX, relY := px-sbPX, py-sbPY
-		return sb.part32[(relY/32)*2+relX/32], nil
-	}
-	// 16x16 is VLPD0's minimum depth.
-	return tile.PartitionNone, nil
+	return part, nil
 }
 
 func (pc *pframeCoder) encodeLosslessIntraInterTile(src SourceFrame420, recon *SourceFrame420, prev *frameCDFs, forceIntegerMV bool, allowScreenContentTools bool, color parser.ColorConfig, miColStart, miColEnd uint16) ([]byte, error) {
