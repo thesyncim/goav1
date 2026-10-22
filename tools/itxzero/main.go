@@ -78,7 +78,7 @@ func simplify(e ast.Expr) (ast.Expr, bool) {
 		}
 		m := sel.Sel.Name
 		switch m {
-		case "Mul", "ShiftAllRight", "ShiftAllLeft", "Max", "Min":
+		case "Mul", "ShiftAllRight", "ShiftAllLeft", "Shift", "Max", "Min":
 			if rz {
 				return zeroIdent(), true
 			}

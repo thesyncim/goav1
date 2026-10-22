@@ -20,6 +20,13 @@ func itxRoundBias(n uint8) archsimd.Int32x4 { return archsimd.BroadcastInt32x4(1
 
 func itxShiftAmount(n int32) archsimd.Int32x4 { return archsimd.BroadcastInt32x4(-n) }
 
+// itxShr is the count vector of an arithmetic right shift by n, for
+// v.Shift(itxShr(n)) in the generated kernels. Broadcasting into a fresh
+// vector lets the compiler share one count per function, where a constant
+// ShiftAllRight inserts its count into the operand and so rebuilds it
+// (MOVD + copy + INS + DUP) at every use.
+func itxShr(n int32) archsimd.Int32x4 { return archsimd.BroadcastInt32x4(-n) }
+
 // itxMulAcc returns acc + x*k (MLA).
 func itxMulAcc(acc, x, k archsimd.Int32x4) archsimd.Int32x4 { return x.MulAdd(k, acc) }
 
