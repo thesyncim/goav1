@@ -1425,9 +1425,8 @@ func (st *lossyEncodeState) buildRealtimeVarPartitionSB(sb *realtimeVarPartSB, s
 		sb.me = *me
 	}
 
-	var wouldSplit16, proxyFired16 [4][4]bool
+	var wouldSplit16, proxyFired16 [4][4]bool // proxyFired16 stays zero: stats attribution only
 	var pending32 [4]bool
-	splitBelow16Pending := false
 
 	refDX, refDY := 0, 0
 	if content.sourceSADNonRD > realtimeSourceSADLow && st.realtimeSourceVarianceForBlock(src, px, py, 64, 64) > 100 {
@@ -1462,17 +1461,6 @@ func (st *lossyEncodeState) buildRealtimeVarPartitionSB(sb *realtimeVarPartSB, s
 				sb.force32[lvl1] = realtimePartEvalOnlySplit
 				sb.force64 = realtimePartEvalOnlySplit
 				wouldSplit16[lvl1][lvl2] = true
-				// Depth removal (PERF_PLAN §6 E4): SVT disallow_below_16x16 — a
-				// marginal split (residual only modestly over the split threshold)
-				// does not earn 8x8 leaves. Disallow the sub-16x16 depth but keep
-				// the parent split so the block still codes as 16x16.
-				if depthRemove16VarMultNum != depthRemove16VarMultDen &&
-					int64(val16)*depthRemove16VarMultDen < sb.thresholds[3]*depthRemove16VarMultNum {
-					sb.force16[lvl1][lvl2] = realtimePartEvalOnlyNone
-					proxyFired16[lvl1][lvl2] = true
-				} else {
-					splitBelow16Pending = true
-				}
 			}
 		}
 		realtimeFillVarianceTree32(&sb.tree.split[lvl1])
@@ -1506,31 +1494,17 @@ func (st *lossyEncodeState) buildRealtimeVarPartitionSB(sb *realtimeVarPartSB, s
 		}
 	}
 	// SVT depth removal (set_depth_removal_level_controls; see
-	// pframe_depth_removal.go): the shared per-SB multi-size sweep feeds the
-	// TRUE disallow_below_16x16 / _32x32 / _64x64 gates, applied SB-wide
-	// (SVT's flags are per-SB, enc_mode_config.c:3207-3237) by clamping the
-	// force flags to PartitionNone at the removed depth, matching
+	// pframe_depth_removal.go): the SB's frame-ME statistics feed the
+	// disallow_below_16x16 / _32x32 / _64x64 gates, applied SB-wide (SVT's
+	// flags are per-SB, enc_mode_config.c:3207-3237) by clamping the force
+	// flags to PartitionNone at the removed depth, matching
 	// set_blocks_to_be_tested's min_sq_size clamp (enc_dec_process.c:
-	// 1476-1505) where the removed depths are never built: below-64 collapses
-	// the SB to one 64x64, below-32 leaves the 64-level decision alone but
-	// codes every 32x32 as None, below-16 codes every 16x16 as None. The
-	// landed 18b20370 proxy above stays active alongside (union).
-	//
-	// The sweep keeps Phase 1's lazy trigger: at least one below-16 split
-	// still pending after the proxy. Phase 2 measured the WIDE trigger (any
-	// split pending at any depth, = pending64) and it is pinned RED: unlike
-	// SVT — whose dist_64/32/16/8 are free byproducts of its one real ME —
-	// goav1's sweep is added work on top of the per-leaf meshes, and on realC
-	// (60f, 5M, vs the Phase-1 base) wide@9/14 lost 0.28 dB (the recon-noise
-	// floor in the dev denominators compresses dev_32x32_to_16x16, over-
-	// firing the dev arm on base frames) while laddering down to the first
-	// quality-green point (base 5 / leaf 10) turned the sweep tax into +5.5%
-	// single-thread CPU with near-zero removals. Re-widen only with Phase 3's
-	// grid reuse, when the sweep replaces the leaf full-pel meshes and its
-	// cost amortizes to zero. pending64/pending32 stay computed for the
-	// stats attribution (the comparisons are free — the variance fills
-	// already happened).
-	if st.depthRemovalLevel != 0 && splitBelow16Pending {
+	// 1476-1505) where the removed depths are never built: below-64
+	// collapses the SB to one 64x64, below-32 leaves the 64-level decision
+	// alone but codes every 32x32 as None, below-16 codes every 16x16 as
+	// None. SVT evaluates the gates for every SB of every inter picture; the
+	// statistics are the frame ME's (hme.go), so the evaluation is free.
+	if st.depthRemovalLevel != 0 {
 		depthDec := realtimeDepthRemovalDecide(st.depthRemovalLevel, st.qIndex, &sb.me)
 		applied64 := depthDec.below64
 		applied32 := depthDec.below32
@@ -2104,6 +2078,14 @@ func (st *lossyEncodeState) decideRealtimePartition(src, ref SourceFrame420, sca
 		}
 	}
 	sbPX, sbPY := (px/64)*64, (py/64)*64
+	// disallow_8x8 (svt_aom_get_disallow_8x8_rtc, enc_mode_config.c:8080):
+	// above M10 rtc never tests 8x8 blocks unless the SB's dimensions need
+	// them, so a 16x16 that the AV1 syntax lets stay whole is never split
+	// (set_blocks_to_be_tested min_sq_size = 16).
+	if level == tile.BlockLevel16x16 && px+16 <= src.Width && py+16 <= src.Height &&
+		!svtDimensionsRequire8x8(min(64, src.Width-sbPX), min(64, src.Height-sbPY)) {
+		return tile.PartitionNone, nil
+	}
 	sb := st.realtimeVarPartitionSB(src, ref, sbPX, sbPY)
 	if sb == nil {
 		// Superblocks crossing the frame edge carry no variance tree, but a
@@ -4543,29 +4525,6 @@ const fullPelReach = 8
 // more than 30% worse than LAST it can no longer overtake it — SVT drops its
 // NEW-MV group, so we skip GOLDEN's subpel refinement and compound evaluation.
 const goldenRefPruneMaxDevPct = 30
-
-// depthRemove16VarMultNum/Den port SVT-AV1's disallow_below_16x16 absolute-cost
-// gate (set_depth_removal_level_controls, Source/Lib/Codec/enc_mode_config.c).
-// SVT builds disallow_below_16x16_cost_th = RDCOST(fast_lambda, cost_th_rate,
-// (sb_size>>3)*mult) and disallows every sub-16x16 block in an SB once
-// cost_16x16 = RDCOST(fast_lambda, 0, me_16x16_distortion) falls below it; the
-// partitioner then clamps the depth search so a 16x16 cannot split to 8x8
-// (enc_dec_process.c: e_depth = (sq_size<=16)?0:...). goav1's variance
-// partitioner already applies exactly this absolute-cost shape — it splits a
-// 16x16 to 8x8 only when its motion-compensated residual (val16) exceeds
-// thresholds[3] — so the SVT gate maps to a second, higher residual threshold:
-// a 16x16 whose residual only modestly exceeds the split threshold is a marginal
-// split that does not earn its four 8x8 leaves, so we disallow the sub-16x16
-// depth while keeping the parent split (the block still codes as 16x16). The
-// disallow threshold is thresholds[3]*Num/Den; SVT's deviation arm
-// (dev_16x16_to_8x8) is unavailable here (the variance tree shares one motion
-// vector across depths, making per-size deviation identically zero), so only the
-// absolute-cost arm is ported. Num==Den (ratio 1) disables removal. The operating
-// ratio is selected on this corpus, holding realC >= 44.85 dB.
-const (
-	depthRemove16VarMultNum = 4
-	depthRemove16VarMultDen = 1
-)
 
 // fullPelDiamondSearchSeeded recenters libaom's mesh search on a
 // coarse-search seed (the hierarchical pre-pass vector).

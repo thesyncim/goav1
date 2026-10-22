@@ -394,30 +394,17 @@ var depthRemovalLevels = [16]depthRemovalCtrls{
 	15: {enabled: true, costMult4x4: 64, costMult16: 384, costMult32: 24, costMult64: 24, dev16To8Th: 300, dev32To16Th: 200, qpScale: 4},
 }
 
-// depthRemovalLevelForFrame is the preset-12 (>M8) rtc non-sc branch of the
-// pic_depth_removal_level ladder (enc_mode_config.c:9287-9295), with SVT's
-// input-resolution ranges (svt_aom_derive_input_resolution,
-// sequence_control_set.c:120 + definitions.h INPUT_SIZE_*_TH).
+// depthRemovalLevelForFrame is pic_depth_removal_level of SVT-AV1's rtc
+// mode-decision config (svt_aom_sig_deriv_mode_decision_config_rtc,
+// Source/Lib/Codec/enc_mode_config.c:9775-9783, v4.1.0): above M8 (M9 for
+// flat IPP) every non-transition picture, base and leaf alike, at every
+// resolution, runs level 5. goav1 has no transition pictures (the
+// transition_present level-0 arm). The parameters stay for the callers;
+// rtc's ladder does not read them. The resolution-dependent 9/14 ladder this
+// replaces is the non-rtc svt_aom_sig_deriv_mode_decision_config_default.
 func depthRemovalLevelForFrame(width, height int, isBase bool) uint8 {
-	const (
-		inputSize360pTH = 0x4CE00 // <= INPUT_SIZE_360p_RANGE
-		inputSize480pTH = 0xA1400 // <= INPUT_SIZE_480p_RANGE
-	)
-	numPixels := width * height
-	switch {
-	case numPixels < inputSize360pTH:
-		return 7
-	case numPixels < inputSize480pTH:
-		if isBase {
-			return 9
-		}
-		return 11
-	default:
-		if isBase {
-			return 9
-		}
-		return 14
-	}
+	_, _, _ = width, height, isBase
+	return 5
 }
 
 // Noise-guard thresholds (enc_mode_config.c:9-10).
@@ -565,4 +552,21 @@ var av1LambdaModeDecision8BitSAD = [256]uint32{
 	9423, 9553, 9683, 9835, 9987, 10117, 10290, 10442, 10593, 10767, 10940, 11113, 11308, 11481, 11676, 11893,
 	12110, 12326, 12543, 12781, 13041, 13301, 13561, 13865, 14168, 14471, 14818, 15164, 15533, 15944, 16356, 16789,
 	17244, 17742, 18262, 18826, 19411, 20039, 20689, 21404, 22140, 22920, 23787, 24675, 25650, 26690, 27773, 28943,
+}
+
+// svtDimensionsRequire8x8 is SVT-AV1's dimensions_require_8x8
+// (Source/Lib/Codec/enc_mode_config.c:2917): whether an SB of aligned size
+// w x h can only be covered with 8x8 blocks, scanning the square sizes from
+// 32 down to 8 for one whose leftover fits.
+func svtDimensionsRequire8x8(w, h int) bool {
+	const startBSize = 64
+	lw, lh := w%startBSize, h%startBSize
+	for half := startBSize >> 1; half >= 8; half >>= 1 {
+		if (lw == 0 || lw > half) && (lh == 0 || lh > half) {
+			return false
+		}
+		lw %= half
+		lh %= half
+	}
+	return true
 }
