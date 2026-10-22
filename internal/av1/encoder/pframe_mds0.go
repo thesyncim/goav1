@@ -27,10 +27,10 @@ import (
 //     bits approximated as 1296 + factor*(|dx|+|dy|) with factor 20 for
 //     screen content else 50.
 //
-// GLOBALMV(0,0) stays in the candidate set as in libaom's realtime pick
-// (av1/encoder/nonrd_pickmode.c ref_mode_set keeps GLOBALMV), preserving this
-// encoder's zero-motion syntax choice; identical vectors share one prediction
-// so the mode symbols' rate alone separates them.
+// There is no GLOBALMV candidate: the light-PD1 injectors add only NEAREST,
+// the NEAR DRL entries and the ME NEWMV (inject_zz_backup_candidate only
+// fires on an empty list, which NEAREST rules out); identical vectors share
+// one prediction so the mode symbols' rate alone separates them.
 //
 // The layer scoping mirrors SVT-AV1 preset 12's temporal-layer modulation
 // (Source/Lib/Codec/enc_mode_config.c: pic_lpd1_lvl = is_base ? 4 : 7):
@@ -51,8 +51,8 @@ import (
 // +3.5% rate — not robust at matched rate, rejected.
 const mds0NearCount = 1
 
-// mds0MaxCands bounds NEAREST + 1 NEAR + GLOBAL + NEW.
-const mds0MaxCands = 4
+// mds0MaxCands bounds NEAREST + 1 NEAR + NEW.
+const mds0MaxCands = 3
 
 type mds0Cand struct {
 	mode tile.InterMode
@@ -131,11 +131,6 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 		n++
 	}
 
-	// GLOBALMV zero motion (libaom nonrd_pickmode keeps GLOBALMV in the
-	// realtime mode set); duplicates reuse the earlier prediction below.
-	cands[n] = mds0Cand{mode: tile.InterModeGlobalMV}
-	n++
-
 	// NEWMV vector-bit predictor: stack slot 0 (choose_best_av1_mv_pred at
 	// approx_inter_rate>1 returns DRL 0).
 	newPred := nearestRefs.Nearest[0]
@@ -149,15 +144,15 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 
 	var dists [mds0MaxCands]int64
 	var sses [mds0MaxCands]uint32
-	var distSource [mds0MaxCands]uint8 // 1=ME prediction, 2=earlier candidate cache
 	best := -1
 	bestCost := int64(0)
 	bestMV := motion.Vector{}
 	for i := 0; i < n; i++ {
 		cand := &cands[i]
-		// Distortion: one prediction per unique vector; the residual
-		// variance <<4 matches fast_loop_core_light_pd1's squared-metric
-		// scale.
+		// Distortion: one prediction per candidate (the injectors
+		// deduplicate vectors, mv_is_already_injected), the ME vector's
+		// cached; the residual variance <<4 matches
+		// fast_loop_core_light_pd1's squared-metric scale.
 		dist := int64(-1)
 		source := uint8(0)
 		if cand.mv == meMV {
@@ -165,17 +160,6 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 			if dist >= 0 {
 				source = 1
 				sses[i] = meSSE
-			}
-		}
-		for j := 0; dist < 0 && j < i; j++ {
-			if cands[j].mv == cand.mv && dists[j] >= 0 {
-				dist = dists[j]
-				source = 2
-				sses[i] = sses[j]
-				if distSource[j] == 1 {
-					source = 1
-				}
-				break
 			}
 		}
 		if dist < 0 {
@@ -188,7 +172,12 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 			sses[i] = sse
 		}
 		dists[i] = dist
-		distSource[i] = source
+		// fast_loop_core_light_pd1: a candidate whose distortion alone,
+		// RDCOST(full_lambda, 0, dist), already exceeds the best cost can
+		// never be the single candidate sent to MDS3; skip its rate.
+		if best >= 0 && dist<<7 > bestCost {
+			continue
+		}
 
 		rate := int64(st.mds0Rates.SingleInterModeBits(stack.ModeContext, cand.mode))
 		if cand.mode == tile.InterModeNewMV || cand.mode == tile.InterModeNearMV {
@@ -223,10 +212,6 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 					// The cached ME pixels were overwritten after a different
 					// candidate became best; restore them only on this path.
 					predYValid = st.predictLuma(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, motion.RegularFilters) == nil
-				case 2:
-					// A duplicate vector can reuse its measured distortion, but
-					// sadScratch may hold another candidate's pixels.
-					predYValid = st.predictLuma(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, motion.RegularFilters) == nil
 				}
 				if predYValid {
 					predYMV = cand.mv
