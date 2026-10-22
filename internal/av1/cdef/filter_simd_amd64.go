@@ -33,3 +33,9 @@ var cdefLowByteIdx = archsimd.LoadInt8x16Array(&[16]int8{0, 2, 4, 6, 8, 10, 12, 
 func cdefNarrowU8(y archsimd.Int16x8) archsimd.Uint8x16 {
 	return y.ToBits().ReshapeToUint8s().PermuteOrZero(cdefLowByteIdx)
 }
+
+// cdefSarI16 is an arithmetic right shift of each 16-bit lane by a count from
+// cdefShiftCountOf.
+func cdefSarI16(v archsimd.Int16x8, sh cdefShiftCount) archsimd.Int16x8 {
+	return v.ShiftAllRight(sh)
+}
