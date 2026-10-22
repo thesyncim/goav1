@@ -59,3 +59,59 @@ func sad16xNx4(src []byte, srcStride int, ref []byte, refStride, rows int) (int,
 	}
 	return sumU16(c0), sumU16(c1), sumU16(c2), sumU16(c3)
 }
+
+// svtSAD16xhx8 is the eight-position step of SVT-AV1's
+// svt_sad_loop_kernel16xh_neon_dotprod / svt_sad_loop_kernel32xh_neon_dotprod
+// (Source/Lib/ASM_NEON_DOTPROD/compute_sad_neon_dotprod.c, the
+// search_area_width % 8 == 0 branch): the SADs of the 16-wide, rows-tall
+// source block against ref+0..ref+7, as two sad16xhx4d batches that share the
+// source row. rows <= 16.
+//
+// archsimd has no UABD/UDOT/UADALP, so each row's absolute differences are
+// MAX-MIN and accumulate as uint16 lanes two ways: S sums the byte pairs as
+// lo + 256*hi (wrapping) and H sums the high bytes. The pair sum lo + hi is
+// S - 255*H modulo 2^16, exact because a position's total is at most
+// 16*16*255 = 65280. The pairwise reduction is linear, so it runs on S and H
+// before the single correction.
+func svtSAD16xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStride, rows int) {
+	_ = src[(rows-1)*srcStride+15]
+	_ = ref[(rows-1)*refStride+22]
+	sp := unsafe.Pointer(&src[0])
+	rp := unsafe.Pointer(&ref[0])
+	var s0, s1, s2, s3, s4, s5, s6, s7 archsimd.Uint16x8
+	var h0, h1, h2, h3, h4, h5, h6, h7 archsimd.Uint16x8
+	// USHL by a hoisted -8: stock archsimd lowers ShiftAllRight to a
+	// per-use DUP + USHL rather than USHR #8.
+	hiShift := archsimd.BroadcastInt16x8(-8)
+	for r := 0; r < rows; r++ {
+		s := load16(unsafe.Add(sp, r*srcStride))
+		p := unsafe.Add(rp, r*refStride)
+		d := absDiffU8x16(s, load16(p)).ReshapeToUint16s()
+		s0, h0 = s0.Add(d), h0.Add(d.Shift(hiShift))
+		d = absDiffU8x16(s, load16(unsafe.Add(p, 1))).ReshapeToUint16s()
+		s1, h1 = s1.Add(d), h1.Add(d.Shift(hiShift))
+		d = absDiffU8x16(s, load16(unsafe.Add(p, 2))).ReshapeToUint16s()
+		s2, h2 = s2.Add(d), h2.Add(d.Shift(hiShift))
+		d = absDiffU8x16(s, load16(unsafe.Add(p, 3))).ReshapeToUint16s()
+		s3, h3 = s3.Add(d), h3.Add(d.Shift(hiShift))
+		d = absDiffU8x16(s, load16(unsafe.Add(p, 4))).ReshapeToUint16s()
+		s4, h4 = s4.Add(d), h4.Add(d.Shift(hiShift))
+		d = absDiffU8x16(s, load16(unsafe.Add(p, 5))).ReshapeToUint16s()
+		s5, h5 = s5.Add(d), h5.Add(d.Shift(hiShift))
+		d = absDiffU8x16(s, load16(unsafe.Add(p, 6))).ReshapeToUint16s()
+		s6, h6 = s6.Add(d), h6.Add(d.Shift(hiShift))
+		d = absDiffU8x16(s, load16(unsafe.Add(p, 7))).ReshapeToUint16s()
+		s7, h7 = s7.Add(d), h7.Add(d.Shift(hiShift))
+	}
+	// horizontal_add_4d_u32x4 for both batches at once: lane k of the
+	// reduced vectors is position k.
+	sv := s0.ConcatAddPairs(s1).ConcatAddPairs(s2.ConcatAddPairs(s3)).
+		ConcatAddPairs(s4.ConcatAddPairs(s5).ConcatAddPairs(s6.ConcatAddPairs(s7)))
+	hv := h0.ConcatAddPairs(h1).ConcatAddPairs(h2.ConcatAddPairs(h3)).
+		ConcatAddPairs(h4.ConcatAddPairs(h5).ConcatAddPairs(h6.ConcatAddPairs(h7)))
+	t := sv.Sub(hv.ShiftAllLeft(8)).Add(hv)
+	lo := (*[4]uint32)(unsafe.Pointer(&acc[0]))
+	hi := (*[4]uint32)(unsafe.Pointer(&acc[4]))
+	archsimd.LoadUint32x4Array(lo).Add(t.ExtendLo4ToUint32()).StoreArray(lo)
+	archsimd.LoadUint32x4Array(hi).Add(t.HiToLo().ExtendLo4ToUint32()).StoreArray(hi)
+}
