@@ -426,6 +426,11 @@ type frameWorkReconWavefrontProgress struct {
 	mu      sync.Mutex
 	cond    sync.Cond
 	aborted atomic.Bool
+	// waiters counts goroutines parked on cond. A publisher stores its
+	// progress first and takes the lock to wake only when someone waits; a
+	// waiter registers under the lock before rechecking, so with sequentially
+	// consistent atomics one of the two always sees the other.
+	waiters atomic.Int32
 }
 
 func (wf *frameWorkReconWavefront) appendRowStart(sbCount int) error {
@@ -478,26 +483,34 @@ func (wf *frameWorkReconWavefront) abortProgress() {
 }
 
 func (wf *frameWorkReconWavefront) waitForRowProgress(done *atomic.Int32, need int32) bool {
-	p := wf.ensureProgress()
+	p := wf.progress
+	if done.Load() >= need {
+		return !p.aborted.Load()
+	}
 	p.mu.Lock()
+	p.waiters.Add(1)
 	for done.Load() < need {
 		if p.aborted.Load() {
+			p.waiters.Add(-1)
 			p.mu.Unlock()
 			return false
 		}
 		p.cond.Wait()
 	}
+	p.waiters.Add(-1)
 	ok := !p.aborted.Load()
 	p.mu.Unlock()
 	return ok
 }
 
 func (wf *frameWorkReconWavefront) publishRowProgress(done *atomic.Int32, value int32) {
-	p := wf.ensureProgress()
-	p.mu.Lock()
+	p := wf.progress
 	done.Store(value)
-	p.cond.Broadcast()
-	p.mu.Unlock()
+	if p.waiters.Load() != 0 {
+		p.mu.Lock()
+		p.cond.Broadcast()
+		p.mu.Unlock()
+	}
 }
 
 // ensureStates lazily allocates wavefrontWorkers per-goroutine reconstruction
