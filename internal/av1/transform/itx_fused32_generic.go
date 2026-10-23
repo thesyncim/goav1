@@ -11,3 +11,8 @@ package transform
 func InverseAddDCT32x32Low8(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int) bool {
 	return false
 }
+
+// InverseAddDCT32x32Low16 is InverseAddDCT32x32Low8 for the 16x16 corner.
+func InverseAddDCT32x32Low16(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows int) bool {
+	return false
+}

@@ -148,9 +148,14 @@ func ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst []byte, dstStride 
 	// the coefficients into dst; a declined block takes the staged path.
 	if bitDepth == 8 && bytesPerSample == 1 && cfg.Transform == transform.TypeDCTDCT &&
 		width == 32 && height == 32 && visibleWidth == 32 && visibleHeight == 32 &&
-		activeRows > 0 && activeRows <= 8 && activeCols > 0 && activeCols <= 8 &&
-		transform.InverseAddDCT32x32Low8(dst, dstStride, dst, dstStride, dequant, scanHeight) {
-		return nil
+		activeRows > 0 && activeRows <= 16 && activeCols > 0 && activeCols <= 16 {
+		if activeRows <= 8 && activeCols <= 8 {
+			if transform.InverseAddDCT32x32Low8(dst, dstStride, dst, dstStride, dequant, scanHeight) {
+				return nil
+			}
+		} else if transform.InverseAddDCT32x32Low16(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows) {
+			return nil
+		}
 	}
 	if err := transform.InverseBlockBitDepthRawBounded(transformScratch, dequant, scanHeight, cfg.Size, cfg.Transform, bitDepth, activeRows, activeCols); err != nil {
 		return ErrInvalidBlock
