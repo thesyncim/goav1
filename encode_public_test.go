@@ -4267,8 +4267,8 @@ func TestPublicEncoderConfigMaxThreadsControlsTileColumns(t *testing.T) {
 		if err != nil {
 			t.Fatalf("four-thread key Encode: %v", err)
 		}
-		if got := publicFirstFrameTileColumns(t, key.Data); got != 4 {
-			t.Fatalf("four-thread tile columns=%d want 4", got)
+		if got := publicFirstFrameTileColumns(t, key.Data); got != 1 {
+			t.Fatalf("four-thread tile columns=%d want 1 (one tile, as SVT-AV1)", got)
 		}
 
 		enc.SetMaxThreads(0)
@@ -4276,8 +4276,8 @@ func TestPublicEncoderConfigMaxThreadsControlsTileColumns(t *testing.T) {
 		if err != nil {
 			t.Fatalf("default-thread key Encode: %v", err)
 		}
-		if got := publicFirstFrameTileColumns(t, key.Data); got != 2 {
-			t.Fatalf("default tile columns=%d want 2", got)
+		if got := publicFirstFrameTileColumns(t, key.Data); got != 1 {
+			t.Fatalf("default tile columns=%d want 1 (one tile, as SVT-AV1)", got)
 		}
 	})
 
@@ -4310,8 +4310,8 @@ func TestPublicEncoderConfigMaxThreadsControlsTileColumns(t *testing.T) {
 		if err != nil {
 			t.Fatalf("four-thread key Encode: %v", err)
 		}
-		if got := publicFirstFrameTileColumns(t, key.Data); got != 4 {
-			t.Fatalf("four-thread tile columns=%d want 4", got)
+		if got := publicFirstFrameTileColumns(t, key.Data); got != 1 {
+			t.Fatalf("four-thread tile columns=%d want 1 (one tile, as SVT-AV1)", got)
 		}
 
 		enc.SetMaxThreads(0)
@@ -4322,8 +4322,8 @@ func TestPublicEncoderConfigMaxThreadsControlsTileColumns(t *testing.T) {
 		if err != nil {
 			t.Fatalf("default-thread key Encode: %v", err)
 		}
-		if got := publicFirstFrameTileColumns(t, key.Data); got != 2 {
-			t.Fatalf("default tile columns=%d want 2", got)
+		if got := publicFirstFrameTileColumns(t, key.Data); got != 1 {
+			t.Fatalf("default tile columns=%d want 1 (one tile, as SVT-AV1)", got)
 		}
 	})
 }

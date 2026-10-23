@@ -2,6 +2,7 @@ package encoder
 
 import (
 	"errors"
+	"runtime"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/obu"
@@ -137,10 +138,9 @@ func TestWebRTCStreamConfigMaxThreadsControlsTileColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("updated EncodePicture: %v", err)
 	}
-	// Keyframes keep tile-column parallelism (no P-frame decision pass to
-	// wavefront), so MaxThreads=4 still emits 4 key tile columns.
-	if got := parseWebRTCTileColumns(t, picture.Frames[0].TU); got != 4 {
-		t.Fatalf("updated encoded tile columns=%d want 4", got)
+	// Keyframes code one tile too, as SVT-AV1's default.
+	if got := parseWebRTCTileColumns(t, picture.Frames[0].TU); got != 1 {
+		t.Fatalf("updated encoded tile columns=%d want 1", got)
 	}
 
 	change = stream.Config()
@@ -148,7 +148,7 @@ func TestWebRTCStreamConfigMaxThreadsControlsTileColumns(t *testing.T) {
 	if err := stream.SetConfig(change); err != nil {
 		t.Fatalf("SetConfig MaxThreads=0: %v", err)
 	}
-	if got, want := stream.encoders[0].tileColsLog2, defaultTileColsLog2(w); got != want {
+	if got, want := stream.encoders[0].tileColsLog2, uint8(0); got != want {
 		t.Fatalf("defaulted tileColsLog2=%d want %d", got, want)
 	}
 	if stream.encoders[0].singleThread {
@@ -158,8 +158,14 @@ func TestWebRTCStreamConfigMaxThreadsControlsTileColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaulted EncodePicture: %v", err)
 	}
-	if got := parseWebRTCTileColumns(t, picture.Frames[0].TU); got != 2 {
-		t.Fatalf("defaulted encoded tile columns=%d want 2", got)
+	// The default codes one tile, inter frames on a GOMAXPROCS-lane wavefront.
+	if procs := runtime.GOMAXPROCS(0); procs > 1 {
+		if got := stream.encoders[0].wavefrontLanes; got != procs {
+			t.Fatalf("defaulted wavefrontLanes=%d want %d", got, procs)
+		}
+	}
+	if got := parseWebRTCTileColumns(t, picture.Frames[0].TU); got != 1 {
+		t.Fatalf("defaulted encoded tile columns=%d want 1", got)
 	}
 }
 
@@ -440,8 +446,14 @@ func TestWebRTCStreamConfigMaxThreadsAppliesToPixelEncoders(t *testing.T) {
 			defer stream.Close()
 			tc.assert(t, stream)
 			picture := tc.encode(t, stream)
-			if got := parseWebRTCTileColumns(t, picture.Frames[0].TU); got != 4 {
-				t.Fatalf("encoded tile columns=%d want 4", got)
+			// The 8-bit 4:2:0 encoder codes one tile (SVT-AV1) on the SB-row
+			// wavefront; the others have no wavefront and parallelize on tiles.
+			want := 4
+			if tc.name == "i420-8" {
+				want = 1
+			}
+			if got := parseWebRTCTileColumns(t, picture.Frames[0].TU); got != want {
+				t.Fatalf("encoded tile columns=%d want %d", got, want)
 			}
 
 			change := stream.Config()

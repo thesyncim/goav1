@@ -159,7 +159,7 @@ func EncodeMonochromeKeyframe(src SourceFrameMono, qIndex uint8) ([]byte, Source
 // for scalable streams whose lower spatial layers are smaller than the shared
 // sequence maximum.
 func EncodeKeyframeWithSequenceMax(src SourceFrame420, qIndex uint8, maxWidth, maxHeight int) ([]byte, SourceFrame420, error) {
-	return encodeKeyframeFilteredTiles(src, qIndex, nil, 0, 0, nil, nil, nil, defaultTileColsLog2(src.Width), keyframeTileOptions{
+	return encodeKeyframeFilteredTiles(src, qIndex, nil, 0, 0, nil, nil, nil, 0, keyframeTileOptions{
 		sequenceMaxWidth:  maxWidth,
 		sequenceMaxHeight: maxHeight,
 	})
@@ -172,7 +172,7 @@ func EncodeKeyframeWithSequenceMax(src SourceFrame420, qIndex uint8, maxWidth, m
 // pool so periodic keyframes allocate nothing; one-shot callers pass nil for
 // both.
 func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier) ([]byte, SourceFrame420, error) {
-	return encodeKeyframeFilteredTiles(src, qIndex, lf, renderW, renderH, reconBuf, tilePC, cdefApp, defaultTileColsLog2(src.Width), keyframeTileOptions{})
+	return encodeKeyframeFilteredTiles(src, qIndex, lf, renderW, renderH, reconBuf, tilePC, cdefApp, 0, keyframeTileOptions{})
 }
 
 // encodeKeyframeFilteredTiles is encodeKeyframeFiltered with the stream's
