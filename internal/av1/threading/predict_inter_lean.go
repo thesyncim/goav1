@@ -8,6 +8,7 @@ import (
 	"math/bits"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
@@ -47,6 +48,14 @@ func (b *FrameWorkBatch) interTarget(index int, block *tile.BlockVisit, plane Fr
 	if err != nil || !ok {
 		return ok, err
 	}
+	return b.interTargetAt(index, block, plane, x, y, width, height, ssX, ssY, t)
+}
+
+// interTargetAt is interTarget after the plane position step, so the two
+// chroma planes of a block can share one position, as dav1d's recon_b_inter
+// derives the chroma block geometry once for both.
+func (b *FrameWorkBatch) interTargetAt(index int, block *tile.BlockVisit, plane FrameWorkPlane, x, y, width, height int, ssX, ssY bool, t *frameWorkInterTarget) (bool, error) {
+	color := &b.Sequence.ColorConfig
 	window := b.cachedJobOutputPlanePtr(index, plane)
 	if window == nil {
 		w, err := b.JobOutputPlane(index, plane)
@@ -67,7 +76,7 @@ func (b *FrameWorkBatch) interTarget(index int, block *tile.BlockVisit, plane Fr
 	if planeOK && frameWorkPlaneBlockStartsBeyondPlane(output, bps, x, y) {
 		return false, nil
 	}
-	width, height, ok = frameWorkClipVisiblePixelsToWindowPtr(window, x, y, width, height)
+	width, height, ok := frameWorkClipVisiblePixelsToWindowPtr(window, x, y, width, height)
 	if !ok {
 		return false, ErrInvalidBatch
 	}
@@ -295,4 +304,146 @@ func (b *FrameWorkBatch) chromaIntraGeometry(index int, block *tile.BlockVisit, 
 		SubsamplingX:   t.ssX,
 		SubsamplingY:   t.ssY,
 	}, true, nil
+}
+
+// boundRefPlane is dav1d's f->refp[refidx].p binding: the validated view
+// referencePlaneViewInto derives for (reference, plane), computed once per job
+// and then read in place. It returns nil when the view is invalid or no job
+// geometry cache is installed; callers then take referencePlaneViewInto.
+func (b *FrameWorkBatch) boundRefPlane(reference FrameWorkReference, plane FrameWorkPlane) *frame.Plane {
+	c := b.geomCache
+	i := uint(reference)*3 + uint(plane)
+	if c == nil || plane > FrameWorkPlaneV || i >= uint(len(c.ref)) {
+		return nil
+	}
+	bit := uint32(1) << i
+	if c.refMask&bit != 0 {
+		return &c.ref[i]
+	}
+	if !b.referencePlaneViewInto(reference, plane, &c.ref[i]) {
+		return nil
+	}
+	c.refMask |= bit
+	return &c.ref[i]
+}
+
+// sameSizeRefPlane returns the bound reference view when it has the output
+// plane's coded size (the lean unscaled routes), else nil.
+func (b *FrameWorkBatch) sameSizeRefPlane(reference FrameWorkReference, plane FrameWorkPlane, codedW, codedH int, tmp *frame.Plane) *frame.Plane {
+	ref := b.boundRefPlane(reference, plane)
+	if ref == nil {
+		if !b.referencePlaneViewInto(reference, plane, tmp) {
+			return nil
+		}
+		ref = tmp
+	}
+	if ref.Width != codedW || ref.Height != codedH {
+		return nil
+	}
+	return ref
+}
+
+// predictBlockInterLean8 is dav1d's recon_b_inter prediction (src/recon_tmpl.c)
+// for the common 8-bit translational block, single-reference or compound: the
+// block-level mode checks run once, the luma plane predicts through mc(), and
+// U and V share one chroma position as dav1d's cbw4/cbh4/cbx4/cby4. Any plane
+// the lean target cannot take (scaled reference, high bit depth layout) goes
+// through the general per-plane route, which owns those semantics. It reports
+// false, with nothing written, for a block outside the translational shapes.
+func (b *FrameWorkBatch) predictBlockInterLean8(index int, visit *tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) (bool, error) {
+	pred := &visit.Prediction
+	refs := &pred.InterMotion.References
+	if b.Sequence.ColorConfig.BitDepth != 8 ||
+		(pred.InterIntraValid && pred.InterIntra.Enabled) ||
+		(pred.MotionModeValid && pred.MotionMode != tile.MotionModeTranslation) {
+		return false, nil
+	}
+	if refs.Compound {
+		blend := pred.CompoundBlend
+		if scratch == nil || !refs.Ref[0].Valid() || !refs.Ref[1].Valid() ||
+			(blend.Type != tile.CompoundTypeAverage && blend.Type != tile.CompoundTypeDistWtd &&
+				blend.Type != tile.CompoundTypeWedge && blend.Type != tile.CompoundTypeDiffWtd) {
+			return false, nil
+		}
+		return true, b.predictBlockInterLeanPlanes(index, visit, scratch, filters, true)
+	}
+	if pred.GlobalWarpedMotionValid || !refs.Ref[0].Valid() || refs.Ref[1] != tile.ReferenceFrameNone {
+		return false, nil
+	}
+	if _, ok := frameWorkReferenceFromTile(refs.Ref[0]); !ok {
+		return false, nil
+	}
+	return true, b.predictBlockInterLeanPlanes(index, visit, scratch, filters, false)
+}
+
+func (b *FrameWorkBatch) predictBlockInterLeanPlanes(index int, visit *tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters, compound bool) error {
+	block := &visit.Block
+	color := &b.Sequence.ColorConfig
+	var cx, cy, cw, ch int
+	var cssX, cssY bool
+	for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
+		if !compound && plane != FrameWorkPlaneY && visit.Prediction.SubChromaInterValid {
+			if err := b.predictBlockInterSubChromaPlanePtr(index, visit, plane, scratch); err != nil {
+				return err
+			}
+			continue
+		}
+		var x, y, w, h int
+		var ssX, ssY bool
+		switch plane {
+		case FrameWorkPlaneY, FrameWorkPlaneU:
+			var ok bool
+			var err error
+			x, y, w, h, ssX, ssY, ok, err = frameWorkBlockPlanePositionPtr(block, color, plane)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				if plane == FrameWorkPlaneU {
+					// No chroma for this block (or monochrome): V has none either.
+					return nil
+				}
+				continue
+			}
+			if plane == FrameWorkPlaneU {
+				cx, cy, cw, ch, cssX, cssY = x, y, w, h, ssX, ssY
+			}
+		default:
+			x, y, w, h, ssX, ssY = cx, cy, cw, ch, cssX, cssY
+		}
+		var t frameWorkInterTarget
+		ok, err := b.interTargetAt(index, block, plane, x, y, w, h, ssX, ssY, &t)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		if compound {
+			handled, err := b.predictBlockInterCompoundLean(visit, plane, scratch, &t, visit.Prediction.CompoundBlend, filters)
+			if !handled {
+				err = b.predictBlockInterCompoundPlaneWithFiltersPtr(index, visit, plane, scratch, filters)
+			}
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		var tmp frame.Plane
+		var ref *frame.Plane
+		if t.bps == 1 {
+			reference, _ := frameWorkReferenceFromTile(visit.Prediction.InterMotion.References.Ref[0])
+			ref = b.sameSizeRefPlane(reference, plane, t.codedW, t.codedH, &tmp)
+		}
+		if ref == nil {
+			if err := b.predictBlockInterPlaneWithFiltersPtr(index, visit, plane, filters, scratch); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := motion.PredictTranslation8(&t.output, ref, t.x, t.y, t.writeW, t.writeH, t.filterW, t.filterH, visit.Prediction.InterMotion.MV[0], t.ssX, t.ssY, filters, frameWorkConvolveScratch(scratch)); err != nil {
+			return ErrInvalidBatch
+		}
+	}
+	return nil
 }

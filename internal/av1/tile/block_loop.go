@@ -1326,7 +1326,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 		}
 		result.InterReferences = refs
 		result.InterReferencesValid = true
-		globalMVs := blockReferenceGlobalMVsForBlock(refs, req.GlobalMVs, req.GlobalMotion, req.AllowHighPrecisionMV, req.ForceIntegerMV, block)
+		globalMVs := blockReferenceGlobalMVsForBlock(refs, &req.GlobalMVs, &req.GlobalMotion, req.AllowHighPrecisionMV, req.ForceIntegerMV, block)
 		globalMotionTypes := blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes)
 		if req.DecodeInterModes {
 			if rt != nil {
@@ -1921,15 +1921,15 @@ func blockReferenceGlobalMVs(refs InterReferencesResult, global [referenceFrameC
 	return out
 }
 
-func blockReferenceGlobalMVsForBlock(refs InterReferencesResult, fallback [referenceFrameCount]motion.Vector, global [referenceFrameCount]parser.WarpedMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool, block BlockVisit) [2]motion.Vector {
-	out := blockReferenceGlobalMVs(refs, fallback)
+func blockReferenceGlobalMVsForBlock(refs InterReferencesResult, fallback *[referenceFrameCount]motion.Vector, global *[referenceFrameCount]parser.WarpedMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool, block BlockVisit) [2]motion.Vector {
+	out := blockReferenceGlobalMVs(refs, *fallback)
 	if refs.Ref[0].Valid() {
-		if mv, ok := globalMotionVector(global[refs.Ref[0]], allowHighPrecisionMV, forceIntegerMV, block); ok {
+		if mv, ok := globalMotionVector(&global[refs.Ref[0]], allowHighPrecisionMV, forceIntegerMV, block); ok {
 			out[0] = mv
 		}
 	}
 	if refs.Compound && refs.Ref[1].Valid() {
-		if mv, ok := globalMotionVector(global[refs.Ref[1]], allowHighPrecisionMV, forceIntegerMV, block); ok {
+		if mv, ok := globalMotionVector(&global[refs.Ref[1]], allowHighPrecisionMV, forceIntegerMV, block); ok {
 			out[1] = mv
 		}
 	}
@@ -2226,7 +2226,7 @@ func intrabcDVValid(dv motion.Vector, req BlockLoopRequest, block BlockVisit) bo
 		srcSB64Col < activeSB64Col-intrabcDelaySB64+wfOffset
 }
 
-func globalMotionVector(params parser.WarpedMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool, block BlockVisit) (motion.Vector, bool) {
+func globalMotionVector(params *parser.WarpedMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool, block BlockVisit) (motion.Vector, bool) {
 	if !globalMotionParamsInitialized(params) {
 		return motion.Vector{}, false
 	}
@@ -2270,7 +2270,7 @@ const (
 	intrabcDelaySB64                = intrabcDelayPixels / 64
 )
 
-func globalMotionParamsInitialized(params parser.WarpedMotionParams) bool {
+func globalMotionParamsInitialized(params *parser.WarpedMotionParams) bool {
 	if params.Type != parser.GlobalMotionIdentity {
 		return true
 	}

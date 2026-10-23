@@ -227,6 +227,9 @@ func (b *FrameWorkBatch) predictBlockInterWithFiltersPtr(index int, visit *tile.
 		}
 		return nil
 	}
+	if handled, err := b.predictBlockInterLean8(index, visit, scratch, filters); handled {
+		return err
+	}
 	if visit.Prediction.InterMotion.References.Compound {
 		if scratch == nil {
 			return ErrInvalidBatch
@@ -1703,17 +1706,19 @@ func (b *FrameWorkBatch) predictBlockInterCompoundLean(visit *tile.BlockLoopVisi
 	if !ok0 || !ok1 {
 		return false, nil
 	}
-	var ref0, ref1 frame.Plane
-	if !b.referencePlaneViewInto(reference0, plane, &ref0) || ref0.Width != t.codedW || ref0.Height != t.codedH {
+	var tmp0, tmp1 frame.Plane
+	ref0 := b.sameSizeRefPlane(reference0, plane, t.codedW, t.codedH, &tmp0)
+	if ref0 == nil {
 		return false, nil
 	}
-	if !b.referencePlaneViewInto(reference1, plane, &ref1) || ref1.Width != t.codedW || ref1.Height != t.codedH {
+	ref1 := b.sameSizeRefPlane(reference1, plane, t.codedW, t.codedH, &tmp1)
+	if ref1 == nil {
 		return false, nil
 	}
-	if err := motion.PrepTranslation8(&scratch.Conv0, &ref0, t.x, t.y, t.width, t.height, t.filterW, t.filterH, motionResult.MV[0], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
+	if err := motion.PrepTranslation8(&scratch.Conv0, ref0, t.x, t.y, t.width, t.height, t.filterW, t.filterH, motionResult.MV[0], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
 		return true, ErrInvalidBatch
 	}
-	if err := motion.PrepTranslation8(&scratch.Conv1, &ref1, t.x, t.y, t.width, t.height, t.filterW, t.filterH, motionResult.MV[1], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
+	if err := motion.PrepTranslation8(&scratch.Conv1, ref1, t.x, t.y, t.width, t.height, t.filterW, t.filterH, motionResult.MV[1], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
 		return true, ErrInvalidBatch
 	}
 	return true, b.blendCompoundConvBufs(visit, plane, scratch, blend, t.output, t.bps, t.x, t.y, t.width, t.height, t.ssX, t.ssY)
@@ -2051,12 +2056,12 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, bloc
 			return err
 		}
 		if reference, ok := frameWorkReferenceFromTile(refFrame); ok && t.bps == 1 {
-			var ref frame.Plane
-			if b.referencePlaneViewInto(reference, plane, &ref) && ref.Width == t.codedW && ref.Height == t.codedH {
+			var tmp frame.Plane
+			if ref := b.sameSizeRefPlane(reference, plane, t.codedW, t.codedH, &tmp); ref != nil {
 				// Select the interpolation-filter kernel from the un-clipped
 				// plane block dimensions (see
 				// predictBlockInterReferencePlaneToOutputWithGeometry).
-				if err := motion.PredictTranslation8(&t.output, &ref, t.x, t.y, t.writeW, t.writeH, t.filterW, t.filterH, mv, t.ssX, t.ssY, filters, frameWorkConvolveScratch(scratch)); err != nil {
+				if err := motion.PredictTranslation8(&t.output, ref, t.x, t.y, t.writeW, t.writeH, t.filterW, t.filterH, mv, t.ssX, t.ssY, filters, frameWorkConvolveScratch(scratch)); err != nil {
 					return ErrInvalidBatch
 				}
 				return nil
