@@ -79,6 +79,9 @@ type WebRTCStream struct {
 	monoReferenceFrames    [WebRTCReferenceBuffers]SourceFrameMono
 	mono16ReferenceFrames  [WebRTCReferenceBuffers]SourceFrameMono16
 	color16ReferenceFrames [WebRTCReferenceBuffers]SourceFrame42016
+	// referenceValid marks the referenceFrames slots holding a reference;
+	// dropping a slot keeps its buffers for the next copy.
+	referenceValid [WebRTCReferenceBuffers]bool
 }
 
 // NewWebRTCStream creates an L1T1 WebRTC stream under CBR rate control.
@@ -651,7 +654,7 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 		s.config = normalized
 		if !sameStructure {
 			s.state = webRTCEncoderStateForNextKey(s.state)
-			s.referenceFrames = [WebRTCReferenceBuffers]SourceFrame420{}
+			s.referenceValid = [WebRTCReferenceBuffers]bool{}
 			s.monoReferenceFrames = [WebRTCReferenceBuffers]SourceFrameMono{}
 			s.mono16ReferenceFrames = [WebRTCReferenceBuffers]SourceFrameMono16{}
 			s.color16ReferenceFrames = [WebRTCReferenceBuffers]SourceFrame42016{}
@@ -715,7 +718,7 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 	s.scaledFrames16 = [WebRTCMaxSpatialLayers]SourceFrame42016{}
 	s.layerScratch = [WebRTCMaxSpatialLayers][]byte{}
 	s.descriptorScratch = [WebRTCMaxSpatialLayers][]byte{}
-	s.referenceFrames = [WebRTCReferenceBuffers]SourceFrame420{}
+	s.referenceValid = [WebRTCReferenceBuffers]bool{}
 	s.monoReferenceFrames = [WebRTCReferenceBuffers]SourceFrameMono{}
 	s.mono16ReferenceFrames = [WebRTCReferenceBuffers]SourceFrameMono16{}
 	s.color16ReferenceFrames = [WebRTCReferenceBuffers]SourceFrame42016{}
@@ -1613,7 +1616,7 @@ func (s *WebRTCStream) encodePictureLayer(enc *VideoEncoder, layerSrc SourceFram
 		if err != nil {
 			return nil, false, err
 		}
-		if refSlot >= WebRTCReferenceBuffers || s.referenceFrames[refSlot].Y == nil {
+		if refSlot >= WebRTCReferenceBuffers || !s.referenceValid[refSlot] {
 			return nil, false, ErrInvalidFrame
 		}
 		tu, err := enc.encodeReferencePFrameWithSequenceMax(layerSrc, s.referenceFrames[refSlot], refSlot, settings, maxWidth, maxHeight)
@@ -1849,6 +1852,7 @@ func (s *WebRTCStream) updateReferenceFrame(settings FrameEncodeSettings, enc *V
 		return err
 	}
 	copyFrameInto(&s.referenceFrames[settings.UpdateBuffer], recon)
+	s.referenceValid[settings.UpdateBuffer] = true
 	return nil
 }
 

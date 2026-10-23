@@ -906,7 +906,7 @@ func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, re
 	if cap(pc.writerBuf) == 0 {
 		pc.writerBuf = make([]byte, 1<<18)
 	}
-	pc.writer.Reset(pc.writerBuf[:0])
+	pc.resetWriter()
 	pc.armCDEFLog()
 	st.w = &pc.writer
 
@@ -1067,7 +1067,7 @@ func (pc *pframeCoder) encodeMonochromeKeyframeTileWithOptions(src SourceFrameMo
 	if cap(pc.writerBuf) == 0 {
 		pc.writerBuf = make([]byte, 1<<18)
 	}
-	pc.writer.Reset(pc.writerBuf[:0])
+	pc.resetWriter()
 	st.w = &pc.writer
 
 	miRows := uint16(src.Height / 4)

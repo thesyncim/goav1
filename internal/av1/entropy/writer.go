@@ -119,6 +119,12 @@ func NewBitCounter() BitCounter {
 
 // Reset rearms the writer over dst, the in-place form of NewWriter for
 // callers that keep one Writer alive across streams.
+// Backing returns the writer's current output buffer at full capacity, so a
+// caller can keep a buffer the writer grew into for the next Reset.
+func (w *Writer) Backing() []byte {
+	return w.buf[:cap(w.buf)]
+}
+
 func (w *Writer) Reset(dst []byte) {
 	w.buf = writerBacking(dst)
 	w.offs = 0

@@ -1015,9 +1015,9 @@ func TestWebRTCStreamTracksReferenceSurfaces(t *testing.T) {
 		if enc == nil {
 			t.Fatalf("missing layer encoder %d", i)
 		}
-		if ref.Y == nil || ref.Width != enc.width || ref.Height != enc.height {
+		if !stream.referenceValid[i] || ref.Width != enc.width || ref.Height != enc.height {
 			t.Fatalf("reference buffer %d geometry=%dx%d valid=%v want %dx%d",
-				i, ref.Width, ref.Height, ref.Y != nil, enc.width, enc.height)
+				i, ref.Width, ref.Height, stream.referenceValid[i], enc.width, enc.height)
 		}
 	}
 
@@ -1027,7 +1027,7 @@ func TestWebRTCStreamTracksReferenceSurfaces(t *testing.T) {
 	if err := stream.SetConfig(controlChange); err != nil {
 		t.Fatalf("SetConfig control change: %v", err)
 	}
-	if stream.referenceFrames[0].Y == nil || stream.referenceFrames[1].Y == nil {
+	if !stream.referenceValid[0] || !stream.referenceValid[1] {
 		t.Fatal("control-only change cleared reference surfaces")
 	}
 
@@ -1036,8 +1036,8 @@ func TestWebRTCStreamTracksReferenceSurfaces(t *testing.T) {
 	if err := stream.SetConfig(structureChange); err != nil {
 		t.Fatalf("SetConfig structure change: %v", err)
 	}
-	for i, ref := range stream.referenceFrames {
-		if ref.Y != nil {
+	for i, valid := range stream.referenceValid {
+		if valid {
 			t.Fatalf("reference buffer %d survived structure reset", i)
 		}
 	}

@@ -115,7 +115,7 @@ func (pc *pframeCoder) encodeHighBitDepthMonochromeKeyframeTileWithOptions(src S
 	if cap(pc.writerBuf) == 0 {
 		pc.writerBuf = make([]byte, 1<<18)
 	}
-	pc.writer.Reset(pc.writerBuf[:0])
+	pc.resetWriter()
 	st.w = &pc.writer
 
 	miRows := uint16(src.Height / 4)

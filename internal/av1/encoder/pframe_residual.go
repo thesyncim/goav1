@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/bits"
+	"sync"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -536,45 +537,81 @@ func (pc *pframeCoder) resetCarrierEdges(rootCols int) {
 // initScans allocates the coder's scan tables and coefficient scratch on
 // first use; later calls are free, so both the inter and keyframe tile
 // paths share one set per coder.
-func (st *lossyEncodeState) initScans() error {
-	if st.scan8 != nil {
-		return nil
-	}
+// encoderScanTables are the default (2D-class) coefficient scans every tile
+// coder reads. They are read-only, so all coders share one copy built on
+// first use instead of building and allocating their own.
+type encoderScanTables struct {
+	scan4, scan8, scan16, scan32 []int16
+	scan16x8, scan8x16           []int16
+	scan8x4, scan4x8             []int16
+	scan32x16, scan16x32         []int16
+	scan4x16, scan16x4           []int16
+	scan8x32, scan32x8           []int16
+	scan16x64, scan64x16         []int16
+}
+
+var (
+	sharedScansOnce sync.Once
+	sharedScans     encoderScanTables
+	sharedScansErr  error
+)
+
+func buildEncoderScanTables() (encoderScanTables, error) {
+	var t encoderScanTables
 	for _, sq := range []struct {
 		dst *[]int16
 		n   uint8
 	}{
-		{&st.scan4, 4}, {&st.scan8, 8}, {&st.scan16, 16}, {&st.scan32, 32},
+		{&t.scan4, 4}, {&t.scan8, 8}, {&t.scan16, 16}, {&t.scan32, 32},
 	} {
 		*sq.dst = make([]int16, int(sq.n)*int(sq.n))
 		inv := make([]int16, int(sq.n)*int(sq.n))
 		if err := transform.FillDefaultScan(*sq.dst, inv, transform.Size{Width: sq.n, Height: sq.n}, transform.Class2D); err != nil {
-			return err
+			return t, err
 		}
 	}
 	for _, rs := range []struct {
 		dst  *[]int16
 		w, h uint8
 	}{
-		{&st.scan16x8, 16, 8}, {&st.scan8x16, 8, 16},
-		{&st.scan8x4, 8, 4}, {&st.scan4x8, 4, 8},
-		{&st.scan32x16, 32, 16}, {&st.scan16x32, 16, 32},
-		{&st.scan4x16, 4, 16}, {&st.scan16x4, 16, 4},
-		{&st.scan8x32, 8, 32}, {&st.scan32x8, 32, 8},
-		{&st.scan16x64, 16, 64}, {&st.scan64x16, 64, 16},
+		{&t.scan16x8, 16, 8}, {&t.scan8x16, 8, 16},
+		{&t.scan8x4, 8, 4}, {&t.scan4x8, 4, 8},
+		{&t.scan32x16, 32, 16}, {&t.scan16x32, 16, 32},
+		{&t.scan4x16, 4, 16}, {&t.scan16x4, 16, 4},
+		{&t.scan8x32, 8, 32}, {&t.scan32x8, 32, 8},
+		{&t.scan16x64, 16, 64}, {&t.scan64x16, 64, 16},
 	} {
 		size := transform.Size{Width: rs.w, Height: rs.h}
 		scanSize, err := transform.ScanSize(size)
 		if err != nil {
-			return err
+			return t, err
 		}
 		total := int(scanSize.Width) * int(scanSize.Height)
 		*rs.dst = make([]int16, total)
 		inv := make([]int16, total)
 		if err := transform.FillDefaultScan(*rs.dst, inv, size, transform.Class2D); err != nil {
-			return err
+			return t, err
 		}
 	}
+	return t, nil
+}
+
+func (st *lossyEncodeState) initScans() error {
+	if st.scan8 != nil {
+		return nil
+	}
+	sharedScansOnce.Do(func() { sharedScans, sharedScansErr = buildEncoderScanTables() })
+	if sharedScansErr != nil {
+		return sharedScansErr
+	}
+	t := &sharedScans
+	st.scan4, st.scan8, st.scan16, st.scan32 = t.scan4, t.scan8, t.scan16, t.scan32
+	st.scan16x8, st.scan8x16 = t.scan16x8, t.scan8x16
+	st.scan8x4, st.scan4x8 = t.scan8x4, t.scan4x8
+	st.scan32x16, st.scan16x32 = t.scan32x16, t.scan16x32
+	st.scan4x16, st.scan16x4 = t.scan4x16, t.scan16x4
+	st.scan8x32, st.scan32x8 = t.scan8x32, t.scan32x8
+	st.scan16x64, st.scan64x16 = t.scan16x64, t.scan64x16
 	scratchLen, err := tile.CoeffLevelsScratchLen(tile.TransformSize32x32)
 	if err != nil {
 		return err
@@ -716,7 +753,7 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 		st.decisionStats = &pc.decisionStats
 	}
 
-	pc.writer.Reset(pc.writerBuf[:0])
+	pc.resetWriter()
 	pc.armCDEFLog()
 	st.w = &pc.writer
 	st.interTxTypeReq = tile.InterTransformTypeRequest{
@@ -996,7 +1033,7 @@ func (pc *pframeCoder) encodeLosslessIntraInterTile(src SourceFrame420, recon *S
 		st.decisionStats = &pc.decisionStats
 	}
 
-	pc.writer.Reset(pc.writerBuf[:0])
+	pc.resetWriter()
 	st.w = &pc.writer
 	st.intraTxTypeReq = tile.IntraTransformTypeRequest{
 		Size:        tile.TransformSize4x4,
@@ -3568,4 +3605,15 @@ func fullPelSearchSAD4(srcBlock, ref []byte, base, stride, bw, bh int, dx0, dy0,
 		fullPelSearchSAD(srcBlock, ref1, stride, bw, bh, 1<<30),
 		fullPelSearchSAD(srcBlock, ref2, stride, bw, bh, 1<<30),
 		fullPelSearchSAD(srcBlock, ref3, stride, bw, bh, 1<<30)
+}
+
+// resetWriter rearms the tile writer over writerBuf, first adopting the
+// buffer the writer grew into on a larger frame (Writer.ensure) so a detailed
+// keyframe or scene cut grows the buffer once per stream instead of on every
+// such frame.
+func (pc *pframeCoder) resetWriter() {
+	if b := pc.writer.Backing(); cap(b) > cap(pc.writerBuf) {
+		pc.writerBuf = b
+	}
+	pc.writer.Reset(pc.writerBuf[:0])
 }
