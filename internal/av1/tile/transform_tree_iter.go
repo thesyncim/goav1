@@ -75,55 +75,67 @@ func (s *txTreeStack) pushChildren(kids *[4]txTreeNode, k int) error {
 	return nil
 }
 
-// readVariableTransformTree decodes one root of a variable transform tree
-// depth first: split reads, Split bits and context marks in libaom's
-// read_tx_size_vartx order.
-func (s *DecodeState) readVariableTransformTree(cdfs *TransformCDFs, ctx *BlockModeContext, req TransformTreeRequest, result *TransformTreeResult, root txTreeNode) error {
-	var stack txTreeStack
-	var kids [4]txTreeNode
-	stack.n[0] = root
-	stack.depth = 1
-	for stack.depth > 0 {
-		stack.depth--
-		n := stack.n[stack.depth]
-		dims, ok := n.size.Dimensions()
+// readTxTree is dav1d's read_tx_tree (src/decode.c): the var-tx split flag of
+// one node, recursing into its visible children in decode order and marking
+// the above/left transform contexts at each leaf. right and bottom bound the
+// block's visible extent in superblock-local 4x4 units; haveTop and haveLeft
+// gate the split context as libaom's edge-seeded txfm contexts do.
+func (s *DecodeState) readTxTree(cdfs *TransformCDFs, ctx *BlockModeContext, masks *[2]uint16, from TransformSize, depth uint8, xOff, yOff, x4, y4, right, bottom int, haveTop, haveLeft bool) error {
+	dims, ok := from.Dimensions()
+	if !ok || uint(x4) >= MaxBlockModeSlots || uint(y4) >= MaxBlockModeSlots {
+		return ErrInvalidDecodeState
+	}
+	split := false
+	if depth < 2 && from > TransformSize4x4 {
+		cat := 2*(int(TransformSize64x64)-int(dims.Max)) - int(depth)
+		if uint(cat) >= TransformPartitionCats {
+			return ErrInvalidDecodeState
+		}
+		a, l := 0, 0
+		if haveTop && ctx.AboveTx[x4] < dims.Log2W {
+			a = 1
+		}
+		if haveLeft && ctx.LeftTx[y4] < dims.Log2H {
+			l = 1
+		}
+		split = s.Reader.ReadBinaryCDFUnchecked(&cdfs.TxPartition[cat][a+l]) != 0
+		if split {
+			masks[depth] |= 1 << (yOff*4 + xOff)
+		}
+	}
+	if split && dims.Max > 1 {
+		sub := dims.Sub
+		subDims, ok := sub.Dimensions()
 		if !ok {
 			return ErrInvalidDecodeState
 		}
-		split, err := s.ReadTransformPartitionSplit(cdfs, ctx, TransformPartitionRequest{
-			Size:     req.Size,
-			From:     n.size,
-			Depth:    n.depth,
-			X4:       uint8(n.x4),
-			Y4:       uint8(n.y4),
-			HaveTop:  n.haveTop,
-			HaveLeft: n.haveLeft,
-		})
-		if err != nil {
+		w, h := int(subDims.W4), int(subDims.H4)
+		d := depth + 1
+		if err := s.readTxTree(cdfs, ctx, masks, sub, d, xOff*2, yOff*2, x4, y4, right, bottom, haveTop, haveLeft); err != nil {
 			return err
 		}
-		if split {
-			result.Split[n.depth] |= 1 << (n.yOff*4 + n.xOff)
-		}
-		if split && dims.Max > 1 {
-			k, err := txTreeChildren(req, n, dims, &kids)
-			if err != nil {
+		if dims.Log2W >= dims.Log2H && x4+w < right {
+			if err := s.readTxTree(cdfs, ctx, masks, sub, d, xOff*2+1, yOff*2, x4+w, y4, right, bottom, haveTop, true); err != nil {
 				return err
 			}
-			if err := stack.pushChildren(&kids, k); err != nil {
+		}
+		if dims.Log2H >= dims.Log2W && y4+h < bottom {
+			if err := s.readTxTree(cdfs, ctx, masks, sub, d, xOff*2, yOff*2+1, x4, y4+h, right, bottom, true, haveLeft); err != nil {
 				return err
 			}
-			continue
+			if dims.Log2W >= dims.Log2H && x4+w < right {
+				if err := s.readTxTree(cdfs, ctx, masks, sub, d, xOff*2+1, yOff*2+1, x4+w, y4+h, right, bottom, true, true); err != nil {
+					return err
+				}
+			}
 		}
-		markW, markH := dims.Log2W, dims.Log2H
-		if split {
-			markW, markH = 0, 0
-		}
-		if err := ctx.MarkTransformArea(n.x4, n.y4, int(dims.W4), int(dims.H4), markW, markH, false); err != nil {
-			return err
-		}
+		return nil
 	}
-	return nil
+	markW, markH := dims.Log2W, dims.Log2H
+	if split {
+		markW, markH = 0, 0
+	}
+	return ctx.MarkTransformArea(x4, y4, int(dims.W4), int(dims.H4), markW, markH, false)
 }
 
 // collectLumaTXBsInWindow writes the luma transform blocks of a variable tree

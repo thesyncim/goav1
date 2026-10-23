@@ -81,23 +81,14 @@ func (s *DecodeState) DecodeTransformTree(cdfs *TransformCDFs, ctx *BlockModeCon
 		maxDims, _ := maxY.Dimensions()
 		reqX4 := int(req.X4)
 		reqY4 := int(req.Y4)
-		for y := 0; y < int(req.VisibleH4); y += int(maxDims.H4) {
-			for x := 0; x < int(req.VisibleW4); x += int(maxDims.W4) {
-				// Within a block, the top/left availability for a maxY-sized
-				// root subblock is shared with the enclosing inter block at
-				// (x=0,y=0); once the loop advances past the first row/column
-				// the prior maxY sibling has marked above/left contexts so
-				// the next iteration sees a real neighbor.
-				root := txTreeNode{
-					size:     maxY,
-					haveTop:  req.HaveTop || y > 0,
-					haveLeft: req.HaveLeft || x > 0,
-					x4:       reqX4 + x,
-					y4:       reqY4 + y,
-					xOff:     x / int(maxDims.W4),
-					yOff:     y / int(maxDims.H4),
-				}
-				if err := s.readVariableTransformTree(cdfs, ctx, req, &result, root); err != nil {
+		right := reqX4 + int(req.VisibleW4)
+		bottom := reqY4 + int(req.VisibleH4)
+		mw, mh := int(maxDims.W4), int(maxDims.H4)
+		// dav1d's read_vartx_tree: one read_tx_tree per max_ytx unit. A unit past
+		// the first row/column has its prior sibling as top/left neighbour.
+		for y, yOff := 0, 0; y < int(req.VisibleH4); y, yOff = y+mh, yOff+1 {
+			for x, xOff := 0, 0; x < int(req.VisibleW4); x, xOff = x+mw, xOff+1 {
+				if err := s.readTxTree(cdfs, ctx, &result.Split, maxY, 0, xOff, yOff, reqX4+x, reqY4+y, right, bottom, req.HaveTop || y > 0, req.HaveLeft || x > 0); err != nil {
 					return TransformTreeResult{}, err
 				}
 			}
