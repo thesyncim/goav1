@@ -249,7 +249,10 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 				return nil, SourceFrame420{}, fmt.Errorf("loop filter init: %w", err)
 			}
 		}
-		if err := lf.reset(); err != nil {
+		// The video encoder signals no deblocking (dlf below), so its
+		// keyframes keep only CDEF's noskip grid.
+		deblock := lfLevel > 0 && (tileOpts.stream == nil || svtRTCDeblockLevel(lfLevel) > 0)
+		if err := lf.resetFor(deblock); err != nil {
 			return nil, SourceFrame420{}, fmt.Errorf("loop filter reset: %w", err)
 		}
 		lfMap = &lf.filtMap
@@ -709,8 +712,7 @@ type lossyEncodeState struct {
 	// lfMap, when non-nil, collects per-MI loop-filter records for the
 	// frame-level deblocking pass (the decoder's own map type, filled with
 	// the same per-block syntax the decoder records).
-	lfMap         *threading.FrameWorkLoopFilterMap
-	lfMaskBuilder *threading.FrameWorkLoopFilterOrderedBuilder
+	lfMap *threading.FrameWorkLoopFilterMap
 
 	// hme, when non-nil, supplies the coarse-search seeds that recenter the
 	// full-pel refinement windows.
@@ -877,7 +879,6 @@ func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, re
 	st.allowScreenContentTools = allowScreenContentTools
 	st.color = color
 	st.lfMap = lfMap
-	st.lfMaskBuilder = nil
 	st.hme = nil
 	st.decisionStats = nil
 	if pc.decisionStatsEnabled {

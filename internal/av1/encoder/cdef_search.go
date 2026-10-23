@@ -419,6 +419,21 @@ func (s *cdefSearcher) bind(g cdefFrameGeometry) {
 func computeCDEFList(m *threading.FrameWorkLoopFilterMap, g cdefFrameGeometry, miRow, miCol int, dlist []cdef.BlockPosition) int {
 	maxr := min(g.miRows-miRow, 16)
 	maxc := min(g.miCols-miCol, 16)
+	if m.NoSkip != nil {
+		// The noskip grid holds the same any-non-skip-MI test per 8x8 block
+		// (miRow, miCol are 64-aligned).
+		word := m.NoSkip.UnitWord(miRow>>4, miCol>>4)
+		count := 0
+		for r := 0; r < maxr; r += 2 {
+			for c := 0; c < maxc; c += 2 {
+				if word>>uint((r>>1)*8+c>>1)&1 != 0 {
+					dlist[count] = cdef.BlockPosition{BY: uint8(r >> 1), BX: uint8(c >> 1)}
+					count++
+				}
+			}
+		}
+		return count
+	}
 	stride := int(m.Stride)
 	nonSkip := func(r, c int) bool {
 		if r >= int(m.Rows) || c >= stride {

@@ -105,3 +105,37 @@ func (h *FrameWorkLoopFilterMasks) NoSkipUnitMask(unitRow, unitCol int) uint64 {
 func (h *FrameWorkLoopFilterMasks) MapFree() bool {
 	return h != nil && h.levels != nil && h.noskip != nil && (h.tileEdges != nil || h.singleTile)
 }
+
+// BindGrid sizes and clears n for a cols x rows MI frame without a mask
+// handle (the encoder's skip-only frames, whose deblocking is off). Frames
+// with odd MI extents are refused and keep the record map.
+func (n *FrameWorkLoopFilterNoSkip) BindGrid(cols, rows int) bool {
+	if n == nil || cols <= 0 || rows <= 0 || cols&1 != 0 || rows&1 != 0 {
+		return false
+	}
+	n.unitCols = (cols + 15) >> 4
+	n.unitRows = (rows + 15) >> 4
+	n.buf = growBytes(n.buf, n.unitCols*n.unitRows*8)
+	initFrameWorkLoopFilterNoSkip(n.buf, cols, rows, n.unitCols, n.unitRows)
+	return true
+}
+
+// Mark sets the noskip bit of every 8x8 block the MI rectangle touches.
+func (n *FrameWorkLoopFilterNoSkip) Mark(miColStart, miRowStart, miColEnd, miRowEnd int) {
+	markFrameWorkLoopFilterNoSkip(n.buf, n.unitCols, miColStart, miRowStart, miColEnd, miRowEnd)
+}
+
+// UnitCols and UnitRows are the bound 64x64-unit grid.
+func (n *FrameWorkLoopFilterNoSkip) UnitCols() int { return n.unitCols }
+func (n *FrameWorkLoopFilterNoSkip) UnitRows() int { return n.unitRows }
+
+// UnitWord is one 64x64 unit's noskip word (bit by*8+bx). Bits of 8x8
+// blocks outside the frame are set.
+func (n *FrameWorkLoopFilterNoSkip) UnitWord(unitRow, unitCol int) uint64 {
+	off := (unitRow*n.unitCols + unitCol) * 8
+	return binary.LittleEndian.Uint64(n.buf[off : off+8])
+}
+
+// AttachNoSkip makes n this handle's CDEF noskip source without binding
+// edge masks (NoSkipUnitGrid then reports n's grid).
+func (h *FrameWorkLoopFilterMasks) AttachNoSkip(n *FrameWorkLoopFilterNoSkip) { h.noskip = n }
