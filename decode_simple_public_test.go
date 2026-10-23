@@ -428,6 +428,32 @@ var profileClips = []struct {
 			"53ac4d1133a4f994c6bc510023e94575",
 		},
 	},
+	// Film grain on show_existing_frame outputs and on shown frames that no
+	// reference slot keeps (random-access hierarchy). Encoded by SVT-AV1 v4.1.0
+	// from a synthetic source (no redistribution restriction):
+	//	ffmpeg -f lavfi -i "testsrc2=size=128x128:rate=30,noise=alls=10:allf=t" \
+	//	  -frames:v 24 -pix_fmt yuv420p -f rawvideo s128.yuv
+	//	SvtAv1EncApp -i s128.yuv -w 128 -h 128 --fps-num 30 --fps-denom 1 \
+	//	  --input-depth 8 --preset 8 --rc 0 --crf 40 --pred-struct 2 \
+	//	  --keyint 150 --frames 11 --film-grain 8 \
+	//	  -b profile0-420-8bit-filmgrain-showexisting-128x128.ivf
+	// Goldens are dav1d --filmgrain 1 (aomdec agrees).
+	{
+		file: "profile0-420-8bit-filmgrain-showexisting-128x128.ivf",
+		frameMD5Hex: []string{
+			"c9cf9ee8f50eab1644b683b883e3a65d",
+			"ac88fbf08f9ad3f5a6b4b4907a713e88",
+			"04c2fa7dfb4ca0f2794df4f4c092a17e",
+			"903aab2bd77b7dba81a7ae4992d54928",
+			"93caf25a797ccd44fbec7774c1cb6423",
+			"1d783cecb67ca097c05229e23ce16e8a",
+			"94fce3994dd6154bdf08b93b2c033826",
+			"d291070713d32f116de3f93394adf351",
+			"181dcd5531faf86c9c8a926add9b851d",
+			"2931aca980f7fdfc2e7194a900d41e77",
+			"32cbbce3e29e022e9ee7518d57d0e14a",
+		},
+	},
 }
 
 func TestSimpleDecoderZeroValueGuards(t *testing.T) {
@@ -3541,6 +3567,7 @@ func decodeLowLevel(t *testing.T, ivf []byte) [][16]byte {
 				digests = append(digests, frameMD5Visible(f))
 			}
 		}
+		av1.DecoderReleaseUnreferencedFrameSurfaces(&refs, &pool)
 	}
 	return digests
 }

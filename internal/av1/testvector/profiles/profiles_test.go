@@ -1359,9 +1359,42 @@ var profileClips = []profileClip{
 		frameMD5Hex: []string{
 			"6a58c1d38654cc4cc616aaa8ca341658",
 			"6a58c1d38654cc4cc616aaa8ca341658",
+			"86b81c3e1835344a7644fbc7a630eddb",
 			"a9abbd1a1ddacec66bdb9af783e0d0fb",
+			"6495796df7a711caa3d8f5042dd4df01",
 			"df765e050d58a124e4fb49f83ef17641",
+			"55adf040f12bff071ae83bae671ef663",
 			"53ac4d1133a4f994c6bc510023e94575",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
+	// Film grain on show_existing_frame outputs and on shown frames that no
+	// reference slot keeps (random-access hierarchy). Encoded by SVT-AV1 v4.1.0
+	// from a synthetic source (no redistribution restriction):
+	//	ffmpeg -f lavfi -i "testsrc2=size=128x128:rate=30,noise=alls=10:allf=t" \
+	//	  -frames:v 24 -pix_fmt yuv420p -f rawvideo s128.yuv
+	//	SvtAv1EncApp -i s128.yuv -w 128 -h 128 --fps-num 30 --fps-denom 1 \
+	//	  --input-depth 8 --preset 8 --rc 0 --crf 40 --pred-struct 2 \
+	//	  --keyint 150 --frames 11 --film-grain 8 \
+	//	  -b profile0-420-8bit-filmgrain-showexisting-128x128.ivf
+	// Goldens are dav1d --filmgrain 1 (aomdec agrees).
+	{
+		name: "profile0-420-8bit-filmgrain-showexisting-128x128",
+		file: "profile0-420-8bit-filmgrain-showexisting-128x128.ivf",
+		frameMD5Hex: []string{
+			"c9cf9ee8f50eab1644b683b883e3a65d",
+			"ac88fbf08f9ad3f5a6b4b4907a713e88",
+			"04c2fa7dfb4ca0f2794df4f4c092a17e",
+			"903aab2bd77b7dba81a7ae4992d54928",
+			"93caf25a797ccd44fbec7774c1cb6423",
+			"1d783cecb67ca097c05229e23ce16e8a",
+			"94fce3994dd6154bdf08b93b2c033826",
+			"d291070713d32f116de3f93394adf351",
+			"181dcd5531faf86c9c8a926add9b851d",
+			"2931aca980f7fdfc2e7194a900d41e77",
+			"32cbbce3e29e022e9ee7518d57d0e14a",
 		},
 		wantBitDepth:     8,
 		wantSubsamplingX: true,
@@ -1712,6 +1745,31 @@ func runProfileClip(t *testing.T, clip profileClip) {
 			if err != nil {
 				t.Fatalf("ivf frame %d run framework event: %v", ivfFrame.Index, err)
 			}
+			if result.Step.Kind == decoder.FrameWorkStepShowExisting && !clip.includeHiddenFrameMD5 {
+				// show_existing_frame outputs the retained reference, with the
+				// film grain stored with it applied for display (dav1d
+				// output_image -> dav1d_apply_grain); every in-loop stage
+				// already ran when the frame was decoded.
+				// (includeHiddenFrameMD5 clips hash hidden frames when decoded.)
+				shown, err := pool.Frame(result.Step.ShowExisting.Surface)
+				if err != nil {
+					t.Fatalf("ivf frame %d show_existing surface: %v", ivfFrame.Index, err)
+				}
+				showCtx := decoder.FrameWorkPostFilterContext{Event: event, Step: result.Step, Output: shown}
+				showCtx = showCtx.WithCompletedPostFilters(decoder.FrameWorkPostFilterLoopFilter | decoder.FrameWorkPostFilterCDEF |
+					decoder.FrameWorkPostFilterSuperRes | decoder.FrameWorkPostFilterLoopRestoration)
+				if _, err := post.fn(showCtx); err != nil {
+					t.Fatalf("ivf frame %d show_existing film grain: %v", ivfFrame.Index, err)
+				}
+				if emitted >= len(wantDigests) {
+					t.Fatalf("ivf frame %d: more visible frames than golden digests (%d)", ivfFrame.Index, len(wantDigests))
+				}
+				if postMD5 != wantDigests[emitted] {
+					t.Fatalf("frame %d (show_existing) md5 got=%x want=%x", emitted, postMD5, wantDigests[emitted])
+				}
+				emitted++
+				continue
+			}
 			if !result.Run.CompletedFrame {
 				continue
 			}
@@ -1734,6 +1792,11 @@ func runProfileClip(t *testing.T, clip profileClip) {
 				t.Fatalf("frame %d md5 got=%x want=%x (libaom golden)", emitted, postMD5, wantDigests[emitted])
 			}
 			emitted++
+		}
+		if havePool && !clip.superRes {
+			// The temporal unit's outputs are consumed: a surface stays live
+			// only while a reference slot keeps it (dav1d_picture_unref).
+			decoder.ReleaseUnreferencedFrameSurfaces(&refs, &pool)
 		}
 	}
 	if emitted != len(wantDigests) {

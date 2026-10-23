@@ -1254,3 +1254,13 @@ func decoderFrameWorkFrameBatch(sequence SequenceHeader, size FrameSize) interna
 		},
 	}
 }
+
+// postFilterSource returns the reconstructed picture behind f when f is the
+// runner's detached film-grain display view (dav1d applies grain into a new
+// output picture while the source stays the reference), or f itself.
+func (r *DecoderFrameWorkReusableSupportedPostFilterRunner) postFilterSource(f *Frame) *Frame {
+	if r != nil && f == &r.runner.FilmGrainOutput && r.runner.Context.Output != nil {
+		return r.runner.Context.Output
+	}
+	return f
+}
