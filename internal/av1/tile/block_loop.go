@@ -564,6 +564,11 @@ func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopConte
 func blockLoopLoadRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8, keepMotion bool) error {
 	scratch.Partition = PartitionContext{}
 	scratch.Mode.resetForSuperblock()
+	if keepMotion {
+		// The loads below and extendAboveContextFromRightCarrier write the
+		// cross-SB snapshots.
+		scratch.Mode.sbHistoryDirty = true
+	}
 	scratch.CDEF.Reset()
 	scratch.CoeffCtx = CoeffEntropyContext{}
 	if carrier == nil {

@@ -35,18 +35,32 @@ func TestBlockModeContextResetLayout(t *testing.T) {
 		t.Fatal("BlockModeContext must stay pointer-free for resetForSuperblock")
 	}
 	n := rt.NumField()
-	if rt.Field(n-2).Name != "GridInterMotion" || rt.Field(n-1).Name != "GridInterp" {
-		t.Fatalf("payload grids must be the last two fields, got %s, %s", rt.Field(n-2).Name, rt.Field(n-1).Name)
+	if rt.Field(n-3).Name != "GridInterMotion" || rt.Field(n-2).Name != "GridInterp" || rt.Field(n-1).Name != "sbHistoryDirty" {
+		t.Fatalf("payload grids and sbHistoryDirty must be the last three fields, got %s, %s, %s", rt.Field(n-3).Name, rt.Field(n-2).Name, rt.Field(n-1).Name)
 	}
 
 	var c BlockModeContext
-	b := unsafe.Slice((*byte)(unsafe.Pointer(&c)), unsafe.Sizeof(c))
+	b := unsafe.Slice((*byte)(unsafe.Pointer(&c)), unsafe.Offsetof(c.sbHistoryDirty))
 	for i := range b {
 		b[i] = 0xa5
 	}
+	c.sbHistoryDirty = true
 	c.resetForSuperblock()
 	want := BlockModeContext{GridInterMotion: c.GridInterMotion, GridInterp: c.GridInterp}
 	if c != want {
 		t.Fatal("resetForSuperblock left a non-payload field set")
+	}
+
+	// Without a keepMotion load the snapshots stay zero, and the clean reset
+	// must still zero every other non-payload field.
+	for i := range b {
+		b[i] = 0xa5
+	}
+	snap := b[unsafe.Offsetof(c.SBTopInterMotion):unsafe.Offsetof(c.AboveInterp)]
+	clear(snap)
+	c.resetForSuperblock()
+	want = BlockModeContext{GridInterMotion: c.GridInterMotion, GridInterp: c.GridInterp}
+	if c != want {
+		t.Fatal("clean resetForSuperblock left a non-payload field set")
 	}
 }

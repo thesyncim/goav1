@@ -207,13 +207,28 @@ type BlockModeContext struct {
 	// observed and its 18 KB need not be zeroed.
 	GridInterMotion [MaxBlockModeSlots][MaxBlockModeSlots]InterMotionResult
 	GridInterp      [MaxBlockModeSlots][MaxBlockModeSlots]motion.InterpFilters
+
+	// sbHistoryDirty says the cross-SB motion snapshots (SBTopInterMotion
+	// through SBDiagonalBlockSizeVisitedGrid) may be non-zero. Only the
+	// keepMotion superblock load writes them, so a stream that keeps
+	// neighbour motion in the dav1d refmvs rows never re-zeroes their 8 KB.
+	sbHistoryDirty bool
 }
 
 // resetForSuperblock is BlockModeContext{} minus the trailing payload grids
 // (see GridInterMotion). The struct holds no pointers, so a byte clear of the
 // prefix is a plain zero-assignment of every other field.
 func (c *BlockModeContext) resetForSuperblock() {
-	clear(unsafe.Slice((*byte)(unsafe.Pointer(c)), unsafe.Offsetof(c.GridInterMotion)))
+	b := unsafe.Slice((*byte)(unsafe.Pointer(c)), unsafe.Offsetof(c.GridInterMotion))
+	if c.sbHistoryDirty {
+		clear(b)
+		c.sbHistoryDirty = false
+		return
+	}
+	// The snapshots are contiguous from SBTopInterMotion up to AboveInterp
+	// and already zero.
+	clear(b[:unsafe.Offsetof(c.SBTopInterMotion)])
+	clear(b[unsafe.Offsetof(c.AboveInterp):])
 }
 
 // CDEFIndexContext caches the cdef_idx values already read for the 64x64 CDEF
