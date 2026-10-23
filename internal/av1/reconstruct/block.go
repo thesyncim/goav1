@@ -143,33 +143,44 @@ func ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst []byte, dstStride 
 		dsp.AddResidualPlaneBlockTrusted(dst, dstStride, bytesPerSample, max, visibleWidth, visibleHeight, residual, width)
 		return nil
 	}
-	// dav1d's two-pass structure with the add fused (transform itx_fused32):
-	// the eob-bounded 8-bit 32x32 DCT_DCT block reconstructs straight from
-	// the coefficients into dst; a declined block takes the staged path.
-	if bitDepth == 8 && bytesPerSample == 1 && cfg.Transform == transform.TypeDCTDCT &&
-		width == height && visibleWidth == width && visibleHeight == height && activeRows > 0 && activeCols > 0 {
-		switch width {
-		case 32:
-			if activeRows <= 8 && activeCols <= 8 {
-				if transform.InverseAddDCT32x32Low8(dst, dstStride, dst, dstStride, dequant, scanHeight) {
+	// dav1d's two-pass structure with the add fused (transform itx_fused*):
+	// the eob-bounded 8-bit square DCT_DCT block, and the 16x16 and 8x8
+	// DCT/ADST pairings, reconstruct straight from the coefficients into
+	// dst; a declined block takes the staged path.
+	if bitDepth == 8 && bytesPerSample == 1 && width == height && visibleWidth == width && visibleHeight == height &&
+		activeRows > 0 && activeCols > 0 {
+		if cfg.Transform == transform.TypeDCTDCT {
+			switch width {
+			case 32:
+				if activeRows <= 8 && activeCols <= 8 {
+					if transform.InverseAddDCT32x32Low8(dst, dstStride, dst, dstStride, dequant, scanHeight) {
+						return nil
+					}
+				} else if activeRows <= 16 && activeCols <= 16 &&
+					transform.InverseAddDCT32x32Low16(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows) {
+					return nil
+				} else if transform.InverseAddDCT32x32Full(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols) {
 					return nil
 				}
-			} else if activeRows <= 16 && activeCols <= 16 &&
-				transform.InverseAddDCT32x32Low16(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows) {
-				return nil
-			} else if transform.InverseAddDCT32x32Full(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols) {
+			case 64:
+				if transform.InverseAddDCT64x64(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols) {
+					return nil
+				}
+			case 16:
+				if transform.InverseAddDCT16x16(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols) {
+					return nil
+				}
+			case 8:
+				if transform.InverseAddDCT8x8(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols) {
+					return nil
+				}
+			}
+		} else if width == 16 {
+			if transform.InverseAdd16x16Hybrid(dst, dstStride, dst, dstStride, dequant, scanHeight, cfg.Transform, activeRows, activeCols) {
 				return nil
 			}
-		case 64:
-			if transform.InverseAddDCT64x64(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols) {
-				return nil
-			}
-		case 16:
-			if transform.InverseAddDCT16x16(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols) {
-				return nil
-			}
-		case 8:
-			if transform.InverseAddDCT8x8(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols) {
+		} else if width == 8 {
+			if transform.InverseAdd8x8Hybrid(dst, dstStride, dst, dstStride, dequant, scanHeight, cfg.Transform, activeRows, activeCols) {
 				return nil
 			}
 		}
