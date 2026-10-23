@@ -191,14 +191,16 @@ func (h *FrameWorkLoopFilterMasks) buildCompact(compact *FrameWorkLoopFilterComp
 	if _, ok := block.Size.Dimensions(); !ok {
 		return ErrInvalidBatch
 	}
-	levelValues, err := compact.levels.blockLevels(scratch, visit, state)
-	if err != nil {
-		return err
+	if !compact.levels.off {
+		levelValues, err := compact.levels.blockLevels(scratch, visit, state)
+		if err != nil {
+			return err
+		}
+		intra := !visit.Prediction.Valid || visit.Prediction.Intra
+		lc := lfmask.LevelCache{Cells: h.LevelCache, Stride: h.Cols}
+		h.buildBlockWithLevels(scratch, int(block.MICol), int(block.MIRow), block.Size,
+			visit.Coefficients.Tree, visit.Prefix.SkipTransform, intra, sbLog2, lc, levelValues)
 	}
-	intra := !visit.Prediction.Valid || visit.Prediction.Intra
-	lc := lfmask.LevelCache{Cells: h.LevelCache, Stride: h.Cols}
-	h.buildBlockWithLevels(scratch, int(block.MICol), int(block.MIRow), block.Size,
-		visit.Coefficients.Tree, visit.Prefix.SkipTransform, intra, sbLog2, lc, levelValues)
 	if !visit.Prefix.SkipTransform {
 		compact.markNoSkip(int(block.MICol), int(block.MIRow), int(block.MIColEnd), int(block.MIRowEnd))
 	}

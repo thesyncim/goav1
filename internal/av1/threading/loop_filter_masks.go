@@ -60,12 +60,17 @@ type FrameWorkLoopFilterLevelTable struct {
 	params       lfmask.LFValueParams
 	lvl          lfmask.LFValues
 	deltaPresent bool
+	// off is dav1d's frame gate on create_lf_mask_{intra,inter} (src/decode.c:
+	// loopfilter.level_y[0] || level_y[1]): with both luma levels zero the
+	// frame is not deblocked, so the block walk builds no edges or levels.
+	off bool
 }
 
 // Bind fills the frame level table from this frame's headers.
 func (t *FrameWorkLoopFilterLevelTable) Bind(lf parser.LoopFilterParams, seg parser.SegmentationParams, delta parser.DeltaParams) {
 	t.params = lfmask.NewLFValueParams(lf, seg, delta)
 	t.deltaPresent = delta.DeltaLFPresent
+	t.off = lf.LevelY[0] == 0 && lf.LevelY[1] == 0
 	lfmask.CalcLFValues(&t.lvl, &t.params, [4]int8{})
 }
 
@@ -271,6 +276,12 @@ func (h *FrameWorkLoopFilterMasks) build(s *frameWorkLoopFilterMaskScratch, visi
 	if h.levels == nil {
 		h.buildBlock(s, int(visit.Block.MICol), int(visit.Block.MIRow), visit.Block.Size,
 			visit.Coefficients.Tree, visit.Prefix.SkipTransform, intra, sbLog2)
+		return nil
+	}
+	if h.levels.off {
+		if h.noskip != nil && !visit.Prefix.SkipTransform {
+			markFrameWorkLoopFilterNoSkip(h.noskip.buf, h.noskip.unitCols, int(visit.Block.MICol), int(visit.Block.MIRow), int(visit.Block.MIColEnd), int(visit.Block.MIRowEnd))
+		}
 		return nil
 	}
 	lv, err := h.levels.blockLevels(s, visit, state)
