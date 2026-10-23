@@ -252,15 +252,39 @@ func (b *FrameWorkBatch) interTargetBound(block *tile.BlockVisit, plane FrameWor
 	if frameWorkPlaneBlockStartsBeyondPlane(bind.raw, bind.bps, x, y) {
 		return false, nil
 	}
+	fullW, fullH, err := frameWorkBlockPlanePredictionExtentPixelsPtr(block, &b.Sequence.ColorConfig, plane)
+	if err != nil {
+		return false, err
+	}
+	// dav1d's mc() writes the whole block at its plane position; a block
+	// whose full extent lies inside the window's writable extent needs no
+	// clipping, so its visible and write extents are known directly.
+	clipW, clipH := int(window.ClipWidth), int(window.ClipHeight)
+	if clipW <= 0 {
+		clipW = int(window.Width)
+	}
+	if clipH <= 0 {
+		clipH = int(window.Height)
+	}
+	if rx, ry := x-int(window.X), y-int(window.Y); rx >= 0 && ry >= 0 && rx+fullW <= clipW && ry+fullH <= clipH &&
+		width > 0 && height > 0 && width <= fullW && height <= fullH &&
+		frameWorkPredictionExtentValid(fullW) && frameWorkPredictionExtentValid(fullH) {
+		*t = frameWorkInterTarget{
+			output: bind.output,
+			x:      x, y: y,
+			width: width, height: height,
+			writeW: fullW, writeH: fullH,
+			filterW: fullW, filterH: fullH,
+			codedW: bind.codedW, codedH: bind.codedH,
+			bps: bind.bps, ssX: ssX, ssY: ssY,
+		}
+		return true, nil
+	}
 	width, height, ok := frameWorkClipVisiblePixelsToWindowPtr(window, x, y, width, height)
 	if !ok {
 		return false, ErrInvalidBatch
 	}
 	writeW, writeH := width, height
-	fullW, fullH, err := frameWorkBlockPlanePredictionExtentPixelsPtr(block, &b.Sequence.ColorConfig, plane)
-	if err != nil {
-		return false, err
-	}
 	if cw, ch, ok := frameWorkClipVisiblePixelsToWindowPtr(window, x, y, fullW, fullH); ok {
 		writeW, writeH = cw, ch
 	}
