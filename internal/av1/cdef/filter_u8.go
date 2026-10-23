@@ -257,34 +257,8 @@ func filterFrameBlocksU8Trusted(dst []byte, dstStride int, input []uint16, input
 	bwLog2 := 3 - xDec
 	bhLog2 := 3 - yDec
 
-	if params.Plane == PlaneY && deriveDirections {
-		// The direction pass runs for every block before any in-place write:
-		// block interiors are disjoint from other blocks' filtered output, so
-		// the values seen here are the pre-CDEF pixels either way.
-		for i := 0; i < len(blocks); {
-			block := blocks[i]
-			by := int(block.BY)
-			bx := int(block.BX)
-			srcOrigin := ((by * dstStride) << bhLog2) + (bx << bwLog2)
-			if bwLog2 == 3 && i+1 < len(blocks) && blocks[i+1].BY == block.BY && blocks[i+1].BX == block.BX+1 {
-				dir1, variance1, dir2, variance2 := findDirectionDualU8Unchecked(dst[srcOrigin:], dst[srcOrigin+8:], dstStride)
-				directions[by][bx] = uint8(dir1)
-				variances[by][bx] = variance1
-				directions[by][bx+1] = uint8(dir2)
-				variances[by][bx+1] = variance2
-				i += 2
-				continue
-			}
-			dir, variance := findDirectionU8Unchecked(dst[srcOrigin:], dstStride)
-			directions[by][bx] = uint8(dir)
-			variances[by][bx] = variance
-			i++
-		}
-	}
-	if deriveDirections && params.Plane == PlaneU && params.XDec != params.YDec {
-		if !convertChromaDirections(blocks, directions, xDec) {
-			return ErrInvalidCDEF
-		}
+	if deriveDirections && !deriveU8Directions(dst, dstStride, blocks, directions, variances, params) {
+		return ErrInvalidCDEF
 	}
 
 	unitParams := unitFilterParams{
@@ -340,4 +314,40 @@ func filterUnitBlocksU8PureGo(dst []byte, dstStride int, input []uint16, inputOr
 		filterBlockU8Impl(dst, dstStride, dstOrigin, input, srcOrigin, blockParams)
 	}
 	return nil
+}
+
+// deriveU8Directions fills the unit's direction grid the way dav1d's
+// cdef_brow does before filtering: the luma search reads the pre-CDEF frame
+// bytes in dst (every block, before any in-place write; block interiors are
+// disjoint from other blocks' filtered output), and 4:2:2/4:4:0 chroma maps
+// the shared luma directions. It reports false for an invalid chroma grid.
+func deriveU8Directions(dst []byte, dstStride int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams) bool {
+	xDec := int(params.XDec)
+	bwLog2 := 3 - xDec
+	bhLog2 := 3 - int(params.YDec)
+	if params.Plane == PlaneY {
+		for i := 0; i < len(blocks); {
+			block := blocks[i]
+			by := int(block.BY)
+			bx := int(block.BX)
+			srcOrigin := ((by * dstStride) << bhLog2) + (bx << bwLog2)
+			if bwLog2 == 3 && i+1 < len(blocks) && blocks[i+1].BY == block.BY && blocks[i+1].BX == block.BX+1 {
+				dir1, variance1, dir2, variance2 := findDirectionDualU8Unchecked(dst[srcOrigin:], dst[srcOrigin+8:], dstStride)
+				directions[by][bx] = uint8(dir1)
+				variances[by][bx] = variance1
+				directions[by][bx+1] = uint8(dir2)
+				variances[by][bx+1] = variance2
+				i += 2
+				continue
+			}
+			dir, variance := findDirectionU8Unchecked(dst[srcOrigin:], dstStride)
+			directions[by][bx] = uint8(dir)
+			variances[by][bx] = variance
+			i++
+		}
+	}
+	if params.Plane == PlaneU && params.XDec != params.YDec {
+		return convertChromaDirections(blocks, directions, xDec)
+	}
+	return true
 }

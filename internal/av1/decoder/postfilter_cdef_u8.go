@@ -202,7 +202,8 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 			if sparseIndependent && !cdefDebugUnit(plane, unitRow, unitCol) && len(blocks) < (unitW/blockWidth)*(unitH/blockHeight) {
 				stageRect = frameWorkCDEFSparseStageRect(blocks, unitW, unitH, blockWidth, blockHeight)
 			}
-			if frameWorkCDEFCanUseSecondaryByteUnit(cdef.U8SecondaryOnlyByteInteriorAvailable(), needPrimaryDirection, filterParams, unitX, unitY, unitW, unitH, width, height, blockWidth, blockHeight, cdefDebugUnit(plane, unitRow, unitCol)) {
+			secondaryOnlyByte := frameWorkCDEFCanUseSecondaryByteUnit(cdef.U8SecondaryOnlyByteInteriorAvailable(), needPrimaryDirection, filterParams, unitX, unitY, unitW, unitH, width, height, blockWidth, blockHeight, cdefDebugUnit(plane, unitRow, unitCol))
+			if secondaryOnlyByte || frameWorkCDEFCanUseByteUnit(cdef.U8ByteInteriorAvailable(), filterParams, unitX, unitY, unitW, unitH, width, height, blockWidth, blockHeight, cdefDebugUnit(plane, unitRow, unitCol)) {
 				byteInput, byteOK := cdefByteScratchView(input, 2*len(input))
 				assembled := false
 				if byteOK {
@@ -225,7 +226,14 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 							copy(leftStorage[r*cdef.HorizontalBorder:(r+1)*cdef.HorizontalBorder], dst.Pix[rowOff:rowOff+cdef.HorizontalBorder])
 						}
 					}
-					if cdef.FilterFrameBlocksU8SecondaryOnlyByteInteriorTrusted(dst.Pix[unitOrigin:], stride, byteInput, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, unitW, unitH, blocks, filterParams) {
+					byteOrigin := cdef.VerticalBorder*cdef.BStride + cdef.HorizontalBorder
+					var filtered bool
+					if secondaryOnlyByte {
+						filtered = cdef.FilterFrameBlocksU8SecondaryOnlyByteInteriorTrusted(dst.Pix[unitOrigin:], stride, byteInput, byteOrigin, unitW, unitH, blocks, filterParams)
+					} else {
+						filtered = cdef.FilterFrameBlocksU8ByteInteriorTrusted(dst.Pix[unitOrigin:], stride, byteInput, byteOrigin, unitW, unitH, blocks, unitDirections, unitVariances, filterParams, needPrimaryDirection)
+					}
+					if filtered {
 						prevFiltered = true
 						units++
 						blocksTotal += uint32(len(blocks))
@@ -269,6 +277,23 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 		}
 	}
 	return units, blocksTotal, nil
+}
+
+// frameWorkCDEFCanUseByteUnit reports whether a unit takes dav1d's 8bpc edged
+// route: the complete 2-pixel tap footprint is inside the plane (edges ==
+// 0xf), so the taps go to a byte buffer with no sentinels and the byte-lane
+// kernels filter any strength split.
+func frameWorkCDEFCanUseByteUnit(available bool, params cdef.FrameFilterParams, unitX int, unitY int, unitW int, unitH int, planeWidth int, planeHeight int, blockWidth int, blockHeight int, debug bool) bool {
+	const tapReach = 2
+	if !available || debug || params.CoeffShift != 0 ||
+		(params.SecondaryStrength != 0 && params.SecondaryStrength != 1 && params.SecondaryStrength != 2 && params.SecondaryStrength != 4) ||
+		(blockWidth != 4 && blockWidth != 8) || (blockHeight != 4 && blockHeight != 8) ||
+		unitW <= 0 || unitH <= 0 || unitW%blockWidth != 0 || unitH%blockHeight != 0 {
+		return false
+	}
+	return unitX >= tapReach && unitY >= tapReach &&
+		unitX+unitW+tapReach <= planeWidth &&
+		unitY+unitH+tapReach <= planeHeight
 }
 
 func frameWorkCDEFCanUseSecondaryByteUnit(available bool, needPrimaryDirection bool, params cdef.FrameFilterParams, unitX int, unitY int, unitW int, unitH int, planeWidth int, planeHeight int, blockWidth int, blockHeight int, debug bool) bool {
