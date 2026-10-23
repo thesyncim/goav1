@@ -4,6 +4,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
@@ -1082,7 +1083,11 @@ func (ctx *FrameWorkPostFilterContext) saveRestorationDeblockBoundariesSuperRes(
 		}
 		upscale.CodedWidth[plane] = uint32(srcPlane.Width)
 		xDec, yDec := frameWorkCDEFPlaneDecimation(codedFormat, plane)
+		// dav1d backup_lpf upscales the MI-aligned coded width (src_w = bw << 2)
+		// but keeps the frame height: rows past it are not saved.
+		height := srcPlane.Height
 		srcPlane = frameWorkCDEFAlignedPlane(srcPlane, ctx.Event.FrameSize, xDec, yDec, bytesPerSample)
+		srcPlane.Height = height
 		codedPlanes[plane] = srcPlane
 		if srcPlane.Width > maxAlignedWidth {
 			maxAlignedWidth = srcPlane.Width
@@ -1534,4 +1539,14 @@ func (ctx *FrameWorkPostFilterContext) restorationPixelBoundaries(boundaries [3]
 		boundaries[i].Bytes = bytes
 	}
 	return boundaries
+}
+
+// BindFrameWorkPostFilterPool threads the tile worker pool into ctx, as the
+// frame-work runner does before Apply, so scratch sizing (the per-lane CDEF and
+// loop-restoration band buffers) matches the pooled apply. It is a free
+// function so the public FrameWorkPostFilterContext alias gains no method.
+func BindFrameWorkPostFilterPool(ctx *FrameWorkPostFilterContext, pool *threading.Pool) {
+	if ctx != nil {
+		ctx.pool = pool
+	}
 }
