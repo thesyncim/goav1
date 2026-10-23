@@ -1306,3 +1306,26 @@ func BenchmarkFullPelDiamondSearch64(b *testing.B) {
 	}
 	fullPelDiamondBenchSink = sum
 }
+
+// TestMemsetBytes checks the memset helpers at every length up to 4096.
+func TestMemsetBytes(t *testing.T) {
+	buf := make([]byte, 4096+32)
+	for n := 0; n <= 4096; n++ {
+		for _, f := range []func([]byte, byte){memsetBytes, memsetBytesScalar} {
+			for i := range buf {
+				buf[i] = 0xEE
+			}
+			v := byte(n*7 + 1)
+			f(buf[3:3+n], v)
+			for i, b := range buf {
+				want := byte(0xEE)
+				if i >= 3 && i < 3+n {
+					want = v
+				}
+				if b != want {
+					t.Fatalf("n=%d: byte %d = %#x, want %#x", n, i, b, want)
+				}
+			}
+		}
+	}
+}

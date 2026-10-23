@@ -59,8 +59,10 @@ func svtAllSAD8x8_16x16Sub(me *realtimeSBMultiSizeME, src, ref []byte, stride, m
 		o := y16*stride + x16
 		svtEightSAD8x8Sub(src[o:], ref[o:], stride, (*[4]uint32)(me.bestSAD[pu8:pu8+4]),
 			(*[4][2]int16)(me.bestMV[pu8:pu8+4]), mvX, mvY, &sad16[n])
-		for k, s := range sad16[n] {
-			me.update(5+n, s, mvX+k, mvY)
-		}
+		me.update8(5+n, &sad16[n], mvX, mvY)
 	}
+}
+
+func (me *realtimeSBMultiSizeME) sweepPoint1Arch(src []byte, stride int, ref []byte, srcBase, refBase, mvX, mvY int) {
+	me.sweepSearchPoint1(src, stride, ref, stride, srcBase, refBase, mvX, mvY)
 }

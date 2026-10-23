@@ -645,10 +645,12 @@ type lossyEncodeState struct {
 	predU          [1024]byte
 	predV          [1024]byte
 	sadScratch     [4096]byte
-	compBuf0       motion.CompoundConvBuf
-	compBuf1       motion.CompoundConvBuf
-	compScratch    motion.CompoundConvolveScratch
-	scaledScratch  motion.ScaledConvolveScratch
+	// mds0Scratch is MDS0's second candidate buffer (pframe_mds0.go).
+	mds0Scratch   [4096]byte
+	compBuf0      motion.CompoundConvBuf
+	compBuf1      motion.CompoundConvBuf
+	compScratch   motion.CompoundConvolveScratch
+	scaledScratch motion.ScaledConvolveScratch
 
 	// Transform/quant scratch for the inter TXB pipeline (residual in,
 	// forward transform out, dequant + inverse residual back), state-owned so
@@ -1433,9 +1435,7 @@ func (st *lossyEncodeState) encodeTXBAvail(reconPlane []byte, srcPlane []byte, s
 
 	dc := dcPredictN(reconPlane, stride, px, py, n, haveTop, haveLeft)
 	pred := st.predU[:n*n] // free during intra TXB coding at n <= 8
-	for i := range pred {
-		pred[i] = dc
-	}
+	memsetBytes(pred, dc)
 	return st.encodeTXBPred(reconPlane, srcPlane, stride, px, py, n, q, ctxReq, coeffCtx, scan, afterSkip, pred)
 }
 
@@ -1444,9 +1444,7 @@ func (st *lossyEncodeState) encodeTXBAvailRect(reconPlane []byte, srcPlane []byt
 
 	dc := dcPredictRect(reconPlane, stride, px, py, w, h, haveTop, haveLeft)
 	pred := st.predU[:w*h]
-	for i := range pred {
-		pred[i] = dc
-	}
+	memsetBytes(pred, dc)
 	return st.encodeTXBPredRect(reconPlane, srcPlane, stride, px, py, w, h, q, ctxReq, coeffCtx, scan, afterSkip, pred)
 }
 
