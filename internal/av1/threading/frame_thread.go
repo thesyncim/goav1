@@ -99,6 +99,11 @@ type FrameThreadRecon struct {
 	// this frame and its references, so the next frame's entropy pass can
 	// run concurrently a few superblock rows behind.
 	Motion *FrameThreadMotion
+	// CDFOut, when set, is the frame's retained frame-context progress: the
+	// update tile publishes it as soon as it saved its adapted CDFs (dav1d
+	// thread_task.c signals out_cdf right after that tile's entropy pass), so
+	// the next frame's entropy pass starts while the other tiles still parse.
+	CDFOut *FrameProgress
 
 	// pending holds the tiles whose reconstruction lanes still run after
 	// their parse returned; the tile parses append to it concurrently.
@@ -122,6 +127,7 @@ type frameThreadPendingRecon struct {
 func (r *FrameThreadRecon) Reset() {
 	r.RefProgress = [parser.InterRefsPerFrame]*FrameProgress{}
 	r.Motion = nil
+	r.CDFOut = nil
 	r.mu.Lock()
 	clear(r.pending)
 	r.pending = r.pending[:0]

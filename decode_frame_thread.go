@@ -394,6 +394,7 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 		p.cdfProgress[retainedCDF].Reset()
 		fc.cdfOut = &p.cdfProgress[retainedCDF]
 	}
+	fc.ft.Recon.CDFOut = fc.cdfOut
 	// dav1d check_tile also waits on the references' entropy progress before
 	// the previous segmentation map is read (get_prev_frame_segid); the pass
 	// waits until the frame writing that map finished its own pass.
