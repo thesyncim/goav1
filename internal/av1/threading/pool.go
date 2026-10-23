@@ -319,6 +319,12 @@ type frameWorkJobGeometryCache struct {
 	interMask uint8
 	interOut  *frame.Frame
 	inter     [3]frameWorkInterBinding
+
+	// ref holds dav1d's f->refp binding for the job: the validated view of
+	// each reference frame plane, indexed [reference*3 + plane], derived the
+	// first time a block predicts from it. refMask has one bit per bound view.
+	refMask uint32
+	ref     [3 * parser.InterRefsPerFrame]frame.Plane
 }
 
 // frameWorkInterBinding is the job-invariant part of frameWorkInterTarget.
@@ -350,6 +356,7 @@ const (
 func (c *frameWorkJobGeometryCache) reset() {
 	c.validMask = 0
 	c.interMask = 0
+	c.refMask = 0
 }
 
 // Surface returns the frame-pool surface that this batch reconstructs into.

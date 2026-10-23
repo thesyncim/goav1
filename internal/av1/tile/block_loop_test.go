@@ -858,12 +858,12 @@ func TestBlockReferenceGlobalMVsForBlockPortsLibaomCenterMV(t *testing.T) {
 		-1024, 1<<16 + 2048,
 	}
 
-	got := blockReferenceGlobalMVsForBlock(refs, [referenceFrameCount]motion.Vector{}, global, true, false, block)
+	got := blockReferenceGlobalMVsForBlock(refs, &[referenceFrameCount]motion.Vector{}, &global, true, false, block)
 	if got[0] != (motion.Vector{Row: 6, Col: 12}) {
 		t.Fatalf("rotzoom global mv=%+v want row=6 col=12", got[0])
 	}
 
-	got = blockReferenceGlobalMVsForBlock(refs, [referenceFrameCount]motion.Vector{}, global, true, true, block)
+	got = blockReferenceGlobalMVsForBlock(refs, &[referenceFrameCount]motion.Vector{}, &global, true, true, block)
 	if got[0] != (motion.Vector{Row: 8, Col: 8}) {
 		t.Fatalf("integer rotzoom global mv=%+v want row=8 col=8", got[0])
 	}
@@ -872,13 +872,13 @@ func TestBlockReferenceGlobalMVsForBlockPortsLibaomCenterMV(t *testing.T) {
 	global[ReferenceFrameLast].Type = parser.GlobalMotionTranslation
 	global[ReferenceFrameLast].Matrix[0] = 13 << 13
 	global[ReferenceFrameLast].Matrix[1] = -7 << 13
-	got = blockReferenceGlobalMVsForBlock(refs, [referenceFrameCount]motion.Vector{}, global, false, true, block)
+	got = blockReferenceGlobalMVsForBlock(refs, &[referenceFrameCount]motion.Vector{}, &global, false, true, block)
 	if got[0] != (motion.Vector{Row: 16, Col: -8}) {
 		t.Fatalf("translation global mv=%+v want row=16 col=-8", got[0])
 	}
 
 	fallback := [referenceFrameCount]motion.Vector{ReferenceFrameLast: {Row: 3, Col: -5}}
-	got = blockReferenceGlobalMVsForBlock(refs, fallback, [referenceFrameCount]parser.WarpedMotionParams{}, true, false, block)
+	got = blockReferenceGlobalMVsForBlock(refs, &fallback, &[referenceFrameCount]parser.WarpedMotionParams{}, true, false, block)
 	if got[0] != fallback[ReferenceFrameLast] {
 		t.Fatalf("fallback global mv=%+v want %+v", got[0], fallback[ReferenceFrameLast])
 	}
