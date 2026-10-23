@@ -3,6 +3,7 @@ package goav1
 import (
 	"errors"
 	"fmt"
+	"unsafe"
 
 	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
@@ -324,7 +325,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	} else {
 		d.visible = d.visibleOne[:0]
 	}
-	if err := d.state.PreallocTemporalMotionScratch(motionSize); err != nil {
+	if err := d.state.PreallocTemporalMotionScratchFrames(motionSize, frameContexts); err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: temporal motion scratch: %w", err)
 	}
@@ -420,7 +421,9 @@ func ivfPayloads(ivf []byte) ([][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("goav1: ivf iterator: %w", err)
 	}
-	var payloads [][]byte
+	// Count the frames first (the iterator only walks headers) so the payload
+	// list and one shared copy of every payload are each a single allocation.
+	count, total := 0, 0
 	for {
 		f, ok, err := it.Next()
 		if err != nil {
@@ -429,7 +432,29 @@ func ivfPayloads(ivf []byte) ([][]byte, error) {
 		if !ok {
 			break
 		}
-		payloads = append(payloads, append([]byte(nil), f.Payload...))
+		count++
+		total += len(f.Payload)
+	}
+	if count == 0 {
+		return nil, errors.New("goav1: ivf stream produced no frames")
+	}
+	it, err = NewIVFIterator(ivf)
+	if err != nil {
+		return nil, fmt.Errorf("goav1: ivf iterator: %w", err)
+	}
+	payloads := make([][]byte, 0, count)
+	backing := make([]byte, 0, total)
+	for range count {
+		f, ok, err := it.Next()
+		if err != nil {
+			return nil, fmt.Errorf("goav1: ivf next: %w", err)
+		}
+		if !ok {
+			break
+		}
+		start := len(backing)
+		backing = append(backing, f.Payload...)
+		payloads = append(payloads, backing[start:len(backing):len(backing)])
 	}
 	if len(payloads) == 0 {
 		return nil, errors.New("goav1: ivf stream produced no frames")
@@ -1081,15 +1106,43 @@ type decoderArena struct {
 	bools   []bool
 }
 
+// newDecoderArena backs every typed region with one zeroed allocation instead
+// of one per element type. All arena types are pointer-free, and the regions
+// are laid out widest element first so each starts aligned for its type.
 func newDecoderArena(size decoderArenaSize) decoderArena {
-	return decoderArena{
-		bytes:   make([]byte, size.bytes),
-		uint16s: make([]uint16, size.uint16s),
-		int16s:  make([]int16, size.int16s),
-		int32s:  make([]int32, size.int32s),
-		ints:    make([]int, size.ints),
-		bools:   make([]bool, size.bools),
+	intBytes := size.ints * int(unsafe.Sizeof(int(0)))
+	int32Bytes := size.int32s * 4
+	uint16Bytes := size.uint16s * 2
+	int16Bytes := size.int16s * 2
+	total := intBytes + int32Bytes + uint16Bytes + int16Bytes + size.bytes + size.bools
+	backing := make([]uint64, (total+7)/8)
+	base := unsafe.Pointer(unsafe.SliceData(backing))
+	off := 0
+	var a decoderArena
+	if size.ints > 0 {
+		a.ints = unsafe.Slice((*int)(unsafe.Add(base, off)), size.ints)
 	}
+	off += intBytes
+	if size.int32s > 0 {
+		a.int32s = unsafe.Slice((*int32)(unsafe.Add(base, off)), size.int32s)
+	}
+	off += int32Bytes
+	if size.uint16s > 0 {
+		a.uint16s = unsafe.Slice((*uint16)(unsafe.Add(base, off)), size.uint16s)
+	}
+	off += uint16Bytes
+	if size.int16s > 0 {
+		a.int16s = unsafe.Slice((*int16)(unsafe.Add(base, off)), size.int16s)
+	}
+	off += int16Bytes
+	if size.bytes > 0 {
+		a.bytes = unsafe.Slice((*byte)(unsafe.Add(base, off)), size.bytes)
+	}
+	off += size.bytes
+	if size.bools > 0 {
+		a.bools = unsafe.Slice((*bool)(unsafe.Add(base, off)), size.bools)
+	}
+	return a
 }
 
 func (a *decoderArena) takeBytes(n int) []byte {
