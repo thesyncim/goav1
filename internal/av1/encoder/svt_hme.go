@@ -65,8 +65,8 @@ func (q *svtPlane) pad() {
 	b, s := q.border, q.stride
 	for y := 0; y < q.h; y++ {
 		row := q.pix[(b+y)*s : (b+y+1)*s]
-		fillBorder(row[:b], row[b])
-		fillBorder(row[b+q.w:b+q.w+b], row[b+q.w-1])
+		memsetBytes(row[:b], row[b])
+		memsetBytes(row[b+q.w:b+q.w+b], row[b+q.w-1])
 	}
 	top := q.pix[b*s : (b+1)*s]
 	bot := q.pix[(b+q.h-1)*s : (b+q.h)*s]
@@ -76,10 +76,20 @@ func (q *svtPlane) pad() {
 	}
 }
 
-// fillBorderScalar sets every byte of dst to v.
-func fillBorderScalar(dst []byte, v byte) {
-	for i := range dst {
+// memsetBytesScalar sets every byte of dst to v, doubling the filled prefix
+// with copy (memmove) past the first 16 bytes.
+func memsetBytesScalar(dst []byte, v byte) {
+	if len(dst) < 32 {
+		for i := range dst {
+			dst[i] = v
+		}
+		return
+	}
+	for i := range dst[:16] {
 		dst[i] = v
+	}
+	for n := 16; n < len(dst); n *= 2 {
+		copy(dst[n:], dst[:n])
 	}
 }
 
@@ -236,10 +246,15 @@ func svtHMESearch(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (bestSAD
 				for ; c < bw; c += 16 {
 					svtSAD16xhx8(&t, s[c:], s2, ref.pix[base+x+c:], s2, rows)
 				}
-				for k, v := range t {
-					if sad := v << 1; sad < bestSAD {
-						bestSAD, bestX, bestY = sad, ox+x+k, oy+y
+				// update_best_sad_u32: the eight positions' minimum first,
+				// its first lane only when it improves the best.
+				m := min(min(min(t[0], t[1]), min(t[2], t[3])), min(min(t[4], t[5]), min(t[6], t[7])))
+				if sad := m << 1; sad < bestSAD {
+					k := 0
+					for t[k] != m {
+						k++
 					}
+					bestSAD, bestX, bestY = sad, ox+x+k, oy+y
 				}
 			}
 			continue

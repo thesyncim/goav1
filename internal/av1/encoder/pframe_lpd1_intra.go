@@ -167,11 +167,7 @@ func lpd1IntraChromaComplexity(src SourceFrame420, cg *intraChromaGeom, level ui
 	return lpd1ComponentLuma
 }
 
-func fillRect(dst []byte, v byte) {
-	for i := range dst {
-		dst[i] = v
-	}
-}
+func fillRect(dst []byte, v byte) { memsetBytes(dst, v) }
 
 // pixelStatsRect dispatches the chroma block sizes of the light-PD1 path to
 // the fixed-size pixel-statistics kernels (svt_aom_mefn_ptr[bsize_uv].vf).

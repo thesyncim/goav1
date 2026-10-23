@@ -2,4 +2,4 @@
 
 package encoder
 
-func fillBorder(dst []byte, v byte) { fillBorderScalar(dst, v) }
+func memsetBytes(dst []byte, v byte) { memsetBytesScalar(dst, v) }

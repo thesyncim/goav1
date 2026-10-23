@@ -85,8 +85,74 @@ func svtAllSAD8x8_16x16Sub(me *realtimeSBMultiSizeME, src, ref []byte, stride, m
 		}
 		best.StoreArray((*[4]uint32)(unsafe.Pointer(&me.bestSAD[pu8])))
 		bestMV.StoreArray((*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8])))
-		for k := range 8 {
-			me.update(5+n, sad16[n][k], mvX+k, mvY)
-		}
+		me.update8(5+n, &sad16[n], mvX, mvY)
 	}
+}
+
+// svtSweepPoint1 is svtAllSAD8x8_16x16Sub for one search position, the
+// svt_ext_sad_calculation_8x8_16x16 (sub_sad) remainder of
+// open_loop_me_get_search_point_results_block: the four 8x8 SUB_SADs of each
+// 16x16 block in one vector with a compare-and-select best update, then the
+// 16x16, 32x32 and 64x64 sums. ref needs no slack past the 64x64 block.
+func svtSweepPoint1(me *realtimeSBMultiSizeME, src, ref []byte, stride, mvX, mvY int) {
+	_ = src[63*stride+63]
+	_ = ref[63*stride+63]
+	sp := unsafe.Pointer(&src[0])
+	rp := unsafe.Pointer(&ref[0])
+	s2 := 2 * stride
+	hiShift := archsimd.BroadcastInt16x8(-8)
+	loShift := archsimd.BroadcastInt16x8(8)
+	mv := archsimd.BroadcastUint32x4(svtPackMV(mvX, mvY))
+	var sad16 [16]uint32
+	for n := range 16 {
+		x16, y16 := sweepBlock16(n)
+		off := y16*stride + x16
+		a := unsafe.Add(sp, off)
+		r := unsafe.Add(rp, off)
+		var st, ht, sb, hb archsimd.Uint16x8
+		for row := range 4 {
+			p := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(a, row*s2)))
+			q := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r, row*s2)))
+			d := p.Max(q).Sub(p.Min(q)).ReshapeToUint16s()
+			st, ht = st.Add(d), ht.Add(d.Shift(hiShift))
+		}
+		for row := 4; row < 8; row++ {
+			p := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(a, row*s2)))
+			q := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r, row*s2)))
+			d := p.Max(q).Sub(p.Min(q)).ReshapeToUint16s()
+			sb, hb = sb.Add(d), hb.Add(d.Shift(hiShift))
+		}
+		sv := st.ConcatAddPairs(sb)
+		hv := ht.ConcatAddPairs(hb)
+		sv = sv.ConcatAddPairs(sv)
+		hv = hv.ConcatAddPairs(hv)
+		sad := sv.Sub(hv.Shift(loShift)).Add(hv).ExtendLo4ToUint32()
+		sad = sad.Add(sad)
+		pu8 := 21 + n*4
+		best := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Pointer(&me.bestSAD[pu8])))
+		bestMV := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8])))
+		lt := sad.Less(best)
+		sad.IfElse(lt, best).StoreArray((*[4]uint32)(unsafe.Pointer(&me.bestSAD[pu8])))
+		mv.IfElse(lt, bestMV).StoreArray((*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8])))
+		s := sad.ReduceSum()
+		sad16[n] = s
+		me.update(5+n, s, mvX, mvY)
+	}
+	var sad64 uint32
+	for q := range 4 {
+		s32 := sad16[q*4] + sad16[q*4+1] + sad16[q*4+2] + sad16[q*4+3]
+		me.update(1+q, s32, mvX, mvY)
+		sad64 += s32
+	}
+	me.update(0, sad64, mvX, mvY)
+}
+
+// sweepPoint1Arch searches one position: the vector kernel when the 64x64
+// windows fit, else the generic path.
+func (me *realtimeSBMultiSizeME) sweepPoint1Arch(src []byte, stride int, ref []byte, srcBase, refBase, mvX, mvY int) {
+	if srcBase >= 0 && refBase >= 0 && srcBase+63*stride+64 <= len(src) && refBase+63*stride+64 <= len(ref) {
+		svtSweepPoint1(me, src[srcBase:], ref[refBase:], stride, mvX, mvY)
+		return
+	}
+	me.sweepSearchPoint1(src, stride, ref, stride, srcBase, refBase, mvX, mvY)
 }

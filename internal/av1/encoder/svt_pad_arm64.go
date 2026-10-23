@@ -4,16 +4,16 @@ package encoder
 
 import "simd/archsimd"
 
-// fillBorder sets every byte of dst to v: the memset of
-// svt_aom_generate_padding's left and right borders. len(dst) is a multiple
-// of 16 (the ME and pyramid borders are 80, 64 and 32 samples).
-func fillBorder(dst []byte, v byte) {
-	if len(dst)%16 != 0 {
-		fillBorderScalar(dst, v)
-		return
-	}
+// memsetBytes sets every byte of dst to v: the memset of
+// svt_aom_generate_padding's left and right borders and of the flat DC
+// predictions. Go lowers a byte-store loop to one store per sample.
+func memsetBytes(dst []byte, v byte) {
 	x := archsimd.BroadcastUint8x16(v)
-	for i := 0; i+16 <= len(dst); i += 16 {
+	i := 0
+	for ; i+16 <= len(dst); i += 16 {
 		x.StoreArray((*[16]uint8)(dst[i : i+16]))
+	}
+	for ; i < len(dst); i++ {
+		dst[i] = v
 	}
 }

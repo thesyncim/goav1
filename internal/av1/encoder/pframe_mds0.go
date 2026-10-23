@@ -142,6 +142,13 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	bestCost := int64(0)
 	bestRate := int64(0)
 	bestMV := motion.Vector{}
+	// Candidate predictions alternate between two scratch buffers, so the
+	// best one so far is never overwritten and predY keeps the ME vector's
+	// pixels throughout, as SVT keeps one prediction buffer per candidate
+	// (candidate_buffer_ptr_array): nothing is re-predicted, and the winner
+	// is copied once.
+	bufs := [2]*[4096]byte{&st.sadScratch, &st.mds0Scratch}
+	cur, bestBuf := 0, -1
 	for i := 0; i < n; i++ {
 		cand := &cands[i]
 		// Distortion: one prediction per candidate (the injectors
@@ -158,11 +165,11 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 			}
 		}
 		if dist < 0 {
-			if perr := st.predictLuma(st.sadScratch[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, motion.RegularFilters); perr != nil {
+			if perr := st.predictLuma(bufs[cur][:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, motion.RegularFilters); perr != nil {
 				dists[i] = -1
 				continue
 			}
-			sse, variance := realtimeInterResidualSSEVariance(src.Y, st.sadScratch[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
+			sse, variance := realtimeInterResidualSSEVariance(src.Y, bufs[cur][:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
 			dist = int64(variance) << 4
 			sses[i] = sse
 		}
@@ -197,20 +204,14 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 		// (dist << 7), the same shape the skip decision already uses.
 		cost := ((rate*lambda + 256) >> 9) + (dist << 7)
 		if best < 0 || cost < bestCost {
-			if !predYValid || predYMV != cand.mv {
-				switch source {
-				case 0:
-					// This candidate was just predicted into sadScratch.
-					copy(st.predY[:bw*bh], st.sadScratch[:bw*bh])
-					predYValid = true
-				case 1:
-					// The cached ME pixels were overwritten after a different
-					// candidate became best; restore them only on this path.
-					predYValid = st.predictLuma(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, motion.RegularFilters) == nil
-				}
-				if predYValid {
-					predYMV = cand.mv
-				}
+			if source == 0 {
+				// The winner so far lives in bufs[cur]; the next candidates
+				// predict into the other buffer.
+				bestBuf = cur
+				cur ^= 1
+			} else {
+				// The ME vector: predY still holds its pixels.
+				bestBuf = -1
 			}
 			best, bestCost = i, cost
 			bestRate = rate
@@ -219,6 +220,10 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	}
 	if best < 0 {
 		return mds0Cand{}, false, false
+	}
+	if bestBuf >= 0 {
+		copy(st.predY[:bw*bh], bufs[bestBuf][:bw*bh])
+		predYValid, predYMV = true, bestMV
 	}
 	// The winner's regular-filter prediction statistics (dist is its
 	// variance << 4) for the later stages (pred_stats.go).
@@ -260,9 +265,7 @@ func intraPBlockGeometry(st *lossyEncodeState, size tile.BlockSize) (int, tile.T
 // edges.
 func fillIntraDCPred(pred []byte, reconPlane []byte, stride, px, py, n int, haveTop, haveLeft bool) {
 	dc := dcPredictN(reconPlane, stride, px, py, n, haveTop, haveLeft)
-	for i := range pred[:n*n] {
-		pred[i] = dc
-	}
+	memsetBytes(pred[:n*n], dc)
 }
 
 // mds0IntraDCWins is the DC_PRED arm of SVT-AV1's light-PD1 MDS0

@@ -377,6 +377,10 @@ func (st *lossyEncodeState) svtPD0BlockDist(src, ref SourceFrame420, me *realtim
 	var sum int32
 	if rx >= 0 && ry >= 0 && rx+w <= ref.Width && ry+h <= ref.Height {
 		sse, sum = svtPD0RectStats(srcBlk, src.YStride, ref.Y[ry*ref.YStride+rx:], ref.YStride, w, h)
+	} else if p := st.refPads.lookup(ref.Y, ref.Width, ref.Height); p != nil && rx >= -p.border && ry >= -p.border && rx+w <= ref.Width+p.border && ry+h <= ref.Height+p.border {
+		// SVT reads its padded reference picture directly; the padded copy
+		// replicates the edges exactly as the clamped window below does.
+		sse, sum = svtPD0RectStats(srcBlk, src.YStride, p.buf[(ry+p.border)*p.stride+rx+p.border:], p.stride, w, h)
 	} else {
 		buf := st.pd0EdgeRef[:w*h]
 		for r := range h {

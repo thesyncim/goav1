@@ -110,3 +110,54 @@ func BenchmarkSweepSearchPoint8(b *testing.B) {
 		me.sweepSearchPoint8(src, ref, stride, 4*stride+100, 3*stride+96, -4, -1)
 	}
 }
+
+// TestSweepPoint1ArchMatchesGeneric checks the single-position sweep
+// dispatch (svtSweepPoint1 where the build has it) against the generic
+// open_loop_me_get_search_point_results_block, on exact-length windows,
+// with random running bests and ties, and on windows that leave the plane.
+func TestSweepPoint1ArchMatchesGeneric(t *testing.T) {
+	rng := rand.New(rand.NewSource(17))
+	const stride = 96
+	src := make([]byte, 70*stride)
+	ref := make([]byte, 70*stride)
+	for trial := 0; trial < 200; trial++ {
+		fillMEPattern(rng, src, trial)
+		fillMEPattern(rng, ref, trial/4)
+		if trial%2 == 1 {
+			for i := range ref {
+				ref[i] = src[(i+5)%len(src)] + byte(rng.Intn(3))
+			}
+		}
+		var a realtimeSBMultiSizeME
+		a.reset()
+		for i := range a.bestSAD {
+			if trial%3 != 0 {
+				a.bestSAD[i] = uint32(rng.Intn(20000))
+				a.bestMV[i] = [2]int16{int16(rng.Intn(9) - 4), 1}
+			}
+		}
+		b := a
+		srcBase := rng.Intn(4*stride + 1)
+		refBase := rng.Intn(6*stride + 1)
+		s := src
+		r := ref[:refBase+63*stride+64]
+		if trial%5 == 4 {
+			r = ref[:refBase+63*stride+60] // too short: the generic path
+		}
+		mvX, mvY := rng.Intn(17)-8, rng.Intn(5)-2
+		if trial%7 == 0 {
+			mvX = -1
+		}
+		func() {
+			defer func() { _ = recover() }()
+			b.sweepSearchPoint1(s, stride, r, stride, srcBase, refBase, mvX, mvY)
+		}()
+		func() {
+			defer func() { _ = recover() }()
+			a.sweepPoint1Arch(s, stride, r, srcBase, refBase, mvX, mvY)
+		}()
+		if a.bestSAD != b.bestSAD || a.bestMV != b.bestMV {
+			t.Fatalf("trial %d: arch and generic differ", trial)
+		}
+	}
+}
