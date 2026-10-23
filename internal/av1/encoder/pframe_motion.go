@@ -107,6 +107,14 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 
 	st.mePredY.valid = false
 	st.mdMEDist = ^uint64(0)
+	if st.zmvForced(block.Size, lumaPX, lumaPY) {
+		// force_zeromv_skip_for_blk: zero-motion LAST only.
+		var o pblockMotion
+		o.refs = tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+		o.refPlanes = ref
+		o.fullSAD = st.leafFullPelSAD(src, ref, lumaPX, lumaPY, bw, bh, motion.Vector{})
+		return o, nil
+	}
 	n := bw
 	var out pblockMotion
 	scaledReference := ref.Width != src.Width || ref.Height != src.Height

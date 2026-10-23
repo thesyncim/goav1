@@ -415,9 +415,11 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 			modeResult.CompoundMode = tile.CompoundInterModeGlobalGlobal
 		}
 	}
+	// The zero-mv exit codes GLOBALMV LAST as skip, as the fused path does.
+	zmvForced := st.zmvForced(block.Size, lumaPX, lumaPY)
 	drlIndex := 0
 	mds0PredRetained := false
-	if !refs.Compound {
+	if !refs.Compound && !zmvForced {
 		mds0Picked := false
 		if st.mds0Level != 0 && !scaledReference && refPlanes.Width == src.Width && refPlanes.Height == src.Height {
 			if cand, ok, retained := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, &stack, lumaPX, lumaPY, bw, bh, mv); ok {
@@ -495,8 +497,15 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	st.lpd1NbrSkipCtx, _ = scratch.Mode.SkipContext(int(block.X4), int(block.Y4))
 	st.lpd1NoteIsInterRate(&scratch.Mode, block)
 	st.lpd1NoteMVP64(lumaPX, lumaPY, bw, bh, modeResult)
-	skip, splitTX, txPlan, txType, err := st.decideInterTXBlock(src, refPlanes, mv, block,
-		lumaPX, lumaPY, bw, bh, cbw, cbh, chromaPX, chromaPY, hasChroma, fullSAD)
+	var skip, splitTX bool
+	var txPlan realtimeInterTXPlan
+	var txType transform.Type
+	if zmvForced {
+		skip = true
+	} else {
+		skip, splitTX, txPlan, txType, err = st.decideInterTXBlock(src, refPlanes, mv, block,
+			lumaPX, lumaPY, bw, bh, cbw, cbh, chromaPX, chromaPY, hasChroma, fullSAD)
+	}
 	st.predYKey.valid = false
 	if err != nil {
 		return err

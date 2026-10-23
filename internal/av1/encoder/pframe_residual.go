@@ -987,6 +987,9 @@ func (st *lossyEncodeState) decideRealtimePartition(src, ref SourceFrame420, sca
 	}
 	px, py := int(miCol)*4, int(miRow)*4
 	sbPX, sbPY := (px/64)*64, (py/64)*64
+	if level == tile.BlockLevel64x64 && st.zmvDecideSB(src, ref, px, py) {
+		return tile.PartitionNone, nil
+	}
 	sb, err := st.svtPD0ForSB(src, ref, sbPX, sbPY)
 	if err != nil {
 		return tile.PartitionSplit, err
@@ -1371,9 +1374,13 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			modeResult.CompoundMode = tile.CompoundInterModeGlobalGlobal
 		}
 	}
+	// A forced zero-mv superblock codes GLOBALMV LAST as skip
+	// (nonrd_pickmode: force_zeromv_skip_for_blk tests only GLOBALMV and a
+	// zero NEARESTMV, with zero rate and distortion).
+	zmvForced := st.zmvForced(block.Size, lumaPX, lumaPY)
 	drlIndex := 0
 	mds0PredRetained := false
-	if !refs.Compound {
+	if !refs.Compound && !zmvForced {
 		mds0Picked := false
 		// The light-PD1 MDS0 candidate decision (SVT preset 12 shape; see
 		// pframe_mds0.go) prices every block, low-distortion ones included:
@@ -1466,8 +1473,15 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	st.lpd1NbrSkipCtx, _ = scratch.Mode.SkipContext(int(block.X4), int(block.Y4))
 	st.lpd1NoteIsInterRate(&scratch.Mode, block)
 	st.lpd1NoteMVP64(lumaPX, lumaPY, bw, bh, modeResult)
-	skip, splitTX, txPlan, txType, err := st.decideInterTXBlock(src, refPlanes, mv, block,
-		lumaPX, lumaPY, bw, bh, cbw, cbh, chromaPX, chromaPY, hasChroma, fullSAD)
+	var skip, splitTX bool
+	var txPlan realtimeInterTXPlan
+	var txType transform.Type
+	if zmvForced {
+		skip = true
+	} else {
+		skip, splitTX, txPlan, txType, err = st.decideInterTXBlock(src, refPlanes, mv, block,
+			lumaPX, lumaPY, bw, bh, cbw, cbh, chromaPX, chromaPY, hasChroma, fullSAD)
+	}
 	st.predYKey.valid = false
 	if err != nil {
 		return err
