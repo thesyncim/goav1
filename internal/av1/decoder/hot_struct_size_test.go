@@ -24,7 +24,7 @@ func TestHotStructSizes(t *testing.T) {
 		// pointers plus a single-tile flag.
 		// The three restoration stripe-boundary handles each add a pixel-row
 		// (Bytes) flag, 8 bytes with alignment.
-		{name: "FrameWorkState", size: unsafe.Sizeof(FrameWorkState{}), max: 569432}, // +1632: frame-thread MV-grid handles and the extra CDF pool pointer; +920: segmentation-map store (dav1d segmap refs per slot and in-flight frame)
+		{name: "FrameWorkState", size: unsafe.Sizeof(FrameWorkState{}), max: 569440}, // +8: the loop-filter map's NoSkip grid pointer (encoder skip-only frames); +1632: frame-thread MV-grid handles and the extra CDF pool pointer; +920: segmentation-map store (dav1d segmap refs per slot and in-flight frame)
 		{name: "FrameWorkLoopFilterPostFilterEdge", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterEdge{}), max: 16},
 		{name: "FrameWorkLoopFilterPostFilterLevelStats", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterLevelStats{}), max: 12},
 		{name: "FrameWorkLoopFilterPostFilterPlan", size: unsafe.Sizeof(FrameWorkLoopFilterPostFilterPlan{}), max: 136},

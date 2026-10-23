@@ -66,6 +66,10 @@ type FrameWorkLoopFilterMap struct {
 	Records []FrameWorkLoopFilterBlockRecord
 	Stride  uint16
 	Rows    uint16
+	// NoSkip, when set, replaces the records as the frame's CDEF skip source:
+	// an encoder frame with deblocking off marks only which 8x8 blocks carry
+	// residual (dav1d's noskip_mask) and leaves Records unmarked.
+	NoSkip *FrameWorkLoopFilterNoSkip
 }
 
 // FrameWorkLoopFilterMapStats summarizes decoded loop-filter metadata coverage

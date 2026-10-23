@@ -70,6 +70,14 @@ func markLoopFilterBlock(m *threading.FrameWorkLoopFilterMap, block tile.BlockVi
 	if err != nil {
 		return err
 	}
+	if m.NoSkip != nil {
+		// Skip-only frame: dav1d decode_b's noskip_mask for a block with
+		// residual.
+		if !skip {
+			m.NoSkip.Mark(int(lfBlock.MICol), int(lfBlock.MIRow), int(lfBlock.MIColEnd), int(lfBlock.MIRowEnd))
+		}
+		return nil
+	}
 	record := threading.FrameWorkLoopFilterBlockRecord{
 		Valid:         true,
 		Block:         lfBlock,
@@ -107,17 +115,10 @@ func markLoopFilterBlock(m *threading.FrameWorkLoopFilterMap, block tile.BlockVi
 	return nil
 }
 
-// markLoopFilterBlock retains the generic per-MI records and, when the frame
-// is serial, commits mask geometry while the transform-edge contexts are live.
+// markLoopFilterBlock records the block in the frame's loop-filter map.
 func (st *lossyEncodeState) markLoopFilterBlock(block tile.BlockVisit, tree tile.TransformTreeResult,
 	skip bool, intra bool, refFrame uint8, mode loopfilter.ModeDeltaClass) error {
-	if err := markLoopFilterBlock(st.lfMap, block, tree, skip, intra, refFrame, mode); err != nil {
-		return err
-	}
-	if st.lfMaskBuilder != nil {
-		return st.lfMaskBuilder.MarkBlock(block, tree, skip, intra)
-	}
-	return nil
+	return markLoopFilterBlock(st.lfMap, block, tree, skip, intra, refFrame, mode)
 }
 
 // loopFilterApplier owns the reusable frame-level deblocking state: the
@@ -129,18 +130,18 @@ type loopFilterApplier struct {
 	bandBufs [][]decoder.FrameWorkLoopFilterPostFilterEdge
 	schedule []uint32
 	filtMap  threading.FrameWorkLoopFilterMap
-	event    decoder.Event
-	bound    bool
+	// noskip is the skip-only frames' CDEF skip source (resetFor).
+	noskip threading.FrameWorkLoopFilterNoSkip
+	event  decoder.Event
+	bound  bool
 
 	// Deblocking edge bitmasks (dav1d-style), built once per frame from the
 	// completed record map and consumed by the mask-driven apply. Single-tile
 	// only: the raster mask build carries above/left context across the whole
 	// frame width. masksBound tracks whether init sized the grid this stream.
-	masks          threading.FrameWorkLoopFilterMasks
-	maskScratch    threading.FrameWorkLoopFilterMaskBuildScratch
-	masksBound     bool
-	orderedBuilder threading.FrameWorkLoopFilterOrderedBuilder
-	orderedMasks   bool
+	masks       threading.FrameWorkLoopFilterMasks
+	maskScratch threading.FrameWorkLoopFilterMaskBuildScratch
+	masksBound  bool
 
 	// Persistent band workers: per-frame goroutine spawns allocate their
 	// closures, so the workers park on a job channel for the applier's
@@ -368,8 +369,25 @@ func (a *loopFilterApplier) bindEdgeList() error {
 }
 
 // reset clears the per-frame records before a frame's tiles fill them.
-func (a *loopFilterApplier) reset() error {
-	a.orderedMasks = false
+func (a *loopFilterApplier) reset() error { return a.resetFor(true) }
+
+// resetFor prepares the frame's loop-filter state. A frame that is not
+// deblocked needs only CDEF's skip source, so (as dav1d builds no
+// loop-filter masks for it and reads its noskip_mask) the map switches to
+// the compact 8x8 noskip grid and the per-MI records are neither cleared
+// nor marked. Odd MI extents keep the records.
+func (a *loopFilterApplier) resetFor(deblock bool) error {
+	if !deblock && a.noskip.BindGrid(int(a.filtMap.Stride), int(a.filtMap.Rows)) {
+		a.filtMap.NoSkip = &a.noskip
+		if poisonSkippedClears {
+			poison := threading.FrameWorkLoopFilterBlockRecord{Valid: true}
+			for i := range a.filtMap.Records {
+				a.filtMap.Records[i] = poison
+			}
+		}
+		return nil
+	}
+	a.filtMap.NoSkip = nil
 	return a.filtMap.Reset()
 }
 
@@ -563,11 +581,7 @@ func (a *loopFilterApplier) applySerialMasks(recon *SourceFrame420, lf parser.Lo
 	if err != nil || !active {
 		return err
 	}
-	if a.orderedMasks {
-		if !a.orderedBuilder.Complete(&a.masks) {
-			return threading.ErrInvalidBatch
-		}
-	} else if err := a.masks.BuildFromMap(&a.maskScratch, a.filtMap, encoderLoopFilterSBLog2); err != nil {
+	if err := a.masks.BuildFromMap(&a.maskScratch, a.filtMap, encoderLoopFilterSBLog2); err != nil {
 		return err
 	}
 	_, err = a.jobCtx.ApplyLoopFilterEdgesFromMasks(&a.masks, a.filtMap)

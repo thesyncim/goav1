@@ -38,7 +38,9 @@ type cdefApplier struct {
 	idxRead   []bool
 	idxMap    threading.FrameWorkCDEFIndexMap
 	idxCols   int
-	idxRows   int
+	// nsMasks carries a skip-only frame's noskip grid to the decoder CDEF.
+	nsMasks threading.FrameWorkLoopFilterMasks
+	idxRows int
 
 	samples   [3][]uint16
 	dirGrid   []cdefDirectionGrid
@@ -205,6 +207,29 @@ func (a *cdefApplier) markFromLoopFilterMap(m *threading.FrameWorkLoopFilterMap,
 		a.idxRead[i] = false
 		a.idxValues[i] = 0
 	}
+	if ns := m.NoSkip; ns != nil {
+		// A unit is read when any in-frame 8x8 block carries residual (the
+		// grid presets the out-of-frame bits, masked off here).
+		cols8, rows8 := int(m.Stride)>>1, int(m.Rows)>>1
+		for uy := 0; uy < min(a.idxRows, ns.UnitRows()); uy++ {
+			for ux := 0; ux < min(a.idxCols, ns.UnitCols()); ux++ {
+				var inFrame uint64
+				for by := 0; by < 8 && uy*8+by < rows8; by++ {
+					for bx := 0; bx < 8 && ux*8+bx < cols8; bx++ {
+						inFrame |= 1 << uint(by*8+bx)
+					}
+				}
+				if ns.UnitWord(uy, ux)&inFrame != 0 {
+					u := uy*a.idxCols + ux
+					a.idxRead[u] = true
+					if fbIdx != nil {
+						a.idxValues[u] = fbIdx[u]
+					}
+				}
+			}
+		}
+		return
+	}
 	stride := int(m.Stride)
 	rows := int(m.Rows)
 	for miRow := 0; miRow < rows; miRow++ {
@@ -266,6 +291,12 @@ func (a *cdefApplier) bindApplyContext(recon *SourceFrame420, cdefParams parser.
 		},
 		Output:        &a.output,
 		LoopFilterMap: lfMap,
+	}
+	if lfMap != nil && lfMap.NoSkip != nil {
+		// Skip-only frame: the decoder's CDEF reads the noskip grid, as for
+		// a dav1d frame whose record map was never marked.
+		a.nsMasks.AttachNoSkip(lfMap.NoSkip)
+		a.jobCtx.LoopFilterMasks = &a.nsMasks
 	}
 	a.jobCtx = a.jobCtx.WithCompletedPostFilters(decoder.FrameWorkPostFilterLoopFilter)
 	a.jobReq = decoder.FrameWorkCDEFPostFilterRequest{
