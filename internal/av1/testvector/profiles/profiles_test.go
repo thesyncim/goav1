@@ -1245,6 +1245,31 @@ var profileClips = []profileClip{
 		wantSubsamplingX: true,
 		wantSubsamplingY: true,
 	},
+	// aomenc 3.15 good mode, 2x2 tiles (two tile rows) in one tile group, cyclic-refresh
+	// segmentation and reference-frame MVs: the multi-tile frame-threaded path,
+	// whose MV_REF progress aggregates across tile rows and columns. Source: a
+	// 256x256 crop of crowdrun (ffmpeg -vf crop=256:256:800:500, 10 frames);
+	// aomenc --good --cpu-used=6 --lag-in-frames=0 --tile-columns=1 --tile-rows=1
+	// --aq-mode=3 --end-usage=cbr --target-bitrate=300.
+	{
+		name: "multitile-2x2-rows-framethread-256x256",
+		file: "multitile-2x2-rows-framethread-256x256.ivf",
+		frameMD5Hex: []string{
+			"510ce2cce741b80043d7af3a38aec3e0",
+			"1af6200095a9ee6d2a99483bcf430b39",
+			"5e77d08a50140445f6590befa8d03c50",
+			"9d45f7a8d1977cf8d6562945359fb179",
+			"3e8c2117d3e1c90364069efd3cf40371",
+			"5655e005d7681d8689a9f7b42faba107",
+			"4d612049f7020e02eb1890b06930cc91",
+			"a0d64fa63011e42c164de743649ce69e",
+			"01a00b93923917ce4fd25820bc9bf9ee",
+			"c449e8bcc5b0733c39bcc75edc4fd75b",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
 	{
 		// Screen-content palette blocks in inter frames, with palette blocks on
 		// the right and bottom frame edges (dav1d decode_b's inter-block pal_sz

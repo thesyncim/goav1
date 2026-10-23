@@ -524,6 +524,10 @@ internal/av1/entropy/writer_log.go:*:*: make([]uint32, 0, n) escapes to heap in 
 internal/av1/motion/compound.go:*:*: moved to heap: im
 internal/av1/motion/scale_scratch.go:*:*: new(scaledHighBDIM) escapes to heap
 internal/av1/motion/scale_scratch.go:*:*: new(scaledHighBDIM) escapes to heap in init.func1:
+internal/av1/threading/frame_thread.go:*:*: make([]FrameThreadMotionTile, maxTile + 1) escapes to heap
+internal/av1/threading/frame_thread.go:*:*: make([]FrameThreadMotionTile, maxTile + 1) escapes to heap in (*FrameThreadMotion).bindTiles:
+internal/av1/threading/frame_thread.go:*:*: make([]FrameWorkBatch, len(batches)) escapes to heap
+internal/av1/threading/frame_thread.go:*:*: make([]FrameWorkBatch, len(batches)) escapes to heap in (*Pool).ExecuteFrameWorkRunnerFrameThread:
 internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes to heap
 internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes to heap in (*frameWorkLoopFilterMaskScratch).reset:
 internal/av1/threading/loop_filter_noskip.go:*:*: make([]uint8, n) escapes to heap

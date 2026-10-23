@@ -1040,7 +1040,7 @@ func (b *FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint
 		CurrentMVFrame:              b.CurrentMVFrame,
 		FrameMIRows:                 uint16(frameMIRows),
 		FrameMICols:                 uint16(frameMICols),
-		MotionProgress:              b.frameThreadMotionProgress(),
+		MotionProgress:              b.frameThreadMotionProgress(index),
 		SkipModeRefs: [2]tile.ReferenceFrame{
 			tile.ReferenceFrame(b.SkipMode.RefFrameIdx[0]),
 			tile.ReferenceFrame(b.SkipMode.RefFrameIdx[1]),
@@ -1205,6 +1205,13 @@ func DecodeAndReconstructJobResidualsPtrOwned(b *FrameWorkBatch, index int, stat
 func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *tile.DecodeState, cdfs FrameWorkTileResidualCDFs, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualRequest, compact *FrameWorkLoopFilterCompactState) (FrameWorkTileResidualStats, error) {
 	if state == nil || scratch == nil || (req.Transforms == nil && !req.UseDefaultTransforms) {
 		return FrameWorkTileResidualStats{}, ErrInvalidBatch
+	}
+	if b.FrameThread != nil && scratch.wavefront != nil {
+		// A frame-threaded batch decoding several tiles reuses this scratch:
+		// the previous tile's lanes must finish reading its buffered events.
+		if err := b.FrameThread.joinWavefront(scratch.wavefront); err != nil {
+			return FrameWorkTileResidualStats{}, err
+		}
 	}
 	scratch.stats = FrameWorkTileResidualStats{}
 	if req.CDEFIndexMap == nil {

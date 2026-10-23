@@ -1603,6 +1603,9 @@ func frameWorkPoolWavefrontShare(workers int, batches int) uint16 {
 // wavefrontLaneTask asks a persistent lane goroutine to run one SB-row
 // wavefront lane until the tile's reconstruction finishes or aborts.
 type wavefrontLaneTask struct {
+	// parse, when set, asks the goroutine to run batch lane of a frame-threaded
+	// frame's entropy passes instead of a wavefront lane.
+	parse    *FrameThreadRecon
 	wf       *frameWorkReconWavefront
 	lane     int
 	lanes    int
@@ -1634,6 +1637,11 @@ func (p *Pool) wavefrontLaneGroupLocked(need int) chan<- wavefrontLaneTask {
 
 func poolWavefrontLaneLoop(tasks <-chan wavefrontLaneTask) {
 	for task := range tasks {
+		if task.parse != nil {
+			task.parse.runBatch(task.lane)
+			task.parse.parseWG.Done()
+			continue
+		}
 		task.wf.runLane(task.lane, task.lanes, task.rowCount)
 	}
 }

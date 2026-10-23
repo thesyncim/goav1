@@ -27,6 +27,9 @@ The project has not published a release tag yet.
   calls drain the pipeline. Output order and pixels are unchanged.
   WithMaxFrameDelay(1) restores one-frame-per-call delivery (dav1d
   max_frame_delay). RTP decoders are realtime and never frame-thread.
+  Frames with several tiles frame-thread too, as long as every tile arrives in
+  one tile group: each tile's entropy pass runs on its own lane, and the
+  frame's reconstruction and post-filter overlap the next frame's tiles.
 
 ### Encoder Scope
 
