@@ -383,6 +383,14 @@ internal/av1/encoder/refpad.go:*:*: make([]byte, lumaNeed) escapes to heap
 internal/av1/encoder/refpad.go:*:*: make([]byte, lumaNeed) escapes to heap in (*refPadCache).reserve:
 internal/av1/encoder/refpad.go:*:*: make([]byte, need) escapes to heap
 internal/av1/encoder/refpad.go:*:*: make([]byte, need) escapes to heap in (*refPadPlane).build:
+internal/av1/encoder/scale_box.go:*:*: make([]uint16, sw) escapes to heap
+internal/av1/encoder/scale_box.go:*:*: make([]uint16, sw) escapes to heap in scalePlaneBox16:
+internal/av1/encoder/scale_box.go:*:*: make([]uint32, n) escapes to heap
+internal/av1/encoder/scale_box.go:*:*: make([]uint32, n) escapes to heap in (*boxScaleScratch).sums:
+internal/av1/encoder/scale_box.go:*:*: make([]uint32, n) escapes to heap in scalePlaneBoxAny[go.shape.uint16]:
+internal/av1/encoder/scale_box.go:*:*: make([]uint32, n) escapes to heap in scalePlaneBoxAny[go.shape.uint8]:
+internal/av1/encoder/scale_box.go:*:*: make([]uint8, sw) escapes to heap
+internal/av1/encoder/scale_box.go:*:*: make([]uint8, sw) escapes to heap in scalePlaneBox8:
 internal/av1/encoder/subpel_cache.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/subpel_cache.go:*:*: new(subpelProbeCache) escapes to heap in (*lossyEncodeState).ensureSubpelProbeCache:
 internal/av1/encoder/subpel_svt.go:*:*: new(subpelProbeCache) escapes to heap
@@ -447,13 +455,13 @@ internal/av1/encoder/video_highbd_color.go:*:*: make([]pframeCoder, nTiles) esca
 internal/av1/encoder/video_highbd_color.go:*:*: make([]uint16, chromaNeed) escapes to heap
 internal/av1/encoder/video_highbd_color.go:*:*: make([]uint16, chromaNeed) escapes to heap in allocColor16Frame:
 internal/av1/encoder/video_highbd_color.go:*:*: make([]uint16, chromaWidth * chromaHeight) escapes to heap
-internal/av1/encoder/video_highbd_color.go:*:*: make([]uint16, chromaWidth * chromaHeight) escapes to heap in scaleSourceFrameColor16Nearest:
+internal/av1/encoder/video_highbd_color.go:*:*: make([]uint16, chromaWidth * chromaHeight) escapes to heap in scaleSourceFrameColor16Box:
 internal/av1/encoder/video_highbd_color.go:*:*: make([]uint16, cw * ch) escapes to heap
 internal/av1/encoder/video_highbd_color.go:*:*: make([]uint16, cw * ch) escapes to heap in (*HighBitDepth420VideoEncoder).padSource:
 internal/av1/encoder/video_highbd_color.go:*:*: make([]uint16, e.width * e.height) escapes to heap
 internal/av1/encoder/video_highbd_color.go:*:*: make([]uint16, e.width * e.height) escapes to heap in (*HighBitDepth420VideoEncoder).padSource:
 internal/av1/encoder/video_highbd_color.go:*:*: make([]uint16, width * height) escapes to heap
-internal/av1/encoder/video_highbd_color.go:*:*: make([]uint16, width * height) escapes to heap in scaleSourceFrameColor16Nearest:
+internal/av1/encoder/video_highbd_color.go:*:*: make([]uint16, width * height) escapes to heap in scaleSourceFrameColor16Box:
 internal/av1/encoder/video_highbd_color.go:*:*: make([]uint16, yNeed) escapes to heap
 internal/av1/encoder/video_highbd_color.go:*:*: make([]uint16, yNeed) escapes to heap in allocColor16Frame:
 internal/av1/encoder/video_mono.go:*:*: make([]TilePayload, nTiles) escapes to heap
@@ -502,7 +510,7 @@ internal/av1/encoder/video_mono_highbd.go:*:*: make([]uint16, need) escapes to h
 internal/av1/encoder/video_mono_highbd.go:*:*: make([]uint16, need) escapes to heap in allocMono16Frame:
 internal/av1/encoder/video_mono_highbd.go:*:*: make([]uint16, need) escapes to heap in copyMono16FrameInto:
 internal/av1/encoder/video_mono_highbd.go:*:*: make([]uint16, width * height) escapes to heap
-internal/av1/encoder/video_mono_highbd.go:*:*: make([]uint16, width * height) escapes to heap in scaleSourceFrameMono16Nearest:
+internal/av1/encoder/video_mono_highbd.go:*:*: make([]uint16, width * height) escapes to heap in scaleSourceFrameMono16Box:
 internal/av1/encoder/video_pipeline.go:*:*: func literal escapes to heap
 internal/av1/encoder/video_pipeline.go:*:*: func literal escapes to heap in (*VideoEncoder).startLeafWorker:
 internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.U)) escapes to heap
@@ -525,10 +533,10 @@ internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, maxLayerBytes) escape
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, size) escapes to heap
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, size) escapes to heap in (*WebRTCStream).appendPictureDependencyDescriptor:
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, cw * ch) escapes to heap
-internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, cw * ch) escapes to heap in scaleSourceFrameColorNearest:
+internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, cw * ch) escapes to heap in scaleSourceFrameColorBox:
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, width * height) escapes to heap
-internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, width * height) escapes to heap in scaleSourceFrameColorNearest:
-internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, width * height) escapes to heap in scaleSourceFrameMonoNearest:
+internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, width * height) escapes to heap in scaleSourceFrameColorBox:
+internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, width * height) escapes to heap in scaleSourceFrameMonoBox:
 internal/av1/encoder/webrtc_stream.go:*:*: moved to heap: stream
 internal/av1/encoder/zeromv_skip.go:*:*: make([]bool, cols * rows) escapes to heap
 internal/av1/encoder/zeromv_skip.go:*:*: make([]bool, cols * rows) escapes to heap in (*hmeState).classifySourceSAD:

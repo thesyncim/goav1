@@ -54,6 +54,13 @@ The project has not published a release tag yet.
 
 ### Encoder
 
+- Spatial-layer and simulcast streams downscale each lower layer's picture
+  with libyuv's `kFilterBox` (libwebrtc's simulcast scaler) instead of
+  nearest-neighbour sampling, cascaded from the layer above. On the real
+  corpus at S3T3 the lower layers gain 0.5-9.0 dB Y-PSNR against an area
+  reference at equal or lower bitrate; the top layer is unchanged. An exact
+  1/2 step's luma is the upper layer's HME pyramid plane, so the upper layer
+  copies it instead of filtering again.
 - `VideoEncoder` no longer promotes delta frames to keyframes on detected
   scene cuts: the HME cut detector, `DisableSceneCutKeyframes`,
   `SetSceneCutKeyframes` and qualitybench `-goav1-scene-cut` are removed. This
