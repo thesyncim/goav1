@@ -19,7 +19,6 @@ func TestVideoEncoderOrderedMasksMatchMap(t *testing.T) {
 	}
 	defer enc.Close()
 	enc.SetMaxThreads(1)
-	enc.SetSceneCutKeyframes(false)
 	var scratch threading.FrameWorkLoopFilterMaskBuildScratch
 	var expected []lfmask.FilterMask
 	interFrames := 0
@@ -71,7 +70,6 @@ func TestVideoEncoderOrderedMasksAllocs(t *testing.T) {
 	}
 	defer enc.Close()
 	enc.SetMaxThreads(1)
-	enc.SetSceneCutKeyframes(false)
 	if err := enc.Prewarm(); err != nil {
 		t.Fatal(err)
 	}

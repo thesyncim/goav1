@@ -78,7 +78,7 @@ qualitybench -manifest /path/to/manifest.csv \
   -bitrates 3000000,6000000,9000000,12000000 \
   -fps 60 -layers 1 -tiles 0 -golden 0 -keyint 0 \
   -gomaxprocs 1 -goav1-max-threads 1 -goav1-effort 0 \
-  -goav1-scene-cut=false -goav1-process-timing=true -timing-mode e2e \
+  -goav1-process-timing=true -timing-mode e2e \
   -svt-preset 13 -svt-lp 1 -svt-asm max \
   -svt-bin /path/to/SvtAv1EncApp -go-bin /path/to/official/go \
   -ffmpeg-bin /path/to/ffmpeg -ffmpeg-av1-decoder libdav1d \

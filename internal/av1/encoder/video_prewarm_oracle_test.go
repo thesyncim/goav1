@@ -111,7 +111,6 @@ func TestVideoEncoderPrewarmLegacyOracle(t *testing.T) {
 					t.Fatal(err)
 				}
 				e.SetMaxThreads(1)
-				e.SetSceneCutKeyframes(false)
 				e.SetGoldenInterval(tc.golden)
 				if tc.cbr {
 					if err = e.SetRateControlConfig(RateControlConfig{TargetBitsPerSecond: 500000, FramesPerSecond: 60, MinQIndex: 20, MaxQIndex: 200}); err != nil {
@@ -188,7 +187,6 @@ func TestVideoEncoderPrewarmFirstFramesAllocs(t *testing.T) {
 			t.Fatal(err)
 		}
 		e.SetMaxThreads(1)
-		e.SetSceneCutKeyframes(false)
 		if err = e.Prewarm(); err != nil {
 			t.Fatal(err)
 		}

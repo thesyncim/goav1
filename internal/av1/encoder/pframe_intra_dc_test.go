@@ -47,7 +47,6 @@ func TestVideoEncoderMDS0IntraDC(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = e.Close() })
 		e.SetMaxThreads(threads)
-		e.SetSceneCutKeyframes(false)
 		e.SetGoldenInterval(0)
 		e.SetDecisionStatsEnabled(true)
 		var tus [][]byte

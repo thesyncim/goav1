@@ -302,7 +302,10 @@ func TestPublicVideoEncoderRoundTrip(t *testing.T) {
 	}
 }
 
-func TestPublicVideoEncoderDisableSceneCutKeyframes(t *testing.T) {
+// TestPublicVideoEncoderHardCutStaysInter pins SVT-AV1 rtc behaviour: a hard
+// content cut is coded as an inter frame (SVT forces scene-change detection
+// off), so only the first frame is a keyframe.
+func TestPublicVideoEncoderHardCutStaysInter(t *testing.T) {
 	const w, h = 320, 192
 	sceneA := make([]byte, (w+64)*h)
 	sceneB := make([]byte, w*h)
@@ -339,40 +342,25 @@ func TestPublicVideoEncoderDisableSceneCutKeyframes(t *testing.T) {
 		}
 		return f
 	}
-	encodeKeys := func(disable bool) []bool {
-		t.Helper()
-		enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
-			Width:                    w,
-			Height:                   h,
-			QIndex:                   110,
-			DisableSceneCutKeyframes: disable,
-		})
+	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{Width: w, Height: h, QIndex: 110})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer enc.Close()
+	keys := make([]bool, 9)
+	for i := range keys {
+		out, err := enc.Encode(makeFrame(i), false)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("encode frame %d: %v", i, err)
 		}
-		defer enc.Close()
-		keys := make([]bool, 9)
-		for i := range keys {
-			out, err := enc.Encode(makeFrame(i), false)
-			if err != nil {
-				t.Fatalf("encode frame %d disable=%v: %v", i, disable, err)
-			}
-			keys[i] = out.Keyframe
-		}
-		return keys
+		keys[i] = out.Keyframe
 	}
-
-	defaultKeys := encodeKeys(false)
-	if !defaultKeys[0] || !defaultKeys[6] {
-		t.Fatalf("default scene-cut keys=%v, want frames 0 and 6", defaultKeys)
+	if !keys[0] {
+		t.Fatalf("keys=%v, want first frame key", keys)
 	}
-	disabledKeys := encodeKeys(true)
-	if !disabledKeys[0] {
-		t.Fatalf("disabled scene-cut keys=%v, want first frame key", disabledKeys)
-	}
-	for i := 1; i < len(disabledKeys); i++ {
-		if disabledKeys[i] {
-			t.Fatalf("disabled scene-cut emitted keyframe at %d: %v", i, disabledKeys)
+	for i := 1; i < len(keys); i++ {
+		if keys[i] {
+			t.Fatalf("hard cut emitted keyframe at %d: %v", i, keys)
 		}
 	}
 }

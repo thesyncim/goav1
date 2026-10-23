@@ -105,7 +105,7 @@ func main() {
 	statsCSV := flag.String("csv", "", "write per-frame CSV stats to this path")
 	nframes := flag.Int("frames", frames, "frames to encode or dump")
 	warmupFrames := flag.Int("warmup", 20, "frames to exclude from steady-state summary")
-	keyInterval := flag.Int("keyint", 0, "force a keyframe every N frames after frame 0 (0 = only first frame and scene cuts)")
+	keyInterval := flag.Int("keyint", 0, "force a keyframe every N frames after frame 0 (0 = only the first frame)")
 	infps := flag.Int("fps", fps, "frame rate for rate control and bitrate reporting")
 	fixedQ := flag.Int("qindex", 0, "fixed qindex 1..255 (disables CBR when > 0)")
 	minQ := flag.Int("minq", 0, "CBR minimum qindex (0 = encoder default)")

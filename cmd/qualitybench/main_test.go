@@ -560,9 +560,6 @@ func TestEncodeGoAV1PersistsAndDecodesLengthPrefixedPayloadStream(t *testing.T) 
 	if result.settings["input_timing_scope"] != "synthetic-frame-generation" {
 		t.Fatalf("input timing scope=%q", result.settings["input_timing_scope"])
 	}
-	if result.settings["scene_cut"] != "false" {
-		t.Fatalf("scene-cut setting=%q want false", result.settings["scene_cut"])
-	}
 	if result.settings["metric_decode"] != "goav1-public-decoder" {
 		t.Fatalf("metric decode=%q want public decoder", result.settings["metric_decode"])
 	}
@@ -1374,7 +1371,6 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		goGC:               "off",
 		goav1MaxThreads:    4,
 		goav1Effort:        int(goav1.EncoderWebRTCMinEffortLevel),
-		goav1SceneCut:      false,
 		goav1ProcessTiming: true,
 		aomThreads:         1,
 		aomRowMT:           0,
@@ -1412,7 +1408,7 @@ func TestMetadataConfigCopiesSlices(t *testing.T) {
 		got.MinSourceIDs != 2 || got.MinCategories != 2 ||
 		got.GoMaxProcs != 4 || got.GoGC != "off" || got.GoAV1MaxThreads != 4 ||
 		got.GoAV1Effort != int(goav1.EncoderWebRTCMinEffortLevel) ||
-		got.GoAV1SceneCut || !got.GoAV1ProcessTime ||
+		!got.GoAV1ProcessTime ||
 		got.TileColumnsLog2 != 0 || got.TileSemantics != "tile-columns-log2" ||
 		got.AOMThreads != 1 || got.AOMRowMT != 0 ||
 		got.AOMCPUUsed != 8 || !got.AOMThreadSweep ||
@@ -1450,7 +1446,6 @@ func TestFairnessNotesDocumentSVTLP(t *testing.T) {
 		!strings.Contains(joined, "-goav1-effort") ||
 		!strings.Contains(joined, "goav1_process_timing") ||
 		!strings.Contains(joined, "-goav1-process-timing=true") ||
-		!strings.Contains(joined, "-goav1-scene-cut=false") ||
 		!strings.Contains(joined, "tile-column log2") ||
 		!strings.Contains(joined, "-ffmpeg-av1-decoder") ||
 		!strings.Contains(joined, "1000/500/600 ms") ||
@@ -1650,7 +1645,6 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		goSHA256:            goHash,
 		goav1MaxThreads:     4,
 		goav1Effort:         0,
-		goav1SceneCut:       false,
 		goav1ProcessTiming:  true,
 		layers:              1,
 		tiles:               0,
@@ -1721,7 +1715,6 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 			"command-timeout":         true,
 			"goav1-max-threads":       true,
 			"goav1-effort":            true,
-			"goav1-scene-cut":         true,
 			"goav1-process-timing":    true,
 			"environment-notes":       true,
 			"cpu-affinity":            true,
@@ -1894,17 +1887,6 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 		t.Fatalf("missing explicit goav1 effort error=%v", err)
 	}
 
-	missingGoAV1SceneCut := cfg
-	missingGoAV1SceneCut.explicitFlags = map[string]bool{}
-	for k, v := range cfg.explicitFlags {
-		missingGoAV1SceneCut.explicitFlags[k] = v
-	}
-	delete(missingGoAV1SceneCut.explicitFlags, "goav1-scene-cut")
-	if err := validatePublishConfig(missingGoAV1SceneCut, gitMetadata{Commit: "abc"}); err == nil ||
-		!strings.Contains(err.Error(), "-goav1-scene-cut") {
-		t.Fatalf("missing explicit goav1 scene-cut error=%v", err)
-	}
-
 	missingGoGC := cfg
 	missingGoGC.explicitFlags = map[string]bool{}
 	for k, v := range cfg.explicitFlags {
@@ -2061,20 +2043,6 @@ func TestValidatePublishConfigRequiresExplicitControls(t *testing.T) {
 	layeredGoAV1Only.layers = 3
 	if err := validatePublishConfig(layeredGoAV1Only, gitMetadata{Commit: "abc"}); err != nil {
 		t.Fatalf("goav1-only layered publish config failed: %v", err)
-	}
-
-	sceneCutExternal := cfg
-	sceneCutExternal.goav1SceneCut = true
-	if err := validatePublishConfig(sceneCutExternal, gitMetadata{Commit: "abc"}); err == nil ||
-		!strings.Contains(err.Error(), "-goav1-scene-cut=false") {
-		t.Fatalf("scene-cut external publish error=%v", err)
-	}
-
-	sceneCutGoAV1Only := cfg
-	sceneCutGoAV1Only.encoders = []string{"goav1"}
-	sceneCutGoAV1Only.goav1SceneCut = true
-	if err := validatePublishConfig(sceneCutGoAV1Only, gitMetadata{Commit: "abc"}); err != nil {
-		t.Fatalf("goav1-only scene-cut publish config failed: %v", err)
 	}
 
 	missingGoAV1ProcessTiming := cfg

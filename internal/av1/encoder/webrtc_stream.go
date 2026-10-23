@@ -319,7 +319,6 @@ func newWebRTCStreamLayerEncoder(config Config, layerIndex uint8, fps int, minQ 
 		_ = enc.Close()
 		return nil, err
 	}
-	enc.SetSceneCutKeyframes(false)
 	return enc, nil
 }
 
