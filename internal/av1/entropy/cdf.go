@@ -210,7 +210,7 @@ func (c *CDF) CopyFrom(src *CDF) error {
 
 func updateCDF(cdf []uint16, symbols int, symbol int) {
 	count := cdf[symbols]
-	rate := uint(4 + (count >> 4))
+	rate := uint(4 + ((count >> 4) & 3))
 	if symbols > 3 {
 		rate++
 	}
@@ -234,7 +234,7 @@ func updateCDF(cdf []uint16, symbols int, symbol int) {
 func updateCDFWindow(cdf []uint16, symbol int) {
 	symbols := len(cdf) - 1
 	count := cdf[symbols]
-	rate := uint(4 + (count >> 4))
+	rate := uint(4 + ((count >> 4) & 3))
 	if symbols > 3 {
 		rate++
 	}
@@ -259,7 +259,7 @@ func updateCDFWindow(cdf []uint16, symbol int) {
 // exact update_cdf arithmetic.
 func updateCDFValues(values *[MaxSymbols + 1]uint16, symbols, symbol int) {
 	count := values[symbols]
-	rate := uint(4 + (count >> 4))
+	rate := uint(4 + ((count >> 4) & 3))
 	if symbols > 3 {
 		rate++
 	}

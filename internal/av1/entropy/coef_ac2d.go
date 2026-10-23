@@ -39,22 +39,24 @@ func (c *Cursor) DecodeCoefsAC2D(scan []int16, shift, stride uint, offsets *[5][
 		c0 := values[0]
 		c1 := values[1]
 		c2 := values[2]
-		lower := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
+		// dav1d's arm64 msac_decode_symbol_adapt4 evaluates every bound at
+		// once and counts those above the coded value. The inverse CDF is
+		// non-increasing and the EC_MIN_PROB offsets strictly decrease, so
+		// l0 > l1 > l2 and each hit implies the earlier ones: the bounds
+		// resolve as conditional selects, not a data-dependent branch chain.
+		l0 := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
+		l1 := ((rngHi * uint32(c1>>ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
+		l2 := ((rngHi * uint32(c2>>ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		lower := l0
 		tok := uint(0)
-		if coded < lower {
-			tok = 1
-			upper = lower
-			lower = ((rngHi * uint32(c1>>ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
-			if coded < lower {
-				tok = 2
-				upper = lower
-				lower = ((rngHi * uint32(c2>>ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
-				if coded < lower {
-					tok = 3
-					upper = lower
-					lower = 0
-				}
-			}
+		if coded < l0 {
+			upper, lower, tok = l0, l1, 1
+		}
+		if coded < l1 {
+			upper, lower, tok = l1, l2, 2
+		}
+		if coded < l2 {
+			upper, lower, tok = l2, 0, 3
 		}
 		if traceEntropyReads {
 			traceCDFRead(c0, 4, dif, rng, readerTell(int(c.pos), cnt, int32(c.tellOffs)))
@@ -74,34 +76,33 @@ func (c *Cursor) DecodeCoefsAC2D(scan []int16, shift, stride uint, offsets *[5][
 		}
 		if update {
 			count := values[4]
-			rate := uint(5 + (count >> 4))
-			c0u := uint32(c0)
-			c1u := uint32(c1)
-			c2u := uint32(c2)
-			switch tok {
-			case 0:
-				c0u -= c0u >> rate
-				c1u -= c1u >> rate
-				c2u -= c2u >> rate
-			case 1:
-				c0u += (CDFProbTop - c0u) >> rate
-				c1u -= c1u >> rate
-				c2u -= c2u >> rate
-			case 2:
-				c0u += (CDFProbTop - c0u) >> rate
-				c1u += (CDFProbTop - c1u) >> rate
-				c2u -= c2u >> rate
-			default:
-				c0u += (CDFProbTop - c0u) >> rate
-				c1u += (CDFProbTop - c1u) >> rate
-				c2u += (CDFProbTop - c2u) >> rate
+			rate := uint(5 + ((count >> 4) & 3))
+			// update_cdf with both adaptations of each entry computed and
+			// the symbol selecting between them (dav1d's asm does the same
+			// with a lane mask).
+			c0u, c1u, c2u := uint32(c0), uint32(c1), uint32(c2)
+			n0 := c0u - c0u>>rate
+			n1 := c1u - c1u>>rate
+			n2 := c2u - c2u>>rate
+			u0 := c0u + (CDFProbTop-c0u)>>rate
+			u1 := c1u + (CDFProbTop-c1u)>>rate
+			u2 := c2u + (CDFProbTop-c2u)>>rate
+			if tok > 0 {
+				n0 = u0
 			}
-			values[0] = uint16(c0u)
-			values[1] = uint16(c1u)
-			values[2] = uint16(c2u)
+			if tok > 1 {
+				n1 = u1
+			}
+			if tok > 2 {
+				n2 = u2
+			}
+			values[0] = uint16(n0)
+			values[1] = uint16(n1)
+			values[2] = uint16(n2)
 			if count < MaxCDFCount {
-				values[4] = count + 1
+				count++
 			}
+			values[4] = count
 		}
 
 		if tok == 3 {
