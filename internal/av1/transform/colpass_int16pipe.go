@@ -217,3 +217,8 @@ func narrowStoreFromInt16(dst []int16, dstStride int, scratch []int16, width int
 // rowLimit is the number of possibly nonzero input rows (0 = all). Bound by
 // the Go SIMD build; nil otherwise.
 var itx16RawColumnPass func(scratch []int32, width, rowLimit int, min, max int32)
+
+// itx16RawColumnPass32Low8 is itx16RawColumnPass for a width x 32 DCT32
+// block whose input rows 8..31 are zero (itx16_dct32_low8_gosimd_arm64.go).
+// Bound by the Go SIMD build; nil otherwise.
+var itx16RawColumnPass32Low8 func(scratch []int32, width int, min, max int32)
