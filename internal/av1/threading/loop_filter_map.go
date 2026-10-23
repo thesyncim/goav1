@@ -123,6 +123,10 @@ func (b *FrameWorkBatch) BindLoopFilterMap(records []FrameWorkLoopFilterBlockRec
 // Reset clears all recorded loop-filter metadata while preserving caller-owned
 // storage and shape.
 func (m FrameWorkLoopFilterMap) Reset() error {
+	if m.Stride == 0 && m.Rows == 0 && m.Records == nil {
+		// An unbound map (mask-only deblocking) holds nothing to clear.
+		return nil
+	}
 	if err := m.validate(); err != nil {
 		return err
 	}

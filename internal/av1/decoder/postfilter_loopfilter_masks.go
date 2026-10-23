@@ -70,7 +70,9 @@ func (ctx *FrameWorkPostFilterContext) beginLoopFilterEdgesFromMasks(masks *thre
 	if compactActive && !threading.FrameWorkLoopFilterCompactReady(masks, ctx.compactLoopFilterState, cols, rows) {
 		return result, levelCtxValue, maxPlane, threading.ErrInvalidBatch
 	}
-	if !compactActive {
+	// The record map is read only to re-derive levels the tile walk did not
+	// write at decode time.
+	if !compactActive && !masks.LevelsAtDecode() {
 		if frameWorkLoopFilterMapEmpty(filterMap) && ctx.LoopFilterMap != nil {
 			filterMap = *ctx.LoopFilterMap
 		}
@@ -695,14 +697,18 @@ func (ctx *FrameWorkPostFilterContext) PrepareLoopFilterMaskBands(masks *threadi
 	if cols != masks.Cols || rows != masks.Rows {
 		return FrameWorkLoopFilterMaskBands{}, threading.ErrInvalidBatch
 	}
-	if frameWorkLoopFilterMapEmpty(filterMap) && ctx.LoopFilterMap != nil {
-		filterMap = *ctx.LoopFilterMap
-	}
-	if frameWorkLoopFilterMapEmpty(filterMap) {
-		return FrameWorkLoopFilterMaskBands{}, threading.ErrInvalidBatch
-	}
-	if err := frameWorkValidateLoopFilterMap(filterMap, cols, rows); err != nil {
-		return FrameWorkLoopFilterMaskBands{}, err
+	if !masks.LevelsAtDecode() {
+		// Levels are re-derived from the record map only when the tile walk
+		// did not write them at decode time.
+		if frameWorkLoopFilterMapEmpty(filterMap) && ctx.LoopFilterMap != nil {
+			filterMap = *ctx.LoopFilterMap
+		}
+		if frameWorkLoopFilterMapEmpty(filterMap) {
+			return FrameWorkLoopFilterMaskBands{}, threading.ErrInvalidBatch
+		}
+		if err := frameWorkValidateLoopFilterMap(filterMap, cols, rows); err != nil {
+			return FrameWorkLoopFilterMaskBands{}, err
+		}
 	}
 	if len(masks.LevelCache) < cols*rows {
 		return FrameWorkLoopFilterMaskBands{}, threading.ErrInvalidBatch

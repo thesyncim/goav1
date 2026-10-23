@@ -760,10 +760,10 @@ func DecoderFrameWorkSideDataScratchLen(sequence SequenceHeader, size FrameSize,
 //
 // See also: DecoderFrameWorkSideDataScratchLen, SetDecoderFrameWorkSideData.
 func BindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef CDEFParams, restoration RestorationParams, scratch DecoderFrameWorkSideDataScratch) (DecoderFrameWorkSideData, error) {
-	return bindDecoderFrameWorkSideData(sequence, size, cdef, restoration, scratch, nil, nil, nil)
+	return bindDecoderFrameWorkSideData(sequence, size, cdef, restoration, scratch, nil, nil, nil, false)
 }
 
-func bindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef CDEFParams, restoration RestorationParams, scratch DecoderFrameWorkSideDataScratch, compact *internalthreading.FrameWorkLoopFilterCompactState, noSkip []byte, event *DecoderEvent) (DecoderFrameWorkSideData, error) {
+func bindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef CDEFParams, restoration RestorationParams, scratch DecoderFrameWorkSideDataScratch, compact *internalthreading.FrameWorkLoopFilterCompactState, noSkip []byte, event *DecoderEvent, maskOnlyLoopFilter bool) (DecoderFrameWorkSideData, error) {
 	scratchSize, err := DecoderFrameWorkSideDataScratchLen(sequence, size, cdef, restoration)
 	if err != nil {
 		return DecoderFrameWorkSideData{}, err
@@ -803,8 +803,12 @@ func bindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef 
 	if err != nil {
 		return DecoderFrameWorkSideData{}, err
 	}
+	// The per-MI record map is bound only for a caller that may read it. A
+	// caller that binds the masks' level cache, tile-edge backups and noskip
+	// (maskOnlyLoopFilter) deblocks from the masks alone, as dav1d keeps no
+	// per-MI loop-filter record, so its map stays unbound and uncleared.
 	var loopFilterMap DecoderFrameWorkLoopFilterMap
-	if compact == nil {
+	if compact == nil && !(maskOnlyLoopFilter && buildMasks) {
 		loopFilterMap, err = BindDecoderFrameWorkLoopFilterMap(sequence, size, scratch.LoopFilterMap[:scratchSize.LoopFilterMap])
 		if err != nil {
 			return DecoderFrameWorkSideData{}, err

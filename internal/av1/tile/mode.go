@@ -791,14 +791,18 @@ func FillSegmentID(dst []uint8, stride uint16, x4 int, y4 int, w4 int, h4 int, s
 		w4 <= 0 || h4 <= 0 || x4+w4 > strideInt {
 		return ErrInvalidDecodeState
 	}
-	for y := range h4 {
-		row := (y4+y)*strideInt + x4
-		if row < 0 || row+w4 > len(dst) {
-			return ErrInvalidDecodeState
-		}
-		for x := range w4 {
-			dst[row+x] = segmentID
-		}
+	base := y4*strideInt + x4
+	if (y4+h4-1)*strideInt+x4+w4 > len(dst) {
+		return ErrInvalidDecodeState
+	}
+	// dav1d case_set: one row is filled, the others copy it.
+	first := dst[base : base+w4 : base+w4]
+	for i := range first {
+		first[i] = segmentID
+	}
+	for y := 1; y < h4; y++ {
+		base += strideInt
+		copy(dst[base:base+w4], first)
 	}
 	return nil
 }

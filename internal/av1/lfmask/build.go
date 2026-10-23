@@ -1,10 +1,6 @@
 package lfmask
 
-import (
-	"encoding/binary"
-
-	"github.com/thesyncim/goav1/internal/av1/tile"
-)
+import "github.com/thesyncim/goav1/internal/av1/tile"
 
 // Builder owns the per-block transform-decomposition scratch so the mask-edge
 // build carries zero heap allocations across the decode block walk. One Builder
@@ -237,16 +233,15 @@ func (b *Builder) CreateInter(m *FilterMask, lc LevelCache, lv Levels, bx, by, i
 // w x h rectangle of cells at (bx, by), dav1d_create_lf_mask_{intra,inter}'s
 // level_cache_ptr loops; each row is sliced once.
 func (c LevelCache) fill(bx, by, w, h, comp int, l0, l1 uint8) {
-	// The pair is one 16-bit store per cell (what the C compiler makes of
-	// dav1d's two adjacent byte stores); comp is 0 (Y) or 2 (U/V), and the
-	// other pair of the cell is left untouched.
-	v := uint16(l0) | uint16(l1)<<8
+	// dav1d's two adjacent byte stores, one 16-bit store per cell
+	// (storeLevelPair); comp is 0 (Y) or 2 (U/V), and the other pair of the
+	// cell is left untouched.
 	base := by*c.Stride + bx
 	if comp == 0 {
 		for y := 0; y < h; y++ {
 			row := c.Cells[base : base+w]
 			for x := range row {
-				binary.LittleEndian.PutUint16(row[x][0:2], v)
+				storeLevelPair(&row[x][0], l0, l1)
 			}
 			base += c.Stride
 		}
@@ -255,7 +250,7 @@ func (c LevelCache) fill(bx, by, w, h, comp int, l0, l1 uint8) {
 	for y := 0; y < h; y++ {
 		row := c.Cells[base : base+w]
 		for x := range row {
-			binary.LittleEndian.PutUint16(row[x][2:4], v)
+			storeLevelPair(&row[x][2], l0, l1)
 		}
 		base += c.Stride
 	}

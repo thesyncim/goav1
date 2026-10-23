@@ -607,9 +607,10 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 			}
 			if compact != nil {
 				internalthreading.InvalidateFrameWorkLoopFilterCompactState(compact)
-				*sidePtr, err = bindDecoderFrameWorkSideData(sequence, events[i].FrameSize, events[i].CDEF, events[i].Restoration, sideScratch, compact, r.compactNoSkip, &events[i])
+				*sidePtr, err = bindDecoderFrameWorkSideData(sequence, events[i].FrameSize, events[i].CDEF, events[i].Restoration, sideScratch, compact, r.compactNoSkip, &events[i], false)
 			} else {
-				*sidePtr, err = BindDecoderFrameWorkResidualEventSideData(sequence, &events[i], sideScratch)
+				*sidePtr, err = bindDecoderFrameWorkSideData(sequence, events[i].FrameSize, events[i].CDEF, events[i].Restoration, sideScratch, nil, nil, nil,
+					r.lfLevels != nil && r.lfTileEdges != nil && r.lfNoSkip != nil)
 				if err == nil && r.lfLevels != nil && sidePtr.LoopFilterMasks.Valid() {
 					r.lfLevels.Bind(events[i].LoopFilter, events[i].Segmentation, events[i].Delta)
 					sidePtr.LoopFilterMasks.BindLevels(r.lfLevels)
