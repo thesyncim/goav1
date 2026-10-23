@@ -582,8 +582,20 @@ func (s *FrameWorkState) resetReferenceState() {
 
 // PreallocTemporalMotionScratch primes the single-pool temporal-MV backing
 // buffers so the first inter frame can bind and publish MV side data without
-// growing slices on the decode path.
+// growing slices on the decode path. It sizes for the deepest frame-threaded
+// decode; see PreallocTemporalMotionScratchFrames.
 func (s *FrameWorkState) PreallocTemporalMotionScratch(size parser.FrameSize) error {
+	return s.PreallocTemporalMotionScratchFrames(size, FrameThreadMaxFrames)
+}
+
+// PreallocTemporalMotionScratchFrames is PreallocTemporalMotionScratch for a
+// decoder that keeps at most frameContexts frames in flight. acquireMVGrid
+// takes the lowest free grid, so a serial decode (one frame context) never
+// uses more than the RefFrames grids the reference slots hold plus the
+// current frame's, and each further in-flight frame holds its own grid and
+// its InterRefsPerFrame reference grids. Grids beyond that bound are only
+// backed if a stream ever reaches them (prepareTemporalMotion grows them).
+func (s *FrameWorkState) PreallocTemporalMotionScratchFrames(size parser.FrameSize, frameContexts int) error {
 	if s == nil {
 		return ErrInvalidFrameWorkState
 	}
@@ -599,7 +611,11 @@ func (s *FrameWorkState) PreallocTemporalMotionScratch(size parser.FrameSize) er
 	if cap(s.temporalMVsBack) < need {
 		s.temporalMVsBack = make([]tile.TemporalMotionEntry, need)
 	}
-	for i := range s.mvFrameBacking {
+	grids := parser.RefFrames + 1
+	if frameContexts > 1 {
+		grids += (1 + parser.InterRefsPerFrame) * min(frameContexts, FrameThreadMaxFrames)
+	}
+	for i := range s.mvFrameBacking[:min(grids, frameWorkMVGrids)] {
 		if cap(s.mvFrameBacking[i]) < need {
 			s.mvFrameBacking[i] = make([]tile.ReferenceMVEntry, need)
 		}

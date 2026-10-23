@@ -45,6 +45,7 @@ func decoderExternalOutputFormat(payloads [][]byte, align int) (bool, FrameForma
 func decoderPostFilterScratchArenaUpperBound(payloads [][]byte, align int, events []DecoderEvent) (DecoderFrameWorkPostFilterRequestScratchSize, error) {
 	var stream DecoderStream
 	var arena DecoderFrameWorkPostFilterRequestScratchSize
+	var scratch decoderUpperBoundScratch
 	for _, payload := range payloads {
 		eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(payload)
 		if err != nil {
@@ -64,7 +65,7 @@ func decoderPostFilterScratchArenaUpperBound(payloads [][]byte, align int, event
 			if !decoderFrameWorkResidualEventBindCandidate(&event) {
 				continue
 			}
-			size, err := decoderPostFilterScratchSizeUpperBound(sequence, &event, align)
+			size, err := decoderPostFilterScratchSizeUpperBound(sequence, &event, align, &scratch)
 			if err != nil {
 				return DecoderFrameWorkPostFilterRequestScratchSize{}, err
 			}
@@ -106,7 +107,13 @@ func decoderTemporalMotionScratchFrameSizeUpperBound(payloads [][]byte, events [
 	return maxSize, nil
 }
 
-func decoderPostFilterScratchSizeUpperBound(sequence SequenceHeader, event *DecoderEvent, align int) (DecoderFrameWorkPostFilterScratchSize, error) {
+// decoderUpperBoundScratch is reused across the per-frame upper-bound probes of a
+// stream so sizing every frame of a long clip does not allocate per frame.
+type decoderUpperBoundScratch struct {
+	restorationRecords []TileRestorationUnitRecord
+}
+
+func decoderPostFilterScratchSizeUpperBound(sequence SequenceHeader, event *DecoderEvent, align int, scratch *decoderUpperBoundScratch) (DecoderFrameWorkPostFilterScratchSize, error) {
 	var output Frame
 	ctx, err := DecoderFrameWorkPostFilterScratchContext(sequence, event, align, nil, &output)
 	if err != nil {
@@ -150,7 +157,7 @@ func decoderPostFilterScratchSizeUpperBound(sequence SequenceHeader, event *Deco
 		tailCtx = tailCtx.WithCompletedPostFilters(DecoderFrameWorkPostFilterSuperRes)
 	}
 	if tailCtx.RemainingPostFilters().Has(DecoderFrameWorkPostFilterLoopRestoration) {
-		restorationSize, err := decoderLoopRestorationScratchUpperBound(tailCtx)
+		restorationSize, err := decoderLoopRestorationScratchUpperBound(tailCtx, scratch)
 		if err != nil {
 			return DecoderFrameWorkPostFilterScratchSize{}, err
 		}
@@ -178,7 +185,7 @@ func decoderLoopFilterEdgeScratchUpperBound(sequence SequenceHeader, size FrameS
 	return cols * rows * 8, nil
 }
 
-func decoderLoopRestorationScratchUpperBound(ctx DecoderFrameWorkPostFilterContext) (DecoderFrameWorkRestorationPostFilterScratchSize, error) {
+func decoderLoopRestorationScratchUpperBound(ctx DecoderFrameWorkPostFilterContext, scratch *decoderUpperBoundScratch) (DecoderFrameWorkRestorationPostFilterScratchSize, error) {
 	plan, err := DecoderFrameWorkRestorationFramePlan(ctx.Event.SequenceHeader, ctx.Event.FrameSize, ctx.Event.Restoration)
 	if err != nil {
 		return DecoderFrameWorkRestorationPostFilterScratchSize{}, err
@@ -188,7 +195,7 @@ func decoderLoopRestorationScratchUpperBound(ctx DecoderFrameWorkPostFilterConte
 	}
 	var out DecoderFrameWorkRestorationPostFilterScratchSize
 	for _, typ := range [...]RestorationType{RestorationWiener, RestorationSGRProj} {
-		records, err := decoderRestorationWorstCaseRecords(plan, typ)
+		records, err := decoderRestorationWorstCaseRecords(plan, typ, scratch)
 		if err != nil {
 			return DecoderFrameWorkRestorationPostFilterScratchSize{}, err
 		}
@@ -201,8 +208,13 @@ func decoderLoopRestorationScratchUpperBound(ctx DecoderFrameWorkPostFilterConte
 	return out, nil
 }
 
-func decoderRestorationWorstCaseRecords(plan TileRestorationFramePlan, typ RestorationType) ([3][]TileRestorationUnitRecord, error) {
-	backing := make([]TileRestorationUnitRecord, plan.UnitRecordLen())
+func decoderRestorationWorstCaseRecords(plan TileRestorationFramePlan, typ RestorationType, scratch *decoderUpperBoundScratch) ([3][]TileRestorationUnitRecord, error) {
+	n := plan.UnitRecordLen()
+	if cap(scratch.restorationRecords) < n {
+		scratch.restorationRecords = make([]TileRestorationUnitRecord, n)
+	}
+	backing := scratch.restorationRecords[:n]
+	clear(backing)
 	records, err := BindTileRestorationFrameRecordBuffers(plan, backing)
 	if err != nil {
 		return [3][]TileRestorationUnitRecord{}, err

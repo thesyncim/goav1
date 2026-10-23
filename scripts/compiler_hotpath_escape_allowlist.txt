@@ -64,11 +64,11 @@ internal/av1/decoder/svc.go:*:*: make(map[int]int, capacity) escapes to heap
 internal/av1/decoder/svc.go:*:*: make(map[int]int, capacity) escapes to heap in (*SharedFrameContextStore).Prealloc:
 internal/av1/decoder/svc.go:*:*: make(map[int]int, capacity) escapes to heap in (*SharedFrameContextStore).store:
 internal/av1/decoder/work.go:*:*: make([]tile.ReferenceMVEntry, need) escapes to heap
-internal/av1/decoder/work.go:*:*: make([]tile.ReferenceMVEntry, need) escapes to heap in (*FrameWorkState).PreallocTemporalMotionScratch:
+internal/av1/decoder/work.go:*:*: make([]tile.ReferenceMVEntry, need) escapes to heap in (*FrameWorkState).PreallocTemporalMotionScratchFrames:
 internal/av1/decoder/work.go:*:*: make([]tile.ReferenceMVEntry, need) escapes to heap in (*FrameWorkState).prepareTemporalMotionField:
 internal/av1/decoder/work.go:*:*: make([]tile.ReferenceMVEntry, need) escapes to heap in (*FrameWorkState).publishTemporalMotionFrame:
 internal/av1/decoder/work.go:*:*: make([]tile.TemporalMotionEntry, need) escapes to heap
-internal/av1/decoder/work.go:*:*: make([]tile.TemporalMotionEntry, need) escapes to heap in (*FrameWorkState).PreallocTemporalMotionScratch:
+internal/av1/decoder/work.go:*:*: make([]tile.TemporalMotionEntry, need) escapes to heap in (*FrameWorkState).PreallocTemporalMotionScratchFrames:
 internal/av1/encoder/cdef_apply.go:*:*: func literal escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: func literal escapes to heap in (*cdefApplier).startWorkers:
 internal/av1/encoder/cdef_apply.go:*:*: make([][]uint16, 8) escapes to heap

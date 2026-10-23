@@ -57,14 +57,18 @@ func newReaderAtDecoderPayloadSource(r io.ReaderAt, size int64) (decoderPayloadS
 	if size < IVFFileHeaderSize {
 		return decoderPayloadSource{}, IVFHeader{}, ErrIVFShortHeader
 	}
-	var headerBuf [IVFFileHeaderSize]byte
-	if err := decoderReadFullAt(r, headerBuf[:], 0); err != nil {
+	// ReadAt is an interface call, so its destination escapes: one heap
+	// buffer serves the file header and then every frame header, instead of
+	// one escaping array per frame.
+	hdrBuf := make([]byte, max(IVFFileHeaderSize, IVFFrameHeaderSize))
+	headerBuf := hdrBuf[:IVFFileHeaderSize]
+	if err := decoderReadFullAt(r, headerBuf, 0); err != nil {
 		if decoderShortRead(err) {
 			return decoderPayloadSource{}, IVFHeader{}, ErrIVFShortHeader
 		}
 		return decoderPayloadSource{}, IVFHeader{}, err
 	}
-	header, n, err := ParseIVFHeader(headerBuf[:])
+	header, n, err := ParseIVFHeader(headerBuf)
 	if err != nil {
 		return decoderPayloadSource{}, header, err
 	}
@@ -80,8 +84,8 @@ func newReaderAtDecoderPayloadSource(r io.ReaderAt, size int64) (decoderPayloadS
 		if size-off < IVFFrameHeaderSize {
 			return decoderPayloadSource{}, header, ErrIVFShortFrameHeader
 		}
-		var frameHeader [IVFFrameHeaderSize]byte
-		if err := decoderReadFullAt(r, frameHeader[:], off); err != nil {
+		frameHeader := hdrBuf[:IVFFrameHeaderSize]
+		if err := decoderReadFullAt(r, frameHeader, off); err != nil {
 			if decoderShortRead(err) {
 				return decoderPayloadSource{}, header, ErrIVFShortFrameHeader
 			}
@@ -413,6 +417,7 @@ func decoderExternalOutputFormatForEvent(sequence SequenceHeader, event *Decoder
 }
 
 func decoderPostFilterScratchArenaUpperBoundFromSource(source decoderPayloadSource, align int, events []DecoderEvent, payloadBuf []byte) (DecoderFrameWorkPostFilterRequestScratchSize, error) {
+	var scratch decoderUpperBoundScratch
 	var stream DecoderStream
 	var arena DecoderFrameWorkPostFilterRequestScratchSize
 	err := source.forEachPayload(payloadBuf, func(payload []byte) error {
@@ -434,7 +439,7 @@ func decoderPostFilterScratchArenaUpperBoundFromSource(source decoderPayloadSour
 			if !decoderFrameWorkResidualEventBindCandidate(&event) {
 				continue
 			}
-			size, err := decoderPostFilterScratchSizeUpperBound(sequence, &event, align)
+			size, err := decoderPostFilterScratchSizeUpperBound(sequence, &event, align, &scratch)
 			if err != nil {
 				return err
 			}
@@ -446,12 +451,13 @@ func decoderPostFilterScratchArenaUpperBoundFromSource(source decoderPayloadSour
 }
 
 func decoderPostFilterScratchArenaUpperBoundFromRTPSource(source decoderPayloadSource, align int) (DecoderFrameWorkPostFilterRequestScratchSize, error) {
+	var scratch decoderUpperBoundScratch
 	var arena DecoderFrameWorkPostFilterRequestScratchSize
 	err := decoderForEachRTPEventFromSource(source, func(sequence SequenceHeader, event DecoderEvent) error {
 		if !decoderFrameWorkResidualEventBindCandidate(&event) {
 			return nil
 		}
-		size, err := decoderPostFilterScratchSizeUpperBound(sequence, &event, align)
+		size, err := decoderPostFilterScratchSizeUpperBound(sequence, &event, align, &scratch)
 		if err != nil {
 			return err
 		}
