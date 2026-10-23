@@ -8,6 +8,7 @@
 # Xiph's media server and encodes them with the encoders goav1 actually
 # receives streams from in production:
 #
+#   aomgood_* libaom good mode (aomenc defaults, cpu-used 2-6, capped frames)
 #   aomrt_*  libaom realtime, configured the way libwebrtc's
 #            LibaomAv1Encoder configures it (third_party/upstream/webrtc/
 #            modules/video_coding/codecs/av1/libaom_av1_encoder.cc), CBR,
@@ -246,6 +247,18 @@ stream_aomrt() { # name src w h kbps speed screen
   record "$name" "aomenc-rt" "$id" "$w" "$h" "$frames" "${args[*]}"
 }
 
+# aomenc good mode (the default usage) at a given --cpu-used: two-pass VBR
+# with lookahead, the full intra tool set (filter-intra, CfL, palette and
+# intrabc on screen content, smooth/paeth, 1:4 partitions, TX64), altrefs
+# and show-existing frames. Good mode is slow, so these use a frame cap.
+stream_aomgood() { # name src w h kbps speed frames extra...
+  local name=$1 id=$2 w=$3 h=$4 kbps=$5 speed=$6 frames=$7; shift 7
+  local in; in=$(scaled "$id" "$w" "$h" y4m)
+  local args=(--good --cpu-used="$speed" --end-usage=vbr --target-bitrate="$kbps" --limit="$frames" "$@")
+  "$AOMENC" --quiet "${args[@]}" --ivf -o "$OUTDIR/streams/$name.ivf" "$in" 2>/dev/null
+  record "$name" "aomenc-good" "$id" "$w" "$h" "$frames" "${args[*]}"
+}
+
 stream_svtrtc() { # name src w h kbps preset extra...
   local name=$1 id=$2 w=$3 h=$4 kbps=$5 preset=$6; shift 6
   local frames; frames=$(source_field "$id" 5)
@@ -315,6 +328,22 @@ gen_streams() {
   stream_aomrt aomrt_debugging_720p_800k_s11     debugging  1280 720  800 11 1
   stream_aomrt aomrt_fourpeople_360p_500k_s9     fourpeople  640 360  500  9 0
   stream_aomrt aomrt_mtbike_360p_600k_s8         mtbike      640 360  600  8 0
+
+  echo "libaom good mode (aomenc defaults):"
+  stream_aomgood aomgood_johnny_360p_600k_c2      johnny      640 360  600 2 30
+  stream_aomgood aomgood_parkjoy_360p_1000k_c4    parkjoy     640 360 1000 4 60
+  stream_aomgood aomgood_wikipedia_360p_400k_c4   wikipedia   640 360  400 4 60
+  stream_aomgood aomgood_mtbike_720p_1500k_c6     mtbike     1280 720 1500 6 60
+  stream_aomgood aomgood_debugging_720p_600k_c6   debugging  1280 720  600 6 60
+  # Synthetic testsrc2 (ffmpeg lavfi, no licence restriction): aomenc picks
+  # screen-content tools and intrabc on it; a single frame is coded with a
+  # reduced still-picture header.
+  local synth="$WORK/testsrc2_640x360.y4m"
+  "$FFMPEG" -v error -y -f lavfi -i testsrc2=size=640x360:rate=30 -frames:v 20 -pix_fmt yuv420p "$synth"
+  "$AOMENC" --quiet --limit=1 --ivf -o "$OUTDIR/streams/aomgood_testsrc2_360p_still.ivf" "$synth" 2>/dev/null
+  record aomgood_testsrc2_360p_still "aomenc-good" testsrc2 640 360 1 "--limit=1"
+  "$AOMENC" --quiet --limit=20 --ivf -o "$OUTDIR/streams/aomgood_testsrc2_360p_20f.ivf" "$synth" 2>/dev/null
+  record aomgood_testsrc2_360p_20f "aomenc-good" testsrc2 640 360 20 "--limit=20"
 
   echo "SVT-AV1 rtc:"
   stream_svtrtc svtrtc_fourpeople_720p_1000k_p12 fourpeople 1280 720 1000 12
