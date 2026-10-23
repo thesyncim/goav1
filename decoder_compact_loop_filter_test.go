@@ -53,8 +53,8 @@ func TestDecoderCompactLoopFilterSelectionAndWorkerFallback(t *testing.T) {
 	if parallel.postFilter.runner.Result.LoopFilter.Plan.Active == false || parallel.postFilter.runner.Result.LoopFilter.Plan.Cells == 0 {
 		t.Fatal("two-worker fallback did not exercise active loop filtering")
 	}
-	if len(parallel.batch.LoopFilterMap.Records) == 0 {
-		t.Fatal("two-worker fallback omitted the legacy loop-filter record map")
+	if len(parallel.batch.LoopFilterMap.Records) == 0 && !parallel.batch.LoopFilterMasks.MapFree() {
+		t.Fatal("two-worker fallback has neither map-free masks nor the loop-filter record map")
 	}
 	if parallelMD5 != serialMD5 {
 		t.Fatalf("worker fallback changed visible output: one-worker=%x two-worker=%x", serialMD5, parallelMD5)
@@ -101,8 +101,11 @@ func TestDecoderCompactLoopFilterFallsBackForMultiTileAndSuperRes(t *testing.T) 
 				t.Fatal("fixture did not exercise active loop filtering")
 			}
 			if loopFilterActive {
-				if len(dec.batch.LoopFilterMap.Records) == 0 {
-					t.Fatal("ineligible route omitted the legacy loop-filter record map")
+				// The non-compact route deblocks from the decode-time masks: either
+				// the masks carry levels, tile-edge backups and noskip (no record
+				// map, as dav1d), or the record map is bound for the edge-list path.
+				if len(dec.batch.LoopFilterMap.Records) == 0 && !dec.batch.LoopFilterMasks.MapFree() {
+					t.Fatal("ineligible route has neither map-free masks nor the loop-filter record map")
 				}
 				t.Logf("fallback verified: external=%v active loop filter, legacy records=%d", dec.useExternal, len(dec.batch.LoopFilterMap.Records))
 			} else {
