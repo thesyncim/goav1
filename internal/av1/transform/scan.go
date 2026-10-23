@@ -142,6 +142,28 @@ func DefaultScanActiveRowsForScan(size Size, class Class, scan []int16, eob int)
 	return int(rows[eob-1]) + 1, true
 }
 
+// DefaultScanActiveCols returns one past the maximum coefficient column in
+// the default scan prefix [0,eob) of size and class: the column counterpart
+// of DefaultScanActiveRowsForScan for callers that code with the default scan
+// order. The bool is false for an invalid size, class or eob.
+func DefaultScanActiveCols(size Size, class Class, eob int) (int, bool) {
+	if eob < 0 || !size.Valid() || !class.Valid() {
+		return 0, false
+	}
+	if eob == 0 {
+		return 0, true
+	}
+	mode, err := DefaultScanMode(size, class)
+	if err != nil {
+		return 0, false
+	}
+	cols := scanMaxColTables[sizeIndex(size)][mode]
+	if len(cols) < eob {
+		return 0, false
+	}
+	return int(cols[eob-1]) + 1, true
+}
+
 // FillScanOrder writes the scan and inverse-scan order for size and mode into
 // caller-provided buffers. Indices use AV1's coefficient raster order.
 //

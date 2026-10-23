@@ -86,6 +86,9 @@ var (
 	// position it stores the maximum coefficient row seen in the prefix ending
 	// at that position. Callers add one to get the active row count.
 	scanMaxRowTables [numSizeSlots][numScanModes][]uint8
+
+	// scanMaxColTables is scanMaxRowTables for the coefficient column.
+	scanMaxColTables [numSizeSlots][numScanModes][]uint8
 )
 
 const numScanModes = 5 // ScanModeZigZag..ScanModeRow1D
@@ -146,8 +149,23 @@ func init() {
 			fillScanOrderCompute(scan, inverse, scanSize, ScanMode(mode))
 			scanTables[idx][mode] = scanPair{scan: scan, inverse: inverse}
 			scanMaxRowTables[idx][mode] = buildScanMaxRowTable(scan, int(scanSize.Height))
+			scanMaxColTables[idx][mode] = buildScanMaxColTable(scan, int(scanSize.Height))
 		}
 	}
+}
+
+func buildScanMaxColTable(scan []int16, height int) []uint8 {
+	cols := make([]uint8, len(scan))
+	maxCol := 0
+	for i, raw := range scan {
+		// The coefficient raster is column-major.
+		col := int(raw) / height
+		if col > maxCol {
+			maxCol = col
+		}
+		cols[i] = uint8(maxCol)
+	}
+	return cols
 }
 
 func buildScanMaxRowTable(scan []int16, height int) []uint8 {

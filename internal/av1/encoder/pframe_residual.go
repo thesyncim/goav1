@@ -3121,11 +3121,14 @@ func (st *lossyEncodeState) reconInterTXBResult(reconPlane, pred []byte, predStr
 		// Collect the same scan-prefix row bound while dequantization already
 		// visits those positions, including entries whose coefficient is zero.
 		activeRows := quantize.DequantizeBlockScaledBitDepthEOBRowsFlatTrusted(dq[:geo.coeffCount], qcoeff, scan, eob, geo.coeffHeight, q, geo.txScale, 8)
+		dst := reconPlane[py*stride+px:]
+		if txType == transform.TypeDCTDCT && reconFusedDCT(dst, stride, pred, predStride, dq[:geo.coeffCount], geo, w, h, activeRows, eob) {
+			return nil
+		}
 		raw := st.invScratch[:n]
 		if err := transform.InverseBlockBitDepthRaw(raw, dq[:geo.coeffCount], geo.coeffHeight, geo.size, txType, 8, activeRows); err != nil {
 			return err
 		}
-		dst := reconPlane[py*stride+px:]
 		addRawResidualToPredReconBlock(dst, stride, pred, predStride, raw, w, h)
 		return nil
 	}

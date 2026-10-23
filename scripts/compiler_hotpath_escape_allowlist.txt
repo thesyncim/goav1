@@ -608,5 +608,6 @@ internal/av1/tile/refmvs_encoder.go:*:*: make([]refmvsBlock, need) escapes to he
 internal/av1/transform/precompute.go:*:*: make([]int16, total) escapes to heap
 internal/av1/transform/precompute.go:*:*: make([]int16, total) escapes to heap in init.N:
 internal/av1/transform/precompute.go:*:*: make([]uint8, len(scan)) escapes to heap
+internal/av1/transform/precompute.go:*:*: make([]uint8, len(scan)) escapes to heap in buildScanMaxColTable:
 internal/av1/transform/precompute.go:*:*: make([]uint8, len(scan)) escapes to heap in buildScanMaxRowTable:
 internal/av1/transform/precompute.go:*:*: make([]uint8, len(scan)) escapes to heap in init.N:
