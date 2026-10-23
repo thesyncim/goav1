@@ -127,12 +127,12 @@ func (e *VideoEncoder) Drain() (tu []byte, key bool, produced bool, err error) {
 // overlapEligible reports whether the buffered leaf and the incoming base can
 // run concurrently with byte-identical output. See the file header for why the
 // scope is restricted to golden-disabled L1T2 single-tile 8-bit 4:2:0 streams
-// with scene-cut promotion off and no render padding.
+// and no render padding.
 func (e *VideoEncoder) overlapEligible(forceKey bool) bool {
 	if forceKey || !e.haveKey || !e.pipeline || e.rcEnabled {
 		return false
 	}
-	if e.temporalLayers != 2 || e.goldenEvery != 0 || e.sceneCutKeyframes {
+	if e.temporalLayers != 2 || e.goldenEvery != 0 {
 		return false
 	}
 	if e.tileColsLog2 != 0 {

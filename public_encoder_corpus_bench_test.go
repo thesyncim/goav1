@@ -149,7 +149,7 @@ func loadPublicEncoderP720Fixture(tb testing.TB, required bool) *publicEncoderP7
 func publicEncoderP720Config() av1.VideoEncoderConfig {
 	return av1.VideoEncoderConfig{
 		Width: publicEncoderP720Width, Height: publicEncoderP720Height,
-		QIndex: 80, MaxThreads: 1, DisableSceneCutKeyframes: true,
+		QIndex: 80, MaxThreads: 1,
 	}
 }
 

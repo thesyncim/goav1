@@ -46,6 +46,15 @@ The project has not published a release tag yet.
   relevant upstream C type widths and signedness, and should land with oracle
   tests and allocation evidence appropriate to the path.
 
+### Encoder
+
+- `VideoEncoder` no longer promotes delta frames to keyframes on detected
+  scene cuts: the HME cut detector, `DisableSceneCutKeyframes`,
+  `SetSceneCutKeyframes` and qualitybench `-goav1-scene-cut` are removed. This
+  matches SVT-AV1 4.1.0 rtc, which forces scene-change detection off and codes
+  cuts with intra blocks in an inter frame, and libwebrtc's libaom setup
+  (`kf_mode = AOM_KF_DISABLED`).
+
 ### Verification
 
 - Local development gates: `go test ./...`, `make alloc`,

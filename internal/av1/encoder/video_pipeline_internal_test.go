@@ -8,11 +8,11 @@ import (
 // TestPipelineOverlapFires confirms the overlap-eligible configuration actually
 // exercises the concurrent leaf/base path (rather than silently falling back to
 // the serial FIFO), so the external byte-identity oracle is testing real
-// concurrency. It also checks that golden-enabled and scene-cut-enabled streams
-// do NOT overlap.
+// concurrency. It also checks that golden-enabled streams do NOT
+// overlap.
 func TestPipelineOverlapFires(t *testing.T) {
 	const w, h = 192, 128
-	newEnc := func(golden int, sceneCut bool) *VideoEncoder {
+	newEnc := func(golden int) *VideoEncoder {
 		// Fixed q: SVT's shared CBR rate control needs each frame's
 		// feedback before the next q, so CBR streams code serially.
 		enc, err := NewVideoEncoder(w, h, 120)
@@ -23,7 +23,6 @@ func TestPipelineOverlapFires(t *testing.T) {
 			t.Fatal(err)
 		}
 		enc.SetGoldenInterval(golden)
-		enc.SetSceneCutKeyframes(sceneCut)
 		return enc
 	}
 	run := func(enc *VideoEncoder, frames int) {
@@ -60,21 +59,15 @@ func TestPipelineOverlapFires(t *testing.T) {
 	}
 
 	const frames = 12
-	eligible := newEnc(0, false)
+	eligible := newEnc(0)
 	run(eligible, frames)
 	if eligible.pipeOverlaps == 0 {
 		t.Fatalf("overlap-eligible stream never overlapped (pipeOverlaps=0)")
 	}
 
-	golden := newEnc(16, false)
+	golden := newEnc(16)
 	run(golden, frames)
 	if golden.pipeOverlaps != 0 {
 		t.Fatalf("golden-enabled stream overlapped (pipeOverlaps=%d), want 0", golden.pipeOverlaps)
-	}
-
-	sceneCut := newEnc(0, true)
-	run(sceneCut, frames)
-	if sceneCut.pipeOverlaps != 0 {
-		t.Fatalf("scene-cut stream overlapped (pipeOverlaps=%d), want 0", sceneCut.pipeOverlaps)
 	}
 }

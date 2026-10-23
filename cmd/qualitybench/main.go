@@ -109,7 +109,6 @@ type benchConfig struct {
 	goSHA256            string
 	goav1MaxThreads     int
 	goav1Effort         int
-	goav1SceneCut       bool
 	goav1ProcessTiming  bool
 	aomThreads          int
 	aomRowMT            int
@@ -418,7 +417,6 @@ type metadataConfig struct {
 	GoGC             string   `json:"gogc,omitempty"`
 	GoAV1MaxThreads  int      `json:"goav1_max_threads"`
 	GoAV1Effort      int      `json:"goav1_effort"`
-	GoAV1SceneCut    bool     `json:"goav1_scene_cut_keyframes"`
 	GoAV1ProcessTime bool     `json:"goav1_process_timing"`
 	AOMThreads       int      `json:"aom_threads"`
 	AOMRowMT         int      `json:"aom_row_mt"`
@@ -788,7 +786,6 @@ func parseFlags() (benchConfig, error) {
 	flag.StringVar(&cfg.goSHA256, "go-sha256", "", "expected SHA-256 of -go-bin for publish runs")
 	flag.IntVar(&cfg.goav1MaxThreads, "goav1-max-threads", 0, "goav1 MaxThreads execution-lane cap (0 = encoder automatic policy)")
 	flag.IntVar(&cfg.goav1Effort, "goav1-effort", 0, "goav1 WebRTC effort level (-2..4; 0 = default quality/speed balance)")
-	flag.BoolVar(&cfg.goav1SceneCut, "goav1-scene-cut", true, "allow goav1 automatic scene-cut keyframes")
 	flag.BoolVar(&cfg.goav1ProcessTiming, "goav1-process-timing", false, "time goav1 encode rows in a subprocess so publish comparisons include process startup like native CLI encoders")
 	flag.IntVar(&cfg.aomThreads, "aom-threads", 4, "aomenc --threads value for libaom rows")
 	flag.IntVar(&cfg.aomRowMT, "aom-row-mt", 1, "aomenc --row-mt value for libaom rows (0 = off, 1 = on)")
@@ -1056,7 +1053,6 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 		"warmup-runs",
 		"goav1-max-threads",
 		"goav1-effort",
-		"goav1-scene-cut",
 		"environment-notes",
 		"cpu-affinity",
 		"power-mode",
@@ -1169,9 +1165,6 @@ func validatePublishConfig(cfg benchConfig, git gitMetadata) error {
 	}
 	if cfg.layers != 1 && (encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1")) {
 		return errors.New("publish requires -layers 1 when aomenc or svt-av1 baselines are selected; equivalent external temporal-layer settings are not implemented")
-	}
-	if cfg.goav1SceneCut && (encoderSelected(cfg, "aomenc") || encoderSelected(cfg, "svt-av1")) {
-		return errors.New("publish requires -goav1-scene-cut=false when aomenc or svt-av1 baselines are selected; external scene-cut-equivalent settings are disabled")
 	}
 	if externalBaselineSelected(cfg) && encoderSelected(cfg, "goav1") {
 		if err := requireExplicitFlag(cfg, "goav1-process-timing"); err != nil {
@@ -3115,7 +3108,6 @@ func metadataConfigFor(cfg benchConfig) (metadataConfig, error) {
 		GoGC:             cfg.goGC,
 		GoAV1MaxThreads:  cfg.goav1MaxThreads,
 		GoAV1Effort:      cfg.goav1Effort,
-		GoAV1SceneCut:    cfg.goav1SceneCut,
 		GoAV1ProcessTime: cfg.goav1ProcessTiming,
 		AOMThreads:       cfg.aomThreads,
 		AOMRowMT:         cfg.aomRowMT,
@@ -3267,7 +3259,6 @@ func fairnessNotes(cfg benchConfig) []string {
 		"qualitybench runs warmups and measured samples in deterministic sample passes across all encoder/bitrate tuples, records every measured encode sample in metadata, and reports the median wall-time sample in the normal CSV row. Publish mode rejects a tuple when repeated measured samples produce different encoded or decoded artifact hashes.",
 		"Publishable rows use -run-order shuffle with an explicit seed so every table has a reproducible encoder/bitrate order without always favoring the same encoder column.",
 		"For fair goav1 comparisons, set -goav1-max-threads and -goav1-effort explicitly; qualitybench forwards them to VideoEncoderConfig.MaxThreads and Speed and records them in metadata.",
-		"For fair external-baseline comparisons, set -goav1-scene-cut=false unless equivalent scene-cut behavior is enabled and recorded for every selected external encoder.",
 		"Tile controls are recorded as tile-column log2 settings; a requested -tiles value of N means 2^N tile columns for goav1, aomenc, and SVT rows.",
 		"For fair external-baseline metric comparisons, set -ffmpeg-av1-decoder explicitly so external IVF decode does not depend on FFmpeg's implicit decoder selection.",
 		"For fair VMAF comparisons, set -vmaf-model explicitly and report it; qualitybench forwards the value to FFmpeg libvmaf's model option and records it in metadata.",
@@ -4223,7 +4214,6 @@ func runGoAV1EncodeHelper(args []string) error {
 	fs.StringVar(&cfg.goGC, "gogc", "", "Go GC setting")
 	fs.IntVar(&cfg.goav1MaxThreads, "goav1-max-threads", 0, "goav1 MaxThreads")
 	fs.IntVar(&cfg.goav1Effort, "goav1-effort", 0, "goav1 effort")
-	fs.BoolVar(&cfg.goav1SceneCut, "goav1-scene-cut", true, "goav1 scene cut")
 	fs.BoolVar(&statsEnabled, "stats-enabled", false, "collect aggregate encoder stats")
 	fs.BoolVar(&frameStatsEnabled, "frame-stats-enabled", false, "collect per-frame encoder stats")
 	fs.StringVar(&resultPath, "result-json", "", "helper result JSON path")
@@ -4465,7 +4455,6 @@ func goAV1EncodeHelperArgs(cfg benchConfig, refPath string, bitrate int, resultP
 		"-gogc", cfg.goGC,
 		"-goav1-max-threads", strconv.Itoa(cfg.goav1MaxThreads),
 		"-goav1-effort", strconv.Itoa(cfg.goav1Effort),
-		"-goav1-scene-cut=" + strconv.FormatBool(cfg.goav1SceneCut),
 		"-stats-enabled=" + strconv.FormatBool(cfg.statsCSVPath != ""),
 		"-frame-stats-enabled=" + strconv.FormatBool(cfg.frameStatsCSVPath != ""),
 		"-result-json", resultPath,
@@ -4767,7 +4756,6 @@ func encodeGoAV1Artifact(cfg benchConfig, frames []goav1.I420Frame, bitrate int)
 			"tile_semantics":     "tile-columns-log2",
 			"max_threads":        strconv.Itoa(cfg.goav1MaxThreads),
 			"effort":             strconv.Itoa(cfg.goav1Effort),
-			"scene_cut":          strconv.FormatBool(cfg.goav1SceneCut),
 			"golden_interval":    strconv.Itoa(cfg.goldenInterval),
 			"key_interval":       strconv.Itoa(cfg.keyInterval),
 			"gomaxprocs":         strconv.Itoa(runtime.GOMAXPROCS(0)),
@@ -4809,16 +4797,15 @@ func encodeGoAV1Artifact(cfg benchConfig, frames []goav1.I420Frame, bitrate int)
 	}()
 
 	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
-		Width:                    cfg.width,
-		Height:                   cfg.height,
-		TargetBitrate:            bitrate,
-		Framerate:                cfg.fps,
-		TemporalLayers:           cfg.layers,
-		TileColumns:              cfg.tiles,
-		MaxThreads:               cfg.goav1MaxThreads,
-		Speed:                    int8(cfg.goav1Effort),
-		GoldenInterval:           cfg.goldenInterval,
-		DisableSceneCutKeyframes: !cfg.goav1SceneCut,
+		Width:          cfg.width,
+		Height:         cfg.height,
+		TargetBitrate:  bitrate,
+		Framerate:      cfg.fps,
+		TemporalLayers: cfg.layers,
+		TileColumns:    cfg.tiles,
+		MaxThreads:     cfg.goav1MaxThreads,
+		Speed:          int8(cfg.goav1Effort),
+		GoldenInterval: cfg.goldenInterval,
 	})
 	if err != nil {
 		result.status, result.errText = "error", err.Error()

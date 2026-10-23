@@ -461,9 +461,8 @@ func BenchmarkVideoEncoderPipelinePan1080p(b *testing.B) {
 	if err := enc.SetTemporalLayers(2); err != nil {
 		b.Fatal(err)
 	}
-	// Overlap-eligible config: golden off, scene-cut off, single-tile inter.
+	// Overlap-eligible config: golden off, single-tile inter.
 	enc.SetGoldenInterval(0)
-	enc.SetSceneCutKeyframes(false)
 	enc.SetMaxThreads(4)
 	if err := enc.SetThroughputPipelining(true); err != nil {
 		b.Fatal(err)
@@ -504,7 +503,7 @@ func BenchmarkVideoEncoderPipelinePan1080p(b *testing.B) {
 }
 
 // BenchmarkStreamingKeyframe1080p measures a forced keyframe inside a live
-// stream - the scene-cut path - where the coder pool and reconstruction
+// stream, where the coder pool and reconstruction
 // buffer reuse keep the per-key allocation near zero.
 func BenchmarkStreamingKeyframe1080p(b *testing.B) {
 	const w, h = 1920, 1080

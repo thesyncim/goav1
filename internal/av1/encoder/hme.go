@@ -57,8 +57,6 @@ type frameME struct {
 	valid      bool
 	isRef      bool
 	sb         []realtimeSBMultiSizeME
-	// l1SAD is the HME center's level-1 SAD (0 when HME was skipped).
-	l1SAD []uint32
 	// me8x8Dist is compute_distortion's me_8x8_distortion: the per-PU 8x8
 	// best SAD sum normalized to a 64x64 area.
 	me8x8Dist []uint64
@@ -230,7 +228,6 @@ func (h *hmeState) prepare(src SourceFrame420, isRef bool, ref int) {
 	n := f.cols * f.rows
 	if len(f.sb) < n {
 		f.sb = make([]realtimeSBMultiSizeME, n)
-		f.l1SAD = make([]uint32, n)
 		f.me8x8Dist = make([]uint64, n)
 	}
 	f.isRef = isRef
@@ -242,7 +239,7 @@ func (h *hmeState) meRows(src SourceFrame420, r0, r1 int) {
 	for r := r0; r < r1; r++ {
 		for c := 0; c < f.cols; c++ {
 			i := r*f.cols + c
-			f.l1SAD[i], f.me8x8Dist[i] = h.motionEstimateSB(&f.sb[i], src.Width, src.Height, c*64, r*64)
+			_, f.me8x8Dist[i] = h.motionEstimateSB(&f.sb[i], src.Width, src.Height, c*64, r*64)
 		}
 	}
 }
@@ -257,27 +254,4 @@ func (h *hmeState) sbME(px, py int) *realtimeSBMultiSizeME {
 		return nil
 	}
 	return &h.fme.sb[r*h.fme.cols+c]
-}
-
-// hmeCutSAD is the per-sample level-1 HME SAD above which a superblock found
-// no match; a frame where most superblocks found none is a scene cut.
-const hmeCutSAD = 25
-
-// cutDetected reports a scene cut: at least 60% of the superblocks' HME
-// centers left a level-1 SAD above hmeCutSAD per half-resolution sample.
-// SVT-AV1 at preset 12 rtc runs with scene-change detection off; this keeps
-// the encoder's opt-in scene-cut keyframes on the SVT HME data.
-func (h *hmeState) cutDetected() bool {
-	f := &h.fme
-	if !f.valid {
-		return false
-	}
-	n := f.cols * f.rows
-	cut := 0
-	for _, s := range f.l1SAD[:n] {
-		if s > 32*32*hmeCutSAD {
-			cut++
-		}
-	}
-	return cut*10 >= n*6
 }

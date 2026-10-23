@@ -135,8 +135,6 @@ internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap
 internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap in padLuma:
 internal/av1/encoder/hme.go:*:*: make([]realtimeSBMultiSizeME, n) escapes to heap
 internal/av1/encoder/hme.go:*:*: make([]realtimeSBMultiSizeME, n) escapes to heap in (*hmeState).prepare:
-internal/av1/encoder/hme.go:*:*: make([]uint32, n) escapes to heap
-internal/av1/encoder/hme.go:*:*: make([]uint32, n) escapes to heap in (*hmeState).prepare:
 internal/av1/encoder/hme.go:*:*: make([]uint64, n) escapes to heap
 internal/av1/encoder/hme.go:*:*: make([]uint64, n) escapes to heap in (*hmeState).prepare:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 262144) escapes to heap

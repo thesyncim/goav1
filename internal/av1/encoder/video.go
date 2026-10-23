@@ -173,7 +173,6 @@ type VideoEncoder struct {
 	goldenEvery       int
 	sinceGoldenFresh  int
 	avgFrameLowMotion int
-	sceneCutKeyframes bool
 
 	content                 ContentHint
 	screenContentSelectable bool
@@ -290,7 +289,7 @@ func newVideoEncoderWithColor(width, height int, qIndex uint8, color SequenceCol
 		width: codedW, height: codedH,
 		renderWidth: width, renderHeight: height,
 		color:  color,
-		qIndex: qIndex, goldenEvery: 0, sceneCutKeyframes: true,
+		qIndex: qIndex, goldenEvery: 0,
 	}
 	e.tileColsLog2 = defaultTileColsLog2(codedW)
 	e.keyframeTileColsLog2 = e.tileColsLog2
@@ -334,12 +333,6 @@ func (e *VideoEncoder) padSource(src SourceFrame420) SourceFrame420 {
 // golden-anchor refreshes; zero disables golden references entirely.
 func (e *VideoEncoder) SetGoldenInterval(n int) {
 	e.goldenEvery = n
-}
-
-// SetSceneCutKeyframes controls whether the encoder may promote a delta frame
-// to a keyframe when the motion search sees a hard cut.
-func (e *VideoEncoder) SetSceneCutKeyframes(enabled bool) {
-	e.sceneCutKeyframes = enabled
 }
 
 // SetContentHint selects the content mode used for subsequently emitted AV1
@@ -739,15 +732,7 @@ func (e *VideoEncoder) EncodeWithTemporalID(src SourceFrame420, forceKey bool, t
 	if temporalID >= uint8(max(e.temporalLayers, 1)) {
 		return nil, false, ErrInvalidFrame
 	}
-	// The hierarchical coarse search doubles as the scene-cut detector:
-	// when most regions find no quarter-res match within reach, predictive
-	// coding would cost near-keyframe bits at worse quality, so restart the
-	// chain with a real keyframe instead. The spacing guard keeps noisy
-	// content from forcing key storms.
 	e.runHME(src, temporalID)
-	if e.sceneCutKeyframes && e.frameIndex >= 4 && e.hme.cutDetected() {
-		return e.Encode(src, true)
-	}
 	tu, err := e.encodePReusing(src, temporalID)
 	if err != nil {
 		return nil, false, err
