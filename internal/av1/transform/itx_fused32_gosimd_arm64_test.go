@@ -3,6 +3,7 @@
 package transform
 
 import (
+	"fmt"
 	"math/rand"
 	"testing"
 )
@@ -39,6 +40,15 @@ func TestInverseAddDCT32x32Low8MatchesStagedPath(t *testing.T) {
 	for trial := 0; trial < 20000; trial++ {
 		clear(coeff)
 		activeRows, activeCols := 1+rng.Intn(8), 1+rng.Intn(8)
+		// The Low4 network serves a pass whose coded extent is at most 4.
+		switch trial % 4 {
+		case 0:
+			activeRows, activeCols = 1+rng.Intn(4), 1+rng.Intn(4)
+		case 1:
+			activeRows = 1 + rng.Intn(4)
+		case 2:
+			activeCols = 1 + rng.Intn(4)
+		}
 		mode := trial % 5
 		mag := []int{64, 1024, 4096, 32767, 70000}[mode]
 		for c := 0; c < activeCols; c++ {
@@ -59,7 +69,7 @@ func TestInverseAddDCT32x32Low8MatchesStagedPath(t *testing.T) {
 		itxFused32Oracle(t, want, stride, pred, stride, coeff, 32, activeRows, activeCols)
 		// In place (the decoder: the prediction already sits in dst).
 		copy(got, pred)
-		ok := InverseAddDCT32x32Low8(got, stride, got, stride, coeff, 32)
+		ok := InverseAddDCT32x32Low8(got, stride, got, stride, coeff, 32, activeRows, activeCols)
 		if mode <= 2 {
 			realistic++
 		}
@@ -86,7 +96,7 @@ func TestInverseAddDCT32x32Low8MatchesStagedPath(t *testing.T) {
 		for i := range got {
 			got[i] = byte(0xa5)
 		}
-		if !InverseAddDCT32x32Low8(got, stride, pred, stride, coeff, 32) {
+		if !InverseAddDCT32x32Low8(got, stride, pred, stride, coeff, 32, activeRows, activeCols) {
 			t.Fatalf("trial %d: separate-pred call declined after the in-place call accepted", trial)
 		}
 		for r := 0; r < 32; r++ {
@@ -111,8 +121,8 @@ func TestInverseAddDCT32x32Low8MatchesStagedPath(t *testing.T) {
 func BenchmarkInverseAddDCT32x32Low8(b *testing.B) {
 	rng := rand.New(rand.NewSource(3))
 	coeff := make([]int32, 32*32)
-	for c := 0; c < 8; c++ {
-		for r := 0; r < 8; r++ {
+	for c := 0; c < 4; c++ {
+		for r := 0; r < 4; r++ {
 			coeff[c*32+r] = int32(rng.Intn(2049) - 1024)
 		}
 	}
@@ -120,17 +130,21 @@ func BenchmarkInverseAddDCT32x32Low8(b *testing.B) {
 	for i := range dst {
 		dst[i] = byte(rng.Intn(256))
 	}
-	b.Run("fused", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			if !InverseAddDCT32x32Low8(dst, 32, dst, 32, coeff, 32) {
-				b.Fatal("declined")
+	// The same 4x4-corner coefficients through the Low4 networks (extents 4)
+	// and the Low8 networks (extents 8).
+	for _, ext := range []int{4, 8} {
+		b.Run(fmt.Sprintf("extent%d/fused", ext), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				if !InverseAddDCT32x32Low8(dst, 32, dst, 32, coeff, 32, ext, ext) {
+					b.Fatal("declined")
+				}
 			}
-		}
-	})
+		})
+	}
 	raw := make([]int32, 32*32)
 	b.Run("staged-transform-only", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			if err := InverseBlockBitDepthRawBounded(raw, coeff, 32, Size{Width: 32, Height: 32}, TypeDCTDCT, 8, 8, 8); err != nil {
+			if err := InverseBlockBitDepthRawBounded(raw, coeff, 32, Size{Width: 32, Height: 32}, TypeDCTDCT, 8, 4, 4); err != nil {
 				b.Fatal(err)
 			}
 		}

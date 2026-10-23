@@ -695,9 +695,10 @@ func itx64Net(n int, in *[32]archsimd.Int16x8, out *[64]archsimd.Int16x8) {
 	var o [32]archsimd.Int16x8
 	switch {
 	case n <= 8:
-		var e [8]archsimd.Int16x8
-		e[0], e[1], e[2], e[3] = in[0], in[2], in[4], in[6]
-		itx32Low8Net(&e, &ev)
+		// Only coefficients 0, 2, 4, 6 reach the even half (a DCT32): its
+		// Low4 network.
+		e := [4]archsimd.Int16x8{in[0], in[2], in[4], in[6]}
+		itx32Low4Net(&e, &ev)
 		itx64Odd8(in, &o)
 	case n <= 16:
 		var e [8]archsimd.Int16x8

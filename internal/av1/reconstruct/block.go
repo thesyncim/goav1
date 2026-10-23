@@ -153,7 +153,7 @@ func ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst []byte, dstStride 
 			switch width {
 			case 32:
 				if activeRows <= 8 && activeCols <= 8 {
-					if transform.InverseAddDCT32x32Low8(dst, dstStride, dst, dstStride, dequant, scanHeight) {
+					if transform.InverseAddDCT32x32Low8(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols) {
 						return nil
 					}
 				} else if activeRows <= 16 && activeCols <= 16 &&

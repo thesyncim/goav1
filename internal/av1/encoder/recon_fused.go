@@ -26,7 +26,7 @@ func reconFusedDCT(dst []byte, stride int, pred []byte, predStride int, coeff []
 		return transform.InverseAddDCT16x16(dst, stride, pred, predStride, coeff, geo.coeffHeight, activeRows, activeCols)
 	case 32:
 		if activeRows <= 8 && activeCols <= 8 {
-			return transform.InverseAddDCT32x32Low8(dst, stride, pred, predStride, coeff, geo.coeffHeight)
+			return transform.InverseAddDCT32x32Low8(dst, stride, pred, predStride, coeff, geo.coeffHeight, activeRows, activeCols)
 		}
 		if activeRows <= 16 && activeCols <= 16 {
 			return transform.InverseAddDCT32x32Low16(dst, stride, pred, predStride, coeff, geo.coeffHeight, activeRows)

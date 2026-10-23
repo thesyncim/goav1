@@ -217,15 +217,20 @@ func itx32Round2(x archsimd.Int16x8, shiftNm1, shift1 archsimd.Int16x8, one arch
 
 // itx32RowStripLow8 runs the row pass of the 8-bit 32x32 DCT_DCT block
 // whose coefficients lie in rows and columns 0..7: rows 0..7 of the
-// column-major coefficients, narrowed to int16, transformed across vectors,
-// rounded by 2, transposed and stored into tmp rows 0..7 (32 wide). It
-// reports false, with tmp untouched, when a row fails the L1 guard, and
-// otherwise also checks the column strips' guards on the stored values.
-func itx32RowStripLow8(coeff []int32, stride int, tmp *[8 * 32]int16) bool {
+// column-major coefficients, narrowed to int16, transformed across vectors
+// (the Low4 network when only columns 0..3 are coded), rounded by 2,
+// transposed and stored into tmp rows 0..7 (32 wide). It reports false, with
+// tmp untouched, when a row fails the L1 guard, and otherwise also checks the
+// column strips' guards on the stored values.
+func itx32RowStripLow8(coeff []int32, stride int, activeCols int, tmp *[8 * 32]int16) bool {
 	_ = coeff[7*stride+7]
 	var in [8]archsimd.Int16x8
 	var l1 archsimd.Uint16x8
-	for k := 0; k < 8; k++ {
+	inCols := 8
+	if activeCols <= 4 {
+		inCols = 4
+	}
+	for k := 0; k < inCols; k++ {
 		x := itx16LoadNarrow(coeff[k*stride : k*stride+8])
 		l1 = l1.AddSaturated(x.Abs().ToBits())
 		in[k] = x
@@ -234,7 +239,11 @@ func itx32RowStripLow8(coeff []int32, stride int, tmp *[8 * 32]int16) bool {
 		return false
 	}
 	var out [32]archsimd.Int16x8
-	itx32Low8Net(&in, &out)
+	if inCols == 4 {
+		itx32Low4Net((*[4]archsimd.Int16x8)(in[:4]), &out)
+	} else {
+		itx32Low8Net(&in, &out)
+	}
 	one := archsimd.BroadcastInt16x8(1)
 	sh1 := archsimd.BroadcastInt16x8(-1)
 	var colL1 archsimd.Uint16x8
@@ -255,15 +264,19 @@ func itx32RowStripLow8(coeff []int32, stride int, tmp *[8 * 32]int16) bool {
 }
 
 // itx32ColStripLow8Add runs the column pass for columns c0..c0+7 from tmp
-// rows 0..7 and adds the result to the block: output row r is
-// Round2(., 4) plus the prediction row, saturated to bytes, stored to dst.
-func itx32ColStripLow8Add(tmp *[8 * 32]int16, c0 int, dst unsafe.Pointer, dstStride int, pred unsafe.Pointer, predStride int) {
+// rows 0..inRows-1 (4 or 8) and adds the result to the block: output row r
+// is Round2(., 4) plus the prediction row, saturated to bytes, stored to dst.
+func itx32ColStripLow8Add(tmp *[8 * 32]int16, c0 int, inRows int, dst unsafe.Pointer, dstStride int, pred unsafe.Pointer, predStride int) {
 	var in [8]archsimd.Int16x8
-	for r := 0; r < 8; r++ {
+	for r := 0; r < inRows; r++ {
 		in[r] = archsimd.LoadInt16x8Array((*[8]int16)(tmp[r*32+c0:]))
 	}
 	var out [32]archsimd.Int16x8
-	itx32Low8Net(&in, &out)
+	if inRows == 4 {
+		itx32Low4Net((*[4]archsimd.Int16x8)(in[:4]), &out)
+	} else {
+		itx32Low8Net(&in, &out)
+	}
 	one := archsimd.BroadcastInt16x8(1)
 	sh1 := archsimd.BroadcastInt16x8(-1)
 	sh3 := archsimd.BroadcastInt16x8(-3)
@@ -276,25 +289,31 @@ func itx32ColStripLow8Add(tmp *[8 * 32]int16, c0 int, dst unsafe.Pointer, dstStr
 }
 
 // InverseAddDCT32x32Low8 reconstructs one 8-bit 32x32 DCT_DCT block whose
-// coded coefficients lie in rows and columns 0..7 (the caller's activeRows
-// and activeCols are at most 8): dst = clip(pred + inverse(coeff)), with
+// coded coefficients lie in rows 0..activeRows-1 and columns
+// 0..activeCols-1, both at most 8: dst = clip(pred + inverse(coeff)), with
 // the dequantized coefficients column-major at coeffStride. pred may be dst.
-// It reports false, with dst untouched, when the block is outside the
-// kernel's contract or a guard declines; the caller then runs the staged
-// path, which produces the same bytes.
-func InverseAddDCT32x32Low8(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int) bool {
-	if coeffStride < 8 || len(coeff) < 7*coeffStride+8 || dstStride < 32 || predStride < 32 ||
+// Each pass runs the Low4 network when its coded extent is at most 4. It
+// reports false, with dst untouched, when the block is outside the kernel's
+// contract or a guard declines; the caller then runs the staged path, which
+// produces the same bytes.
+func InverseAddDCT32x32Low8(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
+	if activeRows <= 0 || activeRows > 8 || activeCols <= 0 || activeCols > 8 ||
+		coeffStride < 8 || len(coeff) < 7*coeffStride+8 || dstStride < 32 || predStride < 32 ||
 		len(dst) < 31*dstStride+32 || len(pred) < 31*predStride+32 {
 		return false
 	}
 	var tmp [8 * 32]int16
-	if !itx32RowStripLow8(coeff, coeffStride, &tmp) {
+	if !itx32RowStripLow8(coeff, coeffStride, activeCols, &tmp) {
 		return false
+	}
+	inRows := 8
+	if activeRows <= 4 {
+		inRows = 4
 	}
 	dp := unsafe.Pointer(unsafe.SliceData(dst))
 	pp := unsafe.Pointer(unsafe.SliceData(pred))
 	for g := 0; g < 4; g++ {
-		itx32ColStripLow8Add(&tmp, 8*g, dp, dstStride, pp, predStride)
+		itx32ColStripLow8Add(&tmp, 8*g, inRows, dp, dstStride, pp, predStride)
 	}
 	return true
 }
