@@ -306,7 +306,6 @@ func newWebRTCStreamLayerEncoder(config Config, layerIndex uint8, fps int, minQ 
 	if err != nil {
 		return nil, err
 	}
-	enc.SetScreenContentSelection(true)
 	if err := enc.SetContentHint(config.Content); err != nil {
 		_ = enc.Close()
 		return nil, err
@@ -343,7 +342,6 @@ func newWebRTCStreamLayerMonoEncoder(config Config, layerIndex uint8, fps int, m
 	if err != nil {
 		return nil, err
 	}
-	enc.SetScreenContentSelection(true)
 	if err := enc.SetContentHint(config.Content); err != nil {
 		_ = enc.Close()
 		return nil, err
@@ -380,7 +378,6 @@ func newWebRTCStreamLayerMono16Encoder(config Config, layerIndex uint8, fps int,
 	if err != nil {
 		return nil, err
 	}
-	enc.SetScreenContentSelection(true)
 	if err := enc.SetContentHint(config.Content); err != nil {
 		_ = enc.Close()
 		return nil, err
@@ -417,7 +414,6 @@ func newWebRTCStreamLayerColor16Encoder(config Config, layerIndex uint8, fps int
 	if err != nil {
 		return nil, err
 	}
-	enc.SetScreenContentSelection(true)
 	if err := enc.SetContentHint(config.Content); err != nil {
 		_ = enc.Close()
 		return nil, err
@@ -754,7 +750,6 @@ func (s *WebRTCStream) updateLayerControls(config Config, fps int) error {
 		if err := enc.SetTemporalLayers(int(config.TemporalLayerCount)); err != nil {
 			return err
 		}
-		enc.SetScreenContentSelection(true)
 		if err := enc.SetContentHint(config.Content); err != nil {
 			return err
 		}
@@ -792,7 +787,6 @@ func (s *WebRTCStream) updateMonoLayerControls(config Config, fps int) error {
 		if err := enc.SetTemporalLayers(int(config.TemporalLayerCount)); err != nil {
 			return err
 		}
-		enc.SetScreenContentSelection(true)
 		if err := enc.SetContentHint(config.Content); err != nil {
 			return err
 		}
@@ -830,7 +824,6 @@ func (s *WebRTCStream) updateMono16LayerControls(config Config, fps int) error {
 		if err := enc.SetTemporalLayers(int(config.TemporalLayerCount)); err != nil {
 			return err
 		}
-		enc.SetScreenContentSelection(true)
 		if err := enc.SetContentHint(config.Content); err != nil {
 			return err
 		}
@@ -868,7 +861,6 @@ func (s *WebRTCStream) updateColor16LayerControls(config Config, fps int) error 
 		if err := enc.SetTemporalLayers(int(config.TemporalLayerCount)); err != nil {
 			return err
 		}
-		enc.SetScreenContentSelection(true)
 		if err := enc.SetContentHint(config.Content); err != nil {
 			return err
 		}

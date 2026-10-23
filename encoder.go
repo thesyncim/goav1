@@ -260,6 +260,7 @@ const (
 	EncoderRateControlCBR = internalencoder.RateControlCBR
 	EncoderRateControlCQP = internalencoder.RateControlCQP
 
+	EncoderContentAuto   = internalencoder.ContentAuto
 	EncoderContentCamera = internalencoder.ContentCamera
 	EncoderContentScreen = internalencoder.ContentScreen
 

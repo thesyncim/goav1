@@ -64,7 +64,6 @@ func TestCDEFSearchMultiStrengthSignalsBitExact(t *testing.T) {
 				t.Fatal(err)
 			}
 			if cfg.screen {
-				enc.SetScreenContentSelection(true)
 				if err := enc.SetContentHint(encoder.ContentScreen); err != nil {
 					t.Fatal(err)
 				}

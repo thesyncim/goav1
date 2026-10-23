@@ -190,7 +190,18 @@ func (e *VideoEncoder) noteRCRefresh(slot int, q uint8, temporalID uint8) {
 	e.svtRef[slot] = svtRCRef{valid: true, q: int(q), layer: int(temporalID)}
 }
 
-// svtScreen is sc_class1 for the stream (screen content selected).
+// svtScreen is the picture's sc_class1 (inherited from the last keyframe).
 func (e *VideoEncoder) svtScreen() bool {
-	return e.screenContentSelectable && e.content == ContentScreen
+	return e.sc.class1
+}
+
+// meControls is svt_aom_sig_deriv_me for the picture's sc_class1. The
+// sequence qp is 35 under CBR (static_config.qp keeps DEFAULT_QP) and the
+// user qp under CQP.
+func (e *VideoEncoder) meControls(width, height int) svtMECtrl {
+	qp := 35
+	if !e.rcEnabled {
+		qp = min(int(e.qIndex)>>2, 63)
+	}
+	return svtMEControls(e.svtScreen(), width, height, qp)
 }

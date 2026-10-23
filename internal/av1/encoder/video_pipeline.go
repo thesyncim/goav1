@@ -241,6 +241,9 @@ func (e *VideoEncoder) runLeafHME(leafSrc SourceFrame420) {
 		l.pl.copyFrom(&r.pl)
 	}
 	e.leafHME.svt.copySlotFrom(&e.hme.svt, 0)
+	// The leaf shares the stream's sc_class and searches one picture back.
+	e.leafHME.ctrl = e.meControls(leafSrc.Width, leafSrc.Height)
+	e.leafHME.dist = 1
 	e.leafHME.runSerial(leafSrc, false, 0, -1)
 }
 
@@ -342,7 +345,7 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 	e.leafPC.st.setLPD1TxCtrls(true)
 	// Light-PD1 level setup of a droppable leaf (video.go encodePReusing),
 	// reading the base reference statistics snapshotted before the overlap.
-	leafSetup := lpd1PictureSetup{ref: e.leafJob.lpd1Ref, picLvl: lpd1PicLevel(false, false, header.Prefix.AllowScreenContentTools), armed: true}
+	leafSetup := lpd1PictureSetup{ref: e.leafJob.lpd1Ref, picLvl: lpd1PicLevel(false, false, e.svtScreen()), armed: true}
 	leafSetup.tlFactor = 180 // the L1T2 leaf is the highest layer
 	leafSetup.gfUpdate = e.leafJob.frameIndex%lpd1MaxGFInterval == 0
 	leafSetup.skipIntra = lpd1RefIntraPerc(e.leafJob.lpd1Ref) <= 50 // pcs->skip_intra of a non-reference picture

@@ -72,10 +72,6 @@ const (
 	realtimeSweepSearchH = 3
 )
 
-// realtimeSweepEarlyExitTH is me_ctx->me_early_exit_th at preset 12 rtc
-// (enc_mode_config.c:914): BLOCK_SIZE_64 * BLOCK_SIZE_64 * 12.
-const realtimeSweepEarlyExitTH = 64 * 64 * 12
-
 func (me *realtimeSBMultiSizeME) reset() {
 	me.valid = false
 	for i := range me.bestSAD {
@@ -145,7 +141,7 @@ func subSADRect(src []byte, srcOff int, ref []byte, refOff, stride, bw, bh int) 
 // preset 12 rtc: init_zz_sad, the HME center (svt_hme.go), the 8x3 sweep with
 // per-PU argmins (open_loop_me_fullpel_search_sblock) and compute_distortion,
 // on the padded current (h.cur) and reference (h.prev) source pictures. It
-// returns the HME level-1 SAD and me_8x8_distortion.
+// returns hme_sad and me_8x8_distortion.
 func (h *hmeState) motionEstimateSB(me *realtimeSBMultiSizeME, width, height, px, py int) (uint32, uint64) {
 	me.reset()
 	cur, prev := &h.cur, h.prev
@@ -164,19 +160,35 @@ func (h *hmeState) motionEstimateSB(me *realtimeSBMultiSizeME, width, height, px
 		zz = uint32(uint64(zz) * 64 * 64 / uint64(bw*bh))
 	}
 
-	// HME center, skipped below me_early_exit_th >> 2.
+	// hme_b64 (svt_me_ctrl.go): the search center and hme_sad.
+	c := &h.ctrl
+	f := svtScaledPictureDistance(max(h.dist, 1))
 	xc, yc := 0, 0
-	var l1 uint32
-	if zz >= realtimeSweepEarlyExitTH>>2 && h.svt.ready() {
-		xc, yc, l1 = h.svt.center(px, py, min(64, ((width+7)&^7)-px), min(64, ((height+7)&^7)-py))
+	var hmeSAD uint32
+	if h.svt.ready() {
+		xc, yc, hmeSAD = h.svt.hmeB64(c, cur, prev, px, py, min(64, ((width+7)&^7)-px), min(64, ((height+7)&^7)-py), zz, f)
 	}
-	// integer_search_b64 at preset 12 rtc: the 8x3 area (me_sa sa_min,
-	// width rounded up to 8, height at least 3), 1x1 below
-	// me_early_exit_th / 6. With me_early_exit_th set SVT skips
-	// check_00_center, so the HME center is the search center as is.
-	nx, ny := realtimeSweepSearchW, realtimeSweepSearchH
-	if zz < realtimeSweepEarlyExitTH/6 {
-		nx, ny = 1, 1
+	// integer_search_b64: me_sa by distance, the hme-based divisor and the
+	// 1x1 area below me_early_exit_th / 6. With me_early_exit_th set SVT
+	// skips check_00_center, so the HME center is the search center as is.
+	nx, ny := c.meArea(f, xc, yc, hmeSAD, zz)
+	if nx*ny > 24 {
+		// me_8x8_var_ctrls level 2: score the center alone, then shrink the
+		// area when its 8x8 SADs vary little. The center stays in the
+		// per-PU argmins ahead of the area scan.
+		me.sweepArea(cur.pix, stride, sbOff, prev.pix, prev.border+px, prev.border+py, xc, yc, 1, 1)
+		mean := me.bestSAD[0] / 64
+		var sq uint32
+		for i := 21; i < 85; i++ {
+			d := int32(me.bestSAD[i]) - int32(mean)
+			sq += uint32(d * d)
+		}
+		switch v := sq / 64; {
+		case v < 80000:
+			nx, ny = (max(1, nx>>2)+7)&^7, max(3, max(1, ny>>2))
+		case v < 150000:
+			nx, ny = (min(nx, nx>>1)+7)&^7, max(3, min(ny, ny>>1))
+		}
 	}
 	x0, y0, nx, ny := svtCorrectSearchArea(px, py, xc-(nx>>1), yc-(ny>>1), nx, ny, (width+7)&^7, (height+7)&^7)
 	me.sweepArea(cur.pix, stride, sbOff, prev.pix, prev.border+px, prev.border+py, x0, y0, nx, ny)
@@ -206,7 +218,7 @@ func (h *hmeState) motionEstimateSB(me *realtimeSBMultiSizeME, width, height, px
 	me.dist16 = uint32(dist16 * 4096 / pix)
 	me.dist8 = uint32(dist8 * 4096 / pix)
 	me.valid = true
-	return l1, dist8 * 4096 / pix
+	return hmeSAD, dist8 * 4096 / pix
 }
 
 // sweepSAD64Sub is the subsampled 64x64 SAD of get_zz_sad.

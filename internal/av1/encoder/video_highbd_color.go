@@ -21,7 +21,6 @@ type HighBitDepth420VideoEncoder struct {
 	content     ContentHint
 	effortLevel int8
 
-	screenContentSelectable bool
 
 	rcEnabled              bool
 	rcTargetBits           int
@@ -198,8 +197,9 @@ func (e *HighBitDepth420VideoEncoder) TemporalID() uint8 {
 	return 0
 }
 
-// SetContentHint selects the content mode used for subsequently emitted AV1
-// frame headers when screen-content selection is enabled.
+// SetContentHint selects the screen_content_mode. This encoder has no
+// screen-content detection, so ContentAuto codes as ContentCamera; a change
+// applies from the next frame header.
 func (e *HighBitDepth420VideoEncoder) SetContentHint(content ContentHint) error {
 	if e == nil {
 		return fmt.Errorf("encoder: nil high-bit-depth 4:2:0 video encoder")
@@ -209,14 +209,6 @@ func (e *HighBitDepth420VideoEncoder) SetContentHint(content ContentHint) error 
 	}
 	e.content = content
 	return nil
-}
-
-// SetScreenContentSelection controls whether sequence headers allow per-frame
-// screen-content signaling.
-func (e *HighBitDepth420VideoEncoder) SetScreenContentSelection(enabled bool) {
-	if e != nil {
-		e.screenContentSelectable = enabled
-	}
 }
 
 // SetEffortLevel selects the realtime encoder effort level.
@@ -449,10 +441,8 @@ func (e *HighBitDepth420VideoEncoder) sequenceHeader(width, height int) Sequence
 	seq.Profile = e.profile
 	seq.ColorConfig = e.color
 	seq.EnableCDEF = false
-	if e != nil && e.screenContentSelectable {
-		seq.SeqForceScreenContentTools = SequenceSelectScreenContentTools
-		seq.SeqForceIntegerMV = SequenceSelectIntegerMV
-	}
+	seq.SeqForceScreenContentTools = SequenceSelectScreenContentTools
+	seq.SeqForceIntegerMV = SequenceSelectIntegerMV
 	return seq
 }
 
@@ -464,16 +454,13 @@ func (e *HighBitDepth420VideoEncoder) parserColorConfig() parser.ColorConfig {
 }
 
 func (e *HighBitDepth420VideoEncoder) applyContentHintToFrameHeader(prefix *FrameHeaderPrefix) {
-	if e == nil || !e.screenContentSelectable || prefix == nil {
+	if e == nil || prefix == nil {
 		return
 	}
-	screen := e.content == ContentScreen
-	prefix.AllowScreenContentTools = screen
-	if prefix.FrameType.keyOrIntra() {
-		prefix.ForceIntegerMV = true
-		return
-	}
-	prefix.ForceIntegerMV = screen
+	// SVT rtc header policy (see VideoEncoder.applyContentHintToFrameHeader).
+	intra := prefix.FrameType.keyOrIntra()
+	prefix.AllowScreenContentTools = intra && e.content == ContentScreen
+	prefix.ForceIntegerMV = intra
 }
 
 func (e *HighBitDepth420VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame42016, maxWidth, maxHeight int) ([]byte, error) {

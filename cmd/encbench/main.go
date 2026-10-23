@@ -115,6 +115,7 @@ func main() {
 	noPSNR := flag.Bool("nopsnr", false, "skip the per-frame PSNR pass (for CPU measurement; score from -o instead)")
 	cpuProfile := flag.String("cpuprofile", "", "write a CPU profile of the encode loop to this path")
 	threads := flag.Int("threads", 0, "encoder MaxThreads (0 = encoder default; >1 runs the inter-frame SB-row wavefront)")
+	content := flag.String("content", "auto", "screen-content mode: auto (detect on keyframes, SVT --scm 2), camera (--scm 0) or screen (--scm 1)")
 	flag.Parse()
 	if *cpuProfile != "" {
 		pf, err := os.Create(*cpuProfile)
@@ -194,6 +195,18 @@ func main() {
 		fmt.Fprintf(os.Stderr, "invalid qindex bounds: qindex %d minq %d maxq %d\n", *fixedQ, *minQ, *maxQ)
 		os.Exit(1)
 	}
+	var contentHint goav1.EncoderContentHint
+	switch *content {
+	case "auto":
+		contentHint = goav1.EncoderContentAuto
+	case "camera":
+		contentHint = goav1.EncoderContentCamera
+	case "screen":
+		contentHint = goav1.EncoderContentScreen
+	default:
+		fmt.Fprintf(os.Stderr, "unknown -content %q\n", *content)
+		os.Exit(2)
+	}
 	targetBitrate := *bitrate
 	if *fixedQ > 0 {
 		targetBitrate = 0
@@ -208,6 +221,7 @@ func main() {
 		TileColumns:    *tiles,
 		GoldenInterval: *golden,
 		MaxThreads:     *threads,
+		Content:        contentHint,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

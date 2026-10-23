@@ -843,6 +843,9 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 		if pc.ownHME == nil {
 			pc.ownHME = new(hmeState)
 		}
+		// Camera-content controls at the CBR sequence qp: these coders have
+		// no screen-content detection.
+		pc.ownHME.ctrl = svtMEControls(false, src.Width, src.Height, 35)
 		pc.ownHME.primeFromRecon(ref)
 		pc.ownHME.runSerial(src, true, 0, -1)
 		st.hme = pc.ownHME

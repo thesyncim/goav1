@@ -174,8 +174,11 @@ type VideoEncoder struct {
 	sinceGoldenFresh  int
 	avgFrameLowMotion int
 
-	content                 ContentHint
-	screenContentSelectable bool
+	// content is the screen_content_mode; sc is the sc_class of the last
+	// keyframe (perform_sc_detection), which every inter frame inherits.
+	content ContentHint
+	sc      svtSCClass
+	scDet   svtSCDetector
 
 	decisionStatsEnabled bool
 	decisionStats        EncoderDecisionStats
@@ -335,8 +338,10 @@ func (e *VideoEncoder) SetGoldenInterval(n int) {
 	e.goldenEvery = n
 }
 
-// SetContentHint selects the content mode used for subsequently emitted AV1
-// frame headers when screen-content selection is enabled.
+// SetContentHint selects SVT-AV1 screen_content_mode semantics: ContentAuto
+// detects screen content on each keyframe (svt_aom_is_screen_content),
+// ContentCamera and ContentScreen force it. Like SVT, the classes are derived
+// at keyframes, so a change takes effect at the next keyframe.
 func (e *VideoEncoder) SetContentHint(content ContentHint) error {
 	if e == nil {
 		return fmt.Errorf("encoder: nil video encoder")
@@ -346,15 +351,6 @@ func (e *VideoEncoder) SetContentHint(content ContentHint) error {
 	}
 	e.content = content
 	return nil
-}
-
-// SetScreenContentSelection controls whether sequence headers allow per-frame
-// screen-content signaling. WebRTC streams enable this so camera/screen
-// switches can be applied without forcing a new coded sequence.
-func (e *VideoEncoder) SetScreenContentSelection(enabled bool) {
-	if e != nil {
-		e.screenContentSelectable = enabled
-	}
 }
 
 // SetEffortLevel selects the realtime encoder effort level. The default zero
@@ -443,10 +439,10 @@ func (e *VideoEncoder) sequenceHeader(width, height int) SequenceHeader {
 			seq.EnableCDEF = false
 		}
 	}
-	if e != nil && e.screenContentSelectable {
-		seq.SeqForceScreenContentTools = SequenceSelectScreenContentTools
-		seq.SeqForceIntegerMV = SequenceSelectIntegerMV
-	}
+	// SVT signals both per frame (sequence_control_set.c: seq_force_*
+	// = 2).
+	seq.SeqForceScreenContentTools = SequenceSelectScreenContentTools
+	seq.SeqForceIntegerMV = SequenceSelectIntegerMV
 	return seq
 }
 
@@ -457,17 +453,17 @@ func (e *VideoEncoder) parserColorConfig() parser.ColorConfig {
 	return parserColorConfig(e.color)
 }
 
+// applyContentHintToFrameHeader is svt_aom_sig_deriv_multi_processes_rtc's
+// header policy: intrabc_level 0 and palette_level 3 on I-slices of sc_class1
+// pictures only, so allow_screen_content_tools is set on screen keyframes
+// and force_integer_mv is 0 (resource_coordination_process.c).
 func (e *VideoEncoder) applyContentHintToFrameHeader(prefix *FrameHeaderPrefix) {
-	if e == nil || !e.screenContentSelectable || prefix == nil {
+	if e == nil || prefix == nil {
 		return
 	}
-	screen := e.content == ContentScreen
-	prefix.AllowScreenContentTools = screen
-	if prefix.FrameType.keyOrIntra() {
-		prefix.ForceIntegerMV = true
-		return
-	}
-	prefix.ForceIntegerMV = screen
+	intra := prefix.FrameType.keyOrIntra()
+	prefix.AllowScreenContentTools = intra && e.sc.class1
+	prefix.ForceIntegerMV = intra
 }
 
 // resizeBytes returns b at length n, reusing its storage when it fits.
@@ -587,6 +583,7 @@ func (e *VideoEncoder) runHME(src SourceFrame420, temporalID uint8) {
 	case e.temporalLayers == 3 && temporalID == 1, e.temporalLayers == 2 && temporalID == 0:
 		e.hme.dist = 2
 	}
+	e.hme.ctrl = e.meControls(src.Width, src.Height)
 	if e.singleThread {
 		e.hme.runSerial(src, isRef, ref, store)
 		return
@@ -767,6 +764,9 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 		return nil, err
 	}
 	e.lazyCDEF.pending = false
+	// perform_sc_detection: the I-slice derives the picture's sc_class and
+	// every following inter frame inherits it.
+	e.sc = e.scDet.classes(e.content, src.Y, src.YStride, src.Width, src.Height)
 	// Keyframe quality boost: every later frame predicts (directly or
 	// transitively) from the key, so it earns a finer quantizer than the
 	// working point; rate control pays the debt back over the next frames
@@ -1534,7 +1534,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if afterT1 {
 		lpd1Ref = e.lpd1T1
 	}
-	lpd1Setup := lpd1PictureSetup{ref: lpd1Ref, picLvl: lpd1PicLevel(false, !droppable, header.Prefix.AllowScreenContentTools), notLastLayer: !droppable || isT1, armed: true}
+	lpd1Setup := lpd1PictureSetup{ref: lpd1Ref, picLvl: lpd1PicLevel(false, !droppable, e.svtScreen()), notLastLayer: !droppable || isT1, armed: true}
 	// update_lambda: the highest temporal layer is LF_UPDATE (180), every
 	// other layer (flat IPP included) ARF or INTNL_ARF (150); low delay
 	// marks every MAX_GF_INTERVAL-th frame GF_UPDATE (set_frame_update_type).
