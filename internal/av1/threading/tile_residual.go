@@ -290,6 +290,9 @@ func (b *FrameWorkBatch) retainTileResidualCDFStorage(index int, state *tile.Dec
 	}
 	copyCDFStorage(b.RetainedTileResidualCDFs, storage)
 	*b.RetainedTileResidualCDFsValid = true
+	if ft := b.FrameThread; ft != nil && ft.CDFOut != nil {
+		ft.CDFOut.Publish(FrameProgressDone)
+	}
 	return nil
 }
 
