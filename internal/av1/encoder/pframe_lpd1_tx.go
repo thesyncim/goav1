@@ -653,14 +653,13 @@ func (st *lossyEncodeState) lpd1ChromaN4(block tile.BlockSize, useShortcuts bool
 // computes the same low-frequency values and zeroes the rest).
 func svtPFN4Zero(tran []int32, w, h, cw, ch int) {
 	kw, kh := min(max(w>>2, 1), cw), min(max(h>>2, 1), ch)
-	for c := 0; c < cw; c++ {
-		col := tran[c*ch : c*ch+ch]
-		if c >= kw {
-			clear(col)
-			continue
+	if kh < ch {
+		for c := 0; c < kw; c++ {
+			clear(tran[c*ch+kh : c*ch+ch])
 		}
-		clear(col[kh:])
 	}
+	// The columns past kw are contiguous: one clear.
+	clear(tran[kw*ch : cw*ch])
 }
 
 // svtPFN4Mask restricts a row-skip kernel's live row-group mask (groups of
