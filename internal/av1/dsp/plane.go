@@ -68,6 +68,20 @@ func CopyPlaneBlock(dst frame.Plane, src frame.Plane, bytesPerSample int, dstX i
 var addResidualPlaneBlockImpl = addResidualPlaneBlockPureGo
 var addRawTransformPlaneBlockImpl = addRawTransformPlaneBlockPureGo
 
+// addConstantPlaneBlock8Impl adds one DC-only residual to an 8-bit block,
+// clamping to [0, 255]; bound like the slots above.
+var addConstantPlaneBlock8Impl = addConstantPlaneBlock8PureGo
+
+func addConstantPlaneBlock8PureGo(dst []byte, dstStride int, width int, height int, residual int16) {
+	r := int(residual)
+	for row := 0; row < height; row++ {
+		line := dst[row*dstStride : row*dstStride+width : row*dstStride+width]
+		for col, sample := range line {
+			line[col] = byte(min(max(int(sample)+r, 0), 0xff))
+		}
+	}
+}
+
 // AddResidualPlaneBlock adds signed transform residuals to an already-predicted
 // destination block and clips to bitDepth.
 func AddResidualPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, residual []int16, residualStride int) error {
@@ -113,6 +127,10 @@ func AddResidualPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSample int,
 // AddConstantResidualPlaneBlockTrusted adds the same transform residual to
 // every sample in an already-validated destination block.
 func AddConstantResidualPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSample int, max uint16, width int, height int, residual int16) {
+	if bytesPerSample == 1 && max == 0xff && height > 0 {
+		addConstantPlaneBlock8Impl(dst, dstStride, width, height, residual)
+		return
+	}
 	switch bytesPerSample {
 	case 1:
 		maxInt := int(max)
