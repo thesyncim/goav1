@@ -65,6 +65,9 @@ The project has not published a release tag yet.
   and integer MV, `allow_screen_content_tools` is set on screen keyframes
   only, and inter frames keep fractional motion. A content change takes
   effect at the next keyframe. `SetScreenContentSelection` is removed.
+  Screen keyframes run SVT's luma palette search (palette_level 3), and
+  screen inter pictures add SVT's V/H/SMOOTH intra candidates
+  (intra_level 6).
 
 ### Verification
 

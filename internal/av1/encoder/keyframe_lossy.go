@@ -743,6 +743,9 @@ type lossyEncodeState struct {
 	intraEdgeAbove, intraEdgeLeft [64]uint16
 	intraPredScratch              [2][64 * 64]byte
 	intraUVTxType                 transform.Type
+	// pal is the screen-content keyframe palette search scratch (palette_sc.go),
+	// allocated on first use.
+	pal *paletteSearch
 
 	// skipRateCDFs prices the inter skip decision's coded alternative
 	// (pframe_lpd1_tx.go exactInterCoeffCost), restarting from skipRateBase
@@ -1220,6 +1223,11 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	pred := st.predY[:n*n]
 	mode := selectIntraModeN(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, n, block.HaveTop, block.HaveLeft, pred)
 	mode, angleDelta := st.improveIntraModeDirectional(src, recon, block, mode, pred, lumaPX, lumaPY, n)
+	// Screen-content keyframes: SVT's luma palette candidates (palette_sc.go).
+	pal := st.keyframePalette(src, block, modeCtx, lumaPX, lumaPY, n, mode, pred)
+	if pal != nil {
+		mode, angleDelta = tile.IntraModeDC, 0
+	}
 
 	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
 		Size: block.Size, X4: block.X4, Y4: block.Y4,
@@ -1246,7 +1254,11 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, tile.ChromaIntraModeDC); err != nil {
 		return fmt.Errorf("mark chroma intra: %w", err)
 	}
-	if err := st.writeNoPaletteMode(modeCtx, block, mode, tile.ChromaIntraModeDC, true); err != nil {
+	if pal != nil {
+		if err := st.writeKeyframePalette(modeCtx, block, mode, pal); err != nil {
+			return fmt.Errorf("palette: %w", err)
+		}
+	} else if err := st.writeNoPaletteMode(modeCtx, block, mode, tile.ChromaIntraModeDC, true); err != nil {
 		return err
 	}
 
@@ -1267,6 +1279,12 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	}
 	afterSkip := func() error {
 		return tile.WriteIntraTransformType(st.w, &st.txCDFs, txTypeReq, transform.TypeDCTDCT)
+	}
+	if pal != nil {
+		// palette_tokens: the color index map, before the residual.
+		if err := tile.WritePaletteTokens(st.w, &st.intraCDFs, st.paletteRequest(block, mode), &pal.res); err != nil {
+			return fmt.Errorf("palette tokens: %w", err)
+		}
 	}
 	if err := st.encodeTXBPred(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, n, st.yQuant, tile.CoeffContextRequest{
 		Plane:      0,

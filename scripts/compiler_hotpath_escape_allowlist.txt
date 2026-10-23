@@ -236,6 +236,8 @@ internal/av1/encoder/loopfilter_apply.go:*:*: make([]threading.FrameWorkLoopFilt
 internal/av1/encoder/loopfilter_apply.go:*:*: make([]threading.FrameWorkLoopFilterBlockRecord, length) escapes to heap in (*loopFilterApplier).init:
 internal/av1/encoder/loopfilter_apply.go:*:*: make([]uint32, size.Schedule) escapes to heap
 internal/av1/encoder/loopfilter_apply.go:*:*: make([]uint32, size.Schedule) escapes to heap in (*loopFilterApplier).bindEdgeList:
+internal/av1/encoder/palette_sc.go:*:*: new(paletteSearch) escapes to heap
+internal/av1/encoder/palette_sc.go:*:*: new(paletteSearch) escapes to heap in (*lossyEncodeState).keyframePalette:
 internal/av1/encoder/pframe.go:*:*: make([]byte, 0, 16384) escapes to heap
 internal/av1/encoder/pframe.go:*:*: make([]byte, 0, 16384) escapes to heap in encodeRepeatPFrameTile:
 internal/av1/encoder/pframe.go:*:*: make([]byte, 0, tdSize + frameSize + groupOBUSize) escapes to heap
