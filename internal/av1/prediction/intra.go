@@ -244,13 +244,7 @@ func fillBlock(block planeBlock, bytesPerSample int, value uint16) {
 }
 
 func fillByteLine(line []byte, value byte) {
-	if len(line) == 0 {
-		return
-	}
-	line[0] = value
-	for filled := 1; filled < len(line); filled <<= 1 {
-		copy(line[filled:], line[:filled])
-	}
+	frame.FillBytes(line, value)
 }
 
 func fillUint16Line(line []byte, value uint16) {

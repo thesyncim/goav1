@@ -260,10 +260,7 @@ func (p *Plane) extendBorders(bytesPerSample int) {
 		case 1:
 			for y := 0; y < height; y++ {
 				row := p.Pix[y*p.Stride : y*p.Stride+p.Stride]
-				edge := row[lastCol]
-				for x := width; x < allocWidth; x++ {
-					row[x] = edge
-				}
+				FillBytes(row[width:allocWidth], row[lastCol])
 			}
 		case 2:
 			for y := 0; y < height; y++ {
