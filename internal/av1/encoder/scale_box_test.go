@@ -142,3 +142,89 @@ func TestWebRTCPyramidHintMatchesFilteredPyramid(t *testing.T) {
 		t.Fatal("stale layers produced a hint")
 	}
 }
+
+func seedTestFrame(w, h, n int) SourceFrame420 {
+	f := SourceFrame420{Y: make([]byte, w*h), U: make([]byte, w*h/4), V: make([]byte, w*h/4), YStride: w, ChromaStride: w / 2, Width: w, Height: h}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			f.Y[y*w+x] = byte(((x+3*n)*7 + (y+n)*13 + ((x+3*n)>>3)*((y+n)>>3)*5) & 0xff)
+		}
+	}
+	for i := range f.U {
+		f.U[i], f.V[i] = 128, 128
+	}
+	return f
+}
+
+// TestWebRTCMESeedFiresOnSimulcastInterFrames checks the cross-layer ME
+// seed: it centers the upper layer's HME on simulcast inter pictures, never
+// on the keyframe (the lower layer ran no ME), never for a lower layer not
+// coded in the picture, and not in an SVC mode.
+func TestWebRTCMESeedFiresOnSimulcastInterFrames(t *testing.T) {
+	for _, tc := range []struct {
+		mode ScalabilityMode
+		want bool
+	}{
+		{ScalabilityModeS2T3, true},
+		{ScalabilityModeL2T3_KEY, false},
+	} {
+		cfg := Config{
+			Resolution:        Resolution{Width: 640, Height: 360},
+			MaxFramerate:      Rational{Num: 30, Den: 1},
+			MinBitrateKbps:    100,
+			MaxBitrateKbps:    900,
+			TargetBitrateKbps: 500,
+			Scalability:       tc.mode,
+		}
+		s, err := NewWebRTCStreamConfig(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for n := 0; n < 4; n++ {
+			if _, err := s.EncodePicture(seedTestFrame(640, 360, n), false); err != nil {
+				t.Fatalf("%s picture %d: %v", tc.mode, n, err)
+			}
+			got := s.encoders[1].hme.seedOn
+			if want := tc.want && n > 0; got != want {
+				t.Fatalf("%s picture %d: seedOn = %v, want %v", tc.mode, n, got, want)
+			}
+			if s.encoders[1].hme.seed != nil {
+				t.Fatalf("%s picture %d: seed left set after the encode", tc.mode, n)
+			}
+		}
+		s.pictureGen++
+		if s.webRTCMESeed(1) != nil {
+			t.Fatalf("%s: a lower layer not coded in the picture seeded", tc.mode)
+		}
+		s.Close()
+	}
+}
+
+func TestBoxInterpolateRow8MatchesScalar(t *testing.T) {
+	const n = 71
+	s0, s1 := boxTestPlane(n, 1, n), boxTestPlane(n, 2, n)[n:]
+	for _, f := range []int{1, 64, 127, 128, 129, 192, 255} {
+		got, want := make([]byte, n), make([]byte, n)
+		boxInterpolateRow8(got, s0, s1, f)
+		boxInterpolateRow(want, s0, s1, f, 128)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("f=%d: SIMD row differs", f)
+		}
+	}
+}
+
+// The 2/3 column fast path computes ScaleFilterCols' BLENDER values.
+func TestBoxFilterColsTwoThirds(t *testing.T) {
+	for _, dw := range []int{8, 9, 672} {
+		sw := dw * 3 / 2
+		s := boxTestPlane(sw, 1, sw)
+		got := make([]byte, dw)
+		boxFilterCols(got, s, 0x4000, 0x18000)
+		for i, x := 0, 0x4000; i < dw; i, x = i+1, x+0x18000 {
+			a, b := int(s[x>>16]), int(s[min(x>>16+1, sw-1)])
+			if want := byte(a + (((x&0xffff)*(b-a) + 0x8000) >> 16)); got[i] != want {
+				t.Fatalf("dw=%d i=%d: %d want %d", dw, i, got[i], want)
+			}
+		}
+	}
+}

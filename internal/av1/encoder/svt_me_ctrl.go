@@ -259,3 +259,33 @@ func svtSearchAreaCorrect(orgX, orgY, ox, oy, w, h, picW, picH, pad int, round8 
 	}
 	return ox, oy, w, h
 }
+
+// hmeSeeded is hmeB64 with level 0 replaced by a lower spatial layer's
+// vector (sx, sy) for this superblock. That layer coded the half-resolution
+// pyramid plane as its picture, so its integer ME already searched level 1's
+// plane over its own HME-centered area; this superblock keeps the level-1
+// refinement (hme_l1_sa around the seed) and everything after it.
+func (p *svtPyramid) hmeSeeded(c *svtMECtrl, px, py, sbW, sbH int, zz uint32, seeds [][2]int) (int, int, uint32) {
+	if zz < c.earlyExit>>2 {
+		return 0, 0, 0
+	}
+	half, six := &p.curHalf, &p.curSix
+	// One level-0 region (hme_level_0's per-region area) centered on the
+	// seed, refined at level 1 with the seeds.
+	var cand [4][2]int
+	n := copy(cand[:], seeds)
+	saW, saH := (p.l0W+7)&^7, p.l0H
+	ox, oy, w, h := svtSearchAreaCorrect(px>>2, py>>2, (seeds[0][0]>>1)-(saW>>1), (seeds[0][1]>>1)-(saH>>1), saW, saH, six.w, six.h, six.border-1, true)
+	if _, x0, y0 := svtHMESearch(six, &p.prevSix, px>>2, py>>2, sbW>>2, sbH>>2, ox, oy, w, h); [2]int{x0 * 2, y0 * 2} != cand[0] {
+		cand[n] = [2]int{x0 * 2, y0 * 2}
+		n++
+	}
+	bestSAD, bx, by := ^uint32(0), 0, 0
+	for _, s := range cand[:n] {
+		ox, oy, w, h := svtSearchAreaCorrect(px>>1, py>>1, s[0]-(svtHMEL1W>>1), s[1]-(svtHMEL1H>>1), svtHMEL1W, svtHMEL1H, half.w, half.h, half.border-1, true)
+		if sad, x1, y1 := svtHMESearch(half, &p.prevHalf, px>>1, py>>1, sbW>>1, sbH>>1, ox, oy, w, h); sad < bestSAD {
+			bestSAD, bx, by = sad, x1*2, y1*2
+		}
+	}
+	return bx, by, bestSAD
+}

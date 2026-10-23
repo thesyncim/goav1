@@ -61,6 +61,12 @@ The project has not published a release tag yet.
   reference at equal or lower bitrate; the top layer is unchanged. An exact
   1/2 step's luma is the upper layer's HME pyramid plane, so the upper layer
   copies it instead of filtering again.
+- In simulcast modes an upper layer's HME takes the layer below's motion
+  as its level-0 result when that layer coded this picture's half-resolution
+  pyramid plane against the same reference: one seed-centered level-0 region
+  and a level-1 refinement of the seeds replace the four-region search.
+  S3T3 single-thread cycles drop 2-5% on the real corpus at -0.4..+0.16%
+  BD-rate per layer (fixed qindex).
 - `VideoEncoder` no longer promotes delta frames to keyframes on detected
   scene cuts: the HME cut detector, `DisableSceneCutKeyframes`,
   `SetSceneCutKeyframes` and qualitybench `-goav1-scene-cut` are removed. This

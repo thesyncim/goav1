@@ -111,6 +111,8 @@ type svtPyramid struct {
 	slotOK            [hmeRefSlots]bool
 	// hint is the next build's precomputed pyramid (setHint), consumed by it.
 	hint svtPyramidHint
+	// halfFromHint marks the current half plane as copied from a hint.
+	halfFromHint bool
 	// l0W, l0H are the level-0 region size of the frame's reference
 	// distance (setDistance).
 	l0W, l0H int
@@ -152,7 +154,7 @@ func svtDownsample2D(dst []byte, dstStride int, src []byte, srcStride, w, h int)
 	}
 }
 
-func buildPyramid(half, six *svtPlane, src SourceFrame420, hint svtPyramidHint) {
+func buildPyramid(half, six *svtPlane, src SourceFrame420, hint svtPyramidHint) (fromHint bool) {
 	hw, hh := src.Width/2, src.Height/2
 	half.size(hw, hh, svtHalfBorder)
 	six.size(hw/2, hh/2, svtSixBorder)
@@ -161,6 +163,7 @@ func buildPyramid(half, six *svtPlane, src SourceFrame420, hint svtPyramidHint) 
 	}
 	if hint.half.Width == hw && hint.half.Height == hh {
 		copyPlaneRows(half.pix[half.org:], half.stride, hint.half.Y, hint.half.YStride, hw, hh)
+		fromHint = true
 	} else {
 		svtDownsample2DArch(half.pix[half.org:], half.stride, src.Y, src.YStride, hw, hh)
 		hint.six = SourceFrame420{}
@@ -172,6 +175,7 @@ func buildPyramid(half, six *svtPlane, src SourceFrame420, hint svtPyramidHint) 
 	}
 	half.pad()
 	six.pad()
+	return fromHint
 }
 
 // build makes src the current pyramid.
@@ -179,11 +183,12 @@ func (p *svtPyramid) build(src SourceFrame420) {
 	hint := p.hint
 	p.hint = svtPyramidHint{}
 	if src.Width/4 < 16 || src.Height/4 < 16 {
+		p.halfFromHint = false
 		p.haveCur, p.havePrev = false, false
 		p.slotOK = [hmeRefSlots]bool{}
 		return
 	}
-	buildPyramid(&p.curHalf, &p.curSix, src, hint)
+	p.halfFromHint = buildPyramid(&p.curHalf, &p.curSix, src, hint)
 	p.haveCur = true
 }
 
