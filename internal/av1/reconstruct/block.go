@@ -147,14 +147,25 @@ func ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst []byte, dstStride 
 	// the eob-bounded 8-bit 32x32 DCT_DCT block reconstructs straight from
 	// the coefficients into dst; a declined block takes the staged path.
 	if bitDepth == 8 && bytesPerSample == 1 && cfg.Transform == transform.TypeDCTDCT &&
-		width == 32 && height == 32 && visibleWidth == 32 && visibleHeight == 32 &&
-		activeRows > 0 && activeRows <= 16 && activeCols > 0 && activeCols <= 16 {
-		if activeRows <= 8 && activeCols <= 8 {
-			if transform.InverseAddDCT32x32Low8(dst, dstStride, dst, dstStride, dequant, scanHeight) {
+		width == height && visibleWidth == width && visibleHeight == height && activeRows > 0 && activeCols > 0 {
+		switch width {
+		case 32:
+			if activeRows <= 8 && activeCols <= 8 {
+				if transform.InverseAddDCT32x32Low8(dst, dstStride, dst, dstStride, dequant, scanHeight) {
+					return nil
+				}
+			} else if activeRows <= 16 && activeCols <= 16 &&
+				transform.InverseAddDCT32x32Low16(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows) {
 				return nil
 			}
-		} else if transform.InverseAddDCT32x32Low16(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows) {
-			return nil
+		case 16:
+			if transform.InverseAddDCT16x16(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols) {
+				return nil
+			}
+		case 8:
+			if transform.InverseAddDCT8x8(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols) {
+				return nil
+			}
 		}
 	}
 	if err := transform.InverseBlockBitDepthRawBounded(transformScratch, dequant, scanHeight, cfg.Size, cfg.Transform, bitDepth, activeRows, activeCols); err != nil {
