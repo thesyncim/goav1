@@ -80,7 +80,11 @@ func InverseAddDCT8x8(dst []byte, dstStride int, pred []byte, predStride int, co
 		return false
 	}
 	var mid [8]archsimd.Int16x8
-	itx8Net(&in, &mid)
+	if activeCols <= 4 {
+		itx8NetLow4(&in, &mid)
+	} else {
+		itx8Net(&in, &mid)
+	}
 	// Round2(x, 1) = (x >> 1) + (x & 1): exact and overflow-free.
 	one := archsimd.BroadcastInt16x8(1)
 	sh1 := archsimd.BroadcastInt16x8(-1)
@@ -98,7 +102,11 @@ func InverseAddDCT8x8(dst []byte, dstStride int, pred []byte, predStride int, co
 	}
 	// Column pass on the transposed rows (lanes = columns), then the add.
 	var out [8]archsimd.Int16x8
-	itx8Net(&mid, &out)
+	if activeRows <= 4 {
+		itx8NetLow4(&mid, &out)
+	} else {
+		itx8Net(&mid, &out)
+	}
 	sh3 := archsimd.BroadcastInt16x8(-3)
 	dp := unsafe.Pointer(unsafe.SliceData(dst))
 	pp := unsafe.Pointer(unsafe.SliceData(pred))
