@@ -205,6 +205,18 @@ func (s *DecodeState) decodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 		if err != nil {
 			return result, fmt.Errorf("decode luma coeffs req=%+v tree=%+v: %w", req.Transform, tree, err)
 		}
+		if !req.Transform.Inter {
+			var walk skipIntraTXBWalk
+			if ok, err := walk.init(&req.Transform, &tree); err != nil {
+				return result, err
+			} else if ok {
+				for walk.next(&scratch.block) {
+					if err := visit(&scratch.block); err != nil {
+						return result, err
+					}
+				}
+			}
+		}
 		return result, nil
 	}
 
@@ -330,6 +342,18 @@ func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s
 	if req.Transform.SkipTransform {
 		if err := coeffCtx.ResetBlock(0, req.Transform.Size, int(req.Transform.X4), int(req.Transform.Y4)); err != nil {
 			return result, err
+		}
+		if !req.Transform.Inter {
+			var walk skipIntraTXBWalk
+			if ok, err := walk.init(&req.Transform, &tree); err != nil {
+				return result, err
+			} else if ok {
+				for walk.next(&scratch.block) {
+					if err := coeffController.VisitBlockCoeffPtr(loopVisit, &scratch.block); err != nil {
+						return result, err
+					}
+				}
+			}
 		}
 		return result, nil
 	}
