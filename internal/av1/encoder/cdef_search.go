@@ -22,6 +22,7 @@ import (
 	"math"
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
+	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/threading"
@@ -463,29 +464,29 @@ func computeCDEFDist8(src []byte, sstride int, filtered []byte, fstride int, dli
 func (s *cdefSearcher) loadCDEFInput(plane []byte, stride, planeW, planeH, x0, y0, w, h int) {
 	const vb, hb = cdef.VerticalBorder, cdef.HorizontalBorder
 	origin := vb*cdef.BStride + hb
+	// Rows [rTop, rBot) and columns [lo, hi) of each row lie inside the
+	// frame; they widen in one LoadSampleRows8Trusted pass (NEON on arm64),
+	// everything else is VeryLarge.
+	rTop, rBot := max(-vb, -y0), min(h+vb, planeH-y0)
+	lo, hi := max(0, hb-x0), min(w+2*hb, planeW-x0+hb)
 	for r := -vb; r < h+vb; r++ {
 		row := s.in[origin+r*cdef.BStride-hb : origin+r*cdef.BStride+w+hb]
-		y := y0 + r
-		if y < 0 || y >= planeH {
+		if r < rTop || r >= rBot {
 			for i := range row {
 				row[i] = cdef.VeryLarge
 			}
 			continue
 		}
-		// Columns [lo, hi) of the row lie inside the frame.
-		lo := max(0, hb-x0)
-		hi := min(len(row), planeW-x0+hb)
 		for i := 0; i < lo; i++ {
 			row[i] = cdef.VeryLarge
 		}
 		for i := hi; i < len(row); i++ {
 			row[i] = cdef.VeryLarge
 		}
-		pr := plane[y*stride+x0-hb+lo : y*stride+x0-hb+hi]
-		dr := row[lo:hi]
-		for i := range dr {
-			dr[i] = uint16(pr[i])
-		}
+	}
+	if rTop < rBot && lo < hi {
+		frame.LoadSampleRows8Trusted(s.in[origin+rTop*cdef.BStride-hb+lo:], cdef.BStride,
+			plane[(y0+rTop)*stride+x0-hb+lo:], stride, hi-lo, rBot-rTop)
 	}
 }
 

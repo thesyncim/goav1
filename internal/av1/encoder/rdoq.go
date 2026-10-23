@@ -2,6 +2,7 @@ package encoder
 
 import (
 	"math/bits"
+	"sync"
 	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
@@ -672,7 +673,7 @@ func rdoqSquareGeometry(n int, plane int) (*rdoqTXB, bool) {
 // rdoqQuantize quantizes the n x n DCT_DCT coefficients tran into qcoeff with
 // SVT's RDOQ pipeline (svt_aom_quantize_inv_quantize with perform_rdoq: the
 // fp quantizer, then svt_av1_optimize_b) and reports whether every level is
-// zero. The caller has armed st.rdoq.
+// zero. The caller has armed the RDOQ tables (rdoqTab).
 func (st *lossyEncodeState) rdoqQuantize(tran []int32, qcoeff []int16, n int, plane int, q quantize.Quantizer) bool {
 	g, ok := rdoqSquareGeometry(n, plane)
 	if !ok {
@@ -694,8 +695,8 @@ func (st *lossyEncodeState) rdoqQuantizeTX(tran []int32, qcoeff []int16, g *rdoq
 	}
 	s := rdoqState{
 		g:       g,
-		tc:      &st.rdoq.coeff[g.txCtx][plane],
-		ec:      &st.rdoq.eob[g.eobSel][plane],
+		tc:      &st.rdoqTab().coeff[g.txCtx][plane],
+		ec:      &st.rdoqTab().eob[g.eobSel][plane],
 		rdmult:  st.rdoqLambda(plane),
 		scan:    g.scan,
 		tcoeff:  tran,
@@ -730,7 +731,7 @@ func (st *lossyEncodeState) armRDOQ() bool {
 		return false
 	}
 	if !st.rdoqReady || st.rdoqQIndex != st.qIndex {
-		st.rdoq.fill(&st.trialCDFs)
+		st.rdoqShared = st.rdoqTable()
 		st.rdoqQIndex = st.qIndex
 		st.rdoqReady = true
 	}
@@ -842,7 +843,7 @@ func (st *lossyEncodeState) svtCoeffCost(qcoeff []int16, size tile.TransformSize
 // svtCoeffCostEOB is svtCoeffCost for a TXB whose end of block is known.
 func (st *lossyEncodeState) svtCoeffCostEOB(qcoeff []int16, g *rdoqTXB, eob int) int64 {
 	plane := g.plane
-	tc := &st.rdoq.coeff[g.txCtx][plane]
+	tc := &st.rdoqTab().coeff[g.txCtx][plane]
 	if eob == 0 {
 		return int64(tc.txbSkip[0][1])
 	}
@@ -850,7 +851,7 @@ func (st *lossyEncodeState) svtCoeffCostEOB(qcoeff []int16, g *rdoqTXB, eob int)
 	levels := st.levels
 	_ = tile.CoeffInitLevels(qcoeff, g.size, levels)
 	cost := int64(tc.txbSkip[0][0])
-	cost += int64(g.eobCost(eob, &st.rdoq.eob[g.eobSel][plane], tc))
+	cost += int64(g.eobCost(eob, &st.rdoqTab().eob[g.eobSel][plane], tc))
 	for c := eob - 1; c >= 0; c-- {
 		pos := int(scan[c])
 		v := int32(qcoeff[pos])
@@ -936,4 +937,34 @@ func (st *lossyEncodeState) svtInterCoeffCost(txPlan realtimeInterTXPlan, lumaTX
 		}
 	}
 	return (cost*lambda + 256) >> 9, true
+}
+
+// rdoqDefaultTables are the coefficient rate tables of the four default
+// coefficient CDF sets, built once per process. Each is immutable after its
+// fill, so every tile coder shares it by pointer.
+var rdoqDefaultTables [tile.CoeffQContexts]struct {
+	once  sync.Once
+	costs rdoqCosts
+}
+
+// rdoqTable fills the rate tables of the current trial CDFs and returns the
+// shared table when they are still the frame's default set (the rate
+// tables are a pure function of the CDFs; every tile coder starts each frame
+// there), else nil after filling the coder's own.
+func (st *lossyEncodeState) rdoqTable() *rdoqCosts {
+	if def := tile.DefaultCoeffCDFs(st.qIndex); st.trialCDFs == *def {
+		t := &rdoqDefaultTables[tile.CoeffQContext(st.qIndex)]
+		t.once.Do(func() { t.costs.fill(def) })
+		return &t.costs
+	}
+	st.rdoqOwn.fill(&st.trialCDFs)
+	return nil
+}
+
+// rdoqTab is the armed RDOQ rate tables.
+func (st *lossyEncodeState) rdoqTab() *rdoqCosts {
+	if st.rdoqShared != nil {
+		return st.rdoqShared
+	}
+	return &st.rdoqOwn
 }

@@ -595,7 +595,11 @@ type lossyEncodeState struct {
 	// the qindex they were built for, the dequantized-coefficient scratch,
 	// and 1 + the plane type of the inter TXB being prepared (0 when RDOQ
 	// is not armed for it).
-	rdoq           rdoqCosts
+	// rdoqShared points at a process-wide immutable default-CDF rate table
+	// (rdoq.go), nil when rdoqOwn holds the tables; struct copies keep both
+	// meanings intact.
+	rdoqShared     *rdoqCosts
+	rdoqOwn        rdoqCosts
 	rdoqReady      bool
 	rdoqQIndex     uint8
 	rdoqDQ         [1024]int32

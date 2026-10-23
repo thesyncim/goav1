@@ -85,7 +85,9 @@ func svtAllSAD8x8_16x16Sub(me *realtimeSBMultiSizeME, src, ref []byte, stride, m
 		}
 		best.StoreArray((*[4]uint32)(unsafe.Pointer(&me.bestSAD[pu8])))
 		bestMV.StoreArray((*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8])))
-		me.update8(5+n, &sad16[n], mvX, mvY)
+		for k := range 8 {
+			me.update(5+n, sad16[n][k], mvX+k, mvY)
+		}
 	}
 }
 
