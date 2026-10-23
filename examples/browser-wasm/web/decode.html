@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>goav1 wasm decoder</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #16181d; --muted: #5d6470;
+    --line: #dde1e7; --accent: #2f6fde; --bad: #c2372b; --good: #1f8a4c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111317; --panel: #1a1d23; --text: #e8eaee; --muted: #9aa1ad;
+            --line: #2b3038; --accent: #6ea0ff; --bad: #ff7a6e; --good: #5fd08f; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .sub a { color: var(--accent); }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end;
+              background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  select, button, input { font: inherit; color: var(--text); background: var(--bg);
+                   border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+  input[type=file] { max-width: 220px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  figure { margin: 16px 0 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+  figcaption { font-size: 12px; color: var(--muted); margin-bottom: 8px; display: flex; justify-content: space-between; }
+  canvas { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 6px; display: block; object-fit: contain; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 16px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 12px; color: var(--muted); }
+  .table-wrap { overflow-x: auto; margin-top: 16px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line);
+          border-radius: 10px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { font-size: 12px; color: var(--muted); font-weight: 500; }
+  #log { margin-top: 16px; font: 12px/1.5 ui-monospace, Menlo, monospace; color: var(--muted);
+         white-space: pre-wrap; max-height: 160px; overflow: auto; }
+  .bad { color: var(--bad); } .good { color: var(--good); }
+</style>
+</head>
+<body>
+<main>
+  <h1>goav1 → WebAssembly AV1 decoder</h1>
+  <p class="sub">IVF → goav1 decoder (wasm, Web Worker, one thread) → I420 VideoFrame → canvas.
+    No WebCodecs decoding involved. <a href="index.html">Encoder demo</a></p>
+
+  <div class="controls">
+    <label>Clip <select id="clip"></select></label>
+    <label>Or your own IVF <input id="file" type="file" accept=".ivf"></label>
+    <label>Wasm build
+      <select id="wasm">
+        <option value="decoder-simd.wasm" selected>TinyGo SIMD128</option>
+        <option value="decoder-simd-nobounds.wasm">TinyGo SIMD128, no bounds checks</option>
+        <option value="decoder-scalar.wasm">TinyGo scalar</option>
+        <option value="decoder-go.wasm">stock Go</option>
+      </select></label>
+    <label>Pace
+      <select id="fps"><option value="30" selected>30 fps</option><option value="60">60 fps</option><option value="0">as fast as possible</option></select></label>
+    <button id="play" class="primary">Play</button>
+    <button id="stop" disabled>Stop</button>
+    <button id="bench">Benchmark</button>
+    <button id="benchAll">Benchmark all builds</button>
+  </div>
+
+  <figure><figcaption><span>Decoded by goav1 in wasm</span><span id="outInfo"></span></figcaption>
+    <canvas id="out"></canvas></figure>
+
+  <div class="stats">
+    <div class="stat"><b id="sDec">–</b><span>decode ms / frame</span></div>
+    <div class="stat"><b id="sFps">–</b><span>shown fps</span></div>
+    <div class="stat"><b id="sFrames">–</b><span>frames shown</span></div>
+  </div>
+
+  <div class="table-wrap"><table>
+    <thead><tr><th>clip</th><th>build</th><th>frames</th><th>ms / frame</th><th>fps</th><th>allocs / frame</th><th>KiB alloc / frame</th><th>MD5 vs corpus</th></tr></thead>
+    <tbody id="results"></tbody>
+  </table></div>
+  <div id="log"></div>
+</main>
+<script src="decode.js"></script>
+</body>
+</html>

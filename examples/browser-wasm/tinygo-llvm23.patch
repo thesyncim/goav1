@@ -1,0 +1,206 @@
+diff --git a/cgo/libclang_config_llvm23.go b/cgo/libclang_config_llvm23.go
+new file mode 100644
+index 0000000..75e7db5
+--- /dev/null
++++ b/cgo/libclang_config_llvm23.go
+@@ -0,0 +1,18 @@
++//go:build !byollvm && llvm23
++
++package cgo
++
++// Homebrew may still ship LLVM 23 under the unversioned llvm formula.
++// Search both llvm@23 and llvm for headers and libraries.
++
++/*
++#cgo linux        CFLAGS:  -I/usr/include/llvm-23 -I/usr/include/llvm-c-23 -I/usr/lib/llvm-23/include -I/usr/lib64/llvm23/include
++#cgo darwin,amd64 CFLAGS:  -I/usr/local/opt/llvm@23/include -I/usr/local/opt/llvm/include
++#cgo darwin,arm64 CFLAGS:  -I/opt/homebrew/opt/llvm@23/include -I/opt/homebrew/opt/llvm/include
++#cgo freebsd      CFLAGS:  -I/usr/local/llvm23/include
++#cgo linux        LDFLAGS: -L/usr/lib/llvm-23/lib -lclang
++#cgo darwin,amd64 LDFLAGS: -L/usr/local/opt/llvm@23/lib -L/usr/local/opt/llvm/lib -lclang
++#cgo darwin,arm64 LDFLAGS: -L/opt/homebrew/opt/llvm@23/lib -L/opt/homebrew/opt/llvm/lib -lclang
++#cgo freebsd      LDFLAGS: -L/usr/local/llvm23/lib -lclang
++*/
++import "C"
+diff --git a/compiler/symbol.go b/compiler/symbol.go
+index 02e7957..abb8b28 100644
+--- a/compiler/symbol.go
++++ b/compiler/symbol.go
+@@ -461,6 +461,11 @@ func (c *compilerContext) parsePragmas(info *functionInfo, f *ssa.Function) {
+ 			info.linkName = parts[1]
+ 			info.wasmName = info.linkName
+ 			info.exported = true
++			if info.linkName == "llvm.returnaddress" && llvmutil.Version() >= 23 {
++				// LLVM 23 overloads llvm.returnaddress on the address space of
++				// the returned pointer and rejects the unmangled name.
++				info.linkName = "llvm.returnaddress.p0"
++			}
+ 		case "//go:interrupt":
+ 			if slices.Contains(f.Pkg.Pkg.Imports(), types.Unsafe) {
+ 				info.interrupt = true
+diff --git a/go.mod b/go.mod
+index d0e20ed..9c6e1b4 100644
+--- a/go.mod
++++ b/go.mod
+@@ -24,7 +24,7 @@ require (
+ 	golang.org/x/tools v0.47.0
+ 	gopkg.in/yaml.v2 v2.4.0
+ 	tinygo.org/x/espflasher v0.8.1
+-	tinygo.org/x/go-llvm v0.0.0-20260721072906-185673ef46a5
++	tinygo.org/x/go-llvm v0.0.0-20261019104553-b75cf7a8b7bc
+ )
+ 
+ require (
+diff --git a/go.sum b/go.sum
+index b54514b..6f7d3fe 100644
+--- a/go.sum
++++ b/go.sum
+@@ -122,3 +122,5 @@ tinygo.org/x/espflasher v0.8.1 h1:Vp+xA16af9NKVOOSJCcrJHqPSLDCpbfCd/TG3x449ks=
+ tinygo.org/x/espflasher v0.8.1/go.mod h1:YLkCtOCz6gdrbueTi6uZbGPSYduTYt62JdNGmiGxgc0=
+ tinygo.org/x/go-llvm v0.0.0-20260721072906-185673ef46a5 h1:0PKRhM1INWAi7PdIng1BHMPTDaRcOmv1UymdTgZ76Jo=
+ tinygo.org/x/go-llvm v0.0.0-20260721072906-185673ef46a5/go.mod h1:GFbusT2VTA4I+l4j80b17KFK+6whv69Wtny5U+T8RR0=
++tinygo.org/x/go-llvm v0.0.0-20261019104553-b75cf7a8b7bc h1:XLpqwFwcXUyBkR15x0ACEuvLA8GbW9ruVjK/er9DPEI=
++tinygo.org/x/go-llvm v0.0.0-20261019104553-b75cf7a8b7bc/go.mod h1:GFbusT2VTA4I+l4j80b17KFK+6whv69Wtny5U+T8RR0=
+diff --git a/interp/branch.go b/interp/branch.go
+new file mode 100644
+index 0000000..8d07763
+--- /dev/null
++++ b/interp/branch.go
+@@ -0,0 +1,43 @@
++package interp
++
++// This file contains all decoding of LLVM branch instructions, so that changes
++// in how LLVM represents them only need to be handled here.
++
++import "tinygo.org/x/go-llvm"
++
++// isBranch returns whether inst is a (conditional or unconditional) br
++// instruction.
++func isBranch(inst llvm.Value) bool {
++	return !inst.IsABranchInst().IsNil()
++}
++
++// isCondBranch returns whether inst is a conditional br instruction.
++func isCondBranch(inst llvm.Value) bool {
++	return isBranch(inst) && inst.SuccessorsCount() == 2
++}
++
++// isUncondBranch returns whether inst is an unconditional br instruction.
++func isUncondBranch(inst llvm.Value) bool {
++	return isBranch(inst) && inst.SuccessorsCount() == 1
++}
++
++// branchCondition returns the i1 condition of a conditional br instruction.
++func branchCondition(inst llvm.Value) llvm.Value {
++	// The bindings lack LLVMGetCondition, so read the operand directly.
++	return inst.Operand(0)
++}
++
++// branchThen and branchElse return the destination of a conditional br
++// instruction when the condition is true or false, respectively. Successors
++// are used instead of operands because the successor order is stable while
++// the operand order is not (it is reversed in LLVM 22 and older).
++func branchThen(inst llvm.Value) llvm.BasicBlock { return inst.Successor(0) }
++func branchElse(inst llvm.Value) llvm.BasicBlock { return inst.Successor(1) }
++
++// branchTarget returns the destination of an unconditional br instruction.
++func branchTarget(inst llvm.Value) llvm.BasicBlock { return inst.Successor(0) }
++
++// opBr stands in for llvm.Br, which LLVM 23 split into UncondBr and CondBr
++// (go-llvm no longer defines llvm.Br there). The compiler tags every branch
++// instruction with it.
++const opBr llvm.Opcode = 1 << 20
+diff --git a/interp/compiler.go b/interp/compiler.go
+index f4c8fd2..d9a0027 100644
+--- a/interp/compiler.go
++++ b/interp/compiler.go
+@@ -95,6 +95,9 @@ func (r *runner) compileFunction(llvmFn llvm.Value) *function {
+ 		for llvmInst := llvmBB.FirstInstruction(); !llvmInst.IsNil(); llvmInst = llvm.NextInstruction(llvmInst) {
+ 			// Create instruction skeleton.
+ 			opcode := llvmInst.InstructionOpcode()
++			if isBranch(llvmInst) {
++				opcode = opBr
++			}
+ 			inst := instruction{
+ 				opcode:     opcode,
+ 				localIndex: len(fn.locals),
+@@ -113,31 +116,23 @@ func (r *runner) compileFunction(llvmFn llvm.Value) *function {
+ 						r.getValue(llvmInst.Operand(0)),
+ 					}
+ 				}
+-			case llvm.Br:
+-				// Branch instruction. Can be either a conditional branch (with
+-				// 3 operands) or unconditional branch (with just one basic
+-				// block operand).
+-				numOperands := llvmInst.OperandsCount()
+-				switch numOperands {
+-				case 3:
+-					// Conditional jump to one of two blocks. Comparable to an
+-					// if/else in procedural languages.
+-					thenBB := llvmInst.Operand(2)
+-					elseBB := llvmInst.Operand(1)
+-					inst.operands = []value{
+-						r.getValue(llvmInst.Operand(0)),
+-						literalValue{uint32(blockIndices[thenBB])},
+-						literalValue{uint32(blockIndices[elseBB])},
+-					}
+-				case 1:
+-					// Unconditional jump to a target basic block. Comparable to
+-					// a jump in C and Go.
+-					jumpBB := llvmInst.Operand(0)
++			case opBr:
++				// Branch instruction. Can be either a conditional branch or an
++				// unconditional branch.
++				blockIndex := func(bb llvm.BasicBlock) literalValue {
++					return literalValue{uint32(blockIndices[bb.AsValue()])}
++				}
++				switch {
++				case isCondBranch(llvmInst):
+ 					inst.operands = []value{
+-						literalValue{uint32(blockIndices[jumpBB])},
++						r.getValue(branchCondition(llvmInst)),
++						blockIndex(branchThen(llvmInst)),
++						blockIndex(branchElse(llvmInst)),
+ 					}
++				case isUncondBranch(llvmInst):
++					inst.operands = []value{blockIndex(branchTarget(llvmInst))}
+ 				default:
+-					panic("unknown number of operands")
++					panic("interp: unknown branch instruction form")
+ 				}
+ 			case llvm.Switch:
+ 				// Compile to an array of (value, label) pairs, of which the
+@@ -385,7 +380,6 @@ func (r *runner) compileFunction(llvmFn llvm.Value) *function {
+ // can be useful for debug logging.
+ var instructionNameMap = [...]string{
+ 	llvm.Ret:         "ret",
+-	llvm.Br:          "br",
+ 	llvm.Switch:      "switch",
+ 	llvm.IndirectBr:  "indirectbr",
+ 	llvm.Invoke:      "invoke",
+diff --git a/interp/interpreter.go b/interp/interpreter.go
+index 3bf8979..a01f357 100644
+--- a/interp/interpreter.go
++++ b/interp/interpreter.go
+@@ -182,7 +182,7 @@ func (r *runner) run(fn *function, params []value, parentMem *memoryView, indent
+ 			}
+ 			// Return instruction doesn't return anything, it's just 'ret void'.
+ 			return nil, mem, nil
+-		case llvm.Br:
++		case opBr:
+ 			switch len(operands) {
+ 			case 1:
+ 				// Unconditional branch: [nextBB]
+diff --git a/interp/memory.go b/interp/memory.go
+index a57b1fe..d99c918 100644
+--- a/interp/memory.go
++++ b/interp/memory.go
+@@ -166,7 +166,7 @@ func (mv *memoryView) markExternal(llvmValue llvm.Value, mark uint8) error {
+ 								}
+ 							}
+ 						}
+-						if opcode == llvm.Br || opcode == llvm.Switch {
++						if isBranch(inst) || opcode == llvm.Switch {
+ 							// These don't affect memory. Skipped here because
+ 							// they also have a label as operand.
+ 							continue
