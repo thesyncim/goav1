@@ -48,3 +48,13 @@ func InverseAdd16x16Hybrid(dst []byte, dstStride int, pred []byte, predStride in
 func InverseAdd8x8Hybrid(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
 	return false
 }
+
+// InverseAddDCT16x32 is the fused path for the 8-bit 16x32 DCT_DCT block.
+func InverseAddDCT16x32(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
+	return false
+}
+
+// InverseAddDCT32x16 is the fused path for the 8-bit 32x16 DCT_DCT block.
+func InverseAddDCT32x16(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
+	return false
+}
