@@ -97,14 +97,10 @@ func NewScaleFactors(refWidth int, refHeight int, curWidth int, curHeight int) (
 	if !ok {
 		return ScaleFactors{}, ErrInvalidMotion
 	}
-	xStep, ok := fixedPointScale(refWidth, curWidth, ScaleSubpelBits)
-	if !ok {
-		return ScaleFactors{}, ErrInvalidMotion
-	}
-	yStep, ok := fixedPointScale(refHeight, curHeight, ScaleSubpelBits)
-	if !ok {
-		return ScaleFactors{}, ErrInvalidMotion
-	}
+	// libaom fixed_point_scale_to_coarse_point_scale and dav1d svc step: the
+	// per-sample step rounds the Q14 scale, not the size ratio directly.
+	xStep := (xScaleFP + 1<<(RefScaleShift-ScaleSubpelBits-1)) >> (RefScaleShift - ScaleSubpelBits)
+	yStep := (yScaleFP + 1<<(RefScaleShift-ScaleSubpelBits-1)) >> (RefScaleShift - ScaleSubpelBits)
 	return ScaleFactors{
 		XScaleFP: uint16(xScaleFP),
 		YScaleFP: uint16(yScaleFP),

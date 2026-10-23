@@ -460,6 +460,40 @@ var profileClips = []struct {
 			"fcb1155a643c1231c2c9478661328e3c",
 		},
 	},
+	// Random frame-size changes (spatial resampling) with variance AQ:
+	// inter frames predict from references at other sizes, upscaled and
+	// downscaled, including odd luma sizes whose chroma scales by the luma
+	// ratio, and pools bind each frame at its own size. Synthetic source:
+	//	ffmpeg -f lavfi -i "testsrc2=size=192x108:rate=30,noise=alls=12:allf=t" \
+	//	  -frames:v 40 -pix_fmt yuv420p src.y4m
+	//	aomenc --ivf --limit=20 --good --cpu-used=6 --end-usage=q \
+	//	  --cq-level=40 --lag-in-frames=6 --aq-mode=1 --resize-mode=2 \
+	//	  -o profile0-420-8bit-resize-random-192x108.ivf src.y4m
+	{
+		file: "profile0-420-8bit-resize-random-192x108.ivf",
+		frameMD5Hex: []string{
+			"15d54d2927d86582a07ee4ff28b30f5c",
+			"26ab0498a46ffc08829fb772322c0ac9",
+			"ba38a24c62696de266963a1046c81e79",
+			"461975b38f020035a34b3c56cae1c285",
+			"488d3377ae5182a47e07bb90bb5b691e",
+			"31d6e2d2d8a59fabb9b435b3b0df3642",
+			"35b76e50eedb15671bb5bdbf13aa77cb",
+			"3826a73a9ccd75cbbfcf25a9ae3a90a5",
+			"5bebbfd3876e9201115fbaa4f6204ffa",
+			"1dc453aee6325991d930146a9f32cb4a",
+			"d88092b526084485a210406dfed49c1d",
+			"3d1fd40a59820cf3220b52e271b05f55",
+			"c28456b23fa1f359f5e8c7f3e233d2c1",
+			"b57850ad944140b61d045dc44604e8e0",
+			"f28be6835a144494562762f910986b2c",
+			"735fc8b6db7f5742b95b5b85c29466e1",
+			"5e0ceebe2d4eb433d449a3348e5f2524",
+			"ae06087df2103429b399015677239d8f",
+			"9d30d30690145f64f90636597acab312",
+			"5fd6cd5ff60c3672863aa20c73353d3c",
+		},
+	},
 }
 
 func TestSimpleDecoderZeroValueGuards(t *testing.T) {
@@ -3519,7 +3553,7 @@ func decodeLowLevel(t *testing.T, ivf []byte) [][16]byte {
 		t.Fatal("stream plan did not identify a bind event")
 	}
 
-	format, err := av1.FrameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
+	format, err := av1.FramePoolFormatFromSequence(plan.Bind.Sequence, 64)
 	if err != nil {
 		t.Fatalf("FrameCodedFormatFromHeaders: %v", err)
 	}
@@ -3667,7 +3701,7 @@ func newPublicRTPDecodeHarnessWithPlan(t *testing.T, plan av1.DecoderFrameWorkRe
 		t.Fatalf("worker pool: %v", err)
 	}
 
-	format, err := av1.FrameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
+	format, err := av1.FramePoolFormatFromSequence(plan.Bind.Sequence, 64)
 	if err != nil {
 		t.Fatalf("FrameCodedFormatFromHeaders: %v", err)
 	}

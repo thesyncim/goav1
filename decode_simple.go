@@ -276,6 +276,17 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: postfilter scratch plan: %w", err)
 	}
+	// Pool slots fit the largest coded frame in the stream; each frame binds a
+	// slot at its own size (dav1d allocates every picture at its frame size).
+	if motionSize.CodedWidth > uint32(format.Width) || motionSize.Height > uint32(format.Height) {
+		maxSize := plan.Bind.Event.FrameSize
+		maxSize.CodedWidth = max(maxSize.CodedWidth, motionSize.CodedWidth)
+		maxSize.Height = max(maxSize.Height, motionSize.Height)
+		if format, err = FrameCodedFormatFromHeaders(plan.Bind.Sequence, maxSize, 64); err != nil {
+			workerPool.Close()
+			return nil, fmt.Errorf("goav1: frame format from stream plan: %w", err)
+		}
+	}
 	arenaSize, err := decoderArenaSizeFor(format, outputFormat, useExternal, surfaceCount, plan.Size, postArena)
 	if err != nil {
 		workerPool.Close()

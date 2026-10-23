@@ -9,6 +9,7 @@ import (
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/motion"
+	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
 // frameWorkScaledRefDisabledEnv force-disables routing scaled-reference inter
@@ -248,4 +249,107 @@ func frameWorkPredictScaledReferencePlaneWithDimsAndFilterSizeScratch(dst frame.
 		return ErrInvalidBatch
 	}
 	return nil
+}
+
+// referenceScale returns the scale factors of reference against the current
+// frame. dav1d derives them once per reference from the luma frame sizes
+// (decode.c: svc[i][0].scale/step from ref_coded_width and width[0]), and
+// chroma predicts with the same factors, so an odd luma size scales chroma by
+// the luma ratio rather than by the rounded chroma plane sizes.
+func (b *FrameWorkBatch) referenceScale(reference FrameWorkReference) (motion.ScaleFactors, bool, error) {
+	index := int(reference)
+	if index < 0 || index >= parser.InterRefsPerFrame || index >= len(b.References) || b.References[index] == nil {
+		return motion.ScaleFactors{}, false, ErrInvalidBatch
+	}
+	refFrame := b.References[index]
+	curWidth, curHeight := int(b.FrameSize.CodedWidth), int(b.FrameSize.Height)
+	if refFrame.Format.Width == curWidth && refFrame.Format.Height == curHeight {
+		return motion.ScaleFactors{Identity: true}, true, nil
+	}
+	if b.Sequence.ScaledReferencePredictionDisabled {
+		return motion.ScaleFactors{}, false, ErrInvalidBatch
+	}
+	sf, err := motion.NewScaleFactors(refFrame.Format.Width, refFrame.Format.Height, curWidth, curHeight)
+	if err != nil {
+		return motion.ScaleFactors{}, false, ErrInvalidBatch
+	}
+	return sf, false, nil
+}
+
+// referenceSameSize reports whether reference has the current frame's luma
+// size, the condition dav1d's unscaled mc() path requires.
+func (b *FrameWorkBatch) referenceSameSize(reference FrameWorkReference) bool {
+	index := int(reference)
+	if index < 0 || index >= parser.InterRefsPerFrame || index >= len(b.References) || b.References[index] == nil {
+		return false
+	}
+	f := b.References[index]
+	return f.Format.Width == int(b.FrameSize.CodedWidth) && f.Format.Height == int(b.FrameSize.Height)
+}
+
+// frameWorkPredictScaledSF predicts one plane block from a scaled reference
+// with the reference's frame-level scale factors.
+func frameWorkPredictScaledSF(dst frame.Plane, ref frame.Plane, sf motion.ScaleFactors,
+	bytesPerSample int, bitDepth uint8,
+	dstX int, dstY int, blockX int, blockY int, width int, height int, filterWidth int, filterHeight int, mv motion.Vector,
+	subsamplingX bool, subsamplingY bool, filters motion.InterpFilters, scratch *motion.ScaledConvolveScratch) error {
+	startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(blockX, blockY, mv, subsamplingX, subsamplingY)
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	xTable, err := motion.SubpelKernelTableFor(filters.X, filterWidth)
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	yTable, err := motion.SubpelKernelTableFor(filters.Y, filterHeight)
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	switch bytesPerSample {
+	case 1:
+		if err := motion.ConvolveScale2D8ClampedWithScratch(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, scratch); err != nil {
+			return ErrInvalidBatch
+		}
+	case 2:
+		if err := motion.ConvolveScale2DHighBDClampedWithScratch(dst, ref, bitDepth, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, scratch); err != nil {
+			return ErrInvalidBatch
+		}
+	default:
+		return ErrInvalidBatch
+	}
+	return nil
+}
+
+// frameWorkPredictScaledToConvBufSF is frameWorkPredictScaledSF at compound
+// precision.
+func frameWorkPredictScaledToConvBufSF(buf *motion.CompoundConvBuf, ref frame.Plane, sf motion.ScaleFactors,
+	geom frameWorkPredictionPlaneGeometry, bitDepth uint8, mv motion.Vector, filters motion.InterpFilters,
+	scratch *motion.ScaledConvolveScratch) error {
+	startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(geom.X, geom.Y, mv, geom.SubsamplingX, geom.SubsamplingY)
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	xTable, err := motion.SubpelKernelTableFor(filters.X, geom.filterWidth())
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	yTable, err := motion.SubpelKernelTableFor(filters.Y, geom.filterHeight())
+	if err != nil {
+		return ErrInvalidBatch
+	}
+	if err := motion.PredictScaledCompoundRefToConvBufWithScratch(buf, ref, geom.bytesPerSample(), bitDepth,
+		geom.width(), geom.height(), startX, xStep, startY, yStep, xTable, yTable, scratch); err != nil {
+		return ErrInvalidBatch
+	}
+	return nil
+}
+
+// frameWorkPredictScaledToBufferSF is the inter-intra / masked-compound
+// staging form of frameWorkPredictScaledSF.
+func frameWorkPredictScaledToBufferSF(dst frame.Plane, ref frame.Plane, sf motion.ScaleFactors,
+	geom frameWorkPredictionPlaneGeometry, bitDepth uint8,
+	dstX int, dstY int, blockX int, blockY int, filterWidth int, filterHeight int, mv motion.Vector, filters motion.InterpFilters,
+	scratch *motion.ScaledConvolveScratch) error {
+	return frameWorkPredictScaledSF(dst, ref, sf, geom.bytesPerSample(), bitDepth, dstX, dstY, blockX, blockY,
+		geom.width(), geom.height(), filterWidth, filterHeight, mv, geom.SubsamplingX, geom.SubsamplingY, filters, scratch)
 }

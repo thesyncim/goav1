@@ -144,7 +144,7 @@ func TestFrameFormatHelpersKeepCodedSurfaceSeparateFromOutput(t *testing.T) {
 
 func TestAcquireFrameSurfaceRejectsFormatMismatch(t *testing.T) {
 	pool := testFramePool(t, 1)
-	_, _, err := AcquireFrameSurface(&pool, testSequence(), testFrameSize(32, 16), 32)
+	_, _, err := AcquireFrameSurface(&pool, testSequence(), testFrameSize(80, 16), 32)
 	if !errors.Is(err, frame.ErrInvalidFormat) {
 		t.Fatalf("AcquireFrameSurface err=%v want %v", err, frame.ErrInvalidFormat)
 	}
@@ -235,7 +235,7 @@ func TestBeginFrameSurfaceRejectsFormatBeforeAcquire(t *testing.T) {
 	_, _, _, err := BeginFrameSurface(nil, &pool, testSequence(), &Event{
 		Kind:        EventFrameHeader,
 		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
-		FrameSize:   testFrameSize(32, 16),
+		FrameSize:   testFrameSize(80, 16),
 	}, 32, nil)
 	if !errors.Is(err, frame.ErrInvalidFormat) {
 		t.Fatalf("BeginFrameSurface err=%v want %v", err, frame.ErrInvalidFormat)
