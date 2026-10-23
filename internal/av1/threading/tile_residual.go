@@ -2331,6 +2331,12 @@ func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoo
 		return nil
 	}
 
+	if done, err := s.reconstructTXBBound(visit, block, cf, activeRows, activeCols, dcOnly); done {
+		if err == nil {
+			s.stats.Residuals++
+		}
+		return err
+	}
 	var geom frameWorkBlockCoeffGeometry
 	var err error
 	if block.Plane == 0 && s.lumaReady {
