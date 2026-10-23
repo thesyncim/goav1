@@ -728,10 +728,21 @@ type lossyEncodeState struct {
 	mds0Level uint8
 	mds0Rates tile.InterModeRateTables
 	// mds0IntraRates prices the DC_PRED candidate light-PD1 injects next to
-	// the inter candidates (pframe_mds0.go mds0IntraDCWins); mds0IntraOK
+	// the inter candidates (pframe_mds0.go mds0IntraWins); mds0IntraOK
 	// reports that the frame-start tables were built. mds0BestCost and
 	// mds0BestVar carry the inter winner's RD cost and residual variance.
 	mds0IntraRates tile.IntraDCRateTables
+	// mds0IntraModeRates extends mds0IntraRates to the screen-content intra
+	// candidates (pframe_intra_sc.go); mdMEDist is the block's md_me_dist,
+	// the smallest post-sub-pel ME cost (^0 when no sub-pel search ran).
+	mds0IntraModeRates svtIntraModeRates
+	mdMEDist           uint64
+	// intraEdgeAbove / intraEdgeLeft hold one block's resolved intra edges
+	// and intraPredScratch a candidate prediction; intraUVTxType is the
+	// implicit chroma transform type prepareIntraTXB and emitIntraTXB use.
+	intraEdgeAbove, intraEdgeLeft [64]uint16
+	intraPredScratch              [2][64 * 64]byte
+	intraUVTxType                 transform.Type
 
 	// skipRateCDFs prices the inter skip decision's coded alternative
 	// (pframe_lpd1_tx.go exactInterCoeffCost), restarting from skipRateBase
@@ -766,7 +777,7 @@ type lossyEncodeState struct {
 	// the light-PD1 TX bypass.
 	mds0BestRate int64
 	// mds0Intra carries the DC candidate's MDS0 statistics when it won the
-	// block (mds0IntraDCWins): the inputs of the intra full loop's TX
+	// block (mds0IntraWins): the inputs of the intra full loop's TX
 	// shortcuts (pframe_lpd1_intra.go).
 	mds0Intra mds0IntraStats
 	// refPads holds the padded copies of the frame's references (refpad.go),
@@ -1493,7 +1504,7 @@ func (st *lossyEncodeState) prepareIntraTXB(srcPlane []byte, stride int, px, py,
 	residual := &st.resScratch
 	residualBlockImpl(residual[:n], srcPlane, py*stride+px, stride, pred, w, w, h)
 	tran := &st.tranScratch
-	if err := forwardTransformBlock8BitResidualTrusted(tran[:cn], residual[:n], st.dqScratch[:n], w, h, transform.TypeDCTDCT); err != nil {
+	if err := forwardTransformBlock8BitResidualTrusted(tran[:cn], residual[:n], st.dqScratch[:n], w, h, st.intraUVTxType); err != nil {
 		return geo, false, err
 	}
 	if st.pfN4 {
@@ -1516,7 +1527,7 @@ func (st *lossyEncodeState) emitIntraTXB(reconPlane, pred []byte, stride int, px
 	if err != nil {
 		return err
 	}
-	return st.reconInterTXBResult(reconPlane, pred, w, stride, px, py, w, h, q, qcoeff, geo, scan, transform.TypeDCTDCT, res)
+	return st.reconInterTXBResult(reconPlane, pred, w, stride, px, py, w, h, q, qcoeff, geo, scan, st.intraUVTxType, res)
 }
 
 // writeIntraTXB codes one intra DCT_DCT TXB through the size-specialized

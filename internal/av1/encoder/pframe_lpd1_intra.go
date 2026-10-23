@@ -26,6 +26,7 @@ import (
 	"math/bits"
 
 	"github.com/thesyncim/goav1/internal/av1/tile"
+	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
 // intraChromaGeom is the chroma side of an intra block in an inter frame.
@@ -49,7 +50,7 @@ type intraFullLoopResult struct {
 // st.predY (stride n): luma into qY, chroma into qU and qV. Planes the full
 // loop skips are left all-zero; their reconstruction is the prediction.
 func (st *lossyEncodeState) lpd1IntraFullLoop(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit,
-	lumaPX, lumaPY, n int, lumaTX tile.TransformSize, cg *intraChromaGeom, qY, qU, qV []int16) (intraFullLoopResult, error) {
+	lumaPX, lumaPY, n int, lumaTX tile.TransformSize, mode tile.IntraMode, uvMode tile.ChromaIntraMode, cg *intraChromaGeom, qY, qU, qV []int16) (intraFullLoopResult, error) {
 	res := intraFullLoopResult{uZero: true, vZero: true}
 	pred := st.predY[:n*n]
 	light := st.lpd1Tx.enabled && videoColorIs420(st.color)
@@ -60,10 +61,13 @@ func (st *lossyEncodeState) lpd1IntraFullLoop(src SourceFrame420, recon *SourceF
 		dec = st.lpd1SB(lumaPX, lumaPY)
 		if s := &st.mds0Intra; s.valid {
 			useShortcuts, _ = st.lpd1TxDetect(s.variance, n, n)
-			// full_dist is the vf sse against the DC prediction:
-			// sum (s - dc)^2 = sum s^2 - 2 dc sum s + n dc^2.
-			dc := int64(pred[0])
-			sse := int64(s.srcSSE) - 2*dc*int64(s.srcSum) + int64(n*n)*dc*dc
+			// full_dist is the vf sse against the prediction; for DC from the
+			// source moments: sum (s - dc)^2 = sum s^2 - 2 dc sum s + n dc^2.
+			sse := int64(s.srcSSE)
+			if s.mode == tile.IntraModeDC {
+				dc := int64(pred[0])
+				sse = int64(s.srcSSE) - 2*dc*int64(s.srcSum) + int64(n*n)*dc*dc
+			}
 			performTX = !st.lpd1BypassTXRate(s.lumaRate, uint32(sse), n, n, dec.bypassTh, st.lpd1FullLambda(dec))
 		}
 	}
@@ -99,10 +103,24 @@ func (st *lossyEncodeState) lpd1IntraFullLoop(src SourceFrame420, recon *SourceF
 			}
 		}
 	}
-	// The DC predictions are the reconstruction of a plane the loop skips.
+	// The chroma predictions are the reconstruction of a plane the loop
+	// skips. uvMode is DC_PRED or intra_luma_to_chroma of the luma mode.
 	predU, predV := st.predU[:cg.cw*cg.ch], st.predV[:cg.cw*cg.ch]
-	fillRect(predU, dcPredictRect(recon.U, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, cg.haveTop, cg.haveLeft))
-	fillRect(predV, dcPredictRect(recon.V, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, cg.haveTop, cg.haveLeft))
+	if uvMode == tile.ChromaIntraModeDC {
+		fillRect(predU, dcPredictRect(recon.U, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, cg.haveTop, cg.haveLeft))
+		fillRect(predV, dcPredictRect(recon.V, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, cg.haveTop, cg.haveLeft))
+	} else {
+		cw, ch := st.chromaPlaneDims(src)
+		if err := st.svtPredictIntraBlock(predU, recon.U, src.ChromaStride, cw, ch, cg.x, cg.y, cg.cw, cg.ch, cg.haveTop, cg.haveLeft, mode); err != nil {
+			return res, err
+		}
+		if err := st.svtPredictIntraBlock(predV, recon.V, src.ChromaStride, cw, ch, cg.x, cg.y, cg.cw, cg.ch, cg.haveTop, cg.haveLeft, mode); err != nil {
+			return res, err
+		}
+	}
+	// The chroma transform type is implicit from the uv mode.
+	st.intraUVTxType = svtIntraUVTxType(uvMode, cg.tx)
+	defer func() { st.intraUVTxType = transform.TypeDCTDCT }()
 	if comp == lpd1ComponentLuma {
 		clear(qU[:res.chromaGeo.coeffCount])
 		clear(qV[:res.chromaGeo.coeffCount])

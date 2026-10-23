@@ -74,7 +74,9 @@ func (st *lossyEncodeState) pblockSubpel(src SourceFrame420, refPlane []byte, re
 	if ctrls == nil || (ctrls.skipZeroMV && mv == (motion.Vector{})) {
 		return mv, fullSAD
 	}
-	refined := st.svtSubpelSearch(src.Y, refPlane, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, refMV, ctrls, st.lpd1FullLambda(dec))
+	refined, besterr := st.svtSubpelSearch(src.Y, refPlane, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, refMV, ctrls, st.lpd1FullLambda(dec))
+	// md_me_dist: the smallest post-sub-pel cost over the references searched.
+	st.mdMEDist = min(st.mdMEDist, besterr)
 	if refined == mv {
 		return mv, fullSAD
 	}
@@ -104,6 +106,7 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 	lumaPX, lumaPY, bw, bh int) (pblockMotion, error) {
 
 	st.mePredY.valid = false
+	st.mdMEDist = ^uint64(0)
 	n := bw
 	var out pblockMotion
 	scaledReference := ref.Width != src.Width || ref.Height != src.Height
