@@ -90,28 +90,13 @@ func (c *Cursor) ReadCoeffTokens2DUpdateUnchecked(scan []CoeffScanContext, strid
 			c.tellOffs = int16(tellOffs)
 		}
 		count := values[4]
-		rate := uint(5 + (count >> 4))
+		rate := uint(5 + ((count >> 4) & 3))
 		c0u := uint32(c0)
 		c1u := uint32(c1)
 		c2u := uint32(c2)
-		switch symbol {
-		case 0:
-			c0u -= c0u >> rate
-			c1u -= c1u >> rate
-			c2u -= c2u >> rate
-		case 1:
-			c0u += (CDFProbTop - c0u) >> rate
-			c1u -= c1u >> rate
-			c2u -= c2u >> rate
-		case 2:
-			c0u += (CDFProbTop - c0u) >> rate
-			c1u += (CDFProbTop - c1u) >> rate
-			c2u -= c2u >> rate
-		default:
-			c0u += (CDFProbTop - c0u) >> rate
-			c1u += (CDFProbTop - c1u) >> rate
-			c2u += (CDFProbTop - c2u) >> rate
-		}
+		c0u = adaptCDFEntry(c0u, rate, symbol > 0)
+		c1u = adaptCDFEntry(c1u, rate, symbol > 1)
+		c2u = adaptCDFEntry(c2u, rate, symbol > 2)
 		values[0] = uint16(c0u)
 		values[1] = uint16(c1u)
 		values[2] = uint16(c2u)

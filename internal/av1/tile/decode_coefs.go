@@ -52,15 +52,7 @@ type coefDecodeResult struct {
 
 // readCoefGolomb is dav1d's read_golomb (src/recon_tmpl.c).
 func readCoefGolomb(c *entropy.Cursor) uint32 {
-	length := 0
-	val := uint32(1)
-	for c.ReadBitTrustedInline() == 0 && length < 32 {
-		length++
-	}
-	for ; length > 0; length-- {
-		val = val<<1 + uint32(c.ReadBitTrustedInline())
-	}
-	return val - 1
+	return c.ReadCoefGolomb()
 }
 
 // coefLoCtx1D is dav1d's get_lo_ctx for TX_CLASS_H/V, with levels already
@@ -181,38 +173,7 @@ func decodeCoefTokens(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, ge
 		activeRows, activeCols = 1, 1
 	}
 	if rc != 0 {
-		acDQ := dq.ac
-		for {
-			bit, refill := c.ReadBitNoRefillTrusted()
-			if refill {
-				c.RefillTrusted()
-			}
-			sign := uint32(bit)
-			rcTok := uint(uint32(cf[rc&1023]))
-			var tok uint
-			var v uint32
-			if rcTok >= 15<<11 {
-				tok = uint(readCoefGolomb(c)) + 15
-				tok &= 0xfffff
-				v = ((acDQ * uint32(tok)) & 0xffffff) >> dq.shift
-				v = min(v, dq.cfMax+sign)
-			} else {
-				tok = rcTok >> 11
-				v = (acDQ * uint32(tok)) >> dq.shift
-			}
-			culLevel += tok
-			if sign != 0 {
-				cf[rc&1023] = -int32(v)
-			} else {
-				cf[rc&1023] = int32(v)
-			}
-			activeRows = max(activeRows, (rc&rowMask)+1)
-			activeCols = max(activeCols, (rc>>colShift)+1)
-			rc = rcTok & 0x3ff
-			if rc == 0 {
-				break
-			}
-		}
+		culLevel, activeRows, activeCols = c.DecodeCoefSignsAC(cf, rc, dq.ac, uint(dq.shift), dq.cfMax, rowMask, colShift, culLevel, activeRows, activeCols)
 	}
 
 	return coefDecodeResult{
