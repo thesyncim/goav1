@@ -40,14 +40,9 @@ func (p *refPadPlane) build(src []byte, srcStride, w, h, border int) {
 	for r := 0; r < h; r++ {
 		row := p.buf[(r+border)*p.stride : (r+border+1)*p.stride]
 		s := src[r*srcStride : r*srcStride+w]
-		left, right := s[0], s[w-1]
-		for i := range row[:border] {
-			row[i] = left
-		}
+		frame.FillBytes(row[:border], s[0])
 		copy(row[border:border+w], s)
-		for i := range row[border+w:] {
-			row[border+w+i] = right
-		}
+		frame.FillBytes(row[border+w:], s[w-1])
 	}
 	top := p.buf[border*p.stride : (border+1)*p.stride]
 	for r := 0; r < border; r++ {

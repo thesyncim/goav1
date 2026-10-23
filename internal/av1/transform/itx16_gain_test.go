@@ -169,17 +169,20 @@ func dct32F(c []float64, stride int, g *gainRecorder) {
 	t27a, t28a = t28-t27, t28+t27
 	t20 = g.rot(rs((t27a-t20a)*181, 8))
 	t27 = g.rot(rs((t27a+t20a)*181, 8))
-	t21 = g.rot(rs((t26-t21)*181, 8))
+	t21a = g.rot(rs((t26-t21)*181, 8))
 	t26a = g.rot(rs((t26+t21)*181, 8))
 	t22 = g.rot(rs((t25a-t22a)*181, 8))
 	t25 = g.rot(rs((t25a+t22a)*181, 8))
 	t23a = g.rot(rs((t24-t23)*181, 8))
 	t24a = g.rot(rs((t24+t23)*181, 8))
-	o := [16]float64{t31, t30a, t29, t28a, t27, t26a, t25, t24a, t23a, t22, t21, t20, t19a, t18, t17a, t16}
+	o := [16]float64{t31, t30a, t29, t28a, t27, t26a, t25, t24a, t23a, t22, t21a, t20, t19a, t18, t17a, t16}
+	var e [16]float64
+	for i := range e {
+		e[i] = c[2*i*stride]
+	}
 	for i := 0; i < 16; i++ {
-		e := c[2*i*stride]
-		c[i*stride] = e + o[i]
-		c[(31-i)*stride] = e - o[i]
+		c[i*stride] = e[i] + o[i]
+		c[(31-i)*stride] = e[i] - o[i]
 	}
 }
 
@@ -231,7 +234,7 @@ func TestITX16GainBounds(t *testing.T) {
 	for _, tc := range []struct {
 		n int
 		f func([]float64, int, *gainRecorder)
-	}{{8, dct8F}, {16, dct16F}} {
+	}{{8, dct8F}, {16, dct16F}, {32, dct32F}} {
 		g := gainsFor(tc.n, tc.f)
 		slack := roundingSlack(tc.n, tc.f, len(g))
 		maxRowL1, maxCoef, maxSlack := 0.0, 0.0, 0.0
@@ -258,7 +261,7 @@ func TestITX16FloatModelTracksScalar(t *testing.T) {
 	for _, tc := range []struct {
 		n int
 		f func([]float64, int, *gainRecorder)
-	}{{16, dct16F}} {
+	}{{16, dct16F}, {32, dct32F}} {
 		for trial := 0; trial < 200; trial++ {
 			ci := make([]int32, tc.n)
 			cf := make([]float64, tc.n)
