@@ -473,19 +473,21 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 	if err != nil {
 		return err
 	}
-	region, regionOK := b.cachedJobRegionTrusted(index)
-	if !regionOK {
-		region, err = b.JobRegion(index)
+	region := b.cachedJobRegionPtr(index)
+	if region == nil {
+		r, err := b.JobRegion(index)
 		if err != nil {
 			return err
 		}
+		region = &r
 	}
-	window, windowOK := b.cachedJobOutputPlaneTrusted(index, FrameWorkPlaneY)
-	if !windowOK {
-		window, err = b.JobOutputPlane(index, FrameWorkPlaneY)
+	window := b.cachedJobOutputPlanePtr(index, FrameWorkPlaneY)
+	if window == nil {
+		w, err := b.JobOutputPlane(index, FrameWorkPlaneY)
 		if err != nil {
 			return err
 		}
+		window = &w
 	}
 	absX, absY, err := frameWorkBlockLumaTransformPosition(visit.Block, tx)
 	if err != nil {
@@ -498,20 +500,25 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 	// transform extent clamped to the window's writable (superblock-aligned,
 	// allocation-bounded) extent. The predWidth/predHeight passed to the
 	// predictor math below stay un-clipped so edge weighting matches libaom.
-	width, height, ok := frameWorkClipVisiblePixelsToWindow(window, absX, absY, predWidth, predHeight)
+	width, height, ok := frameWorkClipVisiblePixelsToWindowPtr(window, absX, absY, predWidth, predHeight)
 	if !ok {
 		if frameWorkPlaneBlockStartsBeyondOutput(b.Output, FrameWorkPlaneY, absX, absY) {
 			return nil
 		}
 		return ErrInvalidBatch
 	}
-	dst := frameWorkPlaneFromWindow(window)
+	dst := frameWorkPlaneFromWindow(*window)
 	x := absX - int(window.X)
 	y := absY - int(window.Y)
 	txX4 := int(tx.X4)
 	txY4 := int(tx.Y4)
 	edgeBlock := frameWorkPredictionTransformEdgeBlock(visit.Block, int(visit.Block.X4), int(visit.Block.Y4), txX4, txY4)
-	edgeBlock = frameWorkPredictionEdgeBlockForWindow(edgeBlock, absX, absY, window)
+	if absX <= int(window.X) {
+		edgeBlock.HaveLeft = false
+	}
+	if absY <= int(window.Y) {
+		edgeBlock.HaveTop = false
+	}
 	if visit.Prediction.Palette.YSize > 0 {
 		baseX, baseY, err := frameWorkBlockLumaPosition(visit.Block)
 		if err != nil {
@@ -528,7 +535,7 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 		if !ok {
 			return ErrInvalidBatch
 		}
-		readBoundX, readBoundY := frameWorkWindowEdgeReadBound(window)
+		readBoundX, readBoundY := frameWorkWindowEdgeReadBoundPtr(window)
 		edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, edgeBlock, scratch, true)
 		if err != nil {
 			return err
@@ -540,7 +547,7 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 	}
 
 	if angle, ok := frameWorkLumaIntraDirectionalAngle(visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta); ok {
-		readBoundX, readBoundY := frameWorkWindowEdgeReadBound(window)
+		readBoundX, readBoundY := frameWorkWindowEdgeReadBoundPtr(window)
 		allowTopRight, allowBottomLeft := frameWorkLumaDirectionalExtendedEdges(edgeBlock, b.Sequence.SBSizeMIB, uint32(region.MIColEnd), uint32(region.MIRowEnd), absX, absY, predWidth, predHeight)
 		edges, err := frameWorkDirectionalPredictionEdges(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, predWidth, predHeight, angle, edgeBlock, scratch, b.Sequence.EnableIntraEdgeFilter, visit.Prediction.IntraEdgeSmoothNeighbor, allowTopRight, allowBottomLeft, readBoundX, readBoundY)
 		if err != nil {
@@ -556,7 +563,7 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 	if !ok {
 		return ErrInvalidBatch
 	}
-	readBoundX, readBoundY := frameWorkWindowEdgeReadBound(window)
+	readBoundX, readBoundY := frameWorkWindowEdgeReadBoundPtr(window)
 	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, edgeBlock, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
@@ -627,7 +634,7 @@ func (b *FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Bloc
 	return nil
 }
 
-func (b *FrameWorkBatch) predictBlockChromaIntraTransformPtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, tx tile.TransformBlock, scratch *FrameWorkIntraPredictionScratch) error {
+func (b *FrameWorkBatch) predictBlockChromaIntraTransformGeneric(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, tx tile.TransformBlock, scratch *FrameWorkIntraPredictionScratch) error {
 	geom, present, err := b.chromaIntraGeometry(index, &visit.Block, plane)
 	if err != nil || !present {
 		return err
@@ -3357,11 +3364,11 @@ func frameWorkBlendOBMCV(dst frame.Plane, tmp frame.Plane, bytesPerSample int, d
 	for row := range height {
 		m := uint16(mask[row])
 		for col := range width {
-			a, ok := frameWorkLoadSample(dst, bytesPerSample, dstX+col, dstY+row)
+			a, ok := frameWorkLoadSample(&dst, bytesPerSample, dstX+col, dstY+row)
 			if !ok {
 				return ErrInvalidBatch
 			}
-			b, ok := frameWorkLoadSample(tmp, bytesPerSample, tmpX+col, tmpY+row)
+			b, ok := frameWorkLoadSample(&tmp, bytesPerSample, tmpX+col, tmpY+row)
 			if !ok {
 				return ErrInvalidBatch
 			}
@@ -3382,11 +3389,11 @@ func frameWorkBlendOBMCH(dst frame.Plane, tmp frame.Plane, bytesPerSample int, d
 	for row := range height {
 		for col := range width {
 			m := uint16(mask[col])
-			a, ok := frameWorkLoadSample(dst, bytesPerSample, dstX+col, dstY+row)
+			a, ok := frameWorkLoadSample(&dst, bytesPerSample, dstX+col, dstY+row)
 			if !ok {
 				return ErrInvalidBatch
 			}
-			b, ok := frameWorkLoadSample(tmp, bytesPerSample, tmpX+col, tmpY+row)
+			b, ok := frameWorkLoadSample(&tmp, bytesPerSample, tmpX+col, tmpY+row)
 			if !ok {
 				return ErrInvalidBatch
 			}
@@ -3465,11 +3472,11 @@ func frameWorkBuildDiffWtdMask(mask []byte, maskStride int, first frame.Plane, s
 	invert := maskType == tile.DiffWtdMaskType38Inv
 	for row := range height {
 		for col := range width {
-			a, ok := frameWorkLoadSample(first, bytesPerSample, col, row)
+			a, ok := frameWorkLoadSample(&first, bytesPerSample, col, row)
 			if !ok {
 				return ErrInvalidBatch
 			}
-			b, ok := frameWorkLoadSample(second, bytesPerSample, col, row)
+			b, ok := frameWorkLoadSample(&second, bytesPerSample, col, row)
 			if !ok {
 				return ErrInvalidBatch
 			}
@@ -4294,7 +4301,7 @@ func frameWorkSubsampleLumaCFLQ3(dst []uint16, plane frame.Plane, bytesPerSample
 }
 
 func frameWorkLoadCFLSourceSample(plane frame.Plane, bytesPerSample int, max uint16, x int, y int) (uint16, bool) {
-	sample, ok := frameWorkLoadSample(plane, bytesPerSample, x, y)
+	sample, ok := frameWorkLoadSample(&plane, bytesPerSample, x, y)
 	return sample, ok && sample <= max
 }
 
@@ -4363,6 +4370,10 @@ func frameWorkIntraPredictionEdges(dst frame.Plane, bytesPerSample int, bitDepth
 // reads (e.g. a 34px-wide frame has a 40px MI-grid width, so an 8x8 transform
 // at x=32 sees n_top_px=8, not the cropped n_top_px=2).
 func frameWorkWindowEdgeReadBound(window FrameWorkPlaneRegion) (int, int) {
+	return frameWorkWindowEdgeReadBoundPtr(&window)
+}
+
+func frameWorkWindowEdgeReadBoundPtr(window *FrameWorkPlaneRegion) (int, int) {
 	// Neighbor reads cap at the MI-aligned extent (libaom's n_top_px/n_left_px
 	// from mi_{cols,rows} * MI_SIZE), NOT the superblock-aligned writable extent.
 	// Reading to the wider writable edge would let blocks straddling the MI grid
@@ -4457,7 +4468,7 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 		available := min(edgeWidth, readBoundX-x)
 		if available > 0 {
 			nTopPx = available
-			if !frameWorkLoadSampleRow(dst, bytesPerSample, x, y-1, above[:available]) {
+			if !frameWorkLoadSampleRow(&dst, bytesPerSample, x, y-1, above[:available]) {
 				return prediction.IntraEdges{}, ErrInvalidBatch
 			}
 			last := above[available-1]
@@ -4502,7 +4513,7 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 		available := min(edgeHeight, readBoundY-y)
 		if available > 0 {
 			nLeftPx = available
-			if !frameWorkLoadSampleCol(dst, bytesPerSample, x-1, y, left[:available]) {
+			if !frameWorkLoadSampleCol(&dst, bytesPerSample, x-1, y, left[:available]) {
 				return prediction.IntraEdges{}, ErrInvalidBatch
 			}
 			last := left[available-1]
@@ -4541,13 +4552,13 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 		var ok bool
 		switch {
 		case nTopPx > 0 && nLeftPx > 0:
-			sample, ok = frameWorkLoadSample(dst, bytesPerSample, x-1, y-1)
+			sample, ok = frameWorkLoadSample(&dst, bytesPerSample, x-1, y-1)
 		case nTopPx > 0:
 			// n_left_px=0: AboveLeft = above_ref[0] = load(x, y-1)
-			sample, ok = frameWorkLoadSample(dst, bytesPerSample, x, y-1)
+			sample, ok = frameWorkLoadSample(&dst, bytesPerSample, x, y-1)
 		case nLeftPx > 0:
 			// n_top_px=0: AboveLeft = left_ref[0] = load(x-1, y)
-			sample, ok = frameWorkLoadSample(dst, bytesPerSample, x-1, y)
+			sample, ok = frameWorkLoadSample(&dst, bytesPerSample, x-1, y)
 		default:
 			// both 0: AboveLeft = base (=128 for 8-bit)
 			sample, ok = frameWorkIntraBoundaryDefault(bitDepth, 0)
@@ -4718,19 +4729,19 @@ func frameWorkDirectionalAboveLeftSample(dst frame.Plane, bytesPerSample int, bi
 		}
 		switch {
 		case nTopPx > 0 && nLeftPx > 0:
-			sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y-1)
+			sample, ok := frameWorkLoadSample(&dst, bytesPerSample, x-1, y-1)
 			if !ok {
 				return 0, ErrInvalidBatch
 			}
 			return sample, nil
 		case nTopPx > 0:
-			sample, ok := frameWorkLoadSample(dst, bytesPerSample, x, y-1)
+			sample, ok := frameWorkLoadSample(&dst, bytesPerSample, x, y-1)
 			if !ok {
 				return 0, ErrInvalidBatch
 			}
 			return sample, nil
 		case nLeftPx > 0:
-			sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y)
+			sample, ok := frameWorkLoadSample(&dst, bytesPerSample, x-1, y)
 			if !ok {
 				return 0, ErrInvalidBatch
 			}
@@ -4744,14 +4755,14 @@ func frameWorkDirectionalAboveLeftSample(dst frame.Plane, bytesPerSample int, bi
 		}
 	}
 	if block.HaveTop {
-		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x, y-1)
+		sample, ok := frameWorkLoadSample(&dst, bytesPerSample, x, y-1)
 		if !ok {
 			return 0, ErrInvalidBatch
 		}
 		return sample, nil
 	}
 	if block.HaveLeft {
-		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y)
+		sample, ok := frameWorkLoadSample(&dst, bytesPerSample, x-1, y)
 		if !ok {
 			return 0, ErrInvalidBatch
 		}
@@ -4871,7 +4882,7 @@ func frameWorkFillDirectionalAbove(dst frame.Plane, bytesPerSample int, bitDepth
 		} else if sampleX >= dst.Width {
 			sampleX = dst.Width - 1
 		}
-		sample, ok := frameWorkLoadSample(dst, bytesPerSample, sampleX, y-1)
+		sample, ok := frameWorkLoadSample(&dst, bytesPerSample, sampleX, y-1)
 		if !ok {
 			return ErrInvalidBatch
 		}
@@ -4964,7 +4975,7 @@ func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, bitDepth 
 		} else if sampleY >= dst.Height {
 			sampleY = dst.Height - 1
 		}
-		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, sampleY)
+		sample, ok := frameWorkLoadSample(&dst, bytesPerSample, x-1, sampleY)
 		if !ok {
 			return ErrInvalidBatch
 		}
@@ -4975,7 +4986,7 @@ func frameWorkFillDirectionalLeft(dst frame.Plane, bytesPerSample int, bitDepth 
 
 func frameWorkMissingAboveSample(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, block tile.BlockVisit) (uint16, error) {
 	if block.HaveLeft {
-		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y)
+		sample, ok := frameWorkLoadSample(&dst, bytesPerSample, x-1, y)
 		if !ok {
 			return 0, ErrInvalidBatch
 		}
@@ -4990,7 +5001,7 @@ func frameWorkMissingAboveSample(dst frame.Plane, bytesPerSample int, bitDepth u
 
 func frameWorkMissingLeftSample(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, block tile.BlockVisit) (uint16, error) {
 	if block.HaveTop {
-		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x, y-1)
+		sample, ok := frameWorkLoadSample(&dst, bytesPerSample, x, y-1)
 		if !ok {
 			return 0, ErrInvalidBatch
 		}
@@ -5005,14 +5016,14 @@ func frameWorkMissingLeftSample(dst frame.Plane, bytesPerSample int, bitDepth ui
 
 func frameWorkMissingTopLeftSample(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, block tile.BlockVisit) (uint16, error) {
 	if block.HaveLeft {
-		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x-1, y)
+		sample, ok := frameWorkLoadSample(&dst, bytesPerSample, x-1, y)
 		if !ok {
 			return 0, ErrInvalidBatch
 		}
 		return sample, nil
 	}
 	if block.HaveTop {
-		sample, ok := frameWorkLoadSample(dst, bytesPerSample, x, y-1)
+		sample, ok := frameWorkLoadSample(&dst, bytesPerSample, x, y-1)
 		if !ok {
 			return 0, ErrInvalidBatch
 		}
@@ -5038,7 +5049,7 @@ func frameWorkIntraBoundaryDefault(bitDepth uint8, offset int) (uint16, bool) {
 	return uint16(value), true
 }
 
-func frameWorkLoadSampleRow(plane frame.Plane, bytesPerSample int, x int, y int, out []uint16) bool {
+func frameWorkLoadSampleRow(plane *frame.Plane, bytesPerSample int, x int, y int, out []uint16) bool {
 	if len(out) == 0 {
 		return true
 	}
@@ -5076,7 +5087,7 @@ func frameWorkLoadSampleRow(plane frame.Plane, bytesPerSample int, x int, y int,
 	return true
 }
 
-func frameWorkLoadSampleCol(plane frame.Plane, bytesPerSample int, x int, y int, out []uint16) bool {
+func frameWorkLoadSampleCol(plane *frame.Plane, bytesPerSample int, x int, y int, out []uint16) bool {
 	if len(out) == 0 {
 		return true
 	}
@@ -5110,8 +5121,8 @@ func frameWorkLoadSampleCol(plane frame.Plane, bytesPerSample int, x int, y int,
 	return true
 }
 
-func frameWorkLoadSample(plane frame.Plane, bytesPerSample int, x int, y int) (uint16, bool) {
-	offset, ok := frameWorkPlaneSampleOffset(plane, bytesPerSample, x, y)
+func frameWorkLoadSample(plane *frame.Plane, bytesPerSample int, x int, y int) (uint16, bool) {
+	offset, ok := frameWorkPlaneSampleOffset(*plane, bytesPerSample, x, y)
 	if !ok {
 		return 0, false
 	}

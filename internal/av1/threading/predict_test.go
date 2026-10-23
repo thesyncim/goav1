@@ -4057,7 +4057,7 @@ func testIntraPrediction4x4Visit(mode tile.IntraMode) tile.BlockLoopVisit {
 }
 
 func frameWorkTestSample(plane frame.Plane, bytesPerSample int, x int, y int) uint16 {
-	sample, ok := frameWorkLoadSample(plane, bytesPerSample, x, y)
+	sample, ok := frameWorkLoadSample(&plane, bytesPerSample, x, y)
 	if !ok {
 		panic("bad test sample")
 	}
