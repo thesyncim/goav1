@@ -4,6 +4,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
@@ -1892,5 +1893,45 @@ func TestCoeffGeometryTxScaleMatchesQuantizeTransformScale(t *testing.T) {
 	}
 	if valid != 19 {
 		t.Fatalf("validated %d transform sizes, want 19", valid)
+	}
+}
+
+// TestCoeffCDFsEqualMatchesOperator pins Equal to the == it replaces: the
+// default sets compare equal to a copy, and adapting any single CDF makes
+// them differ.
+func TestCoeffCDFsEqualMatchesOperator(t *testing.T) {
+	for q := range CoeffQContexts {
+		def := &defaultCoeffCDFs[q]
+		cp := *def
+		if !def.Equal(&cp) || *def != cp {
+			t.Fatalf("q context %d: copy does not compare equal", q)
+		}
+		flat := unsafe.Slice((*entropy.CDF)(unsafe.Pointer(&cp)), coeffCDFCount)
+		if uintptr(len(flat)) != coeffCDFCount {
+			t.Fatalf("flat length %d want %d", len(flat), coeffCDFCount)
+		}
+		for i := 0; i < len(flat); i += 29 {
+			save := flat[i]
+			if err := flat[i].Update(0); err != nil {
+				t.Fatalf("q context %d CDF %d: %v", q, i, err)
+			}
+			if flat[i] == save {
+				t.Fatalf("q context %d CDF %d: Update left the CDF unchanged", q, i)
+			}
+			if def.Equal(&cp) || *def == cp {
+				t.Fatalf("q context %d CDF %d: modified copy compares equal", q, i)
+			}
+			flat[i] = save
+		}
+		last := len(flat) - 1
+		save := flat[last]
+		flat[last].Update(1)
+		if def.Equal(&cp) {
+			t.Fatalf("q context %d: last CDF change not detected", q)
+		}
+		flat[last] = save
+		if !def.Equal(&cp) {
+			t.Fatalf("q context %d: restored copy does not compare equal", q)
+		}
 	}
 }

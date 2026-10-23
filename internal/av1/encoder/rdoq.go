@@ -952,7 +952,7 @@ var rdoqDefaultTables [tile.CoeffQContexts]struct {
 // tables are a pure function of the CDFs; every tile coder starts each frame
 // there), else nil after filling the coder's own.
 func (st *lossyEncodeState) rdoqTable() *rdoqCosts {
-	if def := tile.DefaultCoeffCDFs(st.qIndex); st.trialCDFs == *def {
+	if def := tile.DefaultCoeffCDFs(st.qIndex); st.trialCDFs.Equal(def) {
 		t := &rdoqDefaultTables[tile.CoeffQContext(st.qIndex)]
 		t.once.Do(func() { t.costs.fill(def) })
 		return &t.costs
