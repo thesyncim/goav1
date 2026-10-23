@@ -1459,6 +1459,36 @@ var profileClips = []profileClip{
 		wantSubsamplingX: true,
 		wantSubsamplingY: true,
 	},
+	// Random super-resolution together with random frame-size changes:
+	// upscaled outputs at several sizes (the output pool binds each at its own
+	// size), loop restoration on heights that are not a multiple of 8, and
+	// inter frames predicting from upscaled references of other sizes.
+	// Synthetic source (see profile0-420-8bit-resize-random-192x108):
+	//	aomenc --ivf --limit=12 --good --cpu-used=6 --end-usage=q \
+	//	  --cq-level=40 --lag-in-frames=6 --superres-mode=2 --resize-mode=2 \
+	//	  -o profile0-420-8bit-superres-resize-random-192x108.ivf src.y4m
+	{
+		name: "profile0-420-8bit-superres-resize-random-192x108",
+		file: "profile0-420-8bit-superres-resize-random-192x108.ivf",
+		frameMD5Hex: []string{
+			"96fd04e27fcaafedece2f7d59a1cfa77",
+			"0e463379e6ca9db7ba81231ede75a33d",
+			"539443ba947eb58fb0e37550bc441d59",
+			"eb1a6c52f61f83d410c2b44c0a555ce5",
+			"97bddf042d5dc331c79e0b9a6b93c3f8",
+			"ac6cd384b93082d6de9653b88c3a31cb",
+			"a88b8368ca8ef1d59afddaabb12eedbd",
+			"0755bf967e649e2559ae65dc398d4d6c",
+			"7e5f6dadb9fc5cb5bcb57c2b777ba13a",
+			"3384f4584ad7d1e1603e4b9ea9d9c5ea",
+			"080a0c9084d291a123983f864162f80d",
+			"aa48e6a2e0006cec497d3e87de60066b",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+		superRes:         true,
+	},
 }
 
 // TestProfileVendoredClips decodes each vendored profile-conformance clip
@@ -1614,14 +1644,11 @@ func runProfileClip(t *testing.T, clip profileClip) {
 				// decoded (dav1d sizes its picture pool the same way).
 				// Slots fit the sequence's largest frame; each frame binds one at
 				// its own size.
-				maxEvent := event
-				if !clip.superRes {
-					maxEvent = maxFrameSizeEvent(event)
-				}
+				maxEvent := maxFrameSizeEvent(event)
 				pool, backing, frameSlots, free, used = bindFramePool(t, maxEvent, parser.RefFrames+1)
 				mvEntryBacking, temporalEntryBacking, mvFrames, mvStore, mvLength = bindMotionStore(t, maxEvent, parser.RefFrames+1)
 				if clip.superRes {
-					outputPool, outputBacking, outputFrameSlots, outputFree, outputUsed = bindOutputFramePool(t, event, 8)
+					outputPool, outputBacking, outputFrameSlots, outputFree, outputUsed = bindOutputFramePool(t, maxEvent, 8)
 					mvStore = make([]tile.TemporalMotionReferenceFrame, profileSuperResOutputGlobalBase+8)
 					publishedMVEntryBacking = make([]tile.ReferenceMVEntry, 8*mvLength)
 					publishedMVFrames = make([]tile.ReferenceMVFrame, 8)
@@ -1748,7 +1775,10 @@ func runProfileClip(t *testing.T, clip profileClip) {
 				if active.Has(decoder.FrameWorkPostFilterFilmGrain) {
 					filmGrainFrames++
 				}
-				if clip.superRes {
+				// Only an upscaled frame publishes a detached output surface (the
+				// public decoder's external runner does the same); a frame without
+				// super-res in a super-res stream publishes its coded surface.
+				if clip.superRes && ctx.ActivePostFilters().Has(decoder.FrameWorkPostFilterSuperRes) {
 					out, publishedGlobalSurface, ev, err := applyCallerPostFiltersForPublication(ctx, &outputPool)
 					if err != nil {
 						return -1, err
@@ -2073,10 +2103,12 @@ func publishProfileSuperResTemporalMotionReference(event decoder.Event, globalSu
 	if len(backing) < (local+1)*mvLength {
 		return decoder.ErrSurfaceReferenceBufferTooSmall
 	}
-	if current == nil || len(current.Entries) != mvLength {
+	// Each published slot holds mvLength entries, enough for the largest
+	// frame; a frame publishes its own grid size.
+	if current == nil || len(current.Entries) > mvLength {
 		return decoder.ErrInvalidSurfaceReference
 	}
-	dst := backing[local*mvLength : (local+1)*mvLength]
+	dst := backing[local*mvLength : local*mvLength+len(current.Entries)]
 	copy(dst, current.Entries)
 	published[local] = tile.ReferenceMVFrame{
 		Rows:    current.Rows,

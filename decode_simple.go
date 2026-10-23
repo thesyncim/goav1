@@ -268,9 +268,9 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	var postArena DecoderFrameWorkPostFilterRequestScratchSize
 	switch kind {
 	case decoderPayloadLowOverhead:
-		postArena, err = decoderPostFilterScratchArenaUpperBoundFromSource(source, 64, probeEvents, probePayload)
+		postArena, err = decoderPostFilterScratchArenaUpperBoundFromSource(source, 64, workerPool, probeEvents, probePayload)
 	case decoderPayloadRTP:
-		postArena, err = decoderPostFilterScratchArenaUpperBoundFromRTPSource(source, 64)
+		postArena, err = decoderPostFilterScratchArenaUpperBoundFromRTPSource(source, 64, workerPool)
 	}
 	if err != nil {
 		workerPool.Close()

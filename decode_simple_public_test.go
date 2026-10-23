@@ -628,6 +628,31 @@ var superResProfileClips = []struct {
 			"6af9472b0679093facbefa85e973a7f9",
 		},
 	},
+	// Random super-resolution together with random frame-size changes:
+	// upscaled outputs at several sizes (the output pool binds each at its own
+	// size), loop restoration on heights that are not a multiple of 8, and
+	// inter frames predicting from upscaled references of other sizes.
+	// Synthetic source (see profile0-420-8bit-resize-random-192x108):
+	//	aomenc --ivf --limit=12 --good --cpu-used=6 --end-usage=q \
+	//	  --cq-level=40 --lag-in-frames=6 --superres-mode=2 --resize-mode=2 \
+	//	  -o profile0-420-8bit-superres-resize-random-192x108.ivf src.y4m
+	{
+		file: "profile0-420-8bit-superres-resize-random-192x108.ivf",
+		frameMD5Hex: []string{
+			"96fd04e27fcaafedece2f7d59a1cfa77",
+			"0e463379e6ca9db7ba81231ede75a33d",
+			"539443ba947eb58fb0e37550bc441d59",
+			"eb1a6c52f61f83d410c2b44c0a555ce5",
+			"97bddf042d5dc331c79e0b9a6b93c3f8",
+			"ac6cd384b93082d6de9653b88c3a31cb",
+			"a88b8368ca8ef1d59afddaabb12eedbd",
+			"0755bf967e649e2559ae65dc398d4d6c",
+			"7e5f6dadb9fc5cb5bcb57c2b777ba13a",
+			"3384f4584ad7d1e1603e4b9ea9d9c5ea",
+			"080a0c9084d291a123983f864162f80d",
+			"aa48e6a2e0006cec497d3e87de60066b",
+		},
+	},
 }
 
 func profileClipPath(name string) string {
@@ -772,43 +797,47 @@ func TestSimpleDecoderProfileClipsWorkersMatchGolden(t *testing.T) {
 // publication path, so inter frames reference the upscaled output surface rather
 // than the coded reconstruction surface.
 func TestSimpleDecoderSuperResProfileClipsMatchGolden(t *testing.T) {
-	for _, clip := range superResProfileClips {
-		t.Run(clip.file, func(t *testing.T) {
-			ivf, err := os.ReadFile(profileClipPath(clip.file))
-			if err != nil {
-				t.Fatalf("read clip: %v", err)
-			}
-
-			dec, err := av1.NewDecoderFromIVF(ivf)
-			if err != nil {
-				t.Fatalf("NewDecoderFromIVF: %v", err)
-			}
-			defer dec.Close()
-
-			var got []string
-			for {
-				frames, ok, err := dec.DecodeNext()
+	// Every worker count: the pooled post-filter gives each lane its own
+	// band scratch, which the decoder must size up front.
+	for _, workers := range []int{1, 2, 4, 8} {
+		for _, clip := range superResProfileClips {
+			t.Run(fmt.Sprintf("workers=%d/%s", workers, clip.file), func(t *testing.T) {
+				ivf, err := os.ReadFile(profileClipPath(clip.file))
 				if err != nil {
-					t.Fatalf("DecodeNext: %v", err)
+					t.Fatalf("read clip: %v", err)
 				}
-				if !ok {
-					break
-				}
-				for _, f := range frames {
-					sum := frameMD5Visible(f)
-					got = append(got, hex.EncodeToString(sum[:]))
-				}
-			}
 
-			if len(got) != len(clip.frameMD5Hex) {
-				t.Fatalf("decoded %d visible frames, want %d", len(got), len(clip.frameMD5Hex))
-			}
-			for i, want := range clip.frameMD5Hex {
-				if got[i] != want {
-					t.Fatalf("frame %d md5 got=%s want=%s (libaom golden)", i, got[i], want)
+				dec, err := av1.NewDecoderFromIVF(ivf, av1.WithWorkers(workers))
+				if err != nil {
+					t.Fatalf("NewDecoderFromIVF: %v", err)
 				}
-			}
-		})
+				defer dec.Close()
+
+				var got []string
+				for {
+					frames, ok, err := dec.DecodeNext()
+					if err != nil {
+						t.Fatalf("DecodeNext: %v", err)
+					}
+					if !ok {
+						break
+					}
+					for _, f := range frames {
+						sum := frameMD5Visible(f)
+						got = append(got, hex.EncodeToString(sum[:]))
+					}
+				}
+
+				if len(got) != len(clip.frameMD5Hex) {
+					t.Fatalf("decoded %d visible frames, want %d", len(got), len(clip.frameMD5Hex))
+				}
+				for i, want := range clip.frameMD5Hex {
+					if got[i] != want {
+						t.Fatalf("frame %d md5 got=%s want=%s (libaom golden)", i, got[i], want)
+					}
+				}
+			})
+		}
 	}
 }
 

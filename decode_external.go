@@ -1,79 +1,8 @@
 package goav1
 
+import internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+
 const decoderExternalOutputSurfaceBase = 256
-
-func decoderExternalOutputFormat(payloads [][]byte, align int) (bool, FrameFormat, error) {
-	var stream DecoderStream
-	var format FrameFormat
-	have := false
-	events := make([]DecoderEvent, 0)
-	for _, payload := range payloads {
-		eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(payload)
-		if err != nil {
-			return false, FrameFormat{}, err
-		}
-		if len(events) < eventCount {
-			events = make([]DecoderEvent, eventCount)
-		}
-		sequence, _ := stream.SequenceHeader()
-		count, err := stream.PushLowOverhead(payload, events[:eventCount])
-		if err != nil {
-			return false, FrameFormat{}, err
-		}
-		for i := range count {
-			event := events[i]
-			sequence = decoderFrameWorkResidualEventSequence(sequence, &event)
-			if !decoderFrameWorkResidualEventBindCandidate(&event) ||
-				!event.FrameSize.SuperResEnabled ||
-				event.FrameSize.UpscaledWidth <= event.FrameSize.CodedWidth {
-				continue
-			}
-			next, err := FrameOutputFormatFromHeaders(sequence, event.FrameSize, align)
-			if err != nil {
-				return false, FrameFormat{}, err
-			}
-			if have && next != format {
-				return false, FrameFormat{}, ErrFrameInvalidFormat
-			}
-			format = next
-			have = true
-		}
-	}
-	return have, format, nil
-}
-
-func decoderPostFilterScratchArenaUpperBound(payloads [][]byte, align int, events []DecoderEvent) (DecoderFrameWorkPostFilterRequestScratchSize, error) {
-	var stream DecoderStream
-	var arena DecoderFrameWorkPostFilterRequestScratchSize
-	var scratch decoderUpperBoundScratch
-	for _, payload := range payloads {
-		eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(payload)
-		if err != nil {
-			return DecoderFrameWorkPostFilterRequestScratchSize{}, err
-		}
-		if len(events) < eventCount {
-			return DecoderFrameWorkPostFilterRequestScratchSize{}, ErrDecoderEventBufferTooSmall
-		}
-		sequence, _ := stream.SequenceHeader()
-		count, err := stream.PushLowOverhead(payload, events[:eventCount])
-		if err != nil {
-			return DecoderFrameWorkPostFilterRequestScratchSize{}, err
-		}
-		for i := range count {
-			event := events[i]
-			sequence = decoderFrameWorkResidualEventSequence(sequence, &event)
-			if !decoderFrameWorkResidualEventBindCandidate(&event) {
-				continue
-			}
-			size, err := decoderPostFilterScratchSizeUpperBound(sequence, &event, align, &scratch)
-			if err != nil {
-				return DecoderFrameWorkPostFilterRequestScratchSize{}, err
-			}
-			arena = arena.Max(decoderExternalPostFilterScratchLen(size))
-		}
-	}
-	return arena, nil
-}
 
 func decoderTemporalMotionScratchFrameSizeUpperBound(payloads [][]byte, events []DecoderEvent) (FrameSize, error) {
 	var stream DecoderStream
@@ -113,12 +42,15 @@ type decoderUpperBoundScratch struct {
 	restorationRecords []TileRestorationUnitRecord
 }
 
-func decoderPostFilterScratchSizeUpperBound(sequence SequenceHeader, event *DecoderEvent, align int, scratch *decoderUpperBoundScratch) (DecoderFrameWorkPostFilterScratchSize, error) {
+func decoderPostFilterScratchSizeUpperBound(sequence SequenceHeader, event *DecoderEvent, align int, workerPool *TileWorkerPool, scratch *decoderUpperBoundScratch) (DecoderFrameWorkPostFilterScratchSize, error) {
 	var output Frame
 	ctx, err := DecoderFrameWorkPostFilterScratchContext(sequence, event, align, nil, &output)
 	if err != nil {
 		return DecoderFrameWorkPostFilterScratchSize{}, err
 	}
+	// Size for the pooled apply: the frame-work runner hands the post-filter
+	// the tile worker pool, whose lanes each take their own band scratch.
+	internaldecoder.BindFrameWorkPostFilterPool(&ctx, workerPool)
 	remaining := ctx.RemainingPostFilters()
 	var size DecoderFrameWorkPostFilterScratchSize
 	if remaining.Has(DecoderFrameWorkPostFilterLoopFilter) {

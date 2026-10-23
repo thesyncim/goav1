@@ -356,10 +356,9 @@ func decoderExternalOutputFormatFromSource(source decoderPayloadSource, align in
 			if !ok {
 				continue
 			}
-			if have && next != format {
-				return ErrFrameInvalidFormat
+			if format, err = decoderMergeOutputFormat(have, format, next); err != nil {
+				return err
 			}
-			format = next
 			have = true
 		}
 		return nil
@@ -381,10 +380,9 @@ func decoderExternalOutputFormatFromRTPSource(source decoderPayloadSource, align
 		if !ok {
 			return nil
 		}
-		if have && next != format {
-			return ErrFrameInvalidFormat
+		if format, err = decoderMergeOutputFormat(have, format, next); err != nil {
+			return err
 		}
-		format = next
 		have = true
 		return nil
 	})
@@ -416,7 +414,7 @@ func decoderExternalOutputFormatForEvent(sequence SequenceHeader, event *Decoder
 	return format, true, nil
 }
 
-func decoderPostFilterScratchArenaUpperBoundFromSource(source decoderPayloadSource, align int, events []DecoderEvent, payloadBuf []byte) (DecoderFrameWorkPostFilterRequestScratchSize, error) {
+func decoderPostFilterScratchArenaUpperBoundFromSource(source decoderPayloadSource, align int, workerPool *TileWorkerPool, events []DecoderEvent, payloadBuf []byte) (DecoderFrameWorkPostFilterRequestScratchSize, error) {
 	var scratch decoderUpperBoundScratch
 	var stream DecoderStream
 	var arena DecoderFrameWorkPostFilterRequestScratchSize
@@ -439,7 +437,7 @@ func decoderPostFilterScratchArenaUpperBoundFromSource(source decoderPayloadSour
 			if !decoderFrameWorkResidualEventBindCandidate(&event) {
 				continue
 			}
-			size, err := decoderPostFilterScratchSizeUpperBound(sequence, &event, align, &scratch)
+			size, err := decoderPostFilterScratchSizeUpperBound(sequence, &event, align, workerPool, &scratch)
 			if err != nil {
 				return err
 			}
@@ -450,14 +448,14 @@ func decoderPostFilterScratchArenaUpperBoundFromSource(source decoderPayloadSour
 	return arena, err
 }
 
-func decoderPostFilterScratchArenaUpperBoundFromRTPSource(source decoderPayloadSource, align int) (DecoderFrameWorkPostFilterRequestScratchSize, error) {
+func decoderPostFilterScratchArenaUpperBoundFromRTPSource(source decoderPayloadSource, align int, workerPool *TileWorkerPool) (DecoderFrameWorkPostFilterRequestScratchSize, error) {
 	var scratch decoderUpperBoundScratch
 	var arena DecoderFrameWorkPostFilterRequestScratchSize
 	err := decoderForEachRTPEventFromSource(source, func(sequence SequenceHeader, event DecoderEvent) error {
 		if !decoderFrameWorkResidualEventBindCandidate(&event) {
 			return nil
 		}
-		size, err := decoderPostFilterScratchSizeUpperBound(sequence, &event, align, &scratch)
+		size, err := decoderPostFilterScratchSizeUpperBound(sequence, &event, align, workerPool, &scratch)
 		if err != nil {
 			return err
 		}
@@ -587,4 +585,20 @@ func decoderShortRead(err error) bool {
 
 func decoderMaxInt() int {
 	return int(^uint(0) >> 1)
+}
+
+// decoderMergeOutputFormat folds next into the output pool format: slots fit
+// the largest upscaled frame and each output binds a slot at its own size, so
+// only the sample format must agree.
+func decoderMergeOutputFormat(have bool, format FrameFormat, next FrameFormat) (FrameFormat, error) {
+	if !have {
+		return next, nil
+	}
+	w, h := max(format.Width, next.Width), max(format.Height, next.Height)
+	format.Width, format.Height = next.Width, next.Height
+	if format != next {
+		return FrameFormat{}, ErrFrameInvalidFormat
+	}
+	next.Width, next.Height = w, h
+	return next, nil
 }
