@@ -103,6 +103,11 @@ func TestInverseDCT32Col4Low8SIMDMatchesFullAndScalar(t *testing.T) {
 func TestInverseBlockBitDepthRawDCT32Low8RouteAndFallback(t *testing.T) {
 	original := inverseDCT32Low8Col4Impl
 	defer func() { inverseDCT32Low8Col4Impl = original }()
+	// The int16 column pass takes this shape first; this test covers the
+	// int32 route it falls back to.
+	pass16 := itx16RawColumnPass32Low8
+	itx16RawColumnPass32Low8 = nil
+	defer func() { itx16RawColumnPass32Low8 = pass16 }()
 
 	type routeCase struct {
 		name       string
@@ -199,6 +204,11 @@ func TestInverseBlockBitDepthRawDCT32Low8ReusesPoisonedDestination(t *testing.T)
 		t.Fatal("ARM64 low8 implementation is not bound")
 	}
 	defer func() { inverseDCT32Low8Col4Impl = original }()
+	// The int16 column pass takes this shape first; this test covers the
+	// int32 route it falls back to.
+	pass16 := itx16RawColumnPass32Low8
+	itx16RawColumnPass32Low8 = nil
+	defer func() { itx16RawColumnPass32Low8 = pass16 }()
 
 	size := Size{Width: 32, Height: 32}
 	scan := adjustedScanSize(size)
