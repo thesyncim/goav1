@@ -51,6 +51,9 @@ func TestBlockModeContextResetLayout(t *testing.T) {
 		t.Fatal("resetForSuperblock left a non-payload field set")
 	}
 
+	if poisonSkippedClears {
+		return // the clean reset poisons the snapshots on purpose
+	}
 	// Without a keepMotion load the snapshots stay zero, and the clean reset
 	// must still zero every other non-payload field.
 	for i := range b {

@@ -229,6 +229,11 @@ func (c *BlockModeContext) resetForSuperblock() {
 	// and already zero.
 	clear(b[:unsafe.Offsetof(c.SBTopInterMotion)])
 	clear(b[unsafe.Offsetof(c.AboveInterp):])
+	if poisonSkippedClears {
+		for i := range b[unsafe.Offsetof(c.SBTopInterMotion):unsafe.Offsetof(c.AboveInterp)] {
+			b[int(unsafe.Offsetof(c.SBTopInterMotion))+i] = 0xA5
+		}
+	}
 }
 
 // CDEFIndexContext caches the cdef_idx values already read for the 64x64 CDEF
