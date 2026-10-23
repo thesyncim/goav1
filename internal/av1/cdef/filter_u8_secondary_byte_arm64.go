@@ -64,10 +64,7 @@ func secondaryOnlyByteGroupEntries(blocks []BlockPosition, index int, blockWidth
 }
 
 func cdefConstrainSecondaryByteSIMD(t, x, strength archsimd.Uint8x16, shift archsimd.Int8x16) archsimd.Int8x16 {
-	diff := t.Max(x).Sub(t.Min(x))
-	limit := strength.SubSaturated(diff.Shift(shift))
-	mag := limit.Min(diff).BitsToInt8()
-	return mag.Neg().IfElse(x.Greater(t), mag)
+	return cdefByteConstrain(t, x, strength, shift)
 }
 
 func cdefRoundSecondaryByteSIMD(sum archsimd.Int8x16) archsimd.Int8x16 {
