@@ -223,14 +223,7 @@ func planeBlockWindow(plane frame.Plane, bytesPerSample int, x int, y int, width
 func fillBlock(block planeBlock, bytesPerSample int, value uint16) {
 	switch bytesPerSample {
 	case 1:
-		if block.height == 0 {
-			return
-		}
-		first := block.pix[:block.rowBytes:block.rowBytes]
-		fillByteLine(first, byte(value))
-		for row := 1; row < block.height; row++ {
-			copy(block.pix[row*block.stride:row*block.stride+block.rowBytes], first)
-		}
+		fillBlock8(block, byte(value))
 	case 2:
 		if block.height == 0 {
 			return
@@ -241,10 +234,6 @@ func fillBlock(block planeBlock, bytesPerSample int, value uint16) {
 			copy(block.pix[row*block.stride:row*block.stride+block.rowBytes], first)
 		}
 	}
-}
-
-func fillByteLine(line []byte, value byte) {
-	frame.FillBytes(line, value)
 }
 
 func fillUint16Line(line []byte, value uint16) {
@@ -261,16 +250,7 @@ func fillUint16Line(line []byte, value uint16) {
 func predictVertical(block planeBlock, bytesPerSample int, above []uint16) {
 	switch bytesPerSample {
 	case 1:
-		if block.height == 0 {
-			return
-		}
-		first := block.pix[:block.rowBytes:block.rowBytes]
-		for col := 0; col < block.width; col++ {
-			first[col] = byte(above[col])
-		}
-		for row := 1; row < block.height; row++ {
-			copy(block.pix[row*block.stride:row*block.stride+block.rowBytes], first)
-		}
+		predictVertical8(block, above)
 	case 2:
 		if block.height == 0 {
 			return
@@ -291,10 +271,7 @@ func predictVertical(block planeBlock, bytesPerSample int, above []uint16) {
 func predictHorizontal(block planeBlock, bytesPerSample int, left []uint16) {
 	switch bytesPerSample {
 	case 1:
-		for row := 0; row < block.height; row++ {
-			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-			fillByteLine(line, byte(left[row]))
-		}
+		predictHorizontal8(block, left)
 	case 2:
 		for row := 0; row < block.height; row++ {
 			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]

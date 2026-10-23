@@ -5196,18 +5196,7 @@ func frameWorkPredictChromaPalette(dst frame.Plane, bytesPerSample int, x int, y
 	if plane == FrameWorkPlaneV {
 		colors = palette.VColors
 	}
-	for row := range height {
-		for col := range width {
-			index := palette.UVMap[(mapY+row)*mapStride+mapX+col]
-			if index >= palette.UVSize {
-				return ErrInvalidBatch
-			}
-			if !frameWorkStoreSample(dst, bytesPerSample, x+col, y+row, colors[index]) {
-				return ErrInvalidBatch
-			}
-		}
-	}
-	return nil
+	return frameWorkPaletteFill(dst, bytesPerSample, x, y, width, height, palette.UVMap[:], mapStride, mapX, mapY, &colors, palette.UVSize)
 }
 
 func frameWorkPredictLumaPalette(dst frame.Plane, bytesPerSample int, x int, y int, width int, height int, block tile.BlockVisit, palette tile.PaletteModeResult, mapX int, mapY int) error {
@@ -5223,15 +5212,61 @@ func frameWorkPredictLumaPalette(dst frame.Plane, bytesPerSample int, x int, y i
 	if mapX < 0 || mapY < 0 || mapX+width > mapStride || mapY+height > mapHeight {
 		return ErrInvalidBatch
 	}
+	return frameWorkPaletteFill(dst, bytesPerSample, x, y, width, height, palette.YMap[:], mapStride, mapX, mapY, &palette.YColors, palette.YSize)
+}
+
+// frameWorkPaletteFill is dav1d's pal_pred (src/ipred_tmpl.c): each output
+// sample is the palette color its color-map index selects. The window and map
+// bounds are checked once per block instead of once per sample; an index
+// outside the palette is still rejected.
+func frameWorkPaletteFill(dst frame.Plane, bytesPerSample int, x, y, width, height int, idx []uint8, mapStride, mapX, mapY int, colors *[tile.PaletteMaxSize]uint16, size uint8) error {
+	if width <= 0 || height <= 0 || x < 0 || y < 0 || mapX < 0 || mapY < 0 ||
+		x > dst.Width-width || y > dst.Height-height ||
+		(bytesPerSample != 1 && bytesPerSample != 2) || dst.Stride < dst.Width*bytesPerSample ||
+		size == 0 || size > tile.PaletteMaxSize {
+		return ErrInvalidBatch
+	}
+	if (y+height-1)*dst.Stride+(x+width)*bytesPerSample > len(dst.Pix) ||
+		(mapY+height-1)*mapStride+mapX+width > len(idx) {
+		return ErrInvalidBatch
+	}
+	if bytesPerSample == 1 {
+		// Indices past the palette map to 0x100, which one OR per row flags.
+		var lut [256]uint16
+		for i := range lut {
+			lut[i] = 0x100
+		}
+		for i := range size {
+			if colors[i] > 0xff {
+				return ErrInvalidBatch
+			}
+			lut[i] = colors[i]
+		}
+		for row := range height {
+			m := idx[(mapY+row)*mapStride+mapX:][:width]
+			d := dst.Pix[(y+row)*dst.Stride+x:][:width]
+			bad := uint16(0)
+			for i, v := range m {
+				c := lut[v]
+				bad |= c
+				d[i] = byte(c)
+			}
+			if bad > 0xff {
+				return ErrInvalidBatch
+			}
+		}
+		return nil
+	}
 	for row := range height {
-		for col := range width {
-			index := palette.YMap[(mapY+row)*mapStride+mapX+col]
-			if index >= palette.YSize {
+		m := idx[(mapY+row)*mapStride+mapX:][:width]
+		d := dst.Pix[(y+row)*dst.Stride+2*x:][:2*width]
+		for i, v := range m {
+			if v >= size {
 				return ErrInvalidBatch
 			}
-			if !frameWorkStoreSample(dst, bytesPerSample, x+col, y+row, palette.YColors[index]) {
-				return ErrInvalidBatch
-			}
+			c := colors[v&(tile.PaletteMaxSize-1)]
+			d[2*i] = byte(c)
+			d[2*i+1] = byte(c >> 8)
 		}
 	}
 	return nil
