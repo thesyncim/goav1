@@ -64,14 +64,19 @@ type WebRTCStream struct {
 	goldenInterval    int
 	goldenIntervalSet bool
 
-	encoders          [WebRTCMaxSpatialLayers]*VideoEncoder
-	monoEncoders      [WebRTCMaxSpatialLayers]*MonochromeVideoEncoder
-	mono16Encoders    [WebRTCMaxSpatialLayers]*HighBitDepthMonochromeVideoEncoder
-	color16Encoders   [WebRTCMaxSpatialLayers]*HighBitDepth420VideoEncoder
-	scaledFrames      [WebRTCMaxSpatialLayers]SourceFrame420
-	scaledMono        [WebRTCMaxSpatialLayers]SourceFrameMono
-	scaledMono16      [WebRTCMaxSpatialLayers]SourceFrameMono16
-	scaledFrames16    [WebRTCMaxSpatialLayers]SourceFrame42016
+	encoders        [WebRTCMaxSpatialLayers]*VideoEncoder
+	monoEncoders    [WebRTCMaxSpatialLayers]*MonochromeVideoEncoder
+	mono16Encoders  [WebRTCMaxSpatialLayers]*HighBitDepthMonochromeVideoEncoder
+	color16Encoders [WebRTCMaxSpatialLayers]*HighBitDepth420VideoEncoder
+	scaledFrames    [WebRTCMaxSpatialLayers]SourceFrame420
+	scaledMono      [WebRTCMaxSpatialLayers]SourceFrameMono
+	scaledMono16    [WebRTCMaxSpatialLayers]SourceFrameMono16
+	scaledFrames16  [WebRTCMaxSpatialLayers]SourceFrame42016
+	// layerGen[k] == pictureGen marks layer k's scaled source as built for
+	// the current picture (sourceForLayer).
+	layerGen          [WebRTCMaxSpatialLayers]uint64
+	pictureGen        uint64
+	scaleScratch      boxScaleScratch
 	layerScratch      [WebRTCMaxSpatialLayers][]byte
 	descriptorScratch [WebRTCMaxSpatialLayers][]byte
 
@@ -721,6 +726,7 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 	s.scaledMono = [WebRTCMaxSpatialLayers]SourceFrameMono{}
 	s.scaledMono16 = [WebRTCMaxSpatialLayers]SourceFrameMono16{}
 	s.scaledFrames16 = [WebRTCMaxSpatialLayers]SourceFrame42016{}
+	s.layerGen = [WebRTCMaxSpatialLayers]uint64{}
 	s.layerScratch = [WebRTCMaxSpatialLayers][]byte{}
 	s.descriptorScratch = [WebRTCMaxSpatialLayers][]byte{}
 	s.referenceValid = [WebRTCReferenceBuffers]bool{}
@@ -1256,6 +1262,7 @@ func (s *WebRTCStream) EncodePicture(src SourceFrame420, forceKey bool) (WebRTCE
 	picture.FrameNum = frameNum
 	picture.Keyframe = unit.Key
 	picture.Unit = unit
+	s.pictureGen++
 	metadataDims := webRTCScalabilityMetadataDimensionsForConfig(s.config)
 	for i := uint8(0); i < frameNum; i++ {
 		settings, ok := webRTCPictureUnitFrameSettings(unit, i)
@@ -1270,7 +1277,9 @@ func (s *WebRTCStream) EncodePicture(src SourceFrame420, forceKey bool) (WebRTCE
 		if enc == nil {
 			return WebRTCEncodedPicture{}, ErrInvalidConfig
 		}
+		enc.hme.svt.setHint(s.webRTCPyramidHint(layerSrc, settings.SpatialID))
 		tu, key, err := s.encodePictureLayer(enc, layerSrc, settings, unit.Key)
+		enc.hme.svt.setHint(svtPyramidHint{})
 		if err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
@@ -1340,6 +1349,7 @@ func (s *WebRTCStream) EncodeMonochromePicture(src SourceFrameMono, forceKey boo
 	picture.FrameNum = frameNum
 	picture.Keyframe = unit.Key
 	picture.Unit = unit
+	s.pictureGen++
 	metadataDims := webRTCScalabilityMetadataDimensionsForConfig(s.config)
 	for i := uint8(0); i < frameNum; i++ {
 		settings, ok := webRTCPictureUnitFrameSettings(unit, i)
@@ -1428,6 +1438,7 @@ func (s *WebRTCStream) EncodeHighBitDepthMonochromePicture(src SourceFrameMono16
 	picture.FrameNum = frameNum
 	picture.Keyframe = unit.Key
 	picture.Unit = unit
+	s.pictureGen++
 	metadataDims := webRTCScalabilityMetadataDimensionsForConfig(s.config)
 	for i := uint8(0); i < frameNum; i++ {
 		settings, ok := webRTCPictureUnitFrameSettings(unit, i)
@@ -1528,6 +1539,7 @@ func (s *WebRTCStream) EncodeHighBitDepthColorPicture(src SourceFrame42016, forc
 	picture.FrameNum = frameNum
 	picture.Keyframe = unit.Key
 	picture.Unit = unit
+	s.pictureGen++
 	metadataDims := webRTCScalabilityMetadataDimensionsForConfig(s.config)
 	for i := uint8(0); i < frameNum; i++ {
 		settings, ok := webRTCPictureUnitFrameSettings(unit, i)
@@ -2006,34 +2018,126 @@ func webRTCStreamLayerReconstruction(enc *VideoEncoder) (SourceFrame420, error) 
 	return recon, nil
 }
 
+// Spatial-layer sources. Each lower layer's picture is the box-filtered
+// (scale_box.go) picture of the layer above it, built once per picture
+// (layerGen == pictureGen) top-down: S1 from the input, S0 from S1. The
+// cascade makes an exact 1/2 step's luma the upper layer's HME
+// half-resolution pyramid plane (webRTCPyramidHint).
+
+// cascadeParentLayer reports the layer the spatialID source is scaled from:
+// the next layer up when it is a downscale of the input, else none (-1).
+func (s *WebRTCStream) cascadeParentLayer(spatialID uint8, inputW, inputH int) int {
+	up := spatialID + 1
+	if up >= s.config.SpatialLayerCount || up >= WebRTCMaxSpatialLayers {
+		return -1
+	}
+	r := s.config.SpatialLayers[up].Resolution
+	if !r.Valid() || (int(r.Width) == inputW && int(r.Height) == inputH) {
+		return -1
+	}
+	return int(up)
+}
+
 func (s *WebRTCStream) sourceForLayer(src SourceFrame420, spatialID uint8, resolution Resolution) (SourceFrame420, error) {
 	if spatialID >= WebRTCMaxSpatialLayers || !resolution.Valid() {
 		return SourceFrame420{}, ErrInvalidFrame
 	}
-	if src.Width == int(resolution.Width) && src.Height == int(resolution.Height) {
+	w, h := int(resolution.Width), int(resolution.Height)
+	if src.Width == w && src.Height == h {
 		return src, nil
 	}
-	return scaleSourceFrameColorNearest(&s.scaledFrames[spatialID], src, int(resolution.Width), int(resolution.Height), parserColorConfig(s.config.ColorConfig))
+	if f := s.scaledFrames[spatialID]; s.layerGen[spatialID] == s.pictureGen && f.Width == w && f.Height == h {
+		return f, nil
+	}
+	parent := src
+	if up := s.cascadeParentLayer(spatialID, src.Width, src.Height); up >= 0 {
+		p, err := s.sourceForLayer(src, uint8(up), s.config.SpatialLayers[up].Resolution)
+		if err != nil {
+			return SourceFrame420{}, err
+		}
+		parent = p
+	}
+	out, err := scaleSourceFrameColorBox(&s.scaledFrames[spatialID], parent, w, h, parserColorConfig(s.config.ColorConfig), &s.scaleScratch)
+	if err == nil {
+		s.layerGen[spatialID] = s.pictureGen
+	}
+	return out, err
+}
+
+// webRTCPyramidHint returns the lower layers' luma that equals the HME
+// pyramid of the spatialID layer's source src: layer spatialID-1 when it is
+// an exact 1/2 box step of src (the half plane), and layer spatialID-2 when
+// it is one of that (the sixteenth plane).
+func (s *WebRTCStream) webRTCPyramidHint(src SourceFrame420, spatialID uint8) svtPyramidHint {
+	var hint svtPyramidHint
+	if spatialID == 0 || src.Y == nil || src.Width%2 != 0 || src.Height%2 != 0 {
+		return hint
+	}
+	half := s.scaledFrames[spatialID-1]
+	if s.layerGen[spatialID-1] != s.pictureGen || half.Width*2 != src.Width || half.Height*2 != src.Height || half.Y == nil {
+		return hint
+	}
+	hint.parent = &src.Y[0]
+	hint.half = half
+	if spatialID >= 2 && half.Width%2 == 0 && half.Height%2 == 0 {
+		six := s.scaledFrames[spatialID-2]
+		if s.layerGen[spatialID-2] == s.pictureGen && six.Width*2 == half.Width && six.Height*2 == half.Height && six.Y != nil {
+			hint.six = six
+		}
+	}
+	return hint
 }
 
 func (s *WebRTCStream) sourceForMonoLayer(src SourceFrameMono, spatialID uint8, resolution Resolution) (SourceFrameMono, error) {
 	if spatialID >= WebRTCMaxSpatialLayers || !resolution.Valid() {
 		return SourceFrameMono{}, ErrInvalidFrame
 	}
-	if src.Width == int(resolution.Width) && src.Height == int(resolution.Height) {
+	w, h := int(resolution.Width), int(resolution.Height)
+	if src.Width == w && src.Height == h {
 		return src, nil
 	}
-	return scaleSourceFrameMonoNearest(&s.scaledMono[spatialID], src, int(resolution.Width), int(resolution.Height))
+	if f := s.scaledMono[spatialID]; s.layerGen[spatialID] == s.pictureGen && f.Width == w && f.Height == h {
+		return f, nil
+	}
+	parent := src
+	if up := s.cascadeParentLayer(spatialID, src.Width, src.Height); up >= 0 {
+		p, err := s.sourceForMonoLayer(src, uint8(up), s.config.SpatialLayers[up].Resolution)
+		if err != nil {
+			return SourceFrameMono{}, err
+		}
+		parent = p
+	}
+	out, err := scaleSourceFrameMonoBox(&s.scaledMono[spatialID], parent, w, h, &s.scaleScratch)
+	if err == nil {
+		s.layerGen[spatialID] = s.pictureGen
+	}
+	return out, err
 }
 
 func (s *WebRTCStream) sourceForMono16Layer(src SourceFrameMono16, spatialID uint8, resolution Resolution) (SourceFrameMono16, error) {
 	if spatialID >= WebRTCMaxSpatialLayers || !resolution.Valid() {
 		return SourceFrameMono16{}, ErrInvalidFrame
 	}
-	if src.Width == int(resolution.Width) && src.Height == int(resolution.Height) {
+	w, h := int(resolution.Width), int(resolution.Height)
+	if src.Width == w && src.Height == h {
 		return src, nil
 	}
-	return scaleSourceFrameMono16Nearest(&s.scaledMono16[spatialID], src, int(resolution.Width), int(resolution.Height))
+	if f := s.scaledMono16[spatialID]; s.layerGen[spatialID] == s.pictureGen && f.Width == w && f.Height == h {
+		return f, nil
+	}
+	parent := src
+	if up := s.cascadeParentLayer(spatialID, src.Width, src.Height); up >= 0 {
+		p, err := s.sourceForMono16Layer(src, uint8(up), s.config.SpatialLayers[up].Resolution)
+		if err != nil {
+			return SourceFrameMono16{}, err
+		}
+		parent = p
+	}
+	out, err := scaleSourceFrameMono16Box(&s.scaledMono16[spatialID], parent, w, h, &s.scaleScratch)
+	if err == nil {
+		s.layerGen[spatialID] = s.pictureGen
+	}
+	return out, err
 }
 
 func (s *WebRTCStream) sourceFor42016Layer(src SourceFrame42016, spatialID uint8, resolution Resolution) (SourceFrame42016, error) {
@@ -2044,13 +2148,29 @@ func (s *WebRTCStream) sourceForColor16Layer(src SourceFrame42016, spatialID uin
 	if spatialID >= WebRTCMaxSpatialLayers || !resolution.Valid() {
 		return SourceFrame42016{}, ErrInvalidFrame
 	}
-	if src.Width == int(resolution.Width) && src.Height == int(resolution.Height) {
+	w, h := int(resolution.Width), int(resolution.Height)
+	if src.Width == w && src.Height == h {
 		return src, nil
 	}
-	return scaleSourceFrameColor16Nearest(&s.scaledFrames16[spatialID], src, int(resolution.Width), int(resolution.Height), parserColorConfig(s.config.ColorConfig))
+	if f := s.scaledFrames16[spatialID]; s.layerGen[spatialID] == s.pictureGen && f.Width == w && f.Height == h {
+		return f, nil
+	}
+	parent := src
+	if up := s.cascadeParentLayer(spatialID, src.Width, src.Height); up >= 0 {
+		p, err := s.sourceForColor16Layer(src, uint8(up), s.config.SpatialLayers[up].Resolution)
+		if err != nil {
+			return SourceFrame42016{}, err
+		}
+		parent = p
+	}
+	out, err := scaleSourceFrameColor16Box(&s.scaledFrames16[spatialID], parent, w, h, parserColorConfig(s.config.ColorConfig), &s.scaleScratch)
+	if err == nil {
+		s.layerGen[spatialID] = s.pictureGen
+	}
+	return out, err
 }
 
-func scaleSourceFrameColorNearest(dst *SourceFrame420, src SourceFrame420, width, height int, color parser.ColorConfig) (SourceFrame420, error) {
+func scaleSourceFrameColorBox(dst *SourceFrame420, src SourceFrame420, width, height int, color parser.ColorConfig, scratch *boxScaleScratch) (SourceFrame420, error) {
 	if width <= 0 || height <= 0 {
 		return SourceFrame420{}, ErrInvalidFrame
 	}
@@ -2069,13 +2189,13 @@ func scaleSourceFrameColorNearest(dst *SourceFrame420, src SourceFrame420, width
 	dst.ChromaStride = cw
 	dst.Width = width
 	dst.Height = height
-	scalePlaneNearest(dst.Y, width, width, height, src.Y, src.YStride, src.Width, src.Height)
-	scalePlaneNearest(dst.U, cw, cw, ch, src.U, src.ChromaStride, srcCW, srcCH)
-	scalePlaneNearest(dst.V, cw, cw, ch, src.V, src.ChromaStride, srcCW, srcCH)
+	scalePlaneBox8(dst.Y, width, width, height, src.Y, src.YStride, src.Width, src.Height, scratch)
+	scalePlaneBox8(dst.U, cw, cw, ch, src.U, src.ChromaStride, srcCW, srcCH, scratch)
+	scalePlaneBox8(dst.V, cw, cw, ch, src.V, src.ChromaStride, srcCW, srcCH, scratch)
 	return *dst, nil
 }
 
-func scaleSourceFrameMonoNearest(dst *SourceFrameMono, src SourceFrameMono, width, height int) (SourceFrameMono, error) {
+func scaleSourceFrameMonoBox(dst *SourceFrameMono, src SourceFrameMono, width, height int, scratch *boxScaleScratch) (SourceFrameMono, error) {
 	if width <= 0 || height <= 0 {
 		return SourceFrameMono{}, ErrInvalidFrame
 	}
@@ -2085,25 +2205,8 @@ func scaleSourceFrameMonoNearest(dst *SourceFrameMono, src SourceFrameMono, widt
 	dst.YStride = width
 	dst.Width = width
 	dst.Height = height
-	scalePlaneNearest(dst.Y, width, width, height, src.Y, src.YStride, src.Width, src.Height)
+	scalePlaneBox8(dst.Y, width, width, height, src.Y, src.YStride, src.Width, src.Height, scratch)
 	return *dst, nil
-}
-
-var scalePlaneNearestImpl = scalePlaneNearestPureGo
-
-func scalePlaneNearest(dst []byte, dstStride, dstWidth, dstHeight int, src []byte, srcStride, srcWidth, srcHeight int) {
-	scalePlaneNearestImpl(dst, dstStride, dstWidth, dstHeight, src, srcStride, srcWidth, srcHeight)
-}
-
-func scalePlaneNearestPureGo(dst []byte, dstStride, dstWidth, dstHeight int, src []byte, srcStride, srcWidth, srcHeight int) {
-	for y := 0; y < dstHeight; y++ {
-		sy := y * srcHeight / dstHeight
-		drow := dst[y*dstStride : y*dstStride+dstWidth]
-		srow := src[sy*srcStride:]
-		for x := 0; x < dstWidth; x++ {
-			drow[x] = srow[x*srcWidth/dstWidth]
-		}
-	}
 }
 
 func appendWebRTCLayerTemporalUnit(dst []byte, src []byte, temporalID uint8, spatialID uint8, scalability ScalabilityMode, includeScalabilityMetadata bool, metadataDims webRTCScalabilityMetadataDimensions) ([]byte, error) {

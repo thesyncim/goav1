@@ -773,7 +773,7 @@ func copyMono16FrameInto(dst *SourceFrameMono16, src SourceFrameMono16) {
 	}
 }
 
-func scaleSourceFrameMono16Nearest(dst *SourceFrameMono16, src SourceFrameMono16, width, height int) (SourceFrameMono16, error) {
+func scaleSourceFrameMono16Box(dst *SourceFrameMono16, src SourceFrameMono16, width, height int, scratch *boxScaleScratch) (SourceFrameMono16, error) {
 	if width <= 0 || height <= 0 {
 		return SourceFrameMono16{}, ErrInvalidFrame
 	}
@@ -784,23 +784,6 @@ func scaleSourceFrameMono16Nearest(dst *SourceFrameMono16, src SourceFrameMono16
 	dst.Width = width
 	dst.Height = height
 	dst.BitDepth = src.BitDepth
-	scalePlaneNearest16(dst.Y, width, width, height, src.Y, src.YStride, src.Width, src.Height)
+	scalePlaneBox16(dst.Y, width, width, height, src.Y, src.YStride, src.Width, src.Height, scratch)
 	return *dst, nil
-}
-
-var scalePlaneNearest16Impl = scalePlaneNearest16PureGo
-
-func scalePlaneNearest16(dst []uint16, dstStride, dstWidth, dstHeight int, src []uint16, srcStride, srcWidth, srcHeight int) {
-	scalePlaneNearest16Impl(dst, dstStride, dstWidth, dstHeight, src, srcStride, srcWidth, srcHeight)
-}
-
-func scalePlaneNearest16PureGo(dst []uint16, dstStride, dstWidth, dstHeight int, src []uint16, srcStride, srcWidth, srcHeight int) {
-	for y := 0; y < dstHeight; y++ {
-		sy := y * srcHeight / dstHeight
-		drow := dst[y*dstStride : y*dstStride+dstWidth]
-		srow := src[sy*srcStride:]
-		for x := 0; x < dstWidth; x++ {
-			drow[x] = srow[x*srcWidth/dstWidth]
-		}
-	}
 }

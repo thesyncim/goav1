@@ -109,6 +109,8 @@ type svtPyramid struct {
 	slotHalf          [hmeRefSlots]svtPlane
 	slotSix           [hmeRefSlots]svtPlane
 	slotOK            [hmeRefSlots]bool
+	// hint is the next build's precomputed pyramid (setHint), consumed by it.
+	hint svtPyramidHint
 	// l0W, l0H are the level-0 region size of the frame's reference
 	// distance (setDistance).
 	l0W, l0H int
@@ -150,24 +152,38 @@ func svtDownsample2D(dst []byte, dstStride int, src []byte, srcStride, w, h int)
 	}
 }
 
-func buildPyramid(half, six *svtPlane, src SourceFrame420) {
+func buildPyramid(half, six *svtPlane, src SourceFrame420, hint svtPyramidHint) {
 	hw, hh := src.Width/2, src.Height/2
 	half.size(hw, hh, svtHalfBorder)
 	six.size(hw/2, hh/2, svtSixBorder)
-	svtDownsample2DArch(half.pix[half.org:], half.stride, src.Y, src.YStride, hw, hh)
-	svtDownsample2DArch(six.pix[six.org:], six.stride, half.pix[half.org:], half.stride, hw/2, hh/2)
+	if !hint.matches(src) {
+		hint = svtPyramidHint{}
+	}
+	if hint.half.Width == hw && hint.half.Height == hh {
+		copyPlaneRows(half.pix[half.org:], half.stride, hint.half.Y, hint.half.YStride, hw, hh)
+	} else {
+		svtDownsample2DArch(half.pix[half.org:], half.stride, src.Y, src.YStride, hw, hh)
+		hint.six = SourceFrame420{}
+	}
+	if hint.six.Width == hw/2 && hint.six.Height == hh/2 {
+		copyPlaneRows(six.pix[six.org:], six.stride, hint.six.Y, hint.six.YStride, hw/2, hh/2)
+	} else {
+		svtDownsample2DArch(six.pix[six.org:], six.stride, half.pix[half.org:], half.stride, hw/2, hh/2)
+	}
 	half.pad()
 	six.pad()
 }
 
 // build makes src the current pyramid.
 func (p *svtPyramid) build(src SourceFrame420) {
+	hint := p.hint
+	p.hint = svtPyramidHint{}
 	if src.Width/4 < 16 || src.Height/4 < 16 {
 		p.haveCur, p.havePrev = false, false
 		p.slotOK = [hmeRefSlots]bool{}
 		return
 	}
-	buildPyramid(&p.curHalf, &p.curSix, src)
+	buildPyramid(&p.curHalf, &p.curSix, src, hint)
 	p.haveCur = true
 }
 
@@ -326,4 +342,28 @@ func svtSADRectSub(src []byte, s2 int, ref []byte, bw, rows int) uint32 {
 		}
 	}
 	return sum << 1
+}
+
+// svtPyramidHint carries pyramid planes computed elsewhere for the next
+// build: in a spatial-layer stream the lower layers' box-filtered luma is,
+// sample for sample, the upper layer's half and sixteenth planes
+// (scale_box.go), so the upper layer copies them instead of filtering again.
+// parent pins the source they were made from.
+type svtPyramidHint struct {
+	parent    *byte
+	half, six SourceFrame420
+}
+
+// matches reports whether the hint was made from src.
+func (h svtPyramidHint) matches(src SourceFrame420) bool {
+	return h.parent != nil && len(src.Y) > 0 && h.parent == &src.Y[0]
+}
+
+// setHint hands the next build its precomputed planes.
+func (p *svtPyramid) setHint(h svtPyramidHint) { p.hint = h }
+
+func copyPlaneRows(dst []byte, dstStride int, src []byte, srcStride, w, h int) {
+	for y := 0; y < h; y++ {
+		copy(dst[y*dstStride:y*dstStride+w], src[y*srcStride:y*srcStride+w])
+	}
 }

@@ -834,11 +834,7 @@ func copyColor16FrameInto(dst *SourceFrame42016, src SourceFrame42016, color par
 	}
 }
 
-func scaleSourceFrame42016Nearest(dst *SourceFrame42016, src SourceFrame42016, width, height int) (SourceFrame42016, error) {
-	return scaleSourceFrameColor16Nearest(dst, src, width, height, parser.ColorConfig{BitDepth: src.BitDepth, SubsamplingX: true, SubsamplingY: true})
-}
-
-func scaleSourceFrameColor16Nearest(dst *SourceFrame42016, src SourceFrame42016, width, height int, color parser.ColorConfig) (SourceFrame42016, error) {
+func scaleSourceFrameColor16Box(dst *SourceFrame42016, src SourceFrame42016, width, height int, color parser.ColorConfig, scratch *boxScaleScratch) (SourceFrame42016, error) {
 	if width <= 0 || height <= 0 || width%2 != 0 || height%2 != 0 {
 		return SourceFrame42016{}, ErrInvalidFrame
 	}
@@ -858,8 +854,8 @@ func scaleSourceFrameColor16Nearest(dst *SourceFrame42016, src SourceFrame42016,
 	dst.Width = width
 	dst.Height = height
 	dst.BitDepth = src.BitDepth
-	scalePlaneNearest16(dst.Y, width, width, height, src.Y, src.YStride, src.Width, src.Height)
-	scalePlaneNearest16(dst.U, chromaWidth, chromaWidth, chromaHeight, src.U, src.ChromaStride, srcChromaWidth, srcChromaHeight)
-	scalePlaneNearest16(dst.V, chromaWidth, chromaWidth, chromaHeight, src.V, src.ChromaStride, srcChromaWidth, srcChromaHeight)
+	scalePlaneBox16(dst.Y, width, width, height, src.Y, src.YStride, src.Width, src.Height, scratch)
+	scalePlaneBox16(dst.U, chromaWidth, chromaWidth, chromaHeight, src.U, src.ChromaStride, srcChromaWidth, srcChromaHeight, scratch)
+	scalePlaneBox16(dst.V, chromaWidth, chromaWidth, chromaHeight, src.V, src.ChromaStride, srcChromaWidth, srcChromaHeight, scratch)
 	return *dst, nil
 }
