@@ -361,6 +361,8 @@ type cdefSearcher struct {
 	in      [cdef.InputBufferSize]uint16
 	tmp     [cdefFB * cdefFB]byte
 	dlist   [cdefFB * cdefFB / 64]cdef.BlockPosition
+	trials  [cdefTotalStrengths]cdef.SearchTrial
+	sse     [cdefTotalStrengths]uint64
 	dir     cdef.DirectionGrid
 	vari    cdef.VarianceGrid
 	sbMSE   [2][]*[cdefTotalStrengths]uint64
@@ -572,6 +574,9 @@ func (s *cdefSearcher) search(src, recon *SourceFrame420, m *threading.FrameWork
 						XDec: 0, YDec: 0, Plane: cdef.PlaneY, Damping: damping,
 					})
 				}
+				if pli == 0 && s.searchLumaBatched(srcPlane, srcStrides[0], dlist, fsY[:total], damping, ss, fb) {
+					continue
+				}
 				for gi := 0; gi < total; gi++ {
 					if pli > 0 && fsUV[gi] == -1 {
 						s.mse[1][fb][gi] = cdefDefaultMSEUV * 64
@@ -613,6 +618,30 @@ func (s *cdefSearcher) search(src, recon *SourceFrame420, m *threading.FrameWork
 		}
 	}
 	return s.finish(g, ctrls, qIndex, lambda, fsY[:total])
+}
+
+// searchLumaBatched evaluates every luma trial of filter block fb in one
+// batched pass (cdef.SearchBlocksU8Trusted): per trial, the same
+// filter-then-measure sum the per-trial loop computes. It returns false when
+// the build has no batched kernel, in which case the caller runs that loop.
+func (s *cdefSearcher) searchLumaBatched(srcPlane []byte, srcStride int, dlist []cdef.BlockPosition, fsY []int8, damping uint8, ss, fb int) bool {
+	total := len(fsY)
+	trials := s.trials[:total]
+	for gi, packed := range fsY {
+		sec := uint8(packed) % cdefSecStrengths
+		if sec == 3 {
+			sec = 4
+		}
+		trials[gi] = cdef.SearchTrial{Primary: uint8(packed) / cdefSecStrengths, Secondary: sec}
+	}
+	if !cdef.SearchBlocksU8Trusted(srcPlane, srcStride, s.in[:], cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder,
+		dlist, &s.dir, &s.vari, int(damping), trials, ss, s.sse[:total]) {
+		return false
+	}
+	for gi := range fsY {
+		s.mse[0][fb][gi] = s.sse[gi] * uint64(ss)
+	}
+	return true
 }
 
 // copyFB copies every step-th row of the w x h filter-block reconstruction
