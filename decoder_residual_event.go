@@ -966,7 +966,7 @@ func runDecoderFrameWorkEventWithExternalResidualRunner(req DecoderFrameWorkResi
 		sideRunner,
 		req.Runner,
 		postRunner,
-		req.External.PostPublisher,
+		decoderResolvePostPublisher(req.External.PostPublisher, postRunner),
 	)
 	stats, statsErr := decoderFrameWorkResidualRunnerStats(req.Runner)
 	if req.Stats != nil {
@@ -1438,4 +1438,34 @@ func decoderFrameWorkEventStepSurface(step DecoderFrameWorkStep) (int, error) {
 	default:
 		return -1, ErrDecoderInvalidFrameWorkStep
 	}
+}
+
+// decoderNoGlobalSurfacePublisher reports that the post-filter runner never
+// publishes a global surface.
+type decoderNoGlobalSurfacePublisher struct{}
+
+func (decoderNoGlobalSurfacePublisher) PublishedFrameWorkGlobalSurface() (int, bool) {
+	return -1, false
+}
+
+// decoderResolvePostPublisher resolves the global-surface publisher for the
+// decoder's own post-filter runners with a concrete type switch. Left nil, the
+// event runner falls back to an interface-to-interface type assertion on every
+// frame, and the runtime's per-site assertion cache grows (allocating) at
+// random times while it warms up, which made the zero-alloc decode benchmarks
+// report an occasional 48 B allocation. Unknown runner types keep that
+// fallback.
+func decoderResolvePostPublisher(publisher DecoderFrameWorkPostFilterGlobalSurfacePublisher, post DecoderFrameWorkPostFilterRunner) DecoderFrameWorkPostFilterGlobalSurfacePublisher {
+	if publisher != nil {
+		return publisher
+	}
+	switch r := post.(type) {
+	case nil:
+		return nil
+	case *decoderExternalPostFilterRunner:
+		return r
+	case *DecoderFrameWorkReusableSupportedPostFilterRunner, decoderFrameWorkResidualPostFuncRunner:
+		return decoderNoGlobalSurfacePublisher{}
+	}
+	return nil
 }
