@@ -566,6 +566,37 @@ func (wf *frameWorkReconWavefront) workerResidual(worker int) []int16 {
 	return wf.residualArena[off : off+stride]
 }
 
+// reserveCFArena sizes the deferred cf arena once for the job instead of letting
+// it grow geometrically through its first frames. Each TXB keeps at most its
+// pixel area of coefficients (a scan area never exceeds the transform area,
+// and transforms past the visible block are not coded), so the job's
+// superblock-aligned luma area plus its chroma planes bounds what one job
+// appends; the extra 1024 is the slot arenaSlot reserves ahead of a commit.
+func (s *FrameWorkTileResidualScratch) reserveCFArena(walk tile.BlockWalkRequest, color parser.ColorConfig) {
+	if walk.MIColEnd <= walk.MIColStart || walk.MIRowEnd <= walk.MIRowStart {
+		return
+	}
+	w := (int(walk.MIColEnd-walk.MIColStart)*4 + 63) &^ 63
+	h := (int(walk.MIRowEnd-walk.MIRowStart)*4 + 63) &^ 63
+	luma := w * h
+	need := luma + 1024
+	if !color.MonoChrome {
+		shift := 0
+		if color.SubsamplingX {
+			shift++
+		}
+		if color.SubsamplingY {
+			shift++
+		}
+		need += 2 * (luma >> shift)
+	}
+	if cap(s.cfArena) < need {
+		arena := make([]int32, len(s.cfArena), need)
+		copy(arena, s.cfArena)
+		s.cfArena = arena
+	}
+}
+
 // resetDeferredReconBuffers slices the deferred reconstruction buffers back to
 // zero length while retaining their capacity, so a worker reusing this scratch
 // across jobs never replays a previous job's events or coefficients.
@@ -1251,6 +1282,9 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 		streamRecon = true
 	}
 	deferReconstruction := frameWorkDeferReconstruction || streamRecon
+	if deferReconstruction {
+		scratch.reserveCFArena(loopReq.Walk, b.Sequence.ColorConfig)
+	}
 	batchValue := *b
 	scratch.controller = frameWorkTileResidualLoopController{
 		batch:                  batchValue,
