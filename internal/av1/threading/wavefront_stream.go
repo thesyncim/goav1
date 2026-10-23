@@ -288,8 +288,7 @@ func (c *frameWorkTileResidualLoopController) finishReconStream(parseErr error) 
 	if ft := wf.frameThread; ft != nil {
 		// Frame threading: the parse is done and every row is published; the
 		// lanes finish under the frame's tail (FrameThreadRecon.Join).
-		ft.wf = wf
-		ft.stats = c.stats
+		ft.addPending(wf, c.stats)
 		return nil
 	}
 	return wf.finishLanes(c.stats)

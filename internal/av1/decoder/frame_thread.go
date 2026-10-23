@@ -90,14 +90,15 @@ type FrameThreadFrame struct {
 }
 
 // EventFrameThreadable reports whether event is a coded frame that the
-// frame-threaded path can split: a complete single-tile frame OBU outside an
+// frame-threaded path can split: a frame whose every tile arrives in one final
+// tile group (dav1d submits a frame once all its tile data is in), outside an
 // intra-block-copy frame (whose block copies read the frame being
 // reconstructed at arbitrary distances, so the parse cannot run ahead of the
 // pixels), not starting a new coded video sequence (whose reference reset
 // releases surfaces immediately).
 func EventFrameThreadable(event *Event) bool {
 	return event != nil && event.Kind == EventFrame && event.TileGroup.Final &&
-		event.TileGroup.TileCount == 1 && event.TileInfo.Cols == 1 && event.TileInfo.Rows == 1 &&
+		event.TileGroup.StartTile == 0 && int(event.TileGroup.TileCount) == int(event.TileInfo.Cols)*int(event.TileInfo.Rows) &&
 		!event.NewCodedVideoSequence && !event.FrameSize.AllowIntrabc && !event.FrameSize.SuperResEnabled &&
 		!event.FrameHeader.ShowExistingFrame
 }
@@ -181,8 +182,7 @@ func (s *FrameWorkState) PublishFrameThreaded(refs *SurfaceReferences, event *Ev
 	ft.initialCDF = s.tileResidualCurrentCDF
 	ft.retainedCDF = s.tileResidualRetainedCDF
 	ft.cdfHeld = true
-	ft.willRetain = event.TileInfo.RefreshContext && event.TileInfo.ContextUpdateTileID == 0 &&
-		!event.FrameHeader.DisableCDFUpdate
+	ft.willRetain = event.TileInfo.RefreshContext && !event.FrameHeader.DisableCDFUpdate
 	ft.currentMV = s.currentMVFrame
 	ft.currentMVValid = s.currentMVFrameValid
 	ft.temporal = s.temporalMVsDeferred
@@ -289,11 +289,11 @@ func (s *FrameWorkState) RunStepFrameThreaded(event *Event, step FrameWorkStep, 
 	if err != nil {
 		return err
 	}
-	if !prepared.HasTileWork || prepared.BatchCount != 1 {
+	if !prepared.HasTileWork || prepared.BatchCount < 1 || prepared.BatchCount > len(batches) {
 		return ErrInvalidTileWork
 	}
 	prepared.Base.FrameThread = &ft.Recon
-	if err := workerPool.ExecuteFrameWorkRunnerFrameThread(batches[0], jobs[:prepared.JobCount], prepared.Base, runner, laneNeed); err != nil {
+	if err := workerPool.ExecuteFrameWorkRunnerFrameThread(batches[:prepared.BatchCount], jobs[:prepared.JobCount], prepared.Base, runner, laneNeed); err != nil {
 		return err
 	}
 	if ft.retainedValid != ft.willRetain {

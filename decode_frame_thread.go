@@ -374,7 +374,9 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 	// out_cdf) and, per superblock row, for the references' saved MV_REF
 	// rows (progress[0]); it never waits for reference pixels.
 	currentGrid, refGrids := fc.ft.MotionGrids()
-	fc.motion = internalthreading.FrameThreadMotion{}
+	// Field resets keep the motion link's per-tile progress table allocated.
+	fc.motion.Progress = nil
+	fc.motion.RefProgress = [InterRefsPerFrame]*internalthreading.FrameProgress{}
 	if currentGrid != 0 {
 		p.mvProgress[currentGrid-1].Reset()
 		fc.motion.Progress = &p.mvProgress[currentGrid-1]
@@ -479,7 +481,7 @@ func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStr
 	p := &decoderFramePipeline{
 		d:        d,
 		fcs:      make([]decoderFrameContext, n),
-		laneNeed: n * workers,
+		laneNeed: 2 * n * workers,
 		progress: make([]internalthreading.FrameProgress, surfaceCount),
 		ready:    make([]*Frame, 0, 2*(RefFrames+n)),
 	}
