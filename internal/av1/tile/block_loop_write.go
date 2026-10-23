@@ -42,6 +42,9 @@ func WalkBlockLoopWrite(w *entropy.Writer, partCDFs *PartitionCDFs, scratch *Blo
 	// neighbor is 16x16 or larger.
 	ensureIntrabcDiagonalCarriers(carrier)
 	keepMotion := scratch.keepLegacyMotion()
+	// The left edge stays resident between roots; carrier.Left gets it back
+	// when the walk ends.
+	defer scratch.flushLeftEdge()
 	for miRow := miRowStart; miRow < miRowEnd; miRow += rootSize {
 		if keepMotion {
 			promotePendingDiagonalCarriers(carrier)
@@ -52,7 +55,7 @@ func WalkBlockLoopWrite(w *entropy.Writer, partCDFs *PartitionCDFs, scratch *Blo
 		for miCol := miColStart; miCol < miColEnd; miCol += rootSize {
 			rootColIndex := int((miCol - miColStart) / rootSize)
 			w.LogSuperblock()
-			if err := blockLoopLoadRootContextMotion(scratch, carrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, sbSizeMIB, keepMotion); err != nil {
+			if err := blockLoopLoadRootContextMotion(scratch, carrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, sbSizeMIB, keepMotion, miRow, miCol); err != nil {
 				return err
 			}
 			rootReq := BlockWalkRequest{
@@ -70,7 +73,7 @@ func WalkBlockLoopWrite(w *entropy.Writer, partCDFs *PartitionCDFs, scratch *Blo
 			}); err != nil {
 				return err
 			}
-			if err := blockLoopStoreRootContextMotion(scratch, carrier, rootColIndex, sbSizeMIB, keepMotion); err != nil {
+			if err := blockLoopStoreRootContextMotion(scratch, carrier, rootColIndex, sbSizeMIB, keepMotion, miRow, miCol+rootSize); err != nil {
 				return err
 			}
 			if keepMotion {

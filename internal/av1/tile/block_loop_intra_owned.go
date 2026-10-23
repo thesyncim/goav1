@@ -1,10 +1,6 @@
 package tile
 
-import (
-	"unsafe"
-
-	"github.com/thesyncim/goav1/internal/av1/parser"
-)
+import "github.com/thesyncim/goav1/internal/av1/parser"
 
 // DecodeBlockLoopWithCoeffControllerPtrOwnedIntra is reserved for the decoder-owned
 // full tile walk. Its caller excludes external scratch observers and hooks.
@@ -19,26 +15,46 @@ func DecodeBlockLoopWithCoeffControllerPtrOwnedIntra[T BlockLoopCoeffController]
 	return decodeBlockLoopWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, true, true, visit)
 }
 
-// Only these two pointer-free spans are read by the intra syntax loop. Edge
-// block sizes and the per-block neighbor snapshot remain necessary for tx_size.
+// Only the intra-syntax prefix of each edge (Skip through PaletteUV) and the
+// per-block tx_size neighbor snapshot are read by the intra syntax loop.
 // Motion grids and cross-SB histories remain untouched until a generic walk
 // invokes resetForSuperblock, which clears every validity field before use.
 func (c *BlockModeContext) resetForIntraSuperblock() {
-	clear(unsafe.Slice((*byte)(unsafe.Pointer(c)), unsafe.Offsetof(c.AboveRef)))
-	clear(unsafe.Slice((*byte)(unsafe.Pointer(&c.AboveBlockSize)), unsafe.Offsetof(c.GridMotionValid)-unsafe.Offsetof(c.AboveBlockSize)))
+	c.clearAboveIntraEdge()
+	c.clearLeftIntraEdge()
+	c.resetIntraSuperblockState()
 }
 
-func blockLoopLoadIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8) error {
-	scratch.Partition = PartitionContext{}
-	scratch.Mode.resetForIntraSuperblock()
-	scratch.CDEF.Reset()
-	scratch.CoeffCtx = CoeffEntropyContext{}
-	if carrier == nil {
+func (c *BlockModeContext) resetIntraSuperblockState() {
+	c.TxNeighborValid = false
+	c.TxAboveNeighborIntra = 0
+	c.TxAboveNeighborBlockSize = 0
+	c.TxLeftNeighborIntra = 0
+	c.TxLeftNeighborBlockSize = 0
+}
+
+// blockLoopLoadIntraRootContext loads one root's intra edge contexts; like
+// blockLoopLoadRootContextMotion it keeps the left edge resident between
+// consecutive roots of one walk.
+func blockLoopLoadIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8, miRow, miCol uint32) error {
+	if carrier == nil || rootColIndex < 0 || rootColIndex >= len(carrier.Above) {
+		scratch.flushLeftEdge()
+		scratch.Partition = PartitionContext{}
+		scratch.Mode.resetForIntraSuperblock()
+		scratch.CDEF.Reset()
+		scratch.CoeffCtx = CoeffEntropyContext{}
+		if carrier != nil {
+			return ErrInvalidDecodeState
+		}
 		return nil
 	}
-	if rootColIndex < 0 || rootColIndex >= len(carrier.Above) {
-		return ErrInvalidDecodeState
+	resident := haveLeft && scratch.leftEdgeResident(carrier, miRow, miCol, true)
+	if !resident {
+		scratch.flushLeftEdge()
 	}
+	scratch.leftEdge = blockLoopLeftEdge{}
+	scratch.Mode.resetIntraSuperblockState()
+	scratch.CDEF.Reset()
 	if haveTop {
 		edge := &carrier.Above[rootColIndex]
 		scratch.Partition.Above = edge.Partition
@@ -54,9 +70,7 @@ func blockLoopLoadIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoop
 		scratch.Mode.AboveBlockSize = edge.mode.BlockSize
 		scratch.Mode.AbovePaletteY = edge.mode.PaletteY
 		scratch.Mode.AbovePaletteUV = edge.mode.PaletteUV
-		for plane := range 3 {
-			scratch.CoeffCtx.Above[plane] = edge.Coeff[plane]
-		}
+		scratch.CoeffCtx.Above = edge.Coeff
 		// Keep the mode/size extension used by smaller-SB neighbor contexts.
 		if sbSizeMIB != 0 && rootColIndex+1 < len(carrier.Above) {
 			right := &carrier.Above[rootColIndex+1].mode
@@ -69,8 +83,16 @@ func blockLoopLoadIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoop
 				scratch.Mode.AboveBlockSize[dst] = right.BlockSize[off]
 			}
 		}
+	} else {
+		scratch.Mode.clearAboveIntraEdge()
+		scratch.Partition.Above = [MaxPartitionSlots]uint8{}
+		scratch.CoeffCtx.Above = [3][MaxBlockModeSlots]uint8{}
 	}
-	if haveLeft {
+	if !haveLeft {
+		scratch.Mode.clearLeftIntraEdge()
+		scratch.Partition.Left = [MaxPartitionSlots]uint8{}
+		scratch.CoeffCtx.Left = [3][MaxBlockModeSlots]uint8{}
+	} else if !resident {
 		edge := &carrier.Left
 		scratch.Partition.Left = edge.Partition
 		scratch.Mode.LeftSkip = edge.mode.Skip
@@ -85,14 +107,12 @@ func blockLoopLoadIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoop
 		scratch.Mode.LeftBlockSize = edge.mode.BlockSize
 		scratch.Mode.LeftPaletteY = edge.mode.PaletteY
 		scratch.Mode.LeftPaletteUV = edge.mode.PaletteUV
-		for plane := range 3 {
-			scratch.CoeffCtx.Left[plane] = edge.Coeff[plane]
-		}
+		scratch.CoeffCtx.Left = edge.Coeff
 	}
 	return nil
 }
 
-func blockLoopStoreIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int) error {
+func blockLoopStoreIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, miRow, nextMICol uint32) error {
 	if carrier == nil {
 		return nil
 	}
@@ -113,10 +133,13 @@ func blockLoopStoreIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoo
 	above.mode.BlockSize = scratch.Mode.AboveBlockSize
 	above.mode.PaletteY = scratch.Mode.AbovePaletteY
 	above.mode.PaletteUV = scratch.Mode.AbovePaletteUV
-	for plane := range 3 {
-		above.Coeff[plane] = scratch.CoeffCtx.Above[plane]
-	}
-	left := &carrier.Left
+	above.Coeff = scratch.CoeffCtx.Above
+	scratch.keepLeftEdge(carrier, miRow, nextMICol, true)
+	return nil
+}
+
+// storeIntraLeftEdge is the left half of blockLoopStoreIntraRootContext.
+func storeIntraLeftEdge(left *BlockLoopRootLeftContext, scratch *BlockLoopScratch) {
 	left.Partition = scratch.Partition.Left
 	left.mode.Skip = scratch.Mode.LeftSkip
 	left.mode.SkipMode = scratch.Mode.LeftSkipMode
@@ -130,10 +153,7 @@ func blockLoopStoreIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoo
 	left.mode.BlockSize = scratch.Mode.LeftBlockSize
 	left.mode.PaletteY = scratch.Mode.LeftPaletteY
 	left.mode.PaletteUV = scratch.Mode.LeftPaletteUV
-	for plane := range 3 {
-		left.Coeff[plane] = scratch.CoeffCtx.Left[plane]
-	}
-	return nil
+	left.Coeff = scratch.CoeffCtx.Left
 }
 
 // markOwnedIntra retains the edge sizes used by transform entropy contexts.

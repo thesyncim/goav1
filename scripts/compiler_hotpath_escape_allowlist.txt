@@ -149,6 +149,11 @@ internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, headerSize + groupOBUSize)
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap in EncodeLosslessHighBitDepthMonochromeKeyframe:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap in EncodeLosslessKeyframe:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap in EncodeLosslessMonochromeKeyframe:
+internal/av1/encoder/keyframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap
+internal/av1/encoder/keyframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in encodeLosslessHighBitDepth420KeyframeTile:
+internal/av1/encoder/keyframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in encodeLosslessHighBitDepthMonochromeKeyframeTile:
+internal/av1/encoder/keyframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in encodeLosslessKeyframeTile:
+internal/av1/encoder/keyframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in encodeLosslessMonochromeKeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: moved to heap: scratch
 internal/av1/encoder/keyframe_highbd_color.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap
 internal/av1/encoder/keyframe_highbd_color.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap in EncodeHighBitDepth420Keyframe:
@@ -234,6 +239,8 @@ internal/av1/encoder/pframe.go:*:*: make([]byte, 0, 16384) escapes to heap
 internal/av1/encoder/pframe.go:*:*: make([]byte, 0, 16384) escapes to heap in encodeRepeatPFrameTile:
 internal/av1/encoder/pframe.go:*:*: make([]byte, 0, tdSize + frameSize + groupOBUSize) escapes to heap
 internal/av1/encoder/pframe.go:*:*: make([]byte, 0, tdSize + frameSize + groupOBUSize) escapes to heap in EncodeRepeatPFrame:
+internal/av1/encoder/pframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap
+internal/av1/encoder/pframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in encodeRepeatPFrameTile:
 internal/av1/encoder/pframe.go:*:*: moved to heap: scratch
 internal/av1/encoder/pframe_highbd.go:*:*: func literal escapes to heap
 internal/av1/encoder/pframe_highbd.go:*:*: func literal escapes to heap in (*pframeCoder).encodeHighBitDepthColorPFrameTile:

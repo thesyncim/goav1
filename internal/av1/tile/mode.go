@@ -36,33 +36,36 @@ type BlockModeCDFs struct {
 
 // BlockModeContext is the caller-owned top/left block context for one
 // superblock. Slots are addressed in 4x4 units, matching dav1d's bx4/by4.
+//
+// The fields form three contiguous ranges, which the superblock loads clear
+// independently (dav1d keeps the same split: the tile-wide above context
+// f->a, the per-SB-row left context t->l, and per-block state):
+//   - the above edge, AboveSkip through AboveInterpValid, carried across SB
+//     rows by the carrier's above slots;
+//   - the left edge, LeftSkip through LeftInterpValid, carried along an SB
+//     row (it stays resident in the scratch between consecutive superblocks
+//     of one walk);
+//   - per-superblock state from AboveInterMotion to the end.
+//
+// Within each edge the intra-syntax fields (Skip through PaletteUV) come
+// first; the owned intra walk carries only that prefix.
 type BlockModeContext struct {
 	AboveSkip        [MaxBlockModeSlots]uint8
-	LeftSkip         [MaxBlockModeSlots]uint8
 	AboveSkipMode    [MaxBlockModeSlots]uint8
-	LeftSkipMode     [MaxBlockModeSlots]uint8
 	AboveSegmentPred [MaxBlockModeSlots]uint8
-	LeftSegmentPred  [MaxBlockModeSlots]uint8
 	AboveIntra       [MaxBlockModeSlots]uint8
-	LeftIntra        [MaxBlockModeSlots]uint8
 	AboveMode        [MaxBlockModeSlots]IntraMode
-	LeftMode         [MaxBlockModeSlots]IntraMode
 	AboveChromaIntra [MaxBlockModeSlots]uint8
-	LeftChromaIntra  [MaxBlockModeSlots]uint8
 	AboveChromaMode  [MaxBlockModeSlots]ChromaIntraMode
-	LeftChromaMode   [MaxBlockModeSlots]ChromaIntraMode
 	AboveTxIntra     [MaxBlockModeSlots]uint8
-	LeftTxIntra      [MaxBlockModeSlots]uint8
 	AboveTx          [MaxBlockModeSlots]uint8
-	LeftTx           [MaxBlockModeSlots]uint8
+	AboveBlockSize   [MaxBlockModeSlots]BlockSize
+	AbovePaletteY    [MaxBlockModeSlots]paletteContext
+	AbovePaletteUV   [MaxBlockModeSlots]paletteContext
 	AboveRef         [2][MaxBlockModeSlots]ReferenceFrame
-	LeftRef          [2][MaxBlockModeSlots]ReferenceFrame
 	AboveCompound    [MaxBlockModeSlots]uint8
-	LeftCompound     [MaxBlockModeSlots]uint8
 	AboveCompGroup   [MaxBlockModeSlots]uint8
-	LeftCompGroup    [MaxBlockModeSlots]uint8
 	AboveCompIndex   [MaxBlockModeSlots]uint8
-	LeftCompIndex    [MaxBlockModeSlots]uint8
 	// AboveInterIntra/LeftInterIntra mirror libaom's per-MI inter-intra
 	// status. libaom records inter-intra blocks with
 	// mbmi->ref_frame[1] = INTRA_FRAME while goav1 keeps Ref[1] =
@@ -73,11 +76,55 @@ type BlockModeContext struct {
 	// inter-intra neighbors as warp-affine sample sources because their
 	// ref_frame[1] is INTRA_FRAME, not NONE_FRAME.
 	AboveInterIntra  [MaxBlockModeSlots]uint8
-	LeftInterIntra   [MaxBlockModeSlots]uint8
+	AboveInterp      [MaxBlockModeSlots]motion.InterpFilters
+	AboveInterpValid [MaxBlockModeSlots]uint8
+
+	LeftSkip        [MaxBlockModeSlots]uint8
+	LeftSkipMode    [MaxBlockModeSlots]uint8
+	LeftSegmentPred [MaxBlockModeSlots]uint8
+	LeftIntra       [MaxBlockModeSlots]uint8
+	LeftMode        [MaxBlockModeSlots]IntraMode
+	LeftChromaIntra [MaxBlockModeSlots]uint8
+	LeftChromaMode  [MaxBlockModeSlots]ChromaIntraMode
+	LeftTxIntra     [MaxBlockModeSlots]uint8
+	LeftTx          [MaxBlockModeSlots]uint8
+	LeftBlockSize   [MaxBlockModeSlots]BlockSize
+	LeftPaletteY    [MaxBlockModeSlots]paletteContext
+	LeftPaletteUV   [MaxBlockModeSlots]paletteContext
+	LeftRef         [2][MaxBlockModeSlots]ReferenceFrame
+	LeftCompound    [MaxBlockModeSlots]uint8
+	LeftCompGroup   [MaxBlockModeSlots]uint8
+	LeftCompIndex   [MaxBlockModeSlots]uint8
+	LeftInterIntra  [MaxBlockModeSlots]uint8
+	LeftInterp      [MaxBlockModeSlots]motion.InterpFilters
+	LeftInterpValid [MaxBlockModeSlots]uint8
+
+	// AboveInterMotion/LeftInterMotion are per-superblock: the carriers
+	// restore them only on the libaom-shaped neighbor-motion path
+	// (keepMotion); with dav1d refmvs rows bound they start every superblock
+	// zeroed.
 	AboveInterMotion [MaxBlockModeSlots]InterMotionResult
 	LeftInterMotion  [MaxBlockModeSlots]InterMotionResult
 	AboveMotionValid [MaxBlockModeSlots]uint8
 	LeftMotionValid  [MaxBlockModeSlots]uint8
+
+	// TxNeighborSnapshot captures the above/left neighbor state at slots
+	// touched by the current block, taken before the current block's
+	// MarkIntra/MarkIntrabcMotion overwrites those slots. It is consumed by
+	// the intra tx_size context which, in libaom, reads xd->above_mbmi /
+	// xd->left_mbmi — pointers to neighbor mbmi structs that are not
+	// affected by writes to the current block's mbmi. Without this snapshot
+	// Go's slot-shared AboveIntra/AboveBlockSize/LeftIntra/LeftBlockSize
+	// would be the current block's just-written flags by the time tx_size
+	// reads them inside DecodeBlockCoefficients.
+	TxNeighborValid          bool
+	TxAboveNeighborIntra     uint8
+	TxAboveNeighborBlockSize BlockSize
+	TxLeftNeighborIntra      uint8
+	TxLeftNeighborBlockSize  BlockSize
+
+	// The cross-SB motion snapshots below (SBTopInterMotion through
+	// SBDiagonalBlockSizeVisitedGrid) are contiguous: see sbHistoryDirty.
 
 	// SBTopInterMotion mirrors libaom's frame-level mi grid for the row of
 	// cells immediately above the current superblock. Unlike AboveInterMotion
@@ -149,32 +196,6 @@ type BlockModeContext struct {
 	SBDiagonalBlockSizeGrid        [intrabcCrossSBHistory][intrabcCrossSBHistory]BlockSize
 	SBDiagonalBlockSizeVisitedGrid [intrabcCrossSBHistory][intrabcCrossSBHistory]uint8
 
-	AboveInterp      [MaxBlockModeSlots]motion.InterpFilters
-	LeftInterp       [MaxBlockModeSlots]motion.InterpFilters
-	AboveInterpValid [MaxBlockModeSlots]uint8
-	LeftInterpValid  [MaxBlockModeSlots]uint8
-	AboveBlockSize   [MaxBlockModeSlots]BlockSize
-	LeftBlockSize    [MaxBlockModeSlots]BlockSize
-
-	// TxNeighborSnapshot captures the above/left neighbor state at slots
-	// touched by the current block, taken before the current block's
-	// MarkIntra/MarkIntrabcMotion overwrites those slots. It is consumed by
-	// the intra tx_size context which, in libaom, reads xd->above_mbmi /
-	// xd->left_mbmi — pointers to neighbor mbmi structs that are not
-	// affected by writes to the current block's mbmi. Without this snapshot
-	// Go's slot-shared AboveIntra/AboveBlockSize/LeftIntra/LeftBlockSize
-	// would be the current block's just-written flags by the time tx_size
-	// reads them inside DecodeBlockCoefficients.
-	TxNeighborValid          bool
-	TxAboveNeighborIntra     uint8
-	TxAboveNeighborBlockSize BlockSize
-	TxLeftNeighborIntra      uint8
-	TxLeftNeighborBlockSize  BlockSize
-	AbovePaletteY            [MaxBlockModeSlots]paletteContext
-	LeftPaletteY             [MaxBlockModeSlots]paletteContext
-	AbovePaletteUV           [MaxBlockModeSlots]paletteContext
-	LeftPaletteUV            [MaxBlockModeSlots]paletteContext
-
 	GridMotionValid [MaxBlockModeSlots][MaxBlockModeSlots]uint8
 	GridBlockSize   [MaxBlockModeSlots][MaxBlockModeSlots]BlockSize
 
@@ -216,22 +237,77 @@ type BlockModeContext struct {
 }
 
 // resetForSuperblock is BlockModeContext{} minus the trailing payload grids
-// (see GridInterMotion). The struct holds no pointers, so a byte clear of the
-// prefix is a plain zero-assignment of every other field.
+// (see GridInterMotion): both edges plus the per-superblock state.
 func (c *BlockModeContext) resetForSuperblock() {
-	b := unsafe.Slice((*byte)(unsafe.Pointer(c)), unsafe.Offsetof(c.GridInterMotion))
+	c.clearAboveEdge()
+	c.clearLeftEdge()
+	c.resetSuperblockState()
+}
+
+// clearAboveEdge zeroes the above edge (AboveSkip through AboveInterpValid),
+// dav1d's dav1d_reset_context on the tile's above context.
+func (c *BlockModeContext) clearAboveEdge() {
+	clear(unsafe.Slice((*byte)(unsafe.Pointer(c)), unsafe.Offsetof(c.LeftSkip)))
+}
+
+// clearLeftEdge zeroes the left edge (LeftSkip through LeftInterpValid),
+// dav1d's dav1d_reset_context(&t->l) at the start of an SB row.
+func (c *BlockModeContext) clearLeftEdge() {
+	clear(unsafe.Slice((*byte)(unsafe.Pointer(&c.LeftSkip)), unsafe.Offsetof(c.AboveInterMotion)-unsafe.Offsetof(c.LeftSkip)))
+}
+
+// clearAboveIntraEdge and clearLeftIntraEdge zero the intra-syntax prefix of
+// each edge (Skip through PaletteUV), the only edge fields the owned intra
+// walk reads.
+func (c *BlockModeContext) clearAboveIntraEdge() {
+	clear(unsafe.Slice((*byte)(unsafe.Pointer(c)), unsafe.Offsetof(c.AboveRef)))
+}
+
+func (c *BlockModeContext) clearLeftIntraEdge() {
+	clear(unsafe.Slice((*byte)(unsafe.Pointer(&c.LeftSkip)), unsafe.Offsetof(c.LeftRef)-unsafe.Offsetof(c.LeftSkip)))
+}
+
+// poisonAboveEdge fills the above edge with garbage in goav1_poison builds
+// before a load that must overwrite every field of it.
+func (c *BlockModeContext) poisonAboveEdge() {
+	if poisonSkippedClears {
+		b := unsafe.Slice((*byte)(unsafe.Pointer(c)), unsafe.Offsetof(c.LeftSkip))
+		for i := range b {
+			b[i] = 0xA5
+		}
+	}
+}
+
+// poisonLeftEdge is poisonAboveEdge for the left edge.
+func (c *BlockModeContext) poisonLeftEdge() {
+	if poisonSkippedClears {
+		b := unsafe.Slice((*byte)(unsafe.Pointer(&c.LeftSkip)), unsafe.Offsetof(c.AboveInterMotion)-unsafe.Offsetof(c.LeftSkip))
+		for i := range b {
+			b[i] = 0xA5
+		}
+	}
+}
+
+// resetSuperblockState zeroes the per-superblock range, from
+// AboveInterMotion up to the payload grids. The struct holds no pointers, so
+// a byte clear is a plain zero-assignment.
+func (c *BlockModeContext) resetSuperblockState() {
+	base := unsafe.Offsetof(c.AboveInterMotion)
+	b := unsafe.Slice((*byte)(unsafe.Pointer(&c.AboveInterMotion)), unsafe.Offsetof(c.GridInterMotion)-base)
 	if c.sbHistoryDirty {
 		clear(b)
 		c.sbHistoryDirty = false
 		return
 	}
-	// The snapshots are contiguous from SBTopInterMotion up to AboveInterp
-	// and already zero.
-	clear(b[:unsafe.Offsetof(c.SBTopInterMotion)])
-	clear(b[unsafe.Offsetof(c.AboveInterp):])
+	// The snapshots are contiguous from SBTopInterMotion up to
+	// GridMotionValid and already zero.
+	snapStart := unsafe.Offsetof(c.SBTopInterMotion) - base
+	snapEnd := unsafe.Offsetof(c.GridMotionValid) - base
+	clear(b[:snapStart])
+	clear(b[snapEnd:])
 	if poisonSkippedClears {
-		for i := range b[unsafe.Offsetof(c.SBTopInterMotion):unsafe.Offsetof(c.AboveInterp)] {
-			b[int(unsafe.Offsetof(c.SBTopInterMotion))+i] = 0xA5
+		for i := range b[snapStart:snapEnd] {
+			b[int(snapStart)+i] = 0xA5
 		}
 	}
 }
