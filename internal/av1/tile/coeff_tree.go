@@ -575,6 +575,55 @@ func (s *DecodeState) prepareChromaCoefficients(ctx *CoeffEntropyContext, req Ch
 	}, nil
 }
 
+// prepareChromaCoefBlock is prepareChromaCoefficients for both chroma planes
+// of a block at once, as dav1d's recon_b_* derive cbw4/cbh4 and the uv
+// origin a single time from b and the subsampling: U and V share the same
+// plane block, origin and visible extent. tr has already been validated by
+// DecodeTransformTree. A skip block also gets its U and V context reset.
+func prepareChromaCoefBlock(ctx *CoeffEntropyContext, tr *TransformTreeRequest, tree TransformTreeResult) (chromaCoeffPlanePrep, error) {
+	if ctx == nil || !tree.HasUV || !tree.UV.Valid() {
+		return chromaCoeffPlanePrep{}, ErrInvalidDecodeState
+	}
+	color := &tr.Color
+	if !hasChromaForBlock(tr.Size, int(tr.X4), int(tr.Y4), *color) {
+		return chromaCoeffPlanePrep{}, nil
+	}
+	planeBlock, err := PlaneBlockSize(tr.Size, *color, 1)
+	if err != nil {
+		return chromaCoeffPlanePrep{}, err
+	}
+	ssX := int(boolToShift(color.SubsamplingX))
+	ssY := int(boolToShift(color.SubsamplingY))
+	reqX4 := int(tr.X4)
+	reqY4 := int(tr.Y4)
+	x4 := reqX4 >> ssX
+	y4 := reqY4 >> ssY
+	visibleW4 := ((reqX4 + int(tr.VisibleW4) + ssX) >> ssX) - x4
+	visibleH4 := ((reqY4 + int(tr.VisibleH4) + ssY) >> ssY) - y4
+	uvDims, ok := tree.UV.Dimensions()
+	if !ok || visibleW4 <= 0 || visibleH4 <= 0 ||
+		x4+visibleW4 > MaxBlockModeSlots || y4+visibleH4 > MaxBlockModeSlots {
+		return chromaCoeffPlanePrep{}, ErrInvalidDecodeState
+	}
+	if tr.SkipTransform {
+		for plane := 1; plane <= 2; plane++ {
+			if err := ctx.ResetBlock(plane, planeBlock, x4, y4); err != nil {
+				return chromaCoeffPlanePrep{}, err
+			}
+		}
+		return chromaCoeffPlanePrep{}, nil
+	}
+	return chromaCoeffPlanePrep{
+		HasChroma:  true,
+		PlaneBlock: planeBlock,
+		X4:         uint8(x4),
+		Y4:         uint8(y4),
+		VisibleW4:  uint8(visibleW4),
+		VisibleH4:  uint8(visibleH4),
+		UVDims:     uvDims,
+	}, nil
+}
+
 func (s *DecodeState) DecodeChromaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, req ChromaCoeffTreeRequest, visit ChromaCoeffVisitor) (LumaCoeffStats, error) {
 	if cdfs == nil || scratch == nil || visit == nil {
 		return LumaCoeffStats{}, ErrInvalidDecodeState

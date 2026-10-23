@@ -300,6 +300,47 @@ func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s
 		return BlockCoeffResult{}, fmt.Errorf("decode transform tree req=%+v: %w", req.Transform, err)
 	}
 	result := BlockCoeffResult{Tree: tree}
+	hasChroma := !req.Transform.Color.MonoChrome && tree.HasUV
+
+	// dav1d's decode_b hands a decoded block straight to recon_b_intra /
+	// recon_b_inter (src/recon_tmpl.c), which derive the chroma geometry once
+	// from b and t and walk the TXBs; no per-plane request is built. Skip
+	// blocks only reset the coefficient contexts (dav1d's
+	// dav1d_memset_likely_pow2 of a/l ccoef in decode_b).
+	if req.Transform.SkipTransform || readCoefBlocksSupported(&req) {
+		var chromaPrep [2]chromaCoeffPlanePrep
+		if hasChroma {
+			prep, err := prepareChromaCoefBlock(coeffCtx, &req.Transform, tree)
+			if err != nil {
+				return result, fmt.Errorf("prepare chroma coeffs req=%+v tree=%+v: %w", req.Transform, tree, err)
+			}
+			chromaPrep[0], chromaPrep[1] = prep, prep
+		}
+		if req.Transform.SkipTransform {
+			if err := coeffCtx.ResetBlock(0, req.Transform.Size, int(req.Transform.X4), int(req.Transform.Y4)); err != nil {
+				return result, err
+			}
+			if !req.Transform.Inter {
+				// dav1d's recon_b_intra still predicts a skip intra block
+				// transform block by transform block.
+				var walk skipIntraTXBWalk
+				if ok, err := walk.init(&req.Transform, &tree); err != nil {
+					return result, err
+				} else if ok {
+					for walk.next(&scratch.block) {
+						if err := coeffController.VisitBlockCoeffPtr(loopVisit, &scratch.block); err != nil {
+							return result, err
+						}
+					}
+				}
+			}
+			return result, nil
+		}
+		if err := readCoefBlocks(s, cdfs, coeffCtx, scratch, &req, tree, &chromaPrep, hasChroma, loopVisit, coeffController, &result); err != nil {
+			return result, fmt.Errorf("read coef blocks req=%+v tree=%+v: %w", req.Transform, tree, err)
+		}
+		return result, nil
+	}
 
 	lumaReq := LumaCoeffTreeRequest{
 		TreeRequest:           req.Transform,
@@ -313,7 +354,6 @@ func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s
 		dequant:               req.Dequant,
 	}
 
-	hasChroma := !req.Transform.Color.MonoChrome && tree.HasUV
 	var chromaReq [2]ChromaCoeffTreeRequest
 	var chromaPrep [2]chromaCoeffPlanePrep
 	if hasChroma {
@@ -337,31 +377,6 @@ func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s
 			}
 			chromaPrep[plane-1] = prep
 		}
-	}
-
-	if req.Transform.SkipTransform {
-		if err := coeffCtx.ResetBlock(0, req.Transform.Size, int(req.Transform.X4), int(req.Transform.Y4)); err != nil {
-			return result, err
-		}
-		if !req.Transform.Inter {
-			var walk skipIntraTXBWalk
-			if ok, err := walk.init(&req.Transform, &tree); err != nil {
-				return result, err
-			} else if ok {
-				for walk.next(&scratch.block) {
-					if err := coeffController.VisitBlockCoeffPtr(loopVisit, &scratch.block); err != nil {
-						return result, err
-					}
-				}
-			}
-		}
-		return result, nil
-	}
-	if readCoefBlocksSupported(&req) {
-		if err := readCoefBlocks(s, cdfs, coeffCtx, scratch, &req, tree, &chromaPrep, hasChroma, loopVisit, coeffController, &result); err != nil {
-			return result, fmt.Errorf("read coef blocks req=%+v tree=%+v: %w", req.Transform, tree, err)
-		}
-		return result, nil
 	}
 
 	const maxUnit4 = 16

@@ -1,6 +1,8 @@
 package tile
 
 import (
+	"math/bits"
+
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
@@ -28,6 +30,10 @@ type coefBlock struct {
 	// frame-clipped size in 4x4 units (dav1d's t->bx & 31 and w4/h4).
 	bx4, by4  int
 	w4, h4    int
+	// cx4/cy4 are the chroma origin (bx4 >> ss_hor, by4 >> ss_ver) and
+	// ssX/ssY the chroma subsampling shifts.
+	cx4, cy4  int
+	ssX, ssY  uint
 	blockDims [3]BlockDimensions
 	planeBlk  [3]BlockSize
 
@@ -108,17 +114,24 @@ func readCoefBlocks[T BlockLoopCoeffController](s *DecodeState, cdfs BlockCoeffC
 	txW, txH := int(tDims.W4), int(tDims.H4)
 	ssX := int(boolToShift(tr.Color.SubsamplingX))
 	ssY := int(boolToShift(tr.Color.SubsamplingY))
+	b.ssX, b.ssY = uint(ssX), uint(ssY)
 	var uvW, uvH int
+	hasChroma = hasChroma && chromaPrep[0].HasChroma
 	if hasChroma {
-		uvDims, ok := tree.UV.Dimensions()
-		if !ok {
-			return ErrInvalidDecodeState
-		}
-		uvW, uvH = int(uvDims.W4), int(uvDims.H4)
+		uvW, uvH = int(chromaPrep[0].UVDims.W4), int(chromaPrep[0].UVDims.H4)
+		b.cx4, b.cy4 = int(chromaPrep[0].X4), int(chromaPrep[0].Y4)
 	}
 
 	b.stats = *result
-	defer func() { *result = b.stats }()
+	err := readCoefBlockUnits(&b, coeffController, loopVisit, tree, chromaPrep, hasChroma, txW, txH, uvW, uvH, ssX, ssY)
+	*result = b.stats
+	return err
+}
+
+// readCoefBlockUnits is the per-64x64-unit loop of dav1d's recon_b_intra /
+// recon_b_inter: the unit's luma TXBs, then each chroma plane's.
+func readCoefBlockUnits[T BlockLoopCoeffController](b *coefBlock, coeffController T, loopVisit *BlockLoopVisit, tree TransformTreeResult, chromaPrep *[2]chromaCoeffPlanePrep, hasChroma bool, txW, txH, uvW, uvH, ssX, ssY int) error {
+	txWLog2, txHLog2 := uint(bits.TrailingZeros(uint(txW))), uint(bits.TrailingZeros(uint(txH)))
 	for initY := 0; initY < b.h4; initY += 16 {
 		subH4 := min(b.h4, initY+16)
 		for initX := 0; initX < b.w4; initX += 16 {
@@ -127,9 +140,9 @@ func readCoefBlocks[T BlockLoopCoeffController](s *DecodeState, cdfs BlockCoeffC
 				for x := initX; x < subW4; x += txW {
 					var err error
 					if tree.Variable {
-						err = readCoefTree(&b, coeffController, loopVisit, tree.Y, 0, &tree.Split, x/txW, y/txH, b.bx4+x, b.by4+y)
+						err = readCoefTree(b, coeffController, loopVisit, tree.Y, 0, &tree.Split, x>>txWLog2, y>>txHLog2, b.bx4+x, b.by4+y)
 					} else {
-						err = decodeCoefsTXB(&b, coeffController, loopVisit, 0, tree.Y, b.bx4+x, b.by4+y, min(txW, b.w4-x), min(txH, b.h4-y))
+						err = decodeCoefsTXB(b, coeffController, loopVisit, 0, tree.Y, b.bx4+x, b.by4+y, min(txW, b.w4-x), min(txH, b.h4-y))
 					}
 					if err != nil {
 						return err
@@ -149,7 +162,7 @@ func readCoefBlocks[T BlockLoopCoeffController](s *DecodeState, cdfs BlockCoeffC
 				subCW4 := min(cw4, (initX+16)>>ssX)
 				for y := initY >> ssY; y < subCH4; y += uvH {
 					for x := initX >> ssX; x < subCW4; x += uvW {
-						if err := decodeCoefsTXB(&b, coeffController, loopVisit, uint8(pl+1), tree.UV, int(prep.X4)+x, int(prep.Y4)+y, min(uvW, cw4-x), min(uvH, ch4-y)); err != nil {
+						if err := decodeCoefsTXB(b, coeffController, loopVisit, uint8(pl+1), tree.UV, int(prep.X4)+x, int(prep.Y4)+y, min(uvW, cw4-x), min(uvH, ch4-y)); err != nil {
 							return err
 						}
 					}
@@ -239,9 +252,20 @@ func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T,
 		}
 	}
 	if plane == 0 && b.inter != nil {
-		// t->scratch.txtp_map for the inter chroma transform types.
-		if err := b.inter.Map.Set(TransformBlock{X4: uint8(x4), Y4: uint8(y4), Size: size}, txtp); err != nil {
-			return err
+		// dav1d's decode_coefs: dav1d_memset_pow2[t_dim->lw] of txtp into
+		// t->scratch.txtp_map for each of the TXB's rows. The selector's Type
+		// grid is that map; this walk reads back only what the block's own luma
+		// TXBs wrote, so it skips the generation tags the legacy reader uses.
+		w4, h4 := int(txDims.W4), int(txDims.H4)
+		if x4+w4 > MaxBlockModeSlots || y4+h4 > MaxBlockModeSlots {
+			return ErrInvalidDecodeState
+		}
+		m := &b.inter.Map.Type
+		for y := y4; y < y4+h4; y++ {
+			row := m[y][x4 : x4+w4]
+			for i := range row {
+				row[i] = txtp
+			}
 		}
 	}
 
@@ -330,10 +354,14 @@ func (b *coefBlock) readTxtp(plane uint8, size TransformSize, x4, y4 int) (trans
 		if b.intra {
 			return IntraChromaTransformType(b.chromaMode, size, b.reduced)
 		}
-		luma, err := b.inter.Map.ChromaType(TransformBlock{X4: uint8(x4), Y4: uint8(y4), Size: size}, b.inter.Color)
-		if err != nil {
-			return 0, err
+		// dav1d's recon_b_inter: txtp_map[(by4 + (y << ss_ver)) * 32 +
+		// bx4 + (x << ss_hor)], with x/y the TXB offset in the chroma block.
+		lx := b.bx4 + (x4-b.cx4)<<b.ssX
+		ly := b.by4 + (y4-b.cy4)<<b.ssY
+		if uint(lx) >= MaxBlockModeSlots || uint(ly) >= MaxBlockModeSlots {
+			return 0, ErrInvalidDecodeState
 		}
+		luma := b.inter.Map.Type[ly][lx]
 		return uvInterTransformType(size, luma)
 	}
 	if b.qZero {
