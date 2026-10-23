@@ -92,12 +92,10 @@ func buildWavefrontReconController(t testing.TB, output *frame.Frame, sbCols int
 			})
 			// Skip intra blocks are predicted transform block by transform
 			// block from the all-zero TXB visits the coefficient walk emits
-			// (dav1d recon_b_intra): one 64x64 luma and two 32x32 chroma.
-			for _, txb := range [...]tile.BlockCoeffBlock{
-				{Plane: 0, Block: tile.TransformBlock{X4: uint8(miCol), Y4: uint8(miRow), Size: tile.TransformSize64x64, VisibleW4: 16, VisibleH4: 16}},
-				{Plane: 1, Block: tile.TransformBlock{X4: uint8(miCol / 2), Y4: uint8(miRow / 2), Size: tile.TransformSize32x32, VisibleW4: 8, VisibleH4: 8}},
-				{Plane: 2, Block: tile.TransformBlock{X4: uint8(miCol / 2), Y4: uint8(miRow / 2), Size: tile.TransformSize32x32, VisibleW4: 8, VisibleH4: 8}},
-			} {
+			// (dav1d recon_b_intra). A 16x16 luma / 8x8 chroma transform grid
+			// gives each superblock 16 luma and 2x16 chroma predictions, in
+			// the walk's luma-then-U-then-V order.
+			appendTXB := func(txb tile.BlockCoeffBlock) {
 				txb.Result.AllZero = true
 				blockIndex32, ok := frameWorkReconIndex(len(scratch.reconBlocks))
 				if !ok {
@@ -109,6 +107,19 @@ func buildWavefrontReconController(t testing.TB, output *frame.Frame, sbCols int
 					kind:  frameWorkReconEventTXB,
 					index: blockIndex32,
 				})
+			}
+			for plane := uint8(0); plane < 3; plane++ {
+				size, step, x4, y4 := tile.TransformSize16x16, uint8(4), uint8(miCol), uint8(miRow)
+				if plane != 0 {
+					size, step, x4, y4 = tile.TransformSize8x8, 2, uint8(miCol/2), uint8(miRow/2)
+				}
+				for ty := uint8(0); ty < 4; ty++ {
+					for tx := uint8(0); tx < 4; tx++ {
+						appendTXB(tile.BlockCoeffBlock{Plane: plane, Block: tile.TransformBlock{
+							X4: x4 + tx*step, Y4: y4 + ty*step, Size: size, VisibleW4: step, VisibleH4: step,
+						}})
+					}
+				}
 			}
 		}
 	}
@@ -296,7 +307,7 @@ func TestReconWavefrontSpeedup(t *testing.T) {
 	if reconRaceEnabled {
 		t.Skip("race detector serializes execution; speedup is not observable")
 	}
-	const sbCols, sbRows = 24, 24 // 1536x1536, 24 SB rows
+	const sbCols, sbRows = 32, 32 // 2048x2048, 32 SB rows
 	format := frame.Format{Width: sbCols * 64, Height: sbRows * 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64}
 	out := testBatchFrame(t, format)
 
