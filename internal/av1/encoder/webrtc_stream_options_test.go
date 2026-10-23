@@ -1010,14 +1010,14 @@ func TestWebRTCStreamTracksReferenceSurfaces(t *testing.T) {
 		t.Fatalf("EncodePicture key: %v", err)
 	}
 	for i := uint8(0); i < stream.config.SpatialLayerCount; i++ {
-		ref := stream.referenceFrames[i]
+		ref := stream.refSize[i]
 		enc := stream.encoders[i]
 		if enc == nil {
 			t.Fatalf("missing layer encoder %d", i)
 		}
-		if !stream.referenceValid[i] || ref.Width != enc.width || ref.Height != enc.height {
+		if !stream.referenceValid[i] || int(ref[0]) != enc.width || int(ref[1]) != enc.height {
 			t.Fatalf("reference buffer %d geometry=%dx%d valid=%v want %dx%d",
-				i, ref.Width, ref.Height, stream.referenceValid[i], enc.width, enc.height)
+				i, ref[0], ref[1], stream.referenceValid[i], enc.width, enc.height)
 		}
 	}
 

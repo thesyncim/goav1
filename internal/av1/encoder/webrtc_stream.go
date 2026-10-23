@@ -75,12 +75,21 @@ type WebRTCStream struct {
 	layerScratch      [WebRTCMaxSpatialLayers][]byte
 	descriptorScratch [WebRTCMaxSpatialLayers][]byte
 
-	referenceFrames        [WebRTCReferenceBuffers]SourceFrame420
+	// refPool holds the 8-bit 4:2:0 shared reference pictures, SVT's
+	// reference-picture pool: refSlot names the pool entry each valid slot
+	// references and refPoolRefs counts the slots per entry. A layer's
+	// fresh reconstruction is adopted by swapping buffers with a free entry
+	// (see adoptReference), never copied.
+	refPool     [webRTCRefPoolSize]SourceFrame420
+	refPoolRefs [webRTCRefPoolSize]uint8
+	refSlot     [WebRTCReferenceBuffers]uint8
+	// refSize records each valid slot's picture geometry in every mode.
+	refSize                [WebRTCReferenceBuffers][2]int32
 	monoReferenceFrames    [WebRTCReferenceBuffers]SourceFrameMono
 	mono16ReferenceFrames  [WebRTCReferenceBuffers]SourceFrameMono16
 	color16ReferenceFrames [WebRTCReferenceBuffers]SourceFrame42016
-	// referenceValid marks the referenceFrames slots holding a reference;
-	// dropping a slot keeps its buffers for the next copy.
+	// referenceValid marks the slots holding a reference; dropping a slot
+	// keeps its buffers for reuse.
 	referenceValid [WebRTCReferenceBuffers]bool
 }
 
@@ -655,6 +664,7 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 		if !sameStructure {
 			s.state = webRTCEncoderStateForNextKey(s.state)
 			s.referenceValid = [WebRTCReferenceBuffers]bool{}
+			s.refPoolRefs = [webRTCRefPoolSize]uint8{}
 			s.monoReferenceFrames = [WebRTCReferenceBuffers]SourceFrameMono{}
 			s.mono16ReferenceFrames = [WebRTCReferenceBuffers]SourceFrameMono16{}
 			s.color16ReferenceFrames = [WebRTCReferenceBuffers]SourceFrame42016{}
@@ -719,6 +729,7 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 	s.layerScratch = [WebRTCMaxSpatialLayers][]byte{}
 	s.descriptorScratch = [WebRTCMaxSpatialLayers][]byte{}
 	s.referenceValid = [WebRTCReferenceBuffers]bool{}
+	s.refPoolRefs = [webRTCRefPoolSize]uint8{}
 	s.monoReferenceFrames = [WebRTCReferenceBuffers]SourceFrameMono{}
 	s.mono16ReferenceFrames = [WebRTCReferenceBuffers]SourceFrameMono16{}
 	s.color16ReferenceFrames = [WebRTCReferenceBuffers]SourceFrame42016{}
@@ -1619,7 +1630,7 @@ func (s *WebRTCStream) encodePictureLayer(enc *VideoEncoder, layerSrc SourceFram
 		if refSlot >= WebRTCReferenceBuffers || !s.referenceValid[refSlot] {
 			return nil, false, ErrInvalidFrame
 		}
-		tu, err := enc.encodeReferencePFrameWithSequenceMax(layerSrc, s.referenceFrames[refSlot], refSlot, settings, maxWidth, maxHeight)
+		tu, err := enc.encodeReferencePFrameWithSequenceMax(layerSrc, s.refPool[s.refSlot[refSlot]], refSlot, settings, maxWidth, maxHeight)
 		return tu, false, err
 	default:
 		return nil, false, ErrInvalidFrame
@@ -1840,6 +1851,17 @@ func (s *WebRTCStream) sequenceMaxCodedSize42016() (int, int, error) {
 	return enc.width, enc.height, nil
 }
 
+// updateReferenceFrame records the picture enc just coded into reference slot
+// UpdateBuffer. Only shared-slot coding (spatial SVC, see
+// webRTCStreamUsesSharedReferenceSlotCoding) reads slot pixels; it takes the
+// reconstruction by ownership into the reference pool (adoptReference), as
+// SVT's reference-picture pool does, instead of copying it. In every other
+// mode each layer encoder owns its references, so the slot records only that
+// it is held and its geometry, and the deferred CDEF is not forced. Entering
+// shared-slot mode changes the dependency structure, which invalidates the
+// slots, so a pixel-less slot is never read. The monochrome and
+// high-bit-depth variants below still copy, and likewise only in shared-slot
+// mode.
 func (s *WebRTCStream) updateReferenceFrame(settings FrameEncodeSettings, enc *VideoEncoder) error {
 	if !settings.UpdateBufferSet {
 		return nil
@@ -1847,17 +1869,85 @@ func (s *WebRTCStream) updateReferenceFrame(settings FrameEncodeSettings, enc *V
 	if settings.UpdateBuffer >= WebRTCReferenceBuffers || enc == nil {
 		return ErrInvalidFrame
 	}
+	slot := settings.UpdateBuffer
+	if !webRTCStreamUsesSharedReferenceSlotCoding(s.config) {
+		// The layer encoder owns this reference; the slot records only that
+		// it is held and its geometry.
+		s.refSize[slot] = [2]int32{int32(enc.width), int32(enc.height)}
+		s.referenceValid[slot] = true
+		return nil
+	}
 	recon, err := webRTCStreamLayerReconstruction(enc)
 	if err != nil {
 		return err
 	}
-	copyFrameInto(&s.referenceFrames[settings.UpdateBuffer], recon)
-	s.referenceValid[settings.UpdateBuffer] = true
+	if s.referenceValid[slot] {
+		s.refPoolRefs[s.refSlot[slot]]--
+		s.referenceValid[slot] = false
+	}
+	idx, ok := s.adoptReference(enc, recon)
+	if !ok {
+		return ErrInvalidFrame
+	}
+	s.refSlot[slot] = idx
+	s.refPoolRefs[idx]++
+	s.refSize[slot] = [2]int32{int32(recon.Width), int32(recon.Height)}
+	s.referenceValid[slot] = true
 	return nil
 }
 
+// webRTCRefPoolSize bounds the shared reference pool: one entry per slot, a
+// spare per spatial layer so a free entry of each layer's size exists, and
+// one more.
+const webRTCRefPoolSize = WebRTCReferenceBuffers + WebRTCMaxSpatialLayers + 1
+
+// adoptReference moves recon, which enc just wrote into one of its own
+// reconstruction buffers, into a free pool entry and returns that entry.
+// Like SVT's reference-picture pool it hands the picture over by ownership:
+// the encoder buffer and the free entry swap headers, so the encoder writes
+// its next reconstruction into the entry's old memory. The free entry is
+// preferably one of recon's size, so the swapped-in buffer fits the
+// encoder's next write without reallocating. An entry no slot references
+// is read by nobody, and an encoder buffer is never shared with a slot, so
+// the swap is invisible to every later read. A reconstruction outside the
+// encoder's own buffers falls back to a copy.
+func (s *WebRTCStream) adoptReference(enc *VideoEncoder, recon SourceFrame420) (uint8, bool) {
+	free, empty, any := -1, -1, -1
+	for i := range s.refPool {
+		if s.refPoolRefs[i] != 0 {
+			continue
+		}
+		p := &s.refPool[i]
+		if len(p.Y) == len(recon.Y) && len(p.U) == len(recon.U) && len(p.V) == len(recon.V) {
+			free = i
+			break
+		}
+		if p.Y == nil && empty < 0 {
+			empty = i
+		}
+		if any < 0 {
+			any = i
+		}
+	}
+	if free < 0 {
+		free = empty
+	}
+	if free < 0 {
+		free = any
+	}
+	if free < 0 {
+		return 0, false
+	}
+	if owner := enc.reconstructionOwner(recon); owner != nil {
+		*owner, s.refPool[free] = s.refPool[free], *owner
+	} else {
+		copyFrameInto(&s.refPool[free], recon)
+	}
+	return uint8(free), true
+}
+
 func (s *WebRTCStream) updateMonoReferenceFrame(settings FrameEncodeSettings, enc *MonochromeVideoEncoder) error {
-	if !settings.UpdateBufferSet {
+	if !settings.UpdateBufferSet || !webRTCStreamUsesSharedReferenceSlotCoding(s.config) {
 		return nil
 	}
 	if settings.UpdateBuffer >= WebRTCReferenceBuffers || enc == nil {
@@ -1872,7 +1962,7 @@ func (s *WebRTCStream) updateMonoReferenceFrame(settings FrameEncodeSettings, en
 }
 
 func (s *WebRTCStream) updateMono16ReferenceFrame(settings FrameEncodeSettings, enc *HighBitDepthMonochromeVideoEncoder) error {
-	if !settings.UpdateBufferSet {
+	if !settings.UpdateBufferSet || !webRTCStreamUsesSharedReferenceSlotCoding(s.config) {
 		return nil
 	}
 	if settings.UpdateBuffer >= WebRTCReferenceBuffers || enc == nil {
@@ -1891,7 +1981,7 @@ func (s *WebRTCStream) update42016ReferenceFrame(settings FrameEncodeSettings, e
 }
 
 func (s *WebRTCStream) updateColor16ReferenceFrame(settings FrameEncodeSettings, enc *HighBitDepth420VideoEncoder) error {
-	if !settings.UpdateBufferSet {
+	if !settings.UpdateBufferSet || !webRTCStreamUsesSharedReferenceSlotCoding(s.config) {
 		return nil
 	}
 	if settings.UpdateBuffer >= WebRTCReferenceBuffers || enc == nil {
@@ -2157,4 +2247,20 @@ func webRTCPictureTemporalUnitFrameControl(unit WebRTCPictureTemporalUnit, state
 		return WebRTCFrameControl{}, WebRTCFrameDependencyStructure{}, ErrInvalidFrame
 	}
 	return unit.DeltaUnit.Control.Frames[frameIndex], state.DependencyStructureState.Structure, nil
+}
+
+// reconstructionOwner returns the encoder field whose buffer holds recon: one
+// of the reference reconstruction ring entries or the keyframe buffer. It
+// returns nil when recon lives elsewhere.
+func (e *VideoEncoder) reconstructionOwner(recon SourceFrame420) *SourceFrame420 {
+	if len(recon.Y) == 0 {
+		return nil
+	}
+	for _, f := range [...]*SourceFrame420{&e.reconBufs[0], &e.reconBufs[1], &e.keyRecon} {
+		if len(f.Y) == len(recon.Y) && len(f.U) == len(recon.U) && len(f.V) == len(recon.V) &&
+			&f.Y[0] == &recon.Y[0] && len(f.U) > 0 && &f.U[0] == &recon.U[0] && len(f.V) > 0 && &f.V[0] == &recon.V[0] {
+			return f
+		}
+	}
+	return nil
 }
