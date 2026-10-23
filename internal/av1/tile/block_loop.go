@@ -621,7 +621,7 @@ func blockLoopLoadRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLoo
 		scratch.flushLeftEdge()
 	}
 	scratch.leftEdge = blockLoopLeftEdge{}
-	scratch.Mode.resetSuperblockState()
+	scratch.Mode.resetSuperblockStateRefmvs()
 	scratch.CDEF.Reset()
 	if haveTop {
 		scratch.Mode.poisonAboveEdge()

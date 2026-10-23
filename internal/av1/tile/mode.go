@@ -914,3 +914,34 @@ func minUint8(a uint8, b uint8) uint8 {
 	}
 	return b
 }
+
+// resetSuperblockStateRefmvs is resetSuperblockState for a superblock decoded
+// with the dav1d refmvs rows bound (no legacy neighbour motion). dav1d keeps
+// neighbour motion in the refmvs rows and the sub8x8 chroma and OBMC
+// neighbours read it from there, so the libaom-shaped per-superblock motion
+// arrays (AboveInterMotion through LeftMotionValid) and per-cell grids
+// (GridMotionValid through GridBlockSizeVisited) are neither written nor read
+// in this mode and are not re-zeroed; only the tx_size neighbour snapshot is.
+func (c *BlockModeContext) resetSuperblockStateRefmvs() {
+	if c.sbHistoryDirty {
+		c.resetSuperblockState()
+		return
+	}
+	c.TxNeighborValid = false
+	c.TxAboveNeighborIntra = 0
+	c.TxAboveNeighborBlockSize = 0
+	c.TxLeftNeighborIntra = 0
+	c.TxLeftNeighborBlockSize = 0
+	if poisonSkippedClears {
+		base := unsafe.Offsetof(c.AboveInterMotion)
+		b := unsafe.Slice((*byte)(unsafe.Pointer(&c.AboveInterMotion)), unsafe.Offsetof(c.GridInterMotion)-base)
+		motionEnd := unsafe.Offsetof(c.TxNeighborValid) - base
+		for i := range b[:motionEnd] {
+			b[i] = 0xA5
+		}
+		snapStart := unsafe.Offsetof(c.SBTopInterMotion) - base
+		for i := range b[snapStart:] {
+			b[int(snapStart)+i] = 0xA5
+		}
+	}
+}
