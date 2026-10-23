@@ -7,7 +7,6 @@ import (
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
-	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -159,7 +158,7 @@ func EncodeMonochromeKeyframe(src SourceFrameMono, qIndex uint8) ([]byte, Source
 // for scalable streams whose lower spatial layers are smaller than the shared
 // sequence maximum.
 func EncodeKeyframeWithSequenceMax(src SourceFrame420, qIndex uint8, maxWidth, maxHeight int) ([]byte, SourceFrame420, error) {
-	return encodeKeyframeFilteredTiles(src, qIndex, nil, 0, 0, nil, nil, nil, defaultTileColsLog2(src.Width), keyframeTileOptions{
+	return encodeKeyframeFilteredTiles(src, qIndex, nil, 0, 0, nil, nil, nil, 0, keyframeTileOptions{
 		sequenceMaxWidth:  maxWidth,
 		sequenceMaxHeight: maxHeight,
 	})
@@ -172,7 +171,7 @@ func EncodeKeyframeWithSequenceMax(src SourceFrame420, qIndex uint8, maxWidth, m
 // pool so periodic keyframes allocate nothing; one-shot callers pass nil for
 // both.
 func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier) ([]byte, SourceFrame420, error) {
-	return encodeKeyframeFilteredTiles(src, qIndex, lf, renderW, renderH, reconBuf, tilePC, cdefApp, defaultTileColsLog2(src.Width), keyframeTileOptions{})
+	return encodeKeyframeFilteredTiles(src, qIndex, lf, renderW, renderH, reconBuf, tilePC, cdefApp, 0, keyframeTileOptions{})
 }
 
 // encodeKeyframeFilteredTiles is encodeKeyframeFiltered with the stream's
@@ -607,6 +606,12 @@ type lossyEncodeState struct {
 	// coding order — required for the SB-row wavefront to be byte-identical
 	// to the serial walk. Keyframe paths leave it false (unchanged behavior).
 	trialBlockLocal          bool
+	// keyTrialPristine, when set (keyframe tiles), is the frame-start trial
+	// context set that restoreKeyTrial puts back the contexts keyTrialDirty
+	// marks after each decision unit (keyframe_split.go). Shared read-only by
+	// the wavefront lanes.
+	keyTrialPristine *tile.CoeffCDFs
+	keyTrialDirty    uint16
 	intraEdgeScratch         threading.FrameWorkIntraPredictionScratch
 	keyMIColEnd, keyMIRowEnd uint32
 	keyVisW, keyVisH         int
@@ -939,91 +944,84 @@ func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, re
 		MIColEnd:   miColEnd,
 		MIRowEnd:   miRows,
 	}
-	// intraRDCost prices one candidate exactly: best intra prediction, the
-	// true transform-quantize pass for distortion, and the real coefficient
-	// coder for rate (trial-coded against throwaway contexts, identical for
-	// every candidate). Whole-block candidates predict from the coded
-	// reconstruction; child estimates predict from the source - their
-	// neighbors are not reconstructed yet, and lossy reconstructions track
-	// the source closely enough for a split decision. Keys are rare, so the
-	// trial coding prices in microseconds per node.
-	intraRDCost := func(plane []byte, px, py, n int) (int64, int64) {
-		haveTop := py > int(walkReq.MIRowStart)*4
-		haveLeft := px > int(walkReq.MIColStart)*4
-		selectIntraModeN(src.Y, plane, src.YStride, px, py, n, haveTop, haveLeft, st.predY[:n*n])
-		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
-		st.prepareInterTXB(src.Y, st.predY[:n*n], n, src.YStride, px, py, n, n, st.yQuant, st.lumaQ2[:n*n])
-		lumaD := st.rdDcode
-		cost := st.trialTXBBits(tile.CoeffPlaneY, st.lumaQ2[:n*n], n) + lumaD<<7
-		// Merge candidates differ in chroma transform structure too: one
-		// large block against four small ones.
-		cost += st.trialChromaCost(src, recon, &plane[0] == &recon.Y[0], px, py, n, haveTop, haveLeft)
-		return cost, lumaD
+	// Decisions price against the frame-start trial contexts
+	// (keyframe_split.go), so they are independent of coding order.
+	pc.keyTrialPristine = st.trialCDFs
+	st.keyTrialPristine = &pc.keyTrialPristine
+	st.keyTrialDirty = 0
+	defer func() { st.keyTrialPristine = nil }()
+
+	// Decision pass, then the serial entropy pass replaying it
+	// (keyframe_split.go); the decision pass runs as the SB-row wavefront
+	// when the single-tile coder has lanes.
+	tileMI4W := int(miColEnd - miColStart)
+	rows := (int(miRows) + sbSizeMIB - 1) / sbSizeMIB
+	if cap(pc.splitRowRecs) < rows {
+		next := make([]pframeSplitRecord, rows)
+		copy(next, pc.splitRowRecs)
+		pc.splitRowRecs = next
 	}
-	// intraHeaderCost is the priced overhead of one extra block's prefix
-	// symbols (partition, mode, angle, chroma).
-	intraHeaderCost := (int64(20) << 9) * st.rdMult >> 9
-	decideCore := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
-		if level == tile.BlockLevel8x8 {
-			return tile.PartitionNone, nil
+	pc.splitRowRecs = pc.splitRowRecs[:rows]
+	for r := range pc.splitRowRecs {
+		rowMI4H := min(int(miRows)-r*sbSizeMIB, sbSizeMIB)
+		pc.splitRowRecs[r].reset(tileMI4W, rowMI4H, st.color)
+		if allowScreenContentTools {
+			pc.splitRowRecs[r].reservePalMaps(tileMI4W * 4 * rowMI4H * 4)
 		}
-		if !videoColorIs420(st.color) {
-			return tile.PartitionSplit, nil
-		}
-		px, py := int(miCol)*4, int(miRow)*4
-		if level == tile.BlockLevel32x32 && haveRight && haveBottom {
-			// The 32-tier keeps the near-perfect gate: trial pricing
-			// misjudges the largest transform even with chroma included
-			// (the throwaway contexts diverge most from the real tile
-			// state at that size).
-			if px+32 > src.Width || py+32 > src.Height {
-				return tile.PartitionSplit, nil
-			}
-			selectIntraModeN(src.Y, recon.Y, src.YStride, px, py, 32, py > int(walkReq.MIRowStart)*4, px > int(walkReq.MIColStart)*4, st.predY[:32*32])
-			sad := 0
-			for r := range 32 {
-				row := (py+r)*src.YStride + px
-				for c := range 32 {
-					d := int(src.Y[row+c]) - int(st.predY[r*32+c])
-					if d < 0 {
-						d = -d
-					}
-					sad += d
+	}
+	lanes := min(pc.wavefrontLanes, rows)
+	singleTile := miColStart == 0 && int(miColEnd)*4 >= src.Width
+	pipelined := pc.wavefront != nil && lanes >= 2 && singleTile && st.decisionStats == nil
+	if pipelined {
+		pc.wavefront.startKey(pc, lanes, src, recon, walkReq, miRows, rows, rootCols)
+	} else {
+		decideRecord := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
+			partition, err := st.keyDecidePartition(src, recon, walkReq, level, miCol, miRow, haveRight, haveBottom)
+			if err == nil {
+				if st.decisionStats != nil {
+					st.decisionStats.notePartition(level, partition)
 				}
+				pc.splitRowRecs[int(miRow)/sbSizeMIB].appendPart(partition)
 			}
-			if sad <= 32*32*2 {
-				return tile.PartitionNone, nil
-			}
-			return tile.PartitionSplit, nil
+			return partition, err
 		}
-		if level == tile.BlockLevel16x16 && haveRight && haveBottom {
-			if px+16 > src.Width || py+16 > src.Height {
-				return tile.PartitionSplit, nil
-			}
-			child := int64(0)
-			for _, o8 := range [4][2]int{{0, 0}, {8, 0}, {0, 8}, {8, 8}} {
-				cc, _ := intraRDCost(src.Y, px+o8[0], py+o8[1], 8)
-				child += cc + intraHeaderCost
-			}
-			mc, _ := intraRDCost(recon.Y, px, py, 16)
-			if mc+intraHeaderCost <= child {
-				return tile.PartitionNone, nil
+		visitDecide := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
+			return st.decideKeyBlock(src, recon, block, scratch, &pc.splitRowRecs[int(block.MIRow)/sbSizeMIB])
+		}
+		if err := tile.WalkBlockLoopDecide(scratch, carrier, walkReq, sbSizeMIB, decideRecord, visitDecide); err != nil {
+			return nil, err
+		}
+	}
+	pc.resetCarrierEdges(rootCols)
+	decideReplay := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
+		row := int(miRow) / sbSizeMIB
+		if pipelined {
+			if err := pc.wavefront.waitRowDecided(row); err != nil {
+				return 0, err
 			}
 		}
-		return tile.PartitionSplit, nil
+		return pc.splitRowRecs[row].nextPart()
 	}
-	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
-		partition, err := decideCore(level, ctx, miCol, miRow, haveRight, haveBottom)
-		if err == nil && st.decisionStats != nil {
-			st.decisionStats.notePartition(level, partition)
+	visitWrite := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
+		row := int(block.MIRow) / sbSizeMIB
+		if pipelined {
+			if err := pc.wavefront.waitRowDecided(row); err != nil {
+				return err
+			}
 		}
-		return partition, err
+		return st.writeKeyBlock(block, scratch, &pc.splitRowRecs[row])
 	}
-	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
-		return st.encodeBlock(src, recon, block, scratch)
+	writeErr := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decideReplay, visitWrite)
+	if pipelined {
+		if writeErr != nil {
+			pc.wavefront.abort()
+		}
+		if err := pc.wavefront.join(pc); err != nil && writeErr == nil {
+			writeErr = err
+		}
 	}
-	if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
-		return nil, err
+	if writeErr != nil {
+		return nil, writeErr
 	}
 	return pc.writer.Finish()
 }
@@ -1168,172 +1166,9 @@ func (pc *pframeCoder) encodeMonochromeKeyframeTileWithOptions(src SourceFrameMo
 	return pc.writer.Finish()
 }
 
-// encodeBlock codes one 8x8 DC-intra block: mode symbols in the decoder's
-// order, then the luma TX_8X8 residual (with the tx_type symbol after
-// txb_skip) and the two chroma TX_4X4 residuals, reconstructing each transform
+// encodeMonochromeBlock codes one monochrome intra leaf: mode symbols in the
+// decoder's order, then the luma residual, reconstructing each transform
 // block before the next so later predictions see decoder-identical neighbors.
-func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
-	var n int
-	switch block.Size {
-	case tile.BlockSize8x8:
-		n = 8
-	case tile.BlockSize16x16:
-		n = 16
-	case tile.BlockSize32x32:
-		n = 32
-	default:
-		return fmt.Errorf("encoder: unexpected block %+v", block)
-	}
-	modeCtx := &scratch.Mode
-	coeffCtx := &scratch.CoeffCtx
-
-	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
-	if st.lfMap != nil {
-		yTX, err := tile.MaxTransformSize(block.Size, parser.ColorConfig{}, 0)
-		if err != nil {
-			return err
-		}
-		uvTX, err := tile.MaxTransformSize(block.Size, st.color, 1)
-		if err != nil {
-			return err
-		}
-		if err := markLoopFilterBlock(st.lfMap, block, tile.TransformTreeResult{Y: yTX, UV: uvTX, HasUV: true},
-			false, true, 0, loopfilter.ModeDeltaClassZero); err != nil {
-			return fmt.Errorf("mark loop filter: %w", err)
-		}
-	}
-	if err := tile.WriteSkipTransform(st.w, &st.modeCDFs, modeCtx, prefixReq, false, false); err != nil {
-		return fmt.Errorf("skip: %w", err)
-	}
-	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{}); err != nil {
-		return fmt.Errorf("mark prefix: %w", err)
-	}
-
-	// Luma mode selection by prediction SAD against the reconstructed edges.
-	lumaPX := int(block.MICol) * 4
-	lumaPY := int(block.MIRow) * 4
-	pred := st.predY[:n*n]
-	mode := selectIntraModeN(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, n, block.HaveTop, block.HaveLeft, pred)
-	mode, angleDelta := st.improveIntraModeDirectional(src, recon, block, modeCtx, mode, pred, lumaPX, lumaPY, n)
-	// Screen-content keyframes: SVT's luma palette candidates (palette_sc.go).
-	pal := st.keyframePalette(src, block, modeCtx, lumaPX, lumaPY, n, mode, pred)
-	if pal != nil {
-		mode, angleDelta = tile.IntraModeDC, 0
-	}
-
-	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
-		Size: block.Size, X4: block.X4, Y4: block.Y4,
-	}, mode); err != nil {
-		return fmt.Errorf("luma mode: %w", err)
-	}
-	if err := modeCtx.MarkIntra(block.Size, int(block.X4), int(block.Y4), true, mode); err != nil {
-		return fmt.Errorf("mark intra: %w", err)
-	}
-	if err := tile.WriteIntraAngleDelta(st.w, &st.intraCDFs, tile.IntraAngleDeltaRequest{
-		Size: block.Size, Mode: mode,
-	}, int8(angleDelta)); err != nil {
-		return fmt.Errorf("angle delta: %w", err)
-	}
-	cflAllowed, err := tile.ChromaIntraCFLAllowed(block.Size, st.color, false)
-	if err != nil {
-		return fmt.Errorf("cfl allowed: %w", err)
-	}
-	if err := tile.WriteChromaIntraMode(st.w, &st.intraCDFs, tile.ChromaIntraModeRequest{
-		Size: block.Size, LumaMode: mode, CFLAllowed: cflAllowed,
-	}, tile.ChromaIntraModeDC, tile.CFLAlphaResult{}); err != nil {
-		return fmt.Errorf("chroma mode: %w", err)
-	}
-	if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, tile.ChromaIntraModeDC); err != nil {
-		return fmt.Errorf("mark chroma intra: %w", err)
-	}
-	if pal != nil {
-		if err := st.writeKeyframePalette(modeCtx, block, mode, pal); err != nil {
-			return fmt.Errorf("palette: %w", err)
-		}
-	} else if err := st.writeNoPaletteMode(modeCtx, block, mode, tile.ChromaIntraModeDC, true); err != nil {
-		return err
-	}
-
-	// Largest-TX luma with the tx_type symbol between txb_skip and eob,
-	// then chroma TXBs sized to the stream's chroma sampling geometry.
-	lumaTX, lumaScan := tile.TransformSize8x8, st.scan8
-	switch n {
-	case 16:
-		lumaTX, lumaScan = tile.TransformSize16x16, st.scan16
-	case 32:
-		lumaTX, lumaScan = tile.TransformSize32x32, st.scan32
-	}
-	txTypeReq := tile.IntraTransformTypeRequest{
-		Size:        lumaTX,
-		Mode:        mode,
-		QIndexKnown: true,
-		QIndex:      st.qIndex,
-	}
-	afterSkip := func() error {
-		return tile.WriteIntraTransformType(st.w, &st.txCDFs, txTypeReq, transform.TypeDCTDCT)
-	}
-	if pal != nil {
-		// palette_tokens: the color index map, before the residual.
-		if err := tile.WritePaletteTokens(st.w, &st.intraCDFs, st.paletteRequest(block, mode), &pal.res); err != nil {
-			return fmt.Errorf("palette tokens: %w", err)
-		}
-	}
-	if err := st.encodeTXBPred(recon.Y, src.Y, src.YStride, lumaPX, lumaPY, n, st.yQuant, tile.CoeffContextRequest{
-		Plane:      0,
-		PlaneBlock: block.Size,
-		Size:       lumaTX,
-		X4:         block.X4,
-		Y4:         block.Y4,
-	}, coeffCtx, lumaScan, afterSkip, pred); err != nil {
-		return fmt.Errorf("luma txb: %w", err)
-	}
-
-	chromaBlock, err := tile.PlaneBlockSize(block.Size, st.color, 1)
-	if err != nil {
-		return fmt.Errorf("chroma plane block: %w", err)
-	}
-	cw, ch, err := planeBlockPixels(chromaBlock)
-	if err != nil {
-		return fmt.Errorf("chroma block dimensions: %w", err)
-	}
-	chromaTX, err := tile.MaxTransformSize(block.Size, st.color, 1)
-	if err != nil {
-		return fmt.Errorf("chroma transform size: %w", err)
-	}
-	chromaScan, ok := st.scanForTransformSize(chromaTX)
-	if !ok {
-		chromaScan, ok = st.scanForThinTransformSize(chromaTX)
-	}
-	if !ok {
-		return fmt.Errorf("encoder: unsupported chroma transform %d", chromaTX)
-	}
-	chromaX := chromaXForColor(lumaPX, st.color)
-	chromaY := chromaYForColor(lumaPY, st.color)
-	chromaX4 := chromaX4ForColor(block.X4, st.color)
-	chromaY4 := chromaY4ForColor(block.Y4, st.color)
-	for plane := 1; plane <= 2; plane++ {
-		data, rdata := src.U, recon.U
-		q := st.uQuant
-		if plane == 2 {
-			data, rdata = src.V, recon.V
-			q = st.vQuant
-		}
-		if err := st.encodeTXBAvailRect(rdata, data, src.ChromaStride, chromaX, chromaY, cw, ch, q, tile.CoeffContextRequest{
-			Plane:      uint8(plane),
-			PlaneBlock: chromaBlock,
-			Size:       chromaTX,
-			X4:         chromaX4,
-			Y4:         chromaY4,
-		}, coeffCtx, chromaScan, nil, block.HaveTop, block.HaveLeft); err != nil {
-			return fmt.Errorf("chroma %d txb: %w", plane, err)
-		}
-	}
-	if st.decisionStats != nil {
-		st.decisionStats.noteIntraBlock(block.Size)
-	}
-	return nil
-}
-
 func (st *lossyEncodeState) encodeMonochromeBlock(src SourceFrameMono, recon *SourceFrameMono, block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
 	var n int
 	switch block.Size {
@@ -1898,6 +1733,7 @@ func (st *lossyEncodeState) trialLumaCost(srcPlane, pred []byte, stride, px, py,
 // trialTXBBits trial-codes one quantized transform block and returns the
 // priced rate term.
 func (st *lossyEncodeState) trialTXBBits(plane tile.CoeffPlaneType, qcoeff []int16, n int) int64 {
+	st.noteKeyTrial(plane, n)
 	if n == 4 {
 		if plane == tile.CoeffPlaneY {
 			return st.trialTXBBitsY4x4((*[16]int16)(qcoeff))

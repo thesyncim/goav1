@@ -62,6 +62,11 @@ type pblockRecord struct {
 	intraMode  tile.IntraMode
 	angleDelta int8
 	uvMode     tile.ChromaIntraMode
+
+	// pal is a keyframe leaf's luma palette (YMap nil); palMap indexes its
+	// color index map in the record's map arena, -1 for none.
+	pal    tile.PaletteModeResult
+	palMap int32
 }
 
 // pframeSplitRecord is the preallocated frame-level decision store for one
@@ -72,6 +77,8 @@ type pframeSplitRecord struct {
 	blocks []pblockRecord
 	parts  []tile.Partition
 	coeffs []int16
+	// palMaps holds keyframe palette color index maps (keyframe_split.go).
+	palMaps []uint8
 
 	blockCur int
 	partCur  int
@@ -116,6 +123,7 @@ func (rec *pframeSplitRecord) reset(tileMI4W, tileMI4H int, color parser.ColorCo
 	rec.blocks = rec.blocks[:0]
 	rec.parts = rec.parts[:0]
 	rec.coeffs = rec.coeffs[:0]
+	rec.palMaps = rec.palMaps[:0]
 	rec.rewind()
 }
 
@@ -1134,4 +1142,25 @@ func (st *lossyEncodeState) skipRecordedIntraPBlock(block tile.BlockVisit, coeff
 		}
 	}
 	return nil
+}
+
+// reservePalMaps reserves palette map capacity for up to lumaPix palette
+// pixels (every pixel of the row), so screen-content keyframes record their
+// maps without growing the arena.
+func (rec *pframeSplitRecord) reservePalMaps(lumaPix int) {
+	if cap(rec.palMaps) < lumaPix {
+		rec.palMaps = make([]uint8, 0, lumaPix)
+	}
+}
+
+// storePalMap appends a palette color index map and returns its offset.
+func (rec *pframeSplitRecord) storePalMap(m []uint8) int {
+	off := len(rec.palMaps)
+	rec.palMaps = append(rec.palMaps, m...)
+	return off
+}
+
+// palMap returns the n-entry palette map stored at off.
+func (rec *pframeSplitRecord) palMap(off, n int) []uint8 {
+	return rec.palMaps[off : off+n]
 }

@@ -2,6 +2,7 @@ package encoder
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -55,10 +56,9 @@ type VideoEncoder struct {
 	// uniform tile columns, each encoded by its own coder (independent CDFs
 	// and entropy stream per AV1 tile semantics) on its own goroutine.
 	tileColsLog2 uint8
-	// keyframeTileColsLog2 is the keyframe tile-column split. Keyframes have
-	// no P-frame decision pass, so they cannot use the SB-row wavefront and
-	// keep tile-column parallelism even when inter frames run single-tile +
-	// wavefront (SetMaxThreads). SetTileColumns sets both.
+	// keyframeTileColsLog2 is the keyframe tile-column split; SetTileColumns
+	// sets it with tileColsLog2. Single-tile keyframes parallelize on the
+	// SB-row wavefront (keyframe_split.go), as inter frames do.
 	keyframeTileColsLog2 uint8
 	tilePCs              []pframeCoder
 
@@ -294,8 +294,7 @@ func newVideoEncoderWithColor(width, height int, qIndex uint8, color SequenceCol
 		color:  color,
 		qIndex: qIndex, goldenEvery: 0,
 	}
-	e.tileColsLog2 = defaultTileColsLog2(codedW)
-	e.keyframeTileColsLog2 = e.tileColsLog2
+	e.setDefaultTileColumns()
 	return e, nil
 }
 
@@ -486,23 +485,6 @@ func copyFrameInto(dst *SourceFrame420, src SourceFrame420) {
 	dst.Width, dst.Height = src.Width, src.Height
 }
 
-// defaultTileColsLog2 picks the inter-frame tile-column split: two columns
-// once a frame is wide enough that per-tile entropy coding pays for the
-// goroutine handoff, four at HD, and thirty-ish legal columns at full HD.
-// The full-HD split intentionally saturates the persistent worker pool; the
-// tile syntax clamps the requested power-of-two layout to the legal SB grid.
-func defaultTileColsLog2(width int) uint8 {
-	switch {
-	case width >= 1920:
-		return 5
-	case width >= 1280:
-		return 2
-	case width >= 512:
-		return 1
-	}
-	return 0
-}
-
 // SetTileColumns overrides the inter-frame tile column count (rounded down
 // to a power of two, clamped to the legal range for the frame size at encode
 // time). One column disables tile parallelism.
@@ -521,11 +503,11 @@ func (e *VideoEncoder) SetMaxThreads(n int) {
 		// column, n decision lanes) over tile-column parallelism: it keeps one
 		// entropy context per frame, avoiding the ~0.5 dB the per-tile CDF
 		// split costs on complex motion, while still saturating the cores.
-		// Keyframes have no decision pass to wavefront, so they keep n tile
-		// columns for parallelism. Callers wanting tiled inter frames call
+		// Keyframes run single-tile on the same wavefront (keyframe_split.go),
+		// as SVT-AV1 codes them. Callers wanting tiled frames call
 		// SetTileColumns.
 		e.tileColsLog2 = 0
-		e.keyframeTileColsLog2 = tileColumnsLog2(n)
+		e.keyframeTileColsLog2 = 0
 		e.wavefrontLanes = n
 		return
 	}
@@ -546,12 +528,21 @@ func (e *VideoEncoder) configurePCWavefront() {
 	}
 	e.pc.wavefront = &e.wavefront
 	e.pc.wavefrontLanes = lanes
+	// The CDEF strength search spreads its filter-block rows over as many
+	// lanes (cdef_search.go).
+	e.cdefSearch.setLanes(lanes)
 }
 
 func (e *VideoEncoder) setDefaultTileColumns() {
 	if e != nil {
-		e.tileColsLog2 = defaultTileColsLog2(e.width)
-		e.keyframeTileColsLog2 = e.tileColsLog2
+		// One tile, as SVT-AV1 codes by default (tile_columns = tile_rows =
+		// 0), keyframes and inter frames on the SB-row wavefront with one
+		// lane per P. SetTileColumns selects tiled frames.
+		e.tileColsLog2 = 0
+		e.keyframeTileColsLog2 = 0
+		if n := runtime.GOMAXPROCS(0); n > 1 {
+			e.wavefrontLanes = n
+		}
 	}
 }
 
@@ -647,6 +638,7 @@ func (e *VideoEncoder) Close() error {
 	e.leafWavefront.close()
 	e.lf.close()
 	e.cdefApp.close()
+	e.cdefSearch.close()
 	e.hme.close()
 	e.leafLF.close()
 	e.leafCdefApp.close()
@@ -772,6 +764,8 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 	// working point; rate control pays the debt back over the next frames
 	// through the buffer.
 	keyQ := e.rcKeyQ(src.Width, src.Height, e.svtScreen())
+	// A single-tile keyframe decides on e.pc's SB-row wavefront.
+	e.configurePCWavefront()
 	tu, recon, err := encodeKeyframeFilteredTiles(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, nil, &e.cdefApp, e.keyframeTileColsLog2, keyframeTileOptions{
 		payloads:          e.payloads[:nTiles],
 		errs:              e.tileErrs[:nTiles],
@@ -1228,8 +1222,8 @@ func (e *VideoEncoder) applyInLoopFilters(out *SourceFrame420, lfLevel uint8, cd
 		applyLF = e.lf.applySerialMasks
 		applyCDEF = e.cdefApp.applySerial
 	case parallelMasks:
-		// All multithread inter frames route here, INCLUDING the multi-tile
-		// default (defaultTileColsLog2(1920)=5, ~30 tile columns). The dav1d
+		// All multithread inter frames route here, INCLUDING explicitly
+		// tiled ones (SetTileColumns, e.g. ~30 tile columns at 1080p). The dav1d
 		// bitmask apply is byte-identical to the edge-list sweep across tile
 		// columns because BuildFromMap derives each block's left/above tx-context
 		// directly from the shared record map -- the same neighbour the sweep

@@ -62,10 +62,12 @@ type pframeDecideWorker struct {
 // privatizes every value-array scratch; levels, invScratch, and the mutable
 // subpel cache keep lane-owned backing.
 func (w *pframeDecideWorker) adopt(src *lossyEncodeState) {
+	pal := w.st.pal
 	levels := w.st.levels
 	inv := w.st.invScratch
 	subpelCache := w.st.subpelCache
 	w.st = *src
+	w.st.pal = pal // lane-owned palette search scratch
 	if len(levels) < len(src.levels) {
 		levels = make([]uint8, len(src.levels))
 	}
@@ -119,6 +121,9 @@ type pframeWavefront struct {
 	miCols, miRows  uint16
 	rows, cols      int
 	scaledReference bool
+	// key runs the keyframe decision pass (keyframe_split.go) instead of the
+	// P-frame one.
+	key bool
 }
 
 func (wf *pframeWavefront) ensureCond() {
@@ -276,7 +281,13 @@ func (wf *pframeWavefront) close() {
 // decision plus the per-row partition record append (write-pass replay input).
 func (w *pframeDecideWorker) decidePartition(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
 	wf := w.wf
-	partition, err := w.st.decideRealtimePartition(wf.src, wf.ref, wf.scaledReference, level, miCol, miRow, haveRight, haveBottom)
+	var partition tile.Partition
+	var err error
+	if wf.key {
+		partition, err = w.st.keyDecidePartition(wf.src, wf.recon, wf.walkReq, level, miCol, miRow, haveRight, haveBottom)
+	} else {
+		partition, err = w.st.decideRealtimePartition(wf.src, wf.ref, wf.scaledReference, level, miCol, miRow, haveRight, haveBottom)
+	}
 	if err == nil {
 		w.rec.appendPart(partition)
 	}
@@ -287,6 +298,9 @@ func (w *pframeDecideWorker) decidePartition(level tile.BlockLevel, ctx int, miC
 // into the row's record.
 func (w *pframeDecideWorker) decideVisit(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
 	wf := w.wf
+	if wf.key {
+		return w.st.decideKeyBlock(wf.src, wf.recon, block, scratch, w.rec)
+	}
 	return w.st.decidePBlock(wf.src, wf.ref, wf.golden, wf.recon, block, scratch, wf.referenceMode, wf.walkReq, wf.miCols, wf.miRows, w.rec)
 }
 
@@ -361,6 +375,7 @@ func (wf *pframeWavefront) start(pc *pframeCoder, n int, src, ref SourceFrame420
 	wf.walkReq = walkReq
 	wf.miCols, wf.miRows = miCols, miRows
 	wf.rows, wf.cols = rows, cols
+	wf.key = false
 	wf.scaledReference = scaledReference
 	wf.nextRow.Store(0)
 	wf.aborted.Store(false)
@@ -397,7 +412,9 @@ func (wf *pframeWavefront) join(pc *pframeCoder) error {
 	var firstErr error
 	for i := range wf.workers {
 		w := &wf.workers[i]
-		w.st.unbindRefmvs(&w.scratch)
+		if !wf.key {
+			w.st.unbindRefmvs(&w.scratch)
+		}
 		if w.err != nil && firstErr == nil {
 			firstErr = w.err
 		}
@@ -408,3 +425,39 @@ func (wf *pframeWavefront) join(pc *pframeCoder) error {
 	}
 	return nil
 }
+
+// startKey launches the keyframe decision pass (keyframe_split.go) over the
+// single-tile keyframe with n lanes: the same rows, top-right dependency and
+// trailing serial entropy pass as start. Intra prediction reads the
+// reconstructed above, above-right and left neighbours, which the
+// top-right SB dependency covers. Keyframes carry no motion, so the lanes
+// bind no refmvs store.
+func (wf *pframeWavefront) startKey(pc *pframeCoder, n int, src SourceFrame420, recon *SourceFrame420,
+	walkReq tile.BlockWalkRequest, miRows uint16, rows, cols int) {
+	wf.ensureCond()
+	wf.ensureWorkers(n, pc)
+	wf.ensureDone(rows)
+	wf.carriers.Reset(cols)
+	wf.src, wf.ref, wf.golden, wf.recon = src, SourceFrame420{}, nil, recon
+	wf.walkReq = walkReq
+	wf.miCols, wf.miRows = walkReq.MIColEnd, miRows
+	wf.rows, wf.cols = rows, cols
+	wf.scaledReference = false
+	wf.key = true
+	wf.nextRow.Store(0)
+	wf.aborted.Store(false)
+	for r := 0; r < rows; r++ {
+		wf.done[r].Store(0)
+	}
+	for i := range wf.workers {
+		w := &wf.workers[i]
+		w.err = nil
+		w.adopt(&pc.st)
+	}
+	wf.launched = len(wf.workers)
+	wf.wg.Add(wf.launched)
+	for i := 0; i < wf.launched; i++ {
+		wf.work <- i
+	}
+}
+
