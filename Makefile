@@ -194,6 +194,21 @@ pgo-regenerate:
 	# 5. go tool pprof -proto -output cmd/qualitybench/default.pgo /tmp/goav1-d2a-dec-p720.out /tmp/goav1-d2a-dec-p288.out /tmp/goav1-d2a-enc-realc.out
 	#    Then merge the realtime profile: go tool pprof -proto -output cmd/qualitybench/default.pgo cmd/qualitybench/default.pgo /tmp/goav1-rtc-l1t1.out
 	# 6. Delete internal/av1/testvector/scratch_profile_test.go before committing.
+	# Decoder refresh (merge-style; keeps the encoder samples, since a
+	# re-collected encoder profile measured worse for the decoder in #106):
+	# 7. Add a scratch root benchmark that opens every IVF listed in
+	#    GOAV1_ZZ_FILES (colon separated) with NewDecoderFromIVF(data,
+	#    WithWorkers(1)) and, per b.Loop() iteration, runs
+	#    decodePublicFullClipAfterReset on each decoder.
+	# 8. GOEXPERIMENT=simd go test -c -pgo=cmd/qualitybench/default.pgo -o /tmp/goav1-root.test .
+	# 9. GOAV1_ZZ_FILES=<the four testdata/realcorpus/aq0 streams debugging_720p_800k_s11,
+	#    fourpeople_360p_500k_s9, mtbike_360p_600k_s8, johnny_720p_1500k_s9>:<benchcorpus
+	#    p720_inter_q20 and p360_inter_q32>:<the 960-frame p720 clip> GOMAXPROCS=1
+	#    /tmp/goav1-root.test -test.run '^$$' -test.bench ZZScratchFiles -test.benchtime 40s
+	#    -test.cpuprofile /tmp/goav1-dec-refresh.out
+	# 10. go tool pprof -proto cmd/qualitybench/default.pgo /tmp/goav1-dec-refresh.out > /tmp/merged.pgo
+	#     and move it over cmd/qualitybench/default.pgo; A/B decode (w1 and w8)
+	#     and the RTC encbench before committing. Delete the scratch benchmark.
 	@printf '%s\n' 'PGO regeneration recipe is documented in this target.'
 
 bench-corpus-publish:
