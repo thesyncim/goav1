@@ -1909,3 +1909,76 @@ func parseWebRTCTileColumns(t *testing.T, tu []byte) int {
 	t.Fatal("missing frame header")
 	return 0
 }
+
+// TestWebRTCStreamSharedSlotFlipResetsReferences guards the invariant the
+// reference pool relies on: a SetConfig that switches between shared-slot
+// coding (slot pixels live in the pool) and any other mode (slots record
+// only geometry) must drop every reference slot, so a pixel-less slot is never
+// read and the pool's reference counts stay exact.
+func TestWebRTCStreamSharedSlotFlipResetsReferences(t *testing.T) {
+	checkPool := func(t *testing.T, s *WebRTCStream, when string) {
+		t.Helper()
+		if !webRTCStreamUsesSharedReferenceSlotCoding(s.config) {
+			return
+		}
+		var want [webRTCRefPoolSize]uint8
+		for slot, valid := range s.referenceValid {
+			if valid {
+				want[s.refSlot[slot]]++
+			}
+		}
+		if want != s.refPoolRefs {
+			t.Fatalf("%s: pool refs %v, slots imply %v", when, s.refPoolRefs, want)
+		}
+	}
+	flips := 0
+	for a := ScalabilityMode(0); a < scalabilityModeCount; a++ {
+		cfgA, ok := webRTCStreamDescriptorMatrixConfig(a)
+		if !ok {
+			continue
+		}
+		for b := ScalabilityMode(0); b < scalabilityModeCount; b++ {
+			cfgB, ok := webRTCStreamDescriptorMatrixConfig(b)
+			// Same resolution keeps SetConfig on its in-place path; only a
+			// simulcast flip can flip shared-slot coding there.
+			if !ok || a == b || cfgA.Resolution != cfgB.Resolution || a.IsSimulcast() == b.IsSimulcast() {
+				continue
+			}
+			stream, err := NewWebRTCStreamConfig(cfgA)
+			if err != nil {
+				continue
+			}
+			src := testWebRTCStreamFrame(int(cfgA.Resolution.Width), int(cfgA.Resolution.Height))
+			for i := 0; i < 1; i++ {
+				if _, err := stream.EncodePicture(src, false); err != nil {
+					t.Fatalf("%s picture %d: %v", a, i, err)
+				}
+			}
+			checkPool(t, stream, a.String())
+			sharedA := webRTCStreamUsesSharedReferenceSlotCoding(stream.config)
+			if err := stream.SetConfig(cfgB); err != nil {
+				_ = stream.Close()
+				continue
+			}
+			if sharedA != webRTCStreamUsesSharedReferenceSlotCoding(stream.config) {
+				flips++
+				for slot, valid := range stream.referenceValid {
+					if valid {
+						t.Fatalf("%s -> %s: slot %d survived a shared-slot mode flip", a, b, slot)
+					}
+				}
+			}
+			for i := 0; i < 2; i++ {
+				if _, err := stream.EncodePicture(src, false); err != nil {
+					t.Fatalf("%s -> %s picture %d: %v", a, b, i, err)
+				}
+			}
+			checkPool(t, stream, a.String()+"->"+b.String())
+			_ = stream.Close()
+		}
+	}
+	if flips == 0 {
+		t.Fatal("no mode pair flipped shared-slot coding")
+	}
+	t.Logf("%d shared-slot flips checked", flips)
+}
