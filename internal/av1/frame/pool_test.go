@@ -190,7 +190,7 @@ func TestFramePoolAcquireFormatRejectsMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = pool.AcquireFormat(Format{Width: 32, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
+	_, _, err = pool.AcquireFormat(Format{Width: 80, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32})
 	if !errors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("AcquireFormat err=%v want %v", err, ErrInvalidFormat)
 	}
@@ -487,5 +487,48 @@ func BenchmarkFramePoolReleaseMany(b *testing.B) {
 		if err := pool.ReleaseMany(batch[:]); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// TestFramePoolAcquireFormatBindsSmallerFrames checks that a slot sized for
+// the pool format takes any frame size that fits, and that the slot is
+// rebound to the pool format on a plain Acquire.
+func TestFramePoolAcquireFormatBindsSmallerFrames(t *testing.T) {
+	format := Format{Width: 192, Height: 108, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
+	layout, err := RequiredSize(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing := make([]byte, 2*layout.Size)
+	var frames [2]Frame
+	var free [2]int
+	var used [2]bool
+	pool, err := BindPool(backing, format, frames[:], free[:], used[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	small := Format{Width: 140, Height: 79, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
+	index, f, err := pool.AcquireFormat(small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Format.Width != 140 || f.Format.Height != 79 || f.U.Width != 70 || f.U.Height != 40 {
+		t.Fatalf("bound frame %+v", f.Format)
+	}
+	if got, err := pool.Format(); err != nil || got != pool.frames[1-index].Format {
+		t.Fatalf("pool format %+v err=%v", got, err)
+	}
+	if err := pool.Release(index); err != nil {
+		t.Fatal(err)
+	}
+	index2, f2, err := pool.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index2 != index || f2.Format.Width != 192 || f2.Format.Height != 108 {
+		t.Fatalf("re-acquired slot %d format %+v", index2, f2.Format)
+	}
+	if _, _, err := pool.AcquireFormat(Format{Width: 140, Height: 79, BitDepth: 10, SubsamplingX: true, SubsamplingY: true, Align: 32}); !errors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("bit-depth mismatch err=%v", err)
 	}
 }

@@ -145,7 +145,7 @@ func TestBeginFrameWorkRejectsFormatAfterTilePlanBeforeAcquire(t *testing.T) {
 		t.Fatalf("count=%d", count)
 	}
 	pool := testFramePoolForSize(t, events[1].FrameSize.CodedWidth, events[1].FrameSize.Height, 1)
-	events[1].FrameSize.CodedWidth = 32
+	events[1].FrameSize.CodedWidth = 80
 
 	var refs SurfaceReferences
 	var spans [1]parser.TileSpan

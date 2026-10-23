@@ -213,3 +213,11 @@ func StoreFrameSamplePlane(dst FramePlane, bytesPerSample int, src FrameSamplePl
 func StoreFrameBorderedSamplePlane(dst FramePlane, bytesPerSample int, src FrameBorderedSamplePlane) error {
 	return internalframe.StoreBorderedSamplePlane(dst, bytesPerSample, src)
 }
+
+// FramePoolFormatFromSequence returns the FrameFormat for frame-pool slots
+// that fit every frame of the sequence: the maximum frame size from the
+// sequence header with its bit depth and chroma layout. A pool bound with it
+// acquires each frame at that frame's own size (FramePool.AcquireFormat).
+func FramePoolFormatFromSequence(sequence SequenceHeader, align int) (FrameFormat, error) {
+	return frameFormatFromHeaderWidth(sequence, sequence.MaxFrameWidth, sequence.MaxFrameHeight, align)
+}

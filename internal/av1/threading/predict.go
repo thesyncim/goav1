@@ -1168,12 +1168,12 @@ func (b *FrameWorkBatch) predictBlockInterSubChromaPlanePtr(index int, visit *ti
 		if err != nil {
 			return err
 		}
-		sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
+		sf, sameSize, err := b.referenceScale(reference)
 		if err != nil {
 			return err
 		}
 		if !sameSize {
-			if err := frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth,
+			if err := frameWorkPredictScaledSF(geom.Output, ref, sf, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth,
 				cellX, cellY, cellX, cellY, width, height, filterW, filterH, cell.MV, geom.SubsamplingX, geom.SubsamplingY, cell.InterpFilters,
 				frameWorkScaledConvolveScratch(scratch)); err != nil {
 				return err
@@ -1238,7 +1238,7 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithGeometry(visit *til
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
+	sf, sameSize, err := b.referenceScale(reference)
 	if err != nil {
 		return err
 	}
@@ -1248,7 +1248,7 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithGeometry(visit *til
 		// runs the scaled 8-tap convolver on the block-level MV instead
 		// of the global warp matrix.
 		filterW, filterH := geom.filterWidth(), geom.filterHeight()
-		return frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth,
+		return frameWorkPredictScaledSF(geom.Output, ref, sf, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth,
 			geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), filterW, filterH, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters,
 			frameWorkScaledConvolveScratch(scratch))
 	}
@@ -1524,7 +1524,7 @@ func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithGeometry(visit *tile.Bloc
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
+	sf, sameSize, err := b.referenceScale(reference)
 	if err != nil {
 		return err
 	}
@@ -1534,7 +1534,7 @@ func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithGeometry(visit *tile.Bloc
 		// runs the scaled 8-tap convolver on the block-level MV instead
 		// of the local warp matrix.
 		filterW, filterH := geom.filterWidth(), geom.filterHeight()
-		return frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth,
+		return frameWorkPredictScaledSF(geom.Output, ref, sf, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth,
 			geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), filterW, filterH, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters,
 			frameWorkScaledConvolveScratch(scratch))
 	}
@@ -1791,12 +1791,12 @@ func (b *FrameWorkBatch) predictBlockInterCompoundRefToConvBuf(buf *motion.Compo
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
+	sf, sameSize, err := b.referenceScale(reference)
 	if err != nil {
 		return err
 	}
 	if !sameSize {
-		return frameWorkPredictScaledReferencePlaneToConvBufScratch(buf, ref, geom, b.Sequence.ColorConfig.BitDepth, mv, filters, scaledScratch)
+		return frameWorkPredictScaledToConvBufSF(buf, ref, sf, geom, b.Sequence.ColorConfig.BitDepth, mv, filters, scaledScratch)
 	}
 	if useWarp {
 		if err := motion.PredictWarpedCompoundToConvBuf(buf, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
@@ -2123,7 +2123,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutputWithGeometry(geo
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
+	sf, sameSize, err := b.referenceScale(reference)
 	if err != nil {
 		return err
 	}
@@ -2137,7 +2137,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutputWithGeometry(geo
 		writeHeight = geom.height()
 	}
 	if !sameSize {
-		return frameWorkPredictScaledReferencePlaneWithFilterSizeScratch(geom, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth,
+		return frameWorkPredictScaledSF(geom.Output, ref, sf, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth,
 			geom.X, geom.Y, geom.X, geom.Y, writeWidth, writeHeight, filterW, filterH, mv, geom.SubsamplingX, geom.SubsamplingY, filters,
 			frameWorkScaledConvolveScratch(scratch))
 	}
@@ -2170,7 +2170,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plan
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
+	sf, sameSize, err := b.referenceScale(reference)
 	if err != nil {
 		return err
 	}
@@ -2182,7 +2182,7 @@ func (b *FrameWorkBatch) predictBlockInterReferencePlaneToScratch(dst frame.Plan
 		// from the output frame size — not from the staging buffer used
 		// for inter-intra / masked compound. The scratch plane here is
 		// block-sized, so we anchor the Q14 ratios to geom.Output.
-		return frameWorkPredictScaledReferencePlaneToBufferWithFilterSizeScratch(dst, ref, geom, b.Sequence.ColorConfig.BitDepth,
+		return frameWorkPredictScaledToBufferSF(dst, ref, sf, geom, b.Sequence.ColorConfig.BitDepth,
 			0, 0, geom.X, geom.Y, filterW, filterH, mv, filters, frameWorkScaledConvolveScratch(scratch))
 	}
 	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(geom.X, geom.Y, mv, geom.SubsamplingX, geom.SubsamplingY)
@@ -2219,12 +2219,12 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpToScratch(dst frame.Plane, p
 	if err != nil {
 		return err
 	}
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
+	sf, sameSize, err := b.referenceScale(reference)
 	if err != nil {
 		return err
 	}
 	if !sameSize {
-		return frameWorkPredictScaledReferencePlaneToBufferWithFilterSizeScratch(dst, ref, geom, b.Sequence.ColorConfig.BitDepth,
+		return frameWorkPredictScaledToBufferSF(dst, ref, sf, geom, b.Sequence.ColorConfig.BitDepth,
 			0, 0, geom.X, geom.Y, geom.width(), geom.height(), mv, filters, frameWorkScaledConvolveScratch(scratch))
 	}
 	return motion.PredictWarpedPlaneBlockToScratchBitDepth(dst, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth,
@@ -2363,16 +2363,12 @@ func (b *FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, pla
 	// area must run through the scaled 8-tap convolver instead. libaom
 	// mirror: av1_make_inter_predictor() routes through
 	// av1_convolve_2d_scale_c whenever av1_is_scaled(sf).
-	sameSize, err := frameWorkSameOrScaledReferencePlane(geom, ref, b.Sequence.ScaledReferencePredictionDisabled)
+	sf, sameSize, err := b.referenceScale(reference)
 	if err != nil {
 		return err
 	}
 	if !sameSize {
-		curWidth, curHeight, ok := frameWorkScaledReferenceCurrentDims(geom)
-		if !ok {
-			return ErrInvalidBatch
-		}
-		return frameWorkPredictScaledReferencePlaneWithDimsAndFilterSizeScratch(dst, ref, curWidth, curHeight,
+		return frameWorkPredictScaledSF(dst, ref, sf,
 			geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, dstX, dstY, absX, absY, width, height, filterW, filterH, mv,
 			geom.SubsamplingX, geom.SubsamplingY, filters, frameWorkScaledConvolveScratch(scratch))
 	}

@@ -337,7 +337,9 @@ func (b *FrameWorkBatch) sameSizeRefPlane(reference FrameWorkReference, plane Fr
 		}
 		ref = tmp
 	}
-	if ref.Width != codedW || ref.Height != codedH {
+	if ref.Width != codedW || ref.Height != codedH || !b.referenceSameSize(reference) {
+		// dav1d takes the unscaled mc() path only for a reference of the
+		// current luma frame size; odd sizes can match in chroma alone.
 		return nil
 	}
 	return ref
