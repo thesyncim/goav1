@@ -454,6 +454,12 @@ var profileClips = []struct {
 			"32cbbce3e29e022e9ee7518d57d0e14a",
 		},
 	},
+	{
+		file: "svt-palette-bottom-edge-320x180.ivf",
+		frameMD5Hex: []string{
+			"fcb1155a643c1231c2c9478661328e3c",
+		},
+	},
 }
 
 func TestSimpleDecoderZeroValueGuards(t *testing.T) {
