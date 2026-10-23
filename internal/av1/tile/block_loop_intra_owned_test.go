@@ -88,7 +88,7 @@ func TestOwnedIntraRootContextsMatchFullOracle(t *testing.T) {
 						if err := blockLoopLoadRootContext(&want, &carrier, col, top, left, sb); err != nil {
 							t.Fatal(err)
 						}
-						if err := blockLoopLoadIntraRootContext(&got, &carrier, col, top, left, sb); err != nil {
+						if err := testLoadIntraRootContext(&got, &carrier, col, top, left, sb); err != nil {
 							t.Fatal(err)
 						}
 						ownedIntraCompareLive(t, &got, &want)
@@ -97,14 +97,14 @@ func TestOwnedIntraRootContextsMatchFullOracle(t *testing.T) {
 						}
 						fast := BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, columns)}
 						full := BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, columns)}
-						if err := blockLoopStoreIntraRootContext(&got, &fast, col); err != nil {
+						if err := testStoreIntraRootContext(&got, &fast, col); err != nil {
 							t.Fatal(err)
 						}
 						if err := blockLoopStoreRootContext(&want, &full, col, sb); err != nil {
 							t.Fatal(err)
 						}
 						var reloadedGot, reloadedWant BlockLoopScratch
-						if err := blockLoopLoadIntraRootContext(&reloadedGot, &fast, col, true, true, sb); err != nil {
+						if err := testLoadIntraRootContext(&reloadedGot, &fast, col, true, true, sb); err != nil {
 							t.Fatal(err)
 						}
 						if err := blockLoopLoadRootContext(&reloadedWant, &full, col, true, true, sb); err != nil {
@@ -165,14 +165,14 @@ func TestOwnedIntraErrorsPreserveLiveState(t *testing.T) {
 		var got BlockLoopScratch
 		ownedIntraPoisonMode(&got.Mode, 29)
 		want := got
-		ge := blockLoopLoadIntraRootContext(&got, &carrier, col, true, true, 16)
+		ge := testLoadIntraRootContext(&got, &carrier, col, true, true, 16)
 		we := blockLoopLoadRootContext(&want, &carrier, col, true, true, 16)
 		if !errors.Is(ge, ErrInvalidDecodeState) || !errors.Is(we, ErrInvalidDecodeState) {
 			t.Fatal("missing invalid carrier error")
 		}
 		ownedIntraCompareLive(t, &got, &want)
 		before := carrier.Above[0]
-		if !errors.Is(blockLoopStoreIntraRootContext(&got, &carrier, col), ErrInvalidDecodeState) || carrier.Above[0] != before {
+		if !errors.Is(testStoreIntraRootContext(&got, &carrier, col), ErrInvalidDecodeState) || carrier.Above[0] != before {
 			t.Fatal("invalid store mutated carrier")
 		}
 	}
@@ -202,7 +202,7 @@ func TestOwnedIntraThenGenericCarrierTransition(t *testing.T) {
 				if col == 0 {
 					promotePendingDiagonalCarriers(&wc)
 				}
-				if err := blockLoopLoadIntraRootContext(&fast, &fc, col, row > 0, col > 0, sb); err != nil {
+				if err := testLoadIntraRootContext(&fast, &fc, col, row > 0, col > 0, sb); err != nil {
 					t.Fatal(err)
 				}
 				if err := blockLoopLoadRootContext(&full, &wc, col, row > 0, col > 0, sb); err != nil {
@@ -218,7 +218,7 @@ func TestOwnedIntraThenGenericCarrierTransition(t *testing.T) {
 				if err := full.Mode.MarkIntra(size, 0, 0, true, IntraModeDC); err != nil {
 					t.Fatal(err)
 				}
-				if err := blockLoopStoreIntraRootContext(&fast, &fc, col); err != nil {
+				if err := testStoreIntraRootContext(&fast, &fc, col); err != nil {
 					t.Fatal(err)
 				}
 				if err := blockLoopStoreRootContext(&full, &wc, col, sb); err != nil {
@@ -284,17 +284,33 @@ func TestOwnedIntraContextsNoAlloc(t *testing.T) {
 	var scratch BlockLoopScratch
 	carrier := BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, 2)}
 	if n := testing.AllocsPerRun(100, func() {
-		if err := blockLoopLoadIntraRootContext(&scratch, &carrier, 0, true, true, 16); err != nil {
+		if err := testLoadIntraRootContext(&scratch, &carrier, 0, true, true, 16); err != nil {
 			panic(err)
 		}
 		if err := scratch.Mode.markOwnedIntra(BlockSize16x16, 0, 0, IntraModeDC); err != nil {
 			panic(err)
 		}
-		if err := blockLoopStoreIntraRootContext(&scratch, &carrier, 0); err != nil {
+		if err := testStoreIntraRootContext(&scratch, &carrier, 0); err != nil {
 			panic(err)
 		}
 	}); n != 0 {
 		t.Fatalf("allocs=%g", n)
 	}
-	t.Logf("mode reset bytes: generic=%d owned=%d; five-row history bytes per edge=%d", unsafe.Offsetof(scratch.Mode.GridInterMotion), unsafe.Offsetof(scratch.Mode.AboveRef)+unsafe.Offsetof(scratch.Mode.GridMotionValid)-unsafe.Offsetof(scratch.Mode.AboveBlockSize), unsafe.Sizeof(carrier.Left.mode.InterMotionHistory)+unsafe.Sizeof(carrier.Left.mode.MotionValidHistory)+unsafe.Sizeof(carrier.Left.mode.BlockSizeHistory)+unsafe.Sizeof(carrier.Left.mode.BlockSizeVisitedHistory))
+	t.Logf("mode reset bytes: generic=%d owned=%d; five-row history bytes per edge=%d", unsafe.Offsetof(scratch.Mode.GridInterMotion), unsafe.Offsetof(scratch.Mode.AboveRef)+unsafe.Offsetof(scratch.Mode.LeftRef)-unsafe.Offsetof(scratch.Mode.LeftSkip), unsafe.Sizeof(carrier.Left.mode.InterMotionHistory)+unsafe.Sizeof(carrier.Left.mode.MotionValidHistory)+unsafe.Sizeof(carrier.Left.mode.BlockSizeHistory)+unsafe.Sizeof(carrier.Left.mode.BlockSizeVisitedHistory))
+}
+
+// testLoadIntraRootContext loads one root in isolation: the position never
+// continues a resident left edge, so the left edge comes from carrier.Left.
+func testLoadIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8) error {
+	return blockLoopLoadIntraRootContext(scratch, carrier, rootColIndex, haveTop, haveLeft, sbSizeMIB, ^uint32(0), ^uint32(0))
+}
+
+// testStoreIntraRootContext stores one root and flushes its left edge to
+// carrier.Left, the per-root store the isolated tests compare against.
+func testStoreIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int) error {
+	if err := blockLoopStoreIntraRootContext(scratch, carrier, rootColIndex, 0, 0); err != nil {
+		return err
+	}
+	scratch.flushLeftEdge()
+	return nil
 }

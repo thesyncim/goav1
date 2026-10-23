@@ -40,6 +40,9 @@ type BlockLoopScratch struct {
 	Refmvs refmvsTile
 
 	visit BlockLoopVisit
+
+	// leftEdge tracks a left edge kept resident between superblocks.
+	leftEdge blockLoopLeftEdge
 }
 
 // BlockLoopContextCarrier holds caller-owned edge contexts when a block-loop
@@ -398,7 +401,10 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 		// Deferred temporal projection needs the refmvs rows.
 		return BlockLoopStats{}, ErrInvalidDecodeState
 	}
-	defer func() { scratch.Refmvs.bound = false }()
+	defer func() {
+		scratch.Refmvs.bound = false
+		scratch.flushLeftEdge()
+	}()
 	// With refmvs rows bound, the current frame's MV_REF side data is written
 	// per superblock row from the rows (dav1d_refmvs_save_tmvs) instead of
 	// per block.
@@ -428,9 +434,9 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 			rootColIndex := int((miCol - miColStart) / rootSize)
 			var err error
 			if intraOnlyContexts {
-				err = blockLoopLoadIntraRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB)
+				err = blockLoopLoadIntraRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB, miRow, miCol)
 			} else {
-				err = blockLoopLoadRootContextMotion(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB, keepLegacyMotion)
+				err = blockLoopLoadRootContextMotion(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB, keepLegacyMotion, miRow, miCol)
 			}
 			if err != nil {
 				return stats, err
@@ -532,9 +538,9 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 				return stats, fmt.Errorf("walk root col=%d row=%d: %w", rootColIndex, miRow, err)
 			}
 			if intraOnlyContexts {
-				err = blockLoopStoreIntraRootContext(scratch, req.ContextCarrier, rootColIndex)
+				err = blockLoopStoreIntraRootContext(scratch, req.ContextCarrier, rootColIndex, miRow, miCol+rootSize)
 			} else {
-				err = blockLoopStoreRootContextMotion(scratch, req.ContextCarrier, rootColIndex, req.SBSizeMIB, keepLegacyMotion)
+				err = blockLoopStoreRootContextMotion(scratch, req.ContextCarrier, rootColIndex, req.SBSizeMIB, keepLegacyMotion, miRow, miCol+rootSize)
 			}
 			if err != nil {
 				return stats, fmt.Errorf("store root context col=%d row=%d: %w", rootColIndex, miRow, err)
@@ -554,14 +560,193 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 }
 
 func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8) error {
-	return blockLoopLoadRootContextMotion(scratch, carrier, rootColIndex, haveTop, haveLeft, sbSizeMIB, true)
+	return blockLoopLoadRootContextMotion(scratch, carrier, rootColIndex, haveTop, haveLeft, sbSizeMIB, true, 0, 0)
+}
+
+// blockLoopLeftEdge records a left edge left resident in the scratch after a
+// superblock store, dav1d's t->l: the SB row's left context is indexed in
+// place by the next superblock instead of being stored to and reloaded from
+// carrier.Left. carrier is nil when nothing is pending; otherwise carrier.Left
+// is stale until flushLeftEdge writes the edge back.
+type blockLoopLeftEdge struct {
+	carrier   *BlockLoopContextCarrier
+	miRow     uint16
+	nextMICol uint16
+	intra     bool
+}
+
+// leftEdgeResident reports whether the superblock at (miRow, miCol) continues
+// the walk that left its left edge in the scratch.
+func (s *BlockLoopScratch) leftEdgeResident(carrier *BlockLoopContextCarrier, miRow, miCol uint32, intra bool) bool {
+	return s.leftEdge.carrier == carrier && uint32(s.leftEdge.miRow) == miRow && uint32(s.leftEdge.nextMICol) == miCol && s.leftEdge.intra == intra
+}
+
+// keepLeftEdge marks the stored superblock's left edge resident for the
+// superblock at (miRow, nextMICol).
+func (s *BlockLoopScratch) keepLeftEdge(carrier *BlockLoopContextCarrier, miRow, nextMICol uint32, intra bool) {
+	s.leftEdge = blockLoopLeftEdge{carrier: carrier, miRow: uint16(miRow), nextMICol: uint16(nextMICol), intra: intra}
+}
+
+// flushLeftEdge writes a pending resident left edge back to its carrier, so
+// carrier.Left holds the last stored superblock's left edge exactly as a
+// per-superblock store would have left it.
+func (s *BlockLoopScratch) flushLeftEdge() {
+	carrier := s.leftEdge.carrier
+	if carrier == nil {
+		return
+	}
+	if s.leftEdge.intra {
+		storeIntraLeftEdge(&carrier.Left, s)
+	} else {
+		storeLeftEdge(&carrier.Left, s)
+	}
+	s.leftEdge = blockLoopLeftEdge{}
 }
 
 // blockLoopLoadRootContextMotion loads one root's edge contexts. keepMotion
 // false skips the libaom-shaped neighbor-motion arrays and cross-SB motion
 // snapshots, which have no readers while the frame decoder keeps neighbor
-// motion in the dav1d refmvs rows.
-func blockLoopLoadRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8, keepMotion bool) error {
+// motion in the dav1d refmvs rows. (miRow, miCol) locate the root; on the
+// keepMotion=false path a left edge kept resident by the previous root of the
+// same walk is used in place.
+func blockLoopLoadRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8, keepMotion bool, miRow, miCol uint32) error {
+	// An invalid root column takes the full path, which resets the scratch
+	// before failing.
+	if keepMotion || carrier == nil || rootColIndex < 0 || rootColIndex >= len(carrier.Above) {
+		scratch.flushLeftEdge()
+		return blockLoopLoadRootContextFull(scratch, carrier, rootColIndex, haveTop, haveLeft, sbSizeMIB, keepMotion)
+	}
+	resident := haveLeft && scratch.leftEdgeResident(carrier, miRow, miCol, false)
+	if !resident {
+		scratch.flushLeftEdge()
+	}
+	scratch.leftEdge = blockLoopLeftEdge{}
+	scratch.Mode.resetSuperblockState()
+	scratch.CDEF.Reset()
+	if haveTop {
+		scratch.Mode.poisonAboveEdge()
+		loadAboveEdge(scratch, &carrier.Above[rootColIndex])
+	} else {
+		scratch.Mode.clearAboveEdge()
+		scratch.Partition.Above = [MaxPartitionSlots]uint8{}
+		scratch.CoeffCtx.Above = [3][MaxBlockModeSlots]uint8{}
+	}
+	if !haveLeft {
+		scratch.Mode.clearLeftEdge()
+		scratch.Partition.Left = [MaxPartitionSlots]uint8{}
+		scratch.CoeffCtx.Left = [3][MaxBlockModeSlots]uint8{}
+	} else if !resident {
+		scratch.Mode.poisonLeftEdge()
+		loadLeftEdge(scratch, &carrier.Left)
+	}
+	return nil
+}
+
+// loadAboveEdge copies every above-edge field except the per-superblock
+// neighbor motion.
+func loadAboveEdge(scratch *BlockLoopScratch, above *BlockLoopRootAboveContext) {
+	scratch.Partition.Above = above.Partition
+	scratch.Mode.AboveSkip = above.mode.Skip
+	scratch.Mode.AboveSkipMode = above.mode.SkipMode
+	scratch.Mode.AboveSegmentPred = above.mode.SegmentPred
+	scratch.Mode.AboveIntra = above.mode.Intra
+	scratch.Mode.AboveMode = above.mode.Mode
+	scratch.Mode.AboveChromaIntra = above.mode.ChromaIntra
+	scratch.Mode.AboveChromaMode = above.mode.ChromaMode
+	scratch.Mode.AboveTxIntra = above.mode.TxIntra
+	scratch.Mode.AboveTx = above.mode.Tx
+	scratch.Mode.AboveRef = above.mode.Ref
+	scratch.Mode.AboveCompound = above.mode.Compound
+	scratch.Mode.AboveCompGroup = above.mode.CompGroup
+	scratch.Mode.AboveCompIndex = above.mode.CompIndex
+	scratch.Mode.AboveInterIntra = above.mode.InterIntra
+	scratch.Mode.AboveInterp = above.mode.Interp
+	scratch.Mode.AboveInterpValid = above.mode.InterpValid
+	scratch.Mode.AboveBlockSize = above.mode.BlockSize
+	scratch.Mode.AbovePaletteY = above.mode.PaletteY
+	scratch.Mode.AbovePaletteUV = above.mode.PaletteUV
+	scratch.CoeffCtx.Above = above.Coeff
+}
+
+// loadLeftEdge is loadAboveEdge for the left edge.
+func loadLeftEdge(scratch *BlockLoopScratch, left *BlockLoopRootLeftContext) {
+	scratch.Partition.Left = left.Partition
+	scratch.Mode.LeftSkip = left.mode.Skip
+	scratch.Mode.LeftSkipMode = left.mode.SkipMode
+	scratch.Mode.LeftSegmentPred = left.mode.SegmentPred
+	scratch.Mode.LeftIntra = left.mode.Intra
+	scratch.Mode.LeftMode = left.mode.Mode
+	scratch.Mode.LeftChromaIntra = left.mode.ChromaIntra
+	scratch.Mode.LeftChromaMode = left.mode.ChromaMode
+	scratch.Mode.LeftTxIntra = left.mode.TxIntra
+	scratch.Mode.LeftTx = left.mode.Tx
+	scratch.Mode.LeftRef = left.mode.Ref
+	scratch.Mode.LeftCompound = left.mode.Compound
+	scratch.Mode.LeftCompGroup = left.mode.CompGroup
+	scratch.Mode.LeftCompIndex = left.mode.CompIndex
+	scratch.Mode.LeftInterIntra = left.mode.InterIntra
+	scratch.Mode.LeftInterp = left.mode.Interp
+	scratch.Mode.LeftInterpValid = left.mode.InterpValid
+	scratch.Mode.LeftBlockSize = left.mode.BlockSize
+	scratch.Mode.LeftPaletteY = left.mode.PaletteY
+	scratch.Mode.LeftPaletteUV = left.mode.PaletteUV
+	scratch.CoeffCtx.Left = left.Coeff
+}
+
+// storeAboveEdge is the store side of loadAboveEdge.
+func storeAboveEdge(above *BlockLoopRootAboveContext, scratch *BlockLoopScratch) {
+	above.Partition = scratch.Partition.Above
+	above.mode.Skip = scratch.Mode.AboveSkip
+	above.mode.SkipMode = scratch.Mode.AboveSkipMode
+	above.mode.SegmentPred = scratch.Mode.AboveSegmentPred
+	above.mode.Intra = scratch.Mode.AboveIntra
+	above.mode.Mode = scratch.Mode.AboveMode
+	above.mode.ChromaIntra = scratch.Mode.AboveChromaIntra
+	above.mode.ChromaMode = scratch.Mode.AboveChromaMode
+	above.mode.TxIntra = scratch.Mode.AboveTxIntra
+	above.mode.Tx = scratch.Mode.AboveTx
+	above.mode.Ref = scratch.Mode.AboveRef
+	above.mode.Compound = scratch.Mode.AboveCompound
+	above.mode.CompGroup = scratch.Mode.AboveCompGroup
+	above.mode.CompIndex = scratch.Mode.AboveCompIndex
+	above.mode.InterIntra = scratch.Mode.AboveInterIntra
+	above.mode.Interp = scratch.Mode.AboveInterp
+	above.mode.InterpValid = scratch.Mode.AboveInterpValid
+	above.mode.BlockSize = scratch.Mode.AboveBlockSize
+	above.mode.PaletteY = scratch.Mode.AbovePaletteY
+	above.mode.PaletteUV = scratch.Mode.AbovePaletteUV
+	above.Coeff = scratch.CoeffCtx.Above
+}
+
+// storeLeftEdge is the store side of loadLeftEdge.
+func storeLeftEdge(left *BlockLoopRootLeftContext, scratch *BlockLoopScratch) {
+	left.Partition = scratch.Partition.Left
+	left.mode.Skip = scratch.Mode.LeftSkip
+	left.mode.SkipMode = scratch.Mode.LeftSkipMode
+	left.mode.SegmentPred = scratch.Mode.LeftSegmentPred
+	left.mode.Intra = scratch.Mode.LeftIntra
+	left.mode.Mode = scratch.Mode.LeftMode
+	left.mode.ChromaIntra = scratch.Mode.LeftChromaIntra
+	left.mode.ChromaMode = scratch.Mode.LeftChromaMode
+	left.mode.TxIntra = scratch.Mode.LeftTxIntra
+	left.mode.Tx = scratch.Mode.LeftTx
+	left.mode.Ref = scratch.Mode.LeftRef
+	left.mode.Compound = scratch.Mode.LeftCompound
+	left.mode.CompGroup = scratch.Mode.LeftCompGroup
+	left.mode.CompIndex = scratch.Mode.LeftCompIndex
+	left.mode.InterIntra = scratch.Mode.LeftInterIntra
+	left.mode.Interp = scratch.Mode.LeftInterp
+	left.mode.InterpValid = scratch.Mode.LeftInterpValid
+	left.mode.BlockSize = scratch.Mode.LeftBlockSize
+	left.mode.PaletteY = scratch.Mode.LeftPaletteY
+	left.mode.PaletteUV = scratch.Mode.LeftPaletteUV
+	left.Coeff = scratch.CoeffCtx.Left
+}
+
+// blockLoopLoadRootContextFull is the per-superblock load used by the
+// keepMotion path and carrier-less walks: every edge is reset and reloaded,
+// and the cross-SB motion snapshots are captured.
+func blockLoopLoadRootContextFull(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8, keepMotion bool) error {
 	scratch.Partition = PartitionContext{}
 	scratch.Mode.resetForSuperblock()
 	if keepMotion {
@@ -579,21 +764,7 @@ func blockLoopLoadRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLoo
 	}
 	if haveTop {
 		above := &carrier.Above[rootColIndex]
-		scratch.Partition.Above = above.Partition
-		scratch.Mode.AboveSkip = above.mode.Skip
-		scratch.Mode.AboveSkipMode = above.mode.SkipMode
-		scratch.Mode.AboveSegmentPred = above.mode.SegmentPred
-		scratch.Mode.AboveIntra = above.mode.Intra
-		scratch.Mode.AboveMode = above.mode.Mode
-		scratch.Mode.AboveChromaIntra = above.mode.ChromaIntra
-		scratch.Mode.AboveChromaMode = above.mode.ChromaMode
-		scratch.Mode.AboveTxIntra = above.mode.TxIntra
-		scratch.Mode.AboveTx = above.mode.Tx
-		scratch.Mode.AboveRef = above.mode.Ref
-		scratch.Mode.AboveCompound = above.mode.Compound
-		scratch.Mode.AboveCompGroup = above.mode.CompGroup
-		scratch.Mode.AboveCompIndex = above.mode.CompIndex
-		scratch.Mode.AboveInterIntra = above.mode.InterIntra
+		loadAboveEdge(scratch, above)
 		if keepMotion {
 			scratch.Mode.AboveInterMotion = above.mode.InterMotion
 			scratch.Mode.AboveMotionValid = above.mode.MotionValid
@@ -604,41 +775,18 @@ func blockLoopLoadRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLoo
 			scratch.Mode.SBTopMotionValidGrid = above.mode.MotionValidHistory
 			scratch.Mode.SBTopBlockSizeGrid = above.mode.BlockSizeHistory
 			scratch.Mode.SBTopBlockSizeVisitedGrid = above.mode.BlockSizeVisitedHistory
-		}
-		scratch.Mode.AboveInterp = above.mode.Interp
-		scratch.Mode.AboveInterpValid = above.mode.InterpValid
-		scratch.Mode.AboveBlockSize = above.mode.BlockSize
-		scratch.Mode.AbovePaletteY = above.mode.PaletteY
-		scratch.Mode.AbovePaletteUV = above.mode.PaletteUV
-		for plane := range 3 {
-			scratch.CoeffCtx.Above[plane] = above.Coeff[plane]
-		}
-		// Fill cells past the current SB column (slots SBSizeMIB..) with the
-		// neighboring SB-above-and-right's left-edge data so cross-SB lookups
-		// such as topright (which reads frame mi col >= mi_col + W4) and outer
-		// row scans extending past column SBSizeMIB-1 see libaom's frame-wide
-		// mi grid content rather than zeroed slots from a smaller SB layout.
-		if keepMotion {
+			// Fill cells past the current SB column (slots SBSizeMIB..) with
+			// the neighboring SB-above-and-right's left-edge data so cross-SB
+			// lookups such as topright (which reads frame mi col >= mi_col +
+			// W4) and outer row scans extending past column SBSizeMIB-1 see
+			// libaom's frame-wide mi grid content rather than zeroed slots
+			// from a smaller SB layout.
 			extendAboveContextFromRightCarrier(&scratch.Mode, carrier, rootColIndex+1, sbSizeMIB)
 		}
 	}
 	if haveLeft {
 		left := &carrier.Left
-		scratch.Partition.Left = left.Partition
-		scratch.Mode.LeftSkip = left.mode.Skip
-		scratch.Mode.LeftSkipMode = left.mode.SkipMode
-		scratch.Mode.LeftSegmentPred = left.mode.SegmentPred
-		scratch.Mode.LeftIntra = left.mode.Intra
-		scratch.Mode.LeftMode = left.mode.Mode
-		scratch.Mode.LeftChromaIntra = left.mode.ChromaIntra
-		scratch.Mode.LeftChromaMode = left.mode.ChromaMode
-		scratch.Mode.LeftTxIntra = left.mode.TxIntra
-		scratch.Mode.LeftTx = left.mode.Tx
-		scratch.Mode.LeftRef = left.mode.Ref
-		scratch.Mode.LeftCompound = left.mode.Compound
-		scratch.Mode.LeftCompGroup = left.mode.CompGroup
-		scratch.Mode.LeftCompIndex = left.mode.CompIndex
-		scratch.Mode.LeftInterIntra = left.mode.InterIntra
+		loadLeftEdge(scratch, left)
 		if keepMotion {
 			scratch.Mode.LeftInterMotion = left.mode.InterMotion
 			scratch.Mode.LeftMotionValid = left.mode.MotionValid
@@ -649,14 +797,6 @@ func blockLoopLoadRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLoo
 			scratch.Mode.SBLeftMotionValidGrid = left.mode.MotionValidHistory
 			scratch.Mode.SBLeftBlockSizeGrid = left.mode.BlockSizeHistory
 			scratch.Mode.SBLeftBlockSizeVisitedGrid = left.mode.BlockSizeVisitedHistory
-		}
-		scratch.Mode.LeftInterp = left.mode.Interp
-		scratch.Mode.LeftInterpValid = left.mode.InterpValid
-		scratch.Mode.LeftBlockSize = left.mode.BlockSize
-		scratch.Mode.LeftPaletteY = left.mode.PaletteY
-		scratch.Mode.LeftPaletteUV = left.mode.PaletteUV
-		for plane := range 3 {
-			scratch.CoeffCtx.Left[plane] = left.Coeff[plane]
 		}
 	}
 	if haveTop && haveLeft && keepMotion && rootColIndex >= 0 && rootColIndex < len(carrier.Diagonal) {
@@ -669,12 +809,14 @@ func blockLoopLoadRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLoo
 }
 
 func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, sbSizeMIB uint8) error {
-	return blockLoopStoreRootContextMotion(scratch, carrier, rootColIndex, sbSizeMIB, true)
+	return blockLoopStoreRootContextMotion(scratch, carrier, rootColIndex, sbSizeMIB, true, 0, 0)
 }
 
 // blockLoopStoreRootContextMotion is the store side of
-// blockLoopLoadRootContextMotion.
-func blockLoopStoreRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, sbSizeMIB uint8, keepMotion bool) error {
+// blockLoopLoadRootContextMotion. On the keepMotion=false path the left edge
+// stays resident for the root at (miRow, nextMICol); walks that leave the
+// scratch call flushLeftEdge.
+func blockLoopStoreRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, sbSizeMIB uint8, keepMotion bool, miRow, nextMICol uint32) error {
 	if carrier == nil {
 		return nil
 	}
@@ -682,68 +824,20 @@ func blockLoopStoreRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLo
 		return ErrInvalidDecodeState
 	}
 	above := &carrier.Above[rootColIndex]
-	above.Partition = scratch.Partition.Above
-	above.mode.Skip = scratch.Mode.AboveSkip
-	above.mode.SkipMode = scratch.Mode.AboveSkipMode
-	above.mode.SegmentPred = scratch.Mode.AboveSegmentPred
-	above.mode.Intra = scratch.Mode.AboveIntra
-	above.mode.Mode = scratch.Mode.AboveMode
-	above.mode.ChromaIntra = scratch.Mode.AboveChromaIntra
-	above.mode.ChromaMode = scratch.Mode.AboveChromaMode
-	above.mode.TxIntra = scratch.Mode.AboveTxIntra
-	above.mode.Tx = scratch.Mode.AboveTx
-	above.mode.Ref = scratch.Mode.AboveRef
-	above.mode.Compound = scratch.Mode.AboveCompound
-	above.mode.CompGroup = scratch.Mode.AboveCompGroup
-	above.mode.CompIndex = scratch.Mode.AboveCompIndex
-	above.mode.InterIntra = scratch.Mode.AboveInterIntra
-	if keepMotion {
-		above.mode.InterMotion = scratch.Mode.AboveInterMotion
-		above.mode.MotionValid = scratch.Mode.AboveMotionValid
+	storeAboveEdge(above, scratch)
+	if !keepMotion {
+		scratch.keepLeftEdge(carrier, miRow, nextMICol, false)
+		return nil
 	}
-	above.mode.Interp = scratch.Mode.AboveInterp
-	above.mode.InterpValid = scratch.Mode.AboveInterpValid
-	above.mode.BlockSize = scratch.Mode.AboveBlockSize
-	above.mode.PaletteY = scratch.Mode.AbovePaletteY
-	above.mode.PaletteUV = scratch.Mode.AbovePaletteUV
-	if keepMotion {
-		captureAboveCrossSBHistory(&above.mode, &scratch.Mode, sbSizeMIB)
-	}
-	for plane := range 3 {
-		above.Coeff[plane] = scratch.CoeffCtx.Above[plane]
-	}
+	above.mode.InterMotion = scratch.Mode.AboveInterMotion
+	above.mode.MotionValid = scratch.Mode.AboveMotionValid
+	captureAboveCrossSBHistory(&above.mode, &scratch.Mode, sbSizeMIB)
 
 	left := &carrier.Left
-	left.Partition = scratch.Partition.Left
-	left.mode.Skip = scratch.Mode.LeftSkip
-	left.mode.SkipMode = scratch.Mode.LeftSkipMode
-	left.mode.SegmentPred = scratch.Mode.LeftSegmentPred
-	left.mode.Intra = scratch.Mode.LeftIntra
-	left.mode.Mode = scratch.Mode.LeftMode
-	left.mode.ChromaIntra = scratch.Mode.LeftChromaIntra
-	left.mode.ChromaMode = scratch.Mode.LeftChromaMode
-	left.mode.TxIntra = scratch.Mode.LeftTxIntra
-	left.mode.Tx = scratch.Mode.LeftTx
-	left.mode.Ref = scratch.Mode.LeftRef
-	left.mode.Compound = scratch.Mode.LeftCompound
-	left.mode.CompGroup = scratch.Mode.LeftCompGroup
-	left.mode.CompIndex = scratch.Mode.LeftCompIndex
-	left.mode.InterIntra = scratch.Mode.LeftInterIntra
-	if keepMotion {
-		left.mode.InterMotion = scratch.Mode.LeftInterMotion
-		left.mode.MotionValid = scratch.Mode.LeftMotionValid
-	}
-	left.mode.Interp = scratch.Mode.LeftInterp
-	left.mode.InterpValid = scratch.Mode.LeftInterpValid
-	left.mode.BlockSize = scratch.Mode.LeftBlockSize
-	left.mode.PaletteY = scratch.Mode.LeftPaletteY
-	left.mode.PaletteUV = scratch.Mode.LeftPaletteUV
-	if keepMotion {
-		captureLeftCrossSBHistory(&left.mode, &scratch.Mode, sbSizeMIB)
-	}
-	for plane := range 3 {
-		left.Coeff[plane] = scratch.CoeffCtx.Left[plane]
-	}
+	storeLeftEdge(left, scratch)
+	left.mode.InterMotion = scratch.Mode.LeftInterMotion
+	left.mode.MotionValid = scratch.Mode.LeftMotionValid
+	captureLeftCrossSBHistory(&left.mode, &scratch.Mode, sbSizeMIB)
 	return nil
 }
 
