@@ -8,6 +8,7 @@ package transform
 
 func init() {
 	itx16RawColumnPass = itx16RawColumnPassSIMD
+	itx16RawColumnPass32Low8 = itx16RawColumnPass32Low8SIMD
 	inverseDCT16Col8Impl16 = inverseDCT16Col8SIMD16v2
 }
 
