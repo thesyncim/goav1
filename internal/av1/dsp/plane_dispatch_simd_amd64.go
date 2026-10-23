@@ -15,6 +15,7 @@ import "simd/archsimd"
 func init() {
 	if archsimd.X86.AVX2() {
 		addResidualPlaneBlockImpl = addResidualPlaneBlockSIMD
+		addConstantPlaneBlock8Impl = addConstantPlaneBlock8SIMD
 		addRawTransformPlaneBlockImpl = addRawTransformPlaneBlockSIMD
 		return
 	}
