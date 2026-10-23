@@ -72,6 +72,12 @@ type FrameThreadFrame struct {
 	heldGrids      [1 + parser.InterRefsPerFrame]uint8
 	heldGridCount  int
 	published      bool
+	// seg holds the frame's segmentation-map handles (its current map and
+	// the previous map its entropy pass reads) until it retires.
+	seg      segMapFrame
+	segStore *SegmentMapStore
+	// segView is the block-loop view of seg, taken on the planning goroutine.
+	segView threading.FrameWorkSegmentMaps
 
 	post    FrameWorkPostFilterContext
 	hasPost bool
@@ -131,6 +137,9 @@ func (f *FrameThreadFrame) motionFields() frameWorkMotionFields {
 	if f.temporal {
 		fields.references = f.mvRefs
 		fields.deferred = &f.mvRefs
+	}
+	if f.segView.Stride != 0 {
+		fields.seg = &f.segView
 	}
 	return fields
 }
@@ -212,6 +221,15 @@ func (s *FrameWorkState) PublishFrameThreaded(refs *SurfaceReferences, event *Ev
 	s.tileResidualRetainedCDFsValid = ft.willRetain
 	s.finishTileResidualCDFs(event, -1)
 	s.publishTemporalMotionFrame(event)
+	store := s.segMapStore()
+	store.publish(event.FrameSize.RefreshFrameFlags, s.segFrame.cur)
+	ft.seg = s.segFrame
+	ft.segStore = store
+	ft.segView = threading.FrameWorkSegmentMaps{}
+	if s.segFrame.stride != 0 {
+		ft.segView.Current, ft.segView.Previous, ft.segView.Stride = s.segFrame.fields(store)
+	}
+	s.segFrame = segMapFrame{}
 	// The holds now belong to ft; resetActive must not drop them.
 	s.tileResidualCurrentCDFsValid = false
 	s.tileResidualCurrentCDF = -1
@@ -244,6 +262,10 @@ func (s *FrameWorkState) ReleaseFrameThreadHolds(ft *FrameThreadFrame) {
 	}
 	for i := 0; i < ft.heldGridCount; i++ {
 		s.releaseMVGrid(ft.heldGrids[i])
+	}
+	if ft.segStore != nil {
+		ft.seg.release(ft.segStore)
+		ft.segView = threading.FrameWorkSegmentMaps{}
 	}
 	ft.heldGridCount = 0
 	ft.published = false
@@ -345,4 +367,14 @@ func (f *FrameThreadFrame) MotionGrids() (uint8, [parser.InterRefsPerFrame]uint8
 // entry, and whether its update tile fills the retained entry.
 func (f *FrameThreadFrame) CDFEntries() (initial int8, retained int8, willRetain bool) {
 	return f.initialCDF, f.retainedCDF, f.willRetain
+}
+
+// SegmentMaps reports the frame's segmentation-map handles (1-based; 0 means
+// none): the map its entropy pass writes (0 unless update_map) and the
+// previous map it reads.
+func (f *FrameThreadFrame) SegmentMaps() (written uint8, read uint8) {
+	if f.seg.write {
+		written = f.seg.cur
+	}
+	return written, f.seg.prev
 }

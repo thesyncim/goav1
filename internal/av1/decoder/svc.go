@@ -546,6 +546,7 @@ func (s *FrameWorkState) finishExternal(refs *SurfaceReferences, framePool *fram
 	*refs = next
 	s.finishTileResidualCDFs(event, globalID)
 	s.publishTemporalMotionFrame(event)
+	s.segMapStore().publish(event.FrameSize.RefreshFrameFlags, s.segFrame.cur)
 	s.resetActive()
 	return releaseCount, nil
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 )
 
@@ -35,6 +36,10 @@ type LayeredDecoder struct {
 	sideRunner    decoderFrameWorkResidualSideDataRunner
 	batch         DecoderFrameWorkBatchResidualRunner
 	hasBatch      bool
+
+	// segMaps is the stream-global segmentation-map store every layer state
+	// publishes into, as the reference slots are stream-global.
+	segMaps internaldecoder.SegmentMapStore
 
 	layerPool  FrameLayerPool
 	adapter    DecoderFrameLayerPool
@@ -211,6 +216,7 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 	scaledReferencePredictionEnabled := internalthreading.ScaledReferencePredictionEnabled()
 	for i := range d.states {
 		d.states[i].SetScaledReferencePredictionEnabled(scaledReferencePredictionEnabled)
+		internaldecoder.ShareSegmentMapStore(&d.states[i], &d.segMaps)
 	}
 	d.scratch = newDecoderStreamScratch(plan.Size, &arena)
 	if cap(d.scratch.Outputs) > 0 {
@@ -520,6 +526,7 @@ func (d *LayeredDecoder) prepareForEvents(events []DecoderEvent) error {
 		for i := range d.states {
 			d.states[i].Reset()
 		}
+		d.segMaps.Reset()
 		d.frameContexts.Reset()
 		d.shownHeld = d.shownHeld[:0]
 		return nil
@@ -861,6 +868,7 @@ func (d *LayeredDecoder) Reset() error {
 	for i := range d.states {
 		d.states[i].Reset()
 	}
+	d.segMaps.Reset()
 	d.frameContexts.Reset()
 	d.stats = DecoderFrameWorkTileResidualStats{}
 	d.stream.Reset()

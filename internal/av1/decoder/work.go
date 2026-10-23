@@ -342,6 +342,14 @@ type FrameWorkState struct {
 	// Reset() the maps, discarding the marks accumulated by earlier tiles.
 	sideDataBound bool
 
+	// Segmentation maps: segOwn is the slot store unless segShared names a
+	// store shared with other layer states; segFrame is the current frame's
+	// bindings.
+	segOwn    SegmentMapStore
+	segShared *SegmentMapStore
+	segFrame  segMapFrame
+	segView   threading.FrameWorkSegmentMaps
+
 	active bool
 }
 
@@ -403,6 +411,8 @@ func (s *FrameWorkState) Reset() {
 	for i := range s.mvFrameBacking {
 		mvBack[i] = s.mvFrameBacking[i][:0]
 	}
+	segBack := s.segOwn.backing
+	segShared := s.segShared
 	*s = FrameWorkState{
 		scaledRefPolicySet:     scaledRefPolicySet,
 		scaledRefPolicyEnabled: scaledRefPolicyEnabled,
@@ -411,6 +421,8 @@ func (s *FrameWorkState) Reset() {
 	s.tileResidualCDFPoolExtra = cdfPoolExtra
 	s.temporalMVsBack = temporalBack
 	s.mvFrameBacking = mvBack
+	s.segOwn.backing = segBack
+	s.segShared = segShared
 }
 
 // EnableOwnedTemporalMotionStorage is only for a newly constructed high-level
@@ -532,6 +544,7 @@ func (s *FrameWorkState) resetActive() {
 	s.temporalMVs = tile.TemporalMotionField{}
 	s.temporalMVsValid = false
 	s.mvReferences = [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame{}
+	s.segFrame.release(s.segMapStore())
 	s.temporalMVsDeferred = false
 	s.cdefIndexMap = threading.FrameWorkCDEFIndexMap{}
 	s.cdefIndexMapValid = false
@@ -578,6 +591,7 @@ func (s *FrameWorkState) resetReferenceState() {
 	for i := range parser.RefFrames {
 		s.mvFrameBacking[i] = s.mvFrameBacking[i][:0]
 	}
+	s.segMapStore().resetSlots()
 }
 
 // PreallocTemporalMotionScratch primes the single-pool temporal-MV backing
@@ -772,7 +786,16 @@ func (s *FrameWorkState) Begin(refs *SurfaceReferences, pool *frame.Pool, sequen
 	s.tileResidualCurrentCDFsValid = true
 	s.tileResidualRetainedCDF = retainedCDF
 	s.tileResidualRetainedCDFsValid = false
+	if err := s.segFrame.prepare(s.segMapStore(), event); err != nil {
+		s.releaseTileResidualCDFEntry(currentCDF)
+		s.releaseTileResidualCDFEntry(retainedCDF)
+		s.tileResidualCurrentCDF = -1
+		s.tileResidualCurrentCDFsValid = false
+		s.tileResidualRetainedCDF = -1
+		return FrameWorkPlan{}, nil, err
+	}
 	if err := s.prepareTemporalMotionField(event); err != nil {
+		s.segFrame.release(s.segMapStore())
 		s.releaseTileResidualCDFEntry(currentCDF)
 		s.releaseTileResidualCDFEntry(retainedCDF)
 		s.tileResidualCurrentCDF = -1
@@ -807,6 +830,7 @@ func (s *FrameWorkState) Finish(refs *SurfaceReferences, pool *frame.Pool, event
 	}
 	s.finishTileResidualCDFs(event, -1)
 	s.publishTemporalMotionFrame(event)
+	s.segMapStore().publish(event.FrameSize.RefreshFrameFlags, s.segFrame.cur)
 	s.resetActive()
 	return count, nil
 }
@@ -1180,6 +1204,9 @@ func (s *FrameWorkState) ShowExisting(refs *SurfaceReferences, pool *frame.Pool,
 		return ShowExistingFrameWorkPlan{}, err
 	}
 	*refs = next
+	if s != nil && event.ExistingFrame.FrameType == parser.FrameTypeKey {
+		s.segMapStore().showExistingKey(event.FrameHeader.ExistingFrameIdx)
+	}
 	return ShowExistingFrameWorkPlan{
 		Surface:          surface,
 		ReleaseCount:     releaseCount8,
@@ -2082,6 +2109,9 @@ type frameWorkMotionFields struct {
 	temporal   *tile.TemporalMotionField
 	references [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
 	deferred   *[parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
+
+	// seg carries the frame's segmentation maps (nil without segmentation).
+	seg *threading.FrameWorkSegmentMaps
 }
 
 // motionFields exposes the active frame's temporal-MV batch pointers for the
@@ -2102,6 +2132,10 @@ func (s *FrameWorkState) motionFields() frameWorkMotionFields {
 	if s.temporalMVsDeferred {
 		fields.references = s.mvReferences
 		fields.deferred = &s.mvReferences
+	}
+	if s.segFrame.stride != 0 {
+		s.segView.Current, s.segView.Previous, s.segView.Stride = s.segFrame.fields(s.segMapStore())
+		fields.seg = &s.segView
 	}
 	return fields
 }
@@ -2147,6 +2181,7 @@ func executeFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, o
 		TemporalMVs:                   motion.temporal,
 		ReferenceMVs:                  motion.references,
 		DeferredTemporalReferences:    motion.deferred,
+		SegmentMaps:                   motion.seg,
 		CDEFIndexMap:                  cdefIndexMap,
 		LoopFilterMap:                 loopFilterMap,
 		LoopFilterMasks:               loopFilterMasks,
@@ -2212,6 +2247,7 @@ func prepareFrameWorkStepWithPayload(step FrameWorkStep, output *frame.Frame, re
 		TemporalMVs:                   motion.temporal,
 		ReferenceMVs:                  motion.references,
 		DeferredTemporalReferences:    motion.deferred,
+		SegmentMaps:                   motion.seg,
 		CDEFIndexMap:                  cdefIndexMap,
 		LoopFilterMap:                 loopFilterMap,
 		LoopFilterMasks:               loopFilterMasks,

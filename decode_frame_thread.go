@@ -78,6 +78,8 @@ type decoderFrameContext struct {
 	motion     internalthreading.FrameThreadMotion
 	cdfWait    *internalthreading.FrameProgress
 	cdfOut     *internalthreading.FrameProgress
+	segWait    *internalthreading.FrameProgress
+	segOut     *internalthreading.FrameProgress
 
 	// Tail hand-off. busy is owned by the decode goroutine; start and done
 	// order the tail goroutine's writes (output, tailErr) before the next read.
@@ -112,6 +114,9 @@ type decoderFramePipeline struct {
 	// is producing them.
 	mvProgress  []internalthreading.FrameProgress
 	cdfProgress []internalthreading.FrameProgress
+	// segProgress marks each segmentation-map handle final once the frame
+	// writing it finished its entropy pass.
+	segProgress []internalthreading.FrameProgress
 
 	// hookMu serializes submission with a test parse hook.
 	hookMu sync.Mutex
@@ -134,6 +139,9 @@ func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
 		}
 		if fc.cdfOut != nil {
 			fc.cdfOut.Publish(entropy)
+		}
+		if fc.segOut != nil {
+			fc.segOut.Publish(entropy)
 		}
 		if err != nil {
 			_ = fc.ft.Recon.Join()
@@ -384,6 +392,18 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 		p.cdfProgress[retainedCDF].Reset()
 		fc.cdfOut = &p.cdfProgress[retainedCDF]
 	}
+	// dav1d check_tile also waits on the references' entropy progress before
+	// the previous segmentation map is read (get_prev_frame_segid); the pass
+	// waits until the frame writing that map finished its own pass.
+	segWritten, segRead := fc.ft.SegmentMaps()
+	fc.segOut, fc.segWait = nil, nil
+	if segWritten != 0 {
+		p.segProgress[segWritten-1].Reset()
+		fc.segOut = &p.segProgress[segWritten-1]
+	}
+	if segRead != 0 {
+		fc.segWait = &p.segProgress[segRead-1]
+	}
 	fc.step = step
 	fc.target = output
 	fc.references = references
@@ -416,7 +436,7 @@ func (p *decoderFramePipeline) reset() {
 	for i := range p.progress {
 		p.progress[i].Publish(internalthreading.FrameProgressDone)
 	}
-	for _, set := range [][]internalthreading.FrameProgress{p.mvProgress, p.cdfProgress} {
+	for _, set := range [][]internalthreading.FrameProgress{p.mvProgress, p.cdfProgress, p.segProgress} {
 		for i := range set {
 			set[i].Publish(internalthreading.FrameProgressDone)
 		}
@@ -469,7 +489,8 @@ func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStr
 	}
 	p.mvProgress = make([]internalthreading.FrameProgress, internaldecoder.FrameWorkMVGrids)
 	p.cdfProgress = make([]internalthreading.FrameProgress, internaldecoder.FrameWorkCDFPoolEntries)
-	for _, set := range [][]internalthreading.FrameProgress{p.mvProgress, p.cdfProgress} {
+	p.segProgress = make([]internalthreading.FrameProgress, internaldecoder.FrameWorkSegMaps)
+	for _, set := range [][]internalthreading.FrameProgress{p.mvProgress, p.cdfProgress, p.segProgress} {
 		for i := range set {
 			set[i].Init()
 			set[i].Publish(internalthreading.FrameProgressDone)
@@ -590,6 +611,9 @@ func decoderFramePipelineEventNeedsDrain(event *DecoderEvent) bool {
 func (p *decoderFramePipeline) parseFrame(fc *decoderFrameContext) error {
 	d := p.d
 	if fc.cdfWait != nil && !fc.cdfWait.Wait(internalthreading.FrameProgressDone) {
+		return internalthreading.ErrFrameThreadReference
+	}
+	if fc.segWait != nil && !fc.segWait.Wait(internalthreading.FrameProgressDone) {
 		return internalthreading.ErrFrameThreadReference
 	}
 	var afterParse func()

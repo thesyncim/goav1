@@ -53,6 +53,9 @@ internal/av1/decoder/postfilter_restoration_pool.go:*:*: moved to heap: req
 internal/av1/decoder/postfilter_restoration_pool.go:*:*: moved to heap: stripeAcc
 internal/av1/decoder/postfilter_superres.go:*:*: moved to heap: output
 internal/av1/decoder/postfilter_superres.go:*:*: moved to heap: result
+internal/av1/decoder/segmap.go:*:*: make([]uint8, need) escapes to heap
+internal/av1/decoder/segmap.go:*:*: make([]uint8, need) escapes to heap in (*SegmentMapStore).acquire:
+internal/av1/decoder/segmap.go:*:*: make([]uint8, need) escapes to heap in (*segMapFrame).prepare:
 internal/av1/decoder/svc.go:*:*: make([]threading.FrameWorkTileResidualCDFStorage, 8) escapes to heap
 internal/av1/decoder/svc.go:*:*: make([]threading.FrameWorkTileResidualCDFStorage, 8) escapes to heap in (*SharedFrameContextStore).store:
 internal/av1/decoder/svc.go:*:*: make([]threading.FrameWorkTileResidualCDFStorage, capacity) escapes to heap

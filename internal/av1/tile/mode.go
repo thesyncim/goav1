@@ -521,13 +521,16 @@ func (s *DecodeState) ReadSegmentPrediction(cdfs *BlockModeCDFs, ctx *BlockModeC
 }
 
 // ReadSegmentID decodes one spatial segment id using AV1's negative
-// deinterleave around the current-frame spatial predictor.
+// deinterleave around the current-frame spatial predictor. It ports dav1d's
+// decode_b segment_id read: the symbol is read for every non-skipped block,
+// even when no segment feature is active (last_active_segid -1), and the
+// predictor may name a segment above last_active_segid (a temporally
+// predicted id from the previous map).
 func (s *DecodeState) ReadSegmentID(cdfs *BlockModeCDFs, pred uint8, context int, lastActiveID int8, skip bool) (uint8, error) {
 	if s == nil {
 		return 0, ErrInvalidDecodeState
 	}
-	max := int(lastActiveID) + 1
-	if max <= 0 || max > parser.MaxSegments || int(pred) >= max {
+	if pred >= parser.MaxSegments {
 		return 0, ErrInvalidDecodeState
 	}
 	if skip {
@@ -541,14 +544,18 @@ func (s *DecodeState) ReadSegmentID(cdfs *BlockModeCDFs, pred uint8, context int
 	if err != nil {
 		return 0, err
 	}
-	segmentID, err := negDeinterleaveSegmentID(diff, int(pred), max)
-	if err != nil {
-		return 0, err
+	// dav1d keeps the result in a uint8_t and compares it with the unsigned
+	// last_active_segid: a negative result wraps, an id above the last active
+	// one decodes as 0, and last_active_segid -1 (the largest unsigned value)
+	// never clears it; ids past the segment count decode as 0.
+	segmentID := uint8(negDeinterleave(diff, int(pred), int(lastActiveID)+1))
+	if lastActiveID >= 0 && segmentID > uint8(lastActiveID) {
+		segmentID = 0
 	}
-	if segmentID < 0 || segmentID >= max {
-		return 0, ErrInvalidDecodeState
+	if segmentID >= parser.MaxSegments {
+		segmentID = 0
 	}
-	return uint8(segmentID), nil
+	return segmentID, nil
 }
 
 // ReadSkipMode decodes skip_mode for one block, including the segment and
@@ -864,28 +871,34 @@ func negDeinterleaveSegmentID(diff int, ref int, max int) (int, error) {
 	if diff < 0 || ref < 0 || max <= 0 || ref >= max {
 		return 0, ErrInvalidDecodeState
 	}
+	return negDeinterleave(diff, ref, max), nil
+}
+
+// negDeinterleave is dav1d's neg_deinterleave (src/decode.c), unchecked: ref
+// may reach or exceed max, and the result may then be negative.
+func negDeinterleave(diff int, ref int, max int) int {
 	if ref == 0 {
-		return diff, nil
+		return diff
 	}
 	if ref >= max-1 {
-		return max - diff - 1, nil
+		return max - diff - 1
 	}
 	if 2*ref < max {
 		if diff <= 2*ref {
 			if diff&1 != 0 {
-				return ref + ((diff + 1) >> 1), nil
+				return ref + ((diff + 1) >> 1)
 			}
-			return ref - (diff >> 1), nil
+			return ref - (diff >> 1)
 		}
-		return diff, nil
+		return diff
 	}
 	if diff <= 2*(max-ref-1) {
 		if diff&1 != 0 {
-			return ref + ((diff + 1) >> 1), nil
+			return ref + ((diff + 1) >> 1)
 		}
-		return ref - (diff >> 1), nil
+		return ref - (diff >> 1)
 	}
-	return max - (diff + 1), nil
+	return max - (diff + 1)
 }
 
 func boolByte(v bool) uint8 {

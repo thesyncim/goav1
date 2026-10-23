@@ -1741,18 +1741,11 @@ func (s *DecodeState) decodeBlockSegment(cdfs *BlockModeCDFs, ctx *BlockModeCont
 	if !req.Segmentation.Enabled {
 		return 0, false, defaultSegmentData(), nil
 	}
-	if req.Segmentation.Data.LastActiveID < 0 {
-		if err := fillBlockSegmentID(req, block, 0); err != nil {
-			return 0, false, parser.SegmentData{}, err
-		}
-		return 0, false, req.Segmentation.Data.Segments[0], nil
-	}
 	if !req.Segmentation.UpdateMap {
+		// dav1d writes cur_segmap only under update_map; without it the
+		// frame keeps the previous map as is.
 		id, err := previousBlockSegmentID(req, block)
 		if err != nil {
-			return 0, false, parser.SegmentData{}, err
-		}
-		if err := fillBlockSegmentID(req, block, id); err != nil {
 			return 0, false, parser.SegmentData{}, err
 		}
 		return id, false, req.Segmentation.Data.Segments[id], nil
