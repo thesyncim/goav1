@@ -530,6 +530,10 @@ internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, width * height) escapes 
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, width * height) escapes to heap in scaleSourceFrameColorNearest:
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, width * height) escapes to heap in scaleSourceFrameMonoNearest:
 internal/av1/encoder/webrtc_stream.go:*:*: moved to heap: stream
+internal/av1/encoder/zeromv_skip.go:*:*: make([]bool, cols * rows) escapes to heap
+internal/av1/encoder/zeromv_skip.go:*:*: make([]bool, cols * rows) escapes to heap in (*hmeState).classifySourceSAD:
+internal/av1/encoder/zeromv_skip.go:*:*: make([]uint8, cols * rows) escapes to heap
+internal/av1/encoder/zeromv_skip.go:*:*: make([]uint8, cols * rows) escapes to heap in (*hmeState).classifySourceSAD:
 internal/av1/entropy/writer.go:*:*: make([]byte, 0) escapes to heap
 internal/av1/entropy/writer.go:*:*: make([]byte, 0) escapes to heap in init:
 internal/av1/entropy/writer.go:*:*: make([]byte, grown) escapes to heap
@@ -549,6 +553,7 @@ internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes t
 internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes to heap in (*frameWorkLoopFilterMaskScratch).reset:
 internal/av1/threading/loop_filter_noskip.go:*:*: make([]uint8, n) escapes to heap
 internal/av1/threading/loop_filter_noskip.go:*:*: make([]uint8, n) escapes to heap in (*FrameWorkLoopFilterMasks).BindNoSkip:
+internal/av1/threading/loop_filter_noskip.go:*:*: make([]uint8, n) escapes to heap in (*FrameWorkLoopFilterNoSkip).BindGrid:
 internal/av1/threading/loop_filter_tile_edges.go:*:*: make([]uint8, n) escapes to heap
 internal/av1/threading/loop_filter_tile_edges.go:*:*: make([]uint8, n) escapes to heap in (*FrameWorkLoopFilterMasks).BindTileEdges:
 internal/av1/threading/loop_filter_tile_edges.go:*:*: make([]uint8, n) escapes to heap in growBytes:
