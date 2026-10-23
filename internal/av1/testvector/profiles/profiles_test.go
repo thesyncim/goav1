@@ -1400,6 +1400,27 @@ var profileClips = []profileClip{
 		wantSubsamplingX: true,
 		wantSubsamplingY: true,
 	},
+	{
+		// SVT-AV1 4.1.0 RTC keyframe with screen-content tools: a 32x32
+		// palette block whose bottom rows fall past the frame edge. dav1d's
+		// read_pal_indices reads only the on-screen h4 = imin(bh4, f->bh - by)
+		// rows of color indices. Synthetic, redistributable source (ffmpeg
+		// testsrc2):
+		//   ffmpeg -f lavfi -i testsrc2=size=320x180:rate=30 -frames:v 1 -pix_fmt yuv420p s.yuv
+		//   SvtAv1EncApp -i s.yuv -b svt-palette-bottom-edge-320x180.ivf -w 320 -h 180 \
+		//     --fps-num 30 --fps-denom 1 --frames 1 --input-depth 8 --preset 12 --rc 2 \
+		//     --tbr 300 --buf-sz 1000 --buf-initial-sz 500 --buf-optimal-sz 600 \
+		//     --lookahead 0 --pred-struct 1 --rtc 1 --scd 0 --enable-tf 0 \
+		//     --irefresh-type 2 --keyint -1 --lp 1
+		name: "svt-palette-bottom-edge-320x180",
+		file: "svt-palette-bottom-edge-320x180.ivf",
+		frameMD5Hex: []string{
+			"fcb1155a643c1231c2c9478661328e3c",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
 }
 
 // TestProfileVendoredClips decodes each vendored profile-conformance clip
