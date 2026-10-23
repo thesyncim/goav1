@@ -124,14 +124,13 @@ func (st *lossyEncodeState) markLoopFilterBlock(block tile.BlockVisit, tree tile
 // decoder's loop-filter map over caller-owned records and the edge scratch
 // for its planner. One applier serves a stream of same-sized frames.
 type loopFilterApplier struct {
-	records    []threading.FrameWorkLoopFilterBlockRecord
-	edges      []decoder.FrameWorkLoopFilterPostFilterEdge
-	bandBufs   [][]decoder.FrameWorkLoopFilterPostFilterEdge
-	planeEdges [3][]decoder.FrameWorkLoopFilterPostFilterEdge
-	schedule   []uint32
-	filtMap    threading.FrameWorkLoopFilterMap
-	event      decoder.Event
-	bound      bool
+	records  []threading.FrameWorkLoopFilterBlockRecord
+	edges    []decoder.FrameWorkLoopFilterPostFilterEdge
+	bandBufs [][]decoder.FrameWorkLoopFilterPostFilterEdge
+	schedule []uint32
+	filtMap  threading.FrameWorkLoopFilterMap
+	event    decoder.Event
+	bound    bool
 
 	// Deblocking edge bitmasks (dav1d-style), built once per frame from the
 	// completed record map and consumed by the mask-driven apply. Single-tile
@@ -155,9 +154,18 @@ type loopFilterApplier struct {
 	counts  [lfPlanBands]uint32
 	errs    [lfPlanBands]error
 	// dirEdges partitions the planned edges by plane and edge direction for
-	// the two-phase banded apply; applyErrs holds one slot per apply job.
-	dirEdges  [3][2][]decoder.FrameWorkLoopFilterPostFilterEdge
-	applyErrs [lfApplyMaxJobs]error
+	// the two-phase banded apply, as windows of the one dirBuf backing (a
+	// counting partition, so the lists together need only the frame bound);
+	// applyErrs holds one slot per apply job.
+	dirEdges [3][2][]decoder.FrameWorkLoopFilterPostFilterEdge
+	dirBuf   []decoder.FrameWorkLoopFilterPostFilterEdge
+
+	// The edge-list planner storage, bound on first use (bindEdgeList).
+	edgeSize      decoder.FrameWorkLoopFilterPostFilterScratchSize
+	edgeListBound bool
+	edgeStore     []decoder.FrameWorkLoopFilterPostFilterEdge
+	scheduleStore []uint32
+	applyErrs     [lfApplyMaxJobs]error
 
 	// maskBands is the per-frame shared state for the parallel mask apply
 	// (applyParallelMasks): built once per frame after the mask build, then read
@@ -299,44 +307,63 @@ func (a *loopFilterApplier) init(width, height int) error {
 	if err != nil {
 		return err
 	}
-	a.edges, err = size.BindEdges(make([]decoder.FrameWorkLoopFilterPostFilterEdge, size.Edges))
-	if err != nil {
+	// The edge-list planner's storage is bound on first use (bindEdgeList):
+	// single-threaded streams and multithread inter frames deblock through
+	// the bitmask apply and never need it.
+	a.edgeSize = size
+	a.edgeListBound = false
+	a.bound = true
+	return nil
+}
+
+// bindEdgeList sizes the edge-list planner's storage (the serial edge list
+// and schedule, the per-band plan buffers and the plane/direction partition)
+// to the frame's edge upper bound, reusing what already fits.
+func (a *loopFilterApplier) bindEdgeList() error {
+	if a.edgeListBound {
+		return nil
+	}
+	size := a.edgeSize
+	if cap(a.edgeStore) < size.Edges {
+		a.edgeStore = make([]decoder.FrameWorkLoopFilterPostFilterEdge, size.Edges)
+	}
+	var err error
+	if a.edges, err = size.BindEdges(a.edgeStore[:size.Edges]); err != nil {
 		return err
 	}
-	// Pre-size the per-plane/direction partition buckets to the frame's edge
-	// upper bound so the per-frame append that fills them never grows on the
-	// first detailed frame (a black Prewarm frame plans almost no edges and
-	// would otherwise leave these empty, allocating on the first live frame).
-	for p := range a.dirEdges {
-		for d := range a.dirEdges[p] {
-			if cap(a.dirEdges[p][d]) < size.Edges {
-				a.dirEdges[p][d] = make([]decoder.FrameWorkLoopFilterPostFilterEdge, 0, size.Edges)
-			}
-		}
+	// Size the plane/direction partition to the bound so the first detailed
+	// frame never grows it (a black Prewarm frame plans almost no edges).
+	if cap(a.dirBuf) < size.Edges {
+		a.dirBuf = make([]decoder.FrameWorkLoopFilterPostFilterEdge, size.Edges)
 	}
-	a.schedule, err = size.BindSchedule(make([]uint32, size.Schedule))
-	if err != nil {
+	a.dirBuf = a.dirBuf[:size.Edges]
+	if cap(a.scheduleStore) < size.Schedule {
+		a.scheduleStore = make([]uint32, size.Schedule)
+	}
+	if a.schedule, err = size.BindSchedule(a.scheduleStore[:size.Schedule]); err != nil {
 		return err
 	}
 	// Per-band scratch: a band plans the blocks originating in its rows,
 	// whose cells extend at most 8 MI rows (a 32px block) past the band end;
 	// 8 edge candidates per cell bounds each band's storage.
+	rows := int(a.filtMap.Rows)
 	bands := lfPlanBands
 	if rows < bands*4 {
 		bands = 1
 	}
 	rowsPerBand := (rows + bands - 1) / bands
 	bandBound := (rowsPerBand + 8) * int(a.filtMap.Stride) * 8
-	a.bandBufs = make([][]decoder.FrameWorkLoopFilterPostFilterEdge, bands)
+	if cap(a.bandBufs) < bands {
+		a.bandBufs = make([][]decoder.FrameWorkLoopFilterPostFilterEdge, bands)
+	}
+	a.bandBufs = a.bandBufs[:bands]
 	for i := range a.bandBufs {
-		a.bandBufs[i] = make([]decoder.FrameWorkLoopFilterPostFilterEdge, bandBound)
-	}
-	if cap(a.planeEdges[0]) < len(a.edges) {
-		for p := range a.planeEdges {
-			a.planeEdges[p] = make([]decoder.FrameWorkLoopFilterPostFilterEdge, 0, len(a.edges))
+		if cap(a.bandBufs[i]) < bandBound {
+			a.bandBufs[i] = make([]decoder.FrameWorkLoopFilterPostFilterEdge, bandBound)
 		}
+		a.bandBufs[i] = a.bandBufs[i][:bandBound]
 	}
-	a.bound = true
+	a.edgeListBound = true
 	return nil
 }
 
@@ -391,6 +418,9 @@ func (a *loopFilterApplier) apply(recon *SourceFrame420, lf parser.LoopFilterPar
 	if err != nil || !active {
 		return err
 	}
+	if err := a.bindEdgeList(); err != nil {
+		return err
+	}
 	a.startWorkers()
 
 	// Banded planning: partition block-origin rows across workers, then
@@ -421,15 +451,28 @@ func (a *loopFilterApplier) apply(recon *SourceFrame420, lf parser.LoopFilterPar
 	// edge, then every horizontal edge": the two directions run as separate
 	// phases with a frame-wide barrier, and each phase fans out in
 	// superblock-row bands (bit-exact; see lfApplyLumaBands).
-	for p := range a.dirEdges {
-		for d := range a.dirEdges[p] {
-			a.dirEdges[p][d] = a.dirEdges[p][d][:0]
-		}
-	}
+	var n [3][2]int
+	total := 0
 	for b := range bands {
 		if errs[b] != nil {
 			return errs[b]
 		}
+		for _, e := range a.bandBufs[b][:counts[b]] {
+			n[e.Plane][e.Edge]++
+		}
+		total += int(counts[b])
+	}
+	if len(a.dirBuf) < total {
+		a.dirBuf = make([]decoder.FrameWorkLoopFilterPostFilterEdge, total)
+	}
+	off := 0
+	for p := range a.dirEdges {
+		for d := range a.dirEdges[p] {
+			a.dirEdges[p][d] = a.dirBuf[off : off : off+n[p][d]]
+			off += n[p][d]
+		}
+	}
+	for b := range bands {
 		for _, e := range a.bandBufs[b][:counts[b]] {
 			a.dirEdges[e.Plane][e.Edge] = append(a.dirEdges[e.Plane][e.Edge], e)
 		}
@@ -484,6 +527,9 @@ func (a *loopFilterApplier) apply(recon *SourceFrame420, lf parser.LoopFilterPar
 func (a *loopFilterApplier) applySerial(recon *SourceFrame420, lf parser.LoopFilterParams) error {
 	active, err := a.bindApplyContext(recon, lf)
 	if err != nil || !active {
+		return err
+	}
+	if err := a.bindEdgeList(); err != nil {
 		return err
 	}
 	plan, err := a.jobCtx.LoopFilterPostFilterPlan(decoder.FrameWorkLoopFilterPostFilterRequest{

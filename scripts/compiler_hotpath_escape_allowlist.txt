@@ -217,21 +217,19 @@ internal/av1/encoder/loopfilter_apply.go:*:*: func literal escapes to heap in (*
 internal/av1/encoder/loopfilter_apply.go:*:*: make([][4]uint8, length) escapes to heap
 internal/av1/encoder/loopfilter_apply.go:*:*: make([][4]uint8, length) escapes to heap in (*loopFilterApplier).init:
 internal/av1/encoder/loopfilter_apply.go:*:*: make([][]decoder.FrameWorkLoopFilterPostFilterEdge, bands) escapes to heap
-internal/av1/encoder/loopfilter_apply.go:*:*: make([][]decoder.FrameWorkLoopFilterPostFilterEdge, bands) escapes to heap in (*loopFilterApplier).init:
-internal/av1/encoder/loopfilter_apply.go:*:*: make([]decoder.FrameWorkLoopFilterPostFilterEdge, 0, len(a.edges)) escapes to heap
-internal/av1/encoder/loopfilter_apply.go:*:*: make([]decoder.FrameWorkLoopFilterPostFilterEdge, 0, len(a.edges)) escapes to heap in (*loopFilterApplier).init:
-internal/av1/encoder/loopfilter_apply.go:*:*: make([]decoder.FrameWorkLoopFilterPostFilterEdge, 0, size.Edges) escapes to heap
-internal/av1/encoder/loopfilter_apply.go:*:*: make([]decoder.FrameWorkLoopFilterPostFilterEdge, 0, size.Edges) escapes to heap in (*loopFilterApplier).init:
+internal/av1/encoder/loopfilter_apply.go:*:*: make([][]decoder.FrameWorkLoopFilterPostFilterEdge, bands) escapes to heap in (*loopFilterApplier).bindEdgeList:
 internal/av1/encoder/loopfilter_apply.go:*:*: make([]decoder.FrameWorkLoopFilterPostFilterEdge, bandBound) escapes to heap
-internal/av1/encoder/loopfilter_apply.go:*:*: make([]decoder.FrameWorkLoopFilterPostFilterEdge, bandBound) escapes to heap in (*loopFilterApplier).init:
+internal/av1/encoder/loopfilter_apply.go:*:*: make([]decoder.FrameWorkLoopFilterPostFilterEdge, bandBound) escapes to heap in (*loopFilterApplier).bindEdgeList:
 internal/av1/encoder/loopfilter_apply.go:*:*: make([]decoder.FrameWorkLoopFilterPostFilterEdge, size.Edges) escapes to heap
-internal/av1/encoder/loopfilter_apply.go:*:*: make([]decoder.FrameWorkLoopFilterPostFilterEdge, size.Edges) escapes to heap in (*loopFilterApplier).init:
+internal/av1/encoder/loopfilter_apply.go:*:*: make([]decoder.FrameWorkLoopFilterPostFilterEdge, size.Edges) escapes to heap in (*loopFilterApplier).bindEdgeList:
+internal/av1/encoder/loopfilter_apply.go:*:*: make([]decoder.FrameWorkLoopFilterPostFilterEdge, total) escapes to heap
+internal/av1/encoder/loopfilter_apply.go:*:*: make([]decoder.FrameWorkLoopFilterPostFilterEdge, total) escapes to heap in (*loopFilterApplier).apply:
 internal/av1/encoder/loopfilter_apply.go:*:*: make([]lfmask.FilterMask, maskCount) escapes to heap
 internal/av1/encoder/loopfilter_apply.go:*:*: make([]lfmask.FilterMask, maskCount) escapes to heap in (*loopFilterApplier).init:
 internal/av1/encoder/loopfilter_apply.go:*:*: make([]threading.FrameWorkLoopFilterBlockRecord, length) escapes to heap
 internal/av1/encoder/loopfilter_apply.go:*:*: make([]threading.FrameWorkLoopFilterBlockRecord, length) escapes to heap in (*loopFilterApplier).init:
 internal/av1/encoder/loopfilter_apply.go:*:*: make([]uint32, size.Schedule) escapes to heap
-internal/av1/encoder/loopfilter_apply.go:*:*: make([]uint32, size.Schedule) escapes to heap in (*loopFilterApplier).init:
+internal/av1/encoder/loopfilter_apply.go:*:*: make([]uint32, size.Schedule) escapes to heap in (*loopFilterApplier).bindEdgeList:
 internal/av1/encoder/pframe.go:*:*: make([]byte, 0, 16384) escapes to heap
 internal/av1/encoder/pframe.go:*:*: make([]byte, 0, 16384) escapes to heap in encodeRepeatPFrameTile:
 internal/av1/encoder/pframe.go:*:*: make([]byte, 0, tdSize + frameSize + groupOBUSize) escapes to heap
@@ -281,9 +279,9 @@ internal/av1/encoder/pframe_residual.go:*:*: make([]byte, len(src.Y)) escapes to
 internal/av1/encoder/pframe_residual.go:*:*: make([]byte, len(src.Y)) escapes to heap in EncodePFrame:
 internal/av1/encoder/pframe_residual.go:*:*: make([]byte, len(src.Y)) escapes to heap in EncodeScaledReferencePFrame:
 internal/av1/encoder/pframe_residual.go:*:*: make([]int16, int(sq.n) * int(sq.n)) escapes to heap
-internal/av1/encoder/pframe_residual.go:*:*: make([]int16, int(sq.n) * int(sq.n)) escapes to heap in (*lossyEncodeState).initScans:
+internal/av1/encoder/pframe_residual.go:*:*: make([]int16, int(sq.n) * int(sq.n)) escapes to heap in buildEncoderScanTables:
 internal/av1/encoder/pframe_residual.go:*:*: make([]int16, total) escapes to heap
-internal/av1/encoder/pframe_residual.go:*:*: make([]int16, total) escapes to heap in (*lossyEncodeState).initScans:
+internal/av1/encoder/pframe_residual.go:*:*: make([]int16, total) escapes to heap in buildEncoderScanTables:
 internal/av1/encoder/pframe_residual.go:*:*: make([]int32, 4096) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]int32, 4096) escapes to heap in (*lossyEncodeState).initScans:
 internal/av1/encoder/pframe_residual.go:*:*: make([]motion.Vector, st.grid16Cols * grid16Rows) escapes to heap
@@ -382,20 +380,17 @@ internal/av1/encoder/video.go:*:*: make([]byte, e.width * e.height) escapes to h
 internal/av1/encoder/video.go:*:*: make([]byte, e.width * e.height) escapes to heap in (*VideoEncoder).Prewarm:
 internal/av1/encoder/video.go:*:*: make([]byte, e.width * e.height) escapes to heap in (*VideoEncoder).padSource:
 internal/av1/encoder/video.go:*:*: make([]byte, len(src.U)) escapes to heap
-internal/av1/encoder/video.go:*:*: make([]byte, len(src.U)) escapes to heap in (*VideoEncoder).encodeKeyWithSequenceMax:
 internal/av1/encoder/video.go:*:*: make([]byte, len(src.U)) escapes to heap in (*VideoEncoder).encodePReusing:
 internal/av1/encoder/video.go:*:*: make([]byte, len(src.U)) escapes to heap in (*VideoEncoder).encodeReferencePFrameWithSequenceMax:
-internal/av1/encoder/video.go:*:*: make([]byte, len(src.U)) escapes to heap in copyFrameInto:
 internal/av1/encoder/video.go:*:*: make([]byte, len(src.V)) escapes to heap
-internal/av1/encoder/video.go:*:*: make([]byte, len(src.V)) escapes to heap in (*VideoEncoder).encodeKeyWithSequenceMax:
 internal/av1/encoder/video.go:*:*: make([]byte, len(src.V)) escapes to heap in (*VideoEncoder).encodePReusing:
 internal/av1/encoder/video.go:*:*: make([]byte, len(src.V)) escapes to heap in (*VideoEncoder).encodeReferencePFrameWithSequenceMax:
-internal/av1/encoder/video.go:*:*: make([]byte, len(src.V)) escapes to heap in copyFrameInto:
 internal/av1/encoder/video.go:*:*: make([]byte, len(src.Y)) escapes to heap
-internal/av1/encoder/video.go:*:*: make([]byte, len(src.Y)) escapes to heap in (*VideoEncoder).encodeKeyWithSequenceMax:
 internal/av1/encoder/video.go:*:*: make([]byte, len(src.Y)) escapes to heap in (*VideoEncoder).encodePReusing:
 internal/av1/encoder/video.go:*:*: make([]byte, len(src.Y)) escapes to heap in (*VideoEncoder).encodeReferencePFrameWithSequenceMax:
-internal/av1/encoder/video.go:*:*: make([]byte, len(src.Y)) escapes to heap in copyFrameInto:
+internal/av1/encoder/video.go:*:*: make([]byte, n) escapes to heap
+internal/av1/encoder/video.go:*:*: make([]byte, n) escapes to heap in copyFrameInto:
+internal/av1/encoder/video.go:*:*: make([]byte, n) escapes to heap in resizeBytes:
 internal/av1/encoder/video.go:*:*: make([]entropy.WriterLog, len(coders)) escapes to heap
 internal/av1/encoder/video.go:*:*: make([]entropy.WriterLog, len(coders)) escapes to heap in (*VideoEncoder).encodePReusing:
 internal/av1/encoder/video.go:*:*: make([]error, nTiles) escapes to heap
@@ -485,16 +480,10 @@ internal/av1/encoder/video_pipeline.go:*:*: func literal escapes to heap
 internal/av1/encoder/video_pipeline.go:*:*: func literal escapes to heap in (*VideoEncoder).startLeafWorker:
 internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.U)) escapes to heap
 internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.U)) escapes to heap in (*VideoEncoder).computeLeafTU:
-internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.U)) escapes to heap in (*VideoEncoder).holdSource:
-internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.U)) escapes to heap in (*VideoEncoder).prewarmPipeline:
 internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.V)) escapes to heap
 internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.V)) escapes to heap in (*VideoEncoder).computeLeafTU:
-internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.V)) escapes to heap in (*VideoEncoder).holdSource:
-internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.V)) escapes to heap in (*VideoEncoder).prewarmPipeline:
 internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.Y)) escapes to heap
 internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.Y)) escapes to heap in (*VideoEncoder).computeLeafTU:
-internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.Y)) escapes to heap in (*VideoEncoder).holdSource:
-internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.Y)) escapes to heap in (*VideoEncoder).prewarmPipeline:
 internal/av1/encoder/video_pipeline.go:*:*: new(lpd1Frame) escapes to heap
 internal/av1/encoder/video_pipeline.go:*:*: new(lpd1Frame) escapes to heap in (*VideoEncoder).computeLeafTU:
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, descriptorBytes) escapes to heap
@@ -510,12 +499,6 @@ internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, size) escapes to heap
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, size) escapes to heap in (*WebRTCStream).appendPictureDependencyDescriptor:
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, cw * ch) escapes to heap
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, cw * ch) escapes to heap in scaleSourceFrameColorNearest:
-internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, len(src.U)) escapes to heap
-internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, len(src.U)) escapes to heap in (*WebRTCStream).updateReferenceFrame:
-internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, len(src.V)) escapes to heap
-internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, len(src.V)) escapes to heap in (*WebRTCStream).updateReferenceFrame:
-internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, len(src.Y)) escapes to heap
-internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, len(src.Y)) escapes to heap in (*WebRTCStream).updateReferenceFrame:
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, width * height) escapes to heap
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, width * height) escapes to heap in scaleSourceFrameColorNearest:
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, width * height) escapes to heap in scaleSourceFrameMonoNearest:

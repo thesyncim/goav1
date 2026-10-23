@@ -172,14 +172,21 @@ func (l *svtCDEFLogs) replay(payloads []TilePayload, coders []*pframeCoder, tile
 			}
 		}
 		pc := coders[t]
-		buf := pc.writerBuf
-		if cap(buf) == 0 {
-			buf = make([]byte, 1<<18)
-			pc.writerBuf = buf
+		// The replay rewrites the first pass's bytes in place: its input is
+		// the log. Keep whichever buffer grew (the writer's this frame, or
+		// the replay's) for the next frames.
+		if b := pc.writer.Backing(); cap(b) > cap(pc.writerBuf) {
+			pc.writerBuf = b
 		}
-		data, err := l.logs[t].Replay(buf[:0], idx, int(bits))
+		if cap(pc.writerBuf) == 0 {
+			pc.writerBuf = make([]byte, 1<<18)
+		}
+		data, err := l.logs[t].Replay(pc.writerBuf[:0], idx, int(bits))
 		if err != nil {
 			return err
+		}
+		if cap(data) > cap(pc.writerBuf) {
+			pc.writerBuf = data[:cap(data)]
 		}
 		payloads[t].Data = data
 	}

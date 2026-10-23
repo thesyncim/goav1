@@ -116,7 +116,7 @@ func (pc *pframeCoder) encodeHighBitDepthMonochromePFrameTile(src SourceFrameMon
 	st.hme = nil
 	st.decisionStats = nil
 
-	pc.writer.Reset(pc.writerBuf[:0])
+	pc.resetWriter()
 	st.w = &pc.writer
 	st.interTxTypeReq = tile.InterTransformTypeRequest{
 		Size:        tile.TransformSize8x8,
@@ -193,7 +193,7 @@ func (pc *pframeCoder) encodeHighBitDepthColorPFrameTile(src SourceFrame42016, r
 	st.hme = nil
 	st.decisionStats = nil
 
-	pc.writer.Reset(pc.writerBuf[:0])
+	pc.resetWriter()
 	st.w = &pc.writer
 	st.interTxTypeReq = tile.InterTransformTypeRequest{
 		Size:        tile.TransformSize8x8,
@@ -268,7 +268,7 @@ func (pc *pframeCoder) encodeHighBitDepthLosslessIntraInterTile(src SourceFrame4
 		st.decisionStats = &pc.decisionStats
 	}
 
-	pc.writer.Reset(pc.writerBuf[:0])
+	pc.resetWriter()
 	st.w = &pc.writer
 	st.intraTxTypeReq = tile.IntraTransformTypeRequest{
 		Size:        tile.TransformSize4x4,

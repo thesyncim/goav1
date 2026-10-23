@@ -477,13 +477,19 @@ func (e *VideoEncoder) applyContentHintToFrameHeader(prefix *FrameHeaderPrefix) 
 	prefix.ForceIntegerMV = screen
 }
 
-// copyFrameInto deep-copies src into dst, reusing dst's buffers when sized.
-func copyFrameInto(dst *SourceFrame420, src SourceFrame420) {
-	if len(dst.Y) != len(src.Y) {
-		dst.Y = make([]byte, len(src.Y))
-		dst.U = make([]byte, len(src.U))
-		dst.V = make([]byte, len(src.V))
+// resizeBytes returns b at length n, reusing its storage when it fits.
+func resizeBytes(b []byte, n int) []byte {
+	if cap(b) >= n {
+		return b[:n]
 	}
+	return make([]byte, n)
+}
+
+// copyFrameInto deep-copies src into dst, reusing dst's buffers when they fit.
+func copyFrameInto(dst *SourceFrame420, src SourceFrame420) {
+	dst.Y = resizeBytes(dst.Y, len(src.Y))
+	dst.U = resizeBytes(dst.U, len(src.U))
+	dst.V = resizeBytes(dst.V, len(src.V))
 	copy(dst.Y, src.Y)
 	copy(dst.U, src.U)
 	copy(dst.V, src.V)
