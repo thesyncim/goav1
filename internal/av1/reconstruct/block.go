@@ -143,6 +143,15 @@ func ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst []byte, dstStride 
 		dsp.AddResidualPlaneBlockTrusted(dst, dstStride, bytesPerSample, max, visibleWidth, visibleHeight, residual, width)
 		return nil
 	}
+	// dav1d's two-pass structure with the add fused (transform itx_fused32):
+	// the eob-bounded 8-bit 32x32 DCT_DCT block reconstructs straight from
+	// the coefficients into dst; a declined block takes the staged path.
+	if bitDepth == 8 && bytesPerSample == 1 && cfg.Transform == transform.TypeDCTDCT &&
+		width == 32 && height == 32 && visibleWidth == 32 && visibleHeight == 32 &&
+		activeRows > 0 && activeRows <= 8 && activeCols > 0 && activeCols <= 8 &&
+		transform.InverseAddDCT32x32Low8(dst, dstStride, dst, dstStride, dequant, scanHeight) {
+		return nil
+	}
 	if err := transform.InverseBlockBitDepthRawBounded(transformScratch, dequant, scanHeight, cfg.Size, cfg.Transform, bitDepth, activeRows, activeCols); err != nil {
 		return ErrInvalidBlock
 	}
