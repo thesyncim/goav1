@@ -547,6 +547,8 @@ internal/av1/threading/tile_residual.go:*:*: make([]int16, residualTotal) escape
 internal/av1/threading/tile_residual.go:*:*: make([]int16, residualTotal) escapes to heap in (*frameWorkReconWavefront).ensureStates:
 internal/av1/threading/tile_residual.go:*:*: make([]int32, int32Total) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]int32, int32Total) escapes to heap in (*frameWorkReconWavefront).ensureStates:
+internal/av1/threading/tile_residual.go:*:*: make([]int32, len(s.cfArena), need) escapes to heap
+internal/av1/threading/tile_residual.go:*:*: make([]int32, len(s.cfArena), need) escapes to heap in (*FrameWorkTileResidualScratch).reserveCFArena:
 internal/av1/threading/tile_residual.go:*:*: make([]tile.TemporalMotionEntry, tile.need) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]tile.TemporalMotionEntry, tile.need) escapes to heap in (*FrameWorkTileResidualScratch).PreallocLoopFilterMaskScratch:
 internal/av1/threading/tile_residual.go:*:*: make([]tile.refmvsBlock, tile.need) escapes to heap
