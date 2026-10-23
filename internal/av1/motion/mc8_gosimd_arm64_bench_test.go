@@ -60,7 +60,7 @@ func BenchmarkMC8Prep(b *testing.B) {
 			}
 			b.Run(fmt.Sprintf("%s_%dx%d", mode, w, h), func(b *testing.B) {
 				for b.Loop() {
-					mc8PrepFast(out[:w*h], &ref, 40, 40, w, h, subX, subY, RegularFilters, scratch)
+					mc8PrepFast(out[:w*h], &ref, 40, 40, w, h, w, h, subX, subY, RegularFilters, scratch)
 				}
 			})
 		}

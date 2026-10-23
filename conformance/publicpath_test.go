@@ -428,6 +428,19 @@ var publicClips = []publicClip{
 			"5a3abf8d7ff26eb288cb80276b5f4390",
 		},
 	},
+	{
+		file: "svt-compound-edge-filter-256x136.ivf",
+		frameMD5Hex: []string{
+			"6a58c1d38654cc4cc616aaa8ca341658",
+			"6a58c1d38654cc4cc616aaa8ca341658",
+			"86b81c3e1835344a7644fbc7a630eddb",
+			"a9abbd1a1ddacec66bdb9af783e0d0fb",
+			"6495796df7a711caa3d8f5042dd4df01",
+			"df765e050d58a124e4fb49f83ef17641",
+			"55adf040f12bff071ae83bae671ef663",
+			"53ac4d1133a4f994c6bc510023e94575",
+		},
+	},
 }
 
 var callerPostFilterClips = []publicClip{

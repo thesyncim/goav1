@@ -88,34 +88,35 @@ func compoundConvBufView(buf *CompoundConvBuf, width int, height int) ([]uint16,
 	return buf.Data[:width*height], true
 }
 
-// PredictInterCompoundRefToConvBuf fills buf with the un-rounded 16-bit CONV_BUF
-// predictor (av1_dist_wtd_convolve_* with do_average == 0) for one reference.
-// The block origin (refX, refY) and subpel phases match the single-prediction
-// path; the result is later combined by a compound blend.
-func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) error {
-	return PredictInterCompoundRefToConvBufWithScratch(buf, ref, bytesPerSample, bitDepth, refX, refY, width, height, subX, subY, filters, nil)
-}
-
 // PrepTranslation8 is the decoder's 8-bit translational compound predictor for
 // one reference: ReferenceOriginSubsampled followed by
-// PredictInterCompoundRefToConvBufWithScratch at bit depth 8, with the
-// dav1d-style prep kernels tried first.
-func PrepTranslation8(buf *CompoundConvBuf, ref *frame.Plane, dstX int, dstY int, width int, height int, mv Vector, subsamplingX bool, subsamplingY bool, filters InterpFilters, scratch *CompoundConvolveScratch) error {
+// PredictInterCompoundRefToConvBuf at bit depth 8, with the dav1d-style prep
+// kernels tried first.
+func PrepTranslation8(buf *CompoundConvBuf, ref *frame.Plane, dstX int, dstY int, width int, height int, filterW int, filterH int, mv Vector, subsamplingX bool, subsamplingY bool, filters InterpFilters, scratch *CompoundConvolveScratch) error {
 	refX, refY, subX, subY, err := ReferenceOriginSubsampled(dstX, dstY, mv, subsamplingX, subsamplingY)
 	if err != nil {
 		return err
 	}
 	if buf != nil && filters.X.Valid() && filters.Y.Valid() {
-		if out, ok := compoundConvBufView(buf, width, height); ok && mc8PrepFast(out, ref, refX, refY, width, height, subX, subY, filters, scratch) {
+		if out, ok := compoundConvBufView(buf, width, height); ok && mc8PrepFast(out, ref, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch) {
 			return nil
 		}
 	}
-	return PredictInterCompoundRefToConvBufWithScratch(buf, *ref, 1, 8, refX, refY, width, height, subX, subY, filters, scratch)
+	return PredictInterCompoundRefToConvBuf(buf, *ref, 1, 8, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch)
 }
 
-// PredictInterCompoundRefToConvBufWithScratch is PredictInterCompoundRefToConvBuf
-// using optional caller-owned scratch for the large 2D intermediate block.
-func PredictInterCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) error {
+// PredictInterCompoundRefToConvBuf fills buf with the un-rounded 16-bit CONV_BUF
+// predictor (av1_dist_wtd_convolve_* with do_average == 0) for one reference.
+// The block origin (refX, refY) and subpel phases match the single-prediction
+// path; the result is later combined by a compound blend. width/height are the
+// predicted (possibly frame-edge-clipped) extent; filterW/filterH are the
+// un-clipped plane block dimensions that select the 4-tap or 8-tap kernel. A
+// compound block straddling the right or bottom frame edge can have a visible
+// chroma extent <= 4 while its plane block is larger; dav1d (prep_8tap on the
+// full bw4*4 x bh4*4 block in recon_tmpl.c mc()) and libaom
+// (block_size_wide/high[plane_bsize]) keep the 8-tap kernel there. scratch is
+// optional caller-owned storage for the 2D intermediate block.
+func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, refX int, refY int, width int, height int, filterW int, filterH int, subX int, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) error {
 	if buf == nil || !filters.X.Valid() || !filters.Y.Valid() {
 		return ErrInvalidMotion
 	}
@@ -129,15 +130,15 @@ func PredictInterCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref frame
 	if !ok {
 		return ErrInvalidMotion
 	}
-	if bytesPerSample == 1 && mc8PrepFast(out, &ref, refX, refY, width, height, subX, subY, filters, scratch) {
+	if bytesPerSample == 1 && mc8PrepFast(out, &ref, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch) {
 		return nil
 	}
 	bd := int(bitDepth)
-	xKernel, err := interpKernel(filters.X, width, subX)
+	xKernel, err := interpKernel(filters.X, filterW, subX)
 	if err != nil {
 		return err
 	}
-	yKernel, err := interpKernel(filters.Y, height, subY)
+	yKernel, err := interpKernel(filters.Y, filterH, subY)
 	if err != nil {
 		return err
 	}
