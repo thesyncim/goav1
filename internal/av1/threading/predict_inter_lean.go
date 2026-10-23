@@ -269,15 +269,15 @@ func (b *FrameWorkBatch) interTargetBound(block *tile.BlockVisit, plane FrameWor
 	if rx, ry := x-int(window.X), y-int(window.Y); rx >= 0 && ry >= 0 && rx+fullW <= clipW && ry+fullH <= clipH &&
 		width > 0 && height > 0 && width <= fullW && height <= fullH &&
 		frameWorkPredictionExtentValid(fullW) && frameWorkPredictionExtentValid(fullH) {
-		*t = frameWorkInterTarget{
-			output: bind.output,
-			x:      x, y: y,
-			width: width, height: height,
-			writeW: fullW, writeH: fullH,
-			filterW: fullW, filterH: fullH,
-			codedW: bind.codedW, codedH: bind.codedH,
-			bps: bind.bps, ssX: ssX, ssY: ssY,
-		}
+		// Field stores, not a composite literal: the literal is built in a
+		// temporary and then block-copied into *t.
+		t.output = bind.output
+		t.x, t.y = x, y
+		t.width, t.height = width, height
+		t.writeW, t.writeH = fullW, fullH
+		t.filterW, t.filterH = fullW, fullH
+		t.codedW, t.codedH = bind.codedW, bind.codedH
+		t.bps, t.ssX, t.ssY = bind.bps, ssX, ssY
 		return true, nil
 	}
 	width, height, ok := frameWorkClipVisiblePixelsToWindowPtr(window, x, y, width, height)
@@ -292,15 +292,13 @@ func (b *FrameWorkBatch) interTargetBound(block *tile.BlockVisit, plane FrameWor
 		width > 128 || height > 128 || writeW <= 0 || writeW > 128 || writeH <= 0 || writeH > 128 {
 		return false, ErrInvalidBatch
 	}
-	*t = frameWorkInterTarget{
-		output: bind.output,
-		x:      x, y: y,
-		width: width, height: height,
-		writeW: writeW, writeH: writeH,
-		filterW: fullW, filterH: fullH,
-		codedW: bind.codedW, codedH: bind.codedH,
-		bps: bind.bps, ssX: ssX, ssY: ssY,
-	}
+	t.output = bind.output
+	t.x, t.y = x, y
+	t.width, t.height = width, height
+	t.writeW, t.writeH = writeW, writeH
+	t.filterW, t.filterH = fullW, fullH
+	t.codedW, t.codedH = bind.codedW, bind.codedH
+	t.bps, t.ssX, t.ssY = bind.bps, ssX, ssY
 	return true, nil
 }
 
@@ -407,6 +405,9 @@ func (b *FrameWorkBatch) predictBlockInterLeanPlanes(index int, visit *tile.Bloc
 	color := &b.Sequence.ColorConfig
 	var cx, cy, cw, ch int
 	var cssX, cssY bool
+	// interTargetAt writes every field of t whenever it reports ok, so one
+	// target serves all three planes without re-zeroing it per plane.
+	var t frameWorkInterTarget
 	for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
 		if !compound && plane != FrameWorkPlaneY && visit.Prediction.SubChromaInterValid {
 			if err := b.predictBlockInterSubChromaPlanePtr(index, visit, plane, scratch); err != nil {
@@ -437,7 +438,6 @@ func (b *FrameWorkBatch) predictBlockInterLeanPlanes(index int, visit *tile.Bloc
 		default:
 			x, y, w, h, ssX, ssY = cx, cy, cw, ch, cssX, cssY
 		}
-		var t frameWorkInterTarget
 		ok, err := b.interTargetAt(index, block, plane, x, y, w, h, ssX, ssY, &t)
 		if err != nil {
 			return err
