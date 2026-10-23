@@ -745,6 +745,7 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 	if st.mds0Level != 0 {
 		pc.modeCDFs.EstimateRateTables(&st.mds0Rates)
 		st.mds0IntraOK = st.intraCDFs.EstimateIntraDCRateTables(&st.mds0IntraRates) == nil
+		st.mds0IntraModeRates.estimate(&st.intraCDFs)
 	}
 	st.decisionStats = nil
 	if pc.decisionStatsEnabled {
@@ -1396,7 +1397,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		}
 		if !mds0Picked {
 			modeResult.Mode = st.classifyInterMode(src, refPlanes, &stack, lumaPX, lumaPY, bw, bh, &mv, &fullSAD)
-		} else if st.mds0IntraDCWins(src, recon, block, modeCtx, lumaPX, lumaPY, bw, bh) {
+		} else if st.mds0IntraWins(src, recon, block, modeCtx, lumaPX, lumaPY, bw, bh) {
 			return st.encodeIntraPBlock(src, recon, block, scratch)
 		}
 	}
@@ -1797,8 +1798,15 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 			st.trialReady = true
 		}
 		mode, angleDelta = st.improveIntraModeDirectional(src, recon, block, mode, pred, lumaPX, lumaPY, 8)
+	} else if s := &st.mds0Intra; s.valid && s.mode != tile.IntraModeDC {
+		mode = s.mode
+		copy(pred, st.intraPredScratch[s.pred][:n*n])
 	} else {
 		fillIntraDCPred(pred, recon.Y, src.YStride, lumaPX, lumaPY, n, block.HaveTop, block.HaveLeft)
+	}
+	uvMode := tile.ChromaIntraModeDC
+	if n > 8 {
+		uvMode = svtSCChromaMode(mode)
 	}
 	var chromaBlock tile.BlockSize
 	var chromaScan []int16
@@ -1813,7 +1821,7 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 		}
 		cw, ch, chromaX, chromaY = cg.cw, cg.ch, cg.x, cg.y
 	}
-	fl, err := st.lpd1IntraFullLoop(src, recon, block, lumaPX, lumaPY, n, lumaTX, cg, st.lumaQ[:], st.uQ[:], st.vQ[:])
+	fl, err := st.lpd1IntraFullLoop(src, recon, block, lumaPX, lumaPY, n, lumaTX, mode, uvMode, cg, st.lumaQ[:], st.uQ[:], st.vQ[:])
 	if err != nil {
 		return fmt.Errorf("intra full loop: %w", err)
 	}
@@ -1873,13 +1881,16 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 		}
 		if err := tile.WriteChromaIntraMode(st.w, &st.intraCDFs, tile.ChromaIntraModeRequest{
 			Size: block.Size, LumaMode: mode, CFLAllowed: cflAllowed,
-		}, tile.ChromaIntraModeDC, tile.CFLAlphaResult{}); err != nil {
+		}, uvMode, tile.CFLAlphaResult{}); err != nil {
 			return fmt.Errorf("intra chroma mode: %w", err)
 		}
-		if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, tile.ChromaIntraModeDC); err != nil {
+		if err := st.writeUVAngleDelta(block, mode, uvMode); err != nil {
+			return err
+		}
+		if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, uvMode); err != nil {
 			return fmt.Errorf("mark chroma intra: %w", err)
 		}
-		if err := st.writeNoPaletteMode(modeCtx, block, mode, tile.ChromaIntraModeDC, true); err != nil {
+		if err := st.writeNoPaletteMode(modeCtx, block, mode, uvMode, true); err != nil {
 			return err
 		}
 	} else if err := st.writeNoPaletteMode(modeCtx, block, mode, tile.ChromaIntraModeDC, false); err != nil {
@@ -1946,6 +1957,8 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	}
 	chromaX4 := chromaX4ForColor(block.X4, st.color)
 	chromaY4 := chromaY4ForColor(block.Y4, st.color)
+	st.intraUVTxType = svtIntraUVTxType(uvMode, chromaTX)
+	defer func() { st.intraUVTxType = transform.TypeDCTDCT }()
 	for plane := 1; plane <= 2; plane++ {
 		rdata, cpred, qc, q := recon.U, st.predU[:cw*ch], st.uQ[:chromaGeo.coeffCount], st.uQuant
 		if plane == 2 {

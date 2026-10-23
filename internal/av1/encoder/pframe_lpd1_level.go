@@ -380,6 +380,9 @@ type lpd1PictureSetup struct {
 	// reference counts 0, rc_process.c get_ref_intra_percentage) runs
 	// intra_level 0, no intra candidate at all.
 	skipIntra bool
+	// screen is the picture's sc_class1: intra_level 6 (pframe_intra_sc.go)
+	// instead of the DC-only candidate.
+	screen bool
 	// armed marks a picture setup; coders without one (standalone tile
 	// paths, the external-reference SVC path) keep the base-picture level
 	// pic_lpd1_lvl 4 without per-SB statistics.

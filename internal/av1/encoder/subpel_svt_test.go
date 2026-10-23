@@ -278,7 +278,7 @@ func TestSVTSubpelSearchMatchesPrunedTreeModel(t *testing.T) {
 		var st lossyEncodeState
 		st.qIndex = uint8(60 + rng.Intn(180))
 		st.rdMult = int64(2000 + rng.Intn(60000))
-		got := st.svtSubpelSearch(src, ref, stride, width, height, px, py, bw, bh, start, refMV, &ctrls, st.rdMult)
+		got, _ := st.svtSubpelSearch(src, ref, stride, width, height, px, py, bw, bh, start, refMV, &ctrls, st.rdMult)
 		sq := max(bw, bh)
 		m := svtPrunedTreeModel{
 			src: src, ref: ref, stride: stride, width: width, height: height,

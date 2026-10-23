@@ -349,6 +349,7 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 	leafSetup.tlFactor = 180 // the L1T2 leaf is the highest layer
 	leafSetup.gfUpdate = e.leafJob.frameIndex%lpd1MaxGFInterval == 0
 	leafSetup.skipIntra = lpd1RefIntraPerc(e.leafJob.lpd1Ref) <= 50 // pcs->skip_intra of a non-reference picture
+	leafSetup.screen = e.svtScreen()
 	if videoColorIs420(color) {
 		if e.lpd1Leaf == nil {
 			e.lpd1Leaf = new(lpd1Frame)

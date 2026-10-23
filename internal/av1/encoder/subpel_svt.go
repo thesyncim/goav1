@@ -106,10 +106,11 @@ var svtBilinearFilters2T = [8][2]uint32{
 // svtSubpelSearch is one SVT light-PD1 sub-pel refinement. The reference
 // plane must match the source dimensions. startMV is the full-pel ME vector,
 // refMV the NEWMV predictor the MV cost is measured from. It returns the
-// refined vector; when it differs from startMV it is a sub-pel vector.
+// refined vector (when it differs from startMV it is a sub-pel vector) and
+// its error, the besterr md_subpel_search returns (post_subpel_me_mv_cost).
 // fullLambda is full_lambda_md[EB_8_BIT_MD], the MV cost's rdmult.
 func (st *lossyEncodeState) svtSubpelSearch(src, refPlane []byte, stride, width, height, px, py, bw, bh int,
-	startMV, refMV motion.Vector, ctrls *svtSubpelCtrls, fullLambda int64) motion.Vector {
+	startMV, refMV motion.Vector, ctrls *svtSubpelCtrls, fullLambda int64) (motion.Vector, uint64) {
 
 	st.ensureSubpelProbeCache()
 	scratch := &st.subpelCache.svt
@@ -139,10 +140,10 @@ func (st *lossyEncodeState) svtSubpelSearch(src, refPlane []byte, stride, width,
 
 	// abs_th_mult early exit: (qp * besterr) < ((w * h) << 5) * abs_th_mult.
 	if qp*besterr < uint64((bw*bh)<<5)*ctrls.absThMult {
-		return best
+		return best, besterr
 	}
 	if ctrls.rounds <= 0 {
-		return best
+		return best, besterr
 	}
 	// pred_variance_th: the full-pel prediction is too flat for interpolation
 	// to change it.
@@ -151,7 +152,7 @@ func (st *lossyEncodeState) svtSubpelSearch(src, refPlane []byte, stride, width,
 		log2 := uint(bits.TrailingZeros(uint(bw * bh)))
 		blockVar := (v + (1 << (log2 - 1))) >> log2
 		if blockVar < ctrls.predVarianceTh {
-			return best
+			return best, besterr
 		}
 	}
 	var orgErr uint64
@@ -222,10 +223,10 @@ func (st *lossyEncodeState) svtSubpelSearch(src, refPlane []byte, stride, width,
 		b, p := max(besterr, 1), max(prevErr, 1)
 		deviation := (int64(b) - int64(p)) * 100 / int64(p)
 		if deviation >= ctrls.roundDevTh {
-			return best
+			return best, besterr
 		}
 	}
-	return best
+	return best, besterr
 }
 
 // svtMVCostOpt is svt_mv_err_cost's MV_COST_OPT arm (mcomp.c), used when

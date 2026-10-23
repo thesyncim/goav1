@@ -268,71 +268,115 @@ func fillIntraDCPred(pred []byte, reconPlane []byte, stride, px, py, n int, have
 	memsetBytes(pred[:n*n], dc)
 }
 
-// mds0IntraDCWins is the DC_PRED arm of SVT-AV1's light-PD1 MDS0
-// (mode_decision.c generate_md_stage_0_cand_light_pd1 inject_intra_candidates
-// with the DC-only intra level preset 12 sets): after the inter candidates,
-// DC is skipped when the best inter residual variance already sits under
-// the SB's cand_elimination_ctrls.skip_dc_th (lpd1SBDecision.skipDCTh) per
-// sample (product_coding_loop.c fast_loop_core_light_pd1),
-// else priced like the inter candidates - residual variance << 4 plus
-// svt_aom_intra_fast_cost's rate - against the inter winner, which pays its
-// is_inter flag as av1_inter_fast_cost_light does. Square 16x16, 32x32 and
-// 64x64 blocks (SVT injects DC below 128x128; 64x64 codes TX_64X64): 8x8
-// keeps its own fallback.
-func (st *lossyEncodeState) mds0IntraDCWins(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, modeCtx *tile.BlockModeContext, lumaPX, lumaPY, bw, bh int) bool {
+// mds0IntraWins is the intra arm of SVT-AV1's light-PD1 MDS0
+// (mode_decision.c generate_md_stage_0_cand_light_pd1 inject_intra_candidates,
+// product_coding_loop.c fast_loop_core_light_pd1) after the inter
+// candidates. Camera content injects DC_PRED only (intra_level
+// MAX_INTRA_LEVEL - 1 at preset 12); screen content injects DC, V, H and
+// SMOOTH (pframe_intra_sc.go). Each candidate is skipped when the best
+// candidate so far already has a residual variance under skip_dc_th (DC) or
+// dc_only_th (the others) per sample, else priced like the inter
+// candidates - residual variance << 4 plus svt_aom_intra_fast_cost's rate -
+// against the best so far; the inter winner pays its is_inter flag as
+// av1_inter_fast_cost_light does. Square 16x16, 32x32 and 64x64 blocks (SVT
+// injects intra below 128x128; 64x64 codes TX_64X64): 8x8 keeps its own
+// fallback. A win leaves the candidate in st.mds0Intra (and a non-DC
+// prediction in intraPredScratch[mds0Intra.pred]).
+func (st *lossyEncodeState) mds0IntraWins(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, modeCtx *tile.BlockModeContext, lumaPX, lumaPY, bw, bh int) bool {
 	if !st.mds0IntraOK || st.lpd1.skipIntra || bw != bh || (bw != 16 && bw != 32 && bw != 64) || st.color.MonoChrome {
-		return false
-	}
-	if st.mds0BestVar < int64(st.lpd1SB(lumaPX, lumaPY).skipDCTh*bw*bh) {
 		return false
 	}
 	ctx, err := modeCtx.IntraContext(int(block.X4), int(block.Y4), block.HaveTop, block.HaveLeft)
 	if err != nil || ctx < 0 || ctx >= len(st.mds0IntraRates.IntraFlag) {
 		return false
 	}
-	// fast_loop_core_light_pd1 scores the DC candidate like any other: the
-	// svt_aom_mefn_ptr[bsize].vf variance of source against prediction. The
-	// DC predictor is flat and the variance is shift-invariant, so the
-	// residual variance is the source block's own, measured against zero
-	// through the same pixel-statistics kernels.
-	sse, sum := svtPD0PixelStats(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, svtZeroRow[:], 0, bw)
+	dec := st.lpd1SB(lumaPX, lumaPY)
 	n := int64(bw * bh)
-	variance := int64(sse) - (int64(sum)*int64(sum))/n
-	dist := variance << 4
+	modes := svtSCIntraModes[:1]
+	dcOnlyTh, elim := svtDCOnlyTh(dec.level, st.lpd1.notLastLayer)
+	if st.lpd1.screen && st.mds0IntraModeRates.ok {
+		modes = svtSCIntraModes[:]
+		// md_me_dist under dc_only_th: DC only.
+		if elim && st.mdMEDist != ^uint64(0) && st.mdMEDist < uint64(dcOnlyTh)*uint64(n) {
+			modes = modes[:1]
+		}
+	}
 	cflAllowed := 0
 	if bw <= 32 {
 		cflAllowed = 1
 	}
-	rate := int64(st.mds0IntraRates.IntraFlag[ctx][0]) +
-		int64(st.mds0IntraRates.LumaDCBits(block.Size)) +
-		int64(st.mds0IntraRates.UVModeDC[cflAllowed])
-	lambda := st.lpd1FullLambda(st.lpd1SB(lumaPX, lumaPY))
-	intraCost := ((rate*lambda + 256) >> 9) + (dist << 7)
-	interCost := st.mds0BestCost + ((int64(st.mds0IntraRates.IntraFlag[ctx][1])*lambda + 256) >> 9)
-	if intraCost >= interCost {
-		return false
+	lambda := st.lpd1FullLambda(dec)
+	bestCost := st.mds0BestCost + ((int64(st.mds0IntraRates.IntraFlag[ctx][1])*lambda + 256) >> 9)
+	bestVar := st.mds0BestVar
+	won := false
+	srcBlock := src.Y[lumaPY*src.YStride+lumaPX:]
+	for i, mode := range modes {
+		if mode == tile.IntraModeDC {
+			if bestVar < int64(dec.skipDCTh)*n {
+				continue
+			}
+		} else if elim && bestVar < int64(dcOnlyTh)*n {
+			continue
+		}
+		var sse uint32
+		var sum int32
+		var lumaRate, chromaRate int64
+		buf := 0
+		if st.mds0Intra.valid && st.mds0Intra.pred == 0 {
+			buf = 1
+		}
+		if mode == tile.IntraModeDC {
+			// The DC predictor is flat and the variance is shift-invariant,
+			// so the residual variance is the source block's own, measured
+			// against zero through the same pixel-statistics kernels.
+			sse, sum = svtPD0PixelStats(srcBlock, src.YStride, svtZeroRow[:], 0, bw)
+			lumaRate = int64(st.mds0IntraRates.IntraFlag[ctx][0]) + int64(st.mds0IntraRates.LumaDCBits(block.Size))
+			chromaRate = int64(st.mds0IntraRates.UVModeDC[cflAllowed])
+		} else {
+			pred := st.intraPredScratch[buf][:bw*bh]
+			if err := st.svtPredictIntraBlock(pred, recon.Y, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, block.HaveTop, block.HaveLeft, mode); err != nil {
+				continue
+			}
+			sse, sum = svtPD0PixelStats(srcBlock, src.YStride, pred, bw, bw)
+			l, c := st.mds0IntraModeRates.rate(i, block.Size, cflAllowed == 1)
+			lumaRate = int64(st.mds0IntraRates.IntraFlag[ctx][0]) + l
+			chromaRate = c
+		}
+		variance := int64(sse) - (int64(sum)*int64(sum))/n
+		dist := variance << 4
+		if dist<<7 > bestCost {
+			continue
+		}
+		cost := (((lumaRate+chromaRate)*lambda + 256) >> 9) + (dist << 7)
+		if cost >= bestCost {
+			continue
+		}
+		bestCost, bestVar, won = cost, variance, true
+		// The winner's statistics for the full loop: luma_fast_dist (the
+		// variance), full_dist (its vf sse; for DC derived from the source
+		// moments once the DC value is known) and fast_luma_rate.
+		st.mds0Intra = mds0IntraStats{
+			valid:    true,
+			mode:     mode,
+			pred:     buf,
+			variance: uint32(variance),
+			srcSSE:   sse,
+			srcSum:   sum,
+			lumaRate: lumaRate,
+		}
 	}
-	// The winner's statistics for the full loop: luma_fast_dist (the
-	// variance), the source moments its vf sse derives from once the DC
-	// value is known, and fast_luma_rate (svt_aom_intra_fast_cost: the
-	// is_inter flag plus the y mode bits; the uv mode bits are its
-	// fast_chroma_rate).
-	st.mds0Intra = mds0IntraStats{
-		valid:    true,
-		variance: uint32(variance),
-		srcSSE:   sse,
-		srcSum:   sum,
-		lumaRate: int64(st.mds0IntraRates.IntraFlag[ctx][0]) + int64(st.mds0IntraRates.LumaDCBits(block.Size)),
-	}
-	return true
+	return won
 }
 
-// mds0IntraStats is the DC_PRED MDS0 winner's fast-loop output
-// (fast_loop_core_light_pd1): its residual variance (luma_fast_dist), the
-// source block's sum of squares and sum (against zero) and its
-// fast_luma_rate.
+// mds0IntraStats is the intra MDS0 winner's fast-loop output
+// (fast_loop_core_light_pd1): its mode, its residual variance
+// (luma_fast_dist), the vf sum of squares and sum (against zero for DC,
+// against the prediction otherwise) and its fast_luma_rate. pred names the
+// intraPredScratch buffer holding a non-DC prediction.
 type mds0IntraStats struct {
 	valid    bool
+	mode     tile.IntraMode
+	pred     int
 	variance uint32
 	srcSSE   uint32
 	srcSum   int32
