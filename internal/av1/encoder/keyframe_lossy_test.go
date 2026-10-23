@@ -323,7 +323,7 @@ func parseKeyframeSequenceAndSize(t *testing.T, tu []byte) (parser.SequenceHeade
 				t.Fatalf("ParseSequenceHeader: %v", err)
 			}
 			haveSeq = true
-		case obu.TypeFrameHeader:
+		case obu.TypeFrameHeader, obu.TypeFrame:
 			if !haveSeq {
 				t.Fatal("frame header before sequence header")
 			}

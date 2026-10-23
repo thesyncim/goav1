@@ -28,8 +28,8 @@ func TestEncodeScaledReferencePFrameParsesReferenceSizedHeader(t *testing.T) {
 		t.Fatalf("temporal delimiter ok=%v err=%v unit=%+v", ok, err, unit.Header)
 	}
 	frameHeader, ok, err := it.Next()
-	if err != nil || !ok || frameHeader.Header.Type != obu.TypeFrameHeader {
-		t.Fatalf("frame header ok=%v err=%v unit=%+v", ok, err, frameHeader.Header)
+	if err != nil || !ok || frameHeader.Header.Type != obu.TypeFrame {
+		t.Fatalf("frame OBU ok=%v err=%v unit=%+v", ok, err, frameHeader.Header)
 	}
 
 	seq := losslessKeyframeSequence(src.Width, src.Height)
@@ -51,10 +51,6 @@ func TestEncodeScaledReferencePFrameParsesReferenceSizedHeader(t *testing.T) {
 		t.Fatalf("size=%+v", size)
 	}
 
-	tileGroup, ok, err := it.Next()
-	if err != nil || !ok || tileGroup.Header.Type != obu.TypeTileGroup || len(tileGroup.Payload) == 0 {
-		t.Fatalf("tile group ok=%v err=%v unit=%+v payload=%d", ok, err, tileGroup.Header, len(tileGroup.Payload))
-	}
 	if extra, ok, err := it.Next(); err != nil || ok {
 		t.Fatalf("extra ok=%v err=%v unit=%+v", ok, err, extra.Header)
 	}

@@ -68,6 +68,13 @@ The project has not published a release tag yet.
   Screen keyframes run SVT's luma palette search (palette_level 3), and
   screen inter pictures add SVT's V/H/SMOOTH intra candidates
   (intra_level 6).
+- Every coded frame is one OBU_FRAME (header, byte_alignment, tile group),
+  as SVT-AV1 and libaom emit, instead of an OBU_FRAME_HEADER plus an
+  OBU_TILE_GROUP: about 3.5 bytes less per frame, with the same
+  reconstruction.
+- Inter frames after a keyframe chain from the keyframe's CDFs
+  (primary_ref_frame LAST), as SVT-AV1's do, instead of restarting
+  error-resilient from default contexts.
 
 ### Verification
 

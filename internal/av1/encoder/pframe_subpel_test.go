@@ -279,7 +279,10 @@ func parseFirstInterFrameFilters(t *testing.T, tu []byte, seq parser.SequenceHea
 		if err != nil {
 			t.Fatalf("ParseDeltaParams: %v", err)
 		}
-		lf, err := parser.ParseLoopFilterParams(unit.Payload, seq, prefix, size, seg, delta, nil)
+		// A chained frame (primary_ref_frame LAST) codes its deltas against the
+		// reference's, which this encoder keeps at the defaults.
+		prevDeltas := parser.LoopFilterDeltas{Ref: [parser.RefFrames]int8{1, 0, 0, 0, -1, 0, -1, -1}}
+		lf, err := parser.ParseLoopFilterParams(unit.Payload, seq, prefix, size, seg, delta, &prevDeltas)
 		if err != nil {
 			t.Fatalf("ParseLoopFilterParams: %v", err)
 		}

@@ -183,13 +183,9 @@ func assembleInterTU(seq SequenceHeader, header InterFrameHeaderParams, tilePayl
 	if err != nil {
 		return nil, err
 	}
-	out, err = AppendLowOverheadInterFrameHeaderOBU(out, seq, header, temporalID, 0)
+	out, err = AppendLowOverheadInterFrameOBU(out, seq, header, temporalID, 0, group)
 	if err != nil {
-		return nil, fmt.Errorf("append inter header: %w", err)
-	}
-	out, err = AppendLowOverheadOBU(out, groupOBU)
-	if err != nil {
-		return nil, fmt.Errorf("append tile group OBU: %w", err)
+		return nil, fmt.Errorf("append frame OBU: %w", err)
 	}
 	return out, nil
 }

@@ -531,6 +531,8 @@ func (s *webRTCParsedTUState) verify(t *testing.T, frame encoder.WebRTCEncodedFr
 					wantCodedWidth, wantCodedHeight, want.Width, want.Height)
 			}
 			seenFrameHeader = true
+			// An OBU_FRAME carries the tile group too.
+			seenTileGroup = seenTileGroup || unit.Header.Type == obu.TypeFrame
 		case obu.TypeTileGroup:
 			if unit.Header.TemporalID != frame.Info.TemporalID || unit.Header.SpatialID != frame.Info.SpatialID {
 				t.Fatalf("tile group extension T%d/S%d want T%d/S%d", unit.Header.TemporalID, unit.Header.SpatialID, frame.Info.TemporalID, frame.Info.SpatialID)

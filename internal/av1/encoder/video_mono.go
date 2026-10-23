@@ -714,13 +714,9 @@ func (e *MonochromeVideoEncoder) assembleKeyTU(seq SequenceHeader, header IntraF
 		e.tuScratch = make([]byte, 0, total+total/2)
 	}
 	out := e.tuScratch[:0]
-	out, err = AppendLowOverheadCompleteIntraHeaderTemporalUnit(out, seq, header)
+	out, err = AppendLowOverheadIntraFrameTemporalUnit(out, seq, header, groupOBU.Payload)
 	if err != nil {
 		return nil, fmt.Errorf("append header TU: %w", err)
-	}
-	out, err = AppendLowOverheadOBU(out, groupOBU)
-	if err != nil {
-		return nil, fmt.Errorf("append tile group OBU: %w", err)
 	}
 	e.tuScratch = out
 	return out, nil
