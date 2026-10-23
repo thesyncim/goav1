@@ -176,3 +176,21 @@ func ShowExistingFrameSurface(refs *SurfaceReferences, pool *frame.Pool, event *
 	*refs = next
 	return surface, count, nil
 }
+
+// ReleaseUnreferencedFrameSurfaces returns to pool every surface that no
+// reference slot holds. A serial decoder calls it once the outputs of a
+// temporal unit have been consumed: a decoded surface is then live only while
+// a reference slot keeps it, as dav1d's picture refcounts drop the output
+// reference at dav1d_picture_unref. Shown frames that refresh no slot are
+// released here; already-free slots are left alone.
+func ReleaseUnreferencedFrameSurfaces(refs *SurfaceReferences, pool *frame.Pool) {
+	if refs == nil || pool == nil {
+		return
+	}
+	for i := range pool.Cap() {
+		if refs.Holds(i) {
+			continue
+		}
+		_ = pool.Release(i) // a free slot reports ErrInvalidSlot
+	}
+}

@@ -693,3 +693,11 @@ func DecoderFinishFrameSurface(refs *DecoderSurfaceReferences, pool *FramePool, 
 func DecoderShowExistingFrameSurface(refs *DecoderSurfaceReferences, pool *FramePool, event *DecoderEvent, releases []int) (int, int, error) {
 	return internaldecoder.ShowExistingFrameSurface(refs, pool, event, releases)
 }
+
+// DecoderReleaseUnreferencedFrameSurfaces returns to pool every surface that
+// no reference slot holds. Callers driving the low-level stream or event
+// runners call it once a temporal unit's outputs are consumed; shown frames
+// that refresh no reference slot are only released here.
+func DecoderReleaseUnreferencedFrameSurfaces(refs *DecoderSurfaceReferences, pool *FramePool) {
+	internaldecoder.ReleaseUnreferencedFrameSurfaces(refs, pool)
+}

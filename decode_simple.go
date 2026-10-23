@@ -643,6 +643,10 @@ func (d *Decoder) trackShownSurfacesInPool(out []*Frame, pool *FramePool, surfac
 		return
 	}
 	for _, f := range out {
+		// A film-grain output is a detached view; the pool surface behind it
+		// is the reconstructed picture, which must be released like any other
+		// shown surface.
+		f = d.postFilter.postFilterSource(f)
 		for i := 0; i < pool.Cap(); i++ {
 			pf, err := pool.Frame(i)
 			if err != nil || pf != f {

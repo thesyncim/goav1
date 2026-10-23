@@ -887,6 +887,9 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 		return DecoderFrameWorkEventResult{}, statsErr
 	}
 	output = decoderFrameWorkResidualPostFilterOutput(output, run, req.PostRunner)
+	if output, err = decoderFrameWorkShowExistingFilmGrain(&event, step, output, req.PostRunner); err != nil {
+		return DecoderFrameWorkEventResult{}, err
+	}
 	return DecoderFrameWorkEventResult{
 		Step:           step,
 		Output:         output,
@@ -979,6 +982,9 @@ func runDecoderFrameWorkEventWithExternalResidualRunner(req DecoderFrameWorkResi
 		return DecoderFrameWorkEventResult{}, statsErr
 	}
 	result.Output = decoderFrameWorkResidualPostFilterOutput(result.Output, result.Run, postRunner)
+	if result.Output, err = decoderFrameWorkShowExistingFilmGrain(event, result.Step, result.Output, postRunner); err != nil {
+		return DecoderFrameWorkEventResult{}, err
+	}
 	return result, nil
 }
 
@@ -1468,4 +1474,31 @@ func decoderResolvePostPublisher(publisher DecoderFrameWorkPostFilterGlobalSurfa
 		return decoderNoGlobalSurfacePublisher{}
 	}
 	return nil
+}
+
+// decoderFrameWorkShowExistingFilmGrain applies film grain to a
+// show_existing_frame output. dav1d applies grain to every output picture whose
+// frame header carries apply_grain (output_image -> dav1d_apply_grain), and a
+// shown existing frame carries the film grain parameters, seed included, that
+// were stored with it (load_grain_params). The reconstructed reference stays
+// untouched; only its in-loop filters already ran, so every other stage is
+// marked complete.
+func decoderFrameWorkShowExistingFilmGrain(event *DecoderEvent, step DecoderFrameWorkStep, output *Frame, post DecoderFrameWorkPostFilterRunner) (*Frame, error) {
+	if step.Kind != DecoderFrameWorkStepShowExisting || output == nil || post == nil || !event.FilmGrain.Apply {
+		return output, nil
+	}
+	provider, ok := post.(DecoderFrameWorkPostFilterOutputProvider)
+	if !ok {
+		return output, nil
+	}
+	ctx := DecoderFrameWorkPostFilterContext{Event: *event, Step: step, Output: output}
+	ctx = ctx.WithCompletedPostFilters(DecoderFrameWorkPostFilterLoopFilter | DecoderFrameWorkPostFilterCDEF |
+		DecoderFrameWorkPostFilterSuperRes | DecoderFrameWorkPostFilterLoopRestoration)
+	if err := post.Apply(ctx); err != nil {
+		return nil, err
+	}
+	if grained, ok := provider.PostFilterOutput(); ok && grained != nil {
+		return grained, nil
+	}
+	return output, nil
 }

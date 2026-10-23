@@ -678,11 +678,34 @@ func (s *corpusDecodeState) runEvents(events []decoder.Event) error {
 			if err != nil {
 				return fmt.Errorf("show_existing surface=%d: %w", surface, err)
 			}
+			if event.FilmGrain.Apply {
+				// The shown frame's stored film grain is applied for display
+				// (dav1d output_image -> dav1d_apply_grain); its in-loop stages
+				// already ran.
+				ctx := decoder.FrameWorkPostFilterContext{Event: event, Step: result.Step, Output: f}
+				ctx = ctx.WithCompletedPostFilters(decoder.FrameWorkPostFilterLoopFilter | decoder.FrameWorkPostFilterCDEF |
+					decoder.FrameWorkPostFilterSuperRes | decoder.FrameWorkPostFilterLoopRestoration)
+				post := decoder.FrameWorkBoundSupportedPostFilterRunner{}
+				size, err := libaomSupportedPostFilterScratchLen(ctx)
+				if err != nil {
+					return fmt.Errorf("show_existing film grain scratch: %w", err)
+				}
+				post.Scratch = s.postScratch.bind(size)
+				if err := post.Apply(ctx); err != nil {
+					return fmt.Errorf("show_existing film grain: %w", err)
+				}
+				if post.DisplayOutput != nil {
+					f = post.DisplayOutput
+				}
+			}
 			if err := s.emitVisibleFrame(*f); err != nil {
 				return err
 			}
 		}
 	}
+	// The temporal unit's outputs are consumed: a surface stays live only
+	// while a reference slot keeps it (dav1d_picture_unref).
+	layers.releaseUnreferenced()
 	return nil
 }
 
@@ -4333,4 +4356,18 @@ func joinSortedIntSet(values map[int]bool) string {
 		parts[i] = strconv.Itoa(value)
 	}
 	return strings.Join(parts, "/")
+}
+
+// releaseUnreferenced returns every layer surface no shared reference slot
+// holds. Between temporal units of a serial decode a surface is live only
+// while a reference slot keeps it.
+func (s *corpusSpatialLayers) releaseUnreferenced() {
+	for id, layer := range s.byID {
+		for local := 0; local < layer.pool.Cap(); local++ {
+			global := libaomGlobalSurfaceID(id, local)
+			if !s.sharedRefs.Holds(global) {
+				_ = layer.pool.Release(local) // already-free slots report ErrInvalidSlot
+			}
+		}
+	}
 }
