@@ -1034,13 +1034,10 @@ func (r *Reader) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) (i
 	if r.allowCDFUpdate {
 		count := values[symbols]
 		rate := uint(5 + ((count >> 4) & 3))
-		for i := 0; i < symbol; i++ {
-			v := uint32(values[i])
-			values[i] = uint16(v + ((CDFProbTop - v) >> rate))
-		}
-		for i := symbol; i < last; i++ {
-			v := uint32(values[i])
-			values[i] = uint16(v - (v >> rate))
+		// One fixed-length pass with the symbol selecting each entry's
+		// direction, rather than two loops split at the decoded symbol.
+		for i := 0; i < last; i++ {
+			values[i] = uint16(adaptCDFEntry(uint32(values[i]), rate, i < symbol))
 		}
 		if count < MaxCDFCount {
 			values[symbols] = count + 1
@@ -1127,13 +1124,10 @@ func (c *Cursor) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) in
 		if symbols > 3 {
 			rate++
 		}
-		for i := 0; i < symbol; i++ {
-			v := uint32(values[i])
-			values[i] = uint16(v + ((CDFProbTop - v) >> rate))
-		}
-		for i := symbol; i < last; i++ {
-			v := uint32(values[i])
-			values[i] = uint16(v - (v >> rate))
+		// One fixed-length pass with the symbol selecting each entry's
+		// direction, rather than two loops split at the decoded symbol.
+		for i := 0; i < last; i++ {
+			values[i] = uint16(adaptCDFEntry(uint32(values[i]), rate, i < symbol))
 		}
 		if count < MaxCDFCount {
 			values[symbols] = count + 1
@@ -1164,27 +1158,23 @@ func (c *Cursor) readCDF5Known(values *[MaxSymbols + 1]uint16) int {
 	c1 := uint32(values[1])
 	c2 := uint32(values[2])
 	c3 := uint32(values[3])
-	lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 4*ecMinProb
+	l0 := cdfBound(rngHi, c0, 4*ecMinProb)
+	l1 := cdfBound(rngHi, c1, 3*ecMinProb)
+	l2 := cdfBound(rngHi, c2, 2*ecMinProb)
+	l3 := cdfBound(rngHi, c3, ecMinProb)
+	lower := l0
 	symbol := 0
-	if coded < lower {
-		symbol = 1
-		upper = lower
-		lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
-		if coded < lower {
-			symbol = 2
-			upper = lower
-			lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
-			if coded < lower {
-				symbol = 3
-				upper = lower
-				lower = ((rngHi * (c3 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
-				if coded < lower {
-					symbol = 4
-					upper = lower
-					lower = 0
-				}
-			}
-		}
+	if coded < l0 {
+		upper, lower, symbol = l0, l1, 1
+	}
+	if coded < l1 {
+		upper, lower, symbol = l1, l2, 2
+	}
+	if coded < l2 {
+		upper, lower, symbol = l2, l3, 3
+	}
+	if coded < l3 {
+		upper, lower, symbol = l3, 0, 4
 	}
 
 	if traceEntropyReads {
@@ -1236,32 +1226,27 @@ func (c *Cursor) readCDF6Known(values *[MaxSymbols + 1]uint16) int {
 	c2 := uint32(values[2])
 	c3 := uint32(values[3])
 	c4 := uint32(values[4])
-	lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 5*ecMinProb
+	l0 := cdfBound(rngHi, c0, 5*ecMinProb)
+	l1 := cdfBound(rngHi, c1, 4*ecMinProb)
+	l2 := cdfBound(rngHi, c2, 3*ecMinProb)
+	l3 := cdfBound(rngHi, c3, 2*ecMinProb)
+	l4 := cdfBound(rngHi, c4, ecMinProb)
+	lower := l0
 	symbol := 0
-	if coded < lower {
-		symbol = 1
-		upper = lower
-		lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 4*ecMinProb
-		if coded < lower {
-			symbol = 2
-			upper = lower
-			lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
-			if coded < lower {
-				symbol = 3
-				upper = lower
-				lower = ((rngHi * (c3 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
-				if coded < lower {
-					symbol = 4
-					upper = lower
-					lower = ((rngHi * (c4 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
-					if coded < lower {
-						symbol = 5
-						upper = lower
-						lower = 0
-					}
-				}
-			}
-		}
+	if coded < l0 {
+		upper, lower, symbol = l0, l1, 1
+	}
+	if coded < l1 {
+		upper, lower, symbol = l1, l2, 2
+	}
+	if coded < l2 {
+		upper, lower, symbol = l2, l3, 3
+	}
+	if coded < l3 {
+		upper, lower, symbol = l3, l4, 4
+	}
+	if coded < l4 {
+		upper, lower, symbol = l4, 0, 5
 	}
 
 	if traceEntropyReads {
@@ -1315,37 +1300,31 @@ func (c *Cursor) readCDF7Known(values *[MaxSymbols + 1]uint16) int {
 	c3 := uint32(values[3])
 	c4 := uint32(values[4])
 	c5 := uint32(values[5])
-	lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 6*ecMinProb
+	l0 := cdfBound(rngHi, c0, 6*ecMinProb)
+	l1 := cdfBound(rngHi, c1, 5*ecMinProb)
+	l2 := cdfBound(rngHi, c2, 4*ecMinProb)
+	l3 := cdfBound(rngHi, c3, 3*ecMinProb)
+	l4 := cdfBound(rngHi, c4, 2*ecMinProb)
+	l5 := cdfBound(rngHi, c5, ecMinProb)
+	lower := l0
 	symbol := 0
-	if coded < lower {
-		symbol = 1
-		upper = lower
-		lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 5*ecMinProb
-		if coded < lower {
-			symbol = 2
-			upper = lower
-			lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + 4*ecMinProb
-			if coded < lower {
-				symbol = 3
-				upper = lower
-				lower = ((rngHi * (c3 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
-				if coded < lower {
-					symbol = 4
-					upper = lower
-					lower = ((rngHi * (c4 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
-					if coded < lower {
-						symbol = 5
-						upper = lower
-						lower = ((rngHi * (c5 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
-						if coded < lower {
-							symbol = 6
-							upper = lower
-							lower = 0
-						}
-					}
-				}
-			}
-		}
+	if coded < l0 {
+		upper, lower, symbol = l0, l1, 1
+	}
+	if coded < l1 {
+		upper, lower, symbol = l1, l2, 2
+	}
+	if coded < l2 {
+		upper, lower, symbol = l2, l3, 3
+	}
+	if coded < l3 {
+		upper, lower, symbol = l3, l4, 4
+	}
+	if coded < l4 {
+		upper, lower, symbol = l4, l5, 5
+	}
+	if coded < l5 {
+		upper, lower, symbol = l5, 0, 6
 	}
 
 	if traceEntropyReads {
@@ -1401,42 +1380,35 @@ func (c *Cursor) readCDF8Known(values *[MaxSymbols + 1]uint16) int {
 	c4 := uint32(values[4])
 	c5 := uint32(values[5])
 	c6 := uint32(values[6])
-	lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 7*ecMinProb
+	l0 := cdfBound(rngHi, c0, 7*ecMinProb)
+	l1 := cdfBound(rngHi, c1, 6*ecMinProb)
+	l2 := cdfBound(rngHi, c2, 5*ecMinProb)
+	l3 := cdfBound(rngHi, c3, 4*ecMinProb)
+	l4 := cdfBound(rngHi, c4, 3*ecMinProb)
+	l5 := cdfBound(rngHi, c5, 2*ecMinProb)
+	l6 := cdfBound(rngHi, c6, ecMinProb)
+	lower := l0
 	symbol := 0
-	if coded < lower {
-		symbol = 1
-		upper = lower
-		lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 6*ecMinProb
-		if coded < lower {
-			symbol = 2
-			upper = lower
-			lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + 5*ecMinProb
-			if coded < lower {
-				symbol = 3
-				upper = lower
-				lower = ((rngHi * (c3 >> ecProbShift)) >> (7 - ecProbShift)) + 4*ecMinProb
-				if coded < lower {
-					symbol = 4
-					upper = lower
-					lower = ((rngHi * (c4 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
-					if coded < lower {
-						symbol = 5
-						upper = lower
-						lower = ((rngHi * (c5 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
-						if coded < lower {
-							symbol = 6
-							upper = lower
-							lower = ((rngHi * (c6 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
-							if coded < lower {
-								symbol = 7
-								upper = lower
-								lower = 0
-							}
-						}
-					}
-				}
-			}
-		}
+	if coded < l0 {
+		upper, lower, symbol = l0, l1, 1
+	}
+	if coded < l1 {
+		upper, lower, symbol = l1, l2, 2
+	}
+	if coded < l2 {
+		upper, lower, symbol = l2, l3, 3
+	}
+	if coded < l3 {
+		upper, lower, symbol = l3, l4, 4
+	}
+	if coded < l4 {
+		upper, lower, symbol = l4, l5, 5
+	}
+	if coded < l5 {
+		upper, lower, symbol = l5, l6, 6
+	}
+	if coded < l6 {
+		upper, lower, symbol = l6, 0, 7
 	}
 
 	if traceEntropyReads {
@@ -1494,47 +1466,39 @@ func (c *Cursor) readCDF9Known(values *[MaxSymbols + 1]uint16) int {
 	c5 := uint32(values[5])
 	c6 := uint32(values[6])
 	c7 := uint32(values[7])
-	lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 8*ecMinProb
+	l0 := cdfBound(rngHi, c0, 8*ecMinProb)
+	l1 := cdfBound(rngHi, c1, 7*ecMinProb)
+	l2 := cdfBound(rngHi, c2, 6*ecMinProb)
+	l3 := cdfBound(rngHi, c3, 5*ecMinProb)
+	l4 := cdfBound(rngHi, c4, 4*ecMinProb)
+	l5 := cdfBound(rngHi, c5, 3*ecMinProb)
+	l6 := cdfBound(rngHi, c6, 2*ecMinProb)
+	l7 := cdfBound(rngHi, c7, ecMinProb)
+	lower := l0
 	symbol := 0
-	if coded < lower {
-		symbol = 1
-		upper = lower
-		lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 7*ecMinProb
-		if coded < lower {
-			symbol = 2
-			upper = lower
-			lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + 6*ecMinProb
-			if coded < lower {
-				symbol = 3
-				upper = lower
-				lower = ((rngHi * (c3 >> ecProbShift)) >> (7 - ecProbShift)) + 5*ecMinProb
-				if coded < lower {
-					symbol = 4
-					upper = lower
-					lower = ((rngHi * (c4 >> ecProbShift)) >> (7 - ecProbShift)) + 4*ecMinProb
-					if coded < lower {
-						symbol = 5
-						upper = lower
-						lower = ((rngHi * (c5 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
-						if coded < lower {
-							symbol = 6
-							upper = lower
-							lower = ((rngHi * (c6 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
-							if coded < lower {
-								symbol = 7
-								upper = lower
-								lower = ((rngHi * (c7 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
-								if coded < lower {
-									symbol = 8
-									upper = lower
-									lower = 0
-								}
-							}
-						}
-					}
-				}
-			}
-		}
+	if coded < l0 {
+		upper, lower, symbol = l0, l1, 1
+	}
+	if coded < l1 {
+		upper, lower, symbol = l1, l2, 2
+	}
+	if coded < l2 {
+		upper, lower, symbol = l2, l3, 3
+	}
+	if coded < l3 {
+		upper, lower, symbol = l3, l4, 4
+	}
+	if coded < l4 {
+		upper, lower, symbol = l4, l5, 5
+	}
+	if coded < l5 {
+		upper, lower, symbol = l5, l6, 6
+	}
+	if coded < l6 {
+		upper, lower, symbol = l6, l7, 7
+	}
+	if coded < l7 {
+		upper, lower, symbol = l7, 0, 8
 	}
 
 	if traceEntropyReads {
@@ -1594,52 +1558,43 @@ func (c *Cursor) readCDF10Known(values *[MaxSymbols + 1]uint16) int {
 	c6 := uint32(values[6])
 	c7 := uint32(values[7])
 	c8 := uint32(values[8])
-	lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 9*ecMinProb
+	l0 := cdfBound(rngHi, c0, 9*ecMinProb)
+	l1 := cdfBound(rngHi, c1, 8*ecMinProb)
+	l2 := cdfBound(rngHi, c2, 7*ecMinProb)
+	l3 := cdfBound(rngHi, c3, 6*ecMinProb)
+	l4 := cdfBound(rngHi, c4, 5*ecMinProb)
+	l5 := cdfBound(rngHi, c5, 4*ecMinProb)
+	l6 := cdfBound(rngHi, c6, 3*ecMinProb)
+	l7 := cdfBound(rngHi, c7, 2*ecMinProb)
+	l8 := cdfBound(rngHi, c8, ecMinProb)
+	lower := l0
 	symbol := 0
-	if coded < lower {
-		symbol = 1
-		upper = lower
-		lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 8*ecMinProb
-		if coded < lower {
-			symbol = 2
-			upper = lower
-			lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + 7*ecMinProb
-			if coded < lower {
-				symbol = 3
-				upper = lower
-				lower = ((rngHi * (c3 >> ecProbShift)) >> (7 - ecProbShift)) + 6*ecMinProb
-				if coded < lower {
-					symbol = 4
-					upper = lower
-					lower = ((rngHi * (c4 >> ecProbShift)) >> (7 - ecProbShift)) + 5*ecMinProb
-					if coded < lower {
-						symbol = 5
-						upper = lower
-						lower = ((rngHi * (c5 >> ecProbShift)) >> (7 - ecProbShift)) + 4*ecMinProb
-						if coded < lower {
-							symbol = 6
-							upper = lower
-							lower = ((rngHi * (c6 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
-							if coded < lower {
-								symbol = 7
-								upper = lower
-								lower = ((rngHi * (c7 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
-								if coded < lower {
-									symbol = 8
-									upper = lower
-									lower = ((rngHi * (c8 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
-									if coded < lower {
-										symbol = 9
-										upper = lower
-										lower = 0
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
+	if coded < l0 {
+		upper, lower, symbol = l0, l1, 1
+	}
+	if coded < l1 {
+		upper, lower, symbol = l1, l2, 2
+	}
+	if coded < l2 {
+		upper, lower, symbol = l2, l3, 3
+	}
+	if coded < l3 {
+		upper, lower, symbol = l3, l4, 4
+	}
+	if coded < l4 {
+		upper, lower, symbol = l4, l5, 5
+	}
+	if coded < l5 {
+		upper, lower, symbol = l5, l6, 6
+	}
+	if coded < l6 {
+		upper, lower, symbol = l6, l7, 7
+	}
+	if coded < l7 {
+		upper, lower, symbol = l7, l8, 8
+	}
+	if coded < l8 {
+		upper, lower, symbol = l8, 0, 9
 	}
 
 	if traceEntropyReads {
@@ -1701,57 +1656,47 @@ func (c *Cursor) readCDF11Known(values *[MaxSymbols + 1]uint16) int {
 	c7 := uint32(values[7])
 	c8 := uint32(values[8])
 	c9 := uint32(values[9])
-	lower := ((rngHi * (c0 >> ecProbShift)) >> (7 - ecProbShift)) + 10*ecMinProb
+	l0 := cdfBound(rngHi, c0, 10*ecMinProb)
+	l1 := cdfBound(rngHi, c1, 9*ecMinProb)
+	l2 := cdfBound(rngHi, c2, 8*ecMinProb)
+	l3 := cdfBound(rngHi, c3, 7*ecMinProb)
+	l4 := cdfBound(rngHi, c4, 6*ecMinProb)
+	l5 := cdfBound(rngHi, c5, 5*ecMinProb)
+	l6 := cdfBound(rngHi, c6, 4*ecMinProb)
+	l7 := cdfBound(rngHi, c7, 3*ecMinProb)
+	l8 := cdfBound(rngHi, c8, 2*ecMinProb)
+	l9 := cdfBound(rngHi, c9, ecMinProb)
+	lower := l0
 	symbol := 0
-	if coded < lower {
-		symbol = 1
-		upper = lower
-		lower = ((rngHi * (c1 >> ecProbShift)) >> (7 - ecProbShift)) + 9*ecMinProb
-		if coded < lower {
-			symbol = 2
-			upper = lower
-			lower = ((rngHi * (c2 >> ecProbShift)) >> (7 - ecProbShift)) + 8*ecMinProb
-			if coded < lower {
-				symbol = 3
-				upper = lower
-				lower = ((rngHi * (c3 >> ecProbShift)) >> (7 - ecProbShift)) + 7*ecMinProb
-				if coded < lower {
-					symbol = 4
-					upper = lower
-					lower = ((rngHi * (c4 >> ecProbShift)) >> (7 - ecProbShift)) + 6*ecMinProb
-					if coded < lower {
-						symbol = 5
-						upper = lower
-						lower = ((rngHi * (c5 >> ecProbShift)) >> (7 - ecProbShift)) + 5*ecMinProb
-						if coded < lower {
-							symbol = 6
-							upper = lower
-							lower = ((rngHi * (c6 >> ecProbShift)) >> (7 - ecProbShift)) + 4*ecMinProb
-							if coded < lower {
-								symbol = 7
-								upper = lower
-								lower = ((rngHi * (c7 >> ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
-								if coded < lower {
-									symbol = 8
-									upper = lower
-									lower = ((rngHi * (c8 >> ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
-									if coded < lower {
-										symbol = 9
-										upper = lower
-										lower = ((rngHi * (c9 >> ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
-										if coded < lower {
-											symbol = 10
-											upper = lower
-											lower = 0
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
+	if coded < l0 {
+		upper, lower, symbol = l0, l1, 1
+	}
+	if coded < l1 {
+		upper, lower, symbol = l1, l2, 2
+	}
+	if coded < l2 {
+		upper, lower, symbol = l2, l3, 3
+	}
+	if coded < l3 {
+		upper, lower, symbol = l3, l4, 4
+	}
+	if coded < l4 {
+		upper, lower, symbol = l4, l5, 5
+	}
+	if coded < l5 {
+		upper, lower, symbol = l5, l6, 6
+	}
+	if coded < l6 {
+		upper, lower, symbol = l6, l7, 7
+	}
+	if coded < l7 {
+		upper, lower, symbol = l7, l8, 8
+	}
+	if coded < l8 {
+		upper, lower, symbol = l8, l9, 9
+	}
+	if coded < l9 {
+		upper, lower, symbol = l9, 0, 10
 	}
 
 	if traceEntropyReads {
