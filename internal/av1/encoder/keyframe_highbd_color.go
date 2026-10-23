@@ -77,13 +77,9 @@ func EncodeHighBitDepth420Keyframe(src SourceFrame42016, qIndex uint8) ([]byte, 
 	}
 
 	out := make([]byte, 0, headerSize+groupOBUSize)
-	out, err = AppendLowOverheadCompleteIntraHeaderTemporalUnit(out, seq, header)
+	out, err = AppendLowOverheadIntraFrameTemporalUnit(out, seq, header, groupOBU.Payload)
 	if err != nil {
 		return nil, SourceFrame42016{}, fmt.Errorf("append header TU: %w", err)
-	}
-	out, err = AppendLowOverheadOBU(out, groupOBU)
-	if err != nil {
-		return nil, SourceFrame42016{}, fmt.Errorf("append tile group OBU: %w", err)
 	}
 	return out, recon, nil
 }

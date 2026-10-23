@@ -207,6 +207,17 @@ func appendLowOverheadFrameHeaderOBUPrefix(out []byte, off int, payloadSize int,
 }
 
 func writeIntraFrameHeaderPayload(w *bitWriter, seq SequenceHeader, header IntraFrameHeaderParams) error {
+	if err := writeIntraFrameHeaderFields(w, seq, header); err != nil {
+		return err
+	}
+	// A standalone OBU_FRAME_HEADER payload ends with trailing bits
+	// (trailing_one_bit plus zero alignment); the reference decoders enforce
+	// this even though the goav1 parser does not.
+	return w.writeTrailingBits()
+}
+
+// writeIntraFrameHeaderFields writes uncompressed_header() of an intra frame.
+func writeIntraFrameHeaderFields(w *bitWriter, seq SequenceHeader, header IntraFrameHeaderParams) error {
 	if err := writeFrameHeaderPrefixPayload(w, seq, header.Prefix); err != nil {
 		return err
 	}
@@ -246,13 +257,19 @@ func writeIntraFrameHeaderPayload(w *bitWriter, seq SequenceHeader, header Intra
 	if err := writeFilmGrainParamsPayload(w, seq, header.Prefix, InterFrameSize{}, nil, header.FilmGrain); err != nil {
 		return err
 	}
-	// A standalone OBU_FRAME_HEADER payload ends with trailing bits
-	// (trailing_one_bit plus zero alignment); the reference decoders enforce
-	// this even though the goav1 parser does not.
-	return w.writeTrailingBits()
+	return nil
 }
 
 func writeInterFrameHeaderPayload(w *bitWriter, seq SequenceHeader, header InterFrameHeaderParams) error {
+	if err := writeInterFrameHeaderFields(w, seq, header); err != nil {
+		return err
+	}
+	// Standalone OBU_FRAME_HEADER trailing bits; see the intra writer.
+	return w.writeTrailingBits()
+}
+
+// writeInterFrameHeaderFields writes uncompressed_header() of an inter frame.
+func writeInterFrameHeaderFields(w *bitWriter, seq SequenceHeader, header InterFrameHeaderParams) error {
 	if err := writeFrameHeaderPrefixPayload(w, seq, header.Prefix); err != nil {
 		return err
 	}
@@ -295,6 +312,5 @@ func writeInterFrameHeaderPayload(w *bitWriter, seq SequenceHeader, header Inter
 	if err := writeFilmGrainParamsPayload(w, seq, header.Prefix, header.Size, header.References, header.FilmGrain); err != nil {
 		return err
 	}
-	// Standalone OBU_FRAME_HEADER trailing bits; see the intra writer.
-	return w.writeTrailingBits()
+	return nil
 }

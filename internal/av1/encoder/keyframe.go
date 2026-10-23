@@ -98,13 +98,9 @@ func EncodeLosslessKeyframe(src SourceFrame420) ([]byte, error) {
 	}
 
 	out := make([]byte, 0, headerSize+groupOBUSize)
-	out, err = AppendLowOverheadCompleteIntraHeaderTemporalUnit(out, seq, header)
+	out, err = AppendLowOverheadIntraFrameTemporalUnit(out, seq, header, groupOBU.Payload)
 	if err != nil {
 		return nil, fmt.Errorf("append header TU: %w", err)
-	}
-	out, err = AppendLowOverheadOBU(out, groupOBU)
-	if err != nil {
-		return nil, fmt.Errorf("append tile group OBU: %w", err)
 	}
 	return out, nil
 }
@@ -144,13 +140,9 @@ func EncodeLosslessMonochromeKeyframe(src SourceFrameMono) ([]byte, error) {
 	}
 
 	out := make([]byte, 0, headerSize+groupOBUSize)
-	out, err = AppendLowOverheadCompleteIntraHeaderTemporalUnit(out, seq, header)
+	out, err = AppendLowOverheadIntraFrameTemporalUnit(out, seq, header, groupOBU.Payload)
 	if err != nil {
 		return nil, fmt.Errorf("append header TU: %w", err)
-	}
-	out, err = AppendLowOverheadOBU(out, groupOBU)
-	if err != nil {
-		return nil, fmt.Errorf("append tile group OBU: %w", err)
 	}
 	return out, nil
 }
@@ -190,13 +182,9 @@ func EncodeLosslessHighBitDepthMonochromeKeyframe(src SourceFrameMono16) ([]byte
 	}
 
 	out := make([]byte, 0, headerSize+groupOBUSize)
-	out, err = AppendLowOverheadCompleteIntraHeaderTemporalUnit(out, seq, header)
+	out, err = AppendLowOverheadIntraFrameTemporalUnit(out, seq, header, groupOBU.Payload)
 	if err != nil {
 		return nil, fmt.Errorf("append header TU: %w", err)
-	}
-	out, err = AppendLowOverheadOBU(out, groupOBU)
-	if err != nil {
-		return nil, fmt.Errorf("append tile group OBU: %w", err)
 	}
 	return out, nil
 }
@@ -236,13 +224,9 @@ func EncodeLosslessHighBitDepth420Keyframe(src SourceFrame42016) ([]byte, error)
 	}
 
 	out := make([]byte, 0, headerSize+groupOBUSize)
-	out, err = AppendLowOverheadCompleteIntraHeaderTemporalUnit(out, seq, header)
+	out, err = AppendLowOverheadIntraFrameTemporalUnit(out, seq, header, groupOBU.Payload)
 	if err != nil {
 		return nil, fmt.Errorf("append header TU: %w", err)
-	}
-	out, err = AppendLowOverheadOBU(out, groupOBU)
-	if err != nil {
-		return nil, fmt.Errorf("append tile group OBU: %w", err)
 	}
 	return out, nil
 }

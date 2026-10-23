@@ -147,13 +147,9 @@ func EncodeMonochromeKeyframe(src SourceFrameMono, qIndex uint8) ([]byte, Source
 	}
 
 	out := make([]byte, 0, headerSize+groupOBUSize)
-	out, err = AppendLowOverheadCompleteIntraHeaderTemporalUnit(out, seq, header)
+	out, err = AppendLowOverheadIntraFrameTemporalUnit(out, seq, header, groupOBU.Payload)
 	if err != nil {
 		return nil, SourceFrameMono{}, fmt.Errorf("append header TU: %w", err)
-	}
-	out, err = AppendLowOverheadOBU(out, groupOBU)
-	if err != nil {
-		return nil, SourceFrameMono{}, fmt.Errorf("append tile group OBU: %w", err)
 	}
 	return out, recon, nil
 }
@@ -436,13 +432,9 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 	} else {
 		out = make([]byte, 0, total)
 	}
-	out, err = AppendLowOverheadCompleteIntraHeaderTemporalUnit(out, seq, header)
+	out, err = AppendLowOverheadIntraFrameTemporalUnit(out, seq, header, groupOBU.Payload)
 	if err != nil {
 		return nil, SourceFrame420{}, fmt.Errorf("append header TU: %w", err)
-	}
-	out, err = AppendLowOverheadOBU(out, groupOBU)
-	if err != nil {
-		return nil, SourceFrame420{}, fmt.Errorf("append tile group OBU: %w", err)
 	}
 	if tileOpts.outScratch != nil {
 		*tileOpts.outScratch = out
