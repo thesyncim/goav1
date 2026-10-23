@@ -184,6 +184,18 @@ func ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst []byte, dstStride 
 				return nil
 			}
 		}
+	} else if bitDepth == 8 && bytesPerSample == 1 && cfg.Transform == transform.TypeDCTDCT &&
+		visibleWidth == width && visibleHeight == height && activeRows > 0 && activeCols > 0 {
+		// The 2:1 rectangular DCT_DCT blocks (rect2 coefficient scale).
+		if width == 16 && height == 32 {
+			if transform.InverseAddDCT16x32(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols) {
+				return nil
+			}
+		} else if width == 32 && height == 16 {
+			if transform.InverseAddDCT32x16(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols) {
+				return nil
+			}
+		}
 	}
 	if err := transform.InverseBlockBitDepthRawBounded(transformScratch, dequant, scanHeight, cfg.Size, cfg.Transform, bitDepth, activeRows, activeCols); err != nil {
 		return ErrInvalidBlock
