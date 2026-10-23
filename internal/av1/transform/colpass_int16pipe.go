@@ -209,3 +209,11 @@ func narrowStoreFromInt16(dst []int16, dstStride int, scratch []int16, width int
 		}
 	}
 }
+
+// itx16RawColumnPass runs the DCT16 column pass over the int32 raw scratch
+// of a width x 16 block whose values are already rounded and clamped to the
+// int16 range [min, max] (the 8-bit column bounds), using the int16 kernels
+// where their exactness guard holds and the int32 kernels elsewhere.
+// rowLimit is the number of possibly nonzero input rows (0 = all). Bound by
+// the Go SIMD build; nil otherwise.
+var itx16RawColumnPass func(scratch []int32, width, rowLimit int, min, max int32)

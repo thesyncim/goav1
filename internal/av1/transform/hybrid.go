@@ -322,6 +322,14 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 		}
 	}
 
+	// int16 DCT16 column pass (dav1d 8bpc form) over the raw scratch: exact
+	// under its per-column guard, else the int32 kernels below run.
+	if itx16RawColumnPass != nil && height == dct16Size && vertical == tx1DDCT &&
+		colMin == minInt16 && colMax == maxInt16 && width >= 8 && width&7 == 0 {
+		itx16RawColumnPass(scratch, width, rowLimit, colMin, colMax)
+		return false, nil
+	}
+
 	// Low-row DCT32 SIMD specialization. Staging and the horizontal pass have
 	// left rows rowLimit..31 at exact zero; the kernel derives every output row
 	// from rows 0..7 and preserves the full transform's clamp graph.
