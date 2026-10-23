@@ -965,6 +965,10 @@ func (s *FrameWorkTileResidualStats) Add(other FrameWorkTileResidualStats) {
 // JobBlockLoopRequest derives the block-loop request for Jobs[index] from the
 // frame context carried by this batch.
 func (b *FrameWorkBatch) JobBlockLoopRequest(index int, currentSegmentMap []uint8, previousSegmentMap []uint8, segmentMapStride uint16) (tile.BlockLoopRequest, error) {
+	if segmentMapStride == 0 && currentSegmentMap == nil && previousSegmentMap == nil && b.SegmentMaps != nil {
+		// No caller override: use the frame's own segmentation maps.
+		currentSegmentMap, previousSegmentMap, segmentMapStride = b.SegmentMaps.Current, b.SegmentMaps.Previous, b.SegmentMaps.Stride
+	}
 	region, err := b.JobRegion(index)
 	if err != nil {
 		return tile.BlockLoopRequest{}, err

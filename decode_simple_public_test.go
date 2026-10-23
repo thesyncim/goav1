@@ -370,6 +370,51 @@ var profileClips = []struct {
 			"85211908449f0584823f5a328f240514",
 		},
 	},
+	// Segmentation-map lifecycle (dav1d cur_segmap/prev_segmap). Synthetic
+	// source, no redistribution restriction:
+	//	ffmpeg -f lavfi -i "testsrc2=size=64x64:rate=30,noise=alls=10:allf=t" \
+	//	  -frames:v 20 -pix_fmt yuv420p s64.y4m
+	// Realtime cyclic refresh: update_map with and without temporal_update
+	// (predicted segment ids from the primary reference's map):
+	//	aomenc --ivf --limit=10 --rt --cpu-used=10 --end-usage=cbr \
+	//	  --lag-in-frames=0 --target-bitrate=40 --aq-mode=3 \
+	//	  -o profile0-420-8bit-segmentation-temporal-64x64.ivf s64.y4m
+	// Variance AQ with lookahead: update_map=0 frames inheriting the primary
+	// reference's map, and update_map frames with no active segment feature
+	// (last_active_segid -1, segment ids still coded):
+	//	aomenc --ivf --limit=10 --good --cpu-used=4 --end-usage=q \
+	//	  --cq-level=30 --lag-in-frames=6 --aq-mode=1 \
+	//	  -o profile0-420-8bit-segmentation-inherit-64x64.ivf s64.y4m
+	{
+		file: "profile0-420-8bit-segmentation-temporal-64x64.ivf",
+		frameMD5Hex: []string{
+			"1873c444393fd1b822e74c537b51312e",
+			"3f2cae27b4f4bb733f26bf939dc6c60e",
+			"1015ffeed16a8d2bbb67586155beff39",
+			"7d2fbb64f2995a5a4151f7d65a74c27b",
+			"c81939bd2c1b9d1a8363b218440e87b6",
+			"b0edc9522e1464bd8494e3affd314bc7",
+			"43a240c3f94d46612dbc5301e4cb9f44",
+			"bcd8f6c8a580febb68fcd60b3e1c3c08",
+			"efa85f4cf961c40db1f69b2a217f12cd",
+			"fbe9ef9b8a64cb5869a90412793a0542",
+		},
+	},
+	{
+		file: "profile0-420-8bit-segmentation-inherit-64x64.ivf",
+		frameMD5Hex: []string{
+			"81212bb91ea057042e9e986922127ce4",
+			"b0ed0956479db87032ff787397f0fc46",
+			"6fea5eefe119645d8a2f6a2f2dd47e7d",
+			"c8e3340b207df820046212437d54cb5d",
+			"1d9a9c56eeb8e8ca9d74c17c78719f04",
+			"6c2c8c6b73d0d074656fc649b4a3f4b2",
+			"1e09f7cca76f14a065f56b63e89a4555",
+			"ad18e15d2283df45d8b3791f17729e41",
+			"5129f6b89b10af92fe0826038a1c4206",
+			"5a3abf8d7ff26eb288cb80276b5f4390",
+		},
+	},
 }
 
 func TestSimpleDecoderZeroValueGuards(t *testing.T) {

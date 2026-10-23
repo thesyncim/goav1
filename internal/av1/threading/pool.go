@@ -236,6 +236,9 @@ type FrameWorkBatch struct {
 	// caller-owned storage (normally ReferenceMVs' source) so the batch value
 	// itself never has its address taken.
 	DeferredTemporalReferences *[parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
+	// SegmentMaps, when non-nil, carries the frame's segmentation maps (dav1d
+	// cur_segmap / prev_segmap). It points at caller-owned storage.
+	SegmentMaps *FrameWorkSegmentMaps
 	// CDEFIndexMap receives decoded cdef_idx values while tile residuals run.
 	// It is optional; callers can still pass a per-request map.
 	CDEFIndexMap *FrameWorkCDEFIndexMap
@@ -1626,4 +1629,15 @@ func poolWavefrontLaneLoop(tasks <-chan wavefrontLaneTask) {
 	for task := range tasks {
 		task.wf.runLane(task.lane, task.lanes, task.rowCount)
 	}
+}
+
+// FrameWorkSegmentMaps is a frame's segmentation maps on the frame-absolute
+// 4x4 grid (dav1d cur_segmap / prev_segmap, b4_stride Stride): Current is the
+// map the entropy pass writes when update_map is set (nil otherwise), and
+// Previous is the primary reference's map that unchanged or temporally
+// predicted segment ids read (nil when absent, which reads as all zero).
+type FrameWorkSegmentMaps struct {
+	Current  []uint8
+	Previous []uint8
+	Stride   uint16
 }

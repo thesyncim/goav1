@@ -1448,9 +1448,11 @@ func TestDecodeBlockLoopCopiesPreviousSegmentationWhenMapNotUpdated(t *testing.T
 	if got.SegmentID != 2 || !got.Segment.GlobalMV {
 		t.Fatalf("visit segment id=%d segment=%+v", got.SegmentID, got.Segment)
 	}
+	// Without update_map the frame's map is the previous map itself (dav1d
+	// shares prev_segmap as cur_segmap), so the block loop never writes it.
 	for i, id := range curSeg {
-		if id != 2 {
-			t.Fatalf("curSeg[%d]=%d want 2", i, id)
+		if id != 0 {
+			t.Fatalf("curSeg[%d]=%d want 0 (not written without update_map)", i, id)
 		}
 	}
 }

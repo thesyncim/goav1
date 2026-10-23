@@ -18,7 +18,7 @@ func TestHotStructSizes(t *testing.T) {
 		// persistent lane goroutines instead of spawning them per frame.
 		// DeferredTemporalReferences (8 bytes) hands the tile loops the
 		// references they project per superblock row (dav1d load_tmvs).
-		{name: "FrameWorkBatch", size: unsafe.Sizeof(FrameWorkBatch{}), max: 1632}, // +8: FrameThread (dav1d frame-thread split)
+		{name: "FrameWorkBatch", size: unsafe.Sizeof(FrameWorkBatch{}), max: 1640}, // +8: FrameThread (dav1d frame-thread split); +8: SegmentMaps (dav1d cur/prev_segmap)
 		{name: "FrameWorkFrameContext", size: unsafe.Sizeof(FrameWorkFrameContext{}), max: 1152},
 		{name: "FrameWorkPlaneRegion", size: unsafe.Sizeof(FrameWorkPlaneRegion{}), max: 72},
 		{name: "FrameWorkTileResidualCDFStorage", size: unsafe.Sizeof(FrameWorkTileResidualCDFStorage{}), max: 56 * hotStructKiB},
@@ -29,7 +29,7 @@ func TestHotStructSizes(t *testing.T) {
 		// The tile refmvs state carries dav1d's mfmv setup and rp_proj window.
 		// The three restoration stripe-boundary handles each add a pixel-row
 		// (Bytes) flag, 8 bytes with alignment.
-		{name: "FrameWorkTileResidualScratch", size: unsafe.Sizeof(FrameWorkTileResidualScratch{}), max: 97816}, // +16: two FrameWorkBatch copies gained FrameThread; +16: BlockLoopRequest.MotionProgress; +16: BlockLoopScratch.leftEdge (resident SB-row left context)
+		{name: "FrameWorkTileResidualScratch", size: unsafe.Sizeof(FrameWorkTileResidualScratch{}), max: 97832}, // +16: two FrameWorkBatch copies gained FrameThread; +16: BlockLoopRequest.MotionProgress; +16: BlockLoopScratch.leftEdge (resident SB-row left context); +16: two FrameWorkBatch copies gained SegmentMaps
 		{name: "FrameWorkJobRegion", size: unsafe.Sizeof(FrameWorkJobRegion{}), max: 36},
 		{name: "FrameWorkCDEFIndexMap", size: unsafe.Sizeof(FrameWorkCDEFIndexMap{}), max: 56},
 		{name: "FrameWorkLoopFilterBlockRecord", size: unsafe.Sizeof(FrameWorkLoopFilterBlockRecord{}), max: 34},
@@ -40,7 +40,7 @@ func TestHotStructSizes(t *testing.T) {
 		// typed runner adds no space beyond the former function-plus-range fields.
 		// It also embeds a FrameWorkBatch, hence the wavefront lane channel and
 		// the deferred temporal-reference pointer.
-		{name: "poolTask", size: unsafe.Sizeof(poolTask{}), max: 1744}, // +8: FrameWorkBatch.FrameThread
+		{name: "poolTask", size: unsafe.Sizeof(poolTask{}), max: 1752}, // +8: FrameWorkBatch.FrameThread; +8: FrameWorkBatch.SegmentMaps
 		{name: "frameWorkReconEvent", size: unsafe.Sizeof(frameWorkReconEvent{}), max: 8},
 		{name: "frameWorkReconPaletteBinding", size: unsafe.Sizeof(frameWorkReconPaletteBinding{}), max: 12},
 		{name: "frameWorkReconSB", size: unsafe.Sizeof(frameWorkReconSB{}), max: 12},
