@@ -228,6 +228,9 @@ type pframeCoder struct {
 	// lanes fill disjoint records; the serial decision pass uses the same
 	// layout and the write pass replays rows in raster order either way.
 	splitRowRecs []pframeSplitRecord
+	// keyTrialPristine is the keyframe's frame-start trial context set
+	// (lossyEncodeState.keyTrialPristine).
+	keyTrialPristine tile.CoeffCDFs
 	// wavefront, when non-nil with wavefrontLanes >= 2, runs the decision
 	// pass as an SB-row wavefront (pframe_wavefront.go). Only the single-tile
 	// coder gets one: tile columns already parallelize the multi-tile path.

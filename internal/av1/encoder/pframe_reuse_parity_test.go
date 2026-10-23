@@ -26,10 +26,10 @@ func TestPFrameReuseOptimizationsPreserveEncodedOutput(t *testing.T) {
 		stream  string
 		recon   string
 	}{
-		{1, "6def5d07e6ac5c1533e55c4fa2269e349326f2cc7684f3f0a0c953e7900873eb", "1c0e4f2fa118b4d8ffc7b979c5928a74efa082236d3080f37c9eeaee6db02942"},
-		// One tile at every thread count: the SB-row wavefront reproduces the
-		// serial stream.
-		{4, "6def5d07e6ac5c1533e55c4fa2269e349326f2cc7684f3f0a0c953e7900873eb", "1c0e4f2fa118b4d8ffc7b979c5928a74efa082236d3080f37c9eeaee6db02942"},
+		{1, "bf19874167fc2bf0d412e0ff71204d2883b42c942221e55c174960e6e839fc14", "a21a0732906fdc0d47889be28fbebbb738b9fdbf2d512efcb0170fc15f3d6494"},
+		// One tile at every thread count: the SB-row wavefront (keyframes and
+		// inter frames) reproduces the serial stream.
+		{4, "bf19874167fc2bf0d412e0ff71204d2883b42c942221e55c174960e6e839fc14", "a21a0732906fdc0d47889be28fbebbb738b9fdbf2d512efcb0170fc15f3d6494"},
 	}
 
 	rng := rand.New(rand.NewSource(3))

@@ -83,8 +83,12 @@ The project has not published a release tag yet.
   error-resilient from default contexts.
 - The 8-bit 4:2:0 encoder codes one tile by default, as SVT-AV1
   (tile_columns = tile_rows = 0), keyframes included; the goav1 2/4/32
-  tile-column default is removed. MaxThreads 0 now runs inter frames on the
-  SB-row wavefront with GOMAXPROCS lanes. TileColumns still selects tiles.
+  tile-column default is removed. Keyframes now run the decision/write
+  split with the SB-row wavefront, as inter frames do, pricing decisions
+  against frame-start trial contexts, so the output is identical at every
+  thread count. MaxThreads 0 runs the wavefront with GOMAXPROCS lanes, and
+  the CDEF strength search spreads its filter-block rows over the same
+  lanes. TileColumns still selects tiles.
 
 ### Verification
 

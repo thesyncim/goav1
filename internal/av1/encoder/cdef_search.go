@@ -20,6 +20,8 @@ package encoder
 
 import (
 	"math"
+	"sync"
+	"sync/atomic"
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -358,16 +360,21 @@ type cdefSearcher struct {
 	skipFB []bool
 	fbIdx  []uint8
 
-	in      [cdef.InputBufferSize]uint16
-	tmp     [cdefFB * cdefFB]byte
-	dlist   [cdefFB * cdefFB / 64]cdef.BlockPosition
-	trials  [cdefTotalStrengths]cdef.SearchTrial
-	sse     [cdefTotalStrengths]uint64
-	dir     cdef.DirectionGrid
-	vari    cdef.VarianceGrid
+	// cdefFBScratch is lane 0's (the calling goroutine's) scratch.
+	cdefFBScratch
 	sbMSE   [2][]*[cdefTotalStrengths]uint64
 	sbIndex []int
 	totMSE  [cdefTotalStrengths][cdefTotalStrengths]uint64
+
+	// The frame's search job and its persistent lanes (search).
+	job         cdefSearchJob
+	nextRow     atomic.Int32
+	wantLanes   int
+	lanes       []cdefFBScratch
+	laneWork    chan int
+	laneStarted int
+	laneWG      sync.WaitGroup
+	laneDone    sync.WaitGroup
 }
 
 // svtCDEFDecision is the frame's chosen CDEF parameters and the per-64x64
@@ -463,7 +470,7 @@ func computeCDEFDist8(src []byte, sstride int, filtered []byte, fstride int, dli
 // its CDEF_VBORDER/CDEF_HBORDER halo where those pixels exist in the frame,
 // CDEF_VERY_LARGE elsewhere. Only the rows and columns the filter taps can
 // reach are written.
-func (s *cdefSearcher) loadCDEFInput(plane []byte, stride, planeW, planeH, x0, y0, w, h int) {
+func (s *cdefFBScratch) loadCDEFInput(plane []byte, stride, planeW, planeH, x0, y0, w, h int) {
 	const vb, hb = cdef.VerticalBorder, cdef.HorizontalBorder
 	origin := vb*cdef.BStride + hb
 	// Rows [rTop, rBot) and columns [lo, hi) of each row lie inside the
@@ -492,139 +499,244 @@ func (s *cdefSearcher) loadCDEFInput(plane []byte, stride, planeW, planeH, x0, y
 	}
 }
 
+// cdefFBScratch is one search lane's per-filter-block scratch.
+type cdefFBScratch struct {
+	in     [cdef.InputBufferSize]uint16
+	tmp    [cdefFB * cdefFB]byte
+	dlist  [cdefFB * cdefFB / 64]cdef.BlockPosition
+	trials [cdefTotalStrengths]cdef.SearchTrial
+	sse    [cdefTotalStrengths]uint64
+	dir    cdef.DirectionGrid
+	vari   cdef.VarianceGrid
+}
+
+// cdefSearchJob is the frame's search input, shared read-only by the lanes.
+type cdefSearchJob struct {
+	g                   cdefFrameGeometry
+	m                   *threading.FrameWorkLoopFilterMap
+	subsampling         uint8
+	damping             uint8
+	total               int
+	fsY, fsUV           [cdefTotalStrengths]int8
+	chromaTested        bool
+	planes, srcPlanes   [3][]byte
+	strides, srcStrides [3]int
+	planeW, planeH      [3]int
+}
+
+// setLanes sets how many lanes the per-filter-block search runs on (SVT's
+// cdef_kernel searches picture segments in parallel); fewer than two keeps
+// it on the calling goroutine.
+func (s *cdefSearcher) setLanes(n int) {
+	s.wantLanes = n
+}
+
+// startLanes launches the persistent search lanes once (lane 0 is the
+// caller); they read the frame's job from s.job and claim filter-block rows.
+func (s *cdefSearcher) startLanes(n int) {
+	if len(s.lanes) < n {
+		next := make([]cdefFBScratch, n)
+		s.lanes = next
+	}
+	if s.laneWork == nil {
+		s.laneWork = make(chan int, 64)
+	}
+	work := s.laneWork
+	for s.laneStarted < n-1 {
+		s.laneStarted++
+		s.laneDone.Add(1)
+		go func() {
+			defer s.laneDone.Done()
+			for idx := range work {
+				s.searchClaimedRows(&s.lanes[idx])
+				s.laneWG.Done()
+			}
+		}()
+	}
+}
+
+// close stops the persistent search lanes.
+func (s *cdefSearcher) close() {
+	if s.laneWork == nil {
+		return
+	}
+	close(s.laneWork)
+	s.laneDone.Wait()
+	s.laneWork = nil
+	s.laneStarted = 0
+	s.lanes = nil
+}
+
 // search runs cdef_seg_search over every filter block of the frame and then
 // finish_cdef_search. recon is the pre-CDEF reconstruction (rtc deblocking
-// is off, so it is the cdef_input_recon), src the source picture.
+// is off, so it is the cdef_input_recon), src the source picture. Filter
+// block rows are independent (each writes only its own mse/skip entries), so
+// they spread over the search lanes and the result does not depend on the
+// lane count.
 func (s *cdefSearcher) search(src, recon *SourceFrame420, m *threading.FrameWorkLoopFilterMap, ctrls *svtCDEFSearchCtrls, qIndex uint8, lambda uint64) svtCDEFDecision {
 	g := newCDEFFrameGeometry(recon.Width, recon.Height)
 	s.bind(g)
-	damping := 3 + (qIndex >> 6)
+	j := &s.job
+	j.g, j.m, j.subsampling = g, m, ctrls.subsamplingFactor
+	j.damping = 3 + (qIndex >> 6)
 	first := ctrls.firstPassFSNum
-	total := first + ctrls.defaultSecondPassFSNum
-	var fsY, fsUV [cdefTotalStrengths]int8
-	for gi := 0; gi < total; gi++ {
+	j.total = first + ctrls.defaultSecondPassFSNum
+	j.fsY, j.fsUV = [cdefTotalStrengths]int8{}, [cdefTotalStrengths]int8{}
+	for gi := 0; gi < j.total; gi++ {
 		if gi < first {
-			fsY[gi] = ctrls.defaultFirstPassFS[gi]
-			fsUV[gi] = ctrls.defaultFirstPassFSUV[gi]
+			j.fsY[gi] = ctrls.defaultFirstPassFS[gi]
+			j.fsUV[gi] = ctrls.defaultFirstPassFSUV[gi]
 		} else {
-			fsY[gi] = ctrls.defaultSecondPassFS[gi-first]
-			fsUV[gi] = ctrls.defaultSecondPassFSUV[gi-first]
+			j.fsY[gi] = ctrls.defaultSecondPassFS[gi-first]
+			j.fsUV[gi] = ctrls.defaultSecondPassFSUV[gi-first]
 		}
 	}
 	// A chroma plane whose candidates are all untested (-1) only contributes
 	// default_mse_uv; SVT still copies its input, which nothing reads.
-	chromaTested := false
-	for gi := 0; gi < total; gi++ {
-		chromaTested = chromaTested || fsUV[gi] != -1
+	j.chromaTested = false
+	for gi := 0; gi < j.total; gi++ {
+		j.chromaTested = j.chromaTested || j.fsUV[gi] != -1
 	}
-	planes := [3][]byte{recon.Y, recon.U, recon.V}
-	srcPlanes := [3][]byte{src.Y, src.U, src.V}
-	strides := [3]int{recon.YStride, recon.ChromaStride, recon.ChromaStride}
-	srcStrides := [3]int{src.YStride, src.ChromaStride, src.ChromaStride}
-	planeW := [3]int{recon.Width, (recon.Width + 1) >> 1, (recon.Width + 1) >> 1}
-	planeH := [3]int{recon.Height, (recon.Height + 1) >> 1, (recon.Height + 1) >> 1}
-	for fbr := 0; fbr < g.nvfb; fbr++ {
-		for fbc := 0; fbc < g.nhfb; fbc++ {
-			fb := fbr*g.nhfb + fbc
-			lr, lc := 16*fbr, 16*fbc
-			nhb := min(16, g.miCols-lc)
-			nvb := min(16, g.miRows-lr)
-			count := computeCDEFList(m, g, lr, lc, s.dlist[:])
-			if count == 0 {
-				s.skipFB[fb] = true
+	j.planes = [3][]byte{recon.Y, recon.U, recon.V}
+	j.srcPlanes = [3][]byte{src.Y, src.U, src.V}
+	j.strides = [3]int{recon.YStride, recon.ChromaStride, recon.ChromaStride}
+	j.srcStrides = [3]int{src.YStride, src.ChromaStride, src.ChromaStride}
+	j.planeW = [3]int{recon.Width, (recon.Width + 1) >> 1, (recon.Width + 1) >> 1}
+	j.planeH = [3]int{recon.Height, (recon.Height + 1) >> 1, (recon.Height + 1) >> 1}
+	lanes := min(s.wantLanes, g.nvfb)
+	s.nextRow.Store(0)
+	if lanes >= 2 {
+		s.startLanes(lanes)
+		s.laneWG.Add(lanes - 1)
+		for i := 1; i < lanes; i++ {
+			s.laneWork <- i
+		}
+		s.searchClaimedRows(&s.cdefFBScratch)
+		s.laneWG.Wait()
+	} else {
+		s.searchClaimedRows(&s.cdefFBScratch)
+	}
+	s.job.m = nil
+	s.job.planes, s.job.srcPlanes = [3][]byte{}, [3][]byte{}
+	return s.finish(g, ctrls, qIndex, lambda, j.fsY[:j.total])
+}
+
+// searchClaimedRows searches filter-block rows claimed from s.nextRow until
+// none remain.
+func (s *cdefSearcher) searchClaimedRows(sc *cdefFBScratch) {
+	for {
+		fbr := int(s.nextRow.Add(1)) - 1
+		if fbr >= s.job.g.nvfb {
+			return
+		}
+		s.searchRow(sc, fbr)
+	}
+}
+
+// searchRow is cdef_seg_search over one row of 64x64 filter blocks.
+func (s *cdefSearcher) searchRow(sc *cdefFBScratch, fbr int) {
+	j := &s.job
+	g := j.g
+	total := j.total
+	for fbc := 0; fbc < g.nhfb; fbc++ {
+		fb := fbr*g.nhfb + fbc
+		lr, lc := 16*fbr, 16*fbc
+		nhb := min(16, g.miCols-lc)
+		nvb := min(16, g.miRows-lr)
+		count := computeCDEFList(j.m, g, lr, lc, sc.dlist[:])
+		if count == 0 {
+			s.skipFB[fb] = true
+			continue
+		}
+		s.skipFB[fb] = false
+		dlist := sc.dlist[:count]
+		for pli := 0; pli < 3; pli++ {
+			if pli > 0 && !j.chromaTested {
+				for gi := 0; gi < total; gi++ {
+					s.mse[1][fb][gi] = cdefDefaultMSEUV * 64
+				}
+				break
+			}
+			dec := 0
+			if pli > 0 {
+				dec = 1
+			}
+			x0 := (lc * 4) >> dec
+			y0 := (lr * 4) >> dec
+			w := (nhb * 4) >> dec
+			h := (nvb * 4) >> dec
+			sc.loadCDEFInput(j.planes[pli], j.strides[pli], j.planeW[pli], j.planeH[pli], x0, y0, w, h)
+			ss := int(j.subsampling)
+			if pli == 0 {
+				ss = min(ss, 4) // BLOCK_8X8
+			} else {
+				ss = min(ss, 1) // BLOCK_4X4 (4:2:0)
+			}
+			if ss < 1 {
+				ss = 1
+			}
+			bLog2 := 3 - dec
+			fstride := cdefFB >> dec
+			srcPlane := j.srcPlanes[pli][y0*j.srcStrides[pli]+x0:]
+			reconPlane := j.planes[pli][y0*j.strides[pli]+x0:]
+			if pli == 0 {
+				// svt_cdef_filter_fb's cdef_find_dir on the first luma trial
+				// with a nonzero strength; the grids then serve every luma and
+				// chroma trial of the block.
+				sc.copyFB(reconPlane, j.strides[pli], fstride, w, h, 1)
+				_ = cdef.FilterFrameBlocksU8Trusted(sc.tmp[:], fstride, nil, 0, dlist, &sc.dir, &sc.vari, cdef.FrameFilterParams{
+					XDec: 0, YDec: 0, Plane: cdef.PlaneY, Damping: j.damping,
+				})
+			}
+			if pli == 0 && sc.searchLumaBatched(srcPlane, j.srcStrides[0], dlist, j.fsY[:total], j.damping, ss, &s.mse[0][fb]) {
 				continue
 			}
-			s.skipFB[fb] = false
-			dlist := s.dlist[:count]
-			for pli := 0; pli < 3; pli++ {
-				if pli > 0 && !chromaTested {
-					for gi := 0; gi < total; gi++ {
-						s.mse[1][fb][gi] = cdefDefaultMSEUV * 64
-					}
-					break
-				}
-				dec := 0
-				if pli > 0 {
-					dec = 1
-				}
-				x0 := (lc * 4) >> dec
-				y0 := (lr * 4) >> dec
-				w := (nhb * 4) >> dec
-				h := (nvb * 4) >> dec
-				s.loadCDEFInput(planes[pli], strides[pli], planeW[pli], planeH[pli], x0, y0, w, h)
-				ss := int(ctrls.subsamplingFactor)
-				if pli == 0 {
-					ss = min(ss, 4) // BLOCK_8X8
-				} else {
-					ss = min(ss, 1) // BLOCK_4X4 (4:2:0)
-				}
-				if ss < 1 {
-					ss = 1
-				}
-				bLog2 := 3 - dec
-				fstride := cdefFB >> dec
-				srcPlane := srcPlanes[pli][y0*srcStrides[pli]+x0:]
-				reconPlane := planes[pli][y0*strides[pli]+x0:]
-				if pli == 0 {
-					// svt_cdef_filter_fb's cdef_find_dir on the first
-					// luma trial with a nonzero strength; the grids then
-					// serve every luma and chroma trial of the block.
-					s.copyFB(reconPlane, strides[pli], fstride, w, h, 1)
-					_ = cdef.FilterFrameBlocksU8Trusted(s.tmp[:], fstride, nil, 0, dlist, &s.dir, &s.vari, cdef.FrameFilterParams{
-						XDec: 0, YDec: 0, Plane: cdef.PlaneY, Damping: damping,
-					})
-				}
-				if pli == 0 && s.searchLumaBatched(srcPlane, srcStrides[0], dlist, fsY[:total], damping, ss, fb) {
+			for gi := 0; gi < total; gi++ {
+				if pli > 0 && j.fsUV[gi] == -1 {
+					s.mse[1][fb][gi] = cdefDefaultMSEUV * 64
 					continue
 				}
-				for gi := 0; gi < total; gi++ {
-					if pli > 0 && fsUV[gi] == -1 {
-						s.mse[1][fb][gi] = cdefDefaultMSEUV * 64
-						continue
-					}
-					packed := fsY[gi]
-					if pli > 0 {
-						packed = fsUV[gi]
-					}
-					pri := uint8(packed) / cdefSecStrengths
-					sec := uint8(packed) % cdefSecStrengths
-					if sec == 3 {
-						sec = 4
-					}
-					var curr uint64
-					if pri == 0 && sec == 0 {
-						// The (0,0) trial is the unfiltered reconstruction.
-						curr = cdefDist8(srcPlane, srcStrides[pli], reconPlane, strides[pli], dlist, bLog2, bLog2, ss) * uint64(ss)
-					} else {
-						// svt_cdef_filter_fb with the subsampling factor: only
-						// the measured rows are copied and filtered.
-						s.copyFB(reconPlane, strides[pli], fstride, w, h, ss)
-						_ = cdef.FilterBlocksU8SubsampledTrusted(s.tmp[:], fstride, s.in[:], cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, dlist, &s.dir, &s.vari, cdef.FrameFilterParams{
-							XDec: uint8(dec), YDec: uint8(dec), Plane: cdef.Plane(pli),
-							Level: pri, SecondaryStrength: sec, Damping: damping,
-						}, ss)
-						curr = cdefDist8(srcPlane, srcStrides[pli], s.tmp[:], fstride, dlist, bLog2, bLog2, ss) * uint64(ss)
-					}
-					switch pli {
-					case 0:
-						s.mse[0][fb][gi] = curr
-					case 1:
-						s.mse[1][fb][gi] = curr
-					default:
-						s.mse[1][fb][gi] += curr
-					}
+				packed := j.fsY[gi]
+				if pli > 0 {
+					packed = j.fsUV[gi]
+				}
+				pri := uint8(packed) / cdefSecStrengths
+				sec := uint8(packed) % cdefSecStrengths
+				if sec == 3 {
+					sec = 4
+				}
+				var curr uint64
+				if pri == 0 && sec == 0 {
+					// The (0,0) trial is the unfiltered reconstruction.
+					curr = cdefDist8(srcPlane, j.srcStrides[pli], reconPlane, j.strides[pli], dlist, bLog2, bLog2, ss) * uint64(ss)
+				} else {
+					// svt_cdef_filter_fb with the subsampling factor: only the
+					// measured rows are copied and filtered.
+					sc.copyFB(reconPlane, j.strides[pli], fstride, w, h, ss)
+					_ = cdef.FilterBlocksU8SubsampledTrusted(sc.tmp[:], fstride, sc.in[:], cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, dlist, &sc.dir, &sc.vari, cdef.FrameFilterParams{
+						XDec: uint8(dec), YDec: uint8(dec), Plane: cdef.Plane(pli),
+						Level: pri, SecondaryStrength: sec, Damping: j.damping,
+					}, ss)
+					curr = cdefDist8(srcPlane, j.srcStrides[pli], sc.tmp[:], fstride, dlist, bLog2, bLog2, ss) * uint64(ss)
+				}
+				switch pli {
+				case 0:
+					s.mse[0][fb][gi] = curr
+				case 1:
+					s.mse[1][fb][gi] = curr
+				default:
+					s.mse[1][fb][gi] += curr
 				}
 			}
 		}
 	}
-	return s.finish(g, ctrls, qIndex, lambda, fsY[:total])
 }
 
 // searchLumaBatched evaluates every luma trial of filter block fb in one
 // batched pass (cdef.SearchBlocksU8Trusted): per trial, the same
 // filter-then-measure sum the per-trial loop computes. It returns false when
 // the build has no batched kernel, in which case the caller runs that loop.
-func (s *cdefSearcher) searchLumaBatched(srcPlane []byte, srcStride int, dlist []cdef.BlockPosition, fsY []int8, damping uint8, ss, fb int) bool {
+func (s *cdefFBScratch) searchLumaBatched(srcPlane []byte, srcStride int, dlist []cdef.BlockPosition, fsY []int8, damping uint8, ss int, mse *[cdefTotalStrengths]uint64) bool {
 	total := len(fsY)
 	trials := s.trials[:total]
 	for gi, packed := range fsY {
@@ -639,14 +751,14 @@ func (s *cdefSearcher) searchLumaBatched(srcPlane []byte, srcStride int, dlist [
 		return false
 	}
 	for gi := range fsY {
-		s.mse[0][fb][gi] = s.sse[gi] * uint64(ss)
+		mse[gi] = s.sse[gi] * uint64(ss)
 	}
 	return true
 }
 
 // copyFB copies every step-th row of the w x h filter-block reconstruction
 // into the trial scratch.
-func (s *cdefSearcher) copyFB(recon []byte, stride, fstride, w, h, step int) {
+func (s *cdefFBScratch) copyFB(recon []byte, stride, fstride, w, h, step int) {
 	for r := 0; r < h; r += step {
 		copy(s.tmp[r*fstride:r*fstride+w], recon[r*stride:r*stride+w])
 	}
