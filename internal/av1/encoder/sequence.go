@@ -488,6 +488,12 @@ func validateSequenceHeader(seq SequenceHeader) error {
 	if seq.ReducedStillPictureHeader && (seq.TimingInfoPresent || seq.DecoderModelInfoPresent || seq.InitialDisplayDelayPresent) {
 		return ErrInvalidConfig
 	}
+	// reduced_still_picture_header implies seq_force_screen_content_tools =
+	// SELECT_SCREEN_CONTENT_TOOLS and seq_force_integer_mv = SELECT_INTEGER_MV:
+	// every frame header still codes allow_screen_content_tools.
+	if seq.ReducedStillPictureHeader && (seq.SeqForceScreenContentTools != SequenceSelectScreenContentTools || seq.SeqForceIntegerMV != SequenceSelectIntegerMV) {
+		return ErrInvalidConfig
+	}
 	if !seq.TimingInfoPresent && seq.TimingInfo != (SequenceTimingInfo{}) {
 		return ErrInvalidConfig
 	}

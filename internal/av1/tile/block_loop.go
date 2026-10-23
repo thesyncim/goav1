@@ -1950,19 +1950,9 @@ func (s *DecodeState) readIntrabcMotion(cdfs *MVCDFs, ctx *BlockModeContext, req
 	if err != nil {
 		return InterMotionDecodeResult{}, err
 	}
-	if !intrabcDVTileValid(mv, req, block) {
-		if altPred, ok := intrabcAlternateFallbackMV(req, block, pred); ok {
-			altMV, ok := motionVectorFromInt32(
-				int32(altPred.Row)+int32(residual.Diff.Row),
-				int32(altPred.Col)+int32(residual.Diff.Col),
-			)
-			if ok && intrabcDVTileValid(altMV, req, block) {
-				mv = altMV
-			}
-		}
-	}
-	if !motionVectorValid(mv) {
-		return InterMotionDecodeResult{}, ErrInvalidDecodeState
+	mv, err = intrabcClipDV(mv, req, block)
+	if err != nil {
+		return InterMotionDecodeResult{}, err
 	}
 	return InterMotionDecodeResult{
 		Motion: InterMotionResult{
@@ -1974,6 +1964,11 @@ func (s *DecodeState) readIntrabcMotion(cdfs *MVCDFs, ctx *BlockModeContext, req
 	}, nil
 }
 
+// intrabcPredictedMV ports dav1d's intrabc reference DV (decode.c decode_b):
+// the nearest stack candidate when non-zero, else the near one, else the
+// default one superblock up (or left, past the intrabc delay, in the first
+// superblock row of the tile). Candidates are not validated here; the decoded
+// DV is clipped afterwards (intrabcClipDV).
 func intrabcPredictedMV(ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit) (motion.Vector, error) {
 	if ctx == nil {
 		return motion.Vector{}, ErrInvalidDecodeState
@@ -1989,8 +1984,8 @@ func intrabcPredictedMV(ctx *BlockModeContext, req BlockLoopRequest, block Block
 	if err != nil {
 		return motion.Vector{}, err
 	}
-	for i := 0; i < MaxMVRefCandidates && i < int(stack.Count); i++ {
-		if mv := stack.Candidates[i].This; mv != (motion.Vector{}) && intrabcDVValid(mv, req, block) {
+	for i := 0; i < 2 && i < int(stack.Count); i++ {
+		if mv := stack.Candidates[i].This; mv != (motion.Vector{}) {
 			return mv, nil
 		}
 	}
@@ -2113,119 +2108,6 @@ func referenceMVStackRequestRegion(req BlockLoopRequest, block BlockVisit) Refer
 		FrameMIRows:    req.FrameMIRows,
 		FrameMICols:    req.FrameMICols,
 	}
-}
-
-func intrabcAlternateFallbackMV(req BlockLoopRequest, block BlockVisit, pred motion.Vector) (motion.Vector, bool) {
-	fallback, err := intrabcFallbackMV(req, block)
-	if err != nil || pred != fallback {
-		return motion.Vector{}, false
-	}
-	sbSize4 := int64(req.SBSizeMIB)
-	horizontal, ok := motionVectorFromInt32(0, -int32((sbSize4*4+intrabcDelayPixels)*8))
-	if !ok {
-		return motion.Vector{}, false
-	}
-	vertical, ok := motionVectorFromInt32(-int32(sbSize4*4*8), 0)
-	if !ok {
-		return motion.Vector{}, false
-	}
-	if pred == horizontal {
-		return vertical, true
-	}
-	return horizontal, true
-}
-
-func intrabcDVTileValid(dv motion.Vector, req BlockLoopRequest, block BlockVisit) bool {
-	if dv.Row&7 != 0 || dv.Col&7 != 0 {
-		return false
-	}
-	dims, ok := block.Size.Dimensions()
-	if !ok {
-		return false
-	}
-	blockW := int64(dims.W4) * 4
-	blockH := int64(dims.H4) * 4
-	srcTop := int64(block.MIRow)*4*8 + int64(dv.Row)
-	srcLeft := int64(block.MICol)*4*8 + int64(dv.Col)
-	tileTop := int64(req.Walk.MIRowStart) * 4 * 8
-	tileLeft := int64(req.Walk.MIColStart) * 4 * 8
-	if srcTop < tileTop || srcLeft < tileLeft {
-		return false
-	}
-	srcBottom := (int64(block.MIRow)*4+blockH)*8 + int64(dv.Row)
-	srcRight := (int64(block.MICol)*4+blockW)*8 + int64(dv.Col)
-	tileBottom := int64(req.Walk.MIRowEnd) * 4 * 8
-	tileRight := int64(req.Walk.MIColEnd) * 4 * 8
-	if srcBottom > tileBottom || srcRight > tileRight {
-		return false
-	}
-	if !req.Monochrome {
-		if blockW < 8 && req.Color.SubsamplingX && srcLeft < tileLeft+4*8 {
-			return false
-		}
-		if blockH < 8 && req.Color.SubsamplingY && srcTop < tileTop+4*8 {
-			return false
-		}
-	}
-	return true
-}
-
-func intrabcDVValid(dv motion.Vector, req BlockLoopRequest, block BlockVisit) bool {
-	if dv.Row&7 != 0 || dv.Col&7 != 0 || req.SBSizeMIB == 0 {
-		return false
-	}
-	dims, ok := block.Size.Dimensions()
-	if !ok {
-		return false
-	}
-	blockW := int64(dims.W4) * 4
-	blockH := int64(dims.H4) * 4
-	srcTop := int64(block.MIRow)*4*8 + int64(dv.Row)
-	srcLeft := int64(block.MICol)*4*8 + int64(dv.Col)
-	tileTop := int64(req.Walk.MIRowStart) * 4 * 8
-	tileLeft := int64(req.Walk.MIColStart) * 4 * 8
-	if srcTop < tileTop || srcLeft < tileLeft {
-		return false
-	}
-	srcBottom := (int64(block.MIRow)*4+blockH)*8 + int64(dv.Row)
-	srcRight := (int64(block.MICol)*4+blockW)*8 + int64(dv.Col)
-	tileBottom := int64(req.Walk.MIRowEnd) * 4 * 8
-	tileRight := int64(req.Walk.MIColEnd) * 4 * 8
-	if srcBottom > tileBottom || srcRight > tileRight {
-		return false
-	}
-	if !req.Monochrome {
-		if blockW < 8 && req.Color.SubsamplingX && srcLeft < tileLeft+4*8 {
-			return false
-		}
-		if blockH < 8 && req.Color.SubsamplingY && srcTop < tileTop+4*8 {
-			return false
-		}
-	}
-
-	mibSizeLog2 := 4
-	if req.SBSizeMIB > 16 {
-		mibSizeLog2 = 5
-	}
-	maxMIBSize := int64(1 << mibSizeLog2)
-	sbSize := maxMIBSize * 4
-	activeSBRow := int64(block.MIRow) >> mibSizeLog2
-	activeSB64Col := (int64(block.MICol) * 4) >> 6
-	srcSBRow := ((srcBottom >> 3) - 1) / sbSize
-	srcSB64Col := ((srcRight >> 3) - 1) >> 6
-	totalSB64PerRow := ((int64(req.Walk.MIColEnd) - int64(req.Walk.MIColStart) - 1) >> 4) + 1
-	activeSB64 := activeSBRow*totalSB64PerRow + activeSB64Col
-	srcSB64 := srcSBRow*totalSB64PerRow + srcSB64Col
-	if srcSB64 >= activeSB64-intrabcDelaySB64 {
-		return false
-	}
-	gradient := int64(1 + intrabcDelaySB64)
-	if sbSize > 64 {
-		gradient++
-	}
-	wfOffset := gradient * (activeSBRow - srcSBRow)
-	return srcSBRow <= activeSBRow &&
-		srcSB64Col < activeSB64Col-intrabcDelaySB64+wfOffset
 }
 
 func globalMotionVector(params *parser.WarpedMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool, block BlockVisit) (motion.Vector, bool) {
@@ -2427,4 +2309,75 @@ func decodeBlockLoopVisitCoefficients[T BlockLoopCoeffController](s *DecodeState
 	visit.Coefficients = coefficients
 	visit.CoefficientsValid = true
 	return nil
+}
+
+// intrabcClipDV ports dav1d's intrabc DV clip (decode.c decode_b): the source
+// block is moved inside the decoded part of the tile, out of the current
+// superblock and above the bottom of the current superblock row. A DV that
+// still overlaps the current superblock is a decode error.
+func intrabcClipDV(mv motion.Vector, req BlockLoopRequest, block BlockVisit) (motion.Vector, error) {
+	dims, ok := block.Size.Dimensions()
+	if !ok || req.SBSizeMIB == 0 {
+		return motion.Vector{}, ErrInvalidDecodeState
+	}
+	bw4, bh4 := int(dims.W4), int(dims.H4)
+	bx, by := int(block.MICol), int(block.MIRow)
+	borderLeft := int(req.Walk.MIColStart) * 4
+	borderTop := int(req.Walk.MIRowStart) * 4
+	if !req.Monochrome && HasChromaBlockAt(block.Size, int(block.X4), int(block.Y4), req.Color) {
+		if bw4 < 2 && req.Color.SubsamplingX {
+			borderLeft += 4
+		}
+		if bh4 < 2 && req.Color.SubsamplingY {
+			borderTop += 4
+		}
+	}
+	srcLeft := bx*4 + int(mv.Col)>>3
+	srcTop := by*4 + int(mv.Row)>>3
+	srcRight := srcLeft + bw4*4
+	srcBottom := srcTop + bh4*4
+	borderRight := ((int(req.Walk.MIColEnd) + (bw4 - 1)) &^ (bw4 - 1)) * 4
+
+	if srcLeft < borderLeft {
+		srcRight += borderLeft - srcLeft
+		srcLeft = borderLeft
+	} else if srcRight > borderRight {
+		srcLeft -= srcRight - borderRight
+		srcRight = borderRight
+	}
+	if srcTop < borderTop {
+		srcBottom += borderTop - srcTop
+		srcTop = borderTop
+	}
+
+	sbLog2 := 4
+	if req.SBSizeMIB > 16 {
+		sbLog2 = 5
+	}
+	sbx := (bx >> sbLog2) << (sbLog2 + 2)
+	sby := (by >> sbLog2) << (sbLog2 + 2)
+	sbSize := 1 << (sbLog2 + 2)
+	if srcBottom > sby && srcRight > sbx {
+		if srcTop-borderTop >= srcBottom-sby {
+			// Move the source up into the previous superblock row.
+			srcTop -= srcBottom - sby
+			srcBottom = sby
+		} else if srcLeft-borderLeft >= srcRight-sbx {
+			// Move the source left into the previous superblock.
+			srcLeft -= srcRight - sbx
+			srcRight = sbx
+		}
+	}
+	if srcBottom > sby+sbSize {
+		srcTop -= srcBottom - (sby + sbSize)
+		srcBottom = sby + sbSize
+	}
+	if srcBottom > sby && srcRight > sbx {
+		return motion.Vector{}, ErrInvalidDecodeState
+	}
+	out, ok := motionVectorFromInt32(int32((srcTop-by*4)*8), int32((srcLeft-bx*4)*8))
+	if !ok {
+		return motion.Vector{}, ErrInvalidDecodeState
+	}
+	return out, nil
 }

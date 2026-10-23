@@ -107,7 +107,7 @@ func TestAppendFrameHeaderPrefixPayloadReducedStillPicture(t *testing.T) {
 		t.Fatalf("prefix bytes=% x len=%d want 1", out, len(out))
 	}
 	if parsed.ShowExistingFrame || parsed.FrameType != parser.FrameTypeKey || !parsed.ShowFrame ||
-		!parsed.ErrorResilientMode || parsed.DisableCDFUpdate || parsed.BitsRead != 1 {
+		!parsed.ErrorResilientMode || parsed.DisableCDFUpdate || parsed.BitsRead != 2 {
 		t.Fatalf("parsed prefix=%+v", parsed)
 	}
 }
@@ -235,8 +235,8 @@ func reducedStillEncoderSequenceHeader() SequenceHeader {
 	seq.EnableOrderHint = false
 	seq.EnableJNTComp = false
 	seq.EnableRefFrameMVS = false
-	seq.SeqForceScreenContentTools = 0
-	seq.SeqForceIntegerMV = 0
+	seq.SeqForceScreenContentTools = SequenceSelectScreenContentTools
+	seq.SeqForceIntegerMV = SequenceSelectIntegerMV
 	seq.OrderHintBits = 0
 	seq.EnableSuperRes = false
 	seq.EnableRestoration = false
