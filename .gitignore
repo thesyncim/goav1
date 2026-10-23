@@ -18,3 +18,4 @@ internal/av1/testdata/argon/
 
 # generated benchmark corpus (not committed)
 testdata/benchcorpus/
+testdata/realcorpus/
