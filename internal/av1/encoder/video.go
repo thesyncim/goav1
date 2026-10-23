@@ -791,10 +791,17 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 	e.lpd1KeyRefs(src.Width, src.Height)
 	e.haveKey = true
 	e.frameIndex = 1
-	// The first inter frame after a keyframe starts from default contexts
-	// (primary_ref NONE); chaining arms from its own state.
-	e.haveCtx = false
-	e.haveCtxT1 = false
+	// A shown keyframe refreshes every slot with its context-update tile's
+	// frame-end CDFs (refresh_frame_context; tile zero runs on e.pc), so
+	// the following inter frames chain from them through primary_ref_frame
+	// LAST, as SVT-AV1's do, instead of restarting from defaults.
+	e.haveCtx, e.haveCtxT1 = false, false
+	if videoColorIs420(e.parserColorConfig()) {
+		if err := e.saveKeyframeCDFs(keyQ); err != nil {
+			return nil, err
+		}
+		e.haveCtx, e.haveCtxT1 = true, true
+	}
 	e.lastTemporalID = 0
 	// A shown keyframe refreshes every reference slot, so slot 1 (the GOLDEN
 	// name) now holds the keyframe; seed the search copy.
@@ -1819,4 +1826,25 @@ func (e *VideoEncoder) Recon() SourceFrame420 {
 	}
 	r.Width, r.Height = e.renderWidth, e.renderHeight
 	return r
+}
+
+// saveKeyframeCDFs is the context a keyframe leaves in every reference slot:
+// the defaults for its base_q_idx (setup_past_independence), with the
+// families the keyframe codes taken from tile zero's frame-end state and the
+// symbol counters reset.
+func (e *VideoEncoder) saveKeyframeCDFs(keyQ uint8) error {
+	if err := e.frameCtx.InitDefault(keyQ); err != nil {
+		return err
+	}
+	pc := &e.pc
+	e.frameCtx.Partition = pc.partCDFs
+	e.frameCtx.Mode = pc.st.modeCDFs
+	e.frameCtx.Intra = pc.st.intraCDFs
+	e.frameCtx.Coeff = pc.st.coeffCDFs
+	e.frameCtx.TransformType = pc.st.txCDFs
+	if err := e.frameCtx.ResetCDFCounts(); err != nil {
+		return err
+	}
+	e.frameCtxT1 = e.frameCtx
+	return nil
 }

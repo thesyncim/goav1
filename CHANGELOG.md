@@ -72,6 +72,9 @@ The project has not published a release tag yet.
   as SVT-AV1 and libaom emit, instead of an OBU_FRAME_HEADER plus an
   OBU_TILE_GROUP: about 3.5 bytes less per frame, with the same
   reconstruction.
+- Inter frames after a keyframe chain from the keyframe's CDFs
+  (primary_ref_frame LAST), as SVT-AV1's do, instead of restarting
+  error-resilient from default contexts.
 
 ### Verification
 
