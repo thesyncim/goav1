@@ -554,6 +554,9 @@ func lossyMonochromeKeyframeHeaderForSequence(seq SequenceHeader, width, height 
 // lossyEncodeState carries the per-tile coding state of the non-lossless
 // keyframe encoder.
 type lossyEncodeState struct {
+	// zmvCtrl is the picture's zero-mv static-superblock exit controls
+	// (zeromv_skip.go).
+	zmvCtrl   zmvCtrl
 	w         *entropy.Writer
 	modeCDFs  tile.BlockModeCDFs
 	intraCDFs tile.IntraModeCDFs

@@ -1561,6 +1561,12 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	for t := range e.tilePCs {
 		e.tilePCs[t].st.lpd1Pending = lpd1Setup
 	}
+	// Zero-mv static-superblock exit (zeromv_skip.go): libaom arms it once
+	// rc.frames_since_key > 30.
+	zmv := zmvScreenControls
+	zmv.on = e.svtScreen() && videoColorIs420(color) && e.frameIndex > 30
+	e.setZMVControls(zmv)
+	defer e.setZMVControls(zmvCtrl{})
 	// Cyclic refresh (cyclic_refresh.go): CBR inter frames of the flat
 	// structure or the base layer lower the qindex of a sliding superblock
 	// window and signal it with delta_q (svt_aom_cyclic_refresh_init:

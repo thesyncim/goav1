@@ -25,6 +25,16 @@ import "sync"
 type hmeState struct {
 	svt svtPyramid
 
+	// srcSAD is each 64x64 superblock's source SAD class against the
+	// reference source (classifySourceSAD), srcSADCols its row stride.
+	srcSAD     []uint8
+	srcSADCols int
+	srcSADOK   bool
+	// zmvForce marks the superblocks zmvDecideSB forced to zero-mv skip;
+	// the partition pass writes it per superblock and the coding pass (on
+	// any wavefront lane) reads it.
+	zmvForce []bool
+
 	// cur is the current source's luma padded by meBorder (SVT's padded
 	// input picture); curOK marks it as built from the frame being
 	// estimated. refY are the reference slots' padded source lumas: a
@@ -220,6 +230,11 @@ func (h *hmeState) prepare(src SourceFrame420, isRef bool, ref int) {
 	h.svt.setDistance(h.dist, h.ctrl.l0Min, h.ctrl.l0Max)
 	h.setCur(src)
 	h.selectRef(min(max(ref, 0), hmeRefSlots-1))
+	if h.ctrl.screen {
+		h.classifySourceSAD(src, zmvScreenControls.increase)
+	} else {
+		h.srcSADOK = false
+	}
 	f := &h.fme
 	f.valid = false
 	if !h.havePrev || h.prev.w != src.Width || h.prev.h != src.Height ||
