@@ -1,6 +1,8 @@
 package tile
 
 import (
+	"unsafe"
+
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/transform"
@@ -56,6 +58,28 @@ type CoeffCDFs struct {
 	EOBFlag256   [CoeffPlaneTypes][maxEOBFlagContexts]entropy.CDF
 	EOBFlag512   [CoeffPlaneTypes][maxEOBFlagContexts]entropy.CDF
 	EOBFlag1024  [CoeffPlaneTypes][maxEOBFlagContexts]entropy.CDF
+}
+
+// coeffCDFCount is the number of CDFs in a CoeffCDFs. The assertion below
+// fails to compile if a field that is not an array of CDFs is ever added.
+const coeffCDFCount = unsafe.Sizeof(CoeffCDFs{}) / unsafe.Sizeof(entropy.CDF{})
+
+var _ [0]struct{} = [unsafe.Sizeof(CoeffCDFs{}) % unsafe.Sizeof(entropy.CDF{})]struct{}{}
+
+// Equal reports whether c and o hold identical CDFs; it is the test c == *o
+// would make, written as one loop over the flattened CDF array. TinyGo
+// expands == on an aggregate into one comparison per element, so comparing a
+// CoeffCDFs inline costs hundreds of kilobytes of wasm in the caller, and
+// that makes wasm-opt run for many minutes and tens of gigabytes.
+func (c *CoeffCDFs) Equal(o *CoeffCDFs) bool {
+	a := unsafe.Slice((*entropy.CDF)(unsafe.Pointer(c)), coeffCDFCount)
+	b := unsafe.Slice((*entropy.CDF)(unsafe.Pointer(o)), coeffCDFCount)
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 type TXBSkipRequest struct {
