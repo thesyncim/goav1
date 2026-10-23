@@ -628,6 +628,12 @@ func initCoeffCDFsForQ(c *CoeffCDFs, q int) error {
 	return nil
 }
 
+// DefaultCoeffCDFs returns the read-only default coefficient CDF set
+// InitDefault copies for baseQIndex. Callers must not modify it.
+func DefaultCoeffCDFs(baseQIndex uint8) *CoeffCDFs {
+	return &defaultCoeffCDFs[CoeffQContext(baseQIndex)]
+}
+
 func (c *CoeffCDFs) InitDefault(baseQIndex uint8) error {
 	if c == nil {
 		return entropy.ErrInvalidCDF

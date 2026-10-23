@@ -93,21 +93,6 @@ func (me *realtimeSBMultiSizeME) update(pu int, sad uint32, mvX, mvY int) {
 	}
 }
 
-// update8 is update over eight positions mvX+0..7 of one PU in scan order:
-// the minimum first, then its first position only when it improves the best
-// (update_best_sad_u32), one predictable branch instead of eight.
-func (me *realtimeSBMultiSizeME) update8(pu int, s *[8]uint32, mvX, mvY int) {
-	m := min(min(min(s[0], s[1]), min(s[2], s[3])), min(min(s[4], s[5]), min(s[6], s[7])))
-	if m < me.bestSAD[pu] {
-		k := 0
-		for s[k] != m {
-			k++
-		}
-		me.bestSAD[pu] = m
-		me.bestMV[pu] = [2]int16{int16(mvX + k), int16(mvY)}
-	}
-}
-
 // sweepSearchPoint1 ports open_loop_me_get_search_point_results_block
 // (motion_estimation.c:456) for a single candidate position; the
 // unequal-stride and odd-tail path.
