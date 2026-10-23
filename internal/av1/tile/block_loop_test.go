@@ -1160,7 +1160,7 @@ func TestIntrabcPredictedMVUsesDiagonalCornerBeforeFallback(t *testing.T) {
 	}
 }
 
-func TestIntrabcDVValidMatchesLibaomTileAndWavefrontGuards(t *testing.T) {
+func TestIntrabcClipDVMatchesDav1d(t *testing.T) {
 	req := BlockLoopRequest{
 		Walk: BlockWalkRequest{
 			MIColEnd: 160,
@@ -1170,16 +1170,26 @@ func TestIntrabcDVValidMatchesLibaomTileAndWavefrontGuards(t *testing.T) {
 		Color:      parser.ColorConfig{SubsamplingX: true, SubsamplingY: true},
 		Monochrome: false,
 	}
-	validBlock := BlockVisit{MICol: 0, MIRow: 32, Size: BlockSize16x16}
-	if !intrabcDVValid(motion.Vector{Row: -512}, req, validBlock) {
-		t.Fatal("full-SB upward intrabc DV should be valid")
+	// A DV one superblock up stays as decoded.
+	block := BlockVisit{MICol: 0, MIRow: 32, Size: BlockSize16x16}
+	if got, err := intrabcClipDV(motion.Vector{Row: -512}, req, block); err != nil || got != (motion.Vector{Row: -512}) {
+		t.Fatalf("up DV=%+v err=%v", got, err)
 	}
-	invalidTop := BlockVisit{MICol: 148, MIRow: 16, Size: BlockSize16x8}
-	if intrabcDVValid(motion.Vector{Row: -520}, req, invalidTop) {
-		t.Fatal("DV with source top above the tile should be invalid")
+	// A source above the tile is pushed down to the tile top (dav1d clips
+	// instead of rejecting), and one left of the tile to its left edge.
+	if got, err := intrabcClipDV(motion.Vector{Row: -520 * 8, Col: -64 * 8}, req, block); err != nil || got != (motion.Vector{Row: -128 * 8}) {
+		t.Fatalf("clipped DV=%+v err=%v", got, err)
 	}
-	if intrabcDVValid(motion.Vector{Row: -511}, req, validBlock) {
-		t.Fatal("sub-pixel intrabc DV should be invalid")
+	// A source overlapping the current superblock moves up into the previous
+	// superblock row.
+	if got, err := intrabcClipDV(motion.Vector{Row: -8 * 8}, req, block); err != nil || got != (motion.Vector{Row: -16 * 8}) {
+		t.Fatalf("overlap DV=%+v err=%v", got, err)
+	}
+	// In the first superblock row with no room left, the DV stays in the
+	// current superblock: a decode error.
+	first := BlockVisit{MICol: 0, MIRow: 0, Size: BlockSize16x16}
+	if _, err := intrabcClipDV(motion.Vector{}, req, first); err == nil {
+		t.Fatal("DV inside the current superblock decoded")
 	}
 }
 

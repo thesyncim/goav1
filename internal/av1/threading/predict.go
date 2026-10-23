@@ -1315,33 +1315,85 @@ func (b *FrameWorkBatch) predictBlockIntrabcPlane(index int, visit tile.BlockLoo
 	if mv.Row%8 != 0 || mv.Col%8 != 0 {
 		return ErrInvalidBatch
 	}
-	rowOffset := int(mv.Row / 8)
-	colOffset := int(mv.Col / 8)
-	if geom.SubsamplingY {
-		rowOffset >>= 1
-	}
+	// dav1d recon_b_inter intrabc: mc() from the current frame with the
+	// bilinear filter. The DV is full-pel in luma, so a subsampled chroma
+	// axis can land on a half sample (mx/my = 8 in 1/16 units). Reads clamp
+	// to the MI-aligned frame extent, as dav1d's emu_edge does for intrabc.
+	ssX, ssY := 0, 0
 	if geom.SubsamplingX {
-		colOffset >>= 1
+		ssX = 1
 	}
-	srcX := geom.X + colOffset
-	srcY := geom.Y + rowOffset
-	if srcX < 0 || srcY < 0 || srcX+geom.width() > geom.Output.Width || srcY+geom.height() > geom.Output.Height {
+	if geom.SubsamplingY {
+		ssY = 1
+	}
+	col, row := int(mv.Col), int(mv.Row)
+	srcX := geom.X + col>>(3+ssX)
+	srcY := geom.Y + row>>(3+ssY)
+	mx := col & (15 >> (1 - ssX))
+	my := row & (15 >> (1 - ssY))
+	limW := int(((b.FrameSize.CodedWidth+7)>>3)<<3) >> ssX
+	limH := int(((b.FrameSize.Height+7)>>3)<<3) >> ssY
+	if limW <= 0 || limH <= 0 {
 		return ErrInvalidBatch
 	}
-	rowBytes, ok := frameWorkCheckedMul(geom.width(), geom.bytesPerSample())
-	if !ok {
+	out := geom.Output
+	bps := geom.bytesPerSample()
+	if limW > out.Stride/bps || (limH-1)*out.Stride+limW*bps > len(out.Pix) {
 		return ErrInvalidBatch
 	}
-	for row := 0; row < geom.height(); row++ {
-		srcOff, ok := frameWorkPlaneSampleOffset(geom.Output, geom.bytesPerSample(), srcX, srcY+row)
-		if !ok {
-			return ErrInvalidBatch
+	if srcX < 0 || srcY < 0 || srcX+geom.width() > limW || srcY+geom.height() > limH {
+		return ErrInvalidBatch
+	}
+	if mx == 0 && my == 0 {
+		rowBytes := geom.width() * bps
+		for r := 0; r < geom.height(); r++ {
+			src := (srcY+r)*out.Stride + srcX*bps
+			dst := (geom.Y+r)*out.Stride + geom.X*bps
+			copy(out.Pix[dst:dst+rowBytes], out.Pix[src:src+rowBytes])
 		}
-		dstOff, ok := frameWorkPlaneSampleOffset(geom.Output, geom.bytesPerSample(), geom.X, geom.Y+row)
-		if !ok {
-			return ErrInvalidBatch
+		return nil
+	}
+	intermediate := 4
+	if bps == 2 && b.Sequence.ColorConfig.BitDepth > 8 {
+		intermediate = 14 - int(b.Sequence.ColorConfig.BitDepth)
+	}
+	sample := func(x, y int) int {
+		x = min(max(x, 0), limW-1)
+		y = min(max(y, 0), limH-1)
+		off := y*out.Stride + x*bps
+		if bps == 2 {
+			return int(out.Pix[off]) | int(out.Pix[off+1])<<8
 		}
-		copy(geom.Output.Pix[dstOff:dstOff+rowBytes], geom.Output.Pix[srcOff:srcOff+rowBytes])
+		return int(out.Pix[off])
+	}
+	// The source rows are read before any destination row is written: the
+	// DV keeps the source in already decoded area, never this block.
+	for r := 0; r < geom.height(); r++ {
+		for c := 0; c < geom.width(); c++ {
+			x, y := srcX+c, srcY+r
+			var v int
+			switch {
+			case mx != 0 && my != 0:
+				// put_bilin_c: horizontal pass into the intermediate, then
+				// vertical with the combined rounding.
+				h0 := (16*sample(x, y) + mx*(sample(x+1, y)-sample(x, y)) + ((1 << (4 - intermediate)) >> 1)) >> (4 - intermediate)
+				h1 := (16*sample(x, y+1) + mx*(sample(x+1, y+1)-sample(x, y+1)) + ((1 << (4 - intermediate)) >> 1)) >> (4 - intermediate)
+				v = (16*h0 + my*(h1-h0) + ((1 << (4 + intermediate)) >> 1)) >> (4 + intermediate)
+			case mx != 0:
+				px := (16*sample(x, y) + mx*(sample(x+1, y)-sample(x, y)) + ((1 << (4 - intermediate)) >> 1)) >> (4 - intermediate)
+				v = (px + ((1 << intermediate) >> 1)) >> intermediate
+			default:
+				v = (16*sample(x, y) + my*(sample(x, y+1)-sample(x, y)) + 8) >> 4
+			}
+			v = min(max(v, 0), 1<<b.Sequence.ColorConfig.BitDepth-1)
+			off := (geom.Y+r)*out.Stride + (geom.X+c)*bps
+			if bps == 2 {
+				out.Pix[off] = byte(v)
+				out.Pix[off+1] = byte(v >> 8)
+			} else {
+				out.Pix[off] = byte(v)
+			}
+		}
 	}
 	return nil
 }

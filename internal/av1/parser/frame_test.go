@@ -98,6 +98,7 @@ func TestParseFrameHeaderPrefixReducedStillPicture(t *testing.T) {
 
 	var w testBitWriter
 	w.writeBool(false) // disable_cdf_update
+	w.writeBool(false) // allow_screen_content_tools (SELECT_SCREEN_CONTENT_TOOLS)
 
 	hdr, err := ParseFrameHeaderPrefix(w.bytes(), seq)
 	if err != nil {
@@ -109,8 +110,8 @@ func TestParseFrameHeaderPrefixReducedStillPicture(t *testing.T) {
 	if !hdr.ErrorResilientMode || hdr.DisableCDFUpdate {
 		t.Fatalf("flags=%+v", hdr)
 	}
-	if hdr.BitsRead != 1 {
-		t.Fatalf("BitsRead=%d want 1", hdr.BitsRead)
+	if hdr.BitsRead != 2 {
+		t.Fatalf("BitsRead=%d want 2", hdr.BitsRead)
 	}
 }
 

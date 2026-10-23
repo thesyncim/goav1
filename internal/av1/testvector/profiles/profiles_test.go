@@ -1489,6 +1489,36 @@ var profileClips = []profileClip{
 		wantSubsamplingY: true,
 		superRes:         true,
 	},
+	// aomenc 3.15 good mode (the default): still picture (reduced_still_picture_header) keyframe; the frame header still reads allow_screen_content_tools.
+	// Synthetic source:
+	//	ffmpeg -f lavfi -i testsrc2=size=320x180:rate=30 -frames:v 4 -pix_fmt yuv420p s.y4m
+	//	aomenc --limit=1 --ivf -o profile0-420-8bit-aom-good-still-320x180.ivf s.y4m
+	{
+		name: "profile0-420-8bit-aom-good-still-320x180",
+		file: "profile0-420-8bit-aom-good-still-320x180.ivf",
+		frameMD5Hex: []string{
+			"72cb2369bf2c238f42c9b96db4b5af81",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
+	// aomenc 3.15 good mode (the default): keyframe intra block copy with half-sample chroma DVs, then inter frames.
+	// Synthetic source:
+	//	ffmpeg -f lavfi -i testsrc2=size=320x180:rate=30 -frames:v 4 -pix_fmt yuv420p s.y4m
+	//	aomenc --limit=3 --ivf -o profile0-420-8bit-aom-good-intrabc-320x180.ivf s.y4m
+	{
+		name: "profile0-420-8bit-aom-good-intrabc-320x180",
+		file: "profile0-420-8bit-aom-good-intrabc-320x180.ivf",
+		frameMD5Hex: []string{
+			"81b4f6443de8c2422ff3bdc35e9dfa6c",
+			"a0f70c927e9482e34205d7513d1531bd",
+			"91b2001bd8dec554eeb14b0ec71f4662",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
 }
 
 // TestProfileVendoredClips decodes each vendored profile-conformance clip

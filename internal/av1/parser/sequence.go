@@ -446,6 +446,12 @@ func parseSequenceTools(r *bitstream.Reader, sh *SequenceHeader) error {
 			}
 			sh.OrderHintBits = uint8(v + 1)
 		}
+	} else {
+		// reduced_still_picture_header: the frame header still selects screen
+		// content tools (seq_force_screen_content_tools =
+		// SELECT_SCREEN_CONTENT_TOOLS, seq_force_integer_mv = SELECT_INTEGER_MV).
+		sh.SeqForceScreenContentTools = SelectScreenContentTools
+		sh.SeqForceIntegerMV = SelectIntegerMV
 	}
 
 	if sh.EnableSuperRes, err = r.ReadBool(); err != nil {
