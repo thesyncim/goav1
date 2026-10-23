@@ -352,6 +352,17 @@ var profileClips = []struct {
 		},
 	},
 	{
+		file: "multitile-2x2-tilegroups-256x256.ivf",
+		frameMD5Hex: []string{
+			"6b31744817a07c77e9edb285fcdf8e61",
+			"d59edabf5d6cd4e371ec538712669bfb",
+			"1ff9f17633ef5f3555d4468c7f46b739",
+			"f6f3d99681aa6a66a93e81c88a59e097",
+			"3f6e294e1a5b74d46949628bf3d1869c",
+			"f475dabbc3af165188455b2be6a0f2dd",
+		},
+	},
+	{
 		file: "multitile-2x2-rows-framethread-256x256.ivf",
 		frameMD5Hex: []string{
 			"510ce2cce741b80043d7af3a38aec3e0",

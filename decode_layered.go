@@ -726,7 +726,7 @@ func (d *LayeredDecoder) framePoolForEvent(sequence SequenceHeader, event *Decod
 }
 
 func (d *LayeredDecoder) sideDataForEvent(sequence SequenceHeader, event *DecoderEvent) (*DecoderFrameWorkSideData, error) {
-	if !decoderFrameWorkResidualEventNeedsSideData(event) {
+	if !decoderFrameWorkResidualEventNeedsSideData(event) || decoderEventContinuesFrame(event) {
 		return nil, nil
 	}
 	side, err := BindDecoderFrameWorkResidualEventSideData(sequence, event, d.scratch.SideData)

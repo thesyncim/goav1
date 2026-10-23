@@ -1245,6 +1245,26 @@ var profileClips = []profileClip{
 		wantSubsamplingX: true,
 		wantSubsamplingY: true,
 	},
+	// aomenc 3.15 good mode, 2x2 tiles split over two tile-group OBUs: a later tile
+	// group must keep the frame's side data and saved MVs bound by the first.
+	// Source: a 256x256 crop of crowdrun (ffmpeg -vf crop=256:256:800:500);
+	// aomenc --limit=6 --good --cpu-used=6 --tile-columns=1 --tile-rows=1
+	// --num-tile-groups=2 --lag-in-frames=0.
+	{
+		name: "multitile-2x2-tilegroups-256x256",
+		file: "multitile-2x2-tilegroups-256x256.ivf",
+		frameMD5Hex: []string{
+			"6b31744817a07c77e9edb285fcdf8e61",
+			"d59edabf5d6cd4e371ec538712669bfb",
+			"1ff9f17633ef5f3555d4468c7f46b739",
+			"f6f3d99681aa6a66a93e81c88a59e097",
+			"3f6e294e1a5b74d46949628bf3d1869c",
+			"f475dabbc3af165188455b2be6a0f2dd",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
 	// aomenc 3.15 good mode, 2x2 tiles (two tile rows) in one tile group, cyclic-refresh
 	// segmentation and reference-frame MVs: the multi-tile frame-threaded path,
 	// whose MV_REF progress aggregates across tile rows and columns. Source: a
@@ -1659,6 +1679,7 @@ func runProfileClip(t *testing.T, clip profileClip) {
 		if err != nil {
 			t.Fatalf("ivf frame %d PushLowOverhead: %v", ivfFrame.Index, err)
 		}
+		currentMVSurface := -1
 		for i := 0; i < count; i++ {
 			event := events[i]
 			if !eventRunsFrameWork(event) {
@@ -1713,7 +1734,11 @@ func runProfileClip(t *testing.T, clip profileClip) {
 
 			var postMD5 testvector.MD5
 			havePost := false
-			currentMVSurface := -1
+			// A frame's tile groups share its saved-MV frame: only the first
+			// tile group binds (and clears) it.
+			if event.Kind != decoder.EventTileGroup || event.TileGroup.StartTile == 0 {
+				currentMVSurface = -1
+			}
 			tileRunner := batchRunner(func(ctx decoder.FrameWorkBatch) error {
 				surface, err := ctx.Surface()
 				if err != nil {

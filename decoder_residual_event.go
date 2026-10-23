@@ -591,7 +591,7 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 		}
 
 		sidePtr := (*DecoderFrameWorkSideData)(nil)
-		if decoderFrameWorkResidualEventNeedsSideData(&events[i]) {
+		if decoderFrameWorkResidualEventNeedsSideData(&events[i]) && !decoderEventContinuesFrame(&events[i]) {
 			if r.SideData == nil {
 				return result, ErrDecoderInvalidFrameWorkState
 			}
@@ -1502,4 +1502,14 @@ func decoderFrameWorkShowExistingFilmGrain(event *DecoderEvent, step DecoderFram
 		return grained, nil
 	}
 	return output, nil
+}
+
+// decoderEventContinuesFrame reports whether event is a later tile group of a
+// frame whose earlier tile groups already ran: its blocks add to the frame's
+// CDEF index map, loop-filter masks and restoration records, so they must not
+// be rebound (which resets them). dav1d likewise keeps one frame context across
+// every tile group of a frame (src/decode.c dav1d_submit_frame runs once all
+// tile data arrived).
+func decoderEventContinuesFrame(event *DecoderEvent) bool {
+	return event != nil && event.Kind == DecoderEventTileGroup && event.TileGroup.StartTile != 0
 }
