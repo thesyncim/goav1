@@ -2016,10 +2016,10 @@ func predictCompoundInto(dst []byte, ref0Plane []byte, stride0 int, ref1Plane []
 	}
 	ref0 := frame.Plane{Pix: ref0Plane, Stride: stride0, Width: width, Height: height}
 	ref1 := frame.Plane{Pix: ref1Plane, Stride: stride1, Width: width, Height: height}
-	if err := motion.PredictInterCompoundRefToConvBufWithScratch(buf0, ref0, 1, 8, ref0X, ref0Y, bw, bh, sub0X, sub0Y, motion.InterpFilters{}, scratch); err != nil {
+	if err := motion.PredictInterCompoundRefToConvBuf(buf0, ref0, 1, 8, ref0X, ref0Y, bw, bh, bw, bh, sub0X, sub0Y, motion.InterpFilters{}, scratch); err != nil {
 		return err
 	}
-	if err := motion.PredictInterCompoundRefToConvBufWithScratch(buf1, ref1, 1, 8, ref1X, ref1Y, bw, bh, sub1X, sub1Y, motion.InterpFilters{}, scratch); err != nil {
+	if err := motion.PredictInterCompoundRefToConvBuf(buf1, ref1, 1, 8, ref1X, ref1Y, bw, bh, bw, bh, sub1X, sub1Y, motion.InterpFilters{}, scratch); err != nil {
 		return err
 	}
 	dstPlane := frame.Plane{Pix: dst, Stride: bw, Width: bw, Height: bh}

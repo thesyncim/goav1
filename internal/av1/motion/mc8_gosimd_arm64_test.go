@@ -187,7 +187,7 @@ func TestMC8PrepFastMatchesPureGo(t *testing.T) {
 				}
 				got := slices.Clone(want)
 				mc8RefPrep(want, ref, refX, refY, w, h, subX, subY, filters)
-				if !mc8PrepFast(got[:w*h], &ref, refX, refY, w, h, subX, subY, filters, scratch) {
+				if !mc8PrepFast(got[:w*h], &ref, refX, refY, w, h, w, h, subX, subY, filters, scratch) {
 					kx, ky := mc8Kind(filters.X, w), mc8Kind(filters.Y, h)
 					if (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) {
 						t.Fatalf("mc8PrepFast declined w=%d h=%d filters=%v sub=%d,%d", w, h, filters, subX, subY)

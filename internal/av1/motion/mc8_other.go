@@ -15,7 +15,7 @@ func mc8PutFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h
 	return false
 }
 
-func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, subX, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) bool {
+func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) bool {
 	return false
 }
 

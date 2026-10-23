@@ -1341,6 +1341,32 @@ var profileClips = []profileClip{
 		wantSubsamplingX: true,
 		wantSubsamplingY: true,
 	},
+	{
+		// SVT-AV1 4.1.0 random-access B frames with compound blocks straddling
+		// the bottom frame edge, whose visible chroma height is <= 4 while the
+		// plane block is taller. The interpolation kernel (4-tap vs 8-tap) is
+		// chosen from the full plane block (dav1d mc() preps bw4*4 x bh4*4).
+		// Synthetic, redistributable source (ffmpeg mandelbrot):
+		//   ffmpeg -f lavfi -i mandelbrot=size=256x136:rate=30 -frames:v 8 -pix_fmt yuv420p s.yuv
+		//   SvtAv1EncApp -i s.yuv -w 256 -h 136 --fps-num 30 --fps-denom 1 --input-depth 8 \
+		//     --preset 8 --rc 0 --crf 35 --pred-struct 2 --keyint 150 --frames 8 \
+		//     -b svt-compound-edge-filter-256x136.ivf
+		// This harness compares decoded shown frames only, so the dav1d/aomdec
+		// per-frame MD5s of the show_existing_frame outputs (display frames 2, 4
+		// and 6) are omitted here; the public path tables list all eight.
+		name: "svt-compound-edge-filter-256x136",
+		file: "svt-compound-edge-filter-256x136.ivf",
+		frameMD5Hex: []string{
+			"6a58c1d38654cc4cc616aaa8ca341658",
+			"6a58c1d38654cc4cc616aaa8ca341658",
+			"a9abbd1a1ddacec66bdb9af783e0d0fb",
+			"df765e050d58a124e4fb49f83ef17641",
+			"53ac4d1133a4f994c6bc510023e94575",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
 }
 
 // TestProfileVendoredClips decodes each vendored profile-conformance clip

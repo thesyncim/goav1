@@ -116,10 +116,10 @@ func TestCompound8XYClampedEmuEdgeEntryPoint(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var got, want CompoundConvBuf
 			var scratch CompoundConvolveScratch
-			if err := PredictInterCompoundRefToConvBufWithScratch(&got, ref, 1, 8, tc.refX, tc.refY, tc.width, tc.height, tc.subX, tc.subY, tc.filters, &scratch); err != nil {
+			if err := PredictInterCompoundRefToConvBuf(&got, ref, 1, 8, tc.refX, tc.refY, tc.width, tc.height, tc.width, tc.height, tc.subX, tc.subY, tc.filters, &scratch); err != nil {
 				t.Fatalf("with scratch: %v", err)
 			}
-			if err := PredictInterCompoundRefToConvBuf(&want, ref, 1, 8, tc.refX, tc.refY, tc.width, tc.height, tc.subX, tc.subY, tc.filters); err != nil {
+			if err := PredictInterCompoundRefToConvBuf(&want, ref, 1, 8, tc.refX, tc.refY, tc.width, tc.height, tc.width, tc.height, tc.subX, tc.subY, tc.filters, nil); err != nil {
 				t.Fatalf("without scratch: %v", err)
 			}
 			for i := range tc.width * tc.height {
@@ -249,10 +249,10 @@ func TestCompoundHighBDXYClampedEmuEdgeEntryPoint(t *testing.T) {
 			for _, o := range [][2]int{{-3, 4}, {refW - 2, 4}, {4, -5}, {4, refH - 2}} {
 				var got, want CompoundConvBuf
 				var scratch CompoundConvolveScratch
-				if err := PredictInterCompoundRefToConvBufWithScratch(&got, ref, 2, bitDepth, o[0], o[1], 16, 8, sub[0], sub[1], filters, &scratch); err != nil {
+				if err := PredictInterCompoundRefToConvBuf(&got, ref, 2, bitDepth, o[0], o[1], 16, 8, 16, 8, sub[0], sub[1], filters, &scratch); err != nil {
 					t.Fatalf("with scratch: %v", err)
 				}
-				if err := PredictInterCompoundRefToConvBuf(&want, ref, 2, bitDepth, o[0], o[1], 16, 8, sub[0], sub[1], filters); err != nil {
+				if err := PredictInterCompoundRefToConvBuf(&want, ref, 2, bitDepth, o[0], o[1], 16, 8, 16, 8, sub[0], sub[1], filters, nil); err != nil {
 					t.Fatalf("without scratch: %v", err)
 				}
 				for i := range 16 * 8 {

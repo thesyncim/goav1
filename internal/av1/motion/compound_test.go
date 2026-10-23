@@ -367,10 +367,10 @@ func TestPredictInterCompoundRefToConvBufCopyRoundTrip(t *testing.T) {
 			}
 
 			var buf0, buf1 CompoundConvBuf
-			if err := PredictInterCompoundRefToConvBuf(&buf0, ref, tc.bps, tc.bitDepth, 0, 0, w, h, 0, 0, RegularFilters); err != nil {
+			if err := PredictInterCompoundRefToConvBuf(&buf0, ref, tc.bps, tc.bitDepth, 0, 0, w, h, w, h, 0, 0, RegularFilters, nil); err != nil {
 				t.Fatalf("PredictInterCompoundRefToConvBuf buf0: %v", err)
 			}
-			if err := PredictInterCompoundRefToConvBuf(&buf1, ref, tc.bps, tc.bitDepth, 0, 0, w, h, 0, 0, RegularFilters); err != nil {
+			if err := PredictInterCompoundRefToConvBuf(&buf1, ref, tc.bps, tc.bitDepth, 0, 0, w, h, w, h, 0, 0, RegularFilters, nil); err != nil {
 				t.Fatalf("PredictInterCompoundRefToConvBuf buf1: %v", err)
 			}
 
@@ -431,12 +431,12 @@ func TestPredictInterCompoundRefToConvBuf8OptimizedMatchesReference(t *testing.T
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var got, gotScratch CompoundConvBuf
-			if err := PredictInterCompoundRefToConvBuf(&got, ref, 1, 8, tc.refX, tc.refY, tc.width, tc.height, tc.subX, tc.subY, tc.filters); err != nil {
+			if err := PredictInterCompoundRefToConvBuf(&got, ref, 1, 8, tc.refX, tc.refY, tc.width, tc.height, tc.width, tc.height, tc.subX, tc.subY, tc.filters, nil); err != nil {
 				t.Fatalf("PredictInterCompoundRefToConvBuf: %v", err)
 			}
 			var scratch CompoundConvolveScratch
-			if err := PredictInterCompoundRefToConvBufWithScratch(&gotScratch, ref, 1, 8, tc.refX, tc.refY, tc.width, tc.height, tc.subX, tc.subY, tc.filters, &scratch); err != nil {
-				t.Fatalf("PredictInterCompoundRefToConvBufWithScratch: %v", err)
+			if err := PredictInterCompoundRefToConvBuf(&gotScratch, ref, 1, 8, tc.refX, tc.refY, tc.width, tc.height, tc.width, tc.height, tc.subX, tc.subY, tc.filters, &scratch); err != nil {
+				t.Fatalf("PredictInterCompoundRefToConvBuf scratch: %v", err)
 			}
 			want, err := referenceCompoundConvBuf8(ref, tc.refX, tc.refY, tc.width, tc.height, tc.subX, tc.subY, tc.filters)
 			if err != nil {
@@ -493,12 +493,12 @@ func TestPredictInterCompoundRefToConvBufHighBDOptimizedMatchesClamped(t *testin
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
 				var got, gotScratch, want CompoundConvBuf
-				if err := PredictInterCompoundRefToConvBuf(&got, ref, 2, bitDepth, tc.refX, tc.refY, tc.width, tc.height, tc.subX, tc.subY, tc.filters); err != nil {
+				if err := PredictInterCompoundRefToConvBuf(&got, ref, 2, bitDepth, tc.refX, tc.refY, tc.width, tc.height, tc.width, tc.height, tc.subX, tc.subY, tc.filters, nil); err != nil {
 					t.Fatalf("PredictInterCompoundRefToConvBuf: %v", err)
 				}
 				var scratch CompoundConvolveScratch
-				if err := PredictInterCompoundRefToConvBufWithScratch(&gotScratch, ref, 2, bitDepth, tc.refX, tc.refY, tc.width, tc.height, tc.subX, tc.subY, tc.filters, &scratch); err != nil {
-					t.Fatalf("PredictInterCompoundRefToConvBufWithScratch: %v", err)
+				if err := PredictInterCompoundRefToConvBuf(&gotScratch, ref, 2, bitDepth, tc.refX, tc.refY, tc.width, tc.height, tc.width, tc.height, tc.subX, tc.subY, tc.filters, &scratch); err != nil {
+					t.Fatalf("PredictInterCompoundRefToConvBuf scratch: %v", err)
 				}
 				wantOut, ok := compoundConvBufView(&want, tc.width, tc.height)
 				if !ok {
@@ -671,7 +671,7 @@ func TestPredictScaledCompoundRefToConvBufIdentityMatchesUnscaled(t *testing.T) 
 			if err := PredictScaledCompoundRefToConvBuf(&scaled, ref, tc.bps, tc.bitDepth, w, h, startX, xStep, startY, yStep, xTable, yTable); err != nil {
 				t.Fatalf("PredictScaledCompoundRefToConvBuf: %v", err)
 			}
-			if err := PredictInterCompoundRefToConvBuf(&unscaled, ref, tc.bps, tc.bitDepth, 0, 0, w, h, 0, 0, RegularFilters); err != nil {
+			if err := PredictInterCompoundRefToConvBuf(&unscaled, ref, tc.bps, tc.bitDepth, 0, 0, w, h, w, h, 0, 0, RegularFilters, nil); err != nil {
 				t.Fatalf("PredictInterCompoundRefToConvBuf: %v", err)
 			}
 			if scaled.Width != unscaled.Width || scaled.Height != unscaled.Height {
@@ -738,7 +738,7 @@ func TestPredictScaledCompoundRefToConvBufSubpelIdentityMatchesUnscaled(t *testi
 			if err := PredictScaledCompoundRefToConvBuf(&scaled, ref, tc.bps, tc.bitDepth, w, h, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable); err != nil {
 				t.Fatalf("PredictScaledCompoundRefToConvBuf: %v", err)
 			}
-			if err := PredictInterCompoundRefToConvBuf(&unscaled, ref, tc.bps, tc.bitDepth, refX, refY, w, h, tc.subX, tc.subY, InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapSmooth}); err != nil {
+			if err := PredictInterCompoundRefToConvBuf(&unscaled, ref, tc.bps, tc.bitDepth, refX, refY, w, h, w, h, tc.subX, tc.subY, InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapSmooth}, nil); err != nil {
 				t.Fatalf("PredictInterCompoundRefToConvBuf: %v", err)
 			}
 			for i := range w * h {
@@ -902,15 +902,15 @@ func TestPredictInterCompoundRefToConvBufErrors(t *testing.T) {
 	ref := frame.Plane{Pix: make([]byte, 64), Stride: 8, Width: 8, Height: 8}
 	var buf CompoundConvBuf
 	// nil buffer.
-	if err := PredictInterCompoundRefToConvBuf(nil, ref, 1, 8, 0, 0, 8, 8, 0, 0, RegularFilters); err != ErrInvalidMotion {
+	if err := PredictInterCompoundRefToConvBuf(nil, ref, 1, 8, 0, 0, 8, 8, 8, 8, 0, 0, RegularFilters, nil); err != ErrInvalidMotion {
 		t.Errorf("nil buf err=%v want ErrInvalidMotion", err)
 	}
 	// Out-of-range subpel position.
-	if err := PredictInterCompoundRefToConvBuf(&buf, ref, 1, 8, 0, 0, 8, 8, -1, 0, RegularFilters); err != ErrInvalidMotion {
+	if err := PredictInterCompoundRefToConvBuf(&buf, ref, 1, 8, 0, 0, 8, 8, 8, 8, -1, 0, RegularFilters, nil); err != ErrInvalidMotion {
 		t.Errorf("bad subX err=%v want ErrInvalidMotion", err)
 	}
 	// Bit-depth / sample-width mismatch (8-bit declared but 2 bytes/sample).
-	if err := PredictInterCompoundRefToConvBuf(&buf, ref, 2, 8, 0, 0, 8, 8, 0, 0, RegularFilters); err != ErrInvalidMotion {
+	if err := PredictInterCompoundRefToConvBuf(&buf, ref, 2, 8, 0, 0, 8, 8, 8, 8, 0, 0, RegularFilters, nil); err != ErrInvalidMotion {
 		t.Errorf("bps mismatch err=%v want ErrInvalidMotion", err)
 	}
 }

@@ -66,7 +66,7 @@ func BenchmarkMotion8ABMatrix(b *testing.B) {
 				b.Run("Compound/"+axis.name+"/"+filter.name+"/"+name, func(b *testing.B) {
 					b.ReportAllocs()
 					for b.Loop() {
-						if err := PredictInterCompoundRefToConvBufWithScratch(&conv0, ref, 1, 8, 8, 8, w, h, axis.sx, axis.sy, pair, &compoundScratch); err != nil {
+						if err := PredictInterCompoundRefToConvBuf(&conv0, ref, 1, 8, 8, 8, w, h, w, h, axis.sx, axis.sy, pair, &compoundScratch); err != nil {
 							b.Fatal(err)
 						}
 					}
@@ -114,7 +114,7 @@ func BenchmarkMotion8ABMatrix(b *testing.B) {
 	b.Run("Compound/2D/edge/32x32", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			if err := PredictInterCompoundRefToConvBufWithScratch(&edgeBuf, edgeRef, 1, 8, 0, 0, 32, 32, 3, 5, regular, &edgeScratch); err != nil {
+			if err := PredictInterCompoundRefToConvBuf(&edgeBuf, edgeRef, 1, 8, 0, 0, 32, 32, 32, 32, 3, 5, regular, &edgeScratch); err != nil {
 				b.Fatal(err)
 			}
 		}

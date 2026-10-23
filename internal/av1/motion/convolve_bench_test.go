@@ -183,7 +183,7 @@ func BenchmarkCompoundConvBuf2D8_32(b *testing.B) {
 	var buf CompoundConvBuf
 	var scratch CompoundConvolveScratch
 	runConvolveBench(b, 32, 32, func() {
-		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 32, 32, 3, 5, RegularFilters, &scratch); err != nil {
+		if err := PredictInterCompoundRefToConvBuf(&buf, ref, 1, 8, filterTaps, filterTaps, 32, 32, 32, 32, 3, 5, RegularFilters, &scratch); err != nil {
 			b.Fatal(err)
 		}
 	})
@@ -194,7 +194,7 @@ func BenchmarkCompoundConvBuf2D8_8(b *testing.B) {
 	var buf CompoundConvBuf
 	var scratch CompoundConvolveScratch
 	runConvolveBench(b, 8, 8, func() {
-		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 8, 8, 3, 5, RegularFilters, &scratch); err != nil {
+		if err := PredictInterCompoundRefToConvBuf(&buf, ref, 1, 8, filterTaps, filterTaps, 8, 8, 8, 8, 3, 5, RegularFilters, &scratch); err != nil {
 			b.Fatal(err)
 		}
 	})
@@ -205,7 +205,7 @@ func BenchmarkCompoundConvBuf2D8_4x16(b *testing.B) {
 	var buf CompoundConvBuf
 	var scratch CompoundConvolveScratch
 	runConvolveBench(b, 4, 16, func() {
-		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 4, 16, 3, 5, RegularFilters, &scratch); err != nil {
+		if err := PredictInterCompoundRefToConvBuf(&buf, ref, 1, 8, filterTaps, filterTaps, 4, 16, 4, 16, 3, 5, RegularFilters, &scratch); err != nil {
 			b.Fatal(err)
 		}
 	})
@@ -411,7 +411,7 @@ func BenchmarkCompoundConvBufX8_32(b *testing.B) {
 	_, ref := benchPlanes(32, 8)
 	var buf CompoundConvBuf
 	runConvolveBench(b, 32, 32, func() {
-		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 32, 32, 3, 0, RegularFilters, nil); err != nil {
+		if err := PredictInterCompoundRefToConvBuf(&buf, ref, 1, 8, filterTaps, filterTaps, 32, 32, 32, 32, 3, 0, RegularFilters, nil); err != nil {
 			b.Fatal(err)
 		}
 	})
@@ -421,7 +421,7 @@ func BenchmarkCompoundConvBufX8_4x16(b *testing.B) {
 	_, ref := benchPlanes(16, 8)
 	var buf CompoundConvBuf
 	runConvolveBench(b, 4, 16, func() {
-		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 4, 16, 3, 0, RegularFilters, nil); err != nil {
+		if err := PredictInterCompoundRefToConvBuf(&buf, ref, 1, 8, filterTaps, filterTaps, 4, 16, 4, 16, 3, 0, RegularFilters, nil); err != nil {
 			b.Fatal(err)
 		}
 	})
@@ -431,7 +431,7 @@ func BenchmarkCompoundConvBufY8_32(b *testing.B) {
 	_, ref := benchPlanes(32, 8)
 	var buf CompoundConvBuf
 	runConvolveBench(b, 32, 32, func() {
-		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 32, 32, 0, 5, RegularFilters, nil); err != nil {
+		if err := PredictInterCompoundRefToConvBuf(&buf, ref, 1, 8, filterTaps, filterTaps, 32, 32, 32, 32, 0, 5, RegularFilters, nil); err != nil {
 			b.Fatal(err)
 		}
 	})
@@ -441,7 +441,7 @@ func BenchmarkCompoundConvBufY8_4x16(b *testing.B) {
 	_, ref := benchPlanes(16, 8)
 	var buf CompoundConvBuf
 	runConvolveBench(b, 4, 16, func() {
-		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 4, 16, 0, 5, RegularFilters, nil); err != nil {
+		if err := PredictInterCompoundRefToConvBuf(&buf, ref, 1, 8, filterTaps, filterTaps, 4, 16, 4, 16, 0, 5, RegularFilters, nil); err != nil {
 			b.Fatal(err)
 		}
 	})
@@ -451,7 +451,7 @@ func BenchmarkCompoundConvBufCopy8_32(b *testing.B) {
 	_, ref := benchPlanes(32, 8)
 	var buf CompoundConvBuf
 	runConvolveBench(b, 32, 32, func() {
-		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 32, 32, 0, 0, RegularFilters, nil); err != nil {
+		if err := PredictInterCompoundRefToConvBuf(&buf, ref, 1, 8, filterTaps, filterTaps, 32, 32, 32, 32, 0, 0, RegularFilters, nil); err != nil {
 			b.Fatal(err)
 		}
 	})
@@ -461,7 +461,7 @@ func BenchmarkCompoundConvBufCopy8_4x16(b *testing.B) {
 	_, ref := benchPlanes(16, 8)
 	var buf CompoundConvBuf
 	runConvolveBench(b, 4, 16, func() {
-		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, filterTaps, filterTaps, 4, 16, 0, 0, RegularFilters, nil); err != nil {
+		if err := PredictInterCompoundRefToConvBuf(&buf, ref, 1, 8, filterTaps, filterTaps, 4, 16, 4, 16, 0, 0, RegularFilters, nil); err != nil {
 			b.Fatal(err)
 		}
 	})
@@ -472,7 +472,7 @@ func BenchmarkCompoundConvBuf2DHighBD_32(b *testing.B) {
 	var buf CompoundConvBuf
 	var scratch CompoundConvolveScratch
 	runConvolveBench(b, 32, 32, func() {
-		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 2, 10, filterTaps, filterTaps, 32, 32, 3, 5, RegularFilters, &scratch); err != nil {
+		if err := PredictInterCompoundRefToConvBuf(&buf, ref, 2, 10, filterTaps, filterTaps, 32, 32, 32, 32, 3, 5, RegularFilters, &scratch); err != nil {
 			b.Fatal(err)
 		}
 	})
@@ -483,7 +483,7 @@ func BenchmarkCompoundConvBuf2DHighBDClamped_32(b *testing.B) {
 	var buf CompoundConvBuf
 	var scratch CompoundConvolveScratch
 	runConvolveBench(b, 32, 32, func() {
-		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 2, 10, 0, 0, 32, 32, 3, 5, RegularFilters, &scratch); err != nil {
+		if err := PredictInterCompoundRefToConvBuf(&buf, ref, 2, 10, 0, 0, 32, 32, 32, 32, 3, 5, RegularFilters, &scratch); err != nil {
 			b.Fatal(err)
 		}
 	})
@@ -493,7 +493,7 @@ func BenchmarkCompoundConvBufXHighBD_32(b *testing.B) {
 	_, ref := benchPlanes(32, 10)
 	var buf CompoundConvBuf
 	runConvolveBench(b, 32, 32, func() {
-		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 2, 10, filterTaps, filterTaps, 32, 32, 3, 0, RegularFilters, nil); err != nil {
+		if err := PredictInterCompoundRefToConvBuf(&buf, ref, 2, 10, filterTaps, filterTaps, 32, 32, 32, 32, 3, 0, RegularFilters, nil); err != nil {
 			b.Fatal(err)
 		}
 	})
@@ -503,7 +503,7 @@ func BenchmarkCompoundConvBufYHighBD_32(b *testing.B) {
 	_, ref := benchPlanes(32, 10)
 	var buf CompoundConvBuf
 	runConvolveBench(b, 32, 32, func() {
-		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 2, 10, filterTaps, filterTaps, 32, 32, 0, 5, RegularFilters, nil); err != nil {
+		if err := PredictInterCompoundRefToConvBuf(&buf, ref, 2, 10, filterTaps, filterTaps, 32, 32, 32, 32, 0, 5, RegularFilters, nil); err != nil {
 			b.Fatal(err)
 		}
 	})
@@ -513,7 +513,7 @@ func BenchmarkCompoundConvBufCopyHighBD_32(b *testing.B) {
 	_, ref := benchPlanes(32, 10)
 	var buf CompoundConvBuf
 	runConvolveBench(b, 32, 32, func() {
-		if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 2, 10, filterTaps, filterTaps, 32, 32, 0, 0, RegularFilters, nil); err != nil {
+		if err := PredictInterCompoundRefToConvBuf(&buf, ref, 2, 10, filterTaps, filterTaps, 32, 32, 32, 32, 0, 0, RegularFilters, nil); err != nil {
 			b.Fatal(err)
 		}
 	})

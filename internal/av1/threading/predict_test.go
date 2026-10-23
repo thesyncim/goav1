@@ -4108,7 +4108,7 @@ func testFrameWorkCompoundConvBuf(t *testing.T, reference frame.Plane, bytesPerS
 		t.Fatal(err)
 	}
 	buf := &motion.CompoundConvBuf{}
-	if err := motion.PredictInterCompoundRefToConvBuf(buf, reference, bytesPerSample, bitDepth, refX, refY, width, height, subX, subY, filters); err != nil {
+	if err := motion.PredictInterCompoundRefToConvBuf(buf, reference, bytesPerSample, bitDepth, refX, refY, width, height, width, height, subX, subY, filters, nil); err != nil {
 		t.Fatal(err)
 	}
 	return buf

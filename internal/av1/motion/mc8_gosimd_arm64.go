@@ -253,12 +253,12 @@ func mc8Copy(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride in
 
 // mc8PrepFast fills a w x h CONV_BUF (row stride w) with the dav1d-style prep
 // kernels. It returns false for shapes it does not cover.
-func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, subX, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) bool {
+func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) bool {
 	if (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil || len(out) < w*h {
 		return false
 	}
-	kx := mc8Kind(filters.X, w)
-	ky := mc8Kind(filters.Y, h)
+	kx := mc8Kind(filters.X, filterW)
+	ky := mc8Kind(filters.Y, filterH)
 	if (subX != 0 && !mc8SixTap[kx]) || (subY != 0 && !mc8SixTap[ky]) {
 		return false
 	}

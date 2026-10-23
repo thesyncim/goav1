@@ -40,7 +40,7 @@ func BenchmarkHBDAB(b *testing.B) {
 				b.Run("Compound/"+op.name+"/"+name, func(b *testing.B) {
 					b.ReportAllocs()
 					for b.Loop() {
-						if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 2, bd, filterTaps, filterTaps, w, h, op.subX, op.subY, RegularFilters, &compoundScratch); err != nil {
+						if err := PredictInterCompoundRefToConvBuf(&buf, ref, 2, bd, filterTaps, filterTaps, w, h, w, h, op.subX, op.subY, RegularFilters, &compoundScratch); err != nil {
 							b.Fatal(err)
 						}
 					}
@@ -48,14 +48,14 @@ func BenchmarkHBDAB(b *testing.B) {
 			}
 			var buf0, buf1 CompoundConvBuf
 			var scratch CompoundConvolveScratch
-			if err := PredictInterCompoundRefToConvBufWithScratch(&buf0, ref, 2, bd, filterTaps, filterTaps, w, h, 0, 0, RegularFilters, &scratch); err != nil {
+			if err := PredictInterCompoundRefToConvBuf(&buf0, ref, 2, bd, filterTaps, filterTaps, w, h, w, h, 0, 0, RegularFilters, &scratch); err != nil {
 				b.Fatal(err)
 			}
 			buf1 = buf0
 			b.Run("Compound/Copy/"+name, func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					if err := PredictInterCompoundRefToConvBufWithScratch(&buf0, ref, 2, bd, filterTaps, filterTaps, w, h, 0, 0, RegularFilters, &scratch); err != nil {
+					if err := PredictInterCompoundRefToConvBuf(&buf0, ref, 2, bd, filterTaps, filterTaps, w, h, w, h, 0, 0, RegularFilters, &scratch); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -99,7 +99,7 @@ func BenchmarkHBDABSharp(b *testing.B) {
 				b.Run("Compound/"+op.name+"/"+name, func(b *testing.B) {
 					b.ReportAllocs()
 					for b.Loop() {
-						if err := PredictInterCompoundRefToConvBufWithScratch(&buf, ref, 2, bd, filterTaps, filterTaps, side, side, op.subX, op.subY, sharp, &compoundScratch); err != nil {
+						if err := PredictInterCompoundRefToConvBuf(&buf, ref, 2, bd, filterTaps, filterTaps, side, side, side, side, op.subX, op.subY, sharp, &compoundScratch); err != nil {
 							b.Fatal(err)
 						}
 					}

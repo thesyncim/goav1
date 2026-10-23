@@ -1710,10 +1710,10 @@ func (b *FrameWorkBatch) predictBlockInterCompoundLean(visit *tile.BlockLoopVisi
 	if !b.referencePlaneViewInto(reference1, plane, &ref1) || ref1.Width != t.codedW || ref1.Height != t.codedH {
 		return false, nil
 	}
-	if err := motion.PrepTranslation8(&scratch.Conv0, &ref0, t.x, t.y, t.width, t.height, motionResult.MV[0], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
+	if err := motion.PrepTranslation8(&scratch.Conv0, &ref0, t.x, t.y, t.width, t.height, t.filterW, t.filterH, motionResult.MV[0], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
 		return true, ErrInvalidBatch
 	}
-	if err := motion.PrepTranslation8(&scratch.Conv1, &ref1, t.x, t.y, t.width, t.height, motionResult.MV[1], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
+	if err := motion.PrepTranslation8(&scratch.Conv1, &ref1, t.x, t.y, t.width, t.height, t.filterW, t.filterH, motionResult.MV[1], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
 		return true, ErrInvalidBatch
 	}
 	return true, b.blendCompoundConvBufs(visit, plane, scratch, blend, t.output, t.bps, t.x, t.y, t.width, t.height, t.ssX, t.ssY)
@@ -1803,7 +1803,7 @@ func (b *FrameWorkBatch) predictBlockInterCompoundRefToConvBuf(buf *motion.Compo
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	if err := motion.PredictInterCompoundRefToConvBufWithScratch(buf, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, refX, refY, geom.width(), geom.height(), subX, subY, filters, compoundScratch); err != nil {
+	if err := motion.PredictInterCompoundRefToConvBuf(buf, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, refX, refY, geom.width(), geom.height(), geom.filterWidth(), geom.filterHeight(), subX, subY, filters, compoundScratch); err != nil {
 		return ErrInvalidBatch
 	}
 	return nil

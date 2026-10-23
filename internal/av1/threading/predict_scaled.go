@@ -179,11 +179,11 @@ func frameWorkPredictScaledReferencePlaneToConvBufScratch(buf *motion.CompoundCo
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	xTable, err := motion.SubpelKernelTableFor(filters.X, geom.width())
+	xTable, err := motion.SubpelKernelTableFor(filters.X, geom.filterWidth())
 	if err != nil {
 		return ErrInvalidBatch
 	}
-	yTable, err := motion.SubpelKernelTableFor(filters.Y, geom.height())
+	yTable, err := motion.SubpelKernelTableFor(filters.Y, geom.filterHeight())
 	if err != nil {
 		return ErrInvalidBatch
 	}
