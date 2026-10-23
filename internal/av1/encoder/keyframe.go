@@ -386,8 +386,14 @@ func validateSourcePlaneColor16Samples(label string, name string, samples []uint
 	return nil
 }
 
+// encoderIntraEdgeFilter is enable_intra_edge_filter: on, as SVT-AV1 sets it
+// for every non-all-intra configuration (enc_handle.c). The encoder's
+// directional predictions apply the edge filter and upsampling to match.
+const encoderIntraEdgeFilter = true
+
 func losslessKeyframeSequence(width, height int) SequenceHeader {
 	return SequenceHeader{
+		EnableIntraEdgeFilter: encoderIntraEdgeFilter,
 		Profile:              Profile0,
 		OperatingPointsCount: 1,
 		OperatingPoints: [32]SequenceOperatingPoint{
