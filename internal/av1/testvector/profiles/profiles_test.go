@@ -1268,6 +1268,26 @@ var profileClips = []profileClip{
 		wantSubsamplingX: true,
 		wantSubsamplingY: true,
 	},
+	{
+		// SVT-AV1 4.1.0 keyframe with a skip intra block coded with a luma
+		// transform smaller than the block. Intra blocks read tx_size even when
+		// skip=1 and are predicted transform block by transform block (dav1d
+		// recon_b_intra). Synthetic, redistributable source (ffmpeg testsrc2):
+		//   ffmpeg -f lavfi -i testsrc2=size=320x180:rate=30 -frames:v 1 -pix_fmt yuv420p s.yuv
+		//   SvtAv1EncApp -i s.yuv -b svt-intra-skip-split-tx-320x180.ivf -w 320 -h 180 \
+		//     --fps-num 30 --fps-denom 1 --frames 1 --input-depth 8 --preset 8 --rc 2 \
+		//     --tbr 300 --buf-sz 1000 --buf-initial-sz 500 --buf-optimal-sz 600 \
+		//     --lookahead 0 --pred-struct 1 --rtc 1 --scd 0 --enable-tf 0 \
+		//     --irefresh-type 2 --keyint -1 --lp 1
+		name: "svt-intra-skip-split-tx-320x180",
+		file: "svt-intra-skip-split-tx-320x180.ivf",
+		frameMD5Hex: []string{
+			"85211908449f0584823f5a328f240514",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
 }
 
 // TestProfileVendoredClips decodes each vendored profile-conformance clip

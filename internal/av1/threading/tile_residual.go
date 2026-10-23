@@ -1685,7 +1685,7 @@ func (s *frameWorkReconState) predictBlockBegin(visit *tile.BlockLoopVisit) erro
 	if err := s.predictBeforeCoefficientsPtr(visit); err != nil {
 		return err
 	}
-	if visit.Prefix.SkipTransform {
+	if visit.Prefix.SkipTransform && !visit.Prediction.Intra {
 		if err := s.predictDeferredCFLChroma(); err != nil {
 			return err
 		}
@@ -1714,7 +1714,10 @@ func (s *frameWorkReconState) predictBeforeCoefficientsPtr(visit *tile.BlockLoop
 	if !visit.Prediction.Valid {
 		return nil
 	}
-	if visit.Prediction.Intra && !visit.Prefix.SkipTransform {
+	// Intra blocks, skip or not, are predicted transform block by transform
+	// block from the TXB visits (dav1d recon_b_intra); skip intra blocks get
+	// all-zero TXB visits from the coefficient walk.
+	if visit.Prediction.Intra {
 		if frameWorkVisitUsesCFLPtr(visit) {
 			s.pendingCFLPrediction = true
 			s.cflVisit = *visit
@@ -2231,7 +2234,7 @@ func (s *frameWorkReconState) reconstructTXB(visit *tile.BlockLoopVisit, block *
 }
 
 func (s *frameWorkReconState) reconstructTXBWithNonZero(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, nonzero []int16, currentQIndex uint8) error {
-	if s.predict == nil && s.predictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra && !visit.Prefix.SkipTransform {
+	if s.predict == nil && s.predictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra {
 		if block.Plane != 0 && frameWorkVisitUsesCFLPtr(visit) {
 			if err := s.predictDeferredCFLChroma(); err != nil {
 				return err
@@ -2303,7 +2306,7 @@ func (s *frameWorkReconState) reconstructTXBWithNonZero(visit *tile.BlockLoopVis
 // the predictor/CfL ordering is mirrored here and the narrow reconstruction
 // tail consumes the dequantized scratch before the next TXB reuses it.
 func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, cf []int32, activeRows int, activeCols int, dcOnly bool) error {
-	if s.predict == nil && s.predictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra && !visit.Prefix.SkipTransform {
+	if s.predict == nil && s.predictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra {
 		if block.Plane != 0 && frameWorkVisitUsesCFLPtr(visit) {
 			if err := s.predictDeferredCFLChroma(); err != nil {
 				return err

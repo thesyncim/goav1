@@ -90,6 +90,26 @@ func buildWavefrontReconController(t testing.TB, output *frame.Frame, sbCols int
 				kind:  frameWorkReconEventBlockBegin,
 				index: visitIndex32,
 			})
+			// Skip intra blocks are predicted transform block by transform
+			// block from the all-zero TXB visits the coefficient walk emits
+			// (dav1d recon_b_intra): one 64x64 luma and two 32x32 chroma.
+			for _, txb := range [...]tile.BlockCoeffBlock{
+				{Plane: 0, Block: tile.TransformBlock{X4: uint8(miCol), Y4: uint8(miRow), Size: tile.TransformSize64x64, VisibleW4: 16, VisibleH4: 16}},
+				{Plane: 1, Block: tile.TransformBlock{X4: uint8(miCol / 2), Y4: uint8(miRow / 2), Size: tile.TransformSize32x32, VisibleW4: 8, VisibleH4: 8}},
+				{Plane: 2, Block: tile.TransformBlock{X4: uint8(miCol / 2), Y4: uint8(miRow / 2), Size: tile.TransformSize32x32, VisibleW4: 8, VisibleH4: 8}},
+			} {
+				txb.Result.AllZero = true
+				blockIndex32, ok := frameWorkReconIndex(len(scratch.reconBlocks))
+				if !ok {
+					t.Fatalf("txb index overflow: %d", len(scratch.reconBlocks))
+				}
+				scratch.reconBlocks = append(scratch.reconBlocks, txb)
+				scratch.reconCF = append(scratch.reconCF, frameWorkReconCF{})
+				scratch.reconEvents = append(scratch.reconEvents, frameWorkReconEvent{
+					kind:  frameWorkReconEventTXB,
+					index: blockIndex32,
+				})
+			}
 		}
 	}
 	return c

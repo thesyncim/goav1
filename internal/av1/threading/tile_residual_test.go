@@ -1047,10 +1047,13 @@ func TestFrameWorkTileResidualControllerUsesPredictionScratch(t *testing.T) {
 	}
 
 	var predictionScratch FrameWorkPredictionScratch
+	var scratch FrameWorkTileResidualScratch
 	var stats FrameWorkTileResidualStats
 	controller := frameWorkTileResidualLoopController{
-		batch: ctx,
-		index: 0,
+		batch:   ctx,
+		index:   0,
+		state:   &tile.DecodeState{},
+		scratch: &scratch,
 		req: FrameWorkTileResidualRequest{
 			PredictionScratch: &predictionScratch,
 		},
@@ -1061,11 +1064,31 @@ func TestFrameWorkTileResidualControllerUsesPredictionScratch(t *testing.T) {
 	if err := controller.BeforeBlockCoefficients(visit); err != nil {
 		t.Fatal(err)
 	}
+	// Skip intra blocks are predicted per transform block from the all-zero
+	// TXB visits the coefficient walk emits (dav1d recon_b_intra), not at
+	// block begin.
+	if stats.Predictions != 0 {
+		t.Fatalf("predicted before the first txb: stats=%+v", stats)
+	}
+	if err := controller.VisitBlockCoeff(visit, testSkipIntraTXB(0, 4, 4, tile.TransformSize16x16, 4)); err != nil {
+		t.Fatal(err)
+	}
 	if stats.Predictions != 1 || stats.SkippedBlocks != 1 || stats.CoefficientBlocks != 0 {
 		t.Fatalf("stats=%+v", stats)
 	}
 	if got := frameWorkTestSample(output.Y, output.Layout.BytesPerSample, 16, 16); got != 30 {
 		t.Fatalf("predicted sample=%d want 30", got)
+	}
+}
+
+// testSkipIntraTXB is one all-zero transform-block visit as the coefficient
+// walk emits it for a skip intra block.
+func testSkipIntraTXB(plane uint8, x4, y4 uint8, size tile.TransformSize, vis4 uint8) tile.BlockCoeffBlock {
+	return tile.BlockCoeffBlock{
+		Plane:     plane,
+		Block:     tile.TransformBlock{X4: x4, Y4: y4, Size: size, VisibleW4: vis4, VisibleH4: vis4},
+		Transform: transform.TypeDCTDCT,
+		Result:    tile.TXBDecodeResult{AllZero: true},
 	}
 }
 
@@ -1108,6 +1131,7 @@ func TestFrameWorkTileResidualControllerPredictsCFLOnSkipTransform(t *testing.T)
 	controller := frameWorkTileResidualLoopController{
 		batch:   ctx,
 		index:   0,
+		state:   &tile.DecodeState{},
 		scratch: &scratch,
 		req: FrameWorkTileResidualRequest{
 			PredictionScratch: &predictionScratch,
@@ -1118,6 +1142,15 @@ func TestFrameWorkTileResidualControllerPredictsCFLOnSkipTransform(t *testing.T)
 	visit.Prefix.SkipTransform = true
 	if err := controller.BeforeBlockCoefficients(visit); err != nil {
 		t.Fatal(err)
+	}
+	for _, block := range []tile.BlockCoeffBlock{
+		testSkipIntraTXB(0, 4, 4, tile.TransformSize16x16, 4),
+		testSkipIntraTXB(1, 2, 2, tile.TransformSize8x8, 2),
+		testSkipIntraTXB(2, 2, 2, tile.TransformSize8x8, 2),
+	} {
+		if err := controller.VisitBlockCoeff(visit, block); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	var wantIntraScratch FrameWorkIntraPredictionScratch

@@ -377,6 +377,12 @@ var publicClips = []publicClip{
 			"cacd21efbf61aa405c0364b1929de83a",
 		},
 	},
+	{
+		file: "svt-intra-skip-split-tx-320x180.ivf",
+		frameMD5Hex: []string{
+			"85211908449f0584823f5a328f240514",
+		},
+	},
 }
 
 var callerPostFilterClips = []publicClip{
