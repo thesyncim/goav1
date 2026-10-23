@@ -192,14 +192,8 @@ func InverseBlockBitDepthRawBounded(dst []int32, coeff []int32, coeffStride int,
 	if !ok {
 		return ErrInvalidTransform
 	}
-	if t == TypeIDTX || !t.Supported(size) {
-		return ErrInvalidTransform
-	}
-	width := int(size.Width)
-	height := int(size.Height)
-	if len(dst) < width*height {
-		return ErrInvalidTransform
-	}
+	// inverseSeparableBlockClampedRowsToScratch validates the size, the 1D
+	// types against it (rejecting IDTX) and the scratch extent.
 	_, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, dst, size, t, rowMin, rowMax, colMin, colMax, activeRows, activeCols, nil, false)
 	return err
 }

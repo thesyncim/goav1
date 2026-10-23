@@ -1305,6 +1305,8 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 		readRestoration:        readRestoration,
 		deferReconstruction:    deferReconstruction,
 		wavefrontWorkers:       wavefrontWorkers,
+		defaultCoeffPath: req.Transforms == nil && req.UseDefaultTransforms && loopReq.CoeffVisitor == nil &&
+			req.Predict == nil && !b.Quantization.UsingQMatrix,
 	}
 	// Wire the fused / serial-deferred reconstruction state to the controller's
 	// request scratch and shared geometry cache. The fused single-thread path
@@ -1517,6 +1519,13 @@ type frameWorkTileResidualLoopController struct {
 	dequantKeyValid      bool
 	dequantCurrentQIndex uint8
 	dequantSegmentID     uint8
+
+	// defaultCoeffPath is bound once per tile job: the production
+	// configuration (default transform selectors, no user coefficient visitor
+	// or predict callback, no quantizer matrices) that dav1d's decode_b /
+	// recon_b always run. SelectBlockCoeffRequestPtr then builds the request
+	// directly instead of re-testing that configuration for every block.
+	defaultCoeffPath bool
 }
 
 // frameWorkReconState is the per-goroutine reconstruction state: the CFL
@@ -1769,6 +1778,9 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *
 	if visit == nil {
 		return tile.BlockCoeffRequest{}, ErrInvalidBatch
 	}
+	if c.defaultCoeffPath {
+		return c.selectDefaultBlockCoeffRequest(visit)
+	}
 	var transforms FrameWorkBlockTransforms
 	var segmentQIndex uint8
 	var lossless bool
@@ -1804,7 +1816,7 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *
 		if !chromaMode.Valid() {
 			chromaMode = tile.ChromaIntraModeDC
 		}
-		lumaMode := frameWorkIntraTransformMode(visit.Prediction)
+		lumaMode := frameWorkIntraTransformMode(&visit.Prediction)
 		c.scratch.IntraTX.Reset(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, segmentQIndex, lumaMode, chromaMode)
 		transformSelect = &c.scratch.IntraTX
 	} else if transforms.ReadInterTX {
@@ -2364,7 +2376,7 @@ func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoo
 	return nil
 }
 
-func frameWorkIntraTransformMode(pred tile.BlockPredictionModeResult) tile.IntraMode {
+func frameWorkIntraTransformMode(pred *tile.BlockPredictionModeResult) tile.IntraMode {
 	if !pred.FilterIntraValid {
 		return pred.LumaMode
 	}
@@ -2477,4 +2489,55 @@ type frameWorkReconCF struct {
 	activeRows int32
 	activeCols int32
 	dcOnly     bool
+}
+
+// selectDefaultBlockCoeffRequest is SelectBlockCoeffRequestPtr for the
+// job-bound production configuration (defaultCoeffPath): the block's
+// transform-type selector and coefficient request are built straight from the
+// visit, as dav1d's decode_b hands b to recon_b_*, with the same
+// segment-adjusted qindex and lossless gating as the generic path.
+func (c *frameWorkTileResidualLoopController) selectDefaultBlockCoeffRequest(visit *tile.BlockLoopVisit) (tile.BlockCoeffRequest, error) {
+	segmentQIndex, lossless, err := c.batch.BlockQIndex(c.state.CurrentBaseQIdx, visit.SegmentID)
+	if err != nil {
+		return tile.BlockCoeffRequest{}, err
+	}
+	pred := &visit.Prediction
+	skip := visit.Prefix.SkipTransform
+	intra := pred.Valid && pred.Intra
+	var transformSelect tile.CoeffTransformSelector
+	if intra {
+		chromaMode := pred.ChromaMode
+		if !chromaMode.Valid() {
+			chromaMode = tile.ChromaIntraModeDC
+		}
+		c.scratch.IntraTX.Reset(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, skip, lossless, segmentQIndex, frameWorkIntraTransformMode(pred), chromaMode)
+		transformSelect = &c.scratch.IntraTX
+	} else {
+		c.scratch.InterTX.ResetForColor(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, skip, lossless, segmentQIndex, c.batch.Sequence.ColorConfig)
+		transformSelect = &c.scratch.InterTX
+	}
+	request := tile.BlockCoeffRequest{
+		Transform: tile.TransformTreeRequest{
+			Size:          visit.Block.Size,
+			X4:            visit.Block.X4,
+			Y4:            visit.Block.Y4,
+			VisibleW4:     visit.Block.VisibleW4,
+			VisibleH4:     visit.Block.VisibleH4,
+			HaveTop:       visit.Block.HaveTop,
+			HaveLeft:      visit.Block.HaveLeft,
+			Color:         c.batch.Sequence.ColorConfig,
+			TransformMode: c.req.TransformMode,
+			Inter:         !intra,
+			SkipTransform: skip,
+			Lossless:      lossless,
+		},
+		LumaType:              transform.TypeDCTDCT,
+		ChromaType:            [2]transform.Type{transform.TypeDCTDCT, transform.TypeDCTDCT},
+		TransformSelect:       transformSelect,
+		SkipAllZeroCoeffClear: true,
+	}
+	if !skip && !lossless {
+		request.Dequant = c.bindCoeffDequantTarget(visit, lossless)
+	}
+	return request, nil
 }
