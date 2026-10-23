@@ -364,6 +364,19 @@ var publicClips = []publicClip{
 			"6de64107acac0d89ad361dfe615a1c5f",
 		},
 	},
+	{
+		file: "palette-inter-edge-256x144.ivf",
+		frameMD5Hex: []string{
+			"26ef041b9d87ca87f18d5907defef5cd",
+			"f982fd75bf5979a5e84841b9c0bd4e67",
+			"72b9ca3e978a4b47b49765636e1ecf17",
+			"e53da77074129bfe2f657f2366b9a321",
+			"e95dbd9381762bb7e125f6d01678fc31",
+			"73ce520f5baf089226e9f96920e97d0e",
+			"5e8fc03fd57fe5919fdc9b9c0d8b49de",
+			"cacd21efbf61aa405c0364b1929de83a",
+		},
+	},
 }
 
 var callerPostFilterClips = []publicClip{
