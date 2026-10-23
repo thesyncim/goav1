@@ -94,7 +94,6 @@ func TestVideoEncoderMinEffortSkipsSubpelMotion(t *testing.T) {
 		}
 		defer enc.Close()
 		enc.SetMaxThreads(1)
-		enc.SetScreenContentSelection(true)
 		if err := enc.SetContentHint(encoder.ContentCamera); err != nil {
 			t.Fatalf("SetContentHint: %v", err)
 		}

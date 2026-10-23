@@ -40,6 +40,8 @@ type hmeState struct {
 	// (get_me_reference's dist; 0 means 1), which sizes the HME level-0
 	// search area.
 	dist int
+	// ctrl is the picture's ME/HME control set (svtMEControls).
+	ctrl svtMECtrl
 
 	// fme is the current frame's ME result.
 	fme frameME
@@ -215,7 +217,7 @@ func (h *hmeState) finish(store int) {
 
 func (h *hmeState) prepare(src SourceFrame420, isRef bool, ref int) {
 	h.svt.build(src)
-	h.svt.setDistance(h.dist)
+	h.svt.setDistance(h.dist, h.ctrl.l0Min, h.ctrl.l0Max)
 	h.setCur(src)
 	h.selectRef(min(max(ref, 0), hmeRefSlots-1))
 	f := &h.fme

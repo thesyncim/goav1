@@ -799,8 +799,8 @@ func assertWebRTCControllerReferenceModel(t *testing.T, cfg Config) {
 				(normalized.RateControl == RateControlCQP && frame.Quantizer != normalized.Quantizer) {
 				t.Fatalf("delta %d frame %d rate control frame=%+v config=%+v", deltaIndex, i, frame, normalized)
 			}
-			if normalized.Content == ContentScreen &&
-				(!delta.Headers[i].Prefix.AllowScreenContentTools || !delta.Headers[i].Prefix.ForceIntegerMV) {
+			// SVT-AV1 rtc: screen tools on I-slices only, force_integer_mv 0.
+			if delta.Headers[i].Prefix.AllowScreenContentTools || delta.Headers[i].Prefix.ForceIntegerMV {
 				t.Fatalf("delta %d frame %d screen header=%+v", deltaIndex, i, delta.Headers[i])
 			}
 			wantRefresh := uint8(0)
@@ -1302,7 +1302,7 @@ func TestWebRTCTemporalUnitsPropagateCQPQuantizer(t *testing.T) {
 	}
 }
 
-func TestWebRTCTemporalUnitsPropagateScreenContentTools(t *testing.T) {
+func TestWebRTCTemporalUnitsScreenContentToolsOnKeyOnly(t *testing.T) {
 	cfg := Config{
 		Resolution:        Resolution{Width: 640, Height: 360},
 		Scalability:       ScalabilityModeL2T2,
@@ -1323,8 +1323,9 @@ func TestWebRTCTemporalUnitsPropagateScreenContentTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WebRTCDeltaFrameTemporalUnitForState: %v", err)
 	}
-	if !delta.Headers[0].Prefix.AllowScreenContentTools || !delta.Headers[0].Prefix.ForceIntegerMV ||
-		!delta.Headers[1].Prefix.AllowScreenContentTools || !delta.Headers[1].Prefix.ForceIntegerMV {
+	// SVT-AV1 rtc: screen tools on I-slices only, force_integer_mv 0.
+	if delta.Headers[0].Prefix.AllowScreenContentTools || delta.Headers[0].Prefix.ForceIntegerMV ||
+		delta.Headers[1].Prefix.AllowScreenContentTools || delta.Headers[1].Prefix.ForceIntegerMV {
 		t.Fatalf("delta headers=%+v", delta.Headers)
 	}
 	for i := uint8(0); i < delta.FrameNum; i++ {

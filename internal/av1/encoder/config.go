@@ -675,15 +675,19 @@ func (m RateControlMode) Valid() bool {
 	return m == RateControlCBR || m == RateControlCQP
 }
 
+// ContentHint selects screen-content handling with SVT-AV1 screen_content_mode
+// semantics: ContentAuto (the zero value, scm 2) detects screen content on
+// each keyframe, ContentCamera (scm 0) and ContentScreen (scm 1) force it.
 type ContentHint uint8
 
 const (
-	ContentCamera ContentHint = iota
+	ContentAuto ContentHint = iota
+	ContentCamera
 	ContentScreen
 )
 
 func (h ContentHint) Valid() bool {
-	return h == ContentCamera || h == ContentScreen
+	return h <= ContentScreen
 }
 
 type SpatialLayer struct {

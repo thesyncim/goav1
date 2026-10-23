@@ -2118,7 +2118,8 @@ func TestPublicEncoderWebRTCScreenContentHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncoderWebRTCDeltaFrameTemporalUnitForState: %v", err)
 	}
-	if !delta.Headers[1].Prefix.AllowScreenContentTools || !delta.Headers[1].Prefix.ForceIntegerMV {
+	// SVT-AV1 rtc: screen tools on I-slices only, force_integer_mv 0.
+	if delta.Headers[1].Prefix.AllowScreenContentTools || delta.Headers[1].Prefix.ForceIntegerMV {
 		t.Fatalf("delta headers=%+v", delta.Headers)
 	}
 }
@@ -3004,7 +3005,7 @@ func assertPublicWebRTCControllerUnit(t *testing.T, receiver *av1.RTPDependencyD
 				if !unit.KeyUnit.Header.Prefix.AllowScreenContentTools || !unit.KeyUnit.Header.Prefix.ForceIntegerMV {
 					t.Fatalf("screen key prefix=%+v", unit.KeyUnit.Header.Prefix)
 				}
-			} else if !unit.DeltaUnit.Headers[i].Prefix.AllowScreenContentTools || !unit.DeltaUnit.Headers[i].Prefix.ForceIntegerMV {
+			} else if unit.DeltaUnit.Headers[i].Prefix.AllowScreenContentTools || unit.DeltaUnit.Headers[i].Prefix.ForceIntegerMV {
 				t.Fatalf("screen delta header[%d]=%+v", i, unit.DeltaUnit.Headers[i])
 			}
 		}

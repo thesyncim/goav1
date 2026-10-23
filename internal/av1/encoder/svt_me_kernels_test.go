@@ -114,7 +114,7 @@ func TestSVTHMECorrectArea(t *testing.T) {
 		{304, 0, 0, 0, 16, 4, 320, 180, 31, 0, 0, 16, 4},        // L0 last column, exact fit
 		{304, 176, 0, 2, 16, 4, 320, 180, 31, 0, 2, 16, 2},      // L0 bottom shrink
 	} {
-		ox, oy, w, h := svtHMECorrectArea(c.orgX, c.orgY, c.ox, c.oy, c.w, c.h, c.picW, c.picH, c.pad)
+		ox, oy, w, h := svtSearchAreaCorrect(c.orgX, c.orgY, c.ox, c.oy, c.w, c.h, c.picW, c.picH, c.pad, true)
 		if ox != c.wx || oy != c.wy || w != c.ww || h != c.wh {
 			t.Errorf("%+v: got %d %d %d %d", c, ox, oy, w, h)
 		}
@@ -122,13 +122,21 @@ func TestSVTHMECorrectArea(t *testing.T) {
 }
 
 // TestSVTHMEL0SearchArea pins get_hme_l0_search_area's per-region size at
-// preset 12 rtc for the low-delay reference distances.
+// preset 12 rtc (CBR sequence qp 35) for the low-delay reference distances,
+// camera and screen content.
 func TestSVTHMEL0SearchArea(t *testing.T) {
-	for _, c := range []struct{ dist, w, h int }{{1, 16, 4}, {2, 16, 8}, {4, 16, 12}, {8, 32, 20}, {16, 48, 40}, {32, 48, 48}} {
+	for _, c := range []struct {
+		screen     bool
+		dist, w, h int
+	}{
+		{false, 1, 16, 4}, {false, 2, 16, 8}, {false, 4, 16, 12}, {false, 8, 32, 20}, {false, 16, 48, 40}, {false, 32, 48, 48},
+		{true, 1, 16, 9}, {true, 2, 32, 18}, {true, 4, 32, 27},
+	} {
+		ctrl := svtMEControls(c.screen, 1280, 720, 35)
 		var p svtPyramid
-		p.setDistance(c.dist)
+		p.setDistance(c.dist, ctrl.l0Min, ctrl.l0Max)
 		if p.l0W != c.w || p.l0H != c.h {
-			t.Errorf("dist %d: %dx%d, want %dx%d", c.dist, p.l0W, p.l0H, c.w, c.h)
+			t.Errorf("screen %v dist %d: %dx%d, want %dx%d", c.screen, c.dist, p.l0W, p.l0H, c.w, c.h)
 		}
 	}
 }
@@ -165,6 +173,41 @@ func TestSVTSAD32xhx8MatchesScalar(t *testing.T) {
 					t.Fatalf("trial %d rows %d pos %d: got %d want %d", trial, rows, k, got[k], want)
 				}
 			}
+		}
+	}
+}
+
+// TestSVTMEControls pins the qp-scaled preset-12 rtc ME/HME areas
+// (set_hme_search_params, set_me_search_params with
+// svt_aom_get_qp_based_th_scaling_factors at the CBR sequence qp 35) and the
+// integer-search area per reference distance.
+func TestSVTMEControls(t *testing.T) {
+	cam := svtMEControls(false, 1280, 720, 35)
+	if cam.l0Min != (svtSearchArea{8, 8}) || cam.l0Max != (svtSearchArea{96, 96}) ||
+		cam.meMin != (svtSearchArea{8, 3}) || cam.meMax != (svtSearchArea{8, 3}) || cam.hmeL2 || cam.prehme {
+		t.Fatalf("camera controls %+v", cam)
+	}
+	sc := svtMEControls(true, 1280, 720, 35)
+	if sc.l0Min != (svtSearchArea{18, 18}) || sc.l0Max != (svtSearchArea{107, 107}) ||
+		sc.meMin != (svtSearchArea{13, 9}) || sc.meMax != (svtSearchArea{18, 9}) || !sc.hmeL2 || !sc.prehme {
+		t.Fatalf("screen controls %+v", sc)
+	}
+	for _, c := range []struct {
+		ctrl         svtMECtrl
+		f            int
+		sad, zz      uint32
+		wantW, wantH int
+	}{
+		{cam, 1, 1 << 20, 1 << 20, 8, 3},
+		{cam, 3, 0, 1 << 20, 8, 3},
+		{cam, 1, 0, 100, 1, 1},
+		{sc, 1, 1 << 20, 1 << 20, 16, 9}, // 13x9 rounded up to 16
+		{sc, 3, 1 << 20, 1 << 20, 24, 9}, // capped at 18x9, rounded up
+		{sc, 3, 1000, 1 << 20, 8, 3},     // low hme_sad: divisor 8
+		{sc, 3, 1 << 20, 600, 1, 1},      // below me_early_exit_th / 6
+	} {
+		if w, h := c.ctrl.meArea(c.f, 64, 64, c.sad, c.zz); w != c.wantW || h != c.wantH {
+			t.Errorf("screen %v f %d sad %d zz %d: %dx%d, want %dx%d", c.ctrl.screen, c.f, c.sad, c.zz, w, h, c.wantW, c.wantH)
 		}
 	}
 }

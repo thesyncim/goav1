@@ -54,6 +54,17 @@ The project has not published a release tag yet.
   matches SVT-AV1 4.1.0 rtc, which forces scene-change detection off and codes
   cuts with intra blocks in an inter frame, and libwebrtc's libaom setup
   (`kf_mode = AOM_KF_DISABLED`).
+- Screen content follows SVT-AV1 4.1.0 rtc. `VideoEncoderConfig.Content` and
+  the WebRTC `Content` take `EncoderContentAuto` (the new zero value, SVT
+  `--scm 2`), `EncoderContentCamera` or `EncoderContentScreen`. Auto runs
+  SVT's `svt_aom_is_screen_content` on each keyframe (up to 1080p; inter
+  frames inherit the class). Screen pictures use SVT's screen-content ME:
+  pre-HME, HME level 2, the larger HME and ME search areas, and the early
+  exits, plus the existing screen-content rate control and CDEF levels.
+  Headers follow SVT: sequence headers always select screen-content tools
+  and integer MV, `allow_screen_content_tools` is set on screen keyframes
+  only, and inter frames keep fractional motion. A content change takes
+  effect at the next keyframe. `SetScreenContentSelection` is removed.
 
 ### Verification
 

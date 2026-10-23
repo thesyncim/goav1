@@ -7504,9 +7504,13 @@ func assertPublicRTCFrameScreenContentHeader(
 			if err != nil {
 				t.Fatalf("%s ParseFrameHeaderPrefix: %v", label, err)
 			}
-			if prefix.AllowScreenContentTools != wantScreen || (wantScreen && !prefix.ForceIntegerMV) {
-				t.Fatalf("%s screen flags allow=%v integerMV=%v want screen=%v prefix=%+v",
-					label, prefix.AllowScreenContentTools, prefix.ForceIntegerMV, wantScreen, prefix)
+			// SVT-AV1 rtc: screen-content tools on intra frames of screen
+			// content only (palette on I-slices, no IntraBC); force_integer_mv
+			// is implied on intra frames and 0 otherwise.
+			intra := prefix.FrameType == goav1.FrameTypeKey || prefix.FrameType == goav1.FrameTypeIntraOnly
+			if prefix.AllowScreenContentTools != (wantScreen && intra) || prefix.ForceIntegerMV != intra {
+				t.Fatalf("%s screen flags allow=%v integerMV=%v want screen=%v intra=%v prefix=%+v",
+					label, prefix.AllowScreenContentTools, prefix.ForceIntegerMV, wantScreen, intra, prefix)
 			}
 			return
 		}

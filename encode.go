@@ -360,6 +360,13 @@ type VideoEncoderConfig struct {
 	// codes one reference per frame (mrp_level 0). A negative value also
 	// disables golden references.
 	GoldenInterval int
+
+	// Content selects screen-content handling with SVT-AV1 --scm semantics.
+	// The zero value EncoderContentAuto detects screen content on each
+	// keyframe (svt_aom_is_screen_content, up to 1080p) and switches to SVT's
+	// screen-content tools and speed settings; EncoderContentCamera and
+	// EncoderContentScreen force the choice.
+	Content EncoderContentHint
 }
 
 // EncodedFrame is one encoded picture as a low-overhead temporal unit.
@@ -511,6 +518,10 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 		enc.SetGoldenInterval(0)
 	} else if cfg.GoldenInterval > 0 {
 		enc.SetGoldenInterval(cfg.GoldenInterval)
+	}
+	if err := enc.SetContentHint(cfg.Content); err != nil {
+		_ = enc.Close()
+		return nil, err
 	}
 	// Every buffer, pool and per-coder scratch is sized now, so the first
 	// real frame pays no initialization latency and steady-state encoding

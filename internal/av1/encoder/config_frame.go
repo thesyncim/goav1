@@ -1048,15 +1048,14 @@ func interHeaderFrameForSettings(config Config, settings FrameEncodeSettings, fr
 	}
 
 	prefix := FrameHeaderPrefix{
-		FrameType:               FrameHeaderTypeInter,
-		ShowFrame:               true,
-		ShowableFrame:           true,
-		ErrorResilientMode:      true,
-		AllowScreenContentTools: config.Content == ContentScreen,
-		ForceIntegerMV:          config.Content == ContentScreen,
-		FrameSizeOverride:       true,
-		OrderHint:               orderHint,
-		PrimaryRefFrame:         EncoderPrimaryRefNone,
+		FrameType:          FrameHeaderTypeInter,
+		ShowFrame:          true,
+		ShowableFrame:      true,
+		ErrorResilientMode: true,
+		// SVT rtc: screen tools on I-slices only, force_integer_mv 0.
+		FrameSizeOverride: true,
+		OrderHint:         orderHint,
+		PrimaryRefFrame:   EncoderPrimaryRefNone,
 	}
 	if seq.FrameIDNumbersPresent {
 		prefix.FrameID = uint16(frameID & uint64((uint32(1)<<sequenceFrameIDBits(seq))-1))

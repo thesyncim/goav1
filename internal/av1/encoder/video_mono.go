@@ -19,7 +19,6 @@ type MonochromeVideoEncoder struct {
 	content     ContentHint
 	effortLevel int8
 
-	screenContentSelectable bool
 
 	rcEnabled              bool
 	rcTargetBits           int
@@ -168,8 +167,9 @@ func (e *MonochromeVideoEncoder) TemporalID() uint8 {
 	return 0
 }
 
-// SetContentHint selects the content mode used for subsequently emitted AV1
-// frame headers when screen-content selection is enabled.
+// SetContentHint selects the screen_content_mode. This encoder has no
+// screen-content detection, so ContentAuto codes as ContentCamera; a change
+// applies from the next frame header.
 func (e *MonochromeVideoEncoder) SetContentHint(content ContentHint) error {
 	if e == nil {
 		return fmt.Errorf("encoder: nil monochrome video encoder")
@@ -179,14 +179,6 @@ func (e *MonochromeVideoEncoder) SetContentHint(content ContentHint) error {
 	}
 	e.content = content
 	return nil
-}
-
-// SetScreenContentSelection controls whether sequence headers allow per-frame
-// screen-content signaling.
-func (e *MonochromeVideoEncoder) SetScreenContentSelection(enabled bool) {
-	if e != nil {
-		e.screenContentSelectable = enabled
-	}
 }
 
 // SetEffortLevel selects the realtime encoder effort level. The default zero
@@ -420,24 +412,19 @@ func (e *MonochromeVideoEncoder) padSource(src SourceFrameMono) SourceFrameMono 
 
 func (e *MonochromeVideoEncoder) sequenceHeader(width, height int) SequenceHeader {
 	seq := lossyMonochromeKeyframeSequence(width, height)
-	if e != nil && e.screenContentSelectable {
-		seq.SeqForceScreenContentTools = SequenceSelectScreenContentTools
-		seq.SeqForceIntegerMV = SequenceSelectIntegerMV
-	}
+	seq.SeqForceScreenContentTools = SequenceSelectScreenContentTools
+	seq.SeqForceIntegerMV = SequenceSelectIntegerMV
 	return seq
 }
 
 func (e *MonochromeVideoEncoder) applyContentHintToFrameHeader(prefix *FrameHeaderPrefix) {
-	if e == nil || !e.screenContentSelectable || prefix == nil {
+	if e == nil || prefix == nil {
 		return
 	}
-	screen := e.content == ContentScreen
-	prefix.AllowScreenContentTools = screen
-	if prefix.FrameType.keyOrIntra() {
-		prefix.ForceIntegerMV = true
-		return
-	}
-	prefix.ForceIntegerMV = screen
+	// SVT rtc header policy (see VideoEncoder.applyContentHintToFrameHeader).
+	intra := prefix.FrameType.keyOrIntra()
+	prefix.AllowScreenContentTools = intra && e.content == ContentScreen
+	prefix.ForceIntegerMV = intra
 }
 
 func (e *MonochromeVideoEncoder) encodeKeyWithSequenceMax(src SourceFrameMono, maxWidth, maxHeight int) ([]byte, error) {
