@@ -16,8 +16,10 @@ func SequenceHeaderForConfig(config Config) (SequenceHeader, error) {
 		OperatingPointsCount:  sequenceOperatingPointsForLayers(config.SpatialLayerCount, config.TemporalLayerCount),
 		MaxFrameWidth:         uint32(config.Resolution.Width),
 		MaxFrameHeight:        uint32(config.Resolution.Height),
-		EnableFilterIntra:     true,
-		EnableIntraEdgeFilter: true,
+		// SVT-AV1 rtc M12 runs filter_intra_level 0 (no filter intra) and
+		// keeps the intra edge filter on.
+		EnableFilterIntra:     false,
+		EnableIntraEdgeFilter: encoderIntraEdgeFilter,
 		// Dual filters stay off as SVT-AV1 configures the sequence
 		// (Source/Lib/Codec/sequence_control_set.c enable_dual_filter = 0):
 		// the switchable filter search codes one X = Y pair per block.

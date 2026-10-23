@@ -825,7 +825,7 @@ func (st *lossyEncodeState) decideIntraPBlock(src SourceFrame420, recon *SourceF
 			}
 			st.trialReady = true
 		}
-		mode, angleDelta = st.improveIntraModeDirectional(src, recon, block, mode, pred, lumaPX, lumaPY, 8)
+		mode, angleDelta = st.improveIntraModeDirectional(src, recon, block, modeCtx, mode, pred, lumaPX, lumaPY, 8)
 	} else if s := &st.mds0Intra; s.valid && s.mode != tile.IntraModeDC {
 		mode = s.mode
 		copy(pred, st.intraPredScratch[s.pred][:n*n])

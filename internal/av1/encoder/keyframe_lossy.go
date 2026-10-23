@@ -1222,7 +1222,7 @@ func (st *lossyEncodeState) encodeBlock(src SourceFrame420, recon *SourceFrame42
 	lumaPY := int(block.MIRow) * 4
 	pred := st.predY[:n*n]
 	mode := selectIntraModeN(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, n, block.HaveTop, block.HaveLeft, pred)
-	mode, angleDelta := st.improveIntraModeDirectional(src, recon, block, mode, pred, lumaPX, lumaPY, n)
+	mode, angleDelta := st.improveIntraModeDirectional(src, recon, block, modeCtx, mode, pred, lumaPX, lumaPY, n)
 	// Screen-content keyframes: SVT's luma palette candidates (palette_sc.go).
 	pal := st.keyframePalette(src, block, modeCtx, lumaPX, lumaPY, n, mode, pred)
 	if pal != nil {
@@ -1371,7 +1371,7 @@ func (st *lossyEncodeState) encodeMonochromeBlock(src SourceFrameMono, recon *So
 	mode := selectIntraModeN(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, n, block.HaveTop, block.HaveLeft, pred)
 	src420 := SourceFrame420{Y: src.Y, YStride: src.YStride, Width: src.Width, Height: src.Height}
 	recon420 := SourceFrame420{Y: recon.Y, YStride: recon.YStride, Width: recon.Width, Height: recon.Height}
-	mode, angleDelta := st.improveIntraModeDirectional(src420, &recon420, block, mode, pred, lumaPX, lumaPY, n)
+	mode, angleDelta := st.improveIntraModeDirectional(src420, &recon420, block, modeCtx, mode, pred, lumaPX, lumaPY, n)
 
 	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
 		Size: block.Size, X4: block.X4, Y4: block.Y4,
@@ -1758,7 +1758,7 @@ var keyDirectionalModes = [6]struct {
 // bit-exactly; a SAD pre-filter keeps the exact-rate trials to the two most
 // promising angles. The streams code no intra edge filter, so the edges are
 // the raw reconstructed neighbors throughout.
-func (st *lossyEncodeState) improveIntraModeDirectional(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, mode tile.IntraMode, pred []byte, px, py, n int) (tile.IntraMode, int) {
+func (st *lossyEncodeState) improveIntraModeDirectional(src SourceFrame420, recon *SourceFrame420, block tile.BlockVisit, modeCtx *tile.BlockModeContext, mode tile.IntraMode, pred []byte, px, py, n int) (tile.IntraMode, int) {
 	if !block.HaveTop || !block.HaveLeft || n != 8 {
 		// Larger blocks exist only where the merge gates proved the flat
 		// prediction tight; the diagonal search pays on detail blocks.
@@ -1788,6 +1788,12 @@ func (st *lossyEncodeState) improveIntraModeDirectional(src SourceFrame420, reco
 		st.trialIntraSnap.save(&st.trialCDFs)
 		defer st.trialIntraSnap.restore(&st.trialCDFs)
 	}
+	// The intra edge filter strength reads whether a neighbour uses a smooth
+	// mode (get_filt_type), before this block marks its own mode.
+	smoothNeighbor, err := modeCtx.IntraEdgeSmoothNeighbor(int(block.X4), int(block.Y4), block.HaveTop, block.HaveLeft)
+	if err != nil {
+		return mode, 0
+	}
 	reconPlane := frame.Plane{Pix: recon.Y, Stride: src.YStride, Width: recon.Width, Height: recon.Height}
 	cand := st.sadScratch[:n*n]
 	candPlane := frame.Plane{Pix: cand, Stride: n, Width: n, Height: n}
@@ -1797,7 +1803,7 @@ func (st *lossyEncodeState) improveIntraModeDirectional(src SourceFrame420, reco
 	}
 	best1, best2 := scored{-1, 1 << 30}, scored{-1, 1 << 30}
 	predictAngle := func(angle int) bool {
-		edges, err := threading.BuildLumaDirectionalEdges(reconPlane, 8, px, py, n, n, angle, block, &st.intraEdgeScratch, 16, st.keyMIColEnd, st.keyMIRowEnd, false, false, st.keyVisW, st.keyVisH)
+		edges, err := threading.BuildLumaDirectionalEdges(reconPlane, 8, px, py, n, n, angle, block, &st.intraEdgeScratch, 16, st.keyMIColEnd, st.keyMIRowEnd, encoderIntraEdgeFilter, smoothNeighbor, st.keyVisW, st.keyVisH)
 		if err != nil {
 			return false
 		}
