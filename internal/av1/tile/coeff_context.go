@@ -1,6 +1,9 @@
 package tile
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"unsafe"
+)
 
 type TXBContext struct {
 	TXBSkipContext uint8
@@ -134,8 +137,8 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 	if w4 == 1 && h4 == 1 {
 		top := aboveRow[x4]
 		left := leftRow[y4]
-		dcSign += coeffContextSignDelta[top>>CoeffContextBits]
-		dcSign += coeffContextSignDelta[left>>CoeffContextBits]
+		// dav1d get_dc_sign_ctx TX_4X4: the sign flags summed without a table.
+		dcSign = int8((top>>(CoeffContextBits+1))&1+(left>>(CoeffContextBits+1))&1) - int8((top>>CoeffContextBits)&1+(left>>CoeffContextBits)&1)
 		if req.Plane == 0 {
 			if blockDims.W4 != txDims.W4 || blockDims.H4 != txDims.H4 {
 				top &= CoeffContextMask
@@ -283,51 +286,48 @@ func (c *CoeffEntropyContext) setTXBContext(req CoeffContextRequest, value uint8
 
 func (c *CoeffEntropyContext) setTXBContextKnown(req CoeffContextRequest, txDims TransformDimensions, visibleW int, visibleH int, value uint8) {
 	plane := int(req.Plane)
-	x4 := int(req.X4)
-	y4 := int(req.Y4)
-	var aboveRow, leftRow *[MaxBlockModeSlots]uint8
-	switch plane {
-	case 0:
-		aboveRow = &c.Above[0]
-		leftRow = &c.Left[0]
-	case 1:
-		aboveRow = &c.Above[1]
-		leftRow = &c.Left[1]
-	default:
-		aboveRow = &c.Above[2]
-		leftRow = &c.Left[2]
+	setCoeffContextRun(&c.Above[plane], int(req.X4), int(txDims.W4), visibleW, value)
+	setCoeffContextRun(&c.Left[plane], int(req.Y4), int(txDims.H4), visibleH, value)
+}
+
+// setCoeffContextRun is dav1d's dav1d_memset_likely_pow2 for the a/l coefficient
+// contexts: a TXB side of 1, 2, 4, 8 or 16 units fully inside the frame is one
+// or two word stores (the width the next get_skip_ctx/get_dc_sign_ctx reads
+// back), anything else stores the visible bytes and zeroes the rest.
+func setCoeffContextRun(row *[MaxBlockModeSlots]uint8, x, n, visible int, value uint8) {
+	const ones = 0x0101010101010101
+	if n <= 0 {
+		return
 	}
-	w4 := int(txDims.W4)
-	h4 := int(txDims.H4)
-	if w4 > 0 {
-		_ = aboveRow[x4+w4-1]
+	_ = row[x+n-1]
+	if visible >= n {
+		p := unsafe.Pointer(&row[x])
+		v := uint64(value) * ones
+		switch n {
+		case 1:
+			row[x] = value
+			return
+		case 2:
+			*(*uint16)(p) = uint16(v)
+			return
+		case 4:
+			*(*uint32)(p) = uint32(v)
+			return
+		case 8:
+			*(*uint64)(p) = v
+			return
+		case 16:
+			*(*uint64)(p) = v
+			*(*uint64)(unsafe.Add(p, 8)) = v
+			return
+		}
+		visible = n
 	}
-	if visibleW >= w4 {
-		for k := 0; k < w4; k++ {
-			aboveRow[x4+k] = value
-		}
-	} else {
-		for k := 0; k < visibleW; k++ {
-			aboveRow[x4+k] = value
-		}
-		for k := visibleW; k < w4; k++ {
-			aboveRow[x4+k] = 0
-		}
+	for k := 0; k < visible; k++ {
+		row[x+k] = value
 	}
-	if h4 > 0 {
-		_ = leftRow[y4+h4-1]
-	}
-	if visibleH >= h4 {
-		for k := 0; k < h4; k++ {
-			leftRow[y4+k] = value
-		}
-	} else {
-		for k := 0; k < visibleH; k++ {
-			leftRow[y4+k] = value
-		}
-		for k := visibleH; k < h4; k++ {
-			leftRow[y4+k] = 0
-		}
+	for k := visible; k < n; k++ {
+		row[x+k] = 0
 	}
 }
 
@@ -404,14 +404,16 @@ func coeffEntropyBase(above []uint8, left []uint8) uint8 {
 }
 
 func coeffDCSignContext(dcSign int8) uint8 {
-	switch {
-	case dcSign < 0:
-		return 1
-	case dcSign > 0:
-		return 2
-	default:
-		return 0
+	// dav1d get_dc_sign_ctx: (s != 0) + (s > 0), branch-free.
+	return b2u8(dcSign != 0) + b2u8(dcSign > 0)
+}
+
+func b2u8(v bool) uint8 {
+	var r uint8
+	if v {
+		r = 1
 	}
+	return r
 }
 
 func validCoeffEntropyValue(value uint8) bool {
