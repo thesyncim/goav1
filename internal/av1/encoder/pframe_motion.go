@@ -115,74 +115,24 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 		o.fullSAD = st.leafFullPelSAD(src, ref, lumaPX, lumaPY, bw, bh, motion.Vector{})
 		return o, nil
 	}
-	n := bw
 	var out pblockMotion
 	scaledReference := ref.Width != src.Width || ref.Height != src.Height
 	out.scaledReference = scaledReference
 	var mv motion.Vector
 	fullSAD := -1
-	sadEpoch := st.sadCacheEpoch
 	if scaledReference {
 		if err := predictIntoScaled(st.sadScratch[:bw*bh], ref.Y, ref.YStride, ref.Width, ref.Height, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, &st.scaledScratch); err != nil {
 			return out, fmt.Errorf("scaled reference luma probe: %w", err)
 		}
 		fullSAD = sadRectDualBlock(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, st.sadScratch[:bw*bh], bw, bw, bh)
 	} else {
-		switch {
-		case bw != bh:
-			// Rect halves exist only where the partition decider proved the two
-			// child vectors equal; the shared vector and the summed child SADs
-			// describe the half exactly.
-			if bw >= 32 || bh >= 32 {
-				i0 := (lumaPY/16)*st.grid16Cols + lumaPX/16
-				i1 := i0 + 1
-				if bh > bw {
-					i1 = i0 + st.grid16Cols
-				}
-				if sadCacheValid(st.sad16Grid[i0], sadEpoch) && sadCacheValid(st.sad16Grid[i1], sadEpoch) {
-					mv = st.mv16Grid[i0]
-					fullSAD = sadCacheValue(st.sad16Grid[i0]) + sadCacheValue(st.sad16Grid[i1])
-				}
-				break
-			}
-			i0 := (lumaPY/8)*st.grid8Cols + lumaPX/8
-			i1 := i0 + 1
-			if bh > bw {
-				i1 = i0 + st.grid8Cols
-			}
-			if sadCacheValid(st.sad8Grid[i0], sadEpoch) && sadCacheValid(st.sad8Grid[i1], sadEpoch) {
-				mv = st.mv8Grid[i0]
-				fullSAD = sadCacheValue(st.sad8Grid[i0]) + sadCacheValue(st.sad8Grid[i1])
-			}
-		case n == 64:
-			idx := (lumaPY/64)*st.grid64Cols + lumaPX/64
-			if sadCacheValid(st.sad64Grid[idx], sadEpoch) {
-				mv, fullSAD = st.mv64Grid[idx], sadCacheValue(st.sad64Grid[idx])
-			}
-		case n == 32:
-			idx := (lumaPY/32)*st.grid32Cols + lumaPX/32
-			if sadCacheValid(st.sad32Grid[idx], sadEpoch) {
-				mv, fullSAD = st.mv32Grid[idx], sadCacheValue(st.sad32Grid[idx])
-			}
-		case n == 16:
-			idx := (lumaPY/16)*st.grid16Cols + lumaPX/16
-			if sadCacheValid(st.sad16Grid[idx], sadEpoch) {
-				mv, fullSAD = st.mv16Grid[idx], sadCacheValue(st.sad16Grid[idx])
-			}
-		default:
-			if idx := (lumaPY/8)*st.grid8Cols + lumaPX/8; sadCacheValid(st.sad8Grid[idx], sadEpoch) {
-				mv, fullSAD = st.mv8Grid[idx], sadCacheValue(st.sad8Grid[idx])
-			}
+		// The frame ME's vector for the PU covering this block (zero motion
+		// when the frame has no ME), scored with its exact SAD.
+		if me := st.hme.sbME(lumaPX, lumaPY); me != nil {
+			pu := svtMEBlockOffset(lumaPX&63, lumaPY&63, max(bw, bh))
+			mv = motion.Vector{Row: me.bestMV[pu][1] * 8, Col: me.bestMV[pu][0] * 8}
 		}
-		if fullSAD < 0 {
-			// The frame ME's vector for the PU covering this block (zero
-			// motion when the frame has no ME), scored with its exact SAD.
-			if me := st.hme.sbME(lumaPX, lumaPY); me != nil {
-				pu := svtMEBlockOffset(lumaPX&63, lumaPY&63, max(bw, bh))
-				mv = motion.Vector{Row: me.bestMV[pu][1] * 8, Col: me.bestMV[pu][0] * 8}
-			}
-			fullSAD = st.leafFullPelSAD(src, ref, lumaPX, lumaPY, bw, bh, mv)
-		}
+		fullSAD = st.leafFullPelSAD(src, ref, lumaPX, lumaPY, bw, bh, mv)
 		// read_refine_me_mvs_light_pd1: refine LAST's ME vector with the
 		// NEWMV predictor of LAST's MVP table as the MV cost reference.
 		if st.allowSubpelRefinement() {
