@@ -180,3 +180,38 @@ func TestWriterLogReplayLiterals(t *testing.T) {
 		}
 	}
 }
+
+// TestWriterLogDeferredIdentity: a deferred logging writer adapts every CDF
+// exactly as a coding writer does, and its log's replay is the coding
+// writer's stream, so coding only in Replay changes no byte.
+func TestWriterLogDeferredIdentity(t *testing.T) {
+	rng := rand.New(rand.NewSource(3))
+	for trial := 0; trial < 200; trial++ {
+		ops := randomLogTestOps(rng, 1+rng.Intn(4000), 8)
+		plain := NewWriter(nil)
+		plainCDFs := logTestCDFs(t)
+		writeLogTestOps(&plain, plainCDFs, ops, 37)
+		want, err := plain.Finish()
+		if err != nil {
+			t.Fatal(err)
+		}
+		deferred := NewWriter(nil)
+		var log WriterLog
+		log.SetDeferred(true)
+		deferred.SetLog(&log)
+		deferredCDFs := logTestCDFs(t)
+		writeLogTestOps(&deferred, deferredCDFs, ops, 37)
+		for i := range plainCDFs {
+			if plainCDFs[i] != deferredCDFs[i] {
+				t.Fatalf("trial %d: CDF %d adapted differently while deferred", trial, i)
+			}
+		}
+		got, err := log.Replay(nil, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("trial %d: deferred replay %d bytes != coded %d bytes", trial, len(got), len(want))
+		}
+	}
+}

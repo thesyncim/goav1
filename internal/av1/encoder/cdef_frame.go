@@ -104,6 +104,12 @@ type svtCDEFLogs struct {
 	logs   []entropy.WriterLog
 	coders []*pframeCoder
 	idx    []uint8
+	// deferNext runs the next picture's tile writers deferred (adapting
+	// CDFs, not coding), so Replay is its only coding pass. It follows the
+	// last searched picture: a picture that signals cdef_bits > 0 must be
+	// replayed anyway, while one with cdef_bits == 0 keeps the bytes its
+	// writers coded inline. Either way the stream is the same.
+	deferNext bool
 }
 
 // arm hands tile t's log to coders[t] for the coming tile run.
@@ -115,6 +121,7 @@ func (l *svtCDEFLogs) arm(coders []*pframeCoder) {
 	}
 	for t, pc := range coders {
 		pc.cdefLog = &l.logs[t]
+		l.logs[t].SetDeferred(l.deferNext)
 	}
 }
 
@@ -146,13 +153,17 @@ func (l *svtCDEFLogs) reserve(width, height, nTiles int) {
 	}
 }
 
-// replay re-emits every tile payload of a recorded picture with the
-// cdef_idx literals of fbIdx (frame raster, nhfb wide) spliced in, when the
-// search chose more than one strength. Each tile's bytes are rewritten into
-// its coder's writer buffer: the log, not the first pass's bytes, is the
-// replay's input.
+// replay codes every tile payload of a recorded picture from its log, with
+// the cdef_idx literals of fbIdx (frame raster, nhfb wide) spliced in when
+// the search chose more than one strength. A deferred picture's writers only
+// adapted the CDFs, so this is its one arithmetic-coding pass, as SVT-AV1
+// codes once in its entropy-coding kernel after CDEF; otherwise it runs only
+// when cdef_bits > 0. Each tile's bytes are written into its coder's writer
+// buffer.
 func (l *svtCDEFLogs) replay(payloads []TilePayload, coders []*pframeCoder, tiles TileInfo, miCols uint16, height int, fbIdx []uint8, bits uint8) error {
-	if bits == 0 {
+	deferred := len(payloads) > 0 && l.logs[0].Deferred()
+	l.deferNext = bits != 0
+	if bits == 0 && !deferred {
 		return nil
 	}
 	g := newCDEFFrameGeometry(int(miCols)*4, height)
@@ -166,9 +177,11 @@ func (l *svtCDEFLogs) replay(payloads []TilePayload, coders []*pframeCoder, tile
 		}
 		idx := l.idx[:n]
 		col0 := int(c0) / 16
-		for r := 0; r < sbRows; r++ {
-			for c := 0; c < sbCols; c++ {
-				idx[(r*sbCols+c)*4] = fbIdx[r*g.nhfb+col0+c]
+		if bits != 0 {
+			for r := 0; r < sbRows; r++ {
+				for c := 0; c < sbCols; c++ {
+					idx[(r*sbCols+c)*4] = fbIdx[r*g.nhfb+col0+c]
+				}
 			}
 		}
 		pc := coders[t]
