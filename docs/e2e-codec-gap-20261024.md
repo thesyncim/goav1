@@ -14,8 +14,8 @@ Do not read small differences as regressions or improvements.
 | Measure | 20261009 (`0824b687`) | 20261024 (`6d62eb88`) |
 | --- | ---: | ---: |
 | Decoder, public API, 18 clips, 1 worker: Go / dav1d | 3.640–3.653× | **1.756–1.847×** (3 rounds) |
-| Decoder, real-content corpus, 1 thread, CPU time: Go / dav1d | not measured | **1.595×** (42 streams) |
-| Decoder, real-content corpus, 8 threads, wall: Go / dav1d | not measured | **1.868×** (CPU 1.439×) |
+| Decoder, real-content corpus, 1 thread, CPU time (CLI, process-inclusive): Go / dav1d | not measured | **1.595×** (42 streams) |
+| Decoder, real-content corpus, 8 threads, wall (CLI, process-inclusive): Go / dav1d | not measured | **1.868×** (CPU 1.439×) |
 | Encoder, qualitybench preset 13, median Go / SVT time | 3.678× (3.419–4.857×) | **1.819×** (1.578–2.012×) |
 | Encoder, RTC preset 12, 1 thread, CPU time: Go / SVT | not measured | **1.21–1.26×** (instructions 1.64×) |
 
@@ -168,7 +168,9 @@ FFmpeg/libdav1d.
 | Johnny | 12 | 113.54 / 113.55 | 216.24 / 219.83 | 1.905× / 1.936× |
 
 The median of these 16 time ratios is **1.819×**, range **1.578–2.012×** (old
-report: 3.678×, 3.419–4.857×). CPU-time ratios agree (median 1.806×, range
+report: 3.678×, 3.419–4.857×). The qualitybench harness reports wall and CPU
+time only; cycles and instructions retired are measured on the RTC recipe
+below. CPU-time ratios agree (median 1.806×, range
 1.732–1.948×; `observed_parallelism` is 0.89–1.00 for both encoders). Go's
 absolute throughput roughly doubled (old 56–79 fps, now 114–199 fps) while SVT's
 barely moved (different SVT version), which is the whole change in the ratio.
@@ -271,7 +273,7 @@ wall and minimum CPU in a row can come from different repetitions, so treat the
   the pinned commit. The CLI tables use the Homebrew `dav1d` 1.5.4 binary
   (SHA-256 `add73331b706cb655203c27f7ee21d091ccbbf65191a98e4e49d2d9391cc38e4`,
   dylib `60c3a42a79582241ac77bbbba4c0137c2209204aecbc59e5d6392c2dc0a5b439`);
-  its API-helper timing is within 4% of the static build. Neither binary's
+  its API-helper timing differs from the static build by -2% to +8% by round. Neither binary's
   build provenance is independently attested.
 - **SVT-AV1.** `~/bin/svt410/SvtAv1EncApp`, `SVT-AV1 v4.1.0 (release)`, SHA-256
   `b4d8c5ed72671814f13559db312195414e26c02de878ebf18d7746d6e6f2b4f0`, built
@@ -400,25 +402,27 @@ profile weight:
   units in byte lanes**, as dav1d's edged 8-bit path (#160).
 - **PGO refresh.** A current decoder CPU profile merged into
   `cmd/qualitybench/default.pgo` (#135) after the realtime-encoder profile
-  (#106). Measured effect on the decoder sampler here: about 1–3%.
-- **Correctness fixes from the real-content corpus** (`scripts/gen_real_corpus.sh`,
-  #118, #143): palette edge contexts and on-screen index reads (#70, #129),
+  (#106). Measured effect on the decoder sampler here: 0.1–3%.
+- **Decoder correctness fixes**, most found with the real-content corpus and
+  aomenc/SVT feature streams (`scripts/gen_real_corpus.sh`, #118, #143): palette edge contexts and on-screen index reads (#70, #129),
   skip-intra per-transform-block prediction (#119), segmentation-map allocation
   and propagation (#120), compound interpolation kernel selection (#122), film
   grain on `show_existing_frame` (#127), frame-size changes with per-reference
   scaling (#133), super-res scratch sizing (#137), aomenc good-mode keyframes
   with still-picture headers and intrabc (#142) and per-frame side data across
-  tile groups (#151). Real streams from four encoders now decode byte-exact.
+  tile groups (#151). All 42 real-content streams (aomenc good and realtime, SVT-AV1 realtime and
+  random access, goav1) now decode byte-exact with Go and dav1d.
 - **Encoder.** A broad port of SVT-AV1 realtime preset 12: light-PD1
-  decisions and inter path (#40, #47, #51, #53, #57, #82, #87–#93), RTC rate
+  decisions and inter path (#40, #47, #51, #53, #57, #82, #87, #88, #90, #92, #93), RTC rate
   control and the 3-layer low-delay default (#59), p12 partitioning, deblock and
   restoration levels (#60, #61), the CDEF strength search (#66, #67, #110),
   open-loop ME and HME (#62, #73, #79, #80, #83, #86), RDOQ (#44, #45),
   `TX_MODE_LARGEST` (#96), one tile by default and keyframes on the SB-row
   wavefront (#154), OBU_FRAME packaging (#149) and screen-content tools
-  (#126, #131, #134, #158). Project notes from 2026-10-21 (not committed)
-  recorded about 2.6× SVT CPU and -1.06 dB luma PSNR at 2 Mbps; this report
-  measures 1.26× CPU and -0.013 dB on a similar clip, with the caveats above.
+  (#126, #131, #134, #158). Project notes from 2026-10-21 (not committed) recorded about 2.6× SVT-AV1
+  4.0.1 CPU and -1.06 dB luma PSNR at 2 Mbps on a similar 720p clip; this report
+  measures 1.26× SVT 4.1.0 CPU and -0.013 dB, so the two are not the same
+  reference build.
 
 ## Where the remaining gap is
 
