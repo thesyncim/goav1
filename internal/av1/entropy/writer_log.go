@@ -1,6 +1,9 @@
 package entropy
 
-import "errors"
+import (
+	"errors"
+	"math/bits"
+)
 
 // writer_log.go records a tile's range-coder symbol stream so the tile can be
 // re-emitted with syntax elements the encoder only decides after the whole
@@ -25,7 +28,18 @@ var ErrLogReplay = errors.New("entropy: writer log replay out of range")
 // reused across Reset calls.
 type WriterLog struct {
 	ops []uint32
+	// Deferred makes a logging writer only adapt its CDFs: it skips the
+	// arithmetic coding, leaving Replay as the stream's one coding pass.
+	// Otherwise the writer codes as it logs, and its own bytes stand when
+	// the replay is not needed.
+	deferred bool
 }
+
+// SetDeferred selects whether the writer recording into l skips coding.
+func (l *WriterLog) SetDeferred(on bool) { l.deferred = on }
+
+// Deferred reports whether the writer recording into l skips coding.
+func (l *WriterLog) Deferred() bool { return l.deferred }
 
 // A symbol entry keeps exactly what od_ec_encode_q15 reads: fl >> 6 (bits
 // 0-8), a flag for fl == 32768 (bit 9, the s == 0 case), fh >> 6 (bits
@@ -86,7 +100,9 @@ func (l *WriterLog) boolQ15(val int, f uint32) {
 }
 
 // SetLog starts recording every symbol this writer codes into l (nil stops
-// recording). The writer keeps coding normally; the log is extra.
+// recording). The writer keeps coding unless l is deferred; then it only
+// adapts the CDFs, its Tell and Finish are meaningless, and the stream comes
+// from WriterLog.Replay.
 func (w *Writer) SetLog(l *WriterLog) {
 	w.log = l
 }
@@ -114,54 +130,121 @@ func (w *Writer) LogCDEFUnits(first uint8, mask uint8) {
 	}
 }
 
-// replayQ15 is encodeQ15 on the logged operands: u and v depend on fl and
-// fh only through fl >> 6 and fh >> 6, and on s and nsyms only through
-// nsyms - s.
-func (w *Writer) replayQ15(op uint32) {
-	l := w.low
-	r := w.rng
-	ns := op >> 19 & 0x1f
-	fh := op >> 10 & 0x1ff
-	if op&logFLTop == 0 {
-		fl := op & 0x1ff
-		u := ((r>>8)*fl)>>(7-ecProbShift) + ecMinProb*ns
-		v := ((r>>8)*fh)>>(7-ecProbShift) + ecMinProb*(ns-1)
-		l += uint64(r - u)
-		r = u - v
-	} else {
-		r -= ((r>>8)*fh)>>(7-ecProbShift) + ecMinProb*(ns-1)
-	}
-	w.normalize(l, r)
-}
-
 // Replay codes the logged stream into dst (its capacity is reused) and
 // returns the finished bytes. At each logged cdef_idx position whose unit
-// is still unread in its superblock it writes the bits-wide literal
+// is still unread in its superblock it writes the cdefBits-wide literal
 // cdefIdx[sb*4+unit], sb counting the logged superblocks from zero. With
-// bits == 0 the output equals the original writer's bytes.
-func (l *WriterLog) Replay(dst []byte, cdefIdx []uint8, bits int) ([]byte, error) {
+// cdefBits == 0 the output equals the original writer's bytes.
+func (l *WriterLog) Replay(dst []byte, cdefIdx []uint8, cdefBits int) ([]byte, error) {
 	w := NewWriter(dst)
 	sb := -1
 	var seen uint8
-	for _, op := range l.ops {
+	ops := l.ops
+	i := 0
+	for i < len(ops) {
+		// The symbol run: coder state in registers and no calls, so
+		// nothing spills; it stops at a control entry or a byte flush.
+		lo, rg, cnt := w.low, w.rng, w.cnt
+		var d int32
+		for ; i < len(ops); i++ {
+			op := ops[i]
+			if op>>logKindShift != 0 {
+				break
+			}
+			// encodeQ15 on the logged operands: u and v depend on fl and
+			// fh only through fl >> 6 and fh >> 6, and on s and nsyms only
+			// through nsyms - s.
+			ns := op >> 19 & 0x1f
+			fh := op >> 10 & 0x1ff
+			q := rg >> 8
+			if op&logFLTop == 0 {
+				u := (q*(op&0x1ff))>>(7-ecProbShift) + ecMinProb*ns
+				v := (q*fh)>>(7-ecProbShift) + ecMinProb*(ns-1)
+				lo += uint64(rg - u)
+				rg = u - v
+			} else {
+				rg -= (q*fh)>>(7-ecProbShift) + ecMinProb*(ns-1)
+			}
+			d = int32(bits.LeadingZeros16(uint16(rg)))
+			if cnt+d >= 40 {
+				break
+			}
+			lo, rg, cnt = lo<<uint32(d), rg<<uint32(d), cnt+d
+		}
+		w.low, w.rng, w.cnt = lo, rg, cnt
+		if i == len(ops) {
+			break
+		}
+		op := ops[i]
+		i++
 		switch op >> logKindShift {
 		case 0:
-			w.replayQ15(op)
+			// The symbol is coded; its renormalization flushes bytes.
+			w.normalizeFlush(lo, rg)
 		case logKindSuperblock >> logKindShift:
 			sb++
 			seen = 0
 		case logKindCDEFUnit >> logKindShift:
 			first := uint8(op & 0xff)
-			if seen&(1<<first) != 0 || bits == 0 {
+			if seen&(1<<first) != 0 || cdefBits == 0 {
 				continue
 			}
 			seen |= uint8(op >> 8)
-			i := sb*4 + int(first)
-			if sb < 0 || i >= len(cdefIdx) {
+			k := sb*4 + int(first)
+			if sb < 0 || k >= len(cdefIdx) {
 				return nil, ErrLogReplay
 			}
-			w.WriteLiteral(uint32(cdefIdx[i]), bits)
+			w.WriteLiteral(uint32(cdefIdx[k]), cdefBits)
 		}
 	}
 	return w.Finish()
+}
+
+// adaptCDF2, adaptCDF3 and adaptCDF4 are the CDF adaptations of the 2-, 3-
+// and 4-symbol writers without their coding, for a logging writer in
+// deferred mode.
+func adaptCDF2(values *[MaxSymbols + 1]uint16, s int) {
+	count := values[2]
+	rate := uint(4 + (count >> 4))
+	v0 := values[0]
+	if s == 0 {
+		values[0] = v0 - (v0 >> rate)
+	} else {
+		values[0] = v0 + ((uint16(CDFProbTop) - v0) >> rate)
+	}
+	if count < MaxCDFCount {
+		values[2] = count + 1
+	}
+}
+
+func adaptCDF3(values *[MaxSymbols + 1]uint16, s int) {
+	count := values[3]
+	rate := uint(4 + (count >> 4))
+	for i := range 2 {
+		v := values[i]
+		if i < s {
+			values[i] = v + ((uint16(CDFProbTop) - v) >> rate)
+		} else {
+			values[i] = v - (v >> rate)
+		}
+	}
+	if count < MaxCDFCount {
+		values[3] = count + 1
+	}
+}
+
+func adaptCDF4(values *[MaxSymbols + 1]uint16, s int) {
+	count := values[4]
+	rate := uint(5 + (count >> 4))
+	for i := range 3 {
+		v := values[i]
+		if i < s {
+			values[i] = v + ((uint16(CDFProbTop) - v) >> rate)
+		} else {
+			values[i] = v - (v >> rate)
+		}
+	}
+	if count < MaxCDFCount {
+		values[4] = count + 1
+	}
 }
