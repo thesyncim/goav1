@@ -43,12 +43,12 @@ type decodeOptions struct {
 // spatial layer the temporal unit publishes, or the pinned layer ID
 // when -spatial-layer is set).
 //
-// The runner is bound around a single frame.Pool, which constrains us
-// to SVC streams whose spatial layers share one CodedWidth x Height
-// (the L1T2 case). Truly multi-spatial-resolution streams need the
-// multi-pool decoder.FrameSurfaceProvider path documented in
-// docs/svc.md; that path is exercised by the framework dry-run tests
-// in internal/av1/testvector but not by this CLI.
+// The runner is bound around a single frame.Pool whose slots are sized
+// for the sequence maximum frame; each frame binds a slot at its own
+// coded size, so spatial layers of different resolutions (L2T1, L2T2)
+// share the pool and predict across layers through scaled references.
+// Every frame runs the full post-filter chain (deblock, CDEF, loop
+// restoration) before it is emitted or kept as a reference.
 type decoder struct {
 	pool       av1.FramePool
 	workerPool *av1.TileWorkerPool
@@ -65,6 +65,7 @@ type decoder struct {
 
 	scratch av1.DecoderFrameWorkResidualStreamScratch
 	runner  av1.DecoderFrameWorkResidualStreamRunner
+	post    av1.DecoderFrameWorkReusableSupportedPostFilterRunner
 
 	payloads [][]byte
 	format   av1.FrameFormat
@@ -105,9 +106,10 @@ func newDecoder(payloads [][]byte, workers int) (*decoder, error) {
 		return nil, errors.New("stream plan did not identify a bind event")
 	}
 
-	// Derive the pool format from the bound headers so the superblock alignment
-	// (64 vs 128) matches the surface the decoder reconstructs into.
-	format, err := av1.FrameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
+	// Size the pool slots for the sequence maximum so every spatial layer
+	// (and any frame-size change) binds a slot at its own size; the headers
+	// also fix the superblock alignment the decoder reconstructs into.
+	format, err := av1.FramePoolFormatFromSequence(plan.Bind.Sequence, 64)
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("frame format from stream plan: %w", err)
@@ -190,7 +192,7 @@ func (d *decoder) Decode(dst io.Writer, opts decodeOptions) (decodeStats, error)
 	for i, payload := range d.payloads {
 		start := time.Now()
 		result = av1.DecoderFrameWorkResidualStreamResult{}
-		if err := d.runner.RunLowOverheadInto(&result, payload, nil); err != nil {
+		if err := d.runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, &d.post); err != nil {
 			// Annotate the failure with the layer composition of the
 			// failing payload so the caller knows which (T, S) pair was
 			// in flight at the moment of the proximate decoder error.
@@ -225,8 +227,41 @@ func (d *decoder) Decode(dst io.Writer, opts decodeOptions) (decodeStats, error)
 				i, len(payload), float64(elapsed.Microseconds())/1000.0,
 				result.Run.OutputCount, result.Run.CompletedFrames, emit != nil, emitSpatialID)
 		}
+		d.releaseShownSurfaces(result.Run.Outputs[:result.Run.OutputCount])
 	}
 	return stats, nil
+}
+
+// releaseShownSurfaces returns the pool slots behind one temporal unit's
+// outputs once they are written, unless a reference slot still holds them;
+// those are released by the reference bookkeeping when they leave the
+// reference set. Without this, shown non-reference frames (the upper
+// temporal layers of L1T2/L2T2) leak a slot each and the pool runs dry.
+// Mirrors av1.Decoder's shown-surface release.
+func (d *decoder) releaseShownSurfaces(outputs []*av1.Frame) {
+	for _, f := range outputs {
+		if f == nil {
+			continue
+		}
+		for i := 0; i < d.pool.Cap(); i++ {
+			pf, err := d.pool.Frame(i)
+			if err != nil || pf != f {
+				continue
+			}
+			held := false
+			for r := 0; r < av1.RefFrames; r++ {
+				if surface, ok := d.refs.ReferenceSlot(r); ok && surface == i {
+					held = true
+					break
+				}
+			}
+			if !held {
+				// An already-released slot (a duplicate output, or one
+				// the reference bookkeeping freed) is the benign case.
+				_ = d.pool.Release(i)
+			}
+		}
+	}
 }
 
 // selectOutput pairs the parsed-event slice with the output slice to
