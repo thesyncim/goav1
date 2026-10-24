@@ -948,12 +948,11 @@ func (c *Cursor) ReadCDFUnchecked(cdf *CDF) int {
 		return c.readCDF7Known(&cdf.values)
 	case 8:
 		return c.readCDF8Known(&cdf.values)
-	case 9:
-		return c.readCDF9Known(&cdf.values)
-	case 10:
-		return c.readCDF10Known(&cdf.values)
-	case 11:
-		return c.readCDF11Known(&cdf.values)
+	case 9, 10, 11:
+		if symbol16SIMD {
+			return c.readSymbolKnown(&cdf.values, symbols)
+		}
+		return c.readCDF9To11Known(&cdf.values, symbols)
 	default:
 		return c.readSymbolKnown(&cdf.values, symbols)
 	}
@@ -977,12 +976,11 @@ func (c *Cursor) ReadCDFSymbolsUnchecked(cdf *CDF, symbols int) int {
 		return c.readCDF7Known(&cdf.values)
 	case 8:
 		return c.readCDF8Known(&cdf.values)
-	case 9:
-		return c.readCDF9Known(&cdf.values)
-	case 10:
-		return c.readCDF10Known(&cdf.values)
-	case 11:
-		return c.readCDF11Known(&cdf.values)
+	case 9, 10, 11:
+		if symbol16SIMD {
+			return c.readSymbolKnown(&cdf.values, symbols)
+		}
+		return c.readCDF9To11Known(&cdf.values, symbols)
 	default:
 		return c.readSymbolKnown(&cdf.values, symbols)
 	}
@@ -1000,19 +998,24 @@ func (r *Reader) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) (i
 	symbol := 0
 	last := symbols - 1
 	head := values[0]
-	minTerm := ecMinProb * uint32(last)
-	for symbol < last {
-		v := values[symbol]
-		lower = ((rngHi * uint32(v>>ecProbShift)) >> (7 - ecProbShift)) + minTerm
-		if coded >= lower {
-			break
+	vectored := symbol16SIMD && symbols >= 9
+	if vectored {
+		symbol, lower, upper = decodeSymbol16SIMD(values, last, rangeValue, coded, r.allowCDFUpdate)
+	} else {
+		minTerm := ecMinProb * uint32(last)
+		for symbol < last {
+			v := values[symbol]
+			lower = ((rngHi * uint32(v>>ecProbShift)) >> (7 - ecProbShift)) + minTerm
+			if coded >= lower {
+				break
+			}
+			symbol++
+			upper = lower
+			minTerm -= ecMinProb
 		}
-		symbol++
-		upper = lower
-		minTerm -= ecMinProb
-	}
-	if symbol == last {
-		lower = 0
+		if symbol == last {
+			lower = 0
+		}
 	}
 	if lower >= upper {
 		return 0, ErrInvalidCDF
@@ -1031,7 +1034,7 @@ func (r *Reader) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) (i
 	if cnt < 0 {
 		r.refill()
 	}
-	if r.allowCDFUpdate {
+	if r.allowCDFUpdate && !vectored {
 		count := values[symbols]
 		rate := uint(5 + ((count >> 4) & 3))
 		// One fixed-length pass with the symbol selecting each entry's
@@ -1091,19 +1094,24 @@ func (c *Cursor) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) in
 	symbol := 0
 	last := symbols - 1
 	head := values[0]
-	minTerm := ecMinProb * uint32(last)
-	for symbol < last {
-		v := values[symbol]
-		lower = ((rngHi * uint32(v>>ecProbShift)) >> (7 - ecProbShift)) + minTerm
-		if coded >= lower {
-			break
+	vectored := symbol16SIMD && symbols >= 9
+	if vectored {
+		symbol, lower, upper = decodeSymbol16SIMD(values, last, rangeValue, coded, c.allowCDFUpdate)
+	} else {
+		minTerm := ecMinProb * uint32(last)
+		for symbol < last {
+			v := values[symbol]
+			lower = ((rngHi * uint32(v>>ecProbShift)) >> (7 - ecProbShift)) + minTerm
+			if coded >= lower {
+				break
+			}
+			symbol++
+			upper = lower
+			minTerm -= ecMinProb
 		}
-		symbol++
-		upper = lower
-		minTerm -= ecMinProb
-	}
-	if symbol == last {
-		lower = 0
+		if symbol == last {
+			lower = 0
+		}
 	}
 
 	if traceEntropyReads {
@@ -1118,7 +1126,7 @@ func (c *Cursor) readSymbolKnown(values *[MaxSymbols + 1]uint16, symbols int) in
 	if cnt < 0 {
 		pos, dif, cnt, tellOffs = refillState(src, pos, dif, cnt, tellOffs)
 	}
-	if c.allowCDFUpdate {
+	if c.allowCDFUpdate && !vectored {
 		count := values[symbols]
 		rate := uint(4 + ((count >> 4) & 3))
 		if symbols > 3 {
@@ -2598,4 +2606,17 @@ func (c *Cursor) RefillTrusted() {
 	c.dif = dif
 	c.cnt = int16(cnt)
 	c.tellOffs = int16(tellOffs)
+}
+
+// readCDF9To11Known is the unrolled scalar decode for 9 to 11 symbols, used
+// where the vector large-alphabet search is unavailable.
+func (c *Cursor) readCDF9To11Known(values *[MaxSymbols + 1]uint16, symbols int) int {
+	switch symbols {
+	case 9:
+		return c.readCDF9Known(values)
+	case 10:
+		return c.readCDF10Known(values)
+	default:
+		return c.readCDF11Known(values)
+	}
 }
