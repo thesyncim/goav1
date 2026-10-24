@@ -141,3 +141,38 @@ func TestApplyRowsU8RejectInvalidBeforeMutation(t *testing.T) {
 		}
 	}
 }
+
+// TestRound2ViaHalvingAdd checks the identity the arm64 U8 kernels use for
+// dav1d's srshl by -scaling_shift, which archsimd lacks:
+// round2(p, s) == ((p >> (s-1)) + 1) >> 1 (sshl, then srhadd with zero) for
+// every scaling*grain product an 8-bit frame can produce.
+func TestRound2ViaHalvingAdd(t *testing.T) {
+	for s := 8; s <= 11; s++ {
+		for p := -255 * 128; p <= 255*127; p++ {
+			if got, want := ((p>>(s-1))+1)>>1, roundPowerOfTwo(p, s); got != want {
+				t.Fatalf("p=%d s=%d: got %d want %d", p, s, got, want)
+			}
+		}
+	}
+}
+
+// TestChromaIndexSaturatingSum checks that dav1d's int16 sqadd of
+// avg*uv_luma_mult + src*uv_mult (used by the arm64 U8 chroma kernels) gives
+// the same clipped scaling index as the exact sum.
+func TestChromaIndexSaturatingSum(t *testing.T) {
+	for _, lm := range []int{-128, -127, -1, 0, 1, 126, 127} {
+		for _, m := range []int{-128, -127, -1, 0, 1, 126, 127} {
+			for _, off := range []int{-256, -255, -1, 0, 1, 254, 255} {
+				for avg := 0; avg < 256; avg++ {
+					for src := 0; src < 256; src++ {
+						exact := avg*lm + src*m
+						sat := min(max(exact, -32768), 32767)
+						if got, want := clipInt((sat>>6)+off, 0, 255), clipInt((exact>>6)+off, 0, 255); got != want {
+							t.Fatalf("lm=%d m=%d off=%d avg=%d src=%d: got %d want %d", lm, m, off, avg, src, got, want)
+						}
+					}
+				}
+			}
+		}
+	}
+}

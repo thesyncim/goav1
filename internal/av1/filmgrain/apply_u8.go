@@ -25,6 +25,9 @@ func ApplyLumaRowU8(dst []uint8, src []uint8, grain []int16, scaling []uint8, pa
 		randoms[i] = rng
 	}
 
+	minValue, maxValue := lumaClipBounds(params)
+	var k fgConstsU8
+	k.init(int(params.ScalingShift), minValue, maxValue, 0, 0)
 	var offsets [2][2]uint8
 	for blockX := 0; blockX < params.Width; blockX += LumaBlockSize {
 		blockWidth := LumaBlockSize
@@ -50,7 +53,7 @@ func ApplyLumaRowU8(dst []uint8, src []uint8, grain []int16, scaling []uint8, pa
 			xStart = min(blockWidth, LumaOverlapSamples)
 		}
 
-		applyLumaBlockU8(dst, src, grain, scaling, params, offsets, blockX, blockWidth, xStart, yStart)
+		fgLumaBlockU8(dst, src, grain, scaling, params, offsets, blockX, blockWidth, xStart, yStart, &k)
 	}
 	return nil
 }
@@ -79,6 +82,10 @@ func ApplyChromaRowU8(dst []uint8, src []uint8, luma []uint8, grain []int16, sca
 	shiftX := chromaSubsamplingShift(params.SubsamplingX)
 	shiftY := chromaSubsamplingShift(params.SubsamplingY)
 	chromaBlockWidth := LumaBlockSize >> shiftX
+	minValue, maxValue := chromaClipBounds(params)
+	var k fgConstsU8
+	k.init(int(params.ScalingShift), minValue, maxValue, shiftX, shiftY)
+	k.initChroma(&params)
 	var offsets [2][2]uint8
 	for blockX := 0; blockX < params.Width; blockX += chromaBlockWidth {
 		blockWidth := chromaBlockWidth
@@ -104,7 +111,7 @@ func ApplyChromaRowU8(dst []uint8, src []uint8, luma []uint8, grain []int16, sca
 			xStart = min(blockWidth, LumaOverlapSamples>>shiftX)
 		}
 
-		applyChromaBlockU8(dst, src, luma, grain, scaling, params, shiftX, shiftY, offsets, blockX, blockWidth, xStart, yStart)
+		fgChromaBlockU8(dst, src, luma, grain, scaling, params, shiftX, shiftY, offsets, blockX, blockWidth, xStart, yStart, &k)
 	}
 	return nil
 }
