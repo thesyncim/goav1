@@ -102,6 +102,9 @@ type frameWorkFilmGrainDirectPlanes[T uint8 | uint16] struct {
 	stride [3]int
 	width  [3]int
 	height [3]int
+	// tables, for 10/12-bit planes, hold each plane's per-sample-value
+	// scaling (dav1d's 16bpc generate_scaling); nil at 8 bits.
+	tables *[3][filmgrain.ScalingTableSize]uint8
 }
 
 // frameWorkApplyFilmGrainDirect binds the source and display planes at their
@@ -134,6 +137,8 @@ func frameWorkApplyFilmGrainDirect(ctx *FrameWorkPostFilterContext, output *fram
 		src.pix[i], dst.pix[i] = s, d
 		src.stride[i], src.width[i], src.height[i] = srcPlanes[i].Stride/2, srcPlanes[i].Width, srcPlanes[i].Height
 	}
+	var tables [3][filmgrain.ScalingTableSize]uint8
+	src.tables = &tables
 	dst.stride, dst.width, dst.height = src.stride, src.width, src.height
 	result, err := frameWorkApplyFilmGrainDirectPlanes(ctx, output, req, plan, &src, &dst)
 	return result, true, err
@@ -177,6 +182,13 @@ func frameWorkApplyFilmGrainDirectPlanes[T uint8 | uint16](ctx *FrameWorkPostFil
 			copy(d[start:end], s[start:end])
 		}
 		copy(d[height*stride:], s[height*stride:])
+		var table *[filmgrain.ScalingTableSize]uint8
+		if src.tables != nil {
+			table = &src.tables[plane]
+			if err := filmgrain.BuildScalingTable(table, luts.LUTs[plane][:], plan.BitDepth); err != nil {
+				return FrameWorkFilmGrainPostFilterResult{}, frame.ErrInvalidFormat
+			}
+		}
 		blockHeight := filmgrain.LumaBlockSize
 		if plane != 0 {
 			blockHeight = frameWorkFilmGrainChromaBlockHeight(plan.Format)
@@ -191,11 +203,11 @@ func frameWorkApplyFilmGrainDirectPlanes[T uint8 | uint16](ctx *FrameWorkPostFil
 			start := row * blockHeight * stride
 			if plane == 0 {
 				params := frameWorkFilmGrainLumaRowParams(plan, row, h)
-				err = frameWorkFilmGrainApplyLumaRow(d[start:], s[start:], lumaGrain.Grain, &luts.LUTs[plane], params)
+				err = frameWorkFilmGrainApplyLumaRow(d[start:], s[start:], lumaGrain.Grain, &luts.LUTs[plane], table, params)
 			} else {
 				lumaStart := row * filmgrain.LumaBlockSize * src.stride[0]
 				params := frameWorkFilmGrainChromaRowParams(plan, plane, row, h, src.stride[0])
-				err = frameWorkFilmGrainApplyChromaRow(d[start:], s[start:], src.pix[0][lumaStart:], chromaGrain[plane-1].Grain, &luts.LUTs[plane], params)
+				err = frameWorkFilmGrainApplyChromaRow(d[start:], s[start:], src.pix[0][lumaStart:], chromaGrain[plane-1].Grain, &luts.LUTs[plane], table, params)
 			}
 			if err != nil {
 				return FrameWorkFilmGrainPostFilterResult{}, frame.ErrInvalidFormat
@@ -212,18 +224,18 @@ func frameWorkApplyFilmGrainDirectPlanes[T uint8 | uint16](ctx *FrameWorkPostFil
 
 // frameWorkFilmGrainApplyLumaRow dispatches on the sample type with concrete
 // calls, so the scaling LUTs stay on the caller's stack.
-func frameWorkFilmGrainApplyLumaRow[T uint8 | uint16](dst, src []T, grain []int16, scaling *[filmgrain.ScalingLUTSize]uint8, params filmgrain.LumaRowParams) error {
+func frameWorkFilmGrainApplyLumaRow[T uint8 | uint16](dst, src []T, grain []int16, scaling *[filmgrain.ScalingLUTSize]uint8, table *[filmgrain.ScalingTableSize]uint8, params filmgrain.LumaRowParams) error {
 	if d, ok := any(dst).([]uint8); ok {
 		return filmgrain.ApplyLumaRowU8(d, any(src).([]uint8), grain, scaling[:], params)
 	}
-	return filmgrain.ApplyLumaRow(any(dst).([]uint16), any(src).([]uint16), grain, scaling[:], params)
+	return filmgrain.ApplyLumaRowTable(any(dst).([]uint16), any(src).([]uint16), grain, scaling[:], table, params)
 }
 
 // frameWorkFilmGrainApplyChromaRow is frameWorkFilmGrainApplyLumaRow for a
 // chroma row.
-func frameWorkFilmGrainApplyChromaRow[T uint8 | uint16](dst, src, luma []T, grain []int16, scaling *[filmgrain.ScalingLUTSize]uint8, params filmgrain.ChromaRowParams) error {
+func frameWorkFilmGrainApplyChromaRow[T uint8 | uint16](dst, src, luma []T, grain []int16, scaling *[filmgrain.ScalingLUTSize]uint8, table *[filmgrain.ScalingTableSize]uint8, params filmgrain.ChromaRowParams) error {
 	if d, ok := any(dst).([]uint8); ok {
 		return filmgrain.ApplyChromaRowU8(d, any(src).([]uint8), any(luma).([]uint8), grain, scaling[:], params)
 	}
-	return filmgrain.ApplyChromaRow(any(dst).([]uint16), any(src).([]uint16), any(luma).([]uint16), grain, scaling[:], params)
+	return filmgrain.ApplyChromaRowTable(any(dst).([]uint16), any(src).([]uint16), any(luma).([]uint16), grain, scaling[:], table, params)
 }

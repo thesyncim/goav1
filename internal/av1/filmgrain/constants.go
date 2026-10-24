@@ -25,6 +25,10 @@ const (
 	MaxLumaScalingPoints        = 14
 	MaxLumaARCoeffs             = 24
 
+	// ScalingTableSize is the per-sample-value scaling table of high bit
+	// depth, dav1d's 16bpc SCALING_SIZE.
+	ScalingTableSize = 4096
+
 	LumaBlockSize         = 32
 	NoiseStripeHeight     = 34
 	LumaOverlapSamples    = 2

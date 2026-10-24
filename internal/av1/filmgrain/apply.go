@@ -50,6 +50,20 @@ type ChromaRowParams struct {
 // ApplyLumaRow places generated AV1 luma grain on one 32-line luma row band.
 // src and dst are uint16 sample views of the row band and may alias.
 func ApplyLumaRow(dst []uint16, src []uint16, grain []int16, scaling []uint8, params LumaRowParams) error {
+	return applyLumaRow(dst, src, grain, scaling, nil, params)
+}
+
+// ApplyLumaRowTable is ApplyLumaRow for 10/12-bit rows with table, the
+// per-sample-value scaling from BuildScalingTable(scaling), as dav1d's
+// 16bpc fgy_32x32xn.
+func ApplyLumaRowTable(dst []uint16, src []uint16, grain []int16, scaling []uint8, table *[ScalingTableSize]uint8, params LumaRowParams) error {
+	if table == nil || params.BitDepth == 8 {
+		return ErrInvalidParams
+	}
+	return applyLumaRow(dst, src, grain, scaling, table, params)
+}
+
+func applyLumaRow(dst []uint16, src []uint16, grain []int16, scaling []uint8, table *[ScalingTableSize]uint8, params LumaRowParams) error {
 	if err := validateLumaRow(dst, src, grain, scaling, params); err != nil {
 		return err
 	}
@@ -67,6 +81,11 @@ func ApplyLumaRow(dst []uint16, src []uint16, grain []int16, scaling []uint8, pa
 		randoms[i] = rng
 	}
 
+	minValue, maxValue := lumaClipBounds(params)
+	var k fgConstsHBD
+	if table != nil {
+		k.init(params.BitDepth, int(params.ScalingShift), minValue, maxValue, 0, 0)
+	}
 	var offsets [2][2]uint8
 	for blockX := 0; blockX < params.Width; blockX += LumaBlockSize {
 		blockWidth := LumaBlockSize
@@ -92,7 +111,11 @@ func ApplyLumaRow(dst []uint16, src []uint16, grain []int16, scaling []uint8, pa
 			xStart = min(blockWidth, LumaOverlapSamples)
 		}
 
-		applyLumaBlock(dst, src, grain, scaling, params, offsets, blockX, blockWidth, xStart, yStart)
+		if table != nil {
+			fgLumaBlockHBD(dst, src, grain, scaling, table, params, offsets, blockX, blockWidth, xStart, yStart, &k)
+		} else {
+			applyLumaBlock(dst, src, grain, scaling, params, offsets, blockX, blockWidth, xStart, yStart)
+		}
 	}
 	return nil
 }
@@ -100,6 +123,20 @@ func ApplyLumaRow(dst []uint16, src []uint16, grain []int16, scaling []uint8, pa
 // ApplyChromaRow places generated AV1 chroma grain on one chroma row band.
 // src and dst are uint16 sample views of the chroma band and may alias.
 func ApplyChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16, scaling []uint8, params ChromaRowParams) error {
+	return applyChromaRow(dst, src, luma, grain, scaling, nil, params)
+}
+
+// ApplyChromaRowTable is ApplyChromaRow for 10/12-bit rows with table, the
+// per-sample-value scaling from BuildScalingTable(scaling), as dav1d's
+// 16bpc fguv_32x32xn.
+func ApplyChromaRowTable(dst []uint16, src []uint16, luma []uint16, grain []int16, scaling []uint8, table *[ScalingTableSize]uint8, params ChromaRowParams) error {
+	if table == nil || params.BitDepth == 8 {
+		return ErrInvalidParams
+	}
+	return applyChromaRow(dst, src, luma, grain, scaling, table, params)
+}
+
+func applyChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16, scaling []uint8, table *[ScalingTableSize]uint8, params ChromaRowParams) error {
 	if err := validateChromaRow(dst, src, luma, grain, scaling, params); err != nil {
 		return err
 	}
@@ -120,6 +157,12 @@ func ApplyChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16, sc
 	shiftX := chromaSubsamplingShift(params.SubsamplingX)
 	shiftY := chromaSubsamplingShift(params.SubsamplingY)
 	chromaBlockWidth := LumaBlockSize >> shiftX
+	minValue, maxValue := chromaClipBounds(params)
+	var k fgConstsHBD
+	if table != nil {
+		k.init(params.BitDepth, int(params.ScalingShift), minValue, maxValue, shiftX, shiftY)
+		k.initChroma(&params)
+	}
 	var offsets [2][2]uint8
 	for blockX := 0; blockX < params.Width; blockX += chromaBlockWidth {
 		blockWidth := chromaBlockWidth
@@ -145,7 +188,11 @@ func ApplyChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16, sc
 			xStart = min(blockWidth, LumaOverlapSamples>>shiftX)
 		}
 
-		applyChromaBlock(dst, src, luma, grain, scaling, params, shiftX, shiftY, offsets, blockX, blockWidth, xStart, yStart)
+		if table != nil {
+			fgChromaBlockHBD(dst, src, luma, grain, scaling, table, params, shiftX, shiftY, offsets, blockX, blockWidth, xStart, yStart, &k)
+		} else {
+			applyChromaBlock(dst, src, luma, grain, scaling, params, shiftX, shiftY, offsets, blockX, blockWidth, xStart, yStart)
+		}
 	}
 	return nil
 }
