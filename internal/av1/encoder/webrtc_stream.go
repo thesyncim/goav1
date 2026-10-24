@@ -112,6 +112,9 @@ func NewWebRTCStreamLayers(width, height int, rc RateControlConfig, temporalLaye
 	if temporalLayers < 1 || temporalLayers > int(WebRTCMaxTemporalLayers) {
 		return nil, fmt.Errorf("encoder: unsupported temporal layer count %d", temporalLayers)
 	}
+	if _, err := rc.buffers().resolve(); err != nil {
+		return nil, err
+	}
 	targetKbps := int32((rc.TargetBitsPerSecond + 999) / 1000)
 	if targetKbps <= 0 {
 		targetKbps = 1
@@ -123,6 +126,9 @@ func NewWebRTCStreamLayers(width, height int, rc RateControlConfig, temporalLaye
 		MaxBitrateKbps:    targetKbps,
 		TargetBitrateKbps: targetKbps,
 		RateControl:       RateControlCBR,
+		BufferInitialMs:   int32(rc.BufferInitialMs),
+		BufferOptimalMs:   int32(rc.BufferOptimalMs),
+		BufferMaxMs:       int32(rc.BufferMaxMs),
 	}
 	if temporalLayers > 1 {
 		var ok bool
@@ -305,6 +311,9 @@ func newWebRTCStreamLayerEncoder(config Config, layerIndex uint8, fps int, minQ 
 			FramesPerSecond:     fps,
 			MinQIndex:           minQ,
 			MaxQIndex:           maxQ,
+			BufferInitialMs:     int(config.BufferInitialMs),
+			BufferOptimalMs:     int(config.BufferOptimalMs),
+			BufferMaxMs:         int(config.BufferMaxMs),
 		}, config.ColorConfig)
 	case RateControlCQP:
 		enc, err = newVideoEncoderWithColor(int(layer.Resolution.Width), int(layer.Resolution.Height), config.Quantizer, config.ColorConfig)
@@ -774,6 +783,9 @@ func (s *WebRTCStream) updateLayerControls(config Config, fps int) error {
 				FramesPerSecond:     fps,
 				MinQIndex:           s.rcMinQ,
 				MaxQIndex:           s.rcMaxQ,
+				BufferInitialMs:     int(config.BufferInitialMs),
+				BufferOptimalMs:     int(config.BufferOptimalMs),
+				BufferMaxMs:         int(config.BufferMaxMs),
 			}); err != nil {
 				return err
 			}

@@ -54,6 +54,14 @@ const (
 	publishComparisonModeSingleThread  = "fixed-single-thread"
 
 	goAV1EncodeHelperCommand = "__qualitybench_goav1_encode"
+
+	// The CBR buffer model every encoder is given, in milliseconds of the target
+	// bitrate (--buf-sz, --buf-initial-sz, --buf-optimal-sz; goav1's
+	// BufferMaxMs, BufferInitialMs, BufferOptimalMs). A short clip is sensitive
+	// to the initial level, so the baselines and goav1 must share it.
+	cbrBufferMaxMs     = 1000
+	cbrBufferInitialMs = 500
+	cbrBufferOptimalMs = 600
 )
 
 type benchConfig struct {
@@ -891,6 +899,9 @@ func parseFlags() (benchConfig, error) {
 	}
 	if cfg.layers < 1 || cfg.layers > 3 {
 		return benchConfig{}, fmt.Errorf("invalid temporal layers %d", cfg.layers)
+	}
+	if cfg.layers == 2 && encoderSelected(cfg, "svt-av1") {
+		return benchConfig{}, errors.New("-layers 2 has no SVT-AV1 realtime equivalent (its hierarchical structures are flat or three to six temporal layers); use -layers 1 or 3 with svt-av1")
 	}
 	if cfg.keyInterval < 0 {
 		return benchConfig{}, fmt.Errorf("invalid key interval %d", cfg.keyInterval)
@@ -4751,6 +4762,9 @@ func encodeGoAV1Artifact(cfg benchConfig, frames []goav1.I420Frame, bitrate int)
 			"target_bitrate":     strconv.Itoa(bitrate),
 			"framerate":          strconv.Itoa(cfg.fps),
 			"temporal_layers":    strconv.Itoa(cfg.layers),
+			"buf_sz_ms":          strconv.Itoa(cbrBufferMaxMs),
+			"buf_initial_ms":     strconv.Itoa(cbrBufferInitialMs),
+			"buf_optimal_ms":     strconv.Itoa(cbrBufferOptimalMs),
 			"tile_columns":       strconv.Itoa(cfg.tiles),
 			"tile_columns_log2":  strconv.Itoa(cfg.tiles),
 			"tile_semantics":     "tile-columns-log2",
@@ -4797,15 +4811,18 @@ func encodeGoAV1Artifact(cfg benchConfig, frames []goav1.I420Frame, bitrate int)
 	}()
 
 	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
-		Width:          cfg.width,
-		Height:         cfg.height,
-		TargetBitrate:  bitrate,
-		Framerate:      cfg.fps,
-		TemporalLayers: cfg.layers,
-		TileColumns:    cfg.tiles,
-		MaxThreads:     cfg.goav1MaxThreads,
-		Speed:          int8(cfg.goav1Effort),
-		GoldenInterval: cfg.goldenInterval,
+		Width:           cfg.width,
+		Height:          cfg.height,
+		TargetBitrate:   bitrate,
+		Framerate:       cfg.fps,
+		TemporalLayers:  cfg.layers,
+		TileColumns:     cfg.tiles,
+		MaxThreads:      cfg.goav1MaxThreads,
+		Speed:           int8(cfg.goav1Effort),
+		GoldenInterval:  cfg.goldenInterval,
+		BufferMaxMs:     cbrBufferMaxMs,
+		BufferInitialMs: cbrBufferInitialMs,
+		BufferOptimalMs: cbrBufferOptimalMs,
 	})
 	if err != nil {
 		result.status, result.errText = "error", err.Error()
@@ -4936,9 +4953,9 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 			"auto_alt_ref":       "0",
 			"enable_fwd_kf":      "0",
 			"drop_frame":         "0",
-			"buf_sz_ms":          "1000",
-			"buf_initial_ms":     "500",
-			"buf_optimal_ms":     "600",
+			"buf_sz_ms":          strconv.Itoa(cbrBufferMaxMs),
+			"buf_initial_ms":     strconv.Itoa(cbrBufferInitialMs),
+			"buf_optimal_ms":     strconv.Itoa(cbrBufferOptimalMs),
 			"limit_frames":       strconv.Itoa(cfg.frames),
 			"kf_min_dist":        kfMinDist,
 			"kf_max_dist":        kfMaxDist,
@@ -4981,9 +4998,9 @@ func encodeAOM(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		"--auto-alt-ref=0",
 		"--enable-fwd-kf=0",
 		"--drop-frame=0",
-		"--buf-sz=1000",
-		"--buf-initial-sz=500",
-		"--buf-optimal-sz=600",
+		fmt.Sprintf("--buf-sz=%d", cbrBufferMaxMs),
+		fmt.Sprintf("--buf-initial-sz=%d", cbrBufferInitialMs),
+		fmt.Sprintf("--buf-optimal-sz=%d", cbrBufferOptimalMs),
 		fmt.Sprintf("--limit=%d", cfg.frames),
 	}
 	if cfg.tiles > 0 {
@@ -5045,9 +5062,10 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 			"frames":             strconv.Itoa(cfg.frames),
 			"rate_control":       "cbr",
 			"target_kbps":        strconv.Itoa(kbps(bitrate)),
-			"buf_sz_ms":          "1000",
-			"buf_initial_ms":     "500",
-			"buf_optimal_ms":     "600",
+			"buf_sz_ms":          strconv.Itoa(cbrBufferMaxMs),
+			"buf_initial_ms":     strconv.Itoa(cbrBufferInitialMs),
+			"buf_optimal_ms":     strconv.Itoa(cbrBufferOptimalMs),
+			"hier_levels":        strconv.Itoa(svtHierarchicalLevels(cfg.layers)),
 			"lookahead":          "0",
 			"pred_struct":        "1",
 			"rtc":                "1",
@@ -5097,9 +5115,10 @@ func encodeSVT(cfg benchConfig, refPath string, bitrate int) encodeResult {
 		"--preset", strconv.Itoa(cfg.svtPreset),
 		"--rc", "2",
 		"--tbr", strconv.Itoa(kbps(bitrate)),
-		"--buf-sz", "1000",
-		"--buf-initial-sz", "500",
-		"--buf-optimal-sz", "600",
+		"--buf-sz", strconv.Itoa(cbrBufferMaxMs),
+		"--buf-initial-sz", strconv.Itoa(cbrBufferInitialMs),
+		"--buf-optimal-sz", strconv.Itoa(cbrBufferOptimalMs),
+		"--hierarchical-levels", strconv.Itoa(svtHierarchicalLevels(cfg.layers)),
 		"--lookahead", "0",
 		"--pred-struct", "1",
 		"--rtc", "1",
@@ -5760,4 +5779,17 @@ func formatMetric(v float64) string {
 		return "NA"
 	}
 	return strconv.FormatFloat(v, 'f', 4, 64)
+}
+
+// svtHierarchicalLevels is the --hierarchical-levels that gives SVT-AV1's
+// realtime encoder the prediction structure of goav1's -layers: 1 is its flat
+// mimic (0, which also selects the flat rate-control path) and 3 is its
+// low-delay default of two hierarchical levels (three temporal layers). SVT
+// has no two-layer realtime structure (levels below 2 other than 0 are not
+// accepted), which validateConfig rejects.
+func svtHierarchicalLevels(layers int) int {
+	if layers == 1 {
+		return 0
+	}
+	return 2
 }

@@ -725,6 +725,14 @@ type Config struct {
 	DependencyMetadata bool
 	LowOverheadOBU     bool
 	RTPPacketization   bool
+
+	// BufferInitialMs, BufferOptimalMs and BufferMaxMs size the CBR buffer
+	// model in milliseconds of the target bitrate (SVT-AV1 --buf-initial-sz,
+	// --buf-optimal-sz, --buf-sz). Zero selects 600 / 600 / 1000; see
+	// RateControlConfig.
+	BufferInitialMs int32
+	BufferOptimalMs int32
+	BufferMaxMs     int32
 }
 
 func SetWebRTCSVCConfig(config Config, requestedTemporalLayers uint8, requestedSpatialLayers uint8) (Config, error) {
@@ -883,7 +891,14 @@ func normalizeConfig(config Config) (Config, error) {
 	if config.MaxThreads < 0 || config.KeyFrameInterval < 0 {
 		return Config{}, ErrInvalidConfig
 	}
+	if _, err := config.rateControlBuffers().resolve(); err != nil {
+		return Config{}, ErrInvalidConfig
+	}
 	return config, nil
+}
+
+func (c Config) rateControlBuffers() rcBuffers {
+	return rcBuffers{initialMs: int(c.BufferInitialMs), optimalMs: int(c.BufferOptimalMs), maxMs: int(c.BufferMaxMs)}
 }
 
 func validWebRTCEffortLevel(level int8) bool {

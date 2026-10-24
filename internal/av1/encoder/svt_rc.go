@@ -1,6 +1,9 @@
 package encoder
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 // svt_rc.go ports SVT-AV1's one-pass CBR rate control (Source/Lib/Codec,
 // v4.1.0): one RATE_CONTROL shared by every temporal layer.
@@ -45,11 +48,54 @@ const (
 	svtRCStartingBufMs   = 600
 	svtRCOptimalBufMs    = 600
 	svtRCMaximumBufMs    = 1000
+	svtRCMinBufMs        = 20
+	svtRCMaxBufMs        = 10000
 	svtRCQFactor         = 1.1
 	svtRCInterNormal     = 0
 	svtRCKFStd           = 5
 	svtRCMaxTemporalLvls = 6
 )
+
+// rcBuffers are the CBR buffer model sizes in milliseconds of the target
+// bitrate: SVT-AV1 starting_buffer_level_ms (--buf-initial-sz),
+// optimal_buffer_level_ms (--buf-optimal-sz) and maximum_buffer_size_ms
+// (--buf-sz). A zero field takes the library default (600 / 600 / 1000, the
+// values enc_settings.c sets for CBR).
+type rcBuffers struct {
+	initialMs, optimalMs, maxMs int
+}
+
+// resolve fills the defaults and applies SVT-AV1 config validation: every
+// size is within [20, 10000] ms, and an initial or optimal size that is not
+// below the maximum is clamped to maximum-1.
+func (b rcBuffers) resolve() (rcBuffers, error) {
+	if b.maxMs == 0 {
+		b.maxMs = svtRCMaximumBufMs
+	}
+	if b.initialMs == 0 {
+		b.initialMs = svtRCStartingBufMs
+	}
+	if b.optimalMs == 0 {
+		b.optimalMs = svtRCOptimalBufMs
+	}
+	switch {
+	case !validBufferMs(b.maxMs):
+		return rcBuffers{}, errBufferMs("maximum", b.maxMs)
+	case !validBufferMs(b.initialMs):
+		return rcBuffers{}, errBufferMs("initial", b.initialMs)
+	case !validBufferMs(b.optimalMs):
+		return rcBuffers{}, errBufferMs("optimal", b.optimalMs)
+	}
+	b.initialMs = min(b.initialMs, b.maxMs-1)
+	b.optimalMs = min(b.optimalMs, b.maxMs-1)
+	return b, nil
+}
+
+func validBufferMs(ms int) bool { return ms >= svtRCMinBufMs && ms <= svtRCMaxBufMs }
+
+func errBufferMs(name string, ms int) error {
+	return fmt.Errorf("encoder: %s buffer size %d ms is outside [%d, %d]", name, ms, svtRCMinBufMs, svtRCMaxBufMs)
+}
 
 // svtRCMaxDeltaPerLayer is rc_vbr_cbr.c max_delta_per_layer.
 var svtRCMaxDeltaPerLayer = [6][6]int{
@@ -107,7 +153,7 @@ const (
 // init is set_rc_buffer_sizes + svt_av1_rc_init + av1_rc_update_framerate
 // for a CBR stream (SVT re-runs it on every rate change event,
 // seq_param_changed).
-func (rc *svtRateControl) init(targetBps, fps int, bestQ, worstQ uint8, width, height int) {
+func (rc *svtRateControl) init(targetBps, fps int, bestQ, worstQ uint8, width, height int, buf rcBuffers) {
 	*rc = svtRateControl{enabled: true}
 	rc.bestQuality, rc.worstQuality = int(bestQ), int(worstQ)
 	rc.targetBitRate = int64(targetBps)
@@ -117,9 +163,14 @@ func (rc *svtRateControl) init(targetBps, fps int, bestQ, worstQ uint8, width, h
 	}
 	rc.mbs = ((width + 15) / 16) * ((height + 15) / 16)
 	bw := rc.targetBitRate
-	rc.startingBufferLevel = svtRCStartingBufMs * bw / 1000
-	rc.optimalBufferLevel = svtRCOptimalBufMs * bw / 1000
-	rc.maximumBufferSize = svtRCMaximumBufMs * bw / 1000
+	if r, err := buf.resolve(); err == nil {
+		buf = r
+	} else {
+		buf, _ = rcBuffers{}.resolve()
+	}
+	rc.startingBufferLevel = int64(buf.initialMs) * bw / 1000
+	rc.optimalBufferLevel = int64(buf.optimalMs) * bw / 1000
+	rc.maximumBufferSize = int64(buf.maxMs) * bw / 1000
 
 	rc.avgFrameQIndex = [2]int{rc.worstQuality, rc.worstQuality}
 	rc.lastQ = [2]int{rc.worstQuality, rc.worstQuality}

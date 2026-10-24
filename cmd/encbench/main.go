@@ -110,6 +110,9 @@ func main() {
 	fixedQ := flag.Int("qindex", 0, "fixed qindex 1..255 (disables CBR when > 0)")
 	minQ := flag.Int("minq", 0, "CBR minimum qindex (0 = encoder default)")
 	maxQ := flag.Int("maxq", 0, "CBR maximum qindex (0 = encoder default)")
+	bufInitial := flag.Int("buf-initial-ms", 0, "CBR initial buffer in ms of the target bitrate, SVT --buf-initial-sz (0 = encoder default, 600)")
+	bufOptimal := flag.Int("buf-optimal-ms", 0, "CBR optimal buffer in ms, SVT --buf-optimal-sz (0 = encoder default, 600)")
+	bufMax := flag.Int("buf-max-ms", 0, "CBR maximum buffer in ms, SVT --buf-sz (0 = encoder default, 1000)")
 	ivfPath := flag.String("o", "", "write the encoded stream as IVF to this path")
 	reconPath := flag.String("recon", "", "write the encoder reconstruction as raw I420 to this path")
 	noPSNR := flag.Bool("nopsnr", false, "skip the per-frame PSNR pass (for CPU measurement; score from -o instead)")
@@ -214,14 +217,17 @@ func main() {
 	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
 		Width: w, Height: h,
 		TargetBitrate: targetBitrate, Framerate: *infps,
-		QIndex:         uint8(*fixedQ),
-		MinQIndex:      uint8(*minQ),
-		MaxQIndex:      uint8(*maxQ),
-		TemporalLayers: *layers,
-		TileColumns:    *tiles,
-		GoldenInterval: *golden,
-		MaxThreads:     *threads,
-		Content:        contentHint,
+		QIndex:          uint8(*fixedQ),
+		MinQIndex:       uint8(*minQ),
+		MaxQIndex:       uint8(*maxQ),
+		BufferInitialMs: *bufInitial,
+		BufferOptimalMs: *bufOptimal,
+		BufferMaxMs:     *bufMax,
+		TemporalLayers:  *layers,
+		TileColumns:     *tiles,
+		GoldenInterval:  *golden,
+		MaxThreads:      *threads,
+		Content:         contentHint,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
