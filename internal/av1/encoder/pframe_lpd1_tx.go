@@ -66,10 +66,10 @@ func (st *lossyEncodeState) setLPD1TxCtrls(enabled bool) {
 		return
 	}
 	st.lpd1Tx = lpd1TxCtrls{
-		enabled:            true,
-		zeroYCoeffExit:     true,
-		useMds3ShortcutsTh: 30,
-		skipTxTh:           30,
+		enabled:                 true,
+		zeroYCoeffExit:          true,
+		useMds3ShortcutsTh:      30,
+		skipTxTh:                30,
 		useUVShortcutsOnYCoeffs: true,
 	}
 }
@@ -152,24 +152,6 @@ func (st *lossyEncodeState) lpd1ChromaComplexity(src SourceFrame420, refPlanes S
 		return lpd1ComponentChromaCr
 	}
 	return lpd1ComponentLuma
-}
-
-// lpd1SampledSAD is the row-subsampled SAD the chroma detector uses
-// (svt_nxm_sad_kernel called with stride << shift and height >> shift).
-func lpd1SampledSAD(src, ref []byte, srcOff, refOff, srcStride, refStride, w, rows, step int) int {
-	total := 0
-	for r := 0; r < rows; r++ {
-		s := src[srcOff+r*step*srcStride:]
-		d := ref[refOff+r*step*refStride:]
-		for c := 0; c < w; c++ {
-			diff := int(s[c]) - int(d[c])
-			if diff < 0 {
-				diff = -diff
-			}
-			total += diff
-		}
-	}
-	return total
 }
 
 // decideInterTXBlock runs one inter block's transform/quantize preparation
