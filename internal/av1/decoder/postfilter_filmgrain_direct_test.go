@@ -24,58 +24,58 @@ func TestFilmGrainDirectPublicationMatchesStaged(t *testing.T) {
 		{"444-luma-only", false, false, false, false, 1},
 		{"444-cb-only", false, false, false, false, 2},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := testFilmGrainDirectContext(t, frame.Format{Width: 98, Height: 65, BitDepth: 8, SubsamplingX: tc.sx, SubsamplingY: tc.sy, MonoChrome: tc.mono, Align: 64}, tc.active, tc.fromLuma)
-			ctx.Output.ExtendBorders()
-			before := [3][]byte{bytes.Clone(ctx.Output.Y.Pix), bytes.Clone(ctx.Output.U.Pix), bytes.Clone(ctx.Output.V.Pix)}
-			size, err := ctx.FilmGrainPostFilterScratchLen()
-			if err != nil {
-				t.Fatal(err)
-			}
-			legacyReq := testFrameWorkFilmGrainPostFilterRequest(size)
-			var legacyView frame.Frame
-			legacyReq.OutputView = &legacyView
-			legacy, err := ctx.BindFilmGrainPostFilterOutput(legacyReq)
-			if err != nil {
-				t.Fatal(err)
-			}
-			legacyCtx := ctx
-			legacyCtx.Output = legacy
-			legacyCtx.detachedPostFilterOutput = true
-			wantResult, err := legacyCtx.ApplyFilmGrainPostFilter(legacyReq)
-			if err != nil {
-				t.Fatal(err)
-			}
+		for _, bd := range []uint8{8, 10, 12} {
+			t.Run(fmt.Sprintf("%s-%dbit", tc.name, bd), func(t *testing.T) {
+				ctx := testFilmGrainDirectContext(t, frame.Format{Width: 98, Height: 65, BitDepth: bd, SubsamplingX: tc.sx, SubsamplingY: tc.sy, MonoChrome: tc.mono, Align: 64}, tc.active, tc.fromLuma)
+				ctx.Output.ExtendBorders()
+				before := [3][]byte{bytes.Clone(ctx.Output.Y.Pix), bytes.Clone(ctx.Output.U.Pix), bytes.Clone(ctx.Output.V.Pix)}
+				size, err := ctx.FilmGrainPostFilterScratchLen()
+				if err != nil {
+					t.Fatal(err)
+				}
+				legacyReq := testFrameWorkFilmGrainPostFilterRequest(size)
+				var legacyView frame.Frame
+				legacyReq.OutputView = &legacyView
+				legacy, err := ctx.BindFilmGrainPostFilterOutput(legacyReq)
+				if err != nil {
+					t.Fatal(err)
+				}
+				legacyCtx := ctx
+				legacyCtx.Output = legacy
+				legacyCtx.detachedPostFilterOutput = true
+				wantResult, err := legacyCtx.ApplyFilmGrainPostFilter(legacyReq)
+				if err != nil {
+					t.Fatal(err)
+				}
 
-			req := testFrameWorkFilmGrainPostFilterRequest(size)
-			var view frame.Frame
-			req.OutputView = &view
-			for _, samples := range [][]uint16{req.LumaSamples, req.ChromaSamples[0], req.ChromaSamples[1]} {
-				for i := range samples {
-					samples[i] = 0xabad
+				req := testFrameWorkFilmGrainPostFilterRequest(size)
+				var view frame.Frame
+				req.OutputView = &view
+				for _, samples := range [][]uint16{req.LumaSamples, req.ChromaSamples[0], req.ChromaSamples[1]} {
+					for i := range samples {
+						samples[i] = 0xabad
+					}
 				}
-			}
-			next, got, result, err := ctx.ApplySupportedPostFiltersForPublication(FrameWorkPostFilterRequest{FilmGrain: req})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if next.Output != ctx.Output || got != &view || result.FilmGrain.Output != got || next.RemainingPostFilters() != 0 {
-				t.Fatal("publication ownership/result changed")
-			}
-			if result.FilmGrain.Plan != wantResult.Plan || result.FilmGrain.LumaRows != wantResult.LumaRows || result.FilmGrain.ChromaRows != wantResult.ChromaRows || result.FilmGrain.OutputSize != wantResult.OutputSize {
-				t.Fatal("result geometry changed")
-			}
-			for i, p := range []frame.Plane{got.Y, got.U, got.V} {
-				want := []frame.Plane{legacy.Y, legacy.U, legacy.V}[i]
-				if !bytes.Equal(p.Pix, want.Pix) {
-					t.Fatalf("plane %d full bytes/padding differ", i)
+				next, got, result, err := ctx.ApplySupportedPostFiltersForPublication(FrameWorkPostFilterRequest{FilmGrain: req})
+				if err != nil {
+					t.Fatal(err)
 				}
-				original := []frame.Plane{ctx.Output.Y, ctx.Output.U, ctx.Output.V}[i]
-				if !bytes.Equal(original.Pix, before[i]) {
-					t.Fatalf("reference plane %d modified", i)
+				if next.Output != ctx.Output || got != &view || result.FilmGrain.Output != got || next.RemainingPostFilters() != 0 {
+					t.Fatal("publication ownership/result changed")
 				}
-			}
-			if frameWorkFilmGrainDirectU8Available {
+				if result.FilmGrain.Plan != wantResult.Plan || result.FilmGrain.LumaRows != wantResult.LumaRows || result.FilmGrain.ChromaRows != wantResult.ChromaRows || result.FilmGrain.OutputSize != wantResult.OutputSize {
+					t.Fatal("result geometry changed")
+				}
+				for i, p := range []frame.Plane{got.Y, got.U, got.V} {
+					want := []frame.Plane{legacy.Y, legacy.U, legacy.V}[i]
+					if !bytes.Equal(p.Pix, want.Pix) {
+						t.Fatalf("plane %d full bytes/padding differ", i)
+					}
+					original := []frame.Plane{ctx.Output.Y, ctx.Output.U, ctx.Output.V}[i]
+					if !bytes.Equal(original.Pix, before[i]) {
+						t.Fatalf("reference plane %d modified", i)
+					}
+				}
 				for _, samples := range [][]uint16{req.LumaSamples, req.ChromaSamples[0], req.ChromaSamples[1]} {
 					for _, v := range samples {
 						if v != 0xabad {
@@ -83,30 +83,27 @@ func TestFilmGrainDirectPublicationMatchesStaged(t *testing.T) {
 						}
 					}
 				}
-			}
-			if tc.name == "444-all" {
-				if allocs := testing.AllocsPerRun(20, func() {
-					_, _, _, err := ctx.ApplySupportedPostFiltersForPublication(FrameWorkPostFilterRequest{FilmGrain: req})
-					if err != nil {
-						panic(err)
+				if tc.name == "444-all" {
+					if allocs := testing.AllocsPerRun(20, func() {
+						_, _, _, err := ctx.ApplySupportedPostFiltersForPublication(FrameWorkPostFilterRequest{FilmGrain: req})
+						if err != nil {
+							panic(err)
+						}
+					}); allocs != 0 {
+						t.Fatalf("steady publication allocs=%v", allocs)
 					}
-				}); allocs != 0 {
-					t.Fatalf("steady publication allocs=%v", allocs)
 				}
-			}
-		})
+			})
+		}
 	}
 }
 
 func TestFilmGrainDirectPublicationFallbacks(t *testing.T) {
-	for _, name := range []string{"alias", "odd-subsampled-width", "allocated-view", "high-bit-depth", "noncanonical-plane"} {
+	for _, name := range []string{"alias", "odd-subsampled-width", "allocated-view", "noncanonical-plane"} {
 		t.Run(name, func(t *testing.T) {
 			format := frame.Format{Width: 34, Height: 33, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
 			if name == "odd-subsampled-width" {
 				format.Width = 33
-			}
-			if name == "high-bit-depth" {
-				format.BitDepth = 10
 			}
 			ctx := testFilmGrainDirectContext(t, format, 7, true)
 			if name == "noncanonical-plane" {
