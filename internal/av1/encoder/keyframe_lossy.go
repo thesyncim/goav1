@@ -572,7 +572,6 @@ type lossyEncodeState struct {
 	forceIntegerMV          bool
 	allowScreenContentTools bool
 	effortLevel             int8
-	sadCacheEpoch           uint32
 	yQuant                  quantize.Quantizer
 	uQuant                  quantize.Quantizer
 	vQuant                  quantize.Quantizer
@@ -611,13 +610,13 @@ type lossyEncodeState struct {
 	// at frame start). Inter tiles set it so decisions are independent of
 	// coding order — required for the SB-row wavefront to be byte-identical
 	// to the serial walk. Keyframe paths leave it false (unchanged behavior).
-	trialBlockLocal          bool
+	trialBlockLocal bool
 	// keyTrialPristine, when set (keyframe tiles), is the frame-start trial
 	// context set that restoreKeyTrial puts back the contexts keyTrialDirty
 	// marks after each decision unit (keyframe_split.go). Shared read-only by
 	// the wavefront lanes.
-	keyTrialPristine *tile.CoeffCDFs
-	keyTrialDirty    uint16
+	keyTrialPristine         *tile.CoeffCDFs
+	keyTrialDirty            uint16
 	intraEdgeScratch         threading.FrameWorkIntraPredictionScratch
 	keyMIColEnd, keyMIRowEnd uint32
 	keyVisW, keyVisH         int
@@ -822,21 +821,7 @@ type lossyEncodeState struct {
 	// counter buffer.
 	decisionStats *EncoderDecisionStats
 
-	// Per-frame motion partition grids filled by the 16x16 partition decider:
-	// the merged 16x16 full-pel result, and the child 8x8 full-pel results so
-	// split leaves do not repeat the search. SAD entries are tagged by
-	// sadCacheEpoch to avoid bulk-invalidating the grids every tile.
-	mv16Grid   []motion.Vector
-	sad16Grid  []uint32
-	grid16Cols int
-	mv8Grid    []motion.Vector
-	sad8Grid   []uint32
-	grid8Cols  int
-	mv32Grid   []motion.Vector
-	sad32Grid  []uint32
-	grid32Cols int
-	mv64Grid   []motion.Vector
-	sad64Grid  []uint32
+	// grid64Cols is the tile's width in 64x64 superblocks (the PD0 grid).
 	grid64Cols int
 
 	// pd0Grid holds the per-SB VERY_LIGHT_PD0 trees (pframe_vlpd0.go),
