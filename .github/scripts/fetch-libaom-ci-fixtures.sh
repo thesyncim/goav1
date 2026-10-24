@@ -9,7 +9,8 @@ mkdir -p "$fixture_dir"
 for name in \
 	av1-1-b8-00-quantizer-00.ivf \
 	av1-1-b8-22-svc-L1T2.ivf \
-	av1-1-b8-22-svc-L2T1.ivf
+	av1-1-b8-22-svc-L2T1.ivf \
+	av1-1-b8-22-svc-L2T2.ivf
 do
 	path="$fixture_dir/$name"
 	if [ ! -f "$path" ]; then
