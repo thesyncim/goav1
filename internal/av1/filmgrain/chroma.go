@@ -43,11 +43,7 @@ func GenerateChromaGrain(dst []int16, luma []int16, params ChromaGrainParams) er
 	gaussianShift := int(12 - params.BitDepth + params.GrainScaleShift)
 	for y := range height {
 		for x := range width {
-			index, err := rng.Number(GaussianBits)
-			if err != nil {
-				return err
-			}
-			grain[y*ChromaGrainWidth+x] = int16(roundPowerOfTwo(int(Gaussian(index)), gaussianShift))
+			grain[y*ChromaGrainWidth+x] = int16(roundPowerOfTwo(int(Gaussian(rng.gaussianIndex())), gaussianShift))
 		}
 	}
 
@@ -67,7 +63,7 @@ func GenerateChromaGrain(dst []int16, luma []int16, params ChromaGrainParams) er
 		generateChromaGrainARLag2(grain, luma, &params, width, height, roundingOffset, coeffShift, grainMin, grainMax)
 		return nil
 	case 3:
-		generateChromaGrainARLag3(grain, luma, &params, width, height, roundingOffset, coeffShift, grainMin, grainMax)
+		chromaGrainARLag3(grain, luma, &params, width, height, roundingOffset, coeffShift, grainMin, grainMax)
 		return nil
 	}
 	for y := 3; y < height; y++ {
