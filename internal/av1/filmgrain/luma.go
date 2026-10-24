@@ -37,11 +37,7 @@ func GenerateLumaGrain(dst []int16, params LumaGrainParams) error {
 	gaussianShift := int(12 - params.BitDepth + params.GrainScaleShift)
 	for y := range LumaGrainHeight {
 		for x := range LumaGrainWidth {
-			index, err := rng.Number(GaussianBits)
-			if err != nil {
-				return err
-			}
-			grain[y*LumaGrainWidth+x] = int16(roundPowerOfTwo(int(Gaussian(index)), gaussianShift))
+			grain[y*LumaGrainWidth+x] = int16(roundPowerOfTwo(int(Gaussian(rng.gaussianIndex())), gaussianShift))
 		}
 	}
 
@@ -61,7 +57,7 @@ func GenerateLumaGrain(dst []int16, params LumaGrainParams) error {
 		generateLumaGrainARLag2(grain, &params, roundingOffset, coeffShift, grainMin, grainMax)
 		return nil
 	case 3:
-		generateLumaGrainARLag3(grain, &params, roundingOffset, coeffShift, grainMin, grainMax)
+		lumaGrainARLag3(grain, &params, roundingOffset, coeffShift, grainMin, grainMax)
 		return nil
 	}
 	for y := 3; y < LumaGrainHeight; y++ {
