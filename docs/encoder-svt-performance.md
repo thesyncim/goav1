@@ -93,6 +93,16 @@ qualitybench -manifest /path/to/manifest.csv \
   -stats-csv stats.csv -frame-metrics-csv frames.csv -metadata-json metadata.json
 ~~~
 
+`qualitybench` gives both encoders the same CBR buffers (1000 / 500 / 600 ms,
+`--buf-sz` / `--buf-initial-sz` / `--buf-optimal-sz`; goav1's `BufferMaxMs`,
+`BufferInitialMs`, `BufferOptimalMs`) and SVT-AV1 the prediction structure of
+`-layers`: `--hierarchical-levels 0` for `-layers 1`, SVT's default three-layer
+low-delay structure for `-layers 3`. Earlier runs of this command did not: goav1
+ran flat with its 600 ms default buffer against SVT's three-layer structure with
+500 ms, which made goav1 look like it overshot the target
+(see [rate-control accuracy](e2e-codec-gap-20261024.md#rate-control-accuracy-an-svt-parity-effect-not-a-defect)).
+The tables above predate this change.
+
 The recorded run was split into one-clip, two-bitrate chunks to bound temporary
 raw-frame disk usage. It did not use publish mode or claim the publish corpus
 gates passed. For publication, use the larger, diverse corpus and controlled
