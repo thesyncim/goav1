@@ -215,3 +215,30 @@ func TestWriterLogDeferredIdentity(t *testing.T) {
 		}
 	}
 }
+
+// TestUpdateCDFWideMatchesValues checks the vector CDF update against
+// updateCDFValues for every alphabet from 5 symbols, symbol and count.
+func TestUpdateCDFWideMatchesValues(t *testing.T) {
+	if !symbol16SIMD {
+		t.Skip("no vector update")
+	}
+	rng := rand.New(rand.NewSource(4))
+	for n := 5; n <= MaxSymbols; n++ {
+		for trial := 0; trial < 2000; trial++ {
+			var c CDF
+			if err := c.InitUniform(n); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < trial%40; i++ {
+				updateCDFValues(&c.values, n, rng.Intn(n))
+			}
+			got, want := c.values, c.values
+			s := rng.Intn(n)
+			updateCDFWide(&got, n, s)
+			updateCDFValues(&want, n, s)
+			if got != want {
+				t.Fatalf("n=%d s=%d: got %v want %v", n, s, got, want)
+			}
+		}
+	}
+}
