@@ -8,19 +8,19 @@ import (
 )
 
 // frameWorkApplyFilmGrainForPublication writes grain from the reconstructed
-// source directly to a separate 8-bit display surface, as dav1d's
-// fg_apply_tmpl.c does. The source remains the reference picture, including
-// the original luma used by both chroma planes. Public in-place operations,
-// caller aliases, unusual geometry, and high bit depth keep the staged path.
+// source directly to a separate display surface, as dav1d's fg_apply_tmpl.c
+// does. The source remains the reference picture, including the original luma
+// used by both chroma planes. Public in-place operations, caller aliases,
+// unusual geometry, and (on big-endian hosts) high bit depth keep the staged
+// path.
 func frameWorkApplyFilmGrainForPublication(ctx *FrameWorkPostFilterContext, req FrameWorkFilmGrainPostFilterRequest) (*frame.Frame, FrameWorkFilmGrainPostFilterResult, error) {
-	if frameWorkFilmGrainDirectU8Available && ctx.Output != nil && ctx.Output.Format.BitDepth == 8 &&
-		req.OutputView != nil && req.OutputView != ctx.Output && len(req.OutputFrame) >= ctx.Output.Layout.Size {
+	if ctx.Output != nil && req.OutputView != nil && req.OutputView != ctx.Output && len(req.OutputFrame) >= ctx.Output.Layout.Size {
 		plan, planErr := ctx.FilmGrainPostFilterPlan()
 		output, bindErr := frame.Bind(req.OutputFrame[:ctx.Output.Layout.Size], ctx.Output.Format)
 		if planErr == nil && plan.Active && !frameWorkFilmGrainNoOp(plan.Params) && bindErr == nil &&
 			frameWorkFilmGrainDirectCompatible(&output, ctx.Output, plan) {
-			result, applyErr := frameWorkApplyFilmGrainDirectU8(ctx, &output, req, plan)
-			if applyErr == nil {
+			result, ok, applyErr := frameWorkApplyFilmGrainDirect(ctx, &output, req, plan)
+			if ok && applyErr == nil {
 				*req.OutputView = output
 				result.Output = req.OutputView
 				return req.OutputView, result, nil
@@ -44,7 +44,19 @@ func frameWorkApplyFilmGrainForPublication(ctx *FrameWorkPostFilterContext, req 
 }
 
 func frameWorkFilmGrainDirectCompatible(dst, src *frame.Frame, plan FrameWorkFilmGrainPostFilterPlan) bool {
-	if dst.Format != src.Format || dst.Layout != src.Layout || src.Layout.BytesPerSample != 1 {
+	if dst.Format != src.Format || dst.Layout != src.Layout {
+		return false
+	}
+	switch src.Layout.BytesPerSample {
+	case 1:
+		if src.Format.BitDepth != 8 {
+			return false
+		}
+	case 2:
+		if src.Format.BitDepth != 10 && src.Format.BitDepth != 12 {
+			return false
+		}
+	default:
 		return false
 	}
 	// The staged API's odd-width subsampled chroma reads the caller's luma
@@ -83,7 +95,51 @@ func frameWorkFilmGrainBytesOverlap(a, b []byte) bool {
 	return ap-bp < uintptr(len(b))
 }
 
-func frameWorkApplyFilmGrainDirectU8(ctx *FrameWorkPostFilterContext, output *frame.Frame, req FrameWorkFilmGrainPostFilterRequest, plan FrameWorkFilmGrainPostFilterPlan) (FrameWorkFilmGrainPostFilterResult, error) {
+// frameWorkFilmGrainDirectPlanes are one picture's planes as sample slices,
+// with strides and widths in samples.
+type frameWorkFilmGrainDirectPlanes[T uint8 | uint16] struct {
+	pix    [3][]T
+	stride [3]int
+	width  [3]int
+	height [3]int
+}
+
+// frameWorkApplyFilmGrainDirect binds the source and display planes at their
+// sample width and runs the row kernels from one to the other. ok is false
+// when the planes have no direct sample view (high bit depth on a big-endian
+// host); the caller then takes the staged path.
+func frameWorkApplyFilmGrainDirect(ctx *FrameWorkPostFilterContext, output *frame.Frame, req FrameWorkFilmGrainPostFilterRequest, plan FrameWorkFilmGrainPostFilterPlan) (FrameWorkFilmGrainPostFilterResult, bool, error) {
+	srcPlanes := [3]frame.Plane{ctx.Output.Y, ctx.Output.U, ctx.Output.V}
+	dstPlanes := [3]frame.Plane{output.Y, output.U, output.V}
+	if ctx.Output.Layout.BytesPerSample == 1 {
+		var src, dst frameWorkFilmGrainDirectPlanes[uint8]
+		for i := range srcPlanes {
+			src.pix[i], dst.pix[i] = srcPlanes[i].Pix, dstPlanes[i].Pix
+			src.stride[i], src.width[i], src.height[i] = srcPlanes[i].Stride, srcPlanes[i].Width, srcPlanes[i].Height
+		}
+		dst.stride, dst.width, dst.height = src.stride, src.width, src.height
+		result, err := frameWorkApplyFilmGrainDirectPlanes(ctx, output, req, plan, &src, &dst)
+		return result, true, err
+	}
+	var src, dst frameWorkFilmGrainDirectPlanes[uint16]
+	for i := range srcPlanes {
+		s, ok := frameWorkFilmGrainPlaneU16(srcPlanes[i])
+		if !ok {
+			return FrameWorkFilmGrainPostFilterResult{}, false, nil
+		}
+		d, ok := frameWorkFilmGrainPlaneU16(dstPlanes[i])
+		if !ok {
+			return FrameWorkFilmGrainPostFilterResult{}, false, nil
+		}
+		src.pix[i], dst.pix[i] = s, d
+		src.stride[i], src.width[i], src.height[i] = srcPlanes[i].Stride/2, srcPlanes[i].Width, srcPlanes[i].Height
+	}
+	dst.stride, dst.width, dst.height = src.stride, src.width, src.height
+	result, err := frameWorkApplyFilmGrainDirectPlanes(ctx, output, req, plan, &src, &dst)
+	return result, true, err
+}
+
+func frameWorkApplyFilmGrainDirectPlanes[T uint8 | uint16](ctx *FrameWorkPostFilterContext, output *frame.Frame, req FrameWorkFilmGrainPostFilterRequest, plan FrameWorkFilmGrainPostFilterPlan, src, dst *frameWorkFilmGrainDirectPlanes[T]) (FrameWorkFilmGrainPostFilterResult, error) {
 	luts, err := ctx.FilmGrainPostFilterScalingLUTs()
 	if err != nil {
 		return FrameWorkFilmGrainPostFilterResult{}, err
@@ -106,41 +162,40 @@ func frameWorkApplyFilmGrainDirectU8(ctx *FrameWorkPostFilterContext, output *fr
 	}
 
 	result := FrameWorkFilmGrainPostFilterResult{Plan: plan, OutputSize: output.Layout.Size}
-	srcPlanes := [3]frame.Plane{ctx.Output.Y, ctx.Output.U, ctx.Output.V}
-	dstPlanes := [3]frame.Plane{output.Y, output.U, output.V}
-	for plane, src := range srcPlanes {
-		dst := dstPlanes[plane]
+	for plane := range src.pix {
+		s, d := src.pix[plane], dst.pix[plane]
+		stride, width, height := src.stride[plane], src.width[plane], src.height[plane]
 		if !plan.Planes[plane].Active {
-			copy(dst.Pix, src.Pix)
+			copy(d, s)
 			continue
 		}
 		// StoreSamplePlane historically changed visible samples only. Copy
 		// the extended row/bottom padding without pre-copying active pixels.
-		for y := 0; y < src.Height; y++ {
-			start := y*src.Stride + src.Width
-			end := (y + 1) * src.Stride
-			copy(dst.Pix[start:end], src.Pix[start:end])
+		for y := 0; y < height; y++ {
+			start := y*stride + width
+			end := (y + 1) * stride
+			copy(d[start:end], s[start:end])
 		}
-		copy(dst.Pix[src.Height*src.Stride:], src.Pix[src.Height*src.Stride:])
+		copy(d[height*stride:], s[height*stride:])
 		blockHeight := filmgrain.LumaBlockSize
 		if plane != 0 {
 			blockHeight = frameWorkFilmGrainChromaBlockHeight(plan.Format)
 		}
-		rows := (src.Height + blockHeight - 1) / blockHeight
+		rows := (height + blockHeight - 1) / blockHeight
 		rowCount, ok := frameWorkFilmGrainRows16(rows)
 		if !ok {
 			return FrameWorkFilmGrainPostFilterResult{}, frame.ErrInvalidFormat
 		}
 		for row := range rows {
-			height := min(blockHeight, src.Height-row*blockHeight)
-			start := row * blockHeight * src.Stride
+			h := min(blockHeight, height-row*blockHeight)
+			start := row * blockHeight * stride
 			if plane == 0 {
-				params := frameWorkFilmGrainLumaRowParams(plan, row, height)
-				err = filmgrain.ApplyLumaRowU8(dst.Pix[start:], src.Pix[start:], lumaGrain.Grain, luts.LUTs[plane][:], params)
+				params := frameWorkFilmGrainLumaRowParams(plan, row, h)
+				err = frameWorkFilmGrainApplyLumaRow(d[start:], s[start:], lumaGrain.Grain, &luts.LUTs[plane], params)
 			} else {
-				lumaStart := row * filmgrain.LumaBlockSize * ctx.Output.Y.Stride
-				params := frameWorkFilmGrainChromaRowParams(plan, plane, row, height, ctx.Output.Y.Stride)
-				err = filmgrain.ApplyChromaRowU8(dst.Pix[start:], src.Pix[start:], ctx.Output.Y.Pix[lumaStart:], chromaGrain[plane-1].Grain, luts.LUTs[plane][:], params)
+				lumaStart := row * filmgrain.LumaBlockSize * src.stride[0]
+				params := frameWorkFilmGrainChromaRowParams(plan, plane, row, h, src.stride[0])
+				err = frameWorkFilmGrainApplyChromaRow(d[start:], s[start:], src.pix[0][lumaStart:], chromaGrain[plane-1].Grain, &luts.LUTs[plane], params)
 			}
 			if err != nil {
 				return FrameWorkFilmGrainPostFilterResult{}, frame.ErrInvalidFormat
@@ -153,4 +208,22 @@ func frameWorkApplyFilmGrainDirectU8(ctx *FrameWorkPostFilterContext, output *fr
 		}
 	}
 	return result, nil
+}
+
+// frameWorkFilmGrainApplyLumaRow dispatches on the sample type with concrete
+// calls, so the scaling LUTs stay on the caller's stack.
+func frameWorkFilmGrainApplyLumaRow[T uint8 | uint16](dst, src []T, grain []int16, scaling *[filmgrain.ScalingLUTSize]uint8, params filmgrain.LumaRowParams) error {
+	if d, ok := any(dst).([]uint8); ok {
+		return filmgrain.ApplyLumaRowU8(d, any(src).([]uint8), grain, scaling[:], params)
+	}
+	return filmgrain.ApplyLumaRow(any(dst).([]uint16), any(src).([]uint16), grain, scaling[:], params)
+}
+
+// frameWorkFilmGrainApplyChromaRow is frameWorkFilmGrainApplyLumaRow for a
+// chroma row.
+func frameWorkFilmGrainApplyChromaRow[T uint8 | uint16](dst, src, luma []T, grain []int16, scaling *[filmgrain.ScalingLUTSize]uint8, params filmgrain.ChromaRowParams) error {
+	if d, ok := any(dst).([]uint8); ok {
+		return filmgrain.ApplyChromaRowU8(d, any(src).([]uint8), any(luma).([]uint8), grain, scaling[:], params)
+	}
+	return filmgrain.ApplyChromaRow(any(dst).([]uint16), any(src).([]uint16), any(luma).([]uint16), grain, scaling[:], params)
 }
