@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/md5"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,15 +15,12 @@ import (
 // TestRunSVCInfoDecodesL2T1 is the bundled-vector smoke test for the
 // `-svc-info` mode against the AV1 SVC `av1-1-b8-22-svc-L2T1.ivf`
 // conformance vector. The L2T1 layout publishes two spatial layers at
-// distinct resolutions (640x360 base, 1280x720 enhancement), which
-// today's single-pool decoder driver in this CLI cannot fully decode
-// (it requires the multi-pool decoder.FrameSurfaceProvider path
-// documented in docs/svc.md). The svc-info pass however parses the
-// sequence header and the per-(T,S) OBU fan-out cleanly because it
-// never touches the pixel decoder, so it is the right smoke gate for
-// the bundled L2T1 vector: it verifies parsing infrastructure and
-// confirms the CLI correctly reports the two operating points and the
-// (T=0,S=0)+(T=0,S=1) layer composition that an L2T1 stream advertises.
+// distinct resolutions (640x360 base, 1280x720 enhancement). The
+// svc-info pass parses the sequence header and the per-(T,S) OBU
+// fan-out without touching the pixel decoder: it verifies parsing
+// infrastructure and confirms the CLI correctly reports the two
+// operating points and the (T=0,S=0)+(T=0,S=1) layer composition that
+// an L2T1 stream advertises.
 func TestRunSVCInfoDecodesL2T1(t *testing.T) {
 	ivfPath := repoRelativePath(t, "internal", "av1", "testdata", "libaom", "av1-1-b8-22-svc-L2T1.ivf")
 	if _, err := os.Stat(ivfPath); err != nil {
@@ -46,55 +46,75 @@ func TestRunSVCInfoDecodesL2T1(t *testing.T) {
 	}
 }
 
-// TestRunDecodesL2T1OutputSize is the L2T1 pixel-decode smoke test
-// requested by the CLI spec. The bundled vector mixes a 640x360 base
-// layer with a 1280x720 enhancement layer in the same temporal unit,
-// which the single-pool driver in this CLI rejects with
-// `frame: invalid format` at the very first payload. The test
-// therefore verifies the exact partial-decode contract the CLI
-// promises in main.go's package doc:
-//
-//   - run() returns a non-nil error (CLI exits non-zero),
-//   - the failure annotation carries the layer composition
-//     (T=0 S=0, T=0 S=1) of the failing payload,
-//   - the YUV output file is created and is exactly zero bytes long
-//     (no garbage from a half-decoded frame leaks out).
-//
-// When the single-pool L1T2 / multi-pool L2T1 limitation is lifted in
-// a future commit, this test should be updated to assert the full
-// 8-frame decode at the highest spatial layer
-// (8 * 1280 * 720 * 3 / 2 = 11_059_200 bytes).
-func TestRunDecodesL2T1OutputSize(t *testing.T) {
-	ivfPath := repoRelativePath(t, "internal", "av1", "testdata", "libaom", "av1-1-b8-22-svc-L2T1.ivf")
-	if _, err := os.Stat(ivfPath); err != nil {
-		t.Fatalf("bundled IVF missing: %v", err)
-	}
-
-	outDir := t.TempDir()
-	outPath := filepath.Join(outDir, "out.yuv")
-
-	var stderr bytes.Buffer
-	err := run([]string{"-o", outPath, "-quiet", ivfPath}, io.Discard, &stderr)
-	if err == nil {
-		t.Fatalf("expected non-nil error for L2T1 single-pool decode, got nil\nstderr=%s", stderr.String())
-	}
-	text := stderr.String()
-	for _, want := range []string{
-		"partial decode",
-		"layers=T=0 S=0,T=0 S=1",
+// TestRunDecodesSVCVectorsMatchLibaom decodes the bundled libaom SVC
+// vectors through the CLI's single-pool driver and checks every emitted
+// frame against the libaom per-frame MD5 sidecar (aomdec and dav1d
+// --alllayers 0 agree with it): one frame per temporal unit at the
+// highest spatial layer. L2T1 and L2T2 mix a 640x360 base layer with a
+// 1280x720 enhancement layer that predicts from it through a scaled
+// reference; L2T2 and L1T2 add a non-reference upper temporal layer
+// whose shown surfaces must go back to the pool. A pixel-free size
+// check here once hid that the driver emitted frames without running
+// the post-filters, so the gate is per-frame MD5 at 1 and 8 workers.
+func TestRunDecodesSVCVectorsMatchLibaom(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		bytesPerFrame int
+	}{
+		{"L1T2", 640 * 360 * 3 / 2},
+		{"L2T1", 1280 * 720 * 3 / 2},
+		{"L2T2", 1280 * 720 * 3 / 2},
 	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("stderr missing %q\nstderr=%s", want, text)
+		ivfPath := repoRelativePath(t, "internal", "av1", "testdata", "libaom", "av1-1-b8-22-svc-"+tc.name+".ivf")
+		if _, err := os.Stat(ivfPath); err != nil {
+			t.Fatalf("bundled IVF missing: %v", err)
+		}
+		want := readSidecarMD5s(t, ivfPath+".md5")
+		for _, workers := range []int{1, 8} {
+			t.Run(fmt.Sprintf("%s/workers-%d", tc.name, workers), func(t *testing.T) {
+				outPath := filepath.Join(t.TempDir(), "out.yuv")
+				var stderr bytes.Buffer
+				err := run([]string{"-o", outPath, "-quiet", "-workers", fmt.Sprint(workers), ivfPath}, io.Discard, &stderr)
+				if err != nil {
+					t.Fatalf("run %s decode err=%v\nstderr=%s", tc.name, err, stderr.String())
+				}
+				got, err := os.ReadFile(outPath)
+				if err != nil {
+					t.Fatalf("read output: %v", err)
+				}
+				if len(got) != len(want)*tc.bytesPerFrame {
+					t.Fatalf("output size=%d want %d (%d frames of %d bytes)",
+						len(got), len(want)*tc.bytesPerFrame, len(want), tc.bytesPerFrame)
+				}
+				for i, w := range want {
+					sum := md5.Sum(got[i*tc.bytesPerFrame : (i+1)*tc.bytesPerFrame])
+					if g := hex.EncodeToString(sum[:]); g != w {
+						t.Fatalf("frame %d md5=%s want %s (libaom sidecar)", i, g, w)
+					}
+				}
+			})
 		}
 	}
+}
 
-	info, statErr := os.Stat(outPath)
-	if statErr != nil {
-		t.Fatalf("stat output: %v", statErr)
+// readSidecarMD5s returns the per-frame MD5s of a libaom .md5 sidecar
+// ("<md5>  <name>" per line).
+func readSidecarMD5s(t *testing.T, path string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read sidecar: %v", err)
 	}
-	if info.Size() != 0 {
-		t.Fatalf("partial-decode L2T1 output size=%d want 0 bytes", info.Size())
+	var sums []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if fields := strings.Fields(line); len(fields) > 0 {
+			sums = append(sums, fields[0])
+		}
 	}
+	if len(sums) == 0 {
+		t.Fatalf("sidecar %s has no frames", path)
+	}
+	return sums
 }
 
 // TestRunDecodesL1T2AllFrames exercises the dump_svc pixel decode path
