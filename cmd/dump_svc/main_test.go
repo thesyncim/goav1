@@ -57,19 +57,49 @@ func TestRunSVCInfoDecodesL2T1(t *testing.T) {
 // check here once hid that the driver emitted frames without running
 // the post-filters, so the gate is per-frame MD5 at 1 and 8 workers.
 func TestRunDecodesSVCVectorsMatchLibaom(t *testing.T) {
+	// Per-frame MD5s from the libaom .md5 sidecars (aomdec and dav1d agree).
+	// CI fetches the vectors but not the sidecars, so they are pinned here.
 	for _, tc := range []struct {
 		name          string
 		bytesPerFrame int
+		want          []string
 	}{
-		{"L1T2", 640 * 360 * 3 / 2},
-		{"L2T1", 1280 * 720 * 3 / 2},
-		{"L2T2", 1280 * 720 * 3 / 2},
+		{"L1T2", 640 * 360 * 3 / 2, []string{
+			"f3874ea6c93fa8e345532e7273a00c78",
+			"9fa72a857e695607338354107695176a",
+			"a2eda89c577c97cc342d0ebc79f223c2",
+			"abe1f2c18b65422df79f7e3fa3e62f2c",
+			"d349496e56e18763cc43139d16822329",
+			"4edcc8be524cddff3787f87af8b6a40c",
+			"450f1a8a26c719f26fe74287974f64b0",
+			"a3ac8d3056e8e1deee9c02cccdf2a96a",
+		}},
+		{"L2T1", 1280 * 720 * 3 / 2, []string{
+			"d059f1dbc0f7dcf26a8f96e3175a83cf",
+			"b9edb56e9a351536ca9748bd45a355f4",
+			"176447941753f50218d4e2ce2ba266cf",
+			"7d9836bbc0e98d378961e1f02ffa86ac",
+			"706f8beec0e909caab7457fb99d31840",
+			"1197272fbcaeb550a7951dbe1cf33047",
+			"fb4655c6f9f5bdc86ec634f5da8368df",
+			"57e548bcf058a36b3841da3bc3a9080b",
+		}},
+		{"L2T2", 1280 * 720 * 3 / 2, []string{
+			"d059f1dbc0f7dcf26a8f96e3175a83cf",
+			"dff9dbe5ad9f9638abfa08440c9cb038",
+			"6fe06bb57ca517b0a1da8317eb6c7954",
+			"96c732514b66f80d4d6fbf0225684670",
+			"af9840249331b2a5ff638bc813bbfa39",
+			"b925ea23d949e76008375415ec1ff184",
+			"1989756cd5d51f60c358b37329fa9d45",
+			"339d0793ec430b0eb35be20918bc9ade",
+		}},
 	} {
 		ivfPath := repoRelativePath(t, "internal", "av1", "testdata", "libaom", "av1-1-b8-22-svc-"+tc.name+".ivf")
 		if _, err := os.Stat(ivfPath); err != nil {
 			t.Fatalf("bundled IVF missing: %v", err)
 		}
-		want := readSidecarMD5s(t, ivfPath+".md5")
+		want := tc.want
 		for _, workers := range []int{1, 8} {
 			t.Run(fmt.Sprintf("%s/workers-%d", tc.name, workers), func(t *testing.T) {
 				outPath := filepath.Join(t.TempDir(), "out.yuv")
@@ -95,26 +125,6 @@ func TestRunDecodesSVCVectorsMatchLibaom(t *testing.T) {
 			})
 		}
 	}
-}
-
-// readSidecarMD5s returns the per-frame MD5s of a libaom .md5 sidecar
-// ("<md5>  <name>" per line).
-func readSidecarMD5s(t *testing.T, path string) []string {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read sidecar: %v", err)
-	}
-	var sums []string
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		if fields := strings.Fields(line); len(fields) > 0 {
-			sums = append(sums, fields[0])
-		}
-	}
-	if len(sums) == 0 {
-		t.Fatalf("sidecar %s has no frames", path)
-	}
-	return sums
 }
 
 // TestRunDecodesL1T2AllFrames exercises the dump_svc pixel decode path
