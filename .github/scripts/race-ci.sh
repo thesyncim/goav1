@@ -72,6 +72,7 @@ packages_for() {
         ./cmd/gobenchpublish \
         ./cmd/qualitybench \
         ./conformance \
+        ./internal/av1/transform/itxgen \
         ./internal/benchenv \
         ./tools/itxzero
       ;;
