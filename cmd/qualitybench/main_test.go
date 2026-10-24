@@ -2994,3 +2994,17 @@ func TestCommandTimeoutReportsDeadline(t *testing.T) {
 		t.Fatalf("combined timeout elapsed=%s, want prompt cancellation after %s", combinedElapsed, timeout)
 	}
 }
+
+func TestSVTHierarchicalLevelsMatchGoAV1Layers(t *testing.T) {
+	// goav1 -layers 1 is a flat stream, SVT-AV1's flat mimic is
+	// --hierarchical-levels 0; -layers 3 is its low-delay default of two
+	// hierarchical levels.
+	for layers, want := range map[int]int{1: 0, 3: 2} {
+		if got := svtHierarchicalLevels(layers); got != want {
+			t.Errorf("svtHierarchicalLevels(%d) = %d, want %d", layers, got, want)
+		}
+	}
+	if cbrBufferInitialMs >= cbrBufferMaxMs || cbrBufferOptimalMs >= cbrBufferMaxMs {
+		t.Errorf("buffer model %d/%d/%d: initial and optimal must be below the maximum", cbrBufferInitialMs, cbrBufferOptimalMs, cbrBufferMaxMs)
+	}
+}

@@ -7,7 +7,7 @@ import (
 
 func testCRRateControl(bestQ, worstQ uint8) *svtRateControl {
 	var rc svtRateControl
-	rc.init(1_000_000, 30, bestQ, worstQ, 1280, 720)
+	rc.init(1_000_000, 30, bestQ, worstQ, 1280, 720, rcBuffers{})
 	return &rc
 }
 

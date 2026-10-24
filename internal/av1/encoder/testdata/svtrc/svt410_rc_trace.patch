@@ -1,0 +1,36 @@
+--- a/Source/Lib/Codec/rc_vbr_cbr.c	2026-06-04 20:22:32
++++ b/Source/Lib/Codec/rc_vbr_cbr.c	2026-10-24 21:38:30
+@@ -1310,6 +1310,17 @@
+     }
+ 
+     ppcs->frm_hdr.quantization_params.base_q_idx = clamp_qindex(scs, new_qindex);
++    {
++        RATE_CONTROL* rcq = &scs->enc_ctx->rc;
++        int r0q = -2, r0t = -2, r0s = -2;
++        if (ppcs->ref_list0_count_try) {
++            EbReferenceObject* ro = get_ref_obj(pcs, REF_LIST_0, 0);
++            r0q = pcs->ref_base_q_idx[REF_LIST_0][0];
++            r0t = ro->tmp_layer_idx;
++            r0s = pcs->ref_slice_type[REF_LIST_0][0];
++        }
++        fprintf(stderr, "RCQ pic=%d key=%d tl=%d q=%d tgt=%d buf=%lld aw=%d me=%u pme=%u fsk=%d rc1=%d rc2=%d q1=%d q2=%d n0=%d r0q=%d r0tl=%d r0st=%d cf=%.4f cfk=%.4f fu=%d abq=%d,%d,%d\n", (int)ppcs->picture_number, ppcs->frm_hdr.frame_type == KEY_FRAME, (int)pcs->temporal_layer_index, ppcs->frm_hdr.quantization_params.base_q_idx, ppcs->this_frame_target, (long long)rcq->buffer_level, rcq->active_worst_quality, (unsigned)rcq->cur_avg_base_me_dist, (unsigned)rcq->prev_avg_base_me_dist, rcq->frames_since_key, rcq->rc_1_frame, rcq->rc_2_frame, rcq->q_1_frame, rcq->q_2_frame, (int)ppcs->ref_list0_count_try, r0q, r0t, r0s, rcq->rate_correction_factors[0], rcq->rate_correction_factors[5], scs->enc_ctx->frame_updated, 0,0,0);
++    }
+ }
+ 
+ static int av1_estimate_bits_at_q(FrameType frame_type, int q, int mbs, double correction_factor, EbBitDepth bit_depth,
+@@ -1506,6 +1517,7 @@
+     }
+     update_buffer_level(ppcs, ppcs->projected_frame_size);
+     rc->prev_avg_frame_bandwidth = rc->avg_frame_bandwidth;
++    fprintf(stderr, "RCT cr=%d,%d,%d,%d,%d,%d pic=%d key=%d tl=%d q=%d tgt=%d bits=%d buf=%lld aw=%d avgbw=%d maxbw=%d start=%lld opt=%lld max=%lld off=%lld\n", (int)ppcs->cyclic_refresh.apply_cyclic_refresh, (int)ppcs->cyclic_refresh.actual_num_seg1_sbs, (int)ppcs->cyclic_refresh.actual_num_seg2_sbs, (int)ppcs->cyclic_refresh.qindex_delta[1], (int)ppcs->cyclic_refresh.qindex_delta[2], (int)ppcs->b64_total_count, (int)ppcs->picture_number, frm_hdr->frame_type == KEY_FRAME, (int)ppcs->temporal_layer_index, qindex, ppcs->this_frame_target, ppcs->projected_frame_size, (long long)rc->buffer_level, rc->active_worst_quality, rc->avg_frame_bandwidth, rc->max_frame_bandwidth, (long long)rc->starting_buffer_level, (long long)rc->optimal_buffer_level, (long long)rc->maximum_buffer_size, (long long)rc->bits_off_target);
+ 
+     // Rolling monitors of whether we are over or underspending used to help
+     // regulate min and Max Q in two pass.
+@@ -1572,6 +1584,7 @@
+     }
+     update_buffer_level(ppcs, ppcs->projected_frame_size);
+     rc->prev_avg_frame_bandwidth = rc->avg_frame_bandwidth;
++    fprintf(stderr, "RCT cr=%d,%d,%d,%d,%d,%d pic=%d key=%d tl=%d q=%d tgt=%d bits=%d buf=%lld aw=%d avgbw=%d maxbw=%d start=%lld opt=%lld max=%lld off=%lld\n", (int)ppcs->cyclic_refresh.apply_cyclic_refresh, (int)ppcs->cyclic_refresh.actual_num_seg1_sbs, (int)ppcs->cyclic_refresh.actual_num_seg2_sbs, (int)ppcs->cyclic_refresh.qindex_delta[1], (int)ppcs->cyclic_refresh.qindex_delta[2], (int)ppcs->b64_total_count, (int)ppcs->picture_number, frm_hdr->frame_type == KEY_FRAME, (int)ppcs->temporal_layer_index, qindex, ppcs->this_frame_target, ppcs->projected_frame_size, (long long)rc->buffer_level, rc->active_worst_quality, rc->avg_frame_bandwidth, rc->max_frame_bandwidth, (long long)rc->starting_buffer_level, (long long)rc->optimal_buffer_level, (long long)rc->maximum_buffer_size, (long long)rc->bits_off_target);
+ 
+     // Rolling monitors of whether we are over or underspending used to help
+     // regulate min and Max Q in two pass.

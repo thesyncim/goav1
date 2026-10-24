@@ -331,6 +331,17 @@ type VideoEncoderConfig struct {
 	MinQIndex     uint8
 	MaxQIndex     uint8
 
+	// BufferInitialMs, BufferOptimalMs and BufferMaxMs size the CBR buffer
+	// model in milliseconds of TargetBitrate, as SVT-AV1's --buf-initial-sz,
+	// --buf-optimal-sz and --buf-sz. Zero selects SVT-AV1's defaults, 600 /
+	// 600 / 1000; set values are within [20, 10000], and an initial or
+	// optimal size at or above the maximum is clamped to maximum-1. A smaller
+	// initial size lowers the first frames' targets, which matters on clips of a
+	// few seconds. They apply to 8-bit 4:2:0 CBR encoding.
+	BufferInitialMs int
+	BufferOptimalMs int
+	BufferMaxMs     int
+
 	// TemporalLayers selects the layering mode. Zero follows SVT-AV1's
 	// realtime default (preset 12, --rtc, low delay): three temporal layers
 	// in T0/T2/T1/T2 groups, one reference per frame, a droppable top layer
@@ -470,6 +481,9 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 			FramesPerSecond:     cfg.Framerate,
 			MinQIndex:           cfg.MinQIndex,
 			MaxQIndex:           cfg.MaxQIndex,
+			BufferInitialMs:     cfg.BufferInitialMs,
+			BufferOptimalMs:     cfg.BufferOptimalMs,
+			BufferMaxMs:         cfg.BufferMaxMs,
 		}
 		if rc.MinQIndex == 0 {
 			rc.MinQIndex = 16
@@ -991,6 +1005,9 @@ func NewRTCEncoder(cfg VideoEncoderConfig) (*RTCEncoder, error) {
 		FramesPerSecond:     cfg.Framerate,
 		MinQIndex:           cfg.MinQIndex,
 		MaxQIndex:           cfg.MaxQIndex,
+		BufferInitialMs:     cfg.BufferInitialMs,
+		BufferOptimalMs:     cfg.BufferOptimalMs,
+		BufferMaxMs:         cfg.BufferMaxMs,
 	}
 	if rc.MinQIndex == 0 {
 		rc.MinQIndex = 16

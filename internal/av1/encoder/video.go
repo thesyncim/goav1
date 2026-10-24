@@ -257,6 +257,21 @@ type RateControlConfig struct {
 	FramesPerSecond     int
 	MinQIndex           uint8
 	MaxQIndex           uint8
+
+	// BufferInitialMs, BufferOptimalMs and BufferMaxMs size the CBR buffer
+	// model in milliseconds of the target bitrate: SVT-AV1's --buf-initial-sz,
+	// --buf-optimal-sz and --buf-sz. Zero selects the library defaults
+	// (600 / 600 / 1000); other values are within [20, 10000] ms, and an
+	// initial or optimal size at or above the maximum is clamped to maximum-1.
+	// They size the 8-bit 4:2:0 encoder's SVT-parity controller; the
+	// monochrome and high-bit-depth encoders ignore them.
+	BufferInitialMs int
+	BufferOptimalMs int
+	BufferMaxMs     int
+}
+
+func (rc RateControlConfig) buffers() rcBuffers {
+	return rcBuffers{initialMs: rc.BufferInitialMs, optimalMs: rc.BufferOptimalMs, maxMs: rc.BufferMaxMs}
 }
 
 // NewVideoEncoder creates a streaming encoder. Render dimensions may be odd or

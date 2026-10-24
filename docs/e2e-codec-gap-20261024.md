@@ -16,12 +16,15 @@ Do not read small differences as regressions or improvements.
 | Decoder, public API, 18 clips, 1 worker: Go / dav1d | 3.640–3.653× | **1.756–1.847×** (3 rounds) |
 | Decoder, real-content corpus, 1 thread, CPU time (CLI, process-inclusive): Go / dav1d | not measured | **1.595×** (42 streams) |
 | Decoder, real-content corpus, 8 threads, wall (CLI, process-inclusive): Go / dav1d | not measured | **1.868×** (CPU 1.439×) |
-| Encoder, qualitybench preset 13, median Go / SVT time | 3.678× (3.419–4.857×) | **1.819×** (1.578–2.012×) |
+| Encoder, qualitybench preset 13, median Go / SVT time, flat structure (old protocol) | 3.678× (3.419–4.857×) | **1.619×** (1.517–1.650×) |
+| Encoder, qualitybench preset 13, median Go / SVT time, three temporal layers | not measured | **1.466×** (1.409–1.503×) |
 | Encoder, RTC preset 12, 1 thread, CPU time: Go / SVT | not measured | **1.21–1.26×** (instructions 1.64×) |
 
 The decoder gap is now about 1.8× on the matched API benchmark and about 1.6×
-CPU on real content; the encoder gap is about 1.8× process time on the old
+CPU on real content; the encoder gap is about 1.5–1.6× process time on the old
 conference clips and about 1.2× CPU on the RTC recipe. **Neither is parity.**
+The two encoder `qualitybench` rows were re-run later on 2026-10-24 with
+matched prediction structure and CBR buffers (see the old-protocol section).
 The reference builds also changed between reports (dav1d 1.5.3 to 1.5.4, SVT
 4.0.1 to 4.1.0, see below), and the old decoder run was not PGO, so the
 cross-report ratio change is a statement about these two configurations, not a
@@ -149,56 +152,165 @@ Same protocol and clips as the old report: FourPeople and Johnny, first 120
 frames of the Xiph 1280×720 60 fps WebM, 8-bit I420 (raw SHA-256 identical to
 the old report's, ffmpeg 8.0.1), at 3/6/9/12 Mbps, one warmup and three
 measured process-inclusive runs per clip/rate/encoder, interleaved with shuffled
-order and seed 1, two rounds. The Go executable (`qualitybench`) is prebuilt with
-the repository's default PGO profile, `GOMAXPROCS=1`, `MaxThreads=1`, effort 0,
-`-layers 1`. SVT-AV1 is **4.1.0** (the old report used 4.0.1), preset 13, `--lp 1`,
-`--asm max`, same low-delay CBR settings, no lookahead, scene-cut detection or
-temporal filtering. Metrics are PSNR and SSIM against the raw input via
-FFmpeg/libdav1d.
+order and seed 1, two rounds, in one-clip two-rate chunks. SVT-AV1 is **4.1.0**
+(the old report used 4.0.1), preset 13, `--lp 1`, `--asm max`, low-delay CBR, no
+lookahead, scene-cut detection or temporal filtering. The Go executable
+(`qualitybench`) is prebuilt with the repository's default PGO profile,
+`GOMAXPROCS=1`, `MaxThreads=1`, effort 0. Metrics are PSNR and SSIM against the
+raw input via FFmpeg/libdav1d.
+
+**This section was re-run with matched structure and buffer.** The first run of
+this report compared Go `-layers 1` (a flat stream, 600 ms initial CBR buffer)
+with SVT-AV1 at its default prediction structure (three temporal layers) and
+`--buf-initial-sz 500`, and read Go's bitrate overshoot (+4.0% to +8.7%, against
+-4.5% to +1.3% for SVT) as a rate-control regression. It was not one; see
+[Rate-control accuracy](#rate-control-accuracy-an-svt-parity-effect-not-a-defect).
+`qualitybench` now gives Go the same 500 / 600 / 1000 ms buffers it gives SVT-AV1
+and aomenc (`VideoEncoderConfig.BufferInitialMs/OptimalMs/MaxMs`) and gives
+SVT-AV1 the prediction structure of Go's `-layers`: `--hierarchical-levels 0`
+(SVT's flat mimic, which also selects its flat rate-control path) for
+`-layers 1`, and its low-delay default (two hierarchical levels, three temporal
+layers) for `-layers 3`. Both pairings were measured on 2026-10-24 with the
+code of that change on top of `fb485632` (go1.27.0, not 1.27.2, with
+`GOEXPERIMENT=simd`); the 1-minute load average sampled after each chunk was
+6.7–26.4, so read the timings as in the rest of this report.
+
+### Flat structure: Go `-layers 1` against SVT `--hierarchical-levels 0`
+
+The old protocol's setting.
 
 | Clip | Target Mbps | Go fps, R1 / R2 | SVT fps, R1 / R2 | Go/SVT time, R1 / R2 |
 | --- | ---: | ---: | ---: | ---: |
-| FourPeople | 3 | 198.51 / 196.63 | 354.59 / 342.58 | 1.790× / 1.743× |
-| FourPeople | 6 | 157.98 / 155.75 | 284.99 / 276.45 | 1.805× / 1.774× |
-| FourPeople | 9 | 133.42 / 122.68 | 251.16 / 246.98 | 1.881× / 2.012× |
-| FourPeople | 12 | 119.76 / 119.62 | 225.18 / 224.60 | 1.880× / 1.878× |
-| Johnny | 3 | 184.63 / 192.45 | 291.34 / 333.42 | 1.578× / 1.733× |
-| Johnny | 6 | 143.66 / 151.30 | 249.35 / 268.98 | 1.736× / 1.778× |
-| Johnny | 9 | 128.02 / 127.63 | 234.94 / 244.67 | 1.834× / 1.918× |
-| Johnny | 12 | 113.54 / 113.55 | 216.24 / 219.83 | 1.905× / 1.936× |
+| FourPeople | 3 | 202.52 / 206.90 | 329.61 / 334.35 | 1.629× / 1.616× |
+| FourPeople | 6 | 170.27 / 169.25 | 268.63 / 275.81 | 1.577× / 1.630× |
+| FourPeople | 9 | 139.06 / 144.27 | 220.53 / 235.60 | 1.586× / 1.635× |
+| FourPeople | 12 | 128.98 / 130.89 | 195.64 / 213.77 | 1.517× / 1.635× |
+| Johnny | 3 | 190.48 / 205.31 | 302.89 / 338.98 | 1.591× / 1.650× |
+| Johnny | 6 | 152.05 / 161.86 | 231.64 / 263.99 | 1.523× / 1.629× |
+| Johnny | 9 | 134.78 / 138.14 | 218.47 / 222.07 | 1.621× / 1.609× |
+| Johnny | 12 | 122.27 / 124.06 | 197.02 / 203.52 | 1.611× / 1.639× |
 
-The median of these 16 time ratios is **1.819×**, range **1.578–2.012×** (old
-report: 3.678×, 3.419–4.857×). The qualitybench harness reports wall and CPU
-time only; cycles and instructions retired are measured on the RTC recipe
-below. CPU-time ratios agree (median 1.806×, range
-1.732–1.948×; `observed_parallelism` is 0.89–1.00 for both encoders). Go's
-absolute throughput roughly doubled (old 56–79 fps, now 114–199 fps) while SVT's
-barely moved (different SVT version), which is the whole change in the ratio.
+The median of these 16 time ratios is **1.619×**, range **1.517–1.650×** (old
+report: 3.678×, 3.419–4.857×; first run of this report, against SVT's
+three-layer structure: 1.819×). CPU-time ratios agree (median 1.615×, range
+1.526–1.649×; `observed_parallelism` is 0.98–1.00 for both encoders). SVT's flat
+mode is slower than its three-layer default (196–339 fps against 225–362 fps),
+which is why this ratio is below the unmatched one.
 
-| Clip | Target Mbps | Actual Mbps, Go / SVT | PSNR dB, Go / SVT | SSIM, Go / SVT |
+| Clip | Target Mbps | Actual Mbps, Go / SVT | Rate error, Go / SVT | PSNR dB, Go / SVT | SSIM, Go / SVT |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| FourPeople | 3 | 3.179 / 3.059 | +6.0% / +2.0% | 43.9728 / 43.3835 | 0.9850 / 0.9846 |
+| FourPeople | 6 | 6.189 / 6.118 | +3.1% / +2.0% | 45.9258 / 45.2871 | 0.9888 / 0.9884 |
+| FourPeople | 9 | 9.273 / 9.159 | +3.0% / +1.8% | 46.8801 / 46.1580 | 0.9903 / 0.9897 |
+| FourPeople | 12 | 11.968 / 11.980 | -0.3% / -0.2% | 47.3651 / 46.6656 | 0.9909 / 0.9901 |
+| Johnny | 3 | 3.120 / 2.935 | +4.0% / -2.2% | 45.0950 / 44.6633 | 0.9864 / 0.9858 |
+| Johnny | 6 | 6.166 / 6.054 | +2.8% / +0.9% | 46.8188 / 46.3054 | 0.9901 / 0.9895 |
+| Johnny | 9 | 9.159 / 9.090 | +1.8% / +1.0% | 47.6822 / 47.1250 | 0.9914 / 0.9908 |
+| Johnny | 12 | 12.000 / 11.922 | +0.0% / -0.7% | 48.2068 / 47.6383 | 0.9921 / 0.9914 |
+
+### Three temporal layers: Go `-layers 3` against SVT's default structure
+
+| Clip | Target Mbps | Go fps, R1 / R2 | SVT fps, R1 / R2 | Go/SVT time, R1 / R2 |
 | --- | ---: | ---: | ---: | ---: |
-| FourPeople | 3 | 3.262 / 3.039 | 44.0353 / 43.6197 | 0.9851 / 0.9856 |
-| FourPeople | 6 | 6.406 / 6.018 | 46.0058 / 45.3188 | 0.9889 / 0.9887 |
-| FourPeople | 9 | 9.503 / 8.909 | 46.9273 / 46.0852 | 0.9904 / 0.9899 |
-| FourPeople | 12 | 12.483 / 11.604 | 47.4405 / 46.4897 | 0.9909 / 0.9903 |
-| Johnny | 3 | 3.220 / 2.916 | 45.1637 / 44.8867 | 0.9866 / 0.9868 |
-| Johnny | 6 | 6.390 / 5.921 | 46.9267 / 46.2498 | 0.9904 / 0.9897 |
-| Johnny | 9 | 9.527 / 8.818 | 47.7749 / 46.9238 | 0.9916 / 0.9908 |
-| Johnny | 12 | 12.484 / 11.458 | 48.2608 / 47.3082 | 0.9922 / 0.9913 |
+| FourPeople | 3 | 252.62 / 255.26 | 356.26 / 362.12 | 1.409× / 1.420× |
+| FourPeople | 6 | 199.73 / 201.49 | 292.26 / 295.97 | 1.462× / 1.472× |
+| FourPeople | 9 | 174.65 / 173.69 | 251.96 / 252.88 | 1.443× / 1.455× |
+| FourPeople | 12 | 156.23 / 156.46 | 232.98 / 231.67 | 1.491× / 1.481× |
+| Johnny | 3 | 245.15 / 243.02 | 362.11 / 352.72 | 1.477× / 1.453× |
+| Johnny | 6 | 195.66 / 194.49 | 284.36 / 281.80 | 1.453× / 1.448× |
+| Johnny | 9 | 167.48 / 167.99 | 247.18 / 247.13 | 1.478× / 1.469× |
+| Johnny | 12 | 153.15 / 152.03 | 225.13 / 228.56 | 1.471× / 1.503× |
 
-Every measured encode succeeded. For each clip/rate/encoder the encoded and
-decoded SHA-256 values are identical across its three samples and across both
-rounds (all 16 combinations), so quality values are shown once. The encoded
-hashes differ from the old report because the encoder changed substantially.
+The median of these 16 time ratios is **1.466×**, range **1.409–1.503×** (CPU
+time: median 1.458×, range 1.399–1.496×).
 
-**Rate-control accuracy regressed in this configuration.** Go now overshoots the
-target by **+4.0% to +8.7%** at these 60 fps, 120-frame, single-layer settings
-(the old report: -0.4% to +0.4%), while SVT lands between -4.5% and +1.3%. Go's
-PSNR advantage (+0.28 to +0.95 dB) therefore comes with 6–10% more bits than SVT,
-and SVT has the higher SSIM at 3 Mbps on both clips.
-Equal target bitrate is **not equal quality**; no equal-quality speed or BD-rate
-claim is made. The RTC recipe below, at the target rates it was tuned for,
-hits the target to within about 2% for both encoders.
+| Clip | Target Mbps | Actual Mbps, Go / SVT | Rate error, Go / SVT | PSNR dB, Go / SVT | SSIM, Go / SVT |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| FourPeople | 3 | 3.040 / 3.039 | +1.3% / +1.3% | 43.5781 / 43.6197 | 0.9854 / 0.9856 |
+| FourPeople | 6 | 6.024 / 6.018 | +0.4% / +0.3% | 45.2918 / 45.3188 | 0.9886 / 0.9887 |
+| FourPeople | 9 | 8.922 / 8.909 | -0.9% / -1.0% | 46.0457 / 46.0852 | 0.9897 / 0.9899 |
+| FourPeople | 12 | 11.650 / 11.604 | -2.9% / -3.3% | 46.3927 / 46.4897 | 0.9899 / 0.9903 |
+| Johnny | 3 | 2.907 / 2.916 | -3.1% / -2.8% | 44.7504 / 44.8867 | 0.9865 / 0.9868 |
+| Johnny | 6 | 5.915 / 5.921 | -1.4% / -1.3% | 46.1289 / 46.2498 | 0.9894 / 0.9897 |
+| Johnny | 9 | 8.800 / 8.818 | -2.2% / -2.0% | 46.7589 / 46.9238 | 0.9904 / 0.9908 |
+| Johnny | 12 | 11.537 / 11.458 | -3.9% / -4.5% | 47.0928 / 47.3082 | 0.9907 / 0.9913 |
+
+Every measured encode succeeded. For each clip/rate/encoder the attained
+bitrate and quality are identical across the three samples and both rounds, so
+they are shown once. With the structure and buffer matched the two encoders
+land close together: in the three-layer pairing the attained rate differs by at
+most 0.6 points of the target (Go -3.9% to +1.3%, SVT -4.5% to +1.3%), and Go
+is 0.03 to 0.22 dB lower in PSNR and 0.0001 to 0.0006 lower in SSIM. That is the
+opposite sign to the first run's "PSNR advantage" (+0.28 to +0.95 dB), which was
+the 6 to 10% more bits Go was spending. No equal-quality speed or BD-rate claim
+is made.
+[Per-run data](benchmarks/e2e-20261024-encoder-matched.csv).
+
+### Rate-control accuracy: an SVT-parity effect, not a defect
+
+Go's CBR controller has been a frame-exact port of SVT-AV1 v4.1.0's one-pass CBR
+since #59, which replaced the earlier Go-specific controller that held these
+clips to within 0.4% of target. The October 9 report's accuracy was a property of
+that controller; SVT's own is not exact on a 2 s clip, and neither is the port.
+Four facts establish that the first run's "regression" was a configuration
+difference, not a controller bug:
+
+- **The controller arithmetic is SVT's.** An instrumented `SvtAv1EncApp` (the
+  logging patch and four 120-picture traces are in
+  `internal/av1/encoder/testdata/svtrc`) fed its own per-picture inputs (ME
+  distortion, reference q / layer / slice type, coded size, cyclic-refresh
+  segment statistics) through `svtRateControl`, which chose the same qindex and
+  frame target on all 120 pictures of each trace (flat and three-layer, both
+  clips). `TestSVTRateControlReplaysSVT410Traces` keeps that as a regression
+  guard. It proves the controller, not the sizes the encoder produces.
+- **The initial buffer decides a short clip.** The starting level is 600 ms of
+  the target in SVT-AV1's library defaults (`enc_settings.c`: 1000 / 600 / 600 ms
+  maximum / starting / optimal) and in WebRTC's libaom AV1 wrapper, and Go used
+  it. The benchmark recipes pass `--buf-initial-sz 500` to SVT-AV1. On a 2 s clip
+  0.1 s of the target is about 5% of all bits, and the controller settles at a
+  buffer level set by its own dynamics (in SVT's flat FourPeople 3 Mbps runs it
+  ends near 1.4 Mbit from either start), so the starting difference shows up as
+  final rate error.
+- **SVT-AV1 overshoots as well when it is given Go's buffer.** The same
+  `SvtAv1EncApp` with its default buffer (no `--buf-*` flags) lands at -1.0% to
+  +6.2% on the first run's three-layer structure.
+- **`-layers 1` was never forwarded to SVT-AV1.** SVT ran its three-layer
+  hierarchy while Go ran a flat stream, and the flat structure adds overshoot on
+  both encoders.
+
+Rate error (attained against target) at 3, 6, 9 and 12 Mbps. "Go" rows are
+`qualitybench -layers 1` or `-layers 3`; "SVT" rows are `SvtAv1EncApp` with the
+stated structure and `--buf-initial-sz`.
+
+| Encoder, structure, initial buffer | FourPeople 3 / 6 / 9 / 12 | Johnny 3 / 6 / 9 / 12 |
+| --- | --- | --- |
+| Go, flat, 600 ms (first run) | +8.7 / +6.8 / +5.6 / +4.0 | +7.3 / +6.5 / +5.9 / +4.0 |
+| SVT, three-layer, 500 ms (first run) | +1.3 / +0.3 / -1.0 / -3.3 | -2.8 / -1.3 / -2.0 / -4.5 |
+| SVT, three-layer, 600 ms (library default) | +6.2 / +5.4 / +2.8 / +0.3 | +2.0 / +2.7 / +1.3 / -1.0 |
+| Go, three-layer, 600 ms | +6.4 / +5.5 / +3.1 / +0.2 | +2.1 / +3.3 / +2.0 / -0.7 |
+| Go, three-layer, 500 ms (matched, this section) | +1.3 / +0.4 / -0.9 / -2.9 | -3.1 / -1.4 / -2.2 / -3.9 |
+| SVT, flat, 600 ms | +6.6 / +6.4 / +5.1 / +4.2 | +0.9 / +4.8 / +5.0 / +3.4 |
+| SVT, flat, 500 ms | +2.0 / +2.0 / +1.8 / -0.2 | -2.2 / +0.9 / +1.0 / -0.7 |
+| Go, flat, 500 ms (matched, this section) | +6.0 / +3.1 / +3.0 / -0.3 | +4.0 / +2.8 / +1.8 / 0.0 |
+
+With a matched structure and buffer the three-layer Go and SVT rows agree to
+within 0.6 points at all eight points at 500 ms (this section) and within 0.7
+at 600 ms.
+The default buffer is unchanged (600 ms), so default bitstreams are
+unchanged; `BufferInitialMs` (and the optimal and maximum sizes) now let a
+caller, or this benchmark, ask for SVT's recipe values.
+
+**Open item: the flat structure still overshoots more than SVT's flat mode.**
+At matched flat structure and buffer Go is above SVT by +4.0 and +6.2 points at
+3 Mbps, +1.1 and +1.9 at 6 Mbps, and within ±1.2 at 9 and 12 Mbps. The replay
+rules out the controller: it makes the same decisions given the same inputs.
+What differs is the sizes Go's flat-mode encoder produces for those decisions
+(over frames 10 to 120 of FourPeople at 3 Mbps, the geometric mean of coded
+size over frame target is 1.12 for Go and 0.92 for SVT's flat mode, and SVT's
+frame sizes spread more widely), so the cause is in the encoder's bits per
+frame, not in rate control, and it is not addressed here. The default
+three-layer structure (`TemporalLayers` 0 or 3), which is what the RTC recipe
+and the WebRTC encoder use, does not show it.
 
 ## Encoder: RTC preset 12 recipe, CPU, cycles and instructions
 
@@ -241,8 +353,24 @@ noisiest (the other agents were also running 8-thread suites); the minimum
 wall and minimum CPU in a row can come from different repetitions, so treat the
 8-thread wall advantage as unconfirmed.
 
+The Go rows above use the default 600 ms initial buffer; the SVT rows use the
+recipe's `--buf-initial-sz 500`. With the recipe's buffer sizes also given to Go
+(`-buf-initial-ms 500 -buf-optimal-ms 600 -buf-max-ms 1000`, measured after the
+timed runs with the same input) Go's stream is 515.3, 1004.0 and 1995.2 kbps at
+0.5, 1 and 2 Mbps (luma PSNR 36.96, 40.73 and 44.59 dB) against 522.0, 1016.3 and
+2021.5 kbps (37.01, 40.81 and 44.66 dB) at the default; SVT's payload at 0.5, 1
+and 2 Mbps is 522.6, 1015.3 and 2003.1 kbps. So the two buffer choices
+differ by at most 1.3% of bitrate and 0.08 dB of PSNR, and the timings above are
+unaffected by the choice.
 ## Provenance
 
+- **Matched encoder re-run.** The old-protocol encoder section was re-run later on
+  2026-10-24 with `qualitybench` built from `fb485632` plus the CBR buffer and
+  structure change (`go build -pgo=cmd/qualitybench/default.pgo`, go1.27.0
+  `GOEXPERIMENT=simd`, SHA-256 `7fd0b56c...`), against the same SVT-AV1 4.1.0
+  binary (`b4d8c5ed...`), the same raw inputs and the same flags apart from
+  `-layers` and the structure and buffers described there. The first run's
+  numbers elsewhere in this report are unchanged.
 - **Go toolchain and PGO.** go1.27.2 `GOEXPERIMENT=simd`. The old run used
   `GOTOOLCHAIN=go1.27.2 ... /Users/thesyncim/.codex/bin/project-env go test -c`.
   That wrapper only sets a project `GOCACHE` and `GOTMPDIR`; it adds no `-pgo`,
@@ -294,7 +422,7 @@ wall and minimum CPU in a row can come from different repetitions, so treat the
 ## Machine load
 
 One-minute load averages sampled at each measurement: decoder API rounds 2.5–6.4;
-qualitybench 7.8–10.4; RTC batch one 8.0–33.9 and batch two 5.2–5.8; CLI repetitions
+qualitybench 7.8–10.4 (first run) and 6.7–26.4 (matched re-run); RTC batch one 8.0–33.9 and batch two 5.2–5.8; CLI repetitions
 1–3 3.3–5.0 (mean 4.0) and repetitions 4–6 5.1–7.2 (mean 6.1). The 16 cores were
 shared with concurrent Go test binaries and encoder benchmarks from other
 agents. Instruction counts are insensitive to this; cycles and CPU time are not,
@@ -357,15 +485,21 @@ Old-protocol encoder comparison: see
 [encoder performance](encoder-svt-performance.md#reproduce); the manifest has
 one row per clip (`clip,input,width,height,frames,fps,pix_fmt,sha256`) pointing at
 the raw files, and the recorded run used the same flags with `-svt-bin`
-`~/bin/svt410/SvtAv1EncApp`, `-go-bin` the go1.27.2 executable, and one-clip,
-two-rate chunks (`-bitrates 3000000,6000000` then `9000000,12000000`).
+`~/bin/svt410/SvtAv1EncApp`, `-go-bin` the go executable (go1.27.2 for the first
+run, go1.27.0 for the matched re-run), and one-clip, two-rate chunks
+(`-bitrates 3000000,6000000` then `9000000,12000000`). The matched re-run is
+that command with `-layers 1` (SVT receives `--hierarchical-levels 0`) and with
+`-layers 3` (SVT receives `--hierarchical-levels 2`); `qualitybench` passes both
+encoders the 500 / 600 / 1000 ms buffers itself. The first run lacked the
+structure and buffer matching, which is what its rate-error table shows.
 
 RTC recipe (`KBPS` is 1000 or 2000, `LP` is 1 or 8; the Go bitrate flag is bits
 per second; Go 1 thread runs under `GOMAXPROCS=1`, 8 threads uses `-threads 8`):
 
 ~~~sh
 /usr/bin/time -l ./encbench -input clip.yuv -frames 240 -width 1280 -height 720 \
-  -fps 30 -bitrate "${KBPS}000" -nopsnr -o go.ivf
+  -fps 30 -bitrate "${KBPS}000" -nopsnr -o go.ivf     # timed runs: Go defaults (600 ms initial buffer)
+# adding -buf-initial-ms 500 -buf-optimal-ms 600 -buf-max-ms 1000 matches the SVT line below exactly
 /usr/bin/time -l SvtAv1EncApp -i clip.yuv -b svt.ivf -w 1280 -h 720 \
   --fps-num 30 --fps-denom 1 --frames 240 --input-depth 8 --color-format 1 \
   --profile 0 --level 0 --preset 12 --rc 2 --tbr "$KBPS" --buf-sz 1000 \
@@ -430,8 +564,9 @@ Real-content decode at one thread is instruction-bound: 2.15× dav1d's retired
 instructions at a better IPC. The visible outliers are film grain (4.26×
 cycles), 10-bit (2.46–2.65×) and the multi-thread CPU overhead (Go uses 1.44×
 dav1d's CPU at 8 workers and scales 3.2× against dav1d's 3.8×). Encoder: Go
-retires 1.64× the instructions of SVT p12 for equal PSNR-Y, and over-spends
-bitrate under the old qualitybench settings. No profile was taken in this
+retires 1.64× the instructions of SVT p12 for equal PSNR-Y, and, in the flat
+structure, over-spends bitrate by 1 to 6 points at 3 and 6 Mbps against SVT's flat
+mode (see the open item under the old-protocol results). No profile was taken in this
 round, so this list is derived from the ratios, not from a flat profile.
 
 ## Evidence
@@ -441,8 +576,13 @@ round, so this list is derived from the ratios, not from a flat profile.
 - [Decoder CLI per-stream minima](benchmarks/e2e-20261024-decoder-cli.csv),
   [all 1,440 timed runs](benchmarks/e2e-20261024-decoder-cli-samples.csv) and
   [MD5 verification, 60 streams](benchmarks/e2e-20261024-decoder-cli-verify.csv).
-- [Encoder results](benchmarks/e2e-20261024-encoder.csv): both rounds, attained
-  bitrate, throughput, CPU time and quality.
+- [Encoder results, first run](benchmarks/e2e-20261024-encoder.csv): both
+  rounds, attained bitrate, throughput, CPU time and quality, with Go flat /
+  600 ms initial buffer against SVT's three-layer default (superseded by the
+  matched run below; kept because the cause analysis refers to it).
+- [Encoder results, matched structure and buffer](benchmarks/e2e-20261024-encoder-matched.csv):
+  the flat and three-layer pairings, both rounds, with the same columns plus
+  `structure` and `round`.
 - [RTC recipe timings](benchmarks/e2e-20261024-rtc.csv) (all 96 runs) and
   [quality](benchmarks/e2e-20261024-rtc-quality.csv).
 - [Provenance, hashes and commands](benchmarks/e2e-20261024.json).

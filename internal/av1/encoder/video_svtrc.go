@@ -41,6 +41,9 @@ func rateControlPerFrameBits(rc RateControlConfig) (int, error) {
 	if rc.MinQIndex == 0 || rc.MaxQIndex <= rc.MinQIndex {
 		return 0, fmt.Errorf("encoder: invalid qindex range [%d, %d]", rc.MinQIndex, rc.MaxQIndex)
 	}
+	if _, err := rc.buffers().resolve(); err != nil {
+		return 0, err
+	}
 	perFrameBits := rc.TargetBitsPerSecond / rc.FramesPerSecond
 	if perFrameBits <= 0 {
 		perFrameBits = 1
@@ -62,7 +65,7 @@ func (e *VideoEncoder) armSVTRC(rc RateControlConfig) {
 	} else if e.qIndex > e.rcMaxQ {
 		e.qIndex = e.rcMaxQ
 	}
-	e.svtRC.init(rc.TargetBitsPerSecond, rc.FramesPerSecond, rc.MinQIndex, rc.MaxQIndex, e.width, e.height)
+	e.svtRC.init(rc.TargetBitsPerSecond, rc.FramesPerSecond, rc.MinQIndex, rc.MaxQIndex, e.width, e.height, rc.buffers())
 	e.cr.reset()
 }
 

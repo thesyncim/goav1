@@ -196,7 +196,7 @@ func TestUpdateRateControlConfigReinitializesSVTRateControl(t *testing.T) {
 
 func TestSVTRateControlTargetsAndQ(t *testing.T) {
 	var rc svtRateControl
-	rc.init(1_000_000, 30, 16, 255, 1280, 720)
+	rc.init(1_000_000, 30, 16, 255, 1280, 720, rcBuffers{})
 	// av1_calc_iframe_target_size_one_pass_cbr: the first key takes half
 	// the starting buffer, clamped to max_intra_bitrate_pct.
 	key := svtRCFrame{key: true, width: 1280, height: 720}
