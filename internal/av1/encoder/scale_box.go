@@ -18,7 +18,9 @@ package encoder
 // The 3/4 and 3/8 kernels (ScalePlaneDown34/38) are not ported: no layer
 // geometry reaches them. Those ratios take ScalePlaneBilinearDown. BLENDER is
 // the ARM (16-bit fraction) variant on every architecture so the encoded
-// bytes do not depend on the host.
+// bytes do not depend on the host. The 8-bit bilinear column pass runs a
+// table-driven NEON kernel on arm64 simd builds (scale_box_arm64.go); every
+// other build, and 16-bit planes, run boxFilterCols.
 
 type boxScaleSample interface{ ~uint8 | ~uint16 }
 
@@ -28,6 +30,7 @@ type boxScaleScratch struct {
 	sum  []uint32
 	row8 []uint8
 	row  []uint16
+	cols boxColsCache
 }
 
 func (s *boxScaleScratch) sums(n int) []uint32 {
@@ -162,6 +165,11 @@ func scalePlaneBoxAny[T boxScaleSample](dst []T, dstStride, dw, dh int, src []T,
 		// ScalePlaneBilinearDown (also the 3/4 and 3/8 ratios, see above).
 		maxY := (sh - 1) << 16
 		y = min(y, maxY)
+		var plan *boxColsPlan
+		dst8, is8 := any(dst).([]uint8)
+		if is8 {
+			plan = scratch.cols.plan(sw, dw, x, dx, dh)
+		}
 		for j := 0; j < dh; j++ {
 			yi := y >> 16
 			s := src[yi*srcStride : yi*srcStride+sw]
@@ -176,7 +184,11 @@ func scalePlaneBoxAny[T boxScaleSample](dst []T, dstStride, dw, dh int, src []T,
 					s = row
 				}
 			}
-			boxFilterCols(dst[j*dstStride:j*dstStride+dw], s, x, dx)
+			if plan != nil {
+				plan.filter(dst8[j*dstStride:j*dstStride+dw], any(s).([]uint8))
+			} else {
+				boxFilterCols(dst[j*dstStride:j*dstStride+dw], s, x, dx)
+			}
 			y = min(y+dy, maxY)
 		}
 	}

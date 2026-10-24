@@ -228,3 +228,29 @@ func TestBoxFilterColsTwoThirds(t *testing.T) {
 		}
 	}
 }
+
+func BenchmarkBoxFilterCols8(b *testing.B) {
+	for _, tc := range []struct {
+		name   string
+		sw, dw int
+		x, dx  int
+	}{
+		{"2/3 672", 1008, 672, 0x4000, 0x18000},
+		{"3/2 640->427", 640, 427, 0, 0},
+		{"853->568", 853, 568, 0, 0},
+	} {
+		x, dx := tc.x, tc.dx
+		if dx == 0 {
+			dx = boxFixedDiv(tc.sw, tc.dw)
+			x = dx>>1 - 32768
+		}
+		s := boxTestPlane(tc.sw, 1, tc.sw)
+		d := make([]byte, tc.dw)
+		b.Run(tc.name, func(b *testing.B) {
+			b.SetBytes(int64(tc.dw))
+			for b.Loop() {
+				boxFilterCols(d, s, x, dx)
+			}
+		})
+	}
+}
