@@ -1,0 +1,89 @@
+{
+  "checkpoint": "6d62eb88ae414c283be8fff35a1e864441af41fe",
+  "measured": "2026-10-24",
+  "machine": {
+    "cpu": "Apple M4 Max (12 P + 4 E cores)",
+    "memory_bytes": 68719476736,
+    "os": "macOS 26.3.1 (a), build 25D771280a"
+  },
+  "toolchain": {
+    "go": "go1.27.2 darwin/arm64",
+    "goexperiment": "simd",
+    "cc": "Apple clang 21.0.0 (clang-2100.1.1.101)",
+    "meson": "1.12.1",
+    "ffmpeg": "8.0.1"
+  },
+  "pgo": {
+    "profile": "cmd/qualitybench/default.pgo",
+    "sha256": "4705be048559aca1b3dd5eecc486fb9ebe65354e5b51aba106e5af4bae90fb95",
+    "go_test_binary_pgo": true,
+    "control_nopgo_binary": true,
+    "previous_20261009_decoder_pgo": false,
+    "previous_20261009_encoder_pgo": true
+  },
+  "binaries_sha256": {
+    "public-e2e.test (PGO)": "2a9678adb3d037fd3a89941c0ea5532a78c33a83a1b59a525583127579110173",
+    "public-e2e-nopgo.test": "c472712d32a179a2608a7686d4fc6131f97b1e167673cd4019e18a2188673d6d",
+    "aom-go-dec (PGO)": "de96bc8f6e43f9af4099e901a294685849b1640e03abe651552d7c6fe9bc79f5",
+    "qualitybench (PGO)": "365b36d1bc2ea335b4728589f314a6bd86aeb3ed449df6ad11239f7ad53bf9e5",
+    "encbench (PGO)": "f3a34e0d995e6dda868f299fcac329055e09bf0603f7c9c4a942834d7116cd4f"
+  },
+  "dav1d": {
+    "primary": {
+      "version": "1.5.4-0-g54706fc",
+      "commit": "54706fc6bc0cdecab7e9593974a4039cc038fca7",
+      "build": "local meson release static libdav1d.a, -O3, bitdepths 8,16, HAVE_ASM 1, ARCH_AARCH64 1, no LTO, no debug info, CLI tools off",
+      "libdav1d_a_sha256": "260eb74f7656e348656288055107f166842f625cacab2359b21b757e8903575d",
+      "helper": "tools/c_api_decode_bench/bench.c, -O3 -DNDEBUG -std=c11 -Wall -Wextra -Wconversion, dav1d-only",
+      "helper_sha256": "192dcfc87e568ed5cb0b99a9cc3dc7116d27e7c8f994d8804f3984faa2cf1503"
+    },
+    "homebrew_1_5_4": {
+      "dylib_sha256": "60c3a42a79582241ac77bbbba4c0137c2209204aecbc59e5d6392c2dc0a5b439",
+      "helper_sha256": "1271f951c4d815a4a85a63bf4b7bdc4803746ffc713e0297870cb3d15ff5382d",
+      "cli_sha256": "add73331b706cb655203c27f7ee21d091ccbbf65191a98e4e49d2d9391cc38e4",
+      "use": "dav1d CLI for the process-inclusive tables and a cross-check helper link"
+    },
+    "homebrew_1_5_3": {
+      "dylib_sha256": "bdd18b4f70a9e8956a58de310d8acfdad2ecf6b1be00b813b397e14331d5d0bd",
+      "use": "DYLD_LIBRARY_PATH cross-check of the helper, continuity with 20261009 (b546257, 1.5.3)"
+    },
+    "provenance_attested": false
+  },
+  "svt_av1": {
+    "version": "SVT-AV1 v4.1.0 (release)",
+    "binary": "~/bin/svt410/SvtAv1EncApp",
+    "sha256": "b4d8c5ed72671814f13559db312195414e26c02de878ebf18d7746d6e6f2b4f0",
+    "source": "third_party/upstream/svt-av1 @ c04f951541ad600e0d9c10836f2ab7b9bc69816d (tag v4.1.0)",
+    "cmake": "Release, -O3 -DNDEBUG, ENABLE_NEON/DOTPROD/I8MM ON, NATIVE OFF, SVT_AV1_LTO OFF (from the scratch build trees; the saved binary build directory is not attested)"
+  },
+  "inputs": {
+    "rtc_clip_sha256": "63334b7d55c94588c1115756ee063ad7ab42aedb23df7885a9f8d6b12153de04",
+    "rtc_clip": "1280x720 I420 8-bit, 240 frames, 30 fps: the 48-frame decode of testdata/benchcorpus/p720_inter_q20.ivf (frames 0-47 verified byte-equal), then ping-pong (frame 47 repeated, then backward); built before this run, derivation script not in the repo",
+    "fourpeople_raw_120f_sha256": "a022f06b5751735dc9f21d4706a73b6ccbdc4706ac34da4789b5891d48f82f17",
+    "johnny_raw_120f_sha256": "c11fc6faff36f2daecc4b4b3bc522de118d31e97af3ca0ea42061fefc316b2cf",
+    "fourpeople_webm_sha256": "1e4a5df7e67ae985370321cc2c91b8595f7e3433ad8ee1e84da7a26ff5254deb",
+    "johnny_webm_sha256": "58e58fb9d7f980b241123b04146058b12f386f59a6a56db6f293199824772ace"
+  },
+  "load_averages_1min": {
+    "decoder_inprocess": "2.5-6.4",
+    "qualitybench": "7.8-10.4",
+    "rtc_batch1": "8.0-33.9",
+    "rtc_batch2": "5.2-5.8",
+    "decoder_cli_reps1_3": "3.3-5.0 (mean 4.0)",
+    "decoder_cli_reps4_6": "5.1-7.2 (mean 6.1)",
+    "note": "shared host; other Go test suites and encoder benchmarks ran concurrently"
+  },
+  "commands": {
+    "sampler": "env GOAV1_PUBLIC_FULLCLIP_SAMPLES=1 GOAV1_BENCH_CORPUS_DIR=testdata/benchcorpus GOMAXPROCS=1 GOGC=100 public-e2e.test -test.run ^TestPublicDecoderFullClipCorpusSamples$ -test.count=1 -test.v",
+    "helper": "c-api-decode-bench-dav1d --corpus testdata/benchcorpus",
+    "cli_go_w1": "aom-go-dec -quiet -workers 1 -framedelay 1 -o /dev/null X.ivf",
+    "cli_go_w8": "aom-go-dec -quiet -workers 8 -o /dev/null X.ivf",
+    "cli_dav1d_t1": "dav1d -q --threads 1 --framedelay 1 --muxer yuv -i X.ivf -o /dev/null",
+    "cli_dav1d_t8": "dav1d -q --threads 8 --muxer yuv -i X.ivf -o /dev/null",
+    "cli_md5_dav1d": "dav1d -q --filmgrain 1 --threads N [--framedelay 1] --muxer md5 -i X.ivf -o -",
+    "cli_md5_go": "aom-go-dec -quiet -workers N [-framedelay 1] X.ivf | md5 -q",
+    "qualitybench": "qualitybench -manifest M.csv -encoders goav1,svt-av1 -require-encoders all -bitrates R1,R2 -fps 60 -layers 1 -tiles 0 -golden 0 -keyint 0 -gomaxprocs 1 -goav1-max-threads 1 -goav1-effort 0 -goav1-process-timing=true -timing-mode e2e -svt-preset 13 -svt-lp 1 -svt-asm max -svt-bin SvtAv1EncApp -go-bin go1.27.2/bin/go -ffmpeg-bin ffmpeg -ffmpeg-av1-decoder libdav1d -runs 3 -warmup-runs 1 -run-order shuffle -shuffle-seed 1 -require-metrics psnr,ssim -csv ... -metadata-json ...",
+    "rtc_go": "env GOMAXPROCS=1 encbench -input clip.yuv -frames 240 -width 1280 -height 720 -fps 30 -bitrate KBPS000 -nopsnr -o out.ivf  (t8: no GOMAXPROCS, -threads 8)",
+    "rtc_svt": "SvtAv1EncApp -i clip.yuv -b out.ivf -w 1280 -h 720 --fps-num 30 --fps-denom 1 --frames 240 --input-depth 8 --color-format 1 --profile 0 --level 0 --preset 12 --rc 2 --tbr KBPS --buf-sz 1000 --buf-initial-sz 500 --buf-optimal-sz 600 --lookahead 0 --pred-struct 1 --rtc 1 --scd 0 --enable-tf 0 --irefresh-type 2 --keyint -1 --progress 0 --lp LP"
+  }
+}
