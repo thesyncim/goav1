@@ -146,3 +146,17 @@ func roundPowerOfTwo(value int, bits int) int {
 	}
 	return (value + (1 << (bits - 1))) >> bits
 }
+
+// BuildScalingTable expands the 8-bit-domain scaling LUT into one entry per
+// sample value for bitDepth 10 or 12, as dav1d's generate_scaling does for
+// 16bpc: dst[v] = the interpolated scaling of sample v. Entries above the
+// bit depth's maximum repeat the maximum's, matching scaleLUT's clamp.
+func BuildScalingTable(dst *[ScalingTableSize]uint8, lut []uint8, bitDepth uint8) error {
+	if len(lut) < ScalingLUTSize || (bitDepth != 10 && bitDepth != 12) {
+		return ErrInvalidParams
+	}
+	for v := range dst {
+		dst[v] = scaleLUT(lut, v, bitDepth)
+	}
+	return nil
+}
