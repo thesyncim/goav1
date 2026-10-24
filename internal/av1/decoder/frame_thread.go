@@ -313,6 +313,7 @@ func (s *FrameWorkState) RunStepFrameThreaded(event *Event, step FrameWorkStep, 
 		RestorationFrameBuffers: restoration,
 		pool:                    workerPool,
 	}
+	frameWorkSkipHiddenFilmGrain(&ft.post)
 	ft.hasPost = true
 	return nil
 }

@@ -2016,7 +2016,7 @@ func runFrameWorkPostFilter(event *Event, step FrameWorkStep, output *frame.Fram
 	if output == nil {
 		return frame.ErrInvalidSlot
 	}
-	return post(FrameWorkPostFilterContext{
+	ctx := FrameWorkPostFilterContext{
 		Event:                   *event,
 		Step:                    step,
 		Output:                  output,
@@ -2027,7 +2027,9 @@ func runFrameWorkPostFilter(event *Event, step FrameWorkStep, output *frame.Fram
 		LoopFilterMasks:         loopFilterMasks,
 		RestorationFrameBuffers: restorationFrameBuffers,
 		pool:                    workerPool,
-	})
+	}
+	frameWorkSkipHiddenFilmGrain(&ctx)
+	return post(ctx)
 }
 
 func runFrameWorkPostFilterRunner(event *Event, step FrameWorkStep, output *frame.Frame, referenceCount uint8, executed bool, cdefIndexMap *threading.FrameWorkCDEFIndexMap, loopFilterMap *threading.FrameWorkLoopFilterMap, loopFilterMasks *threading.FrameWorkLoopFilterMasks, restorationFrameBuffers *threading.FrameWorkRestorationFrameBuffers, workerPool *threading.Pool, post FrameWorkPostFilterRunner) error {
@@ -2041,7 +2043,7 @@ func runFrameWorkPostFilterRunnerWithCompact(event *Event, step FrameWorkStep, o
 	if output == nil {
 		return frame.ErrInvalidSlot
 	}
-	return post.Apply(FrameWorkPostFilterContext{
+	ctx := FrameWorkPostFilterContext{
 		Event:                   *event,
 		Step:                    step,
 		Output:                  output,
@@ -2053,7 +2055,9 @@ func runFrameWorkPostFilterRunnerWithCompact(event *Event, step FrameWorkStep, o
 		RestorationFrameBuffers: restorationFrameBuffers,
 		pool:                    workerPool,
 		compactLoopFilterState:  compact,
-	})
+	}
+	frameWorkSkipHiddenFilmGrain(&ctx)
+	return post.Apply(ctx)
 }
 
 // ExecuteTileWork dispatches the planned tile jobs through a reusable worker
@@ -2534,4 +2538,14 @@ func frameWorkStepMatchesEvent(event *Event, step FrameWorkStep) bool {
 		return step.Kind == FrameWorkStepDropped || step.Kind == FrameWorkStepIgnored
 	}
 	return step.Kind == FrameWorkStepIgnored
+}
+
+// frameWorkSkipHiddenFilmGrain marks film grain complete for a frame that is
+// not output (show_frame = 0). dav1d applies grain only to output pictures
+// (output_image -> dav1d_apply_grain); a hidden showable frame gets its grain
+// when show_existing_frame outputs it, from the stored parameters.
+func frameWorkSkipHiddenFilmGrain(ctx *FrameWorkPostFilterContext) {
+	if ctx.Event.FilmGrain.Apply && !EventOutputsFrame(&ctx.Event) {
+		frameWorkMarkCompletedPostFilters(ctx, FrameWorkPostFilterFilmGrain)
+	}
 }
