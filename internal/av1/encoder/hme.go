@@ -56,6 +56,16 @@ type hmeState struct {
 	// fme is the current frame's ME result.
 	fme frameME
 
+	// seed is the ME of a lower spatial layer coded earlier in this picture
+	// at half this layer's resolution (WebRTCStream sets it around the
+	// encode); seedOn marks it usable for the frame prepare set up. refSel
+	// is the reference slot prepare selected.
+	seed   *hmeState
+	seedOn bool
+	refSel int
+	// runs counts prepare calls (frames whose ME ran).
+	runs uint64
+
 	work     chan hmeJob
 	done     chan struct{}
 	started  bool
@@ -229,12 +239,15 @@ func (h *hmeState) prepare(src SourceFrame420, isRef bool, ref int) {
 	h.svt.build(src)
 	h.svt.setDistance(h.dist, h.ctrl.l0Min, h.ctrl.l0Max)
 	h.setCur(src)
-	h.selectRef(min(max(ref, 0), hmeRefSlots-1))
+	h.refSel = min(max(ref, 0), hmeRefSlots-1)
+	h.selectRef(h.refSel)
 	if h.ctrl.screen {
 		h.classifySourceSAD(src, zmvScreenControls.increase)
 	} else {
 		h.srcSADOK = false
 	}
+	h.seedOn = false
+	h.runs++
 	f := &h.fme
 	f.valid = false
 	if !h.havePrev || h.prev.w != src.Width || h.prev.h != src.Height ||
@@ -249,6 +262,7 @@ func (h *hmeState) prepare(src SourceFrame420, isRef bool, ref int) {
 	}
 	f.isRef = isRef
 	f.valid = true
+	h.seedOn = h.seedUsable(src)
 }
 
 func (h *hmeState) meRows(src SourceFrame420, r0, r1 int) {
@@ -271,4 +285,46 @@ func (h *hmeState) sbME(px, py int) *realtimeSBMultiSizeME {
 		return nil
 	}
 	return &h.fme.sb[r*h.fme.cols+c]
+}
+
+// seedUsable reports whether the lower layer's ME can center this frame's
+// HME: the lower layer searched this picture's half-resolution pyramid
+// plane (its source is that plane, svtPyramidHint) against the same
+// reference slot at the same distance, with camera-content HME (levels 0
+// and 1, no pre-HME).
+func (h *hmeState) seedUsable(src SourceFrame420) bool {
+	l := h.seed
+	if l == nil || !l.fme.valid || !h.svt.halfFromHint || l.dist != h.dist || l.refSel != h.refSel ||
+		h.ctrl.prehme || h.ctrl.hmeL2 || l.ctrl.prehme || l.ctrl.hmeL2 {
+		return false
+	}
+	return l.fme.cols == (src.Width/2+63)/64 && l.fme.rows == (src.Height/2+63)/64
+}
+
+// seedCenter is the lower layer's 32x32 vector co-located with the
+// superblock at (px, py), in half-resolution full-pel units.
+func (h *hmeState) seedCenter(px, py int) (seeds [3][2]int, n int) {
+	f := &h.seed.fme
+	c, r := px>>7, py>>7
+	if c >= f.cols || r >= f.rows {
+		return seeds, 0
+	}
+	sb := &f.sb[r*f.cols+c]
+	if !sb.valid {
+		return seeds, 0
+	}
+	add := func(x, y int) {
+		for i := 0; i < n; i++ {
+			if seeds[i] == [2]int{x, y} {
+				return
+			}
+		}
+		seeds[n] = [2]int{x, y}
+		n++
+	}
+	mv := sb.bestMV[1+((py>>6)&1)*2+((px>>6)&1)]
+	add(int(mv[0]), int(mv[1]))
+	add(int(sb.bestMV[0][0]), int(sb.bestMV[0][1]))
+	add(0, 0)
+	return seeds, n
 }

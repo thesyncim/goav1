@@ -74,7 +74,10 @@ type WebRTCStream struct {
 	scaledFrames16  [WebRTCMaxSpatialLayers]SourceFrame42016
 	// layerGen[k] == pictureGen marks layer k's scaled source as built for
 	// the current picture (sourceForLayer).
-	layerGen          [WebRTCMaxSpatialLayers]uint64
+	layerGen [WebRTCMaxSpatialLayers]uint64
+	// layerMEGen[k] == pictureGen marks layer k's frame ME as run for the
+	// current picture (webRTCMESeed).
+	layerMEGen        [WebRTCMaxSpatialLayers]uint64
 	pictureGen        uint64
 	scaleScratch      boxScaleScratch
 	layerScratch      [WebRTCMaxSpatialLayers][]byte
@@ -727,6 +730,7 @@ func (s *WebRTCStream) SetConfig(config Config) error {
 	s.scaledMono16 = [WebRTCMaxSpatialLayers]SourceFrameMono16{}
 	s.scaledFrames16 = [WebRTCMaxSpatialLayers]SourceFrame42016{}
 	s.layerGen = [WebRTCMaxSpatialLayers]uint64{}
+	s.layerMEGen = [WebRTCMaxSpatialLayers]uint64{}
 	s.layerScratch = [WebRTCMaxSpatialLayers][]byte{}
 	s.descriptorScratch = [WebRTCMaxSpatialLayers][]byte{}
 	s.referenceValid = [WebRTCReferenceBuffers]bool{}
@@ -1278,8 +1282,14 @@ func (s *WebRTCStream) EncodePicture(src SourceFrame420, forceKey bool) (WebRTCE
 			return WebRTCEncodedPicture{}, ErrInvalidConfig
 		}
 		enc.hme.svt.setHint(s.webRTCPyramidHint(layerSrc, settings.SpatialID))
+		enc.hme.seed = s.webRTCMESeed(settings.SpatialID)
+		runs := enc.hme.runs
 		tu, key, err := s.encodePictureLayer(enc, layerSrc, settings, unit.Key)
 		enc.hme.svt.setHint(svtPyramidHint{})
+		enc.hme.seed = nil
+		if enc.hme.runs != runs {
+			s.layerMEGen[settings.SpatialID] = s.pictureGen
+		}
 		if err != nil {
 			return WebRTCEncodedPicture{}, err
 		}
@@ -2086,6 +2096,22 @@ func (s *WebRTCStream) webRTCPyramidHint(src SourceFrame420, spatialID uint8) sv
 		}
 	}
 	return hint
+}
+
+// webRTCMESeed returns the ME of the layer below spatialID when it ran for
+// this picture; the upper layer's HME takes it as its level-0 result when
+// the geometry and reference match (hmeState.seedUsable).
+func (s *WebRTCStream) webRTCMESeed(spatialID uint8) *hmeState {
+	// Simulcast only: measured on L3T3_KEY the seed moved BD-rate by up to
+	// +0.75% on some layers, against within 0.16% on S3T3.
+	if !s.config.Scalability.IsSimulcast() || spatialID == 0 || spatialID >= WebRTCMaxSpatialLayers || s.layerMEGen[spatialID-1] != s.pictureGen {
+		return nil
+	}
+	lower := s.encoders[spatialID-1]
+	if lower == nil {
+		return nil
+	}
+	return &lower.hme
 }
 
 func (s *WebRTCStream) sourceForMonoLayer(src SourceFrameMono, spatialID uint8, resolution Resolution) (SourceFrameMono, error) {

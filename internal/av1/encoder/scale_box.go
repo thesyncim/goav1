@@ -167,7 +167,12 @@ func scalePlaneBoxAny[T boxScaleSample](dst []T, dstStride, dw, dh int, src []T,
 			s := src[yi*srcStride : yi*srcStride+sw]
 			if filter == boxFilterBilinear {
 				if yf := (y >> 8) & 255; yf != 0 {
-					boxInterpolateRow(row, s, src[(yi+1)*srcStride:(yi+1)*srcStride+sw], yf, rnd)
+					s1 := src[(yi+1)*srcStride : (yi+1)*srcStride+sw]
+					if r8, ok := any(row).([]uint8); ok {
+						boxInterpolateRow8(r8, any(s).([]uint8), any(s1).([]uint8), yf)
+					} else {
+						boxInterpolateRow(row, s, s1, yf, rnd)
+					}
 					s = row
 				}
 			}
@@ -198,6 +203,20 @@ func boxInterpolateRow[T boxScaleSample](dst, s0, s1 []T, f, rnd int) {
 // a + ((f * (b - a) + 0x8000) >> 16). The right tap is clamped to the row:
 // libyuv reads one sample past it, which a downscale never weights.
 func boxFilterCols[T boxScaleSample](dst, s []T, x, dx int) {
+	if dx == 0x18000 && x == 0x4000 && 3*(len(dst)/2) <= len(s) {
+		// The 2/3 step: taps repeat every two outputs, fractions 1/4, 3/4.
+		n := len(dst) / 2
+		d, s3 := dst[:2*n], s[:3*n]
+		for m := 0; m < n; m++ {
+			a, b, c := int(s3[3*m]), int(s3[3*m+1]), int(s3[3*m+2])
+			d[2*m] = T(a + ((0x4000*(b-a) + 0x8000) >> 16))
+			d[2*m+1] = T(b + ((0xc000*(c-b) + 0x8000) >> 16))
+		}
+		if len(dst) == 2*n {
+			return
+		}
+		dst, x = dst[2*n:], x+2*n*dx
+	}
 	last := len(s) - 1
 	for i := range dst {
 		xi := x >> 16

@@ -166,7 +166,17 @@ func (h *hmeState) motionEstimateSB(me *realtimeSBMultiSizeME, width, height, px
 	xc, yc := 0, 0
 	var hmeSAD uint32
 	if h.svt.ready() {
-		xc, yc, hmeSAD = h.svt.hmeB64(c, cur, prev, px, py, min(64, ((width+7)&^7)-px), min(64, ((height+7)&^7)-py), zz, f)
+		sbW, sbH := min(64, ((width+7)&^7)-px), min(64, ((height+7)&^7)-py)
+		var seeds [3][2]int
+		ns := 0
+		if h.seedOn {
+			seeds, ns = h.seedCenter(px, py)
+		}
+		if ns > 0 {
+			xc, yc, hmeSAD = h.svt.hmeSeeded(c, px, py, sbW, sbH, zz, seeds[:ns])
+		} else {
+			xc, yc, hmeSAD = h.svt.hmeB64(c, cur, prev, px, py, sbW, sbH, zz, f)
+		}
 	}
 	// integer_search_b64: me_sa by distance, the hme-based divisor and the
 	// 1x1 area below me_early_exit_th / 6. With me_early_exit_th set SVT
