@@ -613,32 +613,40 @@ func (s *DecodeState) readPaletteIndices(cdfs *IntraModeCDFs, uv bool, mapScratc
 		return err
 	}
 	mapScratch[0] = uint8(first)
-	for i := 1; i < rows+cols-1; i++ {
-		start := max(i-rows+1, 0)
-		end := min(cols-1, i)
-		for j := end; j >= start; j-- {
-			row := i - j
-			col := j
-			ctx, order, err := paletteColorIndexContext(mapScratch[:], stride, row, col, n)
-			if err != nil {
-				return err
-			}
-			var cdf *entropy.CDF
-			if uv {
-				cdf, err = cdfs.PaletteUVColorIndexCDF(n, ctx)
-			} else {
-				cdf, err = cdfs.PaletteYColorIndexCDF(n, ctx)
-			}
-			if err != nil {
-				return err
-			}
-			sym, err := s.Reader.ReadCDF(cdf)
-			if err != nil {
-				return err
-			}
-			mapScratch[row*stride+col] = order[sym]
+	// dav1d's ts->cdf.m.color_map[pl][pal_sz - 2]: the block's five context
+	// CDFs, checked once instead of per index.
+	cdfRow := &cdfs.PaletteYColorIndex[0]
+	if uint(n-PaletteMinSize) >= PaletteSizes {
+		return ErrInvalidDecodeState
+	}
+	if uv {
+		cdfRow = &cdfs.PaletteUVColorIndex[n-PaletteMinSize]
+	} else {
+		cdfRow = &cdfs.PaletteYColorIndex[n-PaletteMinSize]
+	}
+	for k := range cdfRow {
+		if cdfRow[k].Symbols() != n {
+			return entropy.ErrInvalidCDF
 		}
 	}
+	if uint(first) >= uint(n) || stride > 64 || cols > stride || rows > 64 {
+		return ErrInvalidDecodeState
+	}
+	var order [64][8]uint8
+	var ctx [64]uint8
+	c := s.Reader.Cursor()
+	for i := 1; i < rows+cols-1; i++ {
+		// top/left-to-bottom/right diagonals (dav1d's "wave-front"): order
+		// the whole diagonal, then decode it.
+		diagFirst := min(i, cols-1)
+		diagLast := max(0, i-rows+1)
+		orderPaletteDiagonal(mapScratch, stride, i, diagFirst, diagLast, &order, &ctx)
+		for j, m := diagFirst, 0; j >= diagLast; j, m = j-1, m+1 {
+			sym := c.ReadCDFSymbolsUnchecked(&cdfRow[ctx[m&63]%PaletteColorContexts], n)
+			mapScratch[((i-j)*stride+j)&(MaxPalettePixels-1)] = order[m&63][sym&7]
+		}
+	}
+	c.CommitStateTo(&s.Reader)
 	if cols < stride {
 		for row := 0; row < rows; row++ {
 			line := mapScratch[row*stride : row*stride+stride]
@@ -919,4 +927,61 @@ func (c *BlockModeContext) MarkPaletteUV(size BlockSize, x4 int, y4 int, palette
 		c.LeftPaletteUV[y4+i] = ctx
 	}
 	return nil
+}
+
+// orderPaletteDiagonal is dav1d's order_palette (src/decode.c): the color
+// order and context of every index on diagonal i, from column first down to
+// column last, given the indices decoded on the diagonals before it.
+func orderPaletteDiagonal(m *[MaxPalettePixels]uint8, stride, i, first, last int, order *[64][8]uint8, ctx *[64]uint8) {
+	const mask = MaxPalettePixels - 1
+	haveTop := i > first
+	for j, n := first, 0; j >= last; j, n = j-1, n+1 {
+		at := (i-j)*stride + j
+		o := &order[n&63]
+		var used uint
+		k := 0
+		add := func(v uint8) {
+			v &= 7
+			o[k&7] = v
+			k++
+			used |= 1 << v
+		}
+		switch {
+		case j == 0:
+			ctx[n&63] = 0
+			add(m[(at-stride)&mask])
+		case !haveTop:
+			ctx[n&63] = 0
+			add(m[(at-1)&mask])
+		default:
+			l, t, tl := m[(at-1)&mask], m[(at-stride)&mask], m[(at-stride-1)&mask]
+			switch {
+			case t == l && t == tl:
+				ctx[n&63] = 4
+				add(t)
+			case t == l:
+				ctx[n&63] = 3
+				add(t)
+				add(tl)
+			case t == tl || l == tl:
+				ctx[n&63] = 2
+				add(tl)
+				if t == tl {
+					add(l)
+				} else {
+					add(t)
+				}
+			default:
+				ctx[n&63] = 1
+				add(min(t, l))
+				add(max(t, l))
+				add(tl)
+			}
+		}
+		for remaining := used ^ 0xff; remaining != 0; remaining &= remaining - 1 {
+			o[k&7] = uint8(bits.TrailingZeros(remaining))
+			k++
+		}
+		haveTop = true
+	}
 }
