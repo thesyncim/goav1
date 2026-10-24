@@ -967,7 +967,7 @@ func (c *Cursor) ReadCDFSymbolsUnchecked(cdf *CDF, symbols int) int {
 	case 3:
 		return c.readCDF3Known(&cdf.values)
 	case 4:
-		return c.readCDF4Known(&cdf.values)
+		return c.ReadCDF4Unchecked(cdf)
 	case 5:
 		return c.readCDF5Known(&cdf.values)
 	case 6:
