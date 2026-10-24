@@ -1,9 +1,12 @@
 # Encoder comparison with SVT-AV1
 
-For the current PR #6 checkpoint, see the
-[October 9 end-to-end rerun](e2e-codec-gap-20261009.md). The historical timing
-table below is not the current encoder gap and must not be mixed with that
-rerun to infer a code speedup or regression.
+For the current state of `main`, see the
+[October 24 end-to-end rerun](e2e-codec-gap-20261024.md) (about 1.8× median
+Go/SVT process time on the table below's protocol, about 1.2× CPU on the RTC
+preset 12 recipe). The earlier
+[October 9 rerun](e2e-codec-gap-20261009.md) (3.68×) is history. The historical
+timing table below is not the current encoder gap and must not be mixed with
+either rerun to infer a code speedup or regression.
 
 This October 8, 2026 diagnostic compares the final Go 1.27.2 SIMD build with
 SVT-AV1 4.0.1 preset 13 on an Apple M4 Max. Go uses one encoder thread and
@@ -69,6 +72,9 @@ A manifest records raw input hashes and the following source URLs:
 
 SVT executable SHA-256:
 `db044194faf94d553c2509c8e033ecd05a373ba54d919d0fb49a3a13149d1687`.
+The [October 24 rerun](e2e-codec-gap-20261024.md) used SVT-AV1 4.1.0 built from
+the vendored source (SHA-256 `b4d8c5ed...`, see its provenance section) with the
+same flags and a per-clip manifest of `clip,input,width,height,frames,fps,pix_fmt,sha256`.
 Use the existing harness's metadata JSON to retain exact external commands,
 versions, binary/input/output hashes, and all individual samples.
 

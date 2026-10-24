@@ -173,6 +173,7 @@ see [cmd/dump_svc](cmd/dump_svc).
 
 - [Quality and parity gates](docs/quality-and-parity.md)
 - [Go-native SIMD build and validation](SIMD_PORT.md)
+- [Current end-to-end decoder and encoder gap versus dav1d and SVT-AV1](docs/e2e-codec-gap-20261024.md)
 - [Pinned upstream sources and porting policy](UPSTREAM.md)
 - [Executable public API examples](example_test.go), [decode examples](example_decode_simple_test.go),
   and [encoder examples](example_encode_test.go)

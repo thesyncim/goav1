@@ -109,10 +109,13 @@ not execution. The CI workflow now runs focused four-lane parity and live
 AMD64 binding checks early on its native AVX2 runner; those results must be
 read separately before claiming native AMD64 validation.
 
-The [E2E comparison](e2e-codec-gap-20261009.md) remains pinned to `0824b687`:
-about 3.65× Go/dav1d decode time and 3.68× median Go/SVT encode time in its
-measured configuration, with unequal quality tradeoffs. Assembly removal
-alone does not establish that either gap has closed.
+The [October 9 E2E comparison](e2e-codec-gap-20261009.md) remains pinned to
+`0824b687`: about 3.65× Go/dav1d decode time and 3.68× median Go/SVT encode
+time in its measured configuration, with unequal quality tradeoffs. Assembly
+removal alone does not establish that either gap has closed. The current
+measurement is the [October 24 report](e2e-codec-gap-20261024.md) (about 1.8×
+decode and 1.8× encode time on the same protocols), taken on native ARM64
+after many later changes; it does not measure the AMD64 replacement.
 
 ## Rejected encoder reduction experiment
 
