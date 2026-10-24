@@ -626,7 +626,14 @@ func (w *Writer) WriteCDF3(cdf *CDF, s int) {
 	if w.log != nil {
 		w.log.cdf(&cdf.values, s, 3)
 		if w.log.deferred {
-			adaptCDF3(&cdf.values, s)
+			values := &cdf.values
+			count := values[3]
+			rate := uint(4 + (count >> 4))
+			values[0] = adaptCDFValue(values[0], rate, s > 0)
+			values[1] = adaptCDFValue(values[1], rate, s > 1)
+			if count < MaxCDFCount {
+				values[3] = count + 1
+			}
 			return
 		}
 	}
@@ -710,7 +717,15 @@ func (w *Writer) WriteCDF4(cdf *CDF, s int) {
 	if w.log != nil {
 		w.log.cdf(&cdf.values, s, 4)
 		if w.log.deferred {
-			adaptCDF4(&cdf.values, s)
+			values := &cdf.values
+			count := values[4]
+			rate := uint(5 + (count >> 4))
+			values[0] = adaptCDFValue(values[0], rate, s > 0)
+			values[1] = adaptCDFValue(values[1], rate, s > 1)
+			values[2] = adaptCDFValue(values[2], rate, s > 2)
+			if count < MaxCDFCount {
+				values[4] = count + 1
+			}
 			return
 		}
 	}
@@ -813,7 +828,15 @@ func (w *Writer) WriteCDF4Zero(cdf *CDF) {
 	if w.log != nil {
 		w.log.cdf(&cdf.values, 0, 4)
 		if w.log.deferred {
-			adaptCDF4(&cdf.values, 0)
+			values := &cdf.values
+			count := values[4]
+			rate := uint(5 + (count >> 4))
+			values[0] -= values[0] >> rate
+			values[1] -= values[1] >> rate
+			values[2] -= values[2] >> rate
+			if count < MaxCDFCount {
+				values[4] = count + 1
+			}
 			return
 		}
 	}

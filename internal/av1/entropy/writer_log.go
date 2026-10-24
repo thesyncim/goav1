@@ -200,9 +200,9 @@ func (l *WriterLog) Replay(dst []byte, cdefIdx []uint8, cdefBits int) ([]byte, e
 	return w.Finish()
 }
 
-// adaptCDF2, adaptCDF3 and adaptCDF4 are the CDF adaptations of the 2-, 3-
-// and 4-symbol writers without their coding, for a logging writer in
-// deferred mode.
+// adaptCDF2 is the binary writer's CDF adaptation without its coding, for
+// a logging writer in deferred mode (the 3- and 4-symbol writers spell
+// theirs out with adaptCDFValue).
 func adaptCDF2(values *[MaxSymbols + 1]uint16, s int) {
 	count := values[2]
 	rate := uint(4 + (count >> 4))
@@ -217,34 +217,13 @@ func adaptCDF2(values *[MaxSymbols + 1]uint16, s int) {
 	}
 }
 
-func adaptCDF3(values *[MaxSymbols + 1]uint16, s int) {
-	count := values[3]
-	rate := uint(4 + (count >> 4))
-	for i := range 2 {
-		v := values[i]
-		if i < s {
-			values[i] = v + ((uint16(CDFProbTop) - v) >> rate)
-		} else {
-			values[i] = v - (v >> rate)
-		}
+// adaptCDFValue is one update_cdf entry: raised toward 32768 for the entries
+// below the coded symbol, lowered toward 0 from it on, written so the choice
+// is a select rather than a branch.
+func adaptCDFValue(v uint16, rate uint, up bool) uint16 {
+	n := v - v>>rate
+	if up {
+		n = v + (uint16(CDFProbTop)-v)>>rate
 	}
-	if count < MaxCDFCount {
-		values[3] = count + 1
-	}
-}
-
-func adaptCDF4(values *[MaxSymbols + 1]uint16, s int) {
-	count := values[4]
-	rate := uint(5 + (count >> 4))
-	for i := range 3 {
-		v := values[i]
-		if i < s {
-			values[i] = v + ((uint16(CDFProbTop) - v) >> rate)
-		} else {
-			values[i] = v - (v >> rate)
-		}
-	}
-	if count < MaxCDFCount {
-		values[4] = count + 1
-	}
+	return n
 }
