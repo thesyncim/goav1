@@ -65,14 +65,14 @@ func pred8SIMD(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride 
 }
 
 func pred8Copy(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride int, ref unsafe.Pointer, refStride, w, h int) int {
+	if src == nil {
+		pred8CopyRows(dst, dstStride, ref, refStride, w, h)
+		return 0
+	}
 	var acc archsimd.Uint16x8
 	sad := 0
 	for y := 0; y < h; y++ {
 		r := unsafe.Add(ref, y*refStride)
-		if src == nil && w == 8 {
-			*(*uint64)(unsafe.Add(dst, y*dstStride)) = *(*uint64)(r)
-			continue
-		}
 		for x := 0; x < w; x += 16 {
 			acc = pred8Out16(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r, x))), dst, y*dstStride+x, src, y*srcStride+x, acc)
 		}
@@ -82,6 +82,38 @@ func pred8Copy(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride 
 		}
 	}
 	return sad + sumU16(acc)
+}
+
+// pred8CopyRows is svt_av1_convolve_2d_copy_sr_neon: one loop per block
+// width, so a row costs its address, loads and stores and the loop branch
+// (the row pointers are formed by index: one past the last row would trip
+// checkptr). Widths are 8 or multiples of 16.
+func pred8CopyRows(dst unsafe.Pointer, dstStride int, ref unsafe.Pointer, refStride, w, h int) {
+	switch w {
+	case 8:
+		for y := range h {
+			*(*uint64)(unsafe.Add(dst, y*dstStride)) = *(*uint64)(unsafe.Add(ref, y*refStride))
+		}
+	case 16:
+		for y := range h {
+			*(*[16]byte)(unsafe.Add(dst, y*dstStride)) = *(*[16]byte)(unsafe.Add(ref, y*refStride))
+		}
+	case 32:
+		for y := range h {
+			*(*[32]byte)(unsafe.Add(dst, y*dstStride)) = *(*[32]byte)(unsafe.Add(ref, y*refStride))
+		}
+	case 64:
+		for y := range h {
+			*(*[64]byte)(unsafe.Add(dst, y*dstStride)) = *(*[64]byte)(unsafe.Add(ref, y*refStride))
+		}
+	default:
+		for y := range h {
+			d, r := unsafe.Add(dst, y*dstStride), unsafe.Add(ref, y*refStride)
+			for x := 0; x < w; x += 16 {
+				*(*[16]byte)(unsafe.Add(d, x)) = *(*[16]byte)(unsafe.Add(r, x))
+			}
+		}
+	}
 }
 
 // pred8H is convolve_x_sr: per output row, each tap's window is one 16-byte
