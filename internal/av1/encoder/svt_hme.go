@@ -1,5 +1,7 @@
 package encoder
 
+import "unsafe"
+
 // svt_hme.go is SVT-AV1's hierarchical ME for one 64x64 superblock at
 // preset 12 rtc, the search center of the open-loop ME sweep
 // (pframe_depth_removal.go):
@@ -237,6 +239,19 @@ func svtHMESearch(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (bestSAD
 	bestSAD = ^uint32(0)
 	stride := cur.stride
 	rows := bh / 2
+	if svtHMEColSums && w%8 == 0 && (bw == 16 || bw == 32) && rows <= 16 && w+bw <= svtHMEMaxCols && ref.stride == stride &&
+		ref.org+(by+oy+h-1+2*(rows-1))*stride+bx+ox+svtHMEColSpan(w, bw) <= len(ref.pix) {
+		return svtHMESearchColSum(cur, ref, bx, by, bw, bh, ox, oy, w, h)
+	}
+	return svtHMESearchMaxMin(cur, ref, bx, by, bw, bh, ox, oy, w, h)
+}
+
+// svtHMESearchMaxMin is svtHMESearch on the MAX-MIN absolute-difference
+// kernels.
+func svtHMESearchMaxMin(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (bestSAD uint32, bestX, bestY int) {
+	bestSAD = ^uint32(0)
+	stride := cur.stride
+	rows := bh / 2
 	s2 := 2 * stride
 	s := cur.pix[cur.org+by*stride+bx:]
 	for y := 0; y < h; y++ {
@@ -295,6 +310,116 @@ func svtHMESearch(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (bestSAD
 		}
 	}
 	return bestSAD, bestX, bestY
+}
+
+// svtHMEMaxCols bounds the reference columns (w + bw) svtHMESearchColSum
+// keeps totals for; wider areas (screen content's pre-HME strips) take the
+// MAX-MIN kernels.
+const svtHMEMaxCols = 128
+
+// svtHMEColSpan is the reference columns svtHMESearchColSum reads per row:
+// w + bw rounded up to the 16-column chunks the column totals are built in.
+func svtHMEColSpan(w, bw int) int { return (w + bw + 15) &^ 15 }
+
+// svtHMESearchColSum is svtHMESearch's eight-position path on the identity
+//
+//	sum |a - b| = sum a + sum b - 2 * sum min(a, b):
+//
+// every row and position costs one MIN plus the byte-pair accumulate instead
+// of MAX, MIN, SUB plus the accumulate. The source block's total is shared
+// by every position. Each search row's reference column totals (the block's
+// rows r, r+2, ..., r+2*(rows-1) per column) are kept per row parity: built
+// for the first two search rows, then slid down two rows (one row out, one
+// in) for the rest, so a position's reference total is a sliding sum of
+// bw column totals. The SADs equal svtSAD16xhx8's / svtSAD32xhx8's, so the
+// search (y outer, x inner, first strict minimum) picks the same position.
+func svtHMESearchColSum(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (bestSAD uint32, bestX, bestY int) {
+	bestSAD = ^uint32(0)
+	stride := cur.stride
+	rows := bh / 2
+	s2 := 2 * stride
+	s := cur.pix[cur.org+by*stride+bx:]
+	srcSum := svtBlockSumSubArch(s, s2, bw, rows)
+	span := svtHMEColSpan(w, bw)
+	base0 := ref.org + (by+oy)*stride + bx + ox
+	// The caller checked that rows base0 .. base0+(h-1+2*(rows-1))*stride
+	// hold span columns.
+	_ = s[(rows-1)*s2+bw-1]
+	_ = ref.pix[base0+(h-1+2*(rows-1))*stride+span-1]
+	var cols [2][svtHMEMaxCols]uint16
+	sp := unsafe.Pointer(&s[0])
+	for y := 0; y < h; y++ {
+		base := base0 + y*stride
+		cw := &cols[y&1]
+		if y < 2 {
+			svtColTotalsArch(cw, ref.pix[base:], s2, rows, span)
+		} else {
+			svtColTotalsSlideArch(cw, ref.pix[base-2*stride:], ref.pix[base+2*(rows-1)*stride:], span)
+		}
+		for x := 0; x < w; x += 8 {
+			var t [8]uint32
+			svtHMEEightColSum(&t, sp, unsafe.Pointer(&ref.pix[base+x]), unsafe.Pointer(&cw[x]), s2, bw, rows, srcSum)
+			m := min(min(min(t[0], t[1]), min(t[2], t[3])), min(min(t[4], t[5]), min(t[6], t[7])))
+			if sad := m << 1; sad < bestSAD {
+				k := 0
+				for t[k] != m {
+					k++
+				}
+				bestSAD, bestX, bestY = sad, ox+x+k, oy+y
+			}
+		}
+	}
+	return bestSAD, bestX, bestY
+}
+
+// svtColTotals sets cw[c], c < span, to the sum of ref[r*s2+c] over the
+// rows r < rows.
+func svtColTotals(cw *[svtHMEMaxCols]uint16, ref []byte, s2, rows, span int) {
+	for c := 0; c < span; c++ {
+		var t uint16
+		for r := 0; r < rows; r++ {
+			t += uint16(ref[r*s2+c])
+		}
+		cw[c] = t
+	}
+}
+
+// svtColTotalsSlide moves the column totals cw two rows down: out is the
+// row leaving the block, in the row entering it.
+func svtColTotalsSlide(cw *[svtHMEMaxCols]uint16, out, in []byte, span int) {
+	for c := 0; c < span; c++ {
+		cw[c] += uint16(in[c]) - uint16(out[c])
+	}
+}
+
+// svtBlockSumSub is the sum of the bw x rows block at s (row stride s2).
+func svtBlockSumSub(s []byte, s2, bw, rows int) uint32 {
+	var t uint32
+	for r := 0; r < rows; r++ {
+		for _, v := range s[r*s2 : r*s2+bw] {
+			t += uint32(v)
+		}
+	}
+	return t
+}
+
+// svtHMEEightColSumScalar is the definition of svtHMEEightColSum: t[k] is
+// the SAD of the bw-wide (16 or 32), rows-tall block at s (stride s2)
+// against ref+k (stride s2), from the source total srcSum, the reference
+// column totals cw and the sum of the per-sample minima.
+func svtHMEEightColSumScalar(t *[8]uint32, s []byte, s2 int, ref []byte, cw []uint16, bw, rows int, srcSum uint32) {
+	for k := range t {
+		var q, mn uint32
+		for c := k; c < k+bw; c++ {
+			q += uint32(cw[c])
+		}
+		for r := 0; r < rows; r++ {
+			for c := 0; c < bw; c++ {
+				mn += uint32(min(s[r*s2+c], ref[r*s2+k+c]))
+			}
+		}
+		t[k] = srcSum + q - 2*mn
+	}
 }
 
 // copySlotFrom copies q's reference slot s into p's (the pipelined leaf's
