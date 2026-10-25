@@ -61,6 +61,9 @@ type mc8Phase struct {
 	b [3]int16 // VPMADDUBSW tap pairs: int8 h[2i] | int8 h[2i+1] << 8 (halved taps)
 	d [3]int32 // VPMADDWD tap pairs: int16 h[2i] | int16 h[2i+1] << 16 (halved taps)
 	f [2]int16 // four-tap VPMADDUBSW pairs (h[1], h[2]) and (h[3], h[4])
+	// The eight-tap forms (dav1d put_8tap) over the full window, for sharp.
+	b8 [4]int16
+	d8 [4]int32
 }
 
 var mc8Phases [mc8KindCount][16]mc8Phase
@@ -73,6 +76,11 @@ var mc8SixTap [mc8KindCount]bool
 // window taps 0 and 5, so the w=4 horizontal pass can run four taps (dav1d
 // put_6tap .h_w4).
 var mc8FourTap [mc8KindCount]bool
+
+// mc8EightTap reports whether every phase of kind keeps the eight-tap AVX2
+// sums exact. A block runs the eight-tap kernels on both axes when either
+// filtered axis is sharp.
+var mc8EightTap [mc8KindCount]bool
 
 // mc8AVX2 gates the kernels at run time; tests and benchmarks clear it to
 // measure the general path.
@@ -88,9 +96,19 @@ func init() {
 		mc8KindSmooth4:  &subpelFilters4Smooth,
 	}
 	for kind, tab := range tables {
-		ok, four := true, true
+		ok, four, eight := true, true, true
 		for s := range 16 {
 			k := &tab[s]
+			var h8 [8]int
+			for i, c := range k {
+				if c&1 != 0 {
+					eight = false
+				}
+				h8[i] = int(c) / 2
+			}
+			if !mc8SumsExact(h8[:]) {
+				eight = false
+			}
 			if k[0] != 0 || k[7] != 0 {
 				ok = false
 			}
@@ -128,6 +146,10 @@ func init() {
 				four = false
 			}
 			ph := &mc8Phases[kind][s]
+			for i := range 4 {
+				ph.b8[i] = int16(uint16(uint8(int8(h8[2*i]))) | uint16(uint8(int8(h8[2*i+1])))<<8)
+				ph.d8[i] = int32(uint32(uint16(int16(h8[2*i]))) | uint32(uint16(int16(h8[2*i+1])))<<16)
+			}
 			ph.f[0] = int16(uint16(uint8(int8(h[1]))) | uint16(uint8(int8(h[2])))<<8)
 			ph.f[1] = int16(uint16(uint8(int8(h[3]))) | uint16(uint8(int8(h[4])))<<8)
 			for i := range 3 {
@@ -137,11 +159,15 @@ func init() {
 		}
 		mc8SixTap[kind] = ok
 		mc8FourTap[kind] = ok && four
+		mc8EightTap[kind] = eight
 	}
 	// The 2D outputs use VPACKUSDW, a saturating pack: it matches libaom's
 	// uint16 truncation only while every prep value lies in [0, 65535].
 	for kx := range mc8KindCount {
 		for ky := range mc8KindCount {
+			if mc8EightTap[kx] && mc8EightTap[ky] && !mc8PrepRangeOK(tables[kx], tables[ky]) {
+				mc8EightTap[kx], mc8EightTap[ky] = false, false
+			}
 			if !mc8SixTap[kx] || !mc8SixTap[ky] {
 				continue
 			}
@@ -158,6 +184,45 @@ func init() {
 			}
 		}
 	}
+}
+
+// mc8SumsExact reports whether every VPMADDUBSW pair of the halved taps h and
+// their int16 sums stay exact for put (+34) and prep (+2 + 6144 << 2,
+// unsigned) over byte samples.
+func mc8SumsExact(h []int) bool {
+	sMin, sMax := 0, 0
+	for i := 0; i < len(h); i += 2 {
+		pMin, pMax := 0, 0
+		for _, c := range h[i : i+2] {
+			if c < 0 {
+				pMin += 255 * c
+			} else {
+				pMax += 255 * c
+			}
+		}
+		if pMin < -32768 || pMax > 32767 {
+			return false
+		}
+		sMin += pMin
+		sMax += pMax
+	}
+	return sMin >= -32768 && sMax+34 <= 32767 && sMin+2+6144<<2 >= 0 && sMax+2+6144<<2 <= 65535
+}
+
+// mc8PrepRangeOK reports whether every 2D prep value of the two kinds lies in
+// [0, 65535], where VPACKUSDW equals libaom's uint16 cast.
+func mc8PrepRangeOK(tx, ty *[16][filterTaps]int16) bool {
+	for sx := range 16 {
+		mMin, mMax := mc8TapRange(&tx[sx], 0, 255)
+		mMin, mMax = (mMin+2)>>2, (mMax+2)>>2
+		for sy := range 16 {
+			lo, hi := mc8TapRange(&ty[sy], mMin, mMax)
+			if (lo+32+6144<<6)>>6 < 0 || (hi+32+6144<<6)>>6 > 65535 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // mc8TapRange bounds sum(half tap * v) for v in [lo, hi].
@@ -201,15 +266,15 @@ func mc8Kind(f InterpFilter, blockSize int) int {
 // When any tap falls outside the plane the clamped window is materialized in
 // edge first (dav1d src/recon_tmpl.c mc() emu_edge). Every kernel reads at
 // most max(w+8, 16) bytes per row from the window's left edge.
-func mc8Source(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEdgeStride * emuEdgeRows]byte) (src unsafe.Pointer, stride int, ok bool) {
+func mc8Source(ref *frame.Plane, refX, refY, w, h, taps int, hx, hy bool, edge *[emuEdgeStride * emuEdgeRows]byte) (src unsafe.Pointer, stride int, ok bool) {
 	x0, y0, bw, bh := refX, refY, w, h
 	if hx {
-		x0 -= 2
-		bw += 5
+		x0 -= taps/2 - 1
+		bw += taps - 1
 	}
 	if hy {
-		y0 -= 2
-		bh += 5
+		y0 -= taps/2 - 1
+		bh += taps - 1
 	}
 	if ref.Width <= 0 || ref.Height <= 0 || ref.Stride < ref.Width {
 		return nil, 0, false
@@ -227,6 +292,16 @@ func mc8Source(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEd
 	return unsafe.Pointer(&edge[0]), emuEdgeStride, true
 }
 
+// mc8Taps picks the kernel family for a block: the six-tap kernels (four-tap
+// horizontally at w=4), or the eight-tap kernels on both axes when a filtered
+// axis is sharp (dav1d put_8tap), which w=4 leaves to the general path.
+func mc8Taps(w, kx, ky, subX, subY int) (eight, ok bool) {
+	if (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) {
+		return false, w != 4 || subX == 0 || mc8FourTap[kx]
+	}
+	return true, w != 4 && (subX == 0 || mc8EightTap[kx]) && (subY == 0 || mc8EightTap[ky])
+}
+
 // mc8PutFast predicts a w x h 8-bit block (w a multiple of 8) with the AVX2
 // put kernels. It returns false for shapes it does not cover; the caller then
 // runs the general path.
@@ -236,7 +311,8 @@ func mc8PutFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h
 	}
 	kx := mc8Kind(filters.X, filterW)
 	ky := mc8Kind(filters.Y, filterH)
-	if (subX != 0 && !mc8SixTap[kx]) || (subY != 0 && !mc8SixTap[ky]) || (w == 4 && subX != 0 && !mc8FourTap[kx]) {
+	eight, ok := mc8Taps(w, kx, ky, subX, subY)
+	if !ok {
 		return false
 	}
 	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < dst.Width {
@@ -246,11 +322,28 @@ func mc8PutFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h
 	if dOff+(h-1)*dst.Stride+w > len(dst.Pix) {
 		return false
 	}
-	src, stride, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge)
+	taps := 6
+	if eight {
+		taps = 8
+	}
+	src, stride, ok := mc8Source(ref, refX, refY, w, h, taps, subX != 0, subY != 0, &scratch.edge)
 	if !ok {
 		return false
 	}
 	d := unsafe.Pointer(&dst.Pix[dOff])
+	if eight {
+		switch {
+		case subX != 0 && subY != 0:
+			im := unsafe.Pointer(&scratch.im[0])
+			mc8AVX2H8Mid(src, stride, w, h+7, &mc8Phases[kx][subX], im)
+			mc8AVX2V8Mid(im, w, h, &mc8Phases[ky][subY], d, dst.Stride, true)
+		case subX != 0:
+			mc8AVX2PutH8(src, stride, w, h, &mc8Phases[kx][subX], d, dst.Stride)
+		default:
+			mc8AVX2V8(src, stride, w, h, &mc8Phases[ky][subY], d, dst.Stride, true)
+		}
+		return true
+	}
 	if w == 4 {
 		im := unsafe.Pointer(&scratch.im[0])
 		switch {
@@ -285,14 +378,32 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 	}
 	kx := mc8Kind(filters.X, filterW)
 	ky := mc8Kind(filters.Y, filterH)
-	if (subX != 0 && !mc8SixTap[kx]) || (subY != 0 && !mc8SixTap[ky]) || (w == 4 && subX != 0 && !mc8FourTap[kx]) {
+	eight, ok := mc8Taps(w, kx, ky, subX, subY)
+	if !ok {
 		return false
 	}
-	src, stride, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge)
+	taps := 6
+	if eight {
+		taps = 8
+	}
+	src, stride, ok := mc8Source(ref, refX, refY, w, h, taps, subX != 0, subY != 0, &scratch.edge)
 	if !ok {
 		return false
 	}
 	o := unsafe.Pointer(&out[0])
+	if eight {
+		switch {
+		case subX != 0 && subY != 0:
+			im := unsafe.Pointer(&scratch.im8[0])
+			mc8AVX2H8Mid(src, stride, w, h+7, &mc8Phases[kx][subX], im)
+			mc8AVX2V8Mid(im, w, h, &mc8Phases[ky][subY], o, 0, false)
+		case subX != 0:
+			mc8AVX2PrepH8(src, stride, w, h, &mc8Phases[kx][subX], o)
+		default:
+			mc8AVX2V8(src, stride, w, h, &mc8Phases[ky][subY], o, 0, false)
+		}
+		return true
+	}
 	if w == 4 {
 		im := unsafe.Pointer(&scratch.im8[0])
 		switch {
@@ -325,6 +436,7 @@ var (
 	mc8ShufA = [32]int8{0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8}
 	mc8ShufB = [32]int8{2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10}
 	mc8ShufC = [32]int8{4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12}
+	mc8ShufD = [32]int8{6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14}
 	// mc8Deint gathers the even bytes of each lane, then the odd bytes.
 	mc8Deint = [32]int8{0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15, 0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15}
 	// mc8Q3120 is VPERMQ q3120 as dword indices.
@@ -982,6 +1094,379 @@ func mc8AVX2BlendAvg(dst unsafe.Pointer, ds int, a, b []uint16, w, h int) {
 	}
 }
 
+// mc8AVX2PutH8 is mc8AVX2PutH6 with the eight-tap window (dav1d put_8tap/prep_8tap).
+//
+//go:nocheckptr
+func mc8AVX2PutH8(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, dst unsafe.Pointer, ds int) {
+	sA := archsimd.LoadInt8x32Array(&mc8ShufA)
+	sB := archsimd.LoadInt8x32Array(&mc8ShufB)
+	sC := archsimd.LoadInt8x32Array(&mc8ShufC)
+	sD := archsimd.LoadInt8x32Array(&mc8ShufD)
+	deint := archsimd.LoadInt8x32Array(&mc8Deint)
+	t0, t1, t2, t3 := mc8TapsB(ph.b8[0]), mc8TapsB(ph.b8[1]), mc8TapsB(ph.b8[2]), mc8TapsB(ph.b8[3])
+	rnd := archsimd.BroadcastInt16x16(34)
+	zero := archsimd.Int16x16{}
+	c255 := archsimd.BroadcastInt16x16(255)
+	for r := 0; r < h; r += 2 {
+		s0 := unsafe.Add(src, r*ss)
+		d0 := unsafe.Add(dst, r*ds)
+		s1, d1 := s0, d0
+		two := r+1 < h
+		if two {
+			s1, d1 = unsafe.Add(s0, ss), unsafe.Add(d0, ds)
+		}
+		if w == 8 {
+			a := mc8H8(mc8Ld2(s0, s1), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
+			v := mc8Pack(a, a, zero, c255, deint)
+			mc8St8(d0, v.GetLo())
+			mc8St8(d1, v.GetHi())
+			continue
+		}
+		c := 0
+		for ; c+16 <= w; c += 16 {
+			a := mc8H8(mc8Ld2(unsafe.Add(s0, c), unsafe.Add(s1, c)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
+			b := mc8H8(mc8Ld2(unsafe.Add(s0, c+8), unsafe.Add(s1, c+8)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
+			v := mc8Pack(a, b, zero, c255, deint)
+			mc8St16(unsafe.Add(d1, c), v.GetHi())
+			mc8St16(unsafe.Add(d0, c), v.GetLo())
+		}
+		if c < w {
+			a := mc8H8(mc8Ld2(unsafe.Add(s0, c), unsafe.Add(s1, c)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
+			v := mc8Pack(a, a, zero, c255, deint)
+			mc8St8(unsafe.Add(d1, c), v.GetHi())
+			mc8St8(unsafe.Add(d0, c), v.GetLo())
+		}
+	}
+}
+
+// mc8AVX2PrepH8 is mc8AVX2PrepH6 with the eight-tap window (dav1d put_8tap/prep_8tap).
+//
+//go:nocheckptr
+func mc8AVX2PrepH8(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, out unsafe.Pointer) {
+	sA := archsimd.LoadInt8x32Array(&mc8ShufA)
+	sB := archsimd.LoadInt8x32Array(&mc8ShufB)
+	sC := archsimd.LoadInt8x32Array(&mc8ShufC)
+	sD := archsimd.LoadInt8x32Array(&mc8ShufD)
+	t0, t1, t2, t3 := mc8TapsB(ph.b8[0]), mc8TapsB(ph.b8[1]), mc8TapsB(ph.b8[2]), mc8TapsB(ph.b8[3])
+	rnd := archsimd.BroadcastInt16x16(2 + 6144<<2)
+	if w == 8 {
+		r := 0
+		for ; r+2 <= h; r += 2 {
+			s0 := unsafe.Add(src, r*ss)
+			a := mc8H8(mc8Ld2(s0, unsafe.Add(s0, ss)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd)
+			a.ToBits().ShiftAllRight(2).StoreArray((*[16]uint16)(unsafe.Add(out, r*16)))
+		}
+		if r < h {
+			s0 := unsafe.Add(src, r*ss)
+			a := mc8H8(mc8Ld2(s0, s0), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd)
+			a.ToBits().ShiftAllRight(2).GetLo().StoreArray((*[8]uint16)(unsafe.Add(out, r*16)))
+		}
+		return
+	}
+	for r := 0; r < h; r++ {
+		s0 := unsafe.Add(src, r*ss)
+		o := unsafe.Add(out, r*w*2)
+		c := 0
+		for ; c+16 <= w; c += 16 {
+			a := mc8H8(mc8Ld2(unsafe.Add(s0, c), unsafe.Add(s0, c+8)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd)
+			a.ToBits().ShiftAllRight(2).StoreArray((*[16]uint16)(unsafe.Add(o, c*2)))
+		}
+		if c < w {
+			p := unsafe.Add(s0, c)
+			a := mc8H8(mc8Ld2(p, p), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd)
+			a.ToBits().ShiftAllRight(2).GetLo().StoreArray((*[8]uint16)(unsafe.Add(o, c*2)))
+		}
+	}
+}
+
+// mc8AVX2H8Mid is mc8AVX2H6Mid with the eight-tap window (dav1d put_8tap/prep_8tap).
+//
+//go:nocheckptr
+func mc8AVX2H8Mid(src unsafe.Pointer, ss, w, rows int, ph *mc8Phase, im unsafe.Pointer) {
+	sA := archsimd.LoadInt8x32Array(&mc8ShufA)
+	sB := archsimd.LoadInt8x32Array(&mc8ShufB)
+	sC := archsimd.LoadInt8x32Array(&mc8ShufC)
+	sD := archsimd.LoadInt8x32Array(&mc8ShufD)
+	t0, t1, t2, t3 := mc8TapsB(ph.b8[0]), mc8TapsB(ph.b8[1]), mc8TapsB(ph.b8[2]), mc8TapsB(ph.b8[3])
+	rnd := archsimd.BroadcastInt16x16(2)
+	if w == 8 {
+		r := 0
+		for ; r+2 <= rows; r += 2 {
+			s0 := unsafe.Add(src, r*ss)
+			a := mc8H8(mc8Ld2(s0, unsafe.Add(s0, ss)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(2)
+			a.StoreArray((*[16]int16)(unsafe.Add(im, r*16)))
+		}
+		if r < rows {
+			s0 := unsafe.Add(src, r*ss)
+			a := mc8H8(mc8Ld2(s0, s0), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(2)
+			a.GetLo().StoreArray((*[8]int16)(unsafe.Add(im, r*16)))
+		}
+		return
+	}
+	for r := 0; r < rows; r++ {
+		s0 := unsafe.Add(src, r*ss)
+		o := unsafe.Add(im, r*w*2)
+		c := 0
+		for ; c+16 <= w; c += 16 {
+			a := mc8H8(mc8Ld2(unsafe.Add(s0, c), unsafe.Add(s0, c+8)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(2)
+			a.StoreArray((*[16]int16)(unsafe.Add(o, c*2)))
+		}
+		if c < w {
+			p := unsafe.Add(s0, c)
+			a := mc8H8(mc8Ld2(p, p), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(2)
+			a.GetLo().StoreArray((*[8]int16)(unsafe.Add(o, c*2)))
+		}
+	}
+}
+
+// mc8H8 is mc8H6 over the eight-tap window (PUT_8TAP_H).
+func mc8H8(y archsimd.Uint8x32, sA, sB, sC, sD, t0, t1, t2, t3 archsimd.Int8x32) archsimd.Int16x16 {
+	a := y.PermuteOrZeroGrouped(sA).DotProductPairsSaturated(t0)
+	b := y.PermuteOrZeroGrouped(sB).DotProductPairsSaturated(t1)
+	c := y.PermuteOrZeroGrouped(sC).DotProductPairsSaturated(t2)
+	d := y.PermuteOrZeroGrouped(sD).DotProductPairsSaturated(t3)
+	return a.Add(b).Add(c.Add(d))
+}
+
+func mc8V8(p0, p2, p4, p6 archsimd.Uint8x32, t0, t1, t2, t3 archsimd.Int8x32) archsimd.Int16x16 {
+	a := p0.DotProductPairsSaturated(t0).Add(p2.DotProductPairsSaturated(t1))
+	return a.Add(p4.DotProductPairsSaturated(t2).Add(p6.DotProductPairsSaturated(t3)))
+}
+
+func mc8VMid8(p0, p2, p4, p6, d0, d1, d2, d3 archsimd.Int16x16, rnd archsimd.Int32x8) archsimd.Int32x8 {
+	a := p0.DotProductPairs(d0).Add(rnd).Add(p2.DotProductPairs(d1))
+	return a.Add(p4.DotProductPairs(d2).Add(p6.DotProductPairs(d3)))
+}
+
+// mc8AVX2V8 is the eight-tap vertical-only pass (put: clip((s + 32) >> 6);
+// prep: ((s + 2) >> 2) + 6144), laid out as mc8AVX2PutV6 / mc8AVX2PrepV6.
+//
+//go:nocheckptr
+func mc8AVX2V8(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, dst unsafe.Pointer, ds int, put bool) {
+	t0, t1, t2, t3 := mc8TapsB(ph.b8[0]), mc8TapsB(ph.b8[1]), mc8TapsB(ph.b8[2]), mc8TapsB(ph.b8[3])
+	deint := archsimd.LoadInt8x32Array(&mc8Deint)
+	q3120 := archsimd.LoadUint32x8Array(&mc8Q3120)
+	rndPut := archsimd.BroadcastInt16x16(32)
+	rndPrep := archsimd.BroadcastInt16x16(2 + 6144<<2)
+	zero := archsimd.Int16x16{}
+	c255 := archsimd.BroadcastInt16x16(255)
+	if w == 8 {
+		z0 := mc8ZxW8(src)
+		z1 := mc8ZxW8(unsafe.Add(src, ss))
+		z2 := mc8ZxW8(unsafe.Add(src, 2*ss))
+		z3 := mc8ZxW8(unsafe.Add(src, 3*ss))
+		z4 := mc8ZxW8(unsafe.Add(src, 4*ss))
+		z5 := mc8ZxW8(unsafe.Add(src, 5*ss))
+		z6 := mc8ZxW8(unsafe.Add(src, 6*ss))
+		q0 := mc8Join(mc8PairW8(z0, z1), mc8PairW8(z1, z2))
+		q2 := mc8Join(mc8PairW8(z2, z3), mc8PairW8(z3, z4))
+		q4 := mc8Join(mc8PairW8(z4, z5), mc8PairW8(z5, z6))
+		s := unsafe.Add(src, 7*ss)
+		for r := 0; r < h; r += 2 {
+			z7 := mc8ZxW8(s)
+			z8 := z7
+			if r+1 < h {
+				z8 = mc8ZxW8(unsafe.Add(s, ss))
+			}
+			q6 := mc8Join(mc8PairW8(z6, z7), mc8PairW8(z7, z8))
+			a := mc8V8(q0, q2, q4, q6, t0, t1, t2, t3)
+			if put {
+				a = a.Add(rndPut).ShiftAllRight(6)
+				v := mc8Pack(a, a, zero, c255, deint)
+				d := unsafe.Add(dst, r*ds)
+				mc8St8(d, v.GetLo())
+				if r+1 < h {
+					mc8St8(unsafe.Add(d, ds), v.GetHi())
+				}
+			} else {
+				u := a.Add(rndPrep).ToBits().ShiftAllRight(2)
+				if r+1 < h {
+					u.StoreArray((*[16]uint16)(unsafe.Add(dst, r*16)))
+				} else {
+					u.GetLo().StoreArray((*[8]uint16)(unsafe.Add(dst, r*16)))
+				}
+			}
+			q0, q2, q4, z6 = q2, q4, q6, z8
+			s = unsafe.Add(s, 2*ss)
+		}
+		return
+	}
+	ro := 2 * w
+	for c := 0; c < w; c += 16 {
+		s := unsafe.Add(src, c)
+		z0 := mc8Zx(s)
+		z1 := mc8Zx(unsafe.Add(s, ss))
+		z2 := mc8Zx(unsafe.Add(s, 2*ss))
+		z3 := mc8Zx(unsafe.Add(s, 3*ss))
+		z4 := mc8Zx(unsafe.Add(s, 4*ss))
+		z5 := mc8Zx(unsafe.Add(s, 5*ss))
+		z6 := mc8Zx(unsafe.Add(s, 6*ss))
+		p0, p1, p2, p3 := mc8Pair(z0, z1), mc8Pair(z1, z2), mc8Pair(z2, z3), mc8Pair(z3, z4)
+		p4, p5 := mc8Pair(z4, z5), mc8Pair(z5, z6)
+		s = unsafe.Add(s, 7*ss)
+		full := c+16 <= w
+		for r := 0; r < h; r += 2 {
+			two := r+1 < h
+			z7 := mc8Zx(s)
+			z8 := z7
+			if two {
+				z8 = mc8Zx(unsafe.Add(s, ss))
+			}
+			p6, p7 := mc8Pair(z6, z7), mc8Pair(z7, z8)
+			a := mc8V8(p0, p2, p4, p6, t0, t1, t2, t3)
+			b := mc8V8(p1, p3, p5, p7, t0, t1, t2, t3)
+			if put {
+				a = a.Add(rndPut).ShiftAllRight(6)
+				b = b.Add(rndPut).ShiftAllRight(6)
+				v := mc8Pack(a, b, zero, c255, deint).ReshapeToUint32s().Permute(q3120).ReshapeToUint8s()
+				d := unsafe.Add(dst, r*ds+c)
+				if full {
+					mc8St16(d, v.GetLo())
+					if two {
+						mc8St16(unsafe.Add(d, ds), v.GetHi())
+					}
+				} else {
+					mc8St8(d, v.GetLo())
+					if two {
+						mc8St8(unsafe.Add(d, ds), v.GetHi())
+					}
+				}
+			} else {
+				o := unsafe.Add(dst, r*ro+2*c)
+				x := a.Add(rndPrep).ToBits().ShiftAllRight(2)
+				y := b.Add(rndPrep).ToBits().ShiftAllRight(2)
+				if full {
+					x.StoreArray((*[16]uint16)(o))
+					if two {
+						y.StoreArray((*[16]uint16)(unsafe.Add(o, ro)))
+					}
+				} else {
+					x.GetLo().StoreArray((*[8]uint16)(o))
+					if two {
+						y.GetLo().StoreArray((*[8]uint16)(unsafe.Add(o, ro)))
+					}
+				}
+			}
+			p0, p1, p2, p3, p4, p5, z6 = p2, p3, p4, p5, p6, p7, z8
+			s = unsafe.Add(s, 2*ss)
+		}
+	}
+}
+
+// mc8AVX2V8Mid is the eight-tap 2D vertical pass over the int16 intermediate
+// (h+7 rows, stride w), laid out as mc8AVX2PutV6Mid.
+//
+//go:nocheckptr
+func mc8AVX2V8Mid(im unsafe.Pointer, w, h int, ph *mc8Phase, dst unsafe.Pointer, ds int, put bool) {
+	d0, d1, d2, d3 := mc8TapsD(ph.d8[0]), mc8TapsD(ph.d8[1]), mc8TapsD(ph.d8[2]), mc8TapsD(ph.d8[3])
+	var rnd archsimd.Int32x8
+	var sh uint64
+	if put {
+		rnd, sh = archsimd.BroadcastInt32x8(512), 10
+	} else {
+		rnd, sh = archsimd.BroadcastInt32x8(32+6144<<6), 6
+	}
+	c255 := archsimd.BroadcastUint16x16(255)
+	deint := archsimd.LoadInt8x32Array(&mc8Deint)
+	if w == 8 {
+		l0 := mc8LdI16(im)
+		l1 := mc8LdI16(unsafe.Add(im, 16))
+		l2 := mc8LdI16(unsafe.Add(im, 32))
+		l3 := mc8LdI16(unsafe.Add(im, 48))
+		l4 := mc8LdI16(unsafe.Add(im, 64))
+		l5 := mc8LdI16(unsafe.Add(im, 80))
+		a0, b0 := l0.InterleaveLoGrouped(l1), l0.InterleaveHiGrouped(l1)
+		a2, b2 := l2.InterleaveLoGrouped(l3), l2.InterleaveHiGrouped(l3)
+		a4, b4 := l4.InterleaveLoGrouped(l5), l4.InterleaveHiGrouped(l5)
+		q := unsafe.Add(im, 96)
+		for r := 0; r < h; r += 2 {
+			l6 := mc8LdI16(q)
+			l7 := mc8LdI16(unsafe.Add(q, 16))
+			a6, b6 := l6.InterleaveLoGrouped(l7), l6.InterleaveHiGrouped(l7)
+			lo := mc8VMid8(a0, a2, a4, a6, d0, d1, d2, d3, rnd).ShiftAllRight(sh)
+			hi := mc8VMid8(b0, b2, b4, b6, d0, d1, d2, d3, rnd).ShiftAllRight(sh)
+			u := lo.SaturateToUint16ConcatGrouped(hi)
+			if put {
+				v := u.Min(c255).ReshapeToUint8s().PermuteOrZeroGrouped(deint)
+				d := unsafe.Add(dst, r*ds)
+				mc8St8(d, v.GetLo())
+				if r+1 < h {
+					mc8St8(unsafe.Add(d, ds), v.GetHi())
+				}
+			} else if r+1 < h {
+				u.StoreArray((*[16]uint16)(unsafe.Add(dst, r*16)))
+			} else {
+				u.GetLo().StoreArray((*[8]uint16)(unsafe.Add(dst, r*16)))
+			}
+			a0, b0, a2, b2, a4, b4 = a2, b2, a4, b4, a6, b6
+			q = unsafe.Add(q, 32)
+		}
+		return
+	}
+	q3120 := archsimd.LoadUint32x8Array(&mc8Q3120)
+	rs := w * 2
+	for c := 0; c < w; c += 16 {
+		q := unsafe.Add(im, c*2)
+		l0 := mc8LdI16(q)
+		l1 := mc8LdI16(unsafe.Add(q, rs))
+		l2 := mc8LdI16(unsafe.Add(q, 2*rs))
+		l3 := mc8LdI16(unsafe.Add(q, 3*rs))
+		l4 := mc8LdI16(unsafe.Add(q, 4*rs))
+		l5 := mc8LdI16(unsafe.Add(q, 5*rs))
+		l6 := mc8LdI16(unsafe.Add(q, 6*rs))
+		a0, b0 := l0.InterleaveLoGrouped(l1), l0.InterleaveHiGrouped(l1)
+		a1, b1 := l1.InterleaveLoGrouped(l2), l1.InterleaveHiGrouped(l2)
+		a2, b2 := l2.InterleaveLoGrouped(l3), l2.InterleaveHiGrouped(l3)
+		a3, b3 := l3.InterleaveLoGrouped(l4), l3.InterleaveHiGrouped(l4)
+		a4, b4 := l4.InterleaveLoGrouped(l5), l4.InterleaveHiGrouped(l5)
+		a5, b5 := l5.InterleaveLoGrouped(l6), l5.InterleaveHiGrouped(l6)
+		q = unsafe.Add(q, 7*rs)
+		full := c+16 <= w
+		for r := 0; r < h; r += 2 {
+			two := r+1 < h
+			l7 := mc8LdI16(q)
+			l8 := l7
+			if two {
+				l8 = mc8LdI16(unsafe.Add(q, rs))
+			}
+			a6, b6 := l6.InterleaveLoGrouped(l7), l6.InterleaveHiGrouped(l7)
+			a7, b7 := l7.InterleaveLoGrouped(l8), l7.InterleaveHiGrouped(l8)
+			x := mc8VMid8(a0, a2, a4, a6, d0, d1, d2, d3, rnd).ShiftAllRight(sh).SaturateToUint16ConcatGrouped(mc8VMid8(b0, b2, b4, b6, d0, d1, d2, d3, rnd).ShiftAllRight(sh))
+			y := mc8VMid8(a1, a3, a5, a7, d0, d1, d2, d3, rnd).ShiftAllRight(sh).SaturateToUint16ConcatGrouped(mc8VMid8(b1, b3, b5, b7, d0, d1, d2, d3, rnd).ShiftAllRight(sh))
+			if put {
+				x, y = x.Min(c255), y.Min(c255)
+				v := x.Or(y.ShiftAllLeft(8)).ReshapeToUint8s().PermuteOrZeroGrouped(deint).ReshapeToUint32s().Permute(q3120).ReshapeToUint8s()
+				d := unsafe.Add(dst, r*ds+c)
+				if full {
+					mc8St16(d, v.GetLo())
+					if two {
+						mc8St16(unsafe.Add(d, ds), v.GetHi())
+					}
+				} else {
+					mc8St8(d, v.GetLo())
+					if two {
+						mc8St8(unsafe.Add(d, ds), v.GetHi())
+					}
+				}
+			} else {
+				o := unsafe.Add(dst, r*rs+2*c)
+				if full {
+					x.StoreArray((*[16]uint16)(o))
+					if two {
+						y.StoreArray((*[16]uint16)(unsafe.Add(o, rs)))
+					}
+				} else {
+					x.GetLo().StoreArray((*[8]uint16)(o))
+					if two {
+						y.GetLo().StoreArray((*[8]uint16)(unsafe.Add(o, rs)))
+					}
+				}
+			}
+			a0, b0, a1, b1, a2, b2, a3, b3, a4, b4, a5, b5, l6 = a2, b2, a3, b3, a4, b4, a5, b5, a6, b6, a7, b7, l8
+			q = unsafe.Add(q, 2*rs)
+		}
+	}
+}
 
 // Width-4 kernels (dav1d put_6tap/prep_6tap .h_w4, .v_w4, .hv_w4). Each
 // 256-bit vector holds four rows of four samples: rows r, r+1 in the low lane

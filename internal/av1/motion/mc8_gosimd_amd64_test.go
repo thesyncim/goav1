@@ -129,7 +129,7 @@ func TestAMD64MC8PutFastMatchesPureGo(t *testing.T) {
 				mc8RefPut(want, ref, 3, 2, refX, refY, w, h, filterW, filterH, subX, subY, filters)
 				if !mc8PutFast(&got, &ref, 3, 2, refX, refY, w, h, filterW, filterH, subX, subY, filters, &scratch) {
 					kx, ky := mc8Kind(filters.X, filterW), mc8Kind(filters.Y, filterH)
-					if (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) && (w%8 == 0 || (w == 4 && (subX == 0 || mc8FourTap[kx]))) {
+					if _, cover := mc8Taps(w, kx, ky, subX, subY); cover && w%4 == 0 {
 						t.Fatalf("mc8PutFast declined w=%d h=%d filters=%v sub=%d,%d", w, h, filters, subX, subY)
 					}
 					continue
@@ -207,7 +207,7 @@ func TestAMD64MC8PrepFastMatchesPureGo(t *testing.T) {
 				mc8RefPrep(want, ref, refX, refY, w, h, fw, fh, subX, subY, filters)
 				if !mc8PrepFast(got[:w*h], &ref, refX, refY, w, h, fw, fh, subX, subY, filters, scratch) {
 					kx, ky := mc8Kind(filters.X, fw), mc8Kind(filters.Y, fh)
-					if (subX|subY != 0) && (w%8 == 0 || (w == 4 && (subX == 0 || mc8FourTap[kx]))) && (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) {
+					if _, cover := mc8Taps(w, kx, ky, subX, subY); cover && subX|subY != 0 && w%4 == 0 {
 						t.Fatalf("mc8PrepFast declined w=%d h=%d filters=%v sub=%d,%d", w, h, filters, subX, subY)
 					}
 					continue
@@ -270,11 +270,18 @@ func TestAMD64MC8Dispatch(t *testing.T) {
 	if want := [mc8KindCount]bool{true, true, false, true, true, true}; mc8SixTap != want {
 		t.Fatalf("six-tap kinds = %v, want %v", mc8SixTap, want)
 	}
+	if want := [mc8KindCount]bool{true, true, true, true, true, true}; mc8EightTap != want {
+		t.Fatalf("eight-tap kinds = %v, want %v", mc8EightTap, want)
+	}
 	rng := rand.New(rand.NewSource(9))
 	ref := mc8TestRef(rng, 96, 96, 112, 0)
 	dst := frame.Plane{Pix: make([]byte, 64*64), Stride: 64, Width: 64, Height: 64}
 	var scratch ConvolveScratch
+	sharp := InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapRegular}
 	for _, sub := range [][2]int{{5, 0}, {0, 7}, {3, 9}} {
+		if !mc8PutFast(&dst, &ref, 0, 0, 20, 20, 16, 16, 16, 16, sub[0], sub[1], sharp, &scratch) {
+			t.Fatalf("mc8PutFast declined sharp 16x16 sub=%v", sub)
+		}
 		if !mc8PutFast(&dst, &ref, 0, 0, 20, 20, 16, 16, 16, 16, sub[0], sub[1], RegularFilters, &scratch) {
 			t.Fatalf("mc8PutFast declined 16x16 sub=%v", sub)
 		}

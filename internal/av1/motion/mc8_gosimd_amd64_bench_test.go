@@ -9,6 +9,7 @@ package motion
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -27,9 +28,9 @@ func mc8BenchMV(mode string) Vector {
 	// Q3 luma vector: column phase 5, row phase 11 (in 1/16 units 10, 6).
 	mv := Vector{Row: 8*3 + 3, Col: 8*2 + 5}
 	switch mode {
-	case "h":
+	case "h", "hsharp":
 		mv.Row = 8 * 3
-	case "v":
+	case "v", "vsharp":
 		mv.Col = 8 * 2
 	}
 	return mv
@@ -43,14 +44,18 @@ func BenchmarkAMD64MC8Put(b *testing.B) {
 	dst := frame.Plane{Pix: make([]byte, 192*192), Stride: 192, Width: 192, Height: 192}
 	for _, sz := range [][2]int{{4, 4}, {4, 8}, {8, 8}, {16, 16}, {32, 32}, {64, 64}} {
 		w, h := sz[0], sz[1]
-		for _, mode := range []string{"hv", "h", "v"} {
+		for _, mode := range []string{"hv", "h", "v", "hvsharp", "hsharp", "vsharp"} {
 			mv := mc8BenchMV(mode)
+			filters := RegularFilters
+			if strings.HasSuffix(mode, "sharp") {
+				filters = InterpFilters{X: InterpMultiTapSharp, Y: InterpMultiTapSharp}
+			}
 			for _, impl := range mc8BenchImpls {
 				b.Run(fmt.Sprintf("mode=%s/shape=%dx%d/impl=%s", mode, w, h, impl.name), func(b *testing.B) {
 					mc8AVX2 = impl.on
 					defer func() { mc8AVX2 = true }()
 					for b.Loop() {
-						if err := PredictTranslation8(&dst, &ref, 64, 64, w, h, w, h, mv, false, false, RegularFilters, &scratch); err != nil {
+						if err := PredictTranslation8(&dst, &ref, 64, 64, w, h, w, h, mv, false, false, filters, &scratch); err != nil {
 							b.Fatal(err)
 						}
 					}
@@ -68,14 +73,18 @@ func BenchmarkAMD64MC8Prep(b *testing.B) {
 	buf := new(CompoundConvBuf)
 	for _, sz := range [][2]int{{4, 4}, {4, 8}, {8, 8}, {16, 16}, {32, 32}, {64, 64}} {
 		w, h := sz[0], sz[1]
-		for _, mode := range []string{"hv", "h", "v"} {
+		for _, mode := range []string{"hv", "h", "v", "hvsharp", "hsharp", "vsharp"} {
 			mv := mc8BenchMV(mode)
+			filters := RegularFilters
+			if strings.HasSuffix(mode, "sharp") {
+				filters = InterpFilters{X: InterpMultiTapSharp, Y: InterpMultiTapSharp}
+			}
 			for _, impl := range mc8BenchImpls {
 				b.Run(fmt.Sprintf("mode=%s/shape=%dx%d/impl=%s", mode, w, h, impl.name), func(b *testing.B) {
 					mc8AVX2 = impl.on
 					defer func() { mc8AVX2 = true }()
 					for b.Loop() {
-						if err := PrepTranslation8(buf, &ref, 64, 64, w, h, w, h, mv, false, false, RegularFilters, scratch); err != nil {
+						if err := PrepTranslation8(buf, &ref, 64, 64, w, h, w, h, mv, false, false, filters, scratch); err != nil {
 							b.Fatal(err)
 						}
 					}
