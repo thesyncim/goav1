@@ -86,6 +86,9 @@ func wienerHorizontalSIMDKernel(src []uint16, srcStride int, srcOrigin int, widt
 			packClampedInt32x8ToUint16(out).Store(dstRow[col:])
 		}
 	}
+	// dav1d returns through vzeroupper; the Go compiler emits none, and
+	// dirty upper ymm state slows the legacy-SSE code that follows.
+	archsimd.ClearAVXUpperBits()
 }
 
 // wienerHorizontalU8SIMD is the AVX2 form of wienerHorizontalU8 for 8-bit source
@@ -136,6 +139,9 @@ func wienerHorizontalU8SIMD(src []uint8, srcStride int, srcOrigin int, width int
 			packClampedInt32x8ToUint16(out).Store(dstRow[col:])
 		}
 	}
+	// dav1d returns through vzeroupper; the Go compiler emits none, and
+	// dirty upper ymm state slows the legacy-SSE code that follows.
+	archsimd.ClearAVXUpperBits()
 }
 
 // packClampedInt32x8ToUint16 narrows eight int32 lanes already clamped to
@@ -189,4 +195,5 @@ func wienerHorizontalU8x16(s []uint8, dst []uint16, k *wienerU8Taps) {
 	lo = lo.ShiftAllRight(WienerRound0Bits).Max(zero).Min(mx)
 	hi = hi.ShiftAllRight(WienerRound0Bits).Max(zero).Min(mx)
 	lo.SaturateToInt16ConcatGrouped(hi).AsUint16x16().Store(dst[:16])
+	archsimd.ClearAVXUpperBits()
 }

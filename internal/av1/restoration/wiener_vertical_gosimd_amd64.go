@@ -56,6 +56,9 @@ func wienerVerticalSIMD(temp []uint16, tempStride int, dst []uint16, dstStride i
 			packClampedInt32x8ToUint16(out).Store(dstRow[col:])
 		}
 	}
+	// dav1d returns through vzeroupper; the Go compiler emits none, and
+	// dirty upper ymm state slows the legacy-SSE code that follows.
+	archsimd.ClearAVXUpperBits()
 }
 
 // wienerVerticalU8SIMD is the AVX2 form of wienerVerticalU8: the same vertical
@@ -106,6 +109,9 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 			binary.LittleEndian.PutUint64(dstRow[col:col+8], out.ReshapeToUint64s().GetElem(0))
 		}
 	}
+	// dav1d returns through vzeroupper; the Go compiler emits none, and
+	// dirty upper ymm state slows the legacy-SSE code that follows.
+	archsimd.ClearAVXUpperBits()
 }
 
 // u8LowByteIdx is the PSHUFB selector that gathers the low byte of each of the
@@ -136,6 +142,7 @@ func wienerVerticalU8x16(t []uint16, stride int, dst []uint8, k *wienerU8Taps, s
 	hi = hi.ShiftAllRight(shift).Max(zero).Min(mx)
 	v := lo.SaturateToInt16ConcatGrouped(hi).AsUint8x32().PermuteOrZeroGrouped(archsimd.LoadInt8x32Array(&wienerLowBytes32))
 	v.GetLo().AsUint64x2().InterleaveLo(v.GetHi().AsUint64x2()).AsUint8x16().Store(dst[:16])
+	archsimd.ClearAVXUpperBits()
 }
 
 // wienerLowBytes32 gathers the low byte of each 16-bit lane into the low
