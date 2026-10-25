@@ -42,6 +42,13 @@ import (
 //	prep V:  (s + 2 + 6144 << 2) >> 2  (unsigned)
 //	prep 2D: (sum(half tap * m) + 32 + 6144 << 6) >> 6
 //
+// Like dav1d's RET (VZEROUPPER), every entry point clears the upper YMM
+// halves before returning: Go code after it uses legacy-SSE encodings (MOVUPS
+// copies, X15 zeroing), which carry false dependencies on dirty upper state.
+// For the same reason the kernels keep loop-carried vectors 256-bit and use
+// immediate shift counts only: both otherwise make the compiler emit
+// legacy-SSE MOVUPS / MOVQ inside the loops.
+//
 // amd64 archsimd has no VPACKUSWB: bytes are narrowed by clamping to [0, 255]
 // and VPSHUFB. The 2D results go through VPACKUSDW, which is exact because
 // init checks every phase's output range.
@@ -342,6 +349,7 @@ func mc8PutFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h
 		default:
 			mc8AVX2V8(src, stride, w, h, &mc8Phases[ky][subY], d, dst.Stride, true)
 		}
+		archsimd.ClearAVXUpperBits()
 		return true
 	}
 	if w == 4 {
@@ -355,6 +363,7 @@ func mc8PutFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h
 		default:
 			mc8AVX2V6W4(src, stride, h, &mc8Phases[ky][subY], im, d, dst.Stride, true)
 		}
+		archsimd.ClearAVXUpperBits()
 		return true
 	}
 	switch {
@@ -367,6 +376,7 @@ func mc8PutFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h
 	default:
 		mc8AVX2PutV6(src, stride, w, h, &mc8Phases[ky][subY], d, dst.Stride)
 	}
+	archsimd.ClearAVXUpperBits()
 	return true
 }
 
@@ -393,6 +403,7 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 	o := unsafe.Pointer(&out[0])
 	if subX|subY == 0 {
 		mc8AVX2PrepCopy(src, stride, w, h, o)
+		archsimd.ClearAVXUpperBits()
 		return true
 	}
 	if eight {
@@ -406,6 +417,7 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 		default:
 			mc8AVX2V8(src, stride, w, h, &mc8Phases[ky][subY], o, 0, false)
 		}
+		archsimd.ClearAVXUpperBits()
 		return true
 	}
 	if w == 4 {
@@ -419,6 +431,7 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 		default:
 			mc8AVX2V6W4(src, stride, h, &mc8Phases[ky][subY], im, o, 0, false)
 		}
+		archsimd.ClearAVXUpperBits()
 		return true
 	}
 	switch {
@@ -431,6 +444,7 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 	default:
 		mc8AVX2PrepV6(src, stride, w, h, &mc8Phases[ky][subY], o)
 	}
+	archsimd.ClearAVXUpperBits()
 	return true
 }
 
@@ -694,21 +708,24 @@ func mc8AVX2PutV6(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, dst unsafe.Poi
 	}
 }
 
-// mc8ZxW8 zero-extends the 8 bytes at p to words.
-//
-//go:nocheckptr
-func mc8ZxW8(p unsafe.Pointer) archsimd.Uint16x8 {
-	return mc8Ld16(p).ExtendLo8ToUint16()
+// The eight-column vertical helpers stay in 256-bit registers (a 128-bit
+// value carried across iterations makes the compiler emit legacy-SSE MOVUPS
+// register copies, which stall on x86 while the upper halves are dirty).
+
+// mc8ZxW8 zero-extends the 16 bytes at p to words; the low lane holds the
+// eight columns used.
+func mc8ZxW8(p unsafe.Pointer) archsimd.Uint16x16 {
+	return mc8Zx(p)
 }
 
-func mc8PairW8(a, b archsimd.Uint16x8) archsimd.Uint16x8 {
-	return a.Or(b.ShiftAllLeft(8))
+func mc8PairW8(a, b archsimd.Uint16x16) archsimd.Uint8x32 {
+	return mc8Pair(a, b)
 }
 
-// mc8Join puts a in the low and b in the high lane.
-func mc8Join(a, b archsimd.Uint16x8) archsimd.Uint8x32 {
-	var z archsimd.Uint16x16
-	return z.SetLo(a).SetHi(b).ReshapeToUint8s()
+// mc8Join puts the low lane of a in the low and the low lane of b in the high
+// lane (VPERM2I128).
+func mc8Join(a, b archsimd.Uint8x32) archsimd.Uint8x32 {
+	return a.ConcatPermute128Scalars(0, 2, b)
 }
 
 // mc8AVX2V6W8 runs the eight-column vertical pass two rows per vector (row r
@@ -990,6 +1007,7 @@ func mc8BlendAvgFast(dst *frame.Plane, a, b []uint16, dstX, dstY, w, h int) bool
 		return false
 	}
 	mc8AVX2BlendAvg(unsafe.Pointer(&dst.Pix[off]), dst.Stride, a[:w*h], b[:w*h], w, h)
+	archsimd.ClearAVXUpperBits()
 	return true
 }
 
@@ -1363,12 +1381,13 @@ func mc8AVX2V8(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, dst unsafe.Pointe
 //go:nocheckptr
 func mc8AVX2V8Mid(im unsafe.Pointer, w, h int, ph *mc8Phase, dst unsafe.Pointer, ds int, put bool) {
 	d0, d1, d2, d3 := mc8TapsD(ph.d8[0]), mc8TapsD(ph.d8[1]), mc8TapsD(ph.d8[2]), mc8TapsD(ph.d8[3])
-	var rnd archsimd.Int32x8
-	var sh uint64
+	// put: clip((S + 512) >> 10) is ((S + 512) >> 6) >> 4 after the
+	// unsigned-saturating pack (nested floor division; the >> 6 values fit).
+	// Both shifts stay immediates: a variable count makes the compiler emit a
+	// legacy-SSE MOVQ into an XMM register.
+	rnd := archsimd.BroadcastInt32x8(32 + 6144<<6)
 	if put {
-		rnd, sh = archsimd.BroadcastInt32x8(512), 10
-	} else {
-		rnd, sh = archsimd.BroadcastInt32x8(32+6144<<6), 6
+		rnd = archsimd.BroadcastInt32x8(512)
 	}
 	c255 := archsimd.BroadcastUint16x16(255)
 	deint := archsimd.LoadInt8x32Array(&mc8Deint)
@@ -1387,11 +1406,11 @@ func mc8AVX2V8Mid(im unsafe.Pointer, w, h int, ph *mc8Phase, dst unsafe.Pointer,
 			l6 := mc8LdI16(q)
 			l7 := mc8LdI16(unsafe.Add(q, 16))
 			a6, b6 := l6.InterleaveLoGrouped(l7), l6.InterleaveHiGrouped(l7)
-			lo := mc8VMid8(a0, a2, a4, a6, d0, d1, d2, d3, rnd).ShiftAllRight(sh)
-			hi := mc8VMid8(b0, b2, b4, b6, d0, d1, d2, d3, rnd).ShiftAllRight(sh)
+			lo := mc8VMid8(a0, a2, a4, a6, d0, d1, d2, d3, rnd).ShiftAllRight(6)
+			hi := mc8VMid8(b0, b2, b4, b6, d0, d1, d2, d3, rnd).ShiftAllRight(6)
 			u := lo.SaturateToUint16ConcatGrouped(hi)
 			if put {
-				v := u.Min(c255).ReshapeToUint8s().PermuteOrZeroGrouped(deint)
+				v := u.ShiftAllRight(4).Min(c255).ReshapeToUint8s().PermuteOrZeroGrouped(deint)
 				d := unsafe.Add(dst, r*ds)
 				mc8St8(d, v.GetLo())
 				if r+1 < h {
@@ -1435,10 +1454,10 @@ func mc8AVX2V8Mid(im unsafe.Pointer, w, h int, ph *mc8Phase, dst unsafe.Pointer,
 			}
 			a6, b6 := l6.InterleaveLoGrouped(l7), l6.InterleaveHiGrouped(l7)
 			a7, b7 := l7.InterleaveLoGrouped(l8), l7.InterleaveHiGrouped(l8)
-			x := mc8VMid8(a0, a2, a4, a6, d0, d1, d2, d3, rnd).ShiftAllRight(sh).SaturateToUint16ConcatGrouped(mc8VMid8(b0, b2, b4, b6, d0, d1, d2, d3, rnd).ShiftAllRight(sh))
-			y := mc8VMid8(a1, a3, a5, a7, d0, d1, d2, d3, rnd).ShiftAllRight(sh).SaturateToUint16ConcatGrouped(mc8VMid8(b1, b3, b5, b7, d0, d1, d2, d3, rnd).ShiftAllRight(sh))
+			x := mc8VMid8(a0, a2, a4, a6, d0, d1, d2, d3, rnd).ShiftAllRight(6).SaturateToUint16ConcatGrouped(mc8VMid8(b0, b2, b4, b6, d0, d1, d2, d3, rnd).ShiftAllRight(6))
+			y := mc8VMid8(a1, a3, a5, a7, d0, d1, d2, d3, rnd).ShiftAllRight(6).SaturateToUint16ConcatGrouped(mc8VMid8(b1, b3, b5, b7, d0, d1, d2, d3, rnd).ShiftAllRight(6))
 			if put {
-				x, y = x.Min(c255), y.Min(c255)
+				x, y = x.ShiftAllRight(4).Min(c255), y.ShiftAllRight(4).Min(c255)
 				v := x.Or(y.ShiftAllLeft(8)).ReshapeToUint8s().PermuteOrZeroGrouped(deint).ReshapeToUint32s().Permute(q3120).ReshapeToUint8s()
 				d := unsafe.Add(dst, r*ds+c)
 				if full {
@@ -1645,12 +1664,13 @@ func mc8AVX2V6W4(src unsafe.Pointer, ss, h int, ph *mc8Phase, buf, dst unsafe.Po
 //go:nocheckptr
 func mc8AVX2V6MidW4(im unsafe.Pointer, h int, ph *mc8Phase, dst unsafe.Pointer, ds int, put bool) {
 	d0, d1, d2 := mc8TapsD(ph.d[0]), mc8TapsD(ph.d[1]), mc8TapsD(ph.d[2])
-	var rnd archsimd.Int32x8
-	var sh uint64
+	// put: clip((S + 512) >> 10) is ((S + 512) >> 6) >> 4 after the
+	// unsigned-saturating pack (nested floor division; the >> 6 values fit).
+	// Both shifts stay immediates: a variable count makes the compiler emit a
+	// legacy-SSE MOVQ into an XMM register.
+	rnd := archsimd.BroadcastInt32x8(32 + 6144<<6)
 	if put {
-		rnd, sh = archsimd.BroadcastInt32x8(512), 10
-	} else {
-		rnd, sh = archsimd.BroadcastInt32x8(32+6144<<6), 6
+		rnd = archsimd.BroadcastInt32x8(512)
 	}
 	c255 := archsimd.BroadcastUint16x16(255)
 	deint := archsimd.LoadInt8x32Array(&mc8Deint)
@@ -1662,11 +1682,11 @@ func mc8AVX2V6MidW4(im unsafe.Pointer, h int, ph *mc8Phase, dst unsafe.Pointer, 
 		q := unsafe.Add(im, 8*(r+4))
 		l4, l5 := mc8LdI16(q), mc8LdI16(unsafe.Add(q, 8))
 		pc, qc := l4.InterleaveLoGrouped(l5), l4.InterleaveHiGrouped(l5)
-		x := mc8VMid(pa, pb, pc, d0, d1, d2, rnd).ShiftAllRight(sh)
-		y := mc8VMid(qa, qb, qc, d0, d1, d2, rnd).ShiftAllRight(sh)
+		x := mc8VMid(pa, pb, pc, d0, d1, d2, rnd).ShiftAllRight(6)
+		y := mc8VMid(qa, qb, qc, d0, d1, d2, rnd).ShiftAllRight(6)
 		u := x.SaturateToUint16ConcatGrouped(y)
 		if put {
-			mc8StPutW4(dst, ds, r, h, u.Min(c255).ReshapeToUint8s().PermuteOrZeroGrouped(deint))
+			mc8StPutW4(dst, ds, r, h, u.ShiftAllRight(4).Min(c255).ReshapeToUint8s().PermuteOrZeroGrouped(deint))
 		} else {
 			mc8StPrepW4(dst, r, h, u)
 		}

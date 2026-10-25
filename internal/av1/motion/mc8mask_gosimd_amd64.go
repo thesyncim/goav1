@@ -71,6 +71,7 @@ func mc8BlendMaskFast(dst frame.Plane, a, b []uint16, dstX, dstY, w, h int, mask
 		return false
 	}
 	mc8AVX2Blend(unsafe.Pointer(&dst.Pix[off]), dst.Stride, a[:w*h], b[:w*h], w, h, unsafe.Pointer(&mask[0]), maskStride, subX, mc8OpMask, 0)
+	archsimd.ClearAVXUpperBits()
 	return true
 }
 
@@ -87,6 +88,7 @@ func blendCompoundAvg8AVX2(dst frame.Plane, src0 []uint16, src1 []uint16, dstX i
 	}
 	wts := int32(uint32(uint16(fwdOffset)) | uint32(uint16(bckOffset))<<16)
 	mc8AVX2Blend(unsafe.Pointer(&dst.Pix[off]), dst.Stride, src0[:width*height], src1[:width*height], width, height, nil, 0, false, mc8OpWAvg, wts)
+	archsimd.ClearAVXUpperBits()
 }
 
 func init() {
@@ -271,6 +273,7 @@ func mc8DiffWtdMaskFast(mask []byte, maskStride int, a, b []uint16, w, h int, in
 		return false
 	}
 	mc8AVX2DiffWtd(unsafe.Pointer(&mask[0]), maskStride, a[:w*h], b[:w*h], w, h, invert)
+	archsimd.ClearAVXUpperBits()
 	return true
 }
 
