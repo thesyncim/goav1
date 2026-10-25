@@ -110,8 +110,7 @@ func TestMC16PrepFastMatchesPureGo(t *testing.T) {
 					got := slices.Clone(want)
 					mc16RefPrep(want, ref, bd, refX, refY, w, h, subX, subY, filters)
 					if !mc16PrepFast(got[:w*h], &ref, bd, refX, refY, w, h, w, h, subX, subY, filters, scratch) {
-						kx, ky := mc8Kind(filters.X, w), mc8Kind(filters.Y, h)
-						if (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) && (w == 4 || w&7 == 0) {
+						if mc16Taps(subX, mc8Kind(filters.X, w)) != 8 && (w == 4 || w&7 == 0) {
 							t.Fatalf("mc16PrepFast declined bd=%d w=%d h=%d filters=%v sub=%d,%d", bd, w, h, filters, subX, subY)
 						}
 						continue
@@ -129,17 +128,18 @@ func TestMC16PrepFastMatchesPureGo(t *testing.T) {
 	}
 }
 
-// TestMC16PrepFastEveryPhase sweeps every six-tap kind and phase pair over an
-// in-plane random block at both depths.
+// TestMC16PrepFastEveryPhase sweeps every kind and phase pair (the six-tap
+// kinds and the eight-tap sharp table, on either axis) over an in-plane
+// random block at both depths.
 func TestMC16PrepFastEveryPhase(t *testing.T) {
 	rng := rand.New(rand.NewSource(17))
 	scratch := new(CompoundConvolveScratch)
-	six := []InterpFilter{InterpEightTapRegular, InterpEightTapSmooth, InterpBilinear}
+	kinds := []InterpFilter{InterpEightTapRegular, InterpEightTapSmooth, InterpBilinear, InterpMultiTapSharp}
 	for _, bd := range []int{10, 12} {
 		ref := mc16TestRef(rng, 96, 96, 104, bd, 0)
 		for _, w := range []int{4, 8, 16} {
-			for _, fx := range six {
-				for _, fy := range six {
+			for _, fx := range kinds {
+				for _, fy := range kinds {
 					filters := InterpFilters{X: fx, Y: fy}
 					for subX := range 16 {
 						for subY := range 16 {
@@ -218,8 +218,7 @@ func TestMC16PutFastMatchesPureGo(t *testing.T) {
 					got := frame.Plane{Pix: slices.Clone(want.Pix), Stride: want.Stride, Width: dw, Height: dh}
 					mc16RefPut(want, ref, bd, dstX, dstY, refX, refY, w, h, subX, subY, filters)
 					if !mc16PutFast(&got, &ref, bd, dstX, dstY, refX, refY, w, h, w, h, subX, subY, filters, scratch) {
-						kx, ky := mc8Kind(filters.X, w), mc8Kind(filters.Y, h)
-						if (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) && (w == 4 || w&7 == 0) && (bd == 10 || subX == 0 || subY == 0) {
+						if mc16Taps(subX, mc8Kind(filters.X, w)) != 8 && (w == 4 || w&7 == 0) && (bd == 10 || subX == 0 || subY == 0) {
 							t.Fatalf("mc16PutFast declined bd=%d w=%d h=%d filters=%v sub=%d,%d", bd, w, h, filters, subX, subY)
 						}
 						continue
@@ -229,6 +228,45 @@ func TestMC16PutFastMatchesPureGo(t *testing.T) {
 							if got.Pix[i] != want.Pix[i] {
 								y, x := i/want.Stride, (i%want.Stride)/2
 								t.Fatalf("bd %d pattern %d w=%d h=%d filters=%v sub=%d,%d ref=%d,%d dst=%d,%d: first mismatch at x=%d y=%d", bd, pattern, w, h, filters, subX, subY, refX, refY, dstX, dstY, x, y)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestMC16PutFastEveryPhase sweeps every kind and phase pair (including the
+// eight-tap sharp table on either axis) through the put kernels: 2D at 10
+// bits, the 1D passes at 10 and 12.
+func TestMC16PutFastEveryPhase(t *testing.T) {
+	rng := rand.New(rand.NewSource(19))
+	scratch := new(ConvolveScratch)
+	kinds := []InterpFilter{InterpEightTapRegular, InterpEightTapSmooth, InterpBilinear, InterpMultiTapSharp}
+	const dw, dh = 40, 40
+	for _, bd := range []int{10, 12} {
+		for _, pattern := range []int{0, 3} {
+			ref := mc16TestRef(rng, 96, 96, 104, bd, pattern)
+			for _, sz := range [][2]int{{4, 8}, {4, 16}, {8, 8}, {16, 4}, {16, 16}, {8, 2}} {
+				w, h := sz[0], sz[1]
+				for _, fx := range kinds {
+					for _, fy := range kinds {
+						filters := InterpFilters{X: fx, Y: fy}
+						for subX := range 16 {
+							for subY := range 16 {
+								if subX|subY == 0 || (bd != 10 && subX != 0 && subY != 0) {
+									continue
+								}
+								want := frame.Plane{Pix: make([]byte, 2*dw*dh), Stride: 2 * dw, Width: dw, Height: dh}
+								got := frame.Plane{Pix: make([]byte, 2*dw*dh), Stride: 2 * dw, Width: dw, Height: dh}
+								mc16RefPut(want, ref, bd, 3, 5, 20, 30, w, h, subX, subY, filters)
+								if !mc16PutFast(&got, &ref, bd, 3, 5, 20, 30, w, h, w, h, subX, subY, filters, scratch) {
+									t.Fatalf("declined bd=%d %dx%d filters=%v sub=%d,%d", bd, w, h, filters, subX, subY)
+								}
+								if !slices.Equal(got.Pix, want.Pix) {
+									t.Fatalf("bd=%d pattern=%d %dx%d filters=%v sub=%d,%d mismatch", bd, pattern, w, h, filters, subX, subY)
+								}
 							}
 						}
 					}

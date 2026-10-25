@@ -41,7 +41,8 @@ func mc16PutFast(dst *frame.Plane, ref *frame.Plane, bitDepth, dstX, dstY, refX,
 	}
 	kx := mc8Kind(filters.X, filterW)
 	ky := mc8Kind(filters.Y, filterH)
-	if (subX != 0 && !mc8SixTap[kx]) || (subY != 0 && !mc8SixTap[ky]) {
+	tx, ty := mc16Taps(subX, kx), mc16Taps(subY, ky)
+	if tx == 8 && w == 4 {
 		return false
 	}
 	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < 2*dst.Width {
@@ -51,25 +52,41 @@ func mc16PutFast(dst *frame.Plane, ref *frame.Plane, bitDepth, dstX, dstY, refX,
 	if dOff+(h-1)*dst.Stride+2*w > len(dst.Pix) {
 		return false
 	}
-	src, stride, ok := mc16Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge16)
+	src, stride, ok := mc16Source(ref, refX, refY, w, h, tx, ty, &scratch.edge16)
 	if !ok {
 		return false
 	}
 	d := unsafe.Pointer(&dst.Pix[dOff])
 	maxV := int16(1)<<bitDepth - 1
 	switch {
-	case subX != 0 && subY != 0:
+	case tx != 0 && ty != 0:
 		im := unsafe.Pointer(&scratch.imHBD[0])
-		if w == 4 {
-			mc16H6ToI32W4(src, stride, h+5, &mc8Phases[kx][subX], 2, im)
+		rows := h + ty - 1
+		switch {
+		case tx == 8:
+			mc16H8ToI32(src, stride, w, rows, &mc16SharpPhases[subX], 2, im)
+		case w == 4:
+			mc16H6ToI32W4(src, stride, rows, &mc8Phases[kx][subX], 2, im)
+		default:
+			mc16H6ToI32(src, stride, w, rows, &mc8Phases[kx][subX], 2, im)
+		}
+		switch {
+		case ty == 8:
+			mc16V8FromI32(im, w, h, &mc16SharpPhases[subY].v, 1<<15, true, maxV, d, dst.Stride)
+		case w == 4:
 			mc16PutV6FromI32W4(im, h, &mc8Phases[ky][subY], maxV, d, dst.Stride)
-		} else {
-			mc16H6ToI32(src, stride, w, h+5, &mc8Phases[kx][subX], 2, im)
+		default:
 			mc16PutV6FromI32(im, w, h, &mc8Phases[ky][subY], maxV, d, dst.Stride)
 		}
-	case subX != 0:
+	case tx != 0:
 		round0, _ := highBDRoundBits(uint8(bitDepth))
-		mc16PutH6(src, stride, w, h, &mc8Phases[kx][subX], int32(1)<<(round0-2)+32, maxV, d, dst.Stride)
+		if tx == 8 {
+			mc16PutH8(src, stride, w, h, &mc16SharpPhases[subX], int32(1)<<(round0-2)+32, maxV, d, dst.Stride)
+		} else {
+			mc16PutH6(src, stride, w, h, &mc8Phases[kx][subX], int32(1)<<(round0-2)+32, maxV, d, dst.Stride)
+		}
+	case ty == 8:
+		mc16PutV8(src, stride, w, h, &mc16SharpPhases[subY], maxV, d, dst.Stride)
 	default:
 		mc16PutV6(src, stride, w, h, &mc8Phases[ky][subY], maxV, d, dst.Stride)
 	}
