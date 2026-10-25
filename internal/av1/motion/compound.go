@@ -1172,6 +1172,9 @@ func BlendCompoundAvg(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConv
 		blendCompoundAvg8Impl(dst, src0, src1, dstX, dstY, width, height, fwdOffset, bckOffset, roundOffset, roundBits)
 		return nil
 	}
+	if fwdOffset == 8 && bckOffset == 8 && mc16BlendAvgFast(&dst, src0, src1, bd, dstX, dstY, width, height) {
+		return nil
+	}
 	max, _ := highBDMax(bitDepth)
 	blendCompoundAvgHighBDImpl(dst, src0, src1, max, dstX, dstY, width, height, fwdOffset, bckOffset, roundOffset, roundBits)
 	return nil
@@ -1198,6 +1201,9 @@ func BlendCompoundMaskD16(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *Compound
 	src0 := buf0.Data[:width*height]
 	src1 := buf1.Data[:width*height]
 	if bytesPerSample == 1 && mc8BlendMaskFast(dst, src0, src1, dstX, dstY, width, height, mask, maskStride, subX, subY) {
+		return nil
+	}
+	if bytesPerSample == 2 && mc16BlendMaskFast(dst, src0, src1, bd, dstX, dstY, width, height, mask, maskStride, subX, subY) {
 		return nil
 	}
 	max := uint16(0)
@@ -1242,6 +1248,9 @@ func BuildDiffWtdMaskD16(mask []byte, maskStride int, buf0 *CompoundConvBuf, buf
 	src0 := buf0.Data[:width*height]
 	src1 := buf1.Data[:width*height]
 	if bitDepth == 8 && mc8DiffWtdMaskFast(mask, maskStride, src0, src1, width, height, invert) {
+		return nil
+	}
+	if bitDepth > 8 && mc16DiffWtdMaskFast(mask, maskStride, src0, src1, bd, width, height, invert) {
 		return nil
 	}
 	for y := range height {
