@@ -131,6 +131,9 @@ type decoderFramePipeline struct {
 	// back frames returned by the current call.
 	grain     []*decoderGrainOutput
 	grainUsed int
+	// grainParallel spreads a grained output's stripes across the workers
+	// (dav1d_task_delayed_fg when n_tc > 1).
+	grainParallel DecoderFrameWorkPostFilterParallel
 }
 
 func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
@@ -247,6 +250,7 @@ func (p *decoderFramePipeline) outputImage(fc *decoderFrameContext) (*Frame, err
 	}
 	if p.grainUsed == len(p.grain) {
 		g := &decoderGrainOutput{}
+		g.runner.Parallel = &p.grainParallel
 		p.grain = append(p.grain, g)
 	}
 	g := p.grain[p.grainUsed]
@@ -560,6 +564,7 @@ func (p *decoderFramePipeline) close() {
 		close(p.fcs[i].start)
 		p.fcs[i].postParallel.Close()
 	}
+	p.grainParallel.Close()
 }
 
 // newDecoderFramePipeline binds n frame contexts from their own arena.
@@ -594,6 +599,7 @@ func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStr
 		progress: make([]internalthreading.FrameProgress, surfaceCount),
 		ready:    make([]*Frame, 0, 2*(RefFrames+n)),
 	}
+	p.grainParallel.Workers = workers
 	for i := range p.progress {
 		p.progress[i].Init()
 		p.progress[i].Publish(internalthreading.FrameProgressDone)
