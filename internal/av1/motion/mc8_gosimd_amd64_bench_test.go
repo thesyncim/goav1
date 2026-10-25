@@ -32,6 +32,8 @@ func mc8BenchMV(mode string) Vector {
 		mv.Row = 8 * 3
 	case "v", "vsharp":
 		mv.Col = 8 * 2
+	case "copy":
+		mv = Vector{Row: 8 * 3, Col: 8 * 2}
 	}
 	return mv
 }
@@ -73,7 +75,7 @@ func BenchmarkAMD64MC8Prep(b *testing.B) {
 	buf := new(CompoundConvBuf)
 	for _, sz := range [][2]int{{4, 4}, {4, 8}, {8, 8}, {16, 16}, {32, 32}, {64, 64}} {
 		w, h := sz[0], sz[1]
-		for _, mode := range []string{"hv", "h", "v", "hvsharp", "hsharp", "vsharp"} {
+		for _, mode := range []string{"hv", "h", "v", "hvsharp", "hsharp", "vsharp", "copy"} {
 			mv := mc8BenchMV(mode)
 			filters := RegularFilters
 			if strings.HasSuffix(mode, "sharp") {
@@ -116,6 +118,49 @@ func BenchmarkAMD64MC8BlendAvg(b *testing.B) {
 					}
 				}
 			})
+		}
+	}
+}
+
+func BenchmarkAMD64MC8MaskBlend(b *testing.B) {
+	requireAVX2MC8(b)
+	rng := rand.New(rand.NewSource(11))
+	b0, b1 := new(CompoundConvBuf), new(CompoundConvBuf)
+	for i := range b0.Data {
+		b0.Data[i] = uint16(4000 + rng.Intn(8000))
+		b1.Data[i] = uint16(4000 + rng.Intn(8000))
+	}
+	mask := make([]byte, 256*256)
+	for i := range mask {
+		mask[i] = byte(rng.Intn(65))
+	}
+	dst := frame.Plane{Pix: make([]byte, 128*128), Stride: 128, Width: 128, Height: 128}
+	for _, sz := range [][2]int{{4, 4}, {8, 8}, {16, 16}, {32, 32}, {64, 64}} {
+		w, h := sz[0], sz[1]
+		b0.Width, b0.Height, b1.Width, b1.Height = uint8(w), uint8(h), uint8(w), uint8(h)
+		for _, op := range []string{"mask", "mask420", "diffwtd", "wavg"} {
+			for _, impl := range mc8BenchImpls {
+				b.Run(fmt.Sprintf("op=%s/shape=%dx%d/impl=%s", op, w, h, impl.name), func(b *testing.B) {
+					mc8AVX2 = impl.on
+					defer func() { mc8AVX2 = true }()
+					for b.Loop() {
+						var err error
+						switch op {
+						case "mask":
+							err = BlendCompoundMaskD16(dst, b0, b1, 1, 8, 0, 0, w, h, mask, 128, false, false)
+						case "mask420":
+							err = BlendCompoundMaskD16(dst, b0, b1, 1, 8, 0, 0, w, h, mask, 256, true, true)
+						case "diffwtd":
+							err = BuildDiffWtdMaskD16(mask, 128, b0, b1, 8, w, h, false)
+						default:
+							err = BlendCompoundAvg(dst, b0, b1, 1, 8, 0, 0, w, h, 9, 7)
+						}
+						if err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+			}
 		}
 	}
 }

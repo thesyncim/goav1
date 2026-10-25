@@ -373,7 +373,7 @@ func mc8PutFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h
 // mc8PrepFast fills a w x h CONV_BUF (row stride w) with the AVX2 prep
 // kernels. It returns false for shapes it does not cover.
 func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) bool {
-	if !mc8AVX2 || subX|subY == 0 || (w&7 != 0 && w != 4) || w <= 0 || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil || len(out) < w*h {
+	if !mc8AVX2 || (w&7 != 0 && w != 4) || w <= 0 || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil || len(out) < w*h {
 		return false
 	}
 	kx := mc8Kind(filters.X, filterW)
@@ -391,6 +391,10 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 		return false
 	}
 	o := unsafe.Pointer(&out[0])
+	if subX|subY == 0 {
+		mc8AVX2PrepCopy(src, stride, w, h, o)
+		return true
+	}
 	if eight {
 		switch {
 		case subX != 0 && subY != 0:
@@ -1672,17 +1676,49 @@ func mc8AVX2V6MidW4(im unsafe.Pointer, h int, ph *mc8Phase, dst unsafe.Pointer, 
 	}
 }
 
+// mc8AVX2PrepCopy is the prep copy (dav1d prep_8bpc): 16 * px + 6144.
+//
+//go:nocheckptr
+func mc8AVX2PrepCopy(src unsafe.Pointer, ss, w, h int, out unsafe.Pointer) {
+	off := archsimd.BroadcastUint16x16(6144)
+	switch w {
+	case 4:
+		for r := 0; r < h; r += 4 {
+			p0, p1, p2, p3 := mc8Rows4(src, ss, r, h)
+			var z archsimd.Uint32x4
+			v := z.SetElem(0, mc8Ld32(p0)).SetElem(1, mc8Ld32(p1)).SetElem(2, mc8Ld32(p2)).SetElem(3, mc8Ld32(p3))
+			mc8StPrepW4(out, r, h, v.ReshapeToUint8s().ExtendToUint16().ShiftAllLeft(4).Add(off))
+		}
+	case 8:
+		for r := 0; r < h; r += 2 {
+			p0 := unsafe.Add(src, r*ss)
+			p1 := unsafe.Add(src, min(r+1, h-1)*ss)
+			var z archsimd.Uint64x2
+			u := z.SetElem(0, mc8Ld64(p0)).SetElem(1, mc8Ld64(p1)).ReshapeToUint8s().ExtendToUint16().ShiftAllLeft(4).Add(off)
+			if r+1 < h {
+				u.StoreArray((*[16]uint16)(unsafe.Add(out, r*16)))
+			} else {
+				u.GetLo().StoreArray((*[8]uint16)(unsafe.Add(out, r*16)))
+			}
+		}
+	default:
+		for r := 0; r < h; r++ {
+			s := unsafe.Add(src, r*ss)
+			o := unsafe.Add(out, r*w*2)
+			c := 0
+			for ; c+16 <= w; c += 16 {
+				mc8Zx(unsafe.Add(s, c)).ShiftAllLeft(4).Add(off).StoreArray((*[16]uint16)(unsafe.Add(o, 2*c)))
+			}
+			if c < w {
+				mc8Zx(unsafe.Add(s, c)).ShiftAllLeft(4).Add(off).GetLo().StoreArray((*[8]uint16)(unsafe.Add(o, 2*c)))
+			}
+		}
+	}
+}
+
 // The remaining dav1d-style fast paths are arm64-only for now.
 
 func mc8CopyFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h int) bool {
-	return false
-}
-
-func mc8BlendMaskFast(dst frame.Plane, a, b []uint16, dstX, dstY, w, h int, mask []byte, maskStride int, subX, subY bool) bool {
-	return false
-}
-
-func mc8DiffWtdMaskFast(mask []byte, maskStride int, a, b []uint16, w, h int, invert bool) bool {
 	return false
 }
 

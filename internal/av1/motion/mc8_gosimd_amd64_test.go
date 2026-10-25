@@ -207,7 +207,7 @@ func TestAMD64MC8PrepFastMatchesPureGo(t *testing.T) {
 				mc8RefPrep(want, ref, refX, refY, w, h, fw, fh, subX, subY, filters)
 				if !mc8PrepFast(got[:w*h], &ref, refX, refY, w, h, fw, fh, subX, subY, filters, scratch) {
 					kx, ky := mc8Kind(filters.X, fw), mc8Kind(filters.Y, fh)
-					if _, cover := mc8Taps(w, kx, ky, subX, subY); cover && subX|subY != 0 && w%4 == 0 {
+					if _, cover := mc8Taps(w, kx, ky, subX, subY); cover && w%4 == 0 {
 						t.Fatalf("mc8PrepFast declined w=%d h=%d filters=%v sub=%d,%d", w, h, filters, subX, subY)
 					}
 					continue
@@ -263,6 +263,145 @@ func TestAMD64MC8BlendAvgFastMatchesPureGo(t *testing.T) {
 	}
 }
 
+// mc8RefBlendMask is BlendCompoundMaskD16's 8-bit scalar loop.
+func mc8RefBlendMask(dst frame.Plane, src0, src1 []uint16, dstX, dstY, width, height int, mask []byte, maskStride int, subX, subY bool) {
+	for y := range height {
+		for x := range width {
+			m, _ := compoundMaskSample(mask, maskStride, y, x, subX, subY)
+			i := y*width + x
+			res := (m*int(src0[i]) + (compoundBlendA64MaxAlpha-m)*int(src1[i])) >> compoundBlendA64RoundBits
+			res -= 6144
+			res = roundPowerOfTwo(res, 4)
+			dst.Pix[(dstY+y)*dst.Stride+dstX+x] = clipPixel(res)
+		}
+	}
+}
+
+// mc8RefDiffWtd is BuildDiffWtdMaskD16's 8-bit scalar loop.
+func mc8RefDiffWtd(mask []byte, maskStride int, src0, src1 []uint16, width, height int, invert bool) {
+	for y := range height {
+		for x := range width {
+			i := y*width + x
+			diff := int(src0[i]) - int(src1[i])
+			if diff < 0 {
+				diff = -diff
+			}
+			diff = roundPowerOfTwo(diff, 4)
+			m := max(38+diff/16, 0)
+			if m > compoundBlendA64MaxAlpha {
+				m = compoundBlendA64MaxAlpha
+			}
+			if invert {
+				m = compoundBlendA64MaxAlpha - m
+			}
+			mask[y*maskStride+x] = byte(m)
+		}
+	}
+}
+
+func TestAMD64MC8MaskBlendAndDiffWtdMatchScalar(t *testing.T) {
+	requireAVX2MC8(t)
+	rng := rand.New(rand.NewSource(8))
+	for _, sz := range [][2]int{{8, 8}, {16, 16}, {32, 32}, {8, 4}, {16, 8}, {64, 64}, {128, 128}, {8, 32}, {4, 4}, {4, 8}, {4, 16}, {16, 3}, {16, 1}, {8, 2}, {32, 1}, {96, 4}} {
+		w, h := sz[0], sz[1]
+		for iter := range 30 {
+			a := make([]uint16, w*h)
+			b := make([]uint16, w*h)
+			for i := range a {
+				switch iter % 3 {
+				case 0:
+					a[i] = uint16(2000 + rng.Intn(13400))
+					b[i] = uint16(2000 + rng.Intn(13400))
+				case 1:
+					a[i] = uint16(rng.Intn(65536))
+					b[i] = uint16(rng.Intn(65536))
+				default:
+					a[i] = uint16(6144 + 16*rng.Intn(256))
+					b[i] = uint16(6144 + 16*rng.Intn(256))
+				}
+			}
+			invert := iter&1 != 0
+			if iter%3 != 1 { // diff-wtd needs |a-b| + 8 to fit (8-bit CONV_BUF range)
+				ms := w + 8
+				want := make([]byte, ms*h+16)
+				got := slices.Clone(want)
+				mc8RefDiffWtd(want, ms, a, b, w, h, invert)
+				if !mc8DiffWtdMaskFast(got, ms, a, b, w, h, invert) {
+					t.Fatalf("diffwtd %dx%d declined", w, h)
+				}
+				if !bytes.Equal(got, want) {
+					t.Fatalf("diffwtd %dx%d iter %d mismatch", w, h, iter)
+				}
+			}
+			for _, sub := range []bool{false, true} {
+				mw, mh := w, h
+				if sub {
+					mw, mh = 2*w, 2*h
+				}
+				ms := mw + 4
+				mask := make([]byte, ms*mh+16)
+				for i := range mask {
+					mask[i] = byte(rng.Intn(65))
+				}
+				dw, dh := w+16, h+4
+				want := frame.Plane{Pix: make([]byte, dw*dh), Stride: dw, Width: dw, Height: dh}
+				for i := range want.Pix {
+					want.Pix[i] = byte(i * 11)
+				}
+				got := frame.Plane{Pix: slices.Clone(want.Pix), Stride: dw, Width: dw, Height: dh}
+				mc8RefBlendMask(want, a, b, 3, 1, w, h, mask[:ms*mh], ms, sub, sub)
+				if !mc8BlendMaskFast(got, a, b, 3, 1, w, h, mask[:ms*mh], ms, sub, sub) {
+					t.Fatalf("mask blend %dx%d sub=%v declined", w, h, sub)
+				}
+				if !bytes.Equal(got.Pix, want.Pix) {
+					t.Fatalf("mask blend %dx%d sub=%v iter %d mismatch", w, h, sub, iter)
+				}
+			}
+		}
+	}
+}
+
+func TestAMD64MC8WAvgMatchesPureGo(t *testing.T) {
+	requireAVX2MC8(t)
+	rng := rand.New(rand.NewSource(10))
+	weights := [][2]int{{8, 8}, {9, 7}, {7, 9}, {11, 5}, {5, 11}, {12, 4}, {4, 12}, {13, 3}, {3, 13}, {16, 0}, {0, 16}}
+	for _, sz := range [][2]int{{4, 4}, {4, 8}, {4, 16}, {8, 2}, {8, 8}, {8, 32}, {16, 1}, {16, 3}, {16, 16}, {32, 8}, {64, 64}, {128, 128}, {96, 2}, {24, 4}, {8, 3}, {4, 6}} {
+		w, h := sz[0], sz[1]
+		for iter := range 24 {
+			a := make([]uint16, w*h)
+			b := make([]uint16, w*h)
+			for i := range a {
+				switch iter % 3 {
+				case 0:
+					a[i] = uint16(2000 + rng.Intn(13400))
+					b[i] = uint16(2000 + rng.Intn(13400))
+				case 1:
+					a[i] = uint16(rng.Intn(65536))
+					b[i] = uint16(rng.Intn(65536))
+				default:
+					a[i] = uint16(6144 + 16*rng.Intn(256))
+					b[i] = uint16(6144 + 16*rng.Intn(256))
+				}
+			}
+			wt := weights[iter%len(weights)]
+			dw, dh := w+16, h+4
+			want := frame.Plane{Pix: make([]byte, dw*dh), Stride: dw, Width: dw, Height: dh}
+			for i := range want.Pix {
+				want.Pix[i] = byte(i * 3)
+			}
+			got := frame.Plane{Pix: slices.Clone(want.Pix), Stride: dw, Width: dw, Height: dh}
+			blendCompoundAvg8PureGo(want, a, b, 5, 2, w, h, wt[0], wt[1], 6144, 4)
+			blendCompoundAvg8AVX2(got, a, b, 5, 2, w, h, wt[0], wt[1], 6144, 4)
+			if !bytes.Equal(got.Pix, want.Pix) {
+				t.Fatalf("%dx%d weights %v iter %d: mismatch", w, h, wt, iter)
+			}
+		}
+	}
+	if !mc8BlendShapeOK(16, 16) || mc8BlendShapeOK(24, 4) || mc8BlendShapeOK(8, 3) {
+		t.Fatal("mc8BlendShapeOK coverage changed")
+	}
+}
+
 // TestAMD64MC8Dispatch checks that the public 8-bit predictors take the AVX2
 // kernels and that the six-tap kinds match the arm64 set.
 func TestAMD64MC8Dispatch(t *testing.T) {
@@ -310,5 +449,36 @@ func TestAMD64MC8Dispatch(t *testing.T) {
 	}
 	if !bytes.Equal(got.Pix, want.Pix) {
 		t.Fatal("PredictTranslation8 AVX2 and general paths differ")
+	}
+}
+
+// TestAMD64MC8ZeroAlloc pins that the AVX2 predictors and blends do not
+// allocate, including on emulated-edge blocks.
+func TestAMD64MC8ZeroAlloc(t *testing.T) {
+	requireAVX2MC8(t)
+	rng := rand.New(rand.NewSource(12))
+	ref := mc8TestRef(rng, 96, 96, 112, 0)
+	dst := frame.Plane{Pix: make([]byte, 128*128), Stride: 128, Width: 128, Height: 128}
+	var scratch ConvolveScratch
+	cs := new(CompoundConvolveScratch)
+	b0, b1 := new(CompoundConvBuf), new(CompoundConvBuf)
+	mask := make([]byte, 64*64)
+	sharp := InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapSmooth}
+	allocs := testing.AllocsPerRun(20, func() {
+		for _, mv := range []Vector{{Row: 27, Col: 21}, {Row: -300, Col: 5}, {Row: 3, Col: 0}, {Row: 0, Col: 0}} {
+			for _, sz := range [][2]int{{4, 4}, {8, 8}, {16, 16}, {32, 32}} {
+				_ = PredictTranslation8(&dst, &ref, 8, 8, sz[0], sz[1], sz[0], sz[1], mv, false, false, RegularFilters, &scratch)
+				_ = PredictTranslation8(&dst, &ref, 8, 8, sz[0], sz[1], sz[0], sz[1], mv, false, false, sharp, &scratch)
+				_ = PrepTranslation8(b0, &ref, 8, 8, sz[0], sz[1], sz[0], sz[1], mv, false, false, RegularFilters, cs)
+				_ = PrepTranslation8(b1, &ref, 8, 8, sz[0], sz[1], sz[0], sz[1], mv, false, false, sharp, cs)
+				_ = BlendCompoundMaskD16(dst, b0, b1, 1, 8, 0, 0, sz[0], sz[1], mask, 64, false, false)
+				_ = BuildDiffWtdMaskD16(mask, 64, b0, b1, 8, sz[0], sz[1], true)
+				_ = BlendCompoundAvg(dst, b0, b1, 1, 8, 0, 0, sz[0], sz[1], 9, 7)
+				_ = BlendCompoundAvg(dst, b0, b1, 1, 8, 0, 0, sz[0], sz[1], 8, 8)
+			}
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("allocs = %v, want 0", allocs)
 	}
 }
