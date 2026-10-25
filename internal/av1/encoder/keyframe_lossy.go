@@ -830,6 +830,11 @@ type lossyEncodeState struct {
 	// grid64Cols is the tile's width in 64x64 superblocks (the PD0 grid).
 	grid64Cols int
 
+	// keyPD0 / keyPD0Rates are the keyframe light-PD0 pass scratch and its
+	// frame-start rates (keyframe_pd0.go).
+	keyPD0      *keyPD0
+	keyPD0Rates keyPD0Rates
+	keyPD0On    bool
 	// pd0Grid holds the per-SB VERY_LIGHT_PD0 trees (pframe_vlpd0.go),
 	// pd0Rates the frame-frozen partition rates they price with and
 	// pd0EdgeRef the edge-replicated reference block of off-frame vectors.
@@ -911,6 +916,14 @@ func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, re
 	st.keyVisW, st.keyVisH = src.Width, src.Height
 	if err := st.initScans(); err != nil {
 		return nil, err
+	}
+	// SVT-AV1's light-PD0 partition (keyframe_pd0.go) on camera content.
+	// The VideoEncoder classifies keyframes (svtSCDetector, SVT --scm 2)
+	// before choosing the screen content tools; the one-shot keyframe API
+	// does not, so it keeps its own partition decision.
+	st.keyPD0On = pc.svtKeyPD0 && !allowScreenContentTools && videoColorIs420(color) && color.BitDepth == 8
+	if st.keyPD0On {
+		st.prepareSVTPD0((src.Width+63)/64, (src.Height+63)/64)
 	}
 
 	if cap(pc.writerBuf) == 0 {

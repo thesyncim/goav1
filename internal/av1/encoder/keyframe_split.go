@@ -122,6 +122,27 @@ func (st *lossyEncodeState) keyDecidePartition(src SourceFrame420, recon *Source
 	if !videoColorIs420(st.color) {
 		return tile.PartitionSplit, nil
 	}
+	if st.keyPD0On {
+		px, py := int(miCol)*4, int(miRow)*4
+		sb := st.keyPD0ForSB(src, *recon, px&^63, py&^63, int(walkReq.MIColStart)*4)
+		if sb != nil {
+			x, y := px&63, py&63
+			var part tile.Partition
+			switch level {
+			case tile.BlockLevel64x64:
+				part = sb.part64
+			case tile.BlockLevel32x32:
+				part = sb.part32[(y/32)*2+x/32]
+			default:
+				part = sb.part16[(y/16)*4+x/16]
+			}
+			// This coder codes square blocks only: the edge shapes split.
+			if part != tile.PartitionNone {
+				part = tile.PartitionSplit
+			}
+			return part, nil
+		}
+	}
 	st.restoreKeyTrial()
 	px, py := int(miCol)*4, int(miRow)*4
 	if level == tile.BlockLevel32x32 && haveRight && haveBottom {
@@ -173,6 +194,8 @@ func keyBlockN(size tile.BlockSize) (int, tile.TransformSize, error) {
 		return 16, tile.TransformSize16x16, nil
 	case tile.BlockSize32x32:
 		return 32, tile.TransformSize32x32, nil
+	case tile.BlockSize64x64:
+		return 64, tile.TransformSize64x64, nil
 	}
 	return 0, 0, fmt.Errorf("encoder: unexpected keyframe block size %d", size)
 }
