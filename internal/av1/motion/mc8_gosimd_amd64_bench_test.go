@@ -41,7 +41,7 @@ func BenchmarkAMD64MC8Put(b *testing.B) {
 	ref := mc8TestRef(rng, 320, 320, 352, 0)
 	var scratch ConvolveScratch
 	dst := frame.Plane{Pix: make([]byte, 192*192), Stride: 192, Width: 192, Height: 192}
-	for _, sz := range [][2]int{{8, 8}, {16, 16}, {32, 32}, {64, 64}} {
+	for _, sz := range [][2]int{{4, 4}, {4, 8}, {8, 8}, {16, 16}, {32, 32}, {64, 64}} {
 		w, h := sz[0], sz[1]
 		for _, mode := range []string{"hv", "h", "v"} {
 			mv := mc8BenchMV(mode)
@@ -66,7 +66,7 @@ func BenchmarkAMD64MC8Prep(b *testing.B) {
 	ref := mc8TestRef(rng, 320, 320, 352, 0)
 	scratch := new(CompoundConvolveScratch)
 	buf := new(CompoundConvBuf)
-	for _, sz := range [][2]int{{8, 8}, {16, 16}, {32, 32}, {64, 64}} {
+	for _, sz := range [][2]int{{4, 4}, {4, 8}, {8, 8}, {16, 16}, {32, 32}, {64, 64}} {
 		w, h := sz[0], sz[1]
 		for _, mode := range []string{"hv", "h", "v"} {
 			mv := mc8BenchMV(mode)

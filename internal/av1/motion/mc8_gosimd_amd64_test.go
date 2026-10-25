@@ -76,7 +76,7 @@ func mc8RefPut(dst frame.Plane, ref frame.Plane, dstX, dstY, refX, refY, w, h, f
 func TestAMD64MC8PutFastMatchesPureGo(t *testing.T) {
 	requireAVX2MC8(t)
 	rng := rand.New(rand.NewSource(1))
-	sizes := [][2]int{{4, 4}, {4, 8}, {4, 16}, {4, 2}, {4, 5}, {8, 5}, {16, 7}, {8, 8}, {16, 16}, {32, 32}, {8, 4}, {16, 4}, {8, 2}, {8, 16}, {16, 8}, {24, 8}, {64, 64}, {128, 128}, {32, 8}, {64, 16}, {16, 64}, {8, 32}, {24, 9}, {40, 3}, {8, 1}, {16, 1}, {120, 5}, {56, 128}}
+	sizes := [][2]int{{4, 4}, {4, 8}, {4, 16}, {4, 2}, {4, 5}, {8, 5}, {16, 7}, {8, 8}, {16, 16}, {32, 32}, {8, 4}, {16, 4}, {8, 2}, {8, 16}, {16, 8}, {24, 8}, {64, 64}, {128, 128}, {32, 8}, {64, 16}, {16, 64}, {8, 32}, {24, 9}, {40, 3}, {8, 1}, {16, 1}, {120, 5}, {56, 128}, {4, 1}, {4, 3}, {4, 6}, {4, 7}, {4, 32}, {4, 128}}
 	const rw, rh = 200, 180
 	for pattern := range 5 {
 		ref := mc8TestRef(rng, rw, rh, rw+24, pattern)
@@ -129,7 +129,7 @@ func TestAMD64MC8PutFastMatchesPureGo(t *testing.T) {
 				mc8RefPut(want, ref, 3, 2, refX, refY, w, h, filterW, filterH, subX, subY, filters)
 				if !mc8PutFast(&got, &ref, 3, 2, refX, refY, w, h, filterW, filterH, subX, subY, filters, &scratch) {
 					kx, ky := mc8Kind(filters.X, filterW), mc8Kind(filters.Y, filterH)
-					if (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) && w%8 == 0 {
+					if (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) && (w%8 == 0 || (w == 4 && (subX == 0 || mc8FourTap[kx]))) {
 						t.Fatalf("mc8PutFast declined w=%d h=%d filters=%v sub=%d,%d", w, h, filters, subX, subY)
 					}
 					continue
@@ -142,9 +142,9 @@ func TestAMD64MC8PutFastMatchesPureGo(t *testing.T) {
 	}
 }
 
-func mc8RefPrep(out []uint16, ref frame.Plane, refX, refY, w, h, subX, subY int, filters InterpFilters) {
-	xk, _ := interpKernel(filters.X, w, subX)
-	yk, _ := interpKernel(filters.Y, h, subY)
+func mc8RefPrep(out []uint16, ref frame.Plane, refX, refY, w, h, fw, fh, subX, subY int, filters InterpFilters) {
+	xk, _ := interpKernel(filters.X, fw, subX)
+	yk, _ := interpKernel(filters.Y, fh, subY)
 	const offsetBits = 8 + 2*filterBits - compoundRound0Bits
 	const roundOffset = (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
 	switch {
@@ -162,7 +162,7 @@ func mc8RefPrep(out []uint16, ref frame.Plane, refX, refY, w, h, subX, subY int,
 func TestAMD64MC8PrepFastMatchesPureGo(t *testing.T) {
 	requireAVX2MC8(t)
 	rng := rand.New(rand.NewSource(2))
-	sizes := [][2]int{{4, 4}, {4, 8}, {4, 16}, {4, 2}, {4, 5}, {8, 5}, {16, 7}, {8, 8}, {16, 16}, {32, 32}, {8, 4}, {16, 4}, {8, 16}, {16, 8}, {64, 64}, {128, 128}, {32, 8}, {16, 64}, {24, 9}, {40, 3}, {8, 1}, {16, 1}, {120, 5}, {8, 128}}
+	sizes := [][2]int{{4, 4}, {4, 8}, {4, 16}, {4, 2}, {4, 5}, {8, 5}, {16, 7}, {8, 8}, {16, 16}, {32, 32}, {8, 4}, {16, 4}, {8, 16}, {16, 8}, {64, 64}, {128, 128}, {32, 8}, {16, 64}, {24, 9}, {40, 3}, {8, 1}, {16, 1}, {120, 5}, {8, 128}, {4, 1}, {4, 3}, {4, 6}, {4, 7}, {4, 32}, {4, 128}}
 	const rw, rh = 200, 180
 	scratch := new(CompoundConvolveScratch)
 	for pattern := range 5 {
@@ -200,10 +200,14 @@ func TestAMD64MC8PrepFastMatchesPureGo(t *testing.T) {
 					want[i] = uint16(i * 13)
 				}
 				got := slices.Clone(want)
-				mc8RefPrep(want, ref, refX, refY, w, h, subX, subY, filters)
-				if !mc8PrepFast(got[:w*h], &ref, refX, refY, w, h, w, h, subX, subY, filters, scratch) {
-					kx, ky := mc8Kind(filters.X, w), mc8Kind(filters.Y, h)
-					if (subX|subY != 0) && w%8 == 0 && (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) {
+				fw, fh := w, h
+				if iter%5 == 3 {
+					fw, fh = 2*w, 2*h
+				}
+				mc8RefPrep(want, ref, refX, refY, w, h, fw, fh, subX, subY, filters)
+				if !mc8PrepFast(got[:w*h], &ref, refX, refY, w, h, fw, fh, subX, subY, filters, scratch) {
+					kx, ky := mc8Kind(filters.X, fw), mc8Kind(filters.Y, fh)
+					if (subX|subY != 0) && (w%8 == 0 || (w == 4 && (subX == 0 || mc8FourTap[kx]))) && (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) {
 						t.Fatalf("mc8PrepFast declined w=%d h=%d filters=%v sub=%d,%d", w, h, filters, subX, subY)
 					}
 					continue
