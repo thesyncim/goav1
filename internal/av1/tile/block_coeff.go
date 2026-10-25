@@ -115,20 +115,20 @@ func (s *DecodeState) decodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 		modeCtx == nil || coeffCtx == nil || scratch == nil || visit == nil {
 		return BlockCoeffResult{}, ErrInvalidDecodeState
 	}
-	lumaClass, err := req.LumaType.Class()
-	if err != nil {
+	// Validate the transform types up front, as before. Their classes
+	// are only read by the legacy per-window readers at the end; the
+	// dav1d block walk reads each TXB's txtp itself, so the classes are
+	// derived on that path instead of for every block.
+	if !req.LumaType.Valid() || !req.Transform.Color.MonoChrome &&
+		(!req.ChromaType[0].Valid() || !req.ChromaType[1].Valid()) {
 		return BlockCoeffResult{}, ErrInvalidDecodeState
 	}
-	var chromaClass [2]transform.Class
-	if !req.Transform.Color.MonoChrome {
-		for i, typ := range req.ChromaType {
-			class, err := typ.Class()
-			if err != nil {
-				return BlockCoeffResult{}, ErrInvalidDecodeState
-			}
-			chromaClass[i] = class
-		}
-	}
+	//
+	// (The block keeps its line count so the calls below keep the line
+	// offsets the committed PGO profile keys on.)
+	//
+	//
+	//
 
 	tree, err := s.DecodeTransformTree(cdfs.Transform, modeCtx, req.Transform)
 	if err != nil {
@@ -139,7 +139,7 @@ func (s *DecodeState) decodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 	lumaReq := LumaCoeffTreeRequest{
 		TreeRequest:           req.Transform,
 		Tree:                  tree,
-		Class:                 lumaClass,
+		Class:                 mustClass(req.LumaType),
 		TransformType:         req.LumaType,
 		UseTransformType:      true,
 		TransformSelect:       req.TransformSelect,
@@ -179,7 +179,7 @@ func (s *DecodeState) decodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 				Tree:                  tree,
 				Color:                 req.Transform.Color,
 				Plane:                 uint8(plane),
-				Class:                 chromaClass[plane-1],
+				Class:                 mustClass(req.ChromaType[plane-1]),
 				TransformType:         req.ChromaType[plane-1],
 				UseTransformType:      true,
 				TransformSelect:       req.TransformSelect,
@@ -274,26 +274,26 @@ func (s *DecodeState) decodeBlockCoefficients(cdfs BlockCoeffCDFs, modeCtx *Bloc
 	return result, nil
 }
 
-func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs BlockCoeffCDFs, modeCtx *BlockModeContext, coeffCtx *CoeffEntropyContext, scratch *BlockCoeffScratch, req BlockCoeffRequest, loopVisit *BlockLoopVisit, coeffController T) (BlockCoeffResult, error) {
+func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs BlockCoeffCDFs, modeCtx *BlockModeContext, coeffCtx *CoeffEntropyContext, scratch *BlockCoeffScratch, req *BlockCoeffRequest, loopVisit *BlockLoopVisit, coeffController T) (BlockCoeffResult, error) {
 	resetCoeffDequantTXB(req.Dequant)
 	if s == nil || cdfs.Transform == nil || cdfs.Coeff == nil ||
 		modeCtx == nil || coeffCtx == nil || scratch == nil || loopVisit == nil {
 		return BlockCoeffResult{}, ErrInvalidDecodeState
 	}
-	lumaClass, err := req.LumaType.Class()
-	if err != nil {
+	// Validate the transform types up front, as before. Their classes
+	// are only read by the legacy per-window readers at the end; the
+	// dav1d block walk reads each TXB's txtp itself, so the classes are
+	// derived on that path instead of for every block.
+	if !req.LumaType.Valid() || !req.Transform.Color.MonoChrome &&
+		(!req.ChromaType[0].Valid() || !req.ChromaType[1].Valid()) {
 		return BlockCoeffResult{}, ErrInvalidDecodeState
 	}
-	var chromaClass [2]transform.Class
-	if !req.Transform.Color.MonoChrome {
-		for i, typ := range req.ChromaType {
-			class, err := typ.Class()
-			if err != nil {
-				return BlockCoeffResult{}, ErrInvalidDecodeState
-			}
-			chromaClass[i] = class
-		}
-	}
+	//
+	// (The block keeps its line count so the calls below keep the line
+	// offsets the committed PGO profile keys on.)
+	//
+	//
+	//
 
 	tree, err := s.DecodeTransformTree(cdfs.Transform, modeCtx, req.Transform)
 	if err != nil {
@@ -307,7 +307,7 @@ func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s
 	// from b and t and walk the TXBs; no per-plane request is built. Skip
 	// blocks only reset the coefficient contexts (dav1d's
 	// dav1d_memset_likely_pow2 of a/l ccoef in decode_b).
-	if req.Transform.SkipTransform || readCoefBlocksSupported(&req) {
+	if req.Transform.SkipTransform || readCoefBlocksSupported(req) {
 		var chromaPrep [2]chromaCoeffPlanePrep
 		if hasChroma {
 			prep, err := prepareChromaCoefBlock(coeffCtx, &req.Transform, tree)
@@ -336,7 +336,7 @@ func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s
 			}
 			return result, nil
 		}
-		if err := readCoefBlocks(s, cdfs, coeffCtx, scratch, &req, tree, &chromaPrep, hasChroma, loopVisit, coeffController, &result); err != nil {
+		if err := readCoefBlocks(s, cdfs, coeffCtx, scratch, req, tree, &chromaPrep, hasChroma, loopVisit, coeffController, &result); err != nil {
 			return result, fmt.Errorf("read coef blocks req=%+v tree=%+v: %w", req.Transform, tree, err)
 		}
 		return result, nil
@@ -345,7 +345,7 @@ func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s
 	lumaReq := LumaCoeffTreeRequest{
 		TreeRequest:           req.Transform,
 		Tree:                  tree,
-		Class:                 lumaClass,
+		Class:                 mustClass(req.LumaType),
 		TransformType:         req.LumaType,
 		UseTransformType:      true,
 		TransformSelect:       req.TransformSelect,
@@ -363,7 +363,7 @@ func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s
 				Tree:                  tree,
 				Color:                 req.Transform.Color,
 				Plane:                 uint8(plane),
-				Class:                 chromaClass[plane-1],
+				Class:                 mustClass(req.ChromaType[plane-1]),
 				TransformType:         req.ChromaType[plane-1],
 				UseTransformType:      true,
 				TransformSelect:       req.TransformSelect,
