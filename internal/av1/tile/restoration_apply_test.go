@@ -2272,3 +2272,31 @@ func fuzzRestorationApplySample(data []byte, index int, max uint16) uint16 {
 	hi := uint16(data[(index+1)%len(data)])
 	return (lo | hi<<8) & max
 }
+
+// TestRestorationFramePlaneMaxScratchLen checks that the record-independent
+// size covers every record set its plane type allows.
+func TestRestorationFramePlaneMaxScratchLen(t *testing.T) {
+	for _, typ := range []parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationSwitchable} {
+		grid := testRestorationApplyGrid(t, [3]parser.RestorationType{typ}, 0)
+		maxSize, err := RestorationFramePlaneMaxScratchLen(grid, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, unitType := range []parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj} {
+			if !restorationUnitTypeAllowed(typ, unitType) {
+				continue
+			}
+			records := makeRestorationPlaneRecords(t, grid, func(int) RestorationUnit {
+				return RestorationUnit{Type: unitType, Wiener: av1restoration.DefaultWienerInfo()}
+			})
+			got, err := RestorationFramePlaneScratchLen(grid, records, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Unit.Wiener > maxSize.Unit.Wiener || got.Unit.SGRProj > maxSize.Unit.SGRProj ||
+				got.Boundary.Above > maxSize.Boundary.Above || got.Boundary.Below > maxSize.Boundary.Below {
+				t.Fatalf("type %v units %v: scratch %+v exceeds max %+v", typ, unitType, got, maxSize)
+			}
+		}
+	}
+}

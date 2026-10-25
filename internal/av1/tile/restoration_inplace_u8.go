@@ -510,6 +510,33 @@ func ApplyRestorationFramePlaneInPlaceU8Stripes(grid RestorationPlaneGrid, recor
 	return walkRestorationPlaneStripesInPlaceU8(grid, records, boundaries, buffer, layout, scratch, stripeStart, stripeEnd)
 }
 
+// ApplyRestorationFramePlaneInPlaceU8StripesFollowing is
+// ApplyRestorationFramePlaneInPlaceU8Stripes for a frame whose unit records
+// below the stripes may still be written by its entropy pass (dav1d's
+// lr_sbrow runs while later superblock rows decode): it reads only the
+// records of the units the stripes cover, each validated with its first
+// stripe, and never the whole record set. Stripes may run in any order and
+// concurrently with other stripes, each with its own dataSeg and scratch.
+func ApplyRestorationFramePlaneInPlaceU8StripesFollowing(grid RestorationPlaneGrid, records []RestorationUnitRecord, boundaries RestorationStripeBoundaries, buffer av1frame.Plane, dataSeg []uint16, scratch RestorationUnitRecordBoundaryScratch, stripeStart, stripeEnd int) (RestorationPlaneApplyResult, error) {
+	if !grid.validGeometry() || len(records) != int(grid.HorzUnits)*int(grid.VertUnits) {
+		return RestorationPlaneApplyResult{}, ErrInvalidPlan
+	}
+	if err := validateRestorationStripeBoundaries(grid, boundaries); err != nil {
+		return RestorationPlaneApplyResult{}, err
+	}
+	if buffer.Stride <= 0 || buffer.Width != int(grid.PlaneWidth) || buffer.Height != int(grid.PlaneHeight) {
+		return RestorationPlaneApplyResult{}, ErrInvalidPlan
+	}
+	if stripeStart < 0 || stripeEnd > RestorationTileStripeCount(grid) || stripeStart > stripeEnd {
+		return RestorationPlaneApplyResult{}, ErrInvalidPlan
+	}
+	layout, err := bindRestorationInPlaceU8Layout(grid, dataSeg)
+	if err != nil {
+		return RestorationPlaneApplyResult{}, err
+	}
+	return walkRestorationPlaneStripesInPlaceU8(grid, records, boundaries, buffer, layout, scratch, stripeStart, stripeEnd)
+}
+
 func walkRestorationPlaneStripesInPlaceU8(grid RestorationPlaneGrid, records []RestorationUnitRecord, boundaries RestorationStripeBoundaries, buffer av1frame.Plane, layout restorationInPlaceU8Layout, scratch RestorationUnitRecordBoundaryScratch, stripeStart, stripeEnd int) (RestorationPlaneApplyResult, error) {
 	var result RestorationPlaneApplyResult
 	stripeH := int(av1restoration.ProcUnitSize >> boolToShift(grid.SubsamplingY))

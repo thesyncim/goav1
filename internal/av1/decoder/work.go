@@ -122,6 +122,11 @@ type FrameWorkPostFilterContext struct {
 
 	completedPostFilters     FrameWorkPostFilterStage
 	detachedPostFilterOutput bool
+	// restorationRecordsPending marks a frame-threaded frame whose
+	// post-filter starts before its entropy pass has decoded the
+	// loop-restoration unit records: restoration scratch is then sized for
+	// any record set the frame header allows.
+	restorationRecordsPending bool
 }
 
 // postFilterWorkerCount reports how many worker lanes the postfilter may use to
