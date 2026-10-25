@@ -61,18 +61,18 @@ func readCoefBlocksSupported(req *BlockCoeffRequest) bool {
 // the reconstruction visitor.
 func readCoefBlocks[T BlockLoopCoeffController](s *DecodeState, cdfs BlockCoeffCDFs, coeffCtx *CoeffEntropyContext, scratch *BlockCoeffScratch, req *BlockCoeffRequest, tree TransformTreeResult, chromaPrep *[2]chromaCoeffPlanePrep, hasChroma bool, loopVisit *BlockLoopVisit, coeffController T, result *BlockCoeffResult) error {
 	tr := &req.Transform
-	b := coefBlock{
-		s:       s,
-		cdfs:    cdfs.Coeff,
-		ctx:     coeffCtx,
-		scratch: scratch,
-		dequant: req.Dequant,
-		reduced: false,
-		bx4:     int(tr.X4),
-		by4:     int(tr.Y4),
-		w4:      int(tr.VisibleW4),
-		h4:      int(tr.VisibleH4),
-	}
+	// Filled in place: a composite literal of this addressed struct was
+	// built in a temporary and block-copied with wide loads over the
+	// narrower field stores, which cannot store-forward.
+	var b coefBlock
+	b.s, b.cdfs, b.ctx = s, cdfs.Coeff, coeffCtx
+	b.scratch, b.dequant = scratch, req.Dequant
+	b.bx4 = int(tr.X4)
+	b.by4 = int(tr.Y4)
+	b.w4 = int(tr.VisibleW4)
+	b.h4 = int(tr.VisibleH4)
+	//
+	//
 	switch sel := req.TransformSelect.(type) {
 	case *IntraCoeffTransformSelector:
 		b.intra = true

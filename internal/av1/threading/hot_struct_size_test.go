@@ -29,7 +29,7 @@ func TestHotStructSizes(t *testing.T) {
 		// The tile refmvs state carries dav1d's mfmv setup and rp_proj window.
 		// The three restoration stripe-boundary handles each add a pixel-row
 		// (Bytes) flag, 8 bytes with alignment.
-		{name: "FrameWorkTileResidualScratch", size: unsafe.Sizeof(FrameWorkTileResidualScratch{}), max: 99864}, // +16: two FrameWorkBatch copies gained FrameThread; +16: BlockLoopRequest.MotionProgress; +16: BlockLoopScratch.leftEdge (resident SB-row left context); +16: two FrameWorkBatch copies gained SegmentMaps; +2032: two job geometry caches gained the f->refp reference-plane views
+		{name: "FrameWorkTileResidualScratch", size: unsafe.Sizeof(FrameWorkTileResidualScratch{}), max: 99928}, // +64: the controller's coeffReq slot (the block coefficient request is read in place, not copied per block); +16: two FrameWorkBatch copies gained FrameThread; +16: BlockLoopRequest.MotionProgress; +16: BlockLoopScratch.leftEdge (resident SB-row left context); +16: two FrameWorkBatch copies gained SegmentMaps; +2032: two job geometry caches gained the f->refp reference-plane views
 		{name: "FrameWorkJobRegion", size: unsafe.Sizeof(FrameWorkJobRegion{}), max: 36},
 		{name: "FrameWorkCDEFIndexMap", size: unsafe.Sizeof(FrameWorkCDEFIndexMap{}), max: 56},
 		{name: "FrameWorkLoopFilterBlockRecord", size: unsafe.Sizeof(FrameWorkLoopFilterBlockRecord{}), max: 34},

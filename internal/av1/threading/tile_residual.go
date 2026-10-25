@@ -1543,6 +1543,11 @@ type frameWorkTileResidualLoopController struct {
 	recon    frameWorkReconState
 	reconHot *frameWorkReconState
 
+	// coeffReq is the storage SelectBlockCoeffRequestPtr returns: the block
+	// walk reads the request in place (dav1d's decode_b hands b to
+	// recon_b_* by pointer), so it is not copied out and back in per block.
+	coeffReq tile.BlockCoeffRequest
+
 	// dequantTarget is a stable per-controller target shared with the tracked
 	// coefficient reader. The controller is replaced wholesale for each tile
 	// job, so prepared factors cannot leak across frame quantization parameters.
@@ -1797,10 +1802,14 @@ func (s *frameWorkReconState) predictDeferredCFLChroma() error {
 }
 
 func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequest(visit tile.BlockLoopVisit) (tile.BlockCoeffRequest, error) {
-	return c.SelectBlockCoeffRequestPtr(&visit)
+	req, err := c.SelectBlockCoeffRequestPtr(&visit)
+	if err != nil {
+		return tile.BlockCoeffRequest{}, err
+	}
+	return *req, nil
 }
 
-func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *tile.BlockLoopVisit) (tile.BlockCoeffRequest, error) {
+func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *tile.BlockLoopVisit) (*tile.BlockCoeffRequest, error) {
 	// A previous call can have returned a ready target that was never consumed
 	// because its visitor failed. Do not let it leak into this block.
 	c.dequantTarget.Ready = false
@@ -1808,7 +1817,7 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *
 	c.dequantTarget.ActiveCols = 0
 	c.dequantTarget.TxScale = 0
 	if visit == nil {
-		return tile.BlockCoeffRequest{}, ErrInvalidBatch
+		return nil, ErrInvalidBatch
 	}
 	if c.defaultCoeffPath {
 		return c.selectDefaultBlockCoeffRequest(visit)
@@ -1820,7 +1829,7 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *
 		var err error
 		transforms, err = c.req.Transforms(*visit)
 		if err != nil {
-			return tile.BlockCoeffRequest{}, err
+			return nil, err
 		}
 		// libaom uses xd->qindex[segment_id] (the segment-adjusted qindex) —
 		// not the frame base — when gating tx-type syntax on the
@@ -1828,21 +1837,21 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *
 		// that cached value, so resolve it here.
 		segmentQIndex, lossless, err = c.batch.BlockQIndex(c.state.CurrentBaseQIdx, visit.SegmentID)
 		if err != nil {
-			return tile.BlockCoeffRequest{}, err
+			return nil, err
 		}
 	} else if c.req.UseDefaultTransforms {
 		var err error
 		transforms, segmentQIndex, lossless, err = c.batch.readBlockTransformsAndQIndexPtr(c.state, visit)
 		if err != nil {
-			return tile.BlockCoeffRequest{}, err
+			return nil, err
 		}
 	} else {
-		return tile.BlockCoeffRequest{}, ErrInvalidBatch
+		return nil, ErrInvalidBatch
 	}
 	transformSelect := transforms.TransformSelect
 	if transforms.ReadIntraTX {
 		if !visit.Prediction.Valid || !visit.Prediction.Intra {
-			return tile.BlockCoeffRequest{}, ErrInvalidBatch
+			return nil, ErrInvalidBatch
 		}
 		chromaMode := visit.Prediction.ChromaMode
 		if !chromaMode.Valid() {
@@ -1855,7 +1864,8 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *
 		c.scratch.InterTX.ResetForColor(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, segmentQIndex, c.batch.Sequence.ColorConfig)
 		transformSelect = &c.scratch.InterTX
 	}
-	request := tile.BlockCoeffRequest{
+	request := &c.coeffReq
+	*request = tile.BlockCoeffRequest{
 		Transform: tile.TransformTreeRequest{
 			Size:          visit.Block.Size,
 			X4:            visit.Block.X4,
@@ -2531,10 +2541,10 @@ type frameWorkReconCF struct {
 // transform-type selector and coefficient request are built straight from the
 // visit, as dav1d's decode_b hands b to recon_b_*, with the same
 // segment-adjusted qindex and lossless gating as the generic path.
-func (c *frameWorkTileResidualLoopController) selectDefaultBlockCoeffRequest(visit *tile.BlockLoopVisit) (tile.BlockCoeffRequest, error) {
+func (c *frameWorkTileResidualLoopController) selectDefaultBlockCoeffRequest(visit *tile.BlockLoopVisit) (*tile.BlockCoeffRequest, error) {
 	segmentQIndex, lossless, err := c.batch.BlockQIndex(c.state.CurrentBaseQIdx, visit.SegmentID)
 	if err != nil {
-		return tile.BlockCoeffRequest{}, err
+		return nil, err
 	}
 	pred := &visit.Prediction
 	skip := visit.Prefix.SkipTransform
@@ -2551,7 +2561,8 @@ func (c *frameWorkTileResidualLoopController) selectDefaultBlockCoeffRequest(vis
 		c.scratch.InterTX.ResetForColor(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, skip, lossless, segmentQIndex, c.batch.Sequence.ColorConfig)
 		transformSelect = &c.scratch.InterTX
 	}
-	request := tile.BlockCoeffRequest{
+	request := &c.coeffReq
+	*request = tile.BlockCoeffRequest{
 		Transform: tile.TransformTreeRequest{
 			Size:          visit.Block.Size,
 			X4:            visit.Block.X4,

@@ -304,7 +304,10 @@ type BlockLoopCoeffController interface {
 	SelectBlockCoeffRequest(BlockLoopVisit) (BlockCoeffRequest, error)
 	VisitBlockCoeff(BlockLoopVisit, BlockCoeffBlock) error
 	BeforeBlockCoefficientsPtr(*BlockLoopVisit) error
-	SelectBlockCoeffRequestPtr(*BlockLoopVisit) (BlockCoeffRequest, error)
+	// SelectBlockCoeffRequestPtr returns controller-owned storage, valid
+	// until the next call; the block walk reads it through the pointer
+	// instead of copying the request twice per block.
+	SelectBlockCoeffRequestPtr(*BlockLoopVisit) (*BlockCoeffRequest, error)
 	VisitBlockCoeffPtr(*BlockLoopVisit, *BlockCoeffBlock) error
 }
 
@@ -326,8 +329,8 @@ func (noBlockLoopCoeffController) SelectBlockCoeffRequest(BlockLoopVisit) (Block
 	return BlockCoeffRequest{}, ErrInvalidDecodeState
 }
 
-func (noBlockLoopCoeffController) SelectBlockCoeffRequestPtr(*BlockLoopVisit) (BlockCoeffRequest, error) {
-	return BlockCoeffRequest{}, ErrInvalidDecodeState
+func (noBlockLoopCoeffController) SelectBlockCoeffRequestPtr(*BlockLoopVisit) (*BlockCoeffRequest, error) {
+	return nil, ErrInvalidDecodeState
 }
 
 func (noBlockLoopCoeffController) VisitBlockCoeff(BlockLoopVisit, BlockCoeffBlock) error {
