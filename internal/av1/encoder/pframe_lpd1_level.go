@@ -367,8 +367,8 @@ func (st *lossyEncodeState) lpd1SBInfoFor(f *lpd1Frame, idx int) lpd1SBInfo {
 type lpd1PictureSetup struct {
 	cur, ref *lpd1Frame
 	picLvl   uint8
-	// notLastLayer is !is_highest_layer: this encoder's referenced
-	// pictures (every flat-structure frame, the base and T1 layers).
+	// notLastLayer is !is_highest_layer: the base and T1 layers, and the
+	// flat structure's T0/T1 positions (svtFlatTemporalLayer).
 	notLastLayer bool
 	// tlFactor is rd_frame_type_factor[8-bit][gf_update_type] and gfUpdate
 	// the low-delay GF_UPDATE picture (every MAX_GF_INTERVAL frames).

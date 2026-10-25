@@ -1309,6 +1309,16 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	// droppable layer in t1Recon.
 	isT1 := e.temporalLayers == 3 && temporalID == 1
 	afterT1 := e.temporalLayers == 3 && temporalID == 2 && e.lastTemporalID == 1
+	// Mode-decision layer flags: is_base (temporal_layer_index == 0) and
+	// !is_highest_layer. The bitstream structure (references, refresh,
+	// rate control) follows temporalID; the picture's mode-decision
+	// settings follow SVT's temporal_layer_index, which for the flat
+	// structure is not 0 (svtFlatTemporalLayer).
+	mdIsBase, mdNotLastLayer := temporalID == 0, !droppable || isT1
+	if e.temporalLayers <= 1 {
+		tl := svtFlatTemporalLayer(e.frameIndex + e.lpd1FrameBias)
+		mdIsBase, mdNotLastLayer = tl == 0, tl != svtFlatHierLevels
+	}
 	var out *SourceFrame420
 	switch {
 	case !droppable:
@@ -1401,7 +1411,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		cdefRef, cdefRefStats = e.cdefRefT1, e.lpd1T1
 	}
 	cdefPlan := planSVTCDEF(filterSupported && seq.EnableCDEF && !e.fastestRealtimeEffort() && src.Width*src.Height <= loopFilterMaxArea,
-		false, temporalID == 0, !droppable || isT1, e.svtScreen(), cdefRef, lpd1RefSkipPerc(cdefRefStats))
+		false, mdIsBase, mdNotLastLayer, e.svtScreen(), cdefRef, lpd1RefSkipPerc(cdefRefStats))
 	if lfLevel > 0 || cdefPlan.on {
 		if !e.lf.bound {
 			if err := e.lf.init(src.Width, src.Height); err != nil {
@@ -1513,7 +1523,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	// mds0Level: base frames run level 9, droppable leaves 14 (preset-12
 	// 1080p ladder, enc_mode_config.c:9287-9295). is_ref covers the L1T3
 	// middle layer too (referenced by its trailing T2).
-	e.pc.st.depthRemovalLevel = depthRemovalLevelForFrame(src.Width, src.Height, !droppable)
+	e.pc.st.depthRemovalLevel = depthRemovalLevelForFrame(src.Width, src.Height, mdIsBase)
 	e.pc.st.depthRemovalIsRef = !droppable || isT1
 	// Light-PD1 TX shortcut detectors (SVT set_lpd1_tx_ctrls level 3, the
 	// rtc-forced level; see pframe_lpd1_tx.go). Base pictures keep the
@@ -1539,7 +1549,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if afterT1 {
 		lpd1Ref = e.lpd1T1
 	}
-	lpd1Setup := lpd1PictureSetup{ref: lpd1Ref, picLvl: lpd1PicLevel(false, !droppable, e.svtScreen()), notLastLayer: !droppable || isT1, armed: true}
+	lpd1Setup := lpd1PictureSetup{ref: lpd1Ref, picLvl: lpd1PicLevel(false, mdIsBase, e.svtScreen()), notLastLayer: mdNotLastLayer, armed: true}
 	// update_lambda: the highest temporal layer is LF_UPDATE (180), every
 	// other layer (flat IPP included) ARF or INTNL_ARF (150); low delay
 	// marks every MAX_GF_INTERVAL-th frame GF_UPDATE (set_frame_update_type).

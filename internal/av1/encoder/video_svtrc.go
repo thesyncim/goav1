@@ -113,9 +113,32 @@ func (e *VideoEncoder) UpdateRateControlConfig(rc RateControlConfig) error {
 // low-delay CBR), layered streams have temporalLayers-1.
 func (e *VideoEncoder) svtRCHierLevels() int {
 	if e.temporalLayers <= 1 {
-		return 2
+		return svtFlatHierLevels
 	}
 	return e.temporalLayers - 1
+}
+
+// svtFlatHierLevels is hierarchical_levels under SVT's flat structure: rtc
+// with --hierarchical-levels 0 sets HIERARCHICAL_LEVELS_AUTO (2 at
+// low-delay CBR) and use_flat_ipp (enc_handle.c), so only the references and
+// rate control are flat.
+const svtFlatHierLevels = 2
+
+// svtFlatTemporalLayer is temporal_layer_index of the picture frameOffset
+// frames after the keyframe in SVT's flat structure: the pictures keep the
+// three-layer low-delay positions (T0, T2, T1, T2), so is_base and
+// is_highest_layer, and every mode-decision setting derived from them, vary
+// along the flat stream (pd_process.c: is_highest_layer is
+// temporal_layer_index == hierarchical_levels; is_ref is true under
+// use_flat_ipp).
+func svtFlatTemporalLayer(frameOffset int) int {
+	switch frameOffset % 4 {
+	case 1, 3:
+		return 2
+	case 2:
+		return 1
+	}
+	return 0
 }
 
 // rcKeyQ picks a keyframe's qindex (the fixed q without rate control).

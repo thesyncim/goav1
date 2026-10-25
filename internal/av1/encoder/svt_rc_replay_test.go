@@ -183,3 +183,40 @@ func TestRateControlConfigBuffersReachController(t *testing.T) {
 		t.Fatal("an initial buffer below 20 ms was accepted")
 	}
 }
+
+// TestSVTFlatTemporalLayerMatchesSVT410Traces checks the flat structure's
+// mode-decision layer positions against the temporal_layer_index SVT-AV1
+// v4.1.0 logged for every picture of its flat (--hierarchical-levels 0)
+// traces.
+func TestSVTFlatTemporalLayerMatchesSVT410Traces(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("testdata", "svtrc", "flat_*.csv"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no SVT flat traces: %v", err)
+	}
+	for _, file := range files {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, line := range strings.Split(string(raw), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			fields := strings.Split(line, ",")
+			pic, err1 := strconv.Atoi(fields[0])
+			tl, err2 := strconv.Atoi(fields[2])
+			if err1 != nil || err2 != nil {
+				t.Fatalf("%s: bad row %q", file, line)
+			}
+			if got := svtFlatTemporalLayer(pic); got != tl {
+				t.Fatalf("%s: picture %d temporal layer %d, SVT logged %d", file, pic, got, tl)
+			}
+			n++
+		}
+		if n != 120 {
+			t.Fatalf("%s: %d pictures, want 120", file, n)
+		}
+	}
+}
