@@ -105,6 +105,10 @@ type FrameThreadRecon struct {
 	// thread_task.c signals out_cdf right after that tile's entropy pass), so
 	// the next frame's entropy pass starts while the other tiles still parse.
 	CDFOut *FrameProgress
+	// Rows, when set, receives the frame's reconstructed luma rows as the
+	// lanes finish them, so the post-filter can follow reconstruction row
+	// by row (dav1d's filter tasks wait on the tiles' recon progress).
+	Rows *FrameThreadReconRows
 
 	// pending holds the tiles whose reconstruction lanes still run after
 	// their parse returned; the tile parses append to it concurrently.
@@ -129,6 +133,7 @@ func (r *FrameThreadRecon) Reset() {
 	r.RefProgress = [parser.InterRefsPerFrame]*FrameProgress{}
 	r.Motion = nil
 	r.CDFOut = nil
+	r.Rows = nil
 	r.mu.Lock()
 	clear(r.pending)
 	r.pending = r.pending[:0]
@@ -249,6 +254,11 @@ func (p *Pool) ExecuteFrameWorkRunnerFrameThread(batches []Batch, jobs []tile.Jo
 	ft := base.FrameThread
 	if m := ft.Motion; m != nil {
 		if err := m.bindTiles(base, jobs); err != nil {
+			return err
+		}
+	}
+	if rows := ft.Rows; rows != nil {
+		if err := rows.bindTiles(base, jobs); err != nil {
 			return err
 		}
 	}

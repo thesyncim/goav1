@@ -194,3 +194,74 @@ func (h *FrameWorkLoopFilterMasks) FixTileBoundariesFromEdges() error {
 	h.TileBoundariesFixed = true
 	return nil
 }
+
+// TileEdgesUsable reports whether the tile-edge backups bound to h are being
+// filled for every tile, so FixTileBoundaryRegion can run.
+func (h *FrameWorkLoopFilterMasks) TileEdgesUsable() bool {
+	return h != nil && h.tileEdges != nil && !h.tileEdges.broken.Load()
+}
+
+// FixTileBoundaryRegion is FixTileBoundariesFromEdges for the 128-pixel mask
+// region row r only, the way dav1d fixes each superblock row's tile-boundary
+// strengths in dav1d_loopfilter_sbrow_cols just before deblocking it. It
+// reads the right-edge backups of the region's rows and the bottom backup of
+// a tile row starting in the region, so every tile covering those rows must
+// have flushed them (each superblock row's right edge is flushed before the
+// row is handed to reconstruction, and a tile's bottom context before its
+// last row is). MarkTileBoundariesFixed records the frame done once every
+// region is fixed.
+func (h *FrameWorkLoopFilterMasks) FixTileBoundaryRegion(r int) error {
+	e := h.tileEdges
+	if !h.Valid() || e == nil || e.rows != h.Rows || e.cols != h.Cols || e.broken.Load() {
+		return ErrInvalidBatch
+	}
+	y0 := r << 5
+	if y0 < 0 || y0 >= h.Rows {
+		return nil
+	}
+	for c := 1; c < e.tileCols; c++ {
+		x := e.colStart[c]
+		if x <= 0 || x >= h.Cols {
+			continue
+		}
+		pos := x & 31
+		n := min(32, h.Rows-y0)
+		fixLumaLane(&h.region(x, y0).Y[0][pos], e.rightY[(c-1)*e.rows+y0:][:n])
+		if !e.hasChroma {
+			continue
+		}
+		cy0 := y0 >> e.ssVer
+		cn := min(32>>e.ssVer, e.crows-cy0)
+		if cn <= 0 {
+			continue
+		}
+		fixChromaLane(&h.region(x, y0).UV[0][pos>>e.ssHor], e.rightUV[(c-1)*e.crows+cy0:][:cn], 16>>e.ssVer)
+	}
+	for tr := 1; tr < e.tileRows; tr++ {
+		y := e.rowStart[tr]
+		if y <= 0 || y >= h.Rows || y>>5 != r {
+			continue
+		}
+		pos := y & 31
+		for x0 := 0; x0 < h.Cols; x0 += 32 {
+			n := min(32, h.Cols-x0)
+			fixLumaLane(&h.region(x0, y).Y[1][pos], e.bottomY[(tr-1)*e.cols+x0:][:n])
+			if !e.hasChroma {
+				continue
+			}
+			cx0 := x0 >> e.ssHor
+			cn := min(32>>e.ssHor, e.ccols-cx0)
+			if cn <= 0 {
+				continue
+			}
+			fixChromaLane(&h.region(x0, y).UV[1][pos>>e.ssVer], e.bottomUV[(tr-1)*e.ccols+cx0:][:cn], 16>>e.ssHor)
+		}
+	}
+	return nil
+}
+
+// MarkTileBoundariesFixed records that FixTileBoundaryRegion ran for every
+// region row.
+func (h *FrameWorkLoopFilterMasks) MarkTileBoundariesFixed() {
+	h.TileBoundariesFixed = true
+}

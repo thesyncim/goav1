@@ -420,6 +420,8 @@ type frameWorkReconWavefront struct {
 	// frameThread is the frame-thread split this wavefront belongs to, or nil.
 	// Its lanes wait for the reference surfaces before the first row.
 	frameThread *FrameThreadRecon
+	// reconTile is the tile whose finished SB rows frameThread.Rows gets.
+	reconTile int32
 }
 
 type frameWorkReconWavefrontProgress struct {
@@ -1404,14 +1406,17 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 		loopStats, err = tile.DecodeBlockLoopWithCoeffControllerPtr(state, loopCDFs, &scratch.Loop, loopReq, &scratch.controller, visitBlock)
 	}
 	scratch.stats.Loop = loopStats
+	if err == nil && req.LoopFilterMasks.Valid() {
+		// Back up the tile's edges before its last rows reach reconstruction:
+		// a frame-threaded post-filter fixes each region's tile boundaries
+		// once the region is reconstructed.
+		scratch.lfMask.finishTileEdges()
+	}
 	if scratch.controller.streaming {
 		err = scratch.controller.finishReconStream(err)
 	}
 	if err != nil {
 		return scratch.stats, err
-	}
-	if req.LoopFilterMasks.Valid() {
-		scratch.lfMask.finishTileEdges()
 	}
 	if scratch.controller.deferReconstruction && !streamRecon {
 		if err := scratch.finalizeDeferredPalettes(); err != nil {
@@ -1420,6 +1425,10 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 		if err := scratch.controller.replayDeferredReconstruction(); err != nil {
 			return scratch.stats, err
 		}
+	}
+	if ft := b.FrameThread; !streamRecon && ft != nil && ft.Rows != nil && index < len(b.Jobs) {
+		// A tile reconstructed without lanes finished every row here.
+		ft.Rows.finishRows(int(b.Jobs[index].Tile), FrameProgressDone)
 	}
 	return scratch.stats, nil
 }

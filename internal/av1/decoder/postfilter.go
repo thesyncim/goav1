@@ -794,6 +794,28 @@ func (ctx *FrameWorkPostFilterContext) applySupportedPostFiltersInPlace(req Fram
 			return result, err
 		}
 	}
+	if ctx.reconProgress() != nil {
+		// A frame-threaded frame whose entropy pass and reconstruction may
+		// still run: follow its reconstruction row by row, or wait for all of
+		// it.
+		follow := ctx.rowPipelineFollowsParse(remaining)
+		if !follow {
+			if !ctx.waitParsed() {
+				return result, threading.ErrFrameThreadReference
+			}
+			if remaining.Has(FrameWorkPostFilterLoopFilter) && banding.LoopFilterMIRows <= 0 {
+				ctx.fixLoopFilterMaskTileBoundaries(req.LoopFilter.Map)
+			}
+		}
+		if ctx.rowPipelineEligible(banding, remaining, follow) {
+			if err := ctx.applyRowPipelinedPostFilters(req, remaining, &result); err != nil {
+				return result, err
+			}
+			remaining = frameWorkRemainingPostFilters(ctx)
+		} else if !ctx.waitParsed() || !ctx.waitReconstructed() {
+			return result, threading.ErrFrameThreadReference
+		}
+	}
 	if remaining.Has(FrameWorkPostFilterLoopFilter) && banding.LoopFilterMIRows <= 0 {
 		ctx.fixLoopFilterMaskTileBoundaries(req.LoopFilter.Map)
 		if ctx.sbrowPostFilterEligible(req, banding, remaining) {
