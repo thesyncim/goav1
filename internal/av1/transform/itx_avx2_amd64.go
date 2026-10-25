@@ -9,6 +9,7 @@ package transform
 import (
 	"encoding/binary"
 	"simd/archsimd"
+	"unsafe"
 )
 
 // The fused 8-bit inverse transform + add kernels for amd64 (AVX2), in
@@ -245,6 +246,39 @@ func itxAddStore8(dst, pred []byte, res archsimd.Int16x8) {
 	binary.LittleEndian.PutUint64(dst[:8], b.AsUint64x2().GetElem(0))
 }
 
+// itxPix is the reconstruction target of a fused kernel: dst = clip(pred +
+// residual) with 1-byte samples when maxV is 0, else 2-byte samples clipped
+// to [0, maxV] (strides in bytes).
+type itxPix struct {
+	dst        []byte
+	dstStride  int
+	pred       []byte
+	predStride int
+	maxV       int16
+}
+
+// itxAddStore16HBD stores clip(pred[0..15] + res, 0, maxV) for sixteen
+// 2-byte samples. The saturating add equals the scalar clip for any int16
+// residual and pred <= 4095.
+//
+//go:nocheckptr
+func itxAddStore16HBD(dst, pred []byte, res archsimd.Int16x16, maxV int16) {
+	_, _ = dst[31], pred[31]
+	p := archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Pointer(unsafe.SliceData(pred))))
+	v := p.AddSaturated(res).Max(archsimd.Int16x16{}).Min(archsimd.BroadcastInt16x16(maxV))
+	v.StoreArray((*[16]int16)(unsafe.Pointer(unsafe.SliceData(dst))))
+}
+
+// itxAddStore8HBD is itxAddStore16HBD for eight samples.
+//
+//go:nocheckptr
+func itxAddStore8HBD(dst, pred []byte, res archsimd.Int16x8, maxV int16) {
+	_, _ = dst[15], pred[15]
+	p := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Pointer(unsafe.SliceData(pred))))
+	v := p.AddSaturated(res).Max(archsimd.Int16x8{}).Min(archsimd.BroadcastInt16x8(maxV))
+	v.StoreArray((*[8]int16)(unsafe.Pointer(unsafe.SliceData(dst))))
+}
+
 // itxStoreRowGroup rounds the sixteen row-pass outputs v (v[j] = output j
 // of every lane, lanes in itxRowPerm order of rows r0..r0+15) by n,
 // transposes them and stores row r0+itxRowPerm[e] of tmp (width w) at
@@ -324,46 +358,52 @@ func itxRowStrip64(coeff []int32, stride, r0, inCols int, tmp []int16, colL1 *[4
 	return true
 }
 
-// itxColAdd adds Round2(out[r], 4) to rows 0..len(out)-1 of the block at
+// itxColAdd adds Round2(out[r], 4) to rows 0..len(out)-1 of the target at
 // columns c0..c0+15.
-func itxColAdd(out []archsimd.Int16x16, c0 int, dst []byte, dstStride int, pred []byte, predStride int) {
+func itxColAdd(out []archsimd.Int16x16, c0 int, px *itxPix) {
+	if px.maxV == 0 {
+		for r := range out {
+			itxAddStore16(px.dst[r*px.dstStride+c0:], px.pred[r*px.predStride+c0:], itxRound2x16(out[r], 4))
+		}
+		return
+	}
 	for r := range out {
-		itxAddStore16(dst[r*dstStride+c0:], pred[r*predStride+c0:], itxRound2x16(out[r], 4))
+		itxAddStore16HBD(px.dst[r*px.dstStride+2*c0:], px.pred[r*px.predStride+2*c0:], itxRound2x16(out[r], 4), px.maxV)
 	}
 }
 
 // itxColStripAdd16 runs the 16-point column pass (network t) for columns
 // c0..c0+15 from inRows tmp rows (width w) and adds the result.
-func itxColStripAdd16(tmp []int16, w, c0, inRows int, t tx1DType, dst []byte, dstStride int, pred []byte, predStride int) {
+func itxColStripAdd16(tmp []int16, w, c0, inRows int, t tx1DType, px *itxPix) {
 	var in [16]archsimd.Int16x16
 	for r := 0; r < inRows; r++ {
 		in[r] = archsimd.LoadInt16x16(tmp[r*w+c0:])
 	}
 	var out [16]archsimd.Int16x16
 	itx16Net1D(t, inRows, &in, &out)
-	itxColAdd(out[:], c0, dst, dstStride, pred, predStride)
+	itxColAdd(out[:], c0, px)
 }
 
 // itxColStripAdd32 runs the 32-point DCT column pass for columns c0..c0+15.
-func itxColStripAdd32(tmp []int16, w, c0, inRows int, dst []byte, dstStride int, pred []byte, predStride int) {
+func itxColStripAdd32(tmp []int16, w, c0, inRows int, px *itxPix) {
 	var in [32]archsimd.Int16x16
 	for r := 0; r < inRows; r++ {
 		in[r] = archsimd.LoadInt16x16(tmp[r*w+c0:])
 	}
 	var out [32]archsimd.Int16x16
 	itx32Net(inRows, &in, &out)
-	itxColAdd(out[:], c0, dst, dstStride, pred, predStride)
+	itxColAdd(out[:], c0, px)
 }
 
 // itxColStripAdd64 runs the 64-point DCT column pass for columns c0..c0+15.
-func itxColStripAdd64(tmp []int16, w, c0, inRows int, dst []byte, dstStride int, pred []byte, predStride int) {
+func itxColStripAdd64(tmp []int16, w, c0, inRows int, px *itxPix) {
 	var in [32]archsimd.Int16x16
 	for r := 0; r < inRows; r++ {
 		in[r] = archsimd.LoadInt16x16(tmp[r*w+c0:])
 	}
 	var out [64]archsimd.Int16x16
 	itx64Net(inRows, &in, &out)
-	itxColAdd(out[:], c0, dst, dstStride, pred, predStride)
+	itxColAdd(out[:], c0, px)
 }
 
 // itx16Form rounds a coded extent up to the 16-point network form covering
@@ -392,18 +432,29 @@ func itx64Form(n int) int {
 	}
 }
 
-// itxBlockOK checks the common contract of the fused kernels: a w x h block
-// (h coefficient rows at coeffStride, w/scan columns) with activeRows and
-// activeCols coded.
-func itxBlockOK(w, h, maxRows, maxCols int, dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
+// itxBlockOK checks the common contract of the fused kernels for a w x h
+// block of bytesPerSample-byte samples whose coefficients are maxCols
+// columns of maxRows at coeffStride, activeRows x activeCols of them coded.
+func itxBlockOK(w, h, bytesPerSample, maxRows, maxCols int, dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
+	rowBytes := w * bytesPerSample
 	return itxAVX2 && activeRows > 0 && activeRows <= maxRows && activeCols > 0 && activeCols <= maxCols &&
 		coeffStride >= maxRows && len(coeff) >= (maxCols-1)*coeffStride+maxRows &&
-		dstStride >= w && predStride >= w && len(dst) >= (h-1)*dstStride+w && len(pred) >= (h-1)*predStride+w
+		dstStride >= rowBytes && predStride >= rowBytes &&
+		len(dst) >= (h-1)*dstStride+rowBytes && len(pred) >= (h-1)*predStride+rowBytes
+}
+
+// itxHBDMax returns the pixel maximum of a 10- or 12-bit block, false for
+// any other depth.
+func itxHBDMax(bitDepth uint8) (int16, bool) {
+	if bitDepth != 10 && bitDepth != 12 {
+		return 0, false
+	}
+	return int16(1)<<bitDepth - 1, true
 }
 
 // itxSquare16 is the 16x16 kernel for a horizontal (row) network th and a
 // vertical (column) network tv.
-func itxSquare16(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, tv, th tx1DType, activeRows, activeCols int) bool {
+func itxSquare16(px *itxPix, coeff []int32, coeffStride int, tv, th tx1DType, activeRows, activeCols int) bool {
 	inCols := itx16Form(activeCols)
 	inRows := itx16Form(activeRows)
 	var tmp [16 * 16]int16
@@ -411,49 +462,12 @@ func itxSquare16(dst []byte, dstStride int, pred []byte, predStride int, coeff [
 	if !itxRowStrip16(coeff, coeffStride, 0, inCols, th, false, 2, tmp[:], &colL1) || !itxL1Ok16(colL1) {
 		return false
 	}
-	itxColStripAdd16(tmp[:], 16, 0, inRows, tv, dst, dstStride, pred, predStride)
+	itxColStripAdd16(tmp[:], 16, 0, inRows, tv, px)
 	return true
 }
 
-// InverseAddDCT16x16 reconstructs one 8-bit 16x16 DCT_DCT block with coded
-// coefficients in rows 0..activeRows-1 and columns 0..activeCols-1:
-// dst = clip(pred + inverse(coeff)), with the dequantized coefficients
-// column-major at coeffStride. pred may be dst. It reports false, with dst
-// untouched, when the block is outside the kernel's contract or a guard
-// declines; the caller then runs the staged path, which produces the same
-// bytes.
-func InverseAddDCT16x16(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
-	if !itxBlockOK(16, 16, 16, 16, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
-		return false
-	}
-	return itxSquare16(dst, dstStride, pred, predStride, coeff, coeffStride, tx1DDCT, tx1DDCT, activeRows, activeCols)
-}
-
-// itxHybridTypes returns the per-pass networks of the DCT/ADST/flipped-ADST
-// pairings the fused hybrid kernels cover; ok is false for every other
-// transform type (including DCT_DCT, which has its own kernels).
-func itxHybridTypes(txType Type) (vertical, horizontal tx1DType, ok bool) {
-	switch txType {
-	case TypeADSTDCT, TypeDCTADST, TypeADSTADST, TypeFlipADSTDCT, TypeDCTFlipADST,
-		TypeFlipADSTFlipADST, TypeADSTFlipADST, TypeFlipADSTADST:
-		return txType.tx1DTypes()
-	}
-	return 0, 0, false
-}
-
-// InverseAdd16x16Hybrid reconstructs one 8-bit 16x16 block of a
-// DCT/ADST/flipped-ADST pairing (see itxHybridTypes); otherwise as
-// InverseAddDCT16x16.
-func InverseAdd16x16Hybrid(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
-	vertical, horizontal, ok := itxHybridTypes(txType)
-	if !ok || !itxBlockOK(16, 16, 16, 16, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
-		return false
-	}
-	return itxSquare16(dst, dstStride, pred, predStride, coeff, coeffStride, vertical, horizontal, activeRows, activeCols)
-}
-
 // itxSquare8 is the 8x8 kernel: the whole block stays in xmm registers.
-func itxSquare8(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, tv, th tx1DType, activeRows, activeCols int) bool {
+func itxSquare8(px *itxPix, coeff []int32, coeffStride int, tv, th tx1DType, activeRows, activeCols int) bool {
 	var in [8]archsimd.Int16x8
 	var l1 archsimd.Uint16x8
 	for k := 0; k < activeCols; k++ {
@@ -479,32 +493,20 @@ func itxSquare8(dst []byte, dstStride int, pred []byte, predStride int, coeff []
 	}
 	var out [8]archsimd.Int16x8
 	itx8Net1D(tv, activeRows, &mid, &out)
+	if px.maxV == 0 {
+		for r := 0; r < 8; r++ {
+			itxAddStore8(px.dst[r*px.dstStride:], px.pred[r*px.predStride:], itxRound2x8(out[r], 4))
+		}
+		return true
+	}
 	for r := 0; r < 8; r++ {
-		itxAddStore8(dst[r*dstStride:], pred[r*predStride:], itxRound2x8(out[r], 4))
+		itxAddStore8HBD(px.dst[r*px.dstStride:], px.pred[r*px.predStride:], itxRound2x8(out[r], 4), px.maxV)
 	}
 	return true
 }
 
-// InverseAddDCT8x8 reconstructs one 8-bit 8x8 DCT_DCT block; otherwise as
-// InverseAddDCT16x16.
-func InverseAddDCT8x8(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
-	if !itxBlockOK(8, 8, 8, 8, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
-		return false
-	}
-	return itxSquare8(dst, dstStride, pred, predStride, coeff, coeffStride, tx1DDCT, tx1DDCT, activeRows, activeCols)
-}
-
-// InverseAdd8x8Hybrid is InverseAdd16x16Hybrid for the 8x8 block.
-func InverseAdd8x8Hybrid(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
-	vertical, horizontal, ok := itxHybridTypes(txType)
-	if !ok || !itxBlockOK(8, 8, 8, 8, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
-		return false
-	}
-	return itxSquare8(dst, dstStride, pred, predStride, coeff, coeffStride, vertical, horizontal, activeRows, activeCols)
-}
-
 // itxDCT32 is the 32x32 DCT_DCT kernel for any coded extent.
-func itxDCT32(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
+func itxDCT32(px *itxPix, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
 	inCols := itx64Form(activeCols)
 	inRows := itx64Form(activeRows)
 	var tmp [32 * 32]int16
@@ -523,45 +525,14 @@ func itxDCT32(dst []byte, dstStride int, pred []byte, predStride int, coeff []in
 	if !itxL1Ok16(colL1[0].Max(colL1[1])) {
 		return false
 	}
-	itxColStripAdd32(tmp[:], 32, 0, inRows, dst, dstStride, pred, predStride)
-	itxColStripAdd32(tmp[:], 32, 16, inRows, dst, dstStride, pred, predStride)
+	itxColStripAdd32(tmp[:], 32, 0, inRows, px)
+	itxColStripAdd32(tmp[:], 32, 16, inRows, px)
 	return true
 }
 
-// InverseAddDCT32x32Low8 reconstructs one 8-bit 32x32 DCT_DCT block whose
-// coded coefficients lie in rows and columns 0..7; otherwise as
-// InverseAddDCT16x16.
-func InverseAddDCT32x32Low8(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int) bool {
-	if !itxBlockOK(32, 32, 32, 8, dst, dstStride, pred, predStride, coeff, coeffStride, 8, 8) {
-		return false
-	}
-	return itxDCT32(dst, dstStride, pred, predStride, coeff, coeffStride, 8, 8)
-}
-
-// InverseAddDCT32x32Low16 is InverseAddDCT32x32Low8 for the 16x16 corner.
-func InverseAddDCT32x32Low16(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows int) bool {
-	if !itxBlockOK(32, 32, 32, 16, dst, dstStride, pred, predStride, coeff, coeffStride, 16, 16) {
-		return false
-	}
-	return itxDCT32(dst, dstStride, pred, predStride, coeff, coeffStride, 16, 16)
-}
-
-// InverseAddDCT32x32Full is the fused path for the 8-bit 32x32 DCT_DCT block
-// with any coded extent.
-func InverseAddDCT32x32Full(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
-	if !itxBlockOK(32, 32, 32, 32, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
-		return false
-	}
-	return itxDCT32(dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols)
-}
-
-// InverseAddDCT64x64 reconstructs one 8-bit 64x64 DCT_DCT block whose coded
-// coefficients lie in the 32x32 corner (the 32x32 scan at coeffStride);
-// otherwise as InverseAddDCT16x16.
-func InverseAddDCT64x64(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
-	if !itxBlockOK(64, 64, 32, 32, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
-		return false
-	}
+// itxDCT64 is the 64x64 DCT_DCT kernel (coded coefficients in the 32x32
+// corner).
+func itxDCT64(px *itxPix, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
 	inCols := itx64Form(activeCols)
 	inRows := itx64Form(activeRows)
 	var tmp [32 * 64]int16
@@ -579,18 +550,14 @@ func InverseAddDCT64x64(dst []byte, dstStride int, pred []byte, predStride int, 
 		return false
 	}
 	for c0 := 0; c0 < 64; c0 += 16 {
-		itxColStripAdd64(tmp[:], 64, c0, inRows, dst, dstStride, pred, predStride)
+		itxColStripAdd64(tmp[:], 64, c0, inRows, px)
 	}
 	return true
 }
 
-// InverseAddDCT16x32 reconstructs one 8-bit 16x32 (16 wide, 32 high)
-// DCT_DCT block: rect2-scaled DCT16 rows with the inter-pass Round2(., 1),
-// then DCT32 columns; otherwise as InverseAddDCT16x16.
-func InverseAddDCT16x32(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
-	if !itxBlockOK(16, 32, 32, 16, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
-		return false
-	}
+// itxDCT16x32 is the 16 wide, 32 high DCT_DCT kernel: rect2-scaled DCT16
+// rows with the inter-pass Round2(., 1), then DCT32 columns.
+func itxDCT16x32(px *itxPix, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
 	inCols := itx16Form(activeCols)
 	inRows := itx64Form(activeRows)
 	var tmp [32 * 16]int16
@@ -607,15 +574,12 @@ func InverseAddDCT16x32(dst []byte, dstStride int, pred []byte, predStride int, 
 	if !itxL1Ok16(colL1) {
 		return false
 	}
-	itxColStripAdd32(tmp[:], 16, 0, inRows, dst, dstStride, pred, predStride)
+	itxColStripAdd32(tmp[:], 16, 0, inRows, px)
 	return true
 }
 
-// InverseAddDCT32x16 is InverseAddDCT16x32 for the 32 wide, 16 high block.
-func InverseAddDCT32x16(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
-	if !itxBlockOK(32, 16, 16, 32, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
-		return false
-	}
+// itxDCT32x16 is itxDCT16x32 for the 32 wide, 16 high block.
+func itxDCT32x16(px *itxPix, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
 	inCols := itx64Form(activeCols)
 	inRows := itx16Form(activeRows)
 	var tmp [16 * 32]int16
@@ -623,50 +587,211 @@ func InverseAddDCT32x16(dst []byte, dstStride int, pred []byte, predStride int, 
 	if !itxRowStrip32(coeff, coeffStride, 0, inCols, true, 1, tmp[:], &colL1) || !itxL1Ok16(colL1[0].Max(colL1[1])) {
 		return false
 	}
-	itxColStripAdd16(tmp[:], 32, 0, inRows, tx1DDCT, dst, dstStride, pred, predStride)
-	itxColStripAdd16(tmp[:], 32, 16, inRows, tx1DDCT, dst, dstStride, pred, predStride)
+	itxColStripAdd16(tmp[:], 32, 0, inRows, tx1DDCT, px)
+	itxColStripAdd16(tmp[:], 32, 16, inRows, tx1DDCT, px)
 	return true
 }
 
-// The 10- and 12-bit fused kernels are not ported to amd64 yet; the staged
-// path serves those blocks.
+// itxHybridTypes returns the per-pass networks of the DCT/ADST/flipped-ADST
+// pairings the fused hybrid kernels cover; ok is false for every other
+// transform type (including DCT_DCT, which has its own kernels).
+func itxHybridTypes(txType Type) (vertical, horizontal tx1DType, ok bool) {
+	switch txType {
+	case TypeADSTDCT, TypeDCTADST, TypeADSTADST, TypeFlipADSTDCT, TypeDCTFlipADST,
+		TypeFlipADSTFlipADST, TypeADSTFlipADST, TypeFlipADSTADST:
+		return txType.tx1DTypes()
+	}
+	return 0, 0, false
+}
 
-// InverseAddDCT8x8HBD reports that this build has no fused 16bpc path.
+// InverseAddDCT8x8 reconstructs one 8-bit 8x8 DCT_DCT block with coded
+// coefficients in rows 0..activeRows-1 and columns 0..activeCols-1:
+// dst = clip(pred + inverse(coeff)), with the dequantized coefficients
+// column-major at coeffStride. pred may be dst. It reports false, with dst
+// untouched, when the block is outside the kernel's contract or a guard
+// declines; the caller then runs the staged path, which produces the same
+// bytes.
+func InverseAddDCT8x8(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
+	if !itxBlockOK(8, 8, 1, 8, 8, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, 0}
+	return itxSquare8(&px, coeff, coeffStride, tx1DDCT, tx1DDCT, activeRows, activeCols)
+}
+
+// InverseAdd8x8Hybrid is InverseAddDCT8x8 for the DCT/ADST/flipped-ADST
+// pairings (see itxHybridTypes).
+func InverseAdd8x8Hybrid(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
+	vertical, horizontal, ok := itxHybridTypes(txType)
+	if !ok || !itxBlockOK(8, 8, 1, 8, 8, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, 0}
+	return itxSquare8(&px, coeff, coeffStride, vertical, horizontal, activeRows, activeCols)
+}
+
+// InverseAddDCT16x16 is InverseAddDCT8x8 for the 16x16 block.
+func InverseAddDCT16x16(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
+	if !itxBlockOK(16, 16, 1, 16, 16, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, 0}
+	return itxSquare16(&px, coeff, coeffStride, tx1DDCT, tx1DDCT, activeRows, activeCols)
+}
+
+// InverseAdd16x16Hybrid is InverseAdd8x8Hybrid for the 16x16 block.
+func InverseAdd16x16Hybrid(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
+	vertical, horizontal, ok := itxHybridTypes(txType)
+	if !ok || !itxBlockOK(16, 16, 1, 16, 16, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, 0}
+	return itxSquare16(&px, coeff, coeffStride, vertical, horizontal, activeRows, activeCols)
+}
+
+// InverseAddDCT32x32Low8 is InverseAddDCT8x8 for the 32x32 block whose coded
+// coefficients lie in rows and columns 0..7.
+func InverseAddDCT32x32Low8(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int) bool {
+	if !itxBlockOK(32, 32, 1, 32, 8, dst, dstStride, pred, predStride, coeff, coeffStride, 8, 8) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, 0}
+	return itxDCT32(&px, coeff, coeffStride, 8, 8)
+}
+
+// InverseAddDCT32x32Low16 is InverseAddDCT32x32Low8 for the 16x16 corner.
+func InverseAddDCT32x32Low16(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows int) bool {
+	if !itxBlockOK(32, 32, 1, 32, 16, dst, dstStride, pred, predStride, coeff, coeffStride, 16, 16) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, 0}
+	return itxDCT32(&px, coeff, coeffStride, 16, 16)
+}
+
+// InverseAddDCT32x32Full is InverseAddDCT8x8 for the 32x32 block with any
+// coded extent.
+func InverseAddDCT32x32Full(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
+	if !itxBlockOK(32, 32, 1, 32, 32, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, 0}
+	return itxDCT32(&px, coeff, coeffStride, activeRows, activeCols)
+}
+
+// InverseAddDCT64x64 is InverseAddDCT8x8 for the 64x64 block, whose coded
+// coefficients lie in the 32x32 corner (the 32x32 scan at coeffStride).
+func InverseAddDCT64x64(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
+	if !itxBlockOK(64, 64, 1, 32, 32, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, 0}
+	return itxDCT64(&px, coeff, coeffStride, activeRows, activeCols)
+}
+
+// InverseAddDCT16x32 is InverseAddDCT8x8 for the 16 wide, 32 high block.
+func InverseAddDCT16x32(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
+	if !itxBlockOK(16, 32, 1, 32, 16, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, 0}
+	return itxDCT16x32(&px, coeff, coeffStride, activeRows, activeCols)
+}
+
+// InverseAddDCT32x16 is InverseAddDCT8x8 for the 32 wide, 16 high block.
+func InverseAddDCT32x16(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
+	if !itxBlockOK(32, 16, 1, 16, 32, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, 0}
+	return itxDCT32x16(&px, coeff, coeffStride, activeRows, activeCols)
+}
+
+// The 10- and 12-bit forms (2-byte samples, strides in bytes). dav1d's
+// itx16 reuses its 8bpc int16 column functions at 10 bits; here both passes
+// are the 8-bit int16 networks under the same per-lane L1 guards, so none
+// of the staged path's bd + 8 row or max(bd + 6, 16) column clamps can bite
+// (see itx_fused_hbd_gosimd_arm64.go), and the add saturates and clips to
+// the bit depth.
+
+// InverseAddDCT8x8HBD is InverseAddDCT8x8 for a 10- or 12-bit block.
 func InverseAddDCT8x8HBD(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int, bitDepth uint8) bool {
-	return false
+	maxV, ok := itxHBDMax(bitDepth)
+	if !ok || !itxBlockOK(8, 8, 2, 8, 8, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, maxV}
+	return itxSquare8(&px, coeff, coeffStride, tx1DDCT, tx1DDCT, activeRows, activeCols)
 }
 
-// InverseAddDCT16x16HBD reports that this build has no fused 16bpc path.
-func InverseAddDCT16x16HBD(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int, bitDepth uint8) bool {
-	return false
-}
-
-// InverseAddDCT32x32HBD reports that this build has no fused 16bpc path.
-func InverseAddDCT32x32HBD(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int, bitDepth uint8) bool {
-	return false
-}
-
-// InverseAdd16x16HybridHBD reports that this build has no fused 16bpc path.
-func InverseAdd16x16HybridHBD(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int, bitDepth uint8) bool {
-	return false
-}
-
-// InverseAdd8x8HybridHBD reports that this build has no fused 16bpc path.
+// InverseAdd8x8HybridHBD is InverseAdd8x8Hybrid for a 10- or 12-bit block.
 func InverseAdd8x8HybridHBD(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int, bitDepth uint8) bool {
-	return false
+	vertical, horizontal, ok := itxHybridTypes(txType)
+	maxV, okBD := itxHBDMax(bitDepth)
+	if !ok || !okBD || !itxBlockOK(8, 8, 2, 8, 8, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, maxV}
+	return itxSquare8(&px, coeff, coeffStride, vertical, horizontal, activeRows, activeCols)
 }
 
-// InverseAddDCT64x64HBD reports that this build has no fused 16bpc path.
+// InverseAddDCT16x16HBD is InverseAddDCT16x16 for a 10- or 12-bit block.
+func InverseAddDCT16x16HBD(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int, bitDepth uint8) bool {
+	maxV, ok := itxHBDMax(bitDepth)
+	if !ok || !itxBlockOK(16, 16, 2, 16, 16, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, maxV}
+	return itxSquare16(&px, coeff, coeffStride, tx1DDCT, tx1DDCT, activeRows, activeCols)
+}
+
+// InverseAdd16x16HybridHBD is InverseAdd16x16Hybrid for a 10- or 12-bit
+// block.
+func InverseAdd16x16HybridHBD(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int, bitDepth uint8) bool {
+	vertical, horizontal, ok := itxHybridTypes(txType)
+	maxV, okBD := itxHBDMax(bitDepth)
+	if !ok || !okBD || !itxBlockOK(16, 16, 2, 16, 16, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, maxV}
+	return itxSquare16(&px, coeff, coeffStride, vertical, horizontal, activeRows, activeCols)
+}
+
+// InverseAddDCT32x32HBD is InverseAddDCT32x32Full for a 10- or 12-bit block.
+func InverseAddDCT32x32HBD(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int, bitDepth uint8) bool {
+	maxV, ok := itxHBDMax(bitDepth)
+	if !ok || !itxBlockOK(32, 32, 2, 32, 32, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, maxV}
+	return itxDCT32(&px, coeff, coeffStride, activeRows, activeCols)
+}
+
+// InverseAddDCT64x64HBD is InverseAddDCT64x64 for a 10- or 12-bit block.
 func InverseAddDCT64x64HBD(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int, bitDepth uint8) bool {
-	return false
+	maxV, ok := itxHBDMax(bitDepth)
+	if !ok || !itxBlockOK(64, 64, 2, 32, 32, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, maxV}
+	return itxDCT64(&px, coeff, coeffStride, activeRows, activeCols)
 }
 
-// InverseAddDCT16x32HBD reports that this build has no fused 16bpc path.
+// InverseAddDCT16x32HBD is InverseAddDCT16x32 for a 10- or 12-bit block.
 func InverseAddDCT16x32HBD(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int, bitDepth uint8) bool {
-	return false
+	maxV, ok := itxHBDMax(bitDepth)
+	if !ok || !itxBlockOK(16, 32, 2, 32, 16, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, maxV}
+	return itxDCT16x32(&px, coeff, coeffStride, activeRows, activeCols)
 }
 
-// InverseAddDCT32x16HBD reports that this build has no fused 16bpc path.
+// InverseAddDCT32x16HBD is InverseAddDCT32x16 for a 10- or 12-bit block.
 func InverseAddDCT32x16HBD(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int, bitDepth uint8) bool {
-	return false
+	maxV, ok := itxHBDMax(bitDepth)
+	if !ok || !itxBlockOK(32, 16, 2, 16, 32, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	px := itxPix{dst, dstStride, pred, predStride, maxV}
+	return itxDCT32x16(&px, coeff, coeffStride, activeRows, activeCols)
 }
