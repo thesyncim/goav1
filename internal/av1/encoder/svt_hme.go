@@ -1,5 +1,7 @@
 package encoder
 
+import "unsafe"
+
 // svt_hme.go is SVT-AV1's hierarchical ME for one 64x64 superblock at
 // preset 12 rtc, the search center of the open-loop ME sweep
 // (pframe_depth_removal.go):
@@ -49,6 +51,13 @@ type svtPlane struct {
 	pix          []byte
 	w, h, stride int
 	border, org  int
+	// colSum holds the same-parity column prefix sums of the padded plane
+	// (buildColSums) when colSumOK: colSum[(r+2)*stride+c] is the sum of
+	// pix rows r, r-2, r-4, ... of column c, rows 0 and 1 zero. A SUB_SAD
+	// block's reference total is then two loads per column
+	// (svtHMESearchColSum).
+	colSum   []uint16
+	colSumOK bool
 }
 
 func (q *svtPlane) size(w, h, border int) {
@@ -57,6 +66,35 @@ func (q *svtPlane) size(w, h, border int) {
 	q.org = border*q.stride + border
 	if n := q.stride * (h + 2*border); len(q.pix) < n {
 		q.pix = make([]byte, n)
+	}
+	q.colSumOK = false
+}
+
+// buildColSums fills colSum from the padded plane. The sums wrap in uint16;
+// a block's column total (at most 16 rows of 255) is the exact difference
+// of two of them.
+func (q *svtPlane) buildColSums() {
+	rows := q.h + 2*q.border
+	// 16 slack samples: the colsum loads of svtHMESearchColSum read eight
+	// columns at a time and may pass the last column of the last row.
+	n := q.stride*(rows+2) + 16
+	if len(q.colSum) < n {
+		q.colSum = make([]uint16, n)
+	}
+	clear(q.colSum[:2*q.stride])
+	svtColSumRowsArch(q.colSum, q.pix, q.stride, rows)
+	q.colSumOK = true
+}
+
+// svtColSumRows is the scalar definition of svtColSumRowsArch.
+func svtColSumRows(cs []uint16, pix []byte, stride, rows int) {
+	for r := 0; r < rows; r++ {
+		prev := cs[r*stride : r*stride+stride]
+		next := cs[(r+2)*stride : (r+2)*stride+stride]
+		row := pix[r*stride : r*stride+stride]
+		for c := range row {
+			next[c] = prev[c] + uint16(row[c])
+		}
 	}
 }
 
@@ -97,6 +135,14 @@ func (q *svtPlane) copyFrom(o *svtPlane) {
 	q.size(o.w, o.h, o.border)
 	n := q.stride * (q.h + 2*q.border)
 	copy(q.pix[:n], o.pix[:n])
+	if o.colSumOK {
+		m := q.stride*(q.h+2*q.border+2) + 16
+		if len(q.colSum) < m {
+			q.colSum = make([]uint16, m)
+		}
+		copy(q.colSum[:m], o.colSum[:m])
+		q.colSumOK = true
+	}
 }
 
 // svtPyramid holds the current source pyramid, the pyramids of the
@@ -175,6 +221,10 @@ func buildPyramid(half, six *svtPlane, src SourceFrame420, hint svtPyramidHint) 
 	}
 	half.pad()
 	six.pad()
+	if svtHMEColSums {
+		half.buildColSums()
+		six.buildColSums()
+	}
 	return fromHint
 }
 
@@ -237,6 +287,9 @@ func svtHMESearch(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (bestSAD
 	bestSAD = ^uint32(0)
 	stride := cur.stride
 	rows := bh / 2
+	if svtHMEColSums && ref.colSumOK && w%8 == 0 && (bw == 16 || bw == 32) && rows <= 16 && ref.stride == stride {
+		return svtHMESearchColSum(cur, ref, bx, by, bw, bh, ox, oy, w, h)
+	}
 	s2 := 2 * stride
 	s := cur.pix[cur.org+by*stride+bx:]
 	for y := 0; y < h; y++ {
@@ -295,6 +348,84 @@ func svtHMESearch(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (bestSAD
 		}
 	}
 	return bestSAD, bestX, bestY
+}
+
+// svtHMESearchColSum is svtHMESearch's eight-position path on the identity
+//
+//	sum |a - b| = sum a + sum b - 2 * sum min(a, b):
+//
+// every row and position costs one MIN plus the byte-pair accumulate instead
+// of MAX, MIN, SUB plus the accumulate. The source block's total is shared
+// by every position, and each position's reference total comes from the
+// reference plane's same-parity column sums (svtPlane.colSum): per search
+// row, the block's column totals are bottom minus top prefix rows, and the
+// eight positions' window totals are their sliding sums. The SADs are equal
+// to svtSAD16xhx8's / svtSAD32xhx8's, so the search (y outer, x inner,
+// first strict minimum) picks the same position.
+func svtHMESearchColSum(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (bestSAD uint32, bestX, bestY int) {
+	bestSAD = ^uint32(0)
+	stride := cur.stride
+	rows := bh / 2
+	s2 := 2 * stride
+	s := cur.pix[cur.org+by*stride+bx:]
+	srcSum := svtBlockSumSubArch(s, s2, bw, rows)
+	// Position (x, y) reads the reference rows r0+y, r0+y+2, ...,
+	// r0+y+2*(rows-1) from column c0+x (eight positions read bw+7 columns),
+	// and column c of those rows totals colSum[(r0+y+2*rows)*stride+c] -
+	// colSum[(r0+y)*stride+c] (eight columns loaded at a time, bw+8).
+	r0 := ref.border + by + oy
+	c0 := ref.border + bx + ox
+	_ = s[(rows-1)*s2+bw-1]
+	_ = ref.pix[(r0+h-1+2*(rows-1))*stride+c0+w+bw-2]
+	_ = ref.colSum[(r0+h-1+2*rows)*stride+c0+w+bw-1]
+	sp := unsafe.Pointer(&s[0])
+	for y := 0; y < h; y++ {
+		top := (r0+y)*stride + c0
+		bot := top + 2*rows*stride
+		for x := 0; x < w; x += 8 {
+			var t [8]uint32
+			svtHMEEightColSum(&t, sp, unsafe.Pointer(&ref.pix[top+x]), unsafe.Pointer(&ref.colSum[top+x]), unsafe.Pointer(&ref.colSum[bot+x]), s2, bw, rows, srcSum)
+			m := min(min(min(t[0], t[1]), min(t[2], t[3])), min(min(t[4], t[5]), min(t[6], t[7])))
+			if sad := m << 1; sad < bestSAD {
+				k := 0
+				for t[k] != m {
+					k++
+				}
+				bestSAD, bestX, bestY = sad, ox+x+k, oy+y
+			}
+		}
+	}
+	return bestSAD, bestX, bestY
+}
+
+// svtBlockSumSub is the sum of the bw x rows block at s (row stride s2).
+func svtBlockSumSub(s []byte, s2, bw, rows int) uint32 {
+	var t uint32
+	for r := 0; r < rows; r++ {
+		for _, v := range s[r*s2 : r*s2+bw] {
+			t += uint32(v)
+		}
+	}
+	return t
+}
+
+// svtHMEEightColSumScalar is the definition of svtHMEEightColSum: t[k] is
+// the SAD of the bw-wide (16 or 32), rows-tall block at s (stride s2)
+// against ref+k (stride s2), from the source total srcSum, the reference
+// column totals bot[c] - top[c] and the sum of the per-sample minima.
+func svtHMEEightColSumScalar(t *[8]uint32, s []byte, s2 int, ref []byte, top, bot []uint16, bw, rows int, srcSum uint32) {
+	for k := range t {
+		var q, mn uint32
+		for c := k; c < k+bw; c++ {
+			q += uint32(bot[c] - top[c])
+		}
+		for r := 0; r < rows; r++ {
+			for c := 0; c < bw; c++ {
+				mn += uint32(min(s[r*s2+c], ref[r*s2+k+c]))
+			}
+		}
+		t[k] = srcSum + q - 2*mn
+	}
 }
 
 // copySlotFrom copies q's reference slot s into p's (the pipelined leaf's
