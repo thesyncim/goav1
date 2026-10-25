@@ -272,6 +272,9 @@ func predictInterPlaneBlockFromOriginWithFilterSizeScratch(dst frame.Plane, ref 
 		if bytesPerSample == 1 && mc8CopyFast(&dst, &ref, dstX, dstY, refX, refY, width, height) {
 			return nil
 		}
+		if bytesPerSample == 2 && mc16CopyFast(&dst, &ref, dstX, dstY, refX, refY, width, height) {
+			return nil
+		}
 		if planeRegionFits(ref, bytesPerSample, refX, refY, width, height) {
 			if err := dsp.CopyPlaneBlock(dst, ref, bytesPerSample, dstX, dstY, refX, refY, width, height); err != nil {
 				return ErrInvalidMotion
