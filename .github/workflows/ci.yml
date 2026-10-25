@@ -150,6 +150,11 @@ jobs:
           go test -count=1 -v
           -run '^(TestNativeDCTLanes4.*|TestAMD64DCTLanes4Dispatch|TestAMD64FusedITXDispatch|TestInverseAdd.*MatchesStagedPath|TestSIMDAMD64MatchesArchsimdQueries|TestDetectedMatchesArch)$'
           ./internal/av1/transform ./internal/av1/dsp/cpu
+      - name: 8-bit motion compensation AVX2 parity and live dispatch
+        run: >-
+          go test -count=1 -v
+          -run '^TestAMD64MC8.*$'
+          ./internal/av1/motion
       - name: film grain AVX2 parity and live dispatch
         run: >-
           go test -count=1 -v
