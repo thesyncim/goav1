@@ -186,10 +186,14 @@ func ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst []byte, dstStride 
 		}
 	} else if bytesPerSample == 2 && cfg.Transform == transform.TypeDCTDCT && width == height &&
 		visibleWidth == width && visibleHeight == height && activeRows > 0 && activeCols > 0 {
-		// The 10- and 12-bit square DCT_DCT blocks: the same int16 passes
-		// under the same guards, added to 16bpc samples (dav1d itx16 reuses
-		// its 8bpc column functions at 10 bits).
+		// The 10- and 12-bit square DCT_DCT blocks (8x8 to 64x64): the same
+		// int16 passes under the same guards, added to 16bpc samples (dav1d
+		// itx16 reuses its 8bpc column functions at 10 bits).
 		switch width {
+		case 64:
+			if transform.InverseAddDCT64x64HBD(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols, bitDepth) {
+				return nil
+			}
 		case 32:
 			if transform.InverseAddDCT32x32HBD(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols, bitDepth) {
 				return nil
