@@ -227,7 +227,7 @@ func (b *FrameWorkBatch) predictBlockInterWithFiltersPtr(index int, visit *tile.
 		}
 		return nil
 	}
-	if handled, err := b.predictBlockInterLean8(index, visit, scratch, filters); handled {
+	if handled, err := b.predictBlockInterLean(index, visit, scratch, filters); handled {
 		return err
 	}
 	if visit.Prediction.InterMotion.References.Compound {
@@ -1745,14 +1745,15 @@ func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *t
 	return b.blendCompoundConvBufs(visit, plane, scratch, blend, geom.Output, geom.bytesPerSample(), geom.X, geom.Y, geom.width(), geom.height(), geom.SubsamplingX, geom.SubsamplingY)
 }
 
-// predictBlockInterCompoundLean is the same-size 8-bit translational compound
-// route: both references go straight to motion.PrepTranslation8 from the lean
-// target and the CONV_BUFs are blended as in predictBlockInterCompoundConvBufPtr.
-// It reports false (with nothing written) when a reference is scaled, a
-// global-warp model applies, or the stream is not 8-bit, leaving those to the
+// predictBlockInterCompoundLean is the same-size translational compound
+// route: both references go straight to motion.PrepTranslation8 (or
+// PrepTranslation16 above 8 bits) from the lean target and the CONV_BUFs are
+// blended as in predictBlockInterCompoundConvBufPtr. It reports false (with
+// nothing written) when a reference is scaled, a global-warp model applies, or
+// the target's sample width does not match the bit depth, leaving those to the
 // general geometry path.
 func (b *FrameWorkBatch) predictBlockInterCompoundLean(visit *tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, t *frameWorkInterTarget, blend tile.CompoundBlendResult, filters motion.InterpFilters) (bool, error) {
-	if t.bps != 1 || b.Sequence.ColorConfig.BitDepth != 8 {
+	if !b.leanSampleWidth(t.bps) {
 		return false, nil
 	}
 	if t.width >= 8 && t.height >= 8 &&
@@ -1774,11 +1775,20 @@ func (b *FrameWorkBatch) predictBlockInterCompoundLean(visit *tile.BlockLoopVisi
 	if ref1 == nil {
 		return false, nil
 	}
-	if err := motion.PrepTranslation8(&scratch.Conv0, ref0, t.x, t.y, t.width, t.height, t.filterW, t.filterH, motionResult.MV[0], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
-		return true, ErrInvalidBatch
-	}
-	if err := motion.PrepTranslation8(&scratch.Conv1, ref1, t.x, t.y, t.width, t.height, t.filterW, t.filterH, motionResult.MV[1], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
-		return true, ErrInvalidBatch
+	if t.bps == 1 {
+		if err := motion.PrepTranslation8(&scratch.Conv0, ref0, t.x, t.y, t.width, t.height, t.filterW, t.filterH, motionResult.MV[0], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
+			return true, ErrInvalidBatch
+		}
+		if err := motion.PrepTranslation8(&scratch.Conv1, ref1, t.x, t.y, t.width, t.height, t.filterW, t.filterH, motionResult.MV[1], t.ssX, t.ssY, filters, &scratch.Compound); err != nil {
+			return true, ErrInvalidBatch
+		}
+	} else {
+		if err := b.prepTranslation16(&scratch.Conv0, t, ref0, motionResult.MV[0], filters, scratch); err != nil {
+			return true, ErrInvalidBatch
+		}
+		if err := b.prepTranslation16(&scratch.Conv1, t, ref1, motionResult.MV[1], filters, scratch); err != nil {
+			return true, ErrInvalidBatch
+		}
 	}
 	return true, b.blendCompoundConvBufs(visit, plane, scratch, blend, t.output, t.bps, t.x, t.y, t.width, t.height, t.ssX, t.ssY)
 }
@@ -2105,22 +2115,27 @@ func frameWorkPredictionFilterExtentPacked(width int, height int) (uint8, bool) 
 }
 
 func (b *FrameWorkBatch) predictBlockInterReferencePlaneToOutput(index int, block *tile.BlockVisit, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
-	// Same-size 8-bit references take the lean target + PredictTranslation8
-	// route; scaled references, high bit depth and every error case rerun the
-	// general geometry path below, which owns their semantics.
-	if b.Sequence.ColorConfig.BitDepth == 8 {
+	// Same-size references take the lean target + PredictTranslation{8,16}
+	// route; scaled references and every error case rerun the general
+	// geometry path below, which owns their semantics.
+	{
 		var t frameWorkInterTarget
 		ok, err := b.interTarget(index, block, plane, &t)
 		if err != nil || !ok {
 			return err
 		}
-		if reference, ok := frameWorkReferenceFromTile(refFrame); ok && t.bps == 1 {
+		if reference, ok := frameWorkReferenceFromTile(refFrame); ok && b.leanSampleWidth(t.bps) {
 			var tmp frame.Plane
 			if ref := b.sameSizeRefPlane(reference, plane, t.codedW, t.codedH, &tmp); ref != nil {
 				// Select the interpolation-filter kernel from the un-clipped
 				// plane block dimensions (see
 				// predictBlockInterReferencePlaneToOutputWithGeometry).
-				if err := motion.PredictTranslation8(&t.output, ref, t.x, t.y, t.writeW, t.writeH, t.filterW, t.filterH, mv, t.ssX, t.ssY, filters, frameWorkConvolveScratch(scratch)); err != nil {
+				if t.bps == 1 {
+					err = motion.PredictTranslation8(&t.output, ref, t.x, t.y, t.writeW, t.writeH, t.filterW, t.filterH, mv, t.ssX, t.ssY, filters, frameWorkConvolveScratch(scratch))
+				} else {
+					err = b.predictTranslation16(&t, ref, mv, filters, scratch)
+				}
+				if err != nil {
 					return ErrInvalidBatch
 				}
 				return nil
