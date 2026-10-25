@@ -13,11 +13,15 @@ type ReferenceMVFrame struct {
 	Entries []ReferenceMVEntry
 }
 
-// ReferenceMVEntry mirrors libaom's MV_REF payload.
+// ReferenceMVEntry mirrors libaom's MV_REF payload (dav1d's
+// refmvs_temporal_block). The fields leave no implicit padding and pad
+// stays zero, so entries are 8 bytes of plain memory: load_tmvs compares
+// whole entries with one 64-bit compare, and rows index with a shift.
 type ReferenceMVEntry struct {
-	Ref   ReferenceFrame
 	MV    motion.Vector
+	Ref   ReferenceFrame
 	Valid bool
+	pad   [2]uint8
 }
 
 // ReferenceMVFrameBlockRequest describes one decoded block to copy into the
