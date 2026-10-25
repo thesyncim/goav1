@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
 
-//go:build purego || !arm64 || !goexperiment.simd
+//go:build purego || !goexperiment.simd || (!arm64 && !amd64)
 
 package cdef
 
