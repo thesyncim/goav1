@@ -313,7 +313,10 @@ func (s *FrameWorkState) RunStepFrameThreaded(event *Event, step FrameWorkStep, 
 		RestorationFrameBuffers: restoration,
 		pool:                    workerPool,
 	}
-	frameWorkSkipHiddenFilmGrain(&ft.post)
+	// Film grain is not part of the frame's decode: dav1d applies it when the
+	// picture leaves the frame-thread ring (output_image -> dav1d_apply_grain),
+	// into a new picture, so the owner grains shown frames at output.
+	frameWorkMarkCompletedPostFilters(&ft.post, FrameWorkPostFilterFilmGrain)
 	ft.hasPost = true
 	return nil
 }

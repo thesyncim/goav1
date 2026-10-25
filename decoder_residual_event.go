@@ -573,7 +573,7 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 		sequence = decoderFrameWorkResidualEventSequence(sequence, &events[i])
 
 		if r.fp != nil {
-			if r.fp.eligible(sequence, &events[i]) {
+			if r.fp.eligible(&events[i]) {
 				step, err := r.fp.runFrame(sequence, &events[i])
 				if err != nil {
 					return result, err
@@ -1485,7 +1485,18 @@ func decoderResolvePostPublisher(publisher DecoderFrameWorkPostFilterGlobalSurfa
 // untouched; only its in-loop filters already ran, so every other stage is
 // marked complete.
 func decoderFrameWorkShowExistingFilmGrain(event *DecoderEvent, step DecoderFrameWorkStep, output *Frame, post DecoderFrameWorkPostFilterRunner) (*Frame, error) {
-	if step.Kind != DecoderFrameWorkStepShowExisting || output == nil || post == nil || !event.FilmGrain.Apply {
+	if step.Kind != DecoderFrameWorkStepShowExisting {
+		return output, nil
+	}
+	return decoderFrameWorkOutputFilmGrain(event, step, output, post)
+}
+
+// decoderFrameWorkOutputFilmGrain applies film grain to an output picture
+// whose in-loop filters already ran (dav1d output_image ->
+// dav1d_apply_grain): post synthesizes the grain into its own display
+// surface, and output stays the clean reference.
+func decoderFrameWorkOutputFilmGrain(event *DecoderEvent, step DecoderFrameWorkStep, output *Frame, post DecoderFrameWorkPostFilterRunner) (*Frame, error) {
+	if output == nil || post == nil || !event.FilmGrain.Apply {
 		return output, nil
 	}
 	provider, ok := post.(DecoderFrameWorkPostFilterOutputProvider)
