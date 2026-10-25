@@ -203,8 +203,12 @@ type frameCDFs = threading.FrameWorkTileResidualCDFStorage
 // state frame encoding allocates nothing beyond the temporal-unit assembly.
 type pframeCoder struct {
 	// ownHME is the frame ME of coders not driven by a VideoEncoder.
-	ownHME               *hmeState
-	st                   lossyEncodeState
+	ownHME *hmeState
+	st     lossyEncodeState
+	// svtKeyPD0 runs SVT-AV1's light-PD0 keyframe partition
+	// (keyframe_pd0.go): set by the VideoEncoder, which classifies keyframe
+	// content first.
+	svtKeyPD0            bool
 	effortLevel          int8
 	partCDFs             tile.PartitionCDFs
 	refCDFs              tile.InterRefCDFs

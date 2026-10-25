@@ -32,9 +32,23 @@ func ForwardDCT64x32(coeff []int32, coeffStride int, residual []int16, residualS
 }
 
 func forwardDCT64Extent(coeff []int32, coeffStride int, residual []int16, residualStride int, size Size) error {
+	_, err := forwardDCT64ExtentEnergy(coeff, coeffStride, residual, residualStride, size)
+	return err
+}
+
+// ForwardDCT64ExtentEnergy is the forward DCT_DCT of a transform with a
+// 64-sample side (64x64, 64x32, 32x64, 64x16, 16x64) that also returns the
+// energy of the coefficients the 64-extent zeroing drops: SVT-AV1's
+// svt_handle_transform64x* three_quad_energy, which its mode decision adds to
+// the transform-domain distortion.
+func ForwardDCT64ExtentEnergy(coeff []int32, coeffStride int, residual []int16, residualStride int, size Size) (uint64, error) {
+	return forwardDCT64ExtentEnergy(coeff, coeffStride, residual, residualStride, size)
+}
+
+func forwardDCT64ExtentEnergy(coeff []int32, coeffStride int, residual []int16, residualStride int, size Size) (uint64, error) {
 	params, ok := fwdTxfm2DParams(size)
 	if !ok {
-		return ErrInvalidTransform
+		return 0, ErrInvalidTransform
 	}
 	width := int(size.Width)
 	height := int(size.Height)
@@ -45,9 +59,10 @@ func forwardDCT64Extent(coeff []int32, coeffStride int, residual []int16, residu
 		residualStride < width ||
 		!blockFits(len(residual), residualStride, width, height) ||
 		!coeffBlockFits(len(coeff), coeffStride, coeffWidth, coeffHeight) {
-		return ErrInvalidTransform
+		return 0, ErrInvalidTransform
 	}
 
+	var energy uint64
 	var buf [64 * 64]int32
 	var in, out [64]int32
 	for c := range width {
@@ -70,13 +85,19 @@ func forwardDCT64Extent(coeff []int32, coeffStride int, residual []int16, residu
 			fwdRoundShiftSqrt2(out[:width])
 		}
 		if r >= coeffHeight {
+			for c := range width {
+				energy += uint64(int64(out[c]) * int64(out[c]))
+			}
 			continue
 		}
 		for c := range coeffWidth {
 			coeff[c*coeffStride+r] = out[c]
 		}
+		for c := coeffWidth; c < width; c++ {
+			energy += uint64(int64(out[c]) * int64(out[c]))
+		}
 	}
-	return nil
+	return energy, nil
 }
 
 // fwdDCT64 is av1_fdct64 with the cospi table and cos_bit of the active pass.
