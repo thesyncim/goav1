@@ -411,6 +411,8 @@ func (f *FrameThreadFrame) ApplyPost(post FrameWorkPostFilterRunner, parsed, rec
 		if !parsed.Wait(threading.FrameProgressDone) {
 			return threading.ErrFrameThreadReference
 		}
+	} else {
+		ctx.restorationRecordsPending = remaining.Has(FrameWorkPostFilterLoopRestoration)
 	}
 	if !ctx.rowPipelineCandidate(remaining) {
 		if !recon.Wait(threading.FrameProgressDone) {
