@@ -1,5 +1,7 @@
 package tile
 
+import "unsafe"
+
 // This file ports dav1d's temporal-MV projection: the mfmv setup of
 // dav1d_refmvs_init_frame and load_tmvs_c, which projects the saved motion
 // of up to three reference frames into a 16-row rp_proj window one tile
@@ -99,13 +101,6 @@ func (rt *refmvsTile) temporalRows(by8 int32) ([]TemporalMotionEntry, int32, int
 	return nil, 0, 0
 }
 
-func refmvsApplySign(v, s int32) int32 {
-	if s < 0 {
-		return -v
-	}
-	return v
-}
-
 func refmvsAbs(v int32) int32 {
 	if v < 0 {
 		return -v
@@ -113,7 +108,15 @@ func refmvsAbs(v int32) int32 {
 	return v
 }
 
-// loadTmvs ports load_tmvs_c for one tile superblock row (8x8 units).
+// loadTmvs ports dav1d's load_tmvs (load_tmvs_c and the arm64
+// load_tmvs_neon) for one tile superblock row (8x8 units). As in the asm, a
+// source row is walked as one slice, the projection runs on the div_mult
+// table with the clamp folded into the >> 6 offset, and runs of identical
+// entries are skipped with whole-entry compares. It stays out of line, a
+// leaf like the asm, so its loop state keeps registers instead of sharing
+// the block loop's.
+//
+//go:noinline
 func (rt *refmvsTile) loadTmvs(colStart8, colEnd8, rowStart8, rowEnd8 int32) {
 	m := &rt.frame.mfmv
 	rowEnd8 = min(rowEnd8, m.ih8)
@@ -131,55 +134,78 @@ func (rt *refmvsTile) loadTmvs(colStart8, colEnd8, rowStart8, rowEnd8 int32) {
 		if ref2cur == refmvsInvalidRef2Cur {
 			continue
 		}
-		ref := int32(m.ref[n])
-		refSign := ref - 4
-		src := m.rpRef[ref]
+		ref := m.ref[n]
+		refSign := int32(ref) - 4
+		ref2refs := &m.ref2ref[n]
+		src := m.rpRef[ref&7]
 		srcStride := int32(src.Stride)
 		for y := rowStart8; y < rowEnd8; y++ {
 			ySBAlign := y &^ 7
 			yProjStart := max(ySBAlign, rowStart8)
 			yProjEnd := min(ySBAlign+8, rowEnd8)
-			r := src.Entries[y*srcStride : y*srcStride+colEnd8i]
-			for x := colStart8i; x < colEnd8i; x++ {
-				rb := r[x]
+			r := src.Entries[y*srcStride+colStart8i : y*srcStride+colEnd8i]
+			for i := 0; i < len(r); {
+				rb := r[i]
 				if !rb.Valid {
+					i++
 					continue
 				}
-				ref2ref := m.ref2ref[n][rb.Ref]
+				// dav1d compares rb->ref and rb->mv.n; one 64-bit
+				// compare covers the whole entry.
+				rbBits := refMVEntryBits(&r[i])
+				ref2ref := ref2refs[uint8(rb.Ref)]
 				if ref2ref == 0 {
+					i++
 					continue
 				}
-				offset := refmvsMVProjection(rb.MV, ref2cur, ref2ref)
-				ox, oy := offset.col(), offset.row()
-				posX := x + refmvsApplySign(refmvsAbs(ox)>>6, ox^refSign)
-				posY := y + refmvsApplySign(refmvsAbs(oy)>>6, oy^refSign)
+				// mv_projection with apply_sign(iclip(abs(offset) >> 6,
+				// 0, 0x3fff >> 6), offset ^ ref_sign)
+				frac := ref2cur * refmvsDivMult[ref2ref&31]
+				oy := int32(rb.MV.Row) * frac
+				ox := int32(rb.MV.Col) * frac
+				oy = (oy + 8192 + oy>>31) >> 14
+				ox = (ox + 8192 + ox>>31) >> 14
+				dy := min(refmvsAbs(oy)>>6, 0x3fff>>6)
+				dx := min(refmvsAbs(ox)>>6, 0x3fff>>6)
+				if oy^refSign < 0 {
+					dy = -dy
+				}
+				if ox^refSign < 0 {
+					dx = -dx
+				}
+				posY := y + dy
 				if posY >= yProjStart && posY < yProjEnd {
-					pos := (posY & 15) * stride
+					x := colStart8i + int32(i)
+					posX := x + dx
+					dst := proj[(posY&15)*stride:]
 					entry := TemporalMotionEntry{MV: rb.MV, RefFrameOffset: uint8(ref2ref), Valid: true}
 					for {
 						xSBAlign := x &^ 7
 						if posX >= max(xSBAlign-8, colStart8) && posX < min(xSBAlign+16, colEnd8) {
-							proj[pos+posX] = entry
+							dst[posX] = entry
 						}
-						x++
-						if x >= colEnd8i || r[x] != rb {
+						i++
+						if i >= len(r) || refMVEntryBits(&r[i]) != rbBits {
 							break
 						}
+						x++
 						posX++
 					}
 				} else {
-					for {
-						x++
-						if x >= colEnd8i || r[x] != rb {
-							break
-						}
+					for i++; i < len(r) && refMVEntryBits(&r[i]) == rbBits; i++ {
 					}
 				}
-				x--
 			}
 		}
 	}
 	if refmvsOracleEnabled {
 		refmvsOracleTmvs(rt, colStart8, colEnd8, rowStart8, rowEnd8)
 	}
+}
+
+// refMVEntryBits loads a ReferenceMVEntry as one word; the struct has no
+// implicit padding and its pad bytes stay zero, so equal words are equal
+// entries.
+func refMVEntryBits(e *ReferenceMVEntry) uint64 {
+	return *(*uint64)(unsafe.Pointer(e))
 }
