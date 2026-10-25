@@ -159,3 +159,81 @@ func TestMC16PrepFastEveryPhase(t *testing.T) {
 		}
 	}
 }
+
+// mc16RefPut is the per-tap-clamping scalar single-prediction reference.
+func mc16RefPut(dst frame.Plane, ref frame.Plane, bitDepth, dstX, dstY, refX, refY, w, h, subX, subY int, filters InterpFilters) {
+	xk, _ := interpKernel(filters.X, w, subX)
+	yk, _ := interpKernel(filters.Y, h, subY)
+	maxV, _ := highBDMax(uint8(bitDepth))
+	switch {
+	case subX != 0 && subY != 0:
+		convolve2DHighBDClampedPureGo(dst, ref, uint8(bitDepth), maxV, dstX, dstY, refX, refY, w, h, xk, yk)
+	case subX != 0:
+		convolveXHighBDClampedPureGo(dst, ref, uint8(bitDepth), maxV, dstX, dstY, refX, refY, w, h, xk)
+	default:
+		convolveYHighBDClampedPureGo(dst, ref, uint8(bitDepth), maxV, dstX, dstY, refX, refY, w, h, yk)
+	}
+}
+
+func TestMC16PutFastMatchesPureGo(t *testing.T) {
+	rng := rand.New(rand.NewSource(18))
+	sizes := [][2]int{{4, 4}, {4, 8}, {4, 16}, {4, 2}, {4, 5}, {8, 5}, {16, 7}, {8, 8}, {16, 16}, {32, 32}, {8, 4}, {16, 4}, {8, 16}, {16, 8}, {64, 64}, {128, 128}, {32, 8}, {16, 64}, {24, 6}, {8, 2}}
+	const rw, rh = 200, 180
+	const dw, dh = 160, 150
+	scratch := new(ConvolveScratch)
+	for _, bd := range []int{10, 12} {
+		for pattern := range 5 {
+			ref := mc16TestRef(rng, rw, rh, rw+24, bd, pattern)
+			for _, sz := range sizes {
+				w, h := sz[0], sz[1]
+				for iter := range 64 {
+					filters := InterpFilters{X: mc8TestFilters[rng.Intn(len(mc8TestFilters))], Y: mc8TestFilters[rng.Intn(len(mc8TestFilters))]}
+					subX, subY := 1+rng.Intn(15), 1+rng.Intn(15)
+					switch iter % 4 {
+					case 0:
+						subX = 0
+					case 1:
+						subY = 0
+					}
+					var refX, refY int
+					switch iter % 5 {
+					case 0, 4:
+						refX = 4 + rng.Intn(rw-w-12)
+						refY = 4 + rng.Intn(rh-h-12)
+					case 1:
+						refX = -rng.Intn(w + 6)
+						refY = -rng.Intn(h + 6)
+					case 2:
+						refX = rw - w + rng.Intn(w+6)
+						refY = rh - h + rng.Intn(h+6)
+					default:
+						refX = rng.Intn(rw+2*w) - w - 3
+						refY = rng.Intn(rh+2*h) - h - 3
+					}
+					dstX, dstY := rng.Intn(dw-w+1), rng.Intn(dh-h+1)
+					want := frame.Plane{Pix: make([]byte, 2*(dw+8)*dh), Stride: 2 * (dw + 8), Width: dw, Height: dh}
+					for i := range want.Pix {
+						want.Pix[i] = byte(i * 7)
+					}
+					got := frame.Plane{Pix: slices.Clone(want.Pix), Stride: want.Stride, Width: dw, Height: dh}
+					mc16RefPut(want, ref, bd, dstX, dstY, refX, refY, w, h, subX, subY, filters)
+					if !mc16PutFast(&got, &ref, bd, dstX, dstY, refX, refY, w, h, w, h, subX, subY, filters, scratch) {
+						kx, ky := mc8Kind(filters.X, w), mc8Kind(filters.Y, h)
+						if (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) && (w == 4 || w&7 == 0) && (bd == 10 || subX == 0 || subY == 0) {
+							t.Fatalf("mc16PutFast declined bd=%d w=%d h=%d filters=%v sub=%d,%d", bd, w, h, filters, subX, subY)
+						}
+						continue
+					}
+					if !slices.Equal(got.Pix, want.Pix) {
+						for i := range want.Pix {
+							if got.Pix[i] != want.Pix[i] {
+								y, x := i/want.Stride, (i%want.Stride)/2
+								t.Fatalf("bd %d pattern %d w=%d h=%d filters=%v sub=%d,%d ref=%d,%d dst=%d,%d: first mismatch at x=%d y=%d", bd, pattern, w, h, filters, subX, subY, refX, refY, dstX, dstY, x, y)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

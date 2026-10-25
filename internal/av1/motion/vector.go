@@ -361,6 +361,9 @@ func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 }
 
 func predictInterPlaneBlockHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, refX int, refY int, width int, height int, filterW int, filterH int, subX int, subY int, filters InterpFilters, scratch *ConvolveScratch) error {
+	if mc16PutFast(&dst, &ref, int(bitDepth), dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch) {
+		return nil
+	}
 	max, ok := highBDMax(bitDepth)
 	if !ok || width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
