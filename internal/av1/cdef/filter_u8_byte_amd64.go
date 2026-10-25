@@ -180,13 +180,16 @@ func cdefByteAVX2Store4(dst unsafe.Pointer, dstStr int, v archsimd.Uint8x32) {
 
 // cdefByteAVX2Constrain is ACCUMULATE_TAP_BYTE's constrain(): the signed
 // byte min(|t-x|, max(0, str - (|t-x| >> sh))) carrying the sign of t-x.
-// The byte shift is a 16-bit shift masked to the surviving bits (mask is
-// 0xff >> sh broadcast).
-func cdefByteAVX2Constrain(t, x, str archsimd.Uint8x32, sh uint64, mask archsimd.Uint8x32) archsimd.Int8x32 {
+// The byte shift is a dword shift masked to the surviving bits (mask is
+// 0xff >> sh broadcast). It is VPSRLVD by a hoisted count vector rather than
+// VPSRLW by an xmm count: the compiler rematerializes that count with a
+// legacy-SSE MOVQ inside the row loop, an SSE/AVX transition while the ymm
+// upper halves are live.
+func cdefByteAVX2Constrain(t, x, str archsimd.Uint8x32, sh archsimd.Uint32x8, mask archsimd.Uint8x32) archsimd.Int8x32 {
 	pos := t.SubSaturated(x)
 	neg := x.SubSaturated(t)
 	ad := pos.Or(neg)
-	lim := str.SubSaturated(ad.AsUint16x16().ShiftAllRight(sh).AsUint8x32().And(mask))
+	lim := str.SubSaturated(ad.AsUint32x8().ShiftRight(sh).AsUint8x32().And(mask))
 	return pos.Min(lim).AsInt8x32().Sub(neg.Min(lim).AsInt8x32())
 }
 
@@ -211,9 +214,9 @@ func cdefByteAVX2Weights(w uint8) (archsimd.Uint8x32, archsimd.Uint8x32) {
 func cdefByteAVX2Filter8PriSec(c *cdefByteAVX2Ctx) {
 	priStr := archsimd.BroadcastUint8x32(c.priStr)
 	secStr := archsimd.BroadcastUint8x32(c.secStr)
-	priSh, secSh := c.priSh, c.secSh
-	priMask := archsimd.BroadcastUint8x32(uint8(0xff >> priSh))
-	secMask := archsimd.BroadcastUint8x32(uint8(0xff >> secSh))
+	priMask := archsimd.BroadcastUint8x32(uint8(0xff >> c.priSh))
+	secMask := archsimd.BroadcastUint8x32(uint8(0xff >> c.secSh))
+	priSh, secSh := archsimd.BroadcastUint32x8(uint32(c.priSh)), archsimd.BroadcastUint32x8(uint32(c.secSh))
 	dbl := archsimd.BroadcastInt8x32(c.priDbl)
 	pE, pO := cdefByteAVX2Weights(c.priW)
 	sE, sO := cdefByteAVX2Weights(1)
@@ -253,12 +256,13 @@ func cdefByteAVX2Filter8PriSec(c *cdefByteAVX2Ctx) {
 			dst = unsafe.Add(dst, 4*dstStr)
 		}
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 func cdefByteAVX2Filter8Pri(c *cdefByteAVX2Ctx) {
 	priStr := archsimd.BroadcastUint8x32(c.priStr)
-	priSh := c.priSh
-	priMask := archsimd.BroadcastUint8x32(uint8(0xff >> priSh))
+	priMask := archsimd.BroadcastUint8x32(uint8(0xff >> c.priSh))
+	priSh := archsimd.BroadcastUint32x8(uint32(c.priSh))
 	dbl := archsimd.BroadcastInt8x32(c.priDbl)
 	pE, pO := cdefByteAVX2Weights(c.priW)
 	eight := archsimd.BroadcastInt16x16(8)
@@ -279,12 +283,13 @@ func cdefByteAVX2Filter8Pri(c *cdefByteAVX2Ctx) {
 			dst = unsafe.Add(dst, 4*dstStr)
 		}
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 func cdefByteAVX2Filter8Sec(c *cdefByteAVX2Ctx) {
 	secStr := archsimd.BroadcastUint8x32(c.secStr)
-	secSh := c.secSh
-	secMask := archsimd.BroadcastUint8x32(uint8(0xff >> secSh))
+	secMask := archsimd.BroadcastUint8x32(uint8(0xff >> c.secSh))
+	secSh := archsimd.BroadcastUint32x8(uint32(c.secSh))
 	sE, sO := cdefByteAVX2Weights(1)
 	eight := archsimd.BroadcastInt16x16(8)
 	lowMask := archsimd.BroadcastUint16x16(0xff)
@@ -308,14 +313,15 @@ func cdefByteAVX2Filter8Sec(c *cdefByteAVX2Ctx) {
 			dst = unsafe.Add(dst, 4*dstStr)
 		}
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 func cdefByteAVX2Filter4PriSec(c *cdefByteAVX2Ctx) {
 	priStr := archsimd.BroadcastUint8x32(c.priStr)
 	secStr := archsimd.BroadcastUint8x32(c.secStr)
-	priSh, secSh := c.priSh, c.secSh
-	priMask := archsimd.BroadcastUint8x32(uint8(0xff >> priSh))
-	secMask := archsimd.BroadcastUint8x32(uint8(0xff >> secSh))
+	priMask := archsimd.BroadcastUint8x32(uint8(0xff >> c.priSh))
+	secMask := archsimd.BroadcastUint8x32(uint8(0xff >> c.secSh))
+	priSh, secSh := archsimd.BroadcastUint32x8(uint32(c.priSh)), archsimd.BroadcastUint32x8(uint32(c.secSh))
 	dbl := archsimd.BroadcastInt8x32(c.priDbl)
 	pE, pO := cdefByteAVX2Weights(c.priW)
 	sE, sO := cdefByteAVX2Weights(1)
@@ -355,12 +361,13 @@ func cdefByteAVX2Filter4PriSec(c *cdefByteAVX2Ctx) {
 			dst = unsafe.Add(dst, 4*dstStr)
 		}
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 func cdefByteAVX2Filter4Pri(c *cdefByteAVX2Ctx) {
 	priStr := archsimd.BroadcastUint8x32(c.priStr)
-	priSh := c.priSh
-	priMask := archsimd.BroadcastUint8x32(uint8(0xff >> priSh))
+	priMask := archsimd.BroadcastUint8x32(uint8(0xff >> c.priSh))
+	priSh := archsimd.BroadcastUint32x8(uint32(c.priSh))
 	dbl := archsimd.BroadcastInt8x32(c.priDbl)
 	pE, pO := cdefByteAVX2Weights(c.priW)
 	eight := archsimd.BroadcastInt16x16(8)
@@ -381,12 +388,13 @@ func cdefByteAVX2Filter4Pri(c *cdefByteAVX2Ctx) {
 			dst = unsafe.Add(dst, 4*dstStr)
 		}
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 func cdefByteAVX2Filter4Sec(c *cdefByteAVX2Ctx) {
 	secStr := archsimd.BroadcastUint8x32(c.secStr)
-	secSh := c.secSh
-	secMask := archsimd.BroadcastUint8x32(uint8(0xff >> secSh))
+	secMask := archsimd.BroadcastUint8x32(uint8(0xff >> c.secSh))
+	secSh := archsimd.BroadcastUint32x8(uint32(c.secSh))
 	sE, sO := cdefByteAVX2Weights(1)
 	eight := archsimd.BroadcastInt16x16(8)
 	lowMask := archsimd.BroadcastUint16x16(0xff)
@@ -410,4 +418,5 @@ func cdefByteAVX2Filter4Sec(c *cdefByteAVX2Ctx) {
 			dst = unsafe.Add(dst, 4*dstStr)
 		}
 	}
+	archsimd.ClearAVXUpperBits()
 }
