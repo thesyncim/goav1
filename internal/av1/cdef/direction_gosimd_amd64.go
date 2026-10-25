@@ -113,7 +113,7 @@ var cdefP4RevHiTbl = [8][16]uint8{
 	7: {12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1, 255, 255},
 }
 
-func findDirectionSIMD(img []uint16, stride int, coeffShift int) (int, int32) {
+func findDirectionSIMD128(img []uint16, stride int, coeffShift int) (int, int32) {
 	bias := archsimd.BroadcastInt16x8(128)
 	shiftC := cdefDirShiftCountOf(coeffShift)
 	zero := archsimd.BroadcastInt16x8(0)
@@ -357,9 +357,9 @@ func cdefOddRev(hi archsimd.Int16x8) archsimd.Int16x8 {
 
 var cdefOddRevTbl = [16]uint8{4, 5, 2, 3, 0, 1, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255}
 
-func findDirectionDualSIMD(img1 []uint16, img2 []uint16, stride int, coeffShift int) (int, int32, int, int32) {
-	dir1, var1 := findDirectionSIMD(img1, stride, coeffShift)
-	dir2, var2 := findDirectionSIMD(img2, stride, coeffShift)
+func findDirectionDualSIMD128(img1 []uint16, img2 []uint16, stride int, coeffShift int) (int, int32, int, int32) {
+	dir1, var1 := findDirectionSIMD128(img1, stride, coeffShift)
+	dir2, var2 := findDirectionSIMD128(img2, stride, coeffShift)
 	return dir1, var1, dir2, var2
 }
 
