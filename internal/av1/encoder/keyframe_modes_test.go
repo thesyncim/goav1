@@ -11,11 +11,12 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/ivf"
 )
 
-// TestKeyframeDirectionalModes is the V/H intra gate: striped content
-// predicts almost exactly from the neighboring edge once the first
-// row/column of blocks is coded, so the directional modes must compress far
-// below the DC-only cost (6.2 KB for the vertical scene before they
-// existed), decode bit-exact, and pass aomdec.
+// TestKeyframeDirectionalModes codes striped content as a keyframe: it must
+// decode bit-exact and pass aomdec. Camera-content keyframes code DC_PRED
+// only, as SVT-AV1's rtc presets above M11 do (intra_level
+// MAX_INTRA_LEVEL - 1), so the size bound checks that the partition
+// decision still follows the stripes (whole-frame 8x8 DC coding cost
+// 6.2 KB); the V/H search runs on screen content.
 func TestKeyframeDirectionalModes(t *testing.T) {
 	const w, h = 256, 256
 	cw, ch := w/2, h/2
@@ -55,8 +56,8 @@ func TestKeyframeDirectionalModes(t *testing.T) {
 			}
 			psnr := planePSNR(src.Y, recon.Y)
 			t.Logf("%s key: %d bytes, PSNR %.2f", tc.name, len(tu), psnr)
-			if len(tu) > 3500 {
-				t.Fatalf("key %d bytes: directional intra not engaged (DC-only cost ~6.2KB)", len(tu))
+			if len(tu) > 4000 {
+				t.Fatalf("key %d bytes: partition not following the stripes (8x8 DC cost ~6.2KB)", len(tu))
 			}
 			if psnr < 48 {
 				t.Fatalf("PSNR %.2f below floor", psnr)
