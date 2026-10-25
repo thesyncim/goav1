@@ -72,6 +72,29 @@ var addRawTransformPlaneBlockImpl = addRawTransformPlaneBlockPureGo
 // clamping to [0, 255]; bound like the slots above.
 var addConstantPlaneBlock8Impl = addConstantPlaneBlock8PureGo
 
+// addConstantPlaneBlock16Impl is the 16bpc (2-byte sample) sibling, clamping
+// to [0, max]; bound like the slots above.
+var addConstantPlaneBlock16Impl = addConstantPlaneBlock16PureGo
+
+func addConstantPlaneBlock16PureGo(dst []byte, dstStride int, width int, height int, max uint16, residual int16) {
+	maxInt := int(max)
+	r := int(residual)
+	rowBytes := width * 2
+	for row := 0; row < height; row++ {
+		line := dst[row*dstStride : row*dstStride+rowBytes : row*dstStride+rowBytes]
+		for col := 0; col < rowBytes; col += 2 {
+			v := int(uint16(line[col])|uint16(line[col+1])<<8) + r
+			if v < 0 {
+				v = 0
+			} else if v > maxInt {
+				v = maxInt
+			}
+			line[col] = byte(v)
+			line[col+1] = byte(v >> 8)
+		}
+	}
+}
+
 func addConstantPlaneBlock8PureGo(dst []byte, dstStride int, width int, height int, residual int16) {
 	r := int(residual)
 	for row := 0; row < height; row++ {
@@ -148,21 +171,8 @@ func AddConstantResidualPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSam
 			}
 		}
 	case 2:
-		maxInt := int(max)
-		r := int(residual)
-		rowBytes := width * 2
-		for row := 0; row < height; row++ {
-			line := dst[row*dstStride : row*dstStride+rowBytes : row*dstStride+rowBytes]
-			for col := 0; col < rowBytes; col += 2 {
-				v := int(uint16(line[col])|uint16(line[col+1])<<8) + r
-				if v < 0 {
-					v = 0
-				} else if v > maxInt {
-					v = maxInt
-				}
-				line[col] = byte(v)
-				line[col+1] = byte(v >> 8)
-			}
+		if height > 0 {
+			addConstantPlaneBlock16Impl(dst, dstStride, width, height, max, residual)
 		}
 	}
 }

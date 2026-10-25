@@ -73,3 +73,46 @@ func addConstantPlaneBlock8SIMD(dst []byte, ds int, width int, height int, resid
 		}
 	}
 }
+
+// addConstantPlaneBlock16SIMD is the 16bpc DC-only reconstruction (dav1d
+// itx16 inv_txfm_add_dct_dct eob == 0): clamp(d + r, 0, max) for 2-byte
+// samples, as min(satsub(satadd(d, p), n), max) in uint16 lanes with
+// p = max(r, 0) and n = max(-r, 0), exact for every sample value.
+func addConstantPlaneBlock16SIMD(dst []byte, ds int, width int, height int, maxV uint16, residual int16) {
+	if width != 4 && width%8 != 0 {
+		addConstantPlaneBlock16PureGo(dst, ds, width, height, maxV, residual)
+		return
+	}
+	_ = dst[(height-1)*ds+2*width-1]
+	r := int(residual)
+	pv := archsimd.BroadcastUint16x8(uint16(max(r, 0)))
+	nv := archsimd.BroadcastUint16x8(uint16(max(-r, 0)))
+	mv := archsimd.BroadcastUint16x8(maxV)
+	dp := unsafe.Pointer(unsafe.SliceData(dst))
+	if width == 4 {
+		y := 0
+		for ; y+1 < height; y += 2 {
+			pa := unsafe.Add(dp, y*ds)
+			pb := unsafe.Add(pa, ds)
+			o := archsimd.LoadUint64x2Array(&[2]uint64{*(*uint64)(pa), *(*uint64)(pb)}).ReshapeToUint16s().
+				AddSaturated(pv).SubSaturated(nv).Min(mv).ReshapeToUint64s()
+			*(*uint64)(pa) = o.GetElem(0)
+			*(*uint64)(pb) = o.GetElem(1)
+		}
+		if y < height {
+			pa := unsafe.Add(dp, y*ds)
+			o := archsimd.BroadcastUint64x2(*(*uint64)(pa)).ReshapeToUint16s().
+				AddSaturated(pv).SubSaturated(nv).Min(mv).ReshapeToUint64s()
+			*(*uint64)(pa) = o.GetElem(0)
+		}
+		return
+	}
+	rowBytes := 2 * width
+	for y := 0; y < height; y++ {
+		row := unsafe.Add(dp, y*ds)
+		for c := 0; c < rowBytes; c += 16 {
+			p := (*[8]uint16)(unsafe.Add(row, c))
+			archsimd.LoadUint16x8Array(p).AddSaturated(pv).SubSaturated(nv).Min(mv).StoreArray(p)
+		}
+	}
+}

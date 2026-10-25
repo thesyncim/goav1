@@ -16,6 +16,7 @@ func init() {
 	if archsimd.X86.AVX2() {
 		addResidualPlaneBlockImpl = addResidualPlaneBlockSIMD
 		addConstantPlaneBlock8Impl = addConstantPlaneBlock8SIMD
+		addConstantPlaneBlock16Impl = addConstantPlaneBlock16SIMD
 		addRawTransformPlaneBlockImpl = addRawTransformPlaneBlockSIMD
 		return
 	}

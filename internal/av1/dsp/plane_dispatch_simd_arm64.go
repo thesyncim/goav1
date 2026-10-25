@@ -15,6 +15,7 @@ func init() {
 	if cpu.Detected.NEON {
 		addResidualPlaneBlockImpl = addResidualPlaneBlockSIMD
 		addConstantPlaneBlock8Impl = addConstantPlaneBlock8SIMD
+		addConstantPlaneBlock16Impl = addConstantPlaneBlock16SIMD
 		addRawTransformPlaneBlockImpl = addRawTransformPlaneBlockSIMD
 		return
 	}
