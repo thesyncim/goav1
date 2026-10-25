@@ -123,6 +123,11 @@ type decoderFramePipeline struct {
 
 	ready []*Frame
 	err   error
+
+	// grain holds the display pictures of grained outputs; grainUsed of them
+	// back frames returned by the current call.
+	grain     []*decoderGrainOutput
+	grainUsed int
 }
 
 func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
@@ -167,10 +172,10 @@ func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
 	}
 }
 
-// eligible reports whether event takes the frame-threaded path.
-func (p *decoderFramePipeline) eligible(sequence SequenceHeader, event *DecoderEvent) bool {
-	return internaldecoder.EventFrameThreadable(event) && !sequence.FilmGrainParamsPresent &&
-		!p.d.state.Active()
+// eligible reports whether event takes the frame-threaded path. Film grain
+// does not exclude a frame: it is applied when the frame leaves the ring.
+func (p *decoderFramePipeline) eligible(event *DecoderEvent) bool {
+	return internaldecoder.EventFrameThreadable(event) && !p.d.state.Active()
 }
 
 // retire waits for fc's in-flight frame, returns the surfaces it dropped from
@@ -200,9 +205,51 @@ func (p *decoderFramePipeline) retire(fc *decoderFrameContext) {
 		return
 	}
 	if fc.output != nil {
-		p.ready = append(p.ready, fc.output)
+		out, err := p.outputImage(fc)
 		fc.output = nil
+		if err != nil {
+			if p.err == nil {
+				p.err = err
+			}
+			return
+		}
+		p.ready = append(p.ready, out)
 	}
+}
+
+// decoderGrainOutput is one display picture film grain is applied into when
+// a frame leaves the ring (dav1d_apply_grain's dav1d_picture_alloc_copy). It
+// stays valid until the next DecodeNext call, like every returned frame.
+type decoderGrainOutput struct {
+	runner DecoderFrameWorkReusableSupportedPostFilterRunner
+}
+
+// outputImage is dav1d's output_image for a frame leaving the ring: a frame
+// whose header applies grain is returned as a new picture with the grain
+// synthesized from its stored parameters; the reconstructed surface stays the
+// clean reference. Other frames are returned as is.
+func (p *decoderFramePipeline) outputImage(fc *decoderFrameContext) (*Frame, error) {
+	if !fc.event.FilmGrain.Apply {
+		return fc.output, nil
+	}
+	if p.grainUsed == len(p.grain) {
+		g := &decoderGrainOutput{}
+		p.grain = append(p.grain, g)
+	}
+	g := p.grain[p.grainUsed]
+	p.grainUsed++
+	return decoderFrameWorkOutputFilmGrain(&fc.event, fc.step, fc.output, &g.runner)
+}
+
+// outputSource maps a returned picture to the reconstructed surface behind
+// it: a grained display picture to its source, any other frame to itself.
+func (p *decoderFramePipeline) outputSource(f *Frame) *Frame {
+	for _, g := range p.grain {
+		if s := g.runner.postFilterSource(f); s != f {
+			return s
+		}
+	}
+	return f
 }
 
 func (p *decoderFramePipeline) readyHolds(surface int) bool {
@@ -211,7 +258,7 @@ func (p *decoderFramePipeline) readyHolds(surface int) bool {
 		return false
 	}
 	for _, r := range p.ready {
-		if r == f {
+		if p.d.outputSource(r) == f {
 			return true
 		}
 	}
@@ -434,6 +481,7 @@ var decoderFramePipelineParseHook func(p *decoderFramePipeline, fc *decoderFrame
 func (p *decoderFramePipeline) reset() {
 	p.drain()
 	p.ready = p.ready[:0]
+	p.grainUsed = 0
 	p.err = nil
 	p.next = 0
 	for i := range p.progress {
@@ -545,6 +593,7 @@ func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStr
 func (d *Decoder) decodeNextFrameThreaded() (frames []*Frame, ok bool, err error) {
 	p := d.fp
 	p.ready = p.ready[:0]
+	p.grainUsed = 0
 	if d.next >= d.payloadSource.len() {
 		p.drain()
 		if err := p.takeErr(); err != nil {

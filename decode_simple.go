@@ -639,6 +639,19 @@ func (d *Decoder) postFilterRunner() DecoderFrameWorkPostFilterRunner {
 	return &d.postFilter
 }
 
+// outputSource maps a returned frame to the pool surface behind it: a
+// film-grain output is a detached display picture over its reconstructed
+// source.
+func (d *Decoder) outputSource(f *Frame) *Frame {
+	if s := d.postFilter.postFilterSource(f); s != f {
+		return s
+	}
+	if d.fp != nil {
+		return d.fp.outputSource(f)
+	}
+	return f
+}
+
 // trackShownSurfaces records the pool slots behind one returned batch so the
 // next call can release the ones no reference slot holds.
 func (d *Decoder) trackShownSurfaces(out []*Frame) {
@@ -657,7 +670,7 @@ func (d *Decoder) trackShownSurfacesInPool(out []*Frame, pool *FramePool, surfac
 		// A film-grain output is a detached view; the pool surface behind it
 		// is the reconstructed picture, which must be released like any other
 		// shown surface.
-		f = d.postFilter.postFilterSource(f)
+		f = d.outputSource(f)
 		for i := 0; i < pool.Cap(); i++ {
 			pf, err := pool.Frame(i)
 			if err != nil || pf != f {

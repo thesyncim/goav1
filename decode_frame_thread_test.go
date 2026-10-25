@@ -11,7 +11,7 @@ import (
 
 // frameThreadTestClips are single-tile inter clips (every frame takes the
 // frame-threaded path at workers > 1) plus a 10-bit and a two-tile clip that
-// mix threaded and drained frames.
+// mix threaded and drained frames, and film-grain clips grained at output.
 var frameThreadTestClips = []string{
 	"testdata/benchcorpus/p360_inter_q32.ivf",
 	"testdata/benchcorpus/p360_inter_q32_10bit.ivf",
@@ -26,6 +26,9 @@ var frameThreadTestClips = []string{
 	"internal/av1/testdata/libaom/av1-1-b8-23-film_grain-50.ivf",
 	"internal/av1/testdata/libaom/av1-1-b10-24-monochrome.ivf",
 	"internal/av1/testdata/libaom/av1-1-b10-00-quantizer-10.ivf",
+	// SVT-AV1 random access with film grain: grained outputs leave the ring
+	// several per call, between show_existing_frame outputs.
+	"testdata/realcorpus/repro/svtra_oldtown_360p_20f_fgs8_poolempty.ivf",
 }
 
 // decodeFrameThreadDigest decodes clip through DecodeNext and hashes every
