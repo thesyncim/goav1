@@ -478,7 +478,11 @@ func (w *Writer) WriteCDF(cdf *CDF, s int) {
 			values[4] = count + 1
 		}
 	default:
-		updateCDFValues(values, n, s)
+		if symbol16SIMD {
+			updateCDFWide(values, n, s)
+		} else {
+			updateCDFValues(values, n, s)
+		}
 	}
 }
 
@@ -550,7 +554,11 @@ func (w *BitCounter) WriteCDF(cdf *CDF, s int) {
 			values[4] = count + 1
 		}
 	default:
-		updateCDFValues(values, n, s)
+		if symbol16SIMD {
+			updateCDFWide(values, n, s)
+		} else {
+			updateCDFValues(values, n, s)
+		}
 	}
 }
 
@@ -892,7 +900,11 @@ func (w *Writer) WriteCDF5(cdf *CDF, s int) {
 	if w.log != nil {
 		w.log.cdf(&cdf.values, s, 5)
 		if w.log.deferred {
-			updateCDFValues(&cdf.values, 5, s)
+			if symbol16SIMD {
+				updateCDFWide(&cdf.values, 5, s)
+			} else {
+				updateCDFValues(&cdf.values, 5, s)
+			}
 			return
 		}
 	}
@@ -1021,7 +1033,11 @@ func (w *Writer) WriteCDF7(cdf *CDF, s int) {
 	if w.log != nil {
 		w.log.cdf(&cdf.values, s, 7)
 		if w.log.deferred {
-			updateCDFValues(&cdf.values, 7, s)
+			if symbol16SIMD {
+				updateCDFWide(&cdf.values, 7, s)
+			} else {
+				updateCDFValues(&cdf.values, 7, s)
+			}
 			return
 		}
 	}

@@ -118,3 +118,38 @@ var symbol16Consts = struct {
 	shr6:    splat8[int16](-6),
 	shrRate: [4][8]int16{splat8[int16](-5), splat8[int16](-6), splat8[int16](-7), splat8[int16](-7)},
 }
+
+// symbolUpLanes[s] is 1 in the lanes below s: the entries update_cdf raises
+// when symbol s is coded.
+var symbolUpLanes = func() (t [MaxSymbols][MaxSymbols]uint16) {
+	for s := range MaxSymbols {
+		for i := 0; i < s; i++ {
+			t[s][i] = 1
+		}
+	}
+	return t
+}()
+
+// updateCDFWide is updateCDFValues for 5 to 16 symbols with the decoder's
+// vector update (adaptCDF8): the coder knows the symbol, so the raised lanes
+// come from a table instead of the bound comparison.
+func updateCDFWide(values *[MaxSymbols + 1]uint16, symbols, symbol int) {
+	last := (symbols - 1) & (MaxSymbols - 1)
+	up := &symbolUpLanes[symbol&(MaxSymbols-1)]
+	keep := &symbol16Lanes[last][1]
+	k := &symbol16Consts
+	count := values[symbols]
+	rate := archsimd.LoadInt16x8Array(&k.shrRate[(count>>4)&3])
+	top := archsimd.LoadUint16x8Array(&k.top)
+	c0 := archsimd.LoadUint16x8Array((*[8]uint16)(values[0:8]))
+	c1 := archsimd.LoadUint16x8Array((*[8]uint16)(values[8:16]))
+	s0 := archsimd.LoadUint16x8Array((*[8]uint16)(up[0:8]))
+	s1 := archsimd.LoadUint16x8Array((*[8]uint16)(up[8:16]))
+	k0 := archsimd.LoadUint16x8Array((*[8]uint16)(keep[0:8]))
+	k1 := archsimd.LoadUint16x8Array((*[8]uint16)(keep[8:16]))
+	adaptCDF8(c0, s0, k0, top, rate).Store(values[0:8])
+	adaptCDF8(c1, s1, k1, top, rate).Store(values[8:16])
+	if count < MaxCDFCount {
+		values[symbols] = count + 1
+	}
+}
