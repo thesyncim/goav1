@@ -133,57 +133,112 @@ func TestAMD64LPFSBMatchesScalar(t *testing.T) {
 	}
 }
 
-// BenchmarkAMD64LPFSB times the checkasm-shaped superblock calls on the
-// unit-by-unit reference (impl=generic) and the AVX2 kernels (impl=avx2).
-// dir=h is the vertical-edge column filter (dav1d lpf_h_sb), dir=v the
-// horizontal-edge row filter (lpf_v_sb).
+// BenchmarkAMD64LPFSB times superblock calls on the unit-by-unit reference
+// (impl=generic) and the AVX2 kernels (impl=avx2). dir=h is the vertical-edge
+// column filter (dav1d lpf_h_sb), dir=v the horizontal-edge row filter
+// (lpf_v_sb). content=checkasm reproduces dav1d checkasm's check_lpf_sb draws
+// (a quarter of the edges are random pixels that fail the filter mask at the
+// first tap); content=video is decoded-like: smooth blocks with a small step
+// at every edge, so most edges filter, as in real streams.
 func BenchmarkAMD64LPFSB(b *testing.B) {
 	if !archsimd.X86.AVX2() {
 		b.Skip("AVX2 unavailable")
 	}
-	for _, vertical := range []bool{true, false} {
-		for _, luma := range []bool{true, false} {
-			widths := []int{4, 8, 16}
-			plane := "y"
-			if !luma {
-				widths = []int{4, 6}
-				plane = "uv"
-			}
-			dir := "v"
-			if vertical {
-				dir = "h"
-			}
-			for s, wd := range widths {
-				const cases = 16
-				var cs [cases]checkasmSBCase
-				for i := range cs {
-					cs[i] = newCheckasmSBCase(int64(1000*s+i), vertical, luma, s)
+	for _, content := range []string{"checkasm", "video"} {
+		for _, vertical := range []bool{true, false} {
+			for _, luma := range []bool{true, false} {
+				widths := []int{4, 8, 16}
+				plane := "y"
+				if !luma {
+					widths = []int{4, 6}
+					plane = "uv"
 				}
-				for _, impl := range []string{"generic", "avx2"} {
-					b.Run(fmt.Sprintf("dir=%s/plane=%s/w=%d/impl=%s", dir, plane, wd, impl), func(b *testing.B) {
-						saved := sbAVX2
-						sbAVX2 = impl == "avx2"
-						defer func() { sbAVX2 = saved }()
-						var work [cases][]byte
-						for i := range cs {
-							work[i] = append([]byte(nil), cs[i].pix...)
+				dir := "v"
+				if vertical {
+					dir = "h"
+				}
+				for s, wd := range widths {
+					const cases = 16
+					var cs [cases]checkasmSBCase
+					for i := range cs {
+						if content == "video" {
+							cs[i] = newVideoSBCase(int64(1000*s+i), vertical, luma, s)
+						} else {
+							cs[i] = newCheckasmSBCase(int64(1000*s+i), vertical, luma, s)
 						}
-						i := 0
-						for b.Loop() {
-							c := &cs[i&(cases-1)]
-							w := work[i&(cases-1)]
-							if vertical {
-								FilterSBVertical8(w, c.off, c.stride, c.rowBytes, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
-							} else {
-								FilterSBHorizontal8(w, c.off, c.stride, c.rowBytes, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
+					}
+					for _, impl := range []string{"generic", "avx2"} {
+						b.Run(fmt.Sprintf("content=%s/dir=%s/plane=%s/w=%d/impl=%s", content, dir, plane, wd, impl), func(b *testing.B) {
+							saved := sbAVX2
+							sbAVX2 = impl == "avx2"
+							defer func() { sbAVX2 = saved }()
+							var work [cases][]byte
+							for i := range cs {
+								work[i] = append([]byte(nil), cs[i].pix...)
 							}
-							i++
-						}
-					})
+							i := 0
+							for b.Loop() {
+								c := &cs[i&(cases-1)]
+								w := work[i&(cases-1)]
+								if i&(cases-1) == 0 && i > 0 {
+									// Refresh the inputs so repeated filtering does
+									// not flatten them.
+									b.StopTimer()
+									for k := range cs {
+										copy(work[k], cs[k].pix)
+									}
+									b.StartTimer()
+								}
+								if vertical {
+									FilterSBVertical8(w, c.off, c.stride, c.rowBytes, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
+								} else {
+									FilterSBHorizontal8(w, c.off, c.stride, c.rowBytes, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
+								}
+								i++
+							}
+						})
+					}
 				}
 			}
 		}
 	}
+}
+
+// newVideoSBCase is newCheckasmSBCase's geometry with decoded-like content:
+// every unit is an edge of the widest width the strength allows, levels are
+// mid-range, and the pixels are smooth with a small step across the edge.
+func newVideoSBCase(seed int64, vertical, luma bool, strength int) checkasmSBCase {
+	c := newCheckasmSBCase(seed, vertical, luma, strength)
+	rng := rand.New(rand.NewSource(seed + 99))
+	nBlks := 32
+	if !luma {
+		nBlks = 16
+	}
+	c.vm = [3]uint32{}
+	for j := 0; j < nBlks; j++ {
+		c.vm[strength] |= 1 << uint(j)
+	}
+	for i := range c.lvl {
+		c.lvl[i][0] = uint8(16 + rng.Intn(24))
+	}
+	for i := 0; i < 4*nBlks; i++ {
+		base := 60 + rng.Intn(120)
+		step := rng.Intn(9) - 4
+		for k := -8; k < 8; k++ {
+			v := base + rng.Intn(3) - 1
+			if k >= 0 {
+				v += step
+			}
+			var o int
+			if vertical {
+				o = i*c.stride + c.off + k
+			} else {
+				o = c.off + i + k*c.stride
+			}
+			c.pix[o] = uint8(v)
+		}
+	}
+	return c
 }
 
 // TestAMD64LPFSBZeroAlloc keeps the AVX2 superblock filters allocation-free

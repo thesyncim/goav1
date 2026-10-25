@@ -238,11 +238,17 @@ func avxFlat8Half(p3, p2, p1, p0, q0, q1, q2, q3 archsimd.Uint16x16) (op2, op1, 
 }
 
 // avxFlat16Half runs the dav1d sliding-sum form of the 13-tap filter on
-// sixteen widened lanes (t[0..13] = p6..q6); out[k] is output p5+k (p5..q5),
-// rounded and shifted.
-func avxFlat16Half(t *[14]archsimd.Uint16x16, out *[12]archsimd.Uint16x16) {
-	p6, p5, p4, p3, p2, p1, p0 := t[0], t[1], t[2], t[3], t[4], t[5], t[6]
-	q0, q1, q2, q3, q4, q5, q6 := t[7], t[8], t[9], t[10], t[11], t[12], t[13]
+// sixteen lanes widened from the even or odd bytes of t[1..14] = p6..q6;
+// out[k] is output p5+k (p5..q5), rounded and shifted.
+func avxFlat16Half(t *[16]archsimd.Uint8x32, odd bool, out *[12]archsimd.Uint16x16) {
+	w := func(x archsimd.Uint8x32) archsimd.Uint16x16 {
+		if odd {
+			return x.ReshapeToUint16s().ShiftAllRight(8)
+		}
+		return x.ReshapeToUint16s().And(archsimd.LoadUint16x16Array(&avxConst.w00ff))
+	}
+	p6, p5, p4, p3, p2, p1, p0 := w(t[1]), w(t[2]), w(t[3]), w(t[4]), w(t[5]), w(t[6]), w(t[7])
+	q0, q1, q2, q3, q4, q5, q6 := w(t[8]), w(t[9]), w(t[10]), w(t[11]), w(t[12]), w(t[13]), w(t[14])
 	p6x2 := p6.Add(p6)
 	s := p6.Add(p6x2).Add(p6x2.Add(p6x2)) // 7*p6
 	s = s.Add(p5.Add(p5)).Add(p4.Add(p4)).Add(p3.Add(p2)).Add(p1.Add(p0)).Add(q0).Add(archsimd.BroadcastUint16x16(8))
@@ -287,16 +293,9 @@ func avxLpf16(t *[16]archsimd.Uint8x32, eV, iV, hV, m4, mGt4, m16 archsimd.Uint8
 		m = m.And(avxLE(fo, avxB(&avxConst.b01)))
 	}
 	if !m.IsZero() {
-		var w [14]archsimd.Uint16x16
 		var ev, od [12]archsimd.Uint16x16
-		for k := range w {
-			w[k] = avxEven(t[k+1])
-		}
-		avxFlat16Half(&w, &ev)
-		for k := range w {
-			w[k] = avxOdd(t[k+1])
-		}
-		avxFlat16Half(&w, &od)
+		avxFlat16Half(t, false, &ev)
+		avxFlat16Half(t, true, &od)
 		t[2] = avxSel(m, avxJoin(ev[0], od[0]), t[2])
 		t[3] = avxSel(m, avxJoin(ev[1], od[1]), t[3])
 		t[4] = avxSel(m, avxJoin(ev[2], od[2]), t[4])
@@ -565,10 +564,11 @@ func avxTransposeWords(b0, b1, b2, b3, b4, b5, b6, b7 archsimd.Uint8x32) (t0, t1
 	return
 }
 
-// avxRows2 loads row r into the low lane and row r+16 into the high lane.
-func avxRows2(base unsafe.Pointer, o, stride int) archsimd.Uint8x32 {
-	return archsimd.Uint8x32{}.SetLo(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(base, o)))).
-		SetHi(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(base, o+16*stride))))
+// avxRows2 loads the sixteen bytes at p into the low lane and those at p+s16
+// (sixteen rows further down) into the high lane.
+func avxRows2(p unsafe.Pointer, s16 int) archsimd.Uint8x32 {
+	return archsimd.Uint8x32{}.SetLo(archsimd.LoadUint8x16Array((*[16]uint8)(p))).
+		SetHi(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, s16))))
 }
 
 // avxZipRows pairs rows a and b (their low eight bytes when hi is false, the
@@ -580,15 +580,15 @@ func avxZipRows(a, b archsimd.Uint8x32, zip archsimd.Int8x32, hi bool) archsimd.
 	return a.ReshapeToUint64s().InterleaveLoGrouped(b.ReshapeToUint64s()).ReshapeToUint8s().PermuteOrZeroGrouped(zip)
 }
 
-// avxStoreRowPair writes a de-interleaved row pair: the low eight bytes of
-// each lane are row 2j (lane 0) / 2j+16 (lane 1), the high eight row 2j+1 /
-// 2j+17.
-func avxStoreRowPair(base unsafe.Pointer, o, stride int, a archsimd.Uint8x32) {
+// avxStoreRowPair writes a de-interleaved row pair at p: the low eight bytes
+// of each lane are row 2j (lane 0) / 2j+16 (lane 1), the high eight row 2j+1
+// / 2j+17.
+func avxStoreRowPair(p unsafe.Pointer, stride, s16 int, a archsimd.Uint8x32) {
 	lo, hi := a.GetLo().ReshapeToUint64s(), a.GetHi().ReshapeToUint64s()
-	*(*uint64)(unsafe.Add(base, o)) = lo.GetElem(0)
-	*(*uint64)(unsafe.Add(base, o+stride)) = lo.GetElem(1)
-	*(*uint64)(unsafe.Add(base, o+16*stride)) = hi.GetElem(0)
-	*(*uint64)(unsafe.Add(base, o+17*stride)) = hi.GetElem(1)
+	*(*uint64)(p) = lo.GetElem(0)
+	*(*uint64)(unsafe.Add(p, stride)) = lo.GetElem(1)
+	*(*uint64)(unsafe.Add(p, s16)) = hi.GetElem(0)
+	*(*uint64)(unsafe.Add(p, s16+stride)) = hi.GetElem(1)
 }
 
 // avxVertical8 filters a vertical edge across 32 rows for widths up to 8
@@ -596,33 +596,26 @@ func avxStoreRowPair(base unsafe.Pointer, o, stride int, a archsimd.Uint8x32) {
 // bytes are read per row and the eight p3..q3 bytes are written back.
 func avxVertical8[W avxWidth](base unsafe.Pointer, p3, stride int, eV, iV, hV, m4, mGt4 archsimd.Uint8x32) {
 	zip := archsimd.LoadInt8x32Array(&avxConst.zip)
-	y0, y1 := avxRows2(base, p3, stride), avxRows2(base, p3+stride, stride)
-	y2, y3 := avxRows2(base, p3+2*stride, stride), avxRows2(base, p3+3*stride, stride)
-	y4, y5 := avxRows2(base, p3+4*stride, stride), avxRows2(base, p3+5*stride, stride)
-	y6, y7 := avxRows2(base, p3+6*stride, stride), avxRows2(base, p3+7*stride, stride)
-	y8, y9 := avxRows2(base, p3+8*stride, stride), avxRows2(base, p3+9*stride, stride)
-	y10, y11 := avxRows2(base, p3+10*stride, stride), avxRows2(base, p3+11*stride, stride)
-	y12, y13 := avxRows2(base, p3+12*stride, stride), avxRows2(base, p3+13*stride, stride)
-	y14, y15 := avxRows2(base, p3+14*stride, stride), avxRows2(base, p3+15*stride, stride)
-	t0, t1, t2, t3, t4, t5, t6, t7 := avxTransposeWords(
-		avxZipRows(y0, y1, zip, false), avxZipRows(y2, y3, zip, false),
-		avxZipRows(y4, y5, zip, false), avxZipRows(y6, y7, zip, false),
-		avxZipRows(y8, y9, zip, false), avxZipRows(y10, y11, zip, false),
-		avxZipRows(y12, y13, zip, false), avxZipRows(y14, y15, zip, false))
+	s16 := 16 * stride
+	p0 := unsafe.Add(base, p3)
+	var b [8]archsimd.Uint8x32
+	r := p0
+	for j := range b {
+		b[j] = avxZipRows(avxRows2(r, s16), avxRows2(unsafe.Add(r, stride), s16), zip, false)
+		r = unsafe.Add(r, 2*stride)
+	}
+	t0, t1, t2, t3, t4, t5, t6, t7 := avxTransposeWords(b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7])
 	o2, o1, o0, n0, n1, n2, _, ok := avxLpfCore[W](t0, t1, t2, t3, t4, t5, t6, t7, eV, iV, hV, m4, mGt4)
 	if !ok {
 		return
 	}
-	b0, b1, b2, b3, b4, b5, b6, b7 := avxTransposeWords(t0, o2, o1, o0, n0, n1, n2, t7)
+	b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7] = avxTransposeWords(t0, o2, o1, o0, n0, n1, n2, t7)
 	unzip := archsimd.LoadInt8x32Array(&avxConst.unzip)
-	avxStoreRowPair(base, p3, stride, b0.PermuteOrZeroGrouped(unzip))
-	avxStoreRowPair(base, p3+2*stride, stride, b1.PermuteOrZeroGrouped(unzip))
-	avxStoreRowPair(base, p3+4*stride, stride, b2.PermuteOrZeroGrouped(unzip))
-	avxStoreRowPair(base, p3+6*stride, stride, b3.PermuteOrZeroGrouped(unzip))
-	avxStoreRowPair(base, p3+8*stride, stride, b4.PermuteOrZeroGrouped(unzip))
-	avxStoreRowPair(base, p3+10*stride, stride, b5.PermuteOrZeroGrouped(unzip))
-	avxStoreRowPair(base, p3+12*stride, stride, b6.PermuteOrZeroGrouped(unzip))
-	avxStoreRowPair(base, p3+14*stride, stride, b7.PermuteOrZeroGrouped(unzip))
+	r = p0
+	for j := range b {
+		avxStoreRowPair(r, stride, s16, b[j].PermuteOrZeroGrouped(unzip))
+		r = unsafe.Add(r, 2*stride)
+	}
 }
 
 // avxVertical16 is the wd16 variant: sixteen bytes per row (p7..q7, p7 is the
@@ -630,38 +623,36 @@ func avxVertical8[W avxWidth](base unsafe.Pointer, p3, stride int, eV, iV, hV, m
 // way (dav1d TRANSPOSE_16X16B).
 func avxVertical16(base unsafe.Pointer, p7, stride int, eV, iV, hV, m4, mGt4, m16 archsimd.Uint8x32) {
 	zip := archsimd.LoadInt8x32Array(&avxConst.zip)
-	var y [16]archsimd.Uint8x32
-	for k := range y {
-		y[k] = avxRows2(base, p7+k*stride, stride)
+	s16 := 16 * stride
+	p0 := unsafe.Add(base, p7)
+	var lo, hi [8]archsimd.Uint8x32
+	r := p0
+	for j := range lo {
+		a, b := avxRows2(r, s16), avxRows2(unsafe.Add(r, stride), s16)
+		lo[j] = avxZipRows(a, b, zip, false)
+		hi[j] = avxZipRows(a, b, zip, true)
+		r = unsafe.Add(r, 2*stride)
 	}
 	var t [16]archsimd.Uint8x32
-	t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7] = avxTransposeWords(
-		avxZipRows(y[0], y[1], zip, false), avxZipRows(y[2], y[3], zip, false),
-		avxZipRows(y[4], y[5], zip, false), avxZipRows(y[6], y[7], zip, false),
-		avxZipRows(y[8], y[9], zip, false), avxZipRows(y[10], y[11], zip, false),
-		avxZipRows(y[12], y[13], zip, false), avxZipRows(y[14], y[15], zip, false))
-	t[8], t[9], t[10], t[11], t[12], t[13], t[14], t[15] = avxTransposeWords(
-		avxZipRows(y[0], y[1], zip, true), avxZipRows(y[2], y[3], zip, true),
-		avxZipRows(y[4], y[5], zip, true), avxZipRows(y[6], y[7], zip, true),
-		avxZipRows(y[8], y[9], zip, true), avxZipRows(y[10], y[11], zip, true),
-		avxZipRows(y[12], y[13], zip, true), avxZipRows(y[14], y[15], zip, true))
+	t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7] = avxTransposeWords(lo[0], lo[1], lo[2], lo[3], lo[4], lo[5], lo[6], lo[7])
+	t[8], t[9], t[10], t[11], t[12], t[13], t[14], t[15] = avxTransposeWords(hi[0], hi[1], hi[2], hi[3], hi[4], hi[5], hi[6], hi[7])
 	if !avxLpf16(&t, eV, iV, hV, m4, mGt4, m16) {
 		return
 	}
-	var lo, hi [8]archsimd.Uint8x32
 	lo[0], lo[1], lo[2], lo[3], lo[4], lo[5], lo[6], lo[7] = avxTransposeWords(t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7])
 	hi[0], hi[1], hi[2], hi[3], hi[4], hi[5], hi[6], hi[7] = avxTransposeWords(t[8], t[9], t[10], t[11], t[12], t[13], t[14], t[15])
 	unzip := archsimd.LoadInt8x32Array(&avxConst.unzip)
-	for j := 0; j < 8; j++ {
+	r = p0
+	for j := range lo {
 		l := lo[j].PermuteOrZeroGrouped(unzip).ReshapeToUint64s()
 		h := hi[j].PermuteOrZeroGrouped(unzip).ReshapeToUint64s()
 		r0 := l.InterleaveLoGrouped(h).ReshapeToUint8s()
 		r1 := l.InterleaveHiGrouped(h).ReshapeToUint8s()
-		o := p7 + 2*j*stride
-		r0.GetLo().StoreArray((*[16]uint8)(unsafe.Add(base, o)))
-		r0.GetHi().StoreArray((*[16]uint8)(unsafe.Add(base, o+16*stride)))
-		r1.GetLo().StoreArray((*[16]uint8)(unsafe.Add(base, o+stride)))
-		r1.GetHi().StoreArray((*[16]uint8)(unsafe.Add(base, o+17*stride)))
+		r0.GetLo().StoreArray((*[16]uint8)(r))
+		r0.GetHi().StoreArray((*[16]uint8)(unsafe.Add(r, s16)))
+		r1.GetLo().StoreArray((*[16]uint8)(unsafe.Add(r, stride)))
+		r1.GetHi().StoreArray((*[16]uint8)(unsafe.Add(r, s16+stride)))
+		r = unsafe.Add(r, 2*stride)
 	}
 }
 
