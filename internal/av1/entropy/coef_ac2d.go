@@ -18,6 +18,7 @@ const CoefLevelsLen = 1024 + 2*64
 // rc is the chain head (0 when no AC coefficient is nonzero).
 func (c *Cursor) DecodeCoefsAC2D(scan []int16, shift, stride uint, offsets *[5][5]uint8, levels *[CoefLevelsLen]uint8, cf *[1024]int32, lo *[42]CDF, hi *[21]CDF, rc uint) uint {
 	stride &= 63
+	shift &= 63 // log2 of the scan height; masked so rcI >> shift needs no oversize-shift select
 	mask := stride - 1
 	update := c.allowCDFUpdate
 	dif := c.dif
@@ -29,7 +30,13 @@ func (c *Cursor) DecodeCoefsAC2D(scan []int16, shift, stride uint, offsets *[5][
 		mag := uint(levels[rcI+1]) + uint(levels[rcI+stride]) + uint(levels[rcI+stride+1])
 		hiMag := mag
 		mag += uint(levels[rcI+2]) + uint(levels[rcI+2*stride])
-		ctx := uint(offsets[min(y, 4)][min(x, 4)]) + min((mag+64)>>7, 4)
+		if y > 4 {
+			y = 4
+		}
+		if x > 4 {
+			x = 4
+		}
+		ctx := uint(offsets[y][x]) + min((mag+64)>>7, 4)
 
 		// dav1d_msac_decode_symbol_adapt4(lo_cdf[ctx], 3)
 		values := &lo[ctx].values
