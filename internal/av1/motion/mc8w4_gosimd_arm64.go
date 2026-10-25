@@ -126,14 +126,14 @@ func mc8PutV6FromI32W4(im unsafe.Pointer, h int, ph *mc8Phase, dst unsafe.Pointe
 // are one 16-byte store.
 //
 //go:nocheckptr
-func mc8PrepV6FromI32W4(im unsafe.Pointer, h int, ph *mc8Phase, out unsafe.Pointer) {
+func mc8PrepV6FromI32W4(im unsafe.Pointer, h int, ph *mc8Phase, out unsafe.Pointer, rndConst int32) {
 	c0 := archsimd.LoadInt32x4Array(&ph.p[0])
 	c1 := archsimd.LoadInt32x4Array(&ph.p[1])
 	c2 := archsimd.LoadInt32x4Array(&ph.p[2])
 	c3 := archsimd.LoadInt32x4Array(&ph.p[3])
 	c4 := archsimd.LoadInt32x4Array(&ph.p[4])
 	c5 := archsimd.LoadInt32x4Array(&ph.p[5])
-	rnd := archsimd.BroadcastInt32x4((64 + 6144<<7) << 9)
+	rnd := archsimd.BroadcastInt32x4(rndConst)
 	x0 := archsimd.LoadInt32x4Array((*[4]int32)(im))
 	x1 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(im, 16)))
 	x2 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(im, 32)))
