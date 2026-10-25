@@ -211,15 +211,31 @@ func (rt *refmvsTile) row(idx int32) []refmvsBlock {
 	return rt.buf[o : o+rt.stride]
 }
 
-// splat ports dav1d's splat_mv_c: store tmpl into every 4x4 cell of the block.
+// splat ports dav1d's splat_mv: store tmpl into every 4x4 cell of the block.
+// As splat_mv_neon, it builds one 48-byte pattern of four blocks and writes
+// each row with whole-pattern stores, dispatching on the block width (1, 2,
+// or a multiple of 4 cells) instead of a per-row copy call.
 func (rt *refmvsTile) splat(tmpl refmvsBlock, by4, bx4, bw4, bh4 int32) {
 	base := (by4 & 31) + 5
-	first := rt.row(base)[bx4 : bx4+bw4]
-	for i := range first {
-		first[i] = tmpl
-	}
-	for y := int32(1); y < bh4; y++ {
-		copy(rt.row(base + y)[bx4:bx4+bw4], first)
+	switch bw4 {
+	case 1:
+		for y := int32(0); y < bh4; y++ {
+			rt.row(base + y)[bx4] = tmpl
+		}
+	case 2:
+		pat := [2]refmvsBlock{tmpl, tmpl}
+		for y := int32(0); y < bh4; y++ {
+			*(*[2]refmvsBlock)(rt.row(base + y)[bx4:]) = pat
+		}
+	default:
+		pat := [4]refmvsBlock{tmpl, tmpl, tmpl, tmpl}
+		for y := int32(0); y < bh4; y++ {
+			r := rt.row(base + y)[bx4 : bx4+bw4]
+			for len(r) >= 4 {
+				*(*[4]refmvsBlock)(r) = pat
+				r = r[4:]
+			}
+		}
 	}
 }
 
