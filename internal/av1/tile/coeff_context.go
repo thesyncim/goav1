@@ -51,7 +51,7 @@ func (c *CoeffEntropyContext) TXBContext(req CoeffContextRequest) (TXBContext, e
 // validated req, txDims, blockDims, and neighbor state. It is intended for
 // internal hot paths that have selected a shape-specific coefficient writer.
 func (c *CoeffEntropyContext) TXBContextTrusted(req CoeffContextRequest, txDims TransformDimensions, blockDims BlockDimensions) TXBContext {
-	return c.txbContextTrusted(req, txDims, blockDims)
+	return c.txbContextReq(req, txDims, blockDims)
 }
 
 func (c *CoeffEntropyContext) txbContextKnown(req CoeffContextRequest, txDims TransformDimensions, blockDims BlockDimensions) (TXBContext, error) {
@@ -107,11 +107,16 @@ func (c *CoeffEntropyContext) txbContextKnown(req CoeffContextRequest, txDims Tr
 	}, nil
 }
 
-func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims TransformDimensions, blockDims BlockDimensions) TXBContext {
+func (c *CoeffEntropyContext) txbContextReq(req CoeffContextRequest, txDims TransformDimensions, blockDims BlockDimensions) TXBContext {
+	return c.txbContextTrusted(req.Plane, int(req.X4), int(req.Y4), int(txDims.W4), int(txDims.H4), int(blockDims.W4), int(blockDims.H4))
+}
+
+// txbContextTrusted is dav1d's get_skip_ctx and get_dc_sign_ctx
+// (src/recon_tmpl.c) for the plane TXB at a/l offsets x4, y4: the context
+// bytes are read as one or two words keyed on the transform side, the way
+// dav1d switches on t_dim->lw/lh.
+func (c *CoeffEntropyContext) txbContextTrusted(plane uint8, x4, y4, w4, h4, blockW4, blockH4 int) TXBContext {
 	dcSign := int8(0)
-	plane := int(req.Plane)
-	x4 := int(req.X4)
-	y4 := int(req.Y4)
 	var aboveRow, leftRow *[MaxBlockModeSlots]uint8
 	switch plane {
 	case 0:
@@ -124,8 +129,6 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 		aboveRow = &c.Above[2]
 		leftRow = &c.Left[2]
 	}
-	w4 := int(txDims.W4)
-	h4 := int(txDims.H4)
 	if w4 > 0 {
 		_ = aboveRow[x4+w4-1]
 	}
@@ -139,8 +142,8 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 		left := leftRow[y4]
 		// dav1d get_dc_sign_ctx TX_4X4: the sign flags summed without a table.
 		dcSign = int8((top>>(CoeffContextBits+1))&1+(left>>(CoeffContextBits+1))&1) - int8((top>>CoeffContextBits)&1+(left>>CoeffContextBits)&1)
-		if req.Plane == 0 {
-			if blockDims.W4 != txDims.W4 || blockDims.H4 != txDims.H4 {
+		if plane == 0 {
+			if blockW4 != w4 || blockH4 != h4 {
 				top &= CoeffContextMask
 				top = min(top, 4)
 				left &= CoeffContextMask
@@ -155,7 +158,7 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 				txbSkipCtx++
 			}
 			txbSkipCtx += 7
-			if int(blockDims.W4)*int(blockDims.H4) > int(txDims.W4)*int(txDims.H4) {
+			if blockW4*blockH4 > w4*h4 {
 				txbSkipCtx += 3
 			}
 		}
@@ -167,8 +170,8 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 	topMag, topSign := coeffContextWords(aboveRow, x4, w4)
 	leftMag, leftSign := coeffContextWords(leftRow, y4, h4)
 	dcSign = topSign + leftSign
-	if req.Plane == 0 {
-		if blockDims.W4 != txDims.W4 || blockDims.H4 != txDims.H4 {
+	if plane == 0 {
+		if blockW4 != w4 || blockH4 != h4 {
 			top := topMag & CoeffContextMask
 			top = min(top, 4)
 			left := leftMag & CoeffContextMask
@@ -186,7 +189,7 @@ func (c *CoeffEntropyContext) txbContextTrusted(req CoeffContextRequest, txDims 
 			ctxBase++
 		}
 		ctxOffset := uint8(7)
-		if int(blockDims.W4)*int(blockDims.H4) > int(txDims.W4)*int(txDims.H4) {
+		if blockW4*blockH4 > w4*h4 {
 			ctxOffset = 10
 		}
 		txbSkipCtx = ctxBase + ctxOffset
@@ -214,7 +217,7 @@ func (c *CoeffEntropyContext) markTXBKnown(req CoeffContextRequest, txDims Trans
 	if result.EOB > 0 {
 		value = result.CulLevel
 	}
-	c.setTXBContextKnown(req, txDims, visibleW, visibleH, value)
+	c.setTXBContextReq(req, txDims, visibleW, visibleH, value)
 }
 
 func (c *CoeffEntropyContext) ResetBlock(plane int, block BlockSize, x4 int, y4 int) error {
@@ -280,14 +283,20 @@ func (c *CoeffEntropyContext) setTXBContext(req CoeffContextRequest, value uint8
 	if err != nil {
 		return err
 	}
-	c.setTXBContextKnown(req, txDims, visibleW, visibleH, value)
+	c.setTXBContextReq(req, txDims, visibleW, visibleH, value)
 	return nil
 }
 
-func (c *CoeffEntropyContext) setTXBContextKnown(req CoeffContextRequest, txDims TransformDimensions, visibleW int, visibleH int, value uint8) {
-	plane := int(req.Plane)
-	setCoeffContextRun(&c.Above[plane], int(req.X4), int(txDims.W4), visibleW, value)
-	setCoeffContextRun(&c.Left[plane], int(req.Y4), int(txDims.H4), visibleH, value)
+func (c *CoeffEntropyContext) setTXBContextReq(req CoeffContextRequest, txDims TransformDimensions, visibleW int, visibleH int, value uint8) {
+	c.setTXBContextKnown(req.Plane, int(req.X4), int(req.Y4), int(txDims.W4), int(txDims.H4), visibleW, visibleH, value)
+}
+
+// setTXBContextKnown is the a/l coefficient-context write after the plane TXB
+// at x4, y4: dav1d's dav1d_memset_likely_pow2 of the cul_level byte.
+func (c *CoeffEntropyContext) setTXBContextKnown(plane uint8, x4, y4, w4, h4, visibleW, visibleH int, value uint8) {
+	p := int(plane)
+	setCoeffContextRun(&c.Above[p], x4, w4, visibleW, value)
+	setCoeffContextRun(&c.Left[p], y4, h4, visibleH, value)
 }
 
 // setCoeffContextRun is dav1d's dav1d_memset_likely_pow2 for the a/l coefficient

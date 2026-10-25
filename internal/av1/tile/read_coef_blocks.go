@@ -219,20 +219,20 @@ func readCoefTree[T BlockLoopCoeffController](b *coefBlock, coeffController T, l
 func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T, loopVisit *BlockLoopVisit, plane uint8, size TransformSize, x4, y4, visW, visH int) error {
 	s := b.s
 	resetCoeffDequantTXB(b.dequant)
-	txDims, ok := size.Dimensions()
-	if !ok {
+	if size >= transformSizeCount || plane > 2 {
 		return ErrInvalidDecodeState
 	}
-	ctxReq := CoeffContextRequest{
-		Plane:      plane,
-		PlaneBlock: b.planeBlk[plane],
-		Size:       size,
-		X4:         uint8(x4),
-		Y4:         uint8(y4),
-		VisibleW4:  uint8(visW),
-		VisibleH4:  uint8(visH),
-	}
-	txbCtx := b.ctx.txbContextTrusted(ctxReq, txDims, b.blockDims[plane])
+	txDims := &transformDimensions[size]
+	// dav1d's get_skip_ctx and get_dc_sign_ctx take the TXB position as
+	// scalars. Building a CoeffContextRequest byte by byte on the stack
+	// and passing it by value had the callee read it back as words, which
+	// cannot be store-forwarded from the byte stores and stalled every
+	// transform block.
+	//
+	// (The calls keep their line offsets in this function so the
+	// committed PGO profile still matches their edges.)
+	tw4, th4, bd := int(txDims.W4), int(txDims.H4), &b.blockDims[plane]
+	txbCtx := b.ctx.txbContextTrusted(plane, x4, y4, tw4, th4, int(bd.W4), int(bd.H4))
 	geo := &coeffGeometryTable[size]
 	if !geo.valid || txbCtx.TXBSkipContext >= TXBSkipContexts {
 		return ErrInvalidDecodeState
@@ -256,7 +256,7 @@ func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T,
 		// t->scratch.txtp_map for each of the TXB's rows. The selector's Type
 		// grid is that map; this walk reads back only what the block's own luma
 		// TXBs wrote, so it skips the generation tags the legacy reader uses.
-		w4, h4 := int(txDims.W4), int(txDims.H4)
+		w4, h4 := tw4, th4
 		if x4+w4 > MaxBlockModeSlots || y4+h4 > MaxBlockModeSlots {
 			return ErrInvalidDecodeState
 		}
@@ -278,7 +278,7 @@ func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T,
 	if allSkip {
 		result.AllZero = true
 		stats.AllZero++
-		b.ctx.setTXBContextKnown(ctxReq, txDims, visW, visH, 0)
+		b.ctx.setTXBContextKnown(plane, x4, y4, tw4, th4, visW, visH, 0)
 	} else {
 		class, err := txtp.Class()
 		if err != nil {
@@ -297,7 +297,7 @@ func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T,
 			}
 		}
 		if cf == nil {
-			if result, err = b.readQuantizedTXB(ctxReq, size, coeffPlane, class, txbCtx, geo); err != nil {
+			if result, err = b.readQuantizedTXB(size, coeffPlane, class, txbCtx, geo); err != nil {
 				return err
 			}
 		} else {
@@ -324,18 +324,18 @@ func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T,
 		}
 		stats.NonZero++
 		stats.EOBTotal += uint32(result.EOB)
-		b.ctx.setTXBContextKnown(ctxReq, txDims, visW, visH, result.CulLevel)
+		b.ctx.setTXBContextKnown(plane, x4, y4, tw4, th4, visW, visH, result.CulLevel)
 	}
 
 	blk := &b.scratch.block
-	*blk = BlockCoeffBlock{
-		Plane:     plane,
-		Block:     TransformBlock{X4: uint8(x4), Y4: uint8(y4), Size: size, VisibleW4: uint8(visW), VisibleH4: uint8(visH)},
-		Transform: txtp,
-		Result:    result,
-	}
+	blk.Plane, blk.Transform, blk.Result = plane, txtp, result
+	blk.Block = TransformBlock{X4: uint8(x4), Y4: uint8(y4), Size: size, VisibleW4: uint8(visW), VisibleH4: uint8(visH)}
 	if !result.AllZero && !b.dequant.Ready {
 		blk.Coeffs, blk.Scan, _, _ = b.scratch.Coeff.coeffBuffersWithGeo(size, mustClass(txtp), geo)
+	} else if blk.Coeffs != nil || blk.Scan != nil {
+		// Field stores: a whole-struct store re-zeroed the slice headers
+		// behind write barriers on every TXB.
+		blk.Coeffs, blk.Scan = nil, nil
 	}
 	return coeffController.VisitBlockCoeffPtr(loopVisit, blk)
 }
@@ -400,7 +400,7 @@ func (b *coefBlock) readTxtp(plane uint8, size TransformSize, x4, y4 int) (trans
 // then dequantizes during reconstruction.
 //
 //go:noinline
-func (b *coefBlock) readQuantizedTXB(ctxReq CoeffContextRequest, size TransformSize, plane CoeffPlaneType, class transform.Class, txbCtx TXBContext, geo *coeffGeometry) (TXBDecodeResult, error) {
+func (b *coefBlock) readQuantizedTXB(size TransformSize, plane CoeffPlaneType, class transform.Class, txbCtx TXBContext, geo *coeffGeometry) (TXBDecodeResult, error) {
 	scratch := &b.scratch.Coeff
 	coeffs, scan, levels, err := scratch.coeffBuffersWithGeo(size, class, geo)
 	if err != nil {

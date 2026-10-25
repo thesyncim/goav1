@@ -368,7 +368,7 @@ func benchmarkCoeffEntropyContextTXBContextTrusted(b *testing.B, plane int) {
 	sum := 0
 	b.ReportAllocs()
 	for b.Loop() {
-		txb := ctx.txbContextTrusted(req, txDims, blockDims)
+		txb := ctx.txbContextReq(req, txDims, blockDims)
 		sum += int(txb.TXBSkipContext) + int(txb.DCSignContext)
 	}
 	benchmarkCoeffContextSink = sum
@@ -385,7 +385,7 @@ func benchmarkCoeffEntropyContextSetTXBContextKnown(b *testing.B, visibleW int, 
 
 	b.ReportAllocs()
 	for b.Loop() {
-		ctx.setTXBContextKnown(req, txDims, visibleW, visibleH, value)
+		ctx.setTXBContextReq(req, txDims, visibleW, visibleH, value)
 	}
 	benchmarkCoeffContextSink = int(ctx.Above[0][4]) + int(ctx.Left[0][5])
 }

@@ -861,7 +861,7 @@ func (s *DecodeState) decodeCoeffTXBWithDeferredTransform(cdfs *CoeffCDFs, ctx *
 
 func (s *DecodeState) decodeCoeffTXBWithKnownContext(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, ctxReq CoeffContextRequest, req TXBDecodeRequest, known coeffContextKnown, selector CoeffTransformSelector, typ transform.Type, useType bool, class transform.Class, transformReq CoeffTransformRequest) (transform.Type, TXBDecodeResult, []int16, []int16, error) {
 	resetCoeffDequantTXB(req.dequant)
-	txbCtx := ctx.txbContextTrusted(ctxReq, known.TXDims, known.Block)
+	txbCtx := ctx.txbContextReq(ctxReq, known.TXDims, known.Block)
 	req.Size = ctxReq.Size
 	req.Plane = known.Plane
 	req.TXBSkipContext = txbCtx.TXBSkipContext
