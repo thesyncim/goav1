@@ -179,9 +179,33 @@ func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
 }
 
 // eligible reports whether event takes the frame-threaded path. Film grain
-// does not exclude a frame: it is applied when the frame leaves the ring.
+// does not exclude a frame: it is applied when the frame leaves the ring. A
+// tile group carrying every tile of a frame whose header was deferred (see
+// deferHeader) is taken as the frame.
 func (p *decoderFramePipeline) eligible(event *DecoderEvent) bool {
-	return internaldecoder.EventFrameThreadable(event) && !p.d.state.Active()
+	return (internaldecoder.EventFrameThreadable(event) || internaldecoder.EventTileGroupFrameThreadable(event)) &&
+		!p.d.state.Active()
+}
+
+// deferHeader reports whether the frame header event at events[i] is left to
+// the tile group that completes its frame, so the frame takes the
+// frame-threaded path instead of draining the ring (dav1d parses a frame
+// header OBU into c->frame_hdr and submits the frame when its last tile
+// arrives). It holds when the next event that touches frame state is a tile
+// group carrying every tile of the frame.
+func (p *decoderFramePipeline) deferHeader(events []DecoderEvent, i int) bool {
+	h := &events[i]
+	if h.Kind != DecoderEventFrameHeader || h.NewCodedVideoSequence || p.d.state.Active() {
+		return false
+	}
+	for j := i + 1; j < len(events); j++ {
+		e := &events[j]
+		if !decoderFramePipelineEventNeedsDrain(e) {
+			continue
+		}
+		return internaldecoder.EventTileGroupFrameThreadable(e)
+	}
+	return false
 }
 
 // retire waits for fc's in-flight frame, returns the surfaces it dropped from
@@ -348,6 +372,10 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 
 	fc.event = *src
 	fc.event.SequenceHeader = sequence
+	// A tile group completing a frame whose header was deferred runs as the
+	// frame: its payload carries every tile, and its frame state is the
+	// header's.
+	fc.event.Kind = DecoderEventFrame
 	if fc.payload != nil && len(fc.event.Unit.Raw) != 0 {
 		// The source reuses its payload buffer on the next call, while this
 		// frame's entropy pass may still be reading it (dav1d keeps a

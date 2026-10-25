@@ -97,7 +97,21 @@ type FrameThreadFrame struct {
 // pixels), not starting a new coded video sequence (whose reference reset
 // releases surfaces immediately).
 func EventFrameThreadable(event *Event) bool {
-	return event != nil && event.Kind == EventFrame && event.TileGroup.Final &&
+	return event != nil && event.Kind == EventFrame && frameThreadableTiles(event)
+}
+
+// EventTileGroupFrameThreadable reports whether event is the tile group that
+// completes a frame sent as a frame header OBU followed by one tile group OBU
+// holding every tile, with EventFrameThreadable's other conditions. dav1d
+// submits a frame once all its tiles are in, whichever OBUs carried them
+// (obu.c: n_tiles == cols * rows -> dav1d_submit_frame); the frame-threaded
+// path takes such a tile group as the frame.
+func EventTileGroupFrameThreadable(event *Event) bool {
+	return event != nil && event.Kind == EventTileGroup && frameThreadableTiles(event)
+}
+
+func frameThreadableTiles(event *Event) bool {
+	return event.TileGroup.Final &&
 		event.TileGroup.StartTile == 0 && int(event.TileGroup.TileCount) == int(event.TileInfo.Cols)*int(event.TileInfo.Rows) &&
 		!event.NewCodedVideoSequence && !event.FrameSize.AllowIntrabc && !event.FrameSize.SuperResEnabled &&
 		!event.FrameHeader.ShowExistingFrame

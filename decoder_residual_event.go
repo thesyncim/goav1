@@ -585,6 +585,10 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 				result.ReleaseCount += int(step.Run.ReleaseCount)
 				continue
 			}
+			if r.fp.deferHeader(events, i) {
+				result.Count++
+				continue
+			}
 			if r.fp.showExistingEligible(&events[i]) {
 				step, err := r.fp.showExisting(sequence, &events[i])
 				if err != nil {
