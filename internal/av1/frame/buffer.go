@@ -221,15 +221,49 @@ func Bind(buffer []byte, format Format) (Frame, error) {
 // that lies inside the cropped extent, so frames with no off-edge reads are
 // unaffected.
 func (f *Frame) ExtendBorders() {
-	bytesPerSample := f.Layout.BytesPerSample
-	if bytesPerSample <= 0 {
-		bytesPerSample = 1
-	}
-	f.Y.extendBorders(bytesPerSample)
+	f.ExtendBordersFrom(0)
+}
+
+// ExtendBordersFrom is ExtendBorders for a frame whose luma rows above
+// lumaRow, and the chroma rows they cover, already had their right padding
+// filled by ExtendBorderRows: it fills the right padding of the remaining rows
+// and the bottom padding, and writes nothing in the rows above.
+func (f *Frame) ExtendBordersFrom(lumaRow int) {
+	bytesPerSample := f.bytesPerSample()
+	f.Y.extendBorders(bytesPerSample, lumaRow)
 	if !f.Format.MonoChrome {
-		f.U.extendBorders(bytesPerSample)
-		f.V.extendBorders(bytesPerSample)
+		chromaRow := f.chromaRow(lumaRow)
+		f.U.extendBorders(bytesPerSample, chromaRow)
+		f.V.extendBorders(bytesPerSample, chromaRow)
 	}
+}
+
+// ExtendBorderRows fills the right padding of luma rows [lumaLo, lumaHi) and
+// of the chroma rows they cover, as ExtendBorders does for every row, so a
+// frame can hand out finished rows while later rows are still filtered.
+// lumaLo and lumaHi must be multiples of the chroma subsampling.
+func (f *Frame) ExtendBorderRows(lumaLo, lumaHi int) {
+	bytesPerSample := f.bytesPerSample()
+	f.Y.extendRight(bytesPerSample, lumaLo, lumaHi)
+	if !f.Format.MonoChrome {
+		lo, hi := f.chromaRow(lumaLo), f.chromaRow(lumaHi)
+		f.U.extendRight(bytesPerSample, lo, hi)
+		f.V.extendRight(bytesPerSample, lo, hi)
+	}
+}
+
+func (f *Frame) bytesPerSample() int {
+	if f.Layout.BytesPerSample <= 0 {
+		return 1
+	}
+	return f.Layout.BytesPerSample
+}
+
+func (f *Frame) chromaRow(lumaRow int) int {
+	if f.Format.SubsamplingY {
+		return lumaRow >> 1
+	}
+	return lumaRow
 }
 
 // extendBorders edge-replicates this plane's last valid column into the columns
@@ -237,7 +271,32 @@ func (f *Frame) ExtendBorders() {
 // (now including its extended columns) into rows [Height, allocHeight). The
 // bottom-right corner is filled by the second pass copying the fully extended
 // last row. bytesPerSample is 1 for 8-bit content and 2 for 10/12-bit content.
-func (p *Plane) extendBorders(bytesPerSample int) {
+func (p *Plane) extendBorders(bytesPerSample int, fromRow int) {
+	if p.Stride <= 0 || p.Width <= 0 || p.Height <= 0 || bytesPerSample <= 0 {
+		return
+	}
+	allocHeight := len(p.Pix) / p.Stride
+	if allocHeight <= 0 {
+		return
+	}
+	height := min(p.Height, allocHeight)
+	p.extendRight(bytesPerSample, fromRow, height)
+
+	// Bottom edge: replicate the last valid row (already right-extended) into
+	// the padding rows [height, allocHeight). This also fills the bottom-right
+	// corner.
+	if height < allocHeight {
+		lastRow := p.Pix[(height-1)*p.Stride : (height-1)*p.Stride+p.Stride]
+		for y := height; y < allocHeight; y++ {
+			dst := p.Pix[y*p.Stride : y*p.Stride+p.Stride]
+			copy(dst, lastRow)
+		}
+	}
+}
+
+// extendRight replicates the last valid sample of each valid row in [lo, hi)
+// across the padding columns [width, allocWidth).
+func (p *Plane) extendRight(bytesPerSample int, lo, hi int) {
 	if p.Stride <= 0 || p.Width <= 0 || p.Height <= 0 || bytesPerSample <= 0 {
 		return
 	}
@@ -245,25 +304,19 @@ func (p *Plane) extendBorders(bytesPerSample int) {
 	if allocWidth <= 0 {
 		return
 	}
-	allocHeight := len(p.Pix) / p.Stride
-	if allocHeight <= 0 {
-		return
-	}
 	width := min(p.Width, allocWidth)
-	height := min(p.Height, allocHeight)
-
-	// Right edge: replicate the last valid sample of each valid row across the
-	// padding columns [width, allocWidth).
+	lo = max(lo, 0)
+	hi = min(hi, p.Height, len(p.Pix)/p.Stride)
 	if width < allocWidth {
 		lastCol := (width - 1) * bytesPerSample
 		switch bytesPerSample {
 		case 1:
-			for y := 0; y < height; y++ {
+			for y := lo; y < hi; y++ {
 				row := p.Pix[y*p.Stride : y*p.Stride+p.Stride]
 				FillBytes(row[width:allocWidth], row[lastCol])
 			}
 		case 2:
-			for y := 0; y < height; y++ {
+			for y := lo; y < hi; y++ {
 				row := p.Pix[y*p.Stride : y*p.Stride+p.Stride]
 				lo := row[lastCol]
 				hi := row[lastCol+1]
@@ -274,7 +327,7 @@ func (p *Plane) extendBorders(bytesPerSample int) {
 				}
 			}
 		default:
-			for y := 0; y < height; y++ {
+			for y := lo; y < hi; y++ {
 				row := p.Pix[y*p.Stride : y*p.Stride+p.Stride]
 				edge := row[lastCol : lastCol+bytesPerSample]
 				for x := width; x < allocWidth; x++ {
@@ -282,17 +335,6 @@ func (p *Plane) extendBorders(bytesPerSample int) {
 					copy(row[dst:dst+bytesPerSample], edge)
 				}
 			}
-		}
-	}
-
-	// Bottom edge: replicate the last valid row (already right-extended) into
-	// the padding rows [height, allocHeight). This also fills the bottom-right
-	// corner.
-	if height < allocHeight {
-		lastRow := p.Pix[(height-1)*p.Stride : (height-1)*p.Stride+p.Stride]
-		for y := height; y < allocHeight; y++ {
-			dst := p.Pix[y*p.Stride : y*p.Stride+p.Stride]
-			copy(dst, lastRow)
 		}
 	}
 }

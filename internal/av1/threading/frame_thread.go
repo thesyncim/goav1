@@ -90,9 +90,10 @@ func (p *FrameProgress) Init() {
 // the tile job returns once its parse finished and leaves the lanes running;
 // Join waits for every tile's lanes.
 //
-// Before a lane reconstructs its first row it waits until every reference
-// surface it may predict from is final (RefProgress), so the entropy pass never
-// waits for pixels.
+// Before a lane reconstructs a superblock it waits until every reference
+// surface the superblock predicts from has published the rows its motion
+// reaches (RefProgress, see waitSuperblockReferences), so the entropy pass
+// never waits for pixels.
 type FrameThreadRecon struct {
 	RefProgress [parser.InterRefsPerFrame]*FrameProgress
 	// Motion, when set, links the entropy pass to the saved MV_REF rows of
@@ -204,16 +205,6 @@ func (r *FrameThreadRecon) Join() error {
 			firstErr = err
 		}
 	}
-}
-
-// waitReferences blocks until every reference surface is final.
-func (r *FrameThreadRecon) waitReferences() bool {
-	for _, p := range r.RefProgress {
-		if p != nil && !p.Wait(FrameProgressDone) {
-			return false
-		}
-	}
-	return true
 }
 
 // runBatch runs one tile batch's entropy pass (with its reconstruction lanes

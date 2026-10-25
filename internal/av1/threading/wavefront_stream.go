@@ -164,11 +164,6 @@ func (wf *frameWorkReconWavefront) startLanes(lanes chan<- wavefrontLaneTask, wo
 func (wf *frameWorkReconWavefront) runLane(w int, workers int, rowCount int) {
 	defer wf.wg.Done()
 	st := &wf.states[w]
-	if ft := wf.frameThread; ft != nil && !ft.waitReferences() {
-		wf.firstErr.CompareAndSwap(nil, &wavefrontError{err: ErrFrameThreadReference})
-		wf.abortProgress()
-		return
-	}
 	for row := w; row < rowCount; row += workers {
 		view, ok := wf.waitRows(row + 1)
 		if !ok {

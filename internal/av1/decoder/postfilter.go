@@ -928,7 +928,7 @@ func (ctx *FrameWorkPostFilterContext) applySupportedPostFiltersInPlace(req Fram
 	// reads would return the zero-filled padding instead of libaom's clamped
 	// edge pixel. It is a no-op for frames whose planes fill their allocation.
 	if ctx.Output != nil {
-		ctx.Output.ExtendBorders()
+		ctx.Output.ExtendBordersFrom(ctx.Parallel.extendedRows())
 	}
 	if frameWorkRemainingPostFilters(ctx).Has(FrameWorkPostFilterFilmGrain) {
 		filmGrainResult, err := ctx.ApplyFilmGrainPostFilter(req.FilmGrain)

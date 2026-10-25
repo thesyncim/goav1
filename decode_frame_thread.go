@@ -172,6 +172,9 @@ func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
 		if err != nil {
 			state = internalthreading.FrameProgressError
 		}
+		if err == nil && decoderFramePipelineTailHook != nil {
+			decoderFramePipelineTailHook(fc.target, &p.progress[fc.surface])
+		}
 		p.progress[fc.surface].Publish(state)
 		fc.tailErr = err
 		fc.done <- struct{}{}
@@ -451,6 +454,14 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 	}
 
 	p.progress[surface].Reset()
+	// The tail publishes the surface's finished rows while its post-filter
+	// runs (dav1d sr_cur.progress[1]); later frames wait per superblock.
+	if decoderFramePipelineTailHook == nil {
+		fc.postParallel.BindFrameProgress(&p.progress[surface])
+	} else {
+		// The test hook publishes the rows itself.
+		fc.postParallel.BindFrameProgress(nil)
+	}
 	// dav1d_submit_frame: the reference slots, slot CDF handles and slot MV
 	// grids name this frame before its entropy pass runs.
 	run, err := d.state.PublishFrameThreaded(&d.refs, event, step, &fc.ft)
@@ -567,6 +578,10 @@ func (p *decoderFramePipeline) showExisting(sequence SequenceHeader, src *Decode
 // entropy pass; the returned function runs once the pass returned, before the
 // tail starts.
 var decoderFramePipelineParseHook func(p *decoderFramePipeline, fc *decoderFrameContext, references []*Frame) func()
+
+// decoderFramePipelineTailHook, when set by a test, runs once a frame's tail
+// finished and before its surface is published final.
+var decoderFramePipelineTailHook func(target *Frame, progress *internalthreading.FrameProgress)
 
 // reset drains the pipeline and marks every surface final.
 func (p *decoderFramePipeline) reset() {
