@@ -471,6 +471,11 @@ func (s *WebRTCStream) setRateControlQRange(minQ uint8, maxQ uint8) {
 			enc.rcMinQ = minQ
 			enc.rcMaxQ = maxQ
 			enc.qIndex = minQ/2 + maxQ/2
+			// The 8-bit encoders run SVT-AV1's controller, which takes the range
+			// as its best and worst quality.
+			if enc.svtRC.enabled {
+				enc.svtRC.setQRange(minQ, maxQ)
+			}
 		}
 		mono := s.monoEncoders[i]
 		if mono != nil {

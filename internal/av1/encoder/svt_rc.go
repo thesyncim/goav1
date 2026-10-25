@@ -187,6 +187,15 @@ func (rc *svtRateControl) init(targetBps, fps int, bestQ, worstQ uint8, width, h
 	rc.rateRatioQDeltaAdjustment = 0.25
 }
 
+// setQRange applies a [bestQ, worstQ] qindex range (min_qp_allowed and
+// max_qp_allowed) to a freshly initialized controller: the fields init
+// derives from it, nothing else.
+func (rc *svtRateControl) setQRange(bestQ, worstQ uint8) {
+	rc.bestQuality, rc.worstQuality = int(bestQ), int(worstQ)
+	rc.avgFrameQIndex = [2]int{rc.worstQuality, rc.worstQuality}
+	rc.lastQ = [2]int{rc.worstQuality, rc.worstQuality}
+}
+
 // svtConvertQIndexToQ is svt_av1_convert_qindex_to_q at 8-bit.
 func svtConvertQIndexToQ(q int) float64 {
 	return cyclicQRealTable[max(0, min(q, 255))]
