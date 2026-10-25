@@ -78,13 +78,20 @@ func cdefDirOddCost(left, right archsimd.Int16x16, shuf archsimd.Int8x32, divAlt
 
 func findDirectionU8SIMD(img []byte, stride int) (int, int32) {
 	bias := archsimd.BroadcastInt16x16(128)
-	var zero archsimd.Int16x16
 	p := unsafe.Pointer(unsafe.SliceData(img[:7*stride+8]))
 	sb := uintptr(stride)
 	m0 := cdefDirRowPair(p, unsafe.Add(p, 7*sb), bias)
 	m1 := cdefDirRowPair(unsafe.Add(p, sb), unsafe.Add(p, 6*sb), bias)
 	m2 := cdefDirRowPair(unsafe.Add(p, 2*sb), unsafe.Add(p, 5*sb), bias)
 	m3 := cdefDirRowPair(unsafe.Add(p, 3*sb), unsafe.Add(p, 4*sb), bias)
+	return cdefDirSearchAVX2(m0, m1, m2, m3)
+}
+
+// cdefDirSearchAVX2 is cdef_dir's shared body (dav1d's .main label, which
+// the 16bpc entry jumps into): m_i = [row i | row 7-i] for i < 4, already
+// biased by -128.
+func cdefDirSearchAVX2(m0, m1, m2, m3 archsimd.Int16x16) (int, int32) {
+	var zero archsimd.Int16x16
 	m7 := m0.ConcatPermute128Scalars(1, 0, m0)
 	m6 := m1.ConcatPermute128Scalars(1, 0, m1)
 	m5 := m2.ConcatPermute128Scalars(1, 0, m2)

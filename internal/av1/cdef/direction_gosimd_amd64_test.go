@@ -168,3 +168,32 @@ func BenchmarkAMD64CDEFDirection(b *testing.B) {
 	})
 	_ = sink
 }
+
+// BenchmarkAMD64CDEFDirection16 times the high-bitdepth direction search:
+// dav1d's cdef_dir_16bpc port (impl=avx2) against the 128-bit Go SIMD search
+// (impl=generic), at 10 bits.
+func BenchmarkAMD64CDEFDirection16(b *testing.B) {
+	if !directionSIMDBound() {
+		b.Skip("CPU does not advertise AVX2")
+	}
+	rnd := newCDEFRandom(cdefDeterministicSeed ^ 0x5678)
+	const stride = 64
+	img := make([]uint16, stride*8+16)
+	for i := range img {
+		img[i] = uint16(rnd.generate(1024))
+	}
+	var sink int
+	b.Run("shape=8x8x2/impl=generic", func(b *testing.B) {
+		for b.Loop() {
+			d1, _, d2, _ := findDirectionDualSIMD128(img, img[8:], stride, 2)
+			sink += d1 + d2
+		}
+	})
+	b.Run("shape=8x8x2/impl=avx2", func(b *testing.B) {
+		for b.Loop() {
+			d1, _, d2, _ := findDirectionDualSIMD(img, img[8:], stride, 2)
+			sink += d1 + d2
+		}
+	})
+	_ = sink
+}
