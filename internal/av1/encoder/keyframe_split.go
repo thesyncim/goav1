@@ -103,7 +103,7 @@ func (st *lossyEncodeState) restoreKeyTrial() {
 func (st *lossyEncodeState) keyIntraRDCost(src SourceFrame420, recon *SourceFrame420, walkReq tile.BlockWalkRequest, plane []byte, px, py, n int) int64 {
 	haveTop := py > int(walkReq.MIRowStart)*4
 	haveLeft := px > int(walkReq.MIColStart)*4
-	selectIntraModeN(src.Y, plane, src.YStride, px, py, n, haveTop, haveLeft, st.predY[:n*n])
+	st.keySelectIntraMode(src.Y, plane, src.YStride, px, py, n, haveTop, haveLeft, st.predY[:n*n])
 	st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
 	st.prepareInterTXB(src.Y, st.predY[:n*n], n, src.YStride, px, py, n, n, st.yQuant, st.lumaQ2[:n*n])
 	lumaD := st.rdDcode
@@ -129,7 +129,7 @@ func (st *lossyEncodeState) keyDecidePartition(src SourceFrame420, recon *Source
 		if px+32 > src.Width || py+32 > src.Height {
 			return tile.PartitionSplit, nil
 		}
-		selectIntraModeN(src.Y, recon.Y, src.YStride, px, py, 32, py > int(walkReq.MIRowStart)*4, px > int(walkReq.MIColStart)*4, st.predY[:32*32])
+		st.keySelectIntraMode(src.Y, recon.Y, src.YStride, px, py, 32, py > int(walkReq.MIRowStart)*4, px > int(walkReq.MIColStart)*4, st.predY[:32*32])
 		sad := 0
 		for r := range 32 {
 			row := (py+r)*src.YStride + px
@@ -233,8 +233,11 @@ func (st *lossyEncodeState) decideKeyBlock(src SourceFrame420, recon *SourceFram
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
 	pred := st.predY[:n*n]
-	mode := selectIntraModeN(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, n, block.HaveTop, block.HaveLeft, pred)
-	mode, angleDelta := st.improveIntraModeDirectional(src, recon, block, modeCtx, mode, pred, lumaPX, lumaPY, n)
+	mode := st.keySelectIntraMode(src.Y, recon.Y, src.YStride, lumaPX, lumaPY, n, block.HaveTop, block.HaveLeft, pred)
+	angleDelta := 0
+	if st.allowScreenContentTools {
+		mode, angleDelta = st.improveIntraModeDirectional(src, recon, block, modeCtx, mode, pred, lumaPX, lumaPY, n)
+	}
 	pal := st.keyframePalette(src, block, modeCtx, lumaPX, lumaPY, n, mode, pred)
 	if pal != nil {
 		mode, angleDelta = tile.IntraModeDC, 0
@@ -455,4 +458,19 @@ func (st *lossyEncodeState) writeKeyBlock(block tile.BlockVisit, scratch *tile.B
 		st.decisionStats.noteIntraBlock(block.Size)
 	}
 	return nil
+}
+
+// keySelectIntraMode picks a keyframe block's luma mode and fills pred with
+// its prediction. SVT-AV1's rtc presets above M11
+// (svt_aom_get_intra_mode_levels_rtc) run intra_level MAX_INTRA_LEVEL - 1 on
+// camera content, whose intra_mode_end is DC_PRED (set_intra_ctrls): intra
+// slices code DC_PRED only. Screen content (sc_class1, which is what enables
+// the screen content tools on a keyframe) runs intra_level 4 and keeps the
+// mode search.
+func (st *lossyEncodeState) keySelectIntraMode(srcPlane, reconPlane []byte, stride, px, py, n int, haveTop, haveLeft bool, pred []byte) tile.IntraMode {
+	if st.allowScreenContentTools {
+		return selectIntraModeN(srcPlane, reconPlane, stride, px, py, n, haveTop, haveLeft, pred)
+	}
+	memsetBytes(pred[:n*n], dcPredictN(reconPlane, stride, px, py, n, haveTop, haveLeft))
+	return tile.IntraModeDC
 }
