@@ -41,6 +41,11 @@ type FrameWorkPostFilterParallel struct {
 	ownedPool    *threading.Pool
 	ownedWorkers int
 	job          frameWorkPostFilterParallelJob
+
+	// fgU8 and fgU16 are the film-grain stripe stage's state (dav1d's
+	// ttd->delayed_fg), set up by prep before the stripes run.
+	fgU8  frameWorkFilmGrainRows[uint8]
+	fgU16 frameWorkFilmGrainRows[uint16]
 }
 
 type frameWorkPostFilterParallelStage uint8
@@ -53,6 +58,8 @@ const (
 	frameWorkPostFilterStageLoopFilterVertical
 	frameWorkPostFilterStageLoopFilterHorizontal
 	frameWorkPostFilterStageRestorationU8
+	frameWorkPostFilterStageFilmGrainU8
+	frameWorkPostFilterStageFilmGrainU16
 )
 
 // frameWorkPostFilterParallelJob is persistent runner state read by pool
@@ -137,6 +144,10 @@ func (p *FrameWorkPostFilterParallel) RunRange(band, lo, hi int) error {
 		return p.runCDEFU8Range(job, band, lo, hi)
 	case frameWorkPostFilterStageRestorationU8:
 		return p.runRestorationU8Range(&job.lr, band, lo, hi)
+	case frameWorkPostFilterStageFilmGrainU8:
+		return p.fgU8.apply(lo, hi)
+	case frameWorkPostFilterStageFilmGrainU16:
+		return p.fgU16.apply(lo, hi)
 	case frameWorkPostFilterStageLoopFilterPopulate:
 		for bandIndex := lo; bandIndex < hi; bandIndex++ {
 			rowStart := bandIndex * job.populateRows
