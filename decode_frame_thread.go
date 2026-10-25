@@ -83,12 +83,15 @@ type decoderFrameContext struct {
 
 	// Tail hand-off. busy is owned by the decode goroutine; start and done
 	// order the tail goroutine's writes (output, tailErr) before the next read.
-	busy    bool
-	surface int
-	output  *Frame
-	tailErr error
-	start   chan struct{}
-	done    chan struct{}
+	// existing marks a show_existing_frame output queued in the ring (dav1d's
+	// out_delayed slot holding a reference picture): no tail runs for it.
+	busy     bool
+	existing bool
+	surface  int
+	output   *Frame
+	tailErr  error
+	start    chan struct{}
+	done     chan struct{}
 }
 
 // decoderFramePipeline is the frame-threading coordinator: dav1d's
@@ -184,8 +187,13 @@ func (p *decoderFramePipeline) retire(fc *decoderFrameContext) {
 	if !fc.busy {
 		return
 	}
-	<-fc.done
 	fc.busy = false
+	if fc.existing {
+		fc.existing = false
+		p.output(fc)
+		return
+	}
+	<-fc.done
 	p.d.state.ReleaseFrameThreadHolds(&fc.ft)
 	for _, s := range fc.ft.Releases[:fc.ft.ReleaseCount] {
 		if p.readyHolds(s) {
@@ -204,6 +212,11 @@ func (p *decoderFramePipeline) retire(fc *decoderFrameContext) {
 		fc.output = nil
 		return
 	}
+	p.output(fc)
+}
+
+// output queues fc's output picture, if any, in the ready list.
+func (p *decoderFramePipeline) output(fc *decoderFrameContext) {
 	if fc.output != nil {
 		out, err := p.outputImage(fc)
 		fc.output = nil
@@ -470,6 +483,53 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 		ReferenceCount: referenceCount,
 		Run:            run,
 	}, nil
+}
+
+// showExistingEligible reports whether a show_existing_frame event joins the
+// ring instead of draining it. A key frame shown again resets every
+// reference slot (and the state frames in flight were published against), so
+// it still drains.
+func (p *decoderFramePipeline) showExistingEligible(event *DecoderEvent) bool {
+	return event.Kind == DecoderEventExistingFrame && event.FrameHeader.ShowExistingFrame &&
+		!event.NewCodedVideoSequence && event.ExistingFrame.FrameType != FrameTypeKey &&
+		!p.d.state.Active()
+}
+
+// showExisting queues a show_existing_frame output in the ring (dav1d
+// obu.c with n_fc > 1): it takes the next context, retiring the frame it
+// held, and parks the shown reference picture there, so it leaves the ring
+// in decode order behind every frame submitted before it, which includes
+// the frame that produced it. Grain from the stored parameters is applied
+// when it leaves, like any output.
+func (p *decoderFramePipeline) showExisting(sequence SequenceHeader, src *DecoderEvent) (DecoderFrameWorkEventResult, error) {
+	d := p.d
+	fc := &p.fcs[p.next]
+	p.next++
+	if p.next == len(p.fcs) {
+		p.next = 0
+	}
+	p.retire(fc)
+
+	fc.event = *src
+	fc.event.SequenceHeader = sequence
+	plan, err := d.state.ShowExisting(&d.refs, &d.pool, &fc.event, fc.planReleases[:])
+	if err != nil {
+		return DecoderFrameWorkEventResult{}, err
+	}
+	output, err := d.pool.Frame(plan.Surface)
+	if err != nil {
+		return DecoderFrameWorkEventResult{}, err
+	}
+	step := DecoderFrameWorkStep{
+		Kind:         DecoderFrameWorkStepShowExisting,
+		ReleaseCount: plan.ReleaseCount,
+		ShowExisting: plan,
+	}
+	fc.step = step
+	fc.output = output
+	fc.existing = true
+	fc.busy = true
+	return DecoderFrameWorkEventResult{Step: step, Output: output}, nil
 }
 
 // decoderFramePipelineParseHook, when set by a test, runs before a frame's
