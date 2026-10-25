@@ -67,6 +67,16 @@ type decoderFrameContext struct {
 	planReleases [RefFrames]int
 
 	ft internaldecoder.FrameThreadFrame
+	// reconRows is the frame's reconstruction progress and parsed its
+	// entropy-pass progress, which the post-filter follows while they run.
+	reconRows internalthreading.FrameThreadReconRows
+	parsed    internalthreading.FrameProgress
+	// The post-filter goroutine runs ApplyPost from the frame's StartPost
+	// (dav1d queues the filter tasks with the tile tasks) and reports on
+	// postDone; postStarted is owned by the tail goroutine.
+	postStart   chan struct{}
+	postDone    chan error
+	postStarted bool
 
 	// Entropy-pass inputs captured at submission; the context goroutine runs
 	// the pass after the submitting call returned.
@@ -136,9 +146,22 @@ type decoderFramePipeline struct {
 	grainParallel DecoderFrameWorkPostFilterParallel
 }
 
+func (p *decoderFramePipeline) postLoop(fc *decoderFrameContext) {
+	for range fc.postStart {
+		fc.postDone <- fc.ft.ApplyPost(&fc.postFilter, &fc.parsed, &fc.reconRows.Progress)
+	}
+}
+
 func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
 	for range fc.start {
+		fc.postStarted = false
 		err := p.parseFrame(fc)
+		parsed := internalthreading.FrameProgressDone
+		if err != nil {
+			parsed = internalthreading.FrameProgressError
+			fc.reconRows.Fail()
+		}
+		fc.parsed.Publish(parsed)
 		// The entropy outputs are final: wake the frames whose entropy pass
 		// waits on this frame's CDFs or MV_REF rows.
 		entropy := internalthreading.FrameProgressDone
@@ -154,9 +177,15 @@ func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
 		if fc.segOut != nil {
 			fc.segOut.Publish(entropy)
 		}
-		if err != nil {
+		switch {
+		case fc.postStarted:
+			postErr := <-fc.postDone
+			if ferr := fc.ft.FinishPost(postErr); err == nil {
+				err = ferr
+			}
+		case err != nil:
 			_ = fc.ft.Recon.Join()
-		} else {
+		default:
 			err = fc.ft.Tail(&fc.postFilter)
 		}
 		fc.output = nil
@@ -174,6 +203,9 @@ func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
 		}
 		if err == nil && decoderFramePipelineTailHook != nil {
 			decoderFramePipelineTailHook(fc.target, &p.progress[fc.surface])
+		}
+		if err == nil && decoderFramePipelineDoneHook != nil {
+			decoderFramePipelineDoneHook(fc.target)
 		}
 		p.progress[fc.surface].Publish(state)
 		fc.tailErr = err
@@ -438,6 +470,9 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 		}
 	}
 	fc.ft.Recon.Reset()
+	fc.ft.Recon.Rows = &fc.reconRows
+	fc.reconRows.Reset()
+	fc.parsed.Reset()
 	var references []*Frame
 	if n := int(referenceCount); n != 0 {
 		count, err := ResolveDecoderFrameReferences(&d.pool, fc.refSurface[:n], fc.refFrames[:])
@@ -583,6 +618,10 @@ var decoderFramePipelineParseHook func(p *decoderFramePipeline, fc *decoderFrame
 // finished and before its surface is published final.
 var decoderFramePipelineTailHook func(target *Frame, progress *internalthreading.FrameProgress)
 
+// decoderFramePipelineDoneHook, when set by a test, runs once a frame's tail
+// finished, right before its surface is published final.
+var decoderFramePipelineDoneHook func(target *Frame)
+
 // reset drains the pipeline and marks every surface final.
 func (p *decoderFramePipeline) reset() {
 	p.drain()
@@ -604,6 +643,7 @@ func (p *decoderFramePipeline) close() {
 	p.drain()
 	for i := range p.fcs {
 		close(p.fcs[i].start)
+		close(p.fcs[i].postStart)
 		p.fcs[i].postParallel.Close()
 	}
 	p.grainParallel.Close()
@@ -689,7 +729,18 @@ func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStr
 		}
 		fc.start = make(chan struct{})
 		fc.done = make(chan struct{})
+		fc.postStart = make(chan struct{})
+		fc.postDone = make(chan error)
+		fc.parsed.Init()
+		fc.reconRows.Progress.Init()
+		fc.postParallel.BindReconProgress(&fc.reconRows.Progress)
+		fc.postParallel.BindParseProgress(&fc.parsed)
+		fc.ft.StartPost = func() {
+			fc.postStarted = true
+			fc.postStart <- struct{}{}
+		}
 		go p.tailLoop(fc)
+		go p.postLoop(fc)
 	}
 	return p, nil
 }

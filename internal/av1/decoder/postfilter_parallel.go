@@ -53,6 +53,13 @@ type FrameWorkPostFilterParallel struct {
 	// rows publishes the frame's finished luma rows while the post-filter
 	// runs (dav1d's per-sbrow sr_cur.progress[1]); see BindFrameProgress.
 	rows frameWorkPostFilterRowProgress
+	// recon is the frame's reconstruction progress while its lanes may still
+	// run (see BindReconProgress).
+	recon *threading.FrameProgress
+	// parsed is the frame's entropy-pass progress (see BindParseProgress).
+	parsed *threading.FrameProgress
+	// pipe runs the row pipeline's CDEF unit rows.
+	pipe frameWorkRowPipe
 }
 
 // frameWorkPostFilterRowProgress hands a frame-threaded surface's finished
@@ -130,6 +137,7 @@ func (p *FrameWorkPostFilterParallel) Close() {
 	if p == nil {
 		return
 	}
+	p.closeRowPipe()
 	if p.ownedPool != nil {
 		p.ownedPool.Close()
 		p.ownedPool = nil
@@ -294,13 +302,27 @@ func (r *frameWorkPostFilterRowProgress) finishBand(job *frameWorkPostFilterPara
 	if r.prefix >= job.bands {
 		return
 	}
-	out := job.ctx.Output
-	rows := min(r.prefix*job.unitRowsPerBand*cdef.BlockSize, out.Y.Height)
-	if rows <= r.extended {
+	r.publish(job.ctx.Output, r.prefix*job.unitRowsPerBand*cdef.BlockSize)
+}
+
+// FrameThreadRowsPublishHook, when set by a test, runs each time a
+// frame-threaded post-filter is about to publish the luma rows above rows of
+// out as final.
+var FrameThreadRowsPublishHook func(out *frame.Frame, rows int)
+
+// publish fills the right padding of the luma rows [extended, rows) and the
+// chroma rows they cover and publishes them. Rows at or past the frame
+// height are left to the final publish, after the bottom padding is filled.
+func (r *frameWorkPostFilterRowProgress) publish(out *frame.Frame, rows int) {
+	rows &^= 7
+	if rows <= r.extended || rows >= out.Y.Height {
 		return
 	}
 	out.ExtendBorderRows(r.extended, rows)
 	r.extended = rows
+	if FrameThreadRowsPublishHook != nil {
+		FrameThreadRowsPublishHook(out, rows)
+	}
 	r.progress.Publish(int32(rows))
 }
 

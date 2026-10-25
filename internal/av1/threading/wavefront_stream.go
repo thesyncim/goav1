@@ -175,7 +175,18 @@ func (wf *frameWorkReconWavefront) runLane(w int, workers int, rowCount int) {
 			// then record the first error.
 			wf.firstErr.CompareAndSwap(nil, &wavefrontError{err: err})
 			wf.abortProgress()
+			if ft := wf.frameThread; ft != nil && ft.Rows != nil {
+				ft.Rows.Fail()
+			}
 			return
+		}
+		if ft := wf.frameThread; ft != nil && ft.Rows != nil {
+			if wf.progress.aborted.Load() {
+				// reconstructRow stopped early on the abort.
+				return
+			}
+			b := &wf.build
+			ft.Rows.finishRows(int(wf.reconTile), int32(b.miRowStart+(row+1)*b.sbSizeMIB)*4)
 		}
 	}
 }
@@ -228,6 +239,9 @@ func (c *frameWorkTileResidualLoopController) startReconStream() error {
 		return err
 	}
 	wf.frameThread = c.batch.FrameThread
+	if c.index >= 0 && c.index < len(c.batch.Jobs) {
+		wf.reconTile = int32(c.batch.Jobs[c.index].Tile)
+	}
 	wf.startLanes(c.batch.wavefrontLanes, workers, rowCount)
 	c.streaming = true
 	return nil
@@ -240,6 +254,11 @@ func (c *frameWorkTileResidualLoopController) streamBlockBegin(visit *tile.Block
 	rows, err := wf.noteBlockBegin(len(c.scratch.reconEvents), int(visit.Block.MIRow), int(visit.Block.MICol))
 	if err != nil || rows <= 0 {
 		return err
+	}
+	// The finished row's tile right-edge backup is final; flush it before the
+	// row reaches reconstruction (see FixTileBoundaryRegion).
+	if c.req.LoopFilterMasks.Valid() {
+		c.scratch.lfMask.flushRightEdge()
 	}
 	return c.publishReconRows(rows)
 }

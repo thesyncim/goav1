@@ -81,6 +81,10 @@ type FrameThreadFrame struct {
 
 	post    FrameWorkPostFilterContext
 	hasPost bool
+	// StartPost, when set, is called once the frame's post-filter context is
+	// bound, before its entropy pass runs; the owner then runs ApplyPost on
+	// another goroutine and completes the frame with FinishPost.
+	StartPost func()
 
 	// Releases holds ReleaseCount surfaces the frame's reference refresh
 	// dropped; the owner returns them to the frame pool once every frame that
@@ -336,14 +340,6 @@ func (s *FrameWorkState) RunStepFrameThreaded(event *Event, step FrameWorkStep, 
 		return ErrInvalidTileWork
 	}
 	prepared.Base.FrameThread = &ft.Recon
-	if err := workerPool.ExecuteFrameWorkRunnerFrameThread(batches[:prepared.BatchCount], jobs[:prepared.JobCount], prepared.Base, runner, laneNeed); err != nil {
-		return err
-	}
-	if ft.retainedValid != ft.willRetain {
-		// The slot frame contexts were bound to the retained entry at Begin;
-		// the update tile must have filled it.
-		return ErrInvalidFrameWorkState
-	}
 	ft.post = FrameWorkPostFilterContext{
 		Event:                   *event,
 		Step:                    step,
@@ -361,14 +357,29 @@ func (s *FrameWorkState) RunStepFrameThreaded(event *Event, step FrameWorkStep, 
 	// into a new picture, so the owner grains shown frames at output.
 	frameWorkMarkCompletedPostFilters(&ft.post, FrameWorkPostFilterFilmGrain)
 	ft.hasPost = true
+	if ft.StartPost != nil {
+		// dav1d queues a frame's post-filter tasks with its tile tasks; they
+		// run as reconstruction rows complete.
+		ft.StartPost()
+	}
+	if err := workerPool.ExecuteFrameWorkRunnerFrameThread(batches[:prepared.BatchCount], jobs[:prepared.JobCount], prepared.Base, runner, laneNeed); err != nil {
+		return err
+	}
+	if ft.retainedValid != ft.willRetain {
+		// The slot frame contexts were bound to the retained entry at Begin;
+		// the update tile must have filled it.
+		return ErrInvalidFrameWorkState
+	}
 	return nil
 }
 
-// Tail finishes a frame-threaded frame: it joins the reconstruction lanes and
-// runs the post-filter chain (dav1d's DAV1D_TASK_TYPE_TILE_RECONSTRUCTION and
-// the deblock / CDEF / super-res / loop-restoration sbrow tasks).
+// Tail finishes a frame-threaded frame whose post-filter was not started by
+// StartPost: it joins the reconstruction lanes and runs the post-filter chain
+// (dav1d's DAV1D_TASK_TYPE_TILE_RECONSTRUCTION and the deblock / CDEF /
+// super-res / loop-restoration sbrow tasks).
 func (f *FrameThreadFrame) Tail(post FrameWorkPostFilterRunner) error {
 	if err := f.Recon.Join(); err != nil {
+		f.hasPost = false
 		return err
 	}
 	if !f.hasPost {
@@ -379,6 +390,49 @@ func (f *FrameThreadFrame) Tail(post FrameWorkPostFilterRunner) error {
 		return nil
 	}
 	return post.Apply(f.post)
+}
+
+// ApplyPost runs the post-filter of a frame whose StartPost fired. It runs
+// while the entropy pass and the reconstruction lanes may still run, so the
+// post-filter must follow the frame's reconstruction progress (see
+// FrameWorkPostFilterParallel.BindReconProgress and BindParseProgress).
+//
+// parsed and recon are the frame's entropy-pass and reconstruction progress.
+// Unless the frame's post-filter can follow them row by row, ApplyPost waits
+// for both to finish before it sizes and runs the chain, which then reads the
+// frame's completed side data and pixels as after Tail's join.
+func (f *FrameThreadFrame) ApplyPost(post FrameWorkPostFilterRunner, parsed, recon *threading.FrameProgress) error {
+	if !f.hasPost {
+		return ErrInvalidFrameWorkState
+	}
+	ctx := &f.post
+	remaining := frameWorkRemainingPostFilters(ctx)
+	if !ctx.rowPipelineCandidate(remaining) || !ctx.rowPipelineFollowsParse(remaining) {
+		if !parsed.Wait(threading.FrameProgressDone) {
+			return threading.ErrFrameThreadReference
+		}
+	}
+	if !ctx.rowPipelineCandidate(remaining) {
+		if !recon.Wait(threading.FrameProgressDone) {
+			return threading.ErrFrameThreadReference
+		}
+	}
+	if post == nil {
+		return nil
+	}
+	return post.Apply(f.post)
+}
+
+// FinishPost completes a frame whose StartPost fired once its entropy pass
+// returned and ApplyPost returned postErr: it joins the reconstruction lanes
+// and reports the first failure, a failed lane before the post-filter error
+// it caused.
+func (f *FrameThreadFrame) FinishPost(postErr error) error {
+	f.hasPost = false
+	if err := f.Recon.Join(); err != nil {
+		return err
+	}
+	return postErr
 }
 
 // cdfEntry resolves a saved-CDF pool handle.
