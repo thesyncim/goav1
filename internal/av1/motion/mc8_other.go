@@ -34,3 +34,7 @@ func mc8DiffWtdMaskFast(mask []byte, maskStride int, a, b []uint16, w, h int, in
 func mc8BlendAvgFast(dst *frame.Plane, a, b []uint16, dstX, dstY, w, h int) bool {
 	return false
 }
+
+func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) bool {
+	return false
+}

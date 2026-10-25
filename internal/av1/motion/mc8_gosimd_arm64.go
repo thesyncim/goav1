@@ -272,7 +272,7 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 		case subX != 0 && subY != 0:
 			im := unsafe.Pointer(&scratch.im[0])
 			mc8H6ToI32W4(src, stride, h+5, &mc8Phases[kx][subX], im)
-			mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], o)
+			mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], o, mc8PrepV6Rnd)
 		case subX != 0:
 			mc8PrepH6W4(src, stride, h, &mc8Phases[kx][subX], o)
 		case subY != 0:
@@ -286,7 +286,7 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 	case subX != 0 && subY != 0:
 		im := unsafe.Pointer(&scratch.im[0])
 		mc8H6ToI32(src, stride, w, h+5, &mc8Phases[kx][subX], im)
-		mc8PrepV6FromI32(im, w, h, &mc8Phases[ky][subY], o)
+		mc8PrepV6FromI32(im, w, h, &mc8Phases[ky][subY], o, mc8PrepV6Rnd)
 	case subX != 0:
 		mc8PrepH6(src, stride, w, h, &mc8Phases[kx][subX], o)
 	case subY != 0:
@@ -455,17 +455,24 @@ func mc8PutV6FromI32(im unsafe.Pointer, w, h int, ph *mc8Phase, dst unsafe.Point
 	}
 }
 
-// mc8PrepV6FromI32 is the prep 2D vertical pass over the int32 intermediate.
+// mc8PrepV6Rnd is the 8-bit prep 2D vertical rounding constant, pre-scaled
+// by the 512x vertical taps: (64 + 6144 << 7) << 9.
+const mc8PrepV6Rnd = (64 + 6144<<7) << 9
+
+// mc8PrepV6FromI32 is the prep 2D vertical pass over the int32 intermediate:
+// each CONV_BUF sample is the high half of sum(512 * tap * m) + rndConst, so
+// the result is exact modulo 2^32 (libaom's uint16 cast of the >> 7). The
+// 16bpc prep (mc16_gosimd_arm64.go) shares it with its own constant.
 //
 //go:nocheckptr
-func mc8PrepV6FromI32(im unsafe.Pointer, w, h int, ph *mc8Phase, out unsafe.Pointer) {
+func mc8PrepV6FromI32(im unsafe.Pointer, w, h int, ph *mc8Phase, out unsafe.Pointer, rndConst int32) {
 	c0 := archsimd.LoadInt32x4Array(&ph.p[0])
 	c1 := archsimd.LoadInt32x4Array(&ph.p[1])
 	c2 := archsimd.LoadInt32x4Array(&ph.p[2])
 	c3 := archsimd.LoadInt32x4Array(&ph.p[3])
 	c4 := archsimd.LoadInt32x4Array(&ph.p[4])
 	c5 := archsimd.LoadInt32x4Array(&ph.p[5])
-	rnd := archsimd.BroadcastInt32x4((64 + 6144<<7) << 9)
+	rnd := archsimd.BroadcastInt32x4(rndConst)
 	rs := w * 4
 	ro := w * 2
 	for c := 0; c < w; c += 8 {

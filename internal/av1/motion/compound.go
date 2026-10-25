@@ -133,6 +133,9 @@ func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, byt
 	if bytesPerSample == 1 && mc8PrepFast(out, &ref, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch) {
 		return nil
 	}
+	if bytesPerSample == 2 && mc16PrepFast(out, &ref, int(bitDepth), refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch) {
+		return nil
+	}
 	bd := int(bitDepth)
 	xKernel, err := interpKernel(filters.X, filterW, subX)
 	if err != nil {
