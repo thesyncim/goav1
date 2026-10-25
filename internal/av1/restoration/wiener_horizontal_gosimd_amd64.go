@@ -116,7 +116,7 @@ func wienerHorizontalU8SIMD(src []uint8, srcStride int, srcOrigin int, width int
 		srow := src[srcOrigin+(row-WienerHalfwin)*srcStride-WienerHalfwin:]
 		dstRow := temp[row*width : row*width+width]
 		col := 0
-		for ; col+16 <= width; col += 16 {
+		for ; wienerU8Wide16 && col+16 <= width; col += 16 {
 			wienerHorizontalU8x16(srow[col:col+24], dstRow[col:col+16], &k16)
 		}
 		for ; col < width; col += 8 {

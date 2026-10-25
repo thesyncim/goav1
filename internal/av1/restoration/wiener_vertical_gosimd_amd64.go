@@ -89,7 +89,7 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 	for row := 0; row < height; row++ {
 		dstRow := dst[row*dstStride : row*dstStride+width]
 		col := 0
-		for ; col+16 <= width; col += 16 {
+		for ; wienerU8Wide16 && col+16 <= width; col += 16 {
 			wienerVerticalU8x16(temp[row*tempStride+col:], tempStride, dstRow[col:col+16], &k16, shift)
 		}
 		for ; col < width; col += 8 {
@@ -144,3 +144,6 @@ var wienerLowBytes32 = [32]int8{
 	0, 2, 4, 6, 8, 10, 12, 14, -1, -1, -1, -1, -1, -1, -1, -1,
 	0, 2, 4, 6, 8, 10, 12, 14, -1, -1, -1, -1, -1, -1, -1, -1,
 }
+
+// wienerU8Wide16 selects the 16-wide kernels (benchmarks compare both).
+var wienerU8Wide16 = true

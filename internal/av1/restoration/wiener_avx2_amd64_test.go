@@ -24,7 +24,8 @@ func BenchmarkAMD64WienerU8(b *testing.B) {
 	for _, c := range []struct {
 		name string
 		p    pass
-	}{{"generic", pass{wienerHorizontalU8, wienerVerticalU8}}, {"avx2", pass{wienerHorizontalU8Impl, wienerVerticalU8Impl}}} {
+	}{{"generic", pass{wienerHorizontalU8, wienerVerticalU8}}, {"avx2_8wide", pass{wienerHorizontalU8Impl, wienerVerticalU8Impl}}, {"avx2", pass{wienerHorizontalU8Impl, wienerVerticalU8Impl}}} {
+		wienerU8Wide16 = c.name != "avx2_8wide"
 		b.Run("pass=horizontal/impl="+c.name, func(b *testing.B) {
 			for b.Loop() {
 				c.p.h(src, stride, origin, 64, 64, info.HFilter, round0, scratch)
@@ -36,4 +37,5 @@ func BenchmarkAMD64WienerU8(b *testing.B) {
 			}
 		})
 	}
+	wienerU8Wide16 = true
 }
