@@ -44,23 +44,28 @@ const (
 )
 
 // mc16Source is mc8Source for 16bpc planes (2 bytes per sample, Stride in
-// bytes). Every kernel loads eight samples per tap and output group, so the
-// window must stay readable for max(w+5, 13) samples from its left edge on
-// every row.
-func mc16Source(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *emuEdge16Buf) (src unsafe.Pointer, stride int, ok bool) {
+// bytes). tx and ty are the pass lengths of each axis (mc16Taps: 0, 6 or 8);
+// a six-tap axis reads from two samples before the block, an eight-tap axis
+// from three. Every kernel loads eight samples per tap and output group, so
+// the window must stay readable for max(w+5, 13) samples (max(w+7, 15) with
+// eight horizontal taps) from its left edge on every row.
+func mc16Source(ref *frame.Plane, refX, refY, w, h, tx, ty int, edge *emuEdge16Buf) (src unsafe.Pointer, stride int, ok bool) {
 	x0, y0, bw, bh := refX, refY, w, h
-	if hx {
-		x0 -= 2
-		bw += 5
+	read := 2 * max(w+5, 13)
+	if tx != 0 {
+		x0 -= tx/2 - 1
+		bw += tx - 1
+		if tx == 8 {
+			read = 2 * max(w+7, 15)
+		}
 	}
-	if hy {
-		y0 -= 2
-		bh += 5
+	if ty != 0 {
+		y0 -= ty/2 - 1
+		bh += ty - 1
 	}
 	if ref.Width <= 0 || ref.Height <= 0 || ref.Stride < 2*ref.Width {
 		return nil, 0, false
 	}
-	read := 2 * max(w+5, 13)
 	if x0 >= 0 && y0 >= 0 && x0+bw <= ref.Width && y0+bh <= ref.Height {
 		start := y0*ref.Stride + 2*x0
 		if start+(bh-1)*ref.Stride+read <= len(ref.Pix) {
@@ -71,25 +76,27 @@ func mc16Source(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *emuEd
 		return nil, 0, false
 	}
 	// The edge window holds emuEdge16Rows (136) rows of emuEdge16Stride (144)
-	// samples; bh <= 133 and the kernels read at most 133 samples per row.
+	// samples; bh <= 135 and the kernels read at most 135 samples per row.
 	emuEdge16(bw, bh, *ref, x0, y0, edge[:], 2*emuEdge16Stride)
 	return unsafe.Pointer(&edge[0]), 2 * emuEdge16Stride, true
 }
 
 // mc16PrepFast fills a w x h CONV_BUF (row stride w) from a 10- or 12-bit
 // reference with the dav1d-style prep kernels. It returns false for shapes it
-// does not cover (sharp filters, widths other than 4 or a multiple of 8), in
-// which case the caller runs the general path.
+// does not cover (widths other than 4 or a multiple of 8, or a width-4 block
+// with a sharp horizontal filter), in which case the caller runs the general
+// path.
 func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) bool {
 	if (bitDepth != 10 && bitDepth != 12) || (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil || len(out) < w*h {
 		return false
 	}
 	kx := mc8Kind(filters.X, filterW)
 	ky := mc8Kind(filters.Y, filterH)
-	if (subX != 0 && !mc8SixTap[kx]) || (subY != 0 && !mc8SixTap[ky]) {
+	tx, ty := mc16Taps(subX, kx), mc16Taps(subY, ky)
+	if tx == 8 && w == 4 {
 		return false
 	}
-	src, stride, ok := mc16Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge16)
+	src, stride, ok := mc16Source(ref, refX, refY, w, h, tx, ty, &scratch.edge16)
 	if !ok {
 		return false
 	}
@@ -97,18 +104,32 @@ func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, fi
 	sh := compoundRound0(uint8(bitDepth)) - 1
 	o := unsafe.Pointer(&out[0])
 	switch {
-	case subX != 0 && subY != 0:
+	case tx != 0 && ty != 0:
 		im := unsafe.Pointer(&scratch.im[0])
-		if w == 4 {
-			mc16H6ToI32W4(src, stride, h+5, &mc8Phases[kx][subX], sh, im)
+		rows := h + ty - 1
+		switch {
+		case tx == 8:
+			mc16H8ToI32(src, stride, w, rows, &mc16SharpPhases[subX], sh, im)
+		case w == 4:
+			mc16H6ToI32W4(src, stride, rows, &mc8Phases[kx][subX], sh, im)
+		default:
+			mc16H6ToI32(src, stride, w, rows, &mc8Phases[kx][subX], sh, im)
+		}
+		switch {
+		case ty == 8:
+			mc16V8FromI32(im, w, h, &mc16SharpPhases[subY].p, mc16PrepV6Rnd, false, 0, o, 2*w)
+		case w == 4:
 			mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], o, mc16PrepV6Rnd)
-		} else {
-			mc16H6ToI32(src, stride, w, h+5, &mc8Phases[kx][subX], sh, im)
+		default:
 			mc8PrepV6FromI32(im, w, h, &mc8Phases[ky][subY], o, mc16PrepV6Rnd)
 		}
-	case subX != 0:
+	case tx == 8:
+		mc16PrepH8(src, stride, w, h, &mc16SharpPhases[subX], sh, o)
+	case tx != 0:
 		mc16PrepH6(src, stride, w, h, &mc8Phases[kx][subX], sh, o)
-	case subY != 0:
+	case ty == 8:
+		mc16PrepV8(src, stride, w, h, &mc16SharpPhases[subY], sh, o)
+	case ty != 0:
 		mc16PrepV6(src, stride, w, h, &mc8Phases[ky][subY], sh, o)
 	default:
 		mc16PrepCopy(src, stride, w, h, 6-sh, o)
