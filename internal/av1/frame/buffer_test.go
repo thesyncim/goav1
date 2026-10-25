@@ -863,3 +863,84 @@ func BenchmarkExtendBorders10BitPartialSuperblock(b *testing.B) {
 		f.ExtendBorders()
 	}
 }
+
+// TestExtendBorderRowsThenFrom: filling the right padding of the top rows
+// first (ExtendBorderRows) and the rest later (ExtendBordersFrom) gives the
+// bytes ExtendBorders gives, and the second pass writes nothing in the rows
+// the first one finished, which other goroutines may already be reading.
+func TestExtendBorderRowsThenFrom(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		bitDepth uint8
+		ssX, ssY bool
+		mono     bool
+	}{
+		{"420-8bit", 8, true, true, false},
+		{"422-8bit", 8, true, false, false},
+		{"444-8bit", 8, false, false, false},
+		{"mono-8bit", 8, true, true, true},
+		{"420-10bit", 10, true, true, false},
+		{"444-12bit", 12, false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			format := Format{Width: 70, Height: 75, BitDepth: tc.bitDepth, SubsamplingX: tc.ssX, SubsamplingY: tc.ssY, MonoChrome: tc.mono, Align: 1}
+			layout, err := RequiredSize(format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := make([]byte, layout.Size)
+			for i := range base {
+				base[i] = byte(i*13 + i>>7)
+			}
+			want := append([]byte(nil), base...)
+			wf, err := Bind(want, format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wf.ExtendBorders()
+
+			for _, k := range []int{0, 32, 64, 74} {
+				buf := append([]byte(nil), base...)
+				f, err := Bind(buf, format)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.ExtendBorderRows(0, k)
+				// Poison the finished rows: the second pass must not touch them.
+				planes := []*Plane{&f.Y, &f.U, &f.V}
+				if tc.mono {
+					planes = planes[:1]
+				}
+				rowsOf := func(i int) int {
+					if i > 0 && tc.ssY {
+						return k >> 1
+					}
+					return k
+				}
+				saved := make([][]byte, len(planes))
+				for i, p := range planes {
+					n := rowsOf(i) * p.Stride
+					saved[i] = append([]byte(nil), p.Pix[:n]...)
+					for j := range n {
+						p.Pix[j] ^= 0xFF
+					}
+				}
+				f.ExtendBordersFrom(k)
+				for i, p := range planes {
+					n := rowsOf(i) * p.Stride
+					for j := range n {
+						if p.Pix[j] != saved[i][j]^0xFF {
+							t.Fatalf("k=%d plane %d: finished row byte %d rewritten", k, i, j)
+						}
+					}
+					copy(p.Pix[:n], saved[i])
+				}
+				for i := range buf {
+					if buf[i] != want[i] {
+						t.Fatalf("k=%d: byte %d = %d, ExtendBorders gives %d", k, i, buf[i], want[i])
+					}
+				}
+			}
+		})
+	}
+}
