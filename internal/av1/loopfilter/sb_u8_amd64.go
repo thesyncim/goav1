@@ -351,7 +351,17 @@ func avxGroupLimits(cur, prev archsimd.Uint8x32, sel archsimd.Int8x32, nAll uint
 	acc.applied += uint32(bits.OnesCount32(archsimd.Int8x32{}.Greater(act.BitsToInt8()).ToBits())) >> 2
 	acc.max = acc.max.Max(L.And(act))
 	hV = L.ReshapeToUint64s().ShiftAllRight(4).ReshapeToUint8s().And(avxB(&avxConst.b0f))
-	iV = L.ReshapeToUint64s().ShiftAllRight(sharp0).ReshapeToUint8s().And(avxB(&avxConst.b3f)).
+	// sharp[0] is 0..2; immediate shifts keep the count out of a legacy-SSE
+	// GPR-to-XMM move.
+	lq := L.ReshapeToUint64s()
+	switch sharp0 {
+	case 0:
+	case 1:
+		lq = lq.ShiftAllRight(1)
+	default:
+		lq = lq.ShiftAllRight(2)
+	}
+	iV = lq.ReshapeToUint8s().And(avxB(&avxConst.b3f)).
 		Min(sharp1).Max(avxB(&avxConst.b01))
 	e := L.Add(archsimd.BroadcastUint8x32(2))
 	eV = e.Add(e).Add(iV)
@@ -429,6 +439,8 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 		return filterSBHorizontal8Scalar(pix, off, stride, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 	}
 	st, _ := avxSBHorizontal8(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+	// dav1d's RET: vzeroupper before returning to (legacy-SSE) Go code.
+	archsimd.ClearAVXUpperBits()
 	return st
 }
 
@@ -437,6 +449,8 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 		return filterSBVertical8Scalar(pix, off, stride, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 	}
 	st, _ := avxSBVertical8(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+	// dav1d's RET: vzeroupper before returning to (legacy-SSE) Go code.
+	archsimd.ClearAVXUpperBits()
 	return st
 }
 
