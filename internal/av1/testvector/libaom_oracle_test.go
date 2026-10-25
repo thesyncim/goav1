@@ -573,6 +573,17 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 					t.Fatalf("ivf frame %d emit buffer overflow (cap=%d)", ivfFrame.Index, len(ivfEmitMD5s))
 				}
 				ivfEmitMD5s[ivfEmitCount] = layer.md5BySurface[surface]
+				// Grain is applied only to output pictures, as dav1d's
+				// output_image -> dav1d_apply_grain: the hidden frame's
+				// postfilter skipped it, so the shown frame gets it now
+				// from its stored parameters, seed included.
+				if event.FilmGrain.Apply {
+					got, err := libaomShowExistingFilmGrainMD5(&layer.pool, &event, result.Step, surface)
+					if err != nil {
+						t.Fatalf("ivf frame %d show_existing_frame surface=%d film grain: %v", ivfFrame.Index, surface, err)
+					}
+					ivfEmitMD5s[ivfEmitCount] = got
+				}
 				ivfEmitSpatial[ivfEmitCount] = int(event.SpatialID)
 				ivfEmitCount++
 			}
@@ -954,6 +965,33 @@ func libaomSupportedPostFilterScratchLen(ctx decoder.FrameWorkPostFilterContext)
 		probe.Restoration.Records = ctx.RestorationFrameBuffers.Records
 	}
 	return ctx.SupportedPostFilterScratchLen(probe)
+}
+
+// libaomShowExistingFilmGrainMD5 runs the film grain stage alone on a shown
+// existing surface and returns the MD5 of the grained display picture. The
+// in-loop filters already ran when the frame was decoded, and the retained
+// reference stays untouched.
+func libaomShowExistingFilmGrainMD5(pool *frame.Pool, event *decoder.Event, step decoder.FrameWorkStep, surface int) (MD5, error) {
+	output, err := pool.Frame(surface)
+	if err != nil {
+		return MD5{}, err
+	}
+	ctx := decoder.FrameWorkPostFilterContext{Event: *event, Step: step, Output: output}
+	ctx = ctx.WithCompletedPostFilters(decoder.FrameWorkPostFilterLoopFilter | decoder.FrameWorkPostFilterCDEF |
+		decoder.FrameWorkPostFilterSuperRes | decoder.FrameWorkPostFilterLoopRestoration)
+	post := decoder.FrameWorkBoundSupportedPostFilterRunner{}
+	size, err := libaomSupportedPostFilterScratchLen(ctx)
+	if err != nil {
+		return MD5{}, err
+	}
+	post.Scratch = libaomPostFilterScratchStorage(size)
+	if err := post.Apply(ctx); err != nil {
+		return MD5{}, err
+	}
+	if post.DisplayOutput == nil {
+		return MD5{}, fmt.Errorf("film grain produced no display output")
+	}
+	return FrameMD5(*post.DisplayOutput)
 }
 
 func libaomPostFilterScratchStorage(size decoder.FrameWorkPostFilterScratchSize) decoder.FrameWorkPostFilterScratch {
