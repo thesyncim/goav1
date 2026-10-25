@@ -51,8 +51,13 @@ func quantizeBRowGroupsDiffSIMD(qcoeff []int16, coeff []int32, n int, live uint8
 	shiftV := archsimd.BroadcastInt32x4(-int32(l - int64(txScale)))
 	signShiftV := archsimd.BroadcastInt32x4(-31)
 	stepV := archsimd.BroadcastInt32x4(q.AC)
+	// The dequantization shift and the rate's exponent extraction are
+	// hoisted as shift-count vectors: ShiftAllRight rebuilds its count
+	// (CSEL, NEG, INS, DUP) at every use.
+	txShiftV := archsimd.BroadcastInt32x4(-int32(txScale))
+	expShiftV := archsimd.BroadcastInt32x4(-23)
+	rateBiasV := archsimd.BroadcastUint32x4(124)
 	zero := archsimd.BroadcastInt32x4(0)
-	one := archsimd.BroadcastUint32x4(1)
 	diffAcc := archsimd.BroadcastInt64x2(0)
 	rateAcc := zero
 	for col := 0; col < n; col++ {
@@ -80,16 +85,14 @@ func quantizeBRowGroupsDiffSIMD(qcoeff []int16, coeff []int32, n int, live uint8
 			if u.GetElem(0)|u.GetElem(1) == 0 {
 				continue
 			}
-			dq0 := lo.Mul(stepV).ShiftAllRight(uint64(txScale))
-			dq1 := hi.Mul(stepV).ShiftAllRight(uint64(txScale))
+			dq0 := lo.Mul(stepV).Shift(txShiftV)
+			dq1 := hi.Mul(stepV).Shift(txShiftV)
 			d0 := c0.Add(c0).Sub(dq0)
 			d1 := c1.Add(c1).Sub(dq1)
 			diffAcc = diffAcc.Add(dq0.MulWidenLo(d0)).Add(dq0.HiToLo().MulWidenLo(d0.HiToLo())).
 				Add(dq1.MulWidenLo(d1)).Add(dq1.HiToLo().MulWidenLo(d1.HiToLo()))
-			mag0, mag1 := lo.Abs().ToBits(), hi.Abs().ToBits()
-			nz0, nz1 := mag0.Min(one).BitsToInt32(), mag1.Min(one).BitsToInt32()
-			rateAcc = rateAcc.Add(rowGroupBitLenSIMD(mag0)).Add(rowGroupBitLenSIMD(mag1)).
-				Add(nz0.Add(nz0)).Add(nz1.Add(nz1))
+			rateAcc = rateAcc.Add(rowGroupLaneRateSIMD(lo, expShiftV, rateBiasV)).
+				Add(rowGroupLaneRateSIMD(hi, expShiftV, rateBiasV))
 		}
 	}
 	diff = diffAcc.GetElem(0) + diffAcc.GetElem(1)
@@ -126,11 +129,13 @@ func quantizeBRowGroupsDiffSIMD(qcoeff []int16, coeff []int32, n int, live uint8
 	return diff, rate << 9, true
 }
 
-// Quantized magnitudes are at most 32767, exactly representable in float32.
-// Its exponent gives bits.Len32 after the zero lane is clamped back to zero.
-func rowGroupBitLenSIMD(v archsimd.Uint32x4) archsimd.Int32x4 {
-	return v.BitsToInt32().ConvertToFloat32().ToBits().ShiftAllRight(23).BitsToInt32().
-		Sub(archsimd.BroadcastInt32x4(126)).Max(archsimd.BroadcastInt32x4(0))
+// rowGroupLaneRateSIMD is rowGroupLevelRate per lane: 2 + bits.Len32(|v|)
+// for a nonzero level, 0 for zero. Quantized magnitudes are at most 32767,
+// exactly representable in float32, whose biased exponent e is
+// bits.Len32 + 126 (and 0 for zero), so the rate is e - 124 saturated at
+// zero.
+func rowGroupLaneRateSIMD(v, expShift archsimd.Int32x4, bias archsimd.Uint32x4) archsimd.Int32x4 {
+	return v.Abs().ConvertToFloat32().ToBits().Shift(expShift).SubSaturated(bias).BitsToInt32()
 }
 
 func rowGroupLevelRate(v int16) int64 {
