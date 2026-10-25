@@ -140,6 +140,28 @@ func LoadSamplePlaneFull(dst []uint16, src Plane, bytesPerSample int) (SamplePla
 	return SamplePlane{Pix: samples, Stride: strideSamples, Width: src.Width, Height: src.Height}, loadedWidth, nil
 }
 
+// LoadSamplePlaneRows loads rows [y0, y1) of src into dst, a view bound by
+// BindSamplePlane over the same plane, exactly as LoadSamplePlaneFull loads
+// them, so a snapshot can be filled one band of rows at a time.
+func LoadSamplePlaneRows(dst SamplePlane, src Plane, bytesPerSample int, y0, y1 int) error {
+	strideSamples, need, err := samplePlaneLayout(src, bytesPerSample, true)
+	if err != nil {
+		return err
+	}
+	if dst.Stride != strideSamples || len(dst.Pix) < need || y0 < 0 || y1 > src.Height || y0 > y1 {
+		return ErrInvalidPlane
+	}
+	if y0 == y1 {
+		return nil
+	}
+	fullBytes, ok := checkedMul(src.Height, src.Stride)
+	if !ok || len(src.Pix) < fullBytes {
+		return ErrInvalidPlane
+	}
+	loadSampleRows(dst.Pix[y0*strideSamples:], strideSamples, src.Pix[y0*src.Stride:], src.Stride, strideSamples, y1-y0, bytesPerSample)
+	return nil
+}
+
 // LoadSampleRows8Trusted widens a strided uint8 sample rectangle into strided
 // uint16 storage: dst[y*dstStride+x] = uint16(src[y*srcStride+x]) for x in
 // [0, width), y in [0, height); all other dst elements are left untouched.
