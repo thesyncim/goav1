@@ -64,3 +64,14 @@ func (r *Random) Number(bits uint8) (uint16, error) {
 	}
 	return (r.register >> (16 - bits)) & ((1 << bits) - 1), nil
 }
+
+// gaussianIndex advances the generator once and returns its top
+// GaussianBits bits, dav1d's get_random_number(11, &seed) without the
+// bit-count check, so the grain template fill stays inline.
+func (r *Random) gaussianIndex() uint16 {
+	reg := r.register
+	bit := (reg ^ reg>>1 ^ reg>>3 ^ reg>>12) & 1
+	reg = reg>>1 | bit<<15
+	r.register = reg
+	return reg >> (16 - GaussianBits)
+}
