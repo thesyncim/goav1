@@ -88,3 +88,13 @@ func InverseAdd8x8HybridHBD(dst []byte, dstStride int, pred []byte, predStride i
 func InverseAddDCT64x64HBD(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int, bitDepth uint8) bool {
 	return false
 }
+
+// InverseAddDCT16x32HBD reports that this build has no fused 16bpc path.
+func InverseAddDCT16x32HBD(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int, bitDepth uint8) bool {
+	return false
+}
+
+// InverseAddDCT32x16HBD reports that this build has no fused 16bpc path.
+func InverseAddDCT32x16HBD(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int, bitDepth uint8) bool {
+	return false
+}
