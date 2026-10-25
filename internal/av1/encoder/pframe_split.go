@@ -62,6 +62,7 @@ type pblockRecord struct {
 	intraMode  tile.IntraMode
 	angleDelta int8
 	uvMode     tile.ChromaIntraMode
+	cfl        tile.CFLAlphaResult
 
 	// pal is a keyframe leaf's luma palette (YMap nil); palMap indexes its
 	// color index map in the record's map arena, -1 for none.

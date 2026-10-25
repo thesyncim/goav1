@@ -651,6 +651,12 @@ type lossyEncodeState struct {
 	predU          [1024]byte
 	predV          [1024]byte
 	sadScratch     [4096]byte
+	// Keyframe CfL search scratch (keyframe_cfl.go): the subsampled luma,
+	// its AC and one candidate chroma prediction (chroma blocks are at most
+	// 16x16 where CfL is allowed).
+	cflQ3   [prediction.CFLBufSquare]uint16
+	cflAC   [prediction.CFLBufSquare]int16
+	cflPred [256]byte
 	// mds0Scratch is MDS0's second candidate buffer (pframe_mds0.go).
 	mds0Scratch   [4096]byte
 	compBuf0      motion.CompoundConvBuf

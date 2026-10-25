@@ -324,13 +324,15 @@ func (st *lossyEncodeState) paletteRequest(block tile.BlockVisit, mode tile.Intr
 
 // writeKeyframePalette codes palette_mode_info for a keyframe block (its
 // palette, or has_palette_y = 0) and marks the palette contexts.
-func (st *lossyEncodeState) writeKeyframePalette(modeCtx *tile.BlockModeContext, block tile.BlockVisit, mode tile.IntraMode, pal *paletteCand) error {
+func (st *lossyEncodeState) writeKeyframePalette(modeCtx *tile.BlockModeContext, block tile.BlockVisit, mode tile.IntraMode, uvMode tile.ChromaIntraMode, pal *paletteCand) error {
 	res := tile.PaletteModeResult{}
 	if pal != nil {
 		res = pal.res
 		res.YMap = nil
 	}
-	if err := tile.WritePaletteMode(st.w, &st.intraCDFs, modeCtx, st.paletteRequest(block, mode), &res); err != nil {
+	req := st.paletteRequest(block, mode)
+	req.ChromaMode = uvMode
+	if err := tile.WritePaletteMode(st.w, &st.intraCDFs, modeCtx, req, &res); err != nil {
 		return err
 	}
 	if err := modeCtx.MarkPaletteY(block.Size, int(block.X4), int(block.Y4), res); err != nil {
