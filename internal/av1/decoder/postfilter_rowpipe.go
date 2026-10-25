@@ -111,11 +111,6 @@ func (ctx *FrameWorkPostFilterContext) rowPipelineCandidate(remaining FrameWorkP
 	switch {
 	case ctx.Output.Layout.BytesPerSample == 1 && ctx.Output.Format.BitDepth == 8:
 	case ctx.Output.Layout.BytesPerSample == 2 && (ctx.Output.Format.BitDepth == 10 || ctx.Output.Format.BitDepth == 12):
-		// 10/12-bit loop restoration has no stripe walk yet; such frames keep
-		// the whole-frame chain.
-		if remaining.Has(FrameWorkPostFilterLoopRestoration) {
-			return false
-		}
 	default:
 		return false
 	}
@@ -275,7 +270,7 @@ func (p *FrameWorkPostFilterParallel) rowPipeUnit(w, u int) {
 	if u+1 == pp.unitRows {
 		y1 = int(^uint(0) >> 1)
 	}
-	if err := tile.SaveRestorationFrameBoundaryLinesFromFrameRows(pp.plan, *out, 1, pp.boundaries, true, y0, y1); err != nil {
+	if err := tile.SaveRestorationFrameBoundaryLinesFromFrameRows(pp.plan, *out, out.Layout.BytesPerSample, pp.boundaries, true, y0, y1); err != nil {
 		pp.fail(err)
 		return
 	}
@@ -329,7 +324,13 @@ func (p *FrameWorkPostFilterParallel) rowPipeStripe(w, s int) error {
 			return frame.ErrInvalidPlane
 		}
 		seg := sc.data[pp.dataOff[plane] : pp.dataOff[plane]+pp.dataLen[plane]]
-		r, err := tile.ApplyRestorationFramePlaneInPlaceU8StripesFollowing(grid, pp.records[plane], pp.boundaries[plane], buffer, seg, scratch, s, s+1)
+		var r tile.RestorationPlaneApplyResult
+		var err error
+		if out := pp.ctx.Output; out.Layout.BytesPerSample == 2 {
+			r, err = tile.ApplyRestorationFramePlaneInPlaceU16StripesFollowing(grid, pp.records[plane], pp.boundaries[plane], buffer, out.Format.BitDepth, seg, scratch, s, s+1)
+		} else {
+			r, err = tile.ApplyRestorationFramePlaneInPlaceU8StripesFollowing(grid, pp.records[plane], pp.boundaries[plane], buffer, seg, scratch, s, s+1)
+		}
 		if err != nil {
 			return err
 		}
@@ -507,7 +508,7 @@ func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWor
 				if u+1 == unitRows {
 					y1 = int(^uint(0) >> 1)
 				}
-				if err := tile.SaveRestorationFrameBoundaryLinesFromFrameRows(pp.plan, *out, 1, pp.boundaries, false, y0, y1); err != nil {
+				if err := tile.SaveRestorationFrameBoundaryLinesFromFrameRows(pp.plan, *out, out.Layout.BytesPerSample, pp.boundaries, false, y0, y1); err != nil {
 					return err
 				}
 			}
@@ -680,6 +681,8 @@ func (ctx *FrameWorkPostFilterContext) bindRowPipeRestoration(lr FrameWorkRestor
 			lr.Boundaries = ctx.RestorationFrameBuffers.Boundaries
 		}
 	}
+	// The 8-bit stripes use the in-place segments of the frame sample
+	// scratch layout; 10/12-bit stripes size their own band buffers.
 	size, err := tile.RestorationFrameSampleScratchLen(plan, *ctx.Output, false)
 	if err != nil {
 		return err
@@ -695,7 +698,12 @@ func (ctx *FrameWorkPostFilterContext) bindRowPipeRestoration(lr FrameWorkRestor
 			continue
 		}
 		pp.dataLen[plane] = size.Data[plane].Len
-		off += size.Data[plane].Len
+		if ctx.Output.Layout.BytesPerSample == 2 {
+			if pp.dataLen[plane], err = tile.RestorationFramePlaneInPlaceU16ScratchLen(plan.Grids[plane]); err != nil {
+				return err
+			}
+		}
+		off += pp.dataLen[plane]
 		pp.stripes = max(pp.stripes, tile.RestorationTileStripeCount(plan.Grids[plane]))
 		if len(pp.records[plane]) != int(plan.Grids[plane].HorzUnits)*int(plan.Grids[plane].VertUnits) {
 			return tile.ErrInvalidPlan
