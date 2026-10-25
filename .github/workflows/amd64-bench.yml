@@ -126,18 +126,22 @@ jobs:
       - name: decode timing (base vs ref, interleaved)
         run: |
           set -eu
+          TIMEFORMAT='%3R %3U %3S'
+          REPS=3
+          echo "times are medians over $RUNS runs of $REPS back-to-back decodes (seconds)"
           printf '%-34s %-4s %10s %10s %10s %10s %8s\n' stream thr base_cpu ref_cpu base_wall ref_wall ref/base
           for f in bench-streams/*.ivf; do
             name=$(basename "$f" .ivf)
-            want=$(./dec-base -quiet -workers 1 -framedelay 1 "$f" | md5sum | cut -d' ' -f1)
-            got=$(./dec-ref -quiet -workers 1 -framedelay 1 "$f" | md5sum | cut -d' ' -f1)
+            want=$(./dec-base -quiet -workers 1 -framedelay 1 "$f" 2>/dev/null | md5sum | cut -d' ' -f1)
+            got=$(./dec-ref -quiet -workers 1 -framedelay 1 "$f" 2>/dev/null | md5sum | cut -d' ' -f1)
             if [ "$want" != "$got" ]; then echo "MISMATCH $name base=$want ref=$got"; exit 1; fi
             for thr in 1 4; do
               fd=1; [ "$thr" -gt 1 ] && fd=0
               : > base.t; : > ref.t
               for i in $(seq "$RUNS"); do
                 for b in base ref; do
-                  /usr/bin/time -f '%e %U %S' -a -o "$b.t" ./dec-$b -quiet -workers "$thr" -framedelay "$fd" "$f" > /dev/null
+                  # bash's time at millisecond resolution over REPS decodes
+                  { time { for k in $(seq "$REPS"); do ./dec-$b -quiet -workers "$thr" -framedelay "$fd" "$f" > /dev/null 2>&1; done; }; } 2>> "$b.t"
                 done
               done
               med() { awk -v c="$2" '{ if (c == "cpu") print $2 + $3; else print $1 }' "$1" | sort -g | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}'; }
