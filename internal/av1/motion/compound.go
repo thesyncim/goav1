@@ -105,6 +105,17 @@ func PrepTranslation8(buf *CompoundConvBuf, ref *frame.Plane, dstX int, dstY int
 	return PredictInterCompoundRefToConvBuf(buf, *ref, 1, 8, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch)
 }
 
+// PrepTranslation16 is PrepTranslation8 for 10- and 12-bit planes:
+// ReferenceOriginSubsampled followed by PredictInterCompoundRefToConvBuf with
+// 2-byte samples.
+func PrepTranslation16(buf *CompoundConvBuf, ref *frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int, filterW int, filterH int, mv Vector, subsamplingX bool, subsamplingY bool, filters InterpFilters, scratch *CompoundConvolveScratch) error {
+	refX, refY, subX, subY, err := ReferenceOriginSubsampled(dstX, dstY, mv, subsamplingX, subsamplingY)
+	if err != nil {
+		return err
+	}
+	return PredictInterCompoundRefToConvBuf(buf, *ref, 2, bitDepth, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch)
+}
+
 // PredictInterCompoundRefToConvBuf fills buf with the un-rounded 16-bit CONV_BUF
 // predictor (av1_dist_wtd_convolve_* with do_average == 0) for one reference.
 // The block origin (refX, refY) and subpel phases match the single-prediction

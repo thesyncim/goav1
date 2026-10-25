@@ -250,6 +250,17 @@ func PredictTranslation8(dst *frame.Plane, ref *frame.Plane, dstX int, dstY int,
 	return predictInterPlaneBlockFromOriginWithFilterSizeScratch(*dst, *ref, 1, 8, true, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch)
 }
 
+// PredictTranslation16 is PredictTranslation8 for 10- and 12-bit planes:
+// ReferenceOriginSubsampled followed by the 2-byte-sample single-reference
+// predictor, for the decoder's lean (dav1d recon_b_inter mc()) route.
+func PredictTranslation16(dst *frame.Plane, ref *frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int, filterW int, filterH int, mv Vector, subsamplingX bool, subsamplingY bool, filters InterpFilters, scratch *ConvolveScratch) error {
+	refX, refY, subX, subY, err := ReferenceOriginSubsampled(dstX, dstY, mv, subsamplingX, subsamplingY)
+	if err != nil {
+		return err
+	}
+	return predictInterPlaneBlockFromOriginWithFilterSizeScratch(*dst, *ref, 2, bitDepth, true, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch)
+}
+
 func predictInterPlaneBlockFromOriginWithFilter(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, explicitBitDepth bool, dstX int, dstY int, refX int, refY int, width int, height int, subX int, subY int, filters InterpFilters) error {
 	return predictInterPlaneBlockFromOriginWithFilterSize(dst, ref, bytesPerSample, bitDepth, explicitBitDepth, dstX, dstY, refX, refY, width, height, width, height, subX, subY, filters)
 }

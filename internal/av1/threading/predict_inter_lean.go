@@ -367,18 +367,18 @@ func (b *FrameWorkBatch) sameSizeRefPlane(reference FrameWorkReference, plane Fr
 	return ref
 }
 
-// predictBlockInterLean8 is dav1d's recon_b_inter prediction (src/recon_tmpl.c)
-// for the common 8-bit translational block, single-reference or compound: the
-// block-level mode checks run once, the luma plane predicts through mc(), and
-// U and V share one chroma position as dav1d's cbw4/cbh4/cbx4/cby4. Any plane
-// the lean target cannot take (scaled reference, high bit depth layout) goes
-// through the general per-plane route, which owns those semantics. It reports
-// false, with nothing written, for a block outside the translational shapes.
-func (b *FrameWorkBatch) predictBlockInterLean8(index int, visit *tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) (bool, error) {
+// predictBlockInterLean is dav1d's recon_b_inter prediction (src/recon_tmpl.c,
+// templated over the bit depth) for the common translational block,
+// single-reference or compound: the block-level mode checks run once, the luma
+// plane predicts through mc(), and U and V share one chroma position as
+// dav1d's cbw4/cbh4/cbx4/cby4. Any plane the lean target cannot take (scaled
+// reference, a sample width that does not match the bit depth) goes through
+// the general per-plane route, which owns those semantics. It reports false,
+// with nothing written, for a block outside the translational shapes.
+func (b *FrameWorkBatch) predictBlockInterLean(index int, visit *tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) (bool, error) {
 	pred := &visit.Prediction
 	refs := &pred.InterMotion.References
-	if b.Sequence.ColorConfig.BitDepth != 8 ||
-		(pred.InterIntraValid && pred.InterIntra.Enabled) ||
+	if (pred.InterIntraValid && pred.InterIntra.Enabled) ||
 		(pred.MotionModeValid && pred.MotionMode != tile.MotionModeTranslation) {
 		return false, nil
 	}
@@ -457,7 +457,7 @@ func (b *FrameWorkBatch) predictBlockInterLeanPlanes(index int, visit *tile.Bloc
 		}
 		var tmp frame.Plane
 		var ref *frame.Plane
-		if t.bps == 1 {
+		if b.leanSampleWidth(t.bps) {
 			reference, _ := frameWorkReferenceFromTile(visit.Prediction.InterMotion.References.Ref[0])
 			ref = b.sameSizeRefPlane(reference, plane, t.codedW, t.codedH, &tmp)
 		}
@@ -467,9 +467,36 @@ func (b *FrameWorkBatch) predictBlockInterLeanPlanes(index int, visit *tile.Bloc
 			}
 			continue
 		}
-		if err := motion.PredictTranslation8(&t.output, ref, t.x, t.y, t.writeW, t.writeH, t.filterW, t.filterH, visit.Prediction.InterMotion.MV[0], t.ssX, t.ssY, filters, frameWorkConvolveScratch(scratch)); err != nil {
+		if t.bps == 1 {
+			err = motion.PredictTranslation8(&t.output, ref, t.x, t.y, t.writeW, t.writeH, t.filterW, t.filterH, visit.Prediction.InterMotion.MV[0], t.ssX, t.ssY, filters, frameWorkConvolveScratch(scratch))
+		} else {
+			err = b.predictTranslation16(&t, ref, visit.Prediction.InterMotion.MV[0], filters, scratch)
+		}
+		if err != nil {
 			return ErrInvalidBatch
 		}
 	}
 	return nil
+}
+
+// leanSampleWidth reports whether a lean target's sample width is the one the
+// stream's bit depth implies (1 byte at 8 bits, 2 above), the only layouts the
+// lean translational predictors take.
+func (b *FrameWorkBatch) leanSampleWidth(bps int) bool {
+	if b.Sequence.ColorConfig.BitDepth == 8 {
+		return bps == 1
+	}
+	return bps == 2
+}
+
+// predictTranslation16 is dav1d's mc() for a same-size reference above 8
+// bits: the 16bpc put kernels at the lean target. (The 8-bit call sites run
+// motion.PredictTranslation8 inline.)
+func (b *FrameWorkBatch) predictTranslation16(t *frameWorkInterTarget, ref *frame.Plane, mv motion.Vector, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
+	return motion.PredictTranslation16(&t.output, ref, b.Sequence.ColorConfig.BitDepth, t.x, t.y, t.writeW, t.writeH, t.filterW, t.filterH, mv, t.ssX, t.ssY, filters, frameWorkConvolveScratch(scratch))
+}
+
+// prepTranslation16 is the compound counterpart: one reference's CONV_BUF.
+func (b *FrameWorkBatch) prepTranslation16(buf *motion.CompoundConvBuf, t *frameWorkInterTarget, ref *frame.Plane, mv motion.Vector, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
+	return motion.PrepTranslation16(buf, ref, b.Sequence.ColorConfig.BitDepth, t.x, t.y, t.width, t.height, t.filterW, t.filterH, mv, t.ssX, t.ssY, filters, &scratch.Compound)
 }
