@@ -23,6 +23,7 @@ import (
 
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/prediction"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
@@ -244,7 +245,7 @@ func (st *lossyEncodeState) decideKeyBlock(src SourceFrame420, recon *SourceFram
 	r.kind = pblockIntra
 	r.intraMode = mode
 	r.angleDelta = int8(angleDelta)
-	r.uvMode = tile.ChromaIntraModeDC
+	r.uvMode, r.cfl = tile.ChromaIntraModeDC, tile.CFLAlphaResult{}
 	r.palMap = -1
 	if err := modeCtx.MarkIntra(block.Size, int(block.X4), int(block.Y4), true, mode); err != nil {
 		return fmt.Errorf("mark intra: %w", err)
@@ -279,6 +280,25 @@ func (st *lossyEncodeState) decideKeyBlock(src SourceFrame420, recon *SourceFram
 	if err != nil {
 		return err
 	}
+	dcU := dcPredictRect(recon.U, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, block.HaveTop, block.HaveLeft)
+	dcV := dcPredictRect(recon.V, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, block.HaveTop, block.HaveLeft)
+	// SVT's I-slice CfL search (keyframe_cfl.go, cfl_level 2).
+	var cflAlphaQ3 [3]int
+	if cflAllowed, err := tile.ChromaIntraCFLAllowed(block.Size, st.color, false); err == nil && cflAllowed && videoColorIs420(st.color) {
+		if use, alpha := st.keyCFLDecide(src, recon, &cg, mode, lumaPX, lumaPY, n, dcU, dcV); use {
+			r.uvMode, r.cfl = tile.ChromaIntraModeCFL, alpha
+			for plane := 1; plane <= 2; plane++ {
+				a, err := prediction.CFLAlphaQ3(alpha.Index, alpha.JointSign, prediction.CFLPredType(plane-1))
+				if err != nil {
+					return fmt.Errorf("cfl alpha: %w", err)
+				}
+				cflAlphaQ3[plane] = a
+			}
+			if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, tile.ChromaIntraModeCFL); err != nil {
+				return fmt.Errorf("mark chroma intra: %w", err)
+			}
+		}
+	}
 	for plane := 1; plane <= 2; plane++ {
 		data, rdata := src.U, recon.U
 		if plane == 2 {
@@ -289,7 +309,17 @@ func (st *lossyEncodeState) decideKeyBlock(src SourceFrame420, recon *SourceFram
 			q = st.vQuant
 		}
 		cpred := st.predU[:cg.cw*cg.ch]
-		memsetBytes(cpred, dcPredictRect(rdata, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, block.HaveTop, block.HaveLeft))
+		dc := dcU
+		if plane == 2 {
+			dc = dcV
+		}
+		if r.uvMode == tile.ChromaIntraModeCFL {
+			if !st.keyCFLPredict(cpred, &cg, dc, cflAlphaQ3[plane]) {
+				return fmt.Errorf("encoder: cfl prediction failed")
+			}
+		} else {
+			memsetBytes(cpred, dc)
+		}
 		cgeo, _, err := st.prepareIntraTXB(data, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, q, cg.tx, cpred, st.lumaQ[:])
 		if err != nil {
 			return fmt.Errorf("chroma %d txb: %w", plane, err)
@@ -381,10 +411,10 @@ func (st *lossyEncodeState) writeKeyBlock(block tile.BlockVisit, scratch *tile.B
 	}
 	if err := tile.WriteChromaIntraMode(st.w, &st.intraCDFs, tile.ChromaIntraModeRequest{
 		Size: block.Size, LumaMode: mode, CFLAllowed: cflAllowed,
-	}, tile.ChromaIntraModeDC, tile.CFLAlphaResult{}); err != nil {
+	}, r.uvMode, r.cfl); err != nil {
 		return fmt.Errorf("chroma mode: %w", err)
 	}
-	if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, tile.ChromaIntraModeDC); err != nil {
+	if err := modeCtx.MarkChromaIntra(block.Size, int(block.X4), int(block.Y4), true, r.uvMode); err != nil {
 		return fmt.Errorf("mark chroma intra: %w", err)
 	}
 	var pal *paletteCand
@@ -396,14 +426,16 @@ func (st *lossyEncodeState) writeKeyBlock(block tile.BlockVisit, scratch *tile.B
 		pal.res = r.pal
 		copy(pal.m[:n*n], rec.palMap(int(r.palMap), n*n))
 		pal.res.YMap = &pal.m
-		if err := st.writeKeyframePalette(modeCtx, block, mode, pal); err != nil {
+		if err := st.writeKeyframePalette(modeCtx, block, mode, r.uvMode, pal); err != nil {
 			return fmt.Errorf("palette: %w", err)
 		}
-	} else if err := st.writeNoPaletteMode(modeCtx, block, mode, tile.ChromaIntraModeDC, true); err != nil {
+	} else if err := st.writeNoPaletteMode(modeCtx, block, mode, r.uvMode, true); err != nil {
 		return err
 	}
 	if pal != nil {
-		if err := tile.WritePaletteTokens(st.w, &st.intraCDFs, st.paletteRequest(block, mode), &pal.res); err != nil {
+		req := st.paletteRequest(block, mode)
+		req.ChromaMode = r.uvMode
+		if err := tile.WritePaletteTokens(st.w, &st.intraCDFs, req, &pal.res); err != nil {
 			return fmt.Errorf("palette tokens: %w", err)
 		}
 	}
