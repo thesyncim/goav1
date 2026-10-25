@@ -139,3 +139,32 @@ func TestFindDirectionU8AVX2MatchesScalar(t *testing.T) {
 		}
 	}
 }
+
+// BenchmarkAMD64CDEFDirection times the 8-bit direction search: dav1d's
+// paired-lane AVX2 cdef_dir port (impl=avx2) against the 128-bit Go SIMD
+// search (impl=generic).
+func BenchmarkAMD64CDEFDirection(b *testing.B) {
+	if !directionSIMDBound() {
+		b.Skip("CPU does not advertise AVX2")
+	}
+	rnd := newCDEFRandom(cdefDeterministicSeed ^ 0x1234)
+	const stride = 64
+	img := make([]byte, stride*8+16)
+	for i := range img {
+		img[i] = byte(rnd.generate(256))
+	}
+	var sink int
+	b.Run("shape=8x8x2/impl=generic", func(b *testing.B) {
+		for b.Loop() {
+			d1, _, d2, _ := findDirectionDualU8SIMD128(img, img[8:], stride)
+			sink += d1 + d2
+		}
+	})
+	b.Run("shape=8x8x2/impl=avx2", func(b *testing.B) {
+		for b.Loop() {
+			d1, _, d2, _ := findDirectionDualU8SIMD(img, img[8:], stride)
+			sink += d1 + d2
+		}
+	})
+	_ = sink
+}
