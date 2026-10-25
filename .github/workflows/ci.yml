@@ -148,7 +148,7 @@ jobs:
       - name: four-lane Go SIMD parity and live dispatch
         run: >-
           go test -count=1 -v
-          -run '^(TestNativeDCTLanes4.*|TestAMD64DCTLanes4Dispatch|TestSIMDAMD64MatchesArchsimdQueries|TestDetectedMatchesArch)$'
+          -run '^(TestNativeDCTLanes4.*|TestAMD64DCTLanes4Dispatch|TestAMD64FusedITXDispatch|TestInverseAdd.*MatchesStagedPath|TestSIMDAMD64MatchesArchsimdQueries|TestDetectedMatchesArch)$'
           ./internal/av1/transform ./internal/av1/dsp/cpu
       - name: cache libaom example fixtures
         uses: actions/cache@v4
