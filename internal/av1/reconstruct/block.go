@@ -184,6 +184,25 @@ func ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst []byte, dstStride 
 				return nil
 			}
 		}
+	} else if bytesPerSample == 2 && cfg.Transform == transform.TypeDCTDCT && width == height &&
+		visibleWidth == width && visibleHeight == height && activeRows > 0 && activeCols > 0 {
+		// The 10- and 12-bit square DCT_DCT blocks: the same int16 passes
+		// under the same guards, added to 16bpc samples (dav1d itx16 reuses
+		// its 8bpc column functions at 10 bits).
+		switch width {
+		case 32:
+			if transform.InverseAddDCT32x32HBD(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols, bitDepth) {
+				return nil
+			}
+		case 16:
+			if transform.InverseAddDCT16x16HBD(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols, bitDepth) {
+				return nil
+			}
+		case 8:
+			if transform.InverseAddDCT8x8HBD(dst, dstStride, dst, dstStride, dequant, scanHeight, activeRows, activeCols, bitDepth) {
+				return nil
+			}
+		}
 	} else if bitDepth == 8 && bytesPerSample == 1 && cfg.Transform == transform.TypeDCTDCT &&
 		visibleWidth == width && visibleHeight == height && activeRows > 0 && activeCols > 0 {
 		// The 2:1 rectangular DCT_DCT blocks (rect2 coefficient scale).
