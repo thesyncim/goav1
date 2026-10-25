@@ -1,0 +1,147 @@
+name: amd64-bench
+
+# x86 performance check for the amd64 archsimd (AVX2) kernels. It runs on a
+# hosted x86 runner, so the numbers are real x86 timings rather than the
+# Rosetta ones a developer Mac gives.
+#
+# - Kernel benchmarks: every BenchmarkAMD64* in internal/av1/... at the ref,
+#   whose sub-benchmarks are named impl=generic and impl=avx2, compared with
+#   benchstat across the impl column (one binary, one machine).
+# - Decode timing: aom-go-dec built at the base and at the ref in the same
+#   job, run interleaved on the same streams. The streams are encoded in-job
+#   with aomenc from the first frames of Xiph clips (cached), plus a libaom
+#   test vector. The job also checks that base and ref decode to the same
+#   bytes.
+#
+# It runs on workflow_dispatch and on pushes to perf/amd64-* branches (a
+# workflow_dispatch workflow is only dispatchable once it is on the default
+# branch).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'ref to measure (branch, tag or SHA)'
+        required: true
+      base:
+        description: 'baseline ref for the decode timing'
+        required: false
+        default: 'main'
+      bench:
+        description: 'kernel benchmark regex (run at the ref)'
+        required: false
+        default: '^BenchmarkAMD64'
+      runs:
+        description: 'decode runs per stream and binary'
+        required: false
+        default: '5'
+  push:
+    branches: ['perf/amd64-*']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+  GOEXPERIMENT: simd
+
+jobs:
+  bench:
+    name: amd64 AVX2 bench
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      REF: ${{ github.event.inputs.ref || github.sha }}
+      BASE: ${{ github.event.inputs.base || 'main' }}
+      BENCH: ${{ github.event.inputs.bench || '^BenchmarkAMD64' }}
+      RUNS: ${{ github.event.inputs.runs || '5' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          check-latest: true
+          cache: true
+      - name: machine
+        run: |
+          go version
+          test "$(go env GOARCH)" = amd64
+          grep -q -w avx2 /proc/cpuinfo
+          lscpu | grep -E 'Model name|^CPU\(s\)|Thread|MHz|Flags' | sed -E 's/(Flags:).*/\1 (avx2 avx512f present: '"$(grep -c -w avx512f /proc/cpuinfo)"' cpus)/'
+          git log -1 --format='ref  %H %s'
+          git log -1 --format='base %H %s' "origin/$BASE" 2>/dev/null || git log -1 --format='base %H %s' "$BASE"
+      - name: cache bench streams
+        id: streams
+        uses: actions/cache@v4
+        with:
+          path: bench-streams
+          key: amd64-bench-streams-v1
+      - name: encode bench streams
+        if: steps.streams.outputs.cache-hit != 'true'
+        run: |
+          set -eux
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq aom-tools >/dev/null
+          mkdir -p bench-streams src
+          # first N frames of a Xiph y4m via an HTTP range request
+          fetch() { # url out w h frames
+            hdr=$(curl -fsSL -r 0-255 "$1" | head -n1 | wc -c)
+            bytes=$((hdr + $5 * (6 + $3 * $4 * 3 / 2)))
+            curl -fsSL -r 0-$((bytes - 1)) -o "$2" "$1"
+          }
+          fetch https://media.xiph.org/video/derf/y4m/FourPeople_1280x720_60.y4m src/fourpeople.y4m 1280 720 90
+          fetch https://media.xiph.org/video/derf/y4m/park_joy_420_720p50.y4m src/parkjoy.y4m 1280 720 30
+          aomenc --rt --cpu-used=9 --end-usage=cbr --target-bitrate=1000 --limit=90 --threads=4 \
+            --ivf -o bench-streams/fourpeople_720p_rt.ivf src/fourpeople.y4m
+          aomenc --good --cpu-used=6 --end-usage=vbr --target-bitrate=2500 --limit=30 --threads=4 \
+            --ivf -o bench-streams/parkjoy_720p_good.ivf src/parkjoy.y4m
+          aomenc --rt --cpu-used=9 --end-usage=cbr --target-bitrate=1000 --limit=60 --threads=4 \
+            --bit-depth=10 --ivf -o bench-streams/fourpeople_720p_rt_10bit.ivf src/fourpeople.y4m
+          aomenc --good --cpu-used=6 --end-usage=vbr --target-bitrate=2500 --limit=30 --threads=4 \
+            --film-grain-test=1 --ivf -o bench-streams/parkjoy_720p_good_fgs.ivf src/parkjoy.y4m
+          curl -fsSL -o bench-streams/libaom_allintra.ivf https://storage.googleapis.com/aom-test-data/av1-1-b8-02-allintra.ivf
+          ls -la bench-streams
+      - name: kernel benchmarks (ref, generic vs avx2)
+        run: |
+          go install golang.org/x/perf/cmd/benchstat@latest
+          pkgs=$(grep -rl --include='*_test.go' -E "func ${BENCH#^}" internal/av1 | xargs -r -n1 dirname | sort -u | sed 's|^|./|')
+          if [ -z "$pkgs" ]; then echo "no benchmarks match $BENCH"; exit 0; fi
+          echo "packages: $pkgs"
+          go test -run '^$' -bench "$BENCH" -benchtime=200ms -count=6 $pkgs | tee kernels.txt
+          echo '### generic vs avx2 (sec/op; vs base = avx2 relative to generic)'
+          ~/go/bin/benchstat -col /impl kernels.txt
+      - name: build decoders (base, ref)
+        run: |
+          set -eux
+          go build -o dec-ref ./cmd/aom-go-dec
+          git worktree add -q base-src "origin/$BASE" 2>/dev/null || git worktree add -q base-src "$BASE"
+          (cd base-src && go build -o ../dec-base ./cmd/aom-go-dec)
+      - name: decode timing (base vs ref, interleaved)
+        run: |
+          set -eu
+          printf '%-34s %-4s %10s %10s %10s %10s %8s\n' stream thr base_cpu ref_cpu base_wall ref_wall ref/base
+          for f in bench-streams/*.ivf; do
+            name=$(basename "$f" .ivf)
+            want=$(./dec-base -quiet -workers 1 -framedelay 1 "$f" | md5sum | cut -d' ' -f1)
+            got=$(./dec-ref -quiet -workers 1 -framedelay 1 "$f" | md5sum | cut -d' ' -f1)
+            if [ "$want" != "$got" ]; then echo "MISMATCH $name base=$want ref=$got"; exit 1; fi
+            for thr in 1 4; do
+              fd=1; [ "$thr" -gt 1 ] && fd=0
+              : > base.t; : > ref.t
+              for i in $(seq "$RUNS"); do
+                for b in base ref; do
+                  /usr/bin/time -f '%e %U %S' -a -o "$b.t" ./dec-$b -quiet -workers "$thr" -framedelay "$fd" "$f" > /dev/null
+                done
+              done
+              med() { awk -v c="$2" '{ if (c == "cpu") print $2 + $3; else print $1 }' "$1" | sort -g | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}'; }
+              bc=$(med base.t cpu); rc=$(med ref.t cpu); bw=$(med base.t wall); rw=$(med ref.t wall)
+              printf '%-34s %-4s %10s %10s %10s %10s %8.3f\n' "$name" "w$thr" "$bc" "$rc" "$bw" "$rw" "$(echo "$rc / $bc" | bc -l)"
+            done
+          done
