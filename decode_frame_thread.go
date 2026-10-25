@@ -193,11 +193,10 @@ func (p *decoderFramePipeline) retire(fc *decoderFrameContext) {
 	fc.busy = false
 	if fc.existing {
 		fc.existing = false
-		p.output(fc)
-		return
+	} else {
+		<-fc.done
+		p.d.state.ReleaseFrameThreadHolds(&fc.ft)
 	}
-	<-fc.done
-	p.d.state.ReleaseFrameThreadHolds(&fc.ft)
 	for _, s := range fc.ft.Releases[:fc.ft.ReleaseCount] {
 		if p.readyHolds(s) {
 			// Returned by this call: the shown-surface bookkeeping releases
@@ -490,12 +489,12 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 }
 
 // showExistingEligible reports whether a show_existing_frame event joins the
-// ring instead of draining it. A key frame shown again resets every
-// reference slot (and the state frames in flight were published against), so
-// it still drains.
+// ring instead of draining it. A key frame shown again joins it too (dav1d
+// obu.c): its reference reset takes effect at once for later frames, and the
+// surfaces it drops are released when its slot retires.
 func (p *decoderFramePipeline) showExistingEligible(event *DecoderEvent) bool {
 	return event.Kind == DecoderEventExistingFrame && event.FrameHeader.ShowExistingFrame &&
-		!event.NewCodedVideoSequence && event.ExistingFrame.FrameType != FrameTypeKey &&
+		!event.NewCodedVideoSequence &&
 		!p.d.state.Active()
 }
 
@@ -516,7 +515,7 @@ func (p *decoderFramePipeline) showExisting(sequence SequenceHeader, src *Decode
 
 	fc.event = *src
 	fc.event.SequenceHeader = sequence
-	plan, err := d.state.ShowExisting(&d.refs, &d.pool, &fc.event, fc.planReleases[:])
+	plan, err := d.state.ShowExistingFrameThreaded(&d.refs, &fc.event, &fc.ft)
 	if err != nil {
 		return DecoderFrameWorkEventResult{}, err
 	}

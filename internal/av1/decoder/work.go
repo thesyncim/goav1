@@ -1205,13 +1205,51 @@ func (s *FrameWorkState) ShowExisting(refs *SurfaceReferences, pool *frame.Pool,
 	}
 	*refs = next
 	if s != nil && event.ExistingFrame.FrameType == parser.FrameTypeKey {
-		s.segMapStore().showExistingKey(event.FrameHeader.ExistingFrameIdx)
+		s.showExistingKey(event.FrameHeader.ExistingFrameIdx)
 	}
 	return ShowExistingFrameWorkPlan{
 		Surface:          surface,
 		ReleaseCount:     releaseCount8,
 		DroppedFrameWork: dropped,
 	}, nil
+}
+
+// showExistingKey applies the slot side of a key frame shown again (dav1d
+// obu.c): every other reference slot takes the shown slot's saved CDFs,
+// segmentation map and MV_REF data, as the AV1 reference frame update with
+// refresh_frame_flags = allFrames saves the loaded key frame's state.
+func (s *FrameWorkState) showExistingKey(shown uint8) {
+	if shown >= parser.RefFrames {
+		return
+	}
+	s.segMapStore().showExistingKey(shown)
+	if s.sharedFrameContexts != nil {
+		// The shared stores are keyed by surface, which the reference reset
+		// already points at the shown frame.
+		return
+	}
+	r := int(shown)
+	for i := range parser.RefFrames {
+		if i == r {
+			continue
+		}
+		if s.tileResidualFrameContextValid[i] {
+			s.releaseTileResidualCDFEntry(s.tileResidualSlotCDF[i])
+		}
+		s.tileResidualSlotCDF[i] = s.tileResidualSlotCDF[r]
+		s.tileResidualFrameContextValid[i] = s.tileResidualFrameContextValid[r]
+		if s.tileResidualFrameContextValid[i] {
+			s.retainTileResidualCDFEntry(s.tileResidualSlotCDF[i])
+		}
+		// A key frame's MV_REF data projects nothing (its slots are intra), so
+		// the other slots keep only its metadata, as dav1d drops their refmvs.
+		if s.ownedTemporalMotion {
+			s.releaseMVGrid(s.mvSlotGrid[i])
+			s.mvSlotGrid[i] = 0
+		}
+		s.mvFrameStore[i] = tile.ReferenceMVFrame{}
+		s.mvFrameStoreMeta[i] = s.mvFrameStoreMeta[r]
+	}
 }
 
 // PlanEvent applies one parsed decoder event to frame-work state and returns
