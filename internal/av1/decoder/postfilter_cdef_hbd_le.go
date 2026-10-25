@@ -170,9 +170,10 @@ func frameWorkApplyCDEFPlaneRowsHBDLE(params parser.CDEFParams, indexMap FrameWo
 			// overwrites the current unit in place.
 			nextUnitX := unitX + unitSizeX
 			if nextUnitX < width {
+				// Eight samples per row: a fixed-size move, not a memmove call.
 				for r := 0; r < unitH; r++ {
 					rowOff := (unitY+r)*stride + nextUnitX - cdef.HorizontalBorder
-					copy(leftStorage[r*cdef.HorizontalBorder:(r+1)*cdef.HorizontalBorder], pixels[rowOff:rowOff+cdef.HorizontalBorder])
+					*(*[cdef.HorizontalBorder]uint16)(leftStorage[r*cdef.HorizontalBorder:]) = *(*[cdef.HorizontalBorder]uint16)(pixels[rowOff:])
 				}
 			}
 			if cdefDebugUnit(plane, unitRow, unitCol) {
@@ -271,27 +272,31 @@ func frameWorkAssembleCDEFInputHBDLE(input, pixels []uint16, stride, width, heig
 		}
 	}
 	midOffset := dstOffset + (unitY-srcY0)*cdef.BStride
-	if leftW := unitX - srcX0; leftW > 0 {
-		if leftFromBackup {
-			if len(leftBuf) < cdef.HorizontalBorder*unitH {
-				return threading.ErrInvalidBatch
-			}
-			for row := 0; row < unitH; row++ {
-				dstOff := midOffset + row*cdef.BStride
+	leftW := unitX - srcX0
+	midW := srcX1 - unitX
+	if leftW > 0 && leftFromBackup {
+		if len(leftBuf) < cdef.HorizontalBorder*unitH {
+			return threading.ErrInvalidBatch
+		}
+		for row := 0; row < unitH; row++ {
+			dstOff := midOffset + row*cdef.BStride
+			if leftW == cdef.HorizontalBorder {
+				// A fixed-size move, not a memmove call.
+				*(*[cdef.HorizontalBorder]uint16)(input[dstOff:]) = *(*[cdef.HorizontalBorder]uint16)(leftBuf[row*cdef.HorizontalBorder:])
+			} else {
 				copy(input[dstOff:dstOff+leftW], leftBuf[row*cdef.HorizontalBorder:row*cdef.HorizontalBorder+leftW])
 			}
-		} else {
-			for row := 0; row < unitH; row++ {
-				srcOff := (unitY+row)*stride + srcX0
-				dstOff := midOffset + row*cdef.BStride
-				copy(input[dstOff:dstOff+leftW], pixels[srcOff:srcOff+leftW])
-			}
+			srcOff := (unitY+row)*stride + unitX
+			copy(input[dstOff+leftW:dstOff+leftW+midW], pixels[srcOff:srcOff+midW])
 		}
-	}
-	for row := 0; row < unitH; row++ {
-		srcOff := (unitY+row)*stride + unitX
-		dstOff := midOffset + (unitX - srcX0) + row*cdef.BStride
-		copy(input[dstOff:dstOff+srcX1-unitX], pixels[srcOff:srcOff+srcX1-unitX])
+	} else {
+		// The left halo, when present, is the plane's own samples, contiguous
+		// with the unit's: one copy per row covers both.
+		for row := 0; row < unitH; row++ {
+			srcOff := (unitY+row)*stride + srcX0
+			dstOff := midOffset + row*cdef.BStride
+			copy(input[dstOff:dstOff+leftW+midW], pixels[srcOff:srcOff+leftW+midW])
+		}
 	}
 	if botRows := srcY1 - (unitY + unitH); botRows > 0 {
 		if bottomBuf != nil {

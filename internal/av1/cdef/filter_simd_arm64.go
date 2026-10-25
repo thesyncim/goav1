@@ -74,7 +74,7 @@ func filterUnitBlocksSIMD(dst []uint16, dstStride int, input []uint16, inputOrig
 		ctx.setDirection(dir)
 		ctx.dst = unsafe.Pointer(&dst[dstOrigin])
 		ctx.input = unsafe.Pointer(&input[srcOrigin])
-		cdefFilterBlockSIMD(&ctx, u.blockWidth)
+		cdefFilterBlock16(&ctx, u.blockWidth)
 	}
 	return nil
 }
