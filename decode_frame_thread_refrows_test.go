@@ -1,6 +1,7 @@
 package goav1
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -63,13 +64,15 @@ func poisonRowsTailHook(band int) func(*Frame, *internalthreading.FrameProgress)
 // did not wait for.
 func TestFrameThreadedReferenceRowWaits(t *testing.T) {
 	clips := []string{
+		// Tracked clips first; the local corpora are skipped when absent.
+		"internal/av1/testvector/testdata/profiles/multitile-2x2-rows-framethread-256x256.ivf",
+		"internal/av1/testvector/testdata/profiles/profile0-420-8bit-edgemv-130x130.ivf",
+		"internal/av1/testvector/testdata/profiles/palette-inter-edge-256x144.ivf",
+		"internal/av1/testvector/testdata/profiles/svt-compound-edge-filter-256x136.ivf",
 		"testdata/benchcorpus/p360_inter_q32.ivf",
 		"testdata/benchcorpus/p360_inter_q32_2tiles.ivf",
 		"internal/av1/testdata/libaom/av1-1-b8-05-mv.ivf",
 		"internal/av1/testdata/libaom/av1-1-b8-06-mfmv.ivf",
-		"internal/av1/testvector/testdata/profiles/multitile-2x2-rows-framethread-256x256.ivf",
-		"internal/av1/testvector/testdata/profiles/profile0-420-8bit-edgemv-130x130.ivf",
-		"internal/av1/testvector/testdata/profiles/palette-inter-edge-256x144.ivf",
 		"testdata/realcorpus/streams/aomgood_mtbike_720p_1500k_c6.ivf",
 		"testdata/realcorpus/streams/aomgood_parkjoy_360p_1000k_c4.ivf",
 		"testdata/realcorpus/streams/aomgood_johnny_360p_600k_c2.ivf",
@@ -77,6 +80,10 @@ func TestFrameThreadedReferenceRowWaits(t *testing.T) {
 		"testdata/realcorpus/streams/svtra_oldtown_720p_crf35_p8_fgs8.ivf",
 	}
 	for _, clip := range clips {
+		if _, err := os.Stat(clip); err != nil {
+			t.Logf("%s: %v; skipped", clip, err)
+			continue
+		}
 		want, wantFrames, err := decodeFrameThreadDigestErr(t, clip, WithWorkers(1))
 		if err != nil {
 			t.Fatalf("%s: %v", clip, err)

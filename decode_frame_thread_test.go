@@ -93,6 +93,12 @@ func TestFrameThreadedDecodeByteIdentical(t *testing.T) {
 	profiles, _ := filepath.Glob("internal/av1/testvector/testdata/profiles/*.ivf")
 	clips = append(clips, profiles...)
 	for _, clip := range clips {
+		if _, err := os.Stat(clip); err != nil {
+			// Local corpora (benchcorpus, libaom vectors) are not in every
+			// checkout; the tracked profile clips always run.
+			t.Logf("%s: %v; skipped", clip, err)
+			continue
+		}
 		want, wantFrames, err := decodeFrameThreadDigestErr(t, clip, WithWorkers(1))
 		if err != nil {
 			t.Logf("%s: serial decode fails (%v); skipped", clip, err)
