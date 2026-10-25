@@ -2252,6 +2252,9 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, view 
 		if sb.start < 0 || sb.end < sb.start || sb.end > eventCount {
 			return ErrInvalidBatch
 		}
+		if ft := wf.frameThread; ft != nil && !ft.waitSuperblockReferences(&st.batch, view.events[sb.start:sb.end], view.visits) {
+			return ErrFrameThreadReference
+		}
 		if err := frameWorkReplayReconEvents(st, view.events[sb.start:sb.end], view.visits, view.blocks, view.cf); err != nil {
 			return err
 		}

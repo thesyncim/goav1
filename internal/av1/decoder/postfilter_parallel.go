@@ -1,6 +1,9 @@
 package decoder
 
 import (
+	"sync"
+	"sync/atomic"
+
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
@@ -46,6 +49,43 @@ type FrameWorkPostFilterParallel struct {
 	// ttd->delayed_fg), set up by prep before the stripes run.
 	fgU8  frameWorkFilmGrainRows[uint8]
 	fgU16 frameWorkFilmGrainRows[uint16]
+
+	// rows publishes the frame's finished luma rows while the post-filter
+	// runs (dav1d's per-sbrow sr_cur.progress[1]); see BindFrameProgress.
+	rows frameWorkPostFilterRowProgress
+}
+
+// frameWorkPostFilterRowProgress hands a frame-threaded surface's finished
+// rows to the frames that predict from it while its post-filter still runs.
+// When CDEF is the last stage that writes the surface, CDEF unit rows are
+// claimed top down; once a prefix of them is filtered, its rows (and their
+// right padding) are final and published.
+type frameWorkPostFilterRowProgress struct {
+	progress *threading.FrameProgress
+	next     atomic.Int32
+	mu       sync.Mutex
+	done     []bool
+	prefix   int
+	// extended is the luma row count whose right padding is filled and that
+	// is published; the final border pass starts there.
+	extended int
+}
+
+// BindFrameProgress sets the progress the next post-filter run publishes
+// finished rows to, or clears it with nil. The caller publishes the final
+// value once the run returned.
+func (p *FrameWorkPostFilterParallel) BindFrameProgress(progress *threading.FrameProgress) {
+	p.rows.progress = progress
+	p.rows.extended = 0
+}
+
+// extendedRows is the luma row count whose border padding the run already
+// filled.
+func (p *FrameWorkPostFilterParallel) extendedRows() int {
+	if p == nil {
+		return 0
+	}
+	return p.rows.extended
 }
 
 type frameWorkPostFilterParallelStage uint8
@@ -54,6 +94,7 @@ const (
 	frameWorkPostFilterStageNone frameWorkPostFilterParallelStage = iota
 	frameWorkPostFilterStageCDEFSnapshot
 	frameWorkPostFilterStageCDEFU8
+	frameWorkPostFilterStageCDEFU8Ordered
 	frameWorkPostFilterStageLoopFilterPopulate
 	frameWorkPostFilterStageLoopFilterVertical
 	frameWorkPostFilterStageLoopFilterHorizontal
@@ -75,6 +116,7 @@ type frameWorkPostFilterParallelJob struct {
 
 	unitRowsPerBand int
 	rows            int
+	bands           int
 	populateRows    int
 	regionRows      int
 	regionCols      int
@@ -142,6 +184,8 @@ func (p *FrameWorkPostFilterParallel) RunRange(band, lo, hi int) error {
 		return p.runCDEFSnapshotRange(job, band, lo, hi)
 	case frameWorkPostFilterStageCDEFU8:
 		return p.runCDEFU8Range(job, band, lo, hi)
+	case frameWorkPostFilterStageCDEFU8Ordered:
+		return p.runCDEFU8Ordered(job, band)
 	case frameWorkPostFilterStageRestorationU8:
 		return p.runRestorationU8Range(&job.lr, band, lo, hi)
 	case frameWorkPostFilterStageFilmGrainU8:
@@ -220,6 +264,44 @@ func (p *FrameWorkPostFilterParallel) runCDEFU8Range(job *frameWorkPostFilterPar
 	}
 	p.accumulateCDEFResult(worker, result)
 	return nil
+}
+
+// runCDEFU8Ordered filters CDEF bands claimed in top-down order and
+// publishes each finished prefix (see frameWorkPostFilterRowProgress).
+func (p *FrameWorkPostFilterParallel) runCDEFU8Ordered(job *frameWorkPostFilterParallelJob, worker int) error {
+	for {
+		band := int(p.rows.next.Add(1)) - 1
+		if band >= job.bands {
+			return nil
+		}
+		if err := p.runCDEFU8Range(job, worker, band, band+1); err != nil {
+			return err
+		}
+		p.rows.finishBand(job, band)
+	}
+}
+
+// finishBand records band as filtered and publishes the rows of the new
+// finished prefix. The last band's rows are left to the final publish, after
+// the bottom padding is filled.
+func (r *frameWorkPostFilterRowProgress) finishBand(job *frameWorkPostFilterParallelJob, band int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.done[band] = true
+	for r.prefix < job.bands && r.done[r.prefix] {
+		r.prefix++
+	}
+	if r.prefix >= job.bands {
+		return
+	}
+	out := job.ctx.Output
+	rows := min(r.prefix*job.unitRowsPerBand*cdef.BlockSize, out.Y.Height)
+	if rows <= r.extended {
+		return
+	}
+	out.ExtendBorderRows(r.extended, rows)
+	r.extended = rows
+	r.progress.Publish(int32(rows))
 }
 
 // frameWorkParallelCDEFScratch is one worker's private CDEF band scratch. It
@@ -424,17 +506,39 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterParallelU8(req FrameWo
 		}
 	}
 	ctx.Parallel.resetCDEFResults(workers)
-	err := ctx.Parallel.runRanges(pool, frameWorkPostFilterParallelJob{
+	job := frameWorkPostFilterParallelJob{
 		stage:           frameWorkPostFilterStageCDEFU8,
 		ctx:             *ctx,
 		request:         req,
 		unitRowsPerBand: unitRowsPerBand,
 		rows:            rows,
-	}, bandCount, workers)
+		bands:           bandCount,
+	}
+	count := bandCount
+	if r := &ctx.Parallel.rows; r.progress != nil && ctx.cdefIsLastPixelStage() {
+		// Every worker claims bands top down so the top rows finish first.
+		job.stage = frameWorkPostFilterStageCDEFU8Ordered
+		r.next.Store(0)
+		r.prefix = 0
+		if cap(r.done) < bandCount {
+			r.done = make([]bool, bandCount)
+		}
+		r.done = r.done[:bandCount]
+		clear(r.done)
+		count = workers
+	}
+	err := ctx.Parallel.runRanges(pool, job, count, workers)
 	if err != nil {
 		return FrameWorkCDEFPostFilterResult{}, false, err
 	}
 	return ctx.Parallel.mergeCDEFResults(workers), true, nil
+}
+
+// cdefIsLastPixelStage reports whether no stage after CDEF writes the
+// output surface (loop restoration and super-res are not pending).
+func (ctx *FrameWorkPostFilterContext) cdefIsLastPixelStage() bool {
+	remaining := ctx.RemainingPostFilters()
+	return !remaining.Has(FrameWorkPostFilterLoopRestoration) && !remaining.Has(FrameWorkPostFilterSuperRes)
 }
 
 func (p *FrameWorkPostFilterParallel) resetCDEFResults(workers int) {

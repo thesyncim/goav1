@@ -2274,3 +2274,6 @@ func (stack *ReferenceMVStack) validateCount(need int) error {
 	}
 	return nil
 }
+
+// BlockSizeHeight4 returns the height of size in 4x4 units.
+func BlockSizeHeight4(size BlockSize) int { return blockSizeHeight4(size) }
