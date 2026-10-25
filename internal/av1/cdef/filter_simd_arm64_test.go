@@ -16,8 +16,10 @@ func TestFilterUnitBlocksSIMDMatchesPureGo(t *testing.T) {
 	input := make([]uint16, InputBufferSize)
 	inputOrigin := VerticalBorder*BStride + HorizontalBorder
 	const dstStride = BStride
-	for trial := 0; trial < 600; trial++ {
-		coeffShift := rng.Intn(3)
+	for trial := 0; trial < 2000; trial++ {
+		// 8, 9, 10 and 12 bits: the secondary-only, primary-only and fused
+		// kernels at every depth.
+		coeffShift := []int{0, 1, 2, 4}[rng.Intn(4)]
 		maxSample := (1 << (8 + coeffShift)) - 1
 		for i := range input {
 			if rng.Intn(13) == 0 {
