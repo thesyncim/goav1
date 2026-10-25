@@ -249,6 +249,35 @@ func (s *FrameWorkState) PublishFrameThreaded(refs *SurfaceReferences, event *Ev
 	}, nil
 }
 
+// ShowExistingFrameThreaded is ShowExisting for a show_existing_frame queued
+// in the frame-thread ring (dav1d obu.c with n_fc > 1): the reference slots
+// and slot state are updated at once, but the surfaces a key frame drops from
+// the slots go to ft.Releases, returned to the pool when the queued output
+// retires, after every frame submitted before it that may still read them.
+func (s *FrameWorkState) ShowExistingFrameThreaded(refs *SurfaceReferences, event *Event, ft *FrameThreadFrame) (ShowExistingFrameWorkPlan, error) {
+	if s == nil || s.active || refs == nil || ft == nil || ft.published {
+		return ShowExistingFrameWorkPlan{}, ErrInvalidFrameWorkState
+	}
+	if event.Kind != EventExistingFrame || !event.FrameHeader.ShowExistingFrame {
+		return ShowExistingFrameWorkPlan{}, ErrInvalidSurfaceEvent
+	}
+	next := *refs
+	surface, count, err := next.ShowExistingFrame(event, ft.Releases[:])
+	if err != nil {
+		return ShowExistingFrameWorkPlan{}, err
+	}
+	count8, err := frameWorkReleaseCount8(count)
+	if err != nil {
+		return ShowExistingFrameWorkPlan{}, err
+	}
+	*refs = next
+	ft.ReleaseCount = count
+	if event.ExistingFrame.FrameType == parser.FrameTypeKey {
+		s.showExistingKey(event.FrameHeader.ExistingFrameIdx)
+	}
+	return ShowExistingFrameWorkPlan{Surface: surface, ReleaseCount: count8}, nil
+}
+
 // ReleaseFrameThreadHolds returns the CDF entries and MV grids a retired
 // frame held. It runs on the goroutine that plans frames.
 func (s *FrameWorkState) ReleaseFrameThreadHolds(ft *FrameThreadFrame) {
