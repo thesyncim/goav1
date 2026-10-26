@@ -121,6 +121,64 @@ jobs:
           go test -run '^$' -bench "$BENCH" -benchtime=200ms -count=6 $pkgs | tee kernels.txt
           echo '### generic vs avx2 (sec/op; vs base = avx2 relative to generic)'
           ~/go/bin/benchstat -col /impl kernels.txt
+      - name: cache encoder input
+        id: encinput
+        uses: actions/cache@v4
+        with:
+          path: enc-input
+          key: amd64-bench-enc-input-v1
+      - name: fetch encoder input
+        if: steps.encinput.outputs.cache-hit != 'true'
+        run: |
+          set -eux
+          mkdir -p enc-input
+          # first 120 frames of FourPeople 720p, y4m frame headers stripped to raw I420
+          url=https://media.xiph.org/video/derf/y4m/FourPeople_1280x720_60.y4m
+          hdr=$(curl -fsSL -r 0-255 "$url" | head -n1 | wc -c)
+          bytes=$((hdr + 120 * (6 + 1280 * 720 * 3 / 2)))
+          curl -fsSL -r 0-$((bytes - 1)) -o enc-input/fourpeople.y4m "$url"
+          python3 - <<'EOF'
+          d = open('enc-input/fourpeople.y4m', 'rb').read()
+          fs = 1280 * 720 * 3 // 2
+          i = d.index(b'\n') + 1
+          out = []
+          while i < len(d):
+              assert d[i:i + 6] == b'FRAME\n'
+              out.append(d[i + 6:i + 6 + fs])
+              i += 6 + fs
+          assert len(out) == 120 and all(len(f) == fs for f in out)
+          open('enc-input/fourpeople.yuv', 'wb').write(b''.join(out))
+          EOF
+          rm enc-input/fourpeople.y4m
+      - name: encode timing (base vs ref, interleaved)
+        run: |
+          set -eu
+          go build -pgo=cmd/qualitybench/default.pgo -o enc-ref ./cmd/encbench
+          git worktree add -q enc-base-src "origin/$BASE" 2>/dev/null || git worktree add -q enc-base-src "$BASE"
+          (cd enc-base-src && go build -pgo=cmd/qualitybench/default.pgo -o ../enc-base ./cmd/encbench)
+          ARGS="-input enc-input/fourpeople.yuv -frames 120 -width 1280 -height 720 -fps 60 -bitrate 1000000 -nopsnr"
+          GOMAXPROCS=1 ./enc-base $ARGS -o enc-base.ivf > /dev/null
+          GOMAXPROCS=1 ./enc-ref $ARGS -o enc-ref.ivf > /dev/null
+          ./enc-ref $ARGS -threads 4 -o enc-ref4.ivf > /dev/null
+          GOMAXPROCS=1 GOEXPERIMENT= go run ./cmd/encbench $ARGS -o enc-ref-generic.ivf > /dev/null
+          sha256sum enc-base.ivf enc-ref.ivf enc-ref4.ivf enc-ref-generic.ivf
+          cmp enc-ref.ivf enc-ref4.ivf || { echo "ref stream differs between 1 and 4 threads"; exit 1; }
+          cmp enc-ref.ivf enc-ref-generic.ivf || { echo "ref stream differs between AVX2 and generic builds"; exit 1; }
+          cmp -s enc-base.ivf enc-ref.ivf && echo "base and ref streams are identical" || echo "NOTE: base and ref streams differ"
+          TIMEFORMAT='%3R %3U %3S'
+          : > encb.t; : > encr.t
+          for i in $(seq "$RUNS"); do
+            for b in base ref; do
+              { time GOMAXPROCS=1 ./enc-$b $ARGS -o /dev/null > /dev/null 2>&1; } 2>> "enc$(echo $b | cut -c1).t"
+            done
+          done
+          med() { awk '{ print $2 + $3 }' "$1" | sort -g | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}'; }
+          mn() { awk '{ print $2 + $3 }' "$1" | sort -g | head -n1; }
+          echo "encode, FourPeople 720p 120 frames 1 Mbps, GOMAXPROCS=1, CPU seconds over $RUNS runs"
+          printf 'base median %s min %s\nref  median %s min %s\n' "$(med encb.t)" "$(mn encb.t)" "$(med encr.t)" "$(mn encr.t)"
+          echo "ref/base median $(echo "$(med encr.t) / $(med encb.t)" | bc -l)"
+          GOMAXPROCS=1 ./enc-ref $ARGS -o /dev/null -cpuprofile enc-ref.pprof > /dev/null
+          go tool pprof -top -nodecount=45 enc-ref enc-ref.pprof 2>/dev/null | tail -n +6
       - name: build decoders (base, ref)
         run: |
           set -eux
