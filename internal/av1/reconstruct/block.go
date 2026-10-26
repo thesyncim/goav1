@@ -149,7 +149,12 @@ func ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst []byte, dstStride 
 	// dst; a declined block takes the staged path.
 	if bitDepth == 8 && bytesPerSample == 1 && width == height && visibleWidth == width && visibleHeight == height &&
 		activeRows > 0 && activeCols > 0 {
-		if cfg.Transform == transform.TypeDCTDCT {
+		if width == 4 {
+			// Every 4x4 type but IDTX (amd64: dav1d's inv_txfm_add_4x4).
+			if transform.InverseAdd4x4(dst, dstStride, dst, dstStride, dequant, scanHeight, cfg.Transform, activeRows) {
+				return nil
+			}
+		} else if cfg.Transform == transform.TypeDCTDCT {
 			switch width {
 			case 32:
 				if activeRows <= 8 && activeCols <= 8 {

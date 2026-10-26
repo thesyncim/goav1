@@ -48,6 +48,8 @@ func amd64ITXBenchCases() []amd64ITXCase {
 	sq := func(c amd64ITXCase, dst []byte, stride int, coeff []int32) bool {
 		scanH := min(c.h, 32)
 		switch {
+		case c.w == 4:
+			return InverseAdd4x4(dst, stride, dst, stride, coeff, scanH, c.txType, c.rows)
 		case c.txType != TypeDCTDCT && c.w == 16:
 			return InverseAdd16x16Hybrid(dst, stride, dst, stride, coeff, scanH, c.txType, c.rows, c.cols)
 		case c.txType != TypeDCTDCT:
@@ -71,6 +73,10 @@ func amd64ITXBenchCases() []amd64ITXCase {
 		}
 	}
 	return []amd64ITXCase{
+		mk("4x4/dct", 4, 4, TypeDCTDCT, 4, 4, sq),
+		mk("4x4/adst_adst", 4, 4, TypeADSTADST, 4, 4, sq),
+		mk("4x4/flipadst_dct", 4, 4, TypeFlipADSTDCT, 4, 4, sq),
+		mk("4x4/v_dct", 4, 4, TypeVDCT, 4, 4, sq),
 		mk("8x8/dct/low4", 8, 8, TypeDCTDCT, 4, 4, sq),
 		mk("8x8/dct/full", 8, 8, TypeDCTDCT, 8, 8, sq),
 		mk("8x8/adst_adst", 8, 8, TypeADSTADST, 8, 8, sq),
