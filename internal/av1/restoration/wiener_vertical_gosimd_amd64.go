@@ -75,20 +75,26 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 	}
 	const bitDepth = 8
 	offset := int32(1) << (bitDepth + round1 - 1)
-	// The 16-wide columns run first, in their own loop, so no 128-bit vector
-	// of the 8-wide tail below is live across the calls (its spill reload
-	// would be a legacy-SSE movups).
-	w16 := 0
+	// All columns run the vpmaddwd kernel (an eight-column tail with its
+	// half-width form); the int32 8-wide loop below is kept only as the
+	// benchmark baseline (wienerU8Wide16 off). On Zen 3 that loop stalls on a
+	// legacy-SSE reload of its 128-bit byte selector every iteration.
 	if wienerU8Wide16 {
-		w16 = width &^ 15
 		k16 := newWienerU8Taps(filter, -offset+roundBias(round1), 255)
 		for row := 0; row < height; row++ {
 			dstRow := dst[row*dstStride : row*dstStride+width]
-			for col := 0; col < w16; col += 16 {
-				wienerVerticalU8x16(temp[row*tempStride+col:], tempStride, dstRow[col:col+16], &k16)
+			col := 0
+			for ; col+16 <= width; col += 16 {
+				wienerVerticalU8x16(temp[row*tempStride+col:], tempStride, dstRow[col:col+16], &k16, false)
+			}
+			if col < width {
+				wienerVerticalU8x16(temp[row*tempStride+col:], tempStride, dstRow[col:col+8], &k16, true)
 			}
 		}
+		archsimd.ClearAVXUpperBits()
+		return
 	}
+	const w16 = 0
 	seedV := archsimd.BroadcastInt32x8(-offset + roundBias(round1))
 	zero := archsimd.BroadcastInt32x8(0)
 	maxV := archsimd.BroadcastInt32x8(255)
@@ -136,9 +142,14 @@ var u8LowByteIdx = [16]int8{0, 2, 4, 6, 8, 10, 12, 14}
 // the (f0, f1), (f2, f3'), (f4, f5) and (f6, 0) taps, exact in int32; the
 // clamped sums pack back in order (in-lane unpack, in-lane vpackssdw) and
 // vpshufb plus a 64-bit interleave narrow them to bytes.
-func wienerVerticalU8x16(t []uint16, stride int, dst []uint8, k *wienerU8Taps) {
+func wienerVerticalU8x16(t []uint16, stride int, dst []uint8, k *wienerU8Taps, n8 bool) {
 	const shift = wienerRound1U8
-	ld := func(i int) archsimd.Int16x16 { return archsimd.LoadUint16x16(t[i*stride : i*stride+16]).AsInt16x16() }
+	ld := func(i int) archsimd.Int16x16 {
+		if n8 {
+			return archsimd.Int16x16{}.SetLo(archsimd.LoadUint16x8(t[i*stride : i*stride+8]).AsInt16x8())
+		}
+		return archsimd.LoadUint16x16(t[i*stride : i*stride+16]).AsInt16x16()
+	}
 	r0, r1, r2, r3, r4, r5, r6 := ld(0), ld(1), ld(2), ld(3), ld(4), ld(5), ld(6)
 	var z archsimd.Int16x16
 	f01 := archsimd.LoadInt16x16Array(&k.f01)
@@ -155,7 +166,11 @@ func wienerVerticalU8x16(t []uint16, stride int, dst []uint8, k *wienerU8Taps) {
 	lo = lo.ShiftAllRight(shift).Max(zero).Min(mx)
 	hi = hi.ShiftAllRight(shift).Max(zero).Min(mx)
 	v := lo.SaturateToInt16ConcatGrouped(hi).AsUint8x32().PermuteOrZeroGrouped(archsimd.LoadInt8x32Array(&wienerLowBytes32))
-	v.GetLo().AsUint64x2().InterleaveLo(v.GetHi().AsUint64x2()).AsUint8x16().Store(dst[:16])
+	if n8 {
+		binary.LittleEndian.PutUint64(dst[:8], v.GetLo().AsUint64x2().GetElem(0))
+	} else {
+		v.GetLo().AsUint64x2().InterleaveLo(v.GetHi().AsUint64x2()).AsUint8x16().Store(dst[:16])
+	}
 	archsimd.ClearAVXUpperBits()
 }
 
