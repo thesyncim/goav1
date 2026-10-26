@@ -35,6 +35,10 @@ on:
         description: 'decode runs per stream and binary'
         required: false
         default: '5'
+      profile:
+        description: 'bench stream (basename) to CPU-profile at w1, empty to skip'
+        required: false
+        default: 'libaom_allintra'
   push:
     branches: ['perf/amd64-*']
 
@@ -59,6 +63,7 @@ jobs:
       BASE: ${{ github.event.inputs.base || 'main' }}
       BENCH: ${{ github.event.inputs.bench || '^BenchmarkAMD64' }}
       RUNS: ${{ github.event.inputs.runs || '5' }}
+      PROFILE: ${{ github.event.inputs.profile || 'libaom_allintra' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -153,6 +158,43 @@ jobs:
               printf '%-34s %-4s %10s %10s %10s %10s %8.3f\n' "$name" "w$thr" "$bc" "$rc" "$bw" "$rw" "$(echo "$rc / $bc" | bc -l)"
             done
           done
+      - name: decode profile (ref, w1)
+        if: env.PROFILE != ''
+        run: |
+          set -eu
+          # A throwaway test in the root package decodes the stream in a loop
+          # for about 20 seconds, so a short clip still gives a usable profile.
+          cat > zz_amd64_decprof_test.go <<'EOF'
+          package goav1_test
+
+          import (
+          	"os"
+          	"testing"
+          	"time"
+          )
+
+          func TestZZAMD64DecodeProfile(t *testing.T) {
+          	data, err := os.ReadFile(os.Getenv("DECPROF_IVF"))
+          	if err != nil {
+          		t.Fatal(err)
+          	}
+          	n := 0
+          	for start := time.Now(); time.Since(start) < 20*time.Second; n++ {
+          		if _, err := decodePublicFullClipFresh(data, false); err != nil {
+          			t.Fatal(err)
+          		}
+          	}
+          	t.Logf("decoded the stream %d times", n)
+          }
+          EOF
+          go test -c -o decprof.test .
+          rm zz_amd64_decprof_test.go
+          DECPROF_IVF="bench-streams/$PROFILE.ivf" GOMAXPROCS=1 ./decprof.test \
+            -test.run '^TestZZAMD64DecodeProfile$' -test.v -test.cpuprofile dec.pprof | tail -n 3
+          echo "### $PROFILE w1: flat"
+          go tool pprof -top -nodecount=70 decprof.test dec.pprof 2>/dev/null | tail -n +5
+          echo "### $PROFILE w1: cumulative"
+          go tool pprof -top -cum -nodecount=50 decprof.test dec.pprof 2>/dev/null | tail -n +6
       - name: cache encoder input
         id: encinput
         uses: actions/cache@v4
