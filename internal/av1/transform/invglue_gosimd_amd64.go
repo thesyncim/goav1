@@ -24,30 +24,41 @@ func invGlueSIMDAvailable() bool { return archsimd.X86.AVX2() }
 // clampRoundSIMD rounds-and-shifts scratch in place (shift > 0) and clamps it to
 // [min, max], eight int32 lanes at a time. The rounding uses
 // (x>>s) + ((x>>(s-1))&1), which equals roundShift(x, s) for every int32 x and
-// cannot overflow. Tails and out-of-range shifts use the pure-Go reference.
+// cannot overflow. The staged transforms shift by 0, 1 or 2, each with
+// immediate shift counts (a variable ymm shift count is rematerialized with a
+// legacy-SSE movq, which stalls on dirty upper state on Zen 3), and the upper
+// state is cleared on return. Tails and other shifts use the pure-Go
+// reference.
 func clampRoundSIMD(scratch []int32, shift int, min, max int32) {
-	if shift < 0 || shift > 31 {
+	if shift < 0 || shift > 2 {
 		clampRoundPureGo(scratch, shift, min, max)
 		return
 	}
 	minV := archsimd.BroadcastInt32x8(min)
 	maxV := archsimd.BroadcastInt32x8(max)
 	one := archsimd.BroadcastInt32x8(1)
-	s := uint64(shift)
 	i := 0
-	if shift == 0 {
+	switch shift {
+	case 0:
 		for ; i+8 <= len(scratch); i += 8 {
 			archsimd.LoadInt32x8Array((*[8]int32)(scratch[i:])).
 				Max(minV).Min(maxV).
 				StoreArray((*[8]int32)(scratch[i:]))
 		}
-	} else {
+	case 1:
 		for ; i+8 <= len(scratch); i += 8 {
 			v := archsimd.LoadInt32x8Array((*[8]int32)(scratch[i:]))
-			r := v.ShiftAllRight(s).Add(v.ShiftAllRight(s - 1).And(one))
+			r := v.ShiftAllRight(1).Add(v.And(one))
+			r.Max(minV).Min(maxV).StoreArray((*[8]int32)(scratch[i:]))
+		}
+	case 2:
+		for ; i+8 <= len(scratch); i += 8 {
+			v := archsimd.LoadInt32x8Array((*[8]int32)(scratch[i:]))
+			r := v.ShiftAllRight(2).Add(v.ShiftAllRight(1).And(one))
 			r.Max(minV).Min(maxV).StoreArray((*[8]int32)(scratch[i:]))
 		}
 	}
+	archsimd.ClearAVXUpperBits()
 	if i < len(scratch) {
 		clampRoundPureGo(scratch[i:], shift, min, max)
 	}
