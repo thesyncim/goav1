@@ -76,7 +76,11 @@ jobs:
           grep -q -w avx2 /proc/cpuinfo
           lscpu | grep -E 'Model name|^CPU\(s\)|Thread|MHz|Flags' | sed -E 's/(Flags:).*/\1 (avx2 avx512f present: '"$(grep -c -w avx512f /proc/cpuinfo)"' cpus)/'
           git log -1 --format='ref  %H %s'
-          git log -1 --format='base %H %s' "origin/$BASE" 2>/dev/null || git log -1 --format='base %H %s' "$BASE"
+          # The decode timing compares the ref with its merge base on BASE, so
+          # a branch that is behind BASE is not charged for BASE's newer work.
+          BASE_SHA=$(git merge-base HEAD "origin/$BASE" 2>/dev/null || git rev-parse "$BASE")
+          echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+          git log -1 --format='base %H %s (merge base with '"$BASE"')' "$BASE_SHA"
       - name: cache bench streams
         id: streams
         uses: actions/cache@v4
@@ -121,7 +125,7 @@ jobs:
         run: |
           set -eux
           go build -o dec-ref ./cmd/aom-go-dec
-          git worktree add -q base-src "origin/$BASE" 2>/dev/null || git worktree add -q base-src "$BASE"
+          git worktree add -q base-src "$BASE_SHA"
           (cd base-src && go build -o ../dec-base ./cmd/aom-go-dec)
       - name: decode timing (base vs ref, interleaved)
         run: |
