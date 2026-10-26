@@ -105,10 +105,18 @@ func (ctx *FrameWorkPostFilterContext) waitReconstructed() bool {
 // stages are ones the row pipeline runs, before the side data that
 // rowPipelineEligible also checks is complete.
 func (ctx *FrameWorkPostFilterContext) rowPipelineCandidate(remaining FrameWorkPostFilterStage) bool {
-	if ctx.Output == nil || ctx.Output.Layout.BytesPerSample != 1 || ctx.Output.Format.BitDepth != 8 {
+	if ctx.Output == nil || remaining.Has(FrameWorkPostFilterSuperRes) {
 		return false
 	}
-	if remaining.Has(FrameWorkPostFilterSuperRes) {
+	switch {
+	case ctx.Output.Layout.BytesPerSample == 1 && ctx.Output.Format.BitDepth == 8:
+	case ctx.Output.Layout.BytesPerSample == 2 && (ctx.Output.Format.BitDepth == 10 || ctx.Output.Format.BitDepth == 12):
+		// 10/12-bit loop restoration has no stripe walk yet; such frames keep
+		// the whole-frame chain.
+		if remaining.Has(FrameWorkPostFilterLoopRestoration) {
+			return false
+		}
+	default:
 		return false
 	}
 	return remaining&(FrameWorkPostFilterLoopFilter|FrameWorkPostFilterCDEF|FrameWorkPostFilterLoopRestoration) != 0 &&
@@ -171,6 +179,14 @@ type frameWorkRowPipe struct {
 	cdefOn   bool
 	lrOn     bool
 	unitRows int
+	// hbd frames filter CDEF from the pre-CDEF snapshot in req.SampleScratch
+	// (the uint16 band walk), which the driver fills one unit row at a time:
+	// snap is each plane's bound snapshot and snapRows the rows loaded.
+	hbd      bool
+	snap     [3]frame.SamplePlane
+	snapSrc  [3]frame.Plane
+	snapRows [3]int
+	snapOn   [3]bool
 
 	// Loop restoration: the plan, the decoded records and stripe boundary
 	// lines, each plane's data segment in a worker's band buffer, and the
@@ -235,9 +251,16 @@ func (p *FrameWorkPostFilterParallel) rowPipeUnit(w, u int) {
 	out := pp.ctx.Output
 	if pp.cdefOn {
 		request := pp.req
-		request.SampleScratch = p.cdef[w].line
 		request.InputScratch = p.cdef[w].input
-		res, err := pp.ctx.applyCDEFPostFilterRows(request, u, u+1, false, &p.cdefU8[u])
+		var res FrameWorkCDEFPostFilterResult
+		var err error
+		if pp.hbd {
+			request.UnitDstScratch = p.cdef[w].unitDst
+			res, err = pp.ctx.applyCDEFPostFilterRows(request, u, u+1, false, nil)
+		} else {
+			request.SampleScratch = p.cdef[w].line
+			res, err = pp.ctx.applyCDEFPostFilterRows(request, u, u+1, false, &p.cdefU8[u])
+		}
 		if err != nil {
 			pp.fail(err)
 			return
@@ -431,10 +454,16 @@ func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWor
 		// Every started unit worker indexes its own scratch, so the scratch
 		// covers all of them, not just the ones this frame needs.
 		workers = max(1, p.Workers, pp.started)
+		pp.hbd = out.Layout.BytesPerSample == 2
 		if cdefOn {
 			lumaWidth, chromaWidth := frameWorkCDEFParallelPlaneWidths(ctx)
-			p.ensureCDEFScratch(workers, lumaWidth, chromaWidth, true, unitRows)
+			p.ensureCDEFScratch(workers, lumaWidth, chromaWidth, !pp.hbd, unitRows)
 			p.resetCDEFResults(workers)
+			if pp.hbd {
+				if err := ctx.bindRowPipeCDEFSnapshot(req.CDEF); err != nil {
+					return err
+				}
+			}
 		}
 		if pp.lrOn {
 			p.ensureRestorationScratch(workers, pp.dataOff[2]+pp.dataLen[2], len(req.Restoration.Scratch.Unit.Wiener), len(req.Restoration.Scratch.Unit.SGRProj))
@@ -459,7 +488,11 @@ func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWor
 	// neighbours read from them is saved.
 	dispatch := func(end int) error {
 		for u := next; u < end; u++ {
-			if cdefOn {
+			if cdefOn && pp.hbd {
+				if err := pp.loadSnapshotRows(u); err != nil {
+					return err
+				}
+			} else if cdefOn {
 				if err := ctx.loadCDEFRowBoundary(&p.cdefU8[u], u, unitRows, false); err != nil {
 					return err
 				}
@@ -498,6 +531,8 @@ func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWor
 			pp.req = FrameWorkCDEFPostFilterRequest{}
 			pp.records = [3][]tile.RestorationUnitRecord{}
 			pp.boundaries = [3]tile.RestorationStripeBoundaries{}
+			pp.snap = [3]frame.SamplePlane{}
+			pp.snapSrc = [3]frame.Plane{}
 		}
 		return err
 	}
@@ -575,6 +610,59 @@ func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWor
 	}
 	if pp.lrOn {
 		result.Restoration = p.mergeRowPipeRestorationResults(workers)
+	}
+	return nil
+}
+
+// bindRowPipeCDEFSnapshot binds each filtered plane's pre-CDEF snapshot in
+// req.SampleScratch, as the whole-frame snapshot walk binds it; the driver
+// then fills it one unit row at a time (loadSnapshotRows).
+func (ctx *FrameWorkPostFilterContext) bindRowPipeCDEFSnapshot(req FrameWorkCDEFPostFilterRequest) error {
+	pp := &ctx.Parallel.pipe
+	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
+	for plane := range 3 {
+		pp.snapOn[plane], pp.snapRows[plane] = false, 0
+		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
+		processPlane := frameWorkCDEFPlaneHasFiltering(ctx.Event.CDEF, plane)
+		if plane == 0 && !processPlane {
+			processPlane = chromaFiltering
+		}
+		if !ok || !processPlane {
+			continue
+		}
+		xDec, yDec := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
+		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec, yDec, ctx.Output.Layout.BytesPerSample)
+		snap, err := frame.BindSamplePlane(req.SampleScratch[plane], planeFrame, ctx.Output.Layout.BytesPerSample)
+		if err != nil {
+			return err
+		}
+		pp.snap[plane], pp.snapSrc[plane], pp.snapOn[plane] = snap, planeFrame, true
+	}
+	return nil
+}
+
+// loadSnapshotRows copies the deblocked rows unit row u reads, down to two
+// rows below it, into the snapshot before u or the row below it is filtered.
+// Each row is loaded once, so no worker reads a row while it is written.
+func (pp *frameWorkRowPipe) loadSnapshotRows(u int) error {
+	out := pp.ctx.Output
+	for plane := range 3 {
+		if !pp.snapOn[plane] {
+			continue
+		}
+		src := pp.snapSrc[plane]
+		_, yDec := frameWorkCDEFPlaneDecimation(out.Format, plane)
+		end := src.Height
+		if u+1 < pp.unitRows {
+			end = min(((u+1)*cdef.BlockSize)>>yDec+cdef.VerticalBorder, src.Height)
+		}
+		if end <= pp.snapRows[plane] {
+			continue
+		}
+		if err := frame.LoadSamplePlaneRows(pp.snap[plane], src, out.Layout.BytesPerSample, pp.snapRows[plane], end); err != nil {
+			return err
+		}
+		pp.snapRows[plane] = end
 	}
 	return nil
 }
