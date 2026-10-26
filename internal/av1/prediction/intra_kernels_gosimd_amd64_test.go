@@ -98,7 +98,7 @@ func TestSmoothSIMDMatchesPureGo(t *testing.T) {
 }
 
 func TestApplyCFLSIMDMatchesPureGo(t *testing.T) {
-	dims := [][2]int{{16, 16}, {32, 32}, {16, 8}, {32, 16}, {16, 32}}
+	dims := [][2]int{{16, 16}, {32, 32}, {16, 8}, {32, 16}, {16, 32}, {4, 4}, {4, 8}, {4, 16}}
 	var seed uint32 = 0x7c3
 	for _, dim := range dims {
 		w, h := dim[0], dim[1]
