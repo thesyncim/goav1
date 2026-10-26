@@ -7,48 +7,49 @@ import (
 	"unsafe"
 )
 
-// svtEightSAD8x8Sub is svt_ext_eight_sad_calculation_8x8_16x16 (SUB_SAD,
-// Source/Lib/ASM_AVX2/compute_sad_intrin_avx2.c shape) for one 16x16 block:
-// VPSADBW of a 16-byte row yields the left and right 8x8 row sums, so the
-// four 8x8 SUB_SADs of a position are two accumulators; the bests update
-// with strict '<' per 8x8 and sad16[k] is the four quadrants' sum.
+// svtEightSAD8x8Sub is svt_ext_all_sad_calculation_8x8_16x16_avx2's SUB_SAD
+// pass (Source/Lib/ASM_AVX2/compute_sad_intrin_avx2.c) for one 16x16 block
+// at eight positions. archsimd has no VMPSADBW or VPHMINPOSUW, so each
+// position is one 256-bit VPSADBW per source row pair, in the
+// svt_ext_sad_calculation_8x8_16x16_avx2_intrin shape: rows r and r+8 share
+// a vector, the 64-bit lanes accumulate [TL TR BL BR] and VPACKSSDW folds
+// them to four 32-bit SADs. The per-8x8 bests are a vector compare and blend
+// per position in position order, which keeps the first strict minimum as
+// _mm_minpos_epu16 does; sad16[k] is the four quadrants' sum. An 8x8 SUB_SAD
+// is at most 2*32*255, so the signed pack is exact.
 func svtEightSAD8x8Sub(src, ref []byte, stride int, best *[4]uint32, bestMV *[4][2]int16, mvX, mvY int, sad16 *[8]uint32) {
 	_ = src[14*stride+15]
 	_ = ref[14*stride+22]
 	sp := unsafe.Pointer(&src[0])
 	rp := unsafe.Pointer(&ref[0])
 	s2 := 2 * stride
-	a0 := load16(sp)
-	a1 := load16(unsafe.Add(sp, s2))
-	a2 := load16(unsafe.Add(sp, 2*s2))
-	a3 := load16(unsafe.Add(sp, 3*s2))
-	a4 := load16(unsafe.Add(sp, 4*s2))
-	a5 := load16(unsafe.Add(sp, 5*s2))
-	a6 := load16(unsafe.Add(sp, 6*s2))
-	a7 := load16(unsafe.Add(sp, 7*s2))
+	s8 := 8 * stride
+	a0 := archsimd.Uint8x32{}.SetLo(load16(sp)).SetHi(load16(unsafe.Add(sp, s8)))
+	a1 := archsimd.Uint8x32{}.SetLo(load16(unsafe.Add(sp, s2))).SetHi(load16(unsafe.Add(sp, s2+s8)))
+	a2 := archsimd.Uint8x32{}.SetLo(load16(unsafe.Add(sp, 2*s2))).SetHi(load16(unsafe.Add(sp, 2*s2+s8)))
+	a3 := archsimd.Uint8x32{}.SetLo(load16(unsafe.Add(sp, 3*s2))).SetHi(load16(unsafe.Add(sp, 3*s2+s8)))
+	bp := (*[4]uint32)(unsafe.Pointer(best))
+	mp := (*[4]uint32)(unsafe.Pointer(bestMV))
+	bestV := archsimd.LoadUint32x4Array(bp)
+	bestMVV := archsimd.LoadUint32x4Array(mp)
 	for k := range 8 {
 		r := unsafe.Add(rp, k)
-		top := a0.SumOf8AbsDiff(load16(r)).
-			Add(a1.SumOf8AbsDiff(load16(unsafe.Add(r, s2)))).
-			Add(a2.SumOf8AbsDiff(load16(unsafe.Add(r, 2*s2)))).
-			Add(a3.SumOf8AbsDiff(load16(unsafe.Add(r, 3*s2))))
-		bot := a4.SumOf8AbsDiff(load16(unsafe.Add(r, 4*s2))).
-			Add(a5.SumOf8AbsDiff(load16(unsafe.Add(r, 5*s2)))).
-			Add(a6.SumOf8AbsDiff(load16(unsafe.Add(r, 6*s2)))).
-			Add(a7.SumOf8AbsDiff(load16(unsafe.Add(r, 7*s2))))
-		q := [4]uint32{
-			uint32(top.GetElem(0)) << 1, uint32(top.GetElem(1)) << 1,
-			uint32(bot.GetElem(0)) << 1, uint32(bot.GetElem(1)) << 1,
-		}
-		mv := [2]int16{int16(mvX + k), int16(mvY)}
-		for c, s := range q {
-			if s < best[c] {
-				best[c] = s
-				bestMV[c] = mv
-			}
-		}
-		sad16[k] = q[0] + q[1] + q[2] + q[3]
+		acc := a0.SumOf8AbsDiff(archsimd.Uint8x32{}.SetLo(load16(r)).SetHi(load16(unsafe.Add(r, s8)))).
+			Add(a1.SumOf8AbsDiff(archsimd.Uint8x32{}.SetLo(load16(unsafe.Add(r, s2))).SetHi(load16(unsafe.Add(r, s2+s8))))).
+			Add(a2.SumOf8AbsDiff(archsimd.Uint8x32{}.SetLo(load16(unsafe.Add(r, 2*s2))).SetHi(load16(unsafe.Add(r, 2*s2+s8))))).
+			Add(a3.SumOf8AbsDiff(archsimd.Uint8x32{}.SetLo(load16(unsafe.Add(r, 3*s2))).SetHi(load16(unsafe.Add(r, 3*s2+s8)))))
+		acc = acc.ShiftAllLeft(1)
+		v := acc.AsInt32x8()
+		sad := v.GetLo().SaturateToInt16Concat(v.GetHi()).AsUint32x4()
+		lt := sad.Less(bestV)
+		bestV = sad.IfElse(lt, bestV)
+		bestMVV = archsimd.BroadcastUint32x4(svtPackMV(mvX+k, mvY)).IfElse(lt, bestMVV)
+		h := acc.GetLo().Add(acc.GetHi())
+		sad16[k] = uint32(h.GetElem(0) + h.GetElem(1))
 	}
+	bestV.StoreArray(bp)
+	bestMVV.StoreArray(mp)
+	archsimd.ClearAVXUpperBits()
 }
 
 // svtAllSAD8x8_16x16Sub is svt_ext_all_sad_calculation_8x8_16x16 (SUB_SAD)
