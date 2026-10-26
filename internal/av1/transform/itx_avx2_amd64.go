@@ -502,10 +502,7 @@ func itxSquare8(px *itxPix, coeff []int32, coeffStride int, tv, th tx1DType, act
 		return false
 	}
 	var mid [8]archsimd.Int16x8
-	itx8Net1D(th, activeCols, &in, &mid)
-	for j := range mid {
-		mid[j] = itxRound2x8(mid[j], 1)
-	}
+	itxRect8RowNet(th, activeCols, &in, &mid)
 	itxTranspose8x8(&mid)
 	var colL1 archsimd.Uint16x8
 	for r := range mid {
@@ -515,7 +512,7 @@ func itxSquare8(px *itxPix, coeff []int32, coeffStride int, tv, th tx1DType, act
 		return false
 	}
 	var out [8]archsimd.Int16x8
-	itx8Net1D(tv, activeRows, &mid, &out)
+	itx48Net8(tv, activeRows, &mid, &out)
 	if px.maxV == 0 {
 		for r := 0; r < 8; r++ {
 			itxAddStore8(px.dst[r*px.dstStride:], px.pred[r*px.predStride:], itxRound2x8(out[r], 4))
@@ -655,8 +652,16 @@ func InverseAddDCT8x8(dst []byte, dstStride int, pred []byte, predStride int, co
 
 // InverseAdd8x8Hybrid is InverseAddDCT8x8 for the DCT/ADST/flipped-ADST
 // pairings (see itxHybridTypes).
+//
+// At 8 bits it also covers the identity pairings but IDTX (V_DCT, H_DCT,
+// V_ADST, H_ADST, V_FLIPADST, H_FLIPADST): identity8 rows give
+// Round2(2x, 1) == x, and identity8 columns saturate in int16 where only the
+// clipped sample could tell the difference (see itx_rect16_avx2_amd64.go).
 func InverseAdd8x8Hybrid(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
 	vertical, horizontal, ok := itxHybridTypes(txType)
+	if !ok && txType > TypeIDTX && txType < TypeCount {
+		vertical, horizontal, ok = itx4Types[txType][0], itx4Types[txType][1], true
+	}
 	if !ok || !itxBlockOK(8, 8, 1, 8, 8, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
 		return false
 	}
