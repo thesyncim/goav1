@@ -1716,6 +1716,19 @@ func (c *frameWorkTileResidualLoopController) fusedReconState() *frameWorkReconS
 func (s *frameWorkReconState) predictBlockBegin(visit *tile.BlockLoopVisit) error {
 	s.pendingCFLPrediction = false
 	s.cflPredictionDone = false
+	// dav1d's decode_b calls recon_b_inter directly: a bound translational
+	// inter block goes straight to the per-plane mc() loop.
+	if visit != nil && s.predict == nil && s.predictionScratch != nil && s.predictionScratch.Inter != nil {
+		if l := s.batch.boundLeanInter(s.index); l != nil {
+			if handled, err := s.batch.reconBInter(s.index, l, visit, s.predictionScratch.Inter, nil); handled {
+				if err != nil {
+					return frameWorkPredictBlockError(visit, err)
+				}
+				s.stats.Predictions++
+				return nil
+			}
+		}
+	}
 	if err := s.predictBeforeCoefficientsPtr(visit); err != nil {
 		return err
 	}
@@ -1768,10 +1781,18 @@ func (s *frameWorkReconState) predictBeforeCoefficientsPtr(visit *tile.BlockLoop
 		return nil
 	}
 	if err := s.batch.predictBlockPtr(s.index, visit, s.predictionScratch); err != nil {
-		return fmt.Errorf("predict block=%+v prediction=%+v prefix=%+v: %w", visit.Block, visit.Prediction, visit.Prefix, err)
+		return frameWorkPredictBlockError(visit, err)
 	}
 	s.stats.Predictions++
 	return nil
+}
+
+// frameWorkPredictBlockError wraps a block prediction error with the block,
+// kept out of line so the prediction paths carry no formatting frame.
+//
+//go:noinline
+func frameWorkPredictBlockError(visit *tile.BlockLoopVisit, err error) error {
+	return fmt.Errorf("predict block=%+v prediction=%+v prefix=%+v: %w", visit.Block, visit.Prediction, visit.Prefix, err)
 }
 
 func (s *frameWorkReconState) predictDeferredCFLChroma() error {
