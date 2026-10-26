@@ -2,7 +2,7 @@
 //
 // See LICENSE for the BSD-2-Clause grant and NOTICE for the AOM attribution.
 
-//go:build goexperiment.simd && arm64 && !purego
+//go:build goexperiment.simd && (arm64 || amd64) && !purego
 
 package cdef
 
@@ -64,6 +64,7 @@ func makeByteUnitInput(rng *byteUnitRNG, unitWidth, unitHeight int, pattern int)
 }
 
 func TestFilterFrameBlocksU8ByteInteriorParity(t *testing.T) {
+	requireByteInterior(t)
 	rng := byteUnitRNG(0x9e3779b9)
 	decs := [][2]uint8{{0, 0}, {1, 1}, {1, 0}, {0, 1}}
 	for iter := 0; iter < 3000; iter++ {
@@ -152,6 +153,7 @@ func TestFilterFrameBlocksU8ByteInteriorParity(t *testing.T) {
 // TestFilterFrameBlocksU8ByteInteriorDerivesDirections checks the luma
 // direction pass (run on dst before any write) and the chroma 4:2:2 map.
 func TestFilterFrameBlocksU8ByteInteriorDerivesDirections(t *testing.T) {
+	requireByteInterior(t)
 	rng := byteUnitRNG(0x51ed270b)
 	for iter := 0; iter < 200; iter++ {
 		for _, dec := range [][2]uint8{{0, 0}, {1, 0}} {
@@ -202,6 +204,7 @@ func TestFilterFrameBlocksU8ByteInteriorDerivesDirections(t *testing.T) {
 }
 
 func TestFilterFrameBlocksU8ByteInteriorDeclines(t *testing.T) {
+	requireByteInterior(t)
 	rng := byteUnitRNG(7)
 	input, _, origin := makeByteUnitInput(&rng, 64, 64, 0)
 	blocks := []BlockPosition{{BX: 0, BY: 0}}
@@ -232,6 +235,7 @@ func TestFilterFrameBlocksU8ByteInteriorDeclines(t *testing.T) {
 }
 
 func TestFilterFrameBlocksU8ByteInteriorZeroAlloc(t *testing.T) {
+	requireByteInterior(t)
 	rng := byteUnitRNG(11)
 	input, _, origin := makeByteUnitInput(&rng, 64, 64, 0)
 	blocks := make([]BlockPosition, 0, 64)
@@ -249,5 +253,15 @@ func TestFilterFrameBlocksU8ByteInteriorZeroAlloc(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("byte interior route allocates: %v", allocs)
+	}
+}
+
+// requireByteInterior skips on builds whose CPU lacks the byte kernels (amd64
+// without AVX2). Where they are available every test above must take them:
+// the entry declining is a failure.
+func requireByteInterior(t *testing.T) {
+	t.Helper()
+	if !U8ByteInteriorAvailable() {
+		t.Skip("byte-interior CDEF kernels unavailable on this CPU")
 	}
 }

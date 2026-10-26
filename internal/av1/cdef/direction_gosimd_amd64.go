@@ -113,7 +113,7 @@ var cdefP4RevHiTbl = [8][16]uint8{
 	7: {12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1, 255, 255},
 }
 
-func findDirectionSIMD(img []uint16, stride int, coeffShift int) (int, int32) {
+func findDirectionSIMD128(img []uint16, stride int, coeffShift int) (int, int32) {
 	bias := archsimd.BroadcastInt16x8(128)
 	shiftC := cdefDirShiftCountOf(coeffShift)
 	zero := archsimd.BroadcastInt16x8(0)
@@ -357,9 +357,9 @@ func cdefOddRev(hi archsimd.Int16x8) archsimd.Int16x8 {
 
 var cdefOddRevTbl = [16]uint8{4, 5, 2, 3, 0, 1, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255}
 
-func findDirectionDualSIMD(img1 []uint16, img2 []uint16, stride int, coeffShift int) (int, int32, int, int32) {
-	dir1, var1 := findDirectionSIMD(img1, stride, coeffShift)
-	dir2, var2 := findDirectionSIMD(img2, stride, coeffShift)
+func findDirectionDualSIMD128(img1 []uint16, img2 []uint16, stride int, coeffShift int) (int, int32, int, int32) {
+	dir1, var1 := findDirectionSIMD128(img1, stride, coeffShift)
+	dir2, var2 := findDirectionSIMD128(img2, stride, coeffShift)
 	return dir1, var1, dir2, var2
 }
 
@@ -377,14 +377,14 @@ func cdefDirLoadRowU8Hi(p unsafe.Pointer) archsimd.Int16x8 {
 	return cdefHiToLoU8(archsimd.LoadUint8x16Array((*[16]uint8)(p))).ExtendLo8ToUint16().ConvertToInt16()
 }
 
-// findDirectionU8SIMD is findDirectionSIMD reading the 8-bit frame plane
+// findDirectionU8SIMD128 is findDirectionSIMD reading the 8-bit frame plane
 // directly (dav1d cdef_find_dir_8bpc): coeffShift is always 0 at 8 bits, so
 // the row prologue is just widen + Sub(128). The partial-sum/cost/argmax body
 // is textually identical to findDirectionSIMD — an outlined shared core would
 // push eight Int16x8 rows through the stack ABI (see filter4_gosimd_arm64.go).
 // Rows 0..6 use 16-byte loads whose 8-byte overread lands in the next row;
 // row 7 uses the hi-half load so nothing is read past the block's last byte.
-func findDirectionU8SIMD(img []byte, stride int) (int, int32) {
+func findDirectionU8SIMD128(img []byte, stride int) (int, int32) {
 	bias := archsimd.BroadcastInt16x8(128)
 	zero := archsimd.BroadcastInt16x8(0)
 
@@ -512,9 +512,9 @@ func findDirectionU8SIMD(img []byte, stride int) (int, int32) {
 	return bestDir, (bestCost - opp) >> 10
 }
 
-func findDirectionDualU8SIMD(img1 []byte, img2 []byte, stride int) (int, int32, int, int32) {
-	dir1, var1 := findDirectionU8SIMD(img1, stride)
-	dir2, var2 := findDirectionU8SIMD(img2, stride)
+func findDirectionDualU8SIMD128(img1 []byte, img2 []byte, stride int) (int, int32, int, int32) {
+	dir1, var1 := findDirectionU8SIMD128(img1, stride)
+	dir2, var2 := findDirectionU8SIMD128(img2, stride)
 	return dir1, var1, dir2, var2
 }
 

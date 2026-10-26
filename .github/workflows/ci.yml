@@ -165,6 +165,11 @@ jobs:
           go test -count=1 -v
           -run '^(TestAMD64LPFSB.*|TestFilterSB8.*)$'
           ./internal/av1/loopfilter
+      - name: CDEF AVX2 parity and live dispatch
+        run: >-
+          go test -count=1 -v
+          -run '^(TestAMD64CDEF.*|TestFilterFrameBlocksU8ByteInterior.*|TestFindDirection.*|TestFilterBlockU8SIMD.*|TestFilterBlockSIMD.*)$'
+          ./internal/av1/cdef
       - name: cache libaom example fixtures
         uses: actions/cache@v4
         with:
