@@ -265,3 +265,80 @@ func requireByteInterior(t *testing.T) {
 		t.Skip("byte-interior CDEF kernels unavailable on this CPU")
 	}
 }
+
+// TestFilterFrameBlocksU8ByteInteriorSecondaryOnlyEntryParity checks the
+// secondary-only byte entry (arm64 NEON, amd64 AVX2) against the widened
+// pure-Go filter, dense and sparse block lists, all strengths and dampings.
+// Its availability must match the general byte route so the decoder picks
+// the same route on every SIMD build.
+func TestFilterFrameBlocksU8ByteInteriorSecondaryOnlyEntryParity(t *testing.T) {
+	requireByteInterior(t)
+	if !U8SecondaryOnlyByteInteriorAvailable() {
+		t.Fatal("secondary-only byte route must be available wherever the byte-interior route is")
+	}
+	rng := byteUnitRNG(0x2545f491)
+	decs := [][2]uint8{{0, 0}, {1, 1}, {1, 0}, {0, 1}}
+	for iter := 0; iter < 1200; iter++ {
+		dec := decs[iter%len(decs)]
+		plane := PlaneY
+		if dec != [2]uint8{0, 0} || iter%5 == 2 {
+			plane = Plane(1 + iter%2)
+		}
+		unitWidth := BlockSize >> dec[0]
+		unitHeight := BlockSize >> dec[1]
+		blockWidth := 8 >> dec[0]
+		blockHeight := 8 >> dec[1]
+		input, wide, origin := makeByteUnitInput(&rng, unitWidth, unitHeight, iter%6)
+		var blocks []BlockPosition
+		dense := iter%3 == 0
+		for by := 0; by < unitHeight/blockHeight; by++ {
+			for bx := 0; bx < unitWidth/blockWidth; bx++ {
+				if dense || rng.next()%3 != 0 {
+					blocks = append(blocks, BlockPosition{BX: uint8(bx), BY: uint8(by)})
+				}
+			}
+		}
+		if len(blocks) == 0 {
+			continue
+		}
+		secs := [3]uint8{1, 2, 4}
+		params := FrameFilterParams{
+			XDec: dec[0], YDec: dec[1], Plane: plane,
+			SecondaryStrength: secs[rng.next()%3],
+			Damping:           uint8(3 + rng.next()%4),
+		}
+		const pad = 5
+		dstStride := unitWidth + pad
+		dstLen := (unitHeight-1)*dstStride + unitWidth
+		got := make([]byte, dstLen)
+		for i := range got {
+			got[i] = byte(rng.next())
+		}
+		want := append([]byte(nil), got...)
+		if !FilterFrameBlocksU8SecondaryOnlyByteInteriorTrusted(got, dstStride, input, origin, unitWidth, unitHeight, blocks, params) {
+			t.Fatalf("iter %d: declined %+v", iter, params)
+		}
+		damping := int(params.Damping)
+		if plane != PlaneY {
+			damping--
+		}
+		var dirs DirectionGrid
+		var vars VarianceGrid
+		u := unitFilterParams{
+			secondaryStrength: int(params.SecondaryStrength),
+			damping:           damping,
+			bwLog2:            3 - int(dec[0]),
+			bhLog2:            3 - int(dec[1]),
+			blockWidth:        blockWidth,
+			blockHeight:       blockHeight,
+		}
+		if err := filterUnitBlocksU8PureGo(want, dstStride, wide, origin, blocks, &dirs, &vars, u); err != nil {
+			t.Fatal(err)
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Fatalf("iter %d params %+v: idx %d (row %d col %d) got %d want %d", iter, params, i, i/dstStride, i%dstStride, got[i], want[i])
+			}
+		}
+	}
+}
