@@ -578,8 +578,9 @@ func addSingleExtendedCandidate(stack *[8]refmvsCandidate, cnt *int32, candB *re
 	}
 }
 
-// find ports dav1d_refmvs_find. ref is the target reference pair in dav1d's
-// +1 encoding, tgmv the per-reference global MVs evaluated at this block
+// find ports dav1d_refmvs_find into out, which must be zero: as dav1d it
+// writes only the stack entries it fills. ref is the target reference pair in
+// dav1d's +1 encoding, tgmv the per-reference global MVs evaluated at this block
 // (get_gmv_2d), topHasRight dav1d's EDGE_I444_TOP_HAS_RIGHT edge flag, and
 // by4/bx4 the block's absolute 4x4 position.
 func (rt *refmvsTile) find(out *refmvsResult, ref [2]int8, size BlockSize, topHasRight bool, by4, bx4 int32, tgmvIn [2]motion.Vector) {
@@ -591,7 +592,7 @@ func (rt *refmvsTile) find(out *refmvsResult, ref [2]int8, size BlockSize, topHa
 	h4 := min(min(bh4, 16), rt.tileRowEnd-by4)
 	var gmv, tgmv [2]refmvsMV
 	stack := &out.stack
-	*stack = [8]refmvsCandidate{}
+	// out is zero (both callers pass a fresh refmvsResult): no stack clear.
 
 	cnt := int32(0)
 	if ref[0] > 0 {

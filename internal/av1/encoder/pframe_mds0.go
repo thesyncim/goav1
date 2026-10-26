@@ -88,15 +88,15 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 
 	// NEARESTMV: the first inter MV injected, never deduplicated
 	// (inject_mvp_candidates_ii_light_pd1).
-	nearestRefs, err := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNearestMV}, 0, false, st.forceIntegerMV)
-	if err != nil {
+	nearest, ok := stack.Stack.SingleNearestMV(false, st.forceIntegerMV)
+	if !ok {
 		return mds0Cand{}, false, false
 	}
 	// An intra-bordered block injects no MVP candidates
 	// (use_neighbouring_mode_ctrls): only the ME NEWMV below.
 	maxNear := -1
 	if !st.intraBordered {
-		cands[n] = mds0Cand{mode: tile.InterModeNearestMV, mv: nearestRefs.Nearest[0]}
+		cands[n] = mds0Cand{mode: tile.InterModeNearestMV, mv: nearest}
 		n++
 		// NEARMV DRL 0..2: stack slots 1+drl, capped by near_count and by
 		// the slots the stack actually holds (svt_aom_get_max_drl_index
@@ -107,14 +107,14 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 		}
 	}
 	for d := 0; d < maxNear; d++ {
-		r, rerr := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNearMV}, d, false, st.forceIntegerMV)
-		if rerr != nil {
+		near, ok := stack.Stack.SingleNearMV(d, false, st.forceIntegerMV)
+		if !ok {
 			break
 		}
-		if mds0AlreadyInjected(cands[:n], r.Near[0]) {
+		if mds0AlreadyInjected(cands[:n], near) {
 			continue
 		}
-		cands[n] = mds0Cand{mode: tile.InterModeNearMV, drl: int8(d), mv: r.Near[0]}
+		cands[n] = mds0Cand{mode: tile.InterModeNearMV, drl: int8(d), mv: near}
 		n++
 	}
 
@@ -128,9 +128,9 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 
 	// NEWMV vector-bit predictor: stack slot 0 (choose_best_av1_mv_pred at
 	// approx_inter_rate>1 returns DRL 0).
-	newPred := nearestRefs.Nearest[0]
-	if r, rerr := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNewMV}, 0, false, st.forceIntegerMV); rerr == nil {
-		newPred = r.Residual[0]
+	newPred := nearest
+	if r, ok := stack.Stack.SingleNewMVReference(0, false, st.forceIntegerMV); ok {
+		newPred = r
 	}
 	mvFactor := int64(50)
 	if st.allowScreenContentTools {
