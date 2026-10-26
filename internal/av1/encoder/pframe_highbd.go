@@ -486,26 +486,8 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 		refs.Ref[0] = tile.ReferenceFrameGolden
 		refPlane = *golden
 	}
-	stackReq := tile.ReferenceMVStackRequest{
-		MICol:          block.MICol,
-		MIRow:          block.MIRow,
-		TileMIColStart: walkReq.MIColStart,
-		TileMIRowStart: walkReq.MIRowStart,
-		TileMIColEnd:   walkReq.MIColEnd,
-		TileMIRowEnd:   walkReq.MIRowEnd,
-		FrameMIRows:    miRows,
-		FrameMICols:    miCols,
-		Size:           block.Size,
-		References:     refs,
-		X4:             block.X4,
-		Y4:             block.Y4,
-		HaveTop:        block.HaveTop,
-		HaveLeft:       block.HaveLeft,
-		HaveTopRight:   tile.BlockHasTopRight(16, block),
-		ForceIntegerMV: st.forceIntegerMV,
-	}
-	stack, err := st.referenceMVStack(modeCtx, stackReq, block)
-	if err != nil {
+	var stack tile.ReferenceMVStackResult
+	if err := st.referenceMVStack(&stack, modeCtx, refs, &block, walkReq, miCols, miRows); err != nil {
 		return fmt.Errorf("build ref mv stack: %w", err)
 	}
 	modeResult := tile.InterModeResult{Mode: tile.InterModeGlobalMV}
@@ -610,26 +592,8 @@ func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, re
 		interRefs.Ref[0] = tile.ReferenceFrameGolden
 		refPlanes = *golden
 	}
-	stackReq := tile.ReferenceMVStackRequest{
-		MICol:          block.MICol,
-		MIRow:          block.MIRow,
-		TileMIColStart: walkReq.MIColStart,
-		TileMIRowStart: walkReq.MIRowStart,
-		TileMIColEnd:   walkReq.MIColEnd,
-		TileMIRowEnd:   walkReq.MIRowEnd,
-		FrameMIRows:    miRows,
-		FrameMICols:    miCols,
-		Size:           block.Size,
-		References:     interRefs,
-		X4:             block.X4,
-		Y4:             block.Y4,
-		HaveTop:        block.HaveTop,
-		HaveLeft:       block.HaveLeft,
-		HaveTopRight:   tile.BlockHasTopRight(16, block),
-		ForceIntegerMV: st.forceIntegerMV,
-	}
-	stack, err := st.referenceMVStack(modeCtx, stackReq, block)
-	if err != nil {
+	var stack tile.ReferenceMVStackResult
+	if err := st.referenceMVStack(&stack, modeCtx, interRefs, &block, walkReq, miCols, miRows); err != nil {
 		return fmt.Errorf("build ref mv stack: %w", err)
 	}
 	modeResult := tile.InterModeResult{Mode: tile.InterModeGlobalMV}

@@ -144,9 +144,24 @@ func refmvsOracleWholeField(req *BlockLoopRequest) *TemporalMotionField {
 
 // refmvsOracleEncoderStack diffs an encoder refmvs_find stack against the
 // legacy BuildReferenceMVStack one, field by field as the encoder consumes it.
-func refmvsOracleEncoderStack(c *BlockModeContext, req *ReferenceMVStackRequest, refs InterReferencesResult, got *ReferenceMVStackResult) {
-	if req == nil {
-		return
+func refmvsOracleEncoderStack(c *BlockModeContext, rt *refmvsTile, block *BlockVisit, refs InterReferencesResult, got *ReferenceMVStackResult) {
+	req := &ReferenceMVStackRequest{
+		MICol:          block.MICol,
+		MIRow:          block.MIRow,
+		TileMIColStart: uint16(rt.tileColStart),
+		TileMIRowStart: uint16(rt.tileRowStart),
+		TileMIColEnd:   uint16(rt.tileColEnd),
+		TileMIRowEnd:   uint16(rt.tileRowEnd),
+		FrameMIRows:    uint16(rt.frame.ih4),
+		FrameMICols:    uint16(rt.frame.iw4),
+		Size:           block.Size,
+		References:     refs,
+		X4:             block.X4,
+		Y4:             block.Y4,
+		HaveTop:        block.HaveTop,
+		HaveLeft:       block.HaveLeft,
+		HaveTopRight:   blockHasTopRight(16, *block),
+		ForceIntegerMV: rt.frame.forceIntegerMV,
 	}
 	want, err := c.BuildReferenceMVStack(*req)
 	if err != nil {
