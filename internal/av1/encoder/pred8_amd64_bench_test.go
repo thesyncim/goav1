@@ -11,8 +11,10 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/motion"
 )
 
-// BenchmarkAMD64Pred8 compares the encoder's AVX2 luma predictor (impl=avx2)
-// with the motion package predictor it replaces on amd64 (impl=generic).
+// BenchmarkAMD64Pred8 compares the encoder's AVX2 full-pel predictor
+// (impl=avx2) with the motion package predictor it replaces on amd64
+// (impl=generic). Sub-pel blocks keep the motion package predictor on amd64,
+// so only FP has an avx2 case.
 func BenchmarkAMD64Pred8(b *testing.B) {
 	const w, h = 256, 160
 	rng := rand.New(rand.NewSource(1))
@@ -34,8 +36,8 @@ func BenchmarkAMD64Pred8(b *testing.B) {
 				}
 			})
 			b.Run(fmt.Sprintf("%dx%d/%s/impl=avx2", n, n, tc.name), func(b *testing.B) {
-				if pred8Impl == nil {
-					b.Skip("no AVX2")
+				if pred8Impl == nil || pred8FullPelOnly && tc.subX|tc.subY != 0 {
+					b.Skip("motion package predictor")
 				}
 				for b.Loop() {
 					pred8Predict(dst, n, &ref, 64, 32, n, n, tc.subX, tc.subY, motion.RegularFilters, &im)

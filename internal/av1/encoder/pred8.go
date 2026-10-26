@@ -26,6 +26,10 @@ const pred8IMLen = (64 + 7) * 64
 var pred8Impl func(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride int,
 	ref unsafe.Pointer, refStride, w, h, subX, subY int, xk, yk *[8]int16, im *[pred8IMLen]int16) int
 
+// pred8FullPelOnly limits pred8Impl to full-pel blocks (subX == subY == 0);
+// sub-pel blocks then take the motion package predictor.
+var pred8FullPelOnly bool
+
 // pred8IMImpl and pred8VIMImpl are the two 2-D passes on their own (rows of
 // the first-pass intermediate at any int16 row stride in bytes, and the
 // second pass over an intermediate whose first row is the block's row -3),
@@ -70,7 +74,7 @@ func pred8Fits(ref *frame.Plane, refX, refY, w, h int) bool {
 // full-pel origin (refX, refY) and Q4 fractions, reporting false (nothing
 // written) when the fast path does not apply.
 func pred8Predict(dst []byte, dstStride int, ref *frame.Plane, refX, refY, w, h, subX, subY int, filters motion.InterpFilters, im *[pred8IMLen]int16) bool {
-	if pred8Impl == nil || !pred8KernelsOK || w&7 != 0 || h < 8 || w > 64 || h > 64 ||
+	if pred8Impl == nil || !pred8KernelsOK || pred8FullPelOnly && subX|subY != 0 || w&7 != 0 || h < 8 || w > 64 || h > 64 ||
 		filters.X > motion.InterpMultiTapSharp || filters.Y > motion.InterpMultiTapSharp ||
 		!pred8Fits(ref, refX, refY, w, h) || len(dst) < (h-1)*dstStride+w {
 		return false
@@ -118,7 +122,7 @@ func (st *lossyEncodeState) predictPlane(dst []byte, refPlane []byte, stride, wi
 // block and src (stride srcStride), reporting false when the fast path does
 // not apply.
 func pred8SAD(src []byte, srcStride int, ref *frame.Plane, refX, refY, w, h, subX, subY int, im *[pred8IMLen]int16) (int, bool) {
-	if pred8Impl == nil || !pred8KernelsOK || w&15 != 0 || h < 8 || w > 64 || h > 64 ||
+	if pred8Impl == nil || !pred8KernelsOK || pred8FullPelOnly && subX|subY != 0 || w&15 != 0 || h < 8 || w > 64 || h > 64 ||
 		!pred8Fits(ref, refX, refY, w, h) || len(src) < (h-1)*srcStride+w+16 {
 		return 0, false
 	}
