@@ -28,4 +28,6 @@ func init() {
 	dirLeftCol8Impl = dirLeftCol8SIMD
 	predictFilterIntra8Impl = predictFilterIntraBlockDirect8SIMD
 	predictFilterIntra16Impl = predictFilterIntraBlockDirect16AVX2
+	subsampleLuma16Impl = subsampleLuma16AVX
+	subtractCFLAverageImpl = subtractCFLAverageAVX
 }
