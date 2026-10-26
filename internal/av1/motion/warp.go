@@ -293,9 +293,9 @@ func warpAffineHighBDOffset(dst frame.Plane, ref frame.Plane, bitDepth uint8, ma
 			baseSY := warpHorizontalHighBD(&tmp, ref, i, j, matrix, alpha, beta, gamma, delta, ssX, ssY, reduceBitsHoriz, offsetBitsHoriz)
 			if i+8 <= matY+height && j+8 <= matX+width {
 				if gamma == 0 {
-					warpVerticalHighBDFullGamma0(dst, bitDepth, max, &tmp, i, j, rowShift, colShift, baseSY, delta, reduceBitsVert, offsetBitsVert)
+					warpVerticalHighBDFullGamma0Dispatch(dst, bitDepth, max, &tmp, i, j, rowShift, colShift, baseSY, delta, reduceBitsVert, offsetBitsVert)
 				} else {
-					warpVerticalHighBDFull(dst, bitDepth, max, &tmp, i, j, rowShift, colShift, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert)
+					warpVerticalHighBDFullDispatch(dst, bitDepth, max, &tmp, i, j, rowShift, colShift, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert)
 				}
 				continue
 			}
