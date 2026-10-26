@@ -2481,6 +2481,10 @@ func (st *lossyEncodeState) quantizeInterTXBStats(geo *txBlockGeometry, q quanti
 		st.rdoqQuantizeTX(tran[:cn], qcoeff[:cn], rdoqGeometry(geo.tx, int(st.rdoqArm-1)), q)
 		return st.accumulateInterTXBStats(geo, q, qcoeff)
 	}
+	if st.keyRDOQ {
+		st.keyRDOQQuantize(tran[:cn], qcoeff[:cn], geo.tx, q)
+		return st.accumulateInterTXBStats(geo, q, qcoeff)
+	}
 	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
 		return false
 	}

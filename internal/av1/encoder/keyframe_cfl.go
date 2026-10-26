@@ -125,6 +125,7 @@ func (st *lossyEncodeState) keyCFLPlaneCost(src SourceFrame420, plane int, g *ke
 		return 1 << 59
 	}
 	st.rdDcode = 0
+	st.keyRDOQCtx = st.keyChromaCtx[plane]
 	st.prepareInterTXB(data, pred, g.cw, src.ChromaStride, g.x, g.y, g.cw, g.ch, q, qc[:n])
 	return st.trialTXBBits(tile.CoeffPlaneUV, qc[:n], g.cw) + st.rdDcode<<7
 }

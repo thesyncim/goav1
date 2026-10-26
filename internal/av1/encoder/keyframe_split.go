@@ -298,6 +298,9 @@ func (st *lossyEncodeState) decideKeyBlock(src SourceFrame420, recon *SourceFram
 	// SVT's MDS3 transform shortcuts (keyTXShortcut, keyChromaN4).
 	shortcut := false
 	if st.keyTXSOn {
+		// SVT's I-slice RDOQ (keyRDOQQuantize) on every TXB of the leaf.
+		st.keyRDOQ = true
+		defer func() { st.keyRDOQ = false }()
 		yTX := lumaTX
 		if mode == tile.IntraModeDC && pal == nil {
 			shortcut = keyTXShortcut(src.Y, src.YStride, pred, lumaPX, lumaPY, n, st.qIndex)
@@ -339,6 +342,16 @@ func (st *lossyEncodeState) decideKeyBlock(src SourceFrame420, recon *SourceFram
 		st.pfN4 = st.keyChromaN4(src, &cg, lumaPred, n, lumaPX, lumaPY, dcU, dcV, shortcut)
 		defer func() { st.pfN4 = false }()
 	}
+	if st.keyTXSOn {
+		blockDims, _ := cg.block.Dimensions()
+		txDims, _ := cg.tx.Dimensions()
+		for plane := 1; plane <= 2; plane++ {
+			st.keyChromaCtx[plane] = scratch.CoeffCtx.TXBContextTrusted(tile.CoeffContextRequest{
+				Plane: uint8(plane), PlaneBlock: cg.block, Size: cg.tx, X4: cg.x4, Y4: cg.y4,
+			}, txDims, blockDims)
+		}
+		st.keyRDOQPlane = 1
+	}
 	// SVT's I-slice CfL search (keyframe_cfl.go, cfl_level 2).
 	var cflAlphaQ3 [3]int
 	if cflAllowed, err := tile.ChromaIntraCFLAllowed(block.Size, st.color, false); err == nil && cflAllowed && videoColorIs420(st.color) {
@@ -377,12 +390,25 @@ func (st *lossyEncodeState) decideKeyBlock(src SourceFrame420, recon *SourceFram
 		} else {
 			memsetBytes(cpred, dc)
 		}
+		st.keyRDOQCtx = st.keyChromaCtx[plane]
 		cgeo, _, err := st.prepareIntraTXB(data, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, q, cg.tx, cpred, st.lumaQ[:])
 		if err != nil {
 			return fmt.Errorf("chroma %d txb: %w", plane, err)
 		}
 		if err := st.reconKeyTXB(rec, rdata, cpred, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, plane, cg.tx, cgeo); err != nil {
 			return fmt.Errorf("chroma %d txb: %w", plane, err)
+		}
+		if st.keyTXSOn {
+			// The decision pass's chroma contexts (the next leaves' RDOQ).
+			res := interTXBResult(st.lumaQ[:cgeo.coeffCount], cg.scan, cgeo.coeffCount)
+			if !res.AllZero {
+				res.CulLevel = tile.CoeffCulLevel(st.lumaQ[:cgeo.coeffCount], cg.scan, int(res.EOB))
+			}
+			if err := scratch.CoeffCtx.MarkTXB(tile.CoeffContextRequest{
+				Plane: uint8(plane), PlaneBlock: cg.block, Size: cg.tx, X4: cg.x4, Y4: cg.y4,
+			}, res); err != nil {
+				return fmt.Errorf("chroma %d context: %w", plane, err)
+			}
 		}
 	}
 	return nil
