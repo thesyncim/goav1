@@ -67,8 +67,13 @@ func (w *pframeDecideWorker) adopt(src *lossyEncodeState) {
 	inv := w.st.invScratch
 	subpelCache := w.st.subpelCache
 	keyPD0 := w.st.keyPD0
+	keyTXS := w.st.keyTXS
 	w.st = *src
 	w.st.keyPD0 = keyPD0 // lane-owned keyframe light-PD0 scratch
+	if keyTXS == nil && src.keyTXSOn {
+		keyTXS = new(keyTXSScratch)
+	}
+	w.st.keyTXS = keyTXS // lane-owned keyframe tx-size search scratch
 	w.st.pal = pal       // lane-owned palette search scratch
 	if len(levels) < len(src.levels) {
 		levels = make([]uint8, len(src.levels))

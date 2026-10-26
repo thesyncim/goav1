@@ -261,6 +261,11 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 	if tileOpts.stream != nil {
 		tileOpts.stream.applyContentHintToFrameHeader(&header.Prefix)
 	}
+	// SVT-AV1 rtc I slices signal TX_MODE_SELECT (txs_level 4,
+	// keyframe_txs.go).
+	if keyTXSEnabled(header.Prefix.AllowScreenContentTools, color) {
+		header.TransformRef.TransformMode = TransformModeSwitchable
+	}
 	if renderW > 0 && (renderW != src.Width || renderH != src.Height) {
 		header.Size.RenderWidth = uint32(renderW)
 		header.Size.RenderHeight = uint32(renderH)
@@ -835,6 +840,14 @@ type lossyEncodeState struct {
 	keyPD0      *keyPD0
 	keyPD0Rates keyPD0Rates
 	keyPD0On    bool
+	// keyTXSOn runs SVT's I-slice transform-size search on the keyframe's
+	// DC_PRED leaves under TX_MODE_SELECT (keyframe_txs.go); keyTXS is its
+	// lane-owned scratch, keyTXSLambda its full lambda and keyTXSCoeffTab
+	// the frame-start coefficient rates.
+	keyTXSOn       bool
+	keyTXS         *keyTXSScratch
+	keyTXSLambda   int64
+	keyTXSCoeffTab *rdoqCosts
 	// pd0Grid holds the per-SB VERY_LIGHT_PD0 trees (pframe_vlpd0.go),
 	// pd0Rates the frame-frozen partition rates they price with and
 	// pd0EdgeRef the edge-replicated reference block of off-frame vectors.
@@ -893,6 +906,19 @@ func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, re
 	}
 	if err := st.txCDFs.InitDefault(); err != nil {
 		return nil, err
+	}
+	if err := st.treeCDFs.InitDefault(); err != nil {
+		return nil, err
+	}
+	st.keyTXSOn = keyTXSEnabled(allowScreenContentTools, color)
+	st.transformMode = parser.TransformModeLargest
+	if st.keyTXSOn {
+		st.transformMode = parser.TransformModeSwitchable
+		st.keyTXSLambda = int64(svtCDEFFullLambda(qIndex, true, false, 150))
+		st.keyTXSCoeffTab = keyTXSCoeffTable(qIndex)
+		if st.keyTXS == nil {
+			st.keyTXS = new(keyTXSScratch)
+		}
 	}
 	for plane, dst := range []*quantize.Quantizer{&st.yQuant, &st.uQuant, &st.vQuant} {
 		q, err := quantize.PlaneQuantizer(parser.QuantizationParams{}, qIndex, 8, quantize.Plane(plane))

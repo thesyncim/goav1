@@ -33,3 +33,10 @@ func coeffCulLevelScalar(coeffs []int16, scan []int16, eob int) uint8 {
 	}
 	return uint8(culLevel)
 }
+
+// CoeffCulLevel is the coefficient context value a TXB leaves for its
+// neighbours (cul_level with the DC sign category), over the first eob scan
+// positions of coeffs.
+func CoeffCulLevel(coeffs []int16, scan []int16, eob int) uint8 {
+	return coeffCulLevel(coeffs, scan, eob)
+}

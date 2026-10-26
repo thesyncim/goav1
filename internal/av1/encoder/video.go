@@ -1852,6 +1852,7 @@ func (e *VideoEncoder) saveKeyframeCDFs(keyQ uint8) error {
 	e.frameCtx.Intra = pc.st.intraCDFs
 	e.frameCtx.Coeff = pc.st.coeffCDFs
 	e.frameCtx.TransformType = pc.st.txCDFs
+	e.frameCtx.Transform = pc.st.treeCDFs
 	if err := e.frameCtx.ResetCDFCounts(); err != nil {
 		return err
 	}
