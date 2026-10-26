@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 // See LICENSE for the BSD-2-Clause grant.
 
-//go:build purego || !goexperiment.simd || !arm64
+//go:build purego || !goexperiment.simd || !(arm64 || amd64)
 
 package filmgrain
 
