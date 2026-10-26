@@ -144,6 +144,12 @@ func (size TransformSize) Dimensions() (TransformDimensions, bool) {
 	return transformDimensions[size], true
 }
 
+// Dims returns a pointer to size's dimension record, dav1d's
+// &dav1d_txfm_dimensions[size]; size must be valid.
+func (size TransformSize) Dims() *TransformDimensions {
+	return &transformDimensions[size]
+}
+
 // TransformSize converts size to the transform package's pixel dimensions.
 func (size TransformSize) TransformSize() (transform.Size, error) {
 	dims, ok := size.Dimensions()

@@ -4,9 +4,9 @@ package lfmask
 
 import "unsafe"
 
-// storeLevelPair writes the level bytes l0, l1 at p and p+1 as one 16-bit
-// store (little-endian byte order), the store dav1d's adjacent uint8 writes
-// compile to.
-func storeLevelPair(p *uint8, l0, l1 uint8) {
-	*(*uint16)(unsafe.Pointer(p)) = uint16(l0) | uint16(l1)<<8
+// storeLevelPair writes the level pair v (low byte first) at p and p+1 as one
+// 16-bit store (little-endian byte order), the store dav1d's adjacent uint8
+// writes compile to.
+func storeLevelPair(p *uint8, v uint16) {
+	*(*uint16)(unsafe.Pointer(p)) = v
 }
