@@ -566,9 +566,7 @@ func (wf *frameWorkReconWavefront) ensureStates(workers int, c *frameWorkTileRes
 		st.int32Scratch = wf.workerInt32(w)
 		st.residualScratch = wf.workerResidual(w)
 		st.quant = frameWorkReconQuantCache{}
-		st.pendingCFLPrediction = false
 		st.cflPredictionDone = false
-		st.cflVisit = tile.BlockLoopVisit{}
 	}
 	return nil
 }
@@ -1573,9 +1571,10 @@ type frameWorkReconState struct {
 	lumaReady   bool
 	chromaReady bool
 
-	pendingCFLPrediction bool
-	cflPredictionDone    bool
-	cflVisit             tile.BlockLoopVisit
+	// cflPredictionDone records that the block's CfL chroma has been
+	// predicted, at its first chroma transform block (dav1d recon_b_intra
+	// predicts CfL chroma there, after the luma it reads is reconstructed).
+	cflPredictionDone bool
 }
 
 func (s *frameWorkReconState) bindPrimedLumaReconGeometry() {
@@ -1708,15 +1707,19 @@ func (c *frameWorkTileResidualLoopController) fusedReconState() *frameWorkReconS
 }
 
 // predictBlockBegin runs the predict portion of a block-loop visit: it resets
-// the CFL deferral state machine, predicts luma/non-CfL chroma (or arms the
-// pending-CfL state), and for skip-transform blocks flushes the deferred CfL
-// chroma immediately (there are no TXBs to trigger it later). It is shared by
+// the CfL state and predicts an inter block; an intra block is predicted
+// transform block by transform block from the TXB visits. It is shared by
 // the fused single-thread path (called inline from BeforeBlockCoefficients),
 // the serial deferred replay, and each goroutine of the multi-worker wavefront,
 // each operating on its own frameWorkReconState.
 func (s *frameWorkReconState) predictBlockBegin(visit *tile.BlockLoopVisit) error {
-	s.pendingCFLPrediction = false
 	s.cflPredictionDone = false
+	// dav1d's decode_b predicts nothing for an intra block: recon_b_intra
+	// predicts each transform block, and CfL chroma at the first chroma one.
+	// Intra blocks, skip or not, get TXB visits from the coefficient walk.
+	if visit != nil && s.predict == nil && visit.Prediction.Valid && visit.Prediction.Intra {
+		return nil
+	}
 	// dav1d's decode_b calls recon_b_inter directly: a bound translational
 	// inter block goes straight to the per-plane mc() loop.
 	if visit != nil && s.predict == nil && s.predictionScratch != nil && s.predictionScratch.Inter != nil {
@@ -1730,15 +1733,7 @@ func (s *frameWorkReconState) predictBlockBegin(visit *tile.BlockLoopVisit) erro
 			}
 		}
 	}
-	if err := s.predictBeforeCoefficientsPtr(visit); err != nil {
-		return err
-	}
-	if visit.Prefix.SkipTransform && !visit.Prediction.Intra {
-		if err := s.predictDeferredCFLChroma(); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.predictBeforeCoefficientsPtr(visit)
 }
 
 func (s *frameWorkReconState) predictBeforeCoefficients(visit tile.BlockLoopVisit) error {
@@ -1766,19 +1761,6 @@ func (s *frameWorkReconState) predictBeforeCoefficientsPtr(visit *tile.BlockLoop
 	// block from the TXB visits (dav1d recon_b_intra); skip intra blocks get
 	// all-zero TXB visits from the coefficient walk.
 	if visit.Prediction.Intra {
-		if frameWorkVisitUsesCFLPtr(visit) {
-			s.pendingCFLPrediction = true
-			s.cflVisit = *visit
-		}
-		return nil
-	}
-	if frameWorkVisitUsesCFLPtr(visit) {
-		if err := s.batch.PredictBlockLumaIntra(s.index, *visit, &s.predictionScratch.Intra); err != nil {
-			return fmt.Errorf("predict cfl luma block=%+v: %w", visit.Block, err)
-		}
-		s.pendingCFLPrediction = true
-		s.cflVisit = *visit
-		s.stats.Predictions++
 		return nil
 	}
 	if err := s.batch.predictBlockPtr(s.index, visit, s.predictionScratch); err != nil {
@@ -1809,15 +1791,23 @@ func frameWorkPredictBlockError(visit *tile.BlockLoopVisit, err error) error {
 	return fmt.Errorf("predict block=%+v prediction=%+v prefix=%+v: %w", visit.Block, visit.Prediction, visit.Prefix, err)
 }
 
-func (s *frameWorkReconState) predictDeferredCFLChroma() error {
-	if !s.pendingCFLPrediction || s.cflPredictionDone {
+// predictCFLChroma predicts the CfL chroma of an intra block once, at its
+// first chroma transform block, as dav1d's recon_b_intra: the luma it reads is
+// reconstructed by then. visit is the block's own visit.
+func (s *frameWorkReconState) predictCFLChroma(visit *tile.BlockLoopVisit) error {
+	if s.cflPredictionDone {
 		return nil
 	}
-	if err := s.batch.PredictBlockChromaCFL(s.index, s.cflVisit, s.cflScratch); err != nil {
-		return fmt.Errorf("predict cfl chroma block=%+v: %w", s.cflVisit.Block, err)
+	if err := s.batch.predictBlockChromaCFLPtr(s.index, visit, s.cflScratch); err != nil {
+		return frameWorkPredictCFLError(visit, err)
 	}
 	s.cflPredictionDone = true
 	return nil
+}
+
+//go:noinline
+func frameWorkPredictCFLError(visit *tile.BlockLoopVisit, err error) error {
+	return fmt.Errorf("predict cfl chroma block=%+v: %w", visit.Block, err)
 }
 
 func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *tile.BlockLoopVisit) (*tile.BlockCoeffRequest, error) {
@@ -2301,7 +2291,7 @@ func (s *frameWorkReconState) reconstructTXB(visit *tile.BlockLoopVisit, block *
 func (s *frameWorkReconState) reconstructTXBWithNonZero(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, nonzero []int16, currentQIndex uint8) error {
 	if s.predict == nil && s.predictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra {
 		if block.Plane != 0 && frameWorkVisitUsesCFLPtr(visit) {
-			if err := s.predictDeferredCFLChroma(); err != nil {
+			if err := s.predictCFLChroma(visit); err != nil {
 				return err
 			}
 		} else {
@@ -2309,10 +2299,6 @@ func (s *frameWorkReconState) reconstructTXBWithNonZero(visit *tile.BlockLoopVis
 				return fmt.Errorf("predict intra txb plane=%d visit=%+v block=%+v luma_mode=%d angle_delta=%d: %w", block.Plane, visit.Block, block.Block, visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta, err)
 			}
 			s.stats.Predictions++
-		}
-	} else if block.Plane != 0 {
-		if err := s.predictDeferredCFLChroma(); err != nil {
-			return err
 		}
 	}
 	if block.Result.AllZero {
@@ -2373,7 +2359,7 @@ func (s *frameWorkReconState) reconstructTXBWithNonZero(visit *tile.BlockLoopVis
 func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, cf []int32, activeRows int, activeCols int, dcOnly bool) error {
 	if s.predict == nil && s.predictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra {
 		if block.Plane != 0 && frameWorkVisitUsesCFLPtr(visit) {
-			if err := s.predictDeferredCFLChroma(); err != nil {
+			if err := s.predictCFLChroma(visit); err != nil {
 				return err
 			}
 		} else {
@@ -2381,10 +2367,6 @@ func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoo
 				return frameWorkPredictIntraTXBError(visit, block, err)
 			}
 			s.stats.Predictions++
-		}
-	} else if block.Plane != 0 {
-		if err := s.predictDeferredCFLChroma(); err != nil {
-			return err
 		}
 	}
 	if block.Result.AllZero || block.Result.EOB == 0 {
