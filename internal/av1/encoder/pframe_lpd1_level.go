@@ -279,6 +279,9 @@ type lpd1SBDecision struct {
 	// (LVL_4..5), 7245-7272.
 	nearCount int
 	skipDCTh  int
+	// useNeighbouringMode is use_neighbouring_mode_ctrls.enabled, on at
+	// every light-PD1 cand_reduction_level (2..5) of an inter picture.
+	useNeighbouringMode bool
 	// skipInterTxLevel is lpd1_skip_inter_tx_level, the rtc > ENC_M10
 	// branch (7378-7393).
 	skipInterTxLevel uint8
@@ -318,6 +321,7 @@ func lpd1DecisionForLevel(level lpd1PD1Level, info lpd1SBInfo, pictureQP uint32,
 	}
 	d.rdoq = false
 	d.coeffRateLvl0 = level > 0
+	d.useNeighbouringMode = level != lpd1RegularPD1
 	switch {
 	case level <= 0:
 		d.nearCount = 3 // cand_reduction_level 2
