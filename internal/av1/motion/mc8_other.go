@@ -11,7 +11,8 @@ import "github.com/thesyncim/goav1/internal/av1/frame"
 // Targets without the dav1d-style 8-bit kernels (mc8_gosimd_arm64.go) always
 // run the general convolve paths.
 
-func mc8PutFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *ConvolveScratch) bool {
+// Put8 is the dav1d-style 8-bit put; without the kernels it always declines.
+func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *ConvolveScratch) bool {
 	return false
 }
 

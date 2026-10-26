@@ -114,10 +114,10 @@ func TestMC8PutFastMatchesPureGo(t *testing.T) {
 				}
 				got := frame.Plane{Pix: slices.Clone(want.Pix), Stride: dw, Width: dw, Height: dh}
 				mc8RefPut(want, ref, 3, 2, refX, refY, w, h, filterW, filterH, subX, subY, filters)
-				if !mc8PutFast(&got, &ref, 3, 2, refX, refY, w, h, filterW, filterH, subX, subY, filters, &scratch) {
+				if !Put8(&got, &ref, 3, 2, refX, refY, w, h, filterW, filterH, subX, subY, filters, &scratch) {
 					kx, ky := mc8Kind(filters.X, filterW), mc8Kind(filters.Y, filterH)
 					if (subX == 0 || mc8SixTap[kx]) && (subY == 0 || mc8SixTap[ky]) && (w%8 == 0 || w == 4) {
-						t.Fatalf("mc8PutFast declined w=%d h=%d filters=%v sub=%d,%d", w, h, filters, subX, subY)
+						t.Fatalf("Put8 declined w=%d h=%d filters=%v sub=%d,%d", w, h, filters, subX, subY)
 					}
 					continue
 				}

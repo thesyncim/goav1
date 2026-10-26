@@ -684,6 +684,9 @@ func (b *FrameWorkBatch) reconBInter(index int, l *frameWorkLeanInter, visit *ti
 	var filters motion.InterpFilters
 	switch {
 	case explicitFilters != nil:
+		if !explicitFilters.X.Valid() || !explicitFilters.Y.Valid() {
+			return false, nil
+		}
 		filters = *explicitFilters
 	case l.switchable:
 		if !pred.InterpFiltersValid || !pred.InterpFilters.X.Valid() || !pred.InterpFilters.Y.Valid() {
@@ -794,7 +797,12 @@ func (b *FrameWorkBatch) reconBInter(index int, l *frameWorkLeanInter, visit *ti
 			}
 			var err error
 			if l.bps == 1 {
-				err = motion.PredictTranslation8(out, ref, px, py, writeW, writeH, filterW, filterH, mv[0], ssX, ssY, filters, frameWorkConvolveScratch(scratch))
+				// dav1d's mc(): the put kernel straight from the reference
+				// origin; a shape the kernels decline takes the general path.
+				refX, refY, subX, subY := motion.TranslationOrigin(px, py, mv[0], ssX, ssY)
+				if !motion.Put8(out, ref, px, py, refX, refY, writeW, writeH, filterW, filterH, subX, subY, filters, frameWorkConvolveScratch(scratch)) {
+					err = motion.PredictTranslation8(out, ref, px, py, writeW, writeH, filterW, filterH, mv[0], ssX, ssY, filters, frameWorkConvolveScratch(scratch))
+				}
 			} else {
 				err = motion.PredictTranslation16(out, ref, b.Sequence.ColorConfig.BitDepth, px, py, writeW, writeH, filterW, filterH, mv[0], ssX, ssY, filters, frameWorkConvolveScratch(scratch))
 			}
