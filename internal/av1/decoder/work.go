@@ -1806,7 +1806,7 @@ func FrameWorkSideDataScratchLen(b FrameWorkBatch) (FrameWorkSideDataScratchSize
 		if frameWorkLoopFilterActive(b.LoopFilter) {
 			_, _, masks := threading.FrameWorkLoopFilterMaskShape(cols, rows)
 			size.LoopFilterMasks = masks
-			size.LoopFilterLevels = length
+			size.LoopFilterLevels = threading.FrameWorkLoopFilterLevelCacheLen(cols, rows)
 		}
 	}
 	if frameWorkRestorationActive(b.Restoration) {
@@ -1917,7 +1917,7 @@ func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, 
 				return threading.ErrInvalidBatch
 			}
 			masks := r.LFMasks[:maskCount]
-			levelCache := r.LFLevelCache[:length]
+			levelCache := threading.FrameWorkLoopFilterLevelCacheBind(r.LFLevelCache, cols, rows)
 			clear(masks)
 			clear(levelCache)
 			color := b.Sequence.ColorConfig

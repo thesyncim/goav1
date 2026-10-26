@@ -23,5 +23,5 @@ func refmvsOracleTmvs(*refmvsTile, int32, int32, int32, int32) {}
 
 func refmvsOracleWholeField(*BlockLoopRequest) *TemporalMotionField { return nil }
 
-func refmvsOracleEncoderStack(*BlockModeContext, *ReferenceMVStackRequest, InterReferencesResult, *ReferenceMVStackResult) {
+func refmvsOracleEncoderStack(*BlockModeContext, *refmvsTile, *BlockVisit, InterReferencesResult, *ReferenceMVStackResult) {
 }

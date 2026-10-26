@@ -54,8 +54,8 @@ func (st *lossyEncodeState) pblockStackRequest(block tile.BlockVisit, walkReq ti
 // returns at preset 12 (DRL 0, approx_inter_rate > 1): the MV cost reference
 // of the sub-pel search and of the MDS0 NEWMV rate.
 func (st *lossyEncodeState) svtNewMVPredictor(stack *tile.ReferenceMVStackResult) motion.Vector {
-	if r, err := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNewMV}, 0, false, st.forceIntegerMV); err == nil {
-		return r.Residual[0]
+	if r, ok := stack.Stack.SingleNewMVReference(0, false, st.forceIntegerMV); ok {
+		return r
 	}
 	return motion.Vector{}
 }
@@ -71,7 +71,9 @@ func (st *lossyEncodeState) pblockSubpel(src SourceFrame420, refPlane []byte, re
 	// search, skip_zz_mv skips it from a zero vector (md_subpel_search).
 	dec := st.lpd1SB(lumaPX, lumaPY)
 	ctrls := svtSubpelCtrlsFor(dec.subpelLevel)
-	if ctrls == nil || (ctrls.skipZeroMV && mv == (motion.Vector{})) {
+	// read_refine_me_mvs_light_pd1's skip_subpel: an intra-bordered block
+	// keeps its full-pel ME vector for every reference.
+	if ctrls == nil || st.intraBordered || (ctrls.skipZeroMV && mv == (motion.Vector{})) {
 		return mv, fullSAD
 	}
 	refined, besterr := st.svtSubpelSearch(src.Y, refPlane, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, refMV, ctrls, st.lpd1FullLambda(dec))
@@ -94,6 +96,20 @@ func (st *lossyEncodeState) pblockSubpel(src SourceFrame420, refPlane []byte, re
 	return refined, sad
 }
 
+// isIntraBordered is product_coding_loop.c is_intra_bordered under the SB's
+// use_neighbouring_mode_ctrls: both the above and the left neighbour exist in
+// the tile and are intra. Such a block skips the sub-pel refinement
+// (read_refine_me_mvs_light_pd1) and the MVP candidate injection
+// (inject_mvp_candidates_ii_light_pd1), so MDS0 prices only the ME NEWMV.
+func (st *lossyEncodeState) isIntraBordered(modeCtx *tile.BlockModeContext, block tile.BlockVisit, lumaPX, lumaPY int) bool {
+	if !block.HaveTop || !block.HaveLeft || !st.lpd1SB(lumaPX, lumaPY).useNeighbouringMode {
+		return false
+	}
+	// The is_inter context is 3 exactly when both neighbours are intra.
+	ctx, err := modeCtx.IntraContext(int(block.X4), int(block.Y4), true, true)
+	return err == nil && ctx == 3
+}
+
 // mePredYKey records that predY holds LAST's regular-filter prediction at mv.
 type mePredYKey struct {
 	valid bool
@@ -107,6 +123,7 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 
 	st.mePredY.valid = false
 	st.mdMEDist = ^uint64(0)
+	st.intraBordered = st.isIntraBordered(modeCtx, block, lumaPX, lumaPY)
 	if st.zmvForced(block.Size, lumaPX, lumaPY) {
 		// force_zeromv_skip_for_blk: zero-motion LAST only.
 		var o pblockMotion
@@ -137,12 +154,12 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 		// NEWMV predictor of LAST's MVP table as the MV cost reference.
 		if st.allowSubpelRefinement() {
 			lastRefs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
-			stack, err := st.referenceMVStack(modeCtx, st.pblockStackRequest(block, walkReq, miCols, miRows, lastRefs), block)
+			err := st.referenceMVStack(&out.stack, modeCtx, lastRefs, &block, walkReq, miCols, miRows)
 			if err != nil {
 				return out, fmt.Errorf("build ref mv stack: %w", err)
 			}
-			out.stack, out.stackOK = stack, true
-			mv, fullSAD = st.pblockSubpel(src, ref.Y, ref.YStride, lumaPX, lumaPY, bw, bh, mv, fullSAD, st.svtNewMVPredictor(&stack), true)
+			out.stackOK = true
+			mv, fullSAD = st.pblockSubpel(src, ref.Y, ref.YStride, lumaPX, lumaPY, bw, bh, mv, fullSAD, st.svtNewMVPredictor(&out.stack), true)
 		}
 	}
 
@@ -176,12 +193,12 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 			goldenRefPruned = int64(gsad)*100 > int64(lastSAD)*(100+goldenRefPruneMaxDevPct)
 			if st.allowSubpelRefinement() && !goldenRefPruned {
 				goldenRefs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameGolden, tile.ReferenceFrameNone}}
-				stack, err := st.referenceMVStack(modeCtx, st.pblockStackRequest(block, walkReq, miCols, miRows, goldenRefs), block)
+				err := st.referenceMVStack(&goldenStack, modeCtx, goldenRefs, &block, walkReq, miCols, miRows)
 				if err != nil {
 					return out, fmt.Errorf("build ref mv stack: %w", err)
 				}
-				goldenStack, goldenStackOK = stack, true
-				gmv, gsad = st.pblockSubpel(src, golden.Y, golden.YStride, lumaPX, lumaPY, bw, bh, gmv, gsad, st.svtNewMVPredictor(&stack), false)
+				goldenStackOK = true
+				gmv, gsad = st.pblockSubpel(src, golden.Y, golden.YStride, lumaPX, lumaPY, bw, bh, gmv, gsad, st.svtNewMVPredictor(&goldenStack), false)
 			}
 		} else {
 			base := lumaPY*src.YStride + lumaPX
@@ -230,16 +247,15 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 }
 
 // pblockStack returns the reference-MV stack for the motion stage's refs,
-// reusing the one the sub-pel search built.
-func (st *lossyEncodeState) pblockStack(mo *pblockMotion, block tile.BlockVisit, modeCtx *tile.BlockModeContext, walkReq tile.BlockWalkRequest, miCols, miRows uint16) (tile.ReferenceMVStackResult, error) {
+// reusing the one the sub-pel search built; otherwise it builds it in mo.
+func (st *lossyEncodeState) pblockStack(mo *pblockMotion, block *tile.BlockVisit, modeCtx *tile.BlockModeContext, walkReq tile.BlockWalkRequest, miCols, miRows uint16) (*tile.ReferenceMVStackResult, error) {
 	if mo.stackOK {
-		return mo.stack, nil
+		return &mo.stack, nil
 	}
-	stack, err := st.referenceMVStack(modeCtx, st.pblockStackRequest(block, walkReq, miCols, miRows, mo.refs), block)
-	if err != nil {
-		return stack, fmt.Errorf("build ref mv stack: %w", err)
+	if err := st.referenceMVStack(&mo.stack, modeCtx, mo.refs, block, walkReq, miCols, miRows); err != nil {
+		return &mo.stack, fmt.Errorf("build ref mv stack: %w", err)
 	}
-	return stack, nil
+	return &mo.stack, nil
 }
 
 // leafFullPelSAD is the luma SAD of the bw x bh block at full-pel motion mv,

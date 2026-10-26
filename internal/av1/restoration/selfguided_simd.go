@@ -9,7 +9,7 @@ package restoration
 // Go-native SIMD self-guided restoration drivers for amd64. The
 // per-pixel blend (sgrBlendRowSIMD) and the lane count (sgrBlendLanes) are
 // supplied by the architecture file. The data-dependent LUT gather inside
-// calculateIntermediate (xByXPlus1 / oneByX) stays scalar, and the columns beyond
+// calculateIntermediateAVX2 (xByXPlus1 / oneByX) stays scalar, and the columns beyond
 // the last full vector keep the scalar reference, so every output sample is
 // bit-identical for 8/10/12-bit input.
 
@@ -38,10 +38,11 @@ func boxsumCell(src []int32, srcOrigin, width, srcStride, radius int, squared bo
 }
 
 // selfguidedSIMD is the self-guided filter with the SIMD blend, used for the
-// radius-1 and radius-2 passes. Its A/B coefficients come from the scalar
-// calculateIntermediate with the parameter pass selected by the radius index.
+// radius-1 and radius-2 passes. Its A/B coefficients come from
+// calculateIntermediateAVX2 with the parameter pass selected by the radius
+// index.
 func selfguidedSIMD(dgd []int32, dgdOrigin int, width int, height int, dgdStride int, dst []int32, dstStride int, bitDepth int, paramsIndex int, radiusIndex int, aBuf []int32, bBuf []int32, bufStride int) {
-	calculateIntermediate(dgd, dgdOrigin, width, height, dgdStride, bitDepth, paramsIndex, radiusIndex, 0, aBuf, bBuf, bufStride)
+	calculateIntermediateAVX2(dgd, dgdOrigin, width, height, dgdStride, bitDepth, paramsIndex, radiusIndex, 0, aBuf, bBuf, bufStride)
 	aOrigin := SGRProjBorderVert*bufStride + SGRProjBorderHorz
 	const nb = 5
 	const shift = SGRProjSgrBits + nb - SGRProjRstBits
@@ -76,7 +77,7 @@ func selfguidedSIMD(dgd []int32, dgdOrigin int, width int, height int, dgdStride
 // evaluates the box-sum stencil only on alternating rows (the "fast" subsampled
 // variant), so even and odd rows use different weight sets.
 func selfguidedFastSIMD(dgd []int32, dgdOrigin int, width int, height int, dgdStride int, dst []int32, dstStride int, bitDepth int, paramsIndex int, radiusIndex int, aBuf []int32, bBuf []int32, bufStride int) {
-	calculateIntermediate(dgd, dgdOrigin, width, height, dgdStride, bitDepth, paramsIndex, radiusIndex, 1, aBuf, bBuf, bufStride)
+	calculateIntermediateAVX2(dgd, dgdOrigin, width, height, dgdStride, bitDepth, paramsIndex, radiusIndex, 1, aBuf, bBuf, bufStride)
 	aOrigin := SGRProjBorderVert*bufStride + SGRProjBorderHorz
 	const shiftEven = SGRProjSgrBits + 5 - SGRProjRstBits
 	const shiftOdd = SGRProjSgrBits + 4 - SGRProjRstBits

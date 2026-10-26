@@ -6,6 +6,7 @@ package loopfilter
 
 import (
 	"bytes"
+	"math/bits"
 	"math/rand"
 	"testing"
 
@@ -152,6 +153,76 @@ func TestFilterSB16ScalarMatchesEdgeKernels(t *testing.T) {
 		}
 		if !bytes.Equal(got, want) {
 			t.Fatalf("iter %d: width %d edge %v level %d sharp %d bd %d mismatch", iter, wd, edge, level, sharp, bitDepth)
+		}
+	}
+}
+
+// TestFilterSB16TightBuffers is TestFilterSB8TightBuffers for 10/12-bit
+// planes: planes and level maps end right after the last sample and level
+// the selected units use, so calls reaching a buffer end take the edge path.
+func TestFilterSB16TightBuffers(t *testing.T) {
+	rng := rand.New(rand.NewSource(4))
+	const w, h = 160, 160
+	const stride = 2 * w
+	for iter := 0; iter < 4000; iter++ {
+		bitDepth := uint8(10)
+		if rng.Intn(2) == 0 {
+			bitDepth = 12
+		}
+		luma := rng.Intn(2) == 0
+		lut := NewSBLUT(uint8(rng.Intn(MaxSharpness + 1)))
+		full := sbTestPlane16(rng, w, h, bitDepth)
+		lvlStride := w / 4
+		lvlFull := sbTestLevels(rng, lvlStride*(h/4))
+		comp := rng.Intn(4)
+		units := 1 + rng.Intn(32)
+		vm := sbTestMasks(rng, luma, units)
+		all := vm[0] | vm[1] | vm[2]
+		if all == 0 {
+			continue
+		}
+		hi := 31 - bits.LeadingZeros32(all)
+		vertical := rng.Intn(2) == 0
+		var off, rowBytes, lvlOff, pixLen, lvlLen int
+		if vertical {
+			x := 4 * (1 + rng.Intn(w/4-1))
+			if vm[2] != 0 {
+				x = 8 + 4*rng.Intn(w/4-3)
+			}
+			y0 := 4 * rng.Intn(h/4-units+1)
+			off, rowBytes, lvlOff = y0*stride+2*x, 2*(w-x), (y0/4)*lvlStride+x/4
+			pixLen = off + (4*hi+3)*stride + 14
+			lvlLen = lvlOff + hi*lvlStride + 1
+		} else {
+			y := 4 * (1 + rng.Intn(h/4-1))
+			if vm[2] != 0 {
+				y = 28 + 4*rng.Intn(h/4-8)
+			}
+			x0 := 4 * rng.Intn(w/4-units+1)
+			off, rowBytes, lvlOff = y*stride+2*x0, 2*(w-x0), (y/4)*lvlStride+x0/4
+			pixLen = off + 6*stride + 8*(hi+1)
+			lvlLen = lvlOff + hi + 1
+		}
+		pixLen = min(pixLen, len(full))
+		if rng.Intn(2) == 0 {
+			lvlLen = len(lvlFull)
+		}
+		lvl := append([][4]uint8(nil), lvlFull[:lvlLen]...)
+		want := append([]byte(nil), full[:pixLen]...)
+		got := append([]byte(nil), full[:pixLen]...)
+		var ws, gs SBStats
+		if vertical {
+			ws = filterSBVertical16Scalar(want, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			gs = FilterSBVertical16(got, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+		} else {
+			ws = filterSBHorizontal16Scalar(want, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			gs = FilterSBHorizontal16(got, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+		}
+		if ws != gs {
+			t.Fatalf("iter %d: stats %+v, want %+v", iter, gs, ws)
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("iter %d vertical=%v luma=%v bd=%d vm=%x: samples differ from the reference", iter, vertical, luma, bitDepth, vm)
 		}
 	}
 }

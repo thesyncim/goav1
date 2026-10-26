@@ -70,40 +70,39 @@ func (s *BlockLoopScratch) keepLegacyMotion() bool {
 	return !s.Refmvs.bound || refmvsOracleEnabled
 }
 
-// EncoderReferenceMVStack runs dav1d_refmvs_find for req on the bound rows
-// and returns the stack in the shape the mode writers and MV resolution
-// consume: the candidates, the raw packed mode context and, for single
-// references, the nearest/near pair (dav1d's first two stack entries,
-// global-MV filled). The goav1_refmvs_oracle build diffs it against
-// BuildReferenceMVStack(req).
-func (s *BlockLoopScratch) EncoderReferenceMVStack(req *ReferenceMVStackRequest, block BlockVisit) ReferenceMVStackResult {
-	refs := req.References
+// EncoderReferenceMVStack runs dav1d_refmvs_find for refs at block on the
+// bound rows and writes the stack into dst in the shape the mode writers and
+// MV resolution consume: the candidates, the raw packed mode context and, for
+// single references, the nearest/near pair (dav1d's first two stack entries,
+// global-MV filled). The stack is built in place, as dav1d's decode_b and
+// SVT's generate_av1_mvp_table keep theirs, so the caller needs no request
+// and no copy. The goav1_refmvs_oracle build diffs it against
+// BuildReferenceMVStack.
+func (s *BlockLoopScratch) EncoderReferenceMVStack(dst *ReferenceMVStackResult, refs InterReferencesResult, block *BlockVisit) {
 	var found refmvsResult
 	target := [2]int8{int8(refs.Ref[0]) + 1, -1}
 	if refs.Compound {
 		target[1] = int8(refs.Ref[1]) + 1
 	}
 	s.Refmvs.find(&found, target, block.Size, block.Edge&edgeI444TopHasRight != 0, int32(block.MIRow), int32(block.MICol), [2]motion.Vector{})
-	var out ReferenceMVStackResult
-	out.ModeContext = uint16(found.rawCtx)
-	out.Stack.Count = uint8(found.count)
+	*dst = ReferenceMVStackResult{ModeContext: uint16(found.rawCtx)}
+	dst.Stack.Count = uint8(found.count)
 	for i := range found.count {
 		cand := &found.stack[i]
-		out.Stack.Candidates[i] = ReferenceMVCandidate{
+		dst.Stack.Candidates[i] = ReferenceMVCandidate{
 			This:     cand.mv[0].vector(),
 			Compound: cand.mv[1].vector(),
 			Weight:   uint16(min(cand.weight, 0xffff)),
 		}
 	}
 	if !refs.Compound {
-		out.Stack.SingleRefMVs[0] = found.stack[0].mv[0].vector()
-		out.Stack.SingleRefMVs[1] = found.stack[1].mv[0].vector()
-		out.Stack.SingleRefValid = true
+		dst.Stack.SingleRefMVs[0] = found.stack[0].mv[0].vector()
+		dst.Stack.SingleRefMVs[1] = found.stack[1].mv[0].vector()
+		dst.Stack.SingleRefValid = true
 	}
 	if refmvsOracleEnabled {
-		refmvsOracleEncoderStack(&s.Mode, req, refs, &out)
+		refmvsOracleEncoderStack(&s.Mode, &s.Refmvs, block, refs, dst)
 	}
-	return out
 }
 
 // EncoderCommitInter marks a committed inter block in s.Mode

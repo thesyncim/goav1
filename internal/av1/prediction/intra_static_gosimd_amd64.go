@@ -6,13 +6,17 @@
 
 package prediction
 
-// amd64 routers for the 8-bit intra predictors. The AVX2 asm this replaces served
-// 8-bit blocks with width a multiple of 16; the Go SIMD kernels serve every width
-// a multiple of 8 and every other shape stays on the PureGo reference.
+// amd64 routers for the 8-bit intra predictors. The Go SIMD kernels serve every
+// width a multiple of 8, the width-4 kernels (intra_w4_gosimd_amd64.go) width 4
+// with even height, and every other shape stays on the PureGo reference.
 
 func predictPaethSIMD(block planeBlock, bytesPerSample int, above []uint16, left []uint16, aboveLeft uint16) {
 	if bytesPerSample == 1 && block.width%8 == 0 {
 		paeth8SIMD(block, above, left, aboveLeft)
+		return
+	}
+	if bytesPerSample == 1 && block.width == 4 && block.height%2 == 0 {
+		paethW4AVX(block, above, left, aboveLeft)
 		return
 	}
 	predictPaethPureGo(block, bytesPerSample, above, left, aboveLeft)
@@ -23,12 +27,20 @@ func predictSmoothSIMD(block planeBlock, bytesPerSample int, weightsW []uint16, 
 		smooth8SIMD(block, weightsW, weightsH, above, left, belowPred, rightPred)
 		return
 	}
+	if bytesPerSample == 1 && block.width == 4 && block.height%2 == 0 {
+		smoothW4AVX(block, weightsW, weightsH, above, left, belowPred, rightPred)
+		return
+	}
 	predictSmoothPureGo(block, bytesPerSample, weightsW, weightsH, above, left, belowPred, rightPred)
 }
 
 func predictSmoothVerticalSIMD(block planeBlock, bytesPerSample int, weights []uint16, above []uint16, belowPred uint16) {
 	if bytesPerSample == 1 && block.width%8 == 0 {
 		smoothVertical8SIMD(block, weights, above, belowPred)
+		return
+	}
+	if bytesPerSample == 1 && block.width == 4 && block.height%2 == 0 {
+		smoothVerticalW4AVX(block, weights, above, belowPred)
 		return
 	}
 	predictSmoothVerticalPureGo(block, bytesPerSample, weights, above, belowPred)
@@ -39,6 +51,10 @@ func predictSmoothHorizontalSIMD(block planeBlock, bytesPerSample int, weights [
 		smoothHorizontal8SIMD(block, weights, left, rightPred)
 		return
 	}
+	if bytesPerSample == 1 && block.width == 4 && block.height%2 == 0 {
+		smoothHorizontalW4AVX(block, weights, left, rightPred)
+		return
+	}
 	predictSmoothHorizontalPureGo(block, bytesPerSample, weights, left, rightPred)
 }
 
@@ -47,6 +63,10 @@ func predictSmoothHorizontalSIMD(block planeBlock, bytesPerSample int, weights [
 func applyCFLSIMD(block planeBlock, bytesPerSample int, visibleWidth int, visibleHeight int, acQ3 []int16, alphaQ3 int, max uint16) {
 	if bytesPerSample == 1 && visibleWidth%8 == 0 && max == 0xff {
 		applyCFL8SIMD(block, visibleWidth, visibleHeight, acQ3, alphaQ3)
+		return
+	}
+	if bytesPerSample == 1 && visibleWidth == 4 && visibleHeight%2 == 0 && max == 0xff {
+		applyCFL4AVX(block, visibleHeight, acQ3, alphaQ3)
 		return
 	}
 	applyCFLPureGo(block, bytesPerSample, visibleWidth, visibleHeight, acQ3, alphaQ3, max)

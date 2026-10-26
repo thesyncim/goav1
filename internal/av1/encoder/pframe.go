@@ -291,7 +291,7 @@ func encodeRepeatPFrameTile(width, height int) ([]byte, error) {
 		var stack tile.ReferenceMVStackResult
 		var err error
 		if scratch.EncoderRefmvsBound() {
-			stack = scratch.EncoderReferenceMVStack(&stackReq, block)
+			scratch.EncoderReferenceMVStack(&stack, refs, &block)
 		} else {
 			stack, err = modeCtx.BuildReferenceMVStack(stackReq)
 		}

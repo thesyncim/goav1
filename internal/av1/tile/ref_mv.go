@@ -229,6 +229,66 @@ func (stack *ReferenceMVStack) BestSingleReferenceMVs(allowHighPrecision bool, f
 	return nearest, near, nil
 }
 
+// singleNearestNear is BestSingleReferenceMVs without the error value.
+func (stack *ReferenceMVStack) singleNearestNear(allowHighPrecision, forceInteger bool) (motion.Vector, motion.Vector, bool) {
+	if stack.Count > MaxRefMVStackSize {
+		return motion.Vector{}, motion.Vector{}, false
+	}
+	if stack.SingleRefValid {
+		return motion.LowerPrecision(stack.SingleRefMVs[0], allowHighPrecision, forceInteger),
+			motion.LowerPrecision(stack.SingleRefMVs[1], allowHighPrecision, forceInteger), true
+	}
+	if stack.Count < MaxMVRefCandidates {
+		return motion.Vector{}, motion.Vector{}, false
+	}
+	return motion.LowerPrecision(stack.Candidates[0].This, allowHighPrecision, forceInteger),
+		motion.LowerPrecision(stack.Candidates[1].This, allowHighPrecision, forceInteger), true
+}
+
+// SingleNearestMV is a single-reference stack's NEARESTMV vector, read
+// straight from the stack as SVT's svt_aom_get_av1_mv_pred_drl reads
+// ref_mv_stack[rf][0]: ResolveInterMVReferences' Nearest[0] for NEARESTMV,
+// with ok=false where that fails.
+func (stack *ReferenceMVStack) SingleNearestMV(allowHighPrecision, forceInteger bool) (motion.Vector, bool) {
+	nearest, _, ok := stack.singleNearestNear(allowHighPrecision, forceInteger)
+	return nearest, ok
+}
+
+// SingleNearMV is the NEARMV vector at DRL index drl (stack slot 1+drl), as
+// svt_aom_get_av1_mv_pred_drl: ResolveInterMVReferences' Near[0] for
+// NEARMV, with ok=false where that fails.
+func (stack *ReferenceMVStack) SingleNearMV(drl int, allowHighPrecision, forceInteger bool) (motion.Vector, bool) {
+	_, near, ok := stack.singleNearestNear(allowHighPrecision, forceInteger)
+	if !ok || drl < 0 || drl >= UsableRefMVStackSize {
+		return motion.Vector{}, false
+	}
+	if drl > 0 {
+		if 1+drl >= int(stack.Count) {
+			return motion.Vector{}, false
+		}
+		near = stack.Candidates[1+drl].This
+	}
+	return near, true
+}
+
+// SingleNewMVReference is the NEWMV residual reference at DRL index drl, as
+// svt_aom_get_av1_mv_pred_drl: stack slot drl when the stack holds more than
+// one candidate, else the nearest vector. It is ResolveInterMVReferences'
+// Residual[0] for NEWMV, with ok=false where that fails.
+func (stack *ReferenceMVStack) SingleNewMVReference(drl int, allowHighPrecision, forceInteger bool) (motion.Vector, bool) {
+	nearest, _, ok := stack.singleNearestNear(allowHighPrecision, forceInteger)
+	if !ok || drl < 0 || drl >= UsableRefMVStackSize {
+		return motion.Vector{}, false
+	}
+	if stack.Count > 1 {
+		if drl >= int(stack.Count) {
+			return motion.Vector{}, false
+		}
+		return stack.Candidates[drl].This, true
+	}
+	return nearest, true
+}
+
 // ResolveInterMVReferences ports the stack-selection part of libaom's
 // read_inter_block_mode_info()/assign_mv() path before MV residual bits.
 func (stack *ReferenceMVStack) ResolveInterMVReferences(mode InterModeResult, refMVIndex int, allowHighPrecision bool, forceInteger bool) (InterMVReferenceSet, error) {
