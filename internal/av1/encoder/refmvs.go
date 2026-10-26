@@ -22,14 +22,19 @@ func (st *lossyEncodeState) unbindRefmvs(scratch *tile.BlockLoopScratch) {
 	st.refmvsScratch = nil
 }
 
-// referenceMVStack returns the MV candidate stack for req: dav1d_refmvs_find
-// on the bound refmvs rows when modeCtx is the bound scratch's mode context,
-// else the libaom-shaped BuildReferenceMVStack.
-func (st *lossyEncodeState) referenceMVStack(modeCtx *tile.BlockModeContext, req tile.ReferenceMVStackRequest, block tile.BlockVisit) (tile.ReferenceMVStackResult, error) {
+// referenceMVStack writes the MV candidate stack for refs at block into dst:
+// dav1d_refmvs_find on the bound refmvs rows when modeCtx is the bound
+// scratch's mode context, built in place as SVT's generate_av1_mvp_table
+// fills ctx->ref_mv_stack; else the libaom-shaped BuildReferenceMVStack,
+// whose request is only built on that path.
+func (st *lossyEncodeState) referenceMVStack(dst *tile.ReferenceMVStackResult, modeCtx *tile.BlockModeContext, refs tile.InterReferencesResult, block *tile.BlockVisit, walkReq tile.BlockWalkRequest, miCols, miRows uint16) error {
 	if s := st.refmvsScratch; s != nil && &s.Mode == modeCtx && s.EncoderRefmvsBound() {
-		return s.EncoderReferenceMVStack(&req, block), nil
+		s.EncoderReferenceMVStack(dst, refs, block)
+		return nil
 	}
-	return modeCtx.BuildReferenceMVStack(req)
+	var err error
+	*dst, err = modeCtx.BuildReferenceMVStack(st.pblockStackRequest(*block, walkReq, miCols, miRows, refs))
+	return err
 }
 
 // bindRefmvsShared binds a wavefront lane's scratch to the lanes' shared
