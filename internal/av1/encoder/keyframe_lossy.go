@@ -943,11 +943,12 @@ func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, re
 	if err := st.initScans(); err != nil {
 		return nil, err
 	}
-	// SVT-AV1's light-PD0 partition (keyframe_pd0.go) on camera content.
-	// The VideoEncoder classifies keyframes (svtSCDetector, SVT --scm 2)
-	// before choosing the screen content tools; the one-shot keyframe API
-	// does not, so it keeps its own partition decision.
-	st.keyPD0On = pc.svtKeyPD0 && !allowScreenContentTools && videoColorIs420(color) && color.BitDepth == 8
+	// SVT-AV1's light-PD0 partition (keyframe_pd0.go) on every keyframe
+	// coded without the screen content tools (camera content: DC_PRED
+	// leaves, with the transform-size search of keyframe_txs.go). The
+	// VideoEncoder classifies keyframes first (svtSCDetector, SVT --scm 2);
+	// screen content keeps its own partition decision.
+	st.keyPD0On = keyTXSEnabled(allowScreenContentTools, color)
 	if st.keyPD0On {
 		st.prepareSVTPD0((src.Width+63)/64, (src.Height+63)/64)
 	}

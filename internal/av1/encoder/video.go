@@ -1155,12 +1155,6 @@ func (e *VideoEncoder) startTileWorkers(workers int) {
 
 func (e *VideoEncoder) runKeyframeTileWorkers(req keyframeTileRun) error {
 	nTiles := len(req.payloads)
-	// The keyframe content is classified (svtSCDetector) before the screen
-	// content tools are chosen, so the coders run SVT's light-PD0 partition.
-	e.pc.svtKeyPD0 = true
-	for t := range e.tilePCs[:min(nTiles, len(e.tilePCs))] {
-		e.tilePCs[t].svtKeyPD0 = true
-	}
 	if nTiles == 1 {
 		c0, c1 := tileColBounds(req.tile, 0, req.miCols)
 		data, err := e.pc.encodeKeyframeTileWithColorOptions(req.src, req.recon, req.qIndex, c0, c1, req.lfMap, req.allowScreenContentTools, req.color)
