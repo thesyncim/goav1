@@ -53,6 +53,9 @@ func FilterIntraEdgeBounded(edge []uint16, scratch []uint16, strength uint8, bit
 	if len(scratch) < len(edge) {
 		return ErrInvalidPrediction
 	}
+	if filterIntraEdgeArch(edge, strength) {
+		return nil
+	}
 
 	copy(scratch, edge)
 	kernel := intraEdgeFilterKernels[strength-1]
@@ -102,6 +105,9 @@ func UpsampleIntraEdgeBounded(edge []uint16, origin int, size int, scratch []uin
 	}
 	if err := validateEdgeSamples(edge[origin-1:origin+size], max, bounded); err != nil {
 		return err
+	}
+	if upsampleIntraEdgeArch(edge, origin, size, max) {
+		return nil
 	}
 
 	scratch[0] = edge[origin-1]
