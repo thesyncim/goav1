@@ -281,12 +281,12 @@ func (a *loopFilterApplier) init(width, height int) error {
 	if cap(a.masks.Masks) < maskCount {
 		a.masks.Masks = make([]lfmask.FilterMask, maskCount)
 	}
-	if cap(a.masks.LevelCache) < length {
-		a.masks.LevelCache = make([][4]uint8, length)
+	if levels := threading.FrameWorkLoopFilterLevelCacheLen(cols, rows); cap(a.masks.LevelCache) < levels {
+		a.masks.LevelCache = make([][4]uint8, levels)
 	}
 	a.masks = threading.FrameWorkLoopFilterMasks{
 		Masks:      a.masks.Masks[:maskCount],
-		LevelCache: a.masks.LevelCache[:length],
+		LevelCache: threading.FrameWorkLoopFilterLevelCacheBind(a.masks.LevelCache[:cap(a.masks.LevelCache)], cols, rows),
 		Cols:       cols,
 		Rows:       rows,
 		SB128W:     sb128w,

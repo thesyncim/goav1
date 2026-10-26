@@ -132,6 +132,32 @@ func FrameWorkLoopFilterMaskShape(cols, rows int) (sb128w, sb128h, masks int) {
 	return sb128w, sb128h, sb128w * sb128h
 }
 
+// FrameWorkLoopFilterLevelCacheLen is the level-cache length dav1d allocates
+// (src/decode.c: num_sb128 * 32 * 32 cells + 3 bytes): rows padded to whole
+// 128x128 regions plus one cell, so the superblock deblock drivers can load
+// every unit of a four-unit group (and the trailing component bytes of the
+// last one) without per-group bounds checks at the bottom of the frame.
+// Storage shorter than this but at least cols*rows still binds; the drivers
+// then filter the frame's last groups through their bounds-checked path.
+func FrameWorkLoopFilterLevelCacheLen(cols, rows int) int {
+	return ((rows+31)&^31)*cols + 1
+}
+
+// frameWorkLoopFilterLevelCacheBind slices levelCache to the padded length
+// when it is long enough, else to the frame's cols*rows cells.
+func frameWorkLoopFilterLevelCacheBind(levelCache [][4]uint8, cols, rows int) [][4]uint8 {
+	if n := FrameWorkLoopFilterLevelCacheLen(cols, rows); len(levelCache) >= n {
+		return levelCache[:n]
+	}
+	return levelCache[:cols*rows]
+}
+
+// FrameWorkLoopFilterLevelCacheBind is frameWorkLoopFilterLevelCacheBind for
+// callers outside the package; levelCache must hold at least cols*rows cells.
+func FrameWorkLoopFilterLevelCacheBind(levelCache [][4]uint8, cols, rows int) [][4]uint8 {
+	return frameWorkLoopFilterLevelCacheBind(levelCache, cols, rows)
+}
+
 // Valid reports whether the handle carries a bound mask grid.
 func (h *FrameWorkLoopFilterMasks) Valid() bool {
 	return h != nil && h.Masks != nil && h.SB128W > 0
@@ -162,7 +188,7 @@ func (b *FrameWorkBatch) BindLoopFilterMasks(masks []lfmask.FilterMask, levelCac
 	}
 	out := FrameWorkLoopFilterMasks{
 		Masks:      masks[:maskCount],
-		LevelCache: levelCache[:length],
+		LevelCache: frameWorkLoopFilterLevelCacheBind(levelCache, cols, rows),
 		Cols:       cols,
 		Rows:       rows,
 		SB128W:     sb128w,

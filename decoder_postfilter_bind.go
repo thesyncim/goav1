@@ -732,7 +732,9 @@ func DecoderFrameWorkSideDataScratchLen(sequence SequenceHeader, size FrameSize,
 		return DecoderFrameWorkSideDataScratchSize{}, err
 	}
 	// The deblocking edge bitmasks are sized per 128x128 region; the per-4x4
-	// level cache matches the loop-filter map length. Sized unconditionally (by
+	// level cache is padded to whole regions of rows plus one cell, as dav1d
+	// allocates it, so the deblock drivers read whole groups of levels at the
+	// bottom of the frame. Sized unconditionally (by
 	// frame geometry) since the build gate is per-frame LoopFilter activity,
 	// which the scratch sizing does not see -- the masks stay unbuilt/unused on
 	// loop-filter-inactive frames.
@@ -747,7 +749,7 @@ func DecoderFrameWorkSideDataScratchLen(sequence SequenceHeader, size FrameSize,
 		CDEFReadMap:              cdefLength,
 		LoopFilterMap:            loopFilterLength,
 		LoopFilterMasks:          maskCount,
-		LoopFilterLevelCache:     loopFilterLength,
+		LoopFilterLevelCache:     internalthreading.FrameWorkLoopFilterLevelCacheLen(lfCols, lfRows),
 		RestorationRecords:       restorationPlan.UnitRecordLen(),
 		RestorationBoundaryAbove: boundaryLength,
 		RestorationBoundaryBelow: boundaryLength,
