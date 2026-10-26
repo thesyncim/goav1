@@ -36,7 +36,10 @@ func pixelStatsRows16Arch(src []byte, srcStride int, ref []byte, refStride int, 
 		}
 		sum32 = sum32.Add(sum16.GetLo().ExtendToInt32()).Add(sum16.GetHi().ExtendToInt32())
 	}
-	return uint32(reduceInt32x8(sse)), reduceInt32x8(sum32)
+	sseOut, sumOut := uint32(reduceInt32x8(sse)), reduceInt32x8(sum32)
+	// Return with clean upper ymm state (the compiler emits no vzeroupper).
+	archsimd.ClearAVXUpperBits()
+	return sseOut, sumOut
 }
 
 // reduceInt32x8 returns the sum of the eight lanes.

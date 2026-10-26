@@ -85,4 +85,5 @@ func coeffInitLevelsSIMD(coeffs []int16, scanWidth int, scanHeight int, levels [
 			}
 		}
 	}
+	archsimd.ClearAVXUpperBits()
 }
