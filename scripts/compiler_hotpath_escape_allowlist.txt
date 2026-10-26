@@ -251,8 +251,8 @@ internal/av1/encoder/keyframe_split.go:*:*: new(paletteSearch) escapes to heap
 internal/av1/encoder/keyframe_split.go:*:*: new(paletteSearch) escapes to heap in (*lossyEncodeState).writeKeyBlock:
 internal/av1/encoder/loopfilter_apply.go:*:*: func literal escapes to heap
 internal/av1/encoder/loopfilter_apply.go:*:*: func literal escapes to heap in (*loopFilterApplier).startWorkers:
-internal/av1/encoder/loopfilter_apply.go:*:*: make([][4]uint8, length) escapes to heap
-internal/av1/encoder/loopfilter_apply.go:*:*: make([][4]uint8, length) escapes to heap in (*loopFilterApplier).init:
+internal/av1/encoder/loopfilter_apply.go:*:*: make([][4]uint8, levels) escapes to heap
+internal/av1/encoder/loopfilter_apply.go:*:*: make([][4]uint8, levels) escapes to heap in (*loopFilterApplier).init:
 internal/av1/encoder/loopfilter_apply.go:*:*: make([][]decoder.FrameWorkLoopFilterPostFilterEdge, bands) escapes to heap
 internal/av1/encoder/loopfilter_apply.go:*:*: make([][]decoder.FrameWorkLoopFilterPostFilterEdge, bands) escapes to heap in (*loopFilterApplier).bindEdgeList:
 internal/av1/encoder/loopfilter_apply.go:*:*: make([]decoder.FrameWorkLoopFilterPostFilterEdge, bandBound) escapes to heap
