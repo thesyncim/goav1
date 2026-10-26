@@ -284,8 +284,17 @@ func itxAddStore8HBD(dst, pred []byte, res archsimd.Int16x8, maxV int16) {
 // transposes them and stores row r0+itxRowPerm[e] of tmp (width w) at
 // columns c0..c0+15, adding the stored magnitudes to the column guard.
 func itxStoreRowGroup(v *[16]archsimd.Int16x16, n uint8, tmp []int16, w, r0, c0 int, colL1 *archsimd.Uint16x16) {
-	for j := range v {
-		v[j] = itxRound2x16(v[j], n)
+	// Immediate shift counts only: a variable ymm shift count is
+	// rematerialized with a legacy-SSE movq, which stalls on dirty upper
+	// state (Zen 3).
+	if n == 1 {
+		for j := range v {
+			v[j] = itxRound2x16(v[j], 1)
+		}
+	} else {
+		for j := range v {
+			v[j] = itxRound2x16(v[j], 2)
+		}
 	}
 	itxTranspose16x16(v)
 	l1 := *colL1
@@ -294,6 +303,7 @@ func itxStoreRowGroup(v *[16]archsimd.Int16x16, n uint8, tmp []int16, w, r0, c0 
 		l1 = l1.AddSaturated(v[e].Abs().AsUint16x16())
 	}
 	*colL1 = l1
+	archsimd.ClearAVXUpperBits()
 }
 
 // itxRowLoad loads inCols coefficient columns of rows r0..r0+15 (16 lanes)
@@ -320,11 +330,13 @@ func itxRowLoad(coeff []int32, stride, r0, inCols int, rect2 bool, in []archsimd
 func itxRowStrip16(coeff []int32, stride, r0, inCols int, t tx1DType, rect2 bool, n uint8, tmp []int16, colL1 *archsimd.Uint16x16) bool {
 	var in [16]archsimd.Int16x16
 	if !itxRowLoad(coeff, stride, r0, inCols, rect2, in[:]) {
+		archsimd.ClearAVXUpperBits()
 		return false
 	}
 	var out [16]archsimd.Int16x16
 	itx16Net1D(t, inCols, &in, &out)
 	itxStoreRowGroup(&out, n, tmp, 16, r0, 0, colL1)
+	archsimd.ClearAVXUpperBits()
 	return true
 }
 
@@ -333,6 +345,7 @@ func itxRowStrip16(coeff []int32, stride, r0, inCols int, t tx1DType, rect2 bool
 func itxRowStrip32(coeff []int32, stride, r0, inCols int, rect2 bool, n uint8, tmp []int16, colL1 *[2]archsimd.Uint16x16) bool {
 	var in [32]archsimd.Int16x16
 	if !itxRowLoad(coeff, stride, r0, inCols, rect2, in[:]) {
+		archsimd.ClearAVXUpperBits()
 		return false
 	}
 	var out [32]archsimd.Int16x16
@@ -340,6 +353,7 @@ func itxRowStrip32(coeff []int32, stride, r0, inCols int, rect2 bool, n uint8, t
 	for g := 0; g < 2; g++ {
 		itxStoreRowGroup((*[16]archsimd.Int16x16)(out[16*g:]), n, tmp, 32, r0, 16*g, &colL1[g])
 	}
+	archsimd.ClearAVXUpperBits()
 	return true
 }
 
@@ -348,6 +362,7 @@ func itxRowStrip32(coeff []int32, stride, r0, inCols int, rect2 bool, n uint8, t
 func itxRowStrip64(coeff []int32, stride, r0, inCols int, tmp []int16, colL1 *[4]archsimd.Uint16x16) bool {
 	var in [32]archsimd.Int16x16
 	if !itxRowLoad(coeff, stride, r0, inCols, false, in[:]) {
+		archsimd.ClearAVXUpperBits()
 		return false
 	}
 	var out [64]archsimd.Int16x16
@@ -355,6 +370,7 @@ func itxRowStrip64(coeff []int32, stride, r0, inCols int, tmp []int16, colL1 *[4
 	for g := 0; g < 4; g++ {
 		itxStoreRowGroup((*[16]archsimd.Int16x16)(out[16*g:]), 2, tmp, 64, r0, 16*g, &colL1[g])
 	}
+	archsimd.ClearAVXUpperBits()
 	return true
 }
 
@@ -365,11 +381,13 @@ func itxColAdd(out []archsimd.Int16x16, c0 int, px *itxPix) {
 		for r := range out {
 			itxAddStore16(px.dst[r*px.dstStride+c0:], px.pred[r*px.predStride+c0:], itxRound2x16(out[r], 4))
 		}
+		archsimd.ClearAVXUpperBits()
 		return
 	}
 	for r := range out {
 		itxAddStore16HBD(px.dst[r*px.dstStride+2*c0:], px.pred[r*px.predStride+2*c0:], itxRound2x16(out[r], 4), px.maxV)
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 // itxColStripAdd16 runs the 16-point column pass (network t) for columns
@@ -382,6 +400,7 @@ func itxColStripAdd16(tmp []int16, w, c0, inRows int, t tx1DType, px *itxPix) {
 	var out [16]archsimd.Int16x16
 	itx16Net1D(t, inRows, &in, &out)
 	itxColAdd(out[:], c0, px)
+	archsimd.ClearAVXUpperBits()
 }
 
 // itxColStripAdd32 runs the 32-point DCT column pass for columns c0..c0+15.
@@ -393,6 +412,7 @@ func itxColStripAdd32(tmp []int16, w, c0, inRows int, px *itxPix) {
 	var out [32]archsimd.Int16x16
 	itx32Net(inRows, &in, &out)
 	itxColAdd(out[:], c0, px)
+	archsimd.ClearAVXUpperBits()
 }
 
 // itxColStripAdd64 runs the 64-point DCT column pass for columns c0..c0+15.
@@ -404,6 +424,7 @@ func itxColStripAdd64(tmp []int16, w, c0, inRows int, px *itxPix) {
 	var out [64]archsimd.Int16x16
 	itx64Net(inRows, &in, &out)
 	itxColAdd(out[:], c0, px)
+	archsimd.ClearAVXUpperBits()
 }
 
 // itx16Form rounds a coded extent up to the 16-point network form covering
@@ -460,9 +481,11 @@ func itxSquare16(px *itxPix, coeff []int32, coeffStride int, tv, th tx1DType, ac
 	var tmp [16 * 16]int16
 	var colL1 archsimd.Uint16x16
 	if !itxRowStrip16(coeff, coeffStride, 0, inCols, th, false, 2, tmp[:], &colL1) || !itxL1Ok16(colL1) {
+		archsimd.ClearAVXUpperBits()
 		return false
 	}
 	itxColStripAdd16(tmp[:], 16, 0, inRows, tv, px)
+	archsimd.ClearAVXUpperBits()
 	return true
 }
 
@@ -514,6 +537,7 @@ func itxDCT32(px *itxPix, coeff []int32, coeffStride int, activeRows, activeCols
 	written := 0
 	for ; written < activeRows; written += 16 {
 		if !itxRowStrip32(coeff, coeffStride, written, inCols, false, 2, tmp[:], &colL1) {
+			archsimd.ClearAVXUpperBits()
 			return false
 		}
 	}
@@ -523,10 +547,12 @@ func itxDCT32(px *itxPix, coeff []int32, coeffStride int, activeRows, activeCols
 		clear(tmp[written*32 : inRows*32])
 	}
 	if !itxL1Ok16(colL1[0].Max(colL1[1])) {
+		archsimd.ClearAVXUpperBits()
 		return false
 	}
 	itxColStripAdd32(tmp[:], 32, 0, inRows, px)
 	itxColStripAdd32(tmp[:], 32, 16, inRows, px)
+	archsimd.ClearAVXUpperBits()
 	return true
 }
 
@@ -540,6 +566,7 @@ func itxDCT64(px *itxPix, coeff []int32, coeffStride int, activeRows, activeCols
 	written := 0
 	for ; written < activeRows; written += 16 {
 		if !itxRowStrip64(coeff, coeffStride, written, inCols, tmp[:], &colL1) {
+			archsimd.ClearAVXUpperBits()
 			return false
 		}
 	}
@@ -547,11 +574,13 @@ func itxDCT64(px *itxPix, coeff []int32, coeffStride int, activeRows, activeCols
 		clear(tmp[written*64 : inRows*64])
 	}
 	if !itxL1Ok16(colL1[0].Max(colL1[1]).Max(colL1[2].Max(colL1[3]))) {
+		archsimd.ClearAVXUpperBits()
 		return false
 	}
 	for c0 := 0; c0 < 64; c0 += 16 {
 		itxColStripAdd64(tmp[:], 64, c0, inRows, px)
 	}
+	archsimd.ClearAVXUpperBits()
 	return true
 }
 
@@ -565,6 +594,7 @@ func itxDCT16x32(px *itxPix, coeff []int32, coeffStride int, activeRows, activeC
 	written := 0
 	for ; written < activeRows; written += 16 {
 		if !itxRowStrip16(coeff, coeffStride, written, inCols, tx1DDCT, true, 1, tmp[:], &colL1) {
+			archsimd.ClearAVXUpperBits()
 			return false
 		}
 	}
@@ -572,9 +602,11 @@ func itxDCT16x32(px *itxPix, coeff []int32, coeffStride int, activeRows, activeC
 		clear(tmp[written*16 : inRows*16])
 	}
 	if !itxL1Ok16(colL1) {
+		archsimd.ClearAVXUpperBits()
 		return false
 	}
 	itxColStripAdd32(tmp[:], 16, 0, inRows, px)
+	archsimd.ClearAVXUpperBits()
 	return true
 }
 
@@ -585,10 +617,12 @@ func itxDCT32x16(px *itxPix, coeff []int32, coeffStride int, activeRows, activeC
 	var tmp [16 * 32]int16
 	var colL1 [2]archsimd.Uint16x16
 	if !itxRowStrip32(coeff, coeffStride, 0, inCols, true, 1, tmp[:], &colL1) || !itxL1Ok16(colL1[0].Max(colL1[1])) {
+		archsimd.ClearAVXUpperBits()
 		return false
 	}
 	itxColStripAdd16(tmp[:], 32, 0, inRows, tx1DDCT, px)
 	itxColStripAdd16(tmp[:], 32, 16, inRows, tx1DDCT, px)
+	archsimd.ClearAVXUpperBits()
 	return true
 }
 

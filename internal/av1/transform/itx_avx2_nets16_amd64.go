@@ -158,6 +158,7 @@ func itx16NetFull(in *[16]archsimd.Int16x16, out *[16]archsimd.Int16x16) {
 	out[5], out[10] = e5.AddSaturated(t10a), e5.SubSaturated(t10a)
 	out[6], out[9] = e6.AddSaturated(t9), e6.SubSaturated(t9)
 	out[7], out[8] = e7.AddSaturated(t8a), e7.SubSaturated(t8a)
+	archsimd.ClearAVXUpperBits()
 }
 
 // itx16NetLow8 is itx16NetFull for inputs 8..15 zero (the network of
@@ -239,6 +240,7 @@ func itx16NetLow8(in *[16]archsimd.Int16x16, out *[16]archsimd.Int16x16) {
 	out[5], out[10] = e5.AddSaturated(t10a), e5.SubSaturated(t10a)
 	out[6], out[9] = e6.AddSaturated(t9), e6.SubSaturated(t9)
 	out[7], out[8] = e7.AddSaturated(t8a), e7.SubSaturated(t8a)
+	archsimd.ClearAVXUpperBits()
 }
 
 // itx16NetLow4 is itx16NetFull for inputs 4..15 zero (the network of
@@ -294,6 +296,7 @@ func itx16NetLow4(in *[16]archsimd.Int16x16, out *[16]archsimd.Int16x16) {
 	out[5], out[10] = e5.AddSaturated(t10a), e5.SubSaturated(t10a)
 	out[6], out[9] = e6.AddSaturated(t9), e6.SubSaturated(t9)
 	out[7], out[8] = e7.AddSaturated(t8), e7.SubSaturated(t8)
+	archsimd.ClearAVXUpperBits()
 }
 
 // itx16Net runs the DCT16 network form for n nonzero inputs (4, 8 or 16).
@@ -453,6 +456,7 @@ func itx32Low8Net(in *[8]archsimd.Int16x16, out *[32]archsimd.Int16x16) {
 	out[13], out[18] = E13.AddSaturated(t18), E13.SubSaturated(t18)
 	out[14], out[17] = E14.AddSaturated(t17a), E14.SubSaturated(t17a)
 	out[15], out[16] = E15.AddSaturated(t16), E15.SubSaturated(t16)
+	archsimd.ClearAVXUpperBits()
 }
 
 // itx32Low16Net is inverseDCT32 on sixteen lanes for inputs whose indices
@@ -650,6 +654,7 @@ func itx32Low16Net(in *[16]archsimd.Int16x16, out *[32]archsimd.Int16x16) {
 	out[13], out[18] = E13.AddSaturated(t18), E13.SubSaturated(t18)
 	out[14], out[17] = E14.AddSaturated(t17a), E14.SubSaturated(t17a)
 	out[15], out[16] = E15.AddSaturated(t16), E15.SubSaturated(t16)
+	archsimd.ClearAVXUpperBits()
 }
 
 // itx32FullNet is inverseDCT32 on sixteen lanes for all 32 inputs: in[k] is
@@ -789,6 +794,7 @@ func itx32FullNet(in *[32]archsimd.Int16x16, out *[32]archsimd.Int16x16) {
 	out[13], out[18] = E[13].AddSaturated(t18), E[13].SubSaturated(t18)
 	out[14], out[17] = E[14].AddSaturated(t17a), E[14].SubSaturated(t17a)
 	out[15], out[16] = E[15].AddSaturated(t16), E[15].SubSaturated(t16)
+	archsimd.ClearAVXUpperBits()
 }
 
 // itx32Net runs the DCT32 network form for n nonzero inputs (8, 16 or 32).
@@ -1066,6 +1072,7 @@ func itx64Odd32(in *[32]archsimd.Int16x16, o *[32]archsimd.Int16x16) {
 	o[29] = h188
 	o[30] = h184
 	o[31] = h180
+	archsimd.ClearAVXUpperBits()
 }
 
 // itx64Odd16 is the odd half of inverseDCT64 on sixteen lanes for odd inputs
@@ -1283,6 +1290,7 @@ func itx64Odd16(in *[32]archsimd.Int16x16, o *[32]archsimd.Int16x16) {
 	o[29] = h140
 	o[30] = h136
 	o[31] = h132
+	archsimd.ClearAVXUpperBits()
 }
 
 // itx64Odd8 is the odd half of inverseDCT64 on sixteen lanes for odd inputs
@@ -1452,6 +1460,7 @@ func itx64Odd8(in *[32]archsimd.Int16x16, o *[32]archsimd.Int16x16) {
 	o[29] = h92
 	o[30] = h88
 	o[31] = h84
+	archsimd.ClearAVXUpperBits()
 }
 
 // itx64Net is inverseDCT64 on sixteen lanes for n nonzero inputs (8, 16 or
@@ -1484,6 +1493,7 @@ func itx64Net(n int, in *[32]archsimd.Int16x16, out *[64]archsimd.Int16x16) {
 		out[i] = ev[i].AddSaturated(o[31-i])
 		out[63-i] = ev[i].SubSaturated(o[31-i])
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 // itx16ADSTNet16 is inverseADST16 on sixteen lanes for inputs below 16 (the rest
@@ -1605,6 +1615,7 @@ func itx16ADSTNet16(in *[16]archsimd.Int16x16, out *[16]archsimd.Int16x16) {
 	out[13] = f82
 	out[14] = f77
 	out[15] = f67
+	archsimd.ClearAVXUpperBits()
 }
 
 // itx16ADSTNet8 is inverseADST16 on sixteen lanes for inputs below 8 (the rest
@@ -1726,6 +1737,7 @@ func itx16ADSTNet8(in *[16]archsimd.Int16x16, out *[16]archsimd.Int16x16) {
 	out[13] = f82
 	out[14] = f77
 	out[15] = f67
+	archsimd.ClearAVXUpperBits()
 }
 
 // itx16ADSTNet4 is inverseADST16 on sixteen lanes for inputs below 4 (the rest
@@ -1827,6 +1839,7 @@ func itx16ADSTNet4(in *[16]archsimd.Int16x16, out *[16]archsimd.Int16x16) {
 	out[13] = f62
 	out[14] = f57
 	out[15] = f47
+	archsimd.ClearAVXUpperBits()
 }
 
 // itx16Net1D runs the 16-point network of t for n nonzero inputs (4, 8 or

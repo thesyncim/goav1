@@ -20,6 +20,13 @@ var fgAVX2 = archsimd.X86.AVX2()
 // values dav1d's fgy/fguv_32x32xn_8bpc broadcast before their row loop.
 type fgConstsU8 struct {
 	scalingShift uint64
+	// noiseMul is 2^(17 - scaling_shift): vpmulhw by it is an exact
+	// arithmetic >> (scaling_shift - 1) of the int16 product, with no
+	// variable shift count (whose legacy-SSE movq stalls on Zen 3).
+	noiseMul [16]int16
+	// ix is the index spill of fgGatherIdx16, kept here so the row loops do
+	// not re-zero a local array with legacy-SSE stores.
+	ix [16]int16
 	// The left-overlap weights in dav1d's lane layout: the overlapped
 	// columns blend, every other lane computes cur*32, which the rounding
 	// shift returns unchanged.
@@ -34,6 +41,9 @@ type fgConstsU8 struct {
 
 func (k *fgConstsU8) init(scalingShift int, minValue, maxValue int, sx int, sy int) {
 	k.scalingShift = uint64(scalingShift)
+	for i := range k.noiseMul {
+		k.noiseMul[i] = int16(1) << (17 - scalingShift)
+	}
 	k.minV, k.maxV = int16(minValue), int16(maxValue)
 	for i := range k.oxCur {
 		k.oxOld[i], k.oxCur[i] = 0, 32
@@ -67,9 +77,10 @@ func fgBlend16(old, cur, wOld, wCur archsimd.Int16x16) archsimd.Int16x16 {
 
 // fgNoise16 is clip(src + round2(scale*grain, shift), minV, maxV) on sixteen
 // samples. scale <= 255 and |grain| <= 128, so the product fits int16 as in
-// dav1d's pmaddubsw; round2(p, s) is ((p >> (s-1)) + 1) >> 1 (no pmulhrsw).
-func fgNoise16(scale, grain, src archsimd.Int16x16, shift uint64, minV, maxV archsimd.Int16x16) archsimd.Int16x16 {
-	p := scale.Mul(grain).ShiftAllRight(shift - 1).Add(archsimd.BroadcastInt16x16(1)).ShiftAllRight(1)
+// dav1d's pmaddubsw; round2(p, s) is ((p >> (s-1)) + 1) >> 1 (no pmulhrsw),
+// the first shift as vpmulhw by mul = 2^(17-s).
+func fgNoise16(scale, grain, src, mul archsimd.Int16x16, minV, maxV archsimd.Int16x16) archsimd.Int16x16 {
+	p := scale.Mul(grain).MulHigh(mul).Add(archsimd.BroadcastInt16x16(1)).ShiftAllRight(1)
 	return src.Add(p).Max(minV).Min(maxV)
 }
 
@@ -153,8 +164,8 @@ func fgGrainRow(grain []int16, cur, old, top, topOld int, ox, oy bool, k *fgCons
 // current, left, top and top-left offsets; rows below ystart blend with the
 // top block, and ox blends the left two columns.
 func fgyBlockU8AVX2(dst, src []uint8, stride int, grain []int16, lut *[ScalingLUTSize]uint8, k *fgConstsU8, cur, old, top, topOld, bh, ystart int, ox bool) {
-	minV, maxV := archsimd.BroadcastInt16x16(k.minV), archsimd.BroadcastInt16x16(k.maxV)
 	var sc0, sc1 [2]uint64
+	minV, maxV := archsimd.BroadcastInt16x16(k.minV), archsimd.BroadcastInt16x16(k.maxV)
 	for y := 0; y < bh; y++ {
 		off := y * stride
 		s := src[off : off+32]
@@ -173,10 +184,11 @@ func fgyBlockU8AVX2(dst, src []uint8, stride int, grain []int16, lut *[ScalingLU
 		sc0[1] = fgGather8(lut, binary.LittleEndian.Uint64(s[8:]))
 		sc1[0] = fgGather8(lut, binary.LittleEndian.Uint64(s[16:]))
 		sc1[1] = fgGather8(lut, binary.LittleEndian.Uint64(s[24:]))
-		n0 := fgNoise16(fgScale16(&sc0), g0, fgWiden16(s[0:]), k.scalingShift, minV, maxV)
-		n1 := fgNoise16(fgScale16(&sc1), g1, fgWiden16(s[16:]), k.scalingShift, minV, maxV)
+		n0 := fgNoise16(fgScale16(&sc0), g0, fgWiden16(s[0:]), archsimd.LoadInt16x16Array(&k.noiseMul), minV, maxV)
+		n1 := fgNoise16(fgScale16(&sc1), g1, fgWiden16(s[16:]), archsimd.LoadInt16x16Array(&k.noiseMul), minV, maxV)
 		fgStore32(dst[off:off+32], n0, n1)
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 // fguvIndex16 is fguv's !csfl scaling index for sixteen chroma samples:
@@ -192,9 +204,8 @@ func fguvIndex16(avg, src archsimd.Int16x16, k *fgConstsU8) archsimd.Int16x16 {
 }
 
 // fgGatherIdx16 looks up the scaling values of sixteen int16 indices.
-func fgGatherIdx16(lut *[ScalingLUTSize]uint8, idx archsimd.Int16x16, sc *[2]uint64) {
-	var ix [16]int16
-	idx.StoreArray(&ix)
+func fgGatherIdx16(lut *[ScalingLUTSize]uint8, idx archsimd.Int16x16, sc *[2]uint64, ix *[16]int16) {
+	idx.StoreArray(ix)
 	for j := range sc {
 		var v uint64
 		for i := 7; i >= 0; i-- {
@@ -207,9 +218,9 @@ func fgGatherIdx16(lut *[ScalingLUTSize]uint8, idx archsimd.Int16x16, sc *[2]uin
 // fguvBlockU8SX1AVX2 is fguv_32x32xn_i420/i422_8bpc (the sx loop) for one
 // full-width 16xbh chroma block. lumaStep is the luma stride times 1<<ss_y.
 func fguvBlockU8SX1AVX2(dst, src []uint8, stride int, luma []uint8, lumaStep int, grain []int16, lut *[ScalingLUTSize]uint8, k *fgConstsU8, cur, old, top, topOld, bh, ystart int, ox, csfl bool) {
+	var sc [2]uint64
 	minV, maxV := archsimd.BroadcastInt16x16(k.minV), archsimd.BroadcastInt16x16(k.maxV)
 	ones := archsimd.BroadcastInt8x32(1)
-	var sc [2]uint64
 	for y := 0; y < bh; y++ {
 		off := y * stride
 		gy := y * ChromaGrainWidth
@@ -228,17 +239,18 @@ func fguvBlockU8SX1AVX2(dst, src []uint8, stride int, luma []uint8, lumaStep int
 		if !csfl {
 			avg = fguvIndex16(avg, x, k)
 		}
-		fgGatherIdx16(lut, avg, &sc)
-		n := fgNoise16(fgScale16(&sc), g, x, k.scalingShift, minV, maxV)
+		fgGatherIdx16(lut, avg, &sc, &k.ix)
+		n := fgNoise16(fgScale16(&sc), g, x, archsimd.LoadInt16x16Array(&k.noiseMul), minV, maxV)
 		fgStore16(dst[off:off+16], n)
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 // fguvBlockU8SX0AVX2 is fguv_32x32xn_i444_8bpc for one full-width 32xbh
 // chroma block. lumaStep is the luma stride.
 func fguvBlockU8SX0AVX2(dst, src []uint8, stride int, luma []uint8, lumaStep int, grain []int16, lut *[ScalingLUTSize]uint8, k *fgConstsU8, cur, old, top, topOld, bh, ystart int, ox, csfl bool) {
-	minV, maxV := archsimd.BroadcastInt16x16(k.minV), archsimd.BroadcastInt16x16(k.maxV)
 	var sc0, sc1 [2]uint64
+	minV, maxV := archsimd.BroadcastInt16x16(k.minV), archsimd.BroadcastInt16x16(k.maxV)
 	for y := 0; y < bh; y++ {
 		off := y * stride
 		s := src[off : off+32]
@@ -259,13 +271,14 @@ func fguvBlockU8SX0AVX2(dst, src []uint8, stride int, luma []uint8, lumaStep int
 			sc1[0] = fgGather8(lut, binary.LittleEndian.Uint64(l[16:]))
 			sc1[1] = fgGather8(lut, binary.LittleEndian.Uint64(l[24:]))
 		} else {
-			fgGatherIdx16(lut, fguvIndex16(fgWiden16(l[0:]), x0, k), &sc0)
-			fgGatherIdx16(lut, fguvIndex16(fgWiden16(l[16:]), x1, k), &sc1)
+			fgGatherIdx16(lut, fguvIndex16(fgWiden16(l[0:]), x0, k), &sc0, &k.ix)
+			fgGatherIdx16(lut, fguvIndex16(fgWiden16(l[16:]), x1, k), &sc1, &k.ix)
 		}
-		n0 := fgNoise16(fgScale16(&sc0), g0, x0, k.scalingShift, minV, maxV)
-		n1 := fgNoise16(fgScale16(&sc1), g1, x1, k.scalingShift, minV, maxV)
+		n0 := fgNoise16(fgScale16(&sc0), g0, x0, archsimd.LoadInt16x16Array(&k.noiseMul), minV, maxV)
+		n1 := fgNoise16(fgScale16(&sc1), g1, x1, archsimd.LoadInt16x16Array(&k.noiseMul), minV, maxV)
 		fgStore32(dst[off:off+32], n0, n1)
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 // fgLumaBlockU8 places grain on one luma block of a row band: full-width
