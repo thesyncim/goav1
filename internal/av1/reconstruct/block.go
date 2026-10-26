@@ -234,6 +234,28 @@ func ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst []byte, dstStride 
 		} else if transform.InverseAdd8x4(dst, dstStride, dst, dstStride, dequant, scanHeight, cfg.Transform, activeRows, activeCols) {
 			return nil
 		}
+	} else if bitDepth == 8 && bytesPerSample == 1 && width*height == 64 && width != height &&
+		visibleWidth == width && visibleHeight == height && activeRows > 0 && activeCols > 0 {
+		// The 4x16 and 16x4 blocks of every type but IDTX (amd64: dav1d's
+		// inv_txfm_add_4x16 / inv_txfm_add_16x4).
+		if width == 4 {
+			if transform.InverseAdd4x16(dst, dstStride, dst, dstStride, dequant, scanHeight, cfg.Transform, activeRows, activeCols) {
+				return nil
+			}
+		} else if transform.InverseAdd16x4(dst, dstStride, dst, dstStride, dequant, scanHeight, cfg.Transform, activeRows, activeCols) {
+			return nil
+		}
+	} else if bitDepth == 8 && bytesPerSample == 1 && width*height == 128 &&
+		visibleWidth == width && visibleHeight == height && activeRows > 0 && activeCols > 0 {
+		// The 8x16 and 16x8 blocks of every type but IDTX (amd64: dav1d's
+		// inv_txfm_add_8x16 / inv_txfm_add_16x8).
+		if width == 8 {
+			if transform.InverseAdd8x16(dst, dstStride, dst, dstStride, dequant, scanHeight, cfg.Transform, activeRows, activeCols) {
+				return nil
+			}
+		} else if transform.InverseAdd16x8(dst, dstStride, dst, dstStride, dequant, scanHeight, cfg.Transform, activeRows, activeCols) {
+			return nil
+		}
 	} else if bitDepth == 8 && bytesPerSample == 1 && cfg.Transform == transform.TypeDCTDCT &&
 		visibleWidth == width && visibleHeight == height && activeRows > 0 && activeCols > 0 {
 		// The 2:1 rectangular DCT_DCT blocks (rect2 coefficient scale).

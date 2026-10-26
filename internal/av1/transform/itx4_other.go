@@ -21,3 +21,23 @@ func InverseAdd4x8(dst []byte, dstStride int, pred []byte, predStride int, coeff
 func InverseAdd8x4(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
 	return false
 }
+
+// InverseAdd4x16 is InverseAdd4x4 for the 4x16 block.
+func InverseAdd4x16(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
+	return false
+}
+
+// InverseAdd16x4 is InverseAdd4x4 for the 16x4 block.
+func InverseAdd16x4(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
+	return false
+}
+
+// InverseAdd8x16 is InverseAdd4x4 for the 8x16 block.
+func InverseAdd8x16(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
+	return false
+}
+
+// InverseAdd16x8 is InverseAdd4x4 for the 16x8 block.
+func InverseAdd16x8(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
+	return false
+}

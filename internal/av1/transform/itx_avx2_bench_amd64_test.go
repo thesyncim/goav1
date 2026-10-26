@@ -48,6 +48,14 @@ func amd64ITXBenchCases() []amd64ITXCase {
 	sq := func(c amd64ITXCase, dst []byte, stride int, coeff []int32) bool {
 		scanH := min(c.h, 32)
 		switch {
+		case c.w == 4 && c.h == 16:
+			return InverseAdd4x16(dst, stride, dst, stride, coeff, scanH, c.txType, c.rows, c.cols)
+		case c.w == 16 && c.h == 4:
+			return InverseAdd16x4(dst, stride, dst, stride, coeff, scanH, c.txType, c.rows, c.cols)
+		case c.w == 8 && c.h == 16:
+			return InverseAdd8x16(dst, stride, dst, stride, coeff, scanH, c.txType, c.rows, c.cols)
+		case c.w == 16 && c.h == 8:
+			return InverseAdd16x8(dst, stride, dst, stride, coeff, scanH, c.txType, c.rows, c.cols)
 		case c.w == 4 && c.h == 8:
 			return InverseAdd4x8(dst, stride, dst, stride, coeff, scanH, c.txType, c.rows, c.cols)
 		case c.w == 8 && c.h == 4:
@@ -85,6 +93,10 @@ func amd64ITXBenchCases() []amd64ITXCase {
 		mk("4x8/adst_adst", 4, 8, TypeADSTADST, 8, 4, sq),
 		mk("8x4/dct", 8, 4, TypeDCTDCT, 4, 8, sq),
 		mk("8x4/dct_adst/low4", 8, 4, TypeDCTADST, 4, 4, sq),
+		mk("4x16/adst_dct", 4, 16, TypeADSTDCT, 16, 4, sq),
+		mk("16x4/dct_adst", 16, 4, TypeDCTADST, 4, 16, sq),
+		mk("8x16/dct", 8, 16, TypeDCTDCT, 16, 8, sq),
+		mk("16x8/dct", 16, 8, TypeDCTDCT, 8, 16, sq),
 		mk("8x8/dct/low4", 8, 8, TypeDCTDCT, 4, 4, sq),
 		mk("8x8/dct/full", 8, 8, TypeDCTDCT, 8, 8, sq),
 		mk("8x8/adst_adst", 8, 8, TypeADSTADST, 8, 8, sq),

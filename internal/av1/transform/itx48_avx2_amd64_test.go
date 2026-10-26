@@ -116,3 +116,17 @@ func testInverseAddRect(t *testing.T, w, h int, fused itxRectFused) {
 
 func TestInverseAdd4x8MatchesStaged(t *testing.T) { testInverseAddRect(t, 4, 8, InverseAdd4x8) }
 func TestInverseAdd8x4MatchesStaged(t *testing.T) { testInverseAddRect(t, 8, 4, InverseAdd8x4) }
+
+func TestInverseAdd4x16MatchesStaged(t *testing.T) { testInverseAddRect(t, 4, 16, InverseAdd4x16) }
+func TestInverseAdd16x4MatchesStaged(t *testing.T) { testInverseAddRect(t, 16, 4, InverseAdd16x4) }
+func TestInverseAdd8x16MatchesStaged(t *testing.T) { testInverseAddRect(t, 8, 16, InverseAdd8x16) }
+func TestInverseAdd16x8MatchesStaged(t *testing.T) { testInverseAddRect(t, 16, 8, InverseAdd16x8) }
+
+func TestInverseAdd8x8AllTypesMatchesStaged(t *testing.T) {
+	testInverseAddRect(t, 8, 8, func(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
+		if txType == TypeDCTDCT {
+			return InverseAddDCT8x8(dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols)
+		}
+		return InverseAdd8x8Hybrid(dst, dstStride, pred, predStride, coeff, coeffStride, txType, activeRows, activeCols)
+	})
+}
