@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
@@ -136,12 +137,17 @@ func TestFrameThreadedDecodeByteIdentical(t *testing.T) {
 // pass. The decode stays byte-exact, so the entropy pass (dav1d's
 // DAV1D_TASK_TYPE_TILE_ENTROPY) neither reads reference pixels nor waits for
 // them.
+//
+// The poisoned references are also frames the decoder already returned, so
+// the test hashes its outputs under outputMu and the hook poisons under it
+// too: the decoder never writes an output frame, only this test does.
 func TestFrameThreadedParseNeverReadsReferencePixels(t *testing.T) {
 	clip := "testdata/benchcorpus/p360_inter_q32.ivf"
 	want, wantFrames := decodeFrameThreadDigest(t, clip, WithWorkers(1))
 
 	var gate internalthreading.FrameProgress
 	gate.Init()
+	var outputMu sync.Mutex
 	poisoned := 0
 	decoderFramePipelineParseHook = func(p *decoderFramePipeline, fc *decoderFrameContext, references []*Frame) func() {
 		if len(references) == 0 {
@@ -158,6 +164,9 @@ func TestFrameThreadedParseNeverReadsReferencePixels(t *testing.T) {
 		for i := range references {
 			fc.ft.Recon.RefProgress[i].Wait(internalthreading.FrameProgressDone)
 		}
+		// Retiring frames needs the caller's next DecodeNext, so the lock is
+		// taken only after the waits.
+		outputMu.Lock()
 		gate.Reset()
 		var saved [][]byte
 		seen := map[*Frame]bool{}
@@ -188,12 +197,39 @@ func TestFrameThreadedParseNeverReadsReferencePixels(t *testing.T) {
 					k++
 				}
 			}
+			outputMu.Unlock()
 			gate.Publish(internalthreading.FrameProgressDone)
 		}
 	}
 	defer func() { decoderFramePipelineParseHook = nil }()
 
-	got, frames := decodeFrameThreadDigest(t, clip, WithWorkers(4), WithMaxFrameDelay(3))
+	raw, err := os.ReadFile(clip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec, err := NewDecoderFromIVF(raw, WithWorkers(4), WithMaxFrameDelay(3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dec.Close()
+	sum := sha256.New()
+	frames := 0
+	for {
+		out, ok, err := dec.DecodeNext()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			break
+		}
+		outputMu.Lock()
+		for _, f := range out {
+			frames++
+			hashDecodedFrame(sum, f)
+		}
+		outputMu.Unlock()
+	}
+	got := sum.Sum(nil)
 	if poisoned == 0 {
 		t.Fatal("no frame took the frame-threaded path")
 	}
