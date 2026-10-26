@@ -2,14 +2,21 @@
 
 package encoder
 
-import "simd/archsimd"
+import (
+	"simd/archsimd"
+	"unsafe"
+)
 
 // pixelStatsRows16Arch is pixelStatsRows16 as SVT-AV1's variance_kernel_avx2:
 // each 16-sample row segment zero-extends to 16 int16 lanes (VPMOVZXBW), the
 // difference squares and pair-sums straight into int32 lanes (VPMADDWD), and
 // the signed sum accumulates in int16 lanes. Every 16-sample step adds one
-// difference (|d| <= 255) to each int16 lane, so 64 steps fit before the flush
-// to int32; the sse of a 64x64 block is at most 4096*65025 < 2^31.
+// difference (|d| <= 255) to each int16 lane, so 128 steps fit before the
+// flush to int32; the sse of a 64x64 block is at most 4096*65025 < 2^31.
+//
+// Like SVT's fixed-shape variance{16,32,64}_avx2, the 16-, 32- and 64-wide
+// shapes step raw row pointers with no column loop and no per-row slicing,
+// and their flush groups are constants (no division per call).
 //
 // The kernels run only behind gosimdKernelsSupported (AVX2).
 func pixelStatsRows16Arch(src []byte, srcStride int, ref []byte, refStride int, w, h int) (uint32, int32) {
@@ -18,20 +25,60 @@ func pixelStatsRows16Arch(src []byte, srcStride int, ref []byte, refStride int, 
 	}
 	_ = src[(h-1)*srcStride+w-1]
 	_ = ref[(h-1)*refStride+w-1]
-	groupRows := max(1, 1024/w)
+	sp := unsafe.Pointer(&src[0])
+	rp := unsafe.Pointer(&ref[0])
+	var groupRows int
+	switch w {
+	case 16:
+		groupRows = 128
+	case 32:
+		groupRows = 64
+	case 64:
+		groupRows = 32
+	default:
+		groupRows = max(1, 1024/w)
+	}
 	var sse, sum32 archsimd.Int32x8
 	for r0 := 0; r0 < h; r0 += groupRows {
 		var sum16 archsimd.Int16x16
-		r1 := min(r0+groupRows, h)
-		for r := r0; r < r1; r++ {
-			s := src[r*srcStride : r*srcStride+w]
-			p := ref[r*refStride : r*refStride+w]
-			for c := 0; c+16 <= len(s) && c+16 <= len(p); c += 16 {
-				a := archsimd.LoadUint8x16(s[c : c+16]).ExtendToUint16().BitsToInt16()
-				b := archsimd.LoadUint8x16(p[c : c+16]).ExtendToUint16().BitsToInt16()
-				d := a.Sub(b)
+		n := min(groupRows, h-r0)
+		s := unsafe.Add(sp, r0*srcStride)
+		p := unsafe.Add(rp, r0*refStride)
+		switch w {
+		case 16:
+			for range n {
+				d := pixelDiff16(s, p)
 				sum16 = sum16.Add(d)
 				sse = sse.Add(d.DotProductPairs(d))
+				s, p = unsafe.Add(s, srcStride), unsafe.Add(p, refStride)
+			}
+		case 32:
+			for range n {
+				d0 := pixelDiff16(s, p)
+				d1 := pixelDiff16(unsafe.Add(s, 16), unsafe.Add(p, 16))
+				sum16 = sum16.Add(d0).Add(d1)
+				sse = sse.Add(d0.DotProductPairs(d0)).Add(d1.DotProductPairs(d1))
+				s, p = unsafe.Add(s, srcStride), unsafe.Add(p, refStride)
+			}
+		case 64:
+			for range n {
+				d0 := pixelDiff16(s, p)
+				d1 := pixelDiff16(unsafe.Add(s, 16), unsafe.Add(p, 16))
+				d2 := pixelDiff16(unsafe.Add(s, 32), unsafe.Add(p, 32))
+				d3 := pixelDiff16(unsafe.Add(s, 48), unsafe.Add(p, 48))
+				sum16 = sum16.Add(d0).Add(d1).Add(d2).Add(d3)
+				sse = sse.Add(d0.DotProductPairs(d0)).Add(d1.DotProductPairs(d1)).
+					Add(d2.DotProductPairs(d2)).Add(d3.DotProductPairs(d3))
+				s, p = unsafe.Add(s, srcStride), unsafe.Add(p, refStride)
+			}
+		default:
+			for range n {
+				for c := 0; c < w; c += 16 {
+					d := pixelDiff16(unsafe.Add(s, c), unsafe.Add(p, c))
+					sum16 = sum16.Add(d)
+					sse = sse.Add(d.DotProductPairs(d))
+				}
+				s, p = unsafe.Add(s, srcStride), unsafe.Add(p, refStride)
 			}
 		}
 		sum32 = sum32.Add(sum16.GetLo().ExtendToInt32()).Add(sum16.GetHi().ExtendToInt32())
@@ -40,6 +87,14 @@ func pixelStatsRows16Arch(src []byte, srcStride int, ref []byte, refStride int, 
 	// Return with clean upper ymm state (the compiler emits no vzeroupper).
 	archsimd.ClearAVXUpperBits()
 	return sseOut, sumOut
+}
+
+// pixelDiff16 is the sixteen int16 differences src-ref of the samples at s
+// and p (VPMOVZXBW from memory, VPSUBW).
+func pixelDiff16(s, p unsafe.Pointer) archsimd.Int16x16 {
+	a := archsimd.LoadUint8x16Array((*[16]uint8)(s)).ExtendToUint16().BitsToInt16()
+	b := archsimd.LoadUint8x16Array((*[16]uint8)(p)).ExtendToUint16().BitsToInt16()
+	return a.Sub(b)
 }
 
 // reduceInt32x8 returns the sum of the eight lanes.
