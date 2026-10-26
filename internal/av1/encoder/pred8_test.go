@@ -94,6 +94,12 @@ func TestPred8MatchesMotionPredictor(t *testing.T) {
 				for i := range got {
 					got[i] = 0xa5
 				}
+				if pred8FullPelOnly && subX|subY != 0 {
+					if pred8Predict(got, bw, &ref, refX, refY, bw, bh, subX, subY, filters, &im) {
+						t.Fatalf("%dx%d sub (%d,%d): full-pel-only fast path took a sub-pel block", bw, bh, subX, subY)
+					}
+					continue
+				}
 				if !pred8Predict(got, bw, &ref, refX, refY, bw, bh, subX, subY, filters, &im) {
 					t.Fatalf("%dx%d at (%d,%d): fast path declined", bw, bh, refX, refY)
 				}
