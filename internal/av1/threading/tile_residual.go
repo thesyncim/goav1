@@ -9,6 +9,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
+	"github.com/thesyncim/goav1/internal/av1/reconstruct"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
@@ -1716,6 +1717,19 @@ func (c *frameWorkTileResidualLoopController) fusedReconState() *frameWorkReconS
 func (s *frameWorkReconState) predictBlockBegin(visit *tile.BlockLoopVisit) error {
 	s.pendingCFLPrediction = false
 	s.cflPredictionDone = false
+	// dav1d's decode_b calls recon_b_inter directly: a bound translational
+	// inter block goes straight to the per-plane mc() loop.
+	if visit != nil && s.predict == nil && s.predictionScratch != nil && s.predictionScratch.Inter != nil {
+		if l := s.batch.boundLeanInter(s.index); l != nil {
+			if handled, err := s.batch.reconBInter(s.index, l, visit, s.predictionScratch.Inter, nil); handled {
+				if err != nil {
+					return frameWorkPredictBlockError(visit, err)
+				}
+				s.stats.Predictions++
+				return nil
+			}
+		}
+	}
 	if err := s.predictBeforeCoefficientsPtr(visit); err != nil {
 		return err
 	}
@@ -1768,10 +1782,31 @@ func (s *frameWorkReconState) predictBeforeCoefficientsPtr(visit *tile.BlockLoop
 		return nil
 	}
 	if err := s.batch.predictBlockPtr(s.index, visit, s.predictionScratch); err != nil {
-		return fmt.Errorf("predict block=%+v prediction=%+v prefix=%+v: %w", visit.Block, visit.Prediction, visit.Prefix, err)
+		return frameWorkPredictBlockError(visit, err)
 	}
 	s.stats.Predictions++
 	return nil
+}
+
+// frameWorkPredictIntraTXBError and frameWorkReconstructTXBError wrap a
+// transform block's prediction or reconstruction error, out of line.
+//
+//go:noinline
+func frameWorkPredictIntraTXBError(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, err error) error {
+	return fmt.Errorf("predict intra txb plane=%d visit=%+v block=%+v luma_mode=%d angle_delta=%d: %w", block.Plane, visit.Block, block.Block, visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta, err)
+}
+
+//go:noinline
+func frameWorkReconstructTXBError(block *tile.BlockCoeffBlock, err error) error {
+	return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
+}
+
+// frameWorkPredictBlockError wraps a block prediction error with the block,
+// kept out of line so the prediction paths carry no formatting frame.
+//
+//go:noinline
+func frameWorkPredictBlockError(visit *tile.BlockLoopVisit, err error) error {
+	return fmt.Errorf("predict block=%+v prediction=%+v prefix=%+v: %w", visit.Block, visit.Prediction, visit.Prefix, err)
 }
 
 func (s *frameWorkReconState) predictDeferredCFLChroma() error {
@@ -2343,7 +2378,7 @@ func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoo
 			}
 		} else {
 			if err := s.batch.predictBlockIntraCoeffPtr(s.index, visit, block, &s.predictionScratch.Intra); err != nil {
-				return fmt.Errorf("predict intra txb plane=%d visit=%+v block=%+v luma_mode=%d angle_delta=%d: %w", block.Plane, visit.Block, block.Block, visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta, err)
+				return frameWorkPredictIntraTXBError(visit, block, err)
 			}
 			s.stats.Predictions++
 		}
@@ -2357,11 +2392,51 @@ func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoo
 		return nil
 	}
 
-	if done, err := s.reconstructTXBBound(visit, block, cf, activeRows, activeCols, dcOnly); done {
-		if err == nil {
-			s.stats.Residuals++
+	// dav1d's recon_b_intra / recon_b_inter residual add: the destination is
+	// offset straight from the job's bound plane window (f->cur.data[pl] +
+	// 4 * (by4 * stride + bx4)) and the TXB goes to the inverse transform and
+	// add. A TXB not wholly inside the window's writable extent takes the
+	// validated geometry path below.
+	var window *FrameWorkPlaneRegion
+	var x, y uint32
+	if vb := &visit.Block; block.Plane == 0 {
+		if s.lumaReady {
+			window = &s.batch.geomCache.plane[FrameWorkPlaneY]
+			x = (uint32(vb.MICol) + uint32(block.Block.X4) - uint32(vb.X4)) << 2
+			y = (uint32(vb.MIRow) + uint32(block.Block.Y4) - uint32(vb.Y4)) << 2
 		}
-		return err
+	} else if block.Plane <= 2 && s.chromaReady && vb.MICol >= uint16(vb.X4) && vb.MIRow >= uint16(vb.Y4) {
+		window = &s.batch.geomCache.plane[block.Plane]
+		color := &s.batch.Sequence.ColorConfig
+		ssX := frameWorkSubsampleShift(color.SubsamplingX)
+		ssY := frameWorkSubsampleShift(color.SubsamplingY)
+		x = ((uint32(vb.MICol)-uint32(vb.X4))>>ssX + uint32(block.Block.X4)) << 2
+		y = ((uint32(vb.MIRow)-uint32(vb.Y4))>>ssY + uint32(block.Block.Y4)) << 2
+	}
+	if window != nil {
+		if meta, ok := frameWorkBlockCoeffTransformMeta(block.Block.Size); ok {
+			w, h := uint32(meta.size.Width), uint32(meta.size.Height)
+			clipW, clipH := window.ClipWidth, window.ClipHeight
+			if clipW == 0 {
+				clipW = window.Width
+			}
+			if clipH == 0 {
+				clipH = window.Height
+			}
+			if x >= window.X && y >= window.Y && uint64(x-window.X)+uint64(w) <= uint64(clipW) && uint64(y-window.Y)+uint64(h) <= uint64(clipH) {
+				bps := int(window.BytesPerSample)
+				stride := int(window.Stride)
+				off := int(y-window.Y)*stride + int(x-window.X)*bps
+				n := (int(h)-1)*stride + int(w)*bps
+				if reconstruct.ReconstructPlaneBlockVisibleTrustedAtFromDequantized(window.Pix[off:off+n:off+n], stride, bps, s.batch.Sequence.ColorConfig.BitDepth,
+					int(w), int(h), meta.scanSize, activeRows, activeCols, dcOnly, cf, s.int32Scratch, s.residualScratch,
+					reconstruct.Block{Size: meta.size, Transform: block.Transform, EOB: int16(block.Result.EOB)}) != nil {
+					return ErrInvalidBatch
+				}
+				s.stats.Residuals++
+				return nil
+			}
+		}
 	}
 	var geom frameWorkBlockCoeffGeometry
 	var err error
@@ -2373,7 +2448,7 @@ func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoo
 		if block.Plane == 2 {
 			plane = FrameWorkPlaneV
 		} else if block.Plane != 1 {
-			return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, ErrInvalidBatch)
+			return frameWorkReconstructTXBError(block, ErrInvalidBatch)
 		}
 		c := s.batch.geomCache
 		geom, err = s.batch.blockCoeffGeometryChromaKnown(c.region, c.plane[plane], plane, visit.Block, block)
@@ -2381,10 +2456,10 @@ func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoo
 		geom, err = s.batch.blockCoeffGeometry(s.index, visit.Block, block)
 	}
 	if err != nil {
-		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
+		return frameWorkReconstructTXBError(block, err)
 	}
 	if err := s.batch.reconstructBlockCoeffCoreWithGeometryDequantized(geom, block, activeRows, activeCols, dcOnly, cf, s.int32Scratch, s.residualScratch); err != nil {
-		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
+		return frameWorkReconstructTXBError(block, err)
 	}
 	s.stats.Residuals++
 	return nil

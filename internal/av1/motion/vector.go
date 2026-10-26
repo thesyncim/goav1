@@ -143,6 +143,21 @@ func ReferenceOriginSubsampled(dstX int, dstY int, mv Vector, subsamplingX bool,
 	return refX, refY, subX, subY, nil
 }
 
+// TranslationOrigin is ReferenceOriginSubsampled for a plane position whose
+// Q4 coordinate fits in an int (any position inside a frame), so it cannot
+// fail: dav1d's mc() derives the same origin from the block position and mv.
+func TranslationOrigin(dstX int, dstY int, mv Vector, subsamplingX bool, subsamplingY bool) (refX int, refY int, subX int, subY int) {
+	mvX, mvY := int(mv.Col), int(mv.Row)
+	if !subsamplingX {
+		mvX *= 2
+	}
+	if !subsamplingY {
+		mvY *= 2
+	}
+	posX, posY := dstX*16+mvX, dstY*16+mvY
+	return posX >> 4, posY >> 4, posX & 15, posY & 15
+}
+
 // PredictInterPlaneBlock predicts a block using AV1's regular translational
 // interpolation filter for fractional vectors.
 func PredictInterPlaneBlock(dst frame.Plane, ref frame.Plane, bytesPerSample int, dstX int, dstY int, width int, height int, mv Vector) error {
@@ -244,7 +259,7 @@ func PredictTranslation8(dst *frame.Plane, ref *frame.Plane, dstX int, dstY int,
 			return nil
 		}
 	} else if filterW > 0 && filterH > 0 &&
-		mc8PutFast(dst, ref, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch) {
+		Put8(dst, ref, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch) {
 		return nil
 	}
 	return predictInterPlaneBlockFromOriginWithFilterSizeScratch(*dst, *ref, 1, 8, true, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch)
@@ -332,7 +347,7 @@ func predictInterPlaneBlock8(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 	if width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
 	}
-	if mc8PutFast(&dst, &ref, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch) {
+	if Put8(&dst, &ref, dstX, dstY, refX, refY, width, height, filterW, filterH, subX, subY, filters, scratch) {
 		return nil
 	}
 	if !planeRegionFits(dst, 1, dstX, dstY, width, height) {
