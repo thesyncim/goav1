@@ -848,6 +848,10 @@ type lossyEncodeState struct {
 	keyTXS         *keyTXSScratch
 	keyTXSLambda   int64
 	keyTXSCoeffTab *rdoqCosts
+	// keyLumaEOB is the last keyframe leaf's luma EOB sum and keyLumaSubDC
+	// its first depth-1 transform's DC prediction (keyframe_txs.go).
+	keyLumaEOB   int
+	keyLumaSubDC uint8
 	// pd0Grid holds the per-SB VERY_LIGHT_PD0 trees (pframe_vlpd0.go),
 	// pd0Rates the frame-frozen partition rates they price with and
 	// pd0EdgeRef the edge-replicated reference block of off-frame vectors.
