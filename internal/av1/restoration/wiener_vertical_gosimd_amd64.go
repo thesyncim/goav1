@@ -65,12 +65,29 @@ func wienerVerticalSIMD(temp []uint16, tempStride int, dst []uint16, dstStride i
 // pass with the output clamped to [0,255] and packed to uint8. Eight bytes are
 // stored per group; widths that are not a multiple of 8 use the scalar reference.
 func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride int, width int, height int, filter WienerFilter, round1 int) {
-	if width < 8 || width%8 != 0 {
+	// The 8-bit round1 is the constant wienerRound1U8, so every shift below
+	// is an immediate: a variable ymm shift count is rematerialized inside
+	// the loop with a legacy-SSE movq, which stalls on dirty upper state.
+	if width < 8 || width%8 != 0 || round1 != wienerRound1U8 {
 		wienerVerticalU8(temp, tempStride, dst, dstStride, width, height, filter, round1)
 		return
 	}
 	const bitDepth = 8
 	offset := int32(1) << (bitDepth + round1 - 1)
+	// The 16-wide columns run first, in their own loop, so no 128-bit vector
+	// of the 8-wide tail below is live across the calls (its spill reload
+	// would be a legacy-SSE movups).
+	w16 := 0
+	if wienerU8Wide16 {
+		w16 = width &^ 15
+		k16 := newWienerU8Taps(filter, -offset+roundBias(round1), 255)
+		for row := 0; row < height; row++ {
+			dstRow := dst[row*dstStride : row*dstStride+width]
+			for col := 0; col < w16; col += 16 {
+				wienerVerticalU8x16(temp[row*tempStride+col:], tempStride, dstRow[col:col+16], &k16)
+			}
+		}
+	}
 	seedV := archsimd.BroadcastInt32x8(-offset + roundBias(round1))
 	zero := archsimd.BroadcastInt32x8(0)
 	maxV := archsimd.BroadcastInt32x8(255)
@@ -87,15 +104,10 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 	f4 := archsimd.BroadcastInt32x8(int32(filter[4]))
 	f5 := archsimd.BroadcastInt32x8(int32(filter[5]))
 	f6 := archsimd.BroadcastInt32x8(int32(filter[6]))
-	shift := uint64(round1)
-	k16 := newWienerU8Taps(filter, -offset+roundBias(round1), 255)
+	const shift = wienerRound1U8
 	for row := 0; row < height; row++ {
 		dstRow := dst[row*dstStride : row*dstStride+width]
-		col := 0
-		for ; wienerU8Wide16 && col+16 <= width; col += 16 {
-			wienerVerticalU8x16(temp[row*tempStride+col:], tempStride, dstRow[col:col+16], &k16, shift)
-		}
-		for ; col < width; col += 8 {
+		for col := w16; col < width; col += 8 {
 			r0 := archsimd.LoadUint16x8(temp[(row+0)*tempStride+col:]).ExtendToUint32().AsInt32x8()
 			r1 := archsimd.LoadUint16x8(temp[(row+1)*tempStride+col:]).ExtendToUint32().AsInt32x8()
 			r2 := archsimd.LoadUint16x8(temp[(row+2)*tempStride+col:]).ExtendToUint32().AsInt32x8()
@@ -123,7 +135,8 @@ var u8LowByteIdx = [16]int8{0, 2, 4, 6, 8, 10, 12, 14}
 // the (f0, f1), (f2, f3'), (f4, f5) and (f6, 0) taps, exact in int32; the
 // clamped sums pack back in order (in-lane unpack, in-lane vpackssdw) and
 // vpshufb plus a 64-bit interleave narrow them to bytes.
-func wienerVerticalU8x16(t []uint16, stride int, dst []uint8, k *wienerU8Taps, shift uint64) {
+func wienerVerticalU8x16(t []uint16, stride int, dst []uint8, k *wienerU8Taps) {
+	const shift = wienerRound1U8
 	ld := func(i int) archsimd.Int16x16 { return archsimd.LoadUint16x16(t[i*stride : i*stride+16]).AsInt16x16() }
 	r0, r1, r2, r3, r4, r5, r6 := ld(0), ld(1), ld(2), ld(3), ld(4), ld(5), ld(6)
 	var z archsimd.Int16x16
@@ -154,3 +167,6 @@ var wienerLowBytes32 = [32]int8{
 
 // wienerU8Wide16 selects the 16-wide kernels (benchmarks compare both).
 var wienerU8Wide16 = true
+
+// wienerRound1U8 is the vertical rounding shift at 8 bits (wienerRounds(8)).
+const wienerRound1U8 = 2*WienerFilterBits - WienerRound0Bits

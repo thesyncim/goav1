@@ -104,6 +104,20 @@ func wienerHorizontalU8SIMD(src []uint8, srcStride int, srcOrigin int, width int
 	const bitDepth = 8
 	limit := int32(1) << (bitDepth + 1 + WienerFilterBits - WienerRound0Bits)
 	offset := int32(1) << (bitDepth + WienerFilterBits - 1)
+	// The 16-wide columns run first, in their own loop, so no 128-bit vector
+	// of the 8-wide tail below is live across the calls.
+	w16 := 0
+	if wienerU8Wide16 {
+		w16 = width &^ 15
+		k16 := newWienerU8Taps(filter, offset+roundBias(WienerRound0Bits), limit-1)
+		for row := 0; row < height+2*WienerHalfwin; row++ {
+			srow := src[srcOrigin+(row-WienerHalfwin)*srcStride-WienerHalfwin:]
+			dstRow := temp[row*width : row*width+width]
+			for col := 0; col < w16; col += 16 {
+				wienerHorizontalU8x16(srow[col:col+24], dstRow[col:col+16], &k16)
+			}
+		}
+	}
 	seedV := archsimd.BroadcastInt32x8(offset + roundBias(WienerRound0Bits))
 	zero := archsimd.BroadcastInt32x8(0)
 	zeroBytes := archsimd.BroadcastUint8x16(0)
@@ -113,16 +127,11 @@ func wienerHorizontalU8SIMD(src []uint8, srcStride int, srcOrigin int, width int
 	f2 := archsimd.BroadcastInt32x8(int32(filter[2]))
 	f3 := archsimd.BroadcastInt32x8(int32(filter[3]) + (1 << WienerFilterBits))
 	shift := uint64(WienerRound0Bits)
-	k16 := newWienerU8Taps(filter, offset+roundBias(WienerRound0Bits), limit-1)
 	rows := height + 2*WienerHalfwin
 	for row := 0; row < rows; row++ {
 		srow := src[srcOrigin+(row-WienerHalfwin)*srcStride-WienerHalfwin:]
 		dstRow := temp[row*width : row*width+width]
-		col := 0
-		for ; wienerU8Wide16 && col+16 <= width; col += 16 {
-			wienerHorizontalU8x16(srow[col:col+24], dstRow[col:col+16], &k16)
-		}
-		for ; col < width; col += 8 {
+		for col := w16; col < width; col += 8 {
 			v0 := archsimd.LoadUint8x16(srow[col:]) // s0..s15 of this group
 			// Window k is bytes k..k+7 of v0: shift v0 down by k bytes, zero filling
 			// the top (zeroBytes is the high operand, v0 the low one).
