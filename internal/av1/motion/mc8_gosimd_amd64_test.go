@@ -127,10 +127,10 @@ func TestAMD64MC8PutFastMatchesPureGo(t *testing.T) {
 				}
 				got := frame.Plane{Pix: slices.Clone(want.Pix), Stride: dw, Width: dw, Height: dh}
 				mc8RefPut(want, ref, 3, 2, refX, refY, w, h, filterW, filterH, subX, subY, filters)
-				if !mc8PutFast(&got, &ref, 3, 2, refX, refY, w, h, filterW, filterH, subX, subY, filters, &scratch) {
+				if !Put8(&got, &ref, 3, 2, refX, refY, w, h, filterW, filterH, subX, subY, filters, &scratch) {
 					kx, ky := mc8Kind(filters.X, filterW), mc8Kind(filters.Y, filterH)
 					if _, cover := mc8Taps(w, kx, ky, subX, subY); cover && w%4 == 0 {
-						t.Fatalf("mc8PutFast declined w=%d h=%d filters=%v sub=%d,%d", w, h, filters, subX, subY)
+						t.Fatalf("Put8 declined w=%d h=%d filters=%v sub=%d,%d", w, h, filters, subX, subY)
 					}
 					continue
 				}
@@ -418,11 +418,11 @@ func TestAMD64MC8Dispatch(t *testing.T) {
 	var scratch ConvolveScratch
 	sharp := InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapRegular}
 	for _, sub := range [][2]int{{5, 0}, {0, 7}, {3, 9}} {
-		if !mc8PutFast(&dst, &ref, 0, 0, 20, 20, 16, 16, 16, 16, sub[0], sub[1], sharp, &scratch) {
-			t.Fatalf("mc8PutFast declined sharp 16x16 sub=%v", sub)
+		if !Put8(&dst, &ref, 0, 0, 20, 20, 16, 16, 16, 16, sub[0], sub[1], sharp, &scratch) {
+			t.Fatalf("Put8 declined sharp 16x16 sub=%v", sub)
 		}
-		if !mc8PutFast(&dst, &ref, 0, 0, 20, 20, 16, 16, 16, 16, sub[0], sub[1], RegularFilters, &scratch) {
-			t.Fatalf("mc8PutFast declined 16x16 sub=%v", sub)
+		if !Put8(&dst, &ref, 0, 0, 20, 20, 16, 16, 16, 16, sub[0], sub[1], RegularFilters, &scratch) {
+			t.Fatalf("Put8 declined 16x16 sub=%v", sub)
 		}
 		var cs CompoundConvolveScratch
 		out := make([]uint16, 16*16)

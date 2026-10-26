@@ -153,11 +153,16 @@ func mc8Source(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEd
 	return unsafe.Pointer(&edge[0]), emuEdgeStride, true
 }
 
-// mc8PutFast predicts a w x h 8-bit block (w a multiple of 8) with the
-// dav1d-style put kernels. It returns false for shapes it does not cover, in
-// which case the caller runs the general path.
-func mc8PutFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *ConvolveScratch) bool {
-	if subX|subY == 0 || (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil {
+// Put8 is dav1d's mc() put for an unscaled 8-bit single-reference block:
+// the copy (integer vector) or the put kernels for the block's filters, from
+// the reference origin (refX, refY) and Q4 subpel offsets (subX, subY). It
+// returns false, with nothing written, for shapes it does not cover; the
+// caller then runs the general path.
+func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *ConvolveScratch) bool {
+	if subX|subY == 0 {
+		return mc8CopyFast(dst, ref, dstX, dstY, refX, refY, w, h)
+	}
+	if (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil {
 		return false
 	}
 	kx := mc8Kind(filters.X, filterW)
