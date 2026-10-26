@@ -122,11 +122,24 @@ func TestInverseAdd16x4MatchesStaged(t *testing.T) { testInverseAddRect(t, 16, 4
 func TestInverseAdd8x16MatchesStaged(t *testing.T) { testInverseAddRect(t, 8, 16, InverseAdd8x16) }
 func TestInverseAdd16x8MatchesStaged(t *testing.T) { testInverseAddRect(t, 16, 8, InverseAdd16x8) }
 
+// The square 8x8 kernels load every coefficient column whole, so unlike the
+// rect kernels they need the rows past activeRows zeroed, as the decoder's
+// coefficient buffers always are: clear the garbage testInverseAddRect plants.
 func TestInverseAdd8x8AllTypesMatchesStaged(t *testing.T) {
+	var zeroed [64]int32
 	testInverseAddRect(t, 8, 8, func(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
-		if txType == TypeDCTDCT {
-			return InverseAddDCT8x8(dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols)
+		for c := 0; c < 8; c++ {
+			for r := 0; r < 8; r++ {
+				v := int32(0)
+				if r < activeRows {
+					v = coeff[c*coeffStride+r]
+				}
+				zeroed[c*8+r] = v
+			}
 		}
-		return InverseAdd8x8Hybrid(dst, dstStride, pred, predStride, coeff, coeffStride, txType, activeRows, activeCols)
+		if txType == TypeDCTDCT {
+			return InverseAddDCT8x8(dst, dstStride, pred, predStride, zeroed[:], 8, activeRows, activeCols)
+		}
+		return InverseAdd8x8Hybrid(dst, dstStride, pred, predStride, zeroed[:], 8, txType, activeRows, activeCols)
 	})
 }
