@@ -749,6 +749,9 @@ type lossyEncodeState struct {
 	// the smallest post-sub-pel ME cost (^0 when no sub-pel search ran).
 	mds0IntraModeRates svtIntraModeRates
 	mdMEDist           uint64
+	// intraBordered is the block's is_intra_bordered under the SB's
+	// use_neighbouring_mode_ctrls (pblockMotionSearch).
+	intraBordered bool
 	// intraEdgeAbove / intraEdgeLeft hold one block's resolved intra edges
 	// and intraPredScratch a candidate prediction; intraUVTxType is the
 	// implicit chroma transform type prepareIntraTXB and emitIntraTXB use.
@@ -1395,7 +1398,7 @@ func (st *lossyEncodeState) prepareIntraTXB(srcPlane []byte, stride int, px, py,
 	residual := &st.resScratch
 	residualBlockImpl(residual[:n], srcPlane, py*stride+px, stride, pred, w, w, h)
 	tran := &st.tranScratch
-	if err := forwardTransformBlock8BitResidualTrusted(tran[:cn], residual[:n], st.dqScratch[:n], w, h, st.intraUVTxType); err != nil {
+	if err := st.forwardIntraTXB(tran[:], residual[:], cn, n, w, h); err != nil {
 		return geo, false, err
 	}
 	if st.pfN4 {

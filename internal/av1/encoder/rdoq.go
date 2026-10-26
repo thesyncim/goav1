@@ -781,9 +781,9 @@ func (st *lossyEncodeState) prepareInterTXBDecideRDOQ(geo *txBlockGeometry, w in
 		}
 		mask = transform.ForwardDCT8x8RowSkip8BitTrusted((*[64]int32)(st.tranScratch[:64]), (*[64]int16)(st.resScratch[:64]), thr0, thr)
 	case 16:
-		mask = transform.ForwardDCT16x16RowSkip8BitTrusted((*[256]int32)(st.tranScratch[:256]), (*[256]int16)(st.resScratch[:256]), thr0, thr)
+		mask = forwardDCT16x16Decide(st.pfN4, (*[256]int32)(st.tranScratch[:256]), (*[256]int16)(st.resScratch[:256]), thr0, thr)
 	default:
-		mask = transform.ForwardDCT32x32RowSkip8BitTrusted((*[1024]int32)(st.tranScratch[:1024]), (*[1024]int16)(st.resScratch[:1024]), thr0, thr)
+		mask = forwardDCT32x32Decide(st.pfN4, (*[1024]int32)(st.tranScratch[:1024]), (*[1024]int16)(st.resScratch[:1024]), thr0, thr)
 	}
 	cn := geo.coeffCount
 	if st.pfN4 && w != 8 {
