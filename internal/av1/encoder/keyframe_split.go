@@ -295,12 +295,29 @@ func (st *lossyEncodeState) decideKeyBlock(src SourceFrame420, recon *SourceFram
 		}
 	}
 
-	geo, _, err := st.prepareIntraTXB(src.Y, src.YStride, lumaPX, lumaPY, n, n, st.yQuant, lumaTX, pred, st.lumaQ[:])
-	if err != nil {
-		return fmt.Errorf("luma txb: %w", err)
-	}
-	if err := st.reconKeyTXB(rec, recon.Y, pred, src.YStride, lumaPX, lumaPY, n, n, 0, lumaTX, geo); err != nil {
-		return fmt.Errorf("luma txb: %w", err)
+	if st.keyTXSOn {
+		yTX := lumaTX
+		if mode == tile.IntraModeDC && pal == nil {
+			if yTX, err = st.keyLumaTXS(src, recon, block, scratch, rec, pred, n, lumaTX); err != nil {
+				return fmt.Errorf("luma txs: %w", err)
+			}
+			r.splitTX = yTX != lumaTX
+		} else if err := st.keyLumaDepth0(src, recon, block, scratch, rec, pred, n, lumaTX); err != nil {
+			return fmt.Errorf("luma txb: %w", err)
+		}
+		blockDims, _ := block.Size.Dimensions()
+		txDims, _ := yTX.Dimensions()
+		if err := modeCtx.MarkTransformArea(int(block.X4), int(block.Y4), int(blockDims.W4), int(blockDims.H4), txDims.Log2W, txDims.Log2H, true); err != nil {
+			return fmt.Errorf("mark transform: %w", err)
+		}
+	} else {
+		geo, _, err := st.prepareIntraTXB(src.Y, src.YStride, lumaPX, lumaPY, n, n, st.yQuant, lumaTX, pred, st.lumaQ[:])
+		if err != nil {
+			return fmt.Errorf("luma txb: %w", err)
+		}
+		if err := st.reconKeyTXB(rec, recon.Y, pred, src.YStride, lumaPX, lumaPY, n, n, 0, lumaTX, geo); err != nil {
+			return fmt.Errorf("luma txb: %w", err)
+		}
 	}
 	cg, err := st.keyChroma(block, lumaPX, lumaPY)
 	if err != nil {
@@ -396,11 +413,12 @@ func (st *lossyEncodeState) writeKeyBlock(block tile.BlockVisit, scratch *tile.B
 	}
 	modeCtx := &scratch.Mode
 	coeffCtx := &scratch.CoeffCtx
+	// A split luma codes four quarter-size transforms (keyframe_txs.go).
+	yTX := lumaTX
+	if r.splitTX {
+		yTX = txSizeSquare(n / 2)
+	}
 	if st.lfMap != nil {
-		yTX, err := tile.MaxTransformSize(block.Size, parser.ColorConfig{}, 0)
-		if err != nil {
-			return err
-		}
 		uvTX, err := tile.MaxTransformSize(block.Size, st.color, 1)
 		if err != nil {
 			return err
@@ -466,33 +484,51 @@ func (st *lossyEncodeState) writeKeyBlock(block tile.BlockVisit, scratch *tile.B
 		}
 	}
 
-	st.intraTxTypeReq = tile.IntraTransformTypeRequest{Size: lumaTX, Mode: mode, QIndexKnown: true, QIndex: st.qIndex}
+	if st.keyTXSOn {
+		if _, err := tile.WriteTransformTree(st.w, &st.treeCDFs, modeCtx, tile.TransformTreeRequest{
+			Size: block.Size, X4: block.X4, Y4: block.Y4,
+			VisibleW4: block.VisibleW4, VisibleH4: block.VisibleH4,
+			HaveTop: block.HaveTop, HaveLeft: block.HaveLeft,
+			Color: st.color, TransformMode: parser.TransformModeSwitchable,
+		}, tile.TransformTreeResult{Y: yTX}); err != nil {
+			return fmt.Errorf("transform size: %w", err)
+		}
+	}
+
+	st.intraTxTypeReq = tile.IntraTransformTypeRequest{Size: yTX, Mode: mode, QIndexKnown: true, QIndex: st.qIndex}
 	if st.afterSkipIntra == nil {
 		st.afterSkipIntra = func() error {
 			return tile.WriteIntraTransformType(st.w, &st.txCDFs, st.intraTxTypeReq, transform.TypeDCTDCT)
 		}
 	}
-	lumaScan, ok := st.scanForTransformSize(lumaTX)
+	lumaScan, ok := st.scanForTransformSize(yTX)
 	if !ok {
-		return fmt.Errorf("encoder: unsupported luma transform %d", lumaTX)
+		return fmt.Errorf("encoder: unsupported luma transform %d", yTX)
 	}
-	lumaGeo, err := txBlockGeometryForTransformSize(lumaTX)
+	lumaGeo, err := txBlockGeometryForTransformSize(yTX)
 	if err != nil {
 		return err
 	}
-	qY, err := rec.nextCoeffs(lumaGeo.coeffCount)
-	if err != nil {
-		return err
+	tn, step := n, 1
+	if r.splitTX {
+		tn, step = n/2, 2
 	}
-	// The size-specialized trusted writers code the same syntax (tx_type
-	// from st.intraTxTypeReq after txb_skip) as the generic one.
-	st.intraLumaDCT = true
-	_, err = st.writeIntraTXB(n, n, qY, tile.CoeffContextRequest{
-		Plane: 0, PlaneBlock: block.Size, Size: lumaTX, X4: block.X4, Y4: block.Y4,
-	}, coeffCtx, lumaScan, st.afterSkipIntra)
-	st.intraLumaDCT = false
-	if err != nil {
-		return fmt.Errorf("luma txb: %w", err)
+	for i := range step * step {
+		qY, err := rec.nextCoeffs(lumaGeo.coeffCount)
+		if err != nil {
+			return err
+		}
+		dx4, dy4 := uint8((i%step)*tn/4), uint8((i/step)*tn/4)
+		// The size-specialized trusted writers code the same syntax (tx_type
+		// from st.intraTxTypeReq after txb_skip) as the generic one.
+		st.intraLumaDCT = true
+		_, err = st.writeIntraTXB(tn, tn, qY, tile.CoeffContextRequest{
+			Plane: 0, PlaneBlock: block.Size, Size: yTX, X4: block.X4 + dx4, Y4: block.Y4 + dy4,
+		}, coeffCtx, lumaScan, st.afterSkipIntra)
+		st.intraLumaDCT = false
+		if err != nil {
+			return fmt.Errorf("luma txb: %w", err)
+		}
 	}
 	cg, err := st.keyChroma(block, int(block.MICol)*4, int(block.MIRow)*4)
 	if err != nil {
