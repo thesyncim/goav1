@@ -13,34 +13,28 @@ func u8HalfMAC(x, coefficient, sum archsimd.Int16x8) archsimd.Int16x8 {
 }
 
 func u8HalfSaturate(x archsimd.Int16x8) archsimd.Uint8x16 {
-	var lanes [8]int16
-	var bytes [16]byte
-	x.StoreArray(&lanes)
-	for i, v := range lanes {
-		if v < 0 {
-			v = 0
-		} else if v > 255 {
-			v = 255
-		}
-		bytes[i] = byte(v)
-	}
-	return archsimd.LoadUint8x16(bytes[:])
+	x = x.Max(archsimd.Int16x8{}).Min(archsimd.BroadcastInt16x8(255))
+	return x.ToBits().ReshapeToUint8s().PermuteOrZero(archsimd.LoadInt8x16Array(&u8EvenBytesIdx))
 }
+
+// VPSHUFB indices: the low byte of each word into bytes 0..7, and the low
+// byte of each dword into bytes 0..3 (lo) or 4..7 (hi); -1 zeroes the rest.
+var (
+	u8EvenBytesIdx = [16]int8{0, 2, 4, 6, 8, 10, 12, 14, -1, -1, -1, -1, -1, -1, -1, -1}
+	u8LoDwordBytes = [16]int8{0, 4, 8, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}
+	u8HiDwordBytes = [16]int8{-1, -1, -1, -1, 0, 4, 8, 12, -1, -1, -1, -1, -1, -1, -1, -1}
+)
 
 func u8WideMAC8(lo, hi archsimd.Int32x4, samples, coefficient archsimd.Int16x8) (archsimd.Int32x4, archsimd.Int32x4) {
 	return hbdMAC8(lo, hi, samples, coefficient)
 }
 
+// u8PackClipped32 truncates the eight int32 lanes of lo and hi to bytes 0..7
+// (the scalar byte cast), zeroing bytes 8..15.
 func u8PackClipped32(lo, hi archsimd.Int32x4) archsimd.Uint8x16 {
-	var a, b [4]int32
-	var bytes [16]byte
-	lo.StoreArray(&a)
-	hi.StoreArray(&b)
-	for i := range a {
-		bytes[i] = byte(a[i])
-		bytes[i+4] = byte(b[i])
-	}
-	return archsimd.LoadUint8x16(bytes[:])
+	a := lo.ToBits().ReshapeToUint8s().PermuteOrZero(archsimd.LoadInt8x16Array(&u8LoDwordBytes))
+	b := hi.ToBits().ReshapeToUint8s().PermuteOrZero(archsimd.LoadInt8x16Array(&u8HiDwordBytes))
+	return a.Or(b)
 }
 
 func u8PackU16From32(lo, hi archsimd.Int32x4) archsimd.Uint16x8 {
@@ -56,25 +50,8 @@ func u8WidenU16(x archsimd.Uint16x8) (archsimd.Int32x4, archsimd.Int32x4) {
 }
 
 func u8PackSaturate32(lo, hi archsimd.Int32x4) archsimd.Uint8x16 {
-	var a, b [4]int32
-	var bytes [16]byte
-	lo.StoreArray(&a)
-	hi.StoreArray(&b)
-	for i := range a {
-		u, v := a[i], b[i]
-		if u < 0 {
-			u = 0
-		} else if u > 255 {
-			u = 255
-		}
-		if v < 0 {
-			v = 0
-		} else if v > 255 {
-			v = 255
-		}
-		bytes[i], bytes[i+4] = byte(u), byte(v)
-	}
-	return archsimd.LoadUint8x16(bytes[:])
+	zero, c255 := archsimd.Int32x4{}, archsimd.BroadcastInt32x4(255)
+	return u8PackClipped32(lo.Max(zero).Min(c255), hi.Max(zero).Min(c255))
 }
 
 func u8Right16(x, amount archsimd.Int16x8, count uint64) archsimd.Int16x8 {
