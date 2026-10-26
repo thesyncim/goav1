@@ -17,3 +17,7 @@ func predictDirectionalZ1Arch(block planeBlock, above []uint16, upsampleAbove in
 func predictDirectionalZ3Arch(block planeBlock, left []uint16, upsampleLeft int, dy int, maxBaseY int) bool {
 	return false
 }
+
+func predictDirectionalZ2Arch(block planeBlock, edges DirectionalEdges, upsampleAbove, upsampleLeft, dx, dy int) bool {
+	return false
+}

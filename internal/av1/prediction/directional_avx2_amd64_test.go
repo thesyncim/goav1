@@ -14,8 +14,8 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
-// TestDirectionalZ1Z3AVX2MatchesScalar predicts every zone-1 and zone-3
-// angle for 4..16 block sizes, with and without upsampled edges and with
+// TestDirectionalZ1Z3AVX2MatchesScalar predicts every zone-1, zone-2 and
+// zone-3 angle for 4..16 block sizes, with and without upsampled edges and with
 // predicted extents past the visible block, with the AVX2 kernels on and
 // off.
 func TestDirectionalZ1Z3AVX2MatchesScalar(t *testing.T) {
@@ -25,7 +25,7 @@ func TestDirectionalZ1Z3AVX2MatchesScalar(t *testing.T) {
 	rng := rand.New(rand.NewSource(23))
 	sizes := []int{4, 8, 16}
 	compared := 0
-	const origin = 16
+	const origin = 40
 	for trial := 0; trial < 30000; trial++ {
 		w, h := sizes[rng.Intn(3)], sizes[rng.Intn(3)]
 		pw, ph := w, h
@@ -33,14 +33,15 @@ func TestDirectionalZ1Z3AVX2MatchesScalar(t *testing.T) {
 			pw, ph = w+4*rng.Intn(2), h+4*rng.Intn(2)
 		}
 		angle := 1 + rng.Intn(268)
-		if angle == 90 || angle == 180 || (angle > 90 && angle < 180) {
+		if angle == 90 || angle == 180 {
 			continue
 		}
 		edges := DirectionalEdges{AboveOrigin: origin, LeftOrigin: origin}
-		if trial%2 == 0 {
-			edges.UpsampleAbove, edges.UpsampleLeft = true, true
-		}
+		edges.UpsampleAbove, edges.UpsampleLeft = trial&1 == 0, trial&2 == 0
 		n := origin + 2*(pw+ph) + 8
+		if trial%3 == 0 {
+			n += 16
+		}
 		edges.Above, edges.Left = make([]uint16, n), make([]uint16, n)
 		for i := range edges.Above {
 			edges.Above[i] = uint16(rng.Intn(256))
@@ -86,7 +87,7 @@ func BenchmarkAMD64DirectionalZ1Z3(b *testing.B) {
 	for _, c := range []struct {
 		name  string
 		angle int
-	}{{"z1/4x4/up", 45}, {"z3/4x4/up", 203}} {
+	}{{"z1/4x4/up", 45}, {"z2/4x4/up", 135}, {"z3/4x4/up", 203}} {
 		b.Run("shape="+c.name+"/impl=generic", func(b *testing.B) {
 			withIntraEdgeScalar(func() {
 				for i := 0; i < b.N; i++ {

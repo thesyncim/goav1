@@ -250,6 +250,9 @@ func predictDirectionalZ2(block planeBlock, bytesPerSample int, edges Directiona
 		return err
 	}
 
+	if bytesPerSample == 1 && predictDirectionalZ2Arch(block, edges, upsampleAbove, upsampleLeft, dx, dy) {
+		return nil
+	}
 	fracBitsX := 6 - upsampleAbove
 	fracBitsY := 6 - upsampleLeft
 	minBaseX := -(1 << upsampleAbove)
