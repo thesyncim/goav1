@@ -65,6 +65,22 @@ func PlaneBlockSize(block BlockSize, color parser.ColorConfig, plane int) (Block
 	return out, nil
 }
 
+// ChromaPlaneBlock returns the chroma plane block size of a block of size at
+// 4x4 origin (x4, y4) under subsampling (ssX, ssY), with has false when the
+// block carries no chroma (dav1d's has_chroma). ok is false for an invalid
+// size or a size/subsampling pair with no chroma block.
+func ChromaPlaneBlock(size BlockSize, x4, y4 int, ssX, ssY uint8) (chroma BlockSize, has bool, ok bool) {
+	if size >= blockSizeCount || ssX > 1 || ssY > 1 {
+		return 0, false, false
+	}
+	mask := chromaBlockParityMask[size][ssX][ssY]
+	if !((mask&1 == 0 || x4&1 != 0) && (mask&2 == 0 || y4&1 != 0)) {
+		return 0, false, true
+	}
+	chroma = planeBlockSizeLookup[size][ssX][ssY]
+	return chroma, true, chroma < blockSizeCount
+}
+
 func HasChromaBlock(req TransformTreeRequest, color parser.ColorConfig) bool {
 	return hasChromaForBlock(req.Size, int(req.X4), int(req.Y4), color)
 }
