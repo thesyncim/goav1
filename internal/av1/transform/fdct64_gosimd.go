@@ -84,6 +84,16 @@ func (t *fwd64Twiddles) h30(w int, a, b fwdVec) fwdVec {
 	return t.bf(a, t.n[64-w], b, t.c[w])
 }
 
+// fwdCopyVecs copies src into dst one vector register at a time. The builtin
+// copy lowers these fixed-size moves to legacy-SSE movups pairs on amd64,
+// which stall on Zen 3 while the upper ymm state is dirty.
+func fwdCopyVecs(dst, src []fwdVec) {
+	src = src[:len(dst)]
+	for i := range dst {
+		dst[i] = src[i]
+	}
+}
+
 // fwd64DCTPre is butterfly_dct_pre over in[0:n] into out[0:n].
 func fwd64DCTPre(in, out *[64]fwdVec, n int) {
 	switch n {
@@ -199,7 +209,7 @@ func fwdDCT64N2(t *fwd64Twiddles, in *[64]fwdVec, out *[32]fwdVec) {
 
 	// stage 2
 	fwd64DCTPre(&x1, &x2, 32)
-	copy(x2[32:40], x1[32:40])
+	fwdCopyVecs(x2[32:40], x1[32:40])
 	x2[55], x2[40] = t.b0112(32, x1[55], x1[40])
 	x2[54], x2[41] = t.b0112(32, x1[54], x1[41])
 	x2[53], x2[42] = t.b0112(32, x1[53], x1[42])
@@ -208,17 +218,17 @@ func fwdDCT64N2(t *fwd64Twiddles, in *[64]fwdVec, out *[32]fwdVec) {
 	x2[50], x2[45] = t.b0112(32, x1[50], x1[45])
 	x2[49], x2[46] = t.b0112(32, x1[49], x1[46])
 	x2[48], x2[47] = t.b0112(32, x1[48], x1[47])
-	copy(x2[56:64], x1[56:64])
+	fwdCopyVecs(x2[56:64], x1[56:64])
 
 	// stage 3 (into x1)
 	x3 := &x1
 	fwd64DCTPre(&x2, x3, 16)
-	copy(x3[16:20], x2[16:20])
+	fwdCopyVecs(x3[16:20], x2[16:20])
 	x3[27], x3[20] = t.b0112(32, x2[27], x2[20])
 	x3[26], x3[21] = t.b0112(32, x2[26], x2[21])
 	x3[25], x3[22] = t.b0112(32, x2[25], x2[22])
 	x3[24], x3[23] = t.b0112(32, x2[24], x2[23])
-	copy(x3[28:32], x2[28:32])
+	fwdCopyVecs(x3[28:32], x2[28:32])
 	fwd64DCTPost(&x2, x3, 32, 32)
 
 	// stage 4 (into x2)
@@ -231,7 +241,7 @@ func fwdDCT64N2(t *fwd64Twiddles, in *[64]fwdVec, out *[32]fwdVec) {
 	x4[14] = x3[14]
 	x4[15] = x3[15]
 	fwd64DCTPost(x3, x4, 16, 16)
-	copy(x4[32:36], x3[32:36])
+	fwdCopyVecs(x4[32:36], x3[32:36])
 	x4[59], x4[36] = t.b0112(16, x3[59], x3[36])
 	x4[58], x4[37] = t.b0112(16, x3[58], x3[37])
 	x4[57], x4[38] = t.b0112(16, x3[57], x3[38])
@@ -240,8 +250,8 @@ func fwdDCT64N2(t *fwd64Twiddles, in *[64]fwdVec, out *[32]fwdVec) {
 	x4[41], x4[54] = t.b2312(16, x3[54], x3[41])
 	x4[42], x4[53] = t.b2312(16, x3[53], x3[42])
 	x4[43], x4[52] = t.b2312(16, x3[52], x3[43])
-	copy(x4[44:52], x3[44:52])
-	copy(x4[60:64], x3[60:64])
+	fwdCopyVecs(x4[44:52], x3[44:52])
+	fwdCopyVecs(x4[60:64], x3[60:64])
 
 	// stage 5 (into x1)
 	x5 := &x1
@@ -256,7 +266,7 @@ func fwdDCT64N2(t *fwd64Twiddles, in *[64]fwdVec, out *[32]fwdVec) {
 	x5[28], x5[19] = t.b0112(16, x4[28], x4[19])
 	x5[20], x5[27] = t.b2312(16, x4[27], x4[20])
 	x5[21], x5[26] = t.b2312(16, x4[26], x4[21])
-	copy(x5[22:26], x4[22:26])
+	fwdCopyVecs(x5[22:26], x4[22:26])
 	x5[30] = x4[30]
 	x5[31] = x4[31]
 	fwd64DCTPost(x4, x5, 32, 16)
@@ -281,13 +291,13 @@ func fwdDCT64N2(t *fwd64Twiddles, in *[64]fwdVec, out *[32]fwdVec) {
 	x6[60], x6[35] = t.b0112(8, x5[60], x5[35])
 	x6[36], x6[59] = t.b2312(8, x5[59], x5[36])
 	x6[37], x6[58] = t.b2312(8, x5[58], x5[37])
-	copy(x6[38:42], x5[38:42])
+	fwdCopyVecs(x6[38:42], x5[38:42])
 	x6[53], x6[42] = t.b0130(24, x5[42], x5[53])
 	x6[52], x6[43] = t.b0130(24, x5[43], x5[52])
 	x6[51], x6[44] = t.b0332(24, x5[51], x5[44])
 	x6[50], x6[45] = t.b0332(24, x5[50], x5[45])
-	copy(x6[46:50], x5[46:50])
-	copy(x6[54:58], x5[54:58])
+	fwdCopyVecs(x6[46:50], x5[46:50])
+	fwdCopyVecs(x6[54:58], x5[54:58])
 	x6[62] = x5[62]
 	x6[63] = x5[63]
 

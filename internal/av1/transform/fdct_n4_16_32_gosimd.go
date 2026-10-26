@@ -12,10 +12,12 @@ package transform
 
 func forwardDCT16x16N4Col(buf *[4 * 16]int32, residual *[256]int16) {
 	forwardDCT16x16N4ColSIMD(buf, residual)
+	fwdVecDone()
 }
 
 func forwardDCT32x32N4Col(buf *[8 * 32]int32, residual *[1024]int16) {
 	forwardDCT32x32N4ColSIMD(buf, residual)
+	fwdVecDone()
 }
 
 // forwardDCT16x16N4ColSIMD is forwardDCT16x16N4ColPureGo over fwdLanes

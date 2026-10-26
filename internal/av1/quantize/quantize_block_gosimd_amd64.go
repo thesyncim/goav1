@@ -23,16 +23,19 @@ func quantizeFPVectors(qcoeff []int16, coeff []int32, quant int32, round int32, 
 	roundV := archsimd.BroadcastInt32x8(round)
 	deqV := archsimd.BroadcastInt32x8(dequant)
 	maxV := archsimd.BroadcastInt32x8(maxInt16)
-	shl := uint64(1 + txScale)
-	shr := uint64(16 - txScale)
+	// Per-lane count vectors (VPSLLVD/VPSRAVD): a variable scalar count is
+	// moved into an XMM register with a legacy-SSE movq at every use, which
+	// stalls on Zen 3 while the upper ymm state is dirty.
+	shl := archsimd.BroadcastUint32x8(uint32(1 + txScale))
+	shr := archsimd.BroadcastUint32x8(uint32(16 - txScale))
 	cp := unsafe.Pointer(&coeff[0])
 	qp := unsafe.Pointer(&qcoeff[0])
 	for i := 0; i < n; i += 8 {
 		c := archsimd.LoadInt32x8Array((*[8]int32)(unsafe.Add(cp, 4*i)))
 		abs := c.Abs()
-		keep := abs.ShiftAllLeft(shl).GreaterEqual(deqV)
+		keep := abs.ShiftLeft(shl).GreaterEqual(deqV)
 		a := abs.Add(roundV).Min(maxV)
-		level := a.Mul(quantV).ShiftAllRight(shr).Min(maxV)
+		level := a.Mul(quantV).ShiftRight(shr).Min(maxV)
 		level = quantizeApplySignAVX2(level, c).Masked(keep)
 		// SaturateToInt16Concat packs the low half then the high half, which
 		// is the element order of the eight consecutive outputs.
@@ -65,6 +68,7 @@ func quantizeBVectors(qcoeff []int16, coeff []int32, quant int32, round int32, z
 	zbinU := archsimd.BroadcastInt32x8(zbin).ToBits()
 	maxV := archsimd.BroadcastInt32x8(maxInt16)
 	maxU := maxV.ToBits()
+	shiftV := archsimd.BroadcastUint32x8(uint32(shift))
 	cp := unsafe.Pointer(&coeff[0])
 	qp := unsafe.Pointer(&qcoeff[0])
 	for i := 0; i < n; i += 8 {
@@ -73,7 +77,7 @@ func quantizeBVectors(qcoeff []int16, coeff []int32, quant int32, round int32, z
 		keep := absU.GreaterEqual(zbinU)
 		tmp := absU.Min(maxU).BitsToInt32().Add(roundV).Min(maxV)
 		t := tmp.Mul(quantV).ShiftAllRight(16)
-		level := t.Add(tmp).ShiftAllRight(shift).Min(maxV)
+		level := t.Add(tmp).ShiftRight(shiftV).Min(maxV)
 		level = quantizeApplySignAVX2(level, c).Masked(keep)
 		level.GetLo().SaturateToInt16Concat(level.GetHi()).StoreArray((*[8]int16)(unsafe.Add(qp, 2*i)))
 	}

@@ -32,17 +32,19 @@ type rowGroupQuantAVX2 struct {
 	shift              archsimd.Uint32x8
 }
 
-func newRowGroupQuantAVX2(q Quantizer, txScale uint8, l int64, zbinFactor int32) rowGroupQuantAVX2 {
+// init fills k in place. Returning the struct by value would copy its 192
+// bytes out of the result slot with legacy-SSE movups pairs right after the
+// 256-bit broadcasts, which stalls on Zen 3 while the upper ymm state is
+// dirty.
+func (k *rowGroupQuantAVX2) init(q Quantizer, txScale uint8, l int64, zbinFactor int32) {
 	acQuant, _ := invertQuant(q.AC)
 	maxV := archsimd.BroadcastInt32x8(maxInt16)
-	return rowGroupQuantAVX2{
-		quant: archsimd.BroadcastInt32x8(acQuant),
-		round: archsimd.BroadcastInt32x8(roundPowerOfTwo((48*q.AC)>>7, txScale)),
-		maxV:  maxV,
-		zbin:  archsimd.BroadcastInt32x8(roundPowerOfTwo(roundPowerOfTwo(zbinFactor*q.AC, 7), txScale)).ToBits(),
-		maxU:  maxV.ToBits(),
-		shift: archsimd.BroadcastUint32x8(uint32(l - int64(txScale))),
-	}
+	k.quant = archsimd.BroadcastInt32x8(acQuant)
+	k.round = archsimd.BroadcastInt32x8(roundPowerOfTwo((48*q.AC)>>7, txScale))
+	k.maxV = maxV
+	k.zbin = archsimd.BroadcastInt32x8(roundPowerOfTwo(roundPowerOfTwo(zbinFactor*q.AC, 7), txScale)).ToBits()
+	k.maxU = maxV.ToBits()
+	k.shift = archsimd.BroadcastUint32x8(uint32(l - int64(txScale)))
 }
 
 // lane8 is quantizeBVectors' lane rule on eight coefficients. The level shift
@@ -76,7 +78,8 @@ func quantizeBRowGroupsAVX2(qcoeff []int16, coeff []int32, n int, live uint8, q 
 	if q.DC < 148 {
 		zbinFactor = 84
 	}
-	k := newRowGroupQuantAVX2(q, txScale, l, zbinFactor)
+	var k rowGroupQuantAVX2
+	k.init(q, txScale, l, zbinFactor)
 	cp := unsafe.Pointer(&coeff[0])
 	qp := unsafe.Pointer(&qcoeff[0])
 	var orAcc archsimd.Int32x8
@@ -155,7 +158,8 @@ func quantizeBRowGroupsDiffAVX2(qcoeff []int16, coeff []int32, n int, live uint8
 	if q.DC < 148 {
 		zbinFactor = 84
 	}
-	k := newRowGroupQuantAVX2(q, txScale, l, zbinFactor)
+	var k rowGroupQuantAVX2
+	k.init(q, txScale, l, zbinFactor)
 	stepV := archsimd.BroadcastInt32x8(q.AC)
 	txShiftV := archsimd.BroadcastUint32x8(uint32(txScale))
 	rateBiasV := archsimd.BroadcastInt32x8(124)
