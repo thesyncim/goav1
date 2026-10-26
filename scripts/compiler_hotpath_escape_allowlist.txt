@@ -22,6 +22,8 @@ internal/av1/decoder/postfilter_parallel.go:*:*: make([]FrameWorkCDEFPostFilterU
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]FrameWorkCDEFPostFilterU8BandBoundary, bands) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]FrameWorkLoopFilterPostFilterPlan, workers) escapes to heap
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]FrameWorkLoopFilterPostFilterPlan, workers) escapes to heap in (*FrameWorkPostFilterContext).applyLoopFilterMaskBandsParallel:
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]bool, bandCount) escapes to heap
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]bool, bandCount) escapes to heap in (*FrameWorkPostFilterContext).applyCDEFPostFilterParallelU8:
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]byte, need) escapes to heap
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]byte, need) escapes to heap in (*FrameWorkCDEFPostFilterU8BandBoundary).ensure:
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]byte, need) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
@@ -51,6 +53,17 @@ internal/av1/decoder/postfilter_restoration_pool.go:*:*: moved to heap: puAcc
 internal/av1/decoder/postfilter_restoration_pool.go:*:*: moved to heap: recAcc
 internal/av1/decoder/postfilter_restoration_pool.go:*:*: moved to heap: req
 internal/av1/decoder/postfilter_restoration_pool.go:*:*: moved to heap: stripeAcc
+internal/av1/decoder/postfilter_rowpipe.go:*:*: append(p.lr, make([]frameWorkParallelRestorationScratch, workers - len(p.lr))...) escapes to heap in (*FrameWorkPostFilterContext).applyRowPipelinedPostFilters:
+internal/av1/decoder/postfilter_rowpipe.go:*:*: func literal escapes to heap in (*FrameWorkPostFilterParallel).startRowPipeWorkers:
+internal/av1/decoder/postfilter_rowpipe.go:*:*: make([]bool, n) escapes to heap
+internal/av1/decoder/postfilter_rowpipe.go:*:*: make([]bool, n) escapes to heap in (*FrameWorkPostFilterContext).applyRowPipelinedPostFilters:
+internal/av1/decoder/postfilter_rowpipe.go:*:*: make([]bool, n) escapes to heap in resetBools:
+internal/av1/decoder/postfilter_rowpipe.go:*:*: make([]int32, sgrLen) escapes to heap
+internal/av1/decoder/postfilter_rowpipe.go:*:*: make([]int32, sgrLen) escapes to heap in (*FrameWorkPostFilterContext).applyRowPipelinedPostFilters:
+internal/av1/decoder/postfilter_rowpipe.go:*:*: make([]uint16, dataLen) escapes to heap
+internal/av1/decoder/postfilter_rowpipe.go:*:*: make([]uint16, dataLen) escapes to heap in (*FrameWorkPostFilterContext).applyRowPipelinedPostFilters:
+internal/av1/decoder/postfilter_rowpipe.go:*:*: make([]uint16, wienerLen) escapes to heap
+internal/av1/decoder/postfilter_rowpipe.go:*:*: make([]uint16, wienerLen) escapes to heap in (*FrameWorkPostFilterContext).applyRowPipelinedPostFilters:
 internal/av1/decoder/postfilter_superres.go:*:*: moved to heap: output
 internal/av1/decoder/postfilter_superres.go:*:*: moved to heap: result
 internal/av1/decoder/segmap.go:*:*: make([]uint8, need) escapes to heap
@@ -215,6 +228,8 @@ internal/av1/encoder/keyframe_lossy.go:*:*: make([]error, nTiles) escapes to hea
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]error, nTiles) escapes to heap in encodeKeyframeFilteredTilesInto:
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]pframeSplitRecord, rows) escapes to heap
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]pframeSplitRecord, rows) escapes to heap in (*pframeCoder).encodeKeyframeTileWithColorOptions:
+internal/av1/encoder/keyframe_lossy.go:*:*: make([]svtPD0SB, need) escapes to heap
+internal/av1/encoder/keyframe_lossy.go:*:*: make([]svtPD0SB, need) escapes to heap in (*pframeCoder).encodeKeyframeTileWithColorOptions:
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in (*pframeCoder).encodeKeyframeTileWithColorOptions:
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in (*pframeCoder).encodeMonochromeKeyframeTileWithOptions:
@@ -226,6 +241,10 @@ internal/av1/encoder/keyframe_lossy.go:*:*: moved to heap: req
 internal/av1/encoder/keyframe_lossy.go:*:*: moved to heap: wg
 internal/av1/encoder/keyframe_lossy.go:*:*: new(cdefSearcher) escapes to heap
 internal/av1/encoder/keyframe_lossy.go:*:*: new(cdefSearcher) escapes to heap in encodeKeyframeFilteredTilesInto:
+internal/av1/encoder/keyframe_lossy.go:*:*: new(keyTXSScratch) escapes to heap
+internal/av1/encoder/keyframe_lossy.go:*:*: new(keyTXSScratch) escapes to heap in (*pframeCoder).encodeKeyframeTileWithColorOptions:
+internal/av1/encoder/keyframe_pd0.go:*:*: new(keyPD0) escapes to heap
+internal/av1/encoder/keyframe_pd0.go:*:*: new(keyPD0) escapes to heap in (*lossyEncodeState).keyPD0ForSB:
 internal/av1/encoder/keyframe_split.go:*:*: func literal escapes to heap
 internal/av1/encoder/keyframe_split.go:*:*: func literal escapes to heap in (*lossyEncodeState).writeKeyBlock:
 internal/av1/encoder/keyframe_split.go:*:*: new(paletteSearch) escapes to heap
@@ -354,6 +373,8 @@ internal/av1/encoder/pframe_wavefront.go:*:*: make([]tile.refmvsBlock, tile.need
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]tile.refmvsBlock, tile.need) escapes to heap in (*pframeWavefront).start:
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]uint8, len(src.levels)) escapes to heap
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]uint8, len(src.levels)) escapes to heap in (*pframeDecideWorker).adopt:
+internal/av1/encoder/pframe_wavefront.go:*:*: new(keyTXSScratch) escapes to heap
+internal/av1/encoder/pframe_wavefront.go:*:*: new(keyTXSScratch) escapes to heap in (*pframeDecideWorker).adopt:
 internal/av1/encoder/pframe_wavefront.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/pframe_wavefront.go:*:*: new(subpelProbeCache) escapes to heap in (*pframeDecideWorker).adopt:
 internal/av1/encoder/pred8.go:*:*: new(subpelProbeCache) escapes to heap
@@ -541,6 +562,8 @@ internal/av1/threading/frame_thread.go:*:*: make([]FrameThreadMotionTile, maxTil
 internal/av1/threading/frame_thread.go:*:*: make([]FrameThreadMotionTile, maxTile + 1) escapes to heap in (*FrameThreadMotion).bindTiles:
 internal/av1/threading/frame_thread.go:*:*: make([]FrameWorkBatch, len(batches)) escapes to heap
 internal/av1/threading/frame_thread.go:*:*: make([]FrameWorkBatch, len(batches)) escapes to heap in (*Pool).ExecuteFrameWorkRunnerFrameThread:
+internal/av1/threading/frame_thread_reconrows.go:*:*: make([]frameThreadReconTile, maxTile + 1) escapes to heap
+internal/av1/threading/frame_thread_reconrows.go:*:*: make([]frameThreadReconTile, maxTile + 1) escapes to heap in (*FrameThreadReconRows).bindTiles:
 internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes to heap
 internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes to heap in (*frameWorkLoopFilterMaskScratch).reset:
 internal/av1/threading/loop_filter_noskip.go:*:*: make([]uint8, n) escapes to heap
@@ -582,12 +605,12 @@ internal/av1/threading/wavefront_stream.go:*:*: func literal escapes to heap in 
 internal/av1/threading/wavefront_stream.go:*:*: make([]atomic.Int32, rowCount) escapes to heap
 internal/av1/threading/wavefront_stream.go:*:*: make([]atomic.Int32, rowCount) escapes to heap in (*frameWorkTileResidualLoopController).startReconStream:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap
-internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.7f1f46313746b019a6b1e00788ca1b87711e6cf6d0ec1723667865b91823ad38]:
+internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.interface { BeginBlockCoefficients(*github.com/thesyncim/goav1/internal/av1/tile.BlockLoopVisit) (*github.com/thesyncim/goav1/internal/av1/tile.BlockCoeffRequest, error); VisitBlockCoeffPtr(*github.com/thesyncim/goav1/internal/av1/tile.BlockLoopVisit, *github.com/thesyncim/goav1/internal/av1/tile.BlockCoeffBlock) error }]:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.struct {}]:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap in promotePendingDiagonalCarriers:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in PreallocBlockLoopContextCarrierScratch:
-internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.7f1f46313746b019a6b1e00788ca1b87711e6cf6d0ec1723667865b91823ad38]:
+internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.interface { BeginBlockCoefficients(*github.com/thesyncim/goav1/internal/av1/tile.BlockLoopVisit) (*github.com/thesyncim/goav1/internal/av1/tile.BlockCoeffRequest, error); VisitBlockCoeffPtr(*github.com/thesyncim/goav1/internal/av1/tile.BlockLoopVisit, *github.com/thesyncim/goav1/internal/av1/tile.BlockCoeffBlock) error }]:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.struct {}]:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in ensureIntrabcDiagonalCarriers:
 internal/av1/tile/block_loop.go:*:*: make([]tile.diagonalCornerSlot, tile.n) escapes to heap
