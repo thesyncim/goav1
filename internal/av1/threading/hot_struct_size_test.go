@@ -51,7 +51,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "frameWorkBlockCoeffGeometry", size: unsafe.Sizeof(frameWorkBlockCoeffGeometry{}), max: 88},
 		// The geometry cache also binds each job's inter-prediction output planes
 		// once (dav1d binds f->cur per frame); it lives in per-worker scratch.
-		{name: "frameWorkJobGeometryCache", size: unsafe.Sizeof(frameWorkJobGeometryCache{}), max: 2216}, // +1016: dav1d f->refp views, 7 references x 3 planes; +536: the bound recon_b_inter planes and same-size reference views
+		{name: "frameWorkJobGeometryCache", size: unsafe.Sizeof(frameWorkJobGeometryCache{}), max: 2224}, // +1016: dav1d f->refp views, 7 references x 3 planes; +536: the bound recon_b_inter planes and same-size reference views; +8: the frame filter pair
 		{name: "frameWorkPredictionPlaneGeometry", size: unsafe.Sizeof(frameWorkPredictionPlaneGeometry{}), max: 152},
 		{name: "frameWorkWedgeCode", size: unsafe.Sizeof(frameWorkWedgeCode{}), max: 3},
 	}
