@@ -95,3 +95,18 @@ func shiftRight16(v, rsh archsimd.Int16x8) archsimd.Int16x8 {
 func shiftRight32(v, rsh archsimd.Int32x4) archsimd.Int32x4 {
 	return v.ShiftAllRight(uint64(-int64(rsh.GetElem(0))))
 }
+
+// packU16x16Idx keeps the low byte of each 16-bit lane in the low eight bytes
+// of its 128-bit lane; packU16x16Lanes then joins the two lanes' halves.
+var (
+	packU16x16Idx   = [32]int8{0, 2, 4, 6, 8, 10, 12, 14, -1, -1, -1, -1, -1, -1, -1, -1, 0, 2, 4, 6, 8, 10, 12, 14, -1, -1, -1, -1, -1, -1, -1, -1}
+	packU16x16Lanes = [8]uint32{0, 1, 4, 5, 2, 3, 6, 7}
+)
+
+// packU16x16ToU8 narrows sixteen 16-bit lanes holding values 0..255 to bytes
+// in lane order (VPSHUFB, then VPERMD across the 128-bit halves): amd64
+// archsimd has no VPACKUSWB.
+func packU16x16ToU8(v archsimd.Uint16x16) archsimd.Uint8x16 {
+	b := v.AsUint8x32().PermuteOrZeroGrouped(archsimd.LoadInt8x32Array(&packU16x16Idx))
+	return b.AsUint32x8().Permute(archsimd.LoadUint32x8Array(&packU16x16Lanes)).AsUint8x32().GetLo()
+}

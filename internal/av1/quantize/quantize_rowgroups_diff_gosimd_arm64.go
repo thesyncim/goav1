@@ -137,13 +137,3 @@ func quantizeBRowGroupsDiffSIMD(qcoeff []int16, coeff []int32, n int, live uint8
 func rowGroupLaneRateSIMD(v, expShift archsimd.Int32x4, bias archsimd.Uint32x4) archsimd.Int32x4 {
 	return v.Abs().ConvertToFloat32().ToBits().Shift(expShift).SubSaturated(bias).BitsToInt32()
 }
-
-func rowGroupLevelRate(v int16) int64 {
-	if v == 0 {
-		return 0
-	}
-	if v < 0 {
-		v = -v
-	}
-	return int64(2 + bits.Len16(uint16(v)))
-}
