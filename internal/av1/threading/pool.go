@@ -325,6 +325,13 @@ type frameWorkJobGeometryCache struct {
 	// first time a block predicts from it. refMask has one bit per bound view.
 	refMask uint32
 	ref     [3 * parser.InterRefsPerFrame]frame.Plane
+
+	// lean is the recon_b_inter binding derived from inter and the plane
+	// windows once every plane of the job is bound; leanOK marks it valid for
+	// job leanIndex and output interOut.
+	leanOK    bool
+	leanIndex uint16
+	lean      frameWorkLeanInter
 }
 
 // frameWorkInterBinding is the job-invariant part of frameWorkInterTarget.
@@ -357,6 +364,7 @@ func (c *frameWorkJobGeometryCache) reset() {
 	c.validMask = 0
 	c.interMask = 0
 	c.refMask = 0
+	c.leanOK = false
 }
 
 // Surface returns the frame-pool surface that this batch reconstructs into.
@@ -427,6 +435,7 @@ func (b *FrameWorkBatch) JobRegion(index int) (FrameWorkJobRegion, error) {
 		// A new index invalidates any plane windows cached for the old one.
 		if c.validMask&frameWorkJobGeometryRegionValid == 0 || c.regionIndex != cacheIndex {
 			c.validMask &^= frameWorkJobGeometryPlanesValid
+			c.leanOK = false
 		}
 		c.region = region
 		c.regionIndex = cacheIndex
