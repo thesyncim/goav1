@@ -161,9 +161,17 @@ func fwdTransposeRect(dst, src []int32, rows, cols int) {
 	}
 }
 
-// fwdShift is a runtime arithmetic right-shift amount for fwdShrBy.
-type fwdShift = uint64
+// fwdShift is a runtime arithmetic right-shift amount for fwdShrBy, held as a
+// per-lane count vector (VPSRAVD). A scalar count would be moved into an XMM
+// register with a legacy-SSE movq at every use, which stalls on Zen 3 while
+// the upper ymm state is dirty.
+type fwdShift = archsimd.Uint32x8
 
-func fwdMakeShift(n uint64) fwdShift { return n }
+func fwdMakeShift(n uint64) fwdShift { return archsimd.BroadcastUint32x8(uint32(n)) }
 
-func fwdShrBy(v fwdVec, s fwdShift) fwdVec { return v.ShiftAllRight(s) }
+func fwdShrBy(v fwdVec, s fwdShift) fwdVec { return v.ShiftRight(s) }
+
+// fwdVecDone returns the upper ymm state to clean after a run of fwdVec code
+// (the compiler emits no vzeroupper), so the scalar and legacy-SSE code that
+// follows does not stall on Zen 3.
+func fwdVecDone() { archsimd.ClearAVXUpperBits() }

@@ -192,3 +192,6 @@ type fwdShift = fwdVec
 func fwdMakeShift(n uint64) fwdShift { return archsimd.BroadcastInt32x4(-int32(n)) }
 
 func fwdShrBy(v fwdVec, s fwdShift) fwdVec { return v.Shift(s) }
+
+// fwdVecDone is a no-op on arm64 (see the amd64 counterpart).
+func fwdVecDone() {}

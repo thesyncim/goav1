@@ -57,4 +57,6 @@ func loadSampleRows8SIMD(dst []uint16, dstStride int, src []byte, srcStride int,
 		srcOff += srcStride
 		dstOff += dstStride
 	}
+	// Return with clean upper ymm state (the compiler emits no vzeroupper).
+	archsimd.ClearAVXUpperBits()
 }
