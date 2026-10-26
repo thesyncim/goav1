@@ -163,7 +163,7 @@ func InverseAdd8x4(dst []byte, dstStride int, pred []byte, predStride int, coeff
 	var zero archsimd.Int32x4
 	m := archsimd.LoadInt16x8Array(&itx48RowMask[activeRows])
 	for k := 0; k < activeCols; k++ {
-		x := itx48Rect2x4(coeff[k*coeffStride:k*coeffStride+4]).SaturateToInt16Concat(zero).And(m)
+		x := itx48Rect2x4(coeff[k*coeffStride : k*coeffStride+4]).SaturateToInt16Concat(zero).And(m)
 		l1 = l1.AddSaturated(x.Abs().AsUint16x8())
 		in[k] = x
 	}
