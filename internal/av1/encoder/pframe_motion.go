@@ -71,7 +71,9 @@ func (st *lossyEncodeState) pblockSubpel(src SourceFrame420, refPlane []byte, re
 	// search, skip_zz_mv skips it from a zero vector (md_subpel_search).
 	dec := st.lpd1SB(lumaPX, lumaPY)
 	ctrls := svtSubpelCtrlsFor(dec.subpelLevel)
-	if ctrls == nil || (ctrls.skipZeroMV && mv == (motion.Vector{})) {
+	// read_refine_me_mvs_light_pd1's skip_subpel: an intra-bordered block
+	// keeps its full-pel ME vector for every reference.
+	if ctrls == nil || st.intraBordered || (ctrls.skipZeroMV && mv == (motion.Vector{})) {
 		return mv, fullSAD
 	}
 	refined, besterr := st.svtSubpelSearch(src.Y, refPlane, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, refMV, ctrls, st.lpd1FullLambda(dec))
@@ -94,6 +96,20 @@ func (st *lossyEncodeState) pblockSubpel(src SourceFrame420, refPlane []byte, re
 	return refined, sad
 }
 
+// isIntraBordered is product_coding_loop.c is_intra_bordered under the SB's
+// use_neighbouring_mode_ctrls: both the above and the left neighbour exist in
+// the tile and are intra. Such a block skips the sub-pel refinement
+// (read_refine_me_mvs_light_pd1) and the MVP candidate injection
+// (inject_mvp_candidates_ii_light_pd1), so MDS0 prices only the ME NEWMV.
+func (st *lossyEncodeState) isIntraBordered(modeCtx *tile.BlockModeContext, block tile.BlockVisit, lumaPX, lumaPY int) bool {
+	if !block.HaveTop || !block.HaveLeft || !st.lpd1SB(lumaPX, lumaPY).useNeighbouringMode {
+		return false
+	}
+	// The is_inter context is 3 exactly when both neighbours are intra.
+	ctx, err := modeCtx.IntraContext(int(block.X4), int(block.Y4), true, true)
+	return err == nil && ctx == 3
+}
+
 // mePredYKey records that predY holds LAST's regular-filter prediction at mv.
 type mePredYKey struct {
 	valid bool
@@ -107,6 +123,7 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 
 	st.mePredY.valid = false
 	st.mdMEDist = ^uint64(0)
+	st.intraBordered = st.isIntraBordered(modeCtx, block, lumaPX, lumaPY)
 	if st.zmvForced(block.Size, lumaPX, lumaPY) {
 		// force_zeromv_skip_for_blk: zero-motion LAST only.
 		var o pblockMotion

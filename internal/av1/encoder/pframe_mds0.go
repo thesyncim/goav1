@@ -92,15 +92,19 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	if !ok {
 		return mds0Cand{}, false, false
 	}
-	cands[n] = mds0Cand{mode: tile.InterModeNearestMV, mv: nearest}
-	n++
-
-	// NEARMV DRL 0..2: stack slots 1+drl, capped by near_count and by the
-	// slots the stack actually holds (svt_aom_get_max_drl_index shape:
-	// NEARMV drl d needs ref_mv_count >= d+2).
-	maxNear := int(stack.Stack.Count) - 1
-	if nc := st.lpd1SB(lumaPX, lumaPY).nearCount; maxNear > nc {
-		maxNear = nc
+	// An intra-bordered block injects no MVP candidates
+	// (use_neighbouring_mode_ctrls): only the ME NEWMV below.
+	maxNear := -1
+	if !st.intraBordered {
+		cands[n] = mds0Cand{mode: tile.InterModeNearestMV, mv: nearest}
+		n++
+		// NEARMV DRL 0..2: stack slots 1+drl, capped by near_count and by
+		// the slots the stack actually holds (svt_aom_get_max_drl_index
+		// shape: NEARMV drl d needs ref_mv_count >= d+2).
+		maxNear = int(stack.Stack.Count) - 1
+		if nc := st.lpd1SB(lumaPX, lumaPY).nearCount; maxNear > nc {
+			maxNear = nc
+		}
 	}
 	for d := 0; d < maxNear; d++ {
 		near, ok := stack.Stack.SingleNearMV(d, false, st.forceIntegerMV)
