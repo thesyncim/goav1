@@ -53,7 +53,7 @@ jobs:
   bench:
     name: amd64 AVX2 bench
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       REF: ${{ github.event.inputs.ref || github.sha }}
       BASE: ${{ github.event.inputs.base || 'main' }}
@@ -117,6 +117,38 @@ jobs:
           go test -run '^$' -bench "$BENCH" -benchtime=200ms -count=6 $pkgs | tee kernels.txt
           echo '### generic vs avx2 (sec/op; vs base = avx2 relative to generic)'
           ~/go/bin/benchstat -col /impl kernels.txt
+      - name: build decoders (base, ref)
+        run: |
+          set -eux
+          go build -o dec-ref ./cmd/aom-go-dec
+          git worktree add -q base-src "origin/$BASE" 2>/dev/null || git worktree add -q base-src "$BASE"
+          (cd base-src && go build -o ../dec-base ./cmd/aom-go-dec)
+      - name: decode timing (base vs ref, interleaved)
+        run: |
+          set -eu
+          TIMEFORMAT='%3R %3U %3S'
+          REPS=3
+          echo "times are medians over $RUNS runs of $REPS back-to-back decodes (seconds)"
+          printf '%-34s %-4s %10s %10s %10s %10s %8s\n' stream thr base_cpu ref_cpu base_wall ref_wall ref/base
+          for f in bench-streams/*.ivf; do
+            name=$(basename "$f" .ivf)
+            want=$(./dec-base -quiet -workers 1 -framedelay 1 "$f" 2>/dev/null | md5sum | cut -d' ' -f1)
+            got=$(./dec-ref -quiet -workers 1 -framedelay 1 "$f" 2>/dev/null | md5sum | cut -d' ' -f1)
+            if [ "$want" != "$got" ]; then echo "MISMATCH $name base=$want ref=$got"; exit 1; fi
+            for thr in 1 4; do
+              fd=1; [ "$thr" -gt 1 ] && fd=0
+              : > base.t; : > ref.t
+              for i in $(seq "$RUNS"); do
+                for b in base ref; do
+                  # bash's time at millisecond resolution over REPS decodes
+                  { time { for k in $(seq "$REPS"); do ./dec-$b -quiet -workers "$thr" -framedelay "$fd" "$f" > /dev/null 2>&1; done; }; } 2>> "$b.t"
+                done
+              done
+              med() { awk -v c="$2" '{ if (c == "cpu") print $2 + $3; else print $1 }' "$1" | sort -g | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}'; }
+              bc=$(med base.t cpu); rc=$(med ref.t cpu); bw=$(med base.t wall); rw=$(med ref.t wall)
+              printf '%-34s %-4s %10s %10s %10s %10s %8.3f\n' "$name" "w$thr" "$bc" "$rc" "$bw" "$rw" "$(echo "$rc / $bc" | bc -l)"
+            done
+          done
       - name: cache encoder input
         id: encinput
         uses: actions/cache@v4
@@ -152,11 +184,12 @@ jobs:
           go build -pgo=cmd/qualitybench/default.pgo -o enc-ref ./cmd/encbench
           git worktree add -q enc-base-src "origin/$BASE" 2>/dev/null || git worktree add -q enc-base-src "$BASE"
           (cd enc-base-src && go build -pgo=cmd/qualitybench/default.pgo -o ../enc-base ./cmd/encbench)
+          GOEXPERIMENT= go build -o enc-ref-generic ./cmd/encbench
           ARGS="-input enc-input/fourpeople.yuv -frames 120 -width 1280 -height 720 -fps 60 -bitrate 1000000 -nopsnr"
           GOMAXPROCS=1 ./enc-base $ARGS -o enc-base.ivf > /dev/null
           GOMAXPROCS=1 ./enc-ref $ARGS -o enc-ref.ivf > /dev/null
           ./enc-ref $ARGS -threads 4 -o enc-ref4.ivf > /dev/null
-          GOMAXPROCS=1 GOEXPERIMENT= go run ./cmd/encbench $ARGS -o enc-ref-generic.ivf > /dev/null
+          GOMAXPROCS=1 ./enc-ref-generic $ARGS -o enc-ref-generic.ivf > /dev/null
           sha256sum enc-base.ivf enc-ref.ivf enc-ref4.ivf enc-ref-generic.ivf
           cmp enc-ref.ivf enc-ref4.ivf || { echo "ref stream differs between 1 and 4 threads"; exit 1; }
           cmp enc-ref.ivf enc-ref-generic.ivf || { echo "ref stream differs between AVX2 and generic builds"; exit 1; }
@@ -175,35 +208,3 @@ jobs:
           echo "ref/base median $(echo "$(med encr.t) / $(med encb.t)" | bc -l)"
           GOMAXPROCS=1 ./enc-ref $ARGS -o /dev/null -cpuprofile enc-ref.pprof > /dev/null
           go tool pprof -top -nodecount=45 enc-ref enc-ref.pprof 2>/dev/null | tail -n +6
-      - name: build decoders (base, ref)
-        run: |
-          set -eux
-          go build -o dec-ref ./cmd/aom-go-dec
-          git worktree add -q base-src "origin/$BASE" 2>/dev/null || git worktree add -q base-src "$BASE"
-          (cd base-src && go build -o ../dec-base ./cmd/aom-go-dec)
-      - name: decode timing (base vs ref, interleaved)
-        run: |
-          set -eu
-          TIMEFORMAT='%3R %3U %3S'
-          REPS=3
-          echo "times are medians over $RUNS runs of $REPS back-to-back decodes (seconds)"
-          printf '%-34s %-4s %10s %10s %10s %10s %8s\n' stream thr base_cpu ref_cpu base_wall ref_wall ref/base
-          for f in bench-streams/*.ivf; do
-            name=$(basename "$f" .ivf)
-            want=$(./dec-base -quiet -workers 1 -framedelay 1 "$f" 2>/dev/null | md5sum | cut -d' ' -f1)
-            got=$(./dec-ref -quiet -workers 1 -framedelay 1 "$f" 2>/dev/null | md5sum | cut -d' ' -f1)
-            if [ "$want" != "$got" ]; then echo "MISMATCH $name base=$want ref=$got"; exit 1; fi
-            for thr in 1 4; do
-              fd=1; [ "$thr" -gt 1 ] && fd=0
-              : > base.t; : > ref.t
-              for i in $(seq "$RUNS"); do
-                for b in base ref; do
-                  # bash's time at millisecond resolution over REPS decodes
-                  { time { for k in $(seq "$REPS"); do ./dec-$b -quiet -workers "$thr" -framedelay "$fd" "$f" > /dev/null 2>&1; done; }; } 2>> "$b.t"
-                done
-              done
-              med() { awk -v c="$2" '{ if (c == "cpu") print $2 + $3; else print $1 }' "$1" | sort -g | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}'; }
-              bc=$(med base.t cpu); rc=$(med ref.t cpu); bw=$(med base.t wall); rw=$(med ref.t wall)
-              printf '%-34s %-4s %10s %10s %10s %10s %8.3f\n' "$name" "w$thr" "$bc" "$rc" "$bw" "$rw" "$(echo "$rc / $bc" | bc -l)"
-            done
-          done
