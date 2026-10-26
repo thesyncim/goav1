@@ -54,8 +54,8 @@ func (st *lossyEncodeState) pblockStackRequest(block tile.BlockVisit, walkReq ti
 // returns at preset 12 (DRL 0, approx_inter_rate > 1): the MV cost reference
 // of the sub-pel search and of the MDS0 NEWMV rate.
 func (st *lossyEncodeState) svtNewMVPredictor(stack *tile.ReferenceMVStackResult) motion.Vector {
-	if r, err := stack.Stack.ResolveInterMVReferences(tile.InterModeResult{Mode: tile.InterModeNewMV}, 0, false, st.forceIntegerMV); err == nil {
-		return r.Residual[0]
+	if r, ok := stack.Stack.SingleNewMVReference(0, false, st.forceIntegerMV); ok {
+		return r
 	}
 	return motion.Vector{}
 }
