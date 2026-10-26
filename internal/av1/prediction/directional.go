@@ -158,6 +158,9 @@ func predictDirectionalZ1(block planeBlock, bytesPerSample int, edges Directiona
 	if err := validateDirectionalRange(edges.Above, edges.AboveOrigin, 0, maxBaseX, max, bounded); err != nil {
 		return err
 	}
+	if bytesPerSample == 1 && predictDirectionalZ1Arch(block, edges.Above[edges.AboveOrigin:], upsampleAbove, dx, maxBaseX) {
+		return nil
+	}
 	fracBits := 6 - upsampleAbove
 	baseInc := 1 << upsampleAbove
 	// Fast path: 8-bit, non-upsampled blocks route each visible row through the
@@ -334,6 +337,9 @@ func predictDirectionalZ3(block planeBlock, bytesPerSample int, edges Directiona
 	maxBaseY := (predWidth + predHeight - 1) << upsampleLeft
 	if err := validateDirectionalRange(edges.Left, edges.LeftOrigin, 0, maxBaseY, max, bounded); err != nil {
 		return err
+	}
+	if bytesPerSample == 1 && predictDirectionalZ3Arch(block, edges.Left[edges.LeftOrigin:], upsampleLeft, dy, maxBaseY) {
+		return nil
 	}
 	fracBits := 6 - upsampleLeft
 	baseInc := 1 << upsampleLeft
