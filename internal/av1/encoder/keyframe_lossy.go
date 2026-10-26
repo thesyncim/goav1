@@ -749,6 +749,9 @@ type lossyEncodeState struct {
 	// the smallest post-sub-pel ME cost (^0 when no sub-pel search ran).
 	mds0IntraModeRates svtIntraModeRates
 	mdMEDist           uint64
+	// intraBordered is the block's is_intra_bordered under the SB's
+	// use_neighbouring_mode_ctrls (pblockMotionSearch).
+	intraBordered bool
 	// intraEdgeAbove / intraEdgeLeft hold one block's resolved intra edges
 	// and intraPredScratch a candidate prediction; intraUVTxType is the
 	// implicit chroma transform type prepareIntraTXB and emitIntraTXB use.
