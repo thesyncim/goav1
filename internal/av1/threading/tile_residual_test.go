@@ -660,7 +660,7 @@ func TestFrameWorkTileResidualControllerWiresIntraTransformSelector(t *testing.T
 			ChromaModeValid: true,
 		},
 	}
-	req, err := controller.SelectBlockCoeffRequest(visit)
+	req, err := controller.SelectBlockCoeffRequestPtr(&visit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -892,7 +892,7 @@ func TestFrameWorkTileResidualControllerPropagatesSegmentQIndex(t *testing.T) {
 					Intra: false,
 				},
 			}
-			req, err := controller.SelectBlockCoeffRequest(visit)
+			req, err := controller.SelectBlockCoeffRequestPtr(&visit)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1061,7 +1061,7 @@ func TestFrameWorkTileResidualControllerUsesPredictionScratch(t *testing.T) {
 	}
 	visit := testIntraPredictionVisit(tile.IntraModeDC)
 	visit.Prefix.SkipTransform = true
-	if err := controller.BeforeBlockCoefficients(visit); err != nil {
+	if err := controller.BeforeBlockCoefficientsPtr(&visit); err != nil {
 		t.Fatal(err)
 	}
 	// Skip intra blocks are predicted per transform block from the all-zero
@@ -1070,7 +1070,8 @@ func TestFrameWorkTileResidualControllerUsesPredictionScratch(t *testing.T) {
 	if stats.Predictions != 0 {
 		t.Fatalf("predicted before the first txb: stats=%+v", stats)
 	}
-	if err := controller.VisitBlockCoeff(visit, testSkipIntraTXB(0, 4, 4, tile.TransformSize16x16, 4)); err != nil {
+	skipBlock := testSkipIntraTXB(0, 4, 4, tile.TransformSize16x16, 4)
+	if err := controller.VisitBlockCoeffPtr(&visit, &skipBlock); err != nil {
 		t.Fatal(err)
 	}
 	if stats.Predictions != 1 || stats.SkippedBlocks != 1 || stats.CoefficientBlocks != 0 {
@@ -1109,7 +1110,7 @@ func TestFrameWorkTileResidualControllerSkipsInvalidPredictionScratch(t *testing
 	visit := testIntraPredictionVisit(tile.IntraModeDC)
 	visit.Prediction = tile.BlockPredictionModeResult{}
 	visit.Prefix.SkipTransform = true
-	if err := controller.BeforeBlockCoefficients(visit); err != nil {
+	if err := controller.BeforeBlockCoefficientsPtr(&visit); err != nil {
 		t.Fatal(err)
 	}
 	if stats.Predictions != 0 || stats.SkippedBlocks != 1 || stats.CoefficientBlocks != 0 {
@@ -1140,7 +1141,7 @@ func TestFrameWorkTileResidualControllerPredictsCFLOnSkipTransform(t *testing.T)
 	}
 	visit := testCFLPredictionVisit()
 	visit.Prefix.SkipTransform = true
-	if err := controller.BeforeBlockCoefficients(visit); err != nil {
+	if err := controller.BeforeBlockCoefficientsPtr(&visit); err != nil {
 		t.Fatal(err)
 	}
 	for _, block := range []tile.BlockCoeffBlock{
@@ -1148,7 +1149,7 @@ func TestFrameWorkTileResidualControllerPredictsCFLOnSkipTransform(t *testing.T)
 		testSkipIntraTXB(1, 2, 2, tile.TransformSize8x8, 2),
 		testSkipIntraTXB(2, 2, 2, tile.TransformSize8x8, 2),
 	} {
-		if err := controller.VisitBlockCoeff(visit, block); err != nil {
+		if err := controller.VisitBlockCoeffPtr(&visit, &block); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1193,7 +1194,7 @@ func TestFrameWorkTileResidualControllerDefersCFLUntilChroma(t *testing.T) {
 		stats: &stats,
 	}
 	visit := testCFLPredictionVisit()
-	if err := controller.BeforeBlockCoefficients(visit); err != nil {
+	if err := controller.BeforeBlockCoefficientsPtr(&visit); err != nil {
 		t.Fatal(err)
 	}
 	if got := frameWorkTestSample(output.U, output.Layout.BytesPerSample, 8, 8); got != 0 {
@@ -1209,7 +1210,7 @@ func TestFrameWorkTileResidualControllerDefersCFLUntilChroma(t *testing.T) {
 		Result:    tile.TXBDecodeResult{AllZero: true},
 		Coeffs:    make([]int16, 64),
 	}
-	if err := controller.VisitBlockCoeff(visit, chroma); err != nil {
+	if err := controller.VisitBlockCoeffPtr(&visit, &chroma); err != nil {
 		t.Fatal(err)
 	}
 	testPredictFrameWorkCFLWant(t, want, visit, FrameWorkPlaneU)

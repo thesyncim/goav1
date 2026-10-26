@@ -17,7 +17,7 @@ func TestDecodeTransformTreeIntraSelectedMarksContexts(t *testing.T) {
 		t.Fatal(err)
 	}
 	var ctx BlockModeContext
-	result, err := state.DecodeTransformTree(&cdfs, &ctx, TransformTreeRequest{
+	result, err := state.DecodeTransformTree(&cdfs, &ctx, &TransformTreeRequest{
 		Size:          BlockSize16x16,
 		VisibleW4:     4,
 		VisibleH4:     4,
@@ -45,7 +45,7 @@ func TestDecodeTransformTreeLosslessForcesChroma4x4(t *testing.T) {
 		t.Fatal(err)
 	}
 	var ctx BlockModeContext
-	result, err := state.DecodeTransformTree(&cdfs, &ctx, TransformTreeRequest{
+	result, err := state.DecodeTransformTree(&cdfs, &ctx, &TransformTreeRequest{
 		Size:          BlockSize4x8,
 		VisibleW4:     1,
 		VisibleH4:     2,
@@ -122,7 +122,7 @@ func TestDecodeTransformTreeInterNoSplitMarksLeaf(t *testing.T) {
 		t.Fatal(err)
 	}
 	var ctx BlockModeContext
-	result, err := state.DecodeTransformTree(&cdfs, &ctx, TransformTreeRequest{
+	result, err := state.DecodeTransformTree(&cdfs, &ctx, &TransformTreeRequest{
 		Size:          BlockSize16x16,
 		VisibleW4:     4,
 		VisibleH4:     4,
@@ -308,7 +308,7 @@ func TestTransformTreeFixedInterSkipMarksBlockLogContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	var ctx BlockModeContext
-	result, err := state.DecodeTransformTree(&cdfs, &ctx, TransformTreeRequest{
+	result, err := state.DecodeTransformTree(&cdfs, &ctx, &TransformTreeRequest{
 		Size:          BlockSize128x128,
 		VisibleW4:     32,
 		VisibleH4:     32,
@@ -361,13 +361,13 @@ func TestTransformTreeRejectsInvalidInputs(t *testing.T) {
 	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (*DecodeState)(nil).DecodeTransformTree(&cdfs, &BlockModeContext{}, TransformTreeRequest{Size: BlockSize4x4, VisibleW4: 1, VisibleH4: 1}); !errors.Is(err, ErrInvalidDecodeState) {
+	if _, err := (*DecodeState)(nil).DecodeTransformTree(&cdfs, &BlockModeContext{}, &TransformTreeRequest{Size: BlockSize4x4, VisibleW4: 1, VisibleH4: 1}); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("nil state err=%v want %v", err, ErrInvalidDecodeState)
 	}
-	if _, err := state.DecodeTransformTree(nil, &BlockModeContext{}, TransformTreeRequest{Size: BlockSize4x4, VisibleW4: 1, VisibleH4: 1}); !errors.Is(err, ErrInvalidDecodeState) {
+	if _, err := state.DecodeTransformTree(nil, &BlockModeContext{}, &TransformTreeRequest{Size: BlockSize4x4, VisibleW4: 1, VisibleH4: 1}); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("nil cdfs err=%v want %v", err, ErrInvalidDecodeState)
 	}
-	if _, err := state.DecodeTransformTree(&cdfs, &BlockModeContext{}, TransformTreeRequest{Size: BlockSize4x4}); !errors.Is(err, ErrInvalidDecodeState) {
+	if _, err := state.DecodeTransformTree(&cdfs, &BlockModeContext{}, &TransformTreeRequest{Size: BlockSize4x4}); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("empty req err=%v want %v", err, ErrInvalidDecodeState)
 	}
 	if err := (TransformTreeResult{Y: transformSizeCount}).ForEachLumaTXB(TransformTreeRequest{Size: BlockSize4x4, VisibleW4: 1, VisibleH4: 1}, func(TransformBlock) error { return nil }); !errors.Is(err, ErrInvalidDecodeState) {
@@ -410,7 +410,7 @@ func FuzzDecodeTransformTree(f *testing.F) {
 			SkipTransform: skip,
 			Lossless:      lossless,
 		}
-		result, err := state.DecodeTransformTree(&cdfs, &BlockModeContext{}, req)
+		result, err := state.DecodeTransformTree(&cdfs, &BlockModeContext{}, &req)
 		if err != nil {
 			return
 		}

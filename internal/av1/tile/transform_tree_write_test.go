@@ -102,7 +102,7 @@ func TestWriteTransformTreeRoundTrip(t *testing.T) {
 	}
 
 	for i, o := range ops {
-		got, err := state.DecodeTransformTree(&decCDFs, &decCtx, o.req)
+		got, err := state.DecodeTransformTree(&decCDFs, &decCtx, &o.req)
 		if err != nil {
 			t.Fatalf("op %d: DecodeTransformTree req=%+v: %v", i, o.req, err)
 		}

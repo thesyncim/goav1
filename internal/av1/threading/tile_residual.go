@@ -1620,8 +1620,14 @@ func (c *frameWorkTileResidualLoopController) BeforeSuperblock(visit tile.BlockL
 	return nil
 }
 
-func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficients(visit tile.BlockLoopVisit) error {
-	return c.BeforeBlockCoefficientsPtr(&visit)
+// BeginBlockCoefficients is the block loop's per-block hook (dav1d's
+// decode_b handing the block to recon_b): the block's prediction or deferred
+// reconstruction bookkeeping, then its coefficient request.
+func (c *frameWorkTileResidualLoopController) BeginBlockCoefficients(visit *tile.BlockLoopVisit) (*tile.BlockCoeffRequest, error) {
+	if err := c.BeforeBlockCoefficientsPtr(visit); err != nil {
+		return nil, err
+	}
+	return c.SelectBlockCoeffRequestPtr(visit)
 }
 
 func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficientsPtr(visit *tile.BlockLoopVisit) error {
@@ -1634,7 +1640,7 @@ func (c *frameWorkTileResidualLoopController) BeforeBlockCoefficientsPtr(visit *
 		}
 	}
 	if c.req.CDEFIndexMap != nil {
-		if err := c.req.CDEFIndexMap.MarkBlockPtr(c.batch.CDEF, visit); err != nil {
+		if err := c.req.CDEFIndexMap.MarkBlockPtr(c.batch.CDEF.Bits, visit); err != nil {
 			return err
 		}
 	}
@@ -1779,14 +1785,6 @@ func (s *frameWorkReconState) predictDeferredCFLChroma() error {
 	return nil
 }
 
-func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequest(visit tile.BlockLoopVisit) (tile.BlockCoeffRequest, error) {
-	req, err := c.SelectBlockCoeffRequestPtr(&visit)
-	if err != nil {
-		return tile.BlockCoeffRequest{}, err
-	}
-	return *req, nil
-}
-
 func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *tile.BlockLoopVisit) (*tile.BlockCoeffRequest, error) {
 	// A previous call can have returned a ready target that was never consumed
 	// because its visitor failed. Do not let it leak into this block.
@@ -1842,31 +1840,28 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *
 		c.scratch.InterTX.ResetForColor(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, visit.Prefix.SkipTransform, lossless, segmentQIndex, c.batch.Sequence.ColorConfig)
 		transformSelect = &c.scratch.InterTX
 	}
+	// The request is filled field by field in the controller's storage, as
+	// dav1d's decode_b fills t and b: a composite literal is built in a
+	// temporary and block-copied, and the coefficient walk's reads of the
+	// just-written bytes then miss store forwarding.
 	request := &c.coeffReq
-	*request = tile.BlockCoeffRequest{
-		Transform: tile.TransformTreeRequest{
-			Size:          visit.Block.Size,
-			X4:            visit.Block.X4,
-			Y4:            visit.Block.Y4,
-			VisibleW4:     visit.Block.VisibleW4,
-			VisibleH4:     visit.Block.VisibleH4,
-			HaveTop:       visit.Block.HaveTop,
-			HaveLeft:      visit.Block.HaveLeft,
-			Color:         c.batch.Sequence.ColorConfig,
-			TransformMode: c.req.TransformMode,
-			Inter:         transforms.Inter,
-			SkipTransform: visit.Prefix.SkipTransform,
-			Lossless:      lossless,
-		},
-		LumaType:              transforms.Luma,
-		ChromaType:            transforms.Chroma,
-		TransformSelect:       transformSelect,
-		EOBMultiContext:       transforms.EOBMultiContext,
-		SkipAllZeroCoeffClear: c.userCoeffVisitor == nil,
-	}
-	if target := c.bindCoeffDequantTarget(visit, lossless); target != nil {
-		request.Dequant = target
-	}
+	tr := &request.Transform
+	block := &visit.Block
+	tr.Size = block.Size
+	tr.X4, tr.Y4 = block.X4, block.Y4
+	tr.VisibleW4, tr.VisibleH4 = block.VisibleW4, block.VisibleH4
+	tr.HaveTop, tr.HaveLeft = block.HaveTop, block.HaveLeft
+	tr.Color = c.batch.Sequence.ColorConfig
+	tr.TransformMode = c.req.TransformMode
+	tr.Inter = transforms.Inter
+	tr.SkipTransform = visit.Prefix.SkipTransform
+	tr.Lossless = lossless
+	request.LumaType = transforms.Luma
+	request.ChromaType = transforms.Chroma
+	request.TransformSelect = transformSelect
+	request.EOBMultiContext = transforms.EOBMultiContext
+	request.SkipAllZeroCoeffClear = c.userCoeffVisitor == nil
+	request.Dequant = c.bindCoeffDequantTarget(visit, lossless)
 	return request, nil
 }
 
@@ -1946,10 +1941,6 @@ func (c *frameWorkTileResidualLoopController) selectBlockTransformsPtr(visit *ti
 		return c.batch.readBlockTransformsPtr(c.state, visit)
 	}
 	return FrameWorkBlockTransforms{}, ErrInvalidBatch
-}
-
-func (c *frameWorkTileResidualLoopController) VisitBlockCoeff(visit tile.BlockLoopVisit, block tile.BlockCoeffBlock) error {
-	return c.VisitBlockCoeffPtr(&visit, &block)
 }
 
 func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock) error {
@@ -2539,27 +2530,25 @@ func (c *frameWorkTileResidualLoopController) selectDefaultBlockCoeffRequest(vis
 		c.scratch.InterTX.ResetForColor(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, skip, lossless, segmentQIndex, c.batch.Sequence.ColorConfig)
 		transformSelect = &c.scratch.InterTX
 	}
+	// Filled field by field in place; see SelectBlockCoeffRequestPtr.
 	request := &c.coeffReq
-	*request = tile.BlockCoeffRequest{
-		Transform: tile.TransformTreeRequest{
-			Size:          visit.Block.Size,
-			X4:            visit.Block.X4,
-			Y4:            visit.Block.Y4,
-			VisibleW4:     visit.Block.VisibleW4,
-			VisibleH4:     visit.Block.VisibleH4,
-			HaveTop:       visit.Block.HaveTop,
-			HaveLeft:      visit.Block.HaveLeft,
-			Color:         c.batch.Sequence.ColorConfig,
-			TransformMode: c.req.TransformMode,
-			Inter:         !intra,
-			SkipTransform: skip,
-			Lossless:      lossless,
-		},
-		LumaType:              transform.TypeDCTDCT,
-		ChromaType:            [2]transform.Type{transform.TypeDCTDCT, transform.TypeDCTDCT},
-		TransformSelect:       transformSelect,
-		SkipAllZeroCoeffClear: true,
-	}
+	tr := &request.Transform
+	block := &visit.Block
+	tr.Size = block.Size
+	tr.X4, tr.Y4 = block.X4, block.Y4
+	tr.VisibleW4, tr.VisibleH4 = block.VisibleW4, block.VisibleH4
+	tr.HaveTop, tr.HaveLeft = block.HaveTop, block.HaveLeft
+	tr.Color = c.batch.Sequence.ColorConfig
+	tr.TransformMode = c.req.TransformMode
+	tr.Inter = !intra
+	tr.SkipTransform = skip
+	tr.Lossless = lossless
+	request.LumaType = transform.TypeDCTDCT
+	request.ChromaType = [2]transform.Type{transform.TypeDCTDCT, transform.TypeDCTDCT}
+	request.TransformSelect = transformSelect
+	request.EOBMultiContext = [3]uint8{}
+	request.SkipAllZeroCoeffClear = true
+	request.Dequant = nil
 	if !skip && !lossless {
 		request.Dequant = c.bindCoeffDequantTarget(visit, lossless)
 	}

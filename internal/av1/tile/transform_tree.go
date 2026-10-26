@@ -49,7 +49,9 @@ type TransformBlockVisitor func(TransformBlock) error
 
 // DecodeTransformTree decodes AV1 selected transform-size or inter var-tx
 // syntax for one block and updates the caller-owned transform contexts.
-func (s *DecodeState) DecodeTransformTree(cdfs *TransformCDFs, ctx *BlockModeContext, req TransformTreeRequest) (TransformTreeResult, error) {
+// The request is read in place, as dav1d's read_vartx_tree reads the block
+// state through t and b.
+func (s *DecodeState) DecodeTransformTree(cdfs *TransformCDFs, ctx *BlockModeContext, req *TransformTreeRequest) (TransformTreeResult, error) {
 	if s == nil || cdfs == nil || ctx == nil {
 		return TransformTreeResult{}, ErrInvalidDecodeState
 	}
@@ -153,7 +155,7 @@ func (r TransformTreeResult) forEachLumaTXBInWindow(req TransformTreeRequest, wi
 	if visit == nil {
 		return ErrInvalidDecodeState
 	}
-	if _, err := validateTransformTreeRequest(req); err != nil {
+	if _, err := validateTransformTreeRequest(&req); err != nil {
 		return err
 	}
 	if !r.Y.Valid() {
@@ -255,7 +257,7 @@ func (r *transformTreeReplay) replay(from TransformSize, depth int, x4 int, y4 i
 	return emitTransformBlock(r.req, x4, y4, from, r.visit)
 }
 
-func (s *DecodeState) readFixedTransformSize(cdfs *TransformCDFs, ctx *BlockModeContext, req TransformTreeRequest, maxY TransformSize) (TransformSize, error) {
+func (s *DecodeState) readFixedTransformSize(cdfs *TransformCDFs, ctx *BlockModeContext, req *TransformTreeRequest, maxY TransformSize) (TransformSize, error) {
 	if req.Lossless || req.TransformMode == parser.TransformMode4x4Only || maxY == TransformSize4x4 {
 		return TransformSize4x4, nil
 	}
@@ -276,7 +278,7 @@ func (s *DecodeState) readFixedTransformSize(cdfs *TransformCDFs, ctx *BlockMode
 	})
 }
 
-func fixedTransformMarkContext(req TransformTreeRequest, blockDims BlockDimensions, tx TransformSize) (uint8, uint8, error) {
+func fixedTransformMarkContext(req *TransformTreeRequest, blockDims BlockDimensions, tx TransformSize) (uint8, uint8, error) {
 	if req.Inter && req.SkipTransform {
 		return blockDims.Log2W, blockDims.Log2H, nil
 	}
@@ -287,7 +289,7 @@ func fixedTransformMarkContext(req TransformTreeRequest, blockDims BlockDimensio
 	return txDims.Log2W, txDims.Log2H, nil
 }
 
-func shouldReadVariableTransformTree(req TransformTreeRequest, maxY TransformSize) bool {
+func shouldReadVariableTransformTree(req *TransformTreeRequest, maxY TransformSize) bool {
 	if !req.Inter || req.SkipTransform || req.Lossless ||
 		req.TransformMode != parser.TransformModeSwitchable ||
 		!blockSignalsTransformSize(req.Size) ||
@@ -336,7 +338,7 @@ func transformBlockAt(req TransformTreeRequest, x4 int, y4 int, size TransformSi
 	}, nil
 }
 
-func validateTransformTreeRequest(req TransformTreeRequest) (BlockDimensions, error) {
+func validateTransformTreeRequest(req *TransformTreeRequest) (BlockDimensions, error) {
 	dims, ok := req.Size.Dimensions()
 	if !ok || req.VisibleW4 == 0 || req.VisibleH4 == 0 ||
 		req.VisibleW4 > dims.W4 || req.VisibleH4 > dims.H4 ||

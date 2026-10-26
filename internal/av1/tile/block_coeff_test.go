@@ -111,10 +111,11 @@ func TestDecodeBlockCoefficientsControllerPathMatchesVisitorPath(t *testing.T) {
 	var controllerScratch BlockCoeffScratch
 	var controllerVisit BlockLoopVisit
 	var controllerBlocks []BlockCoeffBlock
-	controllerResult, err := decodeBlockCoefficientsWithCoeffControllerPtr(&controllerState, BlockCoeffCDFs{
+	var controllerResult BlockCoeffResult
+	err = decodeBlockCoefficientsWithCoeffControllerPtr(&controllerState, BlockCoeffCDFs{
 		Transform: &transformCDFs,
 		Coeff:     &coeffCDFs,
-	}, &controllerModeCtx, &controllerCoeffCtx, &controllerScratch, &req, &controllerVisit, blockCoeffTestController{blocks: &controllerBlocks})
+	}, &controllerModeCtx, &controllerCoeffCtx, &controllerScratch, &req, &controllerVisit, blockCoeffTestController{blocks: &controllerBlocks}, &controllerResult)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,24 +453,8 @@ type blockCoeffTestController struct {
 	blocks *[]BlockCoeffBlock
 }
 
-func (c blockCoeffTestController) BeforeBlockCoefficients(BlockLoopVisit) error {
-	return nil
-}
-
-func (c blockCoeffTestController) BeforeBlockCoefficientsPtr(*BlockLoopVisit) error {
-	return nil
-}
-
-func (c blockCoeffTestController) SelectBlockCoeffRequest(BlockLoopVisit) (BlockCoeffRequest, error) {
-	return BlockCoeffRequest{}, ErrInvalidDecodeState
-}
-
-func (c blockCoeffTestController) SelectBlockCoeffRequestPtr(*BlockLoopVisit) (*BlockCoeffRequest, error) {
+func (c blockCoeffTestController) BeginBlockCoefficients(*BlockLoopVisit) (*BlockCoeffRequest, error) {
 	return nil, ErrInvalidDecodeState
-}
-
-func (c blockCoeffTestController) VisitBlockCoeff(BlockLoopVisit, BlockCoeffBlock) error {
-	return ErrInvalidDecodeState
 }
 
 func (c blockCoeffTestController) VisitBlockCoeffPtr(_ *BlockLoopVisit, block *BlockCoeffBlock) error {

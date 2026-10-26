@@ -143,7 +143,7 @@ func (s *DecodeState) readTxTree(cdfs *TransformCDFs, ctx *BlockModeContext, mas
 // order forEachLumaTXBInWindow visits them). It returns errTXBWindowFull if
 // out is too small.
 func (r TransformTreeResult) collectLumaTXBsInWindow(req TransformTreeRequest, window coeffUnitWindow, out *[lumaTXBWindowCap]TransformBlock) (int, error) {
-	if _, err := validateTransformTreeRequest(req); err != nil {
+	if _, err := validateTransformTreeRequest(&req); err != nil {
 		return 0, err
 	}
 	if !r.Y.Valid() || !r.Variable {
