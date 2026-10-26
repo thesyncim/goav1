@@ -163,7 +163,7 @@ jobs:
       - name: loop filter AVX2 parity and live dispatch
         run: >-
           go test -count=1 -v
-          -run '^(TestAMD64LPFSB.*|TestFilterSB8.*)$'
+          -run '^(TestAMD64LPFSB.*|TestFilterSB8.*|TestFilterSB16.*)$'
           ./internal/av1/loopfilter
       - name: CDEF AVX2 parity and live dispatch
         run: >-
