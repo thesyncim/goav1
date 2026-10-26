@@ -83,6 +83,14 @@ func CalcEIH(sharpness int) FilterLUT {
 	return lut
 }
 
+// bmin is imin over two tx-context classes, written branch-free: in the edge
+// loops the comparison is data-dependent, and Go lowers min there to a
+// conditional branch where clang emits csel.
+func bmin(a, b uint8) int {
+	d := int(a) - int(b)
+	return int(b) + d&(d>>63)
+}
+
 func imin(a, b int) int {
 	if a < b {
 		return a
@@ -103,10 +111,10 @@ func imin(a, b int) int {
 // pointer arithmetic). yOff/xOff are the tree-position offsets used to index the
 // per-depth split masks.
 func decompTx(txa *[2][2][32][32]uint8, yBase, xBase int, from tile.TransformSize, depth, yOff, xOff int, txMasks [2]uint16) {
-	td, _ := from.Dimensions()
+	td := from.Dims()
 	isSplit := false
 	if from != tile.TransformSize4x4 && depth <= 1 {
-		isSplit = (txMasks[depth]>>(uint(yOff*4+xOff)))&1 != 0
+		isSplit = (txMasks[depth&1]>>uint(yOff*4+xOff))&1 != 0
 	}
 	if isSplit {
 		sub := td.Sub
@@ -130,87 +138,103 @@ func decompTx(txa *[2][2][32][32]uint8, yBase, xBase int, from tile.TransformSiz
 // maskEdgesInter ORs one 128x128 block's inter luma edges into masks and updates
 // the carried edge-context arrays a[] (above, per-column) and l[] (left, per-row).
 // Ported from dav1d mask_edges_inter (src/lf_mask.c:79).
+//
+// by4/bx4 are in 0..31 and w4/h4 never cross the 128x128 region, so the
+// position indices are masked to 31 and the shift counts to their widths; that
+// only lets the compiler drop the bounds checks and oversized-shift guards that
+// dav1d's C does not carry.
 func maskEdgesInter(masks *[2][32][3][2]uint16, by4, bx4, w4, h4, skip int, maxTx tile.TransformSize, txMasks [2]uint16, a, l []uint8, txa *[2][2][32][32]uint8) {
-	td, _ := maxTx.Dimensions()
+	td := maxTx.Dims()
+	tw4, th4 := int(td.W4), int(td.H4)
 	yOff := 0
-	for y := 0; y < h4; y += int(td.H4) {
+	for y := 0; y < h4; y += th4 {
 		xOff := 0
-		for x := 0; x < w4; x += int(td.W4) {
+		for x := 0; x < w4; x += tw4 {
 			decompTx(txa, y, x, maxTx, 0, yOff, xOff, txMasks)
 			xOff++
 		}
 		yOff++
 	}
+	a = a[:w4]
+	l = l[:h4]
+	txw := &txa[0][0]
+	txh := &txa[1][0]
 
 	// left block edge
-	mask := uint32(1) << uint(by4)
-	for y := 0; y < h4; y++ {
+	mask := uint32(1) << uint(by4&31)
+	col := &masks[0][bx4&31]
+	for y := range l {
 		sidx := 0
 		if mask >= 0x10000 {
 			sidx = 1
 		}
-		smask := uint16(mask >> uint(sidx<<4))
-		masks[0][bx4][imin(int(txa[0][0][y][0]), int(l[y]))][sidx] |= smask
+		smask := uint16(mask >> (uint(sidx<<4) & 31))
+		col[bmin(txw[y&31][0], l[y])][sidx] |= smask
 		mask <<= 1
 	}
 
 	// top block edge
-	mask = uint32(1) << uint(bx4)
-	for x := 0; x < w4; x++ {
+	mask = uint32(1) << uint(bx4&31)
+	row := &masks[1][by4&31]
+	for x := range a {
 		sidx := 0
 		if mask >= 0x10000 {
 			sidx = 1
 		}
-		smask := uint16(mask >> uint(sidx<<4))
-		masks[1][by4][imin(int(txa[1][0][0][x]), int(a[x]))][sidx] |= smask
+		smask := uint16(mask >> (uint(sidx<<4) & 31))
+		row[bmin(txh[0][x&31], a[x])][sidx] |= smask
 		mask <<= 1
 	}
 
 	if skip == 0 {
 		// inner (tx) left|right edges
-		mask = uint32(1) << uint(by4)
+		txstep := &txa[0][1]
+		mask = uint32(1) << uint(by4&31)
 		for y := 0; y < h4; y++ {
 			sidx := 0
 			if mask >= 0x10000 {
 				sidx = 1
 			}
-			smask := uint16(mask >> uint(sidx<<4))
-			ltx := int(txa[0][0][y][0])
-			step := int(txa[0][1][y][0])
+			smask := uint16(mask >> (uint(sidx<<4) & 31))
+			wrow := &txw[y&31]
+			srow := &txstep[y&31]
+			ltx := wrow[0]
+			step := int(srow[0])
 			for x := step; x < w4; x += step {
-				rtx := int(txa[0][0][y][x])
-				masks[0][bx4+x][imin(rtx, ltx)][sidx] |= smask
+				rtx := wrow[x&31]
+				masks[0][(bx4+x)&31][bmin(rtx, ltx)][sidx] |= smask
 				ltx = rtx
-				step = int(txa[0][1][y][x])
+				step = int(srow[x&31])
 			}
 			mask <<= 1
 		}
 		// inner (tx) top|bottom edges
-		mask = uint32(1) << uint(bx4)
+		txstep = &txa[1][1]
+		mask = uint32(1) << uint(bx4&31)
 		for x := 0; x < w4; x++ {
 			sidx := 0
 			if mask >= 0x10000 {
 				sidx = 1
 			}
-			smask := uint16(mask >> uint(sidx<<4))
-			ttx := int(txa[1][0][0][x])
-			step := int(txa[1][1][0][x])
+			smask := uint16(mask >> (uint(sidx<<4) & 31))
+			xi := x & 31
+			ttx := txh[0][xi]
+			step := int(txstep[0][xi])
 			for y := step; y < h4; y += step {
-				btx := int(txa[1][0][y][x])
-				masks[1][by4+y][imin(ttx, btx)][sidx] |= smask
+				btx := txh[y&31][xi]
+				masks[1][(by4+y)&31][bmin(ttx, btx)][sidx] |= smask
 				ttx = btx
-				step = int(txa[1][1][y][x])
+				step = int(txstep[y&31][xi])
 			}
 			mask <<= 1
 		}
 	}
 
-	for y := 0; y < h4; y++ {
-		l[y] = txa[0][0][y][w4-1]
+	wl := (w4 - 1) & 31
+	for y := range l {
+		l[y] = txw[y&31][wl]
 	}
-	for x := 0; x < w4; x++ {
-		a[x] = txa[1][0][h4-1][x]
-	}
+	copy(a, txh[(h4-1)&31][:])
 }
 
 // maskEdgesIntra ORs one 128x128 block's intra luma edges into masks and updates
@@ -289,85 +313,87 @@ func maskEdgesIntra(masks *[2][32][3][2]uint16, by4, bx4, w4, h4 int, tx tile.Tr
 // carried a[]/l[] context arrays. Coordinates and extents are chroma 4x4 units.
 // Ported from dav1d mask_edges_chroma (src/lf_mask.c:200).
 func maskEdgesChroma(masks *[2][32][2][2]uint16, cby4, cbx4, cw4, ch4, skipInter int, tx tile.TransformSize, a, l []uint8, ssHor, ssVer int) {
-	td, _ := tx.Dimensions()
-	twl4 := int(td.Log2W)
-	thl4 := int(td.Log2H)
-	twl4c := 0
-	if twl4 != 0 {
+	td := tx.Dims()
+	twl4c := uint8(0)
+	if td.Log2W != 0 {
 		twl4c = 1
 	}
-	thl4c := 0
-	if thl4 != 0 {
+	thl4c := uint8(0)
+	if td.Log2H != 0 {
 		thl4c = 1
 	}
-	vbits := 4 - ssVer
-	hbits := 4 - ssHor
-	vmask := 16 >> ssVer
-	hmask := 16 >> ssHor
-	vmax := uint32(1) << uint(vmask)
-	hmax := uint32(1) << uint(hmask)
+	vbits := uint(4-ssVer) & 7
+	hbits := uint(4-ssHor) & 7
+	vmask := uint(16>>ssVer) & 31
+	hmask := uint(16>>ssHor) & 31
+	vmax := uint32(1) << vmask
+	hmax := uint32(1) << hmask
+	a = a[:cw4]
+	l = l[:ch4]
 
 	// left block edge
-	mask := uint32(1) << uint(cby4)
-	for y := 0; y < ch4; y++ {
+	mask := uint32(1) << (uint(cby4) & 31)
+	col := &masks[0][cbx4&31]
+	for y := range l {
 		sidx := 0
 		if mask >= vmax {
 			sidx = 1
 		}
-		smask := uint16(mask >> uint(sidx<<uint(vbits)))
-		masks[0][cbx4][imin(twl4c, int(l[y]))][sidx] |= smask
+		smask := uint16(mask >> ((uint(sidx) << vbits) & 31))
+		col[min(twl4c, l[y])][sidx] |= smask
 		mask <<= 1
 	}
 
 	// top block edge
-	mask = uint32(1) << uint(cbx4)
-	for x := 0; x < cw4; x++ {
+	mask = uint32(1) << (uint(cbx4) & 31)
+	row := &masks[1][cby4&31]
+	for x := range a {
 		sidx := 0
 		if mask >= hmax {
 			sidx = 1
 		}
-		smask := uint16(mask >> uint(sidx<<uint(hbits)))
-		masks[1][cby4][imin(thl4c, int(a[x]))][sidx] |= smask
+		smask := uint16(mask >> ((uint(sidx) << hbits) & 31))
+		row[min(thl4c, a[x])][sidx] |= smask
 		mask <<= 1
 	}
 
 	if skipInter == 0 {
 		// inner (tx) left|right edges
 		hstep := int(td.W4)
-		t := uint64(1) << uint(cby4)
-		inner := uint32((t << uint(ch4)) - t)
-		inner1 := uint16(inner & ((1 << uint(vmask)) - 1))
-		inner2 := uint16(inner >> uint(vmask))
+		t := uint64(1) << (uint(cby4) & 31)
+		inner := uint32((t << (uint(ch4) & 63)) - t)
+		inner1 := uint16(inner & ((1 << vmask) - 1))
+		inner2 := uint16(inner >> vmask)
 		for x := hstep; x < cw4; x += hstep {
 			if inner1 != 0 {
-				masks[0][cbx4+x][twl4c][0] |= inner1
+				masks[0][(cbx4+x)&31][twl4c][0] |= inner1
 			}
 			if inner2 != 0 {
-				masks[0][cbx4+x][twl4c][1] |= inner2
+				masks[0][(cbx4+x)&31][twl4c][1] |= inner2
 			}
 		}
 
 		// inner (tx) top|bottom edges
 		vstep := int(td.H4)
-		t = uint64(1) << uint(cbx4)
-		inner = uint32((t << uint(cw4)) - t)
-		inner1 = uint16(inner & ((1 << uint(hmask)) - 1))
-		inner2 = uint16(inner >> uint(hmask))
+		t = uint64(1) << (uint(cbx4) & 31)
+		inner = uint32((t << (uint(cw4) & 63)) - t)
+		inner1 = uint16(inner & ((1 << hmask) - 1))
+		inner2 = uint16(inner >> hmask)
 		for y := vstep; y < ch4; y += vstep {
 			if inner1 != 0 {
-				masks[1][cby4+y][thl4c][0] |= inner1
+				masks[1][(cby4+y)&31][thl4c][0] |= inner1
 			}
 			if inner2 != 0 {
-				masks[1][cby4+y][thl4c][1] |= inner2
+				masks[1][(cby4+y)&31][thl4c][1] |= inner2
 			}
 		}
 	}
 
-	for x := 0; x < cw4; x++ {
-		a[x] = uint8(thl4c)
+	for x := range a {
+		a[x] = thl4c
 	}
-	for y := 0; y < ch4; y++ {
-		l[y] = uint8(twl4c)
+	for y := range l {
+		l[y] = twl4c
 	}
 }
 
@@ -375,52 +401,60 @@ func maskEdgesChroma(masks *[2][32][2][2]uint16, cby4, cbx4, cw4, ch4, skipInter
 // one transform get its clamped width/height classes and step, and the first
 // row its height step. As dav1d's case_set_upto16 and dav1d_memset_pow2
 // (src/ctx.h) do, the transform width selects one fixed-width replicated
-// store per row instead of a per-byte loop.
-func decompTxLeaf(txa *[2][2][32][32]uint8, yBase, xBase int, td tile.TransformDimensions) {
+// store per row instead of a per-byte loop. A leaf's xBase is a multiple of
+// its width inside the 32-cell region, so each case masks it to that
+// alignment, which proves every fixed-width row store in range.
+func decompTxLeaf(txa *[2][2][32][32]uint8, yBase, xBase int, td *tile.TransformDimensions) {
 	lw := uint64(min(td.Log2W, 2))
 	lh := uint64(min(td.Log2H, 2))
 	w, h := int(td.W4), int(td.H4)
 	ys := txa[0][0][yBase : yBase+h]
 	hs := txa[1][0][yBase : yBase+h]
 	steps := txa[0][1][yBase : yBase+h]
+	hstep := &txa[1][1][yBase&31]
 	switch td.Log2W {
 	case 0:
+		xb := xBase & 31
 		for y := range ys {
-			ys[y][xBase] = uint8(lw)
-			hs[y][xBase] = uint8(lh)
-			steps[y][xBase] = 1
+			ys[y][xb] = uint8(lw)
+			hs[y][xb] = uint8(lh)
+			steps[y][xb] = 1
 		}
-		txa[1][1][yBase][xBase] = uint8(h)
+		hstep[xb] = uint8(h)
 	case 1:
+		xb := xBase & 30
 		for y := range ys {
-			binary.LittleEndian.PutUint16(ys[y][xBase:], uint16(lw*0x0101))
-			binary.LittleEndian.PutUint16(hs[y][xBase:], uint16(lh*0x0101))
-			steps[y][xBase] = 2
+			binary.LittleEndian.PutUint16(ys[y][xb:xb+2], uint16(lw*0x0101))
+			binary.LittleEndian.PutUint16(hs[y][xb:xb+2], uint16(lh*0x0101))
+			steps[y][xb] = 2
 		}
-		binary.LittleEndian.PutUint16(txa[1][1][yBase][xBase:], uint16(h)*0x0101)
+		binary.LittleEndian.PutUint16(hstep[xb:xb+2], uint16(h)*0x0101)
 	case 2:
+		xb := xBase & 28
 		for y := range ys {
-			binary.LittleEndian.PutUint32(ys[y][xBase:], uint32(lw*0x01010101))
-			binary.LittleEndian.PutUint32(hs[y][xBase:], uint32(lh*0x01010101))
-			steps[y][xBase] = 4
+			binary.LittleEndian.PutUint32(ys[y][xb:xb+4], uint32(lw*0x01010101))
+			binary.LittleEndian.PutUint32(hs[y][xb:xb+4], uint32(lh*0x01010101))
+			steps[y][xb] = 4
 		}
-		binary.LittleEndian.PutUint32(txa[1][1][yBase][xBase:], uint32(h)*0x01010101)
+		binary.LittleEndian.PutUint32(hstep[xb:xb+4], uint32(h)*0x01010101)
 	case 3:
+		xb := xBase & 24
 		for y := range ys {
-			binary.LittleEndian.PutUint64(ys[y][xBase:], lw*0x0101010101010101)
-			binary.LittleEndian.PutUint64(hs[y][xBase:], lh*0x0101010101010101)
-			steps[y][xBase] = 8
+			binary.LittleEndian.PutUint64(ys[y][xb:xb+8], lw*0x0101010101010101)
+			binary.LittleEndian.PutUint64(hs[y][xb:xb+8], lh*0x0101010101010101)
+			steps[y][xb] = 8
 		}
-		binary.LittleEndian.PutUint64(txa[1][1][yBase][xBase:], uint64(h)*0x0101010101010101)
+		binary.LittleEndian.PutUint64(hstep[xb:xb+8], uint64(h)*0x0101010101010101)
 	default:
+		xb := xBase & 16
 		for y := range ys {
-			binary.LittleEndian.PutUint64(ys[y][xBase:], lw*0x0101010101010101)
-			binary.LittleEndian.PutUint64(ys[y][xBase+8:], lw*0x0101010101010101)
-			binary.LittleEndian.PutUint64(hs[y][xBase:], lh*0x0101010101010101)
-			binary.LittleEndian.PutUint64(hs[y][xBase+8:], lh*0x0101010101010101)
-			steps[y][xBase] = uint8(w)
+			binary.LittleEndian.PutUint64(ys[y][xb:xb+8], lw*0x0101010101010101)
+			binary.LittleEndian.PutUint64(ys[y][xb+8:xb+16], lw*0x0101010101010101)
+			binary.LittleEndian.PutUint64(hs[y][xb:xb+8], lh*0x0101010101010101)
+			binary.LittleEndian.PutUint64(hs[y][xb+8:xb+16], lh*0x0101010101010101)
+			steps[y][xb] = uint8(w)
 		}
-		binary.LittleEndian.PutUint64(txa[1][1][yBase][xBase:], uint64(h)*0x0101010101010101)
-		binary.LittleEndian.PutUint64(txa[1][1][yBase][xBase+8:], uint64(h)*0x0101010101010101)
+		binary.LittleEndian.PutUint64(hstep[xb:xb+8], uint64(h)*0x0101010101010101)
+		binary.LittleEndian.PutUint64(hstep[xb+8:xb+16], uint64(h)*0x0101010101010101)
 	}
 }

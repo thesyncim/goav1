@@ -48,7 +48,7 @@ func TestDecompTxLeafMatchesBytewise(t *testing.T) {
 					}
 				}
 				want = got
-				decompTxLeaf(&got, yBase, xBase, td)
+				decompTxLeaf(&got, yBase, xBase, &td)
 				decompTxLeafRef(&want, yBase, xBase, td)
 				if got != want {
 					t.Fatalf("tx %d at (%d,%d): leaf fill differs", tx, xBase, yBase)
