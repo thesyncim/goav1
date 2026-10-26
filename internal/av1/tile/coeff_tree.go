@@ -162,7 +162,7 @@ func (s *DecodeState) DecodeLumaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyC
 	if s == nil || cdfs == nil || ctx == nil || scratch == nil || visit == nil || !req.Class.Valid() {
 		return LumaCoeffStats{}, ErrInvalidDecodeState
 	}
-	if _, err := validateTransformTreeRequest(req.TreeRequest); err != nil {
+	if _, err := validateTransformTreeRequest(&req.TreeRequest); err != nil {
 		return LumaCoeffStats{}, err
 	}
 	if !req.Tree.Y.Valid() {
@@ -186,7 +186,7 @@ func (s *DecodeState) decodeLumaCoefficientsInWindow(cdfs *CoeffCDFs, ctx *Coeff
 	if visit == nil {
 		return stats, ErrInvalidDecodeState
 	}
-	if _, err := validateTransformTreeRequest(req.TreeRequest); err != nil {
+	if _, err := validateTransformTreeRequest(&req.TreeRequest); err != nil {
 		return stats, err
 	}
 	if !req.Tree.Y.Valid() {
@@ -350,7 +350,7 @@ func decodeLumaCoefficientsInWindowWithCoeffControllerPtr[T BlockLoopCoeffContro
 	if s == nil || cdfs == nil || ctx == nil || scratch == nil || blockScratch == nil || loopVisit == nil || !req.Class.Valid() {
 		return stats, ErrInvalidDecodeState
 	}
-	if _, err := validateTransformTreeRequest(req.TreeRequest); err != nil {
+	if _, err := validateTransformTreeRequest(&req.TreeRequest); err != nil {
 		return stats, err
 	}
 	if !req.Tree.Y.Valid() {
@@ -529,7 +529,7 @@ func (s *DecodeState) prepareChromaCoefficients(ctx *CoeffEntropyContext, req Ch
 	if s == nil || ctx == nil || req.Plane == 0 || req.Plane > 2 || !req.Class.Valid() {
 		return chromaCoeffPlanePrep{}, ErrInvalidDecodeState
 	}
-	if _, err := validateTransformTreeRequest(req.TreeRequest); err != nil {
+	if _, err := validateTransformTreeRequest(&req.TreeRequest); err != nil {
 		return chromaCoeffPlanePrep{}, err
 	}
 	if !req.Tree.HasUV || !req.Tree.UV.Valid() {
@@ -580,17 +580,17 @@ func (s *DecodeState) prepareChromaCoefficients(ctx *CoeffEntropyContext, req Ch
 // origin a single time from b and the subsampling: U and V share the same
 // plane block, origin and visible extent. tr has already been validated by
 // DecodeTransformTree. A skip block also gets its U and V context reset.
-func prepareChromaCoefBlock(ctx *CoeffEntropyContext, tr *TransformTreeRequest, tree TransformTreeResult) (chromaCoeffPlanePrep, error) {
+func prepareChromaCoefBlock(ctx *CoeffEntropyContext, tr *TransformTreeRequest, tree TransformTreeResult, prep *[2]chromaCoeffPlanePrep) error {
 	if ctx == nil || !tree.HasUV || !tree.UV.Valid() {
-		return chromaCoeffPlanePrep{}, ErrInvalidDecodeState
+		return ErrInvalidDecodeState
 	}
 	color := &tr.Color
 	if !hasChromaForBlock(tr.Size, int(tr.X4), int(tr.Y4), *color) {
-		return chromaCoeffPlanePrep{}, nil
+		return nil
 	}
 	planeBlock, err := PlaneBlockSize(tr.Size, *color, 1)
 	if err != nil {
-		return chromaCoeffPlanePrep{}, err
+		return err
 	}
 	ssX := int(boolToShift(color.SubsamplingX))
 	ssY := int(boolToShift(color.SubsamplingY))
@@ -603,25 +603,28 @@ func prepareChromaCoefBlock(ctx *CoeffEntropyContext, tr *TransformTreeRequest, 
 	uvDims, ok := tree.UV.Dimensions()
 	if !ok || visibleW4 <= 0 || visibleH4 <= 0 ||
 		x4+visibleW4 > MaxBlockModeSlots || y4+visibleH4 > MaxBlockModeSlots {
-		return chromaCoeffPlanePrep{}, ErrInvalidDecodeState
+		return ErrInvalidDecodeState
 	}
 	if tr.SkipTransform {
 		for plane := 1; plane <= 2; plane++ {
 			if err := ctx.ResetBlock(plane, planeBlock, x4, y4); err != nil {
-				return chromaCoeffPlanePrep{}, err
+				return err
 			}
 		}
-		return chromaCoeffPlanePrep{}, nil
+		return nil
 	}
-	return chromaCoeffPlanePrep{
-		HasChroma:  true,
-		PlaneBlock: planeBlock,
-		X4:         uint8(x4),
-		Y4:         uint8(y4),
-		VisibleW4:  uint8(visibleW4),
-		VisibleH4:  uint8(visibleH4),
-		UVDims:     uvDims,
-	}, nil
+	// Both planes share one geometry; it is written field by field into each,
+	// since a struct built in a temporary and block-copied is reloaded wide
+	// from the just-stored bytes.
+	for i := range prep {
+		p := &prep[i]
+		p.HasChroma = true
+		p.PlaneBlock = planeBlock
+		p.X4, p.Y4 = uint8(x4), uint8(y4)
+		p.VisibleW4, p.VisibleH4 = uint8(visibleW4), uint8(visibleH4)
+		p.UVDims = uvDims
+	}
+	return nil
 }
 
 func (s *DecodeState) DecodeChromaCoefficients(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, scratch *LumaCoeffTreeScratch, req ChromaCoeffTreeRequest, visit ChromaCoeffVisitor) (LumaCoeffStats, error) {

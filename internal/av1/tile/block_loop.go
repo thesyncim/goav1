@@ -299,15 +299,13 @@ type BlockLoopSuperblockVisitor func(BlockLoopSuperblockVisit) error
 type BlockLoopVisitor func(BlockLoopVisit) error
 type BlockLoopPointerVisitor func(*BlockLoopVisit) error
 
+// BlockLoopCoeffController is the block loop's reconstruction hook, dav1d's
+// decode_b to recon_b handoff: BeginBlockCoefficients runs once per block
+// before its coefficients and returns the block's coefficient request
+// (controller-owned storage, valid until the next call), and
+// VisitBlockCoeffPtr receives each decoded transform block.
 type BlockLoopCoeffController interface {
-	BeforeBlockCoefficients(BlockLoopVisit) error
-	SelectBlockCoeffRequest(BlockLoopVisit) (BlockCoeffRequest, error)
-	VisitBlockCoeff(BlockLoopVisit, BlockCoeffBlock) error
-	BeforeBlockCoefficientsPtr(*BlockLoopVisit) error
-	// SelectBlockCoeffRequestPtr returns controller-owned storage, valid
-	// until the next call; the block walk reads it through the pointer
-	// instead of copying the request twice per block.
-	SelectBlockCoeffRequestPtr(*BlockLoopVisit) (*BlockCoeffRequest, error)
+	BeginBlockCoefficients(*BlockLoopVisit) (*BlockCoeffRequest, error)
 	VisitBlockCoeffPtr(*BlockLoopVisit, *BlockCoeffBlock) error
 }
 
@@ -317,24 +315,8 @@ type BlockLoopCoeffVisitor func(BlockLoopVisit, BlockCoeffBlock) error
 
 type noBlockLoopCoeffController struct{}
 
-func (noBlockLoopCoeffController) BeforeBlockCoefficients(BlockLoopVisit) error {
-	return ErrInvalidDecodeState
-}
-
-func (noBlockLoopCoeffController) BeforeBlockCoefficientsPtr(*BlockLoopVisit) error {
-	return ErrInvalidDecodeState
-}
-
-func (noBlockLoopCoeffController) SelectBlockCoeffRequest(BlockLoopVisit) (BlockCoeffRequest, error) {
-	return BlockCoeffRequest{}, ErrInvalidDecodeState
-}
-
-func (noBlockLoopCoeffController) SelectBlockCoeffRequestPtr(*BlockLoopVisit) (*BlockCoeffRequest, error) {
+func (noBlockLoopCoeffController) BeginBlockCoefficients(*BlockLoopVisit) (*BlockCoeffRequest, error) {
 	return nil, ErrInvalidDecodeState
-}
-
-func (noBlockLoopCoeffController) VisitBlockCoeff(BlockLoopVisit, BlockCoeffBlock) error {
-	return ErrInvalidDecodeState
 }
 
 func (noBlockLoopCoeffController) VisitBlockCoeffPtr(*BlockLoopVisit, *BlockCoeffBlock) error {
@@ -1217,21 +1199,21 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 	}
 	if req.DecodeCoefficients {
 		if hasCoeffController {
-			if err := coeffController.BeforeBlockCoefficientsPtr(visit); err != nil {
-				return nil, fmt.Errorf("before coefficients: %w", err)
-			}
-			coeffReq, err := coeffController.SelectBlockCoeffRequestPtr(visit)
+			// dav1d's decode_b hands the block to the recon hooks once: the
+			// controller's per-block work and its coefficient request are one
+			// call.
+			coeffReq, err := coeffController.BeginBlockCoefficients(visit)
 			if err != nil {
-				return nil, fmt.Errorf("select coeff request: %w", err)
+				return nil, fmt.Errorf("begin coefficients: %w", err)
 			}
-			coefficients, err := decodeBlockCoefficientsWithCoeffControllerPtr(s, BlockCoeffCDFs{
+			err = decodeBlockCoefficientsWithCoeffControllerPtr(s, BlockCoeffCDFs{
 				Transform: cdfs.Transform,
 				Coeff:     cdfs.Coeff,
-			}, ctx, &scratch.CoeffCtx, &scratch.Coeff, coeffReq, visit, coeffController)
+			}, ctx, &scratch.CoeffCtx, &scratch.Coeff, coeffReq, visit, coeffController, &visit.Coefficients)
 			if err != nil {
 				return nil, fmt.Errorf("decode coefficients: %w", err)
 			}
-			visit.Coefficients = coefficients
+			// The coefficients were decoded in place into visit.Coefficients.
 			visit.CoefficientsValid = true
 		} else {
 			if req.BeforeCoefficients != nil {
@@ -1239,7 +1221,7 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 					return nil, fmt.Errorf("before coefficients callback: %w", err)
 				}
 			}
-			if err := decodeBlockLoopVisitCoefficients(s, cdfs, scratch, ctx, req, coeffController, hasCoeffController, visit); err != nil {
+			if err := decodeBlockLoopVisitCoefficients(s, cdfs, scratch, ctx, req, visit); err != nil {
 				return nil, err
 			}
 		}
@@ -1878,10 +1860,7 @@ func defaultSegmentData() parser.SegmentData {
 	return parser.SegmentData{RefFrame: -1}
 }
 
-func blockLoopCoeffRequest[T BlockLoopCoeffController](req *BlockLoopRequest, coeffController T, hasCoeffController bool, visit BlockLoopVisit) (BlockCoeffRequest, error) {
-	if hasCoeffController {
-		return coeffController.SelectBlockCoeffRequest(visit)
-	}
+func blockLoopCoeffRequest(req *BlockLoopRequest, visit BlockLoopVisit) (BlockCoeffRequest, error) {
 	if req.CoeffRequest != nil {
 		return req.CoeffRequest(visit)
 	}
@@ -2291,8 +2270,8 @@ func warpSampleDiagonalCorner(block BlockVisit, ctx *BlockModeContext, ref Refer
 // captures do not move that function's locals to the heap on every block.
 //
 //go:noinline
-func decodeBlockLoopVisitCoefficients[T BlockLoopCoeffController](s *DecodeState, cdfs *BlockLoopCDFs, scratch *BlockLoopScratch, ctx *BlockModeContext, req *BlockLoopRequest, coeffController T, hasCoeffController bool, visit *BlockLoopVisit) error {
-	coeffReq, err := blockLoopCoeffRequest(req, coeffController, hasCoeffController, *visit)
+func decodeBlockLoopVisitCoefficients(s *DecodeState, cdfs *BlockLoopCDFs, scratch *BlockLoopScratch, ctx *BlockModeContext, req *BlockLoopRequest, visit *BlockLoopVisit) error {
+	coeffReq, err := blockLoopCoeffRequest(req, *visit)
 	if err != nil {
 		return fmt.Errorf("select coeff request: %w", err)
 	}

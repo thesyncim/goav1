@@ -19,7 +19,7 @@ func WriteTransformTree(w *entropy.Writer, cdfs *TransformCDFs, ctx *BlockModeCo
 	if w == nil || cdfs == nil || ctx == nil {
 		return TransformTreeResult{}, ErrInvalidDecodeState
 	}
-	blockDims, err := validateTransformTreeRequest(req)
+	blockDims, err := validateTransformTreeRequest(&req)
 	if err != nil {
 		return TransformTreeResult{}, err
 	}
@@ -40,7 +40,7 @@ func WriteTransformTree(w *entropy.Writer, cdfs *TransformCDFs, ctx *BlockModeCo
 		result.HasUV = true
 	}
 
-	if req.Inter && shouldReadVariableTransformTree(req, maxY) {
+	if req.Inter && shouldReadVariableTransformTree(&req, maxY) {
 		result.Variable = true
 		walker := transformTreeWriter{
 			w:    w,
@@ -72,7 +72,7 @@ func WriteTransformTree(w *entropy.Writer, cdfs *TransformCDFs, ctx *BlockModeCo
 		return TransformTreeResult{}, err
 	}
 	result.Y = tx
-	markLog2W, markLog2H, err := fixedTransformMarkContext(req, blockDims, tx)
+	markLog2W, markLog2H, err := fixedTransformMarkContext(&req, blockDims, tx)
 	if err != nil {
 		return TransformTreeResult{}, err
 	}

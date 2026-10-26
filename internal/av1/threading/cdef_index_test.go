@@ -175,7 +175,7 @@ func TestFrameWorkTileResidualControllerRecordsCDEFIndexMap(t *testing.T) {
 		Block:  tile.BlockVisit{MICol: 0, MIRow: 0, MIColEnd: 16, MIRowEnd: 16},
 		Prefix: tile.BlockModeResult{CDEFIndex: 2},
 	}
-	if err := controller.BeforeBlockCoefficients(first); err != nil {
+	if err := controller.BeforeBlockCoefficientsPtr(&first); err != nil {
 		t.Fatal(err)
 	}
 	if !cdefMap.Read[0] || cdefMap.Index[0] != 2 || stats.CoefficientBlocks != 1 {
@@ -186,7 +186,7 @@ func TestFrameWorkTileResidualControllerRecordsCDEFIndexMap(t *testing.T) {
 		Block:  tile.BlockVisit{MICol: 16, MIRow: 0, MIColEnd: 32, MIRowEnd: 16},
 		Prefix: tile.BlockModeResult{SkipTransform: true, CDEFIndex: 3},
 	}
-	if err := controller.BeforeBlockCoefficients(skip); err != nil {
+	if err := controller.BeforeBlockCoefficientsPtr(&skip); err != nil {
 		t.Fatal(err)
 	}
 	if cdefMap.Read[1] || cdefMap.Index[1] != 0 || stats.SkippedBlocks != 1 {
@@ -195,7 +195,7 @@ func TestFrameWorkTileResidualControllerRecordsCDEFIndexMap(t *testing.T) {
 
 	second := skip
 	second.Prefix.SkipTransform = false
-	if err := controller.BeforeBlockCoefficients(second); err != nil {
+	if err := controller.BeforeBlockCoefficientsPtr(&second); err != nil {
 		t.Fatal(err)
 	}
 	if !cdefMap.Read[1] || cdefMap.Index[1] != 3 || stats.CoefficientBlocks != 2 {
