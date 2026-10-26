@@ -196,16 +196,22 @@ func mc16Dot8(a0, a1, a2, a3, a4, a5, a6, a7, k0, k1, k2, k3 archsimd.Int16x16) 
 }
 
 // mc16HDot loads the eight shifted windows of the sixteen (or, with n8, the
-// eight) outputs at p and returns their tap sums.
+// eight) outputs at p and returns their tap sums. The loads are spelled out
+// (not through mc16Ld16) so none is left as an outlined call.
 //
 //go:nocheckptr
 func mc16HDot(p unsafe.Pointer, n8 bool, k0, k1, k2, k3 archsimd.Int16x16) (lo, hi archsimd.Int32x8) {
 	if n8 {
-		return mc16Dot8(mc16Ld8(p), mc16Ld8(unsafe.Add(p, 2)), mc16Ld8(unsafe.Add(p, 4)), mc16Ld8(unsafe.Add(p, 6)),
-			mc16Ld8(unsafe.Add(p, 8)), mc16Ld8(unsafe.Add(p, 10)), mc16Ld8(unsafe.Add(p, 12)), mc16Ld8(unsafe.Add(p, 14)), k0, k1, k2, k3)
+		var z archsimd.Int16x16
+		l := func(o uintptr) archsimd.Int16x16 {
+			return z.SetLo(archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(p, o))))
+		}
+		return mc16Dot8(l(0), l(2), l(4), l(6), l(8), l(10), l(12), l(14), k0, k1, k2, k3)
 	}
-	return mc16Dot8(mc16Ld16(p), mc16Ld16(unsafe.Add(p, 2)), mc16Ld16(unsafe.Add(p, 4)), mc16Ld16(unsafe.Add(p, 6)),
-		mc16Ld16(unsafe.Add(p, 8)), mc16Ld16(unsafe.Add(p, 10)), mc16Ld16(unsafe.Add(p, 12)), mc16Ld16(unsafe.Add(p, 14)), k0, k1, k2, k3)
+	return mc16Dot8(archsimd.LoadInt16x16Array((*[16]int16)(p)), archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Add(p, 2))),
+		archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Add(p, 4))), archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Add(p, 6))),
+		archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Add(p, 8))), archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Add(p, 10))),
+		archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Add(p, 12))), archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Add(p, 14))), k0, k1, k2, k3)
 }
 
 // mc16Out finishes sixteen (n = 16), eight or four sums in the in-lane order
@@ -285,9 +291,11 @@ func mc16V(src unsafe.Pointer, ss, w, h int, pairs *[4]int32, put bool, rc int, 
 	maxV := archsimd.BroadcastInt16x16(maxPix)
 	for c := 0; c < w; c += 16 {
 		n := min(16, w-c)
-		ld := mc16Ld16
-		if n < 16 {
-			ld = mc16Ld8
+		ld := func(p unsafe.Pointer) archsimd.Int16x16 {
+			if n == 16 {
+				return archsimd.LoadInt16x16Array((*[16]int16)(p))
+			}
+			return archsimd.Int16x16{}.SetLo(archsimd.LoadInt16x8Array((*[8]int16)(p)))
 		}
 		s := unsafe.Add(src, 2*c)
 		d := unsafe.Add(dst, 2*c)
