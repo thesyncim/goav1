@@ -42,26 +42,31 @@ func pixelStatsRows16Arch(src []byte, srcStride int, ref []byte, refStride int, 
 	for r0 := 0; r0 < h; r0 += groupRows {
 		var sum16 archsimd.Int16x16
 		n := min(groupRows, h-r0)
-		s := unsafe.Add(sp, r0*srcStride)
-		p := unsafe.Add(rp, r0*refStride)
+		// Row offsets step as integers: a pointer stepped past the last row
+		// would point one past the buffer, which the GC rejects if it is
+		// still live at a safepoint.
+		so, po := r0*srcStride, r0*refStride
 		switch w {
 		case 16:
 			for range n {
+				s, p := unsafe.Add(sp, so), unsafe.Add(rp, po)
 				d := pixelDiff16(s, p)
 				sum16 = sum16.Add(d)
 				sse = sse.Add(d.DotProductPairs(d))
-				s, p = unsafe.Add(s, srcStride), unsafe.Add(p, refStride)
+				so, po = so+srcStride, po+refStride
 			}
 		case 32:
 			for range n {
+				s, p := unsafe.Add(sp, so), unsafe.Add(rp, po)
 				d0 := pixelDiff16(s, p)
 				d1 := pixelDiff16(unsafe.Add(s, 16), unsafe.Add(p, 16))
 				sum16 = sum16.Add(d0).Add(d1)
 				sse = sse.Add(d0.DotProductPairs(d0)).Add(d1.DotProductPairs(d1))
-				s, p = unsafe.Add(s, srcStride), unsafe.Add(p, refStride)
+				so, po = so+srcStride, po+refStride
 			}
 		case 64:
 			for range n {
+				s, p := unsafe.Add(sp, so), unsafe.Add(rp, po)
 				d0 := pixelDiff16(s, p)
 				d1 := pixelDiff16(unsafe.Add(s, 16), unsafe.Add(p, 16))
 				d2 := pixelDiff16(unsafe.Add(s, 32), unsafe.Add(p, 32))
@@ -69,16 +74,17 @@ func pixelStatsRows16Arch(src []byte, srcStride int, ref []byte, refStride int, 
 				sum16 = sum16.Add(d0).Add(d1).Add(d2).Add(d3)
 				sse = sse.Add(d0.DotProductPairs(d0)).Add(d1.DotProductPairs(d1)).
 					Add(d2.DotProductPairs(d2)).Add(d3.DotProductPairs(d3))
-				s, p = unsafe.Add(s, srcStride), unsafe.Add(p, refStride)
+				so, po = so+srcStride, po+refStride
 			}
 		default:
 			for range n {
+				s, p := unsafe.Add(sp, so), unsafe.Add(rp, po)
 				for c := 0; c < w; c += 16 {
 					d := pixelDiff16(unsafe.Add(s, c), unsafe.Add(p, c))
 					sum16 = sum16.Add(d)
 					sse = sse.Add(d.DotProductPairs(d))
 				}
-				s, p = unsafe.Add(s, srcStride), unsafe.Add(p, refStride)
+				so, po = so+srcStride, po+refStride
 			}
 		}
 		sum32 = sum32.Add(sum16.GetLo().ExtendToInt32()).Add(sum16.GetHi().ExtendToInt32())
