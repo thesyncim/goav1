@@ -67,7 +67,9 @@ func wienerHorizontalSIMDKernel(src []uint16, srcStride int, srcOrigin int, widt
 	f2 := archsimd.BroadcastInt32x8(int32(filter[2]))
 	// The center tap absorbs the s3<<WienerFilterBits center reapplication.
 	f3 := archsimd.BroadcastInt32x8(int32(filter[3]) + (1 << WienerFilterBits))
-	shift := uint64(round0)
+	// A variable vpsrad count is rematerialized in the loop with a
+	// legacy-SSE movq; vpsravd takes a hoisted count vector instead.
+	shift := archsimd.BroadcastUint32x8(uint32(round0))
 	rows := height + 2*WienerHalfwin
 	for row := 0; row < rows; row++ {
 		srow := src[srcOrigin+(row-WienerHalfwin)*srcStride-WienerHalfwin:]
@@ -82,7 +84,7 @@ func wienerHorizontalSIMDKernel(src []uint16, srcStride int, srcOrigin int, widt
 			s6 := archsimd.LoadUint16x8(srow[col+6:]).ExtendToUint32().AsInt32x8()
 			sum := seedV.Add(s0.Add(s6).Mul(f0)).Add(s1.Add(s5).Mul(f1)).
 				Add(s2.Add(s4).Mul(f2)).Add(s3.Mul(f3))
-			out := sum.ShiftAllRight(shift).Max(zero).Min(maxV)
+			out := sum.ShiftRight(shift).Max(zero).Min(maxV)
 			packClampedInt32x8ToUint16(out).Store(dstRow[col:])
 		}
 	}

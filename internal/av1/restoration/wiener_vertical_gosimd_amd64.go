@@ -39,7 +39,8 @@ func wienerVerticalSIMD(temp []uint16, tempStride int, dst []uint16, dstStride i
 	f4 := archsimd.BroadcastInt32x8(int32(filter[4]))
 	f5 := archsimd.BroadcastInt32x8(int32(filter[5]))
 	f6 := archsimd.BroadcastInt32x8(int32(filter[6]))
-	shift := uint64(round1)
+	// vpsravd with a hoisted count vector (see wienerHorizontalSIMDKernel).
+	shift := archsimd.BroadcastUint32x8(uint32(round1))
 	for row := 0; row < height; row++ {
 		dstRow := dst[row*dstStride : row*dstStride+width]
 		for col := 0; col < width; col += 8 {
@@ -52,7 +53,7 @@ func wienerVerticalSIMD(temp []uint16, tempStride int, dst []uint16, dstStride i
 			r6 := archsimd.LoadUint16x8(temp[(row+6)*tempStride+col:]).ExtendToUint32().AsInt32x8()
 			sum := seedV.Add(r0.Mul(f0)).Add(r1.Mul(f1)).Add(r2.Mul(f2)).Add(r3.Mul(f3)).
 				Add(r4.Mul(f4)).Add(r5.Mul(f5)).Add(r6.Mul(f6))
-			out := sum.ShiftAllRight(shift).Max(zero).Min(maxV)
+			out := sum.ShiftRight(shift).Max(zero).Min(maxV)
 			packClampedInt32x8ToUint16(out).Store(dstRow[col:])
 		}
 	}

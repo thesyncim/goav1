@@ -30,6 +30,7 @@ func boxsumSIMD(src []int32, srcOrigin int, width int, height int, srcStride int
 	interiorCount := interiorEnd - interiorStart + 1
 	if width <= 0 || height <= 0 || radius < 0 || interiorCount < sgrBlendLanes {
 		boxsum(src, srcOrigin, width, height, srcStride, radius, squared, dst, dstStride)
+		archsimd.ClearAVXUpperBits()
 		return
 	}
 	for row := 0; row < height; row++ {
@@ -60,6 +61,7 @@ func boxsumSIMD(src []int32, srcOrigin int, width int, height int, srcStride int
 			dstRow[col] = boxsumCell(src, srcOrigin, width, srcStride, radius, squared, col, y0, y1)
 		}
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 // sgrBlendRowSIMD computes one blended self-guided output row for cols columns (a
@@ -73,12 +75,16 @@ func sgrBlendRowSIMD(dst []int32, dgd []int32, aPrev []int32, aCur []int32, aNex
 		wv[i] = archsimd.BroadcastInt32x8(w[i])
 	}
 	biasV := archsimd.BroadcastInt32x8(int32(1) << (shift - 1))
+	// vpsravd with a hoisted count: a variable vpsrad count is rematerialized
+	// in the loop with a legacy-SSE movq, which stalls on dirty upper state.
+	shiftV := archsimd.BroadcastUint32x8(uint32(shift))
 	for c := 0; c < cols; c += sgrBlendLanes {
 		a := sgrStencil8(aPrev, aCur, aNext, c, &wv)
 		b := sgrStencil8(bPrev, bCur, bNext, c, &wv)
-		r := a.Mul(loadI32x8(dgd, c)).Add(b).Add(biasV).ShiftAllRight(uint64(shift))
+		r := a.Mul(loadI32x8(dgd, c)).Add(b).Add(biasV).ShiftRight(shiftV)
 		r.Store(dst[c:])
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 // sgrStencil8 evaluates the nine-tap weighted 3x3 stencil for eight consecutive
@@ -141,6 +147,7 @@ func sgrWeightedRowU8SIMD(dst []uint8, src []uint8, f0 []int32, f1 []int32, xq0 
 	if col < width {
 		sgrWeightedRowU8(dst[col:], src[col:], f0[col:], f1[col:], xq0, xq1)
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 // sgrWeightedU8Project8 projects eight samples (zero-extended to 32-bit lanes in s)
