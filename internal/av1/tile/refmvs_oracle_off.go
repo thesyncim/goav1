@@ -14,10 +14,10 @@ const (
 
 func refmvsPoison([]refmvsBlock) {}
 
-func refmvsOracleCompare(*BlockModeContext, *refmvsTile, *refmvsResult, *BlockLoopRequest, BlockVisit, InterReferencesResult, [2]motion.Vector) {
+func refmvsOracleCompare(*BlockModeContext, *refmvsTile, *refmvsResult, *BlockLoopRequest, *BlockVisit, InterReferencesResult, [2]motion.Vector) {
 }
 
-func refmvsOracleTopHasRight(uint8, BlockVisit, bool) {}
+func refmvsOracleTopHasRight(uint8, *BlockVisit, bool) {}
 
 func refmvsOracleTmvs(*refmvsTile, int32, int32, int32, int32) {}
 

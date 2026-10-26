@@ -24,9 +24,9 @@ func refmvsPoison(buf []refmvsBlock) {
 	}
 }
 
-func refmvsOracleCompare(ctx *BlockModeContext, rt *refmvsTile, found *refmvsResult, req *BlockLoopRequest, block BlockVisit, refs InterReferencesResult, globalMVs [2]motion.Vector) {
+func refmvsOracleCompare(ctx *BlockModeContext, rt *refmvsTile, found *refmvsResult, req *BlockLoopRequest, block *BlockVisit, refs InterReferencesResult, globalMVs [2]motion.Vector) {
 	types := blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes)
-	stackReq := legacyReferenceMVStackRequest(*req, block, refs, globalMVs, types)
+	stackReq := legacyReferenceMVStackRequest(*req, *block, refs, globalMVs, types)
 	if stackReq.TemporalMVs == nil && rt.frame.projectTmvs {
 		// Deferred projection: the legacy stack reads the oracle's own
 		// whole-frame field.
@@ -45,7 +45,7 @@ func refmvsOracleCompare(ctx *BlockModeContext, rt *refmvsTile, found *refmvsRes
 		}
 		by4, bx4 := int32(block.MIRow), int32(block.MICol)
 		base := (by4 & 31) + 5
-		msg += fmt.Sprintf("\n topHasRight=%v level=%d partition=%d", blockHasTopRight(req.SBSizeMIB, block), block.Level, block.Partition)
+		msg += fmt.Sprintf("\n topHasRight=%v level=%d partition=%d", blockHasTopRight(req.SBSizeMIB, *block), block.Level, block.Partition)
 		for dy := int32(-1); dy <= 1; dy++ {
 			if rt.rows[base+dy] < 0 {
 				continue
@@ -87,14 +87,14 @@ func refmvsOracleCompare(ctx *BlockModeContext, rt *refmvsTile, found *refmvsRes
 	}
 }
 
-func refmvsOracleTopHasRight(sbSizeMIB uint8, block BlockVisit, has bool) {
+func refmvsOracleTopHasRight(sbSizeMIB uint8, block *BlockVisit, has bool) {
 	// Blocks wider or taller than 64 never use the flag (refmvs_find and
 	// find_matching_ref gate on size first) and blockHasTopRight rejects them.
 	dims := blockDimensions[block.Size]
 	if max(dims.W4, dims.H4) > 16 {
 		return
 	}
-	if want := legacyRefmvsTopHasRight(sbSizeMIB, block); want != has {
+	if want := legacyRefmvsTopHasRight(sbSizeMIB, *block); want != has {
 		panic(fmt.Sprintf("refmvs oracle: top-has-right edge=%#x want %v at mi_row=%d mi_col=%d size=%d level=%d partition=%d",
 			block.Edge, want, block.MIRow, block.MICol, block.Size, block.Level, block.Partition))
 	}

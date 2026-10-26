@@ -5056,7 +5056,7 @@ func TestPublicDecodeAndReconstructDecoderFrameWorkJobResiduals(t *testing.T) {
 		stats.TXBs != 1 || stats.Residuals != 1 || stats.TXBs != stats.NonZero+stats.AllZero {
 		t.Fatalf("residual stats=%+v", stats)
 	}
-	if stats.Loop.CoefficientBlocks != 1 || stats.Loop.CoefficientTXBs != stats.TXBs {
+	if stats.Loop.CoefficientBlocks != 1 {
 		t.Fatalf("loop coefficient stats=%+v residual stats=%+v", stats.Loop, stats)
 	}
 }
@@ -5141,8 +5141,7 @@ func TestPublicDecodeAndRetainDecoderFrameWorkBatchResiduals(t *testing.T) {
 		t.Fatalf("stats=%+v visits=%d", stats, visits)
 	}
 	if stats.CoefficientBlocks != 2 || stats.Residuals != 2 ||
-		stats.TXBs != 2 || stats.TXBs != stats.NonZero+stats.AllZero ||
-		stats.Loop.CoefficientTXBs != stats.TXBs {
+		stats.TXBs != 2 || stats.TXBs != stats.NonZero+stats.AllZero {
 		t.Fatalf("residual stats=%+v", stats)
 	}
 	if !retainedValid {

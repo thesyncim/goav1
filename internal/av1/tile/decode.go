@@ -112,7 +112,12 @@ func (s *DecodeState) ReadBlockDeltas(params parser.DeltaParams, block BlockDelt
 	if !read {
 		return nil
 	}
+	return s.readBlockDeltas(&params, &cdfs, block.Monochrome)
+}
 
+// readBlockDeltas reads one block's delta_qindex and delta_lf symbols once the
+// caller has decided they are coded (dav1d decode_b's delta_q block).
+func (s *DecodeState) readBlockDeltas(params *parser.DeltaParams, cdfs *DeltaCDFs, monochrome bool) error {
 	deltaQ, err := s.Reader.ReadSignedDelta(cdfs.Q, entropy.DeltaSmall)
 	if err != nil {
 		return err
@@ -124,7 +129,7 @@ func (s *DecodeState) ReadBlockDeltas(params parser.DeltaParams, block BlockDelt
 	}
 	if params.DeltaLFMulti {
 		count := FrameLoopFilterCount
-		if block.Monochrome {
+		if monochrome {
 			count = FrameLoopFilterCount - 2
 		}
 		for i := 0; i < count; i++ {

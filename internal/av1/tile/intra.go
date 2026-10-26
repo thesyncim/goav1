@@ -881,6 +881,48 @@ func (s *DecodeState) ReadIntraFlag(cdfs *IntraModeCDFs, ctx *BlockModeContext, 
 
 // ReadIntraFlagResult decodes the block intra/inter entry flag and preserves
 // the intrabc branch used by key/intra-only frames.
+// readIntraFlag is ReadIntraFlagResult for the block loop, reading the block
+// state in place (dav1d decode_b's intra flag) instead of a request copy.
+func (s *DecodeState) readIntraFlag(cdfs *IntraModeCDFs, ctx *BlockModeContext, req *BlockLoopRequest, block *BlockVisit, skipMode bool, segment *parser.SegmentData) (IntraFlagResult, error) {
+	if skipMode {
+		return IntraFlagResult{Intra: false}, nil
+	}
+	if frameTypeIsInterOrSwitch(req.FrameType) {
+		if req.Segmentation.Enabled && (segment.RefFrame >= 0 || segment.GlobalMV) {
+			return IntraFlagResult{Intra: segment.RefFrame == 0 && !segment.GlobalMV}, nil
+		}
+		context, err := ctx.IntraContext(int(block.X4), int(block.Y4), block.HaveTop, block.HaveLeft)
+		if err != nil {
+			return IntraFlagResult{}, err
+		}
+		cdf, err := cdfs.IntraCDF(context)
+		if err != nil {
+			return IntraFlagResult{}, err
+		}
+		isInter, err := s.Reader.ReadCDF(cdf)
+		if err != nil {
+			return IntraFlagResult{}, err
+		}
+		return IntraFlagResult{Intra: isInter == 0}, nil
+	}
+	if req.AllowIntrabc {
+		cdf, err := cdfs.IntrabcCDF()
+		if err != nil {
+			return IntraFlagResult{}, err
+		}
+		intrabc, err := s.Reader.ReadCDF(cdf)
+		if err != nil {
+			return IntraFlagResult{}, err
+		}
+		return IntraFlagResult{
+			Intra:        intrabc == 0,
+			Intrabc:      intrabc != 0,
+			IntrabcValid: true,
+		}, nil
+	}
+	return IntraFlagResult{Intra: true}, nil
+}
+
 func (s *DecodeState) ReadIntraFlagResult(cdfs *IntraModeCDFs, ctx *BlockModeContext, req IntraFlagRequest) (IntraFlagResult, error) {
 	if s == nil {
 		return IntraFlagResult{}, ErrInvalidDecodeState

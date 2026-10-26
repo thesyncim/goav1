@@ -85,6 +85,37 @@ func walkBlocks(ctx *PartitionContext, req BlockWalkRequest, read partitionReadF
 		read:  read,
 		visit: visit,
 	}
+	return w.run(miColStart, miRowStart, miColEnd, miRowEnd, rootSize)
+}
+
+// walkBlocksDecode is the decoder's partition walk, dav1d's decode_sb: the
+// partition symbols are read straight from s, and every leaf is written in
+// place at leaf before visit runs. visit takes no argument so that passing the
+// leaf through an unknown function value does not move the walk to the heap.
+func walkBlocksDecode(s *DecodeState, cdfs *PartitionCDFs, ctx *PartitionContext, req BlockWalkRequest, leaf *BlockVisit, visit func() error) (BlockWalkStats, error) {
+	if s == nil || cdfs == nil || ctx == nil || leaf == nil || visit == nil || !req.Root.Valid() ||
+		req.MIColEnd <= req.MIColStart || req.MIRowEnd <= req.MIRowStart {
+		return BlockWalkStats{}, ErrInvalidDecodeState
+	}
+	rootSize := uint32(req.Root.Size4x4())
+	miColStart := uint32(req.MIColStart)
+	miRowStart := uint32(req.MIRowStart)
+	if rootSize == 0 || miColStart%rootSize != 0 || miRowStart%rootSize != 0 {
+		return BlockWalkStats{}, ErrInvalidDecodeState
+	}
+	w := partitionWalker{
+		ctx:          ctx,
+		req:          req,
+		dec:          s,
+		partCDFs:     cdfs,
+		leaf:         leaf,
+		visitLeafPtr: visit,
+	}
+	return w.run(miColStart, miRowStart, uint32(req.MIColEnd), uint32(req.MIRowEnd), rootSize)
+}
+
+func (w *partitionWalker) run(miColStart, miRowStart, miColEnd, miRowEnd, rootSize uint32) (BlockWalkStats, error) {
+	req := &w.req
 	for miRow := miRowStart; miRow < miRowEnd; miRow += rootSize {
 		for miCol := miColStart; miCol < miColEnd; miCol += rootSize {
 			if err := w.walkNode(req.Root, intraEdgeRoot(req.Root), miCol, miRow, miCol, miRow); err != nil {
@@ -100,6 +131,15 @@ type partitionWalker struct {
 	req   BlockWalkRequest
 	read  partitionReadFunc
 	visit BlockVisitor
+
+	// The decoder's walk (dav1d decode_sb) reads partition symbols directly
+	// from dec/partCDFs and fills each leaf in place at leaf, handing it to
+	// visitLeafPtr (which reads it there) instead of building and copying a
+	// BlockVisit.
+	dec          *DecodeState
+	partCDFs     *PartitionCDFs
+	leaf         *BlockVisit
+	visitLeafPtr func() error
 
 	stats BlockWalkStats
 }
@@ -121,7 +161,7 @@ func (w *partitionWalker) walkNode(level BlockLevel, node uint16, rootCol uint32
 	if err != nil {
 		return err
 	}
-	partition, err := w.read(level, context, miCol, miRow, haveRight, haveBottom)
+	partition, err := w.readPartition(level, context, miCol, miRow, haveRight, haveBottom)
 	w.stats.PartitionReads++
 	if err != nil {
 		return err
@@ -158,6 +198,15 @@ func (w *partitionWalker) walkNode(level BlockLevel, node uint16, rootCol uint32
 		return err
 	}
 	return w.ctx.Mark(level, partition, xb8, yb8)
+}
+
+// readPartition reads one partition symbol: directly from the decoder state on
+// the decoder's walk, through the caller's reader otherwise.
+func (w *partitionWalker) readPartition(level BlockLevel, context int, miCol uint32, miRow uint32, haveRight bool, haveBottom bool) (Partition, error) {
+	if w.partCDFs != nil {
+		return w.dec.ReadPartition(w.partCDFs, level, context, haveRight, haveBottom)
+	}
+	return w.read(level, context, miCol, miRow, haveRight, haveBottom)
 }
 
 func (w *partitionWalker) walkPartitionLeaves(level BlockLevel, partition Partition, node *intraEdgeNode, rootCol uint32, rootRow uint32, miCol uint32, miRow uint32, haveRight bool, haveBottom bool) error {
@@ -328,6 +377,23 @@ func (w *partitionWalker) visitLeaf(level BlockLevel, partition Partition, size 
 	x4 := uint8(miCol - rootCol)
 	y4 := uint8(miRow - rootRow)
 	w.stats.Blocks++
+	if b := w.leaf; b != nil {
+		b.MICol = uint16(miCol)
+		b.MIRow = uint16(miRow)
+		b.MIColEnd = uint16(miEndCol)
+		b.MIRowEnd = uint16(miEndRow)
+		b.X4 = x4
+		b.Y4 = y4
+		b.Level = level
+		b.Partition = partition
+		b.Size = size
+		b.VisibleW4 = uint8(miEndCol - miCol)
+		b.VisibleH4 = uint8(miEndRow - miRow)
+		b.HaveTop = miRow > w.req.neighborMIRowStart()
+		b.HaveLeft = miCol > w.req.neighborMIColStart()
+		b.Edge = edge
+		return w.visitLeafPtr()
+	}
 	return w.visit(BlockVisit{
 		MICol:     uint16(miCol),
 		MIRow:     uint16(miRow),

@@ -266,32 +266,12 @@ type BlockLoopVisit struct {
 	Delta             BlockDeltaContext
 }
 
+// BlockLoopStats counts the partition symbols, leaf blocks and
+// coefficient-carrying blocks a block loop decoded.
 type BlockLoopStats struct {
-	PartitionReads      int32
-	Blocks              int32
-	SegmentPredictions  int32
-	SegmentIDs          int32
-	Prefixes            int32
-	PredictionModes     int32
-	IntraModes          int32
-	InterEntries        int32
-	InterReferences     int32
-	InterModes          int32
-	RefMVStacks         int32
-	DRLIndices          int32
-	InterMVReferences   int32
-	MotionVectors       int32
-	MVResiduals         int32
-	InterpFilters       int32
-	InterIntras         int32
-	MotionModes         int32
-	CompoundBlends      int32
-	CoefficientBlocks   int32
-	CoefficientTXBs     int32
-	CoefficientNonZero  int32
-	CoefficientAllZero  int32
-	CoefficientEOBTotal int32
-	DeltaReads          int32
+	PartitionReads    int32
+	Blocks            int32
+	CoefficientBlocks int32
 }
 
 type BlockLoopSuperblockVisitor func(BlockLoopSuperblockVisit) error
@@ -463,76 +443,15 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 					return stats, err
 				}
 			}
-			walkStats, err := walkBlocks(&scratch.Partition, rootReq, func(level BlockLevel, context int, _ uint32, _ uint32, haveRight bool, haveBottom bool) (Partition, error) {
-				return s.ReadPartition(cdfs.Partition, level, context, haveRight, haveBottom)
-			}, func(block BlockVisit) error {
+			walkStats, err := walkBlocksDecode(s, cdfs.Partition, &scratch.Partition, rootReq, &scratch.visit.Block, func() error {
+				block := &scratch.visit.Block
 				visitInfo, err := decodeBlockLoopVisitWithCoeffControllerPtr(s, &cdfs, scratch, &req, coeffController, hasCoeffController, intraOnlyContexts, block)
 				if err != nil {
-					return fmt.Errorf("decode block=%+v: %w", block, err)
+					return fmt.Errorf("decode block=%+v: %w", *block, err)
 				}
 				stats.Blocks++
-				stats.Prefixes++
-				if visitInfo.SegmentPredicted {
-					stats.SegmentPredictions++
-				}
-				if req.Segmentation.Enabled && req.Segmentation.UpdateMap {
-					stats.SegmentIDs++
-				}
-				if visitInfo.Prediction.Valid {
-					stats.PredictionModes++
-					if visitInfo.Prediction.Intra {
-						stats.IntraModes++
-					} else {
-						stats.InterEntries++
-						if visitInfo.Prediction.InterReferencesValid {
-							stats.InterReferences++
-						}
-						if visitInfo.Prediction.InterModeValid {
-							stats.InterModes++
-						}
-						if visitInfo.Prediction.ReferenceMVStackValid {
-							stats.RefMVStacks++
-						}
-						if visitInfo.Prediction.DRLIndexValid {
-							stats.DRLIndices++
-						}
-						if visitInfo.Prediction.InterMVReferencesValid {
-							stats.InterMVReferences++
-						}
-						if visitInfo.Prediction.InterMotionValid {
-							stats.MotionVectors++
-							for _, valid := range visitInfo.Prediction.MVResidualValid {
-								if valid {
-									stats.MVResiduals++
-								}
-							}
-							stats.InterpFilters += int32(visitInfo.Prediction.InterpFilterReads)
-							if visitInfo.Prediction.InterIntraValid {
-								stats.InterIntras++
-							}
-							if visitInfo.Prediction.MotionModeValid {
-								stats.MotionModes++
-							}
-							if visitInfo.Prediction.CompoundBlendValid {
-								stats.CompoundBlends++
-							}
-						}
-					}
-				}
 				if visitInfo.CoefficientsValid {
 					stats.CoefficientBlocks++
-					total := visitInfo.Coefficients.TotalStats()
-					stats.CoefficientTXBs += int32(total.TXBs)
-					stats.CoefficientNonZero += int32(total.NonZero)
-					stats.CoefficientAllZero += int32(total.AllZero)
-					stats.CoefficientEOBTotal += int32(total.EOBTotal)
-				}
-				readDelta, err := shouldReadBlockDelta(visitInfo.Delta)
-				if err != nil {
-					return err
-				}
-				if readDelta && req.Delta.DeltaQPresent {
-					stats.DeltaReads++
 				}
 				return visit(visitInfo)
 			})
@@ -1083,57 +1002,49 @@ func captureLeftCrossSBHistory(dst *blockModeLeftContext, mode *BlockModeContext
 	}
 }
 
-func decodeBlockLoopVisitWithCoeffController[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, block BlockVisit) (BlockLoopVisit, error) {
-	visit, err := decodeBlockLoopVisitWithCoeffControllerPtr(s, &cdfs, scratch, &req, coeffController, hasCoeffController, false, block)
-	if err != nil {
-		return BlockLoopVisit{}, err
+func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs *BlockLoopCDFs, scratch *BlockLoopScratch, req *BlockLoopRequest, coeffController T, hasCoeffController bool, intraOnlyContexts bool, block *BlockVisit) (*BlockLoopVisit, error) {
+	visit := &scratch.visit
+	if block != &visit.Block {
+		visit.Block = *block
+		block = &visit.Block
 	}
-	return *visit, nil
-}
-
-func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs *BlockLoopCDFs, scratch *BlockLoopScratch, req *BlockLoopRequest, coeffController T, hasCoeffController bool, intraOnlyContexts bool, block BlockVisit) (*BlockLoopVisit, error) {
 	if entropy.TraceRNGEnabled {
 		entropy.TraceLabel("BLOCK mi_row=%d mi_col=%d size=%d", block.MIRow, block.MICol, int(block.Size))
 	}
 	ctx := &scratch.Mode
-	cdef := &scratch.CDEF
 	blockX4 := int(block.X4)
 	blockY4 := int(block.Y4)
-	segmentID := uint8(0)
-	segment := defaultSegmentData()
-	segmentPredicted := false
+	dims, ok := block.Size.Dimensions()
+	if !ok {
+		return nil, ErrInvalidDecodeState
+	}
+	// dav1d decode_b: the block's syntax is read in place from the block
+	// state; the segment features through a pointer into the frame header.
+	segmentID, segment, segmentPredicted := uint8(0), &defaultSegment, false
 	var err error
 	if req.Segmentation.Enabled && (!req.Segmentation.UpdateMap || req.Segmentation.Data.Preskip) {
-		segmentID, segmentPredicted, segment, err = s.decodeBlockSegment(cdfs.Mode, ctx, req, block, false)
+		segmentID, segmentPredicted, err = s.decodeBlockSegment(cdfs.Mode, ctx, req, block, false)
 		if err != nil {
 			return nil, err
 		}
+		segment = &req.Segmentation.Data.Segments[segmentID]
 	}
-
-	prefixReq := BlockModeRequest{
-		Size:                block.Size,
-		SkipMode:            req.SkipMode,
-		CDEF:                req.CDEF,
-		SegmentationEnabled: req.Segmentation.Enabled,
-		Segment:             segment,
-		X4:                  block.X4,
-		Y4:                  block.Y4,
-	}
-	prefix, err := s.readBlockModePrefixSyntax(cdfs.Mode, ctx, prefixReq, segmentPredicted)
+	prefix := BlockModeResult{SegmentPredicted: segmentPredicted}
+	prefix.SkipMode, prefix.SkipTransform, err = s.readBlockSkips(cdfs.Mode, ctx, req, dims, blockX4, blockY4, segment)
 	if err != nil {
 		return nil, fmt.Errorf("read prefix: %w", err)
 	}
-
 	if req.Segmentation.Enabled && req.Segmentation.UpdateMap && !req.Segmentation.Data.Preskip {
-		segmentID, segmentPredicted, segment, err = s.decodeBlockSegment(cdfs.Mode, ctx, req, block, prefix.SkipTransform)
+		segmentID, segmentPredicted, err = s.decodeBlockSegment(cdfs.Mode, ctx, req, block, prefix.SkipTransform)
 		if err != nil {
 			return nil, err
 		}
+		segment = &req.Segmentation.Data.Segments[segmentID]
 		if segmentPredicted {
 			prefix.SegmentPredicted = true
 		}
 	}
-	cdefIndex, err := s.ReadCDEFIndexForBlock(prefixReq.CDEF, cdef, prefixReq.Size, int(prefixReq.X4), int(prefixReq.Y4), prefix.SkipTransform)
+	cdefIndex, err := s.ReadCDEFIndexForBlock(req.CDEF, &scratch.CDEF, block.Size, blockX4, blockY4, prefix.SkipTransform)
 	if err != nil {
 		return nil, err
 	}
@@ -1149,20 +1060,23 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 	// the bottom/right frame edge must still be treated as a full superblock, or
 	// the delta_q/delta_lf symbol is read when libaom skips it, advancing the
 	// entropy decoder by an extra symbol and desyncing every subsequent block.
-	fullSuperblock := false
-	if dims, ok := block.Size.Dimensions(); ok {
-		fullSuperblock = dims.W4 == req.SBSizeMIB && dims.H4 == req.SBSizeMIB
-	}
-	delta := BlockDeltaContext{
-		MICol:          uint16(block.MICol),
-		MIRow:          uint16(block.MIRow),
-		SBSizeMIB:      req.SBSizeMIB,
-		FullSuperblock: fullSuperblock,
-		SkipTransform:  prefix.SkipTransform,
-		Monochrome:     req.Monochrome,
-	}
-	if err := s.ReadBlockDeltas(req.Delta, delta, cdfs.Delta); err != nil {
-		return nil, err
+	// The delta context is written in place, and the symbols are read only
+	// when coded (dav1d decode_b), without a by-value request.
+	//
+	//
+	fullSuperblock := dims.W4 == req.SBSizeMIB && dims.H4 == req.SBSizeMIB
+	visit.Delta.MICol = block.MICol
+	visit.Delta.MIRow = block.MIRow
+	visit.Delta.SBSizeMIB = req.SBSizeMIB
+	visit.Delta.FullSuperblock = fullSuperblock
+	visit.Delta.SkipTransform = prefix.SkipTransform
+	visit.Delta.Monochrome = req.Monochrome
+	// The block loop checks SBSizeMIB != 0; it is 16 or 32.
+	if req.Delta.DeltaQPresent && (uint32(block.MICol)|uint32(block.MIRow))&(uint32(req.SBSizeMIB)-1) == 0 &&
+		(!fullSuperblock || !prefix.SkipTransform) {
+		if err := s.readBlockDeltas(&req.Delta, &cdfs.Delta, req.Monochrome); err != nil {
+			return nil, err
+		}
 	}
 
 	// Capture the above/left neighbor state at slot (X4, Y4) before
@@ -1188,14 +1102,11 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 		ctx.TxLeftNeighborBlockSize = ctx.LeftBlockSize[blockY4]
 	}
 
-	visit := &scratch.visit
-	visit.Block = block
 	visit.SegmentID = segmentID
-	visit.Segment = segment
+	visit.Segment = *segment
 	visit.SegmentPredicted = segmentPredicted
 	visit.Prefix = prefix
 	visit.CoefficientsValid = false
-	visit.Delta = delta
 
 	// decodeBlockPredictionModeInto clears the result itself; it is cleared
 	// here only when no prediction modes are decoded.
@@ -1249,30 +1160,30 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 
 func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *PaletteModeScratch) (BlockPredictionModeResult, error) {
 	var result BlockPredictionModeResult
-	if err := s.decodeBlockPredictionModeInto(&cdfs, ctx, &req, block, prefix, segmentID, segment, paletteMap, &result, false, nil); err != nil {
+	if err := s.decodeBlockPredictionModeInto(&cdfs, ctx, &req, &block, prefix, segmentID, &segment, paletteMap, &result, false, nil); err != nil {
 		return BlockPredictionModeResult{}, err
 	}
 	return result, nil
 }
 
-func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *BlockModeContext, req *BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *PaletteModeScratch, result *BlockPredictionModeResult, intraOnlyContexts bool, rt *refmvsTile) error {
+func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *BlockModeContext, req *BlockLoopRequest, block *BlockVisit, prefix BlockModeResult, segmentID uint8, segment *parser.SegmentData, paletteMap *PaletteModeScratch, result *BlockPredictionModeResult, intraOnlyContexts bool, rt *refmvsTile) error {
 	if result == nil {
 		return ErrInvalidDecodeState
 	}
 	*result = BlockPredictionModeResult{}
 	blockX4 := int(block.X4)
 	blockY4 := int(block.Y4)
-	intraFlag, err := s.ReadIntraFlagResult(cdfs.Intra, ctx, IntraFlagRequest{
-		FrameType:           req.FrameType,
-		AllowIntrabc:        req.AllowIntrabc,
-		SkipMode:            prefix.SkipMode,
-		SegmentationEnabled: req.Segmentation.Enabled,
-		Segment:             segment,
-		X4:                  block.X4,
-		Y4:                  block.Y4,
-		HaveTop:             block.HaveTop,
-		HaveLeft:            block.HaveLeft,
-	})
+	intraFlag, err := s.readIntraFlag(cdfs.Intra, ctx, req, block, prefix.SkipMode, segment)
+	//
+	// (dav1d decode_b reads the intra flag from the block state in place.
+	// These lines keep the function's line offsets, which the committed PGO
+	// profile keys its hot call sites on.)
+	//
+	//
+	//
+	//
+	//
+	//
 	if err != nil {
 		return err
 	}
@@ -1292,7 +1203,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 		result.InterMode = InterModeResult{Mode: InterModeNewMV}
 		result.InterModeValid = true
 		if req.DecodeMotionVectors {
-			motionResult, err := s.readIntrabcMotion(cdfs.MV, ctx, *req, block)
+			motionResult, err := s.readIntrabcMotion(cdfs.MV, ctx, *req, *block)
 			if err != nil {
 				return err
 			}
@@ -1309,7 +1220,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 	if !intraFlag.Intra {
 		var refs InterReferencesResult
 		if rt != nil {
-			refs, err = s.readInterRefsRefmvs(cdfs.InterRef, ctx, req, block, prefix.SkipMode, &segment)
+			refs, err = s.readInterRefsRefmvs(cdfs.InterRef, ctx, req, block, prefix.SkipMode, segment)
 		} else {
 			refs, err = s.ReadInterReferences(cdfs.InterRef, ctx, InterReferenceRequest{
 				Size:                block.Size,
@@ -1317,7 +1228,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 				SkipMode:            prefix.SkipMode,
 				SkipModeRefs:        req.SkipModeRefs,
 				SegmentationEnabled: req.Segmentation.Enabled,
-				Segment:             segment,
+				Segment:             *segment,
 				X4:                  block.X4,
 				Y4:                  block.Y4,
 				HaveTop:             block.HaveTop,
@@ -1333,10 +1244,10 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 		globalMotionTypes := blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes)
 		if req.DecodeInterModes {
 			if rt != nil {
-				if err := s.decodeInterModeRefmvs(cdfs.InterMode, cdfs.MV, ctx, rt, req, block, refs, prefix.SkipMode, &segment, globalMVs, result); err != nil {
+				if err := s.decodeInterModeRefmvs(cdfs.InterMode, cdfs.MV, ctx, rt, req, block, refs, prefix.SkipMode, segment, globalMVs, result); err != nil {
 					return fmt.Errorf("decode inter mode: %w", err)
 				}
-			} else if err := s.decodeInterModeLegacy(*cdfs, ctx, req, block, refs, prefix.SkipMode, segment, globalMVs, globalMotionTypes, result); err != nil {
+			} else if err := s.decodeInterModeLegacy(*cdfs, ctx, req, *block, refs, prefix.SkipMode, *segment, globalMVs, globalMotionTypes, result); err != nil {
 				return err
 			}
 			mode := result.InterMode
@@ -1375,7 +1286,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 							VisibleH4:    block.VisibleH4,
 							HaveTop:      block.HaveTop,
 							HaveLeft:     block.HaveLeft,
-							HaveTopRight: blockHasTopRight(req.SBSizeMIB, block),
+							HaveTopRight: blockHasTopRight(req.SBSizeMIB, *block),
 						})
 						if err != nil {
 							return fmt.Errorf("collect overlappable neighbors: %w", err)
@@ -1393,7 +1304,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 						// warpSampleGrid -> crossSBInterGridInterMotion), matching
 						// libaom's frame-wide av1_findSamples scan, so no separate
 						// SB-diagonal corner augmentation is needed here.
-						numProjRef, err := ctx.WarpSampleCountWithContext(block, refs.Ref[0], req.SBSizeMIB)
+						numProjRef, err := ctx.WarpSampleCountWithContext(*block, refs.Ref[0], req.SBSizeMIB)
 						if err != nil {
 							return fmt.Errorf("count warp samples: %w", err)
 						}
@@ -1417,7 +1328,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 						result.MotionMode = motionMode
 						result.MotionModeValid = true
 						if motionMode == MotionModeWarp {
-							model, invalid, err := ctx.WarpProjectionWithContext(block, refs.Ref[0], result.InterMotion.MV[0], req.SBSizeMIB)
+							model, invalid, err := ctx.WarpProjectionWithContext(*block, refs.Ref[0], result.InterMotion.MV[0], req.SBSizeMIB)
 							if err != nil {
 								return fmt.Errorf("project warped motion: %w", err)
 							}
@@ -1724,7 +1635,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 	return nil
 }
 
-func blockChromaNeighborAvailability(req *BlockLoopRequest, block BlockVisit) (haveTop bool, haveLeft bool, err error) {
+func blockChromaNeighborAvailability(req *BlockLoopRequest, block *BlockVisit) (haveTop bool, haveLeft bool, err error) {
 	dims, ok := block.Size.Dimensions()
 	if !ok {
 		return false, false, ErrInvalidDecodeState
@@ -1742,18 +1653,18 @@ func blockChromaNeighborAvailability(req *BlockLoopRequest, block BlockVisit) (h
 	return haveTop, haveLeft, nil
 }
 
-func (s *DecodeState) decodeBlockSegment(cdfs *BlockModeCDFs, ctx *BlockModeContext, req *BlockLoopRequest, block BlockVisit, skip bool) (uint8, bool, parser.SegmentData, error) {
+func (s *DecodeState) decodeBlockSegment(cdfs *BlockModeCDFs, ctx *BlockModeContext, req *BlockLoopRequest, block *BlockVisit, skip bool) (uint8, bool, error) {
 	if !req.Segmentation.Enabled {
-		return 0, false, defaultSegmentData(), nil
+		return 0, false, nil
 	}
 	if !req.Segmentation.UpdateMap {
 		// dav1d writes cur_segmap only under update_map; without it the
 		// frame keeps the previous map as is.
 		id, err := previousBlockSegmentID(req, block)
 		if err != nil {
-			return 0, false, parser.SegmentData{}, err
+			return 0, false, err
 		}
-		return id, false, req.Segmentation.Data.Segments[id], nil
+		return id, false, nil
 	}
 
 	predicted := false
@@ -1761,36 +1672,64 @@ func (s *DecodeState) decodeBlockSegment(cdfs *BlockModeCDFs, ctx *BlockModeCont
 		var err error
 		predicted, err = s.ReadSegmentPrediction(cdfs, ctx, int(block.X4), int(block.Y4))
 		if err != nil {
-			return 0, false, parser.SegmentData{}, err
+			return 0, false, err
 		}
 	}
 	if predicted {
 		id, err := previousBlockSegmentID(req, block)
 		if err != nil {
-			return 0, false, parser.SegmentData{}, err
+			return 0, false, err
 		}
 		if err := fillBlockSegmentID(req, block, id); err != nil {
-			return 0, false, parser.SegmentData{}, err
+			return 0, false, err
 		}
-		return id, true, req.Segmentation.Data.Segments[id], nil
+		return id, true, nil
 	}
 
 	if len(req.CurrentSegmentMap) == 0 {
-		return 0, false, parser.SegmentData{}, ErrInvalidDecodeState
+		return 0, false, ErrInvalidDecodeState
 	}
 	pred, context, err := PredictCurrentSegmentID(req.CurrentSegmentMap, req.SegmentMapStride,
 		int(block.MICol), int(block.MIRow), block.HaveTop, block.HaveLeft)
 	if err != nil {
-		return 0, false, parser.SegmentData{}, err
+		return 0, false, err
 	}
 	id, err := s.ReadSegmentID(cdfs, pred, context, req.Segmentation.Data.LastActiveID, skip)
 	if err != nil {
-		return 0, false, parser.SegmentData{}, err
+		return 0, false, err
 	}
 	if err := fillBlockSegmentID(req, block, id); err != nil {
-		return 0, false, parser.SegmentData{}, err
+		return 0, false, err
 	}
-	return id, false, req.Segmentation.Data.Segments[id], nil
+	return id, false, nil
+}
+
+// defaultSegment is the segment feature set of a block without segmentation.
+var defaultSegment = defaultSegmentData()
+
+// readBlockSkips reads skip_mode and skip for the block at (x4, y4), as dav1d
+// decode_b does from the block state, without a request struct.
+func (s *DecodeState) readBlockSkips(cdfs *BlockModeCDFs, ctx *BlockModeContext, req *BlockLoopRequest, dims BlockDimensions, x4, y4 int, segment *parser.SegmentData) (skipMode bool, skip bool, err error) {
+	if x4 >= MaxBlockModeSlots || y4 >= MaxBlockModeSlots {
+		return false, false, ErrInvalidDecodeState
+	}
+	segEnabled := req.Segmentation.Enabled
+	if req.SkipMode.Enabled && min(dims.W4, dims.H4) > 1 &&
+		!(segEnabled && (segment.Skip || segment.GlobalMV || segment.RefFrame >= 0)) {
+		symbol, err := s.Reader.ReadCDF(&cdfs.SkipMode[int(ctx.AboveSkipMode[x4])+int(ctx.LeftSkipMode[y4])])
+		if err != nil {
+			return false, false, err
+		}
+		skipMode = symbol != 0
+	}
+	if skipMode || segEnabled && segment.Skip {
+		return skipMode, true, nil
+	}
+	symbol, err := s.Reader.ReadCDF(&cdfs.Skip[int(ctx.AboveSkip[x4])+int(ctx.LeftSkip[y4])])
+	if err != nil {
+		return false, false, err
+	}
+	return false, symbol != 0, nil
 }
 
 func (s *DecodeState) readBlockModePrefixSyntax(cdfs *BlockModeCDFs, ctx *BlockModeContext, req BlockModeRequest, segmentPredicted bool) (BlockModeResult, error) {
@@ -1858,7 +1797,7 @@ func blockLoopRootColumns(req BlockWalkRequest, rootSize uint32) int {
 	return int((uint32(req.MIColEnd) - uint32(req.MIColStart) + rootSize - 1) / rootSize)
 }
 
-func previousBlockSegmentID(req *BlockLoopRequest, block BlockVisit) (uint8, error) {
+func previousBlockSegmentID(req *BlockLoopRequest, block *BlockVisit) (uint8, error) {
 	if len(req.PreviousSegmentMap) == 0 {
 		return 0, nil
 	}
@@ -1866,7 +1805,7 @@ func previousBlockSegmentID(req *BlockLoopRequest, block BlockVisit) (uint8, err
 		int(block.MICol), int(block.MIRow), int(block.VisibleW4), int(block.VisibleH4))
 }
 
-func fillBlockSegmentID(req *BlockLoopRequest, block BlockVisit, segmentID uint8) error {
+func fillBlockSegmentID(req *BlockLoopRequest, block *BlockVisit, segmentID uint8) error {
 	if len(req.CurrentSegmentMap) == 0 {
 		return nil
 	}
@@ -1926,7 +1865,7 @@ func blockReferenceGlobalMVs(refs InterReferencesResult, global [referenceFrameC
 	return out
 }
 
-func blockReferenceGlobalMVsForBlock(refs InterReferencesResult, fallback *[referenceFrameCount]motion.Vector, global *[referenceFrameCount]parser.WarpedMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool, block BlockVisit) [2]motion.Vector {
+func blockReferenceGlobalMVsForBlock(refs InterReferencesResult, fallback *[referenceFrameCount]motion.Vector, global *[referenceFrameCount]parser.WarpedMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool, block *BlockVisit) [2]motion.Vector {
 	out := blockReferenceGlobalMVs(refs, *fallback)
 	if refs.Ref[0].Valid() {
 		if mv, ok := globalMotionVector(&global[refs.Ref[0]], allowHighPrecisionMV, forceIntegerMV, block); ok {
@@ -2113,7 +2052,7 @@ func referenceMVStackRequestRegion(req BlockLoopRequest, block BlockVisit) Refer
 	}
 }
 
-func globalMotionVector(params *parser.WarpedMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool, block BlockVisit) (motion.Vector, bool) {
+func globalMotionVector(params *parser.WarpedMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool, block *BlockVisit) (motion.Vector, bool) {
 	if !globalMotionParamsInitialized(params) {
 		return motion.Vector{}, false
 	}
