@@ -255,6 +255,7 @@ func (st *lossyEncodeState) keyLuma(src SourceFrame420, recon *SourceFrame420, b
 	}
 	// get_start_end_tx_depth: no search for a block crossing the picture, and
 	// prev_depth_coeff_exit_th 2.
+	st.keyLumaEOB = int(res0.EOB)
 	if !search || px+n > src.Width || py+n > src.Height || n < 8 || res0.EOB < 2 {
 		copy(rec.grabCoeffs(cn0), st.lumaQ[:cn0])
 		return lumaTX, coeffCtx.MarkTXB(ctxReq, res0)
@@ -292,17 +293,23 @@ func (st *lossyEncodeState) keyLuma(src SourceFrame420, recon *SourceFrame420, b
 	cs := subGeo.coeffCount
 	var bits, dist int64
 	won := true
+	eobSum := 0
 	for i := range 4 {
 		dx, dy := (i&1)*sub, (i>>1)*sub
 		haveTop := block.HaveTop || dy > 0
 		haveLeft := block.HaveLeft || dx > 0
 		spred := s.pred[:sub*sub]
-		memsetBytes(spred, dcPredictN(recon.Y, stride, px+dx, py+dy, sub, haveTop, haveLeft))
+		dc := dcPredictN(recon.Y, stride, px+dx, py+dy, sub, haveTop, haveLeft)
+		if i == 0 {
+			st.keyLumaSubDC = dc
+		}
+		memsetBytes(spred, dc)
 		qc := s.q1[i*cs : (i+1)*cs]
 		if _, _, err := st.prepareIntraTXB(src.Y, stride, px+dx, py+dy, sub, sub, q, subTX, spred, qc); err != nil {
 			return 0, err
 		}
 		res := interTXBResult(qc, subScan, cs)
+		eobSum += int(res.EOB)
 		if !res.AllZero {
 			res.CulLevel = tile.CoeffCulLevel(qc, subScan, int(res.EOB))
 		}
@@ -328,6 +335,7 @@ func (st *lossyEncodeState) keyLuma(src SourceFrame420, recon *SourceFrame420, b
 	}
 	if won && st.keyTXSCost(bits+rates.txSize[category][sizeCtx][1], dist) < cost0 {
 		copy(rec.grabCoeffs(4*cs), s.q1[:4*cs])
+		st.keyLumaEOB = eobSum
 		return subTX, nil
 	}
 	// Depth 0 stays: restore its reconstruction and contexts.
@@ -361,4 +369,98 @@ func keyTXSCoeffTable(qIndex uint8) *rdoqCosts {
 	t := &rdoqDefaultTables[tile.CoeffQContext(qIndex)]
 	t.once.Do(func() { t.costs.fill(tile.DefaultCoeffCDFs(qIndex)) })
 	return &t.costs
+}
+
+// keyTXShortcut is tx_shortcut_detector for a keyframe leaf. SVT-AV1's rtc
+// presets run tx_shortcut_level 3 above M9 (M11 flat) on every picture
+// (use_mds3_shortcuts_th 10, apply_pf_on_coeffs, chroma_detector_level 1). A
+// keyframe leaf has one candidate, so MDS1 is skipped (enable_skipping_mds1
+// at nic levels 8 and up) and md_stage_0's variance of the DC_PRED
+// prediction decides whether MDS3 takes the shortcuts:
+// 100 * luma_fast_dist < 10 * bw * bh * qindex. A shortcut block codes its
+// luma transforms, at both tx depths, with the N4 partial-frequency shape
+// (only the low quarter of each dimension).
+func keyTXShortcut(src []byte, stride int, pred []byte, px, py, n int, qIndex uint8) bool {
+	a := src[py*stride+px:]
+	var v uint32
+	switch n {
+	case 8:
+		_, v = sseVariance8x8(a, stride, pred, n)
+	case 16:
+		_, v = sseVariance16x16(a, stride, pred, n)
+	case 32:
+		_, v = sseVariance32x32(a, stride, pred, n)
+	case 64:
+		_, v = sseVariance64x64(a, stride, pred, n)
+	default:
+		return false
+	}
+	return 100*uint64(v) < 10*uint64(n*n)*uint64(qIndex)
+}
+
+// keyZero is the all-zero reference of svt_aom_eb_av1_var_offs.
+var keyZero [32 * 32]byte
+
+// keyChromaN4 reports whether a keyframe leaf codes its chroma with the N4
+// shape: svt_aom_full_loop_uv takes it when chroma_complexity_check_pred
+// (use_var) leaves the block at COMPONENT_LUMA and either the block took the
+// tx shortcut or its luma coded fewer than (w_uv >> 4) * (h_uv >> 4)
+// coefficients (apply_pf_on_coeffs; cnt_nz_coeff is the luma EOB sum). The
+// detector compares the luma and chroma prediction SADs over the chroma
+// block's extent, every 2^shift-th row, and the chroma source variances
+// against 150. lumaPred is the winning luma prediction (n x n), or nil for a
+// split block, whose top-left quarter predicts st.keyLumaSubDC.
+func (st *lossyEncodeState) keyChromaN4(src SourceFrame420, g *keyChromaGeom, lumaPred []byte, n, px, py int, dcU, dcV uint8, shortcut bool) bool {
+	cw, ch := g.cw, g.ch
+	if !shortcut && !(st.keyLumaEOB < (cw>>4)*(ch>>4) || st.keyLumaEOB == 0) {
+		return false
+	}
+	shift := 0
+	if ch > 8 {
+		shift = 2
+	} else if ch > 4 {
+		shift = 1
+	}
+	var yDist, cbDist, crDist int
+	for r := 0; r < ch>>shift; r++ {
+		yr := (py + r<<shift) * src.YStride
+		cr := (g.y + r<<shift) * src.ChromaStride
+		for c := range cw {
+			p := int(st.keyLumaSubDC)
+			if lumaPred != nil {
+				p = int(lumaPred[(r<<shift)*n+c])
+			}
+			yDist += absInt(int(src.Y[yr+px+c]) - p)
+			cbDist += absInt(int(src.U[cr+g.x+c]) - int(dcU))
+			crDist += absInt(int(src.V[cr+g.x+c]) - int(dcV))
+		}
+	}
+	yDist <<= 1
+	if cbDist > yDist || crDist > yDist {
+		return false
+	}
+	const th = 150
+	off := g.y*src.ChromaStride + g.x
+	return keyBlockVar(src.U[off:], src.ChromaStride, cw, ch) <= th && keyBlockVar(src.V[off:], src.ChromaStride, cw, ch) <= th
+}
+
+// keyBlockVar is ROUND_POWER_OF_TWO(variance, log2(w * h)) of a w x h source
+// block (the variance kernel against the zero offsets).
+func keyBlockVar(a []byte, stride, w, h int) int {
+	var v uint32
+	switch {
+	case w == 4 && h == 4:
+		_, v = sseVariance4x4(a, stride, keyZero[:], w)
+	case w == 8 && h == 8:
+		_, v = sseVariance8x8(a, stride, keyZero[:], w)
+	case w == 16 && h == 16:
+		_, v = sseVariance16x16(a, stride, keyZero[:], w)
+	default:
+		_, v = sseVariance32x32(a, stride, keyZero[:], w)
+	}
+	log2 := 0
+	for 1<<log2 < w*h {
+		log2++
+	}
+	return int((v + 1<<(log2-1)) >> log2)
 }
