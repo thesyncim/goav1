@@ -807,7 +807,7 @@ func (ctx *FrameWorkPostFilterContext) applySupportedPostFiltersInPlace(req Fram
 				ctx.fixLoopFilterMaskTileBoundaries(req.LoopFilter.Map)
 			}
 		}
-		if ctx.rowPipelineEligible(banding, remaining, follow) {
+		if ctx.rowPipelineEligible(req, banding, remaining, follow) {
 			if err := ctx.applyRowPipelinedPostFilters(req, remaining, &result); err != nil {
 				return result, err
 			}
@@ -1356,7 +1356,13 @@ func (ctx *FrameWorkPostFilterContext) LoopRestorationPostFilterScratchLen(recor
 	}
 	var apply tile.RestorationUnitRecordBoundaryScratchSize
 	for plane := 0; plane < int(plan.Planes); plane++ {
-		planeSize, err := tile.RestorationFramePlaneScratchLen(plan.Grids[plane], records[plane], optimized)
+		var planeSize tile.RestorationUnitRecordBoundaryScratchSize
+		var err error
+		if ctx.restorationRecordsPending {
+			planeSize, err = tile.RestorationFramePlaneMaxScratchLen(plan.Grids[plane], optimized)
+		} else {
+			planeSize, err = tile.RestorationFramePlaneScratchLen(plan.Grids[plane], records[plane], optimized)
+		}
 		if err != nil {
 			return FrameWorkRestorationPostFilterScratchSize{}, err
 		}

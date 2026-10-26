@@ -822,3 +822,58 @@ func restorationSampleBlockFitsAt(length int, origin int, stride int, width int,
 	end := lastRow + width
 	return end >= lastRow && end <= length
 }
+
+// RestorationFramePlaneMaxScratchLen is RestorationFramePlaneScratchLen for a
+// plane whose unit records are not decoded yet: the scratch any record set
+// the frame header allows could need, every unit taken at each filter type
+// its plane type permits. A frame-threaded decoder sizes the restoration
+// scratch this way before its entropy pass has read the unit coefficients.
+func RestorationFramePlaneMaxScratchLen(grid RestorationPlaneGrid, optimized bool) (RestorationUnitRecordBoundaryScratchSize, error) {
+	var size RestorationUnitRecordBoundaryScratchSize
+	if grid.Type == parser.RestorationNone {
+		if grid.Plane > 2 {
+			return size, ErrInvalidPlan
+		}
+		return size, nil
+	}
+	if !grid.validGeometry() {
+		return size, ErrInvalidPlan
+	}
+	for row := uint16(0); row < grid.VertUnits; row++ {
+		for col := uint16(0); col < grid.HorzUnits; col++ {
+			rect, err := grid.UnitRect(col, row)
+			if err != nil {
+				return RestorationUnitRecordBoundaryScratchSize{}, err
+			}
+			stripes, err := grid.ProcessingStripeCount(rect)
+			if err != nil {
+				return RestorationUnitRecordBoundaryScratchSize{}, err
+			}
+			if stripes > int(^uint8(0)) {
+				return RestorationUnitRecordBoundaryScratchSize{}, ErrInvalidPlan
+			}
+			record := RestorationUnitRecord{
+				Index:       uint32(row)*uint32(grid.HorzUnits) + uint32(col),
+				Col:         col,
+				Row:         row,
+				Rect:        rect,
+				StripeCount: uint8(stripes),
+			}
+			for _, t := range [...]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj} {
+				if !restorationUnitTypeAllowed(grid.Type, t) {
+					continue
+				}
+				record.Unit.Type = t
+				recordSize, err := RestorationUnitRecordBoundaryScratchLen(grid, record, optimized)
+				if err != nil {
+					return RestorationUnitRecordBoundaryScratchSize{}, err
+				}
+				size.Unit.Wiener = max(size.Unit.Wiener, recordSize.Unit.Wiener)
+				size.Unit.SGRProj = max(size.Unit.SGRProj, recordSize.Unit.SGRProj)
+				size.Boundary.Above = max(size.Boundary.Above, recordSize.Boundary.Above)
+				size.Boundary.Below = max(size.Boundary.Below, recordSize.Boundary.Below)
+			}
+		}
+	}
+	return size, nil
+}

@@ -23,6 +23,8 @@ type frameWorkParallelRestorationScratch struct {
 	wiener []uint16
 	sgr    []int32
 	result tile.RestorationPlaneApplyResult
+	// frame accumulates the row pipeline's restoration stripes.
+	frame tile.RestorationFrameApplyResult
 }
 
 // applyLoopRestorationPostFilterParallel runs the 8-bit in-place loop
