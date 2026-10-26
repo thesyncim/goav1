@@ -12,7 +12,14 @@ import "simd/archsimd"
 // fgConstsHBD holds the per-row-band constants of the 10/12-bit AVX2 block
 // kernels.
 type fgConstsHBD struct {
-	scalingShift     uint64
+	scalingShift uint64
+	// shiftV is the vpsravd count of the noise round (a variable vpsrad
+	// count is materialized with a legacy-SSE movq, which stalls on Zen 3).
+	shiftV [8]uint32
+	// ix and sc are the gather spills, kept here so the row loops do not
+	// re-zero local arrays with legacy-SSE stores.
+	ix               [16]int16
+	sc               [2]uint64
 	grainMin         int16
 	grainMax         int16
 	oxOld, oxCur     [16]int16
@@ -25,6 +32,9 @@ type fgConstsHBD struct {
 
 func (k *fgConstsHBD) init(bitDepth uint8, scalingShift, minValue, maxValue, sx, sy int) {
 	k.scalingShift = uint64(scalingShift)
+	for i := range k.shiftV {
+		k.shiftV[i] = uint32(scalingShift)
+	}
 	k.grainMin, k.grainMax = int16(-(1 << (bitDepth - 1))), int16((1<<(bitDepth-1))-1)
 	for i := range k.oxCur {
 		k.oxOld[i], k.oxCur[i] = 0, 32
@@ -73,7 +83,8 @@ func fgNoiseHBD16(scale, grain, src archsimd.Int16x16, k *fgConstsHBD) archsimd.
 	var zero archsimd.Int16x16
 	lo, hi := fgMAdd16(scale, zero, grain, zero)
 	r := archsimd.BroadcastInt32x8(1 << (k.scalingShift - 1))
-	n := lo.Add(r).ShiftAllRight(k.scalingShift).SaturateToInt16ConcatGrouped(hi.Add(r).ShiftAllRight(k.scalingShift))
+	sh := archsimd.LoadUint32x8Array(&k.shiftV)
+	n := lo.Add(r).ShiftRight(sh).SaturateToInt16ConcatGrouped(hi.Add(r).ShiftRight(sh))
 	return n.Add(src).Max(archsimd.BroadcastInt16x16(k.minV)).Min(archsimd.BroadcastInt16x16(k.maxV))
 }
 
@@ -105,10 +116,9 @@ func fgGrainRowHBD(grain []int16, cur, old, top, topOld int, ox, oy bool, k *fgC
 // fgGatherHBD16 looks up the scaling bytes of sixteen sample-value indices
 // (dav1d gathers from a per-value table; archsimd has no gather) and
 // widens them to int16.
-func fgGatherHBD16(table *[ScalingTableSize]uint8, idx archsimd.Int16x16) archsimd.Int16x16 {
-	var ix [16]int16
-	idx.StoreArray(&ix)
-	var sc [2]uint64
+func fgGatherHBD16(table *[ScalingTableSize]uint8, idx archsimd.Int16x16, k *fgConstsHBD) archsimd.Int16x16 {
+	ix, sc := &k.ix, &k.sc
+	idx.StoreArray(ix)
 	for j := range sc {
 		var v uint64
 		for i := 7; i >= 0; i-- {
@@ -116,14 +126,14 @@ func fgGatherHBD16(table *[ScalingTableSize]uint8, idx archsimd.Int16x16) archsi
 		}
 		sc[j] = v
 	}
-	return archsimd.LoadUint64x2Array(&sc).AsUint8x16().ExtendToUint16().AsInt16x16()
+	return archsimd.LoadUint64x2Array(sc).AsUint8x16().ExtendToUint16().AsInt16x16()
 }
 
 // fgGatherSrcHBD16 is fgGatherHBD16 for indices read straight from sixteen
 // samples in memory.
-func fgGatherSrcHBD16(table *[ScalingTableSize]uint8, s []uint16) archsimd.Int16x16 {
+func fgGatherSrcHBD16(table *[ScalingTableSize]uint8, s []uint16, k *fgConstsHBD) archsimd.Int16x16 {
 	s = s[:16]
-	var sc [2]uint64
+	sc := &k.sc
 	for j := range sc {
 		q := s[8*j : 8*j+8]
 		sc[j] = uint64(table[q[0]&(ScalingTableSize-1)]) | uint64(table[q[1]&(ScalingTableSize-1)])<<8 |
@@ -131,7 +141,7 @@ func fgGatherSrcHBD16(table *[ScalingTableSize]uint8, s []uint16) archsimd.Int16
 			uint64(table[q[4]&(ScalingTableSize-1)])<<32 | uint64(table[q[5]&(ScalingTableSize-1)])<<40 |
 			uint64(table[q[6]&(ScalingTableSize-1)])<<48 | uint64(table[q[7]&(ScalingTableSize-1)])<<56
 	}
-	return archsimd.LoadUint64x2Array(&sc).AsUint8x16().ExtendToUint16().AsInt16x16()
+	return archsimd.LoadUint64x2Array(sc).AsUint8x16().ExtendToUint16().AsInt16x16()
 }
 
 // fguvIndexHBD16 is the !csfl scaling index for sixteen chroma samples:
@@ -170,9 +180,10 @@ func fgyBlockHBDAVX2(dst, src []uint16, stride int, grain []int16, table *[Scali
 		g0 := fgGrainRowHBD(grain, cur+gy, old+gy, top+gy, topOld+gy, ox, oy, k, wt, wc)
 		g1 := fgGrainRowHBD(grain, cur+gy+16, 0, top+gy+16, 0, false, oy, k, wt, wc)
 		x0, x1 := fgLoadU16(src[off:]), fgLoadU16(src[off+16:])
-		fgStoreU16(dst[off:], fgNoiseHBD16(fgGatherSrcHBD16(table, src[off:]), g0, x0, k))
-		fgStoreU16(dst[off+16:], fgNoiseHBD16(fgGatherSrcHBD16(table, src[off+16:]), g1, x1, k))
+		fgStoreU16(dst[off:], fgNoiseHBD16(fgGatherSrcHBD16(table, src[off:], k), g0, x0, k))
+		fgStoreU16(dst[off+16:], fgNoiseHBD16(fgGatherSrcHBD16(table, src[off+16:], k), g1, x1, k))
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 // fgPairOrder is the vpermd order that undoes vpackssdw's in-lane qword
@@ -205,8 +216,9 @@ func fguvBlockHBDSX1AVX2(dst, src []uint16, stride int, luma []uint16, lumaStep 
 		if !csfl {
 			avg = fguvIndexHBD16(avg, x, k)
 		}
-		fgStoreU16(dst[off:], fgNoiseHBD16(fgGatherHBD16(table, avg), g, x, k))
+		fgStoreU16(dst[off:], fgNoiseHBD16(fgGatherHBD16(table, avg, k), g, x, k))
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 // fguvBlockHBDSX0AVX2 is fguv_32x32xn_i444_16bpc for one full-width 32xbh
@@ -227,13 +239,14 @@ func fguvBlockHBDSX0AVX2(dst, src []uint16, stride int, luma []uint16, lumaStep 
 		a0, a1 := fgLoadU16(luma[li:]), fgLoadU16(luma[li+16:])
 		var s0, s1 archsimd.Int16x16
 		if csfl {
-			s0, s1 = fgGatherSrcHBD16(table, luma[li:]), fgGatherSrcHBD16(table, luma[li+16:])
+			s0, s1 = fgGatherSrcHBD16(table, luma[li:], k), fgGatherSrcHBD16(table, luma[li+16:], k)
 		} else {
-			s0, s1 = fgGatherHBD16(table, fguvIndexHBD16(a0, x0, k)), fgGatherHBD16(table, fguvIndexHBD16(a1, x1, k))
+			s0, s1 = fgGatherHBD16(table, fguvIndexHBD16(a0, x0, k), k), fgGatherHBD16(table, fguvIndexHBD16(a1, x1, k), k)
 		}
 		fgStoreU16(dst[off:], fgNoiseHBD16(s0, g0, x0, k))
 		fgStoreU16(dst[off+16:], fgNoiseHBD16(s1, g1, x1, k))
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 // fgLumaBlockHBD places grain on one 10/12-bit luma block: full-width
