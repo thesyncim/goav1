@@ -32,6 +32,12 @@ type SBLUT struct {
 	// SIMD drivers derive I = max(min(L>>Sharp[0], Sharp[1]), 1) and
 	// E = 2*(L+2)+I across lanes, as dav1d lpf_func does.
 	Sharp [2]uint8
+	// SharpShift and SharpCap are Sharp[0] (negated, a right shift for a
+	// vector shift instruction) and Sharp[1] replicated over sixteen bytes,
+	// so a 128-bit driver loads each with one vector load per group, as
+	// dav1d lpf_func does with ld1r from lut->sharp.
+	SharpShift [16]int8
+	SharpCap   [16]uint8
 }
 
 // NewSBLUT derives the limit tables for a frame's loop-filter sharpness exactly
@@ -50,6 +56,10 @@ func NewSBLUT(sharpness uint8) SBLUT {
 	lut.Sharp[1] = 0xff
 	if sharpness > 0 {
 		lut.Sharp[1] = 9 - sharpness
+	}
+	for i := range lut.SharpShift {
+		lut.SharpShift[i] = -int8(lut.Sharp[0])
+		lut.SharpCap[i] = lut.Sharp[1]
 	}
 	return lut
 }

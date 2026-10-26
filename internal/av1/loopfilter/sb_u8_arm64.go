@@ -7,6 +7,7 @@
 package loopfilter
 
 import (
+	"math/bits"
 	"simd/archsimd"
 	"unsafe"
 )
@@ -419,8 +420,12 @@ func sbLevelsCol(lvl [][4]uint8, li, lvlStride, comp int, nAll uint32) (cur, pre
 	return archsimd.LoadUint32x4Array(&c), archsimd.LoadUint32x4Array(&p)
 }
 
+// filterSBHorizontal8Edge is the group-by-group driver for calls whose
+// samples or levels reach the end of their buffers: each group checks its own
+// reach and falls back to the unit-by-unit reference when it would leave pix.
+//
 //go:nocheckptr
-func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
+func filterSBHorizontal8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	var st SBStats
 	var acc sbAcc
 	gt4All := vm[1] | vm[2]
@@ -472,8 +477,10 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 	return st
 }
 
+// filterSBVertical8Edge is filterSBHorizontal8Edge for vertical edges.
+//
 //go:nocheckptr
-func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
+func filterSBVertical8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	var st SBStats
 	var acc sbAcc
 	gt4All := vm[1] | vm[2]
@@ -525,6 +532,135 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 	}
 	st.Add(acc.stats())
 	return st
+}
+
+// sbLimits is the per-group level prologue of dav1d lpf_func
+// (src/arm/64/loopfilter.S), one unit per 32-bit lane: cur and prev hold each
+// unit's own and fallback (left or above) level in the low byte of its lane
+// with the other bytes zero. L = cur ? cur : prev is replicated over the
+// unit's four bytes by a multiply with the bytes-of-one vector that also
+// floors I; I = imax(imin(L >> sharp[0], sharp[1]), 1) and E = 2*(L+2)+I come
+// from the LUT's replicated sharp vectors, H = L>>4. ok is false when no unit
+// of the nibble has a level ("if (!L) continue").
+func sbLimits(cur, prev archsimd.Uint32x4, nib uint32, lut *SBLUT, acc *sbAcc) (eV, iV, hV archsimd.Uint8x16, m4 archsimd.Mask8x16, ok bool) {
+	one := archsimd.BroadcastUint8x16(1)
+	L := prev.IfElse(cur.Equal(archsimd.Uint32x4{}), cur)
+	lr := L.Mul(one.ReshapeToUint32s()).ReshapeToUint8s()
+	act := archsimd.LoadUint8x16Array(&sbNibbleLanes[nib&15]).AndNot(lr.Equal(archsimd.Uint8x16{}).ToInt8x16().ToBits())
+	h := act.ReshapeToUint64s()
+	if h.GetElem(0)|h.GetElem(1) == 0 {
+		return
+	}
+	acc.cnt = acc.cnt.Sub(act)
+	acc.max = acc.max.Max(lr.And(act))
+	hV = lr.ShiftAllRight(4)
+	iV = lr.Shift(archsimd.LoadInt8x16Array(&lut.SharpShift)).Min(archsimd.LoadUint8x16Array(&lut.SharpCap)).Max(one)
+	e := lr.Add(archsimd.BroadcastUint8x16(2))
+	eV = e.Add(e).Add(iV)
+	m4 = act.BitsToInt8().ToMask()
+	ok = true
+	return
+}
+
+// filterSBHorizontal8 is dav1d lpf_v_sb_{y,uv}_8bpc_neon: the three width
+// masks shift down one four-unit nibble per group while the sample and level
+// cursors advance, each group's levels are one load of l[0] and one of
+// l[-b4_stride] from a level cursor already pointing at component comp (the
+// C side's &lvl[x][comp]), and the widest set nibble picks the kernel. The
+// call's reach is checked once up front, as dav1d trusts its caller; calls
+// that touch the end of pix, the row or the level map take the edge driver.
+//
+//go:nocheckptr
+func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
+	vm0, vm1, vm2 := vm[0]|vm[1]|vm[2], vm[1]|vm[2], vm[2]
+	end := 16 * ((31-bits.LeadingZeros32(vm0))>>2 + 1)
+	reach := 4
+	if vm2 != 0 {
+		reach = 7
+	}
+	li, ls4 := 4*lvlOff+comp, 4*lvlStride
+	if end > rowBytes || off < reach*stride || off+(reach-1)*stride+end > len(pix) || li < ls4 || li+end > 4*len(lvl) {
+		return filterSBHorizontal8Edge(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+	}
+	base := unsafe.Pointer(unsafe.SliceData(pix))
+	lb := unsafe.Pointer(unsafe.SliceData(lvl))
+	var acc sbAcc
+	for q0 := off; vm0 != 0; vm0, vm1, vm2, q0, li = vm0>>4, vm1>>4, vm2>>4, q0+16, li+16 {
+		if vm0&15 == 0 {
+			continue
+		}
+		ff := archsimd.BroadcastUint32x4(0xff)
+		cur := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(lb, li))).And(ff)
+		prev := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(lb, li-ls4))).And(ff)
+		eV, iV, hV, m4, ok := sbLimits(cur, prev, vm0, lut, &acc)
+		if !ok {
+			continue
+		}
+		p := unsafe.Add(base, q0)
+		if vm2&15 != 0 {
+			lpf16U8W[lpfW16](p, stride, eV, iV, hV, m4, sbNibbleMask(vm1), sbNibbleMask(vm2))
+		} else if vm1&15 != 0 {
+			if luma {
+				lpf16U8W[lpfW8](p, stride, eV, iV, hV, m4, sbNibbleMask(vm1), archsimd.Mask8x16{})
+			} else {
+				lpf16U8W[lpfW6](p, stride, eV, iV, hV, m4, sbNibbleMask(vm1), archsimd.Mask8x16{})
+			}
+		} else {
+			lpf16U8W[lpfW4](p, stride, eV, iV, hV, m4, archsimd.Mask8x16{}, archsimd.Mask8x16{})
+		}
+	}
+	return acc.stats()
+}
+
+// filterSBVertical8 is dav1d lpf_h_sb_{y,uv}_8bpc_neon in the same shape:
+// each group reads the (l[-1], l[0]) level pairs of its four units (the ld2
+// lane loads) from the component-offset cursor.
+//
+//go:nocheckptr
+func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
+	vm0, vm1, vm2 := vm[0]|vm[1]|vm[2], vm[1]|vm[2], vm[2]
+	hiG := (31 - bits.LeadingZeros32(vm0)) >> 2
+	reach := 4
+	if vm2 != 0 {
+		reach = 8
+	}
+	li, ls4 := 4*lvlOff+comp, 4*lvlStride
+	if rowBytes < 12 || off < reach || off+(16*hiG+15)*stride+12 > len(pix) || li < 4 || li+(4*hiG+3)*ls4+4 > 4*len(lvl) {
+		return filterSBVertical8Edge(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+	}
+	base := unsafe.Pointer(unsafe.SliceData(pix))
+	lb := unsafe.Pointer(unsafe.SliceData(lvl))
+	stride16 := 16 * stride
+	var acc sbAcc
+	for q0 := off; vm0 != 0; vm0, vm1, vm2, q0, li = vm0>>4, vm1>>4, vm2>>4, q0+stride16, li+4*ls4 {
+		if vm0&15 == 0 {
+			continue
+		}
+		var pr [4]uint64
+		pr[0] = *(*uint64)(unsafe.Add(lb, li-4))
+		pr[1] = *(*uint64)(unsafe.Add(lb, li-4+ls4))
+		pr[2] = *(*uint64)(unsafe.Add(lb, li-4+2*ls4))
+		pr[3] = *(*uint64)(unsafe.Add(lb, li-4+3*ls4))
+		a := archsimd.LoadUint64x2Array((*[2]uint64)(pr[0:2])).ReshapeToUint32s()
+		b := archsimd.LoadUint64x2Array((*[2]uint64)(pr[2:4])).ReshapeToUint32s()
+		ff := archsimd.BroadcastUint32x4(0xff)
+		eV, iV, hV, m4, ok := sbLimits(a.ConcatOdd(b).And(ff), a.ConcatEven(b).And(ff), vm0, lut, &acc)
+		if !ok {
+			continue
+		}
+		if vm2&15 != 0 {
+			lpfVertical16x16U8(unsafe.Add(base, q0-8), stride, eV, iV, hV, m4, sbNibbleMask(vm1), sbNibbleMask(vm2))
+		} else if vm1&15 != 0 {
+			if luma {
+				lpfVertical16x8U8WideW[lpfW8](unsafe.Add(base, q0-4), stride, eV, iV, hV, m4, sbNibbleMask(vm1))
+			} else {
+				lpfVertical16x8U8WideW[lpfW6](unsafe.Add(base, q0-4), stride, eV, iV, hV, m4, sbNibbleMask(vm1))
+			}
+		} else {
+			lpfVertical16x8U8WideW[lpfW4](unsafe.Add(base, q0-4), stride, eV, iV, hV, m4, archsimd.Mask8x16{})
+		}
+	}
+	return acc.stats()
 }
 
 func sbVerticalScalarGroup(pix []byte, q0Off, stride int, vm [3]uint32, sh uint, luma bool, lvl [][4]uint8, u0, lvlStride, comp int, lut *SBLUT) SBStats {
@@ -623,7 +759,7 @@ func lpfTranspose8x8Pairs(a, b, c, d, e, f, g, h archsimd.Uint8x16) (o0, o1, o2,
 func lpfVertical16x16U8(p unsafe.Pointer, stride int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) {
 	var buf [16][16]uint8
 	lpfTranspose16x16Store(p, stride, unsafe.Pointer(&buf), 16)
-	if !lpf16U8(unsafe.Pointer(&buf[8]), 16, 16, eV, iV, hV, m4, mGt4, m16) {
+	if !lpf16U8W[lpfW16](unsafe.Pointer(&buf[8]), 16, eV, iV, hV, m4, mGt4, m16) {
 		return
 	}
 	lpfTranspose16x16Store(unsafe.Pointer(&buf), 16, p, stride)
