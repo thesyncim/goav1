@@ -852,6 +852,13 @@ type lossyEncodeState struct {
 	// its first depth-1 transform's DC prediction (keyframe_txs.go).
 	keyLumaEOB   int
 	keyLumaSubDC uint8
+	// keyRDOQ runs SVT's I-slice RDOQ (rdoq_level 1) on the keyframe TXBs
+	// prepared while it is set, at plane type keyRDOQPlane and the TXB's
+	// contexts keyRDOQCtx; keyChromaCtx holds a leaf's chroma contexts.
+	keyRDOQ      bool
+	keyRDOQPlane int
+	keyRDOQCtx   tile.TXBContext
+	keyChromaCtx [3]tile.TXBContext
 	// pd0Grid holds the per-SB VERY_LIGHT_PD0 trees (pframe_vlpd0.go),
 	// pd0Rates the frame-frozen partition rates they price with and
 	// pd0EdgeRef the edge-replicated reference block of off-frame vectors.
@@ -1394,6 +1401,10 @@ func (st *lossyEncodeState) prepareIntraTXB(srcPlane []byte, stride int, px, py,
 	if st.pfN4 {
 		// N4_SHAPE (the light-PD1 chroma shortcut): only the low quarter.
 		svtPFN4Zero(tran[:cn], w, h, geo.coeffWidth, geo.coeffHeight)
+	}
+	if st.keyRDOQ {
+		st.keyRDOQQuantize(tran[:cn], qcoeff[:cn], size, q)
+		return geo, levelsAllZero(qcoeff[:cn]), nil
 	}
 	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
 		return geo, false, err

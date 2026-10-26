@@ -3,6 +3,8 @@ package encoder
 import (
 	"sync"
 
+	"github.com/thesyncim/goav1/internal/av1/quantize"
+
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
@@ -240,6 +242,8 @@ func (st *lossyEncodeState) keyLuma(src SourceFrame420, recon *SourceFrame420, b
 	txDims, _ := lumaTX.Dimensions()
 
 	// Depth 0: the block's largest transform.
+	ctx0 := coeffCtx.TXBContextTrusted(ctxReq, txDims, blockDims)
+	st.keyRDOQPlane, st.keyRDOQCtx = 0, ctx0
 	geo0, _, err := st.prepareIntraTXB(src.Y, stride, px, py, n, n, q, lumaTX, pred, st.lumaQ[:])
 	if err != nil {
 		return 0, err
@@ -268,7 +272,6 @@ func (st *lossyEncodeState) keyLuma(src SourceFrame420, recon *SourceFrame420, b
 		copy(rec.grabCoeffs(cn0), st.lumaQ[:cn0])
 		return lumaTX, coeffCtx.MarkTXB(ctxReq, res0)
 	}
-	ctx0 := coeffCtx.TXBContextTrusted(ctxReq, txDims, blockDims)
 	rate0 := st.keyTXSCoeffCost(st.lumaQ[:cn0], lumaTX, n, ctx0, int(res0.EOB)) + rates.txSize[category][sizeCtx][0]
 	cost0 := st.keyTXSCost(rate0, keyTXSSSE(src.Y, recon.Y, stride, px, py, n))
 
@@ -305,6 +308,9 @@ func (st *lossyEncodeState) keyLuma(src SourceFrame420, recon *SourceFrame420, b
 		}
 		memsetBytes(spred, dc)
 		qc := s.q1[i*cs : (i+1)*cs]
+		subReq := tile.CoeffContextRequest{Plane: 0, PlaneBlock: block.Size, Size: subTX, X4: block.X4 + uint8(dx/4), Y4: block.Y4 + uint8(dy/4)}
+		ctx := coeffCtx.TXBContextTrusted(subReq, subDims, blockDims)
+		st.keyRDOQCtx = ctx
 		if _, _, err := st.prepareIntraTXB(src.Y, stride, px+dx, py+dy, sub, sub, q, subTX, spred, qc); err != nil {
 			return 0, err
 		}
@@ -316,8 +322,6 @@ func (st *lossyEncodeState) keyLuma(src SourceFrame420, recon *SourceFrame420, b
 		if err := st.reconInterTXBResult(recon.Y, spred, sub, stride, px+dx, py+dy, sub, sub, q, qc, subGeo, subScan, transform.TypeDCTDCT, res); err != nil {
 			return 0, err
 		}
-		subReq := tile.CoeffContextRequest{Plane: 0, PlaneBlock: block.Size, Size: subTX, X4: block.X4 + uint8(dx/4), Y4: block.Y4 + uint8(dy/4)}
-		ctx := coeffCtx.TXBContextTrusted(subReq, subDims, blockDims)
 		bits += st.keyTXSCoeffCost(qc, subTX, sub, ctx, int(res.EOB))
 		dist += keyTXSSSE(src.Y, recon.Y, stride, px+dx, py+dy, sub)
 		if err := coeffCtx.MarkTXB(subReq, res); err != nil {
@@ -463,4 +467,38 @@ func keyBlockVar(a []byte, stride, w, h int) int {
 		log2++
 	}
 	return int((v + 1<<(log2-1)) >> log2)
+}
+
+// keyRDOQQuantize is svt_aom_quantize_inv_quantize with perform_rdoq for a
+// keyframe TXB. SVT-AV1's rtc presets set rdoq_level is_islice ? 1 : 0
+// above M8 (M9 flat). Level 1 runs the full optimize_b on every I-slice TXB:
+// luma and chroma (skip_uv 0), every tx type, eob_th and eob_fast_th 255,
+// no cut-off. It starts from the fp quantizer and prices with the frame-start
+// rates at the TXB's real txb_skip / dc_sign contexts, at
+// full_lambda * plane_rd_mult[rtc][intra] (17 luma, 13 chroma) >> 2.
+func (st *lossyEncodeState) keyRDOQQuantize(tran []int32, qcoeff []int16, size tile.TransformSize, q quantize.Quantizer) {
+	plane := st.keyRDOQPlane
+	g := rdoqGeometry(size, plane)
+	if err := quantize.QuantizeBlockScaledFP(qcoeff[:g.area], g.ch, tran[:g.area], g.ch, g.cw, g.ch, q, uint8(g.shift)); err != nil {
+		return
+	}
+	eob := rdoqEOBFromIScan(qcoeff[:g.area], g.iscan)
+	if eob == 0 {
+		return
+	}
+	tab := st.keyTXSCoeffTab
+	s := rdoqState{
+		g:       g,
+		tc:      &tab.coeff[g.txCtx][plane],
+		ec:      &tab.eob[g.eobSel][plane],
+		rdmult:  (st.keyTXSLambda*rdoqPlaneRDMult[plane] + 2) >> 2,
+		scan:    g.scan,
+		tcoeff:  tran,
+		qcoeff:  qcoeff,
+		dqcoeff: st.rdoqDQ[:],
+		levels:  st.levels,
+		dqDC:    q.DC,
+		dqAC:    q.AC,
+	}
+	s.optimizeB(eob, int(st.keyRDOQCtx.TXBSkipContext), int(st.keyRDOQCtx.DCSignContext))
 }
