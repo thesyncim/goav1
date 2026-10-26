@@ -15,6 +15,7 @@ import (
 func quantizeFPVectors(qcoeff []int16, coeff []int32, quant int32, round int32, dequant int32, txScale uint8) {
 	n := len(coeff)
 	if n == 0 {
+		archsimd.ClearAVXUpperBits()
 		return
 	}
 	_ = qcoeff[n-1]
@@ -37,6 +38,7 @@ func quantizeFPVectors(qcoeff []int16, coeff []int32, quant int32, round int32, 
 		// is the element order of the eight consecutive outputs.
 		level.GetLo().SaturateToInt16Concat(level.GetHi()).StoreArray((*[8]int16)(unsafe.Add(qp, 2*i)))
 	}
+	archsimd.ClearAVXUpperBits()
 }
 
 // quantizeApplySignAVX2 is the eight-lane conditional negate used by the
@@ -54,6 +56,7 @@ func quantizeApplySignAVX2(mag archsimd.Int32x8, src archsimd.Int32x8) archsimd.
 func quantizeBVectors(qcoeff []int16, coeff []int32, quant int32, round int32, zbin int32, shift uint64) {
 	n := len(coeff)
 	if n == 0 {
+		archsimd.ClearAVXUpperBits()
 		return
 	}
 	_ = qcoeff[n-1]
@@ -74,4 +77,5 @@ func quantizeBVectors(qcoeff []int16, coeff []int32, quant int32, round int32, z
 		level = quantizeApplySignAVX2(level, c).Masked(keep)
 		level.GetLo().SaturateToInt16Concat(level.GetHi()).StoreArray((*[8]int16)(unsafe.Add(qp, 2*i)))
 	}
+	archsimd.ClearAVXUpperBits()
 }

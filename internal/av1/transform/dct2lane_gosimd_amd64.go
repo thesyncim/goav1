@@ -119,6 +119,7 @@ func inverseDCT8PairSIMD(p0, p1 unsafe.Pointer, stride uintptr, min, max int32) 
 	dctPairStore(p0, p1, stride, 5, dctPairClip(e2.Sub(t5), minv, maxv))
 	dctPairStore(p0, p1, stride, 6, dctPairClip(e1.Sub(t6), minv, maxv))
 	dctPairStore(p0, p1, stride, 7, dctPairClip(e0.Sub(t7), minv, maxv))
+	archsimd.ClearAVXUpperBits()
 }
 
 func inverseDCT8Row2SIMDAdapter(r0, r1 []int32, min, max int32) {
@@ -262,6 +263,7 @@ func inverseDCT16PairSIMD(p0, p1 unsafe.Pointer, stride uintptr, min, max int32)
 	dctPairStore(p0, p1, stride, 13, dctPairClip(e6.Sub(t13a), minv, maxv))
 	dctPairStore(p0, p1, stride, 14, dctPairClip(e5.Sub(t14), minv, maxv))
 	dctPairStore(p0, p1, stride, 15, dctPairClip(e4.Sub(t15a), minv, maxv))
+	archsimd.ClearAVXUpperBits()
 }
 
 func inverseDCT16Row2SIMDAdapter(r0, r1 []int32, min, max int32) {
