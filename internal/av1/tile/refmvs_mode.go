@@ -79,7 +79,7 @@ func readMVResidualRefmvs(c *entropy.Cursor, cdfs *MVCDFs, ref refmvsMV, mvPrec 
 // not a warped GLOBALMV, has overlappable neighbours), find_matching_ref,
 // the motion_mode / obmc symbol and derive_warpmv. It fills the motion-mode,
 // warp and OBMC-neighbor fields of result.
-func (s *DecodeState) decodeMotionModeRefmvs(cdfs *MotionModeCDFs, c *BlockModeContext, rt *refmvsTile, req *BlockLoopRequest, block BlockVisit, refs InterReferencesResult, skipMode bool, result *BlockPredictionModeResult) (MotionMode, error) {
+func (s *DecodeState) decodeMotionModeRefmvs(cdfs *MotionModeCDFs, c *BlockModeContext, rt *refmvsTile, req *BlockLoopRequest, block *BlockVisit, refs InterReferencesResult, skipMode bool, result *BlockPredictionModeResult) (MotionMode, error) {
 	result.MotionMode = MotionModeTranslation
 	result.MotionModeValid = true
 	dims := blockDimensions[block.Size]
@@ -132,7 +132,7 @@ var compoundModeHasNear = [compoundInterModeCount]bool{
 // reference frames are known: dav1d_refmvs_find, the (comp_)inter_mode
 // symbols, the DRL bits and the MV assignment/residuals. It fills the mode,
 // DRL and motion fields of result.
-func (s *DecodeState) decodeInterModeRefmvs(cdfs *InterModeCDFs, mvCDFs *MVCDFs, modeCtx *BlockModeContext, rt *refmvsTile, req *BlockLoopRequest, block BlockVisit, refs InterReferencesResult, skipMode bool, segment *parser.SegmentData, globalMVs [2]motion.Vector, result *BlockPredictionModeResult) error {
+func (s *DecodeState) decodeInterModeRefmvs(cdfs *InterModeCDFs, mvCDFs *MVCDFs, modeCtx *BlockModeContext, rt *refmvsTile, req *BlockLoopRequest, block *BlockVisit, refs InterReferencesResult, skipMode bool, segment *parser.SegmentData, globalMVs [2]motion.Vector, result *BlockPredictionModeResult) error {
 	var found refmvsResult
 	target := [2]int8{int8(refs.Ref[0]) + 1, -1}
 	if refs.Compound {

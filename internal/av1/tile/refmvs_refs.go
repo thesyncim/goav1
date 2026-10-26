@@ -180,7 +180,7 @@ func envCompDirCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool) int 
 // readInterRefsRefmvs ports decode_b's reference-frame syntax: skip-mode
 // references, the segment reference feature, the comp flag, then either the
 // compound (uni or bidir) or the single-reference tree, on one cursor.
-func (s *DecodeState) readInterRefsRefmvs(cdfs *InterRefCDFs, c *BlockModeContext, req *BlockLoopRequest, block BlockVisit, skipMode bool, segment *parser.SegmentData) (InterReferencesResult, error) {
+func (s *DecodeState) readInterRefsRefmvs(cdfs *InterRefCDFs, c *BlockModeContext, req *BlockLoopRequest, block *BlockVisit, skipMode bool, segment *parser.SegmentData) (InterReferencesResult, error) {
 	if skipMode {
 		refs := req.SkipModeRefs
 		if !refs[0].Valid() || !refs[1].Valid() {
@@ -310,7 +310,7 @@ func envFilterDir(f motion.InterpFilters, dir int) int {
 // (has_subpel_filter), the frame filter when it is not switchable, otherwise
 // one or (dual_filter) two switchable symbols with the get_filter_ctx
 // contexts. It returns the filters and the number of symbols read.
-func (s *DecodeState) readInterpFiltersRefmvs(cdfs *InterpFilterCDFs, c *BlockModeContext, req *BlockLoopRequest, block BlockVisit, refs InterReferencesResult, mode InterModeResult, motionMode MotionMode, globalTypes [2]parser.GlobalMotionType, skipMode bool) (motion.InterpFilters, int, error) {
+func (s *DecodeState) readInterpFiltersRefmvs(cdfs *InterpFilterCDFs, c *BlockModeContext, req *BlockLoopRequest, block *BlockVisit, refs InterReferencesResult, mode InterModeResult, motionMode MotionMode, globalTypes [2]parser.GlobalMotionType, skipMode bool) (motion.InterpFilters, int, error) {
 	if skipMode || motionMode == MotionModeWarp || nonTransGlobalMotion(InterpFilterRequest{Size: block.Size, References: refs, Mode: mode, GlobalTypes: globalTypes}) {
 		filter, err := unswitchableMotionFilter(req.InterpolationFilter)
 		return motion.InterpFilters{X: filter, Y: filter}, 0, err

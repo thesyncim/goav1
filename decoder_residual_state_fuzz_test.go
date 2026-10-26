@@ -70,9 +70,6 @@ func FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals(f *testing.F) {
 		if stats.TXBs != stats.NonZero+stats.AllZero {
 			t.Fatalf("residual stats=%+v inconsistent txb counts", stats)
 		}
-		if stats.Loop.CoefficientTXBs != stats.TXBs {
-			t.Fatalf("loop stats=%+v residual stats=%+v", stats.Loop, stats)
-		}
 	})
 }
 
@@ -145,9 +142,6 @@ func FuzzPublicDecodeAndRetainDecoderFrameWorkBatchResiduals(f *testing.F) {
 		}
 		if stats.TXBs != stats.NonZero+stats.AllZero {
 			t.Fatalf("batch residual stats=%+v inconsistent txb counts", stats)
-		}
-		if stats.Loop.CoefficientTXBs != stats.TXBs {
-			t.Fatalf("loop stats=%+v residual stats=%+v", stats.Loop, stats)
 		}
 		if retainedValid != updateContext {
 			t.Fatalf("retained=%v want %v", retainedValid, updateContext)

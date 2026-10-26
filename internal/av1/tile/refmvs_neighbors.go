@@ -25,7 +25,7 @@ func refmvsFindOddZero(buf []uint8, length int) bool {
 // hasOverlappableNeighbours is decode_b's "has overlappable neighbours"
 // test: an inter (non-intra) block at an odd 4x4 position of the left or top
 // edge context.
-func (c *BlockModeContext) hasOverlappableNeighbours(block BlockVisit) bool {
+func (c *BlockModeContext) hasOverlappableNeighbours(block *BlockVisit) bool {
 	x4, y4 := int(block.X4), int(block.Y4)
 	if block.HaveLeft && refmvsFindOddZero(c.LeftIntra[y4+1:], int(block.VisibleH4)>>1) {
 		return true
@@ -40,7 +40,7 @@ func refmvsMatchesSingleRef(b *refmvsBlock, ref int8) bool {
 // findMatchingRef ports dav1d's find_matching_ref. ref is the 0-based
 // reference frame; masks[0] holds top-edge hits (bit 32 = top-right) and
 // masks[1] left-edge hits (bit 32 = top-left).
-func (rt *refmvsTile) findMatchingRef(block BlockVisit, topHasRight bool, ref ReferenceFrame, masks *[2]uint64) {
+func (rt *refmvsTile) findMatchingRef(block *BlockVisit, topHasRight bool, ref ReferenceFrame, masks *[2]uint64) {
 	dims := blockDimensions[block.Size]
 	bw4, bh4 := int32(dims.W4), int32(dims.H4)
 	w4, h4 := int32(block.VisibleW4), int32(block.VisibleH4)
@@ -138,7 +138,7 @@ func refmvsWarpSample(dx, dy, sx, sy int32, b *refmvsBlock) warpSample {
 // selected by masks, drop the ones whose motion differs from mv by more than
 // the size threshold, then solve the affine model (dav1d_find_affine_int and
 // dav1d_get_shear_params).
-func (rt *refmvsTile) deriveWarpMV(block BlockVisit, masks *[2]uint64, mvIn motion.Vector) (WarpedMotionModel, bool, error) {
+func (rt *refmvsTile) deriveWarpMV(block *BlockVisit, masks *[2]uint64, mvIn motion.Vector) (WarpedMotionModel, bool, error) {
 	var pts [maxWarpSamples]warpSample
 	np := 0
 	dims := blockDimensions[block.Size]
@@ -227,7 +227,7 @@ func (rt *refmvsTile) deriveWarpMV(block BlockVisit, masks *[2]uint64, mvIn moti
 			pts[i] = pts[j]
 		}
 	}
-	return findWarpProjection(pts[:ret], block, mvIn)
+	return findWarpProjection(pts[:ret], *block, mvIn)
 }
 
 // subChromaCells ports dav1d's sub8x8 chroma derivation (recon_tmpl.c
@@ -237,7 +237,7 @@ func (rt *refmvsTile) deriveWarpMV(block BlockVisit, masks *[2]uint64, mvIn moti
 // Cell filters follow dav1d: t->l.filter[by4], t->a->filter[bx4] and
 // tl_4x4_filter (the first 4x4 of the 8x8 split). The trailing self cell's MV
 // and reference are filled by the caller.
-func (rt *refmvsTile) subChromaCells(c *BlockModeContext, block BlockVisit, ssX, ssY bool, filters motion.InterpFilters) (SubChromaInterResult, bool) {
+func (rt *refmvsTile) subChromaCells(c *BlockModeContext, block *BlockVisit, ssX, ssY bool, filters motion.InterpFilters) (SubChromaInterResult, bool) {
 	dims := blockDimensions[block.Size]
 	is4x := dims.W4 == 1 && ssX
 	is4y := dims.H4 == 1 && ssY
@@ -321,7 +321,7 @@ func refmvsNeighborMotion(b *refmvsBlock) InterMotionResult {
 // steps clipped to [2, 16], at most min(log2 size, 4) inter neighbors per
 // edge. Filters come from the above/left edge contexts like dav1d's
 // t->a->filter / t->l.filter.
-func (rt *refmvsTile) obmcNeighbors(c *BlockModeContext, block BlockVisit) OverlappableNeighborSet {
+func (rt *refmvsTile) obmcNeighbors(c *BlockModeContext, block *BlockVisit) OverlappableNeighborSet {
 	var set OverlappableNeighborSet
 	dims := blockDimensions[block.Size]
 	bx, by := int32(block.MICol), int32(block.MIRow)

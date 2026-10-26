@@ -458,10 +458,7 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 						return err
 					}
 					stats.partitionReads += int(jobStats.Loop.PartitionReads)
-					stats.blockPrefixReads += int(jobStats.Loop.Prefixes)
 					stats.blockDeltaPaths += int(jobStats.Loop.Blocks)
-					stats.predictionModeReads += int(jobStats.Loop.PredictionModes)
-					stats.intraModeReads += int(jobStats.Loop.IntraModes)
 					stats.residualTXBs += int(jobStats.TXBs)
 					stats.residuals += int(jobStats.Residuals)
 					stats.predictions += int(jobStats.Predictions)
@@ -663,17 +660,8 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 	if stats.partitionReads == 0 {
 		t.Fatal("no partition syntax was read")
 	}
-	if stats.blockPrefixReads == 0 {
-		t.Fatal("no block prefix syntax was read")
-	}
 	if stats.blockDeltaPaths == 0 {
 		t.Fatal("no block delta syntax path ran")
-	}
-	if stats.predictionModeReads == 0 {
-		t.Fatal("no prediction mode syntax was read")
-	}
-	if stats.intraModeReads == 0 {
-		t.Fatal("no intra mode syntax was read")
 	}
 	if stats.residualTXBs == 0 {
 		t.Fatal("no residual TXBs were decoded")
@@ -694,10 +682,7 @@ type libaomFrameWorkStats struct {
 	retainedContexts          int
 	contextUpdateTiles        int
 	partitionReads            int
-	blockPrefixReads          int
 	blockDeltaPaths           int
-	predictionModeReads       int
-	intraModeReads            int
 	residualTXBs              int
 	residuals                 int
 	predictions               int

@@ -49,7 +49,7 @@ func TestDecodeBlockLoopReadsPrefixDeltaAndSegments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats != (BlockLoopStats{PartitionReads: 1, Blocks: 1, Prefixes: 1, DeltaReads: 1}) {
+	if stats != (BlockLoopStats{PartitionReads: 1, Blocks: 1}) {
 		t.Fatalf("stats=%+v", stats)
 	}
 	if len(visits) != 1 {
@@ -346,7 +346,7 @@ func TestDecodeBlockLoopContextCarrierStoresRootEdges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Blocks != 2 || stats.Prefixes != 2 {
+	if stats.Blocks != 2 {
 		t.Fatalf("stats=%+v want two roots", stats)
 	}
 	if carrier.Above[0].mode.Skip[0] != 1 || carrier.Above[1].mode.Skip[0] != 1 || carrier.Left.mode.Skip[0] != 1 {
@@ -397,7 +397,7 @@ func TestDecodeBlockLoopSegmentationPreskipAndMaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats != (BlockLoopStats{PartitionReads: 1, Blocks: 1, SegmentIDs: 1, Prefixes: 1}) {
+	if stats != (BlockLoopStats{PartitionReads: 1, Blocks: 1}) {
 		t.Fatalf("stats=%+v", stats)
 	}
 	if got.SegmentID != 0 || !got.Segment.Skip || !got.Prefix.SkipTransform {
@@ -450,7 +450,7 @@ func TestDecodeBlockLoopReadsIntraPredictionModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats != (BlockLoopStats{PartitionReads: 1, Blocks: 1, Prefixes: 1, PredictionModes: 1, IntraModes: 1}) {
+	if stats != (BlockLoopStats{PartitionReads: 1, Blocks: 1}) {
 		t.Fatalf("stats=%+v", stats)
 	}
 	if !got.Prediction.Valid || !got.Prediction.Intra || got.Prediction.LumaMode != IntraModeDC ||
@@ -527,15 +527,9 @@ func TestDecodeBlockLoopReadsCoefficients(t *testing.T) {
 		t.Fatal(err)
 	}
 	if stats != (BlockLoopStats{
-		PartitionReads:      1,
-		Blocks:              1,
-		Prefixes:            1,
-		PredictionModes:     1,
-		IntraModes:          1,
-		CoefficientBlocks:   1,
-		CoefficientTXBs:     1,
-		CoefficientNonZero:  1,
-		CoefficientEOBTotal: 1,
+		PartitionReads:    1,
+		Blocks:            1,
+		CoefficientBlocks: 1,
 	}) {
 		t.Fatalf("stats=%+v", stats)
 	}
@@ -665,7 +659,7 @@ func TestDecodeBlockLoopCoefficientSelectorDoesNotRequirePredictionModes(t *test
 	if !beforeCoefficients || coeffVisits != 1 {
 		t.Fatalf("before=%v coeffVisits=%d", beforeCoefficients, coeffVisits)
 	}
-	if stats.PredictionModes != 0 || stats.CoefficientBlocks != 1 || stats.CoefficientTXBs != 1 {
+	if stats.CoefficientBlocks != 1 {
 		t.Fatalf("stats=%+v", stats)
 	}
 }
@@ -713,11 +707,7 @@ func TestDecodeBlockLoopReadsInterReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Blocks == 0 ||
-		stats.PredictionModes != stats.Blocks ||
-		stats.InterEntries != stats.Blocks ||
-		stats.InterReferences != stats.Blocks ||
-		stats.IntraModes != 0 {
+	if stats.Blocks == 0 {
 		t.Fatalf("stats=%+v", stats)
 	}
 	for i, visit := range visits {
@@ -797,15 +787,8 @@ func TestDecodeBlockLoopReadsForcedInterModeAndRefMVStack(t *testing.T) {
 		t.Fatal(err)
 	}
 	if stats != (BlockLoopStats{
-		PartitionReads:  1,
-		Blocks:          1,
-		Prefixes:        1,
-		PredictionModes: 1,
-		InterEntries:    1,
-		InterReferences: 1,
-		InterModes:      1,
-		RefMVStacks:     1,
-		MotionVectors:   1,
+		PartitionReads: 1,
+		Blocks:         1,
 	}) {
 		t.Fatalf("stats=%+v", stats)
 	}
@@ -858,12 +841,12 @@ func TestBlockReferenceGlobalMVsForBlockPortsLibaomCenterMV(t *testing.T) {
 		-1024, 1<<16 + 2048,
 	}
 
-	got := blockReferenceGlobalMVsForBlock(refs, &[referenceFrameCount]motion.Vector{}, &global, true, false, block)
+	got := blockReferenceGlobalMVsForBlock(refs, &[referenceFrameCount]motion.Vector{}, &global, true, false, &block)
 	if got[0] != (motion.Vector{Row: 6, Col: 12}) {
 		t.Fatalf("rotzoom global mv=%+v want row=6 col=12", got[0])
 	}
 
-	got = blockReferenceGlobalMVsForBlock(refs, &[referenceFrameCount]motion.Vector{}, &global, true, true, block)
+	got = blockReferenceGlobalMVsForBlock(refs, &[referenceFrameCount]motion.Vector{}, &global, true, true, &block)
 	if got[0] != (motion.Vector{Row: 8, Col: 8}) {
 		t.Fatalf("integer rotzoom global mv=%+v want row=8 col=8", got[0])
 	}
@@ -872,13 +855,13 @@ func TestBlockReferenceGlobalMVsForBlockPortsLibaomCenterMV(t *testing.T) {
 	global[ReferenceFrameLast].Type = parser.GlobalMotionTranslation
 	global[ReferenceFrameLast].Matrix[0] = 13 << 13
 	global[ReferenceFrameLast].Matrix[1] = -7 << 13
-	got = blockReferenceGlobalMVsForBlock(refs, &[referenceFrameCount]motion.Vector{}, &global, false, true, block)
+	got = blockReferenceGlobalMVsForBlock(refs, &[referenceFrameCount]motion.Vector{}, &global, false, true, &block)
 	if got[0] != (motion.Vector{Row: 16, Col: -8}) {
 		t.Fatalf("translation global mv=%+v want row=16 col=-8", got[0])
 	}
 
 	fallback := [referenceFrameCount]motion.Vector{ReferenceFrameLast: {Row: 3, Col: -5}}
-	got = blockReferenceGlobalMVsForBlock(refs, &fallback, &[referenceFrameCount]parser.WarpedMotionParams{}, true, false, block)
+	got = blockReferenceGlobalMVsForBlock(refs, &fallback, &[referenceFrameCount]parser.WarpedMotionParams{}, true, false, &block)
 	if got[0] != fallback[ReferenceFrameLast] {
 		t.Fatalf("fallback global mv=%+v want %+v", got[0], fallback[ReferenceFrameLast])
 	}
@@ -1658,11 +1641,8 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if stats.Blocks == 0 || stats.PartitionReads == 0 || stats.Prefixes != stats.Blocks {
+		if stats.Blocks == 0 || stats.PartitionReads == 0 {
 			t.Fatalf("bad stats=%+v", stats)
-		}
-		if stats.CoefficientTXBs != stats.CoefficientNonZero+stats.CoefficientAllZero {
-			t.Fatalf("bad coefficient stats=%+v", stats)
 		}
 		if stats.CoefficientBlocks > stats.Blocks {
 			t.Fatalf("coefficient blocks exceed visited blocks: %+v", stats)

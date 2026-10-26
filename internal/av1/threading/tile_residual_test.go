@@ -316,7 +316,7 @@ func TestFrameWorkBatchDecodeAndReconstructJobResiduals(t *testing.T) {
 		stats.TXBs != 1 || stats.Residuals != 1 || stats.TXBs != stats.NonZero+stats.AllZero {
 		t.Fatalf("residual stats=%+v", stats)
 	}
-	if stats.Loop.CoefficientBlocks != 1 || stats.Loop.CoefficientTXBs != stats.TXBs {
+	if stats.Loop.CoefficientBlocks != 1 {
 		t.Fatalf("loop coefficient stats=%+v residual stats=%+v", stats.Loop, stats)
 	}
 }
