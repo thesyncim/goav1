@@ -681,3 +681,43 @@ func interTransformMode(color parser.ColorConfig, qIndex uint8) TransformMode {
 	}
 	return TransformModeSwitchable
 }
+
+// forwardDCT16x16Decide is the skip decision's 16x16 forward DCT: SVT's
+// N4_SHAPE kernel (svt_av1_fwd_txfm2d_16x16_N4, the 4x4 low coefficients)
+// when pfN4 is set, else the row-skipping full transform.
+func forwardDCT16x16Decide(pfN4 bool, coeff *[256]int32, residual *[256]int16, thr0, thr int32) uint8 {
+	if pfN4 {
+		return transform.ForwardDCT16x16N4RowSkip8BitTrusted(coeff, residual, thr0, thr)
+	}
+	return transform.ForwardDCT16x16RowSkip8BitTrusted(coeff, residual, thr0, thr)
+}
+
+// forwardDCT32x32Decide is forwardDCT16x16Decide for 32x32 blocks
+// (svt_av1_fwd_txfm2d_32x32_N4, the 8x8 low coefficients).
+func forwardDCT32x32Decide(pfN4 bool, coeff *[1024]int32, residual *[1024]int16, thr0, thr int32) uint8 {
+	if pfN4 {
+		return transform.ForwardDCT32x32N4RowSkip8BitTrusted(coeff, residual, thr0, thr)
+	}
+	return transform.ForwardDCT32x32RowSkip8BitTrusted(coeff, residual, thr0, thr)
+}
+
+// forwardIntraTXB is prepareIntraTXB's forward transform of the w x h
+// residual (n samples, cn coefficients). Under N4_SHAPE a square DCT_DCT
+// block runs SVT's N4 kernel (svt_av1_fwd_txfm2d_NxN_N4), which writes only
+// the low-quarter coefficients; the caller zeroes the rest.
+func (st *lossyEncodeState) forwardIntraTXB(tran []int32, residual []int16, cn, n, w, h int) error {
+	if st.pfN4 && w == h && st.intraUVTxType == transform.TypeDCTDCT {
+		switch w {
+		case 8:
+			transform.ForwardDCT8x8N48BitTrusted((*[64]int32)(tran[:64]), (*[64]int16)(residual[:64]))
+			return nil
+		case 16:
+			transform.ForwardDCT16x16N48BitTrusted((*[256]int32)(tran[:256]), (*[256]int16)(residual[:256]))
+			return nil
+		case 32:
+			transform.ForwardDCT32x32N48BitTrusted((*[1024]int32)(tran[:1024]), (*[1024]int16)(residual[:1024]))
+			return nil
+		}
+	}
+	return forwardTransformBlock8BitResidualTrusted(tran[:cn], residual[:n], st.dqScratch[:n], w, h, st.intraUVTxType)
+}
