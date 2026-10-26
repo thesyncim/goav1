@@ -334,6 +334,11 @@ func (b *FrameWorkBatch) PredictBlockChromaIntra(index int, visit tile.BlockLoop
 // visit. The luma block in the output frame must already contain reconstructed
 // samples, matching libaom's luma-first CfL scheduling.
 func (b *FrameWorkBatch) PredictBlockChromaCFL(index int, visit tile.BlockLoopVisit, scratch *FrameWorkCFLPredictionScratch) error {
+	return b.predictBlockChromaCFLPtr(index, &visit, scratch)
+}
+
+// predictBlockChromaCFLPtr is PredictBlockChromaCFL on the caller's visit.
+func (b *FrameWorkBatch) predictBlockChromaCFLPtr(index int, visit *tile.BlockLoopVisit, scratch *FrameWorkCFLPredictionScratch) error {
 	if scratch == nil || !visit.Prediction.Valid || !visit.Prediction.Intra ||
 		!visit.Prediction.ChromaModeValid || visit.Prediction.ChromaMode != tile.ChromaIntraModeCFL ||
 		!visit.Prediction.CFLAlphaValid {
@@ -343,7 +348,7 @@ func (b *FrameWorkBatch) PredictBlockChromaCFL(index int, visit tile.BlockLoopVi
 		!tile.HasChromaBlockAt(visit.Block.Size, int(visit.Block.X4), int(visit.Block.Y4), b.Sequence.ColorConfig) {
 		return ErrInvalidBatch
 	}
-	return b.predictBlockChromaCFLShared(index, &visit, scratch)
+	return b.predictBlockChromaCFLShared(index, visit, scratch)
 }
 
 // PredictBlockIntraCoeff writes intra prediction for one transform block from a
