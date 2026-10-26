@@ -295,10 +295,16 @@ func (st *lossyEncodeState) decideKeyBlock(src SourceFrame420, recon *SourceFram
 		}
 	}
 
+	// SVT's MDS3 transform shortcuts (keyTXShortcut, keyChromaN4).
+	shortcut := false
 	if st.keyTXSOn {
 		yTX := lumaTX
 		if mode == tile.IntraModeDC && pal == nil {
-			if yTX, err = st.keyLumaTXS(src, recon, block, scratch, rec, pred, n, lumaTX); err != nil {
+			shortcut = keyTXShortcut(src.Y, src.YStride, pred, lumaPX, lumaPY, n, st.qIndex)
+			st.pfN4 = shortcut
+			yTX, err = st.keyLumaTXS(src, recon, block, scratch, rec, pred, n, lumaTX)
+			st.pfN4 = false
+			if err != nil {
 				return fmt.Errorf("luma txs: %w", err)
 			}
 			r.splitTX = yTX != lumaTX
@@ -325,6 +331,14 @@ func (st *lossyEncodeState) decideKeyBlock(src SourceFrame420, recon *SourceFram
 	}
 	dcU := dcPredictRect(recon.U, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, block.HaveTop, block.HaveLeft)
 	dcV := dcPredictRect(recon.V, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, block.HaveTop, block.HaveLeft)
+	if st.keyTXSOn && mode == tile.IntraModeDC && pal == nil {
+		lumaPred := pred
+		if r.splitTX {
+			lumaPred = nil
+		}
+		st.pfN4 = st.keyChromaN4(src, &cg, lumaPred, n, lumaPX, lumaPY, dcU, dcV, shortcut)
+		defer func() { st.pfN4 = false }()
+	}
 	// SVT's I-slice CfL search (keyframe_cfl.go, cfl_level 2).
 	var cflAlphaQ3 [3]int
 	if cflAllowed, err := tile.ChromaIntraCFLAllowed(block.Size, st.color, false); err == nil && cflAllowed && videoColorIs420(st.color) {
