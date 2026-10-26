@@ -154,12 +154,12 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 		// NEWMV predictor of LAST's MVP table as the MV cost reference.
 		if st.allowSubpelRefinement() {
 			lastRefs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
-			stack, err := st.referenceMVStack(modeCtx, st.pblockStackRequest(block, walkReq, miCols, miRows, lastRefs), block)
+			err := st.referenceMVStack(&out.stack, modeCtx, lastRefs, &block, walkReq, miCols, miRows)
 			if err != nil {
 				return out, fmt.Errorf("build ref mv stack: %w", err)
 			}
-			out.stack, out.stackOK = stack, true
-			mv, fullSAD = st.pblockSubpel(src, ref.Y, ref.YStride, lumaPX, lumaPY, bw, bh, mv, fullSAD, st.svtNewMVPredictor(&stack), true)
+			out.stackOK = true
+			mv, fullSAD = st.pblockSubpel(src, ref.Y, ref.YStride, lumaPX, lumaPY, bw, bh, mv, fullSAD, st.svtNewMVPredictor(&out.stack), true)
 		}
 	}
 
@@ -193,12 +193,12 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 			goldenRefPruned = int64(gsad)*100 > int64(lastSAD)*(100+goldenRefPruneMaxDevPct)
 			if st.allowSubpelRefinement() && !goldenRefPruned {
 				goldenRefs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameGolden, tile.ReferenceFrameNone}}
-				stack, err := st.referenceMVStack(modeCtx, st.pblockStackRequest(block, walkReq, miCols, miRows, goldenRefs), block)
+				err := st.referenceMVStack(&goldenStack, modeCtx, goldenRefs, &block, walkReq, miCols, miRows)
 				if err != nil {
 					return out, fmt.Errorf("build ref mv stack: %w", err)
 				}
-				goldenStack, goldenStackOK = stack, true
-				gmv, gsad = st.pblockSubpel(src, golden.Y, golden.YStride, lumaPX, lumaPY, bw, bh, gmv, gsad, st.svtNewMVPredictor(&stack), false)
+				goldenStackOK = true
+				gmv, gsad = st.pblockSubpel(src, golden.Y, golden.YStride, lumaPX, lumaPY, bw, bh, gmv, gsad, st.svtNewMVPredictor(&goldenStack), false)
 			}
 		} else {
 			base := lumaPY*src.YStride + lumaPX
@@ -247,16 +247,15 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 }
 
 // pblockStack returns the reference-MV stack for the motion stage's refs,
-// reusing the one the sub-pel search built.
-func (st *lossyEncodeState) pblockStack(mo *pblockMotion, block tile.BlockVisit, modeCtx *tile.BlockModeContext, walkReq tile.BlockWalkRequest, miCols, miRows uint16) (tile.ReferenceMVStackResult, error) {
+// reusing the one the sub-pel search built; otherwise it builds it in mo.
+func (st *lossyEncodeState) pblockStack(mo *pblockMotion, block *tile.BlockVisit, modeCtx *tile.BlockModeContext, walkReq tile.BlockWalkRequest, miCols, miRows uint16) (*tile.ReferenceMVStackResult, error) {
 	if mo.stackOK {
-		return mo.stack, nil
+		return &mo.stack, nil
 	}
-	stack, err := st.referenceMVStack(modeCtx, st.pblockStackRequest(block, walkReq, miCols, miRows, mo.refs), block)
-	if err != nil {
-		return stack, fmt.Errorf("build ref mv stack: %w", err)
+	if err := st.referenceMVStack(&mo.stack, modeCtx, mo.refs, block, walkReq, miCols, miRows); err != nil {
+		return &mo.stack, fmt.Errorf("build ref mv stack: %w", err)
 	}
-	return stack, nil
+	return &mo.stack, nil
 }
 
 // leafFullPelSAD is the luma SAD of the bw x bh block at full-pel motion mv,

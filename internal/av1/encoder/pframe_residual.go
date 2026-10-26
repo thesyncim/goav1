@@ -1204,7 +1204,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// have to follow the vector that is actually signaled. The stack reads
 	// only motion context this block has not yet marked, so building it
 	// before the prefix symbols matches the decoder's later view exactly.
-	stack, err := st.pblockStack(&mo, block, modeCtx, walkReq, miCols, miRows)
+	stack, err := st.pblockStack(&mo, &block, modeCtx, walkReq, miCols, miRows)
 	if err != nil {
 		return err
 	}
@@ -1237,7 +1237,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		// md_encode_block_light_pd1 calls md_stage_0_light_pd1 for every
 		// block with more than one candidate, with no source-SAD gate.
 		if st.mds0Level != 0 && !scaledReference && refPlanes.Width == src.Width && refPlanes.Height == src.Height {
-			if cand, ok, retained := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, &stack, lumaPX, lumaPY, bw, bh, mv); ok {
+			if cand, ok, retained := st.mds0PickInterMode(src, refPlanes.Y, refPlanes.YStride, stack, lumaPX, lumaPY, bw, bh, mv); ok {
 				modeResult.Mode = cand.mode
 				if cand.mv != mv {
 					fullSAD = st.mds0WinnerSAD(src, lumaPX, lumaPY, bw, bh, retained, fullSAD)
@@ -1249,7 +1249,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			}
 		}
 		if !mds0Picked {
-			modeResult.Mode = st.classifyInterMode(src, refPlanes, &stack, lumaPX, lumaPY, bw, bh, &mv, &fullSAD)
+			modeResult.Mode = st.classifyInterMode(src, refPlanes, stack, lumaPX, lumaPY, bw, bh, &mv, &fullSAD)
 		} else if st.mds0IntraWins(src, recon, block, modeCtx, lumaPX, lumaPY, bw, bh) {
 			return st.encodeIntraPBlock(src, recon, block, scratch)
 		}
