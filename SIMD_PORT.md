@@ -7,7 +7,7 @@ used a forked toolchain and are not evidence for the official Go release.
 
 ## Toolchain and commands
 
-The modules require Go 1.27.0 or newer. Use the official Go distribution. The
+The modules require Go 1.27.3 or newer. Use the official Go distribution. The
 `scripts/simdtip.sh` filename is retained for compatibility, but the script now
 selects `go` from `PATH` by default or an executable supplied with `GO`:
 

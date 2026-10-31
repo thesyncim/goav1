@@ -1,6 +1,6 @@
 module github.com/thesyncim/goav1/examples/browser-push
 
-go 1.27.0
+go 1.27.3
 
 require (
 	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc

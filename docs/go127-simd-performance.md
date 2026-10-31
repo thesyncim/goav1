@@ -9,7 +9,7 @@ performance.
 The final validation for the October 8 follow-up uses official Go 1.27.2.
 Earlier measurements below retain their original Go 1.27.1 labels; compiler
 versions are not mixed within a before/after comparison. The module minimum
-remains 1.27.0 and CI tracks 1.27.x without a toolchain directive.
+is now 1.27.3 and CI tracks 1.27.x without a toolchain directive.
 
 These arm64 kernel measurements used the official Go 1.27.1 toolchain with
 `GOEXPERIMENT=simd` on an Apple M4 Max. The source baseline was `35c0602a`; the
@@ -292,7 +292,7 @@ scripts/simdtip.sh test -run '^TestPublicDecoderFullClipCorpusSamples$' -count=1
 ## Reproducing the kernel results
 
 Use official Go 1.27.1 for the comparisons below; the module minimum is Go
-1.27.0 and the project does not pin a patch release. The checkpoints identify
+1.27.3 and no toolchain directive pins a release. The checkpoints identify
 the available source and benchmark harness containing each candidate and its
 comparator. They may differ from the exact build snapshot behind the stored
 medians; use the listed benchmark selectors at those checkpoints.
