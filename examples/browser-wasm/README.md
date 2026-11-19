@@ -30,14 +30,8 @@ bounds checks, scalar, and stock Go (`GOOS=js GOARCH=wasm`).
 
 ## Run (macOS arm64)
 
-**Requires** goav1 with the fix from branch `fix/wasm-coeff-cdf-compare`
-(`tile.CoeffCDFs.Equal`). Without it the encoder build makes `wasm-opt` run for
-over ten minutes and past 26 GB of RAM without finishing; see
-[Toolchain notes](#toolchain-notes).
-
 ```sh
-brew install llvm@22        # once; TinyGo is built against it
-./setup-tinygo.sh           # once: patched TinyGo 0.43.0 + Binaryen into .tinygo/
+./setup-tinygo.sh           # once: TinyGo 0.44.0 + Binaryen into .tinygo/
 ./build.sh                  # web/{encoder,decoder}-{simd,simd-nobounds,scalar,go}.wasm
 go run ./serve              # http://localhost:8090
 ```
@@ -55,8 +49,8 @@ TINYGO=$PWD/.tinygo23/bin/tinygo WEB=$PWD/web-llvm23 ./build.sh
 go run ./serve -dir web-llvm23
 ```
 
-This builds the same TinyGo 0.43.0 with [`tinygo-llvm23.patch`](tinygo-llvm23.patch)
-against LLVM 23 and drives Homebrew's LLVM 23 `clang` and `lld` (see
+This builds TinyGo 0.44.0 from source with `-tags llvm23` against LLVM 23 and
+drives Homebrew's LLVM 23 `clang` and `lld` (see
 [Toolchain notes](#toolchain-notes) for why the release tarball's linker cannot
 be used). It works for the wasm builds and for native builds
 (`tinygo build -tags purego -opt=2 ./cmd/aom-go-dec`). Its wasm output passes
@@ -133,29 +127,20 @@ builds (stock Go with and without SIMD, TinyGo with LLVM 22 and 23) agree too.
 
 ## Toolchain notes
 
-- **TinyGo ≥ 0.43.0** is required. It is the first release that supports
-  Go 1.27.
-- **TinyGo 0.43.0 cannot build goav1 for wasm32 without a fix.** Its
-  `make([]T, n)` check compares the element *size in bytes* against the
-  maximum element *count*. On a 32-bit target, any element type over 64 KB is
-  rejected with `slice element type is too big`.
-  [`tinygo-wasm32-large-slice-elem.patch`](tinygo-wasm32-large-slice-elem.patch)
-  is the one-line fix, and `setup-tinygo.sh` applies it. Upstream issue:
-  [tinygo-org/tinygo#5972](https://github.com/tinygo-org/tinygo/issues/5972).
+- **TinyGo ≥ 0.44.0** is required. 0.43.0 supports Go 1.27 but cannot build
+  goav1 for wasm32: its `make([]T, n)` check compared the element *size in
+  bytes* against the maximum element *count*, so any element type over 64 KB
+  was rejected with `slice element type is too big`
+  ([tinygo-org/tinygo#5972](https://github.com/tinygo-org/tinygo/issues/5972)).
+  0.44.0 has the fix and LLVM 23 support, so no patches are needed.
 - **LLVM 23 needs LLVM 23 tools.** TinyGo hands its final module to `wasm-ld`
   (or `ld.lld` natively) as ThinLTO bitcode, and the linker runs the last
   optimisation passes and the code generator. The release tarball's linker is
   LLVM 22.1.4 and rejects bitcode written by LLVM 23 (`wasm-ld: error: Invalid
   summary version 14`), so `setup-tinygo.sh` points the compiler at Homebrew's
-  `clang` and `lld` when `LLVM_TAG=llvm23` (`TOOLS=release` forces the release
-  tools). The same `clang` also compiles TinyGo's own C sources: `compiler-rt` and
-  `wasi-libc` for wasm, plus `bdwgc` in native builds.
-- **TinyGo 0.43.0 has no LLVM 23 support.** [`tinygo-llvm23.patch`](tinygo-llvm23.patch)
-  makes it build and work: a newer `go-llvm` (LLVM 23 bindings), the cgo header
-  config, `interp` reading branches through successors (LLVM 23 split `br`
-  into `condbr`/`uncondbr`), and the unmangled `llvm.returnaddress` import
-  becoming `llvm.returnaddress.p0` (native builds only). The cgo config and the branch helpers come from TinyGo's `dev`
-  branch, which has LLVM 23 support but not yet a release.
+  `clang` and `lld` when `LLVM_TAG=llvm23`. The same `clang` also compiles
+  TinyGo's own C sources: `compiler-rt` and `wasi-libc` for wasm, plus `bdwgc`
+  in native builds.
 - **Do not compare large aggregates with `==` in code that TinyGo builds.**
   TinyGo expands `==` on a struct or array into one comparison per element.
   `st.trialCDFs == *def` in the encoder (a 100 KB struct of arrays) produced a
@@ -164,10 +149,6 @@ builds (stock Go with and without SIMD, TinyGo with LLVM 22 and 23) agree too.
   stalls in `wasm-opt`, look for the largest function with
   `wasm-opt --enable-simd --enable-bulk-memory --enable-nontrapping-float-to-int
   --enable-sign-ext --enable-mutable-globals --func-metrics X.wasm -o /dev/null`.
-- **TinyGo's built-in `clang` needs `-resource-dir`.** The shims written by
-  `setup-tinygo.sh` pass it. TinyGo caches the C libraries it compiles
-  (`compiler-rt`) under a key that includes the `TINYGOROOT` path, so a build
-  from a new location fails with `'float.h' file not found` without it.
 - **The encoder's exports use `//go:wasmexport` with `main` blocked on
   `select {}`.** Legacy `//export` calls made after `main` returns run on a
   stack the asyncify scheduler no longer manages, and the encoder fails with
@@ -203,8 +184,8 @@ builds (stock Go with and without SIMD, TinyGo with LLVM 22 and 23) agree too.
 ## Measured (Apple M4 Max, Chrome 155 headless, 2026-10-23)
 
 goav1 at `origin/main` 35e4f943 plus the `fix/wasm-coeff-cdf-compare` change,
-Go 1.27.0, TinyGo 0.43.0 (patched), Binaryen 133, LLVM 22.1.8 and 23.1.4. All
-runs use one thread, and every build's output is byte-identical to native (see
+Go 1.27.0, TinyGo 0.43.0 (patched; 0.44.0 ships those fixes), Binaryen 133,
+LLVM 22.1.8 and 23.1.4. All runs use one thread, and every build's output is byte-identical to native (see
 above). "Old" is the 2026-10-20 run of this example, before about 50 PRs of
 decoder and encoder work, so the old/new difference is mostly goav1 itself.
 (That run's TinyGo SIMD128 decode of 720p was 25.0 ms/frame; the later
