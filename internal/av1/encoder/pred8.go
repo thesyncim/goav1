@@ -115,7 +115,7 @@ func (st *lossyEncodeState) predictPlane(dst []byte, refPlane []byte, stride, wi
 			}
 		}
 	}
-	return predictIntoFilters(dst, refPlane, stride, width, height, px, py, bw, bh, mv, ssX, ssY, filters, st.scaledScratch.Conv())
+	return predictIntoFilters(dst, refPlane, stride, width, height, px, py, bw, bh, mv, ssX, ssY, filters, st.predictScratch())
 }
 
 // pred8SAD returns the SAD between the regular-filter prediction of a w x h

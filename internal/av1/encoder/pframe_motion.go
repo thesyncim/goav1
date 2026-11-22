@@ -138,7 +138,7 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 	var mv motion.Vector
 	fullSAD := -1
 	if scaledReference {
-		if err := predictIntoScaled(st.sadScratch[:bw*bh], ref.Y, ref.YStride, ref.Width, ref.Height, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, &st.scaledScratch); err != nil {
+		if err := predictIntoScaled(st.sadScratch[:bw*bh], ref.Y, ref.YStride, ref.Width, ref.Height, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, &st.mc.scaledScratch); err != nil {
 			return out, fmt.Errorf("scaled reference luma probe: %w", err)
 		}
 		fullSAD = sadRectDualBlock(src.Y[lumaPY*src.YStride+lumaPX:], src.YStride, st.sadScratch[:bw*bh], bw, bw, bh)
@@ -205,7 +205,7 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 			gsad = sadRectBlock(src.Y, golden.Y, base, base, src.YStride, bw, bh, lastSAD)
 		}
 		if compoundCapable && !goldenRefPruned && referenceMode == parser.ReferenceModeSelect && gsad+32 >= lastSAD && gsad <= lastSAD+bw*bh*4 {
-			if err := predictCompoundInto(st.sadScratch[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, lastMV, gmv, false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err == nil {
+			if err := predictCompoundInto(st.sadScratch[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, lastMV, gmv, false, false, &st.mc.compBuf0, &st.mc.compBuf1, &st.mc.compScratch); err == nil {
 				srcBlock := src.Y[lumaPY*src.YStride+lumaPX:]
 				var compoundSAD int
 				if bw == 8 {

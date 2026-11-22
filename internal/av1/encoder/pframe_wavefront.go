@@ -68,7 +68,12 @@ func (w *pframeDecideWorker) adopt(src *lossyEncodeState) {
 	subpelCache := w.st.subpelCache
 	keyPD0 := w.st.keyPD0
 	keyTXS := w.st.keyTXS
+	mc := w.st.mc
 	w.st = *src
+	if mc == nil {
+		mc = new(lossyMCScratch)
+	}
+	w.st.mc = mc         // lane-owned prediction scratch
 	w.st.keyPD0 = keyPD0 // lane-owned keyframe light-PD0 scratch
 	if keyTXS == nil && src.keyTXSOn {
 		keyTXS = new(keyTXSScratch)

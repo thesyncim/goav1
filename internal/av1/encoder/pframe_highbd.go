@@ -555,7 +555,7 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 	}
 
 	pred := st.predY16[:n*n]
-	if err := predictIntoScaledHighBitDepthMono16(pred, st.predY16Bytes[:n*n*2], refPlane, src.BitDepth, src.Width, src.Height, lumaPX, lumaPY, n, n, motion.Vector{}, &st.scaledScratch); err != nil {
+	if err := predictIntoScaledHighBitDepthMono16(pred, st.predY16Bytes[:n*n*2], refPlane, src.BitDepth, src.Width, src.Height, lumaPX, lumaPY, n, n, motion.Vector{}, &st.mc.scaledScratch); err != nil {
 		return fmt.Errorf("high-bit-depth monochrome prediction: %w", err)
 	}
 	st.interTxTypeReq.Size = tile.TransformSize8x8
@@ -661,7 +661,7 @@ func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, re
 	}
 
 	pred := st.predY16[:n*n]
-	if err := predictIntoScaledHighBitDepthMono16(pred, st.predY16Bytes[:n*n*2], refPlanes[0], src.BitDepth, src.Width, src.Height, lumaPX, lumaPY, n, n, motion.Vector{}, &st.scaledScratch); err != nil {
+	if err := predictIntoScaledHighBitDepthMono16(pred, st.predY16Bytes[:n*n*2], refPlanes[0], src.BitDepth, src.Width, src.Height, lumaPX, lumaPY, n, n, motion.Vector{}, &st.mc.scaledScratch); err != nil {
 		return fmt.Errorf("high-bit-depth color luma prediction: %w", err)
 	}
 	st.interTxTypeReq.Size = tile.TransformSize8x8
@@ -708,7 +708,7 @@ func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, re
 			q = st.vQuant
 		}
 		chromaPred := st.predY16[:cw*ch]
-		if err := predictIntoScaledHighBitDepthMono16(chromaPred, st.predY16Bytes[:cw*ch*2], refPlanes[plane], src.BitDepth, chromaWidth, chromaHeight, chromaX, chromaY, cw, ch, motion.Vector{}, &st.scaledScratch); err != nil {
+		if err := predictIntoScaledHighBitDepthMono16(chromaPred, st.predY16Bytes[:cw*ch*2], refPlanes[plane], src.BitDepth, chromaWidth, chromaHeight, chromaX, chromaY, cw, ch, motion.Vector{}, &st.mc.scaledScratch); err != nil {
 			return fmt.Errorf("high-bit-depth color chroma %d prediction: %w", plane, err)
 		}
 		if err := st.encodeTXBPredRect16(rdata, data, src.ChromaStride, chromaX, chromaY, cw, ch, src.BitDepth, q, tile.CoeffContextRequest{

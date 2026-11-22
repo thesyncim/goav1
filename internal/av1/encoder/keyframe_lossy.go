@@ -559,6 +559,25 @@ func lossyMonochromeKeyframeHeaderForSequence(seq SequenceHeader, width, height 
 	return header
 }
 
+// lossyMCScratch is lossyEncodeState's compound and scaled-reference
+// prediction scratch.
+type lossyMCScratch struct {
+	compBuf0      motion.CompoundConvBuf
+	compBuf1      motion.CompoundConvBuf
+	compScratch   motion.CompoundConvolveScratch
+	scaledScratch motion.ScaledConvolveScratch
+}
+
+// predictScratch is the translational convolve scratch of the unscaled
+// prediction fallback; nil (the convolve's own scratch) for a state built
+// without initScans.
+func (st *lossyEncodeState) predictScratch() *motion.ConvolveScratch {
+	if st.mc == nil {
+		return nil
+	}
+	return st.mc.scaledScratch.Conv()
+}
+
 // lossyEncodeState carries the per-tile coding state of the non-lossless
 // keyframe encoder.
 type lossyEncodeState struct {
@@ -663,11 +682,11 @@ type lossyEncodeState struct {
 	cflAC   [prediction.CFLBufSquare]int16
 	cflPred [256]byte
 	// mds0Scratch is MDS0's second candidate buffer (pframe_mds0.go).
-	mds0Scratch   [4096]byte
-	compBuf0      motion.CompoundConvBuf
-	compBuf1      motion.CompoundConvBuf
-	compScratch   motion.CompoundConvolveScratch
-	scaledScratch motion.ScaledConvolveScratch
+	mds0Scratch [4096]byte
+	// mc is the compound and scaled-reference convolution scratch (about
+	// 750 KiB), held by pointer so a wavefront lane adopting this state
+	// (pframeDecideWorker.adopt) does not copy it; each lane owns its own.
+	mc *lossyMCScratch
 
 	// Transform/quant scratch for the inter TXB pipeline (residual in,
 	// forward transform out, dequant + inverse residual back), state-owned so
