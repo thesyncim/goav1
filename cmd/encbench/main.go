@@ -30,6 +30,32 @@ const (
 	fps           = 60
 )
 
+// syntheticBackground is the textured background of the synthetic scene.
+func syntheticBackground(w, h int) []byte {
+	rng := rand.New(rand.NewSource(9))
+	bg := make([]byte, w*h)
+	for i := range bg {
+		bg[i] = uint8(50 + rng.Intn(90))
+	}
+	// One box-blur pass gives the texture the spatial correlation of natural
+	// content; raw sample noise is incompressible for any codec and pins
+	// every rate controller at its quantizer ceiling.
+	blurred := make([]byte, w*h)
+	for y := 1; y < h-1; y++ {
+		for x := 1; x < w-1; x++ {
+			sum := 0
+			for dy := -1; dy <= 1; dy++ {
+				for dx := -1; dx <= 1; dx++ {
+					sum += int(bg[(y+dy)*w+x+dx])
+				}
+			}
+			blurred[y*w+x] = uint8(sum / 9)
+		}
+	}
+	copy(bg, blurred)
+	return bg
+}
+
 func makeFrame(bg []byte, n, width, height int) goav1.I420Frame {
 	cw, ch := width/2, height/2
 	f := goav1.I420Frame{
@@ -155,29 +181,8 @@ func main() {
 	w, h := *width, *height
 	lumaPixels := w * h
 
-	rng := rand.New(rand.NewSource(9))
-	bg := make([]byte, lumaPixels)
-	for i := range bg {
-		bg[i] = uint8(50 + rng.Intn(90))
-	}
-	// One box-blur pass gives the texture the spatial correlation of natural
-	// content; raw sample noise is incompressible for any codec and pins
-	// every rate controller at its quantizer ceiling.
-	blurred := make([]byte, lumaPixels)
-	for y := 1; y < h-1; y++ {
-		for x := 1; x < w-1; x++ {
-			sum := 0
-			for dy := -1; dy <= 1; dy++ {
-				for dx := -1; dx <= 1; dx++ {
-					sum += int(bg[(y+dy)*w+x+dx])
-				}
-			}
-			blurred[y*w+x] = uint8(sum / 9)
-		}
-	}
-	copy(bg, blurred)
-
 	if *dump != "" {
+		bg := syntheticBackground(w, h)
 		out, err := os.Create(*dump)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -257,6 +262,7 @@ func main() {
 			}
 		}
 	} else {
+		bg := syntheticBackground(w, h)
 		for n := range nFrames {
 			srcs[n] = makeFrame(bg, n, w, h)
 		}
