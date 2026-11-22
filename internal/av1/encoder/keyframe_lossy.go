@@ -2042,16 +2042,23 @@ func selectIntraMode8(srcPlane, reconPlane []byte, stride, px, py int, haveTop, 
 	return selectIntraModeN(srcPlane, reconPlane, stride, px, py, 8, haveTop, haveLeft, pred)
 }
 
-// levelsAllZero reports whether every level is zero, four at a time (every
-// coded area is a multiple of 16 levels).
+// levelsAllZero reports whether every level is zero, four at a time into four
+// independent accumulators (every coded area is a multiple of 16 levels).
 func levelsAllZero(q []int16) bool {
 	w := unsafe.Slice((*uint64)(unsafe.Pointer(unsafe.SliceData(q))), len(q)/4)
-	var acc uint64
+	var a0, a1, a2, a3 uint64
+	for len(w) >= 4 {
+		a0 |= w[0]
+		a1 |= w[1]
+		a2 |= w[2]
+		a3 |= w[3]
+		w = w[4:]
+	}
 	for _, v := range w {
-		acc |= v
+		a0 |= v
 	}
-	for _, v := range q[len(w)*4:] {
-		acc |= uint64(uint16(v))
+	for _, v := range q[len(q)&^3:] {
+		a0 |= uint64(uint16(v))
 	}
-	return acc == 0
+	return a0|a1|a2|a3 == 0
 }

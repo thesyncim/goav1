@@ -282,6 +282,9 @@ func (st *lossyEncodeState) scanForLeafTX(leafTX tile.TransformSize) ([]int16, e
 // coefficient plus one, exactly as WriteCoefficientsTXB computes it before
 // coding txb_skip. This lets the decision pass reconstruct without writing.
 func interTXBResult(qcoeff []int16, scan []int16, coeffCount int) tile.TXBDecodeResult {
+	if levelsAllZero(qcoeff[:coeffCount]) {
+		return tile.TXBDecodeResult{AllZero: true}
+	}
 	eob := 0
 	for c := coeffCount - 1; c >= 0; c-- {
 		if qcoeff[scan[c]] != 0 {
