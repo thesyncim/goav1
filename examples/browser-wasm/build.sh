@@ -11,14 +11,14 @@
 #   ONLY    space-separated build names to build (default: all), for example
 #           ONLY="encoder-simd decoder-simd"
 #
-# Stock Go needs GOTOOLCHAIN=go1.27.0 (or newer) when the go on PATH is older.
+# Stock Go needs GOTOOLCHAIN=go1.27.4 (or newer) when the go on PATH is older.
 set -eu
 cd "$(dirname "$0")"
 if [ -z "${TINYGO:-}" ] && [ -x .tinygo/bin/tinygo ]; then TINYGO=$(pwd)/.tinygo/bin/tinygo; fi
 TINYGO=${TINYGO:-tinygo}
 WEB=${WEB:-web}
 ONLY=${ONLY:-}
-export GOTOOLCHAIN=${GOTOOLCHAIN:-go1.27.0}
+export GOTOOLCHAIN=${GOTOOLCHAIN:-go1.27.4}
 mkdir -p "$WEB"
 rm -f "$WEB"/wasm_exec.js "$WEB"/wasm_exec_go.js  # the Go copy is read-only
 if [ "$WEB" != web ]; then cp web/*.html web/app.js web/worker.js web/decode.js web/decode-worker.js "$WEB"/; fi
