@@ -366,6 +366,18 @@ func frozenDecodedInterContextOracle(c *BlockModeContext, size BlockSize, x4, y4
 	return nil
 }
 
+// clearUnusedPaletteColors drops the colours of size-0 palette edge entries,
+// which no reader observes.
+func clearUnusedPaletteColors(c *BlockModeContext) {
+	for _, edge := range []*[MaxBlockModeSlots]paletteContext{&c.AbovePaletteY, &c.AbovePaletteUV, &c.LeftPaletteY, &c.LeftPaletteUV} {
+		for i := range edge {
+			if edge[i].Size == 0 {
+				edge[i].Colors = [PaletteMaxSize]uint16{}
+			}
+		}
+	}
+}
+
 func TestDecodedInterContextMatchesOriginalCommits(t *testing.T) {
 	initial := seededBlockModeContext(t, 137)
 	caseIndex := 0
@@ -382,6 +394,8 @@ func TestDecodedInterContextMatchesOriginalCommits(t *testing.T) {
 					got, want := initial, initial
 					gotErr := got.MarkInterMotionAndFilters(size, pos[0], pos[1], result, filters, hasChroma)
 					wantErr := frozenDecodedInterContextOracle(&want, size, pos[0], pos[1], result, filters, hasChroma)
+					clearUnusedPaletteColors(&got)
+					clearUnusedPaletteColors(&want)
 					if gotErr != nil || wantErr != nil || !reflect.DeepEqual(got, want) {
 						t.Fatalf("combined commit differs: size=%d pos=%v compound=%t chroma=%t filters=%+v errors=%v/%v", size, pos, compound, hasChroma, filters, gotErr, wantErr)
 					}

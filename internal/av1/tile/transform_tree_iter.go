@@ -1,6 +1,9 @@
 package tile
 
-import "errors"
+import (
+	"encoding/binary"
+	"errors"
+)
 
 // Iterative forms of the variable transform-tree walks. The tree is at most
 // three levels deep (Split has two levels), so an explicit stack replaces
@@ -131,11 +134,35 @@ func (s *DecodeState) readTxTree(cdfs *TransformCDFs, ctx *BlockModeContext, mas
 		}
 		return nil
 	}
+	if x4+int(dims.W4) > MaxBlockModeSlots || y4+int(dims.H4) > MaxBlockModeSlots {
+		return ErrInvalidDecodeState
+	}
 	markW, markH := dims.Log2W, dims.Log2H
 	if split {
 		markW, markH = 0, 0
 	}
-	return ctx.MarkTransformArea(x4, y4, int(dims.W4), int(dims.H4), markW, markH, false)
+	setCtxPow2(ctx.AboveTx[x4:], dims.Log2W, markW)
+	setCtxPow2(ctx.LeftTx[y4:], dims.Log2H, markH)
+	return nil
+}
+
+// setCtxPow2 ports dav1d_memset_pow2: dst[:1<<log2n] = v with one store per
+// up to eight bytes; log2n is at most 4.
+func setCtxPow2(dst []uint8, log2n uint8, v uint8) {
+	x := uint64(v) * 0x0101010101010101
+	switch log2n {
+	case 0:
+		dst[0] = v
+	case 1:
+		binary.LittleEndian.PutUint16(dst, uint16(x))
+	case 2:
+		binary.LittleEndian.PutUint32(dst, uint32(x))
+	case 3:
+		binary.LittleEndian.PutUint64(dst, x)
+	default:
+		binary.LittleEndian.PutUint64(dst, x)
+		binary.LittleEndian.PutUint64(dst[8:], x)
+	}
 }
 
 // collectLumaTXBsInWindow writes the luma transform blocks of a variable tree
