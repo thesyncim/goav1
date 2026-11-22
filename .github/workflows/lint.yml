@@ -35,6 +35,8 @@ jobs:
           fi
       - name: go vet
         run: go vet ./...
+      - name: unsafe allowlist and directives
+        run: ./scripts/check_unsafe.sh
       - name: go mod tidy check
         run: |
           cp go.mod go.mod.orig
