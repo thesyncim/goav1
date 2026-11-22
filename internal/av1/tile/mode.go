@@ -808,12 +808,21 @@ func FillSegmentID(dst []uint8, stride uint16, x4 int, y4 int, w4 int, h4 int, s
 	x := uint64(segmentID) * 0x0101010101010101
 	for range h4 {
 		row := dst[base : base+w4]
-		for len(row) >= 8 {
-			binary.LittleEndian.PutUint64(row, x)
-			row = row[8:]
-		}
-		for i := range row {
-			row[i] = segmentID
+		switch w4 {
+		case 1:
+			row[0] = segmentID
+		case 2:
+			binary.LittleEndian.PutUint16(row, uint16(x))
+		case 4:
+			binary.LittleEndian.PutUint32(row, uint32(x))
+		default:
+			for len(row) >= 8 {
+				binary.LittleEndian.PutUint64(row, x)
+				row = row[8:]
+			}
+			for i := range row {
+				row[i] = segmentID
+			}
 		}
 		base += strideInt
 	}

@@ -253,6 +253,56 @@ type BlockPredictionModeResult struct {
 	SubChromaInterValid bool
 }
 
+// reset clears the result for the next block except the large payloads
+// (reference MV stack, MV references and residuals, warp models, OBMC
+// neighbours), which are only read when their Valid flags, cleared here,
+// are set. The zero stores of adjacent fields merge into wide stores.
+func (r *BlockPredictionModeResult) reset() {
+	r.Valid = false
+	r.Intra = false
+	r.Intrabc = false
+	r.IntrabcValid = false
+	r.LumaMode = 0
+	r.LumaAngleDelta = 0
+	r.IntraEdgeSmoothNeighbor = false
+	r.ChromaIntraEdgeSmoothNeighbor = false
+	r.FilterIntraMode = 0
+	r.FilterIntraValid = false
+	r.Palette = PaletteModeResult{}
+	r.ChromaMode = 0
+	r.ChromaModeValid = false
+	r.ChromaAngleDelta = 0
+	r.CFLAlpha = CFLAlphaResult{}
+	r.CFLAlphaValid = false
+	r.InterReferences = InterReferencesResult{}
+	r.InterReferencesValid = false
+	r.InterMode = InterModeResult{}
+	r.InterModeValid = false
+	r.ReferenceMVStackValid = false
+	r.DRLIndex = 0
+	r.DRLIndexValid = false
+	r.InterMVReferencesValid = false
+	r.InterMotion = InterMotionResult{}
+	r.InterMotionValid = false
+	r.MVResidualValid = [2]bool{}
+	r.InterpFilters = motion.InterpFilters{}
+	r.InterpFiltersValid = false
+	r.InterpFilterReads = 0
+	r.InterIntra = InterIntraResult{}
+	r.InterIntraValid = false
+	r.MotionMode = 0
+	r.MotionModeValid = false
+	r.WarpedMotionInvalid = false
+	r.WarpedMotionValid = false
+	r.GlobalWarpedMotionValid = false
+	r.GlobalWarpedMotionCompoundValid = [2]bool{}
+	r.OverlappableNeighborsValid = false
+	r.CompoundBlend = CompoundBlendResult{}
+	r.CompoundBlendValid = false
+	r.SubChromaInter = SubChromaInterResult{}
+	r.SubChromaInterValid = false
+}
+
 var yModeSizeContext = [blockSizeCount]uint8{
 	BlockSize128x128: 3,
 	BlockSize128x64:  3,
@@ -619,6 +669,21 @@ func (c *IntraModeCDFs) FilterIntraModeCDF() (*entropy.CDF, error) {
 }
 
 // IntraContext returns dav1d's get_intra_ctx() value.
+// envIntraCtx ports env.h get_intra_ctx for in-range slots.
+func envIntraCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool) int {
+	if haveLeft {
+		if haveTop {
+			ctx := int(c.LeftIntra[y4]) + int(c.AboveIntra[x4])
+			return ctx + boolInt(ctx == 2)
+		}
+		return int(c.LeftIntra[y4]) * 2
+	}
+	if haveTop {
+		return int(c.AboveIntra[x4]) * 2
+	}
+	return 0
+}
+
 func (c *BlockModeContext) IntraContext(x4 int, y4 int, haveTop bool, haveLeft bool) (int, error) {
 	if c == nil {
 		return 0, ErrInvalidDecodeState
@@ -892,10 +957,7 @@ func (s *DecodeState) readIntraFlag(cdfs *IntraModeCDFs, ctx *BlockModeContext, 
 			return IntraFlagResult{Intra: segment.RefFrame == 0 && !segment.GlobalMV}, nil
 		}
 		// dav1d decode_b: get_intra_ctx, then one adaptive bool.
-		context, err := ctx.IntraContext(int(block.X4), int(block.Y4), block.HaveTop, block.HaveLeft)
-		if err != nil {
-			return IntraFlagResult{}, err
-		}
+		context := envIntraCtx(ctx, int(block.X4)&(MaxBlockModeSlots-1), int(block.Y4)&(MaxBlockModeSlots-1), block.HaveTop, block.HaveLeft)
 		return IntraFlagResult{Intra: s.Reader.ReadBinaryCDFUnchecked(&cdfs.Intra[context]) == 0}, nil
 	}
 	if req.AllowIntrabc {

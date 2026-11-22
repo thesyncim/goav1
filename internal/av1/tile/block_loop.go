@@ -1152,7 +1152,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 	if result == nil {
 		return ErrInvalidDecodeState
 	}
-	*result = BlockPredictionModeResult{}
+	result.reset()
 	blockX4 := int(block.X4)
 	blockY4 := int(block.Y4)
 	intraFlag, err := s.readIntraFlag(cdfs.Intra, ctx, req, block, prefix.SkipMode, segment)

@@ -2,7 +2,9 @@ package tile
 
 import (
 	"errors"
+	"reflect"
 	"testing"
+	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -645,4 +647,24 @@ func FuzzReadIntraEntry(f *testing.F) {
 			t.Fatalf("MarkIntra err=%v", err)
 		}
 	})
+}
+
+// TestBlockPredictionModeResultResetClearsAllButPayloads guards reset against
+// new fields: everything except the Valid-gated payloads must read as zero.
+func TestBlockPredictionModeResultResetClearsAllButPayloads(t *testing.T) {
+	kept := map[string]bool{"ReferenceMVStack": true, "InterMVReferences": true, "MVResiduals": true,
+		"WarpedMotion": true, "GlobalWarpedMotion": true, "GlobalWarpedMotionCompound": true, "OverlappableNeighbors": true}
+	var r BlockPredictionModeResult
+	b := unsafe.Slice((*byte)(unsafe.Pointer(&r)), unsafe.Sizeof(r))
+	for i := range b {
+		b[i] = 0xff
+	}
+	r.reset()
+	v := reflect.ValueOf(r)
+	for i := range v.NumField() {
+		name := v.Type().Field(i).Name
+		if !kept[name] && !v.Field(i).IsZero() {
+			t.Errorf("reset leaves %s set", name)
+		}
+	}
 }
