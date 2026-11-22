@@ -9,7 +9,7 @@
 //
 // Usage:
 //
-//	aom-go-dec [-o out.yuv] input.ivf
+//	aom-go-dec [-o out.yuv] [-workers N] [-framedelay N] [-quiet] [-cpuprofile out.pprof] input.ivf
 //
 // When -o is omitted the decoded I420 (or I400 for monochrome streams) bytes
 // are written to standard output, one frame after another in display order.
@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/pprof"
 	"time"
 )
 
@@ -46,8 +47,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	workers := fs.Int("workers", 1, "tile worker goroutine count")
 	frameDelay := fs.Int("framedelay", 0, "maximum frames in flight (dav1d --framedelay; 0 = auto, 1 = no frame threading)")
 	quiet := fs.Bool("quiet", false, "suppress per-frame timing on stderr")
+	cpuProfile := fs.String("cpuprofile", "", "write a CPU profile of the decode loop to this path")
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "usage: aom-go-dec [-o out.yuv] [-workers N] [-framedelay N] [-quiet] input.ivf\n\n")
+		fmt.Fprintf(stderr, "usage: aom-go-dec [-o out.yuv] [-workers N] [-framedelay N] [-quiet] [-cpuprofile out.pprof] input.ivf\n\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -93,6 +95,18 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	fmt.Fprintf(stderr, "aom-go-dec: %s %dx%d %d frames @ %d/%d\n",
 		inputPath, header.Width, header.Height, header.FrameCount,
 		header.TimebaseNum, header.TimebaseDen)
+
+	if *cpuProfile != "" {
+		pf, perr := os.Create(*cpuProfile)
+		if perr != nil {
+			return fmt.Errorf("open cpu profile %q: %w", *cpuProfile, perr)
+		}
+		defer pf.Close()
+		if perr := pprof.StartCPUProfile(pf); perr != nil {
+			return fmt.Errorf("start cpu profile: %w", perr)
+		}
+		defer pprof.StopCPUProfile()
+	}
 
 	start := time.Now()
 	totalBytes, decoded, err := dec.Decode(writer, *quiet, stderr)
