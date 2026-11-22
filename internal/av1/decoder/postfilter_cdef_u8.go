@@ -1,6 +1,7 @@
 package decoder
 
 import (
+	"encoding/binary"
 	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
@@ -108,9 +109,12 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 		}
 	}
 	// Sparse staging preserves the old path for overlapping caller scratch.
-	// The left backup is local and cannot alias the caller's input buffer.
+	// Ping-pong two 8-column x unit-height left backups (dav1d lr_bak[2]) so
+	// taking the next unit's backup never overwrites the current unit's halo
+	// and never copies 512 bytes on the byte-interior fast path.
 	sparseIndependent := frameWorkCDEFSparseScratchIndependent(input, dst.Pix, lineBuf, boundary.Top[plane], bottomBoundary)
-	var leftStorage [cdef.HorizontalBorder * cdef.BlockSize]byte
+	var leftStorage [2][cdef.HorizontalBorder * cdef.BlockSize]byte
+	leftIdx := 0
 
 	for unitRow := rowStart; unitRow < rowEnd; unitRow++ {
 		unitY := (unitRow * cdef.BlockSize) >> yDec
@@ -202,29 +206,24 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 			if sparseIndependent && !cdefDebugUnit(plane, unitRow, unitCol) && len(blocks) < (unitW/blockWidth)*(unitH/blockHeight) {
 				stageRect = frameWorkCDEFSparseStageRect(blocks, unitW, unitH, blockWidth, blockHeight)
 			}
+			curLeft := leftStorage[leftIdx][:]
+			nextLeft := leftStorage[leftIdx^1][:]
 			secondaryOnlyByte := frameWorkCDEFCanUseSecondaryByteUnit(cdef.U8SecondaryOnlyByteInteriorAvailable(), needPrimaryDirection, filterParams, unitX, unitY, unitW, unitH, width, height, blockWidth, blockHeight, cdefDebugUnit(plane, unitRow, unitCol))
 			if secondaryOnlyByte || frameWorkCDEFCanUseByteUnit(cdef.U8ByteInteriorAvailable(), filterParams, unitX, unitY, unitW, unitH, width, height, blockWidth, blockHeight, cdefDebugUnit(plane, unitRow, unitCol)) {
 				byteInput, byteOK := cdefByteScratchView(input, 2*len(input))
 				assembled := false
 				if byteOK {
 					if stageRect.active {
-						assembled = frameWorkAssembleCDEFSparseByteInputU8(byteInput, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitX, unitY, unitW, unitH, stageRect)
+						assembled = frameWorkAssembleCDEFSparseByteInputU8(byteInput, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitX, unitY, unitW, unitH, stageRect)
 					}
 					if !assembled {
-						assembled = frameWorkAssembleCDEFSecondaryByteInputU8(byteInput, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitX, unitY, unitW, unitH) == nil
+						assembled = frameWorkAssembleCDEFSecondaryByteInputU8(byteInput, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitX, unitY, unitW, unitH) == nil
 					}
 				}
 				if assembled {
-					// Preserve the previous left halo until the byte filter accepts
-					// the unit. Its entry validates the complete read window before
-					// writing, so a decline can safely fall through to the wide path.
-					oldLeftStorage := leftStorage
 					nextUnitX := unitX + unitSizeX
 					if nextUnitX < width {
-						for r := 0; r < unitH; r++ {
-							rowOff := (unitY+r)*stride + nextUnitX - cdef.HorizontalBorder
-							copy(leftStorage[r*cdef.HorizontalBorder:(r+1)*cdef.HorizontalBorder], dst.Pix[rowOff:rowOff+cdef.HorizontalBorder])
-						}
+						copyCDEFLeftBackup(nextLeft, dst.Pix, unitY*stride+nextUnitX-cdef.HorizontalBorder, stride, unitH)
 					}
 					byteOrigin := cdef.VerticalBorder*cdef.BStride + cdef.HorizontalBorder
 					var filtered bool
@@ -234,31 +233,28 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 						filtered = cdef.FilterFrameBlocksU8ByteInteriorTrusted(dst.Pix[unitOrigin:], stride, byteInput, byteOrigin, unitW, unitH, blocks, unitDirections, unitVariances, filterParams, needPrimaryDirection)
 					}
 					if filtered {
+						leftIdx ^= 1
 						prevFiltered = true
 						units++
 						blocksTotal += uint32(len(blocks))
 						continue
 					}
-					leftStorage = oldLeftStorage
 				}
 			}
-			if !stageRect.active || !frameWorkAssembleCDEFSparseInputU8(input, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitRow, unitX, unitY, unitW, unitH, stageRect) {
-				if err := frameWorkAssembleCDEFInputU8(input, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
+			if !stageRect.active || !frameWorkAssembleCDEFSparseInputU8(input, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitRow, unitX, unitY, unitW, unitH, stageRect) {
+				if err := frameWorkAssembleCDEFInputU8(input, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
 					return units, blocksTotal, err
 				}
 			}
 			// Back up the pre-filter columns the NEXT unit reads as its left
 			// halo (dav1d backup2x8 / lr_bak). This must happen after this
-			// unit's tap assembly consumed the PREVIOUS backup (dav1d
-			// ping-pongs lr_bak[bit] for the same reason) and before the
+			// unit's tap assembly consumed the PREVIOUS backup and before the
 			// kernels overwrite the frame.
 			nextUnitX := unitX + unitSizeX
 			if nextUnitX < width {
-				for r := 0; r < unitH; r++ {
-					rowOff := (unitY+r)*stride + nextUnitX - cdef.HorizontalBorder
-					copy(leftStorage[r*cdef.HorizontalBorder:(r+1)*cdef.HorizontalBorder], dst.Pix[rowOff:rowOff+cdef.HorizontalBorder])
-				}
+				copyCDEFLeftBackup(nextLeft, dst.Pix, unitY*stride+nextUnitX-cdef.HorizontalBorder, stride, unitH)
 			}
+			leftIdx ^= 1
 			if cdefDebugUnit(plane, unitRow, unitCol) {
 				cdefDebugLogUnit(plane, unitRow, unitCol, packed, filterParams, *unitDirections, *unitVariances, input, len(blocks))
 			}
@@ -309,6 +305,19 @@ func frameWorkCDEFCanUseSecondaryByteUnit(available bool, needPrimaryDirection b
 		unitY+unitH+tapReach <= planeHeight
 }
 
+func copyCDEFLeftBackup(dst, src []byte, srcOff, stride, h int) {
+	if h <= 0 {
+		return
+	}
+	_ = dst[(h-1)*cdef.HorizontalBorder+cdef.HorizontalBorder-1]
+	_ = src[srcOff+(h-1)*stride+cdef.HorizontalBorder-1]
+	for r := 0; r < h; r++ {
+		ro := srcOff + r*stride
+		do := r * cdef.HorizontalBorder
+		binary.LittleEndian.PutUint64(dst[do:do+8], binary.LittleEndian.Uint64(src[ro:ro+8]))
+	}
+}
+
 // frameWorkAssembleCDEFSecondaryByteInputU8 copies only the real two-pixel
 // neighborhood consumed by the byte-native secondary-only kernel. Unlike the
 // wide assembly, this fast route requires a complete in-plane halo and uses
@@ -331,6 +340,84 @@ func frameWorkAssembleCDEFSecondaryByteInputU8(input []byte, dst frame.Plane, to
 		return threading.ErrInvalidBatch
 	}
 	origin := cdef.VerticalBorder*cdef.BStride + cdef.HorizontalBorder
+	pix := dst.Pix
+	dstTop := origin - cdef.VerticalBorder*cdef.BStride - tapReach
+	dstBot := origin + unitH*cdef.BStride - tapReach
+
+	switch unitW {
+	case 64:
+		// Top 2 halo rows.
+		copyBytes68(input[dstTop:], topBuf[unitX-tapReach:])
+		copyBytes68(input[dstTop+cdef.BStride:], topBuf[width+unitX-tapReach:])
+		// Interior rows.
+		dstRow := origin - tapReach
+		srcOff := unitY*stride + unitX
+		if leftFromBackup {
+			leftOff := cdef.HorizontalBorder - tapReach
+			for row := 0; row < unitH; row++ {
+				input[dstRow] = leftBuf[leftOff]
+				input[dstRow+1] = leftBuf[leftOff+1]
+				copyBytes66(input[dstRow+tapReach:], pix[srcOff:])
+				dstRow += cdef.BStride
+				srcOff += stride
+				leftOff += cdef.HorizontalBorder
+			}
+		} else {
+			srcOff -= tapReach
+			for row := 0; row < unitH; row++ {
+				copyBytes68(input[dstRow:], pix[srcOff:])
+				dstRow += cdef.BStride
+				srcOff += stride
+			}
+		}
+		// Bottom 2 halo rows.
+		if bottomBuf != nil {
+			copyBytes68(input[dstBot:], bottomBuf[unitX-tapReach:])
+			copyBytes68(input[dstBot+cdef.BStride:], bottomBuf[width+unitX-tapReach:])
+		} else {
+			botOff := (unitY+unitH)*stride + unitX - tapReach
+			copyBytes68(input[dstBot:], pix[botOff:])
+			copyBytes68(input[dstBot+cdef.BStride:], pix[botOff+stride:])
+		}
+		return nil
+
+	case 32:
+		// Top 2 halo rows.
+		copyBytes36(input[dstTop:], topBuf[unitX-tapReach:])
+		copyBytes36(input[dstTop+cdef.BStride:], topBuf[width+unitX-tapReach:])
+		// Interior rows.
+		dstRow := origin - tapReach
+		srcOff := unitY*stride + unitX
+		if leftFromBackup {
+			leftOff := cdef.HorizontalBorder - tapReach
+			for row := 0; row < unitH; row++ {
+				input[dstRow] = leftBuf[leftOff]
+				input[dstRow+1] = leftBuf[leftOff+1]
+				copyBytes34(input[dstRow+tapReach:], pix[srcOff:])
+				dstRow += cdef.BStride
+				srcOff += stride
+				leftOff += cdef.HorizontalBorder
+			}
+		} else {
+			srcOff -= tapReach
+			for row := 0; row < unitH; row++ {
+				copyBytes36(input[dstRow:], pix[srcOff:])
+				dstRow += cdef.BStride
+				srcOff += stride
+			}
+		}
+		// Bottom 2 halo rows.
+		if bottomBuf != nil {
+			copyBytes36(input[dstBot:], bottomBuf[unitX-tapReach:])
+			copyBytes36(input[dstBot+cdef.BStride:], bottomBuf[width+unitX-tapReach:])
+		} else {
+			botOff := (unitY+unitH)*stride + unitX - tapReach
+			copyBytes36(input[dstBot:], pix[botOff:])
+			copyBytes36(input[dstBot+cdef.BStride:], pix[botOff+stride:])
+		}
+		return nil
+	}
+
 	for row := -cdef.VerticalBorder; row < unitH+cdef.VerticalBorder; row++ {
 		dstRow := origin + row*cdef.BStride - tapReach
 		if row < 0 {
@@ -346,20 +433,21 @@ func frameWorkAssembleCDEFSecondaryByteInputU8(input []byte, dst frame.Plane, to
 				src = bottomBuf[srcRow*width+unitX-tapReach:]
 			} else {
 				srcOffset := (unitY+row)*stride + unitX - tapReach
-				src = dst.Pix[srcOffset:]
+				src = pix[srcOffset:]
 			}
 			copy(input[dstRow:dstRow+spanWidth], src[:spanWidth])
 			continue
 		}
 		if leftFromBackup {
 			leftOffset := row*cdef.HorizontalBorder + cdef.HorizontalBorder - tapReach
-			copy(input[dstRow:dstRow+tapReach], leftBuf[leftOffset:leftOffset+tapReach])
+			input[dstRow] = leftBuf[leftOffset]
+			input[dstRow+1] = leftBuf[leftOffset+1]
+			srcOffset := (unitY+row)*stride + unitX
+			copy(input[dstRow+tapReach:dstRow+spanWidth], pix[srcOffset:srcOffset+unitW+tapReach])
 		} else {
 			srcOffset := (unitY+row)*stride + unitX - tapReach
-			copy(input[dstRow:dstRow+tapReach], dst.Pix[srcOffset:srcOffset+tapReach])
+			copy(input[dstRow:dstRow+spanWidth], pix[srcOffset:srcOffset+spanWidth])
 		}
-		srcOffset := (unitY+row)*stride + unitX
-		copy(input[dstRow+tapReach:dstRow+spanWidth], dst.Pix[srcOffset:srcOffset+unitW+tapReach])
 	}
 	return nil
 }
