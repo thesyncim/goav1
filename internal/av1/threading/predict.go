@@ -574,10 +574,6 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 	return nil
 }
 
-func (b *FrameWorkBatch) predictBlockLumaIntraTransform(index int, visit tile.BlockLoopVisit, tx tile.TransformBlock, scratch *FrameWorkIntraPredictionScratch) error {
-	return b.predictBlockLumaIntraTransformPtr(index, &visit, tx, scratch)
-}
-
 func (b *FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkIntraPredictionScratch) error {
 	geom, present, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
 	if err != nil || !present {
@@ -712,10 +708,6 @@ func (b *FrameWorkBatch) predictBlockChromaIntraTransformGeneric(index int, visi
 		return ErrInvalidBatch
 	}
 	return nil
-}
-
-func (b *FrameWorkBatch) predictBlockChromaIntraTransform(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, tx tile.TransformBlock, scratch *FrameWorkIntraPredictionScratch) error {
-	return b.predictBlockChromaIntraTransformPtr(index, &visit, plane, tx, scratch)
 }
 
 func (b *FrameWorkBatch) predictBlockChromaCFLShared(index int, visit *tile.BlockLoopVisit, scratch *FrameWorkCFLPredictionScratch) error {
@@ -1121,14 +1113,6 @@ func (b *FrameWorkBatch) predictBlockInterPlaneWithFiltersPtr(index int, visit *
 	return b.predictBlockInterReferencePlaneToOutput(index, &visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters, scratch)
 }
 
-// predictBlockInterSubChromaPlane drives libaom's sub8x8 chroma prediction
-// for one chroma plane. It iterates over the chroma sub-blocks recorded by
-// the tile decoder (see tile.CollectSubChromaInterCells) and dispatches a
-// translational predictor per cell using that cell's own MV.
-func (b *FrameWorkBatch) predictBlockInterSubChromaPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch) error {
-	return b.predictBlockInterSubChromaPlanePtr(index, &visit, plane, scratch)
-}
-
 func (b *FrameWorkBatch) predictBlockInterSubChromaPlanePtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch) error {
 	if visit == nil || (plane != FrameWorkPlaneU && plane != FrameWorkPlaneV) {
 		return ErrInvalidBatch
@@ -1196,40 +1180,6 @@ func (b *FrameWorkBatch) predictBlockInterSubChromaPlanePtr(index int, visit *ti
 		}
 	}
 	return nil
-}
-
-// predictBlockInterGlobalWarpPlaneWithFilters drives libaom's WARP_PRED dispatch
-// with the translational interpolation filters that libaom would use when the
-// scaled-reference gate downgrades WARP_PRED to TRANSLATION_PRED (see
-// allow_warp() in av1/common/reconinter.c, which returns 0 whenever
-// av1_is_scaled(sf) is true).
-func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
-	return b.predictBlockInterGlobalWarpPlaneWithFiltersPtr(index, &visit, plane, filters, scratch)
-}
-
-func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithFiltersPtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
-	if visit == nil ||
-		!visit.Prediction.Valid ||
-		visit.Prediction.Intra ||
-		frameWorkPredictionIsIntrabcPtr(&visit.Prediction) ||
-		!visit.Prediction.InterMotionValid ||
-		!visit.Prediction.GlobalWarpedMotionValid {
-		return ErrInvalidBatch
-	}
-	if visit.Prediction.InterIntraValid && visit.Prediction.InterIntra.Enabled {
-		return ErrInvalidBatch
-	}
-	motionResult := visit.Prediction.InterMotion
-	if motionResult.References.Compound ||
-		!motionResult.References.Ref[0].Valid() ||
-		motionResult.References.Ref[1] != tile.ReferenceFrameNone {
-		return ErrInvalidBatch
-	}
-	geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
-	if err != nil || !ok {
-		return err
-	}
-	return b.predictBlockInterGlobalWarpPlaneWithGeometry(visit, plane, filters, scratch, geom)
 }
 
 func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithGeometry(visit *tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch, geom frameWorkPredictionPlaneGeometry) error {
@@ -1405,10 +1355,6 @@ func (b *FrameWorkBatch) predictBlockIntrabcPlane(index int, visit tile.BlockLoo
 	return nil
 }
 
-func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
-	return b.predictBlockInterIntraPlaneWithFiltersPtr(index, &visit, plane, scratch, filters)
-}
-
 func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFiltersPtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters) error {
 	if visit == nil ||
 		scratch == nil ||
@@ -1511,10 +1457,6 @@ func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFiltersPtr(index int, vi
 	return frameWorkBlendInterIntraBlock(geom.Output, inter, intra, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), mask, maskStride, maskSubX, maskSubY)
 }
 
-func frameWorkPredictionUsesTranslation(pred tile.BlockPredictionModeResult) bool {
-	return frameWorkPredictionUsesTranslationPtr(&pred)
-}
-
 func frameWorkPredictionUsesTranslationPtr(pred *tile.BlockPredictionModeResult) bool {
 	if pred == nil {
 		return false
@@ -1534,40 +1476,6 @@ func frameWorkPredictionIsIntrabcPtr(pred *tile.BlockPredictionModeResult) bool 
 		return false
 	}
 	return pred.IntrabcValid && pred.Intrabc
-}
-
-// predictBlockInterWarpPlaneWithFilters drives libaom's WARP_PRED dispatch with
-// the translational interpolation filters that libaom would use when the
-// scaled-reference gate downgrades WARP_PRED to TRANSLATION_PRED (see
-// allow_warp() in av1/common/reconinter.c, which returns 0 whenever
-// av1_is_scaled(sf) is true).
-func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithFilters(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
-	return b.predictBlockInterWarpPlaneWithFiltersPtr(index, &visit, plane, filters, scratch)
-}
-
-func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithFiltersPtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {
-	if visit == nil ||
-		!visit.Prediction.Valid ||
-		visit.Prediction.Intra ||
-		frameWorkPredictionIsIntrabcPtr(&visit.Prediction) ||
-		!visit.Prediction.InterMotionValid ||
-		!visit.Prediction.WarpedMotionValid {
-		return ErrInvalidBatch
-	}
-	if visit.Prediction.InterIntraValid && visit.Prediction.InterIntra.Enabled {
-		return ErrInvalidBatch
-	}
-	motionResult := visit.Prediction.InterMotion
-	if motionResult.References.Compound ||
-		!motionResult.References.Ref[0].Valid() ||
-		motionResult.References.Ref[1] != tile.ReferenceFrameNone {
-		return ErrInvalidBatch
-	}
-	geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
-	if err != nil || !ok {
-		return err
-	}
-	return b.predictBlockInterWarpPlaneWithGeometry(visit, plane, filters, scratch, geom)
 }
 
 func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithGeometry(visit *tile.BlockLoopVisit, plane FrameWorkPlane, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch, geom frameWorkPredictionPlaneGeometry) error {
@@ -1717,15 +1625,6 @@ func (b *FrameWorkBatch) predictBlockInterCompoundPlaneWithFiltersPtr(index int,
 	// precision (off-by-1..3 across every compound block). Translational,
 	// scaled, and global-warp references now all produce the CONV_BUF directly.
 	return b.predictBlockInterCompoundConvBufPtr(index, visit, plane, scratch, geom, blend, filters)
-}
-
-// predictBlockInterCompoundConvBuf implements the translational compound inter
-// prediction path at libaom's un-rounded 16-bit CONV_BUF precision: each
-// reference is convolved into a CONV_BUF (av1_dist_wtd_convolve_*) and the two
-// buffers are blended (distance-weighted average or A64 soft mask) with a single
-// final rounding, matching the bitstream-exact compound output.
-func (b *FrameWorkBatch) predictBlockInterCompoundConvBuf(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, geom frameWorkPredictionPlaneGeometry, blend tile.CompoundBlendResult, filters motion.InterpFilters) error {
-	return b.predictBlockInterCompoundConvBufPtr(index, &visit, plane, scratch, geom, blend, filters)
 }
 
 func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch, geom frameWorkPredictionPlaneGeometry, blend tile.CompoundBlendResult, filters motion.InterpFilters) error {
@@ -3415,100 +3314,6 @@ func frameWorkBlendOBMCH(dst frame.Plane, tmp frame.Plane, bytesPerSample int, d
 			if !frameWorkStoreSample(dst, bytesPerSample, dstX+col, dstY+row, frameWorkBlendA64(m, a, b)) {
 				return ErrInvalidBatch
 			}
-		}
-	}
-	return nil
-}
-
-func frameWorkBlendCompoundBlock(dst frame.Plane, first frame.Plane, second frame.Plane, bytesPerSample int, dstX int, dstY int, width int, height int, fwdOffset int, bckOffset int) error {
-	if !frameWorkPlaneBlockAddressable(dst, bytesPerSample, dstX, dstY, width, height) ||
-		!frameWorkPlaneBlockAddressable(first, bytesPerSample, 0, 0, width, height) ||
-		!frameWorkPlaneBlockAddressable(second, bytesPerSample, 0, 0, width, height) {
-		return ErrInvalidBatch
-	}
-	if fwdOffset < 0 || bckOffset < 0 || fwdOffset+bckOffset != 1<<frameWorkDistPrecisionBits {
-		return ErrInvalidBatch
-	}
-	switch bytesPerSample {
-	case 1:
-		for row := range height {
-			// dstLine/firstLine/secondLine all have length width
-			// (frameWorkPlaneBlockAddressable proved the rows fit). Pinning
-			// firstLine/secondLine to len(dstLine) lets the prove pass discharge
-			// all three per-pixel indices under the loop's col < len(dstLine).
-			dstLine := dst.Pix[(dstY+row)*dst.Stride+dstX : (dstY+row)*dst.Stride+dstX+width]
-			firstLine := first.Pix[row*first.Stride : row*first.Stride+width]
-			secondLine := second.Pix[row*second.Stride : row*second.Stride+width]
-			firstLine = firstLine[:len(dstLine)]
-			secondLine = secondLine[:len(dstLine)]
-			for col := range dstLine {
-				out := (uint32(firstLine[col])*uint32(fwdOffset) + uint32(secondLine[col])*uint32(bckOffset) + 1<<(frameWorkDistPrecisionBits-1)) >> frameWorkDistPrecisionBits
-				dstLine[col] = byte(out)
-			}
-		}
-	case 2:
-		for row := range height {
-			// Each line spans width samples of 2 bytes. Pin the source lines to
-			// len(dstLine) and walk the byte index i with an additive +2 induction
-			// (i, i+1) the prove pass can order, rather than a col*2 multiplicative
-			// index, so all six per-pixel accesses fold under len(dstLine).
-			dstLine := dst.Pix[(dstY+row)*dst.Stride+dstX*2 : (dstY+row)*dst.Stride+dstX*2+width*2]
-			firstLine := first.Pix[row*first.Stride : row*first.Stride+width*2]
-			secondLine := second.Pix[row*second.Stride : row*second.Stride+width*2]
-			firstLine = firstLine[:len(dstLine)]
-			secondLine = secondLine[:len(dstLine)]
-			for i := 0; i+1 < len(dstLine); i += 2 {
-				a := uint16(firstLine[i]) | uint16(firstLine[i+1])<<8
-				b := uint16(secondLine[i]) | uint16(secondLine[i+1])<<8
-				out := uint16((uint32(a)*uint32(fwdOffset) + uint32(b)*uint32(bckOffset) + 1<<(frameWorkDistPrecisionBits-1)) >> frameWorkDistPrecisionBits)
-				dstLine[i] = byte(out)
-				dstLine[i+1] = byte(out >> 8)
-			}
-		}
-	default:
-		return ErrInvalidBatch
-	}
-	return nil
-}
-
-func frameWorkBuildDiffWtdMask(mask []byte, maskStride int, first frame.Plane, second frame.Plane, bytesPerSample int, bitDepth uint8, width int, height int, maskType tile.DiffWtdMaskType) error {
-	if !maskType.Valid() ||
-		!frameWorkPlaneBlockAddressable(first, bytesPerSample, 0, 0, width, height) ||
-		!frameWorkPlaneBlockAddressable(second, bytesPerSample, 0, 0, width, height) ||
-		!frameWorkMaskBlockFits(len(mask), maskStride, width, height) {
-		return ErrInvalidBatch
-	}
-	shift := uint8(0)
-	if bitDepth > 8 {
-		shift = bitDepth - 8
-	} else if bitDepth != 8 {
-		return ErrInvalidBatch
-	}
-	invert := maskType == tile.DiffWtdMaskType38Inv
-	for row := range height {
-		for col := range width {
-			a, ok := frameWorkLoadSample(&first, bytesPerSample, col, row)
-			if !ok {
-				return ErrInvalidBatch
-			}
-			b, ok := frameWorkLoadSample(&second, bytesPerSample, col, row)
-			if !ok {
-				return ErrInvalidBatch
-			}
-			diff := int(a)
-			if b > a {
-				diff = int(b - a)
-			} else {
-				diff -= int(b)
-			}
-			if shift != 0 {
-				diff >>= shift
-			}
-			m := min(frameWorkDiffWtdMaskBase+diff/frameWorkDiffWtdFactor, frameWorkBlendA64MaxAlpha)
-			if invert {
-				m = frameWorkBlendA64MaxAlpha - m
-			}
-			mask[row*maskStride+col] = byte(m)
 		}
 	}
 	return nil

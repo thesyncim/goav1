@@ -4232,28 +4232,6 @@ func testFrameWorkDiffWtdMask(t *testing.T, buf0 *motion.CompoundConvBuf, buf1 *
 	return mask
 }
 
-func testFrameWorkBlendMaskSample(t *testing.T, mask []byte, stride int, row int, col int, subX bool, subY bool) uint8 {
-	t.Helper()
-	var m int
-	switch {
-	case !subX && !subY:
-		m = int(mask[row*stride+col])
-	case subX && subY:
-		m = (int(mask[(2*row)*stride+2*col]) +
-			int(mask[(2*row+1)*stride+2*col]) +
-			int(mask[(2*row)*stride+2*col+1]) +
-			int(mask[(2*row+1)*stride+2*col+1]) + 2) >> 2
-	case subX:
-		m = (int(mask[row*stride+2*col]) + int(mask[row*stride+2*col+1]) + 1) >> 1
-	default:
-		m = (int(mask[(2*row)*stride+col]) + int(mask[(2*row+1)*stride+col]) + 1) >> 1
-	}
-	if m < 0 || m > 64 {
-		t.Fatalf("mask sample=%d outside A64 range", m)
-	}
-	return uint8(m)
-}
-
 func fillFrameWorkInterReference(reference *frame.Frame, max uint16) {
 	for y := 0; y < reference.Y.Height; y++ {
 		for x := 0; x < reference.Y.Width; x++ {

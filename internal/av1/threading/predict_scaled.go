@@ -42,38 +42,6 @@ func ScaledReferencePredictionEnabled() bool {
 	return frameWorkScaledRefEnabled()
 }
 
-// frameWorkSameOrScaledReferencePlane validates a reference plane against
-// geom for either same-size sampling or, when the scaled-prediction path is
-// enabled, the AV1 scale-factor range. It mirrors libaom's
-// av1_setup_scale_factors_for_frame checks via motion.NewScaleFactors.
-//
-// Returns (true, nil) if the reference is same-size; (false, nil) if a
-// non-identity scaling is acceptable for the scaled convolver; or an error if
-// the reference dimensions are unusable.
-func frameWorkSameOrScaledReferencePlane(geom frameWorkPredictionPlaneGeometry, ref frame.Plane, scaledReferencePredictionDisabled bool) (bool, error) {
-	// Compare against the current frame's CODED (cropped) plane dimensions, not
-	// geom.Output.Width/Height: the predictor's output plane is extended to the
-	// MI-aligned write extent (frameWorkExtendPlaneToClip), which can exceed the
-	// coded dimensions for the bottom/right partial superblock. libaom keys the
-	// reference same-size / scale-factor decision off the coded frame
-	// dimensions (av1_setup_scale_factors_for_frame), so a partial-superblock
-	// block must not be mistaken for a scaled-reference block.
-	curWidth, curHeight, ok := geom.codedDimensions()
-	if !ok {
-		return false, ErrInvalidBatch
-	}
-	if ref.Width == curWidth && ref.Height == curHeight {
-		return true, nil
-	}
-	if scaledReferencePredictionDisabled {
-		return false, ErrInvalidBatch
-	}
-	if _, err := motion.NewScaleFactors(ref.Width, ref.Height, curWidth, curHeight); err != nil {
-		return false, ErrInvalidBatch
-	}
-	return false, nil
-}
-
 // frameWorkPredictScaledReferencePlane writes one plane block from a smaller
 // or larger reference into geom.Output at (dstX, dstY). It is used only when the
 // scaled-prediction path is enabled and the reference dimensions differ from
@@ -158,41 +126,6 @@ func frameWorkPredictScaledReferencePlaneToBufferWithFilterSizeScratch(dst frame
 	return frameWorkPredictScaledReferencePlaneWithDimsAndFilterSizeScratch(dst, ref, curWidth, curHeight,
 		geom.bytesPerSample(), bitDepth, dstX, dstY, blockX, blockY, geom.width(), geom.height(),
 		filterWidth, filterHeight, mv, geom.SubsamplingX, geom.SubsamplingY, filters, scratch)
-}
-
-func frameWorkPredictScaledReferencePlaneToConvBuf(buf *motion.CompoundConvBuf, ref frame.Plane,
-	geom frameWorkPredictionPlaneGeometry, bitDepth uint8, mv motion.Vector, filters motion.InterpFilters) error {
-	return frameWorkPredictScaledReferencePlaneToConvBufScratch(buf, ref, geom, bitDepth, mv, filters, nil)
-}
-
-func frameWorkPredictScaledReferencePlaneToConvBufScratch(buf *motion.CompoundConvBuf, ref frame.Plane,
-	geom frameWorkPredictionPlaneGeometry, bitDepth uint8, mv motion.Vector, filters motion.InterpFilters,
-	scratch *motion.ScaledConvolveScratch) error {
-	curWidth, curHeight, ok := frameWorkScaledReferenceCurrentDims(geom)
-	if !ok {
-		return ErrInvalidBatch
-	}
-	sf, err := motion.NewScaleFactors(ref.Width, ref.Height, curWidth, curHeight)
-	if err != nil {
-		return ErrInvalidBatch
-	}
-	startX, startY, xStep, yStep, err := sf.ScaledBlockOrigin(geom.X, geom.Y, mv, geom.SubsamplingX, geom.SubsamplingY)
-	if err != nil {
-		return ErrInvalidBatch
-	}
-	xTable, err := motion.SubpelKernelTableFor(filters.X, geom.filterWidth())
-	if err != nil {
-		return ErrInvalidBatch
-	}
-	yTable, err := motion.SubpelKernelTableFor(filters.Y, geom.filterHeight())
-	if err != nil {
-		return ErrInvalidBatch
-	}
-	if err := motion.PredictScaledCompoundRefToConvBufWithScratch(buf, ref, geom.bytesPerSample(), bitDepth,
-		geom.width(), geom.height(), startX, xStep, startY, yStep, xTable, yTable, scratch); err != nil {
-		return ErrInvalidBatch
-	}
-	return nil
 }
 
 // frameWorkPredictScaledReferencePlaneWithDims is the explicit-output-dims

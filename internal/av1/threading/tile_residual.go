@@ -1741,10 +1741,6 @@ func (s *frameWorkReconState) predictBlockBegin(visit *tile.BlockLoopVisit) erro
 	return nil
 }
 
-func (s *frameWorkReconState) predictBeforeCoefficients(visit tile.BlockLoopVisit) error {
-	return s.predictBeforeCoefficientsPtr(&visit)
-}
-
 func (s *frameWorkReconState) predictBeforeCoefficientsPtr(visit *tile.BlockLoopVisit) error {
 	if visit == nil {
 		return ErrInvalidBatch
@@ -1959,23 +1955,6 @@ func (c *frameWorkTileResidualLoopController) PrepareCoeffDequantPlane(plane uin
 	c.dequantTarget.Factors[plane] = [2]int32{q.DC, q.AC}
 	c.dequantTarget.PreparedPlanes |= bit
 	return true
-}
-
-func (c *frameWorkTileResidualLoopController) selectBlockTransforms(visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
-	return c.selectBlockTransformsPtr(&visit)
-}
-
-func (c *frameWorkTileResidualLoopController) selectBlockTransformsPtr(visit *tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
-	if visit == nil {
-		return FrameWorkBlockTransforms{}, ErrInvalidBatch
-	}
-	if c.req.Transforms != nil {
-		return c.req.Transforms(*visit)
-	}
-	if c.req.UseDefaultTransforms {
-		return c.batch.readBlockTransformsPtr(c.state, visit)
-	}
-	return FrameWorkBlockTransforms{}, ErrInvalidBatch
 }
 
 func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock) error {
@@ -2286,18 +2265,6 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, view 
 	return nil
 }
 
-// reconstructTXB performs the predict-then-reconstruct work for one decoded
-// transform block. It is the single reconstruction seam shared by the inline
-// single-thread path (VisitBlockCoeff, which calls it immediately) and the
-// deferred parallel reconstruction path. visit and block are taken by pointer
-// so the single-thread path pays no extra struct copy; the values dereferenced
-// into the predict/reconstruct callees match the previous inline calls exactly.
-// currentQIndex is snapshotted by the caller because the live delta-q state
-// advances past this block before a deferred pass would run.
-func (s *frameWorkReconState) reconstructTXB(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, currentQIndex uint8) error {
-	return s.reconstructTXBWithNonZero(visit, block, nil, currentQIndex)
-}
-
 func (s *frameWorkReconState) reconstructTXBWithNonZero(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, nonzero []int16, currentQIndex uint8) error {
 	if s.predict == nil && s.predictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra {
 		if block.Plane != 0 && frameWorkVisitUsesCFLPtr(visit) {
@@ -2479,10 +2446,6 @@ func frameWorkIntraTransformMode(pred *tile.BlockPredictionModeResult) tile.Intr
 	default:
 		return tile.IntraModeDC
 	}
-}
-
-func frameWorkVisitUsesCFL(visit tile.BlockLoopVisit) bool {
-	return frameWorkVisitUsesCFLPtr(&visit)
 }
 
 func frameWorkVisitUsesCFLPtr(visit *tile.BlockLoopVisit) bool {

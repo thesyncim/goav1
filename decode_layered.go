@@ -479,14 +479,6 @@ func (d *LayeredDecoder) DecodeRTPPacketAfterLossWithMetadata(packet []byte) ([]
 	return d.DecodeRTPPayloadAfterLossWithMetadata(rtp.Payload)
 }
 
-func (d *LayeredDecoder) decodePayload(payload []byte, afterLoss bool) ([]*Frame, error) {
-	outputs, err := d.decodePayloadWithMetadata(payload, afterLoss)
-	if err != nil {
-		return nil, err
-	}
-	return d.framesFromLayered(outputs), nil
-}
-
 func (d *LayeredDecoder) decodePayloadWithMetadata(payload []byte, afterLoss bool) ([]LayeredFrame, error) {
 	if d == nil {
 		return nil, errors.New("goav1: layered decoder is not initialized")

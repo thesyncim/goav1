@@ -2220,10 +2220,6 @@ type batchRunner func(decoder.FrameWorkBatch) error
 
 func (fn batchRunner) Run(ctx decoder.FrameWorkBatch) error { return fn(ctx) }
 
-type postFilterRunner func(decoder.FrameWorkPostFilterContext) error
-
-func (fn postFilterRunner) Apply(ctx decoder.FrameWorkPostFilterContext) error { return fn(ctx) }
-
 type profilePostFilterRunner struct {
 	fn                     func(decoder.FrameWorkPostFilterContext) (int, error)
 	publishedGlobalSurface int
@@ -2274,16 +2270,6 @@ func sideDataScratch(size decoder.FrameWorkSideDataScratchSize) decoder.FrameWor
 		RestorationAbove:   make([]uint16, maxInt(size.RestorationBoundary, 0)),
 		RestorationBelow:   make([]uint16, maxInt(size.RestorationBoundary, 0)),
 	}
-}
-
-// applyCallerPostFilters runs the caller-owned full post-filter chain
-// (ApplyCallerPostFilters) for a super-res frame: loop filter, CDEF, super-res
-// upscale into caller-owned scratch, then loop restoration and film grain at
-// the upscaled resolution. It performs the two-pass super-res scratch sizing
-// (size the upscale output frame first, then re-size for the post-super-res
-// tail) the public caller runner uses, and returns the final display frame.
-func applyCallerPostFilters(ctx decoder.FrameWorkPostFilterContext) (*frame.Frame, decoder.Event, error) {
-	return applyCallerPostFiltersWithSuperResOutput(ctx, nil, nil)
 }
 
 func applyCallerPostFiltersForPublication(ctx decoder.FrameWorkPostFilterContext, outputPool *frame.Pool) (*frame.Frame, int, decoder.Event, error) {

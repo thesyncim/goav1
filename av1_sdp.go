@@ -1388,14 +1388,6 @@ func (s av1SDPMediaSection) hasRTCPFeedback(payloadType string, feedback string)
 		av1SDPRTCPFeedbackListContains(s.rtcpFeedback["*"], feedback)
 }
 
-func (s av1SDPMediaSection) hasHeaderExtension(
-	uri string,
-	extmapDirectionOK func(string) bool,
-) bool {
-	_, ok := s.headerExtensionID(uri, extmapDirectionOK)
-	return ok
-}
-
 func (s av1SDPMediaSection) headerExtensionID(
 	uri string,
 	extmapDirectionOK func(string) bool,

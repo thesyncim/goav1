@@ -7,8 +7,6 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/threading"
 )
 
-const hotStructKiB = 1024
-
 func TestHotStructSizes(t *testing.T) {
 	tests := []struct {
 		name string

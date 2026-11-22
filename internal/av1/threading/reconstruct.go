@@ -142,14 +142,6 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCore(index int, visit tile.BlockVi
 	return nil
 }
 
-// reconstructBlockCoeffCoreTrusted is the hot per-TXB variant. Tile residual
-// decoding has already validated the batch, block geometry, and worker scratch
-// ownership, so this path can hand exact-cap scratch/window slices to the
-// reconstruction core without re-running the public API guard rails.
-func (b *FrameWorkBatch) reconstructBlockCoeffCoreTrusted(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) error {
-	return b.reconstructBlockCoeffCoreTrustedWithNonZero(index, visit, block, nil, txType, currentQIndex, segmentID, int32Scratch, residualScratch, cache)
-}
-
 func (b *FrameWorkBatch) reconstructBlockCoeffCoreTrustedWithNonZero(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock, nonzero []int16, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) error {
 	geom, err := b.blockCoeffGeometryTrusted(index, visit, block)
 	if err != nil {
@@ -198,10 +190,6 @@ func (b *FrameWorkBatch) reconstructBlockCoeffLumaPrimed(index int, visit tile.B
 		return true, err
 	}
 	return true, b.reconstructBlockCoeffCoreWithGeometryAndNonZero(geom, block, nonzero, txType, currentQIndex, segmentID, int32Scratch, residualScratch, cache)
-}
-
-func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometry(geom frameWorkBlockCoeffGeometry, block *tile.BlockCoeffBlock, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) error {
-	return b.reconstructBlockCoeffCoreWithGeometryAndNonZero(geom, block, nil, txType, currentQIndex, segmentID, int32Scratch, residualScratch, cache)
 }
 
 func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometryAndNonZero(geom frameWorkBlockCoeffGeometry, block *tile.BlockCoeffBlock, nonzero []int16, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) error {
@@ -290,29 +278,6 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometryDequantized(geom f
 	return nil
 }
 
-func (b *FrameWorkBatch) cachedBlockQuantizer(cache *frameWorkReconQuantCache, currentQIndex uint8, segmentID uint8, qPlane quantize.Plane) (quantize.Quantizer, bool, error) {
-	idx := int(qPlane)
-	key := frameWorkReconQuantKey(currentQIndex, segmentID)
-	if cache != nil && uint(idx) < uint(len(cache.quantKey)) &&
-		cache.quantKey[idx] == key {
-		return cache.quantizer[idx], cache.losslessPlane&(1<<uint(idx)) != 0, nil
-	}
-	q, lossless, err := b.blockQuantizerForPlane(currentQIndex, segmentID, qPlane)
-	if err != nil {
-		return quantize.Quantizer{}, false, err
-	}
-	if cache != nil && uint(idx) < uint(len(cache.quantKey)) {
-		cache.quantKey[idx] = key
-		cache.quantizer[idx] = q
-		if lossless {
-			cache.losslessPlane |= 1 << uint(idx)
-		} else {
-			cache.losslessPlane &^= 1 << uint(idx)
-		}
-	}
-	return q, lossless, nil
-}
-
 func (b *FrameWorkBatch) cachedBlockQuantizerTrusted(cache *frameWorkReconQuantCache, currentQIndex uint8, segmentID uint8, qPlane quantize.Plane) (quantize.Quantizer, bool, error) {
 	idx := int(qPlane)
 	key := frameWorkReconQuantKey(currentQIndex, segmentID)
@@ -338,33 +303,6 @@ func (b *FrameWorkBatch) cachedBlockQuantizerTrusted(cache *frameWorkReconQuantC
 
 func frameWorkReconQuantKey(currentQIndex uint8, segmentID uint8) uint16 {
 	return 0x8000 | uint16(segmentID)<<8 | uint16(currentQIndex)
-}
-
-func (b *FrameWorkBatch) cachedInverseQMatrix(cache *frameWorkReconQuantCache, qPlane quantize.Plane, size transform.Size, txType transform.Type, lossless bool) ([]uint16, error) {
-	if !b.Quantization.UsingQMatrix || lossless || txType >= transform.TypeIDTX {
-		return nil, nil
-	}
-	if cache != nil &&
-		cache.matrixValid &&
-		cache.matrixPlane == qPlane &&
-		cache.matrixSize == size &&
-		cache.matrixType == txType &&
-		cache.matrixLoss == lossless {
-		return cache.matrix, nil
-	}
-	matrix, err := quantize.InverseQMatrix(b.Quantization, qPlane, size, txType, lossless)
-	if err != nil {
-		return nil, err
-	}
-	if cache != nil {
-		cache.matrixValid = true
-		cache.matrixPlane = qPlane
-		cache.matrixSize = size
-		cache.matrixType = txType
-		cache.matrixLoss = lossless
-		cache.matrix = matrix
-	}
-	return matrix, nil
 }
 
 func (b *FrameWorkBatch) cachedInverseQMatrixTrusted(cache *frameWorkReconQuantCache, qPlane quantize.Plane, size transform.Size, txType transform.Type, lossless bool) ([]uint16, error) {

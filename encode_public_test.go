@@ -11068,14 +11068,6 @@ func publicRTPPacketSequence(t testing.TB, packet []byte) uint16 {
 	return parsed.Header.SequenceNumber
 }
 
-func frameDigestsVisible(frames []*goav1.Frame) [][16]byte {
-	out := make([][16]byte, 0, len(frames))
-	for _, frame := range frames {
-		out = append(out, frameMD5Visible(frame))
-	}
-	return out
-}
-
 func assertPublicRTCSharedReferenceStreamDecodes(t *testing.T, tus [][]byte) {
 	t.Helper()
 	frames := decodePublicRTCLayerPoolLowOverheads(t, tus...)
@@ -11097,60 +11089,6 @@ func decodePublicRTCLayerPoolLowOverheads(t *testing.T, payloads ...[]byte) []*g
 			t.Fatalf("payload %d PushLowOverhead: %v", payloadIndex, err)
 		}
 		h.runEvents(t, payloadIndex, events[:count])
-	}
-	return h.outputs
-}
-
-func decodePublicRTCLayerPoolRTPPayloads(t *testing.T, payloads ...[]byte) []*goav1.Frame {
-	t.Helper()
-	return decodePublicRTCLayerPoolRTPPayloadsWithLabels(t, nil, payloads...)
-}
-
-func decodePublicRTCLayerPoolRTPPayloadsWithLabels(t *testing.T, labels []string, payloads ...[]byte) []*goav1.Frame {
-	t.Helper()
-
-	h := newPublicRTCLayerPoolDecodeHarness(t, len(payloads))
-	defer h.close(t)
-	var (
-		rtpUsed   int
-		rtpBuffer []byte
-		rtpSpans  []goav1.RTPObuSpan
-		events    []goav1.DecoderEvent
-	)
-
-	for payloadIndex, payload := range payloads {
-		plannedUsed, eventCount, err := h.stream.PushRTPPayloadSize(rtpUsed, payload)
-		if err != nil {
-			t.Fatalf("payload %d PushRTPPayloadSize: %v", payloadIndex, err)
-		}
-		if cap(rtpBuffer) < plannedUsed {
-			next := make([]byte, plannedUsed)
-			copy(next, rtpBuffer[:rtpUsed])
-			rtpBuffer = next
-		}
-		rtpBuffer = rtpBuffer[:plannedUsed]
-		if cap(rtpSpans) < eventCount {
-			rtpSpans = make([]goav1.RTPObuSpan, eventCount)
-		}
-		rtpSpans = rtpSpans[:eventCount]
-		if cap(events) < eventCount {
-			events = make([]goav1.DecoderEvent, eventCount)
-		}
-		events = events[:eventCount]
-
-		used, count, err := h.stream.PushRTPPayload(rtpBuffer, rtpUsed, rtpSpans, events, payload)
-		if err != nil {
-			t.Fatalf("payload %d %s PushRTPPayload used=%d planned=%d events=%d/%d inFragment=%v %s: %v",
-				payloadIndex, publicRTCPayloadLabel(labels, payloadIndex), used, plannedUsed, count, eventCount, h.stream.InRTPFragment(), publicRTCRTPPayloadSummary(payload), err)
-		}
-		if used != plannedUsed || count > eventCount {
-			t.Fatalf("payload %d RTP used/count=%d/%d planned=%d/%d", payloadIndex, used, count, plannedUsed, eventCount)
-		}
-		rtpUsed = used
-		h.runEvents(t, payloadIndex, events[:count])
-		if !h.stream.InRTPFragment() {
-			rtpUsed = 0
-		}
 	}
 	return h.outputs
 }
