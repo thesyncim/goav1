@@ -124,14 +124,14 @@ func WriteInterReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeC
 	// gathered once.
 	n := envRefCounts(ctx, int(req.X4), int(req.Y4), req.HaveTop, req.HaveLeft)
 	if refs.Compound {
-		return writeCompoundReferences(w, cdfs, ctx, req, &n, refs)
+		return writeCompoundReferences(w, cdfs, ctx, req, n, refs)
 	}
-	return writeSingleReference(w, cdfs, ctx, req, &n, refs.Ref[0])
+	return writeSingleReference(w, cdfs, ctx, req, n, refs.Ref[0])
 }
 
 // writeSingleReference codes the single_ref bit tree, the exact inverse of
 // readSingleReference.
-func writeSingleReference(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, n *[referenceFrameCount]uint8, ref ReferenceFrame) error {
+func writeSingleReference(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, n envRefCountSet, ref ReferenceFrame) error {
 	if !ref.Valid() {
 		return ErrInvalidDecodeState
 	}
@@ -223,7 +223,7 @@ var compBwdRefWritePatterns = [3]interRefWritePattern{
 	{count: 1, steps: [3]interRefWriteStep{{0, 1}}},
 }
 
-func writeCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, n *[referenceFrameCount]uint8, refs InterReferencesResult) error {
+func writeCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, n envRefCountSet, refs InterReferencesResult) error {
 	unidir, err := compoundReferencesUnidir(refs)
 	if err != nil {
 		return err
@@ -261,7 +261,7 @@ func compoundReferencesUnidir(refs InterReferencesResult) (bool, error) {
 	return false, ErrInvalidDecodeState
 }
 
-func writeUniCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, n *[referenceFrameCount]uint8, refs [2]ReferenceFrame) error {
+func writeUniCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, n envRefCountSet, refs [2]ReferenceFrame) error {
 	if refs[0] < ReferenceFrameLast || refs[0] >= referenceFrameCount ||
 		refs[1] < ReferenceFrameLast || refs[1] >= referenceFrameCount {
 		return ErrInvalidDecodeState
@@ -312,7 +312,7 @@ func writeUniCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *Bloc
 	return nil
 }
 
-func writeBidirCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, n *[referenceFrameCount]uint8, refs [2]ReferenceFrame) error {
+func writeBidirCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest, n envRefCountSet, refs [2]ReferenceFrame) error {
 	fwd := int(refs[0])
 	bwd := int(refs[1]) - int(ReferenceFrameBWD)
 	if uint(fwd) > uint(ReferenceFrameGolden) || uint(bwd) >= uint(len(compBwdRefWritePatterns)) {

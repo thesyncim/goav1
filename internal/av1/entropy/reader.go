@@ -141,6 +141,18 @@ func (r *Reader) Cursor() Cursor {
 	}
 }
 
+// Load points c at r's state. It stores each field in place, so a cursor
+// that lives in memory is not built in a temporary and copied.
+func (c *Cursor) Load(r *Reader) {
+	c.src = r.src
+	c.pos = r.pos
+	c.dif = r.dif
+	c.rng = r.rng
+	c.cnt = r.cnt
+	c.tellOffs = r.tellOffs
+	c.allowCDFUpdate = r.allowCDFUpdate
+}
+
 // CommitTo writes cursor state back to r.
 func (c *Cursor) CommitTo(r *Reader) {
 	r.src = c.src

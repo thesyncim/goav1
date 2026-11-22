@@ -52,11 +52,9 @@ func readMVComponentDiffRefmvs(c *entropy.Cursor, comp *MVComponentCDFs, mvPrec 
 			}
 		}
 	}
-	diff := int32((up<<3)|(fp<<1)|hp) + 1
-	if sign != 0 {
-		return -diff
-	}
-	return diff
+	// sign ? -diff : diff without a branch on the (unpredictable) sign bit.
+	s := -int32(sign)
+	return (int32((up<<3)|(fp<<1)|hp) + 1 ^ s) - s
 }
 
 // readMVResidualRefmvs ports dav1d's read_mv_residual: returns ref + residual
@@ -94,15 +92,14 @@ func (s *DecodeState) decodeMotionModeRefmvs(cdfs *MotionModeCDFs, c *BlockModeC
 	topHasRight := refmvsTopHasRight(req.SBSizeMIB, block)
 	rt.findMatchingRef(block, topHasRight, ref, &masks)
 	allowWarp := !req.ScaledReferences[ref] && !req.ForceIntegerMV && req.AllowWarpedMotion && masks[0]|masks[1] != 0
-
-	cur := s.Reader.Cursor()
+	// The symbols are read straight from the tile's range decoder, as
+	cur := &s.Reader // dav1d reads through &ts->msac.
 	var mode MotionMode
 	if allowWarp {
 		mode = MotionMode(cur.ReadCDF3Unchecked(&cdfs.MotionMode[block.Size]))
 	} else {
 		mode = MotionMode(cur.ReadBinaryCDFUnchecked(&cdfs.OBMC[block.Size]))
 	}
-	cur.CommitStateTo(&s.Reader)
 	result.MotionMode = mode
 	if mode == MotionModeWarp {
 		model, invalid, err := rt.deriveWarpMV(block, &masks, result.InterMotion.MV[0])
@@ -153,10 +150,10 @@ func (s *DecodeState) decodeInterModeRefmvs(cdfs *InterModeCDFs, mvCDFs *MVCDFs,
 	if rf.forceIntegerMV {
 		mvPrec--
 	}
-
-	c := s.Reader.Cursor()
+	var c entropy.Cursor
+	c.Load(&s.Reader)
 	motionResult := &result.InterMotion
-	*motionResult = InterMotionResult{References: refs}
+	motionResult.References = refs // the rest was cleared with the result
 	drlIdx := int32(0)
 	drlRead := false
 	ok := true
