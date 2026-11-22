@@ -34,9 +34,7 @@ import (
 // A Decoder is not safe for concurrent use; serialize calls. The worker count
 // (see WithWorkers) controls the decoder's internal parallelism (tiles, SB-row
 // reconstruction, post-filter bands and, with WithMaxFrameDelay, frame
-// threading), not concurrent use of the Decoder itself. GOAV1_SCALED_PRED is read when the
-// Decoder is constructed, so changing it later does not change this decoder's
-// prediction policy.
+// threading), not concurrent use of the Decoder itself.
 type Decoder struct {
 	pool       FramePool
 	outputPool FramePool
@@ -323,7 +321,6 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		useExternal:   useExternal,
 	}
 	internaldecoder.EnableOwnedTemporalMotionStorage(&d.state)
-	d.state.SetScaledReferencePredictionEnabled(internalthreading.ScaledReferencePredictionEnabled())
 	if d.useExternal {
 		d.external.outputPool = &d.outputPool
 	}

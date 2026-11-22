@@ -162,9 +162,6 @@ func TestRunDecodesL1T2AllFrames(t *testing.T) {
 	if !strings.Contains(text, "640x360") {
 		t.Errorf("stderr missing 640x360 header line:\n%s", text)
 	}
-	if !strings.Contains(text, "scaled_pred=true") {
-		t.Errorf("stderr missing scaled_pred=true (the CLI must default to true):\n%s", text)
-	}
 
 	info, statErr := os.Stat(outPath)
 	if statErr != nil {

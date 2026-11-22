@@ -242,12 +242,6 @@ type FrameWorkState struct {
 	ReferenceCount uint8
 	Sequence       threading.FrameWorkSequenceContext
 
-	// Scaled-reference policy is captured once per state. High-level decoder
-	// constructors set it; low-level callers that leave it unset capture the
-	// environment when the first frame begins.
-	scaledRefPolicySet     bool
-	scaledRefPolicyEnabled bool
-
 	// Saved entropy (CDF) frame contexts are kept in a fixed pool of storages
 	// referenced by per-slot handles instead of one 56KB value per slot, so
 	// saving a frame context under N refresh_frame_flags slots is N handle
@@ -407,8 +401,6 @@ func (s *FrameWorkState) Reset() {
 		return
 	}
 	deactivateFrameWorkStateLoopFilterCompact(s)
-	scaledRefPolicySet := s.scaledRefPolicySet
-	scaledRefPolicyEnabled := s.scaledRefPolicyEnabled
 	ownedTemporalMotion := s.ownedTemporalMotion
 	cdfPoolExtra := s.tileResidualCDFPoolExtra
 	temporalBack := s.temporalMVsBack[:0]
@@ -418,11 +410,7 @@ func (s *FrameWorkState) Reset() {
 	}
 	segBack := s.segOwn.backing
 	segShared := s.segShared
-	*s = FrameWorkState{
-		scaledRefPolicySet:     scaledRefPolicySet,
-		scaledRefPolicyEnabled: scaledRefPolicyEnabled,
-		ownedTemporalMotion:    ownedTemporalMotion,
-	}
+	*s = FrameWorkState{ownedTemporalMotion: ownedTemporalMotion}
 	s.tileResidualCDFPoolExtra = cdfPoolExtra
 	s.temporalMVsBack = temporalBack
 	s.mvFrameBacking = mvBack
@@ -468,17 +456,6 @@ func (s *FrameWorkState) temporalMotionPrepareError(err error) error {
 		s.currentMVFrameValid = false
 	}
 	return err
-}
-
-// SetScaledReferencePredictionEnabled captures whether this state may decode
-// references whose coded dimensions differ from the current frame. High-level
-// decoder constructors use this to snapshot GOAV1_SCALED_PRED once per decoder.
-func (s *FrameWorkState) SetScaledReferencePredictionEnabled(enabled bool) {
-	if s == nil {
-		return
-	}
-	s.scaledRefPolicySet = true
-	s.scaledRefPolicyEnabled = enabled
 }
 
 // acquireTileResidualCDFEntry claims a free pool entry with one frame hold.
@@ -765,9 +742,6 @@ func (s *FrameWorkState) Begin(refs *SurfaceReferences, pool *frame.Pool, sequen
 	if s == nil || s.active {
 		return FrameWorkPlan{}, nil, ErrInvalidFrameWorkState
 	}
-	if !s.scaledRefPolicySet {
-		s.SetScaledReferencePredictionEnabled(threading.ScaledReferencePredictionEnabled())
-	}
 	currentCDF, err := s.acquireInitialTileResidualCDFs(event)
 	if err != nil {
 		return FrameWorkPlan{}, nil, err
@@ -786,7 +760,6 @@ func (s *FrameWorkState) Begin(refs *SurfaceReferences, pool *frame.Pool, sequen
 	s.Surface = plan.Surface
 	s.ReferenceCount = plan.ReferenceCount
 	s.Sequence = threading.FrameWorkSequenceContextFromHeader(sequence)
-	s.Sequence.ScaledReferencePredictionDisabled = !s.scaledRefPolicyEnabled
 	s.tileResidualCurrentCDF = currentCDF
 	s.tileResidualCurrentCDFsValid = true
 	s.tileResidualRetainedCDF = retainedCDF
@@ -2317,8 +2290,6 @@ func frameWorkFrameContext(event *Event, fallback threading.FrameWorkSequenceCon
 	sequence := threading.FrameWorkSequenceContextFromHeader(event.SequenceHeader)
 	if !sequence.Valid() {
 		sequence = fallback
-	} else {
-		sequence.ScaledReferencePredictionDisabled = fallback.ScaledReferencePredictionDisabled
 	}
 	return FrameWorkFrameContext{
 		Sequence:            sequence,

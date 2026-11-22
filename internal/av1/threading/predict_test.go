@@ -3056,32 +3056,7 @@ func TestFrameWorkBatchPredictBlockInterIntrabcCopiesOutput(t *testing.T) {
 	}
 }
 
-func TestFrameWorkBatchPredictBlockInterRejectsScaledReferenceBeforeMutation(t *testing.T) {
-	if frameWorkScaledRefEnabled() {
-		t.Skip("scaled-reference dispatch enabled; same-size-only rejection is bypassed")
-	}
-	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
-	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
-	output.Y.Pix[16*output.Y.Stride+16] = 0x44
-	output.U.Pix[8*output.U.Stride+8] = 0x55
-	output.V.Pix[8*output.V.Stride+8] = 0x66
-
-	ctx := testInterPredictionBatch(output, reference)
-	visit := testInterPredictionVisit(motion.Vector{})
-	if err := ctx.PredictBlockInterWithFilters(0, visit, nil, motion.RegularFilters); !errors.Is(err, ErrInvalidBatch) {
-		t.Fatalf("PredictBlockInterWithFilters err=%v want %v", err, ErrInvalidBatch)
-	}
-	if output.Y.Pix[16*output.Y.Stride+16] != 0x44 ||
-		output.U.Pix[8*output.U.Stride+8] != 0x55 ||
-		output.V.Pix[8*output.V.Stride+8] != 0x66 {
-		t.Fatalf("output mutated y=%#x u=%#x v=%#x", output.Y.Pix[16*output.Y.Stride+16], output.U.Pix[8*output.U.Stride+8], output.V.Pix[8*output.V.Stride+8])
-	}
-}
-
 func TestFrameWorkBatchPredictBlockInterRoutesScaledReferenceWhenEnabled(t *testing.T) {
-	if !frameWorkScaledRefEnabled() {
-		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
-	}
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
 	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64})
 	// Fill the reference with a uniform value: 8-tap kernels sum to 128 (1.0
@@ -3111,36 +3086,6 @@ func TestFrameWorkBatchPredictBlockInterRoutesScaledReferenceWhenEnabled(t *test
 	}
 }
 
-// TestFrameWorkBatchPredictBlockInterWarpRejectsScaledReferenceBeforeMutation
-// pins the default-build behavior: warp+scaled is still a hard reject when the
-// scaled-prediction gate is off, matching the same-size invariant that the
-// 7-vector fast suite relies on.
-func TestFrameWorkBatchPredictBlockInterWarpRejectsScaledReferenceBeforeMutation(t *testing.T) {
-	if frameWorkScaledRefEnabled() {
-		t.Skip("scaled-reference dispatch enabled; same-size-only rejection is bypassed")
-	}
-	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
-	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 64, BitDepth: 8, Align: 64})
-	fillFrameWorkInterReference(reference, 0xff)
-	output.Y.Pix[16*output.Y.Stride+16] = 0x44
-
-	ctx := testInterPredictionBatch(output, reference)
-	visit := testInterPredictionVisit(motion.Vector{})
-	visit.Prediction.MotionModeValid = true
-	visit.Prediction.MotionMode = tile.MotionModeWarp
-	params := parser.DefaultWarpedMotionParams()
-	params.Type = parser.GlobalMotionAffine
-	visit.Prediction.WarpedMotion = tile.WarpedMotionModel{Params: params}
-	visit.Prediction.WarpedMotionValid = true
-
-	if err := ctx.PredictBlockLumaInterWithFilters(0, visit, motion.RegularFilters); !errors.Is(err, ErrInvalidBatch) {
-		t.Fatalf("PredictBlockLumaInterWithFilters err=%v want %v", err, ErrInvalidBatch)
-	}
-	if output.Y.Pix[16*output.Y.Stride+16] != 0x44 {
-		t.Fatalf("output mutated y=%#x", output.Y.Pix[16*output.Y.Stride+16])
-	}
-}
-
 // TestFrameWorkBatchPredictBlockInterWarpFallsBackToScaledTranslation anchors
 // the libaom behavior described in allow_warp() (av1/common/reconinter.c):
 // when av1_is_scaled(sf) is true, allow_warp() returns 0 and the predictor
@@ -3149,9 +3094,6 @@ func TestFrameWorkBatchPredictBlockInterWarpRejectsScaledReferenceBeforeMutation
 // warp-dispatch output must therefore match the dedicated scaled translational
 // helper byte-for-byte.
 func TestFrameWorkBatchPredictBlockInterWarpFallsBackToScaledTranslation(t *testing.T) {
-	if !frameWorkScaledRefEnabled() {
-		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
-	}
 	format := frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64}
 	output := testBatchFrame(t, format)
 	want := testBatchFrame(t, format)
@@ -3211,9 +3153,6 @@ func TestFrameWorkBatchPredictBlockInterWarpFallsBackToScaledTranslation(t *test
 // global warp model paired with a scaled reference must also collapse to the
 // translational scaled convolver on the block-level MV.
 func TestFrameWorkBatchPredictBlockInterGlobalWarpFallsBackToScaledTranslation(t *testing.T) {
-	if !frameWorkScaledRefEnabled() {
-		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
-	}
 	format := frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64}
 	output := testBatchFrame(t, format)
 	want := testBatchFrame(t, format)
@@ -3276,9 +3215,6 @@ func TestFrameWorkBatchPredictBlockInterGlobalWarpFallsBackToScaledTranslation(t
 // to the same-size convolver and corrupted those 8 columns; the SVC L2T1
 // spatial=1 enhancement layer flagged it at dst (96..103, 0) of frame 0.
 func TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledConvolver(t *testing.T) {
-	if !frameWorkScaledRefEnabled() {
-		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
-	}
 	format := frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64}
 	output := testBatchFrame(t, format)
 	want := testBatchFrame(t, format)
@@ -3375,9 +3311,6 @@ func TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledCon
 // allocation profile for the warp+scaled fallback path so the SVC vectors
 // stay zero-alloc per visit.
 func TestFrameWorkBatchPredictBlockInterWarpScaledAllocs(t *testing.T) {
-	if !frameWorkScaledRefEnabled() {
-		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
-	}
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 64, BitDepth: 8, Align: 64})
 	fillFrameWorkInterReference(reference, 0xff)
@@ -3418,9 +3351,6 @@ func TestFrameWorkBatchPredictBlockInterWarpScaledAllocs(t *testing.T) {
 // instead of the output frame (64x64) the resulting samples would diverge
 // from the libaom reference.
 func TestFrameWorkBatchPredictBlockInterIntraScaledMatchesScaledTranslation(t *testing.T) {
-	if !frameWorkScaledRefEnabled() {
-		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
-	}
 	format := frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64}
 	output := testBatchFrame(t, format)
 	want := testBatchFrame(t, format)
@@ -3508,9 +3438,6 @@ func TestFrameWorkBatchPredictBlockInterIntraScaledMatchesScaledTranslation(t *t
 // vectors stay zero-alloc per visit (the inter-intra branch stages into the
 // caller-owned scratch and the scaled convolver writes directly into it).
 func TestFrameWorkBatchPredictBlockInterIntraScaledAllocs(t *testing.T) {
-	if !frameWorkScaledRefEnabled() {
-		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or build with goav1_scaled_pred to exercise")
-	}
 	format := frame.Format{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64}
 	output := testBatchFrame(t, format)
 	reference := testBatchFrame(t, frame.Format{Width: 32, Height: 32, BitDepth: 8, MonoChrome: true, Align: 64})
@@ -3530,32 +3457,7 @@ func TestFrameWorkBatchPredictBlockInterIntraScaledAllocs(t *testing.T) {
 	}
 }
 
-func TestFrameWorkBatchPredictBlockInterCompoundRejectsScaledReferenceBeforeMutation(t *testing.T) {
-	if frameWorkScaledRefEnabled() {
-		t.Skip("scaled-reference dispatch enabled; same-size-only rejection is bypassed")
-	}
-	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
-	last := testBatchFrame(t, output.Format)
-	bwd := testBatchFrame(t, frame.Format{Width: 64, Height: 32, BitDepth: 8, Align: 64})
-	output.Y.Pix[16*output.Y.Stride+16] = 0x77
-	fillFrameWorkInterReference(last, 0xff)
-	fillFrameWorkInterReference(bwd, 0xff)
-
-	ctx := testCompoundInterPredictionBatch(output, last, bwd)
-	visit := testCompoundInterPredictionVisit(motion.Vector{}, motion.Vector{}, tile.CompoundTypeAverage)
-	var scratch FrameWorkInterPredictionScratch
-	if err := ctx.PredictBlockLumaInterCompoundWithFilters(0, visit, &scratch, motion.RegularFilters); !errors.Is(err, ErrInvalidBatch) {
-		t.Fatalf("PredictBlockLumaInterCompoundWithFilters err=%v want %v", err, ErrInvalidBatch)
-	}
-	if output.Y.Pix[16*output.Y.Stride+16] != 0x77 {
-		t.Fatalf("output mutated y=%#x", output.Y.Pix[16*output.Y.Stride+16])
-	}
-}
-
 func TestFrameWorkBatchPredictBlockInterCompoundScaledReferenceUsesConvBuf(t *testing.T) {
-	if !frameWorkScaledRefEnabled() {
-		t.Skip("scaled-reference dispatch disabled; set GOAV1_SCALED_PRED=1 or unset GOAV1_SCALED_PRED to exercise")
-	}
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 8, Align: 64})
 	last := testBatchFrame(t, output.Format)
 	bwd := testBatchFrame(t, frame.Format{Width: 32, Height: 64, BitDepth: 8, Align: 64})
@@ -3903,7 +3805,6 @@ func testInterPredictionBatch(output *frame.Frame, reference *frame.Frame) Frame
 		},
 		Jobs: []tile.Job{{SBCols: 1, SBRows: 1}},
 	}
-	ctx.Sequence.ScaledReferencePredictionDisabled = !frameWorkScaledRefEnabled()
 	return ctx
 }
 

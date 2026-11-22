@@ -249,7 +249,4 @@ func validScaleRatio(refSize int, curSize int) bool {
 // plus a precomputed SubpelKernelTable per axis (SubpelKernelTableFor).
 //
 // The threading prediction path dispatches scaled-reference inter blocks
-// through these kernels when the goav1_scaled_pred build tag or
-// GOAV1_SCALED_PRED=1 environment variable is set; the default build keeps
-// rejecting scaled refs to leave the 7-vector fast suite on its
-// battle-tested same-size translational path.
+// through these kernels.

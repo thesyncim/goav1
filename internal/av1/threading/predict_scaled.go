@@ -5,48 +5,15 @@
 package threading
 
 import (
-	"os"
-
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
-// frameWorkScaledRefDisabledEnv force-disables routing scaled-reference inter
-// blocks through the scaled 8-tap convolver. Scaled-reference prediction is now
-// on by default (libaom: av1_make_inter_predictor() routes through
-// av1_convolve_2d_scale_c whenever av1_is_scaled(sf)), so a size-mismatched
-// reference - e.g. an SVC enhancement layer (spatial>0) referencing a smaller
-// base-layer frame - is handled instead of crashing with ErrInvalidBatch. Set
-// GOAV1_SCALED_PRED=0 to fall back to the legacy same-size-only reject (used
-// only for debugging / bisecting the scaled path). The same-size fast path is
-// unaffected because frameWorkSameOrScaledReferencePlane short-circuits on
-// equal dimensions before consulting this gate at all.
-const frameWorkScaledRefDisabledEnv = "GOAV1_SCALED_PRED"
-
-// frameWorkScaledRefEnabled reports whether the scaled-reference convolver is
-// active. It is unconditionally on unless explicitly disabled with
-// GOAV1_SCALED_PRED=0; the goav1_scaled_pred build tag remains a no-op kept for
-// source compatibility.
-func frameWorkScaledRefEnabled() bool {
-	if frameWorkScaledRefBuildEnabled {
-		return true
-	}
-	return os.Getenv(frameWorkScaledRefDisabledEnv) != "0"
-}
-
-// ScaledReferencePredictionEnabled reports the environment-selected scaled
-// reference policy. Decoder constructors call it once so the policy remains
-// stable for that decoder's lifetime without allocating in block prediction.
-func ScaledReferencePredictionEnabled() bool {
-	return frameWorkScaledRefEnabled()
-}
-
 // frameWorkPredictScaledReferencePlane writes one plane block from a smaller
-// or larger reference into geom.Output at (dstX, dstY). It is used only when the
-// scaled-prediction path is enabled and the reference dimensions differ from
-// the current coded frame dimensions (verified by
-// frameWorkSameOrScaledReferencePlane). The Q14 reference scale factors are
+// or larger reference into geom.Output at (dstX, dstY). It is used only when
+// the reference dimensions differ from the current coded frame dimensions. The
+// Q14 reference scale factors are
 // anchored to the current frame's CODED (cropped) plane dimensions
 // (geom.CodedWidth / geom.CodedHeight), mirroring libaom's
 // av1_setup_scale_factors_for_frame(): the scale factors are derived from the
@@ -198,9 +165,6 @@ func (b *FrameWorkBatch) referenceScale(reference FrameWorkReference) (motion.Sc
 	curWidth, curHeight := int(b.FrameSize.CodedWidth), int(b.FrameSize.Height)
 	if refFrame.Format.Width == curWidth && refFrame.Format.Height == curHeight {
 		return motion.ScaleFactors{Identity: true}, true, nil
-	}
-	if b.Sequence.ScaledReferencePredictionDisabled {
-		return motion.ScaleFactors{}, false, ErrInvalidBatch
 	}
 	sf, err := motion.NewScaleFactors(refFrame.Format.Width, refFrame.Format.Height, curWidth, curHeight)
 	if err != nil {

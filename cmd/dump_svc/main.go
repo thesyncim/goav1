@@ -23,10 +23,6 @@
 //	-svc-info         only print the parsed SVC structure (sequence
 //	                  operating points, scalability metadata, per-OBU
 //	                  layer fan-out) and exit without decoding pixels
-//	-scaled-pred      enable scaled inter-layer prediction (default
-//	                  true; SVC streams effectively require it). The
-//	                  flag installs GOAV1_SCALED_PRED=1 into the
-//	                  process environment if it is not already set.
 //	-format           output sample format: "i420" for I420 / yuv420p
 //	                  (8-bit, planar 4:2:0) or "yuv420p10le" for the
 //	                  canonical FFmpeg 10-bit-LE layout. When the
@@ -61,13 +57,6 @@ import (
 	av1 "github.com/thesyncim/goav1"
 )
 
-// scaledPredEnvVar mirrors internal/av1/threading.frameWorkScaledRefAllowedEnv.
-// dump_svc deals exclusively in SVC bitstreams, where the same-size-only
-// gate kept by the default build rejects valid inter-layer references with
-// the `threading: invalid batch` error; we therefore opt the process into
-// the scaled-prediction path by default.
-const scaledPredEnvVar = "GOAV1_SCALED_PRED"
-
 // Output format identifiers. Aliases match the canonical FFmpeg names so
 // callers can copy/paste filter chains.
 const (
@@ -95,7 +84,6 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	workers := fs.Int("workers", 1, "tile worker goroutine count")
 	quiet := fs.Bool("quiet", false, "suppress per-event SVC log line")
 	svcInfo := fs.Bool("svc-info", false, "only print SVC structure and exit")
-	scaledPred := fs.Bool("scaled-pred", true, "enable scaled inter-layer prediction (sets GOAV1_SCALED_PRED=1)")
 	format := fs.String("format", outputFormatI420, "output sample format: i420 (8-bit) or yuv420p10le (10-bit LE)")
 	useI420 := fs.Bool("i420", false, "shorthand for -format=i420")
 	use10LE := fs.Bool("yuv420p10le", false, "shorthand for -format=yuv420p10le")
@@ -103,7 +91,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 		"select spatial layer to emit (-1 = highest layer the temporal unit publishes)")
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: dump_svc [-o out.yuv] [-workers N] [-quiet] [-svc-info]\n"+
-			"                [-scaled-pred=BOOL] [-format=i420|yuv420p10le]\n"+
+			"                [-format=i420|yuv420p10le]\n"+
 			"                [-i420] [-yuv420p10le] [-spatial-layer=N] input.ivf\n\n")
 		fs.PrintDefaults()
 	}
@@ -139,21 +127,6 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 		return fmt.Errorf("spatial-layer must be in [-1, 3], got %d", *spatialLayer)
 	}
 
-	// Hard-wire the scaled-prediction gate on by default. SVC bitstreams
-	// that ever reference a smaller spatial layer at a different
-	// resolution fail with `threading: invalid batch` without it; the
-	// fast (non-SVC) eight-vector cohort doesn't reach this code path so
-	// flipping the global default here is safe for this CLI's audience.
-	// Only override the process environment when the caller did not
-	// already pin a value so we don't clobber an explicit `=0`.
-	if *scaledPred {
-		if os.Getenv(scaledPredEnvVar) == "" {
-			if err := os.Setenv(scaledPredEnvVar, "1"); err != nil {
-				return fmt.Errorf("set %s=1: %w", scaledPredEnvVar, err)
-			}
-		}
-	}
-
 	inputPath := fs.Arg(0)
 	ivfBytes, err := os.ReadFile(inputPath)
 	if err != nil {
@@ -168,9 +141,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 		return errors.New("ivf contains no frames")
 	}
 
-	fmt.Fprintf(stderr, "dump_svc: %s %dx%d frames=%d timebase=%d/%d format=%s spatial_layer=%d scaled_pred=%v\n",
+	fmt.Fprintf(stderr, "dump_svc: %s %dx%d frames=%d timebase=%d/%d format=%s spatial_layer=%d\n",
 		inputPath, header.Width, header.Height, header.FrameCount,
-		header.TimebaseNum, header.TimebaseDen, *format, *spatialLayer, *scaledPred)
+		header.TimebaseNum, header.TimebaseDen, *format, *spatialLayer)
 
 	if err := dumpSVCStructure(frames, stderr); err != nil {
 		return fmt.Errorf("svc info: %w", err)
