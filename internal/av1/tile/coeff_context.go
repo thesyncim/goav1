@@ -1,9 +1,6 @@
 package tile
 
-import (
-	"encoding/binary"
-	"unsafe"
-)
+import "encoding/binary"
 
 type TXBContext struct {
 	TXBSkipContext uint8
@@ -308,35 +305,34 @@ func setCoeffContextRun(row *[MaxBlockModeSlots]uint8, x, n, visible int, value 
 	if n <= 0 {
 		return
 	}
-	_ = row[x+n-1]
+	run := row[x : x+n]
 	if visible >= n {
-		p := unsafe.Pointer(&row[x])
 		v := uint64(value) * ones
 		switch n {
 		case 1:
-			row[x] = value
+			run[0] = value
 			return
 		case 2:
-			*(*uint16)(p) = uint16(v)
+			binary.LittleEndian.PutUint16(run, uint16(v))
 			return
 		case 4:
-			*(*uint32)(p) = uint32(v)
+			binary.LittleEndian.PutUint32(run, uint32(v))
 			return
 		case 8:
-			*(*uint64)(p) = v
+			binary.LittleEndian.PutUint64(run, v)
 			return
 		case 16:
-			*(*uint64)(p) = v
-			*(*uint64)(unsafe.Add(p, 8)) = v
+			binary.LittleEndian.PutUint64(run, v)
+			binary.LittleEndian.PutUint64(run[8:], v)
 			return
 		}
 		visible = n
 	}
 	for k := 0; k < visible; k++ {
-		row[x+k] = value
+		run[k] = value
 	}
 	for k := visible; k < n; k++ {
-		row[x+k] = 0
+		run[k] = 0
 	}
 }
 
