@@ -211,87 +211,88 @@ func (rt *refmvsTile) row(idx int32) []refmvsBlock {
 	return rt.buf[o : o+rt.stride]
 }
 
-// splat ports dav1d's splat_mv: store tmpl into every 4x4 cell of the block.
-// As splat_mv_neon, it builds one 48-byte pattern of four blocks and writes
-// each row with whole-pattern stores, dispatching on the block width (1, 2,
-// or a multiple of 4 cells) instead of a per-row copy call.
-func (rt *refmvsTile) splat(tmpl refmvsBlock, by4, bx4, bw4, bh4 int32) {
+// splat ports dav1d's splat_mv: store one refmvs block into every 4x4 cell
+// of the block. mv packs mv[0] and mv[1]; rest packs ref[0], ref[1], bs and
+// mf, low byte first. Narrow blocks store each cell from these registers
+// (one 4- and one 8-byte store), so no template is built in memory and
+// reloaded wider than it was written; wider blocks build splat_mv_neon's
+// 48-byte four-cell pattern once and store it whole.
+func (rt *refmvsTile) splat(mv uint64, rest uint32, by4, bx4, bw4, bh4 int32) {
 	base := (by4 & 31) + 5
-	switch bw4 {
-	case 1:
-		for y := int32(0); y < bh4; y++ {
-			rt.row(base + y)[bx4] = tmpl
-		}
-	case 2:
-		pat := [2]refmvsBlock{tmpl, tmpl}
-		for y := int32(0); y < bh4; y++ {
-			*(*[2]refmvsBlock)(rt.row(base + y)[bx4:]) = pat
-		}
-	default:
-		pat := [4]refmvsBlock{tmpl, tmpl, tmpl, tmpl}
+	if bw4 < 4 {
 		for y := int32(0); y < bh4; y++ {
 			r := rt.row(base + y)[bx4 : bx4+bw4]
-			for len(r) >= 4 {
-				*(*[4]refmvsBlock)(r) = pat
-				r = r[4:]
+			for i := range r {
+				r[i].set(mv, rest)
 			}
 		}
+		return
 	}
+	var pat [4]refmvsBlock
+	for i := range pat {
+		pat[i].set(mv, rest)
+	}
+	for y := int32(0); y < bh4; y++ {
+		r := rt.row(base + y)[bx4 : bx4+bw4]
+		for len(r) >= 4 {
+			*(*[4]refmvsBlock)(r) = pat
+			r = r[4:]
+		}
+	}
+}
+
+func (b *refmvsBlock) set(mv uint64, rest uint32) {
+	b.ref[0], b.ref[1], b.bs, b.mf = int8(rest), int8(rest>>8), BlockSize(rest>>16), uint8(rest>>24)
+	b.mv[0], b.mv[1] = refmvsMV(mv), refmvsMV(mv>>32)
+}
+
+func refmvsSplatRest(ref0, ref1 int8, bs BlockSize, mf uint8) uint32 {
+	return uint32(uint8(ref0)) | uint32(uint8(ref1))<<8 | uint32(bs)<<16 | uint32(mf)<<24
 }
 
 // splatInterBlock ports splat_oneref_mv / splat_tworef_mv.
 func (rt *refmvsTile) splatInterBlock(size BlockSize, by4, bx4 int32, motionResult InterMotionResult) {
 	dims := blockDimensions[size]
 	bw4, bh4 := int32(dims.W4), int32(dims.H4)
-	var tmpl refmvsBlock
-	tmpl.bs = size
 	refs := motionResult.References
 	mode := motionResult.Mode
+	mv := uint64(packRefmvsMV(motionResult.MV[0]))
+	ref0, ref1 := int8(refs.Ref[0])+1, int8(-1)
+	mf := uint8(0)
 	if refs.Compound {
-		tmpl.ref = [2]int8{int8(refs.Ref[0]) + 1, int8(refs.Ref[1]) + 1}
-		tmpl.mv = [2]refmvsMV{packRefmvsMV(motionResult.MV[0]), packRefmvsMV(motionResult.MV[1])}
+		ref1 = int8(refs.Ref[1]) + 1
+		mv |= uint64(packRefmvsMV(motionResult.MV[1])) << 32
 		cm := mode.CompoundMode
 		if cm == CompoundInterModeGlobalGlobal {
-			tmpl.mf |= 1
+			mf |= 1
 		}
 		if (1<<cm)&0xbc != 0 {
-			tmpl.mf |= 2
+			mf |= 2
 		}
 	} else {
-		tmpl.ref[0] = int8(refs.Ref[0]) + 1
-		tmpl.ref[1] = -1
 		if motionResult.InterIntra {
-			tmpl.ref[1] = 0
+			ref1 = 0
 		}
-		tmpl.mv[0] = packRefmvsMV(motionResult.MV[0])
 		if mode.Mode == InterModeGlobalMV && min(bw4, bh4) >= 2 {
-			tmpl.mf |= 1
+			mf |= 1
 		}
 		if mode.Mode == InterModeNewMV {
-			tmpl.mf |= 2
+			mf |= 2
 		}
 	}
-	rt.splat(tmpl, by4, bx4, bw4, bh4)
+	rt.splat(mv, refmvsSplatRest(ref0, ref1, size, mf), by4, bx4, bw4, bh4)
 }
 
 // splatIntraBlock ports splat_intraref.
 func (rt *refmvsTile) splatIntraBlock(size BlockSize, by4, bx4 int32) {
 	dims := blockDimensions[size]
-	rt.splat(refmvsBlock{
-		mv:  [2]refmvsMV{refmvsInvalidMV, 0},
-		ref: [2]int8{0, -1},
-		bs:  size,
-	}, by4, bx4, int32(dims.W4), int32(dims.H4))
+	rt.splat(uint64(refmvsInvalidMV), refmvsSplatRest(0, -1, size, 0), by4, bx4, int32(dims.W4), int32(dims.H4))
 }
 
 // splatIntrabcBlock ports splat_intrabc_mv.
 func (rt *refmvsTile) splatIntrabcBlock(size BlockSize, by4, bx4 int32, dv motion.Vector) {
 	dims := blockDimensions[size]
-	rt.splat(refmvsBlock{
-		mv:  [2]refmvsMV{packRefmvsMV(dv), 0},
-		ref: [2]int8{0, -1},
-		bs:  size,
-	}, by4, bx4, int32(dims.W4), int32(dims.H4))
+	rt.splat(uint64(packRefmvsMV(dv)), refmvsSplatRest(0, -1, size, 0), by4, bx4, int32(dims.W4), int32(dims.H4))
 }
 
 // refmvsResult is the output of refmvsFind: dav1d's mvstack, n_mvs and ctx.

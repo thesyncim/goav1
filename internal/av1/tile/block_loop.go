@@ -1026,7 +1026,7 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 			prefix.SegmentPredicted = true
 		}
 	}
-	cdefIndex, err := s.ReadCDEFIndexForBlock(req.CDEF, &scratch.CDEF, block.Size, blockX4, blockY4, prefix.SkipTransform)
+	cdefIndex, err := s.ReadCDEFIndexForBlock(&req.CDEF, &scratch.CDEF, block.Size, blockX4, blockY4, prefix.SkipTransform)
 	if err != nil {
 		return nil, err
 	}
@@ -1427,14 +1427,14 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 				// cells come straight off the grid).
 				hasChroma := hasChromaForBlock(block.Size, blockX4, blockY4, req.Color)
 				if hasChroma {
-					var sub SubChromaInterResult
-					var ok bool
+					// The refmvs path writes the cells in place into the
+					// cleared result, self cell included.
 					if rt != nil {
-						sub, ok = rt.subChromaCells(ctx, block, req.Color.SubsamplingX, req.Color.SubsamplingY, filters)
-					} else {
-						sub, ok = ctx.CollectSubChromaInterCells(block.Size, blockX4, blockY4, req.Color.SubsamplingX, req.Color.SubsamplingY, filters)
-					}
-					if ok {
+						result.SubChromaInterValid = rt.subChromaCells(ctx, block, req.Color.SubsamplingX, req.Color.SubsamplingY, filters, result.InterMotion.MV[0], refs.Ref[0], &result.SubChromaInter)
+					} else if sub, ok := ctx.CollectSubChromaInterCells(block.Size, blockX4, blockY4, req.Color.SubsamplingX, req.Color.SubsamplingY, filters); ok {
+						// The grid fallback returns the cells for the caller
+						// to complete with the block's own mv, reference and
+						// filters.
 						selfCell := &sub.Cells[int(sub.Count)-1]
 						selfCell.MV = result.InterMotion.MV[0]
 						selfCell.Reference = refs.Ref[0]
@@ -1698,20 +1698,12 @@ func (s *DecodeState) readBlockSkips(cdfs *BlockModeCDFs, ctx *BlockModeContext,
 	segEnabled := req.Segmentation.Enabled
 	if req.SkipMode.Enabled && min(dims.W4, dims.H4) > 1 &&
 		!(segEnabled && (segment.Skip || segment.GlobalMV || segment.RefFrame >= 0)) {
-		symbol, err := s.Reader.ReadCDF(&cdfs.SkipMode[int(ctx.AboveSkipMode[x4])+int(ctx.LeftSkipMode[y4])])
-		if err != nil {
-			return false, false, err
-		}
-		skipMode = symbol != 0
+		skipMode = s.Reader.ReadBinaryCDFUnchecked(&cdfs.SkipMode[int(ctx.AboveSkipMode[x4])+int(ctx.LeftSkipMode[y4])]) != 0
 	}
 	if skipMode || segEnabled && segment.Skip {
 		return skipMode, true, nil
 	}
-	symbol, err := s.Reader.ReadCDF(&cdfs.Skip[int(ctx.AboveSkip[x4])+int(ctx.LeftSkip[y4])])
-	if err != nil {
-		return false, false, err
-	}
-	return false, symbol != 0, nil
+	return false, s.Reader.ReadBinaryCDFUnchecked(&cdfs.Skip[int(ctx.AboveSkip[x4])+int(ctx.LeftSkip[y4])]) != 0, nil
 }
 
 func (s *DecodeState) readBlockModePrefixSyntax(cdfs *BlockModeCDFs, ctx *BlockModeContext, req BlockModeRequest, segmentPredicted bool) (BlockModeResult, error) {
@@ -1833,28 +1825,27 @@ func discardBlockLoopCoeff(BlockLoopVisit, BlockCoeffBlock) error {
 	return nil
 }
 
-func blockReferenceGlobalMVs(refs InterReferencesResult, global [referenceFrameCount]motion.Vector) [2]motion.Vector {
-	var out [2]motion.Vector
-	if refs.Ref[0].Valid() {
-		out[0] = global[refs.Ref[0]]
+// blockReferenceGlobalMVsForBlock is dav1d's get_gmv_2d for the block's
+// references, read through pointers into the frame tables.
+func blockReferenceGlobalMVsForBlock(refs InterReferencesResult, fallback *[referenceFrameCount]motion.Vector, global *[referenceFrameCount]parser.WarpedMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool, block *BlockVisit) (out [2]motion.Vector) {
+	n := 1
+	if refs.Compound {
+		n = 2
 	}
-	if refs.Compound && refs.Ref[1].Valid() {
-		out[1] = global[refs.Ref[1]]
-	}
-	return out
-}
-
-func blockReferenceGlobalMVsForBlock(refs InterReferencesResult, fallback *[referenceFrameCount]motion.Vector, global *[referenceFrameCount]parser.WarpedMotionParams, allowHighPrecisionMV bool, forceIntegerMV bool, block *BlockVisit) [2]motion.Vector {
-	out := blockReferenceGlobalMVs(refs, *fallback)
-	if refs.Ref[0].Valid() {
-		if mv, ok := globalMotionVector(&global[refs.Ref[0]], allowHighPrecisionMV, forceIntegerMV, block); ok {
-			out[0] = mv
+	for i := range n {
+		r := refs.Ref[i]
+		if !r.Valid() {
+			continue
 		}
-	}
-	if refs.Compound && refs.Ref[1].Valid() {
-		if mv, ok := globalMotionVector(&global[refs.Ref[1]], allowHighPrecisionMV, forceIntegerMV, block); ok {
-			out[1] = mv
+		p := &global[r]
+		if p.Type == parser.GlobalMotionIdentity && p.Matrix[2] == 1<<globalMotionWarpedModelPrecBits {
+			continue // get_gmv_2d: identity is a zero mv
 		}
+		mv, ok := globalMotionVector(p, allowHighPrecisionMV, forceIntegerMV, block)
+		if !ok {
+			mv = fallback[r]
+		}
+		out[i] = mv
 	}
 	return out
 }

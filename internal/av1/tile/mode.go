@@ -1,6 +1,7 @@
 package tile
 
 import (
+	"encoding/binary"
 	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
@@ -631,37 +632,44 @@ func (s *DecodeState) ReadCDEFIndex(params parser.CDEFParams, skipTransform bool
 
 // ReadCDEFIndexForBlock decodes cdef_idx using libaom/dav1d's 64x64 CDEF-unit
 // cache: the first non-skip block in a unit reads the syntax element, and later
-// blocks in the same unit reuse it without consuming entropy bits.
-func (s *DecodeState) ReadCDEFIndexForBlock(params parser.CDEFParams, ctx *CDEFIndexContext, size BlockSize, x4 int, y4 int, skipTransform bool) (uint8, error) {
-	if s == nil || ctx == nil {
-		return 0, ErrInvalidDecodeState
-	}
-	if params.Bits > maxCDEFBits {
+// blocks in the same unit reuse it without consuming entropy bits. As in dav1d
+// decode_b, the unit index comes from the block's superblock-local position
+// and a block wider or taller than a unit marks the units it covers.
+func (s *DecodeState) ReadCDEFIndexForBlock(params *parser.CDEFParams, ctx *CDEFIndexContext, size BlockSize, x4 int, y4 int, skipTransform bool) (uint8, error) {
+	if s == nil || ctx == nil || params.Bits > maxCDEFBits {
 		return 0, ErrInvalidDecodeState
 	}
 	if skipTransform || params.Bits == 0 {
 		return 0, nil
 	}
-
-	units, count, err := cdefUnitsForBlock(size, x4, y4)
-	if err != nil {
-		return 0, err
+	dims, ok := size.Dimensions()
+	if !ok || x4 < 0 || y4 < 0 ||
+		x4+int(dims.W4) > MaxBlockModeSlots ||
+		y4+int(dims.H4) > MaxBlockModeSlots {
+		return 0, ErrInvalidDecodeState
 	}
-	if ctx.Read[units[0]] {
-		cached := ctx.Index[units[0]]
+	idx := (x4>>4)&1 | (y4>>3)&2
+	if ctx.Read[idx] {
+		cached := ctx.Index[idx]
 		if cached >= parser.MaxCDEFStrengths {
 			return 0, ErrInvalidDecodeState
 		}
 		return cached, nil
 	}
-
-	index, err := s.ReadCDEFIndex(params, false)
+	v, err := s.Reader.ReadBits(params.Bits)
 	if err != nil {
 		return 0, err
 	}
-	for i := range count {
-		ctx.Index[units[i]] = index
-		ctx.Read[units[i]] = true
+	index := uint8(v)
+	ctx.Index[idx], ctx.Read[idx] = index, true
+	if dims.W4 > 16 {
+		ctx.Index[(idx+1)&3], ctx.Read[(idx+1)&3] = index, true
+	}
+	if dims.H4 > 16 {
+		ctx.Index[(idx+2)&3], ctx.Read[(idx+2)&3] = index, true
+	}
+	if dims.W4 > 16 && dims.H4 > 16 {
+		ctx.Index[3], ctx.Read[3] = index, true
 	}
 	return index, nil
 }
@@ -795,14 +803,19 @@ func FillSegmentID(dst []uint8, stride uint16, x4 int, y4 int, w4 int, h4 int, s
 	if (y4+h4-1)*strideInt+x4+w4 > len(dst) {
 		return ErrInvalidDecodeState
 	}
-	// dav1d case_set: one row is filled, the others copy it.
-	first := dst[base : base+w4 : base+w4]
-	for i := range first {
-		first[i] = segmentID
-	}
-	for y := 1; y < h4; y++ {
+	// dav1d case_set: every row is stored from the replicated id, eight
+	// bytes at a time, instead of copying (and reloading) the first row.
+	x := uint64(segmentID) * 0x0101010101010101
+	for range h4 {
+		row := dst[base : base+w4]
+		for len(row) >= 8 {
+			binary.LittleEndian.PutUint64(row, x)
+			row = row[8:]
+		}
+		for i := range row {
+			row[i] = segmentID
+		}
 		base += strideInt
-		copy(dst[base:base+w4], first)
 	}
 	return nil
 }

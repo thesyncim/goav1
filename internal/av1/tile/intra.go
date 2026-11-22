@@ -891,19 +891,12 @@ func (s *DecodeState) readIntraFlag(cdfs *IntraModeCDFs, ctx *BlockModeContext, 
 		if req.Segmentation.Enabled && (segment.RefFrame >= 0 || segment.GlobalMV) {
 			return IntraFlagResult{Intra: segment.RefFrame == 0 && !segment.GlobalMV}, nil
 		}
+		// dav1d decode_b: get_intra_ctx, then one adaptive bool.
 		context, err := ctx.IntraContext(int(block.X4), int(block.Y4), block.HaveTop, block.HaveLeft)
 		if err != nil {
 			return IntraFlagResult{}, err
 		}
-		cdf, err := cdfs.IntraCDF(context)
-		if err != nil {
-			return IntraFlagResult{}, err
-		}
-		isInter, err := s.Reader.ReadCDF(cdf)
-		if err != nil {
-			return IntraFlagResult{}, err
-		}
-		return IntraFlagResult{Intra: isInter == 0}, nil
+		return IntraFlagResult{Intra: s.Reader.ReadBinaryCDFUnchecked(&cdfs.Intra[context]) == 0}, nil
 	}
 	if req.AllowIntrabc {
 		cdf, err := cdfs.IntrabcCDF()
