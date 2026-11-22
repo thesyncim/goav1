@@ -11,7 +11,6 @@ package entropy
 import (
 	"encoding/binary"
 	"math/bits"
-	"unsafe"
 )
 
 const (
@@ -35,13 +34,6 @@ const (
 
 	cdf4HighTokenMax = 12
 )
-
-// byteAtUnchecked loads src[pos] after the caller has proven pos < len(src).
-// Refill loops already carry that branch; this keeps the hot byte load free of
-// a second slice-bounds edge.
-func byteAtUnchecked(src []byte, pos int) byte {
-	return *(*byte)(unsafe.Add(unsafe.Pointer(unsafe.SliceData(src)), pos))
-}
 
 func readerTell(pos int, cnt int32, tellOffs int32) int {
 	return pos*8 - int(cnt) + int(tellOffs)
@@ -83,11 +75,10 @@ func refillState(src []byte, pos int, dif uint64, cnt int32, tellOffs int32) (in
 }
 
 //go:noinline
-//go:nosplit
 func refillStateSlow(src []byte, pos int, dif uint64, cnt int32, tellOffs int32) (int, uint64, int32, int32) {
 	shift := ecWindow - 9 - (cnt + 15)
 	for shift >= 0 && pos < len(src) {
-		dif ^= uint64(byteAtUnchecked(src, pos)) << uint(shift)
+		dif ^= uint64(src[pos]) << uint(shift)
 		cnt += 8
 		shift -= 8
 		pos++
@@ -312,8 +303,6 @@ func (r *Reader) ReadBits(n uint8) (uint32, error) {
 
 // ReadBitsTrusted decodes n equiprobable bits MSB-first for callers that have
 // already proven n <= 32 and the reader is non-nil.
-//
-//go:nosplit
 func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
 	if n == 0 {
 		return 0
@@ -359,7 +348,6 @@ func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
 	return v
 }
 
-//go:nosplit
 func (c *Cursor) readBitTrustedTrace() uint8 {
 	dif := c.dif
 	rangeValue := uint32(c.rng)
@@ -437,8 +425,6 @@ func (c *Cursor) ReadBitTrustedInline() uint8 {
 // ReadBitNoRefillTrusted decodes one equiprobable bit and reports whether the
 // caller must immediately refill before performing any other entropy operation.
 // The trusted caller enters with a normalized range and non-negative count.
-//
-//go:nosplit
 func (c *Cursor) ReadBitNoRefillTrusted() (bit uint8, refill bool) {
 	if traceEntropyReads {
 		return c.readBitTrustedTrace(), false
@@ -459,8 +445,6 @@ func (c *Cursor) ReadBitNoRefillTrusted() (bit uint8, refill bool) {
 }
 
 // ReadBitsTrusted decodes n equiprobable bits MSB-first from cursor state.
-//
-//go:nosplit
 func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 	if n == 0 {
 		return 0
@@ -523,8 +507,6 @@ func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 // Exp-Golomb shape used by AV1 coefficient tails. It returns ok=false after
 // consuming the bit that pushes the prefix beyond maxLength, matching callers
 // that validate malformed coefficient tails after the read.
-//
-//go:nosplit
 func (c *Cursor) ReadUnsignedGolombTrusted(maxLength uint8) (uint32, bool) {
 	dif := c.dif
 	rng := uint32(c.rng)
