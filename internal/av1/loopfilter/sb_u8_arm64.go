@@ -40,8 +40,6 @@ func lpfAny(m archsimd.Mask8x16) bool {
 // p + k*stride, p_k above it at p - (k+1)*stride) and stores the changed rows
 // back. wd is the widest filter any lane needs (4, 6, 8 or 16); the per-lane
 // masks select each lane's own width exactly as the C reference does.
-//
-//go:nocheckptr
 func lpf16U8W[W lpfWidth](p unsafe.Pointer, stride int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) bool {
 	var wdT W
 	wd := int(unsafe.Sizeof(wdT))
@@ -368,8 +366,6 @@ func sbWidth(nGt4, n16 uint32, luma bool) int {
 // sbLevelsRow loads the levels of four consecutive units (horizontal edges:
 // dav1d lpf_v_sb ld1 of l[0] and l[-b4_stride]) with component comp moved to
 // the low byte of each lane.
-//
-//go:nocheckptr
 func sbLevelsRow(lvl [][4]uint8, u0, lvlStride, comp int, nAll uint32) (cur, prev archsimd.Uint32x4) {
 	ff := archsimd.BroadcastUint32x4(0xff)
 	sh := uint64(8 * comp)
@@ -392,8 +388,6 @@ func sbLevelsRow(lvl [][4]uint8, u0, lvlStride, comp int, nAll uint32) (cur, pre
 // sbLevelsCol loads the levels of four units stacked lvlStride cells apart
 // (vertical edges: dav1d lpf_h_sb ld2 of the l[-1], l[0] pairs) with
 // component comp moved to the low byte of each lane.
-//
-//go:nocheckptr
 func sbLevelsCol(lvl [][4]uint8, li, lvlStride, comp int, nAll uint32) (cur, prev archsimd.Uint32x4) {
 	ff := archsimd.BroadcastUint32x4(0xff)
 	sh := uint64(8 * comp)
@@ -423,8 +417,6 @@ func sbLevelsCol(lvl [][4]uint8, li, lvlStride, comp int, nAll uint32) (cur, pre
 // filterSBHorizontal8Edge is the group-by-group driver for calls whose
 // samples or levels reach the end of their buffers: each group checks its own
 // reach and falls back to the unit-by-unit reference when it would leave pix.
-//
-//go:nocheckptr
 func filterSBHorizontal8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	var st SBStats
 	var acc sbAcc
@@ -478,8 +470,6 @@ func filterSBHorizontal8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32
 }
 
 // filterSBVertical8Edge is filterSBHorizontal8Edge for vertical edges.
-//
-//go:nocheckptr
 func filterSBVertical8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	var st SBStats
 	var acc sbAcc
@@ -569,8 +559,6 @@ func sbLimits(cur, prev archsimd.Uint32x4, nib uint32, lut *SBLUT, acc *sbAcc) (
 // C side's &lvl[x][comp]), and the widest set nibble picks the kernel. The
 // call's reach is checked once up front, as dav1d trusts its caller; calls
 // that touch the end of pix, the row or the level map take the edge driver.
-//
-//go:nocheckptr
 func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	vm0, vm1, vm2 := vm[0]|vm[1]|vm[2], vm[1]|vm[2], vm[2]
 	end := 16 * ((31-bits.LeadingZeros32(vm0))>>2 + 1)
@@ -615,8 +603,6 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 // filterSBVertical8 is dav1d lpf_h_sb_{y,uv}_8bpc_neon in the same shape:
 // each group reads the (l[-1], l[0]) level pairs of its four units (the ld2
 // lane loads) from the component-offset cursor.
-//
-//go:nocheckptr
 func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	vm0, vm1, vm2 := vm[0]|vm[1]|vm[2], vm[1]|vm[2], vm[2]
 	hiG := (31 - bits.LeadingZeros32(vm0)) >> 2
@@ -674,8 +660,6 @@ func sbVerticalScalarGroup(pix []byte, q0Off, stride int, vm [3]uint32, sh uint,
 // lpfVertical16x8U8 filters a vertical edge across sixteen rows using eight
 // bytes per row (p3..q3): p points at p3 of the first row. The rows are
 // transposed into tap vectors, filtered, and transposed back.
-//
-//go:nocheckptr
 func lpfVertical16x8U8(p unsafe.Pointer, stride int, wd int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) {
 	var buf [8][16]uint8
 	// Pair row r (low half) with row r+8 (high half), then an 8x8 byte
@@ -754,8 +738,6 @@ func lpfTranspose8x8Pairs(a, b, c, d, e, f, g, h archsimd.Uint8x16) (o0, o1, o2,
 
 // lpfVertical16x16U8 is the wd16 variant: sixteen bytes per row (p7..q7, p
 // points at p7 of the first row), a full 16x16 transpose each way.
-//
-//go:nocheckptr
 func lpfVertical16x16U8(p unsafe.Pointer, stride int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) {
 	var buf [16][16]uint8
 	lpfTranspose16x16Store(p, stride, unsafe.Pointer(&buf), 16)
@@ -786,8 +768,6 @@ func lpfZip64(a, b archsimd.Uint8x16) (archsimd.Uint8x16, archsimd.Uint8x16) {
 
 // lpfTranspose16x16Store loads sixteen 16-byte rows from src, transposes the
 // 16x16 byte matrix in registers and stores it as sixteen rows at dst.
-//
-//go:nocheckptr
 func lpfTranspose16x16Store(src unsafe.Pointer, srcStride int, dst unsafe.Pointer, dstStride int) {
 	r0, r1 := lpfTrn8(lpfLoad(src, 0), lpfLoad(src, srcStride))
 	r2, r3 := lpfTrn8(lpfLoad(src, 2*srcStride), lpfLoad(src, 3*srcStride))
@@ -851,8 +831,6 @@ var lpfLowHalf = [16]uint8{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 // straight into a vector register, rows r and r+8 pair with one zip, and the
 // filtered eight bytes are merged back into the untouched upper eight with one
 // bit-select per row, avoiding the scalar gather/scatter through the stack.
-//
-//go:nocheckptr
 func lpfVertical16x8U8WideW[W lpfWidth](p unsafe.Pointer, stride int, eV, iV, hV archsimd.Uint8x16, m4, mGt4 archsimd.Mask8x16) {
 	r0, r8 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 0))), archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 8*stride)))
 	r1, r9 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, stride))), archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 9*stride)))

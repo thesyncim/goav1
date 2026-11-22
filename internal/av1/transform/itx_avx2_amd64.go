@@ -260,8 +260,6 @@ type itxPix struct {
 // itxAddStore16HBD stores clip(pred[0..15] + res, 0, maxV) for sixteen
 // 2-byte samples. The saturating add equals the scalar clip for any int16
 // residual and pred <= 4095.
-//
-//go:nocheckptr
 func itxAddStore16HBD(dst, pred []byte, res archsimd.Int16x16, maxV int16) {
 	_, _ = dst[31], pred[31]
 	p := archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Pointer(unsafe.SliceData(pred))))
@@ -270,8 +268,6 @@ func itxAddStore16HBD(dst, pred []byte, res archsimd.Int16x16, maxV int16) {
 }
 
 // itxAddStore8HBD is itxAddStore16HBD for eight samples.
-//
-//go:nocheckptr
 func itxAddStore8HBD(dst, pred []byte, res archsimd.Int16x8, maxV int16) {
 	_, _ = dst[15], pred[15]
 	p := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Pointer(unsafe.SliceData(pred))))

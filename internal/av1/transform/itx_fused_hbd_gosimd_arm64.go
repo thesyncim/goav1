@@ -36,8 +36,6 @@ import (
 
 // itxAddRow16 stores clip(pred + res, 0, maxV) for the eight 16bpc samples
 // at pred into dst.
-//
-//go:nocheckptr
 func itxAddRow16(dst, pred unsafe.Pointer, res, zero, maxV archsimd.Int16x8) {
 	archsimd.LoadInt16x8Array((*[8]int16)(pred)).AddSaturated(res).Max(zero).Min(maxV).StoreArray((*[8]int16)(dst))
 }

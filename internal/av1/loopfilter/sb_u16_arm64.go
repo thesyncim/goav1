@@ -50,8 +50,6 @@ func lpf16Any(m archsimd.Mask16x8) bool {
 // the iclip_diff/iclip_pixel bounds, and the flat filters' sums held exactly
 // in uint16 lanes (at most 16*4095+8). Taps are rows around q0 at p, stride
 // in bytes.
-//
-//go:nocheckptr
 func lpf8U16(p unsafe.Pointer, stride int, wd int, bd8 uint, eV, iV, hV archsimd.Uint16x8, m4, mGt4, m16 archsimd.Mask16x8) {
 	p1 := lpf16Load(p, -2*stride)
 	p0 := lpf16Load(p, -stride)
@@ -300,8 +298,6 @@ func lpfTranspose8x8U16Regs(a, b, c, d, e, f, g, h archsimd.Uint16x8) (o0, o1, o
 
 // lpfTransposeRows8U16 loads eight rows of eight uint16 samples from src
 // (byte stride), transposes them and stores eight rows at dst.
-//
-//go:nocheckptr
 func lpfTransposeRows8U16(src unsafe.Pointer, srcStride int, dst unsafe.Pointer, dstStride int) {
 	o0, o1, o2, o3, o4, o5, o6, o7 := lpfTranspose8x8U16Regs(
 		lpf16Load(src, 0), lpf16Load(src, srcStride), lpf16Load(src, 2*srcStride), lpf16Load(src, 3*srcStride),
@@ -319,8 +315,6 @@ func lpfTransposeRows8U16(src unsafe.Pointer, srcStride int, dst unsafe.Pointer,
 // lpfVertical8x8U16 filters a vertical edge across eight rows: p points at p3
 // of the first row (eight samples p3..q3 per row). The rows are transposed,
 // filtered and transposed back in registers.
-//
-//go:nocheckptr
 func lpfVertical8x8U16(p unsafe.Pointer, stride int, wd int, bd8 uint, eV, iV, hV archsimd.Uint16x8, m4, mGt4 archsimd.Mask16x8) {
 	p3, p2, p1, p0, q0, q1, q2, q3 := lpfTranspose8x8U16Regs(
 		lpf16Load(p, 0), lpf16Load(p, stride), lpf16Load(p, 2*stride), lpf16Load(p, 3*stride),
@@ -342,8 +336,6 @@ func lpfVertical8x8U16(p unsafe.Pointer, stride int, wd int, bd8 uint, eV, iV, h
 
 // lpfVertical8x16U16 is the wd16 form: sixteen samples p7..q7 per row, p
 // points at p7 of the first row.
-//
-//go:nocheckptr
 func lpfVertical8x16U16(p unsafe.Pointer, stride int, bd8 uint, eV, iV, hV archsimd.Uint16x8, m4, mGt4, m16 archsimd.Mask16x8) {
 	var buf [16][8]uint16
 	lpfTransposeRows8U16(p, stride, unsafe.Pointer(&buf[0]), 16)
@@ -405,8 +397,6 @@ func sbPairMask16(n uint32) archsimd.Mask16x8 {
 
 // sbLevels16Row loads two consecutive units' levels and their above
 // fallbacks (dav1d 16bpc lpf_v_sb ld1 {v0.8b}/{v1.8b}).
-//
-//go:nocheckptr
 func sbLevels16Row(lvl [][4]uint8, u0, lvlStride, comp int, pair uint32) archsimd.Uint32x4 {
 	var v [2]uint64
 	if u0-lvlStride >= 0 && u0+2 <= len(lvl) {
@@ -426,8 +416,6 @@ func sbLevels16Row(lvl [][4]uint8, u0, lvlStride, comp int, pair uint32) archsim
 
 // sbLevels16Col loads two vertically stacked units' levels and their left
 // fallbacks (dav1d 16bpc lpf_h_sb ld2 of the l[-1], l[0] pairs).
-//
-//go:nocheckptr
 func sbLevels16Col(lvl [][4]uint8, li, lvlStride, comp int, pair uint32) archsimd.Uint32x4 {
 	var v [2]uint64
 	if li-1 >= 0 && li+lvlStride < len(lvl) {
@@ -449,8 +437,6 @@ func sbLevels16Col(lvl [][4]uint8, li, lvlStride, comp int, pair uint32) archsim
 
 // filterSBHorizontal16Edge is the group-by-group driver for calls whose
 // samples or levels reach the end of their buffers.
-//
-//go:nocheckptr
 func filterSBHorizontal16Edge(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	var st SBStats
 	var acc sbAcc16
@@ -493,8 +479,6 @@ func filterSBHorizontal16Edge(pix []byte, off, stride, rowBytes int, bitDepth ui
 }
 
 // filterSBVertical16Edge is filterSBHorizontal16Edge for vertical edges.
-//
-//go:nocheckptr
 func filterSBVertical16Edge(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	var st SBStats
 	var acc sbAcc16
@@ -591,8 +575,6 @@ func sbWidth16(vm1, vm2 uint32, luma bool) int {
 // level cursors advance, and each group's levels are one 8-byte load each of
 // l[0] and l[-b4_stride] from the component-offset level cursor. The call's
 // reach is checked once; calls touching a buffer end take the edge driver.
-//
-//go:nocheckptr
 func filterSBHorizontal16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	vm0, vm1, vm2 := vm[0]|vm[1]|vm[2], vm[1]|vm[2], vm[2]
 	end := 16 * ((31-bits.LeadingZeros32(vm0))>>1 + 1)
@@ -627,8 +609,6 @@ func filterSBHorizontal16(pix []byte, off, stride, rowBytes int, bitDepth uint8,
 
 // filterSBVertical16 is dav1d lpf_h_sb_{y,uv}_16bpc_neon in the same shape:
 // each group reads the (l[-1], l[0]) level pairs of its two units.
-//
-//go:nocheckptr
 func filterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
 	vm0, vm1, vm2 := vm[0]|vm[1]|vm[2], vm[1]|vm[2], vm[2]
 	hiG := (31 - bits.LeadingZeros32(vm0)) >> 1

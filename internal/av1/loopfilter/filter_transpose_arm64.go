@@ -15,8 +15,6 @@ import (
 // lfTranspose8x8U8 transposes eight rows of eight bytes. Both source and
 // destination strides may differ, so the same register ladder serves gather
 // and scatter. Every load and store covers exactly one eight-byte row.
-//
-//go:nocheckptr
 func lfTranspose8x8U8(src []byte, srcOff, srcStride int, dst []byte, dstOff, dstStride int) {
 	sp := unsafe.Add(unsafe.Pointer(unsafe.SliceData(src)), srcOff)
 	dp := unsafe.Add(unsafe.Pointer(unsafe.SliceData(dst)), dstOff)
@@ -57,8 +55,6 @@ func lfTranspose8x8U8(src []byte, srcOff, srcStride int, dst []byte, dstOff, dst
 // lfLoadShortU8 reads exactly four or six bytes; the unused upper lanes are
 // zero. The scatter uses eight-byte reads from scratch, including unused tap
 // rows, whose transposed output is discarded by lfStoreShortU8.
-//
-//go:nocheckptr
 func lfLoadShortU8(pp unsafe.Pointer, width int) archsimd.Uint8x16 {
 	if width == 8 {
 		return archsimd.BroadcastUint64x2(*(*uint64)(pp)).ReshapeToUint8s()
@@ -70,7 +66,6 @@ func lfLoadShortU8(pp unsafe.Pointer, width int) archsimd.Uint8x16 {
 	return archsimd.BroadcastUint64x2(v).ReshapeToUint8s()
 }
 
-//go:nocheckptr
 func lfStoreShortU8(pp unsafe.Pointer, width int, v uint64) {
 	if width == 8 {
 		*(*uint64)(pp) = v
@@ -82,7 +77,6 @@ func lfStoreShortU8(pp unsafe.Pointer, width int, v uint64) {
 	}
 }
 
-//go:nocheckptr
 func lfTranspose8x8U8Short(src []byte, srcOff, srcStride int, dst []byte, dstOff, dstStride int, readBytes, writeBytes int) {
 	sp := unsafe.Add(unsafe.Pointer(unsafe.SliceData(src)), srcOff)
 	dp := unsafe.Add(unsafe.Pointer(unsafe.SliceData(dst)), dstOff)
@@ -114,8 +108,6 @@ func lfTranspose8x8U8Short(src []byte, srcOff, srcStride int, dst []byte, dstOff
 
 // lfTranspose8x8U16 is the sixteen-bit counterpart. Each access is one whole
 // vector and stays inside the caller's validated eight-sample tile.
-//
-//go:nocheckptr
 func lfTranspose8x8U16(src []byte, srcOff, srcStride int, dst []byte, dstOff, dstStride int) {
 	sp := unsafe.Add(unsafe.Pointer(unsafe.SliceData(src)), srcOff)
 	dp := unsafe.Add(unsafe.Pointer(unsafe.SliceData(dst)), dstOff)
@@ -145,7 +137,6 @@ func lfTranspose8x8U16(src []byte, srcOff, srcStride int, dst []byte, dstOff, ds
 	ac3.ReshapeToUint64s().InterleaveOdd(eg3.ReshapeToUint64s()).ReshapeToUint8s().StoreArray((*[16]uint8)(unsafe.Add(dp, 7*dstStride)))
 }
 
-//go:nocheckptr
 func lfLoadShortU16(pp unsafe.Pointer, width int) archsimd.Uint16x8 {
 	if width == 8 {
 		return archsimd.LoadUint8x16Array((*[16]uint8)(pp)).ReshapeToUint16s()
@@ -158,7 +149,6 @@ func lfLoadShortU16(pp unsafe.Pointer, width int) archsimd.Uint16x8 {
 	return archsimd.LoadUint8x16Array(&tmp).ReshapeToUint16s()
 }
 
-//go:nocheckptr
 func lfStoreShortU16(pp unsafe.Pointer, width int, v archsimd.Uint16x8) {
 	if width == 8 {
 		v.ReshapeToUint8s().StoreArray((*[16]uint8)(pp))
@@ -172,7 +162,6 @@ func lfStoreShortU16(pp unsafe.Pointer, width int, v archsimd.Uint16x8) {
 	}
 }
 
-//go:nocheckptr
 func lfTranspose8x8U16Short(src []byte, srcOff, srcStride int, dst []byte, dstOff, dstStride int, readWidth, writeWidth int) {
 	sp := unsafe.Add(unsafe.Pointer(unsafe.SliceData(src)), srcOff)
 	dp := unsafe.Add(unsafe.Pointer(unsafe.SliceData(dst)), dstOff)
