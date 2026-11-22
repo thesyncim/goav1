@@ -26,26 +26,49 @@ func init() {
 	blockErrorImpl = blockErrorSIMD
 }
 
-// residualBlockSIMD extracts dst[r*w+c] = src - pred. Sixteen-wide rows take 16
-// columns per vector; eight-wide rows pack two rows into one vector; anything
-// else is scalar.
+// residualBlockSIMD extracts dst[r*w+c] = src - pred with one kernel per block
+// width, as svt_residual_kernel8bit_neon dispatches: each row is taken as a
+// fixed-size array once, so the vector loads and stores inside it carry no
+// bounds checks. Eight-wide rows pair two rows per vector; other widths are
+// scalar.
 func residualBlockSIMD(dst []int16, srcPlane []byte, srcOff, stride int, pred []byte, predStride, w, h int) {
+	switch w {
+	case 8:
+		if h&1 == 0 {
+			residualRows8(dst, srcPlane, srcOff, stride, pred, predStride, h)
+			return
+		}
+	case 16:
+		for r := range h {
+			residualRow16((*[16]int16)(dst[r*16:]), (*[16]uint8)(srcPlane[srcOff+r*stride:]), (*[16]uint8)(pred[r*predStride:]))
+		}
+		return
+	case 32:
+		for r := range h {
+			d := (*[32]int16)(dst[r*32:])
+			s := (*[32]uint8)(srcPlane[srcOff+r*stride:])
+			p := (*[32]uint8)(pred[r*predStride:])
+			residualRow16((*[16]int16)(d[:16]), (*[16]uint8)(s[:16]), (*[16]uint8)(p[:16]))
+			residualRow16((*[16]int16)(d[16:]), (*[16]uint8)(s[16:]), (*[16]uint8)(p[16:]))
+		}
+		return
+	case 64:
+		for r := range h {
+			d := (*[64]int16)(dst[r*64:])
+			s := (*[64]uint8)(srcPlane[srcOff+r*stride:])
+			p := (*[64]uint8)(pred[r*predStride:])
+			residualRow16((*[16]int16)(d[:16]), (*[16]uint8)(s[:16]), (*[16]uint8)(p[:16]))
+			residualRow16((*[16]int16)(d[16:32]), (*[16]uint8)(s[16:32]), (*[16]uint8)(p[16:32]))
+			residualRow16((*[16]int16)(d[32:48]), (*[16]uint8)(s[32:48]), (*[16]uint8)(p[32:48]))
+			residualRow16((*[16]int16)(d[48:]), (*[16]uint8)(s[48:]), (*[16]uint8)(p[48:]))
+		}
+		return
+	}
 	if w < 8 {
 		residualBlockPureGo(dst, srcPlane, srcOff, stride, pred, predStride, w, h)
 		return
 	}
-	r := 0
-	if w == 8 {
-		for ; r+2 <= h; r += 2 {
-			a := packRows8(srcPlane, srcOff+r*stride, stride)
-			b := packRows8(pred, r*predStride, predStride)
-			lo := a.ExtendLo8ToUint16().BitsToInt16().Sub(b.ExtendLo8ToUint16().BitsToInt16())
-			hi := widenHi8(a).BitsToInt16().Sub(widenHi8(b).BitsToInt16())
-			lo.Store(dst[r*8 : r*8+8])
-			hi.Store(dst[(r+1)*8 : (r+1)*8+8])
-		}
-	}
-	for ; r < h; r++ {
+	for r := 0; r < h; r++ {
 		srow := srcPlane[srcOff+r*stride:]
 		prow := pred[r*predStride:]
 		drow := dst[r*w : r*w+w]
@@ -59,6 +82,40 @@ func residualBlockSIMD(dst []int16, srcPlane []byte, srcOff, stride int, pred []
 		for ; c < w; c++ {
 			drow[c] = int16(srow[c]) - int16(prow[c])
 		}
+	}
+}
+
+// residualRow16 is one sixteen-sample residual row.
+func residualRow16(d *[16]int16, s, p *[16]uint8) {
+	a := archsimd.LoadUint8x16Array(s)
+	b := archsimd.LoadUint8x16Array(p)
+	a.ExtendLo8ToUint16().BitsToInt16().Sub(b.ExtendLo8ToUint16().BitsToInt16()).StoreArray((*[8]int16)(d[:8]))
+	widenHi8(a).BitsToInt16().Sub(widenHi8(b).BitsToInt16()).StoreArray((*[8]int16)(d[8:]))
+}
+
+// residualRows8 is the eight-wide kernel over an even row count, two rows per
+// vector. A contiguous prediction (stride 8) loads both rows at once; a source
+// row pair with 16 readable bytes from each row start loads two vectors and
+// joins their low halves, which keeps the rows out of general registers.
+func residualRows8(dst []int16, src []byte, off, stride int, pred []byte, predStride, h int) {
+	for r := 0; r < h; r += 2 {
+		so := off + r*stride
+		var a, b archsimd.Uint8x16
+		if so+stride+16 <= len(src) {
+			a0 := archsimd.LoadUint8x16Array((*[16]uint8)(src[so:]))
+			a1 := archsimd.LoadUint8x16Array((*[16]uint8)(src[so+stride:]))
+			a = a0.ReshapeToUint64s().InterleaveLo(a1.ReshapeToUint64s()).ReshapeToUint8s()
+		} else {
+			a = packRows8(src, so, stride)
+		}
+		if predStride == 8 {
+			b = archsimd.LoadUint8x16Array((*[16]uint8)(pred[r*8:]))
+		} else {
+			b = packRows8(pred, r*predStride, predStride)
+		}
+		d := (*[16]int16)(dst[r*8:])
+		a.ExtendLo8ToUint16().BitsToInt16().Sub(b.ExtendLo8ToUint16().BitsToInt16()).StoreArray((*[8]int16)(d[:8]))
+		widenHi8(a).BitsToInt16().Sub(widenHi8(b).BitsToInt16()).StoreArray((*[8]int16)(d[8:]))
 	}
 }
 
