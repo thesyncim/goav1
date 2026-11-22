@@ -1,6 +1,7 @@
 package threading
 
 import (
+	"encoding/binary"
 	"fmt"
 	"unsafe"
 
@@ -3990,10 +3991,7 @@ func frameWorkByteSlicesOverlap(a []byte, b []byte) bool {
 	return aStart < bEnd && bStart < aEnd
 }
 
-var frameWorkNativeLittleEndian = func() bool {
-	var sample uint16 = 1
-	return *(*byte)(unsafe.Pointer(&sample)) == 1
-}()
+var frameWorkNativeLittleEndian = binary.NativeEndian.Uint16([]byte{1, 0}) == 1
 
 func frameWorkSubsampleLumaCFLQ3(dst []uint16, plane frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, subX bool, subY bool) error {
 	if !frameWorkPlaneBlockAddressable(plane, bytesPerSample, x, y, width, height) {
