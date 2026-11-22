@@ -171,15 +171,11 @@ func mc16TapPairs16(p *[4]int32) (k0, k1, k2, k3 archsimd.Int16x16) {
 }
 
 // mc16Ld16 loads sixteen samples at p.
-//
-//go:nocheckptr
 func mc16Ld16(p unsafe.Pointer) archsimd.Int16x16 {
 	return archsimd.LoadInt16x16Array((*[16]int16)(p))
 }
 
 // mc16Ld8 loads eight samples at p into the low lane.
-//
-//go:nocheckptr
 func mc16Ld8(p unsafe.Pointer) archsimd.Int16x16 {
 	return archsimd.Int16x16{}.SetLo(archsimd.LoadInt16x8Array((*[8]int16)(p)))
 }
@@ -198,8 +194,6 @@ func mc16Dot8(a0, a1, a2, a3, a4, a5, a6, a7, k0, k1, k2, k3 archsimd.Int16x16) 
 // mc16HDot loads the eight shifted windows of the sixteen (or, with n8, the
 // eight) outputs at p and returns their tap sums. The loads are spelled out
 // (not through mc16Ld16) so none is left as an outlined call.
-//
-//go:nocheckptr
 func mc16HDot(p unsafe.Pointer, n8 bool, k0, k1, k2, k3 archsimd.Int16x16) (lo, hi archsimd.Int32x8) {
 	if n8 {
 		var z archsimd.Int16x16
@@ -217,8 +211,6 @@ func mc16HDot(p unsafe.Pointer, n8 bool, k0, k1, k2, k3 archsimd.Int16x16) (lo, 
 // mc16Out finishes sixteen (n = 16), eight or four sums in the in-lane order
 // and stores them at d: put clips (lo, hi) >> sh to [0, maxV]; prep adds the
 // CONV_BUF offset and keeps the low 16 bits (libaom's uint16 cast).
-//
-//go:nocheckptr
 func mc16Out(lo, hi archsimd.Int32x8, n int, put bool, shV archsimd.Uint32x8, maxV archsimd.Int16x16, d unsafe.Pointer) {
 	lo, hi = lo.ShiftRight(shV), hi.ShiftRight(shV)
 	var v archsimd.Int16x16
@@ -241,8 +233,6 @@ func mc16Out(lo, hi archsimd.Int32x8, n int, put bool, shV archsimd.Uint32x8, ma
 
 // mc16H is the horizontal-only pass: put (clip((S + rnd) >> 7)) or prep
 // (((S + rnd) >> rc) + offset). r is round0 (put) or rc (prep).
-//
-//go:nocheckptr
 func mc16H(src unsafe.Pointer, ss, w, h int, pairs *[4]int32, put bool, r int, maxPix int16, dst unsafe.Pointer, ds int) {
 	k0, k1, k2, k3 := mc16TapPairs16(pairs)
 	var rnd int32
@@ -274,8 +264,6 @@ func mc16H(src unsafe.Pointer, ss, w, h int, pairs *[4]int32, put bool, r int, m
 
 // mc16V is the vertical-only pass (put: clip((S + 64) >> 7); prep: as
 // mc16H), sliding an eight-row window down each column strip.
-//
-//go:nocheckptr
 func mc16V(src unsafe.Pointer, ss, w, h int, pairs *[4]int32, put bool, rc int, maxPix int16, dst unsafe.Pointer, ds int) {
 	k0, k1, k2, k3 := mc16TapPairs16(pairs)
 	var rnd int32
@@ -298,17 +286,16 @@ func mc16V(src unsafe.Pointer, ss, w, h int, pairs *[4]int32, put bool, rc int, 
 			return archsimd.Int16x16{}.SetLo(archsimd.LoadInt16x8Array((*[8]int16)(p)))
 		}
 		s := unsafe.Add(src, 2*c)
-		d := unsafe.Add(dst, 2*c)
 		r0, r1, r2, r3 := ld(s), ld(unsafe.Add(s, ss)), ld(unsafe.Add(s, 2*ss)), ld(unsafe.Add(s, 3*ss))
 		r4, r5, r6 := ld(unsafe.Add(s, 4*ss)), ld(unsafe.Add(s, 5*ss)), ld(unsafe.Add(s, 6*ss))
-		s = unsafe.Add(s, 7*ss)
+		so, do := 2*c+7*ss, 2*c
 		for y := 0; y < h; y++ {
-			r7 := ld(s)
+			r7 := ld(unsafe.Add(src, so))
 			lo, hi := mc16Dot8(r0, r1, r2, r3, r4, r5, r6, r7, k0, k1, k2, k3)
-			mc16Out(lo.Add(rndV), hi.Add(rndV), n, put, shV, maxV, d)
+			mc16Out(lo.Add(rndV), hi.Add(rndV), n, put, shV, maxV, unsafe.Add(dst, do))
 			r0, r1, r2, r3, r4, r5, r6 = r1, r2, r3, r4, r5, r6, r7
-			s = unsafe.Add(s, ss)
-			d = unsafe.Add(d, ds)
+			so += ss
+			do += ds
 		}
 	}
 	archsimd.ClearAVXUpperBits()
@@ -316,8 +303,6 @@ func mc16V(src unsafe.Pointer, ss, w, h int, pairs *[4]int32, put bool, rc int, 
 
 // mc16HToI32 writes rows x w rounded horizontal sums m = (S + 2^(r-1)) >> r
 // as int32 with row stride w (r is round0 for put, rc for prep).
-//
-//go:nocheckptr
 func mc16HToI32(src unsafe.Pointer, ss, w, rows int, pairs *[4]int32, r int, im unsafe.Pointer) {
 	k0, k1, k2, k3 := mc16TapPairs16(pairs)
 	rndV := archsimd.BroadcastInt32x8(int32(1) << (r - 1))
@@ -355,8 +340,6 @@ var mc16PairOrder = [8]uint32{0, 1, 4, 5, 2, 3, 6, 7}
 // stride w): sum(f * m) in int32 (vpmulld), then put clips
 // (sum + 2^(round1-1)) >> round1 and prep stores (sum + 2^21 + 2^20 + 64) >> 7
 // as uint16.
-//
-//go:nocheckptr
 func mc16VFromI32(im unsafe.Pointer, w, h int, pairs *[4]int32, put bool, round1 int, maxPix int16, dst unsafe.Pointer, ds int) {
 	var f [8]archsimd.Int32x8
 	for i := range 4 {
@@ -418,8 +401,6 @@ func mc16VFromI32(im unsafe.Pointer, w, h int, pairs *[4]int32, put bool, round1
 
 // mc16PrepCopy is the prep copy: (px << shl) + offset, in uint16 lanes (the
 // result stays below 2^16 at 10 and 12 bits).
-//
-//go:nocheckptr
 func mc16PrepCopy(src unsafe.Pointer, ss, w, h, shl int, out unsafe.Pointer) {
 	mul := archsimd.BroadcastInt16x16(int16(1) << shl)
 	off := archsimd.BroadcastInt16x16(mc16PrepOffset) // wraps mod 2^16 like the uint16 sum

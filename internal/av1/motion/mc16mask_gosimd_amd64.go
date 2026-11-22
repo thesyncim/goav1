@@ -60,7 +60,6 @@ func mc16Avg16(va, vb, one, bias, mul, maxV archsimd.Uint16x16) archsimd.Uint16x
 	return va.Average(vb).Sub(va.Xor(vb).And(one)).SubSaturated(bias).MulHigh(mul).Min(maxV)
 }
 
-//go:nocheckptr
 func mc16BlendAvgAVX2(dst unsafe.Pointer, ds int, a, b unsafe.Pointer, w, h, rb int, biasC, maxC uint16) {
 	one := archsimd.BroadcastUint16x16(1)
 	bias := archsimd.BroadcastUint16x16(biasC)
@@ -145,7 +144,6 @@ func mc16MaskBlend16(va, vb, m, m64, bias16 archsimd.Int16x16, c, z archsimd.Int
 	return lo.SaturateToInt16ConcatGrouped(hi).Max(archsimd.Int16x16{}).Min(maxV)
 }
 
-//go:nocheckptr
 func mc16BlendMaskAVX2(dst unsafe.Pointer, ds int, a, b unsafe.Pointer, w, h int, mask unsafe.Pointer, maskStride int, sub bool, cC int32, sh uint32, maxPix int16) {
 	m64 := archsimd.BroadcastInt16x16(64)
 	bias16 := archsimd.BroadcastInt16x16(-1 << 15)
@@ -218,7 +216,6 @@ var mc16LowBytes = [32]int8{
 	0, 2, 4, 6, 8, 10, 12, 14, -1, -1, -1, -1, -1, -1, -1, -1,
 }
 
-//go:nocheckptr
 func mc16DiffWtdMaskAVX2(mask unsafe.Pointer, maskStride int, a, b unsafe.Pointer, w, h int, invert bool) {
 	one := archsimd.BroadcastUint16x16(1)
 	base := archsimd.BroadcastUint16x16(38)

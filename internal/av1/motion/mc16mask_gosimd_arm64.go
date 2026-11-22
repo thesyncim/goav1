@@ -54,7 +54,6 @@ func mc16BlendAvgFast(dst *frame.Plane, a, b []uint16, bitDepth, dstX, dstY, w, 
 	return true
 }
 
-//go:nocheckptr
 func mc16BlendAvg(dst unsafe.Pointer, dstStride int, a, b unsafe.Pointer, w, h, rb int, biasC, maxC uint16) {
 	one := archsimd.BroadcastUint16x8(1)
 	bias := archsimd.BroadcastUint16x8(biasC)
@@ -109,7 +108,6 @@ func mc16BlendMaskFast(dst frame.Plane, a, b []uint16, bitDepth, dstX, dstY, w, 
 	return true
 }
 
-//go:nocheckptr
 func mc16BlendMask(dst unsafe.Pointer, dstStride int, a, b unsafe.Pointer, w, h int, mask unsafe.Pointer, maskStride int, sub bool, biasC uint32, mshift uint16, maxPix int16) {
 	bias := archsimd.BroadcastUint32x4(biasC)
 	m64 := archsimd.BroadcastUint16x8(64)
@@ -164,7 +162,6 @@ func mc16DiffWtdMaskFast(mask []byte, maskStride int, a, b []uint16, bitDepth, w
 	return true
 }
 
-//go:nocheckptr
 func mc16DiffWtdMask(mask unsafe.Pointer, maskStride int, a, b unsafe.Pointer, w, h int, invert bool) {
 	right5 := archsimd.BroadcastInt16x8(-5)
 	one := archsimd.BroadcastUint16x8(1)

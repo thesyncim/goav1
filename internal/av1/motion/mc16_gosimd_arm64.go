@@ -139,8 +139,6 @@ func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, fi
 
 // mc16L16 loads eight 16bpc samples at p as int16 lanes (samples are at most
 // 4095, so the bit pattern is a non-negative int16).
-//
-//go:nocheckptr
 func mc16L16(p unsafe.Pointer) archsimd.Int16x8 {
 	return archsimd.LoadInt16x8Array((*[8]int16)(p))
 }
@@ -157,8 +155,6 @@ func mc16PackU16(lo, hi archsimd.Int32x4) archsimd.Uint16x8 {
 
 // mc16H6ToI32 writes rows x w rounded horizontal sums m as int32 with row
 // stride w (the mc8PrepV6FromI32 layout).
-//
-//go:nocheckptr
 func mc16H6ToI32(src unsafe.Pointer, srcStride, w, rows int, ph *mc8Phase, sh int, im unsafe.Pointer) {
 	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
 	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
@@ -207,8 +203,6 @@ func mc16H6ToI32(src unsafe.Pointer, srcStride, w, rows int, ph *mc8Phase, sh in
 
 // mc16H6ToI32W4 writes rows x 4 rounded horizontal sums as int32, row stride
 // 4 (the mc8PrepV6FromI32W4 layout).
-//
-//go:nocheckptr
 func mc16H6ToI32W4(src unsafe.Pointer, srcStride, rows int, ph *mc8Phase, sh int, im unsafe.Pointer) {
 	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
 	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
@@ -232,8 +226,6 @@ func mc16H6ToI32W4(src unsafe.Pointer, srcStride, rows int, ph *mc8Phase, sh int
 
 // mc16PrepH6 is the prep horizontal-only pass. roundOffset is folded into the
 // rounding constant (a multiple of 2^sh commutes with the floor).
-//
-//go:nocheckptr
 func mc16PrepH6(src unsafe.Pointer, srcStride, w, h int, ph *mc8Phase, sh int, out unsafe.Pointer) {
 	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
 	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
@@ -295,8 +287,6 @@ func mc16PrepH6(src unsafe.Pointer, srcStride, w, h int, ph *mc8Phase, sh int, o
 // mc16PrepV6 is the prep vertical-only pass; each column strip slides a
 // six-row window down the block (dav1d's register-resident v path), two
 // output rows per iteration.
-//
-//go:nocheckptr
 func mc16PrepV6(src unsafe.Pointer, srcStride, w, h int, ph *mc8Phase, sh int, out unsafe.Pointer) {
 	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
 	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
@@ -316,16 +306,15 @@ func mc16PrepV6(src unsafe.Pointer, srcStride, w, h int, ph *mc8Phase, sh int, o
 	if w == 4 {
 		// Two output rows share one vector: the low lanes of rows r and r+1
 		// (the CONV_BUF rows are contiguous).
-		s := src
-		r0 := mc16L16(s)
-		r1 := mc16L16(unsafe.Add(s, srcStride))
-		r2 := mc16L16(unsafe.Add(s, 2*srcStride))
-		r3 := mc16L16(unsafe.Add(s, 3*srcStride))
-		r4 := mc16L16(unsafe.Add(s, 4*srcStride))
-		s = unsafe.Add(s, 5*srcStride)
-		o := out
+		r0 := mc16L16(src)
+		r1 := mc16L16(unsafe.Add(src, srcStride))
+		r2 := mc16L16(unsafe.Add(src, 2*srcStride))
+		r3 := mc16L16(unsafe.Add(src, 3*srcStride))
+		r4 := mc16L16(unsafe.Add(src, 4*srcStride))
+		s0 := unsafe.Add(src, 5*srcStride)
 		r := 0
 		for ; r+2 <= h; r += 2 {
+			s, o := unsafe.Add(s0, r*srcStride), unsafe.Add(out, r*ro)
 			r5 := mc16L16(s)
 			r6 := mc16L16(unsafe.Add(s, srcStride))
 			a := rnd.Add(r0.MulWidenLo(c0))
@@ -342,10 +331,9 @@ func mc16PrepV6(src unsafe.Pointer, srcStride, w, h int, ph *mc8Phase, sh int, o
 			b = b.Add(r6.MulWidenLo(c5))
 			mc16PackU16(a.Shift(shv), b.Shift(shv)).StoreArray((*[8]uint16)(o))
 			r0, r1, r2, r3, r4 = r2, r3, r4, r5, r6
-			s = unsafe.Add(s, 2*srcStride)
-			o = unsafe.Add(o, 2*ro)
 		}
 		if r < h {
+			s, o := unsafe.Add(s0, r*srcStride), unsafe.Add(out, r*ro)
 			r5 := mc16L16(s)
 			a := rnd.Add(r0.MulWidenLo(c0))
 			a = a.Add(r1.MulWidenLo(c1))
@@ -360,15 +348,15 @@ func mc16PrepV6(src unsafe.Pointer, srcStride, w, h int, ph *mc8Phase, sh int, o
 	}
 	for col := 0; col < w; col += 8 {
 		s := unsafe.Add(src, 2*col)
-		o := unsafe.Add(out, 2*col)
 		r0 := mc16L16(s)
 		r1 := mc16L16(unsafe.Add(s, srcStride))
 		r2 := mc16L16(unsafe.Add(s, 2*srcStride))
 		r3 := mc16L16(unsafe.Add(s, 3*srcStride))
 		r4 := mc16L16(unsafe.Add(s, 4*srcStride))
-		s = unsafe.Add(s, 5*srcStride)
+		s0, o0 := unsafe.Add(src, 2*col+5*srcStride), unsafe.Add(out, 2*col)
 		r := 0
 		for ; r+2 <= h; r += 2 {
+			s, o := unsafe.Add(s0, r*srcStride), unsafe.Add(o0, r*ro)
 			r5 := mc16L16(s)
 			r6 := mc16L16(unsafe.Add(s, srcStride))
 			alo := rnd.Add(r0.MulWidenLo(c0))
@@ -398,10 +386,9 @@ func mc16PrepV6(src unsafe.Pointer, srcStride, w, h int, ph *mc8Phase, sh int, o
 			mc16PackU16(alo.Shift(shv), ahi.Shift(shv)).StoreArray((*[8]uint16)(o))
 			mc16PackU16(blo.Shift(shv), bhi.Shift(shv)).StoreArray((*[8]uint16)(unsafe.Add(o, ro)))
 			r0, r1, r2, r3, r4 = r2, r3, r4, r5, r6
-			s = unsafe.Add(s, 2*srcStride)
-			o = unsafe.Add(o, 2*ro)
 		}
 		if r < h {
+			s, o := unsafe.Add(s0, r*srcStride), unsafe.Add(o0, r*ro)
 			r5 := mc16L16(s)
 			alo := rnd.Add(r0.MulWidenLo(c0))
 			ahi := rnd.Add(r0.HiToLo().MulWidenLo(h0))
@@ -422,8 +409,6 @@ func mc16PrepV6(src unsafe.Pointer, srcStride, w, h int, ph *mc8Phase, sh int, o
 
 // mc16PrepCopy is the prep copy: (px << shl) + roundOffset, in uint16 lanes
 // (the result stays below 2^16 at 10 and 12 bits).
-//
-//go:nocheckptr
 func mc16PrepCopy(src unsafe.Pointer, srcStride, w, h, shl int, out unsafe.Pointer) {
 	mul := archsimd.BroadcastUint16x8(uint16(1) << shl)
 	off := archsimd.BroadcastUint16x8(mc16PrepRoundOffset)

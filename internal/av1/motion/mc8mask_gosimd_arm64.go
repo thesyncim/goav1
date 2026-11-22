@@ -48,7 +48,6 @@ func mc8BlendMaskFast(dst frame.Plane, a, b []uint16, dstX, dstY, w, h int, mask
 	return true
 }
 
-//go:nocheckptr
 func mc8BlendMask(dst unsafe.Pointer, dstStride int, a, b unsafe.Pointer, w, h int, mask unsafe.Pointer, maskStride int, sub bool) {
 	bias := archsimd.BroadcastUint32x4(392704 << 6)
 	m64 := archsimd.BroadcastUint16x8(64)
@@ -101,7 +100,6 @@ func mc8DiffWtdMaskFast(mask []byte, maskStride int, a, b []uint16, w, h int, in
 	return true
 }
 
-//go:nocheckptr
 func mc8DiffWtdMask(mask unsafe.Pointer, maskStride int, a, b unsafe.Pointer, w, h int, invert bool) {
 	right3 := archsimd.BroadcastInt16x8(-3)
 	right5 := archsimd.BroadcastInt16x8(-5)

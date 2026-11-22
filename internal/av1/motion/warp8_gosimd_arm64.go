@@ -148,8 +148,6 @@ func warpVertical8FullGamma0GoSIMD(dst frame.Plane, tmp *warpTmp, i, j, rowShift
 // right shift: (sum >> 11) - 384 == (sum - 384*2048) >> 11.
 // The caller has proved that all eight destination columns fit.
 // All intermediate pointer loads stay within the 15x8 fixed array.
-//
-//go:nocheckptr
 func warpVertical8Gamma0Kernel(dst frame.Plane, tmp *warpTmp, i, j, rowShift, colShift, baseSY, delta int) {
 	const seed = (1 << (8 + 2*filterBits - round0Bits)) + (1 << (round1Bits - 1)) - ((1<<7)+(1<<8))*(1<<round1Bits)
 	bias := archsimd.BroadcastInt32x4(seed)
@@ -195,8 +193,6 @@ func warpVertical8Gamma0Kernel(dst frame.Plane, tmp *warpTmp, i, j, rowShift, co
 // coefficients for eight columns. The int32 horizontal intermediate fits
 // signed int16, so widening products preserve the scalar dot product.
 // All intermediate pointer loads stay within the 15x8 fixed array.
-//
-//go:nocheckptr
 func warpVerticalGoSIMDCommon(dst frame.Plane, tmp *warpTmp, i, j, rowShift, colShift, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert int) {
 	const seed = (1 << (8 + 2*filterBits - round0Bits)) + (1 << (round1Bits - 1)) - ((1<<7)+(1<<8))*(1<<round1Bits)
 	bias := archsimd.BroadcastInt32x4(seed)
