@@ -131,8 +131,8 @@ func pred8H(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride int
 	sh := archsimd.BroadcastInt16x8(-6)
 	var acc archsimd.Uint16x8
 	sad := 0
-	p := unsafe.Add(ref, -3)
 	for y := 0; y < h; y++ {
+		p := unsafe.Add(ref, y*refStride-3)
 		x := 0
 		for ; x+16 <= w; x += 16 {
 			q := unsafe.Add(p, x)
@@ -178,7 +178,6 @@ func pred8H(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride int
 			sad += sumU16(acc)
 			acc = archsimd.Uint16x8{}
 		}
-		p = unsafe.Add(p, refStride)
 	}
 	return sad + sumU16(acc)
 }
@@ -319,8 +318,8 @@ func pred8IM(im unsafe.Pointer, imStride int, ref unsafe.Pointer, refStride, w, 
 		c6 := archsimd.BroadcastInt16x8(k[6] >> 1)
 		bias := archsimd.BroadcastInt16x8(8194)
 		sh := archsimd.BroadcastInt16x8(-2)
-		p := unsafe.Add(ref, -2)
 		for y := 0; y < rows; y++ {
+			p := unsafe.Add(ref, y*refStride-2)
 			row := unsafe.Add(im, y*imStride)
 			x := 0
 			for ; x+16 <= w; x += 16 {
@@ -356,7 +355,6 @@ func pred8IM(im unsafe.Pointer, imStride int, ref unsafe.Pointer, refStride, w, 
 				a0 = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(q, 5))).ExtendLo8ToUint16().BitsToInt16().MulAdd(c6, a0)
 				a0.Shift(sh).StoreArray((*[8]int16)(unsafe.Add(row, 2*x)))
 			}
-			p = unsafe.Add(p, refStride)
 		}
 		return
 	}
@@ -370,8 +368,8 @@ func pred8IM(im unsafe.Pointer, imStride int, ref unsafe.Pointer, refStride, w, 
 	c7 := archsimd.BroadcastInt16x8(k[7] >> 1)
 	bias := archsimd.BroadcastInt16x8(8194)
 	sh := archsimd.BroadcastInt16x8(-2)
-	p := unsafe.Add(ref, -3)
 	for y := 0; y < rows; y++ {
+		p := unsafe.Add(ref, y*refStride-3)
 		row := unsafe.Add(im, y*imStride)
 		x := 0
 		for ; x+16 <= w; x += 16 {
@@ -415,7 +413,6 @@ func pred8IM(im unsafe.Pointer, imStride int, ref unsafe.Pointer, refStride, w, 
 			a0 = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(q, 7))).ExtendLo8ToUint16().BitsToInt16().MulAdd(c7, a0)
 			a0.Shift(sh).StoreArray((*[8]int16)(unsafe.Add(row, 2*x)))
 		}
-		p = unsafe.Add(p, refStride)
 	}
 }
 
