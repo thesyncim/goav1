@@ -79,24 +79,24 @@ func fwdTranspose(dst, src []int32, n int) {
 
 // fwdTransposeBlock4 transposes the 4x4 block at src (row stride sn) into dst
 // (row stride dn) in registers: interleave the row pairs at 32 bits, then
-// combine the pairs at 64 bits.
+// combine the pairs at 64 bits. The guards bound every row it touches (a
+// stride indexes inside its slice, so 3*stride cannot overflow), so the rows
+// are addressed from the slice bases.
 func fwdTransposeBlock4(dst []int32, dn int, src []int32, sn int) {
-	v0 := archsimd.LoadInt32x4(src[0:])
-	v1 := archsimd.LoadInt32x4(src[sn:])
-	v2 := archsimd.LoadInt32x4(src[2*sn:])
-	v3 := archsimd.LoadInt32x4(src[3*sn:])
+	_, _ = src[sn], src[3*sn+3]
+	_, _ = dst[dn], dst[3*dn+3]
+	v0 := fwdLoadI32At(src, 0)
+	v1 := fwdLoadI32At(src, sn)
+	v2 := fwdLoadI32At(src, 2*sn)
+	v3 := fwdLoadI32At(src, 3*sn)
 	e0 := v0.InterleaveLo(v1)
 	e1 := v0.InterleaveHi(v1)
 	e2 := v2.InterleaveLo(v3)
 	e3 := v2.InterleaveHi(v3)
-	t0 := fwdI64AsI32(fwdI32AsI64(e0).InterleaveLo(fwdI32AsI64(e2)))
-	t1 := fwdI64AsI32(fwdI32AsI64(e0).InterleaveHi(fwdI32AsI64(e2)))
-	t2 := fwdI64AsI32(fwdI32AsI64(e1).InterleaveLo(fwdI32AsI64(e3)))
-	t3 := fwdI64AsI32(fwdI32AsI64(e1).InterleaveHi(fwdI32AsI64(e3)))
-	t0.Store(dst[0:])
-	t1.Store(dst[dn:])
-	t2.Store(dst[2*dn:])
-	t3.Store(dst[3*dn:])
+	fwdStoreI32At(dst, 0, fwdI64AsI32(fwdI32AsI64(e0).InterleaveLo(fwdI32AsI64(e2))))
+	fwdStoreI32At(dst, dn, fwdI64AsI32(fwdI32AsI64(e0).InterleaveHi(fwdI32AsI64(e2))))
+	fwdStoreI32At(dst, 2*dn, fwdI64AsI32(fwdI32AsI64(e1).InterleaveLo(fwdI32AsI64(e3))))
+	fwdStoreI32At(dst, 3*dn, fwdI64AsI32(fwdI32AsI64(e1).InterleaveHi(fwdI32AsI64(e3))))
 }
 
 func fwdI32AsI64(v fwdVec) archsimd.Int64x2 {
@@ -126,6 +126,21 @@ func fwdLoadResAt(s []int16, i, g int) fwdVec {
 		return fwdShl(w.ExtendLo4ToInt32(), 2)
 	}
 	return fwdShl(w.HiToLo().ExtendLo4ToInt32(), 2)
+}
+
+func fwdLoadI16At(s []int16, i int) archsimd.Int16x8 {
+	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), i*2)
+	return archsimd.LoadInt16x8Array((*[8]int16)(p))
+}
+
+// fwdLoadI32Arr and fwdStoreI32Arr address a fixed-length view at a constant
+// offset, which folds into the vector load or store.
+func fwdLoadI32Arr(s []int32, i int) fwdVec {
+	return archsimd.LoadInt32x4Array((*[4]int32)(s[i : i+4]))
+}
+
+func fwdStoreI32Arr(s []int32, i int, v fwdVec) {
+	v.StoreArray((*[4]int32)(s[i : i+4]))
 }
 
 // fwdMulAdd computes a*w + acc. The arm64 intrinsic maps to MLA; AVX2

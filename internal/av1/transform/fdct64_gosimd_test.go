@@ -72,6 +72,16 @@ func TestForwardDCT64x64SIMDMatchesScalar(t *testing.T) {
 				}
 			}
 		}
+		const wideStride = 35
+		var wide [32 * wideStride]int32
+		forwardDCT64x64SIMD(wide[:], wideStride, residual[:], 64)
+		for k := range 32 {
+			for r := range 32 {
+				if wide[k*wideStride+r] != want[k*32+r] {
+					t.Fatalf("trial %d stride %d: coeff[col %d][row %d] = %d, want %d", trial, wideStride, k, r, wide[k*wideStride+r], want[k*32+r])
+				}
+			}
+		}
 	}
 }
 

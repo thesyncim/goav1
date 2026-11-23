@@ -30,94 +30,80 @@ func fwdRowSkipGroupLive(r0, r1, r2, r3, thr, slack archsimd.Int32x4) bool {
 	return m.ReduceMax() >= 0
 }
 
-// fwdAbsSum16 is sum over four vectors of |b[i..i+3]| starting at i.
-func fwdAbsSum16(b []int32, i int) archsimd.Int32x4 {
-	return fwdLoadI32At(b, i).Abs().Add(fwdLoadI32At(b, i+4).Abs()).
-		Add(fwdLoadI32At(b, i+8).Abs().Add(fwdLoadI32At(b, i+12).Abs()))
+// fwdRowSkipSumsLive takes the magnitude sums s of four column-pass rows (one
+// row per lane) and reports whether any row's S + S>>6 + slack reaches its
+// threshold lane.
+func fwdRowSkipSumsLive(s, thr, slack archsimd.Int32x4) bool {
+	m := s.Add(s.Shift(fwdRowSkipShrNeg6)).Add(slack).Sub(thr)
+	return m.ReduceMax() >= 0
 }
 
 // forwardDCT16x16RowSkipSIMD is forwardDCT16x16RowSkipPureGo over the
-// forwardDCT16x16SIMD passes: the column pass runs in full, then each group
-// of four column-pass rows is bounded straight from the row-major column
-// output and only live groups are transposed and row-transformed.
+// forwardDCT16x16SIMD passes: the column pass runs in full into coeff
+// (transposed), then each group of four column-pass rows is bounded from it
+// and only live groups are row-transformed in place.
 func forwardDCT16x16RowSkipSIMD(coeff *[256]int32, residual *[256]int16, thr0, thr int32) uint8 {
-	var buf, bufT [256]int32
 	for g := 0; g < 16; g += fwdLanes {
-		fwdColDCT16(buf[:], g, residual[:], 16)
+		fwdColDCT16(coeff[:], g, residual[:], 16)
 	}
-	thrRest := archsimd.BroadcastInt32x4(thr)
-	thrFirst := thrRest.SetElem(0, thr0)
-	slack := fwdRowSkipSlack16V
-	var mask uint8
-	for g := range 4 {
-		b := buf[g*64:]
-		t := thrRest
-		if g == 0 {
-			t = thrFirst
-		}
-		if fwdRowSkipGroupLive(fwdAbsSum16(b, 0), fwdAbsSum16(b, 16), fwdAbsSum16(b, 32), fwdAbsSum16(b, 48), t, slack) {
-			mask |= 1 << g
-		}
-	}
-	if mask == 0 {
-		return 0
-	}
-	zero := archsimd.BroadcastInt32x4(0)
+	var sums [4]archsimd.Int32x4
 	for h := 0; h < 16; h += 4 {
-		if mask&(1<<(h>>2)) == 0 {
-			for l := 0; l < 16; l++ {
-				fwdStoreI32At(coeff[:], l*16+h, zero)
-			}
-			continue
+		r := (*[15*16 + 4]int32)(coeff[h:])
+		var s0, s1 archsimd.Int32x4
+		for c := 0; c < 16; c += 2 {
+			s0 = s0.Add(fwdLoadI32Arr(r[:], c*16).Abs())
+			s1 = s1.Add(fwdLoadI32Arr(r[:], c*16+16).Abs())
 		}
-		for bj := 0; bj < 16; bj += 4 {
-			fwdTransposeBlock4(bufT[bj*16+h:], 16, buf[h*16+bj:], 16)
-		}
-		fwdRowDCT16(coeff[:], 16, bufT[:], h)
+		sums[h>>2] = s0.Add(s1)
 	}
-	return mask
+	return fwdRowSkipRows(coeff[:], 16, sums[:], thr0, thr, fwdRowSkipSlack16V, fwdRowDCT16)
 }
 
 // forwardDCT32x32RowSkipSIMD is forwardDCT32x32RowSkipPureGo over the
 // forwardDCT32x32SIMD passes (see forwardDCT16x16RowSkipSIMD).
 func forwardDCT32x32RowSkipSIMD(coeff *[1024]int32, residual *[1024]int16, thr0, thr int32) uint8 {
-	var buf, bufT [1024]int32
 	for g := 0; g < 32; g += fwdLanes {
-		fwdColDCT32(buf[:], g, residual[:], 32)
+		fwdColDCT32(coeff[:], g, residual[:], 32)
 	}
-	thrRest := archsimd.BroadcastInt32x4(thr)
-	thrFirst := thrRest.SetElem(0, thr0)
-	slack := fwdRowSkipSlack32V
-	var mask uint8
-	for g := range 8 {
-		b := buf[g*128:]
-		t := thrRest
-		if g == 0 {
-			t = thrFirst
+	var sums [8]archsimd.Int32x4
+	for h := 0; h < 32; h += 4 {
+		r := (*[31*32 + 4]int32)(coeff[h:])
+		var s0, s1 archsimd.Int32x4
+		for c := 0; c < 32; c += 2 {
+			s0 = s0.Add(fwdLoadI32Arr(r[:], c*32).Abs())
+			s1 = s1.Add(fwdLoadI32Arr(r[:], c*32+32).Abs())
 		}
-		r0 := fwdAbsSum16(b, 0).Add(fwdAbsSum16(b, 16))
-		r1 := fwdAbsSum16(b, 32).Add(fwdAbsSum16(b, 48))
-		r2 := fwdAbsSum16(b, 64).Add(fwdAbsSum16(b, 80))
-		r3 := fwdAbsSum16(b, 96).Add(fwdAbsSum16(b, 112))
-		if fwdRowSkipGroupLive(r0, r1, r2, r3, t, slack) {
+		sums[h>>2] = s0.Add(s1)
+	}
+	return fwdRowSkipRows(coeff[:], 32, sums[:], thr0, thr, fwdRowSkipSlack32V, fwdRowDCT32)
+}
+
+// fwdRowSkipRows takes the row magnitude sums of each group of four rows of
+// the transposed n x n column-pass output c (sums[g] covers rows 4g..4g+3),
+// row-transforms the live groups in place and zeroes the others, returning
+// the live-group mask (c is left as is when none is).
+func fwdRowSkipRows(c []int32, n int, sums []archsimd.Int32x4, thr0, thr int32, slack archsimd.Int32x4, row func([]int32, int)) uint8 {
+	thrRest := archsimd.BroadcastInt32x4(thr)
+	t := thrRest.SetElem(0, thr0)
+	var mask uint8
+	for g, s := range sums {
+		if fwdRowSkipSumsLive(s, t, slack) {
 			mask |= 1 << g
 		}
+		t = thrRest
 	}
 	if mask == 0 {
 		return 0
 	}
 	zero := archsimd.BroadcastInt32x4(0)
-	for h := 0; h < 32; h += 4 {
+	for h := 0; h < n; h += 4 {
 		if mask&(1<<(h>>2)) == 0 {
-			for l := 0; l < 32; l++ {
-				fwdStoreI32At(coeff[:], l*32+h, zero)
+			for l := 0; l < n; l++ {
+				zero.Store(c[l*n+h:])
 			}
 			continue
 		}
-		for bj := 0; bj < 32; bj += 4 {
-			fwdTransposeBlock4(bufT[bj*32+h:], 32, buf[h*32+bj:], 32)
-		}
-		fwdRowDCT32(coeff[:], 32, bufT[:], h)
+		row(c, h)
 	}
 	return mask
 }
