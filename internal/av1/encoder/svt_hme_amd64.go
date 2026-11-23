@@ -75,7 +75,8 @@ func svtColTotalsSlideArch(cw *[svtHMEMaxCols]uint16, out, in []byte, span int) 
 }
 
 func svtHMEColSumRow(t *[svtHMEMaxCols / 8][8]uint32, sp, rp, cwp unsafe.Pointer, s2, bw, rows, w int, srcSum uint32) uint32 {
-	return svtHMEColSumRowScalar(t, sp, rp, cwp, s2, bw, rows, w, srcSum)
+	return svtHMEColSumRowScalar(t, unsafe.Slice((*byte)(sp), (rows-1)*s2+bw), s2,
+		unsafe.Slice((*byte)(rp), (rows-1)*s2+bw+w), unsafe.Slice((*uint16)(cwp), bw+w), bw, rows, w, srcSum)
 }
 
 func svtBlockSumSubArch(s []byte, s2, bw, rows int) uint32 {
