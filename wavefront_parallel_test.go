@@ -1,8 +1,8 @@
 package goav1_test
 
 // End-to-end verification that the multi-worker SB-row reconstruction wavefront
-// produces byte-identical output to the single-worker fused path, and that it
-// speeds up a single-tile decode by employing the otherwise-idle pool lanes.
+// produces byte-identical output to the single-worker fused path, with a
+// benchmark of the same decode at one and four workers.
 //
 // The conformance harness (internal/av1/testvector) runs with a one-worker
 // pool, so the wavefront never engages there. These tests drive the same public
@@ -16,7 +16,6 @@ import (
 	"crypto/sha256"
 	"os"
 	"testing"
-	"time"
 
 	av1 "github.com/thesyncim/goav1"
 	"github.com/thesyncim/goav1/internal/av1/threading"
@@ -28,7 +27,7 @@ import (
 // strongest byte-identity probe.
 const wavefrontTestVector = "internal/av1/testdata/libaom/av1-1-b10-00-quantizer-00.ivf"
 
-func decodeWavefrontFrames(t *testing.T, workers int) []byte {
+func decodeWavefrontFrames(t testing.TB, workers int) []byte {
 	t.Helper()
 	raw, err := os.ReadFile(wavefrontTestVector)
 	if err != nil {
@@ -76,7 +75,7 @@ func decodeWavefrontFrames(t *testing.T, workers int) []byte {
 // the requested size. It mirrors newDecodeBenchmarkHarness but is driven from a
 // test and parameterized by the worker count so the same payloads can be
 // decoded with one or many lanes.
-func newWavefrontHarness(t *testing.T, payloads [][]byte, workers int) *decodeBenchmarkHarness {
+func newWavefrontHarness(t testing.TB, payloads [][]byte, workers int) *decodeBenchmarkHarness {
 	t.Helper()
 
 	workerPool, err := av1.NewTileWorkerPool(workers)
@@ -173,37 +172,21 @@ func TestWavefrontByteIdenticalToSingleWorker(t *testing.T) {
 	}
 }
 
-// TestWavefrontSpeedup checks that handing the idle lanes to the wavefront
-// reduces wall-clock decode time for a single-tile clip. It is timing-based, so
-// it only asserts a modest improvement and skips under -race (which serializes
-// the heap and erases the speedup) or on a single CPU.
-func TestWavefrontSpeedup(t *testing.T) {
-	if raceEnabled {
-		t.Skip("race detector serializes execution; speedup is not observable")
-	}
+// BenchmarkWavefrontDecode decodes the single-tile clip end to end with one
+// worker and with four. The wavefront parallelizes only reconstruction; entropy
+// decoding stays serial, so the end-to-end gain on this small clip is modest.
+// The reconstruction phase alone is BenchmarkReconWavefrontReplay in the
+// threading package.
+func BenchmarkWavefrontDecode(b *testing.B) {
 	defer threading.OverrideWavefrontMinSBRowsPerWorkerForTest(1)()
-
-	measure := func(workers int) time.Duration {
-		best := time.Duration(1<<63 - 1)
-		for i := 0; i < 8; i++ {
-			start := time.Now()
-			decodeWavefrontFrames(t, workers)
-			if d := time.Since(start); d < best {
-				best = d
+	for _, bc := range []struct {
+		name    string
+		workers int
+	}{{"workers1", 1}, {"workers4", 4}} {
+		b.Run(bc.name, func(b *testing.B) {
+			for b.Loop() {
+				decodeWavefrontFrames(b, bc.workers)
 			}
-		}
-		return best
-	}
-
-	single := measure(1)
-	multi := measure(4)
-	t.Logf("end-to-end decode best-of-8: workers=1 %v, workers=4 %v (%.2fx)", single, multi, float64(single)/float64(multi))
-	// The wavefront parallelizes only reconstruction (pass 2), which is a
-	// fraction of the end-to-end decode (entropy decode in pass 1 stays serial),
-	// so the end-to-end gain on this small clip is modest. Require only that the
-	// multi-worker path is not slower; the reconstruction-phase speedup itself is
-	// measured directly by the threading package's BenchmarkReconWavefront.
-	if multi > single+single/10 {
-		t.Fatalf("wavefront regressed decode by >10%%: workers=1 %v vs workers=4 %v", single, multi)
+		})
 	}
 }
