@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -9,322 +8,69 @@ import (
 	av1 "github.com/thesyncim/goav1"
 )
 
-// decodeStats accumulates the per-temporal-unit numbers dump_svc prints to
-// stderr at the end of a successful run, plus the partial counts the run()
-// helper reports when a payload mid-stream fails to decode.
+// decodeStats accumulates the numbers dump_svc prints to stderr at the end of
+// a successful run, plus the partial counts run() reports when a payload
+// mid-stream fails to decode.
 type decodeStats struct {
-	PayloadsConsumed int
-	TemporalUnits    int
-	CompletedFrames  int
-	BytesOut         int64
+	Payloads        int
+	CompletedFrames int
+	BytesOut        int64
 
-	// FailureEvents captures the (TemporalID, SpatialID) layer
-	// composition of the payload that triggered a decode error so the
-	// CLI can surface "which layer was in flight when we died" together
-	// with the proximate decoder error string.
+	// FailureEvents is the (TemporalID, SpatialID) layer composition of the
+	// payload that triggered a decode or write error.
 	FailureEvents string
 }
 
-// decodeOptions bundles the per-Decode tuning knobs the CLI surfaces.
-// SpatialLayer == spatialLayerHighest (-1) follows libaom aomdec's
-// output_all_layers=0 convention: emit the highest-SpatialID frame the
-// temporal unit publishes. A non-negative value pins emission to that
-// SpatialID, skipping temporal units that did not publish at that layer.
-type decodeOptions struct {
-	Quiet        bool
-	Log          io.Writer
-	SpatialLayer int8
-}
-
-// decoder owns the caller-supplied scratch needed to drive an SVC IVF
-// through the goav1 public residual stream runner. The layout mirrors
-// cmd/aom-go-dec/decoder.go: this command differs only in how it picks
-// which completed-frame surface to emit per temporal unit (the highest
-// spatial layer the temporal unit publishes, or the pinned layer ID
-// when -spatial-layer is set).
-//
-// The runner is bound around a single frame.Pool whose slots are sized
-// for the sequence maximum frame; each frame binds a slot at its own
-// coded size, so spatial layers of different resolutions (L2T1, L2T2)
-// share the pool and predict across layers through scaled references.
-// Every frame runs the full post-filter chain (deblock, CDEF, loop
-// restoration) before it is emitted or kept as a reference.
-type decoder struct {
-	pool       av1.FramePool
-	workerPool *av1.TileWorkerPool
-	stream     av1.DecoderStream
-
-	refs       av1.DecoderSurfaceReferences
-	state      av1.DecoderFrameWorkState
-	refSurface []int
-	refFrames  []*av1.Frame
-	releases   []int
-	stats      av1.DecoderFrameWorkTileResidualStats
-	sideData   av1.DecoderFrameWorkSideData
-	batch      av1.DecoderFrameWorkBatchResidualRunner
-
-	scratch av1.DecoderFrameWorkResidualStreamScratch
-	runner  av1.DecoderFrameWorkResidualStreamRunner
-	post    av1.DecoderFrameWorkReusableSupportedPostFilterRunner
-
-	payloads [][]byte
-	format   av1.FrameFormat
-}
-
-func newDecoder(payloads [][]byte, workers int) (*decoder, error) {
-	if workers < 1 {
-		return nil, fmt.Errorf("workers must be >= 1, got %d", workers)
-	}
-	if len(payloads) == 0 {
-		return nil, errors.New("no payloads to decode")
-	}
-
-	workerPool, err := av1.NewTileWorkerPool(workers)
-	if err != nil {
-		return nil, fmt.Errorf("worker pool: %w", err)
-	}
-
-	// Probe the stream to learn how much scratch the residual runner
-	// needs. The probe also returns the bind event whose FrameSize
-	// determines the frame.Pool format.
-	var probeStream av1.DecoderStream
-	probeEvents := make([]av1.DecoderEvent, probeEventBudget(payloads))
-	probeSpans := make([]av1.TileSpan, av1.MaxTiles)
-	probeJobs := make([]av1.TileJob, av1.MaxTiles)
-	probeBatches := make([]av1.TileBatch, av1.MaxTiles)
-
-	plan, err := av1.DecoderFrameWorkResidualLowOverheadStreamsPlan(
-		probeStream, payloads, workers,
-		probeEvents, probeSpans, probeJobs, probeBatches,
-	)
-	if err != nil {
-		workerPool.Close()
-		return nil, fmt.Errorf("stream plan: %w", err)
-	}
-	if !plan.HasEvent() {
-		workerPool.Close()
-		return nil, errors.New("stream plan did not identify a bind event")
-	}
-
-	// Size the pool slots for the sequence maximum so every spatial layer
-	// (and any frame-size change) binds a slot at its own size; the headers
-	// also fix the superblock alignment the decoder reconstructs into.
-	format, err := av1.FramePoolFormatFromSequence(plan.Bind.Sequence, 64)
-	if err != nil {
-		workerPool.Close()
-		return nil, fmt.Errorf("frame format from stream plan: %w", err)
-	}
-
-	const surfaceCount = av1.RefFrames + 1
-	pool, err := bindFramePool(format, surfaceCount)
-	if err != nil {
-		workerPool.Close()
-		return nil, fmt.Errorf("frame pool: %w", err)
-	}
-
-	d := &decoder{
-		pool:       pool,
-		workerPool: workerPool,
-		refSurface: make([]int, av1.InterRefsPerFrame),
-		refFrames:  make([]*av1.Frame, av1.InterRefsPerFrame),
-		releases:   make([]int, av1.RefFrames),
-		payloads:   payloads,
-		format:     format,
-	}
-	d.scratch = newStreamScratch(plan.Size)
-
-	runner, _, err := av1.BindDecoderFrameWorkResidualStreamPlanRunner(plan, &d.stream,
-		av1.DecoderFrameWorkResidualEventRuntime{
-			State:             &d.state,
-			Refs:              &d.refs,
-			FramePool:         &d.pool,
-			Align:             64,
-			ReferenceSurfaces: d.refSurface,
-			ReferenceFrames:   d.refFrames,
-			Releases:          d.releases,
-			WorkerPool:        d.workerPool,
-			SideData:          &d.sideData,
-			Stats:             &d.stats,
-		}, d.scratch, &d.batch)
-	if err != nil {
-		workerPool.Close()
-		return nil, fmt.Errorf("bind runner: %w", err)
-	}
-	d.runner = runner
-	return d, nil
-}
-
-// Close releases the worker goroutine pool. It is safe to call more than
-// once.
-func (d *decoder) Close() {
-	if d.workerPool != nil {
-		d.workerPool.Close()
-		d.workerPool = nil
-	}
-}
-
-// Decode drives the bound payloads one temporal unit at a time. After
-// each payload it inspects the residual runner's Outputs slice and
-// writes the selected spatial layer's completed frame for that temporal
-// unit. With opts.SpatialLayer == spatialLayerHighest (-1) it matches
-// libaom aomdec's output_all_layers=0 convention (last non-nil output);
-// with a non-negative value it pins emission to that SpatialID.
-//
-// The runner's Outputs slice aliases caller-owned storage that gets
-// reused on the next call into the runner, so the *Frame samples must
-// be copied (or in our case, written to the io.Writer) before the next
-// Decode iteration.
-func (d *decoder) Decode(dst io.Writer, opts decodeOptions) (decodeStats, error) {
+// decode drives dec one temporal unit at a time and writes one frame per
+// temporal unit to dst. With spatialLayer == spatialLayerHighest it emits the
+// highest spatial layer the temporal unit published (libaom aomdec's
+// output_all_layers=0); otherwise it emits the frame at that SpatialID and
+// writes nothing for a temporal unit that did not publish it. The frames alias
+// decoder-owned surfaces, so each is written before the next DecodeNext call.
+func decode(dec *av1.LayeredDecoder, payloads [][]byte, dst, log io.Writer, quiet bool, spatialLayer int) (decodeStats, error) {
 	var stats decodeStats
-	if opts.Log == nil {
-		opts.Log = io.Discard
-	}
-
-	d.pool.Reset()
-	d.refs.Reset()
-	d.state.Reset()
-	d.stats = av1.DecoderFrameWorkTileResidualStats{}
-	if err := d.runner.Reset(); err != nil {
-		return stats, fmt.Errorf("runner reset: %w", err)
-	}
-
-	var result av1.DecoderFrameWorkResidualStreamResult
-	for i, payload := range d.payloads {
+	for {
 		start := time.Now()
-		result = av1.DecoderFrameWorkResidualStreamResult{}
-		if err := d.runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, &d.post); err != nil {
-			// Annotate the failure with the layer composition of the
-			// failing payload so the caller knows which (T, S) pair was
-			// in flight at the moment of the proximate decoder error.
-			stats.FailureEvents = describePayloadLayers(payload)
-			return stats, fmt.Errorf("payload %d (%d bytes, layers=%s): %w",
-				i, len(payload), stats.FailureEvents, err)
+		frames, ok, err := dec.DecodeNextWithMetadata()
+		if err != nil {
+			stats.FailureEvents = describePayloadLayers(payloads[stats.Payloads])
+			return stats, fmt.Errorf("%w (%d bytes, layers=%s)", err, len(payloads[stats.Payloads]), stats.FailureEvents)
 		}
-		stats.PayloadsConsumed++
-		stats.TemporalUnits++
+		if !ok {
+			return stats, nil
+		}
 		elapsed := time.Since(start)
 
-		// The residual runner can publish multiple completed frames per
-		// payload (e.g. an SVC temporal unit that publishes one frame
-		// per spatial layer). Walk the parsed events (which carry the
-		// SVC (T, S) tagging) in lock-step with the output slots to
-		// pick either the highest spatial layer (default) or the frame
-		// whose SpatialID matches opts.SpatialLayer.
-		events := d.runner.Events[:result.EventCount]
-		emit, emitSpatialID, completedInUnit := selectOutput(events, result.Run.Outputs, opts.SpatialLayer)
-		stats.CompletedFrames += completedInUnit
+		i := stats.Payloads
+		stats.Payloads++
+		stats.CompletedFrames += len(frames)
+		emit, emitSpatialID := selectFrame(frames, spatialLayer)
 		if emit != nil {
-			n, werr := writeYUVFrame(dst, emit)
+			n, err := writeYUVFrame(dst, emit)
 			stats.BytesOut += n
-			if werr != nil {
-				stats.FailureEvents = describePayloadLayers(payload)
-				return stats, fmt.Errorf("payload %d write: %w", i, werr)
+			if err != nil {
+				stats.FailureEvents = describePayloadLayers(payloads[i])
+				return stats, fmt.Errorf("payload %d write: %w", i, err)
 			}
 		}
-		if !opts.Quiet {
-			fmt.Fprintf(opts.Log,
-				"tu=%d payload=%d ms=%.3f outputs=%d completed_frames=%d emit=%v emit_spatial_id=%d\n",
-				i, len(payload), float64(elapsed.Microseconds())/1000.0,
-				result.Run.OutputCount, result.Run.CompletedFrames, emit != nil, emitSpatialID)
-		}
-		d.releaseShownSurfaces(result.Run.Outputs[:result.Run.OutputCount])
-	}
-	return stats, nil
-}
-
-// releaseShownSurfaces returns the pool slots behind one temporal unit's
-// outputs once they are written, unless a reference slot still holds them;
-// those are released by the reference bookkeeping when they leave the
-// reference set. Without this, shown non-reference frames (the upper
-// temporal layers of L1T2/L2T2) leak a slot each and the pool runs dry.
-// Mirrors av1.Decoder's shown-surface release.
-func (d *decoder) releaseShownSurfaces(outputs []*av1.Frame) {
-	for _, f := range outputs {
-		if f == nil {
-			continue
-		}
-		for i := 0; i < d.pool.Cap(); i++ {
-			pf, err := d.pool.Frame(i)
-			if err != nil || pf != f {
-				continue
-			}
-			held := false
-			for r := 0; r < av1.RefFrames; r++ {
-				if surface, ok := d.refs.ReferenceSlot(r); ok && surface == i {
-					held = true
-					break
-				}
-			}
-			if !held {
-				// An already-released slot (a duplicate output, or one
-				// the reference bookkeeping freed) is the benign case.
-				_ = d.pool.Release(i)
-			}
+		if !quiet {
+			fmt.Fprintf(log, "tu=%d payload=%d ms=%.3f outputs=%d emit=%v emit_spatial_id=%d\n",
+				i, len(payloads[i]), float64(elapsed.Microseconds())/1000.0,
+				len(frames), emit != nil, emitSpatialID)
 		}
 	}
 }
 
-// selectOutput pairs the parsed-event slice with the output slice to
-// pick the *Frame the CLI should emit for one payload. Output slots are
-// filled in event order (one slot per frame-publishing event, in the
-// order the runner processed those events), so by walking events and
-// outputs in lock-step we can correlate each output to the SpatialID
-// the event carried.
-//
-// Layer selection rules:
-//
-//   - spatialLayer == spatialLayerHighest (-1): emit the last non-nil
-//     entry. The residual stream runner processes events in OBU order
-//     and SVC OBUs are emitted in ascending SpatialID per temporal
-//     unit, so the last non-nil frame corresponds to the highest
-//     spatial layer the temporal unit reached. This matches libaom
-//     aomdec's default output_all_layers=0 behavior.
-//
-//   - spatialLayer >= 0: emit only the frame whose event SpatialID
-//     matches the pinned layer. If the temporal unit did not publish
-//     at that layer we return nil (and the caller writes no bytes for
-//     this temporal unit), which matches an SFU that drops everything
-//     above its operating point.
-//
-// The returned int is the total number of non-nil outputs in this
-// payload regardless of which one we pick, so the CLI's summary
-// reflects the total decode work the runner actually performed (not
-// just the bytes we serialised). The returned SpatialID is the layer
-// of the *Frame we emit, or -1 if no frame is emitted.
-func selectOutput(events []av1.DecoderEvent, outputs []*av1.Frame, spatialLayer int8) (*av1.Frame, int8, int) {
-	completed := 0
-	var last *av1.Frame
-	var lastSpatial int8 = -1
-	var pinned *av1.Frame
-	var pinnedSpatial int8 = -1
-	outIdx := 0
-	for i := range events {
-		if !av1.DecoderEventOutputsFrame(&events[i]) {
-			continue
-		}
-		if outIdx >= len(outputs) {
-			break
-		}
-		frame := outputs[outIdx]
-		outIdx++
-		if frame == nil {
-			// Slot reserved for this event but the runner did not
-			// publish a surface (e.g. a hidden frame). Don't count
-			// it toward completed frames.
-			continue
-		}
-		completed++
-		last = frame
-		lastSpatial = int8(events[i].SpatialID)
-		if spatialLayer >= 0 && int8(events[i].SpatialID) == spatialLayer {
-			pinned = frame
-			pinnedSpatial = int8(events[i].SpatialID)
+// selectFrame picks the frame to emit for one temporal unit and its SpatialID,
+// or nil and -1 when the pinned layer was not published. Frames arrive in OBU
+// order, which is ascending SpatialID, so the last match is the highest layer.
+func selectFrame(frames []av1.LayeredFrame, spatialLayer int) (*av1.Frame, int) {
+	for i := len(frames) - 1; i >= 0; i-- {
+		if spatialLayer == spatialLayerHighest || int(frames[i].SpatialID) == spatialLayer {
+			return frames[i].Frame, int(frames[i].SpatialID)
 		}
 	}
-	if spatialLayer >= 0 {
-		return pinned, pinnedSpatial, completed
-	}
-	return last, lastSpatial, completed
+	return nil, -1
 }
 
 // writeYUVFrame writes a decoded frame's Y, U, V planes to dst stripping
@@ -348,68 +94,4 @@ func writeYUVFrame(dst io.Writer, frame *av1.Frame) (int64, error) {
 		}
 	}
 	return written, nil
-}
-
-func bindFramePool(format av1.FrameFormat, count int) (av1.FramePool, error) {
-	_, backingSize, err := av1.FramePoolRequiredSize(format, count)
-	if err != nil {
-		return av1.FramePool{}, err
-	}
-	frames := make([]av1.Frame, count)
-	free := make([]int, count)
-	used := make([]bool, count)
-	return av1.BindFramePool(make([]byte, backingSize), format, frames, free, used)
-}
-
-func newStreamScratch(size av1.DecoderFrameWorkResidualStreamScratchSize) av1.DecoderFrameWorkResidualStreamScratch {
-	return av1.DecoderFrameWorkResidualStreamScratch{
-		Events:    make([]av1.DecoderEvent, size.Events),
-		Event:     newEventScratch(size.Event),
-		SideData:  newSideDataScratch(size.Event.SideData),
-		Outputs:   make([]*av1.Frame, size.Event.Outputs),
-		RTPBuffer: make([]byte, size.RTPBuffer),
-		RTPSpans:  make([]av1.RTPObuSpan, size.RTPSpans),
-	}
-}
-
-func newEventScratch(size av1.DecoderFrameWorkResidualEventScratchSize) av1.DecoderFrameWorkResidualEventScratch {
-	return av1.DecoderFrameWorkResidualEventScratch{
-		Runner:   newBatchRunnerScratch(size.Runner),
-		SideData: newSideDataScratch(size.SideData),
-		Spans:    make([]av1.TileSpan, size.Plan.SpanCount),
-		Jobs:     make([]av1.TileJob, size.Plan.JobCount),
-		Batches:  make([]av1.TileBatch, size.Plan.BatchCount),
-	}
-}
-
-func newBatchRunnerScratch(size av1.DecoderFrameWorkBatchResidualRunnerScratchSize) av1.DecoderFrameWorkBatchResidualRunnerScratch {
-	return av1.DecoderFrameWorkBatchResidualRunnerScratch{
-		States:                  make([]av1.TileDecodeState, size.Workers),
-		Storages:                make([]av1.DecoderFrameWorkTileResidualCDFStorage, size.Workers),
-		TileScratch:             make([]av1.DecoderFrameWorkTileResidualScratch, size.Workers),
-		RestorationRequests:     make([]av1.DecoderFrameWorkTileRestorationRequest, size.RestorationRequests),
-		PredictionScratch:       make([]av1.DecoderFrameWorkPredictionScratch, size.Workers),
-		InterPredictionScratch:  make([]av1.DecoderFrameWorkInterPredictionScratch, size.Workers),
-		Stats:                   make([]av1.DecoderFrameWorkTileResidualStats, size.Workers),
-		Int32Scratch:            make([]int32, size.Int32Scratch),
-		ResidualScratch:         make([]int16, size.ResidualScratch),
-		LoopContextAboveScratch: make([]av1.TileBlockLoopRootAboveContext, size.LoopContextAbove),
-	}
-}
-
-func newSideDataScratch(size av1.DecoderFrameWorkSideDataScratchSize) av1.DecoderFrameWorkSideDataScratch {
-	return av1.DecoderFrameWorkSideDataScratch{
-		CDEFIndexMap:             make([]uint8, size.CDEFIndexMap),
-		CDEFReadMap:              make([]bool, size.CDEFReadMap),
-		LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, size.LoopFilterMap),
-		RestorationRecords:       make([]av1.TileRestorationUnitRecord, size.RestorationRecords),
-		RestorationBoundaryAbove: make([]uint16, size.RestorationBoundaryAbove),
-		RestorationBoundaryBelow: make([]uint16, size.RestorationBoundaryBelow),
-	}
-}
-
-func probeEventBudget(payloads [][]byte) int {
-	const eventsPerFrame = 16
-	n := max(len(payloads)*eventsPerFrame, 64)
-	return n
 }

@@ -145,11 +145,19 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 		inputPath, header.Width, header.Height, header.FrameCount,
 		header.TimebaseNum, header.TimebaseDen, *format, *spatialLayer)
 
-	if err := dumpSVCStructure(frames, stderr); err != nil {
+	seq, err := dumpSVCStructure(frames, stderr)
+	if err != nil {
 		return fmt.Errorf("svc info: %w", err)
 	}
 	if *svcInfo {
 		return nil
+	}
+
+	switch bitDepth := seq.ColorConfig.BitDepth; {
+	case *format == outputFormatI420 && bitDepth != 8:
+		return fmt.Errorf("format=i420 requires 8-bit input, stream is %d-bit", bitDepth)
+	case *format == outputFormatYUV420P10LE && bitDepth != 10:
+		return fmt.Errorf("format=yuv420p10le requires 10-bit input, stream is %d-bit", bitDepth)
 	}
 
 	payloads := make([][]byte, len(frames))
@@ -169,34 +177,19 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	}
 	defer writer.Close()
 
-	dec, err := newDecoder(payloads, *workers)
+	dec, err := av1.NewLayeredDecoder(payloads, av1.WithWorkers(*workers))
 	if err != nil {
 		return fmt.Errorf("decoder bind: %w", err)
 	}
 	defer dec.Close()
 
-	switch *format {
-	case outputFormatI420:
-		if dec.format.BitDepth != 8 {
-			return fmt.Errorf("format=i420 requires 8-bit input, stream is %d-bit", dec.format.BitDepth)
-		}
-	case outputFormatYUV420P10LE:
-		if dec.format.BitDepth != 10 {
-			return fmt.Errorf("format=yuv420p10le requires 10-bit input, stream is %d-bit", dec.format.BitDepth)
-		}
-	}
-
 	start := time.Now()
-	stats, err := dec.Decode(writer, decodeOptions{
-		Quiet:        *quiet,
-		Log:          stderr,
-		SpatialLayer: int8(*spatialLayer),
-	})
+	stats, err := decode(dec, payloads, writer, stderr, *quiet, *spatialLayer)
 	elapsed := time.Since(start)
 	if err != nil {
 		fmt.Fprintf(stderr,
 			"dump_svc: partial decode after %d/%d payloads (%d completed_frames, %d bytes out): %v\n",
-			stats.PayloadsConsumed, len(payloads), stats.CompletedFrames, stats.BytesOut, err)
+			stats.Payloads, len(payloads), stats.CompletedFrames, stats.BytesOut, err)
 		if stats.FailureEvents != "" {
 			fmt.Fprintf(stderr, "dump_svc: failing payload layer composition: %s\n", stats.FailureEvents)
 		}
@@ -209,7 +202,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stderr,
 		"dump_svc: decoded %d temporal units, %d completed frames in %s (%.2f fps, %d YUV bytes out)\n",
-		stats.TemporalUnits, stats.CompletedFrames, elapsed.Round(time.Microsecond), fps, stats.BytesOut)
+		stats.Payloads, stats.CompletedFrames, elapsed.Round(time.Microsecond), fps, stats.BytesOut)
 	return nil
 }
 
@@ -233,7 +226,7 @@ func collectIVFFrames(ivfBytes []byte) ([]av1.IVFFrame, av1.IVFHeader, error) {
 	return frames, header, nil
 }
 
-func dumpSVCStructure(frames []av1.IVFFrame, log io.Writer) error {
+func dumpSVCStructure(frames []av1.IVFFrame, log io.Writer) (av1.SequenceHeader, error) {
 	var seq av1.SequenceHeader
 	haveSeq := false
 SequenceScan:
@@ -242,12 +235,12 @@ SequenceScan:
 		for len(payload) > 0 {
 			unit, n, err := av1.ParseLowOverheadOBU(payload)
 			if err != nil {
-				return fmt.Errorf("obu parse: %w", err)
+				return av1.SequenceHeader{}, fmt.Errorf("obu parse: %w", err)
 			}
 			if unit.Header.Type == av1.OBUSequenceHeader {
 				seq, err = av1.ParseSequenceHeader(unit.Payload)
 				if err != nil {
-					return fmt.Errorf("parse sequence: %w", err)
+					return av1.SequenceHeader{}, fmt.Errorf("parse sequence: %w", err)
 				}
 				haveSeq = true
 				break SequenceScan
@@ -256,7 +249,7 @@ SequenceScan:
 		}
 	}
 	if !haveSeq {
-		return errors.New("ivf contains no sequence header")
+		return av1.SequenceHeader{}, errors.New("ivf contains no sequence header")
 	}
 
 	fmt.Fprintf(log, "dump_svc: sequence operating_points=%d max=%dx%d order_hint_bits=%d enable_order_hint=%v\n",
@@ -277,7 +270,7 @@ SequenceScan:
 		for len(payload) > 0 {
 			unit, n, err := av1.ParseLowOverheadOBU(payload)
 			if err != nil {
-				return fmt.Errorf("obu parse: %w", err)
+				return av1.SequenceHeader{}, fmt.Errorf("obu parse: %w", err)
 			}
 			if unit.Header.Extension {
 				counts[layerKey{T: unit.Header.TemporalID, S: unit.Header.SpatialID}]++
@@ -299,14 +292,13 @@ SequenceScan:
 			}
 		}
 	}
-	return nil
+	return seq, nil
 }
 
 // describePayloadLayers walks one IVF frame payload at the OBU level and
 // returns a stable "T=0 S=0,T=0 S=1" summary of every (TemporalID,
-// SpatialID) pair the payload publishes. It is used by Decode() to
-// annotate the proximate decoder error with which layer composition was
-// in flight when the failure occurred.
+// SpatialID) pair the payload publishes. decode annotates a failing
+// payload's error with it.
 func describePayloadLayers(payload []byte) string {
 	type layerKey struct{ T, S uint8 }
 	seen := make(map[layerKey]struct{})
