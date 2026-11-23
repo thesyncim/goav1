@@ -42,7 +42,7 @@ brew install llvm@22        # once; TinyGo is built against it
 go run ./serve              # http://localhost:8090
 ```
 
-Stock Go needs 1.27 (`GOTOOLCHAIN=go1.27.0` if the `go` on your PATH is older;
+Stock Go needs 1.27 (`GOTOOLCHAIN=go1.27.4` if the `go` on your PATH is older;
 `build.sh` sets it by default). Building all eight wasm files takes about 6
 minutes; `ONLY="encoder-simd decoder-simd" ./build.sh` builds just those.
 

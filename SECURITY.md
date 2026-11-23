@@ -153,12 +153,19 @@ amount of allocation, compute, or descriptor churn (a "decoder bomb").
 *Mitigation.*
 
 - **Memory.** The decoder is a zero-allocation-in-steady-state
-  design. Buffers (`FramePool`, postfilter scratch, residual scratch,
-  loop-restoration frame buffers, side-data arenas) are caller-owned
-  and bound up front via public sizing helpers. The decoder cannot
-  silently allocate large buffers in response to a hostile header —
-  if the header asks for more than the caller has bound, the call
-  returns an error.
+  design. With the frame-work API, buffers (`FramePool`, postfilter
+  scratch, residual scratch, loop-restoration frame buffers, side-data
+  arenas) are caller-owned and bound up front via public sizing
+  helpers: if a header asks for more than the caller has bound, the
+  call returns an error. The high-level decoders (`NewDecoder`,
+  `NewDecoderFromIVF`, `NewLayeredDecoder` and their RTP variants)
+  size their own buffers from the stream's headers when they are
+  constructed, so pass `WithFrameSizeLimit` for input that is not
+  trusted: a stream carrying a larger frame is rejected with
+  `ErrDecoderFrameSizeLimit` before anything is allocated for it. A
+  single payload may carry at most 64 OBUs; every OBU is parsed into
+  a multi-kilobyte event record, and the bound keeps a payload of
+  tiny OBUs from being amplified into gigabytes.
 - **Compute.** Tile counts are capped at 64x64. Per-frame work is
   bounded by the parsed (and validated) frame dimensions. The tile
   worker pool is bounded and caller-owned
@@ -225,9 +232,7 @@ boundary above.
     `FuzzPublicDecoderFrameWorkSideDataBinding`,
     `FuzzPublicDecoderFrameWorkPostFilterScratchContext`,
     `FuzzPublicSimpleDecoderIVF`,
-    `FuzzPublicDecodeTileBlockCoefficients`,
-    `FuzzPublicParseTileListOBU`,
-    `FuzzPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficients`.
+    `FuzzPublicParseTileListOBU`.
   - Inverse transforms: WHT, ADST, warp, film grain (commit
     `ff8ba63`).
   - Inverse-qmatrix dequant path (commit `455ddac`).
@@ -254,9 +259,10 @@ boundary above.
   allocation is replaced by a caller-supplied buffer plus a public
   `*Size` / `Required*` helper. A malformed header that would require
   more memory than bound is rejected at bind time, before any write.
-- **CI gates.** `make ci-local` (run in CI) executes `fmt-check`,
-  `vet`, `test`, and `alloc`. `make testvectors-fast` runs the
-  committed libaom conformance subset on every push.
+- **CI gates.** `make ci-local` executes `fmt-check`, `vet`, `vet-tags`,
+  `unsafe-check`, `test`, `alloc`, `compiler-reports` and `trace-zero`;
+  CI runs the same checks. `make testvectors-fast` runs the committed
+  libaom conformance subset on every push.
 
 ## Dependency inventory
 
@@ -267,7 +273,7 @@ The decoder is **pure Go with no third-party module dependencies**.
 ```
 module github.com/thesyncim/goav1
 
-go 1.27.0
+go 1.27.4
 ```
 
 There is no `go.sum` file because the module has no external

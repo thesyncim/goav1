@@ -15,8 +15,6 @@ import (
 // at a time for the 2:1 scaled convolve. Even lanes read bytes t+j and odd
 // lanes bytes t+j+odd of the load, so tap t interleaves the load shifted by t
 // with the load shifted by t+odd (EXT + ZIP1).
-//
-//go:nocheckptr
 func scaledStep2HorizontalRow(src unsafe.Pointer, w8 int, odd int, coef *[filterTaps]archsimd.Int16x8, row []int16) {
 	xRound := archsimd.BroadcastInt16x8(8194)
 	right2 := archsimd.BroadcastInt16x8(-2)

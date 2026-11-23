@@ -21,8 +21,8 @@ type frameWorkReconView struct {
 	sbs      []frameWorkReconSB
 	events   []frameWorkReconEvent
 	visits   []tile.BlockLoopVisit
-	blocks   []tile.BlockCoeffBlock
-	cf       []frameWorkReconCF
+	txbs     []frameWorkReconTXB
+	cfArena  []int32
 }
 
 // frameWorkReconSpanBuilder is the parse-side cursor that partitions the flat
@@ -169,7 +169,13 @@ func (wf *frameWorkReconWavefront) runLane(w int, workers int, rowCount int) {
 		if !ok {
 			return
 		}
-		if err := wf.reconstructRow(st, &view, row, rowCount); err != nil {
+		// dav1d check_tile: a frame-threaded row starts once the reference
+		// rows every superblock in it reads are final.
+		err := ErrFrameThreadReference
+		if ft := wf.frameThread; ft == nil || ft.waitRowReferences(&st.batch, &view, row) {
+			err = wf.reconstructRow(st, &view, row, rowCount)
+		}
+		if err != nil {
 			// Signal abort so any goroutine waiting on this row's (now
 			// never-published) progress stops waiting instead of deadlocking,
 			// then record the first error.
@@ -275,8 +281,8 @@ func (c *frameWorkTileResidualLoopController) publishReconRows(rows int) error {
 		sbs:      wf.sbSpans,
 		events:   c.scratch.reconEvents,
 		visits:   c.scratch.reconVisits,
-		blocks:   c.scratch.reconBlocks,
-		cf:       c.scratch.reconCF,
+		txbs:     c.scratch.reconTXBs,
+		cfArena:  c.scratch.cfArena,
 	})
 	return nil
 }

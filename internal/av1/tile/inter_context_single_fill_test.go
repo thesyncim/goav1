@@ -25,57 +25,52 @@ func frozenMarkInterOracle(c *BlockModeContext, size BlockSize, x4, y4 int, resu
 		y4+int(dims.H4) > MaxBlockModeSlots {
 		return ErrInvalidDecodeState
 	}
-	if !result.Ref[0].Valid() {
+	if !result.Ref0.Valid() {
 		return ErrInvalidDecodeState
 	}
 	if result.Compound {
-		if !result.Ref[1].Valid() {
+		if !result.Ref1.Valid() {
 			return ErrInvalidDecodeState
 		}
-	} else if result.Ref[1] != ReferenceFrameNone {
+	} else if result.Ref1 != ReferenceFrameNone {
 		return ErrInvalidDecodeState
 	}
 
-	compound := boolByte(result.Compound)
-	compIndex := uint8(1)
+	compType := compInterTypeFor(result.Compound)
 	w4 := int(dims.W4)
 	h4 := int(dims.H4)
 	xEnd := x4 + w4
 	yEnd := y4 + h4
 	// dav1d decode_b resets the edge palette sizes for inter blocks.
-	clear(c.AbovePaletteY[x4:xEnd])
-	clear(c.AbovePaletteUV[x4:xEnd])
-	clear(c.LeftPaletteY[y4:yEnd])
-	clear(c.LeftPaletteUV[y4:yEnd])
-	clear(c.AboveIntra[x4:xEnd])
-	clear(c.AboveCompGroup[x4:xEnd])
-	clear(c.AboveInterIntra[x4:xEnd])
+	clear(c.A.PalSz[x4:xEnd])
+	clear(c.PalA.SzUV[x4:xEnd])
+	clear(c.L.PalSz[y4:yEnd])
+	clear(c.PalL.SzUV[y4:yEnd])
+	clear(c.A.Intra[x4:xEnd])
+	clear(c.A.Mode[x4:xEnd])
+	clear(c.A.InterIntra[x4:xEnd])
 	clear(c.AboveMotionValid[x4:xEnd])
-	clear(c.AboveInterpValid[x4:xEnd])
-	clear(c.LeftIntra[y4:yEnd])
-	clear(c.LeftCompGroup[y4:yEnd])
-	clear(c.LeftInterIntra[y4:yEnd])
+	clear(c.L.Intra[y4:yEnd])
+	clear(c.L.Mode[y4:yEnd])
+	clear(c.L.InterIntra[y4:yEnd])
 	clear(c.LeftMotionValid[y4:yEnd])
-	clear(c.LeftInterpValid[y4:yEnd])
 	if hasChroma {
-		clear(c.AboveChromaIntra[x4:xEnd])
-		clear(c.AboveChromaMode[x4:xEnd])
-		clear(c.LeftChromaIntra[y4:yEnd])
-		clear(c.LeftChromaMode[y4:yEnd])
+		clear(c.A.UVMode[x4:xEnd])
+		clear(c.L.UVMode[y4:yEnd])
 	}
 	for i := 0; i < w4; i++ {
-		c.AboveRef[0][x4+i] = result.Ref[0]
-		c.AboveRef[1][x4+i] = result.Ref[1]
-		c.AboveCompound[x4+i] = compound
-		c.AboveCompIndex[x4+i] = compIndex
-		c.AboveBlockSize[x4+i] = size
+		c.A.Ref[0][x4+i] = result.Ref0
+		c.A.Ref[1][x4+i] = result.Ref1
+		c.A.CompType[x4+i] = compType
+		c.A.Filter[0][x4+i], c.A.Filter[1][x4+i] = filterUnset, filterUnset
+		c.A.BlockSize[x4+i] = size
 	}
 	for i := 0; i < h4; i++ {
-		c.LeftRef[0][y4+i] = result.Ref[0]
-		c.LeftRef[1][y4+i] = result.Ref[1]
-		c.LeftCompound[y4+i] = compound
-		c.LeftCompIndex[y4+i] = compIndex
-		c.LeftBlockSize[y4+i] = size
+		c.L.Ref[0][y4+i] = result.Ref0
+		c.L.Ref[1][y4+i] = result.Ref1
+		c.L.CompType[y4+i] = compType
+		c.L.Filter[0][y4+i], c.L.Filter[1][y4+i] = filterUnset, filterUnset
+		c.L.BlockSize[y4+i] = size
 	}
 	c.clearGridInterMotion(size, x4, y4, dims)
 	return nil
@@ -95,12 +90,12 @@ func frozenMarkInterMotionOracle(c *BlockModeContext, size BlockSize, x4, y4 int
 	for i := 0; i < int(dims.W4); i++ {
 		c.AboveInterMotion[x4+i] = result
 		c.AboveMotionValid[x4+i] = 1
-		c.AboveBlockSize[x4+i] = size
+		c.A.BlockSize[x4+i] = size
 	}
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftInterMotion[y4+i] = result
 		c.LeftMotionValid[y4+i] = 1
-		c.LeftBlockSize[y4+i] = size
+		c.L.BlockSize[y4+i] = size
 	}
 	c.markGridInterMotion(size, x4, y4, result, dims)
 	return nil
@@ -213,14 +208,15 @@ func TestBlockModeContextMarkInterSingleFillMatchesFrozenOracle(t *testing.T) {
 			pairIndex := int(size)*len(positions) + positionIndex
 			for _, hasChroma := range [...]bool{false, true} {
 				single := InterReferencesResult{
-					Ref:    [2]ReferenceFrame{ReferenceFrame(pairIndex % int(referenceFrameCount)), ReferenceFrameNone},
+					Ref0: ReferenceFrame(pairIndex % int(referenceFrameCount)), Ref1: ReferenceFrameNone,
 					Unidir: hasChroma,
 				}
 				compareInterContextToFrozenOracle(t, size, pos[0], pos[1], single, hasChroma, caseIndex)
 				caseIndex++
 
 				compound := InterReferencesResult{
-					Ref:      [2]ReferenceFrame{ReferenceFrame((pairIndex / int(referenceFrameCount)) % int(referenceFrameCount)), ReferenceFrame(pairIndex % int(referenceFrameCount))},
+					Ref0:     ReferenceFrame((pairIndex / int(referenceFrameCount)) % int(referenceFrameCount)),
+					Ref1:     ReferenceFrame(pairIndex % int(referenceFrameCount)),
 					Compound: true,
 					Unidir:   hasChroma,
 				}
@@ -232,7 +228,7 @@ func TestBlockModeContextMarkInterSingleFillMatchesFrozenOracle(t *testing.T) {
 }
 
 func TestBlockModeContextMarkInterSingleFillPreservesValidationSequence(t *testing.T) {
-	validRefs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	validRefs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	invalidRefs := []struct {
 		name string
 		size BlockSize
@@ -247,9 +243,9 @@ func TestBlockModeContextMarkInterSingleFillPreservesValidationSequence(t *testi
 		{name: "y past edge", size: BlockSize4x4, y4: MaxBlockModeSlots, refs: validRefs},
 		{name: "wide block past edge", size: BlockSize64x64, x4: 17, refs: validRefs},
 		{name: "tall block past edge", size: BlockSize64x64, y4: 17, refs: validRefs},
-		{name: "missing first ref", size: BlockSize4x4, refs: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameNone, ReferenceFrameNone}}},
-		{name: "compound missing second ref", size: BlockSize4x4, refs: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}, Compound: true}},
-		{name: "single has second ref", size: BlockSize4x4, refs: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameGolden}}},
+		{name: "missing first ref", size: BlockSize4x4, refs: InterReferencesResult{Ref0: ReferenceFrameNone, Ref1: ReferenceFrameNone}},
+		{name: "compound missing second ref", size: BlockSize4x4, refs: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone, Compound: true}},
+		{name: "single has second ref", size: BlockSize4x4, refs: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameGolden}},
 		{name: "edge and ref invalid", size: BlockSize4x4, x4: MaxBlockModeSlots, refs: InterReferencesResult{}},
 	}
 	for i, tc := range invalidRefs {
@@ -281,7 +277,7 @@ func TestBlockModeContextMarkInterSingleFillPreservesValidationSequence(t *testi
 		{name: "x past edge", size: BlockSize4x4, x4: MaxBlockModeSlots, result: validMotion},
 		{name: "mode compound mismatch", size: BlockSize4x4, result: InterMotionResult{References: validRefs, Mode: InterModeResult{Compound: true, CompoundMode: CompoundInterModeNewNew}}},
 		{name: "invalid single mode", size: BlockSize4x4, result: InterMotionResult{References: validRefs, Mode: InterModeResult{Mode: interModeCount}}},
-		{name: "invalid compound mode", size: BlockSize4x4, result: InterMotionResult{References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameGolden}, Compound: true}, Mode: InterModeResult{Compound: true, CompoundMode: compoundInterModeCount}}},
+		{name: "invalid compound mode", size: BlockSize4x4, result: InterMotionResult{References: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameGolden, Compound: true}, Mode: InterModeResult{Compound: true, CompoundMode: compoundInterModeCount}}},
 		{name: "invalid motion ref with edge", size: BlockSize4x4, x4: MaxBlockModeSlots, result: InterMotionResult{References: InterReferencesResult{}, Mode: InterModeResult{Mode: InterModeNewMV}}},
 	}
 	for i, tc := range invalidMotions {
@@ -316,14 +312,14 @@ func TestBlockModeContextMarkInterSingleFillPreservesValidationSequence(t *testi
 // serve as its own motion/filter state oracle. The unchanged grid helpers only
 // support the frozen original motion setup.
 func frozenMarkInterFiltersOracle(c *BlockModeContext, size BlockSize, x4 int, y4 int, refs InterReferencesResult, filters motion.InterpFilters) error {
-	if c == nil || !refs.Ref[0].Valid() || !filters.X.Valid() || !filters.Y.Valid() {
+	if c == nil || !refs.Ref0.Valid() || !filters.X.Valid() || !filters.Y.Valid() {
 		return ErrInvalidDecodeState
 	}
 	if refs.Compound {
-		if !refs.Ref[1].Valid() {
+		if !refs.Ref1.Valid() {
 			return ErrInvalidDecodeState
 		}
-	} else if refs.Ref[1] != ReferenceFrameNone {
+	} else if refs.Ref1 != ReferenceFrameNone {
 		return ErrInvalidDecodeState
 	}
 	dims, ok := size.Dimensions()
@@ -333,12 +329,10 @@ func frozenMarkInterFiltersOracle(c *BlockModeContext, size BlockSize, x4 int, y
 		return ErrInvalidDecodeState
 	}
 	for i := 0; i < int(dims.W4); i++ {
-		c.AboveInterp[x4+i] = filters
-		c.AboveInterpValid[x4+i] = 1
+		c.A.Filter[0][x4+i], c.A.Filter[1][x4+i] = filters.Y, filters.X
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.LeftInterp[y4+i] = filters
-		c.LeftInterpValid[y4+i] = 1
+		c.L.Filter[0][y4+i], c.L.Filter[1][y4+i] = filters.Y, filters.X
 	}
 	// Record the per-MI filter pair so the sub8x8 chroma predictor can read
 	// each covered luma sub-block's own filters (libaom's this_mbmi->
@@ -366,6 +360,25 @@ func frozenDecodedInterContextOracle(c *BlockModeContext, size BlockSize, x4, y4
 	return nil
 }
 
+// clearUnusedPaletteColors drops the colours of size-0 palette edge entries,
+// which no reader observes.
+func clearUnusedPaletteColors(c *BlockModeContext) {
+	for i := range MaxBlockModeSlots {
+		if c.A.PalSz[i] == 0 {
+			c.PalA.Colors[i][0] = [PaletteMaxSize]uint16{}
+		}
+		if c.PalA.SzUV[i] == 0 {
+			c.PalA.Colors[i][1] = [PaletteMaxSize]uint16{}
+		}
+		if c.L.PalSz[i] == 0 {
+			c.PalL.Colors[i][0] = [PaletteMaxSize]uint16{}
+		}
+		if c.PalL.SzUV[i] == 0 {
+			c.PalL.Colors[i][1] = [PaletteMaxSize]uint16{}
+		}
+	}
+}
+
 func TestDecodedInterContextMatchesOriginalCommits(t *testing.T) {
 	initial := seededBlockModeContext(t, 137)
 	caseIndex := 0
@@ -373,15 +386,17 @@ func TestDecodedInterContextMatchesOriginalCommits(t *testing.T) {
 		for _, pos := range positionsForInterContextOracle(size) {
 			for _, compound := range [...]bool{false, true} {
 				for _, hasChroma := range [...]bool{false, true} {
-					refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}, Compound: compound, Unidir: hasChroma}
+					refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone, Compound: compound, Unidir: hasChroma}
 					if compound {
-						refs.Ref[1] = ReferenceFrameAltref
+						refs.Ref1 = ReferenceFrameAltref
 					}
 					result := validInterMotionForOracle(refs, caseIndex)
 					filters := motion.InterpFilters{X: motion.InterpFilter(caseIndex % 4), Y: motion.InterpFilter((caseIndex / 4) % 4)}
 					got, want := initial, initial
 					gotErr := got.MarkInterMotionAndFilters(size, pos[0], pos[1], result, filters, hasChroma)
 					wantErr := frozenDecodedInterContextOracle(&want, size, pos[0], pos[1], result, filters, hasChroma)
+					clearUnusedPaletteColors(&got)
+					clearUnusedPaletteColors(&want)
 					if gotErr != nil || wantErr != nil || !reflect.DeepEqual(got, want) {
 						t.Fatalf("combined commit differs: size=%d pos=%v compound=%t chroma=%t filters=%+v errors=%v/%v", size, pos, compound, hasChroma, filters, gotErr, wantErr)
 					}
@@ -393,12 +408,12 @@ func TestDecodedInterContextMatchesOriginalCommits(t *testing.T) {
 }
 
 func TestDecodedInterContextPreservesErrorAndPartialState(t *testing.T) {
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	valid := validInterMotionForOracle(refs, 19)
 	badMotion := valid
 	badMotion.Mode.Mode = interModeCount
 	badRefs := valid
-	badRefs.References.Ref[0] = ReferenceFrameNone
+	badRefs.References.Ref0 = ReferenceFrameNone
 	validFilters := motion.InterpFilters{X: motion.InterpEightTapSmooth, Y: motion.InterpBilinear}
 	badFilters := motion.InterpFilters{X: motion.InterpFilter(255), Y: motion.InterpBilinear}
 	initial := seededBlockModeContext(t, 29)

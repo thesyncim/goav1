@@ -76,15 +76,24 @@ internal/av1/decoder/svc.go:*:*: make([]threading.FrameWorkTileResidualCDFStorag
 internal/av1/decoder/svc.go:*:*: make([]threading.FrameWorkTileResidualCDFStorage, capacity) escapes to heap in (*SharedFrameContextStore).store:
 internal/av1/decoder/svc.go:*:*: make([]threading.FrameWorkTileResidualCDFStorage, nextLen) escapes to heap
 internal/av1/decoder/svc.go:*:*: make([]threading.FrameWorkTileResidualCDFStorage, nextLen) escapes to heap in (*SharedFrameContextStore).store:
+internal/av1/decoder/svc.go:*:*: make(map[int]*sharedMotionFrame, 8) escapes to heap
+internal/av1/decoder/svc.go:*:*: make(map[int]*sharedMotionFrame, 8) escapes to heap in (*SharedFrameContextStore).publishMotion:
 internal/av1/decoder/svc.go:*:*: make(map[int]int, capacity) escapes to heap
 internal/av1/decoder/svc.go:*:*: make(map[int]int, capacity) escapes to heap in (*SharedFrameContextStore).Prealloc:
 internal/av1/decoder/svc.go:*:*: make(map[int]int, capacity) escapes to heap in (*SharedFrameContextStore).store:
+internal/av1/decoder/svc.go:*:*: new(sharedMotionFrame) escapes to heap
+internal/av1/decoder/svc.go:*:*: new(sharedMotionFrame) escapes to heap in (*SharedFrameContextStore).publishMotion:
 internal/av1/decoder/work.go:*:*: make([]tile.ReferenceMVEntry, need) escapes to heap
 internal/av1/decoder/work.go:*:*: make([]tile.ReferenceMVEntry, need) escapes to heap in (*FrameWorkState).PreallocTemporalMotionScratchFrames:
+internal/av1/decoder/work.go:*:*: make([]tile.ReferenceMVEntry, need) escapes to heap in (*FrameWorkState).prepareSharedTemporalMotionField:
 internal/av1/decoder/work.go:*:*: make([]tile.ReferenceMVEntry, need) escapes to heap in (*FrameWorkState).prepareTemporalMotionField:
 internal/av1/decoder/work.go:*:*: make([]tile.ReferenceMVEntry, need) escapes to heap in (*FrameWorkState).publishTemporalMotionFrame:
 internal/av1/decoder/work.go:*:*: make([]tile.TemporalMotionEntry, need) escapes to heap
 internal/av1/decoder/work.go:*:*: make([]tile.TemporalMotionEntry, need) escapes to heap in (*FrameWorkState).PreallocTemporalMotionScratchFrames:
+internal/av1/decoder/work.go:*:*: make(map[int]*sharedMotionFrame, 8) escapes to heap
+internal/av1/decoder/work.go:*:*: make(map[int]*sharedMotionFrame, 8) escapes to heap in (*FrameWorkState).publishSharedTemporalMotionFrame:
+internal/av1/decoder/work.go:*:*: new(sharedMotionFrame) escapes to heap
+internal/av1/decoder/work.go:*:*: new(sharedMotionFrame) escapes to heap in (*FrameWorkState).publishSharedTemporalMotionFrame:
 internal/av1/encoder/cdef_apply.go:*:*: func literal escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: func literal escapes to heap in (*cdefApplier).startWorkers:
 internal/av1/encoder/cdef_apply.go:*:*: make([][]uint16, 8) escapes to heap
@@ -321,6 +330,9 @@ internal/av1/encoder/pframe_residual.go:*:*: make([]byte, len(src.Y)) escapes to
 internal/av1/encoder/pframe_residual.go:*:*: make([]byte, len(src.Y)) escapes to heap in EncodeScaledReferencePFrame:
 internal/av1/encoder/pframe_residual.go:*:*: make([]int16, int(sq.n) * int(sq.n)) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]int16, int(sq.n) * int(sq.n)) escapes to heap in buildEncoderScanTables:
+internal/av1/encoder/pframe_residual.go:*:*: make([]int16, len(scan)) escapes to heap
+internal/av1/encoder/pframe_residual.go:*:*: make([]int16, len(scan)) escapes to heap in buildEncoderScanTables:
+internal/av1/encoder/pframe_residual.go:*:*: make([]int16, len(scan)) escapes to heap in newInverseScan:
 internal/av1/encoder/pframe_residual.go:*:*: make([]int16, total) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]int16, total) escapes to heap in buildEncoderScanTables:
 internal/av1/encoder/pframe_residual.go:*:*: make([]int32, 4096) escapes to heap
@@ -341,6 +353,8 @@ internal/av1/encoder/pframe_residual.go:*:*: moved to heap: recon
 internal/av1/encoder/pframe_residual.go:*:*: moved to heap: recon420
 internal/av1/encoder/pframe_residual.go:*:*: new(hmeState) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: new(hmeState) escapes to heap in (*pframeCoder).encodeTileWithOptionsColor:
+internal/av1/encoder/pframe_residual.go:*:*: new(lossyMCScratch) escapes to heap
+internal/av1/encoder/pframe_residual.go:*:*: new(lossyMCScratch) escapes to heap in (*lossyEncodeState).initScans:
 internal/av1/encoder/pframe_residual.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: new(subpelProbeCache) escapes to heap in (*pframeCoder).reset:
 internal/av1/encoder/pframe_split.go:*:*: make([]int16, 0, maxCoeffs) escapes to heap
@@ -375,6 +389,8 @@ internal/av1/encoder/pframe_wavefront.go:*:*: make([]uint8, len(src.levels)) esc
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]uint8, len(src.levels)) escapes to heap in (*pframeDecideWorker).adopt:
 internal/av1/encoder/pframe_wavefront.go:*:*: new(keyTXSScratch) escapes to heap
 internal/av1/encoder/pframe_wavefront.go:*:*: new(keyTXSScratch) escapes to heap in (*pframeDecideWorker).adopt:
+internal/av1/encoder/pframe_wavefront.go:*:*: new(lossyMCScratch) escapes to heap
+internal/av1/encoder/pframe_wavefront.go:*:*: new(lossyMCScratch) escapes to heap in (*pframeDecideWorker).adopt:
 internal/av1/encoder/pframe_wavefront.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/pframe_wavefront.go:*:*: new(subpelProbeCache) escapes to heap in (*pframeDecideWorker).adopt:
 internal/av1/encoder/pred8.go:*:*: new(subpelProbeCache) escapes to heap
@@ -576,6 +592,7 @@ internal/av1/threading/pool.go:*:*: func literal escapes to heap in (*Pool).wave
 internal/av1/threading/pool.go:*:*: func literal escapes to heap in NewPool:
 internal/av1/threading/pool.go:*:*: make([]poolWorker, workers) escapes to heap
 internal/av1/threading/pool.go:*:*: make([]poolWorker, workers) escapes to heap in NewPool:
+internal/av1/threading/recon_b.go:*:*: append(a[:cap(a)], make([]int32, 1024 + cap(a) / 2)...) escapes to heap in growCoefArena:
 internal/av1/threading/tile_residual.go:*:*: make([]FrameWorkCFLPredictionScratch, workers) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]FrameWorkCFLPredictionScratch, workers) escapes to heap in (*frameWorkReconWavefront).ensureStates:
 internal/av1/threading/tile_residual.go:*:*: make([]FrameWorkInterPredictionScratch, workers) escapes to heap
@@ -605,12 +622,10 @@ internal/av1/threading/wavefront_stream.go:*:*: func literal escapes to heap in 
 internal/av1/threading/wavefront_stream.go:*:*: make([]atomic.Int32, rowCount) escapes to heap
 internal/av1/threading/wavefront_stream.go:*:*: make([]atomic.Int32, rowCount) escapes to heap in (*frameWorkTileResidualLoopController).startReconStream:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap
-internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.interface { BeginBlockCoefficients(*github.com/thesyncim/goav1/internal/av1/tile.BlockLoopVisit) (*github.com/thesyncim/goav1/internal/av1/tile.BlockCoeffRequest, error); VisitBlockCoeffPtr(*github.com/thesyncim/goav1/internal/av1/tile.BlockLoopVisit, *github.com/thesyncim/goav1/internal/av1/tile.BlockCoeffBlock) error }]:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.struct {}]:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap in promotePendingDiagonalCarriers:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in PreallocBlockLoopContextCarrierScratch:
-internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.interface { BeginBlockCoefficients(*github.com/thesyncim/goav1/internal/av1/tile.BlockLoopVisit) (*github.com/thesyncim/goav1/internal/av1/tile.BlockCoeffRequest, error); VisitBlockCoeffPtr(*github.com/thesyncim/goav1/internal/av1/tile.BlockLoopVisit, *github.com/thesyncim/goav1/internal/av1/tile.BlockCoeffBlock) error }]:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.struct {}]:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in ensureIntrabcDiagonalCarriers:
 internal/av1/tile/block_loop.go:*:*: make([]tile.diagonalCornerSlot, tile.n) escapes to heap
@@ -637,7 +652,6 @@ internal/av1/tile/coeff.go:*:*: make([]entropy.CoeffScanContext, maxEOB) escapes
 internal/av1/tile/coeff.go:*:*: make([]entropy.CoeffScanContext, maxEOB) escapes to heap in init.N:
 internal/av1/tile/coeff.go:*:*: make([]uint8, maxEOB) escapes to heap
 internal/av1/tile/coeff.go:*:*: make([]uint8, maxEOB) escapes to heap in init.N:
-internal/av1/tile/read_coef_blocks.go:*:*: append(a[:cap(a)], make([]int32, 1024 + cap(a) / 2)...) escapes to heap in growCoefArena:
 internal/av1/tile/refmvs.go:*:*: make([]TemporalMotionEntry, need) escapes to heap
 internal/av1/tile/refmvs.go:*:*: make([]TemporalMotionEntry, need) escapes to heap in (*refmvsTile).bindFrame:
 internal/av1/tile/refmvs.go:*:*: make([]TemporalMotionEntry, need) escapes to heap in PreallocBlockLoopRefmvsScratch:

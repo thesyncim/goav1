@@ -64,17 +64,17 @@ func TestReconstructPlaneBlockD157Block0FullPipeline(t *testing.T) {
 			gotPlane.Pix[r*gotPlane.Stride+c] = d157Block0Predictor[r*W+c]
 		}
 	}
-	cfg := Block{
+	cfg := testBlock{
 		Size:      transform.Size{Width: W, Height: H},
 		Transform: transform.TypeDCTDCT,
 		Quantizer: q,
 		EOB:       845,
 	}
-	int32Len, int16Len, err := ScratchLen(cfg)
+	int32Len, int16Len, err := ScratchLen(cfg.block())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconstructPlaneBlock(gotPlane, 1, 8, 0, 0,
+	if err := reconstructQuantized(gotPlane, 1, 8, 0, 0,
 		d157Block0Coeffs[:], H,
 		make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)

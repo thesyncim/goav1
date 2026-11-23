@@ -5,14 +5,6 @@ import (
 	"testing"
 )
 
-// fillBytes fills b with uniform random bytes. It is shared by the
-// architecture-specific differential tests in this package.
-func fillBytes(rng *rand.Rand, b []byte) {
-	for i := range b {
-		b[i] = byte(rng.Intn(256))
-	}
-}
-
 // TestSAD8x8ImplMatchesPureGo proves the dispatched SAD kernel is bit-exact
 // with the portable reference across random data, strides, and offsets
 // (including totals far above any early-exit threshold).

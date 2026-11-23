@@ -147,25 +147,18 @@ func TestInverseDCTDCOnlyBlockBitDepthMatchesFullInverse(t *testing.T) {
 				coeff := make([]int32, width*height)
 				coeff[0] = dc
 				want := make([]int16, width*height)
-				got := make([]int16, width*height)
 				fullScratch := make([]int32, width*height)
 				dcScratch := make([]int32, width+height)
 				if err := InverseBlockBitDepth(want, width, coeff, height, fullScratch, size, TypeDCTDCT, bitDepth); err != nil {
 					t.Fatalf("full size=%+v bd=%d dc=%d: %v", size, bitDepth, dc, err)
-				}
-				if err := InverseDCTDCOnlyBlockBitDepth(got, width, dc, dcScratch, size, bitDepth); err != nil {
-					t.Fatalf("dc size=%+v bd=%d dc=%d: %v", size, bitDepth, dc, err)
 				}
 				sample, err := InverseDCTDCOnlySampleBitDepth(dc, dcScratch, size, bitDepth)
 				if err != nil {
 					t.Fatalf("dc sample size=%+v bd=%d dc=%d: %v", size, bitDepth, dc, err)
 				}
 				for i := range want {
-					if got[i] != want[i] {
-						t.Fatalf("size=%+v bd=%d dc=%d dst[%d]=%d want %d", size, bitDepth, dc, i, got[i], want[i])
-					}
-					if got[i] != sample {
-						t.Fatalf("size=%+v bd=%d dc=%d dst[%d]=%d sample %d", size, bitDepth, dc, i, got[i], sample)
+					if want[i] != sample {
+						t.Fatalf("size=%+v bd=%d dc=%d dst[%d]=%d sample %d", size, bitDepth, dc, i, want[i], sample)
 					}
 				}
 			}

@@ -45,16 +45,12 @@ func lfStore[S lfSample](pix []byte, off int, v archsimd.Int16x8) {
 }
 
 // lfLoad16 loads eight 16-bit samples directly from the validated window.
-//
-//go:nocheckptr
 func lfLoad16(pix []byte, off int) archsimd.Int16x8 {
 	p := (*[16]uint8)(unsafe.Add(unsafe.Pointer(unsafe.SliceData(pix)), off))
 	return archsimd.LoadUint8x16Array(p).ReshapeToUint16s().BitsToInt16()
 }
 
 // lfStore16 writes eight 16-bit lanes to the validated window.
-//
-//go:nocheckptr
 func lfStore16(pix []byte, off int, v archsimd.Int16x8) {
 	p := (*[16]uint8)(unsafe.Add(unsafe.Pointer(unsafe.SliceData(pix)), off))
 	v.ToBits().ReshapeToUint8s().StoreArray(p)

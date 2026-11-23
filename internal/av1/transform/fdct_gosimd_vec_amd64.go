@@ -34,19 +34,8 @@ func fwdShl(v fwdVec, n uint64) fwdVec {
 	return v.ShiftAllLeft(n)
 }
 
-func fwdLoadI32(s []int32) fwdVec {
-	return archsimd.LoadInt32x8(s)
-}
-
 func fwdStoreI32(s []int32, v fwdVec) {
 	v.Store(s)
-}
-
-// fwdLoadRes loads the fwdLanes residual samples of column group g (g is a
-// multiple of eight, so s starts at the group) and widens them to the column
-// pass input scale (shift[0] = 2).
-func fwdLoadRes(s []int16, g int) fwdVec {
-	return fwdShl(archsimd.LoadInt16x8(s[:8]).ExtendToInt32(), 2)
 }
 
 // fwdTranspose writes the transpose of the n x n row-major matrix src into dst

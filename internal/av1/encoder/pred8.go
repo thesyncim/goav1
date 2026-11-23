@@ -30,15 +30,6 @@ var pred8Impl func(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStr
 // sub-pel blocks then take the motion package predictor.
 var pred8FullPelOnly bool
 
-// pred8IMImpl and pred8VIMImpl are the two 2-D passes on their own (rows of
-// the first-pass intermediate at any int16 row stride in bytes, and the
-// second pass over an intermediate whose first row is the block's row -3),
-// for callers that share one intermediate across several vectors.
-var (
-	pred8IMImpl  func(im unsafe.Pointer, imStride int, ref unsafe.Pointer, refStride, w, rows int, k *[8]int16)
-	pred8VIMImpl func(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride int, im unsafe.Pointer, imStride, w, h int, k *[8]int16) int
-)
-
 // pred8Kernels are the 8-tap tables by filter (regular, smooth, sharp).
 var pred8Kernels [3]motion.SubpelKernelTable
 
@@ -115,7 +106,7 @@ func (st *lossyEncodeState) predictPlane(dst []byte, refPlane []byte, stride, wi
 			}
 		}
 	}
-	return predictIntoFilters(dst, refPlane, stride, width, height, px, py, bw, bh, mv, ssX, ssY, filters, st.scaledScratch.Conv())
+	return predictIntoFilters(dst, refPlane, stride, width, height, px, py, bw, bh, mv, ssX, ssY, filters, st.predictScratch())
 }
 
 // pred8SAD returns the SAD between the regular-filter prediction of a w x h

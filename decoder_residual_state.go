@@ -23,8 +23,7 @@ package goav1
 //     DecoderFrameWorkJobBlockLoopContextRootColumns /
 //     BindTileBlockLoopContextCarrier / DecoderFrameWorkJobBlockLoopRequest:
 //     per-job block-loop setup.
-//   - ReadDecoderFrameWorkIntraBlockTransforms / Inter / BlockTransforms /
-//     ReconstructDecoderFrameWorkBlockCoeff / DecodeAndReconstruct /
+//   - DecodeAndReconstruct /
 //     DecodeAndRetain*: the residual decode + reconstruct pipeline.
 //   - DecoderFrameWorkBatchResidualRunner and its
 //     BindDecoderFrameWorkBatchResidualRunner, Run, SetSideData,
@@ -40,14 +39,13 @@ import (
 // scratch lengths required to reconstruct one block at (size, typ) for the
 // given quantizer context.
 func DecoderFrameWorkResidualScratchLen(batch DecoderFrameWorkBatch, currentQIndex uint8, segmentID uint8, plane DecoderFrameWorkPlane, size TransformSize, typ TransformType) (int32Len int, int16Len int, err error) {
-	q, lossless, err := batch.BlockQuantizer(currentQIndex, segmentID, plane)
+	_, lossless, err := batch.BlockQuantizer(currentQIndex, segmentID, plane)
 	if err != nil {
 		return 0, 0, err
 	}
 	return ReconstructBlockScratchLen(ReconstructBlock{
 		Size:      size,
 		Transform: typ,
-		Quantizer: q,
 		Lossless:  lossless,
 	})
 }
@@ -81,13 +79,6 @@ func DecoderFrameWorkBlockQIndex(batch DecoderFrameWorkBatch, currentQIndex uint
 // origin of the coefficient block within the output sample plane.
 func DecoderFrameWorkBlockCoeffPlanePosition(batch DecoderFrameWorkBatch, index int, visit TileBlockVisit, block TileBlockCoeffBlock) (DecoderFrameWorkPlane, int, int, error) {
 	return batch.BlockCoeffPlanePosition(index, visit, block)
-}
-
-// ReconstructDecoderFrameWorkBlockCoeff reconstructs one decoded
-// coefficient block into the output sample plane described by req,
-// using the prediction scratch the caller already populated.
-func ReconstructDecoderFrameWorkBlockCoeff(batch DecoderFrameWorkBatch, index int, req DecoderFrameWorkBlockCoeffReconstruction) error {
-	return batch.ReconstructBlockCoeff(index, req)
 }
 
 // InitDecoderFrameWorkTileResidualCDFStorageDefault initializes storage
@@ -187,27 +178,6 @@ func decoderFrameWorkJobBlockLoopRequestPtr(batch *DecoderFrameWorkBatch, index 
 	req.DecodeMotionModes = true
 	req.DecodeCompoundBlend = true
 	return req, nil
-}
-
-// ReadDecoderFrameWorkIntraBlockTransforms reads the per-block
-// transform metadata for an intra-coded block using state's entropy
-// reader.
-func ReadDecoderFrameWorkIntraBlockTransforms(batch DecoderFrameWorkBatch, state *TileDecodeState, visit TileBlockLoopVisit) (DecoderFrameWorkBlockTransforms, error) {
-	return batch.ReadIntraBlockTransforms(state, visit)
-}
-
-// ReadDecoderFrameWorkInterBlockTransforms reads the per-block
-// transform metadata for an inter-coded block using state's entropy
-// reader.
-func ReadDecoderFrameWorkInterBlockTransforms(batch DecoderFrameWorkBatch, state *TileDecodeState, visit TileBlockLoopVisit) (DecoderFrameWorkBlockTransforms, error) {
-	return batch.ReadInterBlockTransforms(state, visit)
-}
-
-// ReadDecoderFrameWorkBlockTransforms reads the per-block transform
-// metadata for the block visited at visit, dispatching to intra or
-// inter as appropriate.
-func ReadDecoderFrameWorkBlockTransforms(batch DecoderFrameWorkBatch, state *TileDecodeState, visit TileBlockLoopVisit) (DecoderFrameWorkBlockTransforms, error) {
-	return batch.ReadBlockTransforms(state, visit)
 }
 
 // DecodeAndReconstructDecoderFrameWorkJobResiduals decodes and
@@ -581,9 +551,6 @@ func (r *DecoderFrameWorkBatchResidualRunner) RunPtr(batch *DecoderFrameWorkBatc
 		return err
 	}
 	req.Tile.TransformMode = batch.TransformRef.TransformMode
-	if req.Tile.Transforms == nil {
-		req.Tile.UseDefaultTransforms = true
-	}
 	if err := InitDecoderFrameWorkTileResidualCDFStorage(*batch, &r.Storages[worker]); err != nil {
 		return err
 	}
@@ -928,8 +895,6 @@ func decoderFrameWorkApplyBatchResidualLoopOverrides(dst *TileBlockLoopRequest, 
 		dst.ContextCarrier = overrides.ContextCarrier
 	}
 	dst.BeforeSuperblock = overrides.BeforeSuperblock
-	dst.BeforeCoefficients = overrides.BeforeCoefficients
-	dst.CoeffVisitor = overrides.CoeffVisitor
 }
 
 func decoderFrameWorkAccumulateResidualStats(total *DecoderFrameWorkTileResidualStats, next DecoderFrameWorkTileResidualStats) {

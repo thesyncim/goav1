@@ -9,8 +9,6 @@ import (
 
 func init() {
 	pred8Impl = pred8SIMD
-	pred8IMImpl = pred8IM
-	pred8VIMImpl = pred8VIM
 }
 
 // The AV1 8-tap kernels are all even, so the 8-bit passes accumulate halved
@@ -87,7 +85,8 @@ func pred8Copy(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride 
 // pred8CopyRows is svt_av1_convolve_2d_copy_sr_neon: one loop per block
 // width, so a row costs its address, loads and stores and the loop branch
 // (the row pointers are formed by index: one past the last row would trip
-// checkptr). Widths are 8 or multiples of 16.
+// checkptr). Widths are multiples of 8; a width that is not a multiple of 16
+// ends with an 8-byte copy.
 func pred8CopyRows(dst unsafe.Pointer, dstStride int, ref unsafe.Pointer, refStride, w, h int) {
 	switch w {
 	case 8:
@@ -109,8 +108,12 @@ func pred8CopyRows(dst unsafe.Pointer, dstStride int, ref unsafe.Pointer, refStr
 	default:
 		for y := range h {
 			d, r := unsafe.Add(dst, y*dstStride), unsafe.Add(ref, y*refStride)
-			for x := 0; x < w; x += 16 {
+			x := 0
+			for ; x+16 <= w; x += 16 {
 				*(*[16]byte)(unsafe.Add(d, x)) = *(*[16]byte)(unsafe.Add(r, x))
+			}
+			if x < w {
+				*(*uint64)(unsafe.Add(d, x)) = *(*uint64)(unsafe.Add(r, x))
 			}
 		}
 	}
@@ -131,8 +134,8 @@ func pred8H(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride int
 	sh := archsimd.BroadcastInt16x8(-6)
 	var acc archsimd.Uint16x8
 	sad := 0
-	p := unsafe.Add(ref, -3)
 	for y := 0; y < h; y++ {
+		p := unsafe.Add(ref, y*refStride-3)
 		x := 0
 		for ; x+16 <= w; x += 16 {
 			q := unsafe.Add(p, x)
@@ -178,7 +181,6 @@ func pred8H(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride int
 			sad += sumU16(acc)
 			acc = archsimd.Uint16x8{}
 		}
-		p = unsafe.Add(p, refStride)
 	}
 	return sad + sumU16(acc)
 }
@@ -319,8 +321,8 @@ func pred8IM(im unsafe.Pointer, imStride int, ref unsafe.Pointer, refStride, w, 
 		c6 := archsimd.BroadcastInt16x8(k[6] >> 1)
 		bias := archsimd.BroadcastInt16x8(8194)
 		sh := archsimd.BroadcastInt16x8(-2)
-		p := unsafe.Add(ref, -2)
 		for y := 0; y < rows; y++ {
+			p := unsafe.Add(ref, y*refStride-2)
 			row := unsafe.Add(im, y*imStride)
 			x := 0
 			for ; x+16 <= w; x += 16 {
@@ -356,7 +358,6 @@ func pred8IM(im unsafe.Pointer, imStride int, ref unsafe.Pointer, refStride, w, 
 				a0 = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(q, 5))).ExtendLo8ToUint16().BitsToInt16().MulAdd(c6, a0)
 				a0.Shift(sh).StoreArray((*[8]int16)(unsafe.Add(row, 2*x)))
 			}
-			p = unsafe.Add(p, refStride)
 		}
 		return
 	}
@@ -370,8 +371,8 @@ func pred8IM(im unsafe.Pointer, imStride int, ref unsafe.Pointer, refStride, w, 
 	c7 := archsimd.BroadcastInt16x8(k[7] >> 1)
 	bias := archsimd.BroadcastInt16x8(8194)
 	sh := archsimd.BroadcastInt16x8(-2)
-	p := unsafe.Add(ref, -3)
 	for y := 0; y < rows; y++ {
+		p := unsafe.Add(ref, y*refStride-3)
 		row := unsafe.Add(im, y*imStride)
 		x := 0
 		for ; x+16 <= w; x += 16 {
@@ -415,7 +416,6 @@ func pred8IM(im unsafe.Pointer, imStride int, ref unsafe.Pointer, refStride, w, 
 			a0 = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(q, 7))).ExtendLo8ToUint16().BitsToInt16().MulAdd(c7, a0)
 			a0.Shift(sh).StoreArray((*[8]int16)(unsafe.Add(row, 2*x)))
 		}
-		p = unsafe.Add(p, refStride)
 	}
 }
 

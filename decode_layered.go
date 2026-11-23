@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
-	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 )
 
 const layeredDecoderMaxFrameFormats = EncoderWebRTCMaxSpatialLayers + 1
@@ -16,14 +15,17 @@ const layeredDecoderMaxFrameFormats = EncoderWebRTCMaxSpatialLayers + 1
 // spatial layer, shared reference slots, and shared frame contexts, then drives
 // the same residual/event decode path exposed by the lower-level public APIs.
 //
+// It holds one surface pool per coded frame size and has room for one more
+// size than there are spatial layers, so a stream that resizes frame by frame
+// is rejected when it is constructed, and it does not apply super-resolution:
+// such a frame fails with an error. Decoder handles both.
+//
 // The *Frame values returned by DecodeNext, DecodeAll, DecodeRTPPayload, and
 // DecodeRTPPayloadAfterLoss alias decoder-owned layer-pool surfaces. They
 // remain valid only until the next decode call, Reset, or Close unless the AV1
 // reference map still retains the surface internally.
 //
 // A LayeredDecoder is not safe for concurrent use; serialize calls.
-// GOAV1_SCALED_PRED is read when the decoder is constructed and remains fixed
-// for its lifetime.
 type LayeredDecoder struct {
 	workerPool *TileWorkerPool
 
@@ -134,6 +136,9 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 	if cfg.workers < 1 {
 		return nil, fmt.Errorf("goav1: workers must be >= 1, got %d", cfg.workers)
 	}
+	if cfg.frameSizeLimit < 0 {
+		return nil, fmt.Errorf("goav1: frame size limit must be >= 0, got %d", cfg.frameSizeLimit)
+	}
 	if source.len() == 0 {
 		return nil, errors.New("goav1: no payloads to decode")
 	}
@@ -143,8 +148,7 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 		return nil, fmt.Errorf("goav1: worker pool: %w", err)
 	}
 
-	// The probes grow probeEvents to the largest per-payload event count.
-	probeEvents := make([]DecoderEvent, 64)
+	probeEvents := make([]DecoderEvent, decoderMaxPayloadEvents)
 	probeSpans := make([]TileSpan, MaxTiles)
 	probeJobs := make([]TileJob, MaxTiles)
 	probeBatches := make([]TileBatch, MaxTiles)
@@ -154,10 +158,10 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 	switch kind {
 	case decoderPayloadLowOverhead:
 		plan, err = decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(
-			DecoderStream{}, source, cfg.workers, probePayload, probeEvents, probeSpans, probeJobs, probeBatches)
+			DecoderStream{}, source, cfg.workers, cfg.frameSizeLimit, probePayload, probeEvents, probeSpans, probeJobs, probeBatches)
 	case decoderPayloadRTP:
 		plan, err = decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(
-			DecoderStream{}, source, cfg.workers, probeEvents, probeSpans, probeJobs, probeBatches)
+			DecoderStream{}, source, cfg.workers, cfg.frameSizeLimit, probeEvents, probeSpans, probeJobs, probeBatches)
 	default:
 		err = ErrDecoderInvalidFrameWorkState
 	}
@@ -213,9 +217,7 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 		payloadSource: source,
 		payloadBuf:    arena.takeBytes(source.payloadBufferLen()),
 	}
-	scaledReferencePredictionEnabled := internalthreading.ScaledReferencePredictionEnabled()
 	for i := range d.states {
-		d.states[i].SetScaledReferencePredictionEnabled(scaledReferencePredictionEnabled)
 		internaldecoder.ShareSegmentMapStore(&d.states[i], &d.segMaps)
 	}
 	d.scratch = newDecoderStreamScratch(plan.Size, &arena)
@@ -283,14 +285,14 @@ func decoderLayeredCodedFormatsFromSource(source decoderPayloadSource, kind deco
 	switch kind {
 	case decoderPayloadLowOverhead:
 		var stream DecoderStream
-		var events []DecoderEvent
+		events := make([]DecoderEvent, decoderMaxPayloadEvents)
 		err := source.forEachPayload(payloadBuf, func(payload []byte) error {
 			eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(payload)
 			if err != nil {
 				return err
 			}
-			if len(events) < eventCount {
-				events = make([]DecoderEvent, eventCount)
+			if eventCount > decoderMaxPayloadEvents {
+				return ErrDecoderEventBufferTooSmall
 			}
 			sequence, _ := stream.SequenceHeader()
 			count, err := stream.PushLowOverhead(payload, events[:eventCount])
@@ -477,14 +479,6 @@ func (d *LayeredDecoder) DecodeRTPPacketAfterLossWithMetadata(packet []byte) ([]
 		return nil, fmt.Errorf("goav1: rtp packet: %w", err)
 	}
 	return d.DecodeRTPPayloadAfterLossWithMetadata(rtp.Payload)
-}
-
-func (d *LayeredDecoder) decodePayload(payload []byte, afterLoss bool) ([]*Frame, error) {
-	outputs, err := d.decodePayloadWithMetadata(payload, afterLoss)
-	if err != nil {
-		return nil, err
-	}
-	return d.framesFromLayered(outputs), nil
 }
 
 func (d *LayeredDecoder) decodePayloadWithMetadata(payload []byte, afterLoss bool) ([]LayeredFrame, error) {

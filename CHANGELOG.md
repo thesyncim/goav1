@@ -17,10 +17,27 @@ The project has not published a release tag yet.
 - Frames split across several tile-group OBUs decode correctly: later tile
   groups keep the CDEF index map, loop-filter masks and restoration records
   the first tile group bound, instead of resetting them.
-- Current committed decoder vector gates are strict-MD5 clean as documented in
-  [CONFORMANCE.md](CONFORMANCE.md).
+- Current committed decoder vector gates are strict-MD5 clean; the gates are
+  described in [docs/quality-and-parity.md](docs/quality-and-parity.md).
+- Streams coded with quantizer matrices decode correctly. The matrices were
+  indexed row by row although they are stored in coefficient order, so every
+  rectangular transform block was dequantized with the wrong weights; no
+  committed vector used the tool. Two quantizer-matrix clips now gate it.
+- Inter frames that follow a key frame coded with intra block copy decode
+  correctly. Block-copy vectors adapted the motion-vector contexts instead of
+  their own, so the following frames inherited the wrong entropy state (every
+  SVT-AV1 screen-content stream was affected).
+- `LayeredDecoder` projects temporal motion vectors. It kept no motion vectors
+  for its reference buffers, so any frame coded with `use_ref_frame_mvs`
+  (the default in libaom and SVT-AV1) decoded to wrong pixels without an
+  error. Its output now matches `Decoder` and the libaom goldens on every
+  vendored clip it accepts.
 - Hot paths are designed around caller-owned buffers, reusable frame pools,
   explicit scratch sizing, and zero steady-state allocations.
+- `WithFrameSizeLimit` makes the high-level decoders reject streams whose
+  frames exceed a pixel count (dav1d's `frame_size_limit`), and RTP payloads
+  are held to the same 64-OBU bound as low-overhead ones, so hostile input
+  cannot make a decoder allocate thousands of times its size.
 - Performance work remains active, with dav1d/libaom source-shaped scalar code,
   compiler/allocation guardrails, and initial SIMD dispatch/kernels.
 - With more than one worker, low-overhead decoders (NewDecoder,
@@ -33,6 +50,9 @@ The project has not published a release tag yet.
   Frames with several tiles frame-thread too, as long as every tile arrives in
   one tile group: each tile's entropy pass runs on its own lane, and the
   frame's reconstruction and post-filter overlap the next frame's tiles.
+- `aom-go-dec` uses one worker per CPU by default, as dav1d's CLI does;
+  `-workers 1` selects the single-threaded path. The library default stays
+  one worker.
 
 ### Encoder Scope
 

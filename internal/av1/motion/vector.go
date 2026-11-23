@@ -246,6 +246,9 @@ func PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSizeScratch(dst fra
 // predictor: ReferenceOriginSubsampled followed by
 // PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSizeScratch at bit
 // depth 8, with the dav1d-style copy/put kernels tried first.
+//
+// Accesses stay inside ref.Pix (taps outside the plane are edge-clamped,
+// never read) and inside the width x height block of the destination.
 func PredictTranslation8(dst *frame.Plane, ref *frame.Plane, dstX int, dstY int, width int, height int, filterW int, filterH int, mv Vector, subsamplingX bool, subsamplingY bool, filters InterpFilters, scratch *ConvolveScratch) error {
 	if !filters.X.Valid() || !filters.Y.Valid() {
 		return ErrInvalidMotion
@@ -268,6 +271,9 @@ func PredictTranslation8(dst *frame.Plane, ref *frame.Plane, dstX int, dstY int,
 // PredictTranslation16 is PredictTranslation8 for 10- and 12-bit planes:
 // ReferenceOriginSubsampled followed by the 2-byte-sample single-reference
 // predictor, for the decoder's lean (dav1d recon_b_inter mc()) route.
+//
+// Accesses stay inside ref.Pix (taps outside the plane are edge-clamped,
+// never read) and inside the width x height block of the destination.
 func PredictTranslation16(dst *frame.Plane, ref *frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int, filterW int, filterH int, mv Vector, subsamplingX bool, subsamplingY bool, filters InterpFilters, scratch *ConvolveScratch) error {
 	refX, refY, subX, subY, err := ReferenceOriginSubsampled(dstX, dstY, mv, subsamplingX, subsamplingY)
 	if err != nil {

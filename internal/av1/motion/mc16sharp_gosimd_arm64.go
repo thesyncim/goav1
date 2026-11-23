@@ -73,8 +73,6 @@ func mc16Load8Taps(ph *mc16Phase8) (c0, c1, c2, c3, c4, c5, c6, c7 archsimd.Int1
 }
 
 // mc16H8ToI32 is mc16H6ToI32 over window taps 0..7 (w a multiple of 8).
-//
-//go:nocheckptr
 func mc16H8ToI32(src unsafe.Pointer, srcStride, w, rows int, ph *mc16Phase8, sh int, im unsafe.Pointer) {
 	c0, c1, c2, c3, c4, c5, c6, c7 := mc16Load8Taps(ph)
 	h0, h1, h2, h3, h4, h5, h6, h7 := c0.HiToLo(), c1.HiToLo(), c2.HiToLo(), c3.HiToLo(), c4.HiToLo(), c5.HiToLo(), c6.HiToLo(), c7.HiToLo()
@@ -118,8 +116,6 @@ func mc16H8ToI32(src unsafe.Pointer, srcStride, w, rows int, ph *mc16Phase8, sh 
 }
 
 // mc16PrepH8 is mc16PrepH6 over window taps 0..7 (w a multiple of 8).
-//
-//go:nocheckptr
 func mc16PrepH8(src unsafe.Pointer, srcStride, w, h int, ph *mc16Phase8, sh int, out unsafe.Pointer) {
 	c0, c1, c2, c3, c4, c5, c6, c7 := mc16Load8Taps(ph)
 	h0, h1, h2, h3, h4, h5, h6, h7 := c0.HiToLo(), c1.HiToLo(), c2.HiToLo(), c3.HiToLo(), c4.HiToLo(), c5.HiToLo(), c6.HiToLo(), c7.HiToLo()
@@ -161,8 +157,6 @@ func mc16PrepH8(src unsafe.Pointer, srcStride, w, h int, ph *mc16Phase8, sh int,
 }
 
 // mc16PutH8 is mc16PutH6 over window taps 0..7 (w a multiple of 8).
-//
-//go:nocheckptr
 func mc16PutH8(src unsafe.Pointer, srcStride, w, h int, ph *mc16Phase8, rndC int32, maxPix int16, dst unsafe.Pointer, dstStride int) {
 	c0, c1, c2, c3, c4, c5, c6, c7 := mc16Load8Taps(ph)
 	h0, h1, h2, h3, h4, h5, h6, h7 := c0.HiToLo(), c1.HiToLo(), c2.HiToLo(), c3.HiToLo(), c4.HiToLo(), c5.HiToLo(), c6.HiToLo(), c7.HiToLo()
@@ -219,8 +213,6 @@ func mc16V8Lo(x0, x1, x2, x3, x4, x5, x6, x7, c0, c1, c2, c3, c4, c5, c6, c7 arc
 
 // mc16PrepV8 is mc16PrepV6 over window rows 0..7: each column strip slides
 // an eight-row window down the block, two output rows per iteration.
-//
-//go:nocheckptr
 func mc16PrepV8(src unsafe.Pointer, srcStride, w, h int, ph *mc16Phase8, sh int, out unsafe.Pointer) {
 	c0, c1, c2, c3, c4, c5, c6, c7 := mc16Load8Taps(ph)
 	h0, h1, h2, h3, h4, h5, h6, h7 := c0.HiToLo(), c1.HiToLo(), c2.HiToLo(), c3.HiToLo(), c4.HiToLo(), c5.HiToLo(), c6.HiToLo(), c7.HiToLo()
@@ -229,28 +221,26 @@ func mc16PrepV8(src unsafe.Pointer, srcStride, w, h int, ph *mc16Phase8, sh int,
 	ro := w * 2
 	if w == 4 {
 		// Two output rows share one vector (the CONV_BUF rows are contiguous).
-		s := src
-		r0 := mc16L16(s)
-		r1 := mc16L16(unsafe.Add(s, srcStride))
-		r2 := mc16L16(unsafe.Add(s, 2*srcStride))
-		r3 := mc16L16(unsafe.Add(s, 3*srcStride))
-		r4 := mc16L16(unsafe.Add(s, 4*srcStride))
-		r5 := mc16L16(unsafe.Add(s, 5*srcStride))
-		r6 := mc16L16(unsafe.Add(s, 6*srcStride))
-		s = unsafe.Add(s, 7*srcStride)
-		o := out
+		r0 := mc16L16(src)
+		r1 := mc16L16(unsafe.Add(src, srcStride))
+		r2 := mc16L16(unsafe.Add(src, 2*srcStride))
+		r3 := mc16L16(unsafe.Add(src, 3*srcStride))
+		r4 := mc16L16(unsafe.Add(src, 4*srcStride))
+		r5 := mc16L16(unsafe.Add(src, 5*srcStride))
+		r6 := mc16L16(unsafe.Add(src, 6*srcStride))
+		s0 := unsafe.Add(src, 7*srcStride)
 		r := 0
 		for ; r+2 <= h; r += 2 {
+			s, o := unsafe.Add(s0, r*srcStride), unsafe.Add(out, r*ro)
 			r7 := mc16L16(s)
 			r8 := mc16L16(unsafe.Add(s, srcStride))
 			a := mc16V8Lo(r0, r1, r2, r3, r4, r5, r6, r7, c0, c1, c2, c3, c4, c5, c6, c7, rnd)
 			b := mc16V8Lo(r1, r2, r3, r4, r5, r6, r7, r8, c0, c1, c2, c3, c4, c5, c6, c7, rnd)
 			mc16PackU16(a.Shift(shv), b.Shift(shv)).StoreArray((*[8]uint16)(o))
 			r0, r1, r2, r3, r4, r5, r6 = r2, r3, r4, r5, r6, r7, r8
-			s = unsafe.Add(s, 2*srcStride)
-			o = unsafe.Add(o, 2*ro)
 		}
 		if r < h {
+			s, o := unsafe.Add(s0, r*srcStride), unsafe.Add(out, r*ro)
 			r7 := mc16L16(s)
 			a := mc16V8Lo(r0, r1, r2, r3, r4, r5, r6, r7, c0, c1, c2, c3, c4, c5, c6, c7, rnd).Shift(shv)
 			*(*uint64)(o) = mc16PackU16(a, a).ReshapeToUint64s().GetElem(0)
@@ -259,7 +249,6 @@ func mc16PrepV8(src unsafe.Pointer, srcStride, w, h int, ph *mc16Phase8, sh int,
 	}
 	for col := 0; col < w; col += 8 {
 		s := unsafe.Add(src, 2*col)
-		o := unsafe.Add(out, 2*col)
 		r0 := mc16L16(s)
 		r1 := mc16L16(unsafe.Add(s, srcStride))
 		r2 := mc16L16(unsafe.Add(s, 2*srcStride))
@@ -267,9 +256,10 @@ func mc16PrepV8(src unsafe.Pointer, srcStride, w, h int, ph *mc16Phase8, sh int,
 		r4 := mc16L16(unsafe.Add(s, 4*srcStride))
 		r5 := mc16L16(unsafe.Add(s, 5*srcStride))
 		r6 := mc16L16(unsafe.Add(s, 6*srcStride))
-		s = unsafe.Add(s, 7*srcStride)
+		s0, o0 := unsafe.Add(src, 2*col+7*srcStride), unsafe.Add(out, 2*col)
 		r := 0
 		for ; r+2 <= h; r += 2 {
+			s, o := unsafe.Add(s0, r*srcStride), unsafe.Add(o0, r*ro)
 			r7 := mc16L16(s)
 			r8 := mc16L16(unsafe.Add(s, srcStride))
 			alo := mc16V8Lo(r0, r1, r2, r3, r4, r5, r6, r7, c0, c1, c2, c3, c4, c5, c6, c7, rnd)
@@ -293,10 +283,9 @@ func mc16PrepV8(src unsafe.Pointer, srcStride, w, h int, ph *mc16Phase8, sh int,
 			bhi = bhi.Add(r8.HiToLo().MulWidenLo(h7))
 			mc16PackU16(blo.Shift(shv), bhi.Shift(shv)).StoreArray((*[8]uint16)(unsafe.Add(o, ro)))
 			r0, r1, r2, r3, r4, r5, r6 = r2, r3, r4, r5, r6, r7, r8
-			s = unsafe.Add(s, 2*srcStride)
-			o = unsafe.Add(o, 2*ro)
 		}
 		if r < h {
+			s, o := unsafe.Add(s0, r*srcStride), unsafe.Add(o0, r*ro)
 			r7 := mc16L16(s)
 			alo := mc16V8Lo(r0, r1, r2, r3, r4, r5, r6, r7, c0, c1, c2, c3, c4, c5, c6, c7, rnd)
 			ahi := rnd.Add(r0.HiToLo().MulWidenLo(h0))
@@ -313,8 +302,6 @@ func mc16PrepV8(src unsafe.Pointer, srcStride, w, h int, ph *mc16Phase8, sh int,
 }
 
 // mc16PutV8 is mc16PutV6 over window rows 0..7.
-//
-//go:nocheckptr
 func mc16PutV8(src unsafe.Pointer, srcStride, w, h int, ph *mc16Phase8, maxPix int16, dst unsafe.Pointer, dstStride int) {
 	c0, c1, c2, c3, c4, c5, c6, c7 := mc16Load8Taps(ph)
 	h0, h1, h2, h3, h4, h5, h6, h7 := c0.HiToLo(), c1.HiToLo(), c2.HiToLo(), c3.HiToLo(), c4.HiToLo(), c5.HiToLo(), c6.HiToLo(), c7.HiToLo()
@@ -323,18 +310,17 @@ func mc16PutV8(src unsafe.Pointer, srcStride, w, h int, ph *mc16Phase8, maxPix i
 	zero := archsimd.BroadcastInt16x8(0)
 	maxV := archsimd.BroadcastInt16x8(maxPix)
 	if w == 4 {
-		s := src
-		r0 := mc16L16(s)
-		r1 := mc16L16(unsafe.Add(s, srcStride))
-		r2 := mc16L16(unsafe.Add(s, 2*srcStride))
-		r3 := mc16L16(unsafe.Add(s, 3*srcStride))
-		r4 := mc16L16(unsafe.Add(s, 4*srcStride))
-		r5 := mc16L16(unsafe.Add(s, 5*srcStride))
-		r6 := mc16L16(unsafe.Add(s, 6*srcStride))
-		s = unsafe.Add(s, 7*srcStride)
-		d := dst
+		r0 := mc16L16(src)
+		r1 := mc16L16(unsafe.Add(src, srcStride))
+		r2 := mc16L16(unsafe.Add(src, 2*srcStride))
+		r3 := mc16L16(unsafe.Add(src, 3*srcStride))
+		r4 := mc16L16(unsafe.Add(src, 4*srcStride))
+		r5 := mc16L16(unsafe.Add(src, 5*srcStride))
+		r6 := mc16L16(unsafe.Add(src, 6*srcStride))
+		s0 := unsafe.Add(src, 7*srcStride)
 		r := 0
 		for ; r+2 <= h; r += 2 {
+			s, d := unsafe.Add(s0, r*srcStride), unsafe.Add(dst, r*dstStride)
 			r7 := mc16L16(s)
 			r8 := mc16L16(unsafe.Add(s, srcStride))
 			a := mc16V8Lo(r0, r1, r2, r3, r4, r5, r6, r7, c0, c1, c2, c3, c4, c5, c6, c7, rnd)
@@ -343,10 +329,9 @@ func mc16PutV8(src unsafe.Pointer, srcStride, w, h int, ph *mc16Phase8, maxPix i
 			*(*uint64)(d) = v.GetElem(0)
 			*(*uint64)(unsafe.Add(d, dstStride)) = v.GetElem(1)
 			r0, r1, r2, r3, r4, r5, r6 = r2, r3, r4, r5, r6, r7, r8
-			s = unsafe.Add(s, 2*srcStride)
-			d = unsafe.Add(d, 2*dstStride)
 		}
 		if r < h {
+			s, d := unsafe.Add(s0, r*srcStride), unsafe.Add(dst, r*dstStride)
 			r7 := mc16L16(s)
 			a := mc16V8Lo(r0, r1, r2, r3, r4, r5, r6, r7, c0, c1, c2, c3, c4, c5, c6, c7, rnd).Shift(shv)
 			*(*uint64)(d) = mc16Clip(a, a, zero, maxV).ToBits().ReshapeToUint64s().GetElem(0)
@@ -355,7 +340,6 @@ func mc16PutV8(src unsafe.Pointer, srcStride, w, h int, ph *mc16Phase8, maxPix i
 	}
 	for col := 0; col < w; col += 8 {
 		s := unsafe.Add(src, 2*col)
-		d := unsafe.Add(dst, 2*col)
 		r0 := mc16L16(s)
 		r1 := mc16L16(unsafe.Add(s, srcStride))
 		r2 := mc16L16(unsafe.Add(s, 2*srcStride))
@@ -363,9 +347,10 @@ func mc16PutV8(src unsafe.Pointer, srcStride, w, h int, ph *mc16Phase8, maxPix i
 		r4 := mc16L16(unsafe.Add(s, 4*srcStride))
 		r5 := mc16L16(unsafe.Add(s, 5*srcStride))
 		r6 := mc16L16(unsafe.Add(s, 6*srcStride))
-		s = unsafe.Add(s, 7*srcStride)
+		s0, d0 := unsafe.Add(src, 2*col+7*srcStride), unsafe.Add(dst, 2*col)
 		r := 0
 		for ; r+2 <= h; r += 2 {
+			s, d := unsafe.Add(s0, r*srcStride), unsafe.Add(d0, r*dstStride)
 			r7 := mc16L16(s)
 			r8 := mc16L16(unsafe.Add(s, srcStride))
 			alo := mc16V8Lo(r0, r1, r2, r3, r4, r5, r6, r7, c0, c1, c2, c3, c4, c5, c6, c7, rnd)
@@ -389,10 +374,9 @@ func mc16PutV8(src unsafe.Pointer, srcStride, w, h int, ph *mc16Phase8, maxPix i
 			bhi = bhi.Add(r8.HiToLo().MulWidenLo(h7))
 			mc16Clip(blo.Shift(shv), bhi.Shift(shv), zero, maxV).StoreArray((*[8]int16)(unsafe.Add(d, dstStride)))
 			r0, r1, r2, r3, r4, r5, r6 = r2, r3, r4, r5, r6, r7, r8
-			s = unsafe.Add(s, 2*srcStride)
-			d = unsafe.Add(d, 2*dstStride)
 		}
 		if r < h {
+			s, d := unsafe.Add(s0, r*srcStride), unsafe.Add(d0, r*dstStride)
 			r7 := mc16L16(s)
 			alo := mc16V8Lo(r0, r1, r2, r3, r4, r5, r6, r7, c0, c1, c2, c3, c4, c5, c6, c7, rnd)
 			ahi := rnd.Add(r0.HiToLo().MulWidenLo(h0))
@@ -428,8 +412,6 @@ func mc16V8I32(x0, x1, x2, x3, x4, x5, x6, x7, c0, c1, c2, c3, c4, c5, c6, c7, r
 // a pair of rows packs into one vector (UZP2). put clamps it to [0, maxPix]
 // (clip), prep stores it as the CONV_BUF uint16. Output rows are outStride
 // bytes apart.
-//
-//go:nocheckptr
 func mc16V8FromI32(im unsafe.Pointer, w, h int, c *[8][4]int32, rndC int32, clip bool, maxPix int16, out unsafe.Pointer, outStride int) {
 	c0 := archsimd.LoadInt32x4Array(&c[0])
 	c1 := archsimd.LoadInt32x4Array(&c[1])
@@ -445,7 +427,6 @@ func mc16V8FromI32(im unsafe.Pointer, w, h int, c *[8][4]int32, rndC int32, clip
 	rs := w * 4
 	for col := 0; col < w; col += 4 {
 		q := unsafe.Add(im, col*4)
-		o := unsafe.Add(out, col*2)
 		x0 := archsimd.LoadInt32x4Array((*[4]int32)(q))
 		x1 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, rs)))
 		x2 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 2*rs)))
@@ -453,12 +434,12 @@ func mc16V8FromI32(im unsafe.Pointer, w, h int, c *[8][4]int32, rndC int32, clip
 		x4 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 4*rs)))
 		x5 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 5*rs)))
 		x6 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 6*rs)))
-		q = unsafe.Add(q, 7*rs)
+		q0, o0 := unsafe.Add(im, col*4+7*rs), unsafe.Add(out, col*2)
 		r := 0
 		for ; r+2 <= h; r += 2 {
+			q, o := unsafe.Add(q0, r*rs), unsafe.Add(o0, r*outStride)
 			x7 := archsimd.LoadInt32x4Array((*[4]int32)(q))
 			x8 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, rs)))
-			q = unsafe.Add(q, 2*rs)
 			a := mc16V8I32(x0, x1, x2, x3, x4, x5, x6, x7, c0, c1, c2, c3, c4, c5, c6, c7, rnd)
 			b := mc16V8I32(x1, x2, x3, x4, x5, x6, x7, x8, c0, c1, c2, c3, c4, c5, c6, c7, rnd)
 			v := a.ToBits().ReshapeToUint16s().ConcatOdd(b.ToBits().ReshapeToUint16s())
@@ -468,10 +449,10 @@ func mc16V8FromI32(im unsafe.Pointer, w, h int, c *[8][4]int32, rndC int32, clip
 			u := v.ReshapeToUint64s()
 			*(*uint64)(o) = u.GetElem(0)
 			*(*uint64)(unsafe.Add(o, outStride)) = u.GetElem(1)
-			o = unsafe.Add(o, 2*outStride)
 			x0, x1, x2, x3, x4, x5, x6 = x2, x3, x4, x5, x6, x7, x8
 		}
 		if r < h {
+			q, o := unsafe.Add(q0, r*rs), unsafe.Add(o0, r*outStride)
 			x7 := archsimd.LoadInt32x4Array((*[4]int32)(q))
 			a := mc16V8I32(x0, x1, x2, x3, x4, x5, x6, x7, c0, c1, c2, c3, c4, c5, c6, c7, rnd)
 			v := a.ToBits().ReshapeToUint16s().ConcatOdd(a.ToBits().ReshapeToUint16s())

@@ -21,7 +21,7 @@ import (
 // into tap vectors (rows 0..15 in the low 128-bit lane, 16..31 in the high
 // one) and back.
 //
-// AVX2 archsimd lacks a few of the instructions the assembly uses, so three
+// AVX2 archsimd lacks a few of the instructions dav1d's assembly uses, so three
 // steps are rebuilt from operations it does have, byte-exact:
 //   - punpck{l,h}bw: the two rows are first paired into one lane with a 64-bit
 //     unpack, and a byte shuffle (VPSHUFB 0,8,1,9,...) interleaves them.
@@ -29,7 +29,7 @@ import (
 //     the even and odd bytes of each 16-bit lane (v & 0xff, v >> 8), and the
 //     rounded results are merged back as even | odd<<8. The split is
 //     lane-local, so no cross-lane narrowing is needed.
-//   - byte shifts: 64-bit shifts plus a mask, as the assembly itself does.
+//   - byte shifts: 64-bit shifts plus a mask, as dav1d's assembly does.
 // The narrow (four-tap) filter is dav1d's all-int8 saturating sequence.
 
 // sbAVX2 gates the AVX2 superblock path; the tests flip it to compare both.
@@ -48,7 +48,7 @@ type avxWidth interface {
 }
 
 // avxConst holds the byte-splat and shuffle constants, loaded from memory as
-// the assembly's RODATA.
+// dav1d's assembly loads its RODATA.
 var avxConst = struct {
 	b80, b7f, bf8, b10, b40, b01, b03, b04, b3f, b0f [32]uint8
 	w00ff                                            [16]uint16

@@ -72,12 +72,12 @@ func frozenPrewarmOracle(e *VideoEncoder) error {
 
 func prewarmStateForOracle(e *VideoEncoder) any {
 	return struct {
-		HaveKey, HaveCtx, HaveCtxT1, HMEArmed bool
+		HaveKey, HaveCtx, HaveCtxT1, HMEArmed        bool
 		FrameIndex, ReconIdx, SinceGolden, LowMotion int
-		LastTemporalID, QIndex                     uint8
-		RC                                         svtRateControl
-		Ref                                        [2]svtRCRef
-		Stats                                      EncoderDecisionStats
+		LastTemporalID, QIndex                       uint8
+		RC                                           svtRateControl
+		Ref                                          [2]svtRCRef
+		Stats                                        EncoderDecisionStats
 	}{e.haveKey, e.haveCtx, e.haveCtxT1, e.hme.havePrev,
 		e.frameIndex, e.reconIdx, e.sinceGoldenFresh, e.avgFrameLowMotion,
 		e.lastTemporalID, e.qIndex, e.svtRC, e.svtRef, e.decisionStats}

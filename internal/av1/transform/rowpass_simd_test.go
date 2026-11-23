@@ -67,9 +67,9 @@ func eqInt32(a, b []int32) bool {
 
 // TestRowPassDispatchMatchesPureGo asserts every wired batched row kernel is
 // bit-identical to its pure-Go reference across random inputs and the full
-// clamp-range ladder. On arm64 the dispatch slots resolve to the NEON kernels
-// (cpu.Detected.NEON is mandatory), so this is the primary byte-exactness gate
-// for the assembly.
+// clamp-range ladder. On arm64 the dispatch slots resolve to the Go SIMD
+// kernels (cpu.Detected.NEON is mandatory), so this is their primary
+// byte-exactness gate.
 func TestRowPassDispatchMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x5eed))
 	for _, fn := range dispatchRow2Funcs() {

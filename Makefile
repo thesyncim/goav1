@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish pgo-regenerate qualitybench-publish qualitybench-publish-singlethread gc-metrics compiler-reports fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check webrtc-reference webrtc-browser webrtc-production webrtc-production-ci dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
+.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish pgo-regenerate qualitybench-publish qualitybench-publish-singlethread gc-metrics compiler-reports unsafe-check fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet vet-tags fmt-check tidy-check webrtc-reference webrtc-browser webrtc-production webrtc-production-ci dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus feature-sweep ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -179,37 +179,14 @@ bench-cross:
 bench-corpus:
 	GOAV1_BENCH_CORPUS=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
 
+# pgo-regenerate merges fresh one-thread decode and encode CPU profiles into
+# $(GOAV1_PGO_PROFILE). PGO_STREAMS lists the IVF streams to decode and
+# PGO_ENC_CLIP names a raw 8-bit I420 clip as path:WIDTHxHEIGHT. A/B the new
+# profile against the old one before committing it.
+PGO_STREAMS ?=
+PGO_ENC_CLIP ?=
 pgo-regenerate:
-	# Regenerate cmd/qualitybench/default.pgo for D2-a:
-	# 1. Create internal/av1/testvector/scratch_profile_test.go with the
-	#    goav1_oracle build tag and TestScratchProfileDecode. The test reads
-	#    GOAV1_PROFILE_CLIP, loads that IVF once, and runs 30 iterations of
-	#    decodeCorpusClipDiscard(ivfData).
-	# 2. GOAV1_PROFILE_CLIP=$$PWD/testdata/benchcorpus/p720_inter_q32.ivf go test -tags goav1_oracle -run '^TestScratchProfileDecode$$' ./internal/av1/testvector -count=1 -cpuprofile /tmp/goav1-d2a-dec-p720.out
-	# 3. GOAV1_PROFILE_CLIP=$$PWD/testdata/benchcorpus/p288_inter_q20.ivf go test -tags goav1_oracle -run '^TestScratchProfileDecode$$' ./internal/av1/testvector -count=1 -cpuprofile /tmp/goav1-d2a-dec-p288.out
-	# 4. GOMAXPROCS=1 go test ./internal/av1/encoder -run '^$$' -bench '^BenchmarkVideoEncoderRealC1080p$$' -benchtime=60x -count=1 -cpuprofile /tmp/goav1-d2a-enc-realc.out
-	# 4b. Realtime decode: encode a 720p real-content clip with libaom examples/svc_encoder_rtc
-	#     (-sl 1 -tl 1 -lm 0 -sp 7 -b 2500 -bl 2500) and CPU-profile a one-worker
-	#     LayeredDecoder DecodeNext loop over it into /tmp/goav1-rtc-l1t1.out.
-	# 5. go tool pprof -proto -output cmd/qualitybench/default.pgo /tmp/goav1-d2a-dec-p720.out /tmp/goav1-d2a-dec-p288.out /tmp/goav1-d2a-enc-realc.out
-	#    Then merge the realtime profile: go tool pprof -proto -output cmd/qualitybench/default.pgo cmd/qualitybench/default.pgo /tmp/goav1-rtc-l1t1.out
-	# 6. Delete internal/av1/testvector/scratch_profile_test.go before committing.
-	# Decoder refresh (merge-style; keeps the encoder samples, since a
-	# re-collected encoder profile measured worse for the decoder in #106):
-	# 7. Add a scratch root benchmark that opens every IVF listed in
-	#    GOAV1_ZZ_FILES (colon separated) with NewDecoderFromIVF(data,
-	#    WithWorkers(1)) and, per b.Loop() iteration, runs
-	#    decodePublicFullClipAfterReset on each decoder.
-	# 8. GOEXPERIMENT=simd go test -c -pgo=cmd/qualitybench/default.pgo -o /tmp/goav1-root.test .
-	# 9. GOAV1_ZZ_FILES=<the four testdata/realcorpus/aq0 streams debugging_720p_800k_s11,
-	#    fourpeople_360p_500k_s9, mtbike_360p_600k_s8, johnny_720p_1500k_s9>:<benchcorpus
-	#    p720_inter_q20 and p360_inter_q32>:<the 960-frame p720 clip> GOMAXPROCS=1
-	#    /tmp/goav1-root.test -test.run '^$$' -test.bench ZZScratchFiles -test.benchtime 40s
-	#    -test.cpuprofile /tmp/goav1-dec-refresh.out
-	# 10. go tool pprof -proto cmd/qualitybench/default.pgo /tmp/goav1-dec-refresh.out > /tmp/merged.pgo
-	#     and move it over cmd/qualitybench/default.pgo; A/B decode (w1 and w8)
-	#     and the RTC encbench before committing. Delete the scratch benchmark.
-	@printf '%s\n' 'PGO regeneration recipe is documented in this target.'
+	./scripts/regen_pgo.sh $(if $(PGO_ENC_CLIP),-e $(PGO_ENC_CLIP)) $(PGO_STREAMS)
 
 bench-corpus-publish:
 	@if [ -z "$(BENCH_CORPUS_ENVIRONMENT_NOTES)" ]; then echo "set BENCH_CORPUS_ENVIRONMENT_NOTES='power, thermal, and background-load context'"; exit 2; fi
@@ -365,11 +342,12 @@ gc-metrics:
 compiler-reports:
 	./scripts/check_compiler_reports.sh
 
+unsafe-check:
+	./scripts/check_unsafe.sh
+
 fuzz-smoke:
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicSimpleDecoderIVF
-	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeTileBlockCoefficients
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicParseTileListOBU
-	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficients
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndRetainDecoderFrameWorkBatchResiduals
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecoderFrameWorkBatchResidualRunnerSideData
@@ -399,8 +377,6 @@ fuzz-smoke:
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseTileInfo
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseTileGroupHeader
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseTileListOBU
-	go test ./internal/av1/quantize $(FUZZFLAGS) -fuzz='^FuzzDequantizeBlock$$'
-	go test ./internal/av1/quantize $(FUZZFLAGS) -fuzz=FuzzDequantizeBlockScaledQMatrix
 	go test ./internal/av1/quantize $(FUZZFLAGS) -fuzz=FuzzQuantizeFPNoQMatrix
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzBuildJobs
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzJobPayload
@@ -423,12 +399,7 @@ fuzz-smoke:
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadMotionMode
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadInterIntra
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadCompoundBlend
-	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadCoeffPrimitives
-	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadCoefficientsTXB
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzCoeffEntropyContext
-	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeLumaCoefficients
-	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeChromaCoefficients
-	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeBlockCoefficients
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadPaletteMode
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzPaletteColorIndexContext
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzPaletteCache
@@ -472,7 +443,6 @@ fuzz-smoke:
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchJobEntropyReader
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchJobRegion
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchLoopRestorationPlan
-	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchReconstructBlockCoeff
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchDecodeAndReconstructJobResiduals
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkDistanceWeightedCompoundOffsets
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchPredictBlockLumaIntra
@@ -493,7 +463,6 @@ fuzz-smoke:
 	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzFillDefaultScan
 	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzTXBHelpers
 	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzTypeClass
-	go test ./internal/av1/reconstruct $(FUZZFLAGS) -fuzz=FuzzReconstructPlaneBlock
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzResolveLevel
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzThresholdsForLevel
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter4Edge
@@ -530,22 +499,17 @@ trace-zero:
 vet:
 	go vet ./...
 
-fmt-check:
-	@unformatted="$$(gofmt -l .)"; \
-	if [ -n "$$unformatted" ]; then \
-		echo "gofmt: the following files would be reformatted:"; \
-		echo "$$unformatted"; \
-		gofmt -d $$unformatted || true; \
-	else \
-		echo "gofmt: clean"; \
-	fi
+# vet-tags vets the module once per project build tag (goav1_oracle, the
+# refmvs oracle, the trace, poison and debug builds): nothing else compiles
+# the files behind them, so they rot unnoticed otherwise.
+vet-tags:
+	./scripts/vet_tags.sh
 
-fmt-check-strict:
-	@unformatted="$$(gofmt -l .)"; \
+fmt-check:
+	@unformatted="$$(git ls-files '*.go' | xargs gofmt -l)"; \
 	if [ -n "$$unformatted" ]; then \
 		echo "gofmt: the following files need formatting:" >&2; \
 		echo "$$unformatted" >&2; \
-		gofmt -d $$unformatted >&2 || true; \
 		exit 1; \
 	fi
 
@@ -729,7 +693,17 @@ dryrun-external-corpus:
 dryrun-extended:
 	GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomExtendedFrameWorkDryRun' -count=1 -timeout 1800s -v
 
-ci-local: fmt-check vet test alloc compiler-reports trace-zero
+# feature-sweep encodes about 190 small synthetic clips with aomenc and
+# SvtAv1EncApp, one coding tool or header mode each, and compares aom-go-dec's
+# output at one and at eight workers, and the layered decoder's through
+# dump_svc, with dav1d's. It needs aomenc, aomdec,
+# dav1d and ffmpeg (SvtAv1EncApp is optional), and is a local gate for decoder
+# changes, not part of CI.
+feature-sweep: build-cmd
+	go build $(GOAV1_PGO_FLAGS) -o $(dir $(CMDBIN))dump_svc ./cmd/dump_svc
+	./scripts/decoder_feature_sweep.py $(CMDBIN) -l $(dir $(CMDBIN))dump_svc
+
+ci-local: fmt-check vet vet-tags unsafe-check test alloc compiler-reports trace-zero
 
 # CMDDIR is the source directory of the aom-go-dec CLI. CMDBIN is the path
 # `build-cmd` writes the binary to (bin/aom-go-dec by default). Override
@@ -760,7 +734,7 @@ help:
 	@echo "  bench-corpus               generated corpus goav1 vs reference decoder throughput"
 	@echo "  bench-corpus-publish       strict generated corpus throughput requiring all reference decoders"
 	@echo "  bench-go-publish           strict Go benchmark runner with metadata sidecar"
-	@echo "  pgo-regenerate             print the D2-a PGO regeneration recipe"
+	@echo "  pgo-regenerate             merge fresh decode/encode CPU profiles into the PGO profile (PGO_STREAMS, PGO_ENC_CLIP)"
 	@echo "  qualitybench-publish       matched-CPU-budget publish encoder comparison"
 	@echo "  qualitybench-publish-singlethread fixed single-thread publish encoder comparison"
 	@echo "  gc-metrics                 decode GC scan/object-count benchmarks"
@@ -768,8 +742,7 @@ help:
 	@echo "  alloc                      run allocation regression checks"
 	@echo "  trace-zero                 prove entropy tracing compiles out of release hot paths"
 	@echo "  vet                        go vet ./..."
-	@echo "  fmt-check                  report any files gofmt would reformat (non-blocking)"
-	@echo "  fmt-check-strict           fail if gofmt would reformat anything"
+	@echo "  fmt-check                  fail if gofmt would reformat a tracked file"
 	@echo "  tidy-check                 fail if go.mod/go.sum is not tidy"
 	@echo "  webrtc-reference           require aomdec+dav1d for internal and public encoder/WebRTC reference-decode rows"
 	@echo "  webrtc-browser             require aomdec+dav1d for the browser-push WebRTC example"
@@ -785,9 +758,11 @@ help:
 	@echo "  dryrun-profiles            byte-exact profile clips (profile-0 S_FRAME, profile-1 4:4:4 incl. palette/filters/super-res, profile-2 4:2:2/12-bit)"
 	@echo "  dryrun-corpus              byte-exact generated real-content corpus (requires local generated corpus)"
 	@echo "  dryrun-external-corpus     byte-exact local external IVF corpus (requires GOAV1_EXTERNAL_CORPUS_DIR(S))"
+	@echo "  feature-sweep              aomenc/SVT tool-by-tool clips compared with dav1d (needs aomenc, aomdec, dav1d, ffmpeg)"
 	@echo "  test-motion-conformance    libaom convolve conformance"
 	@echo "  test-transform-conformance libaom transform conformance"
-	@echo "  ci-local                   run fmt-check + vet + test + alloc + compiler-reports + trace-zero"
+	@echo "  vet-tags                   go vet once per project build tag (oracle, trace, poison, debug builds)"
+	@echo "  ci-local                   run fmt-check + vet + vet-tags + unsafe-check + test + alloc + compiler-reports + trace-zero"
 	@echo "  build-cmd                  build the aom-go-dec CLI into ./bin"
 	@echo "  install-cmd                go install the aom-go-dec CLI"
 

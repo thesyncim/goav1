@@ -105,22 +105,22 @@ func TestTransformContextsAndMarkMatchDav1d(t *testing.T) {
 	if err := ctx.MarkTransform(BlockSize16x16, 0, 0, TransformSize16x16, true); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.AboveTxIntra[0] != 2 || ctx.LeftTxIntra[0] != 2 || ctx.AboveTx[0] != 2 || ctx.LeftTx[0] != 2 {
+	if ctx.A.TxIntra[0] != 2 || ctx.L.TxIntra[0] != 2 || ctx.A.Tx[0] != 2 || ctx.L.Tx[0] != 2 {
 		t.Fatalf("marked tx above_intra=%d left_intra=%d above=%d left=%d",
-			ctx.AboveTxIntra[0], ctx.LeftTxIntra[0], ctx.AboveTx[0], ctx.LeftTx[0])
+			ctx.A.TxIntra[0], ctx.L.TxIntra[0], ctx.A.Tx[0], ctx.L.Tx[0])
 	}
 	if got, err := ctx.SelectedTransformContextWithAvailability(TransformSize16x16, 0, 0, true, true); err != nil || got != 2 {
 		t.Fatalf("marked selected tx ctx=%d err=%v want 2", got, err)
 	}
-	if err := ctx.MarkInter(BlockSize32x16, 4, 0, InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}, true); err != nil {
+	if err := ctx.MarkInter(BlockSize32x16, 4, 0, InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}, true); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := ctx.SelectedTransformContextWithAvailability(TransformSize16x16, 4, 0, true, false); err != nil || got != 1 {
 		t.Fatalf("inter above selected tx ctx=%d err=%v want 1", got, err)
 	}
 
-	ctx.AboveTx[0] = 0
-	ctx.LeftTx[0] = 0
+	ctx.A.Tx[0] = 0
+	ctx.L.Tx[0] = 0
 	category, context, err := ctx.TransformPartitionContext(TransformPartitionRequest{
 		Size:     BlockSize16x16,
 		From:     TransformSize16x16,
@@ -220,10 +220,10 @@ func TestSelectedTransformContextSnapshotForInterFrameIntraBlock(t *testing.T) {
 	// 8x8 intra block at (x4=4, y4=0) should evaluate the inter-neighbor
 	// branch: above = block_size_wide(16) >= max_tx_wide(8) → 1, and
 	// left = block_size_high(16) >= max_tx_high(8) → 1, giving ctx=2.
-	ctx.AboveIntra[4] = 0
-	ctx.AboveBlockSize[4] = BlockSize16x16
-	ctx.LeftIntra[0] = 0
-	ctx.LeftBlockSize[0] = BlockSize16x16
+	ctx.A.Intra[4] = 0
+	ctx.A.BlockSize[4] = BlockSize16x16
+	ctx.L.Intra[0] = 0
+	ctx.L.BlockSize[0] = BlockSize16x16
 
 	gotPre, err := ctx.SelectedTransformContextWithAvailability(TransformSize8x8, 4, 0, true, true)
 	if err != nil || gotPre != 2 {
@@ -235,15 +235,15 @@ func TestSelectedTransformContextSnapshotForInterFrameIntraBlock(t *testing.T) {
 	// the current block (intra=1), but the snapshot must preserve the
 	// pre-mark neighbor values.
 	ctx.TxNeighborValid = true
-	ctx.TxAboveNeighborIntra = ctx.AboveIntra[4]
-	ctx.TxAboveNeighborBlockSize = ctx.AboveBlockSize[4]
-	ctx.TxLeftNeighborIntra = ctx.LeftIntra[0]
-	ctx.TxLeftNeighborBlockSize = ctx.LeftBlockSize[0]
+	ctx.TxAboveNeighborIntra = ctx.A.Intra[4]
+	ctx.TxAboveNeighborBlockSize = ctx.A.BlockSize[4]
+	ctx.TxLeftNeighborIntra = ctx.L.Intra[0]
+	ctx.TxLeftNeighborBlockSize = ctx.L.BlockSize[0]
 
-	ctx.AboveIntra[4] = 1
-	ctx.AboveBlockSize[4] = BlockSize8x8
-	ctx.LeftIntra[0] = 1
-	ctx.LeftBlockSize[0] = BlockSize8x8
+	ctx.A.Intra[4] = 1
+	ctx.A.BlockSize[4] = BlockSize8x8
+	ctx.L.Intra[0] = 1
+	ctx.L.BlockSize[0] = BlockSize8x8
 
 	gotPost, err := ctx.SelectedTransformContextWithAvailability(TransformSize8x8, 4, 0, true, true)
 	if err != nil || gotPost != 2 {
@@ -613,8 +613,8 @@ func TestTransformPartitionContextNeighborComparisonMatchesLibaom(t *testing.T) 
 	}
 	for _, c := range cases {
 		var ctx BlockModeContext
-		ctx.AboveTx[0] = c.recordLog2
-		ctx.LeftTx[0] = c.recordLog2
+		ctx.A.Tx[0] = c.recordLog2
+		ctx.L.Tx[0] = c.recordLog2
 		fromDims, ok := c.fromSize.Dimensions()
 		if !ok {
 			t.Fatalf("missing dims for %v", c.fromSize)

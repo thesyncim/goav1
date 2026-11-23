@@ -38,14 +38,6 @@ func adaptCDFEntry(v uint32, rate uint, up bool) uint32 {
 	return next
 }
 
-// nextCDFCount is update_cdf's count + (count < 32).
-func nextCDFCount(count uint16) uint16 {
-	if count < MaxCDFCount {
-		count++
-	}
-	return count
-}
-
 // cdfBound is the msac bound v = ((rng >> 8) * (cdf >> EC_PROB_SHIFT) >>
 // (7 - EC_PROB_SHIFT)) + EC_MIN_PROB * (n_symbols - val).
 func cdfBound(rngHi, c, minProb uint32) uint32 {

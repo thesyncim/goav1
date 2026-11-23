@@ -19,14 +19,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "eobToPosSmall", size: unsafe.Sizeof(eobToPosSmall), max: 33},
 		{name: "eobToPosLarge", size: unsafe.Sizeof(eobToPosLarge), max: 17},
 		{name: "eobMultiSizeTable", size: unsafe.Sizeof(eobMultiSizeTable), max: 19},
-		{name: "LumaCoeffStats", size: unsafe.Sizeof(LumaCoeffStats{}), max: 12},
-		{name: "LumaCoeffTreeScratch", size: unsafe.Sizeof(LumaCoeffTreeScratch{}), max: 10644},
-		{name: "TXBSkipRequest", size: unsafe.Sizeof(TXBSkipRequest{}), max: 2},
-		{name: "CoeffTokenRequest", size: unsafe.Sizeof(CoeffTokenRequest{}), max: 3},
-		// Keep request pointers grouped before scalar fields to leave the private
-		// fused-dequant target within one additional pointer-sized slot.
-		{name: "TXBDecodeRequest", size: unsafe.Sizeof(TXBDecodeRequest{}), max: 64},
-		{name: "CoeffDequantTarget", size: unsafe.Sizeof(CoeffDequantTarget{}), max: 104},
+		{name: "LumaCoeffTreeScratch", size: unsafe.Sizeof(LumaCoeffTreeScratch{}), max: coefLevelsLen},
 		{name: "BlockDeltaContext", size: unsafe.Sizeof(BlockDeltaContext{}), max: 8},
 		{name: "coeffGeometry", size: unsafe.Sizeof(coeffGeometry{}), max: 12},
 		{name: "coeffPos", size: unsafe.Sizeof(coeffPos{}), max: 6},
@@ -45,10 +38,10 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "TileSpan", size: unsafe.Sizeof(parser.TileSpan{}), max: 12},
 		// TemporalReferences (8 bytes) selects the per-superblock-row load_tmvs
 		// projection.
-		{name: "BlockLoopRequest", size: unsafe.Sizeof(BlockLoopRequest{}), max: 680}, // +16: MotionProgress (dav1d progress[0] link)
+		{name: "BlockLoopRequest", size: unsafe.Sizeof(BlockLoopRequest{}), max: 616}, // +16: MotionProgress (dav1d progress[0] link); -72: the coefficient hooks went with the per-TXB visit path
 		{name: "BlockLoopSuperblockVisit", size: unsafe.Sizeof(BlockLoopSuperblockVisit{}), max: 6},
 		{name: "BlockModeRequest", size: unsafe.Sizeof(BlockModeRequest{}), max: 48},
-		{name: "BlockPredictionModeResult", size: unsafe.Sizeof(BlockPredictionModeResult{}), max: 784},
+		{name: "BlockPredictionModeResult", size: unsafe.Sizeof(BlockPredictionModeResult{}), max: 168}, // -48: SubChromaInter out of line
 		{name: "IntraFlagRequest", size: unsafe.Sizeof(IntraFlagRequest{}), max: 22},
 		{name: "LumaIntraModeRequest", size: unsafe.Sizeof(LumaIntraModeRequest{}), max: 4},
 		{name: "InterReferenceRequest", size: unsafe.Sizeof(InterReferenceRequest{}), max: 24},

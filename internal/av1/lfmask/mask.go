@@ -18,6 +18,7 @@ package lfmask
 
 import (
 	"encoding/binary"
+	"math/bits"
 
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
@@ -88,7 +89,7 @@ func CalcEIH(sharpness int) FilterLUT {
 // conditional branch where clang emits csel.
 func bmin(a, b uint8) int {
 	d := int(a) - int(b)
-	return int(b) + d&(d>>63)
+	return int(b) + d&(d>>(bits.UintSize-1))
 }
 
 func imin(a, b int) int {

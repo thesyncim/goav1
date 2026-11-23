@@ -1340,10 +1340,6 @@ func decoderFrameWorkResidualEventSequencePtr(sequence SequenceHeader, event *De
 	}
 }
 
-func decoderFrameWorkResidualEventHasSequence(event *DecoderEvent) bool {
-	return decoderFrameWorkResidualEventHasSequencePtr(event)
-}
-
 func decoderFrameWorkResidualEventHasSequencePtr(event *DecoderEvent) bool {
 	if event == nil {
 		return false

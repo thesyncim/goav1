@@ -55,11 +55,8 @@ func FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals(f *testing.F) {
 
 		var scratch av1.DecoderFrameWorkTileResidualScratch
 		req := av1.DecoderFrameWorkTileResidualRequest{
-			Loop:          loopReq,
-			TransformMode: batch.TransformRef.TransformMode,
-			Transforms: func(visit av1.TileBlockLoopVisit) (av1.DecoderFrameWorkBlockTransforms, error) {
-				return av1.ReadDecoderFrameWorkBlockTransforms(batch, &state, visit)
-			},
+			Loop:            loopReq,
+			TransformMode:   batch.TransformRef.TransformMode,
 			Int32Scratch:    make([]int32, int32Len),
 			ResidualScratch: make([]int16, int16Len),
 		}
@@ -127,10 +124,7 @@ func FuzzPublicDecodeAndRetainDecoderFrameWorkBatchResiduals(f *testing.F) {
 		var scratch av1.DecoderFrameWorkTileResidualScratch
 		req := av1.DecoderFrameWorkBatchResidualRequest{
 			Tile: av1.DecoderFrameWorkTileResidualRequest{
-				TransformMode: batch.TransformRef.TransformMode,
-				Transforms: func(visit av1.TileBlockLoopVisit) (av1.DecoderFrameWorkBlockTransforms, error) {
-					return av1.ReadDecoderFrameWorkBlockTransforms(batch, &state, visit)
-				},
+				TransformMode:   batch.TransformRef.TransformMode,
 				Int32Scratch:    make([]int32, int32Len),
 				ResidualScratch: make([]int16, int16Len),
 			},

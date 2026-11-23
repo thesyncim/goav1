@@ -277,62 +277,66 @@ func (p *keyPD0) blockCost(rates *keyPD0Rates, x, y, n, d int) int64 {
 		step, th = 0, n
 		geo, _ = txBlockGeometryForDimensions(n, n)
 	}
+	nz := int16(0)
 	for r := range th {
 		row := src.Y[srcOff+(r<<step)*src.YStride:]
 		res := p.residual[r*n:]
 		for c := range n {
-			res[c] = int16(int(row[c]) - int(dc))
+			v := int16(int(row[c]) - int(dc))
+			res[c] = v
+			nz |= v
 		}
 	}
 	cn := geo.coeffCount
 	var energy uint64
-	if n == 64 {
-		energy, err = transform.ForwardDCT64ExtentEnergy(p.tran[:cn], geo.coeffHeight, p.residual[:n*th], n, geo.size)
-	} else {
-		err = forwardTransformBlock8BitResidualTrusted(p.tran[:cn], p.residual[:n*th], p.scratch[:n*th], n, th, transform.TypeDCTDCT)
-	}
-	if err != nil {
-		return 1 << 62
-	}
-	if quantize.QuantizeBlockScaledB(p.qcoeff[:cn], geo.coeffHeight, p.tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, p.q, geo.txScale) != nil {
-		return 1 << 62
-	}
-	scan, ok := p.st.scanForTransformSize(geo.tx)
-	if !ok {
-		scan, ok = p.st.scanForThinTransformSize(geo.tx)
-	}
+	var scan []int16
 	eob := 0
-	if ok {
-		for i := cn - 1; i >= 0; i-- {
-			if p.qcoeff[scan[i]] != 0 {
-				eob = i + 1
-				break
-			}
-		}
-	}
-	// Transform-domain SSE against the dequantized levels
-	// (svt_aom_picture_full_distortion32_bits_single), plus the dropped
-	// 64-extent energy, at the TX scale (MAX_TX_SCALE 1) and the subres step.
 	var dist int64
-	for i := range cn {
-		t := int64(p.tran[i])
-		dq := int64(0)
-		if lv := int64(p.qcoeff[i]); lv != 0 {
-			deq := int64(p.q.AC)
-			if i == 0 {
-				deq = int64(p.q.DC)
-			}
-			a := lv
-			if a < 0 {
-				a = -a
-			}
-			dq = (a * deq) >> geo.txScale
-			if lv < 0 {
-				dq = -dq
-			}
+	// A zero residual transforms, quantizes and reconstructs to zero: no
+	// levels, no distortion, no dropped energy.
+	if nz != 0 {
+		if n == 64 {
+			energy, err = transform.ForwardDCT64ExtentEnergy(p.tran[:cn], geo.coeffHeight, p.residual[:n*th], n, geo.size)
+		} else {
+			err = forwardTransformBlock8BitResidualTrusted(p.tran[:cn], p.residual[:n*th], p.scratch[:n*th], n, th, transform.TypeDCTDCT)
 		}
-		e := t - dq
-		dist += e * e
+		if err != nil {
+			return 1 << 62
+		}
+		if quantize.QuantizeBlockScaledB(p.qcoeff[:cn], geo.coeffHeight, p.tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, p.q, geo.txScale) != nil {
+			return 1 << 62
+		}
+		var ok bool
+		scan, ok = p.st.scanForTransformSize(geo.tx)
+		if !ok {
+			scan, ok = p.st.scanForThinTransformSize(geo.tx)
+		}
+		if ok {
+			eob = int(interTXBResult(p.qcoeff[:cn], scan, cn).EOB)
+		}
+		// Transform-domain SSE against the dequantized levels
+		// (svt_aom_picture_full_distortion32_bits_single), plus the dropped
+		// 64-extent energy, at the TX scale (MAX_TX_SCALE 1) and the subres step.
+		for i := range cn {
+			t := int64(p.tran[i])
+			dq := int64(0)
+			if lv := int64(p.qcoeff[i]); lv != 0 {
+				deq := int64(p.q.AC)
+				if i == 0 {
+					deq = int64(p.q.DC)
+				}
+				a := lv
+				if a < 0 {
+					a = -a
+				}
+				dq = (a * deq) >> geo.txScale
+				if lv < 0 {
+					dq = -dq
+				}
+			}
+			e := t - dq
+			dist += e * e
+		}
 	}
 	dist += int64(energy)
 	if shift := (1 - int(geo.txScale)) * 2; shift >= 0 {

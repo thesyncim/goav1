@@ -354,10 +354,6 @@ func checkedPlaneLength(width, height, stride int) (int, bool) {
 	return (height-1)*stride + width, true
 }
 
-func validateSourcePlane42016Samples(name string, samples []uint16, stride, width, height int, maxSample uint16, bitDepth uint8) error {
-	return validateSourcePlaneColor16Samples("4:2:0", name, samples, stride, width, height, maxSample, bitDepth)
-}
-
 func validateSourcePlaneColor16Samples(label string, name string, samples []uint16, stride, width, height int, maxSample uint16, bitDepth uint8) error {
 	for y := range height {
 		row := samples[y*stride : y*stride+width]
@@ -378,8 +374,8 @@ const encoderIntraEdgeFilter = true
 func losslessKeyframeSequence(width, height int) SequenceHeader {
 	return SequenceHeader{
 		EnableIntraEdgeFilter: encoderIntraEdgeFilter,
-		Profile:              Profile0,
-		OperatingPointsCount: 1,
+		Profile:               Profile0,
+		OperatingPointsCount:  1,
 		OperatingPoints: [32]SequenceOperatingPoint{
 			{SeqLevelIdx: SequenceLevelMax},
 		},

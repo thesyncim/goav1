@@ -327,10 +327,10 @@ func (st *lossyEncodeState) encodeHighBitDepthLosslessIntraInterBlock(src Source
 	modeCtx.TxNeighborValid = false
 	if int(block.X4) < tile.MaxBlockModeSlots && int(block.Y4) < tile.MaxBlockModeSlots {
 		modeCtx.TxNeighborValid = true
-		modeCtx.TxAboveNeighborIntra = modeCtx.AboveIntra[block.X4]
-		modeCtx.TxAboveNeighborBlockSize = modeCtx.AboveBlockSize[block.X4]
-		modeCtx.TxLeftNeighborIntra = modeCtx.LeftIntra[block.Y4]
-		modeCtx.TxLeftNeighborBlockSize = modeCtx.LeftBlockSize[block.Y4]
+		modeCtx.TxAboveNeighborIntra = modeCtx.A.Intra[block.X4]
+		modeCtx.TxAboveNeighborBlockSize = modeCtx.A.BlockSize[block.X4]
+		modeCtx.TxLeftNeighborIntra = modeCtx.L.Intra[block.Y4]
+		modeCtx.TxLeftNeighborBlockSize = modeCtx.L.BlockSize[block.Y4]
 	}
 	if err := tile.WriteIntraFlag(st.w, &st.intraCDFs, modeCtx, tile.IntraFlagRequest{
 		FrameType: parser.FrameTypeInter,
@@ -480,10 +480,10 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
 
-	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+	refs := tile.InterReferencesResult{Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameNone}
 	refPlane := ref
 	if golden != nil && highBitDepthGoldenReferenceWins(src.Y, src.YStride, ref, *golden, lumaPX, lumaPY, n, n, src.BitDepth) {
-		refs.Ref[0] = tile.ReferenceFrameGolden
+		refs.Ref0 = tile.ReferenceFrameGolden
 		refPlane = *golden
 	}
 	var stack tile.ReferenceMVStackResult
@@ -549,13 +549,13 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 		return fmt.Errorf("transform tree: %w", err)
 	}
 	if st.lfMap != nil {
-		if err := markLoopFilterBlock(st.lfMap, block, lfTree, false, false, uint8(refs.Ref[0])+1, loopfilter.ModeDeltaClassZero); err != nil {
+		if err := markLoopFilterBlock(st.lfMap, block, lfTree, false, false, uint8(refs.Ref0)+1, loopfilter.ModeDeltaClassZero); err != nil {
 			return fmt.Errorf("mark loop filter: %w", err)
 		}
 	}
 
 	pred := st.predY16[:n*n]
-	if err := predictIntoScaledHighBitDepthMono16(pred, st.predY16Bytes[:n*n*2], refPlane, src.BitDepth, src.Width, src.Height, lumaPX, lumaPY, n, n, motion.Vector{}, &st.scaledScratch); err != nil {
+	if err := predictIntoScaledHighBitDepthMono16(pred, st.predY16Bytes[:n*n*2], refPlane, src.BitDepth, src.Width, src.Height, lumaPX, lumaPY, n, n, motion.Vector{}, &st.mc.scaledScratch); err != nil {
 		return fmt.Errorf("high-bit-depth monochrome prediction: %w", err)
 	}
 	st.interTxTypeReq.Size = tile.TransformSize8x8
@@ -586,10 +586,10 @@ func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, re
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
 
-	interRefs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+	interRefs := tile.InterReferencesResult{Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameNone}
 	refPlanes := refs
 	if golden != nil && highBitDepthGoldenReferenceWins(src.Y, src.YStride, refs[0], (*golden)[0], lumaPX, lumaPY, n, n, src.BitDepth) {
-		interRefs.Ref[0] = tile.ReferenceFrameGolden
+		interRefs.Ref0 = tile.ReferenceFrameGolden
 		refPlanes = *golden
 	}
 	var stack tile.ReferenceMVStackResult
@@ -655,13 +655,13 @@ func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, re
 		return fmt.Errorf("transform tree: %w", err)
 	}
 	if st.lfMap != nil {
-		if err := markLoopFilterBlock(st.lfMap, block, lfTree, false, false, uint8(interRefs.Ref[0])+1, loopfilter.ModeDeltaClassZero); err != nil {
+		if err := markLoopFilterBlock(st.lfMap, block, lfTree, false, false, uint8(interRefs.Ref0)+1, loopfilter.ModeDeltaClassZero); err != nil {
 			return fmt.Errorf("mark loop filter: %w", err)
 		}
 	}
 
 	pred := st.predY16[:n*n]
-	if err := predictIntoScaledHighBitDepthMono16(pred, st.predY16Bytes[:n*n*2], refPlanes[0], src.BitDepth, src.Width, src.Height, lumaPX, lumaPY, n, n, motion.Vector{}, &st.scaledScratch); err != nil {
+	if err := predictIntoScaledHighBitDepthMono16(pred, st.predY16Bytes[:n*n*2], refPlanes[0], src.BitDepth, src.Width, src.Height, lumaPX, lumaPY, n, n, motion.Vector{}, &st.mc.scaledScratch); err != nil {
 		return fmt.Errorf("high-bit-depth color luma prediction: %w", err)
 	}
 	st.interTxTypeReq.Size = tile.TransformSize8x8
@@ -708,7 +708,7 @@ func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, re
 			q = st.vQuant
 		}
 		chromaPred := st.predY16[:cw*ch]
-		if err := predictIntoScaledHighBitDepthMono16(chromaPred, st.predY16Bytes[:cw*ch*2], refPlanes[plane], src.BitDepth, chromaWidth, chromaHeight, chromaX, chromaY, cw, ch, motion.Vector{}, &st.scaledScratch); err != nil {
+		if err := predictIntoScaledHighBitDepthMono16(chromaPred, st.predY16Bytes[:cw*ch*2], refPlanes[plane], src.BitDepth, chromaWidth, chromaHeight, chromaX, chromaY, cw, ch, motion.Vector{}, &st.mc.scaledScratch); err != nil {
 			return fmt.Errorf("high-bit-depth color chroma %d prediction: %w", plane, err)
 		}
 		if err := st.encodeTXBPredRect16(rdata, data, src.ChromaStride, chromaX, chromaY, cw, ch, src.BitDepth, q, tile.CoeffContextRequest{
@@ -739,10 +739,6 @@ func (st *lossyEncodeState) highBitDepthMonoGoldenPlane(ref SourceFrameMono16) (
 		return av1frame.Plane{}, err
 	}
 	return highBitDepthReferencePlane(ref.Y, ref.YStride, ref.Width, ref.Height, &st.goldenY16Bytes)
-}
-
-func (st *lossyEncodeState) highBitDepth420ReferencePlanes(ref SourceFrame42016) ([3]av1frame.Plane, error) {
-	return st.highBitDepthColorReferencePlanes(ref, parser.ColorConfig{BitDepth: ref.BitDepth, SubsamplingX: true, SubsamplingY: true})
 }
 
 func (st *lossyEncodeState) highBitDepthColorReferencePlanes(ref SourceFrame42016, color parser.ColorConfig) ([3]av1frame.Plane, error) {

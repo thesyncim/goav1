@@ -19,14 +19,14 @@ func TestWriteInterRefSymbolsRoundTrip(t *testing.T) {
 
 	var ctx BlockModeContext
 	for i := range MaxBlockModeSlots {
-		ctx.AboveIntra[i] = uint8(rng.Intn(2))
-		ctx.LeftIntra[i] = uint8(rng.Intn(2))
+		ctx.A.Intra[i] = uint8(rng.Intn(2))
+		ctx.L.Intra[i] = uint8(rng.Intn(2))
 		for r := range 2 {
-			ctx.AboveRef[r][i] = ReferenceFrame(rng.Intn(7))
-			ctx.LeftRef[r][i] = ReferenceFrame(rng.Intn(7))
+			ctx.A.Ref[r][i] = ReferenceFrame(rng.Intn(7))
+			ctx.L.Ref[r][i] = ReferenceFrame(rng.Intn(7))
 		}
-		ctx.AboveCompound[i] = uint8(rng.Intn(2))
-		ctx.LeftCompound[i] = uint8(rng.Intn(2))
+		ctx.A.CompType[i] = compInterTypeFor(rng.Intn(2) == 1)
+		ctx.L.CompType[i] = compInterTypeFor(rng.Intn(2) == 1)
 	}
 
 	singles := []ReferenceFrame{
@@ -34,15 +34,15 @@ func TestWriteInterRefSymbolsRoundTrip(t *testing.T) {
 		ReferenceFrameGolden, ReferenceFrameBWD, ReferenceFrameAltref2, ReferenceFrameAltref,
 	}
 	compounds := []InterReferencesResult{
-		{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameLast2}, Compound: true, Unidir: true},
-		{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameLast3}, Compound: true, Unidir: true},
-		{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameGolden}, Compound: true, Unidir: true},
-		{Ref: [2]ReferenceFrame{ReferenceFrameBWD, ReferenceFrameAltref}, Compound: true, Unidir: true},
+		{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameLast2, Compound: true, Unidir: true},
+		{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameLast3, Compound: true, Unidir: true},
+		{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameGolden, Compound: true, Unidir: true},
+		{Ref0: ReferenceFrameBWD, Ref1: ReferenceFrameAltref, Compound: true, Unidir: true},
 	}
 	for _, fwd := range []ReferenceFrame{ReferenceFrameLast, ReferenceFrameLast2, ReferenceFrameLast3, ReferenceFrameGolden} {
 		for _, bwd := range []ReferenceFrame{ReferenceFrameBWD, ReferenceFrameAltref2, ReferenceFrameAltref} {
 			compounds = append(compounds, InterReferencesResult{
-				Ref:      [2]ReferenceFrame{fwd, bwd},
+				Ref0: fwd, Ref1: bwd,
 				Compound: true,
 			})
 		}
@@ -108,11 +108,11 @@ func TestWriteInterRefSymbolsRoundTrip(t *testing.T) {
 					ReferenceMode: singleRefModes[rng.Intn(len(singleRefModes))],
 					X4:            x4, Y4: y4, HaveTop: haveTop, HaveLeft: haveLeft,
 				}
-				refs = InterReferencesResult{Ref: [2]ReferenceFrame{singles[rng.Intn(len(singles))], ReferenceFrameNone}}
+				refs = InterReferencesResult{Ref0: singles[rng.Intn(len(singles))], Ref1: ReferenceFrameNone}
 			}
 			o = op{kind: 1, refReq: req, refs: refs}
 			if err := WriteInterReferences(&w, &encRefs, &ctx, req, refs); err != nil {
-				t.Fatalf("WriteInterReferences size=%v mode=%v ref=%v: %v", req.Size, req.ReferenceMode, refs.Ref[0], err)
+				t.Fatalf("WriteInterReferences size=%v mode=%v ref=%v: %v", req.Size, req.ReferenceMode, refs.Ref0, err)
 			}
 		}
 		ops = append(ops, o)
@@ -149,7 +149,7 @@ func TestWriteInterRefSymbolsRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("op %d ReadInterReferences: %v", i, err)
 			}
-			if got.Compound != o.refs.Compound || got.Ref != o.refs.Ref {
+			if got.Compound != o.refs.Compound || got.Pair() != o.refs.Pair() {
 				t.Fatalf("op %d refs=%+v want %+v", i, got, o.refs)
 			}
 		}

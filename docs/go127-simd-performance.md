@@ -9,7 +9,7 @@ performance.
 The final validation for the October 8 follow-up uses official Go 1.27.2.
 Earlier measurements below retain their original Go 1.27.1 labels; compiler
 versions are not mixed within a before/after comparison. The module minimum
-remains 1.27.0 and CI tracks 1.27.x without a toolchain directive.
+is now 1.27.4 and CI tracks 1.27.x without a toolchain directive.
 
 These arm64 kernel measurements used the official Go 1.27.1 toolchain with
 `GOEXPERIMENT=simd` on an Apple M4 Max. The source baseline was `35c0602a`; the
@@ -286,13 +286,13 @@ To collect the Go values, set the corpus directory and run:
 ~~~sh
 export GOAV1_PUBLIC_FULLCLIP_SAMPLES=1 GOAV1_BENCH_CORPUS_DIR=/path/to/benchcorpus
 export GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 GOTOOLCHAIN=local
-scripts/simdtip.sh test -run '^TestPublicDecoderFullClipCorpusSamples$' -count=1 -v .
+go test -run '^TestPublicDecoderFullClipCorpusSamples$' -count=1 -v .
 ~~~
 
 ## Reproducing the kernel results
 
 Use official Go 1.27.1 for the comparisons below; the module minimum is Go
-1.27.0 and the project does not pin a patch release. The checkpoints identify
+1.27.4 and no toolchain directive pins a release. The checkpoints identify
 the available source and benchmark harness containing each candidate and its
 comparator. They may differ from the exact build snapshot behind the stored
 medians; use the listed benchmark selectors at those checkpoints.
@@ -306,7 +306,7 @@ medians; use the listed benchmark selectors at those checkpoints.
 | DSP and CDEF | `ce77788f` | `dsp`: MinMax8x8; `cdef`: FindDirection SIMD and assembly comparisons |
 | Wiener and HBD loop filters | `3298f798` | `restoration`: Wiener horizontal/vertical; `loopfilter`: filter6/filter14 edge cases |
 
-At a checkpoint, run `scripts/simdtip.sh test -run '^$' -cpu=1 -bench '<selector>' -benchmem -benchtime=200ms -count=5 <package>`. Keep `GOMAXPROCS=1`, `GOGC=100`, and `GOFLAGS=`; use `GOTOOLCHAIN=local` with the official Go executable. Run the assembly fallback comparison with `GOEXPERIMENT=nosimd` and the same inverse-DCT selector. The temporary raw logs are not checked into the repository.
+At a checkpoint, run `GOEXPERIMENT=simd go test -run '^$' -cpu=1 -bench '<selector>' -benchmem -benchtime=200ms -count=5 <package>`. Keep `GOMAXPROCS=1`, `GOGC=100`, and `GOFLAGS=`; use `GOTOOLCHAIN=local` with the official Go executable. Run the assembly fallback comparison with `GOEXPERIMENT=nosimd` and the same inverse-DCT selector. The temporary raw logs are not checked into the repository.
 
 These measurements cover one M4 Max and selected kernel shapes. They do not
 establish codec speedups, cross-machine results, or superiority to optimized C

@@ -182,7 +182,7 @@ func compactTestVisit(b orderTestBlock, cols, rows, index int, skip bool) tile.B
 			Valid:                true,
 			InterReferencesValid: true,
 			InterReferences: tile.InterReferencesResult{
-				Ref: [2]tile.ReferenceFrame{tile.ReferenceFrame(index % int(tile.ReferenceFrameAltref+1)), tile.ReferenceFrameNone},
+				Ref0: tile.ReferenceFrame(index % int(tile.ReferenceFrameAltref+1)), Ref1: tile.ReferenceFrameNone,
 			},
 			InterModeValid: true,
 			InterMode:      tile.InterModeResult{Mode: mode},

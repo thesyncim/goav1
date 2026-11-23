@@ -17,7 +17,6 @@ type val struct {
 type gen struct {
 	sb    strings.Builder
 	memo  map[string]val
-	x     [64]val
 	tmpN  int
 	stage string
 }

@@ -11,7 +11,6 @@ package entropy
 import (
 	"encoding/binary"
 	"math/bits"
-	"unsafe"
 )
 
 const (
@@ -32,16 +31,7 @@ const (
 	// NOT rescale this constant or every BitsRead consumer (tile trailing-bit
 	// checks) would shift by ecWindow-32.
 	readerInitTellOffs = 10 - (32 - 8)
-
-	cdf4HighTokenMax = 12
 )
-
-// byteAtUnchecked loads src[pos] after the caller has proven pos < len(src).
-// Refill loops already carry that branch; this keeps the hot byte load free of
-// a second slice-bounds edge.
-func byteAtUnchecked(src []byte, pos int) byte {
-	return *(*byte)(unsafe.Add(unsafe.Pointer(unsafe.SliceData(src)), pos))
-}
 
 func readerTell(pos int, cnt int32, tellOffs int32) int {
 	return pos*8 - int(cnt) + int(tellOffs)
@@ -83,11 +73,10 @@ func refillState(src []byte, pos int, dif uint64, cnt int32, tellOffs int32) (in
 }
 
 //go:noinline
-//go:nosplit
 func refillStateSlow(src []byte, pos int, dif uint64, cnt int32, tellOffs int32) (int, uint64, int32, int32) {
 	shift := ecWindow - 9 - (cnt + 15)
 	for shift >= 0 && pos < len(src) {
-		dif ^= uint64(byteAtUnchecked(src, pos)) << uint(shift)
+		dif ^= uint64(src[pos]) << uint(shift)
 		cnt += 8
 		shift -= 8
 		pos++
@@ -139,6 +128,18 @@ func (r *Reader) Cursor() Cursor {
 		tellOffs:       r.tellOffs,
 		allowCDFUpdate: r.allowCDFUpdate,
 	}
+}
+
+// Load points c at r's state. It stores each field in place, so a cursor
+// that lives in memory is not built in a temporary and copied.
+func (c *Cursor) Load(r *Reader) {
+	c.src = r.src
+	c.pos = r.pos
+	c.dif = r.dif
+	c.rng = r.rng
+	c.cnt = r.cnt
+	c.tellOffs = r.tellOffs
+	c.allowCDFUpdate = r.allowCDFUpdate
 }
 
 // CommitTo writes cursor state back to r.
@@ -300,8 +301,6 @@ func (r *Reader) ReadBits(n uint8) (uint32, error) {
 
 // ReadBitsTrusted decodes n equiprobable bits MSB-first for callers that have
 // already proven n <= 32 and the reader is non-nil.
-//
-//go:nosplit
 func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
 	if n == 0 {
 		return 0
@@ -347,7 +346,6 @@ func (r *Reader) ReadBitsTrusted(n uint8) uint32 {
 	return v
 }
 
-//go:nosplit
 func (c *Cursor) readBitTrustedTrace() uint8 {
 	dif := c.dif
 	rangeValue := uint32(c.rng)
@@ -422,33 +420,7 @@ func (c *Cursor) ReadBitTrustedInline() uint8 {
 	return bit
 }
 
-// ReadBitNoRefillTrusted decodes one equiprobable bit and reports whether the
-// caller must immediately refill before performing any other entropy operation.
-// The trusted caller enters with a normalized range and non-negative count.
-//
-//go:nosplit
-func (c *Cursor) ReadBitNoRefillTrusted() (bit uint8, refill bool) {
-	if traceEntropyReads {
-		return c.readBitTrustedTrace(), false
-	}
-	split := ((c.rng >> 8) << 7) + ecMinProb
-	bit = 1
-	if c.dif >= uint64(split)<<(ecWindow-16) {
-		c.dif -= uint64(split) << (ecWindow - 16)
-		split = c.rng - split
-		bit = 0
-	}
-	// Normalized range splits yield shift 0..2; the mask removes Go's wide-shift guard.
-	shift := uint(16-bits.Len16(split)) & 3
-	c.rng = split << shift
-	c.cnt -= int16(shift)
-	c.dif = ((c.dif + 1) << shift) - 1
-	return bit, c.cnt < 0
-}
-
 // ReadBitsTrusted decodes n equiprobable bits MSB-first from cursor state.
-//
-//go:nosplit
 func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 	if n == 0 {
 		return 0
@@ -505,120 +477,6 @@ func (c *Cursor) ReadBitsTrusted(n uint8) uint32 {
 	c.rng = uint16(rng)
 	c.cnt = int16(cnt)
 	return v
-}
-
-// ReadUnsignedGolombTrusted decodes the unary-prefix/equiprobable-suffix
-// Exp-Golomb shape used by AV1 coefficient tails. It returns ok=false after
-// consuming the bit that pushes the prefix beyond maxLength, matching callers
-// that validate malformed coefficient tails after the read.
-//
-//go:nosplit
-func (c *Cursor) ReadUnsignedGolombTrusted(maxLength uint8) (uint32, bool) {
-	dif := c.dif
-	rng := uint32(c.rng)
-	cnt := int32(c.cnt)
-	pos := 0
-	tellOffs := int32(0)
-	posLoaded := false
-	length := uint8(0)
-
-	for {
-		rangeValue := rng
-		traceDif := dif
-		split := (rangeValue >> 8) << 7
-		split += ecMinProb
-		window := uint64(split) << (ecWindow - 16)
-
-		bit := uint8(1)
-		nextRange := split
-		difTaken, rngTaken := dif-window, rangeValue-split
-		if dif >= window {
-			dif, nextRange, bit = difTaken, rngTaken, 0
-		}
-
-		if traceEntropyReads {
-			if !posLoaded {
-				pos = int(c.pos)
-				tellOffs = int32(c.tellOffs)
-				posLoaded = true
-			}
-			traceBoolRead(CDFProbTop/2, traceDif, rng, readerTell(pos, cnt, tellOffs))
-		}
-		shift := normShift16(nextRange)
-		cnt -= shift
-		dif = ((dif + 1) << uint(shift)) - 1
-		rng = nextRange << uint(shift)
-		if cnt < 0 {
-			if !posLoaded {
-				pos = int(c.pos)
-				tellOffs = int32(c.tellOffs)
-				posLoaded = true
-			}
-			pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
-		}
-		length++
-		if length > maxLength {
-			if posLoaded {
-				c.pos = uint32(pos)
-				c.tellOffs = int16(tellOffs)
-			}
-			c.dif = dif
-			c.rng = uint16(rng)
-			c.cnt = int16(cnt)
-			return 0, false
-		}
-		if bit != 0 {
-			break
-		}
-	}
-
-	var suffix uint32
-	for i := uint8(1); i < length; i++ {
-		rangeValue := rng
-		traceDif := dif
-		split := (rangeValue >> 8) << 7
-		split += ecMinProb
-		window := uint64(split) << (ecWindow - 16)
-
-		bit := uint8(1)
-		nextRange := split
-		difTaken, rngTaken := dif-window, rangeValue-split
-		if dif >= window {
-			dif, nextRange, bit = difTaken, rngTaken, 0
-		}
-
-		if traceEntropyReads {
-			if !posLoaded {
-				pos = int(c.pos)
-				tellOffs = int32(c.tellOffs)
-				posLoaded = true
-			}
-			traceBoolRead(CDFProbTop/2, traceDif, rng, readerTell(pos, cnt, tellOffs))
-		}
-		shift := normShift16(nextRange)
-		cnt -= shift
-		dif = ((dif + 1) << uint(shift)) - 1
-		rng = nextRange << uint(shift)
-		if cnt < 0 {
-			if !posLoaded {
-				pos = int(c.pos)
-				tellOffs = int32(c.tellOffs)
-				posLoaded = true
-			}
-			pos, dif, cnt, tellOffs = refillState(c.src, pos, dif, cnt, tellOffs)
-		}
-		suffix = (suffix << 1) | uint32(bit)
-	}
-
-	if posLoaded {
-		c.pos = uint32(pos)
-		c.tellOffs = int16(tellOffs)
-	}
-	c.dif = dif
-	c.rng = uint16(rng)
-	c.cnt = int16(cnt)
-	value := (uint32(1) << uint(length-1)) | suffix
-	return value - 1, true
 }
 
 // ReadUniform decodes an AV1 ns(n)-style uniformly distributed value in
@@ -904,29 +762,6 @@ func (r *Reader) ReadSymbolTrusted(cdf []uint16, symbols int) (int, error) {
 		return 0, ErrInvalidCDF
 	}
 	return r.readSymbolTrusted(cdf, symbols)
-}
-
-// ReadCDFTrusted decodes one symbol from caller-owned CDF state without the
-// per-call monotonicity validation. The CDF must be valid by construction; see
-// ReadSymbolTrusted.
-func (r *Reader) ReadCDFTrusted(cdf *CDF) (int, error) {
-	if r == nil || cdf == nil {
-		return 0, ErrInvalidCDF
-	}
-	symbols := int(cdf.symbols)
-	if symbols < 2 || symbols > MaxSymbols {
-		return 0, ErrInvalidCDF
-	}
-	switch symbols {
-	case 2:
-		return r.readBinaryCDFKnown(&cdf.values), nil
-	case 3:
-		return r.readCDF3Known(&cdf.values), nil
-	case 4:
-		return r.readCDF4Known(&cdf.values), nil
-	default:
-		return r.readSymbolKnown(&cdf.values, symbols)
-	}
 }
 
 // ReadCDFUnchecked decodes one symbol from cursor state. The caller must prove
@@ -1885,20 +1720,6 @@ func (c *Cursor) ReadCDF4Unchecked(cdf *CDF) int {
 	return c.readCDF4Known(&cdf.values)
 }
 
-// ReadCDF4UpdateUnchecked decodes one four-symbol CDF and always adapts it.
-// Hot callers that already selected the update-enabled path use this to avoid a
-// per-symbol update-mode branch.
-func (c *Cursor) ReadCDF4UpdateUnchecked(cdf *CDF) int {
-	return c.readCDF4UpdateKnown(&cdf.values)
-}
-
-// ReadCDF4NoUpdateUnchecked decodes one four-symbol CDF without adapting it.
-// Hot callers that already selected the no-update path use this to avoid a
-// per-symbol update-mode branch.
-func (c *Cursor) ReadCDF4NoUpdateUnchecked(cdf *CDF) int {
-	return c.readCDF4Known(&cdf.values)
-}
-
 // ReadCDF4HighTokenUnchecked decodes the AV1 high-token base-range chain used
 // by coefficient BR syntax. It is equivalent to reading the same four-symbol
 // CDF up to four times, summing symbols, and stopping early when a symbol below
@@ -1908,18 +1729,6 @@ func (c *Cursor) ReadCDF4HighTokenUnchecked(cdf *CDF) uint8 {
 	if c.allowCDFUpdate {
 		return c.readCDF4HighTokenUpdateLoop(&cdf.values)
 	}
-	return c.readCDF4HighTokenKnown(&cdf.values)
-}
-
-// ReadCDF4HighTokenUpdateUnchecked decodes a high-token chain and always adapts
-// the CDF row after each symbol.
-func (c *Cursor) ReadCDF4HighTokenUpdateUnchecked(cdf *CDF) uint8 {
-	return c.readCDF4HighTokenUpdateLoop(&cdf.values)
-}
-
-// ReadCDF4HighTokenNoUpdateUnchecked decodes a high-token chain without CDF
-// adaptation.
-func (c *Cursor) ReadCDF4HighTokenNoUpdateUnchecked(cdf *CDF) uint8 {
 	return c.readCDF4HighTokenKnown(&cdf.values)
 }
 
@@ -2596,16 +2405,6 @@ func (r *Reader) refill() {
 	r.dif = dif
 	r.cnt = int16(cnt)
 	r.tellOffs = int16(tellOffs)
-}
-
-// RefillTrusted applies the cold byte refill immediately after a no-refill
-// trusted read reports that the normalized count is negative.
-func (c *Cursor) RefillTrusted() {
-	pos, dif, cnt, tellOffs := refillState(c.src, int(c.pos), c.dif, int32(c.cnt), int32(c.tellOffs))
-	c.pos = uint32(pos)
-	c.dif = dif
-	c.cnt = int16(cnt)
-	c.tellOffs = int16(tellOffs)
 }
 
 // readCDF9To11Known is the unrolled scalar decode for 9 to 11 symbols, used

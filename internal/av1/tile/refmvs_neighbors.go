@@ -27,14 +27,14 @@ func refmvsFindOddZero(buf []uint8, length int) bool {
 // edge context.
 func (c *BlockModeContext) hasOverlappableNeighbours(block *BlockVisit) bool {
 	x4, y4 := int(block.X4), int(block.Y4)
-	if block.HaveLeft && refmvsFindOddZero(c.LeftIntra[y4+1:], int(block.VisibleH4)>>1) {
+	if block.HaveLeft && refmvsFindOddZero(c.L.Intra[y4+1:], int(block.VisibleH4)>>1) {
 		return true
 	}
-	return block.HaveTop && refmvsFindOddZero(c.AboveIntra[x4+1:], int(block.VisibleW4)>>1)
+	return block.HaveTop && refmvsFindOddZero(c.A.Intra[x4+1:], int(block.VisibleW4)>>1)
 }
 
 func refmvsMatchesSingleRef(b *refmvsBlock, ref int8) bool {
-	return b.ref[0] == ref && b.ref[1] == -1
+	return b.ref.ref0() == ref && b.ref.ref1() == -1
 }
 
 // findMatchingRef ports dav1d's find_matching_ref. ref is the 0-based
@@ -235,34 +235,35 @@ func (rt *refmvsTile) deriveWarpMV(block *BlockVisit, masks *[2]uint64, mvIn mot
 // left (r[0][bx-1]), top (r[-1][bx]) and top-left (r[-1][bx-1]) neighbors
 // must all be inter for the chroma block to be predicted per luma sub-block.
 // Cell filters follow dav1d: t->l.filter[by4], t->a->filter[bx4] and
-// tl_4x4_filter (the first 4x4 of the 8x8 split). The trailing self cell's MV
-// and reference are filled by the caller.
-func (rt *refmvsTile) subChromaCells(c *BlockModeContext, block *BlockVisit, ssX, ssY bool, filters motion.InterpFilters) (SubChromaInterResult, bool) {
+// tl_4x4_filter (the first 4x4 of the 8x8 split); the trailing self cell
+// carries the block's own mv, ref and filters. The cells are written in place
+// into out, which is left untouched when the block is not split.
+func (rt *refmvsTile) subChromaCells(c *BlockModeContext, block *BlockVisit, ssX, ssY bool, filters motion.InterpFilters, mv motion.Vector, ref ReferenceFrame, out *SubChromaInterResult) bool {
 	dims := blockDimensions[block.Size]
 	is4x := dims.W4 == 1 && ssX
 	is4y := dims.H4 == 1 && ssY
 	if !is4x && !is4y {
-		return SubChromaInterResult{}, false
+		return false
 	}
 	bx, by := int32(block.MICol), int32(block.MIRow)
 	base := (by & 31) + 5
 	var left, top, topLeft *refmvsBlock
 	if is4x {
 		left = &rt.buf[rt.rows[base]+bx-1]
-		if left.ref[0] <= 0 {
-			return SubChromaInterResult{}, false
+		if left.ref.ref0() <= 0 {
+			return false
 		}
 	}
 	if is4y {
 		top = &rt.buf[rt.rows[base-1]+bx]
-		if top.ref[0] <= 0 {
-			return SubChromaInterResult{}, false
+		if top.ref.ref0() <= 0 {
+			return false
 		}
 	}
 	if is4x && is4y {
 		topLeft = &rt.buf[rt.rows[base-1]+bx-1]
-		if topLeft.ref[0] <= 0 {
-			return SubChromaInterResult{}, false
+		if topLeft.ref.ref0() <= 0 {
+			return false
 		}
 	}
 	cellW := uint8(dims.W4) * 4
@@ -273,15 +274,12 @@ func (rt *refmvsTile) subChromaCells(c *BlockModeContext, block *BlockVisit, ssX
 	if ssY {
 		cellH >>= 1
 	}
-	var result SubChromaInterResult
-	add := func(offX, offY uint8, b *refmvsBlock, f motion.InterpFilters) {
-		cell := SubChromaInterCell{OffsetX: offX, OffsetY: offY, Width: cellW, Height: cellH, InterpFilters: f}
-		if b != nil {
-			cell.MV = b.mv[0].vector()
-			cell.Reference = ReferenceFrame(b.ref[0] - 1)
-		}
-		result.Cells[result.Count] = cell
-		result.Count++
+	n := 0
+	add := func(offX, offY uint8, mv motion.Vector, ref ReferenceFrame, f motion.InterpFilters) {
+		cell := &out.Cells[n&3]
+		cell.OffsetX, cell.OffsetY, cell.Width, cell.Height = offX, offY, cellW, cellH
+		cell.MV, cell.Reference, cell.InterpFilters = mv, ref, f
+		n++
 	}
 	var offX, offY uint8
 	if is4x {
@@ -291,26 +289,27 @@ func (rt *refmvsTile) subChromaCells(c *BlockModeContext, block *BlockVisit, ssX
 		offY = cellH
 	}
 	if topLeft != nil {
-		add(0, 0, topLeft, rt.tl4x4Filter)
+		add(0, 0, topLeft.mv[0].vector(), ReferenceFrame(topLeft.ref.ref0()-1), rt.tl4x4Filter)
 	}
 	if top != nil {
-		add(offX, 0, top, c.AboveInterp[block.X4])
+		add(offX, 0, top.mv[0].vector(), ReferenceFrame(top.ref.ref0()-1), c.A.interp(int(block.X4)))
 	}
 	if left != nil {
-		add(0, offY, left, c.LeftInterp[block.Y4])
+		add(0, offY, left.mv[0].vector(), ReferenceFrame(left.ref.ref0()-1), c.L.interp(int(block.Y4)))
 	}
-	add(offX, offY, nil, filters)
-	return result, true
+	add(offX, offY, mv, ref, filters)
+	out.Count = uint8(n)
+	return true
 }
 
 func refmvsNeighborMotion(b *refmvsBlock) InterMotionResult {
 	m := InterMotionResult{MV: [2]motion.Vector{b.mv[0].vector(), b.mv[1].vector()}}
-	m.References.Ref[0] = ReferenceFrame(b.ref[0] - 1)
-	m.References.Ref[1] = ReferenceFrameNone
-	if b.ref[1] > 0 {
-		m.References.Ref[1] = ReferenceFrame(b.ref[1] - 1)
+	m.References.Ref0 = ReferenceFrame(b.ref.ref0() - 1)
+	m.References.Ref1 = ReferenceFrameNone
+	if b.ref.ref1() > 0 {
+		m.References.Ref1 = ReferenceFrame(b.ref.ref1() - 1)
 		m.References.Compound = true
-	} else if b.ref[1] == 0 {
+	} else if b.ref.ref1() == 0 {
 		m.InterIntra = true
 	}
 	return m
@@ -334,16 +333,15 @@ func (rt *refmvsTile) obmcNeighbors(c *BlockModeContext, block *BlockVisit) Over
 		for i, x := int32(0), int32(0); x < w4 && i < limit; {
 			a := &top[bx+x+1]
 			step := min(max(int32(blockDimensions[a.bs].W4), 2), 16)
-			if a.ref[0] > 0 {
+			if a.ref.ref0() > 0 {
 				slot := x4 + x + 1
 				set.Above[i] = OverlappableNeighbor{
-					RelX4:              int8(x),
-					Span4:              uint8(min(step, w4-x)),
-					Size:               a.bs,
-					Motion:             refmvsNeighborMotion(a),
-					MotionValid:        true,
-					InterpFilters:      c.AboveInterp[slot],
-					InterpFiltersValid: c.AboveInterpValid[slot] != 0,
+					RelX4:         int8(x),
+					Span4:         uint8(min(step, w4-x)),
+					Size:          a.bs,
+					Motion:        refmvsNeighborMotion(a),
+					MotionValid:   true,
+					InterpFilters: c.A.interp(int(slot)),
 				}
 				i++
 				set.AboveCount = uint8(i)
@@ -356,16 +354,15 @@ func (rt *refmvsTile) obmcNeighbors(c *BlockModeContext, block *BlockVisit) Over
 		for i, y := int32(0), int32(0); y < h4 && i < limit; {
 			l := &rt.buf[rt.rows[base+y+1]+bx-1]
 			step := min(max(int32(blockDimensions[l.bs].H4), 2), 16)
-			if l.ref[0] > 0 {
+			if l.ref.ref0() > 0 {
 				slot := y4 + y + 1
 				set.Left[i] = OverlappableNeighbor{
-					RelY4:              int8(y),
-					Span4:              uint8(min(step, h4-y)),
-					Size:               l.bs,
-					Motion:             refmvsNeighborMotion(l),
-					MotionValid:        true,
-					InterpFilters:      c.LeftInterp[slot],
-					InterpFiltersValid: c.LeftInterpValid[slot] != 0,
+					RelY4:         int8(y),
+					Span4:         uint8(min(step, h4-y)),
+					Size:          l.bs,
+					Motion:        refmvsNeighborMotion(l),
+					MotionValid:   true,
+					InterpFilters: c.L.interp(int(slot)),
 				}
 				i++
 				set.LeftCount = uint8(i)

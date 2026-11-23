@@ -34,3 +34,27 @@ func TestRDOQEOBMatchesReference(t *testing.T) {
 		}
 	}
 }
+
+func TestLevelsAllZeroFindsEveryLevel(t *testing.T) {
+	for _, n := range []int{0, 1, 3, 4, 7, 16, 24, 64, 100, 256, 1024} {
+		q := make([]int16, n)
+		if !levelsAllZero(q) || !levelsAllZeroPureGo(q) {
+			t.Fatalf("n=%d: zero levels reported non-zero", n)
+		}
+		for i := range q {
+			for _, v := range []int16{1, -1, 256, -32768} {
+				q[i] = v
+				if levelsAllZero(q) || levelsAllZeroPureGo(q) {
+					t.Fatalf("n=%d: level %d at %d reported zero", n, v, i)
+				}
+			}
+			q[i] = 0
+		}
+		if n >= 2 {
+			q[0], q[n-1] = 1, -1
+			if levelsAllZero(q) || levelsAllZeroPureGo(q) {
+				t.Fatalf("n=%d: cancelling levels reported zero", n)
+			}
+		}
+	}
+}

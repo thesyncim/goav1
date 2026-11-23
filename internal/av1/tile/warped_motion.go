@@ -166,7 +166,7 @@ func (c *BlockModeContext) collectWarpSamplesAboveLeft(block BlockVisit, ref Ref
 	// Above row: libaom's av1_findSamples scans the row at row_offset=-1.
 	if block.HaveTop {
 		startSlot := int(block.X4)
-		firstSize := c.AboveBlockSize[startSlot]
+		firstSize := c.A.BlockSize[startSlot]
 		firstW4 := warpNeighborW4(firstSize)
 		if firstW4 <= 0 {
 			firstW4 = 1
@@ -204,7 +204,7 @@ func (c *BlockModeContext) collectWarpSamplesAboveLeft(block BlockVisit, ref Ref
 				if slot >= MaxBlockModeSlots {
 					break
 				}
-				size := c.AboveBlockSize[slot]
+				size := c.A.BlockSize[slot]
 				step := warpNeighborW4(size)
 				if step <= 0 {
 					step = 1
@@ -221,7 +221,7 @@ func (c *BlockModeContext) collectWarpSamplesAboveLeft(block BlockVisit, ref Ref
 	// Left column: libaom's av1_findSamples scans the column at col_offset=-1.
 	if block.HaveLeft && count < maxWarpSamples {
 		startSlot := int(block.Y4)
-		firstSize := c.LeftBlockSize[startSlot]
+		firstSize := c.L.BlockSize[startSlot]
 		firstH4 := warpNeighborH4(firstSize)
 		if firstH4 <= 0 {
 			firstH4 = 1
@@ -253,7 +253,7 @@ func (c *BlockModeContext) collectWarpSamplesAboveLeft(block BlockVisit, ref Ref
 				if slot >= MaxBlockModeSlots {
 					break
 				}
-				size := c.LeftBlockSize[slot]
+				size := c.L.BlockSize[slot]
 				step := warpNeighborH4(size)
 				if step <= 0 {
 					step = 1
@@ -290,16 +290,16 @@ func (c *BlockModeContext) warpAboveNeighborMatches(slot int, ref ReferenceFrame
 	if slot < 0 || slot >= MaxBlockModeSlots {
 		return false
 	}
-	if c.AboveIntra[slot] != 0 {
+	if c.A.Intra[slot] != 0 {
 		return false
 	}
 	if c.AboveMotionValid[slot] == 0 {
 		return false
 	}
-	if c.AboveRef[0][slot] != ref {
+	if c.A.Ref[0][slot] != ref {
 		return false
 	}
-	if c.AboveRef[1][slot] != ReferenceFrameNone {
+	if c.A.Ref[1][slot] != ReferenceFrameNone {
 		return false
 	}
 	// libaom's av1_findSamples rejects inter-intra neighbors because they
@@ -309,7 +309,7 @@ func (c *BlockModeContext) warpAboveNeighborMatches(slot int, ref ReferenceFrame
 	// context bitmap only covers neighbors inside the current superblock;
 	// for a neighbor staged from a prior SB the bit is unset, so also test
 	// the per-cell InterMotion.InterIntra (populated for cross-SB cells too).
-	if c.AboveInterIntra[slot] != 0 || c.AboveInterMotion[slot].InterIntra {
+	if c.A.InterIntra[slot] != 0 || c.AboveInterMotion[slot].InterIntra {
 		return false
 	}
 	return true
@@ -319,29 +319,29 @@ func (c *BlockModeContext) warpLeftNeighborMatches(slot int, ref ReferenceFrame)
 	if slot < 0 || slot >= MaxBlockModeSlots {
 		return false
 	}
-	if c.LeftIntra[slot] != 0 {
+	if c.L.Intra[slot] != 0 {
 		return false
 	}
 	if c.LeftMotionValid[slot] == 0 {
 		return false
 	}
-	if c.LeftRef[0][slot] != ref {
+	if c.L.Ref[0][slot] != ref {
 		return false
 	}
-	if c.LeftRef[1][slot] != ReferenceFrameNone {
+	if c.L.Ref[1][slot] != ReferenceFrameNone {
 		return false
 	}
 	// See warpAboveNeighborMatches: the LeftInterIntra context bitmap is
 	// per-SB, so also consult the per-cell InterMotion.InterIntra to reject
 	// inter-intra neighbors staged from a prior superblock.
-	if c.LeftInterIntra[slot] != 0 || c.LeftInterMotion[slot].InterIntra {
+	if c.L.InterIntra[slot] != 0 || c.LeftInterMotion[slot].InterIntra {
 		return false
 	}
 	return true
 }
 
 func (c *BlockModeContext) warpSampleAboveAt(slot int, colOffset4 int) warpSample {
-	size := c.AboveBlockSize[slot]
+	size := c.A.BlockSize[slot]
 	w4 := warpNeighborW4(size)
 	h4 := warpNeighborH4(size)
 	mv := c.AboveInterMotion[slot].MV[0]
@@ -349,7 +349,7 @@ func (c *BlockModeContext) warpSampleAboveAt(slot int, colOffset4 int) warpSampl
 }
 
 func (c *BlockModeContext) warpSampleLeftAt(slot int, rowOffset4 int) warpSample {
-	size := c.LeftBlockSize[slot]
+	size := c.L.BlockSize[slot]
 	w4 := warpNeighborW4(size)
 	h4 := warpNeighborH4(size)
 	mv := c.LeftInterMotion[slot].MV[0]
@@ -387,10 +387,10 @@ func warpSampleFromMotion(motionResult InterMotionResult, size BlockSize, ref Re
 	if motionResult.References.Compound {
 		return warpSample{}, false
 	}
-	if motionResult.References.Ref[0] != ref {
+	if motionResult.References.Ref0 != ref {
 		return warpSample{}, false
 	}
-	if motionResult.References.Ref[1] != ReferenceFrameNone {
+	if motionResult.References.Ref1 != ReferenceFrameNone {
 		return warpSample{}, false
 	}
 	if motionResult.InterIntra {

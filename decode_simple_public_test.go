@@ -324,6 +324,37 @@ var profileClips = []struct {
 		},
 	},
 	{
+		file: "profile0-420-8bit-qmatrix-intra-128x128.ivf",
+		frameMD5Hex: []string{
+			"cb0e3e72ec97ca73b28e01c56f54c1ab",
+			"0d3db5b820d3c59a6e4e420eda7e2dea",
+			"70ae617c07052865815404c5c50d6bbe",
+		},
+	},
+	{
+		file: "profile0-420-8bit-qmatrix-inter-128x128.ivf",
+		frameMD5Hex: []string{
+			"26be316b151895f0d2504d3ee8aca939",
+			"756780d0ad26003961aa85313df43074",
+			"d04aa1172d420136ea152ac591e8eefc",
+			"a32a816ba7b15e0b4e64b68b9f85c271",
+			"c978cf57eee344c78373675a232e3bc5",
+			"e6bbeadbeb601df2d5ccb1f0818545c1",
+			"b57d43df7533aa30703f696c7d5f5489",
+			"3142c7ade9e3a9d28cf4d2fdc016b4a3",
+		},
+	},
+	{
+		file: "profile0-420-8bit-intrabc-inter-256x144.ivf",
+		frameMD5Hex: []string{
+			"1cf0aa6483847c109e777920d3ef29be",
+			"2b19a5aff4b87647a9a20f25af7a8007",
+			"3ebe0c6fcfcabc69cb06f17b9eb321f6",
+			"7c0159bd8fdf14b46920ae2fd69ba4e6",
+			"e5984f796acfb69ebdc378d61b16a437",
+		},
+	},
+	{
 		file: "profile2-420-12bit-edgemv-130x130.ivf",
 		frameMD5Hex: []string{
 			"f85baff9f8f516879ab8da538e582a09",

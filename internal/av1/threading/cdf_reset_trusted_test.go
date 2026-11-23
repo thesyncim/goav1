@@ -10,7 +10,6 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/lfmask"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
-	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
 // Visit the storage structurally so the oracle covers fields independently of
@@ -89,7 +88,7 @@ func ownedCDFResetTestBatch(t *testing.T, retained *FrameWorkTileResidualCDFStor
 		RetainedTileResidualCDFsValid: valid,
 	}
 	b.LoopFilterMasks = masks
-	return b, compact, FrameWorkTileResidualRequest{UseDefaultTransforms: true}
+	return b, compact, FrameWorkTileResidualRequest{}
 }
 
 func TestFrameWorkCDFResetOwnedRetention(t *testing.T) {
@@ -129,35 +128,11 @@ func TestFrameWorkCDFResetFallbackValidation(t *testing.T) {
 		{"wavefront", func(b *FrameWorkBatch, _ *FrameWorkTileResidualRequest, _ *FrameWorkLoopFilterCompactState) {
 			b.WavefrontWorkers = 2
 		}},
-		{"predict", func(_ *FrameWorkBatch, r *FrameWorkTileResidualRequest, _ *FrameWorkLoopFilterCompactState) {
-			r.Predict = func(tile.BlockLoopVisit) error { return nil }
-		}},
 		{"after block", func(_ *FrameWorkBatch, r *FrameWorkTileResidualRequest, _ *FrameWorkLoopFilterCompactState) {
 			r.AfterBlock = func(tile.BlockLoopVisit) error { return nil }
 		}},
-		{"transforms", func(_ *FrameWorkBatch, r *FrameWorkTileResidualRequest, _ *FrameWorkLoopFilterCompactState) {
-			r.Transforms = func(tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) { return FrameWorkBlockTransforms{}, nil }
-		}},
-		{"default transforms off", func(_ *FrameWorkBatch, r *FrameWorkTileResidualRequest, _ *FrameWorkLoopFilterCompactState) {
-			r.UseDefaultTransforms = false
-		}},
 		{"before superblock", func(_ *FrameWorkBatch, r *FrameWorkTileResidualRequest, _ *FrameWorkLoopFilterCompactState) {
 			r.Loop.BeforeSuperblock = func(tile.BlockLoopSuperblockVisit) error { return nil }
-		}},
-		{"before coefficients", func(_ *FrameWorkBatch, r *FrameWorkTileResidualRequest, _ *FrameWorkLoopFilterCompactState) {
-			r.Loop.BeforeCoefficients = func(tile.BlockLoopVisit) error { return nil }
-		}},
-		{"coefficient visitor", func(_ *FrameWorkBatch, r *FrameWorkTileResidualRequest, _ *FrameWorkLoopFilterCompactState) {
-			r.Loop.CoeffVisitor = func(tile.BlockLoopVisit, tile.BlockCoeffBlock) error { return nil }
-		}},
-		{"coefficient controller", func(_ *FrameWorkBatch, r *FrameWorkTileResidualRequest, _ *FrameWorkLoopFilterCompactState) {
-			r.Loop.CoeffController = &frameWorkTileResidualLoopController{}
-		}},
-		{"coefficient request", func(_ *FrameWorkBatch, r *FrameWorkTileResidualRequest, _ *FrameWorkLoopFilterCompactState) {
-			r.Loop.CoeffRequest = func(tile.BlockLoopVisit) (tile.BlockCoeffRequest, error) { return tile.BlockCoeffRequest{}, nil }
-		}},
-		{"transform select", func(_ *FrameWorkBatch, r *FrameWorkTileResidualRequest, _ *FrameWorkLoopFilterCompactState) {
-			r.Loop.TransformSelect = tile.CoeffTransformSelectorFunc(func(tile.CoeffTransformRequest) (transform.Type, error) { return transform.TypeDCTDCT, nil })
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

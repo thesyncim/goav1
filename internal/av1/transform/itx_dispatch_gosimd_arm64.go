@@ -12,11 +12,11 @@ package transform
 // bitDepth 12: rowBits 20). Wider bounds fall back to pure Go.
 const colClampBoundNEON = 1 << 19
 
-// init binds the Go SIMD batched inverse kernels that replaced the arm64 NEON
-// assembly. The column kernels run four (or two) columns in int32 lanes and the
-// row kernels run rows through a 4x4 transpose; the adapters keep the same
-// envelope gating the assembly adapters had and fall back to the pure-Go
-// reference outside it, so output bytes do not depend on the path taken.
+// init binds the Go SIMD batched inverse kernels. The column kernels run four
+// (or two) columns in int32 lanes and the row kernels run rows through a 4x4
+// transpose; the adapters gate on the clamp envelope the int32 lanes are exact
+// for and fall back to the pure-Go reference outside it, so output bytes do not
+// depend on the path taken.
 func init() {
 	inverseDCT4Col4Impl = inverseDCT4Col4SIMDAdapter
 	inverseDCT8Col2Impl = inverseDCT8Col2SIMDAdapter
@@ -43,7 +43,7 @@ func init() {
 
 // simdColEnvelope reports whether the [min, max] stage clamp lies inside the
 // +/-2^19 envelope the int32-lane kernels are exact for. Column kernels rely on
-// the staged pre-clamp exactly as the assembly kernels did; row kernels read
+// the staged pre-clamp; row kernels read
 // rows that inverseSeparableBlockClampedRowsToScratch staged through
 // stageTransposeClamp into the same [min, max] range, so checking the bounds
 // covers every input without scanning the rows.

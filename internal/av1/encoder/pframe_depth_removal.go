@@ -277,8 +277,6 @@ type depthRemovalCtrls struct {
 	qpScale     int64
 }
 
-const realtimeMaxSignedValue = int64(^uint64(0) >> 1) // MAX_SIGNED_VALUE
-
 // depthRemovalLevels[level] mirrors the upstream switch verbatim.
 var depthRemovalLevels = [16]depthRemovalCtrls{
 	0:  {},

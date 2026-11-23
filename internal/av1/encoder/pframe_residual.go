@@ -418,6 +418,38 @@ type encoderScanTables struct {
 	scan4x16, scan16x4           []int16
 	scan8x32, scan32x8           []int16
 	scan16x64, scan64x16         []int16
+	// inverse maps each scan above to its inverse (interTXBResult).
+	inverse []inverseScan
+}
+
+// inverseScan is one scan's inverse: iscan[pos] is the scan index of raster
+// position pos.
+type inverseScan struct {
+	scan  *int16
+	iscan []int16
+}
+
+func newInverseScan(scan []int16) inverseScan {
+	e := inverseScan{scan: &scan[0], iscan: make([]int16, len(scan))}
+	for c, pos := range scan {
+		e.iscan[pos] = int16(c)
+	}
+	return e
+}
+
+// sharedInverseScan returns the inverse of a shared scan, nil for any other
+// scan.
+func sharedInverseScan(scan []int16) []int16 {
+	if len(scan) == 0 {
+		return nil
+	}
+	p := &scan[0]
+	for i := range sharedScans.inverse {
+		if sharedScans.inverse[i].scan == p {
+			return sharedScans.inverse[i].iscan
+		}
+	}
+	return nil
 }
 
 var (
@@ -439,6 +471,7 @@ func buildEncoderScanTables() (encoderScanTables, error) {
 		if err := transform.FillDefaultScan(*sq.dst, inv, transform.Size{Width: sq.n, Height: sq.n}, transform.Class2D); err != nil {
 			return t, err
 		}
+		t.inverse = append(t.inverse, newInverseScan(*sq.dst))
 	}
 	for _, rs := range []struct {
 		dst  *[]int16
@@ -462,6 +495,7 @@ func buildEncoderScanTables() (encoderScanTables, error) {
 		if err := transform.FillDefaultScan(*rs.dst, inv, size, transform.Class2D); err != nil {
 			return t, err
 		}
+		t.inverse = append(t.inverse, newInverseScan(*rs.dst))
 	}
 	return t, nil
 }
@@ -488,6 +522,7 @@ func (st *lossyEncodeState) initScans() error {
 	}
 	st.levels = make([]uint8, scratchLen)
 	st.invScratch = make([]int32, 4096)
+	st.mc = new(lossyMCScratch)
 	return nil
 }
 
@@ -945,10 +980,10 @@ func (st *lossyEncodeState) encodeLosslessIntraInterBlock(src SourceFrame420, bl
 	modeCtx.TxNeighborValid = false
 	if int(block.X4) < tile.MaxBlockModeSlots && int(block.Y4) < tile.MaxBlockModeSlots {
 		modeCtx.TxNeighborValid = true
-		modeCtx.TxAboveNeighborIntra = modeCtx.AboveIntra[block.X4]
-		modeCtx.TxAboveNeighborBlockSize = modeCtx.AboveBlockSize[block.X4]
-		modeCtx.TxLeftNeighborIntra = modeCtx.LeftIntra[block.Y4]
-		modeCtx.TxLeftNeighborBlockSize = modeCtx.LeftBlockSize[block.Y4]
+		modeCtx.TxAboveNeighborIntra = modeCtx.A.Intra[block.X4]
+		modeCtx.TxAboveNeighborBlockSize = modeCtx.A.BlockSize[block.X4]
+		modeCtx.TxLeftNeighborIntra = modeCtx.L.Intra[block.Y4]
+		modeCtx.TxLeftNeighborBlockSize = modeCtx.L.BlockSize[block.Y4]
 	}
 	if err := tile.WriteIntraFlag(st.w, &st.intraCDFs, modeCtx, tile.IntraFlagRequest{
 		FrameType: parser.FrameTypeInter,
@@ -1265,14 +1300,14 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// Materialize the three plane predictions with the decoder's convolve so
 	// residual coding and reconstruction agree with the decoder bit for bit.
 	if refs.Compound {
-		if err := predictCompoundInto(st.predY[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, compoundMV[0], compoundMV[1], false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+		if err := predictCompoundInto(st.predY[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, compoundMV[0], compoundMV[1], false, false, &st.mc.compBuf0, &st.mc.compBuf1, &st.mc.compScratch); err != nil {
 			return fmt.Errorf("predict compound luma: %w", err)
 		}
 		if hasChroma {
-			if err := predictCompoundInto(st.predU[:cbw*cbh], ref.U, ref.ChromaStride, golden.U, golden.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, compoundMV[0], compoundMV[1], st.color.SubsamplingX, st.color.SubsamplingY, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+			if err := predictCompoundInto(st.predU[:cbw*cbh], ref.U, ref.ChromaStride, golden.U, golden.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, compoundMV[0], compoundMV[1], st.color.SubsamplingX, st.color.SubsamplingY, &st.mc.compBuf0, &st.mc.compBuf1, &st.mc.compScratch); err != nil {
 				return fmt.Errorf("predict compound u: %w", err)
 			}
-			if err := predictCompoundInto(st.predV[:cbw*cbh], ref.V, ref.ChromaStride, golden.V, golden.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, compoundMV[0], compoundMV[1], st.color.SubsamplingX, st.color.SubsamplingY, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+			if err := predictCompoundInto(st.predV[:cbw*cbh], ref.V, ref.ChromaStride, golden.V, golden.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, compoundMV[0], compoundMV[1], st.color.SubsamplingX, st.color.SubsamplingY, &st.mc.compBuf0, &st.mc.compBuf1, &st.mc.compScratch); err != nil {
 				return fmt.Errorf("predict compound v: %w", err)
 			}
 		}
@@ -1280,14 +1315,14 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if refPlanes.Width != src.Width || refPlanes.Height != src.Height {
 			refChromaW := chromaWidthForColor(refPlanes.Width, st.color)
 			refChromaH := chromaHeightForColor(refPlanes.Height, st.color)
-			if err := predictIntoScaled(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, refPlanes.Width, refPlanes.Height, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, &st.scaledScratch); err != nil {
+			if err := predictIntoScaled(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, refPlanes.Width, refPlanes.Height, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, &st.mc.scaledScratch); err != nil {
 				return fmt.Errorf("predict scaled luma: %w", err)
 			}
 			if hasChroma {
-				if err := predictIntoScaled(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, refChromaW, refChromaH, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, &st.scaledScratch); err != nil {
+				if err := predictIntoScaled(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, refChromaW, refChromaH, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, &st.mc.scaledScratch); err != nil {
 					return fmt.Errorf("predict scaled u: %w", err)
 				}
-				if err := predictIntoScaled(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, refChromaW, refChromaH, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, &st.scaledScratch); err != nil {
+				if err := predictIntoScaled(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, refChromaW, refChromaH, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, &st.mc.scaledScratch); err != nil {
 					return fmt.Errorf("predict scaled v: %w", err)
 				}
 			}
@@ -1390,7 +1425,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// (av1/encoder/encodeframe_utils.c): inter blocks predicting from LAST
 	// whose vector is under one pixel accumulate their MI area, feeding the
 	// avg_frame_low_motion statistic behind adaptive golden refresh.
-	if refs.Ref[0] == tile.ReferenceFrameLast {
+	if refs.Ref0 == tile.ReferenceFrameLast {
 		zmv := motionResult.MV[0]
 		if zmv.Row > -8 && zmv.Row < 8 && zmv.Col > -8 && zmv.Col < 8 {
 			st.cntZeroMV += int(block.VisibleW4) * int(block.VisibleH4)
@@ -1441,7 +1476,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if !interModeResultUsesGlobalOnly(modeResult) {
 			lfMode = loopfilter.ModeDeltaClassMotion
 		}
-		if err := st.markLoopFilterBlock(block, lfTree, skip, false, uint8(refs.Ref[0])+1, lfMode); err != nil {
+		if err := st.markLoopFilterBlock(block, lfTree, skip, false, uint8(refs.Ref0)+1, lfMode); err != nil {
 			return fmt.Errorf("mark loop filter: %w", err)
 		}
 	}
@@ -1708,10 +1743,10 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	modeCtx.TxNeighborValid = false
 	if int(block.X4) < tile.MaxBlockModeSlots && int(block.Y4) < tile.MaxBlockModeSlots {
 		modeCtx.TxNeighborValid = true
-		modeCtx.TxAboveNeighborIntra = modeCtx.AboveIntra[block.X4]
-		modeCtx.TxAboveNeighborBlockSize = modeCtx.AboveBlockSize[block.X4]
-		modeCtx.TxLeftNeighborIntra = modeCtx.LeftIntra[block.Y4]
-		modeCtx.TxLeftNeighborBlockSize = modeCtx.LeftBlockSize[block.Y4]
+		modeCtx.TxAboveNeighborIntra = modeCtx.A.Intra[block.X4]
+		modeCtx.TxAboveNeighborBlockSize = modeCtx.A.BlockSize[block.X4]
+		modeCtx.TxLeftNeighborIntra = modeCtx.L.Intra[block.Y4]
+		modeCtx.TxLeftNeighborBlockSize = modeCtx.L.BlockSize[block.Y4]
 	}
 	if err := tile.WriteIntraFlag(st.w, &st.intraCDFs, modeCtx, tile.IntraFlagRequest{
 		FrameType: parser.FrameTypeInter,
@@ -2970,7 +3005,7 @@ func (st *lossyEncodeState) reconInterTXBResult(reconPlane, pred []byte, predStr
 		return nil
 	}
 	if txbResult.EOB == 1 && txType == transform.TypeDCTDCT {
-		dc := quantize.DequantizeDCCoeffBitDepthTrusted(qcoeff[0], q, geo.txScale, nil, 8)
+		dc := quantize.DequantizeDCCoeffBitDepthTrusted(qcoeff[0], q, geo.txScale, 8)
 		sample, err := transform.InverseDCTDCOnlySampleBitDepth(dc, st.invScratch[:n], geo.size, 8)
 		if err != nil {
 			return err
@@ -3129,31 +3164,6 @@ func (st *lossyEncodeState) inter8x8TXCDFAndSymbol(typ transform.Type) (*entropy
 		return nil, 0, false
 	}
 	return cdf, symbol, true
-}
-
-// forwardTransformBlock dispatches the forward transform for every coded
-// DCT_DCT shape and the small square hybrid transforms enabled in the realtime
-// inter tx_type selector.
-func forwardTransformBlock(tran []int32, residual []int16, scratch []int32, w, h int, typ transform.Type) error {
-	if typ == transform.TypeDCTDCT {
-		return forwardDCTBlock(tran, residual, w, h)
-	}
-	if w == 8 && h == 8 {
-		switch typ {
-		case transform.TypeADSTDCT:
-			transform.ForwardBlock8x8ADSTDCTTrusted(tran, h, residual, w, scratch)
-		case transform.TypeDCTADST:
-			transform.ForwardBlock8x8DCTADSTTrusted(tran, h, residual, w, scratch)
-		case transform.TypeADSTADST:
-			transform.ForwardBlock8x8ADSTADSTTrusted(tran, h, residual, w, scratch)
-		case transform.TypeIDTX:
-			transform.ForwardBlock8x8IDTXTrusted(tran, h, residual, w, scratch)
-		default:
-			return transform.ErrInvalidTransform
-		}
-		return nil
-	}
-	return transform.ForwardBlock(tran, h, residual, w, scratch, transform.Size{Width: uint8(w), Height: uint8(h)}, typ)
 }
 
 // forwardTransformBlock8BitResidualTrusted is used only after residuals have

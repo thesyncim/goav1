@@ -150,21 +150,6 @@ func (w *Writer) ensure(n int) {
 	w.buf = next
 }
 
-// normalize renormalizes (low, rng) so 0x8000 <= rng < 0x10000, flushing ready
-// bytes to the output. Port of od_ec_enc_normalize.
-func (w *Writer) normalize(low uint64, rng uint32) {
-	// Fast path, small enough to inline into every symbol writer: no bytes
-	// are ready, so the state only shifts.
-	d := int32(bits.LeadingZeros16(uint16(rng))) // 16 - OD_ILOG_NZ(rng)
-	if s := w.cnt + d; s < 40 && w.err == nil {
-		w.low = low << uint32(d)
-		w.rng = rng << uint32(d)
-		w.cnt = s
-		return
-	}
-	w.normalizeFlush(low, rng)
-}
-
 // normalizeFlush is normalize when output bytes are ready (or the writer has
 // failed).
 func (w *Writer) normalizeFlush(low uint64, rng uint32) {

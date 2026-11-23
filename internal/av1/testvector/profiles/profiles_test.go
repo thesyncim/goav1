@@ -383,6 +383,25 @@
 //	  src444_10_multitile_inter.yuv
 //	# 4:2:2 8-bit inter:
 //	aomenc --i422 ... --profile=2 ... -o profile2-422-8bit-inter-64x64.ivf src422.yuv
+//	# 4:2:0 8-bit quantizer matrices (libaom 3.15.2), all-intra and inter:
+//	ffmpeg -f lavfi -i testsrc2=size=128x128:rate=30 -frames:v 8 \
+//	  -pix_fmt yuv420p -f rawvideo qm420.yuv
+//	aomenc --i420 --width=128 --height=128 --limit=3 --ivf --profile=0 \
+//	  --cpu-used=4 --end-usage=q --cq-level=24 --kf-max-dist=0 \
+//	  --lag-in-frames=0 --enable-qm=1 --qm-min=0 --qm-max=15 \
+//	  --enable-cdef=0 --enable-restoration=0 \
+//	  -o profile0-420-8bit-qmatrix-intra-128x128.ivf qm420.yuv
+//	aomenc --i420 --width=128 --height=128 --limit=8 --ivf --profile=0 \
+//	  --cpu-used=4 --end-usage=q --cq-level=30 --kf-max-dist=30 \
+//	  --lag-in-frames=0 --enable-qm=1 --qm-min=2 --qm-max=12 \
+//	  -o profile0-420-8bit-qmatrix-inter-128x128.ivf qm420.yuv
+//	# 4:2:0 8-bit intra block copy key frame followed by inter frames
+//	# (SVT-AV1 v4.2.0; aomenc does not pick intra block copy on this source):
+//	ffmpeg -f lavfi -i testsrc2=size=256x144:rate=30 -frames:v 8 \
+//	  -pix_fmt yuv420p -f rawvideo ibc420.yuv
+//	SvtAv1EncApp -i ibc420.yuv -w 256 -h 144 --fps-num 30 --fps-denom 1 -n 5 \
+//	  --input-depth 8 --lp 1 --preset 8 --crf 35 --scm 1 --pred-struct 1 \
+//	  -b profile0-420-8bit-intrabc-inter-256x144.ivf
 //
 //	# Golden per-frame MD5s come from `aomdec --rawvideo` (libaom
 //	# test/md5_helper.h layout, which testvector.FrameMD5 reproduces): split the
@@ -1218,6 +1237,56 @@ var profileClips = []profileClip{
 		wantSubsamplingY: true,
 	},
 	{
+		// Profile 0: 4:2:0 8-bit, quantizer matrices, all-intra. Rectangular
+		// transforms up to 32 samples long make the matrix orientation matter.
+		name: "profile0-420-8bit-qmatrix-intra-128x128",
+		file: "profile0-420-8bit-qmatrix-intra-128x128.ivf",
+		frameMD5Hex: []string{
+			"cb0e3e72ec97ca73b28e01c56f54c1ab",
+			"0d3db5b820d3c59a6e4e420eda7e2dea",
+			"70ae617c07052865815404c5c50d6bbe",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
+	{
+		// Profile 0: 4:2:0 8-bit, quantizer matrices, one key frame and seven inter frames. Rectangular
+		// transforms up to 32 samples long make the matrix orientation matter.
+		name: "profile0-420-8bit-qmatrix-inter-128x128",
+		file: "profile0-420-8bit-qmatrix-inter-128x128.ivf",
+		frameMD5Hex: []string{
+			"26be316b151895f0d2504d3ee8aca939",
+			"756780d0ad26003961aa85313df43074",
+			"d04aa1172d420136ea152ac591e8eefc",
+			"a32a816ba7b15e0b4e64b68b9f85c271",
+			"c978cf57eee344c78373675a232e3bc5",
+			"e6bbeadbeb601df2d5ccb1f0818545c1",
+			"b57d43df7533aa30703f696c7d5f5489",
+			"3142c7ade9e3a9d28cf4d2fdc016b4a3",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
+	{
+		// Profile 0: 4:2:0 8-bit screen content from SVT-AV1: a key frame coded
+		// with intra block copy, then four inter frames that inherit its
+		// entropy contexts.
+		name: "profile0-420-8bit-intrabc-inter-256x144",
+		file: "profile0-420-8bit-intrabc-inter-256x144.ivf",
+		frameMD5Hex: []string{
+			"1cf0aa6483847c109e777920d3ef29be",
+			"2b19a5aff4b87647a9a20f25af7a8007",
+			"3ebe0c6fcfcabc69cb06f17b9eb321f6",
+			"7c0159bd8fdf14b46920ae2fd69ba4e6",
+			"e5984f796acfb69ebdc378d61b16a437",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
+	{
 		name: "profile2-420-12bit-edgemv-130x130",
 		file: "profile2-420-12bit-edgemv-130x130.ivf",
 		frameMD5Hex: []string{
@@ -1816,12 +1885,6 @@ func runProfileClip(t *testing.T, clip profileClip) {
 						CDEFIndexMap:  ctx.CDEFIndexMap,
 						LoopFilterMap: ctx.LoopFilterMap,
 						Restoration:   restorationReq,
-						Transforms: func(visit tile.BlockLoopVisit) (threading.FrameWorkBlockTransforms, error) {
-							if visit.Prediction.Valid && !visit.Prediction.Intra {
-								return ctx.ReadInterBlockTransforms(&decodeState, visit)
-							}
-							return ctx.ReadIntraBlockTransforms(&decodeState, visit)
-						},
 						AfterBlock: func(visit tile.BlockLoopVisit) error {
 							if visit.Prediction.Palette.YSize > 0 {
 								paletteYBlocks++
@@ -2200,15 +2263,12 @@ func publishProfileSuperResTemporalMotionReference(event decoder.Event, globalSu
 }
 
 func residualScratch(ctx decoder.FrameWorkBatch) ([]int32, []int16, error) {
-	q, _, err := ctx.BlockQuantizer(ctx.Quantization.BaseQIdx, 0, threading.FrameWorkPlaneY)
-	if err != nil {
+	if _, _, err := ctx.BlockQuantizer(ctx.Quantization.BaseQIdx, 0, threading.FrameWorkPlaneY); err != nil {
 		return nil, nil, err
 	}
 	int32Len, int16Len, err := reconstruct.ScratchLen(reconstruct.Block{
 		Size:      transform.Size{Width: 64, Height: 64},
 		Transform: transform.TypeDCTDCT,
-		Quantizer: q,
-		Lossless:  false,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -2219,10 +2279,6 @@ func residualScratch(ctx decoder.FrameWorkBatch) ([]int32, []int16, error) {
 type batchRunner func(decoder.FrameWorkBatch) error
 
 func (fn batchRunner) Run(ctx decoder.FrameWorkBatch) error { return fn(ctx) }
-
-type postFilterRunner func(decoder.FrameWorkPostFilterContext) error
-
-func (fn postFilterRunner) Apply(ctx decoder.FrameWorkPostFilterContext) error { return fn(ctx) }
 
 type profilePostFilterRunner struct {
 	fn                     func(decoder.FrameWorkPostFilterContext) (int, error)
@@ -2274,16 +2330,6 @@ func sideDataScratch(size decoder.FrameWorkSideDataScratchSize) decoder.FrameWor
 		RestorationAbove:   make([]uint16, maxInt(size.RestorationBoundary, 0)),
 		RestorationBelow:   make([]uint16, maxInt(size.RestorationBoundary, 0)),
 	}
-}
-
-// applyCallerPostFilters runs the caller-owned full post-filter chain
-// (ApplyCallerPostFilters) for a super-res frame: loop filter, CDEF, super-res
-// upscale into caller-owned scratch, then loop restoration and film grain at
-// the upscaled resolution. It performs the two-pass super-res scratch sizing
-// (size the upscale output frame first, then re-size for the post-super-res
-// tail) the public caller runner uses, and returns the final display frame.
-func applyCallerPostFilters(ctx decoder.FrameWorkPostFilterContext) (*frame.Frame, decoder.Event, error) {
-	return applyCallerPostFiltersWithSuperResOutput(ctx, nil, nil)
 }
 
 func applyCallerPostFiltersForPublication(ctx decoder.FrameWorkPostFilterContext, outputPool *frame.Pool) (*frame.Frame, int, decoder.Event, error) {

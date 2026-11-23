@@ -31,11 +31,6 @@ func exprString(fset *token.FileSet, e ast.Expr) string {
 	return b.String()
 }
 
-func isZeroIdent(e ast.Expr) bool {
-	id, ok := e.(*ast.Ident)
-	return ok && zeros[id.Name]
-}
-
 func zeroIdent() ast.Expr { return ast.NewIdent("zero") }
 
 // simplify returns the rewritten expression and whether it is exactly zero.

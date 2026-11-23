@@ -8,6 +8,8 @@ import "github.com/thesyncim/goav1/internal/av1/frame"
 
 // FillPlaneBlock writes value to a rectangular plane block. High-bit-depth
 // samples are stored little-endian in two bytes.
+//
+// Accesses stay inside the width x height block of each plane or buffer.
 func FillPlaneBlock(dst frame.Plane, bytesPerSample int, x int, y int, width int, height int, value uint16) error {
 	block, err := planeBlockWindow(dst, bytesPerSample, x, y, width, height)
 	if err != nil {
@@ -43,6 +45,8 @@ func FillPlaneBlock(dst frame.Plane, bytesPerSample int, x int, y int, width int
 
 // CopyPlaneBlock copies a rectangular plane block from src to dst. The source
 // and destination use the same sample width.
+//
+// Accesses stay inside the width x height block of each plane or buffer.
 func CopyPlaneBlock(dst frame.Plane, src frame.Plane, bytesPerSample int, dstX int, dstY int, srcX int, srcY int, width int, height int) error {
 	dstBlock, err := planeBlockWindow(dst, bytesPerSample, dstX, dstY, width, height)
 	if err != nil {
@@ -107,6 +111,8 @@ func addConstantPlaneBlock8PureGo(dst []byte, dstStride int, width int, height i
 
 // AddResidualPlaneBlock adds signed transform residuals to an already-predicted
 // destination block and clips to bitDepth.
+//
+// Accesses stay inside the width x height block of each plane or buffer.
 func AddResidualPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, residual []int16, residualStride int) error {
 	block, err := planeBlockWindow(dst, bytesPerSample, x, y, width, height)
 	if err != nil {
@@ -136,6 +142,8 @@ func AddResidualPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, 
 // already validated the destination window, sample width, bit-depth maximum,
 // residual extent, and residual stride. dst must start at the block origin and
 // contain every row touched by height/stride.
+//
+// Accesses stay inside the width x height block of each plane or buffer.
 func AddResidualPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSample int, max uint16, width int, height int, residual []int16, residualStride int) {
 	block := planeBlock{
 		pix:      dst,
@@ -149,6 +157,8 @@ func AddResidualPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSample int,
 
 // AddConstantResidualPlaneBlockTrusted adds the same transform residual to
 // every sample in an already-validated destination block.
+//
+// Accesses stay inside the width x height block of each plane or buffer.
 func AddConstantResidualPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSample int, max uint16, width int, height int, residual int16) {
 	if bytesPerSample == 1 && max == 0xff && height > 0 {
 		addConstantPlaneBlock8Impl(dst, dstStride, width, height, residual)
@@ -181,6 +191,8 @@ func AddConstantResidualPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSam
 // output directly to an already-predicted destination block. raw contains
 // int32 samples before AV1's final round-by-four and int16 saturation; this is
 // the fused-add boundary used by dav1d/SVT-style reconstruction paths.
+//
+// Accesses stay inside the width x height block of each plane or buffer.
 func AddRawTransformPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSample int, max uint16, width int, height int, raw []int32, rawStride int) {
 	block := planeBlock{
 		pix:      dst,

@@ -2,7 +2,9 @@ package tile
 
 import (
 	"errors"
+	"reflect"
 	"testing"
+	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -93,7 +95,7 @@ func TestIntraEdgeSmoothNeighborMatchesLibaomLumaType(t *testing.T) {
 	if got, err := ctx.IntraEdgeSmoothNeighbor(6, 7, true, true); err != nil || got {
 		t.Fatalf("directional smooth=%v err=%v want false", got, err)
 	}
-	if err := ctx.MarkInter(BlockSize4x4, 8, 9, InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}, true); err != nil {
+	if err := ctx.MarkInter(BlockSize4x4, 8, 9, InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}, true); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := ctx.IntraEdgeSmoothNeighbor(8, 9, true, true); err != nil || got {
@@ -115,7 +117,7 @@ func TestChromaIntraEdgeSmoothNeighborMatchesLibaomUVType(t *testing.T) {
 	if got, err := ctx.ChromaIntraEdgeSmoothNeighbor(6, 7, true, true, false, false); err != nil || got {
 		t.Fatalf("directional chroma smooth=%v err=%v want false", got, err)
 	}
-	if err := ctx.MarkInter(BlockSize4x4, 8, 9, InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}, true); err != nil {
+	if err := ctx.MarkInter(BlockSize4x4, 8, 9, InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}, true); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := ctx.ChromaIntraEdgeSmoothNeighbor(8, 9, true, true, false, false); err != nil || got {
@@ -132,27 +134,27 @@ func TestChromaIntraEdgeSmoothNeighborMatchesLibaomUVType(t *testing.T) {
 func TestMarkIntraEntryLeavesInterRefsForReferenceReader(t *testing.T) {
 	var ctx BlockModeContext
 	if err := ctx.MarkInter(BlockSize8x8, 0, 0, InterReferencesResult{
-		Ref: [2]ReferenceFrame{ReferenceFrameGolden, ReferenceFrameNone},
+		Ref0: ReferenceFrameGolden, Ref1: ReferenceFrameNone,
 	}, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := ctx.MarkIntraEntry(BlockSize8x8, 0, 0, false, IntraModeDC); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.AboveIntra[0] != 0 || ctx.LeftIntra[0] != 0 {
-		t.Fatalf("intra flags above=%d left=%d want 0,0", ctx.AboveIntra[0], ctx.LeftIntra[0])
+	if ctx.A.Intra[0] != 0 || ctx.L.Intra[0] != 0 {
+		t.Fatalf("intra flags above=%d left=%d want 0,0", ctx.A.Intra[0], ctx.L.Intra[0])
 	}
-	if ctx.AboveRef[0][0] != ReferenceFrameGolden || ctx.LeftRef[0][0] != ReferenceFrameGolden {
-		t.Fatalf("refs changed above=%d left=%d", ctx.AboveRef[0][0], ctx.LeftRef[0][0])
+	if ctx.A.Ref[0][0] != ReferenceFrameGolden || ctx.L.Ref[0][0] != ReferenceFrameGolden {
+		t.Fatalf("refs changed above=%d left=%d", ctx.A.Ref[0][0], ctx.L.Ref[0][0])
 	}
 
 	if err := ctx.MarkIntra(BlockSize8x8, 0, 0, true, IntraModeVertical); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.AboveRef[0][0] != ReferenceFrameNone || ctx.LeftRef[0][0] != ReferenceFrameNone ||
-		ctx.AboveMode[0] != IntraModeVertical || ctx.LeftMode[0] != IntraModeVertical {
+	if ctx.A.Ref[0][0] != ReferenceFrameNone || ctx.L.Ref[0][0] != ReferenceFrameNone ||
+		ctx.A.Mode[0] != IntraModeVertical || ctx.L.Mode[0] != IntraModeVertical {
 		t.Fatalf("intra mark refs/modes aboveRef=%d leftRef=%d aboveMode=%d leftMode=%d",
-			ctx.AboveRef[0][0], ctx.LeftRef[0][0], ctx.AboveMode[0], ctx.LeftMode[0])
+			ctx.A.Ref[0][0], ctx.L.Ref[0][0], ctx.A.Mode[0], ctx.L.Mode[0])
 	}
 }
 
@@ -645,4 +647,63 @@ func FuzzReadIntraEntry(f *testing.F) {
 			t.Fatalf("MarkIntra err=%v", err)
 		}
 	})
+}
+
+// TestBlockPredictionModeResultResetClearsEveryField guards reset against new
+// fields: after it every field must read as zero.
+func TestBlockPredictionModeResultResetClearsEveryField(t *testing.T) {
+	var r BlockPredictionModeResult
+	v := reflect.ValueOf(&r).Elem()
+	for i := range v.NumField() {
+		f := v.Field(i)
+		if f.Kind() == reflect.Pointer {
+			f.Set(reflect.New(f.Type().Elem()))
+			continue
+		}
+		if typeHasPointers(f.Type()) {
+			setAnyNonZero(f)
+			continue
+		}
+		b := unsafe.Slice((*byte)(f.Addr().UnsafePointer()), f.Type().Size())
+		for j := range b {
+			b[j] = 0xff
+		}
+	}
+	r.reset()
+	for i := range v.NumField() {
+		if !v.Field(i).IsZero() {
+			t.Errorf("reset leaves %s set", v.Type().Field(i).Name)
+		}
+	}
+}
+
+func typeHasPointers(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Map, reflect.String, reflect.Interface, reflect.Func, reflect.Chan:
+		return true
+	case reflect.Array:
+		return typeHasPointers(t.Elem())
+	case reflect.Struct:
+		for i := range t.NumField() {
+			if typeHasPointers(t.Field(i).Type) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// setAnyNonZero makes one scalar leaf of a pointer-carrying struct non-zero.
+func setAnyNonZero(v reflect.Value) {
+	for i := range v.NumField() {
+		f := v.Field(i)
+		switch f.Kind() {
+		case reflect.Uint8, reflect.Uint16, reflect.Uint32:
+			f.SetUint(1)
+			return
+		case reflect.Bool:
+			f.SetBool(true)
+			return
+		}
+	}
 }

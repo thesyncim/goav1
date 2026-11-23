@@ -27,8 +27,6 @@ const scaledStep2Half = ScaleSubpelScale / 2
 // filter across columns. Rounding is the scaled formula, so the result is
 // bit-identical. It returns false when the taps are not all even or the source
 // window does not allow 16-byte loads; the caller then runs the scalar path.
-//
-//go:nocheckptr
 func convolveScale2D8Step2GoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
 	startX int64, startY int64, xTable, yTable *SubpelKernelTable, imH int, imBuf *scaledIM) bool {
 	const fo = filterTaps/2 - 1

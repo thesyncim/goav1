@@ -321,10 +321,6 @@ func frameWorkLoopFilterRecordCovers(record FrameWorkLoopFilterBlockRecord, col 
 		row >= miRow && row < miRowEnd
 }
 
-func frameWorkLoopFilterRefMode(visit tile.BlockLoopVisit) (int, loopfilter.ModeDeltaClass, error) {
-	return frameWorkLoopFilterRefModePtr(&visit)
-}
-
 func frameWorkLoopFilterRefModePtr(visit *tile.BlockLoopVisit) (int, loopfilter.ModeDeltaClass, error) {
 	if visit == nil {
 		return 0, loopfilter.ModeDeltaClassZero, ErrInvalidBatch
@@ -332,7 +328,7 @@ func frameWorkLoopFilterRefModePtr(visit *tile.BlockLoopVisit) (int, loopfilter.
 	if !visit.Prediction.Valid || visit.Prediction.Intra || !visit.Prediction.InterReferencesValid {
 		return 0, loopfilter.ModeDeltaClassZero, nil
 	}
-	ref := visit.Prediction.InterReferences.Ref[0]
+	ref := visit.Prediction.InterReferences.Ref0
 	if !ref.Valid() {
 		return 0, loopfilter.ModeDeltaClassZero, ErrInvalidBatch
 	}

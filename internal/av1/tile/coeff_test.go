@@ -164,194 +164,6 @@ func cdfValuesEqual(a, b []uint16) bool {
 	return true
 }
 
-func TestCoeffContextsMatchLibaom(t *testing.T) {
-	ctxTests := []struct {
-		size TransformSize
-		want uint8
-	}{
-		{size: TransformSize4x4, want: 0},
-		{size: TransformSize4x8, want: 1},
-		{size: TransformSize8x16, want: 2},
-		{size: TransformSize16x64, want: 3},
-		{size: TransformSize64x64, want: 4},
-	}
-	for _, tt := range ctxTests {
-		got, err := CoeffTransformSizeContext(tt.size)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != tt.want {
-			t.Fatalf("CoeffTransformSizeContext(%d)=%d want %d", tt.size, got, tt.want)
-		}
-	}
-
-	eobTests := []struct {
-		size TransformSize
-		want uint8
-	}{
-		{size: TransformSize4x4, want: 0},
-		{size: TransformSize4x8, want: 1},
-		{size: TransformSize8x8, want: 2},
-		{size: TransformSize16x16, want: 4},
-		{size: TransformSize16x64, want: 5},
-		{size: TransformSize64x64, want: 6},
-	}
-	for _, tt := range eobTests {
-		got, err := EOBMultiSize(tt.size)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != tt.want {
-			t.Fatalf("EOBMultiSize(%d)=%d want %d", tt.size, got, tt.want)
-		}
-	}
-
-	if got, err := RecEOBPosition(3, 1); err != nil || got != 4 {
-		t.Fatalf("RecEOBPosition(3,1)=%d err=%v want 4", got, err)
-	}
-	if got, err := RecEOBPosition(4, 2); err != nil || got != 7 {
-		t.Fatalf("RecEOBPosition(4,2)=%d err=%v want 7", got, err)
-	}
-	if got, err := CoeffPlaneTypeForPlane(2); err != nil || got != CoeffPlaneUV {
-		t.Fatalf("CoeffPlaneTypeForPlane(2)=%d err=%v want UV", got, err)
-	}
-}
-
-func TestEOBPositionTokenMatchesLibaom(t *testing.T) {
-	tests := []struct {
-		eob       int
-		wantToken int
-		wantExtra int
-	}{
-		{eob: 0, wantToken: 0, wantExtra: 0},
-		{eob: 1, wantToken: 1, wantExtra: 0},
-		{eob: 2, wantToken: 2, wantExtra: 0},
-		{eob: 3, wantToken: 3, wantExtra: 0},
-		{eob: 4, wantToken: 3, wantExtra: 1},
-		{eob: 5, wantToken: 4, wantExtra: 0},
-		{eob: 8, wantToken: 4, wantExtra: 3},
-		{eob: 9, wantToken: 5, wantExtra: 0},
-		{eob: 16, wantToken: 5, wantExtra: 7},
-		{eob: 17, wantToken: 6, wantExtra: 0},
-		{eob: 32, wantToken: 6, wantExtra: 15},
-		{eob: 33, wantToken: 7, wantExtra: 0},
-		{eob: 64, wantToken: 7, wantExtra: 31},
-		{eob: 65, wantToken: 8, wantExtra: 0},
-		{eob: 128, wantToken: 8, wantExtra: 63},
-		{eob: 129, wantToken: 9, wantExtra: 0},
-		{eob: 256, wantToken: 9, wantExtra: 127},
-		{eob: 257, wantToken: 10, wantExtra: 0},
-		{eob: 512, wantToken: 10, wantExtra: 255},
-		{eob: 513, wantToken: 11, wantExtra: 0},
-		{eob: 1024, wantToken: 11, wantExtra: 511},
-	}
-	for _, tt := range tests {
-		token, extra, err := EOBPositionToken(tt.eob)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if token != tt.wantToken || extra != tt.wantExtra {
-			t.Fatalf("EOBPositionToken(%d)=(%d,%d) want (%d,%d)", tt.eob, token, extra, tt.wantToken, tt.wantExtra)
-		}
-		roundTrip, err := RecEOBPosition(token, extra)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if roundTrip != tt.eob {
-			t.Fatalf("RecEOBPosition(%d,%d)=%d want %d", token, extra, roundTrip, tt.eob)
-		}
-	}
-
-	for eob := 0; eob <= 1024; eob++ {
-		token, extra, err := EOBPositionToken(eob)
-		if err != nil {
-			t.Fatalf("EOBPositionToken(%d): %v", eob, err)
-		}
-		got, err := RecEOBPosition(token, extra)
-		if err != nil {
-			t.Fatalf("RecEOBPosition(%d,%d): %v", token, extra, err)
-		}
-		if got != eob {
-			t.Fatalf("eob round trip %d -> token %d extra %d -> %d", eob, token, extra, got)
-		}
-		if extra >= 1<<eobOffsetBits[token] {
-			t.Fatalf("eob %d extra=%d offsetBits=%d", eob, extra, eobOffsetBits[token])
-		}
-	}
-
-	if _, _, err := EOBPositionToken(-1); !errors.Is(err, ErrInvalidDecodeState) {
-		t.Fatalf("negative eob err=%v want %v", err, ErrInvalidDecodeState)
-	}
-	if _, _, err := EOBPositionToken(1025); !errors.Is(err, ErrInvalidDecodeState) {
-		t.Fatalf("large eob err=%v want %v", err, ErrInvalidDecodeState)
-	}
-}
-
-func TestReadCoeffPrimitives(t *testing.T) {
-	var cdfs CoeffCDFs
-	if err := cdfs.InitDefault(0); err != nil {
-		t.Fatal(err)
-	}
-
-	var state DecodeState
-	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	skip, err := state.ReadTXBSkip(&cdfs, TXBSkipRequest{Size: TransformSize4x4, Context: 0})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if skip {
-		t.Fatal("txb skip=true want false")
-	}
-	if got := cdfs.TXBSkip[0][0].Values()[2]; got != 1 {
-		t.Fatalf("txb skip count=%d want 1", got)
-	}
-
-	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	eob, err := state.ReadEOB(&cdfs, EOBRequest{Size: TransformSize4x4, Plane: CoeffPlaneY})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if eob != (EOBResult{Token: 1, Position: 1}) {
-		t.Fatalf("eob=%+v want token 1 position 1", eob)
-	}
-
-	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	level, err := state.ReadCoeffBaseEOB(&cdfs, CoeffTokenRequest{Size: TransformSize4x4, Plane: CoeffPlaneY, Context: 0})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if level != 1 {
-		t.Fatalf("base-eob level=%d want 1", level)
-	}
-	base, err := state.ReadCoeffBase(&cdfs, CoeffTokenRequest{Size: TransformSize4x4, Plane: CoeffPlaneY, Context: 0})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if base != 0 {
-		t.Fatalf("base=%d want 0", base)
-	}
-	br, err := state.ReadCoeffBR(&cdfs, CoeffTokenRequest{Size: TransformSize4x4, Plane: CoeffPlaneY, Context: 0})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if br != 0 {
-		t.Fatalf("br=%d want 0", br)
-	}
-	sign, err := state.ReadDCSign(&cdfs, CoeffPlaneY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sign {
-		t.Fatal("sign=true want false")
-	}
-}
-
 func TestCoeffLevelContextsMatchLibaom(t *testing.T) {
 	scratchLen, err := CoeffLevelsScratchLen(TransformSize4x4)
 	if err != nil {
@@ -670,168 +482,6 @@ func TestCoeffNZMapContextsRejectsInvalidScanPosition(t *testing.T) {
 	}
 }
 
-func TestReadCoefficientsTXBDecodesSingleDC(t *testing.T) {
-	result, coeffs := readCoefficientsTXBForTest(t, []byte{0x00}, TransformSize4x4, transform.Class2D, CoeffPlaneY, 0)
-	if result.AllZero {
-		t.Fatal("AllZero=true want false")
-	}
-	if result.EOB != 1 || result.MaxScanLine != 0 {
-		t.Fatalf("result=%+v want eob=1 maxScanLine=0", result)
-	}
-	if coeffs[0] != 1 {
-		t.Fatalf("coeff[0]=%d want 1", coeffs[0])
-	}
-	for i, coeff := range coeffs[1:] {
-		if coeff != 0 {
-			t.Fatalf("coeff[%d]=%d want 0", i+1, coeff)
-		}
-	}
-	if result.CulLevel != 17 {
-		t.Fatalf("cul_level=%d want 17", result.CulLevel)
-	}
-}
-
-func TestReadCoeffGolombCursorRoundTrip(t *testing.T) {
-	values := []int{0, 1, 2, 3, 4, 7, 15, 31, 63, 127, 255, 1023, 4095, (1 << 20) - 2}
-	w := entropy.NewWriter(make([]byte, 0, 128))
-	for _, v := range values {
-		writeGolomb(&w, v)
-	}
-	payload, err := w.Finish()
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := entropy.NewReader(payload)
-	cursor := r.Cursor()
-	for _, want := range values {
-		got, err := readCoeffGolombCursor(&cursor)
-		if err != nil {
-			t.Fatalf("readCoeffGolombCursor(%d) err=%v", want, err)
-		}
-		if got != want {
-			t.Fatalf("readCoeffGolombCursor=%d want %d", got, want)
-		}
-	}
-}
-
-func TestReadCoeffGolombCursorRejectsLongPrefix(t *testing.T) {
-	w := entropy.NewWriter(make([]byte, 0, 8))
-	for range 21 {
-		w.WriteBit(0)
-	}
-	payload, err := w.Finish()
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := entropy.NewReader(payload)
-	cursor := r.Cursor()
-	if _, err := readCoeffGolombCursor(&cursor); !errors.Is(err, ErrInvalidDecodeState) {
-		t.Fatalf("readCoeffGolombCursor err=%v want %v", err, ErrInvalidDecodeState)
-	}
-}
-
-// TestCoeffEOB1TX64x64ContextsMatchLibaomMVFrame1 pins the entropy-decode
-// context invariants for the canonical inter-frame eob=1 single-DC TX_64X64
-// block. libaom's mv test vector at frame 1 mi=(0,0) plane=0 produces a
-// 64x64 luma TXB with tx_class=2D, eob=1, level=3 (sign=neg), dq_dc=74 →
-// dq=-55 after the 64x64 av1_get_tx_scale shift. The decode reads:
-//   - TXBSkip CDF at txs_ctx=4 (CoeffTransformSizeContext for TX_64X64).
-//   - EOB CDF1024 at plane=Y eob_multi_ctx=0 (2D class) → eob=1.
-//   - LowerLevelsCtxEOB(scanSize=32x32, c=0) → 0 (DC of last-coeff branch).
-//   - CoeffBaseEOB CDF at txs_ctx=4, plane=Y, ctx=0 → level=3 (base=3
-//     forces the BR loop).
-//   - CoeffBRContextEOB(TX_64X64, Class2D, pos=0) → 0 (DC of BR branch).
-//   - CoeffBR CDF at AOMMIN(txs_ctx, TX_32X32)=3, plane=Y, ctx=0 (read at
-//     least once, but for level=3 yields k=0 which terminates the loop and
-//     leaves level at 3 unchanged).
-//   - DCSign CDF at plane=Y, dc_sign_ctx=DCSignContext → sign=neg.
-//
-// Pinning these context values guards against regressions in the
-// rectangular-bias rework, the CoeffBR txs-clamp, or the EOB-branch
-// context functions that would silently mis-route the entropy reads for
-// a single-coefficient 64x64 block.
-func TestCoeffEOB1TX64x64ContextsMatchLibaomMVFrame1(t *testing.T) {
-	txsCtx, err := CoeffTransformSizeContext(TransformSize64x64)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if txsCtx != 4 {
-		t.Fatalf("CoeffTransformSizeContext(TX_64X64)=%d want 4", txsCtx)
-	}
-
-	eobMultiSize, err := EOBMultiSize(TransformSize64x64)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if eobMultiSize != 6 {
-		t.Fatalf("EOBMultiSize(TX_64X64)=%d want 6 (eob_flag_cdf1024)", eobMultiSize)
-	}
-
-	scanSize, err := transform.ScanSize(transform.Size{Width: 64, Height: 64})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if scanSize.Width != 32 || scanSize.Height != 32 {
-		t.Fatalf("ScanSize(TX_64X64)=%+v want 32x32 (av1_get_adjusted_tx_size)", scanSize)
-	}
-
-	if got, err := transform.LowerLevelsCtxEOB(scanSize, 0); err != nil || got != 0 {
-		t.Fatalf("LowerLevelsCtxEOB(32x32, c=0)=%d err=%v want 0", got, err)
-	}
-
-	if got, err := CoeffBRContextEOB(TransformSize64x64, transform.Class2D, 0); err != nil || got != 0 {
-		t.Fatalf("CoeffBRContextEOB(TX_64X64, 2D, pos=0)=%d err=%v want 0", got, err)
-	}
-
-	// CoeffBR CDF is clamped to TX_32X32 (txs_ctx=3) for tx sizes >= 32x32;
-	// verify the CDF lookup does the AOMMIN clamp documented in libaom's
-	// read_coeffs_txb (coeff_br_cdf[AOMMIN(txs_ctx, TX_32X32)]).
-	var cdfs CoeffCDFs
-	if err := cdfs.InitDefault(81); err != nil {
-		t.Fatal(err)
-	}
-	brCDF, err := cdfs.CoeffBRCDF(TransformSize64x64, CoeffPlaneY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	brCDF32, err := cdfs.CoeffBRCDF(TransformSize32x32, CoeffPlaneY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cdfValuesEqual(brCDF.Values(), brCDF32.Values()) {
-		t.Fatalf("CoeffBRCDF(TX_64X64) diverges from TX_32X32 clamp: got=%v want=%v",
-			brCDF.Values(), brCDF32.Values())
-	}
-
-	// qindex=81 lives in q-context 2 (60 < q <= 120). A regression in the
-	// q-context selection would silently swap the CDF cohort the mv vector
-	// reads coefficients with for every frame past the keyframe.
-	if got := CoeffQContext(81); got != 2 {
-		t.Fatalf("CoeffQContext(81)=%d want 2 (mv vector inter-frame qctx)", got)
-	}
-
-	// The eob=1 decode path stores level into levels[get_padded_idx(0, bhl)],
-	// which for TX_64X64 (height=32, bhl=5) is just index 0 (since
-	// (0 >> 5) << TX_PAD_HOR_LOG2 = 0). A regression where pos=0 lands on
-	// a padded index would silently corrupt subsequent CoeffLowerLevelsContext
-	// reads when a non-eob-only block coexists with the DC entry.
-	scratchLen, err := CoeffLevelsScratchLen(TransformSize64x64)
-	if err != nil {
-		t.Fatal(err)
-	}
-	levels := make([]uint8, scratchLen)
-	if err := setCoeffLevel(levels, TransformSize64x64, 0, 3); err != nil {
-		t.Fatal(err)
-	}
-	if levels[0] != 3 {
-		t.Fatalf("setCoeffLevel(TX_64X64, pos=0, 3) stored level at padded idx %d want 0",
-			indexOfNonZero(levels))
-	}
-	if got, err := coeffLevel(levels, TransformSize64x64, 0); err != nil || got != 3 {
-		t.Fatalf("coeffLevel(TX_64X64, 0)=%d err=%v want 3", got, err)
-	}
-}
-
 func indexOfNonZero(levels []uint8) int {
 	for i, v := range levels {
 		if v != 0 {
@@ -839,105 +489,6 @@ func indexOfNonZero(levels []uint8) int {
 		}
 	}
 	return -1
-}
-
-// TestCoeffTraceStubIsNoOp guards the goav1_coeff_trace build tag's no-op
-// stub. The trace helpers are wired into ReadCoefficientsTXB hot paths to
-// capture (c, pos, base, golomb, level, sign) tuples for cross-validation
-// against libaom's read_coeffs_txb. The stub variant must never observe
-// or mutate state so the default build retains zero overhead.
-func TestCoeffTraceStubIsNoOp(t *testing.T) {
-	coeffTraceBlock(0, 0, 0, int(TransformSize4x4), 0, 0)
-	coeffTraceCoeff(0, 0, 0, 0, 0, 0)
-	coeffTraceCulLevel(0)
-
-	// Should also leave decode behaviour intact: re-run the single-DC
-	// canonical block and confirm coeff[0]==1 and cul_level==17 still hold
-	// after the trace points fire.
-	result, coeffs := readCoefficientsTXBForTest(t, []byte{0x00}, TransformSize4x4, transform.Class2D, CoeffPlaneY, 0)
-	if result.AllZero || result.EOB != 1 || coeffs[0] != 1 || result.CulLevel != 17 {
-		t.Fatalf("trace stub disturbed decode: result=%+v coeff[0]=%d", result, coeffs[0])
-	}
-}
-
-func TestCoeffRejectsInvalidInputs(t *testing.T) {
-	var cdfs CoeffCDFs
-	if _, err := cdfs.TXBSkipCDF(TransformSize4x4, 0); !errors.Is(err, entropy.ErrInvalidCDF) {
-		t.Fatalf("uninitialized cdf err=%v want %v", err, entropy.ErrInvalidCDF)
-	}
-	if err := cdfs.InitDefault(0); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cdfs.TXBSkipCDF(transformSizeCount, 0); !errors.Is(err, entropy.ErrInvalidCDF) {
-		t.Fatalf("bad tx cdf err=%v want %v", err, entropy.ErrInvalidCDF)
-	}
-	if _, err := cdfs.EOBExtraCDF(TransformSize4x4, CoeffPlaneY, EOBCoefContexts); !errors.Is(err, entropy.ErrInvalidCDF) {
-		t.Fatalf("bad eob extra err=%v want %v", err, entropy.ErrInvalidCDF)
-	}
-	if _, err := cdfs.DCSignCDF(CoeffPlaneTypes, 0); !errors.Is(err, entropy.ErrInvalidCDF) {
-		t.Fatalf("bad dc sign err=%v want %v", err, entropy.ErrInvalidCDF)
-	}
-	if _, err := RecEOBPosition(len(eobGroupStart), 0); !errors.Is(err, ErrInvalidDecodeState) {
-		t.Fatalf("bad eob pos err=%v want %v", err, ErrInvalidDecodeState)
-	}
-	if _, err := CoeffPlaneTypeForPlane(3); !errors.Is(err, ErrInvalidDecodeState) {
-		t.Fatalf("bad plane err=%v want %v", err, ErrInvalidDecodeState)
-	}
-
-	var nilState *DecodeState
-	if _, err := nilState.ReadTXBSkip(&cdfs, TXBSkipRequest{Size: TransformSize4x4}); !errors.Is(err, ErrInvalidDecodeState) {
-		t.Fatalf("nil state err=%v want %v", err, ErrInvalidDecodeState)
-	}
-	var state DecodeState
-	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := state.ReadEOB(&cdfs, EOBRequest{Size: TransformSize4x4, Plane: CoeffPlaneTypes}); !errors.Is(err, ErrInvalidDecodeState) {
-		t.Fatalf("bad eob req err=%v want %v", err, ErrInvalidDecodeState)
-	}
-
-	txSize, err := TransformSize4x4.TransformSize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	scan, scratch := coeffScanAndScratch(t, TransformSize4x4, txSize, transform.Class2D)
-	if _, err := state.ReadCoefficientsTXB(&cdfs, TXBDecodeRequest{
-		Size:           TransformSize4x4,
-		Plane:          CoeffPlaneY,
-		Class:          transform.Class2D,
-		TXBSkipContext: 0,
-	}, nil, scan, scratch); !errors.Is(err, ErrInvalidDecodeState) {
-		t.Fatalf("short coeff txb err=%v want %v", err, ErrInvalidDecodeState)
-	}
-	if _, err := state.ReadCoefficientsTXB(&cdfs, TXBDecodeRequest{
-		Size:           TransformSize4x4,
-		Plane:          CoeffPlaneY,
-		Class:          transform.Class(99),
-		TXBSkipContext: 0,
-	}, make([]int16, len(scan)), scan, scratch); !errors.Is(err, ErrInvalidDecodeState) {
-		t.Fatalf("bad class txb err=%v want %v", err, ErrInvalidDecodeState)
-	}
-}
-
-func TestCoeffAllocs(t *testing.T) {
-	var cdfs CoeffCDFs
-	var state DecodeState
-	payload := []byte{0x00}
-
-	allocs := testing.AllocsPerRun(1000, func() {
-		if err := cdfs.InitDefault(0); err != nil {
-			t.Fatal(err)
-		}
-		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := state.ReadTXBSkip(&cdfs, TXBSkipRequest{Size: TransformSize4x4, Context: 0}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if allocs != 0 {
-		t.Fatalf("coeff primitive decode allocated: %f", allocs)
-	}
 }
 
 var coeffBenchmarkSink int
@@ -956,379 +507,6 @@ func BenchmarkCoeffCDFsInitDefault(b *testing.B) {
 		q += 73
 	}
 	coeffBenchmarkSink = sum
-}
-
-func BenchmarkReadCoefficientsTXB8x8Class2D(b *testing.B) {
-	benchmarkReadCoefficientsTXB(b, TransformSize8x8, transform.Class2D)
-}
-
-func BenchmarkReadCoefficientsTXB8x8ClassHoriz(b *testing.B) {
-	benchmarkReadCoefficientsTXB(b, TransformSize8x8, transform.ClassHoriz)
-}
-
-func BenchmarkReadCoefficientsTXB8x8Class2DTracked(b *testing.B) {
-	benchmarkReadCoefficientsTXBTracked(b, TransformSize8x8, transform.Class2D)
-}
-
-func BenchmarkReadCoefficientsTXB16x16Class2DTracked(b *testing.B) {
-	benchmarkReadCoefficientsTXBTracked(b, TransformSize16x16, transform.Class2D)
-}
-
-func BenchmarkReadCoefficientsTXB32x32Class2DTracked(b *testing.B) {
-	benchmarkReadCoefficientsTXBTracked(b, TransformSize32x32, transform.Class2D)
-}
-
-func BenchmarkReadCoeffGolombCursor(b *testing.B) {
-	src := make([]byte, 4096)
-	x := uint32(0x9e3779b9)
-	for i := range src {
-		x ^= x << 13
-		x ^= x >> 17
-		x ^= x << 5
-		src[i] = byte(x)
-	}
-	sum := 0
-
-	b.ReportAllocs()
-	b.SetBytes(512)
-	for b.Loop() {
-		r := entropy.NewReader(src)
-		cursor := r.Cursor()
-		for range 512 {
-			v, err := readCoeffGolombCursor(&cursor)
-			if err != nil {
-				r = entropy.NewReader(src)
-				cursor = r.Cursor()
-				continue
-			}
-			sum += v
-		}
-	}
-	coeffBenchmarkSink = sum
-}
-
-func benchmarkReadCoefficientsTXB(b *testing.B, size TransformSize, class transform.Class) {
-	txSize, err := size.TransformSize()
-	if err != nil {
-		b.Fatal(err)
-	}
-	scan, scratch := coeffScanAndScratch(b, size, txSize, class)
-	coeffs := make([]int16, len(scan))
-	payload := coeffBenchmarkTXBPayload(b, size, class, scan, scratch)
-	req := TXBDecodeRequest{
-		Size:            size,
-		Plane:           CoeffPlaneY,
-		Class:           class,
-		TXBSkipContext:  0,
-		DCSignContext:   0,
-		EOBMultiContext: 0,
-	}
-	var cdfs CoeffCDFs
-	if err := cdfs.InitDefault(0); err != nil {
-		b.Fatal(err)
-	}
-	var state DecodeState
-	sum := 0
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
-			b.Fatal(err)
-		}
-		result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, scratch)
-		if err != nil {
-			b.Fatal(err)
-		}
-		sum += int(result.EOB) + int(result.CulLevel)
-	}
-	coeffBenchmarkSink = sum
-}
-
-func benchmarkReadCoefficientsTXBTracked(b *testing.B, size TransformSize, class transform.Class) {
-	txSize, err := size.TransformSize()
-	if err != nil {
-		b.Fatal(err)
-	}
-	scan, scratch := coeffScanAndScratch(b, size, txSize, class)
-	var levelArena [maxCoeffScratchLen]uint8
-	levels := levelArena[:len(scratch)]
-	coeffs := make([]int16, len(scan))
-	payload := coeffBenchmarkTXBPayload(b, size, class, scan, scratch)
-	var dirtyPos [maxCoeffScanLen]int16
-	var dirtyLen uint16
-	var levelDirty [maxCoeffScanLen]int16
-	var levelDirtyLen uint16
-	req := TXBDecodeRequest{
-		Size:                  size,
-		Plane:                 CoeffPlaneY,
-		Class:                 class,
-		TXBSkipContext:        0,
-		DCSignContext:         0,
-		EOBMultiContext:       0,
-		SkipAllZeroCoeffClear: true,
-		skipNonZeroCoeffClear: true,
-		coeffDirtyPos:         &dirtyPos,
-		coeffDirtyLen:         &dirtyLen,
-		levelDirtyPos:         &levelDirty,
-		levelDirtyLen:         &levelDirtyLen,
-		levelDirtyScratch:     &levelArena,
-		trustedScan:           true,
-	}
-	var cdfs CoeffCDFs
-	if err := cdfs.InitDefault(0); err != nil {
-		b.Fatal(err)
-	}
-	var state DecodeState
-	sum := 0
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		for i := 0; i < int(dirtyLen); i++ {
-			coeffs[coeffDirtyPackedPos(dirtyPos[i])] = 0
-		}
-		dirtyLen = 0
-		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
-			b.Fatal(err)
-		}
-		result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, levels)
-		if err != nil {
-			b.Fatal(err)
-		}
-		sum += int(result.EOB) + int(result.CulLevel) + int(dirtyLen) + int(levelDirtyLen)
-	}
-	coeffBenchmarkSink = sum
-}
-
-func coeffBenchmarkTXBPayload(b *testing.B, size TransformSize, class transform.Class, scan []int16, scratch []uint8) []byte {
-	b.Helper()
-	coeffs := make([]int16, len(scan))
-	req := TXBDecodeRequest{
-		Size:            size,
-		Plane:           CoeffPlaneY,
-		Class:           class,
-		TXBSkipContext:  0,
-		DCSignContext:   0,
-		EOBMultiContext: 0,
-	}
-	for seed := 0; seed < 4096; seed++ {
-		payload := []byte{byte(seed), byte(seed*73 + 19), byte(seed ^ 0xa5), byte(seed*29 + 7), 0x5a}
-		clear(coeffs)
-		clear(scratch)
-		var cdfs CoeffCDFs
-		if err := cdfs.InitDefault(0); err != nil {
-			b.Fatal(err)
-		}
-		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
-			b.Fatal(err)
-		}
-		result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, scratch)
-		if err == nil && !result.AllZero && result.EOB > 8 {
-			return payload
-		}
-	}
-	b.Fatal("could not find nontrivial coefficient benchmark payload")
-	return nil
-}
-
-func TestReadCoefficientsTXBAllocs(t *testing.T) {
-	txSize, err := TransformSize4x4.TransformSize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	scan, scratch := coeffScanAndScratch(t, TransformSize4x4, txSize, transform.Class2D)
-	coeffs := make([]int16, len(scan))
-	payload := []byte{0x00}
-	req := TXBDecodeRequest{
-		Size:            TransformSize4x4,
-		Plane:           CoeffPlaneY,
-		Class:           transform.Class2D,
-		TXBSkipContext:  0,
-		DCSignContext:   0,
-		EOBMultiContext: 0,
-	}
-	var cdfs CoeffCDFs
-	var state DecodeState
-
-	allocs := testing.AllocsPerRun(1000, func() {
-		if err := cdfs.InitDefault(0); err != nil {
-			t.Fatal(err)
-		}
-		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
-			t.Fatal(err)
-		}
-		result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, scratch)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if result.EOB != 1 || coeffs[0] != 1 {
-			t.Fatalf("txb result=%+v coeff[0]=%d want eob=1 coeff=1", result, coeffs[0])
-		}
-	})
-	if allocs != 0 {
-		t.Fatalf("txb coefficient decode allocated: %f", allocs)
-	}
-}
-
-func TestReadCoefficientsTXBSkipClearPolicy(t *testing.T) {
-	txSize, err := TransformSize4x4.TransformSize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	scan, scratch := coeffScanAndScratch(t, TransformSize4x4, txSize, transform.Class2D)
-	coeffs := make([]int16, len(scan))
-	var cdfs CoeffCDFs
-	if err := cdfs.InitDefault(0); err != nil {
-		t.Fatal(err)
-	}
-	var state DecodeState
-	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	req := TXBDecodeRequest{
-		Size:          TransformSize4x4,
-		Plane:         CoeffPlaneY,
-		Class:         transform.Class2D,
-		TXBSkipKnown:  true,
-		TXBSkip:       true,
-		DCSignContext: 0,
-	}
-
-	for i := range coeffs {
-		coeffs[i] = 7
-	}
-	result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, scratch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertTXBDecodeInvariants(t, result, coeffs, scan)
-
-	for i := range coeffs {
-		coeffs[i] = 7
-	}
-	req.SkipAllZeroCoeffClear = true
-	result, err = state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, scratch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.AllZero {
-		t.Fatalf("result=%+v want all zero", result)
-	}
-	for i, coeff := range coeffs {
-		if coeff != 7 {
-			t.Fatalf("coeff[%d]=%d want preserved sentinel", i, coeff)
-		}
-	}
-}
-
-func TestReadCoefficientsTXBTrackedLevelDirtyClearsScratch(t *testing.T) {
-	txSize, err := TransformSize8x8.TransformSize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	scan, levelWindow := coeffScanAndScratch(t, TransformSize8x8, txSize, transform.Class2D)
-	var levelArena [maxCoeffScratchLen]uint8
-	levels := levelArena[:len(levelWindow)]
-	coeffs := make([]int16, len(scan))
-	stalePadded := len(levelArena) - 1
-	if stalePadded < 0 || stalePadded > int(^uint16(0)>>1) {
-		t.Fatalf("stale padded index=%d out of test range", stalePadded)
-	}
-
-	var levelDirty [maxCoeffScanLen]int16
-	var levelDirtyLen uint16
-	req := TXBDecodeRequest{
-		Size:              TransformSize8x8,
-		Plane:             CoeffPlaneY,
-		Class:             transform.Class2D,
-		TXBSkipContext:    0,
-		DCSignContext:     0,
-		EOBMultiContext:   0,
-		levelDirtyPos:     &levelDirty,
-		levelDirtyLen:     &levelDirtyLen,
-		levelDirtyScratch: &levelArena,
-	}
-
-	for seed := 0; seed < 256; seed++ {
-		for i := range coeffs {
-			coeffs[i] = 0
-		}
-		levelArena[stalePadded] = 77
-		levelDirty[0] = int16(stalePadded)
-		levelDirtyLen = 1
-
-		var cdfs CoeffCDFs
-		if err := cdfs.InitDefault(0); err != nil {
-			t.Fatal(err)
-		}
-		var state DecodeState
-		payload := []byte{byte(seed), byte(seed*73 + 19), byte(seed ^ 0xa5), 0x5a}
-		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
-			t.Fatal(err)
-		}
-		result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, levels)
-		if err != nil || result.AllZero || result.EOB <= 1 {
-			continue
-		}
-		if levelArena[stalePadded] != 0 {
-			t.Fatalf("stale padded level %d survived dirty clear: %d", stalePadded, levelArena[stalePadded])
-		}
-		if levelDirtyLen == 0 {
-			t.Fatal("levelDirtyLen=0 after nonzero eob decode")
-		}
-		for i := 0; i < int(levelDirtyLen); i++ {
-			padded := int(levelDirty[i])
-			if padded < 0 || padded >= len(levels) {
-				t.Fatalf("levelDirty[%d]=%d out of range len=%d", i, padded, len(levels))
-			}
-			if levels[padded] == 0 {
-				t.Fatalf("levelDirty[%d]=%d points at zero level", i, padded)
-			}
-		}
-		return
-	}
-	t.Fatal("test payload search did not produce an eob>1 TXB")
-}
-
-func TestReadCoefficientsTXBTrackedMatchesPlainMatrix(t *testing.T) {
-	for _, tc := range coeffTXBMatrixCases() {
-		t.Run(tc.name, func(t *testing.T) {
-			scan, scratch, payload := coeffTXBMatrixInputs(t, tc)
-			plainResult, plainCoeffs := decodeCoeffTXBMatrixCase(t, tc, scan, scratch, payload, false)
-			trackedResult, trackedCoeffs := decodeCoeffTXBMatrixCase(t, tc, scan, scratch, payload, true)
-			if plainResult != trackedResult {
-				t.Fatalf("tracked result=%+v want plain %+v", trackedResult, plainResult)
-			}
-			if !slices.Equal(trackedCoeffs, plainCoeffs) {
-				t.Fatalf("tracked coeffs=%v want plain %v", trackedCoeffs, plainCoeffs)
-			}
-		})
-	}
-}
-
-func TestReadCoefficientsTXBTracked2DFastPathMatchesGeneric(t *testing.T) {
-	for _, tc := range coeffTXBMatrixCases() {
-		if tc.class != transform.Class2D {
-			continue
-		}
-		t.Run(tc.name, func(t *testing.T) {
-			scan, scratch, payload := coeffTXBMatrixInputs(t, tc)
-			genericResult, genericCoeffs, genericDirty, genericLevelDirty := decodeKnownTracked2DTXBForTest(t, tc, scan, scratch, payload, false)
-			fastResult, fastCoeffs, fastDirty, fastLevelDirty := decodeKnownTracked2DTXBForTest(t, tc, scan, scratch, payload, true)
-			if fastResult != genericResult {
-				t.Fatalf("fast result=%+v want generic %+v", fastResult, genericResult)
-			}
-			if !slices.Equal(fastCoeffs, genericCoeffs) {
-				t.Fatalf("fast coeffs=%v want generic %v", fastCoeffs, genericCoeffs)
-			}
-			if !slices.Equal(fastDirty, genericDirty) {
-				t.Fatalf("fast dirty=%v want generic %v", fastDirty, genericDirty)
-			}
-			if !slices.Equal(fastLevelDirty, genericLevelDirty) {
-				t.Fatalf("fast level dirty=%v want generic %v", fastLevelDirty, genericLevelDirty)
-			}
-		})
-	}
 }
 
 func TestTracked2DPackedLevelContextFormulas(t *testing.T) {
@@ -1387,358 +565,6 @@ func TestTracked2DPackedLevelContextFormulas(t *testing.T) {
 			}
 		}
 	}
-}
-
-func TestReadCoefficientsTXBTrackedMatrixAllocs(t *testing.T) {
-	for _, tc := range coeffTXBMatrixCases() {
-		t.Run(tc.name, func(t *testing.T) {
-			scan, scratch, payload := coeffTXBMatrixInputs(t, tc)
-			coeffs := make([]int16, len(scan))
-			var levelArena [maxCoeffScratchLen]uint8
-			levels := levelArena[:len(scratch)]
-			var dirtyPos [maxCoeffScanLen]int16
-			var dirtyLen uint16
-			var levelDirty [maxCoeffScanLen]int16
-			var levelDirtyLen uint16
-			req := TXBDecodeRequest{
-				Size:                  tc.size,
-				Plane:                 CoeffPlaneY,
-				Class:                 tc.class,
-				TXBSkipContext:        0,
-				DCSignContext:         0,
-				EOBMultiContext:       0,
-				SkipAllZeroCoeffClear: true,
-				skipNonZeroCoeffClear: true,
-				coeffDirtyPos:         &dirtyPos,
-				coeffDirtyLen:         &dirtyLen,
-				levelDirtyPos:         &levelDirty,
-				levelDirtyLen:         &levelDirtyLen,
-				levelDirtyScratch:     &levelArena,
-				trustedScan:           true,
-			}
-			allocs := testing.AllocsPerRun(1000, func() {
-				for i := 0; i < int(dirtyLen); i++ {
-					coeffs[coeffDirtyPackedPos(dirtyPos[i])] = 0
-				}
-				dirtyLen = 0
-				var cdfs CoeffCDFs
-				if err := cdfs.InitDefault(0); err != nil {
-					t.Fatal(err)
-				}
-				var state DecodeState
-				if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, tc.opts); err != nil {
-					t.Fatal(err)
-				}
-				if _, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, levels); err != nil {
-					t.Fatal(err)
-				}
-			})
-			if allocs != 0 {
-				t.Fatalf("tracked TXB decode allocated: %.2f", allocs)
-			}
-		})
-	}
-}
-
-func coeffTXBMatrixInputs(t testing.TB, tc coeffTXBMatrixCase) ([]int16, []uint8, []byte) {
-	t.Helper()
-	txSize, err := tc.size.TransformSize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	scan, scratch := coeffScanAndScratch(t, tc.size, txSize, tc.class)
-	payload := coeffTXBMatrixPayload(t, tc, scan, scratch)
-	return scan, scratch, payload
-}
-
-type coeffTXBMatrixCase struct {
-	name  string
-	size  TransformSize
-	class transform.Class
-	opts  DecodeOptions
-}
-
-func coeffTXBMatrixCases() []coeffTXBMatrixCase {
-	return []coeffTXBMatrixCase{
-		{name: "4x4_2d_update", size: TransformSize4x4, class: transform.Class2D},
-		{name: "8x8_2d_update", size: TransformSize8x8, class: transform.Class2D},
-		{name: "8x8_horiz_update", size: TransformSize8x8, class: transform.ClassHoriz},
-		{name: "8x8_vert_update", size: TransformSize8x8, class: transform.ClassVert},
-		{name: "8x8_2d_no_update", size: TransformSize8x8, class: transform.Class2D, opts: DecodeOptions{DisableCDFUpdate: true}},
-		{name: "16x16_2d_update", size: TransformSize16x16, class: transform.Class2D},
-	}
-}
-
-func decodeKnownTracked2DTXBForTest(t testing.TB, tc coeffTXBMatrixCase, scan []int16, scratch []uint8, payload []byte, fast bool) (TXBDecodeResult, []int16, []int16, []int16) {
-	t.Helper()
-	coeffs := make([]int16, len(scan))
-	var levelArena [maxCoeffScratchLen]uint8
-	levels := levelArena[:len(scratch)]
-	var dirtyPos [maxCoeffScanLen]int16
-	var dirtyLen uint16
-	var levelDirty [maxCoeffScanLen]int16
-	var levelDirtyLen uint16
-	levelArena[0] = 7
-	levelArena[1] = 9
-	levelDirty[0] = 0
-	levelDirty[1] = 1
-	levelDirtyLen = 2
-	req := TXBDecodeRequest{
-		Size:                  tc.size,
-		Plane:                 CoeffPlaneY,
-		Class:                 transform.Class2D,
-		TXBSkipContext:        0,
-		DCSignContext:         0,
-		EOBMultiContext:       0,
-		TXBSkipKnown:          true,
-		knownNonZero:          true,
-		SkipAllZeroCoeffClear: true,
-		skipNonZeroCoeffClear: true,
-		coeffDirtyPos:         &dirtyPos,
-		coeffDirtyLen:         &dirtyLen,
-		levelDirtyPos:         &levelDirty,
-		levelDirtyLen:         &levelDirtyLen,
-		levelDirtyScratch:     &levelArena,
-		trustedScan:           true,
-	}
-	var cdfs CoeffCDFs
-	if err := cdfs.InitDefault(0); err != nil {
-		t.Fatal(err)
-	}
-	var state DecodeState
-	if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, tc.opts); err != nil {
-		t.Fatal(err)
-	}
-	allZero, err := state.ReadTXBSkip(&cdfs, TXBSkipRequest{Size: tc.size, Context: 0})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if allZero {
-		t.Fatal("matrix payload unexpectedly decoded as all-zero after TXB skip")
-	}
-	geo, ok := coeffGeoPtr(tc.size)
-	if !ok {
-		t.Fatal("missing coefficient geometry")
-	}
-	var result TXBDecodeResult
-	if fast {
-		result, err = state.readCoefficientsTXBTracked2DWithGeo(&cdfs, req, coeffs, scan, levels, geo)
-	} else {
-		result, err = state.readCoefficientsTXBWithGeo(&cdfs, req, coeffs, scan, levels, geo)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	return result, coeffs, slices.Clone(dirtyPos[:dirtyLen]), slices.Clone(levelDirty[:levelDirtyLen])
-}
-
-func decodeCoeffTXBMatrixCase(t testing.TB, tc coeffTXBMatrixCase, scan []int16, scratch []uint8, payload []byte, tracked bool) (TXBDecodeResult, []int16) {
-	t.Helper()
-	coeffs := make([]int16, len(scan))
-	var levelArena [maxCoeffScratchLen]uint8
-	levels := levelArena[:len(scratch)]
-	req := TXBDecodeRequest{
-		Size:            tc.size,
-		Plane:           CoeffPlaneY,
-		Class:           tc.class,
-		TXBSkipContext:  0,
-		DCSignContext:   0,
-		EOBMultiContext: 0,
-	}
-	var dirtyPos [maxCoeffScanLen]int16
-	var dirtyLen uint16
-	var levelDirty [maxCoeffScanLen]int16
-	var levelDirtyLen uint16
-	if tracked {
-		req.SkipAllZeroCoeffClear = true
-		req.skipNonZeroCoeffClear = true
-		req.coeffDirtyPos = &dirtyPos
-		req.coeffDirtyLen = &dirtyLen
-		req.levelDirtyPos = &levelDirty
-		req.levelDirtyLen = &levelDirtyLen
-		req.levelDirtyScratch = &levelArena
-		req.trustedScan = true
-	}
-	var cdfs CoeffCDFs
-	if err := cdfs.InitDefault(0); err != nil {
-		t.Fatal(err)
-	}
-	var state DecodeState
-	if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, tc.opts); err != nil {
-		t.Fatal(err)
-	}
-	result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, levels)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return result, coeffs
-}
-
-func coeffTXBMatrixPayload(t testing.TB, tc coeffTXBMatrixCase, scan []int16, scratch []uint8) []byte {
-	t.Helper()
-	coeffs := make([]int16, len(scan))
-	req := TXBDecodeRequest{
-		Size:            tc.size,
-		Plane:           CoeffPlaneY,
-		Class:           tc.class,
-		TXBSkipContext:  0,
-		DCSignContext:   0,
-		EOBMultiContext: 0,
-	}
-	for seed := 0; seed < 8192; seed++ {
-		payload := []byte{byte(seed), byte(seed*73 + 19), byte(seed ^ 0xa5), byte(seed*29 + 7), byte(seed*11 + 3), 0x5a}
-		clear(coeffs)
-		clear(scratch)
-		var cdfs CoeffCDFs
-		if err := cdfs.InitDefault(0); err != nil {
-			t.Fatal(err)
-		}
-		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, tc.opts); err != nil {
-			t.Fatal(err)
-		}
-		result, err := state.ReadCoefficientsTXB(&cdfs, req, coeffs, scan, scratch)
-		if err == nil && !result.AllZero && result.EOB > 4 {
-			return slices.Clone(payload)
-		}
-	}
-	t.Fatalf("could not find nontrivial TXB payload for %s", tc.name)
-	return nil
-}
-
-func FuzzReadCoeffPrimitives(f *testing.F) {
-	f.Add([]byte{0x00}, uint8(TransformSize4x4), uint8(0), uint8(0), uint8(0), uint8(0))
-	f.Add([]byte{0xff}, uint8(TransformSize16x16), uint8(1), uint8(2), uint8(7), uint8(20))
-	f.Add([]byte{0xa5, 0x5a}, uint8(TransformSize64x64), uint8(0), uint8(1), uint8(8), uint8(40))
-
-	f.Fuzz(func(t *testing.T, payload []byte, rawSize uint8, rawPlane uint8, rawEOBCtx uint8, rawCoeffCtx uint8, q uint8) {
-		if len(payload) == 0 || len(payload) > 64 {
-			return
-		}
-		size := TransformSize(rawSize % uint8(transformSizeCount))
-		plane := CoeffPlaneType(rawPlane % CoeffPlaneTypes)
-		var cdfs CoeffCDFs
-		if err := cdfs.InitDefault(q); err != nil {
-			t.Fatal(err)
-		}
-		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := state.ReadTXBSkip(&cdfs, TXBSkipRequest{
-			Size:    size,
-			Context: rawCoeffCtx % TXBSkipContexts,
-		}); err != nil {
-			t.Fatalf("ReadTXBSkip err=%v", err)
-		}
-		if _, err := state.ReadEOB(&cdfs, EOBRequest{
-			Size:            size,
-			Plane:           plane,
-			EOBMultiContext: rawEOBCtx % maxEOBFlagContexts,
-		}); err != nil {
-			t.Fatalf("ReadEOB err=%v", err)
-		}
-		if _, err := state.ReadCoeffBaseEOB(&cdfs, CoeffTokenRequest{
-			Size:    size,
-			Plane:   plane,
-			Context: rawCoeffCtx % EOBBaseContexts,
-		}); err != nil {
-			t.Fatalf("ReadCoeffBaseEOB err=%v", err)
-		}
-		if _, err := state.ReadCoeffBase(&cdfs, CoeffTokenRequest{
-			Size:    size,
-			Plane:   plane,
-			Context: rawCoeffCtx % CoeffBaseContexts,
-		}); err != nil {
-			t.Fatalf("ReadCoeffBase err=%v", err)
-		}
-		if _, err := state.ReadCoeffBR(&cdfs, CoeffTokenRequest{
-			Size:    size,
-			Plane:   plane,
-			Context: rawCoeffCtx % CoeffBRContexts,
-		}); err != nil {
-			t.Fatalf("ReadCoeffBR err=%v", err)
-		}
-		if _, err := state.ReadDCSign(&cdfs, plane, int(rawCoeffCtx%3)); err != nil {
-			t.Fatalf("ReadDCSign err=%v", err)
-		}
-	})
-}
-
-func FuzzReadCoefficientsTXB(f *testing.F) {
-	f.Add([]byte{0x00}, uint8(TransformSize4x4), uint8(transform.Class2D), uint8(CoeffPlaneY), uint8(0), uint8(0), uint8(0), uint8(0))
-	f.Add([]byte{0xff}, uint8(TransformSize8x8), uint8(transform.ClassHoriz), uint8(CoeffPlaneUV), uint8(1), uint8(1), uint8(1), uint8(21))
-	f.Add([]byte{0xa5, 0x5a}, uint8(TransformSize16x16), uint8(transform.ClassVert), uint8(CoeffPlaneY), uint8(6), uint8(2), uint8(1), uint8(121))
-	f.Add([]byte{0x4d, 0x21, 0xc3, 0x7e}, uint8(TransformSize64x64), uint8(transform.Class2D), uint8(CoeffPlaneUV), uint8(12), uint8(2), uint8(1), uint8(255))
-
-	f.Fuzz(func(t *testing.T, payload []byte, rawSize uint8, rawClass uint8, rawPlane uint8, rawSkipCtx uint8, rawDCSignCtx uint8, rawEOBCtx uint8, q uint8) {
-		if len(payload) == 0 || len(payload) > 128 {
-			return
-		}
-		size := TransformSize(rawSize % uint8(transformSizeCount))
-		class := transform.Class(rawClass % 3)
-		plane := CoeffPlaneType(rawPlane % CoeffPlaneTypes)
-		txSize, err := size.TransformSize()
-		if err != nil {
-			t.Fatal(err)
-		}
-		scan, scratch := coeffScanAndScratch(t, size, txSize, class)
-		coeffs := make([]int16, len(scan))
-
-		var cdfs CoeffCDFs
-		if err := cdfs.InitDefault(q); err != nil {
-			t.Fatal(err)
-		}
-		var state DecodeState
-		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
-			t.Fatal(err)
-		}
-		result, err := state.ReadCoefficientsTXB(&cdfs, TXBDecodeRequest{
-			Size:            size,
-			Plane:           plane,
-			Class:           class,
-			TXBSkipContext:  rawSkipCtx % TXBSkipContexts,
-			DCSignContext:   rawDCSignCtx % 3,
-			EOBMultiContext: rawEOBCtx % maxEOBFlagContexts,
-		}, coeffs, scan, scratch)
-		if err != nil {
-			if errors.Is(err, ErrInvalidDecodeState) {
-				return
-			}
-			t.Fatalf("ReadCoefficientsTXB err=%v", err)
-		}
-		assertTXBDecodeInvariants(t, result, coeffs, scan)
-	})
-}
-
-func readCoefficientsTXBForTest(t *testing.T, payload []byte, size TransformSize, class transform.Class, plane CoeffPlaneType, q uint8) (TXBDecodeResult, []int16) {
-	t.Helper()
-	txSize, err := size.TransformSize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	scan, scratch := coeffScanAndScratch(t, size, txSize, class)
-	coeffs := make([]int16, len(scan))
-	var cdfs CoeffCDFs
-	if err := cdfs.InitDefault(q); err != nil {
-		t.Fatal(err)
-	}
-	var state DecodeState
-	if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	result, err := state.ReadCoefficientsTXB(&cdfs, TXBDecodeRequest{
-		Size:            size,
-		Plane:           plane,
-		Class:           class,
-		TXBSkipContext:  0,
-		DCSignContext:   0,
-		EOBMultiContext: 0,
-	}, coeffs, scan, scratch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return result, coeffs
 }
 
 func coeffScanAndScratch(t testing.TB, size TransformSize, txSize transform.Size, class transform.Class) ([]int16, []uint8) {
@@ -1826,40 +652,6 @@ func (r *coeffContextRandom) u16() uint16 {
 	return uint16(r.next() >> 16)
 }
 
-func assertTXBDecodeInvariants(t *testing.T, result TXBDecodeResult, coeffs []int16, scan []int16) {
-	t.Helper()
-	if result.CulLevel > CoeffContextMask+(2<<CoeffContextBits) {
-		t.Fatalf("cul_level=%d outside context range", result.CulLevel)
-	}
-	if result.AllZero {
-		if result.EOB != 0 || result.MaxScanLine != 0 || result.CulLevel != 0 {
-			t.Fatalf("all-zero result=%+v want zeroed result", result)
-		}
-		for i, coeff := range coeffs {
-			if coeff != 0 {
-				t.Fatalf("all-zero coeff[%d]=%d want 0", i, coeff)
-			}
-		}
-		return
-	}
-	if result.EOB == 0 || int(result.EOB) > len(scan) {
-		t.Fatalf("eob=%d outside scan len %d", result.EOB, len(scan))
-	}
-	if int(result.MaxScanLine) >= len(coeffs) {
-		t.Fatalf("max_scan_line=%d outside coeff len %d", result.MaxScanLine, len(coeffs))
-	}
-	last := int(scan[int(result.EOB)-1])
-	if coeffs[last] == 0 {
-		t.Fatalf("last non-zero scan coeff[%d]=0", last)
-	}
-	for c := int(result.EOB); c < len(scan); c++ {
-		pos := int(scan[c])
-		if coeffs[pos] != 0 {
-			t.Fatalf("coeff after eob scan=%d pos=%d value=%d want 0", c, pos, coeffs[pos])
-		}
-	}
-}
-
 func TestCoeffGeometryTxScaleMatchesQuantizeTransformScale(t *testing.T) {
 	valid := 0
 	for size := TransformSize(0); size < transformSizeCount; size++ {
@@ -1933,5 +725,170 @@ func TestCoeffCDFsEqualMatchesOperator(t *testing.T) {
 		if !def.Equal(&cp) {
 			t.Fatalf("q context %d: restored copy does not compare equal", q)
 		}
+	}
+}
+
+func TestCoeffContextsMatchLibaom(t *testing.T) {
+	ctxTests := []struct {
+		size TransformSize
+		want uint8
+	}{
+		{size: TransformSize4x4, want: 0},
+		{size: TransformSize4x8, want: 1},
+		{size: TransformSize8x16, want: 2},
+		{size: TransformSize16x64, want: 3},
+		{size: TransformSize64x64, want: 4},
+	}
+	for _, tt := range ctxTests {
+		got, err := CoeffTransformSizeContext(tt.size)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tt.want {
+			t.Fatalf("CoeffTransformSizeContext(%d)=%d want %d", tt.size, got, tt.want)
+		}
+	}
+
+	eobTests := []struct {
+		size TransformSize
+		want uint8
+	}{
+		{size: TransformSize4x4, want: 0},
+		{size: TransformSize4x8, want: 1},
+		{size: TransformSize8x8, want: 2},
+		{size: TransformSize16x16, want: 4},
+		{size: TransformSize16x64, want: 5},
+		{size: TransformSize64x64, want: 6},
+	}
+	for _, tt := range eobTests {
+		got, err := EOBMultiSize(tt.size)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tt.want {
+			t.Fatalf("EOBMultiSize(%d)=%d want %d", tt.size, got, tt.want)
+		}
+	}
+
+	if got, err := CoeffPlaneTypeForPlane(2); err != nil || got != CoeffPlaneUV {
+		t.Fatalf("CoeffPlaneTypeForPlane(2)=%d err=%v want UV", got, err)
+	}
+}
+
+func TestEOBPositionTokenMatchesLibaom(t *testing.T) {
+	tests := []struct {
+		eob       int
+		wantToken int
+		wantExtra int
+	}{
+		{eob: 0, wantToken: 0, wantExtra: 0},
+		{eob: 1, wantToken: 1, wantExtra: 0},
+		{eob: 2, wantToken: 2, wantExtra: 0},
+		{eob: 3, wantToken: 3, wantExtra: 0},
+		{eob: 4, wantToken: 3, wantExtra: 1},
+		{eob: 5, wantToken: 4, wantExtra: 0},
+		{eob: 8, wantToken: 4, wantExtra: 3},
+		{eob: 9, wantToken: 5, wantExtra: 0},
+		{eob: 16, wantToken: 5, wantExtra: 7},
+		{eob: 17, wantToken: 6, wantExtra: 0},
+		{eob: 32, wantToken: 6, wantExtra: 15},
+		{eob: 33, wantToken: 7, wantExtra: 0},
+		{eob: 64, wantToken: 7, wantExtra: 31},
+		{eob: 65, wantToken: 8, wantExtra: 0},
+		{eob: 128, wantToken: 8, wantExtra: 63},
+		{eob: 129, wantToken: 9, wantExtra: 0},
+		{eob: 256, wantToken: 9, wantExtra: 127},
+		{eob: 257, wantToken: 10, wantExtra: 0},
+		{eob: 512, wantToken: 10, wantExtra: 255},
+		{eob: 513, wantToken: 11, wantExtra: 0},
+		{eob: 1024, wantToken: 11, wantExtra: 511},
+	}
+	for _, tt := range tests {
+		token, extra, err := EOBPositionToken(tt.eob)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if token != tt.wantToken || extra != tt.wantExtra {
+			t.Fatalf("EOBPositionToken(%d)=(%d,%d) want (%d,%d)", tt.eob, token, extra, tt.wantToken, tt.wantExtra)
+		}
+	}
+
+	for eob := 0; eob <= 1024; eob++ {
+		token, extra, err := EOBPositionToken(eob)
+		if err != nil {
+			t.Fatalf("EOBPositionToken(%d): %v", eob, err)
+		}
+		if got := int(eobGroupStart[token]) + extra; got != eob {
+			t.Fatalf("eob round trip %d -> token %d extra %d -> %d", eob, token, extra, got)
+		}
+		if extra >= 1<<eobOffsetBits[token] {
+			t.Fatalf("eob %d extra=%d offsetBits=%d", eob, extra, eobOffsetBits[token])
+		}
+	}
+
+	if _, _, err := EOBPositionToken(-1); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("negative eob err=%v want %v", err, ErrInvalidDecodeState)
+	}
+	if _, _, err := EOBPositionToken(1025); !errors.Is(err, ErrInvalidDecodeState) {
+		t.Fatalf("large eob err=%v want %v", err, ErrInvalidDecodeState)
+	}
+}
+
+func TestCoeffEOB1TX64x64ContextsMatchLibaomMVFrame1(t *testing.T) {
+	txsCtx, err := CoeffTransformSizeContext(TransformSize64x64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if txsCtx != 4 {
+		t.Fatalf("CoeffTransformSizeContext(TX_64X64)=%d want 4", txsCtx)
+	}
+
+	eobMultiSize, err := EOBMultiSize(TransformSize64x64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eobMultiSize != 6 {
+		t.Fatalf("EOBMultiSize(TX_64X64)=%d want 6 (eob_flag_cdf1024)", eobMultiSize)
+	}
+
+	scanSize, err := transform.ScanSize(transform.Size{Width: 64, Height: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanSize.Width != 32 || scanSize.Height != 32 {
+		t.Fatalf("ScanSize(TX_64X64)=%+v want 32x32 (av1_get_adjusted_tx_size)", scanSize)
+	}
+
+	if got, err := transform.LowerLevelsCtxEOB(scanSize, 0); err != nil || got != 0 {
+		t.Fatalf("LowerLevelsCtxEOB(32x32, c=0)=%d err=%v want 0", got, err)
+	}
+
+	if got, err := CoeffBRContextEOB(TransformSize64x64, transform.Class2D, 0); err != nil || got != 0 {
+		t.Fatalf("CoeffBRContextEOB(TX_64X64, 2D, pos=0)=%d err=%v want 0", got, err)
+	}
+
+	// qindex=81 lives in q-context 2 (60 < q <= 120). A regression in the
+	// q-context selection would silently swap the CDF cohort the mv vector
+	// reads coefficients with for every frame past the keyframe.
+	if got := CoeffQContext(81); got != 2 {
+		t.Fatalf("CoeffQContext(81)=%d want 2 (mv vector inter-frame qctx)", got)
+	}
+
+	// The eob=1 decode path stores level into levels[get_padded_idx(0, bhl)],
+	// which for TX_64X64 (height=32, bhl=5) is just index 0 (since
+	// (0 >> 5) << TX_PAD_HOR_LOG2 = 0). A regression where pos=0 lands on
+	// a padded index would silently corrupt subsequent CoeffLowerLevelsContext
+	// reads when a non-eob-only block coexists with the DC entry.
+	scratchLen, err := CoeffLevelsScratchLen(TransformSize64x64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	levels := make([]uint8, scratchLen)
+	if err := setCoeffLevel(levels, TransformSize64x64, 0, 3); err != nil {
+		t.Fatal(err)
+	}
+	if levels[0] != 3 {
+		t.Fatalf("setCoeffLevel(TX_64X64, pos=0, 3) stored level at padded idx %d want 0",
+			indexOfNonZero(levels))
 	}
 }

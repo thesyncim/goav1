@@ -7,7 +7,6 @@
 package quantize
 
 import (
-	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
@@ -19,8 +18,6 @@ const (
 	DefaultQMLast          = 9
 	DefaultQMFirstAllIntra = 4
 	DefaultQMLastAllIntra  = 10
-
-	qmBits = 5
 )
 
 // QMLevel maps qindex to the inter quantization-matrix level range. This is
@@ -53,48 +50,23 @@ func clampInt(v int, lo int, hi int) int {
 	return min(max(v, lo), hi)
 }
 
-// InverseQMatrix returns libaom's inverse quantization matrix for a decoded
-// transform block, or nil when AV1 uses the flat matrix path.
-func InverseQMatrix(params parser.QuantizationParams, plane Plane, size transform.Size, typ transform.Type, lossless bool) ([]uint16, error) {
-	if !params.UsingQMatrix || lossless || !usesInverseQMatrixTransform(typ) {
-		return nil, nil
-	}
-	level, ok := qmatrixLevelForPlane(params, plane)
-	if !ok {
-		return nil, ErrInvalidQuantizer
-	}
-	if level >= QMLevels {
-		return nil, ErrInvalidQuantizer
-	}
-	if level == QMLevels-1 {
-		return nil, nil
+// QMatrix is libaom's inverse quantization matrix of level for a luma (chroma
+// false) or chroma transform block of size, in coefficient order
+// (col * scanHeight + row, the decoder's cf order). It is nil for the flat
+// level 15 and for sizes without a matrix.
+func QMatrix(level uint8, chroma bool, size transform.Size) []uint16 {
+	if level >= QMLevels-1 {
+		return nil
 	}
 	offset, length, err := inverseQMatrixOffset(size)
 	if err != nil {
-		return nil, err
+		return nil
 	}
 	class := 0
-	if plane != PlaneY {
+	if chroma {
 		class = 1
 	}
-	return inverseQMatrixRef[level][class][offset : offset+length], nil
-}
-
-func usesInverseQMatrixTransform(typ transform.Type) bool {
-	return typ < transform.TypeIDTX
-}
-
-func qmatrixLevelForPlane(params parser.QuantizationParams, plane Plane) (uint8, bool) {
-	switch plane {
-	case PlaneY:
-		return params.QMatrixLevelY, true
-	case PlaneU:
-		return params.QMatrixLevelU, true
-	case PlaneV:
-		return params.QMatrixLevelV, true
-	default:
-		return 0, false
-	}
+	return inverseQMatrixRef[level][class][offset : offset+length]
 }
 
 func inverseQMatrixOffset(size transform.Size) (int, int, error) {

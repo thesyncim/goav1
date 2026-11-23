@@ -378,8 +378,8 @@ func TestEncodePBlockCompoundLastGolden8x8(t *testing.T) {
 
 	got := pc.scratch.Mode.AboveInterMotion[0]
 	if !got.References.Compound ||
-		got.References.Ref[0] != tile.ReferenceFrameLast ||
-		got.References.Ref[1] != tile.ReferenceFrameGolden ||
+		got.References.Ref0 != tile.ReferenceFrameLast ||
+		got.References.Ref1 != tile.ReferenceFrameGolden ||
 		got.Mode.CompoundMode != tile.CompoundInterModeGlobalGlobal {
 		t.Fatalf("motion = %+v, want GLOBAL_GLOBAL LAST+GOLDEN compound", got)
 	}
@@ -474,8 +474,8 @@ func TestEncodePBlockGoldenSingleLarge(t *testing.T) {
 
 			got := pc.scratch.Mode.AboveInterMotion[0]
 			if got.References.Compound ||
-				got.References.Ref[0] != tile.ReferenceFrameGolden ||
-				got.References.Ref[1] != tile.ReferenceFrameNone ||
+				got.References.Ref0 != tile.ReferenceFrameGolden ||
+				got.References.Ref1 != tile.ReferenceFrameNone ||
 				got.Mode.Mode != tile.InterModeGlobalMV {
 				t.Fatalf("motion = %+v, want GLOBALMV single GOLDEN", got)
 			}

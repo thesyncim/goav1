@@ -232,6 +232,20 @@ type SharedFrameContextStore struct {
 	contexts map[int]int
 	backing  []threading.FrameWorkTileResidualCDFStorage
 	used     int
+
+	// motion holds each reference buffer's saved motion vectors under the same
+	// global surface ID (libaom's cm->cur_frame->mvs, dav1d's f->mvs_ref), so
+	// a frame with use_ref_frame_mvs projects from the buffers its reference
+	// slots name, whichever spatial layer decoded them.
+	motion map[int]*sharedMotionFrame
+}
+
+// sharedMotionFrame is one reference buffer's MV_REF grid and the order-hint
+// metadata temporal projection needs. frame.Entries aliases backing.
+type sharedMotionFrame struct {
+	frame   tile.ReferenceMVFrame
+	backing []tile.ReferenceMVEntry
+	meta    mvFrameMeta
 }
 
 // Prealloc primes the retained frame-context map so realtime shared-reference
@@ -262,6 +276,42 @@ func (s *SharedFrameContextStore) Reset() {
 	}
 	clear(s.contexts)
 	s.used = 0
+	for _, m := range s.motion {
+		m.frame = tile.ReferenceMVFrame{}
+		m.meta = mvFrameMeta{}
+	}
+}
+
+// motionFrame returns the saved motion vectors of the buffer with the global
+// surface ID, or nil when that buffer never published any.
+func (s *SharedFrameContextStore) motionFrame(globalID int) *sharedMotionFrame {
+	if s == nil || globalID < 0 {
+		return nil
+	}
+	if m := s.motion[globalID]; m != nil && m.meta.valid {
+		return m
+	}
+	return nil
+}
+
+// publishMotion saves a decoded frame's motion vectors under its global
+// surface ID. The store takes the grid's backing and returns the buffer's
+// previous one for the caller's next frame, so no entries are copied.
+func (s *SharedFrameContextStore) publishMotion(globalID int, current tile.ReferenceMVFrame, backing []tile.ReferenceMVEntry, meta mvFrameMeta) []tile.ReferenceMVEntry {
+	if s == nil || globalID < 0 {
+		return backing
+	}
+	m := s.motion[globalID]
+	if m == nil {
+		if s.motion == nil {
+			s.motion = make(map[int]*sharedMotionFrame, parser.RefFrames)
+		}
+		m = new(sharedMotionFrame)
+		s.motion[globalID] = m
+	}
+	previous := m.backing
+	m.frame, m.backing, m.meta = current, backing, meta
+	return previous
 }
 
 // load returns the saved frame context for the global surface ID, reporting
@@ -545,7 +595,7 @@ func (s *FrameWorkState) finishExternal(refs *SurfaceReferences, framePool *fram
 
 	*refs = next
 	s.finishTileResidualCDFs(event, globalID)
-	s.publishTemporalMotionFrame(event)
+	s.publishTemporalMotionFrame(event, globalID)
 	s.segMapStore().publish(event.FrameSize.RefreshFrameFlags, s.segFrame.cur)
 	s.resetActive()
 	return releaseCount, nil

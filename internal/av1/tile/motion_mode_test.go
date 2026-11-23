@@ -41,7 +41,7 @@ func TestMotionModeCDFsInitDefaultMatchesDav1dAndLibaom(t *testing.T) {
 }
 
 func TestCountOverlappableNeighborsMatchesLibaomScan(t *testing.T) {
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	inter := InterMotionResult{
 		References: refs,
 		Mode:       InterModeResult{Mode: InterModeNearestMV},
@@ -89,7 +89,7 @@ func TestCountOverlappableNeighborsMatchesLibaomScan(t *testing.T) {
 }
 
 func TestCountOverlappableNeighborsPortsFourByFourPairing(t *testing.T) {
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	inter := InterMotionResult{
 		References: refs,
 		Mode:       InterModeResult{Mode: InterModeNearestMV},
@@ -134,9 +134,9 @@ func TestCountOverlappableNeighborsPortsFourByFourPairing(t *testing.T) {
 }
 
 func TestOverlappableNeighborSetCountsWarpSamples(t *testing.T) {
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
-	otherRefs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameGolden, ReferenceFrameNone}}
-	compoundRefs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameAltref}, Compound: true}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
+	otherRefs := InterReferencesResult{Ref0: ReferenceFrameGolden, Ref1: ReferenceFrameNone}
+	compoundRefs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameAltref, Compound: true}
 	var ctx BlockModeContext
 	seedAboveMotion(&ctx, 0, BlockSize8x8, InterMotionResult{References: refs})
 	seedLeftMotion(&ctx, 0, BlockSize8x8, InterMotionResult{References: otherRefs})
@@ -164,7 +164,7 @@ func TestOverlappableNeighborSetCountsWarpSamples(t *testing.T) {
 }
 
 func TestOverlappableNeighborSetCountsTopRightWarpSample(t *testing.T) {
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	inter := InterMotionResult{
 		References: refs,
 		Mode:       InterModeResult{Mode: InterModeNearestMV},
@@ -209,7 +209,7 @@ func TestOverlappableNeighborSetCountsTopRightWarpSample(t *testing.T) {
 }
 
 func TestWarpSamplesUseLibaomOffsetForWideAboveNeighbor(t *testing.T) {
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	inter := InterMotionResult{
 		References: refs,
 		Mode:       InterModeResult{Mode: InterModeNearestMV},
@@ -244,7 +244,7 @@ func TestWarpSamplesUseLibaomOffsetForWideAboveNeighbor(t *testing.T) {
 }
 
 func TestWarpSampleCountSuppressesCoveredTopLeftCorner(t *testing.T) {
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	inter := InterMotionResult{
 		References: refs,
 		Mode:       InterModeResult{Mode: InterModeNearestMV},
@@ -278,7 +278,7 @@ func TestWarpSampleCountSuppressesCoveredTopLeftCorner(t *testing.T) {
 
 func TestWarpProjectionDerivesAffineModel(t *testing.T) {
 	mv := motion.Vector{Row: 5, Col: 3}
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	set := OverlappableNeighborSet{
 		LeftCount: 1,
 		Left: [MaxOverlappableNeighbors]OverlappableNeighbor{
@@ -330,7 +330,7 @@ func TestWarpProjectionDerivesAffineModel(t *testing.T) {
 
 func TestWarpProjectionAllocs(t *testing.T) {
 	mv := motion.Vector{Row: 5, Col: 3}
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	set := OverlappableNeighborSet{
 		LeftCount: 1,
 		Left: [MaxOverlappableNeighbors]OverlappableNeighbor{
@@ -354,7 +354,7 @@ func TestWarpProjectionAllocs(t *testing.T) {
 }
 
 func TestWarpSampleCountForBlockAllocs(t *testing.T) {
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	inter := InterMotionResult{
 		References: refs,
 		Mode:       InterModeResult{Mode: InterModeNearestMV},
@@ -441,7 +441,7 @@ func TestLastMotionModeAllowedMatchesLibaom(t *testing.T) {
 }
 
 func TestWarpSampleCountSkipsInterIntraNeighbors(t *testing.T) {
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	neighbor := OverlappableNeighbor{
 		MotionValid: true,
 		Motion: InterMotionResult{

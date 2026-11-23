@@ -42,7 +42,7 @@ func TestCoeffWriterTrustedScanHotUsesCanonicalLayout(t *testing.T) {
 
 // TestWriteCoefficientsTXBRoundTrip is the oracle gate for the coefficient writer:
 // it encodes a sequence of random quantized transform blocks with shared, adapting
-// CDFs and decodes them back with ReadCoefficientsTXB (the byte-exact libaom
+// CDFs and decodes them back with decode_coefs (decodeCoefTokens, the dav1d
 // inverse) using CDFs that start identical and adapt in lockstep. Every block must
 // reconstruct its coefficients and eob exactly. Covered: all tx classes, square and
 // rectangular sizes, all-zero (txb_skip) blocks, zero runs, base levels, base-range
@@ -63,12 +63,11 @@ func TestWriteCoefficientsTXBRoundTrip(t *testing.T) {
 			t.Fatalf("size %v: %v", size, err)
 		}
 		for _, class := range classes {
+			if class != transform.Class2D && size == TransformSize32x32 {
+				continue // AV1 codes 32-point transforms in 2D only.
+			}
 			scan, encScratch := coeffScanAndScratch(t, size, txSize, class)
 			maxEOB := len(scan)
-			eobMultiCtx := uint8(0)
-			if class != transform.Class2D {
-				eobMultiCtx = 1
-			}
 
 			const nTXB = 50
 			recs := make([][]int16, nTXB)
@@ -99,15 +98,9 @@ func TestWriteCoefficientsTXBRoundTrip(t *testing.T) {
 			if err := state.Reset(buf, Job{Offset: 0, Size: uint32(len(buf))}, DecodeOptions{}); err != nil {
 				t.Fatal(err)
 			}
-			decScan, decScratch := coeffScanAndScratch(t, size, txSize, class)
 			for n := range nTXB {
 				out := make([]int16, maxEOB)
-				result, err := state.ReadCoefficientsTXB(&decCDFs, TXBDecodeRequest{
-					Size: size, Plane: CoeffPlaneY, Class: class, EOBMultiContext: eobMultiCtx,
-				}, out, decScan, decScratch)
-				if err != nil {
-					t.Fatalf("size=%v class=%v txb=%d read: %v", size, class, n, err)
-				}
+				result := decodeTXBForTest(&state, &decCDFs, size, CoeffPlaneY, class, 0, 0, out)
 				want := recs[n]
 				wantEOB := 0
 				for c := range maxEOB {
@@ -1462,7 +1455,7 @@ func firstCoeffCDFDiff(a, b CoeffCDFs) string {
 // TestWriteCoefficientsTXBWithContextRoundTrip drives the carrier path: a
 // sequence of TXBs at random plane positions coded through the encoder-side
 // CoeffEntropyContext carrier must decode exactly through the decoder's
-// ReadCoefficientsTXBWithContext, with both carriers (txb_skip/dc_sign context
+// decode_coefs with the decoder-side carrier, with both carriers (txb_skip/dc_sign context
 // derivation and MarkTXB updates) and both CDF sets evolving in lockstep.
 func TestWriteCoefficientsTXBWithContextRoundTrip(t *testing.T) {
 	rng := rand.New(rand.NewSource(21))
@@ -1541,21 +1534,21 @@ func TestWriteCoefficientsTXBWithContextRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		scan, scratch := coeffScanAndScratch(t, r.ctxReq.Size, txSize, r.class)
+		scan, _ := coeffScanAndScratch(t, r.ctxReq.Size, txSize, r.class)
 		out := make([]int16, len(scan))
-		eobMultiCtx := uint8(0)
-		if r.class != transform.Class2D {
-			eobMultiCtx = 1
-		}
-		result, err := state.ReadCoefficientsTXBWithContext(&decCDFs, &decCarrier, r.ctxReq, TXBDecodeRequest{
-			Class:           r.class,
-			EOBMultiContext: eobMultiCtx,
-		}, out, scan, scratch)
+		plane, err := CoeffPlaneTypeForPlane(int(r.ctxReq.Plane))
 		if err != nil {
-			t.Fatalf("rec %d read with context: %v", i, err)
+			t.Fatal(err)
 		}
-		if result.AllZero != r.result.AllZero || result.EOB != r.result.EOB ||
-			result.CulLevel != r.result.CulLevel || result.MaxScanLine != r.result.MaxScanLine {
+		txbCtx, err := decCarrier.TXBContext(r.ctxReq)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := decodeTXBForTest(&state, &decCDFs, r.ctxReq.Size, plane, r.class, txbCtx.TXBSkipContext, txbCtx.DCSignContext, out)
+		if err := decCarrier.MarkTXB(r.ctxReq, result); err != nil {
+			t.Fatal(err)
+		}
+		if result.AllZero != r.result.AllZero || result.EOB != r.result.EOB || result.CulLevel != r.result.CulLevel {
 			t.Fatalf("rec %d result=%+v want %+v", i, result, r.result)
 		}
 		for p := range out {

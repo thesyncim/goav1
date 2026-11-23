@@ -13,7 +13,7 @@ package goav1
 //     with caller-owned context carriers.
 //   - TileBlockCoeff* / TileLuma*/Chroma*CoeffTree* parameterize the
 //     coefficient decode tree the tile entropy reader walks.
-//   - TileTXBContext, TileCoeffContextRequest, TileTXBDecodeRequest /
+//   - TileTXBContext, TileCoeffContextRequest /
 //     TileTXBDecodeResult drive the per-transform-block entropy context.
 //   - TileIntraMode*, TileFilterIntraMode*, TileChromaIntraMode*,
 //     TileCFLAlphaResult, TileInterMode*, TileMVJoint, TileMVSubpelPrecision
@@ -135,11 +135,6 @@ type TileBlockLoopStats = internaltile.BlockLoopStats
 // invokes for each decoded block.
 type TileBlockLoopVisitor = internaltile.BlockLoopVisitor
 
-// TileBlockLoopCoeffVisitor is the per-block coefficient callback the
-// tile block loop invokes alongside the visitor when coefficient data
-// is required.
-type TileBlockLoopCoeffVisitor = internaltile.BlockLoopCoeffVisitor
-
 // TileTransformCDFs holds the per-tile transform CDF tables used during
 // transform-tree decode.
 //
@@ -154,12 +149,6 @@ type TileBlockCoeffCDFs = internaltile.BlockCoeffCDFs
 // by the block coefficient decoder.
 type TileBlockCoeffScratch = internaltile.BlockCoeffScratch
 
-// TileBlockCoeffRequest bundles caller-owned inputs (CDFs, scratch,
-// transform tree, visitors) for the block coefficient decoder.
-//
-// See also: TileBlockCoeffResult, TileBlockCoeffVisitor.
-type TileBlockCoeffRequest = internaltile.BlockCoeffRequest
-
 // TileBlockCoeffBlock is one decoded coefficient block produced by the
 // block coefficient decoder.
 type TileBlockCoeffBlock = internaltile.BlockCoeffBlock
@@ -169,11 +158,6 @@ type TileBlockCoeffBlock = internaltile.BlockCoeffBlock
 //
 // See also: TileBlockCoeffRequest.
 type TileBlockCoeffResult = internaltile.BlockCoeffResult
-
-// TileBlockCoeffVisitor is the per-decoded-block callback the
-// coefficient decoder invokes once a block's coefficients are
-// available.
-type TileBlockCoeffVisitor = internaltile.BlockCoeffVisitor
 
 // TileCoeffPlaneType identifies a luma or chroma plane within the
 // coefficient decode helpers.
@@ -188,16 +172,10 @@ type TileTXBContext = internaltile.TXBContext
 // TileTXBContext slots.
 type TileCoeffContextRequest = internaltile.CoeffContextRequest
 
-// TileTXBDecodeRequest bundles caller-owned inputs for one
-// transform-block coefficient decode call.
-//
-// See also: TileTXBDecodeResult.
-type TileTXBDecodeRequest = internaltile.TXBDecodeRequest
-
 // TileTXBDecodeResult reports the per-transform-block coefficient
 // decode statistics.
 //
-// See also: TileTXBDecodeRequest.
+// See also: TileCoeffCDFs.
 type TileTXBDecodeResult = internaltile.TXBDecodeResult
 
 // TileCoeffCDFs holds the per-tile coefficient CDF tables shared
@@ -209,53 +187,6 @@ type TileCoeffCDFs = internaltile.CoeffCDFs
 // TileCoeffTreeScratch is the caller-owned scratch shared by the luma
 // and chroma coefficient-tree decode helpers.
 type TileCoeffTreeScratch = internaltile.LumaCoeffTreeScratch
-
-// TileLumaCoeffTreeRequest bundles caller-owned inputs (CDFs, scratch,
-// visitor) for the luma coefficient-tree decoder.
-//
-// See also: TileLumaCoeffBlock, TileLumaCoeffStats.
-type TileLumaCoeffTreeRequest = internaltile.LumaCoeffTreeRequest
-
-// TileLumaCoeffBlock is one decoded luma coefficient block produced by
-// the luma coefficient-tree decoder.
-type TileLumaCoeffBlock = internaltile.LumaCoeffBlock
-
-// TileLumaCoeffStats reports the per-tile luma coefficient decode
-// counters.
-type TileLumaCoeffStats = internaltile.LumaCoeffStats
-
-// TileLumaCoeffVisitor is the per-block callback the luma
-// coefficient-tree decoder invokes once a block's coefficients are
-// available.
-type TileLumaCoeffVisitor = internaltile.LumaCoeffVisitor
-
-// TileChromaCoeffTreeRequest bundles caller-owned inputs (CDFs,
-// scratch, visitor) for the chroma coefficient-tree decoder.
-//
-// See also: TileChromaCoeffBlock.
-type TileChromaCoeffTreeRequest = internaltile.ChromaCoeffTreeRequest
-
-// TileChromaCoeffBlock is one decoded chroma coefficient block produced
-// by the chroma coefficient-tree decoder.
-type TileChromaCoeffBlock = internaltile.ChromaCoeffBlock
-
-// TileChromaCoeffVisitor is the per-block callback the chroma
-// coefficient-tree decoder invokes once a block's coefficients are
-// available.
-type TileChromaCoeffVisitor = internaltile.ChromaCoeffVisitor
-
-// TileCoeffTransformRequest carries the caller-owned inputs for
-// resolving one transform-type selection at coefficient decode time.
-type TileCoeffTransformRequest = internaltile.CoeffTransformRequest
-
-// TileCoeffTransformSelector is the per-block transform-type selector
-// hook the coefficient decoder consults when the caller wants to
-// override the default ext-tx set choice.
-type TileCoeffTransformSelector = internaltile.CoeffTransformSelector
-
-// TileCoeffTransformSelectorFunc is the function form of
-// TileCoeffTransformSelector.
-type TileCoeffTransformSelectorFunc = internaltile.CoeffTransformSelectorFunc
 
 // TileBlockModeResult reports the decoded per-block mode metadata
 // (intra/inter, segment id, skip flag) for one block.

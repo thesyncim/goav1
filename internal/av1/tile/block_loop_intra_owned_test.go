@@ -2,7 +2,6 @@ package tile
 
 import (
 	"errors"
-	"math/rand"
 	"reflect"
 	"testing"
 	"unsafe"
@@ -15,17 +14,26 @@ import (
 // f05383c85c62ba39d0cd0055e66379f6fa0f839c and are the independent old-state oracle.
 // Compare only the documented private intra live fields; separately assert that
 // omitted payload/validity fields remain poisoned, proving the work is omitted.
+var ownedIntraLiveEdgeFields = []string{
+	"Skip", "SkipMode", "SegPred", "Intra", "Mode", "UVMode", "TxIntra", "Tx", "BlockSize", "PalSz",
+}
+
 var ownedIntraLiveFields = []string{
-	"AboveSkip", "LeftSkip", "AboveSkipMode", "LeftSkipMode", "AboveSegmentPred", "LeftSegmentPred",
-	"AboveIntra", "LeftIntra", "AboveMode", "LeftMode", "AboveChromaIntra", "LeftChromaIntra", "AboveChromaMode", "LeftChromaMode",
-	"AboveTxIntra", "LeftTxIntra", "AboveTx", "LeftTx", "AboveBlockSize", "LeftBlockSize",
+	"PalL",
 	"TxNeighborValid", "TxAboveNeighborIntra", "TxAboveNeighborBlockSize", "TxLeftNeighborIntra", "TxLeftNeighborBlockSize",
-	"AbovePaletteY", "LeftPaletteY", "AbovePaletteUV", "LeftPaletteUV",
 }
 
 func ownedIntraCompareLive(t *testing.T, got, want *BlockLoopScratch) {
 	t.Helper()
 	g, w := reflect.ValueOf(&got.Mode).Elem(), reflect.ValueOf(&want.Mode).Elem()
+	for _, edge := range []string{"A", "L"} {
+		ge, we := g.FieldByName(edge), w.FieldByName(edge)
+		for _, name := range ownedIntraLiveEdgeFields {
+			if !reflect.DeepEqual(ge.FieldByName(name).Interface(), we.FieldByName(name).Interface()) {
+				t.Fatalf("live field %s.%s differs", edge, name)
+			}
+		}
+	}
 	for _, name := range ownedIntraLiveFields {
 		if !reflect.DeepEqual(g.FieldByName(name).Interface(), w.FieldByName(name).Interface()) {
 			t.Fatalf("live field %s differs", name)
@@ -118,48 +126,7 @@ func TestOwnedIntraRootContextsMatchFullOracle(t *testing.T) {
 	}
 }
 
-func TestOwnedIntraMarkMatchesFullOracle(t *testing.T) {
-	rng := rand.New(rand.NewSource(7711))
-	for size := BlockSize(0); size < blockSizeCount; size++ {
-		dims, ok := size.Dimensions()
-		if !ok {
-			t.Fatal(size)
-		}
-		for trial := 0; trial < 16; trial++ {
-			var got BlockLoopScratch
-			ownedIntraPoisonMode(&got.Mode, byte(trial+33))
-			want := got
-			before := got.Mode
-			x, y := rng.Intn(MaxBlockModeSlots-int(dims.W4)+1), rng.Intn(MaxBlockModeSlots-int(dims.H4)+1)
-			mode := IntraMode(rng.Intn(int(intraModeCount)))
-			if err := want.Mode.MarkIntra(size, x, y, true, mode); err != nil {
-				t.Fatal(err)
-			}
-			if err := got.Mode.markOwnedIntra(size, x, y, mode); err != nil {
-				t.Fatal(err)
-			}
-			ownedIntraCompareLive(t, &got, &want)
-			if got.Mode.GridMotionValid != before.GridMotionValid || got.Mode.GridBlockSize != before.GridBlockSize || got.Mode.GridBlockSizeVisited != before.GridBlockSizeVisited || got.Mode.AboveRef != before.AboveRef || got.Mode.LeftCompound != before.LeftCompound {
-				t.Fatal("private mark touched omitted motion bookkeeping")
-			}
-		}
-	}
-}
-
 func TestOwnedIntraErrorsPreserveLiveState(t *testing.T) {
-	for _, tc := range []struct {
-		size BlockSize
-		x, y int
-		mode IntraMode
-	}{{blockSizeCount, 0, 0, IntraModeDC}, {BlockSize8x8, -1, 0, IntraModeDC}, {BlockSize8x8, 31, 0, IntraModeDC}, {BlockSize8x8, 0, 31, IntraModeDC}, {BlockSize8x8, 0, 0, intraModeCount}} {
-		var got BlockModeContext
-		ownedIntraPoisonMode(&got, 17)
-		want := got
-		ge, we := got.markOwnedIntra(tc.size, tc.x, tc.y, tc.mode), want.MarkIntra(tc.size, tc.x, tc.y, true, tc.mode)
-		if !errors.Is(ge, ErrInvalidDecodeState) || !errors.Is(we, ErrInvalidDecodeState) || !reflect.DeepEqual(got, want) {
-			t.Fatalf("invalid mark changed state: %+v", tc)
-		}
-	}
 	for _, col := range []int{-1, 1} {
 		carrier := BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, 1)}
 		var got BlockLoopScratch
@@ -212,12 +179,8 @@ func TestOwnedIntraThenGenericCarrierTransition(t *testing.T) {
 				if sb == 32 {
 					size = BlockSize128x128
 				}
-				if err := fast.Mode.markOwnedIntra(size, 0, 0, IntraModeDC); err != nil {
-					t.Fatal(err)
-				}
-				if err := full.Mode.MarkIntra(size, 0, 0, true, IntraModeDC); err != nil {
-					t.Fatal(err)
-				}
+				fast.Mode.markIntraBlock(size, 0, 0, IntraModeDC, ChromaIntraModeDC, false, &PaletteModeResult{}, nil, false)
+				full.Mode.markIntraBlock(size, 0, 0, IntraModeDC, ChromaIntraModeDC, false, &PaletteModeResult{}, nil, true)
 				if err := testStoreIntraRootContext(&fast, &fc, col); err != nil {
 					t.Fatal(err)
 				}
@@ -245,10 +208,12 @@ func TestOwnedIntraThenGenericCarrierTransition(t *testing.T) {
 				if !reflect.DeepEqual(fast.Mode, full.Mode) {
 					t.Fatalf("generic state differs after private stop=%d sb=%d root=%d", stop, sb, index)
 				}
-				result := InterMotionResult{MV: [2]motion.Vector{{Row: int16(index + 1), Col: int16(-index - 2)}}, References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}}
+				result := InterMotionResult{MV: [2]motion.Vector{{Row: int16(index + 1), Col: int16(-index - 2)}}, References: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}}
 				mark := (*BlockModeContext).MarkInterMotion
 				if index&1 != 0 {
-					mark = (*BlockModeContext).MarkIntrabcMotion
+					mark = func(c *BlockModeContext, size BlockSize, x4, y4 int, result InterMotionResult, hasChroma bool) error {
+						return c.markIntrabcMotion(size, x4, y4, result, hasChroma, nil)
+					}
 				}
 				if err := mark(&fast.Mode, BlockSize16x16, 0, 0, result, false); err != nil {
 					t.Fatal(err)
@@ -287,16 +252,14 @@ func TestOwnedIntraContextsNoAlloc(t *testing.T) {
 		if err := testLoadIntraRootContext(&scratch, &carrier, 0, true, true, 16); err != nil {
 			panic(err)
 		}
-		if err := scratch.Mode.markOwnedIntra(BlockSize16x16, 0, 0, IntraModeDC); err != nil {
-			panic(err)
-		}
+		scratch.Mode.markIntraBlock(BlockSize16x16, 0, 0, IntraModeDC, ChromaIntraModeDC, true, &PaletteModeResult{}, nil, false)
 		if err := testStoreIntraRootContext(&scratch, &carrier, 0); err != nil {
 			panic(err)
 		}
 	}); n != 0 {
 		t.Fatalf("allocs=%g", n)
 	}
-	t.Logf("mode reset bytes: generic=%d owned=%d; five-row history bytes per edge=%d", unsafe.Offsetof(scratch.Mode.GridInterMotion), unsafe.Offsetof(scratch.Mode.AboveRef)+unsafe.Offsetof(scratch.Mode.LeftRef)-unsafe.Offsetof(scratch.Mode.LeftSkip), unsafe.Sizeof(carrier.Left.mode.InterMotionHistory)+unsafe.Sizeof(carrier.Left.mode.MotionValidHistory)+unsafe.Sizeof(carrier.Left.mode.BlockSizeHistory)+unsafe.Sizeof(carrier.Left.mode.BlockSizeVisitedHistory))
+	t.Logf("mode reset bytes: generic=%d edge=%d; five-row history bytes per edge=%d", unsafe.Offsetof(scratch.Mode.GridInterMotion), unsafe.Sizeof(scratch.Mode.A), unsafe.Sizeof(carrier.Left.mode.InterMotionHistory)+unsafe.Sizeof(carrier.Left.mode.MotionValidHistory)+unsafe.Sizeof(carrier.Left.mode.BlockSizeHistory)+unsafe.Sizeof(carrier.Left.mode.BlockSizeVisitedHistory))
 }
 
 // testLoadIntraRootContext loads one root in isolation: the position never

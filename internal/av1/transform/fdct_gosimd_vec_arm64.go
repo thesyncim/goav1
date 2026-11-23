@@ -67,25 +67,6 @@ func fwdShl(v fwdVec, n uint64) fwdVec {
 	return v.ShiftAllLeft(n)
 }
 
-func fwdLoadI32(s []int32) fwdVec {
-	return archsimd.LoadInt32x4(s)
-}
-
-func fwdStoreI32(s []int32, v fwdVec) {
-	v.Store(s)
-}
-
-// fwdLoadRes loads the fwdLanes residual samples of column group g. s starts
-// at the 8-column chunk containing g, so one full-width load serves both
-// 4-lane halves; a partial load of four samples costs several times as much.
-func fwdLoadRes(s []int16, g int) fwdVec {
-	w := archsimd.LoadInt16x8Array((*[8]int16)(s))
-	if g&4 == 0 {
-		return fwdShl(w.ExtendLo4ToInt32(), 2)
-	}
-	return fwdShl(w.HiToLo().ExtendLo4ToInt32(), 2)
-}
-
 // fwdTranspose writes the transpose of the n x n row-major matrix src into dst
 // (dst[c*n+r] = src[r*n+c]); n is a multiple of four.
 func fwdTranspose(dst, src []int32, n int) {

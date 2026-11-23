@@ -6,6 +6,26 @@ import "simd/archsimd"
 
 func init() {
 	rdoqEOBImpl = rdoqEOBSIMD
+	levelsAllZeroImpl = levelsAllZeroSIMD
+}
+
+// levelsAllZeroSIMD is levelsAllZeroPureGo sixteen levels at a time.
+func levelsAllZeroSIMD(q []int16) bool {
+	if len(q)&15 != 0 {
+		return levelsAllZeroPureGo(q)
+	}
+	var a0, a1 archsimd.Int16x8
+	for i := 0; i < len(q); i += 16 {
+		a0 = a0.Or(archsimd.LoadInt16x8(q[i : i+8]))
+		a1 = a1.Or(archsimd.LoadInt16x8(q[i+8 : i+16]))
+	}
+	var lanes [8]int16
+	a0.Or(a1).StoreArray(&lanes)
+	var any int16
+	for _, v := range lanes {
+		any |= v
+	}
+	return any == 0
 }
 
 // rdoqEOBSIMD is rdoqEOBPureGo eight levels at a time: the non-zero lanes

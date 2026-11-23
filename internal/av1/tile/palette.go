@@ -35,11 +35,6 @@ type PaletteModeScratch struct {
 	UV [MaxPalettePixels]uint8
 }
 
-type paletteContext struct {
-	Size   uint8
-	Colors [PaletteMaxSize]uint16
-}
-
 func (c *IntraModeCDFs) initPaletteDefaults() error {
 	defaultYSize := [PaletteBSizeContexts][PaletteSizes - 1]uint16{
 		{7952, 13000, 18149, 21478, 25527, 29241},
@@ -634,7 +629,8 @@ func (s *DecodeState) readPaletteIndices(cdfs *IntraModeCDFs, uv bool, mapScratc
 	}
 	var order [64][8]uint8
 	var ctx [64]uint8
-	c := s.Reader.Cursor()
+	var c entropy.Cursor
+	c.Load(&s.Reader)
 	for i := 1; i < rows+cols-1; i++ {
 		// top/left-to-bottom/right diagonals (dav1d's "wave-front"): order
 		// the whole diagonal, then decode it.
@@ -790,10 +786,10 @@ func (c *BlockModeContext) PaletteYModeContext(x4 int, y4 int, haveTop bool, hav
 		return 0, err
 	}
 	ctx := 0
-	if haveTop && c.AbovePaletteY[x4].Size > 0 {
+	if haveTop && c.A.PalSz[x4] > 0 {
 		ctx++
 	}
-	if haveLeft && c.LeftPaletteY[y4].Size > 0 {
+	if haveLeft && c.L.PalSz[y4] > 0 {
 		ctx++
 	}
 	return ctx, nil
@@ -806,36 +802,14 @@ func (c *BlockModeContext) PaletteYCache(x4 int, y4 int, haveTop bool, haveLeft 
 	if err := validateBlockModeSlot(x4, y4); err != nil {
 		return 0, err
 	}
-	var above, left paletteContext
+	var above, left []uint16
 	if haveTop && paletteCacheCanUseAbove(y4) {
-		above = c.AbovePaletteY[x4]
+		above = c.PalA.Colors[x4][0][:c.A.PalSz[x4]]
 	}
 	if haveLeft {
-		left = c.LeftPaletteY[y4]
+		left = c.PalL.Colors[y4][0][:c.L.PalSz[y4]]
 	}
-	i, j, n := 0, 0, 0
-	for i < int(above.Size) && j < int(left.Size) {
-		a, l := above.Colors[i], left.Colors[j]
-		if l < a {
-			paletteAddToCache(cache, &n, l)
-			j++
-		} else {
-			paletteAddToCache(cache, &n, a)
-			i++
-			if l == a {
-				j++
-			}
-		}
-	}
-	for i < int(above.Size) {
-		paletteAddToCache(cache, &n, above.Colors[i])
-		i++
-	}
-	for j < int(left.Size) {
-		paletteAddToCache(cache, &n, left.Colors[j])
-		j++
-	}
-	return n, nil
+	return paletteMergeCache(cache, above, left), nil
 }
 
 func (c *BlockModeContext) PaletteUVCache(x4 int, y4 int, haveTop bool, haveLeft bool, cache *[2 * PaletteMaxSize]uint16) (int, error) {
@@ -845,16 +819,22 @@ func (c *BlockModeContext) PaletteUVCache(x4 int, y4 int, haveTop bool, haveLeft
 	if err := validateBlockModeSlot(x4, y4); err != nil {
 		return 0, err
 	}
-	var above, left paletteContext
+	var above, left []uint16
 	if haveTop && paletteCacheCanUseAbove(y4) {
-		above = c.AbovePaletteUV[x4]
+		above = c.PalA.Colors[x4][1][:c.PalA.SzUV[x4]]
 	}
 	if haveLeft {
-		left = c.LeftPaletteUV[y4]
+		left = c.PalL.Colors[y4][1][:c.PalL.SzUV[y4]]
 	}
+	return paletteMergeCache(cache, above, left), nil
+}
+
+// paletteMergeCache is dav1d's get_palette_cache merge of the sorted above
+// and left colours, dropping repeats.
+func paletteMergeCache(cache *[2 * PaletteMaxSize]uint16, above, left []uint16) int {
 	i, j, n := 0, 0, 0
-	for i < int(above.Size) && j < int(left.Size) {
-		a, l := above.Colors[i], left.Colors[j]
+	for i < len(above) && j < len(left) {
+		a, l := above[i], left[j]
 		if l < a {
 			paletteAddToCache(cache, &n, l)
 			j++
@@ -866,15 +846,13 @@ func (c *BlockModeContext) PaletteUVCache(x4 int, y4 int, haveTop bool, haveLeft
 			}
 		}
 	}
-	for i < int(above.Size) {
-		paletteAddToCache(cache, &n, above.Colors[i])
-		i++
+	for ; i < len(above); i++ {
+		paletteAddToCache(cache, &n, above[i])
 	}
-	for j < int(left.Size) {
-		paletteAddToCache(cache, &n, left.Colors[j])
-		j++
+	for ; j < len(left); j++ {
+		paletteAddToCache(cache, &n, left[j])
 	}
-	return n, nil
+	return n
 }
 
 func paletteAddToCache(cache *[2 * PaletteMaxSize]uint16, n *int, value uint16) {
@@ -897,14 +875,13 @@ func (c *BlockModeContext) MarkPaletteY(size BlockSize, x4 int, y4 int, palette 
 	if !ok || x4 < 0 || y4 < 0 || x4+int(dims.W4) > MaxBlockModeSlots || y4+int(dims.H4) > MaxBlockModeSlots {
 		return ErrInvalidDecodeState
 	}
-	var ctx paletteContext
-	ctx.Size = palette.YSize
-	ctx.Colors = palette.YColors
-	for i := 0; i < int(dims.W4); i++ {
-		c.AbovePaletteY[x4+i] = ctx
+	for i := x4; i < x4+int(dims.W4); i++ {
+		c.A.PalSz[i] = palette.YSize
+		c.PalA.Colors[i][0] = palette.YColors
 	}
-	for i := 0; i < int(dims.H4); i++ {
-		c.LeftPaletteY[y4+i] = ctx
+	for i := y4; i < y4+int(dims.H4); i++ {
+		c.L.PalSz[i] = palette.YSize
+		c.PalL.Colors[i][0] = palette.YColors
 	}
 	return nil
 }
@@ -917,14 +894,13 @@ func (c *BlockModeContext) MarkPaletteUV(size BlockSize, x4 int, y4 int, palette
 	if !ok || x4 < 0 || y4 < 0 || x4+int(dims.W4) > MaxBlockModeSlots || y4+int(dims.H4) > MaxBlockModeSlots {
 		return ErrInvalidDecodeState
 	}
-	var ctx paletteContext
-	ctx.Size = palette.UVSize
-	ctx.Colors = palette.UColors
-	for i := 0; i < int(dims.W4); i++ {
-		c.AbovePaletteUV[x4+i] = ctx
+	for i := x4; i < x4+int(dims.W4); i++ {
+		c.PalA.SzUV[i] = palette.UVSize
+		c.PalA.Colors[i][1] = palette.UColors
 	}
-	for i := 0; i < int(dims.H4); i++ {
-		c.LeftPaletteUV[y4+i] = ctx
+	for i := y4; i < y4+int(dims.H4); i++ {
+		c.PalL.SzUV[i] = palette.UVSize
+		c.PalL.Colors[i][1] = palette.UColors
 	}
 	return nil
 }

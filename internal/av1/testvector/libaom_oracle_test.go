@@ -436,17 +436,11 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 					var interScratch threading.FrameWorkInterPredictionScratch
 					predictionScratch := threading.FrameWorkPredictionScratch{Inter: &interScratch}
 					jobStats, err := ctx.DecodeAndReconstructJobResiduals(j, &decodeState, storage.CDFs(), &scratch, threading.FrameWorkTileResidualRequest{
-						Loop:          loopReq,
-						TransformMode: ctx.TransformRef.TransformMode,
-						CDEFIndexMap:  ctx.CDEFIndexMap,
-						LoopFilterMap: ctx.LoopFilterMap,
-						Restoration:   restorationReq,
-						Transforms: func(visit tile.BlockLoopVisit) (threading.FrameWorkBlockTransforms, error) {
-							if visit.Prediction.Valid && !visit.Prediction.Intra {
-								return ctx.ReadInterBlockTransforms(&decodeState, visit)
-							}
-							return ctx.ReadIntraBlockTransforms(&decodeState, visit)
-						},
+						Loop:              loopReq,
+						TransformMode:     ctx.TransformRef.TransformMode,
+						CDEFIndexMap:      ctx.CDEFIndexMap,
+						LoopFilterMap:     ctx.LoopFilterMap,
+						Restoration:       restorationReq,
 						Int32Scratch:      int32Scratch,
 						ResidualScratch:   residualScratch,
 						PredictionScratch: &predictionScratch,
@@ -881,17 +875,13 @@ func eventRunsFrameWork(event decoder.Event) bool {
 }
 
 func libaomResidualScratch(ctx decoder.FrameWorkBatch) ([]int32, []int16, error) {
-	q, _, err := ctx.BlockQuantizer(ctx.Quantization.BaseQIdx, 0, threading.FrameWorkPlaneY)
-	if err != nil {
+	if _, _, err := ctx.BlockQuantizer(ctx.Quantization.BaseQIdx, 0, threading.FrameWorkPlaneY); err != nil {
 		return nil, nil, err
 	}
-	// Allocate for the largest supported residual scratch; each decoded TXB
-	// still carries its own lossless decision through ReconstructBlockCoeff.
+	// Allocate for the largest supported residual scratch.
 	int32Len, int16Len, err := reconstruct.ScratchLen(reconstruct.Block{
 		Size:      transform.Size{Width: 64, Height: 64},
 		Transform: transform.TypeDCTDCT,
-		Quantizer: q,
-		Lossless:  false,
 	})
 	if err != nil {
 		return nil, nil, err

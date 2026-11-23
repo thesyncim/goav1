@@ -132,7 +132,7 @@ func (f *ReferenceMVFrame) Validate() error {
 
 func referenceMVEntryForInter(result InterMotionResult, refFrameSide [referenceFrameCount]int8) ReferenceMVEntry {
 	entry := ReferenceMVEntry{Ref: ReferenceFrameNone}
-	for i, ref := range result.References.Ref {
+	for i, ref := range result.References.Pair() {
 		if !ref.Valid() || refFrameSide[ref] != 0 {
 			continue
 		}

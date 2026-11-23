@@ -107,7 +107,7 @@ func publicDecoderPredictionIntraVisit(mode av1.TileIntraMode) av1.TileBlockLoop
 }
 
 func publicDecoderPredictionInterVisit(mv av1.MotionVector) av1.TileBlockLoopVisit {
-	refs := av1.TileInterReferencesResult{Ref: [2]av1.TileReferenceFrame{av1.TileReferenceFrameLast, av1.TileReferenceFrameNone}}
+	refs := av1.TileInterReferencesResult{Ref0: av1.TileReferenceFrameLast, Ref1: av1.TileReferenceFrameNone}
 	return av1.TileBlockLoopVisit{
 		Block: publicDecoderPredictionBlockVisit(),
 		Prediction: av1.TileBlockPredictionModeResult{

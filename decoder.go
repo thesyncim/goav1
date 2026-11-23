@@ -371,26 +371,6 @@ type DecoderFrameWorkTileResidualStats = internalthreading.FrameWorkTileResidual
 // event planning and before tile work executes.
 type DecoderFrameWorkSideDataRunner = internaldecoder.FrameWorkSideDataRunner
 
-// DecoderFrameWorkBlockCoeffReconstruction is the per-block reconstruction
-// request that combines a decoded coefficient block with the prediction
-// scratch needed to assemble the output sample plane.
-type DecoderFrameWorkBlockCoeffReconstruction = internalthreading.FrameWorkBlockCoeffReconstruction
-
-// DecoderFrameWorkBlockTransforms describes the per-block transform
-// metadata (mode, type, size, partition) selected by the residual decode
-// pipeline for one tile block.
-type DecoderFrameWorkBlockTransforms = internalthreading.FrameWorkBlockTransforms
-
-// DecoderFrameWorkBlockTransformSelector is the per-block transform
-// selector callback the residual pipeline invokes to choose the
-// transform type for caller-customized decode paths.
-type DecoderFrameWorkBlockTransformSelector = internalthreading.FrameWorkBlockTransformSelector
-
-// DecoderFrameWorkBlockPredictor is the per-block prediction callback the
-// residual pipeline invokes to populate the prediction scratch before
-// reconstruction.
-type DecoderFrameWorkBlockPredictor = internalthreading.FrameWorkBlockPredictor
-
 // DecoderFrameWorkTileRestorationRequest carries the caller-owned
 // loop-restoration buffers and references threaded into the residual
 // pipeline when restoration is active for the frame.
@@ -652,12 +632,9 @@ func NewTileWorkerPool(workers int) (*TileWorkerPool, error) {
 
 // DecoderFrameWorkSequenceContextFromHeader builds a
 // DecoderFrameWorkSequenceContext from sequence so it can be threaded into
-// the frame-work helpers without re-parsing. It also captures the current
-// GOAV1_SCALED_PRED setting in the returned context.
+// the frame-work helpers without re-parsing.
 func DecoderFrameWorkSequenceContextFromHeader(sequence SequenceHeader) DecoderFrameWorkSequenceContext {
-	context := internalthreading.FrameWorkSequenceContextFromHeader(sequence)
-	context.ScaledReferencePredictionDisabled = !internalthreading.ScaledReferencePredictionEnabled()
-	return context
+	return internalthreading.FrameWorkSequenceContextFromHeader(sequence)
 }
 
 // DecoderAcquireFrameSurface acquires a Frame from pool sized for (sequence,

@@ -94,25 +94,22 @@ func TestCompoundBlendContextsMatchLibaom(t *testing.T) {
 		HaveLeft:         true,
 	}
 
-	ctx.AboveCompound[0] = 1
-	ctx.AboveCompGroup[0] = 1
-	ctx.LeftCompound[0] = 1
-	ctx.LeftCompGroup[0] = 0
+	ctx.A.CompType[0] = compInterWedge
+	ctx.L.CompType[0] = compInterAvg
 	if got, err := ctx.CompoundGroupIndexContext(req); err != nil || got != 1 {
 		t.Fatalf("compound group ctx=%d err=%v want 1", got, err)
 	}
 
 	ctx = BlockModeContext{}
-	ctx.AboveRef[0][0] = ReferenceFrameAltref
-	ctx.LeftRef[0][0] = ReferenceFrameAltref
+	ctx.A.Ref[0][0] = ReferenceFrameAltref
+	ctx.L.Ref[0][0] = ReferenceFrameAltref
 	if got, err := ctx.CompoundGroupIndexContext(req); err != nil || got != 5 {
 		t.Fatalf("altref group ctx=%d err=%v want 5", got, err)
 	}
 
 	ctx = BlockModeContext{}
-	ctx.AboveCompound[0] = 1
-	ctx.AboveCompIndex[0] = 0
-	ctx.LeftRef[0][0] = ReferenceFrameAltref
+	ctx.A.CompType[0] = compInterWeightedAvg
+	ctx.L.Ref[0][0] = ReferenceFrameAltref
 	if got, err := ctx.CompoundIndexContext(req); err != nil || got != 4 {
 		t.Fatalf("equal-distance compound index ctx=%d err=%v want 4", got, err)
 	}
@@ -233,28 +230,27 @@ func TestReadCompoundBlend(t *testing.T) {
 func TestMarkCompoundBlend(t *testing.T) {
 	var ctx BlockModeContext
 	refs := InterReferencesResult{
-		Ref:      [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameBWD},
+		Ref0: ReferenceFrameLast, Ref1: ReferenceFrameBWD,
 		Compound: true,
 	}
 	if err := ctx.MarkInter(BlockSize16x16, 2, 3, refs, true); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.AboveCompIndex[2] != 1 || ctx.LeftCompIndex[3] != 1 || ctx.AboveCompGroup[2] != 0 {
-		t.Fatalf("MarkInter default comp state aboveIdx=%d leftIdx=%d group=%d want idx=1 group=0",
-			ctx.AboveCompIndex[2], ctx.LeftCompIndex[3], ctx.AboveCompGroup[2])
+	if ctx.A.CompType[2] != compInterAvg || ctx.L.CompType[3] != compInterAvg {
+		t.Fatalf("MarkInter default comp_type above=%d left=%d want %d", ctx.A.CompType[2], ctx.L.CompType[3], compInterAvg)
 	}
 	blend := CompoundBlendResult{Type: CompoundTypeWedge, CompoundGroupIndex: 1, CompoundIndex: 0}
 	if err := ctx.MarkCompoundBlend(BlockSize16x16, 2, 3, blend); err != nil {
 		t.Fatal(err)
 	}
 	for x := 2; x < 6; x++ {
-		if ctx.AboveCompGroup[x] != 1 || ctx.AboveCompIndex[x] != 0 {
-			t.Fatalf("above slot %d group/index=%d/%d want 1/0", x, ctx.AboveCompGroup[x], ctx.AboveCompIndex[x])
+		if ctx.A.CompType[x] != compInterWedge {
+			t.Fatalf("above slot %d comp_type=%d want %d", x, ctx.A.CompType[x], compInterWedge)
 		}
 	}
 	for y := 3; y < 7; y++ {
-		if ctx.LeftCompGroup[y] != 1 || ctx.LeftCompIndex[y] != 0 {
-			t.Fatalf("left slot %d group/index=%d/%d want 1/0", y, ctx.LeftCompGroup[y], ctx.LeftCompIndex[y])
+		if ctx.L.CompType[y] != compInterWedge {
+			t.Fatalf("left slot %d comp_type=%d want %d", y, ctx.L.CompType[y], compInterWedge)
 		}
 	}
 }
@@ -381,8 +377,8 @@ func FuzzReadCompoundBlend(f *testing.F) {
 			t.Fatal(err)
 		}
 		var ctx BlockModeContext
-		ctx.AboveRef[0][0] = ReferenceFrame(top % uint8(referenceFrameCount))
-		ctx.LeftRef[0][0] = ReferenceFrame(left % uint8(referenceFrameCount))
+		ctx.A.Ref[0][0] = ReferenceFrame(top % uint8(referenceFrameCount))
+		ctx.L.Ref[0][0] = ReferenceFrame(left % uint8(referenceFrameCount))
 		var state DecodeState
 		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
 			t.Fatal(err)

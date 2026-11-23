@@ -224,7 +224,7 @@ func (s decoderPayloadSource) forEachPayload(buf []byte, fn func([]byte) error) 
 	return nil
 }
 
-func decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(stream DecoderStream, source decoderPayloadSource, workers int, payloadBuf []byte, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamPlan, error) {
+func decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(stream DecoderStream, source decoderPayloadSource, workers int, frameSizeLimit int, payloadBuf []byte, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamPlan, error) {
 	var plan DecoderFrameWorkResidualStreamPlan
 	outputs := 0
 	err := source.forEachPayload(payloadBuf, func(src []byte) error {
@@ -241,6 +241,9 @@ func decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(stream DecoderStre
 		sequence, _ := stream.SequenceHeader()
 		count, err := stream.PushLowOverhead(src, events[:eventCount])
 		if err != nil {
+			return err
+		}
+		if err := decoderCheckFrameSizeLimit(frameSizeLimit, events[:count]); err != nil {
 			return err
 		}
 		eventSize, err := DecoderFrameWorkResidualEventsScratchLen(sequence, events[:count], workers, spans, jobs, batches)
@@ -262,13 +265,13 @@ func decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(stream DecoderStre
 	return plan, err
 }
 
-func decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(stream DecoderStream, source decoderPayloadSource, workers int, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamPlan, error) {
+func decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(stream DecoderStream, source decoderPayloadSource, workers int, frameSizeLimit int, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamPlan, error) {
 	rtpBufferBytes, err := source.totalPayloadLen()
 	if err != nil {
 		return DecoderFrameWorkResidualStreamPlan{}, err
 	}
 	rtpBuffer := make([]byte, rtpBufferBytes)
-	rtpSpans := make([]RTPObuSpan, 64)
+	rtpSpans := make([]RTPObuSpan, decoderMaxPayloadEvents)
 
 	var plan DecoderFrameWorkResidualStreamPlan
 	outputs := 0
@@ -287,11 +290,8 @@ func decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(stream DecoderStrea
 		if len(rtpBuffer) < plannedUsed {
 			return ErrRTPShortBuffer
 		}
-		if len(rtpSpans) < eventCount {
-			rtpSpans = make([]RTPObuSpan, eventCount)
-		}
-		if len(events) < eventCount {
-			events = make([]DecoderEvent, eventCount)
+		if len(rtpSpans) < eventCount || len(events) < eventCount {
+			return ErrDecoderEventBufferTooSmall
 		}
 
 		sequence, _ := stream.SequenceHeader()
@@ -301,6 +301,9 @@ func decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(stream DecoderStrea
 		}
 		if actualUsed != plannedUsed || count != eventCount {
 			return ErrDecoderInvalidFrameWorkState
+		}
+		if err := decoderCheckFrameSizeLimit(frameSizeLimit, events[:count]); err != nil {
+			return err
 		}
 		eventSize, err := DecoderFrameWorkResidualEventsScratchLen(sequence, events[:count], workers, spans, jobs, batches)
 		if err != nil {
@@ -328,15 +331,15 @@ func decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(stream DecoderStrea
 func decoderExternalOutputFormatFromSource(source decoderPayloadSource, align int, payloadBuf []byte) (bool, FrameFormat, error) {
 	var stream DecoderStream
 	var format FrameFormat
-	var events []DecoderEvent
+	events := make([]DecoderEvent, decoderMaxPayloadEvents)
 	have := false
 	err := source.forEachPayload(payloadBuf, func(payload []byte) error {
 		eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(payload)
 		if err != nil {
 			return err
 		}
-		if len(events) < eventCount {
-			events = make([]DecoderEvent, eventCount)
+		if eventCount > decoderMaxPayloadEvents {
+			return ErrDecoderEventBufferTooSmall
 		}
 		sequence, _ := stream.SequenceHeader()
 		count, err := stream.PushLowOverhead(payload, events[:eventCount])
@@ -522,10 +525,8 @@ func decoderForEachRTPEventFromSource(source decoderPayloadSource, fn func(Seque
 		return err
 	}
 	rtpBuffer := make([]byte, rtpBufferBytes)
-	// Both grow to the largest per-payload event count below; sizing them by
-	// payload count would reserve gigabytes for long RTP sources.
-	rtpSpans := make([]RTPObuSpan, 64)
-	events := make([]DecoderEvent, 64)
+	rtpSpans := make([]RTPObuSpan, decoderMaxPayloadEvents)
+	events := make([]DecoderEvent, decoderMaxPayloadEvents)
 	var stream DecoderStream
 	used := 0
 	return source.forEachPayload(nil, func(payload []byte) error {
@@ -536,11 +537,8 @@ func decoderForEachRTPEventFromSource(source decoderPayloadSource, fn func(Seque
 		if len(rtpBuffer) < plannedUsed {
 			return ErrRTPShortBuffer
 		}
-		if len(rtpSpans) < eventCount {
-			rtpSpans = make([]RTPObuSpan, eventCount)
-		}
-		if len(events) < eventCount {
-			events = make([]DecoderEvent, eventCount)
+		if eventCount > decoderMaxPayloadEvents {
+			return ErrDecoderEventBufferTooSmall
 		}
 		sequence, _ := stream.SequenceHeader()
 		actualUsed, count, err := stream.PushRTPPayload(rtpBuffer[:plannedUsed], used, rtpSpans[:eventCount], events[:eventCount], payload)

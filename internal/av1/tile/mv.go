@@ -301,7 +301,8 @@ func (s *DecodeState) ReadMotionVector(cdfs *MVCDFs, ref motion.Vector, precisio
 	if cdfs == nil || cdfs.Joint.Symbols() != MVJoints {
 		return motion.Vector{}, MVResidualResult{}, entropy.ErrInvalidCDF
 	}
-	reader := s.Reader.Cursor()
+	var reader entropy.Cursor
+	reader.Load(&s.Reader)
 	symbol := reader.ReadCDF4Unchecked(&cdfs.Joint)
 	joint := MVJoint(symbol)
 	if !joint.Valid() {
@@ -355,7 +356,8 @@ func (s *DecodeState) ReadMVComponentDiff(cdfs *MVComponentCDFs, precision MVSub
 	if s == nil || !precision.Valid() {
 		return 0, MVComponentResult{}, ErrInvalidDecodeState
 	}
-	reader := s.Reader.Cursor()
+	var reader entropy.Cursor
+	reader.Load(&s.Reader)
 	diff, result, err := readMVComponentDiffCursor(&reader, cdfs, precision)
 	reader.CommitStateTo(&s.Reader)
 	return diff, result, err
@@ -445,14 +447,14 @@ func (s *DecodeState) ReadInterMotion(cdfs *MVCDFs, req InterMotionRequest) (Int
 	if s == nil || !req.Precision.Valid() || req.Mode.Compound != req.References.Compound {
 		return InterMotionDecodeResult{}, ErrInvalidDecodeState
 	}
-	if !req.References.Ref[0].Valid() {
+	if !req.References.Ref0.Valid() {
 		return InterMotionDecodeResult{}, ErrInvalidDecodeState
 	}
 	if req.References.Compound {
-		if !req.References.Ref[1].Valid() || !req.Mode.CompoundMode.Valid() {
+		if !req.References.Ref1.Valid() || !req.Mode.CompoundMode.Valid() {
 			return InterMotionDecodeResult{}, ErrInvalidDecodeState
 		}
-	} else if req.References.Ref[1] != ReferenceFrameNone || !req.Mode.Mode.Valid() {
+	} else if req.References.Ref1 != ReferenceFrameNone || !req.Mode.Mode.Valid() {
 		return InterMotionDecodeResult{}, ErrInvalidDecodeState
 	}
 

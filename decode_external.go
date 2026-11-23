@@ -4,38 +4,6 @@ import internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 
 const decoderExternalOutputSurfaceBase = 256
 
-func decoderTemporalMotionScratchFrameSizeUpperBound(payloads [][]byte, events []DecoderEvent) (FrameSize, error) {
-	var stream DecoderStream
-	var maxSize FrameSize
-	for _, payload := range payloads {
-		eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(payload)
-		if err != nil {
-			return FrameSize{}, err
-		}
-		if len(events) < eventCount {
-			return FrameSize{}, ErrDecoderEventBufferTooSmall
-		}
-		count, err := stream.PushLowOverhead(payload, events[:eventCount])
-		if err != nil {
-			return FrameSize{}, err
-		}
-		for i := range count {
-			event := events[i]
-			if !decoderFrameWorkResidualEventBindCandidate(&event) ||
-				event.FrameHeader.ShowExistingFrame {
-				continue
-			}
-			if event.FrameSize.CodedWidth > maxSize.CodedWidth {
-				maxSize.CodedWidth = event.FrameSize.CodedWidth
-			}
-			if event.FrameSize.Height > maxSize.Height {
-				maxSize.Height = event.FrameSize.Height
-			}
-		}
-	}
-	return maxSize, nil
-}
-
 // decoderUpperBoundScratch is reused across the per-frame upper-bound probes of a
 // stream so sizing every frame of a long clip does not allocate per frame.
 type decoderUpperBoundScratch struct {
@@ -364,17 +332,4 @@ func decoderPostFilterScratchTooSmall(s DecoderFrameWorkPostFilterRequestScratch
 		len(s.Uint16Scratch) < size.Uint16Scratch ||
 		len(s.Int16Scratch) < size.Int16Scratch ||
 		len(s.Int32Scratch) < size.Int32Scratch
-}
-
-func decoderPostFilterScratch(size DecoderFrameWorkPostFilterRequestScratchSize) DecoderFrameWorkPostFilterRequestScratch {
-	return DecoderFrameWorkPostFilterRequestScratch{
-		LoopFilterEdges:    make([]DecoderFrameWorkLoopFilterPostFilterEdge, size.LoopFilterEdges),
-		LoopFilterSchedule: make([]uint32, size.LoopFilterSchedule),
-		CDEFDirectionGrid:  make([]CDEFDirectionGrid, size.CDEFDirectionGrid),
-		CDEFVarianceGrid:   make([]CDEFVarianceGrid, size.CDEFVarianceGrid),
-		ByteScratch:        make([]byte, size.ByteScratch),
-		Uint16Scratch:      make([]uint16, size.Uint16Scratch),
-		Int16Scratch:       make([]int16, size.Int16Scratch),
-		Int32Scratch:       make([]int32, size.Int32Scratch),
-	}
 }

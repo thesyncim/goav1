@@ -331,10 +331,6 @@ func forwardBlock8x8IDTXPureGo(coeff []int32, coeffStride int, residual []int16,
 	}
 }
 
-func forwardHybridSupported(size Size, typ Type) bool {
-	return forwardGenericSupported(size, typ)
-}
-
 func forwardDCTBySize(coeff []int32, coeffStride int, residual []int16, residualStride int, size Size) error {
 	switch size {
 	case Size{Width: 4, Height: 4}:
@@ -369,52 +365,6 @@ func forwardDCTBySize(coeff []int32, coeffStride int, residual []int16, residual
 		return forwardDCT64Extent(coeff, coeffStride, residual, residualStride, size)
 	default:
 		return ErrInvalidTransform
-	}
-}
-
-func fwd1D(input []int32, output []int32, typ tx1DType) {
-	switch typ {
-	case tx1DDCT:
-		switch len(input) {
-		case 4:
-			var in, out [4]int32
-			copy(in[:], input)
-			fwdDCT4(&in, &out)
-			copy(output, out[:])
-		case 8:
-			var in, out [8]int32
-			copy(in[:], input)
-			fwdDCT8(&in, &out)
-			copy(output, out[:])
-		}
-	case tx1DADST:
-		switch len(input) {
-		case 4:
-			var in, out [4]int32
-			copy(in[:], input)
-			fwdADST4(&in, &out)
-			copy(output, out[:])
-		case 8:
-			var in, out [8]int32
-			copy(in[:], input)
-			fwdADST8(&in, &out)
-			copy(output, out[:])
-		}
-	case tx1DIdentity:
-		fwdIdentity1D(input, output)
-	}
-}
-
-func fwdIdentity8(input, output *[8]int32) {
-	for i := range 8 {
-		output[i] = input[i] * 2
-	}
-}
-
-func fwdRoundShift1x8(arr *[8]int32) {
-	for i := range 8 {
-		v := arr[i]
-		arr[i] = fwdRoundShift1Value(v)
 	}
 }
 

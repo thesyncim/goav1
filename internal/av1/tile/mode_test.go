@@ -55,15 +55,15 @@ func TestBlockModeContextMatchesLibaomContexts(t *testing.T) {
 	}
 	dims, _ := BlockSize16x8.Dimensions()
 	for i := 0; i < int(dims.W4); i++ {
-		if ctx.AboveSegmentPred[4+i] != 1 || ctx.AboveSkipMode[4+i] != 1 || ctx.AboveSkip[4+i] != 1 {
+		if ctx.A.SegPred[4+i] != 1 || ctx.A.SkipMode[4+i] != 1 || ctx.A.Skip[4+i] != 1 {
 			t.Fatalf("above slot %d seg=%d skip_mode=%d skip=%d", i,
-				ctx.AboveSegmentPred[4+i], ctx.AboveSkipMode[4+i], ctx.AboveSkip[4+i])
+				ctx.A.SegPred[4+i], ctx.A.SkipMode[4+i], ctx.A.Skip[4+i])
 		}
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		if ctx.LeftSegmentPred[6+i] != 1 || ctx.LeftSkipMode[6+i] != 1 || ctx.LeftSkip[6+i] != 1 {
+		if ctx.L.SegPred[6+i] != 1 || ctx.L.SkipMode[6+i] != 1 || ctx.L.Skip[6+i] != 1 {
 			t.Fatalf("left slot %d seg=%d skip_mode=%d skip=%d", i,
-				ctx.LeftSegmentPred[6+i], ctx.LeftSkipMode[6+i], ctx.LeftSkip[6+i])
+				ctx.L.SegPred[6+i], ctx.L.SkipMode[6+i], ctx.L.Skip[6+i])
 		}
 	}
 	if got, err := ctx.SkipContext(4, 6); err != nil || got != 2 {
@@ -127,8 +127,8 @@ func TestReadBlockModePrefixSegmentSkipForcesSkipAndSuppressesCDEF(t *testing.T)
 	if result.SkipMode || !result.SkipTransform || result.CDEFIndex != 0 {
 		t.Fatalf("prefix=%+v", result)
 	}
-	if ctx.AboveSkip[0] != 1 || ctx.LeftSkip[0] != 1 {
-		t.Fatalf("skip context above=%d left=%d", ctx.AboveSkip[0], ctx.LeftSkip[0])
+	if ctx.A.Skip[0] != 1 || ctx.L.Skip[0] != 1 {
+		t.Fatalf("skip context above=%d left=%d", ctx.A.Skip[0], ctx.L.Skip[0])
 	}
 	assertEntropyCDFValues(t, cdfs.SkipMode[0].Values(), []uint16{147, 0, 0})
 	assertEntropyCDFValues(t, cdfs.Skip[0].Values(), []uint16{1097, 0, 0})
@@ -204,7 +204,7 @@ func TestReadCDEFIndexForBlockCachesPerLibaomUnit(t *testing.T) {
 	var ctx CDEFIndexContext
 	ctx.Reset()
 
-	index, err := state.ReadCDEFIndexForBlock(params, &ctx, BlockSize8x8, 0, 0, false)
+	index, err := state.ReadCDEFIndexForBlock(&params, &ctx, BlockSize8x8, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestReadCDEFIndexForBlockCachesPerLibaomUnit(t *testing.T) {
 		t.Fatalf("unit 0 cache read=%v index=%d want true,3", ctx.Read[0], ctx.Index[0])
 	}
 
-	index, err = state.ReadCDEFIndexForBlock(params, &ctx, BlockSize16x16, 8, 8, false)
+	index, err = state.ReadCDEFIndexForBlock(&params, &ctx, BlockSize16x16, 8, 8, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestReadCDEFIndexForBlockCachesPerLibaomUnit(t *testing.T) {
 		t.Fatalf("cached cdef index=%d bits=%d want index 3 bits %d", index, state.Reader.BitsRead(), afterFirst)
 	}
 
-	index, err = state.ReadCDEFIndexForBlock(params, &ctx, BlockSize8x8, 16, 0, false)
+	index, err = state.ReadCDEFIndexForBlock(&params, &ctx, BlockSize8x8, 16, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestReadCDEFIndexForBlockSpanningBlockMarksCoveredUnits(t *testing.T) {
 	var ctx CDEFIndexContext
 	ctx.Reset()
 
-	index, err := state.ReadCDEFIndexForBlock(params, &ctx, BlockSize128x128, 0, 0, false)
+	index, err := state.ReadCDEFIndexForBlock(&params, &ctx, BlockSize128x128, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestReadCDEFIndexForBlockSpanningBlockMarksCoveredUnits(t *testing.T) {
 		}
 	}
 
-	index, err = state.ReadCDEFIndexForBlock(params, &ctx, BlockSize16x16, 16, 16, false)
+	index, err = state.ReadCDEFIndexForBlock(&params, &ctx, BlockSize16x16, 16, 16, false)
 	if err != nil {
 		t.Fatal(err)
 	}

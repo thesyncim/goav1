@@ -56,7 +56,7 @@ func TestCollectSubChromaInterCellsRequiresAllNeighborsInter(t *testing.T) {
 	seedInter := func(x, y int) {
 		ctx.GridMotionValid[y][x] = 1
 		ctx.GridInterMotion[y][x] = InterMotionResult{
-			References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+			References: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone},
 			MV:         [2]motion.Vector{{Row: 1, Col: 2}},
 		}
 	}
@@ -87,7 +87,7 @@ func TestCollectSubChromaInterCellsBlockSize4x4Quadrant(t *testing.T) {
 	for _, p := range [][2]int{{3, 3}, {4, 3}, {3, 4}} {
 		ctx.GridMotionValid[p[1]][p[0]] = 1
 		ctx.GridInterMotion[p[1]][p[0]] = InterMotionResult{
-			References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+			References: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone},
 			MV:         [2]motion.Vector{{Row: int16(p[0]), Col: int16(p[1])}},
 		}
 	}
@@ -127,7 +127,7 @@ func TestCollectSubChromaInterCellsBlockSize4x8Pair(t *testing.T) {
 	ctx := &BlockModeContext{}
 	ctx.GridMotionValid[4][3] = 1
 	ctx.GridInterMotion[4][3] = InterMotionResult{
-		References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+		References: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone},
 		MV:         [2]motion.Vector{{Row: 10, Col: -7}},
 	}
 	got, ok := ctx.CollectSubChromaInterCells(BlockSize4x8, 4, 4, true, true, motion.RegularFilters)
@@ -156,7 +156,7 @@ func TestCollectSubChromaInterCellsBlockSize8x4Pair(t *testing.T) {
 	ctx := &BlockModeContext{}
 	ctx.GridMotionValid[3][4] = 1
 	ctx.GridInterMotion[3][4] = InterMotionResult{
-		References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+		References: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone},
 		MV:         [2]motion.Vector{{Row: -1, Col: 28}},
 	}
 	got, ok := ctx.CollectSubChromaInterCells(BlockSize8x4, 4, 4, true, true, motion.RegularFilters)

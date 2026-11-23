@@ -19,7 +19,6 @@ type HighBitDepthMonochromeVideoEncoder struct {
 	content     ContentHint
 	effortLevel int8
 
-
 	rcEnabled              bool
 	rcTargetBits           int
 	rcFramesPerSec         int

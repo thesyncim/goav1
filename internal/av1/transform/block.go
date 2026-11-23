@@ -33,6 +33,10 @@ const (
 	TypeCount
 )
 
+// TypeWHTWHT is dav1d's WHT_WHT (N_TX_TYPES): the 4x4 Walsh-Hadamard
+// transform of lossless blocks, which is not a coded tx_type.
+const TypeWHTWHT = TypeCount
+
 var typeClasses = [TypeCount]Class{
 	TypeDCTDCT:           Class2D,
 	TypeADSTDCT:          Class2D,
@@ -196,29 +200,6 @@ func InverseBlockBitDepthRawBounded(dst []int32, coeff []int32, coeffStride int,
 	// types against it (rejecting IDTX) and the scratch extent.
 	_, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, dst, size, t, rowMin, rowMax, colMin, colMax, activeRows, activeCols, nil, false)
 	return err
-}
-
-// InverseDCTDCOnlyBlockBitDepth writes the residual for a DCT_DCT block whose
-// only non-zero coefficient is DC. It uses the same 1D DCT kernels and stage
-// clamps as InverseBlockBitDepth, but evaluates only the single horizontal and
-// vertical DC basis before filling the block.
-func InverseDCTDCOnlyBlockBitDepth(dst []int16, dstStride int, dc int32, scratch []int32, size Size, bitDepth uint8) error {
-	sample, err := InverseDCTDCOnlySampleBitDepth(dc, scratch, size, bitDepth)
-	if err != nil {
-		return err
-	}
-	width := int(size.Width)
-	height := int(size.Height)
-	if dstStride < width || !blockFits(len(dst), dstStride, width, height) {
-		return ErrInvalidTransform
-	}
-	for rowIndex := 0; rowIndex < height; rowIndex++ {
-		dstLine := dst[rowIndex*dstStride : rowIndex*dstStride+width : rowIndex*dstStride+width]
-		for colIndex := range dstLine {
-			dstLine[colIndex] = sample
-		}
-	}
-	return nil
 }
 
 // InverseDCTDCOnlySampleBitDepth returns the constant residual sample for a

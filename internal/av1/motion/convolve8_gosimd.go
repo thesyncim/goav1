@@ -317,8 +317,6 @@ func convolve2D8Kernel(ctx *convolve8GoSIMDCtx) {
 // storage. The vertical products still widen to 32 bits as required by AV1.
 // The wrapper supplies at least height+roundedTapCount-1 rows of 128 samples.
 // Every 8-sample vertical load stays within that buffer, including width 4.
-//
-//go:nocheckptr
 func convolve2D8HalfKernel(ctx *convolve8GoSIMDCtx, im []int16, xTaps *hbdTaps16) {
 	c0 := archsimd.BroadcastInt16x8(ctx.kernel[0])
 	c1 := archsimd.BroadcastInt16x8(ctx.kernel[1])

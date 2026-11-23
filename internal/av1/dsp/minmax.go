@@ -21,6 +21,8 @@ var minMaxAbsDiff8x8Impl = minMaxAbsDiff8x8PureGo
 // architecture-appropriate variant selected at package init. The pure-Go
 // implementation is the bit-exact reference and is used on every target
 // that does not yet ship a tuned variant.
+//
+// Accesses stay inside the 8x8 block of a and b.
 func MinMaxAbsDiff8x8(a []byte, aStride int, b []byte, bStride int, bytesPerSample int) (uint16, uint16, error) {
 	return minMaxAbsDiff8x8Impl(a, aStride, b, bStride, bytesPerSample)
 }

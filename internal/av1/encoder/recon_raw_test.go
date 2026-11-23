@@ -196,7 +196,7 @@ func (st *lossyEncodeState) reconInterTXBResultOriginal(reconPlane, pred []byte,
 		return nil
 	}
 	if txbResult.EOB == 1 && txType == transform.TypeDCTDCT {
-		dc := quantize.DequantizeDCCoeffBitDepthTrusted(qcoeff[0], q, geo.txScale, nil, 8)
+		dc := quantize.DequantizeDCCoeffBitDepthTrusted(qcoeff[0], q, geo.txScale, 8)
 		sample, err := transform.InverseDCTDCOnlySampleBitDepth(dc, st.invScratch[:n], geo.size, 8)
 		if err != nil {
 			return err
@@ -211,8 +211,7 @@ func (st *lossyEncodeState) reconInterTXBResultOriginal(reconPlane, pred []byte,
 	if txType != transform.TypeIDTX {
 		raw := st.invScratch[:n]
 		// Every coefficient past the EOB is zero, so the row pass only needs
-		// the transform rows the scan prefix reaches — the decoder's own
-		// activeRows bound (reconstruct.activeTransformRowsFromScan).
+		// the transform rows the scan prefix reaches.
 		if err := transform.InverseBlockBitDepthRaw(raw, dq[:geo.coeffCount], geo.coeffHeight, geo.size, txType, 8, scanActiveRowsOriginal(scan, eob, geo.coeffHeight)); err != nil {
 			return err
 		}

@@ -200,15 +200,17 @@ func fwd64Post4(a, o *[4]fwdVec) {
 }
 
 // fwdDCT64N2 is highbd_fdct64_N2_x4_neon over fwdLanes lines: in holds the 64
-// inputs, out receives the first 32 outputs in natural frequency order.
-func fwdDCT64N2(t *fwd64Twiddles, in *[64]fwdVec, out *[32]fwdVec) {
-	var x1, x2 [64]fwdVec
+// inputs, out receives the first 32 outputs in natural frequency order. x1 and
+// x2 are the stage buffers; the caller owns them so that every stage access is
+// one load or store off a base register (the frame-relative offsets of a local
+// array sit 8 bytes off the 16-byte grid and cost an extra address add each).
+func fwdDCT64N2(t *fwd64Twiddles, in *[64]fwdVec, out *[32]fwdVec, x1, x2 *[64]fwdVec) {
 
 	// stage 1
-	fwd64DCTPre(in, &x1, 64)
+	fwd64DCTPre(in, x1, 64)
 
 	// stage 2
-	fwd64DCTPre(&x1, &x2, 32)
+	fwd64DCTPre(x1, x2, 32)
 	fwdCopyVecs(x2[32:40], x1[32:40])
 	x2[55], x2[40] = t.b0112(32, x1[55], x1[40])
 	x2[54], x2[41] = t.b0112(32, x1[54], x1[41])
@@ -221,18 +223,18 @@ func fwdDCT64N2(t *fwd64Twiddles, in *[64]fwdVec, out *[32]fwdVec) {
 	fwdCopyVecs(x2[56:64], x1[56:64])
 
 	// stage 3 (into x1)
-	x3 := &x1
-	fwd64DCTPre(&x2, x3, 16)
+	x3 := x1
+	fwd64DCTPre(x2, x3, 16)
 	fwdCopyVecs(x3[16:20], x2[16:20])
 	x3[27], x3[20] = t.b0112(32, x2[27], x2[20])
 	x3[26], x3[21] = t.b0112(32, x2[26], x2[21])
 	x3[25], x3[22] = t.b0112(32, x2[25], x2[22])
 	x3[24], x3[23] = t.b0112(32, x2[24], x2[23])
 	fwdCopyVecs(x3[28:32], x2[28:32])
-	fwd64DCTPost(&x2, x3, 32, 32)
+	fwd64DCTPost(x2, x3, 32, 32)
 
 	// stage 4 (into x2)
-	x4 := &x2
+	x4 := x2
 	fwd64DCTPre(x3, x4, 8)
 	x4[8] = x3[8]
 	x4[9] = x3[9]
@@ -254,7 +256,7 @@ func fwdDCT64N2(t *fwd64Twiddles, in *[64]fwdVec, out *[32]fwdVec) {
 	fwdCopyVecs(x4[60:64], x3[60:64])
 
 	// stage 5 (into x1)
-	x5 := &x1
+	x5 := x1
 	fwd64DCTPre(x4, x5, 4)
 	x5[4] = x4[4]
 	x5[6], x5[5] = t.b0112(32, x4[6], x4[5])
@@ -273,7 +275,7 @@ func fwdDCT64N2(t *fwd64Twiddles, in *[64]fwdVec, out *[32]fwdVec) {
 	fwd64DCTPost(x4, x5, 48, 16)
 
 	// stage 6 (into x2)
-	x6 := &x2
+	x6 := x2
 	x6[0] = t.h01(32, x5[0], x5[1])
 	x6[2] = t.h01(16, x5[3], x5[2])
 	fwd64DCTPost(x5, x6, 4, 4)
@@ -302,7 +304,7 @@ func fwdDCT64N2(t *fwd64Twiddles, in *[64]fwdVec, out *[32]fwdVec) {
 	x6[63] = x5[63]
 
 	// stage 7 (into x1)
-	x7 := &x1
+	x7 := x1
 	x7[0] = x6[0]
 	x7[2] = x6[2]
 	x7[4] = t.h01(8, x6[7], x6[4])
@@ -327,7 +329,7 @@ func fwdDCT64N2(t *fwd64Twiddles, in *[64]fwdVec, out *[32]fwdVec) {
 	fwd64DCTPost(x6, x7, 56, 8)
 
 	// stage 8 (into x2)
-	x8 := &x2
+	x8 := x2
 	x8[0] = x7[0]
 	x8[2] = x7[2]
 	x8[4] = x7[4]
@@ -366,7 +368,7 @@ func fwdDCT64N2(t *fwd64Twiddles, in *[64]fwdVec, out *[32]fwdVec) {
 	x8[63] = x7[63]
 
 	// stage 9 (into x1)
-	x9 := &x1
+	x9 := x1
 	x9[0] = x8[0]
 	x9[2] = x8[2]
 	x9[4] = x8[4]
@@ -435,13 +437,13 @@ func forwardDCT64x64SIMD(coeff []int32, coeffStride int, residual []int16, resid
 	// buf holds the column pass outputs row-major (32 kept rows x 64
 	// columns); bufT their transpose (64 columns x 32 rows).
 	var buf, bufT [32 * 64]int32
-	var in [64]fwdVec
+	var in, x1, x2 [64]fwdVec
 	var out [32]fwdVec
 	for g := 0; g < 64; g += fwdLanes {
 		for r := range 64 {
 			in[r] = fwdLoadResRawAt(residual, r*residualStride+g&^7, g)
 		}
-		fwdDCT64N2(fwd64Tw13, &in, &out)
+		fwdDCT64N2(fwd64Tw13, &in, &out, &x1, &x2)
 		for r := range 32 {
 			fwdStoreI32At(buf[:], r*64+g, fwdShr(out[r].Add(fwdConst2), 2))
 		}
@@ -451,7 +453,7 @@ func forwardDCT64x64SIMD(coeff []int32, coeffStride int, residual []int16, resid
 		for c := range 64 {
 			in[c] = fwdLoadI32At(bufT[:], c*32+h)
 		}
-		fwdDCT64N2(fwd64Tw10, &in, &out)
+		fwdDCT64N2(fwd64Tw10, &in, &out, &x1, &x2)
 		for k := range 32 {
 			fwdStoreI32At(coeff, k*coeffStride+h, fwdShr(out[k].Add(fwdConst2), 2))
 		}

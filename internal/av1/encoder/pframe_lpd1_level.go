@@ -174,12 +174,12 @@ type lpd1Frame struct {
 	meQOffset []int16
 
 	// Reference-side facts (valid once published).
-	valid         bool
-	sliceI        bool
-	skipPerc      uint8
+	valid    bool
+	sliceI   bool
+	skipPerc uint8
 	// intraPerc is intra_coded_area: the percentage of the picture coded
 	// intra (0 for an I_SLICE, copy_statistics_to_ref_obj_ect).
-	intraPerc uint8
+	intraPerc     uint8
 	width, height int
 }
 

@@ -1,9 +1,6 @@
 package tile
 
-import (
-	"encoding/binary"
-	"unsafe"
-)
+import "encoding/binary"
 
 type TXBContext struct {
 	TXBSkipContext uint8
@@ -212,14 +209,6 @@ func (c *CoeffEntropyContext) MarkTXB(req CoeffContextRequest, result TXBDecodeR
 	return c.setTXBContext(req, value)
 }
 
-func (c *CoeffEntropyContext) markTXBKnown(req CoeffContextRequest, txDims TransformDimensions, visibleW int, visibleH int, result TXBDecodeResult) {
-	value := uint8(0)
-	if result.EOB > 0 {
-		value = result.CulLevel
-	}
-	c.setTXBContextReq(req, txDims, visibleW, visibleH, value)
-}
-
 func (c *CoeffEntropyContext) ResetBlock(plane int, block BlockSize, x4 int, y4 int) error {
 	if c == nil || plane < 0 || plane >= 3 || x4 < 0 || y4 < 0 {
 		return ErrInvalidDecodeState
@@ -233,46 +222,6 @@ func (c *CoeffEntropyContext) ResetBlock(plane int, block BlockSize, x4 int, y4 
 	clear(c.Above[plane][x4 : x4+int(dims.W4)])
 	clear(c.Left[plane][y4 : y4+int(dims.H4)])
 	return nil
-}
-
-func (s *DecodeState) ReadCoefficientsTXBWithContext(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, ctxReq CoeffContextRequest, req TXBDecodeRequest, coeffs []int16, scan []int16, levelsScratch []uint8) (TXBDecodeResult, error) {
-	req, allZero, err := s.ReadTXBSkipWithContext(cdfs, ctx, ctxReq, req)
-	if err != nil {
-		return TXBDecodeResult{}, err
-	}
-	req.TXBSkipKnown = true
-	req.TXBSkip = allZero
-	result, err := s.ReadCoefficientsTXB(cdfs, req, coeffs, scan, levelsScratch)
-	if err != nil {
-		return TXBDecodeResult{}, err
-	}
-	if err := ctx.MarkTXB(ctxReq, result); err != nil {
-		return TXBDecodeResult{}, err
-	}
-	return result, nil
-}
-
-func (s *DecodeState) ReadTXBSkipWithContext(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, ctxReq CoeffContextRequest, req TXBDecodeRequest) (TXBDecodeRequest, bool, error) {
-	if ctx == nil {
-		return TXBDecodeRequest{}, false, ErrInvalidDecodeState
-	}
-	plane, err := CoeffPlaneTypeForPlane(int(ctxReq.Plane))
-	if err != nil {
-		return TXBDecodeRequest{}, false, err
-	}
-	txbCtx, err := ctx.TXBContext(ctxReq)
-	if err != nil {
-		return TXBDecodeRequest{}, false, err
-	}
-	req.Size = ctxReq.Size
-	req.Plane = plane
-	req.TXBSkipContext = txbCtx.TXBSkipContext
-	req.DCSignContext = txbCtx.DCSignContext
-	allZero, err := s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: req.TXBSkipContext})
-	if err != nil {
-		return TXBDecodeRequest{}, false, err
-	}
-	return req, allZero, nil
 }
 
 func (c *CoeffEntropyContext) setTXBContext(req CoeffContextRequest, value uint8) error {
@@ -308,41 +257,35 @@ func setCoeffContextRun(row *[MaxBlockModeSlots]uint8, x, n, visible int, value 
 	if n <= 0 {
 		return
 	}
-	_ = row[x+n-1]
+	run := row[x : x+n]
 	if visible >= n {
-		p := unsafe.Pointer(&row[x])
 		v := uint64(value) * ones
 		switch n {
 		case 1:
-			row[x] = value
+			run[0] = value
 			return
 		case 2:
-			*(*uint16)(p) = uint16(v)
+			binary.LittleEndian.PutUint16(run, uint16(v))
 			return
 		case 4:
-			*(*uint32)(p) = uint32(v)
+			binary.LittleEndian.PutUint32(run, uint32(v))
 			return
 		case 8:
-			*(*uint64)(p) = v
+			binary.LittleEndian.PutUint64(run, v)
 			return
 		case 16:
-			*(*uint64)(p) = v
-			*(*uint64)(unsafe.Add(p, 8)) = v
+			binary.LittleEndian.PutUint64(run, v)
+			binary.LittleEndian.PutUint64(run[8:], v)
 			return
 		}
 		visible = n
 	}
 	for k := 0; k < visible; k++ {
-		row[x+k] = value
+		run[k] = value
 	}
 	for k := visible; k < n; k++ {
-		row[x+k] = 0
+		run[k] = 0
 	}
-}
-
-func validateCoeffContextRequest(req CoeffContextRequest) (TransformDimensions, BlockDimensions, error) {
-	txDims, blockDims, _, _, err := validateCoeffContextRequestWithSpan(req)
-	return txDims, blockDims, err
 }
 
 func validateCoeffContextRequestWithSpan(req CoeffContextRequest) (TransformDimensions, BlockDimensions, int, int, error) {

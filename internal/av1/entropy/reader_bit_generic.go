@@ -5,8 +5,6 @@
 package entropy
 
 // ReadBitTrusted decodes one equiprobable bit from cursor state.
-//
-//go:nosplit
 func (c *Cursor) ReadBitTrusted() uint8 {
 	if traceEntropyReads {
 		return c.readBitTrustedTrace()

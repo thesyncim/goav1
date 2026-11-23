@@ -57,17 +57,3 @@ func PlaneQuantizer(params QuantizationParams, qIndex uint8, bitDepth uint8, pla
 func TransformScale(width int, height int) (uint8, error) {
 	return internalquantize.TransformScale(width, height)
 }
-
-// DequantizeBlock dequantizes coeff into dst using the supplied Quantizer.
-// dstStride and coeffStride are sample counts (not bytes). The block geometry
-// must match the layout encoded in q.
-func DequantizeBlock(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer) error {
-	return internalquantize.DequantizeBlock(dst, dstStride, coeff, coeffStride, width, height, q)
-}
-
-// DequantizeBlockScaled is DequantizeBlock with an explicit caller-supplied
-// transform scale (typically obtained from TransformScale) instead of using
-// the default scale implied by the block geometry.
-func DequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8) error {
-	return internalquantize.DequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, txScale)
-}

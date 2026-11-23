@@ -47,15 +47,15 @@ func TestRunSVCInfoDecodesL2T1(t *testing.T) {
 }
 
 // TestRunDecodesSVCVectorsMatchLibaom decodes the bundled libaom SVC
-// vectors through the CLI's single-pool driver and checks every emitted
+// vectors through the CLI and checks every emitted
 // frame against the libaom per-frame MD5 sidecar (aomdec and dav1d
 // --alllayers 0 agree with it): one frame per temporal unit at the
 // highest spatial layer. L2T1 and L2T2 mix a 640x360 base layer with a
 // 1280x720 enhancement layer that predicts from it through a scaled
 // reference; L2T2 and L1T2 add a non-reference upper temporal layer
 // whose shown surfaces must go back to the pool. A pixel-free size
-// check here once hid that the driver emitted frames without running
-// the post-filters, so the gate is per-frame MD5 at 1 and 8 workers.
+// check once hid that frames were emitted without running the
+// post-filters, so the gate is per-frame MD5 at 1 and 8 workers.
 func TestRunDecodesSVCVectorsMatchLibaom(t *testing.T) {
 	// Per-frame MD5s from the libaom .md5 sidecars (aomdec and dav1d agree).
 	// CI fetches the vectors but not the sidecars, so they are pinned here.
@@ -127,17 +127,48 @@ func TestRunDecodesSVCVectorsMatchLibaom(t *testing.T) {
 	}
 }
 
+// TestRunSpatialLayerPinning checks -spatial-layer on L2T1: layer 0 emits the
+// eight 640x360 base frames (the whole-output MD5 is dav1d's with --oppoint 1
+// --alllayers 0), and a layer the stream never publishes emits nothing.
+func TestRunSpatialLayerPinning(t *testing.T) {
+	ivfPath := repoRelativePath(t, "internal", "av1", "testdata", "libaom", "av1-1-b8-22-svc-L2T1.ivf")
+	for _, tc := range []struct {
+		layer   string
+		bytes   int
+		wantMD5 string
+	}{
+		{"0", 8 * 640 * 360 * 3 / 2, "1e595312e1cebf280a4dc65e84f07544"},
+		{"2", 0, "d41d8cd98f00b204e9800998ecf8427e"},
+	} {
+		t.Run("layer-"+tc.layer, func(t *testing.T) {
+			outPath := filepath.Join(t.TempDir(), "out.yuv")
+			var stderr bytes.Buffer
+			if err := run([]string{"-o", outPath, "-quiet", "-spatial-layer", tc.layer, ivfPath}, io.Discard, &stderr); err != nil {
+				t.Fatalf("run err=%v\nstderr=%s", err, stderr.String())
+			}
+			got, err := os.ReadFile(outPath)
+			if err != nil {
+				t.Fatalf("read output: %v", err)
+			}
+			if len(got) != tc.bytes {
+				t.Fatalf("output size=%d want %d", len(got), tc.bytes)
+			}
+			sum := md5.Sum(got)
+			if g := hex.EncodeToString(sum[:]); g != tc.wantMD5 {
+				t.Fatalf("output md5=%s want %s", g, tc.wantMD5)
+			}
+		})
+	}
+}
+
 // TestRunDecodesL1T2AllFrames exercises the dump_svc pixel decode path
 // against the bundled L1T2 SVC vector. L1T2 shares a single 640x360
-// frame size across both temporal layers, so the single-pool driver
-// decodes every temporal unit. The decode previously aborted at frame 1
-// because the per-frame CDEF index-map scratch was validated against the
-// prior frame's decoded cdef_idx values before being cleared: a keyframe
+// frame size across both temporal layers. The decode previously aborted at
+// frame 1 because the per-frame CDEF index-map scratch was validated against
+// the prior frame's decoded cdef_idx values before being cleared: a keyframe
 // with more cdef_bits left an index that exceeded the next frame's smaller
-// cdef_bits limit. With that clear-before-bind fixed the clip now decodes
-// all eight temporal units. The smoke test therefore asserts the full
-// 8-frame I420 output (8 * 640 * 360 * 1.5 bytes) plus the expected
-// diagnostic annotations.
+// cdef_bits limit. The smoke test asserts the full 8-frame I420 output
+// (8 * 640 * 360 * 1.5 bytes) plus the expected diagnostic annotations.
 func TestRunDecodesL1T2AllFrames(t *testing.T) {
 	const (
 		width         = 640
@@ -161,9 +192,6 @@ func TestRunDecodesL1T2AllFrames(t *testing.T) {
 	text := stderr.String()
 	if !strings.Contains(text, "640x360") {
 		t.Errorf("stderr missing 640x360 header line:\n%s", text)
-	}
-	if !strings.Contains(text, "scaled_pred=true") {
-		t.Errorf("stderr missing scaled_pred=true (the CLI must default to true):\n%s", text)
 	}
 
 	info, statErr := os.Stat(outPath)
