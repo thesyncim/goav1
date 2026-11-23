@@ -244,15 +244,32 @@ func (b *CoefBlock) DecodeCoefs(plane uint8, size TransformSize, x4, y4, visW, v
 	if plane != 0 {
 		coeffPlane = CoeffPlaneUV
 	}
-	var c entropy.Cursor
-	c.Load(&s.Reader)
-
-	// does this block have any non-zero coefficients
-	sctx := b.ctx.coefSkipCtx(plane, x4, y4, tw4, th4, int(bd.W4), int(bd.H4))
-	allSkip := c.ReadBinaryCDFUnchecked(&b.cdfs.TXBSkip[geo.txCtx][sctx]) != 0
+	// does this block have any non-zero coefficients (get_skip_ctx: a luma
+	// TXB covering its block is context 0 without reading a/l)
+	sctx := uint8(0)
+	if plane != 0 || int(bd.W4) != tw4 || int(bd.H4) != th4 {
+		sctx = b.ctx.coefSkipCtx(plane, x4, y4, tw4, th4, int(bd.W4), int(bd.H4))
+	}
 	var r CoefResult
 	r.Txtp = transform.TypeDCTDCT
-	if !allSkip {
+	if s.Reader.ReadBinaryCDFUnchecked(&b.cdfs.TXBSkip[geo.txCtx][sctx]) != 0 {
+		// all-zero TXB: no cursor, and a 4x4 inside the frame writes one
+		// context byte per side
+		if plane == 0 && b.txtpMap != nil {
+			fillTxtpMap(b.txtpMap, x4, y4, tw4, th4, r.Txtp)
+		}
+		r.TXB.AllZero = true
+		if tw4|th4 == 1 && visW > 0 && visH > 0 {
+			b.ctx.Above[plane][x4&(MaxBlockModeSlots-1)] = 0
+			b.ctx.Left[plane][y4&(MaxBlockModeSlots-1)] = 0
+		} else {
+			b.ctx.setTXBContextKnown(plane, x4, y4, tw4, th4, visW, visH, 0)
+		}
+		return r, nil
+	}
+	var c entropy.Cursor
+	c.Load(&s.Reader)
+	{
 		var err error
 		if r.Txtp, err = b.readTxtp(&c, plane, size, tDim, x4, y4); err != nil {
 			return CoefResult{}, err
@@ -260,12 +277,6 @@ func (b *CoefBlock) DecodeCoefs(plane uint8, size TransformSize, x4, y4, visW, v
 	}
 	if plane == 0 && b.txtpMap != nil {
 		fillTxtpMap(b.txtpMap, x4, y4, tw4, th4, r.Txtp)
-	}
-	if allSkip {
-		c.CommitStateTo(&s.Reader)
-		r.TXB.AllZero = true
-		b.ctx.setTXBContextKnown(plane, x4, y4, tw4, th4, visW, visH, 0)
-		return r, nil
 	}
 	class := transform.Class2D
 	if r.Txtp >= transform.TypeIDTX && r.Txtp != transform.TypeWHTWHT {
