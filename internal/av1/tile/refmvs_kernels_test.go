@@ -188,18 +188,41 @@ func BenchmarkRefmvsSplat(b *testing.B) {
 }
 
 func BenchmarkRefmvsSaveTmvs(b *testing.B) {
+	// A superblock row tiled with mixed block sizes, about a tenth intra,
+	// single and compound references on both sides.
 	rng := rand.New(rand.NewPCG(5, 6))
 	rt := &refmvsTile{}
 	rt.bindFrame(refmvsFrame{iw4: 480, ih4: 272}, 1920, 0, 480, 0, 272)
 	rt.sbrowInit(0, 16)
-	for y4 := int32(0); y4 < 16; y4++ {
-		row := rt.row(y4 + 5)
-		for x4 := int32(0); x4 < 480; x4 += 4 {
-			mv := kernelTestMV(rng) & 0x03ff03ff
-			for i := x4; i < x4+4; i++ {
-				row[i] = refmvsBlock{mv: [2]refmvsMV{mv, 0}, ref: makeRefmvsRefPair(int8(1+rng.IntN(2)), -1), bs: BlockSize16x16}
+	sizes := []BlockSize{BlockSize4x4, BlockSize8x8, BlockSize8x8, BlockSize16x16, BlockSize16x16, BlockSize32x32, BlockSize64x64, BlockSize16x8, BlockSize8x16}
+	for sbx := int32(0); sbx < 480; sbx += 16 {
+		var fill func(x4, y4, w4 int32)
+		fill = func(x4, y4, w4 int32) {
+			bs := sizes[rng.IntN(len(sizes))]
+			d := blockDimensions[bs]
+			if int32(d.W4) < w4 && rng.IntN(3) != 0 {
+				h := w4 / 2
+				for _, o := range [4][2]int32{{0, 0}, {h, 0}, {0, h}, {h, h}} {
+					fill(x4+o[0], y4+o[1], h)
+				}
+				return
+			}
+			bs = map[int32]BlockSize{1: BlockSize4x4, 2: BlockSize8x8, 4: BlockSize16x16, 8: BlockSize32x32, 16: BlockSize64x64}[w4]
+			blk := refmvsBlock{mv: [2]refmvsMV{kernelTestMV(rng) & 0x03ff03ff, kernelTestMV(rng) & 0x03ff03ff}, ref: makeRefmvsRefPair(int8(1+rng.IntN(7)), -1), bs: bs}
+			switch rng.IntN(10) {
+			case 0:
+				blk = refmvsBlock{mv: [2]refmvsMV{refmvsInvalidMV, 0}, ref: makeRefmvsRefPair(0, -1), bs: bs}
+			case 1, 2:
+				blk.ref = makeRefmvsRefPair(int8(1+rng.IntN(4)), int8(5+rng.IntN(3)))
+			}
+			for y := y4; y < y4+w4; y++ {
+				row := rt.row(y + 5)
+				for x := x4; x < x4+w4; x++ {
+					row[x] = blk
+				}
 			}
 		}
+		fill(sbx, 0, 16)
 	}
 	dst := &ReferenceMVFrame{Rows: 136, Cols: 240, Stride: 240, Entries: make([]ReferenceMVEntry, 136*240)}
 	side := [referenceFrameCount]int8{0, 0, 0, 0, 1, 1, 1}
