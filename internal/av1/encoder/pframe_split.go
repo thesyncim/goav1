@@ -27,6 +27,7 @@ package encoder
 
 import (
 	"fmt"
+	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/motion"
@@ -285,6 +286,9 @@ func interTXBResult(qcoeff []int16, scan []int16, coeffCount int) tile.TXBDecode
 	if levelsAllZero(qcoeff[:coeffCount]) {
 		return tile.TXBDecodeResult{AllZero: true}
 	}
+	if endP1 := scanEndP1(scan); len(endP1) >= coeffCount && len(scan) == coeffCount {
+		return tile.TXBDecodeResult{EOB: uint16(levelsEOB(qcoeff[:coeffCount], endP1[:coeffCount]))}
+	}
 	eob := 0
 	for c := coeffCount - 1; c >= 0; c-- {
 		if qcoeff[scan[c]] != 0 {
@@ -296,6 +300,31 @@ func interTXBResult(qcoeff []int16, scan []int16, coeffCount int) tile.TXBDecode
 		return tile.TXBDecodeResult{AllZero: true}
 	}
 	return tile.TXBDecodeResult{EOB: uint16(eob)}
+}
+
+// levelsEOB is the end of block of a block with a non-zero level: the largest
+// endP1 over the non-zero levels, scanned four levels per word so the zero
+// runs cost one test each, in raster order (no scan gather).
+func levelsEOB(q, endP1 []int16) int {
+	endP1 = endP1[:len(q)]
+	w := unsafe.Slice((*uint64)(unsafe.Pointer(unsafe.SliceData(q))), len(q)/4)
+	eob := int16(0)
+	for i, v := range w {
+		if v == 0 {
+			continue
+		}
+		for k := 4 * i; k < 4*i+4; k++ {
+			if q[k] != 0 {
+				eob = max(eob, endP1[k])
+			}
+		}
+	}
+	for k := len(q) &^ 3; k < len(q); k++ {
+		if q[k] != 0 {
+			eob = max(eob, endP1[k])
+		}
+	}
+	return int(eob)
 }
 
 // reconRecordedTXB copies the prepared coefficients into the record arena and

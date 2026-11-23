@@ -418,6 +418,38 @@ type encoderScanTables struct {
 	scan4x16, scan16x4           []int16
 	scan8x32, scan32x8           []int16
 	scan16x64, scan64x16         []int16
+	// ends maps each scan above to its end-of-block table (interTXBResult).
+	ends []scanEnds
+}
+
+// scanEnds is one scan's end-of-block table: endP1[pos] is one past the scan
+// index of raster position pos.
+type scanEnds struct {
+	scan  *int16
+	endP1 []int16
+}
+
+func newScanEnds(scan []int16) scanEnds {
+	e := scanEnds{scan: &scan[0], endP1: make([]int16, len(scan))}
+	for c, pos := range scan {
+		e.endP1[pos] = int16(c + 1)
+	}
+	return e
+}
+
+// scanEndP1 returns the end-of-block table of a shared scan, nil for any
+// other scan.
+func scanEndP1(scan []int16) []int16 {
+	if len(scan) == 0 {
+		return nil
+	}
+	p := &scan[0]
+	for i := range sharedScans.ends {
+		if sharedScans.ends[i].scan == p {
+			return sharedScans.ends[i].endP1
+		}
+	}
+	return nil
 }
 
 var (
@@ -439,6 +471,7 @@ func buildEncoderScanTables() (encoderScanTables, error) {
 		if err := transform.FillDefaultScan(*sq.dst, inv, transform.Size{Width: sq.n, Height: sq.n}, transform.Class2D); err != nil {
 			return t, err
 		}
+		t.ends = append(t.ends, newScanEnds(*sq.dst))
 	}
 	for _, rs := range []struct {
 		dst  *[]int16
@@ -462,6 +495,7 @@ func buildEncoderScanTables() (encoderScanTables, error) {
 		if err := transform.FillDefaultScan(*rs.dst, inv, size, transform.Class2D); err != nil {
 			return t, err
 		}
+		t.ends = append(t.ends, newScanEnds(*rs.dst))
 	}
 	return t, nil
 }
