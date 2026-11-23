@@ -1,8 +1,7 @@
 #!/bin/sh
-# Builds the wasm encoder and decoder variants into web/ with TinyGo (>= 0.43
-# for Go 1.27), plus stock Go js/wasm builds for comparison. TinyGo 0.43.0
-# needs a one-line compiler fix to build goav1 for wasm32 (see README.md);
-# ./setup-tinygo.sh builds one into .tinygo/, which is used by default.
+# Builds the wasm encoder and decoder variants into web/ with TinyGo (>= 0.44;
+# see README.md), plus stock Go js/wasm builds for comparison.
+# ./setup-tinygo.sh installs one into .tinygo/, which is used by default.
 #
 # Environment:
 #   TINYGO  tinygo binary (default .tinygo/bin/tinygo, else tinygo on PATH)
