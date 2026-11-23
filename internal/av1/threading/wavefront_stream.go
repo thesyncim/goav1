@@ -160,8 +160,8 @@ func (wf *frameWorkReconWavefront) startLanes(lanes chan<- wavefrontLaneTask, wo
 		wf.lanes = 1
 		wf.wg.Add(1)
 		t := ft.reconTask()
-		*t = frameReconTask{wf: wf, seq: ft.Seq, tile: wf.reconTile, rowCount: rowCount, needRow: -1}
-		ft.tasks.add(t)
+		*t = frameReconTask{wf: wf, rowCount: rowCount, needRow: -1}
+		ft.tasks.add(ft.Seq, t)
 		return
 	}
 	wf.lanes = workers
