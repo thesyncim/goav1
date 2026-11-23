@@ -1832,50 +1832,10 @@ func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoo
 		return nil
 	}
 
-	// dav1d's recon_b_intra / recon_b_inter residual add: the destination is
-	// offset straight from the job's bound plane window (f->cur.data[pl] +
-	// 4 * (by4 * stride + bx4)) and the TXB goes to the inverse transform and
-	// add. A TXB not wholly inside the window's writable extent takes the
-	// validated geometry path below.
-	var window *FrameWorkPlaneRegion
-	var x, y uint32
-	if vb := &visit.Block; block.Plane == 0 {
-		if s.lumaReady {
-			window = &s.batch.geomCache.plane[FrameWorkPlaneY]
-			x = (uint32(vb.MICol) + uint32(block.Block.X4) - uint32(vb.X4)) << 2
-			y = (uint32(vb.MIRow) + uint32(block.Block.Y4) - uint32(vb.Y4)) << 2
-		}
-	} else if block.Plane <= 2 && s.chromaReady && vb.MICol >= uint16(vb.X4) && vb.MIRow >= uint16(vb.Y4) {
-		window = &s.batch.geomCache.plane[block.Plane]
-		color := &s.batch.Sequence.ColorConfig
-		ssX := frameWorkSubsampleShift(color.SubsamplingX)
-		ssY := frameWorkSubsampleShift(color.SubsamplingY)
-		x = ((uint32(vb.MICol)-uint32(vb.X4))>>ssX + uint32(block.Block.X4)) << 2
-		y = ((uint32(vb.MIRow)-uint32(vb.Y4))>>ssY + uint32(block.Block.Y4)) << 2
-	}
-	if window != nil {
-		if meta, ok := frameWorkBlockCoeffTransformMeta(block.Block.Size); ok {
-			w, h := uint32(meta.size.Width), uint32(meta.size.Height)
-			clipW, clipH := window.ClipWidth, window.ClipHeight
-			if clipW == 0 {
-				clipW = window.Width
-			}
-			if clipH == 0 {
-				clipH = window.Height
-			}
-			if x >= window.X && y >= window.Y && uint64(x-window.X)+uint64(w) <= uint64(clipW) && uint64(y-window.Y)+uint64(h) <= uint64(clipH) {
-				bps := int(window.BytesPerSample)
-				stride := int(window.Stride)
-				off := int(y-window.Y)*stride + int(x-window.X)*bps
-				n := (int(h)-1)*stride + int(w)*bps
-				if reconstruct.ReconstructPlaneBlockVisibleTrustedAtFromDequantized(window.Pix[off:off+n:off+n], stride, bps, s.batch.Sequence.ColorConfig.BitDepth,
-					int(w), int(h), meta.scanSize, activeRows, activeCols, dcOnly, cf, s.int32Scratch, s.residualScratch,
-					reconstruct.Block{Size: meta.size, Transform: block.Transform, EOB: int16(block.Result.EOB)}) != nil {
-					return ErrInvalidBatch
-				}
-				s.stats.Residuals++
-				return nil
-			}
+	if meta, ok := frameWorkBlockCoeffTransformMeta(block.Block.Size); ok {
+		done, err := s.addResidualInWindow(&visit.Block, block.Plane, block.Block.X4, block.Block.Y4, meta, block.Transform, block.Result.EOB, cf, activeRows, activeCols, dcOnly)
+		if done || err != nil {
+			return err
 		}
 	}
 	var geom frameWorkBlockCoeffGeometry
@@ -1903,6 +1863,57 @@ func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoo
 	}
 	s.stats.Residuals++
 	return nil
+}
+
+// addResidualInWindow is the inverse transform add of recon_b_intra /
+// recon_b_inter: the destination is offset straight from the job's bound plane
+// window (f->cur.data[pl] + 4 * (by4 * stride + bx4)) and the TXB at
+// superblock-local x4/y4 goes to the inverse transform and add. It reports
+// false, writing nothing, for a TXB not wholly inside the window's writable
+// extent, which takes the validated geometry path.
+func (s *frameWorkReconState) addResidualInWindow(vb *tile.BlockVisit, plane, x4, y4 uint8, meta frameWorkTransformMeta, txtp transform.Type, eob uint16, cf []int32, activeRows, activeCols int, dcOnly bool) (bool, error) {
+	var window *FrameWorkPlaneRegion
+	var x, y uint32
+	if plane == 0 {
+		if !s.lumaReady {
+			return false, nil
+		}
+		window = &s.batch.geomCache.plane[FrameWorkPlaneY]
+		x = (uint32(vb.MICol) + uint32(x4) - uint32(vb.X4)) << 2
+		y = (uint32(vb.MIRow) + uint32(y4) - uint32(vb.Y4)) << 2
+	} else {
+		if plane > 2 || !s.chromaReady || vb.MICol < uint16(vb.X4) || vb.MIRow < uint16(vb.Y4) {
+			return false, nil
+		}
+		window = &s.batch.geomCache.plane[plane]
+		color := &s.batch.Sequence.ColorConfig
+		ssX := frameWorkSubsampleShift(color.SubsamplingX)
+		ssY := frameWorkSubsampleShift(color.SubsamplingY)
+		x = ((uint32(vb.MICol)-uint32(vb.X4))>>ssX + uint32(x4)) << 2
+		y = ((uint32(vb.MIRow)-uint32(vb.Y4))>>ssY + uint32(y4)) << 2
+	}
+	w, h := uint32(meta.size.Width), uint32(meta.size.Height)
+	clipW, clipH := window.ClipWidth, window.ClipHeight
+	if clipW == 0 {
+		clipW = window.Width
+	}
+	if clipH == 0 {
+		clipH = window.Height
+	}
+	if x < window.X || y < window.Y || uint64(x-window.X)+uint64(w) > uint64(clipW) || uint64(y-window.Y)+uint64(h) > uint64(clipH) {
+		return false, nil
+	}
+	bps := int(window.BytesPerSample)
+	stride := int(window.Stride)
+	off := int(y-window.Y)*stride + int(x-window.X)*bps
+	n := (int(h)-1)*stride + int(w)*bps
+	if reconstruct.ReconstructPlaneBlockVisibleTrustedAtFromDequantized(window.Pix[off:off+n:off+n], stride, bps, s.batch.Sequence.ColorConfig.BitDepth,
+		int(w), int(h), meta.scanSize, activeRows, activeCols, dcOnly, cf, s.int32Scratch, s.residualScratch,
+		reconstruct.Block{Size: meta.size, Transform: txtp, EOB: int16(eob)}) != nil {
+		return true, ErrInvalidBatch
+	}
+	s.stats.Residuals++
+	return true, nil
 }
 
 func frameWorkVisitUsesCFLPtr(visit *tile.BlockLoopVisit) bool {
