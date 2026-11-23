@@ -206,6 +206,26 @@ func TestMC8PrepFastMatchesPureGo(t *testing.T) {
 	}
 }
 
+// TestMC8SixTapWindowSums pins what mc8PutHV6's +34 horizontal rounding
+// relies on: the six window taps of every six-tap phase sum to 128, so the
+// +8 on each rounded horizontal sum adds exactly 2^15 to the vertical sum.
+func TestMC8SixTapWindowSums(t *testing.T) {
+	for kind := range mc8KindCount {
+		if !mc8SixTap[kind] {
+			continue
+		}
+		for s := range 16 {
+			var sum int32
+			for i := range 6 {
+				sum += mc8Phases[kind][s].v[i][0]
+			}
+			if sum != 32*128 {
+				t.Fatalf("kind %d phase %d: 32 * window tap sum = %d, want %d", kind, s, sum, 32*128)
+			}
+		}
+	}
+}
+
 // TestMC8SixTapKinds pins which filter kinds run in the six-tap window.
 func TestMC8SixTapKinds(t *testing.T) {
 	want := [mc8KindCount]bool{true, true, false, true, true, true}
