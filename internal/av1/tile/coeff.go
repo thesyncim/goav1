@@ -173,6 +173,23 @@ type coeffScanHot = entropy.CoeffScanContext
 var coeffPosTable [transformSizeCount][]coeffPos
 var coeffPosHotTable [transformSizeCount][]coeffPosHot
 var coeffScanTable [transformSizeCount][3][]int16
+
+// coefEOBExtentTable is, per transform size and 2D-scan eob, the coefficient
+// rows and columns (rows | cols << 8) that scan positions 0..eob cover: the
+// extent dav1d's inverse transforms derive from eob
+// (dav1d_last_nonzero_col_from_eob and the asm eob thresholds).
+var coefEOBExtentTable [transformSizeCount][]uint16
+
+func coefEOBExtents(scan []int16, height uint16) []uint16 {
+	ext := make([]uint16, len(scan))
+	var rows, cols uint16
+	for i, rc := range scan {
+		rows = max(rows, uint16(rc)%height+1)
+		cols = max(cols, uint16(rc)/height+1)
+		ext[i] = rows | cols<<8
+	}
+	return ext
+}
 var coeffScanHotTable [transformSizeCount][3][]coeffScanHot
 var coeffScanHot4x4Y2D [16]coeffScanHot
 var coeffScanHot8x8Y2D [64]coeffScanHot
@@ -279,6 +296,7 @@ func init() {
 			if scan, err := transform.DefaultScan(txSize, class); err == nil {
 				coeffScanTable[size][class] = scan
 				if class == transform.Class2D {
+					coefEOBExtentTable[size] = coefEOBExtents(scan, uint16(coeffGeometryTable[size].scanHeight))
 					scanHot := make([]coeffScanHot, maxEOB)
 					for c, rawPos := range scan {
 						pos := int(rawPos)

@@ -47,7 +47,39 @@ func ScratchLen(cfg Block) (int32Len int, int16Len int, err error) {
 // The caller validates geometry and scratch capacity; dcOnly must match an
 // EOB-1 DCT_DCT block. dequantSrc may alias the start of int32Scratch; the
 // transform scratch begins after the coded block.
+//
+// activeRows x activeCols is the coefficient extent decode_coefs' eob covers
+// (dav1d_last_nonzero_col_from_eob), which selects the sub-kernel. Like
+// dav1d's inverse transforms, it leaves that extent of dequantSrc zero on
+// return, so the next decode_coefs can rely on a zero coefficient buffer.
 func ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst []byte, dstStride int, bytesPerSample int, bitDepth uint8, visibleWidth int, visibleHeight int, scanSize transform.Size, activeRows int, activeCols int, dcOnly bool, dequantSrc []int32, int32Scratch []int32, residualScratch []int16, cfg Block) error {
+	err := inverseAddFromDequantized(dst, dstStride, bytesPerSample, bitDepth, visibleWidth, visibleHeight, scanSize, activeRows, activeCols, dcOnly, dequantSrc, int32Scratch, residualScratch, cfg)
+	ZeroCoefs(dequantSrc, int(scanSize.Height), activeRows, activeCols)
+	return err
+}
+
+// ZeroCoefs clears the activeRows x activeCols coefficient extent of the
+// column-major cf (column stride scanHeight, a multiple of 4): the zero
+// stores dav1d's inverse transforms issue for the coefficients they load.
+func ZeroCoefs(cf []int32, scanHeight, activeRows, activeCols int) {
+	if activeCols <= 0 || activeRows <= 0 {
+		return
+	}
+	rows := (activeRows + 3) &^ 3
+	if rows >= scanHeight {
+		clear(cf[:activeCols*scanHeight])
+		return
+	}
+	for k := 0; k < activeCols; k++ {
+		col := cf[k*scanHeight : k*scanHeight+rows]
+		for len(col) >= 4 {
+			*(*[4]int32)(col) = [4]int32{}
+			col = col[4:]
+		}
+	}
+}
+
+func inverseAddFromDequantized(dst []byte, dstStride int, bytesPerSample int, bitDepth uint8, visibleWidth int, visibleHeight int, scanSize transform.Size, activeRows int, activeCols int, dcOnly bool, dequantSrc []int32, int32Scratch []int32, residualScratch []int16, cfg Block) error {
 	width := int(cfg.Size.Width)
 	height := int(cfg.Size.Height)
 	scanWidth := int(scanSize.Width)

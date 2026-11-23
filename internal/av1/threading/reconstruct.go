@@ -86,10 +86,11 @@ func frameWorkPrimeLumaReconGeometry(b *FrameWorkBatch, index int) error {
 // through the validated block geometry, for a TXB not wholly inside the
 // window's writable extent.
 func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometryDequantized(geom frameWorkBlockCoeffGeometry, block *tile.BlockCoeffBlock, activeRows int, activeCols int, dcOnly bool, dequant []int32, int32Scratch []int32, residualScratch []int16) error {
-	if geom.visibleWidth == 0 || geom.visibleHeight == 0 {
+	if block.Result.AllZero || block.Result.EOB == 0 {
 		return nil
 	}
-	if block.Result.AllZero || block.Result.EOB == 0 {
+	if geom.visibleWidth == 0 || geom.visibleHeight == 0 {
+		reconstruct.ZeroCoefs(dequant, int(geom.scanSize.Height), activeRows, activeCols)
 		return nil
 	}
 	relX := int(geom.x) - int(geom.window.X)

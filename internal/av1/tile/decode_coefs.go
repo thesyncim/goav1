@@ -147,13 +147,39 @@ func decodeCoefTokens(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, ge
 // (rc = x * scanHeight + y). dcSignCDF is the dc_sign CDF dav1d selects with
 // get_dc_sign_ctx, needed only when dcTok is nonzero. qm is the TXB's
 // quantizer matrix (dav1d's qm_tbl), nil for flat dequantization.
-func decodeCoefResidual(c *entropy.Cursor, dcSignCDF *entropy.CDF, eob int, rc, dcTok uint, cf *[1024]int32, dq coefDequant, qm []uint16, geo *coeffGeometry) coefDecodeResult {
-	rowMask := uint(geo.scanHeight) - 1
-	colShift := uint(log2Coef[geo.scanHeight])
+func decodeCoefResidual(c *entropy.Cursor, dcSignCDF *entropy.CDF, size TransformSize, geo *coeffGeometry, class transform.Class, eob int, rc, dcTok uint, cf *[1024]int32, dq coefDequant, qm []uint16) coefDecodeResult {
+	var r coefDecodeResult
 	if qm != nil {
-		return decodeCoefResidualQM(c, dcSignCDF, eob, rc, dcTok, cf, dq, qm, rowMask, colShift)
+		r = decodeCoefResidualQM(c, dcSignCDF, eob, rc, dcTok, cf, dq, qm)
+	} else {
+		r = decodeCoefResidualFlat(c, dcSignCDF, eob, rc, dcTok, cf, dq)
 	}
-	activeRows, activeCols := uint(0), uint(0)
+	r.activeRows, r.activeCols = coefEOBExtent(size, geo, class, eob)
+	return r
+}
+
+// coefEOBExtent is the coefficient rows and columns an inverse transform has
+// to read for a TXB whose last coded scan position is eob, derived from eob
+// the way dav1d's inverse transforms do: the 2D scan's covered extent, and
+// for the 1D classes the rows (TX_CLASS_H, rc = i) or columns (TX_CLASS_V)
+// that i <= eob reach.
+func coefEOBExtent(size TransformSize, geo *coeffGeometry, class transform.Class, eob int) (rows, cols int) {
+	w, h := int(geo.scanWidth), int(geo.scanHeight)
+	switch class {
+	case transform.Class2D:
+		ext := coefEOBExtentTable[size]
+		e := ext[min(eob, len(ext)-1)]
+		return int(e & 0xff), int(e >> 8)
+	case transform.ClassHoriz:
+		return min(eob+1, h), eob>>log2Coef[h&63] + 1
+	default:
+		return eob>>log2Coef[w&63] + 1, min(eob+1, w)
+	}
+}
+
+// decodeCoefResidualFlat is the flat-dequantization residual and sign pass,
+// dav1d's ac_noqm.
+func decodeCoefResidualFlat(c *entropy.Cursor, dcSignCDF *entropy.CDF, eob int, rc, dcTok uint, cf *[1024]int32, dq coefDequant) coefDecodeResult {
 	var culLevel uint
 	dcSignLevel := uint8(0)
 	if dcTok != 0 {
@@ -178,17 +204,13 @@ func decodeCoefResidual(c *entropy.Cursor, dcSignCDF *entropy.CDF, eob int, rc, 
 		} else {
 			cf[0] = int32(dcDQ)
 		}
-		activeRows, activeCols = 1, 1
 	}
 	if rc != 0 {
-		culLevel, activeRows, activeCols = c.DecodeCoefSignsAC(cf, rc, dq.ac, uint(dq.shift), dq.cfMax, rowMask, colShift, culLevel, activeRows, activeCols)
+		culLevel = c.DecodeCoefSignsAC(cf, rc, dq.ac, uint(dq.shift), dq.cfMax, culLevel)
 	}
-
 	return coefDecodeResult{
-		eob:        eob,
-		culLevel:   uint8(min(culLevel, CoeffContextMask)) + dcSignLevel,
-		activeRows: int(activeRows),
-		activeCols: int(activeCols),
+		eob:      eob,
+		culLevel: uint8(min(culLevel, CoeffContextMask)) + dcSignLevel,
 	}
 }
 
@@ -196,10 +218,8 @@ func decodeCoefResidual(c *entropy.Cursor, dcSignCDF *entropy.CDF, eob int, rc, 
 // dav1d's decode_coefs (the qm_tbl branch and ac_qm): each factor is first
 // weighted by its matrix entry, (dq * qm[rc] + 16) >> 5, and every
 // coefficient is clamped to cf_max.
-func decodeCoefResidualQM(c *entropy.Cursor, dcSignCDF *entropy.CDF, eob int, rc, dcTok uint, cf *[1024]int32, dq coefDequant, qm []uint16, rowMask, colShift uint) coefDecodeResult {
+func decodeCoefResidualQM(c *entropy.Cursor, dcSignCDF *entropy.CDF, eob int, rc, dcTok uint, cf *[1024]int32, dq coefDequant, qm []uint16) coefDecodeResult {
 	shift := uint(dq.shift) & 3
-	colShift &= 63
-	activeRows, activeCols := uint(0), uint(0)
 	var culLevel uint
 	dcSignLevel := uint8(0)
 	if dcTok != 0 {
@@ -223,7 +243,6 @@ func decodeCoefResidualQM(c *entropy.Cursor, dcSignCDF *entropy.CDF, eob int, rc
 		} else {
 			cf[0] = int32(dcDQ)
 		}
-		activeRows, activeCols = 1, 1
 	}
 	for rc != 0 {
 		sign := uint32(c.ReadBitTrusted())
@@ -244,15 +263,11 @@ func decodeCoefResidualQM(c *entropy.Cursor, dcSignCDF *entropy.CDF, eob int, rc
 			w = -w
 		}
 		cf[rc] = w
-		activeRows = max(activeRows, (rc&rowMask)+1)
-		activeCols = max(activeCols, (rc>>colShift)+1)
 		rc = rcTok & 0x3ff
 	}
 	return coefDecodeResult{
-		eob:        eob,
-		culLevel:   uint8(min(culLevel, CoeffContextMask)) + dcSignLevel,
-		activeRows: int(activeRows),
-		activeCols: int(activeCols),
+		eob:      eob,
+		culLevel: uint8(min(culLevel, CoeffContextMask)) + dcSignLevel,
 	}
 }
 

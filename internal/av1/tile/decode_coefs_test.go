@@ -33,7 +33,7 @@ func decodeTXBForTest(s *DecodeState, cdfs *CoeffCDFs, size TransformSize, plane
 // context given.
 func decodeCoefsForTest(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, geo *coeffGeometry, plane CoeffPlaneType, txtp transform.Type, class transform.Class, dcSignCtx uint8, cf *[1024]int32, cfZeroed bool, levels *[coefLevelsLen]uint8, dq coefDequant, qm []uint16) coefDecodeResult {
 	eob, rc, dcTok := decodeCoefTokens(c, cdfs, size, geo, plane, txtp, class, cf, cfZeroed, levels)
-	return decodeCoefResidual(c, &cdfs.DCSign[plane][dcSignCtx], eob, rc, dcTok, cf, dq, qm, geo)
+	return decodeCoefResidual(c, &cdfs.DCSign[plane][dcSignCtx], size, geo, class, eob, rc, dcTok, cf, dq, qm)
 }
 
 // TestDecodeCoefTokensDequantizes codes random quantized TXBs with the
@@ -42,8 +42,9 @@ func decodeCoefsForTest(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, 
 // TXB on one evolving reader/CDF state. Every dequantized coefficient must
 // match AV1's dequantization of the written level: (factor * level) & 0xffffff
 // shifted by dq_shift and clamped to cf_max, with the factor first weighted
-// by the matrix entry, (factor * qm + 16) >> 5. The active row/column extent
-// and the coefficient context byte must match the writer's.
+// by the matrix entry, (factor * qm + 16) >> 5. The coefficient context byte
+// must match the writer's, and the eob-derived extent must cover every
+// nonzero coefficient.
 func TestDecodeCoefTokensDequantizes(t *testing.T) {
 	types := []transform.Type{
 		transform.TypeDCTDCT, transform.TypeADSTADST, transform.TypeIDTX,
@@ -177,8 +178,8 @@ func runDecodeCoefTokensDequant(t *testing.T, rng *rand.Rand, size TransformSize
 				t.Fatalf("%v %v plane=%d txb=%d eob=%d qm=%v: cf[%d] = %d, want %d", size, typ, plane, n, got.eob, r.qm != nil, pos, cf[pos], want)
 			}
 		}
-		if got.activeRows != activeRows || got.activeCols != activeCols {
-			t.Fatalf("%v %v txb=%d: active %dx%d, want %dx%d", size, typ, n, got.activeRows, got.activeCols, activeRows, activeCols)
+		if got.activeRows < activeRows || got.activeCols < activeCols || got.activeRows > height || got.activeCols > int(geo.scanWidth) {
+			t.Fatalf("%v %v txb=%d: extent %dx%d does not cover the nonzero %dx%d inside the scan", size, typ, n, got.activeRows, got.activeCols, activeRows, activeCols)
 		}
 	}
 	return nTXB

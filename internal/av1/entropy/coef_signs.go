@@ -7,12 +7,9 @@ package entropy
 // 11 | next rc, ending at rc 0), replacing each entry with its dequantized,
 // signed coefficient. dqShift must be the transform's dequant shift (0..2).
 //
-// It returns the token sum and the extents of the nonzero AC coefficients
-// (rows: max (rc & rowMask) + 1, columns: max (rc >> colShift) + 1) merged
-// into the values passed in.
-func (c *Cursor) DecodeCoefSignsAC(cf *[1024]int32, rc uint, acDQ uint32, dqShift uint, cfMax uint32, rowMask, colShift uint, culLevel, activeRows, activeCols uint) (uint, uint, uint) {
+// It returns culLevel plus the token sum.
+func (c *Cursor) DecodeCoefSignsAC(cf *[1024]int32, rc uint, acDQ uint32, dqShift uint, cfMax uint32, culLevel uint) uint {
 	dqShift &= 3
-	colShift &= 63
 	dif := c.dif
 	rng := uint32(c.rng)
 	cnt := int32(c.cnt)
@@ -68,8 +65,6 @@ func (c *Cursor) DecodeCoefSignsAC(cf *[1024]int32, rc uint, acDQ uint32, dqShif
 			w = -w
 		}
 		cf[rc] = w
-		activeRows = max(activeRows, (rc&rowMask)+1)
-		activeCols = max(activeCols, (rc>>colShift)+1)
 		rc = rcTok & 0x3ff
 		if rc == 0 {
 			break
@@ -78,7 +73,7 @@ func (c *Cursor) DecodeCoefSignsAC(cf *[1024]int32, rc uint, acDQ uint32, dqShif
 	c.dif = dif
 	c.rng = uint16(rng)
 	c.cnt = int16(cnt)
-	return culLevel, activeRows, activeCols
+	return culLevel
 }
 
 // ReadCoefGolomb is dav1d's read_golomb (src/recon_tmpl.c): an Exp-Golomb

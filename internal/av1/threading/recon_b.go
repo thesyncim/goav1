@@ -148,6 +148,9 @@ func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisi
 		}
 		var err error
 		if r, err = b.DecodeCoefs(plane, size, x4, y4, visW, visH, cf, zeroed, &dq[plane]); err != nil {
+			if zeroed {
+				s.coefBuf.reset()
+			}
 			return err
 		}
 		blk.Transform, blk.Result = r.Txtp, r.TXB
@@ -175,8 +178,11 @@ func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisi
 		s.cfArena = s.cfArena[:cfOff+area]
 		return c.bufferReconTXB(&blk, cfOff, area, r.ActiveRows, r.ActiveCols, dcOnly)
 	}
-	s.coefBuf.used(r.ActiveRows, r.ActiveCols, meta.scanSize.Height)
-	return c.fusedReconState().reconstructTXBWithDequantized(visit, &blk, cf[:area:area], int(r.ActiveRows), int(r.ActiveCols), dcOnly)
+	if err := c.fusedReconState().reconstructTXBWithDequantized(visit, &blk, cf[:area:area], int(r.ActiveRows), int(r.ActiveCols), dcOnly); err != nil {
+		s.coefBuf.reset()
+		return err
+	}
+	return nil
 }
 
 // blockDequant returns the block's dav1d ts->dq[seg_id] with cf_max and the
@@ -218,28 +224,21 @@ func (c *frameWorkTileResidualLoopController) resolveDequant(segmentID uint8) bo
 }
 
 // coefBuffer is dav1d's t->cf: the coefficient buffer the fused reconstruction
-// reads right after each TXB is decoded. dav1d's inverse transforms zero the
-// coefficients they consumed so decode_coefs can rely on a zero buffer; here
-// the next take clears the region the last TXB could have left nonzero, its
-// activeCols columns times activeRows rows.
+// reads right after each TXB is decoded. As in dav1d, the inverse transform
+// (reconstruct.ReconstructPlaneBlockVisibleTrustedAtFromDequantized) zeroes the
+// coefficients it consumed, so decode_coefs always finds a zero buffer; a TXB
+// whose decode or reconstruction failed is cleared by reset.
 type coefBuffer struct {
-	cf                    [1024]int32
-	rows, cols, colStride uint8
+	cf [1024]int32
 }
 
-func (b *coefBuffer) take() *[1024]int32 {
-	// One contiguous clear through the last active row of the last active
-	// column; per-column clears of the active rows measured slower.
-	if n := (int(b.cols)-1)*int(b.colStride) + int(b.rows); n > 0 {
-		clear(b.cf[:n])
-	}
-	b.rows, b.cols = 0, 0
-	return &b.cf
-}
+func (b *coefBuffer) take() *[1024]int32 { return &b.cf }
 
-func (b *coefBuffer) used(rows, cols, stride uint8) {
-	b.rows, b.cols, b.colStride = rows, cols, stride
-}
+// reset re-establishes the all-zero contract after a failed TXB, which may
+// have left coefficients its inverse transform never consumed.
+//
+//go:noinline
+func (b *coefBuffer) reset() { b.cf = [1024]int32{} }
 
 // cfArenaSlot returns the next TXB slot of the frame-thread cf arena, dav1d's
 // ts->frame_thread[p].cf. The arena grows only while warming up; slots handed

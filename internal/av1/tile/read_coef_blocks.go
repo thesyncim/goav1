@@ -288,12 +288,12 @@ func (b *CoefBlock) DecodeCoefs(plane uint8, size TransformSize, x4, y4, visW, v
 	if dq.QM != nil && r.Txtp < transform.TypeIDTX {
 		qm = dq.QM[size]
 	}
-	t := decodeCoefResidual(&c, dcSignCDF, eob, rc, dcTok, cf, coefDequant{
+	t := decodeCoefResidual(&c, dcSignCDF, size, geo, class, eob, rc, dcTok, cf, coefDequant{
 		dc:    dq.DC,
 		ac:    dq.AC,
 		shift: txScale,
 		cfMax: dq.Max,
-	}, qm, geo)
+	}, qm)
 	c.CommitStateTo(&s.Reader)
 	r.TXB = TXBDecodeResult{EOB: uint16(t.eob + 1), CulLevel: t.culLevel}
 	r.ActiveRows, r.ActiveCols = uint8(t.activeRows), uint8(t.activeCols)
