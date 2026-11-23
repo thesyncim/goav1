@@ -254,9 +254,9 @@ type BlockPredictionModeResult struct {
 }
 
 // reset clears the result for the next block except the large payloads
-// (reference MV stack, MV references and residuals, warp models, OBMC
-// neighbours), which are only read when their Valid flags, cleared here,
-// are set. The zero stores of adjacent fields merge into wide stores.
+// (reference MV stack, MV residuals, warp models, OBMC neighbours), which
+// are only read when their Valid flags, cleared here, are set. The zero
+// stores of adjacent fields merge into wide stores.
 func (r *BlockPredictionModeResult) reset() {
 	r.Valid = false
 	r.Intra = false
@@ -281,6 +281,7 @@ func (r *BlockPredictionModeResult) reset() {
 	r.ReferenceMVStackValid = false
 	r.DRLIndex = 0
 	r.DRLIndexValid = false
+	r.InterMVReferences = InterMVReferenceSet{}
 	r.InterMVReferencesValid = false
 	r.InterMotion = InterMotionResult{}
 	r.InterMotionValid = false

@@ -652,7 +652,7 @@ func FuzzReadIntraEntry(f *testing.F) {
 // TestBlockPredictionModeResultResetClearsAllButPayloads guards reset against
 // new fields: everything except the Valid-gated payloads must read as zero.
 func TestBlockPredictionModeResultResetClearsAllButPayloads(t *testing.T) {
-	kept := map[string]bool{"ReferenceMVStack": true, "InterMVReferences": true, "MVResiduals": true,
+	kept := map[string]bool{"ReferenceMVStack": true, "MVResiduals": true,
 		"WarpedMotion": true, "GlobalWarpedMotion": true, "GlobalWarpedMotionCompound": true, "OverlappableNeighbors": true}
 	var r BlockPredictionModeResult
 	b := unsafe.Slice((*byte)(unsafe.Pointer(&r)), unsafe.Sizeof(r))
