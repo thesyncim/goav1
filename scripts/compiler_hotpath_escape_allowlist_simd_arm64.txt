@@ -578,7 +578,6 @@ internal/av1/threading/pool.go:*:*: func literal escapes to heap in (*Pool).wave
 internal/av1/threading/pool.go:*:*: func literal escapes to heap in NewPool:
 internal/av1/threading/pool.go:*:*: make([]poolWorker, workers) escapes to heap
 internal/av1/threading/pool.go:*:*: make([]poolWorker, workers) escapes to heap in NewPool:
-internal/av1/threading/recon_b.go:*:*: append(a[:cap(a)], make([]int32, 1024 + cap(a) / 2)...) escapes to heap in growCoefArena:
 internal/av1/threading/tile_residual.go:*:*: make([]FrameWorkCFLPredictionScratch, workers) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]FrameWorkCFLPredictionScratch, workers) escapes to heap in (*frameWorkReconWavefront).ensureStates:
 internal/av1/threading/tile_residual.go:*:*: make([]FrameWorkInterPredictionScratch, workers) escapes to heap
