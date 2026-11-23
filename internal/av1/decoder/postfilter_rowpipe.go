@@ -49,6 +49,12 @@ func (p *FrameWorkPostFilterParallel) BindReconProgress(progress *threading.Fram
 	p.recon = progress
 }
 
+// BindTasks runs the next row-pipelined post-filter's stages on pool's
+// frame-thread workers as tasks of the frame decoded seq-th.
+func (p *FrameWorkPostFilterParallel) BindTasks(pool *threading.Pool, seq uint64) {
+	p.tasks, p.seq = pool, seq
+}
+
 // BindParseProgress sets the entropy-pass progress of the frame the next
 // post-filter run follows (FrameProgressDone once the pass finished), or
 // clears it with nil.
@@ -122,7 +128,7 @@ func (ctx *FrameWorkPostFilterContext) rowPipelineCandidate(remaining FrameWorkP
 // run as the frame-threaded row pipeline.
 func (ctx *FrameWorkPostFilterContext) rowPipelineEligible(req FrameWorkPostFilterRequest, banding FrameWorkPostFilterBanding, remaining FrameWorkPostFilterStage, follow bool) bool {
 	p := ctx.Parallel
-	if p == nil || p.recon == nil || p.rows.progress == nil {
+	if p == nil || p.recon == nil || p.rows.progress == nil || p.tasks == nil {
 		return false
 	}
 	if !ctx.rowPipelineCandidate(remaining) || banding.LoopFilterMIRows > 0 || banding.CDEFUnitRows > 0 {
@@ -162,10 +168,8 @@ func (ctx *FrameWorkPostFilterContext) multiTile() bool {
 // (the parallel 8-bit band walk), on goroutines owned by the
 // FrameWorkPostFilterParallel.
 type frameWorkRowPipe struct {
-	units   chan int
-	started int
-	wg      sync.WaitGroup
-	err     atomic.Pointer[wavefrontPostFilterError]
+	wg  sync.WaitGroup
+	err atomic.Pointer[wavefrontPostFilterError]
 
 	// The frame's unit-row job, written by the driver before it sends the
 	// first unit row and read by the workers.
@@ -203,32 +207,6 @@ type frameWorkRowPipe struct {
 }
 
 type wavefrontPostFilterError struct{ err error }
-
-// startRowPipeWorkers makes sure n unit workers run.
-func (p *FrameWorkPostFilterParallel) startRowPipeWorkers(n int) {
-	pp := &p.pipe
-	if pp.units == nil {
-		pp.units = make(chan int, 64)
-	}
-	for ; pp.started < n; pp.started++ {
-		go p.rowPipeWorker(pp.started, pp.units)
-	}
-}
-
-func (p *FrameWorkPostFilterParallel) rowPipeWorker(w int, units <-chan int) {
-	for u := range units {
-		p.rowPipeUnit(w, u)
-	}
-}
-
-// closeRowPipe stops the unit workers.
-func (p *FrameWorkPostFilterParallel) closeRowPipe() {
-	if p.pipe.units != nil {
-		close(p.pipe.units)
-		p.pipe.units = nil
-		p.pipe.started = 0
-	}
-}
 
 func (pp *frameWorkRowPipe) fail(err error) {
 	pp.err.CompareAndSwap(nil, &wavefrontPostFilterError{err: err})
@@ -387,50 +365,52 @@ func (ctx *FrameWorkPostFilterContext) loadCDEFRowBoundary(boundary *FrameWorkCD
 }
 
 // applyRowPipelinedPostFilters runs deblock, CDEF and loop restoration behind
-// reconstruction and publishes the rows they finish.
-func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWorkPostFilterRequest, remaining FrameWorkPostFilterStage, result *FrameWorkPostFilterResult) error {
-	p := ctx.Parallel
-	recon := p.recon
-	rows := &p.rows
-	out := ctx.Output
-	sbPx := 64
+// reconstruction and publishes the rows they finish. The stages run as tasks
+// on the frame-thread workers (dav1d's DEBLOCK_COLS / DEBLOCK_ROWS chain and
+// the per-sbrow CDEF / LOOP_RESTORATION tasks): rowPipeDriver deblocks the
+// regions in order and hands the unit rows to rowPipeUnits once their
+// neighbours' inputs are saved; the calling goroutine waits for both.
+func (orig *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWorkPostFilterRequest, remaining FrameWorkPostFilterStage, result *FrameWorkPostFilterResult) error {
+	p := orig.Parallel
+	out := orig.Output
+	d := &p.drive
+	*d = rowPipeDriver{p: p, done: d.done, sbPx: 64}
+	if d.done == nil {
+		d.done = make(chan struct{}, 1)
+	}
+	// The tasks work on the driver's copy of the context, which the frame's
+	// loop-filter level state points into; it is copied back once they ran.
+	d.ctx = *orig
+	ctx := &d.ctx
+	defer func() { *orig = d.ctx; d.ctx = FrameWorkPostFilterContext{} }()
 	if ctx.Event.SequenceHeader.Use128x128Superblock {
-		sbPx = 128
+		d.sbPx = 128
 	}
-	waitRecon := func(n int) error {
-		if !recon.Wait(int32(min(n, int(threading.FrameProgressDone)))) {
-			return threading.ErrFrameThreadReference
-		}
-		return nil
-	}
-
-	lfOn := remaining.Has(FrameWorkPostFilterLoopFilter)
-	cdefOn := remaining.Has(FrameWorkPostFilterCDEF) && frameWorkCDEFHasFiltering(ctx.Event.CDEF, out.Format.MonoChrome)
-
-	var lfResult FrameWorkLoopFilterPostFilterApplyResult
-	var levelCtx frameWorkLoopFilterLevelContext
-	maxPlane := loopfilter.PlaneV
-	masks := ctx.LoopFilterMasks
+	d.lfOn = remaining.Has(FrameWorkPostFilterLoopFilter)
+	d.cdefOn = remaining.Has(FrameWorkPostFilterCDEF) && frameWorkCDEFHasFiltering(ctx.Event.CDEF, out.Format.MonoChrome)
+	d.maxPlane = loopfilter.PlaneV
+	d.masks = ctx.LoopFilterMasks
 	// A multi-tile frame still being parsed fixes its masks' tile boundaries
 	// one region at a time, just before deblocking it.
-	fixRegions := lfOn && !ctx.loopFilterMasksUsable()
-	if lfOn {
+	d.fixRegions = d.lfOn && !ctx.loopFilterMasksUsable()
+	if d.lfOn {
 		var err error
-		lfResult, levelCtx, maxPlane, err = ctx.beginLoopFilterEdgesFromMasks(masks, req.LoopFilter.Map)
+		d.lfResult, d.levelCtx, d.maxPlane, err = ctx.beginLoopFilterEdgesFromMasks(d.masks, req.LoopFilter.Map)
 		if err != nil {
 			return err
 		}
+		d.regions = d.masks.SB128H
 	}
 	_, unitRows, err := frameWorkCDEFUnitGrid(ctx.Event.FrameSize)
 	if err != nil {
 		return err
 	}
+	d.unitRows = unitRows
 
 	pp := &p.pipe
-	pp.cdefOn = cdefOn
+	pp.cdefOn = d.cdefOn
 	pp.lrOn = false
 	pp.unitRows = unitRows
-	saveDeblockLines := false
 	if remaining.Has(FrameWorkPostFilterLoopRestoration) {
 		plan, err := ctx.LoopRestorationPostFilterPlan()
 		if err != nil {
@@ -440,23 +420,21 @@ func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWor
 			if err := ctx.bindRowPipeRestoration(req.Restoration, plan); err != nil {
 				return err
 			}
-			saveDeblockLines = ctx.shouldSaveRestorationDeblockBoundaries()
+			d.saveDeblockLines = ctx.shouldSaveRestorationDeblockBoundaries()
 		}
 	}
-	units := cdefOn || pp.lrOn
+	d.units = d.cdefOn || pp.lrOn
 	workers := 0
-	next := 0
-	if units {
-		if cdefOn {
+	if d.units {
+		if d.cdefOn {
 			if err := ctx.validateCDEFPostFilterRequest(req.CDEF); err != nil {
 				return err
 			}
 		}
-		// Every started unit worker indexes its own scratch, so the scratch
-		// covers all of them, not just the ones this frame needs.
-		workers = max(1, p.Workers, pp.started)
+		// Every frame-thread worker indexes its own scratch.
+		workers = max(1, p.Workers, p.tasks.WorkerCount())
 		pp.hbd = out.Layout.BytesPerSample == 2
-		if cdefOn {
+		if d.cdefOn {
 			lumaWidth, chromaWidth := frameWorkCDEFParallelPlaneWidths(ctx)
 			p.ensureCDEFScratch(workers, lumaWidth, chromaWidth, !pp.hbd, unitRows)
 			p.resetCDEFResults(workers)
@@ -476,143 +454,242 @@ func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWor
 			pp.stripeDone = resetBools(pp.stripeDone, pp.stripes)
 			pp.stripePrefix = 0
 		}
-		rows.done = resetBools(rows.done, unitRows)
-		rows.prefix = 0
+		p.rows.done = resetBools(p.rows.done, unitRows)
+		p.rows.prefix = 0
 		pp.ctx = *ctx
 		// The unit rows run in band mode: their deblocked inputs are final.
 		frameWorkMarkCompletedPostFilters(&pp.ctx, FrameWorkPostFilterLoopFilter)
 		pp.req = req.CDEF
 		pp.err.Store(nil)
-		p.startRowPipeWorkers(workers)
 	}
-	// dispatch hands unit rows [next, end) to the workers once what their
-	// neighbours read from them is saved.
-	dispatch := func(end int) error {
-		for u := next; u < end; u++ {
-			if cdefOn && pp.hbd {
-				if err := pp.loadSnapshotRows(u); err != nil {
-					return err
-				}
-			} else if cdefOn {
-				if err := ctx.loadCDEFRowBoundary(&p.cdefU8[u], u, unitRows, false); err != nil {
-					return err
-				}
-				if u+1 < unitRows {
-					if err := ctx.loadCDEFRowBoundary(&p.cdefU8[u+1], u+1, unitRows, true); err != nil {
-						return err
-					}
-				}
-			}
-			if saveDeblockLines {
-				y0, y1 := u*cdef.BlockSize, (u+1)*cdef.BlockSize
-				if u+1 == unitRows {
-					y1 = int(^uint(0) >> 1)
-				}
-				if err := tile.SaveRestorationFrameBoundaryLinesFromFrameRows(pp.plan, *out, out.Layout.BytesPerSample, pp.boundaries, false, y0, y1); err != nil {
-					return err
-				}
-			}
+	if d.need() != 0 {
+		p.unitTask = rowPipeUnits{p: p}
+		if d.units && !p.tasks.AddFrameTask(p.seq, &p.unitTask) {
+			return threading.ErrPoolClosed
 		}
-		for ; next < end; next++ {
-			if pp.err.Load() != nil {
-				return nil
-			}
-			pp.wg.Add(1)
-			pp.units <- next
+		if !p.tasks.AddFrameTask(p.seq, d) {
+			p.unitTask.driverEnded = true
+			return threading.ErrPoolClosed
 		}
-		return nil
+		<-d.done
+		err = d.err
 	}
-	finish := func(err error) error {
-		if units {
-			pp.wg.Wait()
-			if e := pp.err.Load(); e != nil && err == nil {
-				err = e.err
-			}
-			pp.ctx = FrameWorkPostFilterContext{}
-			pp.req = FrameWorkCDEFPostFilterRequest{}
-			pp.records = [3][]tile.RestorationUnitRecord{}
-			pp.boundaries = [3]tile.RestorationStripeBoundaries{}
-			pp.snap = [3]frame.SamplePlane{}
-			pp.snapSrc = [3]frame.Plane{}
+	if d.units {
+		pp.wg.Wait()
+		if e := pp.err.Load(); e != nil && err == nil {
+			err = e.err
 		}
-		return err
+		pp.ctx = FrameWorkPostFilterContext{}
+		pp.req = FrameWorkCDEFPostFilterRequest{}
+		pp.records = [3][]tile.RestorationUnitRecord{}
+		pp.boundaries = [3]tile.RestorationStripeBoundaries{}
+		pp.snap = [3]frame.SamplePlane{}
+		pp.snapSrc = [3]frame.Plane{}
 	}
-
-	if lfOn {
-		for region := 0; region < masks.SB128H; region++ {
-			last := region+1 == masks.SB128H
-			need := 128*(region+1) + sbPx
-			if last {
-				need = int(threading.FrameProgressDone)
-			}
-			if err := waitRecon(need); err != nil {
-				return finish(err)
-			}
-			if fixRegions {
-				if err := masks.FixTileBoundaryRegion(region); err != nil {
-					return finish(err)
-				}
-			}
-			if err := ctx.applyLoopFilterEdgesFromMasksInPlanePassOrder(&lfResult, masks, &levelCtx, loopfilter.PlaneY, maxPlane, region, region+1); err != nil {
-				return finish(err)
-			}
-			if !units {
-				if !last {
-					// The next region's horizontal edges rewrite up to six
-					// rows above it.
-					rows.publish(out, 128*(region+1)-8)
-				}
-				continue
-			}
-			// Unit row u reads two rows below it, deblock-final once region
-			// u/2 is done.
-			ready := min(2*region+1, unitRows)
-			if last {
-				ready = unitRows
-			}
-			if err := dispatch(ready); err != nil {
-				return finish(err)
-			}
-		}
-	}
-	if units {
-		for u := next; u < unitRows; u++ {
-			need := (u+1)*cdef.BlockSize + sbPx
-			if u+1 == unitRows {
-				need = int(threading.FrameProgressDone)
-			}
-			if err := waitRecon(need); err != nil {
-				return finish(err)
-			}
-			if err := dispatch(u + 1); err != nil {
-				return finish(err)
-			}
-		}
-	}
-	if err := finish(nil); err != nil {
+	if err != nil {
 		return err
 	}
 	// The caller pads the frame's borders next, below rows reconstruction
 	// may still write when no stage waited for the last of them.
-	if err := waitRecon(int(threading.FrameProgressDone)); err != nil {
-		return err
+	if !p.recon.Wait(threading.FrameProgressDone) {
+		return threading.ErrFrameThreadReference
 	}
-	if fixRegions {
-		masks.MarkTileBoundariesFixed()
+	if d.fixRegions {
+		d.masks.MarkTileBoundariesFixed()
 	}
 	completed := FrameWorkPostFilterLoopFilter | FrameWorkPostFilterCDEF | FrameWorkPostFilterLoopRestoration
 	frameWorkMarkCompletedPostFilters(ctx, completed)
 	result.Completed |= completed & remaining
-	if lfOn {
-		result.LoopFilter = lfResult
+	if d.lfOn {
+		result.LoopFilter = d.lfResult
 	}
-	if cdefOn {
+	if d.cdefOn {
 		result.CDEF = p.mergeCDEFResults(workers)
 	}
 	if pp.lrOn {
 		result.Restoration = p.mergeRowPipeRestorationResults(workers)
 	}
 	return nil
+}
+
+// rowPipeDriver is the row pipeline's serial chain as one frame-thread task:
+// step k deblocks region k (dav1d DEBLOCK_COLS / DEBLOCK_ROWS, which wait on
+// the previous sbrow's deblock), then, once a unit row's inputs are final,
+// saves what its neighbours read from it before it changes (CDEF's boundary
+// snapshots and the restoration stripe context lines, dav1d copy_lpf) and
+// hands it to rowPipeUnits. A step is taken once reconstruction reached the
+// rows it reads. Only the claiming worker touches the fields between Claim
+// and Finish; the caller reads them after done.
+type rowPipeDriver struct {
+	p    *FrameWorkPostFilterParallel
+	ctx  FrameWorkPostFilterContext
+	done chan struct{}
+
+	lfResult FrameWorkLoopFilterPostFilterApplyResult
+	levelCtx frameWorkLoopFilterLevelContext
+	maxPlane loopfilter.Plane
+	masks    *threading.FrameWorkLoopFilterMasks
+
+	lfOn, cdefOn, units, fixRegions, saveDeblockLines bool
+	sbPx, regions, unitRows                           int
+
+	// region is the next region to deblock and next the next unit row to
+	// hand over; ready is the unit-row count the running step handed over.
+	region, next, ready int
+	running             bool
+	err                 error
+}
+
+// need is the reconstructed luma row count the next step reads, or 0 when
+// no step is left.
+func (d *rowPipeDriver) need() int32 {
+	switch {
+	case d.lfOn && d.region < d.regions:
+		if d.region+1 == d.regions {
+			return threading.FrameProgressDone
+		}
+		return int32(128*(d.region+1) + d.sbPx)
+	case d.units && d.next < d.unitRows:
+		if d.next+1 == d.unitRows {
+			return threading.FrameProgressDone
+		}
+		return int32((d.next+1)*cdef.BlockSize + d.sbPx)
+	}
+	return 0
+}
+
+// Claim implements threading.FrameTask.
+func (d *rowPipeDriver) Claim() (int, bool, bool) {
+	if d.running {
+		return 0, false, false
+	}
+	need := d.need()
+	if need == 0 || !d.p.recon.Ready(need) {
+		return 0, false, false
+	}
+	d.running = true
+	return 0, true, false
+}
+
+// Run implements threading.FrameTask.
+func (d *rowPipeDriver) Run(int, int) {
+	d.err = d.step()
+}
+
+func (d *rowPipeDriver) step() error {
+	if !d.p.recon.Wait(d.need()) {
+		return threading.ErrFrameThreadReference
+	}
+	ctx := &d.ctx
+	if !d.lfOn || d.region >= d.regions {
+		return d.dispatch(d.next + 1)
+	}
+	region := d.region
+	last := region+1 == d.regions
+	if d.fixRegions {
+		if err := d.masks.FixTileBoundaryRegion(region); err != nil {
+			return err
+		}
+	}
+	if err := ctx.applyLoopFilterEdgesFromMasksInPlanePassOrder(&d.lfResult, d.masks, &d.levelCtx, loopfilter.PlaneY, d.maxPlane, region, region+1); err != nil {
+		return err
+	}
+	d.region++
+	if !d.units {
+		if !last {
+			// The next region's horizontal edges rewrite up to six rows
+			// above it.
+			d.p.rows.publish(ctx.Output, 128*(region+1)-8)
+		}
+		return nil
+	}
+	// Unit row u reads two rows below it, deblock-final once region u/2 is
+	// done.
+	ready := min(2*region+1, d.unitRows)
+	if last {
+		ready = d.unitRows
+	}
+	return d.dispatch(ready)
+}
+
+// dispatch saves what unit rows [next, end) give their neighbours and marks
+// them ready for rowPipeUnits.
+func (d *rowPipeDriver) dispatch(end int) error {
+	ctx := &d.ctx
+	p := d.p
+	pp := &p.pipe
+	out := ctx.Output
+	for u := d.next; u < end; u++ {
+		if d.cdefOn && pp.hbd {
+			if err := pp.loadSnapshotRows(u); err != nil {
+				return err
+			}
+		} else if d.cdefOn {
+			if err := ctx.loadCDEFRowBoundary(&p.cdefU8[u], u, d.unitRows, false); err != nil {
+				return err
+			}
+			if u+1 < d.unitRows {
+				if err := ctx.loadCDEFRowBoundary(&p.cdefU8[u+1], u+1, d.unitRows, true); err != nil {
+					return err
+				}
+			}
+		}
+		if d.saveDeblockLines {
+			y0, y1 := u*cdef.BlockSize, (u+1)*cdef.BlockSize
+			if u+1 == d.unitRows {
+				y1 = int(^uint(0) >> 1)
+			}
+			if err := tile.SaveRestorationFrameBoundaryLinesFromFrameRows(pp.plan, *out, out.Layout.BytesPerSample, pp.boundaries, false, y0, y1); err != nil {
+				return err
+			}
+		}
+	}
+	d.ready = end
+	return nil
+}
+
+// Finish implements threading.FrameTask.
+func (d *rowPipeDriver) Finish(int) bool {
+	d.running = false
+	if d.units && d.ready > d.next {
+		d.p.pipe.wg.Add(d.ready - d.next)
+		d.p.unitTask.dispatched = d.ready
+	}
+	d.next = max(d.next, d.ready)
+	if d.err == nil && d.need() != 0 {
+		return false
+	}
+	d.p.unitTask.driverEnded = true
+	d.done <- struct{}{}
+	return true
+}
+
+// rowPipeUnits runs the unit rows the driver handed over, each as its own
+// task on any frame-thread worker (dav1d's CDEF task falling through to the
+// sbrow's LOOP_RESTORATION).
+type rowPipeUnits struct {
+	p                   *FrameWorkPostFilterParallel
+	dispatched, claimed int
+	driverEnded         bool
+}
+
+// Claim implements threading.FrameTask.
+func (t *rowPipeUnits) Claim() (int, bool, bool) {
+	if t.claimed < t.dispatched {
+		t.claimed++
+		return t.claimed - 1, true, false
+	}
+	return 0, false, t.driverEnded
+}
+
+// Run implements threading.FrameTask.
+func (t *rowPipeUnits) Run(w int, u int) {
+	t.p.rowPipeUnit(w, u)
+}
+
+// Finish implements threading.FrameTask.
+func (t *rowPipeUnits) Finish(int) bool {
+	return false
 }
 
 // bindRowPipeCDEFSnapshot binds each filtered plane's pre-CDEF snapshot in

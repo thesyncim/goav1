@@ -60,6 +60,12 @@ type FrameWorkPostFilterParallel struct {
 	parsed *threading.FrameProgress
 	// pipe runs the row pipeline's CDEF unit rows.
 	pipe frameWorkRowPipe
+	// tasks runs the row pipeline's stages as tasks of the frame decoded
+	// seq-th (see BindTasks); drive and unitTask are those tasks.
+	tasks    *threading.Pool
+	seq      uint64
+	drive    rowPipeDriver
+	unitTask rowPipeUnits
 }
 
 // frameWorkPostFilterRowProgress hands a frame-threaded surface's finished
@@ -137,7 +143,6 @@ func (p *FrameWorkPostFilterParallel) Close() {
 	if p == nil {
 		return
 	}
-	p.closeRowPipe()
 	if p.ownedPool != nil {
 		p.ownedPool.Close()
 		p.ownedPool = nil

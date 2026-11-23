@@ -475,6 +475,7 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 	fc.ft.Recon.Rows = &fc.reconRows
 	p.seq++
 	fc.ft.Recon.Seq = p.seq
+	fc.postParallel.BindTasks(d.workerPool, p.seq)
 	fc.reconRows.Reset()
 	fc.parsed.Reset()
 	var references []*Frame
@@ -739,6 +740,7 @@ func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStr
 		fc.parsed.Init()
 		fc.reconRows.Progress.Init()
 		fc.postParallel.BindReconProgress(&fc.reconRows.Progress)
+		fc.reconRows.Progress.BindTaskWake(d.workerPool)
 		fc.postParallel.BindParseProgress(&fc.parsed)
 		fc.ft.StartPost = func() {
 			fc.postStarted = true
