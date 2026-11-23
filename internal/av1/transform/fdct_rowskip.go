@@ -62,7 +62,7 @@ var (
 // all fall below their zero bin may be skipped; the result sets bit g for each
 // group it computed exactly. Skipped groups read as zero coefficients when
 // any group was computed. A zero result means every coefficient quantizes to
-// zero and coeff was not written.
+// zero; coeff's contents are then unspecified.
 func ForwardDCT16x16RowSkip8BitTrusted(coeff *[256]int32, residual *[256]int16, thr0, thr int32) uint8 {
 	return forwardDCT16x16RowSkipImpl(coeff, residual, thr0, thr)
 }
