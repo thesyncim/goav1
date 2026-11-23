@@ -100,7 +100,18 @@ func forwardDCTBySize8BitResidualTrusted(coeff []int32, coeffStride int, residua
 		}
 		forwardDCT64x64Trusted8BitImpl(coeff, coeffStride, residual, residualStride)
 	default:
-		// Other DCT dimensions use range-independent scalar kernels today.
+		w, h := int(size.Width), int(size.Height)
+		if (w == 2*h || h == 2*w) && w >= 8 && h >= 8 && w <= 32 && h <= 32 {
+			if coeffStride < h || residualStride < w ||
+				!blockFits(len(residual), residualStride, w, h) ||
+				!coeffBlockFits(len(coeff), coeffStride, w, h) {
+				return ErrInvalidTransform
+			}
+			if forwardDCTRect8BitTrusted(coeff, coeffStride, residual, residualStride, size) {
+				return nil
+			}
+		}
+		// The other DCT dimensions use range-independent scalar kernels.
 		return forwardDCTBySize(coeff, coeffStride, residual, residualStride, size)
 	}
 	return nil

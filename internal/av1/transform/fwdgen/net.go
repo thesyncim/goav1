@@ -319,7 +319,9 @@ func (r *runner) value(e ast.Expr) (*node, error) {
 			return r.make(&node{op: '-', a: a, b: b}), nil
 		}
 	case *ast.CallExpr:
-		if id, ok := e.Fun.(*ast.Ident); ok && id.Name == "fwdHalfBtf" && len(e.Args) == 5 {
+		// fwdHalfBtf(w0, a, w1, b, cosBit) and the fixed-bit
+		// fwdHalfBtf13(w0, a, w1, b).
+		if id, ok := e.Fun.(*ast.Ident); ok && (id.Name == "fwdHalfBtf" && len(e.Args) == 5 || id.Name == "fwdHalfBtf13" && len(e.Args) == 4) {
 			w0, err := r.weight(e.Args[0])
 			if err != nil {
 				return nil, err
@@ -351,7 +353,7 @@ func (r *runner) weight(e ast.Expr) (weight, error) {
 	if !ok {
 		return weight{}, r.errorf(e, "unsupported twiddle")
 	}
-	if id, ok := ix.X.(*ast.Ident); !ok || id.Name != "cospi" {
+	if id, ok := ix.X.(*ast.Ident); !ok || id.Name != "cospi" && id.Name != "fwdCospi13" {
 		return weight{}, r.errorf(e, "unsupported twiddle")
 	}
 	i, err := r.intExpr(ix.Index)

@@ -171,16 +171,6 @@ func fwdLoadResRawAt(s []int16, i, g int) fwdVec {
 	return w.HiToLo().ExtendLo4ToInt32()
 }
 
-// fwdTransposeRect writes the transpose of the rows x cols row-major matrix
-// src into dst (dst[c*rows+r] = src[r*cols+c]); both are multiples of four.
-func fwdTransposeRect(dst, src []int32, rows, cols int) {
-	for bi := 0; bi < rows; bi += 4 {
-		for bj := 0; bj < cols; bj += 4 {
-			fwdTransposeBlock4(dst[bj*rows+bi:], rows, src[bi*cols+bj:], cols)
-		}
-	}
-}
-
 // fwdShift is a runtime arithmetic right-shift amount for fwdShrBy: the
 // negated count broadcast for the register-amount SSHL.
 type fwdShift = fwdVec
