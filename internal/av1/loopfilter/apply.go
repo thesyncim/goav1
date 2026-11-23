@@ -10,15 +10,6 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
-// FilterEdgeRequest describes one deblocking edge in plane coordinates.
-type FilterEdgeRequest struct {
-	LevelRequest
-
-	X      uint16
-	Y      uint16
-	Length uint16
-}
-
 // FilterEdgeByWidth applies one AV1 deblocking edge with precomputed thresholds.
 func FilterEdgeByWidth(width uint8, dst frame.Plane, bytesPerSample int, bitDepth uint8, edge Edge, x int32, y int32, length int32, thresholds Thresholds) error {
 	switch width {
