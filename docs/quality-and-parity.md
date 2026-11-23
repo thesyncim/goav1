@@ -21,10 +21,18 @@ gates that cover the changed behavior before making a wider parity claim.
 | `make dryrun-extended` | Opt-in diagnostic cohort with additional vectors, including larger and multi-quantizer cases. |
 | `make dryrun-corpus` | Check the locally generated real-content corpus, when present. |
 | `make dryrun-external-corpus` | Check caller-supplied IVF corpora with supported digest sidecars. |
+| `make feature-sweep` | Encode about 180 small synthetic clips with `aomenc` and `SvtAv1EncApp`, one coding tool or header mode each, and compare the decoder's output at one and at eight workers with `dav1d`. Needs `aomenc`, `aomdec`, `dav1d` and `ffmpeg`; the SVT-AV1 cases run when its encoder is installed. |
 
 The full and extended suites may need vector downloads and the oracle test
 harness. The generated corpus lanes require local corpus data. A skipped lane
 or missing fixture is not a pass.
+
+The published libaom vectors do not use every coding tool. The feature sweep
+exists because two bugs passed every vector gate: quantizer matrices were
+applied in the wrong orientation, and inter frames after an intra block copy
+key frame inherited the wrong entropy contexts. Run it after changing
+coefficient decoding, dequantization, entropy-context handling, prediction or
+post-filter code, and add a case when a tool turns out to be uncovered.
 
 ## Encoder and WebRTC evidence
 

@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish pgo-regenerate qualitybench-publish qualitybench-publish-singlethread gc-metrics compiler-reports unsafe-check fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check tidy-checkwebrtc-reference webrtc-browser webrtc-production webrtc-production-ci dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
+.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish pgo-regenerate qualitybench-publish qualitybench-publish-singlethread gc-metrics compiler-reports unsafe-check fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check tidy-checkwebrtc-reference webrtc-browser webrtc-production webrtc-production-ci dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus feature-sweep ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -693,6 +693,14 @@ dryrun-external-corpus:
 dryrun-extended:
 	GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomExtendedFrameWorkDryRun' -count=1 -timeout 1800s -v
 
+# feature-sweep encodes about 180 small synthetic clips with aomenc and
+# SvtAv1EncApp, one coding tool or header mode each, and compares aom-go-dec's
+# output at one and at eight workers with dav1d's. It needs aomenc, aomdec,
+# dav1d and ffmpeg (SvtAv1EncApp is optional), and is a local gate for decoder
+# changes, not part of CI.
+feature-sweep: build-cmd
+	./scripts/decoder_feature_sweep.py $(CMDBIN)
+
 ci-local: fmt-check vet unsafe-check test alloc compiler-reports trace-zero
 
 # CMDDIR is the source directory of the aom-go-dec CLI. CMDBIN is the path
@@ -748,6 +756,7 @@ help:
 	@echo "  dryrun-profiles            byte-exact profile clips (profile-0 S_FRAME, profile-1 4:4:4 incl. palette/filters/super-res, profile-2 4:2:2/12-bit)"
 	@echo "  dryrun-corpus              byte-exact generated real-content corpus (requires local generated corpus)"
 	@echo "  dryrun-external-corpus     byte-exact local external IVF corpus (requires GOAV1_EXTERNAL_CORPUS_DIR(S))"
+	@echo "  feature-sweep              aomenc/SVT tool-by-tool clips compared with dav1d (needs aomenc, aomdec, dav1d, ffmpeg)"
 	@echo "  test-motion-conformance    libaom convolve conformance"
 	@echo "  test-transform-conformance libaom transform conformance"
 	@echo "  ci-local                   run fmt-check + vet + unsafe-check + test + alloc + compiler-reports + trace-zero"
