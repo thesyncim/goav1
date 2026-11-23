@@ -9,10 +9,14 @@ import "github.com/thesyncim/goav1/internal/av1/parser"
 // dav1d decode.c:1263 and :2604 likewise omit ref-MV splats and row setup for
 // key/intra-only frames without intra-block copy.
 func DecodeBlockLoopWithCoeffControllerPtrOwnedIntra[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, visit BlockLoopPointerVisitor) (BlockLoopStats, error) {
-	if (req.FrameType != parser.FrameTypeKey && req.FrameType != parser.FrameTypeIntraOnly) || req.AllowIntrabc || req.SkipMode.Enabled || !req.DecodePredictionModes {
+	if !ownedIntraRequest(&req) {
 		return BlockLoopStats{}, ErrInvalidDecodeState
 	}
 	return decodeBlockLoopWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, true, true, visit)
+}
+
+func ownedIntraRequest(req *BlockLoopRequest) bool {
+	return (req.FrameType == parser.FrameTypeKey || req.FrameType == parser.FrameTypeIntraOnly) && !req.AllowIntrabc && !req.SkipMode.Enabled && req.DecodePredictionModes
 }
 
 // Only the edges and the per-block tx_size neighbor snapshot are read by the

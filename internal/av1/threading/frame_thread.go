@@ -525,8 +525,9 @@ func (b *FrameWorkBatch) frameThreadMotionProgress(index int) tile.FrameMotionPr
 	return m
 }
 
-// reconTask returns a reconstruction task for one of the frame's tiles.
-func (r *FrameThreadRecon) reconTask() *frameReconTask {
+// reconTask returns the reconstruction task of wf's tile, one of the
+// frame's tiles, with rowCount SB rows.
+func (r *FrameThreadRecon) reconTask(wf *frameWorkReconWavefront, rowCount int) *frameReconTask {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.usedTasks == len(r.reconTasks) {
@@ -534,6 +535,7 @@ func (r *FrameThreadRecon) reconTask() *frameReconTask {
 	}
 	t := r.reconTasks[r.usedTasks]
 	r.usedTasks++
+	*t = frameReconTask{wf: wf, rowCount: rowCount, needRow: -1}
 	return t
 }
 

@@ -577,7 +577,9 @@ internal/av1/threading/frame_tasks.go:*:*: func literal escapes to heap in newFr
 internal/av1/threading/frame_thread.go:*:*: make([]FrameThreadMotionTile, maxTile + 1) escapes to heap
 internal/av1/threading/frame_thread.go:*:*: make([]FrameThreadMotionTile, maxTile + 1) escapes to heap in (*FrameThreadMotion).bindTiles:
 internal/av1/threading/frame_thread.go:*:*: make([]FrameWorkBatch, len(batches)) escapes to heap
-internal/av1/threading/frame_thread.go:*:*: make([]FrameWorkBatch, len(batches)) escapes to heap in (*Pool).ExecuteFrameWorkRunnerFrameThread:
+internal/av1/threading/frame_thread.go:*:*: make([]FrameWorkBatch, len(batches)) escapes to heap in (*Pool).QueueFrameWorkRunnerFrameThread:
+internal/av1/threading/frame_thread.go:*:*: make([]int, len(batches)) escapes to heap
+internal/av1/threading/frame_thread.go:*:*: make([]int, len(batches)) escapes to heap in (*Pool).QueueFrameWorkRunnerFrameThread:
 internal/av1/threading/frame_thread_reconrows.go:*:*: make([]frameThreadReconTile, maxTile + 1) escapes to heap
 internal/av1/threading/frame_thread_reconrows.go:*:*: make([]frameThreadReconTile, maxTile + 1) escapes to heap in (*FrameThreadReconRows).bindTiles:
 internal/av1/threading/loop_filter_masks.go:*:*: make([]uint8, h.Cols) escapes to heap
@@ -622,16 +624,14 @@ internal/av1/threading/wavefront_stream.go:*:*: func literal escapes to heap in 
 internal/av1/threading/wavefront_stream.go:*:*: make([]atomic.Int32, rowCount) escapes to heap
 internal/av1/threading/wavefront_stream.go:*:*: make([]atomic.Int32, rowCount) escapes to heap in (*frameWorkTileResidualLoopController).startReconStream:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap
-internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.struct {}]:
+internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap in DecodeBlockLoopSBRow[go.shape.struct {}]:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap in promotePendingDiagonalCarriers:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in PreallocBlockLoopContextCarrierScratch:
-internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.struct {}]:
+internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in beginBlockLoop:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in ensureIntrabcDiagonalCarriers:
 internal/av1/tile/block_loop.go:*:*: make([]tile.diagonalCornerSlot, tile.n) escapes to heap
-internal/av1/tile/block_loop.go:*:*: make([]tile.diagonalCornerSlot, tile.n) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.*uint8]:
-internal/av1/tile/block_loop.go:*:*: make([]tile.diagonalCornerSlot, tile.rootColumns) escapes to heap
-internal/av1/tile/block_loop.go:*:*: make([]tile.diagonalCornerSlot, tile.rootColumns) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.*uint8]:
+internal/av1/tile/block_loop.go:*:*: make([]tile.diagonalCornerSlot, tile.n) escapes to heap in DecodeBlockLoopSBRow[go.shape.*uint8]:
 internal/av1/tile/block_loop_decide.go:*:*: make([]BlockLoopRootAboveContext, rootCols) escapes to heap
 internal/av1/tile/block_loop_decide.go:*:*: make([]BlockLoopRootAboveContext, rootCols) escapes to heap in (*BlockLoopWavefrontCarriers).Reset:
 internal/av1/tile/block_loop_decide.go:*:*: make([]diagonalCornerSlot, n) escapes to heap

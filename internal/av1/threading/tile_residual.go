@@ -320,6 +320,7 @@ type FrameWorkTileResidualScratch struct {
 
 	controller       frameWorkTileResidualLoopController
 	beforeSuperblock tile.BlockLoopSuperblockVisitor
+	visitBlock       tile.BlockLoopPointerVisitor
 	stats            FrameWorkTileResidualStats
 	geomCache        frameWorkJobGeometryCache
 
@@ -370,10 +371,15 @@ type FrameWorkTileResidualScratch struct {
 // PreallocCallbackScratch primes reusable method-value callbacks used by the
 // block-loop adapter so the first restoration tile does not allocate them.
 func (s *FrameWorkTileResidualScratch) PreallocCallbackScratch() {
-	if s == nil || s.beforeSuperblock != nil {
+	if s == nil {
 		return
 	}
-	s.beforeSuperblock = s.controller.BeforeSuperblock
+	if s.beforeSuperblock == nil {
+		s.beforeSuperblock = s.controller.BeforeSuperblock
+	}
+	if s.visitBlock == nil {
+		s.visitBlock = s.controller.visitBlock
+	}
 }
 
 // PreallocLoopFilterMaskScratch reserves the decode-time loop-filter mask build
@@ -1222,14 +1228,48 @@ func DecodeAndReconstructJobResidualsPtrOwned(b *FrameWorkBatch, index int, stat
 }
 
 func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *tile.DecodeState, cdfs FrameWorkTileResidualCDFs, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualRequest, compact *FrameWorkLoopFilterCompactState) (FrameWorkTileResidualStats, error) {
+	if err := beginJobResiduals(b, index, state, cdfs, scratch, req, compact); err != nil {
+		if scratch == nil {
+			return FrameWorkTileResidualStats{}, err
+		}
+		return scratch.stats, err
+	}
+	var err error
+	for more := true; more && err == nil; {
+		more, err = JobResidualsSBRow(scratch)
+	}
+	return EndJobResiduals(scratch, err)
+}
+
+// BeginJobResidualsPtrOwned binds Jobs[index] to scratch as
+// DecodeAndReconstructJobResidualsPtrOwned decodes it: JobResidualsSBRow then
+// decodes one superblock row per call and EndJobResiduals finishes the job.
+func BeginJobResidualsPtrOwned(b *FrameWorkBatch, index int, state *tile.DecodeState, cdfs FrameWorkTileResidualCDFs, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualRequest, compact *FrameWorkLoopFilterCompactState) error {
+	if b == nil || compact == nil || !FrameWorkLoopFilterCompactStateActive(compact) ||
+		b.LoopFilterMasks == nil || !FrameWorkLoopFilterCompactMatchesMasks(b.LoopFilterMasks, compact) {
+		return ErrInvalidBatch
+	}
+	return beginJobResiduals(b, index, state, cdfs, scratch, req, compact)
+}
+
+// BeginJobResidualsPtr is BeginJobResidualsPtrOwned for
+// DecodeAndReconstructJobResidualsPtr.
+func (b *FrameWorkBatch) BeginJobResidualsPtr(index int, state *tile.DecodeState, cdfs FrameWorkTileResidualCDFs, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualRequest) error {
+	return beginJobResiduals(b, index, state, cdfs, scratch, req, nil)
+}
+
+// beginJobResiduals is the part of a tile job before its block loop: the
+// side-data and reconstruction bindings and the tile's block-loop state. A
+// failure leaves nothing bound.
+func beginJobResiduals(b *FrameWorkBatch, index int, state *tile.DecodeState, cdfs FrameWorkTileResidualCDFs, scratch *FrameWorkTileResidualScratch, req FrameWorkTileResidualRequest, compact *FrameWorkLoopFilterCompactState) error {
 	if state == nil || scratch == nil {
-		return FrameWorkTileResidualStats{}, ErrInvalidBatch
+		return ErrInvalidBatch
 	}
 	if b.FrameThread != nil && scratch.wavefront != nil {
 		// A frame-threaded batch decoding several tiles reuses this scratch:
 		// the previous tile's lanes must finish reading its buffered events.
 		if err := b.FrameThread.joinWavefront(scratch.wavefront); err != nil {
-			return FrameWorkTileResidualStats{}, err
+			return err
 		}
 	}
 	scratch.stats = FrameWorkTileResidualStats{}
@@ -1245,11 +1285,11 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 	compactActive := FrameWorkLoopFilterCompactStateActive(compact)
 	if compactActive {
 		if req.LoopFilterMasks == nil {
-			return FrameWorkTileResidualStats{}, ErrInvalidBatch
+			return ErrInvalidBatch
 		}
 		cols, rows, _, err := b.LoopFilterMapShape()
 		if err != nil || !FrameWorkLoopFilterCompactActiveShape(req.LoopFilterMasks, compact, cols, rows) {
-			return FrameWorkTileResidualStats{}, ErrInvalidBatch
+			return ErrInvalidBatch
 		}
 	}
 
@@ -1286,14 +1326,14 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 		if scratch.lfMask.edges != nil {
 			region, err := b.JobRegion(index)
 			if err != nil {
-				return FrameWorkTileResidualStats{}, err
+				return err
 			}
 			scratch.lfMask.setTile(region)
 		}
 	}
 	b.geomCache = &scratch.geomCache
 	if err := frameWorkPrimeLumaReconGeometry(b, index); err != nil {
-		return FrameWorkTileResidualStats{}, err
+		return err
 	}
 	// The deferred wavefront engages only when the pool offered idle lanes
 	// (single-tile frame on a multi-worker pool) and the tile clears the size
@@ -1353,80 +1393,108 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 	loopReq.ReducedTxSet = b.FrameMode.ReducedTxSet
 	loopReq.QuantDeltasZero = frameWorkQuantDeltasZero(b.Quantization)
 	loopCDFs.TransformType = cdfs.TransformType
+	if compactActive {
+		scratch.controller.compact = compact
+	}
+	scratch.controller.streamRecon = streamRecon
+	if scratch.visitBlock == nil {
+		scratch.visitBlock = scratch.controller.visitBlock
+	}
 	if streamRecon {
 		if err := scratch.controller.startReconStream(); err != nil {
-			return scratch.stats, err
+			return err
 		}
 	}
-	visitBlock := func(visit *tile.BlockLoopVisit) error {
-		if !visit.CoefficientsValid {
-			return ErrInvalidBatch
-		}
-		if req.LoopFilterMasks.Valid() {
-			sbLog2 := 4
-			if b.Sequence.Use128x128Superblock {
-				sbLog2 = 5
-			}
-			if compactActive {
-				if err := req.LoopFilterMasks.buildCompact(compact, &scratch.lfMask, visit, state, sbLog2); err != nil {
-					return fmt.Errorf("build compact loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
-				}
-			} else {
-				// dav1d keeps no per-MI loop-filter record: once the masks carry
-				// levels, noskip and tile-edge backups, nothing reads the map.
-				if req.LoopFilterMap != nil && !req.LoopFilterMasks.MapFree() {
-					if err := req.LoopFilterMap.MarkBlockPtr(visit, state); err != nil {
-						return fmt.Errorf("mark loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
-					}
-				}
-				intra := !visit.Prediction.Valid || visit.Prediction.Intra
-				if err := req.LoopFilterMasks.build(&scratch.lfMask, visit, state, sbLog2, intra); err != nil {
-					return fmt.Errorf("build loop filter masks block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
-				}
-			}
-		} else if req.LoopFilterMap != nil {
-			if err := req.LoopFilterMap.MarkBlockPtr(visit, state); err != nil {
-				return fmt.Errorf("mark loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
-			}
-		}
-		if req.AfterBlock != nil {
-			return req.AfterBlock(*visit)
-		}
-		return nil
-	}
-	var loopStats tile.BlockLoopStats
 	var err error
 	if ownedIntraContexts {
-		loopStats, err = tile.DecodeBlockLoopWithCoeffControllerPtrOwnedIntra(state, loopCDFs, &scratch.Loop, loopReq, &scratch.controller, visitBlock)
+		err = tile.BeginBlockLoopOwnedIntra(state, loopCDFs, &scratch.Loop, &loopReq)
 	} else {
-		loopStats, err = tile.DecodeBlockLoopWithCoeffControllerPtr(state, loopCDFs, &scratch.Loop, loopReq, &scratch.controller, visitBlock)
+		err = tile.BeginBlockLoop(state, loopCDFs, &scratch.Loop, &loopReq)
 	}
-	scratch.stats.Loop = loopStats
-	if err == nil && req.LoopFilterMasks.Valid() {
+	if err != nil && scratch.controller.streaming {
+		err = scratch.controller.finishReconStream(err)
+	}
+	return err
+}
+
+// JobResidualsSBRow decodes the next superblock row of the job bound to
+// scratch and reports whether rows remain.
+func JobResidualsSBRow(scratch *FrameWorkTileResidualScratch) (bool, error) {
+	return tile.DecodeBlockLoopSBRow(&scratch.Loop, &scratch.controller, scratch.visitBlock)
+}
+
+// EndJobResiduals finishes the job bound to scratch once its rows returned
+// err (nil after the last row) and returns the job's counters.
+func EndJobResiduals(scratch *FrameWorkTileResidualScratch, err error) (FrameWorkTileResidualStats, error) {
+	c := &scratch.controller
+	scratch.stats.Loop = tile.EndBlockLoop(&scratch.Loop)
+	if err == nil && c.req.LoopFilterMasks.Valid() {
 		// Back up the tile's edges before its last rows reach reconstruction:
 		// a frame-threaded post-filter fixes each region's tile boundaries
 		// once the region is reconstructed.
 		scratch.lfMask.finishTileEdges()
 	}
-	if scratch.controller.streaming {
-		err = scratch.controller.finishReconStream(err)
+	if c.streaming {
+		err = c.finishReconStream(err)
 	}
 	if err != nil {
 		return scratch.stats, err
 	}
-	if scratch.controller.deferReconstruction && !streamRecon {
+	if c.deferReconstruction && !c.streamRecon {
 		if err := scratch.finalizeDeferredPalettes(); err != nil {
 			return scratch.stats, err
 		}
-		if err := scratch.controller.replayDeferredReconstruction(); err != nil {
+		if err := c.replayDeferredReconstruction(); err != nil {
 			return scratch.stats, err
 		}
 	}
-	if ft := b.FrameThread; !streamRecon && ft != nil && ft.Rows != nil && index < len(b.Jobs) {
+	if ft := c.batch.FrameThread; !c.streamRecon && ft != nil && ft.Rows != nil && c.index < len(c.batch.Jobs) {
 		// A tile reconstructed without lanes finished every row here.
-		ft.Rows.finishRows(int(b.Jobs[index].Tile), FrameProgressDone)
+		ft.Rows.finishRows(int(c.batch.Jobs[c.index].Tile), FrameProgressDone)
 	}
 	return scratch.stats, nil
+}
+
+// visitBlock is the block loop's visitor of a tile job: the decode-time
+// loop-filter masks and the caller's AfterBlock hook.
+func (c *frameWorkTileResidualLoopController) visitBlock(visit *tile.BlockLoopVisit) error {
+	if !visit.CoefficientsValid {
+		return ErrInvalidBatch
+	}
+	req := &c.req
+	scratch := c.scratch
+	state := c.state
+	if req.LoopFilterMasks.Valid() {
+		sbLog2 := 4
+		if c.batch.Sequence.Use128x128Superblock {
+			sbLog2 = 5
+		}
+		if c.compact != nil {
+			if err := req.LoopFilterMasks.buildCompact(c.compact, &scratch.lfMask, visit, state, sbLog2); err != nil {
+				return fmt.Errorf("build compact loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
+			}
+		} else {
+			// dav1d keeps no per-MI loop-filter record: once the masks carry
+			// levels, noskip and tile-edge backups, nothing reads the map.
+			if req.LoopFilterMap != nil && !req.LoopFilterMasks.MapFree() {
+				if err := req.LoopFilterMap.MarkBlockPtr(visit, state); err != nil {
+					return fmt.Errorf("mark loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
+				}
+			}
+			intra := !visit.Prediction.Valid || visit.Prediction.Intra
+			if err := req.LoopFilterMasks.build(&scratch.lfMask, visit, state, sbLog2, intra); err != nil {
+				return fmt.Errorf("build loop filter masks block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
+			}
+		}
+	} else if req.LoopFilterMap != nil {
+		if err := req.LoopFilterMap.MarkBlockPtr(visit, state); err != nil {
+			return fmt.Errorf("mark loop filter block=%+v prediction=%+v: %w", visit.Block, visit.Prediction, err)
+		}
+	}
+	if req.AfterBlock != nil {
+		return req.AfterBlock(*visit)
+	}
+	return nil
 }
 
 // frameWorkOwnedIntraContexts is used only after the compact decoder ownership
@@ -1524,8 +1592,14 @@ type frameWorkTileResidualLoopController struct {
 	wavefrontWorkers uint16
 
 	// streaming is set while scratch.wavefront runs alongside a multi-lane
-	// tile's parse (startReconStream).
-	streaming bool
+	// tile's parse (startReconStream); streamRecon selects that path for the
+	// job.
+	streaming   bool
+	streamRecon bool
+
+	// compact is the decoder-owned loop-filter state the job builds its
+	// masks into, or nil when it is not active.
+	compact *FrameWorkLoopFilterCompactState
 
 	// recon holds the reconstruction state for the fused single-thread path and
 	// the serial deferred replay. The multi-worker wavefront uses its own

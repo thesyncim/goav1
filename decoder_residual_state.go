@@ -526,13 +526,27 @@ func (r *DecoderFrameWorkBatchResidualRunner) Run(batch DecoderFrameWorkBatch) e
 // RunPtr decodes every residual in batch without copying the frame-work
 // context into the runner call. It is used by the internal single-worker typed
 // path; public callers should keep using Run.
-func (r *DecoderFrameWorkBatchResidualRunner) RunPtr(batch *DecoderFrameWorkBatch) (runErr error) {
-	if r != nil && internalthreading.FrameWorkLoopFilterCompactStateActive(r.compactState) {
-		defer func() {
-			if runErr != nil {
-				internalthreading.InvalidateFrameWorkLoopFilterCompactState(r.compactState)
-			}
-		}()
+func (r *DecoderFrameWorkBatchResidualRunner) RunPtr(batch *internalthreading.FrameWorkBatch) error {
+	var rows decoderFrameWorkBatchRows
+	err := r.beginRows(&rows, batch)
+	for err == nil {
+		var more bool
+		if more, err = rows.row(batch); !more {
+			break
+		}
+	}
+	return r.endRows(&rows, err)
+}
+
+// beginRows binds batch's entropy pass to rows on the worker slot
+// batch.Batch.Worker names.
+func (r *DecoderFrameWorkBatchResidualRunner) beginRows(rows *decoderFrameWorkBatchRows, batch *internalthreading.FrameWorkBatch) error {
+	*rows = decoderFrameWorkBatchRows{worker: -1}
+	if r == nil {
+		return ErrThreadingInvalidBatch
+	}
+	rows.compact = r.compactState
+	if internalthreading.FrameWorkLoopFilterCompactStateActive(r.compactState) {
 		if r.compactOwner != r || r.compactSideOwner == nil || r.compactBoundSide != r.compactSideOwner ||
 			!decoderFrameWorkResidualCompactBatchValid(r, batch) {
 			return ErrThreadingInvalidBatch
@@ -545,7 +559,8 @@ func (r *DecoderFrameWorkBatchResidualRunner) RunPtr(batch *DecoderFrameWorkBatc
 	if err != nil {
 		return err
 	}
-	r.Stats[worker] = DecoderFrameWorkTileResidualStats{}
+	rows.worker = worker
+	r.Stats[worker] = internalthreading.FrameWorkTileResidualStats{}
 	req, err := r.workerRequest(worker)
 	if err != nil {
 		return err
@@ -554,17 +569,34 @@ func (r *DecoderFrameWorkBatchResidualRunner) RunPtr(batch *DecoderFrameWorkBatc
 	if err := InitDecoderFrameWorkTileResidualCDFStorage(*batch, &r.Storages[worker]); err != nil {
 		return err
 	}
-	stats, err := decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch, &r.States[worker], &r.Storages[worker], &r.TileScratch[worker], req, r.compactState)
-	r.Stats[worker] = stats
-	if err != nil {
+	*rows = decoderFrameWorkBatchRows{
+		state:   &r.States[worker],
+		storage: &r.Storages[worker],
+		scratch: &r.TileScratch[worker],
+		req:     req,
+		compact: r.compactState,
+		worker:  worker,
+	}
+	return rows.begin()
+}
+
+// endRows records the pass's counters once its rows returned err (nil
+// after the last row) and completes or invalidates the compact loop-filter
+// state.
+func (r *DecoderFrameWorkBatchResidualRunner) endRows(rows *decoderFrameWorkBatchRows, err error) error {
+	if rows.worker >= 0 {
+		r.Stats[rows.worker] = rows.total
+	}
+	if !internalthreading.FrameWorkLoopFilterCompactStateActive(rows.compact) {
 		return err
 	}
-	if internalthreading.FrameWorkLoopFilterCompactStateActive(r.compactState) {
-		if err := internalthreading.CompleteFrameWorkLoopFilterCompactState(r.compactState); err != nil {
-			return err
-		}
+	if err == nil {
+		err = internalthreading.CompleteFrameWorkLoopFilterCompactState(rows.compact)
 	}
-	return nil
+	if err != nil {
+		internalthreading.InvalidateFrameWorkLoopFilterCompactState(rows.compact)
+	}
+	return err
 }
 
 // SetSideData attaches bound frame-level side data (CDEF index map,
@@ -697,84 +729,142 @@ func DecodeAndRetainDecoderFrameWorkBatchResiduals(batch DecoderFrameWorkBatch, 
 }
 
 func decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch *DecoderFrameWorkBatch, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkBatchResidualRequest, compact *internalthreading.FrameWorkLoopFilterCompactState) (DecoderFrameWorkTileResidualStats, error) {
-	if state == nil || storage == nil || scratch == nil {
-		return DecoderFrameWorkTileResidualStats{}, ErrThreadingInvalidBatch
-	}
 	if batch == nil {
 		return DecoderFrameWorkTileResidualStats{}, ErrThreadingInvalidBatch
 	}
-	var total DecoderFrameWorkTileResidualStats
-	for i := range batch.Jobs {
-		// Re-initialize the entropy (CDF) context from the frame context before
-		// each tile in the batch. AV1 decodes every tile from the same starting
-		// context (libaom: tile_data->tctx = *cm->fc inside the per-tile loop of
-		// decode_tiles), so a tile must never inherit the adapted CDFs of an
-		// earlier tile that shared this worker batch. Without this reset, the
-		// first tile decodes correctly but every subsequent tile in the same
-		// batch starts from desynced CDFs and produces wrong pixels. The per-job
-		// retain that follows still captures the context_update_tile_id tile's
-		// adapted CDFs (RetainDecoderFrameWorkTileResidualCDFStorage copies them
-		// out before the next iteration re-initializes the shared storage).
-		if i > 0 {
-			if err := batch.InitTileResidualCDFStorage(storage); err != nil {
-				return total, err
-			}
-		}
-		tileReq := req.Tile
-		loopReq, err := decoderFrameWorkJobBlockLoopRequestPtr(batch, i, req.CurrentSegmentMap, req.PreviousSegmentMap, req.SegmentMapStride, req.Tile.Loop.ContextCarrier)
-		if err != nil {
-			return total, err
-		}
-		if req.LoopContextAbove != nil {
-			rootColumns, err := batch.JobBlockLoopContextRootColumns(i)
-			if err != nil {
-				return total, err
-			}
-			carrier, err := BindTileBlockLoopContextCarrier(rootColumns, req.LoopContextAbove)
-			if err != nil {
-				return total, err
-			}
-			// Preserve already-allocated diagonal-corner scratch slices
-			// across binds so the per-frame loop does not re-allocate
-			// them. The carrier returned by Bind has Diagonal/PendingDiagonal
-			// nil; reuse the persistent scratch from scratch.LoopContext.
-			carrier.Diagonal = scratch.LoopContext.Diagonal
-			carrier.PendingDiagonal = scratch.LoopContext.PendingDiagonal
-			scratch.LoopContext = carrier
-			loopReq.ContextCarrier = &scratch.LoopContext
-		}
-		decoderFrameWorkApplyBatchResidualLoopOverrides(&loopReq, req.Tile.Loop)
-		tileReq.Loop = loopReq
-		stats, err := decodeAndRetainDecoderFrameWorkJobResidualsPtr(batch, i, state, storage, scratch, tileReq, compact)
-		decoderFrameWorkAccumulateResidualStats(&total, stats)
-		if err != nil {
-			return total, err
-		}
-	}
-	return total, nil
-}
-
-func decodeAndRetainDecoderFrameWorkJobResidualsPtr(batch *DecoderFrameWorkBatch, index int, state *TileDecodeState, storage *DecoderFrameWorkTileResidualCDFStorage, scratch *DecoderFrameWorkTileResidualScratch, req DecoderFrameWorkTileResidualRequest, compact *internalthreading.FrameWorkLoopFilterCompactState) (DecoderFrameWorkTileResidualStats, error) {
-	if storage == nil || batch == nil {
-		return DecoderFrameWorkTileResidualStats{}, ErrThreadingInvalidBatch
-	}
-	if err := batch.JobDecodeState(index, state); err != nil {
+	rows := decoderFrameWorkBatchRows{state: state, storage: storage, scratch: scratch, req: req, compact: compact}
+	if err := rows.begin(); err != nil {
 		return DecoderFrameWorkTileResidualStats{}, err
 	}
-	var stats DecoderFrameWorkTileResidualStats
-	var err error
-	if internalthreading.FrameWorkLoopFilterCompactStateActive(compact) {
-		stats, err = internalthreading.DecodeAndReconstructJobResidualsPtrOwned(batch, index, state, DecoderFrameWorkTileResidualCDFsFromStorage(storage), scratch, req, compact)
-	} else {
-		stats, err = batch.DecodeAndReconstructJobResidualsPtr(index, state, DecoderFrameWorkTileResidualCDFsFromStorage(storage), scratch, req)
+	for {
+		more, err := rows.row(batch)
+		if err != nil || !more {
+			return rows.total, err
+		}
 	}
+}
+
+// decoderFrameWorkBatchRows is the resumable entropy pass of one tile batch:
+// its jobs decode in order, one superblock row per row call (dav1d's
+// TILE_ENTROPY task, t->sby advanced per call), each from the frame context,
+// and the context-update tile's adapted CDFs are retained after its last row.
+type decoderFrameWorkBatchRows struct {
+	state   *internaltile.DecodeState
+	storage *internalthreading.FrameWorkTileResidualCDFStorage
+	scratch *internalthreading.FrameWorkTileResidualScratch
+	req     DecoderFrameWorkBatchResidualRequest
+	compact *internalthreading.FrameWorkLoopFilterCompactState
+	worker  int
+
+	// job is the job the next row belongs to; inJob is set once its block
+	// loop is bound, and tileReq is the request it was bound with.
+	job     int
+	inJob   bool
+	tileReq internalthreading.FrameWorkTileResidualRequest
+	total   internalthreading.FrameWorkTileResidualStats
+}
+
+func (b *decoderFrameWorkBatchRows) begin() error {
+	if b.state == nil || b.storage == nil || b.scratch == nil {
+		return ErrThreadingInvalidBatch
+	}
+	b.job, b.inJob, b.total = 0, false, internalthreading.FrameWorkTileResidualStats{}
+	return nil
+}
+
+// done reports whether every job of batch finished.
+func (b *decoderFrameWorkBatchRows) done(batch *internalthreading.FrameWorkBatch) bool {
+	return b.job >= len(batch.Jobs)
+}
+
+// row binds the batch's next job when none is bound, else decodes the bound
+// job's next superblock row, and reports whether work remains. A failed row
+// ends its job.
+func (b *decoderFrameWorkBatchRows) row(batch *internalthreading.FrameWorkBatch) (bool, error) {
+	if b.done(batch) {
+		return false, nil
+	}
+	if !b.inJob {
+		if err := b.beginJob(batch); err != nil {
+			return false, err
+		}
+		b.inJob = true
+		return true, nil
+	}
+	more, err := internalthreading.JobResidualsSBRow(b.scratch)
+	if err == nil && more {
+		return true, nil
+	}
+	b.inJob = false
+	if err = b.endJob(batch, err); err != nil {
+		return false, err
+	}
+	b.job++
+	return !b.done(batch), nil
+}
+
+func (b *decoderFrameWorkBatchRows) beginJob(batch *internalthreading.FrameWorkBatch) error {
+	i, req, scratch := b.job, &b.req, b.scratch
+	// Re-initialize the entropy (CDF) context from the frame context before
+	// each tile in the batch. AV1 decodes every tile from the same starting
+	// context (libaom: tile_data->tctx = *cm->fc inside the per-tile loop of
+	// decode_tiles), so a tile must never inherit the adapted CDFs of an
+	// earlier tile that shared this worker batch. Without this reset, the
+	// first tile decodes correctly but every subsequent tile in the same
+	// batch starts from desynced CDFs and produces wrong pixels. The per-job
+	// retain in endJob still captures the context_update_tile_id tile's
+	// adapted CDFs (RetainDecoderFrameWorkTileResidualCDFStorage copies them
+	// out before the next job re-initializes the shared storage).
+	if i > 0 {
+		if err := batch.InitTileResidualCDFStorage(b.storage); err != nil {
+			return err
+		}
+	}
+	tileReq := req.Tile
+	loopReq, err := decoderFrameWorkJobBlockLoopRequestPtr(batch, i, req.CurrentSegmentMap, req.PreviousSegmentMap, req.SegmentMapStride, req.Tile.Loop.ContextCarrier)
 	if err != nil {
-		return stats, err
+		return err
 	}
-	if err := internalthreading.RetainTileResidualCDFStorageOwned(batch, index, state, storage, &req, compact); err != nil {
-		return stats, err
+	if req.LoopContextAbove != nil {
+		rootColumns, err := batch.JobBlockLoopContextRootColumns(i)
+		if err != nil {
+			return err
+		}
+		carrier, err := BindTileBlockLoopContextCarrier(rootColumns, req.LoopContextAbove)
+		if err != nil {
+			return err
+		}
+		// Preserve already-allocated diagonal-corner scratch slices
+		// across binds so the per-frame loop does not re-allocate
+		// them. The carrier returned by Bind has Diagonal/PendingDiagonal
+		// nil; reuse the persistent scratch from scratch.LoopContext.
+		carrier.Diagonal = scratch.LoopContext.Diagonal
+		carrier.PendingDiagonal = scratch.LoopContext.PendingDiagonal
+		scratch.LoopContext = carrier
+		loopReq.ContextCarrier = &scratch.LoopContext
 	}
-	return stats, nil
+	decoderFrameWorkApplyBatchResidualLoopOverrides(&loopReq, req.Tile.Loop)
+	tileReq.Loop = loopReq
+	b.tileReq = tileReq
+	if err := batch.JobDecodeState(i, b.state); err != nil {
+		return err
+	}
+	cdfs := b.storage.CDFs()
+	if internalthreading.FrameWorkLoopFilterCompactStateActive(b.compact) {
+		return internalthreading.BeginJobResidualsPtrOwned(batch, i, b.state, cdfs, scratch, tileReq, b.compact)
+	}
+	return batch.BeginJobResidualsPtr(i, b.state, cdfs, scratch, tileReq)
+}
+
+// endJob finishes the bound job after its rows returned err and retains its
+// adapted CDFs.
+func (b *decoderFrameWorkBatchRows) endJob(batch *internalthreading.FrameWorkBatch, err error) error {
+	stats, err := internalthreading.EndJobResiduals(b.scratch, err)
+	decoderFrameWorkAccumulateResidualStats(&b.total, stats)
+	if err != nil {
+		return err
+	}
+	return internalthreading.RetainTileResidualCDFStorageOwned(batch, b.job, b.state, b.storage, &b.tileReq, b.compact)
 }
 
 func decoderFrameWorkResidualCompactBatchValid(r *DecoderFrameWorkBatchResidualRunner, batch *DecoderFrameWorkBatch) bool {

@@ -51,6 +51,9 @@ type BlockLoopScratch struct {
 
 	visit BlockLoopVisit
 
+	// tile is the block loop bound by BeginBlockLoop.
+	tile blockLoopTile
+
 	// leftEdge tracks a left edge kept resident between superblocks.
 	leftEdge blockLoopLeftEdge
 }
@@ -297,125 +300,206 @@ func DecodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 }
 
 func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, intraOnlyContexts bool, visit BlockLoopPointerVisitor) (BlockLoopStats, error) {
-	if s == nil || scratch == nil || cdfs.Partition == nil || cdfs.Mode == nil || visit == nil {
+	if visit == nil {
 		return BlockLoopStats{}, ErrInvalidDecodeState
 	}
-	if err := validateBlockLoopRequest(req, hasCoeffController); err != nil {
+	if err := beginBlockLoop(s, cdfs, scratch, &req, hasCoeffController, intraOnlyContexts); err != nil {
 		return BlockLoopStats{}, err
 	}
+	for {
+		more, err := DecodeBlockLoopSBRow(scratch, coeffController, visit)
+		if err != nil || !more {
+			return EndBlockLoop(scratch), err
+		}
+	}
+}
 
-	var stats BlockLoopStats
+// blockLoopTile is the resumable state of one tile's block loop, the part of
+// dav1d's Dav1dTileState that dav1d_decode_tile_sbrow carries from one
+// superblock row to the next: the request, the entropy contexts, the row the
+// next call decodes and the counters so far. The above/left edge contexts and
+// refmvs rows live in the scratch beside it.
+type blockLoopTile struct {
+	s     *DecodeState
+	cdfs  BlockLoopCDFs
+	req   BlockLoopRequest
+	stats BlockLoopStats
+	miRow uint32
+
+	hasCoeffController bool
+	intraOnlyContexts  bool
+	useRefmvs          bool
+	saveTmvs           bool
+	keepLegacyMotion   bool
+}
+
+// BeginBlockLoop binds one tile's block loop to scratch: DecodeBlockLoopSBRow
+// then decodes it one superblock row per call and EndBlockLoop releases it.
+func BeginBlockLoop(s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req *BlockLoopRequest) error {
+	return beginBlockLoop(s, cdfs, scratch, req, true, false)
+}
+
+// BeginBlockLoopOwnedIntra is BeginBlockLoop for the walk
+// DecodeBlockLoopWithCoeffControllerPtrOwnedIntra runs.
+func BeginBlockLoopOwnedIntra(s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req *BlockLoopRequest) error {
+	if !ownedIntraRequest(req) {
+		return ErrInvalidDecodeState
+	}
+	return beginBlockLoop(s, cdfs, scratch, req, true, true)
+}
+
+func beginBlockLoop(s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req *BlockLoopRequest, hasCoeffController bool, intraOnlyContexts bool) error {
+	if s == nil || scratch == nil || cdfs.Partition == nil || cdfs.Mode == nil {
+		return ErrInvalidDecodeState
+	}
+	if err := validateBlockLoopRequest(*req, hasCoeffController); err != nil {
+		return err
+	}
+	t := &scratch.tile
+	*t = blockLoopTile{
+		s:                  s,
+		cdfs:               cdfs,
+		req:                *req,
+		miRow:              uint32(req.Walk.MIRowStart),
+		hasCoeffController: hasCoeffController,
+		intraOnlyContexts:  intraOnlyContexts,
+	}
+	req = &t.req
+	if !intraOnlyContexts {
+		ensureIntrabcDiagonalCarriers(req.ContextCarrier)
+	}
+	t.useRefmvs = !intraOnlyContexts && bindRefmvsForLoop(&scratch.Refmvs, req)
+	if !t.useRefmvs && req.TemporalReferences != nil && req.TemporalMVs == nil && req.UseRefFrameMVS &&
+		(req.FrameType == parser.FrameTypeInter || req.FrameType == parser.FrameTypeSwitch) {
+		// Deferred temporal projection needs the refmvs rows.
+		EndBlockLoop(scratch)
+		return ErrInvalidDecodeState
+	}
+	// With refmvs rows bound, the current frame's MV_REF side data is written
+	// per superblock row from the rows (dav1d_refmvs_save_tmvs) instead of
+	// per block.
+	t.saveTmvs = t.useRefmvs && req.CurrentMVFrame != nil
+	// The libaom-shaped neighbor-motion state has no readers while refmvs rows
+	// are bound; the goav1_refmvs_oracle build keeps it for its differential.
+	t.keepLegacyMotion = !t.useRefmvs || refmvsOracleEnabled
+	if t.saveTmvs {
+		if err := req.CurrentMVFrame.Validate(); err != nil {
+			EndBlockLoop(scratch)
+			return err
+		}
+	}
+	return nil
+}
+
+// EndBlockLoop releases the tile bound by BeginBlockLoop, after its last row
+// or an error, and returns its counters.
+func EndBlockLoop(scratch *BlockLoopScratch) BlockLoopStats {
+	scratch.Refmvs.bound = false
+	scratch.flushLeftEdge()
+	stats := scratch.tile.stats
+	scratch.tile = blockLoopTile{}
+	return stats
+}
+
+// DecodeBlockLoopSBRow decodes the next superblock row of the tile bound by
+// BeginBlockLoop (dav1d_decode_tile_sbrow) and reports whether rows remain.
+func DecodeBlockLoopSBRow[T BlockLoopCoeffController](scratch *BlockLoopScratch, coeffController T, visit BlockLoopPointerVisitor) (bool, error) {
+	t := &scratch.tile
+	s := t.s
+	req := &t.req
+	cdfs := &t.cdfs
+	stats := &t.stats
+	hasCoeffController := t.hasCoeffController
+	intraOnlyContexts := t.intraOnlyContexts
+	keepLegacyMotion := t.keepLegacyMotion
 	rootSize := uint32(req.Walk.Root.Size4x4())
 	miColStart := uint32(req.Walk.MIColStart)
-	miRowStart := uint32(req.Walk.MIRowStart)
 	miColEnd := uint32(req.Walk.MIColEnd)
 	miRowEnd := uint32(req.Walk.MIRowEnd)
 	neighborMIColStart := req.Walk.neighborMIColStart()
 	neighborMIRowStart := req.Walk.neighborMIRowStart()
-	if !intraOnlyContexts {
-		ensureIntrabcDiagonalCarriers(req.ContextCarrier)
+	miRow := t.miRow
+	if s == nil || miRow >= miRowEnd {
+		return false, ErrInvalidDecodeState
 	}
-	useRefmvs := !intraOnlyContexts && bindRefmvsForLoop(&scratch.Refmvs, &req)
-	if !useRefmvs && req.TemporalReferences != nil && req.TemporalMVs == nil && req.UseRefFrameMVS &&
-		(req.FrameType == parser.FrameTypeInter || req.FrameType == parser.FrameTypeSwitch) {
-		// Deferred temporal projection needs the refmvs rows.
-		return BlockLoopStats{}, ErrInvalidDecodeState
+	if !intraOnlyContexts && keepLegacyMotion {
+		promotePendingDiagonalCarriers(req.ContextCarrier)
 	}
-	defer func() {
-		scratch.Refmvs.bound = false
-		scratch.flushLeftEdge()
-	}()
-	// With refmvs rows bound, the current frame's MV_REF side data is written
-	// per superblock row from the rows (dav1d_refmvs_save_tmvs) instead of
-	// per block.
-	saveTmvs := useRefmvs && req.CurrentMVFrame != nil
-	// The libaom-shaped neighbor-motion state has no readers while refmvs rows
-	// are bound; the goav1_refmvs_oracle build keeps it for its differential.
-	keepLegacyMotion := !useRefmvs || refmvsOracleEnabled
-	if saveTmvs {
-		if err := req.CurrentMVFrame.Validate(); err != nil {
-			return stats, err
+	if t.useRefmvs {
+		scratch.Refmvs.sbrowInit(int32(miRow/rootSize), int32(rootSize))
+		if rt := &scratch.Refmvs; rt.frame.projectTmvs && rt.frame.mfmv.n > 0 {
+			if req.MotionProgress != nil && !req.MotionProgress.WaitReferenceRows(int32((miRow+rootSize)>>1)) {
+				return false, ErrInvalidDecodeState
+			}
+			rt.loadTmvs(rt.tileColStart>>1, rt.tileColEnd>>1, int32(miRow>>1), int32((miRow+rootSize)>>1))
 		}
 	}
-	for miRow := miRowStart; miRow < miRowEnd; miRow += rootSize {
+	for miCol := miColStart; miCol < miColEnd; miCol += rootSize {
+		rootColIndex := int((miCol - miColStart) / rootSize)
+		var err error
+		if intraOnlyContexts {
+			err = blockLoopLoadIntraRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB, miRow, miCol)
+		} else {
+			err = blockLoopLoadRootContextMotion(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB, keepLegacyMotion, miRow, miCol)
+		}
+		if err != nil {
+			return false, err
+		}
+		rootReq := BlockWalkRequest{
+			Root:               req.Walk.Root,
+			MIColStart:         uint16(miCol),
+			MIRowStart:         uint16(miRow),
+			MIColEnd:           uint16(minUint32(miColEnd, miCol+rootSize)),
+			MIRowEnd:           uint16(minUint32(miRowEnd, miRow+rootSize)),
+			UseNeighborBounds:  true,
+			NeighborMIColStart: uint16(neighborMIColStart),
+			NeighborMIRowStart: uint16(neighborMIRowStart),
+		}
+		if req.BeforeSuperblock != nil {
+			if err := req.BeforeSuperblock(BlockLoopSuperblockVisit{
+				MICol:     uint16(miCol),
+				MIRow:     uint16(miRow),
+				SBSizeMIB: req.SBSizeMIB,
+			}); err != nil {
+				return false, err
+			}
+		}
+		walkStats, err := walkBlocksDecode(s, cdfs.Partition, &scratch.Partition, rootReq, &scratch.visit.Block, func() error {
+			block := &scratch.visit.Block
+			visitInfo, err := decodeBlockLoopVisitWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, hasCoeffController, intraOnlyContexts, block)
+			if err != nil {
+				return fmt.Errorf("decode block=%+v: %w", *block, err)
+			}
+			stats.Blocks++
+			if visitInfo.CoefficientsValid {
+				stats.CoefficientBlocks++
+			}
+			return visit(visitInfo)
+		})
+		stats.PartitionReads += walkStats.PartitionReads
+		if err != nil {
+			return false, fmt.Errorf("walk root col=%d row=%d: %w", rootColIndex, miRow, err)
+		}
+		if intraOnlyContexts {
+			err = blockLoopStoreIntraRootContext(scratch, req.ContextCarrier, rootColIndex, miRow, miCol+rootSize)
+		} else {
+			err = blockLoopStoreRootContextMotion(scratch, req.ContextCarrier, rootColIndex, req.SBSizeMIB, keepLegacyMotion, miRow, miCol+rootSize)
+		}
+		if err != nil {
+			return false, fmt.Errorf("store root context col=%d row=%d: %w", rootColIndex, miRow, err)
+		}
 		if !intraOnlyContexts && keepLegacyMotion {
-			promotePendingDiagonalCarriers(req.ContextCarrier)
-		}
-		if useRefmvs {
-			scratch.Refmvs.sbrowInit(int32(miRow/rootSize), int32(rootSize))
-			if rt := &scratch.Refmvs; rt.frame.projectTmvs && rt.frame.mfmv.n > 0 {
-				if req.MotionProgress != nil && !req.MotionProgress.WaitReferenceRows(int32((miRow+rootSize)>>1)) {
-					return stats, ErrInvalidDecodeState
-				}
-				rt.loadTmvs(rt.tileColStart>>1, rt.tileColEnd>>1, int32(miRow>>1), int32((miRow+rootSize)>>1))
-			}
-		}
-		for miCol := miColStart; miCol < miColEnd; miCol += rootSize {
-			rootColIndex := int((miCol - miColStart) / rootSize)
-			var err error
-			if intraOnlyContexts {
-				err = blockLoopLoadIntraRootContext(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB, miRow, miCol)
-			} else {
-				err = blockLoopLoadRootContextMotion(scratch, req.ContextCarrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, req.SBSizeMIB, keepLegacyMotion, miRow, miCol)
-			}
-			if err != nil {
-				return stats, err
-			}
-			rootReq := BlockWalkRequest{
-				Root:               req.Walk.Root,
-				MIColStart:         uint16(miCol),
-				MIRowStart:         uint16(miRow),
-				MIColEnd:           uint16(minUint32(miColEnd, miCol+rootSize)),
-				MIRowEnd:           uint16(minUint32(miRowEnd, miRow+rootSize)),
-				UseNeighborBounds:  true,
-				NeighborMIColStart: uint16(neighborMIColStart),
-				NeighborMIRowStart: uint16(neighborMIRowStart),
-			}
-			if req.BeforeSuperblock != nil {
-				if err := req.BeforeSuperblock(BlockLoopSuperblockVisit{
-					MICol:     uint16(miCol),
-					MIRow:     uint16(miRow),
-					SBSizeMIB: req.SBSizeMIB,
-				}); err != nil {
-					return stats, err
-				}
-			}
-			walkStats, err := walkBlocksDecode(s, cdfs.Partition, &scratch.Partition, rootReq, &scratch.visit.Block, func() error {
-				block := &scratch.visit.Block
-				visitInfo, err := decodeBlockLoopVisitWithCoeffControllerPtr(s, &cdfs, scratch, &req, coeffController, hasCoeffController, intraOnlyContexts, block)
-				if err != nil {
-					return fmt.Errorf("decode block=%+v: %w", *block, err)
-				}
-				stats.Blocks++
-				if visitInfo.CoefficientsValid {
-					stats.CoefficientBlocks++
-				}
-				return visit(visitInfo)
-			})
-			stats.PartitionReads += walkStats.PartitionReads
-			if err != nil {
-				return stats, fmt.Errorf("walk root col=%d row=%d: %w", rootColIndex, miRow, err)
-			}
-			if intraOnlyContexts {
-				err = blockLoopStoreIntraRootContext(scratch, req.ContextCarrier, rootColIndex, miRow, miCol+rootSize)
-			} else {
-				err = blockLoopStoreRootContextMotion(scratch, req.ContextCarrier, rootColIndex, req.SBSizeMIB, keepLegacyMotion, miRow, miCol+rootSize)
-			}
-			if err != nil {
-				return stats, fmt.Errorf("store root context col=%d row=%d: %w", rootColIndex, miRow, err)
-			}
-			if !intraOnlyContexts && keepLegacyMotion {
-				captureDiagonalCornerToPending(req.ContextCarrier, rootColIndex+1, &scratch.Mode, req.SBSizeMIB)
-			}
-		}
-		if saveTmvs {
-			scratch.Refmvs.saveTmvs(req.CurrentMVFrame, &req.RefFrameSide, int32(miColStart>>1), int32(miColEnd>>1), int32(miRow>>1), int32((miRow+rootSize)>>1))
-			if req.MotionProgress != nil {
-				req.MotionProgress.PublishRows(int32((miRow + rootSize) >> 1))
-			}
+			captureDiagonalCornerToPending(req.ContextCarrier, rootColIndex+1, &scratch.Mode, req.SBSizeMIB)
 		}
 	}
-	return stats, nil
+	if t.saveTmvs {
+		scratch.Refmvs.saveTmvs(req.CurrentMVFrame, &req.RefFrameSide, int32(miColStart>>1), int32(miColEnd>>1), int32(miRow>>1), int32((miRow+rootSize)>>1))
+		if req.MotionProgress != nil {
+			req.MotionProgress.PublishRows(int32((miRow + rootSize) >> 1))
+		}
+	}
+	t.miRow = miRow + rootSize
+	return t.miRow < miRowEnd, nil
 }
 
 func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8) error {
