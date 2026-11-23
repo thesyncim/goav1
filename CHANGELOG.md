@@ -37,6 +37,9 @@ The project has not published a release tag yet.
   Frames with several tiles frame-thread too, as long as every tile arrives in
   one tile group: each tile's entropy pass runs on its own lane, and the
   frame's reconstruction and post-filter overlap the next frame's tiles.
+- `aom-go-dec` uses one worker per CPU by default, as dav1d's CLI does;
+  `-workers 1` selects the single-threaded path. The library default stays
+  one worker.
 
 ### Encoder Scope
 
