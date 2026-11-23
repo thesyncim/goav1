@@ -198,6 +198,37 @@ func quantizeScalarB(coeff int32, p *quantBParams, txScale uint8) int16 {
 // bit-exact with the scalar rule.
 var quantizeBBlockImpl func(qcoeff []int16, coeff []int32, n int, q Quantizer, txScale uint8) bool
 
+// quantizeBBlockEOBImpl is quantizeBBlockImpl that also returns the end of
+// block over iscan.
+var quantizeBBlockEOBImpl func(qcoeff []int16, coeff []int32, n int, q Quantizer, txScale uint8, iscan []int16) (int, bool)
+
+// QuantizeBlockScaledBEOB is QuantizeBlockScaledB returning the levels' end
+// of block as quantize_b does: one past the largest scan position
+// iscan[c*qStride+r] of a nonzero level (iscan covers width*height entries in
+// the coefficient layout), 0 for an all-zero block.
+func QuantizeBlockScaledBEOB(qcoeff []int16, qStride int, coeff []int32, coeffStride int, width int, height int, q Quantizer, txScale uint8, iscan []int16) (int, error) {
+	if len(iscan) < width*height || qStride != height {
+		return 0, ErrInvalidQuantizer
+	}
+	if width == height && coeffStride == height && quantizeBBlockEOBImpl != nil &&
+		len(qcoeff) >= width*height && len(coeff) >= width*height &&
+		q.DC > 0 && q.AC > 0 && txScale <= 2 {
+		if eob, ok := quantizeBBlockEOBImpl(qcoeff[:width*height], coeff[:width*height], width, q, txScale, iscan); ok {
+			return eob, nil
+		}
+	}
+	if err := QuantizeBlockScaledB(qcoeff, qStride, coeff, coeffStride, width, height, q, txScale); err != nil {
+		return 0, err
+	}
+	eob := 0
+	for pos, v := range qcoeff[:width*height] {
+		if v != 0 {
+			eob = max(eob, int(iscan[pos])+1)
+		}
+	}
+	return eob, nil
+}
+
 // ZeroBinFP returns the fp zero-bin thresholds QuantizeBlockScaledFP applies
 // at txScale: a DC (respectively AC) coefficient whose magnitude is below dc
 // (ac) quantizes to zero (|c| << (1 + txScale) < dequant). Both return 0 for

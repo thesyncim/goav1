@@ -121,13 +121,17 @@ func TestQuantizeBRowGroupsDiffOriginalNumeric(t *testing.T) {
 				for i := range got {
 					got[i] = 0x5a5a
 				}
-				diff, rate, handled := TryQuantizeBRowGroupsDiffTrusted(got, coeff, n, uint8(mask), q, ts)
+				iscan := testISCAN(rng, n)
+				diff, rate, eob, handled := TryQuantizeBRowGroupsDiffTrusted(got, coeff, n, uint8(mask), q, ts, iscan)
 				wantHandled := quantizeBRowGroupsDiffImpl != nil && bits.Len32(uint32(q.AC))-1 >= int(ts)
 				if handled != wantHandled {
 					t.Fatalf("handled=%v want %v n=%d q=%+v ts=%d", handled, wantHandled, n, q, ts)
 				}
 				if handled {
 					handledCount++
+					if wantEOB := testEOB(want, iscan); eob != wantEOB {
+						t.Fatalf("n=%d mask=%x q=%+v ts=%d: eob %d want %d", n, mask, q, ts, eob, wantEOB)
+					}
 					if !reflect.DeepEqual(got[:n*n], want) || diff != wantDiff || rate != wantRate {
 						t.Fatalf("n=%d mask=%x q=%+v ts=%d: diff/rate=%d/%d want=%d/%d levelsEqual=%v", n, mask, q, ts, diff, rate, wantDiff, wantRate, reflect.DeepEqual(got[:n*n], want))
 					}
@@ -157,9 +161,13 @@ func TestQuantizeBRowGroupsDiffOriginalNumeric(t *testing.T) {
 			var got [64]int16
 			coeff[0] = dc
 			want, wantDiff, wantRate := originalRowGroupDiff(coeff[:], 8, 3, q, 0)
-			diff, rate, handled := TryQuantizeBRowGroupsDiffTrusted(got[:], coeff[:], 8, 3, q, 0)
+			iscan := testISCAN(rand.New(rand.NewSource(int64(dc))), 8)
+			diff, rate, eob, handled := TryQuantizeBRowGroupsDiffTrusted(got[:], coeff[:], 8, 3, q, 0, iscan)
 			if handled {
 				handledCount++
+				if wantEOB := testEOB(want, iscan); eob != wantEOB {
+					t.Fatalf("DC override q=%+v dc=%d: eob %d want %d", q, dc, eob, wantEOB)
+				}
 				if !reflect.DeepEqual(got[:], want) || diff != wantDiff || rate != wantRate {
 					t.Fatalf("DC override q=%+v dc=%d: diff/rate=%d/%d want=%d/%d", q, dc, diff, rate, wantDiff, wantRate)
 				}
@@ -181,7 +189,7 @@ func TestQuantizeBRowGroupsDiffDeclinesOverlapAndUnsupported(t *testing.T) {
 		}
 		levels := unsafe.Slice((*int16)(unsafe.Pointer(&backing[0])), 2*len(backing))
 		before := append([]int32(nil), backing...)
-		if _, _, handled := TryQuantizeBRowGroupsDiffTrusted(levels[offset:offset+64], backing[:64], n, 3, Quantizer{120, 140}, 0); handled {
+		if _, _, _, handled := TryQuantizeBRowGroupsDiffTrusted(levels[offset:offset+64], backing[:64], n, 3, Quantizer{120, 140}, 0, make([]int16, 64)); handled {
 			t.Fatalf("overlap offset=%d accepted", offset)
 		}
 		if !reflect.DeepEqual(backing, before) {
@@ -206,7 +214,7 @@ func TestQuantizeBRowGroupsDiffDeclinesOverlapAndUnsupported(t *testing.T) {
 			qcoeff[i] = 123
 		}
 		before := append([]int16(nil), qcoeff...)
-		if _, _, handled := TryQuantizeBRowGroupsDiffTrusted(qcoeff, coeff, tc.n, 0xff, tc.q, tc.ts); handled {
+		if _, _, _, handled := TryQuantizeBRowGroupsDiffTrusted(qcoeff, coeff, tc.n, 0xff, tc.q, tc.ts, make([]int16, 64)); handled {
 			t.Fatalf("unsupported input accepted: %+v", tc)
 		}
 		if !reflect.DeepEqual(qcoeff, before) {
@@ -218,12 +226,38 @@ func TestQuantizeBRowGroupsDiffDeclinesOverlapAndUnsupported(t *testing.T) {
 func TestQuantizeBRowGroupsDiffNoAllocation(t *testing.T) {
 	var coeff [1024]int32
 	var levels [1024]int16
+	var iscan [1024]int16
+	for i := range iscan {
+		iscan[i] = int16(i)
+	}
 	for i := range coeff {
 		coeff[i] = int32(i*17 - 5000)
 	}
 	if got := testing.AllocsPerRun(10, func() {
-		TryQuantizeBRowGroupsDiffTrusted(levels[:], coeff[:], 32, 0x55, Quantizer{120, 140}, 1)
+		TryQuantizeBRowGroupsDiffTrusted(levels[:], coeff[:], 32, 0x55, Quantizer{120, 140}, 1, iscan[:])
 	}); got != 0 {
 		t.Fatalf("allocations=%v", got)
 	}
+}
+
+// testISCAN is a random scan of an n x n block: iscan[pos] is the scan index
+// of pos, with the DC first as every AV1 scan has it.
+func testISCAN(rng *rand.Rand, n int) []int16 {
+	perm := rng.Perm(n*n - 1)
+	iscan := make([]int16, n*n)
+	for pos := 1; pos < n*n; pos++ {
+		iscan[pos] = int16(perm[pos-1] + 1)
+	}
+	return iscan
+}
+
+// testEOB is one past the largest scan index of a nonzero level.
+func testEOB(levels []int16, iscan []int16) int {
+	eob := 0
+	for pos, v := range levels {
+		if v != 0 {
+			eob = max(eob, int(iscan[pos])+1)
+		}
+	}
+	return eob
 }
