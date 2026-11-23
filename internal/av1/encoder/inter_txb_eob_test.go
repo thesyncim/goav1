@@ -7,14 +7,14 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
-func TestInterTXBResultEndTablesMatchScan(t *testing.T) {
+func TestInterTXBResultMatchesScanWalk(t *testing.T) {
 	var st lossyEncodeState
 	if err := st.initScans(); err != nil {
 		t.Fatal(err)
 	}
 	rng := rand.New(rand.NewSource(7))
-	for _, e := range sharedScans.ends {
-		n := len(e.endP1)
+	for _, e := range sharedScans.inverse {
+		n := len(e.iscan)
 		var sc []int16
 		for _, cand := range [][]int16{sharedScans.scan4, sharedScans.scan8, sharedScans.scan16, sharedScans.scan32,
 			sharedScans.scan16x8, sharedScans.scan8x16, sharedScans.scan8x4, sharedScans.scan4x8,

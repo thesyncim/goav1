@@ -3,7 +3,6 @@ package encoder
 import (
 	"fmt"
 	"sync"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -2045,23 +2044,25 @@ func selectIntraMode8(srcPlane, reconPlane []byte, stride, px, py int, haveTop, 
 	return selectIntraModeN(srcPlane, reconPlane, stride, px, py, 8, haveTop, haveLeft, pred)
 }
 
-// levelsAllZero reports whether every level is zero, four at a time into four
-// independent accumulators (every coded area is a multiple of 16 levels).
+// levelsAllZero reports whether every level is zero.
 func levelsAllZero(q []int16) bool {
-	w := unsafe.Slice((*uint64)(unsafe.Pointer(unsafe.SliceData(q))), len(q)/4)
-	var a0, a1, a2, a3 uint64
-	for len(w) >= 4 {
-		a0 |= w[0]
-		a1 |= w[1]
-		a2 |= w[2]
-		a3 |= w[3]
-		w = w[4:]
+	return levelsAllZeroImpl(q)
+}
+
+var levelsAllZeroImpl = levelsAllZeroPureGo
+
+// levelsAllZeroPureGo ORs the levels into four independent accumulators.
+func levelsAllZeroPureGo(q []int16) bool {
+	var a0, a1, a2, a3 int16
+	for len(q) >= 4 {
+		a0 |= q[0]
+		a1 |= q[1]
+		a2 |= q[2]
+		a3 |= q[3]
+		q = q[4:]
 	}
-	for _, v := range w {
+	for _, v := range q {
 		a0 |= v
-	}
-	for _, v := range q[len(q)&^3:] {
-		a0 |= uint64(uint16(v))
 	}
 	return a0|a1|a2|a3 == 0
 }

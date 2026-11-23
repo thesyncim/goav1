@@ -418,35 +418,35 @@ type encoderScanTables struct {
 	scan4x16, scan16x4           []int16
 	scan8x32, scan32x8           []int16
 	scan16x64, scan64x16         []int16
-	// ends maps each scan above to its end-of-block table (interTXBResult).
-	ends []scanEnds
+	// inverse maps each scan above to its inverse (interTXBResult).
+	inverse []inverseScan
 }
 
-// scanEnds is one scan's end-of-block table: endP1[pos] is one past the scan
-// index of raster position pos.
-type scanEnds struct {
+// inverseScan is one scan's inverse: iscan[pos] is the scan index of raster
+// position pos.
+type inverseScan struct {
 	scan  *int16
-	endP1 []int16
+	iscan []int16
 }
 
-func newScanEnds(scan []int16) scanEnds {
-	e := scanEnds{scan: &scan[0], endP1: make([]int16, len(scan))}
+func newInverseScan(scan []int16) inverseScan {
+	e := inverseScan{scan: &scan[0], iscan: make([]int16, len(scan))}
 	for c, pos := range scan {
-		e.endP1[pos] = int16(c + 1)
+		e.iscan[pos] = int16(c)
 	}
 	return e
 }
 
-// scanEndP1 returns the end-of-block table of a shared scan, nil for any
-// other scan.
-func scanEndP1(scan []int16) []int16 {
+// sharedInverseScan returns the inverse of a shared scan, nil for any other
+// scan.
+func sharedInverseScan(scan []int16) []int16 {
 	if len(scan) == 0 {
 		return nil
 	}
 	p := &scan[0]
-	for i := range sharedScans.ends {
-		if sharedScans.ends[i].scan == p {
-			return sharedScans.ends[i].endP1
+	for i := range sharedScans.inverse {
+		if sharedScans.inverse[i].scan == p {
+			return sharedScans.inverse[i].iscan
 		}
 	}
 	return nil
@@ -471,7 +471,7 @@ func buildEncoderScanTables() (encoderScanTables, error) {
 		if err := transform.FillDefaultScan(*sq.dst, inv, transform.Size{Width: sq.n, Height: sq.n}, transform.Class2D); err != nil {
 			return t, err
 		}
-		t.ends = append(t.ends, newScanEnds(*sq.dst))
+		t.inverse = append(t.inverse, newInverseScan(*sq.dst))
 	}
 	for _, rs := range []struct {
 		dst  *[]int16
@@ -495,7 +495,7 @@ func buildEncoderScanTables() (encoderScanTables, error) {
 		if err := transform.FillDefaultScan(*rs.dst, inv, size, transform.Class2D); err != nil {
 			return t, err
 		}
-		t.ends = append(t.ends, newScanEnds(*rs.dst))
+		t.inverse = append(t.inverse, newInverseScan(*rs.dst))
 	}
 	return t, nil
 }

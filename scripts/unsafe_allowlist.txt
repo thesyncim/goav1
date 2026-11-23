@@ -26,7 +26,6 @@ internal/av1/dsp/plane_gosimd_arm64.go
 internal/av1/encoder/avg8x8_gosimd.go
 internal/av1/encoder/cdef_dist_simd_arm64.go
 internal/av1/encoder/enc_small_amd64.go
-internal/av1/encoder/keyframe_lossy.go
 internal/av1/encoder/lpd1_sad_arm64.go
 internal/av1/encoder/metric_gosimd.go
 internal/av1/encoder/pixelstats_rows16_amd64.go
