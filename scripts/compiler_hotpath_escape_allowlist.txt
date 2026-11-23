@@ -321,6 +321,9 @@ internal/av1/encoder/pframe_residual.go:*:*: make([]byte, len(src.Y)) escapes to
 internal/av1/encoder/pframe_residual.go:*:*: make([]byte, len(src.Y)) escapes to heap in EncodeScaledReferencePFrame:
 internal/av1/encoder/pframe_residual.go:*:*: make([]int16, int(sq.n) * int(sq.n)) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]int16, int(sq.n) * int(sq.n)) escapes to heap in buildEncoderScanTables:
+internal/av1/encoder/pframe_residual.go:*:*: make([]int16, len(scan)) escapes to heap
+internal/av1/encoder/pframe_residual.go:*:*: make([]int16, len(scan)) escapes to heap in buildEncoderScanTables:
+internal/av1/encoder/pframe_residual.go:*:*: make([]int16, len(scan)) escapes to heap in newScanEnds:
 internal/av1/encoder/pframe_residual.go:*:*: make([]int16, total) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]int16, total) escapes to heap in buildEncoderScanTables:
 internal/av1/encoder/pframe_residual.go:*:*: make([]int32, 4096) escapes to heap
