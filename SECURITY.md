@@ -232,9 +232,7 @@ boundary above.
     `FuzzPublicDecoderFrameWorkSideDataBinding`,
     `FuzzPublicDecoderFrameWorkPostFilterScratchContext`,
     `FuzzPublicSimpleDecoderIVF`,
-    `FuzzPublicDecodeTileBlockCoefficients`,
-    `FuzzPublicParseTileListOBU`,
-    `FuzzPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficients`.
+    `FuzzPublicParseTileListOBU`.
   - Inverse transforms: WHT, ADST, warp, film grain (commit
     `ff8ba63`).
   - Inverse-qmatrix dequant path (commit `455ddac`).

@@ -6,7 +6,6 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
-	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
 // BlockLoopCDFs groups the caller-owned entropy state used by the block syntax
@@ -241,21 +240,9 @@ type BlockLoopRequest struct {
 	// ReducedTxSet is the frame's reduced_tx_set flag and QuantDeltasZero
 	// reports that no DC/AC quantizer delta is coded, so a block whose
 	// segment-adjusted qindex is zero is lossless.
-	ReducedTxSet    bool
-	QuantDeltasZero bool
-	// DirectRecon hands every block to CoeffController.ReconB once its
-	// transform sizes are read (dav1d's decode_b calling bd_fn.recon_b_*),
-	// instead of the per-transform-block coefficient visits.
-	DirectRecon         bool
-	LumaTransformType   transform.Type
-	ChromaTransformType [2]transform.Type
-	TransformSelect     CoeffTransformSelector
-	EOBMultiContext     [3]uint8
-	CoeffController     BlockLoopCoeffController
-	CoeffRequest        BlockLoopCoeffRequestSelector
-	BeforeSuperblock    BlockLoopSuperblockVisitor
-	BeforeCoefficients  BlockLoopVisitor
-	CoeffVisitor        BlockLoopCoeffVisitor
+	ReducedTxSet     bool
+	QuantDeltasZero  bool
+	BeforeSuperblock BlockLoopSuperblockVisitor
 }
 
 // BlockLoopSuperblockVisit is reported before partition syntax is decoded for
@@ -295,34 +282,15 @@ type BlockLoopVisitor func(BlockLoopVisit) error
 type BlockLoopPointerVisitor func(*BlockLoopVisit) error
 
 // BlockLoopCoeffController is the block loop's reconstruction hook, dav1d's
-// decode_b to recon_b handoff: BeginBlockCoefficients runs once per block
-// before its coefficients and returns the block's coefficient request
-// (controller-owned storage, valid until the next call), and
-// VisitBlockCoeffPtr receives each decoded transform block.
-//
-// With BlockLoopRequest.DirectRecon, ReconB instead receives each block once,
-// after its transform sizes are read, together with the bound CoefBlock whose
-// transform blocks it decodes and reconstructs itself (dav1d's
-// bd_fn.recon_b_intra / recon_b_inter / read_coef_blocks).
+// decode_b to recon_b hand-off: ReconB receives each block once its transform
+// sizes are read, together with the bound CoefBlock whose transform blocks it
+// decodes and reconstructs (dav1d's bd_fn.recon_b_intra / recon_b_inter /
+// read_coef_blocks).
 type BlockLoopCoeffController interface {
-	BeginBlockCoefficients(*BlockLoopVisit) (*BlockCoeffRequest, error)
-	VisitBlockCoeffPtr(*BlockLoopVisit, *BlockCoeffBlock) error
 	ReconB(*BlockLoopVisit, *CoefBlock) error
 }
 
-type BlockLoopCoeffRequestSelector func(BlockLoopVisit) (BlockCoeffRequest, error)
-
-type BlockLoopCoeffVisitor func(BlockLoopVisit, BlockCoeffBlock) error
-
 type noBlockLoopCoeffController struct{}
-
-func (noBlockLoopCoeffController) BeginBlockCoefficients(*BlockLoopVisit) (*BlockCoeffRequest, error) {
-	return nil, ErrInvalidDecodeState
-}
-
-func (noBlockLoopCoeffController) VisitBlockCoeffPtr(*BlockLoopVisit, *BlockCoeffBlock) error {
-	return ErrInvalidDecodeState
-}
 
 func (noBlockLoopCoeffController) ReconB(*BlockLoopVisit, *CoefBlock) error {
 	return ErrInvalidDecodeState
@@ -331,9 +299,6 @@ func (noBlockLoopCoeffController) ReconB(*BlockLoopVisit, *CoefBlock) error {
 // DecodeBlockLoop walks every root block in req and decodes the shared
 // per-block syntax prefix needed before intra/inter and transform decode.
 func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, visit BlockLoopVisitor) (BlockLoopStats, error) {
-	if req.CoeffController != nil {
-		return decodeBlockLoopWithCoeffController(s, cdfs, scratch, req, req.CoeffController, true, visit)
-	}
 	return decodeBlockLoopWithCoeffController(s, cdfs, scratch, req, noBlockLoopCoeffController{}, false, visit)
 }
 
@@ -1134,41 +1099,13 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 		}
 	}
 	if req.DecodeCoefficients {
-		if hasCoeffController && req.DirectRecon {
-			if err := s.bindCoefBlock(cdfs, scratch, req, visit); err != nil {
-				return nil, fmt.Errorf("decode coefficients: %w", err)
-			}
-			if err := coeffController.ReconB(visit, &scratch.coef); err != nil {
-				return nil, fmt.Errorf("decode coefficients: %w", err)
-			}
-			visit.CoefficientsValid = true
-		} else if hasCoeffController {
-			// dav1d's decode_b hands the block to the recon hooks once: the
-			// controller's per-block work and its coefficient request are one
-			// call.
-			coeffReq, err := coeffController.BeginBlockCoefficients(visit)
-			if err != nil {
-				return nil, fmt.Errorf("begin coefficients: %w", err)
-			}
-			err = decodeBlockCoefficientsWithCoeffControllerPtr(s, BlockCoeffCDFs{
-				Transform: cdfs.Transform,
-				Coeff:     cdfs.Coeff,
-			}, ctx, &scratch.CoeffCtx, &scratch.Coeff, coeffReq, visit, coeffController, &visit.Coefficients)
-			if err != nil {
-				return nil, fmt.Errorf("decode coefficients: %w", err)
-			}
-			// The coefficients were decoded in place into visit.Coefficients.
-			visit.CoefficientsValid = true
-		} else {
-			if req.BeforeCoefficients != nil {
-				if err := req.BeforeCoefficients(*visit); err != nil {
-					return nil, fmt.Errorf("before coefficients callback: %w", err)
-				}
-			}
-			if err := decodeBlockLoopVisitCoefficients(s, cdfs, scratch, ctx, req, visit); err != nil {
-				return nil, err
-			}
+		if err := s.bindCoefBlock(cdfs, scratch, req, visit); err != nil {
+			return nil, fmt.Errorf("decode coefficients: %w", err)
 		}
+		if err := coeffController.ReconB(visit, &scratch.coef); err != nil {
+			return nil, fmt.Errorf("decode coefficients: %w", err)
+		}
+		visit.CoefficientsValid = true
 	}
 	return visit, nil
 }
@@ -1774,7 +1711,7 @@ func validateBlockLoopRequest(req BlockLoopRequest, hasCoeffController bool) err
 	if req.TemporalMVs != nil && !req.UseRefFrameMVS {
 		return ErrInvalidDecodeState
 	}
-	if req.DecodeCoefficients && !req.DecodePredictionModes && !hasCoeffController && req.CoeffRequest == nil {
+	if req.DecodeCoefficients && !hasCoeffController {
 		return ErrInvalidDecodeState
 	}
 	rootSize := uint32(req.Walk.Root.Size4x4())
@@ -1820,40 +1757,6 @@ func fillBlockSegmentID(req *BlockLoopRequest, block *BlockVisit, segmentID uint
 
 func defaultSegmentData() parser.SegmentData {
 	return parser.SegmentData{RefFrame: -1}
-}
-
-func blockLoopCoeffRequest(req *BlockLoopRequest, visit BlockLoopVisit) (BlockCoeffRequest, error) {
-	if req.CoeffRequest != nil {
-		return req.CoeffRequest(visit)
-	}
-	if !visit.Prediction.Valid {
-		return BlockCoeffRequest{}, ErrInvalidDecodeState
-	}
-	block := visit.Block
-	return BlockCoeffRequest{
-		Transform: TransformTreeRequest{
-			Size:          block.Size,
-			X4:            block.X4,
-			Y4:            block.Y4,
-			VisibleW4:     block.VisibleW4,
-			VisibleH4:     block.VisibleH4,
-			HaveTop:       block.HaveTop,
-			HaveLeft:      block.HaveLeft,
-			Color:         req.Color,
-			TransformMode: req.TransformMode,
-			Inter:         !visit.Prediction.Intra,
-			SkipTransform: visit.Prefix.SkipTransform,
-			Lossless:      req.Lossless,
-		},
-		LumaType:        req.LumaTransformType,
-		ChromaType:      req.ChromaTransformType,
-		TransformSelect: req.TransformSelect,
-		EOBMultiContext: req.EOBMultiContext,
-	}, nil
-}
-
-func discardBlockLoopCoeff(BlockLoopVisit, BlockCoeffBlock) error {
-	return nil
 }
 
 // blockReferenceGlobalMVsForBlock is dav1d's get_gmv_2d for the block's
@@ -2218,35 +2121,6 @@ func warpSampleDiagonalCorner(block BlockVisit, ctx *BlockModeContext, ref Refer
 		return 0
 	}
 	return 1
-}
-
-// decodeBlockLoopVisitCoefficients decodes one block's coefficients through
-// req.CoeffVisitor (the path without a coefficient controller). It is kept
-// out of decodeBlockLoopVisitWithCoeffControllerPtr so the visitor closure's
-// captures do not move that function's locals to the heap on every block.
-//
-//go:noinline
-func decodeBlockLoopVisitCoefficients(s *DecodeState, cdfs *BlockLoopCDFs, scratch *BlockLoopScratch, ctx *BlockModeContext, req *BlockLoopRequest, visit *BlockLoopVisit) error {
-	coeffReq, err := blockLoopCoeffRequest(req, *visit)
-	if err != nil {
-		return fmt.Errorf("select coeff request: %w", err)
-	}
-	coeffVisit := req.CoeffVisitor
-	if coeffVisit == nil {
-		coeffVisit = discardBlockLoopCoeff
-	}
-	coefficients, err := s.DecodeBlockCoefficients(BlockCoeffCDFs{
-		Transform: cdfs.Transform,
-		Coeff:     cdfs.Coeff,
-	}, ctx, &scratch.CoeffCtx, &scratch.Coeff, coeffReq, func(block BlockCoeffBlock) error {
-		return coeffVisit(*visit, block)
-	})
-	if err != nil {
-		return fmt.Errorf("decode coefficients: %w", err)
-	}
-	visit.Coefficients = coefficients
-	visit.CoefficientsValid = true
-	return nil
 }
 
 // intrabcClipDV ports dav1d's intrabc DV clip (decode.c decode_b): the source

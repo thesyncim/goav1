@@ -7,7 +7,6 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
-	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
 func TestDecodeBlockLoopReadsPrefixDeltaAndSegments(t *testing.T) {
@@ -467,200 +466,6 @@ func TestDecodeBlockLoopReadsIntraPredictionModes(t *testing.T) {
 	}
 	if got := intraCDFs.UVMode[0][IntraModeDC].Values()[int(chromaIntraModeCount-1)]; got != 1 {
 		t.Fatalf("uvmode count=%d want 1", got)
-	}
-}
-
-func TestDecodeBlockLoopReadsCoefficients(t *testing.T) {
-	var state DecodeState
-	if err := state.Reset(make([]byte, 64), Job{Offset: 0, Size: 64}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	partitionCDFs, modeCDFs, deltaCDFs := mustBlockLoopCDFs(t)
-	var intraCDFs IntraModeCDFs
-	if err := intraCDFs.InitDefault(); err != nil {
-		t.Fatal(err)
-	}
-	transformCDFs, coeffCDFs := mustBlockCoeffCDFs(t)
-	req := BlockLoopRequest{
-		Walk: BlockWalkRequest{
-			Root:       BlockLevel16x16,
-			MIColStart: 0,
-			MIRowStart: 0,
-			MIColEnd:   4,
-			MIRowEnd:   4,
-		},
-		SBSizeMIB:             4,
-		FrameType:             parser.FrameTypeKey,
-		DecodePredictionModes: true,
-		DecodeCoefficients:    true,
-		Color:                 parser.ColorConfig{MonoChrome: true},
-		TransformMode:         parser.TransformModeLargest,
-		LumaTransformType:     transform.TypeDCTDCT,
-	}
-
-	var scratch BlockLoopScratch
-	var got BlockLoopVisit
-	coeffVisits := 0
-	req.CoeffVisitor = func(parent BlockLoopVisit, block BlockCoeffBlock) error {
-		coeffVisits++
-		if parent.Block.Size != BlockSize16x16 || parent.Prefix.SkipTransform {
-			t.Fatalf("parent visit=%+v", parent)
-		}
-		if block.Plane != 0 || block.Block.Size != TransformSize16x16 || block.Transform != transform.TypeDCTDCT {
-			t.Fatalf("coeff block=%+v", block)
-		}
-		assertTXBDecodeInvariants(t, block.Result, block.Coeffs, block.Scan)
-		return nil
-	}
-	stats, err := state.DecodeBlockLoop(BlockLoopCDFs{
-		Partition: &partitionCDFs,
-		Mode:      &modeCDFs,
-		Intra:     &intraCDFs,
-		Transform: &transformCDFs,
-		Coeff:     &coeffCDFs,
-		Delta:     deltaCDFs,
-	}, &scratch, req, func(visit BlockLoopVisit) error {
-		got = visit
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stats != (BlockLoopStats{
-		PartitionReads:    1,
-		Blocks:            1,
-		CoefficientBlocks: 1,
-	}) {
-		t.Fatalf("stats=%+v", stats)
-	}
-	if coeffVisits != 1 {
-		t.Fatalf("coeff visits=%d want 1", coeffVisits)
-	}
-	if !got.CoefficientsValid || got.Coefficients.Tree.Y != TransformSize16x16 || got.Coefficients.TotalStats().TXBs != 1 {
-		t.Fatalf("coefficients valid=%v result=%+v", got.CoefficientsValid, got.Coefficients)
-	}
-	if scratch.CoeffCtx.Above[0][0] == 0 || scratch.CoeffCtx.Left[0][0] == 0 {
-		t.Fatalf("coefficient context not marked above=%d left=%d", scratch.CoeffCtx.Above[0][0], scratch.CoeffCtx.Left[0][0])
-	}
-}
-
-func TestDecodeBlockLoopCoefficientVisitorError(t *testing.T) {
-	var state DecodeState
-	if err := state.Reset(make([]byte, 64), Job{Offset: 0, Size: 64}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	partitionCDFs, modeCDFs, deltaCDFs := mustBlockLoopCDFs(t)
-	var intraCDFs IntraModeCDFs
-	if err := intraCDFs.InitDefault(); err != nil {
-		t.Fatal(err)
-	}
-	transformCDFs, coeffCDFs := mustBlockCoeffCDFs(t)
-	errBoom := errors.New("boom")
-	_, err := state.DecodeBlockLoop(BlockLoopCDFs{
-		Partition: &partitionCDFs,
-		Mode:      &modeCDFs,
-		Intra:     &intraCDFs,
-		Transform: &transformCDFs,
-		Coeff:     &coeffCDFs,
-		Delta:     deltaCDFs,
-	}, &BlockLoopScratch{}, BlockLoopRequest{
-		Walk: BlockWalkRequest{
-			Root:       BlockLevel16x16,
-			MIColStart: 0,
-			MIRowStart: 0,
-			MIColEnd:   4,
-			MIRowEnd:   4,
-		},
-		SBSizeMIB:             4,
-		FrameType:             parser.FrameTypeKey,
-		DecodePredictionModes: true,
-		DecodeCoefficients:    true,
-		Color:                 parser.ColorConfig{MonoChrome: true},
-		TransformMode:         parser.TransformModeLargest,
-		LumaTransformType:     transform.TypeDCTDCT,
-		CoeffVisitor: func(BlockLoopVisit, BlockCoeffBlock) error {
-			return errBoom
-		},
-	}, func(BlockLoopVisit) error { return nil })
-	if !errors.Is(err, errBoom) {
-		t.Fatalf("err=%v want %v", err, errBoom)
-	}
-}
-
-func TestDecodeBlockLoopCoefficientSelectorDoesNotRequirePredictionModes(t *testing.T) {
-	var state DecodeState
-	if err := state.Reset(make([]byte, 64), Job{Offset: 0, Size: 64}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	partitionCDFs, modeCDFs, deltaCDFs := mustBlockLoopCDFs(t)
-	transformCDFs, coeffCDFs := mustBlockCoeffCDFs(t)
-
-	beforeCoefficients := false
-	coeffVisits := 0
-	stats, err := state.DecodeBlockLoop(BlockLoopCDFs{
-		Partition: &partitionCDFs,
-		Mode:      &modeCDFs,
-		Transform: &transformCDFs,
-		Coeff:     &coeffCDFs,
-		Delta:     deltaCDFs,
-	}, &BlockLoopScratch{}, BlockLoopRequest{
-		Walk: BlockWalkRequest{
-			Root:       BlockLevel16x16,
-			MIColStart: 0,
-			MIRowStart: 0,
-			MIColEnd:   4,
-			MIRowEnd:   4,
-		},
-		SBSizeMIB:          4,
-		DecodeCoefficients: true,
-		BeforeCoefficients: func(visit BlockLoopVisit) error {
-			if visit.Prediction.Valid {
-				t.Fatalf("prediction unexpectedly decoded: %+v", visit.Prediction)
-			}
-			beforeCoefficients = true
-			return nil
-		},
-		CoeffRequest: func(visit BlockLoopVisit) (BlockCoeffRequest, error) {
-			if !beforeCoefficients {
-				t.Fatal("coefficient selector ran before before-coefficients hook")
-			}
-			return BlockCoeffRequest{
-				Transform: TransformTreeRequest{
-					Size:          visit.Block.Size,
-					X4:            visit.Block.X4,
-					Y4:            visit.Block.Y4,
-					VisibleW4:     visit.Block.VisibleW4,
-					VisibleH4:     visit.Block.VisibleH4,
-					Color:         parser.ColorConfig{MonoChrome: true},
-					TransformMode: parser.TransformModeLargest,
-					Inter:         true,
-					SkipTransform: visit.Prefix.SkipTransform,
-				},
-				LumaType: transform.TypeDCTDCT,
-			}, nil
-		},
-		CoeffVisitor: func(parent BlockLoopVisit, block BlockCoeffBlock) error {
-			coeffVisits++
-			if !beforeCoefficients || parent.Prediction.Valid {
-				t.Fatalf("parent before=%v prediction=%+v", beforeCoefficients, parent.Prediction)
-			}
-			assertTXBDecodeInvariants(t, block.Result, block.Coeffs, block.Scan)
-			return nil
-		},
-	}, func(visit BlockLoopVisit) error {
-		if !visit.CoefficientsValid || visit.Prediction.Valid {
-			t.Fatalf("visit=%+v", visit)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !beforeCoefficients || coeffVisits != 1 {
-		t.Fatalf("before=%v coeffVisits=%d", beforeCoefficients, coeffVisits)
-	}
-	if stats.CoefficientBlocks != 1 {
-		t.Fatalf("stats=%+v", stats)
 	}
 }
 
@@ -1520,16 +1325,10 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 		if err := blendCDFs.InitDefault(); err != nil {
 			t.Fatal(err)
 		}
-		transformCDFs, coeffCDFs := mustBlockCoeffCDFs(t)
 		orderBits := uint8(rawRows%8 + 1)
 		orderLimit := uint32(1) << orderBits
 		decodePredictionModes := rawRoot&0x80 != 0
-		decodeCoefficients := decodePredictionModes && rawRoot&0xf8 == 0xf8
 		transformMode := parser.TransformMode(rawRows % 3)
-		if decodeCoefficients && root == BlockLevel64x64 {
-			transformMode = parser.TransformMode4x4Only
-		}
-		transformType := transform.Type(rawCols % uint8(transform.TypeCount))
 		req := BlockLoopRequest{
 			Walk: BlockWalkRequest{
 				Root:       root,
@@ -1548,7 +1347,6 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 			DecodeInterIntra:      rawRoot&0xf0 == 0xf0,
 			DecodeMotionModes:     rawRoot&0xf0 == 0xf0,
 			DecodeCompoundBlend:   rawRoot&0xf0 == 0xf0,
-			DecodeCoefficients:    decodeCoefficients,
 			GlobalMVs: [referenceFrameCount]motion.Vector{
 				ReferenceFrameLast:    {Row: int16(int8(rawRows)), Col: int16(int8(rawCols))},
 				ReferenceFrameGolden:  {Row: -int16(int8(rawRows)), Col: int16(int8(rawCols))},
@@ -1584,19 +1382,8 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 				SubsamplingX: rawCols&1 != 0,
 				SubsamplingY: rawRows&1 != 0,
 			},
-			TransformMode:       transformMode,
-			Lossless:            rawRows&0x40 != 0,
-			LumaTransformType:   transformType,
-			ChromaTransformType: [2]transform.Type{transformType, transformType},
-		}
-		if req.DecodeCoefficients {
-			req.CoeffVisitor = func(parent BlockLoopVisit, block BlockCoeffBlock) error {
-				if !parent.Prediction.Valid {
-					t.Fatalf("coeff parent missing prediction: %+v", parent)
-				}
-				assertTXBDecodeInvariants(t, block.Result, block.Coeffs, block.Scan)
-				return nil
-			}
+			TransformMode: transformMode,
+			Lossless:      rawRows&0x40 != 0,
 		}
 		if delta {
 			req.Delta = parser.DeltaParams{DeltaQPresent: true}
@@ -1610,8 +1397,6 @@ func FuzzDecodeBlockLoop(f *testing.F) {
 			MV:        &mvCDFs,
 			Motion:    &motionCDFs,
 			Blend:     &blendCDFs,
-			Transform: &transformCDFs,
-			Coeff:     &coeffCDFs,
 			Delta:     deltaCDFs,
 		}, &BlockLoopScratch{}, req, func(visit BlockLoopVisit) error {
 			if uint32(visit.Block.MIColEnd) > cols || uint32(visit.Block.MIRowEnd) > rows {

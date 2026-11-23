@@ -436,17 +436,11 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 					var interScratch threading.FrameWorkInterPredictionScratch
 					predictionScratch := threading.FrameWorkPredictionScratch{Inter: &interScratch}
 					jobStats, err := ctx.DecodeAndReconstructJobResiduals(j, &decodeState, storage.CDFs(), &scratch, threading.FrameWorkTileResidualRequest{
-						Loop:          loopReq,
-						TransformMode: ctx.TransformRef.TransformMode,
-						CDEFIndexMap:  ctx.CDEFIndexMap,
-						LoopFilterMap: ctx.LoopFilterMap,
-						Restoration:   restorationReq,
-						Transforms: func(visit tile.BlockLoopVisit) (threading.FrameWorkBlockTransforms, error) {
-							if visit.Prediction.Valid && !visit.Prediction.Intra {
-								return ctx.ReadInterBlockTransforms(&decodeState, visit)
-							}
-							return ctx.ReadIntraBlockTransforms(&decodeState, visit)
-						},
+						Loop:              loopReq,
+						TransformMode:     ctx.TransformRef.TransformMode,
+						CDEFIndexMap:      ctx.CDEFIndexMap,
+						LoopFilterMap:     ctx.LoopFilterMap,
+						Restoration:       restorationReq,
 						Int32Scratch:      int32Scratch,
 						ResidualScratch:   residualScratch,
 						PredictionScratch: &predictionScratch,

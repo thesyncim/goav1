@@ -23,8 +23,7 @@ package goav1
 //     DecoderFrameWorkJobBlockLoopContextRootColumns /
 //     BindTileBlockLoopContextCarrier / DecoderFrameWorkJobBlockLoopRequest:
 //     per-job block-loop setup.
-//   - ReadDecoderFrameWorkIntraBlockTransforms / Inter / BlockTransforms /
-//     ReconstructDecoderFrameWorkBlockCoeff / DecodeAndReconstruct /
+//   - ReconstructDecoderFrameWorkBlockCoeff / DecodeAndReconstruct /
 //     DecodeAndRetain*: the residual decode + reconstruct pipeline.
 //   - DecoderFrameWorkBatchResidualRunner and its
 //     BindDecoderFrameWorkBatchResidualRunner, Run, SetSideData,
@@ -187,27 +186,6 @@ func decoderFrameWorkJobBlockLoopRequestPtr(batch *DecoderFrameWorkBatch, index 
 	req.DecodeMotionModes = true
 	req.DecodeCompoundBlend = true
 	return req, nil
-}
-
-// ReadDecoderFrameWorkIntraBlockTransforms reads the per-block
-// transform metadata for an intra-coded block using state's entropy
-// reader.
-func ReadDecoderFrameWorkIntraBlockTransforms(batch DecoderFrameWorkBatch, state *TileDecodeState, visit TileBlockLoopVisit) (DecoderFrameWorkBlockTransforms, error) {
-	return batch.ReadIntraBlockTransforms(state, visit)
-}
-
-// ReadDecoderFrameWorkInterBlockTransforms reads the per-block
-// transform metadata for an inter-coded block using state's entropy
-// reader.
-func ReadDecoderFrameWorkInterBlockTransforms(batch DecoderFrameWorkBatch, state *TileDecodeState, visit TileBlockLoopVisit) (DecoderFrameWorkBlockTransforms, error) {
-	return batch.ReadInterBlockTransforms(state, visit)
-}
-
-// ReadDecoderFrameWorkBlockTransforms reads the per-block transform
-// metadata for the block visited at visit, dispatching to intra or
-// inter as appropriate.
-func ReadDecoderFrameWorkBlockTransforms(batch DecoderFrameWorkBatch, state *TileDecodeState, visit TileBlockLoopVisit) (DecoderFrameWorkBlockTransforms, error) {
-	return batch.ReadBlockTransforms(state, visit)
 }
 
 // DecodeAndReconstructDecoderFrameWorkJobResiduals decodes and
@@ -581,9 +559,6 @@ func (r *DecoderFrameWorkBatchResidualRunner) RunPtr(batch *DecoderFrameWorkBatc
 		return err
 	}
 	req.Tile.TransformMode = batch.TransformRef.TransformMode
-	if req.Tile.Transforms == nil {
-		req.Tile.UseDefaultTransforms = true
-	}
 	if err := InitDecoderFrameWorkTileResidualCDFStorage(*batch, &r.Storages[worker]); err != nil {
 		return err
 	}
@@ -928,8 +903,6 @@ func decoderFrameWorkApplyBatchResidualLoopOverrides(dst *TileBlockLoopRequest, 
 		dst.ContextCarrier = overrides.ContextCarrier
 	}
 	dst.BeforeSuperblock = overrides.BeforeSuperblock
-	dst.BeforeCoefficients = overrides.BeforeCoefficients
-	dst.CoeffVisitor = overrides.CoeffVisitor
 }
 
 func decoderFrameWorkAccumulateResidualStats(total *DecoderFrameWorkTileResidualStats, next DecoderFrameWorkTileResidualStats) {

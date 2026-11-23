@@ -347,9 +347,7 @@ unsafe-check:
 
 fuzz-smoke:
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicSimpleDecoderIVF
-	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeTileBlockCoefficients
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicParseTileListOBU
-	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficients
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndRetainDecoderFrameWorkBatchResiduals
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecoderFrameWorkBatchResidualRunnerSideData
@@ -406,9 +404,6 @@ fuzz-smoke:
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadCoeffPrimitives
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadCoefficientsTXB
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzCoeffEntropyContext
-	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeLumaCoefficients
-	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeChromaCoefficients
-	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzDecodeBlockCoefficients
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadPaletteMode
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzPaletteColorIndexContext
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzPaletteCache

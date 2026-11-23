@@ -376,21 +376,6 @@ type DecoderFrameWorkSideDataRunner = internaldecoder.FrameWorkSideDataRunner
 // scratch needed to assemble the output sample plane.
 type DecoderFrameWorkBlockCoeffReconstruction = internalthreading.FrameWorkBlockCoeffReconstruction
 
-// DecoderFrameWorkBlockTransforms describes the per-block transform
-// metadata (mode, type, size, partition) selected by the residual decode
-// pipeline for one tile block.
-type DecoderFrameWorkBlockTransforms = internalthreading.FrameWorkBlockTransforms
-
-// DecoderFrameWorkBlockTransformSelector is the per-block transform
-// selector callback the residual pipeline invokes to choose the
-// transform type for caller-customized decode paths.
-type DecoderFrameWorkBlockTransformSelector = internalthreading.FrameWorkBlockTransformSelector
-
-// DecoderFrameWorkBlockPredictor is the per-block prediction callback the
-// residual pipeline invokes to populate the prediction scratch before
-// reconstruction.
-type DecoderFrameWorkBlockPredictor = internalthreading.FrameWorkBlockPredictor
-
 // DecoderFrameWorkTileRestorationRequest carries the caller-owned
 // loop-restoration buffers and references threaded into the residual
 // pipeline when restoration is active for the frame.

@@ -530,94 +530,6 @@ func BenchmarkPublicDecoderPredictionBridge(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
-func BenchmarkPublicTileCoefficientReplay(b *testing.B) {
-	payload := make([]byte, 16)
-	job := av1.TileJob{Offset: 0, Size: uint32(len(payload))}
-	req := av1.TileLumaCoeffTreeRequest{
-		TreeRequest: av1.TileTransformTreeRequest{Size: av1.TileBlockSize4x4, VisibleW4: 1, VisibleH4: 1},
-		Tree:        av1.TileTransformTreeResult{Y: av1.TileTransformSize4x4},
-		Class:       av1.TransformClass2D,
-	}
-	var cdfs av1.TileCoeffCDFs
-	var state av1.TileDecodeState
-	var ctx av1.TileCoeffEntropyContext
-	var scratch av1.TileCoeffTreeScratch
-
-	b.SetBytes(int64(len(payload)))
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	sum := 0
-	for i := 0; i < b.N; i++ {
-		if err := av1.InitTileCoeffCDFsDefault(&cdfs, 0); err != nil {
-			b.Fatal(err)
-		}
-		if err := av1.ResetTileDecodeState(&state, payload, job, av1.TileDecodeOptions{}); err != nil {
-			b.Fatal(err)
-		}
-		ctx.Reset()
-		stats, err := av1.DecodeTileLumaCoefficients(&state, &cdfs, &ctx, &scratch, req, func(block av1.TileLumaCoeffBlock) error {
-			sum += int(block.Result.EOB)
-			return nil
-		})
-		if err != nil {
-			b.Fatal(err)
-		}
-		sum += int(stats.TXBs)
-	}
-	publicBenchmarkSink = sum
-}
-
-func BenchmarkPublicTileBlockCoefficientDecode(b *testing.B) {
-	payload := make([]byte, 32)
-	job := av1.TileJob{Offset: 0, Size: uint32(len(payload))}
-	req := av1.TileBlockCoeffRequest{
-		Transform: av1.TileTransformTreeRequest{
-			Size:          av1.TileBlockSize8x8,
-			VisibleW4:     2,
-			VisibleH4:     2,
-			Color:         av1.ColorConfig{MonoChrome: true},
-			Inter:         true,
-			TransformMode: av1.TransformModeLargest,
-		},
-		LumaType: av1.TransformTypeDCTDCT,
-	}
-	var transformCDFs av1.TileTransformCDFs
-	var coeffCDFs av1.TileCoeffCDFs
-	var state av1.TileDecodeState
-	var transformCtx av1.TileTransformContext
-	var coeffCtx av1.TileCoeffEntropyContext
-	var scratch av1.TileBlockCoeffScratch
-
-	b.SetBytes(int64(len(payload)))
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	sum := 0
-	for i := 0; i < b.N; i++ {
-		if err := av1.InitTileTransformCDFsDefault(&transformCDFs); err != nil {
-			b.Fatal(err)
-		}
-		if err := av1.InitTileCoeffCDFsDefault(&coeffCDFs, 0); err != nil {
-			b.Fatal(err)
-		}
-		if err := av1.ResetTileDecodeState(&state, payload, job, av1.TileDecodeOptions{}); err != nil {
-			b.Fatal(err)
-		}
-		transformCtx.Reset()
-		coeffCtx.Reset()
-		result, err := av1.DecodeTileBlockCoefficients(&state, av1.TileBlockCoeffCDFs{Transform: &transformCDFs, Coeff: &coeffCDFs}, &transformCtx, &coeffCtx, &scratch, req, func(block av1.TileBlockCoeffBlock) error {
-			sum += int(block.Result.EOB) + int(block.Plane)
-			return nil
-		})
-		if err != nil {
-			b.Fatal(err)
-		}
-		sum += int(result.TotalStats().TXBs)
-	}
-	publicBenchmarkSink = sum
-}
-
 func BenchmarkPublicOutputFilters(b *testing.B) {
 	superSrc := av1.FrameSamplePlane{Pix: make([]uint16, 128*32), Stride: 128, Width: 128, Height: 32}
 	superDst := av1.FrameSamplePlane{Pix: make([]uint16, 192*32), Stride: 192, Width: 192, Height: 32}
@@ -1021,11 +933,8 @@ func BenchmarkPublicDecoderResidualDecode(b *testing.B) {
 	}
 	var scratch av1.DecoderFrameWorkTileResidualScratch
 	req := av1.DecoderFrameWorkTileResidualRequest{
-		Loop:          loopReq,
-		TransformMode: batch.TransformRef.TransformMode,
-		Transforms: func(visit av1.TileBlockLoopVisit) (av1.DecoderFrameWorkBlockTransforms, error) {
-			return av1.ReadDecoderFrameWorkBlockTransforms(batch, &state, visit)
-		},
+		Loop:            loopReq,
+		TransformMode:   batch.TransformRef.TransformMode,
 		Int32Scratch:    make([]int32, int32Len),
 		ResidualScratch: make([]int16, int16Len),
 	}
@@ -1090,7 +999,6 @@ func BenchmarkPublicDecoderResidualBatchDecode(b *testing.B) {
 		b.Fatal(err)
 	}
 	req.Tile.TransformMode = batch.TransformRef.TransformMode
-	req.Tile.UseDefaultTransforms = true
 
 	b.SetBytes(int64(len(batch.Payload)))
 	b.ReportAllocs()
@@ -1691,78 +1599,6 @@ func BenchmarkPublicDecoderBlockCoeffReconstruction(b *testing.B) {
 			b.Fatal(err)
 		}
 		sum += int(output.Y.Pix[i%len(output.Y.Pix)])
-	}
-	publicBenchmarkSink = sum
-}
-
-func BenchmarkPublicDecoderCoeffReplayReconstructionAdapter(b *testing.B) {
-	output := publicBenchmarkDecoderFrame(b, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
-	batch := publicDecoderBlockCoeffSimpleBatch(output)
-	req := publicDecoderBlockCoeffSimpleRequest()
-	ctx := publicDecoderBlockCoeffReplayContext(b, batch, req, av1.DecoderFrameWorkPlaneY)
-	block := av1.TileLumaCoeffBlock{
-		Block:     req.Block.Block,
-		Transform: req.Transform,
-		Result:    req.Block.Result,
-		Coeffs:    req.Block.Coeffs,
-		Scan:      req.Block.Scan,
-	}
-
-	b.SetBytes(4 * 4 * 2)
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	sum := 0
-	for i := 0; i < b.N; i++ {
-		fillPublicReconstructPlane(output.Y, output.Layout.BytesPerSample, 128)
-		if err := av1.ReconstructDecoderFrameWorkLumaCoeffBlock(batch, 0, ctx, block); err != nil {
-			b.Fatal(err)
-		}
-		sum += int(output.Y.Pix[i%len(output.Y.Pix)])
-	}
-	publicBenchmarkSink = sum
-}
-
-func BenchmarkPublicDecoderBlockCoeffDecodeReconstruction(b *testing.B) {
-	output := publicBenchmarkDecoderFrame(b, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
-	batch := publicDecoderBlockCoeffSimpleBatch(output)
-	req := publicDecoderBlockCoeffDecodeRequest(b, batch, false)
-	payload := make([]byte, 32)
-	job := av1.TileJob{Offset: 0, Size: uint32(len(payload))}
-	var state av1.TileDecodeState
-	var transformCDFs av1.TileTransformCDFs
-	var coeffCDFs av1.TileCoeffCDFs
-	cdfs := av1.TileBlockCoeffCDFs{Transform: &transformCDFs, Coeff: &coeffCDFs}
-	var transformCtx av1.TileTransformContext
-	var coeffCtx av1.TileCoeffEntropyContext
-	var scratch av1.TileBlockCoeffScratch
-
-	b.SetBytes(int64(len(payload)))
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	sum := 0
-	for i := 0; i < b.N; i++ {
-		if err := av1.InitTileTransformCDFsDefault(&transformCDFs); err != nil {
-			b.Fatal(err)
-		}
-		if err := av1.InitTileCoeffCDFsDefault(&coeffCDFs, 0); err != nil {
-			b.Fatal(err)
-		}
-		if err := av1.ResetTileDecodeState(&state, payload, job, av1.TileDecodeOptions{}); err != nil {
-			b.Fatal(err)
-		}
-		transformCtx.Reset()
-		coeffCtx.Reset()
-		fillPublicReconstructPlane(output.Y, output.Layout.BytesPerSample, 128)
-		result, err := av1.DecodeAndReconstructDecoderFrameWorkBlockCoefficients(batch, 0, &state, cdfs, &transformCtx, &coeffCtx, &scratch, req, func(block av1.TileBlockCoeffBlock) error {
-			sum += int(block.Result.EOB) + int(block.Plane)
-			return nil
-		})
-		if err != nil {
-			b.Fatal(err)
-		}
-		sum += int(result.TotalStats().TXBs) + int(output.Y.Pix[i%len(output.Y.Pix)])
 	}
 	publicBenchmarkSink = sum
 }

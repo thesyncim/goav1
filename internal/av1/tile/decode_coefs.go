@@ -299,35 +299,3 @@ func decodeCoefs1D(c *entropy.Cursor, loCDF *[CoeffBaseContexts]entropy.CDF, hiC
 
 // log2Coef maps a coefficient scan dimension (4, 8, 16 or 32) to its log2.
 var log2Coef = [33]uint8{4: 2, 8: 3, 16: 4, 32: 5}
-
-// decodeCoefsDequantized runs decodeCoefTokens for a nonzero TXB whose plane
-// has prepared dequant factors and publishes the result on req.dequant the way
-// the tracked quantized reader does. It reports false, consuming nothing, when
-// the target cannot take this TXB.
-func (s *DecodeState) decodeCoefsDequantized(cdfs *CoeffCDFs, req *TXBDecodeRequest, txtp transform.Type, class transform.Class, scratch *LumaCoeffTreeScratch, geo *coeffGeometry, result *TXBDecodeResult) bool {
-	target, txScale, dqMax := prepareTrackedCoeffDequant(req.dequant, req.dequantPlane, geo)
-	if target == nil || req.DCSignContext >= 3 {
-		return false
-	}
-	if len(target.Dst) < 1024 {
-		return false
-	}
-	factors := &target.Factors[req.dequantPlane]
-	var c entropy.Cursor
-	c.Load(&s.Reader)
-	r := decodeCoefTokens(&c, cdfs, req.Size, geo, req.Plane, txtp, class, req.DCSignContext, (*[1024]int32)(target.Dst), false, &scratch.CoefLevels, coefDequant{
-		dc:    uint32(factors[0]),
-		ac:    uint32(factors[1]),
-		shift: txScale,
-		cfMax: uint32(dqMax),
-	})
-	c.CommitStateTo(&s.Reader)
-	target.ActiveRows = r.activeRows
-	target.TxScale = txScale
-	target.decoded = true
-	*result = TXBDecodeResult{
-		EOB:      uint16(r.eob + 1),
-		CulLevel: r.culLevel,
-	}
-	return true
-}

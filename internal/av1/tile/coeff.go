@@ -4,7 +4,6 @@ import (
 	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
-	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
@@ -112,7 +111,6 @@ type TXBDecodeRequest struct {
 	levelDirtyPos     *[maxCoeffScanLen]int16
 	levelDirtyLen     *uint16
 	levelDirtyScratch *[maxCoeffScratchLen]uint8
-	dequant           *CoeffDequantTarget
 
 	Size            TransformSize
 	Plane           CoeffPlaneType
@@ -131,8 +129,6 @@ type TXBDecodeRequest struct {
 	skipNonZeroCoeffClear bool
 	trustedScan           bool
 	knownNonZero          bool
-	dequantPlane          uint8
-	dequantDCOnly         bool
 }
 
 type TXBDecodeResult struct {
@@ -1784,25 +1780,13 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 			reader.CommitStateTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
-		dequantTarget, dequantTxScale, dqMax := prepareTrackedCoeffDequant(req.dequant, req.dequantPlane, geo)
-		if dequantTarget != nil {
-			if !req.dequantDCOnly {
-				clear(dequantTarget.Dst[:maxEOB])
-			}
-			dcFactor := dequantTarget.Factors[req.dequantPlane][0]
-			dequantTarget.Dst[lastPos] = quantize.DequantizeMagnitudeWithBoundsTrusted(int32(lastLevel), negative, dcFactor, dequantTxScale, dqMax)
-			dequantTarget.ActiveRows = (lastPos & (int(geo.scanHeight) - 1)) + 1
-			dequantTarget.TxScale = dequantTxScale
-			dequantTarget.decoded = true
-		} else {
-			signed := int16(lastLevel)
-			if negative {
-				signed = -signed
-			}
-			coeffs[lastPos] = signed
-			dirtyArr[0] = int16(lastPos)
-			*dirtyLen = 1
+		signed := int16(lastLevel)
+		if negative {
+			signed = -signed
 		}
+		coeffs[lastPos] = signed
+		dirtyArr[0] = int16(lastPos)
+		*dirtyLen = 1
 
 		culLevel := lastLevel
 		if culLevel > CoeffContextMask {
@@ -1944,19 +1928,9 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 	if coeffTraceEnabled {
 		coeffTraceBlock(int(req.Plane), 0, 0, int(req.Size), int(req.Class), eobPos)
 	}
-	dequantTarget, dequantTxScale, dqMax := prepareTrackedCoeffDequant(req.dequant, req.dequantPlane, geo)
-	var dcFactor, acFactor int32
-	activeRowMask := 0
-	if dequantTarget != nil {
-		factors := dequantTarget.Factors[req.dequantPlane]
-		dcFactor, acFactor = factors[0], factors[1]
-		activeRowMask = int(geo.scanHeight) - 1
-		clear(dequantTarget.Dst[:maxEOB])
-	}
 	culLevel := 0
 	dcValue := 0
 	maxScanLine := 0
-	activeRows := 0
 	i := nonzeroScanLen - 1
 	if i >= 0 && coeffDirtyPackedPos(dirtyArr[i]) == 0 {
 		pos := 0
@@ -1986,27 +1960,13 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 			reader.CommitStateTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
-		if dequantTarget != nil {
-			dequantTarget.Dst[pos] = quantize.DequantizeMagnitudeWithBoundsTrusted(int32(level), negative, dcFactor, dequantTxScale, dqMax)
-			row := pos & activeRowMask
-			if row+1 > activeRows {
-				activeRows = row + 1
-			}
-			if level != 0 {
-				dcValue = 1
-				if negative {
-					dcValue = -1
-				}
-			}
-		} else {
-			signed := int16(level)
-			if negative {
-				signed = -signed
-			}
-			dcValue = int(signed)
-			coeffs[pos] = signed
-			dirtyArr[i] = int16(pos)
+		signed := int16(level)
+		if negative {
+			signed = -signed
 		}
+		dcValue = int(signed)
+		coeffs[pos] = signed
+		dirtyArr[i] = int16(pos)
 		i--
 	}
 	for ; i >= 0; i-- {
@@ -2045,29 +2005,14 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 			reader.CommitStateTo(&s.Reader)
 			return TXBDecodeResult{}, ErrInvalidDecodeState
 		}
-		if dequantTarget != nil {
-			dequantTarget.Dst[pos] = quantize.DequantizeMagnitudeWithBoundsTrusted(int32(level), negative, acFactor, dequantTxScale, dqMax)
-			row := pos & activeRowMask
-			if row+1 > activeRows {
-				activeRows = row + 1
-			}
-		} else {
-			signed := int16(level)
-			if negative {
-				signed = -signed
-			}
-			coeffs[pos] = signed
-			dirtyArr[i] = int16(pos)
+		signed := int16(level)
+		if negative {
+			signed = -signed
 		}
+		coeffs[pos] = signed
+		dirtyArr[i] = int16(pos)
 	}
-	if dequantTarget != nil {
-		*dirtyLen = 0
-		dequantTarget.ActiveRows = activeRows
-		dequantTarget.TxScale = dequantTxScale
-		dequantTarget.decoded = true
-	} else {
-		*dirtyLen = uint16(nonzeroScanLen)
-	}
+	*dirtyLen = uint16(nonzeroScanLen)
 
 	if culLevel > CoeffContextMask {
 		culLevel = CoeffContextMask
@@ -2087,50 +2032,6 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 		MaxScanLine: uint16(maxScanLine),
 		CulLevel:    uint8(culLevel),
 	}, nil
-}
-
-func prepareTrackedCoeffDequant(target *CoeffDequantTarget, plane uint8, geo *coeffGeometry) (*CoeffDequantTarget, uint8, int32) {
-	if target == nil || geo == nil || len(target.Dst) < int(geo.maxEOB) {
-		return nil, 0, 0
-	}
-	return prepareCoeffDequantFactors(target, plane, geo)
-}
-
-// prepareCoeffDequantFactors resolves the plane's dequant factors and the
-// TXB's dq shift and cf_max without checking where the coefficients go.
-func prepareCoeffDequantFactors(target *CoeffDequantTarget, plane uint8, geo *coeffGeometry) (*CoeffDequantTarget, uint8, int32) {
-	if target == nil || geo == nil || plane > 2 || geo.txCtx >= CoeffTxSizeContexts || target.Provider == nil ||
-		int(geo.scanHeight) <= 0 {
-		return nil, 0, 0
-	}
-	switch target.BitDepth {
-	case 8, 10, 12:
-	default:
-		return nil, 0, 0
-	}
-	// txCtx uses full coded dimensions, not the adjusted coefficient scan
-	// size. For all legal AV1 transforms, max(txCtx-2, 0) matches the coded
-	// area thresholds used by TransformScale (>256 and >1024 pixels).
-	txScale := uint8(0)
-	if geo.txCtx > 2 {
-		txScale = geo.txCtx - 2
-	}
-	if txScale > 2 {
-		return nil, 0, 0
-	}
-	planeBit := uint8(1 << plane)
-	if target.PreparedPlanes&planeBit == 0 && !target.Provider.PrepareCoeffDequantPlane(plane) {
-		return nil, 0, 0
-	}
-	if target.PreparedPlanes&planeBit == 0 {
-		return nil, 0, 0
-	}
-	factors := target.Factors[plane]
-	if factors[0] <= 0 || factors[1] <= 0 {
-		return nil, 0, 0
-	}
-	_, dqMax := quantize.DequantCoefficientBoundsTrusted(target.BitDepth)
-	return target, txScale, dqMax
 }
 
 func readBaseRangeFromArrCursorUpdateTrusted(reader *entropy.Cursor, arr *[CoeffBRContexts]entropy.CDF, context int) uint8 {
@@ -2167,33 +2068,6 @@ func eobFlagCDFKnown(cdfs *CoeffCDFs, size TransformSize, plane CoeffPlaneType, 
 	default:
 		return &cdfs.EOBFlag1024[plane][context]
 	}
-}
-
-func readEOBCursor(reader *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, txCtx int, plane CoeffPlaneType, context uint8) (EOBResult, error) {
-	if reader == nil || cdfs == nil || !plane.Valid() || size >= transformSizeCount ||
-		txCtx < 0 || txCtx >= CoeffTxSizeContexts || context >= maxEOBFlagContexts {
-		return EOBResult{}, ErrInvalidDecodeState
-	}
-	var eobCDF *entropy.CDF
-	eobMultiSize := eobMultiSizeTable[size]
-	switch eobMultiSize {
-	case 0:
-		eobCDF = &cdfs.EOBFlag16[plane][context]
-	case 1:
-		eobCDF = &cdfs.EOBFlag32[plane][context]
-	case 2:
-		eobCDF = &cdfs.EOBFlag64[plane][context]
-	case 3:
-		eobCDF = &cdfs.EOBFlag128[plane][context]
-	case 4:
-		eobCDF = &cdfs.EOBFlag256[plane][context]
-	case 5:
-		eobCDF = &cdfs.EOBFlag512[plane][context]
-	default:
-		eobCDF = &cdfs.EOBFlag1024[plane][context]
-	}
-
-	return readEOBCursorKnown(reader, eobCDF, int(eobMultiSize)+5, &cdfs.EOBExtra[txCtx][plane])
 }
 
 func readEOBCursorKnown(reader *entropy.Cursor, eobCDF *entropy.CDF, eobSymbols int, eobExtraArr *[EOBCoefContexts]entropy.CDF) (EOBResult, error) {
@@ -2526,26 +2400,6 @@ func coeffLowerLevelsCtxFast(levels []uint8, geo *coeffGeometry, posSlice []coef
 	return uint8(ctx + coeff1DContextOffset(row))
 }
 
-func coeffLowerLevelsCtx2DFast(levels []uint8, posSlice []coeffPos, pos int, stride int) uint8 {
-	p := posSlice[pos]
-	if pos == 0 {
-		return 0
-	}
-	padded := int(p.padded)
-	s1 := padded + stride
-	s1p1 := s1 + 1
-	s2 := s1 + stride
-	p1 := padded + 1
-	p2 := padded + 2
-	_ = levels[s2]
-	_ = levels[p2]
-
-	mag := clipMax3(levels[s1]) + clipMax3(levels[p1]) +
-		clipMax3(levels[s1p1]) + clipMax3(levels[s2]) + clipMax3(levels[p2])
-	ctx := minInt((mag+1)>>1, 4)
-	return uint8(ctx + int(p.lower2DOffset))
-}
-
 func coeffLowerLevelsCtxHorizFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos, pos int) uint8 {
 	p := posSlice[pos]
 	padded := int(p.padded)
@@ -2635,17 +2489,6 @@ func coeffBRContextFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos,
 		}
 	}
 	return uint8(mag + 14)
-}
-
-func coeffBRContext2DFast(levels []uint8, posSlice []coeffPos, pos int, stride int) uint8 {
-	p := posSlice[pos]
-	padded := int(p.padded)
-	s1 := padded + stride
-	s1p1 := s1 + 1
-	p1 := padded + 1
-	_ = levels[s1p1]
-	mag := int(levels[p1]) + int(levels[s1]) + int(levels[s1p1])
-	return uint8(minInt((mag+1)>>1, 6) + int(p.br2DOffset))
 }
 
 func coeffBRContextHorizFast(levels []uint8, geo *coeffGeometry, posSlice []coeffPos, pos int) uint8 {

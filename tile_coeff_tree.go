@@ -24,33 +24,3 @@ func InitTileTransformCDFsDefault(cdfs *TileTransformCDFs) error {
 	}
 	return cdfs.InitDefault()
 }
-
-// DecodeTileBlockCoefficients decodes the coefficients for one transform
-// block described by req. transformCtx and coeffCtx are the caller-owned
-// per-superblock contexts; scratch is the caller-owned per-block scratch.
-// The visit callback is invoked once per decoded non-zero coefficient.
-func DecodeTileBlockCoefficients(state *TileDecodeState, cdfs TileBlockCoeffCDFs, transformCtx *TileTransformContext, coeffCtx *TileCoeffEntropyContext, scratch *TileBlockCoeffScratch, req TileBlockCoeffRequest, visit TileBlockCoeffVisitor) (TileBlockCoeffResult, error) {
-	if transformCtx == nil || coeffCtx == nil {
-		return TileBlockCoeffResult{}, ErrTileInvalidDecodeState
-	}
-	return state.DecodeBlockCoefficients(cdfs, &transformCtx.context, &coeffCtx.context, scratch, req, visit)
-}
-
-// DecodeTileLumaCoefficients walks the luma coefficient tree for one block,
-// invoking visit for each emitted coefficient and returning aggregate stats.
-func DecodeTileLumaCoefficients(state *TileDecodeState, cdfs *TileCoeffCDFs, ctx *TileCoeffEntropyContext, scratch *TileCoeffTreeScratch, req TileLumaCoeffTreeRequest, visit TileLumaCoeffVisitor) (TileLumaCoeffStats, error) {
-	if ctx == nil {
-		return TileLumaCoeffStats{}, ErrTileInvalidDecodeState
-	}
-	return state.DecodeLumaCoefficients(cdfs, &ctx.context, scratch, req, visit)
-}
-
-// DecodeTileChromaCoefficients walks the chroma coefficient tree for one
-// block, invoking visit for each emitted coefficient and returning aggregate
-// stats.
-func DecodeTileChromaCoefficients(state *TileDecodeState, cdfs *TileCoeffCDFs, ctx *TileCoeffEntropyContext, scratch *TileCoeffTreeScratch, req TileChromaCoeffTreeRequest, visit TileChromaCoeffVisitor) (TileLumaCoeffStats, error) {
-	if ctx == nil {
-		return TileLumaCoeffStats{}, ErrTileInvalidDecodeState
-	}
-	return state.DecodeChromaCoefficients(cdfs, &ctx.context, scratch, req, visit)
-}

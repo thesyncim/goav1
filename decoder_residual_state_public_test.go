@@ -205,41 +205,6 @@ func TestPublicDecoderBlockLoopRequestAndContextBinding(t *testing.T) {
 	}
 }
 
-func TestPublicDecoderFrameWorkBlockTransformsDispatch(t *testing.T) {
-	output := publicDecoderPostFilterFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
-	batch := publicDecoderPredictionBatch(output)
-	var state av1.TileDecodeState
-
-	intra, err := av1.ReadDecoderFrameWorkBlockTransforms(batch, &state, publicDecoderPredictionIntraVisit(av1.TileIntraModeDC))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if intra.Inter || !intra.ReadIntraTX || intra.ReadInterTX || intra.Luma != av1.TransformTypeDCTDCT {
-		t.Fatalf("intra transforms=%+v", intra)
-	}
-
-	interVisit := publicDecoderPredictionInterVisit(av1.MotionVector{})
-	interVisit.Prediction.Valid = true
-	inter, err := av1.ReadDecoderFrameWorkBlockTransforms(batch, &state, interVisit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !inter.Inter || inter.ReadIntraTX || !inter.ReadInterTX || inter.Luma != av1.TransformTypeDCTDCT {
-		t.Fatalf("inter transforms=%+v", inter)
-	}
-
-	fallback, err := av1.ReadDecoderFrameWorkBlockTransforms(batch, &state, av1.TileBlockLoopVisit{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !fallback.Inter || fallback.ReadIntraTX || !fallback.ReadInterTX {
-		t.Fatalf("fallback transforms=%+v", fallback)
-	}
-	if _, err := av1.ReadDecoderFrameWorkBlockTransforms(batch, nil, publicDecoderPredictionIntraVisit(av1.TileIntraModeDC)); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
-		t.Fatalf("nil state err=%v want %v", err, av1.ErrThreadingInvalidBatch)
-	}
-}
-
 func TestPublicDecoderFrameWorkResidualMaxScratchLen(t *testing.T) {
 	batch, _, _, _, _ := publicDecoderResidualDriver(t)
 	got32, got16, err := av1.DecoderFrameWorkResidualMaxScratchLen(batch, batch.Quantization.BaseQIdx, 0, av1.DecoderFrameWorkPlaneY)
@@ -328,7 +293,6 @@ func TestPublicDecoderFrameWorkBatchResidualScratchBinding(t *testing.T) {
 	}
 
 	bound.Tile.TransformMode = batch.TransformRef.TransformMode
-	bound.Tile.UseDefaultTransforms = true
 	stats, err := av1.DecodeAndRetainDecoderFrameWorkBatchResiduals(batch, state, &storage, &scratch, bound)
 	if err != nil {
 		t.Fatal(err)
@@ -5030,27 +4994,12 @@ func TestPublicDecoderFrameWorkResidualEventRunnerAllocs(t *testing.T) {
 
 func TestPublicDecodeAndReconstructDecoderFrameWorkJobResiduals(t *testing.T) {
 	batch, state, cdfs, scratch, req := publicDecoderResidualDriver(t)
-	predictions := 0
-	transforms := 0
-	req.Predict = func(visit av1.TileBlockLoopVisit) error {
-		predictions++
-		if visit.Block.MICol != 0 || visit.Block.MIRow != 0 {
-			t.Fatalf("visit=%+v", visit.Block)
-		}
-		return nil
-	}
-	req.Transforms = func(visit av1.TileBlockLoopVisit) (av1.DecoderFrameWorkBlockTransforms, error) {
-		transforms++
-		return av1.ReadDecoderFrameWorkBlockTransforms(batch, state, visit)
-	}
-
 	stats, err := av1.DecodeAndReconstructDecoderFrameWorkJobResiduals(batch, 0, state, cdfs, &scratch, req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Loop.Blocks != 1 || stats.Loop.PartitionReads != 1 ||
-		predictions != 1 || transforms != 1 || stats.Predictions != 1 {
-		t.Fatalf("stats=%+v predictions=%d transforms=%d", stats, predictions, transforms)
+	if stats.Loop.Blocks != 1 || stats.Loop.PartitionReads != 1 {
+		t.Fatalf("stats=%+v", stats)
 	}
 	if stats.CoefficientBlocks != 1 || stats.SkippedBlocks != 0 ||
 		stats.TXBs != 1 || stats.Residuals != 1 || stats.TXBs != stats.NonZero+stats.AllZero {
@@ -5102,8 +5051,6 @@ func TestPublicDecodeAndRetainDecoderFrameWorkJobResiduals(t *testing.T) {
 
 func TestPublicDecodeAndRetainDecoderFrameWorkJobResidualsDefaultTransforms(t *testing.T) {
 	batch, state, _, scratch, req := publicDecoderResidualDriver(t)
-	req.Transforms = nil
-	req.UseDefaultTransforms = true
 	var storage av1.DecoderFrameWorkTileResidualCDFStorage
 	if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
 		t.Fatal(err)
@@ -5125,7 +5072,7 @@ func TestPublicDecodeAndRetainDecoderFrameWorkBatchResiduals(t *testing.T) {
 	batch.RetainedTileResidualCDFs = &retained
 	batch.RetainedTileResidualCDFsValid = &retainedValid
 	visits := 0
-	req.Tile.Loop.BeforeCoefficients = func(visit av1.TileBlockLoopVisit) error {
+	req.Tile.AfterBlock = func(visit av1.TileBlockLoopVisit) error {
 		visits++
 		if visits == 2 && visit.Block.MICol != 16 {
 			t.Fatalf("second job block=%+v", visit.Block)
@@ -5204,11 +5151,6 @@ func TestPublicDecodeAndReconstructDecoderFrameWorkJobResidualsRejectsInvalidInp
 	}
 	if _, err := av1.DecodeAndReconstructDecoderFrameWorkJobResiduals(batch, 0, state, cdfs, nil, req); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
 		t.Fatalf("nil scratch err=%v want %v", err, av1.ErrThreadingInvalidBatch)
-	}
-	noTransforms := req
-	noTransforms.Transforms = nil
-	if _, err := av1.DecodeAndReconstructDecoderFrameWorkJobResiduals(batch, 0, state, cdfs, &scratch, noTransforms); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
-		t.Fatalf("nil transforms err=%v want %v", err, av1.ErrThreadingInvalidBatch)
 	}
 	shortCarrier := req
 	scratch.LoopContext.Above = []av1.TileBlockLoopRootAboveContext{}
@@ -5344,7 +5286,6 @@ func TestPublicDecodeAndRetainDecoderFrameWorkBatchResidualsAllocs(t *testing.T)
 			t.Fatal(err)
 		}
 		req.Tile.TransformMode = batch.TransformRef.TransformMode
-		req.Tile.UseDefaultTransforms = true
 		if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
 			t.Fatal(err)
 		}
@@ -5435,11 +5376,8 @@ func publicDecoderResidualDriver(t *testing.T) (av1.DecoderFrameWorkBatch, *av1.
 	}
 	var scratch av1.DecoderFrameWorkTileResidualScratch
 	req := av1.DecoderFrameWorkTileResidualRequest{
-		Loop:          loopReq,
-		TransformMode: batch.TransformRef.TransformMode,
-		Transforms: func(visit av1.TileBlockLoopVisit) (av1.DecoderFrameWorkBlockTransforms, error) {
-			return av1.ReadDecoderFrameWorkBlockTransforms(batch, state, visit)
-		},
+		Loop:            loopReq,
+		TransformMode:   batch.TransformRef.TransformMode,
 		Int32Scratch:    make([]int32, int32Len),
 		ResidualScratch: make([]int16, int16Len),
 	}
@@ -5489,10 +5427,7 @@ func publicDecoderResidualBatchDriver(t *testing.T) (av1.DecoderFrameWorkBatch, 
 	var scratch av1.DecoderFrameWorkTileResidualScratch
 	req := av1.DecoderFrameWorkBatchResidualRequest{
 		Tile: av1.DecoderFrameWorkTileResidualRequest{
-			TransformMode: batch.TransformRef.TransformMode,
-			Transforms: func(visit av1.TileBlockLoopVisit) (av1.DecoderFrameWorkBlockTransforms, error) {
-				return av1.ReadDecoderFrameWorkBlockTransforms(batch, state, visit)
-			},
+			TransformMode:   batch.TransformRef.TransformMode,
 			Int32Scratch:    make([]int32, int32Len),
 			ResidualScratch: make([]int16, int16Len),
 		},

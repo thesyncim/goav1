@@ -253,74 +253,6 @@ func TestFrameWorkBlockLoopRefFrameSideMatchesLibaom(t *testing.T) {
 	}
 }
 
-func TestFrameWorkBatchDecodeAndReconstructJobResiduals(t *testing.T) {
-	output := testBatchFrame(t, frame.Format{
-		Width:      64,
-		Height:     64,
-		BitDepth:   8,
-		MonoChrome: true,
-		Align:      64,
-	})
-	testFillFrame(output, 128)
-	ctx := FrameWorkBatch{
-		Output:  output,
-		Payload: make([]byte, 256),
-		FrameWorkFrameContext: FrameWorkFrameContext{
-			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
-				ColorConfig: parser.ColorConfig{BitDepth: 8, MonoChrome: true},
-			}),
-			FrameSize:    parser.FrameSize{CodedWidth: 64, Height: 64},
-			Quantization: parser.QuantizationParams{BaseQIdx: 64},
-			TransformRef: parser.TransformReferenceParams{TransformMode: parser.TransformModeLargest},
-		},
-		Jobs: []tile.Job{{SBCols: 1, SBRows: 1, Offset: 0, Size: 256}},
-	}
-	var state tile.DecodeState
-	if err := ctx.JobDecodeState(0, &state); err != nil {
-		t.Fatal(err)
-	}
-	cdfs := mustFrameWorkTileResidualCDFs(t, ctx.Quantization.BaseQIdx)
-	var scratch FrameWorkTileResidualScratch
-	loopReq, err := ctx.JobBlockLoopRequest(0, nil, nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	int32Scratch, residualScratch := testFrameWorkResidualScratch(t, ctx, transform.Size{Width: 64, Height: 64}, transform.TypeDCTDCT)
-	predictions := 0
-	transforms := 0
-	stats, err := ctx.DecodeAndReconstructJobResiduals(0, &state, cdfs, &scratch, FrameWorkTileResidualRequest{
-		Loop:          loopReq,
-		TransformMode: ctx.TransformRef.TransformMode,
-		Predict: func(visit tile.BlockLoopVisit) error {
-			predictions++
-			if visit.Block.MICol != 0 || visit.Block.MIRow != 0 {
-				t.Fatalf("visit=%+v", visit.Block)
-			}
-			return nil
-		},
-		Transforms: func(visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
-			transforms++
-			return ctx.ReadInterBlockTransforms(&state, visit)
-		},
-		Int32Scratch:    int32Scratch,
-		ResidualScratch: residualScratch,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stats.Loop.Blocks != 1 || stats.Loop.PartitionReads != 1 ||
-		predictions != 1 || transforms != 1 || stats.Predictions != 1 {
-		t.Fatalf("stats=%+v predictions=%d transforms=%d", stats, predictions, transforms)
-	}
-	if stats.CoefficientBlocks != 1 || stats.SkippedBlocks != 0 ||
-		stats.TXBs != 1 || stats.Residuals != 1 || stats.TXBs != stats.NonZero+stats.AllZero {
-		t.Fatalf("residual stats=%+v", stats)
-	}
-	if stats.Loop.CoefficientBlocks != 1 {
-		t.Fatalf("loop coefficient stats=%+v residual stats=%+v", stats.Loop, stats)
-	}
-}
-
 func TestFrameWorkBatchDecodeAndReconstructJobResidualsDefault(t *testing.T) {
 	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
 	afterBlocks := 0
@@ -465,253 +397,10 @@ func TestFrameWorkBatchDecodeAndReconstructJobResidualsRejectsInvalidInputs(t *t
 	if _, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, nil, req); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("nil scratch err=%v want %v", err, ErrInvalidBatch)
 	}
-	noTransforms := req
-	noTransforms.Transforms = nil
-	if _, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, noTransforms); !errors.Is(err, ErrInvalidBatch) {
-		t.Fatalf("nil transforms err=%v want %v", err, ErrInvalidBatch)
-	}
 	shortCarrier := req
 	scratch.LoopContext.Above = []tile.BlockLoopRootAboveContext{}
 	if _, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, shortCarrier); !errors.Is(err, tile.ErrInvalidDecodeState) {
 		t.Fatalf("short scratch context carrier err=%v want %v", err, tile.ErrInvalidDecodeState)
-	}
-}
-
-func TestFrameWorkBatchReadInterBlockTransforms(t *testing.T) {
-	ctx := FrameWorkBatch{
-		FrameWorkFrameContext: FrameWorkFrameContext{
-			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
-				ColorConfig: parser.ColorConfig{BitDepth: 8},
-			}),
-			Quantization: parser.QuantizationParams{BaseQIdx: 64},
-		},
-	}
-	var cdfs tile.TransformTypeCDFs
-	if err := cdfs.InitDefault(); err != nil {
-		t.Fatal(err)
-	}
-	var state tile.DecodeState
-	if err := state.Reset([]byte{0x00}, tile.Job{Offset: 0, Size: 1}, tile.DecodeOptions{BaseQIdx: 64}); err != nil {
-		t.Fatal(err)
-	}
-	transforms, err := ctx.ReadInterBlockTransforms(&state, tile.BlockLoopVisit{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !transforms.Inter || !transforms.ReadInterTX || transforms.Luma != transform.TypeDCTDCT {
-		t.Fatalf("transforms=%+v", transforms)
-	}
-	var selector tile.InterCoeffTransformSelector
-	selector.Reset(&state, &cdfs, ctx.FrameMode.ReducedTxSet, false, false)
-	got, err := selector.SelectCoeffTransform(tile.CoeffTransformRequest{
-		Block: tile.TransformBlock{Size: tile.TransformSize32x32},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeIDTX {
-		t.Fatalf("tx type=%d want %d", got, transform.TypeIDTX)
-	}
-
-	ctx.FrameMode.ReducedTxSet = true
-	if err := state.Reset([]byte{0x00}, tile.Job{Offset: 0, Size: 1}, tile.DecodeOptions{BaseQIdx: 64}); err != nil {
-		t.Fatal(err)
-	}
-	transforms, err = ctx.ReadInterBlockTransforms(&state, tile.BlockLoopVisit{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	selector.Reset(&state, nil, ctx.FrameMode.ReducedTxSet, true, false)
-	got, err = selector.SelectCoeffTransform(tile.CoeffTransformRequest{
-		Block: tile.TransformBlock{Size: tile.TransformSize16x16},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeDCTDCT {
-		t.Fatalf("reduced tx type=%d want %d", got, transform.TypeDCTDCT)
-	}
-
-	intrabc := tile.BlockLoopVisit{
-		Prediction: tile.BlockPredictionModeResult{
-			Valid:        true,
-			Intrabc:      true,
-			IntrabcValid: true,
-		},
-	}
-	transforms, err = ctx.ReadInterBlockTransforms(&state, intrabc)
-	if err != nil {
-		t.Fatalf("intrabc inter transforms err=%v", err)
-	}
-	if !transforms.Inter || !transforms.ReadInterTX {
-		t.Fatalf("intrabc inter transforms=%+v", transforms)
-	}
-	transforms, err = ctx.ReadBlockTransforms(&state, intrabc)
-	if err != nil {
-		t.Fatalf("intrabc default transforms err=%v", err)
-	}
-	if !transforms.Inter || !transforms.ReadInterTX {
-		t.Fatalf("intrabc default transforms=%+v", transforms)
-	}
-}
-
-func TestFrameWorkBatchReadIntraBlockTransforms(t *testing.T) {
-	ctx := FrameWorkBatch{
-		FrameWorkFrameContext: FrameWorkFrameContext{
-			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
-				ColorConfig: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
-			}),
-			Quantization: parser.QuantizationParams{BaseQIdx: 64},
-		},
-	}
-	var cdfs tile.TransformTypeCDFs
-	if err := cdfs.InitDefault(); err != nil {
-		t.Fatal(err)
-	}
-	var state tile.DecodeState
-	if err := state.Reset([]byte{0x00}, tile.Job{Offset: 0, Size: 1}, tile.DecodeOptions{BaseQIdx: 64}); err != nil {
-		t.Fatal(err)
-	}
-	visit := tile.BlockLoopVisit{
-		Prediction: tile.BlockPredictionModeResult{
-			Valid:           true,
-			Intra:           true,
-			LumaMode:        tile.IntraModeDC,
-			ChromaMode:      tile.ChromaIntraModeVertical,
-			ChromaModeValid: true,
-		},
-	}
-	transforms, err := ctx.ReadIntraBlockTransforms(&state, visit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if transforms.Inter || !transforms.ReadIntraTX || transforms.Luma != transform.TypeDCTDCT {
-		t.Fatalf("transforms=%+v", transforms)
-	}
-	var selector tile.IntraCoeffTransformSelector
-	selector.Reset(&state, &cdfs, ctx.FrameMode.ReducedTxSet, false, false, 64, tile.IntraModeDC, tile.ChromaIntraModeVertical)
-	got, err := selector.SelectCoeffTransform(tile.CoeffTransformRequest{
-		Plane: 0,
-		Block: tile.TransformBlock{Size: tile.TransformSize8x8},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeIDTX {
-		t.Fatalf("intra luma tx type=%d want %d", got, transform.TypeIDTX)
-	}
-	got, err = selector.SelectCoeffTransform(tile.CoeffTransformRequest{
-		Plane: 1,
-		Block: tile.TransformBlock{Size: tile.TransformSize8x8},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeADSTDCT {
-		t.Fatalf("intra chroma tx type=%d want %d", got, transform.TypeADSTDCT)
-	}
-
-	if _, err := ctx.ReadIntraBlockTransforms(nil, visit); !errors.Is(err, ErrInvalidBatch) {
-		t.Fatalf("nil state err=%v want %v", err, ErrInvalidBatch)
-	}
-	visit.Prediction.Intra = false
-	if _, err := ctx.ReadIntraBlockTransforms(&state, visit); !errors.Is(err, ErrInvalidBatch) {
-		t.Fatalf("inter visit err=%v want %v", err, ErrInvalidBatch)
-	}
-}
-
-func TestFrameWorkTileResidualControllerWiresIntraTransformSelector(t *testing.T) {
-	ctx := FrameWorkBatch{
-		FrameWorkFrameContext: FrameWorkFrameContext{
-			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
-				ColorConfig: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
-			}),
-			Quantization: parser.QuantizationParams{BaseQIdx: 64},
-			TransformRef: parser.TransformReferenceParams{TransformMode: parser.TransformModeLargest},
-		},
-	}
-	var state tile.DecodeState
-	if err := state.Reset([]byte{0x00}, tile.Job{Offset: 0, Size: 1}, tile.DecodeOptions{BaseQIdx: 64}); err != nil {
-		t.Fatal(err)
-	}
-	cdfs := mustFrameWorkTileResidualCDFs(t, 64)
-	var scratch FrameWorkTileResidualScratch
-	controller := frameWorkTileResidualLoopController{
-		batch:   ctx,
-		state:   &state,
-		cdfs:    cdfs,
-		scratch: &scratch,
-		req: FrameWorkTileResidualRequest{
-			TransformMode: parser.TransformModeLargest,
-			Transforms: func(visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
-				return ctx.ReadIntraBlockTransforms(&state, visit)
-			},
-		},
-	}
-	visit := tile.BlockLoopVisit{
-		Block:     tile.BlockVisit{Size: tile.BlockSize16x16, VisibleW4: 4, VisibleH4: 4},
-		Segment:   parser.SegmentData{RefFrame: -1},
-		SegmentID: 0,
-		Prediction: tile.BlockPredictionModeResult{
-			Valid:           true,
-			Intra:           true,
-			LumaMode:        tile.IntraModeDC,
-			ChromaMode:      tile.ChromaIntraModeVertical,
-			ChromaModeValid: true,
-		},
-	}
-	req, err := controller.SelectBlockCoeffRequestPtr(&visit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := req.TransformSelect.SelectCoeffTransform(tile.CoeffTransformRequest{
-		Plane: 0,
-		Block: tile.TransformBlock{Size: tile.TransformSize8x8},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeIDTX {
-		t.Fatalf("controller intra luma tx=%d want %d", got, transform.TypeIDTX)
-	}
-	got, err = req.TransformSelect.SelectCoeffTransform(tile.CoeffTransformRequest{
-		Plane: 1,
-		Block: tile.TransformBlock{Size: tile.TransformSize8x8},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeADSTDCT {
-		t.Fatalf("controller intra chroma tx=%d want %d", got, transform.TypeADSTDCT)
-	}
-}
-
-func TestFrameWorkIntraTransformModeUsesFilterIntraDirection(t *testing.T) {
-	tests := []struct {
-		name string
-		mode tile.FilterIntraMode
-		want tile.IntraMode
-	}{
-		{name: "dc", mode: tile.FilterIntraModeDC, want: tile.IntraModeDC},
-		{name: "vertical", mode: tile.FilterIntraModeVertical, want: tile.IntraModeVertical},
-		{name: "horizontal", mode: tile.FilterIntraModeHorizontal, want: tile.IntraModeHorizontal},
-		{name: "d157", mode: tile.FilterIntraModeD157, want: tile.IntraModeD157},
-		{name: "paeth", mode: tile.FilterIntraModePaeth, want: tile.IntraModeDC},
-	}
-	if got := frameWorkIntraTransformMode(&tile.BlockPredictionModeResult{LumaMode: tile.IntraModeD45}); got != tile.IntraModeD45 {
-		t.Fatalf("plain intra transform mode=%d want %d", got, tile.IntraModeD45)
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := frameWorkIntraTransformMode(&tile.BlockPredictionModeResult{
-				LumaMode:         tile.IntraModeD45,
-				FilterIntraValid: true,
-				FilterIntraMode:  tt.mode,
-			})
-			if got != tt.want {
-				t.Fatalf("filter intra transform mode=%d want %d", got, tt.want)
-			}
-		})
 	}
 }
 
@@ -833,90 +522,6 @@ func TestFrameWorkTileResidualCDFStorageRejectsNil(t *testing.T) {
 	}
 }
 
-// TestFrameWorkTileResidualControllerPropagatesSegmentQIndex verifies that the
-// tx-type selector receives the segment-adjusted qindex (xd->qindex[segment_id]
-// in libaom), not the unsegmented frame base. When a segment delta drives the
-// effective qindex to 0, the tx-type syntax must short-circuit to DCT_DCT
-// exactly as libaom does — see SelectBlockCoeffRequest. The mirror case (base
-// qindex 0 with a positive segment delta that lifts the effective qindex
-// above 0) requires the selector to fall through to the entropy-coded tx
-// type instead of the qindex==0 shortcut.
-func TestFrameWorkTileResidualControllerPropagatesSegmentQIndex(t *testing.T) {
-	for _, tt := range []struct {
-		name            string
-		baseQIdx        uint8
-		segmentDeltaQ   int16
-		wantDCTShortcut bool
-	}{
-		{name: "segment_delta_drives_qindex_to_zero", baseQIdx: 64, segmentDeltaQ: -64, wantDCTShortcut: true},
-		{name: "segment_delta_lifts_qindex_above_zero", baseQIdx: 0, segmentDeltaQ: 32, wantDCTShortcut: false},
-		{name: "segment_delta_keeps_qindex_above_zero", baseQIdx: 64, segmentDeltaQ: 0, wantDCTShortcut: false},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			segmentation := parser.SegmentationParams{Enabled: true}
-			segmentation.Data.Segments[1].DeltaQ = tt.segmentDeltaQ
-			ctx := FrameWorkBatch{
-				FrameWorkFrameContext: FrameWorkFrameContext{
-					Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
-						ColorConfig: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
-					}),
-					Quantization: parser.QuantizationParams{BaseQIdx: tt.baseQIdx},
-					Segmentation: segmentation,
-					TransformRef: parser.TransformReferenceParams{TransformMode: parser.TransformModeLargest},
-				},
-			}
-			var state tile.DecodeState
-			if err := state.Reset([]byte{0x00}, tile.Job{Offset: 0, Size: 1}, tile.DecodeOptions{BaseQIdx: tt.baseQIdx}); err != nil {
-				t.Fatal(err)
-			}
-			cdfs := mustFrameWorkTileResidualCDFs(t, tt.baseQIdx)
-			var scratch FrameWorkTileResidualScratch
-			controller := frameWorkTileResidualLoopController{
-				batch:   ctx,
-				state:   &state,
-				cdfs:    cdfs,
-				scratch: &scratch,
-				req: FrameWorkTileResidualRequest{
-					TransformMode: parser.TransformModeLargest,
-					Transforms: func(visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
-						return ctx.ReadInterBlockTransforms(&state, visit)
-					},
-				},
-			}
-			visit := tile.BlockLoopVisit{
-				Block:     tile.BlockVisit{Size: tile.BlockSize16x16, VisibleW4: 4, VisibleH4: 4},
-				Segment:   parser.SegmentData{RefFrame: -1},
-				SegmentID: 1,
-				Prediction: tile.BlockPredictionModeResult{
-					Valid: true,
-					Intra: false,
-				},
-			}
-			req, err := controller.SelectBlockCoeffRequestPtr(&visit)
-			if err != nil {
-				t.Fatal(err)
-			}
-			selector, ok := req.TransformSelect.(*tile.InterCoeffTransformSelector)
-			if !ok {
-				t.Fatalf("transform select=%T want *tile.InterCoeffTransformSelector", req.TransformSelect)
-			}
-			if !selector.QIndexKnown {
-				t.Fatalf("selector.QIndexKnown=false want true")
-			}
-			wantQIndex := uint8(int(tt.baseQIdx) + int(tt.segmentDeltaQ))
-			if wantQIndex != selector.QIndex {
-				t.Fatalf("selector.QIndex=%d want %d (segment-adjusted, base=%d delta=%d)",
-					selector.QIndex, wantQIndex, tt.baseQIdx, tt.segmentDeltaQ)
-			}
-			shortcut := selector.QIndexKnown && selector.QIndex == 0
-			if shortcut != tt.wantDCTShortcut {
-				t.Fatalf("DCT_DCT shortcut=%v want %v (selector.QIndex=%d)",
-					shortcut, tt.wantDCTShortcut, selector.QIndex)
-			}
-		})
-	}
-}
-
 func TestFrameWorkTileResidualCDFStorageAllocs(t *testing.T) {
 	var storage FrameWorkTileResidualCDFStorage
 	allocs := testing.AllocsPerRun(1000, func() {
@@ -932,22 +537,6 @@ func TestFrameWorkTileResidualCDFStorageAllocs(t *testing.T) {
 
 func TestFrameWorkBatchDecodeAndReconstructJobResidualsPropagatesCallbacks(t *testing.T) {
 	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
-	errPredict := errors.New("predict")
-	req.Predict = func(tile.BlockLoopVisit) error { return errPredict }
-	if _, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, req); !errors.Is(err, errPredict) {
-		t.Fatalf("predict err=%v want %v", err, errPredict)
-	}
-
-	ctx, state, cdfs, scratch, req = testFrameWorkResidualDriver(t)
-	errTransform := errors.New("transform")
-	req.Transforms = func(tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
-		return FrameWorkBlockTransforms{}, errTransform
-	}
-	if _, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, req); !errors.Is(err, errTransform) {
-		t.Fatalf("transform err=%v want %v", err, errTransform)
-	}
-
-	ctx, state, cdfs, scratch, req = testFrameWorkResidualDriver(t)
 	errAfterBlock := errors.New("after block")
 	req.AfterBlock = func(tile.BlockLoopVisit) error { return errAfterBlock }
 	if _, err := ctx.DecodeAndReconstructJobResiduals(0, state, cdfs, &scratch, req); !errors.Is(err, errAfterBlock) {
@@ -965,16 +554,9 @@ func TestFrameWorkBatchDecodeAndReconstructJobResidualsPropagatesCallbacks(t *te
 func TestFrameWorkBatchDecodeAndReconstructJobResidualsAfterBlock(t *testing.T) {
 	ctx, state, cdfs, scratch, req := testFrameWorkResidualDriver(t)
 	var order []string
-	req.Loop.CoeffVisitor = func(parent tile.BlockLoopVisit, block tile.BlockCoeffBlock) error {
-		order = append(order, "coeff")
-		if parent.Block.MICol != 0 || parent.Block.MIRow != 0 || block.Plane != 0 {
-			t.Fatalf("parent=%+v block=%+v", parent.Block, block)
-		}
-		return nil
-	}
 	req.AfterBlock = func(visit tile.BlockLoopVisit) error {
 		order = append(order, "after")
-		if !visit.CoefficientsValid || visit.Coefficients.TotalStats().TXBs == 0 {
+		if !visit.CoefficientsValid || scratch.stats.TXBs == 0 {
 			t.Fatalf("after block visit missing coefficients: %+v", visit)
 		}
 		return nil
@@ -986,8 +568,8 @@ func TestFrameWorkBatchDecodeAndReconstructJobResidualsAfterBlock(t *testing.T) 
 	if stats.Loop.Blocks != 1 || stats.CoefficientBlocks != 1 || stats.TXBs == 0 {
 		t.Fatalf("stats=%+v", stats)
 	}
-	if len(order) != 2 || order[0] != "coeff" || order[1] != "after" {
-		t.Fatalf("order=%v want [coeff after]", order)
+	if len(order) != 1 {
+		t.Fatalf("order=%v want [after]", order)
 	}
 }
 
@@ -1061,7 +643,7 @@ func TestFrameWorkTileResidualControllerUsesPredictionScratch(t *testing.T) {
 	}
 	visit := testIntraPredictionVisit(tile.IntraModeDC)
 	visit.Prefix.SkipTransform = true
-	if err := controller.BeforeBlockCoefficientsPtr(&visit); err != nil {
+	if err := controller.reconBBegin(&visit); err != nil {
 		t.Fatal(err)
 	}
 	// Skip intra blocks are predicted per transform block from the all-zero
@@ -1071,7 +653,7 @@ func TestFrameWorkTileResidualControllerUsesPredictionScratch(t *testing.T) {
 		t.Fatalf("predicted before the first txb: stats=%+v", stats)
 	}
 	skipBlock := testSkipIntraTXB(0, 4, 4, tile.TransformSize16x16, 4)
-	if err := controller.VisitBlockCoeffPtr(&visit, &skipBlock); err != nil {
+	if err := controller.fusedReconState().reconstructTXBWithNonZero(&visit, &skipBlock, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	if stats.Predictions != 1 || stats.SkippedBlocks != 1 || stats.CoefficientBlocks != 0 {
@@ -1110,7 +692,7 @@ func TestFrameWorkTileResidualControllerSkipsInvalidPredictionScratch(t *testing
 	visit := testIntraPredictionVisit(tile.IntraModeDC)
 	visit.Prediction = tile.BlockPredictionModeResult{}
 	visit.Prefix.SkipTransform = true
-	if err := controller.BeforeBlockCoefficientsPtr(&visit); err != nil {
+	if err := controller.reconBBegin(&visit); err != nil {
 		t.Fatal(err)
 	}
 	if stats.Predictions != 0 || stats.SkippedBlocks != 1 || stats.CoefficientBlocks != 0 {
@@ -1141,7 +723,7 @@ func TestFrameWorkTileResidualControllerPredictsCFLOnSkipTransform(t *testing.T)
 	}
 	visit := testCFLPredictionVisit()
 	visit.Prefix.SkipTransform = true
-	if err := controller.BeforeBlockCoefficientsPtr(&visit); err != nil {
+	if err := controller.reconBBegin(&visit); err != nil {
 		t.Fatal(err)
 	}
 	for _, block := range []tile.BlockCoeffBlock{
@@ -1149,7 +731,7 @@ func TestFrameWorkTileResidualControllerPredictsCFLOnSkipTransform(t *testing.T)
 		testSkipIntraTXB(1, 2, 2, tile.TransformSize8x8, 2),
 		testSkipIntraTXB(2, 2, 2, tile.TransformSize8x8, 2),
 	} {
-		if err := controller.VisitBlockCoeffPtr(&visit, &block); err != nil {
+		if err := controller.fusedReconState().reconstructTXBWithNonZero(&visit, &block, nil, 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1194,7 +776,7 @@ func TestFrameWorkTileResidualControllerDefersCFLUntilChroma(t *testing.T) {
 		stats: &stats,
 	}
 	visit := testCFLPredictionVisit()
-	if err := controller.BeforeBlockCoefficientsPtr(&visit); err != nil {
+	if err := controller.reconBBegin(&visit); err != nil {
 		t.Fatal(err)
 	}
 	if got := frameWorkTestSample(output.U, output.Layout.BytesPerSample, 8, 8); got != 0 {
@@ -1210,7 +792,7 @@ func TestFrameWorkTileResidualControllerDefersCFLUntilChroma(t *testing.T) {
 		Result:    tile.TXBDecodeResult{AllZero: true},
 		Coeffs:    make([]int16, 64),
 	}
-	if err := controller.VisitBlockCoeffPtr(&visit, &chroma); err != nil {
+	if err := controller.fusedReconState().reconstructTXBWithNonZero(&visit, &chroma, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	testPredictFrameWorkCFLWant(t, want, visit, FrameWorkPlaneU)
@@ -1436,11 +1018,8 @@ func FuzzFrameWorkBatchDecodeAndReconstructJobResiduals(f *testing.F) {
 		}
 		int32Scratch, residualScratch := testFrameWorkResidualScratch(t, ctx, transform.Size{Width: 64, Height: 64}, transform.TypeDCTDCT)
 		_, _ = ctx.DecodeAndReconstructJobResiduals(0, &state, cdfs, &scratch, FrameWorkTileResidualRequest{
-			Loop:          loopReq,
-			TransformMode: ctx.TransformRef.TransformMode,
-			Transforms: func(visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
-				return ctx.ReadInterBlockTransforms(&state, visit)
-			},
+			Loop:            loopReq,
+			TransformMode:   ctx.TransformRef.TransformMode,
 			Int32Scratch:    int32Scratch,
 			ResidualScratch: residualScratch,
 		})
@@ -1476,11 +1055,8 @@ func testFrameWorkResidualDriver(t *testing.T) (FrameWorkBatch, *tile.DecodeStat
 	}
 	int32Scratch, residualScratch := testFrameWorkResidualScratch(t, ctx, transform.Size{Width: 64, Height: 64}, transform.TypeDCTDCT)
 	req := FrameWorkTileResidualRequest{
-		Loop:          loopReq,
-		TransformMode: ctx.TransformRef.TransformMode,
-		Transforms: func(visit tile.BlockLoopVisit) (FrameWorkBlockTransforms, error) {
-			return ctx.ReadInterBlockTransforms(state, visit)
-		},
+		Loop:            loopReq,
+		TransformMode:   ctx.TransformRef.TransformMode,
 		Int32Scratch:    int32Scratch,
 		ResidualScratch: residualScratch,
 	}

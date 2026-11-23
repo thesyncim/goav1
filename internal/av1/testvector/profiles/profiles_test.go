@@ -1816,12 +1816,6 @@ func runProfileClip(t *testing.T, clip profileClip) {
 						CDEFIndexMap:  ctx.CDEFIndexMap,
 						LoopFilterMap: ctx.LoopFilterMap,
 						Restoration:   restorationReq,
-						Transforms: func(visit tile.BlockLoopVisit) (threading.FrameWorkBlockTransforms, error) {
-							if visit.Prediction.Valid && !visit.Prediction.Intra {
-								return ctx.ReadInterBlockTransforms(&decodeState, visit)
-							}
-							return ctx.ReadIntraBlockTransforms(&decodeState, visit)
-						},
 						AfterBlock: func(visit tile.BlockLoopVisit) error {
 							if visit.Prediction.Palette.YSize > 0 {
 								paletteYBlocks++

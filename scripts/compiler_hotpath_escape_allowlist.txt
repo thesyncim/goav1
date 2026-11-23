@@ -613,12 +613,10 @@ internal/av1/threading/wavefront_stream.go:*:*: func literal escapes to heap in 
 internal/av1/threading/wavefront_stream.go:*:*: make([]atomic.Int32, rowCount) escapes to heap
 internal/av1/threading/wavefront_stream.go:*:*: make([]atomic.Int32, rowCount) escapes to heap in (*frameWorkTileResidualLoopController).startReconStream:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap
-internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.interface { BeginBlockCoefficients(*github.com/thesyncim/goav1/internal/av1/tile.BlockLoopVisit) (*github.com/thesyncim/goav1/internal/av1/tile.BlockCoeffRequest, error); ReconB(*github.com/thesyncim/goav1/internal/av1/tile.BlockLoopVisit, *github.com/thesyncim/goav1/internal/av1/tile.CoefBlock) error; VisitBlockCoeffPtr(*github.com/thesyncim/goav1/internal/av1/tile.BlockLoopVisit, *github.com/thesyncim/goav1/internal/av1/tile.BlockCoeffBlock) error }]:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.struct {}]:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap in promotePendingDiagonalCarriers:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in PreallocBlockLoopContextCarrierScratch:
-internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.interface { BeginBlockCoefficients(*github.com/thesyncim/goav1/internal/av1/tile.BlockLoopVisit) (*github.com/thesyncim/goav1/internal/av1/tile.BlockCoeffRequest, error); ReconB(*github.com/thesyncim/goav1/internal/av1/tile.BlockLoopVisit, *github.com/thesyncim/goav1/internal/av1/tile.CoefBlock) error; VisitBlockCoeffPtr(*github.com/thesyncim/goav1/internal/av1/tile.BlockLoopVisit, *github.com/thesyncim/goav1/internal/av1/tile.BlockCoeffBlock) error }]:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in decodeBlockLoopWithCoeffControllerPtr[go.shape.struct {}]:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, rootColumns) escapes to heap in ensureIntrabcDiagonalCarriers:
 internal/av1/tile/block_loop.go:*:*: make([]tile.diagonalCornerSlot, tile.n) escapes to heap

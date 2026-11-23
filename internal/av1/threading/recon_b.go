@@ -18,7 +18,7 @@ import (
 // transform block runs decode_coefs and then its prediction and inverse
 // transform, or is recorded for the replay.
 func (c *frameWorkTileResidualLoopController) ReconB(visit *tile.BlockLoopVisit, b *tile.CoefBlock) error {
-	if err := c.BeforeBlockCoefficientsPtr(visit); err != nil {
+	if err := c.reconBBegin(visit); err != nil {
 		return err
 	}
 	if b.Skip && !b.Intra {
