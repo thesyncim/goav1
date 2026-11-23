@@ -8,8 +8,8 @@ import (
 	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
 )
 
-func TestFrameFormatFromHeaders(t *testing.T) {
-	format, err := frameFormatFromHeaders(
+func TestFrameCodedFormatFromHeaders(t *testing.T) {
+	format, err := frameCodedFormatFromHeaders(
 		SequenceHeader{ColorConfig: internalparser.ColorConfig{
 			BitDepth:     10,
 			SubsamplingX: true,
@@ -43,12 +43,8 @@ func TestFrameCodedAndOutputFormatFromHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := frameFormatFromHeaders(sequence, size, 64)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if coded != legacy || coded.Width != 960 {
-		t.Fatalf("coded=%+v legacy=%+v", coded, legacy)
+	if coded.Width != 960 {
+		t.Fatalf("coded=%+v", coded)
 	}
 
 	output, err := frameOutputFormatFromHeaders(sequence, size, 64)
@@ -61,8 +57,8 @@ func TestFrameCodedAndOutputFormatFromHeaders(t *testing.T) {
 	}
 }
 
-func TestFrameFormatFromHeadersMonochrome(t *testing.T) {
-	format, err := frameFormatFromHeaders(
+func TestFrameCodedFormatFromHeadersMonochrome(t *testing.T) {
+	format, err := frameCodedFormatFromHeaders(
 		SequenceHeader{ColorConfig: internalparser.ColorConfig{
 			BitDepth:   8,
 			MonoChrome: true,
@@ -86,8 +82,8 @@ func TestFrameFormatFromHeadersMonochrome(t *testing.T) {
 	}
 }
 
-func TestFrameFormatFromHeadersRejectsMissingState(t *testing.T) {
-	_, err := frameFormatFromHeaders(SequenceHeader{}, FrameSize{CodedWidth: 16, Height: 16}, 1)
+func TestFrameCodedFormatFromHeadersRejectsMissingState(t *testing.T) {
+	_, err := frameCodedFormatFromHeaders(SequenceHeader{}, FrameSize{CodedWidth: 16, Height: 16}, 1)
 	if !errors.Is(err, internalframe.ErrInvalidFormat) {
 		t.Fatalf("FrameFormatFromHeaders err=%v want %v", err, internalframe.ErrInvalidFormat)
 	}

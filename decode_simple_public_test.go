@@ -13,11 +13,8 @@ import (
 
 	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 	internalencoder "github.com/thesyncim/goav1/internal/av1/encoder"
-	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
 	internalobu "github.com/thesyncim/goav1/internal/av1/obu"
 	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
-	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
-	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 // profileClips are the vendored non-superres profile-conformance clips and
@@ -1743,52 +1740,6 @@ func assertSimpleDecoderDecodeAllVisible(t *testing.T, dec *Decoder, wantVisible
 	}
 }
 
-// TestSimpleDecoderMatchesLowLevelPath proves byte-for-byte that the high-level
-// Decoder produces exactly the same visible-frame bytes as the low-level
-// hand-bound stream-runner path for every vendored profile clip.
-func TestSimpleDecoderMatchesLowLevelPath(t *testing.T) {
-	for _, clip := range profileClips {
-		t.Run(clip.file, func(t *testing.T) {
-			ivf, err := os.ReadFile(profileClipPath(clip.file))
-			if err != nil {
-				t.Fatalf("read clip: %v", err)
-			}
-
-			lowLevel := decodeLowLevel(t, ivf)
-
-			dec, err := NewDecoderFromIVF(ivf)
-			if err != nil {
-				t.Fatalf("NewDecoderFromIVF: %v", err)
-			}
-			defer dec.Close()
-
-			var highLevel [][16]byte
-			for {
-				frames, ok, err := dec.DecodeNext()
-				if err != nil {
-					t.Fatalf("DecodeNext: %v", err)
-				}
-				if !ok {
-					break
-				}
-				for _, f := range frames {
-					highLevel = append(highLevel, frameMD5Visible(f))
-				}
-			}
-
-			if len(highLevel) != len(lowLevel) {
-				t.Fatalf("high-level produced %d frames, low-level %d", len(highLevel), len(lowLevel))
-			}
-			for i := range lowLevel {
-				if highLevel[i] != lowLevel[i] {
-					t.Fatalf("frame %d differs: high=%s low=%s",
-						i, hex.EncodeToString(highLevel[i][:]), hex.EncodeToString(lowLevel[i][:]))
-				}
-			}
-		})
-	}
-}
-
 func TestNewDecoderFromRTPPayloadsProfileClipsMatchGolden(t *testing.T) {
 	limits := RTPPayloadSizeLimits{MaxPayloadLen: 48}
 	runClip := func(file string, wantMD5 []string) {
@@ -1850,45 +1801,6 @@ func TestNewDecoderFromRTPPayloadsProfileClipsMatchGolden(t *testing.T) {
 	}
 	for _, clip := range superResProfileClips {
 		runClip(clip.file, clip.frameMD5Hex)
-	}
-}
-
-func TestPublicDecoderRTPPayloadRunnerMatchesLowOverhead(t *testing.T) {
-	const width, height = 192, 128
-	enc, err := NewRTCEncoderWithConfig(EncoderConfig{
-		Resolution:        EncoderResolution{Width: width, Height: height},
-		MaxFramerate:      EncoderRational{Num: 30, Den: 1},
-		MinBitrateKbps:    120,
-		MaxBitrateKbps:    800,
-		TargetBitrateKbps: 420,
-		Scalability:       EncoderScalabilityModeL1T2,
-	})
-	if err != nil {
-		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
-	}
-	defer enc.Close()
-
-	var lowOverheads [][]byte
-	var rtpPayloads [][]byte
-	for i := 0; i < 4; i++ {
-		frame, err := enc.Encode(publicRTCMatrixFrame(width, height, i), false)
-		if err != nil {
-			t.Fatalf("Encode frame %d: %v", i, err)
-		}
-		lowOverheads = append(lowOverheads, append([]byte(nil), frame.Data...))
-		rtpPayloads = append(rtpPayloads, publicDecoderRTPPayloadsForFrame(t, frame)...)
-	}
-
-	want := decodeLowOverheadPayloads(t, lowOverheads)
-	got := decodeRTPPayloadsLowLevel(t, rtpPayloads)
-	if len(got) != len(want) {
-		t.Fatalf("RTP decoded %d frames, low-overhead decoded %d", len(got), len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("frame %d digest differs: rtp=%s low=%s",
-				i, hex.EncodeToString(got[i][:]), hex.EncodeToString(want[i][:]))
-		}
 	}
 }
 
@@ -1980,7 +1892,7 @@ func TestHighLevelRTPDecodersWebRTCSVCCatalogue(t *testing.T) {
 	limits := RTPPayloadSizeLimits{MaxPayloadLen: 24}
 	covered := 0
 	sharedCovered := 0
-	for step, mode := range encoderWebRTCSVCScalabilityModes() {
+	for step, mode := range internalencoder.AppendWebRTCSVCScalabilityModes(nil) {
 		covered++
 		t.Run(mode.String(), func(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, mode)
@@ -2744,97 +2656,6 @@ func assertPublicDecoderGoldenMD5s(t *testing.T, path string, got [][16]byte, wa
 	}
 }
 
-func TestPublicDecoderRTPPayloadRunnerRecoversAfterEncoderPacketLoss(t *testing.T) {
-	const width, height = 192, 128
-	enc, err := NewRTCEncoderWithConfig(EncoderConfig{
-		Resolution:        EncoderResolution{Width: width, Height: height},
-		MaxFramerate:      EncoderRational{Num: 30, Den: 1},
-		MinBitrateKbps:    120,
-		MaxBitrateKbps:    800,
-		TargetBitrateKbps: 420,
-		Scalability:       EncoderScalabilityModeL1T2,
-	})
-	if err != nil {
-		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
-	}
-	defer enc.Close()
-
-	limits := RTPPayloadSizeLimits{MaxPayloadLen: 24}
-	key0, err := enc.Encode(publicRTCMatrixFrame(width, height, 0), false)
-	if err != nil {
-		t.Fatalf("Encode initial key: %v", err)
-	}
-	key0LowOverhead := append([]byte(nil), key0.Data...)
-	key0Payloads := publicDecoderRTPPayloadsForFrameWithLimits(t, key0, limits)
-
-	delta, err := enc.Encode(publicRTCMatrixFrame(width, height, 1), false)
-	if err != nil {
-		t.Fatalf("Encode dropped delta: %v", err)
-	}
-	deltaPayloads := publicDecoderRTPPayloadsForFrameWithLimits(t, delta, limits)
-	if len(deltaPayloads) < 2 {
-		t.Fatalf("delta frame packetized into %d RTP payloads, want fragmentation", len(deltaPayloads))
-	}
-
-	key2, err := enc.Encode(publicRTCMatrixFrame(width, height, 2), true)
-	if err != nil {
-		t.Fatalf("Encode recovery key: %v", err)
-	}
-	key2LowOverhead := append([]byte(nil), key2.Data...)
-	key2Payloads := publicDecoderRTPPayloadsForFrameWithLimits(t, key2, limits)
-	if len(key2Payloads) == 0 {
-		t.Fatal("recovery key produced no RTP payloads")
-	}
-
-	recoveryPayloads := append(append([][]byte(nil), key0Payloads...), key2Payloads...)
-	lossPrefixPayloads := append(append([][]byte(nil), key0Payloads...), deltaPayloads[:1]...)
-	recoveryPlan := publicRTPDecodePlan(t, recoveryPayloads)
-	lossPrefixPlan := publicRTPDecodePlan(t, lossPrefixPayloads)
-	h := newPublicRTPDecodeHarnessWithPlan(t, lossPrefixPlan.Max(recoveryPlan))
-
-	var result decoderFrameWorkResidualStreamResult
-	if err := h.runner.RunRTPPayloadsIntoWithPostFilterRunner(&result, key0Payloads, &h.postFilter); err != nil {
-		t.Fatalf("RunRTPPayloadsInto initial key: %v", err)
-	}
-	got := publicRTPResultDigests(t, result, 0)
-	if len(got) != 1 || result.Run.OutputCount != 1 {
-		t.Fatalf("initial key outputs=%d digests=%d result=%+v", result.Run.OutputCount, len(got), result)
-	}
-
-	fragment, err := h.runner.RunRTPPayloadWithPostFilterRunner(deltaPayloads[0], &h.postFilter)
-	if err != nil {
-		t.Fatalf("RunRTPPayload dropped delta prefix: %v", err)
-	}
-	if fragment.Run.OutputCount != 0 || h.runner.RTPUsed == 0 || !h.runner.State().InRTPFragment {
-		t.Fatalf("dropped delta did not leave only retained RTP state: fragment=%+v state=%+v", fragment, h.runner.State())
-	}
-
-	beforeRecoveryOutputs := result.Run.OutputCount
-	if err := h.runner.RunRTPPayloadAfterLossIntoWithPostFilterRunner(&result, key2Payloads[0], &h.postFilter); err != nil {
-		t.Fatalf("RunRTPPayloadAfterLossInto recovery key first packet: %v", err)
-	}
-	if len(key2Payloads) > 1 {
-		if err := h.runner.RunRTPPayloadsIntoWithPostFilterRunner(&result, key2Payloads[1:], &h.postFilter); err != nil {
-			t.Fatalf("RunRTPPayloadsInto recovery key tail: %v", err)
-		}
-	}
-	if h.runner.RTPUsed != 0 || h.runner.State().InRTPFragment {
-		t.Fatalf("recovery left retained RTP state=%+v", h.runner.State())
-	}
-	got = publicRTPAppendResultDigests(t, got, result, beforeRecoveryOutputs)
-
-	want := decodeLowOverheadPayloads(t, [][]byte{key0LowOverhead, key2LowOverhead})
-	if len(got) != len(want) {
-		t.Fatalf("RTP recovered %d frames, low-overhead decoded %d", len(got), len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("frame %d digest differs after loss: rtp=%s low=%s",
-				i, hex.EncodeToString(got[i][:]), hex.EncodeToString(want[i][:]))
-		}
-	}
-}
-
 func TestNewDecoderFromRTPPayloadsDecodePayloadAfterLoss(t *testing.T) {
 	inputs := publicDecoderRTPLossRecoveryPayloads(t)
 	dec, err := NewDecoderFromRTPPayloads(inputs.probePayloads)
@@ -3446,11 +3267,6 @@ func TestPublicRTPPacketSequencerSkipMissingDrivesAfterLoss(t *testing.T) {
 	}
 }
 
-func publicDecoderRTPPayloadsForFrame(t testing.TB, frame RTCFrame) [][]byte {
-	t.Helper()
-	return publicDecoderRTPPayloadsForFrameWithLimits(t, frame, RTPPayloadSizeLimits{MaxPayloadLen: 96})
-}
-
 func publicPacketizeLowOverheadRTP(t testing.TB, frame []byte, limits RTPPayloadSizeLimits, startsNewCodedVideoSequence bool, nextSequence *uint16, timestamp uint32) ([][]byte, [][]byte) {
 	t.Helper()
 	firstSize, err := RTPPacketizerScratchLen(frame, limits, nil)
@@ -3623,109 +3439,6 @@ func publicRewriteRTPPacketSequence(t testing.TB, packet []byte, sequenceNumber 
 	return buf[:n]
 }
 
-// decodeLowLevel reproduces the hand-bound public stream-runner path (as in
-// cmd/aom-go-dec and conformance/publicpath_test.go) and returns the per-frame
-// visible MD5 in display order, copying pixels out per payload so multi-frame
-// streams retain every frame.
-func decodeLowLevel(t *testing.T, ivf []byte) [][16]byte {
-	t.Helper()
-
-	it, err := NewIVFIterator(ivf)
-	if err != nil {
-		t.Fatalf("NewIVFIterator: %v", err)
-	}
-	var payloads [][]byte
-	for {
-		f, ok, err := it.Next()
-		if err != nil {
-			t.Fatalf("ivf next: %v", err)
-		}
-		if !ok {
-			break
-		}
-		payloads = append(payloads, append([]byte(nil), f.Payload...))
-	}
-
-	const workers = 1
-	workerPool, err := internalthreading.NewPool(workers)
-	if err != nil {
-		t.Fatalf("worker pool: %v", err)
-	}
-	defer workerPool.Close()
-
-	var probeStream internaldecoder.Stream
-	probeEvents := make([]internaldecoder.Event, 16*len(payloads)+64)
-	probeSpans := make([]internalparser.TileSpan, internalparser.MaxTiles)
-	probeJobs := make([]internaltile.Job, internalparser.MaxTiles)
-	probeBatches := make([]internalthreading.Batch, internalparser.MaxTiles)
-	plan, err := decoderFrameWorkResidualLowOverheadStreamsPlan(
-		probeStream, payloads, workers, probeEvents, probeSpans, probeJobs, probeBatches)
-	if err != nil {
-		t.Fatalf("stream plan: %v", err)
-	}
-	if !plan.HasEvent() {
-		t.Fatal("stream plan did not identify a bind event")
-	}
-
-	format, err := framePoolFormatFromSequence(plan.Bind.Sequence, 64)
-	if err != nil {
-		t.Fatalf("FrameCodedFormatFromHeaders: %v", err)
-	}
-
-	const surfaceCount = internalparser.RefFrames + 1
-	_, backingSize, err := framePoolRequiredSize(format, surfaceCount)
-	if err != nil {
-		t.Fatalf("FramePoolRequiredSize: %v", err)
-	}
-	pool, err := internalframe.BindPool(make([]byte, backingSize), format,
-		make([]Frame, surfaceCount), make([]int, surfaceCount), make([]bool, surfaceCount))
-	if err != nil {
-		t.Fatalf("BindFramePool: %v", err)
-	}
-
-	var (
-		stream     internaldecoder.Stream
-		refs       internaldecoder.SurfaceReferences
-		state      internaldecoder.FrameWorkState
-		stats      internalthreading.FrameWorkTileResidualStats
-		sideData   decoderFrameWorkSideData
-		batch      decoderFrameWorkBatchResidualRunner
-		postFilter decoderFrameWorkReusableSupportedPostFilterRunner
-	)
-	scratch := lowLevelStreamScratch(plan.Size)
-	runner, _, err := bindDecoderFrameWorkResidualStreamPlanRunner(plan, &stream,
-		decoderFrameWorkResidualEventRuntime{
-			State:             &state,
-			Refs:              &refs,
-			FramePool:         &pool,
-			Align:             64,
-			ReferenceSurfaces: make([]int, internalparser.InterRefsPerFrame),
-			ReferenceFrames:   make([]*Frame, internalparser.InterRefsPerFrame),
-			Releases:          make([]int, internalparser.RefFrames),
-			WorkerPool:        workerPool,
-			SideData:          &sideData,
-			Stats:             &stats,
-		}, scratch, &batch)
-	if err != nil {
-		t.Fatalf("bind runner: %v", err)
-	}
-
-	var digests [][16]byte
-	for i, payload := range payloads {
-		var result decoderFrameWorkResidualStreamResult
-		if err := runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, &postFilter); err != nil {
-			t.Fatalf("frame %d run: %v", i, err)
-		}
-		for _, f := range result.Run.Outputs {
-			if f != nil {
-				digests = append(digests, frameMD5Visible(f))
-			}
-		}
-		internaldecoder.ReleaseUnreferencedFrameSurfaces(&refs, &pool)
-	}
-	return digests
-}
-
 func decodeLowOverheadPayloads(t *testing.T, payloads [][]byte) [][16]byte {
 	t.Helper()
 	dec, err := NewDecoder(payloads)
@@ -3747,180 +3460,6 @@ func decodeLowOverheadPayloads(t *testing.T, payloads [][]byte) [][16]byte {
 		}
 	}
 	return digests
-}
-
-func decodeRTPPayloadsLowLevel(t *testing.T, payloads [][]byte) [][16]byte {
-	t.Helper()
-	h := newPublicRTPDecodeHarness(t, payloads)
-	var result decoderFrameWorkResidualStreamResult
-	if err := h.runner.RunRTPPayloadsIntoWithPostFilterRunner(&result, payloads, &h.postFilter); err != nil {
-		t.Fatalf("RunRTPPayloadsIntoWithPostFilterRunner: %v", err)
-	}
-	return publicRTPResultDigests(t, result, 0)
-}
-
-type publicRTPDecodeHarness struct {
-	workerPool        *internalthreading.Pool
-	stream            internaldecoder.Stream
-	refs              internaldecoder.SurfaceReferences
-	state             internaldecoder.FrameWorkState
-	pool              internalframe.Pool
-	stats             internalthreading.FrameWorkTileResidualStats
-	sideData          decoderFrameWorkSideData
-	batch             decoderFrameWorkBatchResidualRunner
-	referenceSurfaces [internalparser.InterRefsPerFrame]int
-	referenceFrames   [internalparser.InterRefsPerFrame]*Frame
-	releases          [internalparser.RefFrames]int
-	scratch           decoderFrameWorkResidualStreamScratch
-	postFilter        decoderFrameWorkReusableSupportedPostFilterRunner
-	runner            decoderFrameWorkResidualStreamRunner
-}
-
-func newPublicRTPDecodeHarness(t *testing.T, payloads [][]byte) *publicRTPDecodeHarness {
-	t.Helper()
-	return newPublicRTPDecodeHarnessWithPlan(t, publicRTPDecodePlan(t, payloads))
-}
-
-func publicRTPDecodePlan(t *testing.T, payloads [][]byte) decoderFrameWorkResidualStreamPlan {
-	t.Helper()
-	const workers = 1
-	rtpBufferBytes := 0
-	for _, payload := range payloads {
-		rtpBufferBytes += len(payload)
-	}
-	var probeStream internaldecoder.Stream
-	probeEvents := make([]internaldecoder.Event, 16*len(payloads)+64)
-	probeSpans := make([]internalparser.TileSpan, internalparser.MaxTiles)
-	probeJobs := make([]internaltile.Job, internalparser.MaxTiles)
-	probeBatches := make([]internalthreading.Batch, internalparser.MaxTiles)
-	probeRTPBuffer := make([]byte, rtpBufferBytes)
-	probeRTPSpans := make([]RTPObuSpan, 16*len(payloads)+64)
-	plan, err := decoderFrameWorkResidualRTPPayloadsStreamPlan(
-		probeStream, 0, payloads, workers, probeRTPBuffer, probeRTPSpans,
-		probeEvents, probeSpans, probeJobs, probeBatches)
-	if err != nil {
-		t.Fatalf("RTP stream plan: %v", err)
-	}
-	if !plan.HasEvent() {
-		t.Fatal("RTP stream plan did not identify a bind event")
-	}
-	return plan
-}
-
-func newPublicRTPDecodeHarnessWithPlan(t *testing.T, plan decoderFrameWorkResidualStreamPlan) *publicRTPDecodeHarness {
-	t.Helper()
-	const workers = 1
-	workerPool, err := internalthreading.NewPool(workers)
-	if err != nil {
-		t.Fatalf("worker pool: %v", err)
-	}
-
-	format, err := framePoolFormatFromSequence(plan.Bind.Sequence, 64)
-	if err != nil {
-		t.Fatalf("FrameCodedFormatFromHeaders: %v", err)
-	}
-	const surfaceCount = internalparser.RefFrames + 1
-	_, backingSize, err := framePoolRequiredSize(format, surfaceCount)
-	if err != nil {
-		t.Fatalf("FramePoolRequiredSize: %v", err)
-	}
-	pool, err := internalframe.BindPool(make([]byte, backingSize), format,
-		make([]Frame, surfaceCount), make([]int, surfaceCount), make([]bool, surfaceCount))
-	if err != nil {
-		t.Fatalf("BindFramePool: %v", err)
-	}
-
-	h := &publicRTPDecodeHarness{
-		workerPool: workerPool,
-		pool:       pool,
-		scratch:    lowLevelStreamScratch(plan.Size),
-	}
-	t.Cleanup(func() {
-		h.workerPool.Close()
-	})
-	runner, _, err := bindDecoderFrameWorkResidualStreamPlanRunner(plan, &h.stream,
-		decoderFrameWorkResidualEventRuntime{
-			State:             &h.state,
-			Refs:              &h.refs,
-			FramePool:         &h.pool,
-			Align:             64,
-			ReferenceSurfaces: h.referenceSurfaces[:],
-			ReferenceFrames:   h.referenceFrames[:],
-			Releases:          h.releases[:],
-			WorkerPool:        h.workerPool,
-			SideData:          &h.sideData,
-			Stats:             &h.stats,
-		}, h.scratch, &h.batch)
-	if err != nil {
-		t.Fatalf("bind RTP runner: %v", err)
-	}
-	h.runner = runner
-	return h
-}
-
-func publicRTPResultDigests(t *testing.T, result decoderFrameWorkResidualStreamResult, from int) [][16]byte {
-	t.Helper()
-	return publicRTPAppendResultDigests(t, nil, result, from)
-}
-
-func publicRTPAppendResultDigests(t *testing.T, dst [][16]byte, result decoderFrameWorkResidualStreamResult, from int) [][16]byte {
-	t.Helper()
-	if from < 0 || from > result.Run.OutputCount || result.Run.OutputCount > len(result.Run.Outputs) {
-		t.Fatalf("invalid result output range from=%d count=%d len=%d", from, result.Run.OutputCount, len(result.Run.Outputs))
-	}
-	for _, f := range result.Run.Outputs[from:result.Run.OutputCount] {
-		if f != nil {
-			dst = append(dst, frameMD5Visible(f))
-		}
-	}
-	return dst
-}
-
-func lowLevelStreamScratch(size decoderFrameWorkResidualStreamScratchSize) decoderFrameWorkResidualStreamScratch {
-	return decoderFrameWorkResidualStreamScratch{
-		Events:    make([]internaldecoder.Event, size.Events),
-		Event:     lowLevelEventScratch(size.Event),
-		SideData:  lowLevelSideDataScratch(size.Event.SideData),
-		Outputs:   make([]*Frame, size.Event.Outputs),
-		RTPBuffer: make([]byte, size.RTPBuffer),
-		RTPSpans:  make([]RTPObuSpan, size.RTPSpans),
-	}
-}
-
-func lowLevelEventScratch(size decoderFrameWorkResidualEventScratchSize) decoderFrameWorkResidualEventScratch {
-	return decoderFrameWorkResidualEventScratch{
-		Runner:   lowLevelBatchRunnerScratch(size.Runner),
-		SideData: lowLevelSideDataScratch(size.SideData),
-		Spans:    make([]internalparser.TileSpan, size.Plan.SpanCount),
-		Jobs:     make([]internaltile.Job, size.Plan.JobCount),
-		Batches:  make([]internalthreading.Batch, size.Plan.BatchCount),
-	}
-}
-
-func lowLevelBatchRunnerScratch(size decoderFrameWorkBatchResidualRunnerScratchSize) decoderFrameWorkBatchResidualRunnerScratch {
-	return decoderFrameWorkBatchResidualRunnerScratch{
-		States:                  make([]internaltile.DecodeState, size.Workers),
-		Storages:                make([]internalthreading.FrameWorkTileResidualCDFStorage, size.Workers),
-		TileScratch:             make([]internalthreading.FrameWorkTileResidualScratch, size.Workers),
-		RestorationRequests:     make([]internalthreading.FrameWorkTileRestorationRequest, size.RestorationRequests),
-		PredictionScratch:       make([]internalthreading.FrameWorkPredictionScratch, size.Workers),
-		InterPredictionScratch:  make([]internalthreading.FrameWorkInterPredictionScratch, size.Workers),
-		Stats:                   make([]internalthreading.FrameWorkTileResidualStats, size.Workers),
-		Int32Scratch:            make([]int32, size.Int32Scratch),
-		ResidualScratch:         make([]int16, size.ResidualScratch),
-		LoopContextAboveScratch: make([]internaltile.BlockLoopRootAboveContext, size.LoopContextAbove),
-	}
-}
-
-func lowLevelSideDataScratch(size decoderFrameWorkSideDataScratchSize) decoderFrameWorkSideDataScratch {
-	return decoderFrameWorkSideDataScratch{
-		CDEFIndexMap:             make([]uint8, size.CDEFIndexMap),
-		CDEFReadMap:              make([]bool, size.CDEFReadMap),
-		LoopFilterMap:            make([]internalthreading.FrameWorkLoopFilterBlockRecord, size.LoopFilterMap),
-		RestorationRecords:       make([]internaltile.RestorationUnitRecord, size.RestorationRecords),
-		RestorationBoundaryAbove: make([]uint16, size.RestorationBoundaryAbove),
-		RestorationBoundaryBelow: make([]uint16, size.RestorationBoundaryBelow),
-	}
 }
 
 // frameMD5Visible reproduces the libaom per-frame digest layout: visible Y rows,

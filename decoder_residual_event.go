@@ -414,42 +414,6 @@ func (r decoderFrameWorkResidualEventRunner) RunEventsWithPostFilterRunner(seque
 	return r.runEvents(sequence, events, sideScratch, nil, post)
 }
 
-// decoderFrameWorkResidualEventScratchLen plans event tile work into
-// caller-owned spans/jobs/batches and reports both residual-runner scratch and
-// frame-level side-data scratch for the event.
-func decoderFrameWorkResidualEventScratchLen(sequence SequenceHeader, event *internaldecoder.Event, workers int, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch) (decoderFrameWorkResidualEventScratchSize, error) {
-	return decoderFrameWorkResidualEventScratchLenPtr(sequence, event, workers, spans, jobs, batches)
-}
-
-func decoderFrameWorkResidualEventScratchLenPtr(sequence SequenceHeader, event *internaldecoder.Event, workers int, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch) (decoderFrameWorkResidualEventScratchSize, error) {
-	size := decoderFrameWorkResidualEventScratchSize{
-		Outputs: decoderFrameWorkResidualEventOutputLenPtr(event),
-	}
-	if event != nil && event.Kind == internaldecoder.EventTileList {
-		runner, plan, err := decoderFrameWorkResidualTileListRunnerScratchLenPtr(sequence, event, workers, spans, jobs, batches)
-		if err != nil {
-			return decoderFrameWorkResidualEventScratchSize{}, err
-		}
-		size.Runner = runner
-		size.Plan = plan
-	} else if decoderFrameWorkResidualEventHasTilePayloadPtr(event) {
-		runner, plan, err := decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence, event, workers, spans, jobs, batches)
-		if err != nil {
-			return decoderFrameWorkResidualEventScratchSize{}, err
-		}
-		size.Runner = runner
-		size.Plan = plan
-	}
-	if decoderFrameWorkResidualEventNeedsSideDataPtr(event) {
-		sideData, err := decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence, event)
-		if err != nil {
-			return decoderFrameWorkResidualEventScratchSize{}, err
-		}
-		size.SideData = sideData
-	}
-	return size, nil
-}
-
 // decoderFrameWorkResidualEventsScratchLen reports reusable scratch for the
 // largest tile-bearing event and largest frame-work side-data shape in events.
 func decoderFrameWorkResidualEventsScratchLen(sequence SequenceHeader, events []internaldecoder.Event, workers int, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch) (decoderFrameWorkResidualEventScratchSize, error) {
@@ -482,13 +446,6 @@ func decoderFrameWorkResidualEventsScratchLen(sequence SequenceHeader, events []
 		}
 	}
 	return size, nil
-}
-
-// decoderFrameWorkResidualEventRunnerScratchLen plans event tile work into
-// caller-owned spans/jobs/batches and reports the residual runner scratch
-// required to execute the planned event.
-func decoderFrameWorkResidualEventRunnerScratchLen(sequence SequenceHeader, event *internaldecoder.Event, workers int, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch) (decoderFrameWorkBatchResidualRunnerScratchSize, internaldecoder.TileWorkPlan, error) {
-	return decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence, event, workers, spans, jobs, batches)
 }
 
 func decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence SequenceHeader, event *internaldecoder.Event, workers int, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch) (decoderFrameWorkBatchResidualRunnerScratchSize, internaldecoder.TileWorkPlan, error) {
@@ -738,14 +695,6 @@ func decoderFrameWorkResidualEventOutputLenPtr(event *internaldecoder.Event) int
 		return 0
 	}
 	return decoderFrameWorkResidualEventOutputLen(&*event)
-}
-
-// runDecoderFrameWorkEventWithResidualRunner plans and executes one decoder
-// frame-work event using a caller-owned residual runner. If SideData is set, it
-// is attached to both the active frame-work state and the residual runner after
-// planning and before tile work runs.
-func runDecoderFrameWorkEventWithResidualRunner(req decoderFrameWorkResidualEventRequest) (internaldecoder.FrameWorkEventResult, error) {
-	return runDecoderFrameWorkEventWithSideRunner(req, nil)
 }
 
 func runDecoderFrameWorkEventWithSideRunner(req decoderFrameWorkResidualEventRequest, sideRunner internaldecoder.FrameWorkSideDataRunner) (result internaldecoder.FrameWorkEventResult, runErr error) {

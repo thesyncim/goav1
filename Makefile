@@ -141,7 +141,7 @@ WEBRTC_PRODUCTION_CI_ENCODER_NONREF_TESTS = ^TestPublicRTCEncoder.*$$
 WEBRTC_PRODUCTION_CI_PUBLIC_REMAINDER_SKIP = ^(TestPublicRTCEncoder.*|TestPublicRTCSharedReferenceSVCDecodeRTPPayloads)$$
 WEBRTC_PRODUCTION_CI_SHARED_RTP_L2 = ^TestPublicRTCSharedReferenceSVCDecodeRTPPayloads$$/^L2.*$$
 WEBRTC_PRODUCTION_CI_SHARED_RTP_L3 = ^TestPublicRTCSharedReferenceSVCDecodeRTPPayloads$$/^L3.*$$
-WEBRTC_PRODUCTION_TESTS = Test(AV1SDP|AV1RTCP|EncoderWebRTC|HighLevelRTPDecodersWebRTCSVCCatalogue|NewDecoderFromRTPPayloads|ParseRTPPacketDependencyDescriptor|PublicDecoderFrameWorkResidual(EventRunner.*TileList|StreamRunnerRTP)|PublicDecoderRTP(Packet|PayloadRunner)|PublicEncodeI(400|420)|PublicEncoderWebRTC|PublicLayeredDecoderRTP|PublicParseTileListOBU|PublicPlanDecoderTileList|PublicResolveDecoderTileList|PublicRTC|PublicRTP|PublicTileList|PublicWebRTCEncoder|RTCP|SimpleDecoderTileListIVFPlayback)
+WEBRTC_PRODUCTION_TESTS = Test(AV1SDP|AV1RTCP|EncoderWebRTC|HighLevelRTPDecodersWebRTCSVCCatalogue|NewDecoderFromRTPPayloads|ParseRTPPacketDependencyDescriptor|PublicDecoderFrameWorkResidual(EventRunner.*TileList|StreamRunnerRTP)|PublicDecoderRTPPacket|PublicEncodeI(400|420)|PublicEncoderWebRTC|PublicLayeredDecoderRTP|PublicParseTileListOBU|PublicPlanDecoderTileList|PublicResolveDecoderTileList|PublicRTC|PublicRTP|PublicTileList|RTCP|SimpleDecoderTileListIVFPlayback)
 WEBRTC_PRODUCTION_INTERNAL_TESTS = Test(AppendWebRTCScalabilityModesMatchesPinnedLibWebRTC|WebRTCStreamAcceptedScalabilityModes(CoverExportedModes|Decode)|WebRTCStreamControlCombinationMatrixDecode|WebRTCEncoderStateTemporalUnitsKeyShiftModes)
 WEBRTC_PRODUCTION_CI_SHARD ?= 0
 
@@ -348,12 +348,10 @@ unsafe-check:
 fuzz-smoke:
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicSimpleDecoderIVF
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicParseTileListOBU
-	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals
-	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndRetainDecoderFrameWorkBatchResiduals
+	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecoderLowOverhead
+	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecoderRTPPayloads
+	go test . $(FUZZFLAGS) -fuzz=FuzzPublicLayeredDecoder
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecoderFrameWorkBatchResidualRunnerSideData
-	go test . $(FUZZFLAGS) -fuzz=FuzzPublicRunDecoderFrameWorkEventWithResidualRunner
-	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecoderFrameWorkSideDataBinding
-	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecoderFrameWorkPostFilterScratchContext
 	go test ./internal/av1/bitstream $(FUZZFLAGS) -fuzz=FuzzReadLEB128
 	go test ./internal/av1/decoder $(FUZZFLAGS) -fuzz=FuzzStreamPush
 	go test ./internal/av1/ivf $(FUZZFLAGS) -fuzz=FuzzIterator

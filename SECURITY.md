@@ -219,13 +219,12 @@ boundary above.
   `panic()` calls in non-test code paths in the module.
 - **Fuzz harnesses.** The repository ships over 100 `Fuzz*` harnesses
   across the public API and internal packages, including:
-  - Decoder pipeline: `FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals`,
-    `FuzzPublicDecodeAndRetainDecoderFrameWorkBatchResiduals`,
+  - Decoder pipeline, hostile payloads through the public decoders with a
+    frame-size limit: `FuzzPublicDecoderLowOverhead` (`NewDecoder`, one to
+    four workers), `FuzzPublicDecoderRTPPayloads` (`NewDecoderFromRTPPayloads`,
+    queued and after-loss live receive), `FuzzPublicLayeredDecoder`
+    (`NewLayeredDecoder` and its RTP form), `FuzzPublicSimpleDecoderIVF`,
     `FuzzPublicDecoderFrameWorkBatchResidualRunnerSideData`,
-    `FuzzPublicRunDecoderFrameWorkEventWithResidualRunner`,
-    `FuzzPublicDecoderFrameWorkSideDataBinding`,
-    `FuzzPublicDecoderFrameWorkPostFilterScratchContext`,
-    `FuzzPublicSimpleDecoderIVF`,
     `FuzzPublicParseTileListOBU`.
   - Inverse transforms: WHT, ADST, warp, film grain (commit
     `ff8ba63`).

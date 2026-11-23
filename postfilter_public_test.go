@@ -120,10 +120,7 @@ func TestPublicRestorationSelfguidedConstantBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	params, err := restorationSGRParamsByIndex(0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	params := internalrestoration.SGRParameterTable[0]
 	xq := internalrestoration.DecodeSGRXQ([2]int8{13, -9}, params)
 	if xq[0] != 13 || xq[1] == 0 {
 		t.Fatalf("xq=%+v", xq)
@@ -147,9 +144,6 @@ func TestPublicPostFilterRejectsInvalid(t *testing.T) {
 	}
 	if _, err := internalrestoration.WienerScratchLen(0, 8); !errors.Is(err, internalrestoration.ErrInvalidRestoration) {
 		t.Fatalf("RestorationWienerScratchLen err=%v want %v", err, internalrestoration.ErrInvalidRestoration)
-	}
-	if _, err := restorationSGRParamsByIndex(internalrestoration.SGRProjParams); !errors.Is(err, internalrestoration.ErrInvalidRestoration) {
-		t.Fatalf("RestorationSGRParamsByIndex err=%v want %v", err, internalrestoration.ErrInvalidRestoration)
 	}
 	if _, err := internalrestoration.SelfguidedScratchLen(0, 8); !errors.Is(err, internalrestoration.ErrInvalidRestoration) {
 		t.Fatalf("RestorationSelfguidedScratchLen err=%v want %v", err, internalrestoration.ErrInvalidRestoration)
