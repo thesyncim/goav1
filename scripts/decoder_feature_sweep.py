@@ -7,11 +7,16 @@ that differs is also decoded with aomdec, to tell a goav1 bug from a reference d
 When SvtAv1EncApp is on PATH a second set of cases is encoded with it: its prediction
 structures and headers differ from aomenc's.
 
-usage: scripts/decoder_feature_sweep.py <aom-go-dec binary> [-l dump_svc binary] [-w workdir] [case-name-substring ...]
+usage: scripts/decoder_feature_sweep.py <aom-go-dec binary> [-l dump_svc binary] [-w workdir] [-x exportdir] [case-name-substring ...]
 
 With -l every 4:2:0 clip is also decoded through the layered decoder (cmd/dump_svc) and
 compared with dav1d; super-resolution and resizing clips are left out there, because the
 layered decoder rejects them.
+
+With -x every case that matches dav1d is copied to exportdir as <case>.ivf, and its line
+"<case> <dav1d md5> <layered 0|1>" goes to exportdir/manifest.txt. The committed set in
+internal/av1/testvector/testdata/features is regenerated this way and gated by
+TestFeatureVectorsMatchDav1d without any external tool.
 
 Needs aomenc, aomdec, dav1d and ffmpeg on PATH (SvtAv1EncApp is optional). Without -w the clips go to a temporary
 directory that is removed afterwards. Exit status: 0 all cases match, 1 a case differs or
@@ -30,9 +35,12 @@ if not args or args[0].startswith("-"):
 DEC = args.pop(0)
 WORK = None
 LAYERED = None
-while len(args) >= 2 and args[0] in ("-w", "-l"):
+EXPORT = None
+while len(args) >= 2 and args[0] in ("-w", "-l", "-x"):
     if args[0] == "-w":
         WORK = args[1]
+    elif args[0] == "-x":
+        EXPORT = args[1]
     else:
         LAYERED = args[1]
     args = args[2:]
@@ -321,6 +329,9 @@ def digest(cmd):
 bad = 0
 skipped = 0
 ran = 0
+exported = []
+if EXPORT:
+    os.makedirs(EXPORT, exist_ok=True)
 for name, args, src, w, h, pix, limit, base in cases:
     if FILTERS and not any(f in name for f in FILTERS):
         continue
@@ -344,7 +355,8 @@ for name, args, src, w, h, pix, limit, base in cases:
     line = []
     ok = True
     runs = [("w1", [DEC, "-quiet", "-workers", "1", ivf]), ("w8", [DEC, "-quiet", "-workers", "8", ivf])]
-    if LAYERED and pix in ("yuv420p", "yuv420p10le") and "superres" not in name and "resize" not in name and "mono" not in name:
+    layered = pix in ("yuv420p", "yuv420p10le") and "superres" not in name and "resize" not in name and "mono" not in name
+    if LAYERED and layered:
         fmt = "-yuv420p10le" if pix == "yuv420p10le" else "-i420"
         runs.append(("layered", [LAYERED, "-quiet", fmt, "-workers", "4", ivf]))
     for label, cmd in runs:
@@ -355,11 +367,17 @@ for name, args, src, w, h, pix, limit, base in cases:
         elif got != ref:
             ok = False
             line.append("%s: differs (%d vs %d bytes)" % (label, gotn, refn))
+    if ok and EXPORT and refrc == 0:
+        shutil.copyfile(ivf, os.path.join(EXPORT, name + ".ivf"))
+        exported.append("%s %s %d" % (name, ref, 1 if layered else 0))
     if not ok:
         bad += 1
         aom, aomn, _, _ = digest(["aomdec", "--rawvideo", "-o", "-", ivf])
         print("FAIL  %-28s %s | dav1d %s aomdec (%d bytes) | %s" % (name, "; ".join(line), "==" if aom == ref else "!=", refn, " ".join(args)))
 print("decoder_feature_sweep: %d cases run, %d mismatched or failed, %d skipped (encoder rejected the options)" % (ran, bad, skipped))
+if EXPORT:
+    with open(os.path.join(EXPORT, "manifest.txt"), "w") as f:
+        f.write("".join(line + "\n" for line in sorted(exported)))
 if CLEANUP:
     shutil.rmtree(WORK, ignore_errors=True)
 sys.exit(1 if bad else 0)
