@@ -239,7 +239,7 @@ func svtHMESearch(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (bestSAD
 	bestSAD = ^uint32(0)
 	stride := cur.stride
 	rows := bh / 2
-	if svtHMEColSums && w%8 == 0 && (bw == 16 || bw == 32) && rows <= 16 && w+bw <= svtHMEMaxCols && ref.stride == stride &&
+	if svtHMEColSums && w >= 8 && w%8 == 0 && (bw == 16 || bw == 32) && rows <= 16 && w+bw <= svtHMEMaxCols && ref.stride == stride &&
 		ref.org+(by+oy+h-1+2*(rows-1))*stride+bx+ox+svtHMEColSpan(w, bw) <= len(ref.pix) {
 		return svtHMESearchColSum(cur, ref, bx, by, bw, bh, ox, oy, w, h)
 	}
@@ -369,10 +369,7 @@ func svtHMESearchColSum(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (b
 
 // svtHMEColSumRowScalar is the definition of svtHMEColSumRow on
 // svtHMEEightColSumScalar.
-func svtHMEColSumRowScalar(t *[svtHMEMaxCols / 8][8]uint32, sp, rp, cwp unsafe.Pointer, s2, bw, rows, w int, srcSum uint32) uint32 {
-	s := unsafe.Slice((*byte)(sp), (rows-1)*s2+bw)
-	ref := unsafe.Slice((*byte)(rp), (rows-1)*s2+bw+w)
-	cw := unsafe.Slice((*uint16)(cwp), bw+w)
+func svtHMEColSumRowScalar(t *[svtHMEMaxCols / 8][8]uint32, s []byte, s2 int, ref []byte, cw []uint16, bw, rows, w int, srcSum uint32) uint32 {
 	key := ^uint32(0)
 	for x := 0; x < w; x += 8 {
 		var e [8]uint32
