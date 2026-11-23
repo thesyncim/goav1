@@ -6,8 +6,8 @@
 
 package transform
 
-// fwd8DCTCore follows the assembly's register-resident column, transpose,
-// row dataflow. Each cNr vector holds four adjacent spatial columns at
+// fwd8DCTCore keeps the block register-resident through the column pass, a
+// transpose and the row pass. Each cNr vector holds four adjacent spatial columns at
 // transformed row N; the interleaves gather four rows for the row pass.
 func fwd8DCTCore(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	var c0l, c1l, c2l, c3l, c4l, c5l, c6l, c7l, c0h, c1h, c2h, c3h, c4h, c5h, c6h, c7h fwdVec

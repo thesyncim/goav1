@@ -3,7 +3,6 @@ package encoder
 import (
 	"math/bits"
 	"sync"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
@@ -809,13 +808,13 @@ func rdoqEOBFromIScan(qcoeff []int16, iscan []int16) int {
 
 var rdoqEOBImpl = rdoqEOBPureGo
 
-// rdoqEOBPureGo skips runs of four zero levels by one 64-bit test.
+// rdoqEOBPureGo skips runs of four zero levels by one test.
 func rdoqEOBPureGo(qcoeff []int16, iscan []int16) int {
 	eob := 0
 	n := len(qcoeff) &^ 3
 	iscan = iscan[:len(qcoeff)]
 	for i := 0; i < n; i += 4 {
-		if *(*uint64)(unsafe.Pointer(&qcoeff[i])) == 0 {
+		if q := qcoeff[i : i+4 : i+4]; q[0]|q[1]|q[2]|q[3] == 0 {
 			continue
 		}
 		for j := i; j < i+4; j++ {

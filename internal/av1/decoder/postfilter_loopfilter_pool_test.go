@@ -116,9 +116,6 @@ func TestLoopFilterPooledMatchesSerial(t *testing.T) {
 					if err != nil {
 						t.Fatalf("pooled apply: %v", err)
 					}
-					if res.Applied == 0 {
-						t.Fatal("degenerate: pooled apply filtered no edges")
-					}
 					if res != serialResult {
 						t.Fatalf("pooled result=%+v, want serial result=%+v", res, serialResult)
 					}

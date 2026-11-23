@@ -6,10 +6,7 @@
 
 package prediction
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // Go-native SIMD CfL kernels. They mirror the scalar contracts in
 // intra_kernels.go:
@@ -33,10 +30,10 @@ func subsampleLuma8SIMD(outputQ3 []uint16, input []uint8, inputStride int, width
 			botBase := (row + 1) * inputStride
 			for oc := 0; oc < outW; oc += 8 {
 				ic := oc << 1
-				top := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Pointer(&input[topBase+ic])))
-				bot := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Pointer(&input[botBase+ic])))
+				top := archsimd.LoadUint8x16Array((*[16]uint8)(input[topBase+ic:]))
+				bot := archsimd.LoadUint8x16Array((*[16]uint8)(input[botBase+ic:]))
 				sum := cflPairSumUint8x16(top).Add(cflPairSumUint8x16(bot)).ShiftAllLeft(1)
-				sum.StoreArray((*[8]uint16)(unsafe.Pointer(&outputQ3[outBase+oc])))
+				sum.StoreArray((*[8]uint16)(outputQ3[outBase+oc:]))
 			}
 		}
 	case subX:
@@ -49,9 +46,9 @@ func subsampleLuma8SIMD(outputQ3 []uint16, input []uint8, inputStride int, width
 			inBase := row * inputStride
 			for oc := 0; oc < outW; oc += 8 {
 				ic := oc << 1
-				v := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Pointer(&input[inBase+ic])))
+				v := archsimd.LoadUint8x16Array((*[16]uint8)(input[inBase+ic:]))
 				sum := cflPairSumUint8x16(v).ShiftAllLeft(2)
-				sum.StoreArray((*[8]uint16)(unsafe.Pointer(&outputQ3[outBase+oc])))
+				sum.StoreArray((*[8]uint16)(outputQ3[outBase+oc:]))
 			}
 		}
 	default:
@@ -63,9 +60,9 @@ func subsampleLuma8SIMD(outputQ3 []uint16, input []uint8, inputStride int, width
 			outBase := row * CFLBufLine
 			inBase := row * inputStride
 			for col := 0; col < outW; col += 16 {
-				v := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Pointer(&input[inBase+col])))
-				v.ExtendLo8ToUint16().ShiftAllLeft(3).StoreArray((*[8]uint16)(unsafe.Pointer(&outputQ3[outBase+col])))
-				v.HiToLo().ExtendLo8ToUint16().ShiftAllLeft(3).StoreArray((*[8]uint16)(unsafe.Pointer(&outputQ3[outBase+col+8])))
+				v := archsimd.LoadUint8x16Array((*[16]uint8)(input[inBase+col:]))
+				v.ExtendLo8ToUint16().ShiftAllLeft(3).StoreArray((*[8]uint16)(outputQ3[outBase+col:]))
+				v.HiToLo().ExtendLo8ToUint16().ShiftAllLeft(3).StoreArray((*[8]uint16)(outputQ3[outBase+col+8:]))
 			}
 		}
 	}
@@ -84,16 +81,16 @@ func subsampleLuma16SIMD(outputQ3 []uint16, input []uint16, inputStride int, wid
 			botBase := (row + 1) * inputStride
 			for oc := 0; oc < outW; oc += 8 {
 				ic := oc << 1
-				top0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&input[topBase+ic])))
-				top1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&input[topBase+ic+8])))
-				bot0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&input[botBase+ic])))
-				bot1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&input[botBase+ic+8])))
+				top0 := archsimd.LoadUint16x8Array((*[8]uint16)(input[topBase+ic:]))
+				top1 := archsimd.LoadUint16x8Array((*[8]uint16)(input[topBase+ic+8:]))
+				bot0 := archsimd.LoadUint16x8Array((*[8]uint16)(input[botBase+ic:]))
+				bot1 := archsimd.LoadUint16x8Array((*[8]uint16)(input[botBase+ic+8:]))
 				if cflUint16AnyAbove(top0, maxV) || cflUint16AnyAbove(top1, maxV) ||
 					cflUint16AnyAbove(bot0, maxV) || cflUint16AnyAbove(bot1, maxV) {
 					return subsampleLuma16PureGo(outputQ3, input, inputStride, width, height, outW, outH, subX, subY, max)
 				}
 				sum := cflPairSumUint16x16(top0, top1).Add(cflPairSumUint16x16(bot0, bot1)).ShiftAllLeft(1)
-				sum.StoreArray((*[8]uint16)(unsafe.Pointer(&outputQ3[outBase+oc])))
+				sum.StoreArray((*[8]uint16)(outputQ3[outBase+oc:]))
 			}
 		}
 	case subX:
@@ -105,13 +102,13 @@ func subsampleLuma16SIMD(outputQ3 []uint16, input []uint16, inputStride int, wid
 			inBase := row * inputStride
 			for oc := 0; oc < outW; oc += 8 {
 				ic := oc << 1
-				in0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&input[inBase+ic])))
-				in1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&input[inBase+ic+8])))
+				in0 := archsimd.LoadUint16x8Array((*[8]uint16)(input[inBase+ic:]))
+				in1 := archsimd.LoadUint16x8Array((*[8]uint16)(input[inBase+ic+8:]))
 				if cflUint16AnyAbove(in0, maxV) || cflUint16AnyAbove(in1, maxV) {
 					return subsampleLuma16PureGo(outputQ3, input, inputStride, width, height, outW, outH, subX, subY, max)
 				}
 				sum := cflPairSumUint16x16(in0, in1).ShiftAllLeft(2)
-				sum.StoreArray((*[8]uint16)(unsafe.Pointer(&outputQ3[outBase+oc])))
+				sum.StoreArray((*[8]uint16)(outputQ3[outBase+oc:]))
 			}
 		}
 	default:
@@ -122,11 +119,11 @@ func subsampleLuma16SIMD(outputQ3 []uint16, input []uint16, inputStride int, wid
 			outBase := row * CFLBufLine
 			inBase := row * inputStride
 			for col := 0; col < outW; col += 8 {
-				v := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&input[inBase+col])))
+				v := archsimd.LoadUint16x8Array((*[8]uint16)(input[inBase+col:]))
 				if cflUint16AnyAbove(v, maxV) {
 					return subsampleLuma16PureGo(outputQ3, input, inputStride, width, height, outW, outH, subX, subY, max)
 				}
-				v.ShiftAllLeft(3).StoreArray((*[8]uint16)(unsafe.Pointer(&outputQ3[outBase+col])))
+				v.ShiftAllLeft(3).StoreArray((*[8]uint16)(outputQ3[outBase+col:]))
 			}
 		}
 	}
@@ -142,7 +139,7 @@ func subtractCFLAverageSIMD(srcQ3 []uint16, dstQ3 []int16, width int, height int
 	for row := 0; row < height; row++ {
 		base := row * CFLBufLine
 		for col := 0; col < width; col += 8 {
-			v := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&srcQ3[base+col])))
+			v := archsimd.LoadUint16x8Array((*[8]uint16)(srcQ3[base+col:]))
 			acc = acc.Add(v.ExtendLo4ToUint32()).Add(v.HiToLo().ExtendLo4ToUint32())
 		}
 	}
@@ -152,10 +149,10 @@ func subtractCFLAverageSIMD(srcQ3 []uint16, dstQ3 []int16, width int, height int
 	for row := 0; row < height; row++ {
 		base := row * CFLBufLine
 		for col := 0; col < width; col += 8 {
-			v := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&srcQ3[base+col])))
+			v := archsimd.LoadUint16x8Array((*[8]uint16)(srcQ3[base+col:]))
 			lo := v.ExtendLo4ToUint32().ConvertToInt32().Sub(avgV)
 			hi := v.HiToLo().ExtendLo4ToUint32().ConvertToInt32().Sub(avgV)
-			cflTruncateInt32PairToInt16(lo, hi).StoreArray((*[8]int16)(unsafe.Pointer(&dstQ3[base+col])))
+			cflTruncateInt32PairToInt16(lo, hi).StoreArray((*[8]int16)(dstQ3[base+col:]))
 		}
 	}
 }

@@ -177,14 +177,14 @@ func WriteInterMotion(w *entropy.Writer, cdfs *MVCDFs, req InterMotionRequest, r
 	if result.References != req.References || result.Mode != req.Mode || result.InterIntra {
 		return ErrInvalidDecodeState
 	}
-	if !req.References.Ref[0].Valid() {
+	if !req.References.Ref0.Valid() {
 		return ErrInvalidDecodeState
 	}
 	if !motionVectorValid(result.MV[0]) {
 		return ErrInvalidDecodeState
 	}
 	if req.References.Compound {
-		if !req.References.Ref[1].Valid() || !req.Mode.CompoundMode.Valid() {
+		if !req.References.Ref1.Valid() || !req.Mode.CompoundMode.Valid() {
 			return ErrInvalidDecodeState
 		}
 		if !motionVectorValid(result.MV[1]) {
@@ -201,7 +201,7 @@ func WriteInterMotion(w *entropy.Writer, cdfs *MVCDFs, req InterMotionRequest, r
 			return err
 		}
 	} else {
-		if req.References.Ref[1] != ReferenceFrameNone || !req.Mode.Mode.Valid() {
+		if req.References.Ref1 != ReferenceFrameNone || !req.Mode.Mode.Valid() {
 			return ErrInvalidDecodeState
 		}
 		if err := writeInterMVComponent(w, cdfs, req, result.MV[0], req.Mode.Mode, 0); err != nil {

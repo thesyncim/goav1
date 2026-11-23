@@ -6,35 +6,28 @@
 
 // Go-native SIMD CDEF direction search (simd/archsimd, GOEXPERIMENT=simd).
 //
-// Byte-exact twin of findDirectionScalar. The 8x8
-// block is loaded as eight Int16x8 rows (one SIMD load per row), shifted right by
-// coeffShift and biased by -128 in-register (matching int32(img>>shift)-128).
-//
-// All eight AV1 directional partial-sum arrays are built entirely in vector
-// registers, exactly like dav1d's AArch64 kernel: each per-row contribution is a
-// lane-shifted add, where the lane shift is the byte-lane VEXT exposed here as
-// Int16x8.concatShiftRight (archsimd's ConcatShiftBytesRight). Partial-sum
-// magnitudes stay in int16 (<= 8*127 = 1016). The finishDirection reduction then
-// squares (MulWidenLo/Hi -> int32) and weights against the libaom div-table, and
-// the argmax + variance tail matches the scalar `>` scan (lowest index wins ties,
-// variance = (best - opposite) >> 10).
+// Byte-exact twin of findDirectionScalar / findDirectionU8Scalar written in
+// safe Go with archsimd vector operations.
 //
 // Partial-array index layout (matches direction.go):
 //
 //	p0[k] = sum over i+j=k        (anti-diagonal, k=0..14): row i at lane offset i
-//	p4[k] = sum over 7+i-j=k      (diagonal,      k=0..14): rev(row i) at lane i
+//	p4[k] = sum over 7+i-j=k      (diagonal,      k=0..14): p0 of rows (r7..r0) reversed
 //	p1[k] = sum over i+(j>>1)=k   (k=0..10): pairwise-sum(row i) at lane i
-//	p3[k] = sum over 3+i-(j>>1)=k (k=0..10): rev(pairwise-sum(row i)) at lane i
-//	p5[k] = sum over 3-(i>>1)+j=k (k=0..10): row i at lane 3-(i>>1)
-//	p7[k] = sum over (i>>1)+j=k   (k=0..10): row i at lane (i>>1)
+//	p3[k] = sum over 3+i-(j>>1)=k (k=0..10): p1 of pairwise-sums (s7..s0) reversed
+//	p5[k] = sum over 3-(i>>1)+j=k (k=0..10): paired rows r67,r45,r23,r01 at 0,1,2,3
+//	p7[k] = sum over (i>>1)+j=k   (k=0..10): paired rows r01,r23,r45,r67 at 0,1,2,3
 //	p2[i] = row i sum (straight);  p6[j] = column sum (straight)
+//
+// Because diagonal and odd cost weights are symmetric around the center index
+// (w[k] == w[14-k] for p0/p4, w[k] == w[10-k] for p1/p3), p4 has the exact same
+// cost as p0 on vertically flipped rows (r7..r0) and p3 has the exact same cost
+// as p1 on vertically flipped pairwise sums (s7..s0). That removes all per-row
+// VTBL reversals and table loads.
 
 package cdef
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 var (
 	// Diagonal cost weights div[1..8] split lo (k=0..3) / hi (k=4..7).
@@ -42,6 +35,10 @@ var (
 	cdefDivDiagHi = [4]int32{168, 140, 120, 105}
 	// Odd cost paired weights div[2],div[4],div[6] (lane 3 unused).
 	cdefDivOdd = [4]int32{420, 210, 140, 0}
+	// hi holds p8..p14 in lanes 0..6 -> [p14,p13,p12,p11,p10,p9,p8,0].
+	cdefDiagRevTbl = [16]uint8{12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1, 255, 255}
+	// hi holds p8,p9,p10 in lanes 0..2 -> [p10,p9,p8,0,...].
+	cdefOddRevTbl = [16]uint8{4, 5, 2, 3, 0, 1, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255}
 )
 
 func init() {
@@ -51,20 +48,8 @@ func init() {
 	findDirectionDualU8Impl = findDirectionDualU8SIMD
 }
 
-// cdefDirLoadRowPtr loads eight uint16 samples at raw pointer p as Int16x8 (no
-// slice bounds check in the hot loads).
-func cdefDirLoadRowPtr(p unsafe.Pointer) archsimd.Int16x8 {
-	return archsimd.LoadInt16x8Array((*[8]int16)(p))
-}
-
 // placeLo returns the low half (indices 0..7) of row r placed at lane offset n
 // (0..7): out[k] = r[k-n] for k>=n, else 0.
-//
-// placeLo and placeHi are one VEXT on the int16 view: x.ConcatShiftBytesRight(y,
-// s) returns bytes [s..s+15] of concat(y, x), so the receiver x is the HIGH
-// operand and y the LOW one; s must be a compile-time constant. The VEXT is
-// written out here rather than through a shared helper because a nested
-// inlined call leaves an inline-mark NOP at every use.
 func placeLo(r, zero archsimd.Int16x8, n uint64) archsimd.Int16x8 {
 	if n == 0 {
 		return r
@@ -81,71 +66,110 @@ func placeHi(r, zero archsimd.Int16x8, n uint64) archsimd.Int16x8 {
 	return zero.ToBits().ReshapeToUint8s().ConcatShiftBytesRight(r.ToBits().ReshapeToUint8s(), 16-2*n).ReshapeToUint16s().BitsToInt16()
 }
 
-// revRowLo returns the low half (idx 0..7) of the full 8-lane reverse of row r
-// (out[k]=r[7-k]) placed at lane offset n, in one VTBL.
-func revRowLo(r archsimd.Int16x8, n int) archsimd.Int16x8 {
-	idx := archsimd.LoadUint8x16Array(&cdefP4RevLoTbl[n])
-	return r.ToBits().ReshapeToUint8s().LookupOrZero(idx).ReshapeToUint16s().BitsToInt16()
+// packLo64 combines the low 64 bits (4 int16 lanes) of a and b into one Int16x8.
+func packLo64(a, b archsimd.Int16x8) archsimd.Int16x8 {
+	return a.ToBits().ReshapeToUint64s().InterleaveLo(b.ToBits().ReshapeToUint64s()).ReshapeToUint16s().BitsToInt16()
 }
 
-// revRowHi returns the high half (idx 8..14) of the same placement (nonzero for
-// n>=1).
-func revRowHi(r archsimd.Int16x8, n int) archsimd.Int16x8 {
-	idx := archsimd.LoadUint8x16Array(&cdefP4RevHiTbl[n])
-	return r.ToBits().ReshapeToUint8s().LookupOrZero(idx).ReshapeToUint16s().BitsToInt16()
+// packHi64 combines the high 64 bits (4 int16 lanes) of a and b into one Int16x8.
+func packHi64(a, b archsimd.Int16x8) archsimd.Int16x8 {
+	return a.ToBits().ReshapeToUint64s().InterleaveHi(b.ToBits().ReshapeToUint64s()).ReshapeToUint16s().BitsToInt16()
 }
 
-var cdefP4RevLoTbl = [8][16]uint8{
-	{14, 15, 12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1},
-	{255, 255, 14, 15, 12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3},
-	{255, 255, 255, 255, 14, 15, 12, 13, 10, 11, 8, 9, 6, 7, 4, 5},
-	{255, 255, 255, 255, 255, 255, 14, 15, 12, 13, 10, 11, 8, 9, 6, 7},
-	{255, 255, 255, 255, 255, 255, 255, 255, 14, 15, 12, 13, 10, 11, 8, 9},
-	{255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 14, 15, 12, 13, 10, 11},
-	{255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 14, 15, 12, 13},
-	{255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 14, 15},
+// cdefStraightCostFromVec = (sum of squares of the 8 int16 lanes)*105.
+func cdefStraightCostFromVec(v archsimd.Int16x8) int32 {
+	hi := v.HiToLo()
+	sq := v.MulWidenLo(v).Add(hi.MulWidenLo(hi))
+	return sq.ReduceSum() * 105
 }
 
-var cdefP4RevHiTbl = [8][16]uint8{
-	1: {0, 1, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
-	2: {2, 3, 0, 1, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
-	3: {4, 5, 2, 3, 0, 1, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
-	4: {6, 7, 4, 5, 2, 3, 0, 1, 255, 255, 255, 255, 255, 255, 255, 255},
-	5: {8, 9, 6, 7, 4, 5, 2, 3, 0, 1, 255, 255, 255, 255, 255, 255},
-	6: {10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1, 255, 255, 255, 255},
-	7: {12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1, 255, 255},
+// cdefDiagCostVec computes finishDirectionDiagonalCost from (lo, hi) using
+// hoisted lookup/weight vectors.
+func cdefDiagCostVec(lo, hi archsimd.Int16x8, revTbl archsimd.Uint8x16, wLo, wHi archsimd.Int32x4) int32 {
+	loHi := lo.HiToLo()
+	f0 := lo.MulWidenLo(lo)
+	f1 := loHi.MulWidenLo(loHi)
+	rev := hi.ToBits().ReshapeToUint8s().LookupOrZero(revTbl).ReshapeToUint16s().BitsToInt16()
+	revHi := rev.HiToLo()
+	g0 := rev.MulWidenLo(rev)
+	g1 := revHi.MulWidenLo(revHi)
+	return f0.Add(g0).Mul(wLo).Add(f1.Add(g1).Mul(wHi)).ReduceSum()
+}
+
+// cdefOddCostVec computes finishDirectionOddCost from (lo, hi) using hoisted
+// lookup/weight vectors, without squaring the low half twice.
+func cdefOddCostVec(lo, hi archsimd.Int16x8, oddRevTbl archsimd.Uint8x16, wOdd archsimd.Int32x4) int32 {
+	loSq0 := lo.MulWidenLo(lo)
+	loHi := lo.HiToLo()
+	loSq1 := loHi.MulWidenLo(loHi)
+	center := (loSq0.GetElem(3) + loSq1.ReduceSum()) * 105
+	rev := hi.ToBits().ReshapeToUint8s().LookupOrZero(oddRevTbl).ReshapeToUint16s().BitsToInt16()
+	revSq := rev.MulWidenLo(rev)
+	return center + loSq0.Add(revSq).Mul(wOdd).ReduceSum()
 }
 
 func findDirectionSIMD(img []uint16, stride int, coeffShift int) (int, int32) {
+	if stride < 8 || stride > 1<<24 || len(img) < 7*stride+8 {
+		return findDirectionScalar(img, stride, coeffShift)
+	}
 	bias := archsimd.BroadcastInt16x8(128)
-	shiftV := archsimd.BroadcastInt16x8(-int16(coeffShift)) // negative = right (VSSHL)
-	zero := archsimd.BroadcastInt16x8(0)
+	var zero archsimd.Int16x8
+	s := img[:7*stride+8]
+	var r0, r1, r2, r3, r4, r5, r6, r7 archsimd.Int16x8
+	if coeffShift == 0 {
+		r0 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Sub(bias)
+		s = s[stride:]
+		r1 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Sub(bias)
+		s = s[stride:]
+		r2 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Sub(bias)
+		s = s[stride:]
+		r3 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Sub(bias)
+		s = s[stride:]
+		r4 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Sub(bias)
+		s = s[stride:]
+		r5 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Sub(bias)
+		s = s[stride:]
+		r6 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Sub(bias)
+		s = s[stride:]
+		r7 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Sub(bias)
+	} else {
+		shiftV := archsimd.BroadcastInt16x8(-int16(coeffShift))
+		r0 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Shift(shiftV).Sub(bias)
+		s = s[stride:]
+		r1 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Shift(shiftV).Sub(bias)
+		s = s[stride:]
+		r2 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Shift(shiftV).Sub(bias)
+		s = s[stride:]
+		r3 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Shift(shiftV).Sub(bias)
+		s = s[stride:]
+		r4 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Shift(shiftV).Sub(bias)
+		s = s[stride:]
+		r5 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Shift(shiftV).Sub(bias)
+		s = s[stride:]
+		r6 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Shift(shiftV).Sub(bias)
+		s = s[stride:]
+		r7 = archsimd.LoadUint16x8(s[0:8]).BitsToInt16().Shift(shiftV).Sub(bias)
+	}
 
-	// Walk a raw pointer by stride*2 bytes per row; the public entry point has
-	// already verified that the 8x8 block fits. This avoids per-row slice bounds
-	// checks in the hot path.
-	p := unsafe.Pointer(&img[0])
-	sb := uintptr(stride) * 2
-	r0 := cdefDirLoadRowPtr(p).Shift(shiftV).Sub(bias)
-	r1 := cdefDirLoadRowPtr(unsafe.Add(p, sb)).Shift(shiftV).Sub(bias)
-	r2 := cdefDirLoadRowPtr(unsafe.Add(p, 2*sb)).Shift(shiftV).Sub(bias)
-	r3 := cdefDirLoadRowPtr(unsafe.Add(p, 3*sb)).Shift(shiftV).Sub(bias)
-	r4 := cdefDirLoadRowPtr(unsafe.Add(p, 4*sb)).Shift(shiftV).Sub(bias)
-	r5 := cdefDirLoadRowPtr(unsafe.Add(p, 5*sb)).Shift(shiftV).Sub(bias)
-	r6 := cdefDirLoadRowPtr(unsafe.Add(p, 6*sb)).Shift(shiftV).Sub(bias)
-	r7 := cdefDirLoadRowPtr(unsafe.Add(p, 7*sb)).Shift(shiftV).Sub(bias)
+	// Row pairs shared by column sums (p6) and odd families (p5, p7).
+	r01 := r0.Add(r1)
+	r23 := r2.Add(r3)
+	r45 := r4.Add(r5)
+	r67 := r6.Add(r7)
+	c6 := cdefStraightCostFromVec(r01.Add(r23).Add(r45).Add(r67))
 
-	// --- straight partials (cost 2 and cost 6) ---
-	// partial[6][j] = column sums.
-	col := r0.Add(r1).Add(r2).Add(r3).Add(r4).Add(r5).Add(r6).Add(r7)
-	c6 := cdefStraightCostFromVec(col)
-	// partial[2][i] = row sums; assemble into a Int16x8 then square*105.
-	rowSums := zero.
-		SetElem(0, r0.ReduceSum()).SetElem(1, r1.ReduceSum()).
-		SetElem(2, r2.ReduceSum()).SetElem(3, r3.ReduceSum()).
-		SetElem(4, r4.ReduceSum()).SetElem(5, r5.ReduceSum()).
-		SetElem(6, r6.ReduceSum()).SetElem(7, r7.ReduceSum())
+	// Pairwise column sums packed two rows per vector: a01 = [s0(4), s1(4)], etc.
+	// Three more ADDP steps give all 8 row sums (p2) in-register with zero GPR moves.
+	a01 := r0.ConcatAddPairs(r1)
+	a23 := r2.ConcatAddPairs(r3)
+	a45 := r4.ConcatAddPairs(r5)
+	a67 := r6.ConcatAddPairs(r7)
+	rowSums := a01.ConcatAddPairs(a23).ConcatAddPairs(a45.ConcatAddPairs(a67))
 	c2 := cdefStraightCostFromVec(rowSums)
+
+	diagRevTbl := archsimd.LoadUint8x16Array(&cdefDiagRevTbl)
+	wDiagLo := archsimd.LoadInt32x4Array(&cdefDivDiagLo)
+	wDiagHi := archsimd.LoadInt32x4Array(&cdefDivDiagHi)
 
 	// --- diagonal family p0 (anti-diagonal): row i at lane offset i ---
 	p0lo := r0.
@@ -156,73 +180,58 @@ func findDirectionSIMD(img []uint16, stride int, coeffShift int) (int, int32) {
 		Add(placeHi(r2, zero, 2)).Add(placeHi(r3, zero, 3)).
 		Add(placeHi(r4, zero, 4)).Add(placeHi(r5, zero, 5)).
 		Add(placeHi(r6, zero, 6)).Add(placeHi(r7, zero, 7))
-	c0 := cdefDiagCostVec(p0lo, p0hi)
+	c0 := cdefDiagCostVec(p0lo, p0hi, diagRevTbl, wDiagLo, wDiagHi)
 
-	// --- diagonal family p4 (diagonal): rev(row i) at lane offset i ---
-	// Fuse the full 8-lane reverse + placement into one VTBL per (row, half).
-	p4lo := revRowLo(r0, 0).
-		Add(revRowLo(r1, 1)).Add(revRowLo(r2, 2)).
-		Add(revRowLo(r3, 3)).Add(revRowLo(r4, 4)).
-		Add(revRowLo(r5, 5)).Add(revRowLo(r6, 6)).Add(revRowLo(r7, 7))
-	p4hi := revRowHi(r1, 1).
-		Add(revRowHi(r2, 2)).Add(revRowHi(r3, 3)).
-		Add(revRowHi(r4, 4)).Add(revRowHi(r5, 5)).
-		Add(revRowHi(r6, 6)).Add(revRowHi(r7, 7))
-	c4 := cdefDiagCostVec(p4lo, p4hi)
+	// --- diagonal family p4: symmetric to p0 on reversed rows (r7..r0) ---
+	p4lo := r7.
+		Add(placeLo(r6, zero, 1)).Add(placeLo(r5, zero, 2)).
+		Add(placeLo(r4, zero, 3)).Add(placeLo(r3, zero, 4)).
+		Add(placeLo(r2, zero, 5)).Add(placeLo(r1, zero, 6)).Add(placeLo(r0, zero, 7))
+	p4hi := placeHi(r6, zero, 1).
+		Add(placeHi(r5, zero, 2)).Add(placeHi(r4, zero, 3)).
+		Add(placeHi(r3, zero, 4)).Add(placeHi(r2, zero, 5)).
+		Add(placeHi(r1, zero, 6)).Add(placeHi(r0, zero, 7))
+	c4 := cdefDiagCostVec(p4lo, p4hi, diagRevTbl, wDiagLo, wDiagHi)
 
-	// --- odd family p7: row i at lane (i>>1) (offsets 0,0,1,1,2,2,3,3) ---
-	p7lo := r0.Add(r1).
-		Add(placeLo(r2, zero, 1)).Add(placeLo(r3, zero, 1)).
-		Add(placeLo(r4, zero, 2)).Add(placeLo(r5, zero, 2)).
-		Add(placeLo(r6, zero, 3)).Add(placeLo(r7, zero, 3))
-	p7hi := placeHi(r2, zero, 1).Add(placeHi(r3, zero, 1)).
-		Add(placeHi(r4, zero, 2)).Add(placeHi(r5, zero, 2)).
-		Add(placeHi(r6, zero, 3)).Add(placeHi(r7, zero, 3))
-	c7 := cdefOddCostVec(p7lo, p7hi)
+	oddRevTbl := archsimd.LoadUint8x16Array(&cdefOddRevTbl)
+	wOdd := archsimd.LoadInt32x4Array(&cdefDivOdd)
 
-	// --- odd family p5: row i at lane 3-(i>>1) (offsets 3,3,2,2,1,1,0,0) ---
-	p5lo := r6.Add(r7).
-		Add(placeLo(r4, zero, 1)).Add(placeLo(r5, zero, 1)).
-		Add(placeLo(r2, zero, 2)).Add(placeLo(r3, zero, 2)).
-		Add(placeLo(r0, zero, 3)).Add(placeLo(r1, zero, 3))
-	p5hi := placeHi(r4, zero, 1).Add(placeHi(r5, zero, 1)).
-		Add(placeHi(r2, zero, 2)).Add(placeHi(r3, zero, 2)).
-		Add(placeHi(r0, zero, 3)).Add(placeHi(r1, zero, 3))
-	c5 := cdefOddCostVec(p5lo, p5hi)
+	// --- odd family p7: paired rows r01,r23,r45,r67 at lane offsets 0,1,2,3 ---
+	p7lo := r01.
+		Add(placeLo(r23, zero, 1)).Add(placeLo(r45, zero, 2)).Add(placeLo(r67, zero, 3))
+	p7hi := placeHi(r23, zero, 1).
+		Add(placeHi(r45, zero, 2)).Add(placeHi(r67, zero, 3))
+	c7 := cdefOddCostVec(p7lo, p7hi, oddRevTbl, wOdd)
 
-	// --- odd family p1: pairwise-sum(row i) at lane i (offsets 0..7) ---
-	// pairwise sum occupies lanes 0..3; placed at lane i -> idx i..i+3 (0..10).
-	s0 := r0.ConcatAddPairs(zero)
-	s1 := r1.ConcatAddPairs(zero)
-	s2 := r2.ConcatAddPairs(zero)
-	s3 := r3.ConcatAddPairs(zero)
-	s4 := r4.ConcatAddPairs(zero)
-	s5 := r5.ConcatAddPairs(zero)
-	s6 := r6.ConcatAddPairs(zero)
-	s7 := r7.ConcatAddPairs(zero)
-	p1lo := s0.
-		Add(placeLo(s1, zero, 1)).Add(placeLo(s2, zero, 2)).
-		Add(placeLo(s3, zero, 3)).Add(placeLo(s4, zero, 4)).
-		Add(placeLo(s5, zero, 5)).Add(placeLo(s6, zero, 6)).Add(placeLo(s7, zero, 7))
-	// high half: only s4..s7 reach idx>=8 (s_i occupies i..i+3).
-	p1hi := placeHi(s4, zero, 4).
-		Add(placeHi(s5, zero, 5)).Add(placeHi(s6, zero, 6)).Add(placeHi(s7, zero, 7))
-	c1 := cdefOddCostVec(p1lo, p1hi)
+	// --- odd family p5: paired rows r67,r45,r23,r01 at lane offsets 0,1,2,3 ---
+	p5lo := r67.
+		Add(placeLo(r45, zero, 1)).Add(placeLo(r23, zero, 2)).Add(placeLo(r01, zero, 3))
+	p5hi := placeHi(r45, zero, 1).
+		Add(placeHi(r23, zero, 2)).Add(placeHi(r01, zero, 3))
+	c5 := cdefOddCostVec(p5lo, p5hi, oddRevTbl, wOdd)
 
-	// --- odd family p3: rev4(pairwise-sum(row i)) at lane i (offsets 0..7) ---
-	// Fuse rev4 + placement into a single VTBL per (row, half) so the reversed
-	// temporaries never materialize (cuts peak vector liveness and one op/row).
-	p3lo := revPlaceLo(s0, 0).
-		Add(revPlaceLo(s1, 1)).Add(revPlaceLo(s2, 2)).
-		Add(revPlaceLo(s3, 3)).Add(revPlaceLo(s4, 4)).
-		Add(revPlaceLo(s5, 5)).Add(revPlaceLo(s6, 6)).Add(revPlaceLo(s7, 7))
-	p3hi := revPlaceHi(s5, 5).
-		Add(revPlaceHi(s6, 6)).Add(revPlaceHi(s7, 7))
-	c3 := cdefOddCostVec(p3lo, p3hi)
+	// --- odd family p1: non-overlapping pairs [s0,s4], [s1,s5], [s2,s6], [s3,s7] ---
+	s04 := packLo64(a01, a45)
+	s15 := packHi64(a01, a45)
+	s26 := packLo64(a23, a67)
+	s37 := packHi64(a23, a67)
+	p1lo := s04.
+		Add(placeLo(s15, zero, 1)).Add(placeLo(s26, zero, 2)).Add(placeLo(s37, zero, 3))
+	p1hi := placeHi(s15, zero, 1).
+		Add(placeHi(s26, zero, 2)).Add(placeHi(s37, zero, 3))
+	c1 := cdefOddCostVec(p1lo, p1hi, oddRevTbl, wOdd)
 
-	// Argmax with the scalar `>` scan (lowest index wins ties), tracking the
-	// opposite cost alongside so the variance needs no second lookup — matches
-	// finishDirection exactly. Kept in registers (no cost[] stack array).
+	// --- odd family p3: symmetric to p1 on reversed pairwise sums (s7..s0) ---
+	s73 := packHi64(a67, a23)
+	s62 := packLo64(a67, a23)
+	s51 := packHi64(a45, a01)
+	s40 := packLo64(a45, a01)
+	p3lo := s73.
+		Add(placeLo(s62, zero, 1)).Add(placeLo(s51, zero, 2)).Add(placeLo(s40, zero, 3))
+	p3hi := placeHi(s62, zero, 1).
+		Add(placeHi(s51, zero, 2)).Add(placeHi(s40, zero, 3))
+	c3 := cdefOddCostVec(p3lo, p3hi, oddRevTbl, wOdd)
+
 	bestDir, bestCost, opp := 0, c0, c4
 	if c1 > bestCost {
 		bestDir, bestCost, opp = 1, c1, c5
@@ -248,173 +257,55 @@ func findDirectionSIMD(img []uint16, stride int, coeffShift int) (int, int32) {
 	return bestDir, (bestCost - opp) >> 10
 }
 
-// revPlaceLo returns the low half (idx 0..7) of rev4(pairwise sums in s lanes
-// 0..3) placed at lane offset n, in a single VTBL: out lane k in [n,n+3] = s lane
-// 3-(k-n), else 0.
-func revPlaceLo(s archsimd.Int16x8, n int) archsimd.Int16x8 {
-	idx := archsimd.LoadUint8x16Array(&cdefP3RevLoTbl[n])
-	return s.ToBits().ReshapeToUint8s().LookupOrZero(idx).ReshapeToUint16s().BitsToInt16()
-}
-
-// revPlaceHi returns the high half (idx 8..14) of the same placement; nonzero
-// only for n = 5,6,7 (n<=4 overflows nothing past lane 7).
-func revPlaceHi(s archsimd.Int16x8, n int) archsimd.Int16x8 {
-	idx := archsimd.LoadUint8x16Array(&cdefP3RevHiTbl[n])
-	return s.ToBits().ReshapeToUint8s().LookupOrZero(idx).ReshapeToUint16s().BitsToInt16()
-}
-
-// Combined rev4 + place index tables for p3 (out-of-range 255 -> zero lane).
-var cdefP3RevLoTbl = [8][16]uint8{
-	{6, 7, 4, 5, 2, 3, 0, 1, 255, 255, 255, 255, 255, 255, 255, 255},
-	{255, 255, 6, 7, 4, 5, 2, 3, 0, 1, 255, 255, 255, 255, 255, 255},
-	{255, 255, 255, 255, 6, 7, 4, 5, 2, 3, 0, 1, 255, 255, 255, 255},
-	{255, 255, 255, 255, 255, 255, 6, 7, 4, 5, 2, 3, 0, 1, 255, 255},
-	{255, 255, 255, 255, 255, 255, 255, 255, 6, 7, 4, 5, 2, 3, 0, 1},
-	{255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 6, 7, 4, 5, 2, 3},
-	{255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 6, 7, 4, 5},
-	{255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 6, 7},
-}
-
-var cdefP3RevHiTbl = [8][16]uint8{
-	5: {0, 1, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
-	6: {2, 3, 0, 1, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
-	7: {4, 5, 2, 3, 0, 1, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
-}
-
-// cdefStraightCostFromVec = (sum of squares of the 8 int16 lanes)*105.
-func cdefStraightCostFromVec(v archsimd.Int16x8) int32 {
-	sq := v.MulWidenLo(v).Add(v.HiToLo().MulWidenLo(v.HiToLo()))
-	return sq.ReduceSum() * 105
-}
-
-// cdefDiagCostVec vectorizes finishDirectionDiagonalCost from the (lo,hi) form:
-//
-//	sum_{k=0..6} (p[k]^2 + p[14-k]^2)*div[k+1] + p[7]^2*div[8]
-//
-// lo lanes 0..7 = p[0..7]; hi lanes 0..6 = p[8..14].
-func cdefDiagCostVec(lo, hi archsimd.Int16x8) int32 {
-	// Forward p[0..7] (lo). Reverse p[14..7] must align lane k with p[14-k].
-	// Build rev = [p14,p13,p12,p11,p10,p9,p8,p7]: reverse hi's lanes 0..6 into
-	// lanes 0..6 and append p7. Simpler: assemble via SetElem from the scalar
-	// squares is costly; instead compute widened squares of lo and of a reversed
-	// combination. Do it in int32 to match the scalar exactly.
-	// Widen p[0..7] to two Int32x4 (lo0..3, lo4..7).
-	f0 := lo.MulWidenLo(lo)                   // p0^2..p3^2
-	f1 := lo.HiToLo().MulWidenLo(lo.HiToLo()) // p4^2..p7^2
-	// rev vector r = [p14,p13,p12,p11,p10,p9,p8,p7]; then r squared aligns
-	// r[k]=p[14-k], so (f[k]+rSq[k]) = p[k]^2+p[14-k]^2 for k=0..7. For k=7 that
-	// is p7^2+p7^2; the scalar wants only p7^2*div8, so we halve-correct by using
-	// rev's lane7 = 0 instead of p7.
-	rev := cdefBuildDiagRev(hi, lo) // [p14..p8, p7-slot=0]
-	g0 := rev.MulWidenLo(rev)
-	g1 := rev.HiToLo().MulWidenLo(rev.HiToLo())
-	sqLo := f0.Add(g0) // (p0^2+p14^2 ... p3^2+p11^2)
-	sqHi := f1.Add(g1) // (p4^2+p10^2 ... p7^2+0)
-	wLo := archsimd.LoadInt32x4Array(&cdefDivDiagLo)
-	wHi := archsimd.LoadInt32x4Array(&cdefDivDiagHi)
-	return sqLo.Mul(wLo).Add(sqHi.Mul(wHi)).ReduceSum()
-}
-
-// cdefBuildDiagRev builds [p14,p13,p12,p11,p10,p9,p8,0] from hi (=p8..p14 in
-// lanes0..6) and lo. Only hi is needed; reverse hi's lanes 0..6 into lanes 0..6
-// and zero lane 7.
-func cdefBuildDiagRev(hi, lo archsimd.Int16x8) archsimd.Int16x8 {
-	_ = lo
-	idx := archsimd.LoadUint8x16Array(&cdefDiagRevTbl)
-	return hi.ToBits().ReshapeToUint8s().LookupOrZero(idx).ReshapeToUint16s().BitsToInt16()
-}
-
-// hi holds p8..p14 in lanes 0..6. We want [p14,p13,p12,p11,p10,p9,p8,0], i.e.
-// out lane k = hi lane 6-k for k=0..6, out lane7 = 0. Byte 2k <- 2(6-k).
-var cdefDiagRevTbl = [16]uint8{12, 13, 10, 11, 8, 9, 6, 7, 4, 5, 2, 3, 0, 1, 255, 255}
-
-// cdefOddCostVec vectorizes finishDirectionOddCost from (lo,hi):
-//
-//	(p[3]^2+..+p[7]^2)*div[8] + (p[0]^2+p[10]^2)*div[2]
-//	 + (p[1]^2+p[9]^2)*div[4] + (p[2]^2+p[8]^2)*div[6]
-//
-// lo lanes 0..7 = p[0..7]; hi lanes 0..2 = p[8..10].
-func cdefOddCostVec(lo, hi archsimd.Int16x8) int32 {
-	loSq0 := lo.MulWidenLo(lo)                   // p0^2..p3^2
-	loSq1 := lo.HiToLo().MulWidenLo(lo.HiToLo()) // p4^2..p7^2
-	// center = (p3^2+p4^2+p5^2+p6^2+p7^2)*105.
-	// p3^2 is loSq0 lane3; p4..7 sq is loSq1 lanes0..3.
-	center := (int32(loSq0.GetElem(3)) + loSq1.ReduceSum()) * 105
-	// paired: (p0^2+p10^2)*420 + (p1^2+p9^2)*210 + (p2^2+p8^2)*140.
-	// fwd = [p0,p1,p2,0]; rev = [p10,p9,p8,0].
-	fwdSq := lo.MulWidenLo(lo) // lanes0..2 = p0^2,p1^2,p2^2
-	rev := cdefOddRev(hi)      // [p10,p9,p8,0,...]
-	revSq := rev.MulWidenLo(rev)
-	// zero lane3 of fwdSq so it doesn't contribute (div lane3 = 0 anyway).
-	paired := fwdSq.Add(revSq)
-	w := archsimd.LoadInt32x4Array(&cdefDivOdd)
-	return center + paired.Mul(w).ReduceSum()
-}
-
-// cdefOddRev builds [p10,p9,p8,0,...] from hi (=p8,p9,p10 in lanes0..2) via VTBL.
-// out lane0=hi lane2, lane1=hi lane1, lane2=hi lane0, lane3=0.
-func cdefOddRev(hi archsimd.Int16x8) archsimd.Int16x8 {
-	idx := archsimd.LoadUint8x16Array(&cdefOddRevTbl)
-	return hi.ToBits().ReshapeToUint8s().LookupOrZero(idx).ReshapeToUint16s().BitsToInt16()
-}
-
-var cdefOddRevTbl = [16]uint8{4, 5, 2, 3, 0, 1, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255}
-
 func findDirectionDualSIMD(img1 []uint16, img2 []uint16, stride int, coeffShift int) (int, int32, int, int32) {
 	dir1, var1 := findDirectionSIMD(img1, stride, coeffShift)
 	dir2, var2 := findDirectionSIMD(img2, stride, coeffShift)
 	return dir1, var1, dir2, var2
 }
 
-// cdefDirLoadRowU8 widens 8 frame bytes at raw pointer p to Int16x8.
-func cdefDirLoadRowU8(p unsafe.Pointer) archsimd.Int16x8 {
-	return archsimd.LoadUint8x16Array((*[16]uint8)(p)).ExtendLo8ToUint16().ConvertToInt16()
-}
-
-// cdefDirLoadRowU8Hi widens bytes 8..15 of the 16 bytes at p. The last block
-// row uses this with p = rowStart-8 so the 16-byte load ends exactly at the
-// row's last needed byte and can never read past the plane allocation (the
-// direction search runs on luma only, but monochrome frames end the backing
-// buffer right after the Y plane).
-func cdefDirLoadRowU8Hi(p unsafe.Pointer) archsimd.Int16x8 {
-	return archsimd.LoadUint8x16Array((*[16]uint8)(p)).HiToLo().ExtendLo8ToUint16().ConvertToInt16()
-}
-
-// findDirectionU8SIMD is findDirectionSIMD reading the 8-bit frame plane
-// directly (dav1d cdef_find_dir_8bpc): coeffShift is always 0 at 8 bits, so
-// the row prologue is just widen + Sub(128). The partial-sum/cost/argmax body
-// is textually identical to findDirectionSIMD — an outlined shared core would
-// push eight Int16x8 rows through the stack ABI (see filter4_gosimd_arm64.go).
-// Rows 0..6 use 16-byte loads whose 8-byte overread lands in the next row;
-// row 7 uses the hi-half load so nothing is read past the block's last byte.
+// findDirectionU8SIMD reads the 8-bit frame plane directly in safe Go.
+// Rows 0..6 use 16-byte loads whose 8-byte tail lands inside rows 1..7; row 7
+// loads [7*stride-8 : 7*stride+8] and takes the high half so no byte past the
+// block's last pixel is read.
 func findDirectionU8SIMD(img []byte, stride int) (int, int32) {
+	if stride < 8 || stride > 1<<24 || len(img) < 7*stride+8 {
+		return findDirectionU8Scalar(img, stride)
+	}
 	bias := archsimd.BroadcastInt16x8(128)
-	zero := archsimd.BroadcastInt16x8(0)
+	var zero archsimd.Int16x8
+	s := img[:7*stride+8]
+	r0 := archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+	s = s[stride:]
+	r1 := archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+	s = s[stride:]
+	r2 := archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+	s = s[stride:]
+	r3 := archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+	s = s[stride:]
+	r4 := archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+	s = s[stride:]
+	r5 := archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+	s = s[stride:]
+	r6 := archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+	r7 := archsimd.LoadUint8x16(s[stride-8 : stride+8]).HiToLo().ExtendLo8ToUint16().BitsToInt16().Sub(bias)
 
-	p := unsafe.Pointer(&img[0])
-	sb := uintptr(stride)
-	r0 := cdefDirLoadRowU8(p).Sub(bias)
-	r1 := cdefDirLoadRowU8(unsafe.Add(p, sb)).Sub(bias)
-	r2 := cdefDirLoadRowU8(unsafe.Add(p, 2*sb)).Sub(bias)
-	r3 := cdefDirLoadRowU8(unsafe.Add(p, 3*sb)).Sub(bias)
-	r4 := cdefDirLoadRowU8(unsafe.Add(p, 4*sb)).Sub(bias)
-	r5 := cdefDirLoadRowU8(unsafe.Add(p, 5*sb)).Sub(bias)
-	r6 := cdefDirLoadRowU8(unsafe.Add(p, 6*sb)).Sub(bias)
-	r7 := cdefDirLoadRowU8Hi(unsafe.Add(p, 7*sb-8)).Sub(bias)
+	r01 := r0.Add(r1)
+	r23 := r2.Add(r3)
+	r45 := r4.Add(r5)
+	r67 := r6.Add(r7)
+	c6 := cdefStraightCostFromVec(r01.Add(r23).Add(r45).Add(r67))
 
-	// --- straight partials (cost 2 and cost 6) ---
-	// partial[6][j] = column sums.
-	col := r0.Add(r1).Add(r2).Add(r3).Add(r4).Add(r5).Add(r6).Add(r7)
-	c6 := cdefStraightCostFromVec(col)
-	// partial[2][i] = row sums; assemble into a Int16x8 then square*105.
-	rowSums := zero.
-		SetElem(0, r0.ReduceSum()).SetElem(1, r1.ReduceSum()).
-		SetElem(2, r2.ReduceSum()).SetElem(3, r3.ReduceSum()).
-		SetElem(4, r4.ReduceSum()).SetElem(5, r5.ReduceSum()).
-		SetElem(6, r6.ReduceSum()).SetElem(7, r7.ReduceSum())
+	a01 := r0.ConcatAddPairs(r1)
+	a23 := r2.ConcatAddPairs(r3)
+	a45 := r4.ConcatAddPairs(r5)
+	a67 := r6.ConcatAddPairs(r7)
+	rowSums := a01.ConcatAddPairs(a23).ConcatAddPairs(a45.ConcatAddPairs(a67))
 	c2 := cdefStraightCostFromVec(rowSums)
 
-	// --- diagonal family p0 (anti-diagonal): row i at lane offset i ---
+	diagRevTbl := archsimd.LoadUint8x16Array(&cdefDiagRevTbl)
+	wDiagLo := archsimd.LoadInt32x4Array(&cdefDivDiagLo)
+	wDiagHi := archsimd.LoadInt32x4Array(&cdefDivDiagHi)
+
 	p0lo := r0.
 		Add(placeLo(r1, zero, 1)).Add(placeLo(r2, zero, 2)).
 		Add(placeLo(r3, zero, 3)).Add(placeLo(r4, zero, 4)).
@@ -423,73 +314,53 @@ func findDirectionU8SIMD(img []byte, stride int) (int, int32) {
 		Add(placeHi(r2, zero, 2)).Add(placeHi(r3, zero, 3)).
 		Add(placeHi(r4, zero, 4)).Add(placeHi(r5, zero, 5)).
 		Add(placeHi(r6, zero, 6)).Add(placeHi(r7, zero, 7))
-	c0 := cdefDiagCostVec(p0lo, p0hi)
+	c0 := cdefDiagCostVec(p0lo, p0hi, diagRevTbl, wDiagLo, wDiagHi)
 
-	// --- diagonal family p4 (diagonal): rev(row i) at lane offset i ---
-	// Fuse the full 8-lane reverse + placement into one VTBL per (row, half).
-	p4lo := revRowLo(r0, 0).
-		Add(revRowLo(r1, 1)).Add(revRowLo(r2, 2)).
-		Add(revRowLo(r3, 3)).Add(revRowLo(r4, 4)).
-		Add(revRowLo(r5, 5)).Add(revRowLo(r6, 6)).Add(revRowLo(r7, 7))
-	p4hi := revRowHi(r1, 1).
-		Add(revRowHi(r2, 2)).Add(revRowHi(r3, 3)).
-		Add(revRowHi(r4, 4)).Add(revRowHi(r5, 5)).
-		Add(revRowHi(r6, 6)).Add(revRowHi(r7, 7))
-	c4 := cdefDiagCostVec(p4lo, p4hi)
+	p4lo := r7.
+		Add(placeLo(r6, zero, 1)).Add(placeLo(r5, zero, 2)).
+		Add(placeLo(r4, zero, 3)).Add(placeLo(r3, zero, 4)).
+		Add(placeLo(r2, zero, 5)).Add(placeLo(r1, zero, 6)).Add(placeLo(r0, zero, 7))
+	p4hi := placeHi(r6, zero, 1).
+		Add(placeHi(r5, zero, 2)).Add(placeHi(r4, zero, 3)).
+		Add(placeHi(r3, zero, 4)).Add(placeHi(r2, zero, 5)).
+		Add(placeHi(r1, zero, 6)).Add(placeHi(r0, zero, 7))
+	c4 := cdefDiagCostVec(p4lo, p4hi, diagRevTbl, wDiagLo, wDiagHi)
 
-	// --- odd family p7: row i at lane (i>>1) (offsets 0,0,1,1,2,2,3,3) ---
-	p7lo := r0.Add(r1).
-		Add(placeLo(r2, zero, 1)).Add(placeLo(r3, zero, 1)).
-		Add(placeLo(r4, zero, 2)).Add(placeLo(r5, zero, 2)).
-		Add(placeLo(r6, zero, 3)).Add(placeLo(r7, zero, 3))
-	p7hi := placeHi(r2, zero, 1).Add(placeHi(r3, zero, 1)).
-		Add(placeHi(r4, zero, 2)).Add(placeHi(r5, zero, 2)).
-		Add(placeHi(r6, zero, 3)).Add(placeHi(r7, zero, 3))
-	c7 := cdefOddCostVec(p7lo, p7hi)
+	oddRevTbl := archsimd.LoadUint8x16Array(&cdefOddRevTbl)
+	wOdd := archsimd.LoadInt32x4Array(&cdefDivOdd)
 
-	// --- odd family p5: row i at lane 3-(i>>1) (offsets 3,3,2,2,1,1,0,0) ---
-	p5lo := r6.Add(r7).
-		Add(placeLo(r4, zero, 1)).Add(placeLo(r5, zero, 1)).
-		Add(placeLo(r2, zero, 2)).Add(placeLo(r3, zero, 2)).
-		Add(placeLo(r0, zero, 3)).Add(placeLo(r1, zero, 3))
-	p5hi := placeHi(r4, zero, 1).Add(placeHi(r5, zero, 1)).
-		Add(placeHi(r2, zero, 2)).Add(placeHi(r3, zero, 2)).
-		Add(placeHi(r0, zero, 3)).Add(placeHi(r1, zero, 3))
-	c5 := cdefOddCostVec(p5lo, p5hi)
+	p7lo := r01.
+		Add(placeLo(r23, zero, 1)).Add(placeLo(r45, zero, 2)).Add(placeLo(r67, zero, 3))
+	p7hi := placeHi(r23, zero, 1).
+		Add(placeHi(r45, zero, 2)).Add(placeHi(r67, zero, 3))
+	c7 := cdefOddCostVec(p7lo, p7hi, oddRevTbl, wOdd)
 
-	// --- odd family p1: pairwise-sum(row i) at lane i (offsets 0..7) ---
-	// pairwise sum occupies lanes 0..3; placed at lane i -> idx i..i+3 (0..10).
-	s0 := r0.ConcatAddPairs(zero)
-	s1 := r1.ConcatAddPairs(zero)
-	s2 := r2.ConcatAddPairs(zero)
-	s3 := r3.ConcatAddPairs(zero)
-	s4 := r4.ConcatAddPairs(zero)
-	s5 := r5.ConcatAddPairs(zero)
-	s6 := r6.ConcatAddPairs(zero)
-	s7 := r7.ConcatAddPairs(zero)
-	p1lo := s0.
-		Add(placeLo(s1, zero, 1)).Add(placeLo(s2, zero, 2)).
-		Add(placeLo(s3, zero, 3)).Add(placeLo(s4, zero, 4)).
-		Add(placeLo(s5, zero, 5)).Add(placeLo(s6, zero, 6)).Add(placeLo(s7, zero, 7))
-	// high half: only s4..s7 reach idx>=8 (s_i occupies i..i+3).
-	p1hi := placeHi(s4, zero, 4).
-		Add(placeHi(s5, zero, 5)).Add(placeHi(s6, zero, 6)).Add(placeHi(s7, zero, 7))
-	c1 := cdefOddCostVec(p1lo, p1hi)
+	p5lo := r67.
+		Add(placeLo(r45, zero, 1)).Add(placeLo(r23, zero, 2)).Add(placeLo(r01, zero, 3))
+	p5hi := placeHi(r45, zero, 1).
+		Add(placeHi(r23, zero, 2)).Add(placeHi(r01, zero, 3))
+	c5 := cdefOddCostVec(p5lo, p5hi, oddRevTbl, wOdd)
 
-	// --- odd family p3: rev4(pairwise-sum(row i)) at lane i (offsets 0..7) ---
-	// Fuse rev4 + placement into a single VTBL per (row, half) so the reversed
-	// temporaries never materialize (cuts peak vector liveness and one op/row).
-	p3lo := revPlaceLo(s0, 0).
-		Add(revPlaceLo(s1, 1)).Add(revPlaceLo(s2, 2)).
-		Add(revPlaceLo(s3, 3)).Add(revPlaceLo(s4, 4)).
-		Add(revPlaceLo(s5, 5)).Add(revPlaceLo(s6, 6)).Add(revPlaceLo(s7, 7))
-	p3hi := revPlaceHi(s5, 5).
-		Add(revPlaceHi(s6, 6)).Add(revPlaceHi(s7, 7))
-	c3 := cdefOddCostVec(p3lo, p3hi)
+	s04 := packLo64(a01, a45)
+	s15 := packHi64(a01, a45)
+	s26 := packLo64(a23, a67)
+	s37 := packHi64(a23, a67)
+	p1lo := s04.
+		Add(placeLo(s15, zero, 1)).Add(placeLo(s26, zero, 2)).Add(placeLo(s37, zero, 3))
+	p1hi := placeHi(s15, zero, 1).
+		Add(placeHi(s26, zero, 2)).Add(placeHi(s37, zero, 3))
+	c1 := cdefOddCostVec(p1lo, p1hi, oddRevTbl, wOdd)
 
-	// Argmax with the scalar `>` scan (lowest index wins ties), tracking the
-	// opposite cost alongside so the variance needs no second lookup — matches
-	// finishDirection exactly. Kept in registers (no cost[] stack array).
+	s73 := packHi64(a67, a23)
+	s62 := packLo64(a67, a23)
+	s51 := packHi64(a45, a01)
+	s40 := packLo64(a45, a01)
+	p3lo := s73.
+		Add(placeLo(s62, zero, 1)).Add(placeLo(s51, zero, 2)).Add(placeLo(s40, zero, 3))
+	p3hi := placeHi(s62, zero, 1).
+		Add(placeHi(s51, zero, 2)).Add(placeHi(s40, zero, 3))
+	c3 := cdefOddCostVec(p3lo, p3hi, oddRevTbl, wOdd)
+
 	bestDir, bestCost, opp := 0, c0, c4
 	if c1 > bestCost {
 		bestDir, bestCost, opp = 1, c1, c5
@@ -520,7 +391,3 @@ func findDirectionDualU8SIMD(img1 []byte, img2 []byte, stride int) (int, int32, 
 	dir2, var2 := findDirectionU8SIMD(img2, stride)
 	return dir1, var1, dir2, var2
 }
-
-// directionSIMDBound reports whether the Go SIMD direction kernels are the
-// dispatch targets on this build: always, on arm64 (NEON is mandatory).
-func directionSIMDBound() bool { return true }

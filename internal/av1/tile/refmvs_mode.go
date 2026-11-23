@@ -52,11 +52,9 @@ func readMVComponentDiffRefmvs(c *entropy.Cursor, comp *MVComponentCDFs, mvPrec 
 			}
 		}
 	}
-	diff := int32((up<<3)|(fp<<1)|hp) + 1
-	if sign != 0 {
-		return -diff
-	}
-	return diff
+	// sign ? -diff : diff without a branch on the (unpredictable) sign bit.
+	s := -int32(sign)
+	return (int32((up<<3)|(fp<<1)|hp) + 1 ^ s) - s
 }
 
 // readMVResidualRefmvs ports dav1d's read_mv_residual: returns ref + residual
@@ -83,7 +81,7 @@ func (s *DecodeState) decodeMotionModeRefmvs(cdfs *MotionModeCDFs, c *BlockModeC
 	result.MotionMode = MotionModeTranslation
 	result.MotionModeValid = true
 	dims := blockDimensions[block.Size]
-	ref := refs.Ref[0]
+	ref := refs.Ref0
 	if refs.Compound || skipMode || !req.SwitchableMotionMode || result.InterIntra.Enabled ||
 		min(dims.W4, dims.H4) < 2 ||
 		(!req.ForceIntegerMV && result.InterMode.Mode == InterModeGlobalMV && req.GlobalMotionTypes[ref] > parser.GlobalMotionTranslation) ||
@@ -94,15 +92,14 @@ func (s *DecodeState) decodeMotionModeRefmvs(cdfs *MotionModeCDFs, c *BlockModeC
 	topHasRight := refmvsTopHasRight(req.SBSizeMIB, block)
 	rt.findMatchingRef(block, topHasRight, ref, &masks)
 	allowWarp := !req.ScaledReferences[ref] && !req.ForceIntegerMV && req.AllowWarpedMotion && masks[0]|masks[1] != 0
-
-	cur := s.Reader.Cursor()
+	// The symbols are read straight from the tile's range decoder, as
+	cur := &s.Reader // dav1d reads through &ts->msac.
 	var mode MotionMode
 	if allowWarp {
 		mode = MotionMode(cur.ReadCDF3Unchecked(&cdfs.MotionMode[block.Size]))
 	} else {
 		mode = MotionMode(cur.ReadBinaryCDFUnchecked(&cdfs.OBMC[block.Size]))
 	}
-	cur.CommitStateTo(&s.Reader)
 	result.MotionMode = mode
 	if mode == MotionModeWarp {
 		model, invalid, err := rt.deriveWarpMV(block, &masks, result.InterMotion.MV[0])
@@ -111,12 +108,12 @@ func (s *DecodeState) decodeMotionModeRefmvs(cdfs *MotionModeCDFs, c *BlockModeC
 		}
 		result.WarpedMotionInvalid = invalid
 		if !invalid {
-			result.WarpedMotion = model
+			s.blockMotionExtras(result).WarpedMotion = model
 			result.WarpedMotionValid = true
 		}
 	}
 	if mode != MotionModeTranslation {
-		result.OverlappableNeighbors = rt.obmcNeighbors(c, block)
+		s.blockMotionExtras(result).OverlappableNeighbors = rt.obmcNeighbors(c, block)
 		result.OverlappableNeighborsValid = true
 	}
 	return mode, nil
@@ -134,9 +131,9 @@ var compoundModeHasNear = [compoundInterModeCount]bool{
 // DRL and motion fields of result.
 func (s *DecodeState) decodeInterModeRefmvs(cdfs *InterModeCDFs, mvCDFs *MVCDFs, modeCtx *BlockModeContext, rt *refmvsTile, req *BlockLoopRequest, block *BlockVisit, refs InterReferencesResult, skipMode bool, segment *parser.SegmentData, globalMVs [2]motion.Vector, result *BlockPredictionModeResult) error {
 	var found refmvsResult
-	target := [2]int8{int8(refs.Ref[0]) + 1, -1}
+	target := makeRefmvsRefPair(int8(refs.Ref0)+1, -1)
 	if refs.Compound {
-		target[1] = int8(refs.Ref[1]) + 1
+		target = makeRefmvsRefPair(int8(refs.Ref0)+1, int8(refs.Ref1)+1)
 	}
 	rt.find(&found, target, block.Size, refmvsTopHasRight(req.SBSizeMIB, block), int32(block.MIRow), int32(block.MICol), globalMVs)
 	if refmvsOracleEnabled {
@@ -153,10 +150,10 @@ func (s *DecodeState) decodeInterModeRefmvs(cdfs *InterModeCDFs, mvCDFs *MVCDFs,
 	if rf.forceIntegerMV {
 		mvPrec--
 	}
-
-	c := s.Reader.Cursor()
+	var c entropy.Cursor
+	c.Load(&s.Reader)
 	motionResult := &result.InterMotion
-	*motionResult = InterMotionResult{References: refs}
+	motionResult.References = refs // the rest was cleared with the result
 	drlIdx := int32(0)
 	drlRead := false
 	ok := true
@@ -198,7 +195,6 @@ func (s *DecodeState) decodeInterModeRefmvs(cdfs *InterModeCDFs, mvCDFs *MVCDFs,
 				mv, valid := readMVResidualRefmvs(&c, mvCDFs, stack[drlIdx].mv[idx], mvPrec)
 				ok = ok && valid
 				motionResult.MV[idx] = mv.vector()
-				result.MVResidualValid[idx] = true
 			}
 		}
 	} else {
@@ -246,7 +242,6 @@ func (s *DecodeState) decodeInterModeRefmvs(cdfs *InterModeCDFs, mvCDFs *MVCDFs,
 			mv, valid := readMVResidualRefmvs(&c, mvCDFs, ref, mvPrec)
 			ok = valid
 			motionResult.MV[0] = mv.vector()
-			result.MVResidualValid[0] = true
 		}
 		motionResult.Mode = InterModeResult{Mode: mode}
 	}
@@ -256,10 +251,8 @@ func (s *DecodeState) decodeInterModeRefmvs(cdfs *InterModeCDFs, mvCDFs *MVCDFs,
 	}
 	result.InterMode = motionResult.Mode
 	result.InterModeValid = true
-	result.ReferenceMVStackValid = true
 	result.DRLIndex = uint8(drlIdx)
 	result.DRLIndexValid = drlRead
-	result.InterMVReferencesValid = !interModeUsesGlobalOnly(motionResult.Mode)
 	result.InterMotionValid = true
 	return nil
 }

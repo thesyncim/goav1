@@ -1,46 +1,34 @@
 package goav1
 
-import internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+import (
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 
-// DecoderTileListEntryDecodePlan is the residual-runner contract for decoding
-// one tile_list_obu() entry. Event is a synthetic tile-group event whose payload
-// is the entry's raw coded tile bytes; Step binds the single-tile work plan and
-// exposes exactly one reference, LAST_FRAME, backed by the entry's external
-// anchor frame.
-type DecoderTileListEntryDecodePlan = internaldecoder.TileListEntryDecodePlan
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+)
 
-// PlanDecoderTileListEntryDecode prepares one tile-list entry for residual
-// decoding. references receives the libaom-shaped reference table for the
-// synthetic entry decode: references[0] is LAST_FRAME and points at
-// anchors[anchor_frame_idx]. The returned Event and Step can be supplied to the
-// frame-work residual runner with output set to a caller-owned scratch
-// reconstruction frame; after the entry decodes, copy Region into the tile-list
-// output mosaic with CopyTileListEntryToOutputFrame.
-func PlanDecoderTileListEntryDecode(event *DecoderEvent, entryIndex int, surface int, anchors []*Frame, references []*Frame, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderTileListEntryDecodePlan, error) {
-	return internaldecoder.PlanTileListEntryDecode(event, entryIndex, surface, anchors, references, workers, spans, jobs, batches)
-}
-
-// DecoderTileListEntryDecodeRunnerScratchLen reports residual-runner scratch
+// decoderTileListEntryDecodeRunnerScratchLen reports residual-runner scratch
 // for the synthetic tile-group event produced by PlanDecoderTileListEntryDecode.
 // It also returns the tile work plan written into spans, jobs, and batches.
-func DecoderTileListEntryDecodeRunnerScratchLen(event *DecoderEvent, entryIndex int, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkBatchResidualRunnerScratchSize, DecoderTileWorkPlan, error) {
-	if event.Kind != DecoderEventTileList {
-		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, ErrDecoderInvalidSurfaceEvent
+func decoderTileListEntryDecodeRunnerScratchLen(event *internaldecoder.Event, entryIndex int, workers int, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch) (decoderFrameWorkBatchResidualRunnerScratchSize, internaldecoder.TileWorkPlan, error) {
+	if event.Kind != internaldecoder.EventTileList {
+		return decoderFrameWorkBatchResidualRunnerScratchSize{}, internaldecoder.TileWorkPlan{}, internaldecoder.ErrInvalidSurfaceEvent
 	}
 	if event.TileListErr != nil {
-		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, event.TileListErr
+		return decoderFrameWorkBatchResidualRunnerScratchSize{}, internaldecoder.TileWorkPlan{}, event.TileListErr
 	}
-	plan, err := PlanDecoderTileListEntryWork(event.TileList, event.TileInfo, entryIndex, workers, spans, jobs, batches)
+	plan, err := internaldecoder.PlanTileListEntryWork(event.TileList, event.TileInfo, entryIndex, workers, spans, jobs, batches)
 	if err != nil {
-		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, err
+		return decoderFrameWorkBatchResidualRunnerScratchSize{}, internaldecoder.TileWorkPlan{}, err
 	}
-	batch := DecoderFrameWorkBatch{
+	batch := internaldecoder.FrameWorkBatch{
 		FrameWorkFrameContext: decoderFrameWorkResidualEventContext(event.SequenceHeader, event),
 		Jobs:                  jobs[:plan.JobCount],
 	}
-	size, err := DecoderFrameWorkBatchResidualRunnerScratchLen(batch, workers)
+	size, err := decoderFrameWorkBatchResidualRunnerScratchLen(batch, workers)
 	if err != nil {
-		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, err
+		return decoderFrameWorkBatchResidualRunnerScratchSize{}, internaldecoder.TileWorkPlan{}, err
 	}
 	return size, plan, nil
 }

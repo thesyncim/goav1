@@ -18,7 +18,7 @@ func BenchmarkEncoderReferenceMVStack(b *testing.B) {
 		FrameMICols: cols, FrameMIRows: rows,
 		Tile: BlockWalkRequest{MIColEnd: cols, MIRowEnd: rows},
 	})
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	var blocks []BlockVisit
 	for sby := int32(0); sby < 3; sby++ {
 		s.Refmvs.sbrowInit(sby, 16)

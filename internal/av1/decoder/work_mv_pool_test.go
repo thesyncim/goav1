@@ -195,7 +195,7 @@ func checkMVPoolRefs(t *testing.T, s *FrameWorkState) {
 func TestOwnedMVPoolMatchesFrozenCopy(t *testing.T) {
 	var s FrameWorkState
 	EnableOwnedTemporalMotionStorage(&s)
-	sequence := threading.FrameWorkSequenceContext{EnableOrderHint: true, OrderHintBits: 8}
+	sequence := threading.FrameWorkSequenceContext{EnableOrderHint: true, EnableRefFrameMVS: true, OrderHintBits: 8}
 	var old copyMVOracle
 	for n := 0; n < 48; n++ {
 		s.Sequence = sequence
@@ -252,7 +252,7 @@ func TestOwnedMVPoolMatchesFrozenCopy(t *testing.T) {
 			fillMVPoolFrame(&s.currentMVFrame, n)
 			fillMVPoolFrame(&old.currentMVFrame, n)
 		}
-		s.publishTemporalMotionFrame(&event)
+		s.publishTemporalMotionFrame(&event, -1)
 		old.publishTemporalMotionFrame(event)
 		if s.mvFrameStoreMeta != old.mvFrameStoreMeta {
 			t.Fatalf("frame %d saved metadata differs", n)
@@ -283,6 +283,7 @@ func TestOwnedMVPoolSharingAndGenericIsolation(t *testing.T) {
 		if owned {
 			EnableOwnedTemporalMotionStorage(&s)
 		}
+		s.Sequence.EnableRefFrameMVS = true
 		e := mvPoolEvent(1)
 		e.TileInfo.UseRefFrameMVS = false
 		e.FrameSize.RefreshFrameFlags = 255
@@ -290,7 +291,7 @@ func TestOwnedMVPoolSharingAndGenericIsolation(t *testing.T) {
 			t.Fatal(err)
 		}
 		fillMVPoolFrame(&s.currentMVFrame, 1)
-		s.publishTemporalMotionFrame(&e)
+		s.publishTemporalMotionFrame(&e, -1)
 		current := &s.currentMVFrame.Entries[0]
 		for i := range s.mvFrameStore {
 			shared := &s.mvFrameStore[i].Entries[0] == current
@@ -315,6 +316,7 @@ func TestOwnedMVPoolSharingAndGenericIsolation(t *testing.T) {
 			}
 		}
 		e.FrameSize.RefreshFrameFlags = 0
+		s.Sequence.EnableRefFrameMVS = true // resetActive cleared the sequence
 		if err := s.prepareTemporalMotionField(&e); err != nil {
 			t.Fatal(err)
 		}
@@ -339,6 +341,7 @@ func TestOwnedMVPoolIntraMetadataAndFallback(t *testing.T) {
 			if owned {
 				EnableOwnedTemporalMotionStorage(&s)
 			}
+			s.Sequence = threading.FrameWorkSequenceContext{EnableOrderHint: true, EnableRefFrameMVS: true, OrderHintBits: 8}
 			e := mvPoolEvent(0)
 			e.FrameSize.AllowIntrabc = intrabc
 			if err := s.prepareTemporalMotionField(&e); err != nil {
@@ -351,10 +354,10 @@ func TestOwnedMVPoolIntraMetadataAndFallback(t *testing.T) {
 			if (s.motionFields().current == nil) != omit {
 				t.Fatal("block-loop current-grid binding differs")
 			}
-			s.publishTemporalMotionFrame(&e)
+			s.publishTemporalMotionFrame(&e, -1)
 			s.resetActive()
 			next := mvPoolEvent(1)
-			s.Sequence = threading.FrameWorkSequenceContext{EnableOrderHint: true, OrderHintBits: 8}
+			s.Sequence = threading.FrameWorkSequenceContext{EnableOrderHint: true, EnableRefFrameMVS: true, OrderHintBits: 8}
 			if err := s.prepareTemporalMotionField(&next); err != nil {
 				t.Fatal(err)
 			}
@@ -396,14 +399,14 @@ func TestOwnedMVPoolFailureAndReuse(t *testing.T) {
 	}
 	checkMVPoolRefs(t, &s)
 	e = mvPoolEvent(1)
-	s.Sequence = threading.FrameWorkSequenceContext{EnableOrderHint: true, OrderHintBits: 0}
+	s.Sequence = threading.FrameWorkSequenceContext{EnableOrderHint: true, EnableRefFrameMVS: true, OrderHintBits: 0}
 	if err := s.prepareTemporalMotionField(&e); err == nil {
 		t.Fatal("invalid order bits accepted")
 	}
 	if s.currentMVGrid != 0 || s.currentMVFrameValid {
 		t.Fatal("failed projection retained current grid")
 	}
-	s.Sequence = threading.FrameWorkSequenceContext{EnableOrderHint: true, OrderHintBits: 8}
+	s.Sequence = threading.FrameWorkSequenceContext{EnableOrderHint: true, EnableRefFrameMVS: true, OrderHintBits: 8}
 	if err := s.prepareTemporalMotionField(&e); err != nil {
 		t.Fatal(err)
 	}
@@ -413,10 +416,11 @@ func TestOwnedMVPoolFailureAndReuse(t *testing.T) {
 	e.TileInfo.UseRefFrameMVS = false
 	for n := 0; n < 24; n++ {
 		e.FrameSize.RefreshFrameFlags = 1 << uint(n%8)
+		s.Sequence.EnableRefFrameMVS = true // resetActive cleared the sequence
 		if err := s.prepareTemporalMotionField(&e); err != nil {
 			t.Fatal(err)
 		}
-		s.publishTemporalMotionFrame(&e)
+		s.publishTemporalMotionFrame(&e, -1)
 		s.resetActive()
 		checkMVPoolRefs(t, &s)
 	}
@@ -439,7 +443,9 @@ func TestOwnedMVPoolFinishAbortFailureLifetimes(t *testing.T) {
 	EnableOwnedTemporalMotionStorage(&s)
 	event := Event{Kind: EventFrameHeader, FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey}, FrameSize: testFrameSize(16, 16)}
 	event.FrameSize.AllowIntrabc = true // retain a writable grid for the lifecycle checks
-	plan, _, err := s.Begin(&refs, &pool, testSequence(), &event, 32, nil, 1, nil, nil, nil)
+	seq := testSequence()
+	seq.EnableOrderHint, seq.EnableRefFrameMVS, seq.OrderHintBits = true, true, 8
+	plan, _, err := s.Begin(&refs, &pool, seq, &event, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +465,7 @@ func TestOwnedMVPoolFinishAbortFailureLifetimes(t *testing.T) {
 	if s.currentMVGrid != 0 || s.Active() {
 		t.Fatal("Abort kept current grid")
 	}
-	plan, _, err = s.Begin(&refs, &pool, testSequence(), &event, 32, nil, 1, nil, nil, nil)
+	plan, _, err = s.Begin(&refs, &pool, seq, &event, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,6 +483,33 @@ func TestOwnedMVPoolFinishAbortFailureLifetimes(t *testing.T) {
 	checkMVPoolRefs(t, &s)
 }
 
+// TestOwnedMVPoolSequenceWithoutRefFrameMVs checks that a sequence without
+// enable_ref_frame_mvs builds no current-frame grid for any frame type: no
+// frame of it can project saved motion, so the block loop skips save_tmvs.
+func TestOwnedMVPoolSequenceWithoutRefFrameMVs(t *testing.T) {
+	var s FrameWorkState
+	EnableOwnedTemporalMotionStorage(&s)
+	s.Sequence = threading.FrameWorkSequenceContext{EnableOrderHint: true, OrderHintBits: 8}
+	for n := range 4 {
+		e := mvPoolEvent(n)
+		e.TileInfo.UseRefFrameMVS = false
+		e.FrameSize.AllowIntrabc = n == 0
+		e.FrameSize.RefreshFrameFlags = 1 << n
+		if err := s.prepareTemporalMotionField(&e); err != nil {
+			t.Fatal(err)
+		}
+		if s.currentMVFrameValid || s.currentMVGrid != 0 || s.motionFields().current != nil {
+			t.Fatalf("frame %d (%v) bound an MV grid", n, e.FrameHeader.FrameType)
+		}
+		s.publishTemporalMotionFrame(&e, -1)
+		if !s.mvFrameStoreMeta[n].valid || s.mvFrameStore[n].Entries != nil {
+			t.Fatalf("frame %d: slot meta=%+v entries=%d", n, s.mvFrameStoreMeta[n], len(s.mvFrameStore[n].Entries))
+		}
+		s.resetActive()
+	}
+	checkMVPoolRefs(t, &s)
+}
+
 func TestOwnedMVPoolWarmAllocs(t *testing.T) {
 	var s FrameWorkState
 	EnableOwnedTemporalMotionStorage(&s)
@@ -489,11 +522,12 @@ func TestOwnedMVPoolWarmAllocs(t *testing.T) {
 	var err error
 	allocs := testing.AllocsPerRun(20, func() {
 		for i := 0; i < 12; i++ {
+			s.Sequence.EnableRefFrameMVS = true // resetActive clears the sequence
 			err = s.prepareTemporalMotionField(&e)
 			if err != nil {
 				return
 			}
-			s.publishTemporalMotionFrame(&e)
+			s.publishTemporalMotionFrame(&e, -1)
 			s.resetActive()
 		}
 		s.Reset()

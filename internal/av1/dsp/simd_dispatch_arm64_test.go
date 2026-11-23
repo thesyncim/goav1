@@ -17,10 +17,8 @@ func TestSIMDDispatchBindsGoSIMDKernels(t *testing.T) {
 		got  any
 		want any
 	}{
-		{"blend", blendA64MaskImpl, blendA64MaskSIMD},
 		{"raw add", addRawTransformPlaneBlockImpl, addRawTransformPlaneBlockSIMD},
 		{"residual add", addResidualPlaneBlockImpl, addResidualPlaneBlockSIMD},
-		{"minmax", minMaxAbsDiff8x8Impl, minMaxAbsDiff8x8SIMD},
 	}
 	for _, tc := range cases {
 		if got, want := reflect.ValueOf(tc.got).Pointer(), reflect.ValueOf(tc.want).Pointer(); got != want {

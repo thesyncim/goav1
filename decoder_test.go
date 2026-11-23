@@ -5,7 +5,12 @@ import (
 	"os"
 	"testing"
 
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internalobu "github.com/thesyncim/goav1/internal/av1/obu"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 func TestDecoderDecodeNextReusesVisibleSlice(t *testing.T) {
@@ -56,7 +61,7 @@ func TestDecoderDecodeNextReusesVisibleSlice(t *testing.T) {
 
 func TestDecoderFinishFrameSurface(t *testing.T) {
 	format := FrameFormat{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
-	layout, err := FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,50 +69,50 @@ func TestDecoderFinishFrameSurface(t *testing.T) {
 	var frames [2]Frame
 	var free [2]int
 	var used [2]bool
-	pool, err := BindFramePool(backing, format, frames[:], free[:], used[:])
+	pool, err := internalframe.BindPool(backing, format, frames[:], free[:], used[:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	sequence := SequenceHeader{ColorConfig: ColorConfig{
+	sequence := SequenceHeader{ColorConfig: internalparser.ColorConfig{
 		BitDepth:     8,
 		SubsamplingX: true,
 		SubsamplingY: true,
 	}}
 	size := FrameSize{CodedWidth: 16, Height: 16}
 
-	var refs DecoderSurfaceReferences
-	plan0, _, err := BeginDecoderFrameWork(&refs, &pool, sequence, &DecoderEvent{
-		Kind:        DecoderEventFrameHeader,
-		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+	var refs internaldecoder.SurfaceReferences
+	plan0, _, err := internaldecoder.BeginFrameWork(&refs, &pool, sequence, &internaldecoder.Event{
+		Kind:        internaldecoder.EventFrameHeader,
+		FrameHeader: internalparser.FrameHeaderPrefix{FrameType: internalparser.FrameTypeKey},
 		FrameSize:   size,
 	}, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan0.Surface != 0 || plan0.ReferenceCount != 0 || plan0.Tile != (DecoderTileWorkPlan{}) {
+	if plan0.Surface != 0 || plan0.ReferenceCount != 0 || plan0.Tile != (internaldecoder.TileWorkPlan{}) {
 		t.Fatalf("plan0=%+v", plan0)
 	}
-	plan1, _, err := BeginDecoderFrameWork(&refs, &pool, sequence, &DecoderEvent{
-		Kind:        DecoderEventFrameHeader,
-		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+	plan1, _, err := internaldecoder.BeginFrameWork(&refs, &pool, sequence, &internaldecoder.Event{
+		Kind:        internaldecoder.EventFrameHeader,
+		FrameHeader: internalparser.FrameHeaderPrefix{FrameType: internalparser.FrameTypeKey},
 		FrameSize:   size,
 	}, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan1.Surface != 1 || plan1.ReferenceCount != 0 || plan1.Tile != (DecoderTileWorkPlan{}) {
+	if plan1.Surface != 1 || plan1.ReferenceCount != 0 || plan1.Tile != (internaldecoder.TileWorkPlan{}) {
 		t.Fatalf("plan1=%+v", plan1)
 	}
 
-	var releases [RefFrames]int
+	var releases [internalparser.RefFrames]int
 	if _, err := refs.Refresh(0xff, plan0.Surface, releases[:]); err != nil {
 		t.Fatal(err)
 	}
 
-	count, err := DecoderFinishFrameSurface(&refs, &pool, &DecoderEvent{
-		Kind:      DecoderEventTileGroup,
+	count, err := internaldecoder.FinishFrameSurface(&refs, &pool, &internaldecoder.Event{
+		Kind:      internaldecoder.EventTileGroup,
 		FrameSize: FrameSize{RefreshFrameFlags: 0xff},
-		TileGroup: TileGroup{Final: true},
+		TileGroup: internalparser.TileGroup{Final: true},
 	}, plan1.Surface, releases[:])
 	if err != nil {
 		t.Fatal(err)
@@ -115,45 +120,45 @@ func TestDecoderFinishFrameSurface(t *testing.T) {
 	if count != 1 || releases[0] != plan0.Surface {
 		t.Fatalf("count=%d release=%d want 1,%d", count, releases[0], plan0.Surface)
 	}
-	if _, err := pool.Frame(plan0.Surface); !errors.Is(err, ErrFrameInvalidSlot) {
-		t.Fatalf("released frame err=%v want %v", err, ErrFrameInvalidSlot)
+	if _, err := pool.Frame(plan0.Surface); !errors.Is(err, internalframe.ErrInvalidSlot) {
+		t.Fatalf("released frame err=%v want %v", err, internalframe.ErrInvalidSlot)
 	}
 }
 
 func TestPlanDecoderFrameTileWork(t *testing.T) {
-	event := DecoderEvent{
-		Kind: DecoderEventTileGroup,
-		Unit: OBUUnit{Payload: []byte{0x80}},
-		TileInfo: TileInfo{
+	event := internaldecoder.Event{
+		Kind: internaldecoder.EventTileGroup,
+		Unit: internalobu.Unit{Payload: []byte{0x80}},
+		TileInfo: internalparser.TileInfo{
 			SBCols:     1,
 			SBRows:     1,
 			Cols:       1,
 			Rows:       1,
-			ColStartSB: [MaxTileCols + 1]uint16{0, 1},
-			RowStartSB: [MaxTileRows + 1]uint16{0, 1},
+			ColStartSB: [internalparser.MaxTileCols + 1]uint16{0, 1},
+			RowStartSB: [internalparser.MaxTileRows + 1]uint16{0, 1},
 		},
-		TileGroup: TileGroup{
+		TileGroup: internalparser.TileGroup{
 			TileCount:  1,
 			DataOffset: 0,
 			DataSize:   1,
 			Final:      true,
 		},
 	}
-	var spans [1]TileSpan
-	var jobs [1]TileJob
-	var batches [1]TileBatch
-	plan, err := PlanDecoderFrameTileWork(&event, 3, 0, 1, spans[:], jobs[:], batches[:])
+	var spans [1]internalparser.TileSpan
+	var jobs [1]internaltile.Job
+	var batches [1]internalthreading.Batch
+	plan, err := internaldecoder.PlanFrameTileWork(&event, 3, 0, 1, spans[:], jobs[:], batches[:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Surface != 3 || plan.ReferenceCount != 0 || plan.Tile != (DecoderTileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}) {
+	if plan.Surface != 3 || plan.ReferenceCount != 0 || plan.Tile != (internaldecoder.TileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}) {
 		t.Fatalf("plan=%+v", plan)
 	}
 }
 
 func TestTileJobPayload(t *testing.T) {
 	payload := []byte{0, 1, 2, 3}
-	job := TileJob{Offset: 1, Size: 2}
+	job := internaltile.Job{Offset: 1, Size: 2}
 
 	data, err := job.Payload(payload)
 	if err != nil {
@@ -165,9 +170,9 @@ func TestTileJobPayload(t *testing.T) {
 }
 
 func TestDecoderFrameWorkBatchJobPayload(t *testing.T) {
-	ctx := DecoderFrameWorkBatch{
+	ctx := internaldecoder.FrameWorkBatch{
 		Payload: []byte{0, 1, 2, 3},
-		Jobs:    []TileJob{{Offset: 2, Size: 2}},
+		Jobs:    []internaltile.Job{{Offset: 2, Size: 2}},
 	}
 
 	data, err := ctx.JobPayload(0)
@@ -180,12 +185,12 @@ func TestDecoderFrameWorkBatchJobPayload(t *testing.T) {
 }
 
 func TestDecoderFrameWorkBatchPlaneHelpers(t *testing.T) {
-	sequence := SequenceHeader{ColorConfig: ColorConfig{
+	sequence := SequenceHeader{ColorConfig: internalparser.ColorConfig{
 		BitDepth:     8,
 		SubsamplingX: true,
 		SubsamplingY: true,
 	}}
-	sequenceContext := DecoderFrameWorkSequenceContextFromHeader(sequence)
+	sequenceContext := internalthreading.FrameWorkSequenceContextFromHeader(sequence)
 	if !sequenceContext.Valid() || sequenceContext.ColorConfig != sequence.ColorConfig {
 		t.Fatalf("sequence context=%+v", sequenceContext)
 	}
@@ -206,123 +211,105 @@ func TestDecoderFrameWorkBatchPlaneHelpers(t *testing.T) {
 		SubsamplingY: true,
 		Align:        32,
 	})
-	references := [InterRefsPerFrame]*Frame{}
-	references[int(DecoderFrameWorkReferenceLast)] = &reference
-	ctx := DecoderFrameWorkBatch{
+	references := [internalparser.InterRefsPerFrame]*Frame{}
+	references[int(internaldecoder.FrameWorkReferenceLast)] = &reference
+	ctx := internaldecoder.FrameWorkBatch{
 		Output:     &output,
 		References: references[:1],
-		FrameWorkFrameContext: DecoderFrameWorkFrameContext{
+		FrameWorkFrameContext: internaldecoder.FrameWorkFrameContext{
 			Sequence:  sequenceContext,
 			FrameSize: FrameSize{CodedWidth: 16, Height: 16},
 		},
-		Jobs: []TileJob{{SBCols: 1, SBRows: 1}},
+		Jobs: []internaltile.Job{{SBCols: 1, SBRows: 1}},
 	}
 
-	outputPlane, err := ctx.JobOutputPlane(0, DecoderFrameWorkPlaneY)
+	outputPlane, err := ctx.JobOutputPlane(0, internaldecoder.FrameWorkPlaneY)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var typedOutput DecoderFrameWorkPlaneRegion = outputPlane
-	if typedOutput.Width != 16 || typedOutput.Height != 16 || typedOutput.Plane != DecoderFrameWorkPlaneY {
+	var typedOutput internaldecoder.FrameWorkPlaneRegion = outputPlane
+	if typedOutput.Width != 16 || typedOutput.Height != 16 || typedOutput.Plane != internaldecoder.FrameWorkPlaneY {
 		t.Fatalf("output plane=%+v", typedOutput)
 	}
 
-	referencePlane, err := ctx.ReferencePlane(DecoderFrameWorkReferenceLast, DecoderFrameWorkPlaneU)
+	referencePlane, err := ctx.ReferencePlane(internaldecoder.FrameWorkReferenceLast, internaldecoder.FrameWorkPlaneU)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if referencePlane.Width != 8 || referencePlane.Height != 8 || referencePlane.Plane != DecoderFrameWorkPlaneU {
+	if referencePlane.Width != 8 || referencePlane.Height != 8 || referencePlane.Plane != internaldecoder.FrameWorkPlaneU {
 		t.Fatalf("reference plane=%+v", referencePlane)
 	}
-	jobReferencePlane, err := ctx.JobReferencePlaneWindow(0, DecoderFrameWorkReferenceLast, DecoderFrameWorkPlaneU, 1, 1)
+	jobReferencePlane, err := ctx.JobReferencePlaneWindow(0, internaldecoder.FrameWorkReferenceLast, internaldecoder.FrameWorkPlaneU, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if jobReferencePlane.Width != 8 || jobReferencePlane.Height != 8 || jobReferencePlane.Plane != DecoderFrameWorkPlaneU {
+	if jobReferencePlane.Width != 8 || jobReferencePlane.Height != 8 || jobReferencePlane.Plane != internaldecoder.FrameWorkPlaneU {
 		t.Fatalf("job reference plane=%+v", jobReferencePlane)
 	}
 }
 
-func TestDecoderFrameWorkSequenceContextCapturesScaledPredictionPolicy(t *testing.T) {
-	t.Setenv("GOAV1_SCALED_PRED", "0")
-	sequence := DecoderFrameWorkSequenceContextFromHeader(SequenceHeader{})
-	wantDisabled := !internalthreading.ScaledReferencePredictionEnabled()
-	if sequence.ScaledReferencePredictionDisabled != wantDisabled {
-		t.Fatalf("scaled prediction disabled=%v want %v", sequence.ScaledReferencePredictionDisabled, wantDisabled)
-	}
-
-	t.Setenv("GOAV1_SCALED_PRED", "1")
-	if sequence.ScaledReferencePredictionDisabled != wantDisabled {
-		t.Fatal("sequence context changed after GOAV1_SCALED_PRED changed")
-	}
-	newSequence := DecoderFrameWorkSequenceContextFromHeader(SequenceHeader{})
-	if newSequence.ScaledReferencePredictionDisabled != !internalthreading.ScaledReferencePredictionEnabled() {
-		t.Fatalf("new context disabled=%v want %v", newSequence.ScaledReferencePredictionDisabled, !internalthreading.ScaledReferencePredictionEnabled())
-	}
-}
-
 func TestDecoderEventDropsFrameWork(t *testing.T) {
-	if !DecoderEventDropsFrameWork(&DecoderEvent{Kind: DecoderEventSequenceHeader, NewCodedVideoSequence: true}) {
+	if !internaldecoder.EventDropsFrameWork(&internaldecoder.Event{Kind: internaldecoder.EventSequenceHeader, NewCodedVideoSequence: true}) {
 		t.Fatal("new sequence did not drop frame work")
 	}
-	if !DecoderEventDropsFrameWork(&DecoderEvent{Kind: DecoderEventTemporalDelimiter, NewTemporalUnit: true}) {
+	if !internaldecoder.EventDropsFrameWork(&internaldecoder.Event{Kind: internaldecoder.EventTemporalDelimiter, NewTemporalUnit: true}) {
 		t.Fatal("temporal delimiter did not drop frame work")
 	}
-	if !DecoderEventDropsFrameWork(&DecoderEvent{Kind: DecoderEventExistingFrame}) {
+	if !internaldecoder.EventDropsFrameWork(&internaldecoder.Event{Kind: internaldecoder.EventExistingFrame}) {
 		t.Fatal("show existing frame did not drop frame work")
 	}
-	if DecoderEventDropsFrameWork(&DecoderEvent{Kind: DecoderEventSequenceHeader, OperatingParametersChanged: true}) {
+	if internaldecoder.EventDropsFrameWork(&internaldecoder.Event{Kind: internaldecoder.EventSequenceHeader, OperatingParametersChanged: true}) {
 		t.Fatal("operating parameter change dropped frame work")
 	}
 }
 
 func TestDecoderEventCompletesFrameWork(t *testing.T) {
-	if !DecoderEventCompletesFrameWork(&DecoderEvent{Kind: DecoderEventFrame, TileGroup: TileGroup{Final: true}}) {
+	if !internaldecoder.EventCompletesFrameWork(&internaldecoder.Event{Kind: internaldecoder.EventFrame, TileGroup: internalparser.TileGroup{Final: true}}) {
 		t.Fatal("final frame did not complete frame work")
 	}
-	if !DecoderEventCompletesFrameWork(&DecoderEvent{Kind: DecoderEventTileGroup, TileGroup: TileGroup{Final: true}}) {
+	if !internaldecoder.EventCompletesFrameWork(&internaldecoder.Event{Kind: internaldecoder.EventTileGroup, TileGroup: internalparser.TileGroup{Final: true}}) {
 		t.Fatal("final tile group did not complete frame work")
 	}
-	if DecoderEventCompletesFrameWork(&DecoderEvent{Kind: DecoderEventTileGroup}) {
+	if internaldecoder.EventCompletesFrameWork(&internaldecoder.Event{Kind: internaldecoder.EventTileGroup}) {
 		t.Fatal("non-final tile group completed frame work")
 	}
 }
 
 func TestDecoderEventOutputsFrame(t *testing.T) {
-	if !DecoderEventOutputsFrame(&DecoderEvent{Kind: DecoderEventFrame, FrameHeader: FrameHeaderPrefix{ShowFrame: true}, TileGroup: TileGroup{Final: true}}) {
+	if !internaldecoder.EventOutputsFrame(&internaldecoder.Event{Kind: internaldecoder.EventFrame, FrameHeader: internalparser.FrameHeaderPrefix{ShowFrame: true}, TileGroup: internalparser.TileGroup{Final: true}}) {
 		t.Fatal("shown final frame did not output frame")
 	}
-	if DecoderEventOutputsFrame(&DecoderEvent{Kind: DecoderEventFrame, TileGroup: TileGroup{Final: true}}) {
+	if internaldecoder.EventOutputsFrame(&internaldecoder.Event{Kind: internaldecoder.EventFrame, TileGroup: internalparser.TileGroup{Final: true}}) {
 		t.Fatal("not-shown final frame output frame")
 	}
-	if !DecoderEventOutputsFrame(&DecoderEvent{Kind: DecoderEventExistingFrame}) {
+	if !internaldecoder.EventOutputsFrame(&internaldecoder.Event{Kind: internaldecoder.EventExistingFrame}) {
 		t.Fatal("show existing frame did not output frame")
 	}
-	if DecoderEventOutputsFrame(&DecoderEvent{Kind: DecoderEventTileGroup}) {
+	if internaldecoder.EventOutputsFrame(&internaldecoder.Event{Kind: internaldecoder.EventTileGroup}) {
 		t.Fatal("non-final tile group output frame")
 	}
 }
 
 func TestDecoderFrameWorkState(t *testing.T) {
 	pool := testDecoderFramePool(t, 1)
-	sequence := SequenceHeader{ColorConfig: ColorConfig{
+	sequence := SequenceHeader{ColorConfig: internalparser.ColorConfig{
 		BitDepth:     8,
 		SubsamplingX: true,
 		SubsamplingY: true,
 	}}
-	header := DecoderEvent{
-		Kind:        DecoderEventFrameHeader,
-		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+	header := internaldecoder.Event{
+		Kind:        internaldecoder.EventFrameHeader,
+		FrameHeader: internalparser.FrameHeaderPrefix{FrameType: internalparser.FrameTypeKey},
 		FrameSize:   FrameSize{CodedWidth: 16, Height: 16},
 	}
-	tileGroup := DecoderEvent{
-		Kind:      DecoderEventTileGroup,
+	tileGroup := internaldecoder.Event{
+		Kind:      internaldecoder.EventTileGroup,
 		FrameSize: FrameSize{RefreshFrameFlags: 0xff},
-		TileGroup: TileGroup{Final: true},
+		TileGroup: internalparser.TileGroup{Final: true},
 	}
 
-	var refs DecoderSurfaceReferences
-	var state DecoderFrameWorkState
+	var refs internaldecoder.SurfaceReferences
+	var state internaldecoder.FrameWorkState
 	plan, output, err := state.Begin(&refs, &pool, sequence, &header, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -331,7 +318,7 @@ func TestDecoderFrameWorkState(t *testing.T) {
 		t.Fatalf("plan=%+v output=%p state=%+v active=%v", plan, output, state, state.Active())
 	}
 
-	var releases [RefFrames]int
+	var releases [internalparser.RefFrames]int
 	count, err := state.Finish(&refs, &pool, &tileGroup, releases[:])
 	if err != nil {
 		t.Fatal(err)
@@ -343,31 +330,31 @@ func TestDecoderFrameWorkState(t *testing.T) {
 
 func TestDecoderFrameWorkStatePostFilterContext(t *testing.T) {
 	pool := testDecoderFramePool(t, 1)
-	sequence := SequenceHeader{ColorConfig: ColorConfig{
+	sequence := SequenceHeader{ColorConfig: internalparser.ColorConfig{
 		BitDepth:     8,
 		SubsamplingX: true,
 		SubsamplingY: true,
 	}}
-	header := DecoderEvent{
-		Kind:        DecoderEventFrameHeader,
-		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+	header := internaldecoder.Event{
+		Kind:        internaldecoder.EventFrameHeader,
+		FrameHeader: internalparser.FrameHeaderPrefix{FrameType: internalparser.FrameTypeKey},
 		FrameSize:   FrameSize{CodedWidth: 16, Height: 16},
 	}
-	tileGroup := DecoderEvent{
-		Kind:      DecoderEventTileGroup,
+	tileGroup := internaldecoder.Event{
+		Kind:      internaldecoder.EventTileGroup,
 		FrameSize: FrameSize{RefreshFrameFlags: 0xff},
-		TileGroup: TileGroup{Final: true},
+		TileGroup: internalparser.TileGroup{Final: true},
 	}
 
-	var refs DecoderSurfaceReferences
-	var state DecoderFrameWorkState
+	var refs internaldecoder.SurfaceReferences
+	var state internaldecoder.FrameWorkState
 	plan, output, err := state.Begin(&refs, &pool, sequence, &header, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	step := DecoderFrameWorkStep{
-		Kind: DecoderFrameWorkStepTile,
-		Tile: DecoderFrameTileWorkPlan{Surface: plan.Surface},
+	step := internaldecoder.FrameWorkStep{
+		Kind: internaldecoder.FrameWorkStepTile,
+		Tile: internaldecoder.FrameTileWorkPlan{Surface: plan.Surface},
 	}
 
 	ctx, err := state.PostFilterContext(&pool, &tileGroup, step, false)
@@ -375,7 +362,7 @@ func TestDecoderFrameWorkStatePostFilterContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ctx.Output != output ||
-		ctx.Event.Kind != DecoderEventTileGroup ||
+		ctx.Event.Kind != internaldecoder.EventTileGroup ||
 		!ctx.Event.TileGroup.Final ||
 		ctx.Step != step ||
 		ctx.ExecutedTileWork ||
@@ -393,36 +380,36 @@ func TestDecoderFrameWorkStatePostFilterContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if noop.Output != nil || noop.Event.Kind != DecoderEventIgnored || noop.Step.Kind != DecoderFrameWorkStepIgnored {
+	if noop.Output != nil || noop.Event.Kind != internaldecoder.EventIgnored || noop.Step.Kind != internaldecoder.FrameWorkStepIgnored {
 		t.Fatalf("non-final context=%+v want zero", noop)
 	}
 }
 
 func TestDecoderFrameWorkStateFinishIfEventCompletesFrameWork(t *testing.T) {
 	pool := testDecoderFramePool(t, 1)
-	sequence := SequenceHeader{ColorConfig: ColorConfig{
+	sequence := SequenceHeader{ColorConfig: internalparser.ColorConfig{
 		BitDepth:     8,
 		SubsamplingX: true,
 		SubsamplingY: true,
 	}}
-	header := DecoderEvent{
-		Kind:        DecoderEventFrameHeader,
-		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+	header := internaldecoder.Event{
+		Kind:        internaldecoder.EventFrameHeader,
+		FrameHeader: internalparser.FrameHeaderPrefix{FrameType: internalparser.FrameTypeKey},
 		FrameSize:   FrameSize{CodedWidth: 16, Height: 16},
 	}
-	tileGroup := DecoderEvent{
-		Kind:      DecoderEventTileGroup,
+	tileGroup := internaldecoder.Event{
+		Kind:      internaldecoder.EventTileGroup,
 		FrameSize: FrameSize{RefreshFrameFlags: 0xff},
-		TileGroup: TileGroup{Final: true},
+		TileGroup: internalparser.TileGroup{Final: true},
 	}
 
-	var refs DecoderSurfaceReferences
-	var state DecoderFrameWorkState
+	var refs internaldecoder.SurfaceReferences
+	var state internaldecoder.FrameWorkState
 	if _, _, err := state.Begin(&refs, &pool, sequence, &header, 32, nil, 1, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	var releases [RefFrames]int
+	var releases [internalparser.RefFrames]int
 	completed, count, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, &tileGroup, releases[:])
 	if err != nil {
 		t.Fatal(err)
@@ -439,73 +426,73 @@ func TestDecoderFrameWorkStateShowExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var refs DecoderSurfaceReferences
-	var releases [RefFrames]int
+	var refs internaldecoder.SurfaceReferences
+	var releases [internalparser.RefFrames]int
 	if _, err := refs.Refresh(1<<0, reference, releases[:]); err != nil {
 		t.Fatal(err)
 	}
 
-	sequence := SequenceHeader{ColorConfig: ColorConfig{
+	sequence := SequenceHeader{ColorConfig: internalparser.ColorConfig{
 		BitDepth:     8,
 		SubsamplingX: true,
 		SubsamplingY: true,
 	}}
-	header := DecoderEvent{
-		Kind:        DecoderEventFrameHeader,
-		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+	header := internaldecoder.Event{
+		Kind:        internaldecoder.EventFrameHeader,
+		FrameHeader: internalparser.FrameHeaderPrefix{FrameType: internalparser.FrameTypeKey},
 		FrameSize:   FrameSize{CodedWidth: 16, Height: 16},
 	}
 
-	var state DecoderFrameWorkState
+	var state internaldecoder.FrameWorkState
 	if _, _, err := state.Begin(&refs, &pool, sequence, &header, 32, nil, 1, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	plan, err := state.ShowExisting(&refs, &pool, &DecoderEvent{
-		Kind: DecoderEventExistingFrame,
-		FrameHeader: FrameHeaderPrefix{
+	plan, err := state.ShowExisting(&refs, &pool, &internaldecoder.Event{
+		Kind: internaldecoder.EventExistingFrame,
+		FrameHeader: internalparser.FrameHeaderPrefix{
 			ShowExistingFrame: true,
 			ExistingFrameIdx:  0,
 		},
-		ExistingFrame: ReferenceFrame{FrameType: FrameTypeInter},
+		ExistingFrame: internalparser.ReferenceFrame{FrameType: internalparser.FrameTypeInter},
 	}, releases[:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan != (DecoderShowExistingFrameWorkPlan{Surface: reference, DroppedFrameWork: true}) || state.Active() {
+	if plan != (internaldecoder.ShowExistingFrameWorkPlan{Surface: reference, DroppedFrameWork: true}) || state.Active() {
 		t.Fatalf("plan=%+v active=%v", plan, state.Active())
 	}
 }
 
 func TestDecoderFrameWorkStatePlanEvent(t *testing.T) {
 	pool := testDecoderFramePool(t, 1)
-	sequence := SequenceHeader{ColorConfig: ColorConfig{
+	sequence := SequenceHeader{ColorConfig: internalparser.ColorConfig{
 		BitDepth:     8,
 		SubsamplingX: true,
 		SubsamplingY: true,
 	}}
-	header := DecoderEvent{
-		Kind:        DecoderEventFrameHeader,
-		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+	header := internaldecoder.Event{
+		Kind:        internaldecoder.EventFrameHeader,
+		FrameHeader: internalparser.FrameHeaderPrefix{FrameType: internalparser.FrameTypeKey},
 		FrameSize:   FrameSize{CodedWidth: 16, Height: 16},
 	}
-	tileGroup := DecoderEvent{
-		Kind:      DecoderEventTileGroup,
+	tileGroup := internaldecoder.Event{
+		Kind:      internaldecoder.EventTileGroup,
 		FrameSize: FrameSize{RefreshFrameFlags: 0xff},
-		TileGroup: TileGroup{Final: true},
+		TileGroup: internalparser.TileGroup{Final: true},
 	}
 
-	var refs DecoderSurfaceReferences
-	var state DecoderFrameWorkState
+	var refs internaldecoder.SurfaceReferences
+	var state internaldecoder.FrameWorkState
 	step, output, err := state.PlanEvent(&refs, &pool, sequence, &header, 32, nil, 1, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output == nil || step.Kind != DecoderFrameWorkStepBegin || step.Begin.Surface != state.Surface {
+	if output == nil || step.Kind != internaldecoder.FrameWorkStepBegin || step.Begin.Surface != state.Surface {
 		t.Fatalf("step=%+v output=%p state=%+v", step, output, state)
 	}
 
-	var releases [RefFrames]int
+	var releases [internalparser.RefFrames]int
 	completed, count, err := state.FinishIfEventCompletesFrameWork(&refs, &pool, &tileGroup, releases[:])
 	if err != nil {
 		t.Fatal(err)
@@ -515,271 +502,49 @@ func TestDecoderFrameWorkStatePlanEvent(t *testing.T) {
 	}
 }
 
-func TestExecuteDecoderFrameWorkStep(t *testing.T) {
-	workerPool, err := NewTileWorkerPool(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer workerPool.Close()
-
-	jobs := [1]TileJob{{Tile: 0, SBCols: 1, SBRows: 1}}
-	batches := [1]TileBatch{{Worker: 0, FirstJob: 0, Count: 1, FirstTile: 0, LastTile: 0, Units: 1}}
-	step := DecoderFrameWorkStep{
-		Kind: DecoderFrameWorkStepTile,
-		Tile: DecoderFrameTileWorkPlan{Tile: DecoderTileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}},
-	}
-	seen := false
-	executed, err := ExecuteDecoderFrameWorkStep(step, workerPool, jobs[:], batches[:], func(batch TileBatch, batchJobs []TileJob) error {
-		seen = batch.Count == 1 && len(batchJobs) == 1 && batchJobs[0].Tile == 0
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !executed || !seen {
-		t.Fatalf("executed=%v seen=%v", executed, seen)
-	}
-}
-
-func TestExecuteDecoderFrameWorkStepWithContext(t *testing.T) {
-	workerPool, err := NewTileWorkerPool(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer workerPool.Close()
-
-	jobs := [1]TileJob{{Tile: 0, SBCols: 1, SBRows: 1}}
-	batches := [1]TileBatch{{Worker: 0, FirstJob: 0, Count: 1, FirstTile: 0, LastTile: 0, Units: 1}}
-	step := DecoderFrameWorkStep{
-		Kind: DecoderFrameWorkStepTile,
-		Tile: DecoderFrameTileWorkPlan{
-			ReferenceCount: 1,
-			Tile:           DecoderTileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1},
-		},
-	}
-	var output Frame
-	var reference Frame
-	references := [InterRefsPerFrame]*Frame{&reference}
-	seen := false
-	executed, err := ExecuteDecoderFrameWorkStepWithContext(step, workerPool, &output, references[:], jobs[:], batches[:], func(ctx DecoderFrameWorkBatch) error {
-		seen = ctx.Step == step &&
-			ctx.Output == &output &&
-			len(ctx.References) == 1 &&
-			ctx.References[0] == &reference &&
-			ctx.Batch.Count == 1 &&
-			len(ctx.Jobs) == 1 &&
-			ctx.Jobs[0].Tile == 0
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !executed || !seen {
-		t.Fatalf("executed=%v seen=%v", executed, seen)
-	}
-}
-
-func TestExecuteDecoderFrameWorkStepWithPayload(t *testing.T) {
-	workerPool, err := NewTileWorkerPool(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer workerPool.Close()
-
-	jobs := [1]TileJob{{Tile: 0, SBCols: 1, SBRows: 1}}
-	batches := [1]TileBatch{{Worker: 0, FirstJob: 0, Count: 1, FirstTile: 0, LastTile: 0, Units: 1}}
-	step := DecoderFrameWorkStep{
-		Kind: DecoderFrameWorkStepTile,
-		Tile: DecoderFrameTileWorkPlan{Tile: DecoderTileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}},
-	}
-	payload := []byte{0xab}
-	seen := false
-	executed, err := ExecuteDecoderFrameWorkStepWithPayload(step, workerPool, nil, nil, payload, jobs[:], batches[:], func(ctx DecoderFrameWorkBatch) error {
-		seen = len(ctx.Payload) == 1 && ctx.Payload[0] == 0xab && len(ctx.Jobs) == 1
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !executed || !seen {
-		t.Fatalf("executed=%v seen=%v", executed, seen)
-	}
-}
-
-func TestRunDecoderFrameWorkEventWithContext(t *testing.T) {
-	workerPool, err := NewTileWorkerPool(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer workerPool.Close()
-
-	pool := testDecoderFramePool(t, 1)
-	sequence := SequenceHeader{ColorConfig: ColorConfig{
-		BitDepth:     8,
-		SubsamplingX: true,
-		SubsamplingY: true,
-	}}
-	event := DecoderEvent{
-		Kind:        DecoderEventFrame,
-		Unit:        OBUUnit{Payload: []byte{0x80}},
-		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
-		FrameSize:   FrameSize{CodedWidth: 16, Height: 16, RefreshFrameFlags: 0xff},
-		TileInfo: TileInfo{
-			SBCols:     1,
-			SBRows:     1,
-			Cols:       1,
-			Rows:       1,
-			ColStartSB: [MaxTileCols + 1]uint16{0, 1},
-			RowStartSB: [MaxTileRows + 1]uint16{0, 1},
-		},
-		TileGroup: TileGroup{
-			TileCount:  1,
-			DataOffset: 0,
-			DataSize:   1,
-			Final:      true,
-		},
-	}
-	var refs DecoderSurfaceReferences
-	var state DecoderFrameWorkState
-	var referenceSurfaces [InterRefsPerFrame]int
-	var referenceFrames [InterRefsPerFrame]*Frame
-	var spans [1]TileSpan
-	var jobs [1]TileJob
-	var batches [1]TileBatch
-	var releases [RefFrames]int
-
-	var seenOutput *Frame
-	result, err := RunDecoderFrameWorkEventWithContext(&state, &refs, &pool, sequence, &event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx DecoderFrameWorkBatch) error {
-		seenOutput = ctx.Output
-		if len(ctx.Payload) != 1 || ctx.Payload[0] != 0x80 {
-			t.Fatalf("payload=%v", ctx.Payload)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Step.Kind != DecoderFrameWorkStepBegin ||
-		result.Output == nil ||
-		result.Output != seenOutput ||
-		result.Run != (DecoderFrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) ||
-		state.Active() {
-		t.Fatalf("result=%+v seen=%p active=%v", result, seenOutput, state.Active())
-	}
-}
-
-func TestRunDecoderFrameWorkEventWithContextAndPostFilter(t *testing.T) {
-	workerPool, err := NewTileWorkerPool(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer workerPool.Close()
-
-	pool := testDecoderFramePool(t, 1)
-	sequence := SequenceHeader{ColorConfig: ColorConfig{
-		BitDepth:     8,
-		SubsamplingX: true,
-		SubsamplingY: true,
-	}}
-	event := DecoderEvent{
-		Kind:        DecoderEventFrame,
-		Unit:        OBUUnit{Payload: []byte{0x80}},
-		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
-		FrameSize:   FrameSize{CodedWidth: 16, Height: 16, RefreshFrameFlags: 0xff},
-		TileInfo: TileInfo{
-			SBCols:     1,
-			SBRows:     1,
-			Cols:       1,
-			Rows:       1,
-			ColStartSB: [MaxTileCols + 1]uint16{0, 1},
-			RowStartSB: [MaxTileRows + 1]uint16{0, 1},
-		},
-		TileGroup: TileGroup{TileCount: 1, DataSize: 1, Final: true},
-	}
-	var refs DecoderSurfaceReferences
-	var state DecoderFrameWorkState
-	var referenceSurfaces [InterRefsPerFrame]int
-	var referenceFrames [InterRefsPerFrame]*Frame
-	var spans [1]TileSpan
-	var jobs [1]TileJob
-	var batches [1]TileBatch
-	var releases [RefFrames]int
-
-	var order [2]string
-	result, err := RunDecoderFrameWorkEventWithContextAndPostFilter(&state, &refs, &pool, sequence, &event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, func(ctx DecoderFrameWorkBatch) error {
-		order[0] = "tile"
-		ctx.Output.Y.Pix[0] = 0x21
-		return nil
-	}, func(ctx DecoderFrameWorkPostFilterContext) error {
-		order[1] = "post"
-		if ctx.Output.Y.Pix[0] != 0x21 || !ctx.ExecutedTileWork {
-			t.Fatalf("post ctx=%+v sample=%d", ctx, ctx.Output.Y.Pix[0])
-		}
-		ctx.Output.Y.Pix[0] = 0x34
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if order != ([2]string{"tile", "post"}) || result.Run != (DecoderFrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) {
-		t.Fatalf("order=%v result=%+v", order, result)
-	}
-	slot, ok := refs.ReferenceSlot(0)
-	if !ok {
-		t.Fatal("frame was not published")
-	}
-	published, err := pool.Frame(slot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if published.Y.Pix[0] != 0x34 {
-		t.Fatalf("published sample=%d want 0x34", published.Y.Pix[0])
-	}
-}
-
 func TestDecoderFrameWorkStateRunStep(t *testing.T) {
-	workerPool, err := NewTileWorkerPool(1)
+	workerPool, err := internalthreading.NewPool(1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer workerPool.Close()
 
 	pool := testDecoderFramePool(t, 1)
-	sequence := SequenceHeader{ColorConfig: ColorConfig{
+	sequence := SequenceHeader{ColorConfig: internalparser.ColorConfig{
 		BitDepth:     8,
 		SubsamplingX: true,
 		SubsamplingY: true,
 	}}
-	header := DecoderEvent{
-		Kind:        DecoderEventFrameHeader,
-		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+	header := internaldecoder.Event{
+		Kind:        internaldecoder.EventFrameHeader,
+		FrameHeader: internalparser.FrameHeaderPrefix{FrameType: internalparser.FrameTypeKey},
 		FrameSize:   FrameSize{CodedWidth: 16, Height: 16},
 	}
-	tileGroup := DecoderEvent{
-		Kind:      DecoderEventTileGroup,
+	tileGroup := internaldecoder.Event{
+		Kind:      internaldecoder.EventTileGroup,
 		FrameSize: FrameSize{RefreshFrameFlags: 0xff},
-		TileGroup: TileGroup{Final: true},
+		TileGroup: internalparser.TileGroup{Final: true},
 	}
-	jobs := [1]TileJob{{Tile: 0, SBCols: 1, SBRows: 1}}
-	batches := [1]TileBatch{{Worker: 0, FirstJob: 0, Count: 1, FirstTile: 0, LastTile: 0, Units: 1}}
-	step := DecoderFrameWorkStep{
-		Kind: DecoderFrameWorkStepTile,
-		Tile: DecoderFrameTileWorkPlan{Tile: DecoderTileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}},
+	jobs := [1]internaltile.Job{{Tile: 0, SBCols: 1, SBRows: 1}}
+	batches := [1]internalthreading.Batch{{Worker: 0, FirstJob: 0, Count: 1, FirstTile: 0, LastTile: 0, Units: 1}}
+	step := internaldecoder.FrameWorkStep{
+		Kind: internaldecoder.FrameWorkStepTile,
+		Tile: internaldecoder.FrameTileWorkPlan{Tile: internaldecoder.TileWorkPlan{SpanCount: 1, JobCount: 1, BatchCount: 1}},
 	}
 
-	var refs DecoderSurfaceReferences
-	var state DecoderFrameWorkState
+	var refs internaldecoder.SurfaceReferences
+	var state internaldecoder.FrameWorkState
 	if _, _, err := state.Begin(&refs, &pool, sequence, &header, 32, nil, 1, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	var releases [RefFrames]int
-	result, err := state.RunStep(&refs, &pool, &tileGroup, step, workerPool, jobs[:], batches[:], releases[:], func(TileBatch, []TileJob) error {
+	var releases [internalparser.RefFrames]int
+	result, err := state.RunStep(&refs, &pool, &tileGroup, step, workerPool, jobs[:], batches[:], releases[:], func(internalthreading.Batch, []internaltile.Job) error {
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != (DecoderFrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) || state.Active() {
+	if result != (internaldecoder.FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) || state.Active() {
 		t.Fatalf("result=%+v active=%v", result, state.Active())
 	}
 }
@@ -791,8 +556,8 @@ func TestResolveDecoderFrameReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var refs [InterRefsPerFrame]*Frame
-	count, err := ResolveDecoderFrameReferences(&pool, []int{surface}, refs[:])
+	var refs [internalparser.InterRefsPerFrame]*Frame
+	count, err := internaldecoder.ResolveFrameReferences(&pool, []int{surface}, refs[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -803,19 +568,19 @@ func TestResolveDecoderFrameReferences(t *testing.T) {
 
 func TestDecoderFrameWorkStateAbort(t *testing.T) {
 	pool := testDecoderFramePool(t, 1)
-	sequence := SequenceHeader{ColorConfig: ColorConfig{
+	sequence := SequenceHeader{ColorConfig: internalparser.ColorConfig{
 		BitDepth:     8,
 		SubsamplingX: true,
 		SubsamplingY: true,
 	}}
-	header := DecoderEvent{
-		Kind:        DecoderEventFrameHeader,
-		FrameHeader: FrameHeaderPrefix{FrameType: FrameTypeKey},
+	header := internaldecoder.Event{
+		Kind:        internaldecoder.EventFrameHeader,
+		FrameHeader: internalparser.FrameHeaderPrefix{FrameType: internalparser.FrameTypeKey},
 		FrameSize:   FrameSize{CodedWidth: 16, Height: 16},
 	}
 
-	var refs DecoderSurfaceReferences
-	var state DecoderFrameWorkState
+	var refs internaldecoder.SurfaceReferences
+	var state internaldecoder.FrameWorkState
 	plan, _, err := state.Begin(&refs, &pool, sequence, &header, 32, nil, 1, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -826,15 +591,15 @@ func TestDecoderFrameWorkStateAbort(t *testing.T) {
 	if state.Active() || pool.Available() != 1 {
 		t.Fatalf("state=%+v active=%v available=%d", state, state.Active(), pool.Available())
 	}
-	if _, err := pool.Frame(plan.Surface); !errors.Is(err, ErrFrameInvalidSlot) {
-		t.Fatalf("aborted frame err=%v want %v", err, ErrFrameInvalidSlot)
+	if _, err := pool.Frame(plan.Surface); !errors.Is(err, internalframe.ErrInvalidSlot) {
+		t.Fatalf("aborted frame err=%v want %v", err, internalframe.ErrInvalidSlot)
 	}
 }
 
-func testDecoderFramePool(t *testing.T, count int) FramePool {
+func testDecoderFramePool(t *testing.T, count int) internalframe.Pool {
 	t.Helper()
 	format := FrameFormat{Width: 16, Height: 16, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
-	layout, err := FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -842,7 +607,7 @@ func testDecoderFramePool(t *testing.T, count int) FramePool {
 	frames := make([]Frame, count)
 	free := make([]int, count)
 	used := make([]bool, count)
-	pool, err := BindFramePool(backing, format, frames, free, used)
+	pool, err := internalframe.BindPool(backing, format, frames, free, used)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -851,12 +616,12 @@ func testDecoderFramePool(t *testing.T, count int) FramePool {
 
 func testDecoderBoundFrame(t *testing.T, format FrameFormat) Frame {
 	t.Helper()
-	layout, err := FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		t.Fatal(err)
 	}
 	buffer := make([]byte, layout.Size)
-	output, err := BindFrame(buffer, format)
+	output, err := internalframe.Bind(buffer, format)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -59,8 +59,8 @@ updates.
 The fundamental trust boundary is **untrusted compressed AV1 bytes
 entering the decoder from a remote or otherwise attacker-controlled
 source** (WebRTC peer, RTP relay, IVF/OBU file from disk, network
-fetch, etc.). Everything downstream of `DecoderStream` and the public
-transport parsers must assume that input bytes are adversarial.
+fetch, etc.). Everything downstream of the decoder constructors and the
+public transport parsers must assume that input bytes are adversarial.
 
 Out of scope:
 
@@ -78,15 +78,14 @@ The reachable attack surface from an attacker who controls the input
 bytes:
 
 1. **Transport parsers.** IVF (`NewIVFIterator`), Section 5
-   temporal-unit OBU streams (`NewLowOverheadIterator`,
-   `NewTemporalUnitIterator`), Annex B (`NewAnnexBIterator`), and the
+   temporal-unit OBU streams (`NewLowOverheadIterator`), and the
    AV1 RTP aggregation header / payload iterator / frame assembler
    (`NewRTPPayloadIterator`, `AssembleRTPFrame`). These walk
    length-prefixed and LEB128-framed byte slices and must never run off
    the end of a caller-owned buffer or accept lengths that exceed the
    payload.
 2. **OBU header parser.** Forbidden-bit and reserved-bit checks,
-   size-field presence checks (low-overhead vs. Annex B), temporal
+   size-field presence checks, temporal
    delimiter ordering. Errors are returned, not panicked — see
    `internal/av1/obu/errors.go`.
 3. **Sequence / frame header parser.** Profile, bit depth, chroma
@@ -132,14 +131,14 @@ panicking branches into typed errors.
 #### T2. Truncated frames, oversize headers, corrupt OBUs
 
 An attacker truncates an OBU mid-LEB128, claims a size larger than the
-remaining buffer, or stuffs the temporal-unit / Annex B framing with
+remaining buffer, or stuffs the temporal-unit framing with
 nested oversize lengths.
 
 *Mitigation.* All readers operate on caller-owned byte slices with
 bounds-checked indexing. LEB128 reads (`internal/av1/bitstream`) cap
 at the AV1-defined byte count and reject overlong encodings. The OBU
-iterator surfaces `ErrShortHeader`, `ErrShortPayload`,
-`ErrSizeMismatch`, and `ErrInvalidAnnexB` for these conditions.
+iterator surfaces `ErrShortHeader`, `ErrShortPayload` and
+`ErrSizeMismatch` for these conditions.
 The RTP depacketizer cross-checks fragment lengths against the
 remainder of the payload before reassembly. Fuzz coverage:
 `internal/av1/bitstream/fuzz_test.go::FuzzReadLEB128` and the
@@ -153,20 +152,23 @@ amount of allocation, compute, or descriptor churn (a "decoder bomb").
 *Mitigation.*
 
 - **Memory.** The decoder is a zero-allocation-in-steady-state
-  design. Buffers (`FramePool`, postfilter scratch, residual scratch,
-  loop-restoration frame buffers, side-data arenas) are caller-owned
-  and bound up front via public sizing helpers. The decoder cannot
-  silently allocate large buffers in response to a hostile header —
-  if the header asks for more than the caller has bound, the call
-  returns an error.
+  design. The decoders (`NewDecoder`, `NewDecoderFromIVF`,
+  `NewLayeredDecoder` and their RTP variants) size every buffer (frame
+  pools, residual and post-filter scratch, loop-restoration buffers,
+  side-data arenas) from the stream's headers when they are
+  constructed; a later header that asks for more than was bound is
+  rejected with an error. Pass `WithFrameSizeLimit` for input that is
+  not trusted: a stream carrying a larger frame is rejected with
+  `ErrDecoderFrameSizeLimit` before anything is allocated for it. A
+  single payload may carry at most 64 OBUs; every OBU is parsed into
+  a multi-kilobyte event record, and the bound keeps a payload of
+  tiny OBUs from being amplified into gigabytes.
 - **Compute.** Tile counts are capped at 64x64. Per-frame work is
-  bounded by the parsed (and validated) frame dimensions. The tile
-  worker pool is bounded and caller-owned
-  (`NewTileWorkerPool`).
+  bounded by the parsed (and validated) frame dimensions. The worker
+  pool is bounded by `WithWorkers`.
 - **File descriptors.** The library opens no files and no sockets. All
   I/O is owned by the caller; the public API consumes `[]byte` or
-  iterator state. Goroutine fan-out is bounded by the caller-owned
-  worker pool.
+  iterator state. Goroutine fan-out is bounded by the worker count.
 
 #### T4. Side channels (timing, cache)
 
@@ -185,11 +187,9 @@ Race conditions inside the decoder are treated as correctness bugs
 with potential security impact (torn writes into caller planes,
 double-release of frame-pool surfaces).
 
-*Mitigation.* The threading model is documented in `ARCHITECTURE.md`.
-State that crosses goroutines is bound to caller-owned scratch with
-explicit lifecycle helpers (`BeginDecoderFrameWork`,
-`RunDecoderFrameWorkEventWithContext`, batch run/finish helpers).
-Frame-pool acquire/release is checked. CI runs `make test` (which
+*Mitigation.* State that crosses goroutines is bound to decoder-owned scratch with
+an explicit per-frame lifecycle (begin, run, finish). Frame-pool
+acquire/release is checked. CI runs `make test` (which
 includes `-race` coverage for the threading and tile packages).
 
 ### Input validation boundaries
@@ -203,7 +203,7 @@ includes `-race` coverage for the threading and tile packages).
 | `quantize`, `filmgrain`            | Invalid quantizer indices, malformed grain tables (commit `744ef85`).                   |
 | `restoration`                      | Bordered-block layout that would read outside the unit (commit `7c893f5`).              |
 | `frame` / `memory` (pool, scratch) | Surface size mismatch on acquire; capacity vs. requested-size mismatch on bind.         |
-| Decoder lifecycle helpers          | Event ordering (e.g. `BeginDecoderFrameWork` before run/finish), surface double-release.|
+| Decoder frame lifecycle            | Event ordering (begin before run/finish), surface double-release.                       |
 
 Beyond these boundaries the decoder treats bytes as already validated
 for the corresponding layer, so all bounds checks must happen at the
@@ -218,22 +218,19 @@ boundary above.
   `panic()` calls in non-test code paths in the module.
 - **Fuzz harnesses.** The repository ships over 100 `Fuzz*` harnesses
   across the public API and internal packages, including:
-  - Public API: `FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals`,
-    `FuzzPublicDecodeAndRetainDecoderFrameWorkBatchResiduals`,
+  - Decoder pipeline, hostile payloads through the public decoders with a
+    frame-size limit: `FuzzPublicDecoderLowOverhead` (`NewDecoder`, one to
+    four workers), `FuzzPublicDecoderRTPPayloads` (`NewDecoderFromRTPPayloads`,
+    queued and after-loss live receive), `FuzzPublicLayeredDecoder`
+    (`NewLayeredDecoder` and its RTP form), `FuzzPublicSimpleDecoderIVF`,
     `FuzzPublicDecoderFrameWorkBatchResidualRunnerSideData`,
-    `FuzzPublicRunDecoderFrameWorkEventWithResidualRunner`,
-    `FuzzPublicDecoderFrameWorkSideDataBinding`,
-    `FuzzPublicDecoderFrameWorkPostFilterScratchContext`,
-    `FuzzPublicSimpleDecoderIVF`,
-    `FuzzPublicDecodeTileBlockCoefficients`,
-    `FuzzPublicParseTileListOBU`,
-    `FuzzPublicDecodeAndReconstructDecoderFrameWorkBlockCoefficients`.
+    `FuzzPublicParseTileListOBU`.
   - Inverse transforms: WHT, ADST, warp, film grain (commit
     `ff8ba63`).
   - Inverse-qmatrix dequant path (commit `455ddac`).
   - Palette mode and color-map decode (commit `133a448`).
   - `internal/av1/bitstream/fuzz_test.go::FuzzReadLEB128`.
-  - Decoder stream dispatch across IVF, low-overhead OBU, Annex B,
+  - Decoder stream dispatch across IVF, low-overhead OBU,
     temporal-unit grouping, and single-OBU input (`FuzzStreamPush`).
   - Tile-list OBU parsing (`FuzzParseTileListOBU`).
   - Entropy reader and CDF state harnesses.
@@ -254,9 +251,10 @@ boundary above.
   allocation is replaced by a caller-supplied buffer plus a public
   `*Size` / `Required*` helper. A malformed header that would require
   more memory than bound is rejected at bind time, before any write.
-- **CI gates.** `make ci-local` (run in CI) executes `fmt-check`,
-  `vet`, `test`, and `alloc`. `make testvectors-fast` runs the
-  committed libaom conformance subset on every push.
+- **CI gates.** `make ci-local` executes `fmt-check`, `vet`, `vet-tags`,
+  `unsafe-check`, `test`, `alloc`, `compiler-reports` and `trace-zero`;
+  CI runs the same checks. `make testvectors-fast` runs the committed
+  libaom conformance subset on every push.
 
 ## Dependency inventory
 
@@ -267,7 +265,7 @@ The decoder is **pure Go with no third-party module dependencies**.
 ```
 module github.com/thesyncim/goav1
 
-go 1.27.0
+go 1.27.4
 ```
 
 There is no `go.sum` file because the module has no external

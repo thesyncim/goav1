@@ -7,8 +7,6 @@ package loopfilter
 import (
 	"math/rand"
 	"testing"
-
-	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 )
 
 // wideFilterParamsCorpus mirrors filter4DispatchParamsCorpus but for the wide
@@ -171,8 +169,6 @@ func TestWideFilterDispatchVerticalMatchesPureGo(t *testing.T) {
 // dispatcher is forced onto the pure-Go branch, so the test still has meaning
 // on a SIMD host where the slot would otherwise always pick the kernel.
 func TestWideFilterDispatchForcedPureGo(t *testing.T) {
-	restore := cpu.OverrideForTest(cpu.Features{})
-	defer restore()
 	prev6, prev8, prev14 := filter6EdgeImpl, filter8EdgeImpl, filter14EdgeImpl
 	filter6EdgeImpl, filter8EdgeImpl, filter14EdgeImpl = filter6EdgePureGo, filter8EdgePureGo, filter14EdgePureGo
 	defer func() { filter6EdgeImpl, filter8EdgeImpl, filter14EdgeImpl = prev6, prev8, prev14 }()

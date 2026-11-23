@@ -8,8 +8,7 @@
 // exported here, and the per-call code path becomes a single indirect call
 // with zero feature-detection overhead.
 //
-// Detection uses only public, official queries and the package contains no
-// assembly. On amd64 builds with GOEXPERIMENT=simd the flags come from
+// Detection uses only public, official queries. On amd64 builds with GOEXPERIMENT=simd the flags come from
 // simd/archsimd.X86, which already checks OS register-state support. Other
 // amd64 builds, and purego builds, report only the SSE2 baseline and leave the
 // higher flags false. arm64 uses the mandatory NEON baseline plus platform

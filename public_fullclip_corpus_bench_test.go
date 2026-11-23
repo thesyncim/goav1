@@ -1,4 +1,4 @@
-package goav1_test
+package goav1
 
 import (
 	"bufio"
@@ -14,8 +14,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	av1 "github.com/thesyncim/goav1"
 )
 
 const (
@@ -73,7 +71,7 @@ func TestPublicDecoderFullClipCorpusMD5Workers(t *testing.T) {
 	clips := loadPublicFullClipCorpus(t)
 	for _, workers := range []int{2, 3, 4, 8} {
 		for _, clip := range clips {
-			dec, err := av1.NewDecoderFromIVF(clip.data, av1.WithWorkers(workers))
+			dec, err := NewDecoderFromIVF(clip.data, WithWorkers(workers))
 			if err != nil {
 				t.Fatalf("%s workers=%d NewDecoderFromIVF: %v", clip.name, workers, err)
 			}
@@ -166,7 +164,7 @@ func BenchmarkPublicDecoderFullClip(b *testing.B) {
 				b.ReportMetric(float64(wantFrames), "frames/op")
 			})
 			b.Run("warm_reset_decode", func(b *testing.B) {
-				dec, err := av1.NewDecoderFromIVF(clip.data, av1.WithWorkers(1))
+				dec, err := NewDecoderFromIVF(clip.data, WithWorkers(1))
 				if err != nil {
 					b.Fatalf("NewDecoderFromIVF: %v", err)
 				}
@@ -300,6 +298,11 @@ func loadPublicFullClipCorpus(t testing.TB) []publicFullClip {
 		t.Fatalf("glob public corpus %q: %v", dir, err)
 	}
 	sort.Strings(paths)
+	// Tests opt in with GOAV1_PUBLIC_FULLCLIP=1 and must fail on a missing
+	// corpus; benchmarks skip so a plain -bench run works without it.
+	if len(paths) == 0 && os.Getenv("GOAV1_PUBLIC_FULLCLIP") != "1" {
+		t.Skipf("public corpus %q is empty; generate it with scripts/gen_bench_corpus.sh", dir)
+	}
 	if len(paths) != publicFullClipExpectedClips {
 		t.Fatalf("public corpus %q has %d IVF clips, want %d", dir, len(paths), publicFullClipExpectedClips)
 	}
@@ -445,7 +448,7 @@ func decodePublicFullClipFresh(data []byte, hashFrames bool) (publicFullClipResu
 }
 
 func decodePublicFullClipFreshWorkers(data []byte, workers int, hashFrames bool) (publicFullClipResult, error) {
-	dec, err := av1.NewDecoderFromIVF(data, av1.WithWorkers(workers))
+	dec, err := NewDecoderFromIVF(data, WithWorkers(workers))
 	if err != nil {
 		return publicFullClipResult{}, fmt.Errorf("NewDecoderFromIVF: %w", err)
 	}
@@ -457,7 +460,7 @@ func decodePublicFullClipFreshWorkers(data []byte, workers int, hashFrames bool)
 // publicFullClipPayloads copies each IVF frame payload before a timed
 // NewDecoder(payloads) run. NewIVFIterator returns views into the IVF bytes.
 func publicFullClipPayloads(ivfBytes []byte) ([][]byte, error) {
-	it, err := av1.NewIVFIterator(ivfBytes)
+	it, err := NewIVFIterator(ivfBytes)
 	if err != nil {
 		return nil, fmt.Errorf("NewIVFIterator: %w", err)
 	}
@@ -480,8 +483,8 @@ func publicFullClipPayloads(ivfBytes []byte) ([][]byte, error) {
 
 func TestPublicFullClipPayloadsRejectsInvalidIVF(t *testing.T) {
 	_, err := publicFullClipPayloads([]byte("DKIF"))
-	if !errors.Is(err, av1.ErrIVFShortHeader) {
-		t.Fatalf("publicFullClipPayloads error=%v, want %v", err, av1.ErrIVFShortHeader)
+	if !errors.Is(err, ErrIVFShortHeader) {
+		t.Fatalf("publicFullClipPayloads error=%v, want %v", err, ErrIVFShortHeader)
 	}
 }
 
@@ -493,7 +496,7 @@ func TestDecodePublicFullClipPayloadsPropagatesInvalidPayload(t *testing.T) {
 }
 
 func decodePublicFullClipPayloads(payloads [][]byte, hashFrames bool) (publicFullClipResult, error) {
-	dec, err := av1.NewDecoder(payloads, av1.WithWorkers(1))
+	dec, err := NewDecoder(payloads, WithWorkers(1))
 	if err != nil {
 		return publicFullClipResult{}, fmt.Errorf("NewDecoder: %w", err)
 	}
@@ -501,7 +504,7 @@ func decodePublicFullClipPayloads(payloads [][]byte, hashFrames bool) (publicFul
 	return decodePublicFullClip(dec, hashFrames)
 }
 
-func decodePublicFullClip(dec *av1.Decoder, hashFrames bool) (publicFullClipResult, error) {
+func decodePublicFullClip(dec *Decoder, hashFrames bool) (publicFullClipResult, error) {
 	var streamHash hash.Hash
 	if hashFrames {
 		streamHash = md5.New()
@@ -541,7 +544,7 @@ func decodePublicFullClip(dec *av1.Decoder, hashFrames bool) (publicFullClipResu
 	return result, nil
 }
 
-func writePublicFullClipFrameMD5(h hash.Hash, f *av1.Frame) error {
+func writePublicFullClipFrameMD5(h hash.Hash, f *Frame) error {
 	bytesPerSample := f.Layout.BytesPerSample
 	if bytesPerSample != 1 && bytesPerSample != 2 {
 		return fmt.Errorf("unsupported bytes per sample: %d", bytesPerSample)
@@ -558,7 +561,7 @@ func writePublicFullClipFrameMD5(h hash.Hash, f *av1.Frame) error {
 	return writePublicFullClipPlaneMD5(h, f.V, bytesPerSample)
 }
 
-func writePublicFullClipPlaneMD5(h hash.Hash, plane av1.FramePlane, bytesPerSample int) error {
+func writePublicFullClipPlaneMD5(h hash.Hash, plane FramePlane, bytesPerSample int) error {
 	if plane.Width < 0 || plane.Height < 0 || plane.Stride < 0 {
 		return errors.New("invalid plane dimensions")
 	}
@@ -585,7 +588,7 @@ func writePublicFullClipPlaneMD5(h hash.Hash, plane av1.FramePlane, bytesPerSamp
 	return nil
 }
 
-func writePublicFullClipNeutralChromaMD5(h hash.Hash, format av1.FrameFormat, bytesPerSample int) error {
+func writePublicFullClipNeutralChromaMD5(h hash.Hash, format FrameFormat, bytesPerSample int) error {
 	width, height := format.Width, format.Height
 	if format.SubsamplingX {
 		width = (width + 1) >> 1
@@ -620,10 +623,10 @@ func writePublicFullClipNeutralChromaMD5(h hash.Hash, format av1.FrameFormat, by
 	return nil
 }
 
-func observePublicFullClipFrame(f *av1.Frame) uint64 {
+func observePublicFullClipFrame(f *Frame) uint64 {
 	value := uint64(f.Format.Width)<<32 | uint64(uint32(f.Format.Height))
 	bytesPerSample := f.Layout.BytesPerSample
-	for _, plane := range []av1.FramePlane{f.Y, f.U, f.V} {
+	for _, plane := range []FramePlane{f.Y, f.U, f.V} {
 		if plane.Width <= 0 || plane.Height <= 0 || len(plane.Pix) == 0 {
 			continue
 		}
@@ -675,7 +678,7 @@ func samplePublicFullClipCold(clip publicFullClip) (publicFullClipTiming, error)
 }
 
 func samplePublicFullClipWarm(clip publicFullClip) (publicFullClipTiming, error) {
-	dec, err := av1.NewDecoderFromIVF(clip.data, av1.WithWorkers(1))
+	dec, err := NewDecoderFromIVF(clip.data, WithWorkers(1))
 	if err != nil {
 		return publicFullClipTiming{}, fmt.Errorf("NewDecoderFromIVF: %w", err)
 	}
@@ -751,7 +754,7 @@ func samplePublicFullClipColdPayload(clip publicFullClip) (publicFullClipTiming,
 	return timing, nil
 }
 
-func decodePublicFullClipAfterReset(dec *av1.Decoder) (publicFullClipResult, error) {
+func decodePublicFullClipAfterReset(dec *Decoder) (publicFullClipResult, error) {
 	if err := dec.Reset(); err != nil {
 		return publicFullClipResult{}, fmt.Errorf("Reset: %w", err)
 	}

@@ -7,7 +7,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
-// coeff_write.go is the forward of ReadCoefficientsTXB: it codes one transform
+// coeff_write.go is the forward of decode_coefs (DecodeCoefs): it codes one transform
 // block's quantized coefficients into the bitstream. Source-shaped port of libaom
 // av1_write_coeffs_txb (av1/encoder/encodetxb.c) plus write_golomb and
 // av1_get_eob_pos_token. It shares this package's coefficient context derivation
@@ -50,8 +50,7 @@ func writeGolombCounter(w *entropy.BitCounter, level int) {
 }
 
 // TXBEncodeRequest carries the per-block inputs the coefficient writer needs that
-// it cannot derive from the coefficients alone, mirroring the corresponding
-// fields of TXBDecodeRequest.
+// it cannot derive from the coefficients alone.
 type TXBEncodeRequest struct {
 	Size           TransformSize
 	Plane          CoeffPlaneType
@@ -68,7 +67,7 @@ type TXBEncodeRequest struct {
 
 // WriteCoefficientsTXB codes the quantized coefficients of one transform block
 // (coeffs in raster order, addressed through scan) into w, the exact inverse of
-// ReadCoefficientsTXB. levels is caller-owned scratch of at least
+// the decoder's decode_coefs token pass. levels is caller-owned scratch of at least
 // CoeffLevelsScratchLen(req.Size). cdfs is adapted in place, matching a decoder
 // with CDF update enabled. Port of av1_write_coeffs_txb.
 func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeRequest, coeffs []int16, scan []int16, levels []uint8) (TXBDecodeResult, error) {
@@ -271,32 +270,6 @@ func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeReque
 	}, nil
 }
 
-// WriteCoefficientsTXB8x8Y2DTrusted is the validation-free 8x8 luma/Class2D
-// specialization of WriteCoefficientsTXB. It assumes coeffs has 64 entries,
-// the default 2D scan is used, txb_skip/dc_sign contexts are zero, and CDF
-// updates are enabled. The levels argument is retained for source compatibility
-// with the generic writer shape; this hot specialization uses stack scratch.
-// If txCDF is non-nil, txSymbol is written after txb_skip and txCDF is restored
-// to its input state, matching transform-type trials that price but do not
-// adapt the real transform CDFs.
-func WriteCoefficientsTXB8x8Y2DTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, _ []uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
-	return WriteCoefficientsTXB8x8Y2DTrustedArray(w, cdfs, (*[64]int16)(coeffs), txCDF, txSymbol)
-}
-
-// WriteCoefficientsTXB8x8Y2DTrustedArray is the pointer-shaped form for hot
-// callers that already own 64-coefficient 8x8 scratch.
-func WriteCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[64]int16, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
-	return writeCoefficientsTXB8x8Y2DTrustedArray(w, cdfs, coeffs, 0, 0, txCDF, txSymbol, true)
-}
-
-// CountCoefficientsTXB8x8Y2DTrusted is the exact output-free rate-pricing
-// variant of WriteCoefficientsTXB8x8Y2DTrusted. It adapts cdfs identically,
-// restores txCDF after pricing, and returns the same Tell delta that a byte
-// writer would observe.
-func CountCoefficientsTXB8x8Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, int) {
-	return CountCoefficientsTXB8x8Y2DTrustedArray(cdfs, (*[64]int16)(coeffs), txCDF, txSymbol)
-}
-
 // CountCoefficientsTXB8x8Y2DTrustedArray is CountCoefficientsTXB8x8Y2DTrusted
 // for callers that can prove the 64-coefficient shape before the hot call.
 func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, int) {
@@ -427,14 +400,6 @@ func CountCoefficientsTXB8x8Y2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16,
 		MaxScanLine: prep.MaxScanLine,
 		CulLevel:    prep.CulLevel,
 	}, w.Tell() - base
-}
-
-// CountCoefficientsTXB8x8UV2DTrusted is the exact output-free rate-pricing
-// specialization for 8x8 chroma/Class2D trials with zero txb_skip/dc_sign
-// contexts. It adapts cdfs identically to WriteCoefficientsTXB and returns the
-// same Tell delta that a byte writer would observe.
-func CountCoefficientsTXB8x8UV2DTrusted(cdfs *CoeffCDFs, coeffs []int16) (TXBDecodeResult, int) {
-	return CountCoefficientsTXB8x8UV2DTrustedArray(cdfs, (*[64]int16)(coeffs))
 }
 
 // CountCoefficientsTXB8x8UV2DTrustedArray is
@@ -579,32 +544,11 @@ func CountCoefficientsTXB8x8UV2DTrustedArray(cdfs *CoeffCDFs, coeff64 *[64]int16
 	}, w.Tell() - base
 }
 
-// CountCoefficientsTXB16x16Y2DTrusted is the exact output-free rate-pricing
-// specialization for 16x16 luma/Class2D trials with zero txb_skip/dc_sign
-// contexts. It adapts cdfs identically to WriteCoefficientsTXB and returns the
-// same Tell delta that a byte writer would observe.
-func CountCoefficientsTXB16x16Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16) (TXBDecodeResult, int) {
-	return countCoefficientsTXB16x16Y2DTrustedArray(cdfs, (*[256]int16)(coeffs), nil, 0)
-}
-
-// CountCoefficientsTXB16x16Y2DTrustedWithTXType is the inter trial-pricing
-// variant: it writes the already-derived transform-type symbol after txb_skip,
-// then restores txCDF so trial pricing does not adapt the real transform CDFs.
-func CountCoefficientsTXB16x16Y2DTrustedWithTXType(cdfs *CoeffCDFs, coeffs []int16, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, int) {
-	return countCoefficientsTXB16x16Y2DTrustedArray(cdfs, (*[256]int16)(coeffs), txCDF, txSymbol)
-}
-
 // CountCoefficientsTXB16x16Y2DTrustedArray is
 // CountCoefficientsTXB16x16Y2DTrusted for callers that can prove the
 // 256-coefficient shape before the hot call.
 func CountCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]int16) (TXBDecodeResult, int) {
 	return countCoefficientsTXB16x16Y2DTrustedArray(cdfs, coeff256, nil, 0)
-}
-
-// CountCoefficientsTXB16x16Y2DTrustedWithTXTypeArray is the pointer-shaped
-// form for inter transform-type trial pricing.
-func CountCoefficientsTXB16x16Y2DTrustedWithTXTypeArray(cdfs *CoeffCDFs, coeff256 *[256]int16, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, int) {
-	return countCoefficientsTXB16x16Y2DTrustedArray(cdfs, coeff256, txCDF, txSymbol)
 }
 
 type txb16x16PrepResult struct {
@@ -826,14 +770,6 @@ func countCoefficientsTXB16x16Y2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]in
 	}, w.Tell() - base
 }
 
-// CountCoefficientsTXB16x16UV2DTrusted is the exact output-free rate-pricing
-// specialization for 16x16 chroma/Class2D trials with zero txb_skip/dc_sign
-// contexts. It adapts cdfs identically to WriteCoefficientsTXB and returns the
-// same Tell delta that a byte writer would observe.
-func CountCoefficientsTXB16x16UV2DTrusted(cdfs *CoeffCDFs, coeffs []int16) (TXBDecodeResult, int) {
-	return CountCoefficientsTXB16x16UV2DTrustedArray(cdfs, (*[256]int16)(coeffs))
-}
-
 // CountCoefficientsTXB16x16UV2DTrustedArray is
 // CountCoefficientsTXB16x16UV2DTrusted for callers that can prove the
 // 256-coefficient shape before the hot call.
@@ -986,25 +922,10 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 	}, w.Tell() - base
 }
 
-// WriteCoefficientsTXB16x16Y2DContextTrusted is the validation-free 16x16
-// luma/Class2D specialization for real coding with already-derived coefficient
-// contexts. If txCDF is non-nil, txSymbol is written after txb_skip and txCDF
-// is adapted in place.
-func WriteCoefficientsTXB16x16Y2DContextTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, _ []uint8, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
-	return WriteCoefficientsTXB16x16Y2DContextTrustedArray(w, cdfs, (*[256]int16)(coeffs), txbSkipContext, dcSignContext, txCDF, txSymbol)
-}
-
 // WriteCoefficientsTXB16x16Y2DContextTrustedArray is the pointer-shaped form
 // for real 16x16 luma coding with already-derived coefficient contexts.
 func WriteCoefficientsTXB16x16Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[256]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
 	return writeCoefficientsTXB16x16Plane2DContextTrustedArray(w, cdfs, coeffs, CoeffPlaneY, txbSkipContext, dcSignContext, txCDF, txSymbol)
-}
-
-// WriteCoefficientsTXB16x16UV2DContextTrusted is the validation-free 16x16
-// chroma/Class2D specialization for real coding with already-derived
-// coefficient contexts.
-func WriteCoefficientsTXB16x16UV2DContextTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, _ []uint8, txbSkipContext, dcSignContext uint8) TXBDecodeResult {
-	return WriteCoefficientsTXB16x16UV2DContextTrustedArray(w, cdfs, (*[256]int16)(coeffs), txbSkipContext, dcSignContext)
 }
 
 // WriteCoefficientsTXB16x16UV2DContextTrustedArray is the pointer-shaped form
@@ -1154,40 +1075,11 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 	}
 }
 
-// CountCoefficientsTXB32x32Y2DTrusted is the exact output-free rate-pricing
-// specialization for 32x32 luma/Class2D trials with zero txb_skip/dc_sign
-// contexts. It adapts cdfs identically to WriteCoefficientsTXB and returns the
-// same Tell delta that a byte writer would observe.
-func CountCoefficientsTXB32x32Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16) (TXBDecodeResult, int) {
-	return countCoefficientsTXB32x32Plane2DTrustedArray(cdfs, (*[1024]int16)(coeffs), CoeffPlaneY, nil, 0)
-}
-
 // CountCoefficientsTXB32x32Y2DTrustedArray is
 // CountCoefficientsTXB32x32Y2DTrusted for callers that can prove the
 // 1024-coefficient shape before the hot call.
 func CountCoefficientsTXB32x32Y2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1024]int16) (TXBDecodeResult, int) {
 	return countCoefficientsTXB32x32Plane2DTrustedArray(cdfs, coeff1024, CoeffPlaneY, nil, 0)
-}
-
-// CountCoefficientsTXB32x32Y2DTrustedWithTXType is the inter trial-pricing
-// variant: it writes the already-derived transform-type symbol after txb_skip,
-// then restores txCDF so trial pricing does not adapt the real transform CDFs.
-func CountCoefficientsTXB32x32Y2DTrustedWithTXType(cdfs *CoeffCDFs, coeffs []int16, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, int) {
-	return countCoefficientsTXB32x32Plane2DTrustedArray(cdfs, (*[1024]int16)(coeffs), CoeffPlaneY, txCDF, txSymbol)
-}
-
-// CountCoefficientsTXB32x32Y2DTrustedWithTXTypeArray is the pointer-shaped
-// form for inter transform-type trial pricing.
-func CountCoefficientsTXB32x32Y2DTrustedWithTXTypeArray(cdfs *CoeffCDFs, coeff1024 *[1024]int16, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, int) {
-	return countCoefficientsTXB32x32Plane2DTrustedArray(cdfs, coeff1024, CoeffPlaneY, txCDF, txSymbol)
-}
-
-// CountCoefficientsTXB32x32UV2DTrusted is the exact output-free rate-pricing
-// specialization for 32x32 chroma/Class2D trials with zero txb_skip/dc_sign
-// contexts. It adapts cdfs identically to WriteCoefficientsTXB and returns the
-// same Tell delta that a byte writer would observe.
-func CountCoefficientsTXB32x32UV2DTrusted(cdfs *CoeffCDFs, coeffs []int16) (TXBDecodeResult, int) {
-	return countCoefficientsTXB32x32Plane2DTrustedArray(cdfs, (*[1024]int16)(coeffs), CoeffPlaneUV, nil, 0)
 }
 
 // CountCoefficientsTXB32x32UV2DTrustedArray is
@@ -1344,14 +1236,6 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 	}, w.Tell() - base
 }
 
-// WriteCoefficientsTXB32x32Y2DContextTrusted is the validation-free 32x32
-// luma/Class2D specialization for real coding with already-derived coefficient
-// contexts. If txCDF is non-nil, txSymbol is written after txb_skip and txCDF
-// is adapted in place.
-func WriteCoefficientsTXB32x32Y2DContextTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, _ []uint8, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
-	return WriteCoefficientsTXB32x32Y2DContextTrustedArray(w, cdfs, (*[1024]int16)(coeffs), txbSkipContext, dcSignContext, txCDF, txSymbol)
-}
-
 // WriteCoefficientsTXB32x32Y2DContextTrustedArray is the pointer-shaped form
 // for real 32x32 luma coding with already-derived coefficient contexts.
 func WriteCoefficientsTXB32x32Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[1024]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
@@ -1367,13 +1251,6 @@ func WriteCoefficientsTXB32x32Y2DContextTrustedZeroedLevels(w *entropy.Writer, c
 		return WriteCoefficientsTXB32x32Y2DContextTrustedArray(w, cdfs, coeffs, txbSkipContext, dcSignContext, txCDF, txSymbol)
 	}
 	return writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w, cdfs, coeffs, (*[scratchLen]uint8)(levelsScratch[:scratchLen]), true, CoeffPlaneY, txbSkipContext, dcSignContext, txCDF, txSymbol)
-}
-
-// WriteCoefficientsTXB32x32UV2DContextTrusted is the validation-free 32x32
-// chroma/Class2D specialization for real coding with already-derived
-// coefficient contexts.
-func WriteCoefficientsTXB32x32UV2DContextTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, _ []uint8, txbSkipContext, dcSignContext uint8) TXBDecodeResult {
-	return WriteCoefficientsTXB32x32UV2DContextTrustedArray(w, cdfs, (*[1024]int16)(coeffs), txbSkipContext, dcSignContext)
 }
 
 // WriteCoefficientsTXB32x32UV2DContextTrustedArray is the pointer-shaped form
@@ -1551,32 +1428,11 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 	}
 }
 
-// WriteCoefficientsTXB4x4Y2DContextTrusted is the validation-free 4x4
-// luma/Class2D specialization for real coding with already-derived coefficient
-// contexts. The afterSkip hook, when non-nil, is called after a nonzero
-// txb_skip symbol and before the EOB token, matching TXBEncodeRequest.AfterSkip.
-func WriteCoefficientsTXB4x4Y2DContextTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, _ []uint8, txbSkipContext, dcSignContext uint8, afterSkip func() error) (TXBDecodeResult, error) {
-	return WriteCoefficientsTXB4x4Y2DContextTrustedArray(w, cdfs, (*[16]int16)(coeffs), txbSkipContext, dcSignContext, afterSkip)
-}
-
-// WriteCoefficientsTXB4x4Y2DContextTrustedTXType is the validation-free 4x4
-// luma/Class2D specialization for real coding when the inter tx_type CDF and
-// symbol are already known. txCDF is adapted in place when non-nil.
-func WriteCoefficientsTXB4x4Y2DContextTrustedTXType(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, _ []uint8, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
-	return WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(w, cdfs, (*[16]int16)(coeffs), txbSkipContext, dcSignContext, txCDF, txSymbol)
-}
-
 // WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray is the pointer-shaped form
 // for real 4x4 luma coding with a pre-resolved inter tx_type symbol.
 func WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[16]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
 	result, _ := writeCoefficientsTXB4x4Y2DContextTrustedArray(w, cdfs, coeffs, txbSkipContext, dcSignContext, nil, txCDF, txSymbol)
 	return result
-}
-
-// WriteCoefficientsTXB4x4Y2DContextTrustedArray is the pointer-shaped form for
-// real 4x4 luma coding with already-derived coefficient contexts.
-func WriteCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[16]int16, txbSkipContext, dcSignContext uint8, afterSkip func() error) (TXBDecodeResult, error) {
-	return writeCoefficientsTXB4x4Y2DContextTrustedArray(w, cdfs, coeffs, txbSkipContext, dcSignContext, afterSkip, nil, 0)
 }
 
 func writeCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[16]int16, txbSkipContext, dcSignContext uint8, afterSkip func() error, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, error) {
@@ -1719,14 +1575,6 @@ func writeCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *Coef
 	}, nil
 }
 
-// CountCoefficientsTXB4x4Y2DTrusted is the exact output-free rate-pricing
-// specialization for 4x4 luma/Class2D trials with zero txb_skip/dc_sign
-// contexts. It adapts cdfs identically to WriteCoefficientsTXB and returns the
-// same Tell delta that a byte writer would observe.
-func CountCoefficientsTXB4x4Y2DTrusted(cdfs *CoeffCDFs, coeffs []int16) (TXBDecodeResult, int) {
-	return CountCoefficientsTXB4x4Y2DTrustedArray(cdfs, (*[16]int16)(coeffs))
-}
-
 // CountCoefficientsTXB4x4Y2DTrustedArray is CountCoefficientsTXB4x4Y2DTrusted
 // for callers that can prove the 16-coefficient shape before the hot call.
 func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16) (TXBDecodeResult, int) {
@@ -1864,13 +1712,6 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 	}, w.Tell() - base
 }
 
-// WriteCoefficientsTXB4x4UV2DContextTrusted is the validation-free 4x4
-// chroma/Class2D specialization for real coding with already-derived
-// coefficient contexts.
-func WriteCoefficientsTXB4x4UV2DContextTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, _ []uint8, txbSkipContext, dcSignContext uint8) TXBDecodeResult {
-	return WriteCoefficientsTXB4x4UV2DContextTrustedArray(w, cdfs, (*[16]int16)(coeffs), txbSkipContext, dcSignContext)
-}
-
 // WriteCoefficientsTXB4x4UV2DContextTrustedArray is the pointer-shaped form for
 // real 4x4 chroma coding with already-derived coefficient contexts.
 func WriteCoefficientsTXB4x4UV2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[16]int16, txbSkipContext, dcSignContext uint8) TXBDecodeResult {
@@ -2004,14 +1845,6 @@ func WriteCoefficientsTXB4x4UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 		MaxScanLine: uint16(maxScanLine),
 		CulLevel:    uint8(culLevel),
 	}
-}
-
-// CountCoefficientsTXB4x4UV2DTrusted is the exact output-free rate-pricing
-// specialization for 4x4 chroma/Class2D trials with zero txb_skip/dc_sign
-// contexts. It adapts cdfs identically to WriteCoefficientsTXB and returns the
-// same Tell delta that a byte writer would observe.
-func CountCoefficientsTXB4x4UV2DTrusted(cdfs *CoeffCDFs, coeffs []int16) (TXBDecodeResult, int) {
-	return CountCoefficientsTXB4x4UV2DTrustedArray(cdfs, (*[16]int16)(coeffs))
 }
 
 // CountCoefficientsTXB4x4UV2DTrustedArray is
@@ -2150,13 +1983,6 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 		MaxScanLine: uint16(maxScanLine),
 		CulLevel:    uint8(culLevel),
 	}, w.Tell() - base
-}
-
-// WriteCoefficientsTXB8x8Y2DContextTrusted is the validation-free 8x8
-// luma/Class2D specialization for real coding with already-derived coefficient
-// contexts. Unlike WriteCoefficientsTXB8x8Y2DTrusted, txCDF is adapted in place.
-func WriteCoefficientsTXB8x8Y2DContextTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, _ []uint8, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
-	return WriteCoefficientsTXB8x8Y2DContextTrustedArray(w, cdfs, (*[64]int16)(coeffs), txbSkipContext, dcSignContext, txCDF, txSymbol)
 }
 
 // WriteCoefficientsTXB8x8Y2DContextTrustedArray is the pointer-shaped form for
@@ -2308,13 +2134,6 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 	}
 }
 
-// WriteCoefficientsTXB8x8UV2DContextTrusted is the validation-free 8x8
-// chroma/Class2D specialization for real coding with already-derived
-// coefficient contexts.
-func WriteCoefficientsTXB8x8UV2DContextTrusted(w *entropy.Writer, cdfs *CoeffCDFs, coeffs []int16, _ []uint8, txbSkipContext, dcSignContext uint8) TXBDecodeResult {
-	return WriteCoefficientsTXB8x8UV2DContextTrustedArray(w, cdfs, (*[64]int16)(coeffs), txbSkipContext, dcSignContext)
-}
-
 // WriteCoefficientsTXB8x8UV2DContextTrustedArray is the pointer-shaped form for
 // real 8x8 chroma coding with already-derived coefficient contexts.
 func WriteCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[64]int16, txbSkipContext, dcSignContext uint8) TXBDecodeResult {
@@ -2452,16 +2271,6 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 		MaxScanLine: uint16(maxScanLine),
 		CulLevel:    uint8(culLevel),
 	}
-}
-
-// WriteCoefficientsTXBWithContext derives the txb_skip and dc_sign contexts from
-// the caller-owned CoeffEntropyContext carrier, codes the transform block with
-// WriteCoefficientsTXB, and marks the carrier with the block's cumulative level
-// exactly as the decoder's ReadCoefficientsTXBWithContext does, so encoder and
-// decoder carrier state evolve in lockstep. It returns the same TXBDecodeResult
-// the decoder would produce for the block.
-func WriteCoefficientsTXBWithContext(w *entropy.Writer, cdfs *CoeffCDFs, ctx *CoeffEntropyContext, ctxReq CoeffContextRequest, class transform.Class, coeffs []int16, scan []int16, levels []uint8) (TXBDecodeResult, error) {
-	return WriteCoefficientsTXBWithContextHook(w, cdfs, ctx, ctxReq, class, coeffs, scan, levels, nil)
 }
 
 // WriteCoefficientsTXBWithContextHook is WriteCoefficientsTXBWithContext with

@@ -22,6 +22,9 @@ const (
 // PredictWarpedPlaneBlockBitDepth predicts a single-reference affine warped
 // block. The destination coordinates are absolute plane coordinates, matching
 // libaom's p_col/p_row convention.
+//
+// Accesses stay inside ref.Pix (taps outside the plane are edge-clamped,
+// never read) and inside the width x height block of the destination.
 func PredictWarpedPlaneBlockBitDepth(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, width int, height int, matrix [6]int32, alpha int16, beta int16, gamma int16, delta int16, subsamplingX bool, subsamplingY bool) error {
 	if width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion

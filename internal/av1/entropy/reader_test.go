@@ -2,7 +2,6 @@ package entropy
 
 import (
 	"errors"
-	"math/bits"
 	"testing"
 	"unsafe"
 )
@@ -24,7 +23,7 @@ func TestReaderHotStructSizes(t *testing.T) {
 }
 
 func TestReaderReadBitKnownValues(t *testing.T) {
-	r := NewReader([]byte{0x00})
+	r := NewReaderWithCDFUpdate([]byte{0x00}, true)
 	bit, err := r.ReadBit()
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +32,7 @@ func TestReaderReadBitKnownValues(t *testing.T) {
 		t.Fatalf("zero stream bit=%d want 0", bit)
 	}
 
-	r = NewReader([]byte{0xff})
+	r = NewReaderWithCDFUpdate([]byte{0xff}, true)
 	bit, err = r.ReadBit()
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +43,7 @@ func TestReaderReadBitKnownValues(t *testing.T) {
 }
 
 func TestReaderReadBool(t *testing.T) {
-	r := NewReader([]byte{0xff})
+	r := NewReaderWithCDFUpdate([]byte{0xff}, true)
 	bit, err := r.ReadBool(128)
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +52,7 @@ func TestReaderReadBool(t *testing.T) {
 		t.Fatalf("bit=%d want 1", bit)
 	}
 
-	r = NewReader([]byte{0x00})
+	r = NewReaderWithCDFUpdate([]byte{0x00}, true)
 	bit, err = r.ReadBool(128)
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +63,7 @@ func TestReaderReadBool(t *testing.T) {
 }
 
 func TestReaderReadBits(t *testing.T) {
-	r := NewReader([]byte{0xff, 0x00})
+	r := NewReaderWithCDFUpdate([]byte{0xff, 0x00}, true)
 	got, err := r.ReadBits(4)
 	if err != nil {
 		t.Fatal(err)
@@ -80,8 +79,8 @@ func TestReaderReadBits(t *testing.T) {
 func TestReaderReadBitsMatchesRepeatedReadBit(t *testing.T) {
 	src := []byte{0xa5, 0x5a, 0xc3, 0x3c, 0xf0, 0x0f, 0x99, 0x66}
 	for n := uint8(0); n <= 32; n++ {
-		bulk := NewReader(src)
-		step := NewReader(src)
+		bulk := NewReaderWithCDFUpdate(src, true)
+		step := NewReaderWithCDFUpdate(src, true)
 		got, err := bulk.ReadBits(n)
 		if err != nil {
 			t.Fatalf("ReadBits(%d): %v", n, err)
@@ -109,7 +108,7 @@ func TestReaderReadBitsMatchesRepeatedReadBit(t *testing.T) {
 }
 
 func TestReaderReadUniform(t *testing.T) {
-	r := NewReader([]byte{0x00})
+	r := NewReaderWithCDFUpdate([]byte{0x00}, true)
 	got, err := r.ReadUniform(10)
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +117,7 @@ func TestReaderReadUniform(t *testing.T) {
 		t.Fatalf("zero uniform=%d want 0", got)
 	}
 
-	r = NewReader([]byte{0xff})
+	r = NewReaderWithCDFUpdate([]byte{0xff}, true)
 	got, err = r.ReadUniform(10)
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +126,7 @@ func TestReaderReadUniform(t *testing.T) {
 		t.Fatalf("one uniform=%d want 9", got)
 	}
 
-	r = NewReader(nil)
+	r = NewReaderWithCDFUpdate(nil, true)
 	got, err = r.ReadUniform(1)
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +137,7 @@ func TestReaderReadUniform(t *testing.T) {
 }
 
 func TestReaderReadSubexp(t *testing.T) {
-	r := NewReader([]byte{0x00})
+	r := NewReaderWithCDFUpdate([]byte{0x00}, true)
 	got, err := r.ReadSubexp(16, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +146,7 @@ func TestReaderReadSubexp(t *testing.T) {
 		t.Fatalf("zero subexp=%d want 0", got)
 	}
 
-	r = NewReader([]byte{0xff, 0xff})
+	r = NewReaderWithCDFUpdate([]byte{0xff, 0xff}, true)
 	got, err = r.ReadSubexp(16, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +157,7 @@ func TestReaderReadSubexp(t *testing.T) {
 }
 
 func TestReaderReadRefSubexp(t *testing.T) {
-	r := NewReader([]byte{0x00})
+	r := NewReaderWithCDFUpdate([]byte{0x00}, true)
 	got, err := r.ReadRefSubexp(10, 1, 4)
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +168,7 @@ func TestReaderReadRefSubexp(t *testing.T) {
 }
 
 func TestReaderReadSignedRefSubexp(t *testing.T) {
-	r := NewReader([]byte{0x00})
+	r := NewReaderWithCDFUpdate([]byte{0x00}, true)
 	got, err := r.ReadSignedRefSubexp(5, 1, -1)
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +180,7 @@ func TestReaderReadSignedRefSubexp(t *testing.T) {
 
 func TestReaderReadSymbol(t *testing.T) {
 	cdf := []uint16{16384, 0, 0}
-	r := NewReader([]byte{0x00})
+	r := NewReaderWithCDFUpdate([]byte{0x00}, true)
 	symbol, err := r.ReadSymbol(cdf, 2)
 	if err != nil {
 		t.Fatal(err)
@@ -202,7 +201,7 @@ func TestReaderReadCDF(t *testing.T) {
 	if err := cdf.InitUniform(2); err != nil {
 		t.Fatal(err)
 	}
-	r := NewReader([]byte{0x00})
+	r := NewReaderWithCDFUpdate([]byte{0x00}, true)
 	symbol, err := r.ReadCDF(&cdf)
 	if err != nil {
 		t.Fatal(err)
@@ -225,8 +224,8 @@ func TestReaderReadBinaryCDFTrustedMatchesReadCDF(t *testing.T) {
 		t.Fatal(err)
 	}
 	trustedCDF := genericCDF
-	generic := NewReader(src)
-	trusted := NewReader(src)
+	generic := NewReaderWithCDFUpdate(src, true)
+	trusted := NewReaderWithCDFUpdate(src, true)
 
 	for i := 0; i < 8; i++ {
 		want, err := generic.ReadSymbol(genericCDF.Values(), genericCDF.Symbols())
@@ -255,8 +254,8 @@ func TestReaderReadSmallCDFTrustedMatchesReadCDF(t *testing.T) {
 				t.Fatal(err)
 			}
 			trustedCDF := genericCDF
-			generic := NewReader(src)
-			trusted := NewReader(src)
+			generic := NewReaderWithCDFUpdate(src, true)
+			trusted := NewReaderWithCDFUpdate(src, true)
 
 			for i := 0; i < 16; i++ {
 				want, err := generic.ReadSymbol(genericCDF.Values(), genericCDF.Symbols())
@@ -376,211 +375,12 @@ func TestCursorTrustedReadsMatchReader(t *testing.T) {
 	}
 }
 
-func TestCursorReadBitNoRefillTrustedMatchesReaderBoundaryStates(t *testing.T) {
-	rngValues := []uint16{32768, 32771, 32772, 33023, 33024, 65411, 65412, 65535}
-	cntValues := []int16{0, 1, 2, 48, 16384}
-	lengths := []int{0, 1, 7, 8, 9}
-	patterns := []string{"zero", "ones", "mixed"}
-	if traceEntropyReads {
-		rngValues = []uint16{32768, 65412, 65535}
-		cntValues = []int16{0, 1}
-		lengths = []int{0, 9}
-	}
-	sawRefill := false
-	sawNoRefill := false
-	sawCountZero := false
-	sawCountMinusOne := false
-	sawCountMinusTwo := false
-	for _, allowUpdate := range []bool{true, false} {
-		for _, length := range lengths {
-			for _, pattern := range patterns {
-				src := make([]byte, length)
-				for i := range src {
-					switch pattern {
-					case "ones":
-						src[i] = 0xff
-					case "mixed":
-						src[i] = byte(i*73 + length*19 + 0xa5)
-					}
-				}
-				for _, rng := range rngValues {
-					split := ((rng >> 8) << 7) + ecMinProb
-					window := uint64(split) << (ecWindow - 16)
-					limit := uint64(rng) << (ecWindow - 16)
-					difValues := []uint64{0, window - 1, window, window + 1, limit - 1}
-					for _, dif := range difValues {
-						if dif >= limit {
-							continue
-						}
-						for _, cnt := range cntValues {
-							ref := NewReaderWithCDFUpdate(src, allowUpdate)
-							gotReader := NewReaderWithCDFUpdate(src, allowUpdate)
-							for _, r := range []*Reader{&ref, &gotReader} {
-								r.pos = 0
-								r.dif = dif
-								r.rng = rng
-								r.cnt = cnt
-								r.tellOffs = readerInitTellOffs
-							}
-							want := ref.ReadBitTrusted()
-							cur := gotReader.Cursor()
-							got, refill := cur.ReadBitNoRefillTrusted()
-							if got != want {
-								t.Fatalf("allow=%v len=%d pattern=%s rng=%d dif=%016x cnt=%d: bit=%d want %d", allowUpdate, length, pattern, rng, dif, cnt, got, want)
-							}
-							nextRange := split
-							if dif >= window {
-								nextRange = rng - split
-							}
-							shift := uint(16 - bits.Len16(nextRange))
-							afterCount := int32(cnt) - int32(shift)
-							expectedRefill := afterCount < 0
-							if traceEntropyReads {
-								if refill {
-									t.Fatalf("trace path reported a second refill: rng=%d dif=%016x cnt=%d", rng, dif, cnt)
-								}
-							} else if refill != expectedRefill {
-								t.Fatalf("allow=%v len=%d pattern=%s rng=%d dif=%016x cnt=%d: refill=%v want %v", allowUpdate, length, pattern, rng, dif, cnt, refill, expectedRefill)
-							}
-							if refill {
-								cur.RefillTrusted()
-							}
-							cur.CommitTo(&gotReader)
-							if gotReader.pos != ref.pos || gotReader.dif != ref.dif || gotReader.rng != ref.rng ||
-								gotReader.cnt != ref.cnt || gotReader.tellOffs != ref.tellOffs ||
-								gotReader.allowCDFUpdate != ref.allowCDFUpdate || gotReader.BitsRead() != ref.BitsRead() {
-								t.Fatalf("allow=%v len=%d pattern=%s rng=%d dif=%016x cnt=%d: got state pos=%d dif=%016x rng=%d cnt=%d tell=%d bits=%d want pos=%d dif=%016x rng=%d cnt=%d tell=%d bits=%d", allowUpdate, length, pattern, rng, dif, cnt, gotReader.pos, gotReader.dif, gotReader.rng, gotReader.cnt, gotReader.tellOffs, gotReader.BitsRead(), ref.pos, ref.dif, ref.rng, ref.cnt, ref.tellOffs, ref.BitsRead())
-							}
-							if expectedRefill {
-								sawRefill = true
-							} else {
-								sawNoRefill = true
-							}
-							if afterCount == 0 {
-								sawCountZero = true
-							}
-							if afterCount == -1 {
-								sawCountMinusOne = true
-							}
-							if afterCount == -2 {
-								sawCountMinusTwo = true
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	if !sawRefill || !sawNoRefill || !sawCountZero || !sawCountMinusOne || !sawCountMinusTwo {
-		t.Fatalf("coverage refill=%v noRefill=%v countZero=%v countMinusOne=%v countMinusTwo=%v", sawRefill, sawNoRefill, sawCountZero, sawCountMinusOne, sawCountMinusTwo)
-	}
-}
-
-func TestCursorReadBitNoRefillTrustedMixedStreamMatchesReader(t *testing.T) {
-	sawBulkRefill := false
-	for _, allowUpdate := range []bool{true, false} {
-		for _, length := range []int{0, 1, 7, 8, 9, 64} {
-			src := make([]byte, length)
-			for i := range src {
-				src[i] = byte(i*53 + 0x81)
-			}
-			ref := NewReaderWithCDFUpdate(src, allowUpdate)
-			gotReader := NewReaderWithCDFUpdate(src, allowUpdate)
-			oracleReader := NewReaderWithCDFUpdate(src, allowUpdate)
-			cur := gotReader.Cursor()
-			oracle := oracleReader.Cursor()
-			var refCDF, gotCDF, oracleCDF CDF
-			if err := refCDF.InitUniform(4); err != nil {
-				t.Fatal(err)
-			}
-			gotCDF, oracleCDF = refCDF, refCDF
-			var refHigh, gotHigh, oracleHigh CDF
-			if err := refHigh.InitUniform(4); err != nil {
-				t.Fatal(err)
-			}
-			gotHigh, oracleHigh = refHigh, refHigh
-			stateMatches := func(got *Reader) bool {
-				return got.pos == ref.pos && got.dif == ref.dif && got.rng == ref.rng &&
-					got.cnt == ref.cnt && got.tellOffs == ref.tellOffs &&
-					got.allowCDFUpdate == ref.allowCDFUpdate && got.BitsRead() == ref.BitsRead()
-			}
-			checkState := func(operation string, iteration int) {
-				cur.CommitTo(&gotReader)
-				oracle.CommitTo(&oracleReader)
-				if !stateMatches(&gotReader) || !stateMatches(&oracleReader) {
-					t.Fatalf("allow=%v len=%d %s[%d]: candidate or old Cursor differs from Reader state", allowUpdate, length, operation, iteration)
-				}
-				cur = gotReader.Cursor()
-				oracle = oracleReader.Cursor()
-			}
-			for i := 0; i < 96; i++ {
-				wantCDFSymbol := ref.ReadCDF4Unchecked(&refCDF)
-				oracleCDFSymbol := oracle.ReadCDF4Unchecked(&oracleCDF)
-				gotCDFSymbol := cur.ReadCDF4Unchecked(&gotCDF)
-				if gotCDFSymbol != wantCDFSymbol || oracleCDFSymbol != wantCDFSymbol || gotCDF != refCDF || oracleCDF != refCDF {
-					t.Fatalf("allow=%v len=%d cdf4[%d] candidate=%d/%v cursor=%d/%v want=%d/%v", allowUpdate, length, i, gotCDFSymbol, gotCDF.Values(), oracleCDFSymbol, oracleCDF.Values(), wantCDFSymbol, refCDF.Values())
-				}
-				checkState("cdf4", i)
-
-				wantHighToken := uint8(0)
-				oracleHighToken := uint8(0)
-				for j := 0; j < 4; j++ {
-					symbol := ref.ReadCDF4Unchecked(&refHigh)
-					oracleSymbol := oracle.ReadCDF4Unchecked(&oracleHigh)
-					wantHighToken += uint8(symbol)
-					oracleHighToken += uint8(oracleSymbol)
-					if symbol < 3 {
-						if oracleSymbol >= 3 {
-							t.Fatalf("allow=%v len=%d high-token oracle termination mismatch at %d", allowUpdate, length, i)
-						}
-						break
-					}
-					if oracleSymbol < 3 {
-						t.Fatalf("allow=%v len=%d high-token oracle terminated early at %d", allowUpdate, length, i)
-					}
-				}
-				gotHighToken := cur.ReadCDF4HighTokenUnchecked(&gotHigh)
-				if gotHighToken != wantHighToken || oracleHighToken != wantHighToken || gotHigh != refHigh || oracleHigh != refHigh {
-					t.Fatalf("allow=%v len=%d high-token[%d] candidate=%d/%v cursor=%d/%v want=%d/%v", allowUpdate, length, i, gotHighToken, gotHigh.Values(), oracleHighToken, oracleHigh.Values(), wantHighToken, refHigh.Values())
-				}
-				checkState("high-token", i)
-
-				wantBit := ref.ReadBitTrusted()
-				oracleBit := oracle.ReadBitTrustedInline()
-				beforePos := cur.pos
-				gotBit, refill := cur.ReadBitNoRefillTrusted()
-				if gotBit != wantBit || oracleBit != wantBit {
-					t.Fatalf("allow=%v len=%d bit[%d] candidate=%d cursor=%d want=%d", allowUpdate, length, i, gotBit, oracleBit, wantBit)
-				}
-				if refill {
-					cur.RefillTrusted()
-					if int(cur.pos)-int(beforePos) >= 6 {
-						sawBulkRefill = true
-					}
-				}
-				checkState("bit", i)
-
-				wantBits := ref.ReadBitsTrusted(3)
-				oracleBits := oracle.ReadBitsTrusted(3)
-				gotBits := cur.ReadBitsTrusted(3)
-				if gotBits != wantBits || oracleBits != wantBits {
-					t.Fatalf("allow=%v len=%d bits[%d] candidate=%d cursor=%d want=%d", allowUpdate, length, i, gotBits, oracleBits, wantBits)
-				}
-				checkState("bits", i)
-			}
-		}
-	}
-	if !traceEntropyReads && !sawBulkRefill {
-		t.Fatal("64-byte stream did not exercise a bulk refill")
-	}
-}
-
 func TestReaderReadSignedDeltaZero(t *testing.T) {
 	var cdf CDF
 	if err := cdf.InitDefaultDelta(); err != nil {
 		t.Fatal(err)
 	}
-	r := NewReader([]byte{0x00})
+	r := NewReaderWithCDFUpdate([]byte{0x00}, true)
 	delta, err := r.ReadSignedDelta(&cdf, DeltaSmall)
 	if err != nil {
 		t.Fatal(err)
@@ -601,7 +401,7 @@ func TestReaderReadSignedDeltaExtendedTail(t *testing.T) {
 	if err := cdf.InitDefaultDelta(); err != nil {
 		t.Fatal(err)
 	}
-	r := NewReader([]byte{0xff, 0xff, 0xff})
+	r := NewReaderWithCDFUpdate([]byte{0xff, 0xff, 0xff}, true)
 	delta, err := r.ReadSignedDelta(&cdf, DeltaSmall)
 	if err != nil {
 		t.Fatal(err)
@@ -657,7 +457,7 @@ func TestReaderReadSymbolMatchesBoolQ15(t *testing.T) {
 }
 
 func TestReaderRejectsInvalidInputs(t *testing.T) {
-	r := NewReader(nil)
+	r := NewReaderWithCDFUpdate(nil, true)
 	if _, err := r.ReadBoolQ15(0); !errors.Is(err, ErrInvalidProbability) {
 		t.Fatalf("zero probability err=%v want %v", err, ErrInvalidProbability)
 	}
@@ -719,7 +519,7 @@ func TestReaderAllocs(t *testing.T) {
 	var state CDF
 	var delta CDF
 	allocs := testing.AllocsPerRun(1000, func() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		if err := state.InitUniform(4); err != nil {
 			t.Fatal(err)
 		}
@@ -765,7 +565,7 @@ func FuzzReaderUniformSubexp(f *testing.F) {
 		n := uint32(rawN%4096) + 1
 		k := rawK & 7
 
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		uniform, err := r.ReadUniform(n)
 		if err != nil {
 			t.Fatalf("ReadUniform err=%v n=%d", err, n)
@@ -774,7 +574,7 @@ func FuzzReaderUniformSubexp(f *testing.F) {
 			t.Fatalf("uniform=%d n=%d", uniform, n)
 		}
 
-		r = NewReader(src)
+		r = NewReaderWithCDFUpdate(src, true)
 		subexp, err := r.ReadSubexp(n, k)
 		if err != nil {
 			t.Fatalf("ReadSubexp err=%v n=%d k=%d", err, n, k)
@@ -784,7 +584,7 @@ func FuzzReaderUniformSubexp(f *testing.F) {
 		}
 
 		ref := uint32(rawRef) % n
-		r = NewReader(src)
+		r = NewReaderWithCDFUpdate(src, true)
 		recentered, err := r.ReadRefSubexp(n, k, ref)
 		if err != nil {
 			t.Fatalf("ReadRefSubexp err=%v n=%d k=%d ref=%d", err, n, k, ref)
@@ -833,7 +633,7 @@ func FuzzReaderSignedDelta(f *testing.F) {
 		if err := cdf.InitDefaultDelta(); err != nil {
 			t.Fatal(err)
 		}
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		delta, err := r.ReadSignedDelta(&cdf, DeltaSmall)
 		if err != nil {
 			t.Fatalf("ReadSignedDelta err=%v src=%x", err, src)
@@ -852,7 +652,7 @@ func BenchmarkReaderReadBit(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		_, _ = r.ReadBit()
 	}
 }
@@ -864,7 +664,7 @@ func BenchmarkCursorReadBitTrustedStream(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(benchSymbolsPerOp)
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		c := r.Cursor()
 		for range benchSymbolsPerOp {
 			sum += int(c.ReadBitTrusted())
@@ -880,7 +680,7 @@ func BenchmarkCursorReadBitsTrustedStream(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(benchSymbolsPerOp)
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		c := r.Cursor()
 		for range benchSymbolsPerOp {
 			sum += c.ReadBitsTrusted(3)
@@ -895,7 +695,7 @@ func BenchmarkReaderReadBits(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(benchSymbolsPerOp)
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		for range benchSymbolsPerOp {
 			_, _ = r.ReadBits(8)
 		}
@@ -907,7 +707,7 @@ func BenchmarkReaderReadUniform(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		_, _ = r.ReadUniform(257)
 	}
 }
@@ -917,7 +717,7 @@ func BenchmarkReaderReadSubexp(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		_, _ = r.ReadSubexp(257, 3)
 	}
 }
@@ -928,7 +728,7 @@ func BenchmarkReaderReadSymbol(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		_, _ = r.ReadSymbol(cdf, 4)
 	}
 }
@@ -942,7 +742,7 @@ func BenchmarkReaderReadCDF(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		_, _ = r.ReadCDF(&cdf)
 	}
 }
@@ -956,7 +756,7 @@ func BenchmarkReaderReadSignedDelta(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		_, _ = r.ReadSignedDelta(&cdf, DeltaSmall)
 	}
 }
@@ -991,7 +791,7 @@ func BenchmarkReaderSymbolStream(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(benchSymbolsPerOp)
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		cdf := []uint16{24576, 16384, 8192, 0, 0}
 		for range benchSymbolsPerOp {
 			if _, err := r.ReadSymbol(cdf, 4); err != nil {
@@ -1031,7 +831,7 @@ func BenchmarkReaderCDFStream(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(benchSymbolsPerOp)
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		var cdf CDF
 		if err := cdf.Init([]uint16{8192, 16384, 24576}); err != nil {
 			b.Fatal(err)
@@ -1112,22 +912,6 @@ func BenchmarkCursorCDFSymbolsStream9(b *testing.B) {
 	benchmarkCursorCDFSymbolsStream(b, 9)
 }
 
-func BenchmarkCursorCDFStream10(b *testing.B) {
-	benchmarkCursorCDFStreamSymbols(b, 10)
-}
-
-func BenchmarkCursorCDFSymbolsStream10(b *testing.B) {
-	benchmarkCursorCDFSymbolsStream(b, 10)
-}
-
-func BenchmarkCursorCDFStream11(b *testing.B) {
-	benchmarkCursorCDFStreamSymbols(b, 11)
-}
-
-func BenchmarkCursorCDFSymbolsStream11(b *testing.B) {
-	benchmarkCursorCDFSymbolsStream(b, 11)
-}
-
 func benchmarkCursorCDF4Stream(b *testing.B, update bool) {
 	b.Helper()
 	src := benchStream()
@@ -1157,7 +941,7 @@ func benchmarkCursorCDFStreamSymbols(b *testing.B, symbols int) {
 	b.ReportAllocs()
 	b.SetBytes(benchSymbolsPerOp)
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		c := r.Cursor()
 		var cdf CDF
 		if err := cdf.InitUniform(symbols); err != nil {
@@ -1178,7 +962,7 @@ func benchmarkCursorCDFSymbolsStream(b *testing.B, symbols int) {
 	b.ReportAllocs()
 	b.SetBytes(benchSymbolsPerOp)
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		c := r.Cursor()
 		var cdf CDF
 		if err := cdf.InitUniform(symbols); err != nil {
@@ -1227,7 +1011,7 @@ func benchmarkReaderCDFStreamSymbols(b *testing.B, symbols int) {
 	b.ReportAllocs()
 	b.SetBytes(benchSymbolsPerOp)
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		var cdf CDF
 		if err := cdf.InitUniform(symbols); err != nil {
 			b.Fatal(err)
@@ -1251,7 +1035,7 @@ func BenchmarkReaderCDFStream16(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(benchSymbolsPerOp)
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		var cdf CDF
 		if err := cdf.InitUniform(16); err != nil {
 			b.Fatal(err)
@@ -1279,7 +1063,7 @@ func BenchmarkReaderSymbolStream16(b *testing.B) {
 			b.Fatal(err)
 		}
 		values := cdf.Values()
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		for range benchSymbolsPerOp {
 			if _, err := r.ReadSymbol(values, 16); err != nil {
 				b.Fatal(err)
@@ -1295,7 +1079,7 @@ func BenchmarkReaderBoolStream(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(benchSymbolsPerOp)
 	for b.Loop() {
-		r := NewReader(src)
+		r := NewReaderWithCDFUpdate(src, true)
 		for range benchSymbolsPerOp {
 			if _, err := r.ReadBoolQ15(CDFProbTop / 2); err != nil {
 				b.Fatal(err)

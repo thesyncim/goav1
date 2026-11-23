@@ -182,7 +182,7 @@ func compactTestVisit(b orderTestBlock, cols, rows, index int, skip bool) tile.B
 			Valid:                true,
 			InterReferencesValid: true,
 			InterReferences: tile.InterReferencesResult{
-				Ref: [2]tile.ReferenceFrame{tile.ReferenceFrame(index % int(tile.ReferenceFrameAltref+1)), tile.ReferenceFrameNone},
+				Ref0: tile.ReferenceFrame(index % int(tile.ReferenceFrameAltref+1)), Ref1: tile.ReferenceFrameNone,
 			},
 			InterModeValid: true,
 			InterMode:      tile.InterModeResult{Mode: mode},
@@ -323,10 +323,10 @@ func TestCompactLoopFilterMatchesMapRasterAndCDEFNoSkip(t *testing.T) {
 		mono   bool
 		blocks func(int, int, int) []orderTestBlock
 	}{
-		{name: "64sb-420-partial-crop", cols: 30, rows: 30, sbLog2: 4, layout: lfmask.I420(), blocks: compactTestLegalBlocks},
-		{name: "128sb-422", cols: 32, rows: 32, sbLog2: 5, layout: lfmask.I422(), blocks: compactTestLegalBlocks},
-		{name: "128sb-444", cols: 32, rows: 30, sbLog2: 5, layout: lfmask.I444(), blocks: compactTestLegalBlocks},
-		{name: "shared-chroma-420-sub8-partitions", cols: 16, rows: 16, sbLog2: 4, layout: lfmask.I420(), blocks: compactTestLegalBlocks},
+		{name: "64sb-420-partial-crop", cols: 30, rows: 30, sbLog2: 4, layout: lfmask.Layout{SSHor: 1, SSVer: 1}, blocks: compactTestLegalBlocks},
+		{name: "128sb-422", cols: 32, rows: 32, sbLog2: 5, layout: lfmask.Layout{SSHor: 1}, blocks: compactTestLegalBlocks},
+		{name: "128sb-444", cols: 32, rows: 30, sbLog2: 5, layout: lfmask.Layout{}, blocks: compactTestLegalBlocks},
+		{name: "shared-chroma-420-sub8-partitions", cols: 16, rows: 16, sbLog2: 4, layout: lfmask.Layout{SSHor: 1, SSVer: 1}, blocks: compactTestLegalBlocks},
 		{name: "mono-sub8-partitions", cols: 16, rows: 16, sbLog2: 4, layout: lfmask.Layout{Mono: true}, mono: true, blocks: compactTestLegalBlocks},
 	}
 	for _, tc := range cases {
@@ -415,7 +415,7 @@ func TestCompactLoopFilterMatchesMapRasterAndCDEFNoSkip(t *testing.T) {
 
 func TestCompactLoopFilterReadinessRequiresCompleteValidWalk(t *testing.T) {
 	const cols, rows = 8, 8
-	h := compactTestHandle(cols, rows, lfmask.I420())
+	h := compactTestHandle(cols, rows, lfmask.Layout{SSHor: 1, SSVer: 1})
 	state := &FrameWorkLoopFilterCompactState{ready: true, cells: 16, blocks: 1}
 	noSkip := make([]byte, 8)
 	for i := range noSkip {
@@ -424,7 +424,7 @@ func TestCompactLoopFilterReadinessRequiresCompleteValidWalk(t *testing.T) {
 	if err := BindFrameWorkLoopFilterCompactState(h, state, noSkip, parser.LoopFilterParams{LevelY: [2]uint8{1, 1}}, parser.SegmentationParams{}, parser.DeltaParams{}, false); err != nil {
 		t.Fatalf("rebind compact state: %v", err)
 	}
-	if state.ready || state.cells != 0 || state.blocks != 0 || !FrameWorkLoopFilterCompactActive(state) {
+	if state.ready || state.cells != 0 || state.blocks != 0 || !FrameWorkLoopFilterCompactStateActive(state) {
 		t.Fatalf("bind did not reset compact state: %+v", *state)
 	}
 	if err := CompleteFrameWorkLoopFilterCompactState(state); err == nil {

@@ -5,13 +5,8 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
-// WriteIntraTransformType codes one luma intra tx_type, the forward of
-// ReadIntraTransformType. The no-symbol cases mirror the reader exactly:
-// skip/lossless/qindex-0 blocks and single-type ext-tx sets code nothing and
-// require DCT_DCT. The symbol index comes from the shared ExtTXSymbolForType
-// inverse of the reader's ExtTXTypeFromSymbol.
-// WriteInterTransformType codes one inter tx_type, the forward of
-// ReadInterTransformType with the same no-symbol gating.
+// WriteInterTransformType codes one inter tx_type with the same no-symbol
+// gating as WriteIntraTransformType.
 func WriteInterTransformType(w *entropy.Writer, cdfs *TransformTypeCDFs, req InterTransformTypeRequest, typ transform.Type) error {
 	if w == nil || !req.Size.Valid() {
 		return ErrInvalidDecodeState
@@ -56,6 +51,10 @@ func WriteInterTransformType(w *entropy.Writer, cdfs *TransformTypeCDFs, req Int
 	return nil
 }
 
+// WriteIntraTransformType codes one luma intra tx_type. The no-symbol cases
+// mirror the decoder's tx_type read: skip/lossless/qindex-0 blocks and
+// single-type ext-tx sets code nothing and require DCT_DCT. The symbol index
+// comes from ExtTXSymbolForType.
 func WriteIntraTransformType(w *entropy.Writer, cdfs *TransformTypeCDFs, req IntraTransformTypeRequest, typ transform.Type) error {
 	if w == nil {
 		return ErrInvalidDecodeState

@@ -1,10 +1,8 @@
-package goav1_test
+package goav1
 
 import (
 	"os"
 	"testing"
-
-	av1 "github.com/thesyncim/goav1"
 )
 
 func TestPublicDecoderCDEFSparseMD5(t *testing.T) {
@@ -18,7 +16,7 @@ func TestPublicDecoderCDEFSparseMD5(t *testing.T) {
 		}
 		selected++
 		t.Run(clip.name, func(t *testing.T) {
-			dec, err := av1.NewDecoderFromIVF(clip.data, av1.WithWorkers(1))
+			dec, err := NewDecoderFromIVF(clip.data, WithWorkers(1))
 			if err != nil {
 				t.Fatal(err)
 			}

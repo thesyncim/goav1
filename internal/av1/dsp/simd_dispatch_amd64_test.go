@@ -23,8 +23,6 @@ func TestSIMDDispatchBindsAVX2Kernels(t *testing.T) {
 		got  any
 		want any
 	}{
-		{"blend", blendA64MaskImpl, blendA64MaskSIMD},
-		{"minmax", minMaxAbsDiff8x8Impl, minMaxAbsDiff8x8SIMD},
 		{"raw add", addRawTransformPlaneBlockImpl, addRawTransformPlaneBlockSIMD},
 		{"residual add", addResidualPlaneBlockImpl, addResidualPlaneBlockSIMD},
 	}

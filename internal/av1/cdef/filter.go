@@ -65,23 +65,12 @@ var cdefDirections = [12][2]int16{
 var cdefPrimaryTaps = [2][2]uint8{{4, 2}, {3, 3}}
 var cdefSecondaryTaps = [2]uint8{2, 1}
 
-// FilterBlock ports libaom's cdef_filter_block_internal for 16-bit output.
-// inputOrigin and dstOrigin mirror the C pointer arguments; input is normally a
-// CDEF buffer whose current block starts at VerticalBorder*BStride+HorizontalBorder.
-func FilterBlock(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) error {
-	if err := validateBlockFilter(dst, dstStride, dstOrigin, input, inputOrigin, params); err != nil {
-		return err
-	}
-	filterBlockUnchecked(dst, dstStride, dstOrigin, input, inputOrigin, params)
-	return nil
-}
-
 func filterBlockUnchecked(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
 	filterBlockImpl(dst, dstStride, dstOrigin, input, inputOrigin, params)
 }
 
 // filterBlockPureGo is the canonical bit-exact CDEF block filter. It assumes
-// its arguments were already validated by FilterBlock; the dispatch slot in
+// its arguments were already validated by the caller; the dispatch slot in
 // filter_dispatch.go defaults to this function so every build has a working
 // reference path.
 func filterBlockPureGo(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
@@ -231,20 +220,9 @@ func min4(cur, a, b, c, d int) int {
 	return cur
 }
 
-// FilterFrameBlocks ports libaom's av1_cdef_filter_fb decode path for 16-bit
-// frame buffers. Direction and variance grids are shared between luma and
-// chroma, matching libaom's CDEF frame-block flow.
-func FilterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams) error {
-	if err := validateFrameFilter(dst, dstStride, input, inputOrigin, directions, variances, params); err != nil {
-		return err
-	}
-	return filterFrameBlocks(dst, dstStride, input, inputOrigin, blocks, directions, variances, params, false, true)
-}
-
-// FilterFrameBlocksTrusted runs FilterFrameBlocks for decoder-owned CDEF unit
-// buffers whose geometry, block positions, and input halos were already
-// validated by the caller. It preserves the same filter math but skips repeated
-// exported-entry validation and uses unchecked direction search helpers.
+// FilterFrameBlocksTrusted filters the listed 8x8 blocks of decoder-owned CDEF
+// unit buffers whose geometry, block positions, and input halos were already
+// validated by the caller. It uses unchecked direction search helpers.
 func FilterFrameBlocksTrusted(dst []uint16, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams) error {
 	return filterFrameBlocks(dst, dstStride, input, inputOrigin, blocks, directions, variances, params, true, true)
 }
@@ -362,7 +340,7 @@ func filterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin 
 }
 
 // unitFilterParams carries the per-filter-unit constants shared by every block
-// of one FilterFrameBlocks call, so tuned unit-level implementations can hoist
+// of one FilterFrameBlocksTrusted call, so tuned unit-level implementations can hoist
 // the per-block filter context out of the block loop.
 type unitFilterParams struct {
 	primaryStrength   int
@@ -440,38 +418,6 @@ func copyBlockIdentity(dst []uint16, dstStride int, dstOrigin int, input []uint1
 	}
 }
 
-func validateBlockFilter(dst []uint16, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) error {
-	width := int(params.Width)
-	height := int(params.Height)
-	if params.CoeffShift > 4 ||
-		params.Direction > 7 ||
-		!validBlockDimension(width) || !validBlockDimension(height) ||
-		!blockFitsAt(len(dst), dstOrigin, dstStride, width, height) {
-		return ErrInvalidCDEF
-	}
-	if !cdefInputFits(len(input), inputOrigin, params) {
-		return ErrInvalidCDEF
-	}
-	return nil
-}
-
-func validateFrameFilter(dst []uint16, dstStride int, input []uint16, inputOrigin int, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams) error {
-	if directions == nil || variances == nil ||
-		params.XDec > 1 ||
-		params.YDec > 1 ||
-		params.Plane > PlaneV ||
-		params.Level > 15 || params.SecondaryStrength > 4 ||
-		params.CoeffShift > 4 ||
-		dstStride <= 0 || inputOrigin < 0 || inputOrigin >= len(input) {
-		return ErrInvalidCDEF
-	}
-	return nil
-}
-
-func validBlockDimension(v int) bool {
-	return v == 4 || v == 8
-}
-
 func cdefInputFits(length int, origin int, params BlockFilterParams) bool {
 	if origin < 0 || origin >= length {
 		return false
@@ -518,15 +464,6 @@ func maxAbs(cur int, off int) int {
 
 func indexFits(length int, index int) bool {
 	return index >= 0 && index < length
-}
-
-func constrain(diff int, threshold int, damping int) int {
-	if threshold == 0 {
-		return 0
-	}
-	shift := max(damping-(bits.Len(uint(threshold))-1), 0)
-	limit := threshold - (absInt(diff) >> shift)
-	return signInt(diff) * clampInt(limit, 0, absInt(diff))
 }
 
 func adjustStrength(strength int, variance int32) int {
@@ -586,13 +523,6 @@ func blockFitsAt(length int, origin int, stride int, width int, height int) bool
 
 func clampInt(v int, lo int, hi int) int {
 	return min(max(v, lo), hi)
-}
-
-func signInt(v int) int {
-	if v < 0 {
-		return -1
-	}
-	return 1
 }
 
 func absInt(v int) int {

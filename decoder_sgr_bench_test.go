@@ -1,4 +1,4 @@
-package goav1_test
+package goav1
 
 import "testing"
 

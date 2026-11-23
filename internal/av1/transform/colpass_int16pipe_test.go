@@ -18,25 +18,25 @@ func TestInt16ColumnSIMDInputGuardBounds(t *testing.T) {
 		full := make([]int16, 8*height)
 		if height == 8 {
 			full[0], full[1] = minInt16, maxInt16
-			if !int16ColumnSIMDInputSafe(full, 8, height, minInt16, maxInt16) {
+			if !int16ColumnSIMDInputSafeScalar(full, 8, height, minInt16, maxInt16) {
 				t.Fatal("DCT8 rejected the full int16 input range")
 			}
 			full[0], full[1] = 30000, 30000
-			if !int16ColumnSIMDInputSafe(full, 8, height, minInt16, maxInt16) {
+			if !int16ColumnSIMDInputSafeScalar(full, 8, height, minInt16, maxInt16) {
 				t.Fatal("DCT8 rejected a full-range even-butterfly input")
 			}
-			if !int16ColumnSIMDInputSafe(full, 8, height, 1, maxInt16) {
+			if !int16ColumnSIMDInputSafeScalar(full, 8, height, 1, maxInt16) {
 				t.Fatal("DCT8 rejected a valid positive-only int16 clamp")
 			}
 			continue
 		}
 		full[0], full[1] = int16(limit), int16(-limit)
-		if !int16ColumnSIMDInputSafe(full, 8, height, minInt16, maxInt16) {
+		if !int16ColumnSIMDInputSafeScalar(full, 8, height, minInt16, maxInt16) {
 			t.Fatalf("height=%d rejected certified boundary", height)
 		}
 		for _, value := range []int32{limit + 1, -limit - 1, minInt16, maxInt16} {
 			full[0] = int16(value)
-			if int16ColumnSIMDInputSafe(full, 8, height, minInt16, maxInt16) {
+			if int16ColumnSIMDInputSafeScalar(full, 8, height, minInt16, maxInt16) {
 				t.Fatalf("height=%d accepted value=%d outside certified interval", height, value)
 			}
 		}
@@ -44,10 +44,10 @@ func TestInt16ColumnSIMDInputGuardBounds(t *testing.T) {
 
 	input := make([]int16, 8*8)
 	input[0], input[4*8] = 30000, 30000
-	if !int16ColumnSIMDInputSafe(input, 8, 8, minInt16, maxInt16) {
+	if !int16ColumnSIMDInputSafeScalar(input, 8, 8, minInt16, maxInt16) {
 		t.Fatal("DCT8 rejected an exact wide pre-rotation sum")
 	}
-	if int16ColumnSIMDInputSafe(make([]int16, 8*16), 8, 16, 1, maxInt16) {
+	if int16ColumnSIMDInputSafeScalar(make([]int16, 8*16), 8, 16, 1, maxInt16) {
 		t.Fatal("accepted a deeper DCT clamp interval that excludes zero")
 	}
 }

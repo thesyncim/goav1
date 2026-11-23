@@ -41,7 +41,7 @@ type intraChromaGeom struct {
 
 // intraFullLoopResult reports the quantized planes of an intra block.
 type intraFullLoopResult struct {
-	lumaGeo, chromaGeo   txBlockGeometry
+	lumaGeo, chromaGeo     txBlockGeometry
 	lumaZero, uZero, vZero bool
 }
 

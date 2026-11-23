@@ -78,8 +78,8 @@ func runCol4(t *testing.T, fn col2TestFunc, rng *rand.Rand, fill func() int32) {
 
 // TestColPassDispatchMatchesPureGo asserts every column kernel is bit-identical
 // to its pure-Go reference across random inputs and the full clamp ladder. On
-// arm64 the entries resolve to the NEON kernels, so this is the byte-exactness
-// gate for the column assembly.
+// arm64 the entries resolve to the Go SIMD kernels, so this is their
+// byte-exactness gate.
 func TestColPassDispatchMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0xc01))
 	for _, fn := range colPass2TestFuncs() {

@@ -723,10 +723,6 @@ func frameWorkCDEFIndexMapEmpty(indexMap FrameWorkCDEFIndexMap) bool {
 		len(indexMap.Index) == 0 && len(indexMap.Read) == 0
 }
 
-func frameWorkApplyCDEFPlane(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, src frame.SamplePlane, dst frame.Plane, bytesPerSample int, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool) (uint32, uint32, error) {
-	return frameWorkApplyCDEFPlaneRows(params, indexMap, skipMap, cols, rows, 0, rows, src, dst, bytesPerSample, input, unitDst, blockStorage, directions, variances, directionGrid, varianceGrid, plane, xDec, yDec, coeffShift, forceLumaDirections, nil)
-}
-
 func frameWorkApplyCDEFPlaneRows(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, src frame.SamplePlane, dst frame.Plane, bytesPerSample int, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
 	var units uint32
 	var blocksTotal uint32
@@ -1261,10 +1257,6 @@ type frameWorkCDEFUnitMaskCache struct {
 	cols         int
 	masks        [frameWorkCDEFUnitMaskCap]uint64
 	done         [frameWorkCDEFUnitMaskCap / 64]uint64
-}
-
-func (c *frameWorkCDEFUnitMaskCache) reset(skipMap *FrameWorkLoopFilterMap, rowStart, rowEnd, cols int) bool {
-	return c.resetWithCompact(skipMap, nil, nil, rowStart, rowEnd, cols, false)
 }
 
 func (c *frameWorkCDEFUnitMaskCache) resetWithCompact(skipMap *FrameWorkLoopFilterMap, masks *threading.FrameWorkLoopFilterMasks, state *threading.FrameWorkLoopFilterCompactState, rowStart, rowEnd, cols int, allowCompact bool) bool {

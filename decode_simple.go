@@ -5,17 +5,20 @@ import (
 	"fmt"
 	"unsafe"
 
+	internalcdef "github.com/thesyncim/goav1/internal/av1/cdef"
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internallfmask "github.com/thesyncim/goav1/internal/av1/lfmask"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
+
 	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 )
 
-// Decoder is an ergonomic, high-level wrapper around the byte-exact public
-// residual-stream-runner decode path. It hides the verbose scratch-binding
-// sequence a low-level integration must perform (probe stream -> derive frame
-// format -> bind frame pool -> size and allocate the residual-stream scratch
-// arenas -> bind the stream-plan runner -> drive RunLowOverhead with the
-// reusable supported post-filter runner) while delegating decode to exactly
-// that conformant path. It does not reimplement any decode logic.
+// Decoder decodes a complete AV1 stream. The constructor probes the stream,
+// derives the frame format, and sizes and binds the frame pool, the
+// residual-stream scratch and the post-filter runner once, so decoding itself
+// does not allocate.
 //
 // Construction probes the supplied AV1 temporal-unit payloads to size every
 // scratch arena once; after construction, decoding is allocation-free for the
@@ -34,20 +37,18 @@ import (
 // A Decoder is not safe for concurrent use; serialize calls. The worker count
 // (see WithWorkers) controls the decoder's internal parallelism (tiles, SB-row
 // reconstruction, post-filter bands and, with WithMaxFrameDelay, frame
-// threading), not concurrent use of the Decoder itself. GOAV1_SCALED_PRED is read when the
-// Decoder is constructed, so changing it later does not change this decoder's
-// prediction policy.
+// threading), not concurrent use of the Decoder itself.
 type Decoder struct {
-	pool       FramePool
-	outputPool FramePool
-	workerPool *TileWorkerPool
+	pool       internalframe.Pool
+	outputPool internalframe.Pool
+	workerPool *internalthreading.Pool
 
-	stream   DecoderStream
-	refs     DecoderSurfaceReferences
-	state    DecoderFrameWorkState
-	stats    DecoderFrameWorkTileResidualStats
-	sideData DecoderFrameWorkSideData
-	batch    DecoderFrameWorkBatchResidualRunner
+	stream   internaldecoder.Stream
+	refs     internaldecoder.SurfaceReferences
+	state    internaldecoder.FrameWorkState
+	stats    internalthreading.FrameWorkTileResidualStats
+	sideData decoderFrameWorkSideData
+	batch    decoderFrameWorkBatchResidualRunner
 
 	compactLF     internalthreading.FrameWorkLoopFilterCompactState
 	lfLevels      internalthreading.FrameWorkLoopFilterLevelTable
@@ -55,19 +56,19 @@ type Decoder struct {
 	lfNoSkip      internalthreading.FrameWorkLoopFilterNoSkip
 	compactNoSkip []byte
 
-	refSurface [InterRefsPerFrame]int
-	refFrames  [InterRefsPerFrame]*Frame
-	releases   [RefFrames]int
+	refSurface [internalparser.InterRefsPerFrame]int
+	refFrames  [internalparser.InterRefsPerFrame]*Frame
+	releases   [internalparser.RefFrames]int
 
-	scratch    DecoderFrameWorkResidualStreamScratch
-	runner     DecoderFrameWorkResidualStreamRunner
-	postFilter DecoderFrameWorkReusableSupportedPostFilterRunner
+	scratch    decoderFrameWorkResidualStreamScratch
+	runner     decoderFrameWorkResidualStreamRunner
+	postFilter decoderFrameWorkReusableSupportedPostFilterRunner
 	external   decoderExternalPostFilterRunner
 
 	// postFilterParallel fans the post-filter chain's independent row bands out
 	// across the same worker count as tile decode. It is reused across frames so
 	// the parallel path stays allocation-free after warm-up.
-	postFilterParallel DecoderFrameWorkPostFilterParallel
+	postFilterParallel internaldecoder.FrameWorkPostFilterParallel
 
 	payloadKind   decoderPayloadKind
 	payloadSource decoderPayloadSource
@@ -85,7 +86,7 @@ type Decoder struct {
 	// shown - the slot bookkeeping never sees them - so the next decode
 	// call returns them to their pool when no reference still holds them.
 	shownHeld    []shownSurface
-	shownHeldBuf [2 * (RefFrames + 1)]shownSurface
+	shownHeldBuf [2 * (internalparser.RefFrames + 1)]shownSurface
 
 	// fp is the frame-threading pipeline (dav1d n_fc > 1), or nil when frames
 	// decode one at a time.
@@ -94,7 +95,7 @@ type Decoder struct {
 
 // shownSurface names one tracked output surface and the pool that owns it.
 type shownSurface struct {
-	pool    *FramePool
+	pool    *internalframe.Pool
 	index   int
 	surface int
 }
@@ -106,11 +107,21 @@ const (
 	decoderPayloadRTP
 )
 
+// decoderMaxPayloadEvents bounds the OBUs one payload may carry. Every OBU is
+// parsed into a DecoderEvent of several kilobytes, so without a bound a payload
+// of two-byte OBUs would make the decoder allocate thousands of times its size.
+const decoderMaxPayloadEvents = 64
+
 // decoderConfig holds resolved construction options.
 type decoderConfig struct {
-	workers       int
-	maxFrameDelay int
+	workers        int
+	maxFrameDelay  int
+	frameSizeLimit int
 }
+
+// ErrDecoderFrameSizeLimit reports a stream that carries a frame larger than
+// the limit set with WithFrameSizeLimit.
+var ErrDecoderFrameSizeLimit = errors.New("goav1: frame size exceeds the configured limit")
 
 // Option configures a Decoder at construction time.
 type Option func(*decoderConfig)
@@ -127,6 +138,30 @@ func WithWorkers(n int) Option {
 	return func(c *decoderConfig) { c.workers = n }
 }
 
+// WithFrameSizeLimit makes the decoder reject a stream that carries a frame of
+// more than pixels luma samples (upscaled width times height) with
+// ErrDecoderFrameSizeLimit, as dav1d's frame_size_limit does. A decoder sizes
+// its buffers from the stream's own headers when it is constructed, so set a
+// limit whenever the input is not trusted. Zero, the default, means no limit.
+func WithFrameSizeLimit(pixels int) Option {
+	return func(c *decoderConfig) { c.frameSizeLimit = pixels }
+}
+
+// decoderCheckFrameSizeLimit reports ErrDecoderFrameSizeLimit when one of
+// events carries a frame size above limit luma samples.
+func decoderCheckFrameSizeLimit(limit int, events []internaldecoder.Event) error {
+	if limit <= 0 {
+		return nil
+	}
+	for i := range events {
+		size := &events[i].FrameSize
+		if uint64(max(size.CodedWidth, size.UpscaledWidth))*uint64(size.Height) > uint64(limit) {
+			return ErrDecoderFrameSizeLimit
+		}
+	}
+	return nil
+}
+
 func resolveConfig(opts []Option) decoderConfig {
 	cfg := decoderConfig{workers: 1}
 	for _, opt := range opts {
@@ -140,7 +175,7 @@ func resolveConfig(opts []Option) decoderConfig {
 // NewDecoder builds a Decoder from a complete, ordered set of AV1 temporal-unit
 // payloads (one per IVF frame). The payloads are probed up front to size scratch
 // and to derive the frame format and superblock alignment from the bound stream
-// headers via FrameCodedFormatFromHeaders, so callers never guess the surface
+// headers via frameCodedFormatFromHeaders, so callers never guess the surface
 // geometry.
 //
 // payloads is retained by reference (not copied); the caller must keep the
@@ -182,38 +217,40 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	if cfg.maxFrameDelay < 0 {
 		return nil, fmt.Errorf("goav1: max frame delay must be >= 0, got %d", cfg.maxFrameDelay)
 	}
+	if cfg.frameSizeLimit < 0 {
+		return nil, fmt.Errorf("goav1: frame size limit must be >= 0, got %d", cfg.frameSizeLimit)
+	}
 	if source.len() == 0 {
 		return nil, errors.New("goav1: no payloads to decode")
 	}
 
-	workerPool, err := NewTileWorkerPool(cfg.workers)
+	workerPool, err := internalthreading.NewPool(cfg.workers)
 	if err != nil {
 		return nil, fmt.Errorf("goav1: worker pool: %w", err)
 	}
 
 	// Probe the stream to learn how much scratch the runner will need and to
 	// bind the sequence/frame headers used to derive the pool format.
-	var probeStream DecoderStream
-	// The probes grow probeEvents to the largest per-payload event count.
-	probeEvents := make([]DecoderEvent, 64)
-	probeSpans := make([]TileSpan, MaxTiles)
-	probeJobs := make([]TileJob, MaxTiles)
-	probeBatches := make([]TileBatch, MaxTiles)
+	var probeStream internaldecoder.Stream
+	probeEvents := make([]internaldecoder.Event, decoderMaxPayloadEvents)
+	probeSpans := make([]internalparser.TileSpan, internalparser.MaxTiles)
+	probeJobs := make([]internaltile.Job, internalparser.MaxTiles)
+	probeBatches := make([]internalthreading.Batch, internalparser.MaxTiles)
 	probePayload := source.makeProbeBuffer()
 
-	var plan DecoderFrameWorkResidualStreamPlan
+	var plan decoderFrameWorkResidualStreamPlan
 	switch kind {
 	case decoderPayloadLowOverhead:
 		plan, err = decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(
-			probeStream, source, cfg.workers, probePayload,
+			probeStream, source, cfg.workers, cfg.frameSizeLimit, probePayload,
 			probeEvents, probeSpans, probeJobs, probeBatches,
 		)
 	case decoderPayloadRTP:
 		plan, err = decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(
-			probeStream, source, cfg.workers, probeEvents, probeSpans, probeJobs, probeBatches,
+			probeStream, source, cfg.workers, cfg.frameSizeLimit, probeEvents, probeSpans, probeJobs, probeBatches,
 		)
 	default:
-		err = ErrDecoderInvalidFrameWorkState
+		err = internaldecoder.ErrInvalidFrameWorkState
 	}
 	if err != nil {
 		workerPool.Close()
@@ -226,7 +263,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 
 	// Derive the pool format from the bound headers so the superblock alignment
 	// (64 vs 128) matches the surface the decoder reconstructs into.
-	format, err := FrameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
+	format, err := frameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: frame format from stream plan: %w", err)
@@ -238,7 +275,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	if kind == decoderPayloadLowOverhead {
 		frameContexts = decoderFrameContextCount(cfg.workers, cfg.maxFrameDelay)
 	}
-	surfaceCount := RefFrames + 1
+	surfaceCount := internalparser.RefFrames + 1
 	if frameContexts > 1 {
 		surfaceCount += 2 * frameContexts
 	}
@@ -265,7 +302,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: temporal motion scratch plan: %w", err)
 	}
-	var postArena DecoderFrameWorkPostFilterRequestScratchSize
+	var postArena decoderFrameWorkPostFilterRequestScratchSize
 	switch kind {
 	case decoderPayloadLowOverhead:
 		postArena, err = decoderPostFilterScratchArenaUpperBoundFromSource(source, 64, workerPool, probeEvents, probePayload)
@@ -282,7 +319,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		maxSize := plan.Bind.Event.FrameSize
 		maxSize.CodedWidth = max(maxSize.CodedWidth, motionSize.CodedWidth)
 		maxSize.Height = max(maxSize.Height, motionSize.Height)
-		if format, err = FrameCodedFormatFromHeaders(plan.Bind.Sequence, maxSize, 64); err != nil {
+		if format, err = frameCodedFormatFromHeaders(plan.Bind.Sequence, maxSize, 64); err != nil {
 			workerPool.Close()
 			return nil, fmt.Errorf("goav1: frame format from stream plan: %w", err)
 		}
@@ -303,7 +340,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: frame pool: %w", err)
 	}
-	var outputPool FramePool
+	var outputPool internalframe.Pool
 	if useExternal {
 		outputPool, err = newDecoderFramePool(outputFormat, surfaceCount, &arena)
 		if err != nil {
@@ -323,7 +360,6 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		useExternal:   useExternal,
 	}
 	internaldecoder.EnableOwnedTemporalMotionStorage(&d.state)
-	d.state.SetScaledReferencePredictionEnabled(internalthreading.ScaledReferencePredictionEnabled())
 	if d.useExternal {
 		d.external.outputPool = &d.outputPool
 	}
@@ -357,7 +393,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	d.postFilter.Parallel = &d.postFilterParallel
 	d.external.supported.Parallel = &d.postFilterParallel
 
-	runtime := DecoderFrameWorkResidualEventRuntime{
+	runtime := decoderFrameWorkResidualEventRuntime{
 		State:             &d.state,
 		Refs:              &d.refs,
 		FramePool:         &d.pool,
@@ -372,14 +408,14 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	if d.useExternal {
 		runtime.TileListOutputPool = &d.outputPool
 		provider := decoderExternalSurfaceProvider{coded: &d.pool, output: &d.outputPool}
-		runtime.External = DecoderFrameWorkExternalReferenceRuntime{
+		runtime.External = decoderFrameWorkExternalReferenceRuntime{
 			Provider:      provider,
 			GlobalSurface: func(local int) int { return local },
 			Releaser:      provider,
 			PostPublisher: &d.external,
 		}
 	}
-	runner, _, err := BindDecoderFrameWorkResidualStreamPlanRunner(plan, &d.stream,
+	runner, _, err := bindDecoderFrameWorkResidualStreamPlanRunner(plan, &d.stream,
 		runtime, d.scratch, &d.batch)
 	if err != nil {
 		workerPool.Close()
@@ -517,7 +553,7 @@ func (d *Decoder) DecodeNext() (frames []*Frame, ok bool, err error) {
 		return nil, false, fmt.Errorf("goav1: frame %d payload: %w", i, err)
 	}
 
-	var result DecoderFrameWorkResidualStreamResult
+	var result decoderFrameWorkResidualStreamResult
 	postFilter := d.postFilterRunner()
 	switch d.payloadKind {
 	case decoderPayloadLowOverhead:
@@ -525,7 +561,7 @@ func (d *Decoder) DecodeNext() (frames []*Frame, ok bool, err error) {
 	case decoderPayloadRTP:
 		err = d.runner.RunRTPPayloadIntoWithPostFilterRunner(&result, payload, postFilter)
 	default:
-		err = ErrDecoderInvalidFrameWorkState
+		err = internaldecoder.ErrInvalidFrameWorkState
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("goav1: payload %d: %w", i, err)
@@ -576,7 +612,7 @@ func (d *Decoder) DecodeRTPSequencedPacket(packet RTPSequencedPacket) ([]*Frame,
 
 // DecodeRTPPayloadAfterLoss clears retained RTP fragment bytes, then decodes
 // one caller-supplied AV1 RTP payload body. Parser sequence and reference state
-// are preserved, matching the lower-level RunRTPPayloadAfterLoss* methods. Use
+// are preserved. Use
 // this after the jitter buffer detects a packet gap before feeding the next
 // payload that should restart depacketization.
 func (d *Decoder) DecodeRTPPayloadAfterLoss(payload []byte) ([]*Frame, error) {
@@ -610,7 +646,7 @@ func (d *Decoder) decodeExternalRTPPayload(payload []byte, afterLoss bool) (fram
 		return nil, errors.New("goav1: decoder closed")
 	}
 	d.releaseShownSurfaces()
-	var result DecoderFrameWorkResidualStreamResult
+	var result decoderFrameWorkResidualStreamResult
 	postFilter := d.postFilterRunner()
 	var err error
 	if afterLoss {
@@ -632,7 +668,7 @@ func (d *Decoder) decodeExternalRTPPayload(payload []byte, afterLoss bool) (fram
 	return out, nil
 }
 
-func (d *Decoder) postFilterRunner() DecoderFrameWorkPostFilterRunner {
+func (d *Decoder) postFilterRunner() internaldecoder.FrameWorkPostFilterRunner {
 	if d.useExternal {
 		return &d.external
 	}
@@ -662,7 +698,7 @@ func (d *Decoder) trackShownSurfaces(out []*Frame) {
 	}
 }
 
-func (d *Decoder) trackShownSurfacesInPool(out []*Frame, pool *FramePool, surfaceBase int) {
+func (d *Decoder) trackShownSurfacesInPool(out []*Frame, pool *internalframe.Pool, surfaceBase int) {
 	if pool == nil {
 		return
 	}
@@ -696,7 +732,7 @@ func (d *Decoder) trackShownSurfacesInPool(out []*Frame, pool *FramePool, surfac
 func (d *Decoder) releaseShownSurfaces() {
 	for _, h := range d.shownHeld {
 		held := false
-		for r := 0; r < RefFrames; r++ {
+		for r := 0; r < internalparser.RefFrames; r++ {
 			if surface, ok := d.refs.ReferenceSlot(r); ok && surface == h.surface {
 				held = true
 				break
@@ -771,7 +807,7 @@ func (d *Decoder) Reset() error {
 	d.refs.Reset()
 	d.state.Reset()
 	internalthreading.DeactivateFrameWorkLoopFilterCompactState(&d.compactLF)
-	d.stats = DecoderFrameWorkTileResidualStats{}
+	d.stats = internalthreading.FrameWorkTileResidualStats{}
 	if err := d.runner.Reset(); err != nil {
 		return fmt.Errorf("goav1: runner reset: %w", err)
 	}
@@ -888,12 +924,12 @@ func copyPlane(p FramePlane, bytesPerSample int) []byte {
 
 // newDecoderFramePool allocates and binds a frame pool sized for the given
 // format and surface count using the public sizing helper.
-func newDecoderFramePool(format FrameFormat, count int, arena *decoderArena) (FramePool, error) {
-	_, backingSize, err := FramePoolRequiredSize(format, count)
+func newDecoderFramePool(format FrameFormat, count int, arena *decoderArena) (internalframe.Pool, error) {
+	_, backingSize, err := framePoolRequiredSize(format, count)
 	if err != nil {
-		return FramePool{}, err
+		return internalframe.Pool{}, err
 	}
-	return BindFramePool(arena.takeBytes(backingSize), format,
+	return internalframe.BindPool(arena.takeBytes(backingSize), format,
 		make([]Frame, count), arena.takeInts(count), arena.takeBools(count))
 }
 
@@ -901,9 +937,9 @@ func newDecoderFramePool(format FrameFormat, count int, arena *decoderArena) (Fr
 // runner needs, sized from the probed plan. It mirrors the binding performed by
 // cmd/aom-go-dec and the conformance harness so the convenience path is the
 // same byte-exact path.
-func newDecoderStreamScratch(size DecoderFrameWorkResidualStreamScratchSize, arena *decoderArena) DecoderFrameWorkResidualStreamScratch {
-	return DecoderFrameWorkResidualStreamScratch{
-		Events:    make([]DecoderEvent, size.Events),
+func newDecoderStreamScratch(size decoderFrameWorkResidualStreamScratchSize, arena *decoderArena) decoderFrameWorkResidualStreamScratch {
+	return decoderFrameWorkResidualStreamScratch{
+		Events:    make([]internaldecoder.Event, size.Events),
 		Event:     newDecoderEventScratch(size.Event, arena),
 		SideData:  newDecoderSideDataScratch(size.Event.SideData, arena),
 		Outputs:   make([]*Frame, size.Event.Outputs),
@@ -912,39 +948,39 @@ func newDecoderStreamScratch(size DecoderFrameWorkResidualStreamScratchSize, are
 	}
 }
 
-func newDecoderEventScratch(size DecoderFrameWorkResidualEventScratchSize, arena *decoderArena) DecoderFrameWorkResidualEventScratch {
-	return DecoderFrameWorkResidualEventScratch{
+func newDecoderEventScratch(size decoderFrameWorkResidualEventScratchSize, arena *decoderArena) decoderFrameWorkResidualEventScratch {
+	return decoderFrameWorkResidualEventScratch{
 		Runner:   newDecoderBatchRunnerScratch(size.Runner, arena),
 		SideData: newDecoderSideDataScratch(size.SideData, arena),
-		Spans:    make([]TileSpan, size.Plan.SpanCount),
-		Jobs:     make([]TileJob, size.Plan.JobCount),
-		Batches:  make([]TileBatch, size.Plan.BatchCount),
+		Spans:    make([]internalparser.TileSpan, size.Plan.SpanCount),
+		Jobs:     make([]internaltile.Job, size.Plan.JobCount),
+		Batches:  make([]internalthreading.Batch, size.Plan.BatchCount),
 	}
 }
 
-func newDecoderBatchRunnerScratch(size DecoderFrameWorkBatchResidualRunnerScratchSize, arena *decoderArena) DecoderFrameWorkBatchResidualRunnerScratch {
-	return DecoderFrameWorkBatchResidualRunnerScratch{
-		States:                  make([]TileDecodeState, size.Workers),
-		Storages:                make([]DecoderFrameWorkTileResidualCDFStorage, size.Workers),
-		TileScratch:             make([]DecoderFrameWorkTileResidualScratch, size.Workers),
-		RestorationRequests:     make([]DecoderFrameWorkTileRestorationRequest, size.RestorationRequests),
-		PredictionScratch:       make([]DecoderFrameWorkPredictionScratch, size.Workers),
-		InterPredictionScratch:  make([]DecoderFrameWorkInterPredictionScratch, size.Workers),
-		Stats:                   make([]DecoderFrameWorkTileResidualStats, size.Workers),
+func newDecoderBatchRunnerScratch(size decoderFrameWorkBatchResidualRunnerScratchSize, arena *decoderArena) decoderFrameWorkBatchResidualRunnerScratch {
+	return decoderFrameWorkBatchResidualRunnerScratch{
+		States:                  make([]internaltile.DecodeState, size.Workers),
+		Storages:                make([]internalthreading.FrameWorkTileResidualCDFStorage, size.Workers),
+		TileScratch:             make([]internalthreading.FrameWorkTileResidualScratch, size.Workers),
+		RestorationRequests:     make([]internalthreading.FrameWorkTileRestorationRequest, size.RestorationRequests),
+		PredictionScratch:       make([]internalthreading.FrameWorkPredictionScratch, size.Workers),
+		InterPredictionScratch:  make([]internalthreading.FrameWorkInterPredictionScratch, size.Workers),
+		Stats:                   make([]internalthreading.FrameWorkTileResidualStats, size.Workers),
 		Int32Scratch:            arena.takeInt32s(size.Int32Scratch),
 		ResidualScratch:         arena.takeInt16s(size.ResidualScratch),
-		LoopContextAboveScratch: make([]TileBlockLoopRootAboveContext, size.LoopContextAbove),
+		LoopContextAboveScratch: make([]internaltile.BlockLoopRootAboveContext, size.LoopContextAbove),
 	}
 }
 
-func newDecoderSideDataScratch(size DecoderFrameWorkSideDataScratchSize, arena *decoderArena) DecoderFrameWorkSideDataScratch {
-	return DecoderFrameWorkSideDataScratch{
+func newDecoderSideDataScratch(size decoderFrameWorkSideDataScratchSize, arena *decoderArena) decoderFrameWorkSideDataScratch {
+	return decoderFrameWorkSideDataScratch{
 		CDEFIndexMap:             arena.takeUint8s(size.CDEFIndexMap),
 		CDEFReadMap:              arena.takeBools(size.CDEFReadMap),
-		LoopFilterMap:            make([]DecoderFrameWorkLoopFilterBlockRecord, size.LoopFilterMap),
-		LoopFilterMasks:          make([]DecoderFrameWorkLoopFilterFilterMask, size.LoopFilterMasks),
+		LoopFilterMap:            make([]internalthreading.FrameWorkLoopFilterBlockRecord, size.LoopFilterMap),
+		LoopFilterMasks:          make([]internallfmask.FilterMask, size.LoopFilterMasks),
 		LoopFilterLevelCache:     make([][4]uint8, size.LoopFilterLevelCache),
-		RestorationRecords:       make([]TileRestorationUnitRecord, size.RestorationRecords),
+		RestorationRecords:       make([]internaltile.RestorationUnitRecord, size.RestorationRecords),
 		RestorationBoundaryAbove: arena.takeUint16s(size.RestorationBoundaryAbove),
 		RestorationBoundaryBelow: arena.takeUint16s(size.RestorationBoundaryBelow),
 	}
@@ -959,7 +995,7 @@ type decoderArenaSize struct {
 	bools   int
 }
 
-func decoderArenaSizeFor(format FrameFormat, outputFormat FrameFormat, useExternal bool, surfaceCount int, stream DecoderFrameWorkResidualStreamScratchSize, post DecoderFrameWorkPostFilterRequestScratchSize) (decoderArenaSize, error) {
+func decoderArenaSizeFor(format FrameFormat, outputFormat FrameFormat, useExternal bool, surfaceCount int, stream decoderFrameWorkResidualStreamScratchSize, post decoderFrameWorkPostFilterRequestScratchSize) (decoderArenaSize, error) {
 	var size decoderArenaSize
 	if err := size.addFramePool(format, surfaceCount); err != nil {
 		return decoderArenaSize{}, err
@@ -974,7 +1010,7 @@ func decoderArenaSizeFor(format FrameFormat, outputFormat FrameFormat, useExtern
 	}
 	noSkipBytes, ok := decoderArenaMultiply(stream.Event.SideData.CDEFIndexMap, 8)
 	if !ok {
-		return decoderArenaSize{}, ErrFrameShortBuffer
+		return decoderArenaSize{}, internalframe.ErrShortBuffer
 	}
 	if err := size.addBytes(noSkipBytes); err != nil {
 		return decoderArenaSize{}, err
@@ -1031,7 +1067,7 @@ func decoderArenaMultiply(a, b int) (int, bool) {
 }
 
 func (s *decoderArenaSize) addFramePool(format FrameFormat, count int) error {
-	_, backingSize, err := FramePoolRequiredSize(format, count)
+	_, backingSize, err := framePoolRequiredSize(format, count)
 	if err != nil {
 		return err
 	}
@@ -1044,7 +1080,7 @@ func (s *decoderArenaSize) addFramePool(format FrameFormat, count int) error {
 	return s.addBools(count)
 }
 
-func (s *decoderArenaSize) addStream(size DecoderFrameWorkResidualStreamScratchSize) error {
+func (s *decoderArenaSize) addStream(size decoderFrameWorkResidualStreamScratchSize) error {
 	if err := s.addBytes(size.RTPBuffer); err != nil {
 		return err
 	}
@@ -1054,21 +1090,21 @@ func (s *decoderArenaSize) addStream(size DecoderFrameWorkResidualStreamScratchS
 	return s.addSideData(size.Event.SideData)
 }
 
-func (s *decoderArenaSize) addEvent(size DecoderFrameWorkResidualEventScratchSize) error {
+func (s *decoderArenaSize) addEvent(size decoderFrameWorkResidualEventScratchSize) error {
 	if err := s.addBatchRunner(size.Runner); err != nil {
 		return err
 	}
 	return s.addSideData(size.SideData)
 }
 
-func (s *decoderArenaSize) addBatchRunner(size DecoderFrameWorkBatchResidualRunnerScratchSize) error {
+func (s *decoderArenaSize) addBatchRunner(size decoderFrameWorkBatchResidualRunnerScratchSize) error {
 	if err := s.addInt32s(size.Int32Scratch); err != nil {
 		return err
 	}
 	return s.addInt16s(size.ResidualScratch)
 }
 
-func (s *decoderArenaSize) addSideData(size DecoderFrameWorkSideDataScratchSize) error {
+func (s *decoderArenaSize) addSideData(size decoderFrameWorkSideDataScratchSize) error {
 	if err := s.addBytes(size.CDEFIndexMap); err != nil {
 		return err
 	}
@@ -1077,12 +1113,12 @@ func (s *decoderArenaSize) addSideData(size DecoderFrameWorkSideDataScratchSize)
 	}
 	totalBoundary, ok := decoderArenaAdd2(size.RestorationBoundaryAbove, size.RestorationBoundaryBelow)
 	if !ok {
-		return ErrFrameShortBuffer
+		return internalframe.ErrShortBuffer
 	}
 	return s.addUint16s(totalBoundary)
 }
 
-func (s *decoderArenaSize) addPostFilter(size DecoderFrameWorkPostFilterRequestScratchSize) error {
+func (s *decoderArenaSize) addPostFilter(size decoderFrameWorkPostFilterRequestScratchSize) error {
 	if err := s.addBytes(size.ByteScratch); err != nil {
 		return err
 	}
@@ -1104,11 +1140,11 @@ func (s *decoderArenaSize) addBools(n int) error   { return decoderArenaAdd(&s.b
 
 func decoderArenaAdd(dst *int, n int) error {
 	if n < 0 {
-		return ErrFrameShortBuffer
+		return internalframe.ErrShortBuffer
 	}
 	sum, ok := decoderArenaAdd2(*dst, n)
 	if !ok {
-		return ErrFrameShortBuffer
+		return internalframe.ErrShortBuffer
 	}
 	*dst = sum
 	return nil
@@ -1231,12 +1267,12 @@ func (a *decoderArena) takeBools(n int) []bool {
 	return out
 }
 
-func decoderPostFilterScratchFromArena(size DecoderFrameWorkPostFilterRequestScratchSize, arena *decoderArena) DecoderFrameWorkPostFilterRequestScratch {
-	return DecoderFrameWorkPostFilterRequestScratch{
-		LoopFilterEdges:    make([]DecoderFrameWorkLoopFilterPostFilterEdge, size.LoopFilterEdges),
+func decoderPostFilterScratchFromArena(size decoderFrameWorkPostFilterRequestScratchSize, arena *decoderArena) decoderFrameWorkPostFilterRequestScratch {
+	return decoderFrameWorkPostFilterRequestScratch{
+		LoopFilterEdges:    make([]internaldecoder.FrameWorkLoopFilterPostFilterEdge, size.LoopFilterEdges),
 		LoopFilterSchedule: make([]uint32, size.LoopFilterSchedule),
-		CDEFDirectionGrid:  make([]CDEFDirectionGrid, size.CDEFDirectionGrid),
-		CDEFVarianceGrid:   make([]CDEFVarianceGrid, size.CDEFVarianceGrid),
+		CDEFDirectionGrid:  make([]internalcdef.DirectionGrid, size.CDEFDirectionGrid),
+		CDEFVarianceGrid:   make([]internalcdef.VarianceGrid, size.CDEFVarianceGrid),
 		ByteScratch:        arena.takeBytes(size.ByteScratch),
 		Uint16Scratch:      arena.takeUint16s(size.Uint16Scratch),
 		Int16Scratch:       arena.takeInt16s(size.Int16Scratch),

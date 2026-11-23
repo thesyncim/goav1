@@ -372,8 +372,6 @@ func compound2D8Kernel(ctx *compound2DGoSIMDCtx) {
 
 // The wrapper allocates the rounded tap count of intermediate rows; every
 // eight-sample vector load below stays inside its 128-sample row.
-//
-//go:nocheckptr
 func compound2D8HalfKernel(ctx *compound2DGoSIMDCtx, im []int16, xTaps *hbdTaps16) {
 	nx, ny := ctx.tapsX, ctx.tapsY
 	rows := ctx.height + ny - 1

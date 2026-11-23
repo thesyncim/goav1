@@ -8,7 +8,7 @@ package dsp
 
 import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 
-// init binds the Go-native SIMD AddResidualPlaneBlock and AddRawTransformPlaneBlock
+// init binds the Go-native SIMD residual-add and raw-transform-add
 // inner loops on arm64 SIMD builds. NEON is mandatory on every arm64 target Go
 // supports; the pure-Go references are the fallback.
 func init() {

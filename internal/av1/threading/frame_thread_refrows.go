@@ -53,15 +53,15 @@ func (n *frameThreadRefNeed) addVisit(v *tile.BlockLoopVisit) {
 	bottom := (int32(v.Block.MIRow) + int32(tile.BlockSizeHeight4(v.Block.Size))) * 4
 	refs := &p.InterMotion.References
 	warp := p.MotionModeValid && p.MotionMode == tile.MotionModeWarp && !p.WarpedMotionInvalid
-	if refs.Ref[1] == tile.ReferenceFrameNone || !refs.Compound {
-		n.add(refs.Ref[0], bottom, p.InterMotion.MV[0], warp || p.GlobalWarpedMotionValid)
+	if refs.Ref1 == tile.ReferenceFrameNone || !refs.Compound {
+		n.add(refs.Ref0, bottom, p.InterMotion.MV[0], warp || p.GlobalWarpedMotionValid)
 	} else {
 		for i := range 2 {
-			n.add(refs.Ref[i], bottom, p.InterMotion.MV[i], warp || p.GlobalWarpedMotionValid || p.GlobalWarpedMotionCompoundValid[i])
+			n.add(refs.At(i), bottom, p.InterMotion.MV[i], warp || p.GlobalWarpedMotionValid || p.GlobalWarpedMotionCompoundValid[i])
 		}
 	}
-	if p.MotionModeValid && p.MotionMode == tile.MotionModeOBMC && p.OverlappableNeighborsValid {
-		s := &p.OverlappableNeighbors
+	if p.MotionModeValid && p.MotionMode == tile.MotionModeOBMC && p.OverlappableNeighborsValid && p.Extras != nil {
+		s := &p.Extras.OverlappableNeighbors
 		for i := range min(int(s.AboveCount), len(s.Above)) {
 			n.addNeighbor(&s.Above[i], bottom)
 		}
@@ -69,8 +69,7 @@ func (n *frameThreadRefNeed) addVisit(v *tile.BlockLoopVisit) {
 			n.addNeighbor(&s.Left[i], bottom)
 		}
 	}
-	if p.SubChromaInterValid {
-		c := &p.SubChromaInter
+	if c := p.SubChromaInter; c != nil {
 		for i := range min(int(c.Count), len(c.Cells)) {
 			n.add(c.Cells[i].Reference, bottom, c.Cells[i].MV, false)
 		}
@@ -81,26 +80,57 @@ func (n *frameThreadRefNeed) addNeighbor(o *tile.OverlappableNeighbor, bottom in
 	if !o.MotionValid {
 		return
 	}
-	n.add(o.Motion.References.Ref[0], bottom, o.Motion.MV[0], false)
+	n.add(o.Motion.References.Ref0, bottom, o.Motion.MV[0], false)
 }
 
 // waitSuperblockReferences blocks until every reference the superblock's
 // buffered blocks predict from has published the rows they read. It reports
 // false when a reference failed to decode.
-func (r *FrameThreadRecon) waitSuperblockReferences(b *FrameWorkBatch, events []frameWorkReconEvent, visits []tile.BlockLoopVisit) bool {
+func (r *FrameThreadRecon) waitSuperblockReferences(b *FrameWorkBatch, visits []tile.BlockLoopVisit) bool {
+	if len(visits) == 0 {
+		return true
+	}
+	var need frameThreadRefNeed
+	need.addVisits(visits)
+	return r.waitReferences(b, &need)
+}
+
+// waitRowReferences blocks until the references every superblock of SB row
+// row reads have published those rows (dav1d's per tile-sbrow lowest_pixel
+// check), so the row's per-superblock waits pass at once.
+func (r *FrameThreadRecon) waitRowReferences(b *FrameWorkBatch, view *frameWorkReconView, row int) bool {
+	if row+1 >= len(view.rowStart) {
+		return true
+	}
+	lo, hi := int(view.rowStart[row]), int(view.rowStart[row+1])
+	if lo < 0 || hi < lo || hi > len(view.sbs) {
+		return true
+	}
 	var need frameThreadRefNeed
 	any := false
-	for i := range events {
-		ev := &events[i]
-		if ev.kind != frameWorkReconEventBlockBegin || int(ev.index) >= len(visits) {
-			continue
+	for _, sb := range view.sbs[lo:hi] {
+		if sb.start < 0 || sb.end < sb.start || int(sb.end) > len(view.visits) {
+			return true
 		}
-		need.addVisit(&visits[ev.index])
-		any = true
+		if sb.end > sb.start {
+			need.addVisits(view.visits[sb.start:sb.end])
+			any = true
+		}
 	}
 	if !any {
 		return true
 	}
+	return r.waitReferences(b, &need)
+}
+
+// addVisits adds the reference rows the buffered blocks read.
+func (n *frameThreadRefNeed) addVisits(visits []tile.BlockLoopVisit) {
+	for i := range visits {
+		n.addVisit(&visits[i])
+	}
+}
+
+func (r *FrameThreadRecon) waitReferences(b *FrameWorkBatch, need *frameThreadRefNeed) bool {
 	for i, rows := range need {
 		p := r.RefProgress[i]
 		if rows == 0 || p == nil {

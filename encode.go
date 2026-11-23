@@ -24,6 +24,8 @@ package goav1
 import (
 	"fmt"
 
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+
 	"github.com/thesyncim/goav1/internal/av1/encoder"
 )
 
@@ -932,7 +934,7 @@ func (f RTCFrame) AppendRTPPacketsWithOptions(payloadDst []byte, descriptorDst [
 	if err != nil {
 		return payloadDst, descriptorDst, 0, err
 	}
-	control := EncoderWebRTCFrameControl{
+	control := encoder.WebRTCFrameControl{
 		GenericFrameInfo:          f.frameInfo,
 		AttachDependencyStructure: f.attachDependencyStructure,
 	}
@@ -950,7 +952,7 @@ func (f RTCFrame) AppendRTPPacketsWithOptions(payloadDst []byte, descriptorDst [
 		}
 		payloadStart := len(rtpPayloads)
 		descriptorStart := len(descriptors)
-		nextPayloads, nextDescriptors, marker, ok, err := AppendEncoderWebRTCFrameControlRTPPacketWithOptions(rtpPayloads, descriptors, &packetizer, control, f.dependencyStructure, options)
+		nextPayloads, nextDescriptors, marker, ok, err := appendEncoderWebRTCFrameControlRTPPacketWithOptions(rtpPayloads, descriptors, &packetizer, control, f.dependencyStructure, options)
 		if err != nil {
 			return payloadDst, descriptorDst, 0, err
 		}
@@ -1193,7 +1195,7 @@ func (e *RTCEncoder) Encode(frame I420Frame, forceKey bool) (RTCFrame, error) {
 		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
 	if !rtcEncoderConfigIsNativeI420(e.stream.Config()) {
-		return RTCFrame{}, ErrEncoderUnsupported
+		return RTCFrame{}, encoder.ErrUnsupported
 	}
 	if err := validateI420Frame(frame); err != nil {
 		return RTCFrame{}, err
@@ -1286,7 +1288,7 @@ func (e *RTCEncoder) EncodeI400HighBitDepth(frame I400HighBitDepthFrame, forceKe
 		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
 	if !e.stream.Config().ColorConfig.MonoChrome || e.stream.Config().ColorConfig.BitDepth <= 8 {
-		return RTCFrame{}, ErrEncoderUnsupported
+		return RTCFrame{}, encoder.ErrUnsupported
 	}
 	out, err := e.stream.EncodeHighBitDepthMonochrome(encoder.SourceFrameMono16(frame), forceKey)
 	if err != nil {
@@ -1303,7 +1305,7 @@ func (e *RTCEncoder) EncodeI420HighBitDepth(frame I420HighBitDepthFrame, forceKe
 		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
 	if !rtcEncoderConfigIsNativeHighBitDepthI420(e.stream.Config()) {
-		return RTCFrame{}, ErrEncoderUnsupported
+		return RTCFrame{}, encoder.ErrUnsupported
 	}
 	out, err := e.stream.EncodeHighBitDepth420(encoder.SourceFrame42016(frame), forceKey)
 	if err != nil {
@@ -1320,7 +1322,7 @@ func (e *RTCEncoder) EncodeI422HighBitDepth(frame I422HighBitDepthFrame, forceKe
 		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
 	if !rtcEncoderConfigIsNativeHighBitDepthI422(e.stream.Config()) {
-		return RTCFrame{}, ErrEncoderUnsupported
+		return RTCFrame{}, encoder.ErrUnsupported
 	}
 	native, err := i422HighBitDepthToNativeScratch(&e.i422HighBitDepthScratch, frame)
 	if err != nil {
@@ -1341,7 +1343,7 @@ func (e *RTCEncoder) EncodeI444HighBitDepth(frame I444HighBitDepthFrame, forceKe
 		return RTCFrame{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
 	if !rtcEncoderConfigIsNativeHighBitDepthI444(e.stream.Config()) {
-		return RTCFrame{}, ErrEncoderUnsupported
+		return RTCFrame{}, encoder.ErrUnsupported
 	}
 	native, err := i444HighBitDepthToNativeScratch(&e.i444HighBitDepthScratch, frame)
 	if err != nil {
@@ -1468,7 +1470,7 @@ func (e *RTCEncoder) EncodePicture(frame I420Frame, forceKey bool) (RTCPicture, 
 		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
 	if !rtcEncoderConfigIsNativeI420(e.stream.Config()) {
-		return RTCPicture{}, ErrEncoderUnsupported
+		return RTCPicture{}, encoder.ErrUnsupported
 	}
 	if err := validateI420Frame(frame); err != nil {
 		return RTCPicture{}, err
@@ -1567,7 +1569,7 @@ func (e *RTCEncoder) EncodeI400HighBitDepthPicture(frame I400HighBitDepthFrame, 
 		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
 	if !e.stream.Config().ColorConfig.MonoChrome || e.stream.Config().ColorConfig.BitDepth <= 8 {
-		return RTCPicture{}, ErrEncoderUnsupported
+		return RTCPicture{}, encoder.ErrUnsupported
 	}
 	out, err := e.stream.EncodeHighBitDepthMonochromePicture(encoder.SourceFrameMono16(frame), forceKey)
 	if err != nil {
@@ -1583,7 +1585,7 @@ func (e *RTCEncoder) EncodeI420HighBitDepthPicture(frame I420HighBitDepthFrame, 
 		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
 	if !rtcEncoderConfigIsNativeHighBitDepthI420(e.stream.Config()) {
-		return RTCPicture{}, ErrEncoderUnsupported
+		return RTCPicture{}, encoder.ErrUnsupported
 	}
 	out, err := e.stream.EncodeHighBitDepth420Picture(encoder.SourceFrame42016(frame), forceKey)
 	if err != nil {
@@ -1599,7 +1601,7 @@ func (e *RTCEncoder) EncodeI422HighBitDepthPicture(frame I422HighBitDepthFrame, 
 		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
 	if !rtcEncoderConfigIsNativeHighBitDepthI422(e.stream.Config()) {
-		return RTCPicture{}, ErrEncoderUnsupported
+		return RTCPicture{}, encoder.ErrUnsupported
 	}
 	native, err := i422HighBitDepthToNativeScratch(&e.i422HighBitDepthScratch, frame)
 	if err != nil {
@@ -1619,7 +1621,7 @@ func (e *RTCEncoder) EncodeI444HighBitDepthPicture(frame I444HighBitDepthFrame, 
 		return RTCPicture{}, fmt.Errorf("goav1: RTCEncoder is not initialized")
 	}
 	if !rtcEncoderConfigIsNativeHighBitDepthI444(e.stream.Config()) {
-		return RTCPicture{}, ErrEncoderUnsupported
+		return RTCPicture{}, encoder.ErrUnsupported
 	}
 	native, err := i444HighBitDepthToNativeScratch(&e.i444HighBitDepthScratch, frame)
 	if err != nil {
@@ -2007,7 +2009,7 @@ func frameToI420Scratch(dst *I420Frame, frame Frame) (I420Frame, error) {
 	if format.BitDepth == 0 {
 		format.BitDepth = 8
 	}
-	layout, err := FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		return I420Frame{}, err
 	}
@@ -2015,20 +2017,20 @@ func frameToI420Scratch(dst *I420Frame, frame Frame) (I420Frame, error) {
 		return I420Frame{}, fmt.Errorf("goav1: Frame dimensions must be positive even values, got %dx%d", format.Width, format.Height)
 	}
 	if format.BitDepth != 8 && format.BitDepth != 10 && format.BitDepth != 12 {
-		return I420Frame{}, ErrFrameInvalidFormat
+		return I420Frame{}, internalframe.ErrInvalidFormat
 	}
 	if !format.MonoChrome && !format.SubsamplingX && format.SubsamplingY {
-		return I420Frame{}, ErrFrameInvalidFormat
+		return I420Frame{}, internalframe.ErrInvalidFormat
 	}
 	if frame.Y.Width != format.Width || frame.Y.Height != format.Height || !encoderPlaneFits(frame.Y, layout.BytesPerSample) {
-		return I420Frame{}, ErrFrameInvalidPlane
+		return I420Frame{}, internalframe.ErrInvalidPlane
 	}
 	if !format.MonoChrome {
 		if frame.U.Width != layout.ChromaWidth || frame.U.Height != layout.ChromaHeight ||
 			frame.V.Width != layout.ChromaWidth || frame.V.Height != layout.ChromaHeight ||
 			!encoderPlaneFits(frame.U, layout.BytesPerSample) ||
 			!encoderPlaneFits(frame.V, layout.BytesPerSample) {
-			return I420Frame{}, ErrFrameInvalidPlane
+			return I420Frame{}, internalframe.ErrInvalidPlane
 		}
 		if format.BitDepth == 8 && format.SubsamplingX && format.SubsamplingY && frame.U.Stride == frame.V.Stride {
 			return I420Frame{
@@ -2069,7 +2071,7 @@ func frameToI422NativeScratch(dst *I420Frame, frame Frame) (I420Frame, error) {
 	if format.BitDepth == 0 {
 		format.BitDepth = 8
 	}
-	layout, err := FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		return I420Frame{}, err
 	}
@@ -2077,7 +2079,7 @@ func frameToI422NativeScratch(dst *I420Frame, frame Frame) (I420Frame, error) {
 		return I420Frame{}, fmt.Errorf("goav1: Frame dimensions must be positive even values, got %dx%d", format.Width, format.Height)
 	}
 	if format.BitDepth != 8 || format.MonoChrome || !format.SubsamplingX || format.SubsamplingY {
-		return I420Frame{}, ErrFrameInvalidFormat
+		return I420Frame{}, internalframe.ErrInvalidFormat
 	}
 	if frame.Y.Width != format.Width || frame.Y.Height != format.Height ||
 		frame.U.Width != layout.ChromaWidth || frame.U.Height != layout.ChromaHeight ||
@@ -2085,7 +2087,7 @@ func frameToI422NativeScratch(dst *I420Frame, frame Frame) (I420Frame, error) {
 		!encoderPlaneFits(frame.Y, layout.BytesPerSample) ||
 		!encoderPlaneFits(frame.U, layout.BytesPerSample) ||
 		!encoderPlaneFits(frame.V, layout.BytesPerSample) {
-		return I420Frame{}, ErrFrameInvalidPlane
+		return I420Frame{}, internalframe.ErrInvalidPlane
 	}
 	if frame.U.Stride == frame.V.Stride {
 		return I420Frame{
@@ -2111,7 +2113,7 @@ func frameToI444NativeScratch(dst *I420Frame, frame Frame) (I420Frame, error) {
 	if format.BitDepth == 0 {
 		format.BitDepth = 8
 	}
-	layout, err := FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		return I420Frame{}, err
 	}
@@ -2119,7 +2121,7 @@ func frameToI444NativeScratch(dst *I420Frame, frame Frame) (I420Frame, error) {
 		return I420Frame{}, fmt.Errorf("goav1: Frame dimensions must be positive even values, got %dx%d", format.Width, format.Height)
 	}
 	if format.BitDepth != 8 || format.MonoChrome || format.SubsamplingX || format.SubsamplingY {
-		return I420Frame{}, ErrFrameInvalidFormat
+		return I420Frame{}, internalframe.ErrInvalidFormat
 	}
 	if frame.Y.Width != format.Width || frame.Y.Height != format.Height ||
 		frame.U.Width != layout.ChromaWidth || frame.U.Height != layout.ChromaHeight ||
@@ -2127,7 +2129,7 @@ func frameToI444NativeScratch(dst *I420Frame, frame Frame) (I420Frame, error) {
 		!encoderPlaneFits(frame.Y, layout.BytesPerSample) ||
 		!encoderPlaneFits(frame.U, layout.BytesPerSample) ||
 		!encoderPlaneFits(frame.V, layout.BytesPerSample) {
-		return I420Frame{}, ErrFrameInvalidPlane
+		return I420Frame{}, internalframe.ErrInvalidPlane
 	}
 	if frame.U.Stride == frame.V.Stride {
 		return I420Frame{
@@ -2153,7 +2155,7 @@ func frameToI400Scratch(dst *I400Frame, frame Frame) (I400Frame, error) {
 	if format.BitDepth == 0 {
 		format.BitDepth = 8
 	}
-	layout, err := FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		return I400Frame{}, err
 	}
@@ -2161,13 +2163,13 @@ func frameToI400Scratch(dst *I400Frame, frame Frame) (I400Frame, error) {
 		return I400Frame{}, fmt.Errorf("goav1: Frame dimensions must be positive even values, got %dx%d", format.Width, format.Height)
 	}
 	if !format.MonoChrome {
-		return I400Frame{}, ErrFrameInvalidFormat
+		return I400Frame{}, internalframe.ErrInvalidFormat
 	}
 	if format.BitDepth != 8 && format.BitDepth != 10 && format.BitDepth != 12 {
-		return I400Frame{}, ErrFrameInvalidFormat
+		return I400Frame{}, internalframe.ErrInvalidFormat
 	}
 	if frame.Y.Width != format.Width || frame.Y.Height != format.Height || !encoderPlaneFits(frame.Y, layout.BytesPerSample) {
-		return I400Frame{}, ErrFrameInvalidPlane
+		return I400Frame{}, internalframe.ErrInvalidPlane
 	}
 	if format.BitDepth == 8 {
 		return I400Frame{
@@ -2187,7 +2189,7 @@ func frameToI400HighBitDepthScratch(dst *I400HighBitDepthFrame, frame Frame, bit
 	if format.BitDepth == 0 {
 		format.BitDepth = 8
 	}
-	layout, err := FrameRequiredSize(frame.Format)
+	layout, err := internalframe.RequiredSize(frame.Format)
 	if err != nil {
 		return I400HighBitDepthFrame{}, err
 	}
@@ -2195,10 +2197,10 @@ func frameToI400HighBitDepthScratch(dst *I400HighBitDepthFrame, frame Frame, bit
 		return I400HighBitDepthFrame{}, fmt.Errorf("goav1: Frame dimensions must be positive even values, got %dx%d", format.Width, format.Height)
 	}
 	if !format.MonoChrome || format.BitDepth != bitDepth || (bitDepth != 10 && bitDepth != 12) {
-		return I400HighBitDepthFrame{}, ErrFrameInvalidFormat
+		return I400HighBitDepthFrame{}, internalframe.ErrInvalidFormat
 	}
 	if frame.Y.Width != format.Width || frame.Y.Height != format.Height || !encoderPlaneFits(frame.Y, layout.BytesPerSample) {
-		return I400HighBitDepthFrame{}, ErrFrameInvalidPlane
+		return I400HighBitDepthFrame{}, internalframe.ErrInvalidPlane
 	}
 	frameI400HighBitDepthScratch(dst, format.Width, format.Height, bitDepth)
 	copyFramePlaneTo16(dst.Y, dst.YStride, frame.Y, layout.BytesPerSample, format.Width, format.Height)
@@ -2210,7 +2212,7 @@ func frameToI420HighBitDepthScratch(dst *I420HighBitDepthFrame, frame Frame, bit
 	if format.BitDepth == 0 {
 		format.BitDepth = 8
 	}
-	layout, err := FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		return I420HighBitDepthFrame{}, err
 	}
@@ -2219,7 +2221,7 @@ func frameToI420HighBitDepthScratch(dst *I420HighBitDepthFrame, frame Frame, bit
 	}
 	if format.MonoChrome || format.BitDepth != bitDepth || (bitDepth != 10 && bitDepth != 12) ||
 		!format.SubsamplingX || !format.SubsamplingY {
-		return I420HighBitDepthFrame{}, ErrFrameInvalidFormat
+		return I420HighBitDepthFrame{}, internalframe.ErrInvalidFormat
 	}
 	if frame.Y.Width != format.Width || frame.Y.Height != format.Height ||
 		frame.U.Width != layout.ChromaWidth || frame.U.Height != layout.ChromaHeight ||
@@ -2227,7 +2229,7 @@ func frameToI420HighBitDepthScratch(dst *I420HighBitDepthFrame, frame Frame, bit
 		!encoderPlaneFits(frame.Y, layout.BytesPerSample) ||
 		!encoderPlaneFits(frame.U, layout.BytesPerSample) ||
 		!encoderPlaneFits(frame.V, layout.BytesPerSample) {
-		return I420HighBitDepthFrame{}, ErrFrameInvalidPlane
+		return I420HighBitDepthFrame{}, internalframe.ErrInvalidPlane
 	}
 	frameI420HighBitDepthScratch(dst, format.Width, format.Height, bitDepth)
 	copyFramePlaneTo16(dst.Y, dst.YStride, frame.Y, layout.BytesPerSample, format.Width, format.Height)
@@ -2241,7 +2243,7 @@ func frameToI422HighBitDepthScratch(dst *I420HighBitDepthFrame, frame Frame, bit
 	if format.BitDepth == 0 {
 		format.BitDepth = 8
 	}
-	layout, err := FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		return I420HighBitDepthFrame{}, err
 	}
@@ -2250,7 +2252,7 @@ func frameToI422HighBitDepthScratch(dst *I420HighBitDepthFrame, frame Frame, bit
 	}
 	if format.MonoChrome || format.BitDepth != bitDepth || (bitDepth != 10 && bitDepth != 12) ||
 		!format.SubsamplingX || format.SubsamplingY {
-		return I420HighBitDepthFrame{}, ErrFrameInvalidFormat
+		return I420HighBitDepthFrame{}, internalframe.ErrInvalidFormat
 	}
 	if frame.Y.Width != format.Width || frame.Y.Height != format.Height ||
 		frame.U.Width != layout.ChromaWidth || frame.U.Height != layout.ChromaHeight ||
@@ -2258,7 +2260,7 @@ func frameToI422HighBitDepthScratch(dst *I420HighBitDepthFrame, frame Frame, bit
 		!encoderPlaneFits(frame.Y, layout.BytesPerSample) ||
 		!encoderPlaneFits(frame.U, layout.BytesPerSample) ||
 		!encoderPlaneFits(frame.V, layout.BytesPerSample) {
-		return I420HighBitDepthFrame{}, ErrFrameInvalidPlane
+		return I420HighBitDepthFrame{}, internalframe.ErrInvalidPlane
 	}
 	frameI422HighBitDepthScratch(dst, format.Width, format.Height, bitDepth)
 	copyFramePlaneTo16(dst.Y, dst.YStride, frame.Y, layout.BytesPerSample, format.Width, format.Height)
@@ -2272,7 +2274,7 @@ func frameToI444HighBitDepthScratch(dst *I420HighBitDepthFrame, frame Frame, bit
 	if format.BitDepth == 0 {
 		format.BitDepth = 8
 	}
-	layout, err := FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		return I420HighBitDepthFrame{}, err
 	}
@@ -2281,7 +2283,7 @@ func frameToI444HighBitDepthScratch(dst *I420HighBitDepthFrame, frame Frame, bit
 	}
 	if format.MonoChrome || format.BitDepth != bitDepth || (bitDepth != 10 && bitDepth != 12) ||
 		format.SubsamplingX || format.SubsamplingY {
-		return I420HighBitDepthFrame{}, ErrFrameInvalidFormat
+		return I420HighBitDepthFrame{}, internalframe.ErrInvalidFormat
 	}
 	if frame.Y.Width != format.Width || frame.Y.Height != format.Height ||
 		frame.U.Width != layout.ChromaWidth || frame.U.Height != layout.ChromaHeight ||
@@ -2289,7 +2291,7 @@ func frameToI444HighBitDepthScratch(dst *I420HighBitDepthFrame, frame Frame, bit
 		!encoderPlaneFits(frame.Y, layout.BytesPerSample) ||
 		!encoderPlaneFits(frame.U, layout.BytesPerSample) ||
 		!encoderPlaneFits(frame.V, layout.BytesPerSample) {
-		return I420HighBitDepthFrame{}, ErrFrameInvalidPlane
+		return I420HighBitDepthFrame{}, internalframe.ErrInvalidPlane
 	}
 	frameI444HighBitDepthScratch(dst, format.Width, format.Height, bitDepth)
 	copyFramePlaneTo16(dst.Y, dst.YStride, frame.Y, layout.BytesPerSample, format.Width, format.Height)
@@ -2735,7 +2737,7 @@ func rtcEncoderConfigIsNativeHighBitDepthI420(cfg EncoderConfig) bool {
 }
 
 func rtcEncoderConfigIsNativeHighBitDepthI422(cfg EncoderConfig) bool {
-	return cfg.Profile == EncoderProfile2 &&
+	return cfg.Profile == encoder.Profile2 &&
 		!cfg.ColorConfig.MonoChrome &&
 		(cfg.ColorConfig.BitDepth == 10 || cfg.ColorConfig.BitDepth == 12) &&
 		cfg.ColorConfig.SubsamplingX &&
@@ -2744,14 +2746,14 @@ func rtcEncoderConfigIsNativeHighBitDepthI422(cfg EncoderConfig) bool {
 
 func rtcEncoderConfigIsNativeHighBitDepthI444(cfg EncoderConfig) bool {
 	return !cfg.ColorConfig.MonoChrome &&
-		((cfg.ColorConfig.BitDepth == 10 && cfg.Profile == EncoderProfile1) ||
-			(cfg.ColorConfig.BitDepth == 12 && cfg.Profile == EncoderProfile2)) &&
+		((cfg.ColorConfig.BitDepth == 10 && cfg.Profile == encoder.Profile1) ||
+			(cfg.ColorConfig.BitDepth == 12 && cfg.Profile == encoder.Profile2)) &&
 		!cfg.ColorConfig.SubsamplingX &&
 		!cfg.ColorConfig.SubsamplingY
 }
 
 func rtcEncoderConfigIsNativeI422(cfg EncoderConfig) bool {
-	return cfg.Profile == EncoderProfile2 &&
+	return cfg.Profile == encoder.Profile2 &&
 		!cfg.ColorConfig.MonoChrome &&
 		cfg.ColorConfig.BitDepth == 8 &&
 		cfg.ColorConfig.SubsamplingX &&
@@ -2759,7 +2761,7 @@ func rtcEncoderConfigIsNativeI422(cfg EncoderConfig) bool {
 }
 
 func rtcEncoderConfigIsNativeI444(cfg EncoderConfig) bool {
-	return cfg.Profile == EncoderProfile1 &&
+	return cfg.Profile == encoder.Profile1 &&
 		!cfg.ColorConfig.MonoChrome &&
 		cfg.ColorConfig.BitDepth == 8 &&
 		!cfg.ColorConfig.SubsamplingX &&

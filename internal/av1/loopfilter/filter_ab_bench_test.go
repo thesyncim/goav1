@@ -11,8 +11,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
 
-// BenchmarkFilterAB exercises the public dispatch with the same edge geometry
-// in the assembly reference and the Go SIMD tree. The near-flat alternating
+// BenchmarkFilterAB exercises the public dispatch with one edge geometry. The near-flat alternating
 // samples keep the filter active, including the wide fourteen-tap path.
 func BenchmarkFilterAB(b *testing.B) {
 	type filterFn func(frame.Plane, int, uint8, Edge, int32, int32, int32, Thresholds) error

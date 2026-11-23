@@ -49,6 +49,9 @@ func (s *FrameWorkTileResidualCDFStorage) ResetCDFCounts() error {
 	if err := resetMVCDFCounts(&s.MV); err != nil {
 		return err
 	}
+	if err := resetMVCDFCounts(&s.DV); err != nil {
+		return err
+	}
 	for i := range s.Interp.Switchable {
 		if err := resetCDFCount(&s.Interp.Switchable[i]); err != nil {
 			return err

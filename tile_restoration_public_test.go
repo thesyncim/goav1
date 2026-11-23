@@ -1,76 +1,76 @@
-package goav1_test
+package goav1
 
 import (
 	"errors"
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+	internalrestoration "github.com/thesyncim/goav1/internal/av1/restoration"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 func TestPublicTileRestorationFramePlanAndBuffers(t *testing.T) {
-	params := av1.RestorationParams{
-		Type:       [3]av1.RestorationType{av1.RestorationWiener, av1.RestorationSGRProj, av1.RestorationNone},
+	params := internalparser.RestorationParams{
+		Type:       [3]internalparser.RestorationType{internalparser.RestorationWiener, internalparser.RestorationSGRProj, internalparser.RestorationNone},
 		UnitSizeY:  128,
 		UnitSizeUV: 64,
 	}
-	size := av1.FrameSize{UpscaledWidth: 300, Height: 260, SuperResDenominator: 8}
-	color := av1.ColorConfig{SubsamplingX: true, SubsamplingY: true}
+	size := FrameSize{UpscaledWidth: 300, Height: 260, SuperResDenominator: 8}
+	color := internalparser.ColorConfig{SubsamplingX: true, SubsamplingY: true}
 
-	y, err := av1.BuildTileRestorationPlaneGrid(params, size, color, 0)
+	y, err := internaltile.BuildRestorationPlaneGrid(params, size, color, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if y.Type != av1.RestorationWiener || y.UnitSize != 128 || y.HorzUnits != 2 || y.VertUnits != 2 {
+	if y.Type != internalparser.RestorationWiener || y.UnitSize != 128 || y.HorzUnits != 2 || y.VertUnits != 2 {
 		t.Fatalf("y grid=%+v", y)
 	}
-	u, err := av1.BuildTileRestorationPlaneGrid(params, size, color, 1)
+	u, err := internaltile.BuildRestorationPlaneGrid(params, size, color, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Type != av1.RestorationSGRProj || u.UnitSize != 64 || !u.SubsamplingX || !u.SubsamplingY ||
+	if u.Type != internalparser.RestorationSGRProj || u.UnitSize != 64 || !u.SubsamplingX || !u.SubsamplingY ||
 		u.HorzUnits != 2 || u.VertUnits != 2 {
 		t.Fatalf("u grid=%+v", u)
 	}
 
-	plan, err := av1.BuildTileRestorationFramePlan(params, size, color)
+	plan, err := internaltile.BuildRestorationFramePlan(params, size, color)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !plan.Active || plan.Planes != 3 || plan.UnitRecords != ([3]uint32{4, 4, 0}) || plan.UnitRecordLen() != 8 {
 		t.Fatalf("plan=%+v records=%d", plan, plan.UnitRecordLen())
 	}
-	if plan.Boundaries[0] != (av1.TileRestorationStripeBoundaryBufferSize{Stride: 320, Rows: 10, Len: 3200}) ||
-		plan.Boundaries[1] != (av1.TileRestorationStripeBoundaryBufferSize{Stride: 160, Rows: 10, Len: 1600}) ||
+	if plan.Boundaries[0] != (internaltile.RestorationStripeBoundaryBufferSize{Stride: 320, Rows: 10, Len: 3200}) ||
+		plan.Boundaries[1] != (internaltile.RestorationStripeBoundaryBufferSize{Stride: 160, Rows: 10, Len: 1600}) ||
 		plan.BoundaryBufferLen() != 4800 {
 		t.Fatalf("boundaries=%+v total=%d", plan.Boundaries, plan.BoundaryBufferLen())
 	}
 
-	recordBacking := make([]av1.TileRestorationUnitRecord, plan.UnitRecordLen())
-	records, err := av1.BindTileRestorationFrameRecordBuffers(plan, recordBacking)
+	recordBacking := make([]internaltile.RestorationUnitRecord, plan.UnitRecordLen())
+	records, err := internaltile.BindRestorationFrameRecordBuffers(plan, recordBacking)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(records[0]) != 4 || len(records[1]) != 4 || records[2] != nil {
 		t.Fatalf("record lens=%d,%d,%d", len(records[0]), len(records[1]), len(records[2]))
 	}
-	if err := av1.ResetTileRestorationPlaneRecords(plan.Grids[0], records[0]); err != nil {
+	if err := internaltile.ResetRestorationPlaneRecords(plan.Grids[0], records[0]); err != nil {
 		t.Fatal(err)
 	}
-	if records[0][0].Unit.Type != av1.RestorationNone || records[0][0].StripeCount == 0 {
+	if records[0][0].Unit.Type != internalparser.RestorationNone || records[0][0].StripeCount == 0 {
 		t.Fatalf("record[0]=%+v", records[0][0])
 	}
 	updated := records[0][0]
-	updated.Unit = av1.TileRestorationUnit{Type: av1.RestorationWiener, Wiener: av1.DefaultRestorationWienerInfo()}
-	if err := av1.StoreTileRestorationUnitRecords(plan.Grids[0], records[0], []av1.TileRestorationUnitRecord{updated}); err != nil {
-		t.Fatal(err)
-	}
-	if records[0][0].Unit.Type != av1.RestorationWiener {
+	updated.Unit = internaltile.RestorationUnit{Type: internalparser.RestorationWiener, Wiener: internalrestoration.DefaultWienerInfo()}
+	records[0][updated.Index] = updated
+	if records[0][0].Unit.Type != internalparser.RestorationWiener {
 		t.Fatalf("stored record=%+v", records[0][0])
 	}
 
 	above := make([]uint16, plan.BoundaryBufferLen())
 	below := make([]uint16, plan.BoundaryBufferLen())
-	boundaries, err := av1.BindTileRestorationFrameBoundaryBuffers(plan, above, below)
+	boundaries, err := internaltile.BindRestorationFrameBoundaryBuffers(plan, above, below)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,10 +81,10 @@ func TestPublicTileRestorationFramePlanAndBuffers(t *testing.T) {
 }
 
 func TestPublicTileRestorationGeometryBoundaryAndApply(t *testing.T) {
-	grid, err := av1.BuildTileRestorationPlaneGrid(
-		av1.RestorationParams{Type: [3]av1.RestorationType{av1.RestorationWiener}, UnitSizeY: 128, UnitSizeUV: 64},
-		av1.FrameSize{UpscaledWidth: 300, Height: 260, SuperResDenominator: 8},
-		av1.ColorConfig{SubsamplingX: true, SubsamplingY: true},
+	grid, err := internaltile.BuildRestorationPlaneGrid(
+		internalparser.RestorationParams{Type: [3]internalparser.RestorationType{internalparser.RestorationWiener}, UnitSizeY: 128, UnitSizeUV: 64},
+		FrameSize{UpscaledWidth: 300, Height: 260, SuperResDenominator: 8},
+		internalparser.ColorConfig{SubsamplingX: true, SubsamplingY: true},
 		0,
 	)
 	if err != nil {
@@ -101,26 +101,26 @@ func TestPublicTileRestorationGeometryBoundaryAndApply(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("stripe=%+v ok=%v err=%v", stripe, ok, err)
 	}
-	if stripe.ProcUnitWidth != av1.RestorationProcUnitSize || stripe.TileStripe != 0 {
+	if stripe.ProcUnitWidth != internalrestoration.ProcUnitSize || stripe.TileStripe != 0 {
 		t.Fatalf("stripe=%+v", stripe)
 	}
-	if scratch, err := av1.TileRestorationStripeBoundaryScratchLen(stripe, false); err != nil || scratch.Above != 0 || scratch.Below == 0 {
+	if scratch, err := internaltile.RestorationStripeBoundaryScratchLen(stripe, false); err != nil || scratch.Above != 0 || scratch.Below == 0 {
 		t.Fatalf("boundary scratch=%+v err=%v", scratch, err)
 	}
 
-	size, err := av1.TileRestorationUnitScratchLen(64, 32)
+	size, err := internaltile.RestorationUnitScratchLen(64, 32)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantWiener, err := av1.RestorationWienerScratchLen(64, 32)
+	wantWiener, err := internalrestoration.WienerScratchLen(64, 32)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantSGR, err := av1.RestorationSelfguidedScratchLen(64, 32)
+	wantSGR, err := internalrestoration.SelfguidedScratchLen(64, 32)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if size != (av1.TileRestorationUnitScratchSize{Wiener: wantWiener, SGRProj: wantSGR}) {
+	if size != (internaltile.RestorationUnitScratchSize{Wiener: wantWiener, SGRProj: wantSGR}) {
 		t.Fatalf("unit scratch=%+v want %d/%d", size, wantWiener, wantSGR)
 	}
 
@@ -137,11 +137,11 @@ func TestPublicTileRestorationGeometryBoundaryAndApply(t *testing.T) {
 			src[origin+row*srcStride+col] = uint16(20 + row*7 + col)
 		}
 	}
-	result, err := av1.ApplyTileRestorationUnit(src, srcStride, origin, dst, dstStride, width, height, av1.TileRestorationUnit{Type: av1.RestorationNone}, 8, av1.TileRestorationUnitScratch{})
+	result, err := internaltile.ApplyRestorationUnit(src, srcStride, origin, dst, dstStride, width, height, internaltile.RestorationUnit{Type: internalparser.RestorationNone}, 8, internaltile.RestorationUnitScratch{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != (av1.TileRestorationUnitApplyResult{Type: av1.RestorationNone}) {
+	if result != (internaltile.RestorationUnitApplyResult{Type: internalparser.RestorationNone}) {
 		t.Fatalf("result=%+v", result)
 	}
 	for row := range height {
@@ -159,7 +159,7 @@ func TestPublicTileRestorationGeometryBoundaryAndApply(t *testing.T) {
 	bordered[borderOrigin+1*stride+0] = 40
 	bordered[borderOrigin+1*stride+1] = 50
 	bordered[borderOrigin+1*stride+2] = 60
-	if err := av1.ExtendTileRestorationFrame(bordered, stride, borderOrigin, 3, 2, 2, 1); err != nil {
+	if err := internaltile.ExtendRestorationFrame(bordered, stride, borderOrigin, 3, 2, 2, 1); err != nil {
 		t.Fatal(err)
 	}
 	if bordered[borderOrigin-2] != 10 || bordered[borderOrigin+3] != 30 ||
@@ -169,53 +169,53 @@ func TestPublicTileRestorationGeometryBoundaryAndApply(t *testing.T) {
 }
 
 func TestPublicTileRestorationRejectsInvalid(t *testing.T) {
-	params := av1.RestorationParams{Type: [3]av1.RestorationType{av1.RestorationWiener}, UnitSizeY: 128, UnitSizeUV: 64}
-	if _, err := av1.BuildTileRestorationPlaneGrid(params, av1.FrameSize{}, av1.ColorConfig{}, 0); !errors.Is(err, av1.ErrTileInvalidPlan) {
-		t.Fatalf("BuildTileRestorationPlaneGrid err=%v want %v", err, av1.ErrTileInvalidPlan)
+	params := internalparser.RestorationParams{Type: [3]internalparser.RestorationType{internalparser.RestorationWiener}, UnitSizeY: 128, UnitSizeUV: 64}
+	if _, err := internaltile.BuildRestorationPlaneGrid(params, FrameSize{}, internalparser.ColorConfig{}, 0); !errors.Is(err, internaltile.ErrInvalidPlan) {
+		t.Fatalf("BuildTileRestorationPlaneGrid err=%v want %v", err, internaltile.ErrInvalidPlan)
 	}
-	plan, err := av1.BuildTileRestorationFramePlan(params, av1.FrameSize{UpscaledWidth: 128, Height: 64, SuperResDenominator: 8}, av1.ColorConfig{})
+	plan, err := internaltile.BuildRestorationFramePlan(params, FrameSize{UpscaledWidth: 128, Height: 64, SuperResDenominator: 8}, internalparser.ColorConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := av1.BindTileRestorationFrameRecordBuffers(plan, make([]av1.TileRestorationUnitRecord, plan.UnitRecordLen()-1)); !errors.Is(err, av1.ErrTileJobBufferTooSmall) {
-		t.Fatalf("BindTileRestorationFrameRecordBuffers err=%v want %v", err, av1.ErrTileJobBufferTooSmall)
+	if _, err := internaltile.BindRestorationFrameRecordBuffers(plan, make([]internaltile.RestorationUnitRecord, plan.UnitRecordLen()-1)); !errors.Is(err, internaltile.ErrJobBufferTooSmall) {
+		t.Fatalf("BindTileRestorationFrameRecordBuffers err=%v want %v", err, internaltile.ErrJobBufferTooSmall)
 	}
-	if _, err := av1.TileRestorationUnitScratchLen(0, 8); !errors.Is(err, av1.ErrRestorationInvalidInput) {
-		t.Fatalf("TileRestorationUnitScratchLen err=%v want %v", err, av1.ErrRestorationInvalidInput)
+	if _, err := internaltile.RestorationUnitScratchLen(0, 8); !errors.Is(err, internalrestoration.ErrInvalidRestoration) {
+		t.Fatalf("TileRestorationUnitScratchLen err=%v want %v", err, internalrestoration.ErrInvalidRestoration)
 	}
-	if _, err := av1.ApplyTileRestorationUnit(nil, 0, 0, nil, 0, 1, 1, av1.TileRestorationUnit{Type: av1.RestorationType(99)}, 8, av1.TileRestorationUnitScratch{}); !errors.Is(err, av1.ErrTileInvalidPlan) {
-		t.Fatalf("ApplyTileRestorationUnit err=%v want %v", err, av1.ErrTileInvalidPlan)
+	if _, err := internaltile.ApplyRestorationUnit(nil, 0, 0, nil, 0, 1, 1, internaltile.RestorationUnit{Type: internalparser.RestorationType(99)}, 8, internaltile.RestorationUnitScratch{}); !errors.Is(err, internaltile.ErrInvalidPlan) {
+		t.Fatalf("ApplyTileRestorationUnit err=%v want %v", err, internaltile.ErrInvalidPlan)
 	}
 }
 
 func TestPublicTileRestorationAllocs(t *testing.T) {
-	params := av1.RestorationParams{Type: [3]av1.RestorationType{av1.RestorationWiener, av1.RestorationSGRProj, av1.RestorationNone}, UnitSizeY: 128, UnitSizeUV: 64}
-	size := av1.FrameSize{UpscaledWidth: 300, Height: 260, SuperResDenominator: 8}
-	color := av1.ColorConfig{SubsamplingX: true, SubsamplingY: true}
-	plan, err := av1.BuildTileRestorationFramePlan(params, size, color)
+	params := internalparser.RestorationParams{Type: [3]internalparser.RestorationType{internalparser.RestorationWiener, internalparser.RestorationSGRProj, internalparser.RestorationNone}, UnitSizeY: 128, UnitSizeUV: 64}
+	size := FrameSize{UpscaledWidth: 300, Height: 260, SuperResDenominator: 8}
+	color := internalparser.ColorConfig{SubsamplingX: true, SubsamplingY: true}
+	plan, err := internaltile.BuildRestorationFramePlan(params, size, color)
 	if err != nil {
 		t.Fatal(err)
 	}
-	recordsBacking := make([]av1.TileRestorationUnitRecord, plan.UnitRecordLen())
+	recordsBacking := make([]internaltile.RestorationUnitRecord, plan.UnitRecordLen())
 	above := make([]uint16, plan.BoundaryBufferLen())
 	below := make([]uint16, plan.BoundaryBufferLen())
 	src := make([]uint16, 13+3*11+5)
 	dst := make([]uint16, 8*4)
 	allocs := testing.AllocsPerRun(1000, func() {
-		records, err := av1.BindTileRestorationFrameRecordBuffers(plan, recordsBacking)
+		records, err := internaltile.BindRestorationFrameRecordBuffers(plan, recordsBacking)
 		if err != nil {
 			t.Fatalf("BindTileRestorationFrameRecordBuffers err=%v", err)
 		}
-		if err := av1.ResetTileRestorationPlaneRecords(plan.Grids[0], records[0]); err != nil {
+		if err := internaltile.ResetRestorationPlaneRecords(plan.Grids[0], records[0]); err != nil {
 			t.Fatalf("ResetTileRestorationPlaneRecords err=%v", err)
 		}
-		if _, err := av1.BindTileRestorationFrameBoundaryBuffers(plan, above, below); err != nil {
+		if _, err := internaltile.BindRestorationFrameBoundaryBuffers(plan, above, below); err != nil {
 			t.Fatalf("BindTileRestorationFrameBoundaryBuffers err=%v", err)
 		}
-		if _, err := av1.TileRestorationUnitScratchLen(64, 32); err != nil {
+		if _, err := internaltile.RestorationUnitScratchLen(64, 32); err != nil {
 			t.Fatalf("TileRestorationUnitScratchLen err=%v", err)
 		}
-		if _, err := av1.ApplyTileRestorationUnit(src, 11, 13, dst, 8, 5, 4, av1.TileRestorationUnit{Type: av1.RestorationNone}, 8, av1.TileRestorationUnitScratch{}); err != nil {
+		if _, err := internaltile.ApplyRestorationUnit(src, 11, 13, dst, 8, 5, 4, internaltile.RestorationUnit{Type: internalparser.RestorationNone}, 8, internaltile.RestorationUnitScratch{}); err != nil {
 			t.Fatalf("ApplyTileRestorationUnit err=%v", err)
 		}
 	})

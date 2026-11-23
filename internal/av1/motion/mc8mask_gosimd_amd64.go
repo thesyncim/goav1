@@ -98,13 +98,10 @@ func init() {
 }
 
 // mc8Ld16U16 loads 16 samples at p.
-//
-//go:nocheckptr
 func mc8Ld16U16(p unsafe.Pointer) archsimd.Uint16x16 {
 	return archsimd.LoadUint16x16Array((*[16]uint16)(p))
 }
 
-//go:nocheckptr
 func mc8Ld32(p unsafe.Pointer) uint32 {
 	return *(*uint32)(p)
 }
@@ -113,22 +110,18 @@ func mc8Ld32(p unsafe.Pointer) uint32 {
 // samples. The 4:2:0 forms average 2x2 mask blocks ((sum + 2) >> 2) with
 // VPMADDUBSW against ones, as dav1d's mask_420.
 
-//go:nocheckptr
 func mc8MaskW4(p unsafe.Pointer, ms int) archsimd.Uint16x16 {
 	var z archsimd.Uint32x4
 	v := z.SetElem(0, mc8Ld32(p)).SetElem(1, mc8Ld32(unsafe.Add(p, ms))).SetElem(2, mc8Ld32(unsafe.Add(p, 2*ms))).SetElem(3, mc8Ld32(unsafe.Add(p, 3*ms)))
 	return v.ReshapeToUint8s().ExtendToUint16()
 }
 
-//go:nocheckptr
 func mc8MaskW8(p unsafe.Pointer, ms int) archsimd.Uint16x16 {
 	var z archsimd.Uint64x2
 	return z.SetElem(0, mc8Ld64(p)).SetElem(1, mc8Ld64(unsafe.Add(p, ms))).ReshapeToUint8s().ExtendToUint16()
 }
 
 // mc8Ld4x8 gathers the 8 bytes at p, p+2*ms, p+4*ms and p+6*ms.
-//
-//go:nocheckptr
 func mc8Ld4x8(p unsafe.Pointer, ms int) archsimd.Uint8x32 {
 	var z2 archsimd.Uint64x2
 	var z4 archsimd.Uint64x4
@@ -138,8 +131,6 @@ func mc8Ld4x8(p unsafe.Pointer, ms int) archsimd.Uint8x32 {
 }
 
 // mc8Mask16 returns the mask of the 16 columns at row r, column c.
-//
-//go:nocheckptr
 func mc8Mask16(mask unsafe.Pointer, ms, r, c int, sub bool, ones archsimd.Int8x32, two archsimd.Int16x16) archsimd.Uint16x16 {
 	if !sub {
 		return mc8Zx(unsafe.Add(mask, r*ms+c))
@@ -153,15 +144,12 @@ func mc8Mask420(x, y archsimd.Uint8x32, ones archsimd.Int8x32, two archsimd.Int1
 	return s.Add(two).ShiftAllRight(2).ToBits()
 }
 
-//go:nocheckptr
 func mc8Ld32B(p unsafe.Pointer) archsimd.Uint8x32 {
 	return archsimd.LoadUint8x32Array((*[32]uint8)(p))
 }
 
 // mc8BlendStep blends the 16 samples at a and b: with mask m (mc8OpMask) or
 // with the broadcast (fwd, bck) word pair wts (mc8OpWAvg).
-//
-//go:nocheckptr
 func mc8BlendStep(a, b unsafe.Pointer, m archsimd.Uint16x16, op int, wts archsimd.Int16x16, sign, m64 archsimd.Uint16x16, kMask, kWAvg archsimd.Int32x8) archsimd.Int16x16 {
 	x := mc8Ld16U16(a).Xor(sign).BitsToInt16()
 	y := mc8Ld16U16(b).Xor(sign).BitsToInt16()
@@ -177,8 +165,6 @@ func mc8BlendStep(a, b unsafe.Pointer, m archsimd.Uint16x16, op int, wts archsim
 
 // mc8AVX2Blend runs the mask blend or the distance-weighted average over a
 // block mc8BlendShapeOK accepts; a and b hold w*h samples.
-//
-//go:nocheckptr
 func mc8AVX2Blend(dst unsafe.Pointer, ds int, a, b []uint16, w, h int, mask unsafe.Pointer, ms int, sub bool, op int, wts int32) {
 	pa := unsafe.Pointer(&a[0])
 	pb := unsafe.Pointer(&b[0])
@@ -286,7 +272,6 @@ func mc8DiffStep(a, b unsafe.Pointer, invert bool, one, base, m64 archsimd.Uint1
 	return m
 }
 
-//go:nocheckptr
 func mc8AVX2DiffWtd(mask unsafe.Pointer, ms int, a, b []uint16, w, h int, invert bool) {
 	pa := unsafe.Pointer(&a[0])
 	pb := unsafe.Pointer(&b[0])

@@ -102,7 +102,6 @@ import (
 	cpufeatures "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/ivf"
-	"github.com/thesyncim/goav1/internal/av1/lfmask"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
@@ -567,7 +566,7 @@ type corpusDecodeState struct {
 	streamHash  hash.Hash
 	workerPool  *threading.Pool
 	layers      *corpusSpatialLayers
-	sideData    corpusFrameWorkSideDataRunner
+	sideData    frameWorkSideData
 	postScratch corpusPostFilterScratch
 
 	ivfFrames     int
@@ -602,9 +601,8 @@ func (s *corpusDecodeState) runEvents(events []decoder.Event) error {
 		layer := layers.layer(event)
 
 		var (
-			postOutput       *frame.Frame
-			postRan          bool
-			currentMVSurface = -1
+			postOutput *frame.Frame
+			postRan    bool
 		)
 		spatialID := event.SpatialID
 		globalSurface := func(local int) int { return libaomGlobalSurfaceID(spatialID, local) }
@@ -614,27 +612,14 @@ func (s *corpusDecodeState) runEvents(events []decoder.Event) error {
 			s.workerPool, layers, globalSurface, layers, &layers.sharedFrameContexts,
 			&s.sideData,
 			libaomFrameWorkBatchRunner(func(ctx decoder.FrameWorkBatch) error {
-				return corpusRunTileWork(ctx, layer, layers, referenceSurfaces[:], &currentMVSurface)
+				return corpusRunTileWork(ctx)
 			}),
 			libaomFrameWorkPostFilterRunner(func(ctx decoder.FrameWorkPostFilterContext) error {
-				post := decoder.FrameWorkBoundSupportedPostFilterRunner{}
-				size, err := libaomSupportedPostFilterScratchLen(ctx)
+				output, err := applySupportedPostFilters(ctx, s.postScratch.bind)
 				if err != nil {
-					return fmt.Errorf("supported postfilter scratch: %w", err)
-				}
-				post.Scratch = s.postScratch.bind(size)
-				if err := post.Apply(ctx); err != nil {
 					return fmt.Errorf("apply postfilters: %w", err)
 				}
-				if currentMVSurface >= 0 {
-					if err := decoder.PublishTemporalMotionReference(&post.Context.Event, currentMVSurface, &layer.mvFrames[currentMVSurface], layer.mvStore); err != nil {
-						return err
-					}
-				}
-				postOutput = post.Context.Output
-				if post.DisplayOutput != nil {
-					postOutput = post.DisplayOutput
-				}
+				postOutput = output
 				postRan = true
 				return nil
 			}),
@@ -685,17 +670,9 @@ func (s *corpusDecodeState) runEvents(events []decoder.Event) error {
 				ctx := decoder.FrameWorkPostFilterContext{Event: event, Step: result.Step, Output: f}
 				ctx = ctx.WithCompletedPostFilters(decoder.FrameWorkPostFilterLoopFilter | decoder.FrameWorkPostFilterCDEF |
 					decoder.FrameWorkPostFilterSuperRes | decoder.FrameWorkPostFilterLoopRestoration)
-				post := decoder.FrameWorkBoundSupportedPostFilterRunner{}
-				size, err := libaomSupportedPostFilterScratchLen(ctx)
+				f, err = applySupportedPostFilters(ctx, s.postScratch.bind)
 				if err != nil {
-					return fmt.Errorf("show_existing film grain scratch: %w", err)
-				}
-				post.Scratch = s.postScratch.bind(size)
-				if err := post.Apply(ctx); err != nil {
 					return fmt.Errorf("show_existing film grain: %w", err)
-				}
-				if post.DisplayOutput != nil {
-					f = post.DisplayOutput
 				}
 			}
 			if err := s.emitVisibleFrame(*f); err != nil {
@@ -715,50 +692,6 @@ func (s *corpusDecodeState) emitVisibleFrame(f frame.Frame) error {
 		return nil
 	}
 	return s.hashVisibleFrame(f)
-}
-
-type corpusFrameWorkSideDataRunner struct {
-	scratch decoder.FrameWorkSideDataScratch
-}
-
-func (r *corpusFrameWorkSideDataRunner) BindFrameWorkSideData(state *decoder.FrameWorkState, ctx decoder.FrameWorkBatch) error {
-	size, err := decoder.FrameWorkSideDataScratchLen(ctx)
-	if err != nil {
-		return err
-	}
-	r.ensure(size)
-	side, err := size.BindRunner(r.scratch)
-	if err != nil {
-		return err
-	}
-	return side.BindFrameWorkSideData(state, ctx)
-}
-
-func (r *corpusFrameWorkSideDataRunner) ensure(size decoder.FrameWorkSideDataScratchSize) {
-	if len(r.scratch.CDEFIndex) < size.CDEF {
-		r.scratch.CDEFIndex = make([]uint8, size.CDEF)
-	}
-	if len(r.scratch.CDEFRead) < size.CDEF {
-		r.scratch.CDEFRead = make([]bool, size.CDEF)
-	}
-	if len(r.scratch.LoopFilterRecords) < size.LoopFilterRecords {
-		r.scratch.LoopFilterRecords = make([]threading.FrameWorkLoopFilterBlockRecord, size.LoopFilterRecords)
-	}
-	if len(r.scratch.LFMasks) < size.LoopFilterMasks {
-		r.scratch.LFMasks = make([]lfmask.FilterMask, size.LoopFilterMasks)
-	}
-	if len(r.scratch.LFLevelCache) < size.LoopFilterLevels {
-		r.scratch.LFLevelCache = make([][4]uint8, size.LoopFilterLevels)
-	}
-	if len(r.scratch.RestorationRecords) < size.RestorationRecords {
-		r.scratch.RestorationRecords = make([]tile.RestorationUnitRecord, size.RestorationRecords)
-	}
-	if len(r.scratch.RestorationAbove) < size.RestorationBoundary {
-		r.scratch.RestorationAbove = make([]uint16, size.RestorationBoundary)
-	}
-	if len(r.scratch.RestorationBelow) < size.RestorationBoundary {
-		r.scratch.RestorationBelow = make([]uint16, size.RestorationBoundary)
-	}
 }
 
 type corpusPostFilterScratch struct {
@@ -960,41 +893,7 @@ func addFrameToStreamMD5(h hash.Hash, f frame.Frame) error {
 // batch (full residual + prediction). It mirrors the batch runner body in
 // runLibaomFrameWorkDryRun, minus the per-path statistics counters the
 // conformance test asserts on.
-func corpusRunTileWork(ctx decoder.FrameWorkBatch, layer *corpusSpatialLayerState, layers *corpusSpatialLayers, referenceSurfaces []int, currentMVSurface *int) error {
-	surface, err := ctx.Surface()
-	if err != nil {
-		return err
-	}
-	if surface >= len(layer.mvFrames) || layer.mvLength == 0 {
-		return decoder.ErrInvalidSurfaceReference
-	}
-	if *currentMVSurface != surface || layer.mvFrames[surface].Entries == nil {
-		first := surface * layer.mvLength
-		currentMVFrame, err := ctx.BindReferenceMVFrame(layer.mvEntryBacking[first : first+layer.mvLength])
-		if err != nil {
-			return err
-		}
-		layer.mvFrames[surface] = currentMVFrame
-		*currentMVSurface = surface
-	}
-	ctx.CurrentMVFrame = &layer.mvFrames[surface]
-	if ctx.TileInfo.UseRefFrameMVS {
-		temporalMVs, err := ctx.BindTemporalMotionField(layer.temporalEntryBacking)
-		if err != nil {
-			return err
-		}
-		ctx.TemporalMVs = &temporalMVs
-		resolved, err := decoder.ResolveTemporalMotionReferencesWithProvider(layers, referenceSurfaces[:len(ctx.References)], ctx.ReferenceMVs[:])
-		if err != nil {
-			return err
-		}
-		if resolved != len(ctx.References) {
-			return decoder.ErrInvalidSurfaceReference
-		}
-		if _, err := ctx.SetupTemporalMotionField(); err != nil {
-			return err
-		}
-	}
+func corpusRunTileWork(ctx decoder.FrameWorkBatch) error {
 	var restorationReq *threading.FrameWorkTileRestorationRequest
 	if ctx.RestorationFrameBuffers != nil {
 		restoration := threading.FrameWorkTileRestorationRequest{Buffers: *ctx.RestorationFrameBuffers}
@@ -1035,17 +934,11 @@ func corpusRunTileWork(ctx decoder.FrameWorkBatch, layer *corpusSpatialLayerStat
 		var interScratch threading.FrameWorkInterPredictionScratch
 		predictionScratch := threading.FrameWorkPredictionScratch{Inter: &interScratch}
 		if _, err := ctx.DecodeAndReconstructJobResiduals(j, &decodeState, storage.CDFs(), &scratch, threading.FrameWorkTileResidualRequest{
-			Loop:          loopReq,
-			TransformMode: ctx.TransformRef.TransformMode,
-			CDEFIndexMap:  ctx.CDEFIndexMap,
-			LoopFilterMap: ctx.LoopFilterMap,
-			Restoration:   restorationReq,
-			Transforms: func(visit tile.BlockLoopVisit) (threading.FrameWorkBlockTransforms, error) {
-				if visit.Prediction.Valid && !visit.Prediction.Intra {
-					return ctx.ReadInterBlockTransforms(&decodeState, visit)
-				}
-				return ctx.ReadIntraBlockTransforms(&decodeState, visit)
-			},
+			Loop:              loopReq,
+			TransformMode:     ctx.TransformRef.TransformMode,
+			CDEFIndexMap:      ctx.CDEFIndexMap,
+			LoopFilterMap:     ctx.LoopFilterMap,
+			Restoration:       restorationReq,
 			Int32Scratch:      int32Scratch,
 			ResidualScratch:   residualScratch,
 			PredictionScratch: &predictionScratch,
@@ -1072,17 +965,12 @@ type corpusSpatialLayerState struct {
 	spatialID uint8
 	format    frame.Format
 
-	pool                 frame.Pool
-	state                decoder.FrameWorkState
-	backing              []byte
-	frameSlots           []frame.Frame
-	free                 []int
-	used                 []bool
-	mvEntryBacking       []tile.ReferenceMVEntry
-	temporalEntryBacking []tile.TemporalMotionEntry
-	mvFrames             []tile.ReferenceMVFrame
-	mvStore              []tile.TemporalMotionReferenceFrame
-	mvLength             int
+	pool       frame.Pool
+	state      decoder.FrameWorkState
+	backing    []byte
+	frameSlots []frame.Frame
+	free       []int
+	used       []bool
 }
 
 type corpusSpatialLayers struct {
@@ -1124,21 +1012,6 @@ func (s *corpusSpatialLayers) ReleaseFrameSurfaces(ids []int) error {
 	return nil
 }
 
-func (s *corpusSpatialLayers) TemporalMotionReference(id int) (tile.TemporalMotionReferenceFrame, error) {
-	spatialID, local, ok := libaomDecodeGlobalSurfaceID(id)
-	if !ok {
-		return tile.TemporalMotionReferenceFrame{}, decoder.ErrInvalidSurfaceReference
-	}
-	layer, ok := s.byID[spatialID]
-	if !ok || layer == nil {
-		return tile.TemporalMotionReferenceFrame{}, decoder.ErrInvalidSurfaceReference
-	}
-	if local < 0 || local >= len(layer.mvStore) {
-		return tile.TemporalMotionReferenceFrame{}, decoder.ErrInvalidSurfaceReference
-	}
-	return layer.mvStore[local], nil
-}
-
 func (s *corpusSpatialLayers) layer(event decoder.Event) *corpusSpatialLayerState {
 	id := event.SpatialID
 	if layer, ok := s.byID[id]; ok {
@@ -1146,7 +1019,6 @@ func (s *corpusSpatialLayers) layer(event decoder.Event) *corpusSpatialLayerStat
 	}
 	layer := &corpusSpatialLayerState{spatialID: id}
 	layer.pool, layer.format, layer.backing, layer.frameSlots, layer.free, layer.used = bindCorpusFramePool(event, 16)
-	layer.mvEntryBacking, layer.temporalEntryBacking, layer.mvFrames, layer.mvStore, layer.mvLength = bindCorpusMotionStore(event, len(layer.frameSlots))
 	s.byID[id] = layer
 	return layer
 }
@@ -1157,10 +1029,6 @@ func (s *corpusSpatialLayers) keepAlive() {
 		runtime.KeepAlive(layer.frameSlots)
 		runtime.KeepAlive(layer.free)
 		runtime.KeepAlive(layer.used)
-		runtime.KeepAlive(layer.mvEntryBacking)
-		runtime.KeepAlive(layer.temporalEntryBacking)
-		runtime.KeepAlive(layer.mvFrames)
-		runtime.KeepAlive(layer.mvStore)
 	}
 }
 
@@ -1179,20 +1047,6 @@ func bindCorpusFramePool(event decoder.Event, count int) (frame.Pool, frame.Form
 		panic(fmt.Sprintf("corpus: BindPool: %v", err))
 	}
 	return pool, format, backing, frames, free, used
-}
-
-func bindCorpusMotionStore(event decoder.Event, count int) ([]tile.ReferenceMVEntry, []tile.TemporalMotionEntry, []tile.ReferenceMVFrame, []tile.TemporalMotionReferenceFrame, int) {
-	miCols := libaomVectorMIExtent(event.FrameSize.CodedWidth)
-	miRows := libaomVectorMIExtent(event.FrameSize.Height)
-	length, err := tile.ReferenceMVFrameEntries(miRows, miCols)
-	if err != nil {
-		panic(fmt.Sprintf("corpus: ReferenceMVFrameEntries: %v", err))
-	}
-	return make([]tile.ReferenceMVEntry, count*length),
-		make([]tile.TemporalMotionEntry, length),
-		make([]tile.ReferenceMVFrame, count),
-		make([]tile.TemporalMotionReferenceFrame, count),
-		length
 }
 
 func TestParseCorpusOracleSidecar(t *testing.T) {

@@ -80,7 +80,7 @@ func TestFilterIntraPredictorMatchesLibaomKnownVector(t *testing.T) {
 		AboveLeftAvailable: true,
 	}
 	plane, _ := testPlane(4, 4, 1, 4)
-	if err := PredictFilterIntraPlaneBlock(plane, 1, 8, 0, 0, 4, 4, FilterIntraModePaeth, edges); err != nil {
+	if err := PredictFilterIntraPlaneBlockWithExtentBounded(plane, 1, 8, 0, 0, 4, 4, 4, 4, FilterIntraModePaeth, edges, false); err != nil {
 		t.Fatal(err)
 	}
 	want := []uint16{
@@ -105,7 +105,7 @@ func TestFilterIntraPredictorWithExtentClipsVisiblePixels(t *testing.T) {
 		AboveLeftAvailable: true,
 	}
 	plane, _ := testPlane(6, 6, 1, 6)
-	if err := PredictFilterIntraPlaneBlockWithExtent(plane, 1, 8, 0, 0, 6, 6, 8, 8, FilterIntraModePaeth, edges); err != nil {
+	if err := PredictFilterIntraPlaneBlockWithExtentBounded(plane, 1, 8, 0, 0, 6, 6, 8, 8, FilterIntraModePaeth, edges, false); err != nil {
 		t.Fatal(err)
 	}
 	full := filterIntraLibaomReference(8, 8, FilterIntraModePaeth, edges, 0xff)
@@ -133,7 +133,7 @@ func TestFilterIntraPredictorMatchesLibaomCorpus(t *testing.T) {
 					edges := randomStaticIntraEdges(size.width, size.height, mask, rnd)
 					want := filterIntraLibaomReference(size.width, size.height, mode, edges, mask)
 					plane, _ := testPlane(size.width, size.height, bytesPerSample, size.width*bytesPerSample)
-					if err := PredictFilterIntraPlaneBlock(plane, bytesPerSample, bitDepth, 0, 0, size.width, size.height, mode, edges); err != nil {
+					if err := PredictFilterIntraPlaneBlockWithExtentBounded(plane, bytesPerSample, bitDepth, 0, 0, size.width, size.height, size.width, size.height, mode, edges, false); err != nil {
 						t.Fatalf("bitDepth=%d mode=%d size=%dx%d iter=%d: %v", bitDepth, mode, size.width, size.height, iter, err)
 					}
 					got := collectPlaneSamples(plane, bytesPerSample, size.width, size.height)
@@ -166,7 +166,7 @@ func TestFilterIntraPredictorRejectsInvalidInputs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := PredictFilterIntraPlaneBlock(plane, 1, 8, 0, 0, tt.width, tt.height, tt.mode, tt.edges); !errors.Is(err, ErrInvalidPrediction) {
+			if err := PredictFilterIntraPlaneBlockWithExtentBounded(plane, 1, 8, 0, 0, tt.width, tt.height, tt.width, tt.height, tt.mode, tt.edges, false); !errors.Is(err, ErrInvalidPrediction) {
 				t.Fatalf("err=%v want %v", err, ErrInvalidPrediction)
 			}
 		})
@@ -177,7 +177,7 @@ func TestFilterIntraPredictorAllocs(t *testing.T) {
 	plane, _ := testPlane(32, 32, 2, 32*2)
 	edges := randomStaticIntraEdges(32, 32, 0xfff, newLibaomIntraEdgeRandom(libaomIntraEdgeDeterministicSeed))
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := PredictFilterIntraPlaneBlock(plane, 2, 12, 0, 0, 32, 32, FilterIntraModePaeth, edges); err != nil {
+		if err := PredictFilterIntraPlaneBlockWithExtentBounded(plane, 2, 12, 0, 0, 32, 32, 32, 32, FilterIntraModePaeth, edges, false); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -202,7 +202,7 @@ func FuzzFilterIntraPredictor(f *testing.F) {
 		max := uint16((1 << bitDepth) - 1)
 		edges := fuzzStaticIntraEdges(size.width, size.height, max, rawSeed, data)
 		plane, _ := testPlane(size.width, size.height, bytesPerSample, size.width*bytesPerSample)
-		if err := PredictFilterIntraPlaneBlock(plane, bytesPerSample, bitDepth, 0, 0, size.width, size.height, mode, edges); err != nil {
+		if err := PredictFilterIntraPlaneBlockWithExtentBounded(plane, bytesPerSample, bitDepth, 0, 0, size.width, size.height, size.width, size.height, mode, edges, false); err != nil {
 			t.Fatalf("PredictFilterIntraPlaneBlock err=%v", err)
 		}
 		for row := 0; row < size.height; row++ {
@@ -220,7 +220,7 @@ func BenchmarkFilterIntraPredictor(b *testing.B) {
 	edges := randomStaticIntraEdges(32, 32, 0xfff, newLibaomIntraEdgeRandom(libaomIntraEdgeDeterministicSeed))
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = PredictFilterIntraPlaneBlock(plane, 2, 12, 0, 0, 32, 32, FilterIntraModeD157, edges)
+		_ = PredictFilterIntraPlaneBlockWithExtentBounded(plane, 2, 12, 0, 0, 32, 32, 32, 32, FilterIntraModeD157, edges, false)
 	}
 }
 

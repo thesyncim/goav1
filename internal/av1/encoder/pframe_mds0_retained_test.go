@@ -58,7 +58,7 @@ func TestMDS0RetainedPredictionMatchesWinner(t *testing.T) {
 			}
 			var sourcePrediction [block * block]byte
 			var sourceScratch motion.ScaledConvolveScratch
-			if err := predictInto(sourcePrediction[:], refPlane, width, width, height,
+			if err := predictIntoScaled(sourcePrediction[:], refPlane, width, width, height, width, height,
 				px, py, block, block, tc.sourceMV, false, false, &sourceScratch); err != nil {
 				t.Fatalf("source prediction: %v", err)
 			}
@@ -87,7 +87,7 @@ func TestMDS0RetainedPredictionMatchesWinner(t *testing.T) {
 
 			var want [block * block]byte
 			var wantScratch motion.ScaledConvolveScratch
-			if err := predictInto(want[:], refPlane, width, width, height,
+			if err := predictIntoScaled(want[:], refPlane, width, width, height, width, height,
 				px, py, block, block, winner.mv, false, false, &wantScratch); err != nil {
 				t.Fatalf("winner prediction: %v", err)
 			}

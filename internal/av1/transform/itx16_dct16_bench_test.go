@@ -32,7 +32,6 @@ func benchCopyKernel(b *testing.B, lowN int, kernel func([]int32)) {
 	}
 }
 
-func BenchmarkDCT16x8_CopyOnly(b *testing.B) { benchCopyKernel(b, 4, func([]int32) {}) }
 func BenchmarkDCT16x8_CopyCol4Low4x2(b *testing.B) {
 	benchCopyKernel(b, 4, func(w []int32) {
 		inverseDCT16LowCol4Impl(w, 8, 4, minInt16, maxInt16)

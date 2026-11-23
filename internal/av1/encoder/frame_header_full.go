@@ -2,7 +2,6 @@ package encoder
 
 import (
 	"github.com/thesyncim/goav1/internal/av1/bitstream"
-	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -57,46 +56,12 @@ func IntraFrameHeaderPayloadSize(seq SequenceHeader, header IntraFrameHeaderPara
 	return w.bytesWritten(), nil
 }
 
-func AppendIntraFrameHeaderPayload(dst []byte, seq SequenceHeader, header IntraFrameHeaderParams) ([]byte, error) {
-	payloadSize, err := IntraFrameHeaderPayloadSize(seq, header)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < payloadSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+payloadSize]
-	w := newBitWriter(out[off:])
-	if err := writeIntraFrameHeaderPayload(&w, seq, header); err != nil {
-		return dst, err
-	}
-	return out, nil
-}
-
 func InterFrameHeaderPayloadSize(seq SequenceHeader, header InterFrameHeaderParams) (int, error) {
 	w := newSizingBitWriter()
 	if err := writeInterFrameHeaderPayload(&w, seq, header); err != nil {
 		return 0, err
 	}
 	return w.bytesWritten(), nil
-}
-
-func AppendInterFrameHeaderPayload(dst []byte, seq SequenceHeader, header InterFrameHeaderParams) ([]byte, error) {
-	payloadSize, err := InterFrameHeaderPayloadSize(seq, header)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < payloadSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+payloadSize]
-	w := newBitWriter(out[off:])
-	if err := writeInterFrameHeaderPayload(&w, seq, header); err != nil {
-		return dst, err
-	}
-	return out, nil
 }
 
 // LowOverheadIntraFrameHeaderOBUSize returns the exact byte count for one
@@ -110,33 +75,6 @@ func LowOverheadIntraFrameHeaderOBUSize(seq SequenceHeader, header IntraFrameHea
 	return lowOverheadFrameHeaderOBUSize(payloadSize, temporalID, spatialID)
 }
 
-// AppendLowOverheadIntraFrameHeaderOBU appends one complete intra frame-header
-// OBU into dst without growing it.
-func AppendLowOverheadIntraFrameHeaderOBU(dst []byte, seq SequenceHeader, header IntraFrameHeaderParams, temporalID uint8, spatialID uint8) ([]byte, error) {
-	payloadSize, err := IntraFrameHeaderPayloadSize(seq, header)
-	if err != nil {
-		return dst, err
-	}
-	obuSize, err := lowOverheadFrameHeaderOBUSize(payloadSize, temporalID, spatialID)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < obuSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+obuSize]
-	payload, err := appendLowOverheadFrameHeaderOBUPrefix(out, off, payloadSize, temporalID, spatialID)
-	if err != nil {
-		return dst, err
-	}
-	w := newBitWriter(payload)
-	if err := writeIntraFrameHeaderPayload(&w, seq, header); err != nil {
-		return dst, err
-	}
-	return out, nil
-}
-
 // LowOverheadInterFrameHeaderOBUSize returns the exact byte count for one
 // complete inter frame-header OBU. temporalID and spatialID are encoded in the
 // OBU extension header when either is non-zero.
@@ -148,33 +86,6 @@ func LowOverheadInterFrameHeaderOBUSize(seq SequenceHeader, header InterFrameHea
 	return lowOverheadFrameHeaderOBUSize(payloadSize, temporalID, spatialID)
 }
 
-// AppendLowOverheadInterFrameHeaderOBU appends one complete inter frame-header
-// OBU into dst without growing it.
-func AppendLowOverheadInterFrameHeaderOBU(dst []byte, seq SequenceHeader, header InterFrameHeaderParams, temporalID uint8, spatialID uint8) ([]byte, error) {
-	payloadSize, err := InterFrameHeaderPayloadSize(seq, header)
-	if err != nil {
-		return dst, err
-	}
-	obuSize, err := lowOverheadFrameHeaderOBUSize(payloadSize, temporalID, spatialID)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < obuSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+obuSize]
-	payload, err := appendLowOverheadFrameHeaderOBUPrefix(out, off, payloadSize, temporalID, spatialID)
-	if err != nil {
-		return dst, err
-	}
-	w := newBitWriter(payload)
-	if err := writeInterFrameHeaderPayload(&w, seq, header); err != nil {
-		return dst, err
-	}
-	return out, nil
-}
-
 func lowOverheadFrameHeaderOBUSize(payloadSize int, temporalID uint8, spatialID uint8) (int, error) {
 	if temporalID > 7 || spatialID > 3 {
 		return 0, ErrInvalidFrame
@@ -184,26 +95,6 @@ func lowOverheadFrameHeaderOBUSize(payloadSize int, temporalID uint8, spatialID 
 		headerSize = 2
 	}
 	return headerSize + bitstream.LEB128Len(uint32(payloadSize)) + payloadSize, nil
-}
-
-func appendLowOverheadFrameHeaderOBUPrefix(out []byte, off int, payloadSize int, temporalID uint8, spatialID uint8) ([]byte, error) {
-	n, err := obu.PutHeader(out[off:], obu.Header{
-		Type:         obu.TypeFrameHeader,
-		Extension:    temporalID != 0 || spatialID != 0,
-		HasSizeField: true,
-		TemporalID:   temporalID,
-		SpatialID:    spatialID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	off += n
-	n, err = bitstream.PutLEB128(out[off:], uint32(payloadSize))
-	if err != nil {
-		return nil, err
-	}
-	off += n
-	return out[off : off+payloadSize], nil
 }
 
 func writeIntraFrameHeaderPayload(w *bitWriter, seq SequenceHeader, header IntraFrameHeaderParams) error {

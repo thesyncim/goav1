@@ -92,48 +92,56 @@ func TestForwardDCTSquareSIMDMatchesPureGo(t *testing.T) {
 		{"32x32", 32, forwardDCT32x32SIMD, forwardDCT32x32PureGo},
 	}
 	for _, tc := range cases {
-		const resExtra, coeffExtra = 5, 3
-		resStride := tc.side + resExtra
-		coeffStride := tc.side + coeffExtra
-		residual := make([]int16, resStride*tc.side)
-		got := make([]int32, coeffStride*tc.side)
-		want := make([]int32, coeffStride*tc.side)
-		patterns := []func(r, c int) int16{
-			func(r, c int) int16 { return 255 },
-			func(r, c int) int16 { return -255 },
-			func(r, c int) int16 {
-				if (r+c)&1 == 0 {
-					return 255
-				}
-				return -255
-			},
+		for _, coeffExtra := range []int{0, 3} {
+			testForwardDCTSquareSIMD(t, rng, tc.name, tc.side, coeffExtra, tc.simd, tc.pure)
 		}
-		check := func(trial int) {
-			t.Helper()
-			clear(got)
-			clear(want)
-			tc.simd(got, coeffStride, residual, resStride)
-			tc.pure(want, coeffStride, residual, resStride)
-			for i := range want {
-				if got[i] != want[i] {
-					t.Fatalf("%s trial %d: coeff[%d] simd %d want %d", tc.name, trial, i, got[i], want[i])
-				}
+	}
+}
+
+// testForwardDCTSquareSIMD runs one kernel pair at coefficient stride
+// side+coeffExtra (0 takes the in-place path, others the copy-out one).
+func testForwardDCTSquareSIMD(t *testing.T, rng *rand.Rand, name string, side, coeffExtra int, simd, pure func([]int32, int, []int16, int)) {
+	const resExtra = 5
+	resStride := side + resExtra
+	coeffStride := side + coeffExtra
+	residual := make([]int16, resStride*side)
+	got := make([]int32, coeffStride*side)
+	want := make([]int32, coeffStride*side)
+	patterns := []func(r, c int) int16{
+		func(r, c int) int16 { return 255 },
+		func(r, c int) int16 { return -255 },
+		func(r, c int) int16 {
+			if (r+c)&1 == 0 {
+				return 255
+			}
+			return -255
+		},
+	}
+	check := func(trial int) {
+		t.Helper()
+		clear(got)
+		clear(want)
+		simd(got, coeffStride, residual, resStride)
+		pure(want, coeffStride, residual, resStride)
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("%s trial %d: coeff[%d] simd %d want %d", name, trial, i, got[i], want[i])
 			}
 		}
-		for _, pat := range patterns {
-			for r := range tc.side {
-				for c := range tc.side {
-					residual[r*resStride+c] = pat(r, c)
-				}
+	}
+	for _, pat := range patterns {
+		for r := range side {
+			for c := range side {
+				residual[r*resStride+c] = pat(r, c)
 			}
-			check(-1)
 		}
-		for trial := range 400 {
-			for i := range residual {
-				residual[i] = int16(rng.Intn(511)) - 255
-			}
-			check(trial)
+		check(-1)
+	}
+	for trial := range 400 {
+		for i := range residual {
+			residual[i] = int16(rng.Intn(511)) - 255
 		}
+		check(trial)
 	}
 }
 

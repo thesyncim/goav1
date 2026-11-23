@@ -22,9 +22,11 @@ package prediction
 //     weights that sum to 256, so the rounded result (w*a + (256-w)*b + 128) is
 //     at most 255*256+128 = 65408 and fits uint16 exactly.
 //   - SMOOTH (2D) is V+H where V and H are each such convex combinations, so
-//     V+H+256 can exceed 16 bits. It is computed as
-//     (floor((V+H)/2) + 128) >> 8, with floor((V+H)/2) = (V>>1) + (H>>1) + (V&H&1),
-//     which equals (V+H+256)>>9 exactly and stays in uint16.
+//     V+H+256 can exceed 16 bits. As dav1d's ipred_smooth_8bpc_neon, V is
+//     bottom*256 + (top-bottom)*w_ver and H is right*256 + (left-right)*w_hor,
+//     each one multiply-accumulate exact mod 2^16. V carries a +255 bias
+//     (V+255 <= 65535), so the rounded halving add avg(V+255, H) is
+//     floor((V+H+256)/2) and its high byte is (V+H+256)>>9 exactly.
 //   - 16-bit SMOOTH products reach 4095*255 and need int32 lanes.
 
 import (
@@ -64,27 +66,67 @@ func paethW4SIMD(block planeBlock, above []uint16, left []uint16, aboveLeft uint
 // rows per vector (lanes 0..3 row r, lanes 4..7 row r+1).
 func smooth8W4SIMD(block planeBlock, weightsW []uint16, weightsH []uint16, above []uint16, left []uint16, belowPred uint16, rightPred uint16) {
 	height := block.height
-	aV := archsimd.LoadUint16x8Array(&[8]uint16{above[0], above[1], above[2], above[3], above[0], above[1], above[2], above[3]})
+	tmb := archsimd.LoadUint16x8Array(&[8]uint16{above[0], above[1], above[2], above[3], above[0], above[1], above[2], above[3]}).Sub(archsimd.BroadcastUint16x8(belowPred))
 	wWV := archsimd.LoadUint16x8Array(&[8]uint16{weightsW[0], weightsW[1], weightsW[2], weightsW[3], weightsW[0], weightsW[1], weightsW[2], weightsW[3]})
-	cwRV := archsimd.BroadcastUint16x8(smoothScale).Sub(wWV).Mul(archsimd.BroadcastUint16x8(rightPred))
-	belowV := archsimd.BroadcastUint16x8(belowPred)
-	oneV := archsimd.BroadcastUint16x8(1)
-	roundV := archsimd.BroadcastUint16x8(1 << (smoothShift1D - 1))
+	vBase := archsimd.BroadcastUint16x8(belowPred<<8 | 0xff)
+	hBase := archsimd.BroadcastUint16x8(rightPred << 8)
 	for row := 0; row < height; row += 2 {
 		wHV := archsimd.LoadUint16x8Array(&[8]uint16{
 			weightsH[row], weightsH[row], weightsH[row], weightsH[row],
 			weightsH[row+1], weightsH[row+1], weightsH[row+1], weightsH[row+1],
 		})
-		lV := archsimd.LoadUint16x8Array(&[8]uint16{
-			left[row], left[row], left[row], left[row],
-			left[row+1], left[row+1], left[row+1], left[row+1],
-		})
-		v := wHV.Mul(aV).Add(archsimd.BroadcastUint16x8(smoothScale).Sub(wHV).Mul(belowV))
-		h := wWV.Mul(lV).Add(cwRV)
-		half := v.Shift(shr1U16).Add(h.Shift(shr1U16)).Add(v.And(h).And(oneV))
-		out := half.Add(roundV).Shift(shr8U16).SaturateToUint8().ReshapeToUint32s()
+		l0, l1 := left[row]-rightPred, left[row+1]-rightPred
+		lmr := archsimd.LoadUint16x8Array(&[8]uint16{l0, l0, l0, l0, l1, l1, l1, l1})
+		avg := tmb.MulAdd(wHV, vBase).Average(wWV.MulAdd(lmr, hBase)).ReshapeToUint8s()
+		out := avg.ConcatOdd(avg).ReshapeToUint32s()
 		putU32(block.pix, row*block.stride, out.GetElem(0))
 		putU32(block.pix, (row+1)*block.stride, out.GetElem(1))
+	}
+}
+
+// smoothW8NEON is the 8-bit 2D SMOOTH kernel for width 8, two rows per
+// iteration narrowed into one vector (dav1d's ipred_smooth w8 loop).
+func smoothW8NEON(block planeBlock, weightsW []uint16, weightsH []uint16, above []uint16, left []uint16, belowPred uint16, rightPred uint16) {
+	height := block.height
+	stride := block.stride
+	tmb := archsimd.LoadUint16x8Array((*[8]uint16)(above)).Sub(archsimd.BroadcastUint16x8(belowPred))
+	wh := archsimd.LoadUint16x8Array((*[8]uint16)(weightsW))
+	vBase := archsimd.BroadcastUint16x8(belowPred<<8 | 0xff)
+	hBase := archsimd.BroadcastUint16x8(rightPred << 8)
+	weightsH, left = weightsH[:height], left[:height]
+	for row := 0; row+1 < height; row += 2 {
+		a0 := tmb.MulAdd(archsimd.BroadcastUint16x8(weightsH[row]), vBase).Average(wh.MulAdd(archsimd.BroadcastUint16x8(left[row]-rightPred), hBase))
+		a1 := tmb.MulAdd(archsimd.BroadcastUint16x8(weightsH[row+1]), vBase).Average(wh.MulAdd(archsimd.BroadcastUint16x8(left[row+1]-rightPred), hBase))
+		out := a0.ReshapeToUint8s().ConcatOdd(a1.ReshapeToUint8s()).ReshapeToUint64s()
+		off := row * stride
+		binary.LittleEndian.PutUint64(block.pix[off:], out.GetElem(0))
+		binary.LittleEndian.PutUint64(block.pix[off+stride:], out.GetElem(1))
+	}
+}
+
+// smoothWideNEON is the 8-bit 2D SMOOTH kernel for width a multiple of 16:
+// per row, sixteen columns per narrowed store.
+func smoothWideNEON(block planeBlock, weightsW []uint16, weightsH []uint16, above []uint16, left []uint16, belowPred uint16, rightPred uint16) {
+	width, height := block.width, block.height
+	blocks := min(width/8, 8)
+	bottomV := archsimd.BroadcastUint16x8(belowPred)
+	vBase := archsimd.BroadcastUint16x8(belowPred<<8 | 0xff)
+	hBase := archsimd.BroadcastUint16x8(rightPred << 8)
+	var tmb, wh [8]archsimd.Uint16x8
+	for b := 0; b < blocks; b++ {
+		tmb[b] = archsimd.LoadUint16x8Array((*[8]uint16)(above[b*8:])).Sub(bottomV)
+		wh[b] = archsimd.LoadUint16x8Array((*[8]uint16)(weightsW[b*8:]))
+	}
+	weightsH, left = weightsH[:height], left[:height]
+	for row := range height {
+		wv := archsimd.BroadcastUint16x8(weightsH[row])
+		lmr := archsimd.BroadcastUint16x8(left[row] - rightPred)
+		dst := block.pix[row*block.stride:]
+		for b := 0; b+1 < blocks; b += 2 {
+			a0 := tmb[b].MulAdd(wv, vBase).Average(wh[b].MulAdd(lmr, hBase))
+			a1 := tmb[b+1].MulAdd(wv, vBase).Average(wh[b+1].MulAdd(lmr, hBase))
+			a0.ReshapeToUint8s().ConcatOdd(a1.ReshapeToUint8s()).StoreArray((*[16]uint8)(dst[b*8:]))
+		}
 	}
 }
 
@@ -247,6 +289,10 @@ func predictPaethSIMD(block planeBlock, bytesPerSample int, above []uint16, left
 // predictSmoothSIMD routes a 2D SMOOTH block to the kernel for its shape.
 func predictSmoothSIMD(block planeBlock, bytesPerSample int, weightsW []uint16, weightsH []uint16, above []uint16, left []uint16, belowPred uint16, rightPred uint16) {
 	switch {
+	case bytesPerSample == 1 && block.width == 8 && block.height%2 == 0:
+		smoothW8NEON(block, weightsW, weightsH, above, left, belowPred, rightPred)
+	case bytesPerSample == 1 && block.width%16 == 0 && block.width <= 64:
+		smoothWideNEON(block, weightsW, weightsH, above, left, belowPred, rightPred)
 	case bytesPerSample == 1 && block.width%8 == 0:
 		smooth8SIMD(block, weightsW, weightsH, above, left, belowPred, rightPred)
 	case bytesPerSample == 1 && block.width == 4 && block.height%2 == 0:

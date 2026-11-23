@@ -295,11 +295,11 @@ func (c *BlockModeContext) SelectedTransformContext(max TransformSize, x4 int, y
 		return 0, err
 	}
 	left := 0
-	if c.LeftTxIntra[y4] >= dims.Log2H {
+	if c.L.TxIntra[y4] >= dims.Log2H {
 		left = 1
 	}
 	above := 0
-	if c.AboveTxIntra[x4] >= dims.Log2W {
+	if c.A.TxIntra[x4] >= dims.Log2W {
 		above = 1
 	}
 	return left + above, nil
@@ -324,10 +324,10 @@ func (c *BlockModeContext) SelectedTransformContextWithAvailability(max Transfor
 	// before DecodeBlockCoefficients reads tx_size context, so without the
 	// snapshot the inter-block branch below would incorrectly read the
 	// current block's flags instead of the neighbor's.
-	aboveIntra := c.AboveIntra[x4]
-	aboveBlockSize := c.AboveBlockSize[x4]
-	leftIntra := c.LeftIntra[y4]
-	leftBlockSize := c.LeftBlockSize[y4]
+	aboveIntra := c.A.Intra[x4]
+	aboveBlockSize := c.A.BlockSize[x4]
+	leftIntra := c.L.Intra[y4]
+	leftBlockSize := c.L.BlockSize[y4]
 	if c.TxNeighborValid {
 		aboveIntra = c.TxAboveNeighborIntra
 		aboveBlockSize = c.TxAboveNeighborBlockSize
@@ -335,7 +335,7 @@ func (c *BlockModeContext) SelectedTransformContextWithAvailability(max Transfor
 		leftBlockSize = c.TxLeftNeighborBlockSize
 	}
 	above := 0
-	if c.AboveTx[x4] >= dims.Log2W {
+	if c.A.Tx[x4] >= dims.Log2W {
 		above = 1
 	}
 	if haveTop && aboveIntra == 0 {
@@ -345,7 +345,7 @@ func (c *BlockModeContext) SelectedTransformContextWithAvailability(max Transfor
 		}
 	}
 	left := 0
-	if c.LeftTx[y4] >= dims.Log2H {
+	if c.L.Tx[y4] >= dims.Log2H {
 		left = 1
 	}
 	if haveLeft && leftIntra == 0 {
@@ -393,11 +393,11 @@ func (c *BlockModeContext) TransformPartitionContext(req TransformPartitionReque
 	// slots zero across blocks, so the "<txw" check would erroneously fire at
 	// edges; gate the comparisons on neighbor availability to match libaom.
 	above := 0
-	if req.HaveTop && c.AboveTx[req.X4] < dims.Log2W {
+	if req.HaveTop && c.A.Tx[req.X4] < dims.Log2W {
 		above = 1
 	}
 	left := 0
-	if req.HaveLeft && c.LeftTx[req.Y4] < dims.Log2H {
+	if req.HaveLeft && c.L.Tx[req.Y4] < dims.Log2H {
 		left = 1
 	}
 	return category, above + left, nil
@@ -435,15 +435,15 @@ func (c *BlockModeContext) MarkTransformArea(x4 int, y4 int, spanW4 int, spanH4 
 		return ErrInvalidDecodeState
 	}
 	for i := range spanW4 {
-		c.AboveTx[x4+i] = ctxLog2W
+		c.A.Tx[x4+i] = ctxLog2W
 		if intra {
-			c.AboveTxIntra[x4+i] = ctxLog2W
+			c.A.TxIntra[x4+i] = ctxLog2W
 		}
 	}
 	for i := range spanH4 {
-		c.LeftTx[y4+i] = ctxLog2H
+		c.L.Tx[y4+i] = ctxLog2H
 		if intra {
-			c.LeftTxIntra[y4+i] = ctxLog2H
+			c.L.TxIntra[y4+i] = ctxLog2H
 		}
 	}
 	return nil

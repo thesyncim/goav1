@@ -80,12 +80,11 @@ func coefHiCtx(mag uint) uint {
 }
 
 // decodeCoefTokens ports dav1d decode_coefs (src/recon_tmpl.c) from the eob
-// read through the residual, sign and dequantization pass, for a non-skipped
-// TXB without quantizer matrices. cf must be zero over the TXB's scan area on
-// entry; it receives the dequantized coefficients in raster scan order
-// (rc = x * scanHeight + y). During the token pass cf doubles as dav1d's
-// token/next-rc chain: cf[rc] = tok << 11 | rc of the previous nonzero.
-func decodeCoefTokens(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, geo *coeffGeometry, plane CoeffPlaneType, txtp transform.Type, class transform.Class, dcSignCtx uint8, cf *[1024]int32, cfZeroed bool, levels *[coefLevelsLen]uint8, dq coefDequant) coefDecodeResult {
+// read through the base and high tokens of a non-skipped TXB. cf must be zero
+// over the TXB's scan area on entry when cfZeroed; it receives dav1d's
+// token/next-rc chain, cf[rc] = tok << 11 | rc of the previous nonzero. It
+// returns the 0-based eob, the chain head rc and the DC token.
+func decodeCoefTokens(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, geo *coeffGeometry, plane CoeffPlaneType, txtp transform.Type, class transform.Class, cf *[1024]int32, cfZeroed bool, levels *[coefLevelsLen]uint8) (eob int, rc, dcTok uint) {
 	txCtx := int(geo.txCtx)
 	scanW := uint(geo.scanWidth)
 	scanH := uint(geo.scanHeight)
@@ -96,7 +95,7 @@ func decodeCoefTokens(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, ge
 		is1D = 1
 	}
 	eobSymbols := int(eobMultiSizeTable[size]) + 5
-	eob := c.ReadCDFSymbolsUnchecked(eobFlagCDFKnown(cdfs, size, plane, is1D), eobSymbols)
+	eob = c.ReadCDFSymbolsUnchecked(eobFlagCDFKnown(cdfs, size, plane, is1D), eobSymbols)
 	if eob > 1 {
 		eobBin := eob - 2
 		eobHiBit := c.ReadBinaryCDFUnchecked(&cdfs.EOBExtra[txCtx][plane][eobBin])
@@ -113,43 +112,52 @@ func decodeCoefTokens(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, ge
 	// base tokens
 	eobCDF := &cdfs.CoeffBaseEOB[txCtx][plane]
 	hiCDF := &cdfs.CoeffBR[geo.txBRCtx][plane]
-	var rc, dcTok uint
-	if eob != 0 {
-		loCDF := &cdfs.CoeffBase[txCtx][plane]
-		sz := uint(eobMultiSizeTable[size])
-		ctx := 1
-		if uint(eob) > 2<<sz {
-			ctx++
-		}
-		if uint(eob) > 4<<sz {
-			ctx++
-		}
-		eobTok := uint(c.ReadCDF3Unchecked(&eobCDF[ctx]))
-		switch class {
-		case transform.Class2D:
-			rc, dcTok = decodeCoefs2D(c, loCDF, hiCDF, size, geo, eob, eobTok, cf, levels)
-		case transform.ClassHoriz:
-			rc, dcTok = decodeCoefs1D(c, loCDF, hiCDF, false, scanW, scanH, eob, eobTok, cf, levels)
-		default:
-			rc, dcTok = decodeCoefs1D(c, loCDF, hiCDF, true, scanW, scanH, eob, eobTok, cf, levels)
-		}
-	} else { // dc-only
+	if eob == 0 { // dc-only
 		tokBR := uint(c.ReadCDF3Unchecked(&eobCDF[0]))
 		dcTok = 1 + tokBR
 		if tokBR == 2 {
 			dcTok = 3 + uint(c.ReadCDF4HighTokenUnchecked(&hiCDF[0]))
 		}
-		rc = 0
+		return 0, 0, dcTok
 	}
+	loCDF := &cdfs.CoeffBase[txCtx][plane]
+	sz := uint(eobMultiSizeTable[size])
+	ctx := 1
+	if uint(eob) > 2<<sz {
+		ctx++
+	}
+	if uint(eob) > 4<<sz {
+		ctx++
+	}
+	eobTok := uint(c.ReadCDF3Unchecked(&eobCDF[ctx]))
+	switch class {
+	case transform.Class2D:
+		rc, dcTok = decodeCoefs2D(c, loCDF, hiCDF, size, geo, eob, eobTok, cf, levels)
+	case transform.ClassHoriz:
+		rc, dcTok = decodeCoefs1D(c, loCDF, hiCDF, false, scanW, scanH, eob, eobTok, cf, levels)
+	default:
+		rc, dcTok = decodeCoefs1D(c, loCDF, hiCDF, true, scanW, scanH, eob, eobTok, cf, levels)
+	}
+	return eob, rc, dcTok
+}
 
-	// residual and sign
-	rowMask := scanH - 1
-	colShift := uint(log2Coef[scanH])
+// decodeCoefResidual is the "residual and sign" pass of dav1d's decode_coefs
+// with its context result: it turns the token chain from decodeCoefTokens
+// into dequantized, signed coefficients in raster scan order
+// (rc = x * scanHeight + y). dcSignCDF is the dc_sign CDF dav1d selects with
+// get_dc_sign_ctx, needed only when dcTok is nonzero. qm is the TXB's
+// quantizer matrix (dav1d's qm_tbl), nil for flat dequantization.
+func decodeCoefResidual(c *entropy.Cursor, dcSignCDF *entropy.CDF, eob int, rc, dcTok uint, cf *[1024]int32, dq coefDequant, qm []uint16, geo *coeffGeometry) coefDecodeResult {
+	rowMask := uint(geo.scanHeight) - 1
+	colShift := uint(log2Coef[geo.scanHeight])
+	if qm != nil {
+		return decodeCoefResidualQM(c, dcSignCDF, eob, rc, dcTok, cf, dq, qm, rowMask, colShift)
+	}
 	activeRows, activeCols := uint(0), uint(0)
 	var culLevel uint
 	dcSignLevel := uint8(0)
 	if dcTok != 0 {
-		dcSign := uint32(c.ReadBinaryCDFUnchecked(&cdfs.DCSign[plane][dcSignCtx]))
+		dcSign := uint32(c.ReadBinaryCDFUnchecked(dcSignCDF))
 		dcDQ := dq.dc
 		if dcSign == 0 {
 			dcSignLevel = 2 << CoeffContextBits
@@ -176,6 +184,70 @@ func decodeCoefTokens(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, ge
 		culLevel, activeRows, activeCols = c.DecodeCoefSignsAC(cf, rc, dq.ac, uint(dq.shift), dq.cfMax, rowMask, colShift, culLevel, activeRows, activeCols)
 	}
 
+	return coefDecodeResult{
+		eob:        eob,
+		culLevel:   uint8(min(culLevel, CoeffContextMask)) + dcSignLevel,
+		activeRows: int(activeRows),
+		activeCols: int(activeCols),
+	}
+}
+
+// decodeCoefResidualQM is the quantizer-matrix residual and sign pass of
+// dav1d's decode_coefs (the qm_tbl branch and ac_qm): each factor is first
+// weighted by its matrix entry, (dq * qm[rc] + 16) >> 5, and every
+// coefficient is clamped to cf_max.
+func decodeCoefResidualQM(c *entropy.Cursor, dcSignCDF *entropy.CDF, eob int, rc, dcTok uint, cf *[1024]int32, dq coefDequant, qm []uint16, rowMask, colShift uint) coefDecodeResult {
+	shift := uint(dq.shift) & 3
+	colShift &= 63
+	activeRows, activeCols := uint(0), uint(0)
+	var culLevel uint
+	dcSignLevel := uint8(0)
+	if dcTok != 0 {
+		dcSign := uint32(c.ReadBinaryCDFUnchecked(dcSignCDF))
+		if dcSign == 0 {
+			dcSignLevel = 2 << CoeffContextBits
+		} else {
+			dcSignLevel = 1 << CoeffContextBits
+		}
+		dcDQ := (dq.dc*uint32(qm[0]) + 16) >> 5
+		if dcTok == 15 {
+			dcTok = (uint(readCoefGolomb(c)) + 15) & 0xfffff
+			dcDQ = (dcDQ * uint32(dcTok)) & 0xffffff
+		} else {
+			dcDQ *= uint32(dcTok)
+		}
+		culLevel = dcTok
+		dcDQ = min(dcDQ>>shift, dq.cfMax+dcSign)
+		if dcSign != 0 {
+			cf[0] = -int32(dcDQ)
+		} else {
+			cf[0] = int32(dcDQ)
+		}
+		activeRows, activeCols = 1, 1
+	}
+	for rc != 0 {
+		sign := uint32(c.ReadBitTrusted())
+		rc &= 1023
+		rcTok := uint(uint32(cf[rc]))
+		v := (dq.ac*uint32(qm[rc]) + 16) >> 5
+		var tok uint
+		if rcTok >= 15<<11 {
+			tok = (uint(readCoefGolomb(c)) + 15) & 0xfffff
+			v = (v * uint32(tok)) & 0xffffff
+		} else {
+			tok = rcTok >> 11
+			v *= uint32(tok)
+		}
+		culLevel += tok
+		w := int32(min(v>>shift, dq.cfMax+sign))
+		if sign != 0 {
+			w = -w
+		}
+		cf[rc] = w
+		activeRows = max(activeRows, (rc&rowMask)+1)
+		activeCols = max(activeCols, (rc>>colShift)+1)
+		rc = rcTok & 0x3ff
+	}
 	return coefDecodeResult{
 		eob:        eob,
 		culLevel:   uint8(min(culLevel, CoeffContextMask)) + dcSignLevel,
@@ -299,34 +371,3 @@ func decodeCoefs1D(c *entropy.Cursor, loCDF *[CoeffBaseContexts]entropy.CDF, hiC
 
 // log2Coef maps a coefficient scan dimension (4, 8, 16 or 32) to its log2.
 var log2Coef = [33]uint8{4: 2, 8: 3, 16: 4, 32: 5}
-
-// decodeCoefsDequantized runs decodeCoefTokens for a nonzero TXB whose plane
-// has prepared dequant factors and publishes the result on req.dequant the way
-// the tracked quantized reader does. It reports false, consuming nothing, when
-// the target cannot take this TXB.
-func (s *DecodeState) decodeCoefsDequantized(cdfs *CoeffCDFs, req *TXBDecodeRequest, txtp transform.Type, class transform.Class, scratch *LumaCoeffTreeScratch, geo *coeffGeometry, result *TXBDecodeResult) bool {
-	target, txScale, dqMax := prepareTrackedCoeffDequant(req.dequant, req.dequantPlane, geo)
-	if target == nil || req.DCSignContext >= 3 {
-		return false
-	}
-	if len(target.Dst) < 1024 {
-		return false
-	}
-	factors := &target.Factors[req.dequantPlane]
-	c := s.Reader.Cursor()
-	r := decodeCoefTokens(&c, cdfs, req.Size, geo, req.Plane, txtp, class, req.DCSignContext, (*[1024]int32)(target.Dst), false, &scratch.CoefLevels, coefDequant{
-		dc:    uint32(factors[0]),
-		ac:    uint32(factors[1]),
-		shift: txScale,
-		cfMax: uint32(dqMax),
-	})
-	c.CommitStateTo(&s.Reader)
-	target.ActiveRows = r.activeRows
-	target.TxScale = txScale
-	target.decoded = true
-	*result = TXBDecodeResult{
-		EOB:      uint16(r.eob + 1),
-		CulLevel: r.culLevel,
-	}
-	return true
-}

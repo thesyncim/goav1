@@ -101,11 +101,6 @@ type WebRTCStream struct {
 	referenceValid [WebRTCReferenceBuffers]bool
 }
 
-// NewWebRTCStream creates an L1T1 WebRTC stream under CBR rate control.
-func NewWebRTCStream(width, height int, rc RateControlConfig) (*WebRTCStream, error) {
-	return NewWebRTCStreamLayers(width, height, rc, 1)
-}
-
 // NewWebRTCStreamLayers creates a WebRTC stream with the given temporal layer
 // count (1 = L1T1, 2 = L1T2, 3 = L1T3).
 func NewWebRTCStreamLayers(width, height int, rc RateControlConfig, temporalLayers int) (*WebRTCStream, error) {
@@ -2006,10 +2001,6 @@ func (s *WebRTCStream) updateMono16ReferenceFrame(settings FrameEncodeSettings, 
 	return nil
 }
 
-func (s *WebRTCStream) update42016ReferenceFrame(settings FrameEncodeSettings, enc *HighBitDepth420VideoEncoder) error {
-	return s.updateColor16ReferenceFrame(settings, enc)
-}
-
 func (s *WebRTCStream) updateColor16ReferenceFrame(settings FrameEncodeSettings, enc *HighBitDepth420VideoEncoder) error {
 	if !settings.UpdateBufferSet || !webRTCStreamUsesSharedReferenceSlotCoding(s.config) {
 		return nil
@@ -2181,10 +2172,6 @@ func (s *WebRTCStream) sourceForMono16Layer(src SourceFrameMono16, spatialID uin
 		s.layerGen[spatialID] = s.pictureGen
 	}
 	return out, err
-}
-
-func (s *WebRTCStream) sourceFor42016Layer(src SourceFrame42016, spatialID uint8, resolution Resolution) (SourceFrame42016, error) {
-	return s.sourceForColor16Layer(src, spatialID, resolution)
 }
 
 func (s *WebRTCStream) sourceForColor16Layer(src SourceFrame42016, spatialID uint8, resolution Resolution) (SourceFrame42016, error) {

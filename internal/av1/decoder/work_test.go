@@ -363,7 +363,6 @@ func TestFrameWorkStateLifecycle(t *testing.T) {
 		t.Fatalf("state=%+v active=%v plan=%+v output=%p", state, state.Active(), plan, output)
 	}
 	wantSequence := threading.FrameWorkSequenceContextFromHeader(events[0].SequenceHeader)
-	wantSequence.ScaledReferencePredictionDisabled = !threading.ScaledReferencePredictionEnabled()
 	if state.Sequence != wantSequence {
 		t.Fatalf("state sequence=%+v want %+v", state.Sequence, wantSequence)
 	}
@@ -397,33 +396,6 @@ func TestFrameWorkStateLifecycle(t *testing.T) {
 	slot, ok := refs.ReferenceSlot(0)
 	if !ok || slot != plan.Surface {
 		t.Fatalf("slot=%d ok=%v want %d", slot, ok, plan.Surface)
-	}
-}
-
-func TestFrameWorkStateScaledReferencePolicySurvivesReset(t *testing.T) {
-	t.Setenv("GOAV1_SCALED_PRED", "0")
-	var state FrameWorkState
-	state.SetScaledReferencePredictionEnabled(threading.ScaledReferencePredictionEnabled())
-	t.Setenv("GOAV1_SCALED_PRED", "1")
-
-	pool := testFramePool(t, 1)
-	var refs SurfaceReferences
-	event := Event{
-		Kind:        EventFrameHeader,
-		FrameHeader: parser.FrameHeaderPrefix{FrameType: parser.FrameTypeKey},
-		FrameSize:   testFrameSize(16, 16),
-	}
-	if _, _, err := state.Begin(&refs, &pool, testSequence(), &event, 32, nil, 1, nil, nil, nil); err != nil {
-		t.Fatalf("Begin: %v", err)
-	}
-	context := frameWorkFrameContext(&event, state.sequenceContext())
-	if !context.Sequence.ScaledReferencePredictionDisabled {
-		t.Fatal("frame context did not retain the decoder's captured disabled policy")
-	}
-
-	state.Reset()
-	if !state.scaledRefPolicySet || state.scaledRefPolicyEnabled {
-		t.Fatalf("scaled-reference policy after Reset: set=%v enabled=%v", state.scaledRefPolicySet, state.scaledRefPolicyEnabled)
 	}
 }
 
@@ -750,7 +722,7 @@ func TestExecuteFrameWorkStepExecutesBeginAndTile(t *testing.T) {
 		Begin: FrameWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
 	}
 	var seen uint16
-	executed, err := ExecuteFrameWorkStep(step, workerPool, jobs[:], batches[:], func(_ threading.Batch, batchJobs []tile.Job) error {
+	executed, err := executeTestFrameWorkStep(step, workerPool, jobs[:], batches[:], func(_ threading.Batch, batchJobs []tile.Job) error {
 		for i := range batchJobs {
 			seen += batchJobs[i].Tile + 1
 		}
@@ -768,7 +740,7 @@ func TestExecuteFrameWorkStepExecutesBeginAndTile(t *testing.T) {
 		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
 	}
 	seen = 0
-	executed, err = ExecuteFrameWorkStep(step, workerPool, jobs[:], batches[:], func(_ threading.Batch, batchJobs []tile.Job) error {
+	executed, err = executeTestFrameWorkStep(step, workerPool, jobs[:], batches[:], func(_ threading.Batch, batchJobs []tile.Job) error {
 		for i := range batchJobs {
 			seen += batchJobs[i].Tile + 1
 		}
@@ -789,7 +761,7 @@ func TestExecuteFrameWorkStepNoopSteps(t *testing.T) {
 		{Kind: FrameWorkStepShowExisting},
 		{Kind: FrameWorkStepBegin},
 	} {
-		executed, err := ExecuteFrameWorkStep(step, nil, nil, nil, nil)
+		executed, err := executeTestFrameWorkStep(step, nil, nil, nil, nil)
 		if err != nil || executed {
 			t.Fatalf("step=%+v executed=%v err=%v", step, executed, err)
 		}
@@ -817,7 +789,7 @@ func TestExecuteFrameWorkStepWithContext(t *testing.T) {
 	}
 
 	calls := 0
-	executed, err := ExecuteFrameWorkStepWithContext(step, workerPool, output, references[:], jobs[:], batches[:], func(ctx FrameWorkBatch) error {
+	executed, err := executeTestFrameWorkStepWithContext(step, workerPool, output, references[:], jobs[:], batches[:], func(ctx FrameWorkBatch) error {
 		calls++
 		if ctx.Step != step {
 			t.Fatalf("step=%+v want %+v", ctx.Step, step)
@@ -862,7 +834,7 @@ func TestExecuteFrameWorkStepWithPayload(t *testing.T) {
 		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
 	}
 
-	executed, err := ExecuteFrameWorkStepWithPayload(step, workerPool, output, nil, payload, jobs[:], batches[:], func(ctx FrameWorkBatch) error {
+	executed, err := executeTestFrameWorkStepWithPayload(step, workerPool, output, nil, payload, jobs[:], batches[:], func(ctx FrameWorkBatch) error {
 		if ctx.Output != output {
 			t.Fatalf("output=%p want %p", ctx.Output, output)
 		}
@@ -1213,7 +1185,7 @@ func TestExecuteFrameWorkStepWithPayloadRejectsInvalidPayloadRange(t *testing.T)
 		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
 	}
 
-	_, err := ExecuteFrameWorkStepWithPayload(step, nil, nil, nil, []byte{0xaa, 0xbb, 0xcc}, jobs[:], batches[:], func(FrameWorkBatch) error {
+	_, err := executeTestFrameWorkStepWithPayload(step, nil, nil, nil, []byte{0xaa, 0xbb, 0xcc}, jobs[:], batches[:], func(FrameWorkBatch) error {
 		t.Fatal("callback should not run")
 		return nil
 	})
@@ -1229,7 +1201,7 @@ func TestExecuteFrameWorkStepWithContextNoopSteps(t *testing.T) {
 		{Kind: FrameWorkStepShowExisting},
 		{Kind: FrameWorkStepBegin},
 	} {
-		executed, err := ExecuteFrameWorkStepWithContext(step, nil, nil, nil, nil, nil, nil)
+		executed, err := executeTestFrameWorkStepWithContext(step, nil, nil, nil, nil, nil, nil)
 		if err != nil || executed {
 			t.Fatalf("step=%+v executed=%v err=%v", step, executed, err)
 		}
@@ -1248,7 +1220,7 @@ func TestExecuteFrameWorkStepWithContextRejectsNilCallback(t *testing.T) {
 		Kind: FrameWorkStepTile,
 		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
 	}
-	_, err = ExecuteFrameWorkStepWithContext(step, workerPool, nil, nil, jobs[:], batches[:], nil)
+	_, err = executeTestFrameWorkStepWithContext(step, workerPool, nil, nil, jobs[:], batches[:], nil)
 	if !errors.Is(err, threading.ErrInvalidCallback) {
 		t.Fatalf("ExecuteFrameWorkStepWithContext err=%v want %v", err, threading.ErrInvalidCallback)
 	}
@@ -1269,7 +1241,7 @@ func TestExecuteFrameWorkStepWithContextRejectsShortReferences(t *testing.T) {
 			Tile:           TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount},
 		},
 	}
-	_, err = ExecuteFrameWorkStepWithContext(step, workerPool, nil, nil, jobs[:], batches[:], func(FrameWorkBatch) error {
+	_, err = executeTestFrameWorkStepWithContext(step, workerPool, nil, nil, jobs[:], batches[:], func(FrameWorkBatch) error {
 		return nil
 	})
 	if !errors.Is(err, ErrSurfaceReferenceBufferTooSmall) {
@@ -1296,7 +1268,7 @@ func TestExecuteTileWorkRejectsInvalidPlan(t *testing.T) {
 }
 
 func TestExecuteFrameWorkStepRejectsInvalidKind(t *testing.T) {
-	_, err := ExecuteFrameWorkStep(FrameWorkStep{Kind: FrameWorkStepKind(99)}, nil, nil, nil, nil)
+	_, err := executeTestFrameWorkStep(FrameWorkStep{Kind: FrameWorkStepKind(99)}, nil, nil, nil, nil)
 	if !errors.Is(err, ErrInvalidTileWork) {
 		t.Fatalf("ExecuteFrameWorkStep err=%v want %v", err, ErrInvalidTileWork)
 	}
@@ -1796,271 +1768,6 @@ func TestFrameWorkStateRunEventWithResidualRunnerFrameOBU(t *testing.T) {
 	}
 }
 
-func TestFrameWorkBoundSideDataRunnerBindsActiveMaps(t *testing.T) {
-	seq := testSequence()
-	event := Event{
-		Kind:           EventFrameHeader,
-		SequenceHeader: seq,
-		FrameHeader: parser.FrameHeaderPrefix{
-			FrameType:       parser.FrameTypeKey,
-			PrimaryRefFrame: parser.PrimaryRefNone,
-		},
-		FrameSize: parser.FrameSize{
-			CodedWidth:          64,
-			UpscaledWidth:       64,
-			Height:              64,
-			SuperResDenominator: 8,
-		},
-		LoopFilter: parser.LoopFilterParams{
-			LevelY: [2]uint8{4},
-		},
-		CDEF: parser.CDEFParams{
-			Bits:          1,
-			Damping:       5,
-			StrengthCount: 1,
-			YStrength:     [parser.MaxCDEFStrengths]uint8{8},
-		},
-		Restoration: parser.RestorationParams{
-			Type:      [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationNone, parser.RestorationNone},
-			UnitSizeY: 64,
-		},
-	}
-	pool := testFramePoolForSize(t, event.FrameSize.CodedWidth, event.FrameSize.Height, 1)
-	var refs SurfaceReferences
-	var state FrameWorkState
-	plan, output, err := state.Begin(&refs, &pool, seq, &event, 32, nil, 1, nil, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := FrameWorkBatch{
-		Step:                  FrameWorkStep{Kind: FrameWorkStepBegin, Begin: plan},
-		Output:                output,
-		FrameWorkFrameContext: frameWorkFrameContext(&event, threading.FrameWorkSequenceContextFromHeader(seq)),
-	}
-	_, _, cdefLen, err := ctx.CDEFIndexMapShape()
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _, lfLen, err := ctx.LoopFilterMapShape()
-	if err != nil {
-		t.Fatal(err)
-	}
-	restorationPlan, err := ctx.RestorationFramePlan()
-	if err != nil {
-		t.Fatal(err)
-	}
-	size, err := FrameWorkSideDataScratchLen(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if size.CDEF != cdefLen ||
-		size.LoopFilterRecords != lfLen ||
-		size.RestorationRecords != restorationPlan.UnitRecordLen() ||
-		size.RestorationBoundary != restorationPlan.BoundaryBufferLen() {
-		t.Fatalf("size=%+v cdef=%d lf=%d restoration=%+v", size, cdefLen, lfLen, restorationPlan)
-	}
-	runner, err := size.BindRunner(FrameWorkSideDataScratch{
-		CDEFIndex:          make([]uint8, size.CDEF),
-		CDEFRead:           make([]bool, size.CDEF),
-		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, size.LoopFilterRecords),
-		LFMasks:            make([]lfmask.FilterMask, size.LoopFilterMasks),
-		LFLevelCache:       make([][4]uint8, size.LoopFilterLevels),
-		RestorationRecords: make([]tile.RestorationUnitRecord, size.RestorationRecords),
-		RestorationAbove:   make([]uint16, size.RestorationBoundary),
-		RestorationBelow:   make([]uint16, size.RestorationBoundary),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := runner.BindFrameWorkSideData(&state, ctx); err != nil {
-		t.Fatal(err)
-	}
-	cdefMap, lfMap, restorationBuffers := state.postFilterSideData()
-	if cdefMap == nil || cdefMap.Stride != runner.CDEFIndexMap.Stride || len(cdefMap.Index) != cdefLen {
-		t.Fatalf("cdefMap=%+v runner=%+v len=%d", cdefMap, runner.CDEFIndexMap, cdefLen)
-	}
-	if lfMap == nil || lfMap.Stride != runner.LoopFilterMap.Stride || len(lfMap.Records) != lfLen {
-		t.Fatalf("lfMap=%+v runner=%+v len=%d", lfMap, runner.LoopFilterMap, lfLen)
-	}
-	if restorationBuffers == nil || restorationBuffers.Plan != runner.RestorationFrameBuffers.Plan ||
-		len(restorationBuffers.Records[0]) != int(restorationPlan.UnitRecords[0]) {
-		t.Fatalf("restorationBuffers=%+v runner=%+v plan=%+v", restorationBuffers, runner.RestorationFrameBuffers, restorationPlan)
-	}
-}
-
-func TestFrameWorkBoundSideDataRunnerIgnoresInactiveReusableScratch(t *testing.T) {
-	seq := testSequence()
-	event := Event{
-		Kind:           EventFrameHeader,
-		SequenceHeader: seq,
-		FrameHeader: parser.FrameHeaderPrefix{
-			FrameType:       parser.FrameTypeKey,
-			PrimaryRefFrame: parser.PrimaryRefNone,
-		},
-		FrameSize: parser.FrameSize{
-			CodedWidth:          64,
-			UpscaledWidth:       64,
-			Height:              64,
-			SuperResDenominator: 8,
-		},
-	}
-	pool := testFramePoolForSize(t, event.FrameSize.CodedWidth, event.FrameSize.Height, 1)
-	var refs SurfaceReferences
-	var state FrameWorkState
-	plan, output, err := state.Begin(&refs, &pool, seq, &event, 32, nil, 1, nil, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := FrameWorkBatch{
-		Step:                  FrameWorkStep{Kind: FrameWorkStepBegin, Begin: plan},
-		Output:                output,
-		FrameWorkFrameContext: frameWorkFrameContext(&event, threading.FrameWorkSequenceContextFromHeader(seq)),
-	}
-	size, err := FrameWorkSideDataScratchLen(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if size != (FrameWorkSideDataScratchSize{}) {
-		t.Fatalf("inactive size=%+v want zero", size)
-	}
-
-	runner := FrameWorkBoundSideDataRunner{
-		CDEFIndex:          make([]uint8, 4),
-		CDEFRead:           make([]bool, 4),
-		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, 256),
-		RestorationRecords: make([]tile.RestorationUnitRecord, 16),
-		RestorationAbove:   make([]uint16, 256),
-		RestorationBelow:   make([]uint16, 256),
-	}
-	if err := runner.BindFrameWorkSideData(&state, ctx); err != nil {
-		t.Fatal(err)
-	}
-	cdefMap, lfMap, restorationBuffers := state.postFilterSideData()
-	if cdefMap != nil || lfMap != nil || restorationBuffers != nil {
-		t.Fatalf("inactive side data cdef=%+v lf=%+v restoration=%+v", cdefMap, lfMap, restorationBuffers)
-	}
-	if runner.CDEFIndexMap.Stride != 0 || len(runner.CDEFIndexMap.Index) != 0 ||
-		runner.LoopFilterMap.Stride != 0 || len(runner.LoopFilterMap.Records) != 0 ||
-		runner.RestorationFrameBuffers.Plan.Planes != 0 {
-		t.Fatalf("runner retained inactive side data: %+v", runner)
-	}
-}
-
-func TestFrameWorkSideDataScratchSizeBindRunnerAllocs(t *testing.T) {
-	seq := testSequence()
-	ctx := FrameWorkBatch{
-		FrameWorkFrameContext: frameWorkFrameContext(&Event{
-			SequenceHeader: seq,
-			FrameSize: parser.FrameSize{
-				CodedWidth:          64,
-				UpscaledWidth:       64,
-				Height:              64,
-				SuperResDenominator: 8,
-			},
-			LoopFilter: parser.LoopFilterParams{LevelY: [2]uint8{4}},
-			CDEF: parser.CDEFParams{
-				Bits:          1,
-				StrengthCount: 1,
-				YStrength:     [parser.MaxCDEFStrengths]uint8{8},
-			},
-			Restoration: parser.RestorationParams{
-				Type:      [3]parser.RestorationType{parser.RestorationWiener},
-				UnitSizeY: 64,
-			},
-		}, threading.FrameWorkSequenceContextFromHeader(seq)),
-	}
-	size, err := FrameWorkSideDataScratchLen(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	scratch := FrameWorkSideDataScratch{
-		CDEFIndex:          make([]uint8, size.CDEF),
-		CDEFRead:           make([]bool, size.CDEF),
-		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, size.LoopFilterRecords),
-		LFMasks:            make([]lfmask.FilterMask, size.LoopFilterMasks),
-		LFLevelCache:       make([][4]uint8, size.LoopFilterLevels),
-		RestorationRecords: make([]tile.RestorationUnitRecord, size.RestorationRecords),
-		RestorationAbove:   make([]uint16, size.RestorationBoundary),
-		RestorationBelow:   make([]uint16, size.RestorationBoundary),
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		runner, err := size.BindRunner(scratch)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(runner.CDEFIndex) != size.CDEF ||
-			len(runner.LoopFilterRecords) != size.LoopFilterRecords ||
-			len(runner.RestorationRecords) != size.RestorationRecords {
-			t.Fatalf("runner=%+v size=%+v", runner, size)
-		}
-	})
-	if allocs != 0 {
-		t.Fatalf("FrameWorkSideDataScratchSize.BindRunner allocated: %f", allocs)
-	}
-}
-
-func TestFrameWorkSideDataScratchSizeMaxAndBindRunnerErrors(t *testing.T) {
-	size := FrameWorkSideDataScratchSize{
-		CDEF:                2,
-		LoopFilterRecords:   4,
-		RestorationRecords:  6,
-		RestorationBoundary: 8,
-	}
-	other := FrameWorkSideDataScratchSize{
-		CDEF:                3,
-		LoopFilterRecords:   1,
-		RestorationRecords:  7,
-		RestorationBoundary: 5,
-	}
-	if got := size.Max(other); got != (FrameWorkSideDataScratchSize{
-		CDEF:                3,
-		LoopFilterRecords:   4,
-		RestorationRecords:  7,
-		RestorationBoundary: 8,
-	}) {
-		t.Fatalf("Max=%+v", got)
-	}
-
-	scratch := FrameWorkSideDataScratch{
-		CDEFIndex:          make([]uint8, size.CDEF),
-		CDEFRead:           make([]bool, size.CDEF),
-		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, size.LoopFilterRecords),
-		LFMasks:            make([]lfmask.FilterMask, size.LoopFilterMasks),
-		LFLevelCache:       make([][4]uint8, size.LoopFilterLevels),
-		RestorationRecords: make([]tile.RestorationUnitRecord, size.RestorationRecords),
-		RestorationAbove:   make([]uint16, size.RestorationBoundary),
-		RestorationBelow:   make([]uint16, size.RestorationBoundary),
-	}
-	tests := []struct {
-		name   string
-		size   FrameWorkSideDataScratchSize
-		mutate func(*FrameWorkSideDataScratch)
-	}{
-		{name: "negative cdef", size: FrameWorkSideDataScratchSize{CDEF: -1}},
-		{name: "short cdef index", size: size, mutate: func(s *FrameWorkSideDataScratch) { s.CDEFIndex = s.CDEFIndex[:len(s.CDEFIndex)-1] }},
-		{name: "short cdef read", size: size, mutate: func(s *FrameWorkSideDataScratch) { s.CDEFRead = s.CDEFRead[:len(s.CDEFRead)-1] }},
-		{name: "short loop map", size: size, mutate: func(s *FrameWorkSideDataScratch) {
-			s.LoopFilterRecords = s.LoopFilterRecords[:len(s.LoopFilterRecords)-1]
-		}},
-		{name: "short restoration records", size: size, mutate: func(s *FrameWorkSideDataScratch) {
-			s.RestorationRecords = s.RestorationRecords[:len(s.RestorationRecords)-1]
-		}},
-		{name: "short restoration above", size: size, mutate: func(s *FrameWorkSideDataScratch) { s.RestorationAbove = s.RestorationAbove[:len(s.RestorationAbove)-1] }},
-		{name: "short restoration below", size: size, mutate: func(s *FrameWorkSideDataScratch) { s.RestorationBelow = s.RestorationBelow[:len(s.RestorationBelow)-1] }},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			short := scratch
-			if tt.mutate != nil {
-				tt.mutate(&short)
-			}
-			if _, err := tt.size.BindRunner(short); !errors.Is(err, frame.ErrShortBuffer) {
-				t.Fatalf("BindRunner err=%v want %v", err, frame.ErrShortBuffer)
-			}
-		})
-	}
-}
-
 func TestFrameWorkStateRunEventWithResidualRunnerSideDataPostFilter(t *testing.T) {
 	framePayload := append([]byte{}, reducedStillFrameHeaderPayloadQ(64)...)
 	framePayload = append(framePayload, make([]byte, 256)...)
@@ -2102,13 +1809,13 @@ func TestFrameWorkStateRunEventWithResidualRunnerSideDataPostFilter(t *testing.T
 			ResidualScratch: make([]int16, 4096),
 		},
 	}
-	side := FrameWorkBoundSideDataRunner{
-		LoopFilterRecords: make([]threading.FrameWorkLoopFilterBlockRecord, 256),
-		LFMasks:           make([]lfmask.FilterMask, 16),
-		LFLevelCache:      make([][4]uint8, 256),
+	side := testLoopFilterSideDataRunner{
+		records:    make([]threading.FrameWorkLoopFilterBlockRecord, 256),
+		masks:      make([]lfmask.FilterMask, 16),
+		levelCache: make([][4]uint8, 256),
 	}
-	post := FrameWorkBoundSupportedPostFilterRunner{
-		Scratch: FrameWorkPostFilterScratch{
+	post := testSupportedPostFilterRunner{
+		scratch: FrameWorkPostFilterScratch{
 			LoopFilterEdges: make([]FrameWorkLoopFilterPostFilterEdge, 256),
 		},
 	}
@@ -2117,7 +1824,7 @@ func TestFrameWorkStateRunEventWithResidualRunnerSideDataPostFilter(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if side.LoopFilterMap.Stride == 0 {
+	if side.loopFilterMap.Stride == 0 {
 		t.Fatalf("side data runner did not bind loop-filter map: %+v", side)
 	}
 	if result.Step.Kind != FrameWorkStepBegin ||
@@ -2129,18 +1836,18 @@ func TestFrameWorkStateRunEventWithResidualRunnerSideDataPostFilter(t *testing.T
 	if stats := runner.Workers[0].Stats; stats.Loop.Blocks == 0 || stats.CoefficientBlocks == 0 || stats.TXBs == 0 {
 		t.Fatalf("residual runner stats=%+v", stats)
 	}
-	coverage, err := side.LoopFilterMap.CoverageStats(int(side.LoopFilterMap.Stride), int(side.LoopFilterMap.Rows))
+	coverage, err := side.loopFilterMap.CoverageStats(int(side.loopFilterMap.Stride), int(side.loopFilterMap.Rows))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if coverage.Blocks == 0 || coverage.Missing != 0 {
 		t.Fatalf("loop-filter coverage=%+v", coverage)
 	}
-	if post.Result.Completed != FrameWorkPostFilterLoopFilter ||
-		!post.Result.LoopFilter.Active ||
-		post.Result.LoopFilter.Plan.Blocks == 0 ||
-		post.Context.RemainingPostFilters() != 0 {
-		t.Fatalf("postfilter result=%+v size=%+v remaining=%v", post.Result, post.Size, post.Context.RemainingPostFilters())
+	if post.result.Completed != FrameWorkPostFilterLoopFilter ||
+		!post.result.LoopFilter.Active ||
+		post.result.LoopFilter.Plan.Blocks == 0 ||
+		post.ctx.RemainingPostFilters() != 0 {
+		t.Fatalf("postfilter result=%+v size=%+v remaining=%v", post.result, post.size, post.ctx.RemainingPostFilters())
 	}
 	slot, ok := refs.ReferenceSlot(0)
 	if !ok || slot != result.Step.Begin.Surface {
@@ -4062,7 +3769,7 @@ func TestExecuteFrameWorkStepAllocs(t *testing.T) {
 		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
 	}
 	allocs := testing.AllocsPerRun(1000, func() {
-		executed, err := ExecuteFrameWorkStep(step, workerPool, jobs[:], batches[:], func(threading.Batch, []tile.Job) error {
+		executed, err := executeTestFrameWorkStep(step, workerPool, jobs[:], batches[:], func(threading.Batch, []tile.Job) error {
 			return nil
 		})
 		if err != nil {
@@ -4096,7 +3803,7 @@ func TestExecuteFrameWorkStepWithContextAllocs(t *testing.T) {
 		},
 	}
 	allocs := testing.AllocsPerRun(1000, func() {
-		executed, err := ExecuteFrameWorkStepWithContext(step, workerPool, &output, references[:], jobs[:], batches[:], noopFrameWorkBatch)
+		executed, err := executeTestFrameWorkStepWithContext(step, workerPool, &output, references[:], jobs[:], batches[:], noopFrameWorkBatch)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4123,7 +3830,7 @@ func TestExecuteFrameWorkStepWithPayloadAllocs(t *testing.T) {
 		Tile: FrameTileWorkPlan{Tile: TileWorkPlan{SpanCount: 2, JobCount: 2, BatchCount: batchCount}},
 	}
 	allocs := testing.AllocsPerRun(1000, func() {
-		executed, err := ExecuteFrameWorkStepWithPayload(step, workerPool, nil, nil, payload, jobs[:], batches[:], noopFrameWorkBatch)
+		executed, err := executeTestFrameWorkStepWithPayload(step, workerPool, nil, nil, payload, jobs[:], batches[:], noopFrameWorkBatch)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4429,13 +4136,13 @@ func TestFrameWorkStateRunEventWithResidualRunnerSideDataPostFilterAllocs(t *tes
 			ResidualScratch: make([]int16, 4096),
 		},
 	}
-	side := FrameWorkBoundSideDataRunner{
-		LoopFilterRecords: make([]threading.FrameWorkLoopFilterBlockRecord, 256),
-		LFMasks:           make([]lfmask.FilterMask, 16),
-		LFLevelCache:      make([][4]uint8, 256),
+	side := testLoopFilterSideDataRunner{
+		records:    make([]threading.FrameWorkLoopFilterBlockRecord, 256),
+		masks:      make([]lfmask.FilterMask, 16),
+		levelCache: make([][4]uint8, 256),
 	}
-	post := FrameWorkBoundSupportedPostFilterRunner{
-		Scratch: FrameWorkPostFilterScratch{
+	post := testSupportedPostFilterRunner{
+		scratch: FrameWorkPostFilterScratch{
 			LoopFilterEdges: make([]FrameWorkLoopFilterPostFilterEdge, 256),
 		},
 	}
@@ -4449,9 +4156,9 @@ func TestFrameWorkStateRunEventWithResidualRunnerSideDataPostFilterAllocs(t *tes
 			t.Fatal(err)
 		}
 		if result.Run != (FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) ||
-			post.Result.Completed != FrameWorkPostFilterLoopFilter ||
-			post.Context.RemainingPostFilters() != 0 {
-			t.Fatalf("result=%+v post=%+v remaining=%v", result, post.Result, post.Context.RemainingPostFilters())
+			post.result.Completed != FrameWorkPostFilterLoopFilter ||
+			post.ctx.RemainingPostFilters() != 0 {
+			t.Fatalf("result=%+v post=%+v remaining=%v", result, post.result, post.ctx.RemainingPostFilters())
 		}
 	})
 	if allocs != 0 {
@@ -4689,7 +4396,7 @@ func BenchmarkExecuteFrameWorkStep(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, _ = ExecuteFrameWorkStep(step, workerPool, jobs[:], batches[:], func(threading.Batch, []tile.Job) error {
+		_, _ = executeTestFrameWorkStep(step, workerPool, jobs[:], batches[:], func(threading.Batch, []tile.Job) error {
 			return nil
 		})
 	}
@@ -4715,7 +4422,7 @@ func BenchmarkExecuteFrameWorkStepWithContext(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, _ = ExecuteFrameWorkStepWithContext(step, workerPool, &output, references[:], jobs[:], batches[:], func(FrameWorkBatch) error {
+		_, _ = executeTestFrameWorkStepWithContext(step, workerPool, &output, references[:], jobs[:], batches[:], func(FrameWorkBatch) error {
 			return nil
 		})
 	}
@@ -4736,7 +4443,7 @@ func BenchmarkExecuteFrameWorkStepWithPayload(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, _ = ExecuteFrameWorkStepWithPayload(step, workerPool, nil, nil, payload, jobs[:], batches[:], noopFrameWorkBatch)
+		_, _ = executeTestFrameWorkStepWithPayload(step, workerPool, nil, nil, payload, jobs[:], batches[:], noopFrameWorkBatch)
 	}
 }
 
@@ -4897,37 +4604,6 @@ func BenchmarkFrameWorkStateRunEventWithContextRunner(b *testing.B) {
 	}
 }
 
-func BenchmarkFrameWorkSideDataScratchSizeBindRunner(b *testing.B) {
-	size := FrameWorkSideDataScratchSize{
-		CDEF:                4,
-		LoopFilterRecords:   256,
-		RestorationRecords:  16,
-		RestorationBoundary: 512,
-	}
-	scratch := FrameWorkSideDataScratch{
-		CDEFIndex:          make([]uint8, size.CDEF),
-		CDEFRead:           make([]bool, size.CDEF),
-		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, size.LoopFilterRecords),
-		LFMasks:            make([]lfmask.FilterMask, size.LoopFilterMasks),
-		LFLevelCache:       make([][4]uint8, size.LoopFilterLevels),
-		RestorationRecords: make([]tile.RestorationUnitRecord, size.RestorationRecords),
-		RestorationAbove:   make([]uint16, size.RestorationBoundary),
-		RestorationBelow:   make([]uint16, size.RestorationBoundary),
-	}
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		runner, err := size.BindRunner(scratch)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if len(runner.LoopFilterRecords) != size.LoopFilterRecords {
-			b.Fatalf("runner=%+v size=%+v", runner, size)
-		}
-	}
-}
-
 func BenchmarkFrameWorkStateRunEventWithResidualSideDataPostFilter(b *testing.B) {
 	framePayload := append([]byte{}, reducedStillFrameHeaderPayloadQ(64)...)
 	framePayload = append(framePayload, make([]byte, 256)...)
@@ -4969,13 +4645,13 @@ func BenchmarkFrameWorkStateRunEventWithResidualSideDataPostFilter(b *testing.B)
 			ResidualScratch: make([]int16, 4096),
 		},
 	}
-	side := FrameWorkBoundSideDataRunner{
-		LoopFilterRecords: make([]threading.FrameWorkLoopFilterBlockRecord, 256),
-		LFMasks:           make([]lfmask.FilterMask, 16),
-		LFLevelCache:      make([][4]uint8, 256),
+	side := testLoopFilterSideDataRunner{
+		records:    make([]threading.FrameWorkLoopFilterBlockRecord, 256),
+		masks:      make([]lfmask.FilterMask, 16),
+		levelCache: make([][4]uint8, 256),
 	}
-	post := FrameWorkBoundSupportedPostFilterRunner{
-		Scratch: FrameWorkPostFilterScratch{
+	post := testSupportedPostFilterRunner{
+		scratch: FrameWorkPostFilterScratch{
 			LoopFilterEdges: make([]FrameWorkLoopFilterPostFilterEdge, 256),
 		},
 	}
@@ -4987,9 +4663,9 @@ func BenchmarkFrameWorkStateRunEventWithResidualSideDataPostFilter(b *testing.B)
 		b.Fatal(err)
 	}
 	if result.Run != (FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) ||
-		post.Result.Completed != FrameWorkPostFilterLoopFilter ||
-		post.Context.RemainingPostFilters() != 0 {
-		b.Fatalf("result=%+v post=%+v remaining=%v", result, post.Result, post.Context.RemainingPostFilters())
+		post.result.Completed != FrameWorkPostFilterLoopFilter ||
+		post.ctx.RemainingPostFilters() != 0 {
+		b.Fatalf("result=%+v post=%+v remaining=%v", result, post.result, post.ctx.RemainingPostFilters())
 	}
 
 	b.ReportAllocs()
@@ -5003,9 +4679,9 @@ func BenchmarkFrameWorkStateRunEventWithResidualSideDataPostFilter(b *testing.B)
 			b.Fatal(err)
 		}
 		if result.Run != (FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) ||
-			post.Result.Completed != FrameWorkPostFilterLoopFilter ||
-			post.Context.RemainingPostFilters() != 0 {
-			b.Fatalf("result=%+v post=%+v remaining=%v", result, post.Result, post.Context.RemainingPostFilters())
+			post.result.Completed != FrameWorkPostFilterLoopFilter ||
+			post.ctx.RemainingPostFilters() != 0 {
+			b.Fatalf("result=%+v post=%+v remaining=%v", result, post.result, post.ctx.RemainingPostFilters())
 		}
 	}
 }
@@ -5302,4 +4978,111 @@ func makeFramePoolForSize(width uint32, height uint32, count int) (frame.Pool, e
 		return frame.Pool{}, err
 	}
 	return pool, nil
+}
+
+func executeTestFrameWorkStep(step FrameWorkStep, pool *threading.Pool, jobs []tile.Job, batches []threading.Batch, fn threading.BatchFunc) (bool, error) {
+	plan, _, hasTile, err := frameWorkStepTilePlan(step)
+	if err != nil || !hasTile {
+		return false, err
+	}
+	if err := ExecuteTileWork(plan, pool, jobs, batches, fn); err != nil {
+		return false, err
+	}
+	return plan.JobCount != 0, nil
+}
+
+func executeTestFrameWorkStepWithContext(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
+	return executeFrameWorkStepWithPayload(step, pool, output, references, nil, false, FrameWorkFrameContext{}, false, nil, nil, nil, frameWorkMotionFields{}, nil, nil, nil, nil, jobs, batches, fn)
+}
+
+func executeTestFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
+	return executeFrameWorkStepWithPayload(step, pool, output, references, payload, true, FrameWorkFrameContext{}, false, nil, nil, nil, frameWorkMotionFields{}, nil, nil, nil, nil, jobs, batches, fn)
+}
+
+// testLoopFilterSideDataRunner binds caller-owned loop-filter map and edge-mask
+// storage for frames whose only active post-filter is the loop filter.
+type testLoopFilterSideDataRunner struct {
+	records       []threading.FrameWorkLoopFilterBlockRecord
+	masks         []lfmask.FilterMask
+	levelCache    [][4]uint8
+	loopFilterMap threading.FrameWorkLoopFilterMap
+}
+
+func (r *testLoopFilterSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, b FrameWorkBatch) error {
+	if !frameWorkLoopFilterActive(b.LoopFilter) {
+		return nil
+	}
+	cols, rows, length, err := b.LoopFilterMapShape()
+	if err != nil {
+		return err
+	}
+	sb128w, sb128h, maskCount := threading.FrameWorkLoopFilterMaskShape(cols, rows)
+	if len(r.records) < length || len(r.masks) < maskCount || len(r.levelCache) < length {
+		return threading.ErrInvalidBatch
+	}
+	r.loopFilterMap = threading.FrameWorkLoopFilterMap{Records: r.records[:length], Stride: uint16(cols), Rows: uint16(rows)}
+	if err := s.SetLoopFilterMap(r.loopFilterMap); err != nil {
+		return err
+	}
+	masks := r.masks[:maskCount]
+	levelCache := threading.FrameWorkLoopFilterLevelCacheBind(r.levelCache, cols, rows)
+	clear(masks)
+	clear(levelCache)
+	color := b.Sequence.ColorConfig
+	layout := lfmask.Layout{Mono: color.MonoChrome}
+	if color.SubsamplingX {
+		layout.SSHor = 1
+	}
+	if color.SubsamplingY {
+		layout.SSVer = 1
+	}
+	return s.SetLoopFilterMasks(threading.FrameWorkLoopFilterMasks{
+		Masks:      masks,
+		LevelCache: levelCache,
+		Cols:       cols,
+		Rows:       rows,
+		SB128W:     sb128w,
+		SB128H:     sb128h,
+		Layout:     layout,
+		HasChroma:  !color.MonoChrome,
+	})
+}
+
+// testSupportedPostFilterRunner binds the supported post-filter request from
+// its scratch and the side data bound in ctx, then applies it in place for
+// publication.
+type testSupportedPostFilterRunner struct {
+	scratch FrameWorkPostFilterScratch
+	size    FrameWorkPostFilterScratchSize
+	ctx     FrameWorkPostFilterContext
+	result  FrameWorkPostFilterResult
+}
+
+func (r *testSupportedPostFilterRunner) Apply(ctx FrameWorkPostFilterContext) error {
+	r.ctx = ctx
+	var options FrameWorkPostFilterBindOptions
+	if ctx.LoopFilterMap != nil {
+		options.LoopFilterMap = *ctx.LoopFilterMap
+		options.LoopFilterTrustedCoverage = true
+	}
+	size, err := r.ctx.SupportedPostFilterScratchLen(FrameWorkPostFilterRequest{})
+	if err != nil {
+		return err
+	}
+	if ctx.RemainingPostFilters().Has(FrameWorkPostFilterLoopFilter) {
+		// The loop filter applies through the bound edge masks; the edge-list
+		// fallback reports a short buffer before mutating the output.
+		size.LoopFilter = FrameWorkLoopFilterPostFilterScratchSize{Edges: len(r.scratch.LoopFilterEdges), Schedule: len(r.scratch.LoopFilterSchedule)}
+	}
+	req, err := size.BindRequest(options, r.scratch)
+	if err != nil {
+		return err
+	}
+	_, result, err := ApplySupportedPostFiltersForPublicationInPlace(&r.ctx, req)
+	if err != nil {
+		return err
+	}
+	r.size = size
+	r.result = result
+	return r.ctx.RequirePublishablePostFilterOutput()
 }

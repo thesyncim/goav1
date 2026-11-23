@@ -111,7 +111,7 @@ func BenchmarkCDEFUnitU8InteriorScanDirect(b *testing.B) {
 		{name: "sparse64x64", blocks: []BlockPosition{{BY: 0, BX: 0}, {BY: 0, BX: 7}, {BY: 7, BX: 0}, {BY: 7, BX: 7}}},
 		{name: "single8x8", blocks: []BlockPosition{{BY: 3, BX: 3}}},
 	} {
-		b.Run(tc.name+"/"+cdefUnitInteriorScanFlavor, func(b *testing.B) {
+		b.Run(tc.name+"/simd", func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				_ = cdefUnitInteriorU8(input, cdefBlockOrigin(), tc.blocks, 3, 3)

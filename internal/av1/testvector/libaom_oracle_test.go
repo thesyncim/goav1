@@ -239,14 +239,15 @@ func TestLibaomFastFrameWorkDryRun(t *testing.T) {
 // one MD5 per temporal unit at the highest-spatial-layer output. The
 // dry-run mirrors that:
 //
-//   - Each spatial layer gets its own frame pool and motion store. SVC
+//   - Each spatial layer gets its own frame pool and frame-work state. SVC
 //     streams with mixed-size spatial layers (e.g. L2T1 base 640x360 +
 //     enhancement 1280x720) cannot share one frame.Pool because
 //     Pool.AcquireFormat is strict about width/height. Reference slots are
 //     stream-global per the AV1 spec, so a single shared SurfaceReferences
 //     spans all layers; the decoder's external-references path routes
-//     cross-pool reference frames and temporal-MV metadata through the
-//     layer aggregator's FrameSurface and TemporalMotionReference providers.
+//     cross-pool reference frames through the layer aggregator's
+//     FrameSurface provider, and temporal-MV metadata through the shared
+//     frame-context store.
 //
 // In both modes, a trailing summary line is logged:
 //
@@ -289,6 +290,7 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 	defer workerPool.Close()
 
 	var stream decoder.Stream
+	var sideData frameWorkSideData
 	layers := newLibaomSpatialLayers()
 	defer layers.keepAlive()
 
@@ -346,56 +348,12 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 			layer := layers.layer(t, event)
 
 			var (
-				postMD5          MD5
-				postRan          bool
-				currentMVSurface = -1
+				postMD5 MD5
+				postRan bool
 			)
 			spatialID := event.SpatialID
 			globalSurface := func(local int) int { return libaomGlobalSurfaceID(spatialID, local) }
-			result, err := layer.state.RunEventWithContextAndExternalReferences(&layers.sharedRefs, &layer.pool, event.SequenceHeader, &event, 32, referenceSurfaces[:], referenceFrames[:], workers, spans[:], jobs[:], batches[:], releases[:], workerPool, layers, globalSurface, layers, &layers.sharedFrameContexts, libaomFrameWorkSideDataRunner{}, libaomFrameWorkBatchRunner(func(ctx decoder.FrameWorkBatch) error {
-				surface, err := ctx.Surface()
-				if err != nil {
-					return err
-				}
-				if surface >= len(layer.mvFrames) || layer.mvLength == 0 {
-					return decoder.ErrInvalidSurfaceReference
-				}
-				if currentMVSurface != surface || layer.mvFrames[surface].Entries == nil {
-					first := surface * layer.mvLength
-					currentMVFrame, err := ctx.BindReferenceMVFrame(layer.mvEntryBacking[first : first+layer.mvLength])
-					if err != nil {
-						return err
-					}
-					layer.mvFrames[surface] = currentMVFrame
-					currentMVSurface = surface
-				}
-				ctx.CurrentMVFrame = &layer.mvFrames[surface]
-				if ctx.TileInfo.UseRefFrameMVS {
-					temporalMVs, err := ctx.BindTemporalMotionField(layer.temporalEntryBacking)
-					if err != nil {
-						return err
-					}
-					ctx.TemporalMVs = &temporalMVs
-					resolved, err := decoder.ResolveTemporalMotionReferencesWithProvider(layers, referenceSurfaces[:len(ctx.References)], ctx.ReferenceMVs[:])
-					if err != nil {
-						return err
-					}
-					if resolved != len(ctx.References) {
-						return decoder.ErrInvalidSurfaceReference
-					}
-					setupStats, err := ctx.SetupTemporalMotionField()
-					if err != nil {
-						return err
-					}
-					// Decode through the per-superblock-row projection the frame
-					// decoder uses (a bound TemporalMVs field would take precedence);
-					// the goav1_refmvs_oracle build diffs it against its own
-					// whole-frame projection.
-					ctx.TemporalMVs = nil
-					ctx.DeferredTemporalReferences = &ctx.ReferenceMVs
-					stats.temporalReferenceResolves += resolved
-					stats.temporalMotionProjections += int(setupStats.Projections)
-				}
+			result, err := layer.state.RunEventWithContextAndExternalReferences(&layers.sharedRefs, &layer.pool, event.SequenceHeader, &event, 32, referenceSurfaces[:], referenceFrames[:], workers, spans[:], jobs[:], batches[:], releases[:], workerPool, layers, globalSurface, layers, &layers.sharedFrameContexts, &sideData, libaomFrameWorkBatchRunner(func(ctx decoder.FrameWorkBatch) error {
 				var restorationReq *threading.FrameWorkTileRestorationRequest
 				if ctx.RestorationFrameBuffers != nil {
 					restoration := threading.FrameWorkTileRestorationRequest{Buffers: *ctx.RestorationFrameBuffers}
@@ -436,17 +394,11 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 					var interScratch threading.FrameWorkInterPredictionScratch
 					predictionScratch := threading.FrameWorkPredictionScratch{Inter: &interScratch}
 					jobStats, err := ctx.DecodeAndReconstructJobResiduals(j, &decodeState, storage.CDFs(), &scratch, threading.FrameWorkTileResidualRequest{
-						Loop:          loopReq,
-						TransformMode: ctx.TransformRef.TransformMode,
-						CDEFIndexMap:  ctx.CDEFIndexMap,
-						LoopFilterMap: ctx.LoopFilterMap,
-						Restoration:   restorationReq,
-						Transforms: func(visit tile.BlockLoopVisit) (threading.FrameWorkBlockTransforms, error) {
-							if visit.Prediction.Valid && !visit.Prediction.Intra {
-								return ctx.ReadInterBlockTransforms(&decodeState, visit)
-							}
-							return ctx.ReadIntraBlockTransforms(&decodeState, visit)
-						},
+						Loop:              loopReq,
+						TransformMode:     ctx.TransformRef.TransformMode,
+						CDEFIndexMap:      ctx.CDEFIndexMap,
+						LoopFilterMap:     ctx.LoopFilterMap,
+						Restoration:       restorationReq,
 						Int32Scratch:      int32Scratch,
 						ResidualScratch:   residualScratch,
 						PredictionScratch: &predictionScratch,
@@ -487,31 +439,17 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 				}
 				return nil
 			}), libaomFrameWorkPostFilterRunner(func(ctx decoder.FrameWorkPostFilterContext) error {
-				post := decoder.FrameWorkBoundSupportedPostFilterRunner{}
-				size, err := libaomSupportedPostFilterScratchLen(ctx)
-				if err != nil {
-					return fmt.Errorf("supported postfilter scratch: %w", err)
-				}
-				post.Scratch = libaomPostFilterScratchStorage(size)
 				// When exercising the parallel post-filter path (GOAV1_POSTFILTER_PARALLEL),
 				// fan the independent row bands across goroutines. The strict-MD5 gate then
 				// proves the parallel path matches libaom on the whole corpus.
 				if libaomPostFilterParallel != nil {
 					ctx.Parallel = libaomPostFilterParallel
 				}
-				if err := post.Apply(ctx); err != nil {
-					t.Logf("postfilter event=%s active=%v supported_size=%+v has_cdef=%v has_lf=%v has_restoration=%v",
-						vector.Name, ctx.ActivePostFilters(), size, ctx.CDEFIndexMap != nil, ctx.LoopFilterMap != nil, ctx.RestorationFrameBuffers != nil)
+				output, err := applySupportedPostFilters(ctx, libaomPostFilterScratchStorage)
+				if err != nil {
+					t.Logf("postfilter event=%s active=%v has_cdef=%v has_lf=%v has_restoration=%v",
+						vector.Name, ctx.ActivePostFilters(), ctx.CDEFIndexMap != nil, ctx.LoopFilterMap != nil, ctx.RestorationFrameBuffers != nil)
 					return fmt.Errorf("apply supported postfilters: %w", err)
-				}
-				if currentMVSurface >= 0 {
-					if err := decoder.PublishTemporalMotionReference(&post.Context.Event, currentMVSurface, &layer.mvFrames[currentMVSurface], layer.mvStore); err != nil {
-						return err
-					}
-				}
-				output := post.Context.Output
-				if post.DisplayOutput != nil {
-					output = post.DisplayOutput
 				}
 				got, err := FrameMD5(*output)
 				if err != nil {
@@ -634,8 +572,8 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 			} else if firstMismatch < 0 {
 				firstMismatch = temporalUnits
 			}
-			t.Logf("ivf=%d temporal_unit=%d spatial=%d md5 progress got=%x official=%x txbs=%d residuals=%d cdef_units=%d mfmv_refs=%d mfmv_projections=%d",
-				ivfFrame.Index, temporalUnits, emitSpatial[k], emitMD5s[k], expected, stats.residualTXBs, stats.residuals, stats.cdefUnitsRead, stats.temporalReferenceResolves, stats.temporalMotionProjections)
+			t.Logf("ivf=%d temporal_unit=%d spatial=%d md5 progress got=%x official=%x txbs=%d residuals=%d cdef_units=%d",
+				ivfFrame.Index, temporalUnits, emitSpatial[k], emitMD5s[k], expected, stats.residualTXBs, stats.residuals, stats.cdefUnitsRead)
 			temporalUnits++
 		}
 		frameCount++
@@ -675,46 +613,39 @@ func runLibaomFrameWorkDryRun(t *testing.T, vector RemoteVector) {
 }
 
 // libaomFrameWorkStats accumulates the per-vector dry-run counters used to
-// assert that the framework exercised tile, prediction, residual, CDEF, and
-// MFMV code paths at least once.
+// assert that the framework exercised tile, prediction, residual, and CDEF
+// code paths at least once.
 type libaomFrameWorkStats struct {
-	tileJobs                  int
-	retainedContexts          int
-	contextUpdateTiles        int
-	partitionReads            int
-	blockDeltaPaths           int
-	residualTXBs              int
-	residuals                 int
-	predictions               int
-	cdefUnitsRead             int
-	temporalReferenceResolves int
-	temporalMotionProjections int
+	tileJobs           int
+	retainedContexts   int
+	contextUpdateTiles int
+	partitionReads     int
+	blockDeltaPaths    int
+	residualTXBs       int
+	residuals          int
+	predictions        int
+	cdefUnitsRead      int
 }
 
-// libaomSpatialLayerState owns the dry-run frame pool, frame-work state, and
-// motion store for one spatial layer (SpatialID). SVC streams with mixed
+// libaomSpatialLayerState owns the dry-run frame pool and frame-work state for
+// one spatial layer (SpatialID). SVC streams with mixed
 // spatial-layer dimensions (e.g. L2T1/L2T2: 640x360 + 1280x720) require a
 // per-layer pool because frame.Pool stores a single Format and rejects
 // AcquireFormat calls whose dimensions differ from the bound format.
 // Reference slots are stream-global per the AV1 spec and live on the
-// containing libaomSpatialLayers' sharedRefs; cross-layer reference frame
-// and temporal-MV resolution route through the layers FrameSurface and
-// TemporalMotionReference providers.
+// containing libaomSpatialLayers' sharedRefs; cross-layer reference frames
+// route through the layers FrameSurface provider and temporal-MV metadata
+// through sharedFrameContexts.
 type libaomSpatialLayerState struct {
 	spatialID uint8
 	format    frame.Format
 
-	pool                 frame.Pool
-	state                decoder.FrameWorkState
-	backing              []byte
-	frameSlots           []frame.Frame
-	free                 []int
-	used                 []bool
-	mvEntryBacking       []tile.ReferenceMVEntry
-	temporalEntryBacking []tile.TemporalMotionEntry
-	mvFrames             []tile.ReferenceMVFrame
-	mvStore              []tile.TemporalMotionReferenceFrame
-	mvLength             int
+	pool       frame.Pool
+	state      decoder.FrameWorkState
+	backing    []byte
+	frameSlots []frame.Frame
+	free       []int
+	used       []bool
 
 	// md5BySurface caches the postfilter MD5 of every completed frame
 	// keyed by its layer-local pool surface index. It is updated when a
@@ -808,27 +739,8 @@ func (s *libaomSpatialLayers) ReleaseFrameSurfaces(ids []int) error {
 	return nil
 }
 
-// TemporalMotionReference implements decoder.TemporalMotionReferenceProvider.
-// SVC enhancement-layer frames reference surfaces in lower-spatial-layer
-// pools, whose temporal motion metadata lives in those layers' mvStore
-// arrays; routing by global ID picks the right mvStore.
-func (s *libaomSpatialLayers) TemporalMotionReference(id int) (tile.TemporalMotionReferenceFrame, error) {
-	spatialID, local, ok := libaomDecodeGlobalSurfaceID(id)
-	if !ok {
-		return tile.TemporalMotionReferenceFrame{}, decoder.ErrInvalidSurfaceReference
-	}
-	layer, ok := s.byID[spatialID]
-	if !ok || layer == nil {
-		return tile.TemporalMotionReferenceFrame{}, decoder.ErrInvalidSurfaceReference
-	}
-	if local < 0 || local >= len(layer.mvStore) {
-		return tile.TemporalMotionReferenceFrame{}, decoder.ErrInvalidSurfaceReference
-	}
-	return layer.mvStore[local], nil
-}
-
 // layer returns the per-spatial-layer state for event.SpatialID, binding it
-// (pool + motion store) on first observation. The pool is sized to 16 slots
+// (pool + MD5 cache) on first observation. The pool is sized to 16 slots
 // at the format implied by the first event seen for that spatial layer,
 // which is the layer's native CodedWidth x Height — matching how libaom
 // configures one decoder instance per spatial layer.
@@ -839,7 +751,6 @@ func (s *libaomSpatialLayers) layer(t *testing.T, event decoder.Event) *libaomSp
 	if !ok {
 		layer = &libaomSpatialLayerState{spatialID: id}
 		layer.pool, layer.format, layer.backing, layer.frameSlots, layer.free, layer.used = bindLibaomVectorFramePool(t, event, 16)
-		layer.mvEntryBacking, layer.temporalEntryBacking, layer.mvFrames, layer.mvStore, layer.mvLength = bindLibaomVectorMotionStore(t, event, len(layer.frameSlots))
 		layer.md5BySurface = make([]MD5, len(layer.frameSlots))
 		layer.md5Valid = make([]bool, len(layer.frameSlots))
 		s.byID[id] = layer
@@ -860,10 +771,6 @@ func (s *libaomSpatialLayers) keepAlive() {
 		runtime.KeepAlive(layer.frameSlots)
 		runtime.KeepAlive(layer.free)
 		runtime.KeepAlive(layer.used)
-		runtime.KeepAlive(layer.mvEntryBacking)
-		runtime.KeepAlive(layer.temporalEntryBacking)
-		runtime.KeepAlive(layer.mvFrames)
-		runtime.KeepAlive(layer.mvStore)
 	}
 }
 
@@ -881,17 +788,13 @@ func eventRunsFrameWork(event decoder.Event) bool {
 }
 
 func libaomResidualScratch(ctx decoder.FrameWorkBatch) ([]int32, []int16, error) {
-	q, _, err := ctx.BlockQuantizer(ctx.Quantization.BaseQIdx, 0, threading.FrameWorkPlaneY)
-	if err != nil {
+	if _, _, err := ctx.BlockQuantizer(ctx.Quantization.BaseQIdx, 0, threading.FrameWorkPlaneY); err != nil {
 		return nil, nil, err
 	}
-	// Allocate for the largest supported residual scratch; each decoded TXB
-	// still carries its own lossless decision through ReconstructBlockCoeff.
+	// Allocate for the largest supported residual scratch.
 	int32Len, int16Len, err := reconstruct.ScratchLen(reconstruct.Block{
 		Size:      transform.Size{Width: 64, Height: 64},
 		Transform: transform.TypeDCTDCT,
-		Quantizer: q,
-		Lossless:  false,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -911,45 +814,142 @@ func (fn libaomFrameWorkPostFilterRunner) Apply(ctx decoder.FrameWorkPostFilterC
 	return fn(ctx)
 }
 
-type libaomFrameWorkSideDataRunner struct{}
-
-func (libaomFrameWorkSideDataRunner) BindFrameWorkSideData(state *decoder.FrameWorkState, ctx decoder.FrameWorkBatch) error {
-	size, err := decoder.FrameWorkSideDataScratchLen(ctx)
-	if err != nil {
-		return err
-	}
-	side, err := size.BindRunner(libaomFrameWorkSideDataScratch(size))
-	if err != nil {
-		return err
-	}
-	return side.BindFrameWorkSideData(state, ctx)
+// frameWorkSideData binds the per-frame CDEF index, loop-filter, and
+// loop-restoration side data of the frame's active post-filter stages, reusing
+// its buffers across frames.
+type frameWorkSideData struct {
+	cdefIndex          []uint8
+	cdefRead           []bool
+	loopFilterRecords  []threading.FrameWorkLoopFilterBlockRecord
+	lfMasks            []lfmask.FilterMask
+	lfLevelCache       [][4]uint8
+	restorationRecords []tile.RestorationUnitRecord
+	restorationAbove   []uint16
+	restorationBelow   []uint16
 }
 
-func libaomFrameWorkSideDataScratch(size decoder.FrameWorkSideDataScratchSize) decoder.FrameWorkSideDataScratch {
-	return decoder.FrameWorkSideDataScratch{
-		CDEFIndex:          make([]uint8, libaomMaxInt(size.CDEF, 0)),
-		CDEFRead:           make([]bool, libaomMaxInt(size.CDEF, 0)),
-		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, libaomMaxInt(size.LoopFilterRecords, 0)),
-		LFMasks:            make([]lfmask.FilterMask, libaomMaxInt(size.LoopFilterMasks, 0)),
-		LFLevelCache:       make([][4]uint8, libaomMaxInt(size.LoopFilterLevels, 0)),
-		RestorationRecords: make([]tile.RestorationUnitRecord, libaomMaxInt(size.RestorationRecords, 0)),
-		RestorationAbove:   make([]uint16, libaomMaxInt(size.RestorationBoundary, 0)),
-		RestorationBelow:   make([]uint16, libaomMaxInt(size.RestorationBoundary, 0)),
+func (r *frameWorkSideData) BindFrameWorkSideData(s *decoder.FrameWorkState, b decoder.FrameWorkBatch) error {
+	lf := b.LoopFilter
+	lfActive := lf.LevelY[0] != 0 || lf.LevelY[1] != 0 || lf.LevelU != 0 || lf.LevelV != 0
+	cdefActive := b.CDEF.Bits != 0 || b.CDEF.YStrength[0] != 0 || b.CDEF.UVStrength[0] != 0
+	if cdefActive {
+		_, _, n, err := b.CDEFIndexMapShape()
+		if err != nil {
+			return err
+		}
+		r.cdefIndex = sideDataBuffer(r.cdefIndex, n)
+		r.cdefRead = sideDataBuffer(r.cdefRead, n)
+		clear(r.cdefIndex)
+		clear(r.cdefRead)
+		cdefMap, err := b.BindCDEFIndexMap(r.cdefIndex, r.cdefRead)
+		if err != nil {
+			return err
+		}
+		if err := s.SetCDEFIndexMap(cdefMap); err != nil {
+			return err
+		}
 	}
+	if lfActive || cdefActive {
+		cols, rows, n, err := b.LoopFilterMapShape()
+		if err != nil {
+			return err
+		}
+		r.loopFilterRecords = sideDataBuffer(r.loopFilterRecords, n)
+		lfMap := threading.FrameWorkLoopFilterMap{Records: r.loopFilterRecords, Stride: uint16(cols), Rows: uint16(rows)}
+		if err := s.SetLoopFilterMap(lfMap); err != nil {
+			return err
+		}
+		if lfActive {
+			sb128w, sb128h, maskCount := threading.FrameWorkLoopFilterMaskShape(cols, rows)
+			r.lfMasks = sideDataBuffer(r.lfMasks, maskCount)
+			r.lfLevelCache = sideDataBuffer(r.lfLevelCache, threading.FrameWorkLoopFilterLevelCacheLen(cols, rows))
+			levelCache := threading.FrameWorkLoopFilterLevelCacheBind(r.lfLevelCache, cols, rows)
+			clear(r.lfMasks)
+			clear(levelCache)
+			color := b.Sequence.ColorConfig
+			layout := lfmask.Layout{Mono: color.MonoChrome}
+			if color.SubsamplingX {
+				layout.SSHor = 1
+			}
+			if color.SubsamplingY {
+				layout.SSVer = 1
+			}
+			if err := s.SetLoopFilterMasks(threading.FrameWorkLoopFilterMasks{
+				Masks:      r.lfMasks,
+				LevelCache: levelCache,
+				Cols:       cols,
+				Rows:       rows,
+				SB128W:     sb128w,
+				SB128H:     sb128h,
+				Layout:     layout,
+				HasChroma:  !color.MonoChrome,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	if b.Restoration.Type[0] != parser.RestorationNone || b.Restoration.Type[1] != parser.RestorationNone || b.Restoration.Type[2] != parser.RestorationNone {
+		plan, err := b.RestorationFramePlan()
+		if err != nil {
+			return err
+		}
+		r.restorationRecords = sideDataBuffer(r.restorationRecords, plan.UnitRecordLen())
+		r.restorationAbove = sideDataBuffer(r.restorationAbove, plan.BoundaryBufferLen())
+		r.restorationBelow = sideDataBuffer(r.restorationBelow, plan.BoundaryBufferLen())
+		buffers, err := b.BindRestorationFrameBuffers(r.restorationRecords, r.restorationAbove, r.restorationBelow)
+		if err != nil {
+			return err
+		}
+		if err := s.SetRestorationFrameBuffers(buffers); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func libaomSupportedPostFilterScratchLen(ctx decoder.FrameWorkPostFilterContext) (decoder.FrameWorkPostFilterScratchSize, error) {
+func sideDataBuffer[T any](buf []T, n int) []T {
+	if cap(buf) < n {
+		return make([]T, n)
+	}
+	return buf[:n]
+}
+
+// applySupportedPostFilters runs the frame's remaining supported post-filter
+// stages over the side data bound in ctx, with scratch from storage, and
+// returns the display output.
+func applySupportedPostFilters(ctx decoder.FrameWorkPostFilterContext, storage func(decoder.FrameWorkPostFilterScratchSize) decoder.FrameWorkPostFilterScratch) (*frame.Frame, error) {
+	var options decoder.FrameWorkPostFilterBindOptions
 	var probe decoder.FrameWorkPostFilterRequest
 	if ctx.LoopFilterMap != nil {
-		probe.LoopFilter.Map = *ctx.LoopFilterMap
+		options.LoopFilterMap = *ctx.LoopFilterMap
+		options.LoopFilterTrustedCoverage = true
+		probe.LoopFilter.Map = options.LoopFilterMap
 	}
 	if ctx.CDEFIndexMap != nil {
-		probe.CDEF.IndexMap = *ctx.CDEFIndexMap
+		options.CDEFIndexMap = *ctx.CDEFIndexMap
+		probe.CDEF.IndexMap = options.CDEFIndexMap
 	}
 	if ctx.RestorationFrameBuffers != nil {
-		probe.Restoration.Records = ctx.RestorationFrameBuffers.Records
+		options.RestorationRecords = ctx.RestorationFrameBuffers.Records
+		options.RestorationBoundaries = ctx.RestorationFrameBuffers.Boundaries
+		probe.Restoration.Records = options.RestorationRecords
 	}
-	return ctx.SupportedPostFilterScratchLen(probe)
+	size, err := ctx.SupportedPostFilterScratchLen(probe)
+	if err != nil {
+		return nil, fmt.Errorf("supported postfilter scratch: %w", err)
+	}
+	req, err := size.BindRequest(options, storage(size))
+	if err != nil {
+		return nil, err
+	}
+	next, display, _, err := ctx.ApplySupportedPostFiltersForPublication(req)
+	if err != nil {
+		return nil, err
+	}
+	if err := next.RequirePublishablePostFilterOutput(); err != nil {
+		return nil, err
+	}
+	return display, nil
 }
 
 // libaomShowExistingFilmGrainMD5 runs the film grain stage alone on a shown
@@ -964,19 +964,14 @@ func libaomShowExistingFilmGrainMD5(pool *frame.Pool, event *decoder.Event, step
 	ctx := decoder.FrameWorkPostFilterContext{Event: *event, Step: step, Output: output}
 	ctx = ctx.WithCompletedPostFilters(decoder.FrameWorkPostFilterLoopFilter | decoder.FrameWorkPostFilterCDEF |
 		decoder.FrameWorkPostFilterSuperRes | decoder.FrameWorkPostFilterLoopRestoration)
-	post := decoder.FrameWorkBoundSupportedPostFilterRunner{}
-	size, err := libaomSupportedPostFilterScratchLen(ctx)
+	display, err := applySupportedPostFilters(ctx, libaomPostFilterScratchStorage)
 	if err != nil {
 		return MD5{}, err
 	}
-	post.Scratch = libaomPostFilterScratchStorage(size)
-	if err := post.Apply(ctx); err != nil {
-		return MD5{}, err
-	}
-	if post.DisplayOutput == nil {
+	if display == output {
 		return MD5{}, fmt.Errorf("film grain produced no display output")
 	}
-	return FrameMD5(*post.DisplayOutput)
+	return FrameMD5(*display)
 }
 
 func libaomPostFilterScratchStorage(size decoder.FrameWorkPostFilterScratchSize) decoder.FrameWorkPostFilterScratch {
@@ -1042,25 +1037,6 @@ func bindLibaomVectorFramePool(t *testing.T, event decoder.Event, count int) (fr
 		t.Fatal(err)
 	}
 	return pool, format, backing, frames, free, used
-}
-
-func bindLibaomVectorMotionStore(t *testing.T, event decoder.Event, count int) ([]tile.ReferenceMVEntry, []tile.TemporalMotionEntry, []tile.ReferenceMVFrame, []tile.TemporalMotionReferenceFrame, int) {
-	t.Helper()
-	miCols := libaomVectorMIExtent(event.FrameSize.CodedWidth)
-	miRows := libaomVectorMIExtent(event.FrameSize.Height)
-	length, err := tile.ReferenceMVFrameEntries(miRows, miCols)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return make([]tile.ReferenceMVEntry, count*length),
-		make([]tile.TemporalMotionEntry, length),
-		make([]tile.ReferenceMVFrame, count),
-		make([]tile.TemporalMotionReferenceFrame, count),
-		length
-}
-
-func libaomVectorMIExtent(pixels uint32) uint32 {
-	return ((pixels + 7) >> 3) << 1
 }
 
 func frameFormatFromEvent(event decoder.Event) frame.Format {

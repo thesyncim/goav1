@@ -21,7 +21,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "FrameWorkBatch", size: unsafe.Sizeof(FrameWorkBatch{}), max: 1640}, // +8: FrameThread (dav1d frame-thread split); +8: SegmentMaps (dav1d cur/prev_segmap)
 		{name: "FrameWorkFrameContext", size: unsafe.Sizeof(FrameWorkFrameContext{}), max: 1152},
 		{name: "FrameWorkPlaneRegion", size: unsafe.Sizeof(FrameWorkPlaneRegion{}), max: 72},
-		{name: "FrameWorkTileResidualCDFStorage", size: unsafe.Sizeof(FrameWorkTileResidualCDFStorage{}), max: 56 * hotStructKiB},
+		{name: "FrameWorkTileResidualCDFStorage", size: unsafe.Sizeof(FrameWorkTileResidualCDFStorage{}), max: 57 * hotStructKiB}, // +508: DV, the intra block copy MV context
 		// The fused coefficient path adds one compact job-owned dequant target
 		// to the controller; its independent 80-byte layout is guarded in tile.
 		// It embeds FrameWorkBatch copies, so the 8-byte wavefront lane channel
@@ -29,7 +29,7 @@ func TestHotStructSizes(t *testing.T) {
 		// The tile refmvs state carries dav1d's mfmv setup and rp_proj window.
 		// The three restoration stripe-boundary handles each add a pixel-row
 		// (Bytes) flag, 8 bytes with alignment.
-		{name: "FrameWorkTileResidualScratch", size: unsafe.Sizeof(FrameWorkTileResidualScratch{}), max: 101000}, // +64: the controller's coeffReq slot (the block coefficient request is read in place, not copied per block); +16: two FrameWorkBatch copies gained FrameThread; +16: BlockLoopRequest.MotionProgress; +16: BlockLoopScratch.leftEdge (resident SB-row left context); +16: two FrameWorkBatch copies gained SegmentMaps; +2032: two job geometry caches gained the f->refp reference-plane views; +1072: and the bound recon_b_inter plane state
+		{name: "FrameWorkTileResidualScratch", size: unsafe.Sizeof(FrameWorkTileResidualScratch{}), max: 99408}, // net smaller: BlockLoopScratch gained the recon_b binding and txtp_map, the controller lost the dequant target, coeffReq and the transform-type selectors; +64: the controller's coeffReq slot (the block coefficient request is read in place, not copied per block); +16: two FrameWorkBatch copies gained FrameThread; +16: BlockLoopRequest.MotionProgress; +16: BlockLoopScratch.leftEdge (resident SB-row left context); +16: two FrameWorkBatch copies gained SegmentMaps; +2032: two job geometry caches gained the f->refp reference-plane views; +1072: and the bound recon_b_inter plane state
 		{name: "FrameWorkJobRegion", size: unsafe.Sizeof(FrameWorkJobRegion{}), max: 36},
 		{name: "FrameWorkCDEFIndexMap", size: unsafe.Sizeof(FrameWorkCDEFIndexMap{}), max: 56},
 		{name: "FrameWorkLoopFilterBlockRecord", size: unsafe.Sizeof(FrameWorkLoopFilterBlockRecord{}), max: 34},
@@ -41,13 +41,13 @@ func TestHotStructSizes(t *testing.T) {
 		// It also embeds a FrameWorkBatch, hence the wavefront lane channel and
 		// the deferred temporal-reference pointer.
 		{name: "poolTask", size: unsafe.Sizeof(poolTask{}), max: 1752}, // +8: FrameWorkBatch.FrameThread; +8: FrameWorkBatch.SegmentMaps
-		{name: "frameWorkReconEvent", size: unsafe.Sizeof(frameWorkReconEvent{}), max: 8},
-		{name: "frameWorkReconPaletteBinding", size: unsafe.Sizeof(frameWorkReconPaletteBinding{}), max: 12},
-		{name: "frameWorkReconSB", size: unsafe.Sizeof(frameWorkReconSB{}), max: 12},
+		{name: "frameWorkReconCBI", size: unsafe.Sizeof(frameWorkReconCBI{}), max: 6},
+		{name: "frameWorkReconPaletteBinding", size: unsafe.Sizeof(frameWorkReconPaletteBinding{}), max: 20}, // +4: the sub8x8 chroma cells arena slot
+		{name: "frameWorkReconSB", size: unsafe.Sizeof(frameWorkReconSB{}), max: 20},                         // +8: the superblock's cbi and cf cursors
 		// The wavefront is allocated once per scratch behind a pointer; it carries
 		// the parse-side span cursor and the published row snapshot the lanes
 		// read while the tile is still parsing.
-		{name: "frameWorkReconWavefront", size: unsafe.Sizeof(frameWorkReconWavefront{}), max: 512}, // +8: frameThread, +8: reconTile
+		{name: "frameWorkReconWavefront", size: unsafe.Sizeof(frameWorkReconWavefront{}), max: 536}, // +8: frameThread, +8: reconTile; +24: the published view snapshots the cf arena
 		{name: "frameWorkBlockCoeffGeometry", size: unsafe.Sizeof(frameWorkBlockCoeffGeometry{}), max: 88},
 		// The geometry cache also binds each job's inter-prediction output planes
 		// once (dav1d binds f->cur per frame); it lives in per-worker scratch.

@@ -64,33 +64,17 @@ func NewSBLUT(sharpness uint8) SBLUT {
 	return lut
 }
 
-// SBStats reports the edges a superblock call filtered: Applied counts every
-// selected unit whose resolved level is non-zero and MaxLevel is the largest
-// such level.
-type SBStats struct {
-	Applied  uint32
-	MaxLevel uint8
-}
-
-// Add accumulates another call's counts.
-func (s *SBStats) Add(o SBStats) {
-	s.Applied += o.Applied
-	if o.MaxLevel > s.MaxLevel {
-		s.MaxLevel = o.MaxLevel
-	}
-}
-
 // FilterSBVertical8 filters the vertical edges of one 4-pixel column of 4x4
 // units in an 8-bit plane. pix[off] is the sample just right of the edge (q0)
 // on the first unit's first row; unit n starts 4*n rows below. lvl[lvlOff +
 // n*lvlStride][comp] is unit n's level; a zero level falls back to the unit on
 // the left (lvl[... - 1]). vm[2] must be zero for chroma. rowBytes is how many
 // bytes from off to the end of the row the call may read and rewrite.
-func FilterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
+func FilterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	if vm[0]|vm[1]|vm[2] == 0 {
-		return SBStats{}
+		return
 	}
-	return filterSBVertical8(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+	filterSBVertical8(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 }
 
 // FilterSBHorizontal8 filters the horizontal edges of one 4-pixel row of 4x4
@@ -100,11 +84,11 @@ func FilterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 // above (lvl[... - lvlStride]). rowBytes is how many bytes from off to the end
 // of the row the call may read and rewrite; whole sixteen-sample groups that
 // would cross it are filtered unit by unit instead.
-func FilterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
+func FilterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	if vm[0]|vm[1]|vm[2] == 0 {
-		return SBStats{}
+		return
 	}
-	return filterSBHorizontal8(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+	filterSBHorizontal8(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 }
 
 // sbUnitWidth returns unit n's filter width (4, 6, 8 or 16) from the masks.
@@ -124,8 +108,7 @@ func sbUnitWidth(vm *[3]uint32, luma bool, bit uint32) int {
 
 // filterSBVertical8Scalar is the unit-by-unit reference: dav1d
 // loop_filter_h_sb128{y,uv}_c over loop_filter() with stridea = row stride.
-func filterSBVertical8Scalar(pix []byte, off, stride int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
-	var st SBStats
+func filterSBVertical8Scalar(pix []byte, off, stride int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	all := vm[0] | vm[1] | vm[2]
 	for all != 0 {
 		n := bits.TrailingZeros32(all)
@@ -139,19 +122,13 @@ func filterSBVertical8Scalar(pix []byte, off, stride int, vm [3]uint32, luma boo
 		if L == 0 {
 			continue
 		}
-		st.Applied++
-		if L > st.MaxLevel {
-			st.MaxLevel = L
-		}
 		lpfUnit8(pix, off+4*n*stride, stride, 1, int(lut.E[L]), int(lut.I[L]), int(L>>4), sbUnitWidth(&vm, luma, bit))
 	}
-	return st
 }
 
 // filterSBHorizontal8Scalar is the unit-by-unit reference for horizontal edges:
 // dav1d loop_filter_v_sb128{y,uv}_c with stridea = 1, strideb = row stride.
-func filterSBHorizontal8Scalar(pix []byte, off, stride int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
-	var st SBStats
+func filterSBHorizontal8Scalar(pix []byte, off, stride int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	all := vm[0] | vm[1] | vm[2]
 	for all != 0 {
 		n := bits.TrailingZeros32(all)
@@ -165,13 +142,8 @@ func filterSBHorizontal8Scalar(pix []byte, off, stride int, vm [3]uint32, luma b
 		if L == 0 {
 			continue
 		}
-		st.Applied++
-		if L > st.MaxLevel {
-			st.MaxLevel = L
-		}
 		lpfUnit8(pix, off+4*n, 1, stride, int(lut.E[L]), int(lut.I[L]), int(L>>4), sbUnitWidth(&vm, luma, bit))
 	}
-	return st
 }
 
 // lpfUnit8 is dav1d's loop_filter() for one 4-sample edge unit of an 8-bit
@@ -303,23 +275,22 @@ func SBLUTFor(sharpness uint8) *SBLUT {
 
 // FilterSBVertical16 is FilterSBVertical8 for 10/12-bit planes stored as
 // little-endian uint16 samples: off, stride and rowBytes are in bytes.
-func FilterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
+func FilterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	if vm[0]|vm[1]|vm[2] == 0 {
-		return SBStats{}
+		return
 	}
-	return filterSBVertical16(pix, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+	filterSBVertical16(pix, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 }
 
 // FilterSBHorizontal16 is FilterSBHorizontal8 for 10/12-bit planes.
-func FilterSBHorizontal16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
+func FilterSBHorizontal16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	if vm[0]|vm[1]|vm[2] == 0 {
-		return SBStats{}
+		return
 	}
-	return filterSBHorizontal16(pix, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+	filterSBHorizontal16(pix, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 }
 
-func filterSBVertical16Scalar(pix []byte, off, stride int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
-	var st SBStats
+func filterSBVertical16Scalar(pix []byte, off, stride int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	all := vm[0] | vm[1] | vm[2]
 	for all != 0 {
 		n := bits.TrailingZeros32(all)
@@ -333,17 +304,11 @@ func filterSBVertical16Scalar(pix []byte, off, stride int, bitDepth uint8, vm [3
 		if L == 0 {
 			continue
 		}
-		st.Applied++
-		if L > st.MaxLevel {
-			st.MaxLevel = L
-		}
 		lpfUnit16(pix, off+4*n*stride, stride, 2, bitDepth, int(lut.E[L]), int(lut.I[L]), int(L>>4), sbUnitWidth(&vm, luma, bit))
 	}
-	return st
 }
 
-func filterSBHorizontal16Scalar(pix []byte, off, stride int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
-	var st SBStats
+func filterSBHorizontal16Scalar(pix []byte, off, stride int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	all := vm[0] | vm[1] | vm[2]
 	for all != 0 {
 		n := bits.TrailingZeros32(all)
@@ -357,13 +322,8 @@ func filterSBHorizontal16Scalar(pix []byte, off, stride int, bitDepth uint8, vm 
 		if L == 0 {
 			continue
 		}
-		st.Applied++
-		if L > st.MaxLevel {
-			st.MaxLevel = L
-		}
 		lpfUnit16(pix, off+8*n, 2, stride, bitDepth, int(lut.E[L]), int(lut.I[L]), int(L>>4), sbUnitWidth(&vm, luma, bit))
 	}
-	return st
 }
 
 func ld16(pix []byte, off int) int { return int(pix[off]) | int(pix[off+1])<<8 }

@@ -6,43 +6,10 @@ package dsp
 
 import "github.com/thesyncim/goav1/internal/av1/frame"
 
-// FillPlaneBlock writes value to a rectangular plane block. High-bit-depth
-// samples are stored little-endian in two bytes.
-func FillPlaneBlock(dst frame.Plane, bytesPerSample int, x int, y int, width int, height int, value uint16) error {
-	block, err := planeBlockWindow(dst, bytesPerSample, x, y, width, height)
-	if err != nil {
-		return err
-	}
-	if bytesPerSample == 1 && value > 0xff {
-		return ErrInvalidBlock
-	}
-	switch bytesPerSample {
-	case 1:
-		v := byte(value)
-		for row := 0; row < block.height; row++ {
-			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-			for i := range line {
-				line[i] = v
-			}
-		}
-	case 2:
-		lo := byte(value)
-		hi := byte(value >> 8)
-		for row := 0; row < block.height; row++ {
-			line := block.pix[row*block.stride : row*block.stride+block.rowBytes]
-			for i := 0; i < len(line); i += 2 {
-				line[i] = lo
-				line[i+1] = hi
-			}
-		}
-	default:
-		return ErrInvalidBlock
-	}
-	return nil
-}
-
 // CopyPlaneBlock copies a rectangular plane block from src to dst. The source
 // and destination use the same sample width.
+//
+// Accesses stay inside the width x height block of each plane or buffer.
 func CopyPlaneBlock(dst frame.Plane, src frame.Plane, bytesPerSample int, dstX int, dstY int, srcX int, srcY int, width int, height int) error {
 	dstBlock, err := planeBlockWindow(dst, bytesPerSample, dstX, dstY, width, height)
 	if err != nil {
@@ -60,11 +27,11 @@ func CopyPlaneBlock(dst frame.Plane, src frame.Plane, bytesPerSample int, dstX i
 	return nil
 }
 
-// addResidualPlaneBlockImpl is the dispatch slot for the AddResidualPlaneBlock
-// inner loop. It is resolved exactly once, at package init (see
+// addResidualPlaneBlockImpl is the dispatch slot for the
+// AddResidualPlaneBlockTrusted inner loop. It is resolved exactly once, at package init (see
 // plane_dispatch_*.go), so the per-call cost is a single indirect call with no
-// feature-detection branches. It is only invoked after AddResidualPlaneBlock
-// has validated every input, so it never has to re-check bounds.
+// feature-detection branches. Its caller has validated every input, so it never
+// has to re-check bounds.
 var addResidualPlaneBlockImpl = addResidualPlaneBlockPureGo
 var addRawTransformPlaneBlockImpl = addRawTransformPlaneBlockPureGo
 
@@ -105,37 +72,12 @@ func addConstantPlaneBlock8PureGo(dst []byte, dstStride int, width int, height i
 	}
 }
 
-// AddResidualPlaneBlock adds signed transform residuals to an already-predicted
-// destination block and clips to bitDepth.
-func AddResidualPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, residual []int16, residualStride int) error {
-	block, err := planeBlockWindow(dst, bytesPerSample, x, y, width, height)
-	if err != nil {
-		return err
-	}
-	max, err := sampleMax(bytesPerSample, bitDepth)
-	if err != nil {
-		return err
-	}
-	if residualStride < width || residualStride <= 0 {
-		return ErrInvalidBlock
-	}
-	lastRowOffset, ok := checkedMul(height-1, residualStride)
-	if !ok {
-		return ErrInvalidBlock
-	}
-	needed, ok := checkedAdd(lastRowOffset, width)
-	if !ok || needed > len(residual) {
-		return ErrInvalidBlock
-	}
-
-	addResidualPlaneBlockImpl(block, bytesPerSample, max, width, residual, residualStride)
-	return nil
-}
-
-// AddResidualPlaneBlockTrusted is AddResidualPlaneBlock after the caller has
-// already validated the destination window, sample width, bit-depth maximum,
+// AddResidualPlaneBlockTrusted adds a residual block to a plane after the
+// caller has already validated the destination window, sample width, bit-depth maximum,
 // residual extent, and residual stride. dst must start at the block origin and
 // contain every row touched by height/stride.
+//
+// Accesses stay inside the width x height block of each plane or buffer.
 func AddResidualPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSample int, max uint16, width int, height int, residual []int16, residualStride int) {
 	block := planeBlock{
 		pix:      dst,
@@ -149,6 +91,8 @@ func AddResidualPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSample int,
 
 // AddConstantResidualPlaneBlockTrusted adds the same transform residual to
 // every sample in an already-validated destination block.
+//
+// Accesses stay inside the width x height block of each plane or buffer.
 func AddConstantResidualPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSample int, max uint16, width int, height int, residual int16) {
 	if bytesPerSample == 1 && max == 0xff && height > 0 {
 		addConstantPlaneBlock8Impl(dst, dstStride, width, height, residual)
@@ -181,6 +125,8 @@ func AddConstantResidualPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSam
 // output directly to an already-predicted destination block. raw contains
 // int32 samples before AV1's final round-by-four and int16 saturation; this is
 // the fused-add boundary used by dav1d/SVT-style reconstruction paths.
+//
+// Accesses stay inside the width x height block of each plane or buffer.
 func AddRawTransformPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSample int, max uint16, width int, height int, raw []int32, rawStride int) {
 	block := planeBlock{
 		pix:      dst,
@@ -243,8 +189,8 @@ func rawTransformResidual(v int32) int {
 
 // addResidualPlaneBlockPureGo is the portable reference for the residual-add
 // inner loop. Every SIMD variant the dispatcher selects MUST produce bit-exact
-// output relative to this function. AddResidualPlaneBlock has already validated
-// the block window, the residual extent, and that bytesPerSample is 1 or 2.
+// output relative to this function. The caller has already validated the block
+// window, the residual extent, and that bytesPerSample is 1 or 2.
 func addResidualPlaneBlockPureGo(block planeBlock, bytesPerSample int, max uint16, width int, residual []int16, residualStride int) {
 	switch bytesPerSample {
 	case 1:
@@ -377,27 +323,6 @@ func planeBlockWindow(plane frame.Plane, bytesPerSample int, x int, y int, width
 		height:   height,
 		rowBytes: rowBytes,
 	}, nil
-}
-
-func sampleMax(bytesPerSample int, bitDepth uint8) (uint16, error) {
-	switch {
-	case bytesPerSample == 1 && bitDepth == 8:
-		return 0xff, nil
-	case bytesPerSample == 2 && (bitDepth == 10 || bitDepth == 12):
-		return uint16((1 << bitDepth) - 1), nil
-	default:
-		return 0, ErrInvalidBlock
-	}
-}
-
-func clipSample(v int, max uint16) uint16 {
-	if v < 0 {
-		return 0
-	}
-	if v > int(max) {
-		return max
-	}
-	return uint16(v)
 }
 
 func checkedAdd(a int, b int) (int, bool) {

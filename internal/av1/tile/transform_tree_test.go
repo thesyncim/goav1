@@ -29,9 +29,9 @@ func TestDecodeTransformTreeIntraSelectedMarksContexts(t *testing.T) {
 	if result.Y != TransformSize16x16 || result.Variable {
 		t.Fatalf("result=%+v want fixed 16x16", result)
 	}
-	if ctx.AboveTxIntra[0] != 2 || ctx.LeftTxIntra[0] != 2 || ctx.AboveTx[3] != 2 || ctx.LeftTx[3] != 2 {
+	if ctx.A.TxIntra[0] != 2 || ctx.L.TxIntra[0] != 2 || ctx.A.Tx[3] != 2 || ctx.L.Tx[3] != 2 {
 		t.Fatalf("tx contexts above=%v left=%v aboveIntra=%v leftIntra=%v",
-			ctx.AboveTx[:4], ctx.LeftTx[:4], ctx.AboveTxIntra[:4], ctx.LeftTxIntra[:4])
+			ctx.A.Tx[:4], ctx.L.Tx[:4], ctx.A.TxIntra[:4], ctx.L.TxIntra[:4])
 	}
 }
 
@@ -135,8 +135,8 @@ func TestDecodeTransformTreeInterNoSplitMarksLeaf(t *testing.T) {
 	if result.Y != TransformSize16x16 || !result.Variable || result.Split != ([2]uint16{}) {
 		t.Fatalf("result=%+v want variable unsplit 16x16", result)
 	}
-	if ctx.AboveTx[0] != 2 || ctx.LeftTx[0] != 2 {
-		t.Fatalf("tx contexts above=%v left=%v", ctx.AboveTx[:4], ctx.LeftTx[:4])
+	if ctx.A.Tx[0] != 2 || ctx.L.Tx[0] != 2 {
+		t.Fatalf("tx contexts above=%v left=%v", ctx.A.Tx[:4], ctx.L.Tx[:4])
 	}
 	var leaves []TransformBlock
 	if err := result.ForEachLumaTXB(TransformTreeRequest{
@@ -286,15 +286,15 @@ func TestMarkTransformAreaMatchesLibaomTxfmPartitionUpdate(t *testing.T) {
 	if err := ctx.MarkTransformArea(4, 6, 2, 2, 0, 0, false); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.AboveTx[4] != 0 || ctx.AboveTx[5] != 0 || ctx.LeftTx[6] != 0 || ctx.LeftTx[7] != 0 {
-		t.Fatalf("split-to-4x4 context above=%v left=%v", ctx.AboveTx[4:8], ctx.LeftTx[6:10])
+	if ctx.A.Tx[4] != 0 || ctx.A.Tx[5] != 0 || ctx.L.Tx[6] != 0 || ctx.L.Tx[7] != 0 {
+		t.Fatalf("split-to-4x4 context above=%v left=%v", ctx.A.Tx[4:8], ctx.L.Tx[6:10])
 	}
-	ctx.AboveTx[0], ctx.LeftTx[0] = 9, 9
+	ctx.A.Tx[0], ctx.L.Tx[0] = 9, 9
 	if err := ctx.MarkTransformArea(0, 0, 4, 2, 2, 1, false); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.AboveTx[0] != 2 || ctx.AboveTx[3] != 2 || ctx.LeftTx[0] != 1 || ctx.LeftTx[1] != 1 {
-		t.Fatalf("txfm partition update context above=%v left=%v", ctx.AboveTx[:4], ctx.LeftTx[:2])
+	if ctx.A.Tx[0] != 2 || ctx.A.Tx[3] != 2 || ctx.L.Tx[0] != 1 || ctx.L.Tx[1] != 1 {
+		t.Fatalf("txfm partition update context above=%v left=%v", ctx.A.Tx[:4], ctx.L.Tx[:2])
 	}
 }
 
@@ -322,8 +322,8 @@ func TestTransformTreeFixedInterSkipMarksBlockLogContext(t *testing.T) {
 	if result.Y != TransformSize64x64 || result.Variable {
 		t.Fatalf("result=%+v want fixed max y tx", result)
 	}
-	if ctx.AboveTx[31] != 5 || ctx.LeftTx[31] != 5 {
-		t.Fatalf("skip contexts above[31]=%d left[31]=%d want block log 5", ctx.AboveTx[31], ctx.LeftTx[31])
+	if ctx.A.Tx[31] != 5 || ctx.L.Tx[31] != 5 {
+		t.Fatalf("skip contexts above[31]=%d left[31]=%d want block log 5", ctx.A.Tx[31], ctx.L.Tx[31])
 	}
 	var called bool
 	if err := result.ForEachLumaTXB(TransformTreeRequest{

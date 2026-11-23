@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+
 	"github.com/thesyncim/goav1/internal/av1/lfmask"
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
@@ -120,15 +123,15 @@ func TestDecoderCompactLoopFilterFallsBackForMultiTileAndSuperRes(t *testing.T) 
 
 func TestDecoderCompactLoopFilterOwnerRejectsCopiesAndHooks(t *testing.T) {
 	side, compact := compactRootSideData(t)
-	batch := &DecoderFrameWorkBatchResidualRunner{}
+	batch := &decoderFrameWorkBatchResidualRunner{}
 	batch.compactState = compact
 	batch.compactOwner = batch
 	batch.compactSideOwner = side
 	if err := batch.setOwnedCompactSideData(side); err != nil {
 		t.Fatal(err)
 	}
-	post := &DecoderFrameWorkReusableSupportedPostFilterRunner{}
-	runner := DecoderFrameWorkResidualEventRunner{
+	post := &decoderFrameWorkReusableSupportedPostFilterRunner{}
+	runner := decoderFrameWorkResidualEventRunner{
 		Workers:           1,
 		BatchRunner:       batch,
 		SideData:          side,
@@ -139,13 +142,13 @@ func TestDecoderCompactLoopFilterOwnerRejectsCopiesAndHooks(t *testing.T) {
 		compactBatchOwner: batch,
 		compactSideOwner:  side,
 	}
-	event := &DecoderEvent{
-		Kind:       DecoderEventFrameHeader,
+	event := &internaldecoder.Event{
+		Kind:       internaldecoder.EventFrameHeader,
 		FrameSize:  FrameSize{CodedWidth: 16, Height: 16},
-		TileInfo:   TileInfo{Cols: 1, Rows: 1},
-		LoopFilter: LoopFilterParams{LevelY: [2]uint8{1, 1}},
+		TileInfo:   internalparser.TileInfo{Cols: 1, Rows: 1},
+		LoopFilter: internalparser.LoopFilterParams{LevelY: [2]uint8{1, 1}},
 	}
-	sequence := SequenceHeader{ColorConfig: ColorConfig{BitDepth: 8, MonoChrome: true}}
+	sequence := SequenceHeader{ColorConfig: internalparser.ColorConfig{BitDepth: 8, MonoChrome: true}}
 	if !runner.ownsCompactLoopFilter(sequence, post, event) {
 		t.Fatal("exact owned one-tile route was not accepted")
 	}
@@ -156,9 +159,6 @@ func TestDecoderCompactLoopFilterOwnerRejectsCopiesAndHooks(t *testing.T) {
 		t.Fatal("copied side-data handle inherited compact ownership")
 	}
 	runner.SideData = side
-	if runner.ownsCompactLoopFilter(sequence, &DecoderFrameWorkReusableCallerPostFilterRunner{}, event) {
-		t.Fatal("custom/caller postfilter inherited compact ownership")
-	}
 	customPost := compactLoopFilterTestPostFilter{}
 	if runner.ownsCompactLoopFilter(sequence, customPost, event) {
 		t.Fatal("custom postfilter hook inherited compact ownership")
@@ -169,8 +169,8 @@ func TestDecoderCompactLoopFilterOwnerRejectsCopiesAndHooks(t *testing.T) {
 	}
 	runner.Workers = 1
 	multiTile := *event
-	multiTile.Kind = DecoderEventTileGroup
-	multiTile.TileGroup = TileGroup{TileCount: 2, Final: true}
+	multiTile.Kind = internaldecoder.EventTileGroup
+	multiTile.TileGroup = internalparser.TileGroup{TileCount: 2, Final: true}
 	if runner.ownsCompactLoopFilter(sequence, post, &multiTile) {
 		t.Fatal("multi-tile route inherited compact ownership")
 	}
@@ -188,7 +188,7 @@ func TestDecoderCompactLoopFilterOwnerRejectsCopiesAndHooks(t *testing.T) {
 
 func TestDecoderCompactLoopFilterRunErrorInvalidatesAndPublicRebindDeactivates(t *testing.T) {
 	side, compact := compactRootSideData(t)
-	batch := &DecoderFrameWorkBatchResidualRunner{}
+	batch := &decoderFrameWorkBatchResidualRunner{}
 	batch.compactState = compact
 	batch.compactOwner = batch
 	batch.compactSideOwner = side
@@ -248,17 +248,17 @@ func TestDecoderCompactLoopFilterWarmResetAllocations(t *testing.T) {
 	}
 }
 
-func compactRootSideData(t *testing.T) (*DecoderFrameWorkSideData, *internalthreading.FrameWorkLoopFilterCompactState) {
+func compactRootSideData(t *testing.T) (*decoderFrameWorkSideData, *internalthreading.FrameWorkLoopFilterCompactState) {
 	t.Helper()
-	side := &DecoderFrameWorkSideData{
-		CDEFIndexMap: DecoderFrameWorkCDEFIndexMap{Index: make([]uint8, 1), Read: make([]bool, 1), Stride: 1, Rows: 1},
-		LoopFilterMap: DecoderFrameWorkLoopFilterMap{
-			Records: make([]DecoderFrameWorkLoopFilterBlockRecord, 16),
+	side := &decoderFrameWorkSideData{
+		CDEFIndexMap: internaldecoder.FrameWorkCDEFIndexMap{Index: make([]uint8, 1), Read: make([]bool, 1), Stride: 1, Rows: 1},
+		LoopFilterMap: internaldecoder.FrameWorkLoopFilterMap{
+			Records: make([]internalthreading.FrameWorkLoopFilterBlockRecord, 16),
 			Stride:  4,
 			Rows:    4,
 		},
-		LoopFilterMasks: DecoderFrameWorkLoopFilterMasks{
-			Masks:      make([]DecoderFrameWorkLoopFilterFilterMask, 1),
+		LoopFilterMasks: internalthreading.FrameWorkLoopFilterMasks{
+			Masks:      make([]lfmask.FilterMask, 1),
 			LevelCache: make([][4]uint8, 16),
 			Cols:       4,
 			Rows:       4,
@@ -266,10 +266,10 @@ func compactRootSideData(t *testing.T) (*DecoderFrameWorkSideData, *internalthre
 			SB128H:     1,
 			Layout:     lfmask.Layout{Mono: true},
 		},
-		RestorationFrameBuffers: DecoderFrameWorkRestorationFrameBuffers{Plan: tile.RestorationFramePlan{Planes: 1}},
+		RestorationFrameBuffers: internalthreading.FrameWorkRestorationFrameBuffers{Plan: tile.RestorationFramePlan{Planes: 1}},
 	}
 	compact := &internalthreading.FrameWorkLoopFilterCompactState{}
-	if err := internalthreading.BindFrameWorkLoopFilterCompactState(&side.LoopFilterMasks, compact, make([]byte, 8), LoopFilterParams{LevelY: [2]uint8{1, 1}}, SegmentationParams{}, DeltaParams{}, true); err != nil {
+	if err := internalthreading.BindFrameWorkLoopFilterCompactState(&side.LoopFilterMasks, compact, make([]byte, 8), internalparser.LoopFilterParams{LevelY: [2]uint8{1, 1}}, internalparser.SegmentationParams{}, internalparser.DeltaParams{}, true); err != nil {
 		t.Fatal(err)
 	}
 	return side, compact
@@ -277,7 +277,9 @@ func compactRootSideData(t *testing.T) (*DecoderFrameWorkSideData, *internalthre
 
 type compactLoopFilterTestPostFilter struct{}
 
-func (compactLoopFilterTestPostFilter) Apply(DecoderFrameWorkPostFilterContext) error { return nil }
+func (compactLoopFilterTestPostFilter) Apply(internaldecoder.FrameWorkPostFilterContext) error {
+	return nil
+}
 
 func visibleFrameMD5(f *Frame) [md5.Size]byte {
 	h := md5.New()

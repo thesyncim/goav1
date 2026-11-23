@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -98,17 +97,10 @@ func TestAppendLoopFilterParamsInterPayload(t *testing.T) {
 		ModeRefDeltaEnabled: false,
 		Deltas:              defaultLoopFilterDeltas(),
 	}
-	payloadSize, err := LoopFilterParamsInterPayloadSize(seq, prefix, size, false, lf, nil)
-	if err != nil {
-		t.Fatalf("LoopFilterParamsInterPayloadSize: %v", err)
-	}
 	var buf [8]byte
-	payload, err := AppendLoopFilterParamsInterPayload(buf[:0], seq, prefix, size, false, lf, nil)
+	payload, err := appendLoopFilterParamsInterPayload(buf[:0], seq, prefix, size, false, lf, nil)
 	if err != nil {
-		t.Fatalf("AppendLoopFilterParamsInterPayload: %v", err)
-	}
-	if len(payload) != payloadSize {
-		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+		t.Fatalf("appendLoopFilterParamsInterPayload: %v", err)
 	}
 	parsed, err := parser.ParseLoopFilterParams(payload, parseEncoderSequenceHeader(t, seq), parser.FrameHeaderPrefix{PrimaryRefFrame: parser.PrimaryRefNone}, parser.FrameSize{}, parser.SegmentationParams{}, parser.DeltaParams{}, nil)
 	if err != nil {
@@ -132,68 +124,26 @@ func TestAppendLoopFilterParamsPayloadRejectsInvalid(t *testing.T) {
 	}
 	var buf [8]byte
 	for _, lf := range cases {
-		if _, err := AppendLoopFilterParamsPayload(buf[:0], seq, prefix, size, false, lf, nil); !errors.Is(err, ErrInvalidFrame) {
-			t.Fatalf("AppendLoopFilterParamsPayload(%+v) err=%v want ErrInvalidFrame", lf, err)
+		if _, err := appendLoopFilterParamsPayload(buf[:0], seq, prefix, size, false, lf, nil); !errors.Is(err, ErrInvalidFrame) {
+			t.Fatalf("appendLoopFilterParamsPayload(%+v) err=%v want ErrInvalidFrame", lf, err)
 		}
 	}
 	lossless := LoopFilterParams{Deltas: base}
-	if _, err := AppendLoopFilterParamsPayload(buf[:0], seq, prefix, size, true, lossless, nil); !errors.Is(err, ErrInvalidFrame) {
+	if _, err := appendLoopFilterParamsPayload(buf[:0], seq, prefix, size, true, lossless, nil); !errors.Is(err, ErrInvalidFrame) {
 		t.Fatalf("lossless missing default flags err=%v want ErrInvalidFrame", err)
 	}
 	nonNone := FrameHeaderPrefix{PrimaryRefFrame: 0}
-	if _, err := AppendLoopFilterParamsPayload(buf[:0], seq, nonNone, size, false, LoopFilterParams{}, nil); !errors.Is(err, ErrInvalidFrame) {
+	if _, err := appendLoopFilterParamsPayload(buf[:0], seq, nonNone, size, false, LoopFilterParams{}, nil); !errors.Is(err, ErrInvalidFrame) {
 		t.Fatalf("missing previous err=%v want ErrInvalidFrame", err)
-	}
-}
-
-func TestAppendLoopFilterParamsPayloadShortBuffer(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	prefix := FrameHeaderPrefix{PrimaryRefFrame: EncoderPrimaryRefNone}
-	size := IntraFrameSize{UpscaledWidth: 64, Height: 64, SuperResDenominator: 8, RefreshFrameFlags: 0xff}
-	lf := LoopFilterParams{LevelY: [2]uint8{1, 0}, Deltas: defaultLoopFilterDeltas()}
-	var buf [1]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendLoopFilterParamsPayload(dst, seq, prefix, size, false, lf, nil)
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want ErrShortBuffer", err)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output=% x", out)
-	}
-}
-
-func TestAppendLoopFilterParamsPayloadAllocs(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	prefix := FrameHeaderPrefix{PrimaryRefFrame: EncoderPrimaryRefNone}
-	size := IntraFrameSize{UpscaledWidth: 64, Height: 64, SuperResDenominator: 8, RefreshFrameFlags: 0xff}
-	lf := LoopFilterParams{LevelY: [2]uint8{1, 0}, Deltas: defaultLoopFilterDeltas()}
-	var buf [8]byte
-	if _, err := AppendLoopFilterParamsPayload(buf[:0], seq, prefix, size, false, lf, nil); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = LoopFilterParamsPayloadSize(seq, prefix, size, false, lf, nil)
-		_, _ = AppendLoopFilterParamsPayload(buf[:0], seq, prefix, size, false, lf, nil)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendLoopFilterParamsPayload allocated: %f", allocs)
 	}
 }
 
 func appendAndParseLoopFilterParams(t *testing.T, seq SequenceHeader, prefix FrameHeaderPrefix, size IntraFrameSize, allLossless bool, lf LoopFilterParams, previous *LoopFilterDeltas) ([]byte, parser.LoopFilterParams) {
 	t.Helper()
-	payloadSize, err := LoopFilterParamsPayloadSize(seq, prefix, size, allLossless, lf, previous)
-	if err != nil {
-		t.Fatalf("LoopFilterParamsPayloadSize: %v", err)
-	}
 	var buf [16]byte
-	payload, err := AppendLoopFilterParamsPayload(buf[:0], seq, prefix, size, allLossless, lf, previous)
+	payload, err := appendLoopFilterParamsPayload(buf[:0], seq, prefix, size, allLossless, lf, previous)
 	if err != nil {
-		t.Fatalf("AppendLoopFilterParamsPayload: %v", err)
-	}
-	if len(payload) != payloadSize {
-		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+		t.Fatalf("appendLoopFilterParamsPayload: %v", err)
 	}
 	parsedPrevious := parserLoopFilterDeltas(previous)
 	parsed, err := parser.ParseLoopFilterParams(

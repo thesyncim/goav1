@@ -5,14 +5,6 @@ import (
 	"testing"
 )
 
-// fillBytes fills b with uniform random bytes. It is shared by the
-// architecture-specific differential tests in this package.
-func fillBytes(rng *rand.Rand, b []byte) {
-	for i := range b {
-		b[i] = byte(rng.Intn(256))
-	}
-}
-
 // TestSAD8x8ImplMatchesPureGo proves the dispatched SAD kernel is bit-exact
 // with the portable reference across random data, strides, and offsets
 // (including totals far above any early-exit threshold).
@@ -679,22 +671,6 @@ func BenchmarkSAD8x8x4Step4(b *testing.B) {
 	}
 }
 
-func BenchmarkSAD8x8x4Step4Composed(b *testing.B) {
-	src := make([]byte, 64*64)
-	ref := make([]byte, 64*64)
-	for i := range src {
-		src[i] = uint8(i * 7)
-		ref[i] = uint8(i * 13)
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = sad8x8Impl(src, ref, 64, 1<<30) +
-			sad8x8Impl(src, ref[4:], 64, 1<<30) +
-			sad8x8Impl(src, ref[8:], 64, 1<<30) +
-			sad8x8Impl(src, ref[12:], 64, 1<<30)
-	}
-}
-
 func BenchmarkSAD16x16(b *testing.B) {
 	src := make([]byte, 64*64)
 	ref := make([]byte, 64*64)
@@ -718,22 +694,6 @@ func BenchmarkSAD16x16x4Step4(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		_, _, _, _ = sad16x16x4Step4Impl(src, ref, 64)
-	}
-}
-
-func BenchmarkSAD16x16x4Step4Composed(b *testing.B) {
-	src := make([]byte, 64*64)
-	ref := make([]byte, 64*64)
-	for i := range src {
-		src[i] = uint8(i * 7)
-		ref[i] = uint8(i * 13)
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = sad16x16Impl(src, ref, 64) +
-			sad16x16Impl(src, ref[4:], 64) +
-			sad16x16Impl(src, ref[8:], 64) +
-			sad16x16Impl(src, ref[12:], 64)
 	}
 }
 
@@ -763,22 +723,6 @@ func BenchmarkSAD32x32x4Step4(b *testing.B) {
 	}
 }
 
-func BenchmarkSAD32x32x4Step4Composed(b *testing.B) {
-	src := make([]byte, 64*64)
-	ref := make([]byte, 64*64)
-	for i := range src {
-		src[i] = uint8(i * 7)
-		ref[i] = uint8(i * 13)
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = sad32x32Impl(src, ref, 64) +
-			sad32x32Impl(src, ref[4:], 64) +
-			sad32x32Impl(src, ref[8:], 64) +
-			sad32x32Impl(src, ref[12:], 64)
-	}
-}
-
 func BenchmarkSAD32x32x4(b *testing.B) {
 	src := make([]byte, 96*96)
 	ref := make([]byte, 96*96)
@@ -804,39 +748,6 @@ func BenchmarkSAD32x32x4ScalarReference(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		sad32x32x4PureGo(src[off:], ref[off+2:], ref[off-2:], ref[off+2*96:], ref[off-2*96:], 96)
-	}
-}
-
-func BenchmarkSAD32x32x4Composed(b *testing.B) {
-	src := make([]byte, 96*96)
-	ref := make([]byte, 96*96)
-	for i := range src {
-		src[i] = uint8(i * 7)
-		ref[i] = uint8(i*13 + 5)
-	}
-	off := 32*96 + 32
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = sad32x32(src[off:], ref[off+2:], 96) +
-			sad32x32(src[off:], ref[off-2:], 96) +
-			sad32x32(src[off:], ref[off+2*96:], 96) +
-			sad32x32(src[off:], ref[off-2*96:], 96)
-	}
-}
-
-func BenchmarkSAD32x32Composed16x16(b *testing.B) {
-	src := make([]byte, 64*64)
-	ref := make([]byte, 64*64)
-	for i := range src {
-		src[i] = uint8(i * 7)
-		ref[i] = uint8(i * 13)
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = sad16x16Impl(src, ref, 64) +
-			sad16x16Impl(src[16:], ref[16:], 64) +
-			sad16x16Impl(src[16*64:], ref[16*64:], 64) +
-			sad16x16Impl(src[16*64+16:], ref[16*64+16:], 64)
 	}
 }
 
@@ -894,55 +805,6 @@ func BenchmarkSAD64x64x4(b *testing.B) {
 	}
 }
 
-func BenchmarkSAD64x64x4ScalarReference(b *testing.B) {
-	const stride = 160
-	src := make([]byte, stride*160)
-	ref := make([]byte, stride*160)
-	for i := range src {
-		src[i] = uint8(i * 7)
-		ref[i] = uint8(i*13 + 5)
-	}
-	off := 64*stride + 64
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = sadRectBlockReference(src, ref, off, off+2, stride, 64, 64) +
-			sadRectBlockReference(src, ref, off, off-2, stride, 64, 64) +
-			sadRectBlockReference(src, ref, off, off+2*stride, stride, 64, 64) +
-			sadRectBlockReference(src, ref, off, off-2*stride, stride, 64, 64)
-	}
-}
-
-func BenchmarkSAD64x64x4Composed(b *testing.B) {
-	const stride = 160
-	src := make([]byte, stride*160)
-	ref := make([]byte, stride*160)
-	for i := range src {
-		src[i] = uint8(i * 7)
-		ref[i] = uint8(i*13 + 5)
-	}
-	off := 64*stride + 64
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = sad64x64Composed(src[off:], ref[off+2:], stride) +
-			sad64x64Composed(src[off:], ref[off-2:], stride) +
-			sad64x64Composed(src[off:], ref[off+2*stride:], stride) +
-			sad64x64Composed(src[off:], ref[off-2*stride:], stride)
-	}
-}
-
-func BenchmarkSAD64x64ScalarReference(b *testing.B) {
-	src := make([]byte, 96*96)
-	ref := make([]byte, 96*96)
-	for i := range src {
-		src[i] = uint8(i * 7)
-		ref[i] = uint8(i * 13)
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		sadRectBlockReference(src, ref, 0, 0, 96, 64, 64)
-	}
-}
-
 func BenchmarkSAD16x16Dual(b *testing.B) {
 	src := make([]byte, 64*64)
 	ref := make([]byte, 16*64)
@@ -958,24 +820,6 @@ func BenchmarkSAD16x16Dual(b *testing.B) {
 	}
 }
 
-func BenchmarkSAD16x16DualComposed8x8(b *testing.B) {
-	src := make([]byte, 64*64)
-	ref := make([]byte, 16*64)
-	for i := range src {
-		src[i] = uint8(i * 7)
-	}
-	for i := range ref {
-		ref[i] = uint8(i * 13)
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = sad8x8Dual(src, 64, ref, 16) +
-			sad8x8Dual(src[8:], 64, ref[8:], 16) +
-			sad8x8Dual(src[8*64:], 64, ref[8*16:], 16) +
-			sad8x8Dual(src[8*64+8:], 64, ref[8*16+8:], 16)
-	}
-}
-
 func BenchmarkSAD32x32Dual(b *testing.B) {
 	src := make([]byte, 64*64)
 	ref := make([]byte, 32*64)
@@ -988,27 +832,6 @@ func BenchmarkSAD32x32Dual(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		sad32x32Dual(src, 64, ref, 32)
-	}
-}
-
-func BenchmarkSAD32x32DualComposed8x8(b *testing.B) {
-	src := make([]byte, 64*64)
-	ref := make([]byte, 32*64)
-	for i := range src {
-		src[i] = uint8(i * 7)
-	}
-	for i := range ref {
-		ref[i] = uint8(i * 13)
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		sum := 0
-		for r := 0; r < 32; r += 8 {
-			for c := 0; c < 32; c += 8 {
-				sum += sad8x8Dual(src[r*64+c:], 64, ref[r*32+c:], 32)
-			}
-		}
-		_ = sum
 	}
 }
 
@@ -1059,27 +882,6 @@ func BenchmarkSADRectDual32x16(b *testing.B) {
 	}
 }
 
-func BenchmarkSADRectDual32x16Composed8x8(b *testing.B) {
-	src := make([]byte, 64*64)
-	ref := make([]byte, 32*64)
-	for i := range src {
-		src[i] = uint8(i * 7)
-	}
-	for i := range ref {
-		ref[i] = uint8(i * 13)
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		sum := 0
-		for r := 0; r < 16; r += 8 {
-			for c := 0; c < 32; c += 8 {
-				sum += sad8x8Dual(src[r*64+c:], 64, ref[r*32+c:], 32)
-			}
-		}
-		_ = sum
-	}
-}
-
 func BenchmarkSADRect32x16(b *testing.B) {
 	src := make([]byte, 64*64)
 	ref := make([]byte, 64*64)
@@ -1090,19 +892,6 @@ func BenchmarkSADRect32x16(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		sadRectBlock(src, ref, 0, 0, 64, 32, 16, 1<<30)
-	}
-}
-
-func BenchmarkSADRect32x16ScalarReference(b *testing.B) {
-	src := make([]byte, 64*64)
-	ref := make([]byte, 64*64)
-	for i := range src {
-		src[i] = uint8(i * 7)
-		ref[i] = uint8(i * 13)
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		sadRectBlockReference(src, ref, 0, 0, 64, 32, 16)
 	}
 }
 
@@ -1189,23 +978,6 @@ func BenchmarkSAD16x16x4ScalarReference(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		sad16x16x4PureGo(src[off:], ref[off+2:], ref[off-2:], ref[off+2*64:], ref[off-2*64:], 64)
-	}
-}
-
-func BenchmarkSAD16x16x4Composed(b *testing.B) {
-	src := make([]byte, 64*64)
-	ref := make([]byte, 64*64)
-	for i := range src {
-		src[i] = uint8(i * 7)
-		ref[i] = uint8(i*13 + 5)
-	}
-	off := 16*64 + 16
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = sad16x16(src[off:], ref[off+2:], 64) +
-			sad16x16(src[off:], ref[off-2:], 64) +
-			sad16x16(src[off:], ref[off+2*64:], 64) +
-			sad16x16(src[off:], ref[off-2*64:], 64)
 	}
 }
 

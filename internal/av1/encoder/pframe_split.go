@@ -282,6 +282,12 @@ func (st *lossyEncodeState) scanForLeafTX(leafTX tile.TransformSize) ([]int16, e
 // coefficient plus one, exactly as WriteCoefficientsTXB computes it before
 // coding txb_skip. This lets the decision pass reconstruct without writing.
 func interTXBResult(qcoeff []int16, scan []int16, coeffCount int) tile.TXBDecodeResult {
+	if levelsAllZero(qcoeff[:coeffCount]) {
+		return tile.TXBDecodeResult{AllZero: true}
+	}
+	if iscan := sharedInverseScan(scan); len(iscan) >= coeffCount && len(scan) == coeffCount {
+		return tile.TXBDecodeResult{EOB: uint16(rdoqEOBFromIScan(qcoeff[:coeffCount], iscan[:coeffCount]))}
+	}
 	eob := 0
 	for c := coeffCount - 1; c >= 0; c-- {
 		if qcoeff[scan[c]] != 0 {
@@ -444,14 +450,14 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	blockFilters := motion.InterpFilters{}
 	// Materialize the three plane predictions, identical to the fused path.
 	if refs.Compound {
-		if err := predictCompoundInto(st.predY[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, compoundMV[0], compoundMV[1], false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+		if err := predictCompoundInto(st.predY[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, compoundMV[0], compoundMV[1], false, false, &st.mc.compBuf0, &st.mc.compBuf1, &st.mc.compScratch); err != nil {
 			return fmt.Errorf("predict compound luma: %w", err)
 		}
 		if hasChroma {
-			if err := predictCompoundInto(st.predU[:cbw*cbh], ref.U, ref.ChromaStride, golden.U, golden.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, compoundMV[0], compoundMV[1], st.color.SubsamplingX, st.color.SubsamplingY, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+			if err := predictCompoundInto(st.predU[:cbw*cbh], ref.U, ref.ChromaStride, golden.U, golden.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, compoundMV[0], compoundMV[1], st.color.SubsamplingX, st.color.SubsamplingY, &st.mc.compBuf0, &st.mc.compBuf1, &st.mc.compScratch); err != nil {
 				return fmt.Errorf("predict compound u: %w", err)
 			}
-			if err := predictCompoundInto(st.predV[:cbw*cbh], ref.V, ref.ChromaStride, golden.V, golden.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, compoundMV[0], compoundMV[1], st.color.SubsamplingX, st.color.SubsamplingY, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+			if err := predictCompoundInto(st.predV[:cbw*cbh], ref.V, ref.ChromaStride, golden.V, golden.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, compoundMV[0], compoundMV[1], st.color.SubsamplingX, st.color.SubsamplingY, &st.mc.compBuf0, &st.mc.compBuf1, &st.mc.compScratch); err != nil {
 				return fmt.Errorf("predict compound v: %w", err)
 			}
 		}
@@ -459,14 +465,14 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 		if refPlanes.Width != src.Width || refPlanes.Height != src.Height {
 			refChromaW := chromaWidthForColor(refPlanes.Width, st.color)
 			refChromaH := chromaHeightForColor(refPlanes.Height, st.color)
-			if err := predictIntoScaled(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, refPlanes.Width, refPlanes.Height, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, &st.scaledScratch); err != nil {
+			if err := predictIntoScaled(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, refPlanes.Width, refPlanes.Height, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, &st.mc.scaledScratch); err != nil {
 				return fmt.Errorf("predict scaled luma: %w", err)
 			}
 			if hasChroma {
-				if err := predictIntoScaled(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, refChromaW, refChromaH, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, &st.scaledScratch); err != nil {
+				if err := predictIntoScaled(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, refChromaW, refChromaH, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, &st.mc.scaledScratch); err != nil {
 					return fmt.Errorf("predict scaled u: %w", err)
 				}
-				if err := predictIntoScaled(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, refChromaW, refChromaH, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, &st.scaledScratch); err != nil {
+				if err := predictIntoScaled(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, refChromaW, refChromaH, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, &st.mc.scaledScratch); err != nil {
 					return fmt.Errorf("predict scaled v: %w", err)
 				}
 			}
@@ -546,7 +552,7 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	}
 	// Zero-motion accounting (libaom update_state(), av1/encoder/
 	// encodeframe_utils.c) belongs to the decision pass.
-	if refs.Ref[0] == tile.ReferenceFrameLast {
+	if refs.Ref0 == tile.ReferenceFrameLast {
 		zmv := motionResult.MV[0]
 		if zmv.Row > -8 && zmv.Row < 8 && zmv.Col > -8 && zmv.Col < 8 {
 			st.cntZeroMV += int(block.VisibleW4) * int(block.VisibleH4)
@@ -748,7 +754,7 @@ func (st *lossyEncodeState) writePBlock(block tile.BlockVisit, scratch *tile.Blo
 		if !interModeResultUsesGlobalOnly(modeResult) {
 			lfMode = loopfilter.ModeDeltaClassMotion
 		}
-		if err := st.markLoopFilterBlock(block, lfTree, skip, false, uint8(refs.Ref[0])+1, lfMode); err != nil {
+		if err := st.markLoopFilterBlock(block, lfTree, skip, false, uint8(refs.Ref0)+1, lfMode); err != nil {
 			return fmt.Errorf("mark loop filter: %w", err)
 		}
 	}
@@ -968,10 +974,10 @@ func (st *lossyEncodeState) writeIntraPBlock(block tile.BlockVisit, scratch *til
 	modeCtx.TxNeighborValid = false
 	if int(block.X4) < tile.MaxBlockModeSlots && int(block.Y4) < tile.MaxBlockModeSlots {
 		modeCtx.TxNeighborValid = true
-		modeCtx.TxAboveNeighborIntra = modeCtx.AboveIntra[block.X4]
-		modeCtx.TxAboveNeighborBlockSize = modeCtx.AboveBlockSize[block.X4]
-		modeCtx.TxLeftNeighborIntra = modeCtx.LeftIntra[block.Y4]
-		modeCtx.TxLeftNeighborBlockSize = modeCtx.LeftBlockSize[block.Y4]
+		modeCtx.TxAboveNeighborIntra = modeCtx.A.Intra[block.X4]
+		modeCtx.TxAboveNeighborBlockSize = modeCtx.A.BlockSize[block.X4]
+		modeCtx.TxLeftNeighborIntra = modeCtx.L.Intra[block.Y4]
+		modeCtx.TxLeftNeighborBlockSize = modeCtx.L.BlockSize[block.Y4]
 	}
 	if err := tile.WriteIntraFlag(st.w, &st.intraCDFs, modeCtx, tile.IntraFlagRequest{
 		FrameType: parser.FrameTypeInter,

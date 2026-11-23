@@ -1,7 +1,5 @@
 package encoder
 
-import "github.com/thesyncim/goav1/internal/av1/bitstream"
-
 const RestorationUnitMax = 256
 
 type RestorationType uint8
@@ -21,56 +19,6 @@ type RestorationParams struct {
 	UnitSizeUVLog2 uint8
 	UnitSizeY      uint16
 	UnitSizeUV     uint16
-}
-
-func RestorationParamsPayloadSize(seq SequenceHeader, size IntraFrameSize, allLossless bool, restoration RestorationParams) (int, error) {
-	w := newSizingBitWriter()
-	if err := writeRestorationParamsPayload(&w, seq, size.AllowIntrabc, size.SuperResDenominator != 8, allLossless, restoration); err != nil {
-		return 0, err
-	}
-	return w.bytesWritten(), nil
-}
-
-func AppendRestorationParamsPayload(dst []byte, seq SequenceHeader, size IntraFrameSize, allLossless bool, restoration RestorationParams) ([]byte, error) {
-	payloadSize, err := RestorationParamsPayloadSize(seq, size, allLossless, restoration)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < payloadSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+payloadSize]
-	w := newBitWriter(out[off:])
-	if err := writeRestorationParamsPayload(&w, seq, size.AllowIntrabc, size.SuperResDenominator != 8, allLossless, restoration); err != nil {
-		return dst, err
-	}
-	return out, nil
-}
-
-func RestorationParamsInterPayloadSize(seq SequenceHeader, size InterFrameSize, allLossless bool, restoration RestorationParams) (int, error) {
-	w := newSizingBitWriter()
-	if err := writeRestorationParamsPayload(&w, seq, false, size.SuperResDenominator != 8, allLossless, restoration); err != nil {
-		return 0, err
-	}
-	return w.bytesWritten(), nil
-}
-
-func AppendRestorationParamsInterPayload(dst []byte, seq SequenceHeader, size InterFrameSize, allLossless bool, restoration RestorationParams) ([]byte, error) {
-	payloadSize, err := RestorationParamsInterPayloadSize(seq, size, allLossless, restoration)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < payloadSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+payloadSize]
-	w := newBitWriter(out[off:])
-	if err := writeRestorationParamsPayload(&w, seq, false, size.SuperResDenominator != 8, allLossless, restoration); err != nil {
-		return dst, err
-	}
-	return out, nil
 }
 
 func writeRestorationParamsPayload(w *bitWriter, seq SequenceHeader, allowIntrabc bool, superResEnabled bool, allLossless bool, restoration RestorationParams) error {

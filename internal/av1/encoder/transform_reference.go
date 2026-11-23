@@ -1,7 +1,5 @@
 package encoder
 
-import "github.com/thesyncim/goav1/internal/av1/bitstream"
-
 type TransformMode uint8
 
 const (
@@ -23,31 +21,6 @@ const (
 type TransformReferenceParams struct {
 	TransformMode TransformMode
 	ReferenceMode ReferenceMode
-}
-
-func TransformReferenceParamsPayloadSize(prefix FrameHeaderPrefix, allLossless bool, params TransformReferenceParams) (int, error) {
-	w := newSizingBitWriter()
-	if err := writeTransformReferenceParamsPayload(&w, prefix, allLossless, params); err != nil {
-		return 0, err
-	}
-	return w.bytesWritten(), nil
-}
-
-func AppendTransformReferenceParamsPayload(dst []byte, prefix FrameHeaderPrefix, allLossless bool, params TransformReferenceParams) ([]byte, error) {
-	payloadSize, err := TransformReferenceParamsPayloadSize(prefix, allLossless, params)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < payloadSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+payloadSize]
-	w := newBitWriter(out[off:])
-	if err := writeTransformReferenceParamsPayload(&w, prefix, allLossless, params); err != nil {
-		return dst, err
-	}
-	return out, nil
 }
 
 func writeTransformReferenceParamsPayload(w *bitWriter, prefix FrameHeaderPrefix, allLossless bool, params TransformReferenceParams) error {

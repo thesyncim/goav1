@@ -96,47 +96,6 @@ func TestWienerHorizontalU8SIMDIsZeroAlloc(t *testing.T) {
 	}
 }
 
-func benchWienerHorizontalU8(b *testing.B, fn func([]uint8, int, int, int, int, WienerFilter, int, []uint16), width int) {
-	const height = 64
-	round0, _ := wienerRounds(8)
-	stride := width + 2*WienerHalfwin
-	origin := WienerHalfwin*stride + WienerHalfwin
-	rnd := newRestorationRandom(restorationDeterministicSeed ^ 0x7c3)
-	src := randomU8Plane(rnd, stride, height+2*WienerHalfwin)
-	temp := make([]uint16, width*(height+2*WienerHalfwin))
-	filter := DefaultWienerInfo().HFilter
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		fn(src, stride, origin, width, height, filter, round0, temp)
-	}
-}
-
-func BenchmarkWienerHorizontalU8_8_SIMD(b *testing.B) {
-	benchWienerHorizontalU8(b, wienerHorizontalU8SIMD, 8)
-}
-func BenchmarkWienerHorizontalU8_8_PureGo(b *testing.B) {
-	benchWienerHorizontalU8(b, wienerHorizontalU8, 8)
-}
-
-func BenchmarkWienerHorizontalU8_32_SIMD(b *testing.B) {
-	benchWienerHorizontalU8(b, wienerHorizontalU8SIMD, 32)
-}
-func BenchmarkWienerHorizontalU8_32_PureGo(b *testing.B) {
-	benchWienerHorizontalU8(b, wienerHorizontalU8, 32)
-}
-
-func BenchmarkWienerHorizontalU8_64_SIMD(b *testing.B) {
-	benchWienerHorizontalU8(b, wienerHorizontalU8SIMD, 64)
-}
-func BenchmarkWienerHorizontalU8_64_PureGo(b *testing.B) {
-	benchWienerHorizontalU8(b, wienerHorizontalU8, 64)
-}
-
-func BenchmarkWienerHorizontalU8_256_SIMD(b *testing.B) {
-	benchWienerHorizontalU8(b, wienerHorizontalU8SIMD, 256)
-}
-
 // TestWienerHorizontalSIMDExtremeSamples hardens the uint16 horizontal kernel at
 // the value and clamp boundaries: all-zero, all-max, alternating 0/max, and a
 // single max spike, for every bit depth and the symmetric filter corpus. The
@@ -172,9 +131,7 @@ func TestWienerHorizontalSIMDExtremeSamples(t *testing.T) {
 					if !wienerHorizontal(src, stride, origin, sz.width, sz.height, info.HFilter, bitDepth, round0, max, want) {
 						t.Fatalf("scalar rejected in-range extremes bd=%d mode=%d", bitDepth, mode)
 					}
-					if !wienerHorizontalSIMD(src, stride, origin, sz.width, sz.height, info.HFilter, bitDepth, round0, max, got) {
-						t.Fatalf("SIMD rejected in-range extremes bd=%d mode=%d sz=%dx%d", bitDepth, mode, sz.width, sz.height)
-					}
+					wienerHorizontalSIMDTrusted(src, stride, origin, sz.width, sz.height, info.HFilter, bitDepth, round0, max, got)
 					for i := range want {
 						if got[i] != want[i] {
 							t.Fatalf("bd=%d mode=%d sz=%dx%d f=%d temp[%d]=%d want %d",

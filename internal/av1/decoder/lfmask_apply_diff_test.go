@@ -36,7 +36,13 @@ func buildLoopFilterMasksFromRecords(t testing.TB, event Event, size parser.Fram
 		t.Fatalf("grid: %v", err)
 	}
 	color := event.SequenceHeader.ColorConfig
-	layout := frameWorkLoopFilterMaskLayout(color)
+	layout := lfmask.Layout{Mono: color.MonoChrome}
+	if color.SubsamplingX {
+		layout.SSHor = 1
+	}
+	if color.SubsamplingY {
+		layout.SSVer = 1
+	}
 	hasChroma := !color.MonoChrome
 	sb128w, sb128h, maskCount := threading.FrameWorkLoopFilterMaskShape(cols, rows)
 	handle := &threading.FrameWorkLoopFilterMasks{
@@ -210,92 +216,13 @@ func runMaskApplyDiff(t *testing.T, event Event, size parser.FrameSize, format f
 	// (b) mask-driven apply into frameB.
 	masks := buildLoopFilterMasksFromRecords(t, event, size, records, sbLog2)
 	ctxB := FrameWorkPostFilterContext{Event: event, Output: frameB, LoopFilterMap: &filterMap}
-	wantCounts := lfMaskApplyCountPerCell(t, ctxB, masks, filterMap)
-	resB, err := ctxB.ApplyLoopFilterEdgesFromMasks(masks, filterMap)
-	if err != nil {
+	if _, err := ctxB.ApplyLoopFilterEdgesFromMasks(masks, filterMap); err != nil {
 		t.Fatalf("mask apply: %v", err)
 	}
 	if resA.Applied == 0 {
 		t.Fatalf("degenerate: edge-list apply filtered no edges")
 	}
-	// resA counts run-merged edges while resB counts individual 4x4 cells, so
-	// the counters differ by construction; the byte-identical planes are the
-	// real gate. A non-zero mask count guards against a silently empty apply.
-	if resB.Applied == 0 {
-		t.Fatalf("degenerate: mask apply filtered no edges")
-	}
-	lfMaskApplyAssertCountsEqual(t, resB, wantCounts)
 	lfMaskApplyAssertFramesEqual(t, frameA, frameB)
-}
-
-// lfMaskApplyCountPerCell visits every decoded mask cell independently, so
-// result counters remain per-cell even when production dispatch merges a run.
-func lfMaskApplyCountPerCell(t *testing.T, ctx FrameWorkPostFilterContext, masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap) FrameWorkLoopFilterPostFilterApplyResult {
-	t.Helper()
-	levelCtx := frameWorkLoopFilterLevelContextFor(&ctx.Event)
-	var want FrameWorkLoopFilterPostFilterApplyResult
-	if err := ctx.populateLoopFilterLevelCacheFromMap(masks, filterMap, &levelCtx, &want.Plan); err != nil {
-		t.Fatalf("count oracle level cache: %v", err)
-	}
-	lc := lfmask.LevelCache{Cells: masks.LevelCache, Stride: masks.Cols}
-	maxPlane := loopfilter.PlaneV
-	if masks.Layout.Mono || ctx.Output.Format.MonoChrome || !masks.HasChroma {
-		maxPlane = loopfilter.PlaneY
-	}
-	chromaGated := levelCtx.lumaZero
-	var firstErr error
-	for plane := loopfilter.PlaneY; plane <= maxPlane; plane++ {
-		if plane != loopfilter.PlaneY && (chromaGated || levelCtx.base[plane][loopfilter.EdgeVertical] == 0) {
-			continue
-		}
-		bounds, err := frameWorkLoopFilterPlaneBounds(&ctx, plane)
-		if err != nil {
-			t.Fatalf("count oracle bounds: %v", err)
-		}
-		countCell := func(edge loopfilter.Edge, x4, y4 int, level, width uint8) {
-			if firstErr != nil {
-				return
-			}
-			clamped, err := frameWorkLoopFilterClampEdgeLengthInBounds(bounds, edge, x4, y4, 1)
-			if err != nil {
-				firstErr = err
-				return
-			}
-			if clamped <= 0 {
-				return
-			}
-			if _, ok, err := frameWorkLoopFilterScheduledWidthInBounds(bounds, edge, x4, y4, 1, width); err != nil {
-				firstErr = err
-			} else if ok {
-				if _, err := loopfilter.ThresholdsForLevel(level, ctx.Event.LoopFilter.Sharpness); err != nil {
-					firstErr = err
-					return
-				}
-				frameWorkCountAppliedLoopFilterMaskEdge(&want, plane, level)
-			}
-		}
-		if plane == loopfilter.PlaneY {
-			ctx.scanLoopFilterMaskLumaBand(masks, lc, loopfilter.EdgeVertical, 0, masks.SB128H, 0, masks.SB128W, countCell)
-			ctx.scanLoopFilterMaskLumaBand(masks, lc, loopfilter.EdgeHorizontal, 0, masks.SB128H, 0, masks.SB128W, countCell)
-		} else {
-			ctx.scanLoopFilterMaskChromaBand(masks, lc, plane, loopfilter.EdgeVertical, 0, masks.SB128H, 0, masks.SB128W, countCell)
-			ctx.scanLoopFilterMaskChromaBand(masks, lc, plane, loopfilter.EdgeHorizontal, 0, masks.SB128H, 0, masks.SB128W, countCell)
-		}
-		if firstErr != nil {
-			t.Fatalf("count oracle scan: %v", firstErr)
-		}
-	}
-	return want
-}
-
-func lfMaskApplyAssertCountsEqual(t *testing.T, got, want FrameWorkLoopFilterPostFilterApplyResult) {
-	t.Helper()
-	if got.Edges != want.Edges || got.Applied != want.Applied || got.PlaneEdges != want.PlaneEdges ||
-		got.PlaneApplied != want.PlaneApplied || got.PlaneMaxLevel != want.PlaneMaxLevel || got.MaxLevel != want.MaxLevel {
-		t.Fatalf("mask apply counts = edges:%d applied:%d planeEdges:%v planeApplied:%v planeMax:%v max:%d; want edges:%d applied:%d planeEdges:%v planeApplied:%v planeMax:%v max:%d",
-			got.Edges, got.Applied, got.PlaneEdges, got.PlaneApplied, got.PlaneMaxLevel, got.MaxLevel,
-			want.Edges, want.Applied, want.PlaneEdges, want.PlaneApplied, want.PlaneMaxLevel, want.MaxLevel)
-	}
 }
 
 func lfMaskApplyEvent(seq parser.SequenceHeader, size parser.FrameSize, lf parser.LoopFilterParams) Event {

@@ -86,29 +86,29 @@ func TestCollectWarpSamplesAboveLeftBypassesOBMCCap(t *testing.T) {
 	}
 
 	// Above neighbor: BLOCK_8X16 (W4=2) at X4=16, single-ref Last.
-	ctx.AboveBlockSize[16] = BlockSize8x16
-	ctx.AboveRef[0][16] = ReferenceFrameLast
-	ctx.AboveRef[1][16] = ReferenceFrameNone
+	ctx.A.BlockSize[16] = BlockSize8x16
+	ctx.A.Ref[0][16] = ReferenceFrameLast
+	ctx.A.Ref[1][16] = ReferenceFrameNone
 	ctx.AboveInterMotion[16].MV[0] = mv
-	ctx.AboveInterMotion[16].References.Ref[0] = ReferenceFrameLast
-	ctx.AboveInterMotion[16].References.Ref[1] = ReferenceFrameNone
+	ctx.AboveInterMotion[16].References.Ref0 = ReferenceFrameLast
+	ctx.AboveInterMotion[16].References.Ref1 = ReferenceFrameNone
 	ctx.AboveMotionValid[16] = 1
 
 	// Left neighbors: three 1-MI-tall (BLOCK_4X4) blocks at Y4=4,5,6, single
 	// ref Last. The 4th left slot (Y4=7) carries an unrelated block whose ref
 	// won't match; av1_findSamples won't add it.
 	for slot := 4; slot <= 6; slot++ {
-		ctx.LeftBlockSize[slot] = BlockSize4x4
-		ctx.LeftRef[0][slot] = ReferenceFrameLast
-		ctx.LeftRef[1][slot] = ReferenceFrameNone
+		ctx.L.BlockSize[slot] = BlockSize4x4
+		ctx.L.Ref[0][slot] = ReferenceFrameLast
+		ctx.L.Ref[1][slot] = ReferenceFrameNone
 		ctx.LeftInterMotion[slot].MV[0] = mv
-		ctx.LeftInterMotion[slot].References.Ref[0] = ReferenceFrameLast
-		ctx.LeftInterMotion[slot].References.Ref[1] = ReferenceFrameNone
+		ctx.LeftInterMotion[slot].References.Ref0 = ReferenceFrameLast
+		ctx.LeftInterMotion[slot].References.Ref1 = ReferenceFrameNone
 		ctx.LeftMotionValid[slot] = 1
 	}
-	ctx.LeftBlockSize[7] = BlockSize4x4
-	ctx.LeftRef[0][7] = ReferenceFrameGolden // does not match
-	ctx.LeftRef[1][7] = ReferenceFrameNone
+	ctx.L.BlockSize[7] = BlockSize4x4
+	ctx.L.Ref[0][7] = ReferenceFrameGolden // does not match
+	ctx.L.Ref[1][7] = ReferenceFrameNone
 	ctx.LeftMotionValid[7] = 1
 
 	var samples [maxWarpSamples]warpSample
@@ -147,23 +147,23 @@ func TestCollectWarpSamplesAboveLeftRejectsInterIntraNeighbors(t *testing.T) {
 		HaveTop:  true,
 		HaveLeft: true,
 	}
-	ctx.AboveBlockSize[16] = BlockSize8x16
-	ctx.AboveRef[0][16] = ReferenceFrameLast
-	ctx.AboveRef[1][16] = ReferenceFrameNone
+	ctx.A.BlockSize[16] = BlockSize8x16
+	ctx.A.Ref[0][16] = ReferenceFrameLast
+	ctx.A.Ref[1][16] = ReferenceFrameNone
 	ctx.AboveInterMotion[16].MV[0] = mv
-	ctx.AboveInterMotion[16].References.Ref[0] = ReferenceFrameLast
-	ctx.AboveInterMotion[16].References.Ref[1] = ReferenceFrameNone
+	ctx.AboveInterMotion[16].References.Ref0 = ReferenceFrameLast
+	ctx.AboveInterMotion[16].References.Ref1 = ReferenceFrameNone
 	ctx.AboveMotionValid[16] = 1
 	for slot := 4; slot <= 6; slot++ {
-		ctx.LeftBlockSize[slot] = BlockSize4x4
-		ctx.LeftRef[0][slot] = ReferenceFrameLast
-		ctx.LeftRef[1][slot] = ReferenceFrameNone
+		ctx.L.BlockSize[slot] = BlockSize4x4
+		ctx.L.Ref[0][slot] = ReferenceFrameLast
+		ctx.L.Ref[1][slot] = ReferenceFrameNone
 		ctx.LeftInterMotion[slot].MV[0] = mv
-		ctx.LeftInterMotion[slot].References.Ref[0] = ReferenceFrameLast
-		ctx.LeftInterMotion[slot].References.Ref[1] = ReferenceFrameNone
+		ctx.LeftInterMotion[slot].References.Ref0 = ReferenceFrameLast
+		ctx.LeftInterMotion[slot].References.Ref1 = ReferenceFrameNone
 		ctx.LeftMotionValid[slot] = 1
 	}
-	ctx.LeftInterIntra[5] = 1
+	ctx.L.InterIntra[5] = 1
 	var samples [maxWarpSamples]warpSample
 	count, _, _, err := ctx.collectWarpSamplesAboveLeft(block, ReferenceFrameLast, &samples)
 	if err != nil {
@@ -183,20 +183,20 @@ func TestMarkInterIntraSetsAboveLeftFlags(t *testing.T) {
 		t.Fatalf("MarkInterIntra: %v", err)
 	}
 	for slot := 5; slot < 7; slot++ {
-		if ctx.AboveInterIntra[slot] != 1 {
-			t.Fatalf("AboveInterIntra[%d] = %d want 1", slot, ctx.AboveInterIntra[slot])
+		if ctx.A.InterIntra[slot] != 1 {
+			t.Fatalf("AboveInterIntra[%d] = %d want 1", slot, ctx.A.InterIntra[slot])
 		}
 	}
 	for slot := 9; slot < 13; slot++ {
-		if ctx.LeftInterIntra[slot] != 1 {
-			t.Fatalf("LeftInterIntra[%d] = %d want 1", slot, ctx.LeftInterIntra[slot])
+		if ctx.L.InterIntra[slot] != 1 {
+			t.Fatalf("LeftInterIntra[%d] = %d want 1", slot, ctx.L.InterIntra[slot])
 		}
 	}
 	// Slots outside the block extent stay zero.
-	if ctx.AboveInterIntra[4] != 0 || ctx.AboveInterIntra[7] != 0 {
-		t.Fatalf("AboveInterIntra leaked outside block extent: %v", ctx.AboveInterIntra[:8])
+	if ctx.A.InterIntra[4] != 0 || ctx.A.InterIntra[7] != 0 {
+		t.Fatalf("AboveInterIntra leaked outside block extent: %v", ctx.A.InterIntra[:8])
 	}
-	if ctx.LeftInterIntra[8] != 0 || ctx.LeftInterIntra[13] != 0 {
-		t.Fatalf("LeftInterIntra leaked outside block extent: %v", ctx.LeftInterIntra[:14])
+	if ctx.L.InterIntra[8] != 0 || ctx.L.InterIntra[13] != 0 {
+		t.Fatalf("LeftInterIntra leaked outside block extent: %v", ctx.L.InterIntra[:14])
 	}
 }

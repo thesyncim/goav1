@@ -50,18 +50,11 @@ func TestEncodePFrameSceneChange(t *testing.T) {
 		}
 	}
 
-	const qIndex = 60
-	keyTU, keyRecon, err := encoder.EncodeKeyframe(src1, qIndex)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cutTU, cutRecon, err := encoder.EncodePFrame(src2, keyRecon, qIndex)
-	if err != nil {
-		t.Fatal(err)
-	}
-	panTU, panRecon, err := encoder.EncodePFrame(src3, cutRecon, qIndex)
-	if err != nil {
-		t.Fatal(err)
+	tus, recons, keys := encodeSequence(t, 60, src1, src2, src3)
+	keyTU, cutTU, panTU := tus[0], tus[1], tus[2]
+	cutRecon := recons[1]
+	if keys[1] || keys[2] {
+		t.Fatalf("inter frames coded as keyframes: %v", keys)
 	}
 	t.Logf("key %dB, scene-cut P %dB, pan P %dB", len(keyTU), len(cutTU), len(panTU))
 	psnr := planePSNR(src2.Y, cutRecon.Y)
@@ -86,10 +79,9 @@ func TestEncodePFrameSceneChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	for i, recon := range []encoder.SourceFrame420{cutRecon, panRecon} {
-		f := frames[i+1]
-		comparePlane(t, "Y", f.Y, recon.Y, w, h, w)
-		comparePlane(t, "U", f.U, recon.U, cw, ch, cw)
-		comparePlane(t, "V", f.V, recon.V, cw, ch, cw)
+	for i, f := range frames {
+		comparePlane(t, "Y", f.Y, recons[i].Y, w, h, w)
+		comparePlane(t, "U", f.U, recons[i].U, cw, ch, cw)
+		comparePlane(t, "V", f.V, recons[i].V, cw, ch, cw)
 	}
 }

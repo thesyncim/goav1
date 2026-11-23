@@ -269,43 +269,6 @@ func TestForwardBlockRejectsUnsupportedHybrid(t *testing.T) {
 	}
 }
 
-func TestForwardBlock8x8HybridTrustedMatchesChecked(t *testing.T) {
-	rng := rand.New(rand.NewSource(13))
-	for _, typ := range []Type{TypeADSTDCT, TypeDCTADST, TypeADSTADST, TypeIDTX} {
-		for trial := range 500 {
-			var residual [64]int16
-			var got, want [64]int32
-			var gotScratch, wantScratch [64]int32
-			for i := range residual {
-				residual[i] = int16(rng.Intn(511) - 255)
-			}
-			if err := ForwardBlock8x8HybridTrusted(got[:], 8, residual[:], 8, gotScratch[:], typ); err != nil {
-				t.Fatalf("trial %d %s trusted: %v", trial, typeName(typ), err)
-			}
-			if err := ForwardBlock(want[:], 8, residual[:], 8, wantScratch[:], Size{Width: 8, Height: 8}, typ); err != nil {
-				t.Fatalf("trial %d %s checked: %v", trial, typeName(typ), err)
-			}
-			for i := range want {
-				if got[i] != want[i] {
-					t.Fatalf("trial %d %s coeff[%d]=%d want %d", trial, typeName(typ), i, got[i], want[i])
-				}
-			}
-		}
-	}
-}
-
-func TestForwardBlock8x8HybridTrustedRejectsUnsupported(t *testing.T) {
-	var residual [64]int16
-	var coeff [64]int32
-	var scratch [64]int32
-	if err := ForwardBlock8x8HybridTrusted(coeff[:], 8, residual[:], 8, scratch[:], TypeDCTDCT); !errors.Is(err, ErrInvalidTransform) {
-		t.Fatalf("DCT_DCT err=%v want %v", err, ErrInvalidTransform)
-	}
-	if err := ForwardBlock8x8HybridTrusted(coeff[:], 8, residual[:], 8, scratch[:], TypeFlipADSTDCT); !errors.Is(err, ErrInvalidTransform) {
-		t.Fatalf("FlipADST err=%v want %v", err, ErrInvalidTransform)
-	}
-}
-
 func TestForwardBlock8x8ADSTImplsMatchPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(16))
 	const resStride, coeffStride = 19, 13
@@ -501,25 +464,6 @@ func BenchmarkForwardBlockHybrid8x8(b *testing.B) {
 	}
 }
 
-func BenchmarkForwardBlock8x8HybridTrusted(b *testing.B) {
-	residual := make([]int16, 64)
-	for i := range residual {
-		residual[i] = int16((i*37+11)%511 - 255)
-	}
-	coeff := make([]int32, 64)
-	scratch := make([]int32, 64)
-	for _, typ := range []Type{TypeADSTDCT, TypeDCTADST, TypeADSTADST, TypeIDTX} {
-		b.Run(typeName(typ), func(b *testing.B) {
-			b.ReportAllocs()
-			for range b.N {
-				if err := ForwardBlock8x8HybridTrusted(coeff, 8, residual, 8, scratch, typ); err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
-	}
-}
-
 func BenchmarkForwardBlock8x8ADSTDCTImpl(b *testing.B) {
 	benchmarkForwardBlock8x8HybridImpl(b, forwardBlock8x8ADSTDCTImpl)
 }
@@ -577,45 +521,6 @@ func benchmarkForwardBlock8x8IDTX(b *testing.B, fn func([]int32, int, []int16, i
 		fn(coeff, 8, residual, 8, scratch)
 	}
 }
-
-func BenchmarkForwardADST8(b *testing.B) {
-	cases := []struct {
-		name string
-		base int32
-	}{
-		{
-			name: "dense",
-			base: -996,
-		},
-		{
-			name: "zero",
-			base: 0,
-		},
-	}
-	for _, tc := range cases {
-		b.Run(tc.name, func(b *testing.B) {
-			var inputs [16][8]int32
-			for i := range inputs {
-				for j := range inputs[i] {
-					if tc.base == 0 {
-						continue
-					}
-					inputs[i][j] = tc.base + int32(i*13+j*37)
-				}
-			}
-			var out [8]int32
-			sum := int32(0)
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				fwdADST8(&inputs[i&15], &out)
-				sum += out[i&7]
-			}
-			forwardADST8BenchSink = sum
-		})
-	}
-}
-
-var forwardADST8BenchSink int32
 
 func typeName(typ Type) string {
 	switch typ {

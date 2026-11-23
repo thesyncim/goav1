@@ -135,8 +135,8 @@ type hmeRefLuma struct {
 }
 
 // meBorder is the replicated border of the ME source pictures. The sweep
-// reads at most 64 + realtimeSweepSearchW/2 + 3 samples left of a frame
-// edge and 64 + 15 right of it (the search center stays within one
+// reads at most 64 + 8/2 + 3 samples left of a frame edge (the preset-12 rtc
+// search area is 8 wide) and 64 + 15 right of it (the search center stays within one
 // superblock of the picture, the batch reads eight positions with a
 // 16-byte over-read), and 64 above and below.
 const meBorder = 80

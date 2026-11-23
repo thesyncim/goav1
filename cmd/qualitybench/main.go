@@ -4493,14 +4493,6 @@ func runEncoder(cfg benchConfig, frames []goav1.I420Frame, refPath string, encod
 	}
 }
 
-func runEncoderMeasured(cfg benchConfig, frames []goav1.I420Frame, refPath string, encoderName string, bitrate int) encodeResult {
-	results := runEncoderJobsMeasured(cfg, frames, refPath, []encodeJob{{bitrate: bitrate, encoder: canonicalEncoderName(encoderName)}})
-	if len(results) == 0 {
-		return encodeResult{encoder: canonicalEncoderName(encoderName), targetBPS: bitrate, status: "error", errText: "no encoder result"}
-	}
-	return results[0]
-}
-
 func runEncoderJobsMeasured(cfg benchConfig, frames []goav1.I420Frame, refPath string, jobs []encodeJob) []encodeResult {
 	return runEncoderJobsMeasuredWithRunner(cfg, frames, refPath, jobs, runEncoder)
 }

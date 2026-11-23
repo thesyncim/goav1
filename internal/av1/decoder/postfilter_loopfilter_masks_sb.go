@@ -18,7 +18,7 @@ import (
 // of the bitmasks, which is exactly the edge-length clamp and padding-edge
 // suppression the per-cell apply performs; on 8-aligned buffers no filter width
 // ever needs downgrading, so the result is byte-identical.
-func (ctx *FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRangeSB(result *FrameWorkLoopFilterPostFilterApplyResult, masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, sharpness uint8, plane loopfilter.Plane, dirMask, rRow0, rRow1, rCol0, rCol1 int, dst frame.Plane, bps int, bitDepth uint8, bounds frameWorkLoopFilterBounds) {
+func (ctx *FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRangeSB(masks *threading.FrameWorkLoopFilterMasks, lc lfmask.LevelCache, sharpness uint8, plane loopfilter.Plane, dirMask, rRow0, rRow1, rCol0, rCol1 int, dst frame.Plane, bps int, bitDepth uint8, bounds frameWorkLoopFilterBounds) {
 	lut := loopfilter.SBLUTFor(sharpness)
 	cols := masks.Cols
 	pix := dst.Pix
@@ -26,7 +26,6 @@ func (ctx *FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRangeSB(result *F
 	w4 := int(bounds.posWidth+3) >> 2
 	h4 := int(bounds.posHeight+3) >> 2
 	cells := lc.Cells
-	var st loopfilter.SBStats
 
 	if plane == loopfilter.PlaneY {
 		if dirMask&maskDirVertical != 0 {
@@ -60,7 +59,7 @@ func (ctx *FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRangeSB(result *F
 						if vm[0]|vm[1]|vm[2] == 0 {
 							continue
 						}
-						st.Add(sbFilterVertical(bps, bitDepth, pix, rowOff+col*4*bps, stride, (dst.Width-col*4)*bps, vm, true, cells, lvlRow+col, cols, 0, lut))
+						sbFilterVertical(bps, bitDepth, pix, rowOff+col*4*bps, stride, (dst.Width-col*4)*bps, vm, true, cells, lvlRow+col, cols, 0, lut)
 					}
 				}
 			}
@@ -95,12 +94,11 @@ func (ctx *FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRangeSB(result *F
 						if vm[0]|vm[1]|vm[2] == 0 {
 							continue
 						}
-						st.Add(sbFilterHorizontal(bps, bitDepth, pix, row*4*stride+baseCol*4*bps, stride, rowBytes, vm, true, cells, row*cols+baseCol, cols, 1, lut))
+						sbFilterHorizontal(bps, bitDepth, pix, row*4*stride+baseCol*4*bps, stride, rowBytes, vm, true, cells, row*cols+baseCol, cols, 1, lut)
 					}
 				}
 			}
 		}
-		frameWorkCountAppliedLoopFilterSB(result, plane, st)
 		return
 	}
 
@@ -145,7 +143,7 @@ func (ctx *FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRangeSB(result *F
 					if vm[0]|vm[1] == 0 {
 						continue
 					}
-					st.Add(sbFilterVertical(bps, bitDepth, pix, rowOff+ccol*4*bps, stride, (dst.Width-ccol*4)*bps, vm, false, cells, lvlRow+ccol, cols, comp, lut))
+					sbFilterVertical(bps, bitDepth, pix, rowOff+ccol*4*bps, stride, (dst.Width-ccol*4)*bps, vm, false, cells, lvlRow+ccol, cols, comp, lut)
 				}
 			}
 		}
@@ -180,12 +178,11 @@ func (ctx *FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRangeSB(result *F
 					if vm[0]|vm[1] == 0 {
 						continue
 					}
-					st.Add(sbFilterHorizontal(bps, bitDepth, pix, crow*4*stride+baseCCol*4*bps, stride, rowBytes, vm, false, cells, crow*cols+baseCCol, cols, comp, lut))
+					sbFilterHorizontal(bps, bitDepth, pix, crow*4*stride+baseCCol*4*bps, stride, rowBytes, vm, false, cells, crow*cols+baseCCol, cols, comp, lut)
 				}
 			}
 		}
 	}
-	frameWorkCountAppliedLoopFilterSB(result, plane, st)
 }
 
 // sb8LaneMask selects the first n (1..32) units of a 32-unit mask lane.
@@ -196,38 +193,22 @@ func sb8LaneMask(n int) uint32 {
 	return uint32(1)<<uint(n) - 1
 }
 
-// frameWorkCountAppliedLoopFilterSB folds a superblock apply's counts into the
-// result exactly as per-cell frameWorkCountAppliedLoopFilterMaskEdge calls would.
-func frameWorkCountAppliedLoopFilterSB(result *FrameWorkLoopFilterPostFilterApplyResult, plane loopfilter.Plane, st loopfilter.SBStats) {
-	if st.Applied == 0 {
-		return
-	}
-	result.Edges += st.Applied
-	result.PlaneEdges[plane] += st.Applied
-	result.Applied += st.Applied
-	result.PlaneApplied[plane] += st.Applied
-	if st.MaxLevel > result.PlaneMaxLevel[plane] {
-		result.PlaneMaxLevel[plane] = st.MaxLevel
-	}
-	if st.MaxLevel > result.MaxLevel {
-		result.MaxLevel = st.MaxLevel
-	}
-}
-
 // sbFilterVertical dispatches one superblock column to the 8-bit or the
 // high-bit-depth kernel.
-func sbFilterVertical(bps int, bitDepth uint8, pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *loopfilter.SBLUT) loopfilter.SBStats {
+func sbFilterVertical(bps int, bitDepth uint8, pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *loopfilter.SBLUT) {
 	if bps == 1 {
-		return loopfilter.FilterSBVertical8(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+		loopfilter.FilterSBVertical8(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+		return
 	}
-	return loopfilter.FilterSBVertical16(pix, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+	loopfilter.FilterSBVertical16(pix, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 }
 
 // sbFilterHorizontal dispatches one superblock row to the 8-bit or the
 // high-bit-depth kernel.
-func sbFilterHorizontal(bps int, bitDepth uint8, pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *loopfilter.SBLUT) loopfilter.SBStats {
+func sbFilterHorizontal(bps int, bitDepth uint8, pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *loopfilter.SBLUT) {
 	if bps == 1 {
-		return loopfilter.FilterSBHorizontal8(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+		loopfilter.FilterSBHorizontal8(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+		return
 	}
-	return loopfilter.FilterSBHorizontal16(pix, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+	loopfilter.FilterSBHorizontal16(pix, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 }

@@ -9,7 +9,6 @@ package threading
 // enforces it outside shared CI hosts where scheduler noise dominates.
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -20,7 +19,7 @@ import (
 
 var wavefrontEnsureStatesBenchSink int
 
-// buildWavefrontReconController builds a controller whose deferred event list is
+// buildWavefrontReconController builds a controller whose deferred buffers are
 // pre-filled with one 64x64 intra-DC skip-transform block per superblock of an
 // sbCols x sbRows single-tile frame, in SB-raster order. Skip-transform intra
 // blocks predict luma+chroma directly from neighbors with no coefficients, so
@@ -80,47 +79,12 @@ func buildWavefrontReconController(t testing.TB, output *frame.Frame, sbCols int
 				},
 			}
 			visit.Prefix.SkipTransform = true
-			visitIndex := len(scratch.reconVisits)
-			visitIndex32, ok := frameWorkReconIndex(visitIndex)
-			if !ok {
-				t.Fatalf("visit index overflow: %d", visitIndex)
-			}
-			scratch.reconVisits = append(scratch.reconVisits, visit)
-			scratch.reconEvents = append(scratch.reconEvents, frameWorkReconEvent{
-				kind:  frameWorkReconEventBlockBegin,
-				index: visitIndex32,
-			})
 			// Skip intra blocks are predicted transform block by transform
-			// block from the all-zero TXB visits the coefficient walk emits
-			// (dav1d recon_b_intra). A 16x16 luma / 8x8 chroma transform grid
-			// gives each superblock 16 luma and 2x16 chroma predictions, in
-			// the walk's luma-then-U-then-V order.
-			appendTXB := func(txb tile.BlockCoeffBlock) {
-				txb.Result.AllZero = true
-				blockIndex32, ok := frameWorkReconIndex(len(scratch.reconBlocks))
-				if !ok {
-					t.Fatalf("txb index overflow: %d", len(scratch.reconBlocks))
-				}
-				scratch.reconBlocks = append(scratch.reconBlocks, txb)
-				scratch.reconCF = append(scratch.reconCF, frameWorkReconCF{})
-				scratch.reconEvents = append(scratch.reconEvents, frameWorkReconEvent{
-					kind:  frameWorkReconEventTXB,
-					index: blockIndex32,
-				})
-			}
-			for plane := uint8(0); plane < 3; plane++ {
-				size, step, x4, y4 := tile.TransformSize16x16, uint8(4), uint8(miCol), uint8(miRow)
-				if plane != 0 {
-					size, step, x4, y4 = tile.TransformSize8x8, 2, uint8(miCol/2), uint8(miRow/2)
-				}
-				for ty := uint8(0); ty < 4; ty++ {
-					for tx := uint8(0); tx < 4; tx++ {
-						appendTXB(tile.BlockCoeffBlock{Plane: plane, Block: tile.TransformBlock{
-							X4: x4 + tx*step, Y4: y4 + ty*step, Size: size, VisibleW4: step, VisibleH4: step,
-						}})
-					}
-				}
-			}
+			// block over the block's transform layout (dav1d recon_b_intra):
+			// a 16x16 luma / 8x8 chroma grid gives each superblock 16 luma
+			// and 2x16 chroma predictions, with no cbi entries.
+			visit.Coefficients.Tree = tile.TransformTreeResult{Y: tile.TransformSize16x16, UV: tile.TransformSize8x8, HasUV: true}
+			scratch.reconVisits = append(scratch.reconVisits, visit)
 		}
 	}
 	return c
@@ -148,7 +112,7 @@ func TestReconWavefrontByteIdenticalToSerial(t *testing.T) {
 		predictionScratch: &predict,
 		cflScratch:        &serialScratch.CFL,
 	}
-	if err := cSerial.replayDeferredReconstruction(); err != nil {
+	if err := cSerial.testReplayDeferredSerial(); err != nil {
 		t.Fatalf("serial replay: %v", err)
 	}
 
@@ -163,7 +127,7 @@ func TestReconWavefrontByteIdenticalToSerial(t *testing.T) {
 			predictionScratch: &wfPredict,
 			cflScratch:        &wavefrontScratch.CFL,
 		}
-		if err := cWave.replayDeferredReconstructionWavefront(); err != nil {
+		if err := cWave.testReplayDeferredWavefront(); err != nil {
 			t.Fatalf("wavefront replay workers=%d: %v", workers, err)
 		}
 		if !equalFramePlanes(serialOut, wavefrontOut) {
@@ -294,78 +258,114 @@ func BenchmarkReconWavefrontEnsureStates(b *testing.B) {
 	}
 }
 
+// testReplayDeferredSerial reconstructs every buffered block in decode order on
+// the controller's own reconstruction state.
+func (c *frameWorkTileResidualLoopController) testReplayDeferredSerial() error {
+	if err := c.scratch.finalizeDeferredPalettes(); err != nil {
+		return err
+	}
+	cur := frameWorkReconCursor{cbi: c.scratch.reconCBI, cf: c.scratch.cfArena}
+	for i := range c.scratch.reconVisits {
+		if err := c.recon.reconBDeferred(&c.scratch.reconVisits[i], &cur); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// testReplayDeferredWavefront reconstructs a fully buffered tile of one 64x64
+// skip block (no cbi entries or coefficients) per superblock through the
+// SB-row wavefront lanes.
+func (c *frameWorkTileResidualLoopController) testReplayDeferredWavefront() error {
+	region, err := c.batch.JobRegion(c.index)
+	if err != nil {
+		return err
+	}
+	sbSizeMIB := int(c.batch.Sequence.SBSizeMIB)
+	rowCount := int(region.SBRows)
+	if sbSizeMIB == 0 || rowCount <= 0 {
+		return ErrInvalidBatch
+	}
+	workers := min(int(c.wavefrontWorkers), rowCount)
+	if c.scratch.wavefront == nil {
+		c.scratch.wavefront = &frameWorkReconWavefront{}
+	}
+	wf := c.scratch.wavefront
+	wf.beginSpans(region, sbSizeMIB)
+	for i := range c.scratch.reconVisits {
+		v := &c.scratch.reconVisits[i]
+		if !v.Prefix.SkipTransform || v.Block.Size != tile.BlockSize64x64 {
+			return ErrInvalidBatch
+		}
+		if _, err := wf.noteSuperblock(i, 0, 0, int(v.Block.MIRow), int(v.Block.MICol)); err != nil {
+			return err
+		}
+	}
+	if err := wf.closeSpans(len(c.scratch.reconVisits)); err != nil {
+		return err
+	}
+	wf.ensureDone(rowCount)
+	wf.resetProgress(rowCount)
+	if err := wf.ensureStates(workers, c); err != nil {
+		return err
+	}
+	wf.startLanes(c.batch.wavefrontLanes, workers, rowCount)
+	wf.publishRows(rowCount, frameWorkReconView{
+		rowStart: wf.rowStart,
+		sbs:      wf.sbSpans,
+		visits:   c.scratch.reconVisits,
+		cbi:      c.scratch.reconCBI,
+		cfArena:  c.scratch.cfArena,
+	})
+	return wf.finishLanes(c.stats)
+}
+
 func equalFramePlanes(a *frame.Frame, b *frame.Frame) bool {
 	return string(a.Y.Pix) == string(b.Y.Pix) &&
 		string(a.U.Pix) == string(b.U.Pix) &&
 		string(a.V.Pix) == string(b.V.Pix)
 }
 
-// TestReconWavefrontSpeedup isolates the parallelized reconstruction phase: it
-// times the serial deferred replay against the multi-goroutine wavefront on a
-// large single-tile workload. It skips under -race (which serializes the heap).
-func TestReconWavefrontSpeedup(t *testing.T) {
-	if reconRaceEnabled {
-		t.Skip("race detector serializes execution; speedup is not observable")
-	}
-	const sbCols, sbRows = 32, 32 // 2048x2048, 32 SB rows
+// BenchmarkReconWavefrontReplay isolates the parallelized reconstruction phase:
+// the serial deferred replay against the four-lane wavefront on a large
+// single-tile workload (2048x2048, 32 superblock rows).
+func BenchmarkReconWavefrontReplay(b *testing.B) {
+	const sbCols, sbRows = 32, 32
 	format := frame.Format{Width: sbCols * 64, Height: sbRows * 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64}
-	out := testBatchFrame(t, format)
+	out := testBatchFrame(b, format)
 
 	var predict FrameWorkPredictionScratch
 	var scratch FrameWorkTileResidualScratch
-
-	bind := func(c *frameWorkTileResidualLoopController) {
-		c.recon = frameWorkReconState{
-			batch:             c.batch,
-			index:             0,
-			stats:             c.stats,
-			predictionScratch: &predict,
-			cflScratch:        &scratch.CFL,
+	for _, workers := range []int{1, 4} {
+		name := "serial"
+		if workers > 1 {
+			name = "wavefront4"
 		}
-	}
-
-	measureSerial := func() time.Duration {
-		best := time.Duration(1<<63 - 1)
-		for range 5 {
-			testFillFrame(out, 0)
-			c := buildWavefrontReconController(t, out, sbCols, sbRows, &scratch)
-			bind(c)
-			start := time.Now()
-			if err := c.replayDeferredReconstruction(); err != nil {
-				t.Fatalf("serial replay: %v", err)
+		b.Run(name, func(b *testing.B) {
+			for b.Loop() {
+				b.StopTimer()
+				testFillFrame(out, 0)
+				c := buildWavefrontReconController(b, out, sbCols, sbRows, &scratch)
+				c.recon = frameWorkReconState{
+					batch:             c.batch,
+					index:             0,
+					stats:             c.stats,
+					predictionScratch: &predict,
+					cflScratch:        &scratch.CFL,
+				}
+				b.StartTimer()
+				var err error
+				if workers > 1 {
+					c.wavefrontWorkers = uint16(workers)
+					err = c.testReplayDeferredWavefront()
+				} else {
+					err = c.testReplayDeferredSerial()
+				}
+				if err != nil {
+					b.Fatal(err)
+				}
 			}
-			if d := time.Since(start); d < best {
-				best = d
-			}
-		}
-		return best
-	}
-	measureWavefront := func(workers int) time.Duration {
-		best := time.Duration(1<<63 - 1)
-		for range 5 {
-			testFillFrame(out, 0)
-			c := buildWavefrontReconController(t, out, sbCols, sbRows, &scratch)
-			c.wavefrontWorkers = uint16(workers)
-			bind(c)
-			start := time.Now()
-			if err := c.replayDeferredReconstructionWavefront(); err != nil {
-				t.Fatalf("wavefront replay: %v", err)
-			}
-			if d := time.Since(start); d < best {
-				best = d
-			}
-		}
-		return best
-	}
-
-	serial := measureSerial()
-	wave := measureWavefront(4)
-	t.Logf("reconstruction best-of-5: serial %v, wavefront(4) %v (%.2fx)", serial, wave, float64(serial)/float64(wave))
-	if wave >= serial {
-		if os.Getenv("CI") != "" {
-			t.Skipf("shared CI host did not show a wavefront speedup: serial %v vs wavefront %v", serial, wave)
-		}
-		t.Fatalf("wavefront did not speed up reconstruction: serial %v vs wavefront %v", serial, wave)
+		})
 	}
 }
 

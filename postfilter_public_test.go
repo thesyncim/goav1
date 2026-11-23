@@ -1,28 +1,29 @@
-package goav1_test
+package goav1
 
 import (
 	"errors"
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
+	internalcdef "github.com/thesyncim/goav1/internal/av1/cdef"
+	internalrestoration "github.com/thesyncim/goav1/internal/av1/restoration"
 )
 
 func TestPublicCDEFStrengthDirectionAndFrameFilter(t *testing.T) {
-	level, secondary, err := av1.DecodeCDEFStrength(43)
+	level, secondary, err := internalcdef.DecodeStrength(43)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if level != 10 || secondary != 4 {
 		t.Fatalf("level=%d secondary=%d want 10,4", level, secondary)
 	}
-	params, err := av1.CDEFFrameFilterParamsFromStrength(av1.CDEFPlaneU, 1, 0, 43, 5, 2)
+	params, err := internalcdef.FrameFilterParamsFromStrength(internalcdef.PlaneU, 1, 0, 43, 5, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if params != (av1.CDEFFrameFilterParams{
+	if params != (internalcdef.FrameFilterParams{
 		XDec:              1,
 		YDec:              0,
-		Plane:             av1.CDEFPlaneU,
+		Plane:             internalcdef.PlaneU,
 		Level:             10,
 		SecondaryStrength: 4,
 		Damping:           5,
@@ -37,7 +38,7 @@ func TestPublicCDEFStrengthDirectionAndFrameFilter(t *testing.T) {
 			img[row*8+col] = uint16(col * 32)
 		}
 	}
-	dir, variance, err := av1.FindCDEFDirection(img, 8, 0)
+	dir, variance, err := internalcdef.FindDirection(img, 8, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,11 +48,11 @@ func TestPublicCDEFStrengthDirectionAndFrameFilter(t *testing.T) {
 
 	input, origin := publicCDEFInput(8, 8)
 	dst := make([]uint16, 8*8)
-	var directions av1.CDEFDirectionGrid
-	var variances av1.CDEFVarianceGrid
-	blocks := []av1.CDEFBlockPosition{{BY: 0, BX: 0}}
-	if err := av1.FilterCDEFFrameBlocks(dst, 8, input, origin, blocks, &directions, &variances, av1.CDEFFrameFilterParams{
-		Plane:      av1.CDEFPlaneY,
+	var directions internalcdef.DirectionGrid
+	var variances internalcdef.VarianceGrid
+	blocks := []internalcdef.BlockPosition{{BY: 0, BX: 0}}
+	if err := internalcdef.FilterFrameBlocksTrusted(dst, 8, input, origin, blocks, &directions, &variances, internalcdef.FrameFilterParams{
+		Plane:      internalcdef.PlaneY,
 		Damping:    3,
 		CoeffShift: 0,
 	}); err != nil {
@@ -67,36 +68,15 @@ func TestPublicCDEFStrengthDirectionAndFrameFilter(t *testing.T) {
 	}
 }
 
-func TestPublicCDEFBlockFilter(t *testing.T) {
-	input, origin := publicCDEFInput(8, 8)
-	dst := make([]uint16, 8*8)
-	if err := av1.FilterCDEFBlock(dst, 8, 0, input, origin, av1.CDEFBlockFilterParams{
-		Direction:      0,
-		PrimaryDamping: 3,
-		Width:          8,
-		Height:         8,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	for row := range 8 {
-		for col := range 8 {
-			want := uint16(10*row + col)
-			if got := dst[row*8+col]; got != want {
-				t.Fatalf("dst(%d,%d)=%d want %d", col, row, got, want)
-			}
-		}
-	}
-}
-
 func TestPublicRestorationWienerPreservesConstantBlock(t *testing.T) {
 	width, height := 17, 13
-	src, stride, origin := publicRestorationSource(width, height, av1.RestorationWienerHalfwin, av1.RestorationWienerHalfwin, 85)
+	src, stride, origin := publicRestorationSource(width, height, internalrestoration.WienerHalfwin, internalrestoration.WienerHalfwin, 85)
 	dst := make([]uint16, width*height)
-	scratchLen, err := av1.RestorationWienerScratchLen(width, height)
+	scratchLen, err := internalrestoration.WienerScratchLen(width, height)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := av1.ApplyRestorationWiener(src, stride, origin, dst, width, width, height, av1.DefaultRestorationWienerInfo(), 8, make([]uint16, scratchLen)); err != nil {
+	if err := internalrestoration.ApplyWienerRestorationTrusted(src, stride, origin, dst, width, width, height, internalrestoration.DefaultWienerInfo(), 8, make([]uint16, scratchLen)); err != nil {
 		t.Fatal(err)
 	}
 	for i, got := range dst {
@@ -105,29 +85,26 @@ func TestPublicRestorationWienerPreservesConstantBlock(t *testing.T) {
 		}
 	}
 
-	filter := av1.NewRestorationWienerFilter(av1.RestorationWienerTap0Mid, av1.RestorationWienerTap1Mid, av1.RestorationWienerTap2Mid)
-	if filter != av1.DefaultRestorationWienerInfo().VFilter {
+	filter := internalrestoration.NewWienerFilter(internalrestoration.WienerTap0Mid, internalrestoration.WienerTap1Mid, internalrestoration.WienerTap2Mid)
+	if filter != internalrestoration.DefaultWienerInfo().VFilter {
 		t.Fatalf("filter=%+v want default", filter)
 	}
 }
 
 func TestPublicRestorationSelfguidedConstantBlock(t *testing.T) {
 	width, height := 16, 16
-	src, stride, origin := publicRestorationSource(width, height, av1.RestorationSGRProjBorderHorz, av1.RestorationSGRProjBorderVert, 341)
+	src, stride, origin := publicRestorationSource(width, height, internalrestoration.SGRProjBorderHorz, internalrestoration.SGRProjBorderVert, 341)
 	dst := make([]uint16, width*height)
-	scratchLen, err := av1.RestorationSelfguidedScratchLen(width, height)
+	scratchLen, err := internalrestoration.SelfguidedScratchLen(width, height)
 	if err != nil {
 		t.Fatal(err)
 	}
-	params, err := av1.RestorationSGRParamsByIndex(0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	xq := av1.DecodeRestorationSGRXQ([2]int8{13, -9}, params)
+	params := internalrestoration.SGRParameterTable[0]
+	xq := internalrestoration.DecodeSGRXQ([2]int8{13, -9}, params)
 	if xq[0] != 13 || xq[1] == 0 {
 		t.Fatalf("xq=%+v", xq)
 	}
-	if err := av1.ApplyRestorationSelfguided(src, stride, origin, dst, width, width, height, 0, [2]int8{13, -9}, 10, make([]int32, scratchLen)); err != nil {
+	if err := internalrestoration.ApplySelfguidedRestoration(src, stride, origin, dst, width, width, height, 0, [2]int8{13, -9}, 10, make([]int32, scratchLen)); err != nil {
 		t.Fatal(err)
 	}
 	for i, got := range dst {
@@ -138,58 +115,55 @@ func TestPublicRestorationSelfguidedConstantBlock(t *testing.T) {
 }
 
 func TestPublicPostFilterRejectsInvalid(t *testing.T) {
-	if _, _, err := av1.DecodeCDEFStrength(64); !errors.Is(err, av1.ErrCDEFInvalidCDEF) {
-		t.Fatalf("DecodeCDEFStrength err=%v want %v", err, av1.ErrCDEFInvalidCDEF)
+	if _, _, err := internalcdef.DecodeStrength(64); !errors.Is(err, internalcdef.ErrInvalidCDEF) {
+		t.Fatalf("DecodeCDEFStrength err=%v want %v", err, internalcdef.ErrInvalidCDEF)
 	}
-	if _, _, err := av1.FindCDEFDirection(make([]uint16, 8), 8, 0); !errors.Is(err, av1.ErrCDEFInvalidCDEF) {
-		t.Fatalf("FindCDEFDirection err=%v want %v", err, av1.ErrCDEFInvalidCDEF)
+	if _, _, err := internalcdef.FindDirection(make([]uint16, 8), 8, 0); !errors.Is(err, internalcdef.ErrInvalidCDEF) {
+		t.Fatalf("FindCDEFDirection err=%v want %v", err, internalcdef.ErrInvalidCDEF)
 	}
-	if _, err := av1.RestorationWienerScratchLen(0, 8); !errors.Is(err, av1.ErrRestorationInvalidInput) {
-		t.Fatalf("RestorationWienerScratchLen err=%v want %v", err, av1.ErrRestorationInvalidInput)
+	if _, err := internalrestoration.WienerScratchLen(0, 8); !errors.Is(err, internalrestoration.ErrInvalidRestoration) {
+		t.Fatalf("RestorationWienerScratchLen err=%v want %v", err, internalrestoration.ErrInvalidRestoration)
 	}
-	if _, err := av1.RestorationSGRParamsByIndex(av1.RestorationSGRProjParams); !errors.Is(err, av1.ErrRestorationInvalidInput) {
-		t.Fatalf("RestorationSGRParamsByIndex err=%v want %v", err, av1.ErrRestorationInvalidInput)
-	}
-	if _, err := av1.RestorationSelfguidedScratchLen(0, 8); !errors.Is(err, av1.ErrRestorationInvalidInput) {
-		t.Fatalf("RestorationSelfguidedScratchLen err=%v want %v", err, av1.ErrRestorationInvalidInput)
+	if _, err := internalrestoration.SelfguidedScratchLen(0, 8); !errors.Is(err, internalrestoration.ErrInvalidRestoration) {
+		t.Fatalf("RestorationSelfguidedScratchLen err=%v want %v", err, internalrestoration.ErrInvalidRestoration)
 	}
 }
 
 func TestPublicPostFilterAllocs(t *testing.T) {
 	cdefInput, cdefOrigin := publicCDEFInput(8, 8)
 	cdefDst := make([]uint16, 8*8)
-	var directions av1.CDEFDirectionGrid
-	var variances av1.CDEFVarianceGrid
-	blocks := []av1.CDEFBlockPosition{{BY: 0, BX: 0}}
+	var directions internalcdef.DirectionGrid
+	var variances internalcdef.VarianceGrid
+	blocks := []internalcdef.BlockPosition{{BY: 0, BX: 0}}
 
 	width, height := 16, 16
-	wienerSrc, wienerStride, wienerOrigin := publicRestorationSource(width, height, av1.RestorationWienerHalfwin, av1.RestorationWienerHalfwin, 85)
+	wienerSrc, wienerStride, wienerOrigin := publicRestorationSource(width, height, internalrestoration.WienerHalfwin, internalrestoration.WienerHalfwin, 85)
 	wienerDst := make([]uint16, width*height)
-	wienerScratchLen, err := av1.RestorationWienerScratchLen(width, height)
+	wienerScratchLen, err := internalrestoration.WienerScratchLen(width, height)
 	if err != nil {
 		t.Fatal(err)
 	}
 	wienerScratch := make([]uint16, wienerScratchLen)
 
-	sgrSrc, sgrStride, sgrOrigin := publicRestorationSource(width, height, av1.RestorationSGRProjBorderHorz, av1.RestorationSGRProjBorderVert, 341)
+	sgrSrc, sgrStride, sgrOrigin := publicRestorationSource(width, height, internalrestoration.SGRProjBorderHorz, internalrestoration.SGRProjBorderVert, 341)
 	sgrDst := make([]uint16, width*height)
-	sgrScratchLen, err := av1.RestorationSelfguidedScratchLen(width, height)
+	sgrScratchLen, err := internalrestoration.SelfguidedScratchLen(width, height)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sgrScratch := make([]int32, sgrScratchLen)
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		if _, _, err := av1.DecodeCDEFStrength(63); err != nil {
+		if _, _, err := internalcdef.DecodeStrength(63); err != nil {
 			t.Fatalf("DecodeCDEFStrength err=%v", err)
 		}
-		if err := av1.FilterCDEFFrameBlocks(cdefDst, 8, cdefInput, cdefOrigin, blocks, &directions, &variances, av1.CDEFFrameFilterParams{Plane: av1.CDEFPlaneY, Damping: 3}); err != nil {
+		if err := internalcdef.FilterFrameBlocksTrusted(cdefDst, 8, cdefInput, cdefOrigin, blocks, &directions, &variances, internalcdef.FrameFilterParams{Plane: internalcdef.PlaneY, Damping: 3}); err != nil {
 			t.Fatalf("FilterCDEFFrameBlocks err=%v", err)
 		}
-		if err := av1.ApplyRestorationWiener(wienerSrc, wienerStride, wienerOrigin, wienerDst, width, width, height, av1.DefaultRestorationWienerInfo(), 8, wienerScratch); err != nil {
+		if err := internalrestoration.ApplyWienerRestorationTrusted(wienerSrc, wienerStride, wienerOrigin, wienerDst, width, width, height, internalrestoration.DefaultWienerInfo(), 8, wienerScratch); err != nil {
 			t.Fatalf("ApplyRestorationWiener err=%v", err)
 		}
-		if err := av1.ApplyRestorationSelfguided(sgrSrc, sgrStride, sgrOrigin, sgrDst, width, width, height, 0, [2]int8{13, -9}, 10, sgrScratch); err != nil {
+		if err := internalrestoration.ApplySelfguidedRestoration(sgrSrc, sgrStride, sgrOrigin, sgrDst, width, width, height, 0, [2]int8{13, -9}, 10, sgrScratch); err != nil {
 			t.Fatalf("ApplyRestorationSelfguided err=%v", err)
 		}
 	})
@@ -199,14 +173,14 @@ func TestPublicPostFilterAllocs(t *testing.T) {
 }
 
 func publicCDEFInput(width int, height int) ([]uint16, int) {
-	input := make([]uint16, av1.CDEFInputBufferSize)
+	input := make([]uint16, internalcdef.InputBufferSize)
 	for i := range input {
-		input[i] = av1.CDEFVeryLarge
+		input[i] = internalcdef.VeryLarge
 	}
-	origin := av1.CDEFVerticalBorder*av1.CDEFBStride + av1.CDEFHorizontalBorder
+	origin := internalcdef.VerticalBorder*internalcdef.BStride + internalcdef.HorizontalBorder
 	for row := range height {
 		for col := range width {
-			input[origin+row*av1.CDEFBStride+col] = uint16(10*row + col)
+			input[origin+row*internalcdef.BStride+col] = uint16(10*row + col)
 		}
 	}
 	return input, origin

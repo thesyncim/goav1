@@ -21,10 +21,18 @@ gates that cover the changed behavior before making a wider parity claim.
 | `make dryrun-extended` | Opt-in diagnostic cohort with additional vectors, including larger and multi-quantizer cases. |
 | `make dryrun-corpus` | Check the locally generated real-content corpus, when present. |
 | `make dryrun-external-corpus` | Check caller-supplied IVF corpora with supported digest sidecars. |
+| `make feature-sweep` | Encode about 190 small synthetic clips with `aomenc` and `SvtAv1EncApp`, one coding tool or header mode each, and compare the decoder's output at one and at eight workers, and the layered decoder's, with `dav1d`. Needs `aomenc`, `aomdec`, `dav1d` and `ffmpeg`; the SVT-AV1 cases run when its encoder is installed. |
 
 The full and extended suites may need vector downloads and the oracle test
 harness. The generated corpus lanes require local corpus data. A skipped lane
 or missing fixture is not a pass.
+
+The published libaom vectors do not use every coding tool. The feature sweep
+exists because two bugs passed every vector gate: quantizer matrices were
+applied in the wrong orientation, and inter frames after an intra block copy
+key frame inherited the wrong entropy contexts. Run it after changing
+coefficient decoding, dequantization, entropy-context handling, prediction or
+post-filter code, and add a case when a tool turns out to be uncovered.
 
 ## Encoder and WebRTC evidence
 
@@ -50,18 +58,18 @@ reference coverage remain active work.
 
 ## Go-native SIMD
 
-The module minimum is Go 1.27.0. The arm64 Go-native SIMD paths require the
-experimental `GOEXPERIMENT=simd` setting with the official Go toolchain. The
-native arm64 CI lane enables it for build, tests, and strict fast/profile
-decoder gates. See the [SIMD port guide](../SIMD_PORT.md) for local commands and
+The module minimum is Go 1.27.4. The arm64 and amd64 Go-native SIMD paths
+require the experimental `GOEXPERIMENT=simd` setting with the official Go
+toolchain. The native arm64 and amd64 CI lanes enable it for build, tests, race
+and checkptr runs of the kernel packages, and the strict fast/profile decoder
+gates. See the [SIMD port guide](../SIMD_PORT.md) for local commands and
 kernel-level validation expectations.
 
 ## Development checks
 
-`make ci-local` runs formatting checks, vet, Go tests, allocation checks,
-compiler reports, and the trace-zero check. The formatting target reports
-unformatted files; use `make fmt-check-strict` when formatting must fail the
-command.
+`make ci-local` runs the gofmt check, vet (also once per project build tag),
+the `unsafe` allowlist check, Go tests, allocation checks, compiler reports,
+and the trace-zero check.
 
 Before changing a decoder DSP or transform path, run its focused conformance
 probe:

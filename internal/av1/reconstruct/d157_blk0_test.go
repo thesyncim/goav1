@@ -52,9 +52,7 @@ func TestReconstructPlaneBlockD157Block0FullPipeline(t *testing.T) {
 			wantPlane.Pix[r*wantPlane.Stride+c] = d157Block0Predictor[r*W+c]
 		}
 	}
-	if err := dsp.AddResidualPlaneBlock(wantPlane, 1, 8, 0, 0, W, H, wantRes, W); err != nil {
-		t.Fatal(err)
-	}
+	dsp.AddResidualPlaneBlockTrusted(wantPlane.Pix, wantPlane.Stride, 1, 0xff, W, H, wantRes, W)
 
 	// Run ReconstructPlaneBlock on the same predictor and assert byte-exact
 	// equality with the hand-composed reference.
@@ -64,17 +62,17 @@ func TestReconstructPlaneBlockD157Block0FullPipeline(t *testing.T) {
 			gotPlane.Pix[r*gotPlane.Stride+c] = d157Block0Predictor[r*W+c]
 		}
 	}
-	cfg := Block{
+	cfg := testBlock{
 		Size:      transform.Size{Width: W, Height: H},
 		Transform: transform.TypeDCTDCT,
 		Quantizer: q,
 		EOB:       845,
 	}
-	int32Len, int16Len, err := ScratchLen(cfg)
+	int32Len, int16Len, err := ScratchLen(cfg.block())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconstructPlaneBlock(gotPlane, 1, 8, 0, 0,
+	if err := reconstructQuantized(gotPlane, 1, 8, 0, 0,
 		d157Block0Coeffs[:], H,
 		make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)

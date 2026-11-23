@@ -54,7 +54,7 @@ func TestEncodeKeyframeDecodeMatchesRecon(t *testing.T) {
 				}
 			}
 
-			tu, recon, err := encoder.EncodeKeyframe(src, tc.qIndex)
+			tu, recon, err := encodeKeyframe(t, src, tc.qIndex)
 			if err != nil {
 				t.Fatalf("encode: %v", err)
 			}
@@ -252,10 +252,16 @@ func TestEncodeKeyframeWithSequenceMaxDecodeMatchesRecon(t *testing.T) {
 		src.V[i] = uint8(140 - i%19)
 	}
 
-	tu, recon, err := encoder.EncodeKeyframeWithSequenceMax(src, qIndex, maxW, maxH)
+	enc, err := encoder.NewVideoEncoder(w, h, qIndex)
 	if err != nil {
-		t.Fatalf("EncodeKeyframeWithSequenceMax: %v", err)
+		t.Fatalf("NewVideoEncoder: %v", err)
 	}
+	defer enc.Close()
+	tu, err := enc.EncodeKeyWithSequenceMax(src, maxW, maxH)
+	if err != nil {
+		t.Fatalf("EncodeKeyWithSequenceMax: %v", err)
+	}
+	recon := enc.Recon()
 	seq, prefix, size := parseKeyframeSequenceAndSize(t, tu)
 	if seq.MaxFrameWidth != maxW || seq.MaxFrameHeight != maxH {
 		t.Fatalf("sequence max=%dx%d want %dx%d", seq.MaxFrameWidth, seq.MaxFrameHeight, maxW, maxH)
@@ -331,9 +337,9 @@ func parseKeyframeSequenceAndSize(t *testing.T, tu []byte) (parser.SequenceHeade
 			if err != nil {
 				t.Fatalf("ParseFrameHeaderPrefix: %v", err)
 			}
-			size, err := parser.ParseIntraFrameSize(unit.Payload, seq, prefix, unit.Header.TemporalID, unit.Header.SpatialID)
+			size, err := parser.ParseFrameSize(unit.Payload, seq, prefix, nil, unit.Header.TemporalID, unit.Header.SpatialID)
 			if err != nil {
-				t.Fatalf("ParseIntraFrameSize: %v", err)
+				t.Fatalf("ParseFrameSize: %v", err)
 			}
 			return seq, prefix, size
 		}

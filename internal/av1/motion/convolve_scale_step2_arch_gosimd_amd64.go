@@ -29,8 +29,6 @@ var scaledStep2Perm = func() (p [2][filterTaps][16]int8) {
 // scaledStep2HorizontalRow filters one source row into eight output columns
 // at a time for the 2:1 scaled convolve, gathering each tap's samples with a
 // byte shuffle (PSHUFB; Permute would emit AVX-512 VBMI VPERMB).
-//
-//go:nocheckptr
 func scaledStep2HorizontalRow(src unsafe.Pointer, w8 int, odd int, coef *[filterTaps]archsimd.Int16x8, row []int16) {
 	var perm [filterTaps]archsimd.Int8x16
 	for t := range filterTaps {

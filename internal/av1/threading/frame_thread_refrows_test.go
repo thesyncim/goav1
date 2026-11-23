@@ -16,7 +16,7 @@ func refRowsTestVisit(miRow uint16, ref tile.ReferenceFrame, mvRow int16) tile.B
 	v.Block.MIRow = miRow
 	v.Block.Size = tile.BlockSize16x16
 	v.Prediction.Valid = true
-	v.Prediction.InterMotion.References.Ref = [2]tile.ReferenceFrame{ref, tile.ReferenceFrameNone}
+	v.Prediction.InterMotion.References.Ref0, v.Prediction.InterMotion.References.Ref1 = ref, tile.ReferenceFrameNone
 	v.Prediction.InterMotion.MV[0] = motion.Vector{Row: mvRow}
 	return v
 }
@@ -44,7 +44,7 @@ func TestFrameThreadRefNeed(t *testing.T) {
 	// Compound: both references, each with its own vector.
 	n = frameThreadRefNeed{}
 	v = refRowsTestVisit(8, tile.ReferenceFrameLast, 8*4)
-	v.Prediction.InterMotion.References.Ref[1] = tile.ReferenceFrameAltref
+	v.Prediction.InterMotion.References.Ref1 = tile.ReferenceFrameAltref
 	v.Prediction.InterMotion.References.Compound = true
 	v.Prediction.InterMotion.MV[1] = motion.Vector{Row: 8 * 40}
 	n.addVisit(&v)
@@ -58,10 +58,10 @@ func TestFrameThreadRefNeed(t *testing.T) {
 	v.Prediction.MotionModeValid = true
 	v.Prediction.MotionMode = tile.MotionModeOBMC
 	v.Prediction.OverlappableNeighborsValid = true
-	v.Prediction.OverlappableNeighbors.AboveCount = 1
-	v.Prediction.OverlappableNeighbors.Above[0].MotionValid = true
-	v.Prediction.OverlappableNeighbors.Above[0].Motion.References.Ref = [2]tile.ReferenceFrame{tile.ReferenceFrameGolden, tile.ReferenceFrameNone}
-	v.Prediction.OverlappableNeighbors.Above[0].Motion.MV[0] = motion.Vector{Row: 8 * 64}
+	testMotionExtras(&v.Prediction).OverlappableNeighbors.AboveCount = 1
+	testMotionExtras(&v.Prediction).OverlappableNeighbors.Above[0].MotionValid = true
+	testMotionExtras(&v.Prediction).OverlappableNeighbors.Above[0].Motion.References = tile.InterReferencesResult{Ref0: tile.ReferenceFrameGolden, Ref1: tile.ReferenceFrameNone}
+	testMotionExtras(&v.Prediction).OverlappableNeighbors.Above[0].Motion.MV[0] = motion.Vector{Row: 8 * 64}
 	n.addVisit(&v)
 	if n[tile.ReferenceFrameGolden] != bottom+64+refRowMargin {
 		t.Fatalf("obmc: golden need %d", n[tile.ReferenceFrameGolden])
@@ -70,8 +70,7 @@ func TestFrameThreadRefNeed(t *testing.T) {
 	// Sub-8x8 chroma cells use their own (neighbouring) vectors.
 	n = frameThreadRefNeed{}
 	v = refRowsTestVisit(8, tile.ReferenceFrameLast, 0)
-	v.Prediction.SubChromaInterValid = true
-	v.Prediction.SubChromaInter.Count = 1
+	v.Prediction.SubChromaInter = &tile.SubChromaInterResult{Count: 1}
 	v.Prediction.SubChromaInter.Cells[0].Reference = tile.ReferenceFrameLast2
 	v.Prediction.SubChromaInter.Cells[0].MV = motion.Vector{Row: 8 * 30}
 	n.addVisit(&v)
@@ -104,4 +103,12 @@ func TestFrameThreadRefNeed(t *testing.T) {
 	if n != (frameThreadRefNeed{}) {
 		t.Fatalf("intra: need %v", n)
 	}
+}
+
+// testMotionExtras returns p's out-of-line warp/OBMC payloads, allocating them.
+func testMotionExtras(p *tile.BlockPredictionModeResult) *tile.BlockPredictionMotionExtras {
+	if p.Extras == nil {
+		p.Extras = &tile.BlockPredictionMotionExtras{}
+	}
+	return p.Extras
 }

@@ -186,20 +186,11 @@ type BlockPredictionModeResult struct {
 	InterMode      InterModeResult
 	InterModeValid bool
 
-	ReferenceMVStack      ReferenceMVStackResult
-	ReferenceMVStackValid bool
-
 	DRLIndex      uint8
 	DRLIndexValid bool
 
-	InterMVReferences      InterMVReferenceSet
-	InterMVReferencesValid bool
-
 	InterMotion      InterMotionResult
 	InterMotionValid bool
-
-	MVResiduals     [2]MVResidualResult
-	MVResidualValid [2]bool
 
 	InterpFilters      motion.InterpFilters
 	InterpFiltersValid bool
@@ -213,44 +204,92 @@ type BlockPredictionModeResult struct {
 	// WarpedMotionInvalid mirrors libaom's wm_params.invalid for coded
 	// WARPED_CAUSAL blocks whose local projection cannot produce a usable
 	// affine model. Such blocks fall back to translational prediction.
-	WarpedMotionInvalid bool
-	WarpedMotion        WarpedMotionModel
-	WarpedMotionValid   bool
+	WarpedMotionInvalid             bool
+	WarpedMotionValid               bool
+	GlobalWarpedMotionValid         bool
+	GlobalWarpedMotionCompoundValid [2]bool
+	OverlappableNeighborsValid      bool
+	// Extras holds the warp models and OBMC neighbours, set only while one
+	// of the flags above is; dav1d keeps these out of Av1Block too.
+	Extras *BlockPredictionMotionExtras
+
+	CompoundBlend      CompoundBlendResult
+	CompoundBlendValid bool
+
+	// SubChromaInter, when set, holds the per-sub-block chroma MVs libaom's
+	// build_inter_predictors_sub8x8 iterates over for inter blocks whose
+	// luma width or height is 4 under chroma subsampling. The chroma plane
+	// of the anchor block is split into the 1-4 luma 4x4 cells of its
+	// chroma footprint, each predicted with its own luma neighbor's MV.
+	// See tile.SubChromaInterResult for the full rationale. Like Extras it
+	// points into the decode state, out of line of the per-block result.
+	SubChromaInter *SubChromaInterResult
+}
+
+// reset clears the result for the next block field by field; the zero
+// stores of adjacent fields merge into wide stores.
+func (r *BlockPredictionModeResult) reset() {
+	r.Valid = false
+	r.Intra = false
+	r.Intrabc = false
+	r.IntrabcValid = false
+	r.LumaMode = 0
+	r.LumaAngleDelta = 0
+	r.IntraEdgeSmoothNeighbor = false
+	r.ChromaIntraEdgeSmoothNeighbor = false
+	r.FilterIntraMode = 0
+	r.FilterIntraValid = false
+	r.Palette = PaletteModeResult{}
+	r.ChromaMode = 0
+	r.ChromaModeValid = false
+	r.ChromaAngleDelta = 0
+	r.CFLAlpha = CFLAlphaResult{}
+	r.CFLAlphaValid = false
+	r.InterReferences = InterReferencesResult{}
+	r.InterReferencesValid = false
+	r.InterMode = InterModeResult{}
+	r.InterModeValid = false
+	r.DRLIndex = 0
+	r.DRLIndexValid = false
+	r.InterMotion = InterMotionResult{}
+	r.InterMotionValid = false
+	r.InterpFilters = motion.InterpFilters{}
+	r.InterpFiltersValid = false
+	r.InterpFilterReads = 0
+	r.InterIntra = InterIntraResult{}
+	r.InterIntraValid = false
+	r.MotionMode = 0
+	r.MotionModeValid = false
+	r.WarpedMotionInvalid = false
+	r.WarpedMotionValid = false
+	r.GlobalWarpedMotionValid = false
+	r.GlobalWarpedMotionCompoundValid = [2]bool{}
+	r.OverlappableNeighborsValid = false
+	r.Extras = nil
+	r.CompoundBlend = CompoundBlendResult{}
+	r.CompoundBlendValid = false
+	r.SubChromaInter = nil
+}
+
+// BlockPredictionMotionExtras holds the rarely used warp and OBMC payloads of
+// one block, out of line of BlockPredictionModeResult.
+type BlockPredictionMotionExtras struct {
+	WarpedMotion WarpedMotionModel
 
 	// GlobalWarpedMotion carries the frame-level global motion as a warp
 	// model (alpha/beta/gamma/delta reduced) for blocks whose AV1 mode is
 	// GLOBALMV/GLOBAL_GLOBALMV with a non-translational warp type and a
 	// block min-side of at least 8 luma samples. libaom's
 	// av1_init_warp_params(...) promotes such blocks from SIMPLE_TRANSLATION
-	// to WARP_PRED using the frame's global motion params; without this
-	// promotion goav1 produces small (~1 sample) but frame-wide off-by-one
-	// drift versus libaom across affine global-motion content.
-	GlobalWarpedMotion      WarpedMotionModel
-	GlobalWarpedMotionValid bool
+	// to WARP_PRED using the frame's global motion params.
+	GlobalWarpedMotion WarpedMotionModel
 
 	// GlobalWarpedMotionCompound mirrors GlobalWarpedMotion for COMPOUND
-	// GLOBAL_GLOBALMV blocks: libaom's av1_init_warp_params promotes each
-	// reference independently to WARP_PRED using that reference's global
-	// motion params (allow_warp keys off is_global_mv_block per ref), so a
-	// compound block warps ref0 with gm[ref0] and ref1 with gm[ref1]. Index
-	// 0/1 follow InterMotion.References.Ref[0/1].
-	GlobalWarpedMotionCompound      [2]WarpedMotionModel
-	GlobalWarpedMotionCompoundValid [2]bool
+	// GLOBAL_GLOBALMV blocks: each reference warps with its own global
+	// motion params. Index 0/1 follow InterMotion.References.Ref[0/1].
+	GlobalWarpedMotionCompound [2]WarpedMotionModel
 
-	OverlappableNeighbors      OverlappableNeighborSet
-	OverlappableNeighborsValid bool
-
-	CompoundBlend      CompoundBlendResult
-	CompoundBlendValid bool
-
-	// SubChromaInter holds the per-sub-block chroma MVs libaom's
-	// build_inter_predictors_sub8x8 iterates over for inter blocks whose
-	// luma width or height is 4 under chroma subsampling. The chroma plane
-	// of the anchor block is split into the 1-4 luma 4x4 cells of its
-	// chroma footprint, each predicted with its own luma neighbor's MV.
-	// See tile.SubChromaInterResult for the full rationale.
-	SubChromaInter      SubChromaInterResult
-	SubChromaInterValid bool
+	OverlappableNeighbors OverlappableNeighborSet
 }
 
 var yModeSizeContext = [blockSizeCount]uint8{
@@ -619,6 +658,21 @@ func (c *IntraModeCDFs) FilterIntraModeCDF() (*entropy.CDF, error) {
 }
 
 // IntraContext returns dav1d's get_intra_ctx() value.
+// envIntraCtx ports env.h get_intra_ctx for in-range slots.
+func envIntraCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool) int {
+	if haveLeft {
+		if haveTop {
+			ctx := int(c.L.Intra[y4]) + int(c.A.Intra[x4])
+			return ctx + boolInt(ctx == 2)
+		}
+		return int(c.L.Intra[y4]) * 2
+	}
+	if haveTop {
+		return int(c.A.Intra[x4]) * 2
+	}
+	return 0
+}
+
 func (c *BlockModeContext) IntraContext(x4 int, y4 int, haveTop bool, haveLeft bool) (int, error) {
 	if c == nil {
 		return 0, ErrInvalidDecodeState
@@ -627,9 +681,9 @@ func (c *BlockModeContext) IntraContext(x4 int, y4 int, haveTop bool, haveLeft b
 		return 0, err
 	}
 	if haveLeft {
-		left := int(c.LeftIntra[y4])
+		left := int(c.L.Intra[y4])
 		if haveTop {
-			ctx := left + int(c.AboveIntra[x4])
+			ctx := left + int(c.A.Intra[x4])
 			if ctx == 2 {
 				return 3, nil
 			}
@@ -638,7 +692,7 @@ func (c *BlockModeContext) IntraContext(x4 int, y4 int, haveTop bool, haveLeft b
 		return left * 2, nil
 	}
 	if haveTop {
-		return int(c.AboveIntra[x4]) * 2, nil
+		return int(c.A.Intra[x4]) * 2, nil
 	}
 	return 0, nil
 }
@@ -654,8 +708,8 @@ func (c *BlockModeContext) IntraEdgeSmoothNeighbor(x4 int, y4 int, haveTop bool,
 	if err := validateBlockModeSlot(x4, y4); err != nil {
 		return false, err
 	}
-	if haveTop && c.AboveIntra[x4] != 0 {
-		smooth, err := intraModeIsSmooth(c.AboveMode[x4])
+	if haveTop && c.A.Intra[x4] != 0 {
+		smooth, err := intraModeIsSmooth(c.A.Mode[x4])
 		if err != nil {
 			return false, err
 		}
@@ -663,8 +717,8 @@ func (c *BlockModeContext) IntraEdgeSmoothNeighbor(x4 int, y4 int, haveTop bool,
 			return true, nil
 		}
 	}
-	if haveLeft && c.LeftIntra[y4] != 0 {
-		smooth, err := intraModeIsSmooth(c.LeftMode[y4])
+	if haveLeft && c.L.Intra[y4] != 0 {
+		smooth, err := intraModeIsSmooth(c.L.Mode[y4])
 		if err != nil {
 			return false, err
 		}
@@ -695,8 +749,8 @@ func (c *BlockModeContext) ChromaIntraEdgeSmoothNeighbor(x4 int, y4 int, haveTop
 	if aboveX4 < 0 || aboveX4 >= MaxBlockModeSlots || leftY4 < 0 || leftY4 >= MaxBlockModeSlots {
 		return false, ErrInvalidDecodeState
 	}
-	if haveTop && c.AboveChromaIntra[aboveX4] != 0 {
-		smooth, err := chromaModeIsSmooth(c.AboveChromaMode[aboveX4])
+	if haveTop {
+		smooth, err := chromaModeIsSmooth(c.A.UVMode[aboveX4])
 		if err != nil {
 			return false, err
 		}
@@ -704,8 +758,8 @@ func (c *BlockModeContext) ChromaIntraEdgeSmoothNeighbor(x4 int, y4 int, haveTop
 			return true, nil
 		}
 	}
-	if haveLeft && c.LeftChromaIntra[leftY4] != 0 {
-		smooth, err := chromaModeIsSmooth(c.LeftChromaMode[leftY4])
+	if haveLeft {
+		smooth, err := chromaModeIsSmooth(c.L.UVMode[leftY4])
 		if err != nil {
 			return false, err
 		}
@@ -725,8 +779,8 @@ func (c *BlockModeContext) KeyframeYModeContext(x4 int, y4 int) (int, int, error
 	if err := validateBlockModeSlot(x4, y4); err != nil {
 		return 0, 0, err
 	}
-	above := c.AboveMode[x4]
-	left := c.LeftMode[y4]
+	above := c.A.Mode[x4]
+	left := c.L.Mode[y4]
 	if !above.Valid() || !left.Valid() {
 		return 0, 0, ErrInvalidDecodeState
 	}
@@ -787,21 +841,25 @@ func (c *BlockModeContext) markIntra(size BlockSize, x4 int, y4 int, intra bool,
 	h4 := int(dims.H4)
 	xEnd := x4 + w4
 	yEnd := y4 + h4
-	clear(c.AboveCompound[x4:xEnd])
-	clear(c.AboveInterIntra[x4:xEnd])
-	clear(c.AboveInterpValid[x4:xEnd])
-	clear(c.LeftCompound[y4:yEnd])
-	clear(c.LeftInterIntra[y4:yEnd])
-	clear(c.LeftInterpValid[y4:yEnd])
+	clear(c.A.CompType[x4:xEnd])
+	clear(c.A.InterIntra[x4:xEnd])
+	clear(c.L.CompType[y4:yEnd])
+	clear(c.L.InterIntra[y4:yEnd])
+	for i := x4; i < xEnd; i++ {
+		c.A.Filter[0][i], c.A.Filter[1][i] = filterUnset, filterUnset
+	}
+	for i := y4; i < yEnd; i++ {
+		c.L.Filter[0][i], c.L.Filter[1][i] = filterUnset, filterUnset
+	}
 	for i := 0; i < w4; i++ {
-		c.AboveRef[0][x4+i] = ref0
-		c.AboveRef[1][x4+i] = ref1
-		c.AboveBlockSize[x4+i] = size
+		c.A.Ref[0][x4+i] = ref0
+		c.A.Ref[1][x4+i] = ref1
+		c.A.BlockSize[x4+i] = size
 	}
 	for i := 0; i < h4; i++ {
-		c.LeftRef[0][y4+i] = ref0
-		c.LeftRef[1][y4+i] = ref1
-		c.LeftBlockSize[y4+i] = size
+		c.L.Ref[0][y4+i] = ref0
+		c.L.Ref[1][y4+i] = ref1
+		c.L.BlockSize[y4+i] = size
 	}
 	if !keepMotion {
 		return nil
@@ -810,6 +868,52 @@ func (c *BlockModeContext) markIntra(size BlockSize, x4 int, y4 int, intra bool,
 	clear(c.LeftMotionValid[y4:yEnd])
 	c.clearGridInterMotion(size, x4, y4, dims)
 	return nil
+}
+
+// markIntraBlock is decode_b's intra set_ctx: the block's prefix, luma and
+// chroma modes, palette sizes and the unset inter fields, one store per field
+// and edge, then the palette colours of a palette block. keepMotion also
+// clears the libaom-shaped neighbor motion (see markInterMotionAndFilters).
+func (c *BlockModeContext) markIntraBlock(size BlockSize, x4, y4 int, mode IntraMode, uvMode ChromaIntraMode, hasChroma bool, pal *PaletteModeResult, prefix *BlockModeResult, keepMotion bool) {
+	dims := blockDimensions[size]
+	w4, h4 := int(dims.W4), int(dims.H4)
+	v := blockEdgeValues{
+		intra:     ctxSplat(1),
+		mode:      ctxSplat(uint8(mode)),
+		ref0:      ctxSplat(0xff),
+		ref1:      ctxSplat(0xff),
+		filter0:   ctxSplat(uint8(filterUnset)),
+		filter1:   ctxSplat(uint8(filterUnset)),
+		blockSize: ctxSplat(uint8(size)),
+		palSz:     ctxSplat(pal.YSize),
+		palUV:     ctxSplat(pal.UVSize),
+		uvMode:    ctxSplat(uint8(uvMode)),
+		chroma:    hasChroma,
+	}
+	v.setPrefix(prefix)
+	c.setBlockEdges(x4, y4, w4, h4, &v)
+	if pal.YSize != 0 {
+		for i := x4; i < x4+w4; i++ {
+			c.PalA.Colors[i][0] = pal.YColors
+		}
+		for i := y4; i < y4+h4; i++ {
+			c.PalL.Colors[i][0] = pal.YColors
+		}
+	}
+	if pal.UVSize != 0 {
+		for i := x4; i < x4+w4; i++ {
+			c.PalA.Colors[i][1] = pal.UColors
+		}
+		for i := y4; i < y4+h4; i++ {
+			c.PalL.Colors[i][1] = pal.UColors
+		}
+	}
+	if !keepMotion {
+		return
+	}
+	clear(c.AboveMotionValid[x4 : x4+w4])
+	clear(c.LeftMotionValid[y4 : y4+h4])
+	c.clearGridInterMotion(size, x4, y4, dims)
 }
 
 // MarkIntraEntry updates only the intra/inter entry context and, for intra
@@ -833,12 +937,12 @@ func (c *BlockModeContext) MarkIntraEntry(size BlockSize, x4 int, y4 int, intra 
 	}
 	intraValue := boolByte(intra)
 	for i := 0; i < int(dims.W4); i++ {
-		c.AboveIntra[x4+i] = intraValue
-		c.AboveMode[x4+i] = mode
+		c.A.Intra[x4+i] = intraValue
+		c.A.Mode[x4+i] = mode
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.LeftIntra[y4+i] = intraValue
-		c.LeftMode[y4+i] = mode
+		c.L.Intra[y4+i] = intraValue
+		c.L.Mode[y4+i] = mode
 	}
 	return nil
 }
@@ -861,14 +965,11 @@ func (c *BlockModeContext) MarkChromaIntra(size BlockSize, x4 int, y4 int, intra
 		y4+int(dims.H4) > MaxBlockModeSlots {
 		return ErrInvalidDecodeState
 	}
-	intraValue := boolByte(intra)
 	for i := 0; i < int(dims.W4); i++ {
-		c.AboveChromaIntra[x4+i] = intraValue
-		c.AboveChromaMode[x4+i] = mode
+		c.A.UVMode[x4+i] = mode
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.LeftChromaIntra[y4+i] = intraValue
-		c.LeftChromaMode[y4+i] = mode
+		c.L.UVMode[y4+i] = mode
 	}
 	return nil
 }
@@ -891,19 +992,9 @@ func (s *DecodeState) readIntraFlag(cdfs *IntraModeCDFs, ctx *BlockModeContext, 
 		if req.Segmentation.Enabled && (segment.RefFrame >= 0 || segment.GlobalMV) {
 			return IntraFlagResult{Intra: segment.RefFrame == 0 && !segment.GlobalMV}, nil
 		}
-		context, err := ctx.IntraContext(int(block.X4), int(block.Y4), block.HaveTop, block.HaveLeft)
-		if err != nil {
-			return IntraFlagResult{}, err
-		}
-		cdf, err := cdfs.IntraCDF(context)
-		if err != nil {
-			return IntraFlagResult{}, err
-		}
-		isInter, err := s.Reader.ReadCDF(cdf)
-		if err != nil {
-			return IntraFlagResult{}, err
-		}
-		return IntraFlagResult{Intra: isInter == 0}, nil
+		// dav1d decode_b: get_intra_ctx, then one adaptive bool.
+		context := envIntraCtx(ctx, int(block.X4)&(MaxBlockModeSlots-1), int(block.Y4)&(MaxBlockModeSlots-1), block.HaveTop, block.HaveLeft)
+		return IntraFlagResult{Intra: s.Reader.ReadBinaryCDFUnchecked(&cdfs.Intra[context]) == 0}, nil
 	}
 	if req.AllowIntrabc {
 		cdf, err := cdfs.IntrabcCDF()

@@ -24,25 +24,6 @@ import "simd/archsimd"
 // trailing arithmetic shift and the [0,maxClamp] clamp match
 // roundPowerOfTwo + clampInt32 bit for bit.
 
-// wienerHorizontalSIMD is the AVX2 form of wienerHorizontal for the uint16 sample
-// domain. It applies the reference validity scan first (every window sample must
-// be <= max, else the call fails with false), then runs the kernel.
-func wienerHorizontalSIMD(src []uint16, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, bitDepth int, round0 int, max uint16, temp []uint16) bool {
-	if width < 8 || width%8 != 0 || !wienerFilterSymmetric(filter) {
-		return wienerHorizontal(src, srcStride, srcOrigin, width, height, filter, bitDepth, round0, max, temp)
-	}
-	for row := -WienerHalfwin; row < height+WienerHalfwin; row++ {
-		srcStart := srcOrigin + row*srcStride - WienerHalfwin
-		for _, s := range src[srcStart : srcStart+width+2*WienerHalfwin] {
-			if s > max {
-				return false
-			}
-		}
-	}
-	wienerHorizontalSIMDKernel(src, srcStride, srcOrigin, width, height, filter, bitDepth, round0, max, temp)
-	return true
-}
-
 // wienerHorizontalSIMDTrusted is the uint16 AVX2 horizontal pass without the
 // per-sample validity scan, used by the decoder-owned trusted entry.
 func wienerHorizontalSIMDTrusted(src []uint16, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, bitDepth int, round0 int, max uint16, temp []uint16) {

@@ -169,12 +169,12 @@ func TestWriteCompoundInterSymbolsRoundTrip(t *testing.T) {
 		CompoundInterModeNewNew,
 	}
 	compoundRefs := []InterReferencesResult{
-		{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameLast2}, Compound: true, Unidir: true},
-		{Ref: [2]ReferenceFrame{ReferenceFrameBWD, ReferenceFrameAltref}, Compound: true, Unidir: true},
-		{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameBWD}, Compound: true},
-		{Ref: [2]ReferenceFrame{ReferenceFrameLast2, ReferenceFrameAltref2}, Compound: true},
-		{Ref: [2]ReferenceFrame{ReferenceFrameLast3, ReferenceFrameAltref}, Compound: true},
-		{Ref: [2]ReferenceFrame{ReferenceFrameGolden, ReferenceFrameBWD}, Compound: true},
+		{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameLast2, Compound: true, Unidir: true},
+		{Ref0: ReferenceFrameBWD, Ref1: ReferenceFrameAltref, Compound: true, Unidir: true},
+		{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameBWD, Compound: true},
+		{Ref0: ReferenceFrameLast2, Ref1: ReferenceFrameAltref2, Compound: true},
+		{Ref0: ReferenceFrameLast3, Ref1: ReferenceFrameAltref, Compound: true},
+		{Ref0: ReferenceFrameGolden, Ref1: ReferenceFrameBWD, Compound: true},
 	}
 	precisions := []MVSubpelPrecision{MVSubpelNone, MVSubpelLow, MVSubpelHigh}
 

@@ -52,15 +52,6 @@ func BuildScalingLUT(dst []uint8, points []ScalingPoint) error {
 	return nil
 }
 
-// ScaleLUT returns the scaling value for an image sample at bitDepth.
-func ScaleLUT(lut []uint8, index int, bitDepth uint8) (uint8, error) {
-	if len(lut) < ScalingLUTSize || bitDepth < 8 || bitDepth > 12 ||
-		index < 0 || index >= 1<<bitDepth {
-		return 0, ErrInvalidParams
-	}
-	return scaleLUT(lut, index, bitDepth), nil
-}
-
 func scaleLUT(lut []uint8, index int, bitDepth uint8) uint8 {
 	// Defense in depth: clip the input sample to the legal bitdepth range
 	// before deriving the LUT index. Internal callers receive uint16 samples

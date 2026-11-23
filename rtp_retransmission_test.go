@@ -1,19 +1,17 @@
-package goav1_test
+package goav1
 
 import (
 	"bytes"
 	"errors"
 	"testing"
-
-	av1 "github.com/thesyncim/goav1"
 )
 
 func TestPublicRTCPGenericNACKPairSequenceNumbers(t *testing.T) {
-	pairs := []av1.RTCPGenericNACKPair{
+	pairs := []RTCPGenericNACKPair{
 		{PacketID: 100, LostPacketBitmask: 0x0005},
 		{PacketID: 0xffff, LostPacketBitmask: 0x0003},
 	}
-	got, err := av1.AppendRTCPGenericNACKPairSequenceNumbers(make([]uint16, 0, 6), pairs)
+	got, err := AppendRTCPGenericNACKPairSequenceNumbers(make([]uint16, 0, 6), pairs)
 	if err != nil {
 		t.Fatalf("AppendRTCPGenericNACKPairSequenceNumbers: %v", err)
 	}
@@ -23,24 +21,24 @@ func TestPublicRTCPGenericNACKPairSequenceNumbers(t *testing.T) {
 	}
 	prefix := make([]uint16, 1, 4)
 	prefix[0] = 7
-	prefixed, err := av1.AppendRTCPGenericNACKPairSequenceNumbers(prefix[:1:4], pairs[:1])
+	prefixed, err := AppendRTCPGenericNACKPairSequenceNumbers(prefix[:1:4], pairs[:1])
 	if err != nil {
 		t.Fatalf("AppendRTCPGenericNACKPairSequenceNumbers prefixed: %v", err)
 	}
 	if !equalUint16s(prefixed, []uint16{7, 100, 101, 103}) {
 		t.Fatalf("prefixed NACK sequence numbers=%v", prefixed)
 	}
-	if _, err := av1.AppendRTCPGenericNACKPairSequenceNumbers(make([]uint16, 0, 2), pairs[:1]); !errors.Is(err, av1.ErrRTCPShortBuffer) {
-		t.Fatalf("short NACK sequence dst err=%v want %v", err, av1.ErrRTCPShortBuffer)
+	if _, err := AppendRTCPGenericNACKPairSequenceNumbers(make([]uint16, 0, 2), pairs[:1]); !errors.Is(err, ErrRTCPShortBuffer) {
+		t.Fatalf("short NACK sequence dst err=%v want %v", err, ErrRTCPShortBuffer)
 	}
-	if out, err := av1.AppendRTCPGenericNACKPairSequenceNumbers(nil, nil); err != nil || len(out) != 0 {
+	if out, err := AppendRTCPGenericNACKPairSequenceNumbers(nil, nil); err != nil || len(out) != 0 {
 		t.Fatalf("empty NACK sequence out=%v err=%v", out, err)
 	}
 }
 
 func TestPublicRTPRetransmissionCacheStoresAndAppendsNACKPackets(t *testing.T) {
-	if _, err := av1.BindRTPRetransmissionCache(nil); !errors.Is(err, av1.ErrRTPInvalidRetransmissionCache) {
-		t.Fatalf("BindRTPRetransmissionCache nil err=%v want %v", err, av1.ErrRTPInvalidRetransmissionCache)
+	if _, err := BindRTPRetransmissionCache(nil); !errors.Is(err, ErrRTPInvalidRetransmissionCache) {
+		t.Fatalf("BindRTPRetransmissionCache nil err=%v want %v", err, ErrRTPInvalidRetransmissionCache)
 	}
 	cache := bindTestRetransmissionCache(t, 8, 64)
 	packets := [][]byte{
@@ -58,8 +56,8 @@ func TestPublicRTPRetransmissionCacheStoresAndAppendsNACKPackets(t *testing.T) {
 	if !cache.Contains(0xffff) || cache.Contains(2) {
 		t.Fatalf("cache contains wrap=%v missing=%v", cache.Contains(0xffff), cache.Contains(2))
 	}
-	pairs := []av1.RTCPGenericNACKPair{{PacketID: 0xffff, LostPacketBitmask: 0x0003}}
-	spans := make([]av1.RTPRetransmissionPacketSpan, 3)
+	pairs := []RTCPGenericNACKPair{{PacketID: 0xffff, LostPacketBitmask: 0x0003}}
+	spans := make([]RTPRetransmissionPacketSpan, 3)
 	out, count, err := cache.AppendPacketsForRTCPGenericNACKPairs(make([]byte, 0, 256), spans, pairs)
 	if err != nil {
 		t.Fatalf("AppendPacketsForRTCPGenericNACKPairs: %v", err)
@@ -82,7 +80,7 @@ func TestPublicRTPRetransmissionCacheStoresAndAppendsNACKPackets(t *testing.T) {
 		t.Fatal("cached packet aliases caller-owned input after Store")
 	}
 
-	missingOnly := []av1.RTCPGenericNACKPair{{PacketID: 22}}
+	missingOnly := []RTCPGenericNACKPair{{PacketID: 22}}
 	out, count, err = cache.AppendPacketsForRTCPGenericNACKPairs(out[:0], spans, missingOnly)
 	if err != nil || count != 0 || len(out) != 0 {
 		t.Fatalf("missing-only NACK out=%d count=%d err=%v", len(out), count, err)
@@ -109,29 +107,29 @@ func TestPublicRTPRetransmissionCacheEvictionResetAndShortBuffers(t *testing.T) 
 	if _, found, err := cache.AppendPacket(out[:0], 1); err != nil || found {
 		t.Fatalf("AppendPacket evicted found=%v err=%v", found, err)
 	}
-	if _, found, err := cache.AppendPacket(make([]byte, 0, len(replacement)-1), 3); !found || !errors.Is(err, av1.ErrRTPShortBuffer) {
-		t.Fatalf("short AppendPacket found=%v err=%v want %v", found, err, av1.ErrRTPShortBuffer)
+	if _, found, err := cache.AppendPacket(make([]byte, 0, len(replacement)-1), 3); !found || !errors.Is(err, ErrRTPShortBuffer) {
+		t.Fatalf("short AppendPacket found=%v err=%v want %v", found, err, ErrRTPShortBuffer)
 	}
-	spans := make([]av1.RTPRetransmissionPacketSpan, 0)
-	if _, _, err := cache.AppendPacketsForRTCPGenericNACKPairs(make([]byte, 0, len(replacement)), spans, []av1.RTCPGenericNACKPair{{PacketID: 3}}); !errors.Is(err, av1.ErrRTPShortBuffer) {
-		t.Fatalf("short retransmission spans err=%v want %v", err, av1.ErrRTPShortBuffer)
+	spans := make([]RTPRetransmissionPacketSpan, 0)
+	if _, _, err := cache.AppendPacketsForRTCPGenericNACKPairs(make([]byte, 0, len(replacement)), spans, []RTCPGenericNACKPair{{PacketID: 3}}); !errors.Is(err, ErrRTPShortBuffer) {
+		t.Fatalf("short retransmission spans err=%v want %v", err, ErrRTPShortBuffer)
 	}
 	cache.Reset()
 	if cache.Contains(3) {
 		t.Fatal("Reset left cached sequence present")
 	}
 
-	shortSlots := []av1.RTPRetransmissionCacheSlot{{Packet: make([]byte, 0, 8)}}
-	shortCache, err := av1.BindRTPRetransmissionCache(shortSlots)
+	shortSlots := []RTPRetransmissionCacheSlot{{Packet: make([]byte, 0, 8)}}
+	shortCache, err := BindRTPRetransmissionCache(shortSlots)
 	if err != nil {
 		t.Fatalf("Bind short slot cache: %v", err)
 	}
-	if err := shortCache.Store(first); !errors.Is(err, av1.ErrRTPShortBuffer) {
-		t.Fatalf("short Store err=%v want %v", err, av1.ErrRTPShortBuffer)
+	if err := shortCache.Store(first); !errors.Is(err, ErrRTPShortBuffer) {
+		t.Fatalf("short Store err=%v want %v", err, ErrRTPShortBuffer)
 	}
-	var zero av1.RTPRetransmissionCache
-	if err := zero.Store(first); !errors.Is(err, av1.ErrRTPInvalidRetransmissionCache) {
-		t.Fatalf("zero Store err=%v want %v", err, av1.ErrRTPInvalidRetransmissionCache)
+	var zero RTPRetransmissionCache
+	if err := zero.Store(first); !errors.Is(err, ErrRTPInvalidRetransmissionCache) {
+		t.Fatalf("zero Store err=%v want %v", err, ErrRTPInvalidRetransmissionCache)
 	}
 }
 
@@ -142,9 +140,9 @@ func TestPublicRTPRetransmissionCacheAllocs(t *testing.T) {
 			t.Fatalf("Store seq %d: %v", seq, err)
 		}
 	}
-	pairs := []av1.RTCPGenericNACKPair{{PacketID: 10, LostPacketBitmask: 0x0007}}
+	pairs := []RTCPGenericNACKPair{{PacketID: 10, LostPacketBitmask: 0x0007}}
 	dst := make([]byte, 0, 256)
-	spans := make([]av1.RTPRetransmissionPacketSpan, 4)
+	spans := make([]RTPRetransmissionPacketSpan, 4)
 	allocs := testing.AllocsPerRun(1000, func() {
 		var err error
 		dst, _, err = cache.AppendPacketsForRTCPGenericNACKPairs(dst[:0], spans, pairs)
@@ -159,40 +157,40 @@ func TestPublicRTPRetransmissionCacheAllocs(t *testing.T) {
 
 func TestPublicRTPRTXPacketWrapParseAndRestore(t *testing.T) {
 	originalPayload := []byte{0x81, 0x55, 0x66, 0x77}
-	originalHeader := av1.RTPHeader{
+	originalHeader := RTPHeader{
 		Marker:           true,
 		PayloadType:      96,
 		SequenceNumber:   0xfffe,
 		Timestamp:        0x01020304,
 		SSRC:             0x11111111,
 		CSRCCount:        2,
-		ExtensionProfile: av1.RTPExtensionProfileOneByte,
+		ExtensionProfile: RTPExtensionProfileOneByte,
 		ExtensionPayload: []byte{0x21, 0xaa, 0xbb, 0x00},
 	}
 	originalHeader.CSRC[0] = 0xaaaa0001
 	originalHeader.CSRC[1] = 0xaaaa0002
-	originalSize, err := av1.RTPPacketSize(originalHeader, originalPayload, 3)
+	originalSize, err := RTPPacketSize(originalHeader, originalPayload, 3)
 	if err != nil {
 		t.Fatalf("RTPPacketSize original: %v", err)
 	}
 	original := make([]byte, originalSize)
-	n, err := av1.PutRTPPacket(original, originalHeader, originalPayload, 3)
+	n, err := PutRTPPacket(original, originalHeader, originalPayload, 3)
 	if err != nil {
 		t.Fatalf("PutRTPPacket original: %v", err)
 	}
 	original = original[:n]
 
-	config := av1.RTPRTXPacketConfig{
+	config := RTPRTXPacketConfig{
 		PayloadType:    97,
 		SequenceNumber: 7,
 		SSRC:           0x22222222,
 	}
-	rtxSize, err := av1.RTPRTXPacketSize(original, config)
+	rtxSize, err := RTPRTXPacketSize(original, config)
 	if err != nil {
 		t.Fatalf("RTPRTXPacketSize: %v", err)
 	}
 	rtx := make([]byte, rtxSize)
-	n, err = av1.PutRTPRTXPacket(rtx, original, config)
+	n, err = PutRTPRTXPacket(rtx, original, config)
 	if err != nil {
 		t.Fatalf("PutRTPRTXPacket: %v", err)
 	}
@@ -201,7 +199,7 @@ func TestPublicRTPRTXPacketWrapParseAndRestore(t *testing.T) {
 	}
 	rtx = rtx[:n]
 
-	parsed, err := av1.ParseRTPRTXPacket(rtx)
+	parsed, err := ParseRTPRTXPacket(rtx)
 	if err != nil {
 		t.Fatalf("ParseRTPRTXPacket: %v", err)
 	}
@@ -227,19 +225,19 @@ func TestPublicRTPRTXPacketWrapParseAndRestore(t *testing.T) {
 		t.Fatalf("parsed RTX OSN=%d payload=%#v", parsed.OriginalSequenceNumber, parsed.OriginalPayload)
 	}
 
-	restoredSize, err := av1.RTPPacketFromRTXSize(rtx, originalHeader.PayloadType, originalHeader.SSRC)
+	restoredSize, err := RTPPacketFromRTXSize(rtx, originalHeader.PayloadType, originalHeader.SSRC)
 	if err != nil {
 		t.Fatalf("RTPPacketFromRTXSize: %v", err)
 	}
 	restored := make([]byte, restoredSize)
-	n, err = av1.PutRTPPacketFromRTX(restored, rtx, originalHeader.PayloadType, originalHeader.SSRC)
+	n, err = PutRTPPacketFromRTX(restored, rtx, originalHeader.PayloadType, originalHeader.SSRC)
 	if err != nil {
 		t.Fatalf("PutRTPPacketFromRTX: %v", err)
 	}
 	if n != restoredSize {
 		t.Fatalf("restored size n=%d want %d", n, restoredSize)
 	}
-	restoredPacket, err := av1.ParseRTPPacket(restored[:n])
+	restoredPacket, err := ParseRTPPacket(restored[:n])
 	if err != nil {
 		t.Fatalf("ParseRTPPacket restored: %v", err)
 	}
@@ -257,13 +255,13 @@ func TestPublicRTPRTXPacketWrapParseAndRestore(t *testing.T) {
 	override := config
 	override.SequenceNumber = 8
 	override.ExtensionOverride = true
-	override.ExtensionProfile = av1.RTPExtensionProfileTwoByte
+	override.ExtensionProfile = RTPExtensionProfileTwoByte
 	override.ExtensionPayload = []byte{3, 1, 0xcc, 0x00}
-	overridden, err := av1.AppendRTPRTXPacket(make([]byte, 0, rtxSize+8), original, override)
+	overridden, err := AppendRTPRTXPacket(make([]byte, 0, rtxSize+8), original, override)
 	if err != nil {
 		t.Fatalf("AppendRTPRTXPacket override: %v", err)
 	}
-	parsedOverride, err := av1.ParseRTPRTXPacket(overridden)
+	parsedOverride, err := ParseRTPRTXPacket(overridden)
 	if err != nil {
 		t.Fatalf("ParseRTPRTXPacket override: %v", err)
 	}
@@ -275,37 +273,37 @@ func TestPublicRTPRTXPacketWrapParseAndRestore(t *testing.T) {
 
 func TestPublicRTPRTXPacketRejectsShortBuffersAndPayloads(t *testing.T) {
 	original := testRetransmissionRTPPacket(t, 44, []byte("payload"))
-	config := av1.RTPRTXPacketConfig{PayloadType: 97, SequenceNumber: 10, SSRC: 0x22222222}
-	size, err := av1.RTPRTXPacketSize(original, config)
+	config := RTPRTXPacketConfig{PayloadType: 97, SequenceNumber: 10, SSRC: 0x22222222}
+	size, err := RTPRTXPacketSize(original, config)
 	if err != nil {
 		t.Fatalf("RTPRTXPacketSize: %v", err)
 	}
-	if _, err := av1.PutRTPRTXPacket(make([]byte, size-1), original, config); !errors.Is(err, av1.ErrRTPShortBuffer) {
-		t.Fatalf("short PutRTPRTXPacket err=%v want %v", err, av1.ErrRTPShortBuffer)
+	if _, err := PutRTPRTXPacket(make([]byte, size-1), original, config); !errors.Is(err, ErrRTPShortBuffer) {
+		t.Fatalf("short PutRTPRTXPacket err=%v want %v", err, ErrRTPShortBuffer)
 	}
-	if out, err := av1.AppendRTPRTXPacket(make([]byte, 0, size-1), original, config); !errors.Is(err, av1.ErrRTPShortBuffer) || len(out) != 0 {
+	if out, err := AppendRTPRTXPacket(make([]byte, 0, size-1), original, config); !errors.Is(err, ErrRTPShortBuffer) || len(out) != 0 {
 		t.Fatalf("short AppendRTPRTXPacket out=%d err=%v", len(out), err)
 	}
-	if _, err := av1.RTPRTXPacketSize([]byte{0x80}, config); !errors.Is(err, av1.ErrRTPShortPayload) {
-		t.Fatalf("short original RTP err=%v want %v", err, av1.ErrRTPShortPayload)
+	if _, err := RTPRTXPacketSize([]byte{0x80}, config); !errors.Is(err, ErrRTPShortPayload) {
+		t.Fatalf("short original RTP err=%v want %v", err, ErrRTPShortPayload)
 	}
 
 	shortRTX := testRetransmissionRTPPacket(t, 55, []byte{0xaa})
-	if _, err := av1.ParseRTPRTXPacket(shortRTX); !errors.Is(err, av1.ErrRTPShortPayload) {
-		t.Fatalf("short ParseRTPRTXPacket err=%v want %v", err, av1.ErrRTPShortPayload)
+	if _, err := ParseRTPRTXPacket(shortRTX); !errors.Is(err, ErrRTPShortPayload) {
+		t.Fatalf("short ParseRTPRTXPacket err=%v want %v", err, ErrRTPShortPayload)
 	}
-	rtx, err := av1.AppendRTPRTXPacket(make([]byte, 0, size), original, config)
+	rtx, err := AppendRTPRTXPacket(make([]byte, 0, size), original, config)
 	if err != nil {
 		t.Fatalf("AppendRTPRTXPacket valid: %v", err)
 	}
-	restoredSize, err := av1.RTPPacketFromRTXSize(rtx, 96, 0x11111111)
+	restoredSize, err := RTPPacketFromRTXSize(rtx, 96, 0x11111111)
 	if err != nil {
 		t.Fatalf("RTPPacketFromRTXSize: %v", err)
 	}
-	if _, err := av1.PutRTPPacketFromRTX(make([]byte, restoredSize-1), rtx, 96, 0x11111111); !errors.Is(err, av1.ErrRTPShortBuffer) {
-		t.Fatalf("short PutRTPPacketFromRTX err=%v want %v", err, av1.ErrRTPShortBuffer)
+	if _, err := PutRTPPacketFromRTX(make([]byte, restoredSize-1), rtx, 96, 0x11111111); !errors.Is(err, ErrRTPShortBuffer) {
+		t.Fatalf("short PutRTPPacketFromRTX err=%v want %v", err, ErrRTPShortBuffer)
 	}
-	if out, err := av1.AppendRTPPacketFromRTX(make([]byte, 0, restoredSize-1), rtx, 96, 0x11111111); !errors.Is(err, av1.ErrRTPShortBuffer) || len(out) != 0 {
+	if out, err := AppendRTPPacketFromRTX(make([]byte, 0, restoredSize-1), rtx, 96, 0x11111111); !errors.Is(err, ErrRTPShortBuffer) || len(out) != 0 {
 		t.Fatalf("short AppendRTPPacketFromRTX out=%d err=%v", len(out), err)
 	}
 }
@@ -317,9 +315,9 @@ func TestPublicRTPRetransmissionCacheAppendsRTXNACKPackets(t *testing.T) {
 			t.Fatalf("Store seq %d: %v", seq, err)
 		}
 	}
-	pairs := []av1.RTCPGenericNACKPair{{PacketID: 10, LostPacketBitmask: 0x0007}}
-	spans := make([]av1.RTPRTXPacketSpan, 4)
-	config := av1.RTPRTXPacketConfig{PayloadType: 97, SequenceNumber: 0xfffe, SSRC: 0x22222222}
+	pairs := []RTCPGenericNACKPair{{PacketID: 10, LostPacketBitmask: 0x0007}}
+	spans := make([]RTPRTXPacketSpan, 4)
+	config := RTPRTXPacketConfig{PayloadType: 97, SequenceNumber: 0xfffe, SSRC: 0x22222222}
 	out, count, next, err := cache.AppendRTXPacketsForRTCPGenericNACKPairs(make([]byte, 0, 512), spans, pairs, config)
 	if err != nil {
 		t.Fatalf("AppendRTXPacketsForRTCPGenericNACKPairs: %v", err)
@@ -335,7 +333,7 @@ func TestPublicRTPRetransmissionCacheAppendsRTXNACKPackets(t *testing.T) {
 			t.Fatalf("span %d=%+v want original=%d rtx=%d", i, span, wantOriginal[i], wantRTX[i])
 		}
 		rtx := out[span.Offset : span.Offset+span.Length]
-		parsed, err := av1.ParseRTPRTXPacket(rtx)
+		parsed, err := ParseRTPRTXPacket(rtx)
 		if err != nil {
 			t.Fatalf("ParseRTPRTXPacket span %d: %v", i, err)
 		}
@@ -345,11 +343,11 @@ func TestPublicRTPRetransmissionCacheAppendsRTXNACKPackets(t *testing.T) {
 			parsed.OriginalSequenceNumber != wantOriginal[i] {
 			t.Fatalf("parsed RTX span %d=%+v osn=%d", i, parsed.Header, parsed.OriginalSequenceNumber)
 		}
-		restored, err := av1.AppendRTPPacketFromRTX(make([]byte, 0, 96), rtx, 96, 0xdec0de)
+		restored, err := AppendRTPPacketFromRTX(make([]byte, 0, 96), rtx, 96, 0xdec0de)
 		if err != nil {
 			t.Fatalf("AppendRTPPacketFromRTX span %d: %v", i, err)
 		}
-		restoredPacket, err := av1.ParseRTPPacket(restored)
+		restoredPacket, err := ParseRTPPacket(restored)
 		if err != nil {
 			t.Fatalf("ParseRTPPacket restored span %d: %v", i, err)
 		}
@@ -359,12 +357,12 @@ func TestPublicRTPRetransmissionCacheAppendsRTXNACKPackets(t *testing.T) {
 		}
 	}
 
-	if _, _, _, err := cache.AppendRTXPacketsForRTCPGenericNACKPairs(out[:0], spans[:0], pairs, config); !errors.Is(err, av1.ErrRTPShortBuffer) {
-		t.Fatalf("short RTX spans err=%v want %v", err, av1.ErrRTPShortBuffer)
+	if _, _, _, err := cache.AppendRTXPacketsForRTCPGenericNACKPairs(out[:0], spans[:0], pairs, config); !errors.Is(err, ErrRTPShortBuffer) {
+		t.Fatalf("short RTX spans err=%v want %v", err, ErrRTPShortBuffer)
 	}
-	var zero av1.RTPRetransmissionCache
-	if _, _, _, err := zero.AppendRTXPacketsForRTCPGenericNACKPairs(out[:0], spans, pairs, config); !errors.Is(err, av1.ErrRTPInvalidRetransmissionCache) {
-		t.Fatalf("zero RTX cache err=%v want %v", err, av1.ErrRTPInvalidRetransmissionCache)
+	var zero RTPRetransmissionCache
+	if _, _, _, err := zero.AppendRTXPacketsForRTCPGenericNACKPairs(out[:0], spans, pairs, config); !errors.Is(err, ErrRTPInvalidRetransmissionCache) {
+		t.Fatalf("zero RTX cache err=%v want %v", err, ErrRTPInvalidRetransmissionCache)
 	}
 }
 
@@ -375,10 +373,10 @@ func TestPublicRTPRetransmissionCacheRTXAllocs(t *testing.T) {
 			t.Fatalf("Store seq %d: %v", seq, err)
 		}
 	}
-	pairs := []av1.RTCPGenericNACKPair{{PacketID: 20, LostPacketBitmask: 0x0007}}
+	pairs := []RTCPGenericNACKPair{{PacketID: 20, LostPacketBitmask: 0x0007}}
 	dst := make([]byte, 0, 512)
-	spans := make([]av1.RTPRTXPacketSpan, 4)
-	config := av1.RTPRTXPacketConfig{PayloadType: 97, SequenceNumber: 30, SSRC: 0x22222222}
+	spans := make([]RTPRTXPacketSpan, 4)
+	config := RTPRTXPacketConfig{PayloadType: 97, SequenceNumber: 30, SSRC: 0x22222222}
 	allocs := testing.AllocsPerRun(1000, func() {
 		var err error
 		var count int
@@ -396,13 +394,13 @@ func TestPublicRTPRetransmissionCacheRTXAllocs(t *testing.T) {
 	}
 }
 
-func bindTestRetransmissionCache(t *testing.T, slots int, packetCap int) av1.RTPRetransmissionCache {
+func bindTestRetransmissionCache(t *testing.T, slots int, packetCap int) RTPRetransmissionCache {
 	t.Helper()
-	storage := make([]av1.RTPRetransmissionCacheSlot, slots)
+	storage := make([]RTPRetransmissionCacheSlot, slots)
 	for i := range storage {
 		storage[i].Packet = make([]byte, 0, packetCap)
 	}
-	cache, err := av1.BindRTPRetransmissionCache(storage)
+	cache, err := BindRTPRetransmissionCache(storage)
 	if err != nil {
 		t.Fatalf("BindRTPRetransmissionCache: %v", err)
 	}
@@ -411,19 +409,19 @@ func bindTestRetransmissionCache(t *testing.T, slots int, packetCap int) av1.RTP
 
 func testRetransmissionRTPPacket(t *testing.T, sequence uint16, payload []byte) []byte {
 	t.Helper()
-	header := av1.RTPHeader{
+	header := RTPHeader{
 		Marker:         true,
 		PayloadType:    96,
 		SequenceNumber: sequence,
 		Timestamp:      90000 + uint32(sequence),
 		SSRC:           0xdec0de,
 	}
-	size, err := av1.RTPPacketSize(header, payload, 0)
+	size, err := RTPPacketSize(header, payload, 0)
 	if err != nil {
 		t.Fatalf("RTPPacketSize: %v", err)
 	}
 	packet := make([]byte, size)
-	n, err := av1.PutRTPPacket(packet, header, payload, 0)
+	n, err := PutRTPPacket(packet, header, payload, 0)
 	if err != nil {
 		t.Fatalf("PutRTPPacket: %v", err)
 	}
@@ -432,7 +430,7 @@ func testRetransmissionRTPPacket(t *testing.T, sequence uint16, payload []byte) 
 
 func packetSequence(t *testing.T, packet []byte) uint16 {
 	t.Helper()
-	parsed, err := av1.ParseRTPPacket(packet)
+	parsed, err := ParseRTPPacket(packet)
 	if err != nil {
 		t.Fatalf("ParseRTPPacket: %v", err)
 	}

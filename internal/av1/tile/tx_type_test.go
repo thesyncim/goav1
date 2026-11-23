@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
-	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
@@ -248,12 +247,8 @@ func TestExtTXTypeInvMatchesLibaom(t *testing.T) {
 			t.Fatalf("set %d count=%d want %d", set, count, len(want))
 		}
 		for symbol, wantType := range want {
-			got, err := ExtTXTypeFromSymbol(set, symbol)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != wantType {
-				t.Fatalf("ExtTXTypeFromSymbol(%d,%d)=%d want %d", set, symbol, got, wantType)
+			if got := extTXTypeInv[set][symbol]; got != wantType {
+				t.Fatalf("extTXTypeInv[%d][%d]=%d want %d", set, symbol, got, wantType)
 			}
 		}
 	}
@@ -279,12 +274,8 @@ func TestExtTXTypeInvMatchesLibaom(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ExtTXTypeFromSymbol(tt.set, tt.symbol)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != tt.want {
-				t.Fatalf("ExtTXTypeFromSymbol(%d,%d)=%d want %d", tt.set, tt.symbol, got, tt.want)
+			if got := extTXTypeInv[tt.set][tt.symbol]; got != tt.want {
+				t.Fatalf("extTXTypeInv[%d][%d]=%d want %d", tt.set, tt.symbol, got, tt.want)
 			}
 		})
 	}
@@ -298,10 +289,7 @@ func TestExtTXSymbolMapMatchesLibaom(t *testing.T) {
 		}
 		seen := uint16(0)
 		for symbol := range count {
-			typ, err := ExtTXTypeFromSymbol(set, symbol)
-			if err != nil {
-				t.Fatal(err)
-			}
+			typ := extTXTypeInv[set][symbol]
 			seen |= 1 << typ
 			got, err := ExtTXSymbolForType(set, typ)
 			if err != nil {
@@ -525,265 +513,6 @@ func TestReadInterTransformTypeUsesLibaomCDF(t *testing.T) {
 	}
 }
 
-func TestInterCoeffTransformSelectorChromaReusesLumaMap(t *testing.T) {
-	var state DecodeState
-	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	var selector InterCoeffTransformSelector
-	selector.ResetForColor(&state, nil, false, false, false, 64, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
-	if err := selector.RecordCoeffTransform(CoeffTransformRequest{
-		Plane: 0,
-		Block: TransformBlock{X4: 4, Y4: 6, Size: TransformSize8x8},
-	}, transform.TypeADSTDCT); err != nil {
-		t.Fatal(err)
-	}
-
-	before := state.Reader.BitsRead()
-	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
-		Plane: 1,
-		Block: TransformBlock{X4: 2, Y4: 3, Size: TransformSize4x4},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeADSTDCT {
-		t.Fatalf("chroma tx type=%d want %d", got, transform.TypeADSTDCT)
-	}
-	if after := state.Reader.BitsRead(); after != before {
-		t.Fatalf("chroma tx type read bits=%d want %d", after, before)
-	}
-	if _, err := selector.SelectCoeffTransform(CoeffTransformRequest{
-		Plane: 2,
-		Block: TransformBlock{X4: 7, Y4: 7, Size: TransformSize4x4},
-	}); !errors.Is(err, ErrInvalidDecodeState) {
-		t.Fatalf("missing tx type map err=%v want %v", err, ErrInvalidDecodeState)
-	}
-}
-
-func TestInterCoeffTransformSelectorResetInvalidatesLumaMapGeneration(t *testing.T) {
-	var state DecodeState
-	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	var selector InterCoeffTransformSelector
-	color := parser.ColorConfig{SubsamplingX: true, SubsamplingY: true}
-	selector.ResetForColor(&state, nil, false, false, false, 64, color)
-	if err := selector.RecordCoeffTransform(CoeffTransformRequest{
-		Plane: 0,
-		Block: TransformBlock{X4: 4, Y4: 6, Size: TransformSize8x8},
-	}, transform.TypeADSTDCT); err != nil {
-		t.Fatal(err)
-	}
-	firstGeneration := selector.Map.generation
-	if firstGeneration == 0 {
-		t.Fatal("generation was not initialized")
-	}
-	selector.ResetForColor(&state, nil, false, false, false, 64, color)
-	if selector.Map.generation == firstGeneration {
-		t.Fatalf("generation did not advance: %d", firstGeneration)
-	}
-	if _, err := selector.SelectCoeffTransform(CoeffTransformRequest{
-		Plane: 1,
-		Block: TransformBlock{X4: 2, Y4: 3, Size: TransformSize4x4},
-	}); !errors.Is(err, ErrInvalidDecodeState) {
-		t.Fatalf("stale tx type map err=%v want %v", err, ErrInvalidDecodeState)
-	}
-	if err := selector.RecordCoeffTransform(CoeffTransformRequest{
-		Plane: 0,
-		Block: TransformBlock{X4: 4, Y4: 6, Size: TransformSize8x8},
-	}, transform.TypeFlipADSTDCT); err != nil {
-		t.Fatal(err)
-	}
-	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
-		Plane: 1,
-		Block: TransformBlock{X4: 2, Y4: 3, Size: TransformSize4x4},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeFlipADSTDCT {
-		t.Fatalf("fresh chroma tx type=%d want %d", got, transform.TypeFlipADSTDCT)
-	}
-	selector.Map.generation = 255
-	selector.Map.Valid[0][0] = 255
-	selector.Map.Reset()
-	if selector.Map.generation != 1 || selector.Map.Valid[0][0] != 0 {
-		t.Fatalf("generation wrap did not clear valid map: generation=%d valid00=%d", selector.Map.generation, selector.Map.Valid[0][0])
-	}
-}
-
-func TestInterCoeffTransformSelectorChromaReusesOddSubsampledLumaMap(t *testing.T) {
-	var state DecodeState
-	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	var selector InterCoeffTransformSelector
-	selector.ResetForColor(&state, nil, false, false, false, 64, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
-	if err := selector.RecordCoeffTransform(CoeffTransformRequest{
-		Plane: 0,
-		Block: TransformBlock{X4: 8, Y4: 13, Size: TransformSize8x4},
-	}, transform.TypeADSTDCT); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
-		Plane: 2,
-		Block: TransformBlock{X4: 4, Y4: 6, Size: TransformSize4x4},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeADSTDCT {
-		t.Fatalf("odd chroma tx type=%d want %d", got, transform.TypeADSTDCT)
-	}
-}
-
-func TestInterCoeffTransformSelectorChromaFallsBackWhenMappedTypeUnsupported(t *testing.T) {
-	var state DecodeState
-	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	var selector InterCoeffTransformSelector
-	selector.ResetForColor(&state, nil, false, false, false, 64, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
-	if err := selector.RecordCoeffTransform(CoeffTransformRequest{
-		Plane: 0,
-		Block: TransformBlock{X4: 0, Y4: 0, Size: TransformSize4x4},
-	}, transform.TypeFlipADSTDCT); err != nil {
-		t.Fatal(err)
-	}
-	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
-		Plane: 2,
-		Block: TransformBlock{X4: 0, Y4: 0, Size: TransformSize32x32},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeDCTDCT {
-		t.Fatalf("unsupported chroma tx type=%d want %d", got, transform.TypeDCTDCT)
-	}
-}
-
-func TestInterCoeffTransformSelectorChromaFallsBackWhenMappedTypeDisallowedByTXSet(t *testing.T) {
-	var state DecodeState
-	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	var selector InterCoeffTransformSelector
-	selector.ResetForColor(&state, nil, false, false, false, 64, parser.ColorConfig{})
-	if err := selector.RecordCoeffTransform(CoeffTransformRequest{
-		Plane: 0,
-		Block: TransformBlock{X4: 24, Y4: 0, Size: TransformSize8x8},
-	}, transform.TypeVADST); err != nil {
-		t.Fatal(err)
-	}
-
-	before := state.Reader.BitsRead()
-	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
-		Plane: 1,
-		Block: TransformBlock{X4: 24, Y4: 0, Size: TransformSize16x16},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeDCTDCT {
-		t.Fatalf("disallowed chroma tx type=%d want %d", got, transform.TypeDCTDCT)
-	}
-	if after := state.Reader.BitsRead(); after != before {
-		t.Fatalf("chroma tx type read bits=%d want %d", after, before)
-	}
-}
-
-func TestInterCoeffTransformSelectorLosslessChromaDoesNotNeedLumaMap(t *testing.T) {
-	var state DecodeState
-	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	var selector InterCoeffTransformSelector
-	selector.ResetForColor(&state, nil, false, false, true, 64, parser.ColorConfig{SubsamplingX: true, SubsamplingY: true})
-	before := state.Reader.BitsRead()
-	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
-		Plane: 1,
-		Block: TransformBlock{X4: 10, Y4: 4, Size: TransformSize4x4},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeDCTDCT {
-		t.Fatalf("lossless chroma tx type=%d want %d", got, transform.TypeDCTDCT)
-	}
-	if after := state.Reader.BitsRead(); after != before {
-		t.Fatalf("lossless chroma tx type read bits=%d want %d", after, before)
-	}
-}
-
-func TestIntraCoeffTransformSelectorReadsLumaAndDerivesChroma(t *testing.T) {
-	var cdfs TransformTypeCDFs
-	if err := cdfs.InitDefault(); err != nil {
-		t.Fatal(err)
-	}
-	var state DecodeState
-	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	var selector IntraCoeffTransformSelector
-	selector.Reset(&state, &cdfs, false, false, false, 64, IntraModeDC, ChromaIntraModeVertical)
-	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
-		Plane: 0,
-		Block: TransformBlock{Size: TransformSize8x8},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeIDTX {
-		t.Fatalf("intra luma tx type=%d want %d", got, transform.TypeIDTX)
-	}
-
-	got, err = selector.SelectCoeffTransform(CoeffTransformRequest{
-		Plane: 1,
-		Block: TransformBlock{Size: TransformSize8x8},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeADSTDCT {
-		t.Fatalf("intra chroma tx type=%d want %d", got, transform.TypeADSTDCT)
-	}
-}
-
-func TestIntraCoeffTransformSelectorQIndexZeroDoesNotRead(t *testing.T) {
-	var state DecodeState
-	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	var selector IntraCoeffTransformSelector
-	selector.Reset(&state, nil, false, false, false, 0, IntraModeD45, ChromaIntraModeD135)
-	before := state.Reader.BitsRead()
-	got, err := selector.SelectCoeffTransform(CoeffTransformRequest{
-		Plane: 0,
-		Block: TransformBlock{Size: TransformSize8x8},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeDCTDCT {
-		t.Fatalf("qindex-zero luma tx type=%d want %d", got, transform.TypeDCTDCT)
-	}
-	got, err = selector.SelectCoeffTransform(CoeffTransformRequest{
-		Plane: 1,
-		Block: TransformBlock{Size: TransformSize8x8},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != transform.TypeDCTDCT {
-		t.Fatalf("qindex-zero chroma tx type=%d want %d", got, transform.TypeDCTDCT)
-	}
-	if after := state.Reader.BitsRead(); after != before {
-		t.Fatalf("qindex-zero tx type read bits=%d want %d", after, before)
-	}
-}
-
 func TestIntraChromaTransformTypeMatchesDav1dUVMap(t *testing.T) {
 	tests := []struct {
 		mode ChromaIntraMode
@@ -824,9 +553,6 @@ func TestTransformTypeRejectsInvalidInputs(t *testing.T) {
 	if _, err := ExtTXTypeCount(ExtTXSetTypes); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad count err=%v want %v", err, ErrInvalidDecodeState)
 	}
-	if _, err := ExtTXTypeFromSymbol(ExtTXSetAll16, 16); !errors.Is(err, ErrInvalidDecodeState) {
-		t.Fatalf("bad symbol err=%v want %v", err, ErrInvalidDecodeState)
-	}
 	if _, err := ExtTXTypeAllowed(ExtTXSetTypes, transform.TypeDCTDCT); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad allowed set err=%v want %v", err, ErrInvalidDecodeState)
 	}
@@ -862,14 +588,10 @@ func TestTransformTypeRejectsInvalidInputs(t *testing.T) {
 
 func TestTransformTypeTablesDoNotAllocate(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
-		set, err := ExtTXSetTypeFor(TransformSize16x16, true, false)
-		if err != nil {
+		if _, err := ExtTXSetTypeFor(TransformSize16x16, true, false); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := ExtTXSetIndex(TransformSize16x16, true, false); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := ExtTXTypeFromSymbol(set, 3); err != nil {
 			t.Fatal(err)
 		}
 	})

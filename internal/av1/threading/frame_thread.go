@@ -233,11 +233,10 @@ func (r *FrameThreadRecon) runBatch(i int) {
 // calling goroutine and every other batch on a lane goroutine; it returns once
 // every parse finished. The parses must not hold the pool, because the
 // post-filter of the previous frame fans its row bands across the pool workers
-// at the same time. Each tile reconstructs on an equal share of the workers,
-// at least one lane. laneNeed is the total number of lane goroutines that may
-// be live at once across every in-flight frame (two per worker per frame: the
-// batch parses plus the reconstruction lanes), so a lane send always finds an
-// idle goroutine.
+// at the same time. Each tile reconstructs on one lane. laneNeed is the total
+// number of lane goroutines that may be live at once across every in-flight
+// frame (two per worker per frame: the batch parses plus the reconstruction
+// lanes), so a lane send always finds an idle goroutine.
 func (p *Pool) ExecuteFrameWorkRunnerFrameThread(batches []Batch, jobs []tile.Job, base FrameWorkBatch, runner FrameWorkBatchRunner, laneNeed int) error {
 	if p == nil || len(p.workers) == 0 {
 		return ErrInvalidWorkerCount
@@ -266,8 +265,6 @@ func (p *Pool) ExecuteFrameWorkRunnerFrameThread(batches []Batch, jobs []tile.Jo
 	if lanes == nil {
 		return ErrPoolClosed
 	}
-	share := len(p.workers) / len(batches)
-	share = max(1, min(share, int(^uint16(0))))
 	if cap(ft.batches) < len(batches) {
 		ft.batches = make([]FrameWorkBatch, len(batches))
 	}
@@ -281,7 +278,10 @@ func (p *Pool) ExecuteFrameWorkRunnerFrameThread(batches []Batch, jobs []tile.Jo
 		*ctx = base
 		ctx.Batch = batches[i]
 		ctx.Jobs = batchJobs
-		ctx.WavefrontWorkers = uint16(share)
+		// dav1d keeps one reconstruction task per tile (t->sby advances as
+		// each SB row finishes): a tile reconstructs its rows in order on one
+		// lane, and the workers spread over the tiles and frames in flight.
+		ctx.WavefrontWorkers = 1
 		ctx.wavefrontLanes = lanes
 	}
 	ft.runner = runner

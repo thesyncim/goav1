@@ -108,7 +108,7 @@ func (c *BlockModeContext) CollectSubChromaInterCells(size BlockSize, x4 int, y4
 				return SubChromaInterResult{}, false
 			}
 			cell := c.GridInterMotion[ny][nx]
-			if !cell.References.Ref[0].Valid() {
+			if !cell.References.Ref0.Valid() {
 				return SubChromaInterResult{}, false
 			}
 			// libaom's build_inter_predictors_sub8x8 predicts each cell with
@@ -130,7 +130,7 @@ func (c *BlockModeContext) CollectSubChromaInterCells(size BlockSize, x4 int, y4
 				Width:         uint8(cellW),
 				Height:        uint8(cellH),
 				MV:            cell.MV[0],
-				Reference:     cell.References.Ref[0],
+				Reference:     cell.References.Ref0,
 				InterpFilters: cellFilters,
 			}
 			result.Count++

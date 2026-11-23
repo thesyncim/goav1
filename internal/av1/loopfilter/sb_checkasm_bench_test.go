@@ -220,7 +220,6 @@ func TestFilterSB8CheckasmMatchesScalar(t *testing.T) {
 					}
 					want := append([]byte(nil), c.pix...)
 					got := append([]byte(nil), c.pix...)
-					var ws, gs SBStats
 					vm := c.vm
 					if seed&1 == 1 && !vertical {
 						for k := range vm {
@@ -228,14 +227,11 @@ func TestFilterSB8CheckasmMatchesScalar(t *testing.T) {
 						}
 					}
 					if vertical {
-						ws = filterSBVertical8Scalar(want, c.off, c.stride, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
-						gs = FilterSBVertical8(got, c.off, c.stride, c.rowBytes, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
+						filterSBVertical8Scalar(want, c.off, c.stride, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
+						FilterSBVertical8(got, c.off, c.stride, c.rowBytes, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
 					} else {
-						ws = filterSBHorizontal8Scalar(want, c.off, c.stride, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
-						gs = FilterSBHorizontal8(got, c.off, c.stride, c.rowBytes, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
-					}
-					if ws != gs {
-						t.Fatalf("seed %d vertical=%v luma=%v s=%d: stats %+v, want %+v", seed, vertical, luma, s, gs, ws)
+						filterSBHorizontal8Scalar(want, c.off, c.stride, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
+						FilterSBHorizontal8(got, c.off, c.stride, c.rowBytes, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
 					}
 					if !bytes.Equal(got, want) {
 						t.Fatalf("seed %d vertical=%v luma=%v s=%d: pixels differ", seed, vertical, luma, s)

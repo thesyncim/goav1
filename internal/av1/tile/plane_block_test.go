@@ -49,27 +49,17 @@ func TestPlaneBlockSizeMatchesLibaomSSSizeLookup(t *testing.T) {
 
 func TestHasChromaBlockMatchesDav1dCondition(t *testing.T) {
 	color420 := parser.ColorConfig{SubsamplingX: true, SubsamplingY: true}
-	if HasChromaBlock(TransformTreeRequest{Size: BlockSize4x4, X4: 0, Y4: 0}, color420) {
+	if HasChromaBlockAt(BlockSize4x4, 0, 0, color420) {
 		t.Fatal("even 4x4 420 block unexpectedly has chroma")
 	}
-	if !HasChromaBlock(TransformTreeRequest{Size: BlockSize4x4, X4: 1, Y4: 1}, color420) {
+	if !HasChromaBlockAt(BlockSize4x4, 1, 1, color420) {
 		t.Fatal("odd 4x4 420 block should have chroma")
 	}
-	if !HasChromaBlock(TransformTreeRequest{Size: BlockSize8x8}, color420) {
+	if !HasChromaBlockAt(BlockSize8x8, 0, 0, color420) {
 		t.Fatal("8x8 420 block should have chroma")
 	}
-	if HasChromaBlock(TransformTreeRequest{Size: BlockSize8x8}, parser.ColorConfig{MonoChrome: true}) {
+	if HasChromaBlockAt(BlockSize8x8, 0, 0, parser.ColorConfig{MonoChrome: true}) {
 		t.Fatal("monochrome block unexpectedly has chroma")
-	}
-	for _, size := range []BlockSize{BlockSize4x4, BlockSize4x8, BlockSize8x4, BlockSize8x8, BlockSize16x16} {
-		for y4 := 0; y4 < 4; y4++ {
-			for x4 := 0; x4 < 4; x4++ {
-				req := TransformTreeRequest{Size: size, X4: uint8(x4), Y4: uint8(y4)}
-				if got, want := HasChromaBlockAt(size, x4, y4, color420), HasChromaBlock(req, color420); got != want {
-					t.Fatalf("HasChromaBlockAt(%d,%d,%d)=%v want %v", size, x4, y4, got, want)
-				}
-			}
-		}
 	}
 }
 

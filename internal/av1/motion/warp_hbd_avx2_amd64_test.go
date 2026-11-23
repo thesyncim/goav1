@@ -180,16 +180,6 @@ func TestWarpHorizontalHighBDGoSIMDFullUint16AndExactFootprint(t *testing.T) {
 	}
 }
 
-func warpHBDTmpChecksum(tmp *warpTmp) int64 {
-	var sum int64
-	for _, v := range tmp {
-		sum += int64(v)
-	}
-	return sum
-}
-
-var warpHBDTmpSink int64
-
 func benchWarpHorizontalHighBDInputs() (frame.Plane, int, int, int, int, int, int) {
 	rng := rand.New(rand.NewSource(1))
 	ref := residentRefPlaneHighBD(rng, 10, false)
@@ -197,26 +187,6 @@ func benchWarpHorizontalHighBDInputs() (frame.Plane, int, int, int, int, int, in
 	const alpha, beta, gamma, delta = -320, -64, 0, -64
 	ix4, sx4, iy4, sy4 := warpBlockOrigin(i, j, [6]int32{42805, -7571, 65230, -57, 0, 65509}, alpha, beta, gamma, delta, 0, 0)
 	return ref, ix4, sx4, iy4, sy4, alpha, beta
-}
-
-func BenchmarkWarpHorizontalHighBDResidentScalar(b *testing.B) {
-	ref, ix4, sx4, iy4, sy4, alpha, beta := benchWarpHorizontalHighBDInputs()
-	var tmp warpTmp
-	b.ReportAllocs()
-	for b.Loop() {
-		warpHorizontalHighBDResident(&tmp, ref, ix4, sx4, iy4, sy4, alpha, beta, 3, 10+filterBits-1)
-	}
-	warpHBDTmpSink = warpHBDTmpChecksum(&tmp)
-}
-
-func BenchmarkWarpHorizontalHighBDResidentGoSIMD(b *testing.B) {
-	ref, ix4, sx4, iy4, sy4, alpha, beta := benchWarpHorizontalHighBDInputs()
-	var tmp warpTmp
-	b.ReportAllocs()
-	for b.Loop() {
-		warpHorizontalHighBDResidentDispatch(&tmp, ref, ix4, sx4, iy4, sy4, alpha, beta, 3, 10+filterBits-1)
-	}
-	warpHBDTmpSink = warpHBDTmpChecksum(&tmp)
 }
 
 // TestAMD64WarpVerticalHighBDMatchesScalar compares the AVX2 16bpc vertical

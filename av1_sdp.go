@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 
+	internalencoder "github.com/thesyncim/goav1/internal/av1/encoder"
+
 	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -236,7 +238,7 @@ func DefaultAV1SDPFmtpParameters() AV1SDPFmtpParameters {
 // needed to advertise the supplied AV1 sequence header. For scalable streams it
 // uses the highest operating-point level/tier present in the sequence.
 func AV1SDPFmtpParametersForSequence(seq SequenceHeader) (AV1SDPFmtpParameters, error) {
-	if seq.SeqProfile > uint8(EncoderProfile2) {
+	if seq.SeqProfile > uint8(internalencoder.Profile2) {
 		return AV1SDPFmtpParameters{}, ErrSDPInvalidConfig
 	}
 	count := int(seq.OperatingPointsCount)
@@ -265,10 +267,10 @@ func AV1SDPFmtpParametersForSequence(seq SequenceHeader) (AV1SDPFmtpParameters, 
 
 // Validate rejects fmtp parameters outside the AV1 bitstream syntax ranges.
 func (p AV1SDPFmtpParameters) Validate() error {
-	if p.Profile < int(EncoderProfile0) || p.Profile > int(EncoderProfile2) {
+	if p.Profile < int(EncoderProfile0) || p.Profile > int(internalencoder.Profile2) {
 		return ErrSDPInvalidConfig
 	}
-	if p.LevelIdx < 0 || p.LevelIdx > EncoderSequenceLevelMax ||
+	if p.LevelIdx < 0 || p.LevelIdx > internalencoder.SequenceLevelMax ||
 		!internalparser.ValidSequenceLevelIndex(uint8(p.LevelIdx)) {
 		return ErrSDPInvalidConfig
 	}
@@ -1386,14 +1388,6 @@ func (s av1SDPMediaSection) hasAV1(
 func (s av1SDPMediaSection) hasRTCPFeedback(payloadType string, feedback string) bool {
 	return av1SDPRTCPFeedbackListContains(s.rtcpFeedback[payloadType], feedback) ||
 		av1SDPRTCPFeedbackListContains(s.rtcpFeedback["*"], feedback)
-}
-
-func (s av1SDPMediaSection) hasHeaderExtension(
-	uri string,
-	extmapDirectionOK func(string) bool,
-) bool {
-	_, ok := s.headerExtensionID(uri, extmapDirectionOK)
-	return ok
 }
 
 func (s av1SDPMediaSection) headerExtensionID(

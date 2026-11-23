@@ -24,7 +24,6 @@ func TestWienerDispatchUsesSIMD(t *testing.T) {
 		got  any
 		want any
 	}{
-		{"wienerHorizontalImpl", wienerHorizontalImpl, wienerHorizontalSIMD},
 		{"wienerHorizontalTrustedImpl", wienerHorizontalTrustedImpl, wienerHorizontalSIMDTrusted},
 		{"wienerVerticalImpl", wienerVerticalImpl, wienerVerticalSIMD},
 		{"wienerHorizontalU8Impl", wienerHorizontalU8Impl, wantWienerHorizontalU8Impl},

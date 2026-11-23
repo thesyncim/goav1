@@ -50,19 +50,6 @@ func (p Profile) String() string {
 	}
 }
 
-func ParseProfile(profile string) (Profile, bool) {
-	switch profile {
-	case "0":
-		return Profile0, true
-	case "1":
-		return Profile1, true
-	case "2":
-		return Profile2, true
-	default:
-		return 0, false
-	}
-}
-
 type ScalabilityMode uint8
 
 const (
@@ -200,15 +187,6 @@ func (m ScalabilityMode) Valid() bool {
 	return m < scalabilityModeCount
 }
 
-func (m ScalabilityMode) webRTCSupported() bool {
-	for _, mode := range webRTCScalabilityModes {
-		if m == mode {
-			return true
-		}
-	}
-	return false
-}
-
 func (m ScalabilityMode) String() string {
 	if !m.Valid() {
 		return ""
@@ -216,131 +194,12 @@ func (m ScalabilityMode) String() string {
 	return scalabilityModes[m].name
 }
 
-func ParseScalabilityMode(mode string) (ScalabilityMode, bool) {
-	switch mode {
-	case "L1T1":
-		return ScalabilityModeL1T1, true
-	case "L1T2":
-		return ScalabilityModeL1T2, true
-	case "L1T3":
-		return ScalabilityModeL1T3, true
-	case "L2T1":
-		return ScalabilityModeL2T1, true
-	case "L2T1h":
-		return ScalabilityModeL2T1h, true
-	case "L2T1_KEY":
-		return ScalabilityModeL2T1_KEY, true
-	case "L2T2":
-		return ScalabilityModeL2T2, true
-	case "L2T2h":
-		return ScalabilityModeL2T2h, true
-	case "L2T2_KEY":
-		return ScalabilityModeL2T2_KEY, true
-	case "L2T2_KEY_SHIFT":
-		return ScalabilityModeL2T2_KEY_SHIFT, true
-	case "L2T3":
-		return ScalabilityModeL2T3, true
-	case "L2T3h":
-		return ScalabilityModeL2T3h, true
-	case "L2T3_KEY":
-		return ScalabilityModeL2T3_KEY, true
-	case "L2T3_KEY_SHIFT":
-		return ScalabilityModeL2T3_KEY_SHIFT, true
-	case "L3T1":
-		return ScalabilityModeL3T1, true
-	case "L3T1h":
-		return ScalabilityModeL3T1h, true
-	case "L3T1_KEY":
-		return ScalabilityModeL3T1_KEY, true
-	case "L3T2":
-		return ScalabilityModeL3T2, true
-	case "L3T2h":
-		return ScalabilityModeL3T2h, true
-	case "L3T2_KEY":
-		return ScalabilityModeL3T2_KEY, true
-	case "L3T2_KEY_SHIFT":
-		return ScalabilityModeL3T2_KEY_SHIFT, true
-	case "L3T3":
-		return ScalabilityModeL3T3, true
-	case "L3T3h":
-		return ScalabilityModeL3T3h, true
-	case "L3T3_KEY":
-		return ScalabilityModeL3T3_KEY, true
-	case "L3T3_KEY_SHIFT":
-		return ScalabilityModeL3T3_KEY_SHIFT, true
-	case "S2T1":
-		return ScalabilityModeS2T1, true
-	case "S2T1h":
-		return ScalabilityModeS2T1h, true
-	case "S2T2":
-		return ScalabilityModeS2T2, true
-	case "S2T2h":
-		return ScalabilityModeS2T2h, true
-	case "S2T3":
-		return ScalabilityModeS2T3, true
-	case "S2T3h":
-		return ScalabilityModeS2T3h, true
-	case "S3T1":
-		return ScalabilityModeS3T1, true
-	case "S3T1h":
-		return ScalabilityModeS3T1h, true
-	case "S3T2":
-		return ScalabilityModeS3T2, true
-	case "S3T2h":
-		return ScalabilityModeS3T2h, true
-	case "S3T3":
-		return ScalabilityModeS3T3, true
-	case "S3T3h":
-		return ScalabilityModeS3T3h, true
-	default:
-		return 0, false
-	}
-}
-
 func WebRTCScalabilityModeCount() int {
 	return len(webRTCScalabilityModes)
 }
 
-func WebRTCSVCScalabilityModeCount() int {
-	return int(scalabilityModeCount)
-}
-
-func ScalabilityModeCount() int {
-	return int(scalabilityModeCount)
-}
-
 func AppendWebRTCScalabilityModes(dst []ScalabilityMode) []ScalabilityMode {
 	return append(dst, webRTCScalabilityModes[:]...)
-}
-
-func AppendWebRTCSVCScalabilityModes(dst []ScalabilityMode) []ScalabilityMode {
-	return AppendScalabilityModes(dst)
-}
-
-func AppendScalabilityModes(dst []ScalabilityMode) []ScalabilityMode {
-	for mode := ScalabilityMode(0); mode < scalabilityModeCount; mode++ {
-		dst = append(dst, mode)
-	}
-	return dst
-}
-
-// ValidateWebRTCActiveScalabilityModes validates the active scalabilityMode
-// values for one WebRTC sender. The WebRTC-SVC API permits multiple active
-// encodings only when none of those encodings uses a single-SSRC S mode.
-func ValidateWebRTCActiveScalabilityModes(modes []ScalabilityMode) error {
-	hasSingleSSRCSimulcast := false
-	for _, mode := range modes {
-		if !mode.Valid() {
-			return ErrInvalidConfig
-		}
-		if mode.IsSimulcast() {
-			hasSingleSSRCSimulcast = true
-		}
-	}
-	if len(modes) > 1 && hasSingleSSRCSimulcast {
-		return ErrInvalidConfig
-	}
-	return nil
 }
 
 // WebRTCScalabilityModeIDC maps a W3C WebRTC scalabilityMode value to its
@@ -568,10 +427,6 @@ func scalabilityModeFor2Spatial(temporal uint8, key bool, smallStep bool, simulc
 	default:
 		return 0, false
 	}
-}
-
-func scalabilityModeFor3Spatial(temporal uint8, key bool, smallStep bool, simulcast bool) (ScalabilityMode, bool) {
-	return scalabilityModeFor3SpatialShift(temporal, key, smallStep, simulcast, false)
 }
 
 func scalabilityModeFor3SpatialShift(temporal uint8, key bool, smallStep bool, simulcast bool, keyShift bool) (ScalabilityMode, bool) {

@@ -27,9 +27,9 @@ package dsp
 //     the clamp.
 //   - raw: rawTransformResidual(v) = sat16(floor((v + 8) / 16)). The saturating
 //     add v + 8 differs from the exact sum only for v > MaxInt32 - 8, where
-//     both sums shifted right by four saturate to 32767 in the narrow (SQXTN);
-//     this is the sequence the retired assembly used. arm64 archsimd has no
-//     immediate-shift form, so the shift is SSHL by a hoisted vector of -4.
+//     both sums shifted right by four saturate to 32767 in the narrow (SQXTN).
+//     arm64 archsimd has no immediate-shift form, so the shift is SSHL by a
+//     hoisted vector of -4.
 //
 // The 8- and 4-sample rows of 8-bit blocks, and the 4-sample rows of 16-bit
 // blocks, are narrower than a vector register. They are read and written with

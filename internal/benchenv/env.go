@@ -154,10 +154,6 @@ func PresentPublishCommandFilteredEnv() []string {
 	return out
 }
 
-func GoEnvForMetadata() map[string]any {
-	return GoEnvForMetadataWithTool("go")
-}
-
 func GoEnvForMetadataWithTool(goBin string) map[string]any {
 	goBin = strings.TrimSpace(goBin)
 	if goBin == "" {

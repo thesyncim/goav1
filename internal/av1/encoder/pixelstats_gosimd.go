@@ -23,19 +23,13 @@ func init() {
 		return
 	}
 	pixelStats8x8Impl = pixelStats8x8SIMD
-	pixelStats8x4Impl = pixelStats8x4SIMD
 	pixelStats8x16Impl = pixelStats8x16SIMD
-	pixelStats8x32Impl = pixelStats8x32SIMD
-	pixelStats16x4Impl = pixelStats16x4SIMD
 	pixelStats16x8Impl = pixelStats16x8SIMD
 	pixelStats16x16Impl = pixelStats16x16SIMD
 	pixelStats16x32Impl = pixelStats16x32SIMD
-	pixelStats16x64Impl = pixelStats16x64SIMD
-	pixelStats32x8Impl = pixelStats32x8SIMD
 	pixelStats32x16Impl = pixelStats32x16SIMD
 	pixelStats32x32Impl = pixelStats32x32SIMD
 	pixelStats32x64Impl = pixelStats32x64SIMD
-	pixelStats64x16Impl = pixelStats64x16SIMD
 	pixelStats64x32Impl = pixelStats64x32SIMD
 }
 
@@ -63,21 +57,6 @@ func reducePixelAcc(sse, sum archsimd.Int32x4) (total, signed int64) {
 // pixelStatsRows16 handles w >= 16 with w a multiple of 16.
 func pixelStatsRows16(src []byte, srcStride int, ref []byte, refStride int, w, h int) (sse uint32, sum int32) {
 	return pixelStatsRows16Arch(src, srcStride, ref, refStride, w, h)
-}
-
-// pixelStatsRows16Generic is pixelStatsRows16 on the shared lane vocabulary.
-func pixelStatsRows16Generic(src []byte, srcStride int, ref []byte, refStride int, w, h int) (sse uint32, sum int32) {
-	sseAcc := archsimd.BroadcastInt32x4(0)
-	sumAcc := archsimd.BroadcastInt32x4(0)
-	for r := range h {
-		srow := src[r*srcStride : r*srcStride+w]
-		rrow := ref[r*refStride : r*refStride+w]
-		for c := 0; c < w; c += 16 {
-			sseAcc, sumAcc = pixelDiffAcc(sseAcc, sumAcc, archsimd.LoadUint8x16(srow[c:c+16]), archsimd.LoadUint8x16(rrow[c:c+16]))
-		}
-	}
-	total, signed := reducePixelAcc(sseAcc, sumAcc)
-	return uint32(total), int32(signed)
 }
 
 // pixelStatsPairs8 handles the 8-wide shape: rows r and r+1 share one vector.
@@ -118,20 +97,8 @@ func pixelStats8x8SIMD(src []byte, srcStride int, ref []byte, refStride int) (ui
 	return pixelStatsSIMD(src, srcStride, ref, refStride, 8, 8)
 }
 
-func pixelStats8x4SIMD(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
-	return pixelStatsSIMD(src, srcStride, ref, refStride, 8, 4)
-}
-
 func pixelStats8x16SIMD(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
 	return pixelStatsSIMD(src, srcStride, ref, refStride, 8, 16)
-}
-
-func pixelStats8x32SIMD(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
-	return pixelStatsSIMD(src, srcStride, ref, refStride, 8, 32)
-}
-
-func pixelStats16x4SIMD(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
-	return pixelStatsSIMD(src, srcStride, ref, refStride, 16, 4)
 }
 
 func pixelStats16x8SIMD(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
@@ -146,14 +113,6 @@ func pixelStats16x32SIMD(src []byte, srcStride int, ref []byte, refStride int) (
 	return pixelStatsSIMD(src, srcStride, ref, refStride, 16, 32)
 }
 
-func pixelStats16x64SIMD(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
-	return pixelStatsSIMD(src, srcStride, ref, refStride, 16, 64)
-}
-
-func pixelStats32x8SIMD(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
-	return pixelStatsSIMD(src, srcStride, ref, refStride, 32, 8)
-}
-
 func pixelStats32x16SIMD(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
 	return pixelStatsSIMD(src, srcStride, ref, refStride, 32, 16)
 }
@@ -164,10 +123,6 @@ func pixelStats32x32SIMD(src []byte, srcStride int, ref []byte, refStride int) (
 
 func pixelStats32x64SIMD(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
 	return pixelStatsSIMD(src, srcStride, ref, refStride, 32, 64)
-}
-
-func pixelStats64x16SIMD(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {
-	return pixelStatsSIMD(src, srcStride, ref, refStride, 64, 16)
 }
 
 func pixelStats64x32SIMD(src []byte, srcStride int, ref []byte, refStride int) (uint32, int32) {

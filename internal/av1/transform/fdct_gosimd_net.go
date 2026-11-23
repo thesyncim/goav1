@@ -337,7 +337,7 @@ func forwardDCT8x8SIMD(coeff []int32, coeffStride int, residual []int16, residua
 }
 
 // forwardDCT8x8SIMDGuarded routes residuals outside the 8-bit range to the
-// int64 scalar reference, like the asm bindings it replaces.
+// int64 scalar reference.
 func forwardDCT8x8SIMDGuarded(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	if !residualFitsMagnitude(residual, residualStride, 8, 8, 255) {
 		forwardDCT8x8PureGo(coeff, coeffStride, residual, residualStride)
@@ -380,8 +380,8 @@ func forwardBlock8x8ADSTADSTSIMD(coeff []int32, coeffStride int, residual []int1
 	}
 }
 
-// forwardBlock8x8ADSTDCTSIMDGuarded and its siblings keep the 8-bit residual
-// guard of the asm bindings they replace.
+// forwardBlock8x8ADSTDCTSIMDGuarded and its siblings route residuals outside
+// the 8-bit range to the int64 scalar reference.
 func forwardBlock8x8ADSTDCTSIMDGuarded(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
 	if !residualFitsMagnitude(residual, residualStride, 8, 8, 255) {
 		forwardBlock8x8ADSTDCTPureGo(coeff, coeffStride, residual, residualStride, scratch)

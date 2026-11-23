@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -151,57 +150,18 @@ func TestAppendFilmGrainParamsPayloadRejectsInvalid(t *testing.T) {
 	}
 	var buf [64]byte
 	for _, tc := range cases {
-		if _, err := AppendFilmGrainParamsPayload(buf[:0], seq, tc.prefix, tc.size, tc.refs, tc.params); !errors.Is(err, ErrInvalidFrame) {
-			t.Fatalf("AppendFilmGrainParamsPayload(%+v) err=%v want ErrInvalidFrame", tc.params, err)
+		if _, err := appendFilmGrainParamsPayload(buf[:0], seq, tc.prefix, tc.size, tc.refs, tc.params); !errors.Is(err, ErrInvalidFrame) {
+			t.Fatalf("appendFilmGrainParamsPayload(%+v) err=%v want ErrInvalidFrame", tc.params, err)
 		}
-	}
-}
-
-func TestAppendFilmGrainParamsPayloadShortBuffer(t *testing.T) {
-	seq := filmGrainSequenceHeader()
-	prefix := FrameHeaderPrefix{FrameType: FrameHeaderTypeKey, ShowFrame: true, ErrorResilientMode: true}
-	var buf [1]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendFilmGrainParamsPayload(dst, seq, prefix, InterFrameSize{}, nil, minimalFilmGrainUpdate())
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want ErrShortBuffer", err)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output=% x", out)
-	}
-}
-
-func TestAppendFilmGrainParamsPayloadAllocs(t *testing.T) {
-	seq := filmGrainSequenceHeader()
-	prefix := FrameHeaderPrefix{FrameType: FrameHeaderTypeKey, ShowFrame: true, ErrorResilientMode: true}
-	params := minimalFilmGrainUpdate()
-	var buf [16]byte
-	if _, err := AppendFilmGrainParamsPayload(buf[:0], seq, prefix, InterFrameSize{}, nil, params); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = FilmGrainParamsPayloadSize(seq, prefix, InterFrameSize{}, nil, params)
-		_, _ = AppendFilmGrainParamsPayload(buf[:0], seq, prefix, InterFrameSize{}, nil, params)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendFilmGrainParamsPayload allocated: %f", allocs)
 	}
 }
 
 func appendAndParseFilmGrainParams(t *testing.T, seq SequenceHeader, prefix FrameHeaderPrefix, size InterFrameSize, refs *parser.ReferenceState, params FilmGrainParams) ([]byte, parser.FilmGrainParams) {
 	t.Helper()
-	payloadSize, err := FilmGrainParamsPayloadSize(seq, prefix, size, refs, params)
-	if err != nil {
-		t.Fatalf("FilmGrainParamsPayloadSize: %v", err)
-	}
 	var buf [128]byte
-	payload, err := AppendFilmGrainParamsPayload(buf[:0], seq, prefix, size, refs, params)
+	payload, err := appendFilmGrainParamsPayload(buf[:0], seq, prefix, size, refs, params)
 	if err != nil {
-		t.Fatalf("AppendFilmGrainParamsPayload: %v", err)
-	}
-	if len(payload) != payloadSize {
-		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+		t.Fatalf("appendFilmGrainParamsPayload: %v", err)
 	}
 	parsed, err := parser.ParseFilmGrainParams(
 		payload,

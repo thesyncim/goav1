@@ -6,6 +6,10 @@
 
 package transform
 
+// invGlueSIMDAvailable reports whether init bound the SIMD glue kernels: always
+// on arm64 (NEON is part of the baseline).
+func invGlueSIMDAvailable() bool { return true }
+
 // row2TestImpls returns the arm64 adapters directly so the differential test
 // always exercises every arm64 kernel for bit-exactness, even the ones the
 // dispatcher leaves unbound for performance reasons.

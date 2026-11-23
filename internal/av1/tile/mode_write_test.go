@@ -21,10 +21,10 @@ func TestWriteModeSymbolsRoundTrip(t *testing.T) {
 	// exercises the derivation as long as both sides see identical state.
 	var ctx BlockModeContext
 	for i := range MaxBlockModeSlots {
-		ctx.AboveSkip[i] = uint8(rng.Intn(2))
-		ctx.LeftSkip[i] = uint8(rng.Intn(2))
-		ctx.AboveMode[i] = IntraMode(rng.Intn(int(intraModeCount)))
-		ctx.LeftMode[i] = IntraMode(rng.Intn(int(intraModeCount)))
+		ctx.A.Skip[i] = uint8(rng.Intn(2))
+		ctx.L.Skip[i] = uint8(rng.Intn(2))
+		ctx.A.Mode[i] = IntraMode(rng.Intn(int(intraModeCount)))
+		ctx.L.Mode[i] = IntraMode(rng.Intn(int(intraModeCount)))
 	}
 
 	type op struct {

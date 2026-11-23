@@ -78,7 +78,12 @@ func appendOBU(t *testing.T, dst []byte, h obu.Header, typ obu.Type, payload []b
 		t.Fatal(err)
 	}
 	dst = append(dst, hb[:n]...)
-	dst = bitstream.AppendLEB128(dst, uint32(len(payload)))
+	var size [8]byte
+	n, err = bitstream.PutLEB128(size[:], uint32(len(payload)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst = append(dst, size[:n]...)
 	return append(dst, payload...)
 }
 

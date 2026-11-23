@@ -1,10 +1,11 @@
-package goav1_test
+package goav1
 
 import (
 	"os"
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
+	internalobu "github.com/thesyncim/goav1/internal/av1/obu"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
 )
 
 const fuzzSimpleDecoderMaxIVFBytes = 8 << 10
@@ -12,22 +13,22 @@ const fuzzSimpleDecoderMaxFrames = 64
 
 func FuzzPublicSimpleDecoderIVF(f *testing.F) {
 	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
-		{payload: appendPublicLowOverheadOBU(nil, av1.OBUTemporalDelimiter, nil)},
+		{payload: appendOBUForTest(nil, internalobu.TypeTemporalDelimiter, nil)},
 	}))
 
-	switchOnly := appendPublicLowOverheadOBU(nil, av1.OBUSequenceHeader, publicDecoderResidualRealtimeSequenceHeaderPayload())
+	switchOnly := appendOBUForTest(nil, internalobu.TypeSequenceHeader, publicDecoderResidualRealtimeSequenceHeaderPayload())
 	switchFrame := append([]byte{}, publicSimpleDecoderSwitchFrameHeaderPayload()...)
 	switchFrame = append(switchFrame, 0xbb)
-	switchOnly = appendPublicLowOverheadOBU(switchOnly, av1.OBUFrame, switchFrame)
+	switchOnly = appendOBUForTest(switchOnly, internalobu.TypeFrame, switchFrame)
 	f.Add(appendPublicIVF(nil, 16, 9, 30, 1, []publicIVFFrame{
 		{payload: switchOnly},
 	}))
 
-	validTilePayload := av1.AppendTileListOBU(nil, av1.TileList{
+	validTilePayload := appendTileListOBU(nil, internalparser.TileList{
 		OutputFrameWidthInTilesMinus1:  0,
 		OutputFrameHeightInTilesMinus1: 0,
 		TileCountMinus1:                0,
-		Entries: []av1.TileListEntry{{
+		Entries: []internalparser.TileListEntry{{
 			AnchorFrameIdx:     0,
 			AnchorTileRow:      0,
 			AnchorTileCol:      0,
@@ -36,19 +37,19 @@ func FuzzPublicSimpleDecoderIVF(f *testing.F) {
 		}},
 	})
 	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
-		{payload: appendPublicLowOverheadOBU(nil, av1.OBUTileList, validTilePayload)},
+		{payload: appendOBUForTest(nil, internalobu.TypeTileList, validTilePayload)},
 	}))
 	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
-		{payload: appendPublicLowOverheadOBU(nil, av1.OBUTileList, []byte{0x00, 0x00, 0x00, 0x00})},
+		{payload: appendOBUForTest(nil, internalobu.TypeTileList, []byte{0x00, 0x00, 0x00, 0x00})},
 	}))
 	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
-		{payload: appendPublicLowOverheadOBU(nil, av1.OBUTileList, []byte{0xff, 0xff, 0xff, 0xff})},
+		{payload: appendOBUForTest(nil, internalobu.TypeTileList, []byte{0xff, 0xff, 0xff, 0xff})},
 	}))
 	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
-		{payload: appendPublicLowOverheadOBU(nil, av1.OBUTileList, []byte{0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0x00, 0x04, 0xaa})},
+		{payload: appendOBUForTest(nil, internalobu.TypeTileList, []byte{0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0x00, 0x04, 0xaa})},
 	}))
 	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
-		{payload: appendPublicLowOverheadOBU(nil, av1.OBUTileList, append(append([]byte{}, validTilePayload...), 0xff))},
+		{payload: appendOBUForTest(nil, internalobu.TypeTileList, append(append([]byte{}, validTilePayload...), 0xff))},
 	}))
 	truncatedIVF := appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
 		{payload: []byte{0xaa, 0xbb}},
@@ -87,7 +88,7 @@ func FuzzPublicSimpleDecoderIVF(f *testing.F) {
 			}
 		}()
 
-		dec, err := av1.NewDecoderFromIVF(data)
+		dec, err := NewDecoderFromIVF(data)
 		if err != nil {
 			return
 		}

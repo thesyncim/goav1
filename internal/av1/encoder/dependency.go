@@ -246,14 +246,6 @@ func WebRTCDependencyStructureStateForTemporalUnit(control WebRTCTemporalUnitCon
 	return next, structure, nil
 }
 
-func WebRTCTemplateIDForFrame(structure WebRTCFrameDependencyStructure, info WebRTCGenericFrameInfo) (uint8, error) {
-	match, err := webRTCDependencyDescriptorMatchFrame(structure, info)
-	if err != nil {
-		return 0, err
-	}
-	return (structure.StructureID + match.templateIndex) % WebRTCRtpDependencyMaxTemplates, nil
-}
-
 func WebRTCFrameDependencyStructureForConfig(config Config) (WebRTCFrameDependencyStructure, error) {
 	config, err := SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
 	if err != nil {

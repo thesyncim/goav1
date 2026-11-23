@@ -63,15 +63,6 @@ type realtimeSBMultiSizeME struct {
 
 const realtimeSweepSADMax = ^uint32(0)
 
-// realtimeSweepSearchArea is the preset-12 rtc full-pel search area: me_sa
-// sa_min/sa_max = {8, 1} (set_me_search_params, enc_mode_config.c, rtc
-// non-sc >M10 branch), then width rounded to a multiple of 8 and height
-// floored to 3 (motion_estimation.c:1255-1259).
-const (
-	realtimeSweepSearchW = 8
-	realtimeSweepSearchH = 3
-)
-
 func (me *realtimeSBMultiSizeME) reset() {
 	me.valid = false
 	for i := range me.bestSAD {
@@ -276,8 +267,6 @@ type depthRemovalCtrls struct {
 	dev32To16Th int64
 	qpScale     int64
 }
-
-const realtimeMaxSignedValue = int64(^uint64(0) >> 1) // MAX_SIGNED_VALUE
 
 // depthRemovalLevels[level] mirrors the upstream switch verbatim.
 var depthRemovalLevels = [16]depthRemovalCtrls{

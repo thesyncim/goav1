@@ -1,7 +1,6 @@
 package encoder
 
 import (
-	"math/rand"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -35,82 +34,6 @@ func TestRealtimeSADPerBitMatchesLibaomMELUT(t *testing.T) {
 		if q.DC != q.AC && dcBased != want && got == dcBased {
 			t.Fatalf("q=%d bd=%d used DC quantizer: got %d want AC-based %d", tc.qIndex, tc.bitDepth, got, want)
 		}
-	}
-}
-
-func TestRealtimeInterTX16TreeMatchesLibaomNonRDCap(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		w, h       int
-		size       tile.BlockSize
-		wantSplit  [2]uint16
-		wantLeaves int
-	}{
-		{name: "32x16", w: 32, h: 16, size: tile.BlockSize32x16, wantSplit: [2]uint16{1, 0}, wantLeaves: 2},
-		{name: "16x32", w: 16, h: 32, size: tile.BlockSize16x32, wantSplit: [2]uint16{1, 0}, wantLeaves: 2},
-		{name: "32x32", w: 32, h: 32, size: tile.BlockSize32x32, wantSplit: [2]uint16{1, 0}, wantLeaves: 4},
-		{name: "64x64", w: 64, h: 64, size: tile.BlockSize64x64, wantSplit: [2]uint16{1, 0x0033}, wantLeaves: 16},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if !realtimeInterTXUses16x16Leaves(tc.w, tc.h) {
-				t.Fatalf("realtimeInterTXUses16x16Leaves(%d,%d)=false", tc.w, tc.h)
-			}
-			tree := realtimeInterTX16Tree(tc.w, tc.h)
-			if tree.Split != tc.wantSplit {
-				t.Fatalf("split=%#v want %#v", tree.Split, tc.wantSplit)
-			}
-			var helperLeaves []tile.TransformBlock
-			if err := forEachRealtimeInterTX16Leaf(tc.w, tc.h, func(i, dx, dy int) error {
-				if dx%16 != 0 || dy%16 != 0 {
-					t.Fatalf("leaf %d offset=(%d,%d) not 16-aligned", i, dx, dy)
-				}
-				helperLeaves = append(helperLeaves, tile.TransformBlock{
-					X4:        uint8(dx / 4),
-					Y4:        uint8(dy / 4),
-					Size:      tile.TransformSize16x16,
-					VisibleW4: 4,
-					VisibleH4: 4,
-				})
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-			if len(helperLeaves) != tc.wantLeaves {
-				t.Fatalf("helper leaves=%d want %d", len(helperLeaves), tc.wantLeaves)
-			}
-
-			maxY, err := tile.MaxTransformSize(tc.size, parser.ColorConfig{}, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			tree.Y = maxY
-			tree.Variable = true
-			var replayLeaves []tile.TransformBlock
-			err = tree.ForEachLumaTXB(tile.TransformTreeRequest{
-				Size:          tc.size,
-				VisibleW4:     uint8(tc.w / 4),
-				VisibleH4:     uint8(tc.h / 4),
-				TransformMode: parser.TransformModeSwitchable,
-				Inter:         true,
-			}, func(block tile.TransformBlock) error {
-				replayLeaves = append(replayLeaves, block)
-				return nil
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(replayLeaves) != tc.wantLeaves {
-				t.Fatalf("replay leaves=%d got=%+v want %d", len(replayLeaves), replayLeaves, tc.wantLeaves)
-			}
-			for i, leaf := range replayLeaves {
-				if leaf.Size != tile.TransformSize16x16 || leaf.VisibleW4 != 4 || leaf.VisibleH4 != 4 {
-					t.Fatalf("leaf[%d]=%+v want visible 16x16", i, leaf)
-				}
-				if leaf != helperLeaves[i] {
-					t.Fatalf("leaf[%d]=%+v helper %+v", i, leaf, helperLeaves[i])
-				}
-			}
-		})
 	}
 }
 
@@ -181,33 +104,6 @@ func TestRealtimeTXSizeLevelBasedOnQstepMatchesSpeedFeatures(t *testing.T) {
 				t.Fatalf("level=%d want %d", got, tc.level)
 			}
 		})
-	}
-}
-
-func TestRealtimeAvg8x8MatchesLibaomCShape(t *testing.T) {
-	rng := rand.New(rand.NewSource(9101))
-	const (
-		stride = 73
-		height = 40
-	)
-	plane := make([]byte, stride*height)
-	for i := range plane {
-		plane[i] = uint8(rng.Intn(256))
-	}
-	for range 500 {
-		x := rng.Intn(stride - 16)
-		y := rng.Intn(height - 16)
-		off := y*stride + x
-		if got, want := realtimeAvg8x8(plane[off:], stride), realtimeAvg8x8PureGo(plane[off:], stride); got != want {
-			t.Fatalf("avg8x8 off=%d got %d want %d", off, got, want)
-		}
-		g0, g1, g2, g3 := realtimeAvg8x8Quad(plane[off:], stride)
-		w0, w1, w2, w3 := realtimeAvg8x8QuadPureGo(plane[off:], stride)
-		got := [4]int{g0, g1, g2, g3}
-		want := [4]int{w0, w1, w2, w3}
-		if got != want {
-			t.Fatalf("avg8x8 quad off=%d got %v want %v", off, got, want)
-		}
 	}
 }
 
@@ -378,8 +274,8 @@ func TestEncodePBlockCompoundLastGolden8x8(t *testing.T) {
 
 	got := pc.scratch.Mode.AboveInterMotion[0]
 	if !got.References.Compound ||
-		got.References.Ref[0] != tile.ReferenceFrameLast ||
-		got.References.Ref[1] != tile.ReferenceFrameGolden ||
+		got.References.Ref0 != tile.ReferenceFrameLast ||
+		got.References.Ref1 != tile.ReferenceFrameGolden ||
 		got.Mode.CompoundMode != tile.CompoundInterModeGlobalGlobal {
 		t.Fatalf("motion = %+v, want GLOBAL_GLOBAL LAST+GOLDEN compound", got)
 	}
@@ -474,8 +370,8 @@ func TestEncodePBlockGoldenSingleLarge(t *testing.T) {
 
 			got := pc.scratch.Mode.AboveInterMotion[0]
 			if got.References.Compound ||
-				got.References.Ref[0] != tile.ReferenceFrameGolden ||
-				got.References.Ref[1] != tile.ReferenceFrameNone ||
+				got.References.Ref0 != tile.ReferenceFrameGolden ||
+				got.References.Ref1 != tile.ReferenceFrameNone ||
 				got.Mode.Mode != tile.InterModeGlobalMV {
 				t.Fatalf("motion = %+v, want GLOBALMV single GOLDEN", got)
 			}

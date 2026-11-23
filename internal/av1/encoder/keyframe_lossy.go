@@ -3,7 +3,6 @@ package encoder
 import (
 	"fmt"
 	"sync"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -28,13 +27,6 @@ import (
 // TX_MODE_LARGEST (luma TX_8X8 + chroma TX_4X4, no tx_size symbols), DC intra,
 // DCT_DCT with the tx_type symbol coded per luma TXB, single tile, no
 // post-filters (decode output == recon).
-
-// EncodeKeyframe encodes src at the given base qindex (1..255) and returns the
-// temporal unit together with the encoder-side reconstruction the decoder must
-// reproduce exactly.
-func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, error) {
-	return encodeKeyframeFiltered(src, qIndex, nil, 0, 0, nil, nil, nil)
-}
 
 // KeyframeEncoder is a reusable keyframe-only encoder. It keeps the same
 // writer, tile-coder, reconstruction, and filter scratch between calls as the
@@ -153,35 +145,15 @@ func EncodeMonochromeKeyframe(src SourceFrameMono, qIndex uint8) ([]byte, Source
 	return out, recon, nil
 }
 
-// EncodeKeyframeWithSequenceMax encodes src as a shown keyframe while keeping
-// the sequence header max dimensions at maxWidth x maxHeight. This is useful
-// for scalable streams whose lower spatial layers are smaller than the shared
-// sequence maximum.
-func EncodeKeyframeWithSequenceMax(src SourceFrame420, qIndex uint8, maxWidth, maxHeight int) ([]byte, SourceFrame420, error) {
-	return encodeKeyframeFilteredTiles(src, qIndex, nil, 0, 0, nil, nil, nil, 0, keyframeTileOptions{
-		sequenceMaxWidth:  maxWidth,
-		sequenceMaxHeight: maxHeight,
-	})
-}
-
-// encodeKeyframeFiltered encodes the keyframe and, when in-loop filtering is
-// active for this size, runs the deblocking pass over the reconstruction
-// through lf (allocating a frame-local applier when the caller has none).
-// Streaming callers pass their reusable reconstruction buffer and tile-coder
-// pool so periodic keyframes allocate nothing; one-shot callers pass nil for
-// both.
-func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier) ([]byte, SourceFrame420, error) {
-	return encodeKeyframeFilteredTiles(src, qIndex, lf, renderW, renderH, reconBuf, tilePC, cdefApp, 0, keyframeTileOptions{})
-}
-
-// encodeKeyframeFilteredTiles is encodeKeyframeFiltered with the stream's
-// tile-column split, which must match the coder pool the caller sized.
+// encodeKeyframeFilteredTiles encodes the keyframe with the stream's
+// tile-column split, which must match the coder pool the caller sized, and
+// runs the in-loop filters over the reconstruction.
 func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier, tileColsLog2 uint8, tileOpts keyframeTileOptions) ([]byte, SourceFrame420, error) {
 	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: frame dimensions must be positive multiples of 8, got %dx%d", src.Width, src.Height)
 	}
 	if qIndex == 0 {
-		return nil, SourceFrame420{}, fmt.Errorf("encoder: qindex 0 is the lossless path; use EncodeLosslessKeyframe")
+		return nil, SourceFrame420{}, fmt.Errorf("encoder: qindex 0 (lossless) is not supported for 4:2:0 keyframes")
 	}
 	seqWidth, seqHeight := src.Width, src.Height
 	if tileOpts.sequenceMaxWidth != 0 || tileOpts.sequenceMaxHeight != 0 {
@@ -511,10 +483,6 @@ func runKeyframeTilesDefault(req keyframeTileRun, tilePC func(t int) *pframeCode
 	return nil
 }
 
-func lossyKeyframeHeader(width, height int, qIndex uint8) IntraFrameHeaderParams {
-	return lossyKeyframeHeaderForSequence(losslessKeyframeSequence(width, height), width, height, qIndex)
-}
-
 func lossyKeyframeHeaderForSequence(seq SequenceHeader, width, height int, qIndex uint8) IntraFrameHeaderParams {
 	header := losslessKeyframeHeaderForSequence(seq, width, height)
 	header.Quantization = QuantizationParams{BaseQIdx: qIndex}
@@ -557,6 +525,25 @@ func lossyMonochromeKeyframeHeaderForSequence(seq SequenceHeader, width, height 
 		ReferenceMode: ReferenceModeSingle,
 	}
 	return header
+}
+
+// lossyMCScratch is lossyEncodeState's compound and scaled-reference
+// prediction scratch.
+type lossyMCScratch struct {
+	compBuf0      motion.CompoundConvBuf
+	compBuf1      motion.CompoundConvBuf
+	compScratch   motion.CompoundConvolveScratch
+	scaledScratch motion.ScaledConvolveScratch
+}
+
+// predictScratch is the translational convolve scratch of the unscaled
+// prediction fallback; nil (the convolve's own scratch) for a state built
+// without initScans.
+func (st *lossyEncodeState) predictScratch() *motion.ConvolveScratch {
+	if st.mc == nil {
+		return nil
+	}
+	return st.mc.scaledScratch.Conv()
 }
 
 // lossyEncodeState carries the per-tile coding state of the non-lossless
@@ -663,11 +650,11 @@ type lossyEncodeState struct {
 	cflAC   [prediction.CFLBufSquare]int16
 	cflPred [256]byte
 	// mds0Scratch is MDS0's second candidate buffer (pframe_mds0.go).
-	mds0Scratch   [4096]byte
-	compBuf0      motion.CompoundConvBuf
-	compBuf1      motion.CompoundConvBuf
-	compScratch   motion.CompoundConvolveScratch
-	scaledScratch motion.ScaledConvolveScratch
+	mds0Scratch [4096]byte
+	// mc is the compound and scaled-reference convolution scratch (about
+	// 750 KiB), held by pointer so a wavefront lane adopting this state
+	// (pframeDecideWorker.adopt) does not copy it; each lane owns its own.
+	mc *lossyMCScratch
 
 	// Transform/quant scratch for the inter TXB pipeline (residual in,
 	// forward transform out, dequant + inverse residual back), state-owned so
@@ -873,23 +860,6 @@ type lossyEncodeState struct {
 	// refmvsScratch is the tile scratch whose dav1d refmvs rows the current
 	// serial walk bound (bindRefmvs), or nil.
 	refmvsScratch *tile.BlockLoopScratch
-}
-
-func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap) ([]byte, error) {
-	var pc pframeCoder
-	return pc.encodeKeyframeTile(src, recon, qIndex, miColStart, miColEnd, lfMap)
-}
-
-// encodeKeyframeTile codes one keyframe tile reusing the coder's buffers:
-// the symbol contexts reinitialize to the keyframe defaults in place, and
-// the scans, scratch planes, context carrier, and writer buffer carry over
-// from inter coding, so a streaming keyframe allocates nothing per tile.
-func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap) ([]byte, error) {
-	return pc.encodeKeyframeTileWithOptions(src, recon, qIndex, miColStart, miColEnd, lfMap, false)
-}
-
-func (pc *pframeCoder) encodeKeyframeTileWithOptions(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap, allowScreenContentTools bool) ([]byte, error) {
-	return pc.encodeKeyframeTileWithColorOptions(src, recon, qIndex, miColStart, miColEnd, lfMap, allowScreenContentTools, parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true})
 }
 
 func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap, allowScreenContentTools bool, color parser.ColorConfig) ([]byte, error) {
@@ -1327,36 +1297,6 @@ func (st *lossyEncodeState) writeNoPaletteMode(modeCtx *tile.BlockModeContext, b
 	return nil
 }
 
-// encodeTXB codes one square n x n transform block: DC-predict from the recon
-// plane, forward transform the source residual, quantize, write the
-// coefficients, then reconstruct through the decoder's own dequant + inverse
-// transform so recon matches the decoder bit-for-bit.
-func (st *lossyEncodeState) encodeTXB(reconPlane []byte, srcPlane []byte, stride int, px, py, n int, q quantize.Quantizer,
-	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error) error {
-	return st.encodeTXBAvail(reconPlane, srcPlane, stride, px, py, n, q, ctxReq, coeffCtx, scan, afterSkip, py > 0, px > 0)
-}
-
-// encodeTXBAvail is encodeTXB with explicit neighbor availability: inside a
-// tile the left/top edges follow the tile boundary, not the frame's. The
-// prediction is flat DC from the available reconstructed edges.
-func (st *lossyEncodeState) encodeTXBAvail(reconPlane []byte, srcPlane []byte, stride int, px, py, n int, q quantize.Quantizer,
-	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, haveTop, haveLeft bool) error {
-
-	dc := dcPredictN(reconPlane, stride, px, py, n, haveTop, haveLeft)
-	pred := st.predU[:n*n] // free during intra TXB coding at n <= 8
-	memsetBytes(pred, dc)
-	return st.encodeTXBPred(reconPlane, srcPlane, stride, px, py, n, q, ctxReq, coeffCtx, scan, afterSkip, pred)
-}
-
-func (st *lossyEncodeState) encodeTXBAvailRect(reconPlane []byte, srcPlane []byte, stride int, px, py, w, h int, q quantize.Quantizer,
-	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, haveTop, haveLeft bool) error {
-
-	dc := dcPredictRect(reconPlane, stride, px, py, w, h, haveTop, haveLeft)
-	pred := st.predU[:w*h]
-	memsetBytes(pred, dc)
-	return st.encodeTXBPredRect(reconPlane, srcPlane, stride, px, py, w, h, q, ctxReq, coeffCtx, scan, afterSkip, pred)
-}
-
 // encodeTXBPred codes one square n x n transform block against an arbitrary
 // already-materialized prediction (stride n): forward transform the source
 // residual, quantize, write the coefficients, then reconstruct through the
@@ -1398,7 +1338,10 @@ func (st *lossyEncodeState) prepareIntraTXB(srcPlane []byte, stride int, px, py,
 	residual := &st.resScratch
 	residualBlockImpl(residual[:n], srcPlane, py*stride+px, stride, pred, w, w, h)
 	tran := &st.tranScratch
-	if err := st.forwardIntraTXB(tran[:], residual[:], cn, n, w, h); err != nil {
+	if levelsAllZero(residual[:n]) {
+		// Every transform maps a zero residual to zero coefficients.
+		clear(tran[:cn])
+	} else if err := st.forwardIntraTXB(tran[:], residual[:], cn, n, w, h); err != nil {
 		return geo, false, err
 	}
 	if st.pfN4 {
@@ -1883,102 +1826,12 @@ func (st *lossyEncodeState) txbBitsToRate(bits int) int64 {
 	return ((int64(bits)<<9)*st.rdMult + 256) >> 9
 }
 
-func (st *lossyEncodeState) trialTXBBitsInter(qcoeff []int16, n int, size tile.TransformSize, typ transform.Type) int64 {
-	if n == 8 && size == tile.TransformSize8x8 {
-		return st.trialTXBBitsInter8x8((*[64]int16)(qcoeff), typ)
-	}
-	if n == 16 && size == tile.TransformSize16x16 {
-		return st.trialTXBBitsInter16x16((*[256]int16)(qcoeff), typ)
-	}
-	if n == 32 && size == tile.TransformSize32x32 {
-		return st.trialTXBBitsInter32x32((*[1024]int16)(qcoeff), typ)
-	}
-
-	tw := entropy.NewCountingWriter()
-	scan := st.scan4
-	var txCDF *entropy.CDF
-	txSymbol := 0
-	if st.qIndex == 0 {
-		if typ != transform.TypeDCTDCT {
-			return 1 << 59
-		}
-	} else {
-		set, err := tile.ExtTXSetTypeFor(size, true, false)
-		if err != nil {
-			return 1 << 59
-		}
-		symbols, err := tile.ExtTXTypeCount(set)
-		if err != nil {
-			return 1 << 59
-		}
-		if symbols <= 1 {
-			if typ != transform.TypeDCTDCT {
-				return 1 << 59
-			}
-		} else {
-			index, err := tile.ExtTXSetIndex(size, true, false)
-			if err != nil {
-				return 1 << 59
-			}
-			square, err := tile.TransformSizeSquare(size)
-			if err != nil {
-				return 1 << 59
-			}
-			txCDF, err = st.txCDFs.InterCDF(index, square, symbols)
-			if err != nil {
-				return 1 << 59
-			}
-			txSymbol, err = tile.ExtTXSymbolForType(set, typ)
-			if err != nil {
-				return 1 << 59
-			}
-		}
-	}
-	base := tw.Tell()
-	afterSkip := func() error {
-		if txCDF == nil {
-			return nil
-		}
-		saved := *txCDF
-		tw.WriteCDF(txCDF, txSymbol)
-		*txCDF = saved
-		return nil
-	}
-	if _, err := tile.WriteCoefficientsTXB(&tw, &st.trialCDFs, tile.TXBEncodeRequest{
-		Size: size, Plane: tile.CoeffPlaneY, Class: transform.Class2D, AfterSkip: afterSkip,
-	}, qcoeff[:n*n], scan, st.levels); err != nil {
-		return 1 << 59
-	}
-	bits := int64(tw.Tell() - base)
-	return ((bits<<9)*st.rdMult + 256) >> 9
-}
-
 func (st *lossyEncodeState) trialTXBBitsInter8x8(qcoeff *[64]int16, typ transform.Type) int64 {
 	txCDF, txSymbol, ok := st.inter8x8TXCDFAndSymbol(typ)
 	if !ok {
 		return 1 << 59
 	}
 	_, bits := tile.CountCoefficientsTXB8x8Y2DTrustedArray(&st.trialCDFs, qcoeff, txCDF, txSymbol)
-	rate := int64(bits)
-	return ((rate<<9)*st.rdMult + 256) >> 9
-}
-
-func (st *lossyEncodeState) trialTXBBitsInter16x16(qcoeff *[256]int16, typ transform.Type) int64 {
-	txCDF, txSymbol, ok := st.interTXCDFAndSymbol(tile.TransformSize16x16, typ)
-	if !ok {
-		return 1 << 59
-	}
-	_, bits := tile.CountCoefficientsTXB16x16Y2DTrustedWithTXTypeArray(&st.trialCDFs, qcoeff, txCDF, txSymbol)
-	rate := int64(bits)
-	return ((rate<<9)*st.rdMult + 256) >> 9
-}
-
-func (st *lossyEncodeState) trialTXBBitsInter32x32(qcoeff *[1024]int16, typ transform.Type) int64 {
-	txCDF, txSymbol, ok := st.interTXCDFAndSymbol(tile.TransformSize32x32, typ)
-	if !ok {
-		return 1 << 59
-	}
-	_, bits := tile.CountCoefficientsTXB32x32Y2DTrustedWithTXTypeArray(&st.trialCDFs, qcoeff, txCDF, txSymbol)
 	rate := int64(bits)
 	return ((rate<<9)*st.rdMult + 256) >> 9
 }
@@ -2023,16 +1876,25 @@ func selectIntraMode8(srcPlane, reconPlane []byte, stride, px, py int, haveTop, 
 	return selectIntraModeN(srcPlane, reconPlane, stride, px, py, 8, haveTop, haveLeft, pred)
 }
 
-// levelsAllZero reports whether every level is zero, four at a time (every
-// coded area is a multiple of 16 levels).
+// levelsAllZero reports whether every level is zero.
 func levelsAllZero(q []int16) bool {
-	w := unsafe.Slice((*uint64)(unsafe.Pointer(unsafe.SliceData(q))), len(q)/4)
-	var acc uint64
-	for _, v := range w {
-		acc |= v
+	return levelsAllZeroImpl(q)
+}
+
+var levelsAllZeroImpl = levelsAllZeroPureGo
+
+// levelsAllZeroPureGo ORs the levels into four independent accumulators.
+func levelsAllZeroPureGo(q []int16) bool {
+	var a0, a1, a2, a3 int16
+	for len(q) >= 4 {
+		a0 |= q[0]
+		a1 |= q[1]
+		a2 |= q[2]
+		a3 |= q[3]
+		q = q[4:]
 	}
-	for _, v := range q[len(w)*4:] {
-		acc |= uint64(uint16(v))
+	for _, v := range q {
+		a0 |= v
 	}
-	return acc == 0
+	return a0|a1|a2|a3 == 0
 }

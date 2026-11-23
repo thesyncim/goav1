@@ -4,8 +4,12 @@ import (
 	"errors"
 	"fmt"
 
-	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
+
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 )
 
 const layeredDecoderMaxFrameFormats = EncoderWebRTCMaxSpatialLayers + 1
@@ -13,8 +17,13 @@ const layeredDecoderMaxFrameFormats = EncoderWebRTCMaxSpatialLayers + 1
 // LayeredDecoder is the high-level receive wrapper for AV1 streams whose
 // reference slots span more than one coded frame size, such as WebRTC
 // shared-reference SVC. It owns a FrameLayerPool, one frame-work state per
-// spatial layer, shared reference slots, and shared frame contexts, then drives
-// the same residual/event decode path exposed by the lower-level public APIs.
+// spatial layer, shared reference slots, and shared frame contexts, and drives
+// the same residual/event decode path as Decoder.
+//
+// It holds one surface pool per coded frame size and has room for one more
+// size than there are spatial layers, so a stream that resizes frame by frame
+// is rejected when it is constructed, and it does not apply super-resolution:
+// such a frame fails with an error. Decoder handles both.
 //
 // The *Frame values returned by DecodeNext, DecodeAll, DecodeRTPPayload, and
 // DecodeRTPPayloadAfterLoss alias decoder-owned layer-pool surfaces. They
@@ -22,38 +31,36 @@ const layeredDecoderMaxFrameFormats = EncoderWebRTCMaxSpatialLayers + 1
 // reference map still retains the surface internally.
 //
 // A LayeredDecoder is not safe for concurrent use; serialize calls.
-// GOAV1_SCALED_PRED is read when the decoder is constructed and remains fixed
-// for its lifetime.
 type LayeredDecoder struct {
-	workerPool *TileWorkerPool
+	workerPool *internalthreading.Pool
 
-	stream        DecoderStream
-	refs          DecoderSurfaceReferences
-	states        [EncoderWebRTCMaxSpatialLayers]DecoderFrameWorkState
-	frameContexts DecoderSharedFrameContextStore
-	stats         DecoderFrameWorkTileResidualStats
-	sideData      DecoderFrameWorkSideData
+	stream        internaldecoder.Stream
+	refs          internaldecoder.SurfaceReferences
+	states        [EncoderWebRTCMaxSpatialLayers]internaldecoder.FrameWorkState
+	frameContexts internaldecoder.SharedFrameContextStore
+	stats         internalthreading.FrameWorkTileResidualStats
+	sideData      decoderFrameWorkSideData
 	sideRunner    decoderFrameWorkResidualSideDataRunner
-	batch         DecoderFrameWorkBatchResidualRunner
+	batch         decoderFrameWorkBatchResidualRunner
 	hasBatch      bool
 
 	// segMaps is the stream-global segmentation-map store every layer state
 	// publishes into, as the reference slots are stream-global.
 	segMaps internaldecoder.SegmentMapStore
 
-	layerPool  FrameLayerPool
-	adapter    DecoderFrameLayerPool
-	globalPool *FramePool
+	layerPool  internalframe.LayerPool
+	adapter    internaldecoder.FrameLayerPool
+	globalPool *internalframe.Pool
 
-	referenceSurfaces [InterRefsPerFrame]int
-	referenceFrames   [InterRefsPerFrame]*Frame
-	releases          [RefFrames]int
+	referenceSurfaces [internalparser.InterRefsPerFrame]int
+	referenceFrames   [internalparser.InterRefsPerFrame]*Frame
+	releases          [internalparser.RefFrames]int
 
-	scratch    DecoderFrameWorkResidualStreamScratch
-	postFilter DecoderFrameWorkReusableSupportedPostFilterRunner
+	scratch    decoderFrameWorkResidualStreamScratch
+	postFilter decoderFrameWorkReusableSupportedPostFilterRunner
 	// postFilterParallel fans the post-filter bands across the tile workers,
 	// as in Decoder.
-	postFilterParallel DecoderFrameWorkPostFilterParallel
+	postFilterParallel internaldecoder.FrameWorkPostFilterParallel
 
 	payloadKind   decoderPayloadKind
 	payloadSource decoderPayloadSource
@@ -68,9 +75,9 @@ type LayeredDecoder struct {
 	visibleOne    [1]*Frame
 	visibleMeta   []LayeredFrame
 	shownHeld     []layeredShownSurface
-	shownHeldBuf  [2 * (RefFrames + 1)]layeredShownSurface
+	shownHeldBuf  [2 * (internalparser.RefFrames + 1)]layeredShownSurface
 	outputSurface []layeredShownSurface
-	outputSurfBuf [2 * (RefFrames + 1)]layeredShownSurface
+	outputSurfBuf [2 * (internalparser.RefFrames + 1)]layeredShownSurface
 
 	globalSurface func(local int) int
 }
@@ -134,32 +141,34 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 	if cfg.workers < 1 {
 		return nil, fmt.Errorf("goav1: workers must be >= 1, got %d", cfg.workers)
 	}
+	if cfg.frameSizeLimit < 0 {
+		return nil, fmt.Errorf("goav1: frame size limit must be >= 0, got %d", cfg.frameSizeLimit)
+	}
 	if source.len() == 0 {
 		return nil, errors.New("goav1: no payloads to decode")
 	}
 
-	workerPool, err := NewTileWorkerPool(cfg.workers)
+	workerPool, err := internalthreading.NewPool(cfg.workers)
 	if err != nil {
 		return nil, fmt.Errorf("goav1: worker pool: %w", err)
 	}
 
-	// The probes grow probeEvents to the largest per-payload event count.
-	probeEvents := make([]DecoderEvent, 64)
-	probeSpans := make([]TileSpan, MaxTiles)
-	probeJobs := make([]TileJob, MaxTiles)
-	probeBatches := make([]TileBatch, MaxTiles)
+	probeEvents := make([]internaldecoder.Event, decoderMaxPayloadEvents)
+	probeSpans := make([]internalparser.TileSpan, internalparser.MaxTiles)
+	probeJobs := make([]internaltile.Job, internalparser.MaxTiles)
+	probeBatches := make([]internalthreading.Batch, internalparser.MaxTiles)
 	probePayload := source.makeProbeBuffer()
 
-	var plan DecoderFrameWorkResidualStreamPlan
+	var plan decoderFrameWorkResidualStreamPlan
 	switch kind {
 	case decoderPayloadLowOverhead:
 		plan, err = decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(
-			DecoderStream{}, source, cfg.workers, probePayload, probeEvents, probeSpans, probeJobs, probeBatches)
+			internaldecoder.Stream{}, source, cfg.workers, cfg.frameSizeLimit, probePayload, probeEvents, probeSpans, probeJobs, probeBatches)
 	case decoderPayloadRTP:
 		plan, err = decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(
-			DecoderStream{}, source, cfg.workers, probeEvents, probeSpans, probeJobs, probeBatches)
+			internaldecoder.Stream{}, source, cfg.workers, cfg.frameSizeLimit, probeEvents, probeSpans, probeJobs, probeBatches)
 	default:
-		err = ErrDecoderInvalidFrameWorkState
+		err = internaldecoder.ErrInvalidFrameWorkState
 	}
 	if err != nil {
 		workerPool.Close()
@@ -180,7 +189,7 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 		return nil, errors.New("goav1: stream plan did not identify a frame format")
 	}
 
-	var postArena DecoderFrameWorkPostFilterRequestScratchSize
+	var postArena decoderFrameWorkPostFilterRequestScratchSize
 	switch kind {
 	case decoderPayloadLowOverhead:
 		postArena, err = decoderPostFilterScratchArenaUpperBoundFromSource(source, 64, workerPool, probeEvents, probePayload)
@@ -213,9 +222,7 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 		payloadSource: source,
 		payloadBuf:    arena.takeBytes(source.payloadBufferLen()),
 	}
-	scaledReferencePredictionEnabled := internalthreading.ScaledReferencePredictionEnabled()
 	for i := range d.states {
-		d.states[i].SetScaledReferencePredictionEnabled(scaledReferencePredictionEnabled)
 		internaldecoder.ShareSegmentMapStore(&d.states[i], &d.segMaps)
 	}
 	d.scratch = newDecoderStreamScratch(plan.Size, &arena)
@@ -228,7 +235,7 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 	}
 	d.shownHeld = d.shownHeldBuf[:0]
 	d.outputSurface = d.outputSurfBuf[:0]
-	d.frameContexts.Prealloc(2 * (RefFrames + 1))
+	d.frameContexts.Prealloc(2 * (internalparser.RefFrames + 1))
 	d.sideRunner = decoderFrameWorkResidualSideDataRunner{
 		SideData:    &d.sideData,
 		BatchRunner: &d.batch,
@@ -239,20 +246,20 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 	d.postFilterParallel.Workers = workerPool.WorkerCount()
 	d.postFilter.Parallel = &d.postFilterParallel
 
-	d.layerPool, err = BindFrameLayerPool(
-		make([]FramePool, layeredDecoderMaxFrameFormats),
+	d.layerPool, err = internalframe.BindLayerPool(
+		make([]internalframe.Pool, layeredDecoderMaxFrameFormats),
 		make([]FrameFormat, layeredDecoderMaxFrameFormats),
 		make([]bool, layeredDecoderMaxFrameFormats),
 		256,
-		FrameLayerFactoryFunc(func(format FrameFormat) (FramePool, error) {
-			_, backingSize, err := FramePoolRequiredSize(format, RefFrames+1)
+		internalframe.LayerFactoryFunc(func(format FrameFormat) (internalframe.Pool, error) {
+			_, backingSize, err := framePoolRequiredSize(format, internalparser.RefFrames+1)
 			if err != nil {
-				return FramePool{}, err
+				return internalframe.Pool{}, err
 			}
-			return BindFramePool(make([]byte, backingSize), format,
-				make([]Frame, RefFrames+1),
-				make([]int, RefFrames+1),
-				make([]bool, RefFrames+1))
+			return internalframe.BindPool(make([]byte, backingSize), format,
+				make([]Frame, internalparser.RefFrames+1),
+				make([]int, internalparser.RefFrames+1),
+				make([]bool, internalparser.RefFrames+1))
 		}),
 	)
 	if err != nil {
@@ -265,10 +272,10 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 			return nil, fmt.Errorf("goav1: bind layer format: %w", err)
 		}
 	}
-	d.adapter = NewDecoderFrameLayerPool(&d.layerPool)
+	d.adapter = internaldecoder.NewFrameLayerPool(&d.layerPool)
 
 	if plan.Size.Event.Runner.Workers != 0 {
-		d.batch, err = BindDecoderFrameWorkBatchResidualRunner(plan.Size.Event.Runner, d.scratch.Event.Runner)
+		d.batch, err = bindDecoderFrameWorkBatchResidualRunner(plan.Size.Event.Runner, d.scratch.Event.Runner)
 		if err != nil {
 			workerPool.Close()
 			return nil, fmt.Errorf("goav1: bind residual runner: %w", err)
@@ -282,15 +289,15 @@ func decoderLayeredCodedFormatsFromSource(source decoderPayloadSource, kind deco
 	var formats []FrameFormat
 	switch kind {
 	case decoderPayloadLowOverhead:
-		var stream DecoderStream
-		var events []DecoderEvent
+		var stream internaldecoder.Stream
+		events := make([]internaldecoder.Event, decoderMaxPayloadEvents)
 		err := source.forEachPayload(payloadBuf, func(payload []byte) error {
 			eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(payload)
 			if err != nil {
 				return err
 			}
-			if len(events) < eventCount {
-				events = make([]DecoderEvent, eventCount)
+			if eventCount > decoderMaxPayloadEvents {
+				return ErrDecoderEventBufferTooSmall
 			}
 			sequence, _ := stream.SequenceHeader()
 			count, err := stream.PushLowOverhead(payload, events[:eventCount])
@@ -309,22 +316,22 @@ func decoderLayeredCodedFormatsFromSource(source decoderPayloadSource, kind deco
 		})
 		return formats, err
 	case decoderPayloadRTP:
-		err := decoderForEachRTPEventFromSource(source, func(sequence SequenceHeader, event DecoderEvent) error {
+		err := decoderForEachRTPEventFromSource(source, func(sequence SequenceHeader, event internaldecoder.Event) error {
 			var err error
 			formats, err = decoderLayeredAppendCodedFormat(formats, sequence, &event, align)
 			return err
 		})
 		return formats, err
 	default:
-		return nil, ErrDecoderInvalidFrameWorkState
+		return nil, internaldecoder.ErrInvalidFrameWorkState
 	}
 }
 
-func decoderLayeredAppendCodedFormat(formats []FrameFormat, sequence SequenceHeader, event *DecoderEvent, align int) ([]FrameFormat, error) {
+func decoderLayeredAppendCodedFormat(formats []FrameFormat, sequence SequenceHeader, event *internaldecoder.Event, align int) ([]FrameFormat, error) {
 	if !decoderFrameWorkResidualEventBindCandidate(event) {
 		return formats, nil
 	}
-	format, err := FrameCodedFormatFromHeaders(sequence, event.FrameSize, align)
+	format, err := frameCodedFormatFromHeaders(sequence, event.FrameSize, align)
 	if err != nil {
 		return formats, err
 	}
@@ -479,14 +486,6 @@ func (d *LayeredDecoder) DecodeRTPPacketAfterLossWithMetadata(packet []byte) ([]
 	return d.DecodeRTPPayloadAfterLossWithMetadata(rtp.Payload)
 }
 
-func (d *LayeredDecoder) decodePayload(payload []byte, afterLoss bool) ([]*Frame, error) {
-	outputs, err := d.decodePayloadWithMetadata(payload, afterLoss)
-	if err != nil {
-		return nil, err
-	}
-	return d.framesFromLayered(outputs), nil
-}
-
 func (d *LayeredDecoder) decodePayloadWithMetadata(payload []byte, afterLoss bool) ([]LayeredFrame, error) {
 	if d == nil {
 		return nil, errors.New("goav1: layered decoder is not initialized")
@@ -509,7 +508,7 @@ func (d *LayeredDecoder) decodePayloadWithMetadata(payload []byte, afterLoss boo
 	return out, nil
 }
 
-func (d *LayeredDecoder) prepareForEvents(events []DecoderEvent) error {
+func (d *LayeredDecoder) prepareForEvents(events []internaldecoder.Event) error {
 	if decoderLayeredEventsStartNewCodedVideoSequence(events) {
 		d.releaseShownSurfaces()
 		next := d.refs
@@ -541,7 +540,7 @@ func (d *LayeredDecoder) pushPayload(payload []byte, afterLoss bool) (int, error
 	switch d.payloadKind {
 	case decoderPayloadLowOverhead:
 		if afterLoss {
-			return 0, ErrDecoderInvalidFrameWorkState
+			return 0, internaldecoder.ErrInvalidFrameWorkState
 		}
 		eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(payload)
 		if err != nil {
@@ -577,7 +576,7 @@ func (d *LayeredDecoder) pushPayload(payload []byte, afterLoss bool) (int, error
 			return 0, err
 		}
 		if used != plannedUsed || count != eventCount {
-			return 0, ErrDecoderInvalidFrameWorkState
+			return 0, internaldecoder.ErrInvalidFrameWorkState
 		}
 		d.rtpUsed = used
 		if !d.stream.InRTPFragment() {
@@ -585,11 +584,11 @@ func (d *LayeredDecoder) pushPayload(payload []byte, afterLoss bool) (int, error
 		}
 		return count, nil
 	default:
-		return 0, ErrDecoderInvalidFrameWorkState
+		return 0, internaldecoder.ErrInvalidFrameWorkState
 	}
 }
 
-func (d *LayeredDecoder) runEvents(events []DecoderEvent) ([]LayeredFrame, error) {
+func (d *LayeredDecoder) runEvents(events []internaldecoder.Event) ([]LayeredFrame, error) {
 	out := d.visibleMeta[:0]
 	d.outputSurface = d.outputSurfBuf[:0]
 	for i := range events {
@@ -609,7 +608,7 @@ func (d *LayeredDecoder) runEvents(events []DecoderEvent) ([]LayeredFrame, error
 		}
 		batchRunner := d.batchRunnerForEvent(&event)
 		d.bindGlobalSurfacePool(framePool)
-		result, err := runDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
+		result, err := runDecoderFrameWorkEventWithSideRunner(decoderFrameWorkResidualEventRequest{
 			State:             state,
 			Refs:              &d.refs,
 			FramePool:         framePool,
@@ -628,7 +627,7 @@ func (d *LayeredDecoder) runEvents(events []DecoderEvent) ([]LayeredFrame, error
 			SideData:          sideData,
 			PostRunner:        &d.postFilter,
 			Stats:             &d.stats,
-			External: DecoderFrameWorkExternalReferenceRuntime{
+			External: decoderFrameWorkExternalReferenceRuntime{
 				Provider:      d.adapter,
 				GlobalSurface: d.globalSurface,
 				Releaser:      d.adapter,
@@ -638,11 +637,11 @@ func (d *LayeredDecoder) runEvents(events []DecoderEvent) ([]LayeredFrame, error
 		if err != nil {
 			return out, err
 		}
-		if !DecoderEventOutputsFrame(&event) {
+		if !internaldecoder.EventOutputsFrame(&event) {
 			continue
 		}
 		if result.Output == nil {
-			return out, ErrDecoderInvalidFrameWorkState
+			return out, internaldecoder.ErrInvalidFrameWorkState
 		}
 		surface, err := d.outputSurfaceForResult(framePool, result)
 		if err != nil {
@@ -656,7 +655,7 @@ func (d *LayeredDecoder) runEvents(events []DecoderEvent) ([]LayeredFrame, error
 	return out, nil
 }
 
-func (d *LayeredDecoder) bindGlobalSurfacePool(framePool *FramePool) {
+func (d *LayeredDecoder) bindGlobalSurfacePool(framePool *internalframe.Pool) {
 	d.globalPool = framePool
 }
 
@@ -664,10 +663,10 @@ func (d *LayeredDecoder) globalSurfaceForCurrentPool(local int) int {
 	if d == nil || d.globalPool == nil || d.globalPool.Cap() == 0 {
 		return -1
 	}
-	return DecoderLayerPoolGlobalSurfaceID(&d.layerPool, d.globalPool, local)
+	return internaldecoder.LayerPoolGlobalSurfaceID(&d.layerPool, d.globalPool, local)
 }
 
-func (d *LayeredDecoder) sideRunnerForEvent(sideData *DecoderFrameWorkSideData, batchRunner *DecoderFrameWorkBatchResidualRunner) DecoderFrameWorkSideDataRunner {
+func (d *LayeredDecoder) sideRunnerForEvent(sideData *decoderFrameWorkSideData, batchRunner *decoderFrameWorkBatchResidualRunner) internaldecoder.FrameWorkSideDataRunner {
 	if sideData == nil {
 		return nil
 	}
@@ -676,7 +675,7 @@ func (d *LayeredDecoder) sideRunnerForEvent(sideData *DecoderFrameWorkSideData, 
 	return &d.sideRunner
 }
 
-func layeredFrameFromEvent(frame *Frame, event *DecoderEvent) LayeredFrame {
+func layeredFrameFromEvent(frame *Frame, event *internaldecoder.Event) LayeredFrame {
 	frameType := event.FrameHeader.FrameType
 	showable := event.FrameHeader.ShowableFrame
 	if event.FrameHeader.ShowExistingFrame {
@@ -688,7 +687,7 @@ func layeredFrameFromEvent(frame *Frame, event *DecoderEvent) LayeredFrame {
 		TemporalID:        event.TemporalID,
 		SpatialID:         event.SpatialID,
 		FrameType:         frameType,
-		CodedKeyframe:     !event.FrameHeader.ShowExistingFrame && event.FrameHeader.FrameType == FrameTypeKey,
+		CodedKeyframe:     !event.FrameHeader.ShowExistingFrame && event.FrameHeader.FrameType == internalparser.FrameTypeKey,
 		ShowExistingFrame: event.FrameHeader.ShowExistingFrame,
 		ShowFrame:         event.FrameHeader.ShowFrame || event.FrameHeader.ShowExistingFrame,
 		ShowableFrame:     showable,
@@ -705,17 +704,17 @@ func (d *LayeredDecoder) framesFromLayered(outputs []LayeredFrame) []*Frame {
 	return out
 }
 
-func (d *LayeredDecoder) stateForEvent(event *DecoderEvent) (*DecoderFrameWorkState, error) {
+func (d *LayeredDecoder) stateForEvent(event *internaldecoder.Event) (*internaldecoder.FrameWorkState, error) {
 	if event.SpatialID >= EncoderWebRTCMaxSpatialLayers {
-		return nil, ErrDecoderInvalidFrameWorkState
+		return nil, internaldecoder.ErrInvalidFrameWorkState
 	}
 	return &d.states[event.SpatialID], nil
 }
 
-func (d *LayeredDecoder) framePoolForEvent(sequence SequenceHeader, event *DecoderEvent) (*FramePool, error) {
+func (d *LayeredDecoder) framePoolForEvent(sequence SequenceHeader, event *internaldecoder.Event) (*internalframe.Pool, error) {
 	switch event.Kind {
-	case DecoderEventFrameHeader, DecoderEventFrame, DecoderEventTileGroup:
-		format, err := FrameCodedFormatFromHeaders(sequence, event.FrameSize, 64)
+	case internaldecoder.EventFrameHeader, internaldecoder.EventFrame, internaldecoder.EventTileGroup:
+		format, err := frameCodedFormatFromHeaders(sequence, event.FrameSize, 64)
 		if err != nil {
 			return nil, err
 		}
@@ -725,11 +724,11 @@ func (d *LayeredDecoder) framePoolForEvent(sequence SequenceHeader, event *Decod
 	}
 }
 
-func (d *LayeredDecoder) sideDataForEvent(sequence SequenceHeader, event *DecoderEvent) (*DecoderFrameWorkSideData, error) {
+func (d *LayeredDecoder) sideDataForEvent(sequence SequenceHeader, event *internaldecoder.Event) (*decoderFrameWorkSideData, error) {
 	if !decoderFrameWorkResidualEventNeedsSideData(event) || decoderEventContinuesFrame(event) {
 		return nil, nil
 	}
-	side, err := BindDecoderFrameWorkResidualEventSideData(sequence, event, d.scratch.SideData)
+	side, err := bindDecoderFrameWorkResidualEventSideData(sequence, event, d.scratch.SideData)
 	if err != nil {
 		return nil, err
 	}
@@ -737,26 +736,26 @@ func (d *LayeredDecoder) sideDataForEvent(sequence SequenceHeader, event *Decode
 	return &d.sideData, nil
 }
 
-func (d *LayeredDecoder) batchRunnerForEvent(event *DecoderEvent) *DecoderFrameWorkBatchResidualRunner {
+func (d *LayeredDecoder) batchRunnerForEvent(event *internaldecoder.Event) *decoderFrameWorkBatchResidualRunner {
 	if !decoderFrameWorkResidualEventHasTilePayload(event) || !d.hasBatch {
 		return nil
 	}
 	return &d.batch
 }
 
-func (d *LayeredDecoder) outputSurfaceForResult(framePool *FramePool, result DecoderFrameWorkEventResult) (int, error) {
+func (d *LayeredDecoder) outputSurfaceForResult(framePool *internalframe.Pool, result internaldecoder.FrameWorkEventResult) (int, error) {
 	switch result.Step.Kind {
-	case DecoderFrameWorkStepShowExisting:
+	case internaldecoder.FrameWorkStepShowExisting:
 		if result.Step.ShowExisting.Surface < 0 {
-			return -1, ErrDecoderInvalidSurfaceReference
+			return -1, internaldecoder.ErrInvalidSurfaceReference
 		}
 		return result.Step.ShowExisting.Surface, nil
-	case DecoderFrameWorkStepBegin:
-		return DecoderLayerPoolGlobalSurfaceID(&d.layerPool, framePool, result.Step.Begin.Surface), nil
-	case DecoderFrameWorkStepTile:
-		return DecoderLayerPoolGlobalSurfaceID(&d.layerPool, framePool, result.Step.Tile.Surface), nil
+	case internaldecoder.FrameWorkStepBegin:
+		return internaldecoder.LayerPoolGlobalSurfaceID(&d.layerPool, framePool, result.Step.Begin.Surface), nil
+	case internaldecoder.FrameWorkStepTile:
+		return internaldecoder.LayerPoolGlobalSurfaceID(&d.layerPool, framePool, result.Step.Tile.Surface), nil
 	default:
-		return -1, ErrDecoderInvalidFrameWorkState
+		return -1, internaldecoder.ErrInvalidFrameWorkState
 	}
 }
 
@@ -778,7 +777,7 @@ func (d *LayeredDecoder) trackShownSurfaces(surfaces []layeredShownSurface) {
 	}
 }
 
-func decoderLayeredEventsStartNewPicture(events []DecoderEvent) bool {
+func decoderLayeredEventsStartNewPicture(events []internaldecoder.Event) bool {
 	for i := range events {
 		if events[i].NewTemporalUnit || events[i].NewCodedVideoSequence {
 			return true
@@ -790,7 +789,7 @@ func decoderLayeredEventsStartNewPicture(events []DecoderEvent) bool {
 	return false
 }
 
-func decoderLayeredEventsStartNewCodedVideoSequence(events []DecoderEvent) bool {
+func decoderLayeredEventsStartNewCodedVideoSequence(events []internaldecoder.Event) bool {
 	for i := range events {
 		if events[i].NewCodedVideoSequence {
 			return true
@@ -802,7 +801,7 @@ func decoderLayeredEventsStartNewCodedVideoSequence(events []DecoderEvent) bool 
 func (d *LayeredDecoder) releaseShownSurfaces() {
 	for _, surface := range d.shownHeld {
 		held := false
-		for slot := 0; slot < RefFrames; slot++ {
+		for slot := 0; slot < internalparser.RefFrames; slot++ {
 			ref, ok := d.refs.ReferenceSlot(slot)
 			if ok && ref == surface.id {
 				held = true
@@ -870,7 +869,7 @@ func (d *LayeredDecoder) Reset() error {
 	}
 	d.segMaps.Reset()
 	d.frameContexts.Reset()
-	d.stats = DecoderFrameWorkTileResidualStats{}
+	d.stats = internalthreading.FrameWorkTileResidualStats{}
 	d.stream.Reset()
 	d.rtpUsed = 0
 	d.sequence = SequenceHeader{}

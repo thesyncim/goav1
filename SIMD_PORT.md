@@ -1,102 +1,55 @@
-# Go-native SIMD port
+# Go-native SIMD
 
-The arm64 and amd64 Go-native SIMD kernels use `simd/archsimd` behind Go's experimental
-`GOEXPERIMENT=simd` build experiment. This document describes how to build and
-validate those paths; it does not make a performance claim. Earlier measurements
-used a forked toolchain and are not evidence for the official Go release.
+The arm64 (NEON) and amd64 (AVX2) kernels are written in Go with
+`simd/archsimd`, behind Go's `GOEXPERIMENT=simd` build experiment. The
+repository contains no assembly. Without the experiment, and under the `purego`
+build tag, the scalar Go implementations run instead; they are also the
+reference every kernel is tested against.
 
-## Toolchain and commands
+## Build and test
 
-The modules require Go 1.27.0 or newer. Use the official Go distribution. The
-`scripts/simdtip.sh` filename is retained for compatibility, but the script now
-selects `go` from `PATH` by default or an executable supplied with `GO`:
+Use the official Go distribution, 1.27.4 or newer.
 
 ~~~sh
-scripts/simdtip.sh build ./...
-scripts/simdtip.sh test ./internal/av1/dsp -run 'SIMD'
-scripts/simdtip.sh conformance
+GOEXPERIMENT=simd go build ./...
+GOEXPERIMENT=simd go test ./...
+GOEXPERIMENT=simd make dryrun-fast
 GOEXPERIMENT=simd make dryrun-profiles
 ~~~
 
-The script forces `simd` on, preserves other explicit experiment selections,
-and inherits the caller's `GOROOT`, `GOTOOLCHAIN`, and `GOCACHE`. For normal
-builds, use the standard Go command without the experiment. SIMD files are
-selected by the `goexperiment.simd` build tag.
+SIMD files are selected by the `goexperiment.simd` build tag. amd64 kernels
+require AVX2, detected through `archsimd.X86`; arm64 feature detection is in
+`internal/av1/dsp/cpu`.
 
-## Validation
+The native arm64 and amd64 CI lanes build, vet and test with the experiment,
+run the kernel packages under `-race` (which enables checkptr), and run the
+strict fast and profile decoder gates. Those gates validate the decoder inputs
+they exercise; they do not prove universal AV1 conformance.
 
-For each kernel change, establish byte-for-byte agreement with an independent
-scalar or assembly implementation across edge cases and relevant input ranges.
-Then prove that the public dispatch selects the intended path and run the
-applicable end-to-end parity gates:
+## Writing a kernel
 
-~~~sh
-scripts/simdtip.sh build ./...
-scripts/simdtip.sh test ./...
-scripts/simdtip.sh conformance
-GOEXPERIMENT=simd make dryrun-profiles
-~~~
+- Match the scalar implementation byte for byte across every block shape,
+  tail, unaligned boundary, extreme value and supported bit depth, with a
+  differential test that does not derive its expectation from the kernel.
+- Prove that the public dispatch selects the kernel, then run the decoder
+  gates above (and the encoder byte-identity checks for encoder kernels).
+- `unsafe` is allowed only where every access is provably in bounds and the
+  kernel is measurably faster for it. Never form a pointer outside its
+  allocation, not even one past the end: derive row pointers from an in-bounds
+  base and an integer offset. `//go:nocheckptr` is not allowed.
+  `scripts/check_unsafe.sh` lists the files that may import `unsafe`.
+- State what a kernel may read and write around the block it is given, enforce
+  it with a length check at the slice-taking entry point, and cover it with a
+  guard-page test (`internal/guardpage`), which places the buffers against
+  inaccessible pages.
+- On amd64, avoid operations that lower to AVX-512 (`TruncTo*`,
+  `SaturateTo*` on wide types, `Permute` on bytes) and call
+  `archsimd.ClearAVXUpperBits()` before leaving a kernel that used 256-bit
+  registers; Zen 3 otherwise stalls on the following SSE code.
+- Measure through the public dispatch as well as the isolated kernel, on the
+  same toolchain and hardware, and compare instructions as well as time. Check
+  that the path allocates nothing.
 
-The native arm64 CI lane uses the official Go 1.27.x toolchain with
-`GOEXPERIMENT=simd` and runs build, tests, and the strict fast and profile
-decoder parity gates. Those decoder gates validate exercised decoder inputs;
-they do not measure encoder quality or prove universal AV1 conformance.
-
-Measure performance separately on the same official toolchain and hardware for
-the SIMD, scalar, and assembly implementations, using representative sizes and
-inputs. Confirm the SIMD implementation is live and check allocations before
-making performance claims. See [quality and parity](docs/quality-and-parity.md)
-for project-level checks. The current arm64 kernel results, reproduction
-commands, and claim limits are in the
-[Go 1.27 SIMD measurement note](docs/go127-simd-performance.md).
-
-## Assembly removal (2026-10-09)
-
-The repository-owned Go packages contain **zero assembly source files** on
-AMD64 and ARM64. Upstream reference trees and assembly inside the official Go
-toolchain are outside this source count. This does not mean the compiler emits
-no machine SIMD instructions, or establish competitive codec performance.
-
-The final four AMD64 DCT32/DCT64 row/column symbols are replaced with four-lane
-Go SIMD butterflies. DCT32 reuses the independently tested DCT64 even-half
-network; both sizes retain narrow/wide range selection and scalar fallbacks.
-CPU detection uses official `archsimd.X86` queries when SIMD is enabled,
-including their OS-state checks. Non-SIMD and purego AMD64 builds now use the
-SSE2 baseline and scalar transforms, not the previous assembly implementation.
-AVX-512 reporting follows the toolchain's complete feature bundle rather than
-the earlier F-only probe. No new external CPU dependency is introduced.
-
-See [assembly-removal evidence](docs/assembly-removal-20261009.md) for the
-validation boundary and emulated AMD64 measurements. These microbenchmarks
-do not replace the [full-clip codec comparison](docs/e2e-codec-gap-20261009.md).
-
-The experiment build enables architecture-specific Go SIMD replacements.
-Default and `purego` builds use scalar Go where assembly has been removed;
-unsupported CPUs, shapes, and numeric ranges retain checked scalar fallbacks.
-Removing assembly does not establish performance parity: whole-decoder and
-encoder measurements must still demonstrate the result independently.
-
-The recovered October 9 motion and loop-filter optimizations are evaluated
-against the previous PR checkpoint, not against dav1d or SVT-AV1. See the
-[measurement note](docs/go127-simd-performance.md) for the sampling protocol
-and remaining comparison limits.
-
-Do not delete an entire assembly file merely because one SIMD dispatch replaces
-one of its symbols. Check default builds, experiment builds, other architectures,
-assembly-to-assembly calls, and numeric/shape fallbacks. Remove replaced bodies
-once those production references are gone, retaining an independent correctness
-oracle without keeping otherwise-dead production code.
-
-## Porting guidelines
-
-- Keep architecture and experiment build constraints explicit. Standard builds
-  use the Go fallback where SIMD replaces assembly, and retain assembly where
-  SIMD has not shown a repeatable benefit.
-- Test output bytes and state with an independent oracle. Do not derive expected
-  results from the implementation under test or widen tolerances to mask drift.
-- Include tails, unaligned boundaries, extreme values, and supported bit depths
-  in differential coverage.
-- Benchmark through public dispatch as well as the isolated kernel so the
-  measured path matches production use.
-- Keep kernels on the existing implementation when SIMD is not byte-exact or
-  does not show a repeatable benefit under the official toolchain.
+Kernel measurements and their limits are in the
+[Go 1.27 SIMD measurement note](docs/go127-simd-performance.md); project-level
+gates are described in [quality and parity](docs/quality-and-parity.md).

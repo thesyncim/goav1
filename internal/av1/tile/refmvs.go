@@ -52,16 +52,24 @@ func (m refmvsMV) negate() refmvsMV {
 // mf flags (1 = globalmv with a min side >= 8 px, 2 = newmv).
 type refmvsBlock struct {
 	mv  [2]refmvsMV
-	ref [2]int8
+	ref refmvsRefPair
 	bs  BlockSize
 	mf  uint8
 }
 
-// refmvsRefPair returns the 16-bit view of a reference pair used for the
-// compound equality test (dav1d's refmvs_refpair.pair).
-func refmvsRefPair(ref [2]int8) uint16 {
-	return uint16(uint8(ref[0])) | uint16(uint8(ref[1]))<<8
+// refmvsRefPair is dav1d's union refmvs_refpair: ref[0] in the low byte,
+// ref[1] in the high byte, compared as one 16-bit pair.
+type refmvsRefPair uint16
+
+func makeRefmvsRefPair(ref0, ref1 int8) refmvsRefPair {
+	return refmvsRefPair(uint8(ref0)) | refmvsRefPair(uint8(ref1))<<8
 }
+
+func (p refmvsRefPair) ref0() int8 { return int8(p) }
+func (p refmvsRefPair) ref1() int8 { return int8(p >> 8) }
+
+// at is ref.ref[n].
+func (p refmvsRefPair) at(n int) int8 { return int8(p >> (uint(n&1) * 8)) }
 
 // refmvsCandidate is dav1d's refmvs_candidate.
 type refmvsCandidate struct {
@@ -211,87 +219,110 @@ func (rt *refmvsTile) row(idx int32) []refmvsBlock {
 	return rt.buf[o : o+rt.stride]
 }
 
-// splat ports dav1d's splat_mv: store tmpl into every 4x4 cell of the block.
-// As splat_mv_neon, it builds one 48-byte pattern of four blocks and writes
-// each row with whole-pattern stores, dispatching on the block width (1, 2,
-// or a multiple of 4 cells) instead of a per-row copy call.
-func (rt *refmvsTile) splat(tmpl refmvsBlock, by4, bx4, bw4, bh4 int32) {
+// splat ports dav1d's splat_mv (splat_mv_neon): store one refmvs block into
+// every 4x4 cell of the block. mv packs mv[0] and mv[1]; rest packs ref[0],
+// ref[1], bs and mf, low byte first. As in the asm, the row pointers come
+// from the row table (sliced once for the block's rows) and each width has
+// its own straight-line store body: narrow blocks store each cell from these
+// registers (one 8- and one 4-byte store), wider ones store the 48-byte
+// four-cell pattern a whole number of times.
+func (rt *refmvsTile) splat(mv uint64, rest uint32, by4, bx4, bw4, bh4 int32) {
 	base := (by4 & 31) + 5
+	rows := rt.rows[base : base+bh4]
+	buf := rt.buf
 	switch bw4 {
 	case 1:
-		for y := int32(0); y < bh4; y++ {
-			rt.row(base + y)[bx4] = tmpl
+		for _, o := range rows {
+			buf[o+bx4].set(mv, rest)
 		}
+		return
 	case 2:
-		pat := [2]refmvsBlock{tmpl, tmpl}
-		for y := int32(0); y < bh4; y++ {
-			*(*[2]refmvsBlock)(rt.row(base + y)[bx4:]) = pat
+		for _, o := range rows {
+			r := (*[2]refmvsBlock)(buf[o+bx4:])
+			r[0].set(mv, rest)
+			r[1].set(mv, rest)
 		}
-	default:
-		pat := [4]refmvsBlock{tmpl, tmpl, tmpl, tmpl}
-		for y := int32(0); y < bh4; y++ {
-			r := rt.row(base + y)[bx4 : bx4+bw4]
-			for len(r) >= 4 {
-				*(*[4]refmvsBlock)(r) = pat
-				r = r[4:]
+		return
+	}
+	var pat [4]refmvsBlock
+	for i := range pat {
+		pat[i].set(mv, rest)
+	}
+	switch bw4 {
+	case 4:
+		for _, o := range rows {
+			*(*[4]refmvsBlock)(buf[o+bx4:]) = pat
+		}
+	case 8:
+		for _, o := range rows {
+			r := (*[8]refmvsBlock)(buf[o+bx4:])
+			*(*[4]refmvsBlock)(r[0:]) = pat
+			*(*[4]refmvsBlock)(r[4:]) = pat
+		}
+	case 16:
+		for _, o := range rows {
+			r := (*[16]refmvsBlock)(buf[o+bx4:])
+			*(*[4]refmvsBlock)(r[0:]) = pat
+			*(*[4]refmvsBlock)(r[4:]) = pat
+			*(*[4]refmvsBlock)(r[8:]) = pat
+			*(*[4]refmvsBlock)(r[12:]) = pat
+		}
+	default: // 32
+		for _, o := range rows {
+			r := (*[32]refmvsBlock)(buf[o+bx4:])
+			for i := 0; i < 32; i += 4 {
+				*(*[4]refmvsBlock)(r[i:]) = pat
 			}
 		}
 	}
+}
+
+func (b *refmvsBlock) set(mv uint64, rest uint32) {
+	b.ref, b.bs, b.mf = refmvsRefPair(rest), BlockSize(rest>>16), uint8(rest>>24)
+	b.mv[0], b.mv[1] = refmvsMV(mv), refmvsMV(mv>>32)
+}
+
+func refmvsSplatRest(ref0, ref1 int8, bs BlockSize, mf uint8) uint32 {
+	return uint32(uint8(ref0)) | uint32(uint8(ref1))<<8 | uint32(bs)<<16 | uint32(mf)<<24
 }
 
 // splatInterBlock ports splat_oneref_mv / splat_tworef_mv.
 func (rt *refmvsTile) splatInterBlock(size BlockSize, by4, bx4 int32, motionResult InterMotionResult) {
 	dims := blockDimensions[size]
 	bw4, bh4 := int32(dims.W4), int32(dims.H4)
-	var tmpl refmvsBlock
-	tmpl.bs = size
 	refs := motionResult.References
 	mode := motionResult.Mode
+	mv := uint64(packRefmvsMV(motionResult.MV[0]))
+	ref0, ref1 := int8(refs.Ref0)+1, int8(-1)
+	mf := uint8(0)
 	if refs.Compound {
-		tmpl.ref = [2]int8{int8(refs.Ref[0]) + 1, int8(refs.Ref[1]) + 1}
-		tmpl.mv = [2]refmvsMV{packRefmvsMV(motionResult.MV[0]), packRefmvsMV(motionResult.MV[1])}
+		ref1 = int8(refs.Ref1) + 1
+		mv |= uint64(packRefmvsMV(motionResult.MV[1])) << 32
 		cm := mode.CompoundMode
 		if cm == CompoundInterModeGlobalGlobal {
-			tmpl.mf |= 1
+			mf |= 1
 		}
 		if (1<<cm)&0xbc != 0 {
-			tmpl.mf |= 2
+			mf |= 2
 		}
 	} else {
-		tmpl.ref[0] = int8(refs.Ref[0]) + 1
-		tmpl.ref[1] = -1
 		if motionResult.InterIntra {
-			tmpl.ref[1] = 0
+			ref1 = 0
 		}
-		tmpl.mv[0] = packRefmvsMV(motionResult.MV[0])
 		if mode.Mode == InterModeGlobalMV && min(bw4, bh4) >= 2 {
-			tmpl.mf |= 1
+			mf |= 1
 		}
 		if mode.Mode == InterModeNewMV {
-			tmpl.mf |= 2
+			mf |= 2
 		}
 	}
-	rt.splat(tmpl, by4, bx4, bw4, bh4)
+	rt.splat(mv, refmvsSplatRest(ref0, ref1, size, mf), by4, bx4, bw4, bh4)
 }
 
 // splatIntraBlock ports splat_intraref.
 func (rt *refmvsTile) splatIntraBlock(size BlockSize, by4, bx4 int32) {
 	dims := blockDimensions[size]
-	rt.splat(refmvsBlock{
-		mv:  [2]refmvsMV{refmvsInvalidMV, 0},
-		ref: [2]int8{0, -1},
-		bs:  size,
-	}, by4, bx4, int32(dims.W4), int32(dims.H4))
-}
-
-// splatIntrabcBlock ports splat_intrabc_mv.
-func (rt *refmvsTile) splatIntrabcBlock(size BlockSize, by4, bx4 int32, dv motion.Vector) {
-	dims := blockDimensions[size]
-	rt.splat(refmvsBlock{
-		mv:  [2]refmvsMV{packRefmvsMV(dv), 0},
-		ref: [2]int8{0, -1},
-		bs:  size,
-	}, by4, bx4, int32(dims.W4), int32(dims.H4))
+	rt.splat(uint64(refmvsInvalidMV), refmvsSplatRest(0, -1, size, 0), by4, bx4, int32(dims.W4), int32(dims.H4))
 }
 
 // refmvsResult is the output of refmvsFind: dav1d's mvstack, n_mvs and ctx.
@@ -304,13 +335,13 @@ type refmvsResult struct {
 	rawCtx int32
 }
 
-func addSpatialCandidate(stack *[8]refmvsCandidate, cnt *int32, weight int32, b *refmvsBlock, ref [2]int8, gmv *[2]refmvsMV, haveNewMVMatch *int32, haveRefMVMatch *int32) {
+func addSpatialCandidate(stack *[8]refmvsCandidate, cnt *int32, weight int32, b *refmvsBlock, ref refmvsRefPair, gmv *[2]refmvsMV, haveNewMVMatch *int32, haveRefMVMatch *int32) {
 	if b.mv[0] == refmvsInvalidMV {
 		return // intra block, no intrabc
 	}
-	if ref[1] == -1 {
+	if ref.ref1() == -1 {
 		for n := range 2 {
-			if b.ref[n] == ref[0] {
+			if b.ref.at(n) == ref.ref0() {
 				candMV := b.mv[n]
 				if b.mf&1 != 0 && gmv[0] != refmvsInvalidMV {
 					candMV = gmv[0]
@@ -332,7 +363,7 @@ func addSpatialCandidate(stack *[8]refmvsCandidate, cnt *int32, weight int32, b 
 				return
 			}
 		}
-	} else if refmvsRefPair(b.ref) == refmvsRefPair(ref) {
+	} else if b.ref == ref {
 		cand := b.mv
 		if b.mf&1 != 0 {
 			if gmv[0] != refmvsInvalidMV {
@@ -361,7 +392,7 @@ func addSpatialCandidate(stack *[8]refmvsCandidate, cnt *int32, weight int32, b 
 
 // scanRow ports dav1d's scan_row. row is the refmvs row slice and bx4 the
 // first scanned column.
-func scanRow(stack *[8]refmvsCandidate, cnt *int32, ref [2]int8, gmv *[2]refmvsMV, row []refmvsBlock, bx4, bw4, w4, maxRows, step int32, haveNewMVMatch, haveRefMVMatch *int32) int32 {
+func scanRow(stack *[8]refmvsCandidate, cnt *int32, ref refmvsRefPair, gmv *[2]refmvsMV, row []refmvsBlock, bx4, bw4, w4, maxRows, step int32, haveNewMVMatch, haveRefMVMatch *int32) int32 {
 	candB := &row[bx4]
 	firstDim := blockDimensions[candB.bs]
 	candBW4 := int32(firstDim.W4)
@@ -388,7 +419,7 @@ func scanRow(stack *[8]refmvsCandidate, cnt *int32, ref [2]int8, gmv *[2]refmvsM
 
 // scanCol ports dav1d's scan_col. rowBase is the row-table index of the first
 // scanned row and bx4 the scanned column.
-func (rt *refmvsTile) scanCol(stack *[8]refmvsCandidate, cnt *int32, ref [2]int8, gmv *[2]refmvsMV, rowBase, bh4, h4, bx4, maxCols, step int32, haveNewMVMatch, haveRefMVMatch *int32) int32 {
+func (rt *refmvsTile) scanCol(stack *[8]refmvsCandidate, cnt *int32, ref refmvsRefPair, gmv *[2]refmvsMV, rowBase, bh4, h4, bx4, maxCols, step int32, haveNewMVMatch, haveRefMVMatch *int32) int32 {
 	candB := &rt.buf[rt.rows[rowBase]+bx4]
 	firstDim := blockDimensions[candB.bs]
 	candBH4 := int32(firstDim.H4)
@@ -445,14 +476,14 @@ func (rf *refmvsFrame) fixMVPrecision(m refmvsMV) refmvsMV {
 	return m
 }
 
-func (rf *refmvsFrame) addTemporalCandidate(stack *[8]refmvsCandidate, cnt *int32, rb *TemporalMotionEntry, ref [2]int8, globalMVCtx *int32, gmv *[2]refmvsMV) {
+func (rf *refmvsFrame) addTemporalCandidate(stack *[8]refmvsCandidate, cnt *int32, rb *TemporalMotionEntry, ref refmvsRefPair, globalMVCtx *int32, gmv *[2]refmvsMV) {
 	if !rb.Valid {
 		return
 	}
 	den := int32(rb.RefFrameOffset)
-	mv := rf.fixMVPrecision(refmvsMVProjection(rb.MV, int32(rf.pocDiff[ref[0]-1]), den))
+	mv := rf.fixMVPrecision(refmvsMVProjection(rb.MV, int32(rf.pocDiff[ref.ref0()-1]), den))
 	last := *cnt
-	if ref[1] == -1 {
+	if ref.ref1() == -1 {
 		if globalMVCtx != nil {
 			dx := mv.col() - gmv[0].col()
 			dy := mv.row() - gmv[0].row()
@@ -481,7 +512,7 @@ func (rf *refmvsFrame) addTemporalCandidate(stack *[8]refmvsCandidate, cnt *int3
 		}
 		return
 	}
-	mvp := [2]refmvsMV{mv, rf.fixMVPrecision(refmvsMVProjection(rb.MV, int32(rf.pocDiff[ref[1]-1]), den))}
+	mvp := [2]refmvsMV{mv, rf.fixMVPrecision(refmvsMVProjection(rb.MV, int32(rf.pocDiff[ref.ref1()-1]), den))}
 	for n := int32(0); n < last; n++ {
 		if stack[n].mv == mvp {
 			stack[n].weight += 2
@@ -498,15 +529,15 @@ func (rf *refmvsFrame) addTemporalCandidate(stack *[8]refmvsCandidate, cnt *int3
 // addCompoundExtendedCandidate ports dav1d's add_compound_extended_candidate.
 // same points at mvstack[*cnt]; diff is same[2:]. sameCount is dav1d's
 // same_count[4] (entries 2/3 are diff_count[0/1]).
-func addCompoundExtendedCandidate(same []refmvsCandidate, sameCount *[4]int32, candB *refmvsBlock, sign0, sign1 uint8, ref [2]int8, signBias *[7]uint8) {
+func addCompoundExtendedCandidate(same []refmvsCandidate, sameCount *[4]int32, candB *refmvsBlock, sign0, sign1 uint8, ref refmvsRefPair, signBias *[7]uint8) {
 	diff := same[2:]
 	for n := range 2 {
-		candRef := candB.ref[n]
+		candRef := candB.ref.at(n)
 		if candRef <= 0 {
 			break
 		}
 		candMV := candB.mv[n]
-		if candRef == ref[0] {
+		if candRef == ref.ref0() {
 			if sameCount[0] < 2 {
 				same[sameCount[0]].mv[0] = candMV
 				sameCount[0]++
@@ -518,7 +549,7 @@ func addCompoundExtendedCandidate(same []refmvsCandidate, sameCount *[4]int32, c
 				diff[sameCount[3]].mv[1] = candMV
 				sameCount[3]++
 			}
-		} else if candRef == ref[1] {
+		} else if candRef == ref.ref1() {
 			if sameCount[1] < 2 {
 				same[sameCount[1]].mv[1] = candMV
 				sameCount[1]++
@@ -555,7 +586,7 @@ func addCompoundExtendedCandidate(same []refmvsCandidate, sameCount *[4]int32, c
 // addSingleExtendedCandidate ports dav1d's add_single_extended_candidate.
 func addSingleExtendedCandidate(stack *[8]refmvsCandidate, cnt *int32, candB *refmvsBlock, sign uint8, signBias *[7]uint8) {
 	for n := range 2 {
-		candRef := candB.ref[n]
+		candRef := candB.ref.at(n)
 		if candRef <= 0 {
 			break
 		}
@@ -583,7 +614,7 @@ func addSingleExtendedCandidate(stack *[8]refmvsCandidate, cnt *int32, candB *re
 // dav1d's +1 encoding, tgmv the per-reference global MVs evaluated at this block
 // (get_gmv_2d), topHasRight dav1d's EDGE_I444_TOP_HAS_RIGHT edge flag, and
 // by4/bx4 the block's absolute 4x4 position.
-func (rt *refmvsTile) find(out *refmvsResult, ref [2]int8, size BlockSize, topHasRight bool, by4, bx4 int32, tgmvIn [2]motion.Vector) {
+func (rt *refmvsTile) find(out *refmvsResult, ref refmvsRefPair, size BlockSize, topHasRight bool, by4, bx4 int32, tgmvIn [2]motion.Vector) {
 	rf := &rt.frame
 	dims := blockDimensions[size]
 	bw4 := int32(dims.W4)
@@ -595,20 +626,20 @@ func (rt *refmvsTile) find(out *refmvsResult, ref [2]int8, size BlockSize, topHa
 	// out is zero (both callers pass a fresh refmvsResult): no stack clear.
 
 	cnt := int32(0)
-	if ref[0] > 0 {
+	if ref.ref0() > 0 {
 		tgmv[0] = packRefmvsMV(tgmvIn[0])
 		gmv[0] = refmvsInvalidMV
-		if rf.gmType[ref[0]-1] > parser.GlobalMotionTranslation {
+		if rf.gmType[ref.ref0()-1] > parser.GlobalMotionTranslation {
 			gmv[0] = tgmv[0]
 		}
 	} else {
 		tgmv[0] = 0
 		gmv[0] = refmvsInvalidMV
 	}
-	if ref[1] > 0 {
+	if ref.ref1() > 0 {
 		tgmv[1] = packRefmvsMV(tgmvIn[1])
 		gmv[1] = refmvsInvalidMV
-		if rf.gmType[ref[1]-1] > parser.GlobalMotionTranslation {
+		if rf.gmType[ref.ref1()-1] > parser.GlobalMotionTranslation {
 			gmv[1] = tgmv[1]
 		}
 	}
@@ -762,10 +793,10 @@ func (rt *refmvsTile) find(out *refmvsResult, ref [2]int8, size BlockSize, topHa
 	top := -(by4 + bh4 + 4) * 4 * 8
 	bottom := (rf.ih4 - by4 + 4) * 4 * 8
 
-	if ref[1] > 0 {
+	if ref.ref1() > 0 {
 		if cnt < 2 {
-			sign0 := rf.signBias[ref[0]-1]
-			sign1 := rf.signBias[ref[1]-1]
+			sign0 := rf.signBias[ref.ref0()-1]
+			sign1 := rf.signBias[ref.ref1()-1]
 			sz4 := min(w4, h4)
 			same := stack[cnt:]
 			var sameCount [4]int32
@@ -842,8 +873,8 @@ func (rt *refmvsTile) find(out *refmvsResult, ref [2]int8, size BlockSize, topHa
 		}
 		out.count = cnt
 		return
-	} else if cnt < 2 && ref[0] > 0 {
-		sign := rf.signBias[ref[0]-1]
+	} else if cnt < 2 && ref.ref0() > 0 {
+		sign := rf.signBias[ref.ref0()-1]
 		sz4 := min(w4, h4)
 
 		// non-self references in top
@@ -892,23 +923,6 @@ func refmvsTopHasRight(sbSizeMIB uint8, block *BlockVisit) bool {
 		refmvsOracleTopHasRight(sbSizeMIB, block, has)
 	}
 	return has
-}
-
-// legacyRefmvsTopHasRight derives the same flag from the block position:
-// blockHasTopRight plus the T_LEFT_SPLIT (VERT_A) rule that the bottom-left
-// square is decoded before the right-hand rectangle above-right of it. The
-// goav1_refmvs_oracle build checks the edge tree against it.
-func legacyRefmvsTopHasRight(sbSizeMIB uint8, block BlockVisit) bool {
-	if !blockHasTopRight(sbSizeMIB, block) {
-		return false
-	}
-	if block.Partition == PartitionTLeftSplit {
-		dims := blockDimensions[block.Size]
-		if dims.W4 == dims.H4 && int(block.MIRow)&int(dims.H4) != 0 {
-			return false
-		}
-	}
-	return true
 }
 
 // refmvsPocDiff ports dav1d's get_poc_diff.
@@ -983,9 +997,9 @@ func (rt *refmvsTile) saveTmvs(dst *ReferenceMVFrame, refFrameSide *[referenceFr
 			cand := &b[x*2+1]
 			end := min(x+(int32(blockDimensions[cand.bs].W4)+1)>>1, colEnd8)
 			tmv := ReferenceMVEntry{Ref: ReferenceFrameNone}
-			if r := cand.ref[1]; r > 0 && refFrameSide[r-1] == 0 && refmvsSaveable(cand.mv[1]) {
+			if r := cand.ref.ref1(); r > 0 && refFrameSide[r-1] == 0 && refmvsSaveable(cand.mv[1]) {
 				tmv = ReferenceMVEntry{Ref: ReferenceFrame(r - 1), MV: cand.mv[1].vector(), Valid: true}
-			} else if r := cand.ref[0]; r > 0 && refFrameSide[r-1] == 0 && refmvsSaveable(cand.mv[0]) {
+			} else if r := cand.ref.ref0(); r > 0 && refFrameSide[r-1] == 0 && refmvsSaveable(cand.mv[0]) {
 				tmv = ReferenceMVEntry{Ref: ReferenceFrame(r - 1), MV: cand.mv[0].vector(), Valid: true}
 			}
 			for ; x < end; x++ {

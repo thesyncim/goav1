@@ -4,7 +4,6 @@ import (
 	"errors"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
-	"github.com/thesyncim/goav1/internal/av1/lfmask"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
@@ -163,75 +162,10 @@ type FrameWorkPostFilterGlobalSurfacePublisher interface {
 	PublishedFrameWorkGlobalSurface() (int, bool)
 }
 
-// FrameWorkSideDataFunc binds caller-owned frame-level side data after event
-// planning and before tile work executes.
-type FrameWorkSideDataFunc func(*FrameWorkState, FrameWorkBatch) error
-
 // FrameWorkSideDataRunner binds caller-owned frame-level side data after event
 // planning and before tile work executes.
 type FrameWorkSideDataRunner interface {
 	BindFrameWorkSideData(*FrameWorkState, FrameWorkBatch) error
-}
-
-// FrameWorkBoundSideDataRunner binds caller-owned frame-level side-data buffers
-// for active postfilter stages before tile work executes.
-type FrameWorkBoundSideDataRunner struct {
-	CDEFIndex []uint8
-	CDEFRead  []bool
-
-	LoopFilterRecords []threading.FrameWorkLoopFilterBlockRecord
-
-	LFMasks      []lfmask.FilterMask
-	LFLevelCache [][4]uint8
-
-	RestorationRecords []tile.RestorationUnitRecord
-	RestorationAbove   []uint16
-	RestorationBelow   []uint16
-
-	CDEFIndexMap            threading.FrameWorkCDEFIndexMap
-	LoopFilterMap           threading.FrameWorkLoopFilterMap
-	LoopFilterMasks         threading.FrameWorkLoopFilterMasks
-	RestorationFrameBuffers threading.FrameWorkRestorationFrameBuffers
-}
-
-// FrameWorkSideDataScratchSize reports caller-owned side-data storage needed by
-// FrameWorkBoundSideDataRunner for one frame context.
-type FrameWorkSideDataScratchSize struct {
-	CDEF                int
-	LoopFilterRecords   int
-	LoopFilterMasks     int
-	LoopFilterLevels    int
-	RestorationRecords  int
-	RestorationBoundary int
-}
-
-// FrameWorkSideDataScratch carries caller-owned backing storage for
-// FrameWorkBoundSideDataRunner.
-type FrameWorkSideDataScratch struct {
-	CDEFIndex []uint8
-	CDEFRead  []bool
-
-	LoopFilterRecords []threading.FrameWorkLoopFilterBlockRecord
-
-	LFMasks      []lfmask.FilterMask
-	LFLevelCache [][4]uint8
-
-	RestorationRecords []tile.RestorationUnitRecord
-	RestorationAbove   []uint16
-	RestorationBelow   []uint16
-}
-
-// Max returns the per-field maximum scratch size needed to satisfy either
-// side-data plan. Callers can accumulate this across frames and reuse one arena.
-func (s FrameWorkSideDataScratchSize) Max(other FrameWorkSideDataScratchSize) FrameWorkSideDataScratchSize {
-	return FrameWorkSideDataScratchSize{
-		CDEF:                maxInt(s.CDEF, other.CDEF),
-		LoopFilterRecords:   maxInt(s.LoopFilterRecords, other.LoopFilterRecords),
-		LoopFilterMasks:     maxInt(s.LoopFilterMasks, other.LoopFilterMasks),
-		LoopFilterLevels:    maxInt(s.LoopFilterLevels, other.LoopFilterLevels),
-		RestorationRecords:  maxInt(s.RestorationRecords, other.RestorationRecords),
-		RestorationBoundary: maxInt(s.RestorationBoundary, other.RestorationBoundary),
-	}
 }
 
 // FrameWorkState is caller-owned lifecycle state for one in-flight frame. It
@@ -241,12 +175,6 @@ type FrameWorkState struct {
 	Surface        int
 	ReferenceCount uint8
 	Sequence       threading.FrameWorkSequenceContext
-
-	// Scaled-reference policy is captured once per state. High-level decoder
-	// constructors set it; low-level callers that leave it unset capture the
-	// environment when the first frame begins.
-	scaledRefPolicySet     bool
-	scaledRefPolicyEnabled bool
 
 	// Saved entropy (CDF) frame contexts are kept in a fixed pool of storages
 	// referenced by per-slot handles instead of one 56KB value per slot, so
@@ -285,6 +213,10 @@ type FrameWorkState struct {
 	sharedFrameContexts             *SharedFrameContextStore
 	sharedFrameContextRefs          *SurfaceReferences
 	sharedFrameContextGlobalSurface func(local int) int
+	// sharedMVBacking is the grid the current frame records its motion
+	// vectors into on the shared path. Publishing a reference frame swaps it
+	// with the store's previous grid for that surface.
+	sharedMVBacking []tile.ReferenceMVEntry
 	// tileResidualCurrentCDF is the pool entry holding the current frame's
 	// initial (inherited or default) context; it is immutable for the frame's
 	// duration — per-job adaptation copies out of it (threading
@@ -300,9 +232,8 @@ type FrameWorkState struct {
 	// decode path. AV1 inter frames with use_ref_frame_mvs project a temporal
 	// MV field from previously decoded reference frames' saved per-block MVs
 	// (libaom's cm->cur_frame->mvs + av1_setup_motion_field). The SVC/shared
-	// path (sharedFrameContexts != nil) wires this through the caller's
-	// per-surface store instead, so these fields are only populated when the
-	// shared store is absent.
+	// path (sharedFrameContexts != nil) keeps the saved grids in that store,
+	// keyed by global surface, and uses only the current-frame fields here.
 	//
 	// mvFrameStore is keyed by reference-map slot exactly like
 	// tileResidualFrameContexts: every refresh_frame_flags slot receives the
@@ -407,8 +338,6 @@ func (s *FrameWorkState) Reset() {
 		return
 	}
 	deactivateFrameWorkStateLoopFilterCompact(s)
-	scaledRefPolicySet := s.scaledRefPolicySet
-	scaledRefPolicyEnabled := s.scaledRefPolicyEnabled
 	ownedTemporalMotion := s.ownedTemporalMotion
 	cdfPoolExtra := s.tileResidualCDFPoolExtra
 	temporalBack := s.temporalMVsBack[:0]
@@ -418,14 +347,12 @@ func (s *FrameWorkState) Reset() {
 	}
 	segBack := s.segOwn.backing
 	segShared := s.segShared
-	*s = FrameWorkState{
-		scaledRefPolicySet:     scaledRefPolicySet,
-		scaledRefPolicyEnabled: scaledRefPolicyEnabled,
-		ownedTemporalMotion:    ownedTemporalMotion,
-	}
+	sharedMVBack := s.sharedMVBacking[:0]
+	*s = FrameWorkState{ownedTemporalMotion: ownedTemporalMotion}
 	s.tileResidualCDFPoolExtra = cdfPoolExtra
 	s.temporalMVsBack = temporalBack
 	s.mvFrameBacking = mvBack
+	s.sharedMVBacking = sharedMVBack
 	s.segOwn.backing = segBack
 	s.segShared = segShared
 }
@@ -468,17 +395,6 @@ func (s *FrameWorkState) temporalMotionPrepareError(err error) error {
 		s.currentMVFrameValid = false
 	}
 	return err
-}
-
-// SetScaledReferencePredictionEnabled captures whether this state may decode
-// references whose coded dimensions differ from the current frame. High-level
-// decoder constructors use this to snapshot GOAV1_SCALED_PRED once per decoder.
-func (s *FrameWorkState) SetScaledReferencePredictionEnabled(enabled bool) {
-	if s == nil {
-		return
-	}
-	s.scaledRefPolicySet = true
-	s.scaledRefPolicyEnabled = enabled
 }
 
 // acquireTileResidualCDFEntry claims a free pool entry with one frame hold.
@@ -765,9 +681,6 @@ func (s *FrameWorkState) Begin(refs *SurfaceReferences, pool *frame.Pool, sequen
 	if s == nil || s.active {
 		return FrameWorkPlan{}, nil, ErrInvalidFrameWorkState
 	}
-	if !s.scaledRefPolicySet {
-		s.SetScaledReferencePredictionEnabled(threading.ScaledReferencePredictionEnabled())
-	}
 	currentCDF, err := s.acquireInitialTileResidualCDFs(event)
 	if err != nil {
 		return FrameWorkPlan{}, nil, err
@@ -786,7 +699,6 @@ func (s *FrameWorkState) Begin(refs *SurfaceReferences, pool *frame.Pool, sequen
 	s.Surface = plan.Surface
 	s.ReferenceCount = plan.ReferenceCount
 	s.Sequence = threading.FrameWorkSequenceContextFromHeader(sequence)
-	s.Sequence.ScaledReferencePredictionDisabled = !s.scaledRefPolicyEnabled
 	s.tileResidualCurrentCDF = currentCDF
 	s.tileResidualCurrentCDFsValid = true
 	s.tileResidualRetainedCDF = retainedCDF
@@ -834,7 +746,7 @@ func (s *FrameWorkState) Finish(refs *SurfaceReferences, pool *frame.Pool, event
 		return 0, err
 	}
 	s.finishTileResidualCDFs(event, -1)
-	s.publishTemporalMotionFrame(event)
+	s.publishTemporalMotionFrame(event, -1)
 	s.segMapStore().publish(event.FrameSize.RefreshFrameFlags, s.segFrame.cur)
 	s.resetActive()
 	return count, nil
@@ -901,25 +813,23 @@ func mvFrameMIExtent(pixels uint32) uint32 {
 // when use_ref_frame_mvs is enabled, resolves the reference frames' saved MV
 // side data and projects the temporal motion field. It is the single-pool
 // counterpart of the per-surface wiring the SVC/shared path performs in its
-// batch callback, so it is skipped entirely when a shared frame-context store
-// is active (the shared path owns CurrentMVFrame/TemporalMVs itself).
+// batch callback.
 //
 // The per-slot MV store is keyed by reference-map slot (RefFrameIdx), exactly
 // like the entropy frame-context store, so no reference surface list is needed
-// here.
+// here. With a shared frame-context store the saved grids live in that store
+// instead, keyed by global surface (prepareSharedTemporalMotionField).
 func (s *FrameWorkState) prepareTemporalMotionField(event *Event) error {
 	s.releaseCurrentMVGrid()
 	s.currentMVIntra = false
 	s.currentMVFrameValid = false
 	s.temporalMVsValid = false
 	s.temporalMVsDeferred = false
-	if s.sharedFrameContexts != nil {
-		// The shared/SVC path wires per-surface MV frames through the caller's
-		// store and batch callback; leave the batch pointers nil here.
-		return nil
-	}
 	if event.FrameHeader.ShowExistingFrame {
 		return nil
+	}
+	if s.sharedFrameContexts != nil {
+		return s.prepareSharedTemporalMotionField(event)
 	}
 
 	miCols := mvFrameMIExtent(event.FrameSize.CodedWidth)
@@ -931,11 +841,15 @@ func (s *FrameWorkState) prepareTemporalMotionField(event *Event) error {
 	}
 	grid := parser.RefFrames // generic callers keep a separate current buffer
 	if s.ownedTemporalMotion {
-		if !event.FrameSize.AllowIntrabc && !event.TileInfo.UseRefFrameMVS &&
-			(event.FrameHeader.FrameType == parser.FrameTypeKey || event.FrameHeader.FrameType == parser.FrameTypeIntraOnly) {
-			// All decoded blocks are intra and temporal projection skips intra
-			// sources. Retain publication metadata, but omit the unused clear,
-			// per-block invalid-entry stores, and grid publication.
+		if !event.TileInfo.UseRefFrameMVS && (!s.Sequence.EnableRefFrameMVS || !event.FrameSize.AllowIntrabc &&
+			(event.FrameHeader.FrameType == parser.FrameTypeKey || event.FrameHeader.FrameType == parser.FrameTypeIntraOnly)) {
+			// No frame reads this grid: either the sequence disables
+			// ref_frame_mvs, so no frame of it projects saved motion (dav1d's
+			// threaded dav1d_decode_tile_sbrow gates save_tmvs on
+			// seq_hdr->ref_frame_mvs), or all decoded blocks are intra and temporal
+			// projection skips intra sources. Retain publication metadata, but
+			// omit the unused clear, the per-sbrow save_tmvs or per-block
+			// stores, and grid publication.
 			s.currentMVIntra = true
 			return nil
 		}
@@ -998,13 +912,87 @@ func (s *FrameWorkState) prepareTemporalMotionField(event *Event) error {
 	return nil
 }
 
+// prepareSharedTemporalMotionField is prepareTemporalMotionField for the
+// shared (SVC, cross-pool) path: the references' saved motion vectors come
+// from the shared store under the global surface each reference slot names,
+// and the frame records its own into a state-owned grid that
+// publishTemporalMotionFrame hands to the store. A sequence that cannot signal
+// use_ref_frame_mvs records nothing.
+func (s *FrameWorkState) prepareSharedTemporalMotionField(event *Event) error {
+	if s.sharedFrameContextRefs == nil || !s.Sequence.EnableRefFrameMVS || !s.Sequence.EnableOrderHint {
+		return nil
+	}
+	miCols := mvFrameMIExtent(event.FrameSize.CodedWidth)
+	miRows := mvFrameMIExtent(event.FrameSize.Height)
+	need, err := tile.ReferenceMVFrameEntries(miRows, miCols)
+	if err != nil {
+		return nil
+	}
+	if !event.FrameSize.AllowIntrabc && !event.TileInfo.UseRefFrameMVS &&
+		(event.FrameHeader.FrameType == parser.FrameTypeKey || event.FrameHeader.FrameType == parser.FrameTypeIntraOnly) {
+		s.currentMVIntra = true
+		return nil
+	}
+	if cap(s.sharedMVBacking) < need {
+		s.sharedMVBacking = make([]tile.ReferenceMVEntry, need)
+	}
+	if err := s.currentMVFrame.Init(miRows, miCols, s.sharedMVBacking[:need]); err != nil {
+		return err
+	}
+	s.currentMVFrameValid = true
+	if !event.TileInfo.UseRefFrameMVS {
+		return nil
+	}
+
+	var refs [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
+	for ref := 0; ref < parser.InterRefsPerFrame; ref++ {
+		slot := int(event.FrameSize.RefFrameIdx[ref])
+		if slot < 0 || slot >= parser.RefFrames {
+			s.currentMVFrameValid = false
+			return ErrInvalidSurfaceReference
+		}
+		globalID, ok := s.sharedFrameContextRefs.ReferenceSlot(slot)
+		if !ok {
+			continue
+		}
+		m := s.sharedFrameContexts.motionFrame(globalID)
+		if m == nil {
+			continue
+		}
+		refs[ref] = tile.TemporalMotionReferenceFrame{
+			Frame:         &m.frame,
+			OrderHint:     m.meta.orderHint,
+			RefOrderHints: m.meta.refOrderHints,
+			IntraOnly:     m.meta.intraOnly,
+		}
+	}
+	s.mvReferences = refs
+	setup := tile.TemporalMotionSetupRequest{
+		EnableOrderHint:  s.Sequence.EnableOrderHint,
+		OrderHintBits:    s.Sequence.OrderHintBits,
+		CurrentOrderHint: event.FrameHeader.OrderHint,
+		References:       s.mvReferences,
+	}
+	if err := setup.Validate(); err != nil {
+		s.currentMVFrameValid = false
+		return err
+	}
+	s.temporalMVsDeferred = true
+	return nil
+}
+
 // publishTemporalMotionFrame publishes the just-decoded frame's MV_REF side data
 // into every reference-map slot named by refresh_frame_flags, mirroring
 // libaom's cm->cur_frame->mvs being reachable through ref_frame_map after the
-// frame is published. It is the single-pool counterpart to the shared path's
-// per-surface MV store and is skipped when that store is active.
-func (s *FrameWorkState) publishTemporalMotionFrame(event *Event) {
-	if s == nil || s.sharedFrameContexts != nil {
+// frame is published. With a shared frame-context store the grid is saved
+// there under publishedGlobalSurface (the frame's own global surface when
+// negative), which is what the refreshed slots name.
+func (s *FrameWorkState) publishTemporalMotionFrame(event *Event, publishedGlobalSurface int) {
+	if s == nil {
+		return
+	}
+	if s.sharedFrameContexts != nil {
+		s.publishSharedTemporalMotionFrame(event, publishedGlobalSurface)
 		return
 	}
 	if !s.currentMVIntra {
@@ -1052,6 +1040,35 @@ func (s *FrameWorkState) publishTemporalMotionFrame(event *Event) {
 		}
 		s.mvFrameStoreMeta[i] = meta
 	}
+}
+
+func (s *FrameWorkState) publishSharedTemporalMotionFrame(event *Event, publishedGlobalSurface int) {
+	if event.FrameSize.RefreshFrameFlags == 0 || s.sharedFrameContextGlobalSurface == nil {
+		// No reference slot will name this frame, so nothing projects from it.
+		return
+	}
+	if !s.currentMVIntra && (!s.currentMVFrameValid || s.currentMVFrame.Validate() != nil) {
+		return
+	}
+	if publishedGlobalSurface < 0 {
+		publishedGlobalSurface = s.sharedFrameContextGlobalSurface(s.Surface)
+	}
+	meta := mvFrameMeta{
+		valid:         true,
+		orderHint:     event.FrameHeader.OrderHint,
+		refOrderHints: event.ReferenceOrderHints,
+		intraOnly: event.FrameHeader.FrameType == parser.FrameTypeKey ||
+			event.FrameHeader.FrameType == parser.FrameTypeIntraOnly,
+	}
+	if s.currentMVIntra {
+		// Keep a descriptor for the buffer: projection skips intra sources
+		// but still uses their presence and order hints.
+		s.sharedFrameContexts.publishMotion(publishedGlobalSurface, tile.ReferenceMVFrame{}, nil, meta)
+		return
+	}
+	s.sharedMVBacking = s.sharedFrameContexts.publishMotion(publishedGlobalSurface, s.currentMVFrame, s.sharedMVBacking, meta)
+	s.currentMVFrame = tile.ReferenceMVFrame{}
+	s.currentMVFrameValid = false
 }
 
 func (s *FrameWorkState) finishTileResidualCDFs(event *Event, publishedGlobalSurface int) {
@@ -1772,184 +1789,6 @@ func (s *FrameWorkState) planEventWithResolvedContext(refs *SurfaceReferences, f
 	return step, output, referenceCount, references, nil
 }
 
-// BindFrameWorkSideData implements FrameWorkSideDataRunner for function hooks.
-func (fn FrameWorkSideDataFunc) BindFrameWorkSideData(s *FrameWorkState, b FrameWorkBatch) error {
-	if fn == nil {
-		return nil
-	}
-	return fn(s, b)
-}
-
-// FrameWorkSideDataScratchLen reports the caller-owned side-data scratch needed
-// for active postfilter stages in b.
-func FrameWorkSideDataScratchLen(b FrameWorkBatch) (FrameWorkSideDataScratchSize, error) {
-	var size FrameWorkSideDataScratchSize
-	if frameWorkCDEFActive(b.CDEF) {
-		_, _, length, err := b.CDEFIndexMapShape()
-		if err != nil {
-			return FrameWorkSideDataScratchSize{}, err
-		}
-		size.CDEF = length
-	}
-	// The loop-filter map carries the per-MI SkipTransform bit consumed by
-	// CDEF block-list construction (libaom's is_8x8_block_skip), so bind the
-	// map whenever either LF or CDEF is active.
-	if frameWorkLoopFilterActive(b.LoopFilter) || frameWorkCDEFActive(b.CDEF) {
-		cols, rows, length, err := b.LoopFilterMapShape()
-		if err != nil {
-			return FrameWorkSideDataScratchSize{}, err
-		}
-		size.LoopFilterRecords = length
-		// The dav1d-style deblocking edge bitmasks (and their frame-wide 4x4
-		// level cache) are only consumed by the loop filter, so bind them only
-		// when the loop filter itself is active for this frame.
-		if frameWorkLoopFilterActive(b.LoopFilter) {
-			_, _, masks := threading.FrameWorkLoopFilterMaskShape(cols, rows)
-			size.LoopFilterMasks = masks
-			size.LoopFilterLevels = threading.FrameWorkLoopFilterLevelCacheLen(cols, rows)
-		}
-	}
-	if frameWorkRestorationActive(b.Restoration) {
-		plan, err := b.RestorationFramePlan()
-		if err != nil {
-			return FrameWorkSideDataScratchSize{}, err
-		}
-		size.RestorationRecords = plan.UnitRecordLen()
-		size.RestorationBoundary = plan.BoundaryBufferLen()
-	}
-	return size, nil
-}
-
-// BindRunner validates and slices caller-owned scratch for
-// FrameWorkBoundSideDataRunner.
-func (s FrameWorkSideDataScratchSize) BindRunner(scratch FrameWorkSideDataScratch) (FrameWorkBoundSideDataRunner, error) {
-	if s.CDEF < 0 || s.LoopFilterRecords < 0 || s.LoopFilterMasks < 0 || s.LoopFilterLevels < 0 ||
-		s.RestorationRecords < 0 || s.RestorationBoundary < 0 ||
-		len(scratch.CDEFIndex) < s.CDEF || len(scratch.CDEFRead) < s.CDEF ||
-		len(scratch.LoopFilterRecords) < s.LoopFilterRecords ||
-		len(scratch.LFMasks) < s.LoopFilterMasks ||
-		len(scratch.LFLevelCache) < s.LoopFilterLevels ||
-		len(scratch.RestorationRecords) < s.RestorationRecords ||
-		len(scratch.RestorationAbove) < s.RestorationBoundary ||
-		len(scratch.RestorationBelow) < s.RestorationBoundary {
-		return FrameWorkBoundSideDataRunner{}, frame.ErrShortBuffer
-	}
-	return FrameWorkBoundSideDataRunner{
-		CDEFIndex:          scratch.CDEFIndex[:s.CDEF],
-		CDEFRead:           scratch.CDEFRead[:s.CDEF],
-		LoopFilterRecords:  scratch.LoopFilterRecords[:s.LoopFilterRecords],
-		LFMasks:            scratch.LFMasks[:s.LoopFilterMasks],
-		LFLevelCache:       scratch.LFLevelCache[:s.LoopFilterLevels],
-		RestorationRecords: scratch.RestorationRecords[:s.RestorationRecords],
-		RestorationAbove:   scratch.RestorationAbove[:s.RestorationBoundary],
-		RestorationBelow:   scratch.RestorationBelow[:s.RestorationBoundary],
-	}, nil
-}
-
-// frameWorkLoopFilterMaskLayout maps a sequence color config to the lfmask
-// chroma-subsampling layout used by the deblocking edge-mask build.
-func frameWorkLoopFilterMaskLayout(color parser.ColorConfig) lfmask.Layout {
-	layout := lfmask.Layout{Mono: color.MonoChrome}
-	if color.SubsamplingX {
-		layout.SSHor = 1
-	}
-	if color.SubsamplingY {
-		layout.SSVer = 1
-	}
-	return layout
-}
-
-// BindFrameWorkSideData binds side-data storage for any active CDEF,
-// loop-filter, or loop-restoration stage and attaches the views to state.
-func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, b FrameWorkBatch) error {
-	if r == nil {
-		return ErrInvalidFrameWorkState
-	}
-	if frameWorkCDEFActive(b.CDEF) {
-		_, _, length, err := b.CDEFIndexMapShape()
-		if err != nil {
-			return err
-		}
-		if len(r.CDEFIndex) < length || len(r.CDEFRead) < length {
-			return threading.ErrInvalidBatch
-		}
-		// Clear before binding: the CDEF index/read buffers are reused across
-		// frames and BindCDEFIndexMap validates each marked entry against this
-		// frame's cdef_bits limit. A stale index from a previous frame with more
-		// cdef_bits would be rejected against a smaller limit. SetCDEFIndexMap
-		// resets the map after this bind, so per-frame state always starts empty.
-		clear(r.CDEFIndex[:length])
-		clear(r.CDEFRead[:length])
-		cdefMap, err := b.BindCDEFIndexMap(r.CDEFIndex, r.CDEFRead)
-		if err != nil {
-			return err
-		}
-		if err := s.SetCDEFIndexMap(cdefMap); err != nil {
-			return err
-		}
-		r.CDEFIndexMap = cdefMap
-	}
-	if frameWorkLoopFilterActive(b.LoopFilter) || frameWorkCDEFActive(b.CDEF) {
-		cols, rows, length, err := b.LoopFilterMapShape()
-		if err != nil {
-			return err
-		}
-		if len(r.LoopFilterRecords) < length {
-			return threading.ErrInvalidBatch
-		}
-		lfMap := threading.FrameWorkLoopFilterMap{
-			Records: r.LoopFilterRecords[:length],
-			Stride:  uint16(cols),
-			Rows:    uint16(rows),
-		}
-		if err := s.SetLoopFilterMap(lfMap); err != nil {
-			return err
-		}
-		r.LoopFilterMap = lfMap
-
-		// Bind the dav1d-style deblocking edge-mask storage only when the loop
-		// filter is active this frame (the masks are consumed only by it). The
-		// mask bitmasks and the level cache are reused across frames, so clear
-		// them before the decode block walk ORs this frame's edges in.
-		if frameWorkLoopFilterActive(b.LoopFilter) {
-			sb128w, sb128h, maskCount := threading.FrameWorkLoopFilterMaskShape(cols, rows)
-			if len(r.LFMasks) < maskCount || len(r.LFLevelCache) < length {
-				return threading.ErrInvalidBatch
-			}
-			masks := r.LFMasks[:maskCount]
-			levelCache := threading.FrameWorkLoopFilterLevelCacheBind(r.LFLevelCache, cols, rows)
-			clear(masks)
-			clear(levelCache)
-			color := b.Sequence.ColorConfig
-			handle := threading.FrameWorkLoopFilterMasks{
-				Masks:      masks,
-				LevelCache: levelCache,
-				Cols:       cols,
-				Rows:       rows,
-				SB128W:     sb128w,
-				SB128H:     sb128h,
-				Layout:     frameWorkLoopFilterMaskLayout(color),
-				HasChroma:  !color.MonoChrome,
-			}
-			if err := s.SetLoopFilterMasks(handle); err != nil {
-				return err
-			}
-			r.LoopFilterMasks = handle
-		}
-	}
-	if frameWorkRestorationActive(b.Restoration) {
-		buffers, err := b.BindRestorationFrameBuffers(r.RestorationRecords, r.RestorationAbove, r.RestorationBelow)
-		if err != nil {
-			return err
-		}
-		if err := s.SetRestorationFrameBuffers(buffers); err != nil {
-			return err
-		}
-		r.RestorationFrameBuffers = buffers
-	}
-	return nil
-}
-
 func (s *FrameWorkState) bindFrameWorkEventSideData(event *Event, step FrameWorkStep, output *frame.Frame, references []*frame.Frame, payload []byte, side FrameWorkSideDataRunner) error {
 	if side == nil {
 		return nil
@@ -2113,37 +1952,6 @@ func ExecuteTileWork(plan TileWorkPlan, pool *threading.Pool, jobs []tile.Job, b
 		return nil
 	}
 	return pool.Execute(batches[:plan.BatchCount], jobs[:plan.JobCount], fn)
-}
-
-// ExecuteFrameWorkStep dispatches any tile work carried by step. Steps that do
-// not carry tile work are successful no-ops; the boolean reports whether tile
-// work actually ran.
-func ExecuteFrameWorkStep(step FrameWorkStep, pool *threading.Pool, jobs []tile.Job, batches []threading.Batch, fn threading.BatchFunc) (bool, error) {
-	plan, _, hasTile, err := frameWorkStepTilePlan(step)
-	if err != nil {
-		return false, err
-	}
-	if !hasTile {
-		return false, nil
-	}
-
-	if err := ExecuteTileWork(plan, pool, jobs, batches, fn); err != nil {
-		return false, err
-	}
-	return plan.JobCount != 0, nil
-}
-
-// ExecuteFrameWorkStepWithContext dispatches frame-work tile batches while
-// passing the output frame and resolved reference frames to each batch.
-func ExecuteFrameWorkStepWithContext(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
-	return executeFrameWorkStepWithPayload(step, pool, output, references, nil, false, FrameWorkFrameContext{}, false, nil, nil, nil, frameWorkMotionFields{}, nil, nil, nil, nil, jobs, batches, fn)
-}
-
-// ExecuteFrameWorkStepWithPayload dispatches frame-work tile batches while
-// passing the output frame, tile-group payload, and resolved reference frames
-// to each batch.
-func ExecuteFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
-	return executeFrameWorkStepWithPayload(step, pool, output, references, payload, true, FrameWorkFrameContext{}, false, nil, nil, nil, frameWorkMotionFields{}, nil, nil, nil, nil, jobs, batches, fn)
 }
 
 // frameWorkMotionFields bundles the optional temporal-MV batch pointers so the
@@ -2317,8 +2125,6 @@ func frameWorkFrameContext(event *Event, fallback threading.FrameWorkSequenceCon
 	sequence := threading.FrameWorkSequenceContextFromHeader(event.SequenceHeader)
 	if !sequence.Valid() {
 		sequence = fallback
-	} else {
-		sequence.ScaledReferencePredictionDisabled = fallback.ScaledReferencePredictionDisabled
 	}
 	return FrameWorkFrameContext{
 		Sequence:            sequence,

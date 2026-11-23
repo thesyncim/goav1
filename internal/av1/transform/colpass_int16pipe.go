@@ -21,7 +21,7 @@ var inverseDCT64Col8Impl16 = inverseDCT64Col8Scalar16
 
 // int16ColumnFast is set when a SIMD int16 column kernel is bound. Without one
 // the int16 pipeline would be no faster than (and adds conversion over) the
-// int32 SIMD/asm path, so hasFastInt16Column stays false and the int32 pipeline
+// int32 SIMD path, so hasFastInt16Column stays false and the int32 pipeline
 // is used. GOEXPERIMENT=simd flips it on.
 var int16ColumnFast = false
 
@@ -100,12 +100,6 @@ func int16ColumnSIMDInputBound(height int) int32 {
 // high-magnitude inputs, so the SIMD dispatcher uses this bound to avoid a
 // measured slowdown while keeping the low-magnitude SIMD win.
 const dct8SIMDProfitabilityBound int32 = 4095
-
-// int16ColumnSIMDInputSafe checks mathematical exactness after the mid-pass
-// round/clamp. Widths below eight use the scalar int16 DCT implementation and
-// need no SIMD-specific range guard. The Go SIMD build binds a vectorized scan;
-// other builds use this exact scalar one.
-var int16ColumnSIMDInputSafe = int16ColumnSIMDInputSafeScalar
 
 // int16ColumnSIMDInputEligible also applies workload profitability policy to
 // the bound SIMD kernel. It is separate from the exactness predicate because

@@ -14,8 +14,6 @@ import (
 // lfFilter4U8Wide follows the byte-domain sixteen-lane dataflow of the old
 // NEON path. The block-limit gate excludes 255, so saturating the byte-domain
 // threshold sum cannot turn a rejected lane into an accepted one.
-//
-//go:nocheckptr
 func lfFilter4U8Wide(pix []byte, q0Base, step, length int, params filter4Params, changed *uint) {
 	limit := archsimd.BroadcastUint8x16(uint8(params.limit))
 	blimit := archsimd.BroadcastUint8x16(uint8(params.blimit))

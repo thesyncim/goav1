@@ -26,7 +26,7 @@ func TestCDEFUnitFilterMaskMatchesPerBlock(t *testing.T) {
 		cols := (miCols*4 + 63) / 64
 		rows := (miRows*4 + 63) / 64
 		var cache frameWorkCDEFUnitMaskCache
-		if !cache.reset(skipMap, 0, rows, cols) {
+		if !cache.resetWithCompact(skipMap, nil, nil, 0, rows, cols, false) {
 			t.Fatal("cache rejected a small band")
 		}
 		var a, b [cdef.NBlocks * cdef.NBlocks]cdef.BlockPosition

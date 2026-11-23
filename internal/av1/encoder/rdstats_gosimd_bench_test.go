@@ -42,26 +42,9 @@ func benchRDStatsDispatch(b *testing.B, n int) {
 	}
 }
 
-func benchBlockErrorDispatch(b *testing.B, n int) {
-	coeff := make([]int32, n)
-	dq := make([]int32, n)
-	for i := range coeff {
-		coeff[i] = int32(i*13 - 500)
-		dq[i] = int32(i*11 - 400)
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		_, _ = blockErrorImpl(coeff, dq, n)
-	}
-}
-
-func BenchmarkResidualDispatch32x32(b *testing.B)  { benchResidualDispatch(b, 32, 32) }
-func BenchmarkResidualDispatch16x16(b *testing.B)  { benchResidualDispatch(b, 16, 16) }
-func BenchmarkResidualDispatch8x8(b *testing.B)    { benchResidualDispatch(b, 8, 8) }
-func BenchmarkRDStatsDispatch1024(b *testing.B)    { benchRDStatsDispatch(b, 1024) }
-func BenchmarkRDStatsDispatch256(b *testing.B)     { benchRDStatsDispatch(b, 256) }
-func BenchmarkRDStatsDispatch64(b *testing.B)      { benchRDStatsDispatch(b, 64) }
-func BenchmarkBlockErrorDispatch1024(b *testing.B) { benchBlockErrorDispatch(b, 1024) }
-func BenchmarkBlockErrorDispatch256(b *testing.B)  { benchBlockErrorDispatch(b, 256) }
-func BenchmarkBlockErrorDispatch64(b *testing.B)   { benchBlockErrorDispatch(b, 64) }
+func BenchmarkResidualDispatch32x32(b *testing.B) { benchResidualDispatch(b, 32, 32) }
+func BenchmarkResidualDispatch16x16(b *testing.B) { benchResidualDispatch(b, 16, 16) }
+func BenchmarkResidualDispatch8x8(b *testing.B)   { benchResidualDispatch(b, 8, 8) }
+func BenchmarkRDStatsDispatch1024(b *testing.B)   { benchRDStatsDispatch(b, 1024) }
+func BenchmarkRDStatsDispatch256(b *testing.B)    { benchRDStatsDispatch(b, 256) }
+func BenchmarkRDStatsDispatch64(b *testing.B)     { benchRDStatsDispatch(b, 64) }

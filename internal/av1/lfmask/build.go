@@ -1,6 +1,10 @@
 package lfmask
 
-import "github.com/thesyncim/goav1/internal/av1/tile"
+import (
+	"encoding/binary"
+
+	"github.com/thesyncim/goav1/internal/av1/tile"
+)
 
 // Builder owns the per-block transform-decomposition scratch so the mask-edge
 // build carries zero heap allocations across the decode block walk. One Builder
@@ -16,15 +20,6 @@ type Layout struct {
 	SSVer int
 	Mono  bool
 }
-
-// I420 returns the 4:2:0 layout.
-func I420() Layout { return Layout{SSHor: 1, SSVer: 1} }
-
-// I422 returns the 4:2:2 layout.
-func I422() Layout { return Layout{SSHor: 1, SSVer: 0} }
-
-// I444 returns the 4:4:4 layout.
-func I444() Layout { return Layout{SSHor: 0, SSVer: 0} }
 
 // LevelCache is dav1d's f->lf.level: a frame-wide grid of 4 resolved loop-filter
 // levels per luma 4x4 cell (Y vertical, Y horizontal, U, V). Cells is caller
@@ -233,16 +228,15 @@ func (b *Builder) CreateInter(m *FilterMask, lc LevelCache, lv Levels, bx, by, i
 // w x h rectangle of cells at (bx, by), dav1d_create_lf_mask_{intra,inter}'s
 // level_cache_ptr loops; each row is sliced once.
 func (c LevelCache) fill(bx, by, w, h, comp int, l0, l1 uint8) {
-	// dav1d's two adjacent byte stores, one 16-bit store per cell
-	// (storeLevelPair); comp is 0 (Y) or 2 (U/V), and the other pair of the
-	// cell is left untouched.
+	// dav1d's two adjacent byte stores, one 16-bit store per cell; comp is 0
+	// (Y) or 2 (U/V), and the other pair of the cell is left untouched.
 	v := uint16(l0) | uint16(l1)<<8
 	comp &= 2
 	base := by*c.Stride + bx
 	for y := 0; y < h; y++ {
 		row := c.Cells[base : base+w]
 		for x := range row {
-			storeLevelPair(&row[x][comp], v)
+			binary.LittleEndian.PutUint16(row[x][comp:comp+2], v)
 		}
 		base += c.Stride
 	}

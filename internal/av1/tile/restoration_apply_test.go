@@ -91,7 +91,7 @@ func TestApplyRestorationUnitWienerMatchesPrimitive(t *testing.T) {
 	if result != (RestorationUnitApplyResult{Type: parser.RestorationWiener, Filtered: true}) {
 		t.Fatalf("result=%+v", result)
 	}
-	if err := av1restoration.ApplyWienerRestoration(src, stride, origin, want, width, width, height, unit.Wiener, bitDepth, make([]uint16, sizes.Wiener)); err != nil {
+	if err := av1restoration.ApplyWienerRestorationTrusted(src, stride, origin, want, width, width, height, unit.Wiener, bitDepth, make([]uint16, sizes.Wiener)); err != nil {
 		t.Fatal(err)
 	}
 	assertSamplesEqual(t, got, want)
@@ -1680,82 +1680,6 @@ func BenchmarkApplyRestorationUnitRecordWithBoundariesWiener(b *testing.B) {
 	}
 }
 
-func BenchmarkApplyRestorationPlaneRecordsWiener(b *testing.B) {
-	grid := testRestorationApplyGrid(b, [3]parser.RestorationType{parser.RestorationWiener}, 0)
-	records := makeRestorationPlaneRecords(b, grid, func(i int) RestorationUnit {
-		return RestorationUnit{Type: parser.RestorationWiener, Wiener: av1restoration.DefaultWienerInfo()}
-	})
-	const bitDepth = 12
-	dataStride := int(grid.PlaneWidth) + 2*restorationApplyFrameHorzBorder + 8
-	dataOrigin := restorationBorder*dataStride + restorationApplyFrameHorzBorder
-	dataRows := int(grid.PlaneHeight) + 2*restorationBorder
-	data := makeRestorationApplySource(dataStride, dataRows, bitDepth)
-	dst := make([]uint16, dataStride*dataRows)
-	boundaries := makeRestorationApplyBoundaries(b, grid, bitDepth, 5)
-	sizes, err := RestorationPlaneApplyScratchLen(grid, records, false)
-	if err != nil {
-		b.Fatal(err)
-	}
-	scratch := makeRestorationBoundaryApplyScratch(sizes)
-	b.ReportAllocs()
-	b.SetBytes(int64(grid.PlaneWidth * grid.PlaneHeight * 2))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := ApplyRestorationPlaneRecords(grid, records, boundaries, data, dataStride, dataOrigin, dst, dataStride, dataOrigin, bitDepth, scratch, false); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkApplyRestorationFramePlaneWiener(b *testing.B) {
-	grid := testRestorationApplyGrid(b, [3]parser.RestorationType{parser.RestorationWiener}, 0)
-	records := makeRestorationPlaneRecords(b, grid, func(i int) RestorationUnit {
-		return RestorationUnit{Type: parser.RestorationWiener, Wiener: av1restoration.DefaultWienerInfo()}
-	})
-	const bitDepth = 12
-	dataStride := int(grid.PlaneWidth) + 2*restorationApplyFrameHorzBorder + 8
-	dataOrigin := restorationBorder*dataStride + restorationApplyFrameHorzBorder
-	dataRows := int(grid.PlaneHeight) + 2*restorationBorder
-	data := makeRestorationApplySource(dataStride, dataRows, bitDepth)
-	dst := make([]uint16, dataStride*dataRows)
-	boundaries := makeRestorationApplyBoundaries(b, grid, bitDepth, 5)
-	sizes, err := RestorationFramePlaneScratchLen(grid, records, false)
-	if err != nil {
-		b.Fatal(err)
-	}
-	scratch := makeRestorationBoundaryApplyScratch(sizes)
-	b.ReportAllocs()
-	b.SetBytes(int64(grid.PlaneWidth * grid.PlaneHeight * 2))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := ApplyRestorationFramePlane(grid, records, boundaries, data, dataStride, dataOrigin, dst, dataStride, dataOrigin, bitDepth, scratch, false); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkApplyRestorationFrameWienerSGR(b *testing.B) {
-	const bitDepth = 12
-	planes := makeRestorationFramePlanes(b, [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}, bitDepth, false)
-	sizes, err := RestorationFrameScratchLen(planes, false)
-	if err != nil {
-		b.Fatal(err)
-	}
-	scratch := makeRestorationBoundaryApplyScratch(sizes)
-	var bytes int64
-	for i := range planes {
-		bytes += int64(planes[i].Grid.PlaneWidth * planes[i].Grid.PlaneHeight * 2)
-	}
-	b.ReportAllocs()
-	b.SetBytes(bytes)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := ApplyRestorationFrame(planes, bitDepth, scratch, false); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func BenchmarkApplyRestorationFrameToFrameWienerSGR(b *testing.B) {
 	const bitDepth = 12
 	types := [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}
@@ -1817,10 +1741,10 @@ func makeRestorationApplyBoundaries(tb testing.TB, grid RestorationPlaneGrid, bi
 	srcStride := int(grid.PlaneWidth) + 3
 	deblock := makeRestorationBoundaryPlaneWithSalt(grid, srcStride, bitDepth, salt)
 	cdef := makeRestorationBoundaryPlaneWithSalt(grid, srcStride, bitDepth, salt+17)
-	if err := SaveRestorationBoundaryLines(grid, deblock, srcStride, 0, boundaries, false); err != nil {
+	if err := SaveRestorationBoundaryLinesFromFramePlane(grid, restorationBoundaryFramePlane(grid, deblock, srcStride), 2, boundaries, false); err != nil {
 		tb.Fatal(err)
 	}
-	if err := SaveRestorationBoundaryLines(grid, cdef, srcStride, 0, boundaries, true); err != nil {
+	if err := SaveRestorationBoundaryLinesFromFramePlane(grid, restorationBoundaryFramePlane(grid, cdef, srcStride), 2, boundaries, true); err != nil {
 		tb.Fatal(err)
 	}
 	return boundaries

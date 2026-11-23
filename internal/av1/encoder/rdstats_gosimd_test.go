@@ -11,7 +11,7 @@ import (
 )
 
 // TestRDStatsGosimdBinding confirms the goexperiment.simd init bound the
-// residual, RD-statistics and block-error dispatch vars to the Go SIMD kernels
+// residual and RD-statistics dispatch vars to the Go SIMD kernels
 // wherever the CPU supports them.
 func TestRDStatsGosimdBinding(t *testing.T) {
 	if !gosimdKernelsSupported() {
@@ -24,7 +24,6 @@ func TestRDStatsGosimdBinding(t *testing.T) {
 	}{
 		{"residualBlockImpl", residualBlockImpl, "residualBlockSIMD"},
 		{"rdStatsBlockImpl", rdStatsBlockImpl, "rdStatsBlockSIMD"},
-		{"blockErrorImpl", blockErrorImpl, "blockErrorSIMD"},
 	}
 	for _, tc := range cases {
 		name := runtime.FuncForPC(reflect.ValueOf(tc.fn).Pointer()).Name()
@@ -97,29 +96,6 @@ func TestRDStatsBlockSIMDSingleNonzero(t *testing.T) {
 					t.Fatalf("count=%d active=%d level=%d mismatch", count, active, level)
 				}
 				qcoeff[active] = 0
-			}
-		}
-	}
-}
-
-func TestBlockErrorSIMDMatchesPureGo(t *testing.T) {
-	rng := rand.New(rand.NewSource(0x5D03))
-	for _, count := range []int{0, 1, 3, 4, 5, 7, 8, 16, 63, 64, 256, 1024} {
-		for trial := range 300 {
-			coeff := make([]int32, count)
-			dq := make([]int32, count)
-			for i := range coeff {
-				coeff[i] = int32(rng.Uint32())
-				dq[i] = int32(rng.Uint32())
-				if trial%2 == 0 {
-					coeff[i] = int32(rng.Intn(65536) - 32768)
-					dq[i] = int32(rng.Intn(65536) - 32768)
-				}
-			}
-			we, ws := blockErrorPureGo(coeff, dq, count)
-			ge, gs := blockErrorSIMD(coeff, dq, count)
-			if ge != we || gs != ws {
-				t.Fatalf("count %d trial %d: got (%d,%d) want (%d,%d)", count, trial, ge, gs, we, ws)
 			}
 		}
 	}

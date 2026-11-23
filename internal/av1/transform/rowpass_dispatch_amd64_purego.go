@@ -6,9 +6,9 @@
 
 package transform
 
-// init binds the pure-Go batched row kernels on the amd64 purego build (which
-// excludes the AVX2 assembly). It keeps the dispatch wiring symmetric across
-// build configurations.
+// init binds the pure-Go batched row kernels on the amd64 purego build, which
+// has no AVX2 kernels, keeping the dispatch wiring symmetric across build
+// configurations.
 func init() {
 	inverseDCT4Row2Impl = inverseDCT4Row2PureGo
 	inverseDCT8Row2Impl = inverseDCT8Row2PureGo

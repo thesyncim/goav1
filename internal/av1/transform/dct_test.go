@@ -6,19 +6,6 @@ import (
 	"testing"
 )
 
-func TestScratchLen(t *testing.T) {
-	got, err := ScratchLen(Size{Width: 16, Height: 32})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != 512 {
-		t.Fatalf("ScratchLen=%d want 512", got)
-	}
-	if _, err := ScratchLen(Size{Width: 4, Height: 12}); !errors.Is(err, ErrInvalidTransform) {
-		t.Fatalf("invalid ScratchLen err=%v want %v", err, ErrInvalidTransform)
-	}
-}
-
 func TestInverseDCT4(t *testing.T) {
 	values := []int32{100, -20, 30, 7}
 	inverseDCT4(values, 1, minInt16, maxInt16)
@@ -89,7 +76,7 @@ func TestInverseDCTBlock4x4DC(t *testing.T) {
 	coeff[0] = 16
 	dst := make([]int16, 4*4)
 	scratch := make([]int32, 4*4)
-	if err := InverseDCTBlock(dst, 4, coeff, 4, scratch, Size{Width: 4, Height: 4}); err != nil {
+	if err := InverseBlock(dst, 4, coeff, 4, scratch, Size{Width: 4, Height: 4}, TypeDCTDCT); err != nil {
 		t.Fatal(err)
 	}
 	for i, got := range dst {
@@ -108,7 +95,7 @@ func TestInverseDCTBlock4x4Mixed(t *testing.T) {
 	}, 4, 4)
 	dst := make([]int16, 4*4)
 	scratch := make([]int32, 4*4)
-	if err := InverseDCTBlock(dst, 4, coeff, 4, scratch, Size{Width: 4, Height: 4}); err != nil {
+	if err := InverseBlock(dst, 4, coeff, 4, scratch, Size{Width: 4, Height: 4}, TypeDCTDCT); err != nil {
 		t.Fatal(err)
 	}
 	want := []int16{
@@ -129,7 +116,7 @@ func TestInverseDCTBlock8x8DC(t *testing.T) {
 	coeff[0] = 32
 	dst := make([]int16, 8*8)
 	scratch := make([]int32, 8*8)
-	if err := InverseDCTBlock(dst, 8, coeff, 8, scratch, Size{Width: 8, Height: 8}); err != nil {
+	if err := InverseBlock(dst, 8, coeff, 8, scratch, Size{Width: 8, Height: 8}, TypeDCTDCT); err != nil {
 		t.Fatal(err)
 	}
 	for i, got := range dst {
@@ -152,7 +139,7 @@ func TestInverseDCTBlock8x8Mixed(t *testing.T) {
 	}, 8, 8)
 	dst := make([]int16, 8*8)
 	scratch := make([]int32, 8*8)
-	if err := InverseDCTBlock(dst, 8, coeff, 8, scratch, Size{Width: 8, Height: 8}); err != nil {
+	if err := InverseBlock(dst, 8, coeff, 8, scratch, Size{Width: 8, Height: 8}, TypeDCTDCT); err != nil {
 		t.Fatal(err)
 	}
 	want := []int16{
@@ -208,7 +195,7 @@ func TestInverseDCTBlockSupportedSizes(t *testing.T) {
 		dst := make([]int16, dstStride*height)
 		scratchLen := width * height
 		scratch := make([]int32, scratchLen+3)
-		if err := InverseDCTBlock(dst, dstStride, coeff, coeffStride, scratch, size); err != nil {
+		if err := InverseBlock(dst, dstStride, coeff, coeffStride, scratch, size, TypeDCTDCT); err != nil {
 			t.Fatalf("%dx%d InverseDCTBlock err=%v", size.Width, size.Height, err)
 		}
 		for row := 0; row < height; row++ {
@@ -231,7 +218,7 @@ func TestInverseDCTBlock4x4Strides(t *testing.T) {
 	dst := make([]int16, 6*4)
 	scratch := make([]int32, 20)
 	coeff[1] = 16
-	if err := InverseDCTBlock(dst, 6, coeff, 6, scratch, Size{Width: 4, Height: 4}); err != nil {
+	if err := InverseBlock(dst, 6, coeff, 6, scratch, Size{Width: 4, Height: 4}, TypeDCTDCT); err != nil {
 		t.Fatal(err)
 	}
 	for row := range 4 {
@@ -270,7 +257,7 @@ func TestInverseDCTBlockRejectsInvalidInputs(t *testing.T) {
 		{name: "short coeff", dst: dst, dstStride: 4, coeff: coeff[:15], coeffStride: 4, scratch: scratch, size: Size{Width: 4, Height: 4}},
 	}
 	for _, tt := range tests {
-		err := InverseDCTBlock(tt.dst, tt.dstStride, tt.coeff, tt.coeffStride, tt.scratch, tt.size)
+		err := InverseBlock(tt.dst, tt.dstStride, tt.coeff, tt.coeffStride, tt.scratch, tt.size, TypeDCTDCT)
 		if !errors.Is(err, ErrInvalidTransform) {
 			t.Fatalf("%s err=%v want %v", tt.name, err, ErrInvalidTransform)
 		}
@@ -291,16 +278,16 @@ func TestInverseDCTBlockAllocs(t *testing.T) {
 	dst32 := make([]int16, 32*32)
 	scratch32 := make([]int32, 32*32)
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := InverseDCTBlock(dst4, 4, coeff4, 4, scratch4, Size{Width: 4, Height: 4}); err != nil {
+		if err := InverseBlock(dst4, 4, coeff4, 4, scratch4, Size{Width: 4, Height: 4}, TypeDCTDCT); err != nil {
 			t.Fatal(err)
 		}
-		if err := InverseDCTBlock(dst8, 8, coeff8, 8, scratch8, Size{Width: 8, Height: 8}); err != nil {
+		if err := InverseBlock(dst8, 8, coeff8, 8, scratch8, Size{Width: 8, Height: 8}, TypeDCTDCT); err != nil {
 			t.Fatal(err)
 		}
-		if err := InverseDCTBlock(dst16, 16, coeff16, 16, scratch16, Size{Width: 16, Height: 16}); err != nil {
+		if err := InverseBlock(dst16, 16, coeff16, 16, scratch16, Size{Width: 16, Height: 16}, TypeDCTDCT); err != nil {
 			t.Fatal(err)
 		}
-		if err := InverseDCTBlock(dst32, 32, coeff32, 32, scratch32, Size{Width: 32, Height: 32}); err != nil {
+		if err := InverseBlock(dst32, 32, coeff32, 32, scratch32, Size{Width: 32, Height: 32}, TypeDCTDCT); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -357,7 +344,7 @@ func FuzzInverseDCTBlock(f *testing.F) {
 				coeff[col*coeffStride+row] = base
 			}
 		}
-		if err := InverseDCTBlock(dst, dstStride, coeff, coeffStride, scratch, size); err != nil {
+		if err := InverseBlock(dst, dstStride, coeff, coeffStride, scratch, size, TypeDCTDCT); err != nil {
 			t.Fatalf("InverseDCTBlock err=%v", err)
 		}
 		for row := 0; row < height; row++ {
@@ -384,7 +371,7 @@ func BenchmarkInverseDCTBlock4x4(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = InverseDCTBlock(dst, 4, coeff, 4, scratch, Size{Width: 4, Height: 4})
+		_ = InverseBlock(dst, 4, coeff, 4, scratch, Size{Width: 4, Height: 4}, TypeDCTDCT)
 	}
 }
 
@@ -397,7 +384,7 @@ func BenchmarkInverseDCTBlock8x8(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = InverseDCTBlock(dst, 8, coeff, 8, scratch, Size{Width: 8, Height: 8})
+		_ = InverseBlock(dst, 8, coeff, 8, scratch, Size{Width: 8, Height: 8}, TypeDCTDCT)
 	}
 }
 

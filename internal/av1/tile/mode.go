@@ -1,6 +1,7 @@
 package tile
 
 import (
+	"encoding/binary"
 	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
@@ -34,70 +35,97 @@ type BlockModeCDFs struct {
 	SegmentID   [BlockModeContexts]entropy.CDF
 }
 
+// BlockContext is dav1d's BlockContext (src/env.h): one edge of the block
+// mode context, indexed by 4x4 position. BlockModeContext holds the above edge
+// (A, dav1d's t->a) and the left edge (L, t->l); the superblock carriers hold
+// the same type, so an edge load or store is one struct copy. The coefficient
+// contexts (lcoef/ccoef) live in CoeffEntropyContext.
+type BlockContext struct {
+	Mode     [MaxBlockModeSlots]IntraMode
+	SegPred  [MaxBlockModeSlots]uint8
+	Skip     [MaxBlockModeSlots]uint8
+	SkipMode [MaxBlockModeSlots]uint8
+	Intra    [MaxBlockModeSlots]uint8
+	// CompType is dav1d's comp_type: compInterNone for single-reference and
+	// intra blocks, else the compound blend.
+	CompType [MaxBlockModeSlots]uint8
+	Ref      [2][MaxBlockModeSlots]ReferenceFrame
+	// Filter is the interpolation filter per direction (0: the pair's Y,
+	// 1: its X); filterUnset (dav1d's DAV1D_N_SWITCHABLE_FILTERS) marks
+	// intra and reset entries.
+	Filter  [2][MaxBlockModeSlots]motion.InterpFilter
+	TxIntra [MaxBlockModeSlots]uint8
+	Tx      [MaxBlockModeSlots]uint8
+	UVMode  [MaxBlockModeSlots]ChromaIntraMode
+	PalSz   [MaxBlockModeSlots]uint8
+
+	// BlockSize and InterIntra feed the libaom-shaped neighbor scans (the
+	// intra tx_size context, warp samples, ref-MV and OBMC scans without
+	// refmvs rows). InterIntra mirrors libaom's ref_frame[1] = INTRA_FRAME
+	// for inter-intra blocks, which goav1 keeps at Ref[1] = ReferenceFrameNone:
+	// av1_findSamples rejects such neighbors as warp sample sources.
+	BlockSize  [MaxBlockModeSlots]BlockSize
+	InterIntra [MaxBlockModeSlots]uint8
+}
+
+// dav1d's CompInterType values for BlockContext.CompType.
+const (
+	compInterNone uint8 = iota
+	compInterWeightedAvg
+	compInterAvg
+	compInterSeg
+	compInterWedge
+)
+
+// filterUnset is dav1d's DAV1D_N_SWITCHABLE_FILTERS edge value.
+const filterUnset = motion.InterpBilinear
+
+var unsetEdgeFilters = func() (f [2][MaxBlockModeSlots]motion.InterpFilter) {
+	for d := range f {
+		for i := range f[d] {
+			f[d][i] = filterUnset
+		}
+	}
+	return f
+}()
+
+// reset is dav1d's reset_context for the fields whose reset value is not
+// zero: the interpolation filters start unset.
+func (e *BlockContext) reset() {
+	*e = BlockContext{}
+	e.Filter = unsetEdgeFilters
+}
+
+// interp is the edge's filter pair at i.
+func (e *BlockContext) interp(i int) motion.InterpFilters {
+	return motion.InterpFilters{X: e.Filter[1][i], Y: e.Filter[0][i]}
+}
+
+// edgePalette is one edge's dav1d t->pal_sz_uv and t->al_pal: the chroma
+// palette size in luma coordinates (aomedia bug 2183) and the Y and U
+// colours, which the colour caches read only up to the sizes. The above
+// caches are read only inside the superblock, so only the left edge is
+// carried between superblocks.
+type edgePalette struct {
+	SzUV   [MaxBlockModeSlots]uint8
+	Colors [MaxBlockModeSlots][2][PaletteMaxSize]uint16
+}
+
 // BlockModeContext is the caller-owned top/left block context for one
 // superblock. Slots are addressed in 4x4 units, matching dav1d's bx4/by4.
 //
-// The fields form three contiguous ranges, which the superblock loads clear
-// independently (dav1d keeps the same split: the tile-wide above context
-// f->a, the per-SB-row left context t->l, and per-block state):
-//   - the above edge, AboveSkip through AboveInterpValid, carried across SB
-//     rows by the carrier's above slots;
-//   - the left edge, LeftSkip through LeftInterpValid, carried along an SB
-//     row (it stays resident in the scratch between consecutive superblocks
-//     of one walk);
-//   - per-superblock state from AboveInterMotion to the end.
-//
-// Within each edge the intra-syntax fields (Skip through PaletteUV) come
-// first; the owned intra walk carries only that prefix.
+// The superblock loads clear three parts independently (dav1d keeps the same
+// split: the tile-wide above context f->a, the per-SB-row left context t->l,
+// and per-block state): the above edge A, carried across SB rows by the
+// carrier's above slots; the left edge L, carried along an SB row (it stays
+// resident in the scratch between consecutive superblocks of one walk); and
+// the per-superblock state from AboveInterMotion to the end.
 type BlockModeContext struct {
-	AboveSkip        [MaxBlockModeSlots]uint8
-	AboveSkipMode    [MaxBlockModeSlots]uint8
-	AboveSegmentPred [MaxBlockModeSlots]uint8
-	AboveIntra       [MaxBlockModeSlots]uint8
-	AboveMode        [MaxBlockModeSlots]IntraMode
-	AboveChromaIntra [MaxBlockModeSlots]uint8
-	AboveChromaMode  [MaxBlockModeSlots]ChromaIntraMode
-	AboveTxIntra     [MaxBlockModeSlots]uint8
-	AboveTx          [MaxBlockModeSlots]uint8
-	AboveBlockSize   [MaxBlockModeSlots]BlockSize
-	AbovePaletteY    [MaxBlockModeSlots]paletteContext
-	AbovePaletteUV   [MaxBlockModeSlots]paletteContext
-	AboveRef         [2][MaxBlockModeSlots]ReferenceFrame
-	AboveCompound    [MaxBlockModeSlots]uint8
-	AboveCompGroup   [MaxBlockModeSlots]uint8
-	AboveCompIndex   [MaxBlockModeSlots]uint8
-	// AboveInterIntra/LeftInterIntra mirror libaom's per-MI inter-intra
-	// status. libaom records inter-intra blocks with
-	// mbmi->ref_frame[1] = INTRA_FRAME while goav1 keeps Ref[1] =
-	// ReferenceFrameNone for them. Neighbor scans that need to know
-	// "has any second ref" (ref_frame[1] != NONE_FRAME) - distinct from
-	// "has an inter second ref" (has_second_ref, i.e. ref_frame[1] >
-	// INTRA_FRAME) - consult this flag. Notably av1_findSamples rejects
-	// inter-intra neighbors as warp-affine sample sources because their
-	// ref_frame[1] is INTRA_FRAME, not NONE_FRAME.
-	AboveInterIntra  [MaxBlockModeSlots]uint8
-	AboveInterp      [MaxBlockModeSlots]motion.InterpFilters
-	AboveInterpValid [MaxBlockModeSlots]uint8
+	A BlockContext
+	L BlockContext
 
-	LeftSkip        [MaxBlockModeSlots]uint8
-	LeftSkipMode    [MaxBlockModeSlots]uint8
-	LeftSegmentPred [MaxBlockModeSlots]uint8
-	LeftIntra       [MaxBlockModeSlots]uint8
-	LeftMode        [MaxBlockModeSlots]IntraMode
-	LeftChromaIntra [MaxBlockModeSlots]uint8
-	LeftChromaMode  [MaxBlockModeSlots]ChromaIntraMode
-	LeftTxIntra     [MaxBlockModeSlots]uint8
-	LeftTx          [MaxBlockModeSlots]uint8
-	LeftBlockSize   [MaxBlockModeSlots]BlockSize
-	LeftPaletteY    [MaxBlockModeSlots]paletteContext
-	LeftPaletteUV   [MaxBlockModeSlots]paletteContext
-	LeftRef         [2][MaxBlockModeSlots]ReferenceFrame
-	LeftCompound    [MaxBlockModeSlots]uint8
-	LeftCompGroup   [MaxBlockModeSlots]uint8
-	LeftCompIndex   [MaxBlockModeSlots]uint8
-	LeftInterIntra  [MaxBlockModeSlots]uint8
-	LeftInterp      [MaxBlockModeSlots]motion.InterpFilters
-	LeftInterpValid [MaxBlockModeSlots]uint8
+	PalA edgePalette
+	PalL edgePalette
 
 	// AboveInterMotion/LeftInterMotion are per-superblock: the carriers
 	// restore them only on the libaom-shaped neighbor-motion path
@@ -239,49 +267,16 @@ type BlockModeContext struct {
 // resetForSuperblock is BlockModeContext{} minus the trailing payload grids
 // (see GridInterMotion): both edges plus the per-superblock state.
 func (c *BlockModeContext) resetForSuperblock() {
-	c.clearAboveEdge()
-	c.clearLeftEdge()
+	c.A.reset()
+	c.L.reset()
 	c.resetSuperblockState()
 }
 
-// clearAboveEdge zeroes the above edge (AboveSkip through AboveInterpValid),
-// dav1d's dav1d_reset_context on the tile's above context.
-func (c *BlockModeContext) clearAboveEdge() {
-	clear(unsafe.Slice((*byte)(unsafe.Pointer(c)), unsafe.Offsetof(c.LeftSkip)))
-}
-
-// clearLeftEdge zeroes the left edge (LeftSkip through LeftInterpValid),
-// dav1d's dav1d_reset_context(&t->l) at the start of an SB row.
-func (c *BlockModeContext) clearLeftEdge() {
-	clear(unsafe.Slice((*byte)(unsafe.Pointer(&c.LeftSkip)), unsafe.Offsetof(c.AboveInterMotion)-unsafe.Offsetof(c.LeftSkip)))
-}
-
-// clearAboveIntraEdge and clearLeftIntraEdge zero the intra-syntax prefix of
-// each edge (Skip through PaletteUV), the only edge fields the owned intra
-// walk reads.
-func (c *BlockModeContext) clearAboveIntraEdge() {
-	clear(unsafe.Slice((*byte)(unsafe.Pointer(c)), unsafe.Offsetof(c.AboveRef)))
-}
-
-func (c *BlockModeContext) clearLeftIntraEdge() {
-	clear(unsafe.Slice((*byte)(unsafe.Pointer(&c.LeftSkip)), unsafe.Offsetof(c.LeftRef)-unsafe.Offsetof(c.LeftSkip)))
-}
-
-// poisonAboveEdge fills the above edge with garbage in goav1_poison builds
-// before a load that must overwrite every field of it.
-func (c *BlockModeContext) poisonAboveEdge() {
+// poisonEdge fills an edge with garbage in goav1_poison builds before a load
+// that must overwrite all of it.
+func poisonEdge(e *BlockContext) {
 	if poisonSkippedClears {
-		b := unsafe.Slice((*byte)(unsafe.Pointer(c)), unsafe.Offsetof(c.LeftSkip))
-		for i := range b {
-			b[i] = 0xA5
-		}
-	}
-}
-
-// poisonLeftEdge is poisonAboveEdge for the left edge.
-func (c *BlockModeContext) poisonLeftEdge() {
-	if poisonSkippedClears {
-		b := unsafe.Slice((*byte)(unsafe.Pointer(&c.LeftSkip)), unsafe.Offsetof(c.AboveInterMotion)-unsafe.Offsetof(c.LeftSkip))
+		b := unsafe.Slice((*byte)(unsafe.Pointer(e)), unsafe.Sizeof(*e))
 		for i := range b {
 			b[i] = 0xA5
 		}
@@ -444,7 +439,7 @@ func (c *BlockModeContext) SkipContext(x4 int, y4 int) (int, error) {
 	if err := validateBlockModeSlot(x4, y4); err != nil {
 		return 0, err
 	}
-	return int(c.AboveSkip[x4]) + int(c.LeftSkip[y4]), nil
+	return int(c.A.Skip[x4]) + int(c.L.Skip[y4]), nil
 }
 
 // SkipModeContext returns libaom's av1_get_skip_mode_context() value.
@@ -455,7 +450,7 @@ func (c *BlockModeContext) SkipModeContext(x4 int, y4 int) (int, error) {
 	if err := validateBlockModeSlot(x4, y4); err != nil {
 		return 0, err
 	}
-	return int(c.AboveSkipMode[x4]) + int(c.LeftSkipMode[y4]), nil
+	return int(c.A.SkipMode[x4]) + int(c.L.SkipMode[y4]), nil
 }
 
 // SegmentPredContext returns libaom's av1_get_pred_context_seg_id() value.
@@ -466,7 +461,7 @@ func (c *BlockModeContext) SegmentPredContext(x4 int, y4 int) (int, error) {
 	if err := validateBlockModeSlot(x4, y4); err != nil {
 		return 0, err
 	}
-	return int(c.AboveSegmentPred[x4]) + int(c.LeftSegmentPred[y4]), nil
+	return int(c.A.SegPred[x4]) + int(c.L.SegPred[y4]), nil
 }
 
 // Mark updates the top/left block prefix context after a decoded block.
@@ -488,14 +483,14 @@ func (c *BlockModeContext) Mark(size BlockSize, x4 int, y4 int, result BlockMode
 	skipMode := boolByte(result.SkipMode)
 	skip := boolByte(result.SkipTransform)
 	for i := 0; i < int(dims.W4); i++ {
-		c.AboveSegmentPred[x4+i] = segPred
-		c.AboveSkipMode[x4+i] = skipMode
-		c.AboveSkip[x4+i] = skip
+		c.A.SegPred[x4+i] = segPred
+		c.A.SkipMode[x4+i] = skipMode
+		c.A.Skip[x4+i] = skip
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.LeftSegmentPred[y4+i] = segPred
-		c.LeftSkipMode[y4+i] = skipMode
-		c.LeftSkip[y4+i] = skip
+		c.L.SegPred[y4+i] = segPred
+		c.L.SkipMode[y4+i] = skipMode
+		c.L.Skip[y4+i] = skip
 	}
 	return nil
 }
@@ -631,37 +626,44 @@ func (s *DecodeState) ReadCDEFIndex(params parser.CDEFParams, skipTransform bool
 
 // ReadCDEFIndexForBlock decodes cdef_idx using libaom/dav1d's 64x64 CDEF-unit
 // cache: the first non-skip block in a unit reads the syntax element, and later
-// blocks in the same unit reuse it without consuming entropy bits.
-func (s *DecodeState) ReadCDEFIndexForBlock(params parser.CDEFParams, ctx *CDEFIndexContext, size BlockSize, x4 int, y4 int, skipTransform bool) (uint8, error) {
-	if s == nil || ctx == nil {
-		return 0, ErrInvalidDecodeState
-	}
-	if params.Bits > maxCDEFBits {
+// blocks in the same unit reuse it without consuming entropy bits. As in dav1d
+// decode_b, the unit index comes from the block's superblock-local position
+// and a block wider or taller than a unit marks the units it covers.
+func (s *DecodeState) ReadCDEFIndexForBlock(params *parser.CDEFParams, ctx *CDEFIndexContext, size BlockSize, x4 int, y4 int, skipTransform bool) (uint8, error) {
+	if s == nil || ctx == nil || params.Bits > maxCDEFBits {
 		return 0, ErrInvalidDecodeState
 	}
 	if skipTransform || params.Bits == 0 {
 		return 0, nil
 	}
-
-	units, count, err := cdefUnitsForBlock(size, x4, y4)
-	if err != nil {
-		return 0, err
+	dims, ok := size.Dimensions()
+	if !ok || x4 < 0 || y4 < 0 ||
+		x4+int(dims.W4) > MaxBlockModeSlots ||
+		y4+int(dims.H4) > MaxBlockModeSlots {
+		return 0, ErrInvalidDecodeState
 	}
-	if ctx.Read[units[0]] {
-		cached := ctx.Index[units[0]]
+	idx := (x4>>4)&1 | (y4>>3)&2
+	if ctx.Read[idx] {
+		cached := ctx.Index[idx]
 		if cached >= parser.MaxCDEFStrengths {
 			return 0, ErrInvalidDecodeState
 		}
 		return cached, nil
 	}
-
-	index, err := s.ReadCDEFIndex(params, false)
+	v, err := s.Reader.ReadBits(params.Bits)
 	if err != nil {
 		return 0, err
 	}
-	for i := range count {
-		ctx.Index[units[i]] = index
-		ctx.Read[units[i]] = true
+	index := uint8(v)
+	ctx.Index[idx], ctx.Read[idx] = index, true
+	if dims.W4 > 16 {
+		ctx.Index[(idx+1)&3], ctx.Read[(idx+1)&3] = index, true
+	}
+	if dims.H4 > 16 {
+		ctx.Index[(idx+2)&3], ctx.Read[(idx+2)&3] = index, true
+	}
+	if dims.W4 > 16 && dims.H4 > 16 {
+		ctx.Index[3], ctx.Read[3] = index, true
 	}
 	return index, nil
 }
@@ -795,14 +797,28 @@ func FillSegmentID(dst []uint8, stride uint16, x4 int, y4 int, w4 int, h4 int, s
 	if (y4+h4-1)*strideInt+x4+w4 > len(dst) {
 		return ErrInvalidDecodeState
 	}
-	// dav1d case_set: one row is filled, the others copy it.
-	first := dst[base : base+w4 : base+w4]
-	for i := range first {
-		first[i] = segmentID
-	}
-	for y := 1; y < h4; y++ {
+	// dav1d case_set: every row is stored from the replicated id, eight
+	// bytes at a time, instead of copying (and reloading) the first row.
+	x := uint64(segmentID) * 0x0101010101010101
+	for range h4 {
+		row := dst[base : base+w4]
+		switch w4 {
+		case 1:
+			row[0] = segmentID
+		case 2:
+			binary.LittleEndian.PutUint16(row, uint16(x))
+		case 4:
+			binary.LittleEndian.PutUint32(row, uint32(x))
+		default:
+			for len(row) >= 8 {
+				binary.LittleEndian.PutUint64(row, x)
+				row = row[8:]
+			}
+			for i := range row {
+				row[i] = segmentID
+			}
+		}
 		base += strideInt
-		copy(dst[base:base+w4], first)
 	}
 	return nil
 }
@@ -869,13 +885,6 @@ func cdefUnitsForBlock(size BlockSize, x4 int, y4 int) ([cdefUnitsPerSB]uint8, i
 		}
 	}
 	return units, count, nil
-}
-
-func negDeinterleaveSegmentID(diff int, ref int, max int) (int, error) {
-	if diff < 0 || ref < 0 || max <= 0 || ref >= max {
-		return 0, ErrInvalidDecodeState
-	}
-	return negDeinterleave(diff, ref, max), nil
 }
 
 // negDeinterleave is dav1d's neg_deinterleave (src/decode.c), unchecked: ref

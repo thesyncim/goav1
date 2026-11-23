@@ -69,10 +69,9 @@ type OverlappableNeighbor struct {
 
 	Size BlockSize
 
-	Motion             InterMotionResult
-	MotionValid        bool
-	InterpFilters      motion.InterpFilters
-	InterpFiltersValid bool
+	Motion        InterMotionResult
+	MotionValid   bool
+	InterpFilters motion.InterpFilters
 }
 
 // OverlappableNeighborSet carries the above and left OBMC neighbor lists.
@@ -432,25 +431,23 @@ func (c *BlockModeContext) collectOverlappableLeft(y4 int, visibleH4 int, maxNei
 
 func (c *BlockModeContext) aboveOverlappableNeighbor(slot int, rel int, span int) OverlappableNeighbor {
 	return OverlappableNeighbor{
-		RelX4:              int8(rel),
-		Span4:              uint8(maxInt(0, span)),
-		Size:               c.AboveBlockSize[slot],
-		Motion:             c.AboveInterMotion[slot],
-		MotionValid:        c.AboveMotionValid[slot] != 0,
-		InterpFilters:      c.AboveInterp[slot],
-		InterpFiltersValid: c.AboveInterpValid[slot] != 0,
+		RelX4:         int8(rel),
+		Span4:         uint8(maxInt(0, span)),
+		Size:          c.A.BlockSize[slot],
+		Motion:        c.AboveInterMotion[slot],
+		MotionValid:   c.AboveMotionValid[slot] != 0,
+		InterpFilters: c.A.interp(slot),
 	}
 }
 
 func (c *BlockModeContext) leftOverlappableNeighbor(slot int, rel int, span int) OverlappableNeighbor {
 	return OverlappableNeighbor{
-		RelY4:              int8(rel),
-		Span4:              uint8(maxInt(0, span)),
-		Size:               c.LeftBlockSize[slot],
-		Motion:             c.LeftInterMotion[slot],
-		MotionValid:        c.LeftMotionValid[slot] != 0,
-		InterpFilters:      c.LeftInterp[slot],
-		InterpFiltersValid: c.LeftInterpValid[slot] != 0,
+		RelY4:         int8(rel),
+		Span4:         uint8(maxInt(0, span)),
+		Size:          c.L.BlockSize[slot],
+		Motion:        c.LeftInterMotion[slot],
+		MotionValid:   c.LeftMotionValid[slot] != 0,
+		InterpFilters: c.L.interp(slot),
 	}
 }
 
@@ -476,8 +473,8 @@ func warpSampleNeighborMatches(n OverlappableNeighbor, ref ReferenceFrame) bool 
 	return n.MotionValid &&
 		!n.Motion.InterIntra &&
 		!n.Motion.References.Compound &&
-		n.Motion.References.Ref[0] == ref &&
-		n.Motion.References.Ref[1] == ReferenceFrameNone
+		n.Motion.References.Ref0 == ref &&
+		n.Motion.References.Ref1 == ReferenceFrameNone
 }
 
 type warpSample struct {
@@ -693,18 +690,18 @@ func warpLeastSquaresProduct1(a int, b int) int {
 }
 
 func (c *BlockModeContext) aboveOverlappable(slot int) bool {
-	return slot >= 0 && slot < MaxBlockModeSlots && c.AboveIntra[slot] == 0 && c.AboveRef[0][slot].Valid()
+	return slot >= 0 && slot < MaxBlockModeSlots && c.A.Intra[slot] == 0 && c.A.Ref[0][slot].Valid()
 }
 
 func (c *BlockModeContext) leftOverlappable(slot int) bool {
-	return slot >= 0 && slot < MaxBlockModeSlots && c.LeftIntra[slot] == 0 && c.LeftRef[0][slot].Valid()
+	return slot >= 0 && slot < MaxBlockModeSlots && c.L.Intra[slot] == 0 && c.L.Ref[0][slot].Valid()
 }
 
 func (c *BlockModeContext) aboveOverlappableStep(slot int) int {
 	if slot < 0 || slot >= MaxBlockModeSlots {
 		return 1
 	}
-	if dims, ok := c.AboveBlockSize[slot].Dimensions(); ok {
+	if dims, ok := c.A.BlockSize[slot].Dimensions(); ok {
 		return maxInt(1, minInt(int(dims.W4), 16))
 	}
 	return 1
@@ -714,7 +711,7 @@ func (c *BlockModeContext) leftOverlappableStep(slot int) int {
 	if slot < 0 || slot >= MaxBlockModeSlots {
 		return 1
 	}
-	if dims, ok := c.LeftBlockSize[slot].Dimensions(); ok {
+	if dims, ok := c.L.BlockSize[slot].Dimensions(); ok {
 		return maxInt(1, minInt(int(dims.H4), 16))
 	}
 	return 1

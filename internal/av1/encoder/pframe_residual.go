@@ -1,7 +1,6 @@
 package encoder
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math/bits"
 	"sync"
@@ -25,45 +24,6 @@ import (
 // temporal residual exactly like the lossy keyframe path, and reconstructs
 // through the decoder's own dequant + inverse transform. Motion estimation
 // (NEWMV + subpel interpolation) extends this path next.
-
-// EncodePFrame encodes src as an inter frame predicting from ref (the previous
-// frame's reconstruction) at the given qindex, returning the temporal unit and
-// the encoder reconstruction the decoder must reproduce exactly.
-func EncodePFrame(src SourceFrame420, ref SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, error) {
-	if src.Width != ref.Width || src.Height != ref.Height {
-		return nil, SourceFrame420{}, fmt.Errorf("encoder: source %dx%d does not match reference %dx%d", src.Width, src.Height, ref.Width, ref.Height)
-	}
-	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
-		return nil, SourceFrame420{}, fmt.Errorf("encoder: P-frame requires multiple-of-8 dimensions, got %dx%d", src.Width, src.Height)
-	}
-	recon := SourceFrame420{
-		Y:            make([]byte, len(src.Y)),
-		U:            make([]byte, len(src.U)),
-		V:            make([]byte, len(src.V)),
-		YStride:      src.YStride,
-		ChromaStride: src.ChromaStride,
-		Width:        src.Width,
-		Height:       src.Height,
-	}
-	tilePayload, err := encodePFrameTile(src, ref, &recon, qIndex)
-	if err != nil {
-		return nil, SourceFrame420{}, fmt.Errorf("encode tile: %w", err)
-	}
-
-	seq := losslessKeyframeSequence(src.Width, src.Height)
-	header, refState := repeatPFrameHeader(src.Width, src.Height, qIndex, 0x01)
-	if interTransformMode(parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}, qIndex) == TransformModeLargest {
-		header.TransformRef.TransformMode = TransformModeLargest
-	}
-	header.References = &refState
-
-	var groupScratch, outScratch []byte
-	out, err := assembleInterTU(seq, header, []TilePayload{{Data: tilePayload}}, 0, &groupScratch, &outScratch)
-	if err != nil {
-		return nil, SourceFrame420{}, err
-	}
-	return out, recon, nil
-}
 
 // EncodeMonochromePFrame encodes src as a native AV1 monochrome inter frame
 // predicting from ref, returning the temporal unit and the encoder
@@ -99,49 +59,6 @@ func EncodeMonochromePFrame(src SourceFrameMono, ref SourceFrameMono, qIndex uin
 	out, err := assembleInterTU(seq, header, []TilePayload{{Data: tilePayload}}, 0, &groupScratch, &outScratch)
 	if err != nil {
 		return nil, SourceFrameMono{}, err
-	}
-	return out, recon, nil
-}
-
-// EncodeScaledReferencePFrame encodes src as an inter frame whose LAST
-// reference has different coded dimensions. The returned temporal unit assumes
-// the decoder already holds that smaller or larger reference frame in slot 0.
-func EncodeScaledReferencePFrame(src SourceFrame420, ref SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, error) {
-	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
-		return nil, SourceFrame420{}, fmt.Errorf("encoder: scaled-reference P-frame requires multiple-of-8 source dimensions, got %dx%d", src.Width, src.Height)
-	}
-	if ref.Width <= 0 || ref.Height <= 0 || ref.Width%8 != 0 || ref.Height%8 != 0 {
-		return nil, SourceFrame420{}, fmt.Errorf("encoder: scaled-reference P-frame requires multiple-of-8 reference dimensions, got %dx%d", ref.Width, ref.Height)
-	}
-	if _, err := motion.NewScaleFactors(ref.Width, ref.Height, src.Width, src.Height); err != nil {
-		return nil, SourceFrame420{}, fmt.Errorf("encoder: invalid scaled reference: %w", err)
-	}
-	recon := SourceFrame420{
-		Y:            make([]byte, len(src.Y)),
-		U:            make([]byte, len(src.U)),
-		V:            make([]byte, len(src.V)),
-		YStride:      src.YStride,
-		ChromaStride: src.ChromaStride,
-		Width:        src.Width,
-		Height:       src.Height,
-	}
-	tilePayload, err := encodePFrameTile(src, ref, &recon, qIndex)
-	if err != nil {
-		return nil, SourceFrame420{}, fmt.Errorf("encode tile: %w", err)
-	}
-
-	seq := losslessKeyframeSequence(src.Width, src.Height)
-	header, refState := repeatPFrameHeader(src.Width, src.Height, qIndex, 0x01)
-	if interTransformMode(parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}, qIndex) == TransformModeLargest {
-		header.TransformRef.TransformMode = TransformModeLargest
-	}
-	refState = referenceStateForFrame(ref.Width, ref.Height)
-	header.References = &refState
-
-	var groupScratch, outScratch []byte
-	out, err := assembleInterTU(seq, header, []TilePayload{{Data: tilePayload}}, 0, &groupScratch, &outScratch)
-	if err != nil {
-		return nil, SourceFrame420{}, err
 	}
 	return out, recon, nil
 }
@@ -242,73 +159,6 @@ type pframeCoder struct {
 	// cdef_idx literals the SVT CDEF search picks after the frame is
 	// reconstructed (cdef_frame.go). The driver owns the logs per tile.
 	cdefLog *entropy.WriterLog
-}
-
-var realtimeAvg8x8Impl = realtimeAvg8x8Wide
-var realtimeAvg8x8QuadImpl = realtimeAvg8x8QuadWide
-
-// realtimeAvg8x8Wide sums the 64 samples of an 8x8 block with SWAR: each row
-// is one little-endian uint64, its even and odd bytes are split into 16-bit
-// lanes, and the lanes accumulate over the eight rows. A lane holds at most
-// 8*510 = 4080, so no carry crosses lanes and the sum is exact.
-func realtimeAvg8x8Wide(src []byte, stride int) int {
-	const lowBytes = 0x00ff00ff00ff00ff
-	_ = src[7*stride+7]
-	r1 := src[stride:]
-	r2 := src[2*stride:]
-	r3 := src[3*stride:]
-	r4 := src[4*stride:]
-	r5 := src[5*stride:]
-	r6 := src[6*stride:]
-	r7 := src[7*stride:]
-	acc := rowPairSum(binary.LittleEndian.Uint64(src), lowBytes) +
-		rowPairSum(binary.LittleEndian.Uint64(r1), lowBytes) +
-		rowPairSum(binary.LittleEndian.Uint64(r2), lowBytes) +
-		rowPairSum(binary.LittleEndian.Uint64(r3), lowBytes) +
-		rowPairSum(binary.LittleEndian.Uint64(r4), lowBytes) +
-		rowPairSum(binary.LittleEndian.Uint64(r5), lowBytes) +
-		rowPairSum(binary.LittleEndian.Uint64(r6), lowBytes) +
-		rowPairSum(binary.LittleEndian.Uint64(r7), lowBytes)
-	sum := acc&0xffff + (acc>>16)&0xffff + (acc>>32)&0xffff + acc>>48
-	return int(sum+32) >> 6
-}
-
-// rowPairSum returns the four 16-bit lanes of w's even and odd byte pairs.
-func rowPairSum(w, lowBytes uint64) uint64 {
-	return (w & lowBytes) + ((w >> 8) & lowBytes)
-}
-
-func realtimeAvg8x8QuadWide(src []byte, stride int) (int, int, int, int) {
-	return realtimeAvg8x8Wide(src, stride),
-		realtimeAvg8x8Wide(src[8:], stride),
-		realtimeAvg8x8Wide(src[8*stride:], stride),
-		realtimeAvg8x8Wide(src[8*stride+8:], stride)
-}
-
-func realtimeAvg8x8(src []byte, stride int) int {
-	return realtimeAvg8x8Impl(src, stride)
-}
-
-func realtimeAvg8x8PureGo(src []byte, stride int) int {
-	sum := 0
-	for y := range 8 {
-		row := y * stride
-		for x := range 8 {
-			sum += int(src[row+x])
-		}
-	}
-	return (sum + 32) >> 6
-}
-
-func realtimeAvg8x8Quad(src []byte, stride int) (int, int, int, int) {
-	return realtimeAvg8x8QuadImpl(src, stride)
-}
-
-func realtimeAvg8x8QuadPureGo(src []byte, stride int) (int, int, int, int) {
-	return realtimeAvg8x8PureGo(src, stride),
-		realtimeAvg8x8PureGo(src[8:], stride),
-		realtimeAvg8x8PureGo(src[8*stride:], stride),
-		realtimeAvg8x8PureGo(src[8*stride+8:], stride)
 }
 
 // reset (re)initializes the per-frame CDF and quantizer state. Buffers are
@@ -418,6 +268,38 @@ type encoderScanTables struct {
 	scan4x16, scan16x4           []int16
 	scan8x32, scan32x8           []int16
 	scan16x64, scan64x16         []int16
+	// inverse maps each scan above to its inverse (interTXBResult).
+	inverse []inverseScan
+}
+
+// inverseScan is one scan's inverse: iscan[pos] is the scan index of raster
+// position pos.
+type inverseScan struct {
+	scan  *int16
+	iscan []int16
+}
+
+func newInverseScan(scan []int16) inverseScan {
+	e := inverseScan{scan: &scan[0], iscan: make([]int16, len(scan))}
+	for c, pos := range scan {
+		e.iscan[pos] = int16(c)
+	}
+	return e
+}
+
+// sharedInverseScan returns the inverse of a shared scan, nil for any other
+// scan.
+func sharedInverseScan(scan []int16) []int16 {
+	if len(scan) == 0 {
+		return nil
+	}
+	p := &scan[0]
+	for i := range sharedScans.inverse {
+		if sharedScans.inverse[i].scan == p {
+			return sharedScans.inverse[i].iscan
+		}
+	}
+	return nil
 }
 
 var (
@@ -439,6 +321,7 @@ func buildEncoderScanTables() (encoderScanTables, error) {
 		if err := transform.FillDefaultScan(*sq.dst, inv, transform.Size{Width: sq.n, Height: sq.n}, transform.Class2D); err != nil {
 			return t, err
 		}
+		t.inverse = append(t.inverse, newInverseScan(*sq.dst))
 	}
 	for _, rs := range []struct {
 		dst  *[]int16
@@ -462,6 +345,7 @@ func buildEncoderScanTables() (encoderScanTables, error) {
 		if err := transform.FillDefaultScan(*rs.dst, inv, size, transform.Class2D); err != nil {
 			return t, err
 		}
+		t.inverse = append(t.inverse, newInverseScan(*rs.dst))
 	}
 	return t, nil
 }
@@ -488,6 +372,7 @@ func (st *lossyEncodeState) initScans() error {
 	}
 	st.levels = make([]uint8, scratchLen)
 	st.invScratch = make([]int32, 4096)
+	st.mc = new(lossyMCScratch)
 	return nil
 }
 
@@ -538,11 +423,6 @@ func (st *lossyEncodeState) scanForThinTransformSize(size tile.TransformSize) ([
 	}
 }
 
-func encodePFrameTile(src SourceFrame420, ref SourceFrame420, recon *SourceFrame420, qIndex uint8) ([]byte, error) {
-	var pc pframeCoder
-	return pc.encodeTile(src, ref, nil, recon, qIndex, nil, parser.ReferenceModeSingle, 0, uint16(src.Width/4))
-}
-
 // exportCDFs snapshots the coder's adapted symbol contexts - the frame-end
 // state the decoder saves from the context-update tile - and resets the
 // symbol counters the way the decoder's save path does.
@@ -559,17 +439,6 @@ func (pc *pframeCoder) exportCDFs(dst *frameCDFs) error {
 	dst.MV = pc.st.mvCDFs
 	dst.DeltaQ = pc.st.deltaQCDF
 	return dst.ResetCDFCounts()
-}
-
-// encodeTile codes one P-frame tile covering MI columns [miColStart,
-// miColEnd) reusing the coder's buffers. Bounds must be superblock-aligned;
-// the full-frame single-tile case passes [0, miCols).
-func (pc *pframeCoder) encodeTile(src SourceFrame420, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, qIndex uint8, prev *frameCDFs, referenceMode parser.ReferenceMode, miColStart, miColEnd uint16) ([]byte, error) {
-	return pc.encodeTileWithOptions(src, ref, golden, recon, qIndex, prev, referenceMode, false, false, miColStart, miColEnd)
-}
-
-func (pc *pframeCoder) encodeTileWithOptions(src SourceFrame420, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420, qIndex uint8, prev *frameCDFs, referenceMode parser.ReferenceMode, forceIntegerMV bool, allowScreenContentTools bool, miColStart, miColEnd uint16) ([]byte, error) {
-	return pc.encodeTileWithOptionsColor(src, ref, golden, recon, qIndex, prev, referenceMode, forceIntegerMV, allowScreenContentTools, parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}, miColStart, miColEnd)
 }
 
 func (pc *pframeCoder) encodeMonochromeTile(src SourceFrameMono, ref SourceFrameMono, golden *SourceFrameMono, recon *SourceFrameMono, qIndex uint8, prev *frameCDFs, referenceMode parser.ReferenceMode, miColStart, miColEnd uint16) ([]byte, error) {
@@ -795,14 +664,7 @@ func (pc *pframeCoder) encodeTileWithOptionsColor(src SourceFrame420, ref Source
 		}
 		return st.writePBlock(block, scratch, &pc.refCDFs, &pc.modeCDFs, &pc.interpCDFs, referenceMode, &pc.splitRowRecs[row])
 	}
-	var writeStart txWriteStatsStamp
-	if txWriteStatsEnabled {
-		writeStart = txWriteStatsStart()
-	}
 	writeErr := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, scratch, carrier, walkReq, sbSizeMIB, decideReplay, visitWrite)
-	if txWriteStatsEnabled {
-		txWriteStatsFinish(writeStart)
-	}
 	if pipelined {
 		if writeErr != nil {
 			pc.wavefront.abort()
@@ -945,10 +807,10 @@ func (st *lossyEncodeState) encodeLosslessIntraInterBlock(src SourceFrame420, bl
 	modeCtx.TxNeighborValid = false
 	if int(block.X4) < tile.MaxBlockModeSlots && int(block.Y4) < tile.MaxBlockModeSlots {
 		modeCtx.TxNeighborValid = true
-		modeCtx.TxAboveNeighborIntra = modeCtx.AboveIntra[block.X4]
-		modeCtx.TxAboveNeighborBlockSize = modeCtx.AboveBlockSize[block.X4]
-		modeCtx.TxLeftNeighborIntra = modeCtx.LeftIntra[block.Y4]
-		modeCtx.TxLeftNeighborBlockSize = modeCtx.LeftBlockSize[block.Y4]
+		modeCtx.TxAboveNeighborIntra = modeCtx.A.Intra[block.X4]
+		modeCtx.TxAboveNeighborBlockSize = modeCtx.A.BlockSize[block.X4]
+		modeCtx.TxLeftNeighborIntra = modeCtx.L.Intra[block.Y4]
+		modeCtx.TxLeftNeighborBlockSize = modeCtx.L.BlockSize[block.Y4]
 	}
 	if err := tile.WriteIntraFlag(st.w, &st.intraCDFs, modeCtx, tile.IntraFlagRequest{
 		FrameType: parser.FrameTypeInter,
@@ -1265,14 +1127,14 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// Materialize the three plane predictions with the decoder's convolve so
 	// residual coding and reconstruction agree with the decoder bit for bit.
 	if refs.Compound {
-		if err := predictCompoundInto(st.predY[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, compoundMV[0], compoundMV[1], false, false, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+		if err := predictCompoundInto(st.predY[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, compoundMV[0], compoundMV[1], false, false, &st.mc.compBuf0, &st.mc.compBuf1, &st.mc.compScratch); err != nil {
 			return fmt.Errorf("predict compound luma: %w", err)
 		}
 		if hasChroma {
-			if err := predictCompoundInto(st.predU[:cbw*cbh], ref.U, ref.ChromaStride, golden.U, golden.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, compoundMV[0], compoundMV[1], st.color.SubsamplingX, st.color.SubsamplingY, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+			if err := predictCompoundInto(st.predU[:cbw*cbh], ref.U, ref.ChromaStride, golden.U, golden.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, compoundMV[0], compoundMV[1], st.color.SubsamplingX, st.color.SubsamplingY, &st.mc.compBuf0, &st.mc.compBuf1, &st.mc.compScratch); err != nil {
 				return fmt.Errorf("predict compound u: %w", err)
 			}
-			if err := predictCompoundInto(st.predV[:cbw*cbh], ref.V, ref.ChromaStride, golden.V, golden.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, compoundMV[0], compoundMV[1], st.color.SubsamplingX, st.color.SubsamplingY, &st.compBuf0, &st.compBuf1, &st.compScratch); err != nil {
+			if err := predictCompoundInto(st.predV[:cbw*cbh], ref.V, ref.ChromaStride, golden.V, golden.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, compoundMV[0], compoundMV[1], st.color.SubsamplingX, st.color.SubsamplingY, &st.mc.compBuf0, &st.mc.compBuf1, &st.mc.compScratch); err != nil {
 				return fmt.Errorf("predict compound v: %w", err)
 			}
 		}
@@ -1280,14 +1142,14 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if refPlanes.Width != src.Width || refPlanes.Height != src.Height {
 			refChromaW := chromaWidthForColor(refPlanes.Width, st.color)
 			refChromaH := chromaHeightForColor(refPlanes.Height, st.color)
-			if err := predictIntoScaled(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, refPlanes.Width, refPlanes.Height, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, &st.scaledScratch); err != nil {
+			if err := predictIntoScaled(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, refPlanes.Width, refPlanes.Height, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, false, false, &st.mc.scaledScratch); err != nil {
 				return fmt.Errorf("predict scaled luma: %w", err)
 			}
 			if hasChroma {
-				if err := predictIntoScaled(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, refChromaW, refChromaH, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, &st.scaledScratch); err != nil {
+				if err := predictIntoScaled(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, refChromaW, refChromaH, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, &st.mc.scaledScratch); err != nil {
 					return fmt.Errorf("predict scaled u: %w", err)
 				}
-				if err := predictIntoScaled(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, refChromaW, refChromaH, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, &st.scaledScratch); err != nil {
+				if err := predictIntoScaled(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, refChromaW, refChromaH, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, &st.mc.scaledScratch); err != nil {
 					return fmt.Errorf("predict scaled v: %w", err)
 				}
 			}
@@ -1390,7 +1252,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// (av1/encoder/encodeframe_utils.c): inter blocks predicting from LAST
 	// whose vector is under one pixel accumulate their MI area, feeding the
 	// avg_frame_low_motion statistic behind adaptive golden refresh.
-	if refs.Ref[0] == tile.ReferenceFrameLast {
+	if refs.Ref0 == tile.ReferenceFrameLast {
 		zmv := motionResult.MV[0]
 		if zmv.Row > -8 && zmv.Row < 8 && zmv.Col > -8 && zmv.Col < 8 {
 			st.cntZeroMV += int(block.VisibleW4) * int(block.VisibleH4)
@@ -1441,7 +1303,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if !interModeResultUsesGlobalOnly(modeResult) {
 			lfMode = loopfilter.ModeDeltaClassMotion
 		}
-		if err := st.markLoopFilterBlock(block, lfTree, skip, false, uint8(refs.Ref[0])+1, lfMode); err != nil {
+		if err := st.markLoopFilterBlock(block, lfTree, skip, false, uint8(refs.Ref0)+1, lfMode); err != nil {
 			return fmt.Errorf("mark loop filter: %w", err)
 		}
 	}
@@ -1708,10 +1570,10 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	modeCtx.TxNeighborValid = false
 	if int(block.X4) < tile.MaxBlockModeSlots && int(block.Y4) < tile.MaxBlockModeSlots {
 		modeCtx.TxNeighborValid = true
-		modeCtx.TxAboveNeighborIntra = modeCtx.AboveIntra[block.X4]
-		modeCtx.TxAboveNeighborBlockSize = modeCtx.AboveBlockSize[block.X4]
-		modeCtx.TxLeftNeighborIntra = modeCtx.LeftIntra[block.Y4]
-		modeCtx.TxLeftNeighborBlockSize = modeCtx.LeftBlockSize[block.Y4]
+		modeCtx.TxAboveNeighborIntra = modeCtx.A.Intra[block.X4]
+		modeCtx.TxAboveNeighborBlockSize = modeCtx.A.BlockSize[block.X4]
+		modeCtx.TxLeftNeighborIntra = modeCtx.L.Intra[block.Y4]
+		modeCtx.TxLeftNeighborBlockSize = modeCtx.L.BlockSize[block.Y4]
 	}
 	if err := tile.WriteIntraFlag(st.w, &st.intraCDFs, modeCtx, tile.IntraFlagRequest{
 		FrameType: parser.FrameTypeInter,
@@ -1837,16 +1699,8 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	return nil
 }
 
-// predictInto runs the decoder's inter prediction (8-tap convolve, fixed
-// EIGHTTAP filters) for one bw x bh block of plane at frame position (px, py)
-// with motion vector mv, writing into dst (stride bw). Full-pel vectors reduce
-// to copies inside the kernel, so one path serves both cases bit-exactly.
-func predictInto(dst []byte, refPlane []byte, stride, width, height, px, py, bw, bh int, mv motion.Vector, ssX, ssY bool, scratch *motion.ScaledConvolveScratch) error {
-	return predictIntoScaled(dst, refPlane, stride, width, height, width, height, px, py, bw, bh, mv, ssX, ssY, scratch)
-}
-
-// predictIntoScaled runs the same inter predictor as predictInto, but allows
-// the reference plane and current plane to have different dimensions. AV1's
+// predictIntoScaled runs the inter predictor and allows the reference plane
+// and current plane to have different dimensions. AV1's
 // scaled inter prediction derives the reference taps from the reference-vs-
 // current size ratio, so callers must pass the full current plane dimensions
 // rather than the destination scratch block dimensions.
@@ -2225,66 +2079,6 @@ func realtimeInterResidualSSEVariance(src, pred []byte, srcStride, predStride, p
 	}
 	sse, sum := pixelStatsPureGo(src[base:], srcStride, pred, predStride, w, h)
 	return sse, varianceFromStats(sse, sum, uint(bits.TrailingZeros(uint(w*h))))
-}
-
-// Compatibility helpers keep the source-cap tests readable while the production
-// path uses the generic 8x8/16x16 realtime plan above.
-func realtimeInterTXUses16x16Leaves(w, h int) bool {
-	return w > 16 || h > 16
-}
-
-func realtimeInterTX16Tree(w, h int) tile.TransformTreeResult {
-	block, ok := realtimeInterBlockSizeForPixels(w, h)
-	if !ok {
-		return tile.TransformTreeResult{}
-	}
-	plan, err := realtimeInterTXPlanForLeafSize(block, 16)
-	if err != nil {
-		return tile.TransformTreeResult{}
-	}
-	return plan.tree
-}
-
-func forEachRealtimeInterTX16Leaf(w, h int, visit func(i, dx, dy int) error) error {
-	block, ok := realtimeInterBlockSizeForPixels(w, h)
-	if !ok {
-		return fmt.Errorf("encoder: invalid realtime tx16 block %dx%d", w, h)
-	}
-	plan, err := realtimeInterTXPlanForLeafSize(block, 16)
-	if err != nil {
-		return err
-	}
-	return plan.ForEachLeaf(visit)
-}
-
-func realtimeInterBlockSizeForPixels(w, h int) (tile.BlockSize, bool) {
-	switch {
-	case w == 64 && h == 64:
-		return tile.BlockSize64x64, true
-	case w == 64 && h == 32:
-		return tile.BlockSize64x32, true
-	case w == 64 && h == 16:
-		return tile.BlockSize64x16, true
-	case w == 32 && h == 64:
-		return tile.BlockSize32x64, true
-	case w == 16 && h == 64:
-		return tile.BlockSize16x64, true
-	case w == 32 && h == 32:
-		return tile.BlockSize32x32, true
-	case w == 32 && h == 16:
-		return tile.BlockSize32x16, true
-	case w == 16 && h == 32:
-		return tile.BlockSize16x32, true
-	case w == 16 && h == 16:
-		return tile.BlockSize16x16, true
-	case w == 16 && h == 8:
-		return tile.BlockSize16x8, true
-	case w == 8 && h == 16:
-		return tile.BlockSize8x16, true
-	case w == 8 && h == 8:
-		return tile.BlockSize8x8, true
-	}
-	return 0, false
 }
 
 // sadBlock is the generic n x n SAD with the 8x8 kernel fast path; limit is
@@ -2970,7 +2764,7 @@ func (st *lossyEncodeState) reconInterTXBResult(reconPlane, pred []byte, predStr
 		return nil
 	}
 	if txbResult.EOB == 1 && txType == transform.TypeDCTDCT {
-		dc := quantize.DequantizeDCCoeffBitDepthTrusted(qcoeff[0], q, geo.txScale, nil, 8)
+		dc := quantize.DequantizeDCCoeffBitDepthTrusted(qcoeff[0], q, geo.txScale, 8)
 		sample, err := transform.InverseDCTDCOnlySampleBitDepth(dc, st.invScratch[:n], geo.size, 8)
 		if err != nil {
 			return err
@@ -3129,31 +2923,6 @@ func (st *lossyEncodeState) inter8x8TXCDFAndSymbol(typ transform.Type) (*entropy
 		return nil, 0, false
 	}
 	return cdf, symbol, true
-}
-
-// forwardTransformBlock dispatches the forward transform for every coded
-// DCT_DCT shape and the small square hybrid transforms enabled in the realtime
-// inter tx_type selector.
-func forwardTransformBlock(tran []int32, residual []int16, scratch []int32, w, h int, typ transform.Type) error {
-	if typ == transform.TypeDCTDCT {
-		return forwardDCTBlock(tran, residual, w, h)
-	}
-	if w == 8 && h == 8 {
-		switch typ {
-		case transform.TypeADSTDCT:
-			transform.ForwardBlock8x8ADSTDCTTrusted(tran, h, residual, w, scratch)
-		case transform.TypeDCTADST:
-			transform.ForwardBlock8x8DCTADSTTrusted(tran, h, residual, w, scratch)
-		case transform.TypeADSTADST:
-			transform.ForwardBlock8x8ADSTADSTTrusted(tran, h, residual, w, scratch)
-		case transform.TypeIDTX:
-			transform.ForwardBlock8x8IDTXTrusted(tran, h, residual, w, scratch)
-		default:
-			return transform.ErrInvalidTransform
-		}
-		return nil
-	}
-	return transform.ForwardBlock(tran, h, residual, w, scratch, transform.Size{Width: uint8(w), Height: uint8(h)}, typ)
 }
 
 // forwardTransformBlock8BitResidualTrusted is used only after residuals have

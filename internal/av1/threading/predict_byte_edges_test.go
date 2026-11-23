@@ -62,7 +62,7 @@ func TestDirectDirectionalEdgeFilterStillRejectsUnboundedSamples(t *testing.T) {
 		scratch.Left[i] = 0xffff
 	}
 	edges := prediction.DirectionalEdges{Above: scratch.Above[:], Left: scratch.Left[:], AboveOrigin: frameWorkDirectionalEdgeOrigin, LeftOrigin: frameWorkDirectionalEdgeOrigin}
-	if err := frameWorkApplyDirectionalIntraEdgeFilter(8, 16, 16, 135, tile.BlockVisit{HaveTop: true, HaveLeft: true}, false, &edges, &scratch); err == nil {
+	if err := frameWorkApplyDirectionalIntraEdgeFilterBounded(8, 16, 16, 135, tile.BlockVisit{HaveTop: true, HaveLeft: true}, false, &edges, &scratch, false); err == nil {
 		t.Fatal("direct helper accepted unbounded caller-supplied samples")
 	}
 }

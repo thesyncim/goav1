@@ -189,9 +189,9 @@ func BenchmarkEncodeKeyframe1080p(b *testing.B) {
 	}
 }
 
-// BenchmarkEncodeKeyframeCold measures the full-HD one-shot convenience helper.
-// It intentionally includes returned temporal-unit/reconstruction allocation
-// and is not a realtime/WebRTC hot-path benchmark.
+// BenchmarkEncodeKeyframeCold measures a full-HD keyframe on a freshly built
+// encoder each iteration, including its scratch allocation. It is not a
+// realtime/WebRTC hot-path benchmark.
 func BenchmarkEncodeKeyframeCold(b *testing.B) {
 	const w, h = 1920, 1080
 	cw, ch := w/2, h/2
@@ -209,7 +209,14 @@ func BenchmarkEncodeKeyframeCold(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, _, err := encoder.EncodeKeyframe(f, 80); err != nil {
+		e, err := encoder.NewKeyframeEncoder(w, h, 80)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if _, _, err := e.Encode(f); err != nil {
+			b.Fatal(err)
+		}
+		if err := e.Close(); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -217,7 +224,7 @@ func BenchmarkEncodeKeyframeCold(b *testing.B) {
 
 // BenchmarkEncodeKeyframeReusable1080p measures repeated full-HD keyframes
 // through the reusable keyframe-only state. This is the zero-allocation
-// alternative to the owned-output one-shot helper above.
+// alternative to the cold encoder above.
 func BenchmarkEncodeKeyframeReusable1080p(b *testing.B) {
 	const w, h = 1920, 1080
 	cw, ch := w/2, h/2

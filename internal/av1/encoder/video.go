@@ -109,7 +109,6 @@ type VideoEncoder struct {
 	tileErrs      []error
 	tuGroup       []byte
 	tuScratch     []byte
-	tuScratch2    []byte
 	tileWork      chan tileWorkRange
 	tileWait      sync.WaitGroup
 	tileWorkerWG  sync.WaitGroup // persistent helpers, separate from per-job completion
@@ -723,7 +722,11 @@ func (e *VideoEncoder) EncodeWithTemporalID(src SourceFrame420, forceKey bool, t
 	if src.Width != e.renderWidth || src.Height != e.renderHeight {
 		return nil, false, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", src.Width, src.Height, e.renderWidth, e.renderHeight)
 	}
-	if e.renderWidth != e.width || e.renderHeight != e.height {
+	// The coding paths address the reconstruction with the source strides,
+	// so a padded or stride-padded source is first copied to the coded size
+	// at tight strides.
+	if e.renderWidth != e.width || e.renderHeight != e.height || src.YStride != e.width ||
+		src.ChromaStride != chromaWidthForColor(e.width, e.parserColorConfig()) {
 		src = e.padSource(src)
 	}
 	if !e.haveKey || forceKey {
@@ -1039,6 +1042,8 @@ func (e *VideoEncoder) Prewarm() error {
 		e.tuScratch = make([]byte, 0, bound)
 		e.tuGroup = make([]byte, 0, bound)
 	}
+	e.cdefSearch.sizingOnly = true
+	defer func() { e.cdefSearch.sizingOnly = false }()
 	if _, _, err := e.Encode(src, true); err != nil {
 		return err
 	}

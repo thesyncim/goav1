@@ -1,22 +1,28 @@
 package goav1
 
-// DecoderFrameWorkResidualStreamRunner connects the byte-stream/RTP event
-// parser to the residual event runner using caller-owned buffers.
-type DecoderFrameWorkResidualStreamRunner struct {
-	Stream      *DecoderStream
-	EventRunner DecoderFrameWorkResidualEventRunner
+import (
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internalobu "github.com/thesyncim/goav1/internal/av1/obu"
+)
 
-	Events          []DecoderEvent
-	SideDataScratch DecoderFrameWorkSideDataScratch
+// decoderFrameWorkResidualStreamRunner connects the byte-stream/RTP event
+// parser to the residual event runner using caller-owned buffers.
+type decoderFrameWorkResidualStreamRunner struct {
+	Stream      *internaldecoder.Stream
+	EventRunner decoderFrameWorkResidualEventRunner
+
+	Events          []internaldecoder.Event
+	SideDataScratch decoderFrameWorkSideDataScratch
 
 	RTPBuffer []byte
 	RTPSpans  []RTPObuSpan
 	RTPUsed   int
 }
 
-// DecoderFrameWorkResidualStreamRunnerState is a cheap snapshot of a bound
+// decoderFrameWorkResidualStreamRunnerState is a cheap snapshot of a bound
 // stream runner's parser state and reusable arena capacities.
-type DecoderFrameWorkResidualStreamRunnerState struct {
+type decoderFrameWorkResidualStreamRunnerState struct {
 	Bound             bool
 	HasSequenceHeader bool
 	InRTPFragment     bool
@@ -28,21 +34,21 @@ type DecoderFrameWorkResidualStreamRunnerState struct {
 	OutputCapacity    int
 }
 
-// DecoderFrameWorkResidualStreamResult reports parser and decode work completed
+// decoderFrameWorkResidualStreamResult reports parser and decode work completed
 // by a stream-runner call.
-type DecoderFrameWorkResidualStreamResult struct {
+type decoderFrameWorkResidualStreamResult struct {
 	EventCount int
 	RTPUsed    int
-	Run        DecoderFrameWorkResidualEventsResult
+	Run        decoderFrameWorkResidualEventsResult
 }
 
 // Accumulate adds next into r using the same result semantics as
-// DecoderFrameWorkResidualStreamRunner.RunRTPPayloads. Event counts are summed,
+// decoderFrameWorkResidualStreamRunner.RunRTPPayloads. Event counts are summed,
 // RTPUsed is replaced by the newest retained-fragment length, and Run is
 // accumulated.
-func (r *DecoderFrameWorkResidualStreamResult) Accumulate(next DecoderFrameWorkResidualStreamResult) error {
+func (r *decoderFrameWorkResidualStreamResult) Accumulate(next decoderFrameWorkResidualStreamResult) error {
 	if r == nil {
-		return ErrDecoderInvalidFrameWorkState
+		return internaldecoder.ErrInvalidFrameWorkState
 	}
 	decoderFrameWorkAccumulateResidualStreamResult(r, next)
 	return nil
@@ -50,24 +56,24 @@ func (r *DecoderFrameWorkResidualStreamResult) Accumulate(next DecoderFrameWorkR
 
 // BindOutputs aliases Run.Outputs to the first Run.OutputCount slots in
 // outputs.
-func (r *DecoderFrameWorkResidualStreamResult) BindOutputs(outputs []*Frame) error {
+func (r *decoderFrameWorkResidualStreamResult) BindOutputs(outputs []*Frame) error {
 	if r == nil {
-		return ErrDecoderInvalidFrameWorkState
+		return internaldecoder.ErrInvalidFrameWorkState
 	}
 	return r.Run.BindOutputs(outputs)
 }
 
-// DecoderFrameWorkResidualStreamPlan reports both the caller-owned scratch
+// decoderFrameWorkResidualStreamPlan reports both the caller-owned scratch
 // required for a residual stream-runner call and the sequence/event pair callers
 // should use to bind a reusable residual event runner for that stream shape.
-type DecoderFrameWorkResidualStreamPlan struct {
-	Size DecoderFrameWorkResidualStreamScratchSize
-	Bind DecoderFrameWorkResidualEventBindPlan
+type decoderFrameWorkResidualStreamPlan struct {
+	Size decoderFrameWorkResidualStreamScratchSize
+	Bind decoderFrameWorkResidualEventBindPlan
 }
 
 // HasEvent reports whether Bind identifies an event that needs residual-event
 // binding or can emit a decoded/display output.
-func (p DecoderFrameWorkResidualStreamPlan) HasEvent() bool {
+func (p decoderFrameWorkResidualStreamPlan) HasEvent() bool {
 	return p.Bind.HasEvent()
 }
 
@@ -75,8 +81,8 @@ func (p DecoderFrameWorkResidualStreamPlan) HasEvent() bool {
 // plans have bind-relevant events, the bind context from other is retained so
 // callers can accumulate plans in decode order and bind against the latest event
 // shape.
-func (p DecoderFrameWorkResidualStreamPlan) Max(other DecoderFrameWorkResidualStreamPlan) DecoderFrameWorkResidualStreamPlan {
-	return DecoderFrameWorkResidualStreamPlan{
+func (p decoderFrameWorkResidualStreamPlan) Max(other decoderFrameWorkResidualStreamPlan) decoderFrameWorkResidualStreamPlan {
+	return decoderFrameWorkResidualStreamPlan{
 		Size: p.Size.Max(other.Size),
 		Bind: decoderFrameWorkResidualStreamBindPlanMax(
 			p.Bind,
@@ -85,21 +91,21 @@ func (p DecoderFrameWorkResidualStreamPlan) Max(other DecoderFrameWorkResidualSt
 	}
 }
 
-// DecoderFrameWorkResidualStreamScratchSize reports caller-owned stream parser
+// decoderFrameWorkResidualStreamScratchSize reports caller-owned stream parser
 // and residual-event scratch needed for one stream-runner call.
-type DecoderFrameWorkResidualStreamScratchSize struct {
+type decoderFrameWorkResidualStreamScratchSize struct {
 	Events    int
 	RTPBuffer int
 	RTPSpans  int
-	Event     DecoderFrameWorkResidualEventScratchSize
+	Event     decoderFrameWorkResidualEventScratchSize
 }
 
-// DecoderFrameWorkResidualStreamScratch carries typed caller-owned parser,
+// decoderFrameWorkResidualStreamScratch carries typed caller-owned parser,
 // residual event, side-data, and output arenas for residual stream runners.
-type DecoderFrameWorkResidualStreamScratch struct {
-	Events   []DecoderEvent
-	Event    DecoderFrameWorkResidualEventScratch
-	SideData DecoderFrameWorkSideDataScratch
+type decoderFrameWorkResidualStreamScratch struct {
+	Events   []internaldecoder.Event
+	Event    decoderFrameWorkResidualEventScratch
+	SideData decoderFrameWorkSideDataScratch
 	Outputs  []*Frame
 
 	RTPBuffer []byte
@@ -108,7 +114,7 @@ type DecoderFrameWorkResidualStreamScratch struct {
 
 // Check reports whether scratch is large enough for size without binding or
 // mutating any caller-owned storage.
-func (s DecoderFrameWorkResidualStreamScratch) Check(size DecoderFrameWorkResidualStreamScratchSize) error {
+func (s decoderFrameWorkResidualStreamScratch) Check(size decoderFrameWorkResidualStreamScratchSize) error {
 	if err := decoderFrameWorkResidualStreamScratchErr(size, s); err != nil {
 		return err
 	}
@@ -116,8 +122,8 @@ func (s DecoderFrameWorkResidualStreamScratch) Check(size DecoderFrameWorkResidu
 }
 
 // Max returns per-arena maximum lengths for reusable residual stream scratch.
-func (s DecoderFrameWorkResidualStreamScratchSize) Max(other DecoderFrameWorkResidualStreamScratchSize) DecoderFrameWorkResidualStreamScratchSize {
-	return DecoderFrameWorkResidualStreamScratchSize{
+func (s decoderFrameWorkResidualStreamScratchSize) Max(other decoderFrameWorkResidualStreamScratchSize) decoderFrameWorkResidualStreamScratchSize {
+	return decoderFrameWorkResidualStreamScratchSize{
 		Events:    max(s.Events, other.Events),
 		RTPBuffer: max(s.RTPBuffer, other.RTPBuffer),
 		RTPSpans:  max(s.RTPSpans, other.RTPSpans),
@@ -127,11 +133,11 @@ func (s DecoderFrameWorkResidualStreamScratchSize) Max(other DecoderFrameWorkRes
 
 // State returns a cheap snapshot of parser state and runner arena capacities.
 // A nil or unbound runner returns the zero state.
-func (r *DecoderFrameWorkResidualStreamRunner) State() DecoderFrameWorkResidualStreamRunnerState {
+func (r *decoderFrameWorkResidualStreamRunner) State() decoderFrameWorkResidualStreamRunnerState {
 	if r == nil || r.Stream == nil {
-		return DecoderFrameWorkResidualStreamRunnerState{}
+		return decoderFrameWorkResidualStreamRunnerState{}
 	}
-	return DecoderFrameWorkResidualStreamRunnerState{
+	return decoderFrameWorkResidualStreamRunnerState{
 		Bound:             true,
 		HasSequenceHeader: r.Stream.HasSequenceHeader(),
 		InRTPFragment:     r.Stream.InRTPFragment(),
@@ -145,7 +151,7 @@ func (r *DecoderFrameWorkResidualStreamRunner) State() DecoderFrameWorkResidualS
 
 // SequenceHeader returns the currently accepted sequence header, if the stream
 // runner is bound and has seen one.
-func (r *DecoderFrameWorkResidualStreamRunner) SequenceHeader() (SequenceHeader, bool) {
+func (r *decoderFrameWorkResidualStreamRunner) SequenceHeader() (SequenceHeader, bool) {
 	if r == nil || r.Stream == nil {
 		return SequenceHeader{}, false
 	}
@@ -154,9 +160,9 @@ func (r *DecoderFrameWorkResidualStreamRunner) SequenceHeader() (SequenceHeader,
 
 // Reset clears the bound parser stream and any retained RTP fragment bytes so
 // the runner can be reused for an independent decode stream.
-func (r *DecoderFrameWorkResidualStreamRunner) Reset() error {
+func (r *decoderFrameWorkResidualStreamRunner) Reset() error {
 	if r == nil || r.Stream == nil {
-		return ErrDecoderInvalidFrameWorkState
+		return internaldecoder.ErrInvalidFrameWorkState
 	}
 	r.Stream.Reset()
 	r.RTPUsed = 0
@@ -166,64 +172,61 @@ func (r *DecoderFrameWorkResidualStreamRunner) Reset() error {
 // ResetRTP clears only retained RTP fragment bytes while preserving parser
 // sequence/reference state. Callers can use this after packet loss or jitter
 // buffer resynchronization.
-func (r *DecoderFrameWorkResidualStreamRunner) ResetRTP() error {
+func (r *decoderFrameWorkResidualStreamRunner) ResetRTP() error {
 	if r == nil || r.Stream == nil {
-		return ErrDecoderInvalidFrameWorkState
+		return internaldecoder.ErrInvalidFrameWorkState
 	}
 	r.Stream.ResetRTP()
 	r.RTPUsed = 0
 	return nil
 }
 
-// BindDecoderFrameWorkResidualStreamEventRunner binds a complete residual
+// bindDecoderFrameWorkResidualStreamEventRunner binds a complete residual
 // stream runner from caller-owned stream and event scratch. It first binds the
 // nested residual event runner, then binds parser/RTP scratch and stream output
 // slots around it.
-func BindDecoderFrameWorkResidualStreamEventRunner(size DecoderFrameWorkResidualStreamScratchSize, stream *DecoderStream, sequence SequenceHeader, event *DecoderEvent, runtime DecoderFrameWorkResidualEventRuntime, scratch DecoderFrameWorkResidualStreamScratch, batchRunner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkResidualStreamRunner, DecoderFrameWorkSideData, error) {
+func bindDecoderFrameWorkResidualStreamEventRunner(size decoderFrameWorkResidualStreamScratchSize, stream *internaldecoder.Stream, sequence SequenceHeader, event *internaldecoder.Event, runtime decoderFrameWorkResidualEventRuntime, scratch decoderFrameWorkResidualStreamScratch, batchRunner *decoderFrameWorkBatchResidualRunner) (decoderFrameWorkResidualStreamRunner, decoderFrameWorkSideData, error) {
 	if stream == nil {
-		return DecoderFrameWorkResidualStreamRunner{}, DecoderFrameWorkSideData{}, ErrDecoderInvalidFrameWorkState
+		return decoderFrameWorkResidualStreamRunner{}, decoderFrameWorkSideData{}, internaldecoder.ErrInvalidFrameWorkState
 	}
 	if err := decoderFrameWorkResidualStreamScratchErr(size, scratch); err != nil {
-		return DecoderFrameWorkResidualStreamRunner{}, DecoderFrameWorkSideData{}, err
+		return decoderFrameWorkResidualStreamRunner{}, decoderFrameWorkSideData{}, err
 	}
-	eventRunner, side, err := BindDecoderFrameWorkResidualEventRunner(size.Event, sequence, event, runtime, scratch.Event, batchRunner)
+	eventRunner, side, err := bindDecoderFrameWorkResidualEventRunner(size.Event, sequence, event, runtime, scratch.Event, batchRunner)
 	if err != nil {
-		return DecoderFrameWorkResidualStreamRunner{}, DecoderFrameWorkSideData{}, err
+		return decoderFrameWorkResidualStreamRunner{}, decoderFrameWorkSideData{}, err
 	}
-	streamRunner, err := BindDecoderFrameWorkResidualStreamRunner(size, stream, eventRunner, scratch)
+	streamRunner, err := bindDecoderFrameWorkResidualStreamRunner(size, stream, eventRunner, scratch)
 	if err != nil {
-		return DecoderFrameWorkResidualStreamRunner{}, DecoderFrameWorkSideData{}, err
+		return decoderFrameWorkResidualStreamRunner{}, decoderFrameWorkSideData{}, err
 	}
 	return streamRunner, side, nil
 }
 
-// BindDecoderFrameWorkResidualStreamPlanRunner binds a complete residual stream
-// runner directly from a stream plan returned by
-// DecoderFrameWorkResidualLowOverheadStreamPlan,
-// DecoderFrameWorkResidualRTPPayloadStreamPlan, or
-// DecoderFrameWorkResidualRTPPayloadsStreamPlan.
-func BindDecoderFrameWorkResidualStreamPlanRunner(plan DecoderFrameWorkResidualStreamPlan, stream *DecoderStream, runtime DecoderFrameWorkResidualEventRuntime, scratch DecoderFrameWorkResidualStreamScratch, batchRunner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkResidualStreamRunner, DecoderFrameWorkSideData, error) {
-	return BindDecoderFrameWorkResidualStreamEventRunner(plan.Size, stream, plan.Bind.Sequence, &plan.Bind.Event, runtime, scratch, batchRunner)
+// bindDecoderFrameWorkResidualStreamPlanRunner binds a complete residual stream
+// runner directly from a stream plan.
+func bindDecoderFrameWorkResidualStreamPlanRunner(plan decoderFrameWorkResidualStreamPlan, stream *internaldecoder.Stream, runtime decoderFrameWorkResidualEventRuntime, scratch decoderFrameWorkResidualStreamScratch, batchRunner *decoderFrameWorkBatchResidualRunner) (decoderFrameWorkResidualStreamRunner, decoderFrameWorkSideData, error) {
+	return bindDecoderFrameWorkResidualStreamEventRunner(plan.Size, stream, plan.Bind.Sequence, &plan.Bind.Event, runtime, scratch, batchRunner)
 }
 
-// BindDecoderFrameWorkResidualStreamRunner binds a stream runner from
+// bindDecoderFrameWorkResidualStreamRunner binds a stream runner from
 // caller-owned parser and side-data scratch. The eventRunner is owned by the
 // caller and is copied into the returned stream runner.
-func BindDecoderFrameWorkResidualStreamRunner(size DecoderFrameWorkResidualStreamScratchSize, stream *DecoderStream, eventRunner DecoderFrameWorkResidualEventRunner, scratch DecoderFrameWorkResidualStreamScratch) (DecoderFrameWorkResidualStreamRunner, error) {
+func bindDecoderFrameWorkResidualStreamRunner(size decoderFrameWorkResidualStreamScratchSize, stream *internaldecoder.Stream, eventRunner decoderFrameWorkResidualEventRunner, scratch decoderFrameWorkResidualStreamScratch) (decoderFrameWorkResidualStreamRunner, error) {
 	if stream == nil {
-		return DecoderFrameWorkResidualStreamRunner{}, ErrDecoderInvalidFrameWorkState
+		return decoderFrameWorkResidualStreamRunner{}, internaldecoder.ErrInvalidFrameWorkState
 	}
 	if err := decoderFrameWorkResidualStreamScratchErr(size, scratch); err != nil {
-		return DecoderFrameWorkResidualStreamRunner{}, err
+		return decoderFrameWorkResidualStreamRunner{}, err
 	}
 	if scratch.Outputs != nil {
 		eventRunner.Outputs = scratch.Outputs[:size.Event.Outputs]
 	}
-	return DecoderFrameWorkResidualStreamRunner{
+	return decoderFrameWorkResidualStreamRunner{
 		Stream:      stream,
 		EventRunner: eventRunner,
 		Events:      scratch.Events[:size.Events],
-		SideDataScratch: DecoderFrameWorkSideDataScratch{
+		SideDataScratch: decoderFrameWorkSideDataScratch{
 			CDEFIndexMap:             scratch.SideData.CDEFIndexMap[:size.Event.SideData.CDEFIndexMap],
 			CDEFReadMap:              scratch.SideData.CDEFReadMap[:size.Event.SideData.CDEFReadMap],
 			LoopFilterMap:            scratch.SideData.LoopFilterMap[:size.Event.SideData.LoopFilterMap],
@@ -238,7 +241,7 @@ func BindDecoderFrameWorkResidualStreamRunner(size DecoderFrameWorkResidualStrea
 	}, nil
 }
 
-func decoderFrameWorkResidualStreamScratchErr(size DecoderFrameWorkResidualStreamScratchSize, scratch DecoderFrameWorkResidualStreamScratch) error {
+func decoderFrameWorkResidualStreamScratchErr(size decoderFrameWorkResidualStreamScratchSize, scratch decoderFrameWorkResidualStreamScratch) error {
 	if decoderFrameWorkResidualScratchTooShort(scratch.Events, size.Events) {
 		return ErrDecoderEventBufferTooSmall
 	}
@@ -247,350 +250,147 @@ func decoderFrameWorkResidualStreamScratchErr(size DecoderFrameWorkResidualStrea
 		return ErrRTPShortBuffer
 	}
 	if decoderFrameWorkResidualStreamSideDataScratchTooShort(scratch.SideData, size.Event.SideData) {
-		return ErrFrameShortBuffer
+		return internalframe.ErrShortBuffer
 	}
 	if scratch.Outputs != nil && decoderFrameWorkResidualScratchTooShort(scratch.Outputs, size.Event.Outputs) {
-		return ErrFrameShortBuffer
+		return internalframe.ErrShortBuffer
 	}
 	return nil
 }
 
-// DecoderFrameWorkResidualLowOverheadStreamScratchLen parses a low-overhead
-// OBU buffer through a copy of stream and reports caller-owned scratch needed to
-// run its residual events. stream is passed by value so the live decoder stream
-// is not mutated by sizing.
-func DecoderFrameWorkResidualLowOverheadStreamScratchLen(stream DecoderStream, src []byte, workers int, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamScratchSize, error) {
-	plan, err := DecoderFrameWorkResidualLowOverheadStreamPlan(stream, src, workers, events, spans, jobs, batches)
-	return plan.Size, err
-}
-
-// DecoderFrameWorkResidualLowOverheadStreamPlan parses a low-overhead OBU
-// buffer through a copy of stream and reports both caller-owned scratch and the
-// bind context for a reusable residual stream runner. stream is passed by value
-// so the live decoder stream is not mutated by planning.
-func DecoderFrameWorkResidualLowOverheadStreamPlan(stream DecoderStream, src []byte, workers int, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamPlan, error) {
-	eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(src)
-	plan := DecoderFrameWorkResidualStreamPlan{
-		Size: DecoderFrameWorkResidualStreamScratchSize{Events: eventCount},
-	}
-	if err != nil {
-		return plan, err
-	}
-	if len(events) < eventCount {
-		return plan, ErrDecoderEventBufferTooSmall
-	}
-	sequence, _ := stream.SequenceHeader()
-	count, err := stream.PushLowOverhead(src, events[:eventCount])
-	if err != nil {
-		return plan, err
-	}
-	eventSize, err := DecoderFrameWorkResidualEventsScratchLen(sequence, events[:count], workers, spans, jobs, batches)
-	if err != nil {
-		return plan, err
-	}
-	plan.Size.Event = eventSize
-	plan.Bind = DecoderFrameWorkResidualEventsBindPlan(sequence, events[:count])
-	return plan, nil
-}
-
-// DecoderFrameWorkResidualLowOverheadStreamsScratchLen validates an ordered
-// set of low-overhead OBU buffers against a copy of stream and reports reusable
-// max scratch needed by RunLowOverheads.
-func DecoderFrameWorkResidualLowOverheadStreamsScratchLen(stream DecoderStream, srcs [][]byte, workers int, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamScratchSize, error) {
-	plan, err := DecoderFrameWorkResidualLowOverheadStreamsPlan(stream, srcs, workers, events, spans, jobs, batches)
-	return plan.Size, err
-}
-
-// DecoderFrameWorkResidualLowOverheadStreamsPlan validates an ordered set of
-// low-overhead OBU buffers against a copy of stream and reports reusable max
-// scratch plus the last bind-relevant event across the chunk batch. Output
-// scratch is accumulated across chunks so callers can bind one runner for
-// incremental low-overhead decode loops.
-func DecoderFrameWorkResidualLowOverheadStreamsPlan(stream DecoderStream, srcs [][]byte, workers int, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamPlan, error) {
-	var plan DecoderFrameWorkResidualStreamPlan
-	outputs := 0
-	for i := range srcs {
-		eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(srcs[i])
-		nextSize := DecoderFrameWorkResidualStreamScratchSize{Events: eventCount}
-		plan.Size = plan.Size.Max(nextSize)
-		if err != nil {
-			return plan, err
-		}
-		if len(events) < eventCount {
-			return plan, ErrDecoderEventBufferTooSmall
-		}
-
-		sequence, _ := stream.SequenceHeader()
-		count, err := stream.PushLowOverhead(srcs[i], events[:eventCount])
-		if err != nil {
-			return plan, err
-		}
-		eventSize, err := DecoderFrameWorkResidualEventsScratchLen(sequence, events[:count], workers, spans, jobs, batches)
-		if err != nil {
-			return plan, err
-		}
-		nextBind := DecoderFrameWorkResidualEventsBindPlan(sequence, events[:count])
-		if nextBind.HasEvent() {
-			plan.Bind = nextBind
-		} else if !plan.Bind.HasEvent() {
-			plan.Bind.Sequence = nextBind.Sequence
-		}
-		nextSize.Event = eventSize
-		outputs += eventSize.Outputs
-		plan.Size = plan.Size.Max(nextSize)
-		plan.Size.Event.Outputs = outputs
-	}
-	return plan, nil
-}
-
-// DecoderFrameWorkResidualRTPPayloadStreamScratchLen validates one AV1 RTP
-// payload against a copy of stream and reports caller-owned RTP/event/residual
-// scratch needed to run completed residual events. If used is non-zero, rtpBuffer
-// must contain the preserved fragment bytes from the live stream runner.
-func DecoderFrameWorkResidualRTPPayloadStreamScratchLen(stream DecoderStream, used int, payload []byte, workers int, rtpBuffer []byte, rtpSpans []RTPObuSpan, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamScratchSize, error) {
-	plan, err := DecoderFrameWorkResidualRTPPayloadStreamPlan(stream, used, payload, workers, rtpBuffer, rtpSpans, events, spans, jobs, batches)
-	return plan.Size, err
-}
-
-// DecoderFrameWorkResidualRTPPayloadStreamPlan validates one AV1 RTP payload
-// against a copy of stream and reports both caller-owned RTP/event/residual
-// scratch and the bind context for completed residual events. If used is
-// non-zero, rtpBuffer must contain the preserved fragment bytes from the live
-// stream runner.
-func DecoderFrameWorkResidualRTPPayloadStreamPlan(stream DecoderStream, used int, payload []byte, workers int, rtpBuffer []byte, rtpSpans []RTPObuSpan, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamPlan, error) {
-	plannedUsed, eventCount, err := stream.PushRTPPayloadSize(used, payload)
-	plan := DecoderFrameWorkResidualStreamPlan{
-		Size: DecoderFrameWorkResidualStreamScratchSize{
-			Events:    eventCount,
-			RTPBuffer: plannedUsed,
-			RTPSpans:  eventCount,
-		},
-	}
-	if err != nil {
-		return plan, err
-	}
-	if len(rtpBuffer) < plannedUsed || len(rtpSpans) < eventCount {
-		return plan, ErrRTPShortBuffer
-	}
-	if len(events) < eventCount {
-		return plan, ErrDecoderEventBufferTooSmall
-	}
-
-	sequence, _ := stream.SequenceHeader()
-	actualUsed, count, err := stream.PushRTPPayload(rtpBuffer[:plannedUsed], used, rtpSpans[:eventCount], events[:eventCount], payload)
-	if err != nil {
-		return plan, err
-	}
-	if actualUsed != plannedUsed || count != eventCount {
-		return plan, ErrDecoderInvalidFrameWorkState
-	}
-	eventSize, err := DecoderFrameWorkResidualEventsScratchLen(sequence, events[:count], workers, spans, jobs, batches)
-	if err != nil {
-		return plan, err
-	}
-	plan.Size.Event = eventSize
-	plan.Bind = DecoderFrameWorkResidualEventsBindPlan(sequence, events[:count])
-	return plan, nil
-}
-
-// DecoderFrameWorkResidualRTPPayloadsStreamScratchLen validates an ordered AV1
-// RTP payload batch against a copy of stream and reports reusable max scratch
-// needed by RunRTPPayloads. If used is non-zero, rtpBuffer must contain the
-// preserved fragment bytes from the live stream runner.
-func DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(stream DecoderStream, used int, payloads [][]byte, workers int, rtpBuffer []byte, rtpSpans []RTPObuSpan, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamScratchSize, error) {
-	plan, err := DecoderFrameWorkResidualRTPPayloadsStreamPlan(stream, used, payloads, workers, rtpBuffer, rtpSpans, events, spans, jobs, batches)
-	return plan.Size, err
-}
-
-// DecoderFrameWorkResidualRTPPayloadsStreamPlan validates an ordered AV1 RTP
-// payload batch against a copy of stream and reports reusable max scratch plus
-// the last bind-relevant event across the payload batch. If used is non-zero,
-// rtpBuffer must contain the preserved fragment bytes from the live stream
-// runner.
-func DecoderFrameWorkResidualRTPPayloadsStreamPlan(stream DecoderStream, used int, payloads [][]byte, workers int, rtpBuffer []byte, rtpSpans []RTPObuSpan, events []DecoderEvent, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualStreamPlan, error) {
-	var plan DecoderFrameWorkResidualStreamPlan
-	outputs := 0
-	for i := range payloads {
-		plannedUsed, eventCount, err := stream.PushRTPPayloadSize(used, payloads[i])
-		nextSize := DecoderFrameWorkResidualStreamScratchSize{
-			Events:    eventCount,
-			RTPBuffer: plannedUsed,
-			RTPSpans:  eventCount,
-		}
-		plan.Size = plan.Size.Max(nextSize)
-		if err != nil {
-			return plan, err
-		}
-		if len(rtpBuffer) < plannedUsed || len(rtpSpans) < eventCount {
-			return plan, ErrRTPShortBuffer
-		}
-		if len(events) < eventCount {
-			return plan, ErrDecoderEventBufferTooSmall
-		}
-
-		sequence, _ := stream.SequenceHeader()
-		actualUsed, count, err := stream.PushRTPPayload(rtpBuffer[:plannedUsed], used, rtpSpans[:eventCount], events[:eventCount], payloads[i])
-		if err != nil {
-			return plan, err
-		}
-		if actualUsed != plannedUsed || count != eventCount {
-			return plan, ErrDecoderInvalidFrameWorkState
-		}
-		eventSize, err := DecoderFrameWorkResidualEventsScratchLen(sequence, events[:count], workers, spans, jobs, batches)
-		if err != nil {
-			return plan, err
-		}
-		nextBind := DecoderFrameWorkResidualEventsBindPlan(sequence, events[:count])
-		if nextBind.HasEvent() {
-			plan.Bind = nextBind
-		} else if !plan.Bind.HasEvent() {
-			plan.Bind.Sequence = nextBind.Sequence
-		}
-		nextSize.Event = eventSize
-		outputs += eventSize.Outputs
-		plan.Size = plan.Size.Max(nextSize)
-		plan.Size.Event.Outputs = outputs
-		used = actualUsed
-		if !stream.InRTPFragment() {
-			used = 0
-		}
-	}
-	return plan, nil
-}
-
 // RunLowOverhead parses a low-overhead OBU buffer into caller-owned event
 // scratch and immediately runs the parsed events through EventRunner.
-func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverhead(src []byte, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) RunLowOverhead(src []byte, post internaldecoder.FrameWorkPostFilterFunc) (decoderFrameWorkResidualStreamResult, error) {
 	return r.runLowOverhead(src, post, nil)
 }
 
 // RunLowOverheadWithPostFilterRunner is RunLowOverhead using a direct
 // postfilter runner instead of a postfilter callback.
-func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverheadWithPostFilterRunner(src []byte, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) RunLowOverheadWithPostFilterRunner(src []byte, post internaldecoder.FrameWorkPostFilterRunner) (decoderFrameWorkResidualStreamResult, error) {
 	return r.runLowOverhead(src, nil, post)
 }
 
 // RunLowOverheadInto parses and runs one low-overhead OBU buffer, then appends
 // its counters and outputs into result.
-func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverheadInto(result *DecoderFrameWorkResidualStreamResult, src []byte, post DecoderFrameWorkPostFilterFunc) error {
+func (r *decoderFrameWorkResidualStreamRunner) RunLowOverheadInto(result *decoderFrameWorkResidualStreamResult, src []byte, post internaldecoder.FrameWorkPostFilterFunc) error {
 	return r.runLowOverheadInto(result, src, post, nil)
 }
 
 // RunLowOverheadIntoWithPostFilterRunner is RunLowOverheadInto using a direct
 // postfilter runner instead of a postfilter callback.
-func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverheadIntoWithPostFilterRunner(result *DecoderFrameWorkResidualStreamResult, src []byte, post DecoderFrameWorkPostFilterRunner) error {
+func (r *decoderFrameWorkResidualStreamRunner) RunLowOverheadIntoWithPostFilterRunner(result *decoderFrameWorkResidualStreamResult, src []byte, post internaldecoder.FrameWorkPostFilterRunner) error {
 	return r.runLowOverheadInto(result, src, nil, post)
 }
 
 // RunLowOverheads parses and runs an ordered batch of low-overhead OBU buffers
 // and aggregates completed event work into one result.
-func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverheads(srcs [][]byte, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) RunLowOverheads(srcs [][]byte, post internaldecoder.FrameWorkPostFilterFunc) (decoderFrameWorkResidualStreamResult, error) {
 	return r.runLowOverheads(srcs, post, nil)
 }
 
 // RunLowOverheadsWithPostFilterRunner is RunLowOverheads using a direct
 // postfilter runner instead of a postfilter callback.
-func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverheadsWithPostFilterRunner(srcs [][]byte, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) RunLowOverheadsWithPostFilterRunner(srcs [][]byte, post internaldecoder.FrameWorkPostFilterRunner) (decoderFrameWorkResidualStreamResult, error) {
 	return r.runLowOverheads(srcs, nil, post)
 }
 
 // RunLowOverheadsInto parses and runs an ordered batch of low-overhead OBU
 // buffers, then appends their counters and outputs into result.
-func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverheadsInto(result *DecoderFrameWorkResidualStreamResult, srcs [][]byte, post DecoderFrameWorkPostFilterFunc) error {
+func (r *decoderFrameWorkResidualStreamRunner) RunLowOverheadsInto(result *decoderFrameWorkResidualStreamResult, srcs [][]byte, post internaldecoder.FrameWorkPostFilterFunc) error {
 	return r.runLowOverheadsInto(result, srcs, post, nil)
 }
 
 // RunLowOverheadsIntoWithPostFilterRunner is RunLowOverheadsInto using a
 // direct postfilter runner instead of a postfilter callback.
-func (r *DecoderFrameWorkResidualStreamRunner) RunLowOverheadsIntoWithPostFilterRunner(result *DecoderFrameWorkResidualStreamResult, srcs [][]byte, post DecoderFrameWorkPostFilterRunner) error {
+func (r *decoderFrameWorkResidualStreamRunner) RunLowOverheadsIntoWithPostFilterRunner(result *decoderFrameWorkResidualStreamResult, srcs [][]byte, post internaldecoder.FrameWorkPostFilterRunner) error {
 	return r.runLowOverheadsInto(result, srcs, nil, post)
 }
 
 // RunRTPPayload depacketizes one AV1 RTP payload into caller-owned OBU/event
 // scratch and immediately runs any completed parsed events. RTPUsed is retained
 // only while the underlying stream is inside an OBU fragment.
-func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayload(payload []byte, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) RunRTPPayload(payload []byte, post internaldecoder.FrameWorkPostFilterFunc) (decoderFrameWorkResidualStreamResult, error) {
 	return r.runRTPPayload(payload, post, nil)
 }
 
 // RunRTPPayloadWithPostFilterRunner is RunRTPPayload using a direct postfilter
 // runner instead of a postfilter callback.
-func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadWithPostFilterRunner(payload []byte, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) RunRTPPayloadWithPostFilterRunner(payload []byte, post internaldecoder.FrameWorkPostFilterRunner) (decoderFrameWorkResidualStreamResult, error) {
 	return r.runRTPPayload(payload, nil, post)
 }
 
 // RunRTPPayloadAfterLoss clears any retained RTP fragment bytes, then
 // depacketizes and runs one AV1 RTP payload. Parser sequence/reference state is
 // preserved, matching ResetRTP.
-func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadAfterLoss(payload []byte, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) RunRTPPayloadAfterLoss(payload []byte, post internaldecoder.FrameWorkPostFilterFunc) (decoderFrameWorkResidualStreamResult, error) {
 	return r.runRTPPayloadAfterLoss(payload, post, nil)
 }
 
 // RunRTPPayloadAfterLossWithPostFilterRunner is RunRTPPayloadAfterLoss using a
 // direct postfilter runner instead of a postfilter callback.
-func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadAfterLossWithPostFilterRunner(payload []byte, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) RunRTPPayloadAfterLossWithPostFilterRunner(payload []byte, post internaldecoder.FrameWorkPostFilterRunner) (decoderFrameWorkResidualStreamResult, error) {
 	return r.runRTPPayloadAfterLoss(payload, nil, post)
 }
 
 // RunRTPPayloadInto depacketizes and runs one AV1 RTP payload, then appends its
 // counters and outputs into result. This is the packet-by-packet equivalent of
 // RunRTPPayloads for callers that drive decoding from a realtime jitter buffer.
-func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadInto(result *DecoderFrameWorkResidualStreamResult, payload []byte, post DecoderFrameWorkPostFilterFunc) error {
+func (r *decoderFrameWorkResidualStreamRunner) RunRTPPayloadInto(result *decoderFrameWorkResidualStreamResult, payload []byte, post internaldecoder.FrameWorkPostFilterFunc) error {
 	return r.runRTPPayloadInto(result, payload, post, nil)
 }
 
 // RunRTPPayloadIntoWithPostFilterRunner is RunRTPPayloadInto using a direct
 // postfilter runner instead of a postfilter callback.
-func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadIntoWithPostFilterRunner(result *DecoderFrameWorkResidualStreamResult, payload []byte, post DecoderFrameWorkPostFilterRunner) error {
+func (r *decoderFrameWorkResidualStreamRunner) RunRTPPayloadIntoWithPostFilterRunner(result *decoderFrameWorkResidualStreamResult, payload []byte, post internaldecoder.FrameWorkPostFilterRunner) error {
 	return r.runRTPPayloadInto(result, payload, nil, post)
 }
 
 // RunRTPPayloadAfterLossInto clears any retained RTP fragment bytes, then
 // depacketizes and runs one AV1 RTP payload and appends its counters and outputs
 // into result.
-func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadAfterLossInto(result *DecoderFrameWorkResidualStreamResult, payload []byte, post DecoderFrameWorkPostFilterFunc) error {
+func (r *decoderFrameWorkResidualStreamRunner) RunRTPPayloadAfterLossInto(result *decoderFrameWorkResidualStreamResult, payload []byte, post internaldecoder.FrameWorkPostFilterFunc) error {
 	return r.runRTPPayloadAfterLossInto(result, payload, post, nil)
 }
 
 // RunRTPPayloadAfterLossIntoWithPostFilterRunner is
 // RunRTPPayloadAfterLossInto using a direct postfilter runner instead of a
 // postfilter callback.
-func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadAfterLossIntoWithPostFilterRunner(result *DecoderFrameWorkResidualStreamResult, payload []byte, post DecoderFrameWorkPostFilterRunner) error {
+func (r *decoderFrameWorkResidualStreamRunner) RunRTPPayloadAfterLossIntoWithPostFilterRunner(result *decoderFrameWorkResidualStreamResult, payload []byte, post internaldecoder.FrameWorkPostFilterRunner) error {
 	return r.runRTPPayloadAfterLossInto(result, payload, nil, post)
 }
 
 // RunRTPPayloads depacketizes and runs an ordered batch of AV1 RTP payloads,
 // preserving RTP fragment state across payloads and aggregating completed event
 // work into one result.
-func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloads(payloads [][]byte, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) RunRTPPayloads(payloads [][]byte, post internaldecoder.FrameWorkPostFilterFunc) (decoderFrameWorkResidualStreamResult, error) {
 	return r.runRTPPayloads(payloads, post, nil)
 }
 
 // RunRTPPayloadsWithPostFilterRunner is RunRTPPayloads using a direct
 // postfilter runner instead of a postfilter callback.
-func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadsWithPostFilterRunner(payloads [][]byte, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) RunRTPPayloadsWithPostFilterRunner(payloads [][]byte, post internaldecoder.FrameWorkPostFilterRunner) (decoderFrameWorkResidualStreamResult, error) {
 	return r.runRTPPayloads(payloads, nil, post)
 }
 
 // RunRTPPayloadsInto depacketizes and runs an ordered batch of AV1 RTP
 // payloads, then appends their counters and outputs into result.
-func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadsInto(result *DecoderFrameWorkResidualStreamResult, payloads [][]byte, post DecoderFrameWorkPostFilterFunc) error {
+func (r *decoderFrameWorkResidualStreamRunner) RunRTPPayloadsInto(result *decoderFrameWorkResidualStreamResult, payloads [][]byte, post internaldecoder.FrameWorkPostFilterFunc) error {
 	return r.runRTPPayloadsInto(result, payloads, post, nil)
 }
 
 // RunRTPPayloadsIntoWithPostFilterRunner is RunRTPPayloadsInto using a direct
 // postfilter runner instead of a postfilter callback.
-func (r *DecoderFrameWorkResidualStreamRunner) RunRTPPayloadsIntoWithPostFilterRunner(result *DecoderFrameWorkResidualStreamResult, payloads [][]byte, post DecoderFrameWorkPostFilterRunner) error {
+func (r *decoderFrameWorkResidualStreamRunner) RunRTPPayloadsIntoWithPostFilterRunner(result *decoderFrameWorkResidualStreamResult, payloads [][]byte, post internaldecoder.FrameWorkPostFilterRunner) error {
 	return r.runRTPPayloadsInto(result, payloads, nil, post)
 }
 
-func (r *DecoderFrameWorkResidualStreamRunner) runLowOverhead(src []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) runLowOverhead(src []byte, post internaldecoder.FrameWorkPostFilterFunc, postRunner internaldecoder.FrameWorkPostFilterRunner) (decoderFrameWorkResidualStreamResult, error) {
 	return r.runLowOverheadWithOutputOffset(src, 0, post, postRunner)
 }
 
-func (r *DecoderFrameWorkResidualStreamRunner) runLowOverheadInto(result *DecoderFrameWorkResidualStreamResult, src []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) error {
+func (r *decoderFrameWorkResidualStreamRunner) runLowOverheadInto(result *decoderFrameWorkResidualStreamResult, src []byte, post internaldecoder.FrameWorkPostFilterFunc, postRunner internaldecoder.FrameWorkPostFilterRunner) error {
 	if result == nil {
-		return ErrDecoderInvalidFrameWorkState
+		return internaldecoder.ErrInvalidFrameWorkState
 	}
 	next, err := r.runLowOverheadWithOutputOffset(src, result.Run.OutputCount, post, postRunner)
 	if accErr := result.Accumulate(next); accErr != nil {
@@ -600,14 +400,14 @@ func (r *DecoderFrameWorkResidualStreamRunner) runLowOverheadInto(result *Decode
 	return err
 }
 
-func (r *DecoderFrameWorkResidualStreamRunner) runLowOverheads(srcs [][]byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) runLowOverheads(srcs [][]byte, post internaldecoder.FrameWorkPostFilterFunc, postRunner internaldecoder.FrameWorkPostFilterRunner) (decoderFrameWorkResidualStreamResult, error) {
 	if r == nil || r.Stream == nil {
-		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
+		return decoderFrameWorkResidualStreamResult{}, internaldecoder.ErrInvalidFrameWorkState
 	}
 	if post != nil && postRunner != nil {
-		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
+		return decoderFrameWorkResidualStreamResult{}, internaldecoder.ErrInvalidFrameWorkState
 	}
-	var result DecoderFrameWorkResidualStreamResult
+	var result decoderFrameWorkResidualStreamResult
 	for i := range srcs {
 		next, err := r.runLowOverheadWithOutputOffset(srcs[i], result.Run.OutputCount, post, postRunner)
 		decoderFrameWorkAccumulateResidualStreamResult(&result, next)
@@ -619,12 +419,12 @@ func (r *DecoderFrameWorkResidualStreamRunner) runLowOverheads(srcs [][]byte, po
 	return result, nil
 }
 
-func (r *DecoderFrameWorkResidualStreamRunner) runLowOverheadsInto(result *DecoderFrameWorkResidualStreamResult, srcs [][]byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) error {
+func (r *decoderFrameWorkResidualStreamRunner) runLowOverheadsInto(result *decoderFrameWorkResidualStreamResult, srcs [][]byte, post internaldecoder.FrameWorkPostFilterFunc, postRunner internaldecoder.FrameWorkPostFilterRunner) error {
 	if result == nil || r == nil || r.Stream == nil {
-		return ErrDecoderInvalidFrameWorkState
+		return internaldecoder.ErrInvalidFrameWorkState
 	}
 	if post != nil && postRunner != nil {
-		return ErrDecoderInvalidFrameWorkState
+		return internaldecoder.ErrInvalidFrameWorkState
 	}
 	for i := range srcs {
 		if err := r.runLowOverheadInto(result, srcs[i], post, postRunner); err != nil {
@@ -634,38 +434,38 @@ func (r *DecoderFrameWorkResidualStreamRunner) runLowOverheadsInto(result *Decod
 	return nil
 }
 
-func (r *DecoderFrameWorkResidualStreamRunner) runLowOverheadWithOutputOffset(src []byte, outputOffset int, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) runLowOverheadWithOutputOffset(src []byte, outputOffset int, post internaldecoder.FrameWorkPostFilterFunc, postRunner internaldecoder.FrameWorkPostFilterRunner) (decoderFrameWorkResidualStreamResult, error) {
 	if r == nil || r.Stream == nil {
-		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
+		return decoderFrameWorkResidualStreamResult{}, internaldecoder.ErrInvalidFrameWorkState
 	}
 	if post != nil && postRunner != nil {
-		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
+		return decoderFrameWorkResidualStreamResult{}, internaldecoder.ErrInvalidFrameWorkState
 	}
 	count, err := r.Stream.PushLowOverhead(src, r.Events)
 	if err != nil {
-		return DecoderFrameWorkResidualStreamResult{EventCount: count}, err
+		return decoderFrameWorkResidualStreamResult{EventCount: count}, err
 	}
 	run, err := r.runParsedEvents(count, outputOffset, post, postRunner)
 	if err != nil {
-		return DecoderFrameWorkResidualStreamResult{EventCount: count, Run: run}, err
+		return decoderFrameWorkResidualStreamResult{EventCount: count, Run: run}, err
 	}
-	return DecoderFrameWorkResidualStreamResult{EventCount: count, Run: run}, nil
+	return decoderFrameWorkResidualStreamResult{EventCount: count, Run: run}, nil
 }
 
-func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayload(payload []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) runRTPPayload(payload []byte, post internaldecoder.FrameWorkPostFilterFunc, postRunner internaldecoder.FrameWorkPostFilterRunner) (decoderFrameWorkResidualStreamResult, error) {
 	return r.runRTPPayloadWithOutputOffset(payload, 0, post, postRunner)
 }
 
-func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadAfterLoss(payload []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) runRTPPayloadAfterLoss(payload []byte, post internaldecoder.FrameWorkPostFilterFunc, postRunner internaldecoder.FrameWorkPostFilterRunner) (decoderFrameWorkResidualStreamResult, error) {
 	if err := r.ResetRTP(); err != nil {
-		return DecoderFrameWorkResidualStreamResult{}, err
+		return decoderFrameWorkResidualStreamResult{}, err
 	}
 	return r.runRTPPayload(payload, post, postRunner)
 }
 
-func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadInto(result *DecoderFrameWorkResidualStreamResult, payload []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) error {
+func (r *decoderFrameWorkResidualStreamRunner) runRTPPayloadInto(result *decoderFrameWorkResidualStreamResult, payload []byte, post internaldecoder.FrameWorkPostFilterFunc, postRunner internaldecoder.FrameWorkPostFilterRunner) error {
 	if result == nil {
-		return ErrDecoderInvalidFrameWorkState
+		return internaldecoder.ErrInvalidFrameWorkState
 	}
 	next, err := r.runRTPPayloadWithOutputOffset(payload, result.Run.OutputCount, post, postRunner)
 	if accErr := result.Accumulate(next); accErr != nil {
@@ -675,9 +475,9 @@ func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadInto(result *Decoder
 	return err
 }
 
-func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadAfterLossInto(result *DecoderFrameWorkResidualStreamResult, payload []byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) error {
+func (r *decoderFrameWorkResidualStreamRunner) runRTPPayloadAfterLossInto(result *decoderFrameWorkResidualStreamResult, payload []byte, post internaldecoder.FrameWorkPostFilterFunc, postRunner internaldecoder.FrameWorkPostFilterRunner) error {
 	if result == nil {
-		return ErrDecoderInvalidFrameWorkState
+		return internaldecoder.ErrInvalidFrameWorkState
 	}
 	if err := r.ResetRTP(); err != nil {
 		return err
@@ -685,36 +485,36 @@ func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadAfterLossInto(result
 	return r.runRTPPayloadInto(result, payload, post, postRunner)
 }
 
-func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadWithOutputOffset(payload []byte, outputOffset int, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) runRTPPayloadWithOutputOffset(payload []byte, outputOffset int, post internaldecoder.FrameWorkPostFilterFunc, postRunner internaldecoder.FrameWorkPostFilterRunner) (decoderFrameWorkResidualStreamResult, error) {
 	if r == nil || r.Stream == nil {
-		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
+		return decoderFrameWorkResidualStreamResult{}, internaldecoder.ErrInvalidFrameWorkState
 	}
 	if post != nil && postRunner != nil {
-		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
+		return decoderFrameWorkResidualStreamResult{}, internaldecoder.ErrInvalidFrameWorkState
 	}
 	used, count, err := r.Stream.PushRTPPayload(r.RTPBuffer, r.RTPUsed, r.RTPSpans, r.Events, payload)
 	r.RTPUsed = used
 	if err != nil {
-		return DecoderFrameWorkResidualStreamResult{EventCount: count, RTPUsed: r.RTPUsed}, err
+		return decoderFrameWorkResidualStreamResult{EventCount: count, RTPUsed: r.RTPUsed}, err
 	}
 	run, err := r.runParsedEvents(count, outputOffset, post, postRunner)
 	if !r.Stream.InRTPFragment() {
 		r.RTPUsed = 0
 	}
 	if err != nil {
-		return DecoderFrameWorkResidualStreamResult{EventCount: count, RTPUsed: r.RTPUsed, Run: run}, err
+		return decoderFrameWorkResidualStreamResult{EventCount: count, RTPUsed: r.RTPUsed, Run: run}, err
 	}
-	return DecoderFrameWorkResidualStreamResult{EventCount: count, RTPUsed: r.RTPUsed, Run: run}, nil
+	return decoderFrameWorkResidualStreamResult{EventCount: count, RTPUsed: r.RTPUsed, Run: run}, nil
 }
 
-func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloads(payloads [][]byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualStreamResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) runRTPPayloads(payloads [][]byte, post internaldecoder.FrameWorkPostFilterFunc, postRunner internaldecoder.FrameWorkPostFilterRunner) (decoderFrameWorkResidualStreamResult, error) {
 	if r == nil || r.Stream == nil {
-		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
+		return decoderFrameWorkResidualStreamResult{}, internaldecoder.ErrInvalidFrameWorkState
 	}
 	if post != nil && postRunner != nil {
-		return DecoderFrameWorkResidualStreamResult{}, ErrDecoderInvalidFrameWorkState
+		return decoderFrameWorkResidualStreamResult{}, internaldecoder.ErrInvalidFrameWorkState
 	}
-	var result DecoderFrameWorkResidualStreamResult
+	var result decoderFrameWorkResidualStreamResult
 	for i := range payloads {
 		next, err := r.runRTPPayloadWithOutputOffset(payloads[i], result.Run.OutputCount, post, postRunner)
 		decoderFrameWorkAccumulateResidualStreamResult(&result, next)
@@ -726,12 +526,12 @@ func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloads(payloads [][]byte,
 	return result, nil
 }
 
-func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadsInto(result *DecoderFrameWorkResidualStreamResult, payloads [][]byte, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) error {
+func (r *decoderFrameWorkResidualStreamRunner) runRTPPayloadsInto(result *decoderFrameWorkResidualStreamResult, payloads [][]byte, post internaldecoder.FrameWorkPostFilterFunc, postRunner internaldecoder.FrameWorkPostFilterRunner) error {
 	if result == nil || r == nil || r.Stream == nil {
-		return ErrDecoderInvalidFrameWorkState
+		return internaldecoder.ErrInvalidFrameWorkState
 	}
 	if post != nil && postRunner != nil {
-		return ErrDecoderInvalidFrameWorkState
+		return internaldecoder.ErrInvalidFrameWorkState
 	}
 	for i := range payloads {
 		if err := r.runRTPPayloadInto(result, payloads[i], post, postRunner); err != nil {
@@ -741,14 +541,14 @@ func (r *DecoderFrameWorkResidualStreamRunner) runRTPPayloadsInto(result *Decode
 	return nil
 }
 
-func (r *DecoderFrameWorkResidualStreamRunner) runParsedEvents(count int, outputOffset int, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualEventsResult, error) {
+func (r *decoderFrameWorkResidualStreamRunner) runParsedEvents(count int, outputOffset int, post internaldecoder.FrameWorkPostFilterFunc, postRunner internaldecoder.FrameWorkPostFilterRunner) (decoderFrameWorkResidualEventsResult, error) {
 	if count < 0 || count > len(r.Events) {
-		return DecoderFrameWorkResidualEventsResult{}, ErrDecoderEventBufferTooSmall
+		return decoderFrameWorkResidualEventsResult{}, ErrDecoderEventBufferTooSmall
 	}
 	eventRunner := r.EventRunner
 	if eventRunner.Outputs != nil {
 		if outputOffset < 0 || outputOffset > len(eventRunner.Outputs) {
-			return DecoderFrameWorkResidualEventsResult{}, ErrFrameShortBuffer
+			return decoderFrameWorkResidualEventsResult{}, internalframe.ErrShortBuffer
 		}
 		eventRunner.Outputs = eventRunner.Outputs[outputOffset:]
 	}
@@ -759,13 +559,13 @@ func (r *DecoderFrameWorkResidualStreamRunner) runParsedEvents(count int, output
 	return eventRunner.RunEvents(sequence, r.Events[:count], r.SideDataScratch, post)
 }
 
-func decoderFrameWorkAccumulateResidualStreamResult(total *DecoderFrameWorkResidualStreamResult, next DecoderFrameWorkResidualStreamResult) {
+func decoderFrameWorkAccumulateResidualStreamResult(total *decoderFrameWorkResidualStreamResult, next decoderFrameWorkResidualStreamResult) {
 	total.EventCount += next.EventCount
 	total.RTPUsed = next.RTPUsed
 	decoderFrameWorkAccumulateResidualEventsResult(&total.Run, next.Run)
 }
 
-func decoderFrameWorkAccumulateResidualEventsResult(total *DecoderFrameWorkResidualEventsResult, next DecoderFrameWorkResidualEventsResult) {
+func decoderFrameWorkAccumulateResidualEventsResult(total *decoderFrameWorkResidualEventsResult, next decoderFrameWorkResidualEventsResult) {
 	total.Count += next.Count
 	if next.Count > 0 {
 		total.Last = next.Last
@@ -777,14 +577,14 @@ func decoderFrameWorkAccumulateResidualEventsResult(total *DecoderFrameWorkResid
 	decoderFrameWorkAccumulateResidualStats(&total.Stats, next.Stats)
 }
 
-func decoderFrameWorkResidualStreamBindResultOutputs(result *DecoderFrameWorkResidualStreamResult, outputs []*Frame) {
+func decoderFrameWorkResidualStreamBindResultOutputs(result *decoderFrameWorkResidualStreamResult, outputs []*Frame) {
 	if outputs == nil {
 		return
 	}
 	result.Run.Outputs = outputs[:result.Run.OutputCount]
 }
 
-func decoderFrameWorkResidualStreamBindPlanMax(a DecoderFrameWorkResidualEventBindPlan, b DecoderFrameWorkResidualEventBindPlan) DecoderFrameWorkResidualEventBindPlan {
+func decoderFrameWorkResidualStreamBindPlanMax(a decoderFrameWorkResidualEventBindPlan, b decoderFrameWorkResidualEventBindPlan) decoderFrameWorkResidualEventBindPlan {
 	if b.HasEvent() {
 		return b
 	}
@@ -798,7 +598,7 @@ func decoderFrameWorkResidualStreamBindPlanMax(a DecoderFrameWorkResidualEventBi
 }
 
 func decoderFrameWorkResidualLowOverheadEventLen(src []byte) (int, error) {
-	it := NewLowOverheadIterator(src)
+	it := internalobu.NewLowOverheadIterator(src)
 	count := 0
 	for {
 		_, ok, err := it.Next()
@@ -812,7 +612,7 @@ func decoderFrameWorkResidualLowOverheadEventLen(src []byte) (int, error) {
 	}
 }
 
-func decoderFrameWorkResidualStreamSideDataScratchTooShort(scratch DecoderFrameWorkSideDataScratch, size DecoderFrameWorkSideDataScratchSize) bool {
+func decoderFrameWorkResidualStreamSideDataScratchTooShort(scratch decoderFrameWorkSideDataScratch, size decoderFrameWorkSideDataScratchSize) bool {
 	return decoderFrameWorkPostFilterScratchTooShort(scratch.CDEFIndexMap, size.CDEFIndexMap) ||
 		decoderFrameWorkPostFilterScratchTooShort(scratch.CDEFReadMap, size.CDEFReadMap) ||
 		decoderFrameWorkPostFilterScratchTooShort(scratch.LoopFilterMap, size.LoopFilterMap) ||

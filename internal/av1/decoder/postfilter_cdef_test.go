@@ -221,41 +221,31 @@ func TestFrameWorkSupportedPostFilterRunnerApplyRunsCDEF(t *testing.T) {
 	cdefMap := req.IndexMap
 	ctx.CDEFIndexMap = &cdefMap
 	req.IndexMap = FrameWorkCDEFIndexMap{}
-	runner := FrameWorkSupportedPostFilterRunner{Request: FrameWorkPostFilterRequest{CDEF: req}}
-	size, err := runner.ScratchLen(ctx)
+	postReq := FrameWorkPostFilterRequest{CDEF: req}
+	size, err := ctx.SupportedPostFilterScratchLen(postReq)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if size.CDEF.Input != cdef.InputBufferSize || size.LoopFilter != (FrameWorkLoopFilterPostFilterScratchSize{}) ||
 		size.Restoration != (FrameWorkRestorationPostFilterScratchSize{}) ||
 		size.FilmGrain != (FrameWorkFilmGrainPostFilterScratchSize{}) {
-		t.Fatalf("runner scratch=%+v", size)
+		t.Fatalf("supported scratch=%+v", size)
 	}
-	if err := runner.Apply(ctx); err != nil {
+	next, result, err := ctx.ApplySupportedPostFilters(postReq)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if runner.Result.Completed != FrameWorkPostFilterCDEF || runner.Context.RemainingPostFilters() != 0 {
-		t.Fatalf("runner result=%+v remaining=%b", runner.Result, runner.Context.RemainingPostFilters())
+	if result.Completed != FrameWorkPostFilterCDEF || next.RemainingPostFilters() != 0 {
+		t.Fatalf("supported result=%+v remaining=%b", result, next.RemainingPostFilters())
 	}
-	if runner.Context.DetachedPostFilterOutput() {
-		t.Fatal("supported runner returned detached output")
+	if next.DetachedPostFilterOutput() {
+		t.Fatal("supported postfilters returned detached output")
 	}
-	if err := runner.Context.RequirePublishablePostFilterOutput(); err != nil {
+	if err := next.RequirePublishablePostFilterOutput(); err != nil {
 		t.Fatalf("RequirePublishablePostFilterOutput err=%v", err)
 	}
 	if !testFrameWorkCDEFPlaneChanged(output.Y, before) {
-		t.Fatal("runner did not change luma samples")
-	}
-}
-
-func TestFrameWorkPostFilterRunnerScratchLenRejectsNilRunner(t *testing.T) {
-	var supported *FrameWorkSupportedPostFilterRunner
-	if _, err := supported.ScratchLen(FrameWorkPostFilterContext{}); !errors.Is(err, ErrInvalidFrameWorkState) {
-		t.Fatalf("supported runner ScratchLen err=%v want %v", err, ErrInvalidFrameWorkState)
-	}
-	var caller *FrameWorkCallerPostFilterRunner
-	if _, err := caller.ScratchLen(FrameWorkPostFilterContext{}); !errors.Is(err, ErrInvalidFrameWorkState) {
-		t.Fatalf("caller runner ScratchLen err=%v want %v", err, ErrInvalidFrameWorkState)
+		t.Fatal("supported postfilters did not change luma samples")
 	}
 }
 
@@ -319,20 +309,25 @@ func TestFrameWorkPostFilterContextSupportedPostFilterCapabilities(t *testing.T)
 }
 
 func TestFrameWorkCallerPostFilterRunnerAllocs(t *testing.T) {
-	runner := FrameWorkCallerPostFilterRunner{}
+	var ctx FrameWorkPostFilterContext
+	var req FrameWorkPostFilterRequest
 	allocs := testing.AllocsPerRun(1000, func() {
-		if _, err := runner.ScratchLen(FrameWorkPostFilterContext{}); err != nil {
+		if _, err := ctx.CallerPostFilterScratchLen(req); err != nil {
 			t.Fatal(err)
 		}
-		if err := runner.Apply(FrameWorkPostFilterContext{}); err != nil {
+		next, result, err := ctx.ApplyCallerPostFilters(req)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if runner.Context.RemainingPostFilters() != 0 || runner.Result.Completed != 0 {
-			t.Fatalf("runner context=%+v result=%+v", runner.Context, runner.Result)
+		if err := next.RequireNoRemainingPostFilters(); err != nil {
+			t.Fatal(err)
+		}
+		if next.RemainingPostFilters() != 0 || result.Completed != 0 {
+			t.Fatalf("caller context=%+v result=%+v", next, result)
 		}
 	})
 	if allocs != 0 {
-		t.Fatalf("FrameWorkCallerPostFilterRunner allocated: %f", allocs)
+		t.Fatalf("caller postfilters allocated: %f", allocs)
 	}
 }
 

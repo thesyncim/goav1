@@ -99,23 +99,9 @@ func BenchmarkWienerVerticalU8_8_PureGo(b *testing.B) {
 	benchWienerVerticalU8(b, wienerVerticalU8, 8)
 }
 
-func BenchmarkWienerVerticalU8_32_SIMD(b *testing.B) {
-	benchWienerVerticalU8(b, wienerVerticalU8SIMD, 32)
-}
-func BenchmarkWienerVerticalU8_32_PureGo(b *testing.B) {
-	benchWienerVerticalU8(b, wienerVerticalU8, 32)
-}
-
 func BenchmarkWienerVerticalU8_64_SIMD(b *testing.B) {
 	benchWienerVerticalU8(b, wienerVerticalU8SIMD, 64)
 }
 func BenchmarkWienerVerticalU8_64_PureGo(b *testing.B) {
 	benchWienerVerticalU8(b, wienerVerticalU8, 64)
-}
-
-func BenchmarkWienerVerticalU8_256_SIMD(b *testing.B) {
-	benchWienerVerticalU8(b, wienerVerticalU8SIMD, 256)
-}
-func BenchmarkWienerVerticalU8_256_PureGo(b *testing.B) {
-	benchWienerVerticalU8(b, wienerVerticalU8, 256)
 }

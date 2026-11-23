@@ -100,41 +100,21 @@ func forwardDCTBySize8BitResidualTrusted(coeff []int32, coeffStride int, residua
 		}
 		forwardDCT64x64Trusted8BitImpl(coeff, coeffStride, residual, residualStride)
 	default:
-		// Other DCT dimensions use range-independent scalar kernels today.
+		w, h := int(size.Width), int(size.Height)
+		if (w == 2*h || h == 2*w) && w >= 8 && h >= 8 && w <= 32 && h <= 32 {
+			if coeffStride < h || residualStride < w ||
+				!blockFits(len(residual), residualStride, w, h) ||
+				!coeffBlockFits(len(coeff), coeffStride, w, h) {
+				return ErrInvalidTransform
+			}
+			if forwardDCTRect8BitTrusted(coeff, coeffStride, residual, residualStride, size) {
+				return nil
+			}
+		}
+		// The other DCT dimensions use range-independent scalar kernels.
 		return forwardDCTBySize(coeff, coeffStride, residual, residualStride, size)
 	}
 	return nil
-}
-
-// ForwardBlock8x8HybridTrusted computes the 8x8 non-DCT_DCT forward transform
-// for callers that already proved the block shape and scratch sizes. The
-// coefficient and residual strides must be at least 8, and coeff/residual/scratch
-// must contain the addressed 8x8 region.
-func ForwardBlock8x8HybridTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, typ Type) error {
-	if !forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, typ) {
-		return ErrInvalidTransform
-	}
-	return nil
-}
-
-// ForwardBlock8x8ADSTDCTTrusted computes the trusted 8x8 ADST_DCT transform.
-func ForwardBlock8x8ADSTDCTTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, TypeADSTDCT)
-}
-
-// ForwardBlock8x8DCTADSTTrusted computes the trusted 8x8 DCT_ADST transform.
-func ForwardBlock8x8DCTADSTTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, TypeDCTADST)
-}
-
-// ForwardBlock8x8ADSTADSTTrusted computes the trusted 8x8 ADST_ADST transform.
-func ForwardBlock8x8ADSTADSTTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, TypeADSTADST)
-}
-
-// ForwardBlock8x8IDTXTrusted computes the trusted 8x8 IDTX transform.
-func ForwardBlock8x8IDTXTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, TypeIDTX)
 }
 
 func forwardBlock8x8HybridSupported(typ Type) bool {
@@ -331,10 +311,6 @@ func forwardBlock8x8IDTXPureGo(coeff []int32, coeffStride int, residual []int16,
 	}
 }
 
-func forwardHybridSupported(size Size, typ Type) bool {
-	return forwardGenericSupported(size, typ)
-}
-
 func forwardDCTBySize(coeff []int32, coeffStride int, residual []int16, residualStride int, size Size) error {
 	switch size {
 	case Size{Width: 4, Height: 4}:
@@ -369,52 +345,6 @@ func forwardDCTBySize(coeff []int32, coeffStride int, residual []int16, residual
 		return forwardDCT64Extent(coeff, coeffStride, residual, residualStride, size)
 	default:
 		return ErrInvalidTransform
-	}
-}
-
-func fwd1D(input []int32, output []int32, typ tx1DType) {
-	switch typ {
-	case tx1DDCT:
-		switch len(input) {
-		case 4:
-			var in, out [4]int32
-			copy(in[:], input)
-			fwdDCT4(&in, &out)
-			copy(output, out[:])
-		case 8:
-			var in, out [8]int32
-			copy(in[:], input)
-			fwdDCT8(&in, &out)
-			copy(output, out[:])
-		}
-	case tx1DADST:
-		switch len(input) {
-		case 4:
-			var in, out [4]int32
-			copy(in[:], input)
-			fwdADST4(&in, &out)
-			copy(output, out[:])
-		case 8:
-			var in, out [8]int32
-			copy(in[:], input)
-			fwdADST8(&in, &out)
-			copy(output, out[:])
-		}
-	case tx1DIdentity:
-		fwdIdentity1D(input, output)
-	}
-}
-
-func fwdIdentity8(input, output *[8]int32) {
-	for i := range 8 {
-		output[i] = input[i] * 2
-	}
-}
-
-func fwdRoundShift1x8(arr *[8]int32) {
-	for i := range 8 {
-		v := arr[i]
-		arr[i] = fwdRoundShift1Value(v)
 	}
 }
 

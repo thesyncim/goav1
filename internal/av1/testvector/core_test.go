@@ -27,8 +27,6 @@ func TestCoreSuiteVectors(t *testing.T) {
 			checkRTPVector(t, vector)
 		case KindIVF:
 			checkIVFVector(t, vector)
-		case KindAnnexB:
-			checkAnnexBVector(t, vector)
 		case KindParser:
 			checkParserVector(t, vector)
 		default:
@@ -143,70 +141,26 @@ func checkIVFVector(t *testing.T, vector Vector) {
 	}
 }
 
-func checkAnnexBVector(t *testing.T, vector Vector) {
-	t.Helper()
-	it := obu.NewAnnexBIterator(vector.Input)
-	wantOff := 0
-	for {
-		unit, ok, err := it.Next()
-		if err != nil {
-			t.Fatalf("%s Next: %v", vector.Name, err)
-		}
-		if !ok {
-			break
-		}
-		end := wantOff + len(unit.Raw)
-		if end > len(vector.Want) {
-			t.Fatalf("%s raw overrun off=%d len=%d want=%d", vector.Name, wantOff, len(unit.Raw), len(vector.Want))
-		}
-		if !bytes.Equal(unit.Raw, vector.Want[wantOff:end]) {
-			t.Fatalf("%s raw=%x want=%x", vector.Name, unit.Raw, vector.Want[wantOff:end])
-		}
-		wantOff = end
-	}
-	if wantOff != len(vector.Want) {
-		t.Fatalf("%s consumed raw=%d want %d", vector.Name, wantOff, len(vector.Want))
-	}
-}
-
 func checkParserVector(t *testing.T, vector Vector) {
 	t.Helper()
 	payload := sequencePayloadFromVector(t, vector)
 	if !bytes.Equal(payload, vector.Want) {
 		t.Fatalf("%s payload=%x want %x", vector.Name, payload, vector.Want)
 	}
-	parse := parser.ParseSequenceHeader
-	if vector.Tag == TagParserSequenceBuganizer502133197 {
-		parse = parser.PeekSequenceHeader
-	}
-	sh, err := parse(payload)
+	sh, err := parser.ParseSequenceHeader(payload)
 	if err != nil {
 		t.Fatalf("%s sequence header parse: %v", vector.Name, err)
 	}
-	if vector.Tag != TagParserSequenceBuganizer502133197 {
-		checkLibaomSequenceConfig(t, vector, sh)
-	}
+	checkLibaomSequenceConfig(t, vector, sh)
 }
 
 func sequencePayloadFromVector(t *testing.T, vector Vector) []byte {
 	t.Helper()
 	switch vector.Tag {
-	case TagParserSequenceFullLowOverhead, TagParserSequenceReducedLowOverhead, TagParserSequenceBuganizer502133197:
+	case TagParserSequenceFullLowOverhead, TagParserSequenceReducedLowOverhead:
 		unit, consumed, err := obu.ParseLowOverhead(vector.Input)
 		if err != nil {
 			t.Fatalf("%s ParseLowOverhead: %v", vector.Name, err)
-		}
-		if consumed != len(vector.Input) {
-			t.Fatalf("%s consumed=%d want %d", vector.Name, consumed, len(vector.Input))
-		}
-		if unit.Header.Type != obu.TypeSequenceHeader {
-			t.Fatalf("%s type=%d want %d", vector.Name, unit.Header.Type, obu.TypeSequenceHeader)
-		}
-		return unit.Payload
-	case TagParserSequenceFullAnnexB, TagParserSequenceReducedAnnexB:
-		unit, consumed, err := obu.ParseAnnexBElement(vector.Input)
-		if err != nil {
-			t.Fatalf("%s ParseAnnexBElement: %v", vector.Name, err)
 		}
 		if consumed != len(vector.Input) {
 			t.Fatalf("%s consumed=%d want %d", vector.Name, consumed, len(vector.Input))
@@ -223,7 +177,7 @@ func sequencePayloadFromVector(t *testing.T, vector Vector) []byte {
 
 func checkLibaomSequenceConfig(t *testing.T, vector Vector, sh parser.SequenceHeader) {
 	t.Helper()
-	reduced := vector.Tag == TagParserSequenceReducedLowOverhead || vector.Tag == TagParserSequenceReducedAnnexB
+	reduced := vector.Tag == TagParserSequenceReducedLowOverhead
 	if sh.SeqProfile != 0 || sh.OperatingPointsCount != 1 || sh.OperatingPoints[0].SeqLevelIdx != 0 || sh.OperatingPoints[0].SeqTier != 0 {
 		t.Fatalf("%s profile/op=%+v", vector.Name, sh)
 	}
