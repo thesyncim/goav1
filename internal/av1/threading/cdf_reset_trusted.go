@@ -25,6 +25,7 @@ func (s *FrameWorkTileResidualCDFStorage) resetCDFCountsTrusted() {
 	resetInterRefCDFCountsTrusted(&s.InterRef)
 	resetInterModeCDFCountsTrusted(&s.InterMode)
 	resetMVCDFCountsTrusted(&s.MV)
+	resetMVCDFCountsTrusted(&s.DV)
 	for i := range s.Interp.Switchable {
 		entropy.ResetCDFCountTrusted(&s.Interp.Switchable[i])
 	}

@@ -395,6 +395,13 @@
 //	  --cpu-used=4 --end-usage=q --cq-level=30 --kf-max-dist=30 \
 //	  --lag-in-frames=0 --enable-qm=1 --qm-min=2 --qm-max=12 \
 //	  -o profile0-420-8bit-qmatrix-inter-128x128.ivf qm420.yuv
+//	# 4:2:0 8-bit intra block copy key frame followed by inter frames
+//	# (SVT-AV1 v4.2.0; aomenc does not pick intra block copy on this source):
+//	ffmpeg -f lavfi -i testsrc2=size=256x144:rate=30 -frames:v 8 \
+//	  -pix_fmt yuv420p -f rawvideo ibc420.yuv
+//	SvtAv1EncApp -i ibc420.yuv -w 256 -h 144 --fps-num 30 --fps-denom 1 -n 5 \
+//	  --input-depth 8 --lp 1 --preset 8 --crf 35 --scm 1 --pred-struct 1 \
+//	  -b profile0-420-8bit-intrabc-inter-256x144.ivf
 //
 //	# Golden per-frame MD5s come from `aomdec --rawvideo` (libaom
 //	# test/md5_helper.h layout, which testvector.FrameMD5 reproduces): split the
@@ -1257,6 +1264,23 @@ var profileClips = []profileClip{
 			"e6bbeadbeb601df2d5ccb1f0818545c1",
 			"b57d43df7533aa30703f696c7d5f5489",
 			"3142c7ade9e3a9d28cf4d2fdc016b4a3",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
+	{
+		// Profile 0: 4:2:0 8-bit screen content from SVT-AV1: a key frame coded
+		// with intra block copy, then four inter frames that inherit its
+		// entropy contexts.
+		name: "profile0-420-8bit-intrabc-inter-256x144",
+		file: "profile0-420-8bit-intrabc-inter-256x144.ivf",
+		frameMD5Hex: []string{
+			"1cf0aa6483847c109e777920d3ef29be",
+			"2b19a5aff4b87647a9a20f25af7a8007",
+			"3ebe0c6fcfcabc69cb06f17b9eb321f6",
+			"7c0159bd8fdf14b46920ae2fd69ba4e6",
+			"e5984f796acfb69ebdc378d61b16a437",
 		},
 		wantBitDepth:     8,
 		wantSubsamplingX: true,

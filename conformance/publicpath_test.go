@@ -358,6 +358,16 @@ var publicClips = []publicClip{
 		},
 	},
 	{
+		file: "profile0-420-8bit-intrabc-inter-256x144.ivf",
+		frameMD5Hex: []string{
+			"1cf0aa6483847c109e777920d3ef29be",
+			"2b19a5aff4b87647a9a20f25af7a8007",
+			"3ebe0c6fcfcabc69cb06f17b9eb321f6",
+			"7c0159bd8fdf14b46920ae2fd69ba4e6",
+			"e5984f796acfb69ebdc378d61b16a437",
+		},
+	},
+	{
 		file: "profile2-420-12bit-edgemv-130x130.ivf",
 		frameMD5Hex: []string{
 			"f85baff9f8f516879ab8da538e582a09",

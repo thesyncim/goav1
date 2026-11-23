@@ -23,6 +23,10 @@ The project has not published a release tag yet.
   indexed row by row although they are stored in coefficient order, so every
   rectangular transform block was dequantized with the wrong weights; no
   committed vector used the tool. Two quantizer-matrix clips now gate it.
+- Inter frames that follow a key frame coded with intra block copy decode
+  correctly. Block-copy vectors adapted the motion-vector contexts instead of
+  their own, so the following frames inherited the wrong entropy state (every
+  SVT-AV1 screen-content stream was affected).
 - Hot paths are designed around caller-owned buffers, reusable frame pools,
   explicit scratch sizing, and zero steady-state allocations.
 - `WithFrameSizeLimit` makes the high-level decoders reject streams whose

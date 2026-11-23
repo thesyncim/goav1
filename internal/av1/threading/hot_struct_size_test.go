@@ -21,7 +21,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "FrameWorkBatch", size: unsafe.Sizeof(FrameWorkBatch{}), max: 1640}, // +8: FrameThread (dav1d frame-thread split); +8: SegmentMaps (dav1d cur/prev_segmap)
 		{name: "FrameWorkFrameContext", size: unsafe.Sizeof(FrameWorkFrameContext{}), max: 1152},
 		{name: "FrameWorkPlaneRegion", size: unsafe.Sizeof(FrameWorkPlaneRegion{}), max: 72},
-		{name: "FrameWorkTileResidualCDFStorage", size: unsafe.Sizeof(FrameWorkTileResidualCDFStorage{}), max: 56 * hotStructKiB},
+		{name: "FrameWorkTileResidualCDFStorage", size: unsafe.Sizeof(FrameWorkTileResidualCDFStorage{}), max: 57 * hotStructKiB}, // +508: DV, the intra block copy MV context
 		// The fused coefficient path adds one compact job-owned dequant target
 		// to the controller; its independent 80-byte layout is guarded in tile.
 		// It embeds FrameWorkBatch copies, so the 8-byte wavefront lane channel

@@ -11,12 +11,17 @@ import (
 // BlockLoopCDFs groups the caller-owned entropy state used by the block syntax
 // loop.
 type BlockLoopCDFs struct {
-	Partition     *PartitionCDFs
-	Mode          *BlockModeCDFs
-	Intra         *IntraModeCDFs
-	InterRef      *InterRefCDFs
-	InterMode     *InterModeCDFs
-	MV            *MVCDFs
+	Partition *PartitionCDFs
+	Mode      *BlockModeCDFs
+	Intra     *IntraModeCDFs
+	InterRef  *InterRefCDFs
+	InterMode *InterModeCDFs
+	MV        *MVCDFs
+	// DV is the motion-vector context of intra block copy (the spec's
+	// MvCtx 1, libaom's ndvc, dav1d's dmv). It adapts separately from MV, so
+	// a key frame coded with intra block copy leaves the contexts the
+	// following inter frames inherit untouched.
+	DV            *MVCDFs
 	Interp        *InterpFilterCDFs
 	Motion        *MotionModeCDFs
 	Blend         *CompoundBlendCDFs
@@ -1046,7 +1051,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 		result.InterMode = InterModeResult{Mode: InterModeNewMV}
 		result.InterModeValid = true
 		if req.DecodeMotionVectors {
-			motionResult, err := s.readIntrabcMotion(cdfs.MV, ctx, *req, *block)
+			motionResult, err := s.readIntrabcMotion(cdfs.DV, ctx, *req, *block)
 			if err != nil {
 				return err
 			}

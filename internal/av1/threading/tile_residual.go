@@ -112,6 +112,7 @@ type FrameWorkTileResidualCDFStorage struct {
 	InterRef              tile.InterRefCDFs
 	InterMode             tile.InterModeCDFs
 	MV                    tile.MVCDFs
+	DV                    tile.MVCDFs
 	Interp                tile.InterpFilterCDFs
 	Motion                tile.MotionModeCDFs
 	Blend                 tile.CompoundBlendCDFs
@@ -158,6 +159,9 @@ func (s *FrameWorkTileResidualCDFStorage) buildDefault(baseQIndex uint8) error {
 		return err
 	}
 	if err := s.MV.InitDefault(); err != nil {
+		return err
+	}
+	if err := s.DV.InitDefault(); err != nil {
 		return err
 	}
 	if err := s.Interp.InitDefault(); err != nil {
@@ -219,6 +223,7 @@ func (s *FrameWorkTileResidualCDFStorage) CDFs() FrameWorkTileResidualCDFs {
 			InterRef:  &s.InterRef,
 			InterMode: &s.InterMode,
 			MV:        &s.MV,
+			DV:        &s.DV,
 			Interp:    &s.Interp,
 			Motion:    &s.Motion,
 			Blend:     &s.Blend,
