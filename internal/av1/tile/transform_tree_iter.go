@@ -78,76 +78,69 @@ func (s *txTreeStack) pushChildren(kids *[4]txTreeNode, k int) error {
 	return nil
 }
 
-// readTxTree is dav1d's read_tx_tree (src/decode.c): the var-tx split flag of
-// one node, recursing into its visible children in decode order and marking
-// the above/left transform contexts at each leaf. right and bottom bound the
-// block's visible extent in superblock-local 4x4 units; haveTop and haveLeft
-// gate the split context as libaom's edge-seeded txfm contexts do.
-func (s *DecodeState) readTxTree(cdfs *TransformCDFs, ctx *BlockModeContext, masks *[2]uint16, from TransformSize, depth uint8, xOff, yOff, x4, y4, right, bottom int, haveTop, haveLeft bool) error {
-	dims, ok := from.Dimensions()
-	if !ok || uint(x4) >= MaxBlockModeSlots || uint(y4) >= MaxBlockModeSlots {
-		return ErrInvalidDecodeState
-	}
-	split := false
+// txTreeReader carries the block-invariant state of dav1d's read_tx_tree
+// recursion: the tile state, the split masks being built (b->tx_split0/1),
+// and the block's visible extent in superblock-local 4x4 units.
+type txTreeReader struct {
+	s      *DecodeState
+	cdfs   *TransformCDFs
+	ctx    *BlockModeContext
+	split  [2]uint16
+	right  int
+	bottom int
+}
+
+// read is dav1d's read_tx_tree (src/decode.c): the var-tx split flag of one
+// node, recursing into its visible children in decode order and setting the
+// above/left transform contexts at each leaf. haveTop and haveLeft gate the
+// split context as libaom's edge-seeded txfm contexts do. The caller
+// guarantees the node lies inside the superblock-local context arrays.
+func (t *txTreeReader) read(from TransformSize, depth uint8, xOff, yOff, x4, y4 int, haveTop, haveLeft bool) {
+	tDim := from.Dims()
+	txw, txh := tDim.Log2W, tDim.Log2H
+	ctx := t.ctx
+	isSplit := false
 	if depth < 2 && from > TransformSize4x4 {
-		cat := 2*(int(TransformSize64x64)-int(dims.Max)) - int(depth)
-		if uint(cat) >= TransformPartitionCats {
-			return ErrInvalidDecodeState
-		}
+		cat := 2*(int(TransformSize64x64)-int(tDim.Max)) - int(depth)
 		a, l := 0, 0
-		if haveTop && ctx.A.Tx[x4] < dims.Log2W {
+		if haveTop && ctx.A.Tx[x4&(MaxBlockModeSlots-1)] < txw {
 			a = 1
 		}
-		if haveLeft && ctx.L.Tx[y4] < dims.Log2H {
+		if haveLeft && ctx.L.Tx[y4&(MaxBlockModeSlots-1)] < txh {
 			l = 1
 		}
-		split = s.Reader.ReadBinaryCDFUnchecked(&cdfs.TxPartition[cat][a+l]) != 0
-		if split {
-			masks[depth] |= 1 << (yOff*4 + xOff)
+		isSplit = t.s.Reader.ReadBinaryCDFUnchecked(&t.cdfs.TxPartition[cat][a+l]) != 0
+		if isSplit {
+			t.split[depth&1] |= 1 << (yOff*4 + xOff)
 		}
 	}
-	if split && dims.Max > 1 {
-		sub := dims.Sub
-		subDims, ok := sub.Dimensions()
-		if !ok {
-			return ErrInvalidDecodeState
-		}
-		w, h := int(subDims.W4), int(subDims.H4)
+	if isSplit && tDim.Max > 1 {
+		sub := tDim.Sub
+		subDim := sub.Dims()
+		txsw, txsh := int(subDim.W4), int(subDim.H4)
 		d := depth + 1
-		if err := s.readTxTree(cdfs, ctx, masks, sub, d, xOff*2, yOff*2, x4, y4, right, bottom, haveTop, haveLeft); err != nil {
-			return err
+		t.read(sub, d, xOff*2, yOff*2, x4, y4, haveTop, haveLeft)
+		if txw >= txh && x4+txsw < t.right {
+			t.read(sub, d, xOff*2+1, yOff*2, x4+txsw, y4, haveTop, true)
 		}
-		if dims.Log2W >= dims.Log2H && x4+w < right {
-			if err := s.readTxTree(cdfs, ctx, masks, sub, d, xOff*2+1, yOff*2, x4+w, y4, right, bottom, haveTop, true); err != nil {
-				return err
+		if txh >= txw && y4+txsh < t.bottom {
+			t.read(sub, d, xOff*2, yOff*2+1, x4, y4+txsh, true, haveLeft)
+			if txw >= txh && x4+txsw < t.right {
+				t.read(sub, d, xOff*2+1, yOff*2+1, x4+txsw, y4+txsh, true, true)
 			}
 		}
-		if dims.Log2H >= dims.Log2W && y4+h < bottom {
-			if err := s.readTxTree(cdfs, ctx, masks, sub, d, xOff*2, yOff*2+1, x4, y4+h, right, bottom, true, haveLeft); err != nil {
-				return err
-			}
-			if dims.Log2W >= dims.Log2H && x4+w < right {
-				if err := s.readTxTree(cdfs, ctx, masks, sub, d, xOff*2+1, yOff*2+1, x4+w, y4+h, right, bottom, true, true); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
+		return
 	}
-	if x4+int(dims.W4) > MaxBlockModeSlots || y4+int(dims.H4) > MaxBlockModeSlots {
-		return ErrInvalidDecodeState
-	}
-	markW, markH := dims.Log2W, dims.Log2H
-	if split {
+	markW, markH := txw, txh
+	if isSplit {
 		markW, markH = 0, 0
 	}
-	setCtxPow2(ctx.A.Tx[x4:], dims.Log2W, markW)
-	setCtxPow2(ctx.L.Tx[y4:], dims.Log2H, markH)
-	return nil
+	setCtxPow2(ctx.A.Tx[x4&(MaxBlockModeSlots-1):], txw, markW)
+	setCtxPow2(ctx.L.Tx[y4&(MaxBlockModeSlots-1):], txh, markH)
 }
 
 // setCtxPow2 ports dav1d_memset_pow2: dst[:1<<log2n] = v with one store per
-// up to eight bytes; log2n is at most 4.
+// up to eight bytes; log2n is at most 5.
 func setCtxPow2(dst []uint8, log2n uint8, v uint8) {
 	x := uint64(v) * 0x0101010101010101
 	switch log2n {
@@ -159,9 +152,14 @@ func setCtxPow2(dst []uint8, log2n uint8, v uint8) {
 		binary.LittleEndian.PutUint32(dst, uint32(x))
 	case 3:
 		binary.LittleEndian.PutUint64(dst, x)
+	case 4:
+		binary.LittleEndian.PutUint64(dst, x)
+		binary.LittleEndian.PutUint64(dst[8:], x)
 	default:
 		binary.LittleEndian.PutUint64(dst, x)
 		binary.LittleEndian.PutUint64(dst[8:], x)
+		binary.LittleEndian.PutUint64(dst[16:], x)
+		binary.LittleEndian.PutUint64(dst[24:], x)
 	}
 }
 

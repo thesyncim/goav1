@@ -48,70 +48,118 @@ type TransformBlock struct {
 type TransformBlockVisitor func(TransformBlock) error
 
 // DecodeTransformTree decodes AV1 selected transform-size or inter var-tx
-// syntax for one block and updates the caller-owned transform contexts.
-// The request is read in place, as dav1d's read_vartx_tree reads the block
-// state through t and b.
+// syntax for one block described by req and updates the caller-owned
+// transform contexts. The block decode reads the sizes through readTxSizes
+// directly from its block visit.
 func (s *DecodeState) DecodeTransformTree(cdfs *TransformCDFs, ctx *BlockModeContext, req *TransformTreeRequest) (TransformTreeResult, error) {
 	if s == nil || cdfs == nil || ctx == nil {
 		return TransformTreeResult{}, ErrInvalidDecodeState
 	}
-	blockDims, err := validateTransformTreeRequest(req)
-	if err != nil {
-		return TransformTreeResult{}, err
+	block := BlockVisit{
+		X4: req.X4, Y4: req.Y4, Size: req.Size,
+		VisibleW4: req.VisibleW4, VisibleH4: req.VisibleH4,
+		HaveTop: req.HaveTop, HaveLeft: req.HaveLeft,
 	}
-
-	maxY, err := MaxTransformSize(req.Size, parser.ColorConfig{}, 0)
-	if err != nil {
-		return TransformTreeResult{}, err
-	}
-	result := TransformTreeResult{Y: maxY}
-	if !req.Color.MonoChrome {
-		uv := TransformSize4x4
-		if !req.Lossless {
-			var err error
-			uv, err = MaxTransformSize(req.Size, req.Color, 1)
-			if err != nil {
-				return TransformTreeResult{}, err
-			}
-		}
-		result.UV = uv
-		result.HasUV = true
-	}
-
-	if req.Inter && shouldReadVariableTransformTree(req, maxY) {
-		result.Variable = true
-		maxDims, _ := maxY.Dimensions()
-		reqX4 := int(req.X4)
-		reqY4 := int(req.Y4)
-		right := reqX4 + int(req.VisibleW4)
-		bottom := reqY4 + int(req.VisibleH4)
-		mw, mh := int(maxDims.W4), int(maxDims.H4)
-		// dav1d's read_vartx_tree: one read_tx_tree per max_ytx unit. A unit past
-		// the first row/column has its prior sibling as top/left neighbour.
-		for y, yOff := 0, 0; y < int(req.VisibleH4); y, yOff = y+mh, yOff+1 {
-			for x, xOff := 0, 0; x < int(req.VisibleW4); x, xOff = x+mw, xOff+1 {
-				if err := s.readTxTree(cdfs, ctx, &result.Split, maxY, 0, xOff, yOff, reqX4+x, reqY4+y, right, bottom, req.HaveTop || y > 0, req.HaveLeft || x > 0); err != nil {
-					return TransformTreeResult{}, err
-				}
-			}
-		}
-		return result, nil
-	}
-
-	tx, err := s.readFixedTransformSize(cdfs, ctx, req, maxY)
-	if err != nil {
-		return TransformTreeResult{}, err
-	}
-	result.Y = tx
-	markLog2W, markLog2H, err := fixedTransformMarkContext(req, blockDims, tx)
-	if err != nil {
-		return TransformTreeResult{}, err
-	}
-	if err := ctx.MarkTransformArea(int(req.X4), int(req.Y4), int(blockDims.W4), int(blockDims.H4),
-		markLog2W, markLog2H, !req.Inter); err != nil {
+	var result TransformTreeResult
+	if err := s.readTxSizes(cdfs, ctx, &block, &req.Color, req.TransformMode, req.Inter, req.SkipTransform, req.Lossless, &result); err != nil {
 		return TransformTreeResult{}, err
 	}
 	return result, nil
+}
+
+// uvTxLayoutColumn is dav1d's f->cur.p.layout column of
+// dav1d_max_txfm_size_for_bs: 1 for 4:2:0, 2 for 4:2:2, 3 for 4:4:4.
+func uvTxLayoutColumn(color *parser.ColorConfig) int {
+	if !color.SubsamplingX {
+		return 3
+	}
+	if color.SubsamplingY {
+		return 1
+	}
+	return 2
+}
+
+// readTxSizes is the transform-size step of dav1d's decode_b: read_vartx_tree
+// (src/decode.c) for inter blocks and the read_tx_size depth read for intra
+// blocks. max_ytx and uvtx come straight from dav1d_max_txfm_size_for_bs, the
+// var-tx tree is read per max_ytx unit by txTreeReader.read, and the fixed-size paths
+// set the transform contexts with dav1d_memset_pow2 stores. The result is
+// written in place into out.
+func (s *DecodeState) readTxSizes(cdfs *TransformCDFs, ctx *BlockModeContext, block *BlockVisit, color *parser.ColorConfig, mode parser.TransformMode, inter, skip, lossless bool, out *TransformTreeResult) error {
+	bs := block.Size
+	if bs >= blockSizeCount {
+		return ErrInvalidDecodeState
+	}
+	bDim := &blockDimensions[bs]
+	bx4, by4 := int(block.X4), int(block.Y4)
+	vw4, vh4 := int(block.VisibleW4), int(block.VisibleH4)
+	if vw4 == 0 || vh4 == 0 || vw4 > int(bDim.W4) || vh4 > int(bDim.H4) ||
+		bx4+int(bDim.W4) > MaxBlockModeSlots || by4+int(bDim.H4) > MaxBlockModeSlots {
+		return ErrInvalidDecodeState
+	}
+	maxTx := &maxTransformSizeForBlock[bs]
+	maxYtx := maxTx[0]
+	*out = TransformTreeResult{Y: maxYtx}
+	if !color.MonoChrome {
+		out.HasUV = true
+		if !lossless {
+			out.UV = maxTx[uvTxLayoutColumn(color)]
+		}
+	}
+
+	if inter && !skip && !lossless && mode == parser.TransformModeSwitchable && maxYtx != TransformSize4x4 {
+		// read_vartx_tree: one read_tx_tree per max_ytx unit. A unit past the
+		// first row/column has its prior sibling as top/left neighbour.
+		out.Variable = true
+		ytx := maxYtx.Dims()
+		t := txTreeReader{s: s, cdfs: cdfs, ctx: ctx, right: bx4 + vw4, bottom: by4 + vh4}
+		for y, yOff := 0, 0; y < vh4; y, yOff = y+int(ytx.H4), yOff+1 {
+			for x, xOff := 0, 0; x < vw4; x, xOff = x+int(ytx.W4), xOff+1 {
+				t.read(maxYtx, 0, xOff, yOff, bx4+x, by4+y, block.HaveTop || y > 0, block.HaveLeft || x > 0)
+			}
+		}
+		out.Split = t.split
+		return nil
+	}
+
+	tx := maxYtx
+	switch {
+	case lossless || mode == parser.TransformMode4x4Only || maxYtx == TransformSize4x4:
+		tx = TransformSize4x4
+	case inter:
+		if mode != parser.TransformModeLargest && mode != parser.TransformModeSwitchable {
+			return ErrInvalidDecodeState
+		}
+	default:
+		var err error
+		tx, err = s.ReadSelectedTransformSize(cdfs, ctx, SelectedTransformRequest{
+			Size:          bs,
+			TransformMode: mode,
+			Lossless:      lossless,
+			X4:            block.X4,
+			Y4:            block.Y4,
+			HaveTop:       block.HaveTop,
+			HaveLeft:      block.HaveLeft,
+		})
+		if err != nil {
+			return err
+		}
+	}
+	out.Y = tx
+	// An inter skip block marks its whole extent; otherwise the context holds
+	// the transform size over the block's span.
+	ctxW, ctxH := bDim.Log2W, bDim.Log2H
+	if !inter || !skip {
+		td := tx.Dims()
+		ctxW, ctxH = td.Log2W, td.Log2H
+	}
+	setCtxPow2(ctx.A.Tx[bx4:], bDim.Log2W, ctxW)
+	setCtxPow2(ctx.L.Tx[by4:], bDim.Log2H, ctxH)
+	if !inter {
+		setCtxPow2(ctx.A.TxIntra[bx4:], bDim.Log2W, ctxW)
+		setCtxPow2(ctx.L.TxIntra[by4:], bDim.Log2H, ctxH)
+	}
+	return nil
 }
 
 // ForEachLumaTXB replays the decoded luma transform tree in coefficient decode
@@ -255,27 +303,6 @@ func (r *transformTreeReplay) replay(from TransformSize, depth int, x4 int, y4 i
 		return nil
 	}
 	return emitTransformBlock(r.req, x4, y4, from, r.visit)
-}
-
-func (s *DecodeState) readFixedTransformSize(cdfs *TransformCDFs, ctx *BlockModeContext, req *TransformTreeRequest, maxY TransformSize) (TransformSize, error) {
-	if req.Lossless || req.TransformMode == parser.TransformMode4x4Only || maxY == TransformSize4x4 {
-		return TransformSize4x4, nil
-	}
-	if req.Inter {
-		if req.TransformMode == parser.TransformModeLargest || req.TransformMode == parser.TransformModeSwitchable {
-			return maxY, nil
-		}
-		return 0, ErrInvalidDecodeState
-	}
-	return s.ReadSelectedTransformSize(cdfs, ctx, SelectedTransformRequest{
-		Size:          req.Size,
-		TransformMode: req.TransformMode,
-		Lossless:      req.Lossless,
-		X4:            req.X4,
-		Y4:            req.Y4,
-		HaveTop:       req.HaveTop,
-		HaveLeft:      req.HaveLeft,
-	})
 }
 
 func fixedTransformMarkContext(req *TransformTreeRequest, blockDims BlockDimensions, tx TransformSize) (uint8, uint8, error) {

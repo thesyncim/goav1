@@ -112,21 +112,10 @@ func (s *DecodeState) bindCoefBlock(cdfs *BlockLoopCDFs, scratch *BlockLoopScrat
 		return ErrInvalidDecodeState
 	}
 
-	tr := &scratch.coefTree
-	tr.Size = block.Size
-	tr.X4, tr.Y4 = block.X4, block.Y4
-	tr.VisibleW4, tr.VisibleH4 = block.VisibleW4, block.VisibleH4
-	tr.HaveTop, tr.HaveLeft = block.HaveTop, block.HaveLeft
-	tr.Color = req.Color
-	tr.TransformMode = req.TransformMode
-	tr.Inter = !intra
-	tr.SkipTransform = skip
-	tr.Lossless = lossless
-	tree, err := s.DecodeTransformTree(cdfs.Transform, &scratch.Mode, tr)
-	if err != nil {
-		return fmt.Errorf("decode transform tree req=%+v: %w", *tr, err)
+	tree := &visit.Coefficients.Tree
+	if err := s.readTxSizes(cdfs.Transform, &scratch.Mode, block, &req.Color, req.TransformMode, !intra, skip, lossless, tree); err != nil {
+		return fmt.Errorf("decode transform sizes block=%+v: %w", *block, err)
 	}
-	visit.Coefficients = BlockCoeffResult{Tree: tree}
 
 	b := &scratch.coef
 	b.s, b.cdfs, b.txCDFs = s, cdfs.Coeff, cdfs.TransformType
@@ -147,7 +136,7 @@ func (s *DecodeState) bindCoefBlock(cdfs *BlockLoopCDFs, scratch *BlockLoopScrat
 	} else {
 		b.txtpMap = &scratch.Coeff.txtpMap
 	}
-	b.Tree = tree
+	b.Tree = *tree
 	b.X4, b.Y4 = int(block.X4), int(block.Y4)
 	b.W4, b.H4 = int(block.VisibleW4), int(block.VisibleH4)
 	lumaDims, ok := block.Size.Dimensions()
