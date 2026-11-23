@@ -12,10 +12,10 @@ func SequenceHeaderForConfig(config Config) (SequenceHeader, error) {
 	}
 
 	seq := SequenceHeader{
-		Profile:               config.Profile,
-		OperatingPointsCount:  sequenceOperatingPointsForLayers(config.SpatialLayerCount, config.TemporalLayerCount),
-		MaxFrameWidth:         uint32(config.Resolution.Width),
-		MaxFrameHeight:        uint32(config.Resolution.Height),
+		Profile:              config.Profile,
+		OperatingPointsCount: sequenceOperatingPointsForLayers(config.SpatialLayerCount, config.TemporalLayerCount),
+		MaxFrameWidth:        uint32(config.Resolution.Width),
+		MaxFrameHeight:       uint32(config.Resolution.Height),
 		// SVT-AV1 rtc M12 runs filter_intra_level 0 (no filter intra) and
 		// keeps the intra edge filter on.
 		EnableFilterIntra:     false,

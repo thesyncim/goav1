@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish pgo-regenerate qualitybench-publish qualitybench-publish-singlethread gc-metrics compiler-reports unsafe-check fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check fmt-check-strict tidy-check webrtc-reference webrtc-browser webrtc-production webrtc-production-ci dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
+.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish pgo-regenerate qualitybench-publish qualitybench-publish-singlethread gc-metrics compiler-reports unsafe-check fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check tidy-checkwebrtc-reference webrtc-browser webrtc-production webrtc-production-ci dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -511,21 +511,10 @@ vet:
 	go vet ./...
 
 fmt-check:
-	@unformatted="$$(gofmt -l .)"; \
-	if [ -n "$$unformatted" ]; then \
-		echo "gofmt: the following files would be reformatted:"; \
-		echo "$$unformatted"; \
-		gofmt -d $$unformatted || true; \
-	else \
-		echo "gofmt: clean"; \
-	fi
-
-fmt-check-strict:
-	@unformatted="$$(gofmt -l .)"; \
+	@unformatted="$$(git ls-files '*.go' | xargs gofmt -l)"; \
 	if [ -n "$$unformatted" ]; then \
 		echo "gofmt: the following files need formatting:" >&2; \
 		echo "$$unformatted" >&2; \
-		gofmt -d $$unformatted >&2 || true; \
 		exit 1; \
 	fi
 
@@ -748,8 +737,7 @@ help:
 	@echo "  alloc                      run allocation regression checks"
 	@echo "  trace-zero                 prove entropy tracing compiles out of release hot paths"
 	@echo "  vet                        go vet ./..."
-	@echo "  fmt-check                  report any files gofmt would reformat (non-blocking)"
-	@echo "  fmt-check-strict           fail if gofmt would reformat anything"
+	@echo "  fmt-check                  fail if gofmt would reformat a tracked file"
 	@echo "  tidy-check                 fail if go.mod/go.sum is not tidy"
 	@echo "  webrtc-reference           require aomdec+dav1d for internal and public encoder/WebRTC reference-decode rows"
 	@echo "  webrtc-browser             require aomdec+dav1d for the browser-push WebRTC example"

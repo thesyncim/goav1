@@ -145,7 +145,7 @@ func syntheticMotionFrames(n, w, h int) []SourceFrame420 {
 		}
 		for r := 0; r < h; r++ {
 			for c := 0; c < w; c++ {
-				val := (c+phase)&255 ^ (r & 63) * 2
+				val := (c+phase)&255 ^ (r&63)*2
 				if (c/48+r/32)%2 == 0 {
 					val += ((c * r) >> 6) & 31
 				}

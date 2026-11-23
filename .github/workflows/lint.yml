@@ -23,16 +23,8 @@ jobs:
           go-version: '1.27.x'
           check-latest: true
           cache: true
-      - name: gofmt (report)
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "::warning::gofmt: the following files would be reformatted:"
-            echo "$unformatted"
-            gofmt -d $unformatted || true
-          else
-            echo "gofmt: clean"
-          fi
+      - name: gofmt
+        run: make fmt-check
       - name: go vet
         run: go vet ./...
       - name: unsafe allowlist and directives

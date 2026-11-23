@@ -28,8 +28,8 @@ type coefBlock struct {
 
 	// bx4/by4 and w4/h4 are the block's superblock-local luma origin and its
 	// frame-clipped size in 4x4 units (dav1d's t->bx & 31 and w4/h4).
-	bx4, by4  int
-	w4, h4    int
+	bx4, by4 int
+	w4, h4   int
 	// cx4/cy4 are the chroma origin (bx4 >> ss_hor, by4 >> ss_ver) and
 	// ssX/ssY the chroma subsampling shifts.
 	cx4, cy4  int

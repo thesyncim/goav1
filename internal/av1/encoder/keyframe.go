@@ -378,8 +378,8 @@ const encoderIntraEdgeFilter = true
 func losslessKeyframeSequence(width, height int) SequenceHeader {
 	return SequenceHeader{
 		EnableIntraEdgeFilter: encoderIntraEdgeFilter,
-		Profile:              Profile0,
-		OperatingPointsCount: 1,
+		Profile:               Profile0,
+		OperatingPointsCount:  1,
 		OperatingPoints: [32]SequenceOperatingPoint{
 			{SeqLevelIdx: SequenceLevelMax},
 		},

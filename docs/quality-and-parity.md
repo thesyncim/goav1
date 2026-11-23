@@ -59,10 +59,8 @@ kernel-level validation expectations.
 
 ## Development checks
 
-`make ci-local` runs formatting checks, vet, Go tests, allocation checks,
-compiler reports, and the trace-zero check. The formatting target reports
-unformatted files; use `make fmt-check-strict` when formatting must fail the
-command.
+`make ci-local` runs the gofmt check, vet, the `unsafe` allowlist check, Go
+tests, allocation checks, compiler reports, and the trace-zero check.
 
 Before changing a decoder DSP or transform path, run its focused conformance
 probe:

@@ -37,11 +37,11 @@ type CoeffDequantTarget struct {
 	Arena *[]int32
 	// Coef, when set, is the zero-maintained t->cf buffer of the dav1d block
 	// walk; Dst is pointed at it after each TXB.
-	Coef           *CoefBuffer
-	Factors        [3][2]int32 // [Y/U/V][DC/AC]
-	ActiveRows     int
+	Coef       *CoefBuffer
+	Factors    [3][2]int32 // [Y/U/V][DC/AC]
+	ActiveRows int
 	// ActiveCols bounds the nonzero coefficient columns (0 = unknown).
-	ActiveCols int
+	ActiveCols     int
 	Provider       CoeffDequantProvider
 	BitDepth       uint8
 	Ready          bool

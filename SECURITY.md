@@ -261,9 +261,10 @@ boundary above.
   allocation is replaced by a caller-supplied buffer plus a public
   `*Size` / `Required*` helper. A malformed header that would require
   more memory than bound is rejected at bind time, before any write.
-- **CI gates.** `make ci-local` (run in CI) executes `fmt-check`,
-  `vet`, `test`, and `alloc`. `make testvectors-fast` runs the
-  committed libaom conformance subset on every push.
+- **CI gates.** `make ci-local` executes `fmt-check`, `vet`,
+  `unsafe-check`, `test`, `alloc`, `compiler-reports` and `trace-zero`;
+  CI runs the same checks. `make testvectors-fast` runs the committed
+  libaom conformance subset on every push.
 
 ## Dependency inventory
 
