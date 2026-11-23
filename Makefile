@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish pgo-regenerate qualitybench-publish qualitybench-publish-singlethread gc-metrics compiler-reports unsafe-check fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet fmt-check tidy-checkwebrtc-reference webrtc-browser webrtc-production webrtc-production-ci dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus feature-sweep ci-local help
+.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish pgo-regenerate qualitybench-publish qualitybench-publish-singlethread gc-metrics compiler-reports unsafe-check fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet vet-tags fmt-check tidy-check webrtc-reference webrtc-browser webrtc-production webrtc-production-ci dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus feature-sweep ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -499,6 +499,12 @@ trace-zero:
 vet:
 	go vet ./...
 
+# vet-tags vets the module once per project build tag (goav1_oracle, the
+# refmvs oracle, the trace, poison and debug builds): nothing else compiles
+# the files behind them, so they rot unnoticed otherwise.
+vet-tags:
+	./scripts/vet_tags.sh
+
 fmt-check:
 	@unformatted="$$(git ls-files '*.go' | xargs gofmt -l)"; \
 	if [ -n "$$unformatted" ]; then \
@@ -687,7 +693,7 @@ dryrun-external-corpus:
 dryrun-extended:
 	GOAV1_EXTENDED_LIBAOM_FRAMEWORK_DRYRUN=1 GOAV1_STRICT_MD5=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle ./internal/av1/testvector -run 'TestLibaomExtendedFrameWorkDryRun' -count=1 -timeout 1800s -v
 
-# feature-sweep encodes about 180 small synthetic clips with aomenc and
+# feature-sweep encodes about 190 small synthetic clips with aomenc and
 # SvtAv1EncApp, one coding tool or header mode each, and compares aom-go-dec's
 # output at one and at eight workers, and the layered decoder's through
 # dump_svc, with dav1d's. It needs aomenc, aomdec,
@@ -697,7 +703,7 @@ feature-sweep: build-cmd
 	go build $(GOAV1_PGO_FLAGS) -o $(dir $(CMDBIN))dump_svc ./cmd/dump_svc
 	./scripts/decoder_feature_sweep.py $(CMDBIN) -l $(dir $(CMDBIN))dump_svc
 
-ci-local: fmt-check vet unsafe-check test alloc compiler-reports trace-zero
+ci-local: fmt-check vet vet-tags unsafe-check test alloc compiler-reports trace-zero
 
 # CMDDIR is the source directory of the aom-go-dec CLI. CMDBIN is the path
 # `build-cmd` writes the binary to (bin/aom-go-dec by default). Override
@@ -755,7 +761,8 @@ help:
 	@echo "  feature-sweep              aomenc/SVT tool-by-tool clips compared with dav1d (needs aomenc, aomdec, dav1d, ffmpeg)"
 	@echo "  test-motion-conformance    libaom convolve conformance"
 	@echo "  test-transform-conformance libaom transform conformance"
-	@echo "  ci-local                   run fmt-check + vet + unsafe-check + test + alloc + compiler-reports + trace-zero"
+	@echo "  vet-tags                   go vet once per project build tag (oracle, trace, poison, debug builds)"
+	@echo "  ci-local                   run fmt-check + vet + vet-tags + unsafe-check + test + alloc + compiler-reports + trace-zero"
 	@echo "  build-cmd                  build the aom-go-dec CLI into ./bin"
 	@echo "  install-cmd                go install the aom-go-dec CLI"
 

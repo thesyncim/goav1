@@ -21,7 +21,7 @@ gates that cover the changed behavior before making a wider parity claim.
 | `make dryrun-extended` | Opt-in diagnostic cohort with additional vectors, including larger and multi-quantizer cases. |
 | `make dryrun-corpus` | Check the locally generated real-content corpus, when present. |
 | `make dryrun-external-corpus` | Check caller-supplied IVF corpora with supported digest sidecars. |
-| `make feature-sweep` | Encode about 180 small synthetic clips with `aomenc` and `SvtAv1EncApp`, one coding tool or header mode each, and compare the decoder's output at one and at eight workers, and the layered decoder's, with `dav1d`. Needs `aomenc`, `aomdec`, `dav1d` and `ffmpeg`; the SVT-AV1 cases run when its encoder is installed. |
+| `make feature-sweep` | Encode about 190 small synthetic clips with `aomenc` and `SvtAv1EncApp`, one coding tool or header mode each, and compare the decoder's output at one and at eight workers, and the layered decoder's, with `dav1d`. Needs `aomenc`, `aomdec`, `dav1d` and `ffmpeg`; the SVT-AV1 cases run when its encoder is installed. |
 
 The full and extended suites may need vector downloads and the oracle test
 harness. The generated corpus lanes require local corpus data. A skipped lane
@@ -67,8 +67,9 @@ kernel-level validation expectations.
 
 ## Development checks
 
-`make ci-local` runs the gofmt check, vet, the `unsafe` allowlist check, Go
-tests, allocation checks, compiler reports, and the trace-zero check.
+`make ci-local` runs the gofmt check, vet (also once per project build tag),
+the `unsafe` allowlist check, Go tests, allocation checks, compiler reports,
+and the trace-zero check.
 
 Before changing a decoder DSP or transform path, run its focused conformance
 probe:

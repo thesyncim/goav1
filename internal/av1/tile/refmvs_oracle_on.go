@@ -190,3 +190,20 @@ func refmvsOracleEncoderStack(c *BlockModeContext, rt *refmvsTile, block *BlockV
 		fail("single ref mvs")
 	}
 }
+
+// legacyRefmvsTopHasRight derives the top-right availability flag from the
+// block position: blockHasTopRight plus the T_LEFT_SPLIT (VERT_A) rule that
+// the bottom-left square is decoded before the right-hand rectangle
+// above-right of it. The edge tree is checked against it.
+func legacyRefmvsTopHasRight(sbSizeMIB uint8, block BlockVisit) bool {
+	if !blockHasTopRight(sbSizeMIB, block) {
+		return false
+	}
+	if block.Partition == PartitionTLeftSplit {
+		dims := blockDimensions[block.Size]
+		if dims.W4 == dims.H4 && int(block.MIRow)&int(dims.H4) != 0 {
+			return false
+		}
+	}
+	return true
+}
