@@ -32,10 +32,7 @@ func TestUVInterTransformTypeMatchesSetRules(t *testing.T) {
 				if ok, err := ExtTXTypeAllowed(lumaSet, typ); err != nil || !ok || !typ.Supported(txSize) {
 					want = transform.TypeDCTDCT
 				}
-				got, err := uvInterTransformType(size, typ)
-				if err != nil {
-					t.Fatal(err)
-				}
+				got := uvInterTxtp(&transformDimensions[size], typ)
 				// The old rule used the chroma size's own set, the same set the
 				// luma type was drawn from when sizes match; check that set too.
 				if got != want {
