@@ -179,37 +179,14 @@ bench-cross:
 bench-corpus:
 	GOAV1_BENCH_CORPUS=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
 
+# pgo-regenerate merges fresh one-thread decode and encode CPU profiles into
+# $(GOAV1_PGO_PROFILE). PGO_STREAMS lists the IVF streams to decode and
+# PGO_ENC_CLIP names a raw 8-bit I420 clip as path:WIDTHxHEIGHT. A/B the new
+# profile against the old one before committing it.
+PGO_STREAMS ?=
+PGO_ENC_CLIP ?=
 pgo-regenerate:
-	# Regenerate cmd/qualitybench/default.pgo for D2-a:
-	# 1. Create internal/av1/testvector/scratch_profile_test.go with the
-	#    goav1_oracle build tag and TestScratchProfileDecode. The test reads
-	#    GOAV1_PROFILE_CLIP, loads that IVF once, and runs 30 iterations of
-	#    decodeCorpusClipDiscard(ivfData).
-	# 2. GOAV1_PROFILE_CLIP=$$PWD/testdata/benchcorpus/p720_inter_q32.ivf go test -tags goav1_oracle -run '^TestScratchProfileDecode$$' ./internal/av1/testvector -count=1 -cpuprofile /tmp/goav1-d2a-dec-p720.out
-	# 3. GOAV1_PROFILE_CLIP=$$PWD/testdata/benchcorpus/p288_inter_q20.ivf go test -tags goav1_oracle -run '^TestScratchProfileDecode$$' ./internal/av1/testvector -count=1 -cpuprofile /tmp/goav1-d2a-dec-p288.out
-	# 4. GOMAXPROCS=1 go test ./internal/av1/encoder -run '^$$' -bench '^BenchmarkVideoEncoderRealC1080p$$' -benchtime=60x -count=1 -cpuprofile /tmp/goav1-d2a-enc-realc.out
-	# 4b. Realtime decode: encode a 720p real-content clip with libaom examples/svc_encoder_rtc
-	#     (-sl 1 -tl 1 -lm 0 -sp 7 -b 2500 -bl 2500) and CPU-profile a one-worker
-	#     LayeredDecoder DecodeNext loop over it into /tmp/goav1-rtc-l1t1.out.
-	# 5. go tool pprof -proto -output cmd/qualitybench/default.pgo /tmp/goav1-d2a-dec-p720.out /tmp/goav1-d2a-dec-p288.out /tmp/goav1-d2a-enc-realc.out
-	#    Then merge the realtime profile: go tool pprof -proto -output cmd/qualitybench/default.pgo cmd/qualitybench/default.pgo /tmp/goav1-rtc-l1t1.out
-	# 6. Delete internal/av1/testvector/scratch_profile_test.go before committing.
-	# Decoder refresh (merge-style; keeps the encoder samples, since a
-	# re-collected encoder profile measured worse for the decoder in #106):
-	# 7. Add a scratch root benchmark that opens every IVF listed in
-	#    GOAV1_ZZ_FILES (colon separated) with NewDecoderFromIVF(data,
-	#    WithWorkers(1)) and, per b.Loop() iteration, runs
-	#    decodePublicFullClipAfterReset on each decoder.
-	# 8. GOEXPERIMENT=simd go test -c -pgo=cmd/qualitybench/default.pgo -o /tmp/goav1-root.test .
-	# 9. GOAV1_ZZ_FILES=<the four testdata/realcorpus/aq0 streams debugging_720p_800k_s11,
-	#    fourpeople_360p_500k_s9, mtbike_360p_600k_s8, johnny_720p_1500k_s9>:<benchcorpus
-	#    p720_inter_q20 and p360_inter_q32>:<the 960-frame p720 clip> GOMAXPROCS=1
-	#    /tmp/goav1-root.test -test.run '^$$' -test.bench ZZScratchFiles -test.benchtime 40s
-	#    -test.cpuprofile /tmp/goav1-dec-refresh.out
-	# 10. go tool pprof -proto cmd/qualitybench/default.pgo /tmp/goav1-dec-refresh.out > /tmp/merged.pgo
-	#     and move it over cmd/qualitybench/default.pgo; A/B decode (w1 and w8)
-	#     and the RTC encbench before committing. Delete the scratch benchmark.
-	@printf '%s\n' 'PGO regeneration recipe is documented in this target.'
+	./scripts/regen_pgo.sh $(if $(PGO_ENC_CLIP),-e $(PGO_ENC_CLIP)) $(PGO_STREAMS)
 
 bench-corpus-publish:
 	@if [ -z "$(BENCH_CORPUS_ENVIRONMENT_NOTES)" ]; then echo "set BENCH_CORPUS_ENVIRONMENT_NOTES='power, thermal, and background-load context'"; exit 2; fi
@@ -763,7 +740,7 @@ help:
 	@echo "  bench-corpus               generated corpus goav1 vs reference decoder throughput"
 	@echo "  bench-corpus-publish       strict generated corpus throughput requiring all reference decoders"
 	@echo "  bench-go-publish           strict Go benchmark runner with metadata sidecar"
-	@echo "  pgo-regenerate             print the D2-a PGO regeneration recipe"
+	@echo "  pgo-regenerate             merge fresh decode/encode CPU profiles into the PGO profile (PGO_STREAMS, PGO_ENC_CLIP)"
 	@echo "  qualitybench-publish       matched-CPU-budget publish encoder comparison"
 	@echo "  qualitybench-publish-singlethread fixed single-thread publish encoder comparison"
 	@echo "  gc-metrics                 decode GC scan/object-count benchmarks"
