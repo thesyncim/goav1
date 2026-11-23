@@ -124,24 +124,18 @@ func (c *frameWorkTileResidualLoopController) reconCoefTree(visit *tile.BlockLoo
 
 // reconTXB is one transform block of recon_b_* / read_coef_blocks:
 // decode_coefs into t->cf (fused) or the frame-thread cf arena (deferred), then
-// the intra prediction and inverse transform add, or the TXB's cbi entry.
-// visW/visH are the frame-clipped extent in 4x4 units.
+// the TXB's cbi entry, or its reconstruction. An inter TXB is read_coef_tree's
+// leaf: nothing for an all-zero TXB, else the inverse transform add straight
+// into the bound plane window. An intra TXB is recon_b_intra's prediction
+// followed by the add. visW/visH are the frame-clipped extent in 4x4 units.
 func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisit, b *tile.CoefBlock, dq *[3]tile.CoefDequant, plane uint8, size tile.TransformSize, x4, y4, visW, visH int) error {
-	// Field stores, not a composite literal: the literal is built in a stack
-	// temporary of byte stores and copied with word loads, a store-forwarding
-	// stall per TXB.
-	var blk tile.BlockCoeffBlock
-	blk.Plane = plane
-	blk.Block.X4, blk.Block.Y4, blk.Block.Size = uint8(x4), uint8(y4), size
-	blk.Block.VisibleW4, blk.Block.VisibleH4 = uint8(visW), uint8(visH)
-	blk.Transform = transform.TypeDCTDCT
 	s := c.scratch
 	var cf *[1024]int32
 	cfOff := 0
 	var r tile.CoefResult
-	if b.Skip {
-		blk.Result.AllZero = true
-	} else {
+	r.Txtp = transform.TypeDCTDCT
+	coded := false
+	if !b.Skip {
 		// Both buffers are zero where decode_coefs writes (dav1d's itx clears).
 		if c.deferReconstruction {
 			cfOff = len(s.cfArena)
@@ -153,26 +147,36 @@ func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisi
 		if r, err = b.DecodeCoefs(plane, size, x4, y4, visW, visH, cf, true, &dq[plane]); err != nil {
 			return err
 		}
-		blk.Transform, blk.Result = r.Txtp, r.TXB
 		c.stats.TXBs++
 		if r.TXB.AllZero {
 			c.stats.AllZero++
 		} else {
+			coded = true
 			c.stats.NonZero++
 			c.stats.EOBTotal += int32(r.TXB.EOB)
 		}
 	}
-	if blk.Result.AllZero {
+	rs := c.reconHot
+	if !c.deferReconstruction && rs == nil {
+		rs = c.fusedReconState()
+	}
+	if !coded {
 		if c.deferReconstruction {
 			if s.cfOverflow {
 				return ErrInvalidBatch
 			}
-			s.reconCBI = append(s.reconCBI, frameWorkReconCBI{txtp: blk.Transform})
+			s.reconCBI = append(s.reconCBI, frameWorkReconCBI{txtp: r.Txtp})
 			return nil
 		}
-		return c.fusedReconState().reconstructTXBWithDequantized(visit, &blk, nil, 0, 0, false)
+		if !b.Intra {
+			rs.stats.Residuals++
+			return nil
+		}
+		var blk tile.BlockCoeffBlock
+		fillTXBRecord(&blk, plane, size, x4, y4, visW, visH, r.Txtp)
+		blk.Result.AllZero = true
+		return rs.reconstructTXBWithDequantized(visit, &blk, nil, 0, 0, false)
 	}
-	dcOnly := blk.Transform == transform.TypeDCTDCT && blk.Result.EOB == 1
 	meta, ok := frameWorkBlockCoeffTransformMeta(size)
 	if !ok {
 		return ErrInvalidBatch
@@ -185,11 +189,32 @@ func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisi
 			return ErrInvalidBatch
 		}
 		s.cfArena = s.cfArena[:cfOff+area]
-		s.reconCBI = append(s.reconCBI, frameWorkReconCBI{eob: blk.Result.EOB, txtp: blk.Transform, activeRows: r.ActiveRows, activeCols: r.ActiveCols})
+		s.reconCBI = append(s.reconCBI, frameWorkReconCBI{eob: r.TXB.EOB, txtp: r.Txtp, activeRows: r.ActiveRows, activeCols: r.ActiveCols})
 		return nil
 	}
 	s.coefBuf.used(r.ActiveRows, r.ActiveCols, meta.scanSize.Height)
-	return c.fusedReconState().reconstructTXBWithDequantized(visit, &blk, cf[:area:area], int(r.ActiveRows), int(r.ActiveCols), dcOnly)
+	dcOnly := r.Txtp == transform.TypeDCTDCT && r.TXB.EOB == 1
+	coefs := cf[:area:area]
+	if !b.Intra {
+		done, err := rs.addResidualInWindow(&visit.Block, plane, uint8(x4), uint8(y4), meta, r.Txtp, r.TXB.EOB, coefs, int(r.ActiveRows), int(r.ActiveCols), dcOnly)
+		if done || err != nil {
+			return err
+		}
+	}
+	// Field stores, not a composite literal: the literal is built in a stack
+	// temporary of byte stores and copied with word loads, a store-forwarding
+	// stall per TXB.
+	var blk tile.BlockCoeffBlock
+	fillTXBRecord(&blk, plane, size, x4, y4, visW, visH, r.Txtp)
+	blk.Result = r.TXB
+	return rs.reconstructTXBWithDequantized(visit, &blk, coefs, int(r.ActiveRows), int(r.ActiveCols), dcOnly)
+}
+
+func fillTXBRecord(blk *tile.BlockCoeffBlock, plane uint8, size tile.TransformSize, x4, y4, visW, visH int, txtp transform.Type) {
+	blk.Plane = plane
+	blk.Block.X4, blk.Block.Y4, blk.Block.Size = uint8(x4), uint8(y4), size
+	blk.Block.VisibleW4, blk.Block.VisibleH4 = uint8(visW), uint8(visH)
+	blk.Transform = txtp
 }
 
 // reconBDeferred is the frame-thread pass-2 decode_b of a buffered block,
@@ -309,12 +334,10 @@ func (s *frameWorkReconState) reconCoefTreeDeferred(visit *tile.BlockLoopVisit, 
 // reconTXBDeferred reconstructs one TXB of a buffered block: a skip block's
 // TXBs are all zero and read no cbi entry.
 func (s *frameWorkReconState) reconTXBDeferred(visit *tile.BlockLoopVisit, cur *frameWorkReconCursor, skip bool, plane uint8, size tile.TransformSize, x4, y4, visW, visH int) error {
+	intra := visit.Prediction.Valid && visit.Prediction.Intra
 	var blk tile.BlockCoeffBlock
-	blk.Plane = plane
-	blk.Block.X4, blk.Block.Y4, blk.Block.Size = uint8(x4), uint8(y4), size
-	blk.Block.VisibleW4, blk.Block.VisibleH4 = uint8(visW), uint8(visH)
-	blk.Transform = transform.TypeDCTDCT
 	if skip {
+		fillTXBRecord(&blk, plane, size, x4, y4, visW, visH, transform.TypeDCTDCT)
 		blk.Result.AllZero = true
 		return s.reconstructTXBWithDequantized(visit, &blk, nil, 0, 0, false)
 	}
@@ -323,8 +346,12 @@ func (s *frameWorkReconState) reconTXBDeferred(visit *tile.BlockLoopVisit, cur *
 	}
 	e := cur.cbi[cur.cbiOff]
 	cur.cbiOff++
-	blk.Transform = e.txtp
 	if e.eob == 0 {
+		if !intra {
+			s.stats.Residuals++
+			return nil
+		}
+		fillTXBRecord(&blk, plane, size, x4, y4, visW, visH, e.txtp)
 		blk.Result.AllZero = true
 		return s.reconstructTXBWithDequantized(visit, &blk, nil, 0, 0, false)
 	}
@@ -338,10 +365,18 @@ func (s *frameWorkReconState) reconTXBDeferred(visit *tile.BlockLoopVisit, cur *
 		return ErrInvalidBatch
 	}
 	cur.cfOff = end
-	blk.Result.EOB = e.eob
 	dcOnly := e.txtp == transform.TypeDCTDCT && e.eob == 1
 	cf := cur.cf[off:end:end]
-	err := s.reconstructTXBWithDequantized(visit, &blk, cf, int(e.activeRows), int(e.activeCols), dcOnly)
+	done := false
+	var err error
+	if !intra {
+		done, err = s.addResidualInWindow(&visit.Block, plane, uint8(x4), uint8(y4), meta, e.txtp, e.eob, cf, int(e.activeRows), int(e.activeCols), dcOnly)
+	}
+	if !done && err == nil {
+		fillTXBRecord(&blk, plane, size, x4, y4, visW, visH, e.txtp)
+		blk.Result.EOB = e.eob
+		err = s.reconstructTXBWithDequantized(visit, &blk, cf, int(e.activeRows), int(e.activeCols), dcOnly)
+	}
 	// dav1d's inverse transforms clear the coefficients they read, so the
 	// next frame's decode_coefs finds the arena zero: the nonzero
 	// coefficients lie in the first activeCols columns of activeRows.
