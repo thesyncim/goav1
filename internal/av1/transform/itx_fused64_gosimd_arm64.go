@@ -803,6 +803,10 @@ func InverseAddDCT64x64(dst []byte, dstStride int, pred []byte, predStride int, 
 	}
 	inCols := itx64Form(activeCols)
 	inRows := itx64Form(activeRows)
+	if coeffStride == 32 && len(coeff) >= 1024 {
+		return itxGenDCT64x64((*[1024]int32)(coeff[:1024]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
+			unsafe.Pointer(unsafe.SliceData(pred)), predStride, activeCols, activeRows)
+	}
 	var tmp [32 * 64]int16
 	var colL1 [8]archsimd.Uint16x8
 	written := 0

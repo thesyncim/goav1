@@ -307,6 +307,10 @@ func InverseAddDCT32x32Low16(dst []byte, dstStride int, pred []byte, predStride 
 		len(dst) < 31*dstStride+32 || len(pred) < 31*predStride+32 {
 		return false
 	}
+	if coeffStride == 32 && len(coeff) >= 1024 && activeRows > 0 && activeRows <= 16 {
+		return itxGenDCT32x32((*[1024]int32)(coeff[:1024]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
+			unsafe.Pointer(unsafe.SliceData(pred)), predStride, 16, activeRows)
+	}
 	var tmp [16 * 32]int16
 	var colL1 [4]archsimd.Uint16x8
 	if !itx32RowStripLow16(coeff, coeffStride, 0, &tmp, &colL1) {
