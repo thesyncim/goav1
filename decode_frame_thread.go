@@ -115,6 +115,8 @@ type decoderFramePipeline struct {
 	fcs      []decoderFrameContext
 	next     int
 	laneNeed int
+	// seq numbers the submitted frames in decode order.
+	seq uint64
 
 	// progress is the per-surface pixel progress (dav1d
 	// Dav1dThreadPicture.progress[1]). Surfaces not owned by an in-flight frame
@@ -471,6 +473,8 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 	}
 	fc.ft.Recon.Reset()
 	fc.ft.Recon.Rows = &fc.reconRows
+	p.seq++
+	fc.ft.Recon.Seq = p.seq
 	fc.reconRows.Reset()
 	fc.parsed.Reset()
 	var references []*Frame
@@ -677,13 +681,14 @@ func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStr
 	p := &decoderFramePipeline{
 		d:        d,
 		fcs:      make([]decoderFrameContext, n),
-		laneNeed: 2 * n * workers,
+		laneNeed: n * workers,
 		progress: make([]internalthreading.FrameProgress, surfaceCount),
 		ready:    make([]*Frame, 0, 2*(RefFrames+n)),
 	}
 	p.grainParallel.Workers = workers
 	for i := range p.progress {
 		p.progress[i].Init()
+		p.progress[i].BindTaskWake(d.workerPool)
 		p.progress[i].Publish(internalthreading.FrameProgressDone)
 	}
 	p.mvProgress = make([]internalthreading.FrameProgress, internaldecoder.FrameWorkMVGrids)

@@ -94,31 +94,28 @@ func (r *FrameThreadRecon) waitSuperblockReferences(b *FrameWorkBatch, events []
 	return r.waitReferences(b, &need)
 }
 
-// waitRowReferences blocks until the references every superblock of SB row
-// row reads have published those rows (dav1d's per tile-sbrow lowest_pixel
-// check), so the row's per-superblock waits pass at once.
-func (r *FrameThreadRecon) waitRowReferences(b *FrameWorkBatch, view *frameWorkReconView, row int) bool {
+// rowReferenceNeed is the reference rows every superblock of SB row row reads
+// (dav1d's per tile-sbrow lowest_pixel); it reports false when the row reads
+// no reference.
+func rowReferenceNeed(view *frameWorkReconView, row int) (frameThreadRefNeed, bool) {
+	var need frameThreadRefNeed
 	if row+1 >= len(view.rowStart) {
-		return true
+		return need, false
 	}
 	lo, hi := int(view.rowStart[row]), int(view.rowStart[row+1])
 	if lo < 0 || hi < lo || hi > len(view.sbs) {
-		return true
+		return need, false
 	}
-	var need frameThreadRefNeed
 	any := false
 	for _, sb := range view.sbs[lo:hi] {
 		if sb.start < 0 || sb.end < sb.start || int(sb.end) > len(view.events) {
-			return true
+			return need, false
 		}
 		if need.addEvents(view.events[sb.start:sb.end], view.visits) {
 			any = true
 		}
 	}
-	if !any {
-		return true
-	}
-	return r.waitReferences(b, &need)
+	return need, any
 }
 
 // addEvents adds the reference rows the buffered blocks of events read and
@@ -137,22 +134,43 @@ func (n *frameThreadRefNeed) addEvents(events []frameWorkReconEvent, visits []ti
 }
 
 func (r *FrameThreadRecon) waitReferences(b *FrameWorkBatch, need *frameThreadRefNeed) bool {
-	for i, rows := range need {
-		p := r.RefProgress[i]
-		if rows == 0 || p == nil {
-			continue
-		}
-		if rows != FrameProgressDone && b != nil {
-			if i >= len(b.References) || b.References[i] == nil || b.frameThreadScaledReference(i) ||
-				rows >= int32(b.References[i].Y.Height) {
-				rows = FrameProgressDone
-			}
-		}
-		if !p.Wait(rows) {
+	for i := range need {
+		p, rows := r.referenceRows(b, need, i)
+		if p != nil && !p.Wait(rows) {
 			return false
 		}
 	}
 	return true
+}
+
+// referencesReady reports whether every reference has published the rows
+// need names (or failed), so the row's task can run without blocking (dav1d
+// check_tile).
+func (r *FrameThreadRecon) referencesReady(b *FrameWorkBatch, need *frameThreadRefNeed) bool {
+	for i := range need {
+		p, rows := r.referenceRows(b, need, i)
+		if p != nil && !p.Ready(rows) {
+			return false
+		}
+	}
+	return true
+}
+
+// referenceRows is reference i's progress and the luma rows of it need
+// waits for, or nil when the reference is not read.
+func (r *FrameThreadRecon) referenceRows(b *FrameWorkBatch, need *frameThreadRefNeed, i int) (*FrameProgress, int32) {
+	rows := need[i]
+	p := r.RefProgress[i]
+	if rows == 0 || p == nil {
+		return nil, 0
+	}
+	if rows != FrameProgressDone && b != nil {
+		if i >= len(b.References) || b.References[i] == nil || b.frameThreadScaledReference(i) ||
+			rows >= int32(b.References[i].Y.Height) {
+			rows = FrameProgressDone
+		}
+	}
+	return p, rows
 }
 
 // frameThreadScaledReference reports whether reference i differs in size

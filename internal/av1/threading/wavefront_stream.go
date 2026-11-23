@@ -124,6 +124,9 @@ func (wf *frameWorkReconWavefront) publishRows(rows int, view frameWorkReconView
 	wf.published = rows
 	p.cond.Broadcast()
 	p.mu.Unlock()
+	if ft := wf.frameThread; ft != nil {
+		ft.tasks.wake()
+	}
 }
 
 // waitRows blocks until at least need SB rows are published and returns the
@@ -150,6 +153,16 @@ func (wf *frameWorkReconWavefront) waitRows(need int) (frameWorkReconView, bool)
 // has published it.
 func (wf *frameWorkReconWavefront) startLanes(lanes chan<- wavefrontLaneTask, workers int, rowCount int) {
 	wf.firstErr.Store(nil)
+	if ft := wf.frameThread; ft != nil && ft.tasks != nil {
+		// dav1d queues one reconstruction task per tile; the workers take its
+		// rows in order as they become ready.
+		wf.lanes = 1
+		wf.wg.Add(1)
+		t := ft.reconTask()
+		*t = frameReconTask{wf: wf, seq: ft.Seq, tile: wf.reconTile, rowCount: rowCount, needRow: -1}
+		ft.tasks.add(t)
+		return
+	}
 	wf.lanes = workers
 	wf.wg.Add(workers)
 	for w := 0; w < workers; w++ {
@@ -169,13 +182,7 @@ func (wf *frameWorkReconWavefront) runLane(w int, workers int, rowCount int) {
 		if !ok {
 			return
 		}
-		// dav1d check_tile: a frame-threaded row starts once the reference
-		// rows every superblock in it reads are final.
-		err := ErrFrameThreadReference
-		if ft := wf.frameThread; ft == nil || ft.waitRowReferences(&st.batch, &view, row) {
-			err = wf.reconstructRow(st, &view, row, rowCount)
-		}
-		if err != nil {
+		if err := wf.reconstructRow(st, &view, row, rowCount); err != nil {
 			// Signal abort so any goroutine waiting on this row's (now
 			// never-published) progress stops waiting instead of deadlocking,
 			// then record the first error.
@@ -214,6 +221,9 @@ func (wf *frameWorkReconWavefront) finishLanes(stats *FrameWorkTileResidualStats
 // cancelLanes aborts and joins the lanes after a parse error.
 func (wf *frameWorkReconWavefront) cancelLanes() {
 	wf.abortProgress()
+	if ft := wf.frameThread; ft != nil {
+		ft.tasks.wake()
+	}
 	wf.wg.Wait()
 }
 
