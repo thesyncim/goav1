@@ -320,6 +320,13 @@ type FrameWorkTileResidualScratch struct {
 	reconVisits []tile.BlockLoopVisit
 	reconCBI    []frameWorkReconCBI
 	cfArena     []int32
+	// cfOverflow reports that a TXB did not fit the job's cf reservation; it
+	// then decoded into cfSpare.
+	cfOverflow bool
+	cfSpare    [1024]int32
+	// cfDirty bounds the arena prefix earlier jobs may have left
+	// coefficients in.
+	cfDirty int
 	// coefBuf is the fused path's dav1d t->cf coefficient buffer.
 	coefBuf         coefBuffer
 	paletteArena    []tile.PaletteModeScratch
@@ -405,6 +412,9 @@ type frameWorkReconWavefront struct {
 	frameThread *FrameThreadRecon
 	// reconTile is the tile whose finished SB rows frameThread.Rows gets.
 	reconTile int32
+	// cfZero records that the last tile's lanes reconstructed, and so
+	// cleared, every coefficient of the scratch's cf arena.
+	cfZero bool
 }
 
 type frameWorkReconWavefrontProgress struct {
@@ -593,6 +603,7 @@ func (s *FrameWorkTileResidualScratch) reserveCFArena(walk tile.BlockWalkRequest
 		arena := make([]int32, len(s.cfArena), need)
 		copy(arena, s.cfArena)
 		s.cfArena = arena
+		s.cfDirty = 0
 	}
 }
 
@@ -602,7 +613,9 @@ func (s *FrameWorkTileResidualScratch) reserveCFArena(walk tile.BlockWalkRequest
 func (s *FrameWorkTileResidualScratch) resetDeferredReconBuffers() {
 	s.reconVisits = s.reconVisits[:0]
 	s.reconCBI = s.reconCBI[:0]
+	s.cfDirty = max(s.cfDirty, len(s.cfArena))
 	s.cfArena = s.cfArena[:0]
+	s.cfOverflow = false
 	s.paletteArena = s.paletteArena[:0]
 	s.paletteBindings = s.paletteBindings[:0]
 	s.extrasArena = s.extrasArena[:0]

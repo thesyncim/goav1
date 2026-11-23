@@ -122,32 +122,51 @@ func (c *frameWorkTileResidualLoopController) reconCoefTree(visit *tile.BlockLoo
 	return c.reconTXB(visit, b, dq, 0, size, x4, y4, min(txW, right-x4), min(txH, bottom-y4))
 }
 
-// reconTXB is one transform block of recon_b_*: decode_coefs into t->cf, then
-// the intra prediction and inverse transform add. On the deferred path it is
-// read_coef_blocks' TXB instead (readCoefTXB). visW/visH are the frame-clipped
-// extent in 4x4 units.
+// reconTXB is one transform block of recon_b_* / read_coef_blocks:
+// decode_coefs into t->cf (fused) or the frame-thread cf arena (deferred), then
+// the intra prediction and inverse transform add, or the TXB's cbi entry.
+// visW/visH are the frame-clipped extent in 4x4 units.
 func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisit, b *tile.CoefBlock, dq *[3]tile.CoefDequant, plane uint8, size tile.TransformSize, x4, y4, visW, visH int) error {
-	if c.deferReconstruction {
-		return c.readCoefTXB(b, dq, plane, size, x4, y4, visW, visH)
-	}
 	blk := tile.BlockCoeffBlock{
 		Plane:     plane,
 		Block:     tile.TransformBlock{X4: uint8(x4), Y4: uint8(y4), Size: size, VisibleW4: uint8(visW), VisibleH4: uint8(visH)},
 		Transform: transform.TypeDCTDCT,
 	}
 	s := c.scratch
+	var cf *[1024]int32
+	cfOff := 0
+	var r tile.CoefResult
 	if b.Skip {
 		blk.Result.AllZero = true
-		return c.fusedReconState().reconstructTXBWithDequantized(visit, &blk, nil, 0, 0, false)
+	} else {
+		// Both buffers are zero where decode_coefs writes (dav1d's itx clears).
+		if c.deferReconstruction {
+			cfOff = len(s.cfArena)
+			cf = s.cfArenaSlot()
+		} else {
+			cf = s.coefBuf.take()
+		}
+		var err error
+		if r, err = b.DecodeCoefs(plane, size, x4, y4, visW, visH, cf, true, &dq[plane]); err != nil {
+			return err
+		}
+		blk.Transform, blk.Result = r.Txtp, r.TXB
+		c.stats.TXBs++
+		if r.TXB.AllZero {
+			c.stats.AllZero++
+		} else {
+			c.stats.NonZero++
+			c.stats.EOBTotal += int32(r.TXB.EOB)
+		}
 	}
-	cf := s.coefBuf.take()
-	r, err := b.DecodeCoefs(plane, size, x4, y4, visW, visH, cf, true, &dq[plane])
-	if err != nil {
-		return err
-	}
-	blk.Transform, blk.Result = r.Txtp, r.TXB
-	c.countTXB(&r)
 	if blk.Result.AllZero {
+		if c.deferReconstruction {
+			if s.cfOverflow {
+				return ErrInvalidBatch
+			}
+			s.reconCBI = append(s.reconCBI, frameWorkReconCBI{txtp: blk.Transform})
+			return nil
+		}
 		return c.fusedReconState().reconstructTXBWithDequantized(visit, &blk, nil, 0, 0, false)
 	}
 	dcOnly := blk.Transform == transform.TypeDCTDCT && blk.Result.EOB == 1
@@ -156,42 +175,18 @@ func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisi
 		return ErrInvalidBatch
 	}
 	area := int(meta.scanSize.Width) * int(meta.scanSize.Height)
-	s.coefBuf.used(r.ActiveRows, r.ActiveCols, meta.scanSize.Height)
-	return c.fusedReconState().reconstructTXBWithDequantized(visit, &blk, cf[:area:area], int(r.ActiveRows), int(r.ActiveCols), dcOnly)
-}
-
-func (c *frameWorkTileResidualLoopController) countTXB(r *tile.CoefResult) {
-	c.stats.TXBs++
-	if r.TXB.AllZero {
-		c.stats.AllZero++
-	} else {
-		c.stats.NonZero++
-		c.stats.EOBTotal += int32(r.TXB.EOB)
-	}
-}
-
-// readCoefTXB is one TXB of dav1d's read_coef_blocks: decode_coefs into the
-// frame-thread cf arena, then the TXB's cbi entry. Only a TXB with
-// coefficients keeps its arena slot.
-func (c *frameWorkTileResidualLoopController) readCoefTXB(b *tile.CoefBlock, dq *[3]tile.CoefDequant, plane uint8, size tile.TransformSize, x4, y4, visW, visH int) error {
-	s := c.scratch
-	cfOff := len(s.cfArena)
-	r, err := b.DecodeCoefs(plane, size, x4, y4, visW, visH, s.cfArenaSlot(), false, &dq[plane])
-	if err != nil {
-		return err
-	}
-	c.countTXB(&r)
-	cbi := frameWorkReconCBI{txtp: r.Txtp}
-	if !r.TXB.AllZero {
-		meta, ok := frameWorkBlockCoeffTransformMeta(size)
-		if !ok {
+	if c.deferReconstruction {
+		// dav1d's read_coef_blocks: the cbi entry, and the coefficients keep
+		// their arena slot.
+		if s.cfOverflow {
 			return ErrInvalidBatch
 		}
-		cbi.eob, cbi.activeRows, cbi.activeCols = r.TXB.EOB, r.ActiveRows, r.ActiveCols
-		s.cfArena = s.cfArena[:cfOff+int(meta.scanSize.Width)*int(meta.scanSize.Height)]
+		s.cfArena = s.cfArena[:cfOff+area]
+		s.reconCBI = append(s.reconCBI, frameWorkReconCBI{eob: blk.Result.EOB, txtp: blk.Transform, activeRows: r.ActiveRows, activeCols: r.ActiveCols})
+		return nil
 	}
-	s.reconCBI = append(s.reconCBI, cbi)
-	return nil
+	s.coefBuf.used(r.ActiveRows, r.ActiveCols, meta.scanSize.Height)
+	return c.fusedReconState().reconstructTXBWithDequantized(visit, &blk, cf[:area:area], int(r.ActiveRows), int(r.ActiveCols), dcOnly)
 }
 
 // reconBDeferred is the frame-thread pass-2 decode_b of a buffered block,
@@ -336,13 +331,19 @@ func (s *frameWorkReconState) reconTXBDeferred(visit *tile.BlockLoopVisit, cur *
 	}
 	off := cur.cfOff
 	end := off + int(meta.scanSize.Width)*int(meta.scanSize.Height)
-	if off < 0 || end > len(cur.cf) {
+	if off < 0 || end > len(cur.cf) || e.activeRows == 0 || e.activeCols == 0 {
 		return ErrInvalidBatch
 	}
 	cur.cfOff = end
 	blk.Result.EOB = e.eob
 	dcOnly := e.txtp == transform.TypeDCTDCT && e.eob == 1
-	return s.reconstructTXBWithDequantized(visit, &blk, cur.cf[off:end:end], int(e.activeRows), int(e.activeCols), dcOnly)
+	cf := cur.cf[off:end:end]
+	err := s.reconstructTXBWithDequantized(visit, &blk, cf, int(e.activeRows), int(e.activeCols), dcOnly)
+	// dav1d's inverse transforms clear the coefficients they read, so the
+	// next frame's decode_coefs finds the arena zero: the nonzero
+	// coefficients lie in the first activeCols columns of activeRows.
+	clear(cf[:min(len(cf), (int(e.activeCols)-1)*int(meta.scanSize.Height)+int(e.activeRows))])
+	return err
 }
 
 // blockDequant returns the block's dav1d ts->dq[seg_id] with cf_max and the
@@ -408,22 +409,17 @@ func (b *coefBuffer) used(rows, cols, stride uint8) {
 }
 
 // cfArenaSlot returns the next TXB slot of the frame-thread cf arena, dav1d's
-// ts->frame_thread[p].cf. The arena grows only while warming up; slots handed
-// out earlier keep their backing array, so published slices stay valid.
+// ts->frame_thread[p].cf. reserveCFArena sized the arena for the whole job, as
+// dav1d sizes frame_thread.cf per frame: it never grows while the lanes read
+// and clear it. A TXB past the reservation gets the spare slot and sets
+// cfOverflow, which fails the job.
 func (s *FrameWorkTileResidualScratch) cfArenaSlot() *[1024]int32 {
 	a := s.cfArena
 	off := len(a)
 	if cap(a)-off < 1024 {
-		a = growCoefArena(a)
-		s.cfArena = a
+		s.cfOverflow = true
+		clear(s.cfSpare[:])
+		return &s.cfSpare
 	}
 	return (*[1024]int32)(a[off : off+1024])
-}
-
-// growCoefArena extends the arena's capacity by at least one TXB slot while
-// keeping its length. It runs only while the arena warms up.
-//
-//go:noinline
-func growCoefArena(a []int32) []int32 {
-	return append(a[:cap(a)], make([]int32, 1024+cap(a)/2)...)[:len(a)]
 }

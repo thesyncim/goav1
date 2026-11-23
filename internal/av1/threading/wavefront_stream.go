@@ -212,6 +212,7 @@ func (wf *frameWorkReconWavefront) finishLanes(stats *FrameWorkTileResidualStats
 	if e := wf.firstErr.Load(); e != nil {
 		return e.err
 	}
+	wf.cfZero = wf.progress != nil && !wf.progress.aborted.Load()
 	for w := 0; w < wf.lanes; w++ {
 		stats.Predictions += wf.states[w].localStats.Predictions
 		stats.Residuals += wf.states[w].localStats.Residuals
@@ -252,6 +253,14 @@ func (c *frameWorkTileResidualLoopController) startReconStream() error {
 	if err := wf.ensureStates(workers, c); err != nil {
 		return err
 	}
+	// The lanes clear every coefficient they reconstruct, so after a tile
+	// that completed the arena is zero again; anything else may have left
+	// coefficients behind.
+	if s := c.scratch; !wf.cfZero {
+		clear(s.cfArena[:min(s.cfDirty, cap(s.cfArena))])
+	}
+	c.scratch.cfDirty = 0
+	wf.cfZero = false
 	wf.frameThread = c.batch.FrameThread
 	if c.index >= 0 && c.index < len(c.batch.Jobs) {
 		wf.reconTile = int32(c.batch.Jobs[c.index].Tile)
