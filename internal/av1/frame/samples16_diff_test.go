@@ -138,18 +138,6 @@ const (
 	benchDstPad = 8
 )
 
-func BenchmarkLoadSampleRows16Scalar(b *testing.B) {
-	dstStride := benchW + benchDstPad
-	srcStride := benchW * 2
-	src := make([]byte, benchH*srcStride)
-	dst := make([]uint16, benchH*dstStride)
-	b.SetBytes(int64(benchW * benchH * 2))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		refLoadSampleRows16(dst, dstStride, src, srcStride, benchW, benchH)
-	}
-}
-
 func BenchmarkLoadSampleRows16Fast(b *testing.B) {
 	dstStride := benchW + benchDstPad
 	srcStride := benchW * 2
@@ -159,18 +147,6 @@ func BenchmarkLoadSampleRows16Fast(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		loadSampleRows16(dst, dstStride, src, srcStride, benchW, benchH)
-	}
-}
-
-func BenchmarkStoreSampleRows16Scalar(b *testing.B) {
-	srcStride := benchW + benchDstPad
-	dstStride := benchW * 2
-	src := make([]uint16, benchH*srcStride)
-	dst := make([]byte, benchH*dstStride)
-	b.SetBytes(int64(benchW * benchH * 2))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		refStoreSampleRows16(dst, dstStride, src, srcStride, benchW, benchH)
 	}
 }
 

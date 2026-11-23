@@ -142,11 +142,5 @@ func benchWienerVertical(b *testing.B, fn func([]uint16, int, []uint16, int, int
 func BenchmarkWienerVertical8_SIMD(b *testing.B)   { benchWienerVertical(b, wienerVerticalSIMD, 8) }
 func BenchmarkWienerVertical8_PureGo(b *testing.B) { benchWienerVertical(b, wienerVertical, 8) }
 
-func BenchmarkWienerVertical32_SIMD(b *testing.B)   { benchWienerVertical(b, wienerVerticalSIMD, 32) }
-func BenchmarkWienerVertical32_PureGo(b *testing.B) { benchWienerVertical(b, wienerVertical, 32) }
-
 func BenchmarkWienerVertical64_SIMD(b *testing.B)   { benchWienerVertical(b, wienerVerticalSIMD, 64) }
 func BenchmarkWienerVertical64_PureGo(b *testing.B) { benchWienerVertical(b, wienerVertical, 64) }
-
-func BenchmarkWienerVertical256_SIMD(b *testing.B)   { benchWienerVertical(b, wienerVerticalSIMD, 256) }
-func BenchmarkWienerVertical256_PureGo(b *testing.B) { benchWienerVertical(b, wienerVertical, 256) }

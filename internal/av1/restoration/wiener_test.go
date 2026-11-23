@@ -303,31 +303,6 @@ func BenchmarkApplyWienerRestoration(b *testing.B) {
 	}
 }
 
-func BenchmarkApplyWienerRestorationTrusted(b *testing.B) {
-	scratchLen, err := WienerScratchLen(64, 64)
-	if err != nil {
-		b.Fatal(err)
-	}
-	scratch := make([]uint16, scratchLen)
-	stride := 64 + 2*WienerHalfwin
-	origin := WienerHalfwin*stride + WienerHalfwin
-	src := make([]uint16, stride*(64+2*WienerHalfwin))
-	dst := make([]uint16, 64*64)
-	rnd := newRestorationRandom(restorationDeterministicSeed ^ 0xabc)
-	for i := range src {
-		src[i] = uint16(rnd.pseudoUniform(1 << 12))
-	}
-	info := DefaultWienerInfo()
-	b.ReportAllocs()
-	b.SetBytes(64 * 64 * 2)
-	b.ResetTimer()
-	for b.Loop() {
-		if err := ApplyWienerRestorationTrusted(src, stride, origin, dst, 64, 64, 64, info, 12, scratch); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func referenceWienerPixel(src []uint16, stride int, origin int, row int, col int, info WienerInfo, bitDepth uint8) uint16 {
 	max := int32((1 << bitDepth) - 1)
 	round0, round1 := referenceWienerRounds(int(bitDepth))

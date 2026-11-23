@@ -105,6 +105,8 @@ jobs:
         run: make compiler-reports
       - name: test with native SIMD
         run: go test -count=1 -timeout 30m ./...
+      - name: benchmark smoke with native SIMD
+        run: make bench-smoke
       # The race shards already run these packages under -race on the
       # generic kernels; here the SIMD kernels need checkptr, which -race
       # would enable at about five times the cost.
@@ -193,6 +195,8 @@ jobs:
         run: go vet ./...
       - name: test with native SIMD
         run: go test -count=1 -timeout 30m ./...
+      - name: benchmark smoke with native SIMD
+        run: make bench-smoke
       # The race shards already run these packages under -race on the
       # generic kernels; here the SIMD kernels need checkptr, which -race
       # would enable at about five times the cost.

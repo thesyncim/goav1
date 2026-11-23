@@ -306,12 +306,3 @@ func BenchmarkReaderReadUVLCShort(b *testing.B) {
 		_, _ = r.ReadUVLC()
 	}
 }
-
-func BenchmarkReaderReadUVLCBitByBitReference(b *testing.B) {
-	src := []byte{0x00, 0x80, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		r := NewReader(src)
-		_, _ = readUVLCBitByBitForTest(&r)
-	}
-}

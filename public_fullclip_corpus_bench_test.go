@@ -298,6 +298,11 @@ func loadPublicFullClipCorpus(t testing.TB) []publicFullClip {
 		t.Fatalf("glob public corpus %q: %v", dir, err)
 	}
 	sort.Strings(paths)
+	// Tests opt in with GOAV1_PUBLIC_FULLCLIP=1 and must fail on a missing
+	// corpus; benchmarks skip so a plain -bench run works without it.
+	if len(paths) == 0 && os.Getenv("GOAV1_PUBLIC_FULLCLIP") != "1" {
+		t.Skipf("public corpus %q is empty; generate it with scripts/gen_bench_corpus.sh", dir)
+	}
 	if len(paths) != publicFullClipExpectedClips {
 		t.Fatalf("public corpus %q has %d IVF clips, want %d", dir, len(paths), publicFullClipExpectedClips)
 	}
