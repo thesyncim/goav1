@@ -333,7 +333,7 @@ func (st *lossyEncodeState) writeRecordedTXB(rec *pframeSplitRecord, w, h int, c
 	if err != nil {
 		return err
 	}
-	_, err = st.emitInterTXBTyped(w, h, qcoeff, ctxReq, coeffCtx, scan, afterSkip, txType)
+	_, err = st.emitInterTXBTyped(w, h, qcoeff, ctxReq, coeffCtx, scan, afterSkip, txType, tile.EOBUnknown)
 	return err
 }
 
@@ -1058,7 +1058,7 @@ func (st *lossyEncodeState) writeIntraPBlock(block tile.BlockVisit, scratch *til
 		Size:       lumaTX,
 		X4:         block.X4,
 		Y4:         block.Y4,
-	}, coeffCtx, lumaScan, st.afterSkipIntra)
+	}, coeffCtx, lumaScan, st.afterSkipIntra, tile.EOBUnknown)
 	st.intraLumaDCT = false
 	st.intraTxTypeReq.Size = tile.TransformSize8x8
 	if err != nil {
@@ -1099,7 +1099,7 @@ func (st *lossyEncodeState) writeIntraPBlock(block tile.BlockVisit, scratch *til
 			Size:       chromaTX,
 			X4:         chromaX4,
 			Y4:         chromaY4,
-		}, coeffCtx, chromaScan, nil); err != nil {
+		}, coeffCtx, chromaScan, nil, tile.EOBUnknown); err != nil {
 			return fmt.Errorf("intra chroma %d txb: %w", plane, err)
 		}
 	}

@@ -10,5 +10,6 @@ func init() {
 	if archsimd.X86.AVX2() {
 		quantizeFPBlockImpl = quantizeFPBlockSIMD
 		quantizeBBlockImpl = quantizeBBlockSIMD
+		quantizeBBlockEOBImpl = quantizeBBlockEOBSIMD
 	}
 }

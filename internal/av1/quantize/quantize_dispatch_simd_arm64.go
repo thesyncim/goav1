@@ -9,5 +9,6 @@ func init() {
 	if cpu.Detected.NEON {
 		quantizeFPBlockImpl = quantizeFPBlockSIMD
 		quantizeBBlockImpl = quantizeBBlockSIMD
+		quantizeBBlockEOBImpl = quantizeBBlockEOBSIMD
 	}
 }

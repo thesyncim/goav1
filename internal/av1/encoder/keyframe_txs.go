@@ -476,15 +476,18 @@ func keyBlockVar(a []byte, stride, w, h int) int {
 // no cut-off. It starts from the fp quantizer and prices with the frame-start
 // rates at the TXB's real txb_skip / dc_sign contexts, at
 // full_lambda * plane_rd_mult[rtc][intra] (17 luma, 13 chroma) >> 2.
-func (st *lossyEncodeState) keyRDOQQuantize(tran []int32, qcoeff []int16, size tile.TransformSize, q quantize.Quantizer) {
+//
+// It returns the optimized end of block, eobUnknown when the quantizer
+// rejects the block.
+func (st *lossyEncodeState) keyRDOQQuantize(tran []int32, qcoeff []int16, size tile.TransformSize, q quantize.Quantizer) int {
 	plane := st.keyRDOQPlane
 	g := rdoqGeometry(size, plane)
 	if err := quantize.QuantizeBlockScaledFP(qcoeff[:g.area], g.ch, tran[:g.area], g.ch, g.cw, g.ch, q, uint8(g.shift)); err != nil {
-		return
+		return eobUnknown
 	}
 	eob := rdoqEOBFromIScan(qcoeff[:g.area], g.iscan)
 	if eob == 0 {
-		return
+		return 0
 	}
 	tab := st.keyTXSCoeffTab
 	s := rdoqState{
@@ -500,5 +503,5 @@ func (st *lossyEncodeState) keyRDOQQuantize(tran []int32, qcoeff []int16, size t
 		dqDC:    q.DC,
 		dqAC:    q.AC,
 	}
-	s.optimizeB(eob, int(st.keyRDOQCtx.TXBSkipContext), int(st.keyRDOQCtx.DCSignContext))
+	return s.optimizeB(eob, int(st.keyRDOQCtx.TXBSkipContext), int(st.keyRDOQCtx.DCSignContext))
 }

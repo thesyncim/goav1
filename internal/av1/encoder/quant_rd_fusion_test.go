@@ -102,10 +102,17 @@ func TestPrepareInterTXBQuantRDOriginalState(t *testing.T) {
 			}
 			var gv, wv bool
 			var gp, wp any
+			geob := eobUnknown
 			func() {
 				defer func() { gp = recover() }()
-				gv = got.prepareInterTXBDecide(src, pred, predStride, stride, 3, 2, n, n, q, gq)
+				geob = got.prepareInterTXBDecide(src, pred, predStride, stride, 3, 2, n, n, q, gq)
+				gv = geob == 0
 			}()
+			if g, ok := rdoqSquareGeometry(n, 0); gp == nil && geob > 0 && ok {
+				if want := rdoqEOBFromIScan(gq[:n*n], g.iscan); geob != want {
+					t.Fatalf("trial %d n=%d: eob %d, levels give %d", trial, n, geob, want)
+				}
+			}
 			func() {
 				defer func() { wp = recover() }()
 				wv = want.prepareInterTXBDecideOriginalQuantRD(src, pred, predStride, stride, 3, 2, n, n, q, wq)

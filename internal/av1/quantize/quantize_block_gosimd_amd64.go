@@ -56,11 +56,13 @@ func quantizeApplySignAVX2(mag archsimd.Int32x8, src archsimd.Int32x8) archsimd.
 // qcoeff, eight coefficients per iteration in one Int32x8 register (AVX2). The
 // lane rule and its exactness argument are shared with the arm64 kernel (see
 // quantize_block_gosimd_arm64.go). len(coeff) must be a multiple of 8.
-func quantizeBVectors(qcoeff []int16, coeff []int32, quant int32, round int32, zbin int32, shift uint64) {
+// With a non-nil iscan it also returns the levels' end of block (one past
+// the largest iscan of a nonzero level); with a nil iscan, 0.
+func quantizeBVectors(qcoeff []int16, coeff []int32, quant int32, round int32, zbin int32, shift uint64, iscan []int16) int {
 	n := len(coeff)
 	if n == 0 {
 		archsimd.ClearAVXUpperBits()
-		return
+		return 0
 	}
 	_ = qcoeff[n-1]
 	quantV := archsimd.BroadcastInt32x8(quant)
@@ -82,4 +84,13 @@ func quantizeBVectors(qcoeff []int16, coeff []int32, quant int32, round int32, z
 		level.GetLo().SaturateToInt16Concat(level.GetHi()).StoreArray((*[8]int16)(unsafe.Add(qp, 2*i)))
 	}
 	archsimd.ClearAVXUpperBits()
+	eob := 0
+	if iscan != nil {
+		for pos, v := range qcoeff[:len(coeff)] {
+			if v != 0 {
+				eob = max(eob, int(iscan[pos])+1)
+			}
+		}
+	}
+	return eob
 }
