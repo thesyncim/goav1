@@ -967,6 +967,7 @@ func newDecoderBatchRunnerScratch(size DecoderFrameWorkBatchResidualRunnerScratc
 		Int32Scratch:            arena.takeInt32s(size.Int32Scratch),
 		ResidualScratch:         arena.takeInt16s(size.ResidualScratch),
 		LoopContextAboveScratch: make([]TileBlockLoopRootAboveContext, size.LoopContextAbove),
+		rows:                    make([]decoderFrameWorkBatchRows, size.Workers),
 	}
 }
 

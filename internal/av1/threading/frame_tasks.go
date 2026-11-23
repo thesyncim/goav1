@@ -28,40 +28,25 @@ type FrameTask interface {
 // scanning the frames oldest first, runs it, and scans again; it parks only
 // when no task is ready and is woken when progress that a task waits on is
 // published. A task never blocks: its dependencies are checked before it is
-// taken (check_tile and the filter tasks' progress checks).
-//
-// The tiles' entropy passes are the one exception: a tile's block loop runs
-// to the end of the tile in one call and waits inside for the references'
-// MV_REF rows (dav1d instead re-queues the entropy task per sbrow). Frames
-// therefore start their entropy passes in decode order (nextEntropy): every
-// pass waits only on older frames' passes, which all hold a worker, so the
-// oldest one always progresses. A worker whose pass waits runs other ready
-// tasks meanwhile (helpUntil), so the reconstruction and post-filter tasks
-// the older frames' pixels depend on keep running.
+// taken (check_tile and the filter tasks' progress checks), and the tiles'
+// entropy passes decode one superblock row per step, re-queued when the next
+// row's dependencies are not met.
 type frameTaskPool struct {
-	mu      sync.Mutex
-	cond    sync.Cond
-	tasks   []frameTaskEntry
-	parked  int
-	helpers int
-	// waiting counts the entropy passes inside helpUntil, of workers.
-	waiting int
-	workers int
-	closed  bool
-	// nextEntropy is the decode order of the frame whose entropy batches
-	// may be taken next.
-	nextEntropy uint64
+	mu     sync.Mutex
+	cond   sync.Cond
+	tasks  []frameTaskEntry
+	parked int
+	closed bool
 }
 
 type frameTaskEntry struct {
-	seq     uint64
-	task    FrameTask
-	entropy *frameEntropyTask
-	init    bool
+	seq  uint64
+	task FrameTask
+	init bool
 }
 
 func newFrameTaskPool(workers int) *frameTaskPool {
-	tp := &frameTaskPool{nextEntropy: 1, workers: workers}
+	tp := &frameTaskPool{}
 	tp.cond.L = &tp.mu
 	for w := range workers {
 		go tp.worker(w)
@@ -88,12 +73,9 @@ func (tp *frameTaskPool) insert(e frameTaskEntry) {
 	tp.mu.Unlock()
 }
 
-// signalLocked wakes a parked worker, or every waiting one while a pass
-// waits in helpUntil (its condition may be what changed).
+// signalLocked wakes a parked worker.
 func (tp *frameTaskPool) signalLocked() {
-	if tp.helpers > 0 {
-		tp.cond.Broadcast()
-	} else if tp.parked > 0 {
+	if tp.parked > 0 {
 		tp.cond.Signal()
 	}
 }
@@ -126,9 +108,8 @@ func (tp *frameTaskPool) remove(task FrameTask) {
 	}
 }
 
-// next claims the first ready step in queue order, skipping entropy batches
-// when helping. Callers hold mu.
-func (tp *frameTaskPool) next(helping bool) (FrameTask, int) {
+// next claims the first ready step in queue order. Callers hold mu.
+func (tp *frameTaskPool) next() (FrameTask, int) {
 	// dav1d runs the frames' init tasks before any decoding task.
 	for i := 0; i < len(tp.tasks); i++ {
 		e := tp.tasks[i]
@@ -142,39 +123,17 @@ func (tp *frameTaskPool) next(helping bool) (FrameTask, int) {
 	}
 	for i := 0; i < len(tp.tasks); i++ {
 		e := tp.tasks[i]
-		t := e.task
 		if e.init {
 			continue
 		}
-		if e.entropy != nil {
-			if helping || e.seq != tp.nextEntropy {
-				continue
-			}
-			if e.entropy.n == 0 {
-				// A frame whose pass did not run: the next frame may start.
-				tp.nextEntropy++
-				tp.remove(t)
-				i = -1
-				continue
-			}
-		}
-		step, ok, gone := t.Claim()
+		step, ok, gone := e.task.Claim()
 		if gone {
-			tp.remove(t)
+			tp.remove(e.task)
 			i--
-			// A pass may be waiting in helpUntil for this task to leave.
-			if tp.helpers > 0 {
-				tp.cond.Broadcast()
-			}
 			continue
 		}
 		if ok {
-			if e.entropy != nil && e.entropy.claimed == e.entropy.n {
-				// Every batch of the frame holds a worker: the next frame's
-				// pass may start.
-				tp.nextEntropy++
-			}
-			return t, step
+			return e.task, step
 		}
 	}
 	return nil, 0
@@ -187,88 +146,79 @@ func (tp *frameTaskPool) worker(w int) {
 			tp.mu.Unlock()
 			return
 		}
-		t, step := tp.next(false)
+		t, step := tp.next()
 		if t == nil {
 			tp.parked++
 			tp.cond.Wait()
 			tp.parked--
 			continue
 		}
-		tp.runLocked(w, t, step)
-	}
-}
-
-// runLocked runs a claimed step with mu released.
-func (tp *frameTaskPool) runLocked(w int, t FrameTask, step int) {
-	// More tasks may be ready: pass the wake on (dav1d re-signals the task
-	// cond once it found a task).
-	tp.signalLocked()
-	tp.mu.Unlock()
-	t.Run(w, step)
-	tp.mu.Lock()
-	if t.Finish(step) {
-		tp.remove(t)
-	}
-	if tp.helpers > 0 {
-		tp.cond.Broadcast()
-	}
-}
-
-// helpUntil runs other ready tasks on worker w, an entropy pass's worker,
-// until done (called with mu held) reports true.
-func (tp *frameTaskPool) helpUntil(w int, done func() bool) {
-	tp.mu.Lock()
-	tp.waiting++
-	if tp.waiting == tp.workers {
-		tp.cond.Broadcast()
-	}
-	for !done() && !tp.closed {
-		// While another worker is free to run the other tasks, the pass
-		// only waits, so it resumes as soon as its rows are in; once every
-		// worker's pass waits, they run the other tasks themselves.
-		var t FrameTask
-		var step int
-		if tp.waiting == tp.workers {
-			t, step = tp.next(true)
+		// More tasks may be ready: pass the wake on (dav1d re-signals the task
+		// cond once it found a task).
+		tp.signalLocked()
+		tp.mu.Unlock()
+		t.Run(w, step)
+		tp.mu.Lock()
+		if t.Finish(step) {
+			tp.remove(t)
 		}
-		if t == nil {
-			tp.helpers++
-			tp.cond.Wait()
-			tp.helpers--
-			continue
-		}
-		tp.runLocked(w, t, step)
 	}
-	tp.waiting--
-	tp.mu.Unlock()
 }
 
 // frameEntropyTask is a frame's tile entropy passes, one step per batch
-// (DAV1D_TASK_TYPE_TILE_ENTROPY).
+// (DAV1D_TASK_TYPE_TILE_ENTROPY): a step decodes the batch's superblock rows
+// for as long as the next one is ready (dav1d's found_unlocked) and leaves
+// the batch queued, to be claimed again once its next row is ready, until
+// its last row.
 type frameEntropyTask struct {
-	ft                 *FrameThreadRecon
-	n, claimed, closed int
-	ran                atomic.Int32
+	ft *FrameThreadRecon
+	// state is each batch's entropyIdle, entropyRunning or entropyDone; left
+	// counts the batches not done (guarded by the pool lock). ended is set by
+	// the step that ran a batch's last row.
+	state []uint8
+	ended []bool
+	left  int
+	ran   atomic.Int32
 }
 
+const (
+	entropyIdle uint8 = iota
+	entropyRunning
+	entropyDone
+)
+
 func (t *frameEntropyTask) reset(ft *FrameThreadRecon, n int) {
-	t.ft, t.n, t.claimed, t.closed = ft, n, 0, 0
+	t.ft = ft
+	if cap(t.state) < n {
+		t.state = make([]uint8, n)
+		t.ended = make([]bool, n)
+	}
+	t.state = t.state[:n]
+	t.ended = t.ended[:n]
+	clear(t.state)
+	clear(t.ended)
+	t.left = n
 	t.ran.Store(0)
 }
 
 // Claim implements FrameTask.
 func (t *frameEntropyTask) Claim() (int, bool, bool) {
-	if t.claimed == t.n {
-		return 0, false, false
+	for i, st := range t.state {
+		if st == entropyIdle && t.ft.batchRowReady(i, true) {
+			t.state[i] = entropyRunning
+			return i, true, false
+		}
 	}
-	t.claimed++
-	return t.claimed - 1, true, false
+	return 0, false, t.left == 0
 }
 
 // Run implements FrameTask.
-func (t *frameEntropyTask) Run(w int, i int) {
-	t.ft.runBatchOn(w, i)
-	if int(t.ran.Add(1)) == t.n {
+func (t *frameEntropyTask) Run(_ int, i int) {
+	if !t.ft.runBatchRows(i) {
+		return
+	}
+	t.ended[i] = true
+	if int(t.ran.Add(1)) == len(t.state) {
 		// The worker that ends the pass publishes its outputs final, as
 		// dav1d's ENTROPY_PROGRESS task sets sr_cur.progress[0].
 		t.ft.publishEntropyOut()
@@ -276,16 +226,15 @@ func (t *frameEntropyTask) Run(w int, i int) {
 }
 
 // Finish implements FrameTask.
-func (t *frameEntropyTask) Finish(int) bool {
-	t.closed++
+func (t *frameEntropyTask) Finish(i int) bool {
+	if !t.ended[i] {
+		t.state[i] = entropyIdle
+		return false
+	}
+	t.state[i] = entropyDone
+	t.left--
 	t.ft.parseWG.Done()
-	return t.closed == t.n
-}
-
-// addEntropy queues the frame decoded seq-th's entropy batches; n is zero
-// for a frame whose pass will not run, which only lets the next frame start.
-func (tp *frameTaskPool) addEntropy(seq uint64, t *frameEntropyTask) {
-	tp.insert(frameTaskEntry{seq: seq, task: t, entropy: t})
+	return t.left == 0
 }
 
 // frameReconTask is one tile's reconstruction task (DAV1D_TASK_TYPE_TILE_
@@ -340,12 +289,6 @@ func (t *frameReconTask) Claim() (int, bool, bool) {
 // Run implements FrameTask.
 func (t *frameReconTask) Run(_ int, row int) {
 	t.ended = t.wf.runTaskRow(row, t.rowCount, &t.view)
-}
-
-// finished reports whether the task left the queue (called with the pool
-// locked).
-func (t *frameReconTask) finished() bool {
-	return t.gone
 }
 
 // Finish implements FrameTask.

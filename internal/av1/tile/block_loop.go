@@ -401,6 +401,25 @@ func EndBlockLoop(scratch *BlockLoopScratch) BlockLoopStats {
 	return stats
 }
 
+// BlockLoopBound reports whether BeginBlockLoop bound a tile to scratch that
+// EndBlockLoop has not released.
+func BlockLoopBound(scratch *BlockLoopScratch) bool {
+	return scratch.tile.s != nil
+}
+
+// BlockLoopNextRowMotion reports the 8x8-row end the next
+// DecodeBlockLoopSBRow call waits for in the references' saved MV_REF rows
+// (FrameMotionProgress.WaitReferenceRows), or false when that row projects no
+// temporal samples.
+func BlockLoopNextRowMotion(scratch *BlockLoopScratch) (int32, bool) {
+	t := &scratch.tile
+	rt := &scratch.Refmvs
+	if !t.useRefmvs || !rt.frame.projectTmvs || rt.frame.mfmv.n == 0 {
+		return 0, false
+	}
+	return int32((t.miRow + uint32(t.req.Walk.Root.Size4x4())) >> 1), true
+}
+
 // DecodeBlockLoopSBRow decodes the next superblock row of the tile bound by
 // BeginBlockLoop (dav1d_decode_tile_sbrow) and reports whether rows remain.
 func DecodeBlockLoopSBRow[T BlockLoopCoeffController](scratch *BlockLoopScratch, coeffController T, visit BlockLoopPointerVisitor) (bool, error) {

@@ -278,6 +278,7 @@ type DecoderFrameWorkBatchResidualRunnerScratch struct {
 	Int32Scratch            []int32
 	ResidualScratch         []int16
 	LoopContextAboveScratch []TileBlockLoopRootAboveContext
+	rows                    []decoderFrameWorkBatchRows
 }
 
 // Max returns per-arena maximum lengths for reusable residual runner scratch.
@@ -325,6 +326,8 @@ type DecoderFrameWorkBatchResidualRunner struct {
 	compactOwner              *DecoderFrameWorkBatchResidualRunner
 	compactSideOwner          *DecoderFrameWorkSideData
 	compactBoundSide          *DecoderFrameWorkSideData
+	// rows holds each worker slot's resumable entropy pass (BeginRows).
+	rows []decoderFrameWorkBatchRows
 }
 
 // DecoderFrameWorkResidualMaxFrameScratchLen reports the worst-case
@@ -480,6 +483,7 @@ func BindDecoderFrameWorkBatchResidualRunner(size DecoderFrameWorkBatchResidualR
 		Int32Scratch:           scratch.Int32Scratch[:size.Int32Scratch],
 		ResidualScratch:        scratch.ResidualScratch[:size.ResidualScratch],
 		LoopContextAbove:       scratch.LoopContextAboveScratch[:size.LoopContextAbove],
+		rows:                   scratch.rows[:min(len(scratch.rows), size.Workers)],
 	}, nil
 }
 
@@ -536,6 +540,57 @@ func (r *DecoderFrameWorkBatchResidualRunner) RunPtr(batch *internalthreading.Fr
 		}
 	}
 	return r.endRows(&rows, err)
+}
+
+// BeginRows implements internalthreading.FrameWorkBatchRowRunner: the
+// batch's pass runs on the rows of its worker slot.
+func (r *DecoderFrameWorkBatchResidualRunner) BeginRows(batch *internalthreading.FrameWorkBatch) error {
+	rows, err := r.slotRows(batch)
+	if err != nil {
+		return err
+	}
+	return r.beginRows(rows, batch)
+}
+
+// Row implements internalthreading.FrameWorkBatchRowRunner.
+func (r *DecoderFrameWorkBatchResidualRunner) Row(batch *internalthreading.FrameWorkBatch) (bool, error) {
+	rows, err := r.slotRows(batch)
+	if err != nil {
+		return false, err
+	}
+	return rows.row(batch)
+}
+
+// EndRows implements internalthreading.FrameWorkBatchRowRunner.
+func (r *DecoderFrameWorkBatchResidualRunner) EndRows(batch *internalthreading.FrameWorkBatch, err error) error {
+	rows, serr := r.slotRows(batch)
+	if serr != nil {
+		return serr
+	}
+	return r.endRows(rows, err)
+}
+
+// RowScratch implements internalthreading.FrameWorkBatchRowRunner.
+func (r *DecoderFrameWorkBatchResidualRunner) RowScratch(batch *internalthreading.FrameWorkBatch) *internalthreading.FrameWorkTileResidualScratch {
+	worker, err := r.workerIndex(*batch)
+	if err != nil {
+		return nil
+	}
+	return &r.TileScratch[worker]
+}
+
+func (r *DecoderFrameWorkBatchResidualRunner) slotRows(batch *internalthreading.FrameWorkBatch) (*decoderFrameWorkBatchRows, error) {
+	if r == nil || batch == nil {
+		return nil, ErrThreadingInvalidBatch
+	}
+	worker, err := r.workerIndex(*batch)
+	if err != nil {
+		return nil, err
+	}
+	if worker >= len(r.rows) {
+		return nil, ErrFrameShortBuffer
+	}
+	return &r.rows[worker], nil
 }
 
 // beginRows binds batch's entropy pass to rows on the worker slot

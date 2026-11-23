@@ -437,6 +437,8 @@ type frameWorkReconWavefront struct {
 	frameThread *FrameThreadRecon
 	// reconTile is the tile whose finished SB rows frameThread.Rows gets.
 	reconTile int32
+	// task is the frame-thread reconstruction task of the tile, or nil.
+	task *frameReconTask
 }
 
 type frameWorkReconWavefrontProgress struct {
@@ -1420,7 +1422,11 @@ func beginJobResiduals(b *FrameWorkBatch, index int, state *tile.DecodeState, cd
 // JobResidualsSBRow decodes the next superblock row of the job bound to
 // scratch and reports whether rows remain.
 func JobResidualsSBRow(scratch *FrameWorkTileResidualScratch) (bool, error) {
-	return tile.DecodeBlockLoopSBRow(&scratch.Loop, &scratch.controller, scratch.visitBlock)
+	more, err := tile.DecodeBlockLoopSBRow(&scratch.Loop, &scratch.controller, scratch.visitBlock)
+	if err == nil && more && scratch.controller.streaming {
+		err = scratch.controller.endReconRow()
+	}
+	return more, err
 }
 
 // EndJobResiduals finishes the job bound to scratch once its rows returned

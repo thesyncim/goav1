@@ -133,15 +133,12 @@ type FrameThreadRecon struct {
 	tasks      *frameTaskPool
 	reconTasks []*frameReconTask
 	usedTasks  int
-	// entropy is the frame's entropy task; entropyQueued records that it
-	// was queued this frame, and batchWorker the worker running each batch.
-	entropy       frameEntropyTask
-	entropyQueued bool
+	// entropy is the frame's entropy task.
+	entropy frameEntropyTask
 	// EntropyOut are the progress of the frame's entropy outputs later
 	// frames wait on (MV_REF grid, segmentation map); the worker ending the
 	// pass publishes them final.
-	EntropyOut  [2]*FrameProgress
-	batchWorker []int
+	EntropyOut [2]*FrameProgress
 
 	// pending holds the tiles whose reconstruction lanes still run after
 	// their parse returned; the tile parses append to it concurrently.
@@ -149,9 +146,11 @@ type FrameThreadRecon struct {
 	pending []frameThreadPendingRecon
 
 	// batches holds each tile batch's context, kept here so the frame-thread
-	// dispatch hands the runner a pointer without a per-frame heap copy.
+	// dispatch hands the runner a pointer without a per-frame heap copy;
+	// begun marks the batches whose rows the runner bound.
 	batches  []FrameWorkBatch
-	runner   FrameWorkBatchRunner
+	begun    []bool
+	runner   FrameWorkBatchRowRunner
 	parseWG  sync.WaitGroup
 	parseErr atomic.Pointer[wavefrontError]
 }
@@ -168,7 +167,6 @@ func (r *FrameThreadRecon) Reset() {
 	r.CDFOut = nil
 	r.Rows = nil
 	r.EntropyOut = [2]*FrameProgress{}
-	r.entropyQueued = false
 	r.mu.Lock()
 	r.usedTasks = 0
 	clear(r.pending)
@@ -196,7 +194,8 @@ func (r *FrameThreadRecon) addPending(wf *frameWorkReconWavefront, stats *FrameW
 
 // joinWavefront joins wf's lanes when it is still pending: a batch that
 // decodes several tiles reuses one scratch, whose buffered reconstruction
-// events the previous tile's lanes may still read.
+// events the previous tile's lanes may still read. The batch's next job is
+// claimed only once they are done (wavefrontReleased), so it does not wait.
 func (r *FrameThreadRecon) joinWavefront(wf *frameWorkReconWavefront) error {
 	r.mu.Lock()
 	for i := range r.pending {
@@ -209,11 +208,26 @@ func (r *FrameThreadRecon) joinWavefront(wf *frameWorkReconWavefront) error {
 		r.pending[last] = frameThreadPendingRecon{}
 		r.pending = r.pending[:last]
 		r.mu.Unlock()
-		r.helpUntilDone(p.wf)
 		return p.join()
 	}
 	r.mu.Unlock()
 	return nil
+}
+
+// wavefrontReleased reports whether wf's reconstruction task left the queue
+// or wf is not pending (called with the pool locked).
+func (r *FrameThreadRecon) wavefrontReleased(wf *frameWorkReconWavefront) bool {
+	if wf == nil {
+		return true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.pending {
+		if r.pending[i].wf == wf {
+			return wf.task == nil || wf.task.gone
+		}
+	}
+	return true
 }
 
 func (p frameThreadPendingRecon) join() error {
@@ -249,24 +263,67 @@ func (r *FrameThreadRecon) Join() error {
 	}
 }
 
-// runBatchOn runs one tile batch's entropy pass on frame-thread worker w
-// (with its tiles' reconstruction tasks left queued) and records the first
-// error.
-func (r *FrameThreadRecon) runBatchOn(w int, i int) {
-	r.batchWorker[i] = w
+// runBatchRows runs batch i's entropy rows while the next one is ready and
+// reports whether the batch ended (its last row ran or it failed).
+func (r *FrameThreadRecon) runBatchRows(i int) bool {
 	ctx := &r.batches[i]
-	if m := r.Motion; m != nil {
-		m.setWorker(ctx.Jobs, w)
+	if !r.begun[i] {
+		r.begun[i] = true
+		if err := r.runner.BeginRows(ctx); err != nil {
+			r.endBatch(ctx, err)
+			return true
+		}
 	}
-	var err error
-	if ptr, ok := r.runner.(interface{ RunPtr(*FrameWorkBatch) error }); ok {
-		err = ptr.RunPtr(ctx)
-	} else {
-		err = r.runner.Run(*ctx)
+	for {
+		more, err := r.runner.Row(ctx)
+		if err != nil || !more {
+			r.endBatch(ctx, err)
+			return true
+		}
+		if !r.batchRowReady(i, false) {
+			return false
+		}
 	}
-	if err != nil {
+}
+
+func (r *FrameThreadRecon) endBatch(ctx *FrameWorkBatch, err error) {
+	if err = r.runner.EndRows(ctx, err); err != nil {
 		r.parseErr.CompareAndSwap(nil, &wavefrontError{err: err})
 	}
+}
+
+// batchRowReady is dav1d's check_tile for batch i's next entropy step: a step
+// that binds the batch's next job waits until the previous job released the
+// scratch (only checked with the pool locked; unlocked it reports false), and
+// a superblock row that projects temporal samples waits for the references'
+// saved MV_REF rows it reads.
+func (r *FrameThreadRecon) batchRowReady(i int, locked bool) bool {
+	scratch := r.runner.RowScratch(&r.batches[i])
+	if scratch == nil {
+		return true
+	}
+	if !tile.BlockLoopBound(&scratch.Loop) {
+		return locked && r.wavefrontReleased(scratch.wavefront)
+	}
+	if m := r.Motion; m != nil {
+		if row8, ok := tile.BlockLoopNextRowMotion(&scratch.Loop); ok {
+			return m.refRowsReady(row8)
+		}
+	}
+	return true
+}
+
+// FrameWorkBatchRowRunner decodes a tile batch's entropy pass one step per
+// Row call, as the frame-thread entropy task runs it: BeginRows binds the
+// batch, each Row either binds its next job or decodes the bound job's next
+// superblock row and reports whether work remains, and EndRows ends the
+// pass after the last row or an error. RowScratch is the tile scratch the
+// batch decodes with.
+type FrameWorkBatchRowRunner interface {
+	BeginRows(*FrameWorkBatch) error
+	Row(*FrameWorkBatch) (bool, error)
+	EndRows(*FrameWorkBatch, error) error
+	RowScratch(*FrameWorkBatch) *FrameWorkTileResidualScratch
 }
 
 // QueueFrameWorkRunnerFrameThread queues a frame's tile entropy passes
@@ -275,7 +332,7 @@ func (r *FrameThreadRecon) runBatchOn(w int, i int) {
 // reconstruction tasks; FrameThreadRecon.WaitParse waits for the parses. The
 // parses do not hold the pool workers, which the post-filter of earlier
 // frames may fan row bands across at the same time.
-func (p *Pool) QueueFrameWorkRunnerFrameThread(batches []Batch, jobs []tile.Job, base FrameWorkBatch, runner FrameWorkBatchRunner) error {
+func (p *Pool) QueueFrameWorkRunnerFrameThread(batches []Batch, jobs []tile.Job, base FrameWorkBatch, runner FrameWorkBatchRowRunner) error {
 	if p == nil || len(p.workers) == 0 {
 		return ErrInvalidWorkerCount
 	}
@@ -293,7 +350,6 @@ func (p *Pool) QueueFrameWorkRunnerFrameThread(batches []Batch, jobs []tile.Job,
 		return ErrPoolClosed
 	}
 	if m := ft.Motion; m != nil {
-		m.recon = ft
 		if err := m.bindTiles(base, jobs); err != nil {
 			return err
 		}
@@ -305,10 +361,11 @@ func (p *Pool) QueueFrameWorkRunnerFrameThread(batches []Batch, jobs []tile.Job,
 	}
 	if cap(ft.batches) < len(batches) {
 		ft.batches = make([]FrameWorkBatch, len(batches))
-		ft.batchWorker = make([]int, len(batches))
+		ft.begun = make([]bool, len(batches))
 	}
 	ft.batches = ft.batches[:len(batches)]
-	ft.batchWorker = ft.batchWorker[:len(batches)]
+	ft.begun = ft.begun[:len(batches)]
+	clear(ft.begun)
 	for i := range batches {
 		batchJobs, err := batches[i].jobSlice(jobs)
 		if err != nil {
@@ -328,8 +385,7 @@ func (p *Pool) QueueFrameWorkRunnerFrameThread(batches []Batch, jobs []tile.Job,
 	ft.parseErr.Store(nil)
 	ft.parseWG.Add(len(batches))
 	ft.entropy.reset(ft, len(batches))
-	ft.entropyQueued = true
-	ft.tasks.addEntropy(ft.Seq, &ft.entropy)
+	ft.tasks.add(ft.Seq, &ft.entropy)
 	return nil
 }
 
@@ -342,38 +398,6 @@ func (r *FrameThreadRecon) WaitParse() error {
 		return e.err
 	}
 	return nil
-}
-
-// EndEntropy lets the frames after r start their entropy passes when r's
-// pass did not run (its frame failed before QueueFrameWorkRunnerFrameThread
-// queued it). Frames start their passes in decode order, so every frame
-// handed a Seq calls it once its pass returned.
-func (r *FrameThreadRecon) EndEntropy(p *Pool) {
-	if r.entropyQueued {
-		return
-	}
-	r.entropy.reset(r, 0)
-	r.entropyQueued = true
-	if tp := p.frameTaskPool(); tp != nil {
-		tp.addEntropy(r.Seq, &r.entropy)
-	}
-}
-
-// helpUntilDone runs other frame-thread tasks on the worker of the pass
-// joining wf until wf's reconstruction task left the queue.
-func (r *FrameThreadRecon) helpUntilDone(wf *frameWorkReconWavefront) {
-	var t *frameReconTask
-	r.mu.Lock()
-	for _, x := range r.reconTasks[:r.usedTasks] {
-		if x.wf == wf {
-			t = x
-		}
-	}
-	r.mu.Unlock()
-	if t == nil || r.tasks == nil {
-		return
-	}
-	r.tasks.helpUntil(r.batchWorker[wf.states[0].batch.Batch.Worker], t.finished)
 }
 
 // FrameThreadMotion is the entropy-progress side of a frame-threaded frame
@@ -393,10 +417,6 @@ type FrameThreadMotion struct {
 	tiles     []FrameThreadMotionTile
 	multi     bool
 	published int32
-	// recon is the frame whose passes wait here; w is the worker of a
-	// single-tile frame's pass.
-	recon *FrameThreadRecon
-	w     int
 }
 
 // FrameThreadMotionTile is one tile's entropy progress (dav1d
@@ -407,8 +427,6 @@ type FrameThreadMotionTile struct {
 	rows int32
 	end  int32
 	used bool
-	// w is the worker running the tile's pass.
-	w int
 }
 
 // bindTiles registers every job's 8x8-row span before any parse runs.
@@ -477,7 +495,7 @@ func frameThreadMotionRows(tiles []FrameThreadMotionTile) int32 {
 
 // WaitReferenceRows implements tile.FrameMotionProgress.
 func (t *FrameThreadMotionTile) WaitReferenceRows(rowEnd8 int32) bool {
-	return t.m.waitReferenceRows(t.w, rowEnd8)
+	return t.m.WaitReferenceRows(rowEnd8)
 }
 
 // PublishRows implements tile.FrameMotionProgress.
@@ -485,17 +503,9 @@ func (t *FrameThreadMotionTile) PublishRows(rowEnd8 int32) {
 	t.m.publishTile(t, rowEnd8)
 }
 
-// WaitReferenceRows implements tile.FrameMotionProgress.
+// WaitReferenceRows implements tile.FrameMotionProgress: the entropy task
+// claims a row only once refRowsReady(rowEnd8) holds, so it returns at once.
 func (m *FrameThreadMotion) WaitReferenceRows(rowEnd8 int32) bool {
-	return m.waitReferenceRows(m.w, rowEnd8)
-}
-
-// waitReferenceRows waits for the references' MV_REF rows, running other
-// frame-thread tasks on worker w meanwhile.
-func (m *FrameThreadMotion) waitReferenceRows(w int, rowEnd8 int32) bool {
-	if m.recon != nil && m.recon.tasks != nil && !m.refRowsReady(rowEnd8) {
-		m.recon.tasks.helpUntil(w, func() bool { return m.refRowsReady(rowEnd8) })
-	}
 	for _, p := range m.RefProgress {
 		if p != nil && !p.Wait(rowEnd8) {
 			return false
@@ -546,19 +556,6 @@ func (m *FrameThreadMotion) refRowsReady(rowEnd8 int32) bool {
 		}
 	}
 	return true
-}
-
-// setWorker records that worker w runs the passes of jobs.
-func (m *FrameThreadMotion) setWorker(jobs []tile.Job, w int) {
-	if !m.multi {
-		m.w = w
-		return
-	}
-	for i := range jobs {
-		if t := int(jobs[i].Tile); t < len(m.tiles) {
-			m.tiles[t].w = w
-		}
-	}
 }
 
 func (r *FrameThreadRecon) publishEntropyOut() {

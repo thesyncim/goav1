@@ -36,6 +36,9 @@ type frameWorkReconSpanBuilder struct {
 	prevRow       int
 	prevCol       int
 	paletteCursor int
+	// rowClosed is set once the parse ended row prevRow (endRow): its last
+	// span is closed and the row published.
+	rowClosed bool
 }
 
 func (wf *frameWorkReconWavefront) beginSpans(region FrameWorkJobRegion, sbSizeMIB int) {
@@ -81,7 +84,8 @@ func (wf *frameWorkReconWavefront) noteBlockBegin(eventIndex int, miRow int, miC
 	if !ok {
 		return -1, ErrInvalidBatch
 	}
-	if n := len(wf.sbSpans); n > 0 {
+	closed := b.rowClosed
+	if n := len(wf.sbSpans); n > 0 && !closed {
 		wf.sbSpans[n-1].end = idx
 	}
 	for len(wf.rowStart) <= sbRow {
@@ -91,11 +95,34 @@ func (wf *frameWorkReconWavefront) noteBlockBegin(eventIndex int, miRow int, miC
 	}
 	wf.sbSpans = append(wf.sbSpans, frameWorkReconSB{start: idx, end: idx, col: col})
 	newRow := sbRow != b.prevRow
-	b.prevRow, b.prevCol = sbRow, sbCol
-	if newRow {
+	b.prevRow, b.prevCol, b.rowClosed = sbRow, sbCol, false
+	if newRow && !closed {
 		return sbRow, nil
 	}
 	return -1, nil
+}
+
+// endRow closes the superblock row the parse just finished at eventCount and
+// reports how many leading rows are now recorded, or -1 when no row is open.
+func (wf *frameWorkReconWavefront) endRow(eventCount int) (int, error) {
+	b := &wf.build
+	if b.prevRow < 0 || b.rowClosed {
+		return -1, nil
+	}
+	idx, ok := frameWorkReconIndex(eventCount)
+	if !ok {
+		return -1, ErrInvalidBatch
+	}
+	if n := len(wf.sbSpans); n > 0 {
+		wf.sbSpans[n-1].end = idx
+	}
+	for len(wf.rowStart) <= b.prevRow+1 {
+		if err := wf.appendRowStart(len(wf.sbSpans)); err != nil {
+			return -1, err
+		}
+	}
+	b.rowClosed = true
+	return b.prevRow + 1, nil
 }
 
 // closeSpans ends the last superblock at eventCount and opens the row starts
@@ -159,9 +186,11 @@ func (wf *frameWorkReconWavefront) startLanes(lanes chan<- wavefrontLaneTask, wo
 		wf.lanes = 1
 		wf.wg.Add(1)
 		t := ft.reconTask(wf, rowCount)
+		wf.task = t
 		ft.tasks.add(ft.Seq, t)
 		return
 	}
+	wf.task = nil
 	wf.lanes = workers
 	wf.wg.Add(workers)
 	for w := 0; w < workers; w++ {
@@ -217,14 +246,16 @@ func (wf *frameWorkReconWavefront) finishLanes(stats *FrameWorkTileResidualStats
 	return nil
 }
 
-// cancelLanes aborts and joins the lanes after a parse error.
-func (wf *frameWorkReconWavefront) cancelLanes() {
+// cancelLanes aborts the lanes after a parse error and joins them; a
+// frame-threaded tile's reconstruction task is left to the frame's tail
+// (FrameThreadRecon.Join), so the pass does not wait for it.
+func (c *frameWorkTileResidualLoopController) cancelLanes() {
+	wf := c.scratch.wavefront
 	wf.abortProgress()
-	if ft := wf.frameThread; ft != nil {
-		// The cancelling pass runs on a frame-thread worker: run other tasks
-		// until the tile's reconstruction task left the queue.
+	if ft := wf.frameThread; ft != nil && ft.tasks != nil {
 		ft.tasks.wake()
-		ft.helpUntilDone(wf)
+		ft.addPending(wf, c.stats)
+		return
 	}
 	wf.wg.Wait()
 }
@@ -273,6 +304,21 @@ func (c *frameWorkTileResidualLoopController) streamBlockBegin(visit *tile.Block
 	if err != nil || rows <= 0 {
 		return err
 	}
+	return c.publishFinishedRows(rows)
+}
+
+// endReconRow publishes the superblock row the parse just finished, as dav1d
+// sets ts->progress[1] after each dav1d_decode_tile_sbrow, so its
+// reconstruction does not wait for the next row's first block.
+func (c *frameWorkTileResidualLoopController) endReconRow() error {
+	rows, err := c.scratch.wavefront.endRow(len(c.scratch.reconEvents))
+	if err != nil || rows <= 0 {
+		return err
+	}
+	return c.publishFinishedRows(rows)
+}
+
+func (c *frameWorkTileResidualLoopController) publishFinishedRows(rows int) error {
 	// The finished row's tile right-edge backup is final; flush it before the
 	// row reaches reconstruction (see FixTileBoundaryRegion).
 	if c.req.LoopFilterMasks.Valid() {
@@ -306,15 +352,15 @@ func (c *frameWorkTileResidualLoopController) finishReconStream(parseErr error) 
 	wf := c.scratch.wavefront
 	c.streaming = false
 	if parseErr != nil {
-		wf.cancelLanes()
+		c.cancelLanes()
 		return parseErr
 	}
 	if err := wf.closeSpans(len(c.scratch.reconEvents)); err != nil {
-		wf.cancelLanes()
+		c.cancelLanes()
 		return err
 	}
 	if err := c.publishReconRows(wf.build.rowCount); err != nil {
-		wf.cancelLanes()
+		c.cancelLanes()
 		return err
 	}
 	if ft := wf.frameThread; ft != nil {

@@ -159,7 +159,6 @@ func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
 	for range fc.start {
 		fc.postStarted = false
 		err := p.parseFrame(fc)
-		fc.ft.Recon.EndEntropy(p.d.workerPool)
 		parsed := internalthreading.FrameProgressDone
 		if err != nil {
 			parsed = internalthreading.FrameProgressError
