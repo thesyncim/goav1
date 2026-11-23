@@ -15,13 +15,13 @@ func DecodeBlockLoopWithCoeffControllerPtrOwnedIntra[T BlockLoopCoeffController]
 	return decodeBlockLoopWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, true, true, visit)
 }
 
-// Only the intra-syntax prefix of each edge (Skip through PaletteUV) and the
-// per-block tx_size neighbor snapshot are read by the intra syntax loop.
-// Motion grids and cross-SB histories remain untouched until a generic walk
-// invokes resetForSuperblock, which clears every validity field before use.
+// Only the edges and the per-block tx_size neighbor snapshot are read by the
+// intra syntax loop. Motion grids and cross-SB histories remain untouched
+// until a generic walk invokes resetForSuperblock, which clears every validity
+// field before use.
 func (c *BlockModeContext) resetForIntraSuperblock() {
-	c.clearAboveIntraEdge()
-	c.clearLeftIntraEdge()
+	c.A = BlockContext{}
+	c.L = BlockContext{}
 	c.resetIntraSuperblockState()
 }
 
@@ -58,55 +58,33 @@ func blockLoopLoadIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoop
 	if haveTop {
 		edge := &carrier.Above[rootColIndex]
 		scratch.Partition.Above = edge.Partition
-		scratch.Mode.AboveSkip = edge.mode.Skip
-		scratch.Mode.AboveSkipMode = edge.mode.SkipMode
-		scratch.Mode.AboveSegmentPred = edge.mode.SegmentPred
-		scratch.Mode.AboveIntra = edge.mode.Intra
-		scratch.Mode.AboveMode = edge.mode.Mode
-		scratch.Mode.AboveChromaIntra = edge.mode.ChromaIntra
-		scratch.Mode.AboveChromaMode = edge.mode.ChromaMode
-		scratch.Mode.AboveTxIntra = edge.mode.TxIntra
-		scratch.Mode.AboveTx = edge.mode.Tx
-		scratch.Mode.AboveBlockSize = edge.mode.BlockSize
-		scratch.Mode.AbovePaletteY = edge.mode.PaletteY
-		scratch.Mode.AbovePaletteUV = edge.mode.PaletteUV
+		scratch.Mode.A = edge.mode.BlockContext
 		scratch.CoeffCtx.Above = edge.Coeff
 		// Keep the mode/size extension used by smaller-SB neighbor contexts.
 		if sbSizeMIB != 0 && rootColIndex+1 < len(carrier.Above) {
 			right := &carrier.Above[rootColIndex+1].mode
 			for off := 0; off < int(sbSizeMIB) && int(sbSizeMIB)+off < MaxBlockModeSlots; off++ {
 				dst := int(sbSizeMIB) + off
-				scratch.Mode.AboveIntra[dst] = right.Intra[off]
-				scratch.Mode.AboveMode[dst] = right.Mode[off]
-				scratch.Mode.AboveChromaIntra[dst] = right.ChromaIntra[off]
-				scratch.Mode.AboveChromaMode[dst] = right.ChromaMode[off]
-				scratch.Mode.AboveBlockSize[dst] = right.BlockSize[off]
+				scratch.Mode.A.Intra[dst] = right.Intra[off]
+				scratch.Mode.A.Mode[dst] = right.Mode[off]
+				scratch.Mode.A.ChromaIntra[dst] = right.ChromaIntra[off]
+				scratch.Mode.A.UVMode[dst] = right.UVMode[off]
+				scratch.Mode.A.BlockSize[dst] = right.BlockSize[off]
 			}
 		}
 	} else {
-		scratch.Mode.clearAboveIntraEdge()
+		scratch.Mode.A = BlockContext{}
 		scratch.Partition.Above = [MaxPartitionSlots]uint8{}
 		scratch.CoeffCtx.Above = [3][MaxBlockModeSlots]uint8{}
 	}
 	if !haveLeft {
-		scratch.Mode.clearLeftIntraEdge()
+		scratch.Mode.L = BlockContext{}
 		scratch.Partition.Left = [MaxPartitionSlots]uint8{}
 		scratch.CoeffCtx.Left = [3][MaxBlockModeSlots]uint8{}
 	} else if !resident {
 		edge := &carrier.Left
 		scratch.Partition.Left = edge.Partition
-		scratch.Mode.LeftSkip = edge.mode.Skip
-		scratch.Mode.LeftSkipMode = edge.mode.SkipMode
-		scratch.Mode.LeftSegmentPred = edge.mode.SegmentPred
-		scratch.Mode.LeftIntra = edge.mode.Intra
-		scratch.Mode.LeftMode = edge.mode.Mode
-		scratch.Mode.LeftChromaIntra = edge.mode.ChromaIntra
-		scratch.Mode.LeftChromaMode = edge.mode.ChromaMode
-		scratch.Mode.LeftTxIntra = edge.mode.TxIntra
-		scratch.Mode.LeftTx = edge.mode.Tx
-		scratch.Mode.LeftBlockSize = edge.mode.BlockSize
-		scratch.Mode.LeftPaletteY = edge.mode.PaletteY
-		scratch.Mode.LeftPaletteUV = edge.mode.PaletteUV
+		scratch.Mode.L = edge.mode.BlockContext
 		scratch.CoeffCtx.Left = edge.Coeff
 	}
 	return nil
@@ -121,18 +99,7 @@ func blockLoopStoreIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoo
 	}
 	above := &carrier.Above[rootColIndex]
 	above.Partition = scratch.Partition.Above
-	above.mode.Skip = scratch.Mode.AboveSkip
-	above.mode.SkipMode = scratch.Mode.AboveSkipMode
-	above.mode.SegmentPred = scratch.Mode.AboveSegmentPred
-	above.mode.Intra = scratch.Mode.AboveIntra
-	above.mode.Mode = scratch.Mode.AboveMode
-	above.mode.ChromaIntra = scratch.Mode.AboveChromaIntra
-	above.mode.ChromaMode = scratch.Mode.AboveChromaMode
-	above.mode.TxIntra = scratch.Mode.AboveTxIntra
-	above.mode.Tx = scratch.Mode.AboveTx
-	above.mode.BlockSize = scratch.Mode.AboveBlockSize
-	above.mode.PaletteY = scratch.Mode.AbovePaletteY
-	above.mode.PaletteUV = scratch.Mode.AbovePaletteUV
+	above.mode.BlockContext = scratch.Mode.A
 	above.Coeff = scratch.CoeffCtx.Above
 	scratch.keepLeftEdge(carrier, miRow, nextMICol, true)
 	return nil
@@ -141,18 +108,7 @@ func blockLoopStoreIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoo
 // storeIntraLeftEdge is the left half of blockLoopStoreIntraRootContext.
 func storeIntraLeftEdge(left *BlockLoopRootLeftContext, scratch *BlockLoopScratch) {
 	left.Partition = scratch.Partition.Left
-	left.mode.Skip = scratch.Mode.LeftSkip
-	left.mode.SkipMode = scratch.Mode.LeftSkipMode
-	left.mode.SegmentPred = scratch.Mode.LeftSegmentPred
-	left.mode.Intra = scratch.Mode.LeftIntra
-	left.mode.Mode = scratch.Mode.LeftMode
-	left.mode.ChromaIntra = scratch.Mode.LeftChromaIntra
-	left.mode.ChromaMode = scratch.Mode.LeftChromaMode
-	left.mode.TxIntra = scratch.Mode.LeftTxIntra
-	left.mode.Tx = scratch.Mode.LeftTx
-	left.mode.BlockSize = scratch.Mode.LeftBlockSize
-	left.mode.PaletteY = scratch.Mode.LeftPaletteY
-	left.mode.PaletteUV = scratch.Mode.LeftPaletteUV
+	left.mode.BlockContext = scratch.Mode.L
 	left.Coeff = scratch.CoeffCtx.Left
 }
 
@@ -167,10 +123,10 @@ func (c *BlockModeContext) markOwnedIntra(size BlockSize, x4 int, y4 int, mode I
 		return ErrInvalidDecodeState
 	}
 	for i := range int(dims.W4) {
-		c.AboveBlockSize[x4+i] = size
+		c.A.BlockSize[x4+i] = size
 	}
 	for i := range int(dims.H4) {
-		c.LeftBlockSize[y4+i] = size
+		c.L.BlockSize[y4+i] = size
 	}
 	return nil
 }

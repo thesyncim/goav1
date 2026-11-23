@@ -873,13 +873,13 @@ func seedAboveMotion(ctx *BlockModeContext, x4 int, size BlockSize, result Inter
 	dims, _ := size.Dimensions()
 	for i := 0; i < int(dims.W4); i++ {
 		slot := x4 + i
-		ctx.AboveIntra[slot] = 0
-		ctx.AboveRef[0][slot] = result.References.Ref[0]
-		ctx.AboveRef[1][slot] = result.References.Ref[1]
-		ctx.AboveCompound[slot] = boolByte(result.References.Compound)
+		ctx.A.Intra[slot] = 0
+		ctx.A.Ref[0][slot] = result.References.Ref[0]
+		ctx.A.Ref[1][slot] = result.References.Ref[1]
+		ctx.A.Compound[slot] = boolByte(result.References.Compound)
 		ctx.AboveInterMotion[slot] = result
 		ctx.AboveMotionValid[slot] = 1
-		ctx.AboveBlockSize[slot] = size
+		ctx.A.BlockSize[slot] = size
 	}
 }
 
@@ -887,13 +887,13 @@ func seedLeftMotion(ctx *BlockModeContext, y4 int, size BlockSize, result InterM
 	dims, _ := size.Dimensions()
 	for i := 0; i < int(dims.H4); i++ {
 		slot := y4 + i
-		ctx.LeftIntra[slot] = 0
-		ctx.LeftRef[0][slot] = result.References.Ref[0]
-		ctx.LeftRef[1][slot] = result.References.Ref[1]
-		ctx.LeftCompound[slot] = boolByte(result.References.Compound)
+		ctx.L.Intra[slot] = 0
+		ctx.L.Ref[0][slot] = result.References.Ref[0]
+		ctx.L.Ref[1][slot] = result.References.Ref[1]
+		ctx.L.Compound[slot] = boolByte(result.References.Compound)
 		ctx.LeftInterMotion[slot] = result
 		ctx.LeftMotionValid[slot] = 1
-		ctx.LeftBlockSize[slot] = size
+		ctx.L.BlockSize[slot] = size
 	}
 }
 
@@ -1727,12 +1727,12 @@ func TestBuildReferenceMVStackSingleRefMVsReflectFinalSort(t *testing.T) {
 		ctx.GridBlockSizeVisited[cell.y][cell.x] = 1
 	}
 	for i := range 8 {
-		ctx.AboveBlockSize[i+6] = BlockSize8x8
-		ctx.AboveIntra[i+6] = 1
+		ctx.A.BlockSize[i+6] = BlockSize8x8
+		ctx.A.Intra[i+6] = 1
 		ctx.GridBlockSizeVisited[9][i+6] = 1
 		ctx.GridBlockSize[9][i+6] = BlockSize8x8
-		ctx.LeftBlockSize[i+10] = BlockSize8x8
-		ctx.LeftIntra[i+10] = 1
+		ctx.L.BlockSize[i+10] = BlockSize8x8
+		ctx.L.Intra[i+10] = 1
 	}
 	result, err := ctx.BuildReferenceMVStack(ReferenceMVStackRequest{
 		Size:           BlockSize16x8,

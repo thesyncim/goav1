@@ -974,10 +974,10 @@ func (st *lossyEncodeState) writeIntraPBlock(block tile.BlockVisit, scratch *til
 	modeCtx.TxNeighborValid = false
 	if int(block.X4) < tile.MaxBlockModeSlots && int(block.Y4) < tile.MaxBlockModeSlots {
 		modeCtx.TxNeighborValid = true
-		modeCtx.TxAboveNeighborIntra = modeCtx.AboveIntra[block.X4]
-		modeCtx.TxAboveNeighborBlockSize = modeCtx.AboveBlockSize[block.X4]
-		modeCtx.TxLeftNeighborIntra = modeCtx.LeftIntra[block.Y4]
-		modeCtx.TxLeftNeighborBlockSize = modeCtx.LeftBlockSize[block.Y4]
+		modeCtx.TxAboveNeighborIntra = modeCtx.A.Intra[block.X4]
+		modeCtx.TxAboveNeighborBlockSize = modeCtx.A.BlockSize[block.X4]
+		modeCtx.TxLeftNeighborIntra = modeCtx.L.Intra[block.Y4]
+		modeCtx.TxLeftNeighborBlockSize = modeCtx.L.BlockSize[block.Y4]
 	}
 	if err := tile.WriteIntraFlag(st.w, &st.intraCDFs, modeCtx, tile.IntraFlagRequest{
 		FrameType: parser.FrameTypeInter,

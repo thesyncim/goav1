@@ -43,39 +43,39 @@ func frozenMarkInterOracle(c *BlockModeContext, size BlockSize, x4, y4 int, resu
 	xEnd := x4 + w4
 	yEnd := y4 + h4
 	// dav1d decode_b resets the edge palette sizes for inter blocks.
-	clear(c.AbovePaletteY[x4:xEnd])
-	clear(c.AbovePaletteUV[x4:xEnd])
-	clear(c.LeftPaletteY[y4:yEnd])
-	clear(c.LeftPaletteUV[y4:yEnd])
-	clear(c.AboveIntra[x4:xEnd])
-	clear(c.AboveCompGroup[x4:xEnd])
-	clear(c.AboveInterIntra[x4:xEnd])
+	clear(c.A.PaletteY[x4:xEnd])
+	clear(c.A.PaletteUV[x4:xEnd])
+	clear(c.L.PaletteY[y4:yEnd])
+	clear(c.L.PaletteUV[y4:yEnd])
+	clear(c.A.Intra[x4:xEnd])
+	clear(c.A.CompGroup[x4:xEnd])
+	clear(c.A.InterIntra[x4:xEnd])
 	clear(c.AboveMotionValid[x4:xEnd])
-	clear(c.AboveInterpValid[x4:xEnd])
-	clear(c.LeftIntra[y4:yEnd])
-	clear(c.LeftCompGroup[y4:yEnd])
-	clear(c.LeftInterIntra[y4:yEnd])
+	clear(c.A.InterpValid[x4:xEnd])
+	clear(c.L.Intra[y4:yEnd])
+	clear(c.L.CompGroup[y4:yEnd])
+	clear(c.L.InterIntra[y4:yEnd])
 	clear(c.LeftMotionValid[y4:yEnd])
-	clear(c.LeftInterpValid[y4:yEnd])
+	clear(c.L.InterpValid[y4:yEnd])
 	if hasChroma {
-		clear(c.AboveChromaIntra[x4:xEnd])
-		clear(c.AboveChromaMode[x4:xEnd])
-		clear(c.LeftChromaIntra[y4:yEnd])
-		clear(c.LeftChromaMode[y4:yEnd])
+		clear(c.A.ChromaIntra[x4:xEnd])
+		clear(c.A.UVMode[x4:xEnd])
+		clear(c.L.ChromaIntra[y4:yEnd])
+		clear(c.L.UVMode[y4:yEnd])
 	}
 	for i := 0; i < w4; i++ {
-		c.AboveRef[0][x4+i] = result.Ref[0]
-		c.AboveRef[1][x4+i] = result.Ref[1]
-		c.AboveCompound[x4+i] = compound
-		c.AboveCompIndex[x4+i] = compIndex
-		c.AboveBlockSize[x4+i] = size
+		c.A.Ref[0][x4+i] = result.Ref[0]
+		c.A.Ref[1][x4+i] = result.Ref[1]
+		c.A.Compound[x4+i] = compound
+		c.A.CompIndex[x4+i] = compIndex
+		c.A.BlockSize[x4+i] = size
 	}
 	for i := 0; i < h4; i++ {
-		c.LeftRef[0][y4+i] = result.Ref[0]
-		c.LeftRef[1][y4+i] = result.Ref[1]
-		c.LeftCompound[y4+i] = compound
-		c.LeftCompIndex[y4+i] = compIndex
-		c.LeftBlockSize[y4+i] = size
+		c.L.Ref[0][y4+i] = result.Ref[0]
+		c.L.Ref[1][y4+i] = result.Ref[1]
+		c.L.Compound[y4+i] = compound
+		c.L.CompIndex[y4+i] = compIndex
+		c.L.BlockSize[y4+i] = size
 	}
 	c.clearGridInterMotion(size, x4, y4, dims)
 	return nil
@@ -95,12 +95,12 @@ func frozenMarkInterMotionOracle(c *BlockModeContext, size BlockSize, x4, y4 int
 	for i := 0; i < int(dims.W4); i++ {
 		c.AboveInterMotion[x4+i] = result
 		c.AboveMotionValid[x4+i] = 1
-		c.AboveBlockSize[x4+i] = size
+		c.A.BlockSize[x4+i] = size
 	}
 	for i := 0; i < int(dims.H4); i++ {
 		c.LeftInterMotion[y4+i] = result
 		c.LeftMotionValid[y4+i] = 1
-		c.LeftBlockSize[y4+i] = size
+		c.L.BlockSize[y4+i] = size
 	}
 	c.markGridInterMotion(size, x4, y4, result, dims)
 	return nil
@@ -333,12 +333,12 @@ func frozenMarkInterFiltersOracle(c *BlockModeContext, size BlockSize, x4 int, y
 		return ErrInvalidDecodeState
 	}
 	for i := 0; i < int(dims.W4); i++ {
-		c.AboveInterp[x4+i] = filters
-		c.AboveInterpValid[x4+i] = 1
+		c.A.Interp[x4+i] = filters
+		c.A.InterpValid[x4+i] = 1
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.LeftInterp[y4+i] = filters
-		c.LeftInterpValid[y4+i] = 1
+		c.L.Interp[y4+i] = filters
+		c.L.InterpValid[y4+i] = 1
 	}
 	// Record the per-MI filter pair so the sub8x8 chroma predictor can read
 	// each covered luma sub-block's own filters (libaom's this_mbmi->
@@ -369,7 +369,7 @@ func frozenDecodedInterContextOracle(c *BlockModeContext, size BlockSize, x4, y4
 // clearUnusedPaletteColors drops the colours of size-0 palette edge entries,
 // which no reader observes.
 func clearUnusedPaletteColors(c *BlockModeContext) {
-	for _, edge := range []*[MaxBlockModeSlots]paletteContext{&c.AbovePaletteY, &c.AbovePaletteUV, &c.LeftPaletteY, &c.LeftPaletteUV} {
+	for _, edge := range []*[MaxBlockModeSlots]paletteContext{&c.A.PaletteY, &c.A.PaletteUV, &c.L.PaletteY, &c.L.PaletteUV} {
 		for i := range edge {
 			if edge[i].Size == 0 {
 				edge[i].Colors = [PaletteMaxSize]uint16{}

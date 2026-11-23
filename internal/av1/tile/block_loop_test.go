@@ -171,13 +171,13 @@ func TestBlockLoopContextCarrierRoundTripsRootEdges(t *testing.T) {
 	var scratch BlockLoopScratch
 	scratch.Partition.Above[2] = 9
 	scratch.Partition.Left[3] = 7
-	scratch.Mode.AboveSkip[0] = 1
-	scratch.Mode.AboveRef[1][2] = ReferenceFrameBWD
+	scratch.Mode.A.Skip[0] = 1
+	scratch.Mode.A.Ref[1][2] = ReferenceFrameBWD
 	scratch.Mode.AboveInterMotion[4] = InterMotionResult{MV: [2]motion.Vector{{Row: 3, Col: -5}}}
 	scratch.Mode.AboveMotionValid[4] = 1
-	scratch.Mode.LeftSkip[5] = 1
-	scratch.Mode.LeftRef[0][6] = ReferenceFrameGolden
-	scratch.Mode.LeftCompIndex[6] = 1
+	scratch.Mode.L.Skip[5] = 1
+	scratch.Mode.L.Ref[0][6] = ReferenceFrameGolden
+	scratch.Mode.L.CompIndex[6] = 1
 	scratch.Mode.LeftInterMotion[6] = InterMotionResult{MV: [2]motion.Vector{{Row: -2, Col: 7}}}
 	scratch.Mode.LeftMotionValid[6] = 1
 	scratch.CoeffCtx.Above[2][8] = 13
@@ -199,13 +199,13 @@ func TestBlockLoopContextCarrierRoundTripsRootEdges(t *testing.T) {
 	if scratch.Partition.Above[2] != 9 || scratch.Partition.Left[3] != 7 {
 		t.Fatalf("partition context above=%d left=%d", scratch.Partition.Above[2], scratch.Partition.Left[3])
 	}
-	if scratch.Mode.AboveSkip[0] != 1 ||
-		scratch.Mode.AboveRef[1][2] != ReferenceFrameBWD ||
+	if scratch.Mode.A.Skip[0] != 1 ||
+		scratch.Mode.A.Ref[1][2] != ReferenceFrameBWD ||
 		scratch.Mode.AboveInterMotion[4].MV[0] != (motion.Vector{Row: 3, Col: -5}) ||
 		scratch.Mode.AboveMotionValid[4] != 1 ||
-		scratch.Mode.LeftSkip[5] != 1 ||
-		scratch.Mode.LeftRef[0][6] != ReferenceFrameGolden ||
-		scratch.Mode.LeftCompIndex[6] != 1 ||
+		scratch.Mode.L.Skip[5] != 1 ||
+		scratch.Mode.L.Ref[0][6] != ReferenceFrameGolden ||
+		scratch.Mode.L.CompIndex[6] != 1 ||
 		scratch.Mode.LeftInterMotion[6].MV[0] != (motion.Vector{Row: -2, Col: 7}) ||
 		scratch.Mode.LeftMotionValid[6] != 1 {
 		t.Fatalf("mode context did not round-trip: %+v", scratch.Mode)
@@ -218,7 +218,7 @@ func TestBlockLoopContextCarrierRoundTripsRootEdges(t *testing.T) {
 		t.Fatal(err)
 	}
 	if scratch.Partition.Above[2] != 0 || scratch.Partition.Left[3] != 0 ||
-		scratch.Mode.AboveSkip[0] != 0 || scratch.Mode.LeftSkip[5] != 0 ||
+		scratch.Mode.A.Skip[0] != 0 || scratch.Mode.L.Skip[5] != 0 ||
 		scratch.CoeffCtx.Above[2][8] != 0 || scratch.CoeffCtx.Left[1][9] != 0 {
 		t.Fatalf("boundary load kept neighbor contexts: partition=%+v mode=%+v coeff=%+v", scratch.Partition, scratch.Mode, scratch.CoeffCtx)
 	}
@@ -407,8 +407,8 @@ func TestDecodeBlockLoopSegmentationPreskipAndMaps(t *testing.T) {
 			t.Fatalf("segment map[%d]=%d want 0", i, id)
 		}
 	}
-	if scratch.Mode.AboveSegmentPred[0] != 0 || scratch.Mode.LeftSkip[0] != 1 {
-		t.Fatalf("mode context segpred=%d leftskip=%d", scratch.Mode.AboveSegmentPred[0], scratch.Mode.LeftSkip[0])
+	if scratch.Mode.A.SegPred[0] != 0 || scratch.Mode.L.Skip[0] != 1 {
+		t.Fatalf("mode context segpred=%d leftskip=%d", scratch.Mode.A.SegPred[0], scratch.Mode.L.Skip[0])
 	}
 }
 
@@ -456,10 +456,10 @@ func TestDecodeBlockLoopReadsIntraPredictionModes(t *testing.T) {
 		!got.Prediction.ChromaModeValid || got.Prediction.ChromaMode != ChromaIntraModeDC {
 		t.Fatalf("prediction=%+v", got.Prediction)
 	}
-	if scratch.Mode.AboveIntra[0] != 1 || scratch.Mode.LeftIntra[0] != 1 ||
-		scratch.Mode.AboveMode[0] != IntraModeDC || scratch.Mode.LeftMode[0] != IntraModeDC {
+	if scratch.Mode.A.Intra[0] != 1 || scratch.Mode.L.Intra[0] != 1 ||
+		scratch.Mode.A.Mode[0] != IntraModeDC || scratch.Mode.L.Mode[0] != IntraModeDC {
 		t.Fatalf("mode context aboveIntra=%d leftIntra=%d aboveMode=%d leftMode=%d",
-			scratch.Mode.AboveIntra[0], scratch.Mode.LeftIntra[0], scratch.Mode.AboveMode[0], scratch.Mode.LeftMode[0])
+			scratch.Mode.A.Intra[0], scratch.Mode.L.Intra[0], scratch.Mode.A.Mode[0], scratch.Mode.L.Mode[0])
 	}
 	if got := intraCDFs.KeyframeYMode[0][0].Values()[int(intraModeCount)]; got != 1 {
 		t.Fatalf("keyframe ymode count=%d want 1", got)
@@ -525,11 +525,11 @@ func TestDecodeBlockLoopReadsInterReferences(t *testing.T) {
 		}
 	}
 	refs := visits[0].Prediction.InterReferences
-	if scratch.Mode.AboveIntra[0] != 0 || scratch.Mode.LeftIntra[0] != 0 ||
-		scratch.Mode.AboveRef[0][0] != refs.Ref[0] || scratch.Mode.LeftRef[0][0] != refs.Ref[0] {
+	if scratch.Mode.A.Intra[0] != 0 || scratch.Mode.L.Intra[0] != 0 ||
+		scratch.Mode.A.Ref[0][0] != refs.Ref[0] || scratch.Mode.L.Ref[0][0] != refs.Ref[0] {
 		t.Fatalf("mode context intra=(%d,%d) refs=(%d,%d) want ref %d",
-			scratch.Mode.AboveIntra[0], scratch.Mode.LeftIntra[0],
-			scratch.Mode.AboveRef[0][0], scratch.Mode.LeftRef[0][0], refs.Ref[0])
+			scratch.Mode.A.Intra[0], scratch.Mode.L.Intra[0],
+			scratch.Mode.A.Ref[0][0], scratch.Mode.L.Ref[0][0], refs.Ref[0])
 	}
 }
 
@@ -616,10 +616,10 @@ func TestDecodeBlockLoopReadsForcedInterModeAndRefMVStack(t *testing.T) {
 			t.Fatalf("current MV entry %d=%+v want %+v", i, entry, want)
 		}
 	}
-	if scratch.Mode.AboveRef[0][0] != ReferenceFrameLast || scratch.Mode.LeftRef[0][0] != ReferenceFrameLast ||
+	if scratch.Mode.A.Ref[0][0] != ReferenceFrameLast || scratch.Mode.L.Ref[0][0] != ReferenceFrameLast ||
 		scratch.Mode.AboveMotionValid[0] != 1 || scratch.Mode.LeftMotionValid[0] != 1 {
 		t.Fatalf("marked refs above=%d left=%d motion=(%d,%d)",
-			scratch.Mode.AboveRef[0][0], scratch.Mode.LeftRef[0][0],
+			scratch.Mode.A.Ref[0][0], scratch.Mode.L.Ref[0][0],
 			scratch.Mode.AboveMotionValid[0], scratch.Mode.LeftMotionValid[0])
 	}
 }
@@ -1150,8 +1150,8 @@ func TestDecodeBlockPredictionModeReadsCompoundBlend(t *testing.T) {
 	if !result.InterMotionValid || !result.InterReferences.Compound {
 		t.Fatalf("motion=%+v refs=%+v", result.InterMotion, result.InterReferences)
 	}
-	if ctx.AboveCompIndex[0] != 1 || ctx.LeftCompIndex[0] != 1 {
-		t.Fatalf("compound index context above=%d left=%d want 1", ctx.AboveCompIndex[0], ctx.LeftCompIndex[0])
+	if ctx.A.CompIndex[0] != 1 || ctx.L.CompIndex[0] != 1 {
+		t.Fatalf("compound index context above=%d left=%d want 1", ctx.A.CompIndex[0], ctx.L.CompIndex[0])
 	}
 }
 
@@ -1893,25 +1893,25 @@ func TestDecodeBlockPredictionModeIntraOnInterFrameUsesInterYModeCDF(t *testing.
 	// and clears AboveRef[0]/AboveCompound/AboveMotionValid so later inter
 	// blocks see the intra neighbor as not-inter. Pin the full neighbor
 	// state at slot 0 for the just-marked intra block.
-	if ctx.AboveIntra[0] != 1 || ctx.LeftIntra[0] != 1 {
-		t.Fatalf("MarkIntra did not set intra flag above=%d left=%d", ctx.AboveIntra[0], ctx.LeftIntra[0])
+	if ctx.A.Intra[0] != 1 || ctx.L.Intra[0] != 1 {
+		t.Fatalf("MarkIntra did not set intra flag above=%d left=%d", ctx.A.Intra[0], ctx.L.Intra[0])
 	}
-	if ctx.AboveMode[0] != result.LumaMode || ctx.LeftMode[0] != result.LumaMode {
-		t.Fatalf("MarkIntra mode above=%d left=%d want %d", ctx.AboveMode[0], ctx.LeftMode[0], result.LumaMode)
+	if ctx.A.Mode[0] != result.LumaMode || ctx.L.Mode[0] != result.LumaMode {
+		t.Fatalf("MarkIntra mode above=%d left=%d want %d", ctx.A.Mode[0], ctx.L.Mode[0], result.LumaMode)
 	}
-	if ctx.AboveRef[0][0] != ReferenceFrameNone || ctx.LeftRef[0][0] != ReferenceFrameNone {
-		t.Fatalf("MarkIntra ref above=%d left=%d want None", ctx.AboveRef[0][0], ctx.LeftRef[0][0])
+	if ctx.A.Ref[0][0] != ReferenceFrameNone || ctx.L.Ref[0][0] != ReferenceFrameNone {
+		t.Fatalf("MarkIntra ref above=%d left=%d want None", ctx.A.Ref[0][0], ctx.L.Ref[0][0])
 	}
-	if ctx.AboveCompound[0] != 0 || ctx.LeftCompound[0] != 0 ||
+	if ctx.A.Compound[0] != 0 || ctx.L.Compound[0] != 0 ||
 		ctx.AboveMotionValid[0] != 0 || ctx.LeftMotionValid[0] != 0 {
 		t.Fatalf("MarkIntra did not clear inter baggage above_compound=%d left_compound=%d above_mv=%d left_mv=%d",
-			ctx.AboveCompound[0], ctx.LeftCompound[0], ctx.AboveMotionValid[0], ctx.LeftMotionValid[0])
+			ctx.A.Compound[0], ctx.L.Compound[0], ctx.AboveMotionValid[0], ctx.LeftMotionValid[0])
 	}
 	// AboveBlockSize / LeftBlockSize must reflect the current block (64x64)
 	// — libaom's xd->above_mbmi->bsize for the just-decoded block is updated
 	// here. Subsequent neighbor lookups within the same SB will see this.
-	if ctx.AboveBlockSize[0] != BlockSize64x64 || ctx.LeftBlockSize[0] != BlockSize64x64 {
-		t.Fatalf("MarkIntra block size above=%d left=%d want 64x64", ctx.AboveBlockSize[0], ctx.LeftBlockSize[0])
+	if ctx.A.BlockSize[0] != BlockSize64x64 || ctx.L.BlockSize[0] != BlockSize64x64 {
+		t.Fatalf("MarkIntra block size above=%d left=%d want 64x64", ctx.A.BlockSize[0], ctx.L.BlockSize[0])
 	}
 	// Chroma neighbor context must also be set (MarkChromaIntra is invoked
 	// when HasChromaBlock is true for the 64x64 block under default color
@@ -1920,8 +1920,8 @@ func TestDecodeBlockPredictionModeIntraOnInterFrameUsesInterYModeCDF(t *testing.
 	if !result.ChromaModeValid {
 		t.Fatalf("expected chroma intra mode read result=%+v", result)
 	}
-	if ctx.AboveChromaIntra[0] != 1 || ctx.LeftChromaIntra[0] != 1 {
+	if ctx.A.ChromaIntra[0] != 1 || ctx.L.ChromaIntra[0] != 1 {
 		t.Fatalf("MarkChromaIntra did not set chroma intra flag above=%d left=%d",
-			ctx.AboveChromaIntra[0], ctx.LeftChromaIntra[0])
+			ctx.A.ChromaIntra[0], ctx.L.ChromaIntra[0])
 	}
 }

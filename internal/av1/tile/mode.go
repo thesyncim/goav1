@@ -35,70 +35,54 @@ type BlockModeCDFs struct {
 	SegmentID   [BlockModeContexts]entropy.CDF
 }
 
-// BlockModeContext is the caller-owned top/left block context for one
-// superblock. Slots are addressed in 4x4 units, matching dav1d's bx4/by4.
-//
-// The fields form three contiguous ranges, which the superblock loads clear
-// independently (dav1d keeps the same split: the tile-wide above context
-// f->a, the per-SB-row left context t->l, and per-block state):
-//   - the above edge, AboveSkip through AboveInterpValid, carried across SB
-//     rows by the carrier's above slots;
-//   - the left edge, LeftSkip through LeftInterpValid, carried along an SB
-//     row (it stays resident in the scratch between consecutive superblocks
-//     of one walk);
-//   - per-superblock state from AboveInterMotion to the end.
-//
-// Within each edge the intra-syntax fields (Skip through PaletteUV) come
-// first; the owned intra walk carries only that prefix.
-type BlockModeContext struct {
-	AboveSkip        [MaxBlockModeSlots]uint8
-	AboveSkipMode    [MaxBlockModeSlots]uint8
-	AboveSegmentPred [MaxBlockModeSlots]uint8
-	AboveIntra       [MaxBlockModeSlots]uint8
-	AboveMode        [MaxBlockModeSlots]IntraMode
-	AboveChromaIntra [MaxBlockModeSlots]uint8
-	AboveChromaMode  [MaxBlockModeSlots]ChromaIntraMode
-	AboveTxIntra     [MaxBlockModeSlots]uint8
-	AboveTx          [MaxBlockModeSlots]uint8
-	AboveBlockSize   [MaxBlockModeSlots]BlockSize
-	AbovePaletteY    [MaxBlockModeSlots]paletteContext
-	AbovePaletteUV   [MaxBlockModeSlots]paletteContext
-	AboveRef         [2][MaxBlockModeSlots]ReferenceFrame
-	AboveCompound    [MaxBlockModeSlots]uint8
-	AboveCompGroup   [MaxBlockModeSlots]uint8
-	AboveCompIndex   [MaxBlockModeSlots]uint8
-	// AboveInterIntra/LeftInterIntra mirror libaom's per-MI inter-intra
-	// status. libaom records inter-intra blocks with
-	// mbmi->ref_frame[1] = INTRA_FRAME while goav1 keeps Ref[1] =
-	// ReferenceFrameNone for them. Neighbor scans that need to know
-	// "has any second ref" (ref_frame[1] != NONE_FRAME) - distinct from
+// BlockContext is dav1d's BlockContext (src/env.h): one edge of the block
+// mode context, indexed by 4x4 position. BlockModeContext holds the above edge
+// (A, dav1d's t->a) and the left edge (L, t->l); the superblock carriers hold
+// the same type, so an edge load or store is one struct copy. The coefficient
+// contexts (lcoef/ccoef) live in CoeffEntropyContext.
+type BlockContext struct {
+	Mode      [MaxBlockModeSlots]IntraMode
+	SegPred   [MaxBlockModeSlots]uint8
+	Skip      [MaxBlockModeSlots]uint8
+	SkipMode  [MaxBlockModeSlots]uint8
+	Intra     [MaxBlockModeSlots]uint8
+	Ref       [2][MaxBlockModeSlots]ReferenceFrame
+	TxIntra   [MaxBlockModeSlots]uint8
+	Tx        [MaxBlockModeSlots]uint8
+	UVMode    [MaxBlockModeSlots]ChromaIntraMode
+	PaletteY  [MaxBlockModeSlots]paletteContext
+	PaletteUV [MaxBlockModeSlots]paletteContext
+
+	ChromaIntra [MaxBlockModeSlots]uint8
+	BlockSize   [MaxBlockModeSlots]BlockSize
+	Compound    [MaxBlockModeSlots]uint8
+	CompGroup   [MaxBlockModeSlots]uint8
+	CompIndex   [MaxBlockModeSlots]uint8
+	// InterIntra mirrors libaom's per-MI inter-intra status. libaom records
+	// inter-intra blocks with mbmi->ref_frame[1] = INTRA_FRAME while goav1
+	// keeps Ref[1] = ReferenceFrameNone for them. Neighbor scans that need to
+	// know "has any second ref" (ref_frame[1] != NONE_FRAME) - distinct from
 	// "has an inter second ref" (has_second_ref, i.e. ref_frame[1] >
 	// INTRA_FRAME) - consult this flag. Notably av1_findSamples rejects
 	// inter-intra neighbors as warp-affine sample sources because their
 	// ref_frame[1] is INTRA_FRAME, not NONE_FRAME.
-	AboveInterIntra  [MaxBlockModeSlots]uint8
-	AboveInterp      [MaxBlockModeSlots]motion.InterpFilters
-	AboveInterpValid [MaxBlockModeSlots]uint8
+	InterIntra  [MaxBlockModeSlots]uint8
+	Interp      [MaxBlockModeSlots]motion.InterpFilters
+	InterpValid [MaxBlockModeSlots]uint8
+}
 
-	LeftSkip        [MaxBlockModeSlots]uint8
-	LeftSkipMode    [MaxBlockModeSlots]uint8
-	LeftSegmentPred [MaxBlockModeSlots]uint8
-	LeftIntra       [MaxBlockModeSlots]uint8
-	LeftMode        [MaxBlockModeSlots]IntraMode
-	LeftChromaIntra [MaxBlockModeSlots]uint8
-	LeftChromaMode  [MaxBlockModeSlots]ChromaIntraMode
-	LeftTxIntra     [MaxBlockModeSlots]uint8
-	LeftTx          [MaxBlockModeSlots]uint8
-	LeftBlockSize   [MaxBlockModeSlots]BlockSize
-	LeftPaletteY    [MaxBlockModeSlots]paletteContext
-	LeftPaletteUV   [MaxBlockModeSlots]paletteContext
-	LeftRef         [2][MaxBlockModeSlots]ReferenceFrame
-	LeftCompound    [MaxBlockModeSlots]uint8
-	LeftCompGroup   [MaxBlockModeSlots]uint8
-	LeftCompIndex   [MaxBlockModeSlots]uint8
-	LeftInterIntra  [MaxBlockModeSlots]uint8
-	LeftInterp      [MaxBlockModeSlots]motion.InterpFilters
-	LeftInterpValid [MaxBlockModeSlots]uint8
+// BlockModeContext is the caller-owned top/left block context for one
+// superblock. Slots are addressed in 4x4 units, matching dav1d's bx4/by4.
+//
+// The superblock loads clear three parts independently (dav1d keeps the same
+// split: the tile-wide above context f->a, the per-SB-row left context t->l,
+// and per-block state): the above edge A, carried across SB rows by the
+// carrier's above slots; the left edge L, carried along an SB row (it stays
+// resident in the scratch between consecutive superblocks of one walk); and
+// the per-superblock state from AboveInterMotion to the end.
+type BlockModeContext struct {
+	A BlockContext
+	L BlockContext
 
 	// AboveInterMotion/LeftInterMotion are per-superblock: the carriers
 	// restore them only on the libaom-shaped neighbor-motion path
@@ -240,49 +224,16 @@ type BlockModeContext struct {
 // resetForSuperblock is BlockModeContext{} minus the trailing payload grids
 // (see GridInterMotion): both edges plus the per-superblock state.
 func (c *BlockModeContext) resetForSuperblock() {
-	c.clearAboveEdge()
-	c.clearLeftEdge()
+	c.A = BlockContext{}
+	c.L = BlockContext{}
 	c.resetSuperblockState()
 }
 
-// clearAboveEdge zeroes the above edge (AboveSkip through AboveInterpValid),
-// dav1d's dav1d_reset_context on the tile's above context.
-func (c *BlockModeContext) clearAboveEdge() {
-	clear(unsafe.Slice((*byte)(unsafe.Pointer(c)), unsafe.Offsetof(c.LeftSkip)))
-}
-
-// clearLeftEdge zeroes the left edge (LeftSkip through LeftInterpValid),
-// dav1d's dav1d_reset_context(&t->l) at the start of an SB row.
-func (c *BlockModeContext) clearLeftEdge() {
-	clear(unsafe.Slice((*byte)(unsafe.Pointer(&c.LeftSkip)), unsafe.Offsetof(c.AboveInterMotion)-unsafe.Offsetof(c.LeftSkip)))
-}
-
-// clearAboveIntraEdge and clearLeftIntraEdge zero the intra-syntax prefix of
-// each edge (Skip through PaletteUV), the only edge fields the owned intra
-// walk reads.
-func (c *BlockModeContext) clearAboveIntraEdge() {
-	clear(unsafe.Slice((*byte)(unsafe.Pointer(c)), unsafe.Offsetof(c.AboveRef)))
-}
-
-func (c *BlockModeContext) clearLeftIntraEdge() {
-	clear(unsafe.Slice((*byte)(unsafe.Pointer(&c.LeftSkip)), unsafe.Offsetof(c.LeftRef)-unsafe.Offsetof(c.LeftSkip)))
-}
-
-// poisonAboveEdge fills the above edge with garbage in goav1_poison builds
-// before a load that must overwrite every field of it.
-func (c *BlockModeContext) poisonAboveEdge() {
+// poisonEdge fills an edge with garbage in goav1_poison builds before a load
+// that must overwrite all of it.
+func poisonEdge(e *BlockContext) {
 	if poisonSkippedClears {
-		b := unsafe.Slice((*byte)(unsafe.Pointer(c)), unsafe.Offsetof(c.LeftSkip))
-		for i := range b {
-			b[i] = 0xA5
-		}
-	}
-}
-
-// poisonLeftEdge is poisonAboveEdge for the left edge.
-func (c *BlockModeContext) poisonLeftEdge() {
-	if poisonSkippedClears {
-		b := unsafe.Slice((*byte)(unsafe.Pointer(&c.LeftSkip)), unsafe.Offsetof(c.AboveInterMotion)-unsafe.Offsetof(c.LeftSkip))
+		b := unsafe.Slice((*byte)(unsafe.Pointer(e)), unsafe.Sizeof(*e))
 		for i := range b {
 			b[i] = 0xA5
 		}
@@ -445,7 +396,7 @@ func (c *BlockModeContext) SkipContext(x4 int, y4 int) (int, error) {
 	if err := validateBlockModeSlot(x4, y4); err != nil {
 		return 0, err
 	}
-	return int(c.AboveSkip[x4]) + int(c.LeftSkip[y4]), nil
+	return int(c.A.Skip[x4]) + int(c.L.Skip[y4]), nil
 }
 
 // SkipModeContext returns libaom's av1_get_skip_mode_context() value.
@@ -456,7 +407,7 @@ func (c *BlockModeContext) SkipModeContext(x4 int, y4 int) (int, error) {
 	if err := validateBlockModeSlot(x4, y4); err != nil {
 		return 0, err
 	}
-	return int(c.AboveSkipMode[x4]) + int(c.LeftSkipMode[y4]), nil
+	return int(c.A.SkipMode[x4]) + int(c.L.SkipMode[y4]), nil
 }
 
 // SegmentPredContext returns libaom's av1_get_pred_context_seg_id() value.
@@ -467,7 +418,7 @@ func (c *BlockModeContext) SegmentPredContext(x4 int, y4 int) (int, error) {
 	if err := validateBlockModeSlot(x4, y4); err != nil {
 		return 0, err
 	}
-	return int(c.AboveSegmentPred[x4]) + int(c.LeftSegmentPred[y4]), nil
+	return int(c.A.SegPred[x4]) + int(c.L.SegPred[y4]), nil
 }
 
 // Mark updates the top/left block prefix context after a decoded block.
@@ -489,14 +440,14 @@ func (c *BlockModeContext) Mark(size BlockSize, x4 int, y4 int, result BlockMode
 	skipMode := boolByte(result.SkipMode)
 	skip := boolByte(result.SkipTransform)
 	for i := 0; i < int(dims.W4); i++ {
-		c.AboveSegmentPred[x4+i] = segPred
-		c.AboveSkipMode[x4+i] = skipMode
-		c.AboveSkip[x4+i] = skip
+		c.A.SegPred[x4+i] = segPred
+		c.A.SkipMode[x4+i] = skipMode
+		c.A.Skip[x4+i] = skip
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.LeftSegmentPred[y4+i] = segPred
-		c.LeftSkipMode[y4+i] = skipMode
-		c.LeftSkip[y4+i] = skip
+		c.L.SegPred[y4+i] = segPred
+		c.L.SkipMode[y4+i] = skipMode
+		c.L.Skip[y4+i] = skip
 	}
 	return nil
 }

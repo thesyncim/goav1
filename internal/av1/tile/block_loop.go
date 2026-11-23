@@ -80,34 +80,12 @@ type BlockLoopRootLeftContext struct {
 	Coeff     [3][MaxBlockModeSlots]uint8
 }
 
+// blockModeAboveContext is one root column's carried above edge: the
+// BlockContext plus the libaom-shaped neighbor motion and its cross-SB history.
 type blockModeAboveContext struct {
-	Skip        [MaxBlockModeSlots]uint8
-	SkipMode    [MaxBlockModeSlots]uint8
-	SegmentPred [MaxBlockModeSlots]uint8
-	Intra       [MaxBlockModeSlots]uint8
-	Mode        [MaxBlockModeSlots]IntraMode
-	ChromaIntra [MaxBlockModeSlots]uint8
-	ChromaMode  [MaxBlockModeSlots]ChromaIntraMode
-	TxIntra     [MaxBlockModeSlots]uint8
-	Tx          [MaxBlockModeSlots]uint8
-	Ref         [2][MaxBlockModeSlots]ReferenceFrame
-	Compound    [MaxBlockModeSlots]uint8
-	CompGroup   [MaxBlockModeSlots]uint8
-	CompIndex   [MaxBlockModeSlots]uint8
-	// InterIntra carries the per-MI inter-intra status across superblock rows
-	// so a warped-motion block at an SB top edge sees the SB-above neighbor's
-	// inter-intra flag. libaom's frame-wide mi grid exposes ref_frame[1] =
-	// INTRA_FRAME there, which av1_findSamples rejects as a warp sample source;
-	// without this field the restored above context defaulted to 0 and goav1
-	// over-collected the neighbor.
-	InterIntra  [MaxBlockModeSlots]uint8
+	BlockContext
 	InterMotion [MaxBlockModeSlots]InterMotionResult
 	MotionValid [MaxBlockModeSlots]uint8
-	Interp      [MaxBlockModeSlots]motion.InterpFilters
-	InterpValid [MaxBlockModeSlots]uint8
-	BlockSize   [MaxBlockModeSlots]BlockSize
-	PaletteY    [MaxBlockModeSlots]paletteContext
-	PaletteUV   [MaxBlockModeSlots]paletteContext
 
 	// InterMotionHistory captures the bottom intrabcCrossSBHistory rows of the
 	// prior SB's grid in row-major order: depth 0 is the bottom row of the
@@ -120,30 +98,11 @@ type blockModeAboveContext struct {
 	BlockSizeVisitedHistory [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
 }
 
+// blockModeLeftContext is the carried left edge.
 type blockModeLeftContext struct {
-	Skip        [MaxBlockModeSlots]uint8
-	SkipMode    [MaxBlockModeSlots]uint8
-	SegmentPred [MaxBlockModeSlots]uint8
-	Intra       [MaxBlockModeSlots]uint8
-	Mode        [MaxBlockModeSlots]IntraMode
-	ChromaIntra [MaxBlockModeSlots]uint8
-	ChromaMode  [MaxBlockModeSlots]ChromaIntraMode
-	TxIntra     [MaxBlockModeSlots]uint8
-	Tx          [MaxBlockModeSlots]uint8
-	Ref         [2][MaxBlockModeSlots]ReferenceFrame
-	Compound    [MaxBlockModeSlots]uint8
-	CompGroup   [MaxBlockModeSlots]uint8
-	CompIndex   [MaxBlockModeSlots]uint8
-	// InterIntra carries the per-MI inter-intra status across superblock columns
-	// (see blockModeAboveContext.InterIntra for the rationale).
-	InterIntra  [MaxBlockModeSlots]uint8
+	BlockContext
 	InterMotion [MaxBlockModeSlots]InterMotionResult
 	MotionValid [MaxBlockModeSlots]uint8
-	Interp      [MaxBlockModeSlots]motion.InterpFilters
-	InterpValid [MaxBlockModeSlots]uint8
-	BlockSize   [MaxBlockModeSlots]BlockSize
-	PaletteY    [MaxBlockModeSlots]paletteContext
-	PaletteUV   [MaxBlockModeSlots]paletteContext
 
 	// InterMotionHistory captures the rightmost intrabcCrossSBHistory columns
 	// of the prior SB-to-left's grid: depth 0 is the rightmost column (=
@@ -518,122 +477,50 @@ func blockLoopLoadRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLoo
 	scratch.Mode.resetSuperblockStateRefmvs()
 	scratch.CDEF.Reset()
 	if haveTop {
-		scratch.Mode.poisonAboveEdge()
+		poisonEdge(&scratch.Mode.A)
 		loadAboveEdge(scratch, &carrier.Above[rootColIndex])
 	} else {
-		scratch.Mode.clearAboveEdge()
+		scratch.Mode.A = BlockContext{}
 		scratch.Partition.Above = [MaxPartitionSlots]uint8{}
 		scratch.CoeffCtx.Above = [3][MaxBlockModeSlots]uint8{}
 	}
 	if !haveLeft {
-		scratch.Mode.clearLeftEdge()
+		scratch.Mode.L = BlockContext{}
 		scratch.Partition.Left = [MaxPartitionSlots]uint8{}
 		scratch.CoeffCtx.Left = [3][MaxBlockModeSlots]uint8{}
 	} else if !resident {
-		scratch.Mode.poisonLeftEdge()
+		poisonEdge(&scratch.Mode.L)
 		loadLeftEdge(scratch, &carrier.Left)
 	}
 	return nil
 }
 
-// loadAboveEdge copies every above-edge field except the per-superblock
-// neighbor motion.
+// loadAboveEdge copies the above edge except the per-superblock neighbor
+// motion.
 func loadAboveEdge(scratch *BlockLoopScratch, above *BlockLoopRootAboveContext) {
 	scratch.Partition.Above = above.Partition
-	scratch.Mode.AboveSkip = above.mode.Skip
-	scratch.Mode.AboveSkipMode = above.mode.SkipMode
-	scratch.Mode.AboveSegmentPred = above.mode.SegmentPred
-	scratch.Mode.AboveIntra = above.mode.Intra
-	scratch.Mode.AboveMode = above.mode.Mode
-	scratch.Mode.AboveChromaIntra = above.mode.ChromaIntra
-	scratch.Mode.AboveChromaMode = above.mode.ChromaMode
-	scratch.Mode.AboveTxIntra = above.mode.TxIntra
-	scratch.Mode.AboveTx = above.mode.Tx
-	scratch.Mode.AboveRef = above.mode.Ref
-	scratch.Mode.AboveCompound = above.mode.Compound
-	scratch.Mode.AboveCompGroup = above.mode.CompGroup
-	scratch.Mode.AboveCompIndex = above.mode.CompIndex
-	scratch.Mode.AboveInterIntra = above.mode.InterIntra
-	scratch.Mode.AboveInterp = above.mode.Interp
-	scratch.Mode.AboveInterpValid = above.mode.InterpValid
-	scratch.Mode.AboveBlockSize = above.mode.BlockSize
-	scratch.Mode.AbovePaletteY = above.mode.PaletteY
-	scratch.Mode.AbovePaletteUV = above.mode.PaletteUV
+	scratch.Mode.A = above.mode.BlockContext
 	scratch.CoeffCtx.Above = above.Coeff
 }
 
 // loadLeftEdge is loadAboveEdge for the left edge.
 func loadLeftEdge(scratch *BlockLoopScratch, left *BlockLoopRootLeftContext) {
 	scratch.Partition.Left = left.Partition
-	scratch.Mode.LeftSkip = left.mode.Skip
-	scratch.Mode.LeftSkipMode = left.mode.SkipMode
-	scratch.Mode.LeftSegmentPred = left.mode.SegmentPred
-	scratch.Mode.LeftIntra = left.mode.Intra
-	scratch.Mode.LeftMode = left.mode.Mode
-	scratch.Mode.LeftChromaIntra = left.mode.ChromaIntra
-	scratch.Mode.LeftChromaMode = left.mode.ChromaMode
-	scratch.Mode.LeftTxIntra = left.mode.TxIntra
-	scratch.Mode.LeftTx = left.mode.Tx
-	scratch.Mode.LeftRef = left.mode.Ref
-	scratch.Mode.LeftCompound = left.mode.Compound
-	scratch.Mode.LeftCompGroup = left.mode.CompGroup
-	scratch.Mode.LeftCompIndex = left.mode.CompIndex
-	scratch.Mode.LeftInterIntra = left.mode.InterIntra
-	scratch.Mode.LeftInterp = left.mode.Interp
-	scratch.Mode.LeftInterpValid = left.mode.InterpValid
-	scratch.Mode.LeftBlockSize = left.mode.BlockSize
-	scratch.Mode.LeftPaletteY = left.mode.PaletteY
-	scratch.Mode.LeftPaletteUV = left.mode.PaletteUV
+	scratch.Mode.L = left.mode.BlockContext
 	scratch.CoeffCtx.Left = left.Coeff
 }
 
 // storeAboveEdge is the store side of loadAboveEdge.
 func storeAboveEdge(above *BlockLoopRootAboveContext, scratch *BlockLoopScratch) {
 	above.Partition = scratch.Partition.Above
-	above.mode.Skip = scratch.Mode.AboveSkip
-	above.mode.SkipMode = scratch.Mode.AboveSkipMode
-	above.mode.SegmentPred = scratch.Mode.AboveSegmentPred
-	above.mode.Intra = scratch.Mode.AboveIntra
-	above.mode.Mode = scratch.Mode.AboveMode
-	above.mode.ChromaIntra = scratch.Mode.AboveChromaIntra
-	above.mode.ChromaMode = scratch.Mode.AboveChromaMode
-	above.mode.TxIntra = scratch.Mode.AboveTxIntra
-	above.mode.Tx = scratch.Mode.AboveTx
-	above.mode.Ref = scratch.Mode.AboveRef
-	above.mode.Compound = scratch.Mode.AboveCompound
-	above.mode.CompGroup = scratch.Mode.AboveCompGroup
-	above.mode.CompIndex = scratch.Mode.AboveCompIndex
-	above.mode.InterIntra = scratch.Mode.AboveInterIntra
-	above.mode.Interp = scratch.Mode.AboveInterp
-	above.mode.InterpValid = scratch.Mode.AboveInterpValid
-	above.mode.BlockSize = scratch.Mode.AboveBlockSize
-	above.mode.PaletteY = scratch.Mode.AbovePaletteY
-	above.mode.PaletteUV = scratch.Mode.AbovePaletteUV
+	above.mode.BlockContext = scratch.Mode.A
 	above.Coeff = scratch.CoeffCtx.Above
 }
 
 // storeLeftEdge is the store side of loadLeftEdge.
 func storeLeftEdge(left *BlockLoopRootLeftContext, scratch *BlockLoopScratch) {
 	left.Partition = scratch.Partition.Left
-	left.mode.Skip = scratch.Mode.LeftSkip
-	left.mode.SkipMode = scratch.Mode.LeftSkipMode
-	left.mode.SegmentPred = scratch.Mode.LeftSegmentPred
-	left.mode.Intra = scratch.Mode.LeftIntra
-	left.mode.Mode = scratch.Mode.LeftMode
-	left.mode.ChromaIntra = scratch.Mode.LeftChromaIntra
-	left.mode.ChromaMode = scratch.Mode.LeftChromaMode
-	left.mode.TxIntra = scratch.Mode.LeftTxIntra
-	left.mode.Tx = scratch.Mode.LeftTx
-	left.mode.Ref = scratch.Mode.LeftRef
-	left.mode.Compound = scratch.Mode.LeftCompound
-	left.mode.CompGroup = scratch.Mode.LeftCompGroup
-	left.mode.CompIndex = scratch.Mode.LeftCompIndex
-	left.mode.InterIntra = scratch.Mode.LeftInterIntra
-	left.mode.Interp = scratch.Mode.LeftInterp
-	left.mode.InterpValid = scratch.Mode.LeftInterpValid
-	left.mode.BlockSize = scratch.Mode.LeftBlockSize
-	left.mode.PaletteY = scratch.Mode.LeftPaletteY
-	left.mode.PaletteUV = scratch.Mode.LeftPaletteUV
+	left.mode.BlockContext = scratch.Mode.L
 	left.Coeff = scratch.CoeffCtx.Left
 }
 
@@ -846,17 +733,17 @@ func extendAboveContextFromRightCarrier(mode *BlockModeContext, carrier *BlockLo
 		}
 		mode.AboveInterMotion[dst] = right.mode.InterMotion[off]
 		mode.AboveMotionValid[dst] = right.mode.MotionValid[off]
-		mode.AboveBlockSize[dst] = right.mode.BlockSize[off]
-		mode.AboveIntra[dst] = right.mode.Intra[off]
-		mode.AboveMode[dst] = right.mode.Mode[off]
-		mode.AboveChromaIntra[dst] = right.mode.ChromaIntra[off]
-		mode.AboveChromaMode[dst] = right.mode.ChromaMode[off]
-		mode.AboveRef[0][dst] = right.mode.Ref[0][off]
-		mode.AboveRef[1][dst] = right.mode.Ref[1][off]
-		mode.AboveCompound[dst] = right.mode.Compound[off]
-		mode.AboveCompGroup[dst] = right.mode.CompGroup[off]
-		mode.AboveCompIndex[dst] = right.mode.CompIndex[off]
-		mode.AboveInterIntra[dst] = right.mode.InterIntra[off]
+		mode.A.BlockSize[dst] = right.mode.BlockSize[off]
+		mode.A.Intra[dst] = right.mode.Intra[off]
+		mode.A.Mode[dst] = right.mode.Mode[off]
+		mode.A.ChromaIntra[dst] = right.mode.ChromaIntra[off]
+		mode.A.UVMode[dst] = right.mode.UVMode[off]
+		mode.A.Ref[0][dst] = right.mode.Ref[0][off]
+		mode.A.Ref[1][dst] = right.mode.Ref[1][off]
+		mode.A.Compound[dst] = right.mode.Compound[off]
+		mode.A.CompGroup[dst] = right.mode.CompGroup[off]
+		mode.A.CompIndex[dst] = right.mode.CompIndex[off]
+		mode.A.InterIntra[dst] = right.mode.InterIntra[off]
 		mode.SBTopInterMotion[dst] = right.mode.InterMotion[off]
 		mode.SBTopMotionValid[dst] = right.mode.MotionValid[off]
 		mode.SBTopBlockSize[dst] = right.mode.BlockSize[off]
@@ -1068,10 +955,10 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 	ctx.TxNeighborValid = false
 	if blockX4 < MaxBlockModeSlots && blockY4 < MaxBlockModeSlots {
 		ctx.TxNeighborValid = true
-		ctx.TxAboveNeighborIntra = ctx.AboveIntra[blockX4]
-		ctx.TxAboveNeighborBlockSize = ctx.AboveBlockSize[blockX4]
-		ctx.TxLeftNeighborIntra = ctx.LeftIntra[blockY4]
-		ctx.TxLeftNeighborBlockSize = ctx.LeftBlockSize[blockY4]
+		ctx.TxAboveNeighborIntra = ctx.A.Intra[blockX4]
+		ctx.TxAboveNeighborBlockSize = ctx.A.BlockSize[blockX4]
+		ctx.TxLeftNeighborIntra = ctx.L.Intra[blockY4]
+		ctx.TxLeftNeighborBlockSize = ctx.L.BlockSize[blockY4]
 	}
 
 	visit.SegmentID = segmentID
@@ -1666,12 +1553,12 @@ func (s *DecodeState) readBlockSkips(cdfs *BlockModeCDFs, ctx *BlockModeContext,
 	segEnabled := req.Segmentation.Enabled
 	if req.SkipMode.Enabled && min(dims.W4, dims.H4) > 1 &&
 		!(segEnabled && (segment.Skip || segment.GlobalMV || segment.RefFrame >= 0)) {
-		skipMode = s.Reader.ReadBinaryCDFUnchecked(&cdfs.SkipMode[int(ctx.AboveSkipMode[x4])+int(ctx.LeftSkipMode[y4])]) != 0
+		skipMode = s.Reader.ReadBinaryCDFUnchecked(&cdfs.SkipMode[int(ctx.A.SkipMode[x4])+int(ctx.L.SkipMode[y4])]) != 0
 	}
 	if skipMode || segEnabled && segment.Skip {
 		return skipMode, true, nil
 	}
-	return false, s.Reader.ReadBinaryCDFUnchecked(&cdfs.Skip[int(ctx.AboveSkip[x4])+int(ctx.LeftSkip[y4])]) != 0, nil
+	return false, s.Reader.ReadBinaryCDFUnchecked(&cdfs.Skip[int(ctx.A.Skip[x4])+int(ctx.L.Skip[y4])]) != 0, nil
 }
 
 func (s *DecodeState) readBlockModePrefixSyntax(cdfs *BlockModeCDFs, ctx *BlockModeContext, req BlockModeRequest, segmentPredicted bool) (BlockModeResult, error) {

@@ -435,37 +435,37 @@ func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, res
 	}
 	xEnd := x4 + w4
 	yEnd := y4 + h4
-	clear(c.AboveIntra[x4:xEnd])
-	clear(c.AboveMode[x4:xEnd])
-	clear(c.AboveCompound[x4:xEnd])
-	clear(c.AboveInterpValid[x4:xEnd])
-	clear(c.AbovePaletteY[x4:xEnd])
-	clear(c.AbovePaletteUV[x4:xEnd])
-	clear(c.LeftIntra[y4:yEnd])
-	clear(c.LeftMode[y4:yEnd])
-	clear(c.LeftCompound[y4:yEnd])
-	clear(c.LeftInterpValid[y4:yEnd])
-	clear(c.LeftPaletteY[y4:yEnd])
-	clear(c.LeftPaletteUV[y4:yEnd])
+	clear(c.A.Intra[x4:xEnd])
+	clear(c.A.Mode[x4:xEnd])
+	clear(c.A.Compound[x4:xEnd])
+	clear(c.A.InterpValid[x4:xEnd])
+	clear(c.A.PaletteY[x4:xEnd])
+	clear(c.A.PaletteUV[x4:xEnd])
+	clear(c.L.Intra[y4:yEnd])
+	clear(c.L.Mode[y4:yEnd])
+	clear(c.L.Compound[y4:yEnd])
+	clear(c.L.InterpValid[y4:yEnd])
+	clear(c.L.PaletteY[y4:yEnd])
+	clear(c.L.PaletteUV[y4:yEnd])
 	if hasChroma {
-		clear(c.AboveChromaIntra[x4:xEnd])
-		clear(c.AboveChromaMode[x4:xEnd])
-		clear(c.LeftChromaIntra[y4:yEnd])
-		clear(c.LeftChromaMode[y4:yEnd])
+		clear(c.A.ChromaIntra[x4:xEnd])
+		clear(c.A.UVMode[x4:xEnd])
+		clear(c.L.ChromaIntra[y4:yEnd])
+		clear(c.L.UVMode[y4:yEnd])
 	}
 	for i := 0; i < w4; i++ {
-		c.AboveRef[0][x4+i] = ReferenceFrameNone
-		c.AboveRef[1][x4+i] = ReferenceFrameNone
+		c.A.Ref[0][x4+i] = ReferenceFrameNone
+		c.A.Ref[1][x4+i] = ReferenceFrameNone
 		c.AboveInterMotion[x4+i] = result
 		c.AboveMotionValid[x4+i] = 1
-		c.AboveBlockSize[x4+i] = size
+		c.A.BlockSize[x4+i] = size
 	}
 	for i := 0; i < h4; i++ {
-		c.LeftRef[0][y4+i] = ReferenceFrameNone
-		c.LeftRef[1][y4+i] = ReferenceFrameNone
+		c.L.Ref[0][y4+i] = ReferenceFrameNone
+		c.L.Ref[1][y4+i] = ReferenceFrameNone
 		c.LeftInterMotion[y4+i] = result
 		c.LeftMotionValid[y4+i] = 1
-		c.LeftBlockSize[y4+i] = size
+		c.L.BlockSize[y4+i] = size
 	}
 	c.markGridInterMotion(size, x4, y4, result, dims)
 	return nil
@@ -858,7 +858,7 @@ func (c *BlockModeContext) scanAboveReferenceMVs(req *ReferenceMVStackRequest, d
 	}
 	for off := 0; off < end; {
 		slot := x4 + off
-		size := c.AboveBlockSize[slot]
+		size := c.A.BlockSize[slot]
 		sizeW4 := blockSizeWidth4(size)
 		sizeH4 := blockSizeHeight4(size)
 		// libaom's scan_row_mbmi sets the iteration stride and
@@ -888,8 +888,8 @@ func (c *BlockModeContext) scanAboveReferenceMVs(req *ReferenceMVStackRequest, d
 			weight = maxInt(weight, inc)
 			*processedRows = inc
 		}
-		if c.AboveIntra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
-			matches, newMatches := result.Stack.addDirectCandidate(c.AboveInterMotion[slot], c.AboveBlockSize[slot], req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
+		if c.A.Intra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
+			matches, newMatches := result.Stack.addDirectCandidate(c.AboveInterMotion[slot], c.A.BlockSize[slot], req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
 			result.RowMatches += uint8(matches)
 			result.NewMVMatches += uint8(newMatches)
 		}
@@ -929,7 +929,7 @@ func (c *BlockModeContext) scanLeftReferenceMVs(req *ReferenceMVStackRequest, di
 	}
 	for off := 0; off < loopEnd; {
 		slot := y4 + off
-		size := c.LeftBlockSize[slot]
+		size := c.L.BlockSize[slot]
 		sizeW4 := blockSizeWidth4(size)
 		sizeH4 := blockSizeHeight4(size)
 		// See scanAboveReferenceMVs: the iteration stride and processedCols
@@ -960,8 +960,8 @@ func (c *BlockModeContext) scanLeftReferenceMVs(req *ReferenceMVStackRequest, di
 			weight = maxInt(weight, inc)
 			*processedCols = inc
 		}
-		if c.LeftIntra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
-			matches, newMatches := result.Stack.addDirectCandidate(c.LeftInterMotion[slot], c.LeftBlockSize[slot], req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
+		if c.L.Intra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
+			matches, newMatches := result.Stack.addDirectCandidate(c.LeftInterMotion[slot], c.L.BlockSize[slot], req.References, uint16(step*weight), req.GlobalMVs, req.GlobalMotionType)
 			result.ColumnMatches += uint8(matches)
 			result.NewMVMatches += uint8(newMatches)
 		}
@@ -975,7 +975,7 @@ func (c *BlockModeContext) scanAboveIntrabcDVs(req *ReferenceMVStackRequest, dim
 	end = minInt(end, refMVMaxScanBlock4)
 	for off := 0; off < end; {
 		slot := x4 + off
-		size := c.AboveBlockSize[slot]
+		size := c.A.BlockSize[slot]
 		step := c.aboveCandidateStep(slot, end-off)
 		weight := 2
 		if c.AboveMotionValid[slot] != 0 {
@@ -1008,7 +1008,7 @@ func (c *BlockModeContext) scanLeftIntrabcDVs(req *ReferenceMVStackRequest, dims
 	end = minInt(end, refMVMaxScanBlock4)
 	for off := 0; off < end; {
 		slot := y4 + off
-		size := c.LeftBlockSize[slot]
+		size := c.L.BlockSize[slot]
 		step := c.leftCandidateStep(slot, end-off)
 		weight := 2
 		if c.LeftMotionValid[slot] != 0 {
@@ -1768,10 +1768,10 @@ func (c *BlockModeContext) topRightInterMotion(req *ReferenceMVStackRequest, dim
 		}
 		return c.SBTopRightInterMotion[slot], c.SBTopRightBlockSize[slot], true
 	}
-	if c.AboveIntra[x] != 0 || c.AboveMotionValid[x] == 0 {
+	if c.A.Intra[x] != 0 || c.AboveMotionValid[x] == 0 {
 		return InterMotionResult{}, 0, false
 	}
-	return c.AboveInterMotion[x], c.AboveBlockSize[x], true
+	return c.AboveInterMotion[x], c.A.BlockSize[x], true
 }
 
 func blockSizeWidth4(size BlockSize) int {
@@ -1833,7 +1833,7 @@ func (c *BlockModeContext) extendSingleReferenceMVStack(req *ReferenceMVStackReq
 		for off := 0; off < miSize && stack.Count < MaxMVRefCandidates; {
 			slot := x4 + off
 			step := c.aboveCandidateStep(slot, miSize-off)
-			if c.AboveIntra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
+			if c.A.Intra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
 				stack.addSingleFallbackCandidate(c.AboveInterMotion[slot], req.References.Ref[0], req.RefSignBias)
 			}
 			off += step
@@ -1844,7 +1844,7 @@ func (c *BlockModeContext) extendSingleReferenceMVStack(req *ReferenceMVStackReq
 		for off := 0; off < miSize && stack.Count < MaxMVRefCandidates; {
 			slot := y4 + off
 			step := c.leftCandidateStep(slot, miSize-off)
-			if c.LeftIntra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
+			if c.L.Intra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
 				stack.addSingleFallbackCandidate(c.LeftInterMotion[slot], req.References.Ref[0], req.RefSignBias)
 			}
 			off += step
@@ -1886,7 +1886,7 @@ func (c *BlockModeContext) collectCompoundReferenceLists(req *ReferenceMVStackRe
 		for off := 0; off < miSize; {
 			slot := x4 + off
 			step := c.aboveCandidateStep(slot, miSize-off)
-			if c.AboveIntra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
+			if c.A.Intra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
 				lists.add(c.AboveInterMotion[slot], req.References.Ref, req.RefSignBias)
 			}
 			off += step
@@ -1897,7 +1897,7 @@ func (c *BlockModeContext) collectCompoundReferenceLists(req *ReferenceMVStackRe
 		for off := 0; off < miSize; {
 			slot := y4 + off
 			step := c.leftCandidateStep(slot, miSize-off)
-			if c.LeftIntra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
+			if c.L.Intra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
 				lists.add(c.LeftInterMotion[slot], req.References.Ref, req.RefSignBias)
 			}
 			off += step
@@ -1908,7 +1908,7 @@ func (c *BlockModeContext) collectCompoundReferenceLists(req *ReferenceMVStackRe
 func (c *BlockModeContext) aboveCandidateStep(slot int, remaining int) int {
 	step := 1
 	if c.AboveMotionValid[slot] != 0 {
-		if dims, ok := c.AboveBlockSize[slot].Dimensions(); ok && int(dims.W4) > step {
+		if dims, ok := c.A.BlockSize[slot].Dimensions(); ok && int(dims.W4) > step {
 			step = int(dims.W4)
 		}
 	}
@@ -1921,7 +1921,7 @@ func (c *BlockModeContext) aboveCandidateStep(slot int, remaining int) int {
 func (c *BlockModeContext) leftCandidateStep(slot int, remaining int) int {
 	step := 1
 	if c.LeftMotionValid[slot] != 0 {
-		if dims, ok := c.LeftBlockSize[slot].Dimensions(); ok && int(dims.H4) > step {
+		if dims, ok := c.L.BlockSize[slot].Dimensions(); ok && int(dims.H4) > step {
 			step = int(dims.H4)
 		}
 	}

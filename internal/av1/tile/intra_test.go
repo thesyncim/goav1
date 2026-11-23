@@ -141,20 +141,20 @@ func TestMarkIntraEntryLeavesInterRefsForReferenceReader(t *testing.T) {
 	if err := ctx.MarkIntraEntry(BlockSize8x8, 0, 0, false, IntraModeDC); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.AboveIntra[0] != 0 || ctx.LeftIntra[0] != 0 {
-		t.Fatalf("intra flags above=%d left=%d want 0,0", ctx.AboveIntra[0], ctx.LeftIntra[0])
+	if ctx.A.Intra[0] != 0 || ctx.L.Intra[0] != 0 {
+		t.Fatalf("intra flags above=%d left=%d want 0,0", ctx.A.Intra[0], ctx.L.Intra[0])
 	}
-	if ctx.AboveRef[0][0] != ReferenceFrameGolden || ctx.LeftRef[0][0] != ReferenceFrameGolden {
-		t.Fatalf("refs changed above=%d left=%d", ctx.AboveRef[0][0], ctx.LeftRef[0][0])
+	if ctx.A.Ref[0][0] != ReferenceFrameGolden || ctx.L.Ref[0][0] != ReferenceFrameGolden {
+		t.Fatalf("refs changed above=%d left=%d", ctx.A.Ref[0][0], ctx.L.Ref[0][0])
 	}
 
 	if err := ctx.MarkIntra(BlockSize8x8, 0, 0, true, IntraModeVertical); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.AboveRef[0][0] != ReferenceFrameNone || ctx.LeftRef[0][0] != ReferenceFrameNone ||
-		ctx.AboveMode[0] != IntraModeVertical || ctx.LeftMode[0] != IntraModeVertical {
+	if ctx.A.Ref[0][0] != ReferenceFrameNone || ctx.L.Ref[0][0] != ReferenceFrameNone ||
+		ctx.A.Mode[0] != IntraModeVertical || ctx.L.Mode[0] != IntraModeVertical {
 		t.Fatalf("intra mark refs/modes aboveRef=%d leftRef=%d aboveMode=%d leftMode=%d",
-			ctx.AboveRef[0][0], ctx.LeftRef[0][0], ctx.AboveMode[0], ctx.LeftMode[0])
+			ctx.A.Ref[0][0], ctx.L.Ref[0][0], ctx.A.Mode[0], ctx.L.Mode[0])
 	}
 }
 

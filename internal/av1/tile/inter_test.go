@@ -61,12 +61,12 @@ func TestInterReferenceContextsMatchDav1d(t *testing.T) {
 		t.Fatalf("forward-only ref ctx=%d err=%v want 2", got, err)
 	}
 
-	ctx.AboveRef[0][0] = ReferenceFrameLast
-	ctx.AboveRef[1][0] = ReferenceFrameGolden
-	ctx.AboveCompound[0] = 1
-	ctx.LeftRef[0][0] = ReferenceFrameBWD
-	ctx.LeftRef[1][0] = ReferenceFrameAltref
-	ctx.LeftCompound[0] = 1
+	ctx.A.Ref[0][0] = ReferenceFrameLast
+	ctx.A.Ref[1][0] = ReferenceFrameGolden
+	ctx.A.Compound[0] = 1
+	ctx.L.Ref[0][0] = ReferenceFrameBWD
+	ctx.L.Ref[1][0] = ReferenceFrameAltref
+	ctx.L.Compound[0] = 1
 	if got, err := ctx.ReferenceModeContext(req); err != nil || got != 4 {
 		t.Fatalf("compound/compound comp ctx=%d err=%v want 4", got, err)
 	}
@@ -83,8 +83,8 @@ func TestInterReferenceContextsMatchDav1d(t *testing.T) {
 	if err := ctx.MarkIntra(BlockSize8x8, 0, 0, true, IntraModeDC); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.AboveRef[0][0] != ReferenceFrameNone || ctx.LeftRef[0][0] != ReferenceFrameNone || ctx.AboveCompound[0] != 0 {
-		t.Fatalf("intra refs above=%d left=%d comp=%d", ctx.AboveRef[0][0], ctx.LeftRef[0][0], ctx.AboveCompound[0])
+	if ctx.A.Ref[0][0] != ReferenceFrameNone || ctx.L.Ref[0][0] != ReferenceFrameNone || ctx.A.Compound[0] != 0 {
+		t.Fatalf("intra refs above=%d left=%d comp=%d", ctx.A.Ref[0][0], ctx.L.Ref[0][0], ctx.A.Compound[0])
 	}
 	if got, err := ctx.ReferenceModeContext(InterReferenceRequest{Size: BlockSize16x16, HaveTop: true}); err != nil || got != 0 {
 		t.Fatalf("intra edge comp ctx=%d err=%v want 0", got, err)
@@ -121,8 +121,8 @@ func TestReadInterReferencesSingleAndForced(t *testing.T) {
 	if err := ctx.MarkInter(BlockSize16x16, 0, 0, result, true); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.AboveRef[0][0] != ReferenceFrameLast || ctx.LeftRef[1][0] != ReferenceFrameNone {
-		t.Fatalf("marked refs above=%d left1=%d", ctx.AboveRef[0][0], ctx.LeftRef[1][0])
+	if ctx.A.Ref[0][0] != ReferenceFrameLast || ctx.L.Ref[1][0] != ReferenceFrameNone {
+		t.Fatalf("marked refs above=%d left1=%d", ctx.A.Ref[0][0], ctx.L.Ref[1][0])
 	}
 
 	result, err = state.ReadInterReferences(&cdfs, &ctx, InterReferenceRequest{
@@ -276,13 +276,13 @@ func FuzzReadInterReferences(f *testing.F) {
 		}
 		var ctx BlockModeContext
 		if haveTop {
-			ctx.AboveRef[0][x4] = ReferenceFrameLast
-			ctx.AboveRef[1][x4] = ReferenceFrameAltref
-			ctx.AboveCompound[x4] = 1
+			ctx.A.Ref[0][x4] = ReferenceFrameLast
+			ctx.A.Ref[1][x4] = ReferenceFrameAltref
+			ctx.A.Compound[x4] = 1
 		}
 		if haveLeft {
-			ctx.LeftRef[0][y4] = ReferenceFrameGolden
-			ctx.LeftRef[1][y4] = ReferenceFrameNone
+			ctx.L.Ref[0][y4] = ReferenceFrameGolden
+			ctx.L.Ref[1][y4] = ReferenceFrameNone
 		}
 		var state DecodeState
 		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {

@@ -15,17 +15,25 @@ import (
 // f05383c85c62ba39d0cd0055e66379f6fa0f839c and are the independent old-state oracle.
 // Compare only the documented private intra live fields; separately assert that
 // omitted payload/validity fields remain poisoned, proving the work is omitted.
+var ownedIntraLiveEdgeFields = []string{
+	"Skip", "SkipMode", "SegPred", "Intra", "Mode", "ChromaIntra", "UVMode", "TxIntra", "Tx", "BlockSize", "PaletteY", "PaletteUV",
+}
+
 var ownedIntraLiveFields = []string{
-	"AboveSkip", "LeftSkip", "AboveSkipMode", "LeftSkipMode", "AboveSegmentPred", "LeftSegmentPred",
-	"AboveIntra", "LeftIntra", "AboveMode", "LeftMode", "AboveChromaIntra", "LeftChromaIntra", "AboveChromaMode", "LeftChromaMode",
-	"AboveTxIntra", "LeftTxIntra", "AboveTx", "LeftTx", "AboveBlockSize", "LeftBlockSize",
 	"TxNeighborValid", "TxAboveNeighborIntra", "TxAboveNeighborBlockSize", "TxLeftNeighborIntra", "TxLeftNeighborBlockSize",
-	"AbovePaletteY", "LeftPaletteY", "AbovePaletteUV", "LeftPaletteUV",
 }
 
 func ownedIntraCompareLive(t *testing.T, got, want *BlockLoopScratch) {
 	t.Helper()
 	g, w := reflect.ValueOf(&got.Mode).Elem(), reflect.ValueOf(&want.Mode).Elem()
+	for _, edge := range []string{"A", "L"} {
+		ge, we := g.FieldByName(edge), w.FieldByName(edge)
+		for _, name := range ownedIntraLiveEdgeFields {
+			if !reflect.DeepEqual(ge.FieldByName(name).Interface(), we.FieldByName(name).Interface()) {
+				t.Fatalf("live field %s.%s differs", edge, name)
+			}
+		}
+	}
 	for _, name := range ownedIntraLiveFields {
 		if !reflect.DeepEqual(g.FieldByName(name).Interface(), w.FieldByName(name).Interface()) {
 			t.Fatalf("live field %s differs", name)
@@ -139,7 +147,7 @@ func TestOwnedIntraMarkMatchesFullOracle(t *testing.T) {
 				t.Fatal(err)
 			}
 			ownedIntraCompareLive(t, &got, &want)
-			if got.Mode.GridMotionValid != before.GridMotionValid || got.Mode.GridBlockSize != before.GridBlockSize || got.Mode.GridBlockSizeVisited != before.GridBlockSizeVisited || got.Mode.AboveRef != before.AboveRef || got.Mode.LeftCompound != before.LeftCompound {
+			if got.Mode.GridMotionValid != before.GridMotionValid || got.Mode.GridBlockSize != before.GridBlockSize || got.Mode.GridBlockSizeVisited != before.GridBlockSizeVisited || got.Mode.A.Ref != before.A.Ref || got.Mode.L.Compound != before.L.Compound {
 				t.Fatal("private mark touched omitted motion bookkeeping")
 			}
 		}
@@ -296,7 +304,7 @@ func TestOwnedIntraContextsNoAlloc(t *testing.T) {
 	}); n != 0 {
 		t.Fatalf("allocs=%g", n)
 	}
-	t.Logf("mode reset bytes: generic=%d owned=%d; five-row history bytes per edge=%d", unsafe.Offsetof(scratch.Mode.GridInterMotion), unsafe.Offsetof(scratch.Mode.AboveRef)+unsafe.Offsetof(scratch.Mode.LeftRef)-unsafe.Offsetof(scratch.Mode.LeftSkip), unsafe.Sizeof(carrier.Left.mode.InterMotionHistory)+unsafe.Sizeof(carrier.Left.mode.MotionValidHistory)+unsafe.Sizeof(carrier.Left.mode.BlockSizeHistory)+unsafe.Sizeof(carrier.Left.mode.BlockSizeVisitedHistory))
+	t.Logf("mode reset bytes: generic=%d owned=%d; five-row history bytes per edge=%d", unsafe.Offsetof(scratch.Mode.GridInterMotion), unsafe.Offsetof(scratch.Mode.A.Ref)+unsafe.Offsetof(scratch.Mode.L.Ref)-unsafe.Offsetof(scratch.Mode.L.Skip), unsafe.Sizeof(carrier.Left.mode.InterMotionHistory)+unsafe.Sizeof(carrier.Left.mode.MotionValidHistory)+unsafe.Sizeof(carrier.Left.mode.BlockSizeHistory)+unsafe.Sizeof(carrier.Left.mode.BlockSizeVisitedHistory))
 }
 
 // testLoadIntraRootContext loads one root in isolation: the position never

@@ -95,10 +95,10 @@ func (s *DecodeState) readTxTree(cdfs *TransformCDFs, ctx *BlockModeContext, mas
 			return ErrInvalidDecodeState
 		}
 		a, l := 0, 0
-		if haveTop && ctx.AboveTx[x4] < dims.Log2W {
+		if haveTop && ctx.A.Tx[x4] < dims.Log2W {
 			a = 1
 		}
-		if haveLeft && ctx.LeftTx[y4] < dims.Log2H {
+		if haveLeft && ctx.L.Tx[y4] < dims.Log2H {
 			l = 1
 		}
 		split = s.Reader.ReadBinaryCDFUnchecked(&cdfs.TxPartition[cat][a+l]) != 0
@@ -141,8 +141,8 @@ func (s *DecodeState) readTxTree(cdfs *TransformCDFs, ctx *BlockModeContext, mas
 	if split {
 		markW, markH = 0, 0
 	}
-	setCtxPow2(ctx.AboveTx[x4:], dims.Log2W, markW)
-	setCtxPow2(ctx.LeftTx[y4:], dims.Log2H, markH)
+	setCtxPow2(ctx.A.Tx[x4:], dims.Log2W, markW)
+	setCtxPow2(ctx.L.Tx[y4:], dims.Log2H, markH)
 	return nil
 }
 

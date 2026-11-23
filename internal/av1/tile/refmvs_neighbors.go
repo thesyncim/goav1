@@ -27,10 +27,10 @@ func refmvsFindOddZero(buf []uint8, length int) bool {
 // edge context.
 func (c *BlockModeContext) hasOverlappableNeighbours(block *BlockVisit) bool {
 	x4, y4 := int(block.X4), int(block.Y4)
-	if block.HaveLeft && refmvsFindOddZero(c.LeftIntra[y4+1:], int(block.VisibleH4)>>1) {
+	if block.HaveLeft && refmvsFindOddZero(c.L.Intra[y4+1:], int(block.VisibleH4)>>1) {
 		return true
 	}
-	return block.HaveTop && refmvsFindOddZero(c.AboveIntra[x4+1:], int(block.VisibleW4)>>1)
+	return block.HaveTop && refmvsFindOddZero(c.A.Intra[x4+1:], int(block.VisibleW4)>>1)
 }
 
 func refmvsMatchesSingleRef(b *refmvsBlock, ref int8) bool {
@@ -292,10 +292,10 @@ func (rt *refmvsTile) subChromaCells(c *BlockModeContext, block *BlockVisit, ssX
 		add(0, 0, topLeft.mv[0].vector(), ReferenceFrame(topLeft.ref[0]-1), rt.tl4x4Filter)
 	}
 	if top != nil {
-		add(offX, 0, top.mv[0].vector(), ReferenceFrame(top.ref[0]-1), c.AboveInterp[block.X4])
+		add(offX, 0, top.mv[0].vector(), ReferenceFrame(top.ref[0]-1), c.A.Interp[block.X4])
 	}
 	if left != nil {
-		add(0, offY, left.mv[0].vector(), ReferenceFrame(left.ref[0]-1), c.LeftInterp[block.Y4])
+		add(0, offY, left.mv[0].vector(), ReferenceFrame(left.ref[0]-1), c.L.Interp[block.Y4])
 	}
 	add(offX, offY, mv, ref, filters)
 	out.Count = uint8(n)
@@ -341,8 +341,8 @@ func (rt *refmvsTile) obmcNeighbors(c *BlockModeContext, block *BlockVisit) Over
 					Size:               a.bs,
 					Motion:             refmvsNeighborMotion(a),
 					MotionValid:        true,
-					InterpFilters:      c.AboveInterp[slot],
-					InterpFiltersValid: c.AboveInterpValid[slot] != 0,
+					InterpFilters:      c.A.Interp[slot],
+					InterpFiltersValid: c.A.InterpValid[slot] != 0,
 				}
 				i++
 				set.AboveCount = uint8(i)
@@ -363,8 +363,8 @@ func (rt *refmvsTile) obmcNeighbors(c *BlockModeContext, block *BlockVisit) Over
 					Size:               l.bs,
 					Motion:             refmvsNeighborMotion(l),
 					MotionValid:        true,
-					InterpFilters:      c.LeftInterp[slot],
-					InterpFiltersValid: c.LeftInterpValid[slot] != 0,
+					InterpFilters:      c.L.Interp[slot],
+					InterpFiltersValid: c.L.InterpValid[slot] != 0,
 				}
 				i++
 				set.LeftCount = uint8(i)

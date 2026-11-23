@@ -29,16 +29,16 @@ func envRefCountOf(r ReferenceFrame) envRefCountSet {
 
 func envRefCounts(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool) envRefCountSet {
 	var cnt envRefCountSet
-	if haveTop && c.AboveIntra[x4] == 0 {
-		cnt += envRefCountOf(c.AboveRef[0][x4])
-		if c.AboveCompound[x4] != 0 {
-			cnt += envRefCountOf(c.AboveRef[1][x4])
+	if haveTop && c.A.Intra[x4] == 0 {
+		cnt += envRefCountOf(c.A.Ref[0][x4])
+		if c.A.Compound[x4] != 0 {
+			cnt += envRefCountOf(c.A.Ref[1][x4])
 		}
 	}
-	if haveLeft && c.LeftIntra[y4] == 0 {
-		cnt += envRefCountOf(c.LeftRef[0][y4])
-		if c.LeftCompound[y4] != 0 {
-			cnt += envRefCountOf(c.LeftRef[1][y4])
+	if haveLeft && c.L.Intra[y4] == 0 {
+		cnt += envRefCountOf(c.L.Ref[0][y4])
+		if c.L.Compound[y4] != 0 {
+			cnt += envRefCountOf(c.L.Ref[1][y4])
 		}
 	}
 	return cnt
@@ -94,30 +94,30 @@ func envUnidir(r0, r1 ReferenceFrame) bool {
 // dav1d's unsigned ">= 4U" test counts with the backward references.
 func envCompCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool) int {
 	if haveTop {
-		aRef := c.AboveRef[0][x4]
+		aRef := c.A.Ref[0][x4]
 		if haveLeft {
-			lRef := c.LeftRef[0][y4]
-			if c.AboveCompound[x4] != 0 {
-				if c.LeftCompound[y4] != 0 {
+			lRef := c.L.Ref[0][y4]
+			if c.A.Compound[x4] != 0 {
+				if c.L.Compound[y4] != 0 {
 					return 4
 				}
-				return 2 + boolInt(lRef.Backward() || c.LeftIntra[y4] != 0)
+				return 2 + boolInt(lRef.Backward() || c.L.Intra[y4] != 0)
 			}
-			if c.LeftCompound[y4] != 0 {
-				return 2 + boolInt(aRef.Backward() || c.AboveIntra[x4] != 0)
+			if c.L.Compound[y4] != 0 {
+				return 2 + boolInt(aRef.Backward() || c.A.Intra[x4] != 0)
 			}
 			return boolInt(lRef.Backward() != aRef.Backward())
 		}
-		if c.AboveCompound[x4] != 0 {
+		if c.A.Compound[x4] != 0 {
 			return 3
 		}
 		return boolInt(aRef.Backward())
 	}
 	if haveLeft {
-		if c.LeftCompound[y4] != 0 {
+		if c.L.Compound[y4] != 0 {
 			return 3
 		}
-		return boolInt(c.LeftRef[0][y4].Backward())
+		return boolInt(c.L.Ref[0][y4].Backward())
 	}
 	return 1
 }
@@ -125,42 +125,42 @@ func envCompCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool) int {
 // envCompDirCtx ports get_comp_dir_ctx.
 func envCompDirCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool) int {
 	if haveTop && haveLeft {
-		aIntra := c.AboveIntra[x4] != 0
-		lIntra := c.LeftIntra[y4] != 0
+		aIntra := c.A.Intra[x4] != 0
+		lIntra := c.L.Intra[y4] != 0
 		if aIntra && lIntra {
 			return 2
 		}
 		if aIntra || lIntra {
 			if aIntra {
-				if c.LeftCompound[y4] == 0 {
+				if c.L.Compound[y4] == 0 {
 					return 2
 				}
-				return 1 + 2*boolInt(envUnidir(c.LeftRef[0][y4], c.LeftRef[1][y4]))
+				return 1 + 2*boolInt(envUnidir(c.L.Ref[0][y4], c.L.Ref[1][y4]))
 			}
-			if c.AboveCompound[x4] == 0 {
+			if c.A.Compound[x4] == 0 {
 				return 2
 			}
-			return 1 + 2*boolInt(envUnidir(c.AboveRef[0][x4], c.AboveRef[1][x4]))
+			return 1 + 2*boolInt(envUnidir(c.A.Ref[0][x4], c.A.Ref[1][x4]))
 		}
-		aComp := c.AboveCompound[x4] != 0
-		lComp := c.LeftCompound[y4] != 0
-		aRef0 := c.AboveRef[0][x4]
-		lRef0 := c.LeftRef[0][y4]
+		aComp := c.A.Compound[x4] != 0
+		lComp := c.L.Compound[y4] != 0
+		aRef0 := c.A.Ref[0][x4]
+		lRef0 := c.L.Ref[0][y4]
 		if !aComp && !lComp {
 			return 1 + 2*boolInt(aRef0.Backward() == lRef0.Backward())
 		}
 		if !aComp || !lComp {
 			if aComp {
-				if !envUnidir(aRef0, c.AboveRef[1][x4]) {
+				if !envUnidir(aRef0, c.A.Ref[1][x4]) {
 					return 1
 				}
-			} else if !envUnidir(lRef0, c.LeftRef[1][y4]) {
+			} else if !envUnidir(lRef0, c.L.Ref[1][y4]) {
 				return 1
 			}
 			return 3 + boolInt(aRef0.Backward() == lRef0.Backward())
 		}
-		aUni := envUnidir(aRef0, c.AboveRef[1][x4])
-		lUni := envUnidir(lRef0, c.LeftRef[1][y4])
+		aUni := envUnidir(aRef0, c.A.Ref[1][x4])
+		lUni := envUnidir(lRef0, c.L.Ref[1][y4])
 		if !aUni && !lUni {
 			return 0
 		}
@@ -170,16 +170,16 @@ func envCompDirCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool) int 
 		return 3 + boolInt((aRef0 == ReferenceFrameBWD) == (lRef0 == ReferenceFrameBWD))
 	}
 	if haveLeft {
-		if c.LeftIntra[y4] != 0 || c.LeftCompound[y4] == 0 {
+		if c.L.Intra[y4] != 0 || c.L.Compound[y4] == 0 {
 			return 2
 		}
-		return 4 * boolInt(envUnidir(c.LeftRef[0][y4], c.LeftRef[1][y4]))
+		return 4 * boolInt(envUnidir(c.L.Ref[0][y4], c.L.Ref[1][y4]))
 	}
 	if haveTop {
-		if c.AboveIntra[x4] != 0 || c.AboveCompound[x4] == 0 {
+		if c.A.Intra[x4] != 0 || c.A.Compound[x4] == 0 {
 			return 2
 		}
-		return 4 * boolInt(envUnidir(c.AboveRef[0][x4], c.AboveRef[1][x4]))
+		return 4 * boolInt(envUnidir(c.A.Ref[0][x4], c.A.Ref[1][x4]))
 	}
 	return 2
 }
@@ -281,11 +281,11 @@ func readEnvBool(c *entropy.Reader, cdf *entropy.CDF) bool {
 // direction dir only when it is an inter block using ref.
 func envFilterCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool, comp bool, dir int, ref ReferenceFrame) int {
 	aFilter, lFilter := switchableFilterMissing, switchableFilterMissing
-	if haveTop && c.AboveInterpValid[x4] != 0 && (c.AboveRef[0][x4] == ref || c.AboveRef[1][x4] == ref) {
-		aFilter = envFilterDir(c.AboveInterp[x4], dir)
+	if haveTop && c.A.InterpValid[x4] != 0 && (c.A.Ref[0][x4] == ref || c.A.Ref[1][x4] == ref) {
+		aFilter = envFilterDir(c.A.Interp[x4], dir)
 	}
-	if haveLeft && c.LeftInterpValid[y4] != 0 && (c.LeftRef[0][y4] == ref || c.LeftRef[1][y4] == ref) {
-		lFilter = envFilterDir(c.LeftInterp[y4], dir)
+	if haveLeft && c.L.InterpValid[y4] != 0 && (c.L.Ref[0][y4] == ref || c.L.Ref[1][y4] == ref) {
+		lFilter = envFilterDir(c.L.Interp[y4], dir)
 	}
 	ctx := dir*interFilterDirOffset + boolInt(comp)*interFilterCompOffset
 	switch {

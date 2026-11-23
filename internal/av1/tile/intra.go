@@ -663,13 +663,13 @@ func (c *IntraModeCDFs) FilterIntraModeCDF() (*entropy.CDF, error) {
 func envIntraCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool) int {
 	if haveLeft {
 		if haveTop {
-			ctx := int(c.LeftIntra[y4]) + int(c.AboveIntra[x4])
+			ctx := int(c.L.Intra[y4]) + int(c.A.Intra[x4])
 			return ctx + boolInt(ctx == 2)
 		}
-		return int(c.LeftIntra[y4]) * 2
+		return int(c.L.Intra[y4]) * 2
 	}
 	if haveTop {
-		return int(c.AboveIntra[x4]) * 2
+		return int(c.A.Intra[x4]) * 2
 	}
 	return 0
 }
@@ -682,9 +682,9 @@ func (c *BlockModeContext) IntraContext(x4 int, y4 int, haveTop bool, haveLeft b
 		return 0, err
 	}
 	if haveLeft {
-		left := int(c.LeftIntra[y4])
+		left := int(c.L.Intra[y4])
 		if haveTop {
-			ctx := left + int(c.AboveIntra[x4])
+			ctx := left + int(c.A.Intra[x4])
 			if ctx == 2 {
 				return 3, nil
 			}
@@ -693,7 +693,7 @@ func (c *BlockModeContext) IntraContext(x4 int, y4 int, haveTop bool, haveLeft b
 		return left * 2, nil
 	}
 	if haveTop {
-		return int(c.AboveIntra[x4]) * 2, nil
+		return int(c.A.Intra[x4]) * 2, nil
 	}
 	return 0, nil
 }
@@ -709,8 +709,8 @@ func (c *BlockModeContext) IntraEdgeSmoothNeighbor(x4 int, y4 int, haveTop bool,
 	if err := validateBlockModeSlot(x4, y4); err != nil {
 		return false, err
 	}
-	if haveTop && c.AboveIntra[x4] != 0 {
-		smooth, err := intraModeIsSmooth(c.AboveMode[x4])
+	if haveTop && c.A.Intra[x4] != 0 {
+		smooth, err := intraModeIsSmooth(c.A.Mode[x4])
 		if err != nil {
 			return false, err
 		}
@@ -718,8 +718,8 @@ func (c *BlockModeContext) IntraEdgeSmoothNeighbor(x4 int, y4 int, haveTop bool,
 			return true, nil
 		}
 	}
-	if haveLeft && c.LeftIntra[y4] != 0 {
-		smooth, err := intraModeIsSmooth(c.LeftMode[y4])
+	if haveLeft && c.L.Intra[y4] != 0 {
+		smooth, err := intraModeIsSmooth(c.L.Mode[y4])
 		if err != nil {
 			return false, err
 		}
@@ -750,8 +750,8 @@ func (c *BlockModeContext) ChromaIntraEdgeSmoothNeighbor(x4 int, y4 int, haveTop
 	if aboveX4 < 0 || aboveX4 >= MaxBlockModeSlots || leftY4 < 0 || leftY4 >= MaxBlockModeSlots {
 		return false, ErrInvalidDecodeState
 	}
-	if haveTop && c.AboveChromaIntra[aboveX4] != 0 {
-		smooth, err := chromaModeIsSmooth(c.AboveChromaMode[aboveX4])
+	if haveTop && c.A.ChromaIntra[aboveX4] != 0 {
+		smooth, err := chromaModeIsSmooth(c.A.UVMode[aboveX4])
 		if err != nil {
 			return false, err
 		}
@@ -759,8 +759,8 @@ func (c *BlockModeContext) ChromaIntraEdgeSmoothNeighbor(x4 int, y4 int, haveTop
 			return true, nil
 		}
 	}
-	if haveLeft && c.LeftChromaIntra[leftY4] != 0 {
-		smooth, err := chromaModeIsSmooth(c.LeftChromaMode[leftY4])
+	if haveLeft && c.L.ChromaIntra[leftY4] != 0 {
+		smooth, err := chromaModeIsSmooth(c.L.UVMode[leftY4])
 		if err != nil {
 			return false, err
 		}
@@ -780,8 +780,8 @@ func (c *BlockModeContext) KeyframeYModeContext(x4 int, y4 int) (int, int, error
 	if err := validateBlockModeSlot(x4, y4); err != nil {
 		return 0, 0, err
 	}
-	above := c.AboveMode[x4]
-	left := c.LeftMode[y4]
+	above := c.A.Mode[x4]
+	left := c.L.Mode[y4]
 	if !above.Valid() || !left.Valid() {
 		return 0, 0, ErrInvalidDecodeState
 	}
@@ -842,21 +842,21 @@ func (c *BlockModeContext) markIntra(size BlockSize, x4 int, y4 int, intra bool,
 	h4 := int(dims.H4)
 	xEnd := x4 + w4
 	yEnd := y4 + h4
-	clear(c.AboveCompound[x4:xEnd])
-	clear(c.AboveInterIntra[x4:xEnd])
-	clear(c.AboveInterpValid[x4:xEnd])
-	clear(c.LeftCompound[y4:yEnd])
-	clear(c.LeftInterIntra[y4:yEnd])
-	clear(c.LeftInterpValid[y4:yEnd])
+	clear(c.A.Compound[x4:xEnd])
+	clear(c.A.InterIntra[x4:xEnd])
+	clear(c.A.InterpValid[x4:xEnd])
+	clear(c.L.Compound[y4:yEnd])
+	clear(c.L.InterIntra[y4:yEnd])
+	clear(c.L.InterpValid[y4:yEnd])
 	for i := 0; i < w4; i++ {
-		c.AboveRef[0][x4+i] = ref0
-		c.AboveRef[1][x4+i] = ref1
-		c.AboveBlockSize[x4+i] = size
+		c.A.Ref[0][x4+i] = ref0
+		c.A.Ref[1][x4+i] = ref1
+		c.A.BlockSize[x4+i] = size
 	}
 	for i := 0; i < h4; i++ {
-		c.LeftRef[0][y4+i] = ref0
-		c.LeftRef[1][y4+i] = ref1
-		c.LeftBlockSize[y4+i] = size
+		c.L.Ref[0][y4+i] = ref0
+		c.L.Ref[1][y4+i] = ref1
+		c.L.BlockSize[y4+i] = size
 	}
 	if !keepMotion {
 		return nil
@@ -888,12 +888,12 @@ func (c *BlockModeContext) MarkIntraEntry(size BlockSize, x4 int, y4 int, intra 
 	}
 	intraValue := boolByte(intra)
 	for i := 0; i < int(dims.W4); i++ {
-		c.AboveIntra[x4+i] = intraValue
-		c.AboveMode[x4+i] = mode
+		c.A.Intra[x4+i] = intraValue
+		c.A.Mode[x4+i] = mode
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.LeftIntra[y4+i] = intraValue
-		c.LeftMode[y4+i] = mode
+		c.L.Intra[y4+i] = intraValue
+		c.L.Mode[y4+i] = mode
 	}
 	return nil
 }
@@ -918,12 +918,12 @@ func (c *BlockModeContext) MarkChromaIntra(size BlockSize, x4 int, y4 int, intra
 	}
 	intraValue := boolByte(intra)
 	for i := 0; i < int(dims.W4); i++ {
-		c.AboveChromaIntra[x4+i] = intraValue
-		c.AboveChromaMode[x4+i] = mode
+		c.A.ChromaIntra[x4+i] = intraValue
+		c.A.UVMode[x4+i] = mode
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.LeftChromaIntra[y4+i] = intraValue
-		c.LeftChromaMode[y4+i] = mode
+		c.L.ChromaIntra[y4+i] = intraValue
+		c.L.UVMode[y4+i] = mode
 	}
 	return nil
 }

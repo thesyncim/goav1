@@ -219,27 +219,27 @@ func (c *BlockModeContext) ReferenceModeContext(req InterReferenceRequest) (int,
 	}
 	if req.HaveTop {
 		if req.HaveLeft {
-			if c.AboveCompound[req.X4] != 0 {
-				if c.LeftCompound[req.Y4] != 0 {
+			if c.A.Compound[req.X4] != 0 {
+				if c.L.Compound[req.Y4] != 0 {
 					return 4, nil
 				}
-				return 2 + boolInt(c.LeftRef[0][req.Y4].Backward() || c.LeftIntra[req.Y4] != 0), nil
+				return 2 + boolInt(c.L.Ref[0][req.Y4].Backward() || c.L.Intra[req.Y4] != 0), nil
 			}
-			if c.LeftCompound[req.Y4] != 0 {
-				return 2 + boolInt(c.AboveRef[0][req.X4].Backward() || c.AboveIntra[req.X4] != 0), nil
+			if c.L.Compound[req.Y4] != 0 {
+				return 2 + boolInt(c.A.Ref[0][req.X4].Backward() || c.A.Intra[req.X4] != 0), nil
 			}
-			return boolInt(c.LeftRef[0][req.Y4].Backward() != c.AboveRef[0][req.X4].Backward()), nil
+			return boolInt(c.L.Ref[0][req.Y4].Backward() != c.A.Ref[0][req.X4].Backward()), nil
 		}
-		if c.AboveCompound[req.X4] != 0 {
+		if c.A.Compound[req.X4] != 0 {
 			return 3, nil
 		}
-		return boolInt(c.AboveRef[0][req.X4].Backward()), nil
+		return boolInt(c.A.Ref[0][req.X4].Backward()), nil
 	}
 	if req.HaveLeft {
-		if c.LeftCompound[req.Y4] != 0 {
+		if c.L.Compound[req.Y4] != 0 {
 			return 3, nil
 		}
-		return boolInt(c.LeftRef[0][req.Y4].Backward()), nil
+		return boolInt(c.L.Ref[0][req.Y4].Backward()), nil
 	}
 	return 1, nil
 }
@@ -252,28 +252,28 @@ func (c *BlockModeContext) CompoundReferenceTypeContext(req InterReferenceReques
 	x4 := int(req.X4)
 	y4 := int(req.Y4)
 	if req.HaveTop && req.HaveLeft {
-		aboveIntra := c.AboveIntra[req.X4] != 0
-		leftIntra := c.LeftIntra[req.Y4] != 0
+		aboveIntra := c.A.Intra[req.X4] != 0
+		leftIntra := c.L.Intra[req.Y4] != 0
 		if aboveIntra && leftIntra {
 			return 2, nil
 		}
 		if aboveIntra || leftIntra {
 			if aboveIntra {
-				if c.LeftCompound[req.Y4] == 0 {
+				if c.L.Compound[req.Y4] == 0 {
 					return 2, nil
 				}
 				return 1 + 2*boolInt(c.leftUnidir(y4)), nil
 			}
-			if c.AboveCompound[req.X4] == 0 {
+			if c.A.Compound[req.X4] == 0 {
 				return 2, nil
 			}
 			return 1 + 2*boolInt(c.aboveUnidir(x4)), nil
 		}
 
-		aboveComp := c.AboveCompound[req.X4] != 0
-		leftComp := c.LeftCompound[req.Y4] != 0
-		aboveRef0 := c.AboveRef[0][req.X4]
-		leftRef0 := c.LeftRef[0][req.Y4]
+		aboveComp := c.A.Compound[req.X4] != 0
+		leftComp := c.L.Compound[req.Y4] != 0
+		aboveRef0 := c.A.Ref[0][req.X4]
+		leftRef0 := c.L.Ref[0][req.Y4]
 		if !aboveComp && !leftComp {
 			return 1 + 2*boolInt(aboveRef0.Backward() == leftRef0.Backward()), nil
 		}
@@ -299,12 +299,12 @@ func (c *BlockModeContext) CompoundReferenceTypeContext(req InterReferenceReques
 	}
 	if req.HaveTop || req.HaveLeft {
 		if req.HaveLeft {
-			if c.LeftIntra[req.Y4] != 0 || c.LeftCompound[req.Y4] == 0 {
+			if c.L.Intra[req.Y4] != 0 || c.L.Compound[req.Y4] == 0 {
 				return 2, nil
 			}
 			return 4 * boolInt(c.leftUnidir(y4)), nil
 		}
-		if c.AboveIntra[req.X4] != 0 || c.AboveCompound[req.X4] == 0 {
+		if c.A.Intra[req.X4] != 0 || c.A.Compound[req.X4] == 0 {
 			return 2, nil
 		}
 		return 4 * boolInt(c.aboveUnidir(x4)), nil
@@ -730,43 +730,43 @@ func (c *BlockModeContext) markInterContext(size BlockSize, x4 int, y4 int, resu
 	// dav1d decode_b resets the edge palette sizes for every inter block
 	// (pal_sz and, outside has_chroma, pal_sz_uv: aomedia bug 2183), so a
 	// later palette block's colour cache and context never see a stale palette.
-	clear(c.AbovePaletteY[x4:xEnd])
-	clear(c.AbovePaletteUV[x4:xEnd])
-	clear(c.LeftPaletteY[y4:yEnd])
-	clear(c.LeftPaletteUV[y4:yEnd])
-	clear(c.AboveIntra[x4:xEnd])
-	clear(c.AboveCompGroup[x4:xEnd])
-	clear(c.AboveInterIntra[x4:xEnd])
+	clear(c.A.PaletteY[x4:xEnd])
+	clear(c.A.PaletteUV[x4:xEnd])
+	clear(c.L.PaletteY[y4:yEnd])
+	clear(c.L.PaletteUV[y4:yEnd])
+	clear(c.A.Intra[x4:xEnd])
+	clear(c.A.CompGroup[x4:xEnd])
+	clear(c.A.InterIntra[x4:xEnd])
 	if !motionKnown {
 		clear(c.AboveMotionValid[x4:xEnd])
 	}
-	clear(c.AboveInterpValid[x4:xEnd])
-	clear(c.LeftIntra[y4:yEnd])
-	clear(c.LeftCompGroup[y4:yEnd])
-	clear(c.LeftInterIntra[y4:yEnd])
+	clear(c.A.InterpValid[x4:xEnd])
+	clear(c.L.Intra[y4:yEnd])
+	clear(c.L.CompGroup[y4:yEnd])
+	clear(c.L.InterIntra[y4:yEnd])
 	if !motionKnown {
 		clear(c.LeftMotionValid[y4:yEnd])
 	}
-	clear(c.LeftInterpValid[y4:yEnd])
+	clear(c.L.InterpValid[y4:yEnd])
 	if hasChroma {
-		clear(c.AboveChromaIntra[x4:xEnd])
-		clear(c.AboveChromaMode[x4:xEnd])
-		clear(c.LeftChromaIntra[y4:yEnd])
-		clear(c.LeftChromaMode[y4:yEnd])
+		clear(c.A.ChromaIntra[x4:xEnd])
+		clear(c.A.UVMode[x4:xEnd])
+		clear(c.L.ChromaIntra[y4:yEnd])
+		clear(c.L.UVMode[y4:yEnd])
 	}
 	for i := 0; i < w4; i++ {
-		c.AboveRef[0][x4+i] = result.Ref[0]
-		c.AboveRef[1][x4+i] = result.Ref[1]
-		c.AboveCompound[x4+i] = compound
-		c.AboveCompIndex[x4+i] = compIndex
-		c.AboveBlockSize[x4+i] = size
+		c.A.Ref[0][x4+i] = result.Ref[0]
+		c.A.Ref[1][x4+i] = result.Ref[1]
+		c.A.Compound[x4+i] = compound
+		c.A.CompIndex[x4+i] = compIndex
+		c.A.BlockSize[x4+i] = size
 	}
 	for i := 0; i < h4; i++ {
-		c.LeftRef[0][y4+i] = result.Ref[0]
-		c.LeftRef[1][y4+i] = result.Ref[1]
-		c.LeftCompound[y4+i] = compound
-		c.LeftCompIndex[y4+i] = compIndex
-		c.LeftBlockSize[y4+i] = size
+		c.L.Ref[0][y4+i] = result.Ref[0]
+		c.L.Ref[1][y4+i] = result.Ref[1]
+		c.L.Compound[y4+i] = compound
+		c.L.CompIndex[y4+i] = compIndex
+		c.L.BlockSize[y4+i] = size
 	}
 	if !motionKnown {
 		c.clearGridInterMotion(size, x4, y4, dims)
@@ -824,10 +824,10 @@ func (c *BlockModeContext) MarkInterIntra(size BlockSize, x4 int, y4 int) error 
 		return ErrInvalidDecodeState
 	}
 	for i := 0; i < int(dims.W4); i++ {
-		c.AboveInterIntra[x4+i] = 1
+		c.A.InterIntra[x4+i] = 1
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.LeftInterIntra[y4+i] = 1
+		c.L.InterIntra[y4+i] = 1
 	}
 	return nil
 }
@@ -873,11 +873,11 @@ func (c *BlockModeContext) neighborRefs(req InterReferenceRequest) (refs [4]Refe
 	if err := c.validateInterRefRequest(req); err != nil {
 		return refs, 0, err
 	}
-	if req.HaveTop && c.AboveIntra[req.X4] == 0 {
-		n = appendRefPair(&refs, n, c.AboveRef[0][req.X4], c.AboveRef[1][req.X4], c.AboveCompound[req.X4] != 0)
+	if req.HaveTop && c.A.Intra[req.X4] == 0 {
+		n = appendRefPair(&refs, n, c.A.Ref[0][req.X4], c.A.Ref[1][req.X4], c.A.Compound[req.X4] != 0)
 	}
-	if req.HaveLeft && c.LeftIntra[req.Y4] == 0 {
-		n = appendRefPair(&refs, n, c.LeftRef[0][req.Y4], c.LeftRef[1][req.Y4], c.LeftCompound[req.Y4] != 0)
+	if req.HaveLeft && c.L.Intra[req.Y4] == 0 {
+		n = appendRefPair(&refs, n, c.L.Ref[0][req.Y4], c.L.Ref[1][req.Y4], c.L.Compound[req.Y4] != 0)
 	}
 	return refs, n, nil
 }
@@ -894,11 +894,11 @@ func appendRefPair(refs *[4]ReferenceFrame, n int, ref0 ReferenceFrame, ref1 Ref
 	return n
 }
 func (c *BlockModeContext) aboveUnidir(x4 int) bool {
-	return (c.AboveRef[0][x4] < ReferenceFrameBWD) == (c.AboveRef[1][x4] < ReferenceFrameBWD)
+	return (c.A.Ref[0][x4] < ReferenceFrameBWD) == (c.A.Ref[1][x4] < ReferenceFrameBWD)
 }
 
 func (c *BlockModeContext) leftUnidir(y4 int) bool {
-	return (c.LeftRef[0][y4] < ReferenceFrameBWD) == (c.LeftRef[1][y4] < ReferenceFrameBWD)
+	return (c.L.Ref[0][y4] < ReferenceFrameBWD) == (c.L.Ref[1][y4] < ReferenceFrameBWD)
 }
 
 func compoundReferenceAllowed(size BlockSize) bool {

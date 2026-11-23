@@ -791,10 +791,10 @@ func (c *BlockModeContext) PaletteYModeContext(x4 int, y4 int, haveTop bool, hav
 		return 0, err
 	}
 	ctx := 0
-	if haveTop && c.AbovePaletteY[x4].Size > 0 {
+	if haveTop && c.A.PaletteY[x4].Size > 0 {
 		ctx++
 	}
-	if haveLeft && c.LeftPaletteY[y4].Size > 0 {
+	if haveLeft && c.L.PaletteY[y4].Size > 0 {
 		ctx++
 	}
 	return ctx, nil
@@ -809,10 +809,10 @@ func (c *BlockModeContext) PaletteYCache(x4 int, y4 int, haveTop bool, haveLeft 
 	}
 	var above, left paletteContext
 	if haveTop && paletteCacheCanUseAbove(y4) {
-		above = c.AbovePaletteY[x4]
+		above = c.A.PaletteY[x4]
 	}
 	if haveLeft {
-		left = c.LeftPaletteY[y4]
+		left = c.L.PaletteY[y4]
 	}
 	i, j, n := 0, 0, 0
 	for i < int(above.Size) && j < int(left.Size) {
@@ -848,10 +848,10 @@ func (c *BlockModeContext) PaletteUVCache(x4 int, y4 int, haveTop bool, haveLeft
 	}
 	var above, left paletteContext
 	if haveTop && paletteCacheCanUseAbove(y4) {
-		above = c.AbovePaletteUV[x4]
+		above = c.A.PaletteUV[x4]
 	}
 	if haveLeft {
-		left = c.LeftPaletteUV[y4]
+		left = c.L.PaletteUV[y4]
 	}
 	i, j, n := 0, 0, 0
 	for i < int(above.Size) && j < int(left.Size) {
@@ -902,10 +902,10 @@ func (c *BlockModeContext) MarkPaletteY(size BlockSize, x4 int, y4 int, palette 
 	ctx.Size = palette.YSize
 	ctx.Colors = palette.YColors
 	for i := 0; i < int(dims.W4); i++ {
-		c.AbovePaletteY[x4+i] = ctx
+		c.A.PaletteY[x4+i] = ctx
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.LeftPaletteY[y4+i] = ctx
+		c.L.PaletteY[y4+i] = ctx
 	}
 	return nil
 }
@@ -922,10 +922,10 @@ func (c *BlockModeContext) MarkPaletteUV(size BlockSize, x4 int, y4 int, palette
 	ctx.Size = palette.UVSize
 	ctx.Colors = palette.UColors
 	for i := 0; i < int(dims.W4); i++ {
-		c.AbovePaletteUV[x4+i] = ctx
+		c.A.PaletteUV[x4+i] = ctx
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.LeftPaletteUV[y4+i] = ctx
+		c.L.PaletteUV[y4+i] = ctx
 	}
 	return nil
 }

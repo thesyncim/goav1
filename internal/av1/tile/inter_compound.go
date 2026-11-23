@@ -440,11 +440,11 @@ func (c *BlockModeContext) CompoundGroupIndexContext(req CompoundBlendRequest) (
 	}
 	aboveCtx := 0
 	if req.HaveTop {
-		aboveCtx = compoundGroupNeighborContext(c.AboveIntra[req.X4], c.AboveCompound[req.X4], c.AboveRef[0][req.X4], c.AboveCompGroup[req.X4])
+		aboveCtx = compoundGroupNeighborContext(c.A.Intra[req.X4], c.A.Compound[req.X4], c.A.Ref[0][req.X4], c.A.CompGroup[req.X4])
 	}
 	leftCtx := 0
 	if req.HaveLeft {
-		leftCtx = compoundGroupNeighborContext(c.LeftIntra[req.Y4], c.LeftCompound[req.Y4], c.LeftRef[0][req.Y4], c.LeftCompGroup[req.Y4])
+		leftCtx = compoundGroupNeighborContext(c.L.Intra[req.Y4], c.L.Compound[req.Y4], c.L.Ref[0][req.Y4], c.L.CompGroup[req.Y4])
 	}
 	return minInt(5, aboveCtx+leftCtx), nil
 }
@@ -462,11 +462,11 @@ func (c *BlockModeContext) CompoundIndexContext(req CompoundBlendRequest) (int, 
 	}
 	aboveCtx := 0
 	if req.HaveTop {
-		aboveCtx = compoundIndexNeighborContext(c.AboveIntra[req.X4], c.AboveCompound[req.X4], c.AboveRef[0][req.X4], c.AboveCompIndex[req.X4])
+		aboveCtx = compoundIndexNeighborContext(c.A.Intra[req.X4], c.A.Compound[req.X4], c.A.Ref[0][req.X4], c.A.CompIndex[req.X4])
 	}
 	leftCtx := 0
 	if req.HaveLeft {
-		leftCtx = compoundIndexNeighborContext(c.LeftIntra[req.Y4], c.LeftCompound[req.Y4], c.LeftRef[0][req.Y4], c.LeftCompIndex[req.Y4])
+		leftCtx = compoundIndexNeighborContext(c.L.Intra[req.Y4], c.L.Compound[req.Y4], c.L.Ref[0][req.Y4], c.L.CompIndex[req.Y4])
 	}
 	return aboveCtx + leftCtx + 3*boolInt(equalDistance), nil
 }
@@ -485,12 +485,12 @@ func (c *BlockModeContext) MarkCompoundBlend(size BlockSize, x4 int, y4 int, res
 		return ErrInvalidDecodeState
 	}
 	for i := 0; i < int(dims.W4); i++ {
-		c.AboveCompGroup[x4+i] = result.CompoundGroupIndex
-		c.AboveCompIndex[x4+i] = result.CompoundIndex
+		c.A.CompGroup[x4+i] = result.CompoundGroupIndex
+		c.A.CompIndex[x4+i] = result.CompoundIndex
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.LeftCompGroup[y4+i] = result.CompoundGroupIndex
-		c.LeftCompIndex[y4+i] = result.CompoundIndex
+		c.L.CompGroup[y4+i] = result.CompoundGroupIndex
+		c.L.CompIndex[y4+i] = result.CompoundIndex
 	}
 	return nil
 }

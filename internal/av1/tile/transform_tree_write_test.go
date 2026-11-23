@@ -117,8 +117,8 @@ func TestWriteTransformTreeRoundTrip(t *testing.T) {
 		}
 	}
 
-	if encCtx.AboveTx != decCtx.AboveTx || encCtx.LeftTx != decCtx.LeftTx ||
-		encCtx.AboveTxIntra != decCtx.AboveTxIntra || encCtx.LeftTxIntra != decCtx.LeftTxIntra {
+	if encCtx.A.Tx != decCtx.A.Tx || encCtx.L.Tx != decCtx.L.Tx ||
+		encCtx.A.TxIntra != decCtx.A.TxIntra || encCtx.L.TxIntra != decCtx.L.TxIntra {
 		t.Fatal("transform context arrays diverge between writer and reader")
 	}
 }

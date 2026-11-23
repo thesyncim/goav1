@@ -19,14 +19,14 @@ func TestWriteInterRefSymbolsRoundTrip(t *testing.T) {
 
 	var ctx BlockModeContext
 	for i := range MaxBlockModeSlots {
-		ctx.AboveIntra[i] = uint8(rng.Intn(2))
-		ctx.LeftIntra[i] = uint8(rng.Intn(2))
+		ctx.A.Intra[i] = uint8(rng.Intn(2))
+		ctx.L.Intra[i] = uint8(rng.Intn(2))
 		for r := range 2 {
-			ctx.AboveRef[r][i] = ReferenceFrame(rng.Intn(7))
-			ctx.LeftRef[r][i] = ReferenceFrame(rng.Intn(7))
+			ctx.A.Ref[r][i] = ReferenceFrame(rng.Intn(7))
+			ctx.L.Ref[r][i] = ReferenceFrame(rng.Intn(7))
 		}
-		ctx.AboveCompound[i] = uint8(rng.Intn(2))
-		ctx.LeftCompound[i] = uint8(rng.Intn(2))
+		ctx.A.Compound[i] = uint8(rng.Intn(2))
+		ctx.L.Compound[i] = uint8(rng.Intn(2))
 	}
 
 	singles := []ReferenceFrame{

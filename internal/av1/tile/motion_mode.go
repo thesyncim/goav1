@@ -434,11 +434,11 @@ func (c *BlockModeContext) aboveOverlappableNeighbor(slot int, rel int, span int
 	return OverlappableNeighbor{
 		RelX4:              int8(rel),
 		Span4:              uint8(maxInt(0, span)),
-		Size:               c.AboveBlockSize[slot],
+		Size:               c.A.BlockSize[slot],
 		Motion:             c.AboveInterMotion[slot],
 		MotionValid:        c.AboveMotionValid[slot] != 0,
-		InterpFilters:      c.AboveInterp[slot],
-		InterpFiltersValid: c.AboveInterpValid[slot] != 0,
+		InterpFilters:      c.A.Interp[slot],
+		InterpFiltersValid: c.A.InterpValid[slot] != 0,
 	}
 }
 
@@ -446,11 +446,11 @@ func (c *BlockModeContext) leftOverlappableNeighbor(slot int, rel int, span int)
 	return OverlappableNeighbor{
 		RelY4:              int8(rel),
 		Span4:              uint8(maxInt(0, span)),
-		Size:               c.LeftBlockSize[slot],
+		Size:               c.L.BlockSize[slot],
 		Motion:             c.LeftInterMotion[slot],
 		MotionValid:        c.LeftMotionValid[slot] != 0,
-		InterpFilters:      c.LeftInterp[slot],
-		InterpFiltersValid: c.LeftInterpValid[slot] != 0,
+		InterpFilters:      c.L.Interp[slot],
+		InterpFiltersValid: c.L.InterpValid[slot] != 0,
 	}
 }
 
@@ -693,18 +693,18 @@ func warpLeastSquaresProduct1(a int, b int) int {
 }
 
 func (c *BlockModeContext) aboveOverlappable(slot int) bool {
-	return slot >= 0 && slot < MaxBlockModeSlots && c.AboveIntra[slot] == 0 && c.AboveRef[0][slot].Valid()
+	return slot >= 0 && slot < MaxBlockModeSlots && c.A.Intra[slot] == 0 && c.A.Ref[0][slot].Valid()
 }
 
 func (c *BlockModeContext) leftOverlappable(slot int) bool {
-	return slot >= 0 && slot < MaxBlockModeSlots && c.LeftIntra[slot] == 0 && c.LeftRef[0][slot].Valid()
+	return slot >= 0 && slot < MaxBlockModeSlots && c.L.Intra[slot] == 0 && c.L.Ref[0][slot].Valid()
 }
 
 func (c *BlockModeContext) aboveOverlappableStep(slot int) int {
 	if slot < 0 || slot >= MaxBlockModeSlots {
 		return 1
 	}
-	if dims, ok := c.AboveBlockSize[slot].Dimensions(); ok {
+	if dims, ok := c.A.BlockSize[slot].Dimensions(); ok {
 		return maxInt(1, minInt(int(dims.W4), 16))
 	}
 	return 1
@@ -714,7 +714,7 @@ func (c *BlockModeContext) leftOverlappableStep(slot int) int {
 	if slot < 0 || slot >= MaxBlockModeSlots {
 		return 1
 	}
-	if dims, ok := c.LeftBlockSize[slot].Dimensions(); ok {
+	if dims, ok := c.L.BlockSize[slot].Dimensions(); ok {
 		return maxInt(1, minInt(int(dims.H4), 16))
 	}
 	return 1

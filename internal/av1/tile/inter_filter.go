@@ -227,15 +227,15 @@ func (c *BlockModeContext) neighborSwitchableInterpFilter(above bool, slot int, 
 	var filters motion.InterpFilters
 	valid := uint8(0)
 	if above {
-		refs[0] = c.AboveRef[0][slot]
-		refs[1] = c.AboveRef[1][slot]
-		filters = c.AboveInterp[slot]
-		valid = c.AboveInterpValid[slot]
+		refs[0] = c.A.Ref[0][slot]
+		refs[1] = c.A.Ref[1][slot]
+		filters = c.A.Interp[slot]
+		valid = c.A.InterpValid[slot]
 	} else {
-		refs[0] = c.LeftRef[0][slot]
-		refs[1] = c.LeftRef[1][slot]
-		filters = c.LeftInterp[slot]
-		valid = c.LeftInterpValid[slot]
+		refs[0] = c.L.Ref[0][slot]
+		refs[1] = c.L.Ref[1][slot]
+		filters = c.L.Interp[slot]
+		valid = c.L.InterpValid[slot]
 	}
 	if valid == 0 || (refs[0] != ref && refs[1] != ref) {
 		return switchableFilterMissing
@@ -270,12 +270,12 @@ func (c *BlockModeContext) MarkInterFilters(size BlockSize, x4 int, y4 int, refs
 		return ErrInvalidDecodeState
 	}
 	for i := 0; i < int(dims.W4); i++ {
-		c.AboveInterp[x4+i] = filters
-		c.AboveInterpValid[x4+i] = 1
+		c.A.Interp[x4+i] = filters
+		c.A.InterpValid[x4+i] = 1
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.LeftInterp[y4+i] = filters
-		c.LeftInterpValid[y4+i] = 1
+		c.L.Interp[y4+i] = filters
+		c.L.InterpValid[y4+i] = 1
 	}
 	// Record the per-MI filter pair so the sub8x8 chroma predictor can read
 	// each covered luma sub-block's own filters (libaom's this_mbmi->

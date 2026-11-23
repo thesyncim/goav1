@@ -49,133 +49,133 @@ func (c *BlockModeContext) markInterMotionAndFilters(size BlockSize, x4, y4 int,
 	const zero, one = 0, 0x0101010101010101
 	switch dims.W4 {
 	case 1:
-		c.AboveIntra[x4] = 0
-		c.AboveCompGroup[x4] = 0
-		c.AboveInterIntra[x4] = 0
-		c.AboveRef[0][x4] = result.References.Ref[0]
-		c.AboveRef[1][x4] = result.References.Ref[1]
-		c.AboveCompound[x4] = compound
-		c.AboveCompIndex[x4] = 1
-		c.AboveBlockSize[x4] = size
-		c.AboveInterpValid[x4] = 1
+		c.A.Intra[x4] = 0
+		c.A.CompGroup[x4] = 0
+		c.A.InterIntra[x4] = 0
+		c.A.Ref[0][x4] = result.References.Ref[0]
+		c.A.Ref[1][x4] = result.References.Ref[1]
+		c.A.Compound[x4] = compound
+		c.A.CompIndex[x4] = 1
+		c.A.BlockSize[x4] = size
+		c.A.InterpValid[x4] = 1
 		if hasChroma {
-			c.AboveChromaIntra[x4] = 0
-			c.AboveChromaMode[x4] = 0
+			c.A.ChromaIntra[x4] = 0
+			c.A.UVMode[x4] = 0
 		}
 	case 2:
-		ctxPut2(c.AboveIntra[x4:], zero)
-		ctxPut2(c.AboveCompGroup[x4:], zero)
-		ctxPut2(c.AboveInterIntra[x4:], zero)
-		ctxPut2(c.AboveRef[0][x4:], ref0)
-		ctxPut2(c.AboveRef[1][x4:], ref1)
-		ctxPut2(c.AboveCompound[x4:], comp)
-		ctxPut2(c.AboveCompIndex[x4:], one)
-		ctxPut2(c.AboveBlockSize[x4:], bs)
-		ctxPut2(c.AboveInterpValid[x4:], one)
+		ctxPut2(c.A.Intra[x4:], zero)
+		ctxPut2(c.A.CompGroup[x4:], zero)
+		ctxPut2(c.A.InterIntra[x4:], zero)
+		ctxPut2(c.A.Ref[0][x4:], ref0)
+		ctxPut2(c.A.Ref[1][x4:], ref1)
+		ctxPut2(c.A.Compound[x4:], comp)
+		ctxPut2(c.A.CompIndex[x4:], one)
+		ctxPut2(c.A.BlockSize[x4:], bs)
+		ctxPut2(c.A.InterpValid[x4:], one)
 		if hasChroma {
-			ctxPut2(c.AboveChromaIntra[x4:], 0)
-			ctxPut2(c.AboveChromaMode[x4:], 0)
+			ctxPut2(c.A.ChromaIntra[x4:], 0)
+			ctxPut2(c.A.UVMode[x4:], 0)
 		}
 	case 4:
-		ctxPut4(c.AboveIntra[x4:], zero)
-		ctxPut4(c.AboveCompGroup[x4:], zero)
-		ctxPut4(c.AboveInterIntra[x4:], zero)
-		ctxPut4(c.AboveRef[0][x4:], ref0)
-		ctxPut4(c.AboveRef[1][x4:], ref1)
-		ctxPut4(c.AboveCompound[x4:], comp)
-		ctxPut4(c.AboveCompIndex[x4:], one)
-		ctxPut4(c.AboveBlockSize[x4:], bs)
-		ctxPut4(c.AboveInterpValid[x4:], one)
+		ctxPut4(c.A.Intra[x4:], zero)
+		ctxPut4(c.A.CompGroup[x4:], zero)
+		ctxPut4(c.A.InterIntra[x4:], zero)
+		ctxPut4(c.A.Ref[0][x4:], ref0)
+		ctxPut4(c.A.Ref[1][x4:], ref1)
+		ctxPut4(c.A.Compound[x4:], comp)
+		ctxPut4(c.A.CompIndex[x4:], one)
+		ctxPut4(c.A.BlockSize[x4:], bs)
+		ctxPut4(c.A.InterpValid[x4:], one)
 		if hasChroma {
-			ctxPut4(c.AboveChromaIntra[x4:], 0)
-			ctxPut4(c.AboveChromaMode[x4:], 0)
+			ctxPut4(c.A.ChromaIntra[x4:], 0)
+			ctxPut4(c.A.UVMode[x4:], 0)
 		}
 	default:
 		for i := x4; i < x4+int(dims.W4); i += 8 {
-			ctxPut8(c.AboveIntra[i:], zero)
-			ctxPut8(c.AboveCompGroup[i:], zero)
-			ctxPut8(c.AboveInterIntra[i:], zero)
-			ctxPut8(c.AboveRef[0][i:], ref0)
-			ctxPut8(c.AboveRef[1][i:], ref1)
-			ctxPut8(c.AboveCompound[i:], comp)
-			ctxPut8(c.AboveCompIndex[i:], one)
-			ctxPut8(c.AboveBlockSize[i:], bs)
-			ctxPut8(c.AboveInterpValid[i:], one)
+			ctxPut8(c.A.Intra[i:], zero)
+			ctxPut8(c.A.CompGroup[i:], zero)
+			ctxPut8(c.A.InterIntra[i:], zero)
+			ctxPut8(c.A.Ref[0][i:], ref0)
+			ctxPut8(c.A.Ref[1][i:], ref1)
+			ctxPut8(c.A.Compound[i:], comp)
+			ctxPut8(c.A.CompIndex[i:], one)
+			ctxPut8(c.A.BlockSize[i:], bs)
+			ctxPut8(c.A.InterpValid[i:], one)
 			if hasChroma {
-				ctxPut8(c.AboveChromaIntra[i:], 0)
-				ctxPut8(c.AboveChromaMode[i:], 0)
+				ctxPut8(c.A.ChromaIntra[i:], 0)
+				ctxPut8(c.A.UVMode[i:], 0)
 			}
 		}
 	}
 	for i := x4; i < x4+int(dims.W4); i++ {
-		c.AbovePaletteY[i].Size = 0
-		c.AbovePaletteUV[i].Size = 0
-		c.AboveInterp[i] = filters
+		c.A.PaletteY[i].Size = 0
+		c.A.PaletteUV[i].Size = 0
+		c.A.Interp[i] = filters
 	}
 	switch dims.H4 {
 	case 1:
-		c.LeftIntra[y4] = 0
-		c.LeftCompGroup[y4] = 0
-		c.LeftInterIntra[y4] = 0
-		c.LeftRef[0][y4] = result.References.Ref[0]
-		c.LeftRef[1][y4] = result.References.Ref[1]
-		c.LeftCompound[y4] = compound
-		c.LeftCompIndex[y4] = 1
-		c.LeftBlockSize[y4] = size
-		c.LeftInterpValid[y4] = 1
+		c.L.Intra[y4] = 0
+		c.L.CompGroup[y4] = 0
+		c.L.InterIntra[y4] = 0
+		c.L.Ref[0][y4] = result.References.Ref[0]
+		c.L.Ref[1][y4] = result.References.Ref[1]
+		c.L.Compound[y4] = compound
+		c.L.CompIndex[y4] = 1
+		c.L.BlockSize[y4] = size
+		c.L.InterpValid[y4] = 1
 		if hasChroma {
-			c.LeftChromaIntra[y4] = 0
-			c.LeftChromaMode[y4] = 0
+			c.L.ChromaIntra[y4] = 0
+			c.L.UVMode[y4] = 0
 		}
 	case 2:
-		ctxPut2(c.LeftIntra[y4:], zero)
-		ctxPut2(c.LeftCompGroup[y4:], zero)
-		ctxPut2(c.LeftInterIntra[y4:], zero)
-		ctxPut2(c.LeftRef[0][y4:], ref0)
-		ctxPut2(c.LeftRef[1][y4:], ref1)
-		ctxPut2(c.LeftCompound[y4:], comp)
-		ctxPut2(c.LeftCompIndex[y4:], one)
-		ctxPut2(c.LeftBlockSize[y4:], bs)
-		ctxPut2(c.LeftInterpValid[y4:], one)
+		ctxPut2(c.L.Intra[y4:], zero)
+		ctxPut2(c.L.CompGroup[y4:], zero)
+		ctxPut2(c.L.InterIntra[y4:], zero)
+		ctxPut2(c.L.Ref[0][y4:], ref0)
+		ctxPut2(c.L.Ref[1][y4:], ref1)
+		ctxPut2(c.L.Compound[y4:], comp)
+		ctxPut2(c.L.CompIndex[y4:], one)
+		ctxPut2(c.L.BlockSize[y4:], bs)
+		ctxPut2(c.L.InterpValid[y4:], one)
 		if hasChroma {
-			ctxPut2(c.LeftChromaIntra[y4:], 0)
-			ctxPut2(c.LeftChromaMode[y4:], 0)
+			ctxPut2(c.L.ChromaIntra[y4:], 0)
+			ctxPut2(c.L.UVMode[y4:], 0)
 		}
 	case 4:
-		ctxPut4(c.LeftIntra[y4:], zero)
-		ctxPut4(c.LeftCompGroup[y4:], zero)
-		ctxPut4(c.LeftInterIntra[y4:], zero)
-		ctxPut4(c.LeftRef[0][y4:], ref0)
-		ctxPut4(c.LeftRef[1][y4:], ref1)
-		ctxPut4(c.LeftCompound[y4:], comp)
-		ctxPut4(c.LeftCompIndex[y4:], one)
-		ctxPut4(c.LeftBlockSize[y4:], bs)
-		ctxPut4(c.LeftInterpValid[y4:], one)
+		ctxPut4(c.L.Intra[y4:], zero)
+		ctxPut4(c.L.CompGroup[y4:], zero)
+		ctxPut4(c.L.InterIntra[y4:], zero)
+		ctxPut4(c.L.Ref[0][y4:], ref0)
+		ctxPut4(c.L.Ref[1][y4:], ref1)
+		ctxPut4(c.L.Compound[y4:], comp)
+		ctxPut4(c.L.CompIndex[y4:], one)
+		ctxPut4(c.L.BlockSize[y4:], bs)
+		ctxPut4(c.L.InterpValid[y4:], one)
 		if hasChroma {
-			ctxPut4(c.LeftChromaIntra[y4:], 0)
-			ctxPut4(c.LeftChromaMode[y4:], 0)
+			ctxPut4(c.L.ChromaIntra[y4:], 0)
+			ctxPut4(c.L.UVMode[y4:], 0)
 		}
 	default:
 		for i := y4; i < y4+int(dims.H4); i += 8 {
-			ctxPut8(c.LeftIntra[i:], zero)
-			ctxPut8(c.LeftCompGroup[i:], zero)
-			ctxPut8(c.LeftInterIntra[i:], zero)
-			ctxPut8(c.LeftRef[0][i:], ref0)
-			ctxPut8(c.LeftRef[1][i:], ref1)
-			ctxPut8(c.LeftCompound[i:], comp)
-			ctxPut8(c.LeftCompIndex[i:], one)
-			ctxPut8(c.LeftBlockSize[i:], bs)
-			ctxPut8(c.LeftInterpValid[i:], one)
+			ctxPut8(c.L.Intra[i:], zero)
+			ctxPut8(c.L.CompGroup[i:], zero)
+			ctxPut8(c.L.InterIntra[i:], zero)
+			ctxPut8(c.L.Ref[0][i:], ref0)
+			ctxPut8(c.L.Ref[1][i:], ref1)
+			ctxPut8(c.L.Compound[i:], comp)
+			ctxPut8(c.L.CompIndex[i:], one)
+			ctxPut8(c.L.BlockSize[i:], bs)
+			ctxPut8(c.L.InterpValid[i:], one)
 			if hasChroma {
-				ctxPut8(c.LeftChromaIntra[i:], 0)
-				ctxPut8(c.LeftChromaMode[i:], 0)
+				ctxPut8(c.L.ChromaIntra[i:], 0)
+				ctxPut8(c.L.UVMode[i:], 0)
 			}
 		}
 	}
 	for i := y4; i < y4+int(dims.H4); i++ {
-		c.LeftPaletteY[i].Size = 0
-		c.LeftPaletteUV[i].Size = 0
-		c.LeftInterp[i] = filters
+		c.L.PaletteY[i].Size = 0
+		c.L.PaletteUV[i].Size = 0
+		c.L.Interp[i] = filters
 	}
 	if !keepMotion {
 		return nil
