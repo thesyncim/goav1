@@ -34,7 +34,7 @@ func (c *BlockModeContext) hasOverlappableNeighbours(block *BlockVisit) bool {
 }
 
 func refmvsMatchesSingleRef(b *refmvsBlock, ref int8) bool {
-	return b.ref[0] == ref && b.ref[1] == -1
+	return b.ref.ref0() == ref && b.ref.ref1() == -1
 }
 
 // findMatchingRef ports dav1d's find_matching_ref. ref is the 0-based
@@ -250,19 +250,19 @@ func (rt *refmvsTile) subChromaCells(c *BlockModeContext, block *BlockVisit, ssX
 	var left, top, topLeft *refmvsBlock
 	if is4x {
 		left = &rt.buf[rt.rows[base]+bx-1]
-		if left.ref[0] <= 0 {
+		if left.ref.ref0() <= 0 {
 			return false
 		}
 	}
 	if is4y {
 		top = &rt.buf[rt.rows[base-1]+bx]
-		if top.ref[0] <= 0 {
+		if top.ref.ref0() <= 0 {
 			return false
 		}
 	}
 	if is4x && is4y {
 		topLeft = &rt.buf[rt.rows[base-1]+bx-1]
-		if topLeft.ref[0] <= 0 {
+		if topLeft.ref.ref0() <= 0 {
 			return false
 		}
 	}
@@ -289,13 +289,13 @@ func (rt *refmvsTile) subChromaCells(c *BlockModeContext, block *BlockVisit, ssX
 		offY = cellH
 	}
 	if topLeft != nil {
-		add(0, 0, topLeft.mv[0].vector(), ReferenceFrame(topLeft.ref[0]-1), rt.tl4x4Filter)
+		add(0, 0, topLeft.mv[0].vector(), ReferenceFrame(topLeft.ref.ref0()-1), rt.tl4x4Filter)
 	}
 	if top != nil {
-		add(offX, 0, top.mv[0].vector(), ReferenceFrame(top.ref[0]-1), c.A.interp(int(block.X4)))
+		add(offX, 0, top.mv[0].vector(), ReferenceFrame(top.ref.ref0()-1), c.A.interp(int(block.X4)))
 	}
 	if left != nil {
-		add(0, offY, left.mv[0].vector(), ReferenceFrame(left.ref[0]-1), c.L.interp(int(block.Y4)))
+		add(0, offY, left.mv[0].vector(), ReferenceFrame(left.ref.ref0()-1), c.L.interp(int(block.Y4)))
 	}
 	add(offX, offY, mv, ref, filters)
 	out.Count = uint8(n)
@@ -304,12 +304,12 @@ func (rt *refmvsTile) subChromaCells(c *BlockModeContext, block *BlockVisit, ssX
 
 func refmvsNeighborMotion(b *refmvsBlock) InterMotionResult {
 	m := InterMotionResult{MV: [2]motion.Vector{b.mv[0].vector(), b.mv[1].vector()}}
-	m.References.Ref[0] = ReferenceFrame(b.ref[0] - 1)
+	m.References.Ref[0] = ReferenceFrame(b.ref.ref0() - 1)
 	m.References.Ref[1] = ReferenceFrameNone
-	if b.ref[1] > 0 {
-		m.References.Ref[1] = ReferenceFrame(b.ref[1] - 1)
+	if b.ref.ref1() > 0 {
+		m.References.Ref[1] = ReferenceFrame(b.ref.ref1() - 1)
 		m.References.Compound = true
-	} else if b.ref[1] == 0 {
+	} else if b.ref.ref1() == 0 {
 		m.InterIntra = true
 	}
 	return m
@@ -333,7 +333,7 @@ func (rt *refmvsTile) obmcNeighbors(c *BlockModeContext, block *BlockVisit) Over
 		for i, x := int32(0), int32(0); x < w4 && i < limit; {
 			a := &top[bx+x+1]
 			step := min(max(int32(blockDimensions[a.bs].W4), 2), 16)
-			if a.ref[0] > 0 {
+			if a.ref.ref0() > 0 {
 				slot := x4 + x + 1
 				set.Above[i] = OverlappableNeighbor{
 					RelX4:         int8(x),
@@ -354,7 +354,7 @@ func (rt *refmvsTile) obmcNeighbors(c *BlockModeContext, block *BlockVisit) Over
 		for i, y := int32(0), int32(0); y < h4 && i < limit; {
 			l := &rt.buf[rt.rows[base+y+1]+bx-1]
 			step := min(max(int32(blockDimensions[l.bs].H4), 2), 16)
-			if l.ref[0] > 0 {
+			if l.ref.ref0() > 0 {
 				slot := y4 + y + 1
 				set.Left[i] = OverlappableNeighbor{
 					RelY4:         int8(y),

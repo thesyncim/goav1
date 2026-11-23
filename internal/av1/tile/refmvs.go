@@ -52,16 +52,24 @@ func (m refmvsMV) negate() refmvsMV {
 // mf flags (1 = globalmv with a min side >= 8 px, 2 = newmv).
 type refmvsBlock struct {
 	mv  [2]refmvsMV
-	ref [2]int8
+	ref refmvsRefPair
 	bs  BlockSize
 	mf  uint8
 }
 
-// refmvsRefPair returns the 16-bit view of a reference pair used for the
-// compound equality test (dav1d's refmvs_refpair.pair).
-func refmvsRefPair(ref [2]int8) uint16 {
-	return uint16(uint8(ref[0])) | uint16(uint8(ref[1]))<<8
+// refmvsRefPair is dav1d's union refmvs_refpair: ref[0] in the low byte,
+// ref[1] in the high byte, compared as one 16-bit pair.
+type refmvsRefPair uint16
+
+func makeRefmvsRefPair(ref0, ref1 int8) refmvsRefPair {
+	return refmvsRefPair(uint8(ref0)) | refmvsRefPair(uint8(ref1))<<8
 }
+
+func (p refmvsRefPair) ref0() int8 { return int8(p) }
+func (p refmvsRefPair) ref1() int8 { return int8(p >> 8) }
+
+// at is ref.ref[n].
+func (p refmvsRefPair) at(n int) int8 { return int8(p >> (uint(n&1) * 8)) }
 
 // refmvsCandidate is dav1d's refmvs_candidate.
 type refmvsCandidate struct {
@@ -242,7 +250,7 @@ func (rt *refmvsTile) splat(mv uint64, rest uint32, by4, bx4, bw4, bh4 int32) {
 }
 
 func (b *refmvsBlock) set(mv uint64, rest uint32) {
-	b.ref[0], b.ref[1], b.bs, b.mf = int8(rest), int8(rest>>8), BlockSize(rest>>16), uint8(rest>>24)
+	b.ref, b.bs, b.mf = refmvsRefPair(rest), BlockSize(rest>>16), uint8(rest>>24)
 	b.mv[0], b.mv[1] = refmvsMV(mv), refmvsMV(mv>>32)
 }
 
@@ -305,13 +313,13 @@ type refmvsResult struct {
 	rawCtx int32
 }
 
-func addSpatialCandidate(stack *[8]refmvsCandidate, cnt *int32, weight int32, b *refmvsBlock, ref [2]int8, gmv *[2]refmvsMV, haveNewMVMatch *int32, haveRefMVMatch *int32) {
+func addSpatialCandidate(stack *[8]refmvsCandidate, cnt *int32, weight int32, b *refmvsBlock, ref refmvsRefPair, gmv *[2]refmvsMV, haveNewMVMatch *int32, haveRefMVMatch *int32) {
 	if b.mv[0] == refmvsInvalidMV {
 		return // intra block, no intrabc
 	}
-	if ref[1] == -1 {
+	if ref.ref1() == -1 {
 		for n := range 2 {
-			if b.ref[n] == ref[0] {
+			if b.ref.at(n) == ref.ref0() {
 				candMV := b.mv[n]
 				if b.mf&1 != 0 && gmv[0] != refmvsInvalidMV {
 					candMV = gmv[0]
@@ -333,7 +341,7 @@ func addSpatialCandidate(stack *[8]refmvsCandidate, cnt *int32, weight int32, b 
 				return
 			}
 		}
-	} else if refmvsRefPair(b.ref) == refmvsRefPair(ref) {
+	} else if b.ref == ref {
 		cand := b.mv
 		if b.mf&1 != 0 {
 			if gmv[0] != refmvsInvalidMV {
@@ -362,7 +370,7 @@ func addSpatialCandidate(stack *[8]refmvsCandidate, cnt *int32, weight int32, b 
 
 // scanRow ports dav1d's scan_row. row is the refmvs row slice and bx4 the
 // first scanned column.
-func scanRow(stack *[8]refmvsCandidate, cnt *int32, ref [2]int8, gmv *[2]refmvsMV, row []refmvsBlock, bx4, bw4, w4, maxRows, step int32, haveNewMVMatch, haveRefMVMatch *int32) int32 {
+func scanRow(stack *[8]refmvsCandidate, cnt *int32, ref refmvsRefPair, gmv *[2]refmvsMV, row []refmvsBlock, bx4, bw4, w4, maxRows, step int32, haveNewMVMatch, haveRefMVMatch *int32) int32 {
 	candB := &row[bx4]
 	firstDim := blockDimensions[candB.bs]
 	candBW4 := int32(firstDim.W4)
@@ -389,7 +397,7 @@ func scanRow(stack *[8]refmvsCandidate, cnt *int32, ref [2]int8, gmv *[2]refmvsM
 
 // scanCol ports dav1d's scan_col. rowBase is the row-table index of the first
 // scanned row and bx4 the scanned column.
-func (rt *refmvsTile) scanCol(stack *[8]refmvsCandidate, cnt *int32, ref [2]int8, gmv *[2]refmvsMV, rowBase, bh4, h4, bx4, maxCols, step int32, haveNewMVMatch, haveRefMVMatch *int32) int32 {
+func (rt *refmvsTile) scanCol(stack *[8]refmvsCandidate, cnt *int32, ref refmvsRefPair, gmv *[2]refmvsMV, rowBase, bh4, h4, bx4, maxCols, step int32, haveNewMVMatch, haveRefMVMatch *int32) int32 {
 	candB := &rt.buf[rt.rows[rowBase]+bx4]
 	firstDim := blockDimensions[candB.bs]
 	candBH4 := int32(firstDim.H4)
@@ -446,14 +454,14 @@ func (rf *refmvsFrame) fixMVPrecision(m refmvsMV) refmvsMV {
 	return m
 }
 
-func (rf *refmvsFrame) addTemporalCandidate(stack *[8]refmvsCandidate, cnt *int32, rb *TemporalMotionEntry, ref [2]int8, globalMVCtx *int32, gmv *[2]refmvsMV) {
+func (rf *refmvsFrame) addTemporalCandidate(stack *[8]refmvsCandidate, cnt *int32, rb *TemporalMotionEntry, ref refmvsRefPair, globalMVCtx *int32, gmv *[2]refmvsMV) {
 	if !rb.Valid {
 		return
 	}
 	den := int32(rb.RefFrameOffset)
-	mv := rf.fixMVPrecision(refmvsMVProjection(rb.MV, int32(rf.pocDiff[ref[0]-1]), den))
+	mv := rf.fixMVPrecision(refmvsMVProjection(rb.MV, int32(rf.pocDiff[ref.ref0()-1]), den))
 	last := *cnt
-	if ref[1] == -1 {
+	if ref.ref1() == -1 {
 		if globalMVCtx != nil {
 			dx := mv.col() - gmv[0].col()
 			dy := mv.row() - gmv[0].row()
@@ -482,7 +490,7 @@ func (rf *refmvsFrame) addTemporalCandidate(stack *[8]refmvsCandidate, cnt *int3
 		}
 		return
 	}
-	mvp := [2]refmvsMV{mv, rf.fixMVPrecision(refmvsMVProjection(rb.MV, int32(rf.pocDiff[ref[1]-1]), den))}
+	mvp := [2]refmvsMV{mv, rf.fixMVPrecision(refmvsMVProjection(rb.MV, int32(rf.pocDiff[ref.ref1()-1]), den))}
 	for n := int32(0); n < last; n++ {
 		if stack[n].mv == mvp {
 			stack[n].weight += 2
@@ -499,15 +507,15 @@ func (rf *refmvsFrame) addTemporalCandidate(stack *[8]refmvsCandidate, cnt *int3
 // addCompoundExtendedCandidate ports dav1d's add_compound_extended_candidate.
 // same points at mvstack[*cnt]; diff is same[2:]. sameCount is dav1d's
 // same_count[4] (entries 2/3 are diff_count[0/1]).
-func addCompoundExtendedCandidate(same []refmvsCandidate, sameCount *[4]int32, candB *refmvsBlock, sign0, sign1 uint8, ref [2]int8, signBias *[7]uint8) {
+func addCompoundExtendedCandidate(same []refmvsCandidate, sameCount *[4]int32, candB *refmvsBlock, sign0, sign1 uint8, ref refmvsRefPair, signBias *[7]uint8) {
 	diff := same[2:]
 	for n := range 2 {
-		candRef := candB.ref[n]
+		candRef := candB.ref.at(n)
 		if candRef <= 0 {
 			break
 		}
 		candMV := candB.mv[n]
-		if candRef == ref[0] {
+		if candRef == ref.ref0() {
 			if sameCount[0] < 2 {
 				same[sameCount[0]].mv[0] = candMV
 				sameCount[0]++
@@ -519,7 +527,7 @@ func addCompoundExtendedCandidate(same []refmvsCandidate, sameCount *[4]int32, c
 				diff[sameCount[3]].mv[1] = candMV
 				sameCount[3]++
 			}
-		} else if candRef == ref[1] {
+		} else if candRef == ref.ref1() {
 			if sameCount[1] < 2 {
 				same[sameCount[1]].mv[1] = candMV
 				sameCount[1]++
@@ -556,7 +564,7 @@ func addCompoundExtendedCandidate(same []refmvsCandidate, sameCount *[4]int32, c
 // addSingleExtendedCandidate ports dav1d's add_single_extended_candidate.
 func addSingleExtendedCandidate(stack *[8]refmvsCandidate, cnt *int32, candB *refmvsBlock, sign uint8, signBias *[7]uint8) {
 	for n := range 2 {
-		candRef := candB.ref[n]
+		candRef := candB.ref.at(n)
 		if candRef <= 0 {
 			break
 		}
@@ -584,7 +592,7 @@ func addSingleExtendedCandidate(stack *[8]refmvsCandidate, cnt *int32, candB *re
 // dav1d's +1 encoding, tgmv the per-reference global MVs evaluated at this block
 // (get_gmv_2d), topHasRight dav1d's EDGE_I444_TOP_HAS_RIGHT edge flag, and
 // by4/bx4 the block's absolute 4x4 position.
-func (rt *refmvsTile) find(out *refmvsResult, ref [2]int8, size BlockSize, topHasRight bool, by4, bx4 int32, tgmvIn [2]motion.Vector) {
+func (rt *refmvsTile) find(out *refmvsResult, ref refmvsRefPair, size BlockSize, topHasRight bool, by4, bx4 int32, tgmvIn [2]motion.Vector) {
 	rf := &rt.frame
 	dims := blockDimensions[size]
 	bw4 := int32(dims.W4)
@@ -596,20 +604,20 @@ func (rt *refmvsTile) find(out *refmvsResult, ref [2]int8, size BlockSize, topHa
 	// out is zero (both callers pass a fresh refmvsResult): no stack clear.
 
 	cnt := int32(0)
-	if ref[0] > 0 {
+	if ref.ref0() > 0 {
 		tgmv[0] = packRefmvsMV(tgmvIn[0])
 		gmv[0] = refmvsInvalidMV
-		if rf.gmType[ref[0]-1] > parser.GlobalMotionTranslation {
+		if rf.gmType[ref.ref0()-1] > parser.GlobalMotionTranslation {
 			gmv[0] = tgmv[0]
 		}
 	} else {
 		tgmv[0] = 0
 		gmv[0] = refmvsInvalidMV
 	}
-	if ref[1] > 0 {
+	if ref.ref1() > 0 {
 		tgmv[1] = packRefmvsMV(tgmvIn[1])
 		gmv[1] = refmvsInvalidMV
-		if rf.gmType[ref[1]-1] > parser.GlobalMotionTranslation {
+		if rf.gmType[ref.ref1()-1] > parser.GlobalMotionTranslation {
 			gmv[1] = tgmv[1]
 		}
 	}
@@ -763,10 +771,10 @@ func (rt *refmvsTile) find(out *refmvsResult, ref [2]int8, size BlockSize, topHa
 	top := -(by4 + bh4 + 4) * 4 * 8
 	bottom := (rf.ih4 - by4 + 4) * 4 * 8
 
-	if ref[1] > 0 {
+	if ref.ref1() > 0 {
 		if cnt < 2 {
-			sign0 := rf.signBias[ref[0]-1]
-			sign1 := rf.signBias[ref[1]-1]
+			sign0 := rf.signBias[ref.ref0()-1]
+			sign1 := rf.signBias[ref.ref1()-1]
 			sz4 := min(w4, h4)
 			same := stack[cnt:]
 			var sameCount [4]int32
@@ -843,8 +851,8 @@ func (rt *refmvsTile) find(out *refmvsResult, ref [2]int8, size BlockSize, topHa
 		}
 		out.count = cnt
 		return
-	} else if cnt < 2 && ref[0] > 0 {
-		sign := rf.signBias[ref[0]-1]
+	} else if cnt < 2 && ref.ref0() > 0 {
+		sign := rf.signBias[ref.ref0()-1]
 		sz4 := min(w4, h4)
 
 		// non-self references in top
@@ -984,9 +992,9 @@ func (rt *refmvsTile) saveTmvs(dst *ReferenceMVFrame, refFrameSide *[referenceFr
 			cand := &b[x*2+1]
 			end := min(x+(int32(blockDimensions[cand.bs].W4)+1)>>1, colEnd8)
 			tmv := ReferenceMVEntry{Ref: ReferenceFrameNone}
-			if r := cand.ref[1]; r > 0 && refFrameSide[r-1] == 0 && refmvsSaveable(cand.mv[1]) {
+			if r := cand.ref.ref1(); r > 0 && refFrameSide[r-1] == 0 && refmvsSaveable(cand.mv[1]) {
 				tmv = ReferenceMVEntry{Ref: ReferenceFrame(r - 1), MV: cand.mv[1].vector(), Valid: true}
-			} else if r := cand.ref[0]; r > 0 && refFrameSide[r-1] == 0 && refmvsSaveable(cand.mv[0]) {
+			} else if r := cand.ref.ref0(); r > 0 && refFrameSide[r-1] == 0 && refmvsSaveable(cand.mv[0]) {
 				tmv = ReferenceMVEntry{Ref: ReferenceFrame(r - 1), MV: cand.mv[0].vector(), Valid: true}
 			}
 			for ; x < end; x++ {

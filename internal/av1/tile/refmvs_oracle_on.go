@@ -20,7 +20,7 @@ const (
 
 func refmvsPoison(buf []refmvsBlock) {
 	for i := range buf {
-		buf[i] = refmvsBlock{mv: [2]refmvsMV{refmvsInvalidMV, refmvsInvalidMV}, ref: [2]int8{-128, -128}, bs: 0xff, mf: 0xff}
+		buf[i] = refmvsBlock{mv: [2]refmvsMV{refmvsInvalidMV, refmvsInvalidMV}, ref: makeRefmvsRefPair(-128, -128), bs: 0xff, mf: 0xff}
 	}
 }
 

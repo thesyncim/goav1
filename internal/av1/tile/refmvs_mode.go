@@ -131,9 +131,9 @@ var compoundModeHasNear = [compoundInterModeCount]bool{
 // DRL and motion fields of result.
 func (s *DecodeState) decodeInterModeRefmvs(cdfs *InterModeCDFs, mvCDFs *MVCDFs, modeCtx *BlockModeContext, rt *refmvsTile, req *BlockLoopRequest, block *BlockVisit, refs InterReferencesResult, skipMode bool, segment *parser.SegmentData, globalMVs [2]motion.Vector, result *BlockPredictionModeResult) error {
 	var found refmvsResult
-	target := [2]int8{int8(refs.Ref[0]) + 1, -1}
+	target := makeRefmvsRefPair(int8(refs.Ref[0])+1, -1)
 	if refs.Compound {
-		target[1] = int8(refs.Ref[1]) + 1
+		target = makeRefmvsRefPair(int8(refs.Ref[0])+1, int8(refs.Ref[1])+1)
 	}
 	rt.find(&found, target, block.Size, refmvsTopHasRight(req.SBSizeMIB, block), int32(block.MIRow), int32(block.MICol), globalMVs)
 	if refmvsOracleEnabled {
