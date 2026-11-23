@@ -841,12 +841,12 @@ func (s *FrameWorkState) prepareTemporalMotionField(event *Event) error {
 	}
 	grid := parser.RefFrames // generic callers keep a separate current buffer
 	if s.ownedTemporalMotion {
-		if !s.Sequence.EnableRefFrameMVS || !event.FrameSize.AllowIntrabc && !event.TileInfo.UseRefFrameMVS &&
-			(event.FrameHeader.FrameType == parser.FrameTypeKey || event.FrameHeader.FrameType == parser.FrameTypeIntraOnly) {
+		if !event.TileInfo.UseRefFrameMVS && (!s.Sequence.EnableRefFrameMVS || !event.FrameSize.AllowIntrabc &&
+			(event.FrameHeader.FrameType == parser.FrameTypeKey || event.FrameHeader.FrameType == parser.FrameTypeIntraOnly)) {
 			// No frame reads this grid: either the sequence disables
-			// ref_frame_mvs, so no frame of it projects saved motion (dav1d
-			// gates save_tmvs on seq_hdr->ref_frame_mvs the same way in
-			// decode_tile_sbrow), or all decoded blocks are intra and temporal
+			// ref_frame_mvs, so no frame of it projects saved motion (dav1d's
+			// threaded dav1d_decode_tile_sbrow gates save_tmvs on
+			// seq_hdr->ref_frame_mvs), or all decoded blocks are intra and temporal
 			// projection skips intra sources. Retain publication metadata, but
 			// omit the unused clear, the per-sbrow save_tmvs or per-block
 			// stores, and grid publication.
