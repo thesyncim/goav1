@@ -87,7 +87,8 @@ func pred8Copy(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride 
 // pred8CopyRows is svt_av1_convolve_2d_copy_sr_neon: one loop per block
 // width, so a row costs its address, loads and stores and the loop branch
 // (the row pointers are formed by index: one past the last row would trip
-// checkptr). Widths are 8 or multiples of 16.
+// checkptr). Widths are multiples of 8; a width that is not a multiple of 16
+// ends with an 8-byte copy.
 func pred8CopyRows(dst unsafe.Pointer, dstStride int, ref unsafe.Pointer, refStride, w, h int) {
 	switch w {
 	case 8:
@@ -109,8 +110,12 @@ func pred8CopyRows(dst unsafe.Pointer, dstStride int, ref unsafe.Pointer, refStr
 	default:
 		for y := range h {
 			d, r := unsafe.Add(dst, y*dstStride), unsafe.Add(ref, y*refStride)
-			for x := 0; x < w; x += 16 {
+			x := 0
+			for ; x+16 <= w; x += 16 {
 				*(*[16]byte)(unsafe.Add(d, x)) = *(*[16]byte)(unsafe.Add(r, x))
+			}
+			if x < w {
+				*(*uint64)(unsafe.Add(d, x)) = *(*uint64)(unsafe.Add(r, x))
 			}
 		}
 	}
