@@ -69,16 +69,10 @@ func (s *DecodeState) bindCoefBlock(cdfs *BlockLoopCDFs, scratch *BlockLoopScrat
 	pred := &visit.Prediction
 	intra := pred.Valid && pred.Intra
 	skip := visit.Prefix.SkipTransform
-	qIndex := s.CurrentBaseQIdx
-	if req.Segmentation.Enabled {
-		if visit.SegmentID >= parser.MaxSegments {
-			return ErrInvalidDecodeState
-		}
-		qIndex = quantize.ClampQIndex(qIndex, req.Segmentation.Data.Segments[visit.SegmentID].DeltaQ)
-	} else if visit.SegmentID != 0 {
+	qIndex, lossless, ok := blockQIndex(req, s.CurrentBaseQIdx, visit.SegmentID)
+	if !ok {
 		return ErrInvalidDecodeState
 	}
-	lossless := qIndex == 0 && req.QuantDeltasZero
 
 	tr := &scratch.coefTree
 	tr.Size = block.Size
@@ -154,6 +148,22 @@ func (s *DecodeState) bindCoefBlock(cdfs *BlockLoopCDFs, scratch *BlockLoopScrat
 		return b.ctx.ResetBlock(0, block.Size, b.X4, b.Y4)
 	}
 	return nil
+}
+
+// blockQIndex is the block's segment-adjusted qindex (the delta-coded current
+// qindex clamped with the segment's delta_q, libaom's xd->qindex[segment_id])
+// that gates the luma transform-type read, and whether the block is lossless.
+func blockQIndex(req *BlockLoopRequest, current, segmentID uint8) (qIndex uint8, lossless, ok bool) {
+	qIndex = current
+	if req.Segmentation.Enabled {
+		if segmentID >= parser.MaxSegments {
+			return 0, false, false
+		}
+		qIndex = quantize.ClampQIndex(qIndex, req.Segmentation.Data.Segments[segmentID].DeltaQ)
+	} else if segmentID != 0 {
+		return 0, false, false
+	}
+	return qIndex, qIndex == 0 && req.QuantDeltasZero, true
 }
 
 // filterIntraTransformMode is dav1d's dav1d_filter_mode_to_y_mode: the intra
