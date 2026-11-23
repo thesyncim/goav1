@@ -32,6 +32,8 @@ type DecodeState struct {
 	// motionExtras backs BlockPredictionModeResult.Extras for the block being
 	// decoded.
 	motionExtras BlockPredictionMotionExtras
+	// subChroma backs BlockPredictionModeResult.SubChromaInter.
+	subChroma SubChromaInterResult
 }
 
 // blockMotionExtras points result at the state's out-of-line payload slot.

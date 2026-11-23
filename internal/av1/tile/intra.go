@@ -216,14 +216,14 @@ type BlockPredictionModeResult struct {
 	CompoundBlend      CompoundBlendResult
 	CompoundBlendValid bool
 
-	// SubChromaInter holds the per-sub-block chroma MVs libaom's
+	// SubChromaInter, when set, holds the per-sub-block chroma MVs libaom's
 	// build_inter_predictors_sub8x8 iterates over for inter blocks whose
 	// luma width or height is 4 under chroma subsampling. The chroma plane
 	// of the anchor block is split into the 1-4 luma 4x4 cells of its
 	// chroma footprint, each predicted with its own luma neighbor's MV.
-	// See tile.SubChromaInterResult for the full rationale.
-	SubChromaInter      SubChromaInterResult
-	SubChromaInterValid bool
+	// See tile.SubChromaInterResult for the full rationale. Like Extras it
+	// points into the decode state, out of line of the per-block result.
+	SubChromaInter *SubChromaInterResult
 }
 
 // reset clears the result for the next block field by field; the zero
@@ -268,8 +268,7 @@ func (r *BlockPredictionModeResult) reset() {
 	r.Extras = nil
 	r.CompoundBlend = CompoundBlendResult{}
 	r.CompoundBlendValid = false
-	r.SubChromaInter = SubChromaInterResult{}
-	r.SubChromaInterValid = false
+	r.SubChromaInter = nil
 }
 
 // BlockPredictionMotionExtras holds the rarely used warp and OBMC payloads of

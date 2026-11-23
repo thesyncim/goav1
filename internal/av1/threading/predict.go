@@ -1108,7 +1108,7 @@ func (b *FrameWorkBatch) predictBlockInterPlaneWithFiltersPtr(index int, visit *
 	// its own neighbor's MV. The tile decoder pre-computed those cells in
 	// visit.Prediction.SubChromaInter; we drive them here for U/V only,
 	// keeping luma on the standard single-MV path.
-	if visit.Prediction.SubChromaInterValid && (plane == FrameWorkPlaneU || plane == FrameWorkPlaneV) {
+	if visit.Prediction.SubChromaInter != nil && (plane == FrameWorkPlaneU || plane == FrameWorkPlaneV) {
 		return b.predictBlockInterSubChromaPlanePtr(index, visit, plane, scratch)
 	}
 	return b.predictBlockInterReferencePlaneToOutput(index, &visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters, scratch)
@@ -1118,7 +1118,7 @@ func (b *FrameWorkBatch) predictBlockInterSubChromaPlanePtr(index int, visit *ti
 	if visit == nil || (plane != FrameWorkPlaneU && plane != FrameWorkPlaneV) {
 		return ErrInvalidBatch
 	}
-	if !visit.Prediction.SubChromaInterValid {
+	if visit.Prediction.SubChromaInter == nil {
 		return ErrInvalidBatch
 	}
 	geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)

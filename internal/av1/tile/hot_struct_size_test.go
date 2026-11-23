@@ -46,7 +46,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "BlockLoopRequest", size: unsafe.Sizeof(BlockLoopRequest{}), max: 616}, // +16: MotionProgress (dav1d progress[0] link); -72: the coefficient hooks went with the per-TXB visit path
 		{name: "BlockLoopSuperblockVisit", size: unsafe.Sizeof(BlockLoopSuperblockVisit{}), max: 6},
 		{name: "BlockModeRequest", size: unsafe.Sizeof(BlockModeRequest{}), max: 48},
-		{name: "BlockPredictionModeResult", size: unsafe.Sizeof(BlockPredictionModeResult{}), max: 216},
+		{name: "BlockPredictionModeResult", size: unsafe.Sizeof(BlockPredictionModeResult{}), max: 168}, // -48: SubChromaInter out of line
 		{name: "IntraFlagRequest", size: unsafe.Sizeof(IntraFlagRequest{}), max: 22},
 		{name: "LumaIntraModeRequest", size: unsafe.Sizeof(LumaIntraModeRequest{}), max: 4},
 		{name: "InterReferenceRequest", size: unsafe.Sizeof(InterReferenceRequest{}), max: 24},

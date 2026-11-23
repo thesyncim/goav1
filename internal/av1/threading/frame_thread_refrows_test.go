@@ -70,8 +70,7 @@ func TestFrameThreadRefNeed(t *testing.T) {
 	// Sub-8x8 chroma cells use their own (neighbouring) vectors.
 	n = frameThreadRefNeed{}
 	v = refRowsTestVisit(8, tile.ReferenceFrameLast, 0)
-	v.Prediction.SubChromaInterValid = true
-	v.Prediction.SubChromaInter.Count = 1
+	v.Prediction.SubChromaInter = &tile.SubChromaInterResult{Count: 1}
 	v.Prediction.SubChromaInter.Cells[0].Reference = tile.ReferenceFrameLast2
 	v.Prediction.SubChromaInter.Cells[0].MV = motion.Vector{Row: 8 * 30}
 	n.addVisit(&v)

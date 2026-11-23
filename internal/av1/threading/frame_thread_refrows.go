@@ -69,8 +69,7 @@ func (n *frameThreadRefNeed) addVisit(v *tile.BlockLoopVisit) {
 			n.addNeighbor(&s.Left[i], bottom)
 		}
 	}
-	if p.SubChromaInterValid {
-		c := &p.SubChromaInter
+	if c := p.SubChromaInter; c != nil {
 		for i := range min(int(c.Count), len(c.Cells)) {
 			n.add(c.Cells[i].Reference, bottom, c.Cells[i].MV, false)
 		}

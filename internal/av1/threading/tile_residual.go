@@ -71,6 +71,7 @@ const (
 	frameWorkReconPaletteY uint8 = 1 << iota
 	frameWorkReconPaletteUV
 	frameWorkReconMotionExtras
+	frameWorkReconSubChroma
 )
 
 // frameWorkReconPaletteBinding records which buffered reconstruction event
@@ -78,10 +79,18 @@ const (
 // complete. Keeping the binding out of frameWorkReconEvent avoids growing every
 // non-palette event for a rare screen-content path.
 type frameWorkReconPaletteBinding struct {
-	visitIndex   int32
-	paletteIndex int32
-	extrasIndex  int32
-	mask         uint8
+	visitIndex     int32
+	paletteIndex   int32
+	extrasIndex    int32
+	subChromaIndex int32
+	mask           uint8
+}
+
+// frameWorkDeferredSlots are the value-arena slots bufferDeferredVisit copied
+// a visit's out-of-line payloads into; mask says which are set.
+type frameWorkDeferredSlots struct {
+	palette, extras, subChroma int
+	mask                       uint8
 }
 
 // FrameWorkTileResidualCDFs groups the caller-owned entropy states needed to
@@ -350,6 +359,8 @@ type FrameWorkTileResidualScratch struct {
 	// (BlockPredictionModeResult.Extras points into per-tile decode state);
 	// they are bound like the palette maps.
 	extrasArena []tile.BlockPredictionMotionExtras
+	// subChromaArena holds the copied sub8x8 chroma cells, bound the same way.
+	subChromaArena []tile.SubChromaInterResult
 
 	// wavefront holds the reusable SB-row wavefront scheduling state used when
 	// the deferred reconstruction replay runs across multiple goroutines. It is
@@ -630,6 +641,7 @@ func (s *FrameWorkTileResidualScratch) resetDeferredReconBuffers() {
 	s.paletteArena = s.paletteArena[:0]
 	s.paletteBindings = s.paletteBindings[:0]
 	s.extrasArena = s.extrasArena[:0]
+	s.subChromaArena = s.subChromaArena[:0]
 }
 
 // nextPaletteScratch returns the value-arena index for a per-block palette map
@@ -656,7 +668,7 @@ func (s *FrameWorkTileResidualScratch) nextPaletteScratch() int {
 // palette arena and return an index binding so pass 2 can install stable
 // pointers after event collection. Non-palette visits (the overwhelming
 // majority) pay no palette copy.
-func (s *FrameWorkTileResidualScratch) bufferDeferredVisit(visit *tile.BlockLoopVisit) (int, int, int, uint8) {
+func (s *FrameWorkTileResidualScratch) bufferDeferredVisit(visit *tile.BlockLoopVisit) (int, frameWorkDeferredSlots) {
 	n := len(s.reconVisits)
 	if n < cap(s.reconVisits) {
 		s.reconVisits = s.reconVisits[:n+1]
@@ -665,34 +677,40 @@ func (s *FrameWorkTileResidualScratch) bufferDeferredVisit(visit *tile.BlockLoop
 		s.reconVisits = append(s.reconVisits, *visit)
 	}
 	p := &s.reconVisits[n].Prediction
-	mask := uint8(0)
-	extrasIndex := -1
+	slots := frameWorkDeferredSlots{palette: -1, extras: -1, subChroma: -1}
 	if p.Extras != nil {
-		extrasIndex = len(s.extrasArena)
+		slots.extras = len(s.extrasArena)
 		s.extrasArena = append(s.extrasArena, *p.Extras)
 		p.Extras = nil
-		mask |= frameWorkReconMotionExtras
+		slots.mask |= frameWorkReconMotionExtras
+	}
+	if p.SubChromaInter != nil {
+		slots.subChroma = len(s.subChromaArena)
+		s.subChromaArena = append(s.subChromaArena, *p.SubChromaInter)
+		p.SubChromaInter = nil
+		slots.mask |= frameWorkReconSubChroma
 	}
 	pal := &p.Palette
 	if pal.YMap == nil && pal.UVMap == nil {
-		return n, -1, extrasIndex, mask
+		return n, slots
 	}
-	paletteIndex := s.nextPaletteScratch()
-	store := &s.paletteArena[paletteIndex]
+	slots.palette = s.nextPaletteScratch()
+	store := &s.paletteArena[slots.palette]
 	if pal.YMap != nil {
 		store.Y = *pal.YMap
 		pal.YMap = nil
-		mask |= frameWorkReconPaletteY
+		slots.mask |= frameWorkReconPaletteY
 	}
 	if pal.UVMap != nil {
 		store.UV = *pal.UVMap
 		pal.UVMap = nil
-		mask |= frameWorkReconPaletteUV
+		slots.mask |= frameWorkReconPaletteUV
 	}
-	return n, paletteIndex, extrasIndex, mask
+	return n, slots
 }
 
-func (s *FrameWorkTileResidualScratch) rememberDeferredPalette(visitIndex int, paletteIndex int, extrasIndex int, mask uint8) error {
+func (s *FrameWorkTileResidualScratch) rememberDeferredPalette(visitIndex int, slots frameWorkDeferredSlots) error {
+	mask := slots.mask
 	if mask == 0 {
 		return nil
 	}
@@ -700,14 +718,19 @@ func (s *FrameWorkTileResidualScratch) rememberDeferredPalette(visitIndex int, p
 	if !ok {
 		return ErrInvalidBatch
 	}
-	binding := frameWorkReconPaletteBinding{visitIndex: visitIndex32, paletteIndex: -1, extrasIndex: -1, mask: mask}
+	binding := frameWorkReconPaletteBinding{visitIndex: visitIndex32, paletteIndex: -1, extrasIndex: -1, subChromaIndex: -1, mask: mask}
 	if mask&(frameWorkReconPaletteY|frameWorkReconPaletteUV) != 0 {
-		if binding.paletteIndex, ok = frameWorkReconIndex(paletteIndex); !ok {
+		if binding.paletteIndex, ok = frameWorkReconIndex(slots.palette); !ok {
 			return ErrInvalidBatch
 		}
 	}
 	if mask&frameWorkReconMotionExtras != 0 {
-		if binding.extrasIndex, ok = frameWorkReconIndex(extrasIndex); !ok {
+		if binding.extrasIndex, ok = frameWorkReconIndex(slots.extras); !ok {
+			return ErrInvalidBatch
+		}
+	}
+	if mask&frameWorkReconSubChroma != 0 {
+		if binding.subChromaIndex, ok = frameWorkReconIndex(slots.subChroma); !ok {
 			return ErrInvalidBatch
 		}
 	}
@@ -741,6 +764,13 @@ func (s *FrameWorkTileResidualScratch) installDeferredPalettes(from int) (int, e
 				return i, ErrInvalidBatch
 			}
 			visit.Prediction.Extras = &s.extrasArena[extrasIndex]
+		}
+		if binding.mask&frameWorkReconSubChroma != 0 {
+			subChromaIndex := int(binding.subChromaIndex)
+			if binding.subChromaIndex < 0 || subChromaIndex >= len(s.subChromaArena) {
+				return i, ErrInvalidBatch
+			}
+			visit.Prediction.SubChromaInter = &s.subChromaArena[subChromaIndex]
 		}
 		if binding.mask&(frameWorkReconPaletteY|frameWorkReconPaletteUV) == 0 {
 			continue
@@ -1618,7 +1648,7 @@ func (c *frameWorkTileResidualLoopController) reconBBegin(visit *tile.BlockLoopV
 				return err
 			}
 		}
-		visitIndex, paletteIndex, extrasIndex, paletteMask := c.scratch.bufferDeferredVisit(visit)
+		visitIndex, slots := c.scratch.bufferDeferredVisit(visit)
 		visitIndex32, ok := frameWorkReconIndex(visitIndex)
 		if !ok {
 			return ErrInvalidBatch
@@ -1627,7 +1657,7 @@ func (c *frameWorkTileResidualLoopController) reconBBegin(visit *tile.BlockLoopV
 			kind:  frameWorkReconEventBlockBegin,
 			index: visitIndex32,
 		})
-		if err := c.scratch.rememberDeferredPalette(visitIndex, paletteIndex, extrasIndex, paletteMask); err != nil {
+		if err := c.scratch.rememberDeferredPalette(visitIndex, slots); err != nil {
 			return err
 		}
 		return nil

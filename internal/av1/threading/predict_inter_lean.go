@@ -415,7 +415,7 @@ func (b *FrameWorkBatch) predictBlockInterLeanPlanes(index int, visit *tile.Bloc
 	// target serves all three planes without re-zeroing it per plane.
 	var t frameWorkInterTarget
 	for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
-		if !compound && plane != FrameWorkPlaneY && visit.Prediction.SubChromaInterValid {
+		if !compound && plane != FrameWorkPlaneY && visit.Prediction.SubChromaInter != nil {
 			if err := b.predictBlockInterSubChromaPlanePtr(index, visit, plane, scratch); err != nil {
 				return err
 			}
@@ -831,7 +831,7 @@ func (b *FrameWorkBatch) reconBInter(index int, l *frameWorkLeanInter, visit *ti
 		if !ok {
 			return true, ErrInvalidBatch
 		}
-		if !compound && pred.SubChromaInterValid {
+		if !compound && pred.SubChromaInter != nil {
 			if err := b.predictBlockInterSubChromaPlanePtr(index, visit, FrameWorkPlaneU, scratch); err != nil {
 				return true, err
 			}

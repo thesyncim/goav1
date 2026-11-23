@@ -1284,10 +1284,12 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 				// cells come straight off the grid).
 				hasChroma := hasChromaForBlock(block.Size, blockX4, blockY4, req.Color)
 				if hasChroma {
-					// The refmvs path writes the cells in place into the
-					// cleared result, self cell included.
+					// The refmvs path writes the cells in place, self cell
+					// included.
 					if rt != nil {
-						result.SubChromaInterValid = rt.subChromaCells(ctx, block, req.Color.SubsamplingX, req.Color.SubsamplingY, filters, result.InterMotion.MV[0], refs.Ref[0], &result.SubChromaInter)
+						if rt.subChromaCells(ctx, block, req.Color.SubsamplingX, req.Color.SubsamplingY, filters, result.InterMotion.MV[0], refs.Ref[0], &s.subChroma) {
+							result.SubChromaInter = &s.subChroma
+						}
 					} else if sub, ok := ctx.CollectSubChromaInterCells(block.Size, blockX4, blockY4, req.Color.SubsamplingX, req.Color.SubsamplingY, filters); ok {
 						// The grid fallback returns the cells for the caller
 						// to complete with the block's own mv, reference and
@@ -1296,8 +1298,8 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 						selfCell.MV = result.InterMotion.MV[0]
 						selfCell.Reference = refs.Ref[0]
 						selfCell.InterpFilters = filters
-						result.SubChromaInter = sub
-						result.SubChromaInterValid = true
+						s.subChroma = sub
+						result.SubChromaInter = &s.subChroma
 					}
 				}
 				// The inter-intra flag keeps the warp findSamples scan from
