@@ -105,6 +105,7 @@ packages_for() {
         ./cmd/encbench \
         ./cmd/gobenchpublish \
         ./cmd/qualitybench \
+        ./internal/av1/transform/fwdgen \
         ./internal/av1/transform/itxgen \
         ./internal/benchenv \
         ./internal/guardpage \

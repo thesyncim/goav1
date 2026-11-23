@@ -219,20 +219,28 @@ func (rt *refmvsTile) row(idx int32) []refmvsBlock {
 	return rt.buf[o : o+rt.stride]
 }
 
-// splat ports dav1d's splat_mv: store one refmvs block into every 4x4 cell
-// of the block. mv packs mv[0] and mv[1]; rest packs ref[0], ref[1], bs and
-// mf, low byte first. Narrow blocks store each cell from these registers
-// (one 4- and one 8-byte store), so no template is built in memory and
-// reloaded wider than it was written; wider blocks build splat_mv_neon's
-// 48-byte four-cell pattern once and store it whole.
+// splat ports dav1d's splat_mv (splat_mv_neon): store one refmvs block into
+// every 4x4 cell of the block. mv packs mv[0] and mv[1]; rest packs ref[0],
+// ref[1], bs and mf, low byte first. As in the asm, the row pointers come
+// from the row table (sliced once for the block's rows) and each width has
+// its own straight-line store body: narrow blocks store each cell from these
+// registers (one 8- and one 4-byte store), wider ones store the 48-byte
+// four-cell pattern a whole number of times.
 func (rt *refmvsTile) splat(mv uint64, rest uint32, by4, bx4, bw4, bh4 int32) {
 	base := (by4 & 31) + 5
-	if bw4 < 4 {
-		for y := int32(0); y < bh4; y++ {
-			r := rt.row(base + y)[bx4 : bx4+bw4]
-			for i := range r {
-				r[i].set(mv, rest)
-			}
+	rows := rt.rows[base : base+bh4]
+	buf := rt.buf
+	switch bw4 {
+	case 1:
+		for _, o := range rows {
+			buf[o+bx4].set(mv, rest)
+		}
+		return
+	case 2:
+		for _, o := range rows {
+			r := (*[2]refmvsBlock)(buf[o+bx4:])
+			r[0].set(mv, rest)
+			r[1].set(mv, rest)
 		}
 		return
 	}
@@ -240,11 +248,31 @@ func (rt *refmvsTile) splat(mv uint64, rest uint32, by4, bx4, bw4, bh4 int32) {
 	for i := range pat {
 		pat[i].set(mv, rest)
 	}
-	for y := int32(0); y < bh4; y++ {
-		r := rt.row(base + y)[bx4 : bx4+bw4]
-		for len(r) >= 4 {
-			*(*[4]refmvsBlock)(r) = pat
-			r = r[4:]
+	switch bw4 {
+	case 4:
+		for _, o := range rows {
+			*(*[4]refmvsBlock)(buf[o+bx4:]) = pat
+		}
+	case 8:
+		for _, o := range rows {
+			r := (*[8]refmvsBlock)(buf[o+bx4:])
+			*(*[4]refmvsBlock)(r[0:]) = pat
+			*(*[4]refmvsBlock)(r[4:]) = pat
+		}
+	case 16:
+		for _, o := range rows {
+			r := (*[16]refmvsBlock)(buf[o+bx4:])
+			*(*[4]refmvsBlock)(r[0:]) = pat
+			*(*[4]refmvsBlock)(r[4:]) = pat
+			*(*[4]refmvsBlock)(r[8:]) = pat
+			*(*[4]refmvsBlock)(r[12:]) = pat
+		}
+	default: // 32
+		for _, o := range rows {
+			r := (*[32]refmvsBlock)(buf[o+bx4:])
+			for i := 0; i < 32; i += 4 {
+				*(*[4]refmvsBlock)(r[i:]) = pat
+			}
 		}
 	}
 }
