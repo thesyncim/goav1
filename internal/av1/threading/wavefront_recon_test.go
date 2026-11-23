@@ -102,7 +102,6 @@ func buildWavefrontReconController(t testing.TB, output *frame.Frame, sbCols int
 					t.Fatalf("txb index overflow: %d", len(scratch.reconBlocks))
 				}
 				scratch.reconBlocks = append(scratch.reconBlocks, txb)
-				scratch.reconCF = append(scratch.reconCF, frameWorkReconCF{})
 				scratch.reconEvents = append(scratch.reconEvents, frameWorkReconEvent{
 					kind:  frameWorkReconEventTXB,
 					index: blockIndex32,

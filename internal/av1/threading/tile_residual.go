@@ -2,6 +2,7 @@ package threading
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 
@@ -27,20 +28,22 @@ const frameWorkDeferReconstruction = false
 // OverrideWavefrontMinSBRowsPerWorkerForTest.
 var frameWorkWavefrontMinSBRowsPerWorker = 2
 
-// frameWorkReconEventKind distinguishes the two deferred reconstruction events:
-// a per-block predict "begin" marker and a per-TXB reconstruction.
+// frameWorkReconEventKind distinguishes the deferred reconstruction events: a
+// per-block predict "begin" marker and the two per-TXB reconstruction records.
 type frameWorkReconEventKind uint8
 
 const (
 	frameWorkReconEventBlockBegin frameWorkReconEventKind = iota
 	frameWorkReconEventTXB
+	frameWorkReconEventTXBCF
 )
 
 // frameWorkReconEvent records one deferred reconstruction step captured during
 // pass 1 (entropy decode) and replayed in pass 2 (predict+reconstruct) in
 // decode order. blockBegin events index reconVisits so pass 2 runs the predict
-// portion of BeforeBlockCoefficients; txb events index reconBlocks, whose
-// Coeffs have been deep-copied into the scratch arena.
+// portion of BeforeBlockCoefficients; txbCF events index reconTXBs, the TXBs of
+// the dav1d block walk; txb events index reconBlocks, TXBs that carry
+// quantized coefficients deep-copied into the scratch arena.
 type frameWorkReconEvent struct {
 	index         int32
 	kind          frameWorkReconEventKind
@@ -338,11 +341,10 @@ type FrameWorkTileResidualScratch struct {
 	reconEvents []frameWorkReconEvent
 	reconVisits []tile.BlockLoopVisit
 	reconBlocks []tile.BlockCoeffBlock
-	// reconCF parallels reconBlocks: the dequantized coefficients of a TXB the
-	// dav1d block walk decoded into cfArena (dav1d's frame-thread cf), or a
-	// nil slice when the TXB carries quantized coefficients instead.
-	reconCF []frameWorkReconCF
-	cfArena []int32
+	// reconTXBs holds the TXBs of the dav1d block walk: all-zero ones and those
+	// dequantized into cfArena (dav1d's frame-thread cbi and cf).
+	reconTXBs []frameWorkReconTXB
+	cfArena   []int32
 	// coefBuf is the fused path's dav1d t->cf coefficient buffer.
 	coefBuf         tile.CoefBuffer
 	coeffArena      []int16
@@ -623,7 +625,7 @@ func (s *FrameWorkTileResidualScratch) resetDeferredReconBuffers() {
 	s.reconEvents = s.reconEvents[:0]
 	s.reconVisits = s.reconVisits[:0]
 	s.reconBlocks = s.reconBlocks[:0]
-	s.reconCF = s.reconCF[:0]
+	s.reconTXBs = s.reconTXBs[:0]
 	s.cfArena = s.cfArena[:0]
 	s.coeffArena = s.coeffArena[:0]
 	s.paletteArena = s.paletteArena[:0]
@@ -1980,11 +1982,7 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.Blo
 			return err
 		}
 	} else if c.deferReconstruction {
-		var cf frameWorkReconCF
-		if dequantReady {
-			cf = frameWorkReconCF{cf: c.dequantTarget.Dst, activeRows: int32(activeRows), activeCols: int32(activeCols), dcOnly: dcOnly}
-		}
-		if err := c.bufferReconTXB(visit, block, cf, c.state.CurrentBaseQIdx); err != nil {
+		if err := c.bufferReconTXB(block, dequantReady, activeRows, activeCols, dcOnly, c.state.CurrentBaseQIdx); err != nil {
 			return err
 		}
 	} else {
@@ -2005,41 +2003,71 @@ func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.Blo
 	return nil
 }
 
-// bufferReconTXB appends a deferred TXB reconstruction event, deep-copying the
-// decoded coefficients into the scratch arena. The live decode reuses one
-// coefficient scratch slice per transform block (block.Coeffs aliases it), so
-// the buffered slice is repointed into the arena with a three-index slice that
-// caps its capacity, preventing a later append from clobbering a neighbor
-// event's coefficients. Scan is kept by reference to the immutable scan table
-// so deferred reconstruction can use the same sparse dequant path as the fused
-// path without copying per-TXB scan data.
-func (c *frameWorkTileResidualLoopController) bufferReconTXB(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, cf frameWorkReconCF, currentQIndex uint8) error {
-	blockIndex := len(c.scratch.reconBlocks)
-	blockIndex32, ok := frameWorkReconIndex(blockIndex)
+// bufferReconTXB records one transform block for the deferred reconstruction
+// pass. A TXB of the dav1d block walk (all zero, or dequantized into the cf
+// arena) is one frameWorkReconTXB. A TXB that still carries quantized
+// coefficients is buffered whole: the live decode reuses one coefficient
+// scratch slice per transform block, so the coefficients and their dirty
+// positions are deep-copied into coeffArena behind a three-index slice, and
+// Scan is kept by reference to the immutable scan table.
+func (c *frameWorkTileResidualLoopController) bufferReconTXB(block *tile.BlockCoeffBlock, dequantReady bool, activeRows, activeCols int, dcOnly bool, currentQIndex uint8) error {
+	s := c.scratch
+	if dequantReady || block.Result.AllZero {
+		rec := frameWorkReconTXB{
+			eob:       block.Result.EOB,
+			block:     block.Block,
+			plane:     block.Plane,
+			transform: block.Transform,
+			culLevel:  block.Result.CulLevel,
+			qIndex:    currentQIndex,
+		}
+		if block.Result.AllZero {
+			rec.flags = frameWorkReconTXBAllZero
+		} else {
+			// The block walk appended this TXB's coefficients to the cf arena
+			// and left the dequant target pointing at them.
+			cf := c.dequantTarget.Dst
+			off := len(s.cfArena) - len(cf)
+			if len(cf) == 0 || len(cf) > 1024 || off < 0 || uint64(off) > math.MaxUint32 ||
+				&s.cfArena[off] != &cf[0] || uint(activeRows) > 255 || uint(activeCols) > 255 {
+				return ErrInvalidBatch
+			}
+			rec.cfOff, rec.cfLen = uint32(off), uint16(len(cf))
+			rec.activeRows, rec.activeCols = uint8(activeRows), uint8(activeCols)
+			if dcOnly {
+				rec.flags = frameWorkReconTXBDCOnly
+			}
+		}
+		index, ok := frameWorkReconIndex(len(s.reconTXBs))
+		if !ok {
+			return ErrInvalidBatch
+		}
+		s.reconTXBs = append(s.reconTXBs, rec)
+		s.reconEvents = append(s.reconEvents, frameWorkReconEvent{kind: frameWorkReconEventTXBCF, index: index})
+		return nil
+	}
+	index, ok := frameWorkReconIndex(len(s.reconBlocks))
 	if !ok {
 		return ErrInvalidBatch
 	}
 	buffered := *block
-	if block.Result.AllZero || cf.cf != nil {
-		buffered.Coeffs = nil
-	} else if n := len(block.Coeffs); n > 0 {
-		dirty := c.scratch.Loop.Coeff.CoeffDirtyPositions()
+	if n := len(block.Coeffs); n > 0 {
+		dirty := s.Loop.Coeff.CoeffDirtyPositions()
 		dirtyLen := len(dirty)
 		if dirtyLen > int(^uint16(0)) {
 			return ErrInvalidBatch
 		}
-		off := len(c.scratch.coeffArena)
-		c.scratch.coeffArena = append(c.scratch.coeffArena, block.Coeffs...)
-		c.scratch.coeffArena = append(c.scratch.coeffArena, dirty...)
-		buffered.Coeffs = c.scratch.coeffArena[off : off+n : off+n+dirtyLen]
+		off := len(s.coeffArena)
+		s.coeffArena = append(s.coeffArena, block.Coeffs...)
+		s.coeffArena = append(s.coeffArena, dirty...)
+		buffered.Coeffs = s.coeffArena[off : off+n : off+n+dirtyLen]
 	} else {
 		buffered.Coeffs = nil
 	}
-	c.scratch.reconBlocks = append(c.scratch.reconBlocks, buffered)
-	c.scratch.reconCF = append(c.scratch.reconCF, cf)
-	c.scratch.reconEvents = append(c.scratch.reconEvents, frameWorkReconEvent{
+	s.reconBlocks = append(s.reconBlocks, buffered)
+	s.reconEvents = append(s.reconEvents, frameWorkReconEvent{
 		kind:          frameWorkReconEventTXB,
-		index:         blockIndex32,
+		index:         index,
 		currentQIndex: currentQIndex,
 	})
 	return nil
@@ -2051,13 +2079,13 @@ func (c *frameWorkTileResidualLoopController) bufferReconTXB(visit *tile.BlockLo
 // the CfL luma-first state machine and intra neighbor reads observe identical
 // inputs, producing byte-identical output.
 func (c *frameWorkTileResidualLoopController) replayDeferredReconstruction() error {
-	return frameWorkReplayReconEvents(&c.recon, c.scratch.reconEvents, c.scratch.reconVisits, c.scratch.reconBlocks, c.scratch.reconCF)
+	return frameWorkReplayReconEvents(&c.recon, c.scratch.reconEvents, c.scratch.reconVisits, c.scratch.reconBlocks, c.scratch.reconTXBs, c.scratch.cfArena)
 }
 
 // frameWorkReplayReconEvents runs a span of buffered reconstruction events in
 // decode order on one reconstruction state. It is the shared inner loop of both
 // the serial deferred replay and each wavefront goroutine's per-SB-row work.
-func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconEvent, visits []tile.BlockLoopVisit, blocks []tile.BlockCoeffBlock, cfs []frameWorkReconCF) error {
+func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconEvent, visits []tile.BlockLoopVisit, blocks []tile.BlockCoeffBlock, txbs []frameWorkReconTXB, cfArena []int32) error {
 	var visit *tile.BlockLoopVisit
 	for i := range events {
 		ev := &events[i]
@@ -2071,17 +2099,35 @@ func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconE
 			if err := s.predictBlockBegin(visit); err != nil {
 				return err
 			}
+		case frameWorkReconEventTXBCF:
+			idx := int(ev.index)
+			if visit == nil || ev.index < 0 || idx >= len(txbs) {
+				return ErrInvalidBatch
+			}
+			t := &txbs[idx]
+			block := tile.BlockCoeffBlock{
+				Plane:     t.plane,
+				Block:     t.block,
+				Transform: t.transform,
+				Result:    tile.TXBDecodeResult{EOB: t.eob, CulLevel: t.culLevel, AllZero: t.flags&frameWorkReconTXBAllZero != 0},
+			}
+			if block.Result.AllZero {
+				if err := s.reconstructTXBWithNonZero(visit, &block, nil, t.qIndex); err != nil {
+					return err
+				}
+				continue
+			}
+			end := uint64(t.cfOff) + uint64(t.cfLen)
+			if end > uint64(len(cfArena)) {
+				return ErrInvalidBatch
+			}
+			if err := s.reconstructTXBWithDequantized(visit, &block, cfArena[t.cfOff:end:end], int(t.activeRows), int(t.activeCols), t.flags&frameWorkReconTXBDCOnly != 0); err != nil {
+				return err
+			}
 		case frameWorkReconEventTXB:
 			idx := int(ev.index)
 			if visit == nil || ev.index < 0 || idx >= len(blocks) {
 				return ErrInvalidBatch
-			}
-			if idx < len(cfs) && cfs[idx].cf != nil {
-				cf := &cfs[idx]
-				if err := s.reconstructTXBWithDequantized(visit, &blocks[idx], cf.cf, int(cf.activeRows), int(cf.activeCols), cf.dcOnly); err != nil {
-					return err
-				}
-				continue
 			}
 			dirty := bufferedCoeffDirtyPositions(&blocks[idx])
 			if err := s.reconstructTXBWithNonZero(visit, &blocks[idx], dirty, ev.currentQIndex); err != nil {
@@ -2181,7 +2227,8 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 		events:   c.scratch.reconEvents,
 		visits:   c.scratch.reconVisits,
 		blocks:   c.scratch.reconBlocks,
-		cf:       c.scratch.reconCF,
+		txbs:     c.scratch.reconTXBs,
+		cfArena:  c.scratch.cfArena,
 	})
 	return wf.finishLanes(c.stats)
 }
@@ -2257,7 +2304,7 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, view 
 		if ft := wf.frameThread; ft != nil && !ft.waitSuperblockReferences(&st.batch, view.events[sb.start:sb.end], view.visits) {
 			return ErrFrameThreadReference
 		}
-		if err := frameWorkReplayReconEvents(st, view.events[sb.start:sb.end], view.visits, view.blocks, view.cf); err != nil {
+		if err := frameWorkReplayReconEvents(st, view.events[sb.start:sb.end], view.visits, view.blocks, view.txbs, view.cfArena); err != nil {
 			return err
 		}
 		wf.publishRowProgress(doneCur, sb.col+1)
@@ -2534,14 +2581,28 @@ func frameWorkAccumulateResidualStats(stats *FrameWorkTileResidualStats, coeff t
 	stats.EOBTotal += int32(coeff.EOBTotal)
 }
 
-// frameWorkReconCF is one deferred TXB's slot in the frame-thread cf arena
-// (dav1d ts->frame_thread[p].cf) with what itxfm_add needs to consume it.
-type frameWorkReconCF struct {
-	cf         []int32
-	activeRows int32
-	activeCols int32
-	dcOnly     bool
+// frameWorkReconTXB is one deferred TXB of the dav1d block walk: what
+// reconstruction reads of tile.BlockCoeffBlock, and the TXB's slot in the
+// frame-thread cf arena with what itxfm_add needs to consume it (dav1d keeps
+// the same facts in frame_thread.cbi and ts->frame_thread[p].cf).
+type frameWorkReconTXB struct {
+	cfOff      uint32
+	cfLen      uint16
+	eob        uint16
+	block      tile.TransformBlock
+	plane      uint8
+	transform  transform.Type
+	culLevel   uint8
+	activeRows uint8
+	activeCols uint8
+	flags      uint8
+	qIndex     uint8
 }
+
+const (
+	frameWorkReconTXBAllZero = 1 << iota
+	frameWorkReconTXBDCOnly
+)
 
 // selectDefaultBlockCoeffRequest is SelectBlockCoeffRequestPtr for the
 // job-bound production configuration (defaultCoeffPath): the block's
