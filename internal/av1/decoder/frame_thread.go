@@ -34,7 +34,7 @@ const (
 // frame immediately, and the frame takes over everything its own entropy pass
 // reads (its initial CDF and retained-CDF entries, its MV grid, the reference
 // MV grids it projects from, its post-filter side data). The next frame can
-// therefore be planned while this one is still parsing. RunStepFrameThreaded
+// therefore be planned while this one is still parsing. BeginStepFrameThreaded
 // then runs the entropy pass from these bindings; Tail finishes the
 // reconstruction and post-filter; ReleaseFrameThreadHolds returns the held
 // entries once the frame is retired.
@@ -318,13 +318,14 @@ func (s *FrameWorkState) ReleaseFrameThreadHolds(ft *FrameThreadFrame) {
 	ft.published = false
 }
 
-// RunStepFrameThreaded runs the entropy pass of a frame published by
-// PublishFrameThreaded, from the bindings the frame took over. Reconstruction
-// lanes keep running when it returns; ft.Tail completes the frame. laneNeed
-// bounds the reconstruction lanes live at once across every in-flight frame.
-// It reads the shared CDF pool only through the entries ft holds, so it may
-// run while the planning goroutine begins later frames.
-func (s *FrameWorkState) RunStepFrameThreaded(event *Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, runner threading.FrameWorkBatchRunner, ft *FrameThreadFrame, laneNeed int) error {
+// BeginStepFrameThreaded starts the entropy pass of a frame published by
+// PublishFrameThreaded, from the bindings the frame took over (dav1d's
+// dav1d_decode_frame_init / init_cdf), and queues its tile tasks on the worker
+// pool's frame-thread workers; EndStepFrameThreaded waits for the pass, and
+// ft.Tail completes the frame. It reads the shared CDF pool only through the
+// entries ft holds, so it may run while the planning goroutine begins later
+// frames.
+func (s *FrameWorkState) BeginStepFrameThreaded(event *Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, runner threading.FrameWorkBatchRunner, ft *FrameThreadFrame) error {
 	if s == nil || ft == nil || !ft.published || !ft.cdfHeld || output == nil {
 		return ErrInvalidFrameWorkState
 	}
@@ -362,7 +363,13 @@ func (s *FrameWorkState) RunStepFrameThreaded(event *Event, step FrameWorkStep, 
 		// run as reconstruction rows complete.
 		ft.StartPost()
 	}
-	if err := workerPool.ExecuteFrameWorkRunnerFrameThread(batches[:prepared.BatchCount], jobs[:prepared.JobCount], prepared.Base, runner, laneNeed); err != nil {
+	return workerPool.QueueFrameWorkRunnerFrameThread(batches[:prepared.BatchCount], jobs[:prepared.JobCount], prepared.Base, runner)
+}
+
+// EndStepFrameThreaded waits for the entropy pass BeginStepFrameThreaded
+// queued; the reconstruction tasks keep running when it returns.
+func (s *FrameWorkState) EndStepFrameThreaded(ft *FrameThreadFrame) error {
+	if err := ft.Recon.WaitParse(); err != nil {
 		return err
 	}
 	if ft.retainedValid != ft.willRetain {

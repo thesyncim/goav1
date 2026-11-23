@@ -222,7 +222,10 @@ func (wf *frameWorkReconWavefront) finishLanes(stats *FrameWorkTileResidualStats
 func (wf *frameWorkReconWavefront) cancelLanes() {
 	wf.abortProgress()
 	if ft := wf.frameThread; ft != nil {
+		// The cancelling pass runs on a frame-thread worker: run other tasks
+		// until the tile's reconstruction task left the queue.
 		ft.tasks.wake()
+		ft.helpUntilDone(wf)
 	}
 	wf.wg.Wait()
 }

@@ -88,8 +88,10 @@ type decoderFrameContext struct {
 	motion     internalthreading.FrameThreadMotion
 	cdfWait    *internalthreading.FrameProgress
 	cdfOut     *internalthreading.FrameProgress
-	segWait    *internalthreading.FrameProgress
-	segOut     *internalthreading.FrameProgress
+	// init is the frame's init task on the frame-thread workers.
+	init    decoderFrameInit
+	segWait *internalthreading.FrameProgress
+	segOut  *internalthreading.FrameProgress
 
 	// Tail hand-off. busy is owned by the decode goroutine; start and done
 	// order the tail goroutine's writes (output, tailErr) before the next read.
@@ -111,10 +113,9 @@ type decoderFrameContext struct {
 // tail goroutine finishes reconstruction and post-filter. Outputs leave the
 // ring in submission order when a context is reused or drained.
 type decoderFramePipeline struct {
-	d        *Decoder
-	fcs      []decoderFrameContext
-	next     int
-	laneNeed int
+	d    *Decoder
+	fcs  []decoderFrameContext
+	next int
 	// seq numbers the submitted frames in decode order.
 	seq uint64
 
@@ -158,6 +159,7 @@ func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
 	for range fc.start {
 		fc.postStarted = false
 		err := p.parseFrame(fc)
+		fc.ft.Recon.EndEntropy(p.d.workerPool)
 		parsed := internalthreading.FrameProgressDone
 		if err != nil {
 			parsed = internalthreading.FrameProgressError
@@ -473,9 +475,7 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 	}
 	fc.ft.Recon.Reset()
 	fc.ft.Recon.Rows = &fc.reconRows
-	p.seq++
-	fc.ft.Recon.Seq = p.seq
-	fc.postParallel.BindTasks(d.workerPool, p.seq)
+
 	fc.reconRows.Reset()
 	fc.parsed.Reset()
 	var references []*Frame
@@ -553,6 +553,12 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 	fc.target = output
 	fc.references = references
 	fc.show = event.FrameHeader.ShowFrame
+	// Every frame handed to its context goroutine gets the next decode-order
+	// number: the workers start the frames' entropy passes in that order.
+	p.seq++
+	fc.ft.Recon.Seq = p.seq
+	fc.ft.Recon.EntropyOut = [2]*internalthreading.FrameProgress{fc.motion.Progress, fc.segOut}
+	fc.postParallel.BindTasks(d.workerPool, p.seq)
 	handed = true
 	fc.busy = true
 	// The context goroutine runs the entropy pass, then the tail; the next
@@ -682,7 +688,6 @@ func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStr
 	p := &decoderFramePipeline{
 		d:        d,
 		fcs:      make([]decoderFrameContext, n),
-		laneNeed: n * workers,
 		progress: make([]internalthreading.FrameProgress, surfaceCount),
 		ready:    make([]*Frame, 0, 2*(RefFrames+n)),
 	}
@@ -699,6 +704,14 @@ func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStr
 		for i := range set {
 			set[i].Init()
 			set[i].Publish(internalthreading.FrameProgressDone)
+		}
+	}
+	// The frame-thread workers take the init tasks once the CDF and
+	// segmentation entries are final, and the entropy passes wait for the
+	// references' MV_REF rows.
+	for _, set := range [][]internalthreading.FrameProgress{p.mvProgress, p.cdfProgress, p.segProgress} {
+		for i := range set {
+			set[i].BindTaskWake(d.workerPool)
 		}
 	}
 	runtime := DecoderFrameWorkResidualEventRuntime{
@@ -735,6 +748,7 @@ func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStr
 		}
 		fc.start = make(chan struct{})
 		fc.done = make(chan struct{})
+		fc.init.done = make(chan struct{}, 1)
 		fc.postStart = make(chan struct{})
 		fc.postDone = make(chan error)
 		fc.parsed.Init()
@@ -828,20 +842,65 @@ func decoderFramePipelineEventNeedsDrain(event *DecoderEvent) bool {
 // waits for the references' MV_REF rows and publishes its own.
 func (p *decoderFramePipeline) parseFrame(fc *decoderFrameContext) error {
 	d := p.d
-	if fc.cdfWait != nil && !fc.cdfWait.Wait(internalthreading.FrameProgressDone) {
-		return internalthreading.ErrFrameThreadReference
-	}
-	if fc.segWait != nil && !fc.segWait.Wait(internalthreading.FrameProgressDone) {
-		return internalthreading.ErrFrameThreadReference
-	}
 	var afterParse func()
 	if decoderFramePipelineParseHook != nil {
 		afterParse = decoderFramePipelineParseHook(p, fc, fc.references)
 		defer p.hookMu.Unlock()
 	}
-	err := d.state.RunStepFrameThreaded(&fc.event, fc.step, d.workerPool, fc.target, fc.references, fc.scratch.Jobs, fc.scratch.Batches, &fc.batch, &fc.ft, p.laneNeed)
+	fc.init = decoderFrameInit{p: p, fc: fc, done: fc.init.done}
+	if !d.workerPool.AddFrameInitTask(fc.ft.Recon.Seq, &fc.init) {
+		return internalthreading.ErrPoolClosed
+	}
+	<-fc.init.done
+	err := fc.init.err
+	if err == nil {
+		err = d.state.EndStepFrameThreaded(&fc.ft)
+	}
 	if afterParse != nil {
 		afterParse()
 	}
 	return err
+}
+
+// decoderFrameInit is a frame's init task (dav1d's DAV1D_TASK_TYPE_INIT and
+// INIT_CDF, run by a frame-thread worker before any decoding task): once the
+// frame's initial frame context and the segmentation map it reads are final
+// (in_cdf.progress), it binds the frame's entropy pass and queues its tile
+// tasks.
+type decoderFrameInit struct {
+	p       *decoderFramePipeline
+	fc      *decoderFrameContext
+	claimed bool
+	err     error
+	done    chan struct{}
+}
+
+// Claim implements internalthreading.FrameTask.
+func (t *decoderFrameInit) Claim() (int, bool, bool) {
+	fc := t.fc
+	if t.claimed ||
+		fc.cdfWait != nil && !fc.cdfWait.Ready(internalthreading.FrameProgressDone) ||
+		fc.segWait != nil && !fc.segWait.Ready(internalthreading.FrameProgressDone) {
+		return 0, false, false
+	}
+	t.claimed = true
+	return 0, true, false
+}
+
+// Run implements internalthreading.FrameTask.
+func (t *decoderFrameInit) Run(int, int) {
+	fc := t.fc
+	d := t.p.d
+	if fc.cdfWait != nil && !fc.cdfWait.Wait(internalthreading.FrameProgressDone) ||
+		fc.segWait != nil && !fc.segWait.Wait(internalthreading.FrameProgressDone) {
+		t.err = internalthreading.ErrFrameThreadReference
+		return
+	}
+	t.err = d.state.BeginStepFrameThreaded(&fc.event, fc.step, d.workerPool, fc.target, fc.references, fc.scratch.Jobs, fc.scratch.Batches, &fc.batch, &fc.ft)
+}
+
+// Finish implements internalthreading.FrameTask.
+func (t *decoderFrameInit) Finish(int) bool {
+	t.done <- struct{}{}
+	return true
 }
