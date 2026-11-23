@@ -21,6 +21,10 @@ The project has not published a release tag yet.
   described in [docs/quality-and-parity.md](docs/quality-and-parity.md).
 - Hot paths are designed around caller-owned buffers, reusable frame pools,
   explicit scratch sizing, and zero steady-state allocations.
+- `WithFrameSizeLimit` makes the high-level decoders reject streams whose
+  frames exceed a pixel count (dav1d's `frame_size_limit`), and RTP payloads
+  are held to the same 64-OBU bound as low-overhead ones, so hostile input
+  cannot make a decoder allocate thousands of times its size.
 - Performance work remains active, with dav1d/libaom source-shaped scalar code,
   compiler/allocation guardrails, and initial SIMD dispatch/kernels.
 - With more than one worker, low-overhead decoders (NewDecoder,

@@ -131,6 +131,9 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 	if cfg.workers < 1 {
 		return nil, fmt.Errorf("goav1: workers must be >= 1, got %d", cfg.workers)
 	}
+	if cfg.frameSizeLimit < 0 {
+		return nil, fmt.Errorf("goav1: frame size limit must be >= 0, got %d", cfg.frameSizeLimit)
+	}
 	if source.len() == 0 {
 		return nil, errors.New("goav1: no payloads to decode")
 	}
@@ -140,8 +143,7 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 		return nil, fmt.Errorf("goav1: worker pool: %w", err)
 	}
 
-	// The probes grow probeEvents to the largest per-payload event count.
-	probeEvents := make([]DecoderEvent, 64)
+	probeEvents := make([]DecoderEvent, decoderMaxPayloadEvents)
 	probeSpans := make([]TileSpan, MaxTiles)
 	probeJobs := make([]TileJob, MaxTiles)
 	probeBatches := make([]TileBatch, MaxTiles)
@@ -151,10 +153,10 @@ func newLayeredDecoderFromPayloadSourceKind(source decoderPayloadSource, kind de
 	switch kind {
 	case decoderPayloadLowOverhead:
 		plan, err = decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(
-			DecoderStream{}, source, cfg.workers, probePayload, probeEvents, probeSpans, probeJobs, probeBatches)
+			DecoderStream{}, source, cfg.workers, cfg.frameSizeLimit, probePayload, probeEvents, probeSpans, probeJobs, probeBatches)
 	case decoderPayloadRTP:
 		plan, err = decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(
-			DecoderStream{}, source, cfg.workers, probeEvents, probeSpans, probeJobs, probeBatches)
+			DecoderStream{}, source, cfg.workers, cfg.frameSizeLimit, probeEvents, probeSpans, probeJobs, probeBatches)
 	default:
 		err = ErrDecoderInvalidFrameWorkState
 	}
@@ -278,14 +280,14 @@ func decoderLayeredCodedFormatsFromSource(source decoderPayloadSource, kind deco
 	switch kind {
 	case decoderPayloadLowOverhead:
 		var stream DecoderStream
-		var events []DecoderEvent
+		events := make([]DecoderEvent, decoderMaxPayloadEvents)
 		err := source.forEachPayload(payloadBuf, func(payload []byte) error {
 			eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(payload)
 			if err != nil {
 				return err
 			}
-			if len(events) < eventCount {
-				events = make([]DecoderEvent, eventCount)
+			if eventCount > decoderMaxPayloadEvents {
+				return ErrDecoderEventBufferTooSmall
 			}
 			sequence, _ := stream.SequenceHeader()
 			count, err := stream.PushLowOverhead(payload, events[:eventCount])

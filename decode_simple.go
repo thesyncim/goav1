@@ -104,11 +104,21 @@ const (
 	decoderPayloadRTP
 )
 
+// decoderMaxPayloadEvents bounds the OBUs one payload may carry. Every OBU is
+// parsed into a DecoderEvent of several kilobytes, so without a bound a payload
+// of two-byte OBUs would make the decoder allocate thousands of times its size.
+const decoderMaxPayloadEvents = 64
+
 // decoderConfig holds resolved construction options.
 type decoderConfig struct {
-	workers       int
-	maxFrameDelay int
+	workers        int
+	maxFrameDelay  int
+	frameSizeLimit int
 }
+
+// ErrDecoderFrameSizeLimit reports a stream that carries a frame larger than
+// the limit set with WithFrameSizeLimit.
+var ErrDecoderFrameSizeLimit = errors.New("goav1: frame size exceeds the configured limit")
 
 // Option configures a Decoder at construction time.
 type Option func(*decoderConfig)
@@ -123,6 +133,30 @@ type Option func(*decoderConfig)
 // call).
 func WithWorkers(n int) Option {
 	return func(c *decoderConfig) { c.workers = n }
+}
+
+// WithFrameSizeLimit makes the decoder reject a stream that carries a frame of
+// more than pixels luma samples (upscaled width times height) with
+// ErrDecoderFrameSizeLimit, as dav1d's frame_size_limit does. A decoder sizes
+// its buffers from the stream's own headers when it is constructed, so set a
+// limit whenever the input is not trusted. Zero, the default, means no limit.
+func WithFrameSizeLimit(pixels int) Option {
+	return func(c *decoderConfig) { c.frameSizeLimit = pixels }
+}
+
+// decoderCheckFrameSizeLimit reports ErrDecoderFrameSizeLimit when one of
+// events carries a frame size above limit luma samples.
+func decoderCheckFrameSizeLimit(limit int, events []DecoderEvent) error {
+	if limit <= 0 {
+		return nil
+	}
+	for i := range events {
+		size := &events[i].FrameSize
+		if uint64(max(size.CodedWidth, size.UpscaledWidth))*uint64(size.Height) > uint64(limit) {
+			return ErrDecoderFrameSizeLimit
+		}
+	}
+	return nil
 }
 
 func resolveConfig(opts []Option) decoderConfig {
@@ -180,6 +214,9 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	if cfg.maxFrameDelay < 0 {
 		return nil, fmt.Errorf("goav1: max frame delay must be >= 0, got %d", cfg.maxFrameDelay)
 	}
+	if cfg.frameSizeLimit < 0 {
+		return nil, fmt.Errorf("goav1: frame size limit must be >= 0, got %d", cfg.frameSizeLimit)
+	}
 	if source.len() == 0 {
 		return nil, errors.New("goav1: no payloads to decode")
 	}
@@ -192,8 +229,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	// Probe the stream to learn how much scratch the runner will need and to
 	// bind the sequence/frame headers used to derive the pool format.
 	var probeStream DecoderStream
-	// The probes grow probeEvents to the largest per-payload event count.
-	probeEvents := make([]DecoderEvent, 64)
+	probeEvents := make([]DecoderEvent, decoderMaxPayloadEvents)
 	probeSpans := make([]TileSpan, MaxTiles)
 	probeJobs := make([]TileJob, MaxTiles)
 	probeBatches := make([]TileBatch, MaxTiles)
@@ -203,12 +239,12 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	switch kind {
 	case decoderPayloadLowOverhead:
 		plan, err = decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(
-			probeStream, source, cfg.workers, probePayload,
+			probeStream, source, cfg.workers, cfg.frameSizeLimit, probePayload,
 			probeEvents, probeSpans, probeJobs, probeBatches,
 		)
 	case decoderPayloadRTP:
 		plan, err = decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(
-			probeStream, source, cfg.workers, probeEvents, probeSpans, probeJobs, probeBatches,
+			probeStream, source, cfg.workers, cfg.frameSizeLimit, probeEvents, probeSpans, probeJobs, probeBatches,
 		)
 	default:
 		err = ErrDecoderInvalidFrameWorkState
