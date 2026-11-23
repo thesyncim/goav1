@@ -92,13 +92,19 @@ func arm64Col(w *writer, nw *network, fn, tab string, shl bool, rnd arm64Round, 
 
 // arm64Row writes a row pass over the fwdLanes rows from h of the
 // transposed column output in (in[c*stride+h], c < n). The outputs are
-// rounded when rnd is set and written to out[k*stride+h]; in and out may be
-// the same slice, every input being loaded before the first store.
-func arm64Row(w *writer, nw *network, sig, tab, in, out string, rnd *arm64Round, stride int) {
+// rounded when rnd is set and written to out[k*outStride+h]; in and out may
+// be the same slice (with equal strides), every input being loaded before
+// the first store.
+// A rect row pass scales every output by sqrt(2) as fwd_txfm2d_c does for
+// 2:1 blocks: round_shift(v*NewSqrt2, NewSqrt2Bits).
+func arm64Row(w *writer, nw *network, sig, tab, in, out string, rnd *arm64Round, rect bool, stride, outStride int) {
 	w.line("func %s {", sig)
 	w.line("\tt := %s", tab)
 	if rnd != nil {
 		w.line("\tr, s := %s, %s", rnd.add, rnd.shr)
+	}
+	if rect {
+		w.line("\tq, qr, qs := fwdConst5793, fwdRound12, fwdShrNeg12")
 	}
 	n := nw.n
 	w.line("\tsrc := (*[%d*%d + fwdLanes]int32)(%s[h:])", n-1, stride, in)
@@ -109,14 +115,17 @@ func arm64Row(w *writer, nw *network, sig, tab, in, out string, rnd *arm64Round,
 	dst := "src"
 	if out != in {
 		dst = "dst"
-		w.line("\tdst := (*[%d*%d + fwdLanes]int32)(%s[h:])", len(nw.out)-1, stride, out)
+		w.line("\tdst := (*[%d*%d + fwdLanes]int32)(%s[h:])", len(nw.out)-1, outStride, out)
 	}
 	for k, v := range nw.out {
 		val := v.name
 		if rnd != nil {
 			val += ".Add(r).Shift(s)"
 		}
-		w.line("\tfwdStoreI32Arr(%s[:], %d*%d, %s)", dst, k, stride, val)
+		if rect {
+			val += ".MulAdd(q, qr).Shift(qs)"
+		}
+		w.line("\tfwdStoreI32Arr(%s[:], %d*%d, %s)", dst, k, outStride, val)
 	}
 	w.line("}")
 }

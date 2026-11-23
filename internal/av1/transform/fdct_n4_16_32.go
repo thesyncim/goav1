@@ -19,22 +19,19 @@ package transform
 //
 // The coefficients are written in the decoder layout coeff[col*n+row], and
 // only the n/4 x n/4 low block is written: the caller zeroes the rest (the
-// encoder's N4 path clears it before quantizing).
+// encoder's N4 path clears it before quantizing). The kernels are bound per
+// build (fdct_n4_16_32_generic.go, fdct_n4_16_32_gosimd_arm64.go).
 
 // ForwardDCT16x16N48BitTrusted writes the 4x4 low coefficients of the 16x16
 // DCT_DCT of an 8-bit residual block (stride 16).
 func ForwardDCT16x16N48BitTrusted(coeff *[256]int32, residual *[256]int16) {
-	var buf [4 * 16]int32
-	forwardDCT16x16N4Col(&buf, residual)
-	fwd16x16N4Rows(coeff, &buf, 0xf)
+	forwardDCT16x16N4(coeff, residual)
 }
 
 // ForwardDCT32x32N48BitTrusted writes the 8x8 low coefficients of the 32x32
 // DCT_DCT of an 8-bit residual block (stride 32).
 func ForwardDCT32x32N48BitTrusted(coeff *[1024]int32, residual *[1024]int16) {
-	var buf [8 * 32]int32
-	forwardDCT32x32N4Col(&buf, residual)
-	fwd32x32N4Rows(coeff, &buf, 0xff)
+	forwardDCT32x32N4(coeff, residual)
 }
 
 // ForwardDCT16x16N4RowSkip8BitTrusted is ForwardDCT16x16RowSkip8BitTrusted
@@ -43,14 +40,7 @@ func ForwardDCT32x32N48BitTrusted(coeff *[1024]int32, residual *[1024]int16) {
 // low coefficients are written and 1 returned. A zero result means every N4
 // coefficient quantizes to zero and coeff was not written.
 func ForwardDCT16x16N4RowSkip8BitTrusted(coeff *[256]int32, residual *[256]int16, thr0, thr int32) uint8 {
-	var buf [4 * 16]int32
-	forwardDCT16x16N4Col(&buf, residual)
-	mask := fwdRowSkipMaskRows(buf[:], 16, 4, thr0, thr, fwdRowSkipSlack16)
-	if mask == 0 {
-		return 0
-	}
-	fwd16x16N4Rows(coeff, &buf, mask)
-	return mask
+	return forwardDCT16x16N4RowSkip(coeff, residual, thr0, thr)
 }
 
 // ForwardDCT32x32N4RowSkip8BitTrusted is ForwardDCT16x16N4RowSkip8BitTrusted
@@ -58,14 +48,7 @@ func ForwardDCT16x16N4RowSkip8BitTrusted(coeff *[256]int32, residual *[256]int16
 // 1), the 8x8 low coefficients. A group that is not live writes zeros when
 // the other one is.
 func ForwardDCT32x32N4RowSkip8BitTrusted(coeff *[1024]int32, residual *[1024]int16, thr0, thr int32) uint8 {
-	var buf [8 * 32]int32
-	forwardDCT32x32N4Col(&buf, residual)
-	mask := fwdRowSkipMaskRows(buf[:], 32, 8, thr0, thr, fwdRowSkipSlack32)
-	if mask == 0 {
-		return 0
-	}
-	fwd32x32N4Rows(coeff, &buf, mask)
-	return mask
+	return forwardDCT32x32N4RowSkip(coeff, residual, thr0, thr)
 }
 
 // fwdRowSkipMaskRows is fwdRowSkipMask over the first rows rows of an
