@@ -905,6 +905,22 @@ func (r *Reader) ReadCDF3Unchecked(cdf *CDF) int {
 	return r.readCDF3Known(&cdf.values)
 }
 
+// ReadCDF5Unchecked, ReadCDF7Unchecked and ReadCDFWideUnchecked decode one
+// symbol from a five-, seven- or more-than-eight-symbol CDF using cursor
+// state: dav1d's msac_decode_symbol_adapt8 / adapt16 at a call site that
+// knows the count. The caller must prove cdf has that many symbols.
+func (c *Cursor) ReadCDF5Unchecked(cdf *CDF) int {
+	return c.readCDF5Known(&cdf.values)
+}
+
+func (c *Cursor) ReadCDF7Unchecked(cdf *CDF) int {
+	return c.readCDF7Known(&cdf.values)
+}
+
+func (c *Cursor) ReadCDFWideUnchecked(cdf *CDF, symbols int) int {
+	return c.readSymbolKnown(&cdf.values, symbols)
+}
+
 // ReadCDF3Unchecked decodes one symbol from a three-symbol CDF using cursor
 // state. The caller must prove c and cdf are non-nil and cdf has exactly three
 // symbols.

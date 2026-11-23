@@ -224,41 +224,45 @@ func filterIntraTransformMode(mode FilterIntraMode) IntraMode {
 // read_coef_tree and recon_b_*: the a/l coefficient contexts and, for inter
 // luma, txtp_map. visW/visH are the frame-clipped extent in 4x4 units. A coded
 // TXB is dequantized with dq into cf in raster scan order (cf must be zero over
-// the scan area when cfZeroed, see decodeCoefTokens).
+// the scan area when cfZeroed, see decodeCoefTokens). One msac cursor carries
+// every read from the skip flag to the last sign.
 func (b *CoefBlock) DecodeCoefs(plane uint8, size TransformSize, x4, y4, visW, visH int, cf *[1024]int32, cfZeroed bool, dq *CoefDequant) (CoefResult, error) {
 	s := b.s
 	if size >= transformSizeCount || plane > 2 {
 		return CoefResult{}, ErrInvalidDecodeState
 	}
-	txDims := &transformDimensions[size]
-	tw4, th4, bd := int(txDims.W4), int(txDims.H4), &b.blockDims[plane]
-	txbCtx := b.ctx.txbContextTrusted(plane, x4, y4, tw4, th4, int(bd.W4), int(bd.H4))
+	tDim := &transformDimensions[size]
+	tw4, th4, bd := int(tDim.W4), int(tDim.H4), &b.blockDims[plane]
+	if x4+tw4 > MaxBlockModeSlots || y4+th4 > MaxBlockModeSlots {
+		return CoefResult{}, ErrInvalidDecodeState
+	}
 	geo := &coeffGeometryTable[size]
-	if !geo.valid || txbCtx.TXBSkipContext >= TXBSkipContexts {
+	if !geo.valid {
 		return CoefResult{}, ErrInvalidDecodeState
 	}
 	coeffPlane := CoeffPlaneY
 	if plane != 0 {
 		coeffPlane = CoeffPlaneUV
 	}
+	var c entropy.Cursor
+	c.Load(&s.Reader)
 
 	// does this block have any non-zero coefficients
-	allSkip := s.Reader.ReadBinaryCDFUnchecked(&b.cdfs.TXBSkip[geo.txCtx][txbCtx.TXBSkipContext]) != 0
+	sctx := b.ctx.coefSkipCtx(plane, x4, y4, tw4, th4, int(bd.W4), int(bd.H4))
+	allSkip := c.ReadBinaryCDFUnchecked(&b.cdfs.TXBSkip[geo.txCtx][sctx]) != 0
 	var r CoefResult
 	r.Txtp = transform.TypeDCTDCT
 	if !allSkip {
 		var err error
-		if r.Txtp, err = b.readTxtp(plane, size, x4, y4); err != nil {
+		if r.Txtp, err = b.readTxtp(&c, plane, size, tDim, x4, y4); err != nil {
 			return CoefResult{}, err
 		}
 	}
 	if plane == 0 && b.txtpMap != nil {
-		if x4+tw4 > MaxBlockModeSlots || y4+th4 > MaxBlockModeSlots {
-			return CoefResult{}, ErrInvalidDecodeState
-		}
 		fillTxtpMap(b.txtpMap, x4, y4, tw4, th4, r.Txtp)
 	}
 	if allSkip {
+		c.CommitStateTo(&s.Reader)
 		r.TXB.AllZero = true
 		b.ctx.setTXBContextKnown(plane, x4, y4, tw4, th4, visW, visH, 0)
 		return r, nil
@@ -270,6 +274,11 @@ func (b *CoefBlock) DecodeCoefs(plane uint8, size TransformSize, x4, y4, visW, v
 			return CoefResult{}, ErrInvalidDecodeState
 		}
 	}
+	eob, rc, dcTok := decodeCoefTokens(&c, b.cdfs, size, geo, coeffPlane, r.Txtp, class, cf, cfZeroed, &b.scratch.Coeff.CoefLevels)
+	var dcSignCDF *entropy.CDF
+	if dcTok != 0 {
+		dcSignCDF = &b.cdfs.DCSign[coeffPlane][b.ctx.coefDCSignCtx(plane, x4, y4, tw4, th4)]
+	}
 	// dav1d's dq_shift: imax(0, t_dim->ctx - 2).
 	txScale := uint8(0)
 	if geo.txCtx > 2 {
@@ -279,14 +288,12 @@ func (b *CoefBlock) DecodeCoefs(plane uint8, size TransformSize, x4, y4, visW, v
 	if dq.QM != nil && r.Txtp < transform.TypeIDTX {
 		qm = dq.QM[size]
 	}
-	var c entropy.Cursor
-	c.Load(&s.Reader)
-	t := decodeCoefTokens(&c, b.cdfs, size, geo, coeffPlane, r.Txtp, class, txbCtx.DCSignContext, cf, cfZeroed, &b.scratch.Coeff.CoefLevels, coefDequant{
+	t := decodeCoefResidual(&c, dcSignCDF, eob, rc, dcTok, cf, coefDequant{
 		dc:    dq.DC,
 		ac:    dq.AC,
 		shift: txScale,
 		cfMax: dq.Max,
-	}, qm)
+	}, qm, geo)
 	c.CommitStateTo(&s.Reader)
 	r.TXB = TXBDecodeResult{EOB: uint16(t.eob + 1), CulLevel: t.culLevel}
 	r.ActiveRows, r.ActiveCols = uint8(t.activeRows), uint8(t.activeCols)
@@ -323,16 +330,24 @@ func fillTxtpMap(m *[MaxBlockModeSlots][MaxBlockModeSlots]transform.Type, x4, y4
 }
 
 // readTxtp is the transform-type section of dav1d's decode_coefs for a
-// non-skipped TXB: chroma types are derived (intra from the UV mode, inter
-// from the co-located luma type in txtp_map), luma types are read from the
-// per-size set unless qidx is zero. A lossless TXB is a WHT_WHT.
-func (b *CoefBlock) readTxtp(plane uint8, size TransformSize, x4, y4 int) (transform.Type, error) {
-	if b.Lossless {
-		return transform.TypeWHTWHT, nil
+// non-skipped TXB: lossless TXBs are WHT_WHT, 64-sample (and intra
+// 32-sample) sides only allow DCT_DCT, chroma types are derived (intra from
+// the UV mode, inter from the co-located luma type in txtp_map), and luma
+// types are read from the set CDF dav1d indexes by t_dim->min unless qidx is
+// zero.
+func (b *CoefBlock) readTxtp(c *entropy.Cursor, plane uint8, size TransformSize, tDim *TransformDimensions, x4, y4 int) (transform.Type, error) {
+	intra := uint8(0)
+	if b.Intra {
+		intra = 1
 	}
-	if plane != 0 {
+	switch {
+	case b.Lossless:
+		return transform.TypeWHTWHT, nil
+	case tDim.Max+intra >= 4:
+		return transform.TypeDCTDCT, nil
+	case plane != 0:
 		if b.Intra {
-			return IntraChromaTransformType(b.chromaMode, size, b.reduced)
+			return txtpFromUVMode[b.chromaMode%chromaIntraModeCount], nil
 		}
 		// dav1d's recon_b_inter: txtp_map[(by4 + (y << ss_ver)) * 32 +
 		// bx4 + (x << ss_hor)], with x/y the TXB offset in the chroma block.
@@ -341,36 +356,56 @@ func (b *CoefBlock) readTxtp(plane uint8, size TransformSize, x4, y4 int) (trans
 		if uint(lx) >= MaxBlockModeSlots || uint(ly) >= MaxBlockModeSlots {
 			return 0, ErrInvalidDecodeState
 		}
-		luma := b.txtpMap[ly][lx]
-		return uvInterTransformType(size, luma)
-	}
-	if b.qZero {
+		return uvInterTxtp(tDim, b.txtpMap[ly][lx]), nil
+	case b.qZero:
 		return transform.TypeDCTDCT, nil
 	}
-	inter := 0
-	if !b.Intra {
-		inter = 1
-	}
-	p := &txTypeReadPlans[inter][txTypePlanReduced(b.reduced)][size]
-	if !p.ok {
-		return 0, ErrInvalidDecodeState
-	}
-	if p.symbols <= 1 {
-		return transform.TypeDCTDCT, nil
-	}
-	var cdf *entropy.CDF
-	var err error
+	sq := tDim.Min & 3
+	cdfs := b.txCDFs
 	if b.Intra {
-		cdf, err = b.txCDFs.IntraCDF(p.index, p.square, b.lumaMode, p.symbols)
-	} else {
-		cdf, err = b.txCDFs.InterCDF(p.index, p.square, p.symbols)
+		mode := b.lumaMode % intraModeCount
+		if b.reduced || sq == 2 {
+			return extTXTypeInv[ExtTXSetDTT4IDTX][c.ReadCDF5Unchecked(&cdfs.Intra[2][sq][mode])&15], nil
+		}
+		return extTXTypeInv[ExtTXSetDTT4IDTX1DDCT][c.ReadCDF7Unchecked(&cdfs.Intra[1][sq][mode])&15], nil
 	}
-	if err != nil {
-		return 0, err
+	switch {
+	case b.reduced || tDim.Max == 3:
+		return extTXTypeInv[ExtTXSetDCTIDTX][c.ReadBinaryCDFUnchecked(&cdfs.Inter[3][sq])&1], nil
+	case sq == 2:
+		return extTXTypeInv[ExtTXSetDTT9IDTX1DDCT][c.ReadCDFWideUnchecked(&cdfs.Inter[2][sq], 12)&15], nil
 	}
-	symbol, err := b.s.ReadSymbol(cdf)
-	if err != nil {
-		return 0, err
+	return extTXTypeInv[ExtTXSetAll16][c.ReadCDFWideUnchecked(&cdfs.Inter[1][sq], 16)&15], nil
+}
+
+// txtpFromUVMode is dav1d_txtp_from_uvmode (src/tables.c).
+var txtpFromUVMode = [chromaIntraModeCount]transform.Type{
+	ChromaIntraModeVertical:         transform.TypeADSTDCT,
+	ChromaIntraModeHorizontal:       transform.TypeDCTADST,
+	ChromaIntraModeD135:             transform.TypeADSTADST,
+	ChromaIntraModeD113:             transform.TypeADSTDCT,
+	ChromaIntraModeD157:             transform.TypeDCTADST,
+	ChromaIntraModeD203:             transform.TypeDCTADST,
+	ChromaIntraModeD67:              transform.TypeADSTDCT,
+	ChromaIntraModeSmooth:           transform.TypeADSTADST,
+	ChromaIntraModeSmoothVertical:   transform.TypeADSTDCT,
+	ChromaIntraModeSmoothHorizontal: transform.TypeDCTADST,
+	ChromaIntraModePaeth:            transform.TypeADSTADST,
+}
+
+// uvInterTxtp is dav1d's get_uv_inter_txtp (src/env.h).
+func uvInterTxtp(uvtDim *TransformDimensions, ytxtp transform.Type) transform.Type {
+	if uvtDim.Max == 3 {
+		if ytxtp == transform.TypeIDTX {
+			return transform.TypeIDTX
+		}
+		return transform.TypeDCTDCT
 	}
-	return p.typeFromSymbol(symbol)
+	if uvtDim.Min == 2 {
+		switch ytxtp {
+		case transform.TypeHFlipADST, transform.TypeVFlipADST, transform.TypeHADST, transform.TypeVADST:
+			return transform.TypeDCTDCT
+		}
+	}
+	return ytxtp
 }

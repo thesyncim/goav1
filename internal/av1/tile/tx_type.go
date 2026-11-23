@@ -399,31 +399,6 @@ func intraModeTransformType(mode IntraMode) (transform.Type, error) {
 	}
 }
 
-// uvInterTransformType derives an inter chroma transform type from the
-// co-located luma type, as dav1d's get_uv_inter_txtp does. A chroma TXB whose
-// square-up size is 32 only allows DCT_DCT and IDTX; a square 16 one excludes
-// the 1D ADST and FLIPADST types; every smaller size allows all sixteen. The
-// luma type was already read from a reduced set when reduced_tx_set is on, so
-// those three rules cover every allowed-set check.
-func uvInterTransformType(size TransformSize, luma transform.Type) (transform.Type, error) {
-	if !size.Valid() || !luma.Valid() {
-		return 0, ErrInvalidDecodeState
-	}
-	switch {
-	case transformSizeSquareUp[size] == TransformSize32x32:
-		if luma == transform.TypeIDTX {
-			return transform.TypeIDTX, nil
-		}
-		return transform.TypeDCTDCT, nil
-	case transformSizeSquare[size] == TransformSize16x16:
-		switch luma {
-		case transform.TypeVADST, transform.TypeHADST, transform.TypeVFlipADST, transform.TypeHFlipADST:
-			return transform.TypeDCTDCT, nil
-		}
-	}
-	return luma, nil
-}
-
 // txTypeReadPlan is everything the luma tx_type read derives from the
 // transform size alone: the allowed set, its CDF index and symbol count and
 // the square size that selects the CDF. dav1d hard-codes the same choices in

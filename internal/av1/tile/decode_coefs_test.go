@@ -21,12 +21,19 @@ func decodeTXBForTest(s *DecodeState, cdfs *CoeffCDFs, size TransformSize, plane
 	var cf [1024]int32
 	var levels [coefLevelsLen]uint8
 	c := s.Reader.Cursor()
-	r := decodeCoefTokens(&c, cdfs, size, geo, plane, transform.TypeDCTDCT, class, dcSignCtx, &cf, true, &levels, coefDequant{dc: 1, ac: 1, cfMax: 1 << 24}, nil)
+	r := decodeCoefsForTest(&c, cdfs, size, geo, plane, transform.TypeDCTDCT, class, dcSignCtx, &cf, true, &levels, coefDequant{dc: 1, ac: 1, cfMax: 1 << 24}, nil)
 	c.CommitStateTo(&s.Reader)
 	for i := range out {
 		out[i] = int16(cf[i])
 	}
 	return TXBDecodeResult{EOB: uint16(r.eob + 1), CulLevel: r.culLevel}
+}
+
+// decodeCoefsForTest is DecodeCoefs from the eob read on, with the dc_sign
+// context given.
+func decodeCoefsForTest(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, geo *coeffGeometry, plane CoeffPlaneType, txtp transform.Type, class transform.Class, dcSignCtx uint8, cf *[1024]int32, cfZeroed bool, levels *[coefLevelsLen]uint8, dq coefDequant, qm []uint16) coefDecodeResult {
+	eob, rc, dcTok := decodeCoefTokens(c, cdfs, size, geo, plane, txtp, class, cf, cfZeroed, levels)
+	return decodeCoefResidual(c, &cdfs.DCSign[plane][dcSignCtx], eob, rc, dcTok, cf, dq, qm, geo)
 }
 
 // TestDecodeCoefTokensDequantizes codes random quantized TXBs with the
@@ -134,7 +141,7 @@ func runDecodeCoefTokensDequant(t *testing.T, rng *rand.Rand, size TransformSize
 			cf[i] = int32(rng.Uint32())
 		}
 		c := state.Reader.Cursor()
-		got := decodeCoefTokens(&c, &decCDFs, size, geo, plane, typ, class, r.dcSignCtx, cf, false, &coefLevels, coefDequant{
+		got := decodeCoefsForTest(&c, &decCDFs, size, geo, plane, typ, class, r.dcSignCtx, cf, false, &coefLevels, coefDequant{
 			dc: uint32(r.dc), ac: uint32(r.ac), shift: txScale, cfMax: uint32(dqMax),
 		}, r.qm)
 		c.CommitStateTo(&state.Reader)
