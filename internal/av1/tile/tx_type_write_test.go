@@ -63,10 +63,7 @@ func TestWriteIntraTransformTypeRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 			symbol := rng.Intn(count)
-			typ, err = ExtTXTypeFromSymbol(set, symbol)
-			if err != nil {
-				t.Fatal(err)
-			}
+			typ = extTXTypeInv[set][symbol]
 		}
 		if err := WriteIntraTransformType(&w, &encCDFs, req, typ); err != nil {
 			t.Fatalf("write size=%v mode=%d reduced=%v typ=%v: %v", size, mode, reduced, typ, err)

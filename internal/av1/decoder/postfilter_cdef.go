@@ -1259,10 +1259,6 @@ type frameWorkCDEFUnitMaskCache struct {
 	done         [frameWorkCDEFUnitMaskCap / 64]uint64
 }
 
-func (c *frameWorkCDEFUnitMaskCache) reset(skipMap *FrameWorkLoopFilterMap, rowStart, rowEnd, cols int) bool {
-	return c.resetWithCompact(skipMap, nil, nil, rowStart, rowEnd, cols, false)
-}
-
 func (c *frameWorkCDEFUnitMaskCache) resetWithCompact(skipMap *FrameWorkLoopFilterMap, masks *threading.FrameWorkLoopFilterMasks, state *threading.FrameWorkLoopFilterCompactState, rowStart, rowEnd, cols int, allowCompact bool) bool {
 	if allowCompact && threading.FrameWorkLoopFilterCompactUnitGridMatches(masks, state, cols, rowEnd) {
 		c.skipMap = nil

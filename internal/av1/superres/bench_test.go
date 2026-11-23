@@ -19,7 +19,7 @@ func benchUpscale(b *testing.B, bitDepth uint8, srcWidth, dstWidth, height int) 
 	b.SetBytes(int64(dstWidth * height * 2))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := UpscalePlane(srcPlane, dstPlane, bitDepth); err != nil {
+		if err := UpscalePlaneCoded(srcPlane, dstPlane, srcPlane.Width, bitDepth); err != nil {
 			b.Fatal(err)
 		}
 	}

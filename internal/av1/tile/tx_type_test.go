@@ -247,12 +247,8 @@ func TestExtTXTypeInvMatchesLibaom(t *testing.T) {
 			t.Fatalf("set %d count=%d want %d", set, count, len(want))
 		}
 		for symbol, wantType := range want {
-			got, err := ExtTXTypeFromSymbol(set, symbol)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != wantType {
-				t.Fatalf("ExtTXTypeFromSymbol(%d,%d)=%d want %d", set, symbol, got, wantType)
+			if got := extTXTypeInv[set][symbol]; got != wantType {
+				t.Fatalf("extTXTypeInv[%d][%d]=%d want %d", set, symbol, got, wantType)
 			}
 		}
 	}
@@ -278,12 +274,8 @@ func TestExtTXTypeInvMatchesLibaom(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ExtTXTypeFromSymbol(tt.set, tt.symbol)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != tt.want {
-				t.Fatalf("ExtTXTypeFromSymbol(%d,%d)=%d want %d", tt.set, tt.symbol, got, tt.want)
+			if got := extTXTypeInv[tt.set][tt.symbol]; got != tt.want {
+				t.Fatalf("extTXTypeInv[%d][%d]=%d want %d", tt.set, tt.symbol, got, tt.want)
 			}
 		})
 	}
@@ -297,10 +289,7 @@ func TestExtTXSymbolMapMatchesLibaom(t *testing.T) {
 		}
 		seen := uint16(0)
 		for symbol := range count {
-			typ, err := ExtTXTypeFromSymbol(set, symbol)
-			if err != nil {
-				t.Fatal(err)
-			}
+			typ := extTXTypeInv[set][symbol]
 			seen |= 1 << typ
 			got, err := ExtTXSymbolForType(set, typ)
 			if err != nil {
@@ -564,9 +553,6 @@ func TestTransformTypeRejectsInvalidInputs(t *testing.T) {
 	if _, err := ExtTXTypeCount(ExtTXSetTypes); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad count err=%v want %v", err, ErrInvalidDecodeState)
 	}
-	if _, err := ExtTXTypeFromSymbol(ExtTXSetAll16, 16); !errors.Is(err, ErrInvalidDecodeState) {
-		t.Fatalf("bad symbol err=%v want %v", err, ErrInvalidDecodeState)
-	}
 	if _, err := ExtTXTypeAllowed(ExtTXSetTypes, transform.TypeDCTDCT); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad allowed set err=%v want %v", err, ErrInvalidDecodeState)
 	}
@@ -602,14 +588,10 @@ func TestTransformTypeRejectsInvalidInputs(t *testing.T) {
 
 func TestTransformTypeTablesDoNotAllocate(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
-		set, err := ExtTXSetTypeFor(TransformSize16x16, true, false)
-		if err != nil {
+		if _, err := ExtTXSetTypeFor(TransformSize16x16, true, false); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := ExtTXSetIndex(TransformSize16x16, true, false); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := ExtTXTypeFromSymbol(set, 3); err != nil {
 			t.Fatal(err)
 		}
 	})

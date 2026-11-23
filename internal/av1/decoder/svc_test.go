@@ -21,7 +21,7 @@ func TestResolveFrameReferencesWithProviderFanOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Caller-owned namespace: layer 0 = poolA, layer 1 = poolB.
-	provider := FrameSurfaceProviderFunc(func(id int) (*frame.Frame, error) {
+	provider := testFrameSurfaceProvider(func(id int) (*frame.Frame, error) {
 		switch id {
 		case indexA:
 			return poolA.Frame(indexA)
@@ -42,7 +42,7 @@ func TestResolveFrameReferencesWithProviderFanOut(t *testing.T) {
 }
 
 func TestResolveFrameReferencesWithProviderRejectsInvalid(t *testing.T) {
-	provider := FrameSurfaceProviderFunc(func(id int) (*frame.Frame, error) {
+	provider := testFrameSurfaceProvider(func(id int) (*frame.Frame, error) {
 		return nil, ErrInvalidSurfaceReference
 	})
 	dst := make([]*frame.Frame, 1)
@@ -57,162 +57,13 @@ func TestResolveFrameReferencesWithProviderRejectsInvalid(t *testing.T) {
 	}
 }
 
-func TestResolveTileListExternalReferencesWithProviderFanOut(t *testing.T) {
-	poolA := testFramePool(t, 1)
-	indexA, wantA, err := poolA.Acquire()
-	if err != nil {
-		t.Fatal(err)
-	}
-	poolB := testFramePool(t, 1)
-	indexB, wantB, err := poolB.Acquire()
-	if err != nil {
-		t.Fatal(err)
-	}
+type testFrameSurfaceProvider func(int) (*frame.Frame, error)
 
-	provider := FrameSurfaceProviderFunc(func(id int) (*frame.Frame, error) {
-		switch id {
-		case indexA:
-			return poolA.Frame(indexA)
-		case 512 + indexB:
-			return poolB.Frame(indexB)
-		}
-		return nil, ErrInvalidSurfaceReference
-	})
-	list := parser.TileList{
-		TileCountMinus1: 1,
-		Entries: []parser.TileListEntry{
-			{AnchorFrameIdx: 5},
-			{AnchorFrameIdx: 0},
-		},
-	}
-	surfaces := []int{indexA, -1, -1, -1, -1, 512 + indexB}
-	sentinel := &frame.Frame{}
-	dst := []*frame.Frame{sentinel, sentinel, sentinel, sentinel, sentinel, sentinel}
+func (fn testFrameSurfaceProvider) FrameSurface(id int) (*frame.Frame, error) { return fn(id) }
 
-	count, err := ResolveTileListExternalReferencesWithProvider(provider, list, surfaces, dst)
-	if err != nil {
-		t.Fatalf("ResolveTileListExternalReferencesWithProvider: %v", err)
-	}
-	if count != 6 {
-		t.Fatalf("count=%d want 6", count)
-	}
-	if dst[0] != wantA || dst[5] != wantB {
-		t.Fatalf("resolved anchors=%p,%p want %p,%p", dst[0], dst[5], wantA, wantB)
-	}
-	for i := 1; i < 5; i++ {
-		if dst[i] != nil {
-			t.Fatalf("hole dst[%d]=%p want nil", i, dst[i])
-		}
-	}
-}
+type testFrameSurfaceReleaser func([]int) error
 
-func TestResolveTileListExternalReferencesWithProviderRejectsInvalid(t *testing.T) {
-	pool := testFramePool(t, 1)
-	index, _, err := pool.Acquire()
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider := FrameSurfaceProviderFunc(func(id int) (*frame.Frame, error) {
-		if id != index {
-			return nil, ErrInvalidSurfaceReference
-		}
-		return pool.Frame(index)
-	})
-	list := parser.TileList{
-		TileCountMinus1: 0,
-		Entries:         []parser.TileListEntry{{AnchorFrameIdx: 0}},
-	}
-	var dst [1]*frame.Frame
-	if _, err := ResolveTileListExternalReferencesWithProvider(nil, list, []int{index}, dst[:]); !errors.Is(err, ErrInvalidSurfaceReference) {
-		t.Fatalf("nil-provider err=%v want %v", err, ErrInvalidSurfaceReference)
-	}
-	if _, err := ResolveTileListExternalReferencesWithProvider(provider, list, nil, dst[:]); !errors.Is(err, ErrSurfaceReferenceBufferTooSmall) {
-		t.Fatalf("short surfaces err=%v want %v", err, ErrSurfaceReferenceBufferTooSmall)
-	}
-	if _, err := ResolveTileListExternalReferencesWithProvider(provider, list, []int{index}, nil); !errors.Is(err, ErrSurfaceReferenceBufferTooSmall) {
-		t.Fatalf("short dst err=%v want %v", err, ErrSurfaceReferenceBufferTooSmall)
-	}
-
-	badCount := list
-	badCount.TileCountMinus1 = 1
-	if _, err := ResolveTileListExternalReferencesWithProvider(provider, badCount, []int{index}, dst[:]); !errors.Is(err, parser.ErrTileListInvalidTileCount) {
-		t.Fatalf("bad tile count err=%v want %v", err, parser.ErrTileListInvalidTileCount)
-	}
-
-	sentinel := &frame.Frame{}
-	dst[0] = sentinel
-	if _, err := ResolveTileListExternalReferencesWithProvider(provider, list, []int{-1}, dst[:]); !errors.Is(err, ErrInvalidSurfaceReference) {
-		t.Fatalf("negative surface err=%v want %v", err, ErrInvalidSurfaceReference)
-	}
-	if dst[0] != sentinel {
-		t.Fatalf("error path published dst=%p want sentinel %p", dst[0], sentinel)
-	}
-
-	nilProvider := FrameSurfaceProviderFunc(func(id int) (*frame.Frame, error) {
-		return nil, nil
-	})
-	if _, err := ResolveTileListExternalReferencesWithProvider(nilProvider, list, []int{index}, dst[:]); !errors.Is(err, ErrInvalidSurfaceReference) {
-		t.Fatalf("nil frame err=%v want %v", err, ErrInvalidSurfaceReference)
-	}
-}
-
-func TestResolveTemporalMotionReferencesWithProviderFanOut(t *testing.T) {
-	poolA := testFramePool(t, 1)
-	indexA, _, err := poolA.Acquire()
-	if err != nil {
-		t.Fatal(err)
-	}
-	mvFrameA, err := bindEmptyReferenceMVFrame(poolA.Frame(indexA))
-	if err != nil {
-		t.Fatal(err)
-	}
-	storeA := tile.TemporalMotionReferenceFrame{Frame: &mvFrameA, OrderHint: 0, IntraOnly: true}
-
-	poolB := testFramePool(t, 1)
-	indexB, _, err := poolB.Acquire()
-	if err != nil {
-		t.Fatal(err)
-	}
-	mvFrameB, err := bindEmptyReferenceMVFrame(poolB.Frame(indexB))
-	if err != nil {
-		t.Fatal(err)
-	}
-	storeB := tile.TemporalMotionReferenceFrame{Frame: &mvFrameB, OrderHint: 0, IntraOnly: true}
-
-	provider := TemporalMotionReferenceProviderFunc(func(id int) (tile.TemporalMotionReferenceFrame, error) {
-		switch id {
-		case 0:
-			return storeA, nil
-		case 256:
-			return storeB, nil
-		}
-		return tile.TemporalMotionReferenceFrame{}, ErrInvalidSurfaceReference
-	})
-	dst := make([]tile.TemporalMotionReferenceFrame, 2)
-	count, err := ResolveTemporalMotionReferencesWithProvider(provider, []int{0, 256}, dst)
-	if err != nil {
-		t.Fatalf("ResolveTemporalMotionReferencesWithProvider: %v", err)
-	}
-	if count != 2 || dst[0].Frame != &mvFrameA || dst[1].Frame != &mvFrameB {
-		t.Fatalf("count=%d dst=%+v", count, dst)
-	}
-}
-
-func TestResolveTemporalMotionReferencesWithProviderRejectsInvalid(t *testing.T) {
-	provider := TemporalMotionReferenceProviderFunc(func(id int) (tile.TemporalMotionReferenceFrame, error) {
-		return tile.TemporalMotionReferenceFrame{}, nil
-	})
-	dst := make([]tile.TemporalMotionReferenceFrame, 1)
-	if _, err := ResolveTemporalMotionReferencesWithProvider(provider, []int{0}, dst); !errors.Is(err, ErrInvalidSurfaceReference) {
-		t.Fatalf("nil-frame err=%v want %v", err, ErrInvalidSurfaceReference)
-	}
-	if _, err := ResolveTemporalMotionReferencesWithProvider(provider, []int{-1}, dst); !errors.Is(err, ErrInvalidSurfaceReference) {
-		t.Fatalf("negative err=%v want %v", err, ErrInvalidSurfaceReference)
-	}
-	if _, err := ResolveTemporalMotionReferencesWithProvider(nil, []int{0}, dst); !errors.Is(err, ErrInvalidSurfaceReference) {
-		t.Fatalf("nil-provider err=%v want %v", err, ErrInvalidSurfaceReference)
-	}
-}
+func (fn testFrameSurfaceReleaser) ReleaseFrameSurfaces(ids []int) error { return fn(ids) }
 
 func bindEmptyReferenceMVFrame(f *frame.Frame, err error) (tile.ReferenceMVFrame, error) {
 	if err != nil {
@@ -261,7 +112,7 @@ func TestFrameWorkStateFinishExternalPublishesPostFilterGlobalSurface(t *testing
 
 	const publishedGlobalSurface = 256
 	var released []int
-	releaser := FrameSurfaceReleaserFunc(func(ids []int) error {
+	releaser := testFrameSurfaceReleaser(func(ids []int) error {
 		released = append(released, ids...)
 		for _, id := range ids {
 			if id == begin.Surface {
@@ -452,72 +303,6 @@ func TestFrameLayerPoolFrameSurfaceReleaser(t *testing.T) {
 	if err := releaser.ReleaseFrameSurfaces(nil); err != nil {
 		t.Fatalf("nil release: %v", err)
 	}
-}
-
-func TestAcquireLayerFrameSurfaceRoundTrip(t *testing.T) {
-	pool, _ := newTestLayerPool(t, 2)
-	sequence := parser.SequenceHeader{
-		ColorConfig: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
-	}
-	size := parser.FrameSize{CodedWidth: 640, Height: 360, UpscaledWidth: 640}
-
-	sub, local, globalID, fr, err := AcquireLayerFrameSurface(pool, sequence, size, 32)
-	if err != nil {
-		t.Fatalf("AcquireLayerFrameSurface: %v", err)
-	}
-	if sub == nil || fr == nil || local < 0 || globalID < 0 {
-		t.Fatalf("sub=%p local=%d global=%d fr=%p", sub, local, globalID, fr)
-	}
-	if got := LayerPoolGlobalSurfaceID(pool, sub, local); got != globalID {
-		t.Fatalf("LayerPoolGlobalSurfaceID=%d want %d", got, globalID)
-	}
-	provider := NewFrameLayerPool(pool)
-	got, err := provider.FrameSurface(globalID)
-	if err != nil || got != fr {
-		t.Fatalf("provider.FrameSurface=%p err=%v want %p", got, err, fr)
-	}
-	if err := sub.Release(local); err != nil {
-		t.Fatalf("sub.Release: %v", err)
-	}
-}
-
-func TestAcquireLayerFrameSurfaceCrossLayer(t *testing.T) {
-	pool, _ := newTestLayerPool(t, 2)
-	sequence := parser.SequenceHeader{
-		ColorConfig: parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
-	}
-	layer0Size := parser.FrameSize{CodedWidth: 640, Height: 360, UpscaledWidth: 640}
-	layer1Size := parser.FrameSize{CodedWidth: 1280, Height: 720, UpscaledWidth: 1280}
-
-	sub0, local0, id0, frame0, err := AcquireLayerFrameSurface(pool, sequence, layer0Size, 32)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sub1, local1, id1, frame1, err := AcquireLayerFrameSurface(pool, sequence, layer1Size, 32)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sub0 == sub1 {
-		t.Fatalf("layer-0 and layer-1 returned the same sub-pool")
-	}
-	if id0 == id1 {
-		t.Fatalf("layer-0 and layer-1 returned the same global ID")
-	}
-	if frame0.Format.Width != 640 || frame1.Format.Width != 1280 {
-		t.Fatalf("layer formats wrong: %d / %d", frame0.Format.Width, frame1.Format.Width)
-	}
-	// Cross-resolve via provider: each global ID must reach its own sub-pool.
-	provider := NewFrameLayerPool(pool)
-	if got, _ := provider.FrameSurface(id0); got != frame0 {
-		t.Fatalf("FrameSurface(layer-0)=%p want %p", got, frame0)
-	}
-	if got, _ := provider.FrameSurface(id1); got != frame1 {
-		t.Fatalf("FrameSurface(layer-1)=%p want %p", got, frame1)
-	}
-	if err := pool.ReleaseMany([]int{id0, id1}); err != nil {
-		t.Fatalf("ReleaseMany: %v", err)
-	}
-	_, _ = local0, local1
 }
 
 func TestFrameLayerPoolNilPoolRejected(t *testing.T) {

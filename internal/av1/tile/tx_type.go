@@ -202,14 +202,6 @@ func ExtTXTypeCount(set ExtTXSetType) (int, error) {
 	return int(extTXTypeCount[set]), nil
 }
 
-func ExtTXTypeFromSymbol(set ExtTXSetType, symbol int) (transform.Type, error) {
-	count, err := ExtTXTypeCount(set)
-	if err != nil || symbol < 0 || symbol >= count {
-		return 0, ErrInvalidDecodeState
-	}
-	return extTXTypeInv[set][symbol], nil
-}
-
 func ExtTXTypeAllowed(set ExtTXSetType, typ transform.Type) (bool, error) {
 	if set >= ExtTXSetTypes || !typ.Valid() {
 		return false, ErrInvalidDecodeState

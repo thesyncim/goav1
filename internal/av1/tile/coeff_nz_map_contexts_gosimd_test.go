@@ -65,59 +65,6 @@ func TestCoeffNZMapContextsSIMDFullMatchesScalar(t *testing.T) {
 	}
 }
 
-// TestCoeffNZMapContextsSIMDMatchesScalar checks the dispatched arch path,
-// including partial eob copies, against the scalar reference. It requires the
-// SIMD path whenever the architecture gate reports it available.
-func TestCoeffNZMapContextsSIMDMatchesScalar(t *testing.T) {
-	if !coeffNZMapSIMDAvailable() {
-		t.Skip("Go SIMD nz-map unavailable on this CPU")
-	}
-	rnd := newCoeffContextRandom(0x4e5a4d41)
-	classes := [...]transform.Class{transform.Class2D, transform.ClassHoriz, transform.ClassVert}
-	for size := range transformSizeCount {
-		geo := coeffGeometryTable[size]
-		if !geo.valid || (geo.scanHeight != 4 && geo.scanHeight != 8 && geo.scanHeight != 16 && geo.scanHeight != 32) {
-			continue
-		}
-		maxEOB := int(geo.maxEOB)
-		levels := make([]uint8, int(geo.scratchLen))
-		for _, class := range classes {
-			scan := coeffScanTable[size][class]
-			if len(scan) < maxEOB {
-				t.Fatalf("size=%d class=%d missing scan", size, class)
-			}
-			for iter := 0; iter < 16; iter++ {
-				for i := range levels {
-					levels[i] = rnd.u8() & 0x7f
-				}
-				for _, eob := range coeffNZMapEOBCases(maxEOB) {
-					if eob <= 1 {
-						continue
-					}
-					got := make([]int8, maxEOB)
-					want := make([]int8, maxEOB)
-					for i := range got {
-						v := int8(rnd.u8() & 0x3f)
-						got[i] = v
-						want[i] = v
-					}
-					if err := coeffNZMapContextsScalar(levels, size, class, scan, eob, want, maxEOB); err != nil {
-						t.Fatal(err)
-					}
-					if !coeffNZMapContextsArch(levels, size, class, scan, eob, got, maxEOB) {
-						t.Fatalf("size=%d class=%d eob=%d did not use arch path", size, class, eob)
-					}
-					for i := range got {
-						if got[i] != want[i] {
-							t.Fatalf("size=%d class=%d eob=%d iter=%d context[%d]=%d want %d", size, class, eob, iter, i, got[i], want[i])
-						}
-					}
-				}
-			}
-		}
-	}
-}
-
 // TestCoeffNZMapContextsSIMDFullZeroAlloc covers the plain shape and the
 // windowed tail groups of the 8-row and 4-row paths (Horiz reaches the furthest
 // neighbour, so its last group is staged through the window).

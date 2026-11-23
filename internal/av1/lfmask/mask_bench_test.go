@@ -41,7 +41,7 @@ func BenchmarkBuilderCreateInter(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				builder.CreateInter(&m, lc, lv, c.bx, c.by, stride, 64, c.skip, c.bs,
-					c.ytx, c.split, c.uvtx, I420(),
+					c.ytx, c.split, c.uvtx, Layout{SSHor: 1, SSVer: 1},
 					ay[c.bx:], ly[c.by&31:], auv[c.bx>>1:], luv[(c.by&31)>>1:])
 			}
 		})

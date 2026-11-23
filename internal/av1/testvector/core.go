@@ -9,13 +9,6 @@ var coreVectors = [...]Vector{
 		Want:  nil,
 	},
 	{
-		Tag:   TagOBUAnnexBTemporalUnit,
-		Kind:  KindAnnexB,
-		Name:  "annex b temporal unit with two frame units",
-		Input: []byte{0x0a, 0x05, 0x01, 0x10, 0x02, 0x08, 0xaa, 0x03, 0x02, 0x18, 0xbb},
-		Want:  []byte{0x10, 0x08, 0xaa, 0x18, 0xbb},
-	},
-	{
 		Tag:   TagRTPPayloadSingleOBU,
 		Kind:  KindRTP,
 		Name:  "rtp single inferred-length frame-header obu",
@@ -65,27 +58,6 @@ var coreVectors = [...]Vector{
 		Input: []byte{0x0a, 0x07, 0x18, 0x22, 0x2b, 0xf1, 0xfe, 0xc0, 0x20},
 		Want:  []byte{0x18, 0x22, 0x2b, 0xf1, 0xfe, 0xc0, 0x20},
 	},
-	{
-		Tag:   TagParserSequenceFullAnnexB,
-		Kind:  KindParser,
-		Name:  "libaom full sequence header annex b obu",
-		Input: []byte{0x0c, 0x08, 0x00, 0x00, 0x00, 0x04, 0x45, 0x7e, 0x3e, 0xff, 0xfc, 0xc0, 0x20},
-		Want:  []byte{0x00, 0x00, 0x00, 0x04, 0x45, 0x7e, 0x3e, 0xff, 0xfc, 0xc0, 0x20},
-	},
-	{
-		Tag:   TagParserSequenceReducedAnnexB,
-		Kind:  KindParser,
-		Name:  "libaom reduced still sequence header annex b obu",
-		Input: []byte{0x08, 0x08, 0x18, 0x22, 0x2b, 0xf1, 0xfe, 0xc0, 0x20},
-		Want:  []byte{0x18, 0x22, 0x2b, 0xf1, 0xfe, 0xc0, 0x20},
-	},
-	{
-		Tag:   TagParserSequenceBuganizer502133197,
-		Kind:  KindParser,
-		Name:  "libaom buganizer 502133197 sequence header low-overhead obu",
-		Input: []byte{0x0a, 0x10, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-		Want:  []byte{0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-	},
 }
 
 var coreIVFSingleFrameMD5 = MD5{0x5a, 0x68, 0xde, 0x99, 0x7d, 0x60, 0xaf, 0xa9, 0x08, 0x3b, 0x17, 0xfe, 0x00, 0xf7, 0xcd, 0xf2}
@@ -96,15 +68,11 @@ var coreDigests = [...]FrameDigest{
 
 const (
 	coreIndexOBULowOverheadTemporalDelimiter = iota
-	coreIndexOBUAnnexBTemporalUnit
 	coreIndexRTPPayloadSingleOBU
 	coreIndexRTPPayloadFragmentedOBU
 	coreIndexIVFSingleFrameAV1
 	coreIndexParserSequenceFullLowOverhead
 	coreIndexParserSequenceReducedLowOverhead
-	coreIndexParserSequenceFullAnnexB
-	coreIndexParserSequenceReducedAnnexB
-	coreIndexParserSequenceBuganizer502133197
 )
 
 // CoreVector returns one core vector by stable numeric tag without scanning
@@ -113,8 +81,6 @@ func CoreVector(tag Tag) (Vector, bool) {
 	switch tag {
 	case TagOBULowOverheadTemporalDelimiter:
 		return coreVectors[coreIndexOBULowOverheadTemporalDelimiter], true
-	case TagOBUAnnexBTemporalUnit:
-		return coreVectors[coreIndexOBUAnnexBTemporalUnit], true
 	case TagRTPPayloadSingleOBU:
 		return coreVectors[coreIndexRTPPayloadSingleOBU], true
 	case TagRTPPayloadFragmentedOBU:
@@ -125,12 +91,6 @@ func CoreVector(tag Tag) (Vector, bool) {
 		return coreVectors[coreIndexParserSequenceFullLowOverhead], true
 	case TagParserSequenceReducedLowOverhead:
 		return coreVectors[coreIndexParserSequenceReducedLowOverhead], true
-	case TagParserSequenceFullAnnexB:
-		return coreVectors[coreIndexParserSequenceFullAnnexB], true
-	case TagParserSequenceReducedAnnexB:
-		return coreVectors[coreIndexParserSequenceReducedAnnexB], true
-	case TagParserSequenceBuganizer502133197:
-		return coreVectors[coreIndexParserSequenceBuganizer502133197], true
 	default:
 		return Vector{}, false
 	}

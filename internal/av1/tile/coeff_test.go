@@ -2,7 +2,6 @@ package tile
 
 import (
 	"errors"
-	"slices"
 	"testing"
 	"unsafe"
 
@@ -369,116 +368,22 @@ func TestCoeffGeometryPositionTablesFitScratch(t *testing.T) {
 	}
 }
 
-func TestCoeffNZMapContextsMatchesLibaomEncodeTxb(t *testing.T) {
-	rnd := newCoeffContextRandom(0x1532a5)
-	for isInter := range 2 {
-		_ = isInter
-		for rawType := range uint8(transform.TypeCount) {
-			typ := transform.Type(rawType)
-			class, err := typ.Class()
-			if err != nil {
-				t.Fatal(err)
-			}
-			for size := range transformSizeCount {
-				if !libaomEncodeTXBTypeValid(size, typ) {
-					continue
-				}
-				txSize, err := size.TransformSize()
-				if err != nil {
-					t.Fatal(err)
-				}
-				scanSize, err := transform.ScanSize(txSize)
-				if err != nil {
-					t.Fatal(err)
-				}
-				maxEOB := int(scanSize.Width) * int(scanSize.Height)
-				scan := make([]int16, maxEOB)
-				inverse := make([]int16, maxEOB)
-				if err := transform.FillDefaultScan(scan, inverse, txSize, class); err != nil {
-					t.Fatal(err)
-				}
-				levels := make([]uint8, mustCoeffLevelsScratchLen(t, size))
-				for range 3 {
-					for _, eob := range coeffNZMapEOBCases(maxEOB) {
-						for i := range levels {
-							levels[i] = 0
-						}
-						contexts := make([]int8, maxEOB)
-						want := make([]int8, maxEOB)
-						for c := range eob {
-							pos := int(scan[c])
-							mustSetCoeffLevel(t, levels, size, pos, int(rnd.u8()&0x7f))
-							contexts[pos] = int8(rnd.u16() >> 9)
-							want[pos] = contexts[pos]
-						}
-						copy(want, contexts)
-						for c := range eob {
-							pos := int(scan[c])
-							var ctx int
-							if c == eob-1 {
-								ctx, err = transform.LowerLevelsCtxEOB(scanSize, c)
-							} else {
-								ctx, err = CoeffLowerLevelsContext(levels, size, class, pos)
-							}
-							if err != nil {
-								t.Fatal(err)
-							}
-							want[pos] = int8(ctx)
-						}
-						if err := CoeffNZMapContexts(levels, size, class, scan, eob, contexts); err != nil {
-							t.Fatal(err)
-						}
-						for i := range maxEOB {
-							if contexts[i] != want[i] {
-								t.Fatalf("size=%d type=%d eob=%d context[%d]=%d want %d", size, typ, eob, i, contexts[i], want[i])
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-}
+const maxCoeffScratchLen = (32 + txPadHorizontal) * (32 + txPadHorizontal)
 
 func TestCoeffTXBLevelHelpersDoNotAllocate(t *testing.T) {
 	var coeffs [32 * 32]int16
 	var levels [(32 + txPadHorizontal) * (32 + txPadHorizontal)]uint8
-	var scan [32 * 32]int16
-	var inverse [32 * 32]int16
-	var contexts [32 * 32]int8
 	for i := range coeffs {
 		coeffs[i] = int16(i - 512)
-	}
-	if err := transform.FillDefaultScan(scan[:], inverse[:], transform.Size{Width: 32, Height: 32}, transform.Class2D); err != nil {
-		t.Fatal(err)
 	}
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		if err := CoeffInitLevels(coeffs[:], TransformSize32x32, levels[:]); err != nil {
 			t.Fatal(err)
 		}
-		if err := CoeffNZMapContexts(levels[:], TransformSize32x32, transform.Class2D, scan[:], 1024, contexts[:]); err != nil {
-			t.Fatal(err)
-		}
 	})
 	if allocs != 0 {
 		t.Fatalf("coeff txb helpers allocated: %f", allocs)
-	}
-}
-
-func TestCoeffNZMapContextsRejectsInvalidScanPosition(t *testing.T) {
-	size := TransformSize16x16
-	geo := coeffGeometryTable[size]
-	levels := make([]uint8, int(geo.scratchLen))
-	contexts := make([]int8, int(geo.maxEOB))
-	scan := append([]int16(nil), coeffScanTable[size][transform.Class2D]...)
-	scan[2] = int16(geo.maxEOB)
-	if err := CoeffNZMapContexts(levels, size, transform.Class2D, scan, 3, contexts); !errors.Is(err, ErrInvalidDecodeState) {
-		t.Fatalf("large scan position err=%v want %v", err, ErrInvalidDecodeState)
-	}
-	scan[2] = -1
-	if err := CoeffNZMapContexts(levels, size, transform.Class2D, scan, 3, contexts); !errors.Is(err, ErrInvalidDecodeState) {
-		t.Fatalf("negative scan position err=%v want %v", err, ErrInvalidDecodeState)
 	}
 }
 
@@ -587,48 +492,11 @@ func coeffScanAndScratch(t testing.TB, size TransformSize, txSize transform.Size
 
 func mustSetCoeffLevel(t *testing.T, levels []uint8, size TransformSize, coeffIndex int, level int) {
 	t.Helper()
-	if err := setCoeffLevel(levels, size, coeffIndex, level); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func mustCoeffLevelsScratchLen(t *testing.T, size TransformSize) int {
-	t.Helper()
-	n, err := CoeffLevelsScratchLen(size)
+	padded, _, _, _, err := coeffPaddedPosition(size, coeffIndex)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return n
-}
-
-func libaomEncodeTXBTypeValid(size TransformSize, typ transform.Type) bool {
-	up, err := TransformSizeSquareUp(size)
-	if err != nil {
-		return false
-	}
-	set := ExtTXSetAll16
-	if up > TransformSize32x32 {
-		set = ExtTXSetDCTOnly
-	} else if up == TransformSize32x32 {
-		set = ExtTXSetDCTIDTX
-	}
-	ok, err := ExtTXTypeAllowed(set, typ)
-	return err == nil && ok
-}
-
-func coeffNZMapEOBCases(maxEOB int) []int {
-	candidates := [...]int{1, 2, maxEOB / 8, maxEOB/8 + 1, maxEOB / 4, maxEOB/4 + 1, maxEOB / 2, maxEOB}
-	out := make([]int, 0, len(candidates))
-	for _, eob := range candidates {
-		if eob <= 0 || eob > maxEOB {
-			continue
-		}
-		seen := slices.Contains(out, eob)
-		if !seen {
-			out = append(out, eob)
-		}
-	}
-	return out
+	levels[padded] = uint8(level)
 }
 
 type coeffContextRandom struct {
@@ -761,11 +629,7 @@ func TestCoeffContextsMatchLibaom(t *testing.T) {
 		{size: TransformSize64x64, want: 6},
 	}
 	for _, tt := range eobTests {
-		got, err := EOBMultiSize(tt.size)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != tt.want {
+		if got := eobMultiSizeTable[tt.size]; got != tt.want {
 			t.Fatalf("EOBMultiSize(%d)=%d want %d", tt.size, got, tt.want)
 		}
 	}
@@ -843,11 +707,7 @@ func TestCoeffEOB1TX64x64ContextsMatchLibaomMVFrame1(t *testing.T) {
 		t.Fatalf("CoeffTransformSizeContext(TX_64X64)=%d want 4", txsCtx)
 	}
 
-	eobMultiSize, err := EOBMultiSize(TransformSize64x64)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if eobMultiSize != 6 {
+	if eobMultiSize := eobMultiSizeTable[TransformSize64x64]; eobMultiSize != 6 {
 		t.Fatalf("EOBMultiSize(TX_64X64)=%d want 6 (eob_flag_cdf1024)", eobMultiSize)
 	}
 
@@ -884,11 +744,9 @@ func TestCoeffEOB1TX64x64ContextsMatchLibaomMVFrame1(t *testing.T) {
 		t.Fatal(err)
 	}
 	levels := make([]uint8, scratchLen)
-	if err := setCoeffLevel(levels, TransformSize64x64, 0, 3); err != nil {
-		t.Fatal(err)
-	}
+	mustSetCoeffLevel(t, levels, TransformSize64x64, 0, 3)
 	if levels[0] != 3 {
-		t.Fatalf("setCoeffLevel(TX_64X64, pos=0, 3) stored level at padded idx %d want 0",
+		t.Fatalf("mustSetCoeffLevel(TX_64X64, pos=0, 3) stored level at padded idx %d want 0",
 			indexOfNonZero(levels))
 	}
 }

@@ -106,13 +106,6 @@ func ParseSequenceHeader(payload []byte) (SequenceHeader, error) {
 	return parseSequenceHeader(payload, true)
 }
 
-// PeekSequenceHeader parses sequence_header_obu() fields without validating
-// trailing bits. This matches libaom's stream-info/config peek path; callers
-// that consume a full sequence header should use ParseSequenceHeader.
-func PeekSequenceHeader(payload []byte) (SequenceHeader, error) {
-	return parseSequenceHeader(payload, false)
-}
-
 func parseSequenceHeader(payload []byte, validateTrailing bool) (SequenceHeader, error) {
 	r := bitstream.NewReader(payload)
 	var sh SequenceHeader

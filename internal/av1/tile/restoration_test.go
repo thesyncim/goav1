@@ -96,7 +96,7 @@ func TestReadRestorationUnitWienerEnabled(t *testing.T) {
 
 func TestReadWienerFilterMatchesLibaomDefaults(t *testing.T) {
 	refs := DefaultRestorationReferences()
-	reader := entropy.NewReader([]byte{0x00, 0x00, 0x00, 0x00})
+	reader := entropy.NewReaderWithCDFUpdate([]byte{0x00, 0x00, 0x00, 0x00}, true)
 	info, err := readWienerFilter(&reader, false, &refs)
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +109,7 @@ func TestReadWienerFilterMatchesLibaomDefaults(t *testing.T) {
 	}
 
 	refs = DefaultRestorationReferences()
-	reader = entropy.NewReader([]byte{0x00, 0x00, 0x00, 0x00})
+	reader = entropy.NewReaderWithCDFUpdate([]byte{0x00, 0x00, 0x00, 0x00}, true)
 	info, err = readWienerFilter(&reader, true, &refs)
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func TestReadWienerFilterMatchesLibaomDefaults(t *testing.T) {
 
 func TestReadSGRProjFilterMatchesLibaomDefaults(t *testing.T) {
 	refs := DefaultRestorationReferences()
-	reader := entropy.NewReader([]byte{0x00, 0x00, 0x00, 0x00})
+	reader := entropy.NewReaderWithCDFUpdate([]byte{0x00, 0x00, 0x00, 0x00}, true)
 	info, err := readSGRProjFilter(&reader, &refs)
 	if err != nil {
 		t.Fatal(err)

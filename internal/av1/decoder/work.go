@@ -4,7 +4,6 @@ import (
 	"errors"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
-	"github.com/thesyncim/goav1/internal/av1/lfmask"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
@@ -163,75 +162,10 @@ type FrameWorkPostFilterGlobalSurfacePublisher interface {
 	PublishedFrameWorkGlobalSurface() (int, bool)
 }
 
-// FrameWorkSideDataFunc binds caller-owned frame-level side data after event
-// planning and before tile work executes.
-type FrameWorkSideDataFunc func(*FrameWorkState, FrameWorkBatch) error
-
 // FrameWorkSideDataRunner binds caller-owned frame-level side data after event
 // planning and before tile work executes.
 type FrameWorkSideDataRunner interface {
 	BindFrameWorkSideData(*FrameWorkState, FrameWorkBatch) error
-}
-
-// FrameWorkBoundSideDataRunner binds caller-owned frame-level side-data buffers
-// for active postfilter stages before tile work executes.
-type FrameWorkBoundSideDataRunner struct {
-	CDEFIndex []uint8
-	CDEFRead  []bool
-
-	LoopFilterRecords []threading.FrameWorkLoopFilterBlockRecord
-
-	LFMasks      []lfmask.FilterMask
-	LFLevelCache [][4]uint8
-
-	RestorationRecords []tile.RestorationUnitRecord
-	RestorationAbove   []uint16
-	RestorationBelow   []uint16
-
-	CDEFIndexMap            threading.FrameWorkCDEFIndexMap
-	LoopFilterMap           threading.FrameWorkLoopFilterMap
-	LoopFilterMasks         threading.FrameWorkLoopFilterMasks
-	RestorationFrameBuffers threading.FrameWorkRestorationFrameBuffers
-}
-
-// FrameWorkSideDataScratchSize reports caller-owned side-data storage needed by
-// FrameWorkBoundSideDataRunner for one frame context.
-type FrameWorkSideDataScratchSize struct {
-	CDEF                int
-	LoopFilterRecords   int
-	LoopFilterMasks     int
-	LoopFilterLevels    int
-	RestorationRecords  int
-	RestorationBoundary int
-}
-
-// FrameWorkSideDataScratch carries caller-owned backing storage for
-// FrameWorkBoundSideDataRunner.
-type FrameWorkSideDataScratch struct {
-	CDEFIndex []uint8
-	CDEFRead  []bool
-
-	LoopFilterRecords []threading.FrameWorkLoopFilterBlockRecord
-
-	LFMasks      []lfmask.FilterMask
-	LFLevelCache [][4]uint8
-
-	RestorationRecords []tile.RestorationUnitRecord
-	RestorationAbove   []uint16
-	RestorationBelow   []uint16
-}
-
-// Max returns the per-field maximum scratch size needed to satisfy either
-// side-data plan. Callers can accumulate this across frames and reuse one arena.
-func (s FrameWorkSideDataScratchSize) Max(other FrameWorkSideDataScratchSize) FrameWorkSideDataScratchSize {
-	return FrameWorkSideDataScratchSize{
-		CDEF:                maxInt(s.CDEF, other.CDEF),
-		LoopFilterRecords:   maxInt(s.LoopFilterRecords, other.LoopFilterRecords),
-		LoopFilterMasks:     maxInt(s.LoopFilterMasks, other.LoopFilterMasks),
-		LoopFilterLevels:    maxInt(s.LoopFilterLevels, other.LoopFilterLevels),
-		RestorationRecords:  maxInt(s.RestorationRecords, other.RestorationRecords),
-		RestorationBoundary: maxInt(s.RestorationBoundary, other.RestorationBoundary),
-	}
 }
 
 // FrameWorkState is caller-owned lifecycle state for one in-flight frame. It
@@ -1851,184 +1785,6 @@ func (s *FrameWorkState) planEventWithResolvedContext(refs *SurfaceReferences, f
 	return step, output, referenceCount, references, nil
 }
 
-// BindFrameWorkSideData implements FrameWorkSideDataRunner for function hooks.
-func (fn FrameWorkSideDataFunc) BindFrameWorkSideData(s *FrameWorkState, b FrameWorkBatch) error {
-	if fn == nil {
-		return nil
-	}
-	return fn(s, b)
-}
-
-// FrameWorkSideDataScratchLen reports the caller-owned side-data scratch needed
-// for active postfilter stages in b.
-func FrameWorkSideDataScratchLen(b FrameWorkBatch) (FrameWorkSideDataScratchSize, error) {
-	var size FrameWorkSideDataScratchSize
-	if frameWorkCDEFActive(b.CDEF) {
-		_, _, length, err := b.CDEFIndexMapShape()
-		if err != nil {
-			return FrameWorkSideDataScratchSize{}, err
-		}
-		size.CDEF = length
-	}
-	// The loop-filter map carries the per-MI SkipTransform bit consumed by
-	// CDEF block-list construction (libaom's is_8x8_block_skip), so bind the
-	// map whenever either LF or CDEF is active.
-	if frameWorkLoopFilterActive(b.LoopFilter) || frameWorkCDEFActive(b.CDEF) {
-		cols, rows, length, err := b.LoopFilterMapShape()
-		if err != nil {
-			return FrameWorkSideDataScratchSize{}, err
-		}
-		size.LoopFilterRecords = length
-		// The dav1d-style deblocking edge bitmasks (and their frame-wide 4x4
-		// level cache) are only consumed by the loop filter, so bind them only
-		// when the loop filter itself is active for this frame.
-		if frameWorkLoopFilterActive(b.LoopFilter) {
-			_, _, masks := threading.FrameWorkLoopFilterMaskShape(cols, rows)
-			size.LoopFilterMasks = masks
-			size.LoopFilterLevels = threading.FrameWorkLoopFilterLevelCacheLen(cols, rows)
-		}
-	}
-	if frameWorkRestorationActive(b.Restoration) {
-		plan, err := b.RestorationFramePlan()
-		if err != nil {
-			return FrameWorkSideDataScratchSize{}, err
-		}
-		size.RestorationRecords = plan.UnitRecordLen()
-		size.RestorationBoundary = plan.BoundaryBufferLen()
-	}
-	return size, nil
-}
-
-// BindRunner validates and slices caller-owned scratch for
-// FrameWorkBoundSideDataRunner.
-func (s FrameWorkSideDataScratchSize) BindRunner(scratch FrameWorkSideDataScratch) (FrameWorkBoundSideDataRunner, error) {
-	if s.CDEF < 0 || s.LoopFilterRecords < 0 || s.LoopFilterMasks < 0 || s.LoopFilterLevels < 0 ||
-		s.RestorationRecords < 0 || s.RestorationBoundary < 0 ||
-		len(scratch.CDEFIndex) < s.CDEF || len(scratch.CDEFRead) < s.CDEF ||
-		len(scratch.LoopFilterRecords) < s.LoopFilterRecords ||
-		len(scratch.LFMasks) < s.LoopFilterMasks ||
-		len(scratch.LFLevelCache) < s.LoopFilterLevels ||
-		len(scratch.RestorationRecords) < s.RestorationRecords ||
-		len(scratch.RestorationAbove) < s.RestorationBoundary ||
-		len(scratch.RestorationBelow) < s.RestorationBoundary {
-		return FrameWorkBoundSideDataRunner{}, frame.ErrShortBuffer
-	}
-	return FrameWorkBoundSideDataRunner{
-		CDEFIndex:          scratch.CDEFIndex[:s.CDEF],
-		CDEFRead:           scratch.CDEFRead[:s.CDEF],
-		LoopFilterRecords:  scratch.LoopFilterRecords[:s.LoopFilterRecords],
-		LFMasks:            scratch.LFMasks[:s.LoopFilterMasks],
-		LFLevelCache:       scratch.LFLevelCache[:s.LoopFilterLevels],
-		RestorationRecords: scratch.RestorationRecords[:s.RestorationRecords],
-		RestorationAbove:   scratch.RestorationAbove[:s.RestorationBoundary],
-		RestorationBelow:   scratch.RestorationBelow[:s.RestorationBoundary],
-	}, nil
-}
-
-// frameWorkLoopFilterMaskLayout maps a sequence color config to the lfmask
-// chroma-subsampling layout used by the deblocking edge-mask build.
-func frameWorkLoopFilterMaskLayout(color parser.ColorConfig) lfmask.Layout {
-	layout := lfmask.Layout{Mono: color.MonoChrome}
-	if color.SubsamplingX {
-		layout.SSHor = 1
-	}
-	if color.SubsamplingY {
-		layout.SSVer = 1
-	}
-	return layout
-}
-
-// BindFrameWorkSideData binds side-data storage for any active CDEF,
-// loop-filter, or loop-restoration stage and attaches the views to state.
-func (r *FrameWorkBoundSideDataRunner) BindFrameWorkSideData(s *FrameWorkState, b FrameWorkBatch) error {
-	if r == nil {
-		return ErrInvalidFrameWorkState
-	}
-	if frameWorkCDEFActive(b.CDEF) {
-		_, _, length, err := b.CDEFIndexMapShape()
-		if err != nil {
-			return err
-		}
-		if len(r.CDEFIndex) < length || len(r.CDEFRead) < length {
-			return threading.ErrInvalidBatch
-		}
-		// Clear before binding: the CDEF index/read buffers are reused across
-		// frames and BindCDEFIndexMap validates each marked entry against this
-		// frame's cdef_bits limit. A stale index from a previous frame with more
-		// cdef_bits would be rejected against a smaller limit. SetCDEFIndexMap
-		// resets the map after this bind, so per-frame state always starts empty.
-		clear(r.CDEFIndex[:length])
-		clear(r.CDEFRead[:length])
-		cdefMap, err := b.BindCDEFIndexMap(r.CDEFIndex, r.CDEFRead)
-		if err != nil {
-			return err
-		}
-		if err := s.SetCDEFIndexMap(cdefMap); err != nil {
-			return err
-		}
-		r.CDEFIndexMap = cdefMap
-	}
-	if frameWorkLoopFilterActive(b.LoopFilter) || frameWorkCDEFActive(b.CDEF) {
-		cols, rows, length, err := b.LoopFilterMapShape()
-		if err != nil {
-			return err
-		}
-		if len(r.LoopFilterRecords) < length {
-			return threading.ErrInvalidBatch
-		}
-		lfMap := threading.FrameWorkLoopFilterMap{
-			Records: r.LoopFilterRecords[:length],
-			Stride:  uint16(cols),
-			Rows:    uint16(rows),
-		}
-		if err := s.SetLoopFilterMap(lfMap); err != nil {
-			return err
-		}
-		r.LoopFilterMap = lfMap
-
-		// Bind the dav1d-style deblocking edge-mask storage only when the loop
-		// filter is active this frame (the masks are consumed only by it). The
-		// mask bitmasks and the level cache are reused across frames, so clear
-		// them before the decode block walk ORs this frame's edges in.
-		if frameWorkLoopFilterActive(b.LoopFilter) {
-			sb128w, sb128h, maskCount := threading.FrameWorkLoopFilterMaskShape(cols, rows)
-			if len(r.LFMasks) < maskCount || len(r.LFLevelCache) < length {
-				return threading.ErrInvalidBatch
-			}
-			masks := r.LFMasks[:maskCount]
-			levelCache := threading.FrameWorkLoopFilterLevelCacheBind(r.LFLevelCache, cols, rows)
-			clear(masks)
-			clear(levelCache)
-			color := b.Sequence.ColorConfig
-			handle := threading.FrameWorkLoopFilterMasks{
-				Masks:      masks,
-				LevelCache: levelCache,
-				Cols:       cols,
-				Rows:       rows,
-				SB128W:     sb128w,
-				SB128H:     sb128h,
-				Layout:     frameWorkLoopFilterMaskLayout(color),
-				HasChroma:  !color.MonoChrome,
-			}
-			if err := s.SetLoopFilterMasks(handle); err != nil {
-				return err
-			}
-			r.LoopFilterMasks = handle
-		}
-	}
-	if frameWorkRestorationActive(b.Restoration) {
-		buffers, err := b.BindRestorationFrameBuffers(r.RestorationRecords, r.RestorationAbove, r.RestorationBelow)
-		if err != nil {
-			return err
-		}
-		if err := s.SetRestorationFrameBuffers(buffers); err != nil {
-			return err
-		}
-		r.RestorationFrameBuffers = buffers
-	}
-	return nil
-}
-
 func (s *FrameWorkState) bindFrameWorkEventSideData(event *Event, step FrameWorkStep, output *frame.Frame, references []*frame.Frame, payload []byte, side FrameWorkSideDataRunner) error {
 	if side == nil {
 		return nil
@@ -2192,37 +1948,6 @@ func ExecuteTileWork(plan TileWorkPlan, pool *threading.Pool, jobs []tile.Job, b
 		return nil
 	}
 	return pool.Execute(batches[:plan.BatchCount], jobs[:plan.JobCount], fn)
-}
-
-// ExecuteFrameWorkStep dispatches any tile work carried by step. Steps that do
-// not carry tile work are successful no-ops; the boolean reports whether tile
-// work actually ran.
-func ExecuteFrameWorkStep(step FrameWorkStep, pool *threading.Pool, jobs []tile.Job, batches []threading.Batch, fn threading.BatchFunc) (bool, error) {
-	plan, _, hasTile, err := frameWorkStepTilePlan(step)
-	if err != nil {
-		return false, err
-	}
-	if !hasTile {
-		return false, nil
-	}
-
-	if err := ExecuteTileWork(plan, pool, jobs, batches, fn); err != nil {
-		return false, err
-	}
-	return plan.JobCount != 0, nil
-}
-
-// ExecuteFrameWorkStepWithContext dispatches frame-work tile batches while
-// passing the output frame and resolved reference frames to each batch.
-func ExecuteFrameWorkStepWithContext(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
-	return executeFrameWorkStepWithPayload(step, pool, output, references, nil, false, FrameWorkFrameContext{}, false, nil, nil, nil, frameWorkMotionFields{}, nil, nil, nil, nil, jobs, batches, fn)
-}
-
-// ExecuteFrameWorkStepWithPayload dispatches frame-work tile batches while
-// passing the output frame, tile-group payload, and resolved reference frames
-// to each batch.
-func ExecuteFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
-	return executeFrameWorkStepWithPayload(step, pool, output, references, payload, true, FrameWorkFrameContext{}, false, nil, nil, nil, frameWorkMotionFields{}, nil, nil, nil, nil, jobs, batches, fn)
 }
 
 // frameWorkMotionFields bundles the optional temporal-MV batch pointers so the

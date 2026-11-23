@@ -1677,6 +1677,7 @@ func runProfileClip(t *testing.T, clip profileClip) {
 	var stream decoder.Stream
 	var refs decoder.SurfaceReferences
 	var state decoder.FrameWorkState
+	decoder.EnableOwnedTemporalMotionStorage(&state)
 	var pool frame.Pool
 	var backing []byte
 	var frameSlots []frame.Frame
@@ -1689,13 +1690,7 @@ func runProfileClip(t *testing.T, clip profileClip) {
 	var outputUsed []bool
 	var frameContexts decoder.SharedFrameContextStore
 	var havePool bool
-	var mvEntryBacking []tile.ReferenceMVEntry
-	var temporalEntryBacking []tile.TemporalMotionEntry
-	var mvFrames []tile.ReferenceMVFrame
-	var mvStore []tile.TemporalMotionReferenceFrame
-	var mvLength int
-	var publishedMVEntryBacking []tile.ReferenceMVEntry
-	var publishedMVFrames []tile.ReferenceMVFrame
+	var sideData frameWorkSideData
 
 	var events [16]decoder.Event
 	var referenceSurfaces [parser.InterRefsPerFrame]int
@@ -1716,12 +1711,6 @@ func runProfileClip(t *testing.T, clip profileClip) {
 		runtime.KeepAlive(outputFrameSlots)
 		runtime.KeepAlive(outputFree)
 		runtime.KeepAlive(outputUsed)
-		runtime.KeepAlive(mvEntryBacking)
-		runtime.KeepAlive(temporalEntryBacking)
-		runtime.KeepAlive(mvFrames)
-		runtime.KeepAlive(mvStore)
-		runtime.KeepAlive(publishedMVEntryBacking)
-		runtime.KeepAlive(publishedMVFrames)
 	}()
 
 	emitted := 0
@@ -1748,7 +1737,6 @@ func runProfileClip(t *testing.T, clip profileClip) {
 		if err != nil {
 			t.Fatalf("ivf frame %d PushLowOverhead: %v", ivfFrame.Index, err)
 		}
-		currentMVSurface := -1
 		for i := 0; i < count; i++ {
 			event := events[i]
 			if !eventRunsFrameWork(event) {
@@ -1791,55 +1779,15 @@ func runProfileClip(t *testing.T, clip profileClip) {
 				// its own size.
 				maxEvent := maxFrameSizeEvent(event)
 				pool, backing, frameSlots, free, used = bindFramePool(t, maxEvent, parser.RefFrames+1)
-				mvEntryBacking, temporalEntryBacking, mvFrames, mvStore, mvLength = bindMotionStore(t, maxEvent, parser.RefFrames+1)
 				if clip.superRes {
 					outputPool, outputBacking, outputFrameSlots, outputFree, outputUsed = bindOutputFramePool(t, maxEvent, 8)
-					mvStore = make([]tile.TemporalMotionReferenceFrame, profileSuperResOutputGlobalBase+8)
-					publishedMVEntryBacking = make([]tile.ReferenceMVEntry, 8*mvLength)
-					publishedMVFrames = make([]tile.ReferenceMVFrame, 8)
 				}
 				havePool = true
 			}
 
 			var postMD5 testvector.MD5
 			havePost := false
-			// A frame's tile groups share its saved-MV frame: only the first
-			// tile group binds (and clears) it.
-			if event.Kind != decoder.EventTileGroup || event.TileGroup.StartTile == 0 {
-				currentMVSurface = -1
-			}
 			tileRunner := batchRunner(func(ctx decoder.FrameWorkBatch) error {
-				surface, err := ctx.Surface()
-				if err != nil {
-					return err
-				}
-				if currentMVSurface != surface || mvFrames[surface].Entries == nil {
-					first := surface * mvLength
-					currentMVFrame, err := ctx.BindReferenceMVFrame(mvEntryBacking[first : first+mvLength])
-					if err != nil {
-						return err
-					}
-					mvFrames[surface] = currentMVFrame
-					currentMVSurface = surface
-				}
-				ctx.CurrentMVFrame = &mvFrames[surface]
-				if ctx.TileInfo.UseRefFrameMVS {
-					temporalMVs, err := ctx.BindTemporalMotionField(temporalEntryBacking)
-					if err != nil {
-						return err
-					}
-					ctx.TemporalMVs = &temporalMVs
-					resolved, err := decoder.ResolveTemporalMotionReferences(referenceSurfaces[:len(ctx.References)], mvStore, ctx.ReferenceMVs[:])
-					if err != nil {
-						return err
-					}
-					if resolved != len(ctx.References) {
-						return decoder.ErrInvalidSurfaceReference
-					}
-					if _, err := ctx.SetupTemporalMotionField(); err != nil {
-						return err
-					}
-				}
 				var restorationReq *threading.FrameWorkTileRestorationRequest
 				if ctx.RestorationFrameBuffers != nil {
 					restoration := threading.FrameWorkTileRestorationRequest{Buffers: *ctx.RestorationFrameBuffers}
@@ -1922,7 +1870,7 @@ func runProfileClip(t *testing.T, clip profileClip) {
 				// public decoder's external runner does the same); a frame without
 				// super-res in a super-res stream publishes its coded surface.
 				if clip.superRes && ctx.ActivePostFilters().Has(decoder.FrameWorkPostFilterSuperRes) {
-					out, publishedGlobalSurface, ev, err := applyCallerPostFiltersForPublication(ctx, &outputPool)
+					out, publishedGlobalSurface, err := applyCallerPostFiltersForPublication(ctx, &outputPool)
 					if err != nil {
 						return -1, err
 					}
@@ -1932,11 +1880,6 @@ func runProfileClip(t *testing.T, clip profileClip) {
 							_ = releaseProfileSuperResOutput(&outputPool, publishedGlobalSurface)
 						}
 					}()
-					if currentMVSurface >= 0 {
-						if err := publishProfileSuperResTemporalMotionReference(ev, publishedGlobalSurface, &mvFrames[currentMVSurface], publishedMVFrames, publishedMVEntryBacking, mvStore, mvLength); err != nil {
-							return -1, err
-						}
-					}
 					got, err := testvector.FrameMD5(*out)
 					if err != nil {
 						return -1, err
@@ -1946,23 +1889,9 @@ func runProfileClip(t *testing.T, clip profileClip) {
 					published = true
 					return publishedGlobalSurface, nil
 				}
-				post := decoder.FrameWorkBoundSupportedPostFilterRunner{}
-				size, err := supportedPostFilterScratchLen(ctx)
+				output, err := applySupportedPostFilters(ctx, postFilterScratchStorage)
 				if err != nil {
 					return -1, err
-				}
-				post.Scratch = postFilterScratchStorage(size)
-				if err := post.Apply(ctx); err != nil {
-					return -1, err
-				}
-				if currentMVSurface >= 0 {
-					if err := decoder.PublishTemporalMotionReference(&post.Context.Event, currentMVSurface, &mvFrames[currentMVSurface], mvStore); err != nil {
-						return -1, err
-					}
-				}
-				output := post.Context.Output
-				if post.DisplayOutput != nil {
-					output = post.DisplayOutput
 				}
 				got, err := testvector.FrameMD5(*output)
 				if err != nil {
@@ -1976,9 +1905,9 @@ func runProfileClip(t *testing.T, clip profileClip) {
 			var err error
 			if clip.superRes {
 				provider := profileSurfaceProvider{coded: &pool, output: &outputPool}
-				result, err = state.RunEventWithContextAndExternalReferences(&refs, &pool, event.SequenceHeader, &event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, provider, func(local int) int { return local }, provider, &frameContexts, sideDataRunner{}, tileRunner, post)
+				result, err = state.RunEventWithContextAndExternalReferences(&refs, &pool, event.SequenceHeader, &event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, provider, func(local int) int { return local }, provider, &frameContexts, &sideData, tileRunner, post)
 			} else {
-				result, err = state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, event.SequenceHeader, &event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, sideDataRunner{}, tileRunner, post)
+				result, err = state.RunEventWithContextAndSideDataAndPostFilterRunners(&refs, &pool, event.SequenceHeader, &event, 32, referenceSurfaces[:], referenceFrames[:], 1, spans[:], jobs[:], batches[:], releases[:], workerPool, &sideData, tileRunner, post)
 			}
 			if err != nil {
 				t.Fatalf("ivf frame %d run framework event: %v", ivfFrame.Index, err)
@@ -2034,7 +1963,11 @@ func runProfileClip(t *testing.T, clip profileClip) {
 		if havePool && !clip.superRes {
 			// The temporal unit's outputs are consumed: a surface stays live
 			// only while a reference slot keeps it (dav1d_picture_unref).
-			decoder.ReleaseUnreferencedFrameSurfaces(&refs, &pool)
+			for surface := range pool.Cap() {
+				if !refs.Holds(surface) {
+					_ = pool.Release(surface) // a free slot reports ErrInvalidSlot
+				}
+			}
 		}
 	}
 	if emitted != len(wantDigests) {
@@ -2131,25 +2064,6 @@ func bindOutputFramePool(t *testing.T, event decoder.Event, count int) (frame.Po
 	return pool, backing, frames, free, used
 }
 
-func bindMotionStore(t *testing.T, event decoder.Event, count int) ([]tile.ReferenceMVEntry, []tile.TemporalMotionEntry, []tile.ReferenceMVFrame, []tile.TemporalMotionReferenceFrame, int) {
-	t.Helper()
-	miCols := miExtent(event.FrameSize.CodedWidth)
-	miRows := miExtent(event.FrameSize.Height)
-	length, err := tile.ReferenceMVFrameEntries(miRows, miCols)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return make([]tile.ReferenceMVEntry, count*length),
-		make([]tile.TemporalMotionEntry, length),
-		make([]tile.ReferenceMVFrame, count),
-		make([]tile.TemporalMotionReferenceFrame, count),
-		length
-}
-
-func miExtent(pixels uint32) uint32 {
-	return ((pixels + 7) >> 3) << 1
-}
-
 func frameFormatFromEvent(event decoder.Event) frame.Format {
 	return frameFormatFromEventWidth(event, event.FrameSize.CodedWidth)
 }
@@ -2238,30 +2152,6 @@ func (p profileSurfaceProvider) resolve(id int) (*frame.Pool, int, error) {
 	return p.coded, id, nil
 }
 
-func publishProfileSuperResTemporalMotionReference(event decoder.Event, globalSurface int, current *tile.ReferenceMVFrame, published []tile.ReferenceMVFrame, backing []tile.ReferenceMVEntry, store []tile.TemporalMotionReferenceFrame, mvLength int) error {
-	local := globalSurface - profileSuperResOutputGlobalBase
-	if local < 0 || local >= len(published) || mvLength <= 0 {
-		return decoder.ErrInvalidSurfaceReference
-	}
-	if len(backing) < (local+1)*mvLength {
-		return decoder.ErrSurfaceReferenceBufferTooSmall
-	}
-	// Each published slot holds mvLength entries, enough for the largest
-	// frame; a frame publishes its own grid size.
-	if current == nil || len(current.Entries) > mvLength {
-		return decoder.ErrInvalidSurfaceReference
-	}
-	dst := backing[local*mvLength : local*mvLength+len(current.Entries)]
-	copy(dst, current.Entries)
-	published[local] = tile.ReferenceMVFrame{
-		Rows:    current.Rows,
-		Cols:    current.Cols,
-		Stride:  current.Stride,
-		Entries: dst,
-	}
-	return decoder.PublishTemporalMotionReference(&event, globalSurface, &published[local], store)
-}
-
 func residualScratch(ctx decoder.FrameWorkBatch) ([]int32, []int16, error) {
 	if _, _, err := ctx.BlockQuantizer(ctx.Quantization.BaseQIdx, 0, threading.FrameWorkPlaneY); err != nil {
 		return nil, nil, err
@@ -2305,37 +2195,148 @@ func (r *profilePostFilterRunner) PublishedFrameWorkGlobalSurface() (int, bool) 
 	return r.publishedGlobalSurface, true
 }
 
-type sideDataRunner struct{}
-
-func (sideDataRunner) BindFrameWorkSideData(state *decoder.FrameWorkState, ctx decoder.FrameWorkBatch) error {
-	size, err := decoder.FrameWorkSideDataScratchLen(ctx)
-	if err != nil {
-		return err
-	}
-	side, err := size.BindRunner(sideDataScratch(size))
-	if err != nil {
-		return err
-	}
-	return side.BindFrameWorkSideData(state, ctx)
+// frameWorkSideData binds the per-frame CDEF index, loop-filter, and
+// loop-restoration side data of the frame's active post-filter stages, reusing
+// its buffers across frames.
+type frameWorkSideData struct {
+	cdefIndex          []uint8
+	cdefRead           []bool
+	loopFilterRecords  []threading.FrameWorkLoopFilterBlockRecord
+	lfMasks            []lfmask.FilterMask
+	lfLevelCache       [][4]uint8
+	restorationRecords []tile.RestorationUnitRecord
+	restorationAbove   []uint16
+	restorationBelow   []uint16
 }
 
-func sideDataScratch(size decoder.FrameWorkSideDataScratchSize) decoder.FrameWorkSideDataScratch {
-	return decoder.FrameWorkSideDataScratch{
-		CDEFIndex:          make([]uint8, maxInt(size.CDEF, 0)),
-		CDEFRead:           make([]bool, maxInt(size.CDEF, 0)),
-		LoopFilterRecords:  make([]threading.FrameWorkLoopFilterBlockRecord, maxInt(size.LoopFilterRecords, 0)),
-		LFMasks:            make([]lfmask.FilterMask, maxInt(size.LoopFilterMasks, 0)),
-		LFLevelCache:       make([][4]uint8, maxInt(size.LoopFilterLevels, 0)),
-		RestorationRecords: make([]tile.RestorationUnitRecord, maxInt(size.RestorationRecords, 0)),
-		RestorationAbove:   make([]uint16, maxInt(size.RestorationBoundary, 0)),
-		RestorationBelow:   make([]uint16, maxInt(size.RestorationBoundary, 0)),
+func (r *frameWorkSideData) BindFrameWorkSideData(s *decoder.FrameWorkState, b decoder.FrameWorkBatch) error {
+	lf := b.LoopFilter
+	lfActive := lf.LevelY[0] != 0 || lf.LevelY[1] != 0 || lf.LevelU != 0 || lf.LevelV != 0
+	cdefActive := b.CDEF.Bits != 0 || b.CDEF.YStrength[0] != 0 || b.CDEF.UVStrength[0] != 0
+	if cdefActive {
+		_, _, n, err := b.CDEFIndexMapShape()
+		if err != nil {
+			return err
+		}
+		r.cdefIndex = sideDataBuffer(r.cdefIndex, n)
+		r.cdefRead = sideDataBuffer(r.cdefRead, n)
+		clear(r.cdefIndex)
+		clear(r.cdefRead)
+		cdefMap, err := b.BindCDEFIndexMap(r.cdefIndex, r.cdefRead)
+		if err != nil {
+			return err
+		}
+		if err := s.SetCDEFIndexMap(cdefMap); err != nil {
+			return err
+		}
 	}
+	if lfActive || cdefActive {
+		cols, rows, n, err := b.LoopFilterMapShape()
+		if err != nil {
+			return err
+		}
+		r.loopFilterRecords = sideDataBuffer(r.loopFilterRecords, n)
+		lfMap := threading.FrameWorkLoopFilterMap{Records: r.loopFilterRecords, Stride: uint16(cols), Rows: uint16(rows)}
+		if err := s.SetLoopFilterMap(lfMap); err != nil {
+			return err
+		}
+		if lfActive {
+			sb128w, sb128h, maskCount := threading.FrameWorkLoopFilterMaskShape(cols, rows)
+			r.lfMasks = sideDataBuffer(r.lfMasks, maskCount)
+			r.lfLevelCache = sideDataBuffer(r.lfLevelCache, threading.FrameWorkLoopFilterLevelCacheLen(cols, rows))
+			levelCache := threading.FrameWorkLoopFilterLevelCacheBind(r.lfLevelCache, cols, rows)
+			clear(r.lfMasks)
+			clear(levelCache)
+			color := b.Sequence.ColorConfig
+			layout := lfmask.Layout{Mono: color.MonoChrome}
+			if color.SubsamplingX {
+				layout.SSHor = 1
+			}
+			if color.SubsamplingY {
+				layout.SSVer = 1
+			}
+			if err := s.SetLoopFilterMasks(threading.FrameWorkLoopFilterMasks{
+				Masks:      r.lfMasks,
+				LevelCache: levelCache,
+				Cols:       cols,
+				Rows:       rows,
+				SB128W:     sb128w,
+				SB128H:     sb128h,
+				Layout:     layout,
+				HasChroma:  !color.MonoChrome,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	if b.Restoration.Type[0] != parser.RestorationNone || b.Restoration.Type[1] != parser.RestorationNone || b.Restoration.Type[2] != parser.RestorationNone {
+		plan, err := b.RestorationFramePlan()
+		if err != nil {
+			return err
+		}
+		r.restorationRecords = sideDataBuffer(r.restorationRecords, plan.UnitRecordLen())
+		r.restorationAbove = sideDataBuffer(r.restorationAbove, plan.BoundaryBufferLen())
+		r.restorationBelow = sideDataBuffer(r.restorationBelow, plan.BoundaryBufferLen())
+		buffers, err := b.BindRestorationFrameBuffers(r.restorationRecords, r.restorationAbove, r.restorationBelow)
+		if err != nil {
+			return err
+		}
+		if err := s.SetRestorationFrameBuffers(buffers); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func applyCallerPostFiltersForPublication(ctx decoder.FrameWorkPostFilterContext, outputPool *frame.Pool) (*frame.Frame, int, decoder.Event, error) {
+func sideDataBuffer[T any](buf []T, n int) []T {
+	if cap(buf) < n {
+		return make([]T, n)
+	}
+	return buf[:n]
+}
+
+// applySupportedPostFilters runs the frame's remaining supported post-filter
+// stages over the side data bound in ctx, with scratch from storage, and
+// returns the display output.
+func applySupportedPostFilters(ctx decoder.FrameWorkPostFilterContext, storage func(decoder.FrameWorkPostFilterScratchSize) decoder.FrameWorkPostFilterScratch) (*frame.Frame, error) {
+	var options decoder.FrameWorkPostFilterBindOptions
+	var probe decoder.FrameWorkPostFilterRequest
+	if ctx.LoopFilterMap != nil {
+		options.LoopFilterMap = *ctx.LoopFilterMap
+		options.LoopFilterTrustedCoverage = true
+		probe.LoopFilter.Map = options.LoopFilterMap
+	}
+	if ctx.CDEFIndexMap != nil {
+		options.CDEFIndexMap = *ctx.CDEFIndexMap
+		probe.CDEF.IndexMap = options.CDEFIndexMap
+	}
+	if ctx.RestorationFrameBuffers != nil {
+		options.RestorationRecords = ctx.RestorationFrameBuffers.Records
+		options.RestorationBoundaries = ctx.RestorationFrameBuffers.Boundaries
+		probe.Restoration.Records = options.RestorationRecords
+	}
+	size, err := ctx.SupportedPostFilterScratchLen(probe)
+	if err != nil {
+		return nil, fmt.Errorf("supported postfilter scratch: %w", err)
+	}
+	req, err := size.BindRequest(options, storage(size))
+	if err != nil {
+		return nil, err
+	}
+	next, display, _, err := ctx.ApplySupportedPostFiltersForPublication(req)
+	if err != nil {
+		return nil, err
+	}
+	if err := next.RequirePublishablePostFilterOutput(); err != nil {
+		return nil, err
+	}
+	return display, nil
+}
+
+func applyCallerPostFiltersForPublication(ctx decoder.FrameWorkPostFilterContext, outputPool *frame.Pool) (*frame.Frame, int, error) {
 	local, outputFrame, err := acquireProfileOutputSurface(outputPool, ctx.Event)
 	if err != nil {
-		return nil, -1, decoder.Event{}, err
+		return nil, -1, err
 	}
 	published := false
 	defer func() {
@@ -2345,14 +2346,14 @@ func applyCallerPostFiltersForPublication(ctx decoder.FrameWorkPostFilterContext
 	}()
 	backing, err := profileFrameBacking(outputFrame)
 	if err != nil {
-		return nil, -1, decoder.Event{}, err
+		return nil, -1, err
 	}
-	out, ev, err := applyCallerPostFiltersWithSuperResOutput(ctx, backing, outputFrame)
+	out, err := applyCallerPostFiltersWithSuperResOutput(ctx, backing, outputFrame)
 	if err != nil {
-		return nil, -1, decoder.Event{}, err
+		return nil, -1, err
 	}
 	published = true
-	return out, profileSuperResOutputGlobalBase + local, ev, nil
+	return out, profileSuperResOutputGlobalBase + local, nil
 }
 
 func releaseProfileSuperResOutput(outputPool *frame.Pool, globalSurface int) error {
@@ -2379,7 +2380,7 @@ func profileFrameBacking(outputFrame *frame.Frame) ([]byte, error) {
 	return outputFrame.Y.Pix[:outputFrame.Layout.Size], nil
 }
 
-func applyCallerPostFiltersWithSuperResOutput(ctx decoder.FrameWorkPostFilterContext, superResOutputFrame []byte, outputView *frame.Frame) (*frame.Frame, decoder.Event, error) {
+func applyCallerPostFiltersWithSuperResOutput(ctx decoder.FrameWorkPostFilterContext, superResOutputFrame []byte, outputView *frame.Frame) (*frame.Frame, error) {
 	var scratchOutputView frame.Frame
 	if outputView == nil {
 		outputView = &scratchOutputView
@@ -2399,7 +2400,7 @@ func applyCallerPostFiltersWithSuperResOutput(ctx decoder.FrameWorkPostFilterCon
 	probe := callerProbeRequest(options)
 	first, err := ctx.CallerPostFilterScratchLen(probe)
 	if err != nil {
-		return nil, decoder.Event{}, err
+		return nil, err
 	}
 	scratch := postFilterScratchStorage(first)
 	probe = callerProbeRequest(options)
@@ -2410,7 +2411,7 @@ func applyCallerPostFiltersWithSuperResOutput(ctx decoder.FrameWorkPostFilterCon
 	probe.SuperRes.OutputView = outputView
 	full, err := ctx.CallerPostFilterScratchLen(probe)
 	if err != nil {
-		return nil, decoder.Event{}, err
+		return nil, err
 	}
 	scratch = postFilterScratchStorage(full)
 	if superResOutputFrame != nil {
@@ -2419,16 +2420,19 @@ func applyCallerPostFiltersWithSuperResOutput(ctx decoder.FrameWorkPostFilterCon
 
 	req, err := full.BindRequest(options, scratch)
 	if err != nil {
-		return nil, decoder.Event{}, err
+		return nil, err
 	}
-	runner := decoder.FrameWorkCallerPostFilterRunner{Request: req}
-	if err := runner.Apply(ctx); err != nil {
-		return nil, decoder.Event{}, err
+	next, _, err := ctx.ApplyCallerPostFilters(req)
+	if err != nil {
+		return nil, err
 	}
-	if runner.Context.Output == nil {
-		return nil, decoder.Event{}, fmt.Errorf("caller post-filter produced nil output")
+	if err := next.RequireNoRemainingPostFilters(); err != nil {
+		return nil, err
 	}
-	return runner.Context.Output, runner.Context.Event, nil
+	if next.Output == nil {
+		return nil, fmt.Errorf("caller post-filter produced nil output")
+	}
+	return next.Output, nil
 }
 
 func callerProbeRequest(options decoder.FrameWorkPostFilterBindOptions) decoder.FrameWorkPostFilterRequest {
@@ -2437,20 +2441,6 @@ func callerProbeRequest(options decoder.FrameWorkPostFilterBindOptions) decoder.
 		CDEF:        decoder.FrameWorkCDEFPostFilterRequest{IndexMap: options.CDEFIndexMap},
 		Restoration: decoder.FrameWorkRestorationPostFilterRequest{Records: options.RestorationRecords},
 	}
-}
-
-func supportedPostFilterScratchLen(ctx decoder.FrameWorkPostFilterContext) (decoder.FrameWorkPostFilterScratchSize, error) {
-	var probe decoder.FrameWorkPostFilterRequest
-	if ctx.LoopFilterMap != nil {
-		probe.LoopFilter.Map = *ctx.LoopFilterMap
-	}
-	if ctx.CDEFIndexMap != nil {
-		probe.CDEF.IndexMap = *ctx.CDEFIndexMap
-	}
-	if ctx.RestorationFrameBuffers != nil {
-		probe.Restoration.Records = ctx.RestorationFrameBuffers.Records
-	}
-	return ctx.SupportedPostFilterScratchLen(probe)
 }
 
 func postFilterScratchStorage(size decoder.FrameWorkPostFilterScratchSize) decoder.FrameWorkPostFilterScratch {

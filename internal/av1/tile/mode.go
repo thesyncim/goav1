@@ -887,13 +887,6 @@ func cdefUnitsForBlock(size BlockSize, x4 int, y4 int) ([cdefUnitsPerSB]uint8, i
 	return units, count, nil
 }
 
-func negDeinterleaveSegmentID(diff int, ref int, max int) (int, error) {
-	if diff < 0 || ref < 0 || max <= 0 || ref >= max {
-		return 0, ErrInvalidDecodeState
-	}
-	return negDeinterleave(diff, ref, max), nil
-}
-
 // negDeinterleave is dav1d's neg_deinterleave (src/decode.c), unchecked: ref
 // may reach or exceed max, and the result may then be negative.
 func negDeinterleave(diff int, ref int, max int) int {

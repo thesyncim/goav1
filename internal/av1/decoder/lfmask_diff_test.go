@@ -114,7 +114,7 @@ func lfmaskLumaCells(t *testing.T, event Event, size parser.FrameSize, records [
 		}
 		builder.CreateInter(&mask, lc, lv, bx, by, cols, rows, skip,
 			rec.Block.Size, rec.TransformTree.Y, rec.TransformTree.Split, rec.TransformTree.UV,
-			lfmask.I420(), aY, lY, nil, nil)
+			lfmask.Layout{SSHor: 1, SSVer: 1}, aY, lY, nil, nil)
 	}
 
 	cells := map[[2]int]lfDiffCell{}
@@ -296,7 +296,7 @@ func lfmaskChromaCells(t *testing.T, event Event, size parser.FrameSize, records
 		}
 		builder.CreateInter(&mask, lc, lv, bx, by, cols, rows, skip,
 			rec.Block.Size, rec.TransformTree.Y, rec.TransformTree.Split, rec.TransformTree.UV,
-			lfmask.I420(), aY, lY, auv, luv)
+			lfmask.Layout{SSHor: 1, SSVer: 1}, aY, lY, auv, luv)
 	}
 
 	levelIdx := 2 // level cache index: 2 = U, 3 = V

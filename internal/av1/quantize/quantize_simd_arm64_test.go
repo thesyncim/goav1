@@ -16,10 +16,8 @@ func TestQuantizeSIMDDispatchBindings(t *testing.T) {
 	if !cpu.Detected.NEON {
 		t.Skip("NEON not detected")
 	}
-	requireQuantizeBinding(t, "quantizeBlockImpl", quantizeBlockImpl, "quantizeBlockSIMD")
 	requireQuantizeBinding(t, "quantizeFPBlockImpl", quantizeFPBlockImpl, "quantizeFPBlockSIMD")
 	requireQuantizeBinding(t, "quantizeBBlockImpl", quantizeBBlockImpl, "quantizeBBlockSIMD")
-	requireQuantizeBinding(t, "quantizeFPNoQMatrixImpl", quantizeFPNoQMatrixImpl, "quantizeFPNoQMatrixSIMD")
 }
 
 func requireQuantizeBinding(t *testing.T, name string, fn any, want string) {
@@ -33,43 +31,6 @@ func requireQuantizeBinding(t *testing.T, name string, fn any, want string) {
 		t.Fatalf("%s bound to %s, want %s", name, got, want)
 	}
 }
-
-func benchQuantizeBlock(b *testing.B, n int, fn func([]int16, []int32, int, Quantizer, uint8) bool) {
-	rng := rand.New(rand.NewSource(79))
-	q := Quantizer{DC: 107, AC: 130}
-	coeff := make([]int32, n*n)
-	for i := range coeff {
-		coeff[i] = int32(rng.Intn(1<<18)) - 1<<17
-	}
-	qcoeff := make([]int16, n*n)
-	b.ReportAllocs()
-	b.SetBytes(int64(n * n * 4))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = fn(qcoeff, coeff, n, q, 1)
-	}
-}
-
-func quantizeBlockScalarBench(qcoeff []int16, coeff []int32, n int, q Quantizer, txScale uint8) bool {
-	count := n * n
-	for i := range count {
-		scale := q.AC
-		if i == 0 {
-			scale = q.DC
-		}
-		qcoeff[i] = quantizeScalar(coeff[i], scale, txScale)
-	}
-	return true
-}
-
-func BenchmarkQuantizeBlock16x16_Scalar(b *testing.B) {
-	benchQuantizeBlock(b, 16, quantizeBlockScalarBench)
-}
-func BenchmarkQuantizeBlock16x16_SIMD(b *testing.B) { benchQuantizeBlock(b, 16, quantizeBlockSIMD) }
-func BenchmarkQuantizeBlock32x32_Scalar(b *testing.B) {
-	benchQuantizeBlock(b, 32, quantizeBlockScalarBench)
-}
-func BenchmarkQuantizeBlock32x32_SIMD(b *testing.B) { benchQuantizeBlock(b, 32, quantizeBlockSIMD) }
 
 func benchQuantizeFPBlock(b *testing.B, n int, fn func([]int16, []int32, int, Quantizer, uint8) bool) {
 	rng := rand.New(rand.NewSource(83))
@@ -121,65 +82,4 @@ func BenchmarkQuantizeFPBlock32x32_Scalar(b *testing.B) {
 }
 func BenchmarkQuantizeFPBlock32x32_SIMD(b *testing.B) {
 	benchQuantizeFPBlock(b, 32, quantizeFPBlockSIMD)
-}
-
-func benchQuantizeFPNoQMatrix(b *testing.B, count int, fn func([]int32, []int32, []int32, []int16, FPQuantizer) (int, bool)) {
-	rng := rand.New(rand.NewSource(89))
-	q := FPQuantizer{
-		Quant:    [2]int16{840, 704},
-		Dequant:  [2]int16{78, 93},
-		Round:    [2]int16{39, 46},
-		LogScale: 1,
-	}
-	coeff := make([]int32, count)
-	for i := range coeff {
-		coeff[i] = int32(rng.Intn(1<<18)) - 1<<17
-	}
-	scan := make([]int16, count)
-	for i := range scan {
-		scan[i] = int16(i)
-	}
-	qcoeff := make([]int32, count)
-	dqcoeff := make([]int32, count)
-	b.ReportAllocs()
-	b.SetBytes(int64(count * 4))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = fn(qcoeff, dqcoeff, coeff, scan, q)
-	}
-}
-
-func quantizeFPNoQMatrixScalarBench(qcoeff []int32, dqcoeff []int32, coeff []int32, scan []int16, q FPQuantizer) (int, bool) {
-	rounding := [2]int32{
-		roundPowerOfTwo(int32(q.Round[0]), q.LogScale),
-		roundPowerOfTwo(int32(q.Round[1]), q.LogScale),
-	}
-	eob := 0
-	for i, rawRC := range scan {
-		rc := int(rawRC)
-		idx := 0
-		if rc != 0 {
-			idx = 1
-		}
-		qc, dqc, nonzero := quantizeFPNoQMatrixScalarCoeff(coeff[rc], idx, q, rounding)
-		qcoeff[rc] = qc
-		dqcoeff[rc] = dqc
-		if nonzero {
-			eob = i + 1
-		}
-	}
-	return eob, true
-}
-
-func BenchmarkQuantizeFPNoQMatrix256_Scalar(b *testing.B) {
-	benchQuantizeFPNoQMatrix(b, 256, quantizeFPNoQMatrixScalarBench)
-}
-func BenchmarkQuantizeFPNoQMatrix256_SIMD(b *testing.B) {
-	benchQuantizeFPNoQMatrix(b, 256, quantizeFPNoQMatrixSIMD)
-}
-func BenchmarkQuantizeFPNoQMatrix1024_Scalar(b *testing.B) {
-	benchQuantizeFPNoQMatrix(b, 1024, quantizeFPNoQMatrixScalarBench)
-}
-func BenchmarkQuantizeFPNoQMatrix1024_SIMD(b *testing.B) {
-	benchQuantizeFPNoQMatrix(b, 1024, quantizeFPNoQMatrixSIMD)
 }
