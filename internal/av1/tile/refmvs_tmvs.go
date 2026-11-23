@@ -209,3 +209,13 @@ func (rt *refmvsTile) loadTmvs(colStart8, colEnd8, rowStart8, rowEnd8 int32) {
 func refMVEntryBits(e *ReferenceMVEntry) uint64 {
 	return *(*uint64)(unsafe.Pointer(e))
 }
+
+// storeRefMVEntryBits stores a whole entry as one word, the inverse of
+// refMVEntryBits; v must keep the pad bytes (bits 48-63) zero. Field-wise
+// stores of the same entry are four narrow stores.
+func storeRefMVEntryBits(e *ReferenceMVEntry, v uint64) {
+	*(*uint64)(unsafe.Pointer(e)) = v
+}
+
+// ReferenceMVEntry is exactly one word (refMVEntryBits, storeRefMVEntryBits).
+var _ [0]struct{} = [unsafe.Sizeof(ReferenceMVEntry{}) - 8]struct{}{}
