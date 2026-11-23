@@ -86,11 +86,12 @@ func (n *frameThreadRefNeed) addNeighbor(o *tile.OverlappableNeighbor, bottom in
 // waitSuperblockReferences blocks until every reference the superblock's
 // buffered blocks predict from has published the rows they read. It reports
 // false when a reference failed to decode.
-func (r *FrameThreadRecon) waitSuperblockReferences(b *FrameWorkBatch, events []frameWorkReconEvent, visits []tile.BlockLoopVisit) bool {
-	var need frameThreadRefNeed
-	if !need.addEvents(events, visits) {
+func (r *FrameThreadRecon) waitSuperblockReferences(b *FrameWorkBatch, visits []tile.BlockLoopVisit) bool {
+	if len(visits) == 0 {
 		return true
 	}
+	var need frameThreadRefNeed
+	need.addVisits(visits)
 	return r.waitReferences(b, &need)
 }
 
@@ -108,10 +109,11 @@ func (r *FrameThreadRecon) waitRowReferences(b *FrameWorkBatch, view *frameWorkR
 	var need frameThreadRefNeed
 	any := false
 	for _, sb := range view.sbs[lo:hi] {
-		if sb.start < 0 || sb.end < sb.start || int(sb.end) > len(view.events) {
+		if sb.start < 0 || sb.end < sb.start || int(sb.end) > len(view.visits) {
 			return true
 		}
-		if need.addEvents(view.events[sb.start:sb.end], view.visits) {
+		if sb.end > sb.start {
+			need.addVisits(view.visits[sb.start:sb.end])
 			any = true
 		}
 	}
@@ -121,19 +123,11 @@ func (r *FrameThreadRecon) waitRowReferences(b *FrameWorkBatch, view *frameWorkR
 	return r.waitReferences(b, &need)
 }
 
-// addEvents adds the reference rows the buffered blocks of events read and
-// reports whether any block was found.
-func (n *frameThreadRefNeed) addEvents(events []frameWorkReconEvent, visits []tile.BlockLoopVisit) bool {
-	any := false
-	for i := range events {
-		ev := &events[i]
-		if ev.kind != frameWorkReconEventBlockBegin || int(ev.index) >= len(visits) {
-			continue
-		}
-		n.addVisit(&visits[ev.index])
-		any = true
+// addVisits adds the reference rows the buffered blocks read.
+func (n *frameThreadRefNeed) addVisits(visits []tile.BlockLoopVisit) {
+	for i := range visits {
+		n.addVisit(&visits[i])
 	}
-	return any
 }
 
 func (r *FrameThreadRecon) waitReferences(b *FrameWorkBatch, need *frameThreadRefNeed) bool {

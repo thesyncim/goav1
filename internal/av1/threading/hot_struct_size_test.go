@@ -41,9 +41,9 @@ func TestHotStructSizes(t *testing.T) {
 		// It also embeds a FrameWorkBatch, hence the wavefront lane channel and
 		// the deferred temporal-reference pointer.
 		{name: "poolTask", size: unsafe.Sizeof(poolTask{}), max: 1752}, // +8: FrameWorkBatch.FrameThread; +8: FrameWorkBatch.SegmentMaps
-		{name: "frameWorkReconEvent", size: unsafe.Sizeof(frameWorkReconEvent{}), max: 8},
+		{name: "frameWorkReconCBI", size: unsafe.Sizeof(frameWorkReconCBI{}), max: 6},
 		{name: "frameWorkReconPaletteBinding", size: unsafe.Sizeof(frameWorkReconPaletteBinding{}), max: 20}, // +4: the sub8x8 chroma cells arena slot
-		{name: "frameWorkReconSB", size: unsafe.Sizeof(frameWorkReconSB{}), max: 12},
+		{name: "frameWorkReconSB", size: unsafe.Sizeof(frameWorkReconSB{}), max: 20},                         // +8: the superblock's cbi and cf cursors
 		// The wavefront is allocated once per scratch behind a pointer; it carries
 		// the parse-side span cursor and the published row snapshot the lanes
 		// read while the tile is still parsing.

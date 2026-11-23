@@ -19,6 +19,123 @@ import (
 
 var wavefrontEnsureStatesBenchSink int
 
+// buildWavefrontReconController builds a controller whose deferred buffers are
+// pre-filled with one 64x64 intra-DC skip-transform block per superblock of an
+// sbCols x sbRows single-tile frame, in SB-raster order. Skip-transform intra
+// blocks predict luma+chroma directly from neighbors with no coefficients, so
+// they exercise the wavefront neighbor dependency without needing a real
+// entropy decode. output receives the reconstructed pixels.
+func buildWavefrontReconController(t testing.TB, output *frame.Frame, sbCols int, sbRows int, scratch *FrameWorkTileResidualScratch) *frameWorkTileResidualLoopController {
+	t.Helper()
+	batch := FrameWorkBatch{
+		Output: output,
+		FrameWorkFrameContext: FrameWorkFrameContext{
+			Sequence: FrameWorkSequenceContextFromHeader(parser.SequenceHeader{
+				ColorConfig: parser.ColorConfig{
+					BitDepth:     output.Format.BitDepth,
+					MonoChrome:   output.Format.MonoChrome,
+					SubsamplingX: output.Format.SubsamplingX,
+					SubsamplingY: output.Format.SubsamplingY,
+				},
+			}),
+			FrameSize: parser.FrameSize{CodedWidth: uint32(output.Format.Width), Height: uint32(output.Format.Height)},
+		},
+		Jobs: []tile.Job{{SBCols: uint16(sbCols), SBRows: uint16(sbRows)}},
+	}
+	scratch.geomCache.reset()
+	scratch.resetDeferredReconBuffers()
+	batch.geomCache = &scratch.geomCache
+
+	var stats FrameWorkTileResidualStats
+	c := &scratch.controller
+	*c = frameWorkTileResidualLoopController{
+		batch:   batch,
+		index:   0,
+		scratch: scratch,
+		stats:   &stats,
+	}
+
+	const sbMIB = 16 // 64x64 superblock = 16 4x4 MI units
+	for r := range sbRows {
+		for col := range sbCols {
+			miCol := uint16(col * sbMIB)
+			miRow := uint16(r * sbMIB)
+			visit := tile.BlockLoopVisit{
+				Block: tile.BlockVisit{
+					MICol: miCol, MIRow: miRow,
+					MIColEnd: miCol + sbMIB, MIRowEnd: miRow + sbMIB,
+					X4: uint8(miCol), Y4: uint8(miRow),
+					Size:      tile.BlockSize64x64,
+					VisibleW4: sbMIB, VisibleH4: sbMIB,
+					HaveTop:  r > 0,
+					HaveLeft: col > 0,
+				},
+				Prediction: tile.BlockPredictionModeResult{
+					Valid:           true,
+					Intra:           true,
+					LumaMode:        tile.IntraModeDC,
+					ChromaMode:      tile.ChromaIntraModeDC,
+					ChromaModeValid: true,
+				},
+			}
+			visit.Prefix.SkipTransform = true
+			// Skip intra blocks are predicted transform block by transform
+			// block over the block's transform layout (dav1d recon_b_intra):
+			// a 16x16 luma / 8x8 chroma grid gives each superblock 16 luma
+			// and 2x16 chroma predictions, with no cbi entries.
+			visit.Coefficients.Tree = tile.TransformTreeResult{Y: tile.TransformSize16x16, UV: tile.TransformSize8x8, HasUV: true}
+			scratch.reconVisits = append(scratch.reconVisits, visit)
+		}
+	}
+	return c
+}
+
+func TestReconWavefrontByteIdenticalToSerial(t *testing.T) {
+	const sbCols, sbRows = 8, 8 // 512x512, 8 SB rows
+	format := frame.Format{Width: sbCols * 64, Height: sbRows * 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64}
+
+	serialOut := testBatchFrame(t, format)
+	wavefrontOut := testBatchFrame(t, format)
+	// Seed the (past-visible) borders deterministically so neighbor reads are
+	// well-defined and identical for both runs.
+	testFillFrame(serialOut, 0)
+	testFillFrame(wavefrontOut, 0)
+
+	var predict, wfPredict FrameWorkPredictionScratch
+	var serialScratch, wavefrontScratch FrameWorkTileResidualScratch
+
+	cSerial := buildWavefrontReconController(t, serialOut, sbCols, sbRows, &serialScratch)
+	cSerial.recon = frameWorkReconState{
+		batch:             cSerial.batch,
+		index:             0,
+		stats:             cSerial.stats,
+		predictionScratch: &predict,
+		cflScratch:        &serialScratch.CFL,
+	}
+	if err := cSerial.testReplayDeferredSerial(); err != nil {
+		t.Fatalf("serial replay: %v", err)
+	}
+
+	for _, workers := range []int{2, 3, 4} {
+		testFillFrame(wavefrontOut, 0)
+		cWave := buildWavefrontReconController(t, wavefrontOut, sbCols, sbRows, &wavefrontScratch)
+		cWave.wavefrontWorkers = uint16(workers)
+		cWave.recon = frameWorkReconState{
+			batch:             cWave.batch,
+			index:             0,
+			stats:             cWave.stats,
+			predictionScratch: &wfPredict,
+			cflScratch:        &wavefrontScratch.CFL,
+		}
+		if err := cWave.testReplayDeferredWavefront(); err != nil {
+			t.Fatalf("wavefront replay workers=%d: %v", workers, err)
+		}
+		if !equalFramePlanes(serialOut, wavefrontOut) {
+			t.Fatalf("workers=%d wavefront output differs from serial replay", workers)
+		}
+	}
+}
+
 func TestReconWavefrontScratchUsesFlatArenas(t *testing.T) {
 	var wf frameWorkReconWavefront
 	c := frameWorkTileResidualLoopController{
@@ -138,6 +255,117 @@ func BenchmarkReconWavefrontEnsureStates(b *testing.B) {
 			b.Fatal(err)
 		}
 		wavefrontEnsureStatesBenchSink += len(wf.states) + len(wf.int32Arena) + len(wf.residualArena)
+	}
+}
+
+// testReplayDeferredSerial reconstructs every buffered block in decode order on
+// the controller's own reconstruction state.
+func (c *frameWorkTileResidualLoopController) testReplayDeferredSerial() error {
+	if err := c.scratch.finalizeDeferredPalettes(); err != nil {
+		return err
+	}
+	cur := frameWorkReconCursor{cbi: c.scratch.reconCBI, cf: c.scratch.cfArena}
+	for i := range c.scratch.reconVisits {
+		if err := c.recon.reconBDeferred(&c.scratch.reconVisits[i], &cur); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// testReplayDeferredWavefront reconstructs a fully buffered tile of one 64x64
+// skip block (no cbi entries or coefficients) per superblock through the
+// SB-row wavefront lanes.
+func (c *frameWorkTileResidualLoopController) testReplayDeferredWavefront() error {
+	region, err := c.batch.JobRegion(c.index)
+	if err != nil {
+		return err
+	}
+	sbSizeMIB := int(c.batch.Sequence.SBSizeMIB)
+	rowCount := int(region.SBRows)
+	if sbSizeMIB == 0 || rowCount <= 0 {
+		return ErrInvalidBatch
+	}
+	workers := min(int(c.wavefrontWorkers), rowCount)
+	if c.scratch.wavefront == nil {
+		c.scratch.wavefront = &frameWorkReconWavefront{}
+	}
+	wf := c.scratch.wavefront
+	wf.beginSpans(region, sbSizeMIB)
+	for i := range c.scratch.reconVisits {
+		v := &c.scratch.reconVisits[i]
+		if !v.Prefix.SkipTransform || v.Block.Size != tile.BlockSize64x64 {
+			return ErrInvalidBatch
+		}
+		if _, err := wf.noteSuperblock(i, 0, 0, int(v.Block.MIRow), int(v.Block.MICol)); err != nil {
+			return err
+		}
+	}
+	if err := wf.closeSpans(len(c.scratch.reconVisits)); err != nil {
+		return err
+	}
+	wf.ensureDone(rowCount)
+	wf.resetProgress(rowCount)
+	if err := wf.ensureStates(workers, c); err != nil {
+		return err
+	}
+	wf.startLanes(c.batch.wavefrontLanes, workers, rowCount)
+	wf.publishRows(rowCount, frameWorkReconView{
+		rowStart: wf.rowStart,
+		sbs:      wf.sbSpans,
+		visits:   c.scratch.reconVisits,
+		cbi:      c.scratch.reconCBI,
+		cfArena:  c.scratch.cfArena,
+	})
+	return wf.finishLanes(c.stats)
+}
+
+func equalFramePlanes(a *frame.Frame, b *frame.Frame) bool {
+	return string(a.Y.Pix) == string(b.Y.Pix) &&
+		string(a.U.Pix) == string(b.U.Pix) &&
+		string(a.V.Pix) == string(b.V.Pix)
+}
+
+// BenchmarkReconWavefrontReplay isolates the parallelized reconstruction phase:
+// the serial deferred replay against the four-lane wavefront on a large
+// single-tile workload (2048x2048, 32 superblock rows).
+func BenchmarkReconWavefrontReplay(b *testing.B) {
+	const sbCols, sbRows = 32, 32
+	format := frame.Format{Width: sbCols * 64, Height: sbRows * 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 64}
+	out := testBatchFrame(b, format)
+
+	var predict FrameWorkPredictionScratch
+	var scratch FrameWorkTileResidualScratch
+	for _, workers := range []int{1, 4} {
+		name := "serial"
+		if workers > 1 {
+			name = "wavefront4"
+		}
+		b.Run(name, func(b *testing.B) {
+			for b.Loop() {
+				b.StopTimer()
+				testFillFrame(out, 0)
+				c := buildWavefrontReconController(b, out, sbCols, sbRows, &scratch)
+				c.recon = frameWorkReconState{
+					batch:             c.batch,
+					index:             0,
+					stats:             c.stats,
+					predictionScratch: &predict,
+					cflScratch:        &scratch.CFL,
+				}
+				b.StartTimer()
+				var err error
+				if workers > 1 {
+					c.wavefrontWorkers = uint16(workers)
+					err = c.testReplayDeferredWavefront()
+				} else {
+					err = c.testReplayDeferredSerial()
+				}
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 
