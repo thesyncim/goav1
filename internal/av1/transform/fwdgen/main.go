@@ -5,17 +5,22 @@
 // Command fwdgen writes the straight-line Go SIMD forward DCT networks of
 // package transform from its scalar reference DCTs.
 //
-// It symbolically runs fwdDCT16, fwdDCT32 (fdct.go) and fwdDCT64 (fdct64.go)
-// over vector lines, keeps the nodes that feed the coded outputs (the first
-// 32 of the 64-point DCT, SVT's N2 form) and prints them as one statement per
-// node, so the networks reproduce the scalar oracle exactly:
+// It symbolically runs fwdDCT8, fwdDCT16, fwdDCT32 (fdct.go) and fwdDCT64
+// (fdct64.go) over vector lines, keeps the nodes that feed the outputs a pass
+// needs (all of them; the first 32 of the 64-point DCT, SVT's N2 form; the
+// first n/4 for SVT's N4_SHAPE) and prints them as one statement per node, so
+// the networks reproduce the scalar oracle exactly:
 //
 //   - fdct_net16_32_gen_arm64.go: the 16- and 32-point column passes (stored
 //     transposed) and in-place row passes, twiddles read off one
 //     fwd64Twiddles table pointer;
 //   - fdct_net64_gen_arm64.go: the 64x64 N2 column and row passes;
-//   - fdct_net16_32_gen_amd64.go: the 16- and 32-point passes in the
-//     row-major layout of the amd64 drivers, over broadcast constants.
+//   - fdct_rect_gen_arm64.go: the passes of the 2:1 rectangles 16x8, 8x16,
+//     32x16 and 16x32 that the square ones do not cover;
+//   - fdct_n4_gen_arm64.go: the 16x16 and 32x32 N4 passes;
+//   - fdct_net16_32_gen_amd64.go, fdct_n4_gen_amd64.go: the 16- and 32-point
+//     passes and N4 column passes in the row-major layout of the amd64
+//     drivers, over broadcast constants.
 //
 // Run it from the transform directory (go generate ./internal/av1/transform).
 // TestGeneratedUpToDate fails when the committed files differ from its output.
@@ -67,7 +72,20 @@ func generate(dir string) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, nw := range []*network{net16, net32, net64} {
+	net8, err := netOf(fdct, "fwdDCT8", 8, 8)
+	if err != nil {
+		return nil, err
+	}
+	// SVT's N4_SHAPE keeps outputs 0..n/4-1 of each 1-D DCT.
+	net16N4, err := netOf(fdct, "fwdDCT16", 16, 4)
+	if err != nil {
+		return nil, err
+	}
+	net32N4, err := netOf(fdct, "fwdDCT32", 32, 8)
+	if err != nil {
+		return nil, err
+	}
+	for _, nw := range []*network{net8, net16, net32, net64, net16N4, net32N4} {
 		nw.name()
 	}
 	cospi12, err := cospiTable(fdct, "fwdCospi12")
@@ -79,7 +97,7 @@ func generate(dir string) (map[string][]byte, error) {
 		return nil, err
 	}
 
-	var a16, a64, x16 writer
+	var a16, a64, ar, an4, x16, xn4 writer
 	round2 := arm64Round{"fwdConst2", "fwdShrNeg2"}
 	round4 := arm64Round{"fwdConst8", "fwdShrNeg4"}
 
@@ -89,12 +107,12 @@ func generate(dir string) (map[string][]byte, error) {
 	a16.line("// cos_bit 13 after the shift[0] = 2 pre-scale, then the shift[1] = -2 round.")
 	arm64Col(&a16, net16, "fwdColDCT16", "fwd64Tw13", true, round2, 16)
 	a16.line("\n// fwdRowDCT16 is the 16-point row pass (cos_bit 12), in place over coeff.")
-	arm64Row(&a16, net16, "fwdRowDCT16(coeff []int32, h int)", "fwdTw12", "coeff", "coeff", nil, 16)
+	arm64Row(&a16, net16, "fwdRowDCT16(coeff []int32, h int)", "fwdTw12", "coeff", "coeff", nil, false, 16, 16)
 	a16.line("\n// fwdColDCT32 is the 32-point column pass of forwardDCT32x32PureGo: fwdDCT32 at")
 	a16.line("// cos_bit 12 after the shift[0] = 2 pre-scale, then the shift[1] = -4 round.")
 	arm64Col(&a16, net32, "fwdColDCT32", "fwdTw12", true, round4, 32)
 	a16.line("\n// fwdRowDCT32 is the 32-point row pass (cos_bit 12), in place over coeff.")
-	arm64Row(&a16, net32, "fwdRowDCT32(coeff []int32, h int)", "fwdTw12", "coeff", "coeff", nil, 32)
+	arm64Row(&a16, net32, "fwdRowDCT32(coeff []int32, h int)", "fwdTw12", "coeff", "coeff", nil, false, 32, 32)
 
 	// 64x64: shift {0, -2, -2}, cos_bit 13 (columns) and 10 (rows); only
 	// the low 32x32 coefficients are coded.
@@ -103,7 +121,49 @@ func generate(dir string) (map[string][]byte, error) {
 	arm64Col(&a64, net64, "fwdColDCT64N2", "fwd64Tw13", false, round2, 32)
 	a64.line("\n// fwdRowDCT64N2 is the 64-point row pass (cos_bit 10) over four rows of the")
 	a64.line("// transposed column output, rounded by shift[2] = -2 into coeff[k*32+r].")
-	arm64Row(&a64, net64, "fwdRowDCT64N2(coeff []int32, bufT []int32, h int)", "fwd64Tw10", "bufT", "coeff", &round2, 32)
+	arm64Row(&a64, net64, "fwdRowDCT64N2(coeff []int32, bufT []int32, h int)", "fwd64Tw10", "bufT", "coeff", &round2, false, 32, 32)
+
+	// The 2:1 rectangles (fwd_txfm2d_c, coefficients coeff[c*h+r]): 16x8
+	// shift {2, -2, 0} with fwdDCT8 columns; 8x16 shift {2, -2, 0}; 32x16
+	// shift {2, -4, 0}; 16x32 shift {2, -4, 0} with cos_bit 12 columns. The
+	// rows run at cos_bit 13 and scale by sqrt(2). 8x16 and 16x32 reuse
+	// fwdColDCT16 and fwdColDCT32.
+	ar.line("// fwdColDCT8T is the 8-point column pass of the 16x8 DCT_DCT (cos_bit 13,")
+	ar.line("// shift {2, -2}), stored transposed with stride 8.")
+	arm64Col(&ar, net8, "fwdColDCT8T", "fwd64Tw13", true, round2, 8)
+	ar.line("\n// fwdColDCT16R4 is the 16-point column pass of the 32x16 DCT_DCT (cos_bit")
+	ar.line("// 13, shift {2, -4}), stored transposed with stride 16.")
+	arm64Col(&ar, net16, "fwdColDCT16R4", "fwd64Tw13", true, round4, 16)
+	for _, rp := range []struct {
+		nw     *network
+		name   string
+		stride int
+	}{
+		{net16, "fwdRowDCT16x8", 8},
+		{net8, "fwdRowDCT8x16", 16},
+		{net32, "fwdRowDCT32x16", 16},
+		{net16, "fwdRowDCT16x32", 32},
+	} {
+		ar.line("\n// %s is the %d-point row pass (cos_bit 13) of its 2:1 block, scaled", rp.name, rp.nw.n)
+		ar.line("// by sqrt(2), in place over coeff[c*%d+h].", rp.stride)
+		arm64Row(&ar, rp.nw, rp.name+"(coeff []int32, h int)", "fwd64Tw13", "coeff", "coeff", nil, true, rp.stride, rp.stride)
+	}
+
+	// N4 16x16 and 32x32: the column pass keeps n/4 outputs, stored
+	// transposed into a (n x n/4) buffer; the row pass turns four of its rows
+	// into the n/4 low coefficients coeff[k*n+r].
+	an4.line("// fwdColDCT16N4T is the N4 column pass of the 16x16 DCT_DCT (outputs 0..3,")
+	an4.line("// cos_bit 13, shift {2, -2}), stored transposed: out[c*4+k].")
+	arm64Col(&an4, net16N4, "fwdColDCT16N4T", "fwd64Tw13", true, round2, 4)
+	an4.line("\n// fwdColDCT32N4T is the N4 column pass of the 32x32 DCT_DCT (outputs 0..7,")
+	an4.line("// cos_bit 12, shift {2, -4}), stored transposed: out[c*8+k].")
+	arm64Col(&an4, net32N4, "fwdColDCT32N4T", "fwdTw12", true, round4, 8)
+	an4.line("\n// fwdRowDCT16N4T is the N4 row pass (cos_bit 12) of rows h..h+3 of buf,")
+	an4.line("// written to coeff[k*16+h], k < 4.")
+	arm64Row(&an4, net16N4, "fwdRowDCT16N4T(coeff []int32, buf []int32, h int)", "fwdTw12", "buf", "coeff", nil, false, 4, 16)
+	an4.line("\n// fwdRowDCT32N4T is the N4 row pass (cos_bit 12) of rows h..h+3 of buf,")
+	an4.line("// written to coeff[k*32+h], k < 8.")
+	arm64Row(&an4, net32N4, "fwdRowDCT32N4T(coeff []int32, buf []int32, h int)", "fwdTw12", "buf", "coeff", nil, false, 8, 32)
 
 	p13 := portable{bit: 13, cospi: cospi13}
 	p12 := portable{bit: 12, cospi: cospi12}
@@ -120,10 +180,22 @@ func generate(dir string) (map[string][]byte, error) {
 	x16.line("// rows from h: fwdDCT32 at cos_bit 12, written to coeff[k*coeffStride+h].")
 	portableRow(&x16, net32, "fwdRowDCT32", p12)
 
+	xn4.line("// fwdColDCT16N4 is the 16x16 N4 column pass over fwdLanes columns from g:")
+	xn4.line("// outputs 0..3 of fwdDCT16 at cos_bit 13, rounded by shift[1] = 2, into")
+	xn4.line("// buf[k*16+g].")
+	portableCol(&xn4, net16N4, "fwdColDCT16N4", p13, "fwdRoundShift2V")
+	xn4.line("\n// fwdColDCT32N4 is the 32x32 N4 column pass over fwdLanes columns from g:")
+	xn4.line("// outputs 0..7 of fwdDCT32 at cos_bit 12, rounded by shift[1] = 4, into")
+	xn4.line("// buf[k*32+g].")
+	portableCol(&xn4, net32N4, "fwdColDCT32N4", p12, "fwdRoundShift4V")
+
 	out := map[string][]byte{}
 	for name, w := range map[string]*writer{
 		"fdct_net16_32_gen_arm64.go": &a16,
 		"fdct_net64_gen_arm64.go":    &a64,
+		"fdct_rect_gen_arm64.go":     &ar,
+		"fdct_n4_gen_arm64.go":       &an4,
+		"fdct_n4_gen_amd64.go":       &xn4,
 		"fdct_net16_32_gen_amd64.go": &x16,
 	} {
 		src, err := format.Source(append([]byte(header), w.String()...))
