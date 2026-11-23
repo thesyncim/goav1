@@ -287,6 +287,10 @@ func InverseAddDCT32x32Low8(dst []byte, dstStride int, pred []byte, predStride i
 		len(dst) < 31*dstStride+32 || len(pred) < 31*predStride+32 {
 		return false
 	}
+	if coeffStride == 32 && len(coeff) >= 1024 {
+		return itxGenDCT32x32C8R8((*[1024]int32)(coeff[:1024]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
+			unsafe.Pointer(unsafe.SliceData(pred)), predStride, 8)
+	}
 	var tmp [8 * 32]int16
 	if !itx32RowStripLow8(coeff, coeffStride, &tmp) {
 		return false

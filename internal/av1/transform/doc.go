@@ -6,3 +6,4 @@
 package transform
 
 //go:generate go run ./fwdgen
+//go:generate go run ./itxgen -w

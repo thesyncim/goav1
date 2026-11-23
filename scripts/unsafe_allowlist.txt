@@ -118,6 +118,7 @@ internal/av1/transform/itx_fused32_low16_gosimd_arm64.go
 internal/av1/transform/itx_fused64_gosimd_arm64.go
 internal/av1/transform/itx_fused64_hbd_gosimd_arm64.go
 internal/av1/transform/itx_fused8_gosimd_arm64.go
+internal/av1/transform/itx_fused_gen_arm64.go
 internal/av1/transform/itx_fused_hbd_gosimd_arm64.go
 internal/av1/transform/itx_fused_hbd_hybrid_gosimd_arm64.go
 internal/av1/transform/itx_fused_hybrid_gosimd_arm64.go
