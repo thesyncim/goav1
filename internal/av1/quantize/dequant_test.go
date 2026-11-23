@@ -233,8 +233,8 @@ func TestDequantizeBlockScaledQMatrixMatchesLibaomFormula(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []int32{
-		128, -129,
-		657, -1164,
+		128, -219,
+		387, -1164,
 	}
 	for i := range want {
 		if dst[i] != want[i] {
@@ -247,7 +247,10 @@ func TestDequantizeBlockScaledQMatrixMatchesLibaomFormula(t *testing.T) {
 	}
 }
 
-func TestDequantizeBlockScaledQMatrixUsesRowMajorMatrixPosition(t *testing.T) {
+// libaom stores its inverse matrices in the order it stores coefficients,
+// column by column, so a coefficient and its weight share one index. Reading
+// the weight row by row is only the same for the symmetric square matrices.
+func TestDequantizeBlockScaledQMatrixUsesStoredCoefficientPosition(t *testing.T) {
 	coeff := []int16{
 		1, 2,
 		3, 4,
@@ -263,9 +266,9 @@ func TestDequantizeBlockScaledQMatrixUsesRowMajorMatrixPosition(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []int32{
-		128, 224,
-		240, 512,
-		480, 864,
+		128, 160,
+		288, 448,
+		640, 864,
 	}
 	for i := range want {
 		if dst[i] != want[i] {

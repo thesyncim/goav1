@@ -303,7 +303,7 @@ func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStrid
 			if row == 0 && col == 0 {
 				scale = q.DC
 			}
-			scale = (int32(iqMatrix[row*width+col])*scale + (1 << (qmBits - 1))) >> qmBits
+			scale = (int32(iqMatrix[col*height+row])*scale + (1 << (qmBits - 1))) >> qmBits
 			dstCol[row] = dequantScalar(int32(coeffCol[row]), scale, txScale, dqMin, dqMax)
 		}
 	}
@@ -384,7 +384,7 @@ func dequantizeBlockScaledEOB(dst []int32, dstStride int, coeff []int16, coeffSt
 			scale = q.DC
 		}
 		if iqMatrix != nil {
-			scale = (int32(iqMatrix[row*width+col])*scale + (1 << (qmBits - 1))) >> qmBits
+			scale = (int32(iqMatrix[col*height+row])*scale + (1 << (qmBits - 1))) >> qmBits
 		}
 		dst[col*dstStride+row] = dequantScalar(int32(coeff[col*coeffStride+row]), scale, txScale, dqMin, dqMax)
 	}
@@ -421,7 +421,7 @@ func dequantizeBlockScaledEOBTrusted(dst []int32, dstStride int, coeff []int16, 
 			scale = q.DC
 		}
 		if iqMatrix != nil {
-			scale = (int32(iqMatrix[row*width+col])*scale + (1 << (qmBits - 1))) >> qmBits
+			scale = (int32(iqMatrix[col*height+row])*scale + (1 << (qmBits - 1))) >> qmBits
 		}
 		dst[col*dstStride+row] = dequantScalar(int32(coeff[col*coeffStride+row]), scale, txScale, dqMin, dqMax)
 	}
@@ -465,7 +465,7 @@ func dequantizeBlockScaledNonZeroTrusted(dst []int32, dstStride int, coeff []int
 			scale = q.DC
 		}
 		if iqMatrix != nil {
-			scale = (int32(iqMatrix[row*width+col])*scale + (1 << (qmBits - 1))) >> qmBits
+			scale = (int32(iqMatrix[col*height+row])*scale + (1 << (qmBits - 1))) >> qmBits
 		}
 		dst[col*dstStride+row] = dequantScalar(int32(coeff[col*coeffStride+row]), scale, txScale, dqMin, dqMax)
 	}

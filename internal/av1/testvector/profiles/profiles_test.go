@@ -383,6 +383,18 @@
 //	  src444_10_multitile_inter.yuv
 //	# 4:2:2 8-bit inter:
 //	aomenc --i422 ... --profile=2 ... -o profile2-422-8bit-inter-64x64.ivf src422.yuv
+//	# 4:2:0 8-bit quantizer matrices (libaom 3.15.2), all-intra and inter:
+//	ffmpeg -f lavfi -i testsrc2=size=128x128:rate=30 -frames:v 8 \
+//	  -pix_fmt yuv420p -f rawvideo qm420.yuv
+//	aomenc --i420 --width=128 --height=128 --limit=3 --ivf --profile=0 \
+//	  --cpu-used=4 --end-usage=q --cq-level=24 --kf-max-dist=0 \
+//	  --lag-in-frames=0 --enable-qm=1 --qm-min=0 --qm-max=15 \
+//	  --enable-cdef=0 --enable-restoration=0 \
+//	  -o profile0-420-8bit-qmatrix-intra-128x128.ivf qm420.yuv
+//	aomenc --i420 --width=128 --height=128 --limit=8 --ivf --profile=0 \
+//	  --cpu-used=4 --end-usage=q --cq-level=30 --kf-max-dist=30 \
+//	  --lag-in-frames=0 --enable-qm=1 --qm-min=2 --qm-max=12 \
+//	  -o profile0-420-8bit-qmatrix-inter-128x128.ivf qm420.yuv
 //
 //	# Golden per-frame MD5s come from `aomdec --rawvideo` (libaom
 //	# test/md5_helper.h layout, which testvector.FrameMD5 reproduces): split the
@@ -1212,6 +1224,39 @@ var profileClips = []profileClip{
 			"8158c19b78deb9ac6aaab9d411fe268f",
 			"eebdcf491352f1b13a24b614ba137832",
 			"54582e43045ece242c0a50e3f73e7a6b",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
+	{
+		// Profile 0: 4:2:0 8-bit, quantizer matrices, all-intra. Rectangular
+		// transforms up to 32 samples long make the matrix orientation matter.
+		name: "profile0-420-8bit-qmatrix-intra-128x128",
+		file: "profile0-420-8bit-qmatrix-intra-128x128.ivf",
+		frameMD5Hex: []string{
+			"cb0e3e72ec97ca73b28e01c56f54c1ab",
+			"0d3db5b820d3c59a6e4e420eda7e2dea",
+			"70ae617c07052865815404c5c50d6bbe",
+		},
+		wantBitDepth:     8,
+		wantSubsamplingX: true,
+		wantSubsamplingY: true,
+	},
+	{
+		// Profile 0: 4:2:0 8-bit, quantizer matrices, one key frame and seven inter frames. Rectangular
+		// transforms up to 32 samples long make the matrix orientation matter.
+		name: "profile0-420-8bit-qmatrix-inter-128x128",
+		file: "profile0-420-8bit-qmatrix-inter-128x128.ivf",
+		frameMD5Hex: []string{
+			"26be316b151895f0d2504d3ee8aca939",
+			"756780d0ad26003961aa85313df43074",
+			"d04aa1172d420136ea152ac591e8eefc",
+			"a32a816ba7b15e0b4e64b68b9f85c271",
+			"c978cf57eee344c78373675a232e3bc5",
+			"e6bbeadbeb601df2d5ccb1f0818545c1",
+			"b57d43df7533aa30703f696c7d5f5489",
+			"3142c7ade9e3a9d28cf4d2fdc016b4a3",
 		},
 		wantBitDepth:     8,
 		wantSubsamplingX: true,

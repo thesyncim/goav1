@@ -80,7 +80,7 @@ func FuzzDequantizeBlockScaledQMatrix(f *testing.F) {
 				if row == 0 && col == 0 {
 					scale = int32(dc)
 				}
-				scale = (int32(iqMatrix[row*width+col])*scale + (1 << (qmBits - 1))) >> qmBits
+				scale = (int32(iqMatrix[col*height+row])*scale + (1 << (qmBits - 1))) >> qmBits
 				input := int32(coeff[col*coeffStride+row])
 				want := dequantScalar(input, scale, txScale, dqMin, dqMax)
 				got := dst[col*dstStride+row]

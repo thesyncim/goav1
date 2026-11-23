@@ -135,7 +135,7 @@ func TestDequantizeBlockDispatchMatchesReference(t *testing.T) {
 					if row == 0 && col == 0 {
 						scale = q.DC
 					}
-					scale = (int32(iq[row*w+col])*scale + (1 << (qmBits - 1))) >> qmBits
+					scale = (int32(iq[col*h+row])*scale + (1 << (qmBits - 1))) >> qmBits
 					want := dequantScalar(int32(coeff[col*stride+row]), scale, txScale, dqMin, dqMax)
 					if got := dstQM[col*stride+row]; got != want {
 						t.Fatalf("qm %dx%d bd=%d (%d,%d): got %d want %d", w, h, bd, col, row, got, want)

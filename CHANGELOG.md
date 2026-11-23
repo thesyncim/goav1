@@ -19,6 +19,10 @@ The project has not published a release tag yet.
   the first tile group bound, instead of resetting them.
 - Current committed decoder vector gates are strict-MD5 clean; the gates are
   described in [docs/quality-and-parity.md](docs/quality-and-parity.md).
+- Streams coded with quantizer matrices decode correctly. The matrices were
+  indexed row by row although they are stored in coefficient order, so every
+  rectangular transform block was dequantized with the wrong weights; no
+  committed vector used the tool. Two quantizer-matrix clips now gate it.
 - Hot paths are designed around caller-owned buffers, reusable frame pools,
   explicit scratch sizing, and zero steady-state allocations.
 - `WithFrameSizeLimit` makes the high-level decoders reject streams whose
