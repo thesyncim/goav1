@@ -2,14 +2,12 @@ package threading
 
 import (
 	"fmt"
-	"math"
 	"sync"
 	"sync/atomic"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
-	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/reconstruct"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 	"github.com/thesyncim/goav1/internal/av1/transform"
@@ -348,7 +346,7 @@ type FrameWorkTileResidualScratch struct {
 	reconTXBs []frameWorkReconTXB
 	cfArena   []int32
 	// coefBuf is the fused path's dav1d t->cf coefficient buffer.
-	coefBuf         tile.CoefBuffer
+	coefBuf         coefBuffer
 	coeffArena      []int16
 	paletteArena    []tile.PaletteModeScratch
 	paletteBindings []frameWorkReconPaletteBinding
@@ -1342,8 +1340,6 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 		readRestoration:        readRestoration,
 		deferReconstruction:    deferReconstruction,
 		wavefrontWorkers:       wavefrontWorkers,
-		defaultCoeffPath: req.Transforms == nil && req.UseDefaultTransforms && loopReq.CoeffVisitor == nil &&
-			req.Predict == nil && !b.Quantization.UsingQMatrix,
 	}
 	// Wire the fused / serial-deferred reconstruction state to the controller's
 	// request scratch and shared geometry cache. The fused single-thread path
@@ -1368,6 +1364,15 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 		loopReq.BeforeSuperblock = scratch.beforeSuperblock
 	}
 
+	if req.Transforms == nil && req.UseDefaultTransforms && loopReq.CoeffVisitor == nil && req.Predict == nil {
+		// The production configuration: dav1d's decode_b hands each block to
+		// recon_b_* once.
+		loopReq.DirectRecon = true
+		loopReq.TransformMode = req.TransformMode
+		loopReq.ReducedTxSet = b.FrameMode.ReducedTxSet
+		loopReq.QuantDeltasZero = frameWorkQuantDeltasZero(b.Quantization)
+		loopCDFs.TransformType = cdfs.TransformType
+	}
 	if streamRecon {
 		if err := scratch.controller.startReconStream(); err != nil {
 			return scratch.stats, err
@@ -1560,21 +1565,12 @@ type frameWorkTileResidualLoopController struct {
 	// recon_b_* by pointer), so it is not copied out and back in per block.
 	coeffReq tile.BlockCoeffRequest
 
-	// dequantTarget is a stable per-controller target shared with the tracked
-	// coefficient reader. The controller is replaced wholesale for each tile
-	// job, so prepared factors cannot leak across frame quantization parameters.
-	dequantTarget        tile.CoeffDequantTarget
-	dequantKey           uint16
-	dequantKeyValid      bool
-	dequantCurrentQIndex uint8
-	dequantSegmentID     uint8
-
-	// defaultCoeffPath is bound once per tile job: the production
-	// configuration (default transform selectors, no user coefficient visitor
-	// or predict callback, no quantizer matrices) that dav1d's decode_b /
-	// recon_b always run. SelectBlockCoeffRequestPtr then builds the request
-	// directly instead of re-testing that configuration for every block.
-	defaultCoeffPath bool
+	// dq is the dav1d ts->dq[seg_id] (with cf_max) ReconB resolved for the
+	// (qindex, segment) key dqKey; dqOK is false when that key has no usable
+	// factors and its blocks take the quantized path.
+	dq    [3]tile.CoefDequant
+	dqKey uint16
+	dqOK  bool
 }
 
 // frameWorkReconState is the per-goroutine reconstruction state: the CFL
@@ -1850,17 +1846,8 @@ func (s *frameWorkReconState) predictDeferredCFLChroma() error {
 }
 
 func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *tile.BlockLoopVisit) (*tile.BlockCoeffRequest, error) {
-	// A previous call can have returned a ready target that was never consumed
-	// because its visitor failed. Do not let it leak into this block.
-	c.dequantTarget.Ready = false
-	c.dequantTarget.ActiveRows = 0
-	c.dequantTarget.ActiveCols = 0
-	c.dequantTarget.TxScale = 0
 	if visit == nil {
 		return nil, ErrInvalidBatch
-	}
-	if c.defaultCoeffPath {
-		return c.selectDefaultBlockCoeffRequest(visit)
 	}
 	var transforms FrameWorkBlockTransforms
 	var segmentQIndex uint8
@@ -1925,182 +1912,29 @@ func (c *frameWorkTileResidualLoopController) SelectBlockCoeffRequestPtr(visit *
 	request.TransformSelect = transformSelect
 	request.EOBMultiContext = transforms.EOBMultiContext
 	request.SkipAllZeroCoeffClear = c.userCoeffVisitor == nil
-	request.Dequant = c.bindCoeffDequantTarget(visit, lossless)
+	request.Dequant = nil
 	return request, nil
 }
 
-func (c *frameWorkTileResidualLoopController) bindCoeffDequantTarget(visit *tile.BlockLoopVisit, lossless bool) *tile.CoeffDequantTarget {
-	if visit == nil || c.userCoeffVisitor != nil ||
-		c.req.Predict != nil || c.req.Transforms != nil || !c.req.UseDefaultTransforms ||
-		visit.Prefix.SkipTransform || lossless || c.batch.Quantization.UsingQMatrix {
-		return nil
-	}
-	key := frameWorkReconQuantKey(c.state.CurrentBaseQIdx, visit.SegmentID)
-	if !c.dequantKeyValid || c.dequantKey != key {
-		c.dequantTarget.Factors = [3][2]int32{}
-		c.dequantTarget.PreparedPlanes = 0
-		c.dequantKey = key
-		c.dequantKeyValid = true
-		c.dequantCurrentQIndex = c.state.CurrentBaseQIdx
-		c.dequantSegmentID = visit.SegmentID
-	}
-	recon := c.reconHot
-	if recon == nil {
-		return nil
-	}
-	if c.dequantTarget.Provider == nil {
-		if c.deferReconstruction {
-			// Deferred reconstruction consumes the coefficients after the parse,
-			// so they go to the frame-thread cf arena instead of int32Scratch.
-			c.dequantTarget.Arena = &c.scratch.cfArena
-		} else {
-			// dav1d's t->cf: a dedicated buffer kept zero between TXBs.
-			c.dequantTarget.Coef = &c.scratch.coefBuf
-		}
-		// The controller and its reconstruction state are job-owned and stable;
-		// this exact slice is consumed by the synchronous reconstruction path.
-		c.dequantTarget.BitDepth = c.batch.Sequence.ColorConfig.BitDepth
-		c.dequantTarget.Provider = c
-	}
-	return &c.dequantTarget
-}
-
-// PrepareCoeffDequantPlane lazily resolves one plane's dequant factors only
-// after the tracked 2D reader has found a nonzero EOB. Returning false leaves
-// the reader on its ordinary quantized fallback and does not move quantizer
-// errors ahead of the original reconstruction point.
-func (c *frameWorkTileResidualLoopController) PrepareCoeffDequantPlane(plane uint8) bool {
-	if c == nil || plane > uint8(quantize.PlaneV) || !c.dequantKeyValid {
-		return false
-	}
-	bit := uint8(1 << plane)
-	if c.dequantTarget.PreparedPlanes&bit != 0 {
-		return true
-	}
-	recon := c.reconHot
-	if recon == nil {
-		return false
-	}
-	q, lossless, err := c.batch.cachedBlockQuantizerTrusted(&recon.quant, c.dequantCurrentQIndex, c.dequantSegmentID, quantize.Plane(plane))
-	if err != nil || lossless || q.DC <= 0 || q.AC <= 0 {
-		return false
-	}
-	c.dequantTarget.Factors[plane] = [2]int32{q.DC, q.AC}
-	c.dequantTarget.PreparedPlanes |= bit
-	return true
-}
-
+// VisitBlockCoeffPtr reconstructs or records one quantized transform block of
+// the per-TXB visit path the caller-hook configurations take.
 func (c *frameWorkTileResidualLoopController) VisitBlockCoeffPtr(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock) error {
-	dequantReady := c.dequantTarget.Ready
-	activeRows := c.dequantTarget.ActiveRows
-	activeCols := c.dequantTarget.ActiveCols
-	// The tile target only becomes ready for EOB-1 DCT_DCT when its DC-only
-	// constant-add shortcut is valid. The transform type in this callback is
-	// the selected per-TXB type, so ADST EOB-1 remains on the full clear path.
-	dcOnly := block != nil && block.Transform == transform.TypeDCTDCT && block.Result.EOB == 1
-	c.dequantTarget.Ready = false
-	c.dequantTarget.ActiveRows = 0
-	c.dequantTarget.ActiveCols = 0
 	if visit == nil || block == nil {
 		return ErrInvalidBatch
 	}
-	if dequantReady && !c.deferReconstruction && c.userCoeffVisitor == nil && c.req.Predict == nil {
-		recon := c.reconHot
-		if recon == nil {
-			recon = c.fusedReconState()
-		}
-		if err := recon.reconstructTXBWithDequantized(visit, block, c.dequantTarget.Dst, activeRows, activeCols, dcOnly); err != nil {
-			return err
-		}
-	} else if c.deferReconstruction {
-		if err := c.bufferReconTXB(block, dequantReady, activeRows, activeCols, dcOnly, c.state.CurrentBaseQIdx); err != nil {
+	if c.deferReconstruction {
+		if err := c.bufferReconTXB(block, 0, 0, 0, 0, false, c.state.CurrentBaseQIdx); err != nil {
 			return err
 		}
 	} else {
-		recon := c.reconHot
-		if recon == nil {
-			recon = c.fusedReconState()
-		}
-		// BlockLoopScratch owns the coefficient decode scratch used by DecodeBlockResidualInto.
-		coeffScratch := &c.scratch.Loop.Coeff
-		dirty := coeffScratch.CoeffDirtyPositions()
-		if err := recon.reconstructTXBWithNonZero(visit, block, dirty, c.state.CurrentBaseQIdx); err != nil {
+		dirty := c.scratch.Loop.Coeff.CoeffDirtyPositions()
+		if err := c.fusedReconState().reconstructTXBWithNonZero(visit, block, dirty, c.state.CurrentBaseQIdx); err != nil {
 			return err
 		}
 	}
 	if c.userCoeffVisitor != nil {
 		return c.userCoeffVisitor(*visit, *block)
 	}
-	return nil
-}
-
-// bufferReconTXB records one transform block for the deferred reconstruction
-// pass. A TXB of the dav1d block walk (all zero, or dequantized into the cf
-// arena) is one frameWorkReconTXB. A TXB that still carries quantized
-// coefficients is buffered whole: the live decode reuses one coefficient
-// scratch slice per transform block, so the coefficients and their dirty
-// positions are deep-copied into coeffArena behind a three-index slice, and
-// Scan is kept by reference to the immutable scan table.
-func (c *frameWorkTileResidualLoopController) bufferReconTXB(block *tile.BlockCoeffBlock, dequantReady bool, activeRows, activeCols int, dcOnly bool, currentQIndex uint8) error {
-	s := c.scratch
-	if dequantReady || block.Result.AllZero {
-		rec := frameWorkReconTXB{
-			eob:       block.Result.EOB,
-			block:     block.Block,
-			plane:     block.Plane,
-			transform: block.Transform,
-			culLevel:  block.Result.CulLevel,
-			qIndex:    currentQIndex,
-		}
-		if block.Result.AllZero {
-			rec.flags = frameWorkReconTXBAllZero
-		} else {
-			// The block walk appended this TXB's coefficients to the cf arena
-			// and left the dequant target pointing at them.
-			cf := c.dequantTarget.Dst
-			off := len(s.cfArena) - len(cf)
-			if len(cf) == 0 || len(cf) > 1024 || off < 0 || uint64(off) > math.MaxUint32 ||
-				&s.cfArena[off] != &cf[0] || uint(activeRows) > 255 || uint(activeCols) > 255 {
-				return ErrInvalidBatch
-			}
-			rec.cfOff, rec.cfLen = uint32(off), uint16(len(cf))
-			rec.activeRows, rec.activeCols = uint8(activeRows), uint8(activeCols)
-			if dcOnly {
-				rec.flags = frameWorkReconTXBDCOnly
-			}
-		}
-		index, ok := frameWorkReconIndex(len(s.reconTXBs))
-		if !ok {
-			return ErrInvalidBatch
-		}
-		s.reconTXBs = append(s.reconTXBs, rec)
-		s.reconEvents = append(s.reconEvents, frameWorkReconEvent{kind: frameWorkReconEventTXBCF, index: index})
-		return nil
-	}
-	index, ok := frameWorkReconIndex(len(s.reconBlocks))
-	if !ok {
-		return ErrInvalidBatch
-	}
-	buffered := *block
-	if n := len(block.Coeffs); n > 0 {
-		dirty := s.Loop.Coeff.CoeffDirtyPositions()
-		dirtyLen := len(dirty)
-		if dirtyLen > int(^uint16(0)) {
-			return ErrInvalidBatch
-		}
-		off := len(s.coeffArena)
-		s.coeffArena = append(s.coeffArena, block.Coeffs...)
-		s.coeffArena = append(s.coeffArena, dirty...)
-		buffered.Coeffs = s.coeffArena[off : off+n : off+n+dirtyLen]
-	} else {
-		buffered.Coeffs = nil
-	}
-	s.reconBlocks = append(s.reconBlocks, buffered)
-	s.reconEvents = append(s.reconEvents, frameWorkReconEvent{
-		kind:          frameWorkReconEventTXB,
-		index:         index,
-		currentQIndex: currentQIndex,
-	})
 	return nil
 }
 
@@ -2634,53 +2468,3 @@ const (
 	frameWorkReconTXBAllZero = 1 << iota
 	frameWorkReconTXBDCOnly
 )
-
-// selectDefaultBlockCoeffRequest is SelectBlockCoeffRequestPtr for the
-// job-bound production configuration (defaultCoeffPath): the block's
-// transform-type selector and coefficient request are built straight from the
-// visit, as dav1d's decode_b hands b to recon_b_*, with the same
-// segment-adjusted qindex and lossless gating as the generic path.
-func (c *frameWorkTileResidualLoopController) selectDefaultBlockCoeffRequest(visit *tile.BlockLoopVisit) (*tile.BlockCoeffRequest, error) {
-	segmentQIndex, lossless, err := c.batch.BlockQIndex(c.state.CurrentBaseQIdx, visit.SegmentID)
-	if err != nil {
-		return nil, err
-	}
-	pred := &visit.Prediction
-	skip := visit.Prefix.SkipTransform
-	intra := pred.Valid && pred.Intra
-	var transformSelect tile.CoeffTransformSelector
-	if intra {
-		chromaMode := pred.ChromaMode
-		if !chromaMode.Valid() {
-			chromaMode = tile.ChromaIntraModeDC
-		}
-		c.scratch.IntraTX.Reset(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, skip, lossless, segmentQIndex, frameWorkIntraTransformMode(pred), chromaMode)
-		transformSelect = &c.scratch.IntraTX
-	} else {
-		c.scratch.InterTX.ResetForColor(c.state, c.cdfs.TransformType, c.batch.FrameMode.ReducedTxSet, skip, lossless, segmentQIndex, c.batch.Sequence.ColorConfig)
-		transformSelect = &c.scratch.InterTX
-	}
-	// Filled field by field in place; see SelectBlockCoeffRequestPtr.
-	request := &c.coeffReq
-	tr := &request.Transform
-	block := &visit.Block
-	tr.Size = block.Size
-	tr.X4, tr.Y4 = block.X4, block.Y4
-	tr.VisibleW4, tr.VisibleH4 = block.VisibleW4, block.VisibleH4
-	tr.HaveTop, tr.HaveLeft = block.HaveTop, block.HaveLeft
-	tr.Color = c.batch.Sequence.ColorConfig
-	tr.TransformMode = c.req.TransformMode
-	tr.Inter = !intra
-	tr.SkipTransform = skip
-	tr.Lossless = lossless
-	request.LumaType = transform.TypeDCTDCT
-	request.ChromaType = [2]transform.Type{transform.TypeDCTDCT, transform.TypeDCTDCT}
-	request.TransformSelect = transformSelect
-	request.EOBMultiContext = [3]uint8{}
-	request.SkipAllZeroCoeffClear = true
-	request.Dequant = nil
-	if !skip && !lossless {
-		request.Dequant = c.bindCoeffDequantTarget(visit, lossless)
-	}
-	return request, nil
-}

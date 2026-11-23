@@ -12,18 +12,19 @@ import (
 // BlockLoopCDFs groups the caller-owned entropy state used by the block syntax
 // loop.
 type BlockLoopCDFs struct {
-	Partition *PartitionCDFs
-	Mode      *BlockModeCDFs
-	Intra     *IntraModeCDFs
-	InterRef  *InterRefCDFs
-	InterMode *InterModeCDFs
-	MV        *MVCDFs
-	Interp    *InterpFilterCDFs
-	Motion    *MotionModeCDFs
-	Blend     *CompoundBlendCDFs
-	Transform *TransformCDFs
-	Coeff     *CoeffCDFs
-	Delta     DeltaCDFs
+	Partition     *PartitionCDFs
+	Mode          *BlockModeCDFs
+	Intra         *IntraModeCDFs
+	InterRef      *InterRefCDFs
+	InterMode     *InterModeCDFs
+	MV            *MVCDFs
+	Interp        *InterpFilterCDFs
+	Motion        *MotionModeCDFs
+	Blend         *CompoundBlendCDFs
+	Transform     *TransformCDFs
+	Coeff         *CoeffCDFs
+	TransformType *TransformTypeCDFs
+	Delta         DeltaCDFs
 }
 
 // BlockLoopScratch is per-superblock scratch for recursive partition and mode
@@ -35,6 +36,11 @@ type BlockLoopScratch struct {
 	Coeff     BlockCoeffScratch
 	CoeffCtx  CoeffEntropyContext
 	Palette   PaletteModeScratch
+
+	// coef and coefTree are the block's recon binding and transform-size
+	// request (bindCoefBlock).
+	coef     CoefBlock
+	coefTree TransformTreeRequest
 
 	// Refmvs is the tile's dav1d refmvs row storage (see refmvs.go).
 	Refmvs refmvsTile
@@ -229,9 +235,18 @@ type BlockLoopRequest struct {
 	FrameMIRows uint16
 	FrameMICols uint16
 
-	Color               parser.ColorConfig
-	TransformMode       parser.TransformMode
-	Lossless            bool
+	Color         parser.ColorConfig
+	TransformMode parser.TransformMode
+	Lossless      bool
+	// ReducedTxSet is the frame's reduced_tx_set flag and QuantDeltasZero
+	// reports that no DC/AC quantizer delta is coded, so a block whose
+	// segment-adjusted qindex is zero is lossless.
+	ReducedTxSet    bool
+	QuantDeltasZero bool
+	// DirectRecon hands every block to CoeffController.ReconB once its
+	// transform sizes are read (dav1d's decode_b calling bd_fn.recon_b_*),
+	// instead of the per-transform-block coefficient visits.
+	DirectRecon         bool
 	LumaTransformType   transform.Type
 	ChromaTransformType [2]transform.Type
 	TransformSelect     CoeffTransformSelector
@@ -284,9 +299,15 @@ type BlockLoopPointerVisitor func(*BlockLoopVisit) error
 // before its coefficients and returns the block's coefficient request
 // (controller-owned storage, valid until the next call), and
 // VisitBlockCoeffPtr receives each decoded transform block.
+//
+// With BlockLoopRequest.DirectRecon, ReconB instead receives each block once,
+// after its transform sizes are read, together with the bound CoefBlock whose
+// transform blocks it decodes and reconstructs itself (dav1d's
+// bd_fn.recon_b_intra / recon_b_inter / read_coef_blocks).
 type BlockLoopCoeffController interface {
 	BeginBlockCoefficients(*BlockLoopVisit) (*BlockCoeffRequest, error)
 	VisitBlockCoeffPtr(*BlockLoopVisit, *BlockCoeffBlock) error
+	ReconB(*BlockLoopVisit, *CoefBlock) error
 }
 
 type BlockLoopCoeffRequestSelector func(BlockLoopVisit) (BlockCoeffRequest, error)
@@ -300,6 +321,10 @@ func (noBlockLoopCoeffController) BeginBlockCoefficients(*BlockLoopVisit) (*Bloc
 }
 
 func (noBlockLoopCoeffController) VisitBlockCoeffPtr(*BlockLoopVisit, *BlockCoeffBlock) error {
+	return ErrInvalidDecodeState
+}
+
+func (noBlockLoopCoeffController) ReconB(*BlockLoopVisit, *CoefBlock) error {
 	return ErrInvalidDecodeState
 }
 
@@ -1109,7 +1134,15 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 		}
 	}
 	if req.DecodeCoefficients {
-		if hasCoeffController {
+		if hasCoeffController && req.DirectRecon {
+			if err := s.bindCoefBlock(cdfs, scratch, req, visit); err != nil {
+				return nil, fmt.Errorf("decode coefficients: %w", err)
+			}
+			if err := coeffController.ReconB(visit, &scratch.coef); err != nil {
+				return nil, fmt.Errorf("decode coefficients: %w", err)
+			}
+			visit.CoefficientsValid = true
+		} else if hasCoeffController {
 			// dav1d's decode_b hands the block to the recon hooks once: the
 			// controller's per-block work and its coefficient request are one
 			// call.

@@ -14,6 +14,8 @@ type BlockCoeffCDFs struct {
 type BlockCoeffScratch struct {
 	Coeff LumaCoeffTreeScratch
 	block BlockCoeffBlock
+	// txtpMap is dav1d's t->scratch.txtp_map.
+	txtpMap [MaxBlockModeSlots][MaxBlockModeSlots]transform.Type
 }
 
 // CoeffDequantProvider supplies per-plane dequant factors for the private
@@ -28,16 +30,7 @@ type CoeffDequantProvider interface {
 // Factors are cached by the provider for the current quantization key; Ready,
 // ActiveRows, and TxScale describe only the most recently decoded TXB.
 type CoeffDequantTarget struct {
-	Dst []int32
-	// Arena, when set, switches the target to dav1d's frame-thread cf layout
-	// (ts->frame_thread[p].cf): each dequantized TXB is appended to *Arena and
-	// Dst is left pointing at its slot, so a deferred reconstruction pass can
-	// consume it later. Only the dav1d block walk (readCoefBlocks) fills it;
-	// the quantized readers ignore an arena target.
-	Arena *[]int32
-	// Coef, when set, is the zero-maintained t->cf buffer of the dav1d block
-	// walk; Dst is pointed at it after each TXB.
-	Coef       *CoefBuffer
+	Dst        []int32
 	Factors    [3][2]int32 // [Y/U/V][DC/AC]
 	ActiveRows int
 	// ActiveCols bounds the nonzero coefficient columns (0 = unknown).
@@ -302,42 +295,29 @@ func decodeBlockCoefficientsWithCoeffControllerPtr[T BlockLoopCoeffController](s
 	*result = BlockCoeffResult{Tree: tree}
 	hasChroma := !req.Transform.Color.MonoChrome && tree.HasUV
 
-	// dav1d's decode_b hands a decoded block straight to recon_b_intra /
-	// recon_b_inter (src/recon_tmpl.c), which derive the chroma geometry once
-	// from b and t and walk the TXBs; no per-plane request is built. Skip
-	// blocks only reset the coefficient contexts (dav1d's
-	// dav1d_memset_likely_pow2 of a/l ccoef in decode_b).
-	if req.Transform.SkipTransform || readCoefBlocksSupported(req) {
+	if req.Transform.SkipTransform {
 		var chromaPrep [2]chromaCoeffPlanePrep
 		if hasChroma {
-			err := prepareChromaCoefBlock(coeffCtx, &req.Transform, tree, &chromaPrep)
-			if err != nil {
+			if err := prepareChromaCoefBlock(coeffCtx, &req.Transform, tree, &chromaPrep); err != nil {
 				return fmt.Errorf("prepare chroma coeffs req=%+v tree=%+v: %w", req.Transform, tree, err)
 			}
-			// Both planes' geometry was written in place.
 		}
-		if req.Transform.SkipTransform {
-			if err := coeffCtx.ResetBlock(0, req.Transform.Size, int(req.Transform.X4), int(req.Transform.Y4)); err != nil {
+		if err := coeffCtx.ResetBlock(0, req.Transform.Size, int(req.Transform.X4), int(req.Transform.Y4)); err != nil {
+			return err
+		}
+		if !req.Transform.Inter {
+			// dav1d's recon_b_intra still predicts a skip intra block
+			// transform block by transform block.
+			var walk skipIntraTXBWalk
+			if ok, err := walk.init(&req.Transform, &tree); err != nil {
 				return err
-			}
-			if !req.Transform.Inter {
-				// dav1d's recon_b_intra still predicts a skip intra block
-				// transform block by transform block.
-				var walk skipIntraTXBWalk
-				if ok, err := walk.init(&req.Transform, &tree); err != nil {
-					return err
-				} else if ok {
-					for walk.next(&scratch.block) {
-						if err := coeffController.VisitBlockCoeffPtr(loopVisit, &scratch.block); err != nil {
-							return err
-						}
+			} else if ok {
+				for walk.next(&scratch.block) {
+					if err := coeffController.VisitBlockCoeffPtr(loopVisit, &scratch.block); err != nil {
+						return err
 					}
 				}
 			}
-			return nil
-		}
-		if err := readCoefBlocks(s, cdfs, coeffCtx, scratch, req, tree, &chromaPrep, hasChroma, loopVisit, coeffController, result); err != nil {
-			return fmt.Errorf("read coef blocks req=%+v tree=%+v: %w", req.Transform, tree, err)
 		}
 		return nil
 	}

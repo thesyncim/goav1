@@ -45,7 +45,7 @@ func TestHotStructSizes(t *testing.T) {
 		{name: "TileSpan", size: unsafe.Sizeof(parser.TileSpan{}), max: 12},
 		// TemporalReferences (8 bytes) selects the per-superblock-row load_tmvs
 		// projection.
-		{name: "BlockLoopRequest", size: unsafe.Sizeof(BlockLoopRequest{}), max: 680}, // +16: MotionProgress (dav1d progress[0] link)
+		{name: "BlockLoopRequest", size: unsafe.Sizeof(BlockLoopRequest{}), max: 688}, // +16: MotionProgress (dav1d progress[0] link); +8: ReducedTxSet, QuantDeltasZero, DirectRecon
 		{name: "BlockLoopSuperblockVisit", size: unsafe.Sizeof(BlockLoopSuperblockVisit{}), max: 6},
 		{name: "BlockModeRequest", size: unsafe.Sizeof(BlockModeRequest{}), max: 48},
 		{name: "BlockPredictionModeResult", size: unsafe.Sizeof(BlockPredictionModeResult{}), max: 216},

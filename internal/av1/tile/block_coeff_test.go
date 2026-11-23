@@ -462,6 +462,10 @@ func (c blockCoeffTestController) VisitBlockCoeffPtr(_ *BlockLoopVisit, block *B
 	return nil
 }
 
+func (c blockCoeffTestController) ReconB(*BlockLoopVisit, *CoefBlock) error {
+	return ErrInvalidDecodeState
+}
+
 func cloneBlockCoeffBlockForTest(block BlockCoeffBlock) BlockCoeffBlock {
 	out := block
 	if block.Coeffs != nil {

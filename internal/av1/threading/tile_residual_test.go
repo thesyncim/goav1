@@ -201,7 +201,7 @@ func TestFrameWorkDeferredReconPreservesScanSlice(t *testing.T) {
 		Scan:      scan,
 	}
 
-	if err := controller.bufferReconTXB(&block, false, 0, 0, false, 7); err != nil {
+	if err := controller.bufferReconTXB(&block, 0, 0, 0, 0, false, 7); err != nil {
 		t.Fatalf("buffer recon txb: %v", err)
 	}
 

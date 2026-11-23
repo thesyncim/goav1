@@ -1,241 +1,195 @@
 package tile
 
 import (
-	"math/bits"
+	"fmt"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
-// coefBlock is the per-block binding dav1d's recon_b_intra/recon_b_inter and
+// CoefBlock is the per-block binding dav1d's recon_b_intra/recon_b_inter and
 // read_coef_blocks (src/recon_tmpl.c) read from Av1Block, t and f while they
-// walk a block's transform blocks: everything decode_coefs needs that is
-// constant across the block.
-type coefBlock struct {
+// walk a block's transform blocks. decode_b binds it once per block (bindCoefBlock)
+// after the transform sizes are read; the exported fields are the walk geometry
+// the reconstruction side iterates, the rest is what DecodeCoefs needs.
+type CoefBlock struct {
 	s       *DecodeState
 	cdfs    *CoeffCDFs
 	txCDFs  *TransformTypeCDFs
 	ctx     *CoeffEntropyContext
 	scratch *BlockCoeffScratch
-	dequant *CoeffDequantTarget
-	inter   *InterCoeffTransformSelector
+	// txtpMap is dav1d's t->scratch.txtp_map: the luma transform types an
+	// inter block's chroma TXBs derive theirs from.
+	txtpMap *[MaxBlockModeSlots][MaxBlockModeSlots]transform.Type
 
-	intra      bool
 	reduced    bool
 	qZero      bool
 	lumaMode   IntraMode
 	chromaMode ChromaIntraMode
+	blockDims  [3]BlockDimensions
 
-	// bx4/by4 and w4/h4 are the block's superblock-local luma origin and its
-	// frame-clipped size in 4x4 units (dav1d's t->bx & 31 and w4/h4).
-	bx4, by4 int
-	w4, h4   int
-	// cx4/cy4 are the chroma origin (bx4 >> ss_hor, by4 >> ss_ver) and
-	// ssX/ssY the chroma subsampling shifts.
-	cx4, cy4  int
-	ssX, ssY  uint
-	blockDims [3]BlockDimensions
-	planeBlk  [3]BlockSize
-
-	stats BlockCoeffResult
+	// Tree holds the block's transform sizes (b->tx / b->max_ytx, b->uvtx and
+	// the var-tx split masks).
+	Tree TransformTreeResult
+	// X4/Y4 and W4/H4 are the superblock-local luma origin and the
+	// frame-clipped size in 4x4 units (dav1d's t->bx & 31 and w4/h4); CX4/CY4
+	// and CW4/CH4 the same for chroma, valid when HasChroma.
+	X4, Y4, W4, H4     int
+	CX4, CY4, CW4, CH4 int
+	SSX, SSY           uint
+	HasChroma          bool
+	Intra              bool
+	Skip               bool
+	Lossless           bool
 }
 
-// readCoefBlocksSupported reports whether the dav1d-shaped block walk can take
-// this block: the fused dequantized reconstruction target is bound and the
-// transform type is read by one of the tile-owned selectors.
-func readCoefBlocksSupported(req *BlockCoeffRequest) bool {
-	if req.Dequant == nil || !req.SkipAllZeroCoeffClear || coeffTraceEnabled || req.Transform.Lossless {
-		return false
-	}
-	switch req.TransformSelect.(type) {
-	case *IntraCoeffTransformSelector, *InterCoeffTransformSelector:
-		return true
-	}
-	return false
+// CoefDequant is one plane's dav1d dq_tbl[0..1] together with cf_max.
+type CoefDequant struct {
+	DC, AC, Max uint32
 }
 
-// readCoefBlocks is the transform-block walk of dav1d's recon_b_intra and
-// recon_b_inter (src/recon_tmpl.c): per 64x64 unit, every luma TXB (a grid of
-// b->tx for intra, read_coef_tree over max_ytx and tx_split for inter), then
-// each chroma plane's grid of b->uvtx. Each TXB runs decodeCoefsTXB and then
-// the reconstruction visitor.
-func readCoefBlocks[T BlockLoopCoeffController](s *DecodeState, cdfs BlockCoeffCDFs, coeffCtx *CoeffEntropyContext, scratch *BlockCoeffScratch, req *BlockCoeffRequest, tree TransformTreeResult, chromaPrep *[2]chromaCoeffPlanePrep, hasChroma bool, loopVisit *BlockLoopVisit, coeffController T, result *BlockCoeffResult) error {
-	tr := &req.Transform
-	// Filled in place: a composite literal of this addressed struct was
-	// built in a temporary and block-copied with wide loads over the
-	// narrower field stores, which cannot store-forward.
-	var b coefBlock
-	b.s, b.cdfs, b.ctx = s, cdfs.Coeff, coeffCtx
-	b.scratch, b.dequant = scratch, req.Dequant
-	b.bx4 = int(tr.X4)
-	b.by4 = int(tr.Y4)
-	b.w4 = int(tr.VisibleW4)
-	b.h4 = int(tr.VisibleH4)
-	//
-	//
-	switch sel := req.TransformSelect.(type) {
-	case *IntraCoeffTransformSelector:
-		b.intra = true
-		b.txCDFs = sel.CDFs
-		b.reduced = sel.ReducedTXSet
-		b.qZero = sel.QIndexKnown && sel.QIndex == 0
-		b.lumaMode = sel.LumaMode
-		b.chromaMode = sel.ChromaMode
-	case *InterCoeffTransformSelector:
-		b.inter = sel
-		b.txCDFs = sel.CDFs
-		b.reduced = sel.ReducedTXSet
-		b.qZero = sel.QIndexKnown && sel.QIndex == 0
+// CoefResult is what decode_coefs hands back: the TXB result (EOB is dav1d's
+// eob + 1, zero with AllZero), the transform type, and the extent of the
+// nonzero dequantized coefficients the inverse transform has to read.
+type CoefResult struct {
+	TXB        TXBDecodeResult
+	Txtp       transform.Type
+	ActiveRows uint8
+	ActiveCols uint8
+}
+
+// bindCoefBlock is the part of dav1d's decode_b that precedes the
+// bd_fn.recon_b_* call: the transform sizes (read_tx_size / read_vartx_tree),
+// the skip block's a/l coefficient-context reset, and the per-block binding
+// the transform-block walk reads.
+func (s *DecodeState) bindCoefBlock(cdfs *BlockLoopCDFs, scratch *BlockLoopScratch, req *BlockLoopRequest, visit *BlockLoopVisit) error {
+	block := &visit.Block
+	pred := &visit.Prediction
+	intra := pred.Valid && pred.Intra
+	skip := visit.Prefix.SkipTransform
+	qIndex := s.CurrentBaseQIdx
+	if req.Segmentation.Enabled {
+		if visit.SegmentID >= parser.MaxSegments {
+			return ErrInvalidDecodeState
+		}
+		qIndex = quantize.ClampQIndex(qIndex, req.Segmentation.Data.Segments[visit.SegmentID].DeltaQ)
+	} else if visit.SegmentID != 0 {
+		return ErrInvalidDecodeState
 	}
-	lumaDims, ok := tr.Size.Dimensions()
+	lossless := qIndex == 0 && req.QuantDeltasZero
+
+	tr := &scratch.coefTree
+	tr.Size = block.Size
+	tr.X4, tr.Y4 = block.X4, block.Y4
+	tr.VisibleW4, tr.VisibleH4 = block.VisibleW4, block.VisibleH4
+	tr.HaveTop, tr.HaveLeft = block.HaveTop, block.HaveLeft
+	tr.Color = req.Color
+	tr.TransformMode = req.TransformMode
+	tr.Inter = !intra
+	tr.SkipTransform = skip
+	tr.Lossless = lossless
+	tree, err := s.DecodeTransformTree(cdfs.Transform, &scratch.Mode, tr)
+	if err != nil {
+		return fmt.Errorf("decode transform tree req=%+v: %w", *tr, err)
+	}
+	visit.Coefficients = BlockCoeffResult{Tree: tree}
+
+	b := &scratch.coef
+	b.s, b.cdfs, b.txCDFs = s, cdfs.Coeff, cdfs.TransformType
+	b.ctx, b.scratch = &scratch.CoeffCtx, &scratch.Coeff
+	b.reduced = req.ReducedTxSet
+	b.qZero = qIndex == 0
+	b.Intra, b.Skip, b.Lossless = intra, skip, lossless
+	b.txtpMap = nil
+	if intra {
+		b.lumaMode = pred.LumaMode
+		if pred.FilterIntraValid {
+			b.lumaMode = filterIntraTransformMode(pred.FilterIntraMode)
+		}
+		b.chromaMode = pred.ChromaMode
+		if !b.chromaMode.Valid() {
+			b.chromaMode = ChromaIntraModeDC
+		}
+	} else {
+		b.txtpMap = &scratch.Coeff.txtpMap
+	}
+	b.Tree = tree
+	b.X4, b.Y4 = int(block.X4), int(block.Y4)
+	b.W4, b.H4 = int(block.VisibleW4), int(block.VisibleH4)
+	lumaDims, ok := block.Size.Dimensions()
 	if !ok {
 		return ErrInvalidDecodeState
 	}
 	b.blockDims[0] = lumaDims
-	b.planeBlk[0] = tr.Size
-	if hasChroma {
-		for pl := range 2 {
-			prep := &chromaPrep[pl]
-			if !prep.HasChroma {
-				continue
-			}
-			dims, ok := prep.PlaneBlock.Dimensions()
-			if !ok {
-				return ErrInvalidDecodeState
-			}
-			b.blockDims[pl+1] = dims
-			b.planeBlk[pl+1] = prep.PlaneBlock
-		}
-	}
-	tDims, ok := tree.Y.Dimensions()
-	if !ok {
-		return ErrInvalidDecodeState
-	}
-	txW, txH := int(tDims.W4), int(tDims.H4)
-	ssX := int(boolToShift(tr.Color.SubsamplingX))
-	ssY := int(boolToShift(tr.Color.SubsamplingY))
-	b.ssX, b.ssY = uint(ssX), uint(ssY)
-	var uvW, uvH int
-	hasChroma = hasChroma && chromaPrep[0].HasChroma
-	if hasChroma {
-		uvW, uvH = int(chromaPrep[0].UVDims.W4), int(chromaPrep[0].UVDims.H4)
-		b.cx4, b.cy4 = int(chromaPrep[0].X4), int(chromaPrep[0].Y4)
-	}
-
-	b.stats = *result
-	err := readCoefBlockUnits(&b, coeffController, loopVisit, tree, chromaPrep, hasChroma, txW, txH, uvW, uvH, ssX, ssY)
-	*result = b.stats
-	return err
-}
-
-// readCoefBlockUnits is the per-64x64-unit loop of dav1d's recon_b_intra /
-// recon_b_inter: the unit's luma TXBs, then each chroma plane's.
-func readCoefBlockUnits[T BlockLoopCoeffController](b *coefBlock, coeffController T, loopVisit *BlockLoopVisit, tree TransformTreeResult, chromaPrep *[2]chromaCoeffPlanePrep, hasChroma bool, txW, txH, uvW, uvH, ssX, ssY int) error {
-	txWLog2, txHLog2 := uint(bits.TrailingZeros(uint(txW))), uint(bits.TrailingZeros(uint(txH)))
-	for initY := 0; initY < b.h4; initY += 16 {
-		subH4 := min(b.h4, initY+16)
-		for initX := 0; initX < b.w4; initX += 16 {
-			subW4 := min(b.w4, initX+16)
-			for y := initY; y < subH4; y += txH {
-				for x := initX; x < subW4; x += txW {
-					var err error
-					if tree.Variable {
-						err = readCoefTree(b, coeffController, loopVisit, tree.Y, 0, &tree.Split, x>>txWLog2, y>>txHLog2, b.bx4+x, b.by4+y)
-					} else {
-						err = decodeCoefsTXB(b, coeffController, loopVisit, 0, tree.Y, b.bx4+x, b.by4+y, min(txW, b.w4-x), min(txH, b.h4-y))
-					}
-					if err != nil {
-						return err
-					}
-				}
-			}
-			if !hasChroma {
-				continue
-			}
-			for pl := range 2 {
-				prep := &chromaPrep[pl]
-				if !prep.HasChroma {
-					continue
-				}
-				cw4, ch4 := int(prep.VisibleW4), int(prep.VisibleH4)
-				subCH4 := min(ch4, (initY+16)>>ssY)
-				subCW4 := min(cw4, (initX+16)>>ssX)
-				for y := initY >> ssY; y < subCH4; y += uvH {
-					for x := initX >> ssX; x < subCW4; x += uvW {
-						if err := decodeCoefsTXB(b, coeffController, loopVisit, uint8(pl+1), tree.UV, int(prep.X4)+x, int(prep.Y4)+y, min(uvW, cw4-x), min(uvH, ch4-y)); err != nil {
-							return err
-						}
-					}
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// readCoefTree is dav1d's read_coef_tree (src/recon_tmpl.c): it follows the
-// var-tx split masks down to the coded luma transform blocks.
-func readCoefTree[T BlockLoopCoeffController](b *coefBlock, coeffController T, loopVisit *BlockLoopVisit, size TransformSize, depth int, split *[2]uint16, xOff, yOff, x4, y4 int) error {
-	dims, ok := size.Dimensions()
-	if !ok {
-		return ErrInvalidDecodeState
-	}
-	txW, txH := int(dims.W4), int(dims.H4)
-	right, bottom := b.bx4+b.w4, b.by4+b.h4
-	if depth < 2 && yOff < 4 && split[depth]&(1<<(yOff*4+xOff)) != 0 && size > TransformSize4x4 {
-		sub := dims.Sub
-		subDims, ok := sub.Dimensions()
-		if !ok {
-			return ErrInvalidDecodeState
-		}
-		txsw, txsh := int(subDims.W4), int(subDims.H4)
-		if err := readCoefTree(b, coeffController, loopVisit, sub, depth+1, split, xOff*2, yOff*2, x4, y4); err != nil {
+	b.SSX = uint(boolToShift(req.Color.SubsamplingX))
+	b.SSY = uint(boolToShift(req.Color.SubsamplingY))
+	b.HasChroma = tree.HasUV && hasChromaForBlock(block.Size, b.X4, b.Y4, req.Color)
+	if b.HasChroma {
+		planeBlock, err := PlaneBlockSize(block.Size, req.Color, 1)
+		if err != nil {
 			return err
 		}
-		if txW >= txH && x4+txsw < right {
-			if err := readCoefTree(b, coeffController, loopVisit, sub, depth+1, split, xOff*2+1, yOff*2, x4+txsw, y4); err != nil {
-				return err
-			}
+		dims, ok := planeBlock.Dimensions()
+		if !ok || !tree.UV.Valid() {
+			return ErrInvalidDecodeState
 		}
-		if txH >= txW && y4+txsh < bottom {
-			if err := readCoefTree(b, coeffController, loopVisit, sub, depth+1, split, xOff*2, yOff*2+1, x4, y4+txsh); err != nil {
-				return err
-			}
-			if txW >= txH && x4+txsw < right {
-				if err := readCoefTree(b, coeffController, loopVisit, sub, depth+1, split, xOff*2+1, yOff*2+1, x4+txsw, y4+txsh); err != nil {
+		b.blockDims[1], b.blockDims[2] = dims, dims
+		b.CX4, b.CY4 = b.X4>>b.SSX, b.Y4>>b.SSY
+		b.CW4 = ((b.X4 + b.W4 + int(b.SSX)) >> b.SSX) - b.CX4
+		b.CH4 = ((b.Y4 + b.H4 + int(b.SSY)) >> b.SSY) - b.CY4
+		if b.CW4 <= 0 || b.CH4 <= 0 || b.CX4+b.CW4 > MaxBlockModeSlots || b.CY4+b.CH4 > MaxBlockModeSlots {
+			return ErrInvalidDecodeState
+		}
+		if skip {
+			for plane := 1; plane <= 2; plane++ {
+				if err := b.ctx.ResetBlock(plane, planeBlock, b.CX4, b.CY4); err != nil {
 					return err
 				}
 			}
 		}
-		return nil
 	}
-	return decodeCoefsTXB(b, coeffController, loopVisit, 0, size, x4, y4, min(txW, right-x4), min(txH, bottom-y4))
+	if skip {
+		return b.ctx.ResetBlock(0, block.Size, b.X4, b.Y4)
+	}
+	return nil
 }
 
-// decodeCoefsTXB is one transform block of dav1d's recon_b_*: decode_coefs
-// (skip, transform type, tokens), the a/l coefficient-context and txtp_map
-// updates, and the reconstruction visit. visW/visH are the frame-clipped
-// extent in 4x4 units.
-func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T, loopVisit *BlockLoopVisit, plane uint8, size TransformSize, x4, y4, visW, visH int) error {
+// filterIntraTransformMode is dav1d's dav1d_filter_mode_to_y_mode: the intra
+// mode a filter-intra block's transform type is coded under.
+func filterIntraTransformMode(mode FilterIntraMode) IntraMode {
+	switch mode {
+	case FilterIntraModeVertical:
+		return IntraModeVertical
+	case FilterIntraModeHorizontal:
+		return IntraModeHorizontal
+	case FilterIntraModeD157:
+		return IntraModeD157
+	default:
+		return IntraModeDC
+	}
+}
+
+// DecodeCoefs is dav1d's decode_coefs (src/recon_tmpl.c) for one plane TXB at
+// a/l offsets x4, y4 of the bound block, followed by the caller-side updates of
+// read_coef_tree and recon_b_*: the a/l coefficient contexts and, for inter
+// luma, txtp_map. visW/visH are the frame-clipped extent in 4x4 units. With cf
+// and dq set, a coded TXB is dequantized into cf in raster scan order (cf must
+// be zero over the scan area when cfZeroed, see decodeCoefTokens); with cf nil
+// it is read as quantized coefficients into the binding's scratch
+// (QuantizedCoefs), the path lossless and quantizer-matrix blocks take.
+func (b *CoefBlock) DecodeCoefs(plane uint8, size TransformSize, x4, y4, visW, visH int, cf *[1024]int32, cfZeroed bool, dq *CoefDequant) (CoefResult, error) {
 	s := b.s
-	resetCoeffDequantTXB(b.dequant)
 	if size >= transformSizeCount || plane > 2 {
-		return ErrInvalidDecodeState
+		return CoefResult{}, ErrInvalidDecodeState
 	}
 	txDims := &transformDimensions[size]
-	// dav1d's get_skip_ctx and get_dc_sign_ctx take the TXB position as
-	// scalars. Building a CoeffContextRequest byte by byte on the stack
-	// and passing it by value had the callee read it back as words, which
-	// cannot be store-forwarded from the byte stores and stalled every
-	// transform block.
-	//
-	// (The calls keep their line offsets in this function so the
-	// committed PGO profile still matches their edges.)
 	tw4, th4, bd := int(txDims.W4), int(txDims.H4), &b.blockDims[plane]
 	txbCtx := b.ctx.txbContextTrusted(plane, x4, y4, tw4, th4, int(bd.W4), int(bd.H4))
 	geo := &coeffGeometryTable[size]
 	if !geo.valid || txbCtx.TXBSkipContext >= TXBSkipContexts {
-		return ErrInvalidDecodeState
+		return CoefResult{}, ErrInvalidDecodeState
 	}
 	coeffPlane := CoeffPlaneY
 	if plane != 0 {
@@ -244,95 +198,64 @@ func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T,
 
 	// does this block have any non-zero coefficients
 	allSkip := s.Reader.ReadBinaryCDFUnchecked(&b.cdfs.TXBSkip[geo.txCtx][txbCtx.TXBSkipContext]) != 0
-	txtp := transform.TypeDCTDCT
+	var r CoefResult
+	r.Txtp = transform.TypeDCTDCT
 	if !allSkip {
 		var err error
-		if txtp, err = b.readTxtp(plane, size, x4, y4); err != nil {
-			return err
+		if r.Txtp, err = b.readTxtp(plane, size, x4, y4); err != nil {
+			return CoefResult{}, err
 		}
 	}
-	if plane == 0 && b.inter != nil {
-		// dav1d's decode_coefs: dav1d_memset_pow2[t_dim->lw] of txtp into
-		// t->scratch.txtp_map for each of the TXB's rows. The selector's Type
-		// grid is that map; this walk reads back only what the block's own luma
-		// TXBs wrote, so it skips the generation tags the legacy reader uses.
-		w4, h4 := tw4, th4
-		if x4+w4 > MaxBlockModeSlots || y4+h4 > MaxBlockModeSlots {
-			return ErrInvalidDecodeState
+	if plane == 0 && b.txtpMap != nil {
+		if x4+tw4 > MaxBlockModeSlots || y4+th4 > MaxBlockModeSlots {
+			return CoefResult{}, ErrInvalidDecodeState
 		}
-		fillTxtpMap(&b.inter.Map.Type, x4, y4, w4, h4, txtp)
+		fillTxtpMap(b.txtpMap, x4, y4, tw4, th4, r.Txtp)
 	}
-
-	var result TXBDecodeResult
-	stats := &b.stats.Luma
-	if plane != 0 {
-		stats = &b.stats.Chroma[plane-1]
-	}
-	stats.TXBs++
 	if allSkip {
-		result.AllZero = true
-		stats.AllZero++
+		r.TXB.AllZero = true
 		b.ctx.setTXBContextKnown(plane, x4, y4, tw4, th4, visW, visH, 0)
+		return r, nil
+	}
+	class := transform.Class2D
+	if r.Txtp >= transform.TypeIDTX {
+		var err error
+		if class, err = r.Txtp.Class(); err != nil {
+			return CoefResult{}, ErrInvalidDecodeState
+		}
+	}
+	if cf == nil || dq == nil {
+		var err error
+		if r.TXB, err = b.readQuantizedTXB(size, coeffPlane, class, txbCtx, geo); err != nil {
+			return CoefResult{}, err
+		}
 	} else {
-		class, err := txtp.Class()
-		if err != nil {
-			return ErrInvalidDecodeState
+		// dav1d's dq_shift: imax(0, t_dim->ctx - 2).
+		txScale := uint8(0)
+		if geo.txCtx > 2 {
+			txScale = geo.txCtx - 2
 		}
-		target, txScale, dqMax := prepareCoeffDequantFactors(b.dequant, plane, geo)
-		var cf *[1024]int32
-		cfZeroed := false
-		if target != nil {
-			if target.Coef != nil {
-				cf, cfZeroed = target.Coef.take(), true
-			} else if target.Arena != nil {
-				cf = target.arenaSlot()
-			} else if len(target.Dst) >= 1024 {
-				cf = (*[1024]int32)(target.Dst)
-			}
-		}
-		if cf == nil {
-			if result, err = b.readQuantizedTXB(size, coeffPlane, class, txbCtx, geo); err != nil {
-				return err
-			}
-		} else {
-			factors := &target.Factors[plane]
-			var c entropy.Cursor
-			c.Load(&s.Reader)
-			r := decodeCoefTokens(&c, b.cdfs, size, geo, coeffPlane, txtp, class, txbCtx.DCSignContext, cf, cfZeroed, &b.scratch.Coeff.CoefLevels, coefDequant{
-				dc:    uint32(factors[0]),
-				ac:    uint32(factors[1]),
-				shift: txScale,
-				cfMax: uint32(dqMax),
-			})
-			c.CommitStateTo(&s.Reader)
-			target.ActiveRows = r.activeRows
-			target.ActiveCols = r.activeCols
-			target.TxScale = txScale
-			target.Ready = true
-			result = TXBDecodeResult{EOB: uint16(r.eob + 1), CulLevel: r.culLevel}
-			if target.Coef != nil {
-				target.Coef.used(r.activeRows, r.activeCols, int(geo.scanHeight))
-				target.Dst = target.Coef.CF[:geo.maxEOB:geo.maxEOB]
-			} else if target.Arena != nil {
-				target.commitArenaSlot(int(geo.maxEOB))
-			}
-		}
-		stats.NonZero++
-		stats.EOBTotal += uint32(result.EOB)
-		b.ctx.setTXBContextKnown(plane, x4, y4, tw4, th4, visW, visH, result.CulLevel)
+		var c entropy.Cursor
+		c.Load(&s.Reader)
+		t := decodeCoefTokens(&c, b.cdfs, size, geo, coeffPlane, r.Txtp, class, txbCtx.DCSignContext, cf, cfZeroed, &b.scratch.Coeff.CoefLevels, coefDequant{
+			dc:    dq.DC,
+			ac:    dq.AC,
+			shift: txScale,
+			cfMax: dq.Max,
+		})
+		c.CommitStateTo(&s.Reader)
+		r.TXB = TXBDecodeResult{EOB: uint16(t.eob + 1), CulLevel: t.culLevel}
+		r.ActiveRows, r.ActiveCols = uint8(t.activeRows), uint8(t.activeCols)
 	}
+	b.ctx.setTXBContextKnown(plane, x4, y4, tw4, th4, visW, visH, r.TXB.CulLevel)
+	return r, nil
+}
 
-	blk := &b.scratch.block
-	blk.Plane, blk.Transform, blk.Result = plane, txtp, result
-	blk.Block = TransformBlock{X4: uint8(x4), Y4: uint8(y4), Size: size, VisibleW4: uint8(visW), VisibleH4: uint8(visH)}
-	if !result.AllZero && !b.dequant.Ready {
-		blk.Coeffs, blk.Scan, _, _ = b.scratch.Coeff.coeffBuffersWithGeo(size, mustClass(txtp), geo)
-	} else if blk.Coeffs != nil || blk.Scan != nil {
-		// Field stores: a whole-struct store re-zeroed the slice headers
-		// behind write barriers on every TXB.
-		blk.Coeffs, blk.Scan = nil, nil
-	}
-	return coeffController.VisitBlockCoeffPtr(loopVisit, blk)
+// QuantizedCoefs returns the quantized coefficients and scan of the TXB the
+// last cf-less DecodeCoefs read.
+func (b *CoefBlock) QuantizedCoefs(size TransformSize, txtp transform.Type) (coeffs, scan []int16) {
+	coeffs, scan, _, _ = b.scratch.Coeff.coeffBuffersWithGeo(size, mustClass(txtp), &coeffGeometryTable[size])
+	return coeffs, scan
 }
 
 // fillTxtpMap is decode_coefs' dav1d_memset_pow2[t_dim->lw] of txtp into each
@@ -371,27 +294,31 @@ func mustClass(t transform.Type) transform.Class {
 // readTxtp is the transform-type section of dav1d's decode_coefs for a
 // non-skipped TXB: chroma types are derived (intra from the UV mode, inter
 // from the co-located luma type in txtp_map), luma types are read from the
-// per-size set unless qidx is zero.
-func (b *coefBlock) readTxtp(plane uint8, size TransformSize, x4, y4 int) (transform.Type, error) {
+// per-size set unless qidx is zero. A lossless TXB is a WHT_WHT, which the
+// reconstruction keys on the block's quantizer and reads as DCT_DCT.
+func (b *CoefBlock) readTxtp(plane uint8, size TransformSize, x4, y4 int) (transform.Type, error) {
+	if b.Lossless {
+		return transform.TypeDCTDCT, nil
+	}
 	if plane != 0 {
-		if b.intra {
+		if b.Intra {
 			return IntraChromaTransformType(b.chromaMode, size, b.reduced)
 		}
 		// dav1d's recon_b_inter: txtp_map[(by4 + (y << ss_ver)) * 32 +
 		// bx4 + (x << ss_hor)], with x/y the TXB offset in the chroma block.
-		lx := b.bx4 + (x4-b.cx4)<<b.ssX
-		ly := b.by4 + (y4-b.cy4)<<b.ssY
+		lx := b.X4 + (x4-b.CX4)<<b.SSX
+		ly := b.Y4 + (y4-b.CY4)<<b.SSY
 		if uint(lx) >= MaxBlockModeSlots || uint(ly) >= MaxBlockModeSlots {
 			return 0, ErrInvalidDecodeState
 		}
-		luma := b.inter.Map.Type[ly][lx]
+		luma := b.txtpMap[ly][lx]
 		return uvInterTransformType(size, luma)
 	}
 	if b.qZero {
 		return transform.TypeDCTDCT, nil
 	}
 	inter := 0
-	if !b.intra {
+	if !b.Intra {
 		inter = 1
 	}
 	p := &txTypeReadPlans[inter][txTypePlanReduced(b.reduced)][size]
@@ -403,7 +330,7 @@ func (b *coefBlock) readTxtp(plane uint8, size TransformSize, x4, y4 int) (trans
 	}
 	var cdf *entropy.CDF
 	var err error
-	if b.intra {
+	if b.Intra {
 		cdf, err = b.txCDFs.IntraCDF(p.index, p.square, b.lumaMode, p.symbols)
 	} else {
 		cdf, err = b.txCDFs.InterCDF(p.index, p.square, p.symbols)
@@ -423,7 +350,7 @@ func (b *coefBlock) readTxtp(plane uint8, size TransformSize, x4, y4 int) (trans
 // then dequantizes during reconstruction.
 //
 //go:noinline
-func (b *coefBlock) readQuantizedTXB(size TransformSize, plane CoeffPlaneType, class transform.Class, txbCtx TXBContext, geo *coeffGeometry) (TXBDecodeResult, error) {
+func (b *CoefBlock) readQuantizedTXB(size TransformSize, plane CoeffPlaneType, class transform.Class, txbCtx TXBContext, geo *coeffGeometry) (TXBDecodeResult, error) {
 	scratch := &b.scratch.Coeff
 	coeffs, scan, levels, err := scratch.coeffBuffersWithGeo(size, class, geo)
 	if err != nil {
@@ -452,58 +379,4 @@ func (b *coefBlock) readQuantizedTXB(size TransformSize, plane CoeffPlaneType, c
 		return b.s.readCoefficientsTXBTracked2DWithGeo(b.cdfs, req, coeffs, scan, levels, geo)
 	}
 	return b.s.readCoefficientsTXBWithGeo(b.cdfs, req, coeffs, scan, levels, geo)
-}
-
-// arenaSlot returns the next TXB slot of the frame-thread cf arena, dav1d's
-// ts->frame_thread[p].cf. The arena grows only while warming up; slots handed
-// out earlier keep their backing array, so published slices stay valid.
-func (t *CoeffDequantTarget) arenaSlot() *[1024]int32 {
-	a := *t.Arena
-	off := len(a)
-	if cap(a)-off < 1024 {
-		a = growCoefArena(a)
-		*t.Arena = a
-	}
-	return (*[1024]int32)(a[off : off+1024])
-}
-
-// commitArenaSlot keeps the scan area of the slot just decoded and points Dst
-// at it, as dav1d advances ts->frame_thread[p].cf past each TXB.
-func (t *CoeffDequantTarget) commitArenaSlot(area int) {
-	a := *t.Arena
-	off := len(a)
-	*t.Arena = a[:off+area]
-	t.Dst = a[off : off+area : off+area]
-}
-
-// growCoefArena extends the arena's capacity by at least one TXB slot while
-// keeping its length. It runs only while the arena warms up.
-//
-//go:noinline
-func growCoefArena(a []int32) []int32 {
-	return append(a[:cap(a)], make([]int32, 1024+cap(a)/2)...)[:len(a)]
-}
-
-// CoefBuffer is dav1d's t->cf: the coefficient buffer the synchronous
-// reconstruction reads right after each TXB is decoded. dav1d's inverse
-// transforms zero the coefficients they consumed so decode_coefs can rely on
-// a zero buffer; here the next take clears the region the last TXB could have
-// left nonzero, its activeCols columns times activeRows rows.
-type CoefBuffer struct {
-	CF                    [1024]int32
-	rows, cols, colStride uint8
-}
-
-func (b *CoefBuffer) take() *[1024]int32 {
-	// One contiguous clear through the last active row of the last active
-	// column; per-column clears of the active rows measured slower.
-	if n := (int(b.cols)-1)*int(b.colStride) + int(b.rows); n > 0 {
-		clear(b.CF[:n])
-	}
-	b.rows, b.cols = 0, 0
-	return &b.CF
-}
-
-func (b *CoefBuffer) used(rows, cols, stride int) {
-	b.rows, b.cols, b.colStride = uint8(rows), uint8(cols), uint8(stride)
 }
