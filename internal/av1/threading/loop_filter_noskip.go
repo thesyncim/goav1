@@ -49,21 +49,23 @@ func initFrameWorkLoopFilterNoSkip(noskip []byte, cols, rows, unitCols, unitRows
 
 // markFrameWorkLoopFilterNoSkip sets the noskip bit of every 8x8 block the MI
 // rectangle touches (dav1d decode.c: noskip_mask[by4 >> 1][bx_idx] |= mask
-// for each 8-row pair of a block with !b->skip).
+// for each 8-row pair of a block with !b->skip): one mask OR per row and
+// 64x64 unit the block spans.
 func markFrameWorkLoopFilterNoSkip(noskip []byte, unitCols, miColStart, miRowStart, miColEnd, miRowEnd int) {
 	startX := miColStart >> 1
 	startY := miRowStart >> 1
 	endX := (miColEnd + 1) >> 1
 	endY := (miRowEnd + 1) >> 1
 	for y := startY; y < endY; y++ {
-		unitY := y >> 3
-		localY := y & 7
-		for x := startX; x < endX; x++ {
+		rowOff := (y>>3)*unitCols*8 + y&7
+		for x := startX; x < endX; {
 			unitX := x >> 3
-			off := (unitY*unitCols+unitX)*8 + localY
+			n := min(endX, (unitX+1)<<3) - x
+			off := rowOff + unitX*8
 			if off >= 0 && off < len(noskip) {
-				noskip[off] |= 1 << uint(x&7)
+				noskip[off] |= uint8((1<<uint(n) - 1) << uint(x&7))
 			}
+			x += n
 		}
 	}
 }
