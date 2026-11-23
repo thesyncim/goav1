@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
@@ -62,8 +61,8 @@ func TestBitWriterMatchesMSBFirstShape(t *testing.T) {
 	if got := buf[:w.bytesWritten()]; !bytes.Equal(got, want) {
 		t.Fatalf("bit writer = %08b want %08b", got, want)
 	}
-	if w.bitsWritten() != 16 || !w.byteAligned() {
-		t.Fatalf("writer position bits=%d aligned=%v", w.bitsWritten(), w.byteAligned())
+	if w.bytesWritten() != 2 || !w.byteAligned() {
+		t.Fatalf("writer position bytes=%d aligned=%v", w.bytesWritten(), w.byteAligned())
 	}
 }
 
@@ -79,9 +78,9 @@ func TestAppendSequenceHeaderPayloadRealtime(t *testing.T) {
 		t.Fatalf("payload size=%d want %d", size, len(want))
 	}
 	var buf [64]byte
-	out, err := AppendSequenceHeaderPayload(buf[:0], seq)
+	out, err := appendSequenceHeaderPayload(buf[:0], seq)
 	if err != nil {
-		t.Fatalf("AppendSequenceHeaderPayload: %v", err)
+		t.Fatalf("appendSequenceHeaderPayload: %v", err)
 	}
 	if !bytes.Equal(out, want) {
 		t.Fatalf("payload = % x; want % x", out, want)
@@ -202,9 +201,9 @@ func TestAppendSequenceHeaderTimingAndDisplayDelay(t *testing.T) {
 	seq.OperatingPoints[0].InitialDisplayDelayMinus1 = 3
 
 	var buf [128]byte
-	out, err := AppendSequenceHeaderPayload(buf[:0], seq)
+	out, err := appendSequenceHeaderPayload(buf[:0], seq)
 	if err != nil {
-		t.Fatalf("AppendSequenceHeaderPayload: %v", err)
+		t.Fatalf("appendSequenceHeaderPayload: %v", err)
 	}
 	parsed, err := parser.ParseSequenceHeader(out)
 	if err != nil {
@@ -225,19 +224,6 @@ func TestAppendSequenceHeaderTimingAndDisplayDelay(t *testing.T) {
 	if !op.DecoderModelPresent || op.DecoderBufferDelay != 17 || op.EncoderBufferDelay != 19 || !op.LowDelayMode ||
 		!op.InitialDisplayDelayPresent || op.InitialDisplayDelayMinus1 != 3 {
 		t.Fatalf("parsed operating point: %+v", op)
-	}
-}
-
-func TestAppendSequenceHeaderShortBuffer(t *testing.T) {
-	var buf [4]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendSequenceHeaderPayload(dst, realtimeEncoderSequenceHeader())
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want %v", err, bitstream.ErrShortBuffer)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output: % x", out)
 	}
 }
 
@@ -273,9 +259,9 @@ func TestSequenceHeaderForConfigSingleLayer(t *testing.T) {
 	}
 
 	var buf [128]byte
-	out, err := AppendSequenceHeaderPayload(buf[:0], seq)
+	out, err := appendSequenceHeaderPayload(buf[:0], seq)
 	if err != nil {
-		t.Fatalf("AppendSequenceHeaderPayload: %v", err)
+		t.Fatalf("appendSequenceHeaderPayload: %v", err)
 	}
 	parsed, err := parser.ParseSequenceHeader(out)
 	if err != nil {
@@ -308,9 +294,9 @@ func TestSequenceHeaderForConfigSVCOperatingPoints(t *testing.T) {
 	}
 
 	var buf [160]byte
-	out, err := AppendSequenceHeaderPayload(buf[:0], seq)
+	out, err := appendSequenceHeaderPayload(buf[:0], seq)
 	if err != nil {
-		t.Fatalf("AppendSequenceHeaderPayload: %v", err)
+		t.Fatalf("appendSequenceHeaderPayload: %v", err)
 	}
 	parsed, err := parser.ParseSequenceHeader(out)
 	if err != nil {
@@ -320,12 +306,6 @@ func TestSequenceHeaderForConfigSVCOperatingPoints(t *testing.T) {
 		if parsed.OperatingPoints[i].IDC != wantIDC[i] {
 			t.Fatalf("parsed op[%d]=%+v want idc=%#x", i, parsed.OperatingPoints[i], wantIDC[i])
 		}
-	}
-	if index, ok := parser.SelectOperatingPoint(parsed, 1, 1); !ok || index != 0 {
-		t.Fatalf("SelectOperatingPoint top layer = %d,%v; want 0,true", index, ok)
-	}
-	if index, ok := parser.SelectOperatingPoint(parsed, 0, 0); !ok || index != 0 {
-		t.Fatalf("SelectOperatingPoint base layer first match = %d,%v; want 0,true", index, ok)
 	}
 }
 
@@ -412,9 +392,9 @@ func TestSequenceHeaderForConfigExplicitColorConfig(t *testing.T) {
 				t.Fatalf("sequence color=%+v want %+v", seq.ColorConfig, tc.want)
 			}
 			var buf [160]byte
-			out, err := AppendSequenceHeaderPayload(buf[:0], seq)
+			out, err := appendSequenceHeaderPayload(buf[:0], seq)
 			if err != nil {
-				t.Fatalf("AppendSequenceHeaderPayload: %v", err)
+				t.Fatalf("appendSequenceHeaderPayload: %v", err)
 			}
 			parsed, err := parser.ParseSequenceHeader(out)
 			if err != nil {

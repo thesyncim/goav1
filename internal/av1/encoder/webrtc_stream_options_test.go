@@ -1904,7 +1904,7 @@ func parseWebRTCTileColumns(t *testing.T, tu []byte) int {
 			}
 			var size parser.FrameSize
 			if prefix.UsesIntraFrameSizePath() {
-				size, err = parser.ParseIntraFrameSize(unit.Payload, seq, prefix, unit.Header.TemporalID, unit.Header.SpatialID)
+				size, err = parser.ParseFrameSize(unit.Payload, seq, prefix, nil, unit.Header.TemporalID, unit.Header.SpatialID)
 			} else {
 				size, err = parser.ParseFrameSize(unit.Payload, seq, prefix, nil, unit.Header.TemporalID, unit.Header.SpatialID)
 			}

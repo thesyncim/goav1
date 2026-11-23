@@ -101,11 +101,6 @@ type WebRTCStream struct {
 	referenceValid [WebRTCReferenceBuffers]bool
 }
 
-// NewWebRTCStream creates an L1T1 WebRTC stream under CBR rate control.
-func NewWebRTCStream(width, height int, rc RateControlConfig) (*WebRTCStream, error) {
-	return NewWebRTCStreamLayers(width, height, rc, 1)
-}
-
 // NewWebRTCStreamLayers creates a WebRTC stream with the given temporal layer
 // count (1 = L1T1, 2 = L1T2, 3 = L1T3).
 func NewWebRTCStreamLayers(width, height int, rc RateControlConfig, temporalLayers int) (*WebRTCStream, error) {

@@ -62,14 +62,6 @@ func AppendLowOverheadOBU(dst []byte, unit OBU) ([]byte, error) {
 	return out, nil
 }
 
-// WebRTCScalabilityMetadataPayloadSize returns the metadata_obu() payload size
-// for mode. ok is false for L1T1 and invalid modes that carry no AV1
-// scalability metadata.
-func WebRTCScalabilityMetadataPayloadSize(mode ScalabilityMode) (size int, ok bool) {
-	size, ok, _ = webRTCScalabilityMetadataPayloadSize(mode, webRTCScalabilityMetadataDimensions{})
-	return size, ok
-}
-
 func webRTCScalabilityMetadataPayloadSize(mode ScalabilityMode, dims webRTCScalabilityMetadataDimensions) (size int, ok bool, err error) {
 	if !mode.Valid() || mode == ScalabilityModeL1T1 {
 		return 0, false, nil
@@ -82,12 +74,6 @@ func webRTCScalabilityMetadataPayloadSize(mode ScalabilityMode, dims webRTCScala
 		return 0, false, nil
 	}
 	return bitstream.LEB128Len(uint32(obu.MetadataTypeScalability)) + 1 + structureSize + 1, true, nil
-}
-
-// AppendWebRTCScalabilityMetadataPayload appends metadata_obu() payload bytes
-// for mode without growing dst.
-func AppendWebRTCScalabilityMetadataPayload(dst []byte, mode ScalabilityMode) ([]byte, bool, error) {
-	return appendWebRTCScalabilityMetadataPayload(dst, mode, webRTCScalabilityMetadataDimensions{})
 }
 
 func appendWebRTCScalabilityMetadataPayload(dst []byte, mode ScalabilityMode, dims webRTCScalabilityMetadataDimensions) ([]byte, bool, error) {
@@ -275,14 +261,6 @@ func webRTCScalabilityMetadataDimensionsForFrames(frames []FrameEncodeSettings) 
 	return dims
 }
 
-func webRTCScalabilityMetadataDimensionsForModeFrames(mode ScalabilityMode, frames []FrameEncodeSettings) webRTCScalabilityMetadataDimensions {
-	spatial, _, _, ok := mode.Layers()
-	if !ok || len(frames) != int(spatial) {
-		return webRTCScalabilityMetadataDimensions{}
-	}
-	return webRTCScalabilityMetadataDimensionsForFrames(frames)
-}
-
 func webRTCScalabilityMetadataDimensionsForConfig(config Config) webRTCScalabilityMetadataDimensions {
 	var frames [WebRTCMaxSpatialLayers]FrameEncodeSettings
 	if config.SpatialLayerCount == 0 || config.SpatialLayerCount > WebRTCMaxSpatialLayers {
@@ -334,70 +312,6 @@ func appendLowOverheadWebRTCScalabilityMetadataOBU(dst []byte, mode ScalabilityM
 		return dst, true, ErrInvalidFrame
 	}
 	return out, true, nil
-}
-
-// LowOverheadWebRTCScalabilityMetadataOBUSize returns the OBU size for mode's
-// AV1 scalability metadata. ok is false for L1T1 and invalid modes.
-func LowOverheadWebRTCScalabilityMetadataOBUSize(mode ScalabilityMode) (size int, ok bool, err error) {
-	return lowOverheadWebRTCScalabilityMetadataOBUSize(mode, webRTCScalabilityMetadataDimensions{})
-}
-
-// AppendLowOverheadWebRTCScalabilityMetadataOBU appends one low-overhead
-// METADATA_TYPE_SCALABILITY OBU for mode.
-func AppendLowOverheadWebRTCScalabilityMetadataOBU(dst []byte, mode ScalabilityMode) ([]byte, bool, error) {
-	return appendLowOverheadWebRTCScalabilityMetadataOBU(dst, mode, webRTCScalabilityMetadataDimensions{})
-}
-
-func appendLowOverheadWebRTCScalabilityMetadataOBUForFrames(dst []byte, mode ScalabilityMode, frames []FrameEncodeSettings) ([]byte, bool, error) {
-	return appendLowOverheadWebRTCScalabilityMetadataOBU(dst, mode, webRTCScalabilityMetadataDimensionsForModeFrames(mode, frames))
-}
-
-func lowOverheadWebRTCScalabilityMetadataOBUSizeForFrames(mode ScalabilityMode, frames []FrameEncodeSettings) (size int, ok bool, err error) {
-	return lowOverheadWebRTCScalabilityMetadataOBUSize(mode, webRTCScalabilityMetadataDimensionsForModeFrames(mode, frames))
-}
-
-// LowOverheadTemporalUnitSize returns the exact number of bytes required to emit
-// a low-overhead temporal unit: one temporal-delimiter OBU followed by obus.
-func LowOverheadTemporalUnitSize(obus []OBU) (int, error) {
-	if len(obus) == 0 {
-		return 0, ErrInvalidFrame
-	}
-	size := lowOverheadOBUSizeUnchecked(OBU{Type: obu.TypeTemporalDelimiter})
-	for i := range obus {
-		unit := obus[i]
-		if unit.Type == obu.TypeTemporalDelimiter {
-			return 0, ErrInvalidFrame
-		}
-		if err := validateOBU(unit); err != nil {
-			return 0, err
-		}
-		size += lowOverheadOBUSizeUnchecked(unit)
-	}
-	return size, nil
-}
-
-// AppendLowOverheadTemporalUnit appends one temporal-delimiter OBU followed by
-// obus. The function never grows dst and validates the full unit before writing,
-// so errors leave dst length unchanged.
-func AppendLowOverheadTemporalUnit(dst []byte, obus []OBU) ([]byte, error) {
-	size, err := LowOverheadTemporalUnitSize(obus)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < size {
-		return dst, bitstream.ErrShortBuffer
-	}
-	out, err := AppendLowOverheadOBU(dst, OBU{Type: obu.TypeTemporalDelimiter})
-	if err != nil {
-		return dst, err
-	}
-	for i := range obus {
-		out, err = AppendLowOverheadOBU(out, obus[i])
-		if err != nil {
-			return dst, err
-		}
-	}
-	return out, nil
 }
 
 func validateOBU(unit OBU) error {

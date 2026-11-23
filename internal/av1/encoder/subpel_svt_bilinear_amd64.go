@@ -11,12 +11,6 @@ import (
 // svtSubpelAVX2 gates the AVX2 sub-pel variance kernel.
 var svtSubpelAVX2 = gosimdKernelsSupported()
 
-// svtBilinearPredictArch is the scalar reference on amd64: only the fused
-// variance below is on the encoder's path.
-func svtBilinearPredictArch(scratch *svtSubpelScratch, ref []byte, refStride, bw, bh, xoff, yoff int) {
-	svtBilinearPredict(scratch, ref, refStride, bw, bh, xoff, yoff)
-}
-
 // svtSubpelVarianceArch is vfp->svf on AVX2, shaped like SVT-AV1's
 // Source/Lib/ASM_AVX2/variance_avx2.c svt_aom_sub_pixel_variance{16,32,64}xh
 // (filter_block_2rows / the half-pel _mm256_avg_epu8 branch): a zero phase

@@ -20,10 +20,6 @@ func newSizingBitWriter() bitWriter {
 	return bitWriter{sizing: true}
 }
 
-func (w *bitWriter) bitsWritten() int {
-	return w.bit
-}
-
 func (w *bitWriter) bytesWritten() int {
 	return (w.bit + 7) >> 3
 }

@@ -17,8 +17,6 @@ func BenchmarkPred8(b *testing.B) {
 	rng := rand.New(rand.NewSource(1))
 	pix := make([]byte, w*h)
 	rng.Read(pix)
-	src := make([]byte, w*h)
-	rng.Read(src)
 	ref := frame.Plane{Pix: pix, Stride: w, Width: w, Height: h}
 	var im [pred8IMLen]int16
 	var scratch motion.ConvolveScratch
@@ -32,11 +30,6 @@ func BenchmarkPred8(b *testing.B) {
 				pred8Predict(dst, 16, &ref, 64, 32, 16, 16, tc.subX, tc.subY, motion.RegularFilters, &im)
 			}
 		})
-		b.Run("fastSAD16/"+tc.name, func(b *testing.B) {
-			for range b.N {
-				pred8SAD(src[32*w+64:], w, &ref, 64, 32, 16, 16, tc.subX, tc.subY, &im)
-			}
-		})
 		b.Run("motion16/"+tc.name, func(b *testing.B) {
 			d := frame.Plane{Pix: dst, Stride: 16, Width: 16, Height: 16}
 			for range b.N {
@@ -46,8 +39,8 @@ func BenchmarkPred8(b *testing.B) {
 	}
 }
 
-// TestPred8MatchesMotionPredictor checks the fast luma predictor (store and
-// SAD modes) against the motion package predictor for every Q4 phase, filter
+// TestPred8MatchesMotionPredictor checks the fast luma predictor against the
+// motion package predictor for every Q4 phase, filter
 // pair and block shape, over random, extreme and alternating planes.
 func TestPred8MatchesMotionPredictor(t *testing.T) {
 	if pred8Impl == nil {
@@ -56,7 +49,6 @@ func TestPred8MatchesMotionPredictor(t *testing.T) {
 	const w, h = 160, 120
 	rng := rand.New(rand.NewSource(17))
 	pix := make([]byte, w*h)
-	src := make([]byte, w*h)
 	ref := frame.Plane{Pix: pix, Stride: w, Width: w, Height: h}
 	var scratch motion.ConvolveScratch
 	var im [pred8IMLen]int16
@@ -75,7 +67,6 @@ func TestPred8MatchesMotionPredictor(t *testing.T) {
 				pix[i] = byte(128 + rng.Intn(9) - 4)
 			}
 		}
-		rng.Read(src)
 		for _, sz := range [][2]int{{8, 8}, {16, 16}, {32, 32}, {64, 64}, {16, 8}, {8, 16}, {32, 16}, {16, 32}, {64, 16}, {16, 64}, {64, 32}, {32, 64}} {
 			bw, bh := sz[0], sz[1]
 			for trial := range 40 {
@@ -105,15 +96,6 @@ func TestPred8MatchesMotionPredictor(t *testing.T) {
 				}
 				if !bytes.Equal(got[:bw*bh], want[:bw*bh]) {
 					t.Fatalf("pattern %d %dx%d at (%d,%d) sub (%d,%d) filters %+v: prediction differs", pattern, bw, bh, refX, refY, subX, subY, filters)
-				}
-				if bw%16 != 0 || filters != motion.RegularFilters {
-					continue
-				}
-				so := rng.Intn(w*(h-bh-1) - bw)
-				wantSAD := sadRectDualBlock(src[so:], w, want, bw, bw, bh)
-				gotSAD, ok := pred8SAD(src[so:], w, &ref, refX, refY, bw, bh, subX, subY, &im)
-				if !ok || gotSAD != wantSAD {
-					t.Fatalf("pattern %d %dx%d sub (%d,%d): SAD %d ok=%v want %d", pattern, bw, bh, subX, subY, gotSAD, ok, wantSAD)
 				}
 			}
 		}

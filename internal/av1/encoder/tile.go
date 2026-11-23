@@ -30,31 +30,6 @@ const (
 	InterpolationSwitchable = parser.InterpolationSwitchable
 )
 
-func TileInfoPayloadSize(seq SequenceHeader, prefix FrameHeaderPrefix, codedWidth uint32, height uint32, tiles TileInfo) (int, error) {
-	w := newSizingBitWriter()
-	if err := writeTileInfoPayload(&w, seq, prefix, codedWidth, height, tiles); err != nil {
-		return 0, err
-	}
-	return w.bytesWritten(), nil
-}
-
-func AppendTileInfoPayload(dst []byte, seq SequenceHeader, prefix FrameHeaderPrefix, codedWidth uint32, height uint32, tiles TileInfo) ([]byte, error) {
-	payloadSize, err := TileInfoPayloadSize(seq, prefix, codedWidth, height, tiles)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < payloadSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+payloadSize]
-	w := newBitWriter(out[off:])
-	if err := writeTileInfoPayload(&w, seq, prefix, codedWidth, height, tiles); err != nil {
-		return dst, err
-	}
-	return out, nil
-}
-
 // TileGroupPayloadSize returns the byte count for a standalone tile_group_obu()
 // payload covering startTile through endTile, including tile-size prefixes for
 // every tile except the last tile in the group.

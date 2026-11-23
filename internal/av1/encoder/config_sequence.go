@@ -3,8 +3,7 @@ package encoder
 const webRTCDefaultOrderHintBits = 7
 
 // SequenceHeaderForConfig maps a WebRTC encoder config into the sequence
-// header descriptor consumed by AppendSequenceHeaderPayload and
-// AppendLowOverheadSequenceHeaderOBU.
+// header descriptor consumed by AppendLowOverheadSequenceHeaderOBU.
 func SequenceHeaderForConfig(config Config) (SequenceHeader, error) {
 	config, err := SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
 	if err != nil {

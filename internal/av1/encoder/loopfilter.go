@@ -1,7 +1,5 @@
 package encoder
 
-import "github.com/thesyncim/goav1/internal/av1/bitstream"
-
 const LoopFilterModeDeltas = 2
 
 // LoopFilterDeltas is the persistent loop-filter ref/mode delta table.
@@ -21,56 +19,6 @@ type LoopFilterParams struct {
 	ModeRefDeltaEnabled bool
 	ModeRefDeltaUpdate  bool
 	Deltas              LoopFilterDeltas
-}
-
-func LoopFilterParamsPayloadSize(seq SequenceHeader, prefix FrameHeaderPrefix, size IntraFrameSize, allLossless bool, lf LoopFilterParams, previous *LoopFilterDeltas) (int, error) {
-	w := newSizingBitWriter()
-	if err := writeLoopFilterParamsPayload(&w, seq, prefix, size.AllowIntrabc, allLossless, lf, previous); err != nil {
-		return 0, err
-	}
-	return w.bytesWritten(), nil
-}
-
-func AppendLoopFilterParamsPayload(dst []byte, seq SequenceHeader, prefix FrameHeaderPrefix, size IntraFrameSize, allLossless bool, lf LoopFilterParams, previous *LoopFilterDeltas) ([]byte, error) {
-	payloadSize, err := LoopFilterParamsPayloadSize(seq, prefix, size, allLossless, lf, previous)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < payloadSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+payloadSize]
-	w := newBitWriter(out[off:])
-	if err := writeLoopFilterParamsPayload(&w, seq, prefix, size.AllowIntrabc, allLossless, lf, previous); err != nil {
-		return dst, err
-	}
-	return out, nil
-}
-
-func LoopFilterParamsInterPayloadSize(seq SequenceHeader, prefix FrameHeaderPrefix, size InterFrameSize, allLossless bool, lf LoopFilterParams, previous *LoopFilterDeltas) (int, error) {
-	w := newSizingBitWriter()
-	if err := writeLoopFilterParamsPayload(&w, seq, prefix, false, allLossless, lf, previous); err != nil {
-		return 0, err
-	}
-	return w.bytesWritten(), nil
-}
-
-func AppendLoopFilterParamsInterPayload(dst []byte, seq SequenceHeader, prefix FrameHeaderPrefix, size InterFrameSize, allLossless bool, lf LoopFilterParams, previous *LoopFilterDeltas) ([]byte, error) {
-	payloadSize, err := LoopFilterParamsInterPayloadSize(seq, prefix, size, allLossless, lf, previous)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < payloadSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+payloadSize]
-	w := newBitWriter(out[off:])
-	if err := writeLoopFilterParamsPayload(&w, seq, prefix, false, allLossless, lf, previous); err != nil {
-		return dst, err
-	}
-	return out, nil
 }
 
 func writeLoopFilterParamsPayload(w *bitWriter, seq SequenceHeader, prefix FrameHeaderPrefix, allowIntrabc bool, allLossless bool, lf LoopFilterParams, previous *LoopFilterDeltas) error {

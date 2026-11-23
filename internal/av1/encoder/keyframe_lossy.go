@@ -28,13 +28,6 @@ import (
 // DCT_DCT with the tx_type symbol coded per luma TXB, single tile, no
 // post-filters (decode output == recon).
 
-// EncodeKeyframe encodes src at the given base qindex (1..255) and returns the
-// temporal unit together with the encoder-side reconstruction the decoder must
-// reproduce exactly.
-func EncodeKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, error) {
-	return encodeKeyframeFiltered(src, qIndex, nil, 0, 0, nil, nil, nil)
-}
-
 // KeyframeEncoder is a reusable keyframe-only encoder. It keeps the same
 // writer, tile-coder, reconstruction, and filter scratch between calls as the
 // streaming VideoEncoder, so repeated forced keyframes do not allocate once
@@ -152,35 +145,15 @@ func EncodeMonochromeKeyframe(src SourceFrameMono, qIndex uint8) ([]byte, Source
 	return out, recon, nil
 }
 
-// EncodeKeyframeWithSequenceMax encodes src as a shown keyframe while keeping
-// the sequence header max dimensions at maxWidth x maxHeight. This is useful
-// for scalable streams whose lower spatial layers are smaller than the shared
-// sequence maximum.
-func EncodeKeyframeWithSequenceMax(src SourceFrame420, qIndex uint8, maxWidth, maxHeight int) ([]byte, SourceFrame420, error) {
-	return encodeKeyframeFilteredTiles(src, qIndex, nil, 0, 0, nil, nil, nil, 0, keyframeTileOptions{
-		sequenceMaxWidth:  maxWidth,
-		sequenceMaxHeight: maxHeight,
-	})
-}
-
-// encodeKeyframeFiltered encodes the keyframe and, when in-loop filtering is
-// active for this size, runs the deblocking pass over the reconstruction
-// through lf (allocating a frame-local applier when the caller has none).
-// Streaming callers pass their reusable reconstruction buffer and tile-coder
-// pool so periodic keyframes allocate nothing; one-shot callers pass nil for
-// both.
-func encodeKeyframeFiltered(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier) ([]byte, SourceFrame420, error) {
-	return encodeKeyframeFilteredTiles(src, qIndex, lf, renderW, renderH, reconBuf, tilePC, cdefApp, 0, keyframeTileOptions{})
-}
-
-// encodeKeyframeFilteredTiles is encodeKeyframeFiltered with the stream's
-// tile-column split, which must match the coder pool the caller sized.
+// encodeKeyframeFilteredTiles encodes the keyframe with the stream's
+// tile-column split, which must match the coder pool the caller sized, and
+// runs the in-loop filters over the reconstruction.
 func encodeKeyframeFilteredTiles(src SourceFrame420, qIndex uint8, lf *loopFilterApplier, renderW, renderH int, reconBuf *SourceFrame420, tilePC func(t int) *pframeCoder, cdefApp *cdefApplier, tileColsLog2 uint8, tileOpts keyframeTileOptions) ([]byte, SourceFrame420, error) {
 	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
 		return nil, SourceFrame420{}, fmt.Errorf("encoder: frame dimensions must be positive multiples of 8, got %dx%d", src.Width, src.Height)
 	}
 	if qIndex == 0 {
-		return nil, SourceFrame420{}, fmt.Errorf("encoder: qindex 0 is the lossless path; use EncodeLosslessKeyframe")
+		return nil, SourceFrame420{}, fmt.Errorf("encoder: qindex 0 (lossless) is not supported for 4:2:0 keyframes")
 	}
 	seqWidth, seqHeight := src.Width, src.Height
 	if tileOpts.sequenceMaxWidth != 0 || tileOpts.sequenceMaxHeight != 0 {
@@ -1853,102 +1826,12 @@ func (st *lossyEncodeState) txbBitsToRate(bits int) int64 {
 	return ((int64(bits)<<9)*st.rdMult + 256) >> 9
 }
 
-func (st *lossyEncodeState) trialTXBBitsInter(qcoeff []int16, n int, size tile.TransformSize, typ transform.Type) int64 {
-	if n == 8 && size == tile.TransformSize8x8 {
-		return st.trialTXBBitsInter8x8((*[64]int16)(qcoeff), typ)
-	}
-	if n == 16 && size == tile.TransformSize16x16 {
-		return st.trialTXBBitsInter16x16((*[256]int16)(qcoeff), typ)
-	}
-	if n == 32 && size == tile.TransformSize32x32 {
-		return st.trialTXBBitsInter32x32((*[1024]int16)(qcoeff), typ)
-	}
-
-	tw := entropy.NewCountingWriter()
-	scan := st.scan4
-	var txCDF *entropy.CDF
-	txSymbol := 0
-	if st.qIndex == 0 {
-		if typ != transform.TypeDCTDCT {
-			return 1 << 59
-		}
-	} else {
-		set, err := tile.ExtTXSetTypeFor(size, true, false)
-		if err != nil {
-			return 1 << 59
-		}
-		symbols, err := tile.ExtTXTypeCount(set)
-		if err != nil {
-			return 1 << 59
-		}
-		if symbols <= 1 {
-			if typ != transform.TypeDCTDCT {
-				return 1 << 59
-			}
-		} else {
-			index, err := tile.ExtTXSetIndex(size, true, false)
-			if err != nil {
-				return 1 << 59
-			}
-			square, err := tile.TransformSizeSquare(size)
-			if err != nil {
-				return 1 << 59
-			}
-			txCDF, err = st.txCDFs.InterCDF(index, square, symbols)
-			if err != nil {
-				return 1 << 59
-			}
-			txSymbol, err = tile.ExtTXSymbolForType(set, typ)
-			if err != nil {
-				return 1 << 59
-			}
-		}
-	}
-	base := tw.Tell()
-	afterSkip := func() error {
-		if txCDF == nil {
-			return nil
-		}
-		saved := *txCDF
-		tw.WriteCDF(txCDF, txSymbol)
-		*txCDF = saved
-		return nil
-	}
-	if _, err := tile.WriteCoefficientsTXB(&tw, &st.trialCDFs, tile.TXBEncodeRequest{
-		Size: size, Plane: tile.CoeffPlaneY, Class: transform.Class2D, AfterSkip: afterSkip,
-	}, qcoeff[:n*n], scan, st.levels); err != nil {
-		return 1 << 59
-	}
-	bits := int64(tw.Tell() - base)
-	return ((bits<<9)*st.rdMult + 256) >> 9
-}
-
 func (st *lossyEncodeState) trialTXBBitsInter8x8(qcoeff *[64]int16, typ transform.Type) int64 {
 	txCDF, txSymbol, ok := st.inter8x8TXCDFAndSymbol(typ)
 	if !ok {
 		return 1 << 59
 	}
 	_, bits := tile.CountCoefficientsTXB8x8Y2DTrustedArray(&st.trialCDFs, qcoeff, txCDF, txSymbol)
-	rate := int64(bits)
-	return ((rate<<9)*st.rdMult + 256) >> 9
-}
-
-func (st *lossyEncodeState) trialTXBBitsInter16x16(qcoeff *[256]int16, typ transform.Type) int64 {
-	txCDF, txSymbol, ok := st.interTXCDFAndSymbol(tile.TransformSize16x16, typ)
-	if !ok {
-		return 1 << 59
-	}
-	_, bits := tile.CountCoefficientsTXB16x16Y2DTrustedWithTXTypeArray(&st.trialCDFs, qcoeff, txCDF, txSymbol)
-	rate := int64(bits)
-	return ((rate<<9)*st.rdMult + 256) >> 9
-}
-
-func (st *lossyEncodeState) trialTXBBitsInter32x32(qcoeff *[1024]int16, typ transform.Type) int64 {
-	txCDF, txSymbol, ok := st.interTXCDFAndSymbol(tile.TransformSize32x32, typ)
-	if !ok {
-		return 1 << 59
-	}
-	_, bits := tile.CountCoefficientsTXB32x32Y2DTrustedWithTXTypeArray(&st.trialCDFs, qcoeff, txCDF, txSymbol)
 	rate := int64(bits)
 	return ((rate<<9)*st.rdMult + 256) >> 9
 }

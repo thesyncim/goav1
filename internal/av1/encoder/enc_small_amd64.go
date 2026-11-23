@@ -17,29 +17,6 @@ import (
 // encAVX2 gates the kernels in this file.
 var encAVX2 = gosimdKernelsSupported()
 
-func init() {
-	if encAVX2 {
-		realtimeAvg8x8QuadImpl = realtimeAvg8x8QuadAVX2
-	}
-}
-
-// realtimeAvg8x8QuadAVX2 is realtimeAvg8x8QuadWide on 16-byte rows: VPSADBW
-// against zero sums the left and right eight bytes of a row into the two
-// lanes, so each eight-row band is two accumulators.
-func realtimeAvg8x8QuadAVX2(src []byte, stride int) (int, int, int, int) {
-	_ = src[15*stride+15]
-	p := unsafe.Pointer(&src[0])
-	var zero archsimd.Uint8x16
-	var top, bot archsimd.Uint64x2
-	for r := 0; r < 8; r++ {
-		top = top.Add(load16(unsafe.Add(p, r*stride)).SumOf8AbsDiff(zero))
-		bot = bot.Add(load16(unsafe.Add(p, (r+8)*stride)).SumOf8AbsDiff(zero))
-	}
-	tl, tr := int(top.GetElem(0)), int(top.GetElem(1))
-	bl, br := int(bot.GetElem(0)), int(bot.GetElem(1))
-	return (tl + 32) >> 6, (tr + 32) >> 6, (bl + 32) >> 6, (br + 32) >> 6
-}
-
 // lpd1SampledSAD is the row-subsampled SAD the chroma detector uses
 // (svt_nxm_sad_kernel called with stride << shift and height >> shift), as
 // svt_nxm_sad_kernel_helper_avx2: 16-byte rows directly, 8-byte rows two to a
@@ -80,30 +57,6 @@ func lpd1SampledSAD(src, ref []byte, srcOff, refOff, srcStride, refStride, w, ro
 		}
 	}
 	return sumU64(acc)
-}
-
-// sad8x4x4 computes four 8x4 SADs of one source block against four reference
-// origins sharing stride: svt_aom_compute8x4_sad_kernel, the row-subsampled
-// 8x8 SAD of SVT-AV1's SUB_SAD_SEARCH when called with a doubled stride.
-func sad8x4x4(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int, int) {
-	_ = src[3*stride+7]
-	_ = ref0[3*stride+7]
-	_ = ref1[3*stride+7]
-	_ = ref2[3*stride+7]
-	_ = ref3[3*stride+7]
-	if !encAVX2 {
-		return sad8x4PureGo(src, ref0, stride), sad8x4PureGo(src, ref1, stride),
-			sad8x4PureGo(src, ref2, stride), sad8x4PureGo(src, ref3, stride)
-	}
-	sp := unsafe.Pointer(&src[0])
-	p0, p1, p2, p3 := unsafe.Pointer(&ref0[0]), unsafe.Pointer(&ref1[0]), unsafe.Pointer(&ref2[0]), unsafe.Pointer(&ref3[0])
-	o := 2 * stride
-	s, t := pack2Rows(sp, stride), pack2Rows(step(sp, o), stride)
-	c0 := s.SumOf8AbsDiff(pack2Rows(p0, stride)).Add(t.SumOf8AbsDiff(pack2Rows(step(p0, o), stride)))
-	c1 := s.SumOf8AbsDiff(pack2Rows(p1, stride)).Add(t.SumOf8AbsDiff(pack2Rows(step(p1, o), stride)))
-	c2 := s.SumOf8AbsDiff(pack2Rows(p2, stride)).Add(t.SumOf8AbsDiff(pack2Rows(step(p2, o), stride)))
-	c3 := s.SumOf8AbsDiff(pack2Rows(p3, stride)).Add(t.SumOf8AbsDiff(pack2Rows(step(p3, o), stride)))
-	return sumU64(c0), sumU64(c1), sumU64(c2), sumU64(c3)
 }
 
 // memsetBytes sets every byte of dst to v: the memset of

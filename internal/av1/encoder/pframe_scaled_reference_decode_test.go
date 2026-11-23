@@ -1,68 +1,62 @@
 package encoder_test
 
 import (
+	"fmt"
 	"testing"
 
 	goav1 "github.com/thesyncim/goav1"
 	"github.com/thesyncim/goav1/internal/av1/encoder"
 )
 
-func TestEncodeScaledReferencePFrameLayerPoolDecodeMatchesRecon(t *testing.T) {
-	const (
-		baseW, baseH = 64, 48
-		topW, topH   = 128, 96
-		keyQ         = 64
-	)
-
-	baseSrc := scaledReferenceDecodeBaseFrame(baseW, baseH)
-	keyTU, baseRecon, err := encoder.EncodeKeyframeWithSequenceMax(baseSrc, keyQ, topW, topH)
-	if err != nil {
-		t.Fatalf("EncodeKeyframeWithSequenceMax: %v", err)
-	}
-
-	topSrc := scaleSource420(baseRecon, topW, topH)
-	for _, tc := range []struct {
-		name   string
-		qIndex uint8
-	}{
-		{name: "lossless", qIndex: 0},
-		{name: "lossy", qIndex: 72},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			scaledTU, topRecon, err := encoder.EncodeScaledReferencePFrame(topSrc, baseRecon, tc.qIndex)
+// TestWebRTCStreamInterLayerPredictionDecodeMatchesRecon codes two spatial
+// SVC pictures, so the upper layer predicts from the half-size base layer
+// through the scaled inter predictor, and checks that every decoded frame
+// equals its layer encoder's reconstruction bit for bit.
+func TestWebRTCStreamInterLayerPredictionDecodeMatchesRecon(t *testing.T) {
+	const topW, topH = 128, 96
+	for _, mode := range []encoder.ScalabilityMode{encoder.ScalabilityModeL2T1, encoder.ScalabilityModeL2T2} {
+		t.Run(mode.String(), func(t *testing.T) {
+			stream, err := encoder.NewWebRTCStreamConfig(encoder.Config{
+				Resolution:        encoder.Resolution{Width: topW, Height: topH},
+				MaxFramerate:      encoder.Rational{Num: 30, Den: 1},
+				MinBitrateKbps:    100,
+				MaxBitrateKbps:    900,
+				TargetBitrateKbps: 500,
+				Scalability:       mode,
+			})
 			if err != nil {
-				t.Fatalf("EncodeScaledReferencePFrame: %v", err)
+				t.Fatalf("NewWebRTCStreamConfig: %v", err)
 			}
-			if tc.qIndex == 0 {
-				compareBytePlane(t, "lossless source Y", topRecon.Y, topRecon.YStride, topSrc.Y, topSrc.YStride, topW, topH)
-				compareBytePlane(t, "lossless source U", topRecon.U, topRecon.ChromaStride, topSrc.U, topSrc.ChromaStride, topW/2, topH/2)
-				compareBytePlane(t, "lossless source V", topRecon.V, topRecon.ChromaStride, topSrc.V, topSrc.ChromaStride, topW/2, topH/2)
+			defer stream.Close()
+			src := scaledReferenceDecodeBaseFrame(topW, topH)
+			var tus [][]byte
+			var recons []encoder.SourceFrame420
+			for pic := range 2 {
+				if pic == 1 {
+					src = shiftSource420(src, 2, 1)
+				}
+				picture, err := stream.EncodePicture(src, pic == 0)
+				if err != nil {
+					t.Fatalf("EncodePicture %d: %v", pic, err)
+				}
+				for i := range picture.FrameNum {
+					frame := picture.Frames[i]
+					tus = append(tus, append([]byte(nil), frame.TU...))
+					recons = append(recons, cloneFrame(stream.LayerRecon(frame.Info.SpatialID)))
+				}
 			}
-
-			frames := decodeLayerPoolLowOverheads(t, keyTU, scaledTU)
-			if len(frames) != 2 {
-				t.Fatalf("decoded %d frames, want 2", len(frames))
+			frames := decodeLayerPoolLowOverheads(t, tus...)
+			if len(frames) != len(recons) {
+				t.Fatalf("decoded %d frames, want %d", len(frames), len(recons))
 			}
-			comparePlane(t, "base Y", frames[0].Y, baseRecon.Y, baseW, baseH, baseW)
-			comparePlane(t, "base U", frames[0].U, baseRecon.U, baseW/2, baseH/2, baseW/2)
-			comparePlane(t, "base V", frames[0].V, baseRecon.V, baseW/2, baseH/2, baseW/2)
-			comparePlane(t, "top Y", frames[1].Y, topRecon.Y, topW, topH, topW)
-			comparePlane(t, "top U", frames[1].U, topRecon.U, topW/2, topH/2, topW/2)
-			comparePlane(t, "top V", frames[1].V, topRecon.V, topW/2, topH/2, topW/2)
+			for i, f := range frames {
+				r := recons[i]
+				cw, ch := r.Width/2, r.Height/2
+				comparePlane(t, fmt.Sprintf("frame%d Y", i), f.Y, r.Y, r.Width, r.Height, r.YStride)
+				comparePlane(t, fmt.Sprintf("frame%d U", i), f.U, r.U, cw, ch, r.ChromaStride)
+				comparePlane(t, fmt.Sprintf("frame%d V", i), f.V, r.V, cw, ch, r.ChromaStride)
+			}
 		})
-	}
-}
-
-func compareBytePlane(t *testing.T, name string, got []byte, gotStride int, want []byte, wantStride int, w, h int) {
-	t.Helper()
-	for y := range h {
-		gotRow := got[y*gotStride : y*gotStride+w]
-		wantRow := want[y*wantStride : y*wantStride+w]
-		for x := range w {
-			if gotRow[x] != wantRow[x] {
-				t.Fatalf("%s differs at (%d,%d): got %d want %d", name, x, y, gotRow[x], wantRow[x])
-			}
-		}
 	}
 }
 
@@ -108,29 +102,20 @@ func scaledReferenceDecodeBaseFrame(width, height int) encoder.SourceFrame420 {
 	return f
 }
 
-func scaleSource420(src encoder.SourceFrame420, width, height int) encoder.SourceFrame420 {
-	cw, ch := width/2, height/2
-	dst := encoder.SourceFrame420{
-		Y:            make([]byte, width*height),
-		U:            make([]byte, cw*ch),
-		V:            make([]byte, cw*ch),
-		YStride:      width,
-		ChromaStride: cw,
-		Width:        width,
-		Height:       height,
-	}
-	scalePlane(dst.Y, dst.YStride, width, height, src.Y, src.YStride, src.Width, src.Height)
-	scalePlane(dst.U, dst.ChromaStride, cw, ch, src.U, src.ChromaStride, src.Width/2, src.Height/2)
-	scalePlane(dst.V, dst.ChromaStride, cw, ch, src.V, src.ChromaStride, src.Width/2, src.Height/2)
+// shiftSource420 moves src by (dx, dy) samples, replicating the top and left
+// edges.
+func shiftSource420(src encoder.SourceFrame420, dx, dy int) encoder.SourceFrame420 {
+	dst := cloneFrame(src)
+	shiftPlane(dst.Y, src.Y, src.YStride, src.Width, src.Height, dx, dy)
+	shiftPlane(dst.U, src.U, src.ChromaStride, src.Width/2, src.Height/2, dx/2, dy/2)
+	shiftPlane(dst.V, src.V, src.ChromaStride, src.Width/2, src.Height/2, dx/2, dy/2)
 	return dst
 }
 
-func scalePlane(dst []byte, dstStride, dstWidth, dstHeight int, src []byte, srcStride, srcWidth, srcHeight int) {
-	for y := range dstHeight {
-		sy := y * srcHeight / dstHeight
-		for x := range dstWidth {
-			sx := x * srcWidth / dstWidth
-			dst[y*dstStride+x] = src[sy*srcStride+sx]
+func shiftPlane(dst, src []byte, stride, w, h, dx, dy int) {
+	for y := range h {
+		for x := range w {
+			dst[y*stride+x] = src[max(0, y-dy)*stride+max(0, x-dx)]
 		}
 	}
 }
