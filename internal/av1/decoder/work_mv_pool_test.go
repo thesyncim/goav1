@@ -522,6 +522,7 @@ func TestOwnedMVPoolWarmAllocs(t *testing.T) {
 	var err error
 	allocs := testing.AllocsPerRun(20, func() {
 		for i := 0; i < 12; i++ {
+			s.Sequence.EnableRefFrameMVS = true // resetActive clears the sequence
 			err = s.prepareTemporalMotionField(&e)
 			if err != nil {
 				return
