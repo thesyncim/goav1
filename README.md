@@ -123,8 +123,10 @@ reusable `Decoder`, `VideoEncoder`, and `RTCEncoder` values when finished.
   WebRTC-specific layering and RTP metadata through `RTCEncoder`.
 - Parse and build AV1 RTP payloads, RTP extension elements, selected SDP
   capability values, and RTCP packets and feedback.
-- Use lower-level IVF, OBU, bitstream, frame, and DSP helpers when an
-  integration needs explicit ownership of buffers and work.
+- Read IVF files with `NewIVFIterator`.
+
+The decoder's internal pipeline (frame pools, tile work, post-filter runners,
+kernels) is not part of the public API.
 
 The checked-in decoder vectors cover profiles 0 and 1, plus selected profile 2
 clips, and include 8-, 10-, and 12-bit content. This describes fixture coverage;

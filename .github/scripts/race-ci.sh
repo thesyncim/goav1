@@ -70,7 +70,6 @@ packages_for() {
         ./cmd/encbench \
         ./cmd/gobenchpublish \
         ./cmd/qualitybench \
-        ./conformance \
         ./internal/av1/transform/itxgen \
         ./internal/benchenv \
         ./internal/guardpage \

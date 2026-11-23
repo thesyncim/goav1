@@ -3,77 +3,81 @@ package goav1
 import (
 	"fmt"
 
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
+
 	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 )
 
-// DecoderFrameWorkResidualEventRequest carries caller-owned state for running
-// one decoder frame-work event with DecoderFrameWorkBatchResidualRunner.
-type DecoderFrameWorkResidualEventRequest struct {
-	State     *DecoderFrameWorkState
-	Refs      *DecoderSurfaceReferences
-	FramePool *FramePool
+// decoderFrameWorkResidualEventRequest carries caller-owned state for running
+// one decoder frame-work event with decoderFrameWorkBatchResidualRunner.
+type decoderFrameWorkResidualEventRequest struct {
+	State     *internaldecoder.FrameWorkState
+	Refs      *internaldecoder.SurfaceReferences
+	FramePool *internalframe.Pool
 	// TileListOutputPool optionally receives display-only tile-list mosaics and
 	// temporary tile-list entry reconstructions. When nil, FramePool is used for
 	// both entry reconstruction and the final mosaic output.
-	TileListOutputPool *FramePool
+	TileListOutputPool *internalframe.Pool
 
 	Sequence SequenceHeader
-	Event    DecoderEvent
+	Event    internaldecoder.Event
 	Align    int
 
 	ReferenceSurfaces []int
 	ReferenceFrames   []*Frame
 
 	Workers int
-	Spans   []TileSpan
-	Jobs    []TileJob
-	Batches []TileBatch
+	Spans   []internalparser.TileSpan
+	Jobs    []internaltile.Job
+	Batches []internalthreading.Batch
 
 	Releases   []int
-	WorkerPool *TileWorkerPool
+	WorkerPool *internalthreading.Pool
 
-	Runner   *DecoderFrameWorkBatchResidualRunner
-	SideData *DecoderFrameWorkSideData
-	Post     DecoderFrameWorkPostFilterFunc
+	Runner   *decoderFrameWorkBatchResidualRunner
+	SideData *decoderFrameWorkSideData
+	Post     internaldecoder.FrameWorkPostFilterFunc
 
-	PostRunner DecoderFrameWorkPostFilterRunner
-	Stats      *DecoderFrameWorkTileResidualStats
+	PostRunner internaldecoder.FrameWorkPostFilterRunner
+	Stats      *internalthreading.FrameWorkTileResidualStats
 
-	External DecoderFrameWorkExternalReferenceRuntime
+	External decoderFrameWorkExternalReferenceRuntime
 }
 
-// DecoderFrameWorkResidualEventRunner stores the stable caller-owned buffers
+// decoderFrameWorkResidualEventRunner stores the stable caller-owned buffers
 // and pools used to run decoder frame-work events with a residual batch runner.
-type DecoderFrameWorkResidualEventRunner struct {
-	State     *DecoderFrameWorkState
-	Refs      *DecoderSurfaceReferences
-	FramePool *FramePool
+type decoderFrameWorkResidualEventRunner struct {
+	State     *internaldecoder.FrameWorkState
+	Refs      *internaldecoder.SurfaceReferences
+	FramePool *internalframe.Pool
 	// TileListOutputPool optionally receives display-only tile-list mosaics and
 	// temporary tile-list entry reconstructions. When nil, FramePool is used for
 	// both entry reconstruction and the final mosaic output.
-	TileListOutputPool *FramePool
+	TileListOutputPool *internalframe.Pool
 	Align              int
 
 	ReferenceSurfaces []int
 	ReferenceFrames   []*Frame
 
 	Workers int
-	Spans   []TileSpan
-	Jobs    []TileJob
-	Batches []TileBatch
+	Spans   []internalparser.TileSpan
+	Jobs    []internaltile.Job
+	Batches []internalthreading.Batch
 
 	Releases   []int
-	WorkerPool *TileWorkerPool
+	WorkerPool *internalthreading.Pool
 
-	BatchRunner *DecoderFrameWorkBatchResidualRunner
-	SideData    *DecoderFrameWorkSideData
-	Stats       *DecoderFrameWorkTileResidualStats
+	BatchRunner *decoderFrameWorkBatchResidualRunner
+	SideData    *decoderFrameWorkSideData
+	Stats       *internalthreading.FrameWorkTileResidualStats
 	Outputs     []*Frame
 
-	External DecoderFrameWorkExternalReferenceRuntime
+	External decoderFrameWorkExternalReferenceRuntime
 
-	sideRunner DecoderFrameWorkSideDataRunner
+	sideRunner internaldecoder.FrameWorkSideDataRunner
 
 	compactState *internalthreading.FrameWorkLoopFilterCompactState
 	// lfLevels, when set, is bound per frame so the tile walk writes the
@@ -85,9 +89,9 @@ type DecoderFrameWorkResidualEventRunner struct {
 	// lfNoSkip holds dav1d's CDEF noskip_mask written by the tile walk.
 	lfNoSkip          *internalthreading.FrameWorkLoopFilterNoSkip
 	compactNoSkip     []byte
-	compactPostOwner  *DecoderFrameWorkReusableSupportedPostFilterRunner
-	compactBatchOwner *DecoderFrameWorkBatchResidualRunner
-	compactSideOwner  *DecoderFrameWorkSideData
+	compactPostOwner  *decoderFrameWorkReusableSupportedPostFilterRunner
+	compactBatchOwner *decoderFrameWorkBatchResidualRunner
+	compactSideOwner  *decoderFrameWorkSideData
 
 	// fp, when set, runs frame-threadable events through the frame-threading
 	// pipeline and drains it before any other event; outputs then leave through
@@ -95,135 +99,135 @@ type DecoderFrameWorkResidualEventRunner struct {
 	fp *decoderFramePipeline
 }
 
-// DecoderFrameWorkResidualEventsResult summarizes a batch of parsed decoder
+// decoderFrameWorkResidualEventsResult summarizes a batch of parsed decoder
 // events run through a residual event runner. CompletedFrames counts decoded
 // final tile frames; OutputCount counts display outputs, including
 // show-existing-frame events that reuse a retained reference. Outputs aliases
 // the runner's caller-owned output slots when they are provided.
-type DecoderFrameWorkResidualEventsResult struct {
+type decoderFrameWorkResidualEventsResult struct {
 	Count            int
-	Last             DecoderFrameWorkEventResult
+	Last             internaldecoder.FrameWorkEventResult
 	ExecutedTileWork int
 	CompletedFrames  int
 	OutputCount      int
 	Outputs          []*Frame
 	ReleaseCount     int
-	Stats            DecoderFrameWorkTileResidualStats
+	Stats            internalthreading.FrameWorkTileResidualStats
 }
 
 // Accumulate adds next into r using the same result semantics as
-// DecoderFrameWorkResidualEventRunner.RunEvents. The most recent non-empty
+// decoderFrameWorkResidualEventRunner.RunEvents. The most recent non-empty
 // event becomes Last, counters and residual stats are summed, and Outputs is
 // left unchanged so callers can bind it to their own output arena.
-func (r *DecoderFrameWorkResidualEventsResult) Accumulate(next DecoderFrameWorkResidualEventsResult) error {
+func (r *decoderFrameWorkResidualEventsResult) Accumulate(next decoderFrameWorkResidualEventsResult) error {
 	if r == nil {
-		return ErrDecoderInvalidFrameWorkState
+		return internaldecoder.ErrInvalidFrameWorkState
 	}
 	decoderFrameWorkAccumulateResidualEventsResult(r, next)
 	return nil
 }
 
 // BindOutputs aliases Outputs to the first OutputCount slots in outputs.
-func (r *DecoderFrameWorkResidualEventsResult) BindOutputs(outputs []*Frame) error {
+func (r *decoderFrameWorkResidualEventsResult) BindOutputs(outputs []*Frame) error {
 	if r == nil {
-		return ErrDecoderInvalidFrameWorkState
+		return internaldecoder.ErrInvalidFrameWorkState
 	}
 	if len(outputs) < r.OutputCount {
-		return ErrFrameShortBuffer
+		return internalframe.ErrShortBuffer
 	}
 	r.Outputs = outputs[:r.OutputCount]
 	return nil
 }
 
-// DecoderFrameWorkResidualEventRuntime groups stable decoder state that is not
+// decoderFrameWorkResidualEventRuntime groups stable decoder state that is not
 // carved out of residual-event scratch.
-type DecoderFrameWorkResidualEventRuntime struct {
-	State     *DecoderFrameWorkState
-	Refs      *DecoderSurfaceReferences
-	FramePool *FramePool
+type decoderFrameWorkResidualEventRuntime struct {
+	State     *internaldecoder.FrameWorkState
+	Refs      *internaldecoder.SurfaceReferences
+	FramePool *internalframe.Pool
 	// TileListOutputPool optionally receives display-only tile-list mosaics and
 	// temporary tile-list entry reconstructions. When nil, FramePool is used for
 	// both entry reconstruction and the final mosaic output.
-	TileListOutputPool *FramePool
+	TileListOutputPool *internalframe.Pool
 	Align              int
 
 	ReferenceSurfaces []int
 	ReferenceFrames   []*Frame
 	Releases          []int
 
-	WorkerPool *TileWorkerPool
-	SideData   *DecoderFrameWorkSideData
-	Stats      *DecoderFrameWorkTileResidualStats
+	WorkerPool *internalthreading.Pool
+	SideData   *decoderFrameWorkSideData
+	Stats      *internalthreading.FrameWorkTileResidualStats
 	Outputs    []*Frame
 
-	External DecoderFrameWorkExternalReferenceRuntime
+	External decoderFrameWorkExternalReferenceRuntime
 }
 
-// DecoderFrameWorkExternalReferenceRuntime configures the residual event
+// decoderFrameWorkExternalReferenceRuntime configures the residual event
 // runner to resolve and release references through a caller-owned global
 // surface namespace. This is used by decode paths whose publishable reference
 // surface may differ from the coded reconstruction surface, such as super-res
 // publication into an upscaled output pool.
-type DecoderFrameWorkExternalReferenceRuntime struct {
-	Provider      DecoderFrameSurfaceProvider
+type decoderFrameWorkExternalReferenceRuntime struct {
+	Provider      internaldecoder.FrameSurfaceProvider
 	GlobalSurface func(local int) int
-	Releaser      DecoderFrameSurfaceReleaser
-	FrameContexts *DecoderSharedFrameContextStore
-	PostPublisher DecoderFrameWorkPostFilterGlobalSurfacePublisher
+	Releaser      internaldecoder.FrameSurfaceReleaser
+	FrameContexts *internaldecoder.SharedFrameContextStore
+	PostPublisher internaldecoder.FrameWorkPostFilterGlobalSurfacePublisher
 }
 
 // Enabled reports whether the runtime should use external reference
 // resolution.
-func (r DecoderFrameWorkExternalReferenceRuntime) Enabled() bool {
+func (r decoderFrameWorkExternalReferenceRuntime) Enabled() bool {
 	return r.Provider != nil
 }
 
-// DecoderFrameWorkResidualEventBindPlan reports the sequence/event context
+// decoderFrameWorkResidualEventBindPlan reports the sequence/event context
 // callers should use when binding a reusable residual event runner for a parsed
 // event list. EventIndex is -1 when the list has no event that needs residual
 // event binding; Sequence still reflects sequence headers seen in the list.
-type DecoderFrameWorkResidualEventBindPlan struct {
+type decoderFrameWorkResidualEventBindPlan struct {
 	Sequence   SequenceHeader
-	Event      DecoderEvent
+	Event      internaldecoder.Event
 	EventIndex int
 }
 
 // HasEvent reports whether Event/EventIndex refer to a bind-relevant parsed
 // event.
-func (p DecoderFrameWorkResidualEventBindPlan) HasEvent() bool {
+func (p decoderFrameWorkResidualEventBindPlan) HasEvent() bool {
 	return p.EventIndex >= 0 && decoderFrameWorkResidualEventBindCandidate(&p.Event)
 }
 
-// DecoderFrameWorkResidualEventScratchSize reports the caller-owned scratch
+// decoderFrameWorkResidualEventScratchSize reports the caller-owned scratch
 // needed to run one residual event and capture its postfilter side data.
-type DecoderFrameWorkResidualEventScratchSize struct {
-	Runner   DecoderFrameWorkBatchResidualRunnerScratchSize
-	SideData DecoderFrameWorkSideDataScratchSize
-	Plan     DecoderTileWorkPlan
+type decoderFrameWorkResidualEventScratchSize struct {
+	Runner   decoderFrameWorkBatchResidualRunnerScratchSize
+	SideData decoderFrameWorkSideDataScratchSize
+	Plan     internaldecoder.TileWorkPlan
 	Outputs  int
 }
 
-// DecoderFrameWorkResidualEventScratch carries typed caller-owned arenas for
-// BindDecoderFrameWorkResidualEventRunner.
-type DecoderFrameWorkResidualEventScratch struct {
-	Runner   DecoderFrameWorkBatchResidualRunnerScratch
-	SideData DecoderFrameWorkSideDataScratch
+// decoderFrameWorkResidualEventScratch carries typed caller-owned arenas for
+// bindDecoderFrameWorkResidualEventRunner.
+type decoderFrameWorkResidualEventScratch struct {
+	Runner   decoderFrameWorkBatchResidualRunnerScratch
+	SideData decoderFrameWorkSideDataScratch
 
-	Spans   []TileSpan
-	Jobs    []TileJob
-	Batches []TileBatch
+	Spans   []internalparser.TileSpan
+	Jobs    []internaltile.Job
+	Batches []internalthreading.Batch
 }
 
 // Check reports whether scratch is large enough for size without binding or
 // mutating any caller-owned storage.
-func (s DecoderFrameWorkResidualEventScratch) Check(size DecoderFrameWorkResidualEventScratchSize) error {
+func (s decoderFrameWorkResidualEventScratch) Check(size decoderFrameWorkResidualEventScratchSize) error {
 	if decoderFrameWorkResidualScratchTooShort(s.Spans, size.Plan.SpanCount) ||
 		decoderFrameWorkResidualScratchTooShort(s.Jobs, size.Plan.JobCount) ||
 		decoderFrameWorkResidualScratchTooShort(s.Batches, size.Plan.BatchCount) {
-		return ErrFrameShortBuffer
+		return internalframe.ErrShortBuffer
 	}
 	if decoderFrameWorkResidualStreamSideDataScratchTooShort(s.SideData, size.SideData) {
-		return ErrFrameShortBuffer
+		return internalframe.ErrShortBuffer
 	}
 	if err := decoderFrameWorkBatchResidualRunnerScratchErr(size.Runner, s.Runner); err != nil {
 		return err
@@ -233,11 +237,11 @@ func (s DecoderFrameWorkResidualEventScratch) Check(size DecoderFrameWorkResidua
 
 // Max returns per-arena maximum lengths and plan counts for reusable residual
 // event scratch.
-func (s DecoderFrameWorkResidualEventScratchSize) Max(other DecoderFrameWorkResidualEventScratchSize) DecoderFrameWorkResidualEventScratchSize {
-	return DecoderFrameWorkResidualEventScratchSize{
+func (s decoderFrameWorkResidualEventScratchSize) Max(other decoderFrameWorkResidualEventScratchSize) decoderFrameWorkResidualEventScratchSize {
+	return decoderFrameWorkResidualEventScratchSize{
 		Runner:   s.Runner.Max(other.Runner),
 		SideData: s.SideData.Max(other.SideData),
-		Plan: DecoderTileWorkPlan{
+		Plan: internaldecoder.TileWorkPlan{
 			SpanCount:  max(s.Plan.SpanCount, other.Plan.SpanCount),
 			JobCount:   max(s.Plan.JobCount, other.Plan.JobCount),
 			BatchCount: max(s.Plan.BatchCount, other.Plan.BatchCount),
@@ -246,13 +250,13 @@ func (s DecoderFrameWorkResidualEventScratchSize) Max(other DecoderFrameWorkResi
 	}
 }
 
-// DecoderFrameWorkResidualEventsBindPlan scans a parsed event list and returns
-// the sequence/event pair appropriate for BindDecoderFrameWorkResidualEventRunner
-// or BindDecoderFrameWorkResidualStreamEventRunner. The returned event is the
+// decoderFrameWorkResidualEventsBindPlan scans a parsed event list and returns
+// the sequence/event pair appropriate for bindDecoderFrameWorkResidualEventRunner
+// or bindDecoderFrameWorkResidualStreamEventRunner. The returned event is the
 // last event that can require residual side data, tile payload runner state, or
 // output collection; this matches the max-scratch event-list sizing contract.
-func DecoderFrameWorkResidualEventsBindPlan(sequence SequenceHeader, events []DecoderEvent) DecoderFrameWorkResidualEventBindPlan {
-	plan := DecoderFrameWorkResidualEventBindPlan{
+func decoderFrameWorkResidualEventsBindPlan(sequence SequenceHeader, events []internaldecoder.Event) decoderFrameWorkResidualEventBindPlan {
+	plan := decoderFrameWorkResidualEventBindPlan{
 		Sequence:   sequence,
 		EventIndex: -1,
 	}
@@ -271,36 +275,36 @@ func DecoderFrameWorkResidualEventsBindPlan(sequence SequenceHeader, events []De
 	return plan
 }
 
-// BindDecoderFrameWorkResidualEventRunner binds a reusable event runner and
+// bindDecoderFrameWorkResidualEventRunner binds a reusable event runner and
 // frame-level side data from caller-owned scratch. batchRunner is caller-owned
 // storage for the nested residual batch runner; the returned event runner keeps
 // a pointer to it.
-func BindDecoderFrameWorkResidualEventRunner(size DecoderFrameWorkResidualEventScratchSize, sequence SequenceHeader, event *DecoderEvent, runtime DecoderFrameWorkResidualEventRuntime, scratch DecoderFrameWorkResidualEventScratch, batchRunner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkResidualEventRunner, DecoderFrameWorkSideData, error) {
+func bindDecoderFrameWorkResidualEventRunner(size decoderFrameWorkResidualEventScratchSize, sequence SequenceHeader, event *internaldecoder.Event, runtime decoderFrameWorkResidualEventRuntime, scratch decoderFrameWorkResidualEventScratch, batchRunner *decoderFrameWorkBatchResidualRunner) (decoderFrameWorkResidualEventRunner, decoderFrameWorkSideData, error) {
 	if size.Runner.Workers != 0 && batchRunner == nil {
-		return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, ErrThreadingInvalidBatch
+		return decoderFrameWorkResidualEventRunner{}, decoderFrameWorkSideData{}, internalthreading.ErrInvalidBatch
 	}
 	if decoderFrameWorkResidualScratchTooShort(scratch.Spans, size.Plan.SpanCount) ||
 		decoderFrameWorkResidualScratchTooShort(scratch.Jobs, size.Plan.JobCount) ||
 		decoderFrameWorkResidualScratchTooShort(scratch.Batches, size.Plan.BatchCount) {
-		return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, ErrFrameShortBuffer
+		return decoderFrameWorkResidualEventRunner{}, decoderFrameWorkSideData{}, internalframe.ErrShortBuffer
 	}
 
 	if size.Runner.Workers != 0 {
-		boundRunner, err := BindDecoderFrameWorkBatchResidualRunner(size.Runner, scratch.Runner)
+		boundRunner, err := bindDecoderFrameWorkBatchResidualRunner(size.Runner, scratch.Runner)
 		if err != nil {
-			return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, err
+			return decoderFrameWorkResidualEventRunner{}, decoderFrameWorkSideData{}, err
 		}
 		*batchRunner = boundRunner
 	}
-	var side DecoderFrameWorkSideData
+	var side decoderFrameWorkSideData
 	if decoderFrameWorkResidualEventNeedsSideData(event) {
 		var err error
-		side, err = BindDecoderFrameWorkResidualEventSideData(sequence, event, scratch.SideData)
+		side, err = bindDecoderFrameWorkResidualEventSideData(sequence, event, scratch.SideData)
 		if err != nil {
-			return DecoderFrameWorkResidualEventRunner{}, DecoderFrameWorkSideData{}, err
+			return decoderFrameWorkResidualEventRunner{}, decoderFrameWorkSideData{}, err
 		}
 	}
-	runner := DecoderFrameWorkResidualEventRunner{
+	runner := decoderFrameWorkResidualEventRunner{
 		State:              runtime.State,
 		Refs:               runtime.Refs,
 		FramePool:          runtime.FramePool,
@@ -332,8 +336,8 @@ func BindDecoderFrameWorkResidualEventRunner(size DecoderFrameWorkResidualEventS
 // Run plans and executes one decoder frame-work event using the runner's
 // stable caller-owned state. The sequence, event, side-data, and postfilter
 // callback remain per-event inputs.
-func (r DecoderFrameWorkResidualEventRunner) Run(sequence SequenceHeader, event *DecoderEvent, side *DecoderFrameWorkSideData, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkEventResult, error) {
-	return runDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
+func (r decoderFrameWorkResidualEventRunner) Run(sequence SequenceHeader, event *internaldecoder.Event, side *decoderFrameWorkSideData, post internaldecoder.FrameWorkPostFilterFunc) (internaldecoder.FrameWorkEventResult, error) {
+	return runDecoderFrameWorkEventWithSideRunner(decoderFrameWorkResidualEventRequest{
 		State:              r.State,
 		Refs:               r.Refs,
 		FramePool:          r.FramePool,
@@ -360,8 +364,8 @@ func (r DecoderFrameWorkResidualEventRunner) Run(sequence SequenceHeader, event 
 // RunWithPostFilterRunner plans and executes one decoder frame-work event using
 // direct residual and postfilter runners, avoiding callback method values in the
 // final-frame path.
-func (r DecoderFrameWorkResidualEventRunner) RunWithPostFilterRunner(sequence SequenceHeader, event *DecoderEvent, side *DecoderFrameWorkSideData, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkEventResult, error) {
-	return runDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
+func (r decoderFrameWorkResidualEventRunner) RunWithPostFilterRunner(sequence SequenceHeader, event *internaldecoder.Event, side *decoderFrameWorkSideData, post internaldecoder.FrameWorkPostFilterRunner) (internaldecoder.FrameWorkEventResult, error) {
+	return runDecoderFrameWorkEventWithSideRunner(decoderFrameWorkResidualEventRequest{
 		State:              r.State,
 		Refs:               r.Refs,
 		FramePool:          r.FramePool,
@@ -385,7 +389,7 @@ func (r DecoderFrameWorkResidualEventRunner) RunWithPostFilterRunner(sequence Se
 	}, r.boundSideDataRunner(side))
 }
 
-func (r DecoderFrameWorkResidualEventRunner) boundSideDataRunner(side *DecoderFrameWorkSideData) DecoderFrameWorkSideDataRunner {
+func (r decoderFrameWorkResidualEventRunner) boundSideDataRunner(side *decoderFrameWorkSideData) internaldecoder.FrameWorkSideDataRunner {
 	if side == nil || side != r.SideData {
 		return nil
 	}
@@ -400,38 +404,38 @@ func (r DecoderFrameWorkResidualEventRunner) boundSideDataRunner(side *DecoderFr
 // each frame-work event that can produce or consume residual side maps. If
 // r.Stats is set, it receives aggregate stats for the whole event slice after a
 // successful run.
-func (r DecoderFrameWorkResidualEventRunner) RunEvents(sequence SequenceHeader, events []DecoderEvent, sideScratch DecoderFrameWorkSideDataScratch, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkResidualEventsResult, error) {
+func (r decoderFrameWorkResidualEventRunner) RunEvents(sequence SequenceHeader, events []internaldecoder.Event, sideScratch decoderFrameWorkSideDataScratch, post internaldecoder.FrameWorkPostFilterFunc) (decoderFrameWorkResidualEventsResult, error) {
 	return r.runEvents(sequence, events, sideScratch, post, nil)
 }
 
 // RunEventsWithPostFilterRunner is RunEvents using a direct postfilter runner
 // instead of a postfilter callback.
-func (r DecoderFrameWorkResidualEventRunner) RunEventsWithPostFilterRunner(sequence SequenceHeader, events []DecoderEvent, sideScratch DecoderFrameWorkSideDataScratch, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkResidualEventsResult, error) {
+func (r decoderFrameWorkResidualEventRunner) RunEventsWithPostFilterRunner(sequence SequenceHeader, events []internaldecoder.Event, sideScratch decoderFrameWorkSideDataScratch, post internaldecoder.FrameWorkPostFilterRunner) (decoderFrameWorkResidualEventsResult, error) {
 	return r.runEvents(sequence, events, sideScratch, nil, post)
 }
 
-// DecoderFrameWorkResidualEventScratchLen plans event tile work into
+// decoderFrameWorkResidualEventScratchLen plans event tile work into
 // caller-owned spans/jobs/batches and reports both residual-runner scratch and
 // frame-level side-data scratch for the event.
-func DecoderFrameWorkResidualEventScratchLen(sequence SequenceHeader, event *DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualEventScratchSize, error) {
+func decoderFrameWorkResidualEventScratchLen(sequence SequenceHeader, event *internaldecoder.Event, workers int, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch) (decoderFrameWorkResidualEventScratchSize, error) {
 	return decoderFrameWorkResidualEventScratchLenPtr(sequence, event, workers, spans, jobs, batches)
 }
 
-func decoderFrameWorkResidualEventScratchLenPtr(sequence SequenceHeader, event *DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualEventScratchSize, error) {
-	size := DecoderFrameWorkResidualEventScratchSize{
+func decoderFrameWorkResidualEventScratchLenPtr(sequence SequenceHeader, event *internaldecoder.Event, workers int, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch) (decoderFrameWorkResidualEventScratchSize, error) {
+	size := decoderFrameWorkResidualEventScratchSize{
 		Outputs: decoderFrameWorkResidualEventOutputLenPtr(event),
 	}
-	if event != nil && event.Kind == DecoderEventTileList {
+	if event != nil && event.Kind == internaldecoder.EventTileList {
 		runner, plan, err := decoderFrameWorkResidualTileListRunnerScratchLenPtr(sequence, event, workers, spans, jobs, batches)
 		if err != nil {
-			return DecoderFrameWorkResidualEventScratchSize{}, err
+			return decoderFrameWorkResidualEventScratchSize{}, err
 		}
 		size.Runner = runner
 		size.Plan = plan
 	} else if decoderFrameWorkResidualEventHasTilePayloadPtr(event) {
 		runner, plan, err := decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence, event, workers, spans, jobs, batches)
 		if err != nil {
-			return DecoderFrameWorkResidualEventScratchSize{}, err
+			return decoderFrameWorkResidualEventScratchSize{}, err
 		}
 		size.Runner = runner
 		size.Plan = plan
@@ -439,17 +443,17 @@ func decoderFrameWorkResidualEventScratchLenPtr(sequence SequenceHeader, event *
 	if decoderFrameWorkResidualEventNeedsSideDataPtr(event) {
 		sideData, err := decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence, event)
 		if err != nil {
-			return DecoderFrameWorkResidualEventScratchSize{}, err
+			return decoderFrameWorkResidualEventScratchSize{}, err
 		}
 		size.SideData = sideData
 	}
 	return size, nil
 }
 
-// DecoderFrameWorkResidualEventsScratchLen reports reusable scratch for the
+// decoderFrameWorkResidualEventsScratchLen reports reusable scratch for the
 // largest tile-bearing event and largest frame-work side-data shape in events.
-func DecoderFrameWorkResidualEventsScratchLen(sequence SequenceHeader, events []DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkResidualEventScratchSize, error) {
-	var size DecoderFrameWorkResidualEventScratchSize
+func decoderFrameWorkResidualEventsScratchLen(sequence SequenceHeader, events []internaldecoder.Event, workers int, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch) (decoderFrameWorkResidualEventScratchSize, error) {
+	var size decoderFrameWorkResidualEventScratchSize
 	for i := range events {
 		event := &events[i]
 		sequence = decoderFrameWorkResidualEventSequencePtr(sequence, event)
@@ -457,21 +461,21 @@ func DecoderFrameWorkResidualEventsScratchLen(sequence SequenceHeader, events []
 		if decoderFrameWorkResidualEventNeedsSideDataPtr(event) {
 			side, err := decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence, event)
 			if err != nil {
-				return DecoderFrameWorkResidualEventScratchSize{}, err
+				return decoderFrameWorkResidualEventScratchSize{}, err
 			}
 			size.SideData = size.SideData.Max(side)
 		}
-		if event.Kind == DecoderEventTileList {
+		if event.Kind == internaldecoder.EventTileList {
 			runner, plan, err := decoderFrameWorkResidualTileListRunnerScratchLenPtr(sequence, event, workers, spans, jobs, batches)
 			if err != nil {
-				return DecoderFrameWorkResidualEventScratchSize{}, err
+				return decoderFrameWorkResidualEventScratchSize{}, err
 			}
 			size.Runner = size.Runner.Max(runner)
 			size.Plan = decoderFrameWorkResidualEventPlanMax(size.Plan, plan)
 		} else if decoderFrameWorkResidualEventHasTilePayloadPtr(event) {
 			runner, plan, err := decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence, event, workers, spans, jobs, batches)
 			if err != nil {
-				return DecoderFrameWorkResidualEventScratchSize{}, err
+				return decoderFrameWorkResidualEventScratchSize{}, err
 			}
 			size.Runner = size.Runner.Max(runner)
 			size.Plan = decoderFrameWorkResidualEventPlanMax(size.Plan, plan)
@@ -480,51 +484,51 @@ func DecoderFrameWorkResidualEventsScratchLen(sequence SequenceHeader, events []
 	return size, nil
 }
 
-// DecoderFrameWorkResidualEventRunnerScratchLen plans event tile work into
+// decoderFrameWorkResidualEventRunnerScratchLen plans event tile work into
 // caller-owned spans/jobs/batches and reports the residual runner scratch
 // required to execute the planned event.
-func DecoderFrameWorkResidualEventRunnerScratchLen(sequence SequenceHeader, event *DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkBatchResidualRunnerScratchSize, DecoderTileWorkPlan, error) {
+func decoderFrameWorkResidualEventRunnerScratchLen(sequence SequenceHeader, event *internaldecoder.Event, workers int, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch) (decoderFrameWorkBatchResidualRunnerScratchSize, internaldecoder.TileWorkPlan, error) {
 	return decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence, event, workers, spans, jobs, batches)
 }
 
-func decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence SequenceHeader, event *DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkBatchResidualRunnerScratchSize, DecoderTileWorkPlan, error) {
-	if event != nil && event.Kind == DecoderEventTileList {
+func decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence SequenceHeader, event *internaldecoder.Event, workers int, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch) (decoderFrameWorkBatchResidualRunnerScratchSize, internaldecoder.TileWorkPlan, error) {
+	if event != nil && event.Kind == internaldecoder.EventTileList {
 		return decoderFrameWorkResidualTileListRunnerScratchLenPtr(sequence, event, workers, spans, jobs, batches)
 	}
 	plan, err := planDecoderTileWorkPtr(event, workers, spans, jobs, batches)
 	if err != nil {
-		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, err
+		return decoderFrameWorkBatchResidualRunnerScratchSize{}, internaldecoder.TileWorkPlan{}, err
 	}
-	batch := DecoderFrameWorkBatch{
+	batch := internaldecoder.FrameWorkBatch{
 		FrameWorkFrameContext: decoderFrameWorkResidualEventContextPtr(sequence, event),
 		Jobs:                  jobs[:plan.JobCount],
 	}
-	size, err := DecoderFrameWorkBatchResidualRunnerScratchLen(batch, workers)
+	size, err := decoderFrameWorkBatchResidualRunnerScratchLen(batch, workers)
 	if err != nil {
-		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, err
+		return decoderFrameWorkBatchResidualRunnerScratchSize{}, internaldecoder.TileWorkPlan{}, err
 	}
 	return size, plan, nil
 }
 
-func decoderFrameWorkResidualTileListRunnerScratchLenPtr(sequence SequenceHeader, event *DecoderEvent, workers int, spans []TileSpan, jobs []TileJob, batches []TileBatch) (DecoderFrameWorkBatchResidualRunnerScratchSize, DecoderTileWorkPlan, error) {
-	if event == nil || event.Kind != DecoderEventTileList {
-		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, ErrDecoderInvalidSurfaceEvent
+func decoderFrameWorkResidualTileListRunnerScratchLenPtr(sequence SequenceHeader, event *internaldecoder.Event, workers int, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch) (decoderFrameWorkBatchResidualRunnerScratchSize, internaldecoder.TileWorkPlan, error) {
+	if event == nil || event.Kind != internaldecoder.EventTileList {
+		return decoderFrameWorkBatchResidualRunnerScratchSize{}, internaldecoder.TileWorkPlan{}, internaldecoder.ErrInvalidSurfaceEvent
 	}
 	if event.TileListErr != nil {
-		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, event.TileListErr
+		return decoderFrameWorkBatchResidualRunnerScratchSize{}, internaldecoder.TileWorkPlan{}, event.TileListErr
 	}
 	tileCount := event.TileList.TileCount()
 	if tileCount <= 0 || tileCount != len(event.TileList.Entries) {
-		return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, ErrTileListInvalidTileCount
+		return decoderFrameWorkBatchResidualRunnerScratchSize{}, internaldecoder.TileWorkPlan{}, internalparser.ErrTileListInvalidTileCount
 	}
-	var size DecoderFrameWorkBatchResidualRunnerScratchSize
-	var maxPlan DecoderTileWorkPlan
+	var size decoderFrameWorkBatchResidualRunnerScratchSize
+	var maxPlan internaldecoder.TileWorkPlan
 	probe := *event
 	probe.SequenceHeader = sequence
 	for i := 0; i < tileCount; i++ {
-		nextSize, plan, err := DecoderTileListEntryDecodeRunnerScratchLen(&probe, i, workers, spans, jobs, batches)
+		nextSize, plan, err := decoderTileListEntryDecodeRunnerScratchLen(&probe, i, workers, spans, jobs, batches)
 		if err != nil {
-			return DecoderFrameWorkBatchResidualRunnerScratchSize{}, DecoderTileWorkPlan{}, err
+			return decoderFrameWorkBatchResidualRunnerScratchSize{}, internaldecoder.TileWorkPlan{}, err
 		}
 		size = size.Max(nextSize)
 		maxPlan = decoderFrameWorkResidualEventPlanMax(maxPlan, plan)
@@ -532,37 +536,31 @@ func decoderFrameWorkResidualTileListRunnerScratchLenPtr(sequence SequenceHeader
 	return size, maxPlan, nil
 }
 
-// DecoderFrameWorkResidualEventSideDataScratchLen reports frame-level side-data
-// scratch for the event's frame size, CDEF, and restoration parameters.
-func DecoderFrameWorkResidualEventSideDataScratchLen(sequence SequenceHeader, event *DecoderEvent) (DecoderFrameWorkSideDataScratchSize, error) {
-	return decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence, event)
+func decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence SequenceHeader, event *internaldecoder.Event) (decoderFrameWorkSideDataScratchSize, error) {
+	return decoderFrameWorkSideDataScratchLen(sequence, event.FrameSize, event.CDEF, event.Restoration)
 }
 
-func decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence SequenceHeader, event *DecoderEvent) (DecoderFrameWorkSideDataScratchSize, error) {
-	return DecoderFrameWorkSideDataScratchLen(sequence, event.FrameSize, event.CDEF, event.Restoration)
-}
-
-// BindDecoderFrameWorkResidualEventSideData binds frame-level side data using
+// bindDecoderFrameWorkResidualEventSideData binds frame-level side data using
 // the event's frame size, CDEF, and restoration parameters.
-func BindDecoderFrameWorkResidualEventSideData(sequence SequenceHeader, event *DecoderEvent, scratch DecoderFrameWorkSideDataScratch) (DecoderFrameWorkSideData, error) {
+func bindDecoderFrameWorkResidualEventSideData(sequence SequenceHeader, event *internaldecoder.Event, scratch decoderFrameWorkSideDataScratch) (decoderFrameWorkSideData, error) {
 	return bindDecoderFrameWorkResidualEventSideDataPtr(sequence, event, scratch)
 }
 
-func bindDecoderFrameWorkResidualEventSideDataPtr(sequence SequenceHeader, event *DecoderEvent, scratch DecoderFrameWorkSideDataScratch) (DecoderFrameWorkSideData, error) {
-	return BindDecoderFrameWorkSideData(sequence, event.FrameSize, event.CDEF, event.Restoration, scratch)
+func bindDecoderFrameWorkResidualEventSideDataPtr(sequence SequenceHeader, event *internaldecoder.Event, scratch decoderFrameWorkSideDataScratch) (decoderFrameWorkSideData, error) {
+	return bindDecoderFrameWorkSideData(sequence, event.FrameSize, event.CDEF, event.Restoration, scratch)
 }
 
-func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, events []DecoderEvent, sideScratch DecoderFrameWorkSideDataScratch, post DecoderFrameWorkPostFilterFunc, postRunner DecoderFrameWorkPostFilterRunner) (result DecoderFrameWorkResidualEventsResult, runErr error) {
+func (r decoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, events []internaldecoder.Event, sideScratch decoderFrameWorkSideDataScratch, post internaldecoder.FrameWorkPostFilterFunc, postRunner internaldecoder.FrameWorkPostFilterRunner) (result decoderFrameWorkResidualEventsResult, runErr error) {
 	defer func() {
 		if runErr != nil {
 			internalthreading.InvalidateFrameWorkLoopFilterCompactState(r.compactState)
 		}
 	}()
 	if post != nil && postRunner != nil {
-		return DecoderFrameWorkResidualEventsResult{}, ErrDecoderInvalidFrameWorkState
+		return decoderFrameWorkResidualEventsResult{}, internaldecoder.ErrInvalidFrameWorkState
 	}
 	if r.Outputs != nil && len(r.Outputs) < decoderFrameWorkResidualEventsOutputLen(events) {
-		return DecoderFrameWorkResidualEventsResult{}, ErrFrameShortBuffer
+		return decoderFrameWorkResidualEventsResult{}, internalframe.ErrShortBuffer
 	}
 	if r.Outputs != nil {
 		result.Outputs = r.Outputs[:0]
@@ -603,10 +601,10 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 			}
 		}
 
-		sidePtr := (*DecoderFrameWorkSideData)(nil)
+		sidePtr := (*decoderFrameWorkSideData)(nil)
 		if decoderFrameWorkResidualEventNeedsSideData(&events[i]) && !decoderEventContinuesFrame(&events[i]) {
 			if r.SideData == nil {
-				return result, ErrDecoderInvalidFrameWorkState
+				return result, internaldecoder.ErrInvalidFrameWorkState
 			}
 			sidePtr = r.SideData
 			var err error
@@ -620,9 +618,9 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 			}
 			if compact != nil {
 				internalthreading.InvalidateFrameWorkLoopFilterCompactState(compact)
-				*sidePtr, err = bindDecoderFrameWorkSideData(sequence, events[i].FrameSize, events[i].CDEF, events[i].Restoration, sideScratch, compact, r.compactNoSkip, &events[i], false)
+				*sidePtr, err = bindDecoderFrameWorkSideDataWith(sequence, events[i].FrameSize, events[i].CDEF, events[i].Restoration, sideScratch, compact, r.compactNoSkip, &events[i], false)
 			} else {
-				*sidePtr, err = bindDecoderFrameWorkSideData(sequence, events[i].FrameSize, events[i].CDEF, events[i].Restoration, sideScratch, nil, nil, nil,
+				*sidePtr, err = bindDecoderFrameWorkSideDataWith(sequence, events[i].FrameSize, events[i].CDEF, events[i].Restoration, sideScratch, nil, nil, nil,
 					r.lfLevels != nil && r.lfTileEdges != nil && r.lfNoSkip != nil)
 				if err == nil && r.lfLevels != nil && sidePtr.LoopFilterMasks.Valid() {
 					r.lfLevels.Bind(events[i].LoopFilter, events[i].Segmentation, events[i].Delta)
@@ -643,7 +641,7 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 			}
 		}
 
-		var step DecoderFrameWorkEventResult
+		var step internaldecoder.FrameWorkEventResult
 		var err error
 		if postRunner != nil {
 			step, err = single.RunWithPostFilterRunner(sequence, &events[i], sidePtr, postRunner)
@@ -669,7 +667,7 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 			}
 			if r.Outputs != nil {
 				if result.OutputCount >= len(r.Outputs) {
-					return result, ErrFrameShortBuffer
+					return result, internalframe.ErrShortBuffer
 				}
 				r.Outputs[result.OutputCount] = step.Output
 			}
@@ -690,7 +688,7 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 	return result, nil
 }
 
-func (r DecoderFrameWorkResidualEventRunner) ownsCompactLoopFilter(sequence SequenceHeader, post DecoderFrameWorkPostFilterRunner, event *DecoderEvent) bool {
+func (r decoderFrameWorkResidualEventRunner) ownsCompactLoopFilter(sequence SequenceHeader, post internaldecoder.FrameWorkPostFilterRunner, event *internaldecoder.Event) bool {
 	if event == nil {
 		return false
 	}
@@ -698,8 +696,8 @@ func (r DecoderFrameWorkResidualEventRunner) ownsCompactLoopFilter(sequence Sequ
 	if !sideOK || ownedSide.SideData == nil || ownedSide.SideData != r.SideData || ownedSide.BatchRunner != r.BatchRunner {
 		return false
 	}
-	payloadEvent := event.Kind == DecoderEventFrame || event.Kind == DecoderEventTileGroup
-	kindEligible := event.Kind == DecoderEventFrameHeader || payloadEvent
+	payloadEvent := event.Kind == internaldecoder.EventFrame || event.Kind == internaldecoder.EventTileGroup
+	kindEligible := event.Kind == internaldecoder.EventFrameHeader || payloadEvent
 	if payloadEvent && (event.TileGroup.TileCount != 1 || !event.TileGroup.Final) {
 		return false
 	}
@@ -716,11 +714,11 @@ func (r DecoderFrameWorkResidualEventRunner) ownsCompactLoopFilter(sequence Sequ
 	if r.WorkerPool != nil && r.WorkerPool.WorkerCount() != 1 {
 		return false
 	}
-	owner, ok := post.(*DecoderFrameWorkReusableSupportedPostFilterRunner)
+	owner, ok := post.(*decoderFrameWorkReusableSupportedPostFilterRunner)
 	return ok && owner == r.compactPostOwner && r.compactPostOwner != nil && len(r.compactNoSkip) != 0
 }
 
-func decoderFrameWorkResidualEventsOutputLen(events []DecoderEvent) int {
+func decoderFrameWorkResidualEventsOutputLen(events []internaldecoder.Event) int {
 	count := 0
 	for i := range events {
 		count += decoderFrameWorkResidualEventOutputLen(&events[i])
@@ -728,58 +726,58 @@ func decoderFrameWorkResidualEventsOutputLen(events []DecoderEvent) int {
 	return count
 }
 
-func decoderFrameWorkResidualEventOutputLen(event *DecoderEvent) int {
-	if DecoderEventOutputsFrame(event) {
+func decoderFrameWorkResidualEventOutputLen(event *internaldecoder.Event) int {
+	if internaldecoder.EventOutputsFrame(event) {
 		return 1
 	}
 	return 0
 }
 
-func decoderFrameWorkResidualEventOutputLenPtr(event *DecoderEvent) int {
+func decoderFrameWorkResidualEventOutputLenPtr(event *internaldecoder.Event) int {
 	if event == nil {
 		return 0
 	}
 	return decoderFrameWorkResidualEventOutputLen(&*event)
 }
 
-// RunDecoderFrameWorkEventWithResidualRunner plans and executes one decoder
+// runDecoderFrameWorkEventWithResidualRunner plans and executes one decoder
 // frame-work event using a caller-owned residual runner. If SideData is set, it
 // is attached to both the active frame-work state and the residual runner after
 // planning and before tile work runs.
-func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEventRequest) (DecoderFrameWorkEventResult, error) {
-	return runDecoderFrameWorkEventWithResidualRunner(req, nil)
+func runDecoderFrameWorkEventWithResidualRunner(req decoderFrameWorkResidualEventRequest) (internaldecoder.FrameWorkEventResult, error) {
+	return runDecoderFrameWorkEventWithSideRunner(req, nil)
 }
 
-func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEventRequest, sideRunner DecoderFrameWorkSideDataRunner) (result DecoderFrameWorkEventResult, runErr error) {
+func runDecoderFrameWorkEventWithSideRunner(req decoderFrameWorkResidualEventRequest, sideRunner internaldecoder.FrameWorkSideDataRunner) (result internaldecoder.FrameWorkEventResult, runErr error) {
 	defer func() {
 		if runErr != nil && req.Runner != nil && req.Runner.compactOwner == req.Runner {
 			internalthreading.InvalidateFrameWorkLoopFilterCompactState(req.Runner.compactState)
 		}
 	}()
 	if decoderFrameWorkResidualEventHasTilePayload(&req.Event) && req.Runner == nil {
-		return DecoderFrameWorkEventResult{}, ErrThreadingInvalidBatch
+		return internaldecoder.FrameWorkEventResult{}, internalthreading.ErrInvalidBatch
 	}
 	if req.Post != nil && req.PostRunner != nil {
-		return DecoderFrameWorkEventResult{}, ErrDecoderInvalidFrameWorkState
+		return internaldecoder.FrameWorkEventResult{}, internaldecoder.ErrInvalidFrameWorkState
 	}
 	event := req.Event
 	event.SequenceHeader = req.Sequence
 
-	if event.Kind == DecoderEventTileList {
+	if event.Kind == internaldecoder.EventTileList {
 		if event.TileListErr != nil {
-			return DecoderFrameWorkEventResult{}, event.TileListErr
+			return internaldecoder.FrameWorkEventResult{}, event.TileListErr
 		}
-		if _, err := TileListOutputGeometryForGrid(event.TileList, event.TileInfo, event.SequenceHeader.Use128x128Superblock); err != nil {
-			return DecoderFrameWorkEventResult{}, err
+		if _, err := internalparser.TileListOutputGeometryForGrid(event.TileList, event.TileInfo, event.SequenceHeader.Use128x128Superblock); err != nil {
+			return internaldecoder.FrameWorkEventResult{}, err
 		}
 		if req.Runner == nil {
-			return DecoderFrameWorkEventResult{}, ErrThreadingInvalidBatch
+			return internaldecoder.FrameWorkEventResult{}, internalthreading.ErrInvalidBatch
 		}
 		if err := req.Runner.ResetStats(); err != nil {
-			return DecoderFrameWorkEventResult{}, err
+			return internaldecoder.FrameWorkEventResult{}, err
 		}
 		if req.Stats != nil {
-			*req.Stats = DecoderFrameWorkTileResidualStats{}
+			*req.Stats = internalthreading.FrameWorkTileResidualStats{}
 		}
 		result, err := runDecoderFrameWorkTileListWithResidualRunner(req, &event)
 		stats, statsErr := decoderFrameWorkResidualRunnerStats(req.Runner)
@@ -787,21 +785,21 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 			*req.Stats = stats
 		}
 		if err != nil {
-			return DecoderFrameWorkEventResult{}, err
+			return internaldecoder.FrameWorkEventResult{}, err
 		}
 		if statsErr != nil {
-			return DecoderFrameWorkEventResult{}, statsErr
+			return internaldecoder.FrameWorkEventResult{}, statsErr
 		}
 		return result, nil
 	}
 
 	if req.Runner != nil {
 		if err := req.Runner.ResetStats(); err != nil {
-			return DecoderFrameWorkEventResult{}, err
+			return internaldecoder.FrameWorkEventResult{}, err
 		}
 	}
 	if req.Stats != nil {
-		*req.Stats = DecoderFrameWorkTileResidualStats{}
+		*req.Stats = internalthreading.FrameWorkTileResidualStats{}
 	}
 
 	if req.External.Enabled() {
@@ -810,34 +808,34 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 
 	step, output, err := req.State.PlanEvent(req.Refs, req.FramePool, req.Sequence, &event, req.Align, req.ReferenceSurfaces, req.Workers, req.Spans, req.Jobs, req.Batches, req.Releases)
 	if err != nil {
-		return DecoderFrameWorkEventResult{}, err
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
 
 	tile, referenceCount, hasTile, err := decoderFrameWorkEventStepTile(step)
 	if err != nil {
-		return DecoderFrameWorkEventResult{}, err
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
 	if hasTile && req.SideData != nil {
 		if decoderFrameWorkResidualSideRunnerOwnsCompact(sideRunner, req.Runner, req.SideData) {
-			if err := sideRunner.BindFrameWorkSideData(req.State, DecoderFrameWorkBatch{}); err != nil {
-				return DecoderFrameWorkEventResult{}, err
+			if err := sideRunner.BindFrameWorkSideData(req.State, internaldecoder.FrameWorkBatch{}); err != nil {
+				return internaldecoder.FrameWorkEventResult{}, err
 			}
 		} else {
 			if tile.JobCount != 0 {
-				if err := SetDecoderFrameWorkBatchResidualRunnerSideData(req.Runner, *req.SideData); err != nil {
-					return DecoderFrameWorkEventResult{}, err
+				if err := setDecoderFrameWorkBatchResidualRunnerSideData(req.Runner, *req.SideData); err != nil {
+					return internaldecoder.FrameWorkEventResult{}, err
 				}
 			}
-			if err := SetDecoderFrameWorkSideData(req.State, *req.SideData); err != nil {
-				return DecoderFrameWorkEventResult{}, err
+			if err := setDecoderFrameWorkSideData(req.State, *req.SideData); err != nil {
+				return internaldecoder.FrameWorkEventResult{}, err
 			}
 		}
 	}
 
-	if step.Kind == DecoderFrameWorkStepShowExisting {
+	if step.Kind == internaldecoder.FrameWorkStepShowExisting {
 		output, err = req.FramePool.Frame(step.ShowExisting.Surface)
 		if err != nil {
-			return DecoderFrameWorkEventResult{}, err
+			return internaldecoder.FrameWorkEventResult{}, err
 		}
 	}
 
@@ -846,39 +844,39 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 		if output == nil {
 			surface, err := decoderFrameWorkEventStepSurface(step)
 			if err != nil {
-				return DecoderFrameWorkEventResult{}, err
+				return internaldecoder.FrameWorkEventResult{}, err
 			}
 			output, err = req.FramePool.Frame(surface)
 			if err != nil {
-				return DecoderFrameWorkEventResult{}, err
+				return internaldecoder.FrameWorkEventResult{}, err
 			}
 		}
 		if referenceCount != 0 {
 			referenceCountN := int(referenceCount)
 			if len(req.ReferenceSurfaces) < referenceCountN {
-				return DecoderFrameWorkEventResult{}, ErrDecoderSurfaceReferenceBufferTooSmall
+				return internaldecoder.FrameWorkEventResult{}, internaldecoder.ErrSurfaceReferenceBufferTooSmall
 			}
-			if step.Kind == DecoderFrameWorkStepTile {
+			if step.Kind == internaldecoder.FrameWorkStepTile {
 				count, err := req.Refs.FrameReferences(&event, req.ReferenceSurfaces)
 				if err != nil {
-					return DecoderFrameWorkEventResult{}, err
+					return internaldecoder.FrameWorkEventResult{}, err
 				}
 				if count != referenceCountN {
-					return DecoderFrameWorkEventResult{}, ErrDecoderInvalidFrameWorkStep
+					return internaldecoder.FrameWorkEventResult{}, internaldecoder.ErrInvalidFrameWorkStep
 				}
 			}
-			count, err := ResolveDecoderFrameReferences(req.FramePool, req.ReferenceSurfaces[:referenceCountN], req.ReferenceFrames)
+			count, err := internaldecoder.ResolveFrameReferences(req.FramePool, req.ReferenceSurfaces[:referenceCountN], req.ReferenceFrames)
 			if err != nil {
-				return DecoderFrameWorkEventResult{}, err
+				return internaldecoder.FrameWorkEventResult{}, err
 			}
 			if count != referenceCountN {
-				return DecoderFrameWorkEventResult{}, ErrDecoderInvalidFrameWorkStep
+				return internaldecoder.FrameWorkEventResult{}, internaldecoder.ErrInvalidFrameWorkStep
 			}
 			references = req.ReferenceFrames[:referenceCountN]
 		}
 	}
 
-	var run DecoderFrameWorkStepResult
+	var run internaldecoder.FrameWorkStepResult
 	if req.WorkerPool != nil && req.WorkerPool.WorkerCount() == 1 {
 		var compact *internalthreading.FrameWorkLoopFilterCompactState
 		if decoderFrameWorkResidualSideRunnerOwnsCompact(sideRunner, req.Runner, req.SideData) {
@@ -895,16 +893,16 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 		*req.Stats = stats
 	}
 	if err != nil {
-		return DecoderFrameWorkEventResult{}, err
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
 	if statsErr != nil {
-		return DecoderFrameWorkEventResult{}, statsErr
+		return internaldecoder.FrameWorkEventResult{}, statsErr
 	}
 	output = decoderFrameWorkResidualPostFilterOutput(output, run, req.PostRunner)
 	if output, err = decoderFrameWorkShowExistingFilmGrain(&event, step, output, req.PostRunner); err != nil {
-		return DecoderFrameWorkEventResult{}, err
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
-	return DecoderFrameWorkEventResult{
+	return internaldecoder.FrameWorkEventResult{
 		Step:           step,
 		Output:         output,
 		ReferenceCount: referenceCount,
@@ -912,10 +910,10 @@ func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEven
 	}, nil
 }
 
-func runDecoderFrameWorkEventSingleWorkerResidualRunner(req DecoderFrameWorkResidualEventRequest, event *DecoderEvent, step DecoderFrameWorkStep, output *Frame, references []*Frame, compact *internalthreading.FrameWorkLoopFilterCompactState) (DecoderFrameWorkStepResult, error) {
+func runDecoderFrameWorkEventSingleWorkerResidualRunner(req decoderFrameWorkResidualEventRequest, event *internaldecoder.Event, step internaldecoder.FrameWorkStep, output *Frame, references []*Frame, compact *internalthreading.FrameWorkLoopFilterCompactState) (internaldecoder.FrameWorkStepResult, error) {
 	prepared, err := internaldecoder.PrepareFrameWorkStepWithPayloadContext(req.State, event, step, output, references, event.Unit.Payload, req.Jobs, req.Batches)
 	if err != nil {
-		return DecoderFrameWorkStepResult{}, err
+		return internaldecoder.FrameWorkStepResult{}, err
 	}
 	if !prepared.HasTileWork {
 		return internaldecoder.CompleteFrameWorkPreparedPayloadStep(req.State, req.Refs, req.FramePool, event, step, prepared, output, req.Releases, false, req.Post)
@@ -923,14 +921,14 @@ func runDecoderFrameWorkEventSingleWorkerResidualRunner(req DecoderFrameWorkResi
 	batches := req.Batches[:prepared.BatchCount]
 	jobs := req.Jobs[:prepared.JobCount]
 	if err := internalthreading.ValidateSingleWorkerFrameWorkBatches(req.WorkerPool, batches, jobs); err != nil {
-		return DecoderFrameWorkStepResult{}, err
+		return internaldecoder.FrameWorkStepResult{}, err
 	}
 	var firstErr error
 	for i := range batches {
 		batch := batches[i]
 		batchJobs, err := batch.JobSlice(jobs)
 		if err != nil {
-			return DecoderFrameWorkStepResult{}, err
+			return internaldecoder.FrameWorkStepResult{}, err
 		}
 		ctx := prepared.Base
 		ctx.Batch = batch
@@ -940,7 +938,7 @@ func runDecoderFrameWorkEventSingleWorkerResidualRunner(req DecoderFrameWorkResi
 		}
 	}
 	if firstErr != nil {
-		return DecoderFrameWorkStepResult{}, firstErr
+		return internaldecoder.FrameWorkStepResult{}, firstErr
 	}
 	if req.PostRunner != nil {
 		if compact != nil {
@@ -951,7 +949,7 @@ func runDecoderFrameWorkEventSingleWorkerResidualRunner(req DecoderFrameWorkResi
 	return internaldecoder.CompleteFrameWorkPreparedPayloadStep(req.State, req.Refs, req.FramePool, event, step, prepared, output, req.Releases, true, req.Post)
 }
 
-func runDecoderFrameWorkEventWithExternalResidualRunner(req DecoderFrameWorkResidualEventRequest, event *DecoderEvent, sideRunner DecoderFrameWorkSideDataRunner) (DecoderFrameWorkEventResult, error) {
+func runDecoderFrameWorkEventWithExternalResidualRunner(req decoderFrameWorkResidualEventRequest, event *internaldecoder.Event, sideRunner internaldecoder.FrameWorkSideDataRunner) (internaldecoder.FrameWorkEventResult, error) {
 	postRunner := req.PostRunner
 	if req.Post != nil {
 		postRunner = decoderFrameWorkResidualPostFuncRunner{fn: req.Post}
@@ -990,34 +988,34 @@ func runDecoderFrameWorkEventWithExternalResidualRunner(req DecoderFrameWorkResi
 		*req.Stats = stats
 	}
 	if err != nil {
-		return DecoderFrameWorkEventResult{}, err
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
 	if statsErr != nil {
-		return DecoderFrameWorkEventResult{}, statsErr
+		return internaldecoder.FrameWorkEventResult{}, statsErr
 	}
 	result.Output = decoderFrameWorkResidualPostFilterOutput(result.Output, result.Run, postRunner)
 	if result.Output, err = decoderFrameWorkShowExistingFilmGrain(event, result.Step, result.Output, postRunner); err != nil {
-		return DecoderFrameWorkEventResult{}, err
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
 	return result, nil
 }
 
-func runDecoderFrameWorkTileListWithResidualRunner(req DecoderFrameWorkResidualEventRequest, event *DecoderEvent) (DecoderFrameWorkEventResult, error) {
+func runDecoderFrameWorkTileListWithResidualRunner(req decoderFrameWorkResidualEventRequest, event *internaldecoder.Event) (internaldecoder.FrameWorkEventResult, error) {
 	if event.TileListErr != nil {
-		return DecoderFrameWorkEventResult{}, event.TileListErr
+		return internaldecoder.FrameWorkEventResult{}, event.TileListErr
 	}
 	if req.FramePool == nil {
-		return DecoderFrameWorkEventResult{}, ErrFrameInvalidPool
+		return internaldecoder.FrameWorkEventResult{}, internalframe.ErrInvalidPool
 	}
 	if req.WorkerPool == nil {
-		return DecoderFrameWorkEventResult{}, ErrThreadingInvalidWorkerCount
+		return internaldecoder.FrameWorkEventResult{}, internalthreading.ErrInvalidWorkerCount
 	}
-	geometry, err := TileListOutputGeometryForGrid(event.TileList, event.TileInfo, event.SequenceHeader.Use128x128Superblock)
+	geometry, err := internalparser.TileListOutputGeometryForGrid(event.TileList, event.TileInfo, event.SequenceHeader.Use128x128Superblock)
 	if err != nil {
-		return DecoderFrameWorkEventResult{}, err
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
-	if _, err := TileListOutputFrameFormat(event.SequenceHeader, geometry, req.Align); err != nil {
-		return DecoderFrameWorkEventResult{}, fmt.Errorf("tile-list output format: %w", err)
+	if _, err := tileListOutputFrameFormat(event.SequenceHeader, geometry, req.Align); err != nil {
+		return internaldecoder.FrameWorkEventResult{}, fmt.Errorf("tile-list output format: %w", err)
 	}
 
 	outputPool := req.TileListOutputPool
@@ -1027,7 +1025,7 @@ func runDecoderFrameWorkTileListWithResidualRunner(req DecoderFrameWorkResidualE
 	entryPool := outputPool
 	outputSurface, output, err := outputPool.Acquire()
 	if err != nil {
-		return DecoderFrameWorkEventResult{}, fmt.Errorf("tile-list output acquire: %w", err)
+		return internaldecoder.FrameWorkEventResult{}, fmt.Errorf("tile-list output acquire: %w", err)
 	}
 	outputPublished := false
 	defer func() {
@@ -1038,7 +1036,7 @@ func runDecoderFrameWorkTileListWithResidualRunner(req DecoderFrameWorkResidualE
 
 	entrySurface, entryOutput, err := entryPool.Acquire()
 	if err != nil {
-		return DecoderFrameWorkEventResult{}, fmt.Errorf("tile-list entry acquire: %w", err)
+		return internaldecoder.FrameWorkEventResult{}, fmt.Errorf("tile-list entry acquire: %w", err)
 	}
 	entryReleased := false
 	defer func() {
@@ -1047,12 +1045,12 @@ func runDecoderFrameWorkTileListWithResidualRunner(req DecoderFrameWorkResidualE
 		}
 	}()
 
-	var anchors [TileListMaxExternalReferences]*Frame
+	var anchors [internalparser.TileListMaxExternalReferences]*Frame
 	if _, err := decoderFrameWorkResolveTileListAnchorFrames(req, event, anchors[:]); err != nil {
-		return DecoderFrameWorkEventResult{}, fmt.Errorf("tile-list anchor resolve: %w", err)
+		return internaldecoder.FrameWorkEventResult{}, fmt.Errorf("tile-list anchor resolve: %w", err)
 	}
-	var references [InterRefsPerFrame]*Frame
-	var lastStep DecoderFrameWorkStep
+	var references [internalparser.InterRefsPerFrame]*Frame
+	var lastStep internaldecoder.FrameWorkStep
 	var referenceCount uint8
 	executed := false
 	tileCount := event.TileList.TileCount()
@@ -1060,41 +1058,41 @@ func runDecoderFrameWorkTileListWithResidualRunner(req DecoderFrameWorkResidualE
 		for j := range references {
 			references[j] = nil
 		}
-		plan, err := PlanDecoderTileListEntryDecode(event, i, entrySurface, anchors[:], references[:], req.Workers, req.Spans, req.Jobs, req.Batches)
+		plan, err := internaldecoder.PlanTileListEntryDecode(event, i, entrySurface, anchors[:], references[:], req.Workers, req.Spans, req.Jobs, req.Batches)
 		if err != nil {
-			return DecoderFrameWorkEventResult{}, fmt.Errorf("tile-list entry plan %d: %w", i, err)
+			return internaldecoder.FrameWorkEventResult{}, fmt.Errorf("tile-list entry plan %d: %w", i, err)
 		}
 		prepared, err := internaldecoder.PrepareFrameWorkStepWithPayloadContext(nil, &plan.Event, plan.Step, entryOutput, references[:plan.ReferenceCount], plan.Payload, req.Jobs, req.Batches)
 		if err != nil {
-			return DecoderFrameWorkEventResult{}, fmt.Errorf("tile-list entry prepare %d: %w", i, err)
+			return internaldecoder.FrameWorkEventResult{}, fmt.Errorf("tile-list entry prepare %d: %w", i, err)
 		}
 		entryExecuted, err := runDecoderFrameWorkTileListPreparedStep(req, prepared)
 		if err != nil {
-			return DecoderFrameWorkEventResult{}, fmt.Errorf("tile-list entry run %d: %w", i, err)
+			return internaldecoder.FrameWorkEventResult{}, fmt.Errorf("tile-list entry run %d: %w", i, err)
 		}
-		if err := CopyTileListEntryToOutputFrame(output, entryOutput, event.TileList, plan.Geometry, i); err != nil {
-			return DecoderFrameWorkEventResult{}, fmt.Errorf("tile-list entry copy %d: %w", i, err)
+		if err := copyTileListEntryToOutputFrame(output, entryOutput, event.TileList, plan.Geometry, i); err != nil {
+			return internaldecoder.FrameWorkEventResult{}, fmt.Errorf("tile-list entry copy %d: %w", i, err)
 		}
 		lastStep = plan.Step
 		referenceCount = plan.ReferenceCount
 		executed = executed || entryExecuted
 	}
 	if err := entryPool.Release(entrySurface); err != nil {
-		return DecoderFrameWorkEventResult{}, fmt.Errorf("tile-list entry release: %w", err)
+		return internaldecoder.FrameWorkEventResult{}, fmt.Errorf("tile-list entry release: %w", err)
 	}
 	entryReleased = true
 	outputPublished = true
-	return DecoderFrameWorkEventResult{
+	return internaldecoder.FrameWorkEventResult{
 		Step:           lastStep,
 		Output:         output,
 		ReferenceCount: referenceCount,
-		Run: DecoderFrameWorkStepResult{
+		Run: internaldecoder.FrameWorkStepResult{
 			ExecutedTileWork: executed,
 		},
 	}, nil
 }
 
-func runDecoderFrameWorkTileListPreparedStep(req DecoderFrameWorkResidualEventRequest, prepared internaldecoder.FrameWorkPreparedPayloadStep) (bool, error) {
+func runDecoderFrameWorkTileListPreparedStep(req decoderFrameWorkResidualEventRequest, prepared internaldecoder.FrameWorkPreparedPayloadStep) (bool, error) {
 	if !prepared.HasTileWork {
 		return false, nil
 	}
@@ -1129,17 +1127,17 @@ func runDecoderFrameWorkTileListPreparedStep(req DecoderFrameWorkResidualEventRe
 	return true, nil
 }
 
-func decoderFrameWorkResolveTileListAnchorFrames(req DecoderFrameWorkResidualEventRequest, event *DecoderEvent, dst []*Frame) (int, error) {
+func decoderFrameWorkResolveTileListAnchorFrames(req decoderFrameWorkResidualEventRequest, event *internaldecoder.Event, dst []*Frame) (int, error) {
 	tileCount := event.TileList.TileCount()
-	if tileCount <= 0 || tileCount > TileListMaxTiles || tileCount != len(event.TileList.Entries) {
-		return 0, ErrTileListInvalidTileCount
+	if tileCount <= 0 || tileCount > internalparser.TileListMaxTiles || tileCount != len(event.TileList.Entries) {
+		return 0, internalparser.ErrTileListInvalidTileCount
 	}
-	var used [TileListMaxExternalReferences]bool
+	var used [internalparser.TileListMaxExternalReferences]bool
 	maxAnchor := -1
 	for i := range event.TileList.Entries {
 		anchor := int(event.TileList.Entries[i].AnchorFrameIdx)
-		if anchor < 0 || anchor >= TileListMaxExternalReferences {
-			return 0, ErrTileListInvalidAnchorIndex
+		if anchor < 0 || anchor >= internalparser.TileListMaxExternalReferences {
+			return 0, internalparser.ErrTileListInvalidAnchorIndex
 		}
 		used[anchor] = true
 		if anchor > maxAnchor {
@@ -1147,11 +1145,11 @@ func decoderFrameWorkResolveTileListAnchorFrames(req DecoderFrameWorkResidualEve
 		}
 	}
 	if maxAnchor < 0 {
-		return 0, ErrTileListInvalidTileCount
+		return 0, internalparser.ErrTileListInvalidTileCount
 	}
 	count := maxAnchor + 1
 	if len(dst) < count {
-		return 0, ErrDecoderSurfaceReferenceBufferTooSmall
+		return 0, internaldecoder.ErrSurfaceReferenceBufferTooSmall
 	}
 	for i := 0; i < count; i++ {
 		dst[i] = nil
@@ -1173,61 +1171,61 @@ func decoderFrameWorkResolveTileListAnchorFrames(req DecoderFrameWorkResidualEve
 	return count, nil
 }
 
-func decoderFrameWorkTileListAnchorSurface(req DecoderFrameWorkResidualEventRequest, anchor int) (int, error) {
-	if req.Refs != nil && anchor < RefFrames {
+func decoderFrameWorkTileListAnchorSurface(req decoderFrameWorkResidualEventRequest, anchor int) (int, error) {
+	if req.Refs != nil && anchor < internalparser.RefFrames {
 		if surface, ok := req.Refs.ReferenceSlot(anchor); ok {
 			return surface, nil
 		}
 	}
 	if req.External.Enabled() {
 		if anchor >= len(req.ReferenceSurfaces) {
-			return -1, ErrDecoderSurfaceReferenceBufferTooSmall
+			return -1, internaldecoder.ErrSurfaceReferenceBufferTooSmall
 		}
 		surface := req.ReferenceSurfaces[anchor]
 		if surface < 0 {
-			return -1, ErrDecoderInvalidSurfaceReference
+			return -1, internaldecoder.ErrInvalidSurfaceReference
 		}
 		return surface, nil
 	}
 	if anchor >= len(req.ReferenceSurfaces) {
-		return -1, ErrDecoderSurfaceReferenceBufferTooSmall
+		return -1, internaldecoder.ErrSurfaceReferenceBufferTooSmall
 	}
 	surface := req.ReferenceSurfaces[anchor]
 	if surface < 0 {
-		return -1, ErrDecoderInvalidSurfaceReference
+		return -1, internaldecoder.ErrInvalidSurfaceReference
 	}
 	return surface, nil
 }
 
-func decoderFrameWorkTileListAnchorFrame(req DecoderFrameWorkResidualEventRequest, surface int) (*Frame, error) {
+func decoderFrameWorkTileListAnchorFrame(req decoderFrameWorkResidualEventRequest, surface int) (*Frame, error) {
 	if req.External.Enabled() {
 		frame, err := req.External.Provider.FrameSurface(surface)
 		if err != nil {
 			return nil, err
 		}
 		if frame == nil {
-			return nil, ErrDecoderInvalidSurfaceReference
+			return nil, internaldecoder.ErrInvalidSurfaceReference
 		}
 		return frame, nil
 	}
 	if req.FramePool == nil {
-		return nil, ErrFrameInvalidPool
+		return nil, internalframe.ErrInvalidPool
 	}
 	frame, err := req.FramePool.Frame(surface)
 	if err != nil {
 		return nil, err
 	}
 	if frame == nil {
-		return nil, ErrDecoderInvalidSurfaceReference
+		return nil, internaldecoder.ErrInvalidSurfaceReference
 	}
 	return frame, nil
 }
 
 type decoderFrameWorkResidualPostFuncRunner struct {
-	fn DecoderFrameWorkPostFilterFunc
+	fn internaldecoder.FrameWorkPostFilterFunc
 }
 
-func (r decoderFrameWorkResidualPostFuncRunner) Apply(ctx DecoderFrameWorkPostFilterContext) error {
+func (r decoderFrameWorkResidualPostFuncRunner) Apply(ctx internaldecoder.FrameWorkPostFilterContext) error {
 	if r.fn == nil {
 		return nil
 	}
@@ -1235,11 +1233,11 @@ func (r decoderFrameWorkResidualPostFuncRunner) Apply(ctx DecoderFrameWorkPostFi
 }
 
 type decoderFrameWorkResidualSideDataRunner struct {
-	SideData    *DecoderFrameWorkSideData
-	BatchRunner *DecoderFrameWorkBatchResidualRunner
+	SideData    *decoderFrameWorkSideData
+	BatchRunner *decoderFrameWorkBatchResidualRunner
 }
 
-func decoderFrameWorkResidualSideRunnerOwnsCompact(sideRunner DecoderFrameWorkSideDataRunner, batchRunner *DecoderFrameWorkBatchResidualRunner, side *DecoderFrameWorkSideData) bool {
+func decoderFrameWorkResidualSideRunnerOwnsCompact(sideRunner internaldecoder.FrameWorkSideDataRunner, batchRunner *decoderFrameWorkBatchResidualRunner, side *decoderFrameWorkSideData) bool {
 	r, ok := sideRunner.(decoderFrameWorkResidualSideDataRunner)
 	if !ok || side == nil || r.SideData != side || batchRunner == nil || r.BatchRunner != batchRunner ||
 		batchRunner.compactOwner != batchRunner || batchRunner.compactState == nil ||
@@ -1250,7 +1248,7 @@ func decoderFrameWorkResidualSideRunnerOwnsCompact(sideRunner DecoderFrameWorkSi
 	return internalthreading.FrameWorkLoopFilterCompactStateActive(batchRunner.compactState)
 }
 
-func (r decoderFrameWorkResidualSideDataRunner) BindFrameWorkSideData(state *DecoderFrameWorkState, _ DecoderFrameWorkBatch) error {
+func (r decoderFrameWorkResidualSideDataRunner) BindFrameWorkSideData(state *internaldecoder.FrameWorkState, _ internaldecoder.FrameWorkBatch) error {
 	if r.SideData == nil {
 		return nil
 	}
@@ -1265,28 +1263,28 @@ func (r decoderFrameWorkResidualSideDataRunner) BindFrameWorkSideData(state *Dec
 		return r.BatchRunner.setOwnedCompactSideData(r.SideData)
 	}
 	if r.BatchRunner != nil {
-		if err := SetDecoderFrameWorkBatchResidualRunnerSideData(r.BatchRunner, *r.SideData); err != nil {
+		if err := setDecoderFrameWorkBatchResidualRunnerSideData(r.BatchRunner, *r.SideData); err != nil {
 			return err
 		}
 	}
-	return SetDecoderFrameWorkSideData(state, *r.SideData)
+	return setDecoderFrameWorkSideData(state, *r.SideData)
 }
 
-func decoderFrameWorkResidualRunnerStats(runner *DecoderFrameWorkBatchResidualRunner) (DecoderFrameWorkTileResidualStats, error) {
+func decoderFrameWorkResidualRunnerStats(runner *decoderFrameWorkBatchResidualRunner) (internalthreading.FrameWorkTileResidualStats, error) {
 	if runner == nil {
-		return DecoderFrameWorkTileResidualStats{}, nil
+		return internalthreading.FrameWorkTileResidualStats{}, nil
 	}
 	return runner.TotalStats()
 }
 
-func decoderFrameWorkResidualResultOutputsFrame(event *DecoderEvent, result DecoderFrameWorkEventResult) bool {
+func decoderFrameWorkResidualResultOutputsFrame(event *internaldecoder.Event, result internaldecoder.FrameWorkEventResult) bool {
 	if result.Output == nil {
 		return false
 	}
-	if result.Step.Kind == DecoderFrameWorkStepShowExisting {
+	if result.Step.Kind == internaldecoder.FrameWorkStepShowExisting {
 		return true
 	}
-	if event.Kind == DecoderEventTileList && event.TileListErr == nil {
+	if event.Kind == internaldecoder.EventTileList && event.TileListErr == nil {
 		return true
 	}
 	// A completed coded frame is only emitted to the output stream when its
@@ -1294,14 +1292,14 @@ func decoderFrameWorkResidualResultOutputsFrame(event *DecoderEvent, result Deco
 	// their reference-buffer side effects but surface later via
 	// show_existing_frame, so they must stay out of Outputs. DecoderEventOutputsFrame
 	// also gates the per-event output-slot sizing, keeping the two in lockstep.
-	return result.Run.CompletedFrame && DecoderEventOutputsFrame(event)
+	return result.Run.CompletedFrame && internaldecoder.EventOutputsFrame(event)
 }
 
-func decoderFrameWorkResidualPostFilterOutput(output *Frame, run DecoderFrameWorkStepResult, post DecoderFrameWorkPostFilterRunner) *Frame {
+func decoderFrameWorkResidualPostFilterOutput(output *Frame, run internaldecoder.FrameWorkStepResult, post internaldecoder.FrameWorkPostFilterRunner) *Frame {
 	if !run.CompletedFrame || post == nil {
 		return output
 	}
-	provider, ok := post.(DecoderFrameWorkPostFilterOutputProvider)
+	provider, ok := post.(decoderFrameWorkPostFilterOutputProvider)
 	if !ok {
 		return output
 	}
@@ -1312,25 +1310,25 @@ func decoderFrameWorkResidualPostFilterOutput(output *Frame, run DecoderFrameWor
 	return postOutput
 }
 
-func decoderFrameWorkResidualEventSequence(sequence SequenceHeader, event *DecoderEvent) SequenceHeader {
+func decoderFrameWorkResidualEventSequence(sequence SequenceHeader, event *internaldecoder.Event) SequenceHeader {
 	return decoderFrameWorkResidualEventSequencePtr(sequence, event)
 }
 
-func decoderFrameWorkResidualEventSequencePtr(sequence SequenceHeader, event *DecoderEvent) SequenceHeader {
+func decoderFrameWorkResidualEventSequencePtr(sequence SequenceHeader, event *internaldecoder.Event) SequenceHeader {
 	if event == nil {
 		return sequence
 	}
 	switch event.Kind {
-	case DecoderEventSequenceHeader:
+	case internaldecoder.EventSequenceHeader:
 		if decoderFrameWorkResidualEventHasSequencePtr(event) {
 			return event.SequenceHeader
 		}
 		return sequence
-	case DecoderEventFrameHeader,
-		DecoderEventRedundantFrameHeader,
-		DecoderEventFrame,
-		DecoderEventTileGroup,
-		DecoderEventExistingFrame:
+	case internaldecoder.EventFrameHeader,
+		internaldecoder.EventRedundantFrameHeader,
+		internaldecoder.EventFrame,
+		internaldecoder.EventTileGroup,
+		internaldecoder.EventExistingFrame:
 		if decoderFrameWorkResidualEventHasSequencePtr(event) {
 			return event.SequenceHeader
 		}
@@ -1340,90 +1338,90 @@ func decoderFrameWorkResidualEventSequencePtr(sequence SequenceHeader, event *De
 	}
 }
 
-func decoderFrameWorkResidualEventHasSequencePtr(event *DecoderEvent) bool {
+func decoderFrameWorkResidualEventHasSequencePtr(event *internaldecoder.Event) bool {
 	if event == nil {
 		return false
 	}
 	return event.SequenceHeader.ColorConfig.BitDepth != 0
 }
 
-func decoderFrameWorkResidualEventNeedsSideData(event *DecoderEvent) bool {
+func decoderFrameWorkResidualEventNeedsSideData(event *internaldecoder.Event) bool {
 	return decoderFrameWorkResidualEventNeedsSideDataPtr(event)
 }
 
-func decoderFrameWorkResidualEventNeedsSideDataPtr(event *DecoderEvent) bool {
+func decoderFrameWorkResidualEventNeedsSideDataPtr(event *internaldecoder.Event) bool {
 	if event == nil {
 		return false
 	}
 	switch event.Kind {
-	case DecoderEventFrameHeader, DecoderEventFrame, DecoderEventTileGroup:
+	case internaldecoder.EventFrameHeader, internaldecoder.EventFrame, internaldecoder.EventTileGroup:
 		return true
 	default:
 		return false
 	}
 }
 
-func decoderFrameWorkResidualEventHasTilePayload(event *DecoderEvent) bool {
+func decoderFrameWorkResidualEventHasTilePayload(event *internaldecoder.Event) bool {
 	return decoderFrameWorkResidualEventHasTilePayloadPtr(event)
 }
 
-func decoderFrameWorkResidualEventHasTilePayloadPtr(event *DecoderEvent) bool {
+func decoderFrameWorkResidualEventHasTilePayloadPtr(event *internaldecoder.Event) bool {
 	if event == nil {
 		return false
 	}
 	switch event.Kind {
-	case DecoderEventFrame, DecoderEventTileGroup:
+	case internaldecoder.EventFrame, internaldecoder.EventTileGroup:
 		return true
 	default:
 		return false
 	}
 }
 
-func decoderFrameWorkResidualEventBindCandidate(event *DecoderEvent) bool {
+func decoderFrameWorkResidualEventBindCandidate(event *internaldecoder.Event) bool {
 	return decoderFrameWorkResidualEventBindCandidatePtr(event)
 }
 
-func decoderFrameWorkResidualEventBindCandidatePtr(event *DecoderEvent) bool {
+func decoderFrameWorkResidualEventBindCandidatePtr(event *internaldecoder.Event) bool {
 	return decoderFrameWorkResidualEventNeedsSideDataPtr(event) ||
 		decoderFrameWorkResidualEventHasTilePayloadPtr(event) ||
-		(event != nil && DecoderEventOutputsFrame(&*event))
+		(event != nil && internaldecoder.EventOutputsFrame(&*event))
 }
 
-func decoderFrameWorkResidualEventPlanMax(a DecoderTileWorkPlan, b DecoderTileWorkPlan) DecoderTileWorkPlan {
-	return DecoderTileWorkPlan{
+func decoderFrameWorkResidualEventPlanMax(a internaldecoder.TileWorkPlan, b internaldecoder.TileWorkPlan) internaldecoder.TileWorkPlan {
+	return internaldecoder.TileWorkPlan{
 		SpanCount:  max(a.SpanCount, b.SpanCount),
 		JobCount:   max(a.JobCount, b.JobCount),
 		BatchCount: max(a.BatchCount, b.BatchCount),
 	}
 }
 
-func decoderFrameWorkEventStepTile(step DecoderFrameWorkStep) (DecoderTileWorkPlan, uint8, bool, error) {
+func decoderFrameWorkEventStepTile(step internaldecoder.FrameWorkStep) (internaldecoder.TileWorkPlan, uint8, bool, error) {
 	switch step.Kind {
-	case DecoderFrameWorkStepIgnored, DecoderFrameWorkStepDropped, DecoderFrameWorkStepShowExisting:
-		return DecoderTileWorkPlan{}, 0, false, nil
-	case DecoderFrameWorkStepBegin:
+	case internaldecoder.FrameWorkStepIgnored, internaldecoder.FrameWorkStepDropped, internaldecoder.FrameWorkStepShowExisting:
+		return internaldecoder.TileWorkPlan{}, 0, false, nil
+	case internaldecoder.FrameWorkStepBegin:
 		return step.Begin.Tile, step.Begin.ReferenceCount, true, nil
-	case DecoderFrameWorkStepTile:
+	case internaldecoder.FrameWorkStepTile:
 		return step.Tile.Tile, step.Tile.ReferenceCount, true, nil
 	default:
-		return DecoderTileWorkPlan{}, 0, false, ErrDecoderInvalidTileWork
+		return internaldecoder.TileWorkPlan{}, 0, false, internaldecoder.ErrInvalidTileWork
 	}
 }
 
-func decoderFrameWorkResidualEventContext(sequence SequenceHeader, event *DecoderEvent) DecoderFrameWorkFrameContext {
+func decoderFrameWorkResidualEventContext(sequence SequenceHeader, event *internaldecoder.Event) internaldecoder.FrameWorkFrameContext {
 	return decoderFrameWorkResidualEventContextPtr(sequence, event)
 }
 
 // decoderFrameWorkResidualEventContextPtr builds the context used by scratch
 // sizing. Scaled-reference policy does not affect those lengths, so keep this
 // conversion independent of environment lookups.
-func decoderFrameWorkResidualEventContextPtr(sequence SequenceHeader, event *DecoderEvent) DecoderFrameWorkFrameContext {
+func decoderFrameWorkResidualEventContextPtr(sequence SequenceHeader, event *internaldecoder.Event) internaldecoder.FrameWorkFrameContext {
 	if event == nil {
-		return DecoderFrameWorkFrameContext{
+		return internaldecoder.FrameWorkFrameContext{
 			Sequence: internalthreading.FrameWorkSequenceContextFromHeader(sequence),
 		}
 	}
-	return DecoderFrameWorkFrameContext{
+	return internaldecoder.FrameWorkFrameContext{
 		Sequence:            internalthreading.FrameWorkSequenceContextFromHeader(sequence),
 		FrameHeader:         event.FrameHeader,
 		FrameSize:           event.FrameSize,
@@ -1443,16 +1441,16 @@ func decoderFrameWorkResidualEventContextPtr(sequence SequenceHeader, event *Dec
 	}
 }
 
-func decoderFrameWorkEventStepSurface(step DecoderFrameWorkStep) (int, error) {
+func decoderFrameWorkEventStepSurface(step internaldecoder.FrameWorkStep) (int, error) {
 	switch step.Kind {
-	case DecoderFrameWorkStepBegin:
+	case internaldecoder.FrameWorkStepBegin:
 		return step.Begin.Surface, nil
-	case DecoderFrameWorkStepTile:
+	case internaldecoder.FrameWorkStepTile:
 		return step.Tile.Surface, nil
-	case DecoderFrameWorkStepShowExisting:
+	case internaldecoder.FrameWorkStepShowExisting:
 		return step.ShowExisting.Surface, nil
 	default:
-		return -1, ErrDecoderInvalidFrameWorkStep
+		return -1, internaldecoder.ErrInvalidFrameWorkStep
 	}
 }
 
@@ -1471,7 +1469,7 @@ func (decoderNoGlobalSurfacePublisher) PublishedFrameWorkGlobalSurface() (int, b
 // random times while it warms up, which made the zero-alloc decode benchmarks
 // report an occasional 48 B allocation. Unknown runner types keep that
 // fallback.
-func decoderResolvePostPublisher(publisher DecoderFrameWorkPostFilterGlobalSurfacePublisher, post DecoderFrameWorkPostFilterRunner) DecoderFrameWorkPostFilterGlobalSurfacePublisher {
+func decoderResolvePostPublisher(publisher internaldecoder.FrameWorkPostFilterGlobalSurfacePublisher, post internaldecoder.FrameWorkPostFilterRunner) internaldecoder.FrameWorkPostFilterGlobalSurfacePublisher {
 	if publisher != nil {
 		return publisher
 	}
@@ -1480,7 +1478,7 @@ func decoderResolvePostPublisher(publisher DecoderFrameWorkPostFilterGlobalSurfa
 		return nil
 	case *decoderExternalPostFilterRunner:
 		return r
-	case *DecoderFrameWorkReusableSupportedPostFilterRunner, decoderFrameWorkResidualPostFuncRunner:
+	case *decoderFrameWorkReusableSupportedPostFilterRunner, decoderFrameWorkResidualPostFuncRunner:
 		return decoderNoGlobalSurfacePublisher{}
 	}
 	return nil
@@ -1493,8 +1491,8 @@ func decoderResolvePostPublisher(publisher DecoderFrameWorkPostFilterGlobalSurfa
 // were stored with it (load_grain_params). The reconstructed reference stays
 // untouched; only its in-loop filters already ran, so every other stage is
 // marked complete.
-func decoderFrameWorkShowExistingFilmGrain(event *DecoderEvent, step DecoderFrameWorkStep, output *Frame, post DecoderFrameWorkPostFilterRunner) (*Frame, error) {
-	if step.Kind != DecoderFrameWorkStepShowExisting {
+func decoderFrameWorkShowExistingFilmGrain(event *internaldecoder.Event, step internaldecoder.FrameWorkStep, output *Frame, post internaldecoder.FrameWorkPostFilterRunner) (*Frame, error) {
+	if step.Kind != internaldecoder.FrameWorkStepShowExisting {
 		return output, nil
 	}
 	return decoderFrameWorkOutputFilmGrain(event, step, output, post)
@@ -1504,17 +1502,17 @@ func decoderFrameWorkShowExistingFilmGrain(event *DecoderEvent, step DecoderFram
 // whose in-loop filters already ran (dav1d output_image ->
 // dav1d_apply_grain): post synthesizes the grain into its own display
 // surface, and output stays the clean reference.
-func decoderFrameWorkOutputFilmGrain(event *DecoderEvent, step DecoderFrameWorkStep, output *Frame, post DecoderFrameWorkPostFilterRunner) (*Frame, error) {
+func decoderFrameWorkOutputFilmGrain(event *internaldecoder.Event, step internaldecoder.FrameWorkStep, output *Frame, post internaldecoder.FrameWorkPostFilterRunner) (*Frame, error) {
 	if output == nil || post == nil || !event.FilmGrain.Apply {
 		return output, nil
 	}
-	provider, ok := post.(DecoderFrameWorkPostFilterOutputProvider)
+	provider, ok := post.(decoderFrameWorkPostFilterOutputProvider)
 	if !ok {
 		return output, nil
 	}
-	ctx := DecoderFrameWorkPostFilterContext{Event: *event, Step: step, Output: output}
-	ctx = ctx.WithCompletedPostFilters(DecoderFrameWorkPostFilterLoopFilter | DecoderFrameWorkPostFilterCDEF |
-		DecoderFrameWorkPostFilterSuperRes | DecoderFrameWorkPostFilterLoopRestoration)
+	ctx := internaldecoder.FrameWorkPostFilterContext{Event: *event, Step: step, Output: output}
+	ctx = ctx.WithCompletedPostFilters(internaldecoder.FrameWorkPostFilterLoopFilter | internaldecoder.FrameWorkPostFilterCDEF |
+		internaldecoder.FrameWorkPostFilterSuperRes | internaldecoder.FrameWorkPostFilterLoopRestoration)
 	if err := post.Apply(ctx); err != nil {
 		return nil, err
 	}
@@ -1530,6 +1528,6 @@ func decoderFrameWorkOutputFilmGrain(event *DecoderEvent, step DecoderFrameWorkS
 // be rebound (which resets them). dav1d likewise keeps one frame context across
 // every tile group of a frame (src/decode.c dav1d_submit_frame runs once all
 // tile data arrived).
-func decoderEventContinuesFrame(event *DecoderEvent) bool {
-	return event != nil && event.Kind == DecoderEventTileGroup && event.TileGroup.StartTile != 0
+func decoderEventContinuesFrame(event *internaldecoder.Event) bool {
+	return event != nil && event.Kind == internaldecoder.EventTileGroup && event.TileGroup.StartTile != 0
 }

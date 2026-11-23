@@ -8,6 +8,19 @@ The project has not published a release tag yet.
 
 ## [Unreleased]
 
+### Public API
+
+- The package exports what an application uses and nothing else: `Decoder`
+  and `LayeredDecoder` with their constructors and options, `Frame`, the IVF
+  iterator, the encoders (`VideoEncoder`, `RTCEncoder`, `KeyframeEncoder`,
+  their configs and frame types) and the WebRTC transport helpers (RTP, RTCP,
+  RTX, sequencing, SDP). About 1,400 lower-level identifiers are gone: the
+  frame-work decode pipeline (`DecoderFrameWork*`, `Bind*`, `Run*`), frame
+  pools and layer pools, tile work and tile syntax readers, OBU and
+  sequence-header parsing, prediction, transform, quantizer, loop-filter,
+  CDEF, restoration, super-resolution, film-grain and DSP kernels, and the
+  encoder's bitstream writers. In-module code uses the internal packages.
+
 ### Decoder
 
 - Pure-Go AV1 decode pipeline covers IVF, OBU, Annex B, RTP, frame headers,

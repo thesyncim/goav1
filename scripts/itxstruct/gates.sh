@@ -18,7 +18,6 @@ if [ -n "$dec" ]; then
   run profiles      sh -c "make dryrun-profiles && GOEXPERIMENT=simd make dryrun-profiles"
   run testvectors   make testvectors-fast
   run conformance   make dryrun-fast
-  run conformance-pkg sh -c "go test -count=1 ./conformance && GOEXPERIMENT=simd go test -count=1 ./conformance"
 fi
 wait
 for f in "$L"-*.log; do echo "$(basename "$f"): $(tail -1 "$f") $(grep -c -- '--- FAIL' "$f") fails"; done

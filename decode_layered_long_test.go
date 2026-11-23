@@ -1,9 +1,7 @@
-package goav1_test
+package goav1
 
 import (
 	"testing"
-
-	goav1 "github.com/thesyncim/goav1"
 )
 
 // Droppable layer frames refresh no reference slot, so their surfaces are
@@ -11,14 +9,14 @@ import (
 // (the public decoder previously died at frame fourteen).
 func TestLongL1T2DecodeNoPoolLeak(t *testing.T) {
 	const w, h, n = 320, 192, 60
-	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+	enc, err := NewVideoEncoder(VideoEncoderConfig{
 		Width: w, Height: h, TargetBitrate: 500_000, Framerate: 30, TemporalLayers: 2,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var tus [][]byte
-	f := goav1.I420Frame{
+	f := I420Frame{
 		Y: make([]byte, w*h), U: make([]byte, w*h/4), V: make([]byte, w*h/4),
 		YStride: w, ChromaStride: w / 2, Width: w, Height: h,
 	}
@@ -32,7 +30,7 @@ func TestLongL1T2DecodeNoPoolLeak(t *testing.T) {
 		}
 		tus = append(tus, append([]byte(nil), out.Data...))
 	}
-	dec, err := goav1.NewDecoder(tus)
+	dec, err := NewDecoder(tus)
 	if err != nil {
 		t.Fatal(err)
 	}

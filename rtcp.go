@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"math/bits"
+
+	internalencoder "github.com/thesyncim/goav1/internal/av1/encoder"
 )
 
 const (
@@ -2257,7 +2259,7 @@ func EncoderWebRTCRTCPCompoundPacketsReceiverEstimatedMaximumBitrate(
 
 // EncoderWebRTCApplyReceiverEstimatedMaximumBitrate applies one REMB bitrate
 // estimate to config's WebRTC target bitrate fields and returns a normalized
-// config suitable for RTCEncoder.SetConfig or WebRTCEncoder.SetConfig. The
+// config suitable for RTCEncoder.SetConfig or webRTCEncoder.SetConfig. The
 // estimate is rounded up to kbps, clamped by configured min/max bitrate limits,
 // and distributed across active spatial layers in proportion to their current
 // targets. Rate-control mode, framerate, scalability, and keyframe policy are
@@ -2347,9 +2349,9 @@ func EncoderWebRTCRTCPCompoundPacketsApplyReceiverEstimatedMaximumBitrate(
 }
 
 func encoderWebRTCReceiverEstimatedMaximumBitrateTargetKbps(bitrateBps uint64) int32 {
-	maxBps := uint64(EncoderWebRTCMaxBitrateKbps) * 1000
+	maxBps := uint64(internalencoder.WebRTCMaxBitrateKbps) * 1000
 	if bitrateBps >= maxBps {
-		return EncoderWebRTCMaxBitrateKbps
+		return internalencoder.WebRTCMaxBitrateKbps
 	}
 	if bitrateBps == 0 {
 		return 1
@@ -2372,7 +2374,7 @@ func encoderWebRTCClampReceiverEstimatedMaximumBitrateKbps(targetKbps int32, min
 
 func encoderWebRTCApplyReceiverEstimatedMaximumBitrateSpatialLayers(config *EncoderConfig, targetKbps int32) {
 	layerCount := int(config.SpatialLayerCount)
-	if layerCount <= 0 || layerCount > EncoderMaxSpatialLayers {
+	if layerCount <= 0 || layerCount > internalencoder.MaxSpatialLayers {
 		return
 	}
 

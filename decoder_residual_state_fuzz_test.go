@@ -1,10 +1,14 @@
-package goav1_test
+package goav1
 
 import (
 	"errors"
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 func FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals(f *testing.F) {
@@ -17,50 +21,50 @@ func FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals(f *testing.F) {
 			return
 		}
 		qIndex := rawQ | 1
-		output := publicDecoderPostFilterFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+		output := publicDecoderPostFilterFrame(t, FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 		publicFillDecoderPostFilterPlane(output.Y)
-		batch := av1.DecoderFrameWorkBatch{
+		batch := internaldecoder.FrameWorkBatch{
 			Output:  output,
 			Payload: payload,
-			FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
-				Sequence: av1.DecoderFrameWorkSequenceContextFromHeader(av1.SequenceHeader{
-					ColorConfig: av1.ColorConfig{BitDepth: 8, MonoChrome: true},
+			FrameWorkFrameContext: internaldecoder.FrameWorkFrameContext{
+				Sequence: internalthreading.FrameWorkSequenceContextFromHeader(SequenceHeader{
+					ColorConfig: internalparser.ColorConfig{BitDepth: 8, MonoChrome: true},
 				}),
-				FrameSize:    av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8},
-				Quantization: av1.QuantizationParams{BaseQIdx: qIndex},
-				TransformRef: av1.TransformReferenceParams{TransformMode: av1.TransformModeLargest},
+				FrameSize:    FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8},
+				Quantization: internalparser.QuantizationParams{BaseQIdx: qIndex},
+				TransformRef: internalparser.TransformReferenceParams{TransformMode: internalparser.TransformModeLargest},
 			},
-			Jobs: []av1.TileJob{{SBCols: 1, SBRows: 1, Offset: 0, Size: uint32(len(payload))}},
+			Jobs: []internaltile.Job{{SBCols: 1, SBRows: 1, Offset: 0, Size: uint32(len(payload))}},
 		}
 		if sideMaps {
 			publicBindResidualFuzzSideMaps(t, &batch)
 		}
 
-		var state av1.TileDecodeState
-		if err := av1.InitDecoderFrameWorkJobDecodeState(batch, 0, &state); err != nil {
+		var state internaltile.DecodeState
+		if err := initDecoderFrameWorkJobDecodeState(batch, 0, &state); err != nil {
 			t.Fatal(err)
 		}
-		var storage av1.DecoderFrameWorkTileResidualCDFStorage
-		if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, qIndex); err != nil {
+		var storage internalthreading.FrameWorkTileResidualCDFStorage
+		if err := initDecoderFrameWorkTileResidualCDFStorageDefault(&storage, qIndex); err != nil {
 			t.Fatal(err)
 		}
-		loopReq, err := av1.DecoderFrameWorkJobBlockLoopRequest(batch, 0, nil, nil, 0, nil)
+		loopReq, err := decoderFrameWorkJobBlockLoopRequest(batch, 0, nil, nil, 0, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		int32Len, int16Len, err := av1.DecoderFrameWorkResidualMaxScratchLen(batch, qIndex, 0, av1.DecoderFrameWorkPlaneY)
+		int32Len, int16Len, err := decoderFrameWorkResidualMaxScratchLen(batch, qIndex, 0, internaldecoder.FrameWorkPlaneY)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		var scratch av1.DecoderFrameWorkTileResidualScratch
-		req := av1.DecoderFrameWorkTileResidualRequest{
+		var scratch internalthreading.FrameWorkTileResidualScratch
+		req := internalthreading.FrameWorkTileResidualRequest{
 			Loop:            loopReq,
 			TransformMode:   batch.TransformRef.TransformMode,
 			Int32Scratch:    make([]int32, int32Len),
 			ResidualScratch: make([]int16, int16Len),
 		}
-		stats, err := av1.DecodeAndReconstructDecoderFrameWorkJobResiduals(batch, 0, &state, av1.DecoderFrameWorkTileResidualCDFsFromStorage(&storage), &scratch, req)
+		stats, err := decodeAndReconstructDecoderFrameWorkJobResiduals(batch, 0, &state, decoderFrameWorkTileResidualCDFsFromStorage(&storage), &scratch, req)
 		if err != nil {
 			return
 		}
@@ -80,26 +84,26 @@ func FuzzPublicDecodeAndRetainDecoderFrameWorkBatchResiduals(f *testing.F) {
 			return
 		}
 		qIndex := rawQ | 1
-		output := publicDecoderPostFilterFrame(t, av1.FrameFormat{Width: 128, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+		output := publicDecoderPostFilterFrame(t, FrameFormat{Width: 128, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 		publicFillDecoderPostFilterPlane(output.Y)
 		firstSize := len(payload) / 2
-		batch := av1.DecoderFrameWorkBatch{
+		batch := internaldecoder.FrameWorkBatch{
 			Output:  output,
 			Payload: payload,
-			FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
-				Sequence: av1.DecoderFrameWorkSequenceContextFromHeader(av1.SequenceHeader{
-					ColorConfig: av1.ColorConfig{BitDepth: 8, MonoChrome: true},
+			FrameWorkFrameContext: internaldecoder.FrameWorkFrameContext{
+				Sequence: internalthreading.FrameWorkSequenceContextFromHeader(SequenceHeader{
+					ColorConfig: internalparser.ColorConfig{BitDepth: 8, MonoChrome: true},
 				}),
-				FrameSize:    av1.FrameSize{CodedWidth: 128, UpscaledWidth: 128, Height: 64, SuperResDenominator: 8},
-				Quantization: av1.QuantizationParams{BaseQIdx: qIndex},
-				TransformRef: av1.TransformReferenceParams{TransformMode: av1.TransformModeLargest},
+				FrameSize:    FrameSize{CodedWidth: 128, UpscaledWidth: 128, Height: 64, SuperResDenominator: 8},
+				Quantization: internalparser.QuantizationParams{BaseQIdx: qIndex},
+				TransformRef: internalparser.TransformReferenceParams{TransformMode: internalparser.TransformModeLargest},
 			},
-			Jobs: []av1.TileJob{
+			Jobs: []internaltile.Job{
 				{SBX: 0, SBY: 0, SBCols: 1, SBRows: 1, Offset: 0, Size: uint32(firstSize)},
 				{SBX: 1, SBY: 0, SBCols: 1, SBRows: 1, Offset: uint32(firstSize), Size: uint32(len(payload) - firstSize), UpdatesFrameContext: updateContext},
 			},
 		}
-		var retained av1.DecoderFrameWorkTileResidualCDFStorage
+		var retained internalthreading.FrameWorkTileResidualCDFStorage
 		retainedValid := false
 		batch.RetainedTileResidualCDFs = &retained
 		batch.RetainedTileResidualCDFsValid = &retainedValid
@@ -107,30 +111,30 @@ func FuzzPublicDecodeAndRetainDecoderFrameWorkBatchResiduals(f *testing.F) {
 			publicBindResidualFuzzSideMaps(t, &batch)
 		}
 
-		var storage av1.DecoderFrameWorkTileResidualCDFStorage
-		if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, qIndex); err != nil {
+		var storage internalthreading.FrameWorkTileResidualCDFStorage
+		if err := initDecoderFrameWorkTileResidualCDFStorageDefault(&storage, qIndex); err != nil {
 			t.Fatal(err)
 		}
-		int32Len, int16Len, err := av1.DecoderFrameWorkResidualMaxScratchLen(batch, qIndex, 0, av1.DecoderFrameWorkPlaneY)
+		int32Len, int16Len, err := decoderFrameWorkResidualMaxScratchLen(batch, qIndex, 0, internaldecoder.FrameWorkPlaneY)
 		if err != nil {
 			t.Fatal(err)
 		}
-		loopContextLen, err := av1.DecoderFrameWorkBatchResidualLoopContextAboveLen(batch)
+		loopContextLen, err := decoderFrameWorkBatchResidualLoopContextAboveLen(batch)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		var state av1.TileDecodeState
-		var scratch av1.DecoderFrameWorkTileResidualScratch
-		req := av1.DecoderFrameWorkBatchResidualRequest{
-			Tile: av1.DecoderFrameWorkTileResidualRequest{
+		var state internaltile.DecodeState
+		var scratch internalthreading.FrameWorkTileResidualScratch
+		req := decoderFrameWorkBatchResidualRequest{
+			Tile: internalthreading.FrameWorkTileResidualRequest{
 				TransformMode:   batch.TransformRef.TransformMode,
 				Int32Scratch:    make([]int32, int32Len),
 				ResidualScratch: make([]int16, int16Len),
 			},
-			LoopContextAbove: make([]av1.TileBlockLoopRootAboveContext, loopContextLen),
+			LoopContextAbove: make([]internaltile.BlockLoopRootAboveContext, loopContextLen),
 		}
-		stats, err := av1.DecodeAndRetainDecoderFrameWorkBatchResiduals(batch, &state, &storage, &scratch, req)
+		stats, err := decodeAndRetainDecoderFrameWorkBatchResiduals(batch, &state, &storage, &scratch, req)
 		if err != nil {
 			return
 		}
@@ -151,43 +155,43 @@ func FuzzPublicDecoderFrameWorkBatchResidualRunnerSideData(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, rawWorkers uint8, rawCDEFBits uint8, activeRestoration bool, omitRestorationScratch bool, corruptLoopMap bool) {
 		workers := int(rawWorkers%4) + 1
-		sequence := av1.SequenceHeader{
+		sequence := SequenceHeader{
 			EnableCDEF:        true,
 			EnableRestoration: true,
-			ColorConfig: av1.ColorConfig{
+			ColorConfig: internalparser.ColorConfig{
 				BitDepth:   8,
 				MonoChrome: true,
 			},
 		}
-		size := av1.FrameSize{CodedWidth: 128, UpscaledWidth: 128, Height: 64, SuperResDenominator: 8}
+		size := FrameSize{CodedWidth: 128, UpscaledWidth: 128, Height: 64, SuperResDenominator: 8}
 		cdefBits := rawCDEFBits & 3
-		cdef := av1.CDEFParams{
+		cdef := internalparser.CDEFParams{
 			Bits:          cdefBits,
 			StrengthCount: uint8(1) << cdefBits,
 		}
-		restoration := av1.RestorationParams{}
+		restoration := internalparser.RestorationParams{}
 		if activeRestoration {
-			restoration = av1.RestorationParams{
-				Type:      [3]av1.RestorationType{av1.RestorationWiener},
+			restoration = internalparser.RestorationParams{
+				Type:      [3]internalparser.RestorationType{internalparser.RestorationWiener},
 				UnitSizeY: 64,
 			}
 		}
 
-		batch := av1.DecoderFrameWorkBatch{
-			FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
-				Sequence:     av1.DecoderFrameWorkSequenceContextFromHeader(sequence),
+		batch := internaldecoder.FrameWorkBatch{
+			FrameWorkFrameContext: internaldecoder.FrameWorkFrameContext{
+				Sequence:     internalthreading.FrameWorkSequenceContextFromHeader(sequence),
 				FrameSize:    size,
 				CDEF:         cdef,
 				Restoration:  restoration,
-				Quantization: av1.QuantizationParams{BaseQIdx: 64},
-				TransformRef: av1.TransformReferenceParams{TransformMode: av1.TransformModeLargest},
+				Quantization: internalparser.QuantizationParams{BaseQIdx: 64},
+				TransformRef: internalparser.TransformReferenceParams{TransformMode: internalparser.TransformModeLargest},
 			},
-			Jobs: []av1.TileJob{
+			Jobs: []internaltile.Job{
 				{SBX: 0, SBY: 0, SBCols: 1, SBRows: 1, Offset: 0, Size: 1},
 				{SBX: 1, SBY: 0, SBCols: 1, SBRows: 1, Offset: 1, Size: 1},
 			},
 		}
-		runnerSize, err := av1.DecoderFrameWorkBatchResidualRunnerScratchLen(batch, workers)
+		runnerSize, err := decoderFrameWorkBatchResidualRunnerScratchLen(batch, workers)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -195,20 +199,20 @@ func FuzzPublicDecoderFrameWorkBatchResidualRunnerSideData(f *testing.F) {
 		if omitRestorationScratch {
 			runnerScratch.RestorationRequests = nil
 		}
-		runner, err := av1.BindDecoderFrameWorkBatchResidualRunner(runnerSize, runnerScratch)
+		runner, err := bindDecoderFrameWorkBatchResidualRunner(runnerSize, runnerScratch)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		sideSize, err := av1.DecoderFrameWorkSideDataScratchLen(sequence, size, cdef, restoration)
+		sideSize, err := decoderFrameWorkSideDataScratchLen(sequence, size, cdef, restoration)
 		if err != nil {
 			t.Fatal(err)
 		}
-		side, err := av1.BindDecoderFrameWorkSideData(sequence, size, cdef, restoration, av1.DecoderFrameWorkSideDataScratch{
+		side, err := bindDecoderFrameWorkSideData(sequence, size, cdef, restoration, decoderFrameWorkSideDataScratch{
 			CDEFIndexMap:             make([]uint8, sideSize.CDEFIndexMap),
 			CDEFReadMap:              make([]bool, sideSize.CDEFReadMap),
-			LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, sideSize.LoopFilterMap),
-			RestorationRecords:       make([]av1.TileRestorationUnitRecord, sideSize.RestorationRecords),
+			LoopFilterMap:            make([]internalthreading.FrameWorkLoopFilterBlockRecord, sideSize.LoopFilterMap),
+			RestorationRecords:       make([]internaltile.RestorationUnitRecord, sideSize.RestorationRecords),
 			RestorationBoundaryAbove: make([]uint16, sideSize.RestorationBoundaryAbove),
 			RestorationBoundaryBelow: make([]uint16, sideSize.RestorationBoundaryBelow),
 		})
@@ -221,19 +225,19 @@ func FuzzPublicDecoderFrameWorkBatchResidualRunnerSideData(f *testing.F) {
 			side.RestorationFrameBuffers.Records[0][0].Index = 99
 		}
 		if corruptLoopMap {
-			side.LoopFilterMap = av1.DecoderFrameWorkLoopFilterMap{Stride: 1, Rows: 1}
+			side.LoopFilterMap = internaldecoder.FrameWorkLoopFilterMap{Stride: 1, Rows: 1}
 		}
 
-		err = av1.SetDecoderFrameWorkBatchResidualRunnerSideData(&runner, side)
+		err = setDecoderFrameWorkBatchResidualRunnerSideData(&runner, side)
 		if activeRestoration && omitRestorationScratch {
-			if !errors.Is(err, av1.ErrFrameShortBuffer) {
-				t.Fatalf("missing restoration requests err=%v want %v", err, av1.ErrFrameShortBuffer)
+			if !errors.Is(err, internalframe.ErrShortBuffer) {
+				t.Fatalf("missing restoration requests err=%v want %v", err, internalframe.ErrShortBuffer)
 			}
 			return
 		}
 		if corruptLoopMap {
-			if !errors.Is(err, av1.ErrThreadingInvalidBatch) {
-				t.Fatalf("corrupt loop map err=%v want %v", err, av1.ErrThreadingInvalidBatch)
+			if !errors.Is(err, internalthreading.ErrInvalidBatch) {
+				t.Fatalf("corrupt loop map err=%v want %v", err, internalthreading.ErrInvalidBatch)
 			}
 			return
 		}
@@ -274,15 +278,15 @@ func FuzzPublicRunDecoderFrameWorkEventWithResidualRunner(f *testing.F) {
 		copy(tilePayload[1:], payload[:firstSize])
 		copy(tilePayload[1+firstSize:], payload[firstSize:])
 
-		sequence := av1.SequenceHeader{
+		sequence := SequenceHeader{
 			EnableCDEF: true,
-			ColorConfig: av1.ColorConfig{
+			ColorConfig: internalparser.ColorConfig{
 				BitDepth:   8,
 				MonoChrome: true,
 			},
 		}
 		cdefBits := rawCDEFBits & 3
-		cdef := av1.CDEFParams{
+		cdef := internalparser.CDEFParams{
 			Bits:          cdefBits,
 			StrengthCount: uint8(1) << cdefBits,
 		}
@@ -291,51 +295,51 @@ func FuzzPublicRunDecoderFrameWorkEventWithResidualRunner(f *testing.F) {
 		event.CDEF = cdef
 		event.Quantization.BaseQIdx = rawQ | 1
 
-		var scratchSpans [2]av1.TileSpan
-		var scratchJobs [2]av1.TileJob
-		var scratchBatches [1]av1.TileBatch
-		eventScratch, err := av1.DecoderFrameWorkResidualEventScratchLen(sequence, &event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+		var scratchSpans [2]internalparser.TileSpan
+		var scratchJobs [2]internaltile.Job
+		var scratchBatches [1]internalthreading.Batch
+		eventScratch, err := decoderFrameWorkResidualEventScratchLen(sequence, &event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
 		if err != nil {
 			t.Fatal(err)
 		}
-		runner, err := av1.BindDecoderFrameWorkBatchResidualRunner(eventScratch.Runner, publicDecoderBatchResidualRunnerScratch(eventScratch.Runner))
+		runner, err := bindDecoderFrameWorkBatchResidualRunner(eventScratch.Runner, publicDecoderBatchResidualRunnerScratch(eventScratch.Runner))
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		var side *av1.DecoderFrameWorkSideData
-		var boundSide av1.DecoderFrameWorkSideData
+		var side *decoderFrameWorkSideData
+		var boundSide decoderFrameWorkSideData
 		if sideData {
-			boundSide, err = av1.BindDecoderFrameWorkResidualEventSideData(sequence, &event, publicDecoderFrameWorkSideDataScratch(eventScratch.SideData))
+			boundSide, err = bindDecoderFrameWorkResidualEventSideData(sequence, &event, publicDecoderFrameWorkSideDataScratch(eventScratch.SideData))
 			if err != nil {
 				t.Fatal(err)
 			}
 			side = &boundSide
 		}
 
-		workerPool, err := av1.NewTileWorkerPool(1)
+		workerPool, err := internalthreading.NewPool(1)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer workerPool.Close()
 
-		pool := publicDecoderPostFilterFramePool(t, av1.FrameFormat{
+		pool := publicDecoderPostFilterFramePool(t, FrameFormat{
 			Width:      int(event.FrameSize.CodedWidth),
 			Height:     int(event.FrameSize.Height),
 			BitDepth:   8,
 			MonoChrome: true,
 			Align:      64,
 		}, 1)
-		var refs av1.DecoderSurfaceReferences
-		var state av1.DecoderFrameWorkState
-		var referenceSurfaces [av1.InterRefsPerFrame]int
-		var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
-		var spans [2]av1.TileSpan
-		var jobs [2]av1.TileJob
-		var batches [1]av1.TileBatch
-		var releases [av1.RefFrames]int
+		var refs internaldecoder.SurfaceReferences
+		var state internaldecoder.FrameWorkState
+		var referenceSurfaces [internalparser.InterRefsPerFrame]int
+		var referenceFrames [internalparser.InterRefsPerFrame]*Frame
+		var spans [2]internalparser.TileSpan
+		var jobs [2]internaltile.Job
+		var batches [1]internalthreading.Batch
+		var releases [internalparser.RefFrames]int
 
-		result, err := av1.RunDecoderFrameWorkEventWithResidualRunner(av1.DecoderFrameWorkResidualEventRequest{
+		result, err := runDecoderFrameWorkEventWithResidualRunner(decoderFrameWorkResidualEventRequest{
 			State:             &state,
 			Refs:              &refs,
 			FramePool:         &pool,
@@ -356,7 +360,7 @@ func FuzzPublicRunDecoderFrameWorkEventWithResidualRunner(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if result.Run != (av1.DecoderFrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) ||
+		if result.Run != (internaldecoder.FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) ||
 			result.Output == nil ||
 			state.Active() {
 			t.Fatalf("event runner result=%+v output=%p active=%v", result, result.Output, state.Active())
@@ -367,26 +371,26 @@ func FuzzPublicRunDecoderFrameWorkEventWithResidualRunner(f *testing.F) {
 	})
 }
 
-func publicBindResidualFuzzSideMaps(t *testing.T, batch *av1.DecoderFrameWorkBatch) {
+func publicBindResidualFuzzSideMaps(t *testing.T, batch *internaldecoder.FrameWorkBatch) {
 	t.Helper()
-	batch.CDEF = av1.CDEFParams{Bits: 0, StrengthCount: 1}
-	sequence := av1.SequenceHeader{
+	batch.CDEF = internalparser.CDEFParams{Bits: 0, StrengthCount: 1}
+	sequence := SequenceHeader{
 		Use128x128Superblock: batch.Sequence.Use128x128Superblock,
 		ColorConfig:          batch.Sequence.ColorConfig,
 	}
-	_, _, cdefLength, err := av1.DecoderFrameWorkCDEFIndexMapShape(sequence, batch.FrameSize)
+	_, _, cdefLength, err := decoderFrameWorkCDEFIndexMapShape(sequence, batch.FrameSize)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cdefMap, err := av1.BindDecoderFrameWorkCDEFIndexMap(sequence, batch.FrameSize, batch.CDEF, make([]uint8, cdefLength), make([]bool, cdefLength))
+	cdefMap, err := bindDecoderFrameWorkCDEFIndexMap(sequence, batch.FrameSize, batch.CDEF, make([]uint8, cdefLength), make([]bool, cdefLength))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, loopLength, err := av1.DecoderFrameWorkLoopFilterMapShape(sequence, batch.FrameSize)
+	_, _, loopLength, err := decoderFrameWorkLoopFilterMapShape(sequence, batch.FrameSize)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loopMap, err := av1.BindDecoderFrameWorkLoopFilterMap(sequence, batch.FrameSize, make([]av1.DecoderFrameWorkLoopFilterBlockRecord, loopLength))
+	loopMap, err := bindDecoderFrameWorkLoopFilterMap(sequence, batch.FrameSize, make([]internalthreading.FrameWorkLoopFilterBlockRecord, loopLength))
 	if err != nil {
 		t.Fatal(err)
 	}

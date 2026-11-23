@@ -4,7 +4,7 @@
 
 //go:build unix
 
-package goav1_test
+package goav1
 
 import (
 	"bytes"
@@ -12,14 +12,13 @@ import (
 	"runtime/debug"
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
 	"github.com/thesyncim/goav1/internal/guardpage"
 )
 
 // guardedI420 returns frame n of a moving test pattern whose planes are each
 // exactly (rows-1)*stride+width bytes, against a guard page on the trailing
 // (or, with before, the leading) side.
-func guardedI420(t *testing.T, w, h, yStride, cStride, n int, before bool) av1.I420Frame {
+func guardedI420(t *testing.T, w, h, yStride, cStride, n int, before bool) I420Frame {
 	cw, ch := (w+1)/2, (h+1)/2
 	alloc := func(rows, stride, width int) []byte {
 		if before {
@@ -27,7 +26,7 @@ func guardedI420(t *testing.T, w, h, yStride, cStride, n int, before bool) av1.I
 		}
 		return guardpage.After[byte](t, (rows-1)*stride+width)
 	}
-	f := av1.I420Frame{
+	f := I420Frame{
 		Y: alloc(h, yStride, w), U: alloc(ch, cStride, cw), V: alloc(ch, cStride, cw),
 		YStride: yStride, ChromaStride: cStride, Width: w, Height: h,
 	}
@@ -94,23 +93,23 @@ func encodeGuarded(t *testing.T, name string, w, h, yStride, cStride int, before
 			t.Fatalf("%s: encoder panicked: %v", name, r)
 		}
 	}()
-	cfg := av1.VideoEncoderConfig{Width: w, Height: h, TargetBitrate: 400_000, Framerate: 30, TemporalLayers: layers, MaxThreads: threads}
-	var encode func(av1.I420Frame, bool) ([]byte, error)
+	cfg := VideoEncoderConfig{Width: w, Height: h, TargetBitrate: 400_000, Framerate: 30, TemporalLayers: layers, MaxThreads: threads}
+	var encode func(I420Frame, bool) ([]byte, error)
 	if rtc {
-		e, err := av1.NewRTCEncoder(cfg)
+		e, err := NewRTCEncoder(cfg)
 		if err != nil {
 			return
 		}
-		encode = func(f av1.I420Frame, key bool) ([]byte, error) {
+		encode = func(f I420Frame, key bool) ([]byte, error) {
 			out, err := e.Encode(f, key)
 			return out.Data, err
 		}
 	} else {
-		e, err := av1.NewVideoEncoder(cfg)
+		e, err := NewVideoEncoder(cfg)
 		if err != nil {
 			return
 		}
-		encode = func(f av1.I420Frame, key bool) ([]byte, error) {
+		encode = func(f I420Frame, key bool) ([]byte, error) {
 			out, err := e.Encode(f, key)
 			return out.Data, err
 		}

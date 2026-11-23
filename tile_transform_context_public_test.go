@@ -1,15 +1,15 @@
-package goav1_test
+package goav1
 
 import (
 	"errors"
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 func TestPublicTileTransformContext(t *testing.T) {
-	var ctx av1.TileTransformContext
-	selected, err := ctx.SelectedTransformContext(av1.TileTransformSize16x16, 0, 0)
+	var ctx tileTransformContext
+	selected, err := ctx.SelectedTransformContext(internaltile.TransformSize16x16, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -19,7 +19,7 @@ func TestPublicTileTransformContext(t *testing.T) {
 	if err := ctx.MarkTransformArea(0, 0, 4, 4, 2, 1, true); err != nil {
 		t.Fatal(err)
 	}
-	selected, err = ctx.SelectedTransformContext(av1.TileTransformSize16x16, 0, 0)
+	selected, err = ctx.SelectedTransformContext(internaltile.TransformSize16x16, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,9 +27,9 @@ func TestPublicTileTransformContext(t *testing.T) {
 		t.Fatalf("selected context=%d want 1", selected)
 	}
 
-	category, partitionCtx, err := ctx.TransformPartitionContext(av1.TileTransformPartitionRequest{
-		Size:     av1.TileBlockSize32x32,
-		From:     av1.TileTransformSize32x32,
+	category, partitionCtx, err := ctx.TransformPartitionContext(internaltile.TransformPartitionRequest{
+		Size:     internaltile.BlockSize32x32,
+		From:     internaltile.TransformSize32x32,
 		Depth:    0,
 		X4:       0,
 		Y4:       0,
@@ -45,9 +45,9 @@ func TestPublicTileTransformContext(t *testing.T) {
 	if err := ctx.MarkTransformArea(0, 0, 8, 8, 3, 3, false); err != nil {
 		t.Fatal(err)
 	}
-	category, partitionCtx, err = ctx.TransformPartitionContext(av1.TileTransformPartitionRequest{
-		Size:     av1.TileBlockSize32x32,
-		From:     av1.TileTransformSize32x32,
+	category, partitionCtx, err = ctx.TransformPartitionContext(internaltile.TransformPartitionRequest{
+		Size:     internaltile.BlockSize32x32,
+		From:     internaltile.TransformSize32x32,
 		Depth:    0,
 		X4:       0,
 		Y4:       0,
@@ -61,7 +61,7 @@ func TestPublicTileTransformContext(t *testing.T) {
 		t.Fatalf("marked partition context=%d,%d want 2,0", category, partitionCtx)
 	}
 	ctx.Reset()
-	selected, err = ctx.SelectedTransformContext(av1.TileTransformSize16x16, 0, 0)
+	selected, err = ctx.SelectedTransformContext(internaltile.TransformSize16x16, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,24 +69,24 @@ func TestPublicTileTransformContext(t *testing.T) {
 		t.Fatalf("reset selected context=%d want 0", selected)
 	}
 
-	var nilCtx *av1.TileTransformContext
-	if _, err := nilCtx.SelectedTransformContext(av1.TileTransformSize16x16, 0, 0); !errors.Is(err, av1.ErrTileInvalidDecodeState) {
-		t.Fatalf("nil context err=%v want %v", err, av1.ErrTileInvalidDecodeState)
+	var nilCtx *tileTransformContext
+	if _, err := nilCtx.SelectedTransformContext(internaltile.TransformSize16x16, 0, 0); !errors.Is(err, internaltile.ErrInvalidDecodeState) {
+		t.Fatalf("nil context err=%v want %v", err, internaltile.ErrInvalidDecodeState)
 	}
 }
 
 func TestPublicTileTransformTreeReplay(t *testing.T) {
-	req := av1.TileTransformTreeRequest{
-		Size:      av1.TileBlockSize16x16,
+	req := internaltile.TransformTreeRequest{
+		Size:      internaltile.BlockSize16x16,
 		X4:        4,
 		Y4:        5,
 		VisibleW4: 4,
 		VisibleH4: 4,
 	}
-	result := av1.TileTransformTreeResult{Y: av1.TileTransformSize8x8}
-	var blocks [4]av1.TileTransformBlock
+	result := internaltile.TransformTreeResult{Y: internaltile.TransformSize8x8}
+	var blocks [4]internaltile.TransformBlock
 	count := 0
-	err := av1.ForEachTileLumaTransformBlock(result, req, func(block av1.TileTransformBlock) error {
+	err := forEachTileLumaTransformBlock(result, req, func(block internaltile.TransformBlock) error {
 		if count >= len(blocks) {
 			t.Fatal("too many blocks")
 		}
@@ -97,11 +97,11 @@ func TestPublicTileTransformTreeReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := [...]av1.TileTransformBlock{
-		{X4: 4, Y4: 5, Size: av1.TileTransformSize8x8, VisibleW4: 2, VisibleH4: 2},
-		{X4: 6, Y4: 5, Size: av1.TileTransformSize8x8, VisibleW4: 2, VisibleH4: 2},
-		{X4: 4, Y4: 7, Size: av1.TileTransformSize8x8, VisibleW4: 2, VisibleH4: 2},
-		{X4: 6, Y4: 7, Size: av1.TileTransformSize8x8, VisibleW4: 2, VisibleH4: 2},
+	want := [...]internaltile.TransformBlock{
+		{X4: 4, Y4: 5, Size: internaltile.TransformSize8x8, VisibleW4: 2, VisibleH4: 2},
+		{X4: 6, Y4: 5, Size: internaltile.TransformSize8x8, VisibleW4: 2, VisibleH4: 2},
+		{X4: 4, Y4: 7, Size: internaltile.TransformSize8x8, VisibleW4: 2, VisibleH4: 2},
+		{X4: 6, Y4: 7, Size: internaltile.TransformSize8x8, VisibleW4: 2, VisibleH4: 2},
 	}
 	if count != len(want) {
 		t.Fatalf("count=%d want %d", count, len(want))
@@ -115,7 +115,7 @@ func TestPublicTileTransformTreeReplay(t *testing.T) {
 	skipReq := req
 	skipReq.SkipTransform = true
 	count = 0
-	if err := av1.ForEachTileLumaTransformBlock(result, skipReq, func(av1.TileTransformBlock) error {
+	if err := forEachTileLumaTransformBlock(result, skipReq, func(internaltile.TransformBlock) error {
 		count++
 		return nil
 	}); err != nil {
@@ -124,27 +124,27 @@ func TestPublicTileTransformTreeReplay(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("skip emitted %d blocks", count)
 	}
-	if err := av1.ForEachTileLumaTransformBlock(result, req, nil); !errors.Is(err, av1.ErrTileInvalidDecodeState) {
-		t.Fatalf("nil visitor err=%v want %v", err, av1.ErrTileInvalidDecodeState)
+	if err := forEachTileLumaTransformBlock(result, req, nil); !errors.Is(err, internaltile.ErrInvalidDecodeState) {
+		t.Fatalf("nil visitor err=%v want %v", err, internaltile.ErrInvalidDecodeState)
 	}
 }
 
 func TestPublicTileTransformContextAllocs(t *testing.T) {
-	var ctx av1.TileTransformContext
-	req := av1.TileTransformPartitionRequest{
-		Size: av1.TileBlockSize32x32,
-		From: av1.TileTransformSize32x32,
+	var ctx tileTransformContext
+	req := internaltile.TransformPartitionRequest{
+		Size: internaltile.BlockSize32x32,
+		From: internaltile.TransformSize32x32,
 	}
-	treeReq := av1.TileTransformTreeRequest{Size: av1.TileBlockSize16x16, VisibleW4: 4, VisibleH4: 4}
-	result := av1.TileTransformTreeResult{Y: av1.TileTransformSize8x8}
+	treeReq := internaltile.TransformTreeRequest{Size: internaltile.BlockSize16x16, VisibleW4: 4, VisibleH4: 4}
+	result := internaltile.TransformTreeResult{Y: internaltile.TransformSize8x8}
 	var err error
 	allocs := testing.AllocsPerRun(1000, func() {
 		ctx.Reset()
 		err = ctx.MarkTransformArea(0, 0, 8, 8, 3, 3, true)
-		_, err = ctx.SelectedTransformContext(av1.TileTransformSize32x32, 0, 0)
+		_, err = ctx.SelectedTransformContext(internaltile.TransformSize32x32, 0, 0)
 		_, _, err = ctx.TransformPartitionContext(req)
-		err = ctx.MarkTransform(av1.TileBlockSize16x16, 0, 0, av1.TileTransformSize8x8, true)
-		err = av1.ForEachTileLumaTransformBlock(result, treeReq, func(av1.TileTransformBlock) error {
+		err = ctx.MarkTransform(internaltile.BlockSize16x16, 0, 0, internaltile.TransformSize8x8, true)
+		err = forEachTileLumaTransformBlock(result, treeReq, func(internaltile.TransformBlock) error {
 			return nil
 		})
 	})

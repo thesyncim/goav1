@@ -3,139 +3,45 @@ package goav1
 import (
 	internalbitstream "github.com/thesyncim/goav1/internal/av1/bitstream"
 	internalencoder "github.com/thesyncim/goav1/internal/av1/encoder"
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internalobu "github.com/thesyncim/goav1/internal/av1/obu"
 )
 
 const (
-	EncoderMaxLayers                           = internalencoder.MaxLayers
-	EncoderMaxTemporalLayers                   = internalencoder.MaxTemporalLayers
-	EncoderMaxSpatialLayers                    = internalencoder.MaxSpatialLayers
-	EncoderWebRTCMaxSpatialLayers              = internalencoder.WebRTCMaxSpatialLayers
-	EncoderWebRTCMaxTemporalLayers             = internalencoder.WebRTCMaxTemporalLayers
-	EncoderWebRTCReferenceBuffers              = internalencoder.WebRTCReferenceBuffers
-	EncoderWebRTCMaxReferences                 = internalencoder.WebRTCMaxFrameReferences
-	EncoderWebRTCRtpTicksPerSecond             = internalencoder.WebRTCRtpTicksPerSecond
-	EncoderWebRTCMinEffortLevel                = internalencoder.WebRTCMinEffortLevel
-	EncoderWebRTCMaxEffortLevel                = internalencoder.WebRTCMaxEffortLevel
-	EncoderWebRTCMaxQuantizer                  = internalencoder.WebRTCMaxQuantizer
-	EncoderWebRTCMaxDimension                  = internalencoder.WebRTCMaxDimension
-	EncoderWebRTCMaxFramePixels                = internalencoder.WebRTCMaxFramePixels
-	EncoderWebRTCMaxBitrateKbps                = internalencoder.WebRTCMaxBitrateKbps
-	EncoderWebRTCRtpDependencyMaxDecodeTargets = internalencoder.WebRTCRtpDependencyMaxDecodeTargets
-	EncoderWebRTCRtpDependencyMaxTemplates     = internalencoder.WebRTCRtpDependencyMaxTemplates
-	EncoderLibaomSVCReferenceSlots             = internalencoder.LibaomSVCReferenceSlots
-)
+	EncoderWebRTCMaxSpatialLayers = internalencoder.WebRTCMaxSpatialLayers
 
-type EncoderProfile = internalencoder.Profile
+	EncoderWebRTCMinEffortLevel = internalencoder.WebRTCMinEffortLevel
+	EncoderWebRTCMaxEffortLevel = internalencoder.WebRTCMaxEffortLevel
+)
 
 const (
 	EncoderProfile0 = internalencoder.Profile0
-	EncoderProfile1 = internalencoder.Profile1
-	EncoderProfile2 = internalencoder.Profile2
 )
 
 type EncoderScalabilityMode = internalencoder.ScalabilityMode
 
 const (
-	EncoderScalabilityModeL1T1           = internalencoder.ScalabilityModeL1T1
-	EncoderScalabilityModeL1T2           = internalencoder.ScalabilityModeL1T2
-	EncoderScalabilityModeL1T3           = internalencoder.ScalabilityModeL1T3
-	EncoderScalabilityModeL2T1           = internalencoder.ScalabilityModeL2T1
-	EncoderScalabilityModeL2T1h          = internalencoder.ScalabilityModeL2T1h
-	EncoderScalabilityModeL2T1_KEY       = internalencoder.ScalabilityModeL2T1_KEY
-	EncoderScalabilityModeL2T2           = internalencoder.ScalabilityModeL2T2
-	EncoderScalabilityModeL2T2h          = internalencoder.ScalabilityModeL2T2h
-	EncoderScalabilityModeL2T2_KEY       = internalencoder.ScalabilityModeL2T2_KEY
-	EncoderScalabilityModeL2T2_KEY_SHIFT = internalencoder.ScalabilityModeL2T2_KEY_SHIFT
-	EncoderScalabilityModeL2T3           = internalencoder.ScalabilityModeL2T3
-	EncoderScalabilityModeL2T3h          = internalencoder.ScalabilityModeL2T3h
-	EncoderScalabilityModeL2T3_KEY       = internalencoder.ScalabilityModeL2T3_KEY
+	EncoderScalabilityModeL1T1 = internalencoder.ScalabilityModeL1T1
+	EncoderScalabilityModeL1T2 = internalencoder.ScalabilityModeL1T2
+	EncoderScalabilityModeL1T3 = internalencoder.ScalabilityModeL1T3
+
 	EncoderScalabilityModeL2T3_KEY_SHIFT = internalencoder.ScalabilityModeL2T3_KEY_SHIFT
-	EncoderScalabilityModeL3T1           = internalencoder.ScalabilityModeL3T1
-	EncoderScalabilityModeL3T1h          = internalencoder.ScalabilityModeL3T1h
-	EncoderScalabilityModeL3T1_KEY       = internalencoder.ScalabilityModeL3T1_KEY
-	EncoderScalabilityModeL3T2           = internalencoder.ScalabilityModeL3T2
-	EncoderScalabilityModeL3T2h          = internalencoder.ScalabilityModeL3T2h
-	EncoderScalabilityModeL3T2_KEY       = internalencoder.ScalabilityModeL3T2_KEY
+
 	EncoderScalabilityModeL3T2_KEY_SHIFT = internalencoder.ScalabilityModeL3T2_KEY_SHIFT
-	EncoderScalabilityModeL3T3           = internalencoder.ScalabilityModeL3T3
-	EncoderScalabilityModeL3T3h          = internalencoder.ScalabilityModeL3T3h
-	EncoderScalabilityModeL3T3_KEY       = internalencoder.ScalabilityModeL3T3_KEY
+
 	EncoderScalabilityModeL3T3_KEY_SHIFT = internalencoder.ScalabilityModeL3T3_KEY_SHIFT
-	EncoderScalabilityModeS2T1           = internalencoder.ScalabilityModeS2T1
-	EncoderScalabilityModeS2T1h          = internalencoder.ScalabilityModeS2T1h
-	EncoderScalabilityModeS2T2           = internalencoder.ScalabilityModeS2T2
-	EncoderScalabilityModeS2T2h          = internalencoder.ScalabilityModeS2T2h
-	EncoderScalabilityModeS2T3           = internalencoder.ScalabilityModeS2T3
-	EncoderScalabilityModeS2T3h          = internalencoder.ScalabilityModeS2T3h
-	EncoderScalabilityModeS3T1           = internalencoder.ScalabilityModeS3T1
-	EncoderScalabilityModeS3T1h          = internalencoder.ScalabilityModeS3T1h
-	EncoderScalabilityModeS3T2           = internalencoder.ScalabilityModeS3T2
-	EncoderScalabilityModeS3T2h          = internalencoder.ScalabilityModeS3T2h
-	EncoderScalabilityModeS3T3           = internalencoder.ScalabilityModeS3T3
-	EncoderScalabilityModeS3T3h          = internalencoder.ScalabilityModeS3T3h
 )
 
 type EncoderRational = internalencoder.Rational
 type EncoderResolution = internalencoder.Resolution
 type EncoderRateControlMode = internalencoder.RateControlMode
 type EncoderContentHint = internalencoder.ContentHint
-type EncoderSpatialLayer = internalencoder.SpatialLayer
-type EncoderConfig = internalencoder.Config
-type EncoderFrameType = internalencoder.FrameType
-type EncoderFrameEncodeSettings = internalencoder.FrameEncodeSettings
-type EncoderReferenceBufferState = internalencoder.ReferenceBufferState
-type EncoderLibaomSVCRefFrameConfig = internalencoder.LibaomSVCRefFrameConfig
-type EncoderDecodeTargetIndication = internalencoder.DecodeTargetIndication
-type EncoderFrameIDBufferState = internalencoder.FrameIDBufferState
-type EncoderWebRTCGenericFrameInfo = internalencoder.WebRTCGenericFrameInfo
-type EncoderWebRTCFrameDependencyTemplate = internalencoder.WebRTCFrameDependencyTemplate
-type EncoderWebRTCFrameDependencyStructure = internalencoder.WebRTCFrameDependencyStructure
-type EncoderWebRTCDependencyDescriptorOptions = internalencoder.WebRTCDependencyDescriptorOptions
-type EncoderWebRTCDependencyStructureState = internalencoder.WebRTCDependencyStructureState
-type EncoderWebRTCFrameControl = internalencoder.WebRTCFrameControl
-type EncoderWebRTCTemporalUnitControl = internalencoder.WebRTCTemporalUnitControl
-type EncoderOBU = internalencoder.OBU
-type EncoderSequenceHeader = internalencoder.SequenceHeader
-type EncoderSequenceOperatingPoint = internalencoder.SequenceOperatingPoint
-type EncoderSequenceColorConfig = internalencoder.SequenceColorConfig
-type EncoderFrameHeaderType = internalencoder.FrameHeaderType
-type EncoderFrameHeaderPrefix = internalencoder.FrameHeaderPrefix
-type EncoderIntraFrameHeaderParams = internalencoder.IntraFrameHeaderParams
-type EncoderInterFrameHeaderParams = internalencoder.InterFrameHeaderParams
-type EncoderIntraFrameSize = internalencoder.IntraFrameSize
-type EncoderInterFrameSize = internalencoder.InterFrameSize
-type EncoderQuantizationParams = internalencoder.QuantizationParams
-type EncoderSegmentData = internalencoder.SegmentData
-type EncoderSegmentationData = internalencoder.SegmentationData
-type EncoderSegmentationParams = internalencoder.SegmentationParams
-type EncoderDeltaParams = internalencoder.DeltaParams
-type EncoderLoopFilterDeltas = internalencoder.LoopFilterDeltas
-type EncoderLoopFilterParams = internalencoder.LoopFilterParams
-type EncoderCDEFParams = internalencoder.CDEFParams
-type EncoderRestorationType = internalencoder.RestorationType
-type EncoderRestorationParams = internalencoder.RestorationParams
-type EncoderInterpolationFilter = internalencoder.InterpolationFilter
-type EncoderTileInfo = internalencoder.TileInfo
-type EncoderTilePayload = internalencoder.TilePayload
-type EncoderTransformMode = internalencoder.TransformMode
-type EncoderReferenceMode = internalencoder.ReferenceMode
-type EncoderTransformReferenceParams = internalencoder.TransformReferenceParams
-type EncoderSkipModeParams = internalencoder.SkipModeParams
-type EncoderFrameModeParams = internalencoder.FrameModeParams
-type EncoderGlobalMotionType = internalencoder.GlobalMotionType
-type EncoderWarpedMotionParams = internalencoder.WarpedMotionParams
-type EncoderGlobalMotionParams = internalencoder.GlobalMotionParams
-type EncoderFilmGrainParams = internalencoder.FilmGrainParams
-type EncoderIntraHeaderTemporalUnit = internalencoder.IntraHeaderTemporalUnit
-type EncoderInterHeaderFrame = internalencoder.InterHeaderFrame
-type EncoderWebRTCKeyFrameTemporalUnit = internalencoder.WebRTCKeyFrameTemporalUnit
-type EncoderWebRTCDeltaFrameTemporalUnit = internalencoder.WebRTCDeltaFrameTemporalUnit
-type EncoderWebRTCPictureTemporalUnit = internalencoder.WebRTCPictureTemporalUnit
-type EncoderWebRTCState = internalencoder.WebRTCEncoderState
 
-type WebRTCEncoder struct {
+type EncoderConfig = internalencoder.Config
+
+type webRTCEncoder struct {
 	config EncoderConfig
-	state  EncoderWebRTCState
+	state  internalencoder.WebRTCEncoderState
 }
 
 type EncoderWebRTCRTPPacketDependencyDescriptorOptions struct {
@@ -144,14 +50,14 @@ type EncoderWebRTCRTPPacketDependencyDescriptorOptions struct {
 	ActiveDecodeTargetsMask                 uint32
 }
 
-// EncoderWebRTCVideoLayersAllocationConfig controls how encoder configuration
+// encoderWebRTCVideoLayersAllocationConfig controls how encoder configuration
 // is converted into WebRTC's video-layers-allocation RTP header extension.
 //
 // The zero value describes one RTP stream, all configured spatial layers active,
 // and resolution/framerate omitted. For multi-temporal modes, callers must set
 // TargetBitratesKbps[spatial][temporal] to the cumulative bitrate ladder in
 // kbps; goav1 does not invent a temporal bitrate split from a spatial target.
-type EncoderWebRTCVideoLayersAllocationConfig struct {
+type encoderWebRTCVideoLayersAllocationConfig struct {
 	RTPStreamID    int
 	RTPStreamCount int
 
@@ -168,46 +74,46 @@ type EncoderWebRTCVideoLayersAllocationConfig struct {
 	// TargetBitratesKbps holds cumulative target bitrates in kbps by spatial
 	// layer then temporal layer. Single-temporal layers may omit this and use the
 	// normalized encoder spatial-layer target bitrate.
-	TargetBitratesKbps [EncoderWebRTCMaxSpatialLayers][EncoderWebRTCMaxTemporalLayers]uint32
+	TargetBitratesKbps [EncoderWebRTCMaxSpatialLayers][internalencoder.WebRTCMaxTemporalLayers]uint32
 
 	IncludeResolutionAndFramerate bool
 }
 
-// EncoderWebRTCVideoLayersAllocationScratch owns the backing storage used by
-// EncoderWebRTCVideoLayersAllocationInto. The returned RTPVideoLayersAllocation
+// encoderWebRTCVideoLayersAllocationScratch owns the backing storage used by
+// encoderWebRTCVideoLayersAllocationInto. The returned RTPVideoLayersAllocation
 // aliases this scratch until the next call that reuses it.
-type EncoderWebRTCVideoLayersAllocationScratch struct {
+type encoderWebRTCVideoLayersAllocationScratch struct {
 	ActiveSpatialLayers [EncoderWebRTCMaxSpatialLayers]RTPVideoLayersAllocationLayer
-	TargetBitratesKbps  [EncoderWebRTCMaxSpatialLayers][EncoderWebRTCMaxTemporalLayers]uint32
+	TargetBitratesKbps  [EncoderWebRTCMaxSpatialLayers][internalencoder.WebRTCMaxTemporalLayers]uint32
 }
 
-type EncoderFrameSamplePlanes struct {
-	Y FrameSamplePlane
-	U FrameSamplePlane
-	V FrameSamplePlane
+type encoderFrameSamplePlanes struct {
+	Y internalframe.SamplePlane
+	U internalframe.SamplePlane
+	V internalframe.SamplePlane
 }
 
-type EncoderWebRTCPictureSampleScratchSize struct {
+type encoderWebRTCPictureSampleScratchSize struct {
 	Samples  int
 	FrameNum int
 }
 
-type EncoderWebRTCPictureSampleScratch struct {
+type encoderWebRTCPictureSampleScratch struct {
 	Samples []uint16
 }
 
-type EncoderWebRTCPictureSamplePlanes struct {
-	Frames   [EncoderWebRTCMaxSpatialLayers]EncoderFrameSamplePlanes
+type encoderWebRTCPictureSamplePlanes struct {
+	Frames   [EncoderWebRTCMaxSpatialLayers]encoderFrameSamplePlanes
 	FrameNum uint8
 }
 
-type EncoderWebRTCPictureTemporalUnitRTPScratchSize struct {
+type encoderWebRTCPictureTemporalUnitRTPScratchSize struct {
 	Packetizer         RTPPacketizerScratchSize
 	MaxPayloadBytes    int
 	MaxDescriptorBytes int
 }
 
-type EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize struct {
+type encoderWebRTCPictureTemporalUnitFramesRTPScratchSize struct {
 	FrameOBUBytes      int
 	FrameSpans         int
 	PacketSpans        int
@@ -216,32 +122,32 @@ type EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize struct {
 	MaxDescriptorBytes int
 }
 
-type EncoderWebRTCPictureTemporalUnitFramesRTPScratch struct {
+type encoderWebRTCPictureTemporalUnitFramesRTPScratch struct {
 	FrameOBU    []byte
-	FrameSpans  []EncoderWebRTCFrameRTPPacketSpan
+	FrameSpans  []encoderWebRTCFrameRTPPacketSpan
 	PacketSpans []EncoderWebRTCRTPPacketSpan
 	OBUs        []RTPPacketizerOBU
 	Packets     []RTPPacketPlan
 	Work        []RTPPacketPlan
 }
 
-type EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo struct {
+type encoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo struct {
 	PacketCount     int
 	PayloadBytes    int
 	DescriptorBytes int
 }
 
-type EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo struct {
+type encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo struct {
 	FrameOBUBytes int
-	RTP           EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo
+	RTP           encoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo
 }
 
-type EncoderWebRTCFrameOBUSpan struct {
+type encoderWebRTCFrameOBUSpan struct {
 	Offset int
 	Length int
 }
 
-type EncoderWebRTCFrameRTPPacketSpan struct {
+type encoderWebRTCFrameRTPPacketSpan struct {
 	FrameOBUOffset int
 	FrameOBULength int
 	PacketOffset   int
@@ -263,90 +169,19 @@ const (
 	EncoderContentAuto   = internalencoder.ContentAuto
 	EncoderContentCamera = internalencoder.ContentCamera
 	EncoderContentScreen = internalencoder.ContentScreen
-
-	EncoderFrameTypeKey   = internalencoder.FrameTypeKey
-	EncoderFrameTypeStart = internalencoder.FrameTypeStart
-	EncoderFrameTypeDelta = internalencoder.FrameTypeDelta
-
-	EncoderFrameHeaderTypeKey       = internalencoder.FrameHeaderTypeKey
-	EncoderFrameHeaderTypeInter     = internalencoder.FrameHeaderTypeInter
-	EncoderFrameHeaderTypeIntraOnly = internalencoder.FrameHeaderTypeIntraOnly
-	EncoderFrameHeaderTypeSwitch    = internalencoder.FrameHeaderTypeSwitch
-	EncoderPrimaryRefNone           = internalencoder.EncoderPrimaryRefNone
-
-	EncoderSequenceColorPrimariesBT709         = internalencoder.SequenceColorPrimariesBT709
-	EncoderSequenceTransferCharacteristicsSRGB = internalencoder.SequenceTransferCharacteristicsSRGB
-	EncoderSequenceMatrixCoefficientsIdentity  = internalencoder.SequenceMatrixCoefficientsIdentity
-	EncoderSequenceSelectScreenContentTools    = internalencoder.SequenceSelectScreenContentTools
-	EncoderSequenceSelectIntegerMV             = internalencoder.SequenceSelectIntegerMV
-	EncoderSequenceLevelMax                    = internalencoder.SequenceLevelMax
-
-	EncoderDecodeTargetNotPresent  = internalencoder.DecodeTargetNotPresent
-	EncoderDecodeTargetDiscardable = internalencoder.DecodeTargetDiscardable
-	EncoderDecodeTargetSwitch      = internalencoder.DecodeTargetSwitch
-	EncoderDecodeTargetRequired    = internalencoder.DecodeTargetRequired
-
-	EncoderRestorationNone       = internalencoder.RestorationNone
-	EncoderRestorationSwitchable = internalencoder.RestorationSwitchable
-	EncoderRestorationWiener     = internalencoder.RestorationWiener
-	EncoderRestorationSGRProj    = internalencoder.RestorationSGRProj
-
-	EncoderInterpolationEightTap   = internalencoder.InterpolationEightTap
-	EncoderInterpolationSmooth     = internalencoder.InterpolationSmooth
-	EncoderInterpolationSharp      = internalencoder.InterpolationSharp
-	EncoderInterpolationBilinear   = internalencoder.InterpolationBilinear
-	EncoderInterpolationSwitchable = internalencoder.InterpolationSwitchable
-
-	EncoderTransformMode4x4Only    = internalencoder.TransformMode4x4Only
-	EncoderTransformModeLargest    = internalencoder.TransformModeLargest
-	EncoderTransformModeSwitchable = internalencoder.TransformModeSwitchable
-
-	EncoderReferenceModeSingle   = internalencoder.ReferenceModeSingle
-	EncoderReferenceModeCompound = internalencoder.ReferenceModeCompound
-	EncoderReferenceModeSelect   = internalencoder.ReferenceModeSelect
-
-	EncoderGlobalMotionIdentity    = internalencoder.GlobalMotionIdentity
-	EncoderGlobalMotionTranslation = internalencoder.GlobalMotionTranslation
-	EncoderGlobalMotionRotZoom     = internalencoder.GlobalMotionRotZoom
-	EncoderGlobalMotionAffine      = internalencoder.GlobalMotionAffine
-
-	EncoderMaxFilmGrainYPoints  = internalencoder.MaxFilmGrainYPoints
-	EncoderMaxFilmGrainUVPoints = internalencoder.MaxFilmGrainUVPoints
-	EncoderMaxFilmGrainYCoeffs  = internalencoder.MaxFilmGrainYCoeffs
-	EncoderMaxFilmGrainUVCoeffs = internalencoder.MaxFilmGrainUVCoeffs
-
-	EncoderMaxTileRows = internalencoder.MaxTileRows
-	EncoderMaxTileCols = internalencoder.MaxTileCols
 )
 
 var (
-	ErrEncoderInvalidConfig = internalencoder.ErrInvalidConfig
-	ErrEncoderInvalidFrame  = internalencoder.ErrInvalidFrame
-	ErrEncoderUnsupported   = internalencoder.ErrUnsupported
-	ErrEncoderShortBuffer   = internalbitstream.ErrShortBuffer
+	ErrEncoderInvalidFrame = internalencoder.ErrInvalidFrame
 )
 
-func ParseEncoderProfile(profile string) (EncoderProfile, bool) {
-	return internalencoder.ParseProfile(profile)
-}
-
-func ParseEncoderScalabilityMode(mode string) (EncoderScalabilityMode, bool) {
-	return internalencoder.ParseScalabilityMode(mode)
-}
-
-// EncoderScalabilityModes returns every explicit encoder scalabilityMode value
+// encoderScalabilityModes returns every explicit encoder scalabilityMode value
 // accepted by encoder config, including implemented key-shift variants that
 // are not in the pinned WebRTC catalogue. Use EncoderWebRTCScalabilityModes
 // when validating browser setParameters()/libwebrtc catalogue values.
-func EncoderScalabilityModes() []EncoderScalabilityMode {
+func encoderScalabilityModes() []EncoderScalabilityMode {
 	out := make([]EncoderScalabilityMode, 0, internalencoder.ScalabilityModeCount())
 	return internalencoder.AppendScalabilityModes(out)
-}
-
-// AppendEncoderScalabilityModes appends every explicit encoder scalabilityMode
-// value accepted by encoder config to dst and returns the extended slice.
-func AppendEncoderScalabilityModes(dst []EncoderScalabilityMode) []EncoderScalabilityMode {
-	return internalencoder.AppendScalabilityModes(dst)
 }
 
 // EncoderWebRTCScalabilityModes returns the pinned-libwebrtc WebRTC SVC
@@ -356,71 +191,21 @@ func EncoderWebRTCScalabilityModes() []EncoderScalabilityMode {
 	return internalencoder.AppendWebRTCScalabilityModes(out)
 }
 
-// AppendEncoderWebRTCScalabilityModes appends the pinned-libwebrtc WebRTC SVC
-// scalabilityMode values supported by the WebRTC encoder/control surfaces to
-// dst and returns the extended slice.
-func AppendEncoderWebRTCScalabilityModes(dst []EncoderScalabilityMode) []EncoderScalabilityMode {
-	return internalencoder.AppendWebRTCScalabilityModes(dst)
-}
-
-// EncoderWebRTCSVCScalabilityModes returns every W3C WebRTC-SVC scalabilityMode
+// encoderWebRTCSVCScalabilityModes returns every W3C WebRTC-SVC scalabilityMode
 // value implemented by the encoder/control surfaces, including W3C KEY_SHIFT
 // variants that are not present in the pinned libwebrtc catalogue.
-func EncoderWebRTCSVCScalabilityModes() []EncoderScalabilityMode {
+func encoderWebRTCSVCScalabilityModes() []EncoderScalabilityMode {
 	out := make([]EncoderScalabilityMode, 0, internalencoder.WebRTCSVCScalabilityModeCount())
 	return internalencoder.AppendWebRTCSVCScalabilityModes(out)
 }
 
-// AppendEncoderWebRTCSVCScalabilityModes appends every implemented W3C
-// WebRTC-SVC scalabilityMode value to dst and returns the extended slice.
-func AppendEncoderWebRTCSVCScalabilityModes(dst []EncoderScalabilityMode) []EncoderScalabilityMode {
-	return internalencoder.AppendWebRTCSVCScalabilityModes(dst)
-}
-
-// ValidateEncoderWebRTCActiveScalabilityModes validates the active
+// validateEncoderWebRTCActiveScalabilityModes validates the active
 // scalabilityMode values for one WebRTC sender. Pass only active encodings; a
 // sender with no active encodings is accepted. Per the WebRTC-SVC setParameters
 // rule, multiple active encodings cannot include a single-SSRC simulcast S mode
 // such as S2T1 or S3T3h.
-func ValidateEncoderWebRTCActiveScalabilityModes(modes ...EncoderScalabilityMode) error {
+func validateEncoderWebRTCActiveScalabilityModes(modes ...EncoderScalabilityMode) error {
 	return internalencoder.ValidateWebRTCActiveScalabilityModes(modes)
-}
-
-// EncoderWebRTCScalabilityModeIDC maps a W3C WebRTC scalabilityMode value to
-// its predefined AV1 metadata_scalability() scalability_mode_idc value. ok is
-// false when AV1 has no predefined IDC for the WebRTC mode. The metadata OBU
-// helpers still support those modes by writing MetadataScalabilityModeSS with
-// an explicit scalability_structure().
-func EncoderWebRTCScalabilityModeIDC(mode EncoderScalabilityMode) (idc uint8, ok bool) {
-	return internalencoder.WebRTCScalabilityModeIDC(mode)
-}
-
-func EncoderWebRTCScalabilityMetadataPayloadSize(mode EncoderScalabilityMode) (size int, ok bool) {
-	return internalencoder.WebRTCScalabilityMetadataPayloadSize(mode)
-}
-
-func AppendEncoderWebRTCScalabilityMetadataPayload(dst []byte, mode EncoderScalabilityMode) ([]byte, bool, error) {
-	return internalencoder.AppendWebRTCScalabilityMetadataPayload(dst, mode)
-}
-
-func EncoderLowOverheadWebRTCScalabilityMetadataOBUSize(mode EncoderScalabilityMode) (size int, ok bool, err error) {
-	return internalencoder.LowOverheadWebRTCScalabilityMetadataOBUSize(mode)
-}
-
-func AppendEncoderLowOverheadWebRTCScalabilityMetadataOBU(dst []byte, mode EncoderScalabilityMode) ([]byte, bool, error) {
-	return internalencoder.AppendLowOverheadWebRTCScalabilityMetadataOBU(dst, mode)
-}
-
-func DefaultEncoderScalabilityMode(temporalLayers uint8, spatialLayers uint8) (EncoderScalabilityMode, bool) {
-	return internalencoder.DefaultScalabilityMode(temporalLayers, spatialLayers)
-}
-
-func LimitEncoderScalabilityModeSpatialLayers(mode EncoderScalabilityMode, limit uint8) (EncoderScalabilityMode, bool) {
-	return internalencoder.LimitScalabilityModeSpatialLayers(mode, limit)
-}
-
-func EncoderLimitedSpatialLayers(resolution EncoderResolution) uint8 {
-	return internalencoder.LimitedSpatialLayers(resolution)
 }
 
 func SetWebRTCEncoderSVCConfig(config EncoderConfig, requestedTemporalLayers uint8, requestedSpatialLayers uint8) (EncoderConfig, error) {
@@ -448,27 +233,27 @@ func EncoderWebRTCRTPFrameDuration(config EncoderConfig) (EncoderRational, error
 	return EncoderRational{Num: int32(num), Den: int32(den)}, nil
 }
 
-// EncoderWebRTCVideoLayersAllocation builds WebRTC's video-layers-allocation
+// encoderWebRTCVideoLayersAllocation builds WebRTC's video-layers-allocation
 // RTP header-extension payload model from an encoder config and explicit
 // allocation controls. The result is ready for RTPVideoLayersAllocationSize,
 // PutRTPVideoLayersAllocationHeaderExtension, or
 // EncoderWebRTCRTPPacketHeaderConfig.VideoLayersAllocation.
-func EncoderWebRTCVideoLayersAllocation(config EncoderConfig, allocationConfig EncoderWebRTCVideoLayersAllocationConfig) (RTPVideoLayersAllocation, error) {
-	var scratch EncoderWebRTCVideoLayersAllocationScratch
-	allocation, err := EncoderWebRTCVideoLayersAllocationInto(config, allocationConfig, &scratch)
+func encoderWebRTCVideoLayersAllocation(config EncoderConfig, allocationConfig encoderWebRTCVideoLayersAllocationConfig) (RTPVideoLayersAllocation, error) {
+	var scratch encoderWebRTCVideoLayersAllocationScratch
+	allocation, err := encoderWebRTCVideoLayersAllocationInto(config, allocationConfig, &scratch)
 	if err != nil {
 		return RTPVideoLayersAllocation{}, err
 	}
 	return cloneRTPVideoLayersAllocation(allocation), nil
 }
 
-// EncoderWebRTCVideoLayersAllocationInto is EncoderWebRTCVideoLayersAllocation
+// encoderWebRTCVideoLayersAllocationInto is encoderWebRTCVideoLayersAllocation
 // with caller-owned scratch for production control loops that refresh layer
 // allocation metadata when bitrate, framerate, active layers, or scalability
 // settings change.
-func EncoderWebRTCVideoLayersAllocationInto(config EncoderConfig, allocationConfig EncoderWebRTCVideoLayersAllocationConfig, scratch *EncoderWebRTCVideoLayersAllocationScratch) (RTPVideoLayersAllocation, error) {
+func encoderWebRTCVideoLayersAllocationInto(config EncoderConfig, allocationConfig encoderWebRTCVideoLayersAllocationConfig, scratch *encoderWebRTCVideoLayersAllocationScratch) (RTPVideoLayersAllocation, error) {
 	if scratch == nil {
-		return RTPVideoLayersAllocation{}, ErrEncoderInvalidConfig
+		return RTPVideoLayersAllocation{}, internalencoder.ErrInvalidConfig
 	}
 	normalized, err := internalencoder.SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
 	if err != nil {
@@ -477,8 +262,8 @@ func EncoderWebRTCVideoLayersAllocationInto(config EncoderConfig, allocationConf
 	spatialLayers := int(normalized.SpatialLayerCount)
 	temporalLayers := int(normalized.TemporalLayerCount)
 	if spatialLayers <= 0 || spatialLayers > EncoderWebRTCMaxSpatialLayers ||
-		temporalLayers <= 0 || temporalLayers > EncoderWebRTCMaxTemporalLayers {
-		return RTPVideoLayersAllocation{}, ErrEncoderInvalidConfig
+		temporalLayers <= 0 || temporalLayers > internalencoder.WebRTCMaxTemporalLayers {
+		return RTPVideoLayersAllocation{}, internalencoder.ErrInvalidConfig
 	}
 
 	rtpStreamCount := allocationConfig.RTPStreamCount
@@ -487,7 +272,7 @@ func EncoderWebRTCVideoLayersAllocationInto(config EncoderConfig, allocationConf
 	}
 	if rtpStreamCount < 1 || rtpStreamCount > 4 ||
 		allocationConfig.RTPStreamID < 0 || allocationConfig.RTPStreamID >= rtpStreamCount {
-		return RTPVideoLayersAllocation{}, ErrEncoderInvalidConfig
+		return RTPVideoLayersAllocation{}, internalencoder.ErrInvalidConfig
 	}
 
 	allSpatialMask := uint8((1 << uint(spatialLayers)) - 1)
@@ -495,12 +280,12 @@ func EncoderWebRTCVideoLayersAllocationInto(config EncoderConfig, allocationConf
 	if allocationConfig.ActiveSpatialLayerMaskSet {
 		activeMask = allocationConfig.ActiveSpatialLayerMask
 		if activeMask&^allSpatialMask != 0 {
-			return RTPVideoLayersAllocation{}, ErrEncoderInvalidConfig
+			return RTPVideoLayersAllocation{}, internalencoder.ErrInvalidConfig
 		}
 	}
 	if activeMask == 0 {
 		if allocationConfig.RTPStreamID != 0 || rtpStreamCount != 1 {
-			return RTPVideoLayersAllocation{}, ErrEncoderInvalidConfig
+			return RTPVideoLayersAllocation{}, internalencoder.ErrInvalidConfig
 		}
 		return RTPVideoLayersAllocation{RTPStreamCount: 1}, nil
 	}
@@ -526,7 +311,7 @@ func EncoderWebRTCVideoLayersAllocationInto(config EncoderConfig, allocationConf
 			}
 			layerStreamID := allocationConfig.SpatialLayerRTPStreamIDs[spatialID]
 			if layerStreamID < 0 || layerStreamID >= rtpStreamCount {
-				return RTPVideoLayersAllocation{}, ErrEncoderInvalidConfig
+				return RTPVideoLayersAllocation{}, internalencoder.ErrInvalidConfig
 			}
 			if layerStreamID != streamID {
 				continue
@@ -539,7 +324,7 @@ func EncoderWebRTCVideoLayersAllocationInto(config EncoderConfig, allocationConf
 		}
 	}
 	if len(allocation.ActiveSpatialLayers) == 0 {
-		return RTPVideoLayersAllocation{}, ErrEncoderInvalidConfig
+		return RTPVideoLayersAllocation{}, internalencoder.ErrInvalidConfig
 	}
 	if err := ValidateRTPVideoLayersAllocation(allocation); err != nil {
 		return RTPVideoLayersAllocation{}, err
@@ -563,7 +348,7 @@ func cloneRTPVideoLayersAllocation(allocation RTPVideoLayersAllocation) RTPVideo
 	return out
 }
 
-func encoderWebRTCVideoLayersAllocationLayer(config EncoderConfig, allocationConfig EncoderWebRTCVideoLayersAllocationConfig, spatialID int, temporalLayers int, rtpStreamID int, framerate int, targetScratch []uint32) (RTPVideoLayersAllocationLayer, error) {
+func encoderWebRTCVideoLayersAllocationLayer(config EncoderConfig, allocationConfig encoderWebRTCVideoLayersAllocationConfig, spatialID int, temporalLayers int, rtpStreamID int, framerate int, targetScratch []uint32) (RTPVideoLayersAllocationLayer, error) {
 	targets, err := encoderWebRTCVideoLayersAllocationTargets(config, allocationConfig, spatialID, temporalLayers, targetScratch)
 	if err != nil {
 		return RTPVideoLayersAllocationLayer{}, err
@@ -582,9 +367,9 @@ func encoderWebRTCVideoLayersAllocationLayer(config EncoderConfig, allocationCon
 	return layer, nil
 }
 
-func encoderWebRTCVideoLayersAllocationTargets(config EncoderConfig, allocationConfig EncoderWebRTCVideoLayersAllocationConfig, spatialID int, temporalLayers int, targetScratch []uint32) ([]uint32, error) {
+func encoderWebRTCVideoLayersAllocationTargets(config EncoderConfig, allocationConfig encoderWebRTCVideoLayersAllocationConfig, spatialID int, temporalLayers int, targetScratch []uint32) ([]uint32, error) {
 	if len(targetScratch) < temporalLayers {
-		return nil, ErrEncoderInvalidConfig
+		return nil, internalencoder.ErrInvalidConfig
 	}
 	targets := targetScratch[:temporalLayers]
 	var previous uint32
@@ -600,9 +385,9 @@ func encoderWebRTCVideoLayersAllocationTargets(config EncoderConfig, allocationC
 			}
 		}
 		if target == 0 ||
-			target > uint32(EncoderWebRTCMaxBitrateKbps) ||
+			target > uint32(internalencoder.WebRTCMaxBitrateKbps) ||
 			(temporalID > 0 && target < previous) {
-			return nil, ErrEncoderInvalidConfig
+			return nil, internalencoder.ErrInvalidConfig
 		}
 		targets[temporalID] = target
 		previous = target
@@ -612,11 +397,11 @@ func encoderWebRTCVideoLayersAllocationTargets(config EncoderConfig, allocationC
 
 func encoderWebRTCVideoLayersAllocationFramerate(rate EncoderRational) (int, error) {
 	if !rate.Valid() {
-		return 0, ErrEncoderInvalidConfig
+		return 0, internalencoder.ErrInvalidConfig
 	}
 	fps := int((int64(rate.Num) + int64(rate.Den)/2) / int64(rate.Den))
 	if fps < 1 || fps > 0xff {
-		return 0, ErrEncoderInvalidConfig
+		return 0, internalencoder.ErrInvalidConfig
 	}
 	return fps, nil
 }
@@ -631,27 +416,7 @@ func encoderWebRTCRTPDurationGCD(a int64, b int64) int64 {
 	return a
 }
 
-func ValidateEncoderTemporalUnitFrames(frames []EncoderFrameEncodeSettings, state EncoderReferenceBufferState, rcMode EncoderRateControlMode) (EncoderReferenceBufferState, error) {
-	return internalencoder.ValidateTemporalUnitFrames(frames, state, rcMode)
-}
-
-func EncoderLibaomSVCRefFrameConfigForFrame(settings EncoderFrameEncodeSettings) (EncoderLibaomSVCRefFrameConfig, error) {
-	return internalencoder.LibaomSVCRefFrameConfigForFrame(settings)
-}
-
-func EncoderWebRTCGenericFrameInfoForFrame(settings EncoderFrameEncodeSettings, frameID uint64, state EncoderFrameIDBufferState, spatialLayers uint8, temporalLayers uint8) (EncoderWebRTCGenericFrameInfo, EncoderFrameIDBufferState, error) {
-	return internalencoder.WebRTCGenericFrameInfoForFrame(settings, frameID, state, spatialLayers, temporalLayers)
-}
-
-func EncoderWebRTCFrameDependencyStructureForConfig(config EncoderConfig) (EncoderWebRTCFrameDependencyStructure, error) {
-	return internalencoder.WebRTCFrameDependencyStructureForConfig(config)
-}
-
-func EncoderWebRTCTemplateIDForFrame(structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo) (uint8, error) {
-	return internalencoder.WebRTCTemplateIDForFrame(structure, info)
-}
-
-func EncoderWebRTCRTPDependencyDescriptorMandatoryForFrame(structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo, firstPacketInFrame bool, lastPacketInFrame bool) (RTPDependencyDescriptorMandatory, error) {
+func encoderWebRTCRTPDependencyDescriptorMandatoryForFrame(structure internalencoder.WebRTCFrameDependencyStructure, info internalencoder.WebRTCGenericFrameInfo, firstPacketInFrame bool, lastPacketInFrame bool) (RTPDependencyDescriptorMandatory, error) {
 	templateID, err := internalencoder.WebRTCTemplateIDForFrame(structure, info)
 	if err != nil {
 		return RTPDependencyDescriptorMandatory{}, err
@@ -664,41 +429,7 @@ func EncoderWebRTCRTPDependencyDescriptorMandatoryForFrame(structure EncoderWebR
 	}, nil
 }
 
-func EncoderWebRTCDependencyDescriptorSize(structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo, attachStructure bool) (int, error) {
-	return internalencoder.WebRTCDependencyDescriptorSize(structure, info, attachStructure)
-}
-
-func EncoderWebRTCAllDecodeTargetsMask(structure EncoderWebRTCFrameDependencyStructure) (uint32, error) {
-	return internalencoder.WebRTCAllDecodeTargetsMask(structure)
-}
-
-func EncoderWebRTCActiveDecodeTargetsMask(structure EncoderWebRTCFrameDependencyStructure, maxSpatialID uint8, maxTemporalID uint8) (uint32, error) {
-	return internalencoder.WebRTCActiveDecodeTargetsMask(structure, maxSpatialID, maxTemporalID)
-}
-
-func EncoderWebRTCSpatialDecodeTargetsMask(structure EncoderWebRTCFrameDependencyStructure, spatialID uint8, maxTemporalID uint8) (uint32, error) {
-	return internalencoder.WebRTCSpatialDecodeTargetsMask(structure, spatialID, maxTemporalID)
-}
-
-func EncoderWebRTCDependencyDescriptorSizeWithOptions(structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo, options EncoderWebRTCDependencyDescriptorOptions) (int, error) {
-	return internalencoder.WebRTCDependencyDescriptorSizeWithOptions(structure, info, options)
-}
-
-func AppendEncoderWebRTCDependencyDescriptor(dst []byte, structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo, firstPacketInFrame bool, lastPacketInFrame bool, attachStructure bool) ([]byte, error) {
-	return internalencoder.AppendWebRTCDependencyDescriptor(dst, structure, info, firstPacketInFrame, lastPacketInFrame, attachStructure)
-}
-
-func AppendEncoderWebRTCDependencyDescriptorWithOptions(dst []byte, structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo, options EncoderWebRTCDependencyDescriptorOptions) ([]byte, error) {
-	return internalencoder.AppendWebRTCDependencyDescriptorWithOptions(dst, structure, info, options)
-}
-
-func EncoderWebRTCRTPPacketDependencyDescriptorSize(packetizer *RTPPacketizer, structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo, attachStructureOnFirstPacket bool) (int, bool, error) {
-	return EncoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions(packetizer, structure, info, EncoderWebRTCRTPPacketDependencyDescriptorOptions{
-		AttachStructureOnFirstPacket: attachStructureOnFirstPacket,
-	})
-}
-
-func EncoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions(packetizer *RTPPacketizer, structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) (int, bool, error) {
+func encoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions(packetizer *RTPPacketizer, structure internalencoder.WebRTCFrameDependencyStructure, info internalencoder.WebRTCGenericFrameInfo, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) (int, bool, error) {
 	flags, ok := NextRTPPacketDependencyDescriptorFlags(packetizer)
 	if !ok {
 		return 0, false, nil
@@ -710,13 +441,7 @@ func EncoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions(packetizer *RTPPa
 	return size, true, nil
 }
 
-func AppendEncoderWebRTCRTPPacketDependencyDescriptor(dst []byte, packetizer *RTPPacketizer, structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo, attachStructureOnFirstPacket bool) ([]byte, bool, error) {
-	return AppendEncoderWebRTCRTPPacketDependencyDescriptorWithOptions(dst, packetizer, structure, info, EncoderWebRTCRTPPacketDependencyDescriptorOptions{
-		AttachStructureOnFirstPacket: attachStructureOnFirstPacket,
-	})
-}
-
-func AppendEncoderWebRTCRTPPacketDependencyDescriptorWithOptions(dst []byte, packetizer *RTPPacketizer, structure EncoderWebRTCFrameDependencyStructure, info EncoderWebRTCGenericFrameInfo, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) ([]byte, bool, error) {
+func appendEncoderWebRTCRTPPacketDependencyDescriptorWithOptions(dst []byte, packetizer *RTPPacketizer, structure internalencoder.WebRTCFrameDependencyStructure, info internalencoder.WebRTCGenericFrameInfo, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) ([]byte, bool, error) {
 	flags, ok := NextRTPPacketDependencyDescriptorFlags(packetizer)
 	if !ok {
 		return dst, false, nil
@@ -728,44 +453,32 @@ func AppendEncoderWebRTCRTPPacketDependencyDescriptorWithOptions(dst []byte, pac
 	return out, true, nil
 }
 
-func EncoderWebRTCFrameControlRTPPacketDependencyDescriptorSize(packetizer *RTPPacketizer, control EncoderWebRTCFrameControl, structure EncoderWebRTCFrameDependencyStructure) (int, bool, error) {
-	return EncoderWebRTCFrameControlRTPPacketDependencyDescriptorSizeWithOptions(packetizer, control, structure, EncoderWebRTCRTPPacketDependencyDescriptorOptions{
-		AttachStructureOnFirstPacket: control.AttachDependencyStructure,
-	})
-}
-
-func EncoderWebRTCFrameControlRTPPacketDependencyDescriptorSizeWithOptions(packetizer *RTPPacketizer, control EncoderWebRTCFrameControl, structure EncoderWebRTCFrameDependencyStructure, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) (int, bool, error) {
+func encoderWebRTCFrameControlRTPPacketDependencyDescriptorSizeWithOptions(packetizer *RTPPacketizer, control internalencoder.WebRTCFrameControl, structure internalencoder.WebRTCFrameDependencyStructure, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) (int, bool, error) {
 	if control.AttachDependencyStructure {
 		options.AttachStructureOnFirstPacket = true
 	}
-	return EncoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions(packetizer, structure, control.GenericFrameInfo, options)
+	return encoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions(packetizer, structure, control.GenericFrameInfo, options)
 }
 
-func AppendEncoderWebRTCFrameControlRTPPacketDependencyDescriptor(dst []byte, packetizer *RTPPacketizer, control EncoderWebRTCFrameControl, structure EncoderWebRTCFrameDependencyStructure) ([]byte, bool, error) {
-	return AppendEncoderWebRTCFrameControlRTPPacketDependencyDescriptorWithOptions(dst, packetizer, control, structure, EncoderWebRTCRTPPacketDependencyDescriptorOptions{
-		AttachStructureOnFirstPacket: control.AttachDependencyStructure,
-	})
-}
-
-func AppendEncoderWebRTCFrameControlRTPPacketDependencyDescriptorWithOptions(dst []byte, packetizer *RTPPacketizer, control EncoderWebRTCFrameControl, structure EncoderWebRTCFrameDependencyStructure, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) ([]byte, bool, error) {
+func appendEncoderWebRTCFrameControlRTPPacketDependencyDescriptorWithOptions(dst []byte, packetizer *RTPPacketizer, control internalencoder.WebRTCFrameControl, structure internalencoder.WebRTCFrameDependencyStructure, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) ([]byte, bool, error) {
 	if control.AttachDependencyStructure {
 		options.AttachStructureOnFirstPacket = true
 	}
-	return AppendEncoderWebRTCRTPPacketDependencyDescriptorWithOptions(dst, packetizer, structure, control.GenericFrameInfo, options)
+	return appendEncoderWebRTCRTPPacketDependencyDescriptorWithOptions(dst, packetizer, structure, control.GenericFrameInfo, options)
 }
 
-func EncoderWebRTCFrameControlRTPPacketSize(packetizer *RTPPacketizer, control EncoderWebRTCFrameControl, structure EncoderWebRTCFrameDependencyStructure) (payloadSize int, descriptorSize int, ok bool, err error) {
-	return EncoderWebRTCFrameControlRTPPacketSizeWithOptions(packetizer, control, structure, EncoderWebRTCRTPPacketDependencyDescriptorOptions{
+func encoderWebRTCFrameControlRTPPacketSize(packetizer *RTPPacketizer, control internalencoder.WebRTCFrameControl, structure internalencoder.WebRTCFrameDependencyStructure) (payloadSize int, descriptorSize int, ok bool, err error) {
+	return encoderWebRTCFrameControlRTPPacketSizeWithOptions(packetizer, control, structure, EncoderWebRTCRTPPacketDependencyDescriptorOptions{
 		AttachStructureOnFirstPacket: control.AttachDependencyStructure,
 	})
 }
 
-func EncoderWebRTCFrameControlRTPPacketSizeWithOptions(packetizer *RTPPacketizer, control EncoderWebRTCFrameControl, structure EncoderWebRTCFrameDependencyStructure, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) (payloadSize int, descriptorSize int, ok bool, err error) {
+func encoderWebRTCFrameControlRTPPacketSizeWithOptions(packetizer *RTPPacketizer, control internalencoder.WebRTCFrameControl, structure internalencoder.WebRTCFrameDependencyStructure, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) (payloadSize int, descriptorSize int, ok bool, err error) {
 	payloadSize, ok = packetizer.NextPacketSize()
 	if !ok {
 		return 0, 0, false, nil
 	}
-	descriptorSize, ok, err = EncoderWebRTCFrameControlRTPPacketDependencyDescriptorSizeWithOptions(packetizer, control, structure, options)
+	descriptorSize, ok, err = encoderWebRTCFrameControlRTPPacketDependencyDescriptorSizeWithOptions(packetizer, control, structure, options)
 	if err != nil {
 		return 0, 0, true, err
 	}
@@ -775,14 +488,14 @@ func EncoderWebRTCFrameControlRTPPacketSizeWithOptions(packetizer *RTPPacketizer
 	return payloadSize, descriptorSize, true, nil
 }
 
-func AppendEncoderWebRTCFrameControlRTPPacket(payloadDst []byte, descriptorDst []byte, packetizer *RTPPacketizer, control EncoderWebRTCFrameControl, structure EncoderWebRTCFrameDependencyStructure) (payload []byte, descriptor []byte, marker bool, ok bool, err error) {
-	return AppendEncoderWebRTCFrameControlRTPPacketWithOptions(payloadDst, descriptorDst, packetizer, control, structure, EncoderWebRTCRTPPacketDependencyDescriptorOptions{
+func appendEncoderWebRTCFrameControlRTPPacket(payloadDst []byte, descriptorDst []byte, packetizer *RTPPacketizer, control internalencoder.WebRTCFrameControl, structure internalencoder.WebRTCFrameDependencyStructure) (payload []byte, descriptor []byte, marker bool, ok bool, err error) {
+	return appendEncoderWebRTCFrameControlRTPPacketWithOptions(payloadDst, descriptorDst, packetizer, control, structure, EncoderWebRTCRTPPacketDependencyDescriptorOptions{
 		AttachStructureOnFirstPacket: control.AttachDependencyStructure,
 	})
 }
 
-func AppendEncoderWebRTCFrameControlRTPPacketWithOptions(payloadDst []byte, descriptorDst []byte, packetizer *RTPPacketizer, control EncoderWebRTCFrameControl, structure EncoderWebRTCFrameDependencyStructure, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) (payload []byte, descriptor []byte, marker bool, ok bool, err error) {
-	descriptor, ok, err = AppendEncoderWebRTCFrameControlRTPPacketDependencyDescriptorWithOptions(descriptorDst, packetizer, control, structure, options)
+func appendEncoderWebRTCFrameControlRTPPacketWithOptions(payloadDst []byte, descriptorDst []byte, packetizer *RTPPacketizer, control internalencoder.WebRTCFrameControl, structure internalencoder.WebRTCFrameDependencyStructure, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) (payload []byte, descriptor []byte, marker bool, ok bool, err error) {
+	descriptor, ok, err = appendEncoderWebRTCFrameControlRTPPacketDependencyDescriptorWithOptions(descriptorDst, packetizer, control, structure, options)
 	if err != nil || !ok {
 		return payloadDst, descriptorDst, false, ok, err
 	}
@@ -805,8 +518,8 @@ func AppendEncoderWebRTCFrameControlRTPPacketWithOptions(payloadDst []byte, desc
 	return out[:off+n], descriptor, marker, true, nil
 }
 
-func encoderWebRTCRTPPacketDependencyDescriptorOptions(flags RTPPacketDependencyDescriptorFlags, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) EncoderWebRTCDependencyDescriptorOptions {
-	return EncoderWebRTCDependencyDescriptorOptions{
+func encoderWebRTCRTPPacketDependencyDescriptorOptions(flags RTPPacketDependencyDescriptorFlags, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) internalencoder.WebRTCDependencyDescriptorOptions {
+	return internalencoder.WebRTCDependencyDescriptorOptions{
 		FirstPacketInFrame:         flags.FirstPacketInFrame,
 		LastPacketInFrame:          flags.LastPacketInFrame,
 		AttachStructure:            options.AttachStructureOnFirstPacket && flags.FirstPacketInFrame,
@@ -815,7 +528,7 @@ func encoderWebRTCRTPPacketDependencyDescriptorOptions(flags RTPPacketDependency
 	}
 }
 
-func EncoderWebRTCPictureTemporalUnitFrameNum(unit EncoderWebRTCPictureTemporalUnit) uint8 {
+func encoderWebRTCPictureTemporalUnitFrameNum(unit internalencoder.WebRTCPictureTemporalUnit) uint8 {
 	if unit.Key {
 		return unit.KeyUnit.FrameNum
 	}
@@ -825,88 +538,88 @@ func EncoderWebRTCPictureTemporalUnitFrameNum(unit EncoderWebRTCPictureTemporalU
 	return 0
 }
 
-func EncoderWebRTCPictureTemporalUnitFrameControl(unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8) (EncoderWebRTCFrameControl, EncoderWebRTCFrameDependencyStructure, error) {
+func encoderWebRTCPictureTemporalUnitFrameControl(unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8) (internalencoder.WebRTCFrameControl, internalencoder.WebRTCFrameDependencyStructure, error) {
 	if unit.Key == unit.Delta {
-		return EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
+		return internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
 	}
 	if unit.Key {
 		if frameIndex >= unit.KeyUnit.Control.FrameNum {
-			return EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
+			return internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
 		}
 		return unit.KeyUnit.Control.Frames[frameIndex], unit.KeyUnit.Control.DependencyStructure, nil
 	}
 	if frameIndex >= unit.DeltaUnit.Control.FrameNum || !state.DependencyStructureState.Valid {
-		return EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
+		return internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
 	}
 	return unit.DeltaUnit.Control.Frames[frameIndex], state.DependencyStructureState.Structure, nil
 }
 
-func EncoderWebRTCPictureTemporalUnitDependencyDescriptorSize(unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, attachStructure bool) (int, error) {
-	control, structure, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
+func encoderWebRTCPictureTemporalUnitDependencyDescriptorSize(unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8, attachStructure bool) (int, error) {
+	control, structure, err := encoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
 	if err != nil {
 		return 0, err
 	}
 	return internalencoder.WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, attachStructure)
 }
 
-func EncoderWebRTCPictureTemporalUnitMaxDependencyDescriptorSize(unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8) (int, error) {
-	control, structure, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
+func encoderWebRTCPictureTemporalUnitMaxDependencyDescriptorSize(unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8) (int, error) {
+	control, structure, err := encoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
 	if err != nil {
 		return 0, err
 	}
 	return internalencoder.WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, control.AttachDependencyStructure)
 }
 
-func AppendEncoderWebRTCPictureTemporalUnitDependencyDescriptor(dst []byte, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, firstPacketInFrame bool, lastPacketInFrame bool, attachStructure bool) ([]byte, error) {
-	control, structure, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
+func appendEncoderWebRTCPictureTemporalUnitDependencyDescriptor(dst []byte, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8, firstPacketInFrame bool, lastPacketInFrame bool, attachStructure bool) ([]byte, error) {
+	control, structure, err := encoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
 	if err != nil {
 		return dst, err
 	}
 	return internalencoder.AppendWebRTCDependencyDescriptor(dst, structure, control.GenericFrameInfo, firstPacketInFrame, lastPacketInFrame, attachStructure)
 }
 
-func EncoderWebRTCPictureTemporalUnitFrameOBUSize(payload []byte, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8) (int, EncoderWebRTCFrameControl, EncoderWebRTCFrameDependencyStructure, error) {
-	control, structure, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
+func encoderWebRTCPictureTemporalUnitFrameOBUSize(payload []byte, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8) (int, internalencoder.WebRTCFrameControl, internalencoder.WebRTCFrameDependencyStructure, error) {
+	control, structure, err := encoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
 	if err != nil {
-		return 0, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return 0, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
 	size, err := internalencoder.LowOverheadOBUSize(internalencoder.OBU{
-		Type:       OBUFrame,
+		Type:       internalobu.TypeFrame,
 		TemporalID: control.Settings.TemporalID,
 		SpatialID:  control.Settings.SpatialID,
 		Payload:    payload,
 	})
 	if err != nil {
-		return 0, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return 0, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
 	return size, control, structure, nil
 }
 
-func AppendEncoderWebRTCPictureTemporalUnitFrameOBU(dst []byte, payload []byte, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8) ([]byte, EncoderWebRTCFrameControl, EncoderWebRTCFrameDependencyStructure, error) {
-	_, control, structure, err := EncoderWebRTCPictureTemporalUnitFrameOBUSize(payload, unit, state, frameIndex)
+func appendEncoderWebRTCPictureTemporalUnitFrameOBU(dst []byte, payload []byte, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8) ([]byte, internalencoder.WebRTCFrameControl, internalencoder.WebRTCFrameDependencyStructure, error) {
+	_, control, structure, err := encoderWebRTCPictureTemporalUnitFrameOBUSize(payload, unit, state, frameIndex)
 	if err != nil {
-		return dst, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return dst, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
 	out, err := internalencoder.AppendLowOverheadOBU(dst, internalencoder.OBU{
-		Type:       OBUFrame,
+		Type:       internalobu.TypeFrame,
 		TemporalID: control.Settings.TemporalID,
 		SpatialID:  control.Settings.SpatialID,
 		Payload:    payload,
 	})
 	if err != nil {
-		return dst, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return dst, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
 	return out, control, structure, nil
 }
 
-func EncoderWebRTCPictureTemporalUnitFramesOBUSize(framePayloads [][]byte, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState) (int, error) {
-	frameNum := EncoderWebRTCPictureTemporalUnitFrameNum(unit)
+func encoderWebRTCPictureTemporalUnitFramesOBUSize(framePayloads [][]byte, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState) (int, error) {
+	frameNum := encoderWebRTCPictureTemporalUnitFrameNum(unit)
 	if frameNum == 0 || len(framePayloads) != int(frameNum) {
 		return 0, ErrEncoderInvalidFrame
 	}
 	size := 0
 	for i := uint8(0); i < frameNum; i++ {
-		frameSize, _, _, err := EncoderWebRTCPictureTemporalUnitFrameOBUSize(framePayloads[i], unit, state, i)
+		frameSize, _, _, err := encoderWebRTCPictureTemporalUnitFrameOBUSize(framePayloads[i], unit, state, i)
 		if err != nil {
 			return 0, err
 		}
@@ -915,23 +628,23 @@ func EncoderWebRTCPictureTemporalUnitFramesOBUSize(framePayloads [][]byte, unit 
 	return size, nil
 }
 
-func AppendEncoderWebRTCPictureTemporalUnitFramesOBU(dst []byte, spans []EncoderWebRTCFrameOBUSpan, framePayloads [][]byte, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState) ([]byte, int, error) {
-	frameNum := EncoderWebRTCPictureTemporalUnitFrameNum(unit)
+func appendEncoderWebRTCPictureTemporalUnitFramesOBU(dst []byte, spans []encoderWebRTCFrameOBUSpan, framePayloads [][]byte, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState) ([]byte, int, error) {
+	frameNum := encoderWebRTCPictureTemporalUnitFrameNum(unit)
 	if frameNum == 0 || len(framePayloads) != int(frameNum) {
 		return dst, 0, ErrEncoderInvalidFrame
 	}
 	if len(spans) < int(frameNum) {
-		return dst, 0, ErrEncoderShortBuffer
+		return dst, 0, internalbitstream.ErrShortBuffer
 	}
 	out := dst
 	for i := uint8(0); i < frameNum; i++ {
 		start := len(out)
-		next, _, _, err := AppendEncoderWebRTCPictureTemporalUnitFrameOBU(out, framePayloads[i], unit, state, i)
+		next, _, _, err := appendEncoderWebRTCPictureTemporalUnitFrameOBU(out, framePayloads[i], unit, state, i)
 		if err != nil {
 			return dst, 0, err
 		}
 		out = next
-		spans[i] = EncoderWebRTCFrameOBUSpan{
+		spans[i] = encoderWebRTCFrameOBUSpan{
 			Offset: start,
 			Length: len(out) - start,
 		}
@@ -939,13 +652,13 @@ func AppendEncoderWebRTCPictureTemporalUnitFramesOBU(dst []byte, spans []Encoder
 	return out, int(frameNum), nil
 }
 
-func EncoderWebRTCPictureTemporalUnitFramesRTPScratchLen(framePayloads [][]byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU) (EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize, error) {
-	frameNum := EncoderWebRTCPictureTemporalUnitFrameNum(unit)
+func encoderWebRTCPictureTemporalUnitFramesRTPScratchLen(framePayloads [][]byte, limits RTPPayloadSizeLimits, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU) (encoderWebRTCPictureTemporalUnitFramesRTPScratchSize, error) {
+	frameNum := encoderWebRTCPictureTemporalUnitFrameNum(unit)
 	if frameNum == 0 || len(framePayloads) != int(frameNum) {
-		return EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize{}, ErrEncoderInvalidFrame
+		return encoderWebRTCPictureTemporalUnitFramesRTPScratchSize{}, ErrEncoderInvalidFrame
 	}
-	frameOBUBytes, err := EncoderWebRTCPictureTemporalUnitFramesOBUSize(framePayloads, unit, state)
-	size := EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize{
+	frameOBUBytes, err := encoderWebRTCPictureTemporalUnitFramesOBUSize(framePayloads, unit, state)
+	size := encoderWebRTCPictureTemporalUnitFramesRTPScratchSize{
 		FrameOBUBytes: frameOBUBytes,
 		FrameSpans:    int(frameNum),
 	}
@@ -953,18 +666,18 @@ func EncoderWebRTCPictureTemporalUnitFramesRTPScratchLen(framePayloads [][]byte,
 		return size, err
 	}
 	if cap(frameOBUScratch)-len(frameOBUScratch) < frameOBUBytes {
-		return size, ErrEncoderShortBuffer
+		return size, internalbitstream.ErrShortBuffer
 	}
 
 	frameOBUs := frameOBUScratch[:0]
 	for i := uint8(0); i < frameNum; i++ {
 		frameStart := len(frameOBUs)
-		nextFrameOBUs, _, _, err := AppendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUs, framePayloads[i], unit, state, i)
+		nextFrameOBUs, _, _, err := appendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUs, framePayloads[i], unit, state, i)
 		if err != nil {
 			return size, err
 		}
 		frameOBUs = nextFrameOBUs
-		scratch, err := EncoderWebRTCPictureTemporalUnitRTPScratchLen(frameOBUs[frameStart:], limits, unit, state, i, obuScratch)
+		scratch, err := encoderWebRTCPictureTemporalUnitRTPScratchLen(frameOBUs[frameStart:], limits, unit, state, i, obuScratch)
 		if err != nil {
 			return size, err
 		}
@@ -988,15 +701,15 @@ func EncoderWebRTCPictureTemporalUnitFramesRTPScratchLen(framePayloads [][]byte,
 	return size, nil
 }
 
-func BindEncoderWebRTCPictureTemporalUnitFramesRTPScratch(size EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize, scratch EncoderWebRTCPictureTemporalUnitFramesRTPScratch) (EncoderWebRTCPictureTemporalUnitFramesRTPScratch, error) {
+func bindEncoderWebRTCPictureTemporalUnitFramesRTPScratch(size encoderWebRTCPictureTemporalUnitFramesRTPScratchSize, scratch encoderWebRTCPictureTemporalUnitFramesRTPScratch) (encoderWebRTCPictureTemporalUnitFramesRTPScratch, error) {
 	if size.FrameOBUBytes < 0 || size.FrameSpans < 0 || size.PacketSpans < 0 ||
 		size.Packetizer.OBUs < 0 || size.Packetizer.Packets < 0 || size.Packetizer.Work < 0 {
-		return EncoderWebRTCPictureTemporalUnitFramesRTPScratch{}, ErrEncoderShortBuffer
+		return encoderWebRTCPictureTemporalUnitFramesRTPScratch{}, internalbitstream.ErrShortBuffer
 	}
 	if cap(scratch.FrameOBU) < size.FrameOBUBytes || len(scratch.FrameSpans) < size.FrameSpans ||
 		len(scratch.PacketSpans) < size.PacketSpans || len(scratch.OBUs) < size.Packetizer.OBUs ||
 		len(scratch.Packets) < size.Packetizer.Packets || len(scratch.Work) < size.Packetizer.Work {
-		return EncoderWebRTCPictureTemporalUnitFramesRTPScratch{}, ErrEncoderShortBuffer
+		return encoderWebRTCPictureTemporalUnitFramesRTPScratch{}, internalbitstream.ErrShortBuffer
 	}
 	scratch.FrameOBU = scratch.FrameOBU[:0]
 	scratch.FrameSpans = scratch.FrameSpans[:size.FrameSpans]
@@ -1007,64 +720,64 @@ func BindEncoderWebRTCPictureTemporalUnitFramesRTPScratch(size EncoderWebRTCPict
 	return scratch, nil
 }
 
-func EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSize(framePayload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo, EncoderWebRTCFrameControl, EncoderWebRTCFrameDependencyStructure, error) {
-	frameOBUSize, control, structure, err := EncoderWebRTCPictureTemporalUnitFrameOBUSize(framePayload, unit, state, frameIndex)
+func encoderWebRTCPictureTemporalUnitFrameRTPPacketsSize(framePayload []byte, limits RTPPayloadSizeLimits, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo, internalencoder.WebRTCFrameControl, internalencoder.WebRTCFrameDependencyStructure, error) {
+	frameOBUSize, control, structure, err := encoderWebRTCPictureTemporalUnitFrameOBUSize(framePayload, unit, state, frameIndex)
 	if err != nil {
-		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
-	frameOBU, _, _, err := AppendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUScratch[:0], framePayload, unit, state, frameIndex)
+	frameOBU, _, _, err := appendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUScratch[:0], framePayload, unit, state, frameIndex)
 	if err != nil {
-		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
-	rtpSize, rtpControl, rtpStructure, err := EncoderWebRTCPictureTemporalUnitRTPPacketsSize(frameOBU, limits, unit, state, frameIndex, obuScratch, packetScratch, workScratch)
+	rtpSize, rtpControl, rtpStructure, err := encoderWebRTCPictureTemporalUnitRTPPacketsSize(frameOBU, limits, unit, state, frameIndex, obuScratch, packetScratch, workScratch)
 	if err != nil {
-		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
 	if rtpControl != control || rtpStructure != structure {
-		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
+		return encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
 	}
-	return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{
+	return encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{
 		FrameOBUBytes: frameOBUSize,
 		RTP:           rtpSize,
 	}, control, structure, nil
 }
 
-func AppendEncoderWebRTCPictureTemporalUnitFrameRTPPackets(payloadDst []byte, descriptorDst []byte, spans []EncoderWebRTCRTPPacketSpan, frameOBUScratch []byte, framePayload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (frameOBU []byte, rtpPayloads []byte, descriptors []byte, packetCount int, control EncoderWebRTCFrameControl, structure EncoderWebRTCFrameDependencyStructure, err error) {
-	frameOBU, control, structure, err = AppendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUScratch[:0], framePayload, unit, state, frameIndex)
+func appendEncoderWebRTCPictureTemporalUnitFrameRTPPackets(payloadDst []byte, descriptorDst []byte, spans []EncoderWebRTCRTPPacketSpan, frameOBUScratch []byte, framePayload []byte, limits RTPPayloadSizeLimits, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (frameOBU []byte, rtpPayloads []byte, descriptors []byte, packetCount int, control internalencoder.WebRTCFrameControl, structure internalencoder.WebRTCFrameDependencyStructure, err error) {
+	frameOBU, control, structure, err = appendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUScratch[:0], framePayload, unit, state, frameIndex)
 	if err != nil {
-		return frameOBUScratch[:0], payloadDst, descriptorDst, 0, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return frameOBUScratch[:0], payloadDst, descriptorDst, 0, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
-	rtpPayloads, descriptors, packetCount, rtpControl, rtpStructure, err := AppendEncoderWebRTCPictureTemporalUnitRTPPackets(payloadDst, descriptorDst, spans, frameOBU, limits, unit, state, frameIndex, obuScratch, packetScratch, workScratch)
+	rtpPayloads, descriptors, packetCount, rtpControl, rtpStructure, err := appendEncoderWebRTCPictureTemporalUnitRTPPackets(payloadDst, descriptorDst, spans, frameOBU, limits, unit, state, frameIndex, obuScratch, packetScratch, workScratch)
 	if err != nil {
-		return frameOBU, payloadDst, descriptorDst, 0, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return frameOBU, payloadDst, descriptorDst, 0, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
 	if rtpControl != control || rtpStructure != structure {
-		return frameOBU, payloadDst, descriptorDst, 0, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
+		return frameOBU, payloadDst, descriptorDst, 0, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
 	}
 	return frameOBU, rtpPayloads, descriptors, packetCount, control, structure, nil
 }
 
-func EncoderWebRTCPictureTemporalUnitFramesRTPPacketsSize(framePayloads [][]byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo, error) {
-	frameNum := EncoderWebRTCPictureTemporalUnitFrameNum(unit)
+func encoderWebRTCPictureTemporalUnitFramesRTPPacketsSize(framePayloads [][]byte, limits RTPPayloadSizeLimits, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo, error) {
+	frameNum := encoderWebRTCPictureTemporalUnitFrameNum(unit)
 	if frameNum == 0 || len(framePayloads) != int(frameNum) {
-		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, ErrEncoderInvalidFrame
+		return encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, ErrEncoderInvalidFrame
 	}
-	frameOBUBytes, err := EncoderWebRTCPictureTemporalUnitFramesOBUSize(framePayloads, unit, state)
+	frameOBUBytes, err := encoderWebRTCPictureTemporalUnitFramesOBUSize(framePayloads, unit, state)
 	if err != nil {
-		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, err
+		return encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, err
 	}
 	frameOBUs := frameOBUScratch[:0]
-	size := EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{FrameOBUBytes: frameOBUBytes}
+	size := encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{FrameOBUBytes: frameOBUBytes}
 	for i := uint8(0); i < frameNum; i++ {
 		frameStart := len(frameOBUs)
-		nextFrameOBUs, _, _, err := AppendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUs, framePayloads[i], unit, state, i)
+		nextFrameOBUs, _, _, err := appendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUs, framePayloads[i], unit, state, i)
 		if err != nil {
-			return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, err
+			return encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, err
 		}
 		frameOBUs = nextFrameOBUs
-		rtpSize, _, _, err := EncoderWebRTCPictureTemporalUnitRTPPacketsSize(frameOBUs[frameStart:], limits, unit, state, i, obuScratch, packetScratch, workScratch)
+		rtpSize, _, _, err := encoderWebRTCPictureTemporalUnitRTPPacketsSize(frameOBUs[frameStart:], limits, unit, state, i, obuScratch, packetScratch, workScratch)
 		if err != nil {
-			return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, err
+			return encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, err
 		}
 		size.RTP.PacketCount += rtpSize.PacketCount
 		size.RTP.PayloadBytes += rtpSize.PayloadBytes
@@ -1073,8 +786,8 @@ func EncoderWebRTCPictureTemporalUnitFramesRTPPacketsSize(framePayloads [][]byte
 	return size, nil
 }
 
-func AppendEncoderWebRTCPictureTemporalUnitFramesRTPPackets(frameOBUDst []byte, payloadDst []byte, descriptorDst []byte, frameSpans []EncoderWebRTCFrameRTPPacketSpan, packetSpans []EncoderWebRTCRTPPacketSpan, framePayloads [][]byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (frameOBUs []byte, rtpPayloads []byte, descriptors []byte, frameCount int, packetCount int, err error) {
-	frameNum := EncoderWebRTCPictureTemporalUnitFrameNum(unit)
+func appendEncoderWebRTCPictureTemporalUnitFramesRTPPackets(frameOBUDst []byte, payloadDst []byte, descriptorDst []byte, frameSpans []encoderWebRTCFrameRTPPacketSpan, packetSpans []EncoderWebRTCRTPPacketSpan, framePayloads [][]byte, limits RTPPayloadSizeLimits, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (frameOBUs []byte, rtpPayloads []byte, descriptors []byte, frameCount int, packetCount int, err error) {
+	frameNum := encoderWebRTCPictureTemporalUnitFrameNum(unit)
 	if frameNum == 0 || len(framePayloads) != int(frameNum) {
 		return frameOBUDst, payloadDst, descriptorDst, 0, 0, ErrEncoderInvalidFrame
 	}
@@ -1088,16 +801,16 @@ func AppendEncoderWebRTCPictureTemporalUnitFramesRTPPackets(frameOBUDst []byte, 
 	for i := uint8(0); i < frameNum; i++ {
 		frameStart := len(frameOBUs)
 		packetStart := packetCount
-		nextFrameOBUs, _, _, err := AppendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUs, framePayloads[i], unit, state, i)
+		nextFrameOBUs, _, _, err := appendEncoderWebRTCPictureTemporalUnitFrameOBU(frameOBUs, framePayloads[i], unit, state, i)
 		if err != nil {
 			return frameOBUDst, payloadDst, descriptorDst, 0, 0, err
 		}
 		frameOBUs = nextFrameOBUs
-		nextPayloads, nextDescriptors, wrotePackets, _, _, err := AppendEncoderWebRTCPictureTemporalUnitRTPPackets(rtpPayloads, descriptors, packetSpans[packetCount:], frameOBUs[frameStart:], limits, unit, state, i, obuScratch, packetScratch, workScratch)
+		nextPayloads, nextDescriptors, wrotePackets, _, _, err := appendEncoderWebRTCPictureTemporalUnitRTPPackets(rtpPayloads, descriptors, packetSpans[packetCount:], frameOBUs[frameStart:], limits, unit, state, i, obuScratch, packetScratch, workScratch)
 		if err != nil {
 			return frameOBUDst, payloadDst, descriptorDst, 0, 0, err
 		}
-		frameSpans[i] = EncoderWebRTCFrameRTPPacketSpan{
+		frameSpans[i] = encoderWebRTCFrameRTPPacketSpan{
 			FrameOBUOffset: frameStart,
 			FrameOBULength: len(frameOBUs) - frameStart,
 			PacketOffset:   packetStart,
@@ -1111,8 +824,8 @@ func AppendEncoderWebRTCPictureTemporalUnitFramesRTPPackets(frameOBUDst []byte, 
 	return frameOBUs, rtpPayloads, descriptors, frameCount, packetCount, nil
 }
 
-func AppendEncoderWebRTCPictureTemporalUnitFramesRTPPacketsWithScratch(payloadDst []byte, descriptorDst []byte, scratch EncoderWebRTCPictureTemporalUnitFramesRTPScratch, framePayloads [][]byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState) (frameOBUs []byte, rtpPayloads []byte, descriptors []byte, frameCount int, packetCount int, err error) {
-	return AppendEncoderWebRTCPictureTemporalUnitFramesRTPPackets(
+func appendEncoderWebRTCPictureTemporalUnitFramesRTPPacketsWithScratch(payloadDst []byte, descriptorDst []byte, scratch encoderWebRTCPictureTemporalUnitFramesRTPScratch, framePayloads [][]byte, limits RTPPayloadSizeLimits, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState) (frameOBUs []byte, rtpPayloads []byte, descriptors []byte, frameCount int, packetCount int, err error) {
+	return appendEncoderWebRTCPictureTemporalUnitFramesRTPPackets(
 		scratch.FrameOBU,
 		payloadDst,
 		descriptorDst,
@@ -1128,36 +841,36 @@ func AppendEncoderWebRTCPictureTemporalUnitFramesRTPPacketsWithScratch(payloadDs
 	)
 }
 
-func EncoderWebRTCNextTemporalUnitFramesRTPScratchLen(framePayloads [][]byte, limits RTPPayloadSizeLimits, config EncoderConfig, state EncoderWebRTCState, forceKeyFrame bool, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU) (EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize, EncoderWebRTCPictureTemporalUnit, EncoderWebRTCState, error) {
-	unit, next, err := EncoderWebRTCNextTemporalUnitForState(config, state, forceKeyFrame)
+func encoderWebRTCNextTemporalUnitFramesRTPScratchLen(framePayloads [][]byte, limits RTPPayloadSizeLimits, config EncoderConfig, state internalencoder.WebRTCEncoderState, forceKeyFrame bool, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU) (encoderWebRTCPictureTemporalUnitFramesRTPScratchSize, internalencoder.WebRTCPictureTemporalUnit, internalencoder.WebRTCEncoderState, error) {
+	unit, next, err := internalencoder.WebRTCNextTemporalUnitForState(config, state, forceKeyFrame)
 	if err != nil {
-		return EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize{}, EncoderWebRTCPictureTemporalUnit{}, EncoderWebRTCState{}, err
+		return encoderWebRTCPictureTemporalUnitFramesRTPScratchSize{}, internalencoder.WebRTCPictureTemporalUnit{}, internalencoder.WebRTCEncoderState{}, err
 	}
-	size, err := EncoderWebRTCPictureTemporalUnitFramesRTPScratchLen(framePayloads, limits, unit, next, frameOBUScratch, obuScratch)
+	size, err := encoderWebRTCPictureTemporalUnitFramesRTPScratchLen(framePayloads, limits, unit, next, frameOBUScratch, obuScratch)
 	if err != nil {
 		return size, unit, next, err
 	}
 	return size, unit, next, nil
 }
 
-func EncoderWebRTCNextTemporalUnitFramesRTPPacketsSize(framePayloads [][]byte, limits RTPPayloadSizeLimits, config EncoderConfig, state EncoderWebRTCState, forceKeyFrame bool, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo, EncoderWebRTCPictureTemporalUnit, EncoderWebRTCState, error) {
-	unit, next, err := EncoderWebRTCNextTemporalUnitForState(config, state, forceKeyFrame)
+func encoderWebRTCNextTemporalUnitFramesRTPPacketsSize(framePayloads [][]byte, limits RTPPayloadSizeLimits, config EncoderConfig, state internalencoder.WebRTCEncoderState, forceKeyFrame bool, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo, internalencoder.WebRTCPictureTemporalUnit, internalencoder.WebRTCEncoderState, error) {
+	unit, next, err := internalencoder.WebRTCNextTemporalUnitForState(config, state, forceKeyFrame)
 	if err != nil {
-		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, EncoderWebRTCPictureTemporalUnit{}, EncoderWebRTCState{}, err
+		return encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, internalencoder.WebRTCPictureTemporalUnit{}, internalencoder.WebRTCEncoderState{}, err
 	}
-	size, err := EncoderWebRTCPictureTemporalUnitFramesRTPPacketsSize(framePayloads, limits, unit, next, frameOBUScratch, obuScratch, packetScratch, workScratch)
+	size, err := encoderWebRTCPictureTemporalUnitFramesRTPPacketsSize(framePayloads, limits, unit, next, frameOBUScratch, obuScratch, packetScratch, workScratch)
 	if err != nil {
-		return EncoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, unit, next, err
+		return encoderWebRTCPictureTemporalUnitFrameRTPPacketsSizeInfo{}, unit, next, err
 	}
 	return size, unit, next, nil
 }
 
-func AppendEncoderWebRTCNextTemporalUnitFramesRTPPacketsWithScratch(payloadDst []byte, descriptorDst []byte, scratch EncoderWebRTCPictureTemporalUnitFramesRTPScratch, framePayloads [][]byte, limits RTPPayloadSizeLimits, config EncoderConfig, state EncoderWebRTCState, forceKeyFrame bool) (frameOBUs []byte, rtpPayloads []byte, descriptors []byte, frameCount int, packetCount int, unit EncoderWebRTCPictureTemporalUnit, next EncoderWebRTCState, err error) {
-	unit, next, err = EncoderWebRTCNextTemporalUnitForState(config, state, forceKeyFrame)
+func appendEncoderWebRTCNextTemporalUnitFramesRTPPacketsWithScratch(payloadDst []byte, descriptorDst []byte, scratch encoderWebRTCPictureTemporalUnitFramesRTPScratch, framePayloads [][]byte, limits RTPPayloadSizeLimits, config EncoderConfig, state internalencoder.WebRTCEncoderState, forceKeyFrame bool) (frameOBUs []byte, rtpPayloads []byte, descriptors []byte, frameCount int, packetCount int, unit internalencoder.WebRTCPictureTemporalUnit, next internalencoder.WebRTCEncoderState, err error) {
+	unit, next, err = internalencoder.WebRTCNextTemporalUnitForState(config, state, forceKeyFrame)
 	if err != nil {
-		return scratch.FrameOBU, payloadDst, descriptorDst, 0, 0, EncoderWebRTCPictureTemporalUnit{}, EncoderWebRTCState{}, err
+		return scratch.FrameOBU, payloadDst, descriptorDst, 0, 0, internalencoder.WebRTCPictureTemporalUnit{}, internalencoder.WebRTCEncoderState{}, err
 	}
-	frameOBUs, rtpPayloads, descriptors, frameCount, packetCount, err = AppendEncoderWebRTCPictureTemporalUnitFramesRTPPacketsWithScratch(
+	frameOBUs, rtpPayloads, descriptors, frameCount, packetCount, err = appendEncoderWebRTCPictureTemporalUnitFramesRTPPacketsWithScratch(
 		payloadDst,
 		descriptorDst,
 		scratch,
@@ -1167,18 +880,18 @@ func AppendEncoderWebRTCNextTemporalUnitFramesRTPPacketsWithScratch(payloadDst [
 		next,
 	)
 	if err != nil {
-		return scratch.FrameOBU, payloadDst, descriptorDst, 0, 0, EncoderWebRTCPictureTemporalUnit{}, EncoderWebRTCState{}, err
+		return scratch.FrameOBU, payloadDst, descriptorDst, 0, 0, internalencoder.WebRTCPictureTemporalUnit{}, internalencoder.WebRTCEncoderState{}, err
 	}
 	return frameOBUs, rtpPayloads, descriptors, frameCount, packetCount, unit, next, nil
 }
 
-func EncoderWebRTCPictureTemporalUnitRTPScratchLen(payload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, obuScratch []RTPPacketizerOBU) (EncoderWebRTCPictureTemporalUnitRTPScratchSize, error) {
+func encoderWebRTCPictureTemporalUnitRTPScratchLen(payload []byte, limits RTPPayloadSizeLimits, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8, obuScratch []RTPPacketizerOBU) (encoderWebRTCPictureTemporalUnitRTPScratchSize, error) {
 	packetizer, err := RTPPacketizerScratchLen(payload, limits, obuScratch)
-	size := EncoderWebRTCPictureTemporalUnitRTPScratchSize{Packetizer: packetizer}
+	size := encoderWebRTCPictureTemporalUnitRTPScratchSize{Packetizer: packetizer}
 	if err != nil {
 		return size, err
 	}
-	descriptor, err := EncoderWebRTCPictureTemporalUnitMaxDependencyDescriptorSize(unit, state, frameIndex)
+	descriptor, err := encoderWebRTCPictureTemporalUnitMaxDependencyDescriptorSize(unit, state, frameIndex)
 	if err != nil {
 		return size, err
 	}
@@ -1189,32 +902,32 @@ func EncoderWebRTCPictureTemporalUnitRTPScratchLen(payload []byte, limits RTPPay
 	return size, nil
 }
 
-func NewEncoderWebRTCPictureTemporalUnitRTPPacketizer(payload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (RTPPacketizer, EncoderWebRTCFrameControl, EncoderWebRTCFrameDependencyStructure, error) {
-	control, structure, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
+func newEncoderWebRTCPictureTemporalUnitRTPPacketizer(payload []byte, limits RTPPayloadSizeLimits, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (RTPPacketizer, internalencoder.WebRTCFrameControl, internalencoder.WebRTCFrameDependencyStructure, error) {
+	control, structure, err := encoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
 	if err != nil {
-		return RTPPacketizer{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return RTPPacketizer{}, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
 	packetizer, err := NewRTPPacketizer(
 		payload,
 		limits,
-		control.Settings.Type == EncoderFrameTypeKey,
-		frameIndex+1 == EncoderWebRTCPictureTemporalUnitFrameNum(unit),
+		control.Settings.Type == internalencoder.FrameTypeKey,
+		frameIndex+1 == encoderWebRTCPictureTemporalUnitFrameNum(unit),
 		obuScratch,
 		packetScratch,
 		workScratch,
 	)
 	if err != nil {
-		return RTPPacketizer{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return RTPPacketizer{}, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
 	return packetizer, control, structure, nil
 }
 
-func EncoderWebRTCPictureTemporalUnitRTPPacketsSize(payload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo, EncoderWebRTCFrameControl, EncoderWebRTCFrameDependencyStructure, error) {
-	packetizer, control, structure, err := NewEncoderWebRTCPictureTemporalUnitRTPPacketizer(payload, limits, unit, state, frameIndex, obuScratch, packetScratch, workScratch)
+func encoderWebRTCPictureTemporalUnitRTPPacketsSize(payload []byte, limits RTPPayloadSizeLimits, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (encoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo, internalencoder.WebRTCFrameControl, internalencoder.WebRTCFrameDependencyStructure, error) {
+	packetizer, control, structure, err := newEncoderWebRTCPictureTemporalUnitRTPPacketizer(payload, limits, unit, state, frameIndex, obuScratch, packetScratch, workScratch)
 	if err != nil {
-		return EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return encoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo{}, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
-	size := EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo{
+	size := encoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo{
 		PacketCount:  packetizer.NumPackets(),
 		PayloadBytes: RTPPacketizerRemainingPayloadSize(&packetizer),
 	}
@@ -1223,35 +936,35 @@ func EncoderWebRTCPictureTemporalUnitRTPPacketsSize(payload []byte, limits RTPPa
 	}
 	firstDescriptor, err := internalencoder.WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, control.AttachDependencyStructure)
 	if err != nil {
-		return EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return encoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo{}, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
 	size.DescriptorBytes = firstDescriptor
 	if size.PacketCount > 1 {
 		descriptor, err := internalencoder.WebRTCDependencyDescriptorSize(structure, control.GenericFrameInfo, false)
 		if err != nil {
-			return EncoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo{}, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+			return encoderWebRTCPictureTemporalUnitRTPPacketsSizeInfo{}, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 		}
 		size.DescriptorBytes += descriptor * (size.PacketCount - 1)
 	}
 	return size, control, structure, nil
 }
 
-func AppendEncoderWebRTCPictureTemporalUnitFirstRTPPacket(payloadDst []byte, descriptorDst []byte, payload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (rtpPayload []byte, descriptor []byte, marker bool, ok bool, control EncoderWebRTCFrameControl, structure EncoderWebRTCFrameDependencyStructure, err error) {
-	packetizer, control, structure, err := NewEncoderWebRTCPictureTemporalUnitRTPPacketizer(payload, limits, unit, state, frameIndex, obuScratch, packetScratch, workScratch)
+func appendEncoderWebRTCPictureTemporalUnitFirstRTPPacket(payloadDst []byte, descriptorDst []byte, payload []byte, limits RTPPayloadSizeLimits, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (rtpPayload []byte, descriptor []byte, marker bool, ok bool, control internalencoder.WebRTCFrameControl, structure internalencoder.WebRTCFrameDependencyStructure, err error) {
+	packetizer, control, structure, err := newEncoderWebRTCPictureTemporalUnitRTPPacketizer(payload, limits, unit, state, frameIndex, obuScratch, packetScratch, workScratch)
 	if err != nil {
-		return payloadDst, descriptorDst, false, false, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return payloadDst, descriptorDst, false, false, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
-	rtpPayload, descriptor, marker, ok, err = AppendEncoderWebRTCFrameControlRTPPacket(payloadDst, descriptorDst, &packetizer, control, structure)
+	rtpPayload, descriptor, marker, ok, err = appendEncoderWebRTCFrameControlRTPPacket(payloadDst, descriptorDst, &packetizer, control, structure)
 	if err != nil {
-		return payloadDst, descriptorDst, false, ok, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return payloadDst, descriptorDst, false, ok, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
 	return rtpPayload, descriptor, marker, ok, control, structure, nil
 }
 
-func AppendEncoderWebRTCPictureTemporalUnitRTPPackets(payloadDst []byte, descriptorDst []byte, spans []EncoderWebRTCRTPPacketSpan, payload []byte, limits RTPPayloadSizeLimits, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (rtpPayloads []byte, descriptors []byte, packetCount int, control EncoderWebRTCFrameControl, structure EncoderWebRTCFrameDependencyStructure, err error) {
-	packetizer, control, structure, err := NewEncoderWebRTCPictureTemporalUnitRTPPacketizer(payload, limits, unit, state, frameIndex, obuScratch, packetScratch, workScratch)
+func appendEncoderWebRTCPictureTemporalUnitRTPPackets(payloadDst []byte, descriptorDst []byte, spans []EncoderWebRTCRTPPacketSpan, payload []byte, limits RTPPayloadSizeLimits, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8, obuScratch []RTPPacketizerOBU, packetScratch []RTPPacketPlan, workScratch []RTPPacketPlan) (rtpPayloads []byte, descriptors []byte, packetCount int, control internalencoder.WebRTCFrameControl, structure internalencoder.WebRTCFrameDependencyStructure, err error) {
+	packetizer, control, structure, err := newEncoderWebRTCPictureTemporalUnitRTPPacketizer(payload, limits, unit, state, frameIndex, obuScratch, packetScratch, workScratch)
 	if err != nil {
-		return payloadDst, descriptorDst, 0, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+		return payloadDst, descriptorDst, 0, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 	}
 	rtpPayloads = payloadDst
 	descriptors = descriptorDst
@@ -1260,13 +973,13 @@ func AppendEncoderWebRTCPictureTemporalUnitRTPPackets(payloadDst []byte, descrip
 			if packetizer.NumPackets() == 0 {
 				return rtpPayloads, descriptors, packetCount, control, structure, nil
 			}
-			return payloadDst, descriptorDst, 0, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, ErrRTPPacketPlanTooSmall
+			return payloadDst, descriptorDst, 0, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, ErrRTPPacketPlanTooSmall
 		}
 		payloadStart := len(rtpPayloads)
 		descriptorStart := len(descriptors)
-		nextPayloads, nextDescriptors, marker, ok, err := AppendEncoderWebRTCFrameControlRTPPacket(rtpPayloads, descriptors, &packetizer, control, structure)
+		nextPayloads, nextDescriptors, marker, ok, err := appendEncoderWebRTCFrameControlRTPPacket(rtpPayloads, descriptors, &packetizer, control, structure)
 		if err != nil {
-			return payloadDst, descriptorDst, 0, EncoderWebRTCFrameControl{}, EncoderWebRTCFrameDependencyStructure{}, err
+			return payloadDst, descriptorDst, 0, internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, err
 		}
 		if !ok {
 			return rtpPayloads, descriptors, packetCount, control, structure, nil
@@ -1284,82 +997,34 @@ func AppendEncoderWebRTCPictureTemporalUnitRTPPackets(payloadDst []byte, descrip
 	}
 }
 
-func EncoderWebRTCPictureTemporalUnitRTPPacketSize(packetizer *RTPPacketizer, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8) (payloadSize int, descriptorSize int, ok bool, err error) {
-	control, structure, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
+func encoderWebRTCPictureTemporalUnitRTPPacketSize(packetizer *RTPPacketizer, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8) (payloadSize int, descriptorSize int, ok bool, err error) {
+	control, structure, err := encoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
 	if err != nil {
 		return 0, 0, false, err
 	}
-	return EncoderWebRTCFrameControlRTPPacketSize(packetizer, control, structure)
+	return encoderWebRTCFrameControlRTPPacketSize(packetizer, control, structure)
 }
 
-func AppendEncoderWebRTCPictureTemporalUnitRTPPacket(payloadDst []byte, descriptorDst []byte, packetizer *RTPPacketizer, unit EncoderWebRTCPictureTemporalUnit, state EncoderWebRTCState, frameIndex uint8) (payload []byte, descriptor []byte, marker bool, ok bool, err error) {
-	control, structure, err := EncoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
+func appendEncoderWebRTCPictureTemporalUnitRTPPacket(payloadDst []byte, descriptorDst []byte, packetizer *RTPPacketizer, unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8) (payload []byte, descriptor []byte, marker bool, ok bool, err error) {
+	control, structure, err := encoderWebRTCPictureTemporalUnitFrameControl(unit, state, frameIndex)
 	if err != nil {
 		return payloadDst, descriptorDst, false, false, err
 	}
-	return AppendEncoderWebRTCFrameControlRTPPacket(payloadDst, descriptorDst, packetizer, control, structure)
+	return appendEncoderWebRTCFrameControlRTPPacket(payloadDst, descriptorDst, packetizer, control, structure)
 }
 
-func EncoderWebRTCTemporalUnitControlForFrames(config EncoderConfig, frames []EncoderFrameEncodeSettings, referenceState EncoderReferenceBufferState, frameIDState EncoderFrameIDBufferState, firstFrameID uint64) (EncoderWebRTCTemporalUnitControl, error) {
-	return internalencoder.WebRTCTemporalUnitControlForFrames(config, frames, referenceState, frameIDState, firstFrameID)
-}
-
-func EncoderWebRTCDependencyStructureStateForTemporalUnit(control EncoderWebRTCTemporalUnitControl, state EncoderWebRTCDependencyStructureState) (EncoderWebRTCDependencyStructureState, EncoderWebRTCFrameDependencyStructure, error) {
-	return internalencoder.WebRTCDependencyStructureStateForTemporalUnit(control, state)
-}
-
-func EncoderSupportedResolutionScaling(from EncoderResolution, to EncoderResolution) (EncoderRational, bool) {
-	return internalencoder.SupportedResolutionScaling(from, to)
-}
-
-func EncoderSequenceHeaderForConfig(config EncoderConfig) (EncoderSequenceHeader, error) {
-	return internalencoder.SequenceHeaderForConfig(config)
-}
-
-func EncoderIntraHeaderTemporalUnitForConfig(config EncoderConfig, orderHint uint8) (EncoderIntraHeaderTemporalUnit, error) {
-	return internalencoder.IntraHeaderTemporalUnitForConfig(config, orderHint)
-}
-
-func EncoderWebRTCKeyFrameTemporalUnitForConfig(config EncoderConfig, orderHint uint8, firstFrameID uint64) (EncoderWebRTCKeyFrameTemporalUnit, error) {
-	return internalencoder.WebRTCKeyFrameTemporalUnitForConfig(config, orderHint, firstFrameID)
-}
-
-func EncoderWebRTCDeltaFrameTemporalUnitForConfig(config EncoderConfig, referenceState EncoderReferenceBufferState, frameIDState EncoderFrameIDBufferState, temporalID uint8, firstFrameID uint64) (EncoderWebRTCDeltaFrameTemporalUnit, error) {
-	return internalencoder.WebRTCDeltaFrameTemporalUnitForConfig(config, referenceState, frameIDState, temporalID, firstFrameID)
-}
-
-func EncoderWebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config EncoderConfig, referenceState EncoderReferenceBufferState, frameIDState EncoderFrameIDBufferState, temporalID uint8, firstFrameID uint64, orderHint uint8) (EncoderWebRTCDeltaFrameTemporalUnit, error) {
-	return internalencoder.WebRTCDeltaFrameTemporalUnitForConfigWithOrderHint(config, referenceState, frameIDState, temporalID, firstFrameID, orderHint)
-}
-
-func EncoderWebRTCDeltaFrameTemporalUnitForConfigWithDeltaPictureIndex(config EncoderConfig, referenceState EncoderReferenceBufferState, frameIDState EncoderFrameIDBufferState, deltaPictureIndex uint64, firstFrameID uint64, orderHint uint8) (EncoderWebRTCDeltaFrameTemporalUnit, error) {
-	return internalencoder.WebRTCDeltaFrameTemporalUnitForConfigWithDeltaPictureIndex(config, referenceState, frameIDState, deltaPictureIndex, firstFrameID, orderHint)
-}
-
-func EncoderWebRTCKeyFrameTemporalUnitForState(config EncoderConfig, state EncoderWebRTCState) (EncoderWebRTCKeyFrameTemporalUnit, EncoderWebRTCState, error) {
-	return internalencoder.WebRTCKeyFrameTemporalUnitForState(config, state)
-}
-
-func EncoderWebRTCDeltaFrameTemporalUnitForState(config EncoderConfig, state EncoderWebRTCState) (EncoderWebRTCDeltaFrameTemporalUnit, EncoderWebRTCState, error) {
-	return internalencoder.WebRTCDeltaFrameTemporalUnitForState(config, state)
-}
-
-func EncoderWebRTCNextTemporalUnitForState(config EncoderConfig, state EncoderWebRTCState, forceKeyFrame bool) (EncoderWebRTCPictureTemporalUnit, EncoderWebRTCState, error) {
-	return internalencoder.WebRTCNextTemporalUnitForState(config, state, forceKeyFrame)
-}
-
-func NewWebRTCEncoder(config EncoderConfig, state EncoderWebRTCState) (WebRTCEncoder, error) {
+func newWebRTCEncoder(config EncoderConfig, state internalencoder.WebRTCEncoderState) (webRTCEncoder, error) {
 	normalized, err := internalencoder.SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
 	if err != nil {
-		return WebRTCEncoder{}, err
+		return webRTCEncoder{}, err
 	}
 	if _, err := internalencoder.SequenceHeaderForConfig(normalized); err != nil {
-		return WebRTCEncoder{}, err
+		return webRTCEncoder{}, err
 	}
-	return WebRTCEncoder{config: normalized, state: state}, nil
+	return webRTCEncoder{config: normalized, state: state}, nil
 }
 
-func (e *WebRTCEncoder) Config() EncoderConfig {
+func (e *webRTCEncoder) Config() EncoderConfig {
 	if e == nil {
 		return EncoderConfig{}
 	}
@@ -1368,9 +1033,9 @@ func (e *WebRTCEncoder) Config() EncoderConfig {
 
 // RTPFrameDuration returns the exact RTP timestamp duration of one encoded
 // picture under the encoder's current normalized config.
-func (e *WebRTCEncoder) RTPFrameDuration() (EncoderRational, error) {
+func (e *webRTCEncoder) RTPFrameDuration() (EncoderRational, error) {
 	if e == nil {
-		return EncoderRational{}, ErrEncoderInvalidConfig
+		return EncoderRational{}, internalencoder.ErrInvalidConfig
 	}
 	return EncoderWebRTCRTPFrameDuration(e.config)
 }
@@ -1379,9 +1044,9 @@ func (e *WebRTCEncoder) RTPFrameDuration() (EncoderRational, error) {
 // the AV1 sequence header or dependency structure reset reference/dependency
 // state so the next temporal unit is a key unit while preserving frame number
 // and order-hint continuity.
-func (e *WebRTCEncoder) SetConfig(config EncoderConfig) error {
+func (e *webRTCEncoder) SetConfig(config EncoderConfig) error {
 	if e == nil {
-		return ErrEncoderInvalidConfig
+		return internalencoder.ErrInvalidConfig
 	}
 	normalized, err := internalencoder.SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
 	if err != nil {
@@ -1409,9 +1074,9 @@ func (e *WebRTCEncoder) SetConfig(config EncoderConfig) error {
 // stream, applies the last WebRTC REMB estimate to the encoder bitrate config
 // when present, and returns the parsed packet suffix. Caller-owned scratch keeps
 // the feedback path allocation-free once sized.
-func (e *WebRTCEncoder) ApplyRTCPReceiverEstimatedMaximumBitrate(compound []byte, packetScratch []RTCPPacket, ssrcScratch []uint32) (applied bool, packets []RTCPPacket, err error) {
+func (e *webRTCEncoder) ApplyRTCPReceiverEstimatedMaximumBitrate(compound []byte, packetScratch []RTCPPacket, ssrcScratch []uint32) (applied bool, packets []RTCPPacket, err error) {
 	if e == nil {
-		return false, packetScratch, ErrEncoderInvalidConfig
+		return false, packetScratch, internalencoder.ErrInvalidConfig
 	}
 	updated, ok, packets, err := EncoderWebRTCRTCPCompoundPacketsApplyReceiverEstimatedMaximumBitrate(
 		e.config,
@@ -1431,9 +1096,9 @@ func (e *WebRTCEncoder) ApplyRTCPReceiverEstimatedMaximumBitrate(compound []byte
 // RTCPRequiresKeyFrame parses a raw compound RTCP packet stream and reports
 // whether PLI, FIR, or valid AV1 LRR feedback asks the caller to force the next
 // encoded picture as a key picture.
-func (e *WebRTCEncoder) RTCPRequiresKeyFrame(compound []byte, packetScratch []RTCPPacket, firScratch []RTCPFullIntraRequestEntry, lrrScratch []AV1RTCPLayerRefreshRequestEntry) (forceKey bool, packets []RTCPPacket, err error) {
+func (e *webRTCEncoder) RTCPRequiresKeyFrame(compound []byte, packetScratch []RTCPPacket, firScratch []RTCPFullIntraRequestEntry, lrrScratch []AV1RTCPLayerRefreshRequestEntry) (forceKey bool, packets []RTCPPacket, err error) {
 	if e == nil {
-		return false, packetScratch, ErrEncoderInvalidConfig
+		return false, packetScratch, internalencoder.ErrInvalidConfig
 	}
 	return EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
 		e.config,
@@ -1446,9 +1111,9 @@ func (e *WebRTCEncoder) RTCPRequiresKeyFrame(compound []byte, packetScratch []RT
 
 // RTCPLayerRefreshTarget parses a raw compound RTCP packet stream and returns
 // the highest active decode-target cap requested by valid AV1 LRR feedback.
-func (e *WebRTCEncoder) RTCPLayerRefreshTarget(compound []byte, packetScratch []RTCPPacket, lrrScratch []AV1RTCPLayerRefreshRequestEntry) (target AV1RTCPLayerRefreshLayerIndex, ok bool, packets []RTCPPacket, err error) {
+func (e *webRTCEncoder) RTCPLayerRefreshTarget(compound []byte, packetScratch []RTCPPacket, lrrScratch []AV1RTCPLayerRefreshRequestEntry) (target AV1RTCPLayerRefreshLayerIndex, ok bool, packets []RTCPPacket, err error) {
 	if e == nil {
-		return AV1RTCPLayerRefreshLayerIndex{}, false, packetScratch, ErrEncoderInvalidConfig
+		return AV1RTCPLayerRefreshLayerIndex{}, false, packetScratch, internalencoder.ErrInvalidConfig
 	}
 	return EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget(
 		e.config,
@@ -1458,136 +1123,136 @@ func (e *WebRTCEncoder) RTCPLayerRefreshTarget(compound []byte, packetScratch []
 	)
 }
 
-func encoderWebRTCStateForNextKey(state EncoderWebRTCState) EncoderWebRTCState {
-	return EncoderWebRTCState{
+func encoderWebRTCStateForNextKey(state internalencoder.WebRTCEncoderState) internalencoder.WebRTCEncoderState {
+	return internalencoder.WebRTCEncoderState{
 		NextOrderHint: state.NextOrderHint,
 		NextFrameID:   state.NextFrameID,
 	}
 }
 
-func (e *WebRTCEncoder) State() EncoderWebRTCState {
+func (e *webRTCEncoder) State() internalencoder.WebRTCEncoderState {
 	if e == nil {
-		return EncoderWebRTCState{}
+		return internalencoder.WebRTCEncoderState{}
 	}
 	return e.state
 }
 
-func (e *WebRTCEncoder) ResetState(state EncoderWebRTCState) error {
+func (e *webRTCEncoder) ResetState(state internalencoder.WebRTCEncoderState) error {
 	if e == nil {
-		return ErrEncoderInvalidConfig
+		return internalencoder.ErrInvalidConfig
 	}
 	e.state = state
 	return nil
 }
 
-func (e *WebRTCEncoder) LowOverheadPictureHeaderTemporalUnitSize(forceKeyFrame bool) (int, EncoderWebRTCPictureTemporalUnit, error) {
+func (e *webRTCEncoder) LowOverheadPictureHeaderTemporalUnitSize(forceKeyFrame bool) (int, internalencoder.WebRTCPictureTemporalUnit, error) {
 	if e == nil {
-		return 0, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+		return 0, internalencoder.WebRTCPictureTemporalUnit{}, internalencoder.ErrInvalidConfig
 	}
 	size, unit, _, err := internalencoder.LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(e.config, e.state, forceKeyFrame)
 	return size, unit, err
 }
 
-func (e *WebRTCEncoder) AppendLowOverheadPictureHeaderTemporalUnit(dst []byte, forceKeyFrame bool) ([]byte, EncoderWebRTCPictureTemporalUnit, error) {
+func (e *webRTCEncoder) AppendLowOverheadPictureHeaderTemporalUnit(dst []byte, forceKeyFrame bool) ([]byte, internalencoder.WebRTCPictureTemporalUnit, error) {
 	if e == nil {
-		return dst, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+		return dst, internalencoder.WebRTCPictureTemporalUnit{}, internalencoder.ErrInvalidConfig
 	}
 	out, unit, next, err := internalencoder.AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(dst, e.config, e.state, forceKeyFrame)
 	if err != nil {
-		return dst, EncoderWebRTCPictureTemporalUnit{}, err
+		return dst, internalencoder.WebRTCPictureTemporalUnit{}, err
 	}
 	e.state = next
 	return out, unit, nil
 }
 
-func (e *WebRTCEncoder) LowOverheadPictureHeaderTemporalUnitForFramesSize(frames []Frame, forceKeyFrame bool) (int, EncoderWebRTCPictureTemporalUnit, error) {
+func (e *webRTCEncoder) LowOverheadPictureHeaderTemporalUnitForFramesSize(frames []Frame, forceKeyFrame bool) (int, internalencoder.WebRTCPictureTemporalUnit, error) {
 	if e == nil {
-		return 0, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+		return 0, internalencoder.WebRTCPictureTemporalUnit{}, internalencoder.ErrInvalidConfig
 	}
 	size, unit, _, err := internalencoder.LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(e.config, e.state, forceKeyFrame)
 	if err != nil {
-		return 0, EncoderWebRTCPictureTemporalUnit{}, err
+		return 0, internalencoder.WebRTCPictureTemporalUnit{}, err
 	}
 	if err := validateEncoderPictureFrames(frames, unit, e.config); err != nil {
-		return 0, EncoderWebRTCPictureTemporalUnit{}, err
+		return 0, internalencoder.WebRTCPictureTemporalUnit{}, err
 	}
 	return size, unit, nil
 }
 
-func (e *WebRTCEncoder) AppendLowOverheadPictureHeaderTemporalUnitForFrames(dst []byte, frames []Frame, forceKeyFrame bool) ([]byte, EncoderWebRTCPictureTemporalUnit, error) {
+func (e *webRTCEncoder) AppendLowOverheadPictureHeaderTemporalUnitForFrames(dst []byte, frames []Frame, forceKeyFrame bool) ([]byte, internalencoder.WebRTCPictureTemporalUnit, error) {
 	if e == nil {
-		return dst, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+		return dst, internalencoder.WebRTCPictureTemporalUnit{}, internalencoder.ErrInvalidConfig
 	}
 	_, unit, _, err := internalencoder.LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(e.config, e.state, forceKeyFrame)
 	if err != nil {
-		return dst, EncoderWebRTCPictureTemporalUnit{}, err
+		return dst, internalencoder.WebRTCPictureTemporalUnit{}, err
 	}
 	if err := validateEncoderPictureFrames(frames, unit, e.config); err != nil {
-		return dst, EncoderWebRTCPictureTemporalUnit{}, err
+		return dst, internalencoder.WebRTCPictureTemporalUnit{}, err
 	}
 	out, appended, next, err := internalencoder.AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(dst, e.config, e.state, forceKeyFrame)
 	if err != nil {
-		return dst, EncoderWebRTCPictureTemporalUnit{}, err
+		return dst, internalencoder.WebRTCPictureTemporalUnit{}, err
 	}
 	if appended != unit {
-		return dst, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidFrame
+		return dst, internalencoder.WebRTCPictureTemporalUnit{}, ErrEncoderInvalidFrame
 	}
 	e.state = next
 	return out, unit, nil
 }
 
-func (e *WebRTCEncoder) PictureSampleScratchSize(frames []Frame, forceKeyFrame bool) (EncoderWebRTCPictureSampleScratchSize, EncoderWebRTCPictureTemporalUnit, error) {
+func (e *webRTCEncoder) PictureSampleScratchSize(frames []Frame, forceKeyFrame bool) (encoderWebRTCPictureSampleScratchSize, internalencoder.WebRTCPictureTemporalUnit, error) {
 	if e == nil {
-		return EncoderWebRTCPictureSampleScratchSize{}, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+		return encoderWebRTCPictureSampleScratchSize{}, internalencoder.WebRTCPictureTemporalUnit{}, internalencoder.ErrInvalidConfig
 	}
 	_, unit, _, err := internalencoder.LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(e.config, e.state, forceKeyFrame)
 	if err != nil {
-		return EncoderWebRTCPictureSampleScratchSize{}, EncoderWebRTCPictureTemporalUnit{}, err
+		return encoderWebRTCPictureSampleScratchSize{}, internalencoder.WebRTCPictureTemporalUnit{}, err
 	}
 	if err := validateEncoderPictureFrames(frames, unit, e.config); err != nil {
-		return EncoderWebRTCPictureSampleScratchSize{}, EncoderWebRTCPictureTemporalUnit{}, err
+		return encoderWebRTCPictureSampleScratchSize{}, internalencoder.WebRTCPictureTemporalUnit{}, err
 	}
 	size, err := encoderPictureSampleScratchSize(frames)
 	if err != nil {
-		return EncoderWebRTCPictureSampleScratchSize{}, EncoderWebRTCPictureTemporalUnit{}, err
+		return encoderWebRTCPictureSampleScratchSize{}, internalencoder.WebRTCPictureTemporalUnit{}, err
 	}
 	return size, unit, nil
 }
 
-func (e *WebRTCEncoder) LoadPictureSamplePlanes(scratch EncoderWebRTCPictureSampleScratch, frames []Frame, forceKeyFrame bool) (EncoderWebRTCPictureSamplePlanes, EncoderWebRTCPictureTemporalUnit, error) {
+func (e *webRTCEncoder) LoadPictureSamplePlanes(scratch encoderWebRTCPictureSampleScratch, frames []Frame, forceKeyFrame bool) (encoderWebRTCPictureSamplePlanes, internalencoder.WebRTCPictureTemporalUnit, error) {
 	if e == nil {
-		return EncoderWebRTCPictureSamplePlanes{}, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+		return encoderWebRTCPictureSamplePlanes{}, internalencoder.WebRTCPictureTemporalUnit{}, internalencoder.ErrInvalidConfig
 	}
 	size, unit, err := e.PictureSampleScratchSize(frames, forceKeyFrame)
 	if err != nil {
-		return EncoderWebRTCPictureSamplePlanes{}, EncoderWebRTCPictureTemporalUnit{}, err
+		return encoderWebRTCPictureSamplePlanes{}, internalencoder.WebRTCPictureTemporalUnit{}, err
 	}
 	if len(scratch.Samples) < size.Samples {
-		return EncoderWebRTCPictureSamplePlanes{}, EncoderWebRTCPictureTemporalUnit{}, ErrFrameShortBuffer
+		return encoderWebRTCPictureSamplePlanes{}, internalencoder.WebRTCPictureTemporalUnit{}, internalframe.ErrShortBuffer
 	}
 	planes, err := loadEncoderPictureSamplePlanes(scratch.Samples[:size.Samples], frames)
 	if err != nil {
-		return EncoderWebRTCPictureSamplePlanes{}, EncoderWebRTCPictureTemporalUnit{}, err
+		return encoderWebRTCPictureSamplePlanes{}, internalencoder.WebRTCPictureTemporalUnit{}, err
 	}
 	return planes, unit, nil
 }
 
-func (e *WebRTCEncoder) PictureTemporalUnitFramesRTPScratchSize(framePayloads [][]byte, limits RTPPayloadSizeLimits, forceKeyFrame bool, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU) (EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize, EncoderWebRTCPictureTemporalUnit, error) {
+func (e *webRTCEncoder) PictureTemporalUnitFramesRTPScratchSize(framePayloads [][]byte, limits RTPPayloadSizeLimits, forceKeyFrame bool, frameOBUScratch []byte, obuScratch []RTPPacketizerOBU) (encoderWebRTCPictureTemporalUnitFramesRTPScratchSize, internalencoder.WebRTCPictureTemporalUnit, error) {
 	if e == nil {
-		return EncoderWebRTCPictureTemporalUnitFramesRTPScratchSize{}, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+		return encoderWebRTCPictureTemporalUnitFramesRTPScratchSize{}, internalencoder.WebRTCPictureTemporalUnit{}, internalencoder.ErrInvalidConfig
 	}
-	size, unit, _, err := EncoderWebRTCNextTemporalUnitFramesRTPScratchLen(framePayloads, limits, e.config, e.state, forceKeyFrame, frameOBUScratch, obuScratch)
+	size, unit, _, err := encoderWebRTCNextTemporalUnitFramesRTPScratchLen(framePayloads, limits, e.config, e.state, forceKeyFrame, frameOBUScratch, obuScratch)
 	if err != nil {
-		return size, EncoderWebRTCPictureTemporalUnit{}, err
+		return size, internalencoder.WebRTCPictureTemporalUnit{}, err
 	}
 	return size, unit, nil
 }
 
-func (e *WebRTCEncoder) AppendPictureTemporalUnitFramesRTPPacketsWithScratch(payloadDst []byte, descriptorDst []byte, scratch EncoderWebRTCPictureTemporalUnitFramesRTPScratch, framePayloads [][]byte, limits RTPPayloadSizeLimits, forceKeyFrame bool) (frameOBUs []byte, rtpPayloads []byte, descriptors []byte, frameCount int, packetCount int, unit EncoderWebRTCPictureTemporalUnit, err error) {
+func (e *webRTCEncoder) AppendPictureTemporalUnitFramesRTPPacketsWithScratch(payloadDst []byte, descriptorDst []byte, scratch encoderWebRTCPictureTemporalUnitFramesRTPScratch, framePayloads [][]byte, limits RTPPayloadSizeLimits, forceKeyFrame bool) (frameOBUs []byte, rtpPayloads []byte, descriptors []byte, frameCount int, packetCount int, unit internalencoder.WebRTCPictureTemporalUnit, err error) {
 	if e == nil {
-		return scratch.FrameOBU, payloadDst, descriptorDst, 0, 0, EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+		return scratch.FrameOBU, payloadDst, descriptorDst, 0, 0, internalencoder.WebRTCPictureTemporalUnit{}, internalencoder.ErrInvalidConfig
 	}
-	frameOBUs, rtpPayloads, descriptors, frameCount, packetCount, unit, next, err := AppendEncoderWebRTCNextTemporalUnitFramesRTPPacketsWithScratch(
+	frameOBUs, rtpPayloads, descriptors, frameCount, packetCount, unit, next, err := appendEncoderWebRTCNextTemporalUnitFramesRTPPacketsWithScratch(
 		payloadDst,
 		descriptorDst,
 		scratch,
@@ -1598,26 +1263,26 @@ func (e *WebRTCEncoder) AppendPictureTemporalUnitFramesRTPPacketsWithScratch(pay
 		forceKeyFrame,
 	)
 	if err != nil {
-		return scratch.FrameOBU, payloadDst, descriptorDst, 0, 0, EncoderWebRTCPictureTemporalUnit{}, err
+		return scratch.FrameOBU, payloadDst, descriptorDst, 0, 0, internalencoder.WebRTCPictureTemporalUnit{}, err
 	}
 	e.state = next
 	return frameOBUs, rtpPayloads, descriptors, frameCount, packetCount, unit, nil
 }
 
-func (e *WebRTCEncoder) NextTemporalUnit(forceKeyFrame bool) (EncoderWebRTCPictureTemporalUnit, error) {
+func (e *webRTCEncoder) NextTemporalUnit(forceKeyFrame bool) (internalencoder.WebRTCPictureTemporalUnit, error) {
 	if e == nil {
-		return EncoderWebRTCPictureTemporalUnit{}, ErrEncoderInvalidConfig
+		return internalencoder.WebRTCPictureTemporalUnit{}, internalencoder.ErrInvalidConfig
 	}
 	unit, next, err := internalencoder.WebRTCNextTemporalUnitForState(e.config, e.state, forceKeyFrame)
 	if err != nil {
-		return EncoderWebRTCPictureTemporalUnit{}, err
+		return internalencoder.WebRTCPictureTemporalUnit{}, err
 	}
 	e.state = next
 	return unit, nil
 }
 
-func validateEncoderPictureFrames(frames []Frame, unit EncoderWebRTCPictureTemporalUnit, config EncoderConfig) error {
-	frameNum := EncoderWebRTCPictureTemporalUnitFrameNum(unit)
+func validateEncoderPictureFrames(frames []Frame, unit internalencoder.WebRTCPictureTemporalUnit, config EncoderConfig) error {
+	frameNum := encoderWebRTCPictureTemporalUnitFrameNum(unit)
 	if frameNum == 0 || len(frames) != int(frameNum) {
 		return ErrEncoderInvalidFrame
 	}
@@ -1634,81 +1299,81 @@ func validateEncoderPictureFrames(frames []Frame, unit EncoderWebRTCPictureTempo
 	return nil
 }
 
-func encoderPictureSampleScratchSize(frames []Frame) (EncoderWebRTCPictureSampleScratchSize, error) {
+func encoderPictureSampleScratchSize(frames []Frame) (encoderWebRTCPictureSampleScratchSize, error) {
 	total := 0
 	for i := range frames {
 		frame := frames[i]
-		layout, err := FrameRequiredSize(frame.Format)
+		layout, err := internalframe.RequiredSize(frame.Format)
 		if err != nil {
-			return EncoderWebRTCPictureSampleScratchSize{}, err
+			return encoderWebRTCPictureSampleScratchSize{}, err
 		}
-		need, err := FrameSamplePlaneLen(frame.Y, layout.BytesPerSample)
+		need, err := internalframe.SamplePlaneLen(frame.Y, layout.BytesPerSample)
 		if err != nil {
-			return EncoderWebRTCPictureSampleScratchSize{}, err
+			return encoderWebRTCPictureSampleScratchSize{}, err
 		}
 		if !checkedAddEncoderInt(&total, need) {
-			return EncoderWebRTCPictureSampleScratchSize{}, ErrEncoderInvalidFrame
+			return encoderWebRTCPictureSampleScratchSize{}, ErrEncoderInvalidFrame
 		}
 		if frame.Format.MonoChrome {
 			continue
 		}
-		need, err = FrameSamplePlaneLen(frame.U, layout.BytesPerSample)
+		need, err = internalframe.SamplePlaneLen(frame.U, layout.BytesPerSample)
 		if err != nil {
-			return EncoderWebRTCPictureSampleScratchSize{}, err
+			return encoderWebRTCPictureSampleScratchSize{}, err
 		}
 		if !checkedAddEncoderInt(&total, need) {
-			return EncoderWebRTCPictureSampleScratchSize{}, ErrEncoderInvalidFrame
+			return encoderWebRTCPictureSampleScratchSize{}, ErrEncoderInvalidFrame
 		}
-		need, err = FrameSamplePlaneLen(frame.V, layout.BytesPerSample)
+		need, err = internalframe.SamplePlaneLen(frame.V, layout.BytesPerSample)
 		if err != nil {
-			return EncoderWebRTCPictureSampleScratchSize{}, err
+			return encoderWebRTCPictureSampleScratchSize{}, err
 		}
 		if !checkedAddEncoderInt(&total, need) {
-			return EncoderWebRTCPictureSampleScratchSize{}, ErrEncoderInvalidFrame
+			return encoderWebRTCPictureSampleScratchSize{}, ErrEncoderInvalidFrame
 		}
 	}
-	return EncoderWebRTCPictureSampleScratchSize{Samples: total, FrameNum: len(frames)}, nil
+	return encoderWebRTCPictureSampleScratchSize{Samples: total, FrameNum: len(frames)}, nil
 }
 
-func loadEncoderPictureSamplePlanes(samples []uint16, frames []Frame) (EncoderWebRTCPictureSamplePlanes, error) {
-	var out EncoderWebRTCPictureSamplePlanes
+func loadEncoderPictureSamplePlanes(samples []uint16, frames []Frame) (encoderWebRTCPictureSamplePlanes, error) {
+	var out encoderWebRTCPictureSamplePlanes
 	if len(frames) > EncoderWebRTCMaxSpatialLayers {
-		return EncoderWebRTCPictureSamplePlanes{}, ErrEncoderInvalidFrame
+		return encoderWebRTCPictureSamplePlanes{}, ErrEncoderInvalidFrame
 	}
 	off := 0
 	for i := range frames {
 		frame := frames[i]
-		layout, err := FrameRequiredSize(frame.Format)
+		layout, err := internalframe.RequiredSize(frame.Format)
 		if err != nil {
-			return EncoderWebRTCPictureSamplePlanes{}, err
+			return encoderWebRTCPictureSamplePlanes{}, err
 		}
-		yNeed, err := FrameSamplePlaneLen(frame.Y, layout.BytesPerSample)
+		yNeed, err := internalframe.SamplePlaneLen(frame.Y, layout.BytesPerSample)
 		if err != nil {
-			return EncoderWebRTCPictureSamplePlanes{}, err
+			return encoderWebRTCPictureSamplePlanes{}, err
 		}
-		y, err := LoadFrameSamplePlane(samples[off:off+yNeed], frame.Y, layout.BytesPerSample)
+		y, err := internalframe.LoadSamplePlane(samples[off:off+yNeed], frame.Y, layout.BytesPerSample)
 		if err != nil {
-			return EncoderWebRTCPictureSamplePlanes{}, err
+			return encoderWebRTCPictureSamplePlanes{}, err
 		}
 		off += yNeed
 		out.Frames[i].Y = y
 		if !frame.Format.MonoChrome {
-			uNeed, err := FrameSamplePlaneLen(frame.U, layout.BytesPerSample)
+			uNeed, err := internalframe.SamplePlaneLen(frame.U, layout.BytesPerSample)
 			if err != nil {
-				return EncoderWebRTCPictureSamplePlanes{}, err
+				return encoderWebRTCPictureSamplePlanes{}, err
 			}
-			u, err := LoadFrameSamplePlane(samples[off:off+uNeed], frame.U, layout.BytesPerSample)
+			u, err := internalframe.LoadSamplePlane(samples[off:off+uNeed], frame.U, layout.BytesPerSample)
 			if err != nil {
-				return EncoderWebRTCPictureSamplePlanes{}, err
+				return encoderWebRTCPictureSamplePlanes{}, err
 			}
 			off += uNeed
-			vNeed, err := FrameSamplePlaneLen(frame.V, layout.BytesPerSample)
+			vNeed, err := internalframe.SamplePlaneLen(frame.V, layout.BytesPerSample)
 			if err != nil {
-				return EncoderWebRTCPictureSamplePlanes{}, err
+				return encoderWebRTCPictureSamplePlanes{}, err
 			}
-			v, err := LoadFrameSamplePlane(samples[off:off+vNeed], frame.V, layout.BytesPerSample)
+			v, err := internalframe.LoadSamplePlane(samples[off:off+vNeed], frame.V, layout.BytesPerSample)
 			if err != nil {
-				return EncoderWebRTCPictureSamplePlanes{}, err
+				return encoderWebRTCPictureSamplePlanes{}, err
 			}
 			off += vNeed
 			out.Frames[i].U = u
@@ -1731,23 +1396,23 @@ func checkedAddEncoderInt(dst *int, add int) bool {
 	return true
 }
 
-func encoderPictureUnitFrameSettings(unit EncoderWebRTCPictureTemporalUnit, frameIndex uint8) (EncoderFrameEncodeSettings, bool) {
+func encoderPictureUnitFrameSettings(unit internalencoder.WebRTCPictureTemporalUnit, frameIndex uint8) (internalencoder.FrameEncodeSettings, bool) {
 	if unit.Key == unit.Delta {
-		return EncoderFrameEncodeSettings{}, false
+		return internalencoder.FrameEncodeSettings{}, false
 	}
 	if unit.Key {
 		if frameIndex >= unit.KeyUnit.FrameNum {
-			return EncoderFrameEncodeSettings{}, false
+			return internalencoder.FrameEncodeSettings{}, false
 		}
 		return unit.KeyUnit.Frames[frameIndex], true
 	}
 	if frameIndex >= unit.DeltaUnit.FrameNum {
-		return EncoderFrameEncodeSettings{}, false
+		return internalencoder.FrameEncodeSettings{}, false
 	}
 	return unit.DeltaUnit.Frames[frameIndex], true
 }
 
-func encoderFrameMatchesSettings(f Frame, settings EncoderFrameEncodeSettings, seq EncoderSequenceHeader) bool {
+func encoderFrameMatchesSettings(f Frame, settings internalencoder.FrameEncodeSettings, seq internalencoder.SequenceHeader) bool {
 	if !settings.Output || settings.Resolution.Width <= 0 || settings.Resolution.Height <= 0 {
 		return false
 	}
@@ -1756,7 +1421,7 @@ func encoderFrameMatchesSettings(f Frame, settings EncoderFrameEncodeSettings, s
 		f.Format.SubsamplingX != seq.ColorConfig.SubsamplingX || f.Format.SubsamplingY != seq.ColorConfig.SubsamplingY {
 		return false
 	}
-	layout, err := FrameRequiredSize(f.Format)
+	layout, err := internalframe.RequiredSize(f.Format)
 	if err != nil || layout.BytesPerSample <= 0 {
 		return false
 	}
@@ -1799,304 +1464,4 @@ func encoderPlaneFits(p FramePlane, bytesPerSample int) bool {
 	}
 	need := lastRow + rowBytes
 	return need >= rowBytes && len(p.Pix) >= need
-}
-
-func EncoderWebRTCTemporalIDForDeltaPicture(temporalLayers uint8, deltaPictureIndex uint64) (uint8, error) {
-	return internalencoder.WebRTCTemporalIDForDeltaPicture(temporalLayers, deltaPictureIndex)
-}
-
-func EncoderLowOverheadOBUSize(unit EncoderOBU) (int, error) {
-	return internalencoder.LowOverheadOBUSize(unit)
-}
-
-func AppendEncoderLowOverheadOBU(dst []byte, unit EncoderOBU) ([]byte, error) {
-	return internalencoder.AppendLowOverheadOBU(dst, unit)
-}
-
-func EncoderLowOverheadTemporalUnitSize(obus []EncoderOBU) (int, error) {
-	return internalencoder.LowOverheadTemporalUnitSize(obus)
-}
-
-func AppendEncoderLowOverheadTemporalUnit(dst []byte, obus []EncoderOBU) ([]byte, error) {
-	return internalencoder.AppendLowOverheadTemporalUnit(dst, obus)
-}
-
-func EncoderSequenceHeaderPayloadSize(seq EncoderSequenceHeader) (int, error) {
-	return internalencoder.SequenceHeaderPayloadSize(seq)
-}
-
-func AppendEncoderSequenceHeaderPayload(dst []byte, seq EncoderSequenceHeader) ([]byte, error) {
-	return internalencoder.AppendSequenceHeaderPayload(dst, seq)
-}
-
-func EncoderLowOverheadSequenceHeaderOBUSize(seq EncoderSequenceHeader) (int, error) {
-	return internalencoder.LowOverheadSequenceHeaderOBUSize(seq)
-}
-
-func AppendEncoderLowOverheadSequenceHeaderOBU(dst []byte, seq EncoderSequenceHeader) ([]byte, error) {
-	return internalencoder.AppendLowOverheadSequenceHeaderOBU(dst, seq)
-}
-
-func EncoderFrameHeaderPrefixPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix) (int, error) {
-	return internalencoder.FrameHeaderPrefixPayloadSize(seq, prefix)
-}
-
-func AppendEncoderFrameHeaderPrefixPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix) ([]byte, error) {
-	return internalencoder.AppendFrameHeaderPrefixPayload(dst, seq, prefix)
-}
-
-func EncoderFrameHeaderIntraPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {
-	return internalencoder.FrameHeaderIntraPayloadSize(seq, prefix, size)
-}
-
-func AppendEncoderFrameHeaderIntraPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) ([]byte, error) {
-	return internalencoder.AppendFrameHeaderIntraPayload(dst, seq, prefix, size)
-}
-
-func EncoderFrameHeaderInterPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize) (int, error) {
-	return internalencoder.FrameHeaderInterPayloadSize(seq, prefix, size)
-}
-
-func AppendEncoderFrameHeaderInterPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize) ([]byte, error) {
-	return internalencoder.AppendFrameHeaderInterPayload(dst, seq, prefix, size)
-}
-
-func EncoderIntraFrameHeaderPayloadSize(seq EncoderSequenceHeader, header EncoderIntraFrameHeaderParams) (int, error) {
-	return internalencoder.IntraFrameHeaderPayloadSize(seq, header)
-}
-
-func AppendEncoderIntraFrameHeaderPayload(dst []byte, seq EncoderSequenceHeader, header EncoderIntraFrameHeaderParams) ([]byte, error) {
-	return internalencoder.AppendIntraFrameHeaderPayload(dst, seq, header)
-}
-
-func EncoderInterFrameHeaderPayloadSize(seq EncoderSequenceHeader, header EncoderInterFrameHeaderParams) (int, error) {
-	return internalencoder.InterFrameHeaderPayloadSize(seq, header)
-}
-
-func AppendEncoderInterFrameHeaderPayload(dst []byte, seq EncoderSequenceHeader, header EncoderInterFrameHeaderParams) ([]byte, error) {
-	return internalencoder.AppendInterFrameHeaderPayload(dst, seq, header)
-}
-
-func EncoderTileInfoPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, codedWidth uint32, height uint32, tiles EncoderTileInfo) (int, error) {
-	return internalencoder.TileInfoPayloadSize(seq, prefix, codedWidth, height, tiles)
-}
-
-func AppendEncoderTileInfoPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, codedWidth uint32, height uint32, tiles EncoderTileInfo) ([]byte, error) {
-	return internalencoder.AppendTileInfoPayload(dst, seq, prefix, codedWidth, height, tiles)
-}
-
-func EncoderTileGroupPayloadSize(tiles EncoderTileInfo, startTile uint16, endTile uint16, payloads []EncoderTilePayload) (int, error) {
-	return internalencoder.TileGroupPayloadSize(tiles, startTile, endTile, payloads)
-}
-
-func AppendEncoderTileGroupPayload(dst []byte, tiles EncoderTileInfo, startTile uint16, endTile uint16, payloads []EncoderTilePayload) ([]byte, error) {
-	return internalencoder.AppendTileGroupPayload(dst, tiles, startTile, endTile, payloads)
-}
-
-func EncoderQuantizationParamsPayloadSize(seq EncoderSequenceHeader, quant EncoderQuantizationParams) (int, error) {
-	return internalencoder.QuantizationParamsPayloadSize(seq, quant)
-}
-
-func AppendEncoderQuantizationParamsPayload(dst []byte, seq EncoderSequenceHeader, quant EncoderQuantizationParams) ([]byte, error) {
-	return internalencoder.AppendQuantizationParamsPayload(dst, seq, quant)
-}
-
-func EncoderSegmentationParamsPayloadSize(prefix EncoderFrameHeaderPrefix, seg EncoderSegmentationParams) (int, error) {
-	return internalencoder.SegmentationParamsPayloadSize(prefix, seg)
-}
-
-func AppendEncoderSegmentationParamsPayload(dst []byte, prefix EncoderFrameHeaderPrefix, seg EncoderSegmentationParams) ([]byte, error) {
-	return internalencoder.AppendSegmentationParamsPayload(dst, prefix, seg)
-}
-
-func EncoderDeltaParamsPayloadSize(size EncoderIntraFrameSize, quant EncoderQuantizationParams, delta EncoderDeltaParams) (int, error) {
-	return internalencoder.DeltaParamsPayloadSize(size, quant, delta)
-}
-
-func AppendEncoderDeltaParamsPayload(dst []byte, size EncoderIntraFrameSize, quant EncoderQuantizationParams, delta EncoderDeltaParams) ([]byte, error) {
-	return internalencoder.AppendDeltaParamsPayload(dst, size, quant, delta)
-}
-
-func EncoderDeltaParamsInterPayloadSize(size EncoderInterFrameSize, quant EncoderQuantizationParams, delta EncoderDeltaParams) (int, error) {
-	return internalencoder.DeltaParamsInterPayloadSize(size, quant, delta)
-}
-
-func AppendEncoderDeltaParamsInterPayload(dst []byte, size EncoderInterFrameSize, quant EncoderQuantizationParams, delta EncoderDeltaParams) ([]byte, error) {
-	return internalencoder.AppendDeltaParamsInterPayload(dst, size, quant, delta)
-}
-
-func EncoderLoopFilterParamsPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize, allLossless bool, lf EncoderLoopFilterParams, previous *EncoderLoopFilterDeltas) (int, error) {
-	return internalencoder.LoopFilterParamsPayloadSize(seq, prefix, size, allLossless, lf, previous)
-}
-
-func AppendEncoderLoopFilterParamsPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize, allLossless bool, lf EncoderLoopFilterParams, previous *EncoderLoopFilterDeltas) ([]byte, error) {
-	return internalencoder.AppendLoopFilterParamsPayload(dst, seq, prefix, size, allLossless, lf, previous)
-}
-
-func EncoderLoopFilterParamsInterPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, allLossless bool, lf EncoderLoopFilterParams, previous *EncoderLoopFilterDeltas) (int, error) {
-	return internalencoder.LoopFilterParamsInterPayloadSize(seq, prefix, size, allLossless, lf, previous)
-}
-
-func AppendEncoderLoopFilterParamsInterPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, allLossless bool, lf EncoderLoopFilterParams, previous *EncoderLoopFilterDeltas) ([]byte, error) {
-	return internalencoder.AppendLoopFilterParamsInterPayload(dst, seq, prefix, size, allLossless, lf, previous)
-}
-
-func EncoderCDEFParamsPayloadSize(seq EncoderSequenceHeader, size EncoderIntraFrameSize, allLossless bool, cdef EncoderCDEFParams) (int, error) {
-	return internalencoder.CDEFParamsPayloadSize(seq, size, allLossless, cdef)
-}
-
-func AppendEncoderCDEFParamsPayload(dst []byte, seq EncoderSequenceHeader, size EncoderIntraFrameSize, allLossless bool, cdef EncoderCDEFParams) ([]byte, error) {
-	return internalencoder.AppendCDEFParamsPayload(dst, seq, size, allLossless, cdef)
-}
-
-func EncoderCDEFParamsInterPayloadSize(seq EncoderSequenceHeader, size EncoderInterFrameSize, allLossless bool, cdef EncoderCDEFParams) (int, error) {
-	return internalencoder.CDEFParamsInterPayloadSize(seq, size, allLossless, cdef)
-}
-
-func AppendEncoderCDEFParamsInterPayload(dst []byte, seq EncoderSequenceHeader, size EncoderInterFrameSize, allLossless bool, cdef EncoderCDEFParams) ([]byte, error) {
-	return internalencoder.AppendCDEFParamsInterPayload(dst, seq, size, allLossless, cdef)
-}
-
-func EncoderRestorationParamsPayloadSize(seq EncoderSequenceHeader, size EncoderIntraFrameSize, allLossless bool, restoration EncoderRestorationParams) (int, error) {
-	return internalencoder.RestorationParamsPayloadSize(seq, size, allLossless, restoration)
-}
-
-func AppendEncoderRestorationParamsPayload(dst []byte, seq EncoderSequenceHeader, size EncoderIntraFrameSize, allLossless bool, restoration EncoderRestorationParams) ([]byte, error) {
-	return internalencoder.AppendRestorationParamsPayload(dst, seq, size, allLossless, restoration)
-}
-
-func EncoderRestorationParamsInterPayloadSize(seq EncoderSequenceHeader, size EncoderInterFrameSize, allLossless bool, restoration EncoderRestorationParams) (int, error) {
-	return internalencoder.RestorationParamsInterPayloadSize(seq, size, allLossless, restoration)
-}
-
-func AppendEncoderRestorationParamsInterPayload(dst []byte, seq EncoderSequenceHeader, size EncoderInterFrameSize, allLossless bool, restoration EncoderRestorationParams) ([]byte, error) {
-	return internalencoder.AppendRestorationParamsInterPayload(dst, seq, size, allLossless, restoration)
-}
-
-func EncoderTransformReferenceParamsPayloadSize(prefix EncoderFrameHeaderPrefix, allLossless bool, params EncoderTransformReferenceParams) (int, error) {
-	return internalencoder.TransformReferenceParamsPayloadSize(prefix, allLossless, params)
-}
-
-func AppendEncoderTransformReferenceParamsPayload(dst []byte, prefix EncoderFrameHeaderPrefix, allLossless bool, params EncoderTransformReferenceParams) ([]byte, error) {
-	return internalencoder.AppendTransformReferenceParamsPayload(dst, prefix, allLossless, params)
-}
-
-func EncoderSkipModeParamsPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, refs *ReferenceState, transformRef EncoderTransformReferenceParams, params EncoderSkipModeParams) (int, error) {
-	return internalencoder.SkipModeParamsPayloadSize(seq, prefix, size, refs, transformRef, params)
-}
-
-func AppendEncoderSkipModeParamsPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, refs *ReferenceState, transformRef EncoderTransformReferenceParams, params EncoderSkipModeParams) ([]byte, error) {
-	return internalencoder.AppendSkipModeParamsPayload(dst, seq, prefix, size, refs, transformRef, params)
-}
-
-func EncoderFrameModeParamsPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, params EncoderFrameModeParams) (int, error) {
-	return internalencoder.FrameModeParamsPayloadSize(seq, prefix, params)
-}
-
-func AppendEncoderFrameModeParamsPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, params EncoderFrameModeParams) ([]byte, error) {
-	return internalencoder.AppendFrameModeParamsPayload(dst, seq, prefix, params)
-}
-
-func EncoderDefaultWarpedMotionParams() EncoderWarpedMotionParams {
-	return internalencoder.DefaultWarpedMotionParams()
-}
-
-func EncoderDefaultGlobalMotionParams() EncoderGlobalMotionParams {
-	return internalencoder.DefaultGlobalMotionParams()
-}
-
-func EncoderGlobalMotionParamsPayloadSize(prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, tiles TileInfo, refs *ReferenceState, params EncoderGlobalMotionParams) (int, error) {
-	return internalencoder.GlobalMotionParamsPayloadSize(prefix, size, tiles, refs, params)
-}
-
-func AppendEncoderGlobalMotionParamsPayload(dst []byte, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, tiles TileInfo, refs *ReferenceState, params EncoderGlobalMotionParams) ([]byte, error) {
-	return internalencoder.AppendGlobalMotionParamsPayload(dst, prefix, size, tiles, refs, params)
-}
-
-func EncoderFilmGrainParamsPayloadSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, refs *ReferenceState, params EncoderFilmGrainParams) (int, error) {
-	return internalencoder.FilmGrainParamsPayloadSize(seq, prefix, size, refs, params)
-}
-
-func AppendEncoderFilmGrainParamsPayload(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize, refs *ReferenceState, params EncoderFilmGrainParams) ([]byte, error) {
-	return internalencoder.AppendFilmGrainParamsPayload(dst, seq, prefix, size, refs, params)
-}
-
-func EncoderLowOverheadFrameHeaderIntraOBUSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {
-	return internalencoder.LowOverheadFrameHeaderIntraOBUSize(seq, prefix, size)
-}
-
-func AppendEncoderLowOverheadFrameHeaderIntraOBU(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) ([]byte, error) {
-	return internalencoder.AppendLowOverheadFrameHeaderIntraOBU(dst, seq, prefix, size)
-}
-
-func EncoderLowOverheadFrameHeaderInterOBUSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize) (int, error) {
-	return internalencoder.LowOverheadFrameHeaderInterOBUSize(seq, prefix, size)
-}
-
-func AppendEncoderLowOverheadFrameHeaderInterOBU(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderInterFrameSize) ([]byte, error) {
-	return internalencoder.AppendLowOverheadFrameHeaderInterOBU(dst, seq, prefix, size)
-}
-
-func EncoderLowOverheadInterHeaderFrameOBUSize(header EncoderInterHeaderFrame) (int, error) {
-	return internalencoder.LowOverheadInterHeaderFrameOBUSize(header)
-}
-
-func AppendEncoderLowOverheadInterHeaderFrameOBU(dst []byte, header EncoderInterHeaderFrame) ([]byte, error) {
-	return internalencoder.AppendLowOverheadInterHeaderFrameOBU(dst, header)
-}
-
-func EncoderLowOverheadWebRTCDeltaHeaderTemporalUnitSize(unit EncoderWebRTCDeltaFrameTemporalUnit) (int, error) {
-	return internalencoder.LowOverheadWebRTCDeltaHeaderTemporalUnitSize(unit)
-}
-
-func AppendEncoderLowOverheadWebRTCDeltaHeaderTemporalUnit(dst []byte, unit EncoderWebRTCDeltaFrameTemporalUnit) ([]byte, error) {
-	return internalencoder.AppendLowOverheadWebRTCDeltaHeaderTemporalUnit(dst, unit)
-}
-
-func EncoderLowOverheadWebRTCDeltaHeaderTemporalUnitForStateSize(config EncoderConfig, state EncoderWebRTCState) (int, EncoderWebRTCDeltaFrameTemporalUnit, EncoderWebRTCState, error) {
-	return internalencoder.LowOverheadWebRTCDeltaHeaderTemporalUnitForStateSize(config, state)
-}
-
-func AppendEncoderLowOverheadWebRTCDeltaHeaderTemporalUnitForState(dst []byte, config EncoderConfig, state EncoderWebRTCState) ([]byte, EncoderWebRTCDeltaFrameTemporalUnit, EncoderWebRTCState, error) {
-	return internalencoder.AppendLowOverheadWebRTCDeltaHeaderTemporalUnitForState(dst, config, state)
-}
-
-func EncoderLowOverheadIntraHeaderTemporalUnitSize(seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) (int, error) {
-	return internalencoder.LowOverheadIntraHeaderTemporalUnitSize(seq, prefix, size)
-}
-
-func AppendEncoderLowOverheadIntraHeaderTemporalUnit(dst []byte, seq EncoderSequenceHeader, prefix EncoderFrameHeaderPrefix, size EncoderIntraFrameSize) ([]byte, error) {
-	return internalencoder.AppendLowOverheadIntraHeaderTemporalUnit(dst, seq, prefix, size)
-}
-
-func EncoderLowOverheadIntraHeaderTemporalUnitForConfigSize(config EncoderConfig, orderHint uint8) (int, EncoderIntraHeaderTemporalUnit, error) {
-	return internalencoder.LowOverheadIntraHeaderTemporalUnitForConfigSize(config, orderHint)
-}
-
-func AppendEncoderLowOverheadIntraHeaderTemporalUnitForConfig(dst []byte, config EncoderConfig, orderHint uint8) ([]byte, EncoderIntraHeaderTemporalUnit, error) {
-	return internalencoder.AppendLowOverheadIntraHeaderTemporalUnitForConfig(dst, config, orderHint)
-}
-
-func EncoderLowOverheadWebRTCKeyFrameTemporalUnitForConfigSize(config EncoderConfig, orderHint uint8, firstFrameID uint64) (int, EncoderWebRTCKeyFrameTemporalUnit, error) {
-	return internalencoder.LowOverheadWebRTCKeyFrameTemporalUnitForConfigSize(config, orderHint, firstFrameID)
-}
-
-func AppendEncoderLowOverheadWebRTCKeyFrameTemporalUnitForConfig(dst []byte, config EncoderConfig, orderHint uint8, firstFrameID uint64) ([]byte, EncoderWebRTCKeyFrameTemporalUnit, error) {
-	return internalencoder.AppendLowOverheadWebRTCKeyFrameTemporalUnitForConfig(dst, config, orderHint, firstFrameID)
-}
-
-func EncoderLowOverheadWebRTCKeyFrameTemporalUnitForStateSize(config EncoderConfig, state EncoderWebRTCState) (int, EncoderWebRTCKeyFrameTemporalUnit, EncoderWebRTCState, error) {
-	return internalencoder.LowOverheadWebRTCKeyFrameTemporalUnitForStateSize(config, state)
-}
-
-func AppendEncoderLowOverheadWebRTCKeyFrameTemporalUnitForState(dst []byte, config EncoderConfig, state EncoderWebRTCState) ([]byte, EncoderWebRTCKeyFrameTemporalUnit, EncoderWebRTCState, error) {
-	return internalencoder.AppendLowOverheadWebRTCKeyFrameTemporalUnitForState(dst, config, state)
-}
-
-func EncoderLowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(config EncoderConfig, state EncoderWebRTCState, forceKeyFrame bool) (int, EncoderWebRTCPictureTemporalUnit, EncoderWebRTCState, error) {
-	return internalencoder.LowOverheadWebRTCPictureHeaderTemporalUnitForStateSize(config, state, forceKeyFrame)
-}
-
-func AppendEncoderLowOverheadWebRTCPictureHeaderTemporalUnitForState(dst []byte, config EncoderConfig, state EncoderWebRTCState, forceKeyFrame bool) ([]byte, EncoderWebRTCPictureTemporalUnit, EncoderWebRTCState, error) {
-	return internalencoder.AppendLowOverheadWebRTCPictureHeaderTemporalUnitForState(dst, config, state, forceKeyFrame)
 }

@@ -1,68 +1,68 @@
-package goav1_test
+package goav1
 
 import (
 	"errors"
 	"strings"
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
 )
 
 func TestAV1SDPConstants(t *testing.T) {
-	if av1.AV1RTPMediaType != "video/AV1" {
-		t.Fatalf("AV1RTPMediaType = %q, want video/AV1", av1.AV1RTPMediaType)
+	if AV1RTPMediaType != "video/AV1" {
+		t.Fatalf("AV1RTPMediaType = %q, want video/AV1", AV1RTPMediaType)
 	}
-	if av1.AV1RTPEncodingName != "AV1" {
-		t.Fatalf("AV1RTPEncodingName = %q, want AV1", av1.AV1RTPEncodingName)
+	if AV1RTPEncodingName != "AV1" {
+		t.Fatalf("AV1RTPEncodingName = %q, want AV1", AV1RTPEncodingName)
 	}
-	if av1.AV1RTPClockRate != 90000 {
-		t.Fatalf("AV1RTPClockRate = %d, want 90000", av1.AV1RTPClockRate)
+	if AV1RTPClockRate != 90000 {
+		t.Fatalf("AV1RTPClockRate = %d, want 90000", AV1RTPClockRate)
 	}
-	if av1.AV1RTPDependencyDescriptorURI != "https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension" {
-		t.Fatalf("AV1RTPDependencyDescriptorURI = %q", av1.AV1RTPDependencyDescriptorURI)
+	if AV1RTPDependencyDescriptorURI != "https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension" {
+		t.Fatalf("AV1RTPDependencyDescriptorURI = %q", AV1RTPDependencyDescriptorURI)
 	}
-	if av1.AV1RTPMIDURI != "urn:ietf:params:rtp-hdrext:sdes:mid" ||
-		av1.AV1RTPStreamIDURI != "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id" ||
-		av1.AV1RTPRepairedStreamIDURI != "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id" {
+	if AV1RTPMIDURI != "urn:ietf:params:rtp-hdrext:sdes:mid" ||
+		AV1RTPStreamIDURI != "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id" ||
+		AV1RTPRepairedStreamIDURI != "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id" {
 		t.Fatalf("unexpected RTP SDES extmap URI constants")
 	}
-	if av1.AV1RTPVideoOrientationURI != "urn:3gpp:video-orientation" ||
-		av1.AV1RTPTransportWideCCURI != "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01" ||
-		av1.AV1RTPTransportWideCC02URI != "http://www.webrtc.org/experiments/rtp-hdrext/transport-wide-cc-02" ||
-		av1.AV1RTPAbsoluteSendTimeURI != "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" ||
-		av1.AV1RTPAbsoluteCaptureTimeURI != "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time" ||
-		av1.AV1RTPPlayoutDelayURI != "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay" ||
-		av1.AV1RTPVideoContentTypeURI != "http://www.webrtc.org/experiments/rtp-hdrext/video-content-type" ||
-		av1.AV1RTPVideoTimingURI != "http://www.webrtc.org/experiments/rtp-hdrext/video-timing" ||
-		av1.AV1RTPVideoLayersAllocationURI != "http://www.webrtc.org/experiments/rtp-hdrext/video-layers-allocation00" ||
-		av1.AV1RTPColorSpaceURI != "http://www.webrtc.org/experiments/rtp-hdrext/color-space" {
+	if AV1RTPVideoOrientationURI != "urn:3gpp:video-orientation" ||
+		AV1RTPTransportWideCCURI != "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01" ||
+		AV1RTPTransportWideCC02URI != "http://www.webrtc.org/experiments/rtp-hdrext/transport-wide-cc-02" ||
+		AV1RTPAbsoluteSendTimeURI != "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" ||
+		AV1RTPAbsoluteCaptureTimeURI != "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time" ||
+		AV1RTPPlayoutDelayURI != "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay" ||
+		AV1RTPVideoContentTypeURI != "http://www.webrtc.org/experiments/rtp-hdrext/video-content-type" ||
+		AV1RTPVideoTimingURI != "http://www.webrtc.org/experiments/rtp-hdrext/video-timing" ||
+		AV1RTPVideoLayersAllocationURI != "http://www.webrtc.org/experiments/rtp-hdrext/video-layers-allocation00" ||
+		AV1RTPColorSpaceURI != "http://www.webrtc.org/experiments/rtp-hdrext/color-space" {
 		t.Fatalf("unexpected WebRTC video extmap URI constants")
 	}
-	if av1.AV1SDPFmtpProfile != "profile" ||
-		av1.AV1SDPFmtpLevelIdx != "level-idx" ||
-		av1.AV1SDPFmtpTier != "tier" {
+	if AV1SDPFmtpProfile != "profile" ||
+		AV1SDPFmtpLevelIdx != "level-idx" ||
+		AV1SDPFmtpTier != "tier" {
 		t.Fatalf("unexpected AV1 SDP fmtp keys")
 	}
-	if av1.AV1SDPRIDMaxWidth != "max-width" ||
-		av1.AV1SDPRIDMaxHeight != "max-height" ||
-		av1.AV1SDPRIDMaxFrameRate != "max-fps" ||
-		av1.AV1SDPRIDMaxFrameSize != "max-fs" ||
-		av1.AV1SDPRIDMaxBitrate != "max-br" ||
-		av1.AV1SDPRIDMaxPixelsPerSecond != "max-pps" ||
-		av1.AV1SDPRIDMaxBitsPerPixel != "max-bpp" ||
-		av1.AV1SDPRIDDepend != "depend" {
+	if AV1SDPRIDMaxWidth != "max-width" ||
+		AV1SDPRIDMaxHeight != "max-height" ||
+		AV1SDPRIDMaxFrameRate != "max-fps" ||
+		AV1SDPRIDMaxFrameSize != "max-fs" ||
+		AV1SDPRIDMaxBitrate != "max-br" ||
+		AV1SDPRIDMaxPixelsPerSecond != "max-pps" ||
+		AV1SDPRIDMaxBitsPerPixel != "max-bpp" ||
+		AV1SDPRIDDepend != "depend" {
 		t.Fatalf("unexpected AV1 SDP RID keys")
 	}
-	if got := av1.DefaultAV1SDPFmtpParameters(); got != (av1.AV1SDPFmtpParameters{Profile: 0, LevelIdx: 5, Tier: 0}) {
+	if got := DefaultAV1SDPFmtpParameters(); got != (AV1SDPFmtpParameters{Profile: 0, LevelIdx: 5, Tier: 0}) {
 		t.Fatalf("DefaultAV1SDPFmtpParameters = %+v", got)
 	}
-	if av1.AV1SDPSimulcastPausedPrefix != "~" {
-		t.Fatalf("AV1SDPSimulcastPausedPrefix = %q, want ~", av1.AV1SDPSimulcastPausedPrefix)
+	if AV1SDPSimulcastPausedPrefix != "~" {
+		t.Fatalf("AV1SDPSimulcastPausedPrefix = %q, want ~", AV1SDPSimulcastPausedPrefix)
 	}
 }
 
 func TestAV1SDPRTPMapSDP(t *testing.T) {
-	rtpmap := av1.AV1SDPRTPMap{PayloadType: "98"}
+	rtpmap := AV1SDPRTPMap{PayloadType: "98"}
 	line, err := rtpmap.SDP()
 	if err != nil {
 		t.Fatalf("RTPMap SDP: %v", err)
@@ -71,7 +71,7 @@ func TestAV1SDPRTPMapSDP(t *testing.T) {
 		t.Fatalf("RTPMap SDP line=%q", line)
 	}
 	prefix := []byte("x")
-	appended, err := (av1.AV1SDPRTPMap{PayloadType: "99"}).AppendSDP(prefix)
+	appended, err := (AV1SDPRTPMap{PayloadType: "99"}).AppendSDP(prefix)
 	if err != nil {
 		t.Fatalf("RTPMap AppendSDP: %v", err)
 	}
@@ -79,14 +79,14 @@ func TestAV1SDPRTPMapSDP(t *testing.T) {
 		t.Fatalf("appended RTPMap line=%q", appended)
 	}
 
-	parsed, err := av1.ParseAV1SDPRTPMap(" a=rtpmap:98 Av1/90000 ")
+	parsed, err := ParseAV1SDPRTPMap(" a=rtpmap:98 Av1/90000 ")
 	if err != nil {
 		t.Fatalf("ParseAV1SDPRTPMap: %v", err)
 	}
 	if parsed != rtpmap {
 		t.Fatalf("ParseAV1SDPRTPMap=%+v want %+v", parsed, rtpmap)
 	}
-	if !av1.AV1SDPNegotiates(joinAV1SDPLines(
+	if !AV1SDPNegotiates(joinAV1SDPLines(
 		"m=video 9 UDP/TLS/RTP/SAVPF 98",
 		line,
 	)) {
@@ -95,20 +95,20 @@ func TestAV1SDPRTPMapSDP(t *testing.T) {
 }
 
 func TestAV1SDPRTPMapRejectsInvalid(t *testing.T) {
-	invalidMaps := []av1.AV1SDPRTPMap{
+	invalidMaps := []AV1SDPRTPMap{
 		{PayloadType: ""},
 		{PayloadType: "av1"},
 		{PayloadType: "128"},
 		{PayloadType: "98\n99"},
 	}
 	for _, tc := range invalidMaps {
-		if err := tc.Validate(); !errors.Is(err, av1.ErrSDPInvalidConfig) {
-			t.Fatalf("Validate(%+v) err=%v want %v", tc, err, av1.ErrSDPInvalidConfig)
+		if err := tc.Validate(); !errors.Is(err, ErrSDPInvalidConfig) {
+			t.Fatalf("Validate(%+v) err=%v want %v", tc, err, ErrSDPInvalidConfig)
 		}
-		if out, err := tc.AppendSDP([]byte("prefix")); !errors.Is(err, av1.ErrSDPInvalidConfig) || string(out) != "prefix" {
+		if out, err := tc.AppendSDP([]byte("prefix")); !errors.Is(err, ErrSDPInvalidConfig) || string(out) != "prefix" {
 			t.Fatalf("AppendSDP(%+v) out=%q err=%v", tc, out, err)
 		}
-		if line, err := tc.SDP(); !errors.Is(err, av1.ErrSDPInvalidConfig) || line != "" {
+		if line, err := tc.SDP(); !errors.Is(err, ErrSDPInvalidConfig) || line != "" {
 			t.Fatalf("SDP(%+v) line=%q err=%v", tc, line, err)
 		}
 	}
@@ -121,16 +121,16 @@ func TestAV1SDPRTPMapRejectsInvalid(t *testing.T) {
 		"a=rtpmap:98 AV1/90000/2",
 		"a=rtpmap:98 AV1/90000 extra",
 	} {
-		if _, err := av1.ParseAV1SDPRTPMap(line); !errors.Is(err, av1.ErrSDPInvalidConfig) {
-			t.Fatalf("ParseAV1SDPRTPMap(%q) err=%v want %v", line, err, av1.ErrSDPInvalidConfig)
+		if _, err := ParseAV1SDPRTPMap(line); !errors.Is(err, ErrSDPInvalidConfig) {
+			t.Fatalf("ParseAV1SDPRTPMap(%q) err=%v want %v", line, err, ErrSDPInvalidConfig)
 		}
 	}
 }
 
 func TestAV1SDPFmtpAttributeSDP(t *testing.T) {
-	attr := av1.AV1SDPFmtpAttribute{
+	attr := AV1SDPFmtpAttribute{
 		PayloadType: "98",
-		Parameters:  av1.AV1SDPFmtpParameters{Profile: 1, LevelIdx: 31, Tier: 1},
+		Parameters:  AV1SDPFmtpParameters{Profile: 1, LevelIdx: 31, Tier: 1},
 	}
 	line, err := attr.SDP()
 	if err != nil {
@@ -140,9 +140,9 @@ func TestAV1SDPFmtpAttributeSDP(t *testing.T) {
 		t.Fatalf("FmtpAttribute SDP line=%q", line)
 	}
 	prefix := []byte("x")
-	appended, err := (av1.AV1SDPFmtpAttribute{
+	appended, err := (AV1SDPFmtpAttribute{
 		PayloadType: "99",
-		Parameters:  av1.DefaultAV1SDPFmtpParameters(),
+		Parameters:  DefaultAV1SDPFmtpParameters(),
 	}).AppendSDP(prefix)
 	if err != nil {
 		t.Fatalf("FmtpAttribute AppendSDP: %v", err)
@@ -151,14 +151,14 @@ func TestAV1SDPFmtpAttributeSDP(t *testing.T) {
 		t.Fatalf("appended FmtpAttribute line=%q", appended)
 	}
 
-	parsed, err := av1.ParseAV1SDPFmtpAttribute(" a=fmtp:98 LEVEL-IDX=31; PROFILE=1; TIER=1; x-google-start-bitrate=500 ")
+	parsed, err := ParseAV1SDPFmtpAttribute(" a=fmtp:98 LEVEL-IDX=31; PROFILE=1; TIER=1; x-google-start-bitrate=500 ")
 	if err != nil {
 		t.Fatalf("ParseAV1SDPFmtpAttribute: %v", err)
 	}
 	if parsed != attr {
 		t.Fatalf("ParseAV1SDPFmtpAttribute=%+v want %+v", parsed, attr)
 	}
-	if !av1.AV1SDPNegotiatesParams(joinAV1SDPLines(
+	if !AV1SDPNegotiatesParams(joinAV1SDPLines(
 		"m=video 9 UDP/TLS/RTP/SAVPF 98",
 		"a=rtpmap:98 AV1/90000",
 		line,
@@ -168,22 +168,22 @@ func TestAV1SDPFmtpAttributeSDP(t *testing.T) {
 }
 
 func TestAV1SDPFmtpAttributeRejectsInvalid(t *testing.T) {
-	validParams := av1.DefaultAV1SDPFmtpParameters()
-	invalidAttributes := []av1.AV1SDPFmtpAttribute{
+	validParams := DefaultAV1SDPFmtpParameters()
+	invalidAttributes := []AV1SDPFmtpAttribute{
 		{PayloadType: "", Parameters: validParams},
 		{PayloadType: "av1", Parameters: validParams},
 		{PayloadType: "128", Parameters: validParams},
 		{PayloadType: "98\n99", Parameters: validParams},
-		{PayloadType: "98", Parameters: av1.AV1SDPFmtpParameters{Profile: 3, LevelIdx: 5, Tier: 0}},
+		{PayloadType: "98", Parameters: AV1SDPFmtpParameters{Profile: 3, LevelIdx: 5, Tier: 0}},
 	}
 	for _, tc := range invalidAttributes {
-		if err := tc.Validate(); !errors.Is(err, av1.ErrSDPInvalidConfig) {
-			t.Fatalf("Validate(%+v) err=%v want %v", tc, err, av1.ErrSDPInvalidConfig)
+		if err := tc.Validate(); !errors.Is(err, ErrSDPInvalidConfig) {
+			t.Fatalf("Validate(%+v) err=%v want %v", tc, err, ErrSDPInvalidConfig)
 		}
-		if out, err := tc.AppendSDP([]byte("prefix")); !errors.Is(err, av1.ErrSDPInvalidConfig) || string(out) != "prefix" {
+		if out, err := tc.AppendSDP([]byte("prefix")); !errors.Is(err, ErrSDPInvalidConfig) || string(out) != "prefix" {
 			t.Fatalf("AppendSDP(%+v) out=%q err=%v", tc, out, err)
 		}
-		if line, err := tc.SDP(); !errors.Is(err, av1.ErrSDPInvalidConfig) || line != "" {
+		if line, err := tc.SDP(); !errors.Is(err, ErrSDPInvalidConfig) || line != "" {
 			t.Fatalf("SDP(%+v) line=%q err=%v", tc, line, err)
 		}
 	}
@@ -196,8 +196,8 @@ func TestAV1SDPFmtpAttributeRejectsInvalid(t *testing.T) {
 		"a=fmtp:98 level-idx=10",
 		"a=fmtp:98 tier=two",
 	} {
-		if _, err := av1.ParseAV1SDPFmtpAttribute(line); !errors.Is(err, av1.ErrSDPInvalidConfig) {
-			t.Fatalf("ParseAV1SDPFmtpAttribute(%q) err=%v want %v", line, err, av1.ErrSDPInvalidConfig)
+		if _, err := ParseAV1SDPFmtpAttribute(line); !errors.Is(err, ErrSDPInvalidConfig) {
+			t.Fatalf("ParseAV1SDPFmtpAttribute(%q) err=%v want %v", line, err, ErrSDPInvalidConfig)
 		}
 	}
 }
@@ -206,37 +206,37 @@ func TestParseAV1SDPFmtp(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
-		want av1.AV1SDPFmtpParameters
+		want AV1SDPFmtpParameters
 	}{
 		{
 			name: "empty defaults",
 			in:   "",
-			want: av1.AV1SDPFmtpParameters{Profile: 0, LevelIdx: 5, Tier: 0},
+			want: AV1SDPFmtpParameters{Profile: 0, LevelIdx: 5, Tier: 0},
 		},
 		{
 			name: "profile level tier",
 			in:   "profile=2; level-idx=8; tier=1",
-			want: av1.AV1SDPFmtpParameters{Profile: 2, LevelIdx: 8, Tier: 1},
+			want: AV1SDPFmtpParameters{Profile: 2, LevelIdx: 8, Tier: 1},
 		},
 		{
 			name: "case and spacing",
 			in:   " LEVEL-IDX = 31 ; x-google-start-bitrate=800 ; PROFILE = 1 ; TIER = 1 ",
-			want: av1.AV1SDPFmtpParameters{Profile: 1, LevelIdx: 31, Tier: 1},
+			want: AV1SDPFmtpParameters{Profile: 1, LevelIdx: 31, Tier: 1},
 		},
 		{
 			name: "profile only",
 			in:   "profile=1",
-			want: av1.AV1SDPFmtpParameters{Profile: 1, LevelIdx: 5, Tier: 0},
+			want: AV1SDPFmtpParameters{Profile: 1, LevelIdx: 5, Tier: 0},
 		},
 		{
 			name: "trailing semicolon",
 			in:   "profile=0; level-idx=5; tier=0;",
-			want: av1.AV1SDPFmtpParameters{Profile: 0, LevelIdx: 5, Tier: 0},
+			want: AV1SDPFmtpParameters{Profile: 0, LevelIdx: 5, Tier: 0},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := av1.ParseAV1SDPFmtp(tc.in)
+			got, err := ParseAV1SDPFmtp(tc.in)
 			if err != nil {
 				t.Fatalf("ParseAV1SDPFmtp returned error: %v", err)
 			}
@@ -248,7 +248,7 @@ func TestParseAV1SDPFmtp(t *testing.T) {
 }
 
 func TestAV1SDPFmtpRejectsInvalidConfig(t *testing.T) {
-	for _, params := range []av1.AV1SDPFmtpParameters{
+	for _, params := range []AV1SDPFmtpParameters{
 		{Profile: -1, LevelIdx: 5, Tier: 0},
 		{Profile: 3, LevelIdx: 5, Tier: 0},
 		{Profile: 0, LevelIdx: -1, Tier: 0},
@@ -258,7 +258,7 @@ func TestAV1SDPFmtpRejectsInvalidConfig(t *testing.T) {
 		{Profile: 0, LevelIdx: 5, Tier: 1},
 		{Profile: 0, LevelIdx: 8, Tier: 2},
 	} {
-		if err := params.Validate(); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+		if err := params.Validate(); !errors.Is(err, ErrSDPInvalidConfig) {
 			t.Fatalf("Validate(%+v) error = %v, want ErrSDPInvalidConfig", params, err)
 		}
 	}
@@ -275,14 +275,14 @@ func TestAV1SDPFmtpRejectsInvalidConfig(t *testing.T) {
 		"tier=0; tier=1",
 		"profile",
 	} {
-		if _, err := av1.ParseAV1SDPFmtp(in); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+		if _, err := ParseAV1SDPFmtp(in); !errors.Is(err, ErrSDPInvalidConfig) {
 			t.Fatalf("ParseAV1SDPFmtp(%q) error = %v, want ErrSDPInvalidConfig", in, err)
 		}
 	}
 }
 
 func TestAV1SDPFmtpAppendAndAllows(t *testing.T) {
-	params := av1.AV1SDPFmtpParameters{Profile: 2, LevelIdx: 8, Tier: 1}
+	params := AV1SDPFmtpParameters{Profile: 2, LevelIdx: 8, Tier: 1}
 	got, err := params.Fmtp()
 	if err != nil {
 		t.Fatalf("Fmtp returned error: %v", err)
@@ -298,7 +298,7 @@ func TestAV1SDPFmtpAppendAndAllows(t *testing.T) {
 		t.Fatalf("AppendFmtp = %q", appended)
 	}
 
-	caps := av1.AV1SDPFmtpParameters{Profile: 2, LevelIdx: 31, Tier: 1}
+	caps := AV1SDPFmtpParameters{Profile: 2, LevelIdx: 31, Tier: 1}
 	allowed, err := caps.Allows(params)
 	if err != nil {
 		t.Fatalf("Allows returned error: %v", err)
@@ -306,26 +306,26 @@ func TestAV1SDPFmtpAppendAndAllows(t *testing.T) {
 	if !allowed {
 		t.Fatal("profile 2 level max tier 1 rejected profile 2 level 8 tier 1")
 	}
-	allowed, err = av1.DefaultAV1SDPFmtpParameters().Allows(params)
+	allowed, err = DefaultAV1SDPFmtpParameters().Allows(params)
 	if err != nil {
 		t.Fatalf("Allows default returned error: %v", err)
 	}
 	if allowed {
 		t.Fatal("default profile 0 level 5 tier 0 allowed profile 2 level 8 tier 1")
 	}
-	if _, err := caps.Allows(av1.AV1SDPFmtpParameters{Profile: 0, LevelIdx: 10}); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+	if _, err := caps.Allows(AV1SDPFmtpParameters{Profile: 0, LevelIdx: 10}); !errors.Is(err, ErrSDPInvalidConfig) {
 		t.Fatalf("Allows invalid stream error = %v, want ErrSDPInvalidConfig", err)
 	}
 }
 
 func TestParseAV1SDPExtmap(t *testing.T) {
-	extmap, err := av1.ParseAV1SDPExtmap("a=extmap:4/recvonly https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension attrs")
+	extmap, err := ParseAV1SDPExtmap("a=extmap:4/recvonly https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension attrs")
 	if err != nil {
 		t.Fatalf("ParseAV1SDPExtmap returned error: %v", err)
 	}
 	if extmap.ID != 4 ||
 		extmap.Direction != "recvonly" ||
-		extmap.URI != av1.AV1RTPDependencyDescriptorURI ||
+		extmap.URI != AV1RTPDependencyDescriptorURI ||
 		extmap.Attributes != "attrs" {
 		t.Fatalf("ParseAV1SDPExtmap = %+v", extmap)
 	}
@@ -337,35 +337,35 @@ func TestParseAV1SDPExtmap(t *testing.T) {
 		t.Fatalf("Extmap SDP = %q", line)
 	}
 
-	noDirection, err := av1.ParseAV1SDPExtmap("1 urn:ietf:params:rtp-hdrext:sdes:mid")
+	noDirection, err := ParseAV1SDPExtmap("1 urn:ietf:params:rtp-hdrext:sdes:mid")
 	if err != nil {
 		t.Fatalf("ParseAV1SDPExtmap without prefix returned error: %v", err)
 	}
-	if noDirection.ID != 1 || noDirection.Direction != "" || noDirection.URI != av1.AV1RTPMIDURI {
+	if noDirection.ID != 1 || noDirection.Direction != "" || noDirection.URI != AV1RTPMIDURI {
 		t.Fatalf("ParseAV1SDPExtmap no direction = %+v", noDirection)
 	}
 
-	mixedCase, err := av1.ParseAV1SDPExtmap(" A=EXTMAP:5/SENDRECV http://www.webrtc.org/experiments/rtp-hdrext/video-timing timing-attr ")
+	mixedCase, err := ParseAV1SDPExtmap(" A=EXTMAP:5/SENDRECV http://www.webrtc.org/experiments/rtp-hdrext/video-timing timing-attr ")
 	if err != nil {
 		t.Fatalf("ParseAV1SDPExtmap mixed-case prefix returned error: %v", err)
 	}
 	if mixedCase.ID != 5 ||
 		mixedCase.Direction != "sendrecv" ||
-		mixedCase.URI != av1.AV1RTPVideoTimingURI ||
+		mixedCase.URI != AV1RTPVideoTimingURI ||
 		mixedCase.Attributes != "timing-attr" {
 		t.Fatalf("ParseAV1SDPExtmap mixed-case prefix = %+v", mixedCase)
 	}
 }
 
 func TestAV1SDPExtmapRejectsInvalidConfig(t *testing.T) {
-	for _, extmap := range []av1.AV1SDPExtmap{
+	for _, extmap := range []AV1SDPExtmap{
 		{},
-		{ID: -1, URI: av1.AV1RTPMIDURI},
-		{ID: 256, URI: av1.AV1RTPMIDURI},
-		{ID: 1, Direction: "both", URI: av1.AV1RTPMIDURI},
+		{ID: -1, URI: AV1RTPMIDURI},
+		{ID: 256, URI: AV1RTPMIDURI},
+		{ID: 1, Direction: "both", URI: AV1RTPMIDURI},
 		{ID: 1},
 	} {
-		if err := extmap.Validate(); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+		if err := extmap.Validate(); !errors.Is(err, ErrSDPInvalidConfig) {
 			t.Fatalf("Validate(%+v) error = %v, want ErrSDPInvalidConfig", extmap, err)
 		}
 	}
@@ -377,24 +377,24 @@ func TestAV1SDPExtmapRejectsInvalidConfig(t *testing.T) {
 		"a=extmap:one urn:ietf:params:rtp-hdrext:sdes:mid",
 		"a=extmap:1",
 	} {
-		if _, err := av1.ParseAV1SDPExtmap(line); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+		if _, err := ParseAV1SDPExtmap(line); !errors.Is(err, ErrSDPInvalidConfig) {
 			t.Fatalf("ParseAV1SDPExtmap(%q) error = %v, want ErrSDPInvalidConfig", line, err)
 		}
 	}
 }
 
 func TestParseAV1SDPRID(t *testing.T) {
-	rid, err := av1.ParseAV1SDPRID("a=rid:q recv pt=98,99;max-width=640;max-height=360;max-fps=30;max-fs=230400;max-br=700000;max-pps=6912000;max-bpp=1.25;depend=base")
+	rid, err := ParseAV1SDPRID("a=rid:q recv pt=98,99;max-width=640;max-height=360;max-fps=30;max-fs=230400;max-br=700000;max-pps=6912000;max-bpp=1.25;depend=base")
 	if err != nil {
 		t.Fatalf("ParseAV1SDPRID returned error: %v", err)
 	}
-	if rid.ID != "q" || rid.Direction != av1.AV1SDPRIDDirectionReceive {
+	if rid.ID != "q" || rid.Direction != AV1SDPRIDDirectionReceive {
 		t.Fatalf("ParseAV1SDPRID id/direction = %q/%q", rid.ID, rid.Direction)
 	}
 	if len(rid.PayloadTypes) != 2 || rid.PayloadTypes[0] != "98" || rid.PayloadTypes[1] != "99" {
 		t.Fatalf("ParseAV1SDPRID payloads = %#v", rid.PayloadTypes)
 	}
-	want := av1.AV1SDPRIDRestrictions{
+	want := AV1SDPRIDRestrictions{
 		MaxWidth:              640,
 		MaxHeight:             360,
 		MaxFrameRate:          30,
@@ -423,7 +423,7 @@ func TestParseAV1SDPRID(t *testing.T) {
 		t.Fatalf("RID SDP = %q", line)
 	}
 
-	restrictions, err := av1.ParseAV1SDPRIDRestrictions("max-width;max-height=720;max-bpp=0.0001")
+	restrictions, err := ParseAV1SDPRIDRestrictions("max-width;max-height=720;max-bpp=0.0001")
 	if err != nil {
 		t.Fatalf("ParseAV1SDPRIDRestrictions returned error: %v", err)
 	}
@@ -433,12 +433,12 @@ func TestParseAV1SDPRID(t *testing.T) {
 		t.Fatalf("ParseAV1SDPRIDRestrictions = %+v", restrictions)
 	}
 
-	mixedCase, err := av1.ParseAV1SDPRID(" A=RID:screen RECV PT=98;MAX-WIDTH=1280;MAX-FPS=30 ")
+	mixedCase, err := ParseAV1SDPRID(" A=RID:screen RECV PT=98;MAX-WIDTH=1280;MAX-FPS=30 ")
 	if err != nil {
 		t.Fatalf("ParseAV1SDPRID mixed-case prefix returned error: %v", err)
 	}
 	if mixedCase.ID != "screen" ||
-		mixedCase.Direction != av1.AV1SDPRIDDirectionReceive ||
+		mixedCase.Direction != AV1SDPRIDDirectionReceive ||
 		len(mixedCase.PayloadTypes) != 1 ||
 		mixedCase.PayloadTypes[0] != "98" ||
 		mixedCase.Restrictions.MaxWidth != 1280 ||
@@ -448,14 +448,14 @@ func TestParseAV1SDPRID(t *testing.T) {
 }
 
 func TestAV1SDPRIDRejectsInvalidConfig(t *testing.T) {
-	for _, restrictions := range []av1.AV1SDPRIDRestrictions{
+	for _, restrictions := range []AV1SDPRIDRestrictions{
 		{MaxWidth: -1},
 		{MaxBitsPerPixelX10000: -1},
 		{MaxBitsPerPixelX10000: 480001},
 		{DependsOn: []string{""}},
 		{DependsOn: []string{"bad/id"}},
 	} {
-		if err := restrictions.Validate(); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+		if err := restrictions.Validate(); !errors.Is(err, ErrSDPInvalidConfig) {
 			t.Fatalf("Validate(%+v) error = %v, want ErrSDPInvalidConfig", restrictions, err)
 		}
 	}
@@ -475,14 +475,14 @@ func TestAV1SDPRIDRejectsInvalidConfig(t *testing.T) {
 		"a=rid:q recv depend=",
 		"a=rid:q recv depend=base,bad/id",
 	} {
-		if _, err := av1.ParseAV1SDPRID(line); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+		if _, err := ParseAV1SDPRID(line); !errors.Is(err, ErrSDPInvalidConfig) {
 			t.Fatalf("ParseAV1SDPRID(%q) error = %v, want ErrSDPInvalidConfig", line, err)
 		}
 	}
 }
 
 func TestAV1SDPRIDRestrictionsAllowsFrame(t *testing.T) {
-	restrictions := av1.AV1SDPRIDRestrictions{
+	restrictions := AV1SDPRIDRestrictions{
 		MaxWidth:              1280,
 		MaxHeight:             720,
 		MaxFrameRate:          30,
@@ -525,19 +525,19 @@ func TestAV1SDPRIDRestrictionsAllowsFrame(t *testing.T) {
 			}
 		})
 	}
-	if _, err := restrictions.AllowsFrame(640, 360, 0); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+	if _, err := restrictions.AllowsFrame(640, 360, 0); !errors.Is(err, ErrSDPInvalidConfig) {
 		t.Fatalf("AllowsFrame invalid fps error = %v, want ErrSDPInvalidConfig", err)
 	}
-	if _, err := restrictions.AllowsEncodedFrame(640, 360, 30, 0, 1); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+	if _, err := restrictions.AllowsEncodedFrame(640, 360, 30, 0, 1); !errors.Is(err, ErrSDPInvalidConfig) {
 		t.Fatalf("AllowsEncodedFrame invalid bitrate error = %v, want ErrSDPInvalidConfig", err)
 	}
-	if _, err := restrictions.AllowsEncodedFrame(640, 360, 30, 1, 0); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+	if _, err := restrictions.AllowsEncodedFrame(640, 360, 30, 1, 0); !errors.Is(err, ErrSDPInvalidConfig) {
 		t.Fatalf("AllowsEncodedFrame invalid frame bits error = %v, want ErrSDPInvalidConfig", err)
 	}
 }
 
 func TestParseAV1SDPSimulcast(t *testing.T) {
-	simulcast, err := av1.ParseAV1SDPSimulcast("a=simulcast:send q;h,f recv ~low,mid;high")
+	simulcast, err := ParseAV1SDPSimulcast("a=simulcast:send q;h,f recv ~low,mid;high")
 	if err != nil {
 		t.Fatalf("ParseAV1SDPSimulcast returned error: %v", err)
 	}
@@ -565,7 +565,7 @@ func TestParseAV1SDPSimulcast(t *testing.T) {
 		t.Fatalf("Simulcast SDP = %q", line)
 	}
 
-	reordered, err := av1.ParseAV1SDPSimulcast("recv r send s")
+	reordered, err := ParseAV1SDPSimulcast("recv r send s")
 	if err != nil {
 		t.Fatalf("ParseAV1SDPSimulcast reordered returned error: %v", err)
 	}
@@ -577,7 +577,7 @@ func TestParseAV1SDPSimulcast(t *testing.T) {
 		t.Fatalf("reordered SDP = %q", line)
 	}
 
-	mixedCase, err := av1.ParseAV1SDPSimulcast(" A=SIMULCAST:RECV q SEND h ")
+	mixedCase, err := ParseAV1SDPSimulcast(" A=SIMULCAST:RECV q SEND h ")
 	if err != nil {
 		t.Fatalf("ParseAV1SDPSimulcast mixed-case prefix returned error: %v", err)
 	}
@@ -592,13 +592,13 @@ func TestParseAV1SDPSimulcast(t *testing.T) {
 }
 
 func TestAV1SDPSimulcastRejectsInvalidConfig(t *testing.T) {
-	for _, simulcast := range []av1.AV1SDPSimulcast{
+	for _, simulcast := range []AV1SDPSimulcast{
 		{},
-		{Send: []av1.AV1SDPSimulcastStream{{}}},
-		{Send: []av1.AV1SDPSimulcastStream{{{RID: ""}}}},
-		{Send: []av1.AV1SDPSimulcastStream{{{RID: "q"}, {RID: "q"}}}},
+		{Send: []AV1SDPSimulcastStream{{}}},
+		{Send: []AV1SDPSimulcastStream{{{RID: ""}}}},
+		{Send: []AV1SDPSimulcastStream{{{RID: "q"}, {RID: "q"}}}},
 	} {
-		if err := simulcast.Validate(); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+		if err := simulcast.Validate(); !errors.Is(err, ErrSDPInvalidConfig) {
 			t.Fatalf("Validate(%+v) error = %v, want ErrSDPInvalidConfig", simulcast, err)
 		}
 	}
@@ -614,37 +614,37 @@ func TestAV1SDPSimulcastRejectsInvalidConfig(t *testing.T) {
 		"a=simulcast:send q/h",
 		"a=simulcast:send q recv h send f",
 	} {
-		if _, err := av1.ParseAV1SDPSimulcast(line); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+		if _, err := ParseAV1SDPSimulcast(line); !errors.Is(err, ErrSDPInvalidConfig) {
 			t.Fatalf("ParseAV1SDPSimulcast(%q) error = %v, want ErrSDPInvalidConfig", line, err)
 		}
 	}
 }
 
 func TestAV1SDPFmtpParametersForSequence(t *testing.T) {
-	seq := av1.SequenceHeader{
+	seq := SequenceHeader{
 		SeqProfile:           2,
 		OperatingPointsCount: 3,
 	}
-	seq.OperatingPoints[0] = av1.OperatingPoint{SeqLevelIdx: 5, SeqTier: 0}
-	seq.OperatingPoints[1] = av1.OperatingPoint{SeqLevelIdx: 8, SeqTier: 1}
-	seq.OperatingPoints[2] = av1.OperatingPoint{SeqLevelIdx: 4, SeqTier: 0}
-	got, err := av1.AV1SDPFmtpParametersForSequence(seq)
+	seq.OperatingPoints[0] = internalparser.OperatingPoint{SeqLevelIdx: 5, SeqTier: 0}
+	seq.OperatingPoints[1] = internalparser.OperatingPoint{SeqLevelIdx: 8, SeqTier: 1}
+	seq.OperatingPoints[2] = internalparser.OperatingPoint{SeqLevelIdx: 4, SeqTier: 0}
+	got, err := AV1SDPFmtpParametersForSequence(seq)
 	if err != nil {
 		t.Fatalf("AV1SDPFmtpParametersForSequence returned error: %v", err)
 	}
-	want := av1.AV1SDPFmtpParameters{Profile: 2, LevelIdx: 8, Tier: 1}
+	want := AV1SDPFmtpParameters{Profile: 2, LevelIdx: 8, Tier: 1}
 	if got != want {
 		t.Fatalf("AV1SDPFmtpParametersForSequence = %+v, want %+v", got, want)
 	}
 
-	allowed, err := (av1.AV1SDPFmtpParameters{Profile: 2, LevelIdx: 31, Tier: 1}).AllowsSequence(seq)
+	allowed, err := (AV1SDPFmtpParameters{Profile: 2, LevelIdx: 31, Tier: 1}).AllowsSequence(seq)
 	if err != nil {
 		t.Fatalf("AllowsSequence returned error: %v", err)
 	}
 	if !allowed {
 		t.Fatal("max-level receiver rejected sequence")
 	}
-	allowed, err = av1.DefaultAV1SDPFmtpParameters().AllowsSequence(seq)
+	allowed, err = DefaultAV1SDPFmtpParameters().AllowsSequence(seq)
 	if err != nil {
 		t.Fatalf("AllowsSequence default returned error: %v", err)
 	}
@@ -654,12 +654,12 @@ func TestAV1SDPFmtpParametersForSequence(t *testing.T) {
 
 	bad := seq
 	bad.OperatingPointsCount = 0
-	if _, err := av1.AV1SDPFmtpParametersForSequence(bad); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+	if _, err := AV1SDPFmtpParametersForSequence(bad); !errors.Is(err, ErrSDPInvalidConfig) {
 		t.Fatalf("zero operating points error = %v, want ErrSDPInvalidConfig", err)
 	}
 	bad = seq
 	bad.OperatingPoints[0].SeqLevelIdx = 10
-	if _, err := av1.AV1SDPFmtpParametersForSequence(bad); !errors.Is(err, av1.ErrSDPInvalidConfig) {
+	if _, err := AV1SDPFmtpParametersForSequence(bad); !errors.Is(err, ErrSDPInvalidConfig) {
 		t.Fatalf("reserved level error = %v, want ErrSDPInvalidConfig", err)
 	}
 }
@@ -673,19 +673,19 @@ func TestAV1SDPSectionScanning(t *testing.T) {
 		"a=rtpmap:98 AV1/90000",
 		"a=fmtp:98 profile=2; level-idx=8; tier=1;",
 	)
-	if !av1.AV1SDPNegotiates(sdp) {
+	if !AV1SDPNegotiates(sdp) {
 		t.Fatal("AV1SDPNegotiates rejected active AV1 video section")
 	}
-	if !av1.AV1SDPOffersReceive(sdp) {
+	if !AV1SDPOffersReceive(sdp) {
 		t.Fatal("AV1SDPOffersReceive rejected sendrecv AV1 video section")
 	}
-	if !av1.AV1SDPAnswersSend(sdp) {
+	if !AV1SDPAnswersSend(sdp) {
 		t.Fatal("AV1SDPAnswersSend rejected sendrecv AV1 video section")
 	}
-	if !av1.AV1SDPNegotiatesParams(sdp, av1.AV1SDPFmtpParameters{Profile: 2, LevelIdx: 8, Tier: 1}) {
+	if !AV1SDPNegotiatesParams(sdp, AV1SDPFmtpParameters{Profile: 2, LevelIdx: 8, Tier: 1}) {
 		t.Fatal("AV1SDPNegotiatesParams rejected matching stream")
 	}
-	if av1.AV1SDPOffersReceiveParams(sdp, av1.AV1SDPFmtpParameters{Profile: 2, LevelIdx: 12, Tier: 1}) {
+	if AV1SDPOffersReceiveParams(sdp, AV1SDPFmtpParameters{Profile: 2, LevelIdx: 12, Tier: 1}) {
 		t.Fatal("AV1SDPOffersReceiveParams allowed stream above advertised level")
 	}
 
@@ -732,7 +732,7 @@ func TestAV1SDPSectionScanning(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if av1.AV1SDPNegotiates(tc.sdp) {
+			if AV1SDPNegotiates(tc.sdp) {
 				t.Fatal("AV1SDPNegotiates accepted invalid SDP")
 			}
 		})
@@ -743,10 +743,10 @@ func TestAV1SDPSectionScanning(t *testing.T) {
 		"a=sendonly",
 		"a=rtpmap:98 AV1/90000",
 	)
-	if av1.AV1SDPOffersReceive(sendOnly) {
+	if AV1SDPOffersReceive(sendOnly) {
 		t.Fatal("sendonly offer reported receive support")
 	}
-	if !av1.AV1SDPAnswersSend(sendOnly) {
+	if !AV1SDPAnswersSend(sendOnly) {
 		t.Fatal("sendonly answer did not report send support")
 	}
 
@@ -755,10 +755,10 @@ func TestAV1SDPSectionScanning(t *testing.T) {
 		"m=video 9 UDP/TLS/RTP/SAVPF 98",
 		"a=rtpmap:98 AV1/90000",
 	)
-	if !av1.AV1SDPOffersReceive(recvOnly) {
+	if !AV1SDPOffersReceive(recvOnly) {
 		t.Fatal("session-level recvonly offer did not report receive support")
 	}
-	if av1.AV1SDPAnswersSend(recvOnly) {
+	if AV1SDPAnswersSend(recvOnly) {
 		t.Fatal("recvonly SDP reported send support")
 	}
 }
@@ -777,28 +777,28 @@ func TestAV1SDPRTCPFeedbackScanning(t *testing.T) {
 		"a=rtcp-fb:* goog-remb",
 		"a=rtcp-fb:99 ccm lrr",
 	)
-	if !av1.AV1SDPNegotiatesRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackNACK) {
+	if !AV1SDPNegotiatesRTCPFeedback(sdp, AV1SDPRTCPFeedbackNACK) {
 		t.Fatal("AV1SDPNegotiatesRTCPFeedback rejected payload-specific nack")
 	}
-	if !av1.AV1SDPNegotiatesRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackPLI) {
+	if !AV1SDPNegotiatesRTCPFeedback(sdp, AV1SDPRTCPFeedbackPLI) {
 		t.Fatal("AV1SDPNegotiatesRTCPFeedback rejected payload-specific pli")
 	}
-	if !av1.AV1SDPNegotiatesRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackFIR) {
+	if !AV1SDPNegotiatesRTCPFeedback(sdp, AV1SDPRTCPFeedbackFIR) {
 		t.Fatal("AV1SDPNegotiatesRTCPFeedback rejected wildcard fir")
 	}
-	if !av1.AV1SDPOffersReceiveRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackLRR) {
+	if !AV1SDPOffersReceiveRTCPFeedback(sdp, AV1SDPRTCPFeedbackLRR) {
 		t.Fatal("AV1SDPOffersReceiveRTCPFeedback rejected AV1 payload-specific lrr")
 	}
-	if !av1.AV1SDPOffersReceiveRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackTransportCC) {
+	if !AV1SDPOffersReceiveRTCPFeedback(sdp, AV1SDPRTCPFeedbackTransportCC) {
 		t.Fatal("AV1SDPOffersReceiveRTCPFeedback rejected payload-specific transport-cc")
 	}
-	if !av1.AV1SDPOffersReceiveRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackREMB) {
+	if !AV1SDPOffersReceiveRTCPFeedback(sdp, AV1SDPRTCPFeedbackREMB) {
 		t.Fatal("AV1SDPOffersReceiveRTCPFeedback rejected wildcard goog-remb")
 	}
-	if av1.AV1SDPOffersReceiveRTCPFeedback(sdp, "ack rpsi") {
+	if AV1SDPOffersReceiveRTCPFeedback(sdp, "ack rpsi") {
 		t.Fatal("AV1SDPOffersReceiveRTCPFeedback accepted missing feedback")
 	}
-	if av1.AV1SDPOffersReceiveRTCPFeedback(sdp, "") {
+	if AV1SDPOffersReceiveRTCPFeedback(sdp, "") {
 		t.Fatal("AV1SDPOffersReceiveRTCPFeedback accepted empty feedback")
 	}
 
@@ -808,7 +808,7 @@ func TestAV1SDPRTCPFeedbackScanning(t *testing.T) {
 		"a=rtpmap:98 AV1/90000",
 		"a=rtcp-fb:96 ccm lrr",
 	)
-	if av1.AV1SDPNegotiatesRTCPFeedback(wrongPayload, av1.AV1SDPRTCPFeedbackLRR) {
+	if AV1SDPNegotiatesRTCPFeedback(wrongPayload, AV1SDPRTCPFeedbackLRR) {
 		t.Fatal("AV1SDPNegotiatesRTCPFeedback accepted feedback on non-AV1 payload")
 	}
 
@@ -818,7 +818,7 @@ func TestAV1SDPRTCPFeedbackScanning(t *testing.T) {
 		"a=rtpmap:98 AV1/90000",
 		"a=rtcp-fb:98 ccm lrr",
 	)
-	if av1.AV1SDPNegotiatesRTCPFeedback(inactive, av1.AV1SDPRTCPFeedbackLRR) {
+	if AV1SDPNegotiatesRTCPFeedback(inactive, AV1SDPRTCPFeedbackLRR) {
 		t.Fatal("AV1SDPNegotiatesRTCPFeedback accepted inactive section")
 	}
 
@@ -828,10 +828,10 @@ func TestAV1SDPRTCPFeedbackScanning(t *testing.T) {
 		"a=rtpmap:98 AV1/90000",
 		"a=rtcp-fb:98 ccm lrr",
 	)
-	if av1.AV1SDPOffersReceiveRTCPFeedback(sendOnly, av1.AV1SDPRTCPFeedbackLRR) {
+	if AV1SDPOffersReceiveRTCPFeedback(sendOnly, AV1SDPRTCPFeedbackLRR) {
 		t.Fatal("AV1SDPOffersReceiveRTCPFeedback accepted sendonly section")
 	}
-	if !av1.AV1SDPAnswersSendRTCPFeedback(sendOnly, av1.AV1SDPRTCPFeedbackLRR) {
+	if !AV1SDPAnswersSendRTCPFeedback(sendOnly, AV1SDPRTCPFeedbackLRR) {
 		t.Fatal("AV1SDPAnswersSendRTCPFeedback rejected sendonly section")
 	}
 
@@ -840,13 +840,13 @@ func TestAV1SDPRTCPFeedbackScanning(t *testing.T) {
 		"a=rtcp-fb:* ccm lrr",
 		"a=rtpmap:98 AV1/90000",
 	)
-	if !av1.AV1SDPNegotiatesRTCPFeedback(wildcardBeforeRTPMap, " CCM LRR ") {
+	if !AV1SDPNegotiatesRTCPFeedback(wildcardBeforeRTPMap, " CCM LRR ") {
 		t.Fatal("AV1SDPNegotiatesRTCPFeedback rejected normalized wildcard feedback")
 	}
 }
 
 func TestAV1SDPRTCPFeedbackSDP(t *testing.T) {
-	pli := av1.AV1SDPRTCPFeedback{
+	pli := AV1SDPRTCPFeedback{
 		PayloadType: "98",
 		Feedback:    " NACK   PLI ",
 	}
@@ -858,9 +858,9 @@ func TestAV1SDPRTCPFeedbackSDP(t *testing.T) {
 		t.Fatalf("PLI SDP line=%q", line)
 	}
 	prefix := []byte("x")
-	appended, err := (av1.AV1SDPRTCPFeedback{
+	appended, err := (AV1SDPRTCPFeedback{
 		PayloadType: "*",
-		Feedback:    av1.AV1SDPRTCPFeedbackLRR,
+		Feedback:    AV1SDPRTCPFeedbackLRR,
 	}).AppendSDP(prefix)
 	if err != nil {
 		t.Fatalf("wildcard LRR AppendSDP: %v", err)
@@ -875,16 +875,16 @@ func TestAV1SDPRTCPFeedbackSDP(t *testing.T) {
 		line,
 		string(appended[1:]),
 	)
-	if !av1.AV1SDPNegotiatesRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackPLI) {
+	if !AV1SDPNegotiatesRTCPFeedback(sdp, AV1SDPRTCPFeedbackPLI) {
 		t.Fatal("generated PLI rtcp-fb line did not negotiate")
 	}
-	if !av1.AV1SDPNegotiatesRTCPFeedback(sdp, av1.AV1SDPRTCPFeedbackLRR) {
+	if !AV1SDPNegotiatesRTCPFeedback(sdp, AV1SDPRTCPFeedbackLRR) {
 		t.Fatal("generated wildcard LRR rtcp-fb line did not negotiate")
 	}
 
-	transportCC, err := (av1.AV1SDPRTCPFeedback{
+	transportCC, err := (AV1SDPRTCPFeedback{
 		PayloadType: "98",
-		Feedback:    av1.AV1SDPRTCPFeedbackTransportCC,
+		Feedback:    AV1SDPRTCPFeedbackTransportCC,
 	}).SDP()
 	if err != nil {
 		t.Fatalf("transport-cc SDP: %v", err)
@@ -892,9 +892,9 @@ func TestAV1SDPRTCPFeedbackSDP(t *testing.T) {
 	if transportCC != "a=rtcp-fb:98 transport-cc" {
 		t.Fatalf("transport-cc line=%q", transportCC)
 	}
-	remb, err := (av1.AV1SDPRTCPFeedback{
+	remb, err := (AV1SDPRTCPFeedback{
 		PayloadType: "*",
-		Feedback:    av1.AV1SDPRTCPFeedbackREMB,
+		Feedback:    AV1SDPRTCPFeedbackREMB,
 	}).SDP()
 	if err != nil {
 		t.Fatalf("goog-remb SDP: %v", err)
@@ -905,22 +905,22 @@ func TestAV1SDPRTCPFeedbackSDP(t *testing.T) {
 }
 
 func TestAV1SDPRTCPFeedbackRejectsInvalid(t *testing.T) {
-	tests := []av1.AV1SDPRTCPFeedback{
-		{PayloadType: "", Feedback: av1.AV1SDPRTCPFeedbackPLI},
-		{PayloadType: "av1", Feedback: av1.AV1SDPRTCPFeedbackPLI},
-		{PayloadType: "128", Feedback: av1.AV1SDPRTCPFeedbackPLI},
-		{PayloadType: "98\n99", Feedback: av1.AV1SDPRTCPFeedbackPLI},
+	tests := []AV1SDPRTCPFeedback{
+		{PayloadType: "", Feedback: AV1SDPRTCPFeedbackPLI},
+		{PayloadType: "av1", Feedback: AV1SDPRTCPFeedbackPLI},
+		{PayloadType: "128", Feedback: AV1SDPRTCPFeedbackPLI},
+		{PayloadType: "98\n99", Feedback: AV1SDPRTCPFeedbackPLI},
 		{PayloadType: "98", Feedback: ""},
 		{PayloadType: "98", Feedback: "nack\npli"},
 	}
 	for _, tc := range tests {
-		if err := tc.Validate(); !errors.Is(err, av1.ErrSDPInvalidConfig) {
-			t.Fatalf("Validate(%+v) err=%v want %v", tc, err, av1.ErrSDPInvalidConfig)
+		if err := tc.Validate(); !errors.Is(err, ErrSDPInvalidConfig) {
+			t.Fatalf("Validate(%+v) err=%v want %v", tc, err, ErrSDPInvalidConfig)
 		}
-		if out, err := tc.AppendSDP([]byte("prefix")); !errors.Is(err, av1.ErrSDPInvalidConfig) || string(out) != "prefix" {
+		if out, err := tc.AppendSDP([]byte("prefix")); !errors.Is(err, ErrSDPInvalidConfig) || string(out) != "prefix" {
 			t.Fatalf("AppendSDP(%+v) out=%q err=%v", tc, out, err)
 		}
-		if line, err := tc.SDP(); !errors.Is(err, av1.ErrSDPInvalidConfig) || line != "" {
+		if line, err := tc.SDP(); !errors.Is(err, ErrSDPInvalidConfig) || line != "" {
 			t.Fatalf("SDP(%+v) line=%q err=%v", tc, line, err)
 		}
 	}
@@ -936,40 +936,40 @@ func TestAV1SDPHeaderExtensionScanning(t *testing.T) {
 		"a=extmap:3/sendonly urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id",
 		"a=extmap:4/sendrecv https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension",
 	)
-	if !av1.AV1SDPNegotiatesHeaderExtension(sdp, av1.AV1RTPDependencyDescriptorURI) {
+	if !AV1SDPNegotiatesHeaderExtension(sdp, AV1RTPDependencyDescriptorURI) {
 		t.Fatal("AV1SDPNegotiatesHeaderExtension rejected dependency descriptor")
 	}
-	if id, ok := av1.AV1SDPNegotiatesHeaderExtensionID(sdp, av1.AV1RTPDependencyDescriptorURI); !ok || id != 4 {
+	if id, ok := AV1SDPNegotiatesHeaderExtensionID(sdp, AV1RTPDependencyDescriptorURI); !ok || id != 4 {
 		t.Fatalf("AV1SDPNegotiatesHeaderExtensionID dependency descriptor = %d,%v want 4,true", id, ok)
 	}
-	if !av1.AV1SDPOffersReceiveHeaderExtension(sdp, av1.AV1RTPStreamIDURI) {
+	if !AV1SDPOffersReceiveHeaderExtension(sdp, AV1RTPStreamIDURI) {
 		t.Fatal("AV1SDPOffersReceiveHeaderExtension rejected recvonly RID")
 	}
-	if id, ok := av1.AV1SDPOffersReceiveHeaderExtensionID(sdp, av1.AV1RTPStreamIDURI); !ok || id != 2 {
+	if id, ok := AV1SDPOffersReceiveHeaderExtensionID(sdp, AV1RTPStreamIDURI); !ok || id != 2 {
 		t.Fatalf("AV1SDPOffersReceiveHeaderExtensionID RID = %d,%v want 2,true", id, ok)
 	}
-	if av1.AV1SDPAnswersSendHeaderExtension(sdp, av1.AV1RTPStreamIDURI) {
+	if AV1SDPAnswersSendHeaderExtension(sdp, AV1RTPStreamIDURI) {
 		t.Fatal("AV1SDPAnswersSendHeaderExtension accepted recvonly RID")
 	}
-	if id, ok := av1.AV1SDPAnswersSendHeaderExtensionID(sdp, av1.AV1RTPStreamIDURI); ok || id != 0 {
+	if id, ok := AV1SDPAnswersSendHeaderExtensionID(sdp, AV1RTPStreamIDURI); ok || id != 0 {
 		t.Fatalf("AV1SDPAnswersSendHeaderExtensionID recvonly RID = %d,%v want 0,false", id, ok)
 	}
-	if !av1.AV1SDPAnswersSendHeaderExtension(sdp, av1.AV1RTPRepairedStreamIDURI) {
+	if !AV1SDPAnswersSendHeaderExtension(sdp, AV1RTPRepairedStreamIDURI) {
 		t.Fatal("AV1SDPAnswersSendHeaderExtension rejected sendonly repaired RID")
 	}
-	if id, ok := av1.AV1SDPAnswersSendHeaderExtensionID(sdp, av1.AV1RTPRepairedStreamIDURI); !ok || id != 3 {
+	if id, ok := AV1SDPAnswersSendHeaderExtensionID(sdp, AV1RTPRepairedStreamIDURI); !ok || id != 3 {
 		t.Fatalf("AV1SDPAnswersSendHeaderExtensionID repaired RID = %d,%v want 3,true", id, ok)
 	}
-	if !av1.AV1SDPOffersReceiveHeaderExtension(sdp, av1.AV1RTPMIDURI) {
+	if !AV1SDPOffersReceiveHeaderExtension(sdp, AV1RTPMIDURI) {
 		t.Fatal("AV1SDPOffersReceiveHeaderExtension rejected inherited MID")
 	}
-	if id, ok := av1.AV1SDPOffersReceiveHeaderExtensionID(sdp, av1.AV1RTPMIDURI); !ok || id != 1 {
+	if id, ok := AV1SDPOffersReceiveHeaderExtensionID(sdp, AV1RTPMIDURI); !ok || id != 1 {
 		t.Fatalf("AV1SDPOffersReceiveHeaderExtensionID MID = %d,%v want 1,true", id, ok)
 	}
-	if av1.AV1SDPOffersReceiveHeaderExtension(sdp, "") {
+	if AV1SDPOffersReceiveHeaderExtension(sdp, "") {
 		t.Fatal("AV1SDPOffersReceiveHeaderExtension accepted empty URI")
 	}
-	if id, ok := av1.AV1SDPOffersReceiveHeaderExtensionID(sdp, ""); ok || id != 0 {
+	if id, ok := AV1SDPOffersReceiveHeaderExtensionID(sdp, ""); ok || id != 0 {
 		t.Fatalf("AV1SDPOffersReceiveHeaderExtensionID empty URI = %d,%v want 0,false", id, ok)
 	}
 
@@ -979,13 +979,13 @@ func TestAV1SDPHeaderExtensionScanning(t *testing.T) {
 		"a=rtpmap:98 AV1/90000",
 		"a=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid",
 	)
-	if av1.AV1SDPOffersReceiveHeaderExtension(sendOnlySection, av1.AV1RTPMIDURI) {
+	if AV1SDPOffersReceiveHeaderExtension(sendOnlySection, AV1RTPMIDURI) {
 		t.Fatal("sendonly inherited extmap reported receive support")
 	}
-	if !av1.AV1SDPAnswersSendHeaderExtension(sendOnlySection, av1.AV1RTPMIDURI) {
+	if !AV1SDPAnswersSendHeaderExtension(sendOnlySection, AV1RTPMIDURI) {
 		t.Fatal("sendonly inherited extmap did not report send support")
 	}
-	if id, ok := av1.AV1SDPAnswersSendHeaderExtensionID(sendOnlySection, av1.AV1RTPMIDURI); !ok || id != 1 {
+	if id, ok := AV1SDPAnswersSendHeaderExtensionID(sendOnlySection, AV1RTPMIDURI); !ok || id != 1 {
 		t.Fatalf("sendonly inherited extmap ID = %d,%v want 1,true", id, ok)
 	}
 
@@ -994,10 +994,10 @@ func TestAV1SDPHeaderExtensionScanning(t *testing.T) {
 		"a=rtpmap:111 opus/48000/2",
 		"a=extmap:1 https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension",
 	)
-	if av1.AV1SDPNegotiatesHeaderExtension(wrongMedia, av1.AV1RTPDependencyDescriptorURI) {
+	if AV1SDPNegotiatesHeaderExtension(wrongMedia, AV1RTPDependencyDescriptorURI) {
 		t.Fatal("audio extmap reported AV1 header-extension support")
 	}
-	if id, ok := av1.AV1SDPNegotiatesHeaderExtensionID(wrongMedia, av1.AV1RTPDependencyDescriptorURI); ok || id != 0 {
+	if id, ok := AV1SDPNegotiatesHeaderExtensionID(wrongMedia, AV1RTPDependencyDescriptorURI); ok || id != 0 {
 		t.Fatalf("audio extmap ID = %d,%v want 0,false", id, ok)
 	}
 }
@@ -1013,13 +1013,13 @@ func TestAV1SDPRIDFrameScanning(t *testing.T) {
 		"a=rid:h recv pt=99;max-width=1280;max-height=720;max-fps=30",
 		"a=rid:out send pt=99;max-width=1920;max-height=1080;max-fps=60",
 	)
-	if !av1.AV1SDPOffersReceiveFrame(sdp, 640, 360, 30) {
+	if !AV1SDPOffersReceiveFrame(sdp, 640, 360, 30) {
 		t.Fatal("AV1SDPOffersReceiveFrame rejected matching AV1 recv RID")
 	}
-	if av1.AV1SDPOffersReceiveFrame(sdp, 1280, 720, 31) {
+	if AV1SDPOffersReceiveFrame(sdp, 1280, 720, 31) {
 		t.Fatal("AV1SDPOffersReceiveFrame accepted frame above recv RID fps")
 	}
-	if !av1.AV1SDPAnswersSendFrame(sdp, 1920, 1080, 60) {
+	if !AV1SDPAnswersSendFrame(sdp, 1920, 1080, 60) {
 		t.Fatal("AV1SDPAnswersSendFrame rejected matching AV1 send RID")
 	}
 
@@ -1029,7 +1029,7 @@ func TestAV1SDPRIDFrameScanning(t *testing.T) {
 		"a=rtpmap:98 AV1/90000",
 		"a=rid:v recv pt=96;max-width=320;max-height=180;max-fps=15",
 	)
-	if !av1.AV1SDPOffersReceiveFrame(wrongPayloadRIDOnly, 1920, 1080, 60) {
+	if !AV1SDPOffersReceiveFrame(wrongPayloadRIDOnly, 1920, 1080, 60) {
 		t.Fatal("non-AV1 RID restrictions constrained AV1 payload")
 	}
 
@@ -1038,10 +1038,10 @@ func TestAV1SDPRIDFrameScanning(t *testing.T) {
 		"a=rtpmap:98 AV1/90000",
 		"a=rid:q recv max-width=640;max-height=360;max-fps=30",
 	)
-	if !av1.AV1SDPOffersReceiveFrame(unscopedRID, 640, 360, 30) {
+	if !AV1SDPOffersReceiveFrame(unscopedRID, 640, 360, 30) {
 		t.Fatal("AV1SDPOffersReceiveFrame rejected unscoped matching RID")
 	}
-	if av1.AV1SDPOffersReceiveFrame(unscopedRID, 1280, 720, 30) {
+	if AV1SDPOffersReceiveFrame(unscopedRID, 1280, 720, 30) {
 		t.Fatal("AV1SDPOffersReceiveFrame accepted frame above unscoped RID")
 	}
 
@@ -1051,7 +1051,7 @@ func TestAV1SDPRIDFrameScanning(t *testing.T) {
 		"a=rid:q recv max-width=640;max-height=360;max-fps=30",
 		"a=rid:q recv max-width=1280;max-height=720;max-fps=30",
 	)
-	if !av1.AV1SDPOffersReceiveFrame(duplicateRID, 1280, 720, 30) {
+	if !AV1SDPOffersReceiveFrame(duplicateRID, 1280, 720, 30) {
 		t.Fatal("duplicate RID was not discarded before frame matching")
 	}
 
@@ -1060,7 +1060,7 @@ func TestAV1SDPRIDFrameScanning(t *testing.T) {
 		"a=rtpmap:98 AV1/90000",
 		"a=rid:q recv max-width=wide",
 	)
-	if !av1.AV1SDPOffersReceiveFrame(invalidRID, 1280, 720, 30) {
+	if !AV1SDPOffersReceiveFrame(invalidRID, 1280, 720, 30) {
 		t.Fatal("invalid RID line was not discarded before frame matching")
 	}
 
@@ -1070,7 +1070,7 @@ func TestAV1SDPRIDFrameScanning(t *testing.T) {
 		"a=rtpmap:98 AV1/90000",
 		"a=rid:q recv max-width=640;max-height=360;max-fps=30",
 	)
-	if av1.AV1SDPOffersReceiveFrame(sendOnly, 640, 360, 30) {
+	if AV1SDPOffersReceiveFrame(sendOnly, 640, 360, 30) {
 		t.Fatal("sendonly section reported receive frame support")
 	}
 }
@@ -1084,22 +1084,22 @@ func TestAV1SDPRIDEncodedFrameScanning(t *testing.T) {
 		"a=rid:q recv pt=98;max-width=640;max-height=360;max-fps=30;max-br=700000;max-bpp=1.25",
 		"a=rid:out send pt=98;max-width=1920;max-height=1080;max-fps=60;max-br=1500000;max-bpp=2.00",
 	)
-	if !av1.AV1SDPOffersReceiveEncodedFrame(sdp, 640, 360, 30, 700000, 280000) {
+	if !AV1SDPOffersReceiveEncodedFrame(sdp, 640, 360, 30, 700000, 280000) {
 		t.Fatal("AV1SDPOffersReceiveEncodedFrame rejected matching bitrate and bpp")
 	}
-	if av1.AV1SDPOffersReceiveEncodedFrame(sdp, 640, 360, 30, 700001, 280000) {
+	if AV1SDPOffersReceiveEncodedFrame(sdp, 640, 360, 30, 700001, 280000) {
 		t.Fatal("AV1SDPOffersReceiveEncodedFrame accepted frame above RID max-br")
 	}
-	if av1.AV1SDPOffersReceiveEncodedFrame(sdp, 640, 360, 30, 700000, 300000) {
+	if AV1SDPOffersReceiveEncodedFrame(sdp, 640, 360, 30, 700000, 300000) {
 		t.Fatal("AV1SDPOffersReceiveEncodedFrame accepted frame above RID max-bpp")
 	}
-	if av1.AV1SDPOffersReceiveEncodedFrame(sdp, 640, 360, 30, 0, 280000) {
+	if AV1SDPOffersReceiveEncodedFrame(sdp, 640, 360, 30, 0, 280000) {
 		t.Fatal("AV1SDPOffersReceiveEncodedFrame accepted invalid bitrate under max-br")
 	}
-	if !av1.AV1SDPAnswersSendEncodedFrame(sdp, 1920, 1080, 60, 1500000, 4000000) {
+	if !AV1SDPAnswersSendEncodedFrame(sdp, 1920, 1080, 60, 1500000, 4000000) {
 		t.Fatal("AV1SDPAnswersSendEncodedFrame rejected matching send RID")
 	}
-	if av1.AV1SDPAnswersSendEncodedFrame(sdp, 1920, 1080, 60, 1500000, 4200000) {
+	if AV1SDPAnswersSendEncodedFrame(sdp, 1920, 1080, 60, 1500000, 4200000) {
 		t.Fatal("AV1SDPAnswersSendEncodedFrame accepted send frame above max-bpp")
 	}
 
@@ -1109,7 +1109,7 @@ func TestAV1SDPRIDEncodedFrameScanning(t *testing.T) {
 		"a=rtpmap:98 AV1/90000",
 		"a=rid:v recv pt=96;max-width=320;max-height=180;max-br=100000;max-bpp=0.50",
 	)
-	if !av1.AV1SDPOffersReceiveEncodedFrame(wrongPayloadRIDOnly, 1920, 1080, 60, 5000000, 5000000) {
+	if !AV1SDPOffersReceiveEncodedFrame(wrongPayloadRIDOnly, 1920, 1080, 60, 5000000, 5000000) {
 		t.Fatal("non-AV1 encoded RID restrictions constrained AV1 payload")
 	}
 }
@@ -1128,22 +1128,22 @@ func TestAV1SDPSimulcastScanning(t *testing.T) {
 		"a=rid:sendh send pt=99;max-width=1280;max-height=720;max-fps=30",
 		"a=simulcast:recv q;h send sendh",
 	)
-	if !av1.AV1SDPNegotiatesSimulcast(sdp) {
+	if !AV1SDPNegotiatesSimulcast(sdp) {
 		t.Fatal("AV1SDPNegotiatesSimulcast rejected active AV1 simulcast")
 	}
-	if !av1.AV1SDPOffersReceiveSimulcast(sdp) {
+	if !AV1SDPOffersReceiveSimulcast(sdp) {
 		t.Fatal("AV1SDPOffersReceiveSimulcast rejected AV1 recv simulcast")
 	}
-	if !av1.AV1SDPAnswersSendSimulcast(sdp) {
+	if !AV1SDPAnswersSendSimulcast(sdp) {
 		t.Fatal("AV1SDPAnswersSendSimulcast rejected AV1 send simulcast")
 	}
-	if !av1.AV1SDPOffersReceiveFrame(sdp, 1280, 720, 30) {
+	if !AV1SDPOffersReceiveFrame(sdp, 1280, 720, 30) {
 		t.Fatal("AV1SDPOffersReceiveFrame rejected matching simulcast RID")
 	}
-	if av1.AV1SDPOffersReceiveFrame(sdp, 1920, 1080, 30) {
+	if AV1SDPOffersReceiveFrame(sdp, 1920, 1080, 30) {
 		t.Fatal("AV1SDPOffersReceiveFrame used RID outside simulcast recv list")
 	}
-	if !av1.AV1SDPAnswersSendFrame(sdp, 1280, 720, 30) {
+	if !AV1SDPAnswersSendFrame(sdp, 1280, 720, 30) {
 		t.Fatal("AV1SDPAnswersSendFrame rejected matching simulcast send RID")
 	}
 
@@ -1153,10 +1153,10 @@ func TestAV1SDPSimulcastScanning(t *testing.T) {
 		"a=rid:q recv pt=98;max-width=640;max-height=360;max-fps=30",
 		"a=simulcast:recv ~q",
 	)
-	if !av1.AV1SDPOffersReceiveSimulcast(pausedAlternative) {
+	if !AV1SDPOffersReceiveSimulcast(pausedAlternative) {
 		t.Fatal("paused simulcast RID was not treated as negotiated")
 	}
-	if !av1.AV1SDPOffersReceiveFrame(pausedAlternative, 640, 360, 30) {
+	if !AV1SDPOffersReceiveFrame(pausedAlternative, 640, 360, 30) {
 		t.Fatal("paused simulcast RID restrictions did not allow matching frame")
 	}
 
@@ -1167,7 +1167,7 @@ func TestAV1SDPSimulcastScanning(t *testing.T) {
 		"a=rid:v recv pt=96;max-width=320;max-height=180;max-fps=15",
 		"a=simulcast:recv v",
 	)
-	if av1.AV1SDPOffersReceiveSimulcast(wrongPayload) {
+	if AV1SDPOffersReceiveSimulcast(wrongPayload) {
 		t.Fatal("AV1SDPOffersReceiveSimulcast accepted non-AV1 RID")
 	}
 
@@ -1178,13 +1178,13 @@ func TestAV1SDPSimulcastScanning(t *testing.T) {
 		"a=simulcast:recv q",
 		"a=simulcast:recv q",
 	)
-	if av1.AV1SDPOffersReceiveSimulcast(duplicateSimulcast) {
+	if AV1SDPOffersReceiveSimulcast(duplicateSimulcast) {
 		t.Fatal("duplicate simulcast attribute was not disabled")
 	}
-	if av1.AV1SDPOffersReceiveFrame(duplicateSimulcast, 1280, 720, 30) {
+	if AV1SDPOffersReceiveFrame(duplicateSimulcast, 1280, 720, 30) {
 		t.Fatal("duplicate simulcast attribute ignored RID receiver restriction")
 	}
-	if !av1.AV1SDPOffersReceiveFrame(duplicateSimulcast, 640, 360, 30) {
+	if !AV1SDPOffersReceiveFrame(duplicateSimulcast, 640, 360, 30) {
 		t.Fatal("duplicate simulcast attribute should still allow matching RID restriction")
 	}
 
@@ -1193,10 +1193,10 @@ func TestAV1SDPSimulcastScanning(t *testing.T) {
 		"a=rtpmap:98 AV1/90000",
 		"a=simulcast:recv q",
 	)
-	if av1.AV1SDPOffersReceiveSimulcast(missingRID) {
+	if AV1SDPOffersReceiveSimulcast(missingRID) {
 		t.Fatal("AV1SDPOffersReceiveSimulcast accepted missing RID")
 	}
-	if av1.AV1SDPOffersReceiveFrame(missingRID, 640, 360, 30) {
+	if AV1SDPOffersReceiveFrame(missingRID, 640, 360, 30) {
 		t.Fatal("AV1SDPOffersReceiveFrame accepted simulcast RID without restrictions")
 	}
 }
@@ -1210,32 +1210,32 @@ func TestAV1SDPSimulcastEncodedFrameScanning(t *testing.T) {
 		"a=rid:h recv pt=99;max-width=1280;max-height=720;max-fps=30;max-br=1200000;max-bpp=1.00",
 		"a=simulcast:recv q;h",
 	)
-	if !av1.AV1SDPOffersReceiveEncodedFrame(sdp, 1280, 720, 30, 1200000, 900000) {
+	if !AV1SDPOffersReceiveEncodedFrame(sdp, 1280, 720, 30, 1200000, 900000) {
 		t.Fatal("AV1SDPOffersReceiveEncodedFrame rejected matching simulcast RID")
 	}
-	if av1.AV1SDPOffersReceiveEncodedFrame(sdp, 1280, 720, 30, 1200001, 900000) {
+	if AV1SDPOffersReceiveEncodedFrame(sdp, 1280, 720, 30, 1200001, 900000) {
 		t.Fatal("AV1SDPOffersReceiveEncodedFrame accepted simulcast frame above max-br")
 	}
-	if av1.AV1SDPOffersReceiveEncodedFrame(sdp, 1280, 720, 30, 1200000, 930000) {
+	if AV1SDPOffersReceiveEncodedFrame(sdp, 1280, 720, 30, 1200000, 930000) {
 		t.Fatal("AV1SDPOffersReceiveEncodedFrame accepted simulcast frame above max-bpp")
 	}
-	if av1.AV1SDPOffersReceiveEncodedFrame(sdp, 1920, 1080, 30, 1200000, 900000) {
+	if AV1SDPOffersReceiveEncodedFrame(sdp, 1920, 1080, 30, 1200000, 900000) {
 		t.Fatal("AV1SDPOffersReceiveEncodedFrame used RID outside simulcast recv limits")
 	}
 }
 
 func TestAV1SDPOffersReceiveSequence(t *testing.T) {
-	seq := av1.SequenceHeader{
+	seq := SequenceHeader{
 		SeqProfile:           2,
 		OperatingPointsCount: 1,
 	}
-	seq.OperatingPoints[0] = av1.OperatingPoint{SeqLevelIdx: 8, SeqTier: 1}
+	seq.OperatingPoints[0] = internalparser.OperatingPoint{SeqLevelIdx: 8, SeqTier: 1}
 	sdp := joinAV1SDPLines(
 		"m=video 9 UDP/TLS/RTP/SAVPF 98",
 		"a=rtpmap:98 AV1/90000",
 		"a=fmtp:98 profile=2; level-idx=8; tier=1",
 	)
-	if !av1.AV1SDPOffersReceiveSequence(sdp, seq) {
+	if !AV1SDPOffersReceiveSequence(sdp, seq) {
 		t.Fatal("AV1SDPOffersReceiveSequence rejected matching sequence")
 	}
 	limited := joinAV1SDPLines(
@@ -1243,7 +1243,7 @@ func TestAV1SDPOffersReceiveSequence(t *testing.T) {
 		"a=rtpmap:98 AV1/90000",
 		"a=fmtp:98 profile=0; level-idx=5",
 	)
-	if av1.AV1SDPOffersReceiveSequence(limited, seq) {
+	if AV1SDPOffersReceiveSequence(limited, seq) {
 		t.Fatal("AV1SDPOffersReceiveSequence allowed profile/level above offer")
 	}
 }

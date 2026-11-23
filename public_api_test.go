@@ -1,14 +1,19 @@
-package goav1_test
+package goav1
 
 import (
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internalloopfilter "github.com/thesyncim/goav1/internal/av1/loopfilter"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+	internalrestoration "github.com/thesyncim/goav1/internal/av1/restoration"
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 func TestPublicDecoderPostFilterTypesAreNameable(t *testing.T) {
-	var buffers av1.DecoderFrameWorkRestorationFrameBuffers
-	ctx := av1.DecoderFrameWorkPostFilterContext{
+	var buffers internalthreading.FrameWorkRestorationFrameBuffers
+	ctx := internaldecoder.FrameWorkPostFilterContext{
 		RestorationFrameBuffers: &buffers,
 	}
 	if ctx.RestorationFrameBuffers != &buffers {
@@ -29,49 +34,49 @@ func TestPublicDecoderPostFilterTypesAreNameable(t *testing.T) {
 		t.Fatalf("RequireSupportedPostFilters err=%v", err)
 	}
 
-	edge := av1.DecoderFrameWorkLoopFilterPostFilterEdge{
-		Plane:     av1.LoopFilterPlaneY,
-		Edge:      av1.LoopFilterEdgeVertical,
-		Transform: av1.TileTransformSize4x4,
+	edge := internaldecoder.FrameWorkLoopFilterPostFilterEdge{
+		Plane:     internalloopfilter.PlaneY,
+		Edge:      internalloopfilter.EdgeVertical,
+		Transform: internaltile.TransformSize4x4,
 	}
-	if edge.Plane != av1.LoopFilterPlaneY || edge.Edge != av1.LoopFilterEdgeVertical {
+	if edge.Plane != internalloopfilter.PlaneY || edge.Edge != internalloopfilter.EdgeVertical {
 		t.Fatalf("edge=%+v", edge)
 	}
 
-	records := [3][]av1.TileRestorationUnitRecord{
+	records := [3][]internaltile.RestorationUnitRecord{
 		{
 			{
-				Rect: av1.TileRestorationUnitRect{X1: 4, Y1: 4},
-				Unit: av1.TileRestorationUnit{
-					Type:   av1.RestorationWiener,
-					Wiener: av1.RestorationWienerInfo{},
+				Rect: internaltile.RestorationUnitRect{X1: 4, Y1: 4},
+				Unit: internaltile.RestorationUnit{
+					Type:   internalparser.RestorationWiener,
+					Wiener: internalrestoration.WienerInfo{},
 				},
 			},
 		},
 	}
-	boundaries := [3]av1.TileRestorationStripeBoundaries{}
-	scratch := av1.TileRestorationUnitRecordBoundaryScratch{
-		Unit: av1.TileRestorationUnitScratch{},
+	boundaries := [3]internaltile.RestorationStripeBoundaries{}
+	scratch := internaltile.RestorationUnitRecordBoundaryScratch{
+		Unit: internaltile.RestorationUnitScratch{},
 	}
-	restorationReq := av1.DecoderFrameWorkRestorationPostFilterRequest{
+	restorationReq := internaldecoder.FrameWorkRestorationPostFilterRequest{
 		Records:    records,
 		Boundaries: boundaries,
 		Scratch:    scratch,
 	}
-	req := av1.DecoderFrameWorkPostFilterRequest{
-		LoopFilter: av1.DecoderFrameWorkLoopFilterPostFilterRequest{
-			Edges: []av1.DecoderFrameWorkLoopFilterPostFilterEdge{edge},
+	req := internaldecoder.FrameWorkPostFilterRequest{
+		LoopFilter: internaldecoder.FrameWorkLoopFilterPostFilterRequest{
+			Edges: []internaldecoder.FrameWorkLoopFilterPostFilterEdge{edge},
 		},
 		Restoration: restorationReq,
 	}
-	if req.Restoration.Records[0][0].Unit.Type != av1.RestorationWiener {
+	if req.Restoration.Records[0][0].Unit.Type != internalparser.RestorationWiener {
 		t.Fatalf("restoration request=%+v", req.Restoration)
 	}
 
-	var loopResult av1.DecoderFrameWorkLoopFilterPostFilterApplyResult
-	var restorationResult av1.TileRestorationFrameApplyResult
-	result := av1.DecoderFrameWorkCallerPostFilterResult{
-		FrameWorkPostFilterResult: av1.DecoderFrameWorkPostFilterResult{
+	var loopResult internaldecoder.FrameWorkLoopFilterPostFilterApplyResult
+	var restorationResult internaltile.RestorationFrameApplyResult
+	result := internaldecoder.FrameWorkCallerPostFilterResult{
+		FrameWorkPostFilterResult: internaldecoder.FrameWorkPostFilterResult{
 			LoopFilter:  loopResult,
 			Restoration: restorationResult,
 		},
@@ -79,28 +84,28 @@ func TestPublicDecoderPostFilterTypesAreNameable(t *testing.T) {
 	if !result.Completed.Empty() {
 		t.Fatalf("result=%+v", result)
 	}
-	var callerRunner av1.DecoderFrameWorkCallerPostFilterRunner
+	var callerRunner internaldecoder.FrameWorkCallerPostFilterRunner
 	if callerRunner.Result.Completed != result.Completed {
 		t.Fatalf("caller runner=%+v result=%+v", callerRunner, result)
 	}
 	if callerScratch, err := callerRunner.ScratchLen(ctx); err != nil || callerScratch.SuperRes.OutputFrame != 0 {
 		t.Fatalf("caller runner scratch=%+v err=%v", callerScratch, err)
 	}
-	var supportedRunner av1.DecoderFrameWorkSupportedPostFilterRunner
+	var supportedRunner internaldecoder.FrameWorkSupportedPostFilterRunner
 	if supportedScratch, err := supportedRunner.ScratchLen(ctx); err != nil || supportedScratch.LoopFilter.Edges != 0 {
 		t.Fatalf("supported runner scratch=%+v err=%v", supportedScratch, err)
 	}
 
-	var postScratch av1.DecoderFrameWorkPostFilterScratchSize
-	postScratch.Restoration = av1.DecoderFrameWorkRestorationPostFilterScratchSize{
-		Samples: av1.TileRestorationFrameSampleScratchSize{},
-		Apply:   av1.TileRestorationUnitRecordBoundaryScratchSize{},
+	var postScratch internaldecoder.FrameWorkPostFilterScratchSize
+	postScratch.Restoration = internaldecoder.FrameWorkRestorationPostFilterScratchSize{
+		Samples: internaltile.RestorationFrameSampleScratchSize{},
+		Apply:   internaltile.RestorationUnitRecordBoundaryScratchSize{},
 	}
 	postScratch.LoopFilter.Edges = 2
 	postScratch.SuperRes.OutputFrame = 16
-	combinedScratch := postScratch.Max(av1.DecoderFrameWorkPostFilterScratchSize{
-		LoopFilter: av1.DecoderFrameWorkLoopFilterPostFilterScratchSize{Edges: 4},
-		SuperRes:   av1.DecoderFrameWorkSuperResPostFilterScratchSize{OutputFrame: 8},
+	combinedScratch := postScratch.Max(internaldecoder.FrameWorkPostFilterScratchSize{
+		LoopFilter: internaldecoder.FrameWorkLoopFilterPostFilterScratchSize{Edges: 4},
+		SuperRes:   internaldecoder.FrameWorkSuperResPostFilterScratchSize{OutputFrame: 8},
 	})
 	if combinedScratch.LoopFilter.Edges != 4 || combinedScratch.SuperRes.OutputFrame != 16 {
 		t.Fatalf("combined scratch=%+v", combinedScratch)

@@ -1,4 +1,4 @@
-package goav1_test
+package goav1
 
 import (
 	"bytes"
@@ -11,7 +11,13 @@ import (
 	"strings"
 	"testing"
 
-	goav1 "github.com/thesyncim/goav1"
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internalencoder "github.com/thesyncim/goav1/internal/av1/encoder"
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
+
 	"github.com/thesyncim/goav1/internal/av1/obu"
 )
 
@@ -29,12 +35,12 @@ func TestPublicEncoderWebRTCScalabilityModeCatalogue(t *testing.T) {
 		"S2T1", "S2T1h", "S2T2", "S2T2h", "S2T3", "S2T3h",
 		"S3T1", "S3T1h", "S3T2", "S3T2h", "S3T3", "S3T3h",
 	}
-	modes := goav1.EncoderWebRTCScalabilityModes()
+	modes := EncoderWebRTCScalabilityModes()
 	if len(modes) != len(want) {
 		t.Fatalf("EncoderWebRTCScalabilityModes len=%d want %d", len(modes), len(want))
 	}
-	prefixed := goav1.AppendEncoderWebRTCScalabilityModes([]goav1.EncoderScalabilityMode{goav1.EncoderScalabilityModeL3T3})
-	if len(prefixed) != len(want)+1 || prefixed[0] != goav1.EncoderScalabilityModeL3T3 {
+	prefixed := internalencoder.AppendWebRTCScalabilityModes([]EncoderScalabilityMode{internalencoder.ScalabilityModeL3T3})
+	if len(prefixed) != len(want)+1 || prefixed[0] != internalencoder.ScalabilityModeL3T3 {
 		t.Fatalf("AppendEncoderWebRTCScalabilityModes prefix len=%d first=%s", len(prefixed), prefixed[0])
 	}
 	for i, name := range want {
@@ -42,7 +48,7 @@ func TestPublicEncoderWebRTCScalabilityModeCatalogue(t *testing.T) {
 		if prefixed[i+1] != mode {
 			t.Fatalf("prefixed mode %d=%s want %s", i+1, prefixed[i+1], mode)
 		}
-		parsed, ok := goav1.ParseEncoderScalabilityMode(name)
+		parsed, ok := internalencoder.ParseScalabilityMode(name)
 		if !ok || parsed != mode {
 			t.Fatalf("ParseEncoderScalabilityMode(%q)=%s,%v want %s,true", name, parsed, ok, mode)
 		}
@@ -76,7 +82,7 @@ func TestPublicEncoderWebRTCScalabilityModeCatalogue(t *testing.T) {
 				mode.UsesKeyFrameInterLayerDependencyShift())
 		}
 	}
-	if _, ok := goav1.ParseEncoderScalabilityMode("L4T4"); ok {
+	if _, ok := internalencoder.ParseScalabilityMode("L4T4"); ok {
 		t.Fatal("ParseEncoderScalabilityMode accepted invalid L4T4")
 	}
 }
@@ -93,12 +99,12 @@ func TestPublicEncoderScalabilityModeCatalogueIncludesExplicitModes(t *testing.T
 		"S2T1", "S2T1h", "S2T2", "S2T2h", "S2T3", "S2T3h",
 		"S3T1", "S3T1h", "S3T2", "S3T2h", "S3T3", "S3T3h",
 	}
-	modes := goav1.EncoderScalabilityModes()
+	modes := encoderScalabilityModes()
 	if len(modes) != len(want) {
 		t.Fatalf("EncoderScalabilityModes len=%d want %d", len(modes), len(want))
 	}
-	prefixed := goav1.AppendEncoderScalabilityModes([]goav1.EncoderScalabilityMode{goav1.EncoderScalabilityModeL3T3})
-	if len(prefixed) != len(want)+1 || prefixed[0] != goav1.EncoderScalabilityModeL3T3 {
+	prefixed := internalencoder.AppendScalabilityModes([]EncoderScalabilityMode{internalencoder.ScalabilityModeL3T3})
+	if len(prefixed) != len(want)+1 || prefixed[0] != internalencoder.ScalabilityModeL3T3 {
 		t.Fatalf("AppendEncoderScalabilityModes prefix len=%d first=%s", len(prefixed), prefixed[0])
 	}
 	for i, name := range want {
@@ -106,7 +112,7 @@ func TestPublicEncoderScalabilityModeCatalogueIncludesExplicitModes(t *testing.T
 		if prefixed[i+1] != mode {
 			t.Fatalf("prefixed mode %d=%s want %s", i+1, prefixed[i+1], mode)
 		}
-		parsed, ok := goav1.ParseEncoderScalabilityMode(name)
+		parsed, ok := internalencoder.ParseScalabilityMode(name)
 		if !ok || parsed != mode {
 			t.Fatalf("ParseEncoderScalabilityMode(%q)=%s,%v want %s,true", name, parsed, ok, mode)
 		}
@@ -115,18 +121,18 @@ func TestPublicEncoderScalabilityModeCatalogueIncludesExplicitModes(t *testing.T
 		}
 	}
 
-	pinnedLibWebRTCOnly := make(map[goav1.EncoderScalabilityMode]bool)
-	for _, mode := range goav1.EncoderWebRTCScalabilityModes() {
+	pinnedLibWebRTCOnly := make(map[EncoderScalabilityMode]bool)
+	for _, mode := range EncoderWebRTCScalabilityModes() {
 		pinnedLibWebRTCOnly[mode] = true
 	}
-	webRTCSVC := make(map[goav1.EncoderScalabilityMode]bool)
-	for _, mode := range goav1.EncoderWebRTCSVCScalabilityModes() {
+	webRTCSVC := make(map[EncoderScalabilityMode]bool)
+	for _, mode := range encoderWebRTCSVCScalabilityModes() {
 		webRTCSVC[mode] = true
 	}
-	for _, mode := range []goav1.EncoderScalabilityMode{
-		goav1.EncoderScalabilityModeL2T3_KEY_SHIFT,
-		goav1.EncoderScalabilityModeL3T2_KEY_SHIFT,
-		goav1.EncoderScalabilityModeL3T3_KEY_SHIFT,
+	for _, mode := range []EncoderScalabilityMode{
+		EncoderScalabilityModeL2T3_KEY_SHIFT,
+		EncoderScalabilityModeL3T2_KEY_SHIFT,
+		EncoderScalabilityModeL3T3_KEY_SHIFT,
 	} {
 		if !containsEncoderScalabilityMode(modes, mode) {
 			t.Fatalf("EncoderScalabilityModes omitted explicit mode %s", mode)
@@ -137,7 +143,7 @@ func TestPublicEncoderScalabilityModeCatalogueIncludesExplicitModes(t *testing.T
 		if !webRTCSVC[mode] {
 			t.Fatalf("EncoderWebRTCSVCScalabilityModes omitted W3C mode %s", mode)
 		}
-		if err := goav1.ValidateEncoderWebRTCActiveScalabilityModes(mode); err != nil {
+		if err := validateEncoderWebRTCActiveScalabilityModes(mode); err != nil {
 			t.Fatalf("ValidateEncoderWebRTCActiveScalabilityModes(%s): %v", mode, err)
 		}
 	}
@@ -155,21 +161,21 @@ func TestPublicEncoderWebRTCSVCScalabilityModeCatalogueIncludesCompleteW3CList(t
 		"S2T1", "S2T1h", "S2T2", "S2T2h", "S2T3", "S2T3h",
 		"S3T1", "S3T1h", "S3T2", "S3T2h", "S3T3", "S3T3h",
 	}
-	modes := goav1.EncoderWebRTCSVCScalabilityModes()
+	modes := encoderWebRTCSVCScalabilityModes()
 	if len(modes) != len(want) {
 		t.Fatalf("EncoderWebRTCSVCScalabilityModes len=%d want %d", len(modes), len(want))
 	}
-	prefixed := goav1.AppendEncoderWebRTCSVCScalabilityModes([]goav1.EncoderScalabilityMode{goav1.EncoderScalabilityModeL3T3})
-	if len(prefixed) != len(want)+1 || prefixed[0] != goav1.EncoderScalabilityModeL3T3 {
+	prefixed := internalencoder.AppendWebRTCSVCScalabilityModes([]EncoderScalabilityMode{internalencoder.ScalabilityModeL3T3})
+	if len(prefixed) != len(want)+1 || prefixed[0] != internalencoder.ScalabilityModeL3T3 {
 		t.Fatalf("AppendEncoderWebRTCSVCScalabilityModes prefix len=%d first=%s", len(prefixed), prefixed[0])
 	}
-	seen := make(map[goav1.EncoderScalabilityMode]bool, len(modes))
+	seen := make(map[EncoderScalabilityMode]bool, len(modes))
 	for i, name := range want {
 		mode := modes[i]
 		if prefixed[i+1] != mode {
 			t.Fatalf("prefixed mode %d=%s want %s", i+1, prefixed[i+1], mode)
 		}
-		parsed, ok := goav1.ParseEncoderScalabilityMode(name)
+		parsed, ok := internalencoder.ParseScalabilityMode(name)
 		if !ok || parsed != mode {
 			t.Fatalf("ParseEncoderScalabilityMode(%q)=%s,%v want %s,true", name, parsed, ok, mode)
 		}
@@ -181,13 +187,13 @@ func TestPublicEncoderWebRTCSVCScalabilityModeCatalogueIncludesCompleteW3CList(t
 		}
 		seen[mode] = true
 	}
-	modes[0] = goav1.EncoderScalabilityModeS3T3h
-	if got := goav1.EncoderWebRTCSVCScalabilityModes()[0]; got != goav1.EncoderScalabilityModeL1T1 {
+	modes[0] = internalencoder.ScalabilityModeS3T3h
+	if got := encoderWebRTCSVCScalabilityModes()[0]; got != EncoderScalabilityModeL1T1 {
 		t.Fatalf("EncoderWebRTCSVCScalabilityModes aliased caller mutation: %s", got)
 	}
 }
 
-func containsEncoderScalabilityMode(modes []goav1.EncoderScalabilityMode, want goav1.EncoderScalabilityMode) bool {
+func containsEncoderScalabilityMode(modes []EncoderScalabilityMode, want EncoderScalabilityMode) bool {
 	for _, mode := range modes {
 		if mode == want {
 			return true
@@ -208,8 +214,8 @@ func TestPublicVideoEncoderRoundTrip(t *testing.T) {
 	for i := range bg {
 		bg[i] = uint8(60 + rng.Intn(80))
 	}
-	makeFrame := func(n int) goav1.I420Frame {
-		f := goav1.I420Frame{
+	makeFrame := func(n int) I420Frame {
+		f := I420Frame{
 			Y: append([]byte(nil), bg...), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
 			YStride: w, ChromaStride: cw, Width: w, Height: h,
 		}
@@ -224,7 +230,7 @@ func TestPublicVideoEncoderRoundTrip(t *testing.T) {
 		}
 		return f
 	}
-	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+	enc, err := NewVideoEncoder(VideoEncoderConfig{
 		Width: w, Height: h,
 		TargetBitrate: 400_000, Framerate: 30,
 		TemporalLayers: 2,
@@ -265,7 +271,7 @@ func TestPublicVideoEncoderRoundTrip(t *testing.T) {
 		t.Fatal("rate controller reported qindex 0")
 	}
 
-	dec, err := goav1.NewDecoder(tus)
+	dec, err := NewDecoder(tus)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,8 +325,8 @@ func TestPublicVideoEncoderHardCutStaysInter(t *testing.T) {
 	for i := range sceneB {
 		sceneB[i] = uint8(140 + (i/9)%50 + rngB.Intn(50))
 	}
-	makeFrame := func(idx int) goav1.I420Frame {
-		f := goav1.I420Frame{
+	makeFrame := func(idx int) I420Frame {
+		f := I420Frame{
 			Y:            make([]byte, w*h),
 			U:            make([]byte, w*h/4),
 			V:            make([]byte, w*h/4),
@@ -342,7 +348,7 @@ func TestPublicVideoEncoderHardCutStaysInter(t *testing.T) {
 		}
 		return f
 	}
-	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{Width: w, Height: h, QIndex: 110})
+	enc, err := NewVideoEncoder(VideoEncoderConfig{Width: w, Height: h, QIndex: 110})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,13 +373,13 @@ func TestPublicVideoEncoderHardCutStaysInter(t *testing.T) {
 
 func TestPublicKeyframeEncoderRoundTripAnd1080pAllocs(t *testing.T) {
 	const w, h = 1920, 1080
-	enc, err := goav1.NewKeyframeEncoder(w, h, 80)
+	enc, err := NewKeyframeEncoder(w, h, 80)
 	if err != nil {
 		t.Fatalf("NewKeyframeEncoder: %v", err)
 	}
 	defer enc.Close()
 
-	frames := [...]goav1.I420Frame{
+	frames := [...]I420Frame{
 		publicRTCMatrixFrame(w, h, 0),
 		publicRTCMatrixFrame(w, h, 1),
 		publicRTCMatrixFrame(w, h, 2),
@@ -431,9 +437,9 @@ func TestPublicKeyframeEncoderRoundTripAnd1080pAllocs(t *testing.T) {
 	}
 }
 
-func publicAssertI420TUDecodesToRecon(t *testing.T, tu []byte, recon goav1.I420Frame) {
+func publicAssertI420TUDecodesToRecon(t *testing.T, tu []byte, recon I420Frame) {
 	t.Helper()
-	dec, err := goav1.NewDecoder([][]byte{append([]byte(nil), tu...)})
+	dec, err := NewDecoder([][]byte{append([]byte(nil), tu...)})
 	if err != nil {
 		t.Fatalf("NewDecoder: %v", err)
 	}
@@ -467,7 +473,7 @@ func publicAssertI420TUDecodesToRecon(t *testing.T, tu []byte, recon goav1.I420F
 
 func TestPublicEncodeI400KeyframeNativeMonochrome(t *testing.T) {
 	const w, h, stride = 96, 64, 112
-	src := goav1.I400Frame{
+	src := I400Frame{
 		Y:       make([]byte, stride*h),
 		YStride: stride,
 		Width:   w,
@@ -488,7 +494,7 @@ func TestPublicEncodeI400KeyframeNativeMonochrome(t *testing.T) {
 		{name: "lossy", qIndex: 96},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tu, recon, err := goav1.EncodeI400Keyframe(src, tc.qIndex)
+			tu, recon, err := EncodeI400Keyframe(src, tc.qIndex)
 			if err != nil {
 				t.Fatalf("EncodeI400Keyframe: %v", err)
 			}
@@ -512,7 +518,7 @@ func TestPublicEncodeI400KeyframeNativeMonochrome(t *testing.T) {
 				}
 			}
 
-			dec, err := goav1.NewDecoder([][]byte{tu})
+			dec, err := NewDecoder([][]byte{tu})
 			if err != nil {
 				t.Fatalf("NewDecoder: %v", err)
 			}
@@ -544,7 +550,7 @@ func TestPublicEncodeI400KeyframeNativeMonochrome(t *testing.T) {
 
 func TestPublicEncodeI400PFrameNativeMonochrome(t *testing.T) {
 	const w, h, stride = 128, 96, 144
-	src1 := goav1.I400Frame{
+	src1 := I400Frame{
 		Y:       make([]byte, stride*h),
 		YStride: stride,
 		Width:   w,
@@ -555,7 +561,7 @@ func TestPublicEncodeI400PFrameNativeMonochrome(t *testing.T) {
 			src1.Y[y*stride+x] = uint8((72 + x*2 + y*3 + (x*y)%19) & 0xff)
 		}
 	}
-	src2 := goav1.I400Frame{
+	src2 := I400Frame{
 		Y:       make([]byte, stride*h),
 		YStride: stride,
 		Width:   w,
@@ -575,7 +581,7 @@ func TestPublicEncodeI400PFrameNativeMonochrome(t *testing.T) {
 		}
 	}
 
-	keyTU, keyRecon, err := goav1.EncodeI400Keyframe(src1, 80)
+	keyTU, keyRecon, err := EncodeI400Keyframe(src1, 80)
 	if err != nil {
 		t.Fatalf("EncodeI400Keyframe: %v", err)
 	}
@@ -592,7 +598,7 @@ func TestPublicEncodeI400PFrameNativeMonochrome(t *testing.T) {
 		{name: "lossy", qIndex: 80},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			pTU, pRecon, err := goav1.EncodeI400PFrame(src2, keyRecon, tc.qIndex)
+			pTU, pRecon, err := EncodeI400PFrame(src2, keyRecon, tc.qIndex)
 			if err != nil {
 				t.Fatalf("EncodeI400PFrame: %v", err)
 			}
@@ -602,7 +608,7 @@ func TestPublicEncodeI400PFrameNativeMonochrome(t *testing.T) {
 			if tc.qIndex == 0 && !bytes.Equal(pRecon.Y, src2.Y) {
 				t.Fatal("lossless P-frame reconstruction differs from source")
 			}
-			dec, err := goav1.NewDecoder([][]byte{keyTU, pTU})
+			dec, err := NewDecoder([][]byte{keyTU, pTU})
 			if err != nil {
 				t.Fatalf("NewDecoder: %v", err)
 			}
@@ -636,7 +642,7 @@ func TestPublicEncodeI400PFrameNativeMonochrome(t *testing.T) {
 func TestPublicEncodeI400KeyframeReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 128, 72
-	src := goav1.I400Frame{
+	src := I400Frame{
 		Y:       make([]byte, w*h),
 		YStride: w,
 		Width:   w,
@@ -649,7 +655,7 @@ func TestPublicEncodeI400KeyframeReferenceDecoders(t *testing.T) {
 	}
 	for _, qIndex := range []uint8{0, 88} {
 		t.Run(fmt.Sprintf("q%d", qIndex), func(t *testing.T) {
-			tu, _, err := goav1.EncodeI400Keyframe(src, qIndex)
+			tu, _, err := EncodeI400Keyframe(src, qIndex)
 			if err != nil {
 				t.Fatalf("EncodeI400Keyframe: %v", err)
 			}
@@ -665,7 +671,7 @@ func TestPublicEncodeI400HighBitDepthLosslessKeyframeReferenceDecoders(t *testin
 	for _, bitDepth := range []uint8{10, 12} {
 		t.Run(fmt.Sprintf("%dbit", bitDepth), func(t *testing.T) {
 			maxSample := uint16((1 << bitDepth) - 1)
-			src := goav1.I400HighBitDepthFrame{
+			src := I400HighBitDepthFrame{
 				Y:        make([]uint16, w*h),
 				YStride:  w,
 				Width:    w,
@@ -678,7 +684,7 @@ func TestPublicEncodeI400HighBitDepthLosslessKeyframeReferenceDecoders(t *testin
 				}
 			}
 
-			tu, recon, err := goav1.EncodeI400HighBitDepthLosslessKeyframe(src)
+			tu, recon, err := EncodeI400HighBitDepthLosslessKeyframe(src)
 			if err != nil {
 				t.Fatalf("EncodeI400HighBitDepthLosslessKeyframe: %v", err)
 			}
@@ -719,7 +725,7 @@ func TestPublicEncodeI400HighBitDepthKeyframeReferenceDecoders(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(fmt.Sprintf("%dbit-q%d", tc.bitDepth, tc.qIndex), func(t *testing.T) {
 			maxSample := uint16((1 << tc.bitDepth) - 1)
-			src := goav1.I400HighBitDepthFrame{
+			src := I400HighBitDepthFrame{
 				Y:        make([]uint16, w*h),
 				YStride:  w,
 				Width:    w,
@@ -732,7 +738,7 @@ func TestPublicEncodeI400HighBitDepthKeyframeReferenceDecoders(t *testing.T) {
 				}
 			}
 
-			tu, recon, err := goav1.EncodeI400HighBitDepthKeyframe(src, tc.qIndex)
+			tu, recon, err := EncodeI400HighBitDepthKeyframe(src, tc.qIndex)
 			if err != nil {
 				t.Fatalf("EncodeI400HighBitDepthKeyframe: %v", err)
 			}
@@ -773,15 +779,15 @@ func TestPublicEncodeI420HighBitDepthKeyframeReferenceDecoders(t *testing.T) {
 		qIndex   uint8
 		profile  uint8
 	}{
-		{bitDepth: 10, qIndex: 0, profile: uint8(goav1.EncoderProfile0)},
-		{bitDepth: 10, qIndex: 72, profile: uint8(goav1.EncoderProfile0)},
-		{bitDepth: 12, qIndex: 0, profile: uint8(goav1.EncoderProfile2)},
-		{bitDepth: 12, qIndex: 104, profile: uint8(goav1.EncoderProfile2)},
+		{bitDepth: 10, qIndex: 0, profile: uint8(EncoderProfile0)},
+		{bitDepth: 10, qIndex: 72, profile: uint8(EncoderProfile0)},
+		{bitDepth: 12, qIndex: 0, profile: uint8(internalencoder.Profile2)},
+		{bitDepth: 12, qIndex: 104, profile: uint8(internalencoder.Profile2)},
 	}
 	for _, tc := range cases {
 		t.Run(fmt.Sprintf("%dbit-q%d", tc.bitDepth, tc.qIndex), func(t *testing.T) {
 			src := publicI420HighBitDepthFrame(w, h, tc.bitDepth, int(tc.qIndex))
-			tu, recon, err := goav1.EncodeI420HighBitDepthKeyframe(src, tc.qIndex)
+			tu, recon, err := EncodeI420HighBitDepthKeyframe(src, tc.qIndex)
 			if err != nil {
 				t.Fatalf("EncodeI420HighBitDepthKeyframe: %v", err)
 			}
@@ -804,7 +810,7 @@ func TestPublicEncodeI420HighBitDepthKeyframeReferenceDecoders(t *testing.T) {
 			}
 
 			ivf := appendPublicIVF(nil, w, h, 30, 1, []publicIVFFrame{{payload: tu}})
-			decoded, err := goav1.DecodeIVF(ivf)
+			decoded, err := DecodeIVF(ivf)
 			if err != nil {
 				t.Fatalf("DecodeIVF: %v", err)
 			}
@@ -841,7 +847,7 @@ func TestPublicEncodeI400HighBitDepthPFrameReferenceDecoders(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(fmt.Sprintf("%dbit-q%d", tc.bitDepth, tc.qIndex), func(t *testing.T) {
 			maxSample := uint16((1 << tc.bitDepth) - 1)
-			src1 := goav1.I400HighBitDepthFrame{
+			src1 := I400HighBitDepthFrame{
 				Y:        make([]uint16, w*h),
 				YStride:  w,
 				Width:    w,
@@ -853,11 +859,11 @@ func TestPublicEncodeI400HighBitDepthPFrameReferenceDecoders(t *testing.T) {
 					src1.Y[y*w+x] = uint16((91 + x*17 + y*29 + (x*y)%181) & int(maxSample))
 				}
 			}
-			keyTU, keyRecon, err := goav1.EncodeI400HighBitDepthKeyframe(src1, tc.qIndex)
+			keyTU, keyRecon, err := EncodeI400HighBitDepthKeyframe(src1, tc.qIndex)
 			if err != nil {
 				t.Fatalf("EncodeI400HighBitDepthKeyframe: %v", err)
 			}
-			src2 := goav1.I400HighBitDepthFrame{
+			src2 := I400HighBitDepthFrame{
 				Y:        make([]uint16, w*h),
 				YStride:  w,
 				Width:    w,
@@ -878,7 +884,7 @@ func TestPublicEncodeI400HighBitDepthPFrameReferenceDecoders(t *testing.T) {
 				}
 			}
 
-			pTU, pRecon, err := goav1.EncodeI400HighBitDepthPFrame(src2, keyRecon, tc.qIndex)
+			pTU, pRecon, err := EncodeI400HighBitDepthPFrame(src2, keyRecon, tc.qIndex)
 			if err != nil {
 				t.Fatalf("EncodeI400HighBitDepthPFrame: %v", err)
 			}
@@ -915,11 +921,11 @@ func TestPublicEncodeI420HighBitDepthPFrameReferenceDecoders(t *testing.T) {
 		t.Run(fmt.Sprintf("%dbit-q%d", tc.bitDepth, tc.qIndex), func(t *testing.T) {
 			maxSample := uint16((1 << tc.bitDepth) - 1)
 			src1 := publicI420HighBitDepthFrame(w, h, tc.bitDepth, int(tc.qIndex))
-			keyTU, keyRecon, err := goav1.EncodeI420HighBitDepthKeyframe(src1, tc.qIndex)
+			keyTU, keyRecon, err := EncodeI420HighBitDepthKeyframe(src1, tc.qIndex)
 			if err != nil {
 				t.Fatalf("EncodeI420HighBitDepthKeyframe: %v", err)
 			}
-			src2 := goav1.I420HighBitDepthFrame{
+			src2 := I420HighBitDepthFrame{
 				Y:            make([]uint16, w*h),
 				U:            make([]uint16, (w/2)*(h/2)),
 				V:            make([]uint16, (w/2)*(h/2)),
@@ -943,7 +949,7 @@ func TestPublicEncodeI420HighBitDepthPFrameReferenceDecoders(t *testing.T) {
 				}
 			}
 
-			pTU, pRecon, err := goav1.EncodeI420HighBitDepthPFrame(src2, keyRecon, tc.qIndex)
+			pTU, pRecon, err := EncodeI420HighBitDepthPFrame(src2, keyRecon, tc.qIndex)
 			if err != nil {
 				t.Fatalf("EncodeI420HighBitDepthPFrame: %v", err)
 			}
@@ -957,7 +963,7 @@ func TestPublicEncodeI420HighBitDepthPFrameReferenceDecoders(t *testing.T) {
 				{payload: keyTU},
 				{timestamp: 1, payload: pTU},
 			})
-			dec, err := goav1.NewDecoder([][]byte{keyTU, pTU})
+			dec, err := NewDecoder([][]byte{keyTU, pTU})
 			if err != nil {
 				t.Fatalf("NewDecoder: %v", err)
 			}
@@ -985,14 +991,14 @@ func TestPublicEncodeI420HighBitDepthPFrameReferenceDecoders(t *testing.T) {
 }
 
 func TestPublicEncodeI400HighBitDepthLosslessKeyframeRejectsInvalid(t *testing.T) {
-	valid := goav1.I400HighBitDepthFrame{
+	valid := I400HighBitDepthFrame{
 		Y:        make([]uint16, 64*64),
 		YStride:  64,
 		Width:    64,
 		Height:   64,
 		BitDepth: 10,
 	}
-	if _, _, err := goav1.EncodeI400HighBitDepthLosslessKeyframe(goav1.I400HighBitDepthFrame{
+	if _, _, err := EncodeI400HighBitDepthLosslessKeyframe(I400HighBitDepthFrame{
 		Y:        valid.Y,
 		YStride:  valid.YStride,
 		Width:    valid.Width,
@@ -1004,45 +1010,45 @@ func TestPublicEncodeI400HighBitDepthLosslessKeyframeRejectsInvalid(t *testing.T
 	invalidSample := valid
 	invalidSample.Y = append([]uint16(nil), valid.Y...)
 	invalidSample.Y[17] = 1024
-	if _, _, err := goav1.EncodeI400HighBitDepthLosslessKeyframe(invalidSample); err == nil {
+	if _, _, err := EncodeI400HighBitDepthLosslessKeyframe(invalidSample); err == nil {
 		t.Fatal("EncodeI400HighBitDepthLosslessKeyframe accepted sample above 10-bit range")
 	}
 }
 
 func TestPublicEncodeI420HighBitDepthKeyframeRejectsInvalid(t *testing.T) {
 	valid := publicI420HighBitDepthFrame(64, 64, 10, 3)
-	if _, _, err := goav1.EncodeI420HighBitDepthLosslessKeyframe(valid); err != nil {
+	if _, _, err := EncodeI420HighBitDepthLosslessKeyframe(valid); err != nil {
 		t.Fatalf("EncodeI420HighBitDepthLosslessKeyframe valid: %v", err)
 	}
 	bitDepthMismatch := valid
 	bitDepthMismatch.BitDepth = 9
-	if _, _, err := goav1.EncodeI420HighBitDepthLosslessKeyframe(bitDepthMismatch); err == nil {
+	if _, _, err := EncodeI420HighBitDepthLosslessKeyframe(bitDepthMismatch); err == nil {
 		t.Fatal("EncodeI420HighBitDepthLosslessKeyframe accepted 9-bit input")
 	}
-	if _, _, err := goav1.EncodeI420HighBitDepthKeyframe(bitDepthMismatch, 72); err == nil {
+	if _, _, err := EncodeI420HighBitDepthKeyframe(bitDepthMismatch, 72); err == nil {
 		t.Fatal("EncodeI420HighBitDepthKeyframe accepted 9-bit input")
 	}
 	shortChroma := valid
 	shortChroma.U = shortChroma.U[:len(shortChroma.U)-1]
-	if _, _, err := goav1.EncodeI420HighBitDepthLosslessKeyframe(shortChroma); err == nil {
+	if _, _, err := EncodeI420HighBitDepthLosslessKeyframe(shortChroma); err == nil {
 		t.Fatal("EncodeI420HighBitDepthLosslessKeyframe accepted short chroma plane")
 	}
-	if _, _, err := goav1.EncodeI420HighBitDepthKeyframe(shortChroma, 72); err == nil {
+	if _, _, err := EncodeI420HighBitDepthKeyframe(shortChroma, 72); err == nil {
 		t.Fatal("EncodeI420HighBitDepthKeyframe accepted short chroma plane")
 	}
 	invalidSample := valid
 	invalidSample.V = append([]uint16(nil), valid.V...)
 	invalidSample.V[7] = 1024
-	if _, _, err := goav1.EncodeI420HighBitDepthLosslessKeyframe(invalidSample); err == nil {
+	if _, _, err := EncodeI420HighBitDepthLosslessKeyframe(invalidSample); err == nil {
 		t.Fatal("EncodeI420HighBitDepthLosslessKeyframe accepted sample above 10-bit range")
 	}
-	if _, _, err := goav1.EncodeI420HighBitDepthKeyframe(invalidSample, 72); err == nil {
+	if _, _, err := EncodeI420HighBitDepthKeyframe(invalidSample, 72); err == nil {
 		t.Fatal("EncodeI420HighBitDepthKeyframe accepted sample above 10-bit range")
 	}
 }
 
 func TestPublicEncodeI400HighBitDepthPFrameRejectsInvalid(t *testing.T) {
-	valid := goav1.I400HighBitDepthFrame{
+	valid := I400HighBitDepthFrame{
 		Y:        make([]uint16, 64*64),
 		YStride:  64,
 		Width:    64,
@@ -1051,12 +1057,12 @@ func TestPublicEncodeI400HighBitDepthPFrameRejectsInvalid(t *testing.T) {
 	}
 	bitDepthMismatch := valid
 	bitDepthMismatch.BitDepth = 12
-	if _, _, err := goav1.EncodeI400HighBitDepthPFrame(valid, bitDepthMismatch, 72); err == nil {
+	if _, _, err := EncodeI400HighBitDepthPFrame(valid, bitDepthMismatch, 72); err == nil {
 		t.Fatal("EncodeI400HighBitDepthPFrame accepted mismatched bit depth")
 	}
 	dimMismatch := valid
 	dimMismatch.Width = 32
-	if _, _, err := goav1.EncodeI400HighBitDepthPFrame(valid, dimMismatch, 72); err == nil {
+	if _, _, err := EncodeI400HighBitDepthPFrame(valid, dimMismatch, 72); err == nil {
 		t.Fatal("EncodeI400HighBitDepthPFrame accepted mismatched dimensions")
 	}
 }
@@ -1065,24 +1071,24 @@ func TestPublicEncodeI420HighBitDepthPFrameRejectsInvalid(t *testing.T) {
 	valid := publicI420HighBitDepthFrame(64, 64, 10, 3)
 	bitDepthMismatch := valid
 	bitDepthMismatch.BitDepth = 12
-	if _, _, err := goav1.EncodeI420HighBitDepthPFrame(valid, bitDepthMismatch, 72); err == nil {
+	if _, _, err := EncodeI420HighBitDepthPFrame(valid, bitDepthMismatch, 72); err == nil {
 		t.Fatal("EncodeI420HighBitDepthPFrame accepted mismatched bit depth")
 	}
 	dimMismatch := valid
 	dimMismatch.Width = 32
-	if _, _, err := goav1.EncodeI420HighBitDepthPFrame(valid, dimMismatch, 72); err == nil {
+	if _, _, err := EncodeI420HighBitDepthPFrame(valid, dimMismatch, 72); err == nil {
 		t.Fatal("EncodeI420HighBitDepthPFrame accepted mismatched dimensions")
 	}
 	shortRef := valid
 	shortRef.V = shortRef.V[:len(shortRef.V)-1]
-	if _, _, err := goav1.EncodeI420HighBitDepthPFrame(valid, shortRef, 72); err == nil {
+	if _, _, err := EncodeI420HighBitDepthPFrame(valid, shortRef, 72); err == nil {
 		t.Fatal("EncodeI420HighBitDepthPFrame accepted short reference chroma")
 	}
 }
 
 func TestPublicVideoEncoderClose(t *testing.T) {
 	const w, h = 192, 128
-	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+	enc, err := NewVideoEncoder(VideoEncoderConfig{
 		Width: w, Height: h,
 		TargetBitrate: 300_000, Framerate: 30,
 		TileColumns: 2,
@@ -1109,7 +1115,7 @@ func TestPublicVideoEncoderClose(t *testing.T) {
 func TestPublicRTCEncoder(t *testing.T) {
 	const w, h = 192, 128
 	cw, ch := w/2, h/2
-	enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+	enc, err := NewRTCEncoder(VideoEncoderConfig{
 		Width: w, Height: h,
 		TargetBitrate: 250_000, Framerate: 30,
 		TemporalLayers: 2,
@@ -1119,7 +1125,7 @@ func TestPublicRTCEncoder(t *testing.T) {
 	}
 	var tus [][]byte
 	for i := range 6 {
-		f := goav1.I420Frame{
+		f := I420Frame{
 			Y: make([]byte, w*h), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
 			YStride: w, ChromaStride: cw, Width: w, Height: h,
 		}
@@ -1142,7 +1148,7 @@ func TestPublicRTCEncoder(t *testing.T) {
 		}
 		tus = append(tus, append([]byte(nil), out.Data...))
 	}
-	dec, err := goav1.NewDecoder(tus)
+	dec, err := NewDecoder(tus)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1165,50 +1171,50 @@ func TestPublicRTCEncoder(t *testing.T) {
 
 func TestPublicVideoEncoderInputFormatsMatchI420(t *testing.T) {
 	const w, h = 192, 128
-	cfg := goav1.VideoEncoderConfig{
+	cfg := VideoEncoderConfig{
 		Width: w, Height: h,
 		QIndex:         80,
 		TemporalLayers: 2,
 	}
 	formats := []struct {
 		name   string
-		source func(int) goav1.I420Frame
-		encode func(*goav1.VideoEncoder, goav1.I420Frame, bool) (goav1.EncodedFrame, error)
+		source func(int) I420Frame
+		encode func(*VideoEncoder, I420Frame, bool) (EncodedFrame, error)
 	}{
 		{
 			name: "I422",
-			source: func(frame int) goav1.I420Frame {
+			source: func(frame int) I420Frame {
 				return publicRTCMatrixFrame(w, h, frame)
 			},
-			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
+			encode: func(enc *VideoEncoder, src I420Frame, forceKey bool) (EncodedFrame, error) {
 				return enc.EncodeI422(publicI422FromI420(src), forceKey)
 			},
 		},
 		{
 			name: "I444",
-			source: func(frame int) goav1.I420Frame {
+			source: func(frame int) I420Frame {
 				return publicRTCMatrixFrame(w, h, frame)
 			},
-			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
+			encode: func(enc *VideoEncoder, src I420Frame, forceKey bool) (EncodedFrame, error) {
 				return enc.EncodeI444(publicI444FromI420(src), forceKey)
 			},
 		},
 		{
 			name: "I400",
-			source: func(frame int) goav1.I420Frame {
+			source: func(frame int) I420Frame {
 				return publicI420NeutralChroma(publicRTCMatrixFrame(w, h, frame))
 			},
-			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
+			encode: func(enc *VideoEncoder, src I420Frame, forceKey bool) (EncodedFrame, error) {
 				return enc.EncodeI400(publicI400FromI420(src), forceKey)
 			},
 		},
 		{
 			name: "Frame420-8bit",
-			source: func(frame int) goav1.I420Frame {
+			source: func(frame int) I420Frame {
 				return publicRTCMatrixFrame(w, h, frame)
 			},
-			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
-				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+			encode: func(enc *VideoEncoder, src I420Frame, forceKey bool) (EncodedFrame, error) {
+				frame := publicFrameFromI420(t, src, FrameFormat{
 					Width:        src.Width,
 					Height:       src.Height,
 					BitDepth:     8,
@@ -1221,11 +1227,11 @@ func TestPublicVideoEncoderInputFormatsMatchI420(t *testing.T) {
 		},
 		{
 			name: "Frame420-10bit",
-			source: func(frame int) goav1.I420Frame {
+			source: func(frame int) I420Frame {
 				return publicRTCMatrixFrame(w, h, frame)
 			},
-			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
-				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+			encode: func(enc *VideoEncoder, src I420Frame, forceKey bool) (EncodedFrame, error) {
+				frame := publicFrameFromI420(t, src, FrameFormat{
 					Width:        src.Width,
 					Height:       src.Height,
 					BitDepth:     10,
@@ -1238,11 +1244,11 @@ func TestPublicVideoEncoderInputFormatsMatchI420(t *testing.T) {
 		},
 		{
 			name: "Frame422-10bit",
-			source: func(frame int) goav1.I420Frame {
+			source: func(frame int) I420Frame {
 				return publicRTCMatrixFrame(w, h, frame)
 			},
-			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
-				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+			encode: func(enc *VideoEncoder, src I420Frame, forceKey bool) (EncodedFrame, error) {
+				frame := publicFrameFromI420(t, src, FrameFormat{
 					Width:        src.Width,
 					Height:       src.Height,
 					BitDepth:     10,
@@ -1254,11 +1260,11 @@ func TestPublicVideoEncoderInputFormatsMatchI420(t *testing.T) {
 		},
 		{
 			name: "Frame444-12bit",
-			source: func(frame int) goav1.I420Frame {
+			source: func(frame int) I420Frame {
 				return publicRTCMatrixFrame(w, h, frame)
 			},
-			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
-				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+			encode: func(enc *VideoEncoder, src I420Frame, forceKey bool) (EncodedFrame, error) {
+				frame := publicFrameFromI420(t, src, FrameFormat{
 					Width:    src.Width,
 					Height:   src.Height,
 					BitDepth: 12,
@@ -1269,11 +1275,11 @@ func TestPublicVideoEncoderInputFormatsMatchI420(t *testing.T) {
 		},
 		{
 			name: "Frame400-10bit",
-			source: func(frame int) goav1.I420Frame {
+			source: func(frame int) I420Frame {
 				return publicI420NeutralChroma(publicRTCMatrixFrame(w, h, frame))
 			},
-			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
-				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+			encode: func(enc *VideoEncoder, src I420Frame, forceKey bool) (EncodedFrame, error) {
+				frame := publicFrameFromI420(t, src, FrameFormat{
 					Width:      src.Width,
 					Height:     src.Height,
 					BitDepth:   10,
@@ -1285,31 +1291,31 @@ func TestPublicVideoEncoderInputFormatsMatchI420(t *testing.T) {
 		},
 		{
 			name: "NV12",
-			source: func(frame int) goav1.I420Frame {
+			source: func(frame int) I420Frame {
 				return publicRTCMatrixFrame(w, h, frame)
 			},
-			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
+			encode: func(enc *VideoEncoder, src I420Frame, forceKey bool) (EncodedFrame, error) {
 				return enc.EncodeNV12(publicNV12FromI420(src), forceKey)
 			},
 		},
 		{
 			name: "NV21",
-			source: func(frame int) goav1.I420Frame {
+			source: func(frame int) I420Frame {
 				return publicRTCMatrixFrame(w, h, frame)
 			},
-			encode: func(enc *goav1.VideoEncoder, src goav1.I420Frame, forceKey bool) (goav1.EncodedFrame, error) {
+			encode: func(enc *VideoEncoder, src I420Frame, forceKey bool) (EncodedFrame, error) {
 				return enc.EncodeNV21(publicNV21FromI420(src), forceKey)
 			},
 		},
 	}
 	for _, format := range formats {
 		t.Run(format.name, func(t *testing.T) {
-			i420Enc, err := goav1.NewVideoEncoder(cfg)
+			i420Enc, err := NewVideoEncoder(cfg)
 			if err != nil {
 				t.Fatalf("NewVideoEncoder I420: %v", err)
 			}
 			defer i420Enc.Close()
-			testEnc, err := goav1.NewVideoEncoder(cfg)
+			testEnc, err := NewVideoEncoder(cfg)
 			if err != nil {
 				t.Fatalf("NewVideoEncoder %s: %v", format.name, err)
 			}
@@ -1334,7 +1340,7 @@ func TestPublicVideoEncoderInputFormatsMatchI420(t *testing.T) {
 }
 
 func TestPublicVideoEncoderRejectsUnsupportedFrameFormat(t *testing.T) {
-	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+	enc, err := NewVideoEncoder(VideoEncoderConfig{
 		Width: 16, Height: 16,
 		QIndex: 80,
 	})
@@ -1343,23 +1349,23 @@ func TestPublicVideoEncoderRejectsUnsupportedFrameFormat(t *testing.T) {
 	}
 	defer enc.Close()
 
-	format := goav1.FrameFormat{
+	format := FrameFormat{
 		Width:        16,
 		Height:       16,
 		BitDepth:     8,
 		SubsamplingY: true,
 		Align:        32,
 	}
-	layout, err := goav1.FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		t.Fatalf("FrameRequiredSize: %v", err)
 	}
-	frame, err := goav1.BindFrame(make([]byte, layout.Size), format)
+	frame, err := internalframe.Bind(make([]byte, layout.Size), format)
 	if err != nil {
 		t.Fatalf("BindFrame: %v", err)
 	}
-	if _, err := enc.EncodeFrame(frame, false); !errors.Is(err, goav1.ErrFrameInvalidFormat) {
-		t.Fatalf("EncodeFrame err=%v want %v", err, goav1.ErrFrameInvalidFormat)
+	if _, err := enc.EncodeFrame(frame, false); !errors.Is(err, internalframe.ErrInvalidFormat) {
+		t.Fatalf("EncodeFrame err=%v want %v", err, internalframe.ErrInvalidFormat)
 	}
 }
 
@@ -1370,53 +1376,53 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 	}
 	formats := []struct {
 		name          string
-		source        func(int, int, int) goav1.I420Frame
-		encode        func(*goav1.RTCEncoder, goav1.I420Frame, bool) (goav1.RTCFrame, error)
-		encodePicture func(*goav1.RTCEncoder, goav1.I420Frame, bool) (goav1.RTCPicture, error)
+		source        func(int, int, int) I420Frame
+		encode        func(*RTCEncoder, I420Frame, bool) (RTCFrame, error)
+		encodePicture func(*RTCEncoder, I420Frame, bool) (RTCPicture, error)
 	}{
 		{
 			name: "I422",
-			source: func(width int, height int, frame int) goav1.I420Frame {
+			source: func(width int, height int, frame int) I420Frame {
 				return publicRTCMatrixFrame(width, height, frame)
 			},
-			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
+			encode: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCFrame, error) {
 				return enc.EncodeI422(publicI422FromI420(src), forceKey)
 			},
-			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
+			encodePicture: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCPicture, error) {
 				return enc.EncodeI422Picture(publicI422FromI420(src), forceKey)
 			},
 		},
 		{
 			name: "I444",
-			source: func(width int, height int, frame int) goav1.I420Frame {
+			source: func(width int, height int, frame int) I420Frame {
 				return publicRTCMatrixFrame(width, height, frame)
 			},
-			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
+			encode: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCFrame, error) {
 				return enc.EncodeI444(publicI444FromI420(src), forceKey)
 			},
-			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
+			encodePicture: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCPicture, error) {
 				return enc.EncodeI444Picture(publicI444FromI420(src), forceKey)
 			},
 		},
 		{
 			name: "I400",
-			source: func(width int, height int, frame int) goav1.I420Frame {
+			source: func(width int, height int, frame int) I420Frame {
 				return publicI420NeutralChroma(publicRTCMatrixFrame(width, height, frame))
 			},
-			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
+			encode: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCFrame, error) {
 				return enc.EncodeI400(publicI400FromI420(src), forceKey)
 			},
-			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
+			encodePicture: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCPicture, error) {
 				return enc.EncodeI400Picture(publicI400FromI420(src), forceKey)
 			},
 		},
 		{
 			name: "Frame420-8bit",
-			source: func(width int, height int, frame int) goav1.I420Frame {
+			source: func(width int, height int, frame int) I420Frame {
 				return publicRTCMatrixFrame(width, height, frame)
 			},
-			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
-				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+			encode: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCFrame, error) {
+				frame := publicFrameFromI420(t, src, FrameFormat{
 					Width:        src.Width,
 					Height:       src.Height,
 					BitDepth:     8,
@@ -1426,8 +1432,8 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 				})
 				return enc.EncodeFrame(frame, forceKey)
 			},
-			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
-				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+			encodePicture: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCPicture, error) {
+				frame := publicFrameFromI420(t, src, FrameFormat{
 					Width:        src.Width,
 					Height:       src.Height,
 					BitDepth:     8,
@@ -1440,11 +1446,11 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 		},
 		{
 			name: "Frame420-10bit",
-			source: func(width int, height int, frame int) goav1.I420Frame {
+			source: func(width int, height int, frame int) I420Frame {
 				return publicRTCMatrixFrame(width, height, frame)
 			},
-			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
-				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+			encode: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCFrame, error) {
+				frame := publicFrameFromI420(t, src, FrameFormat{
 					Width:        src.Width,
 					Height:       src.Height,
 					BitDepth:     10,
@@ -1454,8 +1460,8 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 				})
 				return enc.EncodeFrame(frame, forceKey)
 			},
-			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
-				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+			encodePicture: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCPicture, error) {
+				frame := publicFrameFromI420(t, src, FrameFormat{
 					Width:        src.Width,
 					Height:       src.Height,
 					BitDepth:     10,
@@ -1468,11 +1474,11 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 		},
 		{
 			name: "Frame422-10bit",
-			source: func(width int, height int, frame int) goav1.I420Frame {
+			source: func(width int, height int, frame int) I420Frame {
 				return publicRTCMatrixFrame(width, height, frame)
 			},
-			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
-				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+			encode: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCFrame, error) {
+				frame := publicFrameFromI420(t, src, FrameFormat{
 					Width:        src.Width,
 					Height:       src.Height,
 					BitDepth:     10,
@@ -1481,8 +1487,8 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 				})
 				return enc.EncodeFrame(frame, forceKey)
 			},
-			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
-				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+			encodePicture: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCPicture, error) {
+				frame := publicFrameFromI420(t, src, FrameFormat{
 					Width:        src.Width,
 					Height:       src.Height,
 					BitDepth:     10,
@@ -1494,11 +1500,11 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 		},
 		{
 			name: "Frame444-12bit",
-			source: func(width int, height int, frame int) goav1.I420Frame {
+			source: func(width int, height int, frame int) I420Frame {
 				return publicRTCMatrixFrame(width, height, frame)
 			},
-			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
-				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+			encode: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCFrame, error) {
+				frame := publicFrameFromI420(t, src, FrameFormat{
 					Width:    src.Width,
 					Height:   src.Height,
 					BitDepth: 12,
@@ -1506,8 +1512,8 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 				})
 				return enc.EncodeFrame(frame, forceKey)
 			},
-			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
-				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+			encodePicture: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCPicture, error) {
+				frame := publicFrameFromI420(t, src, FrameFormat{
 					Width:    src.Width,
 					Height:   src.Height,
 					BitDepth: 12,
@@ -1518,11 +1524,11 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 		},
 		{
 			name: "Frame400-10bit",
-			source: func(width int, height int, frame int) goav1.I420Frame {
+			source: func(width int, height int, frame int) I420Frame {
 				return publicI420NeutralChroma(publicRTCMatrixFrame(width, height, frame))
 			},
-			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
-				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+			encode: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCFrame, error) {
+				frame := publicFrameFromI420(t, src, FrameFormat{
 					Width:      src.Width,
 					Height:     src.Height,
 					BitDepth:   10,
@@ -1531,8 +1537,8 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 				})
 				return enc.EncodeFrame(frame, forceKey)
 			},
-			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
-				frame := publicFrameFromI420(t, src, goav1.FrameFormat{
+			encodePicture: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCPicture, error) {
+				frame := publicFrameFromI420(t, src, FrameFormat{
 					Width:      src.Width,
 					Height:     src.Height,
 					BitDepth:   10,
@@ -1544,25 +1550,25 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 		},
 		{
 			name: "NV12",
-			source: func(width int, height int, frame int) goav1.I420Frame {
+			source: func(width int, height int, frame int) I420Frame {
 				return publicRTCMatrixFrame(width, height, frame)
 			},
-			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
+			encode: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCFrame, error) {
 				return enc.EncodeNV12(publicNV12FromI420(src), forceKey)
 			},
-			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
+			encodePicture: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCPicture, error) {
 				return enc.EncodeNV12Picture(publicNV12FromI420(src), forceKey)
 			},
 		},
 		{
 			name: "NV21",
-			source: func(width int, height int, frame int) goav1.I420Frame {
+			source: func(width int, height int, frame int) I420Frame {
 				return publicRTCMatrixFrame(width, height, frame)
 			},
-			encode: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCFrame, error) {
+			encode: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCFrame, error) {
 				return enc.EncodeNV21(publicNV21FromI420(src), forceKey)
 			},
-			encodePicture: func(enc *goav1.RTCEncoder, src goav1.I420Frame, forceKey bool) (goav1.RTCPicture, error) {
+			encodePicture: func(enc *RTCEncoder, src I420Frame, forceKey bool) (RTCPicture, error) {
 				return enc.EncodeNV21Picture(publicNV21FromI420(src), forceKey)
 			},
 		},
@@ -1570,7 +1576,7 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 	for _, format := range formats {
 		t.Run(format.name+"/single-spatial", func(t *testing.T) {
 			const w, h = 192, 128
-			enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+			enc, err := NewRTCEncoder(VideoEncoderConfig{
 				Width: w, Height: h,
 				TargetBitrate: 250_000, Framerate: 30,
 				TemporalLayers: 2,
@@ -1590,7 +1596,7 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 				}
 				tus = append(tus, append([]byte(nil), out.Data...))
 			}
-			dec, err := goav1.NewDecoder(tus)
+			dec, err := NewDecoder(tus)
 			if err != nil {
 				t.Fatalf("NewDecoder: %v", err)
 			}
@@ -1613,19 +1619,19 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 
 		t.Run(format.name+"/multi-spatial-rtp", func(t *testing.T) {
 			const w, h = 640, 360
-			cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeS2T2)
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg := publicRTCMatrixConfig(w, h, internalencoder.ScalabilityModeS2T2)
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = 34
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
 			defer enc.Close()
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 			for frame := 0; frame < 2; frame++ {
 				picture, err := format.encodePicture(enc, format.source(w, h, frame), false)
@@ -1646,22 +1652,22 @@ func TestPublicRTCEncoderInputFormatsEncodeAndPictureDecode(t *testing.T) {
 func TestPublicRTCEncoderI422NativeReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 192, 128
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
-	cfg.Profile = goav1.EncoderProfile2
+	cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T2)
+	cfg.Profile = internalencoder.Profile2
 	cfg.ColorConfigSet = true
-	cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+	cfg.ColorConfig = internalencoder.SequenceColorConfig{
 		BitDepth:     8,
 		SubsamplingX: true,
 	}
-	cfg.RateControl = goav1.EncoderRateControlCQP
+	cfg.RateControl = EncoderRateControlCQP
 	cfg.Quantizer = 28
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
 	defer enc.Close()
-	if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); !errors.Is(err, goav1.ErrEncoderUnsupported) {
-		t.Fatalf("Encode(I420) on native I422 err=%v want %v", err, goav1.ErrEncoderUnsupported)
+	if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); !errors.Is(err, internalencoder.ErrUnsupported) {
+		t.Fatalf("Encode(I420) on native I422 err=%v want %v", err, internalencoder.ErrUnsupported)
 	}
 
 	frames := make([]publicIVFFrame, 0, 5)
@@ -1672,7 +1678,7 @@ func TestPublicRTCEncoderI422NativeReferenceDecoders(t *testing.T) {
 		}
 		if frame == 0 {
 			seq := publicFirstSequenceHeader(t, out.Data)
-			if seq.SeqProfile != uint8(goav1.EncoderProfile2) ||
+			if seq.SeqProfile != uint8(internalencoder.Profile2) ||
 				seq.ColorConfig.MonoChrome ||
 				seq.ColorConfig.BitDepth != 8 ||
 				!seq.ColorConfig.SubsamplingX ||
@@ -1685,7 +1691,7 @@ func TestPublicRTCEncoderI422NativeReferenceDecoders(t *testing.T) {
 			payload:   append([]byte(nil), out.Data...),
 		})
 	}
-	generic, err := enc.EncodeFrame(publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 4), goav1.FrameFormat{
+	generic, err := enc.EncodeFrame(publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 4), FrameFormat{
 		Width:        w,
 		Height:       h,
 		BitDepth:     8,
@@ -1701,7 +1707,7 @@ func TestPublicRTCEncoderI422NativeReferenceDecoders(t *testing.T) {
 	})
 
 	ivf := appendPublicIVF(nil, w, h, 30, 1, frames)
-	decoded, err := goav1.DecodeIVF(ivf)
+	decoded, err := DecodeIVF(ivf)
 	if err != nil {
 		t.Fatalf("DecodeIVF: %v", err)
 	}
@@ -1721,30 +1727,30 @@ func TestPublicRTCEncoderI422NativeMultiSpatialReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	scenarios := []struct {
 		name string
-		mode goav1.EncoderScalabilityMode
+		mode EncoderScalabilityMode
 	}{
-		{name: "simulcast-s2t2", mode: goav1.EncoderScalabilityModeS2T2},
-		{name: "shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT},
+		{name: "simulcast-s2t2", mode: internalencoder.ScalabilityModeS2T2},
+		{name: "shared-svc-l2t2-key-shift", mode: internalencoder.ScalabilityModeL2T2_KEY_SHIFT},
 	}
 	for _, scenario := range scenarios {
 		scenario := scenario
 		t.Run(scenario.name, func(t *testing.T) {
 			w, h := publicRTCMatrixGeometry(t, scenario.mode)
 			cfg := publicRTCMatrixConfig(w, h, scenario.mode)
-			cfg.Profile = goav1.EncoderProfile2
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.Profile = internalencoder.Profile2
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = 32
 			cfg.ColorConfigSet = true
-			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			cfg.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth:     8,
 				SubsamplingX: true,
 			}
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
 			defer enc.Close()
-			if enc.Config().Profile != goav1.EncoderProfile2 ||
+			if enc.Config().Profile != internalencoder.Profile2 ||
 				enc.Config().ColorConfig.MonoChrome ||
 				!enc.Config().ColorConfig.SubsamplingX ||
 				enc.Config().ColorConfig.SubsamplingY ||
@@ -1752,10 +1758,10 @@ func TestPublicRTCEncoderI422NativeMultiSpatialReferenceDecoders(t *testing.T) {
 				t.Fatalf("normalized config=%+v want native multi-spatial 4:2:2", enc.Config())
 			}
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 			for frame := 0; frame < 4; frame++ {
 				forceKey := frame == 2
@@ -1769,7 +1775,7 @@ func TestPublicRTCEncoderI422NativeMultiSpatialReferenceDecoders(t *testing.T) {
 						continue
 					}
 					seq := publicFirstSequenceHeader(t, picture.Frames[i].Data)
-					if seq.SeqProfile != uint8(goav1.EncoderProfile2) ||
+					if seq.SeqProfile != uint8(internalencoder.Profile2) ||
 						seq.ColorConfig.MonoChrome ||
 						seq.ColorConfig.BitDepth != 8 ||
 						!seq.ColorConfig.SubsamplingX ||
@@ -1789,46 +1795,46 @@ func TestPublicRTCEncoderI422NativeMultiSpatialReferenceDecoders(t *testing.T) {
 
 func TestPublicRTCEncoderI422NativeControlChurnReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
-	mode := goav1.EncoderScalabilityModeL2T3_KEY_SHIFT
+	mode := EncoderScalabilityModeL2T3_KEY_SHIFT
 	width, height := publicRTCMatrixGeometry(t, mode)
 	baseKbps := publicRTCMatrixControlBitrateKbps(t, mode)
-	fpsCycle := []goav1.EncoderRational{
+	fpsCycle := []EncoderRational{
 		{Num: 15, Den: 1},
 		{Num: 30, Den: 1},
 		{Num: 60000, Den: 1001},
 		{Num: 60, Den: 1},
 	}
-	configForStep := func(step int) goav1.EncoderConfig {
+	configForStep := func(step int) EncoderConfig {
 		cfg := publicRTCMatrixConfig(width, height, mode)
-		cfg.Profile = goav1.EncoderProfile2
+		cfg.Profile = internalencoder.Profile2
 		cfg.ColorConfigSet = true
-		cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+		cfg.ColorConfig = internalencoder.SequenceColorConfig{
 			BitDepth:     8,
 			SubsamplingX: true,
 		}
 		cfg.MaxFramerate = fpsCycle[step%len(fpsCycle)]
 		cfg.MaxThreads = int32(1 + step%3)
-		cfg.Content = goav1.EncoderContentCamera
+		cfg.Content = EncoderContentCamera
 		if step%2 == 1 {
-			cfg.Content = goav1.EncoderContentScreen
+			cfg.Content = EncoderContentScreen
 		}
 		publicRTCApplyControlBitrates(&cfg, baseKbps+int32(step*97))
 		if step%2 == 0 {
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = uint8(26 + step)
 		} else {
-			cfg.RateControl = goav1.EncoderRateControlCBR
+			cfg.RateControl = EncoderRateControlCBR
 			cfg.Quantizer = 0
 		}
 		return cfg
 	}
 
-	var enc *goav1.RTCEncoder
-	var descriptorReceiver goav1.RTPDependencyDescriptorState
-	var rtpReceiver goav1.RTPDependencyDescriptorState
-	var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+	var enc *RTCEncoder
+	var descriptorReceiver RTPDependencyDescriptorState
+	var rtpReceiver RTPDependencyDescriptorState
+	var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 	var orderedTUs [][]byte
-	var sequence goav1.SequenceHeader
+	var sequence SequenceHeader
 	nextFrameID := uint64(0)
 	for step := 0; step < 6; step++ {
 		cfg := configForStep(step)
@@ -1836,7 +1842,7 @@ func TestPublicRTCEncoderI422NativeControlChurnReferenceDecoders(t *testing.T) {
 		wantKey := step == 0 || forceKey
 		if enc == nil {
 			var err error
-			enc, err = goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err = NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
@@ -1848,7 +1854,7 @@ func TestPublicRTCEncoderI422NativeControlChurnReferenceDecoders(t *testing.T) {
 			}
 		}
 		assertPublicRTCConfigControls(t, enc.Config(), cfg)
-		wantDuration, err := goav1.EncoderWebRTCRTPFrameDuration(enc.Config())
+		wantDuration, err := EncoderWebRTCRTPFrameDuration(enc.Config())
 		if err != nil {
 			t.Fatalf("step %d EncoderWebRTCRTPFrameDuration: %v", step, err)
 		}
@@ -1868,9 +1874,9 @@ func TestPublicRTCEncoderI422NativeControlChurnReferenceDecoders(t *testing.T) {
 			if !picture.Frames[i].CodedKeyframe {
 				continue
 			}
-			assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("native-i422-control-step-%d-S%d", step, picture.Frames[i].SpatialID), picture.Frames[i].Data, &sequence, enc.Config().Content == goav1.EncoderContentScreen)
+			assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("native-i422-control-step-%d-S%d", step, picture.Frames[i].SpatialID), picture.Frames[i].Data, &sequence, enc.Config().Content == EncoderContentScreen)
 			seq := publicFirstSequenceHeader(t, picture.Frames[i].Data)
-			if seq.SeqProfile != uint8(goav1.EncoderProfile2) ||
+			if seq.SeqProfile != uint8(internalencoder.Profile2) ||
 				seq.ColorConfig.MonoChrome ||
 				seq.ColorConfig.BitDepth != 8 ||
 				!seq.ColorConfig.SubsamplingX ||
@@ -1889,21 +1895,21 @@ func TestPublicRTCEncoderI422NativeControlChurnReferenceDecoders(t *testing.T) {
 func TestPublicRTCEncoderI444NativeReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 192, 128
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
-	cfg.Profile = goav1.EncoderProfile1
+	cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T2)
+	cfg.Profile = internalencoder.Profile1
 	cfg.ColorConfigSet = true
-	cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+	cfg.ColorConfig = internalencoder.SequenceColorConfig{
 		BitDepth: 8,
 	}
-	cfg.RateControl = goav1.EncoderRateControlCQP
+	cfg.RateControl = EncoderRateControlCQP
 	cfg.Quantizer = 28
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
 	defer enc.Close()
-	if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); !errors.Is(err, goav1.ErrEncoderUnsupported) {
-		t.Fatalf("Encode(I420) on native I444 err=%v want %v", err, goav1.ErrEncoderUnsupported)
+	if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); !errors.Is(err, internalencoder.ErrUnsupported) {
+		t.Fatalf("Encode(I420) on native I444 err=%v want %v", err, internalencoder.ErrUnsupported)
 	}
 
 	frames := make([]publicIVFFrame, 0, 4)
@@ -1914,7 +1920,7 @@ func TestPublicRTCEncoderI444NativeReferenceDecoders(t *testing.T) {
 		}
 		if frame == 0 {
 			seq := publicFirstSequenceHeader(t, out.Data)
-			if seq.SeqProfile != uint8(goav1.EncoderProfile1) ||
+			if seq.SeqProfile != uint8(internalencoder.Profile1) ||
 				seq.ColorConfig.MonoChrome ||
 				seq.ColorConfig.BitDepth != 8 ||
 				seq.ColorConfig.SubsamplingX ||
@@ -1929,7 +1935,7 @@ func TestPublicRTCEncoderI444NativeReferenceDecoders(t *testing.T) {
 	}
 
 	ivf := appendPublicIVF(nil, w, h, 30, 1, frames)
-	decoded, err := goav1.DecodeIVF(ivf)
+	decoded, err := DecodeIVF(ivf)
 	if err != nil {
 		t.Fatalf("DecodeIVF: %v", err)
 	}
@@ -1949,29 +1955,29 @@ func TestPublicRTCEncoderI444NativeMultiSpatialReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	scenarios := []struct {
 		name string
-		mode goav1.EncoderScalabilityMode
+		mode EncoderScalabilityMode
 	}{
-		{name: "simulcast-s2t2", mode: goav1.EncoderScalabilityModeS2T2},
-		{name: "shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT},
+		{name: "simulcast-s2t2", mode: internalencoder.ScalabilityModeS2T2},
+		{name: "shared-svc-l2t2-key-shift", mode: internalencoder.ScalabilityModeL2T2_KEY_SHIFT},
 	}
 	for _, scenario := range scenarios {
 		scenario := scenario
 		t.Run(scenario.name, func(t *testing.T) {
 			w, h := publicRTCMatrixGeometry(t, scenario.mode)
 			cfg := publicRTCMatrixConfig(w, h, scenario.mode)
-			cfg.Profile = goav1.EncoderProfile1
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.Profile = internalencoder.Profile1
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = 32
 			cfg.ColorConfigSet = true
-			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			cfg.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth: 8,
 			}
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
 			defer enc.Close()
-			if enc.Config().Profile != goav1.EncoderProfile1 ||
+			if enc.Config().Profile != internalencoder.Profile1 ||
 				enc.Config().ColorConfig.MonoChrome ||
 				enc.Config().ColorConfig.SubsamplingX ||
 				enc.Config().ColorConfig.SubsamplingY ||
@@ -1979,10 +1985,10 @@ func TestPublicRTCEncoderI444NativeMultiSpatialReferenceDecoders(t *testing.T) {
 				t.Fatalf("normalized config=%+v want native multi-spatial 4:4:4", enc.Config())
 			}
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 			for frame := 0; frame < 4; frame++ {
 				forceKey := frame == 2
@@ -1996,7 +2002,7 @@ func TestPublicRTCEncoderI444NativeMultiSpatialReferenceDecoders(t *testing.T) {
 						continue
 					}
 					seq := publicFirstSequenceHeader(t, picture.Frames[i].Data)
-					if seq.SeqProfile != uint8(goav1.EncoderProfile1) ||
+					if seq.SeqProfile != uint8(internalencoder.Profile1) ||
 						seq.ColorConfig.MonoChrome ||
 						seq.ColorConfig.BitDepth != 8 ||
 						seq.ColorConfig.SubsamplingX ||
@@ -2016,43 +2022,43 @@ func TestPublicRTCEncoderI444NativeMultiSpatialReferenceDecoders(t *testing.T) {
 
 func TestPublicRTCEncoderI444NativeControlChurnReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
-	mode := goav1.EncoderScalabilityModeL2T3_KEY_SHIFT
+	mode := EncoderScalabilityModeL2T3_KEY_SHIFT
 	width, height := publicRTCMatrixGeometry(t, mode)
 	baseKbps := publicRTCMatrixControlBitrateKbps(t, mode)
-	fpsCycle := []goav1.EncoderRational{
+	fpsCycle := []EncoderRational{
 		{Num: 15, Den: 1},
 		{Num: 30, Den: 1},
 		{Num: 60000, Den: 1001},
 		{Num: 60, Den: 1},
 	}
-	configForStep := func(step int) goav1.EncoderConfig {
+	configForStep := func(step int) EncoderConfig {
 		cfg := publicRTCMatrixConfig(width, height, mode)
-		cfg.Profile = goav1.EncoderProfile1
+		cfg.Profile = internalencoder.Profile1
 		cfg.ColorConfigSet = true
-		cfg.ColorConfig = goav1.EncoderSequenceColorConfig{BitDepth: 8}
+		cfg.ColorConfig = internalencoder.SequenceColorConfig{BitDepth: 8}
 		cfg.MaxFramerate = fpsCycle[step%len(fpsCycle)]
 		cfg.MaxThreads = int32(1 + step%3)
-		cfg.Content = goav1.EncoderContentCamera
+		cfg.Content = EncoderContentCamera
 		if step%2 == 1 {
-			cfg.Content = goav1.EncoderContentScreen
+			cfg.Content = EncoderContentScreen
 		}
 		publicRTCApplyControlBitrates(&cfg, baseKbps+int32(step*97))
 		if step%2 == 0 {
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = uint8(26 + step)
 		} else {
-			cfg.RateControl = goav1.EncoderRateControlCBR
+			cfg.RateControl = EncoderRateControlCBR
 			cfg.Quantizer = 0
 		}
 		return cfg
 	}
 
-	var enc *goav1.RTCEncoder
-	var descriptorReceiver goav1.RTPDependencyDescriptorState
-	var rtpReceiver goav1.RTPDependencyDescriptorState
-	var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+	var enc *RTCEncoder
+	var descriptorReceiver RTPDependencyDescriptorState
+	var rtpReceiver RTPDependencyDescriptorState
+	var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 	var orderedTUs [][]byte
-	var sequence goav1.SequenceHeader
+	var sequence SequenceHeader
 	nextFrameID := uint64(0)
 	for step := 0; step < 6; step++ {
 		cfg := configForStep(step)
@@ -2060,7 +2066,7 @@ func TestPublicRTCEncoderI444NativeControlChurnReferenceDecoders(t *testing.T) {
 		wantKey := step == 0 || forceKey
 		if enc == nil {
 			var err error
-			enc, err = goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err = NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
@@ -2072,7 +2078,7 @@ func TestPublicRTCEncoderI444NativeControlChurnReferenceDecoders(t *testing.T) {
 			}
 		}
 		assertPublicRTCConfigControls(t, enc.Config(), cfg)
-		wantDuration, err := goav1.EncoderWebRTCRTPFrameDuration(enc.Config())
+		wantDuration, err := EncoderWebRTCRTPFrameDuration(enc.Config())
 		if err != nil {
 			t.Fatalf("step %d EncoderWebRTCRTPFrameDuration: %v", step, err)
 		}
@@ -2092,9 +2098,9 @@ func TestPublicRTCEncoderI444NativeControlChurnReferenceDecoders(t *testing.T) {
 			if !picture.Frames[i].CodedKeyframe {
 				continue
 			}
-			assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("native-i444-control-step-%d-S%d", step, picture.Frames[i].SpatialID), picture.Frames[i].Data, &sequence, enc.Config().Content == goav1.EncoderContentScreen)
+			assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("native-i444-control-step-%d-S%d", step, picture.Frames[i].SpatialID), picture.Frames[i].Data, &sequence, enc.Config().Content == EncoderContentScreen)
 			seq := publicFirstSequenceHeader(t, picture.Frames[i].Data)
-			if seq.SeqProfile != uint8(goav1.EncoderProfile1) ||
+			if seq.SeqProfile != uint8(internalencoder.Profile1) ||
 				seq.ColorConfig.MonoChrome ||
 				seq.ColorConfig.BitDepth != 8 ||
 				seq.ColorConfig.SubsamplingX ||
@@ -2112,13 +2118,13 @@ func TestPublicRTCEncoderI444NativeControlChurnReferenceDecoders(t *testing.T) {
 
 func TestPublicRTCEncoderI400NativeMonochrome(t *testing.T) {
 	const w, h = 192, 128
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T3)
+	cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T3)
 	cfg.ColorConfigSet = true
-	cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+	cfg.ColorConfig = internalencoder.SequenceColorConfig{
 		BitDepth:   8,
 		MonoChrome: true,
 	}
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
@@ -2132,7 +2138,7 @@ func TestPublicRTCEncoderI400NativeMonochrome(t *testing.T) {
 	for frame := 0; frame < len(wantTID); frame++ {
 		if frame == 3 {
 			control := enc.Config()
-			control.MaxFramerate = goav1.EncoderRational{Num: 60, Den: 1}
+			control.MaxFramerate = EncoderRational{Num: 60, Den: 1}
 			control.MinBitrateKbps += 15
 			control.MaxBitrateKbps += 180
 			control.TargetBitrateKbps += 90
@@ -2157,7 +2163,7 @@ func TestPublicRTCEncoderI400NativeMonochrome(t *testing.T) {
 		tus = append(tus, append([]byte(nil), out.Data...))
 	}
 
-	frame := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, len(wantTID)), goav1.FrameFormat{
+	frame := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, len(wantTID)), FrameFormat{
 		Width:      w,
 		Height:     h,
 		BitDepth:   10,
@@ -2170,7 +2176,7 @@ func TestPublicRTCEncoderI400NativeMonochrome(t *testing.T) {
 	}
 	tus = append(tus, append([]byte(nil), generic.Data...))
 
-	dec, err := goav1.NewDecoder(tus)
+	dec, err := NewDecoder(tus)
 	if err != nil {
 		t.Fatalf("NewDecoder: %v", err)
 	}
@@ -2203,8 +2209,8 @@ func TestPublicRTCEncoderI400NativeMonochromeGoldenInterval(t *testing.T) {
 	for i := range base {
 		base[i] = uint8(50 + rng.Intn(170))
 	}
-	mk := func(boxX int) goav1.I400Frame {
-		f := goav1.I400Frame{
+	mk := func(boxX int) I400Frame {
+		f := I400Frame{
 			Y: append([]byte(nil), base...), YStride: w, Width: w, Height: h,
 		}
 		if boxX >= 0 {
@@ -2216,22 +2222,22 @@ func TestPublicRTCEncoderI400NativeMonochromeGoldenInterval(t *testing.T) {
 		}
 		return f
 	}
-	frames := []goav1.I400Frame{
+	frames := []I400Frame{
 		mk(-1),
 		mk(64),
 		mk(-1),
 	}
 	encode := func(goldenInterval int) [][]byte {
-		cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T1)
+		cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T1)
 		cfg.MinBitrateKbps = 2000
 		cfg.MaxBitrateKbps = 2000
 		cfg.TargetBitrateKbps = 2000
 		cfg.ColorConfigSet = true
-		cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+		cfg.ColorConfig = internalencoder.SequenceColorConfig{
 			BitDepth:   8,
 			MonoChrome: true,
 		}
-		enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+		enc, err := NewRTCEncoderWithConfig(cfg)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2256,7 +2262,7 @@ func TestPublicRTCEncoderI400NativeMonochromeGoldenInterval(t *testing.T) {
 	if len(withGolden[2])*5 >= len(lastOnly[2])*4 {
 		t.Fatalf("golden interval did not materially reduce monochrome reveal frame: last-only %dB, golden %dB", len(lastOnly[2]), len(withGolden[2]))
 	}
-	dec, err := goav1.NewDecoder(withGolden)
+	dec, err := NewDecoder(withGolden)
 	if err != nil {
 		t.Fatalf("NewDecoder: %v", err)
 	}
@@ -2285,15 +2291,15 @@ func TestPublicRTCEncoderI400NativeMonochromeGoldenInterval(t *testing.T) {
 func TestPublicRTCEncoderI400NativeMonochromeReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 192, 128
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
-	cfg.RateControl = goav1.EncoderRateControlCQP
+	cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T2)
+	cfg.RateControl = EncoderRateControlCQP
 	cfg.Quantizer = 42
 	cfg.ColorConfigSet = true
-	cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+	cfg.ColorConfig = internalencoder.SequenceColorConfig{
 		BitDepth:   8,
 		MonoChrome: true,
 	}
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
@@ -2321,24 +2327,24 @@ func TestPublicRTCEncoderI400NativeMonochromeMultiSpatialReferenceDecoders(t *te
 	decoders := publicReferenceAV1Decoders(t)
 	scenarios := []struct {
 		name string
-		mode goav1.EncoderScalabilityMode
+		mode EncoderScalabilityMode
 	}{
-		{name: "simulcast-s2t2", mode: goav1.EncoderScalabilityModeS2T2},
-		{name: "shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT},
+		{name: "simulcast-s2t2", mode: internalencoder.ScalabilityModeS2T2},
+		{name: "shared-svc-l2t2-key-shift", mode: internalencoder.ScalabilityModeL2T2_KEY_SHIFT},
 	}
 	for _, scenario := range scenarios {
 		scenario := scenario
 		t.Run(scenario.name, func(t *testing.T) {
 			w, h := publicRTCMatrixGeometry(t, scenario.mode)
 			cfg := publicRTCMatrixConfig(w, h, scenario.mode)
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = 39
 			cfg.ColorConfigSet = true
-			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			cfg.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth:   8,
 				MonoChrome: true,
 			}
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
@@ -2347,8 +2353,8 @@ func TestPublicRTCEncoderI400NativeMonochromeMultiSpatialReferenceDecoders(t *te
 				t.Fatalf("normalized config=%+v want native multi-spatial mono", enc.Config())
 			}
 
-			var receiver goav1.RTPDependencyDescriptorState
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var receiver RTPDependencyDescriptorState
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 			for frame := 0; frame < 5; frame++ {
 				forceKey := frame == 3
@@ -2385,25 +2391,25 @@ func TestPublicRTCEncoderI400HighBitDepthNativeMonochromeReferenceDecoders(t *te
 	cases := []struct {
 		name     string
 		bitDepth uint8
-		profile  goav1.EncoderProfile
+		profile  internalencoder.Profile
 	}{
-		{name: "10bit", bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "12bit", bitDepth: 12, profile: goav1.EncoderProfile2},
+		{name: "10bit", bitDepth: 10, profile: EncoderProfile0},
+		{name: "12bit", bitDepth: 12, profile: internalencoder.Profile2},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			const w, h = 192, 128
-			cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
+			cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T2)
 			cfg.Profile = tc.profile
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = 42
 			cfg.ColorConfigSet = true
-			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			cfg.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth:   tc.bitDepth,
 				MonoChrome: true,
 			}
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
@@ -2412,10 +2418,10 @@ func TestPublicRTCEncoderI400HighBitDepthNativeMonochromeReferenceDecoders(t *te
 				t.Fatalf("normalized color=%+v want native %d-bit monochrome", enc.Config().ColorConfig, tc.bitDepth)
 			}
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 			for frame := 0; frame < 4; frame++ {
 				picture, err := enc.EncodeI400HighBitDepthPicture(publicI400HighBitDepthFromI420(publicRTCMatrixFrame(w, h, frame), tc.bitDepth, frame), frame == 2)
@@ -2447,16 +2453,16 @@ func TestPublicRTCEncoderI400HighBitDepthNativeMonochromeMultiSpatialReferenceDe
 	decoders := publicReferenceAV1Decoders(t)
 	scenarios := []struct {
 		name     string
-		mode     goav1.EncoderScalabilityMode
+		mode     EncoderScalabilityMode
 		bitDepth uint8
-		profile  goav1.EncoderProfile
+		profile  internalencoder.Profile
 	}{
-		{name: "10bit-simulcast-s2t2", mode: goav1.EncoderScalabilityModeS2T2, bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "12bit-simulcast-s3t2", mode: goav1.EncoderScalabilityModeS3T2, bitDepth: 12, profile: goav1.EncoderProfile2},
-		{name: "10bit-shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "12bit-shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, bitDepth: 12, profile: goav1.EncoderProfile2},
-		{name: "10bit-shared-svc-l3t2-key-shift", mode: goav1.EncoderScalabilityModeL3T2_KEY_SHIFT, bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "12bit-shared-svc-l3t2-key-shift", mode: goav1.EncoderScalabilityModeL3T2_KEY_SHIFT, bitDepth: 12, profile: goav1.EncoderProfile2},
+		{name: "10bit-simulcast-s2t2", mode: internalencoder.ScalabilityModeS2T2, bitDepth: 10, profile: EncoderProfile0},
+		{name: "12bit-simulcast-s3t2", mode: internalencoder.ScalabilityModeS3T2, bitDepth: 12, profile: internalencoder.Profile2},
+		{name: "10bit-shared-svc-l2t2-key-shift", mode: internalencoder.ScalabilityModeL2T2_KEY_SHIFT, bitDepth: 10, profile: EncoderProfile0},
+		{name: "12bit-shared-svc-l2t2-key-shift", mode: internalencoder.ScalabilityModeL2T2_KEY_SHIFT, bitDepth: 12, profile: internalencoder.Profile2},
+		{name: "10bit-shared-svc-l3t2-key-shift", mode: EncoderScalabilityModeL3T2_KEY_SHIFT, bitDepth: 10, profile: EncoderProfile0},
+		{name: "12bit-shared-svc-l3t2-key-shift", mode: EncoderScalabilityModeL3T2_KEY_SHIFT, bitDepth: 12, profile: internalencoder.Profile2},
 	}
 	for _, scenario := range scenarios {
 		scenario := scenario
@@ -2464,14 +2470,14 @@ func TestPublicRTCEncoderI400HighBitDepthNativeMonochromeMultiSpatialReferenceDe
 			w, h := publicRTCMatrixGeometry(t, scenario.mode)
 			cfg := publicRTCMatrixConfig(w, h, scenario.mode)
 			cfg.Profile = scenario.profile
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = 39
 			cfg.ColorConfigSet = true
-			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			cfg.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth:   scenario.bitDepth,
 				MonoChrome: true,
 			}
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
@@ -2480,10 +2486,10 @@ func TestPublicRTCEncoderI400HighBitDepthNativeMonochromeMultiSpatialReferenceDe
 				t.Fatalf("normalized config=%+v want native multi-spatial %d-bit mono", enc.Config(), scenario.bitDepth)
 			}
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 			for frame := 0; frame < 4; frame++ {
 				forceKey := frame == 2
@@ -2521,15 +2527,15 @@ func TestPublicRTCEncoderI400HighBitDepthNativeMonochromeControlChurnReferenceDe
 	decoders := publicReferenceAV1Decoders(t)
 	scenarios := []struct {
 		name     string
-		mode     goav1.EncoderScalabilityMode
-		reconfig goav1.EncoderScalabilityMode
+		mode     EncoderScalabilityMode
+		reconfig EncoderScalabilityMode
 		bitDepth uint8
-		profile  goav1.EncoderProfile
+		profile  internalencoder.Profile
 	}{
-		{name: "10bit-single-l1t2-to-l1t3", mode: goav1.EncoderScalabilityModeL1T2, reconfig: goav1.EncoderScalabilityModeL1T3, bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "10bit-simulcast-s2t2-to-s2t3", mode: goav1.EncoderScalabilityModeS2T2, reconfig: goav1.EncoderScalabilityModeS2T3, bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "10bit-shared-svc-l2t2-to-l2t3-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, reconfig: goav1.EncoderScalabilityModeL2T3_KEY_SHIFT, bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "12bit-shared-svc-l3t2-to-l3t3-key-shift", mode: goav1.EncoderScalabilityModeL3T2_KEY_SHIFT, reconfig: goav1.EncoderScalabilityModeL3T3_KEY_SHIFT, bitDepth: 12, profile: goav1.EncoderProfile2},
+		{name: "10bit-single-l1t2-to-l1t3", mode: EncoderScalabilityModeL1T2, reconfig: EncoderScalabilityModeL1T3, bitDepth: 10, profile: EncoderProfile0},
+		{name: "10bit-simulcast-s2t2-to-s2t3", mode: internalencoder.ScalabilityModeS2T2, reconfig: internalencoder.ScalabilityModeS2T3, bitDepth: 10, profile: EncoderProfile0},
+		{name: "10bit-shared-svc-l2t2-to-l2t3-key-shift", mode: internalencoder.ScalabilityModeL2T2_KEY_SHIFT, reconfig: EncoderScalabilityModeL2T3_KEY_SHIFT, bitDepth: 10, profile: EncoderProfile0},
+		{name: "12bit-shared-svc-l3t2-to-l3t3-key-shift", mode: EncoderScalabilityModeL3T2_KEY_SHIFT, reconfig: EncoderScalabilityModeL3T3_KEY_SHIFT, bitDepth: 12, profile: internalencoder.Profile2},
 	}
 	for scenarioIndex, scenario := range scenarios {
 		scenarioIndex, scenario := scenarioIndex, scenario
@@ -2537,26 +2543,26 @@ func TestPublicRTCEncoderI400HighBitDepthNativeMonochromeControlChurnReferenceDe
 			width, height := publicRTCMatrixGeometry(t, scenario.mode)
 			cfg := publicRTCMatrixConfig(width, height, scenario.mode)
 			cfg.Profile = scenario.profile
-			cfg.MaxFramerate = goav1.EncoderRational{Num: 30, Den: 1}
+			cfg.MaxFramerate = EncoderRational{Num: 30, Den: 1}
 			cfg.ColorConfigSet = true
-			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			cfg.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth:   scenario.bitDepth,
 				MonoChrome: true,
 			}
 			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, scenario.mode)+int32(75*scenarioIndex))
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
 			defer enc.Close()
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
-			var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
-			var sharedSequence goav1.SequenceHeader
+			var layerSequences [EncoderWebRTCMaxSpatialLayers]SequenceHeader
+			var sharedSequence SequenceHeader
 
 			appendPicture := func(label string, frameIndex int, forceKey bool, wantKey bool, wantScreen bool) {
 				t.Helper()
@@ -2590,7 +2596,7 @@ func TestPublicRTCEncoderI400HighBitDepthNativeMonochromeControlChurnReferenceDe
 			appendPicture("initial key", 0, false, true, false)
 
 			fpsBitrateChange := enc.Config()
-			fpsBitrateChange.MaxFramerate = goav1.EncoderRational{Num: 60000, Den: 1001}
+			fpsBitrateChange.MaxFramerate = EncoderRational{Num: 60000, Den: 1001}
 			publicRTCApplyControlBitrates(&fpsBitrateChange, publicRTCMatrixControlBitrateKbps(t, scenario.mode)+int32(150+scenarioIndex*31))
 			if err := enc.SetConfig(fpsBitrateChange); err != nil {
 				t.Fatalf("SetConfig fps/bitrate: %v", err)
@@ -2599,9 +2605,9 @@ func TestPublicRTCEncoderI400HighBitDepthNativeMonochromeControlChurnReferenceDe
 			appendPicture("fps bitrate delta", 1, false, false, false)
 
 			cqpChange := enc.Config()
-			cqpChange.RateControl = goav1.EncoderRateControlCQP
+			cqpChange.RateControl = EncoderRateControlCQP
 			cqpChange.Quantizer = uint8(31 + scenarioIndex)
-			cqpChange.Content = goav1.EncoderContentScreen
+			cqpChange.Content = EncoderContentScreen
 			if err := enc.SetConfig(cqpChange); err != nil {
 				t.Fatalf("SetConfig CQP/screen: %v", err)
 			}
@@ -2610,7 +2616,7 @@ func TestPublicRTCEncoderI400HighBitDepthNativeMonochromeControlChurnReferenceDe
 
 			scalabilityChange := enc.Config()
 			scalabilityChange.Scalability = scenario.reconfig
-			scalabilityChange.MaxFramerate = goav1.EncoderRational{Num: 24, Den: 1}
+			scalabilityChange.MaxFramerate = EncoderRational{Num: 24, Den: 1}
 			scalabilityChange.Quantizer = uint8(28 + scenarioIndex)
 			wantReconfigKey := publicRTCSetConfigRequiresKey(t, enc.Config(), scalabilityChange)
 			if err := enc.SetConfig(scalabilityChange); err != nil {
@@ -2623,10 +2629,10 @@ func TestPublicRTCEncoderI400HighBitDepthNativeMonochromeControlChurnReferenceDe
 			appendPicture("scalability screen key", 3, false, true, true)
 
 			cbrChange := enc.Config()
-			cbrChange.RateControl = goav1.EncoderRateControlCBR
+			cbrChange.RateControl = EncoderRateControlCBR
 			cbrChange.Quantizer = 0
-			cbrChange.MaxFramerate = goav1.EncoderRational{Num: 120, Den: 1}
-			cbrChange.Content = goav1.EncoderContentCamera
+			cbrChange.MaxFramerate = EncoderRational{Num: 120, Den: 1}
+			cbrChange.Content = EncoderContentCamera
 			publicRTCApplyControlBitrates(&cbrChange, publicRTCMatrixControlBitrateKbps(t, scenario.reconfig)+int32(220+scenarioIndex*41))
 			if err := enc.SetConfig(cbrChange); err != nil {
 				t.Fatalf("SetConfig CBR/camera: %v", err)
@@ -2645,32 +2651,32 @@ func TestPublicRTCEncoderI420HighBitDepthNativeReferenceDecoders(t *testing.T) {
 	cases := []struct {
 		name     string
 		bitDepth uint8
-		profile  goav1.EncoderProfile
+		profile  internalencoder.Profile
 	}{
-		{name: "10bit", bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "12bit", bitDepth: 12, profile: goav1.EncoderProfile2},
+		{name: "10bit", bitDepth: 10, profile: EncoderProfile0},
+		{name: "12bit", bitDepth: 12, profile: internalencoder.Profile2},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			const w, h = 192, 128
-			cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
+			cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T2)
 			cfg.Profile = tc.profile
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = 42
 			cfg.ColorConfigSet = true
-			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			cfg.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth:     tc.bitDepth,
 				SubsamplingX: true,
 				SubsamplingY: true,
 			}
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
 			defer enc.Close()
-			if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); !errors.Is(err, goav1.ErrEncoderUnsupported) {
-				t.Fatalf("Encode(I420) on native %d-bit I420 err=%v want %v", tc.bitDepth, err, goav1.ErrEncoderUnsupported)
+			if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); !errors.Is(err, internalencoder.ErrUnsupported) {
+				t.Fatalf("Encode(I420) on native %d-bit I420 err=%v want %v", tc.bitDepth, err, internalencoder.ErrUnsupported)
 			}
 			if enc.Config().Profile != tc.profile ||
 				enc.Config().ColorConfig.BitDepth != tc.bitDepth ||
@@ -2681,10 +2687,10 @@ func TestPublicRTCEncoderI420HighBitDepthNativeReferenceDecoders(t *testing.T) {
 					enc.Config().ColorConfig, enc.Config().Profile, tc.profile, tc.bitDepth)
 			}
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 			for frame := 0; frame < 4; frame++ {
 				forceKey := frame == 2
@@ -2723,36 +2729,36 @@ func TestPublicRTCEncoderI420HighBitDepthNativeTileColumnsReferenceDecoders(t *t
 	cases := []struct {
 		name     string
 		bitDepth uint8
-		profile  goav1.EncoderProfile
+		profile  internalencoder.Profile
 	}{
-		{name: "10bit", bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "12bit", bitDepth: 12, profile: goav1.EncoderProfile2},
+		{name: "10bit", bitDepth: 10, profile: EncoderProfile0},
+		{name: "12bit", bitDepth: 12, profile: internalencoder.Profile2},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			const w, h = 512, 288
-			cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T1)
+			cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T1)
 			cfg.Profile = tc.profile
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = 41
 			cfg.ColorConfigSet = true
-			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			cfg.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth:     tc.bitDepth,
 				SubsamplingX: true,
 				SubsamplingY: true,
 			}
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
 			defer enc.Close()
 			enc.SetTileColumns(4)
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 			for frame := 0; frame < 3; frame++ {
 				picture, err := enc.EncodeI420HighBitDepthPicture(publicI420HighBitDepthFrame(w, h, tc.bitDepth, frame), false)
@@ -2777,16 +2783,16 @@ func TestPublicRTCEncoderI420HighBitDepthNativeMultiSpatialReferenceDecoders(t *
 	decoders := publicReferenceAV1Decoders(t)
 	scenarios := []struct {
 		name     string
-		mode     goav1.EncoderScalabilityMode
+		mode     EncoderScalabilityMode
 		bitDepth uint8
-		profile  goav1.EncoderProfile
+		profile  internalencoder.Profile
 	}{
-		{name: "10bit-simulcast-s2t2", mode: goav1.EncoderScalabilityModeS2T2, bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "12bit-simulcast-s3t2", mode: goav1.EncoderScalabilityModeS3T2, bitDepth: 12, profile: goav1.EncoderProfile2},
-		{name: "10bit-shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "12bit-shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, bitDepth: 12, profile: goav1.EncoderProfile2},
-		{name: "10bit-shared-svc-l3t2-key-shift", mode: goav1.EncoderScalabilityModeL3T2_KEY_SHIFT, bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "12bit-shared-svc-l3t2-key-shift", mode: goav1.EncoderScalabilityModeL3T2_KEY_SHIFT, bitDepth: 12, profile: goav1.EncoderProfile2},
+		{name: "10bit-simulcast-s2t2", mode: internalencoder.ScalabilityModeS2T2, bitDepth: 10, profile: EncoderProfile0},
+		{name: "12bit-simulcast-s3t2", mode: internalencoder.ScalabilityModeS3T2, bitDepth: 12, profile: internalencoder.Profile2},
+		{name: "10bit-shared-svc-l2t2-key-shift", mode: internalencoder.ScalabilityModeL2T2_KEY_SHIFT, bitDepth: 10, profile: EncoderProfile0},
+		{name: "12bit-shared-svc-l2t2-key-shift", mode: internalencoder.ScalabilityModeL2T2_KEY_SHIFT, bitDepth: 12, profile: internalencoder.Profile2},
+		{name: "10bit-shared-svc-l3t2-key-shift", mode: EncoderScalabilityModeL3T2_KEY_SHIFT, bitDepth: 10, profile: EncoderProfile0},
+		{name: "12bit-shared-svc-l3t2-key-shift", mode: EncoderScalabilityModeL3T2_KEY_SHIFT, bitDepth: 12, profile: internalencoder.Profile2},
 	}
 	for _, scenario := range scenarios {
 		scenario := scenario
@@ -2794,15 +2800,15 @@ func TestPublicRTCEncoderI420HighBitDepthNativeMultiSpatialReferenceDecoders(t *
 			w, h := publicRTCMatrixGeometry(t, scenario.mode)
 			cfg := publicRTCMatrixConfig(w, h, scenario.mode)
 			cfg.Profile = scenario.profile
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = 39
 			cfg.ColorConfigSet = true
-			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			cfg.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth:     scenario.bitDepth,
 				SubsamplingX: true,
 				SubsamplingY: true,
 			}
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
@@ -2817,10 +2823,10 @@ func TestPublicRTCEncoderI420HighBitDepthNativeMultiSpatialReferenceDecoders(t *
 					enc.Config(), scenario.profile, scenario.bitDepth)
 			}
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 			for frame := 0; frame < 4; frame++ {
 				forceKey := frame == 2
@@ -2862,15 +2868,15 @@ func TestPublicRTCEncoderI420HighBitDepthNativeControlChurnReferenceDecoders(t *
 	decoders := publicReferenceAV1Decoders(t)
 	scenarios := []struct {
 		name     string
-		mode     goav1.EncoderScalabilityMode
-		reconfig goav1.EncoderScalabilityMode
+		mode     EncoderScalabilityMode
+		reconfig EncoderScalabilityMode
 		bitDepth uint8
-		profile  goav1.EncoderProfile
+		profile  internalencoder.Profile
 	}{
-		{name: "10bit-single-l1t2-to-l1t3", mode: goav1.EncoderScalabilityModeL1T2, reconfig: goav1.EncoderScalabilityModeL1T3, bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "10bit-simulcast-s2t2-to-s2t3", mode: goav1.EncoderScalabilityModeS2T2, reconfig: goav1.EncoderScalabilityModeS2T3, bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "10bit-shared-svc-l2t2-to-l2t3-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, reconfig: goav1.EncoderScalabilityModeL2T3_KEY_SHIFT, bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "12bit-shared-svc-l3t2-to-l3t3-key-shift", mode: goav1.EncoderScalabilityModeL3T2_KEY_SHIFT, reconfig: goav1.EncoderScalabilityModeL3T3_KEY_SHIFT, bitDepth: 12, profile: goav1.EncoderProfile2},
+		{name: "10bit-single-l1t2-to-l1t3", mode: EncoderScalabilityModeL1T2, reconfig: EncoderScalabilityModeL1T3, bitDepth: 10, profile: EncoderProfile0},
+		{name: "10bit-simulcast-s2t2-to-s2t3", mode: internalencoder.ScalabilityModeS2T2, reconfig: internalencoder.ScalabilityModeS2T3, bitDepth: 10, profile: EncoderProfile0},
+		{name: "10bit-shared-svc-l2t2-to-l2t3-key-shift", mode: internalencoder.ScalabilityModeL2T2_KEY_SHIFT, reconfig: EncoderScalabilityModeL2T3_KEY_SHIFT, bitDepth: 10, profile: EncoderProfile0},
+		{name: "12bit-shared-svc-l3t2-to-l3t3-key-shift", mode: EncoderScalabilityModeL3T2_KEY_SHIFT, reconfig: EncoderScalabilityModeL3T3_KEY_SHIFT, bitDepth: 12, profile: internalencoder.Profile2},
 	}
 	for scenarioIndex, scenario := range scenarios {
 		scenarioIndex, scenario := scenarioIndex, scenario
@@ -2878,27 +2884,27 @@ func TestPublicRTCEncoderI420HighBitDepthNativeControlChurnReferenceDecoders(t *
 			width, height := publicRTCMatrixGeometry(t, scenario.mode)
 			cfg := publicRTCMatrixConfig(width, height, scenario.mode)
 			cfg.Profile = scenario.profile
-			cfg.MaxFramerate = goav1.EncoderRational{Num: 30, Den: 1}
+			cfg.MaxFramerate = EncoderRational{Num: 30, Den: 1}
 			cfg.ColorConfigSet = true
-			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			cfg.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth:     scenario.bitDepth,
 				SubsamplingX: true,
 				SubsamplingY: true,
 			}
 			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, scenario.mode)+int32(75*scenarioIndex))
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
 			defer enc.Close()
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
-			var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
-			var sharedSequence goav1.SequenceHeader
+			var layerSequences [EncoderWebRTCMaxSpatialLayers]SequenceHeader
+			var sharedSequence SequenceHeader
 
 			appendPicture := func(label string, frameIndex int, forceKey bool, wantKey bool, wantScreen bool) {
 				t.Helper()
@@ -2936,7 +2942,7 @@ func TestPublicRTCEncoderI420HighBitDepthNativeControlChurnReferenceDecoders(t *
 			appendPicture("initial key", 0, false, true, false)
 
 			fpsBitrateChange := enc.Config()
-			fpsBitrateChange.MaxFramerate = goav1.EncoderRational{Num: 60000, Den: 1001}
+			fpsBitrateChange.MaxFramerate = EncoderRational{Num: 60000, Den: 1001}
 			publicRTCApplyControlBitrates(&fpsBitrateChange, publicRTCMatrixControlBitrateKbps(t, scenario.mode)+int32(150+scenarioIndex*31))
 			if err := enc.SetConfig(fpsBitrateChange); err != nil {
 				t.Fatalf("SetConfig fps/bitrate: %v", err)
@@ -2945,9 +2951,9 @@ func TestPublicRTCEncoderI420HighBitDepthNativeControlChurnReferenceDecoders(t *
 			appendPicture("fps bitrate delta", 1, false, false, false)
 
 			cqpChange := enc.Config()
-			cqpChange.RateControl = goav1.EncoderRateControlCQP
+			cqpChange.RateControl = EncoderRateControlCQP
 			cqpChange.Quantizer = uint8(31 + scenarioIndex)
-			cqpChange.Content = goav1.EncoderContentScreen
+			cqpChange.Content = EncoderContentScreen
 			if err := enc.SetConfig(cqpChange); err != nil {
 				t.Fatalf("SetConfig CQP/screen: %v", err)
 			}
@@ -2956,7 +2962,7 @@ func TestPublicRTCEncoderI420HighBitDepthNativeControlChurnReferenceDecoders(t *
 
 			scalabilityChange := enc.Config()
 			scalabilityChange.Scalability = scenario.reconfig
-			scalabilityChange.MaxFramerate = goav1.EncoderRational{Num: 24, Den: 1}
+			scalabilityChange.MaxFramerate = EncoderRational{Num: 24, Den: 1}
 			scalabilityChange.Quantizer = uint8(28 + scenarioIndex)
 			wantReconfigKey := publicRTCSetConfigRequiresKey(t, enc.Config(), scalabilityChange)
 			if err := enc.SetConfig(scalabilityChange); err != nil {
@@ -2969,10 +2975,10 @@ func TestPublicRTCEncoderI420HighBitDepthNativeControlChurnReferenceDecoders(t *
 			appendPicture("scalability screen key", 3, false, true, true)
 
 			cbrChange := enc.Config()
-			cbrChange.RateControl = goav1.EncoderRateControlCBR
+			cbrChange.RateControl = EncoderRateControlCBR
 			cbrChange.Quantizer = 0
-			cbrChange.MaxFramerate = goav1.EncoderRational{Num: 120, Den: 1}
-			cbrChange.Content = goav1.EncoderContentCamera
+			cbrChange.MaxFramerate = EncoderRational{Num: 120, Den: 1}
+			cbrChange.Content = EncoderContentCamera
 			publicRTCApplyControlBitrates(&cbrChange, publicRTCMatrixControlBitrateKbps(t, scenario.reconfig)+int32(220+scenarioIndex*41))
 			if err := enc.SetConfig(cbrChange); err != nil {
 				t.Fatalf("SetConfig CBR/camera: %v", err)
@@ -2999,24 +3005,24 @@ func TestPublicRTCEncoderI422HighBitDepthNativeReferenceDecoders(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			const w, h = 192, 128
-			cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
-			cfg.Profile = goav1.EncoderProfile2
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T2)
+			cfg.Profile = internalencoder.Profile2
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = 42
 			cfg.ColorConfigSet = true
-			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			cfg.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth:     tc.bitDepth,
 				SubsamplingX: true,
 			}
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
 			defer enc.Close()
-			if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); !errors.Is(err, goav1.ErrEncoderUnsupported) {
-				t.Fatalf("Encode(I420) on native %d-bit I422 err=%v want %v", tc.bitDepth, err, goav1.ErrEncoderUnsupported)
+			if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); !errors.Is(err, internalencoder.ErrUnsupported) {
+				t.Fatalf("Encode(I420) on native %d-bit I422 err=%v want %v", tc.bitDepth, err, internalencoder.ErrUnsupported)
 			}
-			if enc.Config().Profile != goav1.EncoderProfile2 ||
+			if enc.Config().Profile != internalencoder.Profile2 ||
 				enc.Config().ColorConfig.BitDepth != tc.bitDepth ||
 				enc.Config().ColorConfig.MonoChrome ||
 				!enc.Config().ColorConfig.SubsamplingX ||
@@ -3025,10 +3031,10 @@ func TestPublicRTCEncoderI422HighBitDepthNativeReferenceDecoders(t *testing.T) {
 					enc.Config().ColorConfig, enc.Config().Profile, tc.bitDepth)
 			}
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 			for frame := 0; frame < 4; frame++ {
 				forceKey := frame == 2
@@ -3044,7 +3050,7 @@ func TestPublicRTCEncoderI422HighBitDepthNativeReferenceDecoders(t *testing.T) {
 				}
 				if picture.Frames[0].CodedKeyframe {
 					seq := publicFirstSequenceHeader(t, picture.Frames[0].Data)
-					if seq.SeqProfile != uint8(goav1.EncoderProfile2) ||
+					if seq.SeqProfile != uint8(internalencoder.Profile2) ||
 						seq.ColorConfig.MonoChrome ||
 						seq.ColorConfig.BitDepth != tc.bitDepth ||
 						!seq.ColorConfig.SubsamplingX ||
@@ -3067,28 +3073,28 @@ func TestPublicRTCEncoderI444HighBitDepthNativeReferenceDecoders(t *testing.T) {
 	cases := []struct {
 		name     string
 		bitDepth uint8
-		profile  goav1.EncoderProfile
+		profile  internalencoder.Profile
 	}{
-		{name: "10bit", bitDepth: 10, profile: goav1.EncoderProfile1},
-		{name: "12bit", bitDepth: 12, profile: goav1.EncoderProfile2},
+		{name: "10bit", bitDepth: 10, profile: internalencoder.Profile1},
+		{name: "12bit", bitDepth: 12, profile: internalencoder.Profile2},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			const w, h = 192, 128
-			cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
+			cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T2)
 			cfg.Profile = tc.profile
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = 42
 			cfg.ColorConfigSet = true
-			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{BitDepth: tc.bitDepth}
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			cfg.ColorConfig = internalencoder.SequenceColorConfig{BitDepth: tc.bitDepth}
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
 			defer enc.Close()
-			if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); !errors.Is(err, goav1.ErrEncoderUnsupported) {
-				t.Fatalf("Encode(I420) on native %d-bit I444 err=%v want %v", tc.bitDepth, err, goav1.ErrEncoderUnsupported)
+			if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); !errors.Is(err, internalencoder.ErrUnsupported) {
+				t.Fatalf("Encode(I420) on native %d-bit I444 err=%v want %v", tc.bitDepth, err, internalencoder.ErrUnsupported)
 			}
 			if enc.Config().Profile != tc.profile ||
 				enc.Config().ColorConfig.BitDepth != tc.bitDepth ||
@@ -3099,10 +3105,10 @@ func TestPublicRTCEncoderI444HighBitDepthNativeReferenceDecoders(t *testing.T) {
 					enc.Config().ColorConfig, enc.Config().Profile, tc.profile, tc.bitDepth)
 			}
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 			for frame := 0; frame < 4; frame++ {
 				forceKey := frame == 2
@@ -3138,20 +3144,20 @@ func TestPublicRTCEncoderI444HighBitDepthNativeReferenceDecoders(t *testing.T) {
 
 func TestPublicRTCEncoderHighBitDepthNon420ScalabilityModeCatalogueReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
-	modes := goav1.EncoderWebRTCScalabilityModes()
+	modes := EncoderWebRTCScalabilityModes()
 	if len(modes) == 0 {
 		t.Fatal("no WebRTC scalability modes")
 	}
 	cases := []struct {
 		name     string
 		bitDepth uint8
-		profile  goav1.EncoderProfile
+		profile  internalencoder.Profile
 		i444     bool
 	}{
-		{name: "i422-10bit", bitDepth: 10, profile: goav1.EncoderProfile2},
-		{name: "i422-12bit", bitDepth: 12, profile: goav1.EncoderProfile2},
-		{name: "i444-10bit", bitDepth: 10, profile: goav1.EncoderProfile1, i444: true},
-		{name: "i444-12bit", bitDepth: 12, profile: goav1.EncoderProfile2, i444: true},
+		{name: "i422-10bit", bitDepth: 10, profile: internalencoder.Profile2},
+		{name: "i422-12bit", bitDepth: 12, profile: internalencoder.Profile2},
+		{name: "i444-10bit", bitDepth: 10, profile: internalencoder.Profile1, i444: true},
+		{name: "i444-12bit", bitDepth: 12, profile: internalencoder.Profile2, i444: true},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -3162,18 +3168,18 @@ func TestPublicRTCEncoderHighBitDepthNon420ScalabilityModeCatalogueReferenceDeco
 					width, height := publicRTCMatrixGeometry(t, mode)
 					cfg := publicRTCMatrixConfig(width, height, mode)
 					cfg.Profile = tc.profile
-					cfg.RateControl = goav1.EncoderRateControlCQP
+					cfg.RateControl = EncoderRateControlCQP
 					cfg.Quantizer = uint8(36 + modeIndex%13)
-					cfg.Content = goav1.EncoderContentCamera
+					cfg.Content = EncoderContentCamera
 					if modeIndex%3 == 1 {
-						cfg.Content = goav1.EncoderContentScreen
+						cfg.Content = EncoderContentScreen
 					}
 					cfg.ColorConfigSet = true
-					cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+					cfg.ColorConfig = internalencoder.SequenceColorConfig{
 						BitDepth:     tc.bitDepth,
 						SubsamplingX: !tc.i444,
 					}
-					enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+					enc, err := NewRTCEncoderWithConfig(cfg)
 					if err != nil {
 						t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 					}
@@ -3187,17 +3193,17 @@ func TestPublicRTCEncoderHighBitDepthNon420ScalabilityModeCatalogueReferenceDeco
 							mode, enc.Config(), tc.profile, tc.bitDepth, tc.i444)
 					}
 
-					var descriptorReceiver goav1.RTPDependencyDescriptorState
-					var rtpReceiver goav1.RTPDependencyDescriptorState
-					var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+					var descriptorReceiver RTPDependencyDescriptorState
+					var rtpReceiver RTPDependencyDescriptorState
+					var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 					var orderedTUs [][]byte
-					var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
-					var sharedSequence goav1.SequenceHeader
+					var layerSequences [EncoderWebRTCMaxSpatialLayers]SequenceHeader
+					var sharedSequence SequenceHeader
 					nextFrameID := uint64(0)
 
 					for frameIndex := 0; frameIndex < 3; frameIndex++ {
 						forceKey := frameIndex == 2
-						var picture goav1.RTCPicture
+						var picture RTCPicture
 						if tc.i444 {
 							picture, err = enc.EncodeI444HighBitDepthPicture(publicI444HighBitDepthFrame(width, height, tc.bitDepth, frameIndex), forceKey)
 						} else {
@@ -3227,10 +3233,10 @@ func TestPublicRTCEncoderHighBitDepthNon420ScalabilityModeCatalogueReferenceDeco
 								}
 							}
 							if publicRTCSharedReferenceSlotMode(current.Scalability) {
-								assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s frame %d S%d", mode, frameIndex, frame.SpatialID), frame.Data, &sharedSequence, current.Content == goav1.EncoderContentScreen)
+								assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s frame %d S%d", mode, frameIndex, frame.SpatialID), frame.Data, &sharedSequence, current.Content == EncoderContentScreen)
 								continue
 							}
-							assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s frame %d S%d", mode, frameIndex, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == goav1.EncoderContentScreen)
+							assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s frame %d S%d", mode, frameIndex, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == EncoderContentScreen)
 						}
 						appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
 					}
@@ -3245,11 +3251,11 @@ func TestPublicRTCEncoderHighBitDepthNon420ScalabilityModeCatalogueReferenceDeco
 
 func TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
-	modes := goav1.EncoderWebRTCScalabilityModes()
+	modes := EncoderWebRTCScalabilityModes()
 	if len(modes) == 0 {
 		t.Fatal("no WebRTC scalability modes")
 	}
-	fpsCycle := []goav1.EncoderRational{
+	fpsCycle := []EncoderRational{
 		{Num: 30, Den: 1},
 		{Num: 60000, Den: 1001},
 		{Num: 24, Den: 1},
@@ -3257,21 +3263,21 @@ func TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders(t
 		{Num: 15, Den: 1},
 	}
 	speedCycle := []int8{
-		goav1.EncoderWebRTCMinEffortLevel,
+		EncoderWebRTCMinEffortLevel,
 		0,
-		goav1.EncoderWebRTCMaxEffortLevel,
+		EncoderWebRTCMaxEffortLevel,
 		1,
 	}
 	cases := []struct {
 		name     string
 		bitDepth uint8
-		profile  goav1.EncoderProfile
+		profile  internalencoder.Profile
 		i444     bool
 	}{
-		{name: "i422-10bit", bitDepth: 10, profile: goav1.EncoderProfile2},
-		{name: "i422-12bit", bitDepth: 12, profile: goav1.EncoderProfile2},
-		{name: "i444-10bit", bitDepth: 10, profile: goav1.EncoderProfile1, i444: true},
-		{name: "i444-12bit", bitDepth: 12, profile: goav1.EncoderProfile2, i444: true},
+		{name: "i422-10bit", bitDepth: 10, profile: internalencoder.Profile2},
+		{name: "i422-12bit", bitDepth: 12, profile: internalencoder.Profile2},
+		{name: "i444-10bit", bitDepth: 10, profile: internalencoder.Profile1, i444: true},
+		{name: "i444-12bit", bitDepth: 12, profile: internalencoder.Profile2, i444: true},
 	}
 
 	for _, tc := range cases {
@@ -3281,11 +3287,11 @@ func TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders(t
 				modeIndex, mode := modeIndex, mode
 				t.Run(mode.String(), func(t *testing.T) {
 					width, height := publicRTCMatrixGeometry(t, mode)
-					configForStep := func(step int) goav1.EncoderConfig {
+					configForStep := func(step int) EncoderConfig {
 						cfg := publicRTCMatrixConfig(width, height, mode)
 						cfg.Profile = tc.profile
 						cfg.ColorConfigSet = true
-						cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+						cfg.ColorConfig = internalencoder.SequenceColorConfig{
 							BitDepth:     tc.bitDepth,
 							SubsamplingX: !tc.i444,
 						}
@@ -3293,39 +3299,39 @@ func TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders(t
 						cfg.Speed = speedCycle[(modeIndex+step)%len(speedCycle)]
 						cfg.MaxThreads = int32(1 + (modeIndex+step)%3)
 						cfg.KeyFrameInterval = int32(2 + (modeIndex+step)%3)
-						cfg.Content = goav1.EncoderContentCamera
+						cfg.Content = EncoderContentCamera
 						publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(modeIndex*19+step*47))
 						switch step % 3 {
 						case 1:
-							cfg.RateControl = goav1.EncoderRateControlCQP
+							cfg.RateControl = EncoderRateControlCQP
 							cfg.Quantizer = uint8(24 + (modeIndex+step)%35)
-							cfg.Content = goav1.EncoderContentScreen
+							cfg.Content = EncoderContentScreen
 						case 2:
-							cfg.Content = goav1.EncoderContentScreen
+							cfg.Content = EncoderContentScreen
 						}
-						if cfg.RateControl == goav1.EncoderRateControlCBR {
+						if cfg.RateControl == EncoderRateControlCBR {
 							cfg.Quantizer = 0
 						}
 						return cfg
 					}
 
 					initial := configForStep(0)
-					rtc, err := goav1.NewRTCEncoderWithConfig(initial)
+					rtc, err := NewRTCEncoderWithConfig(initial)
 					if err != nil {
 						t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 					}
 					defer rtc.Close()
-					controller, err := goav1.NewWebRTCEncoder(initial, goav1.EncoderWebRTCState{})
+					controller, err := newWebRTCEncoder(initial, internalencoder.WebRTCEncoderState{})
 					if err != nil {
 						t.Fatalf("NewWebRTCEncoder(%s): %v", mode, err)
 					}
 
-					var descriptorReceiver goav1.RTPDependencyDescriptorState
-					var rtpReceiver goav1.RTPDependencyDescriptorState
-					var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+					var descriptorReceiver RTPDependencyDescriptorState
+					var rtpReceiver RTPDependencyDescriptorState
+					var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 					var orderedTUs [][]byte
-					var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
-					var sharedSequence goav1.SequenceHeader
+					var layerSequences [EncoderWebRTCMaxSpatialLayers]SequenceHeader
+					var sharedSequence SequenceHeader
 					nextFrameID := uint64(0)
 
 					for step := 0; step < 5; step++ {
@@ -3347,7 +3353,7 @@ func TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders(t
 							t.Fatalf("%s step %d controller NextTemporalUnit: %v", mode, step, err)
 						}
 						controllerState := controller.State()
-						var picture goav1.RTCPicture
+						var picture RTCPicture
 						if tc.i444 {
 							picture, err = rtc.EncodeI444HighBitDepthPicture(publicI444HighBitDepthFrame(width, height, tc.bitDepth, step), forceKey)
 						} else {
@@ -3356,7 +3362,7 @@ func TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders(t
 						if err != nil {
 							t.Fatalf("%s step %d EncodeHighBitDepthPicture: %v", mode, step, err)
 						}
-						frameNum := goav1.EncoderWebRTCPictureTemporalUnitFrameNum(unit)
+						frameNum := encoderWebRTCPictureTemporalUnitFrameNum(unit)
 						if picture.FrameNum != int(frameNum) || picture.Keyframe != unit.Key {
 							t.Fatalf("%s step %d picture frames=%d key=%v want frames=%d key=%v",
 								mode, step, picture.FrameNum, picture.Keyframe, frameNum, unit.Key)
@@ -3366,13 +3372,13 @@ func TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders(t
 						assertPublicRTCPictureDescriptors(t, &descriptorReceiver, current, picture, unit.Key, &nextFrameID)
 						for frameIndex := 0; frameIndex < picture.FrameNum; frameIndex++ {
 							frame := picture.Frames[frameIndex]
-							control, _, err := goav1.EncoderWebRTCPictureTemporalUnitFrameControl(unit, controllerState, uint8(frameIndex))
+							control, _, err := encoderWebRTCPictureTemporalUnitFrameControl(unit, controllerState, uint8(frameIndex))
 							if err != nil {
 								t.Fatalf("%s step %d frame %d controller frame control: %v", mode, step, frameIndex, err)
 							}
 							settings := control.Settings
 							info := control.GenericFrameInfo
-							wantCodedKey := unit.Key && (current.Scalability.IsSimulcast() || settings.Type == goav1.EncoderFrameTypeKey)
+							wantCodedKey := unit.Key && (current.Scalability.IsSimulcast() || settings.Type == internalencoder.FrameTypeKey)
 							if frame.FrameID != info.FrameID ||
 								frame.TemporalID != info.TemporalID ||
 								frame.SpatialID != info.SpatialID ||
@@ -3400,10 +3406,10 @@ func TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders(t
 								}
 							}
 							if publicRTCSharedReferenceSlotMode(current.Scalability) {
-								assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s step %d S%d", mode, step, frame.SpatialID), frame.Data, &sharedSequence, current.Content == goav1.EncoderContentScreen)
+								assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s step %d S%d", mode, step, frame.SpatialID), frame.Data, &sharedSequence, current.Content == EncoderContentScreen)
 								continue
 							}
-							assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s step %d S%d", mode, step, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == goav1.EncoderContentScreen)
+							assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s step %d S%d", mode, step, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == EncoderContentScreen)
 						}
 						appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
 					}
@@ -3420,15 +3426,15 @@ func TestPublicRTCEncoderHighBitDepthNon420NativeMultiSpatialReferenceDecoders(t
 	decoders := publicReferenceAV1Decoders(t)
 	scenarios := []struct {
 		name     string
-		mode     goav1.EncoderScalabilityMode
+		mode     EncoderScalabilityMode
 		bitDepth uint8
-		profile  goav1.EncoderProfile
+		profile  internalencoder.Profile
 		i444     bool
 	}{
-		{name: "i422-10bit-simulcast-s2t2", mode: goav1.EncoderScalabilityModeS2T2, bitDepth: 10, profile: goav1.EncoderProfile2},
-		{name: "i422-12bit-shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, bitDepth: 12, profile: goav1.EncoderProfile2},
-		{name: "i444-10bit-simulcast-s2t2", mode: goav1.EncoderScalabilityModeS2T2, bitDepth: 10, profile: goav1.EncoderProfile1, i444: true},
-		{name: "i444-12bit-shared-svc-l2t2-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, bitDepth: 12, profile: goav1.EncoderProfile2, i444: true},
+		{name: "i422-10bit-simulcast-s2t2", mode: internalencoder.ScalabilityModeS2T2, bitDepth: 10, profile: internalencoder.Profile2},
+		{name: "i422-12bit-shared-svc-l2t2-key-shift", mode: internalencoder.ScalabilityModeL2T2_KEY_SHIFT, bitDepth: 12, profile: internalencoder.Profile2},
+		{name: "i444-10bit-simulcast-s2t2", mode: internalencoder.ScalabilityModeS2T2, bitDepth: 10, profile: internalencoder.Profile1, i444: true},
+		{name: "i444-12bit-shared-svc-l2t2-key-shift", mode: internalencoder.ScalabilityModeL2T2_KEY_SHIFT, bitDepth: 12, profile: internalencoder.Profile2, i444: true},
 	}
 	for _, scenario := range scenarios {
 		scenario := scenario
@@ -3436,14 +3442,14 @@ func TestPublicRTCEncoderHighBitDepthNon420NativeMultiSpatialReferenceDecoders(t
 			w, h := publicRTCMatrixGeometry(t, scenario.mode)
 			cfg := publicRTCMatrixConfig(w, h, scenario.mode)
 			cfg.Profile = scenario.profile
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = 39
 			cfg.ColorConfigSet = true
-			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			cfg.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth:     scenario.bitDepth,
 				SubsamplingX: !scenario.i444,
 			}
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
@@ -3457,14 +3463,14 @@ func TestPublicRTCEncoderHighBitDepthNon420NativeMultiSpatialReferenceDecoders(t
 				t.Fatalf("normalized config=%+v want native multi-spatial high-bit-depth non-4:2:0", enc.Config())
 			}
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 			for frame := 0; frame < 4; frame++ {
 				forceKey := frame == 2
-				var picture goav1.RTCPicture
+				var picture RTCPicture
 				if scenario.i444 {
 					picture, err = enc.EncodeI444HighBitDepthPicture(publicI444HighBitDepthFrame(w, h, scenario.bitDepth, frame), forceKey)
 				} else {
@@ -3507,14 +3513,14 @@ func TestPublicRTCEncoderHighBitDepthNon420ControlChurnReferenceDecoders(t *test
 	decoders := publicReferenceAV1Decoders(t)
 	scenarios := []struct {
 		name     string
-		mode     goav1.EncoderScalabilityMode
-		reconfig goav1.EncoderScalabilityMode
+		mode     EncoderScalabilityMode
+		reconfig EncoderScalabilityMode
 		bitDepth uint8
-		profile  goav1.EncoderProfile
+		profile  internalencoder.Profile
 		i444     bool
 	}{
-		{name: "i422-10bit-l2t2-to-l2t3-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, reconfig: goav1.EncoderScalabilityModeL2T3_KEY_SHIFT, bitDepth: 10, profile: goav1.EncoderProfile2},
-		{name: "i444-12bit-l2t2-to-l2t3-key-shift", mode: goav1.EncoderScalabilityModeL2T2_KEY_SHIFT, reconfig: goav1.EncoderScalabilityModeL2T3_KEY_SHIFT, bitDepth: 12, profile: goav1.EncoderProfile2, i444: true},
+		{name: "i422-10bit-l2t2-to-l2t3-key-shift", mode: internalencoder.ScalabilityModeL2T2_KEY_SHIFT, reconfig: EncoderScalabilityModeL2T3_KEY_SHIFT, bitDepth: 10, profile: internalencoder.Profile2},
+		{name: "i444-12bit-l2t2-to-l2t3-key-shift", mode: internalencoder.ScalabilityModeL2T2_KEY_SHIFT, reconfig: EncoderScalabilityModeL2T3_KEY_SHIFT, bitDepth: 12, profile: internalencoder.Profile2, i444: true},
 	}
 	for scenarioIndex, scenario := range scenarios {
 		scenarioIndex, scenario := scenarioIndex, scenario
@@ -3522,30 +3528,30 @@ func TestPublicRTCEncoderHighBitDepthNon420ControlChurnReferenceDecoders(t *test
 			width, height := publicRTCMatrixGeometry(t, scenario.mode)
 			cfg := publicRTCMatrixConfig(width, height, scenario.mode)
 			cfg.Profile = scenario.profile
-			cfg.MaxFramerate = goav1.EncoderRational{Num: 30, Den: 1}
+			cfg.MaxFramerate = EncoderRational{Num: 30, Den: 1}
 			cfg.ColorConfigSet = true
-			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			cfg.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth:     scenario.bitDepth,
 				SubsamplingX: !scenario.i444,
 			}
 			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, scenario.mode)+int32(75*scenarioIndex))
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
 			defer enc.Close()
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
-			var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
-			var sharedSequence goav1.SequenceHeader
+			var layerSequences [EncoderWebRTCMaxSpatialLayers]SequenceHeader
+			var sharedSequence SequenceHeader
 
 			appendPicture := func(label string, frameIndex int, forceKey bool, wantKey bool, wantScreen bool) {
 				t.Helper()
-				var picture goav1.RTCPicture
+				var picture RTCPicture
 				if scenario.i444 {
 					picture, err = enc.EncodeI444HighBitDepthPicture(publicI444HighBitDepthFrame(width, height, scenario.bitDepth, frameIndex), forceKey)
 				} else {
@@ -3584,7 +3590,7 @@ func TestPublicRTCEncoderHighBitDepthNon420ControlChurnReferenceDecoders(t *test
 			appendPicture("initial key", 0, false, true, false)
 
 			fpsBitrateChange := enc.Config()
-			fpsBitrateChange.MaxFramerate = goav1.EncoderRational{Num: 60000, Den: 1001}
+			fpsBitrateChange.MaxFramerate = EncoderRational{Num: 60000, Den: 1001}
 			publicRTCApplyControlBitrates(&fpsBitrateChange, publicRTCMatrixControlBitrateKbps(t, scenario.mode)+int32(150+scenarioIndex*31))
 			if err := enc.SetConfig(fpsBitrateChange); err != nil {
 				t.Fatalf("SetConfig fps/bitrate: %v", err)
@@ -3593,9 +3599,9 @@ func TestPublicRTCEncoderHighBitDepthNon420ControlChurnReferenceDecoders(t *test
 			appendPicture("fps bitrate delta", 1, false, false, false)
 
 			cqpChange := enc.Config()
-			cqpChange.RateControl = goav1.EncoderRateControlCQP
+			cqpChange.RateControl = EncoderRateControlCQP
 			cqpChange.Quantizer = uint8(31 + scenarioIndex)
-			cqpChange.Content = goav1.EncoderContentScreen
+			cqpChange.Content = EncoderContentScreen
 			if err := enc.SetConfig(cqpChange); err != nil {
 				t.Fatalf("SetConfig CQP/screen: %v", err)
 			}
@@ -3604,7 +3610,7 @@ func TestPublicRTCEncoderHighBitDepthNon420ControlChurnReferenceDecoders(t *test
 
 			scalabilityChange := enc.Config()
 			scalabilityChange.Scalability = scenario.reconfig
-			scalabilityChange.MaxFramerate = goav1.EncoderRational{Num: 24, Den: 1}
+			scalabilityChange.MaxFramerate = EncoderRational{Num: 24, Den: 1}
 			scalabilityChange.Quantizer = uint8(28 + scenarioIndex)
 			wantReconfigKey := publicRTCSetConfigRequiresKey(t, enc.Config(), scalabilityChange)
 			if err := enc.SetConfig(scalabilityChange); err != nil {
@@ -3617,10 +3623,10 @@ func TestPublicRTCEncoderHighBitDepthNon420ControlChurnReferenceDecoders(t *test
 			appendPicture("scalability screen key", 3, false, true, true)
 
 			cbrChange := enc.Config()
-			cbrChange.RateControl = goav1.EncoderRateControlCBR
+			cbrChange.RateControl = EncoderRateControlCBR
 			cbrChange.Quantizer = 0
-			cbrChange.MaxFramerate = goav1.EncoderRational{Num: 120, Den: 1}
-			cbrChange.Content = goav1.EncoderContentCamera
+			cbrChange.MaxFramerate = EncoderRational{Num: 120, Den: 1}
+			cbrChange.Content = EncoderContentCamera
 			publicRTCApplyControlBitrates(&cbrChange, publicRTCMatrixControlBitrateKbps(t, scenario.reconfig)+int32(220+scenarioIndex*41))
 			if err := enc.SetConfig(cbrChange); err != nil {
 				t.Fatalf("SetConfig CBR/camera: %v", err)
@@ -3638,32 +3644,32 @@ func TestPublicRTCEncoderHighBitDepthNon420GenericFrameNative(t *testing.T) {
 	cases := []struct {
 		name     string
 		bitDepth uint8
-		profile  goav1.EncoderProfile
+		profile  internalencoder.Profile
 		i444     bool
 	}{
-		{name: "i422-10bit", bitDepth: 10, profile: goav1.EncoderProfile2},
-		{name: "i444-10bit", bitDepth: 10, profile: goav1.EncoderProfile1, i444: true},
+		{name: "i422-10bit", bitDepth: 10, profile: internalencoder.Profile2},
+		{name: "i444-10bit", bitDepth: 10, profile: internalencoder.Profile1, i444: true},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			const w, h = 192, 128
-			cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T1)
+			cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T1)
 			cfg.Profile = tc.profile
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = 38
 			cfg.ColorConfigSet = true
-			cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			cfg.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth:     tc.bitDepth,
 				SubsamplingX: !tc.i444,
 			}
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
 			defer enc.Close()
 
-			frame := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 0), goav1.FrameFormat{
+			frame := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 0), FrameFormat{
 				Width:        w,
 				Height:       h,
 				BitDepth:     tc.bitDepth,
@@ -3684,14 +3690,14 @@ func TestPublicRTCEncoderHighBitDepthNon420GenericFrameNative(t *testing.T) {
 					seq.SeqProfile, seq.ColorConfig, tc.profile, tc.bitDepth, tc.i444)
 			}
 
-			bad := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 1), goav1.FrameFormat{
+			bad := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 1), FrameFormat{
 				Width:        w,
 				Height:       h,
 				BitDepth:     8,
 				SubsamplingX: !tc.i444,
 				Align:        32,
 			})
-			if _, err := enc.EncodeFrame(bad, false); !errors.Is(err, goav1.ErrFrameInvalidFormat) {
+			if _, err := enc.EncodeFrame(bad, false); !errors.Is(err, internalframe.ErrInvalidFormat) {
 				t.Fatalf("EncodeFrame 8-bit into %d-bit non-4:2:0 err=%v want ErrFrameInvalidFormat", tc.bitDepth, err)
 			}
 		})
@@ -3700,23 +3706,23 @@ func TestPublicRTCEncoderHighBitDepthNon420GenericFrameNative(t *testing.T) {
 
 func TestPublicRTCEncoderI420HighBitDepthGenericFrameNative(t *testing.T) {
 	const w, h = 192, 128
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T1)
-	cfg.Profile = goav1.EncoderProfile0
-	cfg.RateControl = goav1.EncoderRateControlCQP
+	cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T1)
+	cfg.Profile = EncoderProfile0
+	cfg.RateControl = EncoderRateControlCQP
 	cfg.Quantizer = 38
 	cfg.ColorConfigSet = true
-	cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+	cfg.ColorConfig = internalencoder.SequenceColorConfig{
 		BitDepth:     10,
 		SubsamplingX: true,
 		SubsamplingY: true,
 	}
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
 	defer enc.Close()
 
-	frame := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 0), goav1.FrameFormat{
+	frame := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 0), FrameFormat{
 		Width:        w,
 		Height:       h,
 		BitDepth:     10,
@@ -3729,7 +3735,7 @@ func TestPublicRTCEncoderI420HighBitDepthGenericFrameNative(t *testing.T) {
 		t.Fatalf("EncodeFrame native high-bit-depth I420: %v", err)
 	}
 	seq := publicFirstSequenceHeader(t, out.Data)
-	if seq.SeqProfile != uint8(goav1.EncoderProfile0) ||
+	if seq.SeqProfile != uint8(EncoderProfile0) ||
 		seq.ColorConfig.MonoChrome ||
 		seq.ColorConfig.BitDepth != 10 ||
 		!seq.ColorConfig.SubsamplingX ||
@@ -3737,7 +3743,7 @@ func TestPublicRTCEncoderI420HighBitDepthGenericFrameNative(t *testing.T) {
 		t.Fatalf("sequence profile=%d color=%+v want native 10-bit 4:2:0", seq.SeqProfile, seq.ColorConfig)
 	}
 
-	bad := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 1), goav1.FrameFormat{
+	bad := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 1), FrameFormat{
 		Width:        w,
 		Height:       h,
 		BitDepth:     8,
@@ -3745,7 +3751,7 @@ func TestPublicRTCEncoderI420HighBitDepthGenericFrameNative(t *testing.T) {
 		SubsamplingY: true,
 		Align:        32,
 	})
-	if _, err := enc.EncodeFrame(bad, false); !errors.Is(err, goav1.ErrFrameInvalidFormat) {
+	if _, err := enc.EncodeFrame(bad, false); !errors.Is(err, internalframe.ErrInvalidFormat) {
 		t.Fatalf("EncodeFrame 8-bit into 10-bit I420 err=%v want ErrFrameInvalidFormat", err)
 	}
 }
@@ -3755,17 +3761,17 @@ func TestPublicRTCEncoderSetConfigNativeHighBitDepthI420TransitionReferenceDecod
 	cases := []struct {
 		name     string
 		bitDepth uint8
-		profile  goav1.EncoderProfile
+		profile  internalencoder.Profile
 	}{
-		{name: "10bit-profile0", bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "12bit-profile2", bitDepth: 12, profile: goav1.EncoderProfile2},
+		{name: "10bit-profile0", bitDepth: 10, profile: EncoderProfile0},
+		{name: "12bit-profile2", bitDepth: 12, profile: internalencoder.Profile2},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			const w, h = 192, 128
-			cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T2)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
@@ -3777,10 +3783,10 @@ func TestPublicRTCEncoderSetConfigNativeHighBitDepthI420TransitionReferenceDecod
 			}
 			colorConfig := enc.Config()
 			colorConfig.Profile = tc.profile
-			colorConfig.RateControl = goav1.EncoderRateControlCQP
+			colorConfig.RateControl = EncoderRateControlCQP
 			colorConfig.Quantizer = 39
 			colorConfig.ColorConfigSet = true
-			colorConfig.ColorConfig = goav1.EncoderSequenceColorConfig{
+			colorConfig.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth:     tc.bitDepth,
 				SubsamplingX: true,
 				SubsamplingY: true,
@@ -3796,10 +3802,10 @@ func TestPublicRTCEncoderSetConfigNativeHighBitDepthI420TransitionReferenceDecod
 				t.Fatalf("post-SetConfig config=%+v want profile=%d %d-bit 4:2:0", enc.Config(), tc.profile, tc.bitDepth)
 			}
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := first.Frames[0].FrameID + uint64(first.FrameNum)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 
 			key, err := enc.EncodeI420HighBitDepthPicture(publicI420HighBitDepthFrame(w, h, tc.bitDepth, 1), false)
@@ -3838,21 +3844,21 @@ func TestPublicRTCEncoderSetConfigNativeHighBitDepthI420TransitionReferenceDecod
 
 func TestPublicRTCEncoderHighBitDepthMonochromeGenericFrameNative(t *testing.T) {
 	const w, h = 192, 128
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T1)
-	cfg.RateControl = goav1.EncoderRateControlCQP
+	cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T1)
+	cfg.RateControl = EncoderRateControlCQP
 	cfg.Quantizer = 38
 	cfg.ColorConfigSet = true
-	cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+	cfg.ColorConfig = internalencoder.SequenceColorConfig{
 		BitDepth:   10,
 		MonoChrome: true,
 	}
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
 	defer enc.Close()
 
-	frame := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 0), goav1.FrameFormat{
+	frame := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 0), FrameFormat{
 		Width:      w,
 		Height:     h,
 		BitDepth:   10,
@@ -3868,22 +3874,22 @@ func TestPublicRTCEncoderHighBitDepthMonochromeGenericFrameNative(t *testing.T) 
 		t.Fatalf("sequence color=%+v want native 10-bit monochrome", seq.ColorConfig)
 	}
 
-	bad := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 1), goav1.FrameFormat{
+	bad := publicFrameFromI420(t, publicRTCMatrixFrame(w, h, 1), FrameFormat{
 		Width:      w,
 		Height:     h,
 		BitDepth:   8,
 		MonoChrome: true,
 		Align:      32,
 	})
-	if _, err := enc.EncodeFrame(bad, false); !errors.Is(err, goav1.ErrFrameInvalidFormat) {
+	if _, err := enc.EncodeFrame(bad, false); !errors.Is(err, internalframe.ErrInvalidFormat) {
 		t.Fatalf("EncodeFrame 8-bit into 10-bit mono err=%v want ErrFrameInvalidFormat", err)
 	}
 }
 
 func TestPublicRTCEncoderSetConfigNativeMonochromeTransition(t *testing.T) {
 	const w, h = 192, 128
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T2)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
@@ -3895,7 +3901,7 @@ func TestPublicRTCEncoderSetConfigNativeMonochromeTransition(t *testing.T) {
 	}
 	mono := enc.Config()
 	mono.ColorConfigSet = true
-	mono.ColorConfig = goav1.EncoderSequenceColorConfig{
+	mono.ColorConfig = internalencoder.SequenceColorConfig{
 		BitDepth:   8,
 		MonoChrome: true,
 	}
@@ -3923,17 +3929,17 @@ func TestPublicRTCEncoderSetConfigNativeHighBitDepthMonochromeTransitionReferenc
 	cases := []struct {
 		name     string
 		bitDepth uint8
-		profile  goav1.EncoderProfile
+		profile  internalencoder.Profile
 	}{
-		{name: "10bit-profile0", bitDepth: 10, profile: goav1.EncoderProfile0},
-		{name: "12bit-profile2", bitDepth: 12, profile: goav1.EncoderProfile2},
+		{name: "10bit-profile0", bitDepth: 10, profile: EncoderProfile0},
+		{name: "12bit-profile2", bitDepth: 12, profile: internalencoder.Profile2},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			const w, h = 192, 128
-			cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T2)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
@@ -3945,10 +3951,10 @@ func TestPublicRTCEncoderSetConfigNativeHighBitDepthMonochromeTransitionReferenc
 			}
 			monoConfig := enc.Config()
 			monoConfig.Profile = tc.profile
-			monoConfig.RateControl = goav1.EncoderRateControlCQP
+			monoConfig.RateControl = EncoderRateControlCQP
 			monoConfig.Quantizer = 39
 			monoConfig.ColorConfigSet = true
-			monoConfig.ColorConfig = goav1.EncoderSequenceColorConfig{
+			monoConfig.ColorConfig = internalencoder.SequenceColorConfig{
 				BitDepth:   tc.bitDepth,
 				MonoChrome: true,
 			}
@@ -3961,10 +3967,10 @@ func TestPublicRTCEncoderSetConfigNativeHighBitDepthMonochromeTransitionReferenc
 				t.Fatalf("post-SetConfig config=%+v want profile=%d %d-bit monochrome", enc.Config(), tc.profile, tc.bitDepth)
 			}
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := first.Frames[0].FrameID + uint64(first.FrameNum)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 
 			key, err := enc.EncodeI400HighBitDepthPicture(publicI400HighBitDepthFromI420(publicRTCMatrixFrame(w, h, 1), tc.bitDepth, 1), false)
@@ -4002,8 +4008,8 @@ func TestPublicRTCEncoderSetConfigNativeHighBitDepthMonochromeTransitionReferenc
 func TestPublicRTCEncoderSetConfigNativeI422TransitionReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 192, 128
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T2)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
@@ -4014,16 +4020,16 @@ func TestPublicRTCEncoderSetConfigNativeI422TransitionReferenceDecoders(t *testi
 		t.Fatalf("EncodePicture: %v", err)
 	}
 	i422Config := enc.Config()
-	i422Config.Profile = goav1.EncoderProfile2
+	i422Config.Profile = internalencoder.Profile2
 	i422Config.ColorConfigSet = true
-	i422Config.ColorConfig = goav1.EncoderSequenceColorConfig{
+	i422Config.ColorConfig = internalencoder.SequenceColorConfig{
 		BitDepth:     8,
 		SubsamplingX: true,
 	}
 	if err := enc.SetConfig(i422Config); err != nil {
 		t.Fatalf("SetConfig I422: %v", err)
 	}
-	if enc.Config().Profile != goav1.EncoderProfile2 ||
+	if enc.Config().Profile != internalencoder.Profile2 ||
 		enc.Config().ColorConfig.MonoChrome ||
 		enc.Config().ColorConfig.BitDepth != 8 ||
 		!enc.Config().ColorConfig.SubsamplingX ||
@@ -4038,7 +4044,7 @@ func TestPublicRTCEncoderSetConfigNativeI422TransitionReferenceDecoders(t *testi
 		t.Fatalf("I422 transition key=%+v after first=%+v", key, first)
 	}
 	seq := publicFirstSequenceHeader(t, key.Frames[0].Data)
-	if seq.SeqProfile != uint8(goav1.EncoderProfile2) ||
+	if seq.SeqProfile != uint8(internalencoder.Profile2) ||
 		seq.ColorConfig.MonoChrome ||
 		seq.ColorConfig.BitDepth != 8 ||
 		!seq.ColorConfig.SubsamplingX ||
@@ -4066,8 +4072,8 @@ func TestPublicRTCEncoderSetConfigNativeI422TransitionReferenceDecoders(t *testi
 func TestPublicRTCEncoderSetConfigNativeI444TransitionReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 192, 128
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T2)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
@@ -4078,15 +4084,15 @@ func TestPublicRTCEncoderSetConfigNativeI444TransitionReferenceDecoders(t *testi
 		t.Fatalf("EncodePicture: %v", err)
 	}
 	i444Config := enc.Config()
-	i444Config.Profile = goav1.EncoderProfile1
+	i444Config.Profile = internalencoder.Profile1
 	i444Config.ColorConfigSet = true
-	i444Config.ColorConfig = goav1.EncoderSequenceColorConfig{
+	i444Config.ColorConfig = internalencoder.SequenceColorConfig{
 		BitDepth: 8,
 	}
 	if err := enc.SetConfig(i444Config); err != nil {
 		t.Fatalf("SetConfig I444: %v", err)
 	}
-	if enc.Config().Profile != goav1.EncoderProfile1 ||
+	if enc.Config().Profile != internalencoder.Profile1 ||
 		enc.Config().ColorConfig.MonoChrome ||
 		enc.Config().ColorConfig.SubsamplingX ||
 		enc.Config().ColorConfig.SubsamplingY {
@@ -4100,7 +4106,7 @@ func TestPublicRTCEncoderSetConfigNativeI444TransitionReferenceDecoders(t *testi
 		t.Fatalf("I444 transition key=%+v after first=%+v", key, first)
 	}
 	seq := publicFirstSequenceHeader(t, key.Frames[0].Data)
-	if seq.SeqProfile != uint8(goav1.EncoderProfile1) ||
+	if seq.SeqProfile != uint8(internalencoder.Profile1) ||
 		seq.ColorConfig.MonoChrome ||
 		seq.ColorConfig.BitDepth != 8 ||
 		seq.ColorConfig.SubsamplingX ||
@@ -4128,7 +4134,7 @@ func TestPublicRTCEncoderSetConfigNativeI444TransitionReferenceDecoders(t *testi
 func TestPublicEncoderRuntimeOptions(t *testing.T) {
 	const w, h = 192, 128
 	t.Run("VideoEncoder", func(t *testing.T) {
-		enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+		enc, err := NewVideoEncoder(VideoEncoderConfig{
 			Width: w, Height: h,
 			TargetBitrate: 400_000, Framerate: 30,
 		})
@@ -4150,7 +4156,7 @@ func TestPublicEncoderRuntimeOptions(t *testing.T) {
 		if !key.Keyframe || delta.Keyframe {
 			t.Fatalf("runtime options key=%v delta=%v", key.Keyframe, delta.Keyframe)
 		}
-		dec, err := goav1.NewDecoder([][]byte{
+		dec, err := NewDecoder([][]byte{
 			keyData,
 			append([]byte(nil), delta.Data...),
 		})
@@ -4175,8 +4181,8 @@ func TestPublicEncoderRuntimeOptions(t *testing.T) {
 	})
 
 	t.Run("RTCEncoder", func(t *testing.T) {
-		cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeS2T2)
-		enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+		cfg := publicRTCMatrixConfig(w, h, internalencoder.ScalabilityModeS2T2)
+		enc, err := NewRTCEncoderWithConfig(cfg)
 		if err != nil {
 			t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 		}
@@ -4186,7 +4192,7 @@ func TestPublicEncoderRuntimeOptions(t *testing.T) {
 			t.Fatalf("key EncodePicture: %v", err)
 		}
 		keyLastFrameID := key.Frames[key.FrameNum-1].FrameID
-		var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+		var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 		var orderedTUs [][]byte
 		appendPublicRTCPictureLayerData(t, &layerTUs, &orderedTUs, key)
 		enc.SetTileColumns(4)
@@ -4205,37 +4211,37 @@ func TestPublicEncoderRuntimeOptions(t *testing.T) {
 		assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
 	})
 
-	var zeroVideo goav1.VideoEncoder
+	var zeroVideo VideoEncoder
 	zeroVideo.SetTileColumns(4)
 	zeroVideo.SetMaxThreads(1)
 	zeroVideo.SetGoldenInterval(0)
 	if err := zeroVideo.SetEffortLevel(0); err == nil {
 		t.Fatal("zero VideoEncoder SetEffortLevel unexpectedly succeeded")
 	}
-	var zeroRTC goav1.RTCEncoder
+	var zeroRTC RTCEncoder
 	zeroRTC.SetTileColumns(4)
 	zeroRTC.SetMaxThreads(1)
 	zeroRTC.SetGoldenInterval(0)
 }
 
 func TestPublicVideoEncoderConfigSpeedValidation(t *testing.T) {
-	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+	enc, err := NewVideoEncoder(VideoEncoderConfig{
 		Width: 64, Height: 64,
 		TargetBitrate: 100_000, Framerate: 30,
-		Speed: goav1.EncoderWebRTCMinEffortLevel,
+		Speed: EncoderWebRTCMinEffortLevel,
 	})
 	if err != nil {
 		t.Fatalf("NewVideoEncoder min effort: %v", err)
 	}
-	if err := enc.SetEffortLevel(goav1.EncoderWebRTCMaxEffortLevel); err != nil {
+	if err := enc.SetEffortLevel(EncoderWebRTCMaxEffortLevel); err != nil {
 		t.Fatalf("SetEffortLevel max effort: %v", err)
 	}
 	_ = enc.Close()
 
-	_, err = goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+	_, err = NewVideoEncoder(VideoEncoderConfig{
 		Width: 64, Height: 64,
 		TargetBitrate: 100_000, Framerate: 30,
-		Speed: goav1.EncoderWebRTCMinEffortLevel - 1,
+		Speed: EncoderWebRTCMinEffortLevel - 1,
 	})
 	if err == nil {
 		t.Fatal("NewVideoEncoder accepted invalid effort")
@@ -4245,7 +4251,7 @@ func TestPublicVideoEncoderConfigSpeedValidation(t *testing.T) {
 func TestPublicEncoderConfigMaxThreadsControlsTileColumns(t *testing.T) {
 	const w, h = 640, 360
 	t.Run("VideoEncoder", func(t *testing.T) {
-		enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+		enc, err := NewVideoEncoder(VideoEncoderConfig{
 			Width: w, Height: h,
 			TargetBitrate: 900_000, Framerate: 30,
 			MaxThreads: 1,
@@ -4282,7 +4288,7 @@ func TestPublicEncoderConfigMaxThreadsControlsTileColumns(t *testing.T) {
 	})
 
 	t.Run("RTCEncoder", func(t *testing.T) {
-		enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+		enc, err := NewRTCEncoder(VideoEncoderConfig{
 			Width: w, Height: h,
 			TargetBitrate: 900_000, Framerate: 30,
 			MaxThreads: 1,
@@ -4331,7 +4337,7 @@ func TestPublicEncoderConfigMaxThreadsControlsTileColumns(t *testing.T) {
 func TestPublicRTCEncoderDependencyDescriptorBorrowedLifetime(t *testing.T) {
 	t.Run("Encode", func(t *testing.T) {
 		const w, h = 192, 128
-		enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+		enc, err := NewRTCEncoder(VideoEncoderConfig{
 			Width: w, Height: h,
 			TargetBitrate: 250_000, Framerate: 30,
 			TemporalLayers: 2,
@@ -4364,7 +4370,7 @@ func TestPublicRTCEncoderDependencyDescriptorBorrowedLifetime(t *testing.T) {
 
 	t.Run("EncodePicture", func(t *testing.T) {
 		const w, h = 640, 360
-		enc, err := goav1.NewRTCEncoderWithConfig(publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL2T2))
+		enc, err := NewRTCEncoderWithConfig(publicRTCMatrixConfig(w, h, internalencoder.ScalabilityModeL2T2))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4377,7 +4383,7 @@ func TestPublicRTCEncoderDependencyDescriptorBorrowedLifetime(t *testing.T) {
 		if first.FrameNum != 2 {
 			t.Fatalf("first FrameNum=%d want 2", first.FrameNum)
 		}
-		var snapshots [goav1.EncoderWebRTCMaxSpatialLayers][]byte
+		var snapshots [EncoderWebRTCMaxSpatialLayers][]byte
 		for i := 0; i < first.FrameNum; i++ {
 			snapshots[i] = append([]byte(nil), first.Frames[i].DependencyDescriptor...)
 			if len(snapshots[i]) == 0 {
@@ -4406,23 +4412,23 @@ func TestPublicRTCEncoderDependencyDescriptorBorrowedLifetime(t *testing.T) {
 func TestPublicRTCEncoderEncodePicture1080pHotPathAllocs(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		mode goav1.EncoderScalabilityMode
+		mode EncoderScalabilityMode
 	}{
-		{name: "L1T3", mode: goav1.EncoderScalabilityModeL1T3},
-		{name: "S3T3", mode: goav1.EncoderScalabilityModeS3T3},
+		{name: "L1T3", mode: EncoderScalabilityModeL1T3},
+		{name: "S3T3", mode: internalencoder.ScalabilityModeS3T3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			const width, height = 1920, 1080
 			cfg := publicRTCMatrixConfig(width, height, tc.mode)
 			cfg.TargetBitrateKbps = 1800
 			cfg.MaxBitrateKbps = 2400
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
 			defer enc.Close()
 
-			frames := [...]goav1.I420Frame{
+			frames := [...]I420Frame{
 				publicRTCMatrixFrame(width, height, 0),
 				publicRTCMatrixFrame(width, height, 1),
 				publicRTCMatrixFrame(width, height, 2),
@@ -4459,7 +4465,7 @@ func TestPublicRTCEncoderEncodePicture1080pHotPathAllocs(t *testing.T) {
 	}
 }
 
-func warmPublicRTCEncoderEncodePictureHotPath(tb testing.TB, enc *goav1.RTCEncoder, frames []goav1.I420Frame) {
+func warmPublicRTCEncoderEncodePictureHotPath(tb testing.TB, enc *RTCEncoder, frames []I420Frame) {
 	tb.Helper()
 	for i := 0; i < len(frames)*2; i++ {
 		forceKey := i == 0 || i == len(frames)
@@ -4475,8 +4481,8 @@ func warmPublicRTCEncoderEncodePictureHotPath(tb testing.TB, enc *goav1.RTCEncod
 
 func TestPublicRTCEncoderClose(t *testing.T) {
 	const w, h = 640, 360
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL2T2)
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	cfg := publicRTCMatrixConfig(w, h, internalencoder.ScalabilityModeL2T2)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
@@ -4498,36 +4504,36 @@ func TestPublicRTCEncoderClose(t *testing.T) {
 }
 
 func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
-	cfg := publicRTCMatrixConfig(640, 360, goav1.EncoderScalabilityModeL2T2_KEY_SHIFT)
+	cfg := publicRTCMatrixConfig(640, 360, internalencoder.ScalabilityModeL2T2_KEY_SHIFT)
 	cfg.BitDepth = 0
-	normalized, err := goav1.NormalizeRTCEncoderConfig(cfg)
+	normalized, err := NormalizeRTCEncoderConfig(cfg)
 	if err != nil {
 		t.Fatalf("NormalizeRTCEncoderConfig valid: %v", err)
 	}
 	if normalized.BitDepth != 8 ||
-		normalized.Profile != goav1.EncoderProfile0 ||
+		normalized.Profile != EncoderProfile0 ||
 		normalized.SpatialLayerCount != 2 ||
 		normalized.TemporalLayerCount != 2 ||
-		normalized.RateControl != goav1.EncoderRateControlCBR {
+		normalized.RateControl != EncoderRateControlCBR {
 		t.Fatalf("normalized config=%+v", normalized)
 	}
 	cqp := cfg
-	cqp.RateControl = goav1.EncoderRateControlCQP
+	cqp.RateControl = EncoderRateControlCQP
 	cqp.Quantizer = 32
-	normalizedCQP, err := goav1.NormalizeRTCEncoderConfig(cqp)
+	normalizedCQP, err := NormalizeRTCEncoderConfig(cqp)
 	if err != nil {
 		t.Fatalf("NormalizeRTCEncoderConfig CQP: %v", err)
 	}
-	if normalizedCQP.RateControl != goav1.EncoderRateControlCQP || normalizedCQP.Quantizer != 32 {
+	if normalizedCQP.RateControl != EncoderRateControlCQP || normalizedCQP.Quantizer != 32 {
 		t.Fatalf("normalized CQP config=%+v", normalizedCQP)
 	}
-	mono := publicRTCMatrixConfig(640, 360, goav1.EncoderScalabilityModeL2T2)
+	mono := publicRTCMatrixConfig(640, 360, internalencoder.ScalabilityModeL2T2)
 	mono.ColorConfigSet = true
-	mono.ColorConfig = goav1.EncoderSequenceColorConfig{
+	mono.ColorConfig = internalencoder.SequenceColorConfig{
 		BitDepth:   8,
 		MonoChrome: true,
 	}
-	normalizedMono, err := goav1.NormalizeRTCEncoderConfig(mono)
+	normalizedMono, err := NormalizeRTCEncoderConfig(mono)
 	if err != nil {
 		t.Fatalf("NormalizeRTCEncoderConfig monochrome: %v", err)
 	}
@@ -4537,16 +4543,16 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 		t.Fatalf("normalized monochrome config=%+v", normalizedMono)
 	}
 	i444 := cfg
-	i444.Profile = goav1.EncoderProfile1
+	i444.Profile = internalencoder.Profile1
 	i444.ColorConfigSet = true
-	i444.ColorConfig = goav1.EncoderSequenceColorConfig{
+	i444.ColorConfig = internalencoder.SequenceColorConfig{
 		BitDepth: 8,
 	}
-	normalizedI444, err := goav1.NormalizeRTCEncoderConfig(i444)
+	normalizedI444, err := NormalizeRTCEncoderConfig(i444)
 	if err != nil {
 		t.Fatalf("NormalizeRTCEncoderConfig I444: %v", err)
 	}
-	if normalizedI444.Profile != goav1.EncoderProfile1 ||
+	if normalizedI444.Profile != internalencoder.Profile1 ||
 		normalizedI444.ColorConfig.BitDepth != 8 ||
 		normalizedI444.ColorConfig.SubsamplingX ||
 		normalizedI444.ColorConfig.SubsamplingY {
@@ -4554,11 +4560,11 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 	}
 	highBitDepthI420 := cfg
 	highBitDepthI420.BitDepth = 10
-	normalizedHighBitDepthI420, err := goav1.NormalizeRTCEncoderConfig(highBitDepthI420)
+	normalizedHighBitDepthI420, err := NormalizeRTCEncoderConfig(highBitDepthI420)
 	if err != nil {
 		t.Fatalf("NormalizeRTCEncoderConfig high-bit-depth I420: %v", err)
 	}
-	if normalizedHighBitDepthI420.Profile != goav1.EncoderProfile0 ||
+	if normalizedHighBitDepthI420.Profile != EncoderProfile0 ||
 		normalizedHighBitDepthI420.BitDepth != 10 ||
 		normalizedHighBitDepthI420.ColorConfig.BitDepth != 10 ||
 		normalizedHighBitDepthI420.ColorConfig.MonoChrome ||
@@ -4566,7 +4572,7 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 		!normalizedHighBitDepthI420.ColorConfig.SubsamplingY {
 		t.Fatalf("normalized high-bit-depth I420 config=%+v", normalizedHighBitDepthI420)
 	}
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig valid: %v", err)
 	}
@@ -4575,51 +4581,51 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 
 	tests := []struct {
 		name string
-		edit func(*goav1.EncoderConfig)
+		edit func(*EncoderConfig)
 		want error
 	}{
 		{
 			name: "ambiguous-color-config-without-enable",
-			edit: func(cfg *goav1.EncoderConfig) {
-				cfg.ColorConfig = goav1.EncoderSequenceColorConfig{
+			edit: func(cfg *EncoderConfig) {
+				cfg.ColorConfig = internalencoder.SequenceColorConfig{
 					BitDepth:     8,
 					SubsamplingX: true,
 					SubsamplingY: true,
 				}
 			},
-			want: goav1.ErrEncoderInvalidConfig,
+			want: internalencoder.ErrInvalidConfig,
 		},
 		{
 			name: "cqp-quantizer-zero",
-			edit: func(cfg *goav1.EncoderConfig) {
-				cfg.RateControl = goav1.EncoderRateControlCQP
+			edit: func(cfg *EncoderConfig) {
+				cfg.RateControl = EncoderRateControlCQP
 			},
-			want: goav1.ErrEncoderUnsupported,
+			want: internalencoder.ErrUnsupported,
 		},
 		{
 			name: "cqp-quantizer-too-high",
-			edit: func(cfg *goav1.EncoderConfig) {
-				cfg.RateControl = goav1.EncoderRateControlCQP
-				cfg.Quantizer = goav1.EncoderWebRTCMaxQuantizer + 1
+			edit: func(cfg *EncoderConfig) {
+				cfg.RateControl = EncoderRateControlCQP
+				cfg.Quantizer = internalencoder.WebRTCMaxQuantizer + 1
 			},
-			want: goav1.ErrEncoderInvalidConfig,
+			want: internalencoder.ErrInvalidConfig,
 		},
 		{
 			name: "invalid-framerate",
-			edit: func(cfg *goav1.EncoderConfig) {
-				cfg.MaxFramerate = goav1.EncoderRational{Num: 1, Den: 2}
+			edit: func(cfg *EncoderConfig) {
+				cfg.MaxFramerate = EncoderRational{Num: 1, Den: 2}
 			},
-			want: goav1.ErrEncoderInvalidConfig,
+			want: internalencoder.ErrInvalidConfig,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			bad := cfg
 			tc.edit(&bad)
-			if _, err := goav1.NormalizeRTCEncoderConfig(bad); !errors.Is(err, tc.want) {
+			if _, err := NormalizeRTCEncoderConfig(bad); !errors.Is(err, tc.want) {
 				t.Fatalf("NormalizeRTCEncoderConfig err=%v want %v", err, tc.want)
 			}
-			if _, err := goav1.NewRTCEncoderWithConfig(bad); !errors.Is(err, tc.want) {
+			if _, err := NewRTCEncoderWithConfig(bad); !errors.Is(err, tc.want) {
 				t.Fatalf("NewRTCEncoderWithConfig err=%v want %v", err, tc.want)
 			}
 			if err := enc.SetConfig(bad); !errors.Is(err, tc.want) {
@@ -4634,13 +4640,13 @@ func TestPublicRTCEncoderNormalizeConfig(t *testing.T) {
 
 func TestPublicRTCEncoderEncodeRejectsMultiSpatialWithoutMutating(t *testing.T) {
 	const w, h = 640, 360
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL2T2)
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	cfg := publicRTCMatrixConfig(w, h, internalencoder.ScalabilityModeL2T2)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
-	if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); err != goav1.ErrEncoderUnsupported {
-		t.Fatalf("Encode multi-spatial err=%v want %v", err, goav1.ErrEncoderUnsupported)
+	if _, err := enc.Encode(publicRTCMatrixFrame(w, h, 0), false); err != internalencoder.ErrUnsupported {
+		t.Fatalf("Encode multi-spatial err=%v want %v", err, internalencoder.ErrUnsupported)
 	}
 	picture, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, 1), false)
 	if err != nil {
@@ -4656,7 +4662,7 @@ func TestPublicRTCEncoderEncodeRejectsMultiSpatialWithoutMutating(t *testing.T) 
 func TestPublicRTCFrameAppendRTPPackets(t *testing.T) {
 	const w, h = 192, 128
 	cw, ch := w/2, h/2
-	enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+	enc, err := NewRTCEncoder(VideoEncoderConfig{
 		Width: w, Height: h,
 		TargetBitrate: 250_000, Framerate: 30,
 		TemporalLayers: 2,
@@ -4664,7 +4670,7 @@ func TestPublicRTCFrameAppendRTPPackets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	src := goav1.I420Frame{
+	src := I420Frame{
 		Y: make([]byte, w*h), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
 		YStride: w, ChromaStride: cw, Width: w, Height: h,
 	}
@@ -4679,14 +4685,14 @@ func TestPublicRTCFrameAppendRTPPackets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
-	var receiver goav1.RTPDependencyDescriptorState
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 96}
+	var receiver RTPDependencyDescriptorState
 	assertPublicRTCFrameRTPPackets(t, &receiver, frame, limits, true, true, true)
 }
 
 func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 	const w, h = 192, 128
-	enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+	enc, err := NewRTCEncoder(VideoEncoderConfig{
 		Width: w, Height: h,
 		TargetBitrate: 250_000, Framerate: 30,
 		TemporalLayers: 2,
@@ -4699,21 +4705,21 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 		t.Fatalf("Encode: %v", err)
 	}
 
-	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 96}
 	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
 	if err != nil {
 		t.Fatalf("RTPPacketScratchLen first: %v", err)
 	}
-	obuScratch := make([]goav1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
+	obuScratch := make([]RTPPacketizerOBU, firstSize.Packetizer.OBUs)
 	size, err := frame.RTPPacketScratchLen(limits, obuScratch)
 	if err != nil {
 		t.Fatalf("RTPPacketScratchLen full: %v", err)
 	}
-	packetScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Packets)
-	workScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Work)
+	packetScratch := make([]RTPPacketPlan, size.Packetizer.Packets)
+	workScratch := make([]RTPPacketPlan, size.Packetizer.Work)
 	payloadBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxPayloadBytes)
 	descriptorBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxDescriptorBytes)
-	packetSpans := make([]goav1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
+	packetSpans := make([]EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
 	rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPackets(payloadBuf, descriptorBuf, packetSpans, limits, obuScratch, packetScratch, workScratch)
 	if err != nil {
 		t.Fatalf("AppendRTPPackets: %v", err)
@@ -4722,7 +4728,7 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 		t.Fatalf("packet count=%d want %d and fragmentation", packetCount, size.Packetizer.Packets)
 	}
 
-	config := goav1.EncoderWebRTCRTPPacketHeaderConfig{
+	config := EncoderWebRTCRTPPacketHeaderConfig{
 		PayloadType:                     96,
 		SequenceNumber:                  0xfffe,
 		Timestamp:                       0x01020304,
@@ -4737,33 +4743,33 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 		TransportWideCCExtensionID:      4,
 		TransportWideCCSequenceNumber:   0x1234,
 		TransportWideCC02ExtensionID:    5,
-		TransportWideCC02: goav1.RTPTransportWideCC02{
+		TransportWideCC02: RTPTransportWideCC02{
 			SequenceNumber:        0x2234,
 			FeedbackRequest:       true,
 			IncludeTimestamps:     true,
 			FeedbackSequenceCount: 3,
 		},
 		VideoOrientationExtensionID: 6,
-		VideoOrientation: goav1.RTPCoordinationOfVideoOrientation{
+		VideoOrientation: RTPCoordinationOfVideoOrientation{
 			Camera:   true,
 			Flip:     true,
 			Rotation: 180,
 		},
 		PlayoutDelayExtensionID:        7,
-		PlayoutDelay:                   goav1.RTPPlayoutDelay{MinDelayMs: 120, MaxDelayMs: 560},
+		PlayoutDelay:                   RTPPlayoutDelay{MinDelayMs: 120, MaxDelayMs: 560},
 		AbsoluteSendTimeExtensionID:    8,
 		AbsoluteSendTime:               0x00abc1,
 		AbsoluteCaptureTimeExtensionID: 9,
-		AbsoluteCaptureTime: goav1.RTPAbsoluteCaptureTime{
+		AbsoluteCaptureTime: RTPAbsoluteCaptureTime{
 			AbsoluteCaptureTimestamp:           0x0102030405060708,
 			EstimatedCaptureClockOffsetPresent: true,
 			EstimatedCaptureClockOffset:        -1234,
 		},
 		VideoContentTypeExtensionID: 10,
-		VideoContentType:            goav1.RTPVideoContentTypeScreenshare,
+		VideoContentType:            RTPVideoContentTypeScreenshare,
 		VideoTimingExtensionID:      11,
-		VideoTiming: goav1.RTPVideoTiming{
-			Flags:                        goav1.RTPVideoTimingFlagTriggeredByTimer,
+		VideoTiming: RTPVideoTiming{
+			Flags:                        RTPVideoTimingFlagTriggeredByTimer,
 			EncodeStartDeltaMs:           1,
 			EncodeFinishDeltaMs:          2,
 			PacketizationCompleteDeltaMs: 3,
@@ -4772,71 +4778,71 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 			NetworkTimestamp2DeltaMs:     6,
 		},
 		VideoLayersAllocationExtensionID: 13,
-		VideoLayersAllocation: goav1.RTPVideoLayersAllocation{
+		VideoLayersAllocation: RTPVideoLayersAllocation{
 			RTPStreamID:    0,
 			RTPStreamCount: 1,
-			ActiveSpatialLayers: []goav1.RTPVideoLayersAllocationLayer{
+			ActiveSpatialLayers: []RTPVideoLayersAllocationLayer{
 				{RTPStreamID: 0, SpatialID: 0, TargetBitratesKbps: []uint32{450, 700}, Width: w, Height: h, Framerate: 30},
 			},
 			HasResolutionAndFramerate: true,
 		},
 		ColorSpaceExtensionID: 12,
-		ColorSpace: goav1.RTPColorSpace{
-			Primaries:              goav1.RTPColorSpacePrimaryBT709,
-			Transfer:               goav1.RTPColorSpaceTransferBT709,
-			Matrix:                 goav1.RTPColorSpaceMatrixBT709,
-			Range:                  goav1.RTPColorSpaceRangeFull,
-			ChromaSitingHorizontal: goav1.RTPColorSpaceChromaSitingHalf,
-			ChromaSitingVertical:   goav1.RTPColorSpaceChromaSitingCollocated,
+		ColorSpace: RTPColorSpace{
+			Primaries:              RTPColorSpacePrimaryBT709,
+			Transfer:               RTPColorSpaceTransferBT709,
+			Matrix:                 RTPColorSpaceMatrixBT709,
+			Range:                  RTPColorSpaceRangeFull,
+			ChromaSitingHorizontal: RTPColorSpaceChromaSitingHalf,
+			ChromaSitingVertical:   RTPColorSpaceChromaSitingCollocated,
 		},
-		HeaderExtensionProfile: goav1.RTPExtensionProfileTwoByte | 0x0005,
+		HeaderExtensionProfile: RTPExtensionProfileTwoByte | 0x0005,
 	}
-	headerSpans := make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, packetCount)
-	oneByteConfig := goav1.EncoderWebRTCRTPPacketHeaderConfig{
+	headerSpans := make([]EncoderWebRTCRTPPacketHeaderSpan, packetCount)
+	oneByteConfig := EncoderWebRTCRTPPacketHeaderConfig{
 		PayloadType:                     config.PayloadType,
 		SequenceNumber:                  config.SequenceNumber,
 		Timestamp:                       config.Timestamp,
 		SSRC:                            config.SSRC,
 		DependencyDescriptorExtensionID: config.DependencyDescriptorExtensionID,
-		HeaderExtensionProfile:          goav1.RTPExtensionProfileOneByte,
+		HeaderExtensionProfile:          RTPExtensionProfileOneByte,
 	}
-	if _, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(oneByteConfig, []byte{0xaa}, make([]byte, 17), []goav1.EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 17}}); !errors.Is(err, goav1.ErrRTPInvalidHeaderExtension) {
-		t.Fatalf("one-byte dependency descriptor packet size err=%v want %v", err, goav1.ErrRTPInvalidHeaderExtension)
+	if _, err := EncoderWebRTCRTPPacketsWithHeadersSize(oneByteConfig, []byte{0xaa}, make([]byte, 17), []EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 17}}); !errors.Is(err, ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("one-byte dependency descriptor packet size err=%v want %v", err, ErrRTPInvalidHeaderExtension)
 	}
-	if _, _, err := goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(nil, make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, 1), oneByteConfig, []byte{0xaa}, make([]byte, 17), []goav1.EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 17}}); !errors.Is(err, goav1.ErrRTPInvalidHeaderExtension) {
-		t.Fatalf("one-byte dependency descriptor packet err=%v want %v", err, goav1.ErrRTPInvalidHeaderExtension)
+	if _, _, err := AppendEncoderWebRTCRTPPacketsWithHeaders(nil, make([]EncoderWebRTCRTPPacketHeaderSpan, 1), oneByteConfig, []byte{0xaa}, make([]byte, 17), []EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 17}}); !errors.Is(err, ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("one-byte dependency descriptor packet err=%v want %v", err, ErrRTPInvalidHeaderExtension)
 	}
 	duplicateExtConfig := config
 	duplicateExtConfig.MIDExtensionID = config.DependencyDescriptorExtensionID
-	if _, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(duplicateExtConfig, []byte{0xaa}, []byte{0xbb}, []goav1.EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 1}}); !errors.Is(err, goav1.ErrRTPInvalidHeaderExtension) {
-		t.Fatalf("duplicate extension id size err=%v want %v", err, goav1.ErrRTPInvalidHeaderExtension)
+	if _, err := EncoderWebRTCRTPPacketsWithHeadersSize(duplicateExtConfig, []byte{0xaa}, []byte{0xbb}, []EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 1}}); !errors.Is(err, ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("duplicate extension id size err=%v want %v", err, ErrRTPInvalidHeaderExtension)
 	}
 	danglingExtConfig := config
 	danglingExtConfig.VideoOrientationExtensionID = 0
-	if _, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(danglingExtConfig, []byte{0xaa}, []byte{0xbb}, []goav1.EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 1}}); !errors.Is(err, goav1.ErrRTPInvalidHeaderExtension) {
-		t.Fatalf("dangling extension value size err=%v want %v", err, goav1.ErrRTPInvalidHeaderExtension)
+	if _, err := EncoderWebRTCRTPPacketsWithHeadersSize(danglingExtConfig, []byte{0xaa}, []byte{0xbb}, []EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 1}}); !errors.Is(err, ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("dangling extension value size err=%v want %v", err, ErrRTPInvalidHeaderExtension)
 	}
 	danglingExtConfig = config
 	danglingExtConfig.VideoLayersAllocationExtensionID = 0
-	if _, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(danglingExtConfig, []byte{0xaa}, []byte{0xbb}, []goav1.EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 1}}); !errors.Is(err, goav1.ErrRTPInvalidHeaderExtension) {
-		t.Fatalf("dangling VLA extension value size err=%v want %v", err, goav1.ErrRTPInvalidHeaderExtension)
+	if _, err := EncoderWebRTCRTPPacketsWithHeadersSize(danglingExtConfig, []byte{0xaa}, []byte{0xbb}, []EncoderWebRTCRTPPacketSpan{{PayloadLength: 1, DescriptorLength: 1}}); !errors.Is(err, ErrRTPInvalidHeaderExtension) {
+		t.Fatalf("dangling VLA extension value size err=%v want %v", err, ErrRTPInvalidHeaderExtension)
 	}
-	twccOnlyConfig := goav1.EncoderWebRTCRTPPacketHeaderConfig{
+	twccOnlyConfig := EncoderWebRTCRTPPacketHeaderConfig{
 		PayloadType:                   98,
 		SequenceNumber:                0x4100,
 		Timestamp:                     0x11121314,
 		SSRC:                          0x0badf00d,
 		TransportWideCCExtensionID:    4,
 		TransportWideCCSequenceNumber: 0x9000,
-		HeaderExtensionProfile:        goav1.RTPExtensionProfileTwoByte,
+		HeaderExtensionProfile:        RTPExtensionProfileTwoByte,
 	}
-	twccOnlySize, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(
+	twccOnlySize, err := EncoderWebRTCRTPPacketsWithHeadersSize(
 		twccOnlyConfig, rtpPayloads, descriptors, packetSpans[:packetCount])
 	if err != nil {
 		t.Fatalf("TWCC-only EncoderWebRTCRTPPacketsWithHeadersSize: %v", err)
 	}
-	twccOnlySpans := make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, packetCount)
-	twccOnlyPackets, twccOnlyCount, err := goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(
+	twccOnlySpans := make([]EncoderWebRTCRTPPacketHeaderSpan, packetCount)
+	twccOnlyPackets, twccOnlyCount, err := AppendEncoderWebRTCRTPPacketsWithHeaders(
 		make([]byte, 0, twccOnlySize.Bytes), twccOnlySpans, twccOnlyConfig,
 		rtpPayloads, descriptors, packetSpans[:packetCount])
 	if err != nil {
@@ -4846,19 +4852,19 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 		t.Fatalf("TWCC-only packet count=%d want %d", twccOnlyCount, packetCount)
 	}
 	twccRaw := twccOnlyPackets[twccOnlySpans[0].Offset : twccOnlySpans[0].Offset+twccOnlySpans[0].Length]
-	if _, err := goav1.ParseRTPPacketDependencyDescriptor(twccRaw, config.DependencyDescriptorExtensionID, nil); !errors.Is(err, goav1.ErrRTPHeaderExtensionNotFound) {
-		t.Fatalf("TWCC-only dependency descriptor err=%v want %v", err, goav1.ErrRTPHeaderExtensionNotFound)
+	if _, err := ParseRTPPacketDependencyDescriptor(twccRaw, config.DependencyDescriptorExtensionID, nil); !errors.Is(err, ErrRTPHeaderExtensionNotFound) {
+		t.Fatalf("TWCC-only dependency descriptor err=%v want %v", err, ErrRTPHeaderExtensionNotFound)
 	}
-	twccPacket, err := goav1.ParseRTPPacket(twccRaw)
+	twccPacket, err := ParseRTPPacket(twccRaw)
 	if err != nil {
 		t.Fatalf("TWCC-only ParseRTPPacket: %v", err)
 	}
-	twccElement, ok, err := goav1.FindRTPHeaderExtensionElement(
+	twccElement, ok, err := FindRTPHeaderExtensionElement(
 		twccPacket.Header.ExtensionProfile, twccPacket.Header.ExtensionPayload, twccOnlyConfig.TransportWideCCExtensionID)
 	if err != nil || !ok {
 		t.Fatalf("TWCC-only extension ok=%v err=%v", ok, err)
 	}
-	twccOnly, err := goav1.ParseRTPTransportWideCCHeaderExtension(twccElement.Payload)
+	twccOnly, err := ParseRTPTransportWideCCHeaderExtension(twccElement.Payload)
 	if err != nil || twccOnly != twccOnlyConfig.TransportWideCCSequenceNumber {
 		t.Fatalf("TWCC-only sequence=%d err=%v want %d", twccOnly, err, twccOnlyConfig.TransportWideCCSequenceNumber)
 	}
@@ -4866,18 +4872,18 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 		t.Fatalf("TWCC-only dependency span=%+v", twccOnlySpans[0])
 	}
 
-	sizeInfo, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(config, rtpPayloads, descriptors, packetSpans[:packetCount])
+	sizeInfo, err := EncoderWebRTCRTPPacketsWithHeadersSize(config, rtpPayloads, descriptors, packetSpans[:packetCount])
 	if err != nil {
 		t.Fatalf("EncoderWebRTCRTPPacketsWithHeadersSize: %v", err)
 	}
 	if sizeInfo.Packets != packetCount || sizeInfo.Bytes <= len(rtpPayloads) ||
-		sizeInfo.MaxPacketBytes <= limits.MaxPayloadLen || sizeInfo.MaxHeaderBytes <= goav1.RTPHeaderMinSize {
+		sizeInfo.MaxPacketBytes <= limits.MaxPayloadLen || sizeInfo.MaxHeaderBytes <= RTPHeaderMinSize {
 		t.Fatalf("packet header size=%+v packetCount=%d payloadBytes=%d", sizeInfo, packetCount, len(rtpPayloads))
 	}
 	prefix := []byte{0xde, 0xad, 0xbe}
 	fullDst := make([]byte, len(prefix), len(prefix)+sizeInfo.Bytes)
 	copy(fullDst, prefix)
-	fullPackets, fullCount, err := goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(fullDst, headerSpans, config, rtpPayloads, descriptors, packetSpans[:packetCount])
+	fullPackets, fullCount, err := AppendEncoderWebRTCRTPPacketsWithHeaders(fullDst, headerSpans, config, rtpPayloads, descriptors, packetSpans[:packetCount])
 	if err != nil {
 		t.Fatalf("AppendEncoderWebRTCRTPPacketsWithHeaders: %v", err)
 	}
@@ -4890,7 +4896,7 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 	}
 	var allocErr error
 	sizeAllocs := testing.AllocsPerRun(50, func() {
-		_, allocErr = goav1.EncoderWebRTCRTPPacketsWithHeadersSize(config, rtpPayloads, descriptors, packetSpans[:packetCount])
+		_, allocErr = EncoderWebRTCRTPPacketsWithHeadersSize(config, rtpPayloads, descriptors, packetSpans[:packetCount])
 	})
 	if allocErr != nil {
 		t.Fatalf("EncoderWebRTCRTPPacketsWithHeadersSize alloc run: %v", allocErr)
@@ -4899,9 +4905,9 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 		t.Fatalf("EncoderWebRTCRTPPacketsWithHeadersSize allocations=%f want 0", sizeAllocs)
 	}
 	allocDst := make([]byte, 0, sizeInfo.Bytes)
-	allocHeaderSpans := make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, packetCount)
+	allocHeaderSpans := make([]EncoderWebRTCRTPPacketHeaderSpan, packetCount)
 	appendAllocs := testing.AllocsPerRun(50, func() {
-		_, _, allocErr = goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(allocDst[:0], allocHeaderSpans, config, rtpPayloads, descriptors, packetSpans[:packetCount])
+		_, _, allocErr = AppendEncoderWebRTCRTPPacketsWithHeaders(allocDst[:0], allocHeaderSpans, config, rtpPayloads, descriptors, packetSpans[:packetCount])
 	})
 	if allocErr != nil {
 		t.Fatalf("AppendEncoderWebRTCRTPPacketsWithHeaders alloc run: %v", allocErr)
@@ -4911,7 +4917,7 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 	}
 
 	payloadSlices := make([][]byte, packetCount)
-	var receiver goav1.RTPDependencyDescriptorState
+	var receiver RTPDependencyDescriptorState
 	totalPacketBytes := 0
 	for i := 0; i < packetCount; i++ {
 		span := headerSpans[i]
@@ -4921,10 +4927,10 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 		totalPacketBytes += span.Length
 		raw := fullPackets[span.Offset : span.Offset+span.Length]
 		if i == 0 {
-			if _, err := goav1.ParseRTPPacketDependencyDescriptor(raw, config.DependencyDescriptorExtensionID+1, &goav1.RTPDependencyDescriptorState{}); !errors.Is(err, goav1.ErrRTPHeaderExtensionNotFound) {
-				t.Fatalf("packet %d missing dependency descriptor err=%v want %v", i, err, goav1.ErrRTPHeaderExtensionNotFound)
+			if _, err := ParseRTPPacketDependencyDescriptor(raw, config.DependencyDescriptorExtensionID+1, &RTPDependencyDescriptorState{}); !errors.Is(err, ErrRTPHeaderExtensionNotFound) {
+				t.Fatalf("packet %d missing dependency descriptor err=%v want %v", i, err, ErrRTPHeaderExtensionNotFound)
 			}
-			parsedWithoutState, err := goav1.ParseRTPPacketDependencyDescriptor(raw, config.DependencyDescriptorExtensionID, nil)
+			parsedWithoutState, err := ParseRTPPacketDependencyDescriptor(raw, config.DependencyDescriptorExtensionID, nil)
 			if err != nil {
 				t.Fatalf("packet %d ParseRTPPacketDependencyDescriptor without state: %v", i, err)
 			}
@@ -4932,7 +4938,7 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 				t.Fatalf("packet %d descriptor without state frame=%d want %d", i, parsedWithoutState.Descriptor.Mandatory.FrameNumber, frame.FrameID)
 			}
 		}
-		descriptorPacket, err := goav1.ParseRTPPacketDependencyDescriptor(raw, config.DependencyDescriptorExtensionID, &receiver)
+		descriptorPacket, err := ParseRTPPacketDependencyDescriptor(raw, config.DependencyDescriptorExtensionID, &receiver)
 		if err != nil {
 			t.Fatalf("packet %d ParseRTPPacketDependencyDescriptor: %v", i, err)
 		}
@@ -4952,109 +4958,109 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 			span.Marker != packet.Header.Marker {
 			t.Fatalf("packet %d header span=%+v payload=%d", i, span, len(packet.Payload))
 		}
-		midElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.MIDExtensionID)
+		midElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.MIDExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d MID extension ok=%v err=%v", i, ok, err)
 		}
-		mid, err := goav1.ParseRTPMIDHeaderExtension(midElement.Payload)
+		mid, err := ParseRTPMIDHeaderExtension(midElement.Payload)
 		if err != nil || mid != config.MID {
 			t.Fatalf("packet %d MID=%q err=%v want %q", i, mid, err, config.MID)
 		}
-		ridElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.RTPStreamIDExtensionID)
+		ridElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.RTPStreamIDExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d RID extension ok=%v err=%v", i, ok, err)
 		}
-		rid, err := goav1.ParseRTPStreamIDHeaderExtension(ridElement.Payload)
+		rid, err := ParseRTPStreamIDHeaderExtension(ridElement.Payload)
 		if err != nil || rid != config.RTPStreamID {
 			t.Fatalf("packet %d RID=%q err=%v want %q", i, rid, err, config.RTPStreamID)
 		}
-		rridElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.RepairedRTPStreamIDExtensionID)
+		rridElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.RepairedRTPStreamIDExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d RRID extension ok=%v err=%v", i, ok, err)
 		}
-		rrid, err := goav1.ParseRTPRepairedStreamIDHeaderExtension(rridElement.Payload)
+		rrid, err := ParseRTPRepairedStreamIDHeaderExtension(rridElement.Payload)
 		if err != nil || rrid != config.RepairedRTPStreamID {
 			t.Fatalf("packet %d RRID=%q err=%v want %q", i, rrid, err, config.RepairedRTPStreamID)
 		}
-		twccElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.TransportWideCCExtensionID)
+		twccElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.TransportWideCCExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d TWCC extension ok=%v err=%v", i, ok, err)
 		}
-		twcc, err := goav1.ParseRTPTransportWideCCHeaderExtension(twccElement.Payload)
+		twcc, err := ParseRTPTransportWideCCHeaderExtension(twccElement.Payload)
 		if want := config.TransportWideCCSequenceNumber + uint16(i); err != nil || twcc != want {
 			t.Fatalf("packet %d TWCC=%d err=%v want %d", i, twcc, err, want)
 		}
-		twcc02Element, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.TransportWideCC02ExtensionID)
+		twcc02Element, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.TransportWideCC02ExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d TWCC02 extension ok=%v err=%v", i, ok, err)
 		}
-		twcc02, err := goav1.ParseRTPTransportWideCC02HeaderExtension(twcc02Element.Payload)
+		twcc02, err := ParseRTPTransportWideCC02HeaderExtension(twcc02Element.Payload)
 		wantTWCC02 := config.TransportWideCC02
 		wantTWCC02.SequenceNumber += uint16(i)
 		if err != nil || twcc02 != wantTWCC02 {
 			t.Fatalf("packet %d TWCC02=%+v err=%v want %+v", i, twcc02, err, wantTWCC02)
 		}
-		orientationElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.VideoOrientationExtensionID)
+		orientationElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.VideoOrientationExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d CVO extension ok=%v err=%v", i, ok, err)
 		}
-		orientation, err := goav1.ParseRTPCoordinationOfVideoOrientationHeaderExtension(orientationElement.Payload)
+		orientation, err := ParseRTPCoordinationOfVideoOrientationHeaderExtension(orientationElement.Payload)
 		if err != nil || orientation != config.VideoOrientation {
 			t.Fatalf("packet %d CVO=%+v err=%v want %+v", i, orientation, err, config.VideoOrientation)
 		}
-		playoutElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.PlayoutDelayExtensionID)
+		playoutElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.PlayoutDelayExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d playout-delay extension ok=%v err=%v", i, ok, err)
 		}
-		playout, err := goav1.ParseRTPPlayoutDelayHeaderExtension(playoutElement.Payload)
+		playout, err := ParseRTPPlayoutDelayHeaderExtension(playoutElement.Payload)
 		if err != nil || playout != config.PlayoutDelay {
 			t.Fatalf("packet %d playout-delay=%+v err=%v want %+v", i, playout, err, config.PlayoutDelay)
 		}
-		absSendElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.AbsoluteSendTimeExtensionID)
+		absSendElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.AbsoluteSendTimeExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d abs-send-time extension ok=%v err=%v", i, ok, err)
 		}
-		absSend, err := goav1.ParseRTPAbsoluteSendTimeHeaderExtension(absSendElement.Payload)
+		absSend, err := ParseRTPAbsoluteSendTimeHeaderExtension(absSendElement.Payload)
 		if err != nil || absSend != config.AbsoluteSendTime {
 			t.Fatalf("packet %d abs-send-time=%#x err=%v want %#x", i, absSend, err, config.AbsoluteSendTime)
 		}
-		absCaptureElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.AbsoluteCaptureTimeExtensionID)
+		absCaptureElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.AbsoluteCaptureTimeExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d abs-capture-time extension ok=%v err=%v", i, ok, err)
 		}
-		absCapture, err := goav1.ParseRTPAbsoluteCaptureTimeHeaderExtension(absCaptureElement.Payload)
+		absCapture, err := ParseRTPAbsoluteCaptureTimeHeaderExtension(absCaptureElement.Payload)
 		if err != nil || absCapture != config.AbsoluteCaptureTime {
 			t.Fatalf("packet %d abs-capture-time=%+v err=%v want %+v", i, absCapture, err, config.AbsoluteCaptureTime)
 		}
-		contentElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.VideoContentTypeExtensionID)
+		contentElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.VideoContentTypeExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d content-type extension ok=%v err=%v", i, ok, err)
 		}
-		contentType, err := goav1.ParseRTPVideoContentTypeHeaderExtension(contentElement.Payload)
+		contentType, err := ParseRTPVideoContentTypeHeaderExtension(contentElement.Payload)
 		if err != nil || contentType != config.VideoContentType {
 			t.Fatalf("packet %d content-type=%d err=%v want %d", i, contentType, err, config.VideoContentType)
 		}
-		timingElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.VideoTimingExtensionID)
+		timingElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.VideoTimingExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d video-timing extension ok=%v err=%v", i, ok, err)
 		}
-		timing, err := goav1.ParseRTPVideoTimingHeaderExtension(timingElement.Payload)
+		timing, err := ParseRTPVideoTimingHeaderExtension(timingElement.Payload)
 		if err != nil || timing != config.VideoTiming {
 			t.Fatalf("packet %d video-timing=%+v err=%v want %+v", i, timing, err, config.VideoTiming)
 		}
-		layersElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.VideoLayersAllocationExtensionID)
+		layersElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.VideoLayersAllocationExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d video-layers-allocation extension ok=%v err=%v", i, ok, err)
 		}
-		layers, err := goav1.ParseRTPVideoLayersAllocationHeaderExtension(layersElement.Payload)
+		layers, err := ParseRTPVideoLayersAllocationHeaderExtension(layersElement.Payload)
 		if err != nil || !sameRTPVideoLayersAllocation(layers, config.VideoLayersAllocation) {
 			t.Fatalf("packet %d video-layers-allocation=%+v err=%v want %+v", i, layers, err, config.VideoLayersAllocation)
 		}
-		colorSpaceElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.ColorSpaceExtensionID)
+		colorSpaceElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, config.ColorSpaceExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d color-space extension ok=%v err=%v", i, ok, err)
 		}
-		colorSpace, err := goav1.ParseRTPColorSpaceHeaderExtension(colorSpaceElement.Payload)
+		colorSpace, err := ParseRTPColorSpaceHeaderExtension(colorSpaceElement.Payload)
 		if err != nil || colorSpace != config.ColorSpace {
 			t.Fatalf("packet %d color-space=%+v err=%v want %+v", i, colorSpace, err, config.ColorSpace)
 		}
@@ -5077,7 +5083,7 @@ func TestPublicRTCFrameAppendRTPPacketsWithHeaders(t *testing.T) {
 
 func TestPublicRTCFrameAppendRTPPacketsActiveDecodeTargets(t *testing.T) {
 	const w, h = 192, 128
-	enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+	enc, err := NewRTCEncoder(VideoEncoderConfig{
 		Width: w, Height: h,
 		TargetBitrate: 250_000, Framerate: 30,
 		TemporalLayers: 2,
@@ -5089,7 +5095,7 @@ func TestPublicRTCFrameAppendRTPPacketsActiveDecodeTargets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 96}
 	allMask, err := frame.AllDecodeTargetsMask()
 	if err != nil {
 		t.Fatalf("AllDecodeTargetsMask: %v", err)
@@ -5104,7 +5110,7 @@ func TestPublicRTCFrameAppendRTPPacketsActiveDecodeTargets(t *testing.T) {
 	if activeMask != 0x01 {
 		t.Fatalf("active decode targets mask=%#x want 0x01", activeMask)
 	}
-	options := goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions{
+	options := EncoderWebRTCRTPPacketDependencyDescriptorOptions{
 		ActiveDecodeTargetsPresentOnFirstPacket: true,
 		ActiveDecodeTargetsMask:                 activeMask,
 	}
@@ -5112,19 +5118,19 @@ func TestPublicRTCFrameAppendRTPPacketsActiveDecodeTargets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RTPPacketScratchLenWithOptions first: %v", err)
 	}
-	obuScratch := make([]goav1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
+	obuScratch := make([]RTPPacketizerOBU, firstSize.Packetizer.OBUs)
 	size, err := frame.RTPPacketScratchLenWithOptions(limits, obuScratch, options)
 	if err != nil {
 		t.Fatalf("RTPPacketScratchLenWithOptions full: %v", err)
 	}
-	if size.Packetizer.Packets <= 1 || size.MaxDescriptorBytes <= goav1.RTPDependencyDescriptorMandatorySize {
+	if size.Packetizer.Packets <= 1 || size.MaxDescriptorBytes <= RTPDependencyDescriptorMandatorySize {
 		t.Fatalf("scratch=%+v want fragmented frame and extended first descriptor", size)
 	}
-	packetScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Packets)
-	workScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Work)
+	packetScratch := make([]RTPPacketPlan, size.Packetizer.Packets)
+	workScratch := make([]RTPPacketPlan, size.Packetizer.Work)
 	payloadBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxPayloadBytes)
 	descriptorBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxDescriptorBytes)
-	spans := make([]goav1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
+	spans := make([]EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
 	rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPacketsWithOptions(payloadBuf, descriptorBuf, spans, limits, obuScratch, packetScratch, workScratch, options)
 	if err != nil {
 		t.Fatalf("AppendRTPPacketsWithOptions: %v", err)
@@ -5133,7 +5139,7 @@ func TestPublicRTCFrameAppendRTPPacketsActiveDecodeTargets(t *testing.T) {
 		t.Fatalf("packet count=%d want %d", packetCount, size.Packetizer.Packets)
 	}
 	payloadSlices := make([][]byte, packetCount)
-	var receiver goav1.RTPDependencyDescriptorState
+	var receiver RTPDependencyDescriptorState
 	for i := 0; i < packetCount; i++ {
 		span := spans[i]
 		payloadSlices[i] = rtpPayloads[span.PayloadOffset : span.PayloadOffset+span.PayloadLength]
@@ -5163,8 +5169,8 @@ func TestPublicRTCFrameAppendRTPPacketsActiveDecodeTargets(t *testing.T) {
 }
 
 func TestPublicRTCPictureActiveDecodeTargetsControlMatrix(t *testing.T) {
-	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}
-	fps := []goav1.EncoderRational{
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 48}
+	fps := []EncoderRational{
 		{Num: 30, Den: 1},
 		{Num: 60, Den: 1},
 		{Num: 30000, Den: 1001},
@@ -5172,27 +5178,27 @@ func TestPublicRTCPictureActiveDecodeTargetsControlMatrix(t *testing.T) {
 		{Num: 120, Den: 1},
 	}
 
-	if _, err := (goav1.RTCPicture{}).AllDecodeTargetsMask(); !errors.Is(err, goav1.ErrEncoderInvalidFrame) {
-		t.Fatalf("empty picture AllDecodeTargetsMask err=%v want %v", err, goav1.ErrEncoderInvalidFrame)
+	if _, err := (RTCPicture{}).AllDecodeTargetsMask(); !errors.Is(err, ErrEncoderInvalidFrame) {
+		t.Fatalf("empty picture AllDecodeTargetsMask err=%v want %v", err, ErrEncoderInvalidFrame)
 	}
-	if _, err := (goav1.RTCPicture{}).ActiveDecodeTargetsRTPOptions(0, 0); !errors.Is(err, goav1.ErrEncoderInvalidFrame) {
-		t.Fatalf("empty picture ActiveDecodeTargetsRTPOptions err=%v want %v", err, goav1.ErrEncoderInvalidFrame)
+	if _, err := (RTCPicture{}).ActiveDecodeTargetsRTPOptions(0, 0); !errors.Is(err, ErrEncoderInvalidFrame) {
+		t.Fatalf("empty picture ActiveDecodeTargetsRTPOptions err=%v want %v", err, ErrEncoderInvalidFrame)
 	}
 
-	for step, mode := range goav1.EncoderWebRTCScalabilityModes() {
+	for step, mode := range EncoderWebRTCScalabilityModes() {
 		mode := mode
 		t.Run(mode.String(), func(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, mode)
 			cfg := publicRTCMatrixConfig(width, height, mode)
 			cfg.MaxFramerate = fps[step%len(fps)]
 			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*19))
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 			}
 			defer enc.Close()
 
-			var receiver goav1.RTPDependencyDescriptorState
+			var receiver RTPDependencyDescriptorState
 			key, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 0), false)
 			if err != nil {
 				t.Fatalf("key EncodePicture(%s): %v", mode, err)
@@ -5216,14 +5222,14 @@ func TestPublicRTCPictureActiveDecodeTargetsControlMatrix(t *testing.T) {
 }
 
 func TestPublicEncoderWebRTCVideoLayersAllocationControlMatrix(t *testing.T) {
-	fps := []goav1.EncoderRational{
+	fps := []EncoderRational{
 		{Num: 30, Den: 1},
 		{Num: 60000, Den: 1001},
 		{Num: 24, Den: 1},
 		{Num: 120, Den: 1},
 	}
 
-	for step, mode := range goav1.EncoderWebRTCScalabilityModes() {
+	for step, mode := range EncoderWebRTCScalabilityModes() {
 		mode := mode
 		t.Run(mode.String(), func(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, mode)
@@ -5231,14 +5237,14 @@ func TestPublicEncoderWebRTCVideoLayersAllocationControlMatrix(t *testing.T) {
 			cfg.MaxFramerate = fps[step%len(fps)]
 			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*13))
 
-			normalized, err := goav1.SetWebRTCEncoderSVCConfig(cfg, cfg.TemporalLayerCount, cfg.SpatialLayerCount)
+			normalized, err := SetWebRTCEncoderSVCConfig(cfg, cfg.TemporalLayerCount, cfg.SpatialLayerCount)
 			if err != nil {
 				t.Fatalf("SetWebRTCEncoderSVCConfig(%s): %v", mode, err)
 			}
 
 			spatialLayers := int(normalized.SpatialLayerCount)
 			temporalLayers := int(normalized.TemporalLayerCount)
-			allocationConfig := goav1.EncoderWebRTCVideoLayersAllocationConfig{
+			allocationConfig := encoderWebRTCVideoLayersAllocationConfig{
 				IncludeResolutionAndFramerate: true,
 			}
 			if spatialLayers > 1 && step%2 == 1 {
@@ -5250,7 +5256,7 @@ func TestPublicEncoderWebRTCVideoLayersAllocationControlMatrix(t *testing.T) {
 			}
 			publicRTCSetAllocationTargetBitrates(&allocationConfig, spatialLayers, temporalLayers, uint32(200+step*7))
 
-			allocation, err := goav1.EncoderWebRTCVideoLayersAllocation(cfg, allocationConfig)
+			allocation, err := encoderWebRTCVideoLayersAllocation(cfg, allocationConfig)
 			if err != nil {
 				t.Fatalf("EncoderWebRTCVideoLayersAllocation(%s): %v", mode, err)
 			}
@@ -5258,19 +5264,19 @@ func TestPublicEncoderWebRTCVideoLayersAllocationControlMatrix(t *testing.T) {
 			if !sameRTPVideoLayersAllocation(allocation, want) {
 				t.Fatalf("allocation=%+v want %+v", allocation, want)
 			}
-			size, err := goav1.RTPVideoLayersAllocationSize(allocation)
+			size, err := RTPVideoLayersAllocationSize(allocation)
 			if err != nil {
 				t.Fatalf("RTPVideoLayersAllocationSize(%s): %v", mode, err)
 			}
 			buf := make([]byte, size)
-			n, err := goav1.PutRTPVideoLayersAllocationHeaderExtension(buf, allocation)
+			n, err := PutRTPVideoLayersAllocationHeaderExtension(buf, allocation)
 			if err != nil {
 				t.Fatalf("PutRTPVideoLayersAllocationHeaderExtension(%s): %v", mode, err)
 			}
 			if n != size {
 				t.Fatalf("PutRTPVideoLayersAllocationHeaderExtension(%s) n=%d want %d", mode, n, size)
 			}
-			parsed, err := goav1.ParseRTPVideoLayersAllocationHeaderExtension(buf)
+			parsed, err := ParseRTPVideoLayersAllocationHeaderExtension(buf)
 			if err != nil {
 				t.Fatalf("ParseRTPVideoLayersAllocationHeaderExtension(%s): %v", mode, err)
 			}
@@ -5282,22 +5288,22 @@ func TestPublicEncoderWebRTCVideoLayersAllocationControlMatrix(t *testing.T) {
 }
 
 func TestPublicEncoderWebRTCVideoLayersAllocationDefaultsMasksAndErrors(t *testing.T) {
-	t1Config := publicRTCMatrixConfig(640, 360, goav1.EncoderScalabilityModeL2T1)
+	t1Config := publicRTCMatrixConfig(640, 360, internalencoder.ScalabilityModeL2T1)
 	publicRTCApplyControlBitrates(&t1Config, 900)
-	normalizedT1, err := goav1.SetWebRTCEncoderSVCConfig(t1Config, 0, 0)
+	normalizedT1, err := SetWebRTCEncoderSVCConfig(t1Config, 0, 0)
 	if err != nil {
 		t.Fatalf("SetWebRTCEncoderSVCConfig L2T1: %v", err)
 	}
-	allocation, err := goav1.EncoderWebRTCVideoLayersAllocation(t1Config, goav1.EncoderWebRTCVideoLayersAllocationConfig{})
+	allocation, err := encoderWebRTCVideoLayersAllocation(t1Config, encoderWebRTCVideoLayersAllocationConfig{})
 	if err != nil {
 		t.Fatalf("default EncoderWebRTCVideoLayersAllocation: %v", err)
 	}
-	wantDefault := publicRTCExpectedVideoLayersAllocation(t, normalizedT1, goav1.EncoderWebRTCVideoLayersAllocationConfig{})
+	wantDefault := publicRTCExpectedVideoLayersAllocation(t, normalizedT1, encoderWebRTCVideoLayersAllocationConfig{})
 	if !sameRTPVideoLayersAllocation(allocation, wantDefault) {
 		t.Fatalf("default allocation=%+v want %+v", allocation, wantDefault)
 	}
 
-	paused, err := goav1.EncoderWebRTCVideoLayersAllocation(t1Config, goav1.EncoderWebRTCVideoLayersAllocationConfig{
+	paused, err := encoderWebRTCVideoLayersAllocation(t1Config, encoderWebRTCVideoLayersAllocationConfig{
 		ActiveSpatialLayerMaskSet: true,
 	})
 	if err != nil {
@@ -5306,19 +5312,19 @@ func TestPublicEncoderWebRTCVideoLayersAllocationDefaultsMasksAndErrors(t *testi
 	if paused.RTPStreamCount != 1 || len(paused.ActiveSpatialLayers) != 0 {
 		t.Fatalf("paused allocation=%+v", paused)
 	}
-	pausedSize, err := goav1.RTPVideoLayersAllocationSize(paused)
+	pausedSize, err := RTPVideoLayersAllocationSize(paused)
 	if err != nil || pausedSize != 1 {
 		t.Fatalf("paused size=%d err=%v want 1,nil", pausedSize, err)
 	}
 
-	subsetConfig := publicRTCMatrixConfig(960, 540, goav1.EncoderScalabilityModeL3T2)
-	subsetOptions := goav1.EncoderWebRTCVideoLayersAllocationConfig{
+	subsetConfig := publicRTCMatrixConfig(960, 540, internalencoder.ScalabilityModeL3T2)
+	subsetOptions := encoderWebRTCVideoLayersAllocationConfig{
 		ActiveSpatialLayerMaskSet:     true,
 		ActiveSpatialLayerMask:        0b101,
 		IncludeResolutionAndFramerate: true,
 	}
 	publicRTCSetAllocationTargetBitrates(&subsetOptions, 3, 2, 300)
-	subset, err := goav1.EncoderWebRTCVideoLayersAllocation(subsetConfig, subsetOptions)
+	subset, err := encoderWebRTCVideoLayersAllocation(subsetConfig, subsetOptions)
 	if err != nil {
 		t.Fatalf("subset EncoderWebRTCVideoLayersAllocation: %v", err)
 	}
@@ -5328,67 +5334,67 @@ func TestPublicEncoderWebRTCVideoLayersAllocationDefaultsMasksAndErrors(t *testi
 		t.Fatalf("subset allocation=%+v", subset)
 	}
 
-	missingTemporalTargets := publicRTCMatrixConfig(640, 360, goav1.EncoderScalabilityModeL1T2)
-	if _, err := goav1.EncoderWebRTCVideoLayersAllocation(missingTemporalTargets, goav1.EncoderWebRTCVideoLayersAllocationConfig{}); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
-		t.Fatalf("missing temporal target err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	missingTemporalTargets := publicRTCMatrixConfig(640, 360, EncoderScalabilityModeL1T2)
+	if _, err := encoderWebRTCVideoLayersAllocation(missingTemporalTargets, encoderWebRTCVideoLayersAllocationConfig{}); !errors.Is(err, internalencoder.ErrInvalidConfig) {
+		t.Fatalf("missing temporal target err=%v want %v", err, internalencoder.ErrInvalidConfig)
 	}
-	decreasing := goav1.EncoderWebRTCVideoLayersAllocationConfig{}
+	decreasing := encoderWebRTCVideoLayersAllocationConfig{}
 	decreasing.TargetBitratesKbps[0][0] = 600
 	decreasing.TargetBitratesKbps[0][1] = 500
-	if _, err := goav1.EncoderWebRTCVideoLayersAllocation(missingTemporalTargets, decreasing); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
-		t.Fatalf("decreasing temporal target err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	if _, err := encoderWebRTCVideoLayersAllocation(missingTemporalTargets, decreasing); !errors.Is(err, internalencoder.ErrInvalidConfig) {
+		t.Fatalf("decreasing temporal target err=%v want %v", err, internalencoder.ErrInvalidConfig)
 	}
-	badStream := goav1.EncoderWebRTCVideoLayersAllocationConfig{RTPStreamCount: 2, RTPStreamID: 2}
-	if _, err := goav1.EncoderWebRTCVideoLayersAllocation(t1Config, badStream); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
-		t.Fatalf("bad stream id err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	badStream := encoderWebRTCVideoLayersAllocationConfig{RTPStreamCount: 2, RTPStreamID: 2}
+	if _, err := encoderWebRTCVideoLayersAllocation(t1Config, badStream); !errors.Is(err, internalencoder.ErrInvalidConfig) {
+		t.Fatalf("bad stream id err=%v want %v", err, internalencoder.ErrInvalidConfig)
 	}
-	badLayerStream := goav1.EncoderWebRTCVideoLayersAllocationConfig{RTPStreamCount: 2}
+	badLayerStream := encoderWebRTCVideoLayersAllocationConfig{RTPStreamCount: 2}
 	badLayerStream.SpatialLayerRTPStreamIDs[1] = 2
-	if _, err := goav1.EncoderWebRTCVideoLayersAllocation(t1Config, badLayerStream); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
-		t.Fatalf("bad layer stream id err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	if _, err := encoderWebRTCVideoLayersAllocation(t1Config, badLayerStream); !errors.Is(err, internalencoder.ErrInvalidConfig) {
+		t.Fatalf("bad layer stream id err=%v want %v", err, internalencoder.ErrInvalidConfig)
 	}
-	if _, err := goav1.EncoderWebRTCVideoLayersAllocation(t1Config, goav1.EncoderWebRTCVideoLayersAllocationConfig{
+	if _, err := encoderWebRTCVideoLayersAllocation(t1Config, encoderWebRTCVideoLayersAllocationConfig{
 		ActiveSpatialLayerMaskSet: true,
 		ActiveSpatialLayerMask:    0b100,
-	}); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
-		t.Fatalf("bad active spatial mask err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	}); !errors.Is(err, internalencoder.ErrInvalidConfig) {
+		t.Fatalf("bad active spatial mask err=%v want %v", err, internalencoder.ErrInvalidConfig)
 	}
-	if _, err := goav1.EncoderWebRTCVideoLayersAllocation(t1Config, goav1.EncoderWebRTCVideoLayersAllocationConfig{
+	if _, err := encoderWebRTCVideoLayersAllocation(t1Config, encoderWebRTCVideoLayersAllocationConfig{
 		RTPStreamCount:            2,
 		ActiveSpatialLayerMaskSet: true,
-	}); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
-		t.Fatalf("paused multi-stream err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	}); !errors.Is(err, internalencoder.ErrInvalidConfig) {
+		t.Fatalf("paused multi-stream err=%v want %v", err, internalencoder.ErrInvalidConfig)
 	}
 	highFPS := t1Config
-	highFPS.MaxFramerate = goav1.EncoderRational{Num: 300, Den: 1}
-	if _, err := goav1.EncoderWebRTCVideoLayersAllocation(highFPS, goav1.EncoderWebRTCVideoLayersAllocationConfig{
+	highFPS.MaxFramerate = EncoderRational{Num: 300, Den: 1}
+	if _, err := encoderWebRTCVideoLayersAllocation(highFPS, encoderWebRTCVideoLayersAllocationConfig{
 		IncludeResolutionAndFramerate: true,
-	}); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
-		t.Fatalf("high fps err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	}); !errors.Is(err, internalencoder.ErrInvalidConfig) {
+		t.Fatalf("high fps err=%v want %v", err, internalencoder.ErrInvalidConfig)
 	}
 }
 
 func TestPublicEncoderWebRTCVideoLayersAllocationIntoScratchAndRTPHeaders(t *testing.T) {
-	mode := goav1.EncoderScalabilityModeL3T3_KEY_SHIFT
+	mode := EncoderScalabilityModeL3T3_KEY_SHIFT
 	width, height := publicRTCMatrixGeometry(t, mode)
 	cfg := publicRTCMatrixConfig(width, height, mode)
-	cfg.MaxFramerate = goav1.EncoderRational{Num: 60000, Den: 1001}
+	cfg.MaxFramerate = EncoderRational{Num: 60000, Den: 1001}
 	publicRTCApplyControlBitrates(&cfg, 1500)
-	normalized, err := goav1.SetWebRTCEncoderSVCConfig(cfg, cfg.TemporalLayerCount, cfg.SpatialLayerCount)
+	normalized, err := SetWebRTCEncoderSVCConfig(cfg, cfg.TemporalLayerCount, cfg.SpatialLayerCount)
 	if err != nil {
 		t.Fatalf("SetWebRTCEncoderSVCConfig(%s): %v", mode, err)
 	}
 
-	allocationConfig := goav1.EncoderWebRTCVideoLayersAllocationConfig{
+	allocationConfig := encoderWebRTCVideoLayersAllocationConfig{
 		IncludeResolutionAndFramerate: true,
 	}
 	publicRTCSetAllocationTargetBitrates(&allocationConfig, int(normalized.SpatialLayerCount), int(normalized.TemporalLayerCount), 420)
-	var scratch goav1.EncoderWebRTCVideoLayersAllocationScratch
-	allocation, err := goav1.EncoderWebRTCVideoLayersAllocationInto(cfg, allocationConfig, &scratch)
+	var scratch encoderWebRTCVideoLayersAllocationScratch
+	allocation, err := encoderWebRTCVideoLayersAllocationInto(cfg, allocationConfig, &scratch)
 	if err != nil {
 		t.Fatalf("EncoderWebRTCVideoLayersAllocationInto: %v", err)
 	}
-	want, err := goav1.EncoderWebRTCVideoLayersAllocation(cfg, allocationConfig)
+	want, err := encoderWebRTCVideoLayersAllocation(cfg, allocationConfig)
 	if err != nil {
 		t.Fatalf("EncoderWebRTCVideoLayersAllocation: %v", err)
 	}
@@ -5400,13 +5406,13 @@ func TestPublicEncoderWebRTCVideoLayersAllocationIntoScratchAndRTPHeaders(t *tes
 		&allocation.ActiveSpatialLayers[0].TargetBitratesKbps[0] != &scratch.TargetBitratesKbps[0][0] {
 		t.Fatalf("allocation does not alias caller scratch: %+v", allocation)
 	}
-	if _, err := goav1.EncoderWebRTCVideoLayersAllocationInto(cfg, allocationConfig, nil); !errors.Is(err, goav1.ErrEncoderInvalidConfig) {
-		t.Fatalf("nil scratch err=%v want %v", err, goav1.ErrEncoderInvalidConfig)
+	if _, err := encoderWebRTCVideoLayersAllocationInto(cfg, allocationConfig, nil); !errors.Is(err, internalencoder.ErrInvalidConfig) {
+		t.Fatalf("nil scratch err=%v want %v", err, internalencoder.ErrInvalidConfig)
 	}
 
 	var allocErr error
 	allocs := testing.AllocsPerRun(100, func() {
-		_, allocErr = goav1.EncoderWebRTCVideoLayersAllocationInto(cfg, allocationConfig, &scratch)
+		_, allocErr = encoderWebRTCVideoLayersAllocationInto(cfg, allocationConfig, &scratch)
 	})
 	if allocErr != nil {
 		t.Fatalf("allocation scratch alloc run: %v", allocErr)
@@ -5415,7 +5421,7 @@ func TestPublicEncoderWebRTCVideoLayersAllocationIntoScratchAndRTPHeaders(t *tes
 		t.Fatalf("EncoderWebRTCVideoLayersAllocationInto allocations=%f want 0", allocs)
 	}
 
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
@@ -5432,26 +5438,26 @@ func TestPublicEncoderWebRTCVideoLayersAllocationIntoScratchAndRTPHeaders(t *tes
 		t.Fatalf("ActiveDecodeTargetsRTPOptions: %v", err)
 	}
 	frame := picture.Frames[0]
-	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 96}
 	firstSize, err := frame.RTPPacketScratchLenWithOptions(limits, nil, options)
 	if err != nil {
 		t.Fatalf("RTPPacketScratchLenWithOptions first: %v", err)
 	}
-	obuScratch := make([]goav1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
+	obuScratch := make([]RTPPacketizerOBU, firstSize.Packetizer.OBUs)
 	size, err := frame.RTPPacketScratchLenWithOptions(limits, obuScratch, options)
 	if err != nil {
 		t.Fatalf("RTPPacketScratchLenWithOptions full: %v", err)
 	}
-	packetScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Packets)
-	workScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Work)
+	packetScratch := make([]RTPPacketPlan, size.Packetizer.Packets)
+	workScratch := make([]RTPPacketPlan, size.Packetizer.Work)
 	payloadBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxPayloadBytes)
 	descriptorBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxDescriptorBytes)
-	packetSpans := make([]goav1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
+	packetSpans := make([]EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
 	rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPacketsWithOptions(payloadBuf, descriptorBuf, packetSpans, limits, obuScratch, packetScratch, workScratch, options)
 	if err != nil {
 		t.Fatalf("AppendRTPPacketsWithOptions: %v", err)
 	}
-	headerConfig := goav1.EncoderWebRTCRTPPacketHeaderConfig{
+	headerConfig := EncoderWebRTCRTPPacketHeaderConfig{
 		PayloadType:                      96,
 		SequenceNumber:                   0x2100,
 		Timestamp:                        0x11223344,
@@ -5460,12 +5466,12 @@ func TestPublicEncoderWebRTCVideoLayersAllocationIntoScratchAndRTPHeaders(t *tes
 		VideoLayersAllocationExtensionID: 5,
 		VideoLayersAllocation:            allocation,
 	}
-	packetSize, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(headerConfig, rtpPayloads, descriptors, packetSpans[:packetCount])
+	packetSize, err := EncoderWebRTCRTPPacketsWithHeadersSize(headerConfig, rtpPayloads, descriptors, packetSpans[:packetCount])
 	if err != nil {
 		t.Fatalf("EncoderWebRTCRTPPacketsWithHeadersSize: %v", err)
 	}
-	headerSpans := make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, packetCount)
-	fullPackets, fullCount, err := goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(make([]byte, 0, packetSize.Bytes), headerSpans, headerConfig, rtpPayloads, descriptors, packetSpans[:packetCount])
+	headerSpans := make([]EncoderWebRTCRTPPacketHeaderSpan, packetCount)
+	fullPackets, fullCount, err := AppendEncoderWebRTCRTPPacketsWithHeaders(make([]byte, 0, packetSize.Bytes), headerSpans, headerConfig, rtpPayloads, descriptors, packetSpans[:packetCount])
 	if err != nil {
 		t.Fatalf("AppendEncoderWebRTCRTPPacketsWithHeaders: %v", err)
 	}
@@ -5473,20 +5479,20 @@ func TestPublicEncoderWebRTCVideoLayersAllocationIntoScratchAndRTPHeaders(t *tes
 		t.Fatalf("full packet count=%d want %d", fullCount, packetCount)
 	}
 
-	var receiver goav1.RTPDependencyDescriptorState
+	var receiver RTPDependencyDescriptorState
 	raw := fullPackets[headerSpans[0].Offset : headerSpans[0].Offset+headerSpans[0].Length]
-	descriptorPacket, err := goav1.ParseRTPPacketDependencyDescriptor(raw, headerConfig.DependencyDescriptorExtensionID, &receiver)
+	descriptorPacket, err := ParseRTPPacketDependencyDescriptor(raw, headerConfig.DependencyDescriptorExtensionID, &receiver)
 	if err != nil {
 		t.Fatalf("ParseRTPPacketDependencyDescriptor: %v", err)
 	}
 	if !descriptorPacket.Descriptor.HasActiveDecodeTargets || descriptorPacket.Descriptor.ActiveDecodeTargetsMask != options.ActiveDecodeTargetsMask {
 		t.Fatalf("active decode targets=%v/%#x want true/%#x", descriptorPacket.Descriptor.HasActiveDecodeTargets, descriptorPacket.Descriptor.ActiveDecodeTargetsMask, options.ActiveDecodeTargetsMask)
 	}
-	element, ok, err := goav1.FindRTPHeaderExtensionElement(descriptorPacket.Packet.Header.ExtensionProfile, descriptorPacket.Packet.Header.ExtensionPayload, headerConfig.VideoLayersAllocationExtensionID)
+	element, ok, err := FindRTPHeaderExtensionElement(descriptorPacket.Packet.Header.ExtensionProfile, descriptorPacket.Packet.Header.ExtensionPayload, headerConfig.VideoLayersAllocationExtensionID)
 	if err != nil || !ok {
 		t.Fatalf("video-layers-allocation extension ok=%v err=%v", ok, err)
 	}
-	parsed, err := goav1.ParseRTPVideoLayersAllocationHeaderExtension(element.Payload)
+	parsed, err := ParseRTPVideoLayersAllocationHeaderExtension(element.Payload)
 	if err != nil || !sameRTPVideoLayersAllocation(parsed, allocation) {
 		t.Fatalf("parsed allocation=%+v err=%v want %+v", parsed, err, allocation)
 	}
@@ -5494,18 +5500,18 @@ func TestPublicEncoderWebRTCVideoLayersAllocationIntoScratchAndRTPHeaders(t *tes
 
 func TestPublicLayeredDecoderRTPPacketDecodeTargetSelection(t *testing.T) {
 	const dependencyDescriptorExtensionID = 42
-	if _, err := goav1.RTPDependencyDescriptorDecodeTargetActive(goav1.RTPDependencyDescriptorState{}, 0); !errors.Is(err, goav1.ErrRTPInvalidDependencyDescriptor) {
-		t.Fatalf("empty RTPDependencyDescriptorDecodeTargetActive err=%v want %v", err, goav1.ErrRTPInvalidDependencyDescriptor)
+	if _, err := RTPDependencyDescriptorDecodeTargetActive(RTPDependencyDescriptorState{}, 0); !errors.Is(err, ErrRTPInvalidDependencyDescriptor) {
+		t.Fatalf("empty RTPDependencyDescriptorDecodeTargetActive err=%v want %v", err, ErrRTPInvalidDependencyDescriptor)
 	}
 
-	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 32}
-	fps := []goav1.EncoderRational{
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 32}
+	fps := []EncoderRational{
 		{Num: 30, Den: 1},
 		{Num: 60, Den: 1},
 		{Num: 30000, Den: 1001},
 		{Num: 24, Den: 1},
 	}
-	for step, mode := range goav1.EncoderWebRTCScalabilityModes() {
+	for step, mode := range EncoderWebRTCScalabilityModes() {
 		mode := mode
 		t.Run(mode.String(), func(t *testing.T) {
 			spatialLayers, temporalLayers, _, ok := mode.Layers()
@@ -5516,13 +5522,13 @@ func TestPublicLayeredDecoderRTPPacketDecodeTargetSelection(t *testing.T) {
 			cfg := publicRTCMatrixConfig(width, height, mode)
 			cfg.MaxFramerate = fps[step%len(fps)]
 			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*11))
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 			}
 			defer enc.Close()
 
-			var receiver goav1.RTPDependencyDescriptorState
+			var receiver RTPDependencyDescriptorState
 			var selectedPackets [][]byte
 			var selectedLowOverheads [][]byte
 			var wantMetadata []publicLayeredFrameMetadata
@@ -5563,7 +5569,7 @@ func TestPublicLayeredDecoderRTPPacketDecodeTargetSelection(t *testing.T) {
 					}
 					framePackets := publicDecoderRTPPacketsForFrameWithLimitsAndOptions(t, frame, limits, options)
 					for packetIndex, packet := range framePackets {
-						parsed, err := goav1.ParseRTPPacketDependencyDescriptor(packet, dependencyDescriptorExtensionID, &receiver)
+						parsed, err := ParseRTPPacketDependencyDescriptor(packet, dependencyDescriptorExtensionID, &receiver)
 						if err != nil {
 							t.Fatalf("%s picture %d output %d packet %d ParseRTPPacketDependencyDescriptor: %v", mode, frameIndex, outputIndex, packetIndex, err)
 						}
@@ -5577,7 +5583,7 @@ func TestPublicLayeredDecoderRTPPacketDecodeTargetSelection(t *testing.T) {
 								t.Fatalf("%s picture %d output %d first descriptor=%+v want active mask %#x", mode, frameIndex, outputIndex, descriptor, wantActiveMask)
 							}
 						}
-						active, err := goav1.RTPDependencyDescriptorDecodeTargetActive(receiver, 0)
+						active, err := RTPDependencyDescriptorDecodeTargetActive(receiver, 0)
 						if err != nil {
 							t.Fatalf("%s picture %d output %d packet %d DecodeTargetActive: %v", mode, frameIndex, outputIndex, packetIndex, err)
 						}
@@ -5585,14 +5591,14 @@ func TestPublicLayeredDecoderRTPPacketDecodeTargetSelection(t *testing.T) {
 							t.Fatalf("%s picture %d output %d packet %d target 0 unexpectedly inactive", mode, frameIndex, outputIndex, packetIndex)
 						}
 						if spatialLayers*temporalLayers > 1 {
-							inactive, err := goav1.RTPDependencyDescriptorDecodeTargetActive(receiver, 1)
+							inactive, err := RTPDependencyDescriptorDecodeTargetActive(receiver, 1)
 							if err != nil {
 								t.Fatalf("%s picture %d output %d packet %d DecodeTargetActive(target 1): %v", mode, frameIndex, outputIndex, packetIndex, err)
 							}
 							if inactive {
 								t.Fatalf("%s picture %d output %d packet %d target 1 unexpectedly active under mask %#x", mode, frameIndex, outputIndex, packetIndex, wantActiveMask)
 							}
-							inactiveForward, err := goav1.RTPDependencyDescriptorFrameForwardedForDecodeTarget(descriptor, receiver, 1)
+							inactiveForward, err := RTPDependencyDescriptorFrameForwardedForDecodeTarget(descriptor, receiver, 1)
 							if err != nil {
 								t.Fatalf("%s picture %d output %d packet %d FrameForwardedForDecodeTarget(target 1): %v", mode, frameIndex, outputIndex, packetIndex, err)
 							}
@@ -5600,16 +5606,16 @@ func TestPublicLayeredDecoderRTPPacketDecodeTargetSelection(t *testing.T) {
 								t.Fatalf("%s picture %d output %d packet %d target 1 unexpectedly forwarded under mask %#x", mode, frameIndex, outputIndex, packetIndex, wantActiveMask)
 							}
 						}
-						matches, err := goav1.RTPDependencyDescriptorFrameMatchesDecodeTarget(descriptor, 0)
+						matches, err := RTPDependencyDescriptorFrameMatchesDecodeTarget(descriptor, 0)
 						if err != nil {
 							t.Fatalf("%s picture %d output %d packet %d FrameMatchesDecodeTarget: %v", mode, frameIndex, outputIndex, packetIndex, err)
 						}
-						forward, err := goav1.RTPDependencyDescriptorFrameForwardedForDecodeTarget(descriptor, receiver, 0)
+						forward, err := RTPDependencyDescriptorFrameForwardedForDecodeTarget(descriptor, receiver, 0)
 						if err != nil {
 							t.Fatalf("%s picture %d output %d packet %d FrameForwardedForDecodeTarget: %v", mode, frameIndex, outputIndex, packetIndex, err)
 						}
 						if matches != wantForward || forward != wantForward {
-							dti, _ := goav1.RTPDependencyDescriptorFrameDecodeTargetIndication(descriptor, 0)
+							dti, _ := RTPDependencyDescriptorFrameDecodeTargetIndication(descriptor, 0)
 							t.Fatalf("%s picture %d output %d packet %d target0 matches/forward=%v/%v want %v dti=%d deps=%+v",
 								mode, frameIndex, outputIndex, packetIndex, matches, forward, wantForward, dti, descriptor.FrameDependencies)
 						}
@@ -5650,13 +5656,13 @@ func TestPublicLayeredDecoderRTPPacketDecodeTargetSelection(t *testing.T) {
 
 func TestPublicRTCFrameAppendRTPPacketsSpatialPicture(t *testing.T) {
 	const w, h = 640, 360
-	enc, err := goav1.NewRTCEncoderWithConfig(goav1.EncoderConfig{
-		Resolution:        goav1.EncoderResolution{Width: w, Height: h},
-		MaxFramerate:      goav1.EncoderRational{Num: 30, Den: 1},
+	enc, err := NewRTCEncoderWithConfig(EncoderConfig{
+		Resolution:        EncoderResolution{Width: w, Height: h},
+		MaxFramerate:      EncoderRational{Num: 30, Den: 1},
 		MinBitrateKbps:    200,
 		MaxBitrateKbps:    900,
 		TargetBitrateKbps: 600,
-		Scalability:       goav1.EncoderScalabilityModeL2T2_KEY_SHIFT,
+		Scalability:       internalencoder.ScalabilityModeL2T2_KEY_SHIFT,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -5673,8 +5679,8 @@ func TestPublicRTCFrameAppendRTPPacketsSpatialPicture(t *testing.T) {
 		t.Fatalf("picture frame coding/position metadata = %+v %+v", picture.Frames[0], picture.Frames[1])
 	}
 
-	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
-	var receiver goav1.RTPDependencyDescriptorState
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 96}
+	var receiver RTPDependencyDescriptorState
 	for i := 0; i < picture.FrameNum; i++ {
 		wantAttached := i == 0
 		wantNewCodedVideoSequence := i == 0
@@ -5686,19 +5692,19 @@ func TestPublicRTCFrameAppendRTPPacketsSpatialPicture(t *testing.T) {
 func TestPublicRTCEncoderEncodePictureKeyShiftSpatial(t *testing.T) {
 	const w, h = 640, 360
 	cw, ch := w/2, h/2
-	enc, err := goav1.NewRTCEncoderWithConfig(goav1.EncoderConfig{
-		Resolution:        goav1.EncoderResolution{Width: w, Height: h},
-		MaxFramerate:      goav1.EncoderRational{Num: 30, Den: 1},
+	enc, err := NewRTCEncoderWithConfig(EncoderConfig{
+		Resolution:        EncoderResolution{Width: w, Height: h},
+		MaxFramerate:      EncoderRational{Num: 30, Den: 1},
 		MinBitrateKbps:    200,
 		MaxBitrateKbps:    900,
 		TargetBitrateKbps: 600,
-		Scalability:       goav1.EncoderScalabilityModeL2T2_KEY_SHIFT,
+		Scalability:       internalencoder.ScalabilityModeL2T2_KEY_SHIFT,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	makeFrame := func(n int) goav1.I420Frame {
-		f := goav1.I420Frame{
+	makeFrame := func(n int) I420Frame {
+		f := I420Frame{
 			Y: make([]byte, w*h), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
 			YStride: w, ChromaStride: cw, Width: w, Height: h,
 		}
@@ -5763,64 +5769,64 @@ func TestPublicRTCEncoderSupportsWebRTCPixelModeMatrix(t *testing.T) {
 		name   string
 		width  int
 		height int
-		modes  []goav1.EncoderScalabilityMode
+		modes  []EncoderScalabilityMode
 	}{
 		{
 			name:   "single-spatial",
 			width:  192,
 			height: 128,
-			modes: []goav1.EncoderScalabilityMode{
-				goav1.EncoderScalabilityModeL1T1,
-				goav1.EncoderScalabilityModeL1T2,
-				goav1.EncoderScalabilityModeL1T3,
+			modes: []EncoderScalabilityMode{
+				EncoderScalabilityModeL1T1,
+				EncoderScalabilityModeL1T2,
+				EncoderScalabilityModeL1T3,
 			},
 		},
 		{
 			name:   "two-spatial",
 			width:  640,
 			height: 360,
-			modes: []goav1.EncoderScalabilityMode{
-				goav1.EncoderScalabilityModeL2T1,
-				goav1.EncoderScalabilityModeL2T1h,
-				goav1.EncoderScalabilityModeL2T1_KEY,
-				goav1.EncoderScalabilityModeL2T2,
-				goav1.EncoderScalabilityModeL2T2h,
-				goav1.EncoderScalabilityModeL2T2_KEY,
-				goav1.EncoderScalabilityModeL2T2_KEY_SHIFT,
-				goav1.EncoderScalabilityModeL2T3,
-				goav1.EncoderScalabilityModeL2T3h,
-				goav1.EncoderScalabilityModeL2T3_KEY,
-				goav1.EncoderScalabilityModeL2T3_KEY_SHIFT,
-				goav1.EncoderScalabilityModeS2T1,
-				goav1.EncoderScalabilityModeS2T1h,
-				goav1.EncoderScalabilityModeS2T2,
-				goav1.EncoderScalabilityModeS2T2h,
-				goav1.EncoderScalabilityModeS2T3,
-				goav1.EncoderScalabilityModeS2T3h,
+			modes: []EncoderScalabilityMode{
+				internalencoder.ScalabilityModeL2T1,
+				internalencoder.ScalabilityModeL2T1h,
+				internalencoder.ScalabilityModeL2T1_KEY,
+				internalencoder.ScalabilityModeL2T2,
+				internalencoder.ScalabilityModeL2T2h,
+				internalencoder.ScalabilityModeL2T2_KEY,
+				internalencoder.ScalabilityModeL2T2_KEY_SHIFT,
+				internalencoder.ScalabilityModeL2T3,
+				internalencoder.ScalabilityModeL2T3h,
+				internalencoder.ScalabilityModeL2T3_KEY,
+				EncoderScalabilityModeL2T3_KEY_SHIFT,
+				internalencoder.ScalabilityModeS2T1,
+				internalencoder.ScalabilityModeS2T1h,
+				internalencoder.ScalabilityModeS2T2,
+				internalencoder.ScalabilityModeS2T2h,
+				internalencoder.ScalabilityModeS2T3,
+				internalencoder.ScalabilityModeS2T3h,
 			},
 		},
 		{
 			name:   "three-spatial",
 			width:  1008,
 			height: 576,
-			modes: []goav1.EncoderScalabilityMode{
-				goav1.EncoderScalabilityModeL3T1,
-				goav1.EncoderScalabilityModeL3T1h,
-				goav1.EncoderScalabilityModeL3T1_KEY,
-				goav1.EncoderScalabilityModeL3T2,
-				goav1.EncoderScalabilityModeL3T2h,
-				goav1.EncoderScalabilityModeL3T2_KEY,
-				goav1.EncoderScalabilityModeL3T2_KEY_SHIFT,
-				goav1.EncoderScalabilityModeL3T3,
-				goav1.EncoderScalabilityModeL3T3h,
-				goav1.EncoderScalabilityModeL3T3_KEY,
-				goav1.EncoderScalabilityModeL3T3_KEY_SHIFT,
-				goav1.EncoderScalabilityModeS3T1,
-				goav1.EncoderScalabilityModeS3T1h,
-				goav1.EncoderScalabilityModeS3T2,
-				goav1.EncoderScalabilityModeS3T2h,
-				goav1.EncoderScalabilityModeS3T3,
-				goav1.EncoderScalabilityModeS3T3h,
+			modes: []EncoderScalabilityMode{
+				internalencoder.ScalabilityModeL3T1,
+				internalencoder.ScalabilityModeL3T1h,
+				internalencoder.ScalabilityModeL3T1_KEY,
+				internalencoder.ScalabilityModeL3T2,
+				internalencoder.ScalabilityModeL3T2h,
+				internalencoder.ScalabilityModeL3T2_KEY,
+				EncoderScalabilityModeL3T2_KEY_SHIFT,
+				internalencoder.ScalabilityModeL3T3,
+				internalencoder.ScalabilityModeL3T3h,
+				internalencoder.ScalabilityModeL3T3_KEY,
+				EncoderScalabilityModeL3T3_KEY_SHIFT,
+				internalencoder.ScalabilityModeS3T1,
+				internalencoder.ScalabilityModeS3T1h,
+				internalencoder.ScalabilityModeS3T2,
+				internalencoder.ScalabilityModeS3T2h,
+				internalencoder.ScalabilityModeS3T3,
+				internalencoder.ScalabilityModeS3T3h,
 			},
 		},
 	}
@@ -5828,14 +5834,14 @@ func TestPublicRTCEncoderSupportsWebRTCPixelModeMatrix(t *testing.T) {
 		t.Run(group.name, func(t *testing.T) {
 			for _, mode := range group.modes {
 				cfg := publicRTCMatrixConfig(group.width, group.height, mode)
-				enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+				enc, err := NewRTCEncoderWithConfig(cfg)
 				if err != nil {
 					t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 				}
-				var receiver goav1.RTPDependencyDescriptorState
-				var rtpReceiver goav1.RTPDependencyDescriptorState
+				var receiver RTPDependencyDescriptorState
+				var rtpReceiver RTPDependencyDescriptorState
 				nextFrameID := uint64(0)
-				var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+				var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 				var orderedTUs [][]byte
 				for frame := 0; frame < 3; frame++ {
 					picture, err := enc.EncodePicture(publicRTCMatrixFrame(group.width, group.height, frame), false)
@@ -5852,24 +5858,24 @@ func TestPublicRTCEncoderSupportsWebRTCPixelModeMatrix(t *testing.T) {
 }
 
 func TestPublicRTCEncoderSupportsWebRTC1080pThreeLayerSmallStepModes(t *testing.T) {
-	modes := []goav1.EncoderScalabilityMode{
-		goav1.EncoderScalabilityModeL3T1h,
-		goav1.EncoderScalabilityModeL3T2h,
-		goav1.EncoderScalabilityModeL3T3h,
-		goav1.EncoderScalabilityModeS3T1h,
-		goav1.EncoderScalabilityModeS3T2h,
-		goav1.EncoderScalabilityModeS3T3h,
+	modes := []EncoderScalabilityMode{
+		internalencoder.ScalabilityModeL3T1h,
+		internalencoder.ScalabilityModeL3T2h,
+		internalencoder.ScalabilityModeL3T3h,
+		internalencoder.ScalabilityModeS3T1h,
+		internalencoder.ScalabilityModeS3T2h,
+		internalencoder.ScalabilityModeS3T3h,
 	}
 	for _, mode := range modes {
 		t.Run(mode.String(), func(t *testing.T) {
 			cfg := publicRTCMatrixConfig(1920, 1080, mode)
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 			}
 			defer enc.Close()
 			got := enc.Config()
-			if got.SpatialLayerCount != 3 || got.SpatialLayers[0].Resolution != (goav1.EncoderResolution{Width: 853, Height: 480}) {
+			if got.SpatialLayerCount != 3 || got.SpatialLayers[0].Resolution != (EncoderResolution{Width: 853, Height: 480}) {
 				t.Fatalf("%s normalized layers=%d base=%+v", mode, got.SpatialLayerCount, got.SpatialLayers[0].Resolution)
 			}
 			for frame := 0; frame < 2; frame++ {
@@ -5886,7 +5892,7 @@ func TestPublicRTCEncoderSupportsWebRTC1080pThreeLayerSmallStepModes(t *testing.
 }
 
 func TestPublicRTCEncoderCQPScalabilityModeMatrixDecodes(t *testing.T) {
-	modes := goav1.EncoderWebRTCScalabilityModes()
+	modes := EncoderWebRTCScalabilityModes()
 	if len(modes) == 0 {
 		t.Fatal("no WebRTC scalability modes")
 	}
@@ -5894,22 +5900,22 @@ func TestPublicRTCEncoderCQPScalabilityModeMatrixDecodes(t *testing.T) {
 		t.Run(string(mode), func(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, mode)
 			cfg := publicRTCMatrixConfig(width, height, mode)
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = uint8(24 + step%32)
 
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 			}
 			defer enc.Close()
-			if got := enc.Config(); got.RateControl != goav1.EncoderRateControlCQP || got.Quantizer != cfg.Quantizer {
+			if got := enc.Config(); got.RateControl != EncoderRateControlCQP || got.Quantizer != cfg.Quantizer {
 				t.Fatalf("config rate control=%d q=%d want CQP q=%d", got.RateControl, got.Quantizer, cfg.Quantizer)
 			}
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 			for frame := 0; frame < 2; frame++ {
 				picture, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, frame), false)
@@ -5920,7 +5926,7 @@ func TestPublicRTCEncoderCQPScalabilityModeMatrixDecodes(t *testing.T) {
 				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), picture, frame == 0, &nextFrameID)
 			}
 			controlChange := enc.Config()
-			controlChange.MaxFramerate = []goav1.EncoderRational{
+			controlChange.MaxFramerate = []EncoderRational{
 				{Num: 60, Den: 1},
 				{Num: 30000, Den: 1001},
 				{Num: 24, Den: 1},
@@ -5952,8 +5958,8 @@ func TestPublicRTCEncoderCQPScalabilityModeMatrixDecodes(t *testing.T) {
 func TestPublicRTCEncoderSetConfigReconfigure(t *testing.T) {
 	const w, h = 640, 360
 	cw, ch := w/2, h/2
-	makeFrame := func(n int) goav1.I420Frame {
-		f := goav1.I420Frame{
+	makeFrame := func(n int) I420Frame {
+		f := I420Frame{
 			Y: make([]byte, w*h), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
 			YStride: w, ChromaStride: cw, Width: w, Height: h,
 		}
@@ -5966,19 +5972,19 @@ func TestPublicRTCEncoderSetConfigReconfigure(t *testing.T) {
 		}
 		return f
 	}
-	cfg := goav1.EncoderConfig{
-		Resolution:        goav1.EncoderResolution{Width: w, Height: h},
-		MaxFramerate:      goav1.EncoderRational{Num: 30, Den: 1},
+	cfg := EncoderConfig{
+		Resolution:        EncoderResolution{Width: w, Height: h},
+		MaxFramerate:      EncoderRational{Num: 30, Den: 1},
 		MinBitrateKbps:    100,
 		MaxBitrateKbps:    800,
 		TargetBitrateKbps: 500,
-		Scalability:       goav1.EncoderScalabilityModeL1T2,
+		Scalability:       EncoderScalabilityModeL1T2,
 	}
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
-	if got, err := enc.RTPFrameDuration(); err != nil || got != (goav1.EncoderRational{Num: 3000, Den: 1}) {
+	if got, err := enc.RTPFrameDuration(); err != nil || got != (EncoderRational{Num: 3000, Den: 1}) {
 		t.Fatalf("initial RTPFrameDuration=%+v err=%v", got, err)
 	}
 	key, err := enc.Encode(makeFrame(0), false)
@@ -5994,14 +6000,14 @@ func TestPublicRTCEncoderSetConfigReconfigure(t *testing.T) {
 	}
 
 	controlChange := cfg
-	controlChange.MaxFramerate = goav1.EncoderRational{Num: 60, Den: 1}
+	controlChange.MaxFramerate = EncoderRational{Num: 60, Den: 1}
 	controlChange.MinBitrateKbps = 200
 	controlChange.MaxBitrateKbps = 1200
 	controlChange.TargetBitrateKbps = 900
 	if err := enc.SetConfig(controlChange); err != nil {
 		t.Fatalf("SetConfig control change: %v", err)
 	}
-	if got, err := enc.RTPFrameDuration(); err != nil || got != (goav1.EncoderRational{Num: 1500, Den: 1}) {
+	if got, err := enc.RTPFrameDuration(); err != nil || got != (EncoderRational{Num: 1500, Den: 1}) {
 		t.Fatalf("control RTPFrameDuration=%+v err=%v", got, err)
 	}
 	delta, err = enc.Encode(makeFrame(2), false)
@@ -6013,7 +6019,7 @@ func TestPublicRTCEncoderSetConfigReconfigure(t *testing.T) {
 	}
 
 	structureChange := controlChange
-	structureChange.Scalability = goav1.EncoderScalabilityModeS2T2
+	structureChange.Scalability = internalencoder.ScalabilityModeS2T2
 	if err := enc.SetConfig(structureChange); err != nil {
 		t.Fatalf("SetConfig structure change: %v", err)
 	}
@@ -6027,7 +6033,7 @@ func TestPublicRTCEncoderSetConfigReconfigure(t *testing.T) {
 	}
 
 	fullSVC := structureChange
-	fullSVC.Scalability = goav1.EncoderScalabilityModeL2T2
+	fullSVC.Scalability = internalencoder.ScalabilityModeL2T2
 	if err := enc.SetConfig(fullSVC); err != nil {
 		t.Fatalf("SetConfig full SVC: %v", err)
 	}
@@ -6043,22 +6049,22 @@ func TestPublicRTCEncoderSetConfigReconfigure(t *testing.T) {
 
 func TestPublicRTCEncoderSetConfigCQPTransitionsDecode(t *testing.T) {
 	const w, h = 640, 360
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL2T2)
-	cfg.RateControl = goav1.EncoderRateControlCQP
+	cfg := publicRTCMatrixConfig(w, h, internalencoder.ScalabilityModeL2T2)
+	cfg.RateControl = EncoderRateControlCQP
 	cfg.Quantizer = 37
 
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
 	defer enc.Close()
 
-	var descriptorReceiver goav1.RTPDependencyDescriptorState
-	var rtpReceiver goav1.RTPDependencyDescriptorState
+	var descriptorReceiver RTPDependencyDescriptorState
+	var rtpReceiver RTPDependencyDescriptorState
 	nextFrameID := uint64(0)
-	var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+	var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 	var orderedTUs [][]byte
-	encode := func(label string, frame int, wantKey bool) goav1.RTCPicture {
+	encode := func(label string, frame int, wantKey bool) RTCPicture {
 		t.Helper()
 		picture, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, frame), false)
 		if err != nil {
@@ -6080,9 +6086,9 @@ func TestPublicRTCEncoderSetConfigCQPTransitionsDecode(t *testing.T) {
 	encode("CQP q change delta", 1, false)
 
 	cbrChange := enc.Config()
-	cbrChange.RateControl = goav1.EncoderRateControlCBR
+	cbrChange.RateControl = EncoderRateControlCBR
 	cbrChange.Quantizer = 0
-	cbrChange.MaxFramerate = goav1.EncoderRational{Num: 60, Den: 1}
+	cbrChange.MaxFramerate = EncoderRational{Num: 60, Den: 1}
 	publicRTCApplyControlBitrates(&cbrChange, 1100)
 	if err := enc.SetConfig(cbrChange); err != nil {
 		t.Fatalf("SetConfig CBR transition: %v", err)
@@ -6091,7 +6097,7 @@ func TestPublicRTCEncoderSetConfigCQPTransitionsDecode(t *testing.T) {
 	encode("CBR transition delta", 2, false)
 
 	backToCQP := enc.Config()
-	backToCQP.RateControl = goav1.EncoderRateControlCQP
+	backToCQP.RateControl = EncoderRateControlCQP
 	backToCQP.Quantizer = 41
 	if err := enc.SetConfig(backToCQP); err != nil {
 		t.Fatalf("SetConfig CQP transition: %v", err)
@@ -6105,16 +6111,16 @@ func TestPublicRTCEncoderSetConfigCQPTransitionsDecode(t *testing.T) {
 func TestPublicRTCEncoderSingleSpatialSettingsReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 192, 128
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T2)
+	cfg := publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T2)
 	publicRTCApplyControlBitrates(&cfg, 420)
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
 	defer enc.Close()
 
 	var frames []publicIVFFrame
-	var sequence goav1.SequenceHeader
+	var sequence SequenceHeader
 	appendFrame := func(label string, frameIndex int, wantKey bool, wantScreen bool) {
 		t.Helper()
 		frame, err := enc.Encode(publicRTCMatrixFrame(w, h, frameIndex), false)
@@ -6135,21 +6141,21 @@ func TestPublicRTCEncoderSingleSpatialSettingsReferenceDecoders(t *testing.T) {
 	appendFrame("warm CBR delta", 1, false, false)
 
 	fpsBitrateChange := enc.Config()
-	fpsBitrateChange.MaxFramerate = goav1.EncoderRational{Num: 60000, Den: 1001}
+	fpsBitrateChange.MaxFramerate = EncoderRational{Num: 60000, Den: 1001}
 	publicRTCApplyControlBitrates(&fpsBitrateChange, 700)
 	if err := enc.SetConfig(fpsBitrateChange); err != nil {
 		t.Fatalf("SetConfig fps/bitrate: %v", err)
 	}
 	assertPublicRTCConfigControls(t, enc.Config(), fpsBitrateChange)
-	if got, err := enc.RTPFrameDuration(); err != nil || got != (goav1.EncoderRational{Num: 3003, Den: 2}) {
+	if got, err := enc.RTPFrameDuration(); err != nil || got != (EncoderRational{Num: 3003, Den: 2}) {
 		t.Fatalf("fps/bitrate RTPFrameDuration=%+v err=%v", got, err)
 	}
 	appendFrame("fps bitrate delta", 2, false, false)
 
 	cqpChange := enc.Config()
-	cqpChange.RateControl = goav1.EncoderRateControlCQP
+	cqpChange.RateControl = EncoderRateControlCQP
 	cqpChange.Quantizer = 35
-	cqpChange.Content = goav1.EncoderContentScreen
+	cqpChange.Content = EncoderContentScreen
 	if err := enc.SetConfig(cqpChange); err != nil {
 		t.Fatalf("SetConfig CQP/screen: %v", err)
 	}
@@ -6157,24 +6163,24 @@ func TestPublicRTCEncoderSingleSpatialSettingsReferenceDecoders(t *testing.T) {
 	appendFrame("CQP screen delta", 3, false, true)
 
 	scalabilityChange := enc.Config()
-	scalabilityChange.Scalability = goav1.EncoderScalabilityModeL1T3
-	scalabilityChange.MaxFramerate = goav1.EncoderRational{Num: 24, Den: 1}
+	scalabilityChange.Scalability = EncoderScalabilityModeL1T3
+	scalabilityChange.MaxFramerate = EncoderRational{Num: 24, Den: 1}
 	scalabilityChange.Quantizer = 31
 	if err := enc.SetConfig(scalabilityChange); err != nil {
 		t.Fatalf("SetConfig scalability screen: %v", err)
 	}
 	assertPublicRTCConfigControls(t, enc.Config(), scalabilityChange)
-	if got, err := enc.RTPFrameDuration(); err != nil || got != (goav1.EncoderRational{Num: 3750, Den: 1}) {
+	if got, err := enc.RTPFrameDuration(); err != nil || got != (EncoderRational{Num: 3750, Den: 1}) {
 		t.Fatalf("scalability RTPFrameDuration=%+v err=%v", got, err)
 	}
 	appendFrame("L1T3 screen key", 4, true, true)
 	appendFrame("L1T3 screen delta", 5, false, true)
 
 	cbrChange := enc.Config()
-	cbrChange.RateControl = goav1.EncoderRateControlCBR
+	cbrChange.RateControl = EncoderRateControlCBR
 	cbrChange.Quantizer = 0
-	cbrChange.MaxFramerate = goav1.EncoderRational{Num: 120, Den: 1}
-	cbrChange.Content = goav1.EncoderContentCamera
+	cbrChange.MaxFramerate = EncoderRational{Num: 120, Den: 1}
+	cbrChange.Content = EncoderContentCamera
 	publicRTCApplyControlBitrates(&cbrChange, 520)
 	if err := enc.SetConfig(cbrChange); err != nil {
 		t.Fatalf("SetConfig CBR/camera: %v", err)
@@ -6189,10 +6195,10 @@ func TestPublicRTCEncoderSingleSpatialSettingsReferenceDecoders(t *testing.T) {
 func TestPublicRTCEncoderSimulcastSettingsReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 1008, 576
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeS3T3h)
-	cfg.MaxFramerate = goav1.EncoderRational{Num: 30, Den: 1}
+	cfg := publicRTCMatrixConfig(w, h, internalencoder.ScalabilityModeS3T3h)
+	cfg.MaxFramerate = EncoderRational{Num: 30, Den: 1}
 	publicRTCApplyControlBitrates(&cfg, 1500)
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
@@ -6203,15 +6209,15 @@ func TestPublicRTCEncoderSimulcastSettingsReferenceDecoders(t *testing.T) {
 	if !ok || spatialLayers != 3 {
 		t.Fatalf("normalized scalability=%s spatial=%d ok=%v", normalized.Scalability, spatialLayers, ok)
 	}
-	var layerRes [goav1.EncoderWebRTCMaxSpatialLayers]goav1.EncoderResolution
+	var layerRes [EncoderWebRTCMaxSpatialLayers]EncoderResolution
 	for i := uint8(0); i < spatialLayers; i++ {
 		layerRes[i] = normalized.SpatialLayers[i].Resolution
 	}
 
-	var receiver goav1.RTPDependencyDescriptorState
+	var receiver RTPDependencyDescriptorState
 	nextFrameID := uint64(0)
-	var layerFrames [goav1.EncoderWebRTCMaxSpatialLayers][]publicIVFFrame
-	var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
+	var layerFrames [EncoderWebRTCMaxSpatialLayers][]publicIVFFrame
+	var layerSequences [EncoderWebRTCMaxSpatialLayers]SequenceHeader
 	appendPicture := func(label string, frameIndex int, wantKey bool, wantScreen bool) {
 		t.Helper()
 		picture, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, frameIndex), false)
@@ -6244,7 +6250,7 @@ func TestPublicRTCEncoderSimulcastSettingsReferenceDecoders(t *testing.T) {
 	appendPicture("warm S3T3h CBR delta", 1, false, false)
 
 	fpsBitrateChange := enc.Config()
-	fpsBitrateChange.MaxFramerate = goav1.EncoderRational{Num: 60000, Den: 1001}
+	fpsBitrateChange.MaxFramerate = EncoderRational{Num: 60000, Den: 1001}
 	publicRTCApplyControlBitrates(&fpsBitrateChange, 1800)
 	if err := enc.SetConfig(fpsBitrateChange); err != nil {
 		t.Fatalf("SetConfig fps/bitrate: %v", err)
@@ -6253,9 +6259,9 @@ func TestPublicRTCEncoderSimulcastSettingsReferenceDecoders(t *testing.T) {
 	appendPicture("S3T3h fps bitrate delta", 2, false, false)
 
 	cqpChange := enc.Config()
-	cqpChange.RateControl = goav1.EncoderRateControlCQP
+	cqpChange.RateControl = EncoderRateControlCQP
 	cqpChange.Quantizer = 33
-	cqpChange.Content = goav1.EncoderContentScreen
+	cqpChange.Content = EncoderContentScreen
 	if err := enc.SetConfig(cqpChange); err != nil {
 		t.Fatalf("SetConfig CQP/screen: %v", err)
 	}
@@ -6263,9 +6269,9 @@ func TestPublicRTCEncoderSimulcastSettingsReferenceDecoders(t *testing.T) {
 	appendPicture("S3T3h CQP screen delta", 3, false, true)
 
 	scalabilityChange := enc.Config()
-	scalabilityChange.Scalability = goav1.EncoderScalabilityModeS3T2h
-	scalabilityChange.MaxFramerate = goav1.EncoderRational{Num: 24, Den: 1}
-	scalabilityChange.RateControl = goav1.EncoderRateControlCQP
+	scalabilityChange.Scalability = internalencoder.ScalabilityModeS3T2h
+	scalabilityChange.MaxFramerate = EncoderRational{Num: 24, Den: 1}
+	scalabilityChange.RateControl = EncoderRateControlCQP
 	scalabilityChange.Quantizer = 29
 	if err := enc.SetConfig(scalabilityChange); err != nil {
 		t.Fatalf("SetConfig scalability screen: %v", err)
@@ -6275,10 +6281,10 @@ func TestPublicRTCEncoderSimulcastSettingsReferenceDecoders(t *testing.T) {
 	appendPicture("S3T2h CQP screen delta", 5, false, true)
 
 	cbrChange := enc.Config()
-	cbrChange.RateControl = goav1.EncoderRateControlCBR
+	cbrChange.RateControl = EncoderRateControlCBR
 	cbrChange.Quantizer = 0
-	cbrChange.MaxFramerate = goav1.EncoderRational{Num: 120, Den: 1}
-	cbrChange.Content = goav1.EncoderContentCamera
+	cbrChange.MaxFramerate = EncoderRational{Num: 120, Den: 1}
+	cbrChange.Content = EncoderContentCamera
 	publicRTCApplyControlBitrates(&cbrChange, 1350)
 	if err := enc.SetConfig(cbrChange); err != nil {
 		t.Fatalf("SetConfig CBR/camera: %v", err)
@@ -6299,20 +6305,20 @@ func TestPublicRTCEncoderSimulcastSettingsReferenceDecoders(t *testing.T) {
 func TestPublicRTCEncoderSharedSVCSettingsReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	const w, h = 640, 360
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL2T2_KEY_SHIFT)
-	cfg.MaxFramerate = goav1.EncoderRational{Num: 30, Den: 1}
+	cfg := publicRTCMatrixConfig(w, h, internalencoder.ScalabilityModeL2T2_KEY_SHIFT)
+	cfg.MaxFramerate = EncoderRational{Num: 30, Den: 1}
 	publicRTCApplyControlBitrates(&cfg, 900)
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
 	defer enc.Close()
 
-	var descriptorReceiver goav1.RTPDependencyDescriptorState
-	var activeReceiver goav1.RTPDependencyDescriptorState
-	activeLimits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}
+	var descriptorReceiver RTPDependencyDescriptorState
+	var activeReceiver RTPDependencyDescriptorState
+	activeLimits := RTPPayloadSizeLimits{MaxPayloadLen: 48}
 	nextFrameID := uint64(0)
-	var sequence goav1.SequenceHeader
+	var sequence SequenceHeader
 	var frames []publicIVFFrame
 	var lowOverheads [][]byte
 	appendPicture := func(label string, frameIndex int, forceKey bool, wantKey bool, wantScreen bool) {
@@ -6343,21 +6349,21 @@ func TestPublicRTCEncoderSharedSVCSettingsReferenceDecoders(t *testing.T) {
 	appendPicture("warm L2T2_KEY_SHIFT CBR delta", 1, false, false, false)
 
 	fpsBitrateChange := enc.Config()
-	fpsBitrateChange.MaxFramerate = goav1.EncoderRational{Num: 60000, Den: 1001}
+	fpsBitrateChange.MaxFramerate = EncoderRational{Num: 60000, Den: 1001}
 	publicRTCApplyControlBitrates(&fpsBitrateChange, 1100)
 	if err := enc.SetConfig(fpsBitrateChange); err != nil {
 		t.Fatalf("SetConfig fps/bitrate: %v", err)
 	}
 	assertPublicRTCConfigControls(t, enc.Config(), fpsBitrateChange)
-	if got, err := enc.RTPFrameDuration(); err != nil || got != (goav1.EncoderRational{Num: 3003, Den: 2}) {
+	if got, err := enc.RTPFrameDuration(); err != nil || got != (EncoderRational{Num: 3003, Den: 2}) {
 		t.Fatalf("fps/bitrate RTPFrameDuration=%+v err=%v", got, err)
 	}
 	appendPicture("L2T2_KEY_SHIFT fps bitrate delta", 2, false, false, false)
 
 	cqpChange := enc.Config()
-	cqpChange.RateControl = goav1.EncoderRateControlCQP
+	cqpChange.RateControl = EncoderRateControlCQP
 	cqpChange.Quantizer = 32
-	cqpChange.Content = goav1.EncoderContentScreen
+	cqpChange.Content = EncoderContentScreen
 	if err := enc.SetConfig(cqpChange); err != nil {
 		t.Fatalf("SetConfig CQP/screen: %v", err)
 	}
@@ -6366,24 +6372,24 @@ func TestPublicRTCEncoderSharedSVCSettingsReferenceDecoders(t *testing.T) {
 	appendPicture("L2T2_KEY_SHIFT forced screen key", 4, true, true, true)
 
 	scalabilityChange := enc.Config()
-	scalabilityChange.Scalability = goav1.EncoderScalabilityModeL2T3_KEY_SHIFT
-	scalabilityChange.MaxFramerate = goav1.EncoderRational{Num: 24, Den: 1}
+	scalabilityChange.Scalability = EncoderScalabilityModeL2T3_KEY_SHIFT
+	scalabilityChange.MaxFramerate = EncoderRational{Num: 24, Den: 1}
 	scalabilityChange.Quantizer = 29
 	if err := enc.SetConfig(scalabilityChange); err != nil {
 		t.Fatalf("SetConfig scalability screen: %v", err)
 	}
 	assertPublicRTCConfigControls(t, enc.Config(), scalabilityChange)
-	if got, err := enc.RTPFrameDuration(); err != nil || got != (goav1.EncoderRational{Num: 3750, Den: 1}) {
+	if got, err := enc.RTPFrameDuration(); err != nil || got != (EncoderRational{Num: 3750, Den: 1}) {
 		t.Fatalf("scalability RTPFrameDuration=%+v err=%v", got, err)
 	}
 	appendPicture("L2T3_KEY_SHIFT screen structure key", 5, false, true, true)
 	appendPicture("L2T3_KEY_SHIFT CQP screen delta", 6, false, false, true)
 
 	cbrChange := enc.Config()
-	cbrChange.RateControl = goav1.EncoderRateControlCBR
+	cbrChange.RateControl = EncoderRateControlCBR
 	cbrChange.Quantizer = 0
-	cbrChange.MaxFramerate = goav1.EncoderRational{Num: 120, Den: 1}
-	cbrChange.Content = goav1.EncoderContentCamera
+	cbrChange.MaxFramerate = EncoderRational{Num: 120, Den: 1}
+	cbrChange.Content = EncoderContentCamera
 	publicRTCApplyControlBitrates(&cbrChange, 780)
 	if err := enc.SetConfig(cbrChange); err != nil {
 		t.Fatalf("SetConfig CBR/camera: %v", err)
@@ -6401,11 +6407,11 @@ func TestPublicRTCEncoderSharedSVCSettingsReferenceDecoders(t *testing.T) {
 
 func TestPublicRTCEncoderScalabilityModeCatalogueReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
-	modes := goav1.EncoderWebRTCScalabilityModes()
+	modes := EncoderWebRTCScalabilityModes()
 	if len(modes) == 0 {
 		t.Fatal("no WebRTC scalability modes")
 	}
-	fpsCycle := []goav1.EncoderRational{
+	fpsCycle := []EncoderRational{
 		{Num: 30, Den: 1},
 		{Num: 60000, Den: 1001},
 		{Num: 24, Den: 1},
@@ -6419,22 +6425,22 @@ func TestPublicRTCEncoderScalabilityModeCatalogueReferenceDecoders(t *testing.T)
 			cfg.MaxFramerate = fpsCycle[step%len(fpsCycle)]
 			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*9))
 			if step%2 == 0 {
-				cfg.RateControl = goav1.EncoderRateControlCQP
+				cfg.RateControl = EncoderRateControlCQP
 				cfg.Quantizer = uint8(24 + step%31)
 			}
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 			}
 			defer enc.Close()
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
-			var layerFrames [goav1.EncoderWebRTCMaxSpatialLayers][]publicIVFFrame
-			var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
+			var layerFrames [EncoderWebRTCMaxSpatialLayers][]publicIVFFrame
+			var layerSequences [EncoderWebRTCMaxSpatialLayers]SequenceHeader
 			var orderedFrames []publicIVFFrame
 			var lowOverheads [][]byte
-			var sharedSequence goav1.SequenceHeader
+			var sharedSequence SequenceHeader
 			appendPicture := func(label string, frameIndex int, forceKey bool, wantKey bool, wantScreen bool) {
 				t.Helper()
 				picture, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, frameIndex), forceKey)
@@ -6458,7 +6464,7 @@ func TestPublicRTCEncoderScalabilityModeCatalogueReferenceDecoders(t *testing.T)
 						lowOverheads = append(lowOverheads, payload)
 						continue
 					}
-					if frame.SpatialID >= goav1.EncoderWebRTCMaxSpatialLayers {
+					if frame.SpatialID >= EncoderWebRTCMaxSpatialLayers {
 						t.Fatalf("%s spatial id=%d", label, frame.SpatialID)
 					}
 					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), payload, &layerSequences[frame.SpatialID], wantScreen)
@@ -6469,50 +6475,50 @@ func TestPublicRTCEncoderScalabilityModeCatalogueReferenceDecoders(t *testing.T)
 				}
 			}
 
-			appendPicture("initial key", 0, false, true, cfg.Content == goav1.EncoderContentScreen)
+			appendPicture("initial key", 0, false, true, cfg.Content == EncoderContentScreen)
 
 			controlChange := enc.Config()
 			controlChange.MaxFramerate = fpsCycle[(step+1)%len(fpsCycle)]
-			if controlChange.RateControl == goav1.EncoderRateControlCQP {
-				controlChange.RateControl = goav1.EncoderRateControlCBR
+			if controlChange.RateControl == EncoderRateControlCQP {
+				controlChange.RateControl = EncoderRateControlCBR
 				controlChange.Quantizer = 0
 				publicRTCApplyControlBitrates(&controlChange, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*11)+57)
 			} else {
-				controlChange.RateControl = goav1.EncoderRateControlCQP
+				controlChange.RateControl = EncoderRateControlCQP
 				controlChange.Quantizer = uint8(29 + step%27)
 			}
 			if step%3 == 0 {
-				controlChange.Content = goav1.EncoderContentScreen
+				controlChange.Content = EncoderContentScreen
 			} else {
-				controlChange.Content = goav1.EncoderContentCamera
+				controlChange.Content = EncoderContentCamera
 			}
 			if err := enc.SetConfig(controlChange); err != nil {
 				t.Fatalf("SetConfig(%s control): %v", mode, err)
 			}
 			assertPublicRTCConfigControls(t, enc.Config(), controlChange)
-			appendPicture("control delta", 1, false, false, controlChange.Content == goav1.EncoderContentScreen)
-			appendPicture("forced key", 2, true, true, controlChange.Content == goav1.EncoderContentScreen)
+			appendPicture("control delta", 1, false, false, controlChange.Content == EncoderContentScreen)
+			appendPicture("forced key", 2, true, true, controlChange.Content == EncoderContentScreen)
 
 			secondControlChange := enc.Config()
 			secondControlChange.MaxFramerate = fpsCycle[(step+2)%len(fpsCycle)]
-			if secondControlChange.RateControl == goav1.EncoderRateControlCQP {
-				secondControlChange.RateControl = goav1.EncoderRateControlCBR
+			if secondControlChange.RateControl == EncoderRateControlCQP {
+				secondControlChange.RateControl = EncoderRateControlCBR
 				secondControlChange.Quantizer = 0
 				publicRTCApplyControlBitrates(&secondControlChange, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*13)+91)
 			} else {
-				secondControlChange.RateControl = goav1.EncoderRateControlCQP
+				secondControlChange.RateControl = EncoderRateControlCQP
 				secondControlChange.Quantizer = uint8(31 + step%23)
 			}
-			if secondControlChange.Content == goav1.EncoderContentScreen {
-				secondControlChange.Content = goav1.EncoderContentCamera
+			if secondControlChange.Content == EncoderContentScreen {
+				secondControlChange.Content = EncoderContentCamera
 			} else {
-				secondControlChange.Content = goav1.EncoderContentScreen
+				secondControlChange.Content = EncoderContentScreen
 			}
 			if err := enc.SetConfig(secondControlChange); err != nil {
 				t.Fatalf("SetConfig(%s second control): %v", mode, err)
 			}
 			assertPublicRTCConfigControls(t, enc.Config(), secondControlChange)
-			appendPicture("second control delta", 3, false, false, secondControlChange.Content == goav1.EncoderContentScreen)
+			appendPicture("second control delta", 3, false, false, secondControlChange.Content == EncoderContentScreen)
 
 			normalized := enc.Config()
 			if publicRTCSharedReferenceSlotMode(mode) {
@@ -6539,11 +6545,11 @@ func TestPublicRTCEncoderScalabilityModeCatalogueReferenceDecoders(t *testing.T)
 
 func TestPublicRTCEncoderSetConfigScalabilityTransitionReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
-	modes := goav1.EncoderWebRTCScalabilityModes()
+	modes := EncoderWebRTCScalabilityModes()
 	if len(modes) == 0 {
 		t.Fatal("no WebRTC scalability modes")
 	}
-	fpsCycle := []goav1.EncoderRational{
+	fpsCycle := []EncoderRational{
 		{Num: 30, Den: 1},
 		{Num: 60000, Den: 1001},
 		{Num: 24, Den: 1},
@@ -6551,11 +6557,11 @@ func TestPublicRTCEncoderSetConfigScalabilityTransitionReferenceDecoders(t *test
 		{Num: 15, Den: 1},
 	}
 	type transitionPhase struct {
-		layerFrames    [goav1.EncoderWebRTCMaxSpatialLayers][]publicIVFFrame
-		layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
+		layerFrames    [EncoderWebRTCMaxSpatialLayers][]publicIVFFrame
+		layerSequences [EncoderWebRTCMaxSpatialLayers]SequenceHeader
 		orderedFrames  []publicIVFFrame
 		lowOverheads   [][]byte
-		sharedSequence goav1.SequenceHeader
+		sharedSequence SequenceHeader
 	}
 
 	for step, initial := range modes {
@@ -6567,18 +6573,18 @@ func TestPublicRTCEncoderSetConfigScalabilityTransitionReferenceDecoders(t *test
 			cfg.MaxFramerate = fpsCycle[step%len(fpsCycle)]
 			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, initial)+int32(step*7))
 			if step%2 == 1 {
-				cfg.RateControl = goav1.EncoderRateControlCQP
+				cfg.RateControl = EncoderRateControlCQP
 				cfg.Quantizer = uint8(22 + step%37)
-				cfg.Content = goav1.EncoderContentScreen
+				cfg.Content = EncoderContentScreen
 			}
 
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", initial, err)
 			}
 			defer enc.Close()
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
 			appendPicture := func(phase *transitionPhase, label string, frameIndex int, forceKey bool, wantKey bool, wantScreen bool) {
 				t.Helper()
@@ -6603,7 +6609,7 @@ func TestPublicRTCEncoderSetConfigScalabilityTransitionReferenceDecoders(t *test
 						phase.lowOverheads = append(phase.lowOverheads, payload)
 						continue
 					}
-					if frame.SpatialID >= goav1.EncoderWebRTCMaxSpatialLayers {
+					if frame.SpatialID >= EncoderWebRTCMaxSpatialLayers {
 						t.Fatalf("%s spatial id=%d", label, frame.SpatialID)
 					}
 					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), payload, &phase.layerSequences[frame.SpatialID], wantScreen)
@@ -6613,7 +6619,7 @@ func TestPublicRTCEncoderSetConfigScalabilityTransitionReferenceDecoders(t *test
 					})
 				}
 			}
-			assertPhaseReferenceDecoders := func(label string, cfg goav1.EncoderConfig, phase transitionPhase) {
+			assertPhaseReferenceDecoders := func(label string, cfg EncoderConfig, phase transitionPhase) {
 				t.Helper()
 				if publicRTCSharedReferenceSlotMode(cfg.Scalability) {
 					if len(phase.lowOverheads) == 0 || len(phase.orderedFrames) == 0 {
@@ -6638,42 +6644,42 @@ func TestPublicRTCEncoderSetConfigScalabilityTransitionReferenceDecoders(t *test
 			}
 
 			var initialPhase transitionPhase
-			appendPicture(&initialPhase, "initial key", 0, false, true, cfg.Content == goav1.EncoderContentScreen)
+			appendPicture(&initialPhase, "initial key", 0, false, true, cfg.Content == EncoderContentScreen)
 
 			controlChange := enc.Config()
 			controlChange.MaxFramerate = fpsCycle[(step+1)%len(fpsCycle)]
-			if controlChange.RateControl == goav1.EncoderRateControlCQP {
-				controlChange.RateControl = goav1.EncoderRateControlCBR
+			if controlChange.RateControl == EncoderRateControlCQP {
+				controlChange.RateControl = EncoderRateControlCBR
 				controlChange.Quantizer = 0
 				publicRTCApplyControlBitrates(&controlChange, publicRTCMatrixControlBitrateKbps(t, initial)+int32(step*11)+61)
 			} else {
-				controlChange.RateControl = goav1.EncoderRateControlCQP
+				controlChange.RateControl = EncoderRateControlCQP
 				controlChange.Quantizer = uint8(28 + step%29)
 			}
 			if step%3 == 0 {
-				controlChange.Content = goav1.EncoderContentScreen
+				controlChange.Content = EncoderContentScreen
 			} else {
-				controlChange.Content = goav1.EncoderContentCamera
+				controlChange.Content = EncoderContentCamera
 			}
 			if err := enc.SetConfig(controlChange); err != nil {
 				t.Fatalf("SetConfig(%s controls): %v", initial, err)
 			}
 			assertPublicRTCConfigControls(t, enc.Config(), controlChange)
-			appendPicture(&initialPhase, "control delta", 1, false, false, controlChange.Content == goav1.EncoderContentScreen)
+			appendPicture(&initialPhase, "control delta", 1, false, false, controlChange.Content == EncoderContentScreen)
 			assertPhaseReferenceDecoders("transition-"+initial.String()+"-controls", enc.Config(), initialPhase)
 
 			structureChange := enc.Config()
 			structureChange.Scalability = reconfig
 			structureChange.MaxFramerate = fpsCycle[(step+2)%len(fpsCycle)]
-			if structureChange.RateControl == goav1.EncoderRateControlCQP {
-				structureChange.RateControl = goav1.EncoderRateControlCBR
+			if structureChange.RateControl == EncoderRateControlCQP {
+				structureChange.RateControl = EncoderRateControlCBR
 				structureChange.Quantizer = 0
 				publicRTCApplyControlBitrates(&structureChange, publicRTCMatrixControlBitrateKbps(t, reconfig)+int32(step*13)+83)
 			} else {
-				structureChange.RateControl = goav1.EncoderRateControlCQP
+				structureChange.RateControl = EncoderRateControlCQP
 				structureChange.Quantizer = uint8(30 + step%23)
 			}
-			structureChange.Content = goav1.EncoderContentScreen
+			structureChange.Content = EncoderContentScreen
 			wantStructureKey := publicRTCSetConfigRequiresKey(t, enc.Config(), structureChange)
 			if err := enc.SetConfig(structureChange); err != nil {
 				t.Fatalf("SetConfig(%s to %s): %v", initial, reconfig, err)
@@ -6695,46 +6701,46 @@ func TestPublicRTCEncoderPairwiseControlRTPReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	type step struct {
 		label       string
-		fps         goav1.EncoderRational
-		rateControl goav1.EncoderRateControlMode
+		fps         EncoderRational
+		rateControl EncoderRateControlMode
 		quantizer   uint8
 		targetKbps  int32
-		content     goav1.EncoderContentHint
+		content     EncoderContentHint
 		forceKey    bool
 	}
 	scenarios := []struct {
 		name  string
-		mode  goav1.EncoderScalabilityMode
+		mode  EncoderScalabilityMode
 		steps []step
 	}{
 		{
 			name: "single-spatial-l1t3",
-			mode: goav1.EncoderScalabilityModeL1T3,
+			mode: EncoderScalabilityModeL1T3,
 			steps: []step{
-				{label: "camera-cbr-30", fps: goav1.EncoderRational{Num: 30, Den: 1}, rateControl: goav1.EncoderRateControlCBR, targetKbps: 420, content: goav1.EncoderContentCamera},
-				{label: "screen-cqp-ntsc", fps: goav1.EncoderRational{Num: 60000, Den: 1001}, rateControl: goav1.EncoderRateControlCQP, quantizer: 35, targetKbps: 520, content: goav1.EncoderContentScreen},
-				{label: "forced-screen-cqp-24", fps: goav1.EncoderRational{Num: 24, Den: 1}, rateControl: goav1.EncoderRateControlCQP, quantizer: 29, targetKbps: 540, content: goav1.EncoderContentScreen, forceKey: true},
-				{label: "camera-cbr-120", fps: goav1.EncoderRational{Num: 120, Den: 1}, rateControl: goav1.EncoderRateControlCBR, targetKbps: 700, content: goav1.EncoderContentCamera},
+				{label: "camera-cbr-30", fps: EncoderRational{Num: 30, Den: 1}, rateControl: EncoderRateControlCBR, targetKbps: 420, content: EncoderContentCamera},
+				{label: "screen-cqp-ntsc", fps: EncoderRational{Num: 60000, Den: 1001}, rateControl: EncoderRateControlCQP, quantizer: 35, targetKbps: 520, content: EncoderContentScreen},
+				{label: "forced-screen-cqp-24", fps: EncoderRational{Num: 24, Den: 1}, rateControl: EncoderRateControlCQP, quantizer: 29, targetKbps: 540, content: EncoderContentScreen, forceKey: true},
+				{label: "camera-cbr-120", fps: EncoderRational{Num: 120, Den: 1}, rateControl: EncoderRateControlCBR, targetKbps: 700, content: EncoderContentCamera},
 			},
 		},
 		{
 			name: "shared-svc-l2t3-key-shift",
-			mode: goav1.EncoderScalabilityModeL2T3_KEY_SHIFT,
+			mode: EncoderScalabilityModeL2T3_KEY_SHIFT,
 			steps: []step{
-				{label: "screen-cqp-24", fps: goav1.EncoderRational{Num: 24, Den: 1}, rateControl: goav1.EncoderRateControlCQP, quantizer: 31, targetKbps: 900, content: goav1.EncoderContentScreen},
-				{label: "camera-cbr-30", fps: goav1.EncoderRational{Num: 30, Den: 1}, rateControl: goav1.EncoderRateControlCBR, targetKbps: 1100, content: goav1.EncoderContentCamera},
-				{label: "screen-cqp-ntsc", fps: goav1.EncoderRational{Num: 60000, Den: 1001}, rateControl: goav1.EncoderRateControlCQP, quantizer: 33, targetKbps: 1000, content: goav1.EncoderContentScreen},
-				{label: "forced-camera-cbr-15", fps: goav1.EncoderRational{Num: 15, Den: 1}, rateControl: goav1.EncoderRateControlCBR, targetKbps: 780, content: goav1.EncoderContentCamera, forceKey: true},
+				{label: "screen-cqp-24", fps: EncoderRational{Num: 24, Den: 1}, rateControl: EncoderRateControlCQP, quantizer: 31, targetKbps: 900, content: EncoderContentScreen},
+				{label: "camera-cbr-30", fps: EncoderRational{Num: 30, Den: 1}, rateControl: EncoderRateControlCBR, targetKbps: 1100, content: EncoderContentCamera},
+				{label: "screen-cqp-ntsc", fps: EncoderRational{Num: 60000, Den: 1001}, rateControl: EncoderRateControlCQP, quantizer: 33, targetKbps: 1000, content: EncoderContentScreen},
+				{label: "forced-camera-cbr-15", fps: EncoderRational{Num: 15, Den: 1}, rateControl: EncoderRateControlCBR, targetKbps: 780, content: EncoderContentCamera, forceKey: true},
 			},
 		},
 		{
 			name: "simulcast-s3t2h",
-			mode: goav1.EncoderScalabilityModeS3T2h,
+			mode: internalencoder.ScalabilityModeS3T2h,
 			steps: []step{
-				{label: "camera-cbr-30", fps: goav1.EncoderRational{Num: 30, Den: 1}, rateControl: goav1.EncoderRateControlCBR, targetKbps: 1500, content: goav1.EncoderContentCamera},
-				{label: "screen-cqp-ntsc", fps: goav1.EncoderRational{Num: 60000, Den: 1001}, rateControl: goav1.EncoderRateControlCQP, quantizer: 32, targetKbps: 1600, content: goav1.EncoderContentScreen},
-				{label: "forced-camera-cbr-24", fps: goav1.EncoderRational{Num: 24, Den: 1}, rateControl: goav1.EncoderRateControlCBR, targetKbps: 1700, content: goav1.EncoderContentCamera, forceKey: true},
-				{label: "screen-cqp-120", fps: goav1.EncoderRational{Num: 120, Den: 1}, rateControl: goav1.EncoderRateControlCQP, quantizer: 27, targetKbps: 1450, content: goav1.EncoderContentScreen},
+				{label: "camera-cbr-30", fps: EncoderRational{Num: 30, Den: 1}, rateControl: EncoderRateControlCBR, targetKbps: 1500, content: EncoderContentCamera},
+				{label: "screen-cqp-ntsc", fps: EncoderRational{Num: 60000, Den: 1001}, rateControl: EncoderRateControlCQP, quantizer: 32, targetKbps: 1600, content: EncoderContentScreen},
+				{label: "forced-camera-cbr-24", fps: EncoderRational{Num: 24, Den: 1}, rateControl: EncoderRateControlCBR, targetKbps: 1700, content: EncoderContentCamera, forceKey: true},
+				{label: "screen-cqp-120", fps: EncoderRational{Num: 120, Den: 1}, rateControl: EncoderRateControlCQP, quantizer: 27, targetKbps: 1450, content: EncoderContentScreen},
 			},
 		},
 	}
@@ -6743,36 +6749,36 @@ func TestPublicRTCEncoderPairwiseControlRTPReferenceDecoders(t *testing.T) {
 		scenario := scenario
 		t.Run(scenario.name, func(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, scenario.mode)
-			configForStep := func(s step) goav1.EncoderConfig {
+			configForStep := func(s step) EncoderConfig {
 				cfg := publicRTCMatrixConfig(width, height, scenario.mode)
 				cfg.MaxFramerate = s.fps
 				cfg.RateControl = s.rateControl
 				cfg.Quantizer = s.quantizer
 				cfg.Content = s.content
-				if cfg.RateControl == goav1.EncoderRateControlCBR {
+				if cfg.RateControl == EncoderRateControlCBR {
 					cfg.Quantizer = 0
 				}
 				publicRTCApplyControlBitrates(&cfg, s.targetKbps)
 				return cfg
 			}
 
-			var enc *goav1.RTCEncoder
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
-			var activeReceiver goav1.RTPDependencyDescriptorState
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var enc *RTCEncoder
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
+			var activeReceiver RTPDependencyDescriptorState
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
-			var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
-			var sharedSequence goav1.SequenceHeader
+			var layerSequences [EncoderWebRTCMaxSpatialLayers]SequenceHeader
+			var sharedSequence SequenceHeader
 			nextFrameID := uint64(0)
-			activeLimits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}
+			activeLimits := RTPPayloadSizeLimits{MaxPayloadLen: 48}
 
 			for i, s := range scenario.steps {
 				cfg := configForStep(s)
 				wantKey := i == 0 || s.forceKey
 				if enc == nil {
 					var err error
-					enc, err = goav1.NewRTCEncoderWithConfig(cfg)
+					enc, err = NewRTCEncoderWithConfig(cfg)
 					if err != nil {
 						t.Fatalf("NewRTCEncoderWithConfig(%s): %v", scenario.mode, err)
 					}
@@ -6785,7 +6791,7 @@ func TestPublicRTCEncoderPairwiseControlRTPReferenceDecoders(t *testing.T) {
 					}
 				}
 				assertPublicRTCConfigControls(t, enc.Config(), cfg)
-				wantDuration, err := goav1.EncoderWebRTCRTPFrameDuration(enc.Config())
+				wantDuration, err := EncoderWebRTCRTPFrameDuration(enc.Config())
 				if err != nil {
 					t.Fatalf("%s EncoderWebRTCRTPFrameDuration: %v", s.label, err)
 				}
@@ -6806,10 +6812,10 @@ func TestPublicRTCEncoderPairwiseControlRTPReferenceDecoders(t *testing.T) {
 				for frameIndex := 0; frameIndex < picture.FrameNum; frameIndex++ {
 					frame := picture.Frames[frameIndex]
 					if publicRTCSharedReferenceSlotMode(current.Scalability) {
-						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", s.label, frame.SpatialID), frame.Data, &sharedSequence, current.Content == goav1.EncoderContentScreen)
+						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", s.label, frame.SpatialID), frame.Data, &sharedSequence, current.Content == EncoderContentScreen)
 						continue
 					}
-					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", s.label, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == goav1.EncoderContentScreen)
+					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", s.label, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == EncoderContentScreen)
 				}
 				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
 			}
@@ -6847,7 +6853,7 @@ func TestPublicRTCEncoderPairwiseControlRTPReferenceDecoders(t *testing.T) {
 
 func TestPublicRTCEncoderDeterministicControlChurnSoakReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
-	fpsCycle := []goav1.EncoderRational{
+	fpsCycle := []EncoderRational{
 		{Num: 15, Den: 1},
 		{Num: 24, Den: 1},
 		{Num: 30, Den: 1},
@@ -6856,19 +6862,19 @@ func TestPublicRTCEncoderDeterministicControlChurnSoakReferenceDecoders(t *testi
 		{Num: 120, Den: 1},
 	}
 	speedCycle := []int8{
-		goav1.EncoderWebRTCMinEffortLevel,
+		EncoderWebRTCMinEffortLevel,
 		0,
 		1,
-		goav1.EncoderWebRTCMaxEffortLevel,
+		EncoderWebRTCMaxEffortLevel,
 	}
 	scenarios := []struct {
 		name string
-		mode goav1.EncoderScalabilityMode
+		mode EncoderScalabilityMode
 	}{
-		{name: "single-spatial-l1t3", mode: goav1.EncoderScalabilityModeL1T3},
-		{name: "shared-svc-l2t3-key-shift", mode: goav1.EncoderScalabilityModeL2T3_KEY_SHIFT},
-		{name: "shared-svc-l3t3-key-shift", mode: goav1.EncoderScalabilityModeL3T3_KEY_SHIFT},
-		{name: "simulcast-s3t3h", mode: goav1.EncoderScalabilityModeS3T3h},
+		{name: "single-spatial-l1t3", mode: EncoderScalabilityModeL1T3},
+		{name: "shared-svc-l2t3-key-shift", mode: EncoderScalabilityModeL2T3_KEY_SHIFT},
+		{name: "shared-svc-l3t3-key-shift", mode: EncoderScalabilityModeL3T3_KEY_SHIFT},
+		{name: "simulcast-s3t3h", mode: internalencoder.ScalabilityModeS3T3h},
 	}
 
 	for scenarioIndex, scenario := range scenarios {
@@ -6877,37 +6883,37 @@ func TestPublicRTCEncoderDeterministicControlChurnSoakReferenceDecoders(t *testi
 			rng := rand.New(rand.NewSource(int64(0x5eed0000 + scenarioIndex*0x101)))
 			width, height := publicRTCMatrixGeometry(t, scenario.mode)
 			baseKbps := publicRTCMatrixControlBitrateKbps(t, scenario.mode)
-			configForStep := func(step int) goav1.EncoderConfig {
+			configForStep := func(step int) EncoderConfig {
 				cfg := publicRTCMatrixConfig(width, height, scenario.mode)
 				cfg.MaxFramerate = fpsCycle[(step+rng.Intn(len(fpsCycle)))%len(fpsCycle)]
 				cfg.Speed = speedCycle[(step+rng.Intn(len(speedCycle)))%len(speedCycle)]
 				cfg.MaxThreads = int32(1 + rng.Intn(3))
-				cfg.Content = goav1.EncoderContentCamera
+				cfg.Content = EncoderContentCamera
 				if rng.Intn(2) == 0 {
-					cfg.Content = goav1.EncoderContentScreen
+					cfg.Content = EncoderContentScreen
 				}
 				targetKbps := baseKbps + int32(step*53+rng.Intn(int(baseKbps/2)+1))
 				publicRTCApplyControlBitrates(&cfg, targetKbps)
 				if rng.Intn(2) == 0 {
-					cfg.RateControl = goav1.EncoderRateControlCQP
+					cfg.RateControl = EncoderRateControlCQP
 					cfg.Quantizer = uint8(22 + rng.Intn(23))
 				} else {
-					cfg.RateControl = goav1.EncoderRateControlCBR
+					cfg.RateControl = EncoderRateControlCBR
 					cfg.Quantizer = 0
 				}
 				return cfg
 			}
 
-			var enc *goav1.RTCEncoder
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
-			var activeReceiver goav1.RTPDependencyDescriptorState
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var enc *RTCEncoder
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
+			var activeReceiver RTPDependencyDescriptorState
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
-			var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
-			var sharedSequence goav1.SequenceHeader
+			var layerSequences [EncoderWebRTCMaxSpatialLayers]SequenceHeader
+			var sharedSequence SequenceHeader
 			nextFrameID := uint64(0)
-			activeLimits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}
+			activeLimits := RTPPayloadSizeLimits{MaxPayloadLen: 48}
 
 			for step := 0; step < 8; step++ {
 				cfg := configForStep(step)
@@ -6915,7 +6921,7 @@ func TestPublicRTCEncoderDeterministicControlChurnSoakReferenceDecoders(t *testi
 				wantKey := step == 0 || forceKey
 				if enc == nil {
 					var err error
-					enc, err = goav1.NewRTCEncoderWithConfig(cfg)
+					enc, err = NewRTCEncoderWithConfig(cfg)
 					if err != nil {
 						t.Fatalf("NewRTCEncoderWithConfig(%s): %v", scenario.mode, err)
 					}
@@ -6927,7 +6933,7 @@ func TestPublicRTCEncoderDeterministicControlChurnSoakReferenceDecoders(t *testi
 					}
 				}
 				assertPublicRTCConfigControls(t, enc.Config(), cfg)
-				wantDuration, err := goav1.EncoderWebRTCRTPFrameDuration(enc.Config())
+				wantDuration, err := EncoderWebRTCRTPFrameDuration(enc.Config())
 				if err != nil {
 					t.Fatalf("step %d EncoderWebRTCRTPFrameDuration: %v", step, err)
 				}
@@ -6948,10 +6954,10 @@ func TestPublicRTCEncoderDeterministicControlChurnSoakReferenceDecoders(t *testi
 				for frameIndex := 0; frameIndex < picture.FrameNum; frameIndex++ {
 					frame := picture.Frames[frameIndex]
 					if publicRTCSharedReferenceSlotMode(current.Scalability) {
-						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("step-%d S%d", step, frame.SpatialID), frame.Data, &sharedSequence, current.Content == goav1.EncoderContentScreen)
+						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("step-%d S%d", step, frame.SpatialID), frame.Data, &sharedSequence, current.Content == EncoderContentScreen)
 						continue
 					}
-					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("step-%d S%d", step, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == goav1.EncoderContentScreen)
+					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("step-%d S%d", step, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == EncoderContentScreen)
 				}
 				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
 			}
@@ -6965,11 +6971,11 @@ func TestPublicRTCEncoderDeterministicControlChurnSoakReferenceDecoders(t *testi
 
 func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
-	modes := goav1.EncoderWebRTCScalabilityModes()
+	modes := EncoderWebRTCScalabilityModes()
 	if len(modes) == 0 {
 		t.Fatal("no WebRTC scalability modes")
 	}
-	fpsCycle := []goav1.EncoderRational{
+	fpsCycle := []EncoderRational{
 		{Num: 30, Den: 1},
 		{Num: 60000, Den: 1001},
 		{Num: 24, Den: 1},
@@ -6983,32 +6989,32 @@ func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, mode)
 			cfg := publicRTCMatrixConfig(width, height, mode)
 			cfg.MaxFramerate = fpsCycle[step%len(fpsCycle)]
-			cfg.Content = goav1.EncoderContentCamera
+			cfg.Content = EncoderContentCamera
 			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*17))
 			if step%2 == 1 {
-				cfg.RateControl = goav1.EncoderRateControlCQP
+				cfg.RateControl = EncoderRateControlCQP
 				cfg.Quantizer = uint8(23 + step%31)
-				cfg.Content = goav1.EncoderContentScreen
+				cfg.Content = EncoderContentScreen
 			}
 
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 			}
 			defer enc.Close()
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
-			var activeReceiver goav1.RTPDependencyDescriptorState
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
+			var activeReceiver RTPDependencyDescriptorState
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
-			var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
-			var sharedSequence goav1.SequenceHeader
-			activeLimits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}
+			var layerSequences [EncoderWebRTCMaxSpatialLayers]SequenceHeader
+			var sharedSequence SequenceHeader
+			activeLimits := RTPPayloadSizeLimits{MaxPayloadLen: 48}
 			nextFrameID := uint64(0)
 			frameIndex := 0
 
-			appendPicture := func(label string, forceKey bool, wantKey bool) goav1.RTCPicture {
+			appendPicture := func(label string, forceKey bool, wantKey bool) RTCPicture {
 				t.Helper()
 				picture, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, frameIndex), forceKey)
 				if err != nil {
@@ -7024,10 +7030,10 @@ func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 				for i := 0; i < picture.FrameNum; i++ {
 					frame := picture.Frames[i]
 					if publicRTCSharedReferenceSlotMode(current.Scalability) {
-						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), frame.Data, &sharedSequence, current.Content == goav1.EncoderContentScreen)
+						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), frame.Data, &sharedSequence, current.Content == EncoderContentScreen)
 						continue
 					}
-					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == goav1.EncoderContentScreen)
+					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s S%d", label, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == EncoderContentScreen)
 				}
 				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
 				return picture
@@ -7038,16 +7044,16 @@ func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 			rembKbps := publicRTCMatrixControlBitrateKbps(t, mode) + int32(step*29) + 73
 			rembCompound := publicRTCREMBFeedbackCompound(t, uint64(rembKbps)*1000)
 			beforeREMB := enc.Config()
-			wantREMB, err := goav1.EncoderWebRTCApplyReceiverEstimatedMaximumBitrate(
+			wantREMB, err := EncoderWebRTCApplyReceiverEstimatedMaximumBitrate(
 				beforeREMB,
-				goav1.RTCPReceiverEstimatedMaximumBitrate{BitrateBps: uint64(rembKbps) * 1000},
+				RTCPReceiverEstimatedMaximumBitrate{BitrateBps: uint64(rembKbps) * 1000},
 			)
 			if err != nil {
 				t.Fatalf("expected REMB config: %v", err)
 			}
 			ok, packets, err := enc.ApplyRTCPReceiverEstimatedMaximumBitrate(
 				rembCompound,
-				make([]goav1.RTCPPacket, 0, 2),
+				make([]RTCPPacket, 0, 2),
 				make([]uint32, 0, 1),
 			)
 			if err != nil {
@@ -7076,15 +7082,15 @@ func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 			}
 			appendPicture("REMB delta", false, false)
 
-			pliCompound := testAV1RTCPFeedbackCompound(t, goav1.RTCPFeedbackPacket{
-				PacketType: goav1.RTCPPSFBPacketType,
-				FMT:        goav1.RTCPPSFBPictureLossIndicationFMT,
+			pliCompound := testAV1RTCPFeedbackCompound(t, RTCPFeedbackPacket{
+				PacketType: RTCPPSFBPacketType,
+				FMT:        RTCPPSFBPictureLossIndicationFMT,
 				SenderSSRC: 0x01020304,
 				MediaSSRC:  0x05060708,
 			})
 			forcePLI, pliPackets, err := enc.RTCPRequiresKeyFrame(
 				pliCompound,
-				make([]goav1.RTCPPacket, 0, 1),
+				make([]RTCPPacket, 0, 1),
 				nil,
 				nil,
 			)
@@ -7097,18 +7103,18 @@ func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 			appendPicture("PLI recovery key", forcePLI, true)
 
 			entry := testAV1RTCPValidLayerRefreshEntry(t, mode)
-			lrrCompound := testAV1RTCPFeedbackCompound(t, goav1.RTCPFeedbackPacket{
-				PacketType: goav1.RTCPPSFBPacketType,
-				FMT:        goav1.RTCPPSFBLayerRefreshRequestFMT,
+			lrrCompound := testAV1RTCPFeedbackCompound(t, RTCPFeedbackPacket{
+				PacketType: RTCPPSFBPacketType,
+				FMT:        RTCPPSFBLayerRefreshRequestFMT,
 				SenderSSRC: 0x01020304,
 				MediaSSRC:  entry.SSRC,
-				FCI:        testAV1RTCPLayerRefreshFCI(t, []goav1.AV1RTCPLayerRefreshRequestEntry{entry}),
+				FCI:        testAV1RTCPLayerRefreshFCI(t, []AV1RTCPLayerRefreshRequestEntry{entry}),
 			})
 			forceLRR, lrrPackets, err := enc.RTCPRequiresKeyFrame(
 				lrrCompound,
-				make([]goav1.RTCPPacket, 0, 1),
+				make([]RTCPPacket, 0, 1),
 				nil,
-				make([]goav1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+				make([]AV1RTCPLayerRefreshRequestEntry, 0, 1),
 			)
 			if err != nil {
 				t.Fatalf("LRR compound decision: %v", err)
@@ -7118,8 +7124,8 @@ func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 			}
 			target, ok, targetPackets, err := enc.RTCPLayerRefreshTarget(
 				lrrCompound,
-				make([]goav1.RTCPPacket, 0, 1),
-				make([]goav1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+				make([]RTCPPacket, 0, 1),
+				make([]AV1RTCPLayerRefreshRequestEntry, 0, 1),
 			)
 			if err != nil {
 				t.Fatalf("LRR target compound: %v", err)
@@ -7140,7 +7146,7 @@ func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 			if options.ActiveDecodeTargetsMask != wantMask {
 				t.Fatalf("LRR active mask=%#x want %#x", options.ActiveDecodeTargetsMask, wantMask)
 			}
-			var lrrActiveReceiver goav1.RTPDependencyDescriptorState
+			var lrrActiveReceiver RTPDependencyDescriptorState
 			for i := 0; i < lrrRecovery.FrameNum; i++ {
 				assertPublicRTCFrameRTPPacketsWithActiveDecodeTargets(t, &lrrActiveReceiver, lrrRecovery.Frames[i], activeLimits, options)
 			}
@@ -7153,11 +7159,11 @@ func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 
 func TestPublicRTCEncoderControllerSettingsReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
-	modes := goav1.EncoderWebRTCScalabilityModes()
+	modes := EncoderWebRTCScalabilityModes()
 	if len(modes) == 0 {
 		t.Fatal("no WebRTC scalability modes")
 	}
-	fpsCycle := []goav1.EncoderRational{
+	fpsCycle := []EncoderRational{
 		{Num: 30, Den: 1},
 		{Num: 60000, Den: 1001},
 		{Num: 24, Den: 1},
@@ -7165,9 +7171,9 @@ func TestPublicRTCEncoderControllerSettingsReferenceDecoders(t *testing.T) {
 		{Num: 15, Den: 1},
 	}
 	speedCycle := []int8{
-		goav1.EncoderWebRTCMinEffortLevel,
+		EncoderWebRTCMinEffortLevel,
 		0,
-		goav1.EncoderWebRTCMaxEffortLevel,
+		EncoderWebRTCMaxEffortLevel,
 		1,
 	}
 
@@ -7175,45 +7181,45 @@ func TestPublicRTCEncoderControllerSettingsReferenceDecoders(t *testing.T) {
 		modeIndex, mode := modeIndex, mode
 		t.Run(mode.String(), func(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, mode)
-			configForStep := func(step int) goav1.EncoderConfig {
+			configForStep := func(step int) EncoderConfig {
 				cfg := publicRTCMatrixConfig(width, height, mode)
 				cfg.MaxFramerate = fpsCycle[(modeIndex+step)%len(fpsCycle)]
 				cfg.Speed = speedCycle[(modeIndex+step)%len(speedCycle)]
 				cfg.MaxThreads = int32(1 + (modeIndex+step)%3)
 				cfg.KeyFrameInterval = int32(2 + (modeIndex+step)%3)
-				cfg.Content = goav1.EncoderContentCamera
+				cfg.Content = EncoderContentCamera
 				publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(modeIndex*17+step*53))
 				switch step % 3 {
 				case 1:
-					cfg.RateControl = goav1.EncoderRateControlCQP
+					cfg.RateControl = EncoderRateControlCQP
 					cfg.Quantizer = uint8(24 + (modeIndex+step)%35)
-					cfg.Content = goav1.EncoderContentScreen
+					cfg.Content = EncoderContentScreen
 				case 2:
-					cfg.Content = goav1.EncoderContentScreen
+					cfg.Content = EncoderContentScreen
 				}
-				if cfg.RateControl == goav1.EncoderRateControlCBR {
+				if cfg.RateControl == EncoderRateControlCBR {
 					cfg.Quantizer = 0
 				}
 				return cfg
 			}
 
 			initial := configForStep(0)
-			rtc, err := goav1.NewRTCEncoderWithConfig(initial)
+			rtc, err := NewRTCEncoderWithConfig(initial)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 			}
 			defer rtc.Close()
-			controller, err := goav1.NewWebRTCEncoder(initial, goav1.EncoderWebRTCState{})
+			controller, err := newWebRTCEncoder(initial, internalencoder.WebRTCEncoderState{})
 			if err != nil {
 				t.Fatalf("NewWebRTCEncoder(%s): %v", mode, err)
 			}
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
-			var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
-			var sharedSequence goav1.SequenceHeader
+			var layerSequences [EncoderWebRTCMaxSpatialLayers]SequenceHeader
+			var sharedSequence SequenceHeader
 			nextFrameID := uint64(0)
 
 			for step := 0; step < 5; step++ {
@@ -7239,7 +7245,7 @@ func TestPublicRTCEncoderControllerSettingsReferenceDecoders(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s step %d EncodePicture: %v", mode, step, err)
 				}
-				frameNum := goav1.EncoderWebRTCPictureTemporalUnitFrameNum(unit)
+				frameNum := encoderWebRTCPictureTemporalUnitFrameNum(unit)
 				if picture.FrameNum != int(frameNum) || picture.Keyframe != unit.Key {
 					t.Fatalf("%s step %d picture frames=%d key=%v want frames=%d key=%v",
 						mode, step, picture.FrameNum, picture.Keyframe, frameNum, unit.Key)
@@ -7248,13 +7254,13 @@ func TestPublicRTCEncoderControllerSettingsReferenceDecoders(t *testing.T) {
 				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, current, picture, unit.Key, &nextFrameID)
 				for frameIndex := 0; frameIndex < picture.FrameNum; frameIndex++ {
 					frame := picture.Frames[frameIndex]
-					control, _, err := goav1.EncoderWebRTCPictureTemporalUnitFrameControl(unit, controllerState, uint8(frameIndex))
+					control, _, err := encoderWebRTCPictureTemporalUnitFrameControl(unit, controllerState, uint8(frameIndex))
 					if err != nil {
 						t.Fatalf("%s step %d frame %d controller frame control: %v", mode, step, frameIndex, err)
 					}
 					settings := control.Settings
 					info := control.GenericFrameInfo
-					wantCodedKey := unit.Key && (current.Scalability.IsSimulcast() || settings.Type == goav1.EncoderFrameTypeKey)
+					wantCodedKey := unit.Key && (current.Scalability.IsSimulcast() || settings.Type == internalencoder.FrameTypeKey)
 					if frame.FrameID != info.FrameID ||
 						frame.TemporalID != info.TemporalID ||
 						frame.SpatialID != info.SpatialID ||
@@ -7271,10 +7277,10 @@ func TestPublicRTCEncoderControllerSettingsReferenceDecoders(t *testing.T) {
 							mode, step, frameIndex, settings, current.RateControl, current.Quantizer, current.Speed)
 					}
 					if publicRTCSharedReferenceSlotMode(current.Scalability) {
-						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s step %d S%d", mode, step, frame.SpatialID), frame.Data, &sharedSequence, current.Content == goav1.EncoderContentScreen)
+						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s step %d S%d", mode, step, frame.SpatialID), frame.Data, &sharedSequence, current.Content == EncoderContentScreen)
 						continue
 					}
-					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s step %d S%d", mode, step, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == goav1.EncoderContentScreen)
+					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("%s step %d S%d", mode, step, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == EncoderContentScreen)
 				}
 				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
 			}
@@ -7286,40 +7292,40 @@ func TestPublicRTCEncoderControllerSettingsReferenceDecoders(t *testing.T) {
 }
 
 func TestPublicRTCEncoderRTPHeaderTimestampCadenceControlMatrix(t *testing.T) {
-	modes := goav1.EncoderWebRTCScalabilityModes()
+	modes := EncoderWebRTCScalabilityModes()
 	if len(modes) == 0 {
 		t.Fatal("no WebRTC scalability modes")
 	}
-	fpsCycle := []goav1.EncoderRational{
+	fpsCycle := []EncoderRational{
 		{Num: 30, Den: 1},
 		{Num: 60000, Den: 1001},
 		{Num: 24, Den: 1},
 		{Num: 120, Den: 1},
 		{Num: 15, Den: 1},
 	}
-	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 72}
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 72}
 
 	for modeIndex, mode := range modes {
 		modeIndex, mode := modeIndex, mode
 		t.Run(mode.String(), func(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, mode)
-			configForStep := func(step int) goav1.EncoderConfig {
+			configForStep := func(step int) EncoderConfig {
 				cfg := publicRTCMatrixConfig(width, height, mode)
 				cfg.MaxFramerate = fpsCycle[(modeIndex+step)%len(fpsCycle)]
-				cfg.Content = goav1.EncoderContentCamera
+				cfg.Content = EncoderContentCamera
 				publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(modeIndex*19+step*41))
 				if step%2 == 1 {
-					cfg.RateControl = goav1.EncoderRateControlCQP
+					cfg.RateControl = EncoderRateControlCQP
 					cfg.Quantizer = uint8(25 + (modeIndex+step*3)%31)
-					cfg.Content = goav1.EncoderContentScreen
+					cfg.Content = EncoderContentScreen
 				}
-				if cfg.RateControl == goav1.EncoderRateControlCBR {
+				if cfg.RateControl == EncoderRateControlCBR {
 					cfg.Quantizer = 0
 				}
 				return cfg
 			}
 
-			enc, err := goav1.NewRTCEncoderWithConfig(configForStep(0))
+			enc, err := NewRTCEncoderWithConfig(configForStep(0))
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 			}
@@ -7327,7 +7333,7 @@ func TestPublicRTCEncoderRTPHeaderTimestampCadenceControlMatrix(t *testing.T) {
 
 			sequence := uint16(0x3000 + modeIndex*257)
 			timestampUnits := uint64(0x01000000+modeIndex*0x10000) * 2
-			var receiver goav1.RTPDependencyDescriptorState
+			var receiver RTPDependencyDescriptorState
 			for step := 0; step < 5; step++ {
 				cfg := configForStep(step)
 				if step > 0 {
@@ -7404,9 +7410,9 @@ func publicReferenceAV1Decoders(t *testing.T) []publicReferenceAV1Decoder {
 	return decoders
 }
 
-func publicFirstSequenceHeader(t *testing.T, frameData []byte) goav1.SequenceHeader {
+func publicFirstSequenceHeader(t *testing.T, frameData []byte) SequenceHeader {
 	t.Helper()
-	it := goav1.NewLowOverheadIterator(frameData)
+	it := obu.NewLowOverheadIterator(frameData)
 	for {
 		unit, ok, err := it.Next()
 		if err != nil {
@@ -7415,24 +7421,24 @@ func publicFirstSequenceHeader(t *testing.T, frameData []byte) goav1.SequenceHea
 		if !ok {
 			break
 		}
-		if unit.Header.Type != goav1.OBUSequenceHeader {
+		if unit.Header.Type != obu.TypeSequenceHeader {
 			continue
 		}
-		seq, err := goav1.ParseSequenceHeader(unit.Payload)
+		seq, err := internalparser.ParseSequenceHeader(unit.Payload)
 		if err != nil {
 			t.Fatalf("ParseSequenceHeader: %v", err)
 		}
 		return seq
 	}
 	t.Fatal("missing sequence header")
-	return goav1.SequenceHeader{}
+	return SequenceHeader{}
 }
 
 func publicFirstFrameTileColumns(t *testing.T, frameData []byte) int {
 	t.Helper()
-	var sequence goav1.SequenceHeader
+	var sequence SequenceHeader
 	haveSequence := false
-	it := goav1.NewLowOverheadIterator(frameData)
+	it := obu.NewLowOverheadIterator(frameData)
 	for {
 		unit, ok, err := it.Next()
 		if err != nil {
@@ -7442,30 +7448,30 @@ func publicFirstFrameTileColumns(t *testing.T, frameData []byte) int {
 			break
 		}
 		switch unit.Header.Type {
-		case goav1.OBUSequenceHeader:
-			sequence, err = goav1.ParseSequenceHeader(unit.Payload)
+		case obu.TypeSequenceHeader:
+			sequence, err = internalparser.ParseSequenceHeader(unit.Payload)
 			if err != nil {
 				t.Fatalf("ParseSequenceHeader: %v", err)
 			}
 			haveSequence = true
-		case goav1.OBUFrameHeader, goav1.OBUFrame:
+		case obu.TypeFrameHeader, obu.TypeFrame:
 			if !haveSequence {
 				t.Fatal("frame header appeared before sequence header")
 			}
-			prefix, err := goav1.ParseFrameHeaderPrefix(unit.Payload, sequence)
+			prefix, err := internalparser.ParseFrameHeaderPrefix(unit.Payload, sequence)
 			if err != nil {
 				t.Fatalf("ParseFrameHeaderPrefix: %v", err)
 			}
-			var size goav1.FrameSize
+			var size FrameSize
 			if prefix.UsesIntraFrameSizePath() {
-				size, err = goav1.ParseIntraFrameSize(unit.Payload, sequence, prefix, unit.Header.TemporalID, unit.Header.SpatialID)
+				size, err = internalparser.ParseIntraFrameSize(unit.Payload, sequence, prefix, unit.Header.TemporalID, unit.Header.SpatialID)
 			} else {
-				size, err = goav1.ParseFrameSize(unit.Payload, sequence, prefix, nil, unit.Header.TemporalID, unit.Header.SpatialID)
+				size, err = internalparser.ParseFrameSize(unit.Payload, sequence, prefix, nil, unit.Header.TemporalID, unit.Header.SpatialID)
 			}
 			if err != nil {
 				t.Fatalf("ParseFrameSize: %v", err)
 			}
-			tiles, err := goav1.ParseTileInfo(unit.Payload, sequence, prefix, size)
+			tiles, err := internalparser.ParseTileInfo(unit.Payload, sequence, prefix, size)
 			if err != nil {
 				t.Fatalf("ParseTileInfo: %v", err)
 			}
@@ -7477,10 +7483,10 @@ func publicFirstFrameTileColumns(t *testing.T, frameData []byte) int {
 }
 
 func assertPublicRTCFrameScreenContentHeader(
-	t *testing.T, label string, frameData []byte, sequence *goav1.SequenceHeader, wantScreen bool,
+	t *testing.T, label string, frameData []byte, sequence *SequenceHeader, wantScreen bool,
 ) {
 	t.Helper()
-	it := goav1.NewLowOverheadIterator(frameData)
+	it := obu.NewLowOverheadIterator(frameData)
 	for {
 		unit, ok, err := it.Next()
 		if err != nil {
@@ -7490,24 +7496,24 @@ func assertPublicRTCFrameScreenContentHeader(
 			break
 		}
 		switch unit.Header.Type {
-		case goav1.OBUSequenceHeader:
-			seq, err := goav1.ParseSequenceHeader(unit.Payload)
+		case obu.TypeSequenceHeader:
+			seq, err := internalparser.ParseSequenceHeader(unit.Payload)
 			if err != nil {
 				t.Fatalf("%s ParseSequenceHeader: %v", label, err)
 			}
 			*sequence = seq
-		case goav1.OBUFrameHeader, goav1.OBUFrame:
+		case obu.TypeFrameHeader, obu.TypeFrame:
 			if sequence.ColorConfig.BitDepth == 0 {
 				t.Fatalf("%s frame header appeared before sequence header", label)
 			}
-			prefix, err := goav1.ParseFrameHeaderPrefix(unit.Payload, *sequence)
+			prefix, err := internalparser.ParseFrameHeaderPrefix(unit.Payload, *sequence)
 			if err != nil {
 				t.Fatalf("%s ParseFrameHeaderPrefix: %v", label, err)
 			}
 			// SVT-AV1 rtc: screen-content tools on intra frames of screen
 			// content only (palette on I-slices, no IntraBC); force_integer_mv
 			// is implied on intra frames and 0 otherwise.
-			intra := prefix.FrameType == goav1.FrameTypeKey || prefix.FrameType == goav1.FrameTypeIntraOnly
+			intra := prefix.FrameType == internalparser.FrameTypeKey || prefix.FrameType == internalparser.FrameTypeIntraOnly
 			if prefix.AllowScreenContentTools != (wantScreen && intra) || prefix.ForceIntegerMV != intra {
 				t.Fatalf("%s screen flags allow=%v integerMV=%v want screen=%v intra=%v prefix=%+v",
 					label, prefix.AllowScreenContentTools, prefix.ForceIntegerMV, wantScreen, intra, prefix)
@@ -7522,7 +7528,7 @@ func assertPublicIVFMatchesReferenceDecodersRawYUV(
 	t *testing.T, decoders []publicReferenceAV1Decoder, name string, ivf []byte,
 ) {
 	t.Helper()
-	decoded, err := goav1.DecodeIVF(ivf)
+	decoded, err := DecodeIVF(ivf)
 	if err != nil {
 		t.Fatalf("%s DecodeIVF: %v", name, err)
 	}
@@ -7589,7 +7595,7 @@ func assertPublicIVFMonochromeMatchesReferenceDecoders(
 	t *testing.T, decoders []publicReferenceAV1Decoder, name string, ivf []byte, width int, height int,
 ) {
 	t.Helper()
-	decoded, err := goav1.DecodeIVF(ivf)
+	decoded, err := DecodeIVF(ivf)
 	if err != nil {
 		t.Fatalf("%s DecodeIVF: %v", name, err)
 	}
@@ -7644,7 +7650,7 @@ func assertPublicIVFHighBitDepthMonochromeMatchesReferenceDecoders(
 	t *testing.T, decoders []publicReferenceAV1Decoder, name string, ivf []byte, wantY []byte, width int, height int, bytesPerSample int,
 ) {
 	t.Helper()
-	decoded, err := goav1.DecodeIVF(ivf)
+	decoded, err := DecodeIVF(ivf)
 	if err != nil {
 		t.Fatalf("%s DecodeIVF: %v", name, err)
 	}
@@ -7711,17 +7717,17 @@ func assertPublicIVFHighBitDepthMonochromeMatchesReferenceDecoders(
 
 func publicRTCREMBFeedbackCompound(t *testing.T, bitrateBps uint64) []byte {
 	t.Helper()
-	fci, err := goav1.AppendRTCPReceiverEstimatedMaximumBitrateFCI(
-		make([]byte, 0, goav1.RTCPReceiverEstimatedMaximumBitrateFCIMinSize+goav1.RTCPReceiverEstimatedMaximumBitrateSSRCSize),
+	fci, err := AppendRTCPReceiverEstimatedMaximumBitrateFCI(
+		make([]byte, 0, RTCPReceiverEstimatedMaximumBitrateFCIMinSize+RTCPReceiverEstimatedMaximumBitrateSSRCSize),
 		bitrateBps,
 		[]uint32{0x05060708},
 	)
 	if err != nil {
 		t.Fatalf("AppendRTCPReceiverEstimatedMaximumBitrateFCI: %v", err)
 	}
-	return testAV1RTCPFeedbackCompound(t, goav1.RTCPFeedbackPacket{
-		PacketType: goav1.RTCPPSFBPacketType,
-		FMT:        goav1.RTCPPSFBApplicationLayerFeedbackFMT,
+	return testAV1RTCPFeedbackCompound(t, RTCPFeedbackPacket{
+		PacketType: RTCPPSFBPacketType,
+		FMT:        RTCPPSFBApplicationLayerFeedbackFMT,
 		SenderSSRC: 0x01020304,
 		MediaSSRC:  0x05060708,
 		FCI:        fci,
@@ -7732,8 +7738,8 @@ func assertPublicRTCRTPReferenceDecoders(
 	t *testing.T,
 	decoders []publicReferenceAV1Decoder,
 	name string,
-	cfg goav1.EncoderConfig,
-	layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte,
+	cfg EncoderConfig,
+	layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte,
 	orderedTUs [][]byte,
 ) {
 	t.Helper()
@@ -7772,8 +7778,8 @@ func assertPublicRTCRTPMonochromeReferenceDecoders(
 	t *testing.T,
 	decoders []publicReferenceAV1Decoder,
 	name string,
-	cfg goav1.EncoderConfig,
-	layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte,
+	cfg EncoderConfig,
+	layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte,
 	orderedTUs [][]byte,
 ) {
 	t.Helper()
@@ -7877,13 +7883,13 @@ func firstPublicByteDiff(a []byte, b []byte) int {
 
 func TestPublicRTCEncoderSetConfigSpatialCycleDecodes(t *testing.T) {
 	const w, h = 1008, 576
-	modes := []goav1.EncoderScalabilityMode{
-		goav1.EncoderScalabilityModeL1T2,
-		goav1.EncoderScalabilityModeS2T2,
-		goav1.EncoderScalabilityModeL3T2_KEY_SHIFT,
-		goav1.EncoderScalabilityModeL1T3,
+	modes := []EncoderScalabilityMode{
+		EncoderScalabilityModeL1T2,
+		internalencoder.ScalabilityModeS2T2,
+		EncoderScalabilityModeL3T2_KEY_SHIFT,
+		EncoderScalabilityModeL1T3,
 	}
-	fps := []goav1.EncoderRational{
+	fps := []EncoderRational{
 		{Num: 30, Den: 1},
 		{Num: 60, Den: 1},
 		{Num: 30000, Den: 1001},
@@ -7894,13 +7900,13 @@ func TestPublicRTCEncoderSetConfigSpatialCycleDecodes(t *testing.T) {
 	cfg := publicRTCMatrixConfig(w, h, modes[0])
 	cfg.MaxFramerate = fps[0]
 	publicRTCApplyControlBitrates(&cfg, targets[0])
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig(%s): %v", modes[0], err)
 	}
 	defer enc.Close()
 
-	var receiver goav1.RTPDependencyDescriptorState
+	var receiver RTPDependencyDescriptorState
 	nextFrameID := uint64(0)
 	frameIndex := 0
 	for step, mode := range modes {
@@ -7914,7 +7920,7 @@ func TestPublicRTCEncoderSetConfigSpatialCycleDecodes(t *testing.T) {
 			assertPublicRTCConfigBitrates(t, enc.Config(), cfg)
 		}
 
-		var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+		var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 		var orderedTUs [][]byte
 		key, err := enc.EncodePicture(publicRTCMatrixFrame(w, h, frameIndex), false)
 		if err != nil {
@@ -7937,8 +7943,8 @@ func TestPublicRTCEncoderSetConfigSpatialCycleDecodes(t *testing.T) {
 
 func TestPublicRTCEncoderKeyFrameScalabilityMetadata(t *testing.T) {
 	const w, h = 640, 360
-	cfg := publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL2T2)
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	cfg := publicRTCMatrixConfig(w, h, internalencoder.ScalabilityModeL2T2)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig L2T2: %v", err)
 	}
@@ -7949,10 +7955,10 @@ func TestPublicRTCEncoderKeyFrameScalabilityMetadata(t *testing.T) {
 	if picture.FrameNum < 1 || !picture.Keyframe {
 		t.Fatalf("picture=%+v", picture)
 	}
-	assertPublicRTCFrameScalabilityMetadata(t, picture.Frames[0].Data, goav1.MetadataScalabilityModeL2T2, true)
+	assertPublicRTCFrameScalabilityMetadata(t, picture.Frames[0].Data, obu.ScalabilityModeL2T2, true)
 
-	ssCfg := publicRTCMatrixConfig(960, 540, goav1.EncoderScalabilityModeL3T1h)
-	ssEnc, err := goav1.NewRTCEncoderWithConfig(ssCfg)
+	ssCfg := publicRTCMatrixConfig(960, 540, internalencoder.ScalabilityModeL3T1h)
+	ssEnc, err := NewRTCEncoderWithConfig(ssCfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig L3T1h: %v", err)
 	}
@@ -7971,7 +7977,7 @@ func TestPublicRTCEncoderKeyFrameScalabilityMetadata(t *testing.T) {
 		[]uint8{1},
 	)
 
-	plain, err := goav1.NewRTCEncoderWithConfig(publicRTCMatrixConfig(w, h, goav1.EncoderScalabilityModeL1T1))
+	plain, err := NewRTCEncoderWithConfig(publicRTCMatrixConfig(w, h, EncoderScalabilityModeL1T1))
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig L1T1: %v", err)
 	}
@@ -7983,11 +7989,11 @@ func TestPublicRTCEncoderKeyFrameScalabilityMetadata(t *testing.T) {
 }
 
 func TestPublicRTCEncoderSetConfigFullModeCatalogueDecodes(t *testing.T) {
-	modes := goav1.EncoderWebRTCScalabilityModes()
+	modes := EncoderWebRTCScalabilityModes()
 	if len(modes) == 0 {
 		t.Fatal("no WebRTC scalability modes")
 	}
-	fps := []goav1.EncoderRational{
+	fps := []EncoderRational{
 		{Num: 30, Den: 1},
 		{Num: 60, Den: 1},
 		{Num: 30000, Den: 1001},
@@ -7996,10 +8002,10 @@ func TestPublicRTCEncoderSetConfigFullModeCatalogueDecodes(t *testing.T) {
 		{Num: 120, Den: 1},
 	}
 
-	var enc *goav1.RTCEncoder
-	var descriptorReceiver goav1.RTPDependencyDescriptorState
-	var rtpReceiver goav1.RTPDependencyDescriptorState
-	var activeLayerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+	var enc *RTCEncoder
+	var descriptorReceiver RTPDependencyDescriptorState
+	var rtpReceiver RTPDependencyDescriptorState
+	var activeLayerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 	var activeOrderedTUs [][]byte
 	nextFrameID := uint64(0)
 	frameIndex := 0
@@ -8011,14 +8017,14 @@ func TestPublicRTCEncoderSetConfigFullModeCatalogueDecodes(t *testing.T) {
 		targetKbps := publicRTCMatrixControlBitrateKbps(t, mode) + int32((step%5)*37)
 		publicRTCApplyControlBitrates(&cfg, targetKbps)
 		if step%2 == 1 {
-			cfg.RateControl = goav1.EncoderRateControlCQP
+			cfg.RateControl = EncoderRateControlCQP
 			cfg.Quantizer = uint8(24 + step%31)
 		}
 
 		wantKey := true
 		if enc == nil {
 			var err error
-			enc, err = goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err = NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 			}
@@ -8031,7 +8037,7 @@ func TestPublicRTCEncoderSetConfigFullModeCatalogueDecodes(t *testing.T) {
 		}
 		assertPublicRTCConfigControls(t, enc.Config(), cfg)
 		if wantKey {
-			activeLayerTUs = [goav1.EncoderWebRTCMaxSpatialLayers][][]byte{}
+			activeLayerTUs = [EncoderWebRTCMaxSpatialLayers][][]byte{}
 			activeOrderedTUs = nil
 		}
 
@@ -8053,7 +8059,7 @@ func TestPublicRTCEncoderSetConfigFullModeCatalogueDecodes(t *testing.T) {
 
 		controlChange := enc.Config()
 		controlChange.MaxFramerate = fps[(step+1)%len(fps)]
-		if controlChange.RateControl == goav1.EncoderRateControlCQP {
+		if controlChange.RateControl == EncoderRateControlCQP {
 			controlChange.Quantizer = uint8(20 + (step*7)%37)
 		} else {
 			publicRTCApplyControlBitrates(&controlChange, targetKbps+53)
@@ -8075,11 +8081,11 @@ func TestPublicRTCEncoderSetConfigFullModeCatalogueDecodes(t *testing.T) {
 }
 
 func TestPublicRTCEncoderControlChurnSoakMatrix(t *testing.T) {
-	modes := goav1.EncoderWebRTCScalabilityModes()
+	modes := EncoderWebRTCScalabilityModes()
 	if len(modes) == 0 {
 		t.Fatal("no WebRTC scalability modes")
 	}
-	fpsCycle := []goav1.EncoderRational{
+	fpsCycle := []EncoderRational{
 		{Num: 30, Den: 1},
 		{Num: 60000, Den: 1001},
 		{Num: 60, Den: 1},
@@ -8092,37 +8098,37 @@ func TestPublicRTCEncoderControlChurnSoakMatrix(t *testing.T) {
 		modeIndex, mode := modeIndex, mode
 		t.Run(mode.String(), func(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, mode)
-			configForStep := func(step int) goav1.EncoderConfig {
+			configForStep := func(step int) EncoderConfig {
 				cfg := publicRTCMatrixConfig(width, height, mode)
 				cfg.MaxFramerate = fpsCycle[(modeIndex+step)%len(fpsCycle)]
-				cfg.Content = goav1.EncoderContentCamera
+				cfg.Content = EncoderContentCamera
 				target := publicRTCMatrixControlBitrateKbps(t, mode) + int32(modeIndex*13+step*37)
 				publicRTCApplyControlBitrates(&cfg, target)
 				if step%2 == 1 {
-					cfg.RateControl = goav1.EncoderRateControlCQP
+					cfg.RateControl = EncoderRateControlCQP
 					cfg.Quantizer = uint8(23 + (modeIndex+step*5)%37)
-					cfg.Content = goav1.EncoderContentScreen
+					cfg.Content = EncoderContentScreen
 				}
 				if step%4 == 3 {
-					cfg.Content = goav1.EncoderContentScreen
+					cfg.Content = EncoderContentScreen
 				}
 				return cfg
 			}
 
-			enc, err := goav1.NewRTCEncoderWithConfig(configForStep(0))
+			enc, err := NewRTCEncoderWithConfig(configForStep(0))
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 			}
 			defer enc.Close()
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
-			var rtpReceiver goav1.RTPDependencyDescriptorState
-			var activeReceiver goav1.RTPDependencyDescriptorState
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var descriptorReceiver RTPDependencyDescriptorState
+			var rtpReceiver RTPDependencyDescriptorState
+			var activeReceiver RTPDependencyDescriptorState
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
-			var layerSequences [goav1.EncoderWebRTCMaxSpatialLayers]goav1.SequenceHeader
-			var sharedSequence goav1.SequenceHeader
-			activeLimits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 56}
+			var layerSequences [EncoderWebRTCMaxSpatialLayers]SequenceHeader
+			var sharedSequence SequenceHeader
+			activeLimits := RTPPayloadSizeLimits{MaxPayloadLen: 56}
 			nextFrameID := uint64(0)
 
 			for step := 0; step < 8; step++ {
@@ -8136,7 +8142,7 @@ func TestPublicRTCEncoderControlChurnSoakMatrix(t *testing.T) {
 					}
 				}
 				assertPublicRTCConfigControls(t, enc.Config(), cfg)
-				wantDuration, err := goav1.EncoderWebRTCRTPFrameDuration(cfg)
+				wantDuration, err := EncoderWebRTCRTPFrameDuration(cfg)
 				if err != nil {
 					t.Fatalf("%s step %d EncoderWebRTCRTPFrameDuration: %v", mode, step, err)
 				}
@@ -8159,13 +8165,13 @@ func TestPublicRTCEncoderControlChurnSoakMatrix(t *testing.T) {
 				for frameIndex := 0; frameIndex < picture.FrameNum; frameIndex++ {
 					frame := picture.Frames[frameIndex]
 					if publicRTCSharedReferenceSlotMode(current.Scalability) {
-						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("step-%d S%d", step, frame.SpatialID), frame.Data, &sharedSequence, current.Content == goav1.EncoderContentScreen)
+						assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("step-%d S%d", step, frame.SpatialID), frame.Data, &sharedSequence, current.Content == EncoderContentScreen)
 						continue
 					}
-					if frame.SpatialID >= goav1.EncoderWebRTCMaxSpatialLayers {
+					if frame.SpatialID >= EncoderWebRTCMaxSpatialLayers {
 						t.Fatalf("%s step %d spatial id=%d", mode, step, frame.SpatialID)
 					}
-					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("step-%d S%d", step, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == goav1.EncoderContentScreen)
+					assertPublicRTCFrameScreenContentHeader(t, fmt.Sprintf("step-%d S%d", step, frame.SpatialID), frame.Data, &layerSequences[frame.SpatialID], current.Content == EncoderContentScreen)
 				}
 				appendPublicRTCPictureRTPData(t, &rtpReceiver, &layerTUs, &orderedTUs, picture)
 			}
@@ -8176,9 +8182,9 @@ func TestPublicRTCEncoderControlChurnSoakMatrix(t *testing.T) {
 }
 
 func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
-	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 24}
 	covered := 0
-	for step, mode := range goav1.EncoderWebRTCScalabilityModes() {
+	for step, mode := range EncoderWebRTCScalabilityModes() {
 		if !publicRTCSharedReferenceSlotMode(mode) {
 			continue
 		}
@@ -8186,14 +8192,14 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 		t.Run(mode.String(), func(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, mode)
 			cfg := publicRTCMatrixConfig(width, height, mode)
-			cfg.MaxFramerate = []goav1.EncoderRational{
+			cfg.MaxFramerate = []EncoderRational{
 				{Num: 30, Den: 1},
 				{Num: 60, Den: 1},
 				{Num: 30000, Den: 1001},
 				{Num: 24, Den: 1},
 			}[step%4]
 			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*13))
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 			}
@@ -8207,7 +8213,7 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 			for frameIndex := 0; frameIndex < 3; frameIndex++ {
 				if frameIndex == 2 {
 					controlChange := enc.Config()
-					controlChange.MaxFramerate = goav1.EncoderRational{Num: 120, Den: 1}
+					controlChange.MaxFramerate = EncoderRational{Num: 120, Den: 1}
 					publicRTCApplyControlBitrates(&controlChange, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*17)+53)
 					if err := enc.SetConfig(controlChange); err != nil {
 						t.Fatalf("SetConfig(%s control): %v", mode, err)
@@ -8290,8 +8296,8 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 
 func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
 	const dependencyDescriptorExtensionID = 42
-	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 192}
-	fps := []goav1.EncoderRational{
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 192}
+	fps := []EncoderRational{
 		{Num: 30, Den: 1},
 		{Num: 60, Den: 1},
 		{Num: 30000, Den: 1001},
@@ -8299,14 +8305,14 @@ func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
 		{Num: 120, Den: 1},
 	}
 
-	for step, mode := range goav1.EncoderWebRTCScalabilityModes() {
+	for step, mode := range EncoderWebRTCScalabilityModes() {
 		mode := mode
 		t.Run(mode.String(), func(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, mode)
 			cfg := publicRTCMatrixConfig(width, height, mode)
 			cfg.MaxFramerate = fps[step%len(fps)]
 			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, mode)+int32(step*23))
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 			}
@@ -8350,11 +8356,11 @@ func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
 					}
 				}
 			}
-			cacheSlots := make([]goav1.RTPRetransmissionCacheSlot, len(key0Packets)+len(lostPackets)+len(recoveryPackets)+8)
+			cacheSlots := make([]RTPRetransmissionCacheSlot, len(key0Packets)+len(lostPackets)+len(recoveryPackets)+8)
 			for i := range cacheSlots {
-				cacheSlots[i].Packet = make([]byte, 0, maxPacketLen+goav1.RTPHeaderMinSize+2)
+				cacheSlots[i].Packet = make([]byte, 0, maxPacketLen+RTPHeaderMinSize+2)
 			}
-			retransmissionCache, err := goav1.BindRTPRetransmissionCache(cacheSlots)
+			retransmissionCache, err := BindRTPRetransmissionCache(cacheSlots)
 			if err != nil {
 				t.Fatalf("BindRTPRetransmissionCache(%s): %v", mode, err)
 			}
@@ -8371,7 +8377,7 @@ func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
 			if len(selectedProbePackets) == 0 {
 				t.Fatalf("%s produced no S0/T0 probe packets", mode)
 			}
-			dec, err := goav1.NewLayeredDecoderFromRTPPackets(selectedProbePackets)
+			dec, err := NewLayeredDecoderFromRTPPackets(selectedProbePackets)
 			if err != nil {
 				t.Fatalf("NewLayeredDecoderFromRTPPackets(%s): %v", mode, err)
 			}
@@ -8387,24 +8393,24 @@ func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
 			if slotCount > 1<<15 {
 				slotCount = 1 << 15
 			}
-			sequencer, err := goav1.BindRTPPacketSequencer(make([]goav1.RTPPacketSequencerSlot, slotCount))
+			sequencer, err := BindRTPPacketSequencer(make([]RTPPacketSequencerSlot, slotCount))
 			if err != nil {
 				t.Fatalf("BindRTPPacketSequencer(%s): %v", mode, err)
 			}
-			events := make([]goav1.RTPSequencedPacket, 0, 8)
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			events := make([]RTPSequencedPacket, 0, 8)
+			var descriptorReceiver RTPDependencyDescriptorState
 			var got [][16]byte
 			var gotMetadata []publicLayeredFrameMetadata
 			pendingLoss := false
 
-			decodeEvents := func(label string, in []goav1.RTPSequencedPacket) {
+			decodeEvents := func(label string, in []RTPSequencedPacket) {
 				t.Helper()
 				for i, event := range in {
-					parsed, err := goav1.ParseRTPPacketDependencyDescriptor(event.RawPacket, dependencyDescriptorExtensionID, &descriptorReceiver)
+					parsed, err := ParseRTPPacketDependencyDescriptor(event.RawPacket, dependencyDescriptorExtensionID, &descriptorReceiver)
 					if err != nil {
 						t.Fatalf("%s %s event %d ParseRTPPacketDependencyDescriptor: %v", mode, label, i, err)
 					}
-					forward, err := goav1.RTPDependencyDescriptorFrameForwardedForDecodeTarget(parsed.Descriptor, descriptorReceiver, 0)
+					forward, err := RTPDependencyDescriptorFrameForwardedForDecodeTarget(parsed.Descriptor, descriptorReceiver, 0)
 					if err != nil {
 						t.Fatalf("%s %s event %d FrameForwardedForDecodeTarget: %v", mode, label, i, err)
 					}
@@ -8428,7 +8434,7 @@ func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
 					}
 				}
 			}
-			push := func(label string, packet []byte) []goav1.RTPSequencedPacket {
+			push := func(label string, packet []byte) []RTPSequencedPacket {
 				t.Helper()
 				out, err := sequencer.Push(packet, events[:0])
 				if err != nil {
@@ -8450,29 +8456,29 @@ func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
 			if len(missing) != 1 || missing[0] != wantGapSeq {
 				t.Fatalf("%s key0 missing=%#v want [%#x]", mode, missing, wantGapSeq)
 			}
-			pairs, err := sequencer.AppendMissingRTCPGenericNACKPairs(make([]goav1.RTCPGenericNACKPair, 0, 1))
+			pairs, err := sequencer.AppendMissingRTCPGenericNACKPairs(make([]RTCPGenericNACKPair, 0, 1))
 			if err != nil {
 				t.Fatalf("%s AppendMissingRTCPGenericNACKPairs key0 gap: %v", mode, err)
 			}
-			if len(pairs) != 1 || pairs[0] != (goav1.RTCPGenericNACKPair{PacketID: wantGapSeq}) {
+			if len(pairs) != 1 || pairs[0] != (RTCPGenericNACKPair{PacketID: wantGapSeq}) {
 				t.Fatalf("%s key0 NACK pairs=%+v want PID %#x", mode, pairs, wantGapSeq)
 			}
 			duplicate := push("key0-packet-2-duplicate", key0Packets[2])
 			if len(duplicate) != 0 || sequencer.Buffered() != 1 {
 				t.Fatalf("%s duplicate released=%d buffered=%d want 0/1", mode, len(duplicate), sequencer.Buffered())
 			}
-			originalGapPacket, err := goav1.ParseRTPPacket(key0Packets[1])
+			originalGapPacket, err := ParseRTPPacket(key0Packets[1])
 			if err != nil {
 				t.Fatalf("%s ParseRTPPacket original gap: %v", mode, err)
 			}
-			rtxConfig := goav1.RTPRTXPacketConfig{
+			rtxConfig := RTPRTXPacketConfig{
 				PayloadType:    97,
 				SequenceNumber: uint16(0x7000 + step),
 				SSRC:           0x55667700 + uint32(step),
 			}
-			rtxSpans := make([]goav1.RTPRTXPacketSpan, 1)
+			rtxSpans := make([]RTPRTXPacketSpan, 1)
 			rtxPackets, rtxCount, nextRTXConfig, err := retransmissionCache.AppendRTXPacketsForRTCPGenericNACKPairs(
-				make([]byte, 0, maxPacketLen+goav1.RTPHeaderMinSize+2),
+				make([]byte, 0, maxPacketLen+RTPHeaderMinSize+2),
 				rtxSpans,
 				pairs,
 				rtxConfig,
@@ -8484,7 +8490,7 @@ func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
 				t.Fatalf("%s RTX count=%d next=%#x want 1/%#x", mode, rtxCount, nextRTXConfig.SequenceNumber, rtxConfig.SequenceNumber+1)
 			}
 			rtxPacket := rtxPackets[rtxSpans[0].Offset : rtxSpans[0].Offset+rtxSpans[0].Length]
-			parsedRTX, err := goav1.ParseRTPRTXPacket(rtxPacket)
+			parsedRTX, err := ParseRTPRTXPacket(rtxPacket)
 			if err != nil {
 				t.Fatalf("%s ParseRTPRTXPacket key0 gap: %v", mode, err)
 			}
@@ -8496,7 +8502,7 @@ func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
 				parsedRTX.Header.SSRC != rtxConfig.SSRC {
 				t.Fatalf("%s RTX repair span=%+v parsed=%+v osn=%#x", mode, rtxSpans[0], parsedRTX.Header, parsedRTX.OriginalSequenceNumber)
 			}
-			restoredGap, err := goav1.AppendRTPPacketFromRTX(
+			restoredGap, err := AppendRTPPacketFromRTX(
 				make([]byte, 0, len(key0Packets[1])),
 				rtxPacket,
 				originalGapPacket.Header.PayloadType,
@@ -8535,7 +8541,7 @@ func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
 				t.Fatalf("%s lost missing len=%d first=%#x want len=%d first=%#x", mode, len(missing), firstMissing, len(lostPackets), firstLostSeq)
 			}
 			nackCap := (len(lostPackets) + 15) / 16
-			pairs, err = sequencer.AppendMissingRTCPGenericNACKPairs(make([]goav1.RTCPGenericNACKPair, 0, nackCap))
+			pairs, err = sequencer.AppendMissingRTCPGenericNACKPairs(make([]RTCPGenericNACKPair, 0, nackCap))
 			if err != nil {
 				t.Fatalf("%s AppendMissingRTCPGenericNACKPairs lost picture: %v", mode, err)
 			}
@@ -8563,7 +8569,7 @@ func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
 			wantLowOverheads := append(wantKey0, publicRTCPictureDecodeTargetLowOverheads(recovery, 0, 0)...)
 			want := decodePublicLayeredDecoderLowOverheadDigests(t, wantLowOverheads...)
 			var wantMetadata []publicLayeredFrameMetadata
-			for _, picture := range []goav1.RTCPicture{key0, recovery} {
+			for _, picture := range []RTCPicture{key0, recovery} {
 				for i := 0; i < picture.FrameNum; i++ {
 					frame := picture.Frames[i]
 					if frame.SpatialID == 0 && frame.TemporalID == 0 {
@@ -8586,15 +8592,15 @@ func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
 
 func TestPublicRTCEncoderControlImpairmentRTPReferenceDecoders(t *testing.T) {
 	const dependencyDescriptorExtensionID = 42
-	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 96}
 	decoders := publicReferenceAV1Decoders(t)
 	scenarios := []struct {
 		name string
-		mode goav1.EncoderScalabilityMode
+		mode EncoderScalabilityMode
 	}{
-		{name: "single-spatial-l1t3", mode: goav1.EncoderScalabilityModeL1T3},
-		{name: "shared-svc-l2t3-key-shift", mode: goav1.EncoderScalabilityModeL2T3_KEY_SHIFT},
-		{name: "simulcast-s3t2h", mode: goav1.EncoderScalabilityModeS3T2h},
+		{name: "single-spatial-l1t3", mode: EncoderScalabilityModeL1T3},
+		{name: "shared-svc-l2t3-key-shift", mode: EncoderScalabilityModeL2T3_KEY_SHIFT},
+		{name: "simulcast-s3t2h", mode: internalencoder.ScalabilityModeS3T2h},
 	}
 
 	for scenarioIndex, scenario := range scenarios {
@@ -8602,17 +8608,17 @@ func TestPublicRTCEncoderControlImpairmentRTPReferenceDecoders(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, scenario.mode)
 			cfg := publicRTCMatrixConfig(width, height, scenario.mode)
-			cfg.MaxFramerate = goav1.EncoderRational{Num: 30, Den: 1}
-			cfg.Content = goav1.EncoderContentCamera
+			cfg.MaxFramerate = EncoderRational{Num: 30, Den: 1}
+			cfg.Content = EncoderContentCamera
 			publicRTCApplyControlBitrates(&cfg, publicRTCMatrixControlBitrateKbps(t, scenario.mode)+int32(scenarioIndex*97))
 
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", scenario.mode, err)
 			}
 			defer enc.Close()
 
-			var descriptorReceiver goav1.RTPDependencyDescriptorState
+			var descriptorReceiver RTPDependencyDescriptorState
 			nextFrameID := uint64(0)
 			key0, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 0), false)
 			if err != nil {
@@ -8622,10 +8628,10 @@ func TestPublicRTCEncoderControlImpairmentRTPReferenceDecoders(t *testing.T) {
 			assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), key0, true, &nextFrameID)
 
 			lostConfig := enc.Config()
-			lostConfig.MaxFramerate = goav1.EncoderRational{Num: 60000, Den: 1001}
-			lostConfig.RateControl = goav1.EncoderRateControlCQP
+			lostConfig.MaxFramerate = EncoderRational{Num: 60000, Den: 1001}
+			lostConfig.RateControl = EncoderRateControlCQP
 			lostConfig.Quantizer = uint8(27 + scenarioIndex*5)
-			lostConfig.Content = goav1.EncoderContentScreen
+			lostConfig.Content = EncoderContentScreen
 			if publicRTCSetConfigRequiresKey(t, enc.Config(), lostConfig) {
 				t.Fatalf("%s same-mode lost-control change unexpectedly requires key", scenario.name)
 			}
@@ -8644,10 +8650,10 @@ func TestPublicRTCEncoderControlImpairmentRTPReferenceDecoders(t *testing.T) {
 			assertPublicRTCPictureDescriptors(t, &descriptorReceiver, enc.Config(), lost, false, &nextFrameID)
 
 			recoveryConfig := enc.Config()
-			recoveryConfig.MaxFramerate = goav1.EncoderRational{Num: 120, Den: 1}
-			recoveryConfig.RateControl = goav1.EncoderRateControlCBR
+			recoveryConfig.MaxFramerate = EncoderRational{Num: 120, Den: 1}
+			recoveryConfig.RateControl = EncoderRateControlCBR
 			recoveryConfig.Quantizer = 0
-			recoveryConfig.Content = goav1.EncoderContentScreen
+			recoveryConfig.Content = EncoderContentScreen
 			publicRTCApplyControlBitrates(&recoveryConfig, publicRTCMatrixControlBitrateKbps(t, scenario.mode)+int32(scenarioIndex*113)+211)
 			if publicRTCSetConfigRequiresKey(t, enc.Config(), recoveryConfig) {
 				t.Fatalf("%s same-mode recovery-control change unexpectedly requires key", scenario.name)
@@ -8657,16 +8663,16 @@ func TestPublicRTCEncoderControlImpairmentRTPReferenceDecoders(t *testing.T) {
 			}
 			assertPublicRTCConfigControls(t, enc.Config(), recoveryConfig)
 
-			pliCompound := testAV1RTCPFeedbackCompound(t, goav1.RTCPFeedbackPacket{
-				PacketType: goav1.RTCPPSFBPacketType,
-				FMT:        goav1.RTCPPSFBPictureLossIndicationFMT,
+			pliCompound := testAV1RTCPFeedbackCompound(t, RTCPFeedbackPacket{
+				PacketType: RTCPPSFBPacketType,
+				FMT:        RTCPPSFBPictureLossIndicationFMT,
 				SenderSSRC: 0x01020304,
 				MediaSSRC:  0x05060708,
 			})
-			forceKey, packets, err := goav1.EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
+			forceKey, packets, err := EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame(
 				enc.Config(),
 				pliCompound,
-				make([]goav1.RTCPPacket, 0, 1),
+				make([]RTCPPacket, 0, 1),
 				nil,
 				nil,
 			)
@@ -8706,7 +8712,7 @@ func TestPublicRTCEncoderControlImpairmentRTPReferenceDecoders(t *testing.T) {
 			if len(probePackets) == 0 {
 				t.Fatalf("%s produced no S0/T0 probe packets", scenario.name)
 			}
-			dec, err := goav1.NewLayeredDecoderFromRTPPackets(probePackets)
+			dec, err := NewLayeredDecoderFromRTPPackets(probePackets)
 			if err != nil {
 				t.Fatalf("NewLayeredDecoderFromRTPPackets(%s): %v", scenario.name, err)
 			}
@@ -8719,23 +8725,23 @@ func TestPublicRTCEncoderControlImpairmentRTPReferenceDecoders(t *testing.T) {
 			if slotCount < 16 {
 				slotCount = 16
 			}
-			sequencer, err := goav1.BindRTPPacketSequencer(make([]goav1.RTPPacketSequencerSlot, slotCount))
+			sequencer, err := BindRTPPacketSequencer(make([]RTPPacketSequencerSlot, slotCount))
 			if err != nil {
 				t.Fatalf("BindRTPPacketSequencer(%s): %v", scenario.name, err)
 			}
-			events := make([]goav1.RTPSequencedPacket, 0, 8)
-			var rtpDescriptorReceiver goav1.RTPDependencyDescriptorState
+			events := make([]RTPSequencedPacket, 0, 8)
+			var rtpDescriptorReceiver RTPDependencyDescriptorState
 			var got [][16]byte
 			var gotMetadata []publicLayeredFrameMetadata
 			pendingLoss := false
-			decodeEvents := func(label string, in []goav1.RTPSequencedPacket) {
+			decodeEvents := func(label string, in []RTPSequencedPacket) {
 				t.Helper()
 				for i, event := range in {
-					parsed, err := goav1.ParseRTPPacketDependencyDescriptor(event.RawPacket, dependencyDescriptorExtensionID, &rtpDescriptorReceiver)
+					parsed, err := ParseRTPPacketDependencyDescriptor(event.RawPacket, dependencyDescriptorExtensionID, &rtpDescriptorReceiver)
 					if err != nil {
 						t.Fatalf("%s %s event %d ParseRTPPacketDependencyDescriptor: %v", scenario.name, label, i, err)
 					}
-					forward, err := goav1.RTPDependencyDescriptorFrameForwardedForDecodeTarget(parsed.Descriptor, rtpDescriptorReceiver, 0)
+					forward, err := RTPDependencyDescriptorFrameForwardedForDecodeTarget(parsed.Descriptor, rtpDescriptorReceiver, 0)
 					if err != nil {
 						t.Fatalf("%s %s event %d FrameForwardedForDecodeTarget: %v", scenario.name, label, i, err)
 					}
@@ -8759,7 +8765,7 @@ func TestPublicRTCEncoderControlImpairmentRTPReferenceDecoders(t *testing.T) {
 					}
 				}
 			}
-			push := func(label string, packet []byte) []goav1.RTPSequencedPacket {
+			push := func(label string, packet []byte) []RTPSequencedPacket {
 				t.Helper()
 				out, err := sequencer.Push(packet, events[:0])
 				if err != nil {
@@ -8783,7 +8789,7 @@ func TestPublicRTCEncoderControlImpairmentRTPReferenceDecoders(t *testing.T) {
 			if len(missing) != len(lostPackets) || missing[0] != firstLostSeq {
 				t.Fatalf("%s missing len=%d first=%#x want len=%d first=%#x", scenario.name, len(missing), missing[0], len(lostPackets), firstLostSeq)
 			}
-			pairs, err := sequencer.AppendMissingRTCPGenericNACKPairs(make([]goav1.RTCPGenericNACKPair, 0, (len(lostPackets)+15)/16))
+			pairs, err := sequencer.AppendMissingRTCPGenericNACKPairs(make([]RTCPGenericNACKPair, 0, (len(lostPackets)+15)/16))
 			if err != nil {
 				t.Fatalf("%s AppendMissingRTCPGenericNACKPairs lost picture: %v", scenario.name, err)
 			}
@@ -8806,7 +8812,7 @@ func TestPublicRTCEncoderControlImpairmentRTPReferenceDecoders(t *testing.T) {
 			wantLowOverheads := append(publicRTCPictureDecodeTargetLowOverheads(key0, 0, 0), publicRTCPictureDecodeTargetLowOverheads(recovery, 0, 0)...)
 			want := decodePublicLayeredDecoderLowOverheadDigests(t, wantLowOverheads...)
 			var wantMetadata []publicLayeredFrameMetadata
-			for _, picture := range []goav1.RTCPicture{key0, recovery} {
+			for _, picture := range []RTCPicture{key0, recovery} {
 				for i := 0; i < picture.FrameNum; i++ {
 					frame := picture.Frames[i]
 					if frame.SpatialID == 0 && frame.TemporalID == 0 {
@@ -8824,8 +8830,8 @@ func TestPublicRTCEncoderControlImpairmentRTPReferenceDecoders(t *testing.T) {
 				}
 			}
 
-			var deliveredReceiver goav1.RTPDependencyDescriptorState
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var deliveredReceiver RTPDependencyDescriptorState
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 			appendPublicRTCPictureRTPData(t, &deliveredReceiver, &layerTUs, &orderedTUs, key0)
 			appendPublicRTCPictureRTPData(t, &deliveredReceiver, &layerTUs, &orderedTUs, recovery)
@@ -8836,11 +8842,11 @@ func TestPublicRTCEncoderControlImpairmentRTPReferenceDecoders(t *testing.T) {
 }
 
 func TestPublicLayeredDecoderRTPPayloadAfterLossSharedSVC(t *testing.T) {
-	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
-	mode := goav1.EncoderScalabilityModeL2T1
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 24}
+	mode := internalencoder.ScalabilityModeL2T1
 	width, height := publicRTCMatrixGeometry(t, mode)
 	cfg := publicRTCMatrixConfig(width, height, mode)
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
@@ -8872,7 +8878,7 @@ func TestPublicLayeredDecoderRTPPayloadAfterLossSharedSVC(t *testing.T) {
 	probePayloads := append(append([][]byte(nil), key0Payloads...), key2Payloads...)
 	probePackets := append(append([][]byte(nil), key0Packets...), key2Packets...)
 
-	dec, err := goav1.NewLayeredDecoderFromRTPPayloads(probePayloads)
+	dec, err := NewLayeredDecoderFromRTPPayloads(probePayloads)
 	if err != nil {
 		t.Fatalf("NewLayeredDecoderFromRTPPayloads: %v", err)
 	}
@@ -8926,7 +8932,7 @@ func TestPublicLayeredDecoderRTPPayloadAfterLossSharedSVC(t *testing.T) {
 		}
 	}
 
-	packetDec, err := goav1.NewLayeredDecoderFromRTPPackets(probePackets)
+	packetDec, err := NewLayeredDecoderFromRTPPackets(probePackets)
 	if err != nil {
 		t.Fatalf("NewLayeredDecoderFromRTPPackets: %v", err)
 	}
@@ -8978,10 +8984,10 @@ func TestPublicLayeredDecoderRTPPayloadAfterLossSharedSVC(t *testing.T) {
 }
 
 func TestPublicLayeredDecoderRTPPacketRejectsMalformedWithoutMutating(t *testing.T) {
-	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
-	mode := goav1.EncoderScalabilityModeL2T1
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 24}
+	mode := internalencoder.ScalabilityModeL2T1
 	width, height := publicRTCMatrixGeometry(t, mode)
-	enc, err := goav1.NewRTCEncoderWithConfig(publicRTCMatrixConfig(width, height, mode))
+	enc, err := NewRTCEncoderWithConfig(publicRTCMatrixConfig(width, height, mode))
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
@@ -9012,11 +9018,11 @@ func TestPublicLayeredDecoderRTPPacketRejectsMalformedWithoutMutating(t *testing
 	probePackets := append(append([][]byte(nil), key0Packets...), deltaPackets...)
 	probePackets = append(probePackets, key2Packets...)
 	for _, tc := range publicMalformedRTPPacketCases() {
-		_, err := goav1.NewLayeredDecoderFromRTPPackets([][]byte{key0Packets[0], tc.packet})
+		_, err := NewLayeredDecoderFromRTPPackets([][]byte{key0Packets[0], tc.packet})
 		publicAssertMalformedRTPPacketError(t, "NewLayeredDecoderFromRTPPackets "+tc.name, err, tc.want)
 	}
 
-	dec, err := goav1.NewLayeredDecoderFromRTPPackets(probePackets)
+	dec, err := NewLayeredDecoderFromRTPPackets(probePackets)
 	if err != nil {
 		t.Fatalf("NewLayeredDecoderFromRTPPackets: %v", err)
 	}
@@ -9027,7 +9033,7 @@ func TestPublicLayeredDecoderRTPPacketRejectsMalformedWithoutMutating(t *testing
 
 	var got [][16]byte
 	var gotMetadata []publicLayeredFrameMetadata
-	appendLayered := func(frames []goav1.LayeredFrame) {
+	appendLayered := func(frames []LayeredFrame) {
 		t.Helper()
 		for _, frame := range frames {
 			got = append(got, frameMD5Visible(frame.Frame))
@@ -9093,7 +9099,7 @@ func TestPublicLayeredDecoderRTPPacketRejectsMalformedWithoutMutating(t *testing
 		}
 	}
 	var wantMetadata []publicLayeredFrameMetadata
-	for _, picture := range []goav1.RTCPicture{key0, delta, key2} {
+	for _, picture := range []RTCPicture{key0, delta, key2} {
 		for i := 0; i < picture.FrameNum; i++ {
 			wantMetadata = append(wantMetadata, publicLayeredFrameMetadataFromRTCFrame(picture.Frames[i]))
 		}
@@ -9102,11 +9108,11 @@ func TestPublicLayeredDecoderRTPPacketRejectsMalformedWithoutMutating(t *testing
 }
 
 func TestPublicLayeredDecoderRTPPacketSequencerAfterLossSharedSVC(t *testing.T) {
-	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 24}
-	mode := goav1.EncoderScalabilityModeL2T1
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 24}
+	mode := internalencoder.ScalabilityModeL2T1
 	width, height := publicRTCMatrixGeometry(t, mode)
 	cfg := publicRTCMatrixConfig(width, height, mode)
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
@@ -9137,11 +9143,11 @@ func TestPublicLayeredDecoderRTPPacketSequencerAfterLossSharedSVC(t *testing.T) 
 	probePackets := append(append([][]byte(nil), key0Packets...), deltaPackets...)
 	probePackets = append(probePackets, key2Packets...)
 
-	sequencer, err := goav1.BindRTPPacketSequencer(make([]goav1.RTPPacketSequencerSlot, 2048))
+	sequencer, err := BindRTPPacketSequencer(make([]RTPPacketSequencerSlot, 2048))
 	if err != nil {
 		t.Fatalf("BindRTPPacketSequencer: %v", err)
 	}
-	dec, err := goav1.NewLayeredDecoderFromRTPPackets(probePackets)
+	dec, err := NewLayeredDecoderFromRTPPackets(probePackets)
 	if err != nil {
 		t.Fatalf("NewLayeredDecoderFromRTPPackets: %v", err)
 	}
@@ -9149,7 +9155,7 @@ func TestPublicLayeredDecoderRTPPacketSequencerAfterLossSharedSVC(t *testing.T) 
 
 	var got [][16]byte
 	var gotMetadata []publicLayeredFrameMetadata
-	decodeEvents := func(label string, events []goav1.RTPSequencedPacket) {
+	decodeEvents := func(label string, events []RTPSequencedPacket) {
 		t.Helper()
 		for i, event := range events {
 			frames, err := dec.DecodeRTPSequencedPacketWithMetadata(event)
@@ -9163,7 +9169,7 @@ func TestPublicLayeredDecoderRTPPacketSequencerAfterLossSharedSVC(t *testing.T) 
 		}
 	}
 
-	events := make([]goav1.RTPSequencedPacket, 0, 16)
+	events := make([]RTPSequencedPacket, 0, 16)
 	for i, packet := range key0Packets {
 		events, err = sequencer.Push(packet, events[:0])
 		if err != nil {
@@ -9206,7 +9212,7 @@ func TestPublicLayeredDecoderRTPPacketSequencerAfterLossSharedSVC(t *testing.T) 
 	lowOverheads := append(append([][]byte(nil), key0LowOverheads...), key2LowOverheads...)
 	want := decodePublicLayeredDecoderLowOverheadDigests(t, lowOverheads...)
 	var wantMetadata []publicLayeredFrameMetadata
-	for _, picture := range []goav1.RTCPicture{key0, key2} {
+	for _, picture := range []RTCPicture{key0, key2} {
 		for i := 0; i < picture.FrameNum; i++ {
 			wantMetadata = append(wantMetadata, publicLayeredFrameMetadataFromRTCFrame(picture.Frames[i]))
 		}
@@ -9223,17 +9229,17 @@ func TestPublicLayeredDecoderRTPPacketSequencerAfterLossSharedSVC(t *testing.T) 
 }
 
 func TestPublicRTCEncoderRTCPCompoundFeedbackForcesKeyPicture(t *testing.T) {
-	mode := goav1.EncoderScalabilityModeL3T2h
+	mode := internalencoder.ScalabilityModeL3T2h
 	width, height := publicRTCMatrixGeometry(t, mode)
-	enc, err := goav1.NewRTCEncoderWithConfig(publicRTCMatrixConfig(width, height, mode))
+	enc, err := NewRTCEncoderWithConfig(publicRTCMatrixConfig(width, height, mode))
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
 	defer enc.Close()
 
-	var receiver goav1.RTPDependencyDescriptorState
+	var receiver RTPDependencyDescriptorState
 	nextFrameID := uint64(0)
-	var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+	var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 	var orderedTUs [][]byte
 
 	key, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 0), false)
@@ -9250,19 +9256,19 @@ func TestPublicRTCEncoderRTCPCompoundFeedbackForcesKeyPicture(t *testing.T) {
 	appendPublicRTCPictureRTPData(t, &receiver, &layerTUs, &orderedTUs, delta)
 	assertPublicRTCPictureDescriptors(t, &receiver, enc.Config(), delta, false, &nextFrameID)
 
-	compound, err := goav1.AppendRTCPSenderReportPacket(make([]byte, 0, 128), goav1.RTCPSenderReport{
+	compound, err := AppendRTCPSenderReportPacket(make([]byte, 0, 128), RTCPSenderReport{
 		SenderSSRC: 0x01020304,
 	})
 	if err != nil {
 		t.Fatalf("AppendRTCPSenderReportPacket: %v", err)
 	}
 	entry := testAV1RTCPValidLayerRefreshEntry(t, mode)
-	compound, err = goav1.AppendRTCPFeedbackPacket(compound, goav1.RTCPFeedbackPacket{
-		PacketType: goav1.RTCPPSFBPacketType,
-		FMT:        goav1.RTCPPSFBLayerRefreshRequestFMT,
+	compound, err = AppendRTCPFeedbackPacket(compound, RTCPFeedbackPacket{
+		PacketType: RTCPPSFBPacketType,
+		FMT:        RTCPPSFBLayerRefreshRequestFMT,
 		SenderSSRC: 0x01020304,
 		MediaSSRC:  entry.SSRC,
-		FCI:        testAV1RTCPLayerRefreshFCI(t, []goav1.AV1RTCPLayerRefreshRequestEntry{entry}),
+		FCI:        testAV1RTCPLayerRefreshFCI(t, []AV1RTCPLayerRefreshRequestEntry{entry}),
 	})
 	if err != nil {
 		t.Fatalf("AppendRTCPFeedbackPacket LRR: %v", err)
@@ -9270,9 +9276,9 @@ func TestPublicRTCEncoderRTCPCompoundFeedbackForcesKeyPicture(t *testing.T) {
 
 	forceKey, packets, err := enc.RTCPRequiresKeyFrame(
 		compound,
-		make([]goav1.RTCPPacket, 0, 2),
+		make([]RTCPPacket, 0, 2),
 		nil,
-		make([]goav1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+		make([]AV1RTCPLayerRefreshRequestEntry, 0, 1),
 	)
 	if err != nil {
 		t.Fatalf("EncoderWebRTCRTCPCompoundPacketsRequireKeyFrame: %v", err)
@@ -9282,8 +9288,8 @@ func TestPublicRTCEncoderRTCPCompoundFeedbackForcesKeyPicture(t *testing.T) {
 	}
 	target, ok, targetPackets, err := enc.RTCPLayerRefreshTarget(
 		compound,
-		make([]goav1.RTCPPacket, 0, 2),
-		make([]goav1.AV1RTCPLayerRefreshRequestEntry, 0, 1),
+		make([]RTCPPacket, 0, 2),
+		make([]AV1RTCPLayerRefreshRequestEntry, 0, 1),
 	)
 	if err != nil {
 		t.Fatalf("EncoderWebRTCRTCPCompoundPacketsLayerRefreshTarget: %v", err)
@@ -9310,42 +9316,42 @@ func TestPublicRTCEncoderRTCPCompoundFeedbackForcesKeyPicture(t *testing.T) {
 	if options.ActiveDecodeTargetsMask != wantMask {
 		t.Fatalf("LRR active mask=%#x want %#x", options.ActiveDecodeTargetsMask, wantMask)
 	}
-	var activeReceiver goav1.RTPDependencyDescriptorState
+	var activeReceiver RTPDependencyDescriptorState
 	for i := 0; i < recovery.FrameNum; i++ {
-		assertPublicRTCFrameRTPPacketsWithActiveDecodeTargets(t, &activeReceiver, recovery.Frames[i], goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}, options)
+		assertPublicRTCFrameRTPPacketsWithActiveDecodeTargets(t, &activeReceiver, recovery.Frames[i], RTPPayloadSizeLimits{MaxPayloadLen: 48}, options)
 	}
 	assertPublicRTCLayerStreamsDecode(t, enc.Config(), layerTUs, orderedTUs)
 }
 
 func TestPublicRTCEncoderRTCPFeedbackMethodsAllocs(t *testing.T) {
-	mode := goav1.EncoderScalabilityModeL3T2h
+	mode := internalencoder.ScalabilityModeL3T2h
 	width, height := publicRTCMatrixGeometry(t, mode)
 	cfg := publicRTCMatrixConfig(width, height, mode)
 	publicRTCApplyControlBitrates(&cfg, 1500)
-	enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+	enc, err := NewRTCEncoderWithConfig(cfg)
 	if err != nil {
 		t.Fatalf("NewRTCEncoderWithConfig: %v", err)
 	}
 	defer enc.Close()
 
 	rembCompound := publicRTCREMBFeedbackCompound(t, 700_000)
-	pliCompound := testAV1RTCPFeedbackCompound(t, goav1.RTCPFeedbackPacket{
-		PacketType: goav1.RTCPPSFBPacketType,
-		FMT:        goav1.RTCPPSFBPictureLossIndicationFMT,
+	pliCompound := testAV1RTCPFeedbackCompound(t, RTCPFeedbackPacket{
+		PacketType: RTCPPSFBPacketType,
+		FMT:        RTCPPSFBPictureLossIndicationFMT,
 		SenderSSRC: 0x01020304,
 		MediaSSRC:  0x05060708,
 	})
 	entry := testAV1RTCPValidLayerRefreshEntry(t, mode)
-	lrrCompound := testAV1RTCPFeedbackCompound(t, goav1.RTCPFeedbackPacket{
-		PacketType: goav1.RTCPPSFBPacketType,
-		FMT:        goav1.RTCPPSFBLayerRefreshRequestFMT,
+	lrrCompound := testAV1RTCPFeedbackCompound(t, RTCPFeedbackPacket{
+		PacketType: RTCPPSFBPacketType,
+		FMT:        RTCPPSFBLayerRefreshRequestFMT,
 		SenderSSRC: 0x01020304,
 		MediaSSRC:  entry.SSRC,
-		FCI:        testAV1RTCPLayerRefreshFCI(t, []goav1.AV1RTCPLayerRefreshRequestEntry{entry}),
+		FCI:        testAV1RTCPLayerRefreshFCI(t, []AV1RTCPLayerRefreshRequestEntry{entry}),
 	})
-	packetScratch := make([]goav1.RTCPPacket, 0, 1)
+	packetScratch := make([]RTCPPacket, 0, 1)
 	ssrcScratch := make([]uint32, 0, 1)
-	lrrScratch := make([]goav1.AV1RTCPLayerRefreshRequestEntry, 0, 1)
+	lrrScratch := make([]AV1RTCPLayerRefreshRequestEntry, 0, 1)
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		if ok, packets, err := enc.ApplyRTCPReceiverEstimatedMaximumBitrate(rembCompound, packetScratch[:0], ssrcScratch[:0]); err != nil || !ok || len(packets) != 1 {
@@ -9364,22 +9370,22 @@ func TestPublicRTCEncoderRTCPFeedbackMethodsAllocs(t *testing.T) {
 }
 
 func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
-	for _, initial := range goav1.EncoderWebRTCScalabilityModes() {
+	for _, initial := range EncoderWebRTCScalabilityModes() {
 		initial := initial
 		reconfig := publicRTCMatrixReconfigMode(t, initial)
 		width, height := publicRTCMatrixGeometry(t, initial)
 		t.Run(initial.String()+"-to-"+reconfig.String(), func(t *testing.T) {
 			cfg := publicRTCMatrixConfig(width, height, initial)
-			enc, err := goav1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", initial, err)
 			}
-			var receiver goav1.RTPDependencyDescriptorState
-			var packetReceiver goav1.RTPDependencyDescriptorState
-			var activeReceiver goav1.RTPDependencyDescriptorState
-			activeLimits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 48}
+			var receiver RTPDependencyDescriptorState
+			var packetReceiver RTPDependencyDescriptorState
+			var activeReceiver RTPDependencyDescriptorState
+			activeLimits := RTPPayloadSizeLimits{MaxPayloadLen: 48}
 			nextFrameID := uint64(0)
-			var layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var orderedTUs [][]byte
 
 			key, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 0), false)
@@ -9391,7 +9397,7 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 			assertPublicRTCPictureActiveDecodeTargetOptions(t, &activeReceiver, enc.Config(), key, activeLimits)
 
 			controlChange := enc.Config()
-			controlChange.MaxFramerate = goav1.EncoderRational{Num: 60, Den: 1}
+			controlChange.MaxFramerate = EncoderRational{Num: 60, Den: 1}
 			publicRTCApplyControlBitrates(&controlChange, publicRTCMatrixControlBitrateKbps(t, initial))
 			if err := enc.SetConfig(controlChange); err != nil {
 				t.Fatalf("SetConfig control change: %v", err)
@@ -9413,7 +9419,7 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 				t.Fatalf("SetConfig structure change: %v", err)
 			}
 			assertPublicRTCConfigControls(t, enc.Config(), structureChange)
-			var reconfigLayerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte
+			var reconfigLayerTUs [EncoderWebRTCMaxSpatialLayers][][]byte
 			var reconfigOrderedTUs [][]byte
 			structureKey, err := enc.EncodePicture(publicRTCMatrixFrame(width, height, 2), false)
 			if err != nil {
@@ -9435,7 +9441,7 @@ func TestPublicRTCEncoderSettingsMatrixDependencyDescriptors(t *testing.T) {
 	}
 }
 
-func publicRTCMatrixGeometry(t *testing.T, mode goav1.EncoderScalabilityMode) (int, int) {
+func publicRTCMatrixGeometry(t *testing.T, mode EncoderScalabilityMode) (int, int) {
 	t.Helper()
 	spatial, _, _, ok := mode.Layers()
 	if !ok {
@@ -9454,7 +9460,7 @@ func publicRTCMatrixGeometry(t *testing.T, mode goav1.EncoderScalabilityMode) (i
 	}
 }
 
-func publicRTCMatrixReconfigMode(t *testing.T, mode goav1.EncoderScalabilityMode) goav1.EncoderScalabilityMode {
+func publicRTCMatrixReconfigMode(t *testing.T, mode EncoderScalabilityMode) EncoderScalabilityMode {
 	t.Helper()
 	spatial, temporal, _, ok := mode.Layers()
 	if !ok {
@@ -9464,23 +9470,23 @@ func publicRTCMatrixReconfigMode(t *testing.T, mode goav1.EncoderScalabilityMode
 	if temporal >= 3 {
 		wantTemporal = temporal - 1
 	}
-	for _, candidate := range goav1.EncoderWebRTCScalabilityModes() {
+	for _, candidate := range EncoderWebRTCScalabilityModes() {
 		cSpatial, cTemporal, _, ok := candidate.Layers()
 		if ok && candidate != mode && cSpatial == spatial && cTemporal == wantTemporal {
 			return candidate
 		}
 	}
-	for _, candidate := range goav1.EncoderWebRTCScalabilityModes() {
+	for _, candidate := range EncoderWebRTCScalabilityModes() {
 		cSpatial, _, _, ok := candidate.Layers()
 		if ok && candidate != mode && cSpatial == spatial {
 			return candidate
 		}
 	}
 	t.Fatalf("no reconfigure mode for %s", mode)
-	return goav1.EncoderScalabilityModeL1T1
+	return EncoderScalabilityModeL1T1
 }
 
-func publicRTCMatrixControlBitrateKbps(t *testing.T, mode goav1.EncoderScalabilityMode) int32 {
+func publicRTCMatrixControlBitrateKbps(t *testing.T, mode EncoderScalabilityMode) int32 {
 	t.Helper()
 	spatial, _, _, ok := mode.Layers()
 	if !ok {
@@ -9499,7 +9505,7 @@ func publicRTCMatrixControlBitrateKbps(t *testing.T, mode goav1.EncoderScalabili
 	}
 }
 
-func publicRTCApplyControlBitrates(cfg *goav1.EncoderConfig, targetKbps int32) {
+func publicRTCApplyControlBitrates(cfg *EncoderConfig, targetKbps int32) {
 	cfg.MinBitrateKbps = targetKbps / 4
 	cfg.MaxBitrateKbps = targetKbps * 2
 	cfg.TargetBitrateKbps = targetKbps
@@ -9522,13 +9528,13 @@ func publicRTCApplyControlBitrates(cfg *goav1.EncoderConfig, targetKbps int32) {
 	}
 }
 
-func assertPublicRTCConfigBitrates(t *testing.T, got goav1.EncoderConfig, want goav1.EncoderConfig) {
+func assertPublicRTCConfigBitrates(t *testing.T, got EncoderConfig, want EncoderConfig) {
 	t.Helper()
 	spatialLayers, _, _, ok := got.Scalability.Layers()
 	if !ok {
 		t.Fatalf("invalid normalized mode %s", got.Scalability)
 	}
-	want, err := goav1.SetWebRTCEncoderSVCConfig(want, want.TemporalLayerCount, want.SpatialLayerCount)
+	want, err := SetWebRTCEncoderSVCConfig(want, want.TemporalLayerCount, want.SpatialLayerCount)
 	if err != nil {
 		t.Fatalf("normalize expected config %s: %v", want.Scalability, err)
 	}
@@ -9549,9 +9555,9 @@ func assertPublicRTCConfigBitrates(t *testing.T, got goav1.EncoderConfig, want g
 	}
 }
 
-func assertPublicRTCConfigControls(t *testing.T, got goav1.EncoderConfig, want goav1.EncoderConfig) {
+func assertPublicRTCConfigControls(t *testing.T, got EncoderConfig, want EncoderConfig) {
 	t.Helper()
-	want, err := goav1.SetWebRTCEncoderSVCConfig(want, want.TemporalLayerCount, want.SpatialLayerCount)
+	want, err := SetWebRTCEncoderSVCConfig(want, want.TemporalLayerCount, want.SpatialLayerCount)
 	if err != nil {
 		t.Fatalf("normalize expected config %s: %v", want.Scalability, err)
 	}
@@ -9566,11 +9572,11 @@ func assertPublicRTCConfigControls(t *testing.T, got goav1.EncoderConfig, want g
 		t.Fatalf("config timing fps=%+v timebase=%+v want fps=%+v timebase=%+v",
 			got.MaxFramerate, got.RTPTimebase, want.MaxFramerate, want.RTPTimebase)
 	}
-	gotDuration, err := goav1.EncoderWebRTCRTPFrameDuration(got)
+	gotDuration, err := EncoderWebRTCRTPFrameDuration(got)
 	if err != nil {
 		t.Fatalf("got RTP frame duration: %v", err)
 	}
-	wantDuration, err := goav1.EncoderWebRTCRTPFrameDuration(want)
+	wantDuration, err := EncoderWebRTCRTPFrameDuration(want)
 	if err != nil {
 		t.Fatalf("want RTP frame duration: %v", err)
 	}
@@ -9599,31 +9605,31 @@ func assertPublicRTCConfigControls(t *testing.T, got goav1.EncoderConfig, want g
 	assertPublicRTCConfigBitrates(t, got, want)
 }
 
-func publicRTCSetConfigRequiresKey(t *testing.T, before goav1.EncoderConfig, after goav1.EncoderConfig) bool {
+func publicRTCSetConfigRequiresKey(t *testing.T, before EncoderConfig, after EncoderConfig) bool {
 	t.Helper()
-	normalizedBefore, err := goav1.SetWebRTCEncoderSVCConfig(before, before.TemporalLayerCount, before.SpatialLayerCount)
+	normalizedBefore, err := SetWebRTCEncoderSVCConfig(before, before.TemporalLayerCount, before.SpatialLayerCount)
 	if err != nil {
 		t.Fatalf("normalize previous config %s: %v", before.Scalability, err)
 	}
-	normalizedAfter, err := goav1.SetWebRTCEncoderSVCConfig(after, after.TemporalLayerCount, after.SpatialLayerCount)
+	normalizedAfter, err := SetWebRTCEncoderSVCConfig(after, after.TemporalLayerCount, after.SpatialLayerCount)
 	if err != nil {
 		t.Fatalf("normalize next config %s: %v", after.Scalability, err)
 	}
 	if !publicRTCConfigLayerGeometryEqual(normalizedBefore, normalizedAfter) {
 		return true
 	}
-	beforeStructure, err := goav1.EncoderWebRTCFrameDependencyStructureForConfig(normalizedBefore)
+	beforeStructure, err := internalencoder.WebRTCFrameDependencyStructureForConfig(normalizedBefore)
 	if err != nil {
 		t.Fatalf("previous dependency structure %s: %v", normalizedBefore.Scalability, err)
 	}
-	afterStructure, err := goav1.EncoderWebRTCFrameDependencyStructureForConfig(normalizedAfter)
+	afterStructure, err := internalencoder.WebRTCFrameDependencyStructureForConfig(normalizedAfter)
 	if err != nil {
 		t.Fatalf("next dependency structure %s: %v", normalizedAfter.Scalability, err)
 	}
 	return beforeStructure != afterStructure
 }
 
-func publicRTCConfigLayerGeometryEqual(a goav1.EncoderConfig, b goav1.EncoderConfig) bool {
+func publicRTCConfigLayerGeometryEqual(a EncoderConfig, b EncoderConfig) bool {
 	if a.SpatialLayerCount != b.SpatialLayerCount {
 		return false
 	}
@@ -9635,17 +9641,17 @@ func publicRTCConfigLayerGeometryEqual(a goav1.EncoderConfig, b goav1.EncoderCon
 	return true
 }
 
-func cloneRTCPictureData(p *goav1.RTCPicture) {
+func cloneRTCPictureData(p *RTCPicture) {
 	for i := 0; i < p.FrameNum; i++ {
 		p.Frames[i].Data = append([]byte(nil), p.Frames[i].Data...)
 		p.Frames[i].DependencyDescriptor = append([]byte(nil), p.Frames[i].DependencyDescriptor...)
 	}
 }
 
-func publicRTCMatrixConfig(width, height int, mode goav1.EncoderScalabilityMode) goav1.EncoderConfig {
-	return goav1.EncoderConfig{
-		Resolution:        goav1.EncoderResolution{Width: int32(width), Height: int32(height)},
-		MaxFramerate:      goav1.EncoderRational{Num: 30, Den: 1},
+func publicRTCMatrixConfig(width, height int, mode EncoderScalabilityMode) EncoderConfig {
+	return EncoderConfig{
+		Resolution:        EncoderResolution{Width: int32(width), Height: int32(height)},
+		MaxFramerate:      EncoderRational{Num: 30, Den: 1},
 		MinBitrateKbps:    120,
 		MaxBitrateKbps:    1600,
 		TargetBitrateKbps: 900,
@@ -9653,9 +9659,9 @@ func publicRTCMatrixConfig(width, height int, mode goav1.EncoderScalabilityMode)
 	}
 }
 
-func publicRTCMatrixFrame(width, height int, n int) goav1.I420Frame {
+func publicRTCMatrixFrame(width, height int, n int) I420Frame {
 	cw, ch := width/2, height/2
-	f := goav1.I420Frame{
+	f := I420Frame{
 		Y: make([]byte, width*height), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
 		YStride: width, ChromaStride: cw, Width: width, Height: height,
 	}
@@ -9672,7 +9678,7 @@ func publicRTCMatrixFrame(width, height int, n int) goav1.I420Frame {
 	return f
 }
 
-func publicI420NeutralChroma(src goav1.I420Frame) goav1.I420Frame {
+func publicI420NeutralChroma(src I420Frame) I420Frame {
 	out := src
 	out.Y = append([]byte(nil), src.Y...)
 	cw, ch := src.Width/2, src.Height/2
@@ -9687,7 +9693,7 @@ func publicI420NeutralChroma(src goav1.I420Frame) goav1.I420Frame {
 	return out
 }
 
-func publicI422FromI420(src goav1.I420Frame) goav1.I422Frame {
+func publicI422FromI420(src I420Frame) I422Frame {
 	cw := src.Width / 2
 	u := make([]byte, cw*src.Height)
 	v := make([]byte, cw*src.Height)
@@ -9696,7 +9702,7 @@ func publicI422FromI420(src goav1.I420Frame) goav1.I422Frame {
 		copy(u[y*cw:y*cw+cw], src.U[srcY:srcY+cw])
 		copy(v[y*cw:y*cw+cw], src.V[srcY:srcY+cw])
 	}
-	return goav1.I422Frame{
+	return I422Frame{
 		Y:            src.Y,
 		U:            u,
 		V:            v,
@@ -9707,7 +9713,7 @@ func publicI422FromI420(src goav1.I420Frame) goav1.I422Frame {
 	}
 }
 
-func publicI444FromI420(src goav1.I420Frame) goav1.I444Frame {
+func publicI444FromI420(src I420Frame) I444Frame {
 	u := make([]byte, src.Width*src.Height)
 	v := make([]byte, src.Width*src.Height)
 	cw := src.Width / 2
@@ -9722,7 +9728,7 @@ func publicI444FromI420(src goav1.I420Frame) goav1.I444Frame {
 			dstV[x*2+1] = src.V[srcY+x]
 		}
 	}
-	return goav1.I444Frame{
+	return I444Frame{
 		Y:       src.Y,
 		U:       u,
 		V:       v,
@@ -9734,7 +9740,7 @@ func publicI444FromI420(src goav1.I420Frame) goav1.I444Frame {
 	}
 }
 
-func publicI422NativePattern(width int, height int, frame int) goav1.I422Frame {
+func publicI422NativePattern(width int, height int, frame int) I422Frame {
 	base := publicRTCMatrixFrame(width, height, frame)
 	chromaWidth := width / 2
 	u := make([]byte, chromaWidth*height)
@@ -9747,7 +9753,7 @@ func publicI422NativePattern(width int, height int, frame int) goav1.I422Frame {
 			vr[x] = byte(255 - ((x*7 + y*13 + frame*11) & 0xff))
 		}
 	}
-	return goav1.I422Frame{
+	return I422Frame{
 		Y:            base.Y,
 		U:            u,
 		V:            v,
@@ -9758,7 +9764,7 @@ func publicI422NativePattern(width int, height int, frame int) goav1.I422Frame {
 	}
 }
 
-func publicI444NativePattern(width int, height int, frame int) goav1.I444Frame {
+func publicI444NativePattern(width int, height int, frame int) I444Frame {
 	base := publicRTCMatrixFrame(width, height, frame)
 	u := make([]byte, width*height)
 	v := make([]byte, width*height)
@@ -9770,7 +9776,7 @@ func publicI444NativePattern(width int, height int, frame int) goav1.I444Frame {
 			vr[x] = byte(255 - ((x*5 + y*11 + frame*13) & 0xff))
 		}
 	}
-	return goav1.I444Frame{
+	return I444Frame{
 		Y:       base.Y,
 		U:       u,
 		V:       v,
@@ -9782,8 +9788,8 @@ func publicI444NativePattern(width int, height int, frame int) goav1.I444Frame {
 	}
 }
 
-func publicI400FromI420(src goav1.I420Frame) goav1.I400Frame {
-	return goav1.I400Frame{
+func publicI400FromI420(src I420Frame) I400Frame {
+	return I400Frame{
 		Y:       src.Y,
 		YStride: src.YStride,
 		Width:   src.Width,
@@ -9791,7 +9797,7 @@ func publicI400FromI420(src goav1.I420Frame) goav1.I400Frame {
 	}
 }
 
-func publicI400HighBitDepthFromI420(src goav1.I420Frame, bitDepth uint8, n int) goav1.I400HighBitDepthFrame {
+func publicI400HighBitDepthFromI420(src I420Frame, bitDepth uint8, n int) I400HighBitDepthFrame {
 	y := make([]uint16, src.Width*src.Height)
 	lowMask := uint16(0)
 	if bitDepth > 8 {
@@ -9804,7 +9810,7 @@ func publicI400HighBitDepthFromI420(src goav1.I420Frame, bitDepth uint8, n int) 
 			dstRow[x] = publicFrameHighBitSample(sample, bitDepth) | (uint16(x+yy+n) & lowMask)
 		}
 	}
-	return goav1.I400HighBitDepthFrame{
+	return I400HighBitDepthFrame{
 		Y:        y,
 		YStride:  src.Width,
 		Width:    src.Width,
@@ -9813,13 +9819,13 @@ func publicI400HighBitDepthFromI420(src goav1.I420Frame, bitDepth uint8, n int) 
 	}
 }
 
-func publicFrameFromI420(tb testing.TB, src goav1.I420Frame, format goav1.FrameFormat) goav1.Frame {
+func publicFrameFromI420(tb testing.TB, src I420Frame, format FrameFormat) Frame {
 	tb.Helper()
-	layout, err := goav1.FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		tb.Fatalf("FrameRequiredSize: %v", err)
 	}
-	frame, err := goav1.BindFrame(make([]byte, layout.Size), format)
+	frame, err := internalframe.Bind(make([]byte, layout.Size), format)
 	if err != nil {
 		tb.Fatalf("BindFrame: %v", err)
 	}
@@ -9876,7 +9882,7 @@ func publicFrameHighBitSample(sample byte, bitDepth uint8) uint16 {
 	return uint16(sample) << (bitDepth - 8)
 }
 
-func publicNV12FromI420(src goav1.I420Frame) goav1.NV12Frame {
+func publicNV12FromI420(src I420Frame) NV12Frame {
 	uv := make([]byte, src.Width*src.Height/2)
 	cw, ch := src.Width/2, src.Height/2
 	for y := 0; y < ch; y++ {
@@ -9888,7 +9894,7 @@ func publicNV12FromI420(src goav1.I420Frame) goav1.NV12Frame {
 			dstRow[x*2+1] = vRow[x]
 		}
 	}
-	return goav1.NV12Frame{
+	return NV12Frame{
 		Y:        src.Y,
 		UV:       uv,
 		YStride:  src.YStride,
@@ -9898,7 +9904,7 @@ func publicNV12FromI420(src goav1.I420Frame) goav1.NV12Frame {
 	}
 }
 
-func publicNV21FromI420(src goav1.I420Frame) goav1.NV21Frame {
+func publicNV21FromI420(src I420Frame) NV21Frame {
 	vu := make([]byte, src.Width*src.Height/2)
 	cw, ch := src.Width/2, src.Height/2
 	for y := 0; y < ch; y++ {
@@ -9910,7 +9916,7 @@ func publicNV21FromI420(src goav1.I420Frame) goav1.NV21Frame {
 			dstRow[x*2+1] = uRow[x]
 		}
 	}
-	return goav1.NV21Frame{
+	return NV21Frame{
 		Y:        src.Y,
 		VU:       vu,
 		YStride:  src.YStride,
@@ -9920,9 +9926,9 @@ func publicNV21FromI420(src goav1.I420Frame) goav1.NV21Frame {
 	}
 }
 
-func assertPublicRTCPictureDescriptors(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, cfg goav1.EncoderConfig, picture goav1.RTCPicture, wantKey bool, nextFrameID *uint64) {
+func assertPublicRTCPictureDescriptors(t *testing.T, receiver *RTPDependencyDescriptorState, cfg EncoderConfig, picture RTCPicture, wantKey bool, nextFrameID *uint64) {
 	t.Helper()
-	normalized, err := goav1.SetWebRTCEncoderSVCConfig(cfg, cfg.TemporalLayerCount, cfg.SpatialLayerCount)
+	normalized, err := SetWebRTCEncoderSVCConfig(cfg, cfg.TemporalLayerCount, cfg.SpatialLayerCount)
 	if err != nil {
 		t.Fatalf("SetWebRTCEncoderSVCConfig(%s): %v", cfg.Scalability, err)
 	}
@@ -9975,13 +9981,13 @@ func assertPublicRTCPictureDescriptors(t *testing.T, receiver *goav1.RTPDependen
 	*nextFrameID += uint64(picture.FrameNum)
 }
 
-func assertPublicRTCFrameRTPPackets(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, frame goav1.RTCFrame, limits goav1.RTPPayloadSizeLimits, wantAttachedStructure bool, wantNewCodedVideoSequence bool, wantMarker bool) {
+func assertPublicRTCFrameRTPPackets(t *testing.T, receiver *RTPDependencyDescriptorState, frame RTCFrame, limits RTPPayloadSizeLimits, wantAttachedStructure bool, wantNewCodedVideoSequence bool, wantMarker bool) {
 	t.Helper()
 	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
 	if err != nil {
 		t.Fatalf("RTPPacketScratchLen first S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
 	}
-	obuScratch := make([]goav1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
+	obuScratch := make([]RTPPacketizerOBU, firstSize.Packetizer.OBUs)
 	size, err := frame.RTPPacketScratchLen(limits, obuScratch)
 	if err != nil {
 		t.Fatalf("RTPPacketScratchLen full S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
@@ -9989,11 +9995,11 @@ func assertPublicRTCFrameRTPPackets(t *testing.T, receiver *goav1.RTPDependencyD
 	if size.Packetizer.Packets <= 1 {
 		t.Fatalf("packetizer packets=%d want fragmented frame S%d", size.Packetizer.Packets, frame.SpatialID)
 	}
-	packetScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Packets)
-	workScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Work)
+	packetScratch := make([]RTPPacketPlan, size.Packetizer.Packets)
+	workScratch := make([]RTPPacketPlan, size.Packetizer.Work)
 	payloadBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxPayloadBytes)
 	descriptorBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxDescriptorBytes)
-	spans := make([]goav1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
+	spans := make([]EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
 	rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPackets(payloadBuf, descriptorBuf, spans, limits, obuScratch, packetScratch, workScratch)
 	if err != nil {
 		t.Fatalf("AppendRTPPackets S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
@@ -10005,7 +10011,7 @@ func assertPublicRTCFrameRTPPackets(t *testing.T, receiver *goav1.RTPDependencyD
 	for i := range packetCount {
 		span := spans[i]
 		payloadSlices[i] = rtpPayloads[span.PayloadOffset : span.PayloadOffset+span.PayloadLength]
-		header, _, err := goav1.ParseRTPAggregationHeader(payloadSlices[i])
+		header, _, err := ParseRTPAggregationHeader(payloadSlices[i])
 		if err != nil {
 			t.Fatalf("packet %d aggregation header S%d: %v", i, frame.SpatialID, err)
 		}
@@ -10036,7 +10042,7 @@ func assertPublicRTCFrameRTPPackets(t *testing.T, receiver *goav1.RTPDependencyD
 	assertPublicRTPPayloadsAssembleToFrame(t, frame.Data, payloadSlices)
 }
 
-func publicRTPTimestampHalfTicks(t *testing.T, mode goav1.EncoderScalabilityMode, step int, duration goav1.EncoderRational) uint64 {
+func publicRTPTimestampHalfTicks(t *testing.T, mode EncoderScalabilityMode, step int, duration EncoderRational) uint64 {
 	t.Helper()
 	if duration.Num <= 0 || duration.Den <= 0 || 2%duration.Den != 0 {
 		t.Fatalf("%s step %d RTPFrameDuration=%+v want positive duration representable in half-ticks", mode, step, duration)
@@ -10044,9 +10050,9 @@ func publicRTPTimestampHalfTicks(t *testing.T, mode goav1.EncoderScalabilityMode
 	return uint64(duration.Num) * uint64(2/duration.Den)
 }
 
-func publicAssertRTCPictureRTPHeaderTimestamp(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, picture goav1.RTCPicture, limits goav1.RTPPayloadSizeLimits, sequence *uint16, timestamp uint32) {
+func publicAssertRTCPictureRTPHeaderTimestamp(t *testing.T, receiver *RTPDependencyDescriptorState, picture RTCPicture, limits RTPPayloadSizeLimits, sequence *uint16, timestamp uint32) {
 	t.Helper()
-	if picture.FrameNum <= 0 || picture.FrameNum > goav1.EncoderWebRTCMaxSpatialLayers {
+	if picture.FrameNum <= 0 || picture.FrameNum > EncoderWebRTCMaxSpatialLayers {
 		t.Fatalf("invalid picture frame count %d", picture.FrameNum)
 	}
 	totalPackets := 0
@@ -10056,16 +10062,16 @@ func publicAssertRTCPictureRTPHeaderTimestamp(t *testing.T, receiver *goav1.RTPD
 		if err != nil {
 			t.Fatalf("RTPPacketScratchLen first frame %d S%d/T%d: %v", frameIndex, frame.SpatialID, frame.TemporalID, err)
 		}
-		obuScratch := make([]goav1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
+		obuScratch := make([]RTPPacketizerOBU, firstSize.Packetizer.OBUs)
 		size, err := frame.RTPPacketScratchLen(limits, obuScratch)
 		if err != nil {
 			t.Fatalf("RTPPacketScratchLen full frame %d S%d/T%d: %v", frameIndex, frame.SpatialID, frame.TemporalID, err)
 		}
-		packetScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Packets)
-		workScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Work)
+		packetScratch := make([]RTPPacketPlan, size.Packetizer.Packets)
+		workScratch := make([]RTPPacketPlan, size.Packetizer.Work)
 		payloadBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxPayloadBytes)
 		descriptorBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxDescriptorBytes)
-		packetSpans := make([]goav1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
+		packetSpans := make([]EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
 		rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPackets(payloadBuf, descriptorBuf, packetSpans, limits, obuScratch, packetScratch, workScratch)
 		if err != nil {
 			t.Fatalf("AppendRTPPackets frame %d S%d/T%d: %v", frameIndex, frame.SpatialID, frame.TemporalID, err)
@@ -10075,19 +10081,19 @@ func publicAssertRTCPictureRTPHeaderTimestamp(t *testing.T, receiver *goav1.RTPD
 		}
 
 		startSequence := *sequence
-		headerConfig := goav1.EncoderWebRTCRTPPacketHeaderConfig{
+		headerConfig := EncoderWebRTCRTPPacketHeaderConfig{
 			PayloadType:                     96,
 			SequenceNumber:                  startSequence,
 			Timestamp:                       timestamp,
 			SSRC:                            0x77880000 + uint32(frame.SpatialID),
 			DependencyDescriptorExtensionID: 42,
 		}
-		packetSize, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(headerConfig, rtpPayloads, descriptors, packetSpans[:packetCount])
+		packetSize, err := EncoderWebRTCRTPPacketsWithHeadersSize(headerConfig, rtpPayloads, descriptors, packetSpans[:packetCount])
 		if err != nil {
 			t.Fatalf("EncoderWebRTCRTPPacketsWithHeadersSize frame %d S%d/T%d: %v", frameIndex, frame.SpatialID, frame.TemporalID, err)
 		}
-		headerSpans := make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, packetCount)
-		fullPackets, fullCount, err := goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(make([]byte, 0, packetSize.Bytes), headerSpans, headerConfig, rtpPayloads, descriptors, packetSpans[:packetCount])
+		headerSpans := make([]EncoderWebRTCRTPPacketHeaderSpan, packetCount)
+		fullPackets, fullCount, err := AppendEncoderWebRTCRTPPacketsWithHeaders(make([]byte, 0, packetSize.Bytes), headerSpans, headerConfig, rtpPayloads, descriptors, packetSpans[:packetCount])
 		if err != nil {
 			t.Fatalf("AppendEncoderWebRTCRTPPacketsWithHeaders frame %d S%d/T%d: %v", frameIndex, frame.SpatialID, frame.TemporalID, err)
 		}
@@ -10100,7 +10106,7 @@ func publicAssertRTCPictureRTPHeaderTimestamp(t *testing.T, receiver *goav1.RTPD
 			packetSpan := packetSpans[packetIndex]
 			headerSpan := headerSpans[packetIndex]
 			raw := fullPackets[headerSpan.Offset : headerSpan.Offset+headerSpan.Length]
-			descriptorPacket, err := goav1.ParseRTPPacketDependencyDescriptor(raw, headerConfig.DependencyDescriptorExtensionID, receiver)
+			descriptorPacket, err := ParseRTPPacketDependencyDescriptor(raw, headerConfig.DependencyDescriptorExtensionID, receiver)
 			if err != nil {
 				t.Fatalf("packet %d frame %d ParseRTPPacketDependencyDescriptor: %v", packetIndex, frameIndex, err)
 			}
@@ -10141,7 +10147,7 @@ func publicAssertRTCPictureRTPHeaderTimestamp(t *testing.T, receiver *goav1.RTPD
 	}
 }
 
-func assertPublicRTCPictureActiveDecodeTargetOptions(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, cfg goav1.EncoderConfig, picture goav1.RTCPicture, limits goav1.RTPPayloadSizeLimits) {
+func assertPublicRTCPictureActiveDecodeTargetOptions(t *testing.T, receiver *RTPDependencyDescriptorState, cfg EncoderConfig, picture RTCPicture, limits RTPPayloadSizeLimits) {
 	t.Helper()
 	spatialLayers, temporalLayers, _, ok := cfg.Scalability.Layers()
 	if !ok {
@@ -10177,30 +10183,30 @@ func assertPublicRTCPictureActiveDecodeTargetOptions(t *testing.T, receiver *goa
 			}
 		}
 	}
-	if _, err := picture.ActiveDecodeTargetsMask(spatialLayers, 0); !errors.Is(err, goav1.ErrEncoderInvalidFrame) {
-		t.Fatalf("%s invalid spatial active mask err=%v want %v", cfg.Scalability, err, goav1.ErrEncoderInvalidFrame)
+	if _, err := picture.ActiveDecodeTargetsMask(spatialLayers, 0); !errors.Is(err, ErrEncoderInvalidFrame) {
+		t.Fatalf("%s invalid spatial active mask err=%v want %v", cfg.Scalability, err, ErrEncoderInvalidFrame)
 	}
-	if _, err := picture.ActiveDecodeTargetsMask(0, temporalLayers); !errors.Is(err, goav1.ErrEncoderInvalidFrame) {
-		t.Fatalf("%s invalid temporal active mask err=%v want %v", cfg.Scalability, err, goav1.ErrEncoderInvalidFrame)
+	if _, err := picture.ActiveDecodeTargetsMask(0, temporalLayers); !errors.Is(err, ErrEncoderInvalidFrame) {
+		t.Fatalf("%s invalid temporal active mask err=%v want %v", cfg.Scalability, err, ErrEncoderInvalidFrame)
 	}
 }
 
-func assertPublicRTCFrameRTPPacketsWithActiveDecodeTargets(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, frame goav1.RTCFrame, limits goav1.RTPPayloadSizeLimits, options goav1.EncoderWebRTCRTPPacketDependencyDescriptorOptions) {
+func assertPublicRTCFrameRTPPacketsWithActiveDecodeTargets(t *testing.T, receiver *RTPDependencyDescriptorState, frame RTCFrame, limits RTPPayloadSizeLimits, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) {
 	t.Helper()
 	firstSize, err := frame.RTPPacketScratchLenWithOptions(limits, nil, options)
 	if err != nil {
 		t.Fatalf("RTPPacketScratchLenWithOptions first S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
 	}
-	obuScratch := make([]goav1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
+	obuScratch := make([]RTPPacketizerOBU, firstSize.Packetizer.OBUs)
 	size, err := frame.RTPPacketScratchLenWithOptions(limits, obuScratch, options)
 	if err != nil {
 		t.Fatalf("RTPPacketScratchLenWithOptions full S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
 	}
-	packetScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Packets)
-	workScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Work)
+	packetScratch := make([]RTPPacketPlan, size.Packetizer.Packets)
+	workScratch := make([]RTPPacketPlan, size.Packetizer.Work)
 	payloadBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxPayloadBytes)
 	descriptorBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxDescriptorBytes)
-	spans := make([]goav1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
+	spans := make([]EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
 	rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPacketsWithOptions(payloadBuf, descriptorBuf, spans, limits, obuScratch, packetScratch, workScratch, options)
 	if err != nil {
 		t.Fatalf("AppendRTPPacketsWithOptions S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
@@ -10239,7 +10245,7 @@ func assertPublicRTCFrameRTPPacketsWithActiveDecodeTargets(t *testing.T, receive
 	assertPublicRTPPayloadsAssembleToFrame(t, frame.Data, payloadSlices)
 }
 
-func publicRTCSetAllocationTargetBitrates(config *goav1.EncoderWebRTCVideoLayersAllocationConfig, spatialLayers int, temporalLayers int, base uint32) {
+func publicRTCSetAllocationTargetBitrates(config *encoderWebRTCVideoLayersAllocationConfig, spatialLayers int, temporalLayers int, base uint32) {
 	for spatialID := 0; spatialID < spatialLayers; spatialID++ {
 		cumulative := base + uint32(spatialID*160)
 		for temporalID := 0; temporalID < temporalLayers; temporalID++ {
@@ -10249,7 +10255,7 @@ func publicRTCSetAllocationTargetBitrates(config *goav1.EncoderWebRTCVideoLayers
 	}
 }
 
-func publicRTCExpectedVideoLayersAllocation(t *testing.T, config goav1.EncoderConfig, allocationConfig goav1.EncoderWebRTCVideoLayersAllocationConfig) goav1.RTPVideoLayersAllocation {
+func publicRTCExpectedVideoLayersAllocation(t *testing.T, config EncoderConfig, allocationConfig encoderWebRTCVideoLayersAllocationConfig) RTPVideoLayersAllocation {
 	t.Helper()
 	spatialLayers := int(config.SpatialLayerCount)
 	temporalLayers := int(config.TemporalLayerCount)
@@ -10265,14 +10271,14 @@ func publicRTCExpectedVideoLayersAllocation(t *testing.T, config goav1.EncoderCo
 		activeMask = allocationConfig.ActiveSpatialLayerMask
 	}
 	if activeMask == 0 {
-		return goav1.RTPVideoLayersAllocation{RTPStreamCount: 1}
+		return RTPVideoLayersAllocation{RTPStreamCount: 1}
 	}
 
 	framerate := 0
 	if allocationConfig.IncludeResolutionAndFramerate {
 		framerate = publicRTCVideoLayersAllocationFramerate(t, config.MaxFramerate)
 	}
-	allocation := goav1.RTPVideoLayersAllocation{
+	allocation := RTPVideoLayersAllocation{
 		RTPStreamID:               allocationConfig.RTPStreamID,
 		RTPStreamCount:            rtpStreamCount,
 		HasResolutionAndFramerate: allocationConfig.IncludeResolutionAndFramerate,
@@ -10283,7 +10289,7 @@ func publicRTCExpectedVideoLayersAllocation(t *testing.T, config goav1.EncoderCo
 				allocationConfig.SpatialLayerRTPStreamIDs[spatialID] != streamID {
 				continue
 			}
-			layer := goav1.RTPVideoLayersAllocationLayer{
+			layer := RTPVideoLayersAllocationLayer{
 				RTPStreamID:        streamID,
 				SpatialID:          spatialID,
 				TargetBitratesKbps: publicRTCVideoLayersAllocationTargets(t, config, allocationConfig, spatialID, temporalLayers),
@@ -10299,7 +10305,7 @@ func publicRTCExpectedVideoLayersAllocation(t *testing.T, config goav1.EncoderCo
 	return allocation
 }
 
-func publicRTCVideoLayersAllocationTargets(t *testing.T, config goav1.EncoderConfig, allocationConfig goav1.EncoderWebRTCVideoLayersAllocationConfig, spatialID int, temporalLayers int) []uint32 {
+func publicRTCVideoLayersAllocationTargets(t *testing.T, config EncoderConfig, allocationConfig encoderWebRTCVideoLayersAllocationConfig, spatialID int, temporalLayers int) []uint32 {
 	t.Helper()
 	targets := make([]uint32, temporalLayers)
 	for temporalID := 0; temporalID < temporalLayers; temporalID++ {
@@ -10319,7 +10325,7 @@ func publicRTCVideoLayersAllocationTargets(t *testing.T, config goav1.EncoderCon
 	return targets
 }
 
-func publicRTCVideoLayersAllocationFramerate(t *testing.T, rate goav1.EncoderRational) int {
+func publicRTCVideoLayersAllocationFramerate(t *testing.T, rate EncoderRational) int {
 	t.Helper()
 	if !rate.Valid() {
 		t.Fatalf("invalid framerate %+v", rate)
@@ -10343,18 +10349,18 @@ func publicExpectedActiveDecodeTargetsMask(spatialLayers uint8, temporalLayers u
 
 func assertPublicRTPPayloadsAssembleToFrame(t *testing.T, frameData []byte, payloadSlices [][]byte) {
 	t.Helper()
-	assembledLen, obuCount, err := goav1.AssembleRTPFrameSize(payloadSlices)
+	assembledLen, obuCount, err := AssembleRTPFrameSize(payloadSlices)
 	if err != nil {
 		t.Fatalf("AssembleRTPFrameSize: %v", err)
 	}
 	assembled := make([]byte, assembledLen)
-	assembledOBUs := make([]goav1.RTPFrameOBU, obuCount)
-	wrote, gotOBUs, err := goav1.AssembleRTPFrame(assembled, payloadSlices, assembledOBUs)
+	assembledOBUs := make([]RTPFrameOBU, obuCount)
+	wrote, gotOBUs, err := AssembleRTPFrame(assembled, payloadSlices, assembledOBUs)
 	if err != nil {
 		t.Fatalf("AssembleRTPFrame: %v", err)
 	}
 	var expected []byte
-	it := goav1.NewLowOverheadIterator(frameData)
+	it := obu.NewLowOverheadIterator(frameData)
 	for {
 		unit, ok, err := it.Next()
 		if err != nil {
@@ -10364,7 +10370,7 @@ func assertPublicRTPPayloadsAssembleToFrame(t *testing.T, frameData []byte, payl
 			break
 		}
 		switch unit.Header.Type {
-		case goav1.OBUTemporalDelimiter, goav1.OBUTileList, goav1.OBUPadding:
+		case obu.TypeTemporalDelimiter, obu.TypeTileList, obu.TypePadding:
 			continue
 		default:
 			expected = append(expected, unit.Raw...)
@@ -10377,11 +10383,11 @@ func assertPublicRTPPayloadsAssembleToFrame(t *testing.T, frameData []byte, payl
 
 func assertPublicRTCFrameScalabilityMetadata(t *testing.T, frameData []byte, wantIDC uint8, wantPresent bool) {
 	t.Helper()
-	it := goav1.NewLowOverheadIterator(frameData)
-	if td, ok, err := it.Next(); err != nil || !ok || td.Header.Type != goav1.OBUTemporalDelimiter {
+	it := obu.NewLowOverheadIterator(frameData)
+	if td, ok, err := it.Next(); err != nil || !ok || td.Header.Type != obu.TypeTemporalDelimiter {
 		t.Fatalf("TD ok=%v err=%v header=%+v", ok, err, td.Header)
 	}
-	if seq, ok, err := it.Next(); err != nil || !ok || seq.Header.Type != goav1.OBUSequenceHeader {
+	if seq, ok, err := it.Next(); err != nil || !ok || seq.Header.Type != obu.TypeSequenceHeader {
 		t.Fatalf("sequence ok=%v err=%v header=%+v", ok, err, seq.Header)
 	}
 	next, ok, err := it.Next()
@@ -10389,49 +10395,49 @@ func assertPublicRTCFrameScalabilityMetadata(t *testing.T, frameData []byte, wan
 		t.Fatalf("next OBU ok=%v err=%v header=%+v", ok, err, next.Header)
 	}
 	if !wantPresent {
-		if next.Header.Type == goav1.OBUMetadata {
+		if next.Header.Type == obu.TypeMetadata {
 			t.Fatalf("unexpected metadata payload=% x", next.Payload)
 		}
-		if next.Header.Type != goav1.OBUFrameHeader && next.Header.Type != goav1.OBUFrame {
+		if next.Header.Type != obu.TypeFrameHeader && next.Header.Type != obu.TypeFrame {
 			t.Fatalf("next OBU after sequence=%+v", next.Header)
 		}
 		return
 	}
-	if next.Header.Type != goav1.OBUMetadata {
+	if next.Header.Type != obu.TypeMetadata {
 		t.Fatalf("metadata header=%+v", next.Header)
 	}
-	meta, err := goav1.ParseMetadataOBU(next.Payload)
+	meta, err := obu.ParseMetadata(next.Payload)
 	if err != nil {
 		t.Fatalf("ParseMetadataOBU: %v", err)
 	}
-	if meta.Type != goav1.MetadataTypeScalability || meta.Scalability.ModeIDC != wantIDC || meta.Scalability.HasStructure {
+	if meta.Type != obu.MetadataTypeScalability || meta.Scalability.ModeIDC != wantIDC || meta.Scalability.HasStructure {
 		t.Fatalf("metadata=%+v want idc=%d", meta, wantIDC)
 	}
 	frame, ok, err := it.Next()
-	if err != nil || !ok || (frame.Header.Type != goav1.OBUFrameHeader && frame.Header.Type != goav1.OBUFrame) {
+	if err != nil || !ok || (frame.Header.Type != obu.TypeFrameHeader && frame.Header.Type != obu.TypeFrame) {
 		t.Fatalf("frame after metadata ok=%v err=%v header=%+v", ok, err, frame.Header)
 	}
 }
 
 func assertPublicRTCFrameScalabilitySSMetadata(t *testing.T, frameData []byte, widths []uint16, heights []uint16, refIDs []uint8, groupTIDs []uint8, groupDiffs []uint8) {
 	t.Helper()
-	it := goav1.NewLowOverheadIterator(frameData)
-	if td, ok, err := it.Next(); err != nil || !ok || td.Header.Type != goav1.OBUTemporalDelimiter {
+	it := obu.NewLowOverheadIterator(frameData)
+	if td, ok, err := it.Next(); err != nil || !ok || td.Header.Type != obu.TypeTemporalDelimiter {
 		t.Fatalf("TD ok=%v err=%v header=%+v", ok, err, td.Header)
 	}
-	if seq, ok, err := it.Next(); err != nil || !ok || seq.Header.Type != goav1.OBUSequenceHeader {
+	if seq, ok, err := it.Next(); err != nil || !ok || seq.Header.Type != obu.TypeSequenceHeader {
 		t.Fatalf("sequence ok=%v err=%v header=%+v", ok, err, seq.Header)
 	}
 	next, ok, err := it.Next()
-	if err != nil || !ok || next.Header.Type != goav1.OBUMetadata {
+	if err != nil || !ok || next.Header.Type != obu.TypeMetadata {
 		t.Fatalf("metadata ok=%v err=%v header=%+v", ok, err, next.Header)
 	}
-	meta, err := goav1.ParseMetadataOBU(next.Payload)
+	meta, err := obu.ParseMetadata(next.Payload)
 	if err != nil {
 		t.Fatalf("ParseMetadataOBU: %v", err)
 	}
-	if meta.Type != goav1.MetadataTypeScalability ||
-		meta.Scalability.ModeIDC != goav1.MetadataScalabilityModeSS ||
+	if meta.Type != obu.MetadataTypeScalability ||
+		meta.Scalability.ModeIDC != obu.ScalabilityModeSS ||
 		!meta.Scalability.HasStructure {
 		t.Fatalf("metadata=%+v", meta)
 	}
@@ -10469,12 +10475,12 @@ func assertPublicRTCFrameScalabilitySSMetadata(t *testing.T, frameData []byte, w
 		}
 	}
 	frame, ok, err := it.Next()
-	if err != nil || !ok || (frame.Header.Type != goav1.OBUFrameHeader && frame.Header.Type != goav1.OBUFrame) {
+	if err != nil || !ok || (frame.Header.Type != obu.TypeFrameHeader && frame.Header.Type != obu.TypeFrame) {
 		t.Fatalf("frame after metadata ok=%v err=%v header=%+v", ok, err, frame.Header)
 	}
 }
 
-func publicDecodedFramesRawYUV(frames []goav1.DecodedFrame) []byte {
+func publicDecodedFramesRawYUV(frames []DecodedFrame) []byte {
 	var out []byte
 	for _, frame := range frames {
 		out = append(out, frame.Y...)
@@ -10484,7 +10490,7 @@ func publicDecodedFramesRawYUV(frames []goav1.DecodedFrame) []byte {
 	return out
 }
 
-func appendPublicI400HighBitDepthRaw(dst []byte, frame goav1.I400HighBitDepthFrame) []byte {
+func appendPublicI400HighBitDepthRaw(dst []byte, frame I400HighBitDepthFrame) []byte {
 	for y := range frame.Height {
 		row := frame.Y[y*frame.YStride : y*frame.YStride+frame.Width]
 		for _, sample := range row {
@@ -10494,7 +10500,7 @@ func appendPublicI400HighBitDepthRaw(dst []byte, frame goav1.I400HighBitDepthFra
 	return dst
 }
 
-func appendPublicI420HighBitDepthRaw(dst []byte, frame goav1.I420HighBitDepthFrame) []byte {
+func appendPublicI420HighBitDepthRaw(dst []byte, frame I420HighBitDepthFrame) []byte {
 	dst = appendPublicI420HighBitDepthPlaneRaw(dst, frame.Y, frame.YStride, frame.Width, frame.Height)
 	chromaWidth, chromaHeight := frame.Width/2, frame.Height/2
 	dst = appendPublicI420HighBitDepthPlaneRaw(dst, frame.U, frame.ChromaStride, chromaWidth, chromaHeight)
@@ -10511,9 +10517,9 @@ func appendPublicI420HighBitDepthPlaneRaw(dst []byte, samples []uint16, stride, 
 	return dst
 }
 
-func publicI420HighBitDepthFrame(width, height int, bitDepth uint8, seed int) goav1.I420HighBitDepthFrame {
+func publicI420HighBitDepthFrame(width, height int, bitDepth uint8, seed int) I420HighBitDepthFrame {
 	chromaWidth, chromaHeight := width/2, height/2
-	frame := goav1.I420HighBitDepthFrame{
+	frame := I420HighBitDepthFrame{
 		Y:            make([]uint16, width*height),
 		U:            make([]uint16, chromaWidth*chromaHeight),
 		V:            make([]uint16, chromaWidth*chromaHeight),
@@ -10539,9 +10545,9 @@ func publicI420HighBitDepthFrame(width, height int, bitDepth uint8, seed int) go
 	return frame
 }
 
-func publicI422HighBitDepthFrame(width, height int, bitDepth uint8, seed int) goav1.I422HighBitDepthFrame {
+func publicI422HighBitDepthFrame(width, height int, bitDepth uint8, seed int) I422HighBitDepthFrame {
 	chromaWidth := width / 2
-	frame := goav1.I422HighBitDepthFrame{
+	frame := I422HighBitDepthFrame{
 		Y:            make([]uint16, width*height),
 		U:            make([]uint16, chromaWidth*height),
 		V:            make([]uint16, chromaWidth*height),
@@ -10567,8 +10573,8 @@ func publicI422HighBitDepthFrame(width, height int, bitDepth uint8, seed int) go
 	return frame
 }
 
-func publicI444HighBitDepthFrame(width, height int, bitDepth uint8, seed int) goav1.I444HighBitDepthFrame {
-	frame := goav1.I444HighBitDepthFrame{
+func publicI444HighBitDepthFrame(width, height int, bitDepth uint8, seed int) I444HighBitDepthFrame {
+	frame := I444HighBitDepthFrame{
 		Y:        make([]uint16, width*height),
 		U:        make([]uint16, width*height),
 		V:        make([]uint16, width*height),
@@ -10613,7 +10619,7 @@ func publicUint16Equal(a []uint16, b []uint16) bool {
 	return true
 }
 
-func publicI420HighBitDepthFrameEqual(a goav1.I420HighBitDepthFrame, b goav1.I420HighBitDepthFrame) bool {
+func publicI420HighBitDepthFrameEqual(a I420HighBitDepthFrame, b I420HighBitDepthFrame) bool {
 	if a.Width != b.Width || a.Height != b.Height || a.BitDepth != b.BitDepth {
 		return false
 	}
@@ -10641,7 +10647,7 @@ func publicI420HighBitDepthFrameEqual(a goav1.I420HighBitDepthFrame, b goav1.I42
 	return true
 }
 
-func publicI400HighBitDepthFrameEqual(a goav1.I400HighBitDepthFrame, b goav1.I400HighBitDepthFrame) bool {
+func publicI400HighBitDepthFrameEqual(a I400HighBitDepthFrame, b I400HighBitDepthFrame) bool {
 	if a.Width != b.Width || a.Height != b.Height || a.BitDepth != b.BitDepth {
 		return false
 	}
@@ -10657,7 +10663,7 @@ func publicI400HighBitDepthFrameEqual(a goav1.I400HighBitDepthFrame, b goav1.I40
 	return true
 }
 
-func appendPublicFrameRawYUV(dst []byte, frame *goav1.Frame) []byte {
+func appendPublicFrameRawYUV(dst []byte, frame *Frame) []byte {
 	if frame == nil {
 		return dst
 	}
@@ -10668,7 +10674,7 @@ func appendPublicFrameRawYUV(dst []byte, frame *goav1.Frame) []byte {
 	return dst
 }
 
-func appendPublicFramePlaneRawYUV(dst []byte, plane goav1.FramePlane, bytesPerSample int) []byte {
+func appendPublicFramePlaneRawYUV(dst []byte, plane FramePlane, bytesPerSample int) []byte {
 	if plane.Width == 0 || plane.Height == 0 || len(plane.Pix) == 0 {
 		return dst
 	}
@@ -10680,7 +10686,7 @@ func appendPublicFramePlaneRawYUV(dst []byte, plane goav1.FramePlane, bytesPerSa
 	return dst
 }
 
-func assertPublicRTCAttachedStructure(t *testing.T, structure goav1.RTPDependencyDescriptorStructure, cfg goav1.EncoderConfig) {
+func assertPublicRTCAttachedStructure(t *testing.T, structure RTPDependencyDescriptorStructure, cfg EncoderConfig) {
 	t.Helper()
 	spatialLayers, temporalLayers, _, ok := cfg.Scalability.Layers()
 	if !ok {
@@ -10700,11 +10706,11 @@ func assertPublicRTCAttachedStructure(t *testing.T, structure goav1.RTPDependenc
 	}
 }
 
-func appendPublicRTCPictureLayerData(t *testing.T, layerTUs *[goav1.EncoderWebRTCMaxSpatialLayers][][]byte, orderedTUs *[][]byte, picture goav1.RTCPicture) {
+func appendPublicRTCPictureLayerData(t *testing.T, layerTUs *[EncoderWebRTCMaxSpatialLayers][][]byte, orderedTUs *[][]byte, picture RTCPicture) {
 	t.Helper()
 	for i := 0; i < picture.FrameNum; i++ {
 		spatialID := picture.Frames[i].SpatialID
-		if spatialID >= goav1.EncoderWebRTCMaxSpatialLayers {
+		if spatialID >= EncoderWebRTCMaxSpatialLayers {
 			t.Fatalf("frame %d spatial id=%d", i, spatialID)
 		}
 		tu := append([]byte(nil), picture.Frames[i].Data...)
@@ -10713,12 +10719,12 @@ func appendPublicRTCPictureLayerData(t *testing.T, layerTUs *[goav1.EncoderWebRT
 	}
 }
 
-func appendPublicRTCPictureRTPData(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, layerTUs *[goav1.EncoderWebRTCMaxSpatialLayers][][]byte, orderedTUs *[][]byte, picture goav1.RTCPicture) {
+func appendPublicRTCPictureRTPData(t *testing.T, receiver *RTPDependencyDescriptorState, layerTUs *[EncoderWebRTCMaxSpatialLayers][][]byte, orderedTUs *[][]byte, picture RTCPicture) {
 	t.Helper()
 	for i := 0; i < picture.FrameNum; i++ {
 		frame := picture.Frames[i]
 		spatialID := frame.SpatialID
-		if spatialID >= goav1.EncoderWebRTCMaxSpatialLayers {
+		if spatialID >= EncoderWebRTCMaxSpatialLayers {
 			t.Fatalf("frame %d spatial id=%d", i, spatialID)
 		}
 		tu := publicRTCPacketizeAndAssembleFrame(t, receiver, frame)
@@ -10727,24 +10733,24 @@ func appendPublicRTCPictureRTPData(t *testing.T, receiver *goav1.RTPDependencyDe
 	}
 }
 
-func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDependencyDescriptorState, frame goav1.RTCFrame) []byte {
+func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *RTPDependencyDescriptorState, frame RTCFrame) []byte {
 	t.Helper()
-	limits := goav1.RTPPayloadSizeLimits{MaxPayloadLen: 96}
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 96}
 	const dependencyDescriptorExtensionID = 42
 	firstSize, err := frame.RTPPacketScratchLen(limits, nil)
 	if err != nil {
 		t.Fatalf("RTPPacketScratchLen first S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
 	}
-	obuScratch := make([]goav1.RTPPacketizerOBU, firstSize.Packetizer.OBUs)
+	obuScratch := make([]RTPPacketizerOBU, firstSize.Packetizer.OBUs)
 	size, err := frame.RTPPacketScratchLen(limits, obuScratch)
 	if err != nil {
 		t.Fatalf("RTPPacketScratchLen full S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
 	}
-	packetScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Packets)
-	workScratch := make([]goav1.RTPPacketPlan, size.Packetizer.Work)
+	packetScratch := make([]RTPPacketPlan, size.Packetizer.Packets)
+	workScratch := make([]RTPPacketPlan, size.Packetizer.Work)
 	payloadBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxPayloadBytes)
 	descriptorBuf := make([]byte, 0, size.Packetizer.Packets*size.MaxDescriptorBytes)
-	spans := make([]goav1.EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
+	spans := make([]EncoderWebRTCRTPPacketSpan, size.Packetizer.Packets)
 	rtpPayloads, descriptors, packetCount, err := frame.AppendRTPPackets(payloadBuf, descriptorBuf, spans, limits, obuScratch, packetScratch, workScratch)
 	if err != nil {
 		t.Fatalf("AppendRTPPackets S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
@@ -10752,7 +10758,7 @@ func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDepende
 	if packetCount != size.Packetizer.Packets {
 		t.Fatalf("packet count=%d want %d", packetCount, size.Packetizer.Packets)
 	}
-	headerConfig := goav1.EncoderWebRTCRTPPacketHeaderConfig{
+	headerConfig := EncoderWebRTCRTPPacketHeaderConfig{
 		PayloadType:                     96,
 		SequenceNumber:                  uint16(frame.FrameID * 29),
 		Timestamp:                       uint32(frame.FrameID * 3000),
@@ -10765,20 +10771,20 @@ func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDepende
 		TransportWideCCExtensionID:      3,
 		TransportWideCCSequenceNumber:   uint16(frame.FrameID * 31),
 		AbsoluteSendTimeExtensionID:     4,
-		AbsoluteSendTime:                uint32(frame.FrameID*37) & goav1.RTPAbsoluteSendTimeMaxValue,
+		AbsoluteSendTime:                uint32(frame.FrameID*37) & RTPAbsoluteSendTimeMaxValue,
 		VideoContentTypeExtensionID:     5,
-		VideoContentType:                goav1.RTPVideoContentTypeScreenshare,
+		VideoContentType:                RTPVideoContentTypeScreenshare,
 	}
-	packetSize, err := goav1.EncoderWebRTCRTPPacketsWithHeadersSize(headerConfig, rtpPayloads, descriptors, spans[:packetCount])
+	packetSize, err := EncoderWebRTCRTPPacketsWithHeadersSize(headerConfig, rtpPayloads, descriptors, spans[:packetCount])
 	if err != nil {
 		t.Fatalf("EncoderWebRTCRTPPacketsWithHeadersSize S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
 	}
 	if packetSize.Packets != packetCount || packetSize.Bytes <= len(rtpPayloads) ||
-		packetSize.MaxHeaderBytes <= goav1.RTPHeaderMinSize {
+		packetSize.MaxHeaderBytes <= RTPHeaderMinSize {
 		t.Fatalf("full RTP size=%+v packetCount=%d payloadBytes=%d", packetSize, packetCount, len(rtpPayloads))
 	}
-	headerSpans := make([]goav1.EncoderWebRTCRTPPacketHeaderSpan, packetCount)
-	fullPackets, fullCount, err := goav1.AppendEncoderWebRTCRTPPacketsWithHeaders(make([]byte, 0, packetSize.Bytes), headerSpans, headerConfig, rtpPayloads, descriptors, spans[:packetCount])
+	headerSpans := make([]EncoderWebRTCRTPPacketHeaderSpan, packetCount)
+	fullPackets, fullCount, err := AppendEncoderWebRTCRTPPacketsWithHeaders(make([]byte, 0, packetSize.Bytes), headerSpans, headerConfig, rtpPayloads, descriptors, spans[:packetCount])
 	if err != nil {
 		t.Fatalf("AppendEncoderWebRTCRTPPacketsWithHeaders S%d T%d: %v", frame.SpatialID, frame.TemporalID, err)
 	}
@@ -10790,7 +10796,7 @@ func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDepende
 		span := spans[i]
 		headerSpan := headerSpans[i]
 		raw := fullPackets[headerSpan.Offset : headerSpan.Offset+headerSpan.Length]
-		descriptorPacket, err := goav1.ParseRTPPacketDependencyDescriptor(raw, dependencyDescriptorExtensionID, receiver)
+		descriptorPacket, err := ParseRTPPacketDependencyDescriptor(raw, dependencyDescriptorExtensionID, receiver)
 		if err != nil {
 			t.Fatalf("packet %d ParseRTPPacketDependencyDescriptor S%d: %v", i, frame.SpatialID, err)
 		}
@@ -10800,7 +10806,7 @@ func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDepende
 			packet.Header.Timestamp != headerConfig.Timestamp ||
 			packet.Header.SSRC != headerConfig.SSRC ||
 			packet.Header.Marker != span.Marker ||
-			packet.Header.ExtensionProfile != goav1.RTPExtensionProfileTwoByte {
+			packet.Header.ExtensionProfile != RTPExtensionProfileTwoByte {
 			t.Fatalf("packet %d RTP header=%+v span=%+v config=%+v", i, packet.Header, span, headerConfig)
 		}
 		if headerSpan.HeaderSize != len(raw)-len(packet.Payload) ||
@@ -10815,47 +10821,47 @@ func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDepende
 		if !bytes.Equal(payloadSlices[i], wantPayload) {
 			t.Fatalf("packet %d payload mismatch len=%d want=%d", i, len(payloadSlices[i]), len(wantPayload))
 		}
-		midElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, headerConfig.MIDExtensionID)
+		midElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, headerConfig.MIDExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d MID extension ok=%v err=%v", i, ok, err)
 		}
-		mid, err := goav1.ParseRTPMIDHeaderExtension(midElement.Payload)
+		mid, err := ParseRTPMIDHeaderExtension(midElement.Payload)
 		if err != nil || mid != headerConfig.MID {
 			t.Fatalf("packet %d MID=%q err=%v want %q", i, mid, err, headerConfig.MID)
 		}
-		ridElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, headerConfig.RTPStreamIDExtensionID)
+		ridElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, headerConfig.RTPStreamIDExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d RID extension ok=%v err=%v", i, ok, err)
 		}
-		rid, err := goav1.ParseRTPStreamIDHeaderExtension(ridElement.Payload)
+		rid, err := ParseRTPStreamIDHeaderExtension(ridElement.Payload)
 		if err != nil || rid != headerConfig.RTPStreamID {
 			t.Fatalf("packet %d RID=%q err=%v want %q", i, rid, err, headerConfig.RTPStreamID)
 		}
-		twccElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, headerConfig.TransportWideCCExtensionID)
+		twccElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, headerConfig.TransportWideCCExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d TWCC extension ok=%v err=%v", i, ok, err)
 		}
-		twcc, err := goav1.ParseRTPTransportWideCCHeaderExtension(twccElement.Payload)
+		twcc, err := ParseRTPTransportWideCCHeaderExtension(twccElement.Payload)
 		if want := headerConfig.TransportWideCCSequenceNumber + uint16(i); err != nil || twcc != want {
 			t.Fatalf("packet %d TWCC=%d err=%v want %d", i, twcc, err, want)
 		}
-		absSendElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, headerConfig.AbsoluteSendTimeExtensionID)
+		absSendElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, headerConfig.AbsoluteSendTimeExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d abs-send-time extension ok=%v err=%v", i, ok, err)
 		}
-		absSend, err := goav1.ParseRTPAbsoluteSendTimeHeaderExtension(absSendElement.Payload)
+		absSend, err := ParseRTPAbsoluteSendTimeHeaderExtension(absSendElement.Payload)
 		if err != nil || absSend != headerConfig.AbsoluteSendTime {
 			t.Fatalf("packet %d abs-send-time=%#x err=%v want %#x", i, absSend, err, headerConfig.AbsoluteSendTime)
 		}
-		contentElement, ok, err := goav1.FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, headerConfig.VideoContentTypeExtensionID)
+		contentElement, ok, err := FindRTPHeaderExtensionElement(packet.Header.ExtensionProfile, packet.Header.ExtensionPayload, headerConfig.VideoContentTypeExtensionID)
 		if err != nil || !ok {
 			t.Fatalf("packet %d content-type extension ok=%v err=%v", i, ok, err)
 		}
-		content, err := goav1.ParseRTPVideoContentTypeHeaderExtension(contentElement.Payload)
+		content, err := ParseRTPVideoContentTypeHeaderExtension(contentElement.Payload)
 		if err != nil || content != headerConfig.VideoContentType {
 			t.Fatalf("packet %d content-type=%d err=%v want %d", i, content, err, headerConfig.VideoContentType)
 		}
-		header, _, err := goav1.ParseRTPAggregationHeader(payloadSlices[i])
+		header, _, err := ParseRTPAggregationHeader(payloadSlices[i])
 		if err != nil {
 			t.Fatalf("packet %d aggregation header S%d: %v", i, frame.SpatialID, err)
 		}
@@ -10878,13 +10884,13 @@ func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDepende
 			t.Fatalf("packet %d marker=%v frame=%+v", i, span.Marker, frame)
 		}
 	}
-	assembledLen, obuCount, err := goav1.AssembleRTPFrameSize(payloadSlices)
+	assembledLen, obuCount, err := AssembleRTPFrameSize(payloadSlices)
 	if err != nil {
 		t.Fatalf("AssembleRTPFrameSize: %v", err)
 	}
 	assembled := make([]byte, assembledLen)
-	assembledOBUs := make([]goav1.RTPFrameOBU, obuCount)
-	wrote, gotOBUs, err := goav1.AssembleRTPFrame(assembled, payloadSlices, assembledOBUs)
+	assembledOBUs := make([]RTPFrameOBU, obuCount)
+	wrote, gotOBUs, err := AssembleRTPFrame(assembled, payloadSlices, assembledOBUs)
 	if err != nil {
 		t.Fatalf("AssembleRTPFrame: %v", err)
 	}
@@ -10894,7 +10900,7 @@ func publicRTCPacketizeAndAssembleFrame(t *testing.T, receiver *goav1.RTPDepende
 	return assembled[:wrote]
 }
 
-func assertPublicRTCLayerStreamsDecode(t *testing.T, cfg goav1.EncoderConfig, layerTUs [goav1.EncoderWebRTCMaxSpatialLayers][][]byte, orderedTUs [][]byte) {
+func assertPublicRTCLayerStreamsDecode(t *testing.T, cfg EncoderConfig, layerTUs [EncoderWebRTCMaxSpatialLayers][][]byte, orderedTUs [][]byte) {
 	t.Helper()
 	if publicRTCSharedReferenceSlotMode(cfg.Scalability) {
 		assertPublicRTCSharedReferenceStreamDecodes(t, orderedTUs)
@@ -10908,7 +10914,7 @@ func assertPublicRTCLayerStreamsDecode(t *testing.T, cfg goav1.EncoderConfig, la
 
 func assertPublicRTCSpatialLayerDecodes(t *testing.T, spatialID int, tus [][]byte) {
 	t.Helper()
-	dec, err := goav1.NewDecoder(tus)
+	dec, err := NewDecoder(tus)
 	if err != nil {
 		t.Fatalf("spatial layer %d decoder: %v", spatialID, err)
 	}
@@ -10929,14 +10935,14 @@ func assertPublicRTCSpatialLayerDecodes(t *testing.T, spatialID int, tus [][]byt
 	}
 }
 
-func publicRTCSharedReferenceSlotMode(mode goav1.EncoderScalabilityMode) bool {
+func publicRTCSharedReferenceSlotMode(mode EncoderScalabilityMode) bool {
 	return mode.UsesSharedReferenceSlots()
 }
 
 type publicLayeredFrameMetadata struct {
 	TemporalID    uint8
 	SpatialID     uint8
-	FrameType     goav1.FrameType
+	FrameType     FrameType
 	CodedKeyframe bool
 	ShowExisting  bool
 	ShowFrame     bool
@@ -10944,10 +10950,10 @@ type publicLayeredFrameMetadata struct {
 	Height        int
 }
 
-func publicLayeredFrameMetadataFromRTCFrame(frame goav1.RTCFrame) publicLayeredFrameMetadata {
-	frameType := goav1.FrameTypeInter
+func publicLayeredFrameMetadataFromRTCFrame(frame RTCFrame) publicLayeredFrameMetadata {
+	frameType := internalparser.FrameTypeInter
 	if frame.CodedKeyframe {
-		frameType = goav1.FrameTypeKey
+		frameType = internalparser.FrameTypeKey
 	}
 	return publicLayeredFrameMetadata{
 		TemporalID:    frame.TemporalID,
@@ -10958,7 +10964,7 @@ func publicLayeredFrameMetadataFromRTCFrame(frame goav1.RTCFrame) publicLayeredF
 	}
 }
 
-func publicLayeredFrameMetadataFromDecoded(t *testing.T, frame goav1.LayeredFrame) publicLayeredFrameMetadata {
+func publicLayeredFrameMetadataFromDecoded(t *testing.T, frame LayeredFrame) publicLayeredFrameMetadata {
 	t.Helper()
 	if frame.Frame == nil {
 		t.Fatal("layered metadata has nil frame")
@@ -11006,7 +11012,7 @@ func assertPublicLayeredFrameMetadata(t *testing.T, got []publicLayeredFrameMeta
 	}
 }
 
-func publicRTCPictureFramesInOrder(pictures ...goav1.RTCPicture) [][]byte {
+func publicRTCPictureFramesInOrder(pictures ...RTCPicture) [][]byte {
 	var out [][]byte
 	for _, picture := range pictures {
 		for i := 0; i < picture.FrameNum; i++ {
@@ -11016,7 +11022,7 @@ func publicRTCPictureFramesInOrder(pictures ...goav1.RTCPicture) [][]byte {
 	return out
 }
 
-func publicRTCPictureRTPPayloads(t *testing.T, picture goav1.RTCPicture, limits goav1.RTPPayloadSizeLimits) [][]byte {
+func publicRTCPictureRTPPayloads(t *testing.T, picture RTCPicture, limits RTPPayloadSizeLimits) [][]byte {
 	t.Helper()
 	var out [][]byte
 	for i := 0; i < picture.FrameNum; i++ {
@@ -11025,7 +11031,7 @@ func publicRTCPictureRTPPayloads(t *testing.T, picture goav1.RTCPicture, limits 
 	return out
 }
 
-func publicRTCPictureRTPPackets(t *testing.T, picture goav1.RTCPicture, limits goav1.RTPPayloadSizeLimits) [][]byte {
+func publicRTCPictureRTPPackets(t *testing.T, picture RTCPicture, limits RTPPayloadSizeLimits) [][]byte {
 	t.Helper()
 	var out [][]byte
 	for i := 0; i < picture.FrameNum; i++ {
@@ -11034,7 +11040,7 @@ func publicRTCPictureRTPPackets(t *testing.T, picture goav1.RTCPicture, limits g
 	return out
 }
 
-func publicRTCPictureDecodeTargetRTPPackets(t *testing.T, picture goav1.RTCPicture, limits goav1.RTPPayloadSizeLimits, spatialID uint8, temporalID uint8) [][]byte {
+func publicRTCPictureDecodeTargetRTPPackets(t *testing.T, picture RTCPicture, limits RTPPayloadSizeLimits, spatialID uint8, temporalID uint8) [][]byte {
 	t.Helper()
 	var out [][]byte
 	for i := 0; i < picture.FrameNum; i++ {
@@ -11047,7 +11053,7 @@ func publicRTCPictureDecodeTargetRTPPackets(t *testing.T, picture goav1.RTCPictu
 	return out
 }
 
-func publicRTCPictureDecodeTargetLowOverheads(picture goav1.RTCPicture, spatialID uint8, temporalID uint8) [][]byte {
+func publicRTCPictureDecodeTargetLowOverheads(picture RTCPicture, spatialID uint8, temporalID uint8) [][]byte {
 	var out [][]byte
 	for i := 0; i < picture.FrameNum; i++ {
 		frame := picture.Frames[i]
@@ -11061,7 +11067,7 @@ func publicRTCPictureDecodeTargetLowOverheads(picture goav1.RTCPicture, spatialI
 
 func publicRTPPacketSequence(t testing.TB, packet []byte) uint16 {
 	t.Helper()
-	parsed, err := goav1.ParseRTPPacket(packet)
+	parsed, err := ParseRTPPacket(packet)
 	if err != nil {
 		t.Fatalf("ParseRTPPacket sequence: %v", err)
 	}
@@ -11076,12 +11082,12 @@ func assertPublicRTCSharedReferenceStreamDecodes(t *testing.T, tus [][]byte) {
 	}
 }
 
-func decodePublicRTCLayerPoolLowOverheads(t *testing.T, payloads ...[]byte) []*goav1.Frame {
+func decodePublicRTCLayerPoolLowOverheads(t *testing.T, payloads ...[]byte) []*Frame {
 	t.Helper()
 
 	h := newPublicRTCLayerPoolDecodeHarness(t, len(payloads))
 	defer h.close(t)
-	events := make([]goav1.DecoderEvent, 16)
+	events := make([]internaldecoder.Event, 16)
 
 	for payloadIndex, payload := range payloads {
 		count, err := h.stream.PushLowOverhead(payload, events)
@@ -11098,7 +11104,7 @@ func decodePublicRTCLayerPoolLowOverheadDigests(t *testing.T, payloads ...[]byte
 
 	h := newPublicRTCLayerPoolDecodeHarness(t, len(payloads))
 	defer h.close(t)
-	events := make([]goav1.DecoderEvent, 16)
+	events := make([]internaldecoder.Event, 16)
 	var out [][16]byte
 
 	for payloadIndex, payload := range payloads {
@@ -11120,7 +11126,7 @@ func decodePublicRTCLayerPoolLowOverheadRawYUV(t *testing.T, payloads ...[]byte)
 
 	h := newPublicRTCLayerPoolDecodeHarness(t, len(payloads))
 	defer h.close(t)
-	events := make([]goav1.DecoderEvent, 16)
+	events := make([]internaldecoder.Event, 16)
 	var out []byte
 	frames := 0
 
@@ -11144,7 +11150,7 @@ func decodePublicRTCLayerPoolLowOverheadMonochromeRawY(t *testing.T, payloads ..
 
 	h := newPublicRTCLayerPoolDecodeHarness(t, len(payloads))
 	defer h.close(t)
-	events := make([]goav1.DecoderEvent, 16)
+	events := make([]internaldecoder.Event, 16)
 	var out []byte
 	var spans []publicMonochromeFrameSpan
 
@@ -11183,8 +11189,8 @@ func decodePublicRTCLayerPoolRTPPayloadDigestsWithLabels(t *testing.T, labels []
 	var (
 		rtpUsed   int
 		rtpBuffer []byte
-		rtpSpans  []goav1.RTPObuSpan
-		events    []goav1.DecoderEvent
+		rtpSpans  []RTPObuSpan
+		events    []internaldecoder.Event
 		out       [][16]byte
 	)
 
@@ -11200,11 +11206,11 @@ func decodePublicRTCLayerPoolRTPPayloadDigestsWithLabels(t *testing.T, labels []
 		}
 		rtpBuffer = rtpBuffer[:plannedUsed]
 		if cap(rtpSpans) < eventCount {
-			rtpSpans = make([]goav1.RTPObuSpan, eventCount)
+			rtpSpans = make([]RTPObuSpan, eventCount)
 		}
 		rtpSpans = rtpSpans[:eventCount]
 		if cap(events) < eventCount {
-			events = make([]goav1.DecoderEvent, eventCount)
+			events = make([]internaldecoder.Event, eventCount)
 		}
 		events = events[:eventCount]
 
@@ -11231,7 +11237,7 @@ func decodePublicRTCLayerPoolRTPPayloadDigestsWithLabels(t *testing.T, labels []
 
 func decodePublicLayeredDecoderLowOverheadDigests(t *testing.T, payloads ...[]byte) [][16]byte {
 	t.Helper()
-	dec, err := goav1.NewLayeredDecoder(payloads)
+	dec, err := NewLayeredDecoder(payloads)
 	if err != nil {
 		t.Fatalf("NewLayeredDecoder: %v", err)
 	}
@@ -11255,7 +11261,7 @@ func decodePublicLayeredDecoderLowOverheadDigests(t *testing.T, payloads ...[]by
 
 func decodePublicLayeredDecoderLowOverheadMetadata(t *testing.T, payloads ...[]byte) []publicLayeredFrameMetadata {
 	t.Helper()
-	dec, err := goav1.NewLayeredDecoder(payloads)
+	dec, err := NewLayeredDecoder(payloads)
 	if err != nil {
 		t.Fatalf("NewLayeredDecoder metadata: %v", err)
 	}
@@ -11279,7 +11285,7 @@ func decodePublicLayeredDecoderLowOverheadMetadata(t *testing.T, payloads ...[]b
 
 func decodePublicLayeredDecoderRTPPayloadDigests(t *testing.T, payloads ...[]byte) [][16]byte {
 	t.Helper()
-	dec, err := goav1.NewLayeredDecoderFromRTPPayloads(payloads)
+	dec, err := NewLayeredDecoderFromRTPPayloads(payloads)
 	if err != nil {
 		t.Fatalf("NewLayeredDecoderFromRTPPayloads: %v", err)
 	}
@@ -11309,7 +11315,7 @@ func decodePublicLayeredDecoderRTPPayloadDigests(t *testing.T, payloads ...[]byt
 
 func decodePublicLayeredDecoderRTPPayloadMetadata(t *testing.T, payloads ...[]byte) []publicLayeredFrameMetadata {
 	t.Helper()
-	dec, err := goav1.NewLayeredDecoderFromRTPPayloads(payloads)
+	dec, err := NewLayeredDecoderFromRTPPayloads(payloads)
 	if err != nil {
 		t.Fatalf("NewLayeredDecoderFromRTPPayloads metadata: %v", err)
 	}
@@ -11343,7 +11349,7 @@ func decodePublicLayeredDecoderRTPPayloadMetadata(t *testing.T, payloads ...[]by
 
 func decodePublicLayeredDecoderRTPPacketDigests(t *testing.T, packets ...[]byte) [][16]byte {
 	t.Helper()
-	dec, err := goav1.NewLayeredDecoderFromRTPPackets(packets)
+	dec, err := NewLayeredDecoderFromRTPPackets(packets)
 	if err != nil {
 		t.Fatalf("NewLayeredDecoderFromRTPPackets: %v", err)
 	}
@@ -11373,7 +11379,7 @@ func decodePublicLayeredDecoderRTPPacketDigests(t *testing.T, packets ...[]byte)
 
 func decodePublicLayeredDecoderRTPPacketMetadata(t *testing.T, packets ...[]byte) []publicLayeredFrameMetadata {
 	t.Helper()
-	dec, err := goav1.NewLayeredDecoderFromRTPPackets(packets)
+	dec, err := NewLayeredDecoderFromRTPPackets(packets)
 	if err != nil {
 		t.Fatalf("NewLayeredDecoderFromRTPPackets metadata: %v", err)
 	}
@@ -11407,7 +11413,7 @@ func decodePublicLayeredDecoderRTPPacketMetadata(t *testing.T, packets ...[]byte
 
 func decodePublicLayeredLiveDecoderRTPPayloadDigests(t *testing.T, probePayloads [][]byte, payloads ...[]byte) [][16]byte {
 	t.Helper()
-	dec, err := goav1.NewLayeredDecoderFromRTPPayloads(probePayloads)
+	dec, err := NewLayeredDecoderFromRTPPayloads(probePayloads)
 	if err != nil {
 		t.Fatalf("NewLayeredDecoderFromRTPPayloads live: %v", err)
 	}
@@ -11431,7 +11437,7 @@ func decodePublicLayeredLiveDecoderRTPPayloadDigests(t *testing.T, probePayloads
 
 func decodePublicLayeredLiveDecoderRTPPacketDigests(t *testing.T, probePackets [][]byte, packets ...[]byte) [][16]byte {
 	t.Helper()
-	dec, err := goav1.NewLayeredDecoderFromRTPPackets(probePackets)
+	dec, err := NewLayeredDecoderFromRTPPackets(probePackets)
 	if err != nil {
 		t.Fatalf("NewLayeredDecoderFromRTPPackets live: %v", err)
 	}
@@ -11455,7 +11461,7 @@ func decodePublicLayeredLiveDecoderRTPPacketDigests(t *testing.T, probePackets [
 
 func decodePublicLayeredLiveDecoderRTPPayloadMetadata(t *testing.T, probePayloads [][]byte, payloads ...[]byte) []publicLayeredFrameMetadata {
 	t.Helper()
-	dec, err := goav1.NewLayeredDecoderFromRTPPayloads(probePayloads)
+	dec, err := NewLayeredDecoderFromRTPPayloads(probePayloads)
 	if err != nil {
 		t.Fatalf("NewLayeredDecoderFromRTPPayloads live metadata: %v", err)
 	}
@@ -11479,7 +11485,7 @@ func decodePublicLayeredLiveDecoderRTPPayloadMetadata(t *testing.T, probePayload
 
 func decodePublicLayeredLiveDecoderRTPPacketMetadata(t *testing.T, probePackets [][]byte, packets ...[]byte) []publicLayeredFrameMetadata {
 	t.Helper()
-	dec, err := goav1.NewLayeredDecoderFromRTPPackets(probePackets)
+	dec, err := NewLayeredDecoderFromRTPPackets(probePackets)
 	if err != nil {
 		t.Fatalf("NewLayeredDecoderFromRTPPackets live metadata: %v", err)
 	}
@@ -11509,7 +11515,7 @@ func publicRTCPayloadLabel(labels []string, index int) string {
 }
 
 func publicRTCRTPPayloadSummary(payload []byte) string {
-	it, err := goav1.NewRTPPayloadIterator(payload)
+	it, err := NewRTPPayloadIterator(payload)
 	if err != nil {
 		return fmt.Sprintf("rtp=%dB iteratorErr=%v", len(payload), err)
 	}
@@ -11536,50 +11542,50 @@ func publicRTCRTPPayloadSummary(payload []byte) string {
 
 type publicRTCLayerPoolDecodeHarness struct {
 	workers    int
-	workerPool *goav1.TileWorkerPool
+	workerPool *internalthreading.Pool
 
-	layerPool goav1.FrameLayerPool
-	adapter   goav1.DecoderFrameLayerPool
+	layerPool internalframe.LayerPool
+	adapter   internaldecoder.FrameLayerPool
 
-	stream        goav1.DecoderStream
-	refs          goav1.DecoderSurfaceReferences
-	states        [goav1.EncoderWebRTCMaxSpatialLayers]goav1.DecoderFrameWorkState
-	frameContexts goav1.DecoderSharedFrameContextStore
-	stats         goav1.DecoderFrameWorkTileResidualStats
-	postFilter    goav1.DecoderFrameWorkReusableSupportedPostFilterRunner
-	sequence      goav1.SequenceHeader
+	stream        internaldecoder.Stream
+	refs          internaldecoder.SurfaceReferences
+	states        [EncoderWebRTCMaxSpatialLayers]internaldecoder.FrameWorkState
+	frameContexts internaldecoder.SharedFrameContextStore
+	stats         internalthreading.FrameWorkTileResidualStats
+	postFilter    decoderFrameWorkReusableSupportedPostFilterRunner
+	sequence      SequenceHeader
 	haveSequence  bool
 
 	referenceSurfaces []int
-	referenceFrames   []*goav1.Frame
+	referenceFrames   []*Frame
 	releases          []int
-	planSpans         []goav1.TileSpan
-	planJobs          []goav1.TileJob
-	planBatches       []goav1.TileBatch
-	outputs           []*goav1.Frame
+	planSpans         []internalparser.TileSpan
+	planJobs          []internaltile.Job
+	planBatches       []internalthreading.Batch
+	outputs           []*Frame
 }
 
 func newPublicRTCLayerPoolDecodeHarness(t *testing.T, outputCap int) *publicRTCLayerPoolDecodeHarness {
 	t.Helper()
 	const workers = 1
-	workerPool, err := goav1.NewTileWorkerPool(workers)
+	workerPool, err := internalthreading.NewPool(workers)
 	if err != nil {
 		t.Fatalf("NewTileWorkerPool: %v", err)
 	}
-	layerPool := newPublicDecoderLayerPool(t, goav1.EncoderWebRTCMaxSpatialLayers+1, goav1.RefFrames+1)
+	layerPool := newPublicDecoderLayerPool(t, EncoderWebRTCMaxSpatialLayers+1, internalparser.RefFrames+1)
 	h := &publicRTCLayerPoolDecodeHarness{
 		workers:           workers,
 		workerPool:        workerPool,
 		layerPool:         layerPool,
-		referenceSurfaces: make([]int, goav1.InterRefsPerFrame),
-		referenceFrames:   make([]*goav1.Frame, goav1.InterRefsPerFrame),
-		releases:          make([]int, goav1.RefFrames),
-		planSpans:         make([]goav1.TileSpan, goav1.MaxTiles),
-		planJobs:          make([]goav1.TileJob, goav1.MaxTiles),
-		planBatches:       make([]goav1.TileBatch, goav1.MaxTiles),
-		outputs:           make([]*goav1.Frame, 0, outputCap),
+		referenceSurfaces: make([]int, internalparser.InterRefsPerFrame),
+		referenceFrames:   make([]*Frame, internalparser.InterRefsPerFrame),
+		releases:          make([]int, internalparser.RefFrames),
+		planSpans:         make([]internalparser.TileSpan, internalparser.MaxTiles),
+		planJobs:          make([]internaltile.Job, internalparser.MaxTiles),
+		planBatches:       make([]internalthreading.Batch, internalparser.MaxTiles),
+		outputs:           make([]*Frame, 0, outputCap),
 	}
-	h.adapter = goav1.NewDecoderFrameLayerPool(&h.layerPool)
+	h.adapter = internaldecoder.NewFrameLayerPool(&h.layerPool)
 	return h
 }
 
@@ -11588,18 +11594,18 @@ func (h *publicRTCLayerPoolDecodeHarness) close(t *testing.T) {
 	h.workerPool.Close()
 }
 
-func (h *publicRTCLayerPoolDecodeHarness) stateForEvent(t *testing.T, payloadIndex, eventIndex int, event goav1.DecoderEvent) *goav1.DecoderFrameWorkState {
+func (h *publicRTCLayerPoolDecodeHarness) stateForEvent(t *testing.T, payloadIndex, eventIndex int, event internaldecoder.Event) *internaldecoder.FrameWorkState {
 	t.Helper()
-	if event.SpatialID >= goav1.EncoderWebRTCMaxSpatialLayers {
-		t.Fatalf("payload %d event %d spatial id %d exceeds WebRTC maximum %d", payloadIndex, eventIndex, event.SpatialID, goav1.EncoderWebRTCMaxSpatialLayers)
+	if event.SpatialID >= EncoderWebRTCMaxSpatialLayers {
+		t.Fatalf("payload %d event %d spatial id %d exceeds WebRTC maximum %d", payloadIndex, eventIndex, event.SpatialID, EncoderWebRTCMaxSpatialLayers)
 	}
 	return &h.states[event.SpatialID]
 }
 
-func (h *publicRTCLayerPoolDecodeHarness) runEvents(t *testing.T, payloadIndex int, events []goav1.DecoderEvent) {
+func (h *publicRTCLayerPoolDecodeHarness) runEvents(t *testing.T, payloadIndex int, events []internaldecoder.Event) {
 	t.Helper()
 	for eventIndex, event := range events {
-		if event.Kind == goav1.DecoderEventSequenceHeader {
+		if event.Kind == internaldecoder.EventSequenceHeader {
 			h.sequence = event.SequenceHeader
 			h.haveSequence = true
 		} else if !h.haveSequence {
@@ -11610,26 +11616,26 @@ func (h *publicRTCLayerPoolDecodeHarness) runEvents(t *testing.T, payloadIndex i
 		}
 
 		framePool := publicRTCLayerDecodeFramePool(t, &h.layerPool, h.sequence, event)
-		size, err := goav1.DecoderFrameWorkResidualEventScratchLen(h.sequence, &event, h.workers, h.planSpans, h.planJobs, h.planBatches)
+		size, err := decoderFrameWorkResidualEventScratchLen(h.sequence, &event, h.workers, h.planSpans, h.planJobs, h.planBatches)
 		if err != nil {
 			t.Fatalf("payload %d event %d scratch len: %v", payloadIndex, eventIndex, err)
 		}
 		scratch := publicRTCLayerDecodeEventScratch(size)
 
-		var batchRunner goav1.DecoderFrameWorkBatchResidualRunner
-		var batchRunnerPtr *goav1.DecoderFrameWorkBatchResidualRunner
+		var batchRunner decoderFrameWorkBatchResidualRunner
+		var batchRunnerPtr *decoderFrameWorkBatchResidualRunner
 		if size.Runner.Workers != 0 {
-			batchRunner, err = goav1.BindDecoderFrameWorkBatchResidualRunner(size.Runner, scratch.Runner)
+			batchRunner, err = bindDecoderFrameWorkBatchResidualRunner(size.Runner, scratch.Runner)
 			if err != nil {
 				t.Fatalf("payload %d event %d bind residual runner: %v", payloadIndex, eventIndex, err)
 			}
 			batchRunnerPtr = &batchRunner
 		}
 
-		var sideData goav1.DecoderFrameWorkSideData
-		var sideDataPtr *goav1.DecoderFrameWorkSideData
+		var sideData decoderFrameWorkSideData
+		var sideDataPtr *decoderFrameWorkSideData
 		if publicRTCLayerDecodeEventNeedsSideData(event) {
-			sideData, err = goav1.BindDecoderFrameWorkSideData(h.sequence, event.FrameSize, event.CDEF, event.Restoration, scratch.SideData)
+			sideData, err = bindDecoderFrameWorkSideData(h.sequence, event.FrameSize, event.CDEF, event.Restoration, scratch.SideData)
 			if err != nil {
 				t.Fatalf("payload %d event %d bind side data: %v", payloadIndex, eventIndex, err)
 			}
@@ -11640,10 +11646,10 @@ func (h *publicRTCLayerPoolDecodeHarness) runEvents(t *testing.T, payloadIndex i
 			if framePool == nil {
 				return -1
 			}
-			return goav1.DecoderLayerPoolGlobalSurfaceID(&h.layerPool, framePool, local)
+			return internaldecoder.LayerPoolGlobalSurfaceID(&h.layerPool, framePool, local)
 		}
 		state := h.stateForEvent(t, payloadIndex, eventIndex, event)
-		result, err := goav1.RunDecoderFrameWorkEventWithResidualRunner(goav1.DecoderFrameWorkResidualEventRequest{
+		result, err := runDecoderFrameWorkEventWithResidualRunner(decoderFrameWorkResidualEventRequest{
 			State:             state,
 			Refs:              &h.refs,
 			FramePool:         framePool,
@@ -11662,7 +11668,7 @@ func (h *publicRTCLayerPoolDecodeHarness) runEvents(t *testing.T, payloadIndex i
 			SideData:          sideDataPtr,
 			PostRunner:        &h.postFilter,
 			Stats:             &h.stats,
-			External: goav1.DecoderFrameWorkExternalReferenceRuntime{
+			External: decoderFrameWorkExternalReferenceRuntime{
 				Provider:      h.adapter,
 				GlobalSurface: globalSurface,
 				Releaser:      h.adapter,
@@ -11675,7 +11681,7 @@ func (h *publicRTCLayerPoolDecodeHarness) runEvents(t *testing.T, payloadIndex i
 				event.FrameHeader.FrameType, event.FrameSize.RefreshFrameFlags, h.refs, framePool == nil, state.Surface, event.FrameSize, err)
 		}
 		h.assertReferencedSurfacesResolvable(t, payloadIndex, eventIndex, event)
-		if goav1.DecoderEventOutputsFrame(&event) {
+		if internaldecoder.EventOutputsFrame(&event) {
 			if result.Output == nil {
 				t.Fatalf("payload %d event %d output frame is nil", payloadIndex, eventIndex)
 			}
@@ -11684,9 +11690,9 @@ func (h *publicRTCLayerPoolDecodeHarness) runEvents(t *testing.T, payloadIndex i
 	}
 }
 
-func (h *publicRTCLayerPoolDecodeHarness) assertReferencedSurfacesResolvable(t *testing.T, payloadIndex, eventIndex int, event goav1.DecoderEvent) {
+func (h *publicRTCLayerPoolDecodeHarness) assertReferencedSurfacesResolvable(t *testing.T, payloadIndex, eventIndex int, event internaldecoder.Event) {
 	t.Helper()
-	for slot := 0; slot < goav1.RefFrames; slot++ {
+	for slot := 0; slot < internalparser.RefFrames; slot++ {
 		surface, ok := h.refs.ReferenceSlot(slot)
 		if !ok {
 			continue
@@ -11697,11 +11703,11 @@ func (h *publicRTCLayerPoolDecodeHarness) assertReferencedSurfacesResolvable(t *
 	}
 }
 
-func publicRTCLayerDecodeFramePool(t *testing.T, pool *goav1.FrameLayerPool, sequence goav1.SequenceHeader, event goav1.DecoderEvent) *goav1.FramePool {
+func publicRTCLayerDecodeFramePool(t *testing.T, pool *internalframe.LayerPool, sequence SequenceHeader, event internaldecoder.Event) *internalframe.Pool {
 	t.Helper()
 	switch event.Kind {
-	case goav1.DecoderEventFrameHeader, goav1.DecoderEventFrame, goav1.DecoderEventTileGroup:
-		format, err := goav1.FrameCodedFormatFromHeaders(sequence, event.FrameSize, 64)
+	case internaldecoder.EventFrameHeader, internaldecoder.EventFrame, internaldecoder.EventTileGroup:
+		format, err := frameCodedFormatFromHeaders(sequence, event.FrameSize, 64)
 		if err != nil {
 			t.Fatalf("FrameCodedFormatFromHeaders: %v", err)
 		}
@@ -11715,33 +11721,33 @@ func publicRTCLayerDecodeFramePool(t *testing.T, pool *goav1.FrameLayerPool, seq
 	}
 }
 
-func publicRTCLayerDecodeEventNeedsSideData(event goav1.DecoderEvent) bool {
+func publicRTCLayerDecodeEventNeedsSideData(event internaldecoder.Event) bool {
 	switch event.Kind {
-	case goav1.DecoderEventFrameHeader, goav1.DecoderEventFrame, goav1.DecoderEventTileGroup:
+	case internaldecoder.EventFrameHeader, internaldecoder.EventFrame, internaldecoder.EventTileGroup:
 		return true
 	default:
 		return false
 	}
 }
 
-func publicRTCLayerDecodeEventScratch(size goav1.DecoderFrameWorkResidualEventScratchSize) goav1.DecoderFrameWorkResidualEventScratch {
-	return goav1.DecoderFrameWorkResidualEventScratch{
-		Runner: goav1.DecoderFrameWorkBatchResidualRunnerScratch{
-			States:                  make([]goav1.TileDecodeState, size.Runner.Workers),
-			Storages:                make([]goav1.DecoderFrameWorkTileResidualCDFStorage, size.Runner.Workers),
-			TileScratch:             make([]goav1.DecoderFrameWorkTileResidualScratch, size.Runner.Workers),
-			RestorationRequests:     make([]goav1.DecoderFrameWorkTileRestorationRequest, size.Runner.RestorationRequests),
-			PredictionScratch:       make([]goav1.DecoderFrameWorkPredictionScratch, size.Runner.Workers),
-			InterPredictionScratch:  make([]goav1.DecoderFrameWorkInterPredictionScratch, size.Runner.Workers),
-			Stats:                   make([]goav1.DecoderFrameWorkTileResidualStats, size.Runner.Workers),
+func publicRTCLayerDecodeEventScratch(size decoderFrameWorkResidualEventScratchSize) decoderFrameWorkResidualEventScratch {
+	return decoderFrameWorkResidualEventScratch{
+		Runner: decoderFrameWorkBatchResidualRunnerScratch{
+			States:                  make([]internaltile.DecodeState, size.Runner.Workers),
+			Storages:                make([]internalthreading.FrameWorkTileResidualCDFStorage, size.Runner.Workers),
+			TileScratch:             make([]internalthreading.FrameWorkTileResidualScratch, size.Runner.Workers),
+			RestorationRequests:     make([]internalthreading.FrameWorkTileRestorationRequest, size.Runner.RestorationRequests),
+			PredictionScratch:       make([]internalthreading.FrameWorkPredictionScratch, size.Runner.Workers),
+			InterPredictionScratch:  make([]internalthreading.FrameWorkInterPredictionScratch, size.Runner.Workers),
+			Stats:                   make([]internalthreading.FrameWorkTileResidualStats, size.Runner.Workers),
 			Int32Scratch:            make([]int32, size.Runner.Int32Scratch),
 			ResidualScratch:         make([]int16, size.Runner.ResidualScratch),
-			LoopContextAboveScratch: make([]goav1.TileBlockLoopRootAboveContext, size.Runner.LoopContextAbove),
+			LoopContextAboveScratch: make([]internaltile.BlockLoopRootAboveContext, size.Runner.LoopContextAbove),
 		},
 		SideData: publicDecoderFrameWorkSideDataScratch(size.SideData),
-		Spans:    make([]goav1.TileSpan, size.Plan.SpanCount),
-		Jobs:     make([]goav1.TileJob, size.Plan.JobCount),
-		Batches:  make([]goav1.TileBatch, size.Plan.BatchCount),
+		Spans:    make([]internalparser.TileSpan, size.Plan.SpanCount),
+		Jobs:     make([]internaltile.Job, size.Plan.JobCount),
+		Batches:  make([]internalthreading.Batch, size.Plan.BatchCount),
 	}
 }
 
@@ -11769,7 +11775,7 @@ func rtpPayloadHasLayerOBU(t *testing.T, data []byte, temporalID uint8, spatialI
 func TestPublicRTCEncoderL1T3(t *testing.T) {
 	const w, h = 192, 128
 	cw, ch := w/2, h/2
-	enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+	enc, err := NewRTCEncoder(VideoEncoderConfig{
 		Width: w, Height: h,
 		TargetBitrate: 300_000, Framerate: 30,
 		TemporalLayers: 3,
@@ -11780,7 +11786,7 @@ func TestPublicRTCEncoderL1T3(t *testing.T) {
 	wantTIDs := []uint8{0, 2, 1, 2, 0, 2, 1, 2, 0}
 	var tus [][]byte
 	for i, wantTID := range wantTIDs {
-		f := goav1.I420Frame{
+		f := I420Frame{
 			Y: make([]byte, w*h), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
 			YStride: w, ChromaStride: cw, Width: w, Height: h,
 		}
@@ -11803,7 +11809,7 @@ func TestPublicRTCEncoderL1T3(t *testing.T) {
 		}
 		tus = append(tus, append([]byte(nil), out.Data...))
 	}
-	dec, err := goav1.NewDecoder(tus)
+	dec, err := NewDecoder(tus)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -11832,8 +11838,8 @@ func TestPublicRTCEncoderGoldenInterval(t *testing.T) {
 	for i := range base {
 		base[i] = uint8(50 + rng.Intn(170))
 	}
-	mk := func(boxX int) goav1.I420Frame {
-		f := goav1.I420Frame{
+	mk := func(boxX int) I420Frame {
+		f := I420Frame{
 			Y: append([]byte(nil), base...), U: make([]byte, cw*ch), V: make([]byte, cw*ch),
 			YStride: w, ChromaStride: cw, Width: w, Height: h,
 		}
@@ -11850,13 +11856,13 @@ func TestPublicRTCEncoderGoldenInterval(t *testing.T) {
 		}
 		return f
 	}
-	frames := []goav1.I420Frame{
+	frames := []I420Frame{
 		mk(-1),
 		mk(64),
 		mk(-1),
 	}
 	encode := func(goldenInterval int) [][]byte {
-		enc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+		enc, err := NewRTCEncoder(VideoEncoderConfig{
 			Width: w, Height: h,
 			TargetBitrate: 2_000_000, Framerate: 30,
 			MinQIndex:      40,
@@ -11886,28 +11892,28 @@ func TestPublicRTCEncoderGoldenInterval(t *testing.T) {
 }
 
 func TestPublicEncoderZeroValueGuards(t *testing.T) {
-	var video goav1.VideoEncoder
-	if _, err := video.Encode(goav1.I420Frame{}, false); err == nil {
+	var video VideoEncoder
+	if _, err := video.Encode(I420Frame{}, false); err == nil {
 		t.Fatal("zero VideoEncoder Encode returned nil error")
 	}
-	if _, err := video.EncodeI422(goav1.I422Frame{}, false); err == nil {
+	if _, err := video.EncodeI422(I422Frame{}, false); err == nil {
 		t.Fatal("zero VideoEncoder EncodeI422 returned nil error")
 	}
-	if _, err := video.EncodeI444(goav1.I444Frame{}, false); err == nil {
+	if _, err := video.EncodeI444(I444Frame{}, false); err == nil {
 		t.Fatal("zero VideoEncoder EncodeI444 returned nil error")
 	}
-	if _, err := video.EncodeI400(goav1.I400Frame{}, false); err == nil {
+	if _, err := video.EncodeI400(I400Frame{}, false); err == nil {
 		t.Fatal("zero VideoEncoder EncodeI400 returned nil error")
 	}
-	if _, err := video.EncodeNV12(goav1.NV12Frame{}, false); err == nil {
+	if _, err := video.EncodeNV12(NV12Frame{}, false); err == nil {
 		t.Fatal("zero VideoEncoder EncodeNV12 returned nil error")
 	}
-	if _, err := video.EncodeNV21(goav1.NV21Frame{}, false); err == nil {
+	if _, err := video.EncodeNV21(NV21Frame{}, false); err == nil {
 		t.Fatal("zero VideoEncoder EncodeNV21 returned nil error")
 	}
 	video.SetDecisionStatsEnabled(true)
 	video.ResetDecisionStats()
-	if got := video.DecisionStats(); got != (goav1.EncoderDecisionStats{}) {
+	if got := video.DecisionStats(); got != (EncoderDecisionStats{}) {
 		t.Fatalf("zero VideoEncoder stats=%+v", got)
 	}
 	if got := video.QIndex(); got != 0 {
@@ -11917,45 +11923,45 @@ func TestPublicEncoderZeroValueGuards(t *testing.T) {
 		t.Fatalf("zero VideoEncoder reconstruction=%+v", got)
 	}
 
-	var rtc goav1.RTCEncoder
-	if _, err := rtc.Encode(goav1.I420Frame{}, false); err == nil {
+	var rtc RTCEncoder
+	if _, err := rtc.Encode(I420Frame{}, false); err == nil {
 		t.Fatal("zero RTCEncoder Encode returned nil error")
 	}
-	if _, err := rtc.EncodeI422(goav1.I422Frame{}, false); err == nil {
+	if _, err := rtc.EncodeI422(I422Frame{}, false); err == nil {
 		t.Fatal("zero RTCEncoder EncodeI422 returned nil error")
 	}
-	if _, err := rtc.EncodeI444(goav1.I444Frame{}, false); err == nil {
+	if _, err := rtc.EncodeI444(I444Frame{}, false); err == nil {
 		t.Fatal("zero RTCEncoder EncodeI444 returned nil error")
 	}
-	if _, err := rtc.EncodeI400(goav1.I400Frame{}, false); err == nil {
+	if _, err := rtc.EncodeI400(I400Frame{}, false); err == nil {
 		t.Fatal("zero RTCEncoder EncodeI400 returned nil error")
 	}
-	if _, err := rtc.EncodeNV12(goav1.NV12Frame{}, false); err == nil {
+	if _, err := rtc.EncodeNV12(NV12Frame{}, false); err == nil {
 		t.Fatal("zero RTCEncoder EncodeNV12 returned nil error")
 	}
-	if _, err := rtc.EncodeNV21(goav1.NV21Frame{}, false); err == nil {
+	if _, err := rtc.EncodeNV21(NV21Frame{}, false); err == nil {
 		t.Fatal("zero RTCEncoder EncodeNV21 returned nil error")
 	}
-	if _, err := rtc.EncodeNV12Picture(goav1.NV12Frame{}, false); err == nil {
+	if _, err := rtc.EncodeNV12Picture(NV12Frame{}, false); err == nil {
 		t.Fatal("zero RTCEncoder EncodeNV12Picture returned nil error")
 	}
-	if _, err := rtc.EncodeNV21Picture(goav1.NV21Frame{}, false); err == nil {
+	if _, err := rtc.EncodeNV21Picture(NV21Frame{}, false); err == nil {
 		t.Fatal("zero RTCEncoder EncodeNV21Picture returned nil error")
 	}
-	if _, err := rtc.EncodeI422Picture(goav1.I422Frame{}, false); err == nil {
+	if _, err := rtc.EncodeI422Picture(I422Frame{}, false); err == nil {
 		t.Fatal("zero RTCEncoder EncodeI422Picture returned nil error")
 	}
-	if _, err := rtc.EncodeI444Picture(goav1.I444Frame{}, false); err == nil {
+	if _, err := rtc.EncodeI444Picture(I444Frame{}, false); err == nil {
 		t.Fatal("zero RTCEncoder EncodeI444Picture returned nil error")
 	}
-	if _, err := rtc.EncodeI400Picture(goav1.I400Frame{}, false); err == nil {
+	if _, err := rtc.EncodeI400Picture(I400Frame{}, false); err == nil {
 		t.Fatal("zero RTCEncoder EncodeI400Picture returned nil error")
 	}
 }
 
 func TestPublicEncoderRejectsInvalidI420Frames(t *testing.T) {
 	const w, h = 64, 64
-	invalid := goav1.I420Frame{
+	invalid := I420Frame{
 		Y:            make([]byte, w*h-1),
 		U:            make([]byte, w*h/4),
 		V:            make([]byte, w*h/4),
@@ -11964,7 +11970,7 @@ func TestPublicEncoderRejectsInvalidI420Frames(t *testing.T) {
 		Width:        w,
 		Height:       h,
 	}
-	video, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+	video, err := NewVideoEncoder(VideoEncoderConfig{
 		Width: w, Height: h, QIndex: 80,
 	})
 	if err != nil {
@@ -11979,7 +11985,7 @@ func TestPublicEncoderRejectsInvalidI420Frames(t *testing.T) {
 		t.Fatal("VideoEncoder accepted an invalid chroma stride")
 	}
 
-	rtc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+	rtc, err := NewRTCEncoder(VideoEncoderConfig{
 		Width: w, Height: h, TargetBitrate: 100_000, Framerate: 30,
 	})
 	if err != nil {
@@ -11997,7 +12003,7 @@ func TestPublicEncoderRejectsInvalidI422Frames(t *testing.T) {
 	valid := publicI422FromI420(publicRTCMatrixFrame(w, h, 0))
 	invalid := valid
 	invalid.U = invalid.U[:len(invalid.U)-1]
-	video, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+	video, err := NewVideoEncoder(VideoEncoderConfig{
 		Width: w, Height: h, QIndex: 80,
 	})
 	if err != nil {
@@ -12013,7 +12019,7 @@ func TestPublicEncoderRejectsInvalidI422Frames(t *testing.T) {
 		t.Fatal("VideoEncoder accepted an invalid I422 chroma stride")
 	}
 
-	rtc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+	rtc, err := NewRTCEncoder(VideoEncoderConfig{
 		Width: w, Height: h, TargetBitrate: 100_000, Framerate: 30,
 	})
 	if err != nil {
@@ -12035,7 +12041,7 @@ func TestPublicEncoderRejectsInvalidI444Frames(t *testing.T) {
 	valid := publicI444FromI420(publicRTCMatrixFrame(w, h, 0))
 	invalid := valid
 	invalid.U = invalid.U[:len(invalid.U)-1]
-	video, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+	video, err := NewVideoEncoder(VideoEncoderConfig{
 		Width: w, Height: h, QIndex: 80,
 	})
 	if err != nil {
@@ -12051,7 +12057,7 @@ func TestPublicEncoderRejectsInvalidI444Frames(t *testing.T) {
 		t.Fatal("VideoEncoder accepted an invalid I444 U stride")
 	}
 
-	rtc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+	rtc, err := NewRTCEncoder(VideoEncoderConfig{
 		Width: w, Height: h, TargetBitrate: 100_000, Framerate: 30,
 	})
 	if err != nil {
@@ -12073,7 +12079,7 @@ func TestPublicEncoderRejectsInvalidI400Frames(t *testing.T) {
 	valid := publicI400FromI420(publicRTCMatrixFrame(w, h, 0))
 	invalid := valid
 	invalid.Y = invalid.Y[:len(invalid.Y)-1]
-	video, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+	video, err := NewVideoEncoder(VideoEncoderConfig{
 		Width: w, Height: h, QIndex: 80,
 	})
 	if err != nil {
@@ -12089,7 +12095,7 @@ func TestPublicEncoderRejectsInvalidI400Frames(t *testing.T) {
 		t.Fatal("VideoEncoder accepted an invalid I400 Y stride")
 	}
 
-	rtc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+	rtc, err := NewRTCEncoder(VideoEncoderConfig{
 		Width: w, Height: h, TargetBitrate: 100_000, Framerate: 30,
 	})
 	if err != nil {
@@ -12111,7 +12117,7 @@ func TestPublicEncoderRejectsInvalidNV12Frames(t *testing.T) {
 	valid := publicNV12FromI420(publicRTCMatrixFrame(w, h, 0))
 	invalid := valid
 	invalid.Y = invalid.Y[:len(invalid.Y)-1]
-	video, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+	video, err := NewVideoEncoder(VideoEncoderConfig{
 		Width: w, Height: h, QIndex: 80,
 	})
 	if err != nil {
@@ -12127,7 +12133,7 @@ func TestPublicEncoderRejectsInvalidNV12Frames(t *testing.T) {
 		t.Fatal("VideoEncoder accepted an invalid NV12 UV stride")
 	}
 
-	rtc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+	rtc, err := NewRTCEncoder(VideoEncoderConfig{
 		Width: w, Height: h, TargetBitrate: 100_000, Framerate: 30,
 	})
 	if err != nil {
@@ -12149,7 +12155,7 @@ func TestPublicEncoderRejectsInvalidNV21Frames(t *testing.T) {
 	valid := publicNV21FromI420(publicRTCMatrixFrame(w, h, 0))
 	invalid := valid
 	invalid.Y = invalid.Y[:len(invalid.Y)-1]
-	video, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+	video, err := NewVideoEncoder(VideoEncoderConfig{
 		Width: w, Height: h, QIndex: 80,
 	})
 	if err != nil {
@@ -12165,7 +12171,7 @@ func TestPublicEncoderRejectsInvalidNV21Frames(t *testing.T) {
 		t.Fatal("VideoEncoder accepted an invalid NV21 VU stride")
 	}
 
-	rtc, err := goav1.NewRTCEncoder(goav1.VideoEncoderConfig{
+	rtc, err := NewRTCEncoder(VideoEncoderConfig{
 		Width: w, Height: h, TargetBitrate: 100_000, Framerate: 30,
 	})
 	if err != nil {

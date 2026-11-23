@@ -1,4 +1,4 @@
-package goav1_test
+package goav1
 
 // End-to-end decoder throughput benchmarks. These exercise the public AV1
 // decoder API against the bundled libaom quantizer_00 IVF and report the
@@ -18,7 +18,11 @@ import (
 	"runtime/metrics"
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 // benchVectorPath is the libaom 8-bit quantizer-00 IVF shipped in the
@@ -179,7 +183,7 @@ func benchmarkDecodeHighLevelProfileClip(b *testing.B, path string, frameCount i
 	b.Helper()
 
 	ivfBytes := mustReadBenchFile(b, path)
-	dec, err := av1.NewDecoderFromIVF(ivfBytes)
+	dec, err := NewDecoderFromIVF(ivfBytes)
 	if err != nil {
 		b.Fatalf("NewDecoderFromIVF: %v", err)
 	}
@@ -233,7 +237,7 @@ func benchmarkDecodeHighLevelProfileClipGCMetrics(b *testing.B, path string, fra
 	b.Helper()
 
 	ivfBytes := mustReadBenchFile(b, path)
-	dec, err := av1.NewDecoderFromIVF(ivfBytes)
+	dec, err := NewDecoderFromIVF(ivfBytes)
 	if err != nil {
 		b.Fatalf("NewDecoderFromIVF: %v", err)
 	}
@@ -293,7 +297,7 @@ func TestDecodeHighLevelProfileClipSteadyStateAllocs(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ivfBytes := mustReadBenchFile(t, tc.path)
-			dec, err := av1.NewDecoderFromIVF(ivfBytes)
+			dec, err := NewDecoderFromIVF(ivfBytes)
 			if err != nil {
 				t.Fatalf("NewDecoderFromIVF: %v", err)
 			}
@@ -413,65 +417,65 @@ func BenchmarkDecodeFirstFrameOnly(b *testing.B) {
 // to decode benchFrames end-to-end. It is allocated once and reused across
 // benchmark iterations so per-iteration allocations are zero.
 type decodeBenchmarkHarness struct {
-	pool       av1.FramePool
-	workerPool *av1.TileWorkerPool
-	stream     av1.DecoderStream
+	pool       internalframe.Pool
+	workerPool *internalthreading.Pool
+	stream     internaldecoder.Stream
 
-	refs       av1.DecoderSurfaceReferences
-	state      av1.DecoderFrameWorkState
+	refs       internaldecoder.SurfaceReferences
+	state      internaldecoder.FrameWorkState
 	refSurface []int
-	refFrames  []*av1.Frame
+	refFrames  []*Frame
 	releases   []int
-	stats      av1.DecoderFrameWorkTileResidualStats
-	sideData   av1.DecoderFrameWorkSideData
-	batch      av1.DecoderFrameWorkBatchResidualRunner
+	stats      internalthreading.FrameWorkTileResidualStats
+	sideData   decoderFrameWorkSideData
+	batch      decoderFrameWorkBatchResidualRunner
 
-	scratch av1.DecoderFrameWorkResidualStreamScratch
-	runner  av1.DecoderFrameWorkResidualStreamRunner
+	scratch decoderFrameWorkResidualStreamScratch
+	runner  decoderFrameWorkResidualStreamRunner
 
 	payloads [][]byte
 }
 
-func newDecodeBenchmarkHarness(b testing.TB, frames []av1.IVFFrame) *decodeBenchmarkHarness {
+func newDecodeBenchmarkHarness(b testing.TB, frames []IVFFrame) *decodeBenchmarkHarness {
 	b.Helper()
 	payloads := make([][]byte, len(frames))
 	for i, f := range frames {
 		payloads[i] = f.Payload
 	}
 
-	workerPool, err := av1.NewTileWorkerPool(1)
+	workerPool, err := internalthreading.NewPool(1)
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	var probeStream av1.DecoderStream
-	probeEvents := make([]av1.DecoderEvent, benchMaxProbeEvents(payloads))
-	probeSpans := make([]av1.TileSpan, av1.MaxTiles)
-	probeJobs := make([]av1.TileJob, av1.MaxTiles)
-	probeBatches := make([]av1.TileBatch, av1.MaxTiles)
+	var probeStream internaldecoder.Stream
+	probeEvents := make([]internaldecoder.Event, benchMaxProbeEvents(payloads))
+	probeSpans := make([]internalparser.TileSpan, internalparser.MaxTiles)
+	probeJobs := make([]internaltile.Job, internalparser.MaxTiles)
+	probeBatches := make([]internalthreading.Batch, internalparser.MaxTiles)
 
-	plan, err := av1.DecoderFrameWorkResidualLowOverheadStreamsPlan(probeStream, payloads, 1, probeEvents, probeSpans, probeJobs, probeBatches)
+	plan, err := decoderFrameWorkResidualLowOverheadStreamsPlan(probeStream, payloads, 1, probeEvents, probeSpans, probeJobs, probeBatches)
 	if err != nil {
 		workerPool.Close()
 		b.Fatal(err)
 	}
 
-	format, err := av1.FrameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
+	format, err := frameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
 	if err != nil {
 		b.Fatalf("FrameCodedFormatFromHeaders: %v", err)
 	}
 	// Provide enough surfaces for the bounded reference set plus the in-flight
 	// output. A pool of MaxFrameBufferCount slots matches the worst-case
 	// requirement of the AV1 bitstream.
-	const surfaceCount = av1.RefFrames + 1
+	const surfaceCount = internalparser.RefFrames + 1
 	pool := bindBenchFramePool(b, format, surfaceCount)
 
 	h := &decodeBenchmarkHarness{
 		pool:       pool,
 		workerPool: workerPool,
-		refSurface: make([]int, av1.InterRefsPerFrame),
-		refFrames:  make([]*av1.Frame, av1.InterRefsPerFrame),
-		releases:   make([]int, av1.RefFrames),
+		refSurface: make([]int, internalparser.InterRefsPerFrame),
+		refFrames:  make([]*Frame, internalparser.InterRefsPerFrame),
+		releases:   make([]int, internalparser.RefFrames),
 		payloads:   payloads,
 	}
 	if err := h.state.PreallocTemporalMotionScratch(plan.Bind.Event.FrameSize); err != nil {
@@ -480,7 +484,7 @@ func newDecodeBenchmarkHarness(b testing.TB, frames []av1.IVFFrame) *decodeBench
 	}
 	h.scratch = newBenchStreamScratch(plan.Size)
 
-	runner, _, err := av1.BindDecoderFrameWorkResidualStreamPlanRunner(plan, &h.stream, av1.DecoderFrameWorkResidualEventRuntime{
+	runner, _, err := bindDecoderFrameWorkResidualStreamPlanRunner(plan, &h.stream, decoderFrameWorkResidualEventRuntime{
 		State:             &h.state,
 		Refs:              &h.refs,
 		FramePool:         &h.pool,
@@ -511,75 +515,75 @@ func (h *decodeBenchmarkHarness) runOnce() (int, int, error) {
 	h.pool.Reset()
 	h.refs.Reset()
 	h.state.Reset()
-	h.stats = av1.DecoderFrameWorkTileResidualStats{}
+	h.stats = internalthreading.FrameWorkTileResidualStats{}
 	if err := h.runner.Reset(); err != nil {
 		return 0, 0, err
 	}
-	var result av1.DecoderFrameWorkResidualStreamResult
+	var result decoderFrameWorkResidualStreamResult
 	if err := h.runner.RunLowOverheadsInto(&result, h.payloads, nil); err != nil {
 		return 0, 0, err
 	}
 	return result.Run.CompletedFrames, int(h.stats.TXBs), nil
 }
 
-func bindBenchFramePool(b testing.TB, format av1.FrameFormat, count int) av1.FramePool {
+func bindBenchFramePool(b testing.TB, format FrameFormat, count int) internalframe.Pool {
 	b.Helper()
-	_, backingSize, err := av1.FramePoolRequiredSize(format, count)
+	_, backingSize, err := framePoolRequiredSize(format, count)
 	if err != nil {
 		b.Fatal(err)
 	}
-	frames := make([]av1.Frame, count)
+	frames := make([]Frame, count)
 	free := make([]int, count)
 	used := make([]bool, count)
-	pool, err := av1.BindFramePool(make([]byte, backingSize), format, frames, free, used)
+	pool, err := internalframe.BindPool(make([]byte, backingSize), format, frames, free, used)
 	if err != nil {
 		b.Fatal(err)
 	}
 	return pool
 }
 
-func newBenchStreamScratch(size av1.DecoderFrameWorkResidualStreamScratchSize) av1.DecoderFrameWorkResidualStreamScratch {
-	return av1.DecoderFrameWorkResidualStreamScratch{
-		Events:    make([]av1.DecoderEvent, size.Events),
+func newBenchStreamScratch(size decoderFrameWorkResidualStreamScratchSize) decoderFrameWorkResidualStreamScratch {
+	return decoderFrameWorkResidualStreamScratch{
+		Events:    make([]internaldecoder.Event, size.Events),
 		Event:     newBenchEventScratch(size.Event),
 		SideData:  newBenchSideDataScratch(size.Event.SideData),
-		Outputs:   make([]*av1.Frame, size.Event.Outputs),
+		Outputs:   make([]*Frame, size.Event.Outputs),
 		RTPBuffer: make([]byte, size.RTPBuffer),
-		RTPSpans:  make([]av1.RTPObuSpan, size.RTPSpans),
+		RTPSpans:  make([]RTPObuSpan, size.RTPSpans),
 	}
 }
 
-func newBenchEventScratch(size av1.DecoderFrameWorkResidualEventScratchSize) av1.DecoderFrameWorkResidualEventScratch {
-	return av1.DecoderFrameWorkResidualEventScratch{
+func newBenchEventScratch(size decoderFrameWorkResidualEventScratchSize) decoderFrameWorkResidualEventScratch {
+	return decoderFrameWorkResidualEventScratch{
 		Runner:   newBenchBatchRunnerScratch(size.Runner),
 		SideData: newBenchSideDataScratch(size.SideData),
-		Spans:    make([]av1.TileSpan, size.Plan.SpanCount),
-		Jobs:     make([]av1.TileJob, size.Plan.JobCount),
-		Batches:  make([]av1.TileBatch, size.Plan.BatchCount),
+		Spans:    make([]internalparser.TileSpan, size.Plan.SpanCount),
+		Jobs:     make([]internaltile.Job, size.Plan.JobCount),
+		Batches:  make([]internalthreading.Batch, size.Plan.BatchCount),
 	}
 }
 
-func newBenchBatchRunnerScratch(size av1.DecoderFrameWorkBatchResidualRunnerScratchSize) av1.DecoderFrameWorkBatchResidualRunnerScratch {
-	return av1.DecoderFrameWorkBatchResidualRunnerScratch{
-		States:                  make([]av1.TileDecodeState, size.Workers),
-		Storages:                make([]av1.DecoderFrameWorkTileResidualCDFStorage, size.Workers),
-		TileScratch:             make([]av1.DecoderFrameWorkTileResidualScratch, size.Workers),
-		RestorationRequests:     make([]av1.DecoderFrameWorkTileRestorationRequest, size.RestorationRequests),
-		PredictionScratch:       make([]av1.DecoderFrameWorkPredictionScratch, size.Workers),
-		InterPredictionScratch:  make([]av1.DecoderFrameWorkInterPredictionScratch, size.Workers),
-		Stats:                   make([]av1.DecoderFrameWorkTileResidualStats, size.Workers),
+func newBenchBatchRunnerScratch(size decoderFrameWorkBatchResidualRunnerScratchSize) decoderFrameWorkBatchResidualRunnerScratch {
+	return decoderFrameWorkBatchResidualRunnerScratch{
+		States:                  make([]internaltile.DecodeState, size.Workers),
+		Storages:                make([]internalthreading.FrameWorkTileResidualCDFStorage, size.Workers),
+		TileScratch:             make([]internalthreading.FrameWorkTileResidualScratch, size.Workers),
+		RestorationRequests:     make([]internalthreading.FrameWorkTileRestorationRequest, size.RestorationRequests),
+		PredictionScratch:       make([]internalthreading.FrameWorkPredictionScratch, size.Workers),
+		InterPredictionScratch:  make([]internalthreading.FrameWorkInterPredictionScratch, size.Workers),
+		Stats:                   make([]internalthreading.FrameWorkTileResidualStats, size.Workers),
 		Int32Scratch:            make([]int32, size.Int32Scratch),
 		ResidualScratch:         make([]int16, size.ResidualScratch),
-		LoopContextAboveScratch: make([]av1.TileBlockLoopRootAboveContext, size.LoopContextAbove),
+		LoopContextAboveScratch: make([]internaltile.BlockLoopRootAboveContext, size.LoopContextAbove),
 	}
 }
 
-func newBenchSideDataScratch(size av1.DecoderFrameWorkSideDataScratchSize) av1.DecoderFrameWorkSideDataScratch {
-	return av1.DecoderFrameWorkSideDataScratch{
+func newBenchSideDataScratch(size decoderFrameWorkSideDataScratchSize) decoderFrameWorkSideDataScratch {
+	return decoderFrameWorkSideDataScratch{
 		CDEFIndexMap:             make([]uint8, size.CDEFIndexMap),
 		CDEFReadMap:              make([]bool, size.CDEFReadMap),
-		LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, size.LoopFilterMap),
-		RestorationRecords:       make([]av1.TileRestorationUnitRecord, size.RestorationRecords),
+		LoopFilterMap:            make([]internalthreading.FrameWorkLoopFilterBlockRecord, size.LoopFilterMap),
+		RestorationRecords:       make([]internaltile.RestorationUnitRecord, size.RestorationRecords),
 		RestorationBoundaryAbove: make([]uint16, size.RestorationBoundaryAbove),
 		RestorationBoundaryBelow: make([]uint16, size.RestorationBoundaryBelow),
 	}
@@ -611,13 +615,13 @@ func mustReadBenchFile(b testing.TB, path string) []byte {
 	return raw
 }
 
-func mustCollectIVFFrames(b testing.TB, ivf []byte) []av1.IVFFrame {
+func mustCollectIVFFrames(b testing.TB, ivf []byte) []IVFFrame {
 	b.Helper()
-	it, err := av1.NewIVFIterator(ivf)
+	it, err := NewIVFIterator(ivf)
 	if err != nil {
 		b.Fatalf("NewIVFIterator: %v", err)
 	}
-	frames := make([]av1.IVFFrame, 0, it.Header().FrameCount)
+	frames := make([]IVFFrame, 0, it.Header().FrameCount)
 	for {
 		frame, ok, err := it.Next()
 		if err != nil {

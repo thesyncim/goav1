@@ -50,6 +50,9 @@ import (
 	"strings"
 	"time"
 
+	internalobu "github.com/thesyncim/goav1/internal/av1/obu"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+
 	av1 "github.com/thesyncim/goav1"
 )
 
@@ -229,12 +232,12 @@ SequenceScan:
 	for _, frame := range frames {
 		payload := frame.Payload
 		for len(payload) > 0 {
-			unit, n, err := av1.ParseLowOverheadOBU(payload)
+			unit, n, err := internalobu.ParseLowOverhead(payload)
 			if err != nil {
 				return av1.SequenceHeader{}, fmt.Errorf("obu parse: %w", err)
 			}
-			if unit.Header.Type == av1.OBUSequenceHeader {
-				seq, err = av1.ParseSequenceHeader(unit.Payload)
+			if unit.Header.Type == internalobu.TypeSequenceHeader {
+				seq, err = internalparser.ParseSequenceHeader(unit.Payload)
 				if err != nil {
 					return av1.SequenceHeader{}, fmt.Errorf("parse sequence: %w", err)
 				}
@@ -264,13 +267,13 @@ SequenceScan:
 	for _, frame := range frames {
 		payload := frame.Payload
 		for len(payload) > 0 {
-			unit, n, err := av1.ParseLowOverheadOBU(payload)
+			unit, n, err := internalobu.ParseLowOverhead(payload)
 			if err != nil {
 				return av1.SequenceHeader{}, fmt.Errorf("obu parse: %w", err)
 			}
 			if unit.Header.Extension {
 				counts[layerKey{T: unit.Header.TemporalID, S: unit.Header.SpatialID}]++
-			} else if unit.Header.Type != av1.OBUSequenceHeader && unit.Header.Type != av1.OBUTemporalDelimiter && unit.Header.Type != av1.OBUMetadata {
+			} else if unit.Header.Type != internalobu.TypeSequenceHeader && unit.Header.Type != internalobu.TypeTemporalDelimiter && unit.Header.Type != internalobu.TypeMetadata {
 				counts[layerKey{}]++
 			}
 			payload = payload[n:]
@@ -299,15 +302,15 @@ func describePayloadLayers(payload []byte) string {
 	type layerKey struct{ T, S uint8 }
 	seen := make(map[layerKey]struct{})
 	for len(payload) > 0 {
-		unit, n, err := av1.ParseLowOverheadOBU(payload)
+		unit, n, err := internalobu.ParseLowOverhead(payload)
 		if err != nil {
 			return fmt.Sprintf("<obu parse error: %v>", err)
 		}
 		if unit.Header.Extension {
 			seen[layerKey{T: unit.Header.TemporalID, S: unit.Header.SpatialID}] = struct{}{}
-		} else if unit.Header.Type != av1.OBUSequenceHeader &&
-			unit.Header.Type != av1.OBUTemporalDelimiter &&
-			unit.Header.Type != av1.OBUMetadata {
+		} else if unit.Header.Type != internalobu.TypeSequenceHeader &&
+			unit.Header.Type != internalobu.TypeTemporalDelimiter &&
+			unit.Header.Type != internalobu.TypeMetadata {
 			seen[layerKey{}] = struct{}{}
 		}
 		payload = payload[n:]
