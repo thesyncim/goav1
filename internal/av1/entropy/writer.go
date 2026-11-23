@@ -229,9 +229,7 @@ func (w *Writer) propagateCarry(offs int) {
 func (w *Writer) encodeQ15(fl, fh uint32, s, nsyms int) {
 	if w.log != nil {
 		w.log.sym(fl, fh, s, nsyms)
-		if w.log.deferred {
-			return
-		}
+		return
 	}
 	l := w.low
 	r := w.rng
@@ -270,9 +268,7 @@ func (w *BitCounter) encodeQ15(fl, fh uint32, s, nsyms int) {
 func (w *Writer) WriteBoolQ15(val int, f uint32) {
 	if w.log != nil {
 		w.log.boolQ15(val, f)
-		if w.log.deferred {
-			return
-		}
+		return
 	}
 	if traceEntropyReads {
 		traceWriteBool(uint16(f))
@@ -299,9 +295,7 @@ func (w *Writer) WriteBoolQ15(val int, f uint32) {
 func (w *Writer) WriteBit(val int) {
 	if w.log != nil {
 		w.log.boolQ15(val, 1<<14)
-		if w.log.deferred {
-			return
-		}
+		return
 	}
 	if traceEntropyReads {
 		traceWriteBool(1 << 14)
@@ -522,10 +516,8 @@ func (w *BitCounter) WriteCDF(cdf *CDF, s int) {
 func (w *Writer) WriteBinaryCDFTrusted(cdf *CDF, s int) {
 	if w.log != nil {
 		w.log.cdf(&cdf.values, s, 2)
-		if w.log.deferred {
-			adaptCDF2(&cdf.values, s)
-			return
-		}
+		adaptCDF2(&cdf.values, s)
+		return
 	}
 	values := &cdf.values
 	if traceEntropyReads {
@@ -587,17 +579,15 @@ func (w *BitCounter) WriteBinaryCDFTrusted(cdf *CDF, s int) {
 func (w *Writer) WriteCDF3(cdf *CDF, s int) {
 	if w.log != nil {
 		w.log.cdf(&cdf.values, s, 3)
-		if w.log.deferred {
-			values := &cdf.values
-			count := values[3]
-			rate := uint(4 + (count >> 4))
-			values[0] = adaptCDFValue(values[0], rate, s > 0)
-			values[1] = adaptCDFValue(values[1], rate, s > 1)
-			if count < MaxCDFCount {
-				values[3] = count + 1
-			}
-			return
+		values := &cdf.values
+		count := values[3]
+		rate := uint(4 + (count >> 4))
+		values[0] = adaptCDFValue(values[0], rate, s > 0)
+		values[1] = adaptCDFValue(values[1], rate, s > 1)
+		if count < MaxCDFCount {
+			values[3] = count + 1
 		}
+		return
 	}
 	values := &cdf.values
 	if traceEntropyReads {
@@ -678,18 +668,16 @@ func (w *BitCounter) WriteCDF3(cdf *CDF, s int) {
 func (w *Writer) WriteCDF4(cdf *CDF, s int) {
 	if w.log != nil {
 		w.log.cdf(&cdf.values, s, 4)
-		if w.log.deferred {
-			values := &cdf.values
-			count := values[4]
-			rate := uint(5 + (count >> 4))
-			values[0] = adaptCDFValue(values[0], rate, s > 0)
-			values[1] = adaptCDFValue(values[1], rate, s > 1)
-			values[2] = adaptCDFValue(values[2], rate, s > 2)
-			if count < MaxCDFCount {
-				values[4] = count + 1
-			}
-			return
+		values := &cdf.values
+		count := values[4]
+		rate := uint(5 + (count >> 4))
+		values[0] = adaptCDFValue(values[0], rate, s > 0)
+		values[1] = adaptCDFValue(values[1], rate, s > 1)
+		values[2] = adaptCDFValue(values[2], rate, s > 2)
+		if count < MaxCDFCount {
+			values[4] = count + 1
 		}
+		return
 	}
 	values := &cdf.values
 	if traceEntropyReads {
@@ -789,18 +777,16 @@ func (w *BitCounter) WriteCDF4(cdf *CDF, s int) {
 func (w *Writer) WriteCDF4Zero(cdf *CDF) {
 	if w.log != nil {
 		w.log.cdf(&cdf.values, 0, 4)
-		if w.log.deferred {
-			values := &cdf.values
-			count := values[4]
-			rate := uint(5 + (count >> 4))
-			values[0] -= values[0] >> rate
-			values[1] -= values[1] >> rate
-			values[2] -= values[2] >> rate
-			if count < MaxCDFCount {
-				values[4] = count + 1
-			}
-			return
+		values := &cdf.values
+		count := values[4]
+		rate := uint(5 + (count >> 4))
+		values[0] -= values[0] >> rate
+		values[1] -= values[1] >> rate
+		values[2] -= values[2] >> rate
+		if count < MaxCDFCount {
+			values[4] = count + 1
 		}
+		return
 	}
 	values := &cdf.values
 	if traceEntropyReads {
@@ -853,14 +839,12 @@ func (w *BitCounter) WriteCDF4Zero(cdf *CDF) {
 func (w *Writer) WriteCDF5(cdf *CDF, s int) {
 	if w.log != nil {
 		w.log.cdf(&cdf.values, s, 5)
-		if w.log.deferred {
-			if symbol16SIMD {
-				updateCDFWide(&cdf.values, 5, s)
-			} else {
-				updateCDFValues(&cdf.values, 5, s)
-			}
-			return
+		if symbol16SIMD {
+			updateCDFWide(&cdf.values, 5, s)
+		} else {
+			updateCDFValues(&cdf.values, 5, s)
 		}
+		return
 	}
 	values := &cdf.values
 	if traceEntropyReads {
@@ -986,14 +970,12 @@ func (w *BitCounter) WriteCDF5(cdf *CDF, s int) {
 func (w *Writer) WriteCDF7(cdf *CDF, s int) {
 	if w.log != nil {
 		w.log.cdf(&cdf.values, s, 7)
-		if w.log.deferred {
-			if symbol16SIMD {
-				updateCDFWide(&cdf.values, 7, s)
-			} else {
-				updateCDFValues(&cdf.values, 7, s)
-			}
-			return
+		if symbol16SIMD {
+			updateCDFWide(&cdf.values, 7, s)
+		} else {
+			updateCDFValues(&cdf.values, 7, s)
 		}
+		return
 	}
 	values := &cdf.values
 	if traceEntropyReads {

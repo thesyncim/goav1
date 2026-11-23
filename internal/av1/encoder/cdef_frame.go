@@ -99,17 +99,14 @@ func (pc *pframeCoder) armCDEFLog() {
 
 // svtCDEFLogs owns the per-tile symbol logs of searched pictures and the
 // cdef_idx table scratch. Logs are indexed by tile, not by coder, so a
-// keyframe's (larger) logs size the inter frames' too.
+// keyframe's (larger) logs size the inter frames' too. A searched picture's
+// tile writers only adapt their CDFs while they log, and the replay after
+// the CDEF decision is the picture's one arithmetic-coding pass, as SVT-AV1
+// entropy-codes the frame once, after CDEF.
 type svtCDEFLogs struct {
 	logs   []entropy.WriterLog
 	coders []*pframeCoder
 	idx    []uint8
-	// deferNext runs the next picture's tile writers deferred (adapting
-	// CDFs, not coding), so Replay is its only coding pass. It follows the
-	// last searched picture: a picture that signals cdef_bits > 0 must be
-	// replayed anyway, while one with cdef_bits == 0 keeps the bytes its
-	// writers coded inline. Either way the stream is the same.
-	deferNext bool
 }
 
 // arm hands tile t's log to coders[t] for the coming tile run.
@@ -121,7 +118,6 @@ func (l *svtCDEFLogs) arm(coders []*pframeCoder) {
 	}
 	for t, pc := range coders {
 		pc.cdefLog = &l.logs[t]
-		l.logs[t].SetDeferred(l.deferNext)
 	}
 }
 
@@ -155,17 +151,10 @@ func (l *svtCDEFLogs) reserve(width, height, nTiles int) {
 
 // replay codes every tile payload of a recorded picture from its log, with
 // the cdef_idx literals of fbIdx (frame raster, nhfb wide) spliced in when
-// the search chose more than one strength. A deferred picture's writers only
-// adapted the CDFs, so this is its one arithmetic-coding pass, as SVT-AV1
-// codes once in its entropy-coding kernel after CDEF; otherwise it runs only
-// when cdef_bits > 0. Each tile's bytes are written into its coder's writer
-// buffer.
+// the search chose more than one strength. The writers only adapted the
+// CDFs, so this is the picture's one arithmetic-coding pass. Each tile's
+// bytes are written into its coder's writer buffer.
 func (l *svtCDEFLogs) replay(payloads []TilePayload, coders []*pframeCoder, tiles TileInfo, miCols uint16, height int, fbIdx []uint8, bits uint8) error {
-	deferred := len(payloads) > 0 && l.logs[0].Deferred()
-	l.deferNext = bits != 0
-	if bits == 0 && !deferred {
-		return nil
-	}
 	g := newCDEFFrameGeometry(int(miCols)*4, height)
 	sbRows := (g.miRows + 15) / 16
 	for t := range payloads {

@@ -86,31 +86,6 @@ func randomLogTestOps(rng *rand.Rand, n int, cdfCount int) []logTestOp {
 
 // TestWriterLogReplayIdentity: replaying the log with no literals reproduces
 // the original writer's bytes exactly, for every hooked symbol writer.
-func TestWriterLogReplayIdentity(t *testing.T) {
-	rng := rand.New(rand.NewSource(1))
-	for trial := 0; trial < 200; trial++ {
-		ops := randomLogTestOps(rng, 1+rng.Intn(4000), 8)
-		orig := NewWriter(nil)
-		var log WriterLog
-		orig.SetLog(&log)
-		writeLogTestOps(&orig, logTestCDFs(t), ops, 37)
-		want, err := orig.Finish()
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := log.Replay(nil, nil, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(got, want) {
-			t.Fatalf("trial %d: replay %d bytes != original %d bytes", trial, len(got), len(want))
-		}
-	}
-}
-
-// TestWriterLogReplayLiterals: the spliced cdef_idx literals decode at the
-// marked positions (once per superblock unit) and every other symbol still
-// decodes to the written value.
 func TestWriterLogReplayLiterals(t *testing.T) {
 	rng := rand.New(rand.NewSource(2))
 	const markEvery = 29
@@ -121,9 +96,6 @@ func TestWriterLogReplayLiterals(t *testing.T) {
 		var log WriterLog
 		w.SetLog(&log)
 		writeLogTestOps(&w, logTestCDFs(t), ops, markEvery)
-		if _, err := w.Finish(); err != nil {
-			t.Fatal(err)
-		}
 		sbs := (len(ops) + markEvery - 1) / markEvery
 		idx := make([]uint8, sbs*4)
 		for i := range idx {
@@ -181,10 +153,10 @@ func TestWriterLogReplayLiterals(t *testing.T) {
 	}
 }
 
-// TestWriterLogDeferredIdentity: a deferred logging writer adapts every CDF
-// exactly as a coding writer does, and its log's replay is the coding
-// writer's stream, so coding only in Replay changes no byte.
-func TestWriterLogDeferredIdentity(t *testing.T) {
+// TestWriterLogReplayIdentity: a logging writer adapts every CDF exactly as
+// a coding writer does, and its log's replay is the coding writer's stream,
+// so coding only in Replay changes no byte.
+func TestWriterLogReplayIdentity(t *testing.T) {
 	rng := rand.New(rand.NewSource(3))
 	for trial := 0; trial < 200; trial++ {
 		ops := randomLogTestOps(rng, 1+rng.Intn(4000), 8)
@@ -197,13 +169,12 @@ func TestWriterLogDeferredIdentity(t *testing.T) {
 		}
 		deferred := NewWriter(nil)
 		var log WriterLog
-		log.SetDeferred(true)
 		deferred.SetLog(&log)
 		deferredCDFs := logTestCDFs(t)
 		writeLogTestOps(&deferred, deferredCDFs, ops, 37)
 		for i := range plainCDFs {
 			if plainCDFs[i] != deferredCDFs[i] {
-				t.Fatalf("trial %d: CDF %d adapted differently while deferred", trial, i)
+				t.Fatalf("trial %d: CDF %d adapted differently while logging", trial, i)
 			}
 		}
 		got, err := log.Replay(nil, nil, 0)
@@ -211,7 +182,7 @@ func TestWriterLogDeferredIdentity(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !bytes.Equal(got, want) {
-			t.Fatalf("trial %d: deferred replay %d bytes != coded %d bytes", trial, len(got), len(want))
+			t.Fatalf("trial %d: replay %d bytes != coded %d bytes", trial, len(got), len(want))
 		}
 	}
 }

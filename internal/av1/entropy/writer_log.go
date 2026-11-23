@@ -25,21 +25,12 @@ import (
 var ErrLogReplay = errors.New("entropy: writer log replay out of range")
 
 // WriterLog is the caller-owned symbol log of one Writer. Its storage is
-// reused across Reset calls.
+// reused across Reset calls. A writer recording into a log only adapts its
+// CDFs: it skips the arithmetic coding, leaving Replay as the stream's one
+// coding pass (as SVT-AV1 codes the frame once, after CDEF).
 type WriterLog struct {
 	ops []uint32
-	// Deferred makes a logging writer only adapt its CDFs: it skips the
-	// arithmetic coding, leaving Replay as the stream's one coding pass.
-	// Otherwise the writer codes as it logs, and its own bytes stand when
-	// the replay is not needed.
-	deferred bool
 }
-
-// SetDeferred selects whether the writer recording into l skips coding.
-func (l *WriterLog) SetDeferred(on bool) { l.deferred = on }
-
-// Deferred reports whether the writer recording into l skips coding.
-func (l *WriterLog) Deferred() bool { return l.deferred }
 
 // A symbol entry keeps exactly what od_ec_encode_q15 reads: fl >> 6 (bits
 // 0-8), a flag for fl == 32768 (bit 9, the s == 0 case), fh >> 6 (bits
@@ -100,9 +91,8 @@ func (l *WriterLog) boolQ15(val int, f uint32) {
 }
 
 // SetLog starts recording every symbol this writer codes into l (nil stops
-// recording). The writer keeps coding unless l is deferred; then it only
-// adapts the CDFs, its Tell and Finish are meaningless, and the stream comes
-// from WriterLog.Replay.
+// recording). While recording the writer only adapts the CDFs: its Tell and
+// Finish are meaningless, and the stream comes from WriterLog.Replay.
 func (w *Writer) SetLog(l *WriterLog) {
 	w.log = l
 }
@@ -201,7 +191,7 @@ func (l *WriterLog) Replay(dst []byte, cdefIdx []uint8, cdefBits int) ([]byte, e
 }
 
 // adaptCDF2 is the binary writer's CDF adaptation without its coding, for
-// a logging writer in deferred mode (the 3- and 4-symbol writers spell
+// a logging writer (the 3- and 4-symbol writers spell
 // theirs out with adaptCDFValue).
 func adaptCDF2(values *[MaxSymbols + 1]uint16, s int) {
 	count := values[2]
