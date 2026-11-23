@@ -283,6 +283,10 @@ func lpfFlat16Half(p6, p5, p4, p3, p2, p1, p0, q0, q1, q2, q3, q4, q5, q6 archsi
 	out[11] = s
 }
 
+// sbLowByteLanes keeps the low byte of each 32-bit lane: dav1d lpf_func's
+// movi v2.4s, #0xff, as one table load instead of a GPR-to-vector broadcast.
+var sbLowByteLanes = [4]uint32{0xff, 0xff, 0xff, 0xff}
+
 // sbNibbleLanes[b] selects the four byte lanes of every unit in the four-unit
 // group whose bit is set in b (unit k owns lanes 4k..4k+3): dav1d lpf_func's
 // dup + cmtst of a vmask nibble against word_1248, as one table load.
@@ -367,7 +371,7 @@ func sbWidth(nGt4, n16 uint32, luma bool) int {
 // dav1d lpf_v_sb ld1 of l[0] and l[-b4_stride]) with component comp moved to
 // the low byte of each lane.
 func sbLevelsRow(lvl [][4]uint8, u0, lvlStride, comp int, nAll uint32) (cur, prev archsimd.Uint32x4) {
-	ff := archsimd.BroadcastUint32x4(0xff)
+	ff := archsimd.LoadUint32x4Array(&sbLowByteLanes)
 	sh := uint64(8 * comp)
 	if u0-lvlStride >= 0 && u0+4 <= len(lvl) {
 		base := unsafe.Pointer(unsafe.SliceData(lvl))
@@ -389,7 +393,7 @@ func sbLevelsRow(lvl [][4]uint8, u0, lvlStride, comp int, nAll uint32) (cur, pre
 // (vertical edges: dav1d lpf_h_sb ld2 of the l[-1], l[0] pairs) with
 // component comp moved to the low byte of each lane.
 func sbLevelsCol(lvl [][4]uint8, li, lvlStride, comp int, nAll uint32) (cur, prev archsimd.Uint32x4) {
-	ff := archsimd.BroadcastUint32x4(0xff)
+	ff := archsimd.LoadUint32x4Array(&sbLowByteLanes)
 	sh := uint64(8 * comp)
 	if li-1 >= 0 && li+3*lvlStride < len(lvl) {
 		base := unsafe.Pointer(unsafe.SliceData(lvl))
@@ -577,7 +581,7 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 		if vm0&15 == 0 {
 			continue
 		}
-		ff := archsimd.BroadcastUint32x4(0xff)
+		ff := archsimd.LoadUint32x4Array(&sbLowByteLanes)
 		cur := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(lb, li))).And(ff)
 		prev := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(lb, li-ls4))).And(ff)
 		eV, iV, hV, m4, ok := sbLimits(cur, prev, vm0, lut, &acc)
@@ -629,7 +633,7 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 		pr[3] = *(*uint64)(unsafe.Add(lb, li-4+3*ls4))
 		a := archsimd.LoadUint64x2Array((*[2]uint64)(pr[0:2])).ReshapeToUint32s()
 		b := archsimd.LoadUint64x2Array((*[2]uint64)(pr[2:4])).ReshapeToUint32s()
-		ff := archsimd.BroadcastUint32x4(0xff)
+		ff := archsimd.LoadUint32x4Array(&sbLowByteLanes)
 		eV, iV, hV, m4, ok := sbLimits(a.ConcatOdd(b).And(ff), a.ConcatEven(b).And(ff), vm0, lut, &acc)
 		if !ok {
 			continue
