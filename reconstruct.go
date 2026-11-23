@@ -8,9 +8,33 @@ import (
 
 // reconstructBlockMaxScratchLen reports the worst-case int32 and int16 scratch
 // lengths required to reconstruct any supported AV1 block, optionally limited
-// to the lossless transform path. Callers typically use it to size persistent
-// per-thread scratches at initialization time.
+// to the lossless transform path. The bounds are constants, as dav1d's
+// fixed-size t->cf and itx scratch: they are computed once, not per frame.
 func reconstructBlockMaxScratchLen(lossless bool) (int32Len int, int16Len int, err error) {
+	i := 0
+	if lossless {
+		i = 1
+	}
+	m := &reconstructMaxScratch[i]
+	return m.int32Len, m.int16Len, m.err
+}
+
+type reconstructScratchBound struct {
+	int32Len, int16Len int
+	err                error
+}
+
+var reconstructMaxScratch = [2]reconstructScratchBound{
+	computeReconstructScratchBound(false),
+	computeReconstructScratchBound(true),
+}
+
+func computeReconstructScratchBound(lossless bool) reconstructScratchBound {
+	int32Len, int16Len, err := scanReconstructBlockMaxScratchLen(lossless)
+	return reconstructScratchBound{int32Len, int16Len, err}
+}
+
+func scanReconstructBlockMaxScratchLen(lossless bool) (int32Len int, int16Len int, err error) {
 	var found bool
 	for _, size := range reconstructBlockScratchSizes {
 		for _, typ := range reconstructBlockScratchTypes {
