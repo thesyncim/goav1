@@ -81,7 +81,7 @@ func (s *DecodeState) decodeMotionModeRefmvs(cdfs *MotionModeCDFs, c *BlockModeC
 	result.MotionMode = MotionModeTranslation
 	result.MotionModeValid = true
 	dims := blockDimensions[block.Size]
-	ref := refs.Ref[0]
+	ref := refs.Ref0
 	if refs.Compound || skipMode || !req.SwitchableMotionMode || result.InterIntra.Enabled ||
 		min(dims.W4, dims.H4) < 2 ||
 		(!req.ForceIntegerMV && result.InterMode.Mode == InterModeGlobalMV && req.GlobalMotionTypes[ref] > parser.GlobalMotionTranslation) ||
@@ -131,9 +131,9 @@ var compoundModeHasNear = [compoundInterModeCount]bool{
 // DRL and motion fields of result.
 func (s *DecodeState) decodeInterModeRefmvs(cdfs *InterModeCDFs, mvCDFs *MVCDFs, modeCtx *BlockModeContext, rt *refmvsTile, req *BlockLoopRequest, block *BlockVisit, refs InterReferencesResult, skipMode bool, segment *parser.SegmentData, globalMVs [2]motion.Vector, result *BlockPredictionModeResult) error {
 	var found refmvsResult
-	target := makeRefmvsRefPair(int8(refs.Ref[0])+1, -1)
+	target := makeRefmvsRefPair(int8(refs.Ref0)+1, -1)
 	if refs.Compound {
-		target = makeRefmvsRefPair(int8(refs.Ref[0])+1, int8(refs.Ref[1])+1)
+		target = makeRefmvsRefPair(int8(refs.Ref0)+1, int8(refs.Ref1)+1)
 	}
 	rt.find(&found, target, block.Size, refmvsTopHasRight(req.SBSizeMIB, block), int32(block.MIRow), int32(block.MICol), globalMVs)
 	if refmvsOracleEnabled {

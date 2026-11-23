@@ -160,14 +160,14 @@ func validateInterpFilterRequest(req InterpFilterRequest) error {
 	if !ok ||
 		int(req.X4)+int(dims.W4) > MaxBlockModeSlots ||
 		int(req.Y4)+int(dims.H4) > MaxBlockModeSlots ||
-		!req.References.Ref[0].Valid() {
+		!req.References.Ref0.Valid() {
 		return ErrInvalidDecodeState
 	}
 	if req.References.Compound {
-		if !req.References.Ref[1].Valid() || !req.Mode.CompoundMode.Valid() {
+		if !req.References.Ref1.Valid() || !req.Mode.CompoundMode.Valid() {
 			return ErrInvalidDecodeState
 		}
-	} else if req.References.Ref[1] != ReferenceFrameNone || !req.Mode.Mode.Valid() {
+	} else if req.References.Ref1 != ReferenceFrameNone || !req.Mode.Mode.Valid() {
 		return ErrInvalidDecodeState
 	}
 	if req.MotionMode != MotionModeTranslation && req.MotionMode != MotionModeOBMC && req.MotionMode != MotionModeWarp {
@@ -194,7 +194,7 @@ func (c *BlockModeContext) SwitchableInterpContext(req InterpFilterRequest, dir 
 	if req.References.Compound {
 		ctx += interFilterCompOffset
 	}
-	ref := req.References.Ref[0]
+	ref := req.References.Ref0
 	left := switchableFilterMissing
 	above := switchableFilterMissing
 	if req.HaveLeft {
@@ -236,14 +236,14 @@ func (c *BlockModeContext) neighborSwitchableInterpFilter(above bool, slot int, 
 // MarkInterFilters records the decoded interpolation filter pair in the
 // above/left mode context for later switchable-filter contexts.
 func (c *BlockModeContext) MarkInterFilters(size BlockSize, x4 int, y4 int, refs InterReferencesResult, filters motion.InterpFilters) error {
-	if c == nil || !refs.Ref[0].Valid() || !filters.X.Valid() || !filters.Y.Valid() {
+	if c == nil || !refs.Ref0.Valid() || !filters.X.Valid() || !filters.Y.Valid() {
 		return ErrInvalidDecodeState
 	}
 	if refs.Compound {
-		if !refs.Ref[1].Valid() {
+		if !refs.Ref1.Valid() {
 			return ErrInvalidDecodeState
 		}
-	} else if refs.Ref[1] != ReferenceFrameNone {
+	} else if refs.Ref1 != ReferenceFrameNone {
 		return ErrInvalidDecodeState
 	}
 	dims, ok := size.Dimensions()

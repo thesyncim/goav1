@@ -304,10 +304,10 @@ func (rt *refmvsTile) subChromaCells(c *BlockModeContext, block *BlockVisit, ssX
 
 func refmvsNeighborMotion(b *refmvsBlock) InterMotionResult {
 	m := InterMotionResult{MV: [2]motion.Vector{b.mv[0].vector(), b.mv[1].vector()}}
-	m.References.Ref[0] = ReferenceFrame(b.ref.ref0() - 1)
-	m.References.Ref[1] = ReferenceFrameNone
+	m.References.Ref0 = ReferenceFrame(b.ref.ref0() - 1)
+	m.References.Ref1 = ReferenceFrameNone
 	if b.ref.ref1() > 0 {
-		m.References.Ref[1] = ReferenceFrame(b.ref.ref1() - 1)
+		m.References.Ref1 = ReferenceFrame(b.ref.ref1() - 1)
 		m.References.Compound = true
 	} else if b.ref.ref1() == 0 {
 		m.InterIntra = true

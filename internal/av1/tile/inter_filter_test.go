@@ -33,7 +33,7 @@ func TestInterpFilterCDFsInitDefaultMatchesLibaom(t *testing.T) {
 }
 
 func TestSwitchableInterpContextMatchesLibaom(t *testing.T) {
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	base := InterpFilterRequest{
 		FrameFilter: parser.InterpolationSwitchable,
 		Size:        BlockSize16x16,
@@ -84,7 +84,7 @@ func TestSwitchableInterpContextMatchesLibaom(t *testing.T) {
 	}
 
 	compound := base
-	compound.References = InterReferencesResult{Compound: true, Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameAltref}}
+	compound.References = InterReferencesResult{Compound: true, Ref0: ReferenceFrameLast, Ref1: ReferenceFrameAltref}
 	compound.Mode = InterModeResult{Compound: true, CompoundMode: CompoundInterModeNearestNearest}
 	got, err = ctx.SwitchableInterpContext(compound, 0)
 	if err != nil {
@@ -107,7 +107,7 @@ func TestReadInterpFiltersPortsLibaomGates(t *testing.T) {
 	if err := state.Reset([]byte{0x00, 0x00}, Job{Offset: 0, Size: 2}, DecodeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	req := InterpFilterRequest{
 		FrameFilter: parser.InterpolationSwitchable,
 		Size:        BlockSize16x16,
@@ -157,7 +157,7 @@ func TestReadInterpFiltersConsumesSwitchableCDFs(t *testing.T) {
 		FrameFilter:      parser.InterpolationSwitchable,
 		EnableDualFilter: true,
 		Size:             BlockSize16x16,
-		References:       InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+		References:       InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone},
 		Mode:             InterModeResult{Mode: InterModeNewMV},
 		MotionMode:       MotionModeTranslation,
 		X4:               0,

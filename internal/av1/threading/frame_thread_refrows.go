@@ -53,11 +53,11 @@ func (n *frameThreadRefNeed) addVisit(v *tile.BlockLoopVisit) {
 	bottom := (int32(v.Block.MIRow) + int32(tile.BlockSizeHeight4(v.Block.Size))) * 4
 	refs := &p.InterMotion.References
 	warp := p.MotionModeValid && p.MotionMode == tile.MotionModeWarp && !p.WarpedMotionInvalid
-	if refs.Ref[1] == tile.ReferenceFrameNone || !refs.Compound {
-		n.add(refs.Ref[0], bottom, p.InterMotion.MV[0], warp || p.GlobalWarpedMotionValid)
+	if refs.Ref1 == tile.ReferenceFrameNone || !refs.Compound {
+		n.add(refs.Ref0, bottom, p.InterMotion.MV[0], warp || p.GlobalWarpedMotionValid)
 	} else {
 		for i := range 2 {
-			n.add(refs.Ref[i], bottom, p.InterMotion.MV[i], warp || p.GlobalWarpedMotionValid || p.GlobalWarpedMotionCompoundValid[i])
+			n.add(refs.At(i), bottom, p.InterMotion.MV[i], warp || p.GlobalWarpedMotionValid || p.GlobalWarpedMotionCompoundValid[i])
 		}
 	}
 	if p.MotionModeValid && p.MotionMode == tile.MotionModeOBMC && p.OverlappableNeighborsValid && p.Extras != nil {
@@ -80,7 +80,7 @@ func (n *frameThreadRefNeed) addNeighbor(o *tile.OverlappableNeighbor, bottom in
 	if !o.MotionValid {
 		return
 	}
-	n.add(o.Motion.References.Ref[0], bottom, o.Motion.MV[0], false)
+	n.add(o.Motion.References.Ref0, bottom, o.Motion.MV[0], false)
 }
 
 // waitSuperblockReferences blocks until every reference the superblock's

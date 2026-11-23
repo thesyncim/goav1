@@ -1425,7 +1425,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 	// (av1/encoder/encodeframe_utils.c): inter blocks predicting from LAST
 	// whose vector is under one pixel accumulate their MI area, feeding the
 	// avg_frame_low_motion statistic behind adaptive golden refresh.
-	if refs.Ref[0] == tile.ReferenceFrameLast {
+	if refs.Ref0 == tile.ReferenceFrameLast {
 		zmv := motionResult.MV[0]
 		if zmv.Row > -8 && zmv.Row < 8 && zmv.Col > -8 && zmv.Col < 8 {
 			st.cntZeroMV += int(block.VisibleW4) * int(block.VisibleH4)
@@ -1476,7 +1476,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 		if !interModeResultUsesGlobalOnly(modeResult) {
 			lfMode = loopfilter.ModeDeltaClassMotion
 		}
-		if err := st.markLoopFilterBlock(block, lfTree, skip, false, uint8(refs.Ref[0])+1, lfMode); err != nil {
+		if err := st.markLoopFilterBlock(block, lfTree, skip, false, uint8(refs.Ref0)+1, lfMode); err != nil {
 			return fmt.Errorf("mark loop filter: %w", err)
 		}
 	}

@@ -16,7 +16,7 @@ func refRowsTestVisit(miRow uint16, ref tile.ReferenceFrame, mvRow int16) tile.B
 	v.Block.MIRow = miRow
 	v.Block.Size = tile.BlockSize16x16
 	v.Prediction.Valid = true
-	v.Prediction.InterMotion.References.Ref = [2]tile.ReferenceFrame{ref, tile.ReferenceFrameNone}
+	v.Prediction.InterMotion.References.Ref0, v.Prediction.InterMotion.References.Ref1 = ref, tile.ReferenceFrameNone
 	v.Prediction.InterMotion.MV[0] = motion.Vector{Row: mvRow}
 	return v
 }
@@ -44,7 +44,7 @@ func TestFrameThreadRefNeed(t *testing.T) {
 	// Compound: both references, each with its own vector.
 	n = frameThreadRefNeed{}
 	v = refRowsTestVisit(8, tile.ReferenceFrameLast, 8*4)
-	v.Prediction.InterMotion.References.Ref[1] = tile.ReferenceFrameAltref
+	v.Prediction.InterMotion.References.Ref1 = tile.ReferenceFrameAltref
 	v.Prediction.InterMotion.References.Compound = true
 	v.Prediction.InterMotion.MV[1] = motion.Vector{Row: 8 * 40}
 	n.addVisit(&v)
@@ -60,7 +60,7 @@ func TestFrameThreadRefNeed(t *testing.T) {
 	v.Prediction.OverlappableNeighborsValid = true
 	testMotionExtras(&v.Prediction).OverlappableNeighbors.AboveCount = 1
 	testMotionExtras(&v.Prediction).OverlappableNeighbors.Above[0].MotionValid = true
-	testMotionExtras(&v.Prediction).OverlappableNeighbors.Above[0].Motion.References.Ref = [2]tile.ReferenceFrame{tile.ReferenceFrameGolden, tile.ReferenceFrameNone}
+	testMotionExtras(&v.Prediction).OverlappableNeighbors.Above[0].Motion.References = tile.InterReferencesResult{Ref0: tile.ReferenceFrameGolden, Ref1: tile.ReferenceFrameNone}
 	testMotionExtras(&v.Prediction).OverlappableNeighbors.Above[0].Motion.MV[0] = motion.Vector{Row: 8 * 64}
 	n.addVisit(&v)
 	if n[tile.ReferenceFrameGolden] != bottom+64+refRowMargin {

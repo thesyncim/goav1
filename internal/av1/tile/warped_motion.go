@@ -387,10 +387,10 @@ func warpSampleFromMotion(motionResult InterMotionResult, size BlockSize, ref Re
 	if motionResult.References.Compound {
 		return warpSample{}, false
 	}
-	if motionResult.References.Ref[0] != ref {
+	if motionResult.References.Ref0 != ref {
 		return warpSample{}, false
 	}
-	if motionResult.References.Ref[1] != ReferenceFrameNone {
+	if motionResult.References.Ref1 != ReferenceFrameNone {
 		return warpSample{}, false
 	}
 	if motionResult.InterIntra {

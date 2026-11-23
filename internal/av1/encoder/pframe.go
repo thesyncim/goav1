@@ -238,7 +238,7 @@ func encodeRepeatPFrameTile(width, height int) ([]byte, error) {
 		return tile.PartitionSplit, nil
 	}
 
-	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+	refs := tile.InterReferencesResult{Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameNone}
 	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
 		modeCtx := &scratch.Mode
 

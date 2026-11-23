@@ -473,8 +473,8 @@ func warpSampleNeighborMatches(n OverlappableNeighbor, ref ReferenceFrame) bool 
 	return n.MotionValid &&
 		!n.Motion.InterIntra &&
 		!n.Motion.References.Compound &&
-		n.Motion.References.Ref[0] == ref &&
-		n.Motion.References.Ref[1] == ReferenceFrameNone
+		n.Motion.References.Ref0 == ref &&
+		n.Motion.References.Ref1 == ReferenceFrameNone
 }
 
 type warpSample struct {

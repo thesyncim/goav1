@@ -125,8 +125,8 @@ func compInterTypeOfBlend(b CompoundBlendResult) uint8 {
 func interEdgeValues(size BlockSize, refs InterReferencesResult, compType uint8, filters motion.InterpFilters, interIntra, hasChroma bool) blockEdgeValues {
 	return blockEdgeValues{
 		compType:   ctxSplat(compType),
-		ref0:       ctxSplat(uint8(refs.Ref[0])),
-		ref1:       ctxSplat(uint8(refs.Ref[1])),
+		ref0:       ctxSplat(uint8(refs.Ref0)),
+		ref1:       ctxSplat(uint8(refs.Ref1)),
 		filter0:    ctxSplat(uint8(filters.Y)),
 		filter1:    ctxSplat(uint8(filters.X)),
 		blockSize:  ctxSplat(uint8(size)),

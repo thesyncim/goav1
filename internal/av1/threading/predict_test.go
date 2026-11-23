@@ -2791,7 +2791,7 @@ func TestFrameWorkBatchPredictBlockLumaInterCompoundAverageRejectsInvalidInputs(
 		}(), visit: testCompoundInterPredictionVisit(motion.Vector{}, motion.Vector{}, tile.CompoundTypeDistWtd), scratch: &scratch},
 		{name: "single ref", ctx: ctx, visit: func() tile.BlockLoopVisit {
 			visit := valid
-			refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+			refs := tile.InterReferencesResult{Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameNone}
 			visit.Prediction.InterReferences = refs
 			visit.Prediction.InterMotion.References = refs
 			return visit
@@ -2955,7 +2955,7 @@ func TestFrameWorkBatchPredictBlockLumaInterRejectsInvalidInputs(t *testing.T) {
 		{name: "compound", ctx: ctx, visit: func() tile.BlockLoopVisit {
 			visit := valid
 			visit.Prediction.InterMotion.References.Compound = true
-			visit.Prediction.InterMotion.References.Ref[1] = tile.ReferenceFrameBWD
+			visit.Prediction.InterMotion.References.Ref1 = tile.ReferenceFrameBWD
 			return visit
 		}()},
 		{name: "non translation motion mode", ctx: ctx, visit: func() tile.BlockLoopVisit {
@@ -3836,7 +3836,7 @@ func testIntraPredictionVisit(mode tile.IntraMode) tile.BlockLoopVisit {
 }
 
 func testInterPredictionVisit(mv motion.Vector) tile.BlockLoopVisit {
-	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+	refs := tile.InterReferencesResult{Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameNone}
 	return tile.BlockLoopVisit{
 		Block: tile.BlockVisit{
 			MICol: 4, MIRow: 4, MIColEnd: 8, MIRowEnd: 8,
@@ -3902,7 +3902,7 @@ func testOBMCInterPredictionVisit(baseMV motion.Vector, aboveMV motion.Vector, l
 }
 
 func testCompoundInterPredictionVisit(mv0 motion.Vector, mv1 motion.Vector, compoundType tile.CompoundType) tile.BlockLoopVisit {
-	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameBWD}, Compound: true}
+	refs := tile.InterReferencesResult{Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameBWD, Compound: true}
 	compoundIndex := uint8(0)
 	if compoundType == tile.CompoundTypeAverage {
 		compoundIndex = 1

@@ -208,7 +208,7 @@ func TestOwnedIntraThenGenericCarrierTransition(t *testing.T) {
 				if !reflect.DeepEqual(fast.Mode, full.Mode) {
 					t.Fatalf("generic state differs after private stop=%d sb=%d root=%d", stop, sb, index)
 				}
-				result := InterMotionResult{MV: [2]motion.Vector{{Row: int16(index + 1), Col: int16(-index - 2)}}, References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}}
+				result := InterMotionResult{MV: [2]motion.Vector{{Row: int16(index + 1), Col: int16(-index - 2)}}, References: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}}
 				mark := (*BlockModeContext).MarkInterMotion
 				if index&1 != 0 {
 					mark = func(c *BlockModeContext, size BlockSize, x4, y4 int, result InterMotionResult, hasChroma bool) error {

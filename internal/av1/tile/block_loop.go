@@ -1143,7 +1143,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 						// warpSampleGrid -> crossSBInterGridInterMotion), matching
 						// libaom's frame-wide av1_findSamples scan, so no separate
 						// SB-diagonal corner augmentation is needed here.
-						numProjRef, err := ctx.WarpSampleCountWithContext(*block, refs.Ref[0], req.SBSizeMIB)
+						numProjRef, err := ctx.WarpSampleCountWithContext(*block, refs.Ref0, req.SBSizeMIB)
 						if err != nil {
 							return fmt.Errorf("count warp samples: %w", err)
 						}
@@ -1167,7 +1167,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 						result.MotionMode = motionMode
 						result.MotionModeValid = true
 						if motionMode == MotionModeWarp {
-							model, invalid, err := ctx.WarpProjectionWithContext(*block, refs.Ref[0], result.InterMotion.MV[0], req.SBSizeMIB)
+							model, invalid, err := ctx.WarpProjectionWithContext(*block, refs.Ref0, result.InterMotion.MV[0], req.SBSizeMIB)
 							if err != nil {
 								return fmt.Errorf("project warped motion: %w", err)
 							}
@@ -1192,10 +1192,10 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 					// local OverlappableNeighbor projection.
 					if motionMode == MotionModeTranslation &&
 						!refs.Compound &&
-						refs.Ref[0].Valid() &&
+						refs.Ref0.Valid() &&
 						isGlobalMVBlock(mode, block.Size, blockReferenceGlobalMotionType(refs, req.GlobalMotionTypes)) &&
 						!blockReferenceScaled(refs, req.ScaledReferences) {
-						params := req.GlobalMotion[refs.Ref[0]]
+						params := req.GlobalMotion[refs.Ref0]
 						if model, ok := warpShearParams(WarpedMotionModel{Params: params}); ok {
 							s.blockMotionExtras(result).GlobalWarpedMotion = model
 							result.GlobalWarpedMotionValid = true
@@ -1208,13 +1208,13 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 						refs.Compound &&
 						!blockReferenceScaled(refs, req.ScaledReferences) {
 						for r := range 2 {
-							if !refs.Ref[r].Valid() {
+							if !refs.At(r).Valid() {
 								continue
 							}
-							if !isGlobalMVBlock(mode, block.Size, req.GlobalMotionTypes[refs.Ref[r]]) {
+							if !isGlobalMVBlock(mode, block.Size, req.GlobalMotionTypes[refs.At(r)]) {
 								continue
 							}
-							params := req.GlobalMotion[refs.Ref[r]]
+							params := req.GlobalMotion[refs.At(r)]
 							if model, ok := warpShearParams(WarpedMotionModel{Params: params}); ok {
 								s.blockMotionExtras(result).GlobalWarpedMotionCompound[r] = model
 								result.GlobalWarpedMotionCompoundValid[r] = true
@@ -1287,7 +1287,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 					// The refmvs path writes the cells in place, self cell
 					// included.
 					if rt != nil {
-						if rt.subChromaCells(ctx, block, req.Color.SubsamplingX, req.Color.SubsamplingY, filters, result.InterMotion.MV[0], refs.Ref[0], &s.subChroma) {
+						if rt.subChromaCells(ctx, block, req.Color.SubsamplingX, req.Color.SubsamplingY, filters, result.InterMotion.MV[0], refs.Ref0, &s.subChroma) {
 							result.SubChromaInter = &s.subChroma
 						}
 					} else if sub, ok := ctx.CollectSubChromaInterCells(block.Size, blockX4, blockY4, req.Color.SubsamplingX, req.Color.SubsamplingY, filters); ok {
@@ -1296,7 +1296,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 						// filters.
 						selfCell := &sub.Cells[int(sub.Count)-1]
 						selfCell.MV = result.InterMotion.MV[0]
-						selfCell.Reference = refs.Ref[0]
+						selfCell.Reference = refs.Ref0
 						selfCell.InterpFilters = filters
 						s.subChroma = sub
 						result.SubChromaInter = &s.subChroma
@@ -1637,7 +1637,7 @@ func blockReferenceGlobalMVsForBlock(refs InterReferencesResult, fallback *[refe
 		n = 2
 	}
 	for i := range n {
-		r := refs.Ref[i]
+		r := refs.At(i)
 		if !r.Valid() {
 			continue
 		}
@@ -1910,37 +1910,37 @@ func globalMotionIntegerMVPrecision(v int32) int32 {
 }
 
 func blockReferenceGlobalMotionType(refs InterReferencesResult, global [referenceFrameCount]parser.GlobalMotionType) parser.GlobalMotionType {
-	if refs.Ref[0].Valid() {
-		return global[refs.Ref[0]]
+	if refs.Ref0.Valid() {
+		return global[refs.Ref0]
 	}
 	return parser.GlobalMotionIdentity
 }
 
 func blockReferenceGlobalMotionTypes(refs InterReferencesResult, global [referenceFrameCount]parser.GlobalMotionType) [2]parser.GlobalMotionType {
 	var out [2]parser.GlobalMotionType
-	if refs.Ref[0].Valid() {
-		out[0] = global[refs.Ref[0]]
+	if refs.Ref0.Valid() {
+		out[0] = global[refs.Ref0]
 	}
-	if refs.Compound && refs.Ref[1].Valid() {
-		out[1] = global[refs.Ref[1]]
+	if refs.Compound && refs.Ref1.Valid() {
+		out[1] = global[refs.Ref1]
 	}
 	return out
 }
 
 func blockReferenceScaled(refs InterReferencesResult, scaled [referenceFrameCount]bool) bool {
-	if refs.Ref[0].Valid() {
-		return scaled[refs.Ref[0]]
+	if refs.Ref0.Valid() {
+		return scaled[refs.Ref0]
 	}
 	return false
 }
 
 func blockReferenceOrderHints(refs InterReferencesResult, orderHints [referenceFrameCount]uint8) [2]uint8 {
 	var out [2]uint8
-	if refs.Ref[0].Valid() {
-		out[0] = orderHints[refs.Ref[0]]
+	if refs.Ref0.Valid() {
+		out[0] = orderHints[refs.Ref0]
 	}
-	if refs.Compound && refs.Ref[1].Valid() {
-		out[1] = orderHints[refs.Ref[1]]
+	if refs.Compound && refs.Ref1.Valid() {
+		out[1] = orderHints[refs.Ref1]
 	}
 	return out
 }
@@ -1981,10 +1981,10 @@ func warpSampleDiagonalCorner(block BlockVisit, ctx *BlockModeContext, ref Refer
 	if motionResult.References.Compound {
 		return 0
 	}
-	if motionResult.References.Ref[0] != ref {
+	if motionResult.References.Ref0 != ref {
 		return 0
 	}
-	if motionResult.References.Ref[1] != ReferenceFrameNone {
+	if motionResult.References.Ref1 != ReferenceFrameNone {
 		return 0
 	}
 	if motionResult.InterIntra {

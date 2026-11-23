@@ -520,16 +520,16 @@ func TestDecodeBlockLoopReadsInterReferences(t *testing.T) {
 			t.Fatalf("visit %d prediction=%+v", i, visit.Prediction)
 		}
 		refs := visit.Prediction.InterReferences
-		if refs.Compound || !refs.Ref[0].Valid() || refs.Ref[1] != ReferenceFrameNone {
+		if refs.Compound || !refs.Ref0.Valid() || refs.Ref1 != ReferenceFrameNone {
 			t.Fatalf("visit %d refs=%+v", i, refs)
 		}
 	}
 	refs := visits[0].Prediction.InterReferences
 	if scratch.Mode.A.Intra[0] != 0 || scratch.Mode.L.Intra[0] != 0 ||
-		scratch.Mode.A.Ref[0][0] != refs.Ref[0] || scratch.Mode.L.Ref[0][0] != refs.Ref[0] {
+		scratch.Mode.A.Ref[0][0] != refs.Ref0 || scratch.Mode.L.Ref[0][0] != refs.Ref0 {
 		t.Fatalf("mode context intra=(%d,%d) refs=(%d,%d) want ref %d",
 			scratch.Mode.A.Intra[0], scratch.Mode.L.Intra[0],
-			scratch.Mode.A.Ref[0][0], scratch.Mode.L.Ref[0][0], refs.Ref[0])
+			scratch.Mode.A.Ref[0][0], scratch.Mode.L.Ref[0][0], refs.Ref0)
 	}
 }
 
@@ -625,7 +625,7 @@ func TestDecodeBlockLoopReadsForcedInterModeAndRefMVStack(t *testing.T) {
 }
 
 func TestBlockReferenceGlobalMVsForBlockPortsLibaomCenterMV(t *testing.T) {
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	block := BlockVisit{MICol: 4, MIRow: 8, Size: BlockSize16x16}
 	var global [referenceFrameCount]parser.WarpedMotionParams
 	global[ReferenceFrameLast] = parser.DefaultWarpedMotionParams()
@@ -671,7 +671,7 @@ func TestDecodeBlockPredictionModeReadsInterModeDRLAndStack(t *testing.T) {
 	if err := interModeCDFs.InitDefault(); err != nil {
 		t.Fatal(err)
 	}
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	aboveMotion := InterMotionResult{
 		References: refs,
 		Mode:       InterModeResult{Mode: InterModeNewMV},
@@ -726,7 +726,7 @@ func TestDecodeBlockPredictionModeInterModeRequiresCDFs(t *testing.T) {
 	if err := state.Reset([]byte{0x00, 0x00}, Job{Offset: 0, Size: 2}, DecodeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	var ctx BlockModeContext
 	seedAboveMotion(&ctx, 0, BlockSize8x8, InterMotionResult{
 		References: refs,
@@ -978,7 +978,7 @@ func TestDecodeBlockPredictionModeReadsMotionVectorResidual(t *testing.T) {
 	if err := mvCDFs.InitDefault(); err != nil {
 		t.Fatal(err)
 	}
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	var ctx BlockModeContext
 	seedAboveMotion(&ctx, 0, BlockSize8x8, InterMotionResult{
 		References: refs,
@@ -1036,7 +1036,7 @@ func TestDecodeBlockPredictionModeReadsInterIntraAndMotionMode(t *testing.T) {
 	if err := motionCDFs.InitDefault(); err != nil {
 		t.Fatal(err)
 	}
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	var ctx BlockModeContext
 	seedAboveMotion(&ctx, 0, BlockSize8x8, InterMotionResult{
 		References: refs,
@@ -1725,7 +1725,7 @@ func TestWarpSampleDiagonalCornerAddsCrossSBContribution(t *testing.T) {
 		ctx.SBDiagonalMotionValidGrid[0][0] = 1
 		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
 			References: InterReferencesResult{
-				Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone},
+				Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone,
 			},
 		}
 		block := BlockVisit{
@@ -1741,7 +1741,7 @@ func TestWarpSampleDiagonalCornerAddsCrossSBContribution(t *testing.T) {
 		ctx.SBDiagonalMotionValidGrid[0][0] = 1
 		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
 			References: InterReferencesResult{
-				Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone},
+				Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone,
 			},
 		}
 		block := BlockVisit{
@@ -1757,7 +1757,7 @@ func TestWarpSampleDiagonalCornerAddsCrossSBContribution(t *testing.T) {
 		ctx.SBDiagonalMotionValidGrid[0][0] = 1
 		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
 			References: InterReferencesResult{
-				Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone},
+				Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone,
 			},
 		}
 		block := BlockVisit{
@@ -1773,7 +1773,7 @@ func TestWarpSampleDiagonalCornerAddsCrossSBContribution(t *testing.T) {
 		ctx.SBDiagonalMotionValidGrid[0][0] = 1
 		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
 			References: InterReferencesResult{
-				Ref:      [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameBWD},
+				Ref0: ReferenceFrameLast, Ref1: ReferenceFrameBWD,
 				Compound: true,
 			},
 		}
@@ -1790,7 +1790,7 @@ func TestWarpSampleDiagonalCornerAddsCrossSBContribution(t *testing.T) {
 		ctx.SBDiagonalMotionValidGrid[0][0] = 1
 		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
 			References: InterReferencesResult{
-				Ref: [2]ReferenceFrame{ReferenceFrameGolden, ReferenceFrameNone},
+				Ref0: ReferenceFrameGolden, Ref1: ReferenceFrameNone,
 			},
 		}
 		block := BlockVisit{
@@ -1806,7 +1806,7 @@ func TestWarpSampleDiagonalCornerAddsCrossSBContribution(t *testing.T) {
 		ctx.SBDiagonalMotionValidGrid[0][0] = 1
 		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
 			References: InterReferencesResult{
-				Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone},
+				Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone,
 			},
 			InterIntra: true,
 		}

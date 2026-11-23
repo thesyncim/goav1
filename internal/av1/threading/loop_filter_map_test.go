@@ -81,7 +81,7 @@ func TestFrameWorkLoopFilterMapMarkBlockRecordsInterMetadata(t *testing.T) {
 			Valid:                true,
 			InterReferencesValid: true,
 			InterReferences: tile.InterReferencesResult{
-				Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameGolden, tile.ReferenceFrameNone},
+				Ref0: tile.ReferenceFrameGolden, Ref1: tile.ReferenceFrameNone,
 			},
 			InterModeValid: true,
 			InterMode:      tile.InterModeResult{Mode: tile.InterModeNewMV},
@@ -146,7 +146,7 @@ func TestFrameWorkLoopFilterMapMarkBlockHandlesIntraAndCompound(t *testing.T) {
 			Valid:                true,
 			InterReferencesValid: true,
 			InterReferences: tile.InterReferencesResult{
-				Ref:      [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameAltref},
+				Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameAltref,
 				Compound: true,
 			},
 			InterModeValid: true,
@@ -188,7 +188,7 @@ func TestFrameWorkLoopFilterMapMarkBlockRejectsInvalidInputs(t *testing.T) {
 			Valid:                true,
 			InterReferencesValid: true,
 			InterReferences: tile.InterReferencesResult{
-				Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone},
+				Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameNone,
 			},
 			InterModeValid: true,
 			InterMode:      tile.InterModeResult{Mode: tile.InterModeNearestMV},
@@ -213,7 +213,7 @@ func TestFrameWorkLoopFilterMapMarkBlockRejectsInvalidInputs(t *testing.T) {
 	}
 
 	badRef := valid
-	badRef.Prediction.InterReferences.Ref[0] = tile.ReferenceFrameNone
+	badRef.Prediction.InterReferences.Ref0 = tile.ReferenceFrameNone
 	if err := filterMap.MarkBlock(badRef, state); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("bad ref err=%v want %v", err, ErrInvalidBatch)
 	}
@@ -363,7 +363,7 @@ func TestFrameWorkLoopFilterMapAllocs(t *testing.T) {
 			Valid:                true,
 			InterReferencesValid: true,
 			InterReferences: tile.InterReferencesResult{
-				Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone},
+				Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameNone,
 			},
 			InterModeValid: true,
 			InterMode:      tile.InterModeResult{Mode: tile.InterModeNearestMV},
@@ -422,7 +422,7 @@ func BenchmarkFrameWorkLoopFilterMapMarkBlock(b *testing.B) {
 			Valid:                true,
 			InterReferencesValid: true,
 			InterReferences: tile.InterReferencesResult{
-				Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone},
+				Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameNone,
 			},
 			InterModeValid: true,
 			InterMode:      tile.InterModeResult{Mode: tile.InterModeNearestMV},

@@ -80,9 +80,9 @@ func (s *BlockLoopScratch) keepLegacyMotion() bool {
 // BuildReferenceMVStack.
 func (s *BlockLoopScratch) EncoderReferenceMVStack(dst *ReferenceMVStackResult, refs InterReferencesResult, block *BlockVisit) {
 	var found refmvsResult
-	target := makeRefmvsRefPair(int8(refs.Ref[0])+1, -1)
+	target := makeRefmvsRefPair(int8(refs.Ref0)+1, -1)
 	if refs.Compound {
-		target = makeRefmvsRefPair(int8(refs.Ref[0])+1, int8(refs.Ref[1])+1)
+		target = makeRefmvsRefPair(int8(refs.Ref0)+1, int8(refs.Ref1)+1)
 	}
 	s.Refmvs.find(&found, target, block.Size, block.Edge&edgeI444TopHasRight != 0, int32(block.MIRow), int32(block.MICol), [2]motion.Vector{})
 	*dst = ReferenceMVStackResult{ModeContext: uint16(found.rawCtx)}

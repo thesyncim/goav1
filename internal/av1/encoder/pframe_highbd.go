@@ -480,10 +480,10 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
 
-	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+	refs := tile.InterReferencesResult{Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameNone}
 	refPlane := ref
 	if golden != nil && highBitDepthGoldenReferenceWins(src.Y, src.YStride, ref, *golden, lumaPX, lumaPY, n, n, src.BitDepth) {
-		refs.Ref[0] = tile.ReferenceFrameGolden
+		refs.Ref0 = tile.ReferenceFrameGolden
 		refPlane = *golden
 	}
 	var stack tile.ReferenceMVStackResult
@@ -549,7 +549,7 @@ func (st *lossyEncodeState) encodeHighBitDepthMonochromePBlock(src SourceFrameMo
 		return fmt.Errorf("transform tree: %w", err)
 	}
 	if st.lfMap != nil {
-		if err := markLoopFilterBlock(st.lfMap, block, lfTree, false, false, uint8(refs.Ref[0])+1, loopfilter.ModeDeltaClassZero); err != nil {
+		if err := markLoopFilterBlock(st.lfMap, block, lfTree, false, false, uint8(refs.Ref0)+1, loopfilter.ModeDeltaClassZero); err != nil {
 			return fmt.Errorf("mark loop filter: %w", err)
 		}
 	}
@@ -586,10 +586,10 @@ func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, re
 	lumaPX := int(block.MICol) * 4
 	lumaPY := int(block.MIRow) * 4
 
-	interRefs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+	interRefs := tile.InterReferencesResult{Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameNone}
 	refPlanes := refs
 	if golden != nil && highBitDepthGoldenReferenceWins(src.Y, src.YStride, refs[0], (*golden)[0], lumaPX, lumaPY, n, n, src.BitDepth) {
-		interRefs.Ref[0] = tile.ReferenceFrameGolden
+		interRefs.Ref0 = tile.ReferenceFrameGolden
 		refPlanes = *golden
 	}
 	var stack tile.ReferenceMVStackResult
@@ -655,7 +655,7 @@ func (st *lossyEncodeState) encodeHighBitDepth420PBlock(src SourceFrame42016, re
 		return fmt.Errorf("transform tree: %w", err)
 	}
 	if st.lfMap != nil {
-		if err := markLoopFilterBlock(st.lfMap, block, lfTree, false, false, uint8(interRefs.Ref[0])+1, loopfilter.ModeDeltaClassZero); err != nil {
+		if err := markLoopFilterBlock(st.lfMap, block, lfTree, false, false, uint8(interRefs.Ref0)+1, loopfilter.ModeDeltaClassZero); err != nil {
 			return fmt.Errorf("mark loop filter: %w", err)
 		}
 	}

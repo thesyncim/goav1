@@ -236,12 +236,12 @@ func (s *EncoderDecisionStats) noteInterBlock(size tile.BlockSize, skip bool, sp
 	} else if int(mode.Mode) < len(s.InterModes) {
 		s.InterModes[mode.Mode]++
 	}
-	if refs.Ref[0].Valid() {
-		s.PrimaryReferenceBlocks[refs.Ref[0]]++
-		s.ReferenceUses[refs.Ref[0]]++
+	if refs.Ref0.Valid() {
+		s.PrimaryReferenceBlocks[refs.Ref0]++
+		s.ReferenceUses[refs.Ref0]++
 	}
-	if refs.Compound && refs.Ref[1].Valid() {
-		s.ReferenceUses[refs.Ref[1]]++
+	if refs.Compound && refs.Ref1.Valid() {
+		s.ReferenceUses[refs.Ref1]++
 	}
 }
 

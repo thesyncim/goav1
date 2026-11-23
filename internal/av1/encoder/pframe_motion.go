@@ -127,7 +127,7 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 	if st.zmvForced(block.Size, lumaPX, lumaPY) {
 		// force_zeromv_skip_for_blk: zero-motion LAST only.
 		var o pblockMotion
-		o.refs = tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+		o.refs = tile.InterReferencesResult{Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameNone}
 		o.refPlanes = ref
 		o.fullSAD = st.leafFullPelSAD(src, ref, lumaPX, lumaPY, bw, bh, motion.Vector{})
 		return o, nil
@@ -153,7 +153,7 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 		// read_refine_me_mvs_light_pd1: refine LAST's ME vector with the
 		// NEWMV predictor of LAST's MVP table as the MV cost reference.
 		if st.allowSubpelRefinement() {
-			lastRefs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+			lastRefs := tile.InterReferencesResult{Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameNone}
 			err := st.referenceMVStack(&out.stack, modeCtx, lastRefs, &block, walkReq, miCols, miRows)
 			if err != nil {
 				return out, fmt.Errorf("build ref mv stack: %w", err)
@@ -168,7 +168,7 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 	// when the previous frame cannot. Compound covers 8x8 and 16x16 leaves,
 	// which get a true golden motion search; larger blocks keep the cheap
 	// zero-motion anchor probe.
-	refs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameNone}}
+	refs := tile.InterReferencesResult{Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameNone}
 	refPlanes := ref
 	compound := false
 	var compoundMV [2]motion.Vector
@@ -192,7 +192,7 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 			// its full-pel distortion is >30% worse than LAST (perform_md_reference_pruning).
 			goldenRefPruned = int64(gsad)*100 > int64(lastSAD)*(100+goldenRefPruneMaxDevPct)
 			if st.allowSubpelRefinement() && !goldenRefPruned {
-				goldenRefs := tile.InterReferencesResult{Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameGolden, tile.ReferenceFrameNone}}
+				goldenRefs := tile.InterReferencesResult{Ref0: tile.ReferenceFrameGolden, Ref1: tile.ReferenceFrameNone}
 				err := st.referenceMVStack(&goldenStack, modeCtx, goldenRefs, &block, walkReq, miCols, miRows)
 				if err != nil {
 					return out, fmt.Errorf("build ref mv stack: %w", err)
@@ -224,7 +224,7 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 		// The anchor must win clearly: LAST keeps the cheaper ref symbol and
 		// denser MV predictors.
 		if !compound && gsad+32 < fullSAD {
-			refs.Ref[0] = tile.ReferenceFrameGolden
+			refs.Ref0 = tile.ReferenceFrameGolden
 			refPlanes = *golden
 			mv, fullSAD = gmv, gsad
 			out.stack, out.stackOK = goldenStack, goldenStackOK
@@ -232,7 +232,7 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 		}
 		if compound {
 			refs = tile.InterReferencesResult{
-				Ref:      [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameGolden},
+				Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameGolden,
 				Compound: true,
 				Unidir:   true,
 			}

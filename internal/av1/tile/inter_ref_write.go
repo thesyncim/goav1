@@ -64,7 +64,7 @@ func WriteInterReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeC
 		return err
 	}
 	if req.SkipMode {
-		if !refs.Compound || refs.Unidir || refs.Ref != req.SkipModeRefs {
+		if !refs.Compound || refs.Unidir || refs.Pair() != req.SkipModeRefs {
 			return ErrInvalidDecodeState
 		}
 		return nil
@@ -72,7 +72,7 @@ func WriteInterReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeC
 	if req.SegmentationEnabled {
 		if req.Segment.RefFrame > 0 {
 			implied := ReferenceFrame(req.Segment.RefFrame - 1)
-			if refs.Compound || refs.Unidir || refs.Ref[0] != implied || refs.Ref[1] != ReferenceFrameNone {
+			if refs.Compound || refs.Unidir || refs.Ref0 != implied || refs.Ref1 != ReferenceFrameNone {
 				return ErrInvalidDecodeState
 			}
 			return nil
@@ -81,18 +81,18 @@ func WriteInterReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeC
 			return ErrInvalidDecodeState
 		}
 		if req.Segment.Skip || req.Segment.GlobalMV {
-			if refs.Compound || refs.Unidir || refs.Ref[0] != ReferenceFrameLast || refs.Ref[1] != ReferenceFrameNone {
+			if refs.Compound || refs.Unidir || refs.Ref0 != ReferenceFrameLast || refs.Ref1 != ReferenceFrameNone {
 				return ErrInvalidDecodeState
 			}
 			return nil
 		}
 	}
 	if refs.Compound {
-		if !refs.Ref[0].Valid() || !refs.Ref[1].Valid() {
+		if !refs.Ref0.Valid() || !refs.Ref1.Valid() {
 			return ErrInvalidDecodeState
 		}
 	} else {
-		if !refs.Ref[0].Valid() || refs.Ref[1] != ReferenceFrameNone || refs.Unidir {
+		if !refs.Ref0.Valid() || refs.Ref1 != ReferenceFrameNone || refs.Unidir {
 			return ErrInvalidDecodeState
 		}
 	}
@@ -126,7 +126,7 @@ func WriteInterReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockModeC
 	if refs.Compound {
 		return writeCompoundReferences(w, cdfs, ctx, req, n, refs)
 	}
-	return writeSingleReference(w, cdfs, ctx, req, n, refs.Ref[0])
+	return writeSingleReference(w, cdfs, ctx, req, n, refs.Ref0)
 }
 
 // writeSingleReference codes the single_ref bit tree, the exact inverse of
@@ -238,24 +238,24 @@ func writeCompoundReferences(w *entropy.Writer, cdfs *InterRefCDFs, ctx *BlockMo
 	}
 	w.WriteBinaryCDFTrusted(cdf, boolToSym(!unidir))
 	if unidir {
-		return writeUniCompoundReferences(w, cdfs, ctx, req, n, refs.Ref)
+		return writeUniCompoundReferences(w, cdfs, ctx, req, n, refs.Pair())
 	}
-	return writeBidirCompoundReferences(w, cdfs, ctx, req, n, refs.Ref)
+	return writeBidirCompoundReferences(w, cdfs, ctx, req, n, refs.Pair())
 }
 
 func compoundReferencesUnidir(refs InterReferencesResult) (bool, error) {
-	if !refs.Compound || !refs.Ref[0].Valid() || !refs.Ref[1].Valid() {
+	if !refs.Compound || !refs.Ref0.Valid() || !refs.Ref1.Valid() {
 		return false, ErrInvalidDecodeState
 	}
-	switch refs.Ref {
+	switch refs.Pair() {
 	case [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameLast2},
 		[2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameLast3},
 		[2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameGolden},
 		[2]ReferenceFrame{ReferenceFrameBWD, ReferenceFrameAltref}:
 		return true, nil
 	}
-	if refs.Ref[0] >= ReferenceFrameLast && refs.Ref[0] <= ReferenceFrameGolden &&
-		refs.Ref[1] >= ReferenceFrameBWD && refs.Ref[1] <= ReferenceFrameAltref {
+	if refs.Ref0 >= ReferenceFrameLast && refs.Ref0 <= ReferenceFrameGolden &&
+		refs.Ref1 >= ReferenceFrameBWD && refs.Ref1 <= ReferenceFrameAltref {
 		return false, nil
 	}
 	return false, ErrInvalidDecodeState

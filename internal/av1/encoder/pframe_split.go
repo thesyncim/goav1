@@ -552,7 +552,7 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	}
 	// Zero-motion accounting (libaom update_state(), av1/encoder/
 	// encodeframe_utils.c) belongs to the decision pass.
-	if refs.Ref[0] == tile.ReferenceFrameLast {
+	if refs.Ref0 == tile.ReferenceFrameLast {
 		zmv := motionResult.MV[0]
 		if zmv.Row > -8 && zmv.Row < 8 && zmv.Col > -8 && zmv.Col < 8 {
 			st.cntZeroMV += int(block.VisibleW4) * int(block.VisibleH4)
@@ -754,7 +754,7 @@ func (st *lossyEncodeState) writePBlock(block tile.BlockVisit, scratch *tile.Blo
 		if !interModeResultUsesGlobalOnly(modeResult) {
 			lfMode = loopfilter.ModeDeltaClassMotion
 		}
-		if err := st.markLoopFilterBlock(block, lfTree, skip, false, uint8(refs.Ref[0])+1, lfMode); err != nil {
+		if err := st.markLoopFilterBlock(block, lfTree, skip, false, uint8(refs.Ref0)+1, lfMode); err != nil {
 			return fmt.Errorf("mark loop filter: %w", err)
 		}
 	}

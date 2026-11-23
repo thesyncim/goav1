@@ -94,7 +94,7 @@ func TestReadInterMotionAssignsModesAndResiduals(t *testing.T) {
 	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	req := InterMotionRequest{
 		References: refs,
 		Mode:       InterModeResult{Mode: InterModeNewMV},
@@ -132,7 +132,7 @@ func TestReadInterMotionCompoundAndGlobal(t *testing.T) {
 	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	refs := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameAltref}, Compound: true}
+	refs := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameAltref, Compound: true}
 	mode := InterModeResult{Compound: true, CompoundMode: CompoundInterModeGlobalGlobal}
 	result, err := state.ReadInterMotion(nil, InterMotionRequest{
 		References: refs,
@@ -167,7 +167,7 @@ func TestReadMotionVectorRejectsInvalidInputs(t *testing.T) {
 		t.Fatalf("nil cdfs err=%v want %v", err, entropy.ErrInvalidCDF)
 	}
 	if _, err := state.ReadInterMotion(nil, InterMotionRequest{
-		References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+		References: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone},
 		Mode:       InterModeResult{Mode: InterModeNearestMV, Compound: true},
 		Precision:  MVSubpelLow,
 	}); !errors.Is(err, ErrInvalidDecodeState) {

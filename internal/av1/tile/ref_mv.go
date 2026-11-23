@@ -793,7 +793,7 @@ func (req *ReferenceMVStackRequest) addTemporalReferenceMV(blkRow int, blkCol in
 }
 
 func (req *ReferenceMVStackRequest) temporalProjectedMV(sample TemporalMotionEntry, refIndex int) (motion.Vector, error) {
-	ref := req.References.Ref[refIndex]
+	ref := req.References.At(refIndex)
 	if !ref.Valid() {
 		return motion.Vector{}, ErrInvalidDecodeState
 	}
@@ -1820,7 +1820,7 @@ func (c *BlockModeContext) extendSingleReferenceMVStack(req *ReferenceMVStackReq
 			slot := x4 + off
 			step := c.aboveCandidateStep(slot, miSize-off)
 			if c.A.Intra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
-				stack.addSingleFallbackCandidate(c.AboveInterMotion[slot], req.References.Ref[0], req.RefSignBias)
+				stack.addSingleFallbackCandidate(c.AboveInterMotion[slot], req.References.Ref0, req.RefSignBias)
 			}
 			off += step
 		}
@@ -1831,7 +1831,7 @@ func (c *BlockModeContext) extendSingleReferenceMVStack(req *ReferenceMVStackReq
 			slot := y4 + off
 			step := c.leftCandidateStep(slot, miSize-off)
 			if c.L.Intra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
-				stack.addSingleFallbackCandidate(c.LeftInterMotion[slot], req.References.Ref[0], req.RefSignBias)
+				stack.addSingleFallbackCandidate(c.LeftInterMotion[slot], req.References.Ref0, req.RefSignBias)
 			}
 			off += step
 		}
@@ -1873,7 +1873,7 @@ func (c *BlockModeContext) collectCompoundReferenceLists(req *ReferenceMVStackRe
 			slot := x4 + off
 			step := c.aboveCandidateStep(slot, miSize-off)
 			if c.A.Intra[slot] == 0 && c.AboveMotionValid[slot] != 0 {
-				lists.add(c.AboveInterMotion[slot], req.References.Ref, req.RefSignBias)
+				lists.add(c.AboveInterMotion[slot], req.References.Pair(), req.RefSignBias)
 			}
 			off += step
 		}
@@ -1884,7 +1884,7 @@ func (c *BlockModeContext) collectCompoundReferenceLists(req *ReferenceMVStackRe
 			slot := y4 + off
 			step := c.leftCandidateStep(slot, miSize-off)
 			if c.L.Intra[slot] == 0 && c.LeftMotionValid[slot] != 0 {
-				lists.add(c.LeftInterMotion[slot], req.References.Ref, req.RefSignBias)
+				lists.add(c.LeftInterMotion[slot], req.References.Pair(), req.RefSignBias)
 			}
 			off += step
 		}
@@ -1984,16 +1984,16 @@ func validateInterMotion(result InterMotionResult) error {
 }
 
 func validateInterReferences(refs InterReferencesResult) error {
-	if !refs.Ref[0].Valid() {
+	if !refs.Ref0.Valid() {
 		return ErrInvalidDecodeState
 	}
 	if refs.Compound {
-		if !refs.Ref[1].Valid() {
+		if !refs.Ref1.Valid() {
 			return ErrInvalidDecodeState
 		}
 		return nil
 	}
-	if refs.Ref[1] != ReferenceFrameNone {
+	if refs.Ref1 != ReferenceFrameNone {
 		return ErrInvalidDecodeState
 	}
 	return nil
@@ -2049,8 +2049,8 @@ func blockIsLastVerticalRect(block BlockVisit, dims BlockDimensions) bool {
 func (stack *ReferenceMVStack) addDirectCandidate(candidate InterMotionResult, candidateSize BlockSize, refs InterReferencesResult, weight uint16, globalMVs [2]motion.Vector, globalTypes [2]parser.GlobalMotionType) (int, int) {
 	if refs.Compound {
 		if !candidate.References.Compound ||
-			candidate.References.Ref[0] != refs.Ref[0] ||
-			candidate.References.Ref[1] != refs.Ref[1] {
+			candidate.References.Ref0 != refs.Ref0 ||
+			candidate.References.Ref1 != refs.Ref1 {
 			return 0, 0
 		}
 		this := candidate.MV[0]
@@ -2067,7 +2067,7 @@ func (stack *ReferenceMVStack) addDirectCandidate(candidate InterMotionResult, c
 
 	matches := 0
 	for ref := range 2 {
-		if candidate.References.Ref[ref] != refs.Ref[0] {
+		if candidate.References.At(ref) != refs.Ref0 {
 			continue
 		}
 		mv := candidate.MV[ref]
@@ -2135,7 +2135,7 @@ func (stack *ReferenceMVStack) addSingleFallbackCandidate(candidate InterMotionR
 	// whose negated comp MV is libaom's third candidate). The stack array bound
 	// (MaxRefMVStackSize) still applies via addUniqueFallback.
 	for ref := 0; ref < 2; ref++ {
-		candidateRef := candidate.References.Ref[ref]
+		candidateRef := candidate.References.At(ref)
 		if !candidateRef.Valid() {
 			continue
 		}
@@ -2263,7 +2263,7 @@ type compoundReferenceLists struct {
 
 func (lists *compoundReferenceLists) add(candidate InterMotionResult, target [2]ReferenceFrame, signBias [referenceFrameCount]bool) {
 	for refIdx := range 2 {
-		candidateRef := candidate.References.Ref[refIdx]
+		candidateRef := candidate.References.At(refIdx)
 		if !candidateRef.Valid() {
 			continue
 		}

@@ -230,7 +230,7 @@ func TestReadCompoundBlend(t *testing.T) {
 func TestMarkCompoundBlend(t *testing.T) {
 	var ctx BlockModeContext
 	refs := InterReferencesResult{
-		Ref:      [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameBWD},
+		Ref0: ReferenceFrameLast, Ref1: ReferenceFrameBWD,
 		Compound: true,
 	}
 	if err := ctx.MarkInter(BlockSize16x16, 2, 3, refs, true); err != nil {

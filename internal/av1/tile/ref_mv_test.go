@@ -240,7 +240,7 @@ func TestReferenceMVStackRejectsInvalidInputs(t *testing.T) {
 	}
 	if _, err := (&BlockModeContext{}).BuildReferenceMVStack(ReferenceMVStackRequest{
 		Size:                        BlockSize16x16,
-		References:                  InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+		References:                  InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone},
 		TemporalMVSampleUnavailable: true,
 	}); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("temporal without ref-frame-mvs err=%v want %v", err, ErrInvalidDecodeState)
@@ -265,14 +265,14 @@ func TestReferenceMVStackAllocs(t *testing.T) {
 
 func TestBlockModeContextBuildReferenceMVStackSingle(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	above := InterMotionResult{
 		References: target,
 		Mode:       InterModeResult{Mode: InterModeNewMV},
 		MV:         [2]motion.Vector{{Row: 3, Col: 5}},
 	}
 	left := InterMotionResult{
-		References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameGolden, ReferenceFrameNone}},
+		References: InterReferencesResult{Ref0: ReferenceFrameGolden, Ref1: ReferenceFrameNone},
 		Mode:       InterModeResult{Mode: InterModeNearMV},
 		MV:         [2]motion.Vector{{Row: -7, Col: 9}},
 	}
@@ -311,7 +311,7 @@ func TestBlockModeContextBuildReferenceMVStackSingle(t *testing.T) {
 
 func TestBuildReferenceMVStackRefFrameMVSUnavailableSetsGlobalContext(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	req := ReferenceMVStackRequest{
 		Size:                        BlockSize16x16,
 		References:                  target,
@@ -341,7 +341,7 @@ func TestBuildReferenceMVStackUsesTemporalRefFrameMVS(t *testing.T) {
 	}
 	req := ReferenceMVStackRequest{
 		Size:       BlockSize16x16,
-		References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+		References: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone},
 
 		MICol:            0,
 		MIRow:            0,
@@ -389,7 +389,7 @@ func TestBuildReferenceMVStackTemporalCompoundProjectsBothRefs(t *testing.T) {
 	req := ReferenceMVStackRequest{
 		Size: BlockSize16x16,
 		References: InterReferencesResult{
-			Ref:      [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameBWD},
+			Ref0: ReferenceFrameLast, Ref1: ReferenceFrameBWD,
 			Compound: true,
 		},
 
@@ -427,7 +427,7 @@ func TestBuildReferenceMVStackTemporalUnavailableSetsGlobalContext(t *testing.T)
 	var ctx BlockModeContext
 	req := ReferenceMVStackRequest{
 		Size:             BlockSize16x16,
-		References:       InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+		References:       InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone},
 		TileMIColEnd:     16,
 		TileMIRowEnd:     16,
 		TemporalMVs:      newTemporalMotionFieldForTest(t, 16, 16),
@@ -452,14 +452,14 @@ func TestBuildReferenceMVStackTemporalUnavailableSetsGlobalContext(t *testing.T)
 
 func TestBlockModeContextBuildReferenceMVStackCompound(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameBWD}, Compound: true}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameBWD, Compound: true}
 	direct := InterMotionResult{
 		References: target,
 		Mode:       InterModeResult{Compound: true, CompoundMode: CompoundInterModeNewNew},
 		MV:         [2]motion.Vector{{Row: 4, Col: 6}, {Row: -2, Col: -8}},
 	}
 	fallback := InterMotionResult{
-		References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameAltref}, Compound: true},
+		References: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameAltref, Compound: true},
 		Mode:       InterModeResult{Compound: true, CompoundMode: CompoundInterModeNearNear},
 		MV:         [2]motion.Vector{{Row: 10, Col: 12}, {Row: 14, Col: 16}},
 	}
@@ -493,7 +493,7 @@ func TestBlockModeContextBuildReferenceMVStackCompound(t *testing.T) {
 func TestBlockModeContextMarkInterClearsStaleMotion(t *testing.T) {
 	var ctx BlockModeContext
 	motionResult := InterMotionResult{
-		References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+		References: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone},
 		Mode:       InterModeResult{Mode: InterModeNewMV},
 		MV:         [2]motion.Vector{{Row: 3, Col: 5}},
 	}
@@ -529,7 +529,7 @@ func TestBlockModeContextMarkInterClearsStaleMotion(t *testing.T) {
 func TestBlockModeContextMarkInterMotionFillsGrid(t *testing.T) {
 	var ctx BlockModeContext
 	motionResult := InterMotionResult{
-		References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+		References: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone},
 		Mode:       InterModeResult{Mode: InterModeNearMV},
 		MV:         [2]motion.Vector{{Row: 0, Col: -7}},
 	}
@@ -553,7 +553,7 @@ func TestBlockModeContextMarkInterMotionFillsGrid(t *testing.T) {
 
 func TestBuildReferenceMVStackUsesOuterGridCandidateForNearMV(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	left := InterMotionResult{
 		References: target,
 		Mode:       InterModeResult{Mode: InterModeNearMV},
@@ -616,7 +616,7 @@ func TestBuildReferenceMVStackUsesOuterGridCandidateForNearMV(t *testing.T) {
 // downstream.
 func TestBuildReferenceMVStackIntraNearestAdvancesProcessedRows(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	topRight := InterMotionResult{
 		References: target,
 		Mode:       InterModeResult{Mode: InterModeNewMV},
@@ -673,7 +673,7 @@ func TestBuildReferenceMVStackIntraNearestAdvancesProcessedRows(t *testing.T) {
 
 func TestBuildReferenceMVStackUsesTopRightBeforeNearestCutoff(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	above := InterMotionResult{
 		References: target,
 		Mode:       InterModeResult{Mode: InterModeNearMV},
@@ -733,7 +733,7 @@ func TestBuildReferenceMVStackSingleGlobalFallbackDoesNotInflateCount(t *testing
 	global := motion.Vector{Row: 11, Col: -13}
 	result, err := ctx.BuildReferenceMVStack(ReferenceMVStackRequest{
 		Size:       BlockSize16x16,
-		References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+		References: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone},
 		GlobalMVs:  [2]motion.Vector{global},
 	})
 	if err != nil {
@@ -809,7 +809,7 @@ func FuzzBuildReferenceMVStack(f *testing.F) {
 		if compound {
 			ref1 = ReferenceFrame(rawRef1 % uint8(referenceFrameCount))
 		}
-		refs := InterReferencesResult{Ref: [2]ReferenceFrame{ref0, ref1}, Compound: compound}
+		refs := InterReferencesResult{Ref0: ref0, Ref1: ref1, Compound: compound}
 		mode := InterModeResult{Mode: InterMode(rawMode % uint8(interModeCount))}
 		if compound {
 			mode = InterModeResult{Compound: true, CompoundMode: CompoundInterMode(rawMode % uint8(compoundInterModeCount))}
@@ -822,7 +822,7 @@ func FuzzBuildReferenceMVStack(f *testing.F) {
 			MV:         [2]motion.Vector{{Row: aboveRow, Col: aboveCol}, {Row: -aboveRow, Col: -aboveCol}},
 		}
 		left := InterMotionResult{
-			References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameGolden, ReferenceFrameAltref}, Compound: true},
+			References: InterReferencesResult{Ref0: ReferenceFrameGolden, Ref1: ReferenceFrameAltref, Compound: true},
 			Mode:       InterModeResult{Compound: true, CompoundMode: CompoundInterModeNearNear},
 			MV:         [2]motion.Vector{{Row: leftRow, Col: leftCol}, {Row: -leftCol, Col: leftRow}},
 		}
@@ -874,8 +874,8 @@ func seedAboveMotion(ctx *BlockModeContext, x4 int, size BlockSize, result Inter
 	for i := 0; i < int(dims.W4); i++ {
 		slot := x4 + i
 		ctx.A.Intra[slot] = 0
-		ctx.A.Ref[0][slot] = result.References.Ref[0]
-		ctx.A.Ref[1][slot] = result.References.Ref[1]
+		ctx.A.Ref[0][slot] = result.References.Ref0
+		ctx.A.Ref[1][slot] = result.References.Ref1
 		ctx.A.CompType[slot] = compInterTypeFor(result.References.Compound)
 		ctx.AboveInterMotion[slot] = result
 		ctx.AboveMotionValid[slot] = 1
@@ -888,8 +888,8 @@ func seedLeftMotion(ctx *BlockModeContext, y4 int, size BlockSize, result InterM
 	for i := 0; i < int(dims.H4); i++ {
 		slot := y4 + i
 		ctx.L.Intra[slot] = 0
-		ctx.L.Ref[0][slot] = result.References.Ref[0]
-		ctx.L.Ref[1][slot] = result.References.Ref[1]
+		ctx.L.Ref[0][slot] = result.References.Ref0
+		ctx.L.Ref[1][slot] = result.References.Ref1
 		ctx.L.CompType[slot] = compInterTypeFor(result.References.Compound)
 		ctx.LeftInterMotion[slot] = result
 		ctx.LeftMotionValid[slot] = 1
@@ -911,7 +911,7 @@ func seedLeftMotion(ctx *BlockModeContext, y4 int, size BlockSize, result InterM
 // DRL loop one bit early.
 func TestBuildReferenceMVStackGlobalMVSubstitution(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	candidateMV := motion.Vector{Row: -9, Col: -67}
 	// Seed an above neighbor whose stored prediction mode is GLOBALMV. libaom
 	// substitutes gm_mv_candidates[0] for this neighbor in the stack.
@@ -976,7 +976,7 @@ func TestBuildReferenceMVStackGlobalMVSubstitution(t *testing.T) {
 // non-translational warps via the `type > TRANSLATION` guard.
 func TestBuildReferenceMVStackTranslationOnlySkipsGlobalMVSubstitution(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	candidateMV := motion.Vector{Row: -9, Col: -67}
 	seedAboveMotion(&ctx, 4, BlockSize16x8, InterMotionResult{
 		References: target,
@@ -1006,7 +1006,7 @@ func TestBuildReferenceMVStackTranslationOnlySkipsGlobalMVSubstitution(t *testin
 // luma samples (W4>=2 and H4>=2), matching libaom's block_size_allowed gate.
 func TestBuildReferenceMVStackSmallGlobalMVBlockSkipsSubstitution(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	candidateMV := motion.Vector{Row: -9, Col: -67}
 	seedAboveMotion(&ctx, 4, BlockSize8x4, InterMotionResult{
 		References: target,
@@ -1045,7 +1045,7 @@ func TestBuildReferenceMVStackSmallGlobalMVBlockSkipsSubstitution(t *testing.T) 
 // can reach.
 func TestScanOuterBlockReferenceMVUsesSBLeftHistory(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	leftMV := motion.Vector{Row: 7, Col: -11}
 	candidate := InterMotionResult{
 		References: target,
@@ -1087,7 +1087,7 @@ func TestScanOuterBlockReferenceMVUsesSBLeftHistory(t *testing.T) {
 // a stale SBLeft snapshot when the current SB is the leftmost in the tile.
 func TestScanOuterBlockReferenceMVSkipsSBLeftWithoutHaveLeft(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	ctx.SBLeftInterMotionGrid[0][29] = InterMotionResult{
 		References: target,
 		Mode:       InterModeResult{Mode: InterModeNearestMV},
@@ -1121,7 +1121,7 @@ func TestScanOuterBlockReferenceMVSkipsSBLeftWithoutHaveLeft(t *testing.T) {
 // scan_blk_mbmi() is_inside() check.
 func TestScanOuterBlockReferenceMVSkipsSBTopAtTileBoundary(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	mv := InterMotionResult{
 		References: target,
 		Mode:       InterModeResult{Mode: InterModeNearestMV},
@@ -1175,7 +1175,7 @@ func TestScanOuterBlockReferenceMVSkipsSBTopAtTileBoundary(t *testing.T) {
 // cascading into the (68,0) seq=228966 DRL/joint divergence.
 func TestScanOuterBlockReferenceMVUsesSBTopCorner(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	cornerMV := motion.Vector{Row: 7, Col: 21}
 	candidate := InterMotionResult{
 		References: target,
@@ -1253,7 +1253,7 @@ func TestScanOuterBlockReferenceMVUsesSBTopCorner(t *testing.T) {
 // monochrome frame 3 SB(4,1) divergence point lines up with libaom.
 func TestScanOuterBlockReferenceMVUsesSBDiagonalCorner(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	cornerMV := motion.Vector{Row: 4, Col: -6}
 	candidate := InterMotionResult{
 		References: target,
@@ -1327,7 +1327,7 @@ func TestScanOuterBlockReferenceMVUsesSBDiagonalCorner(t *testing.T) {
 // one cell off libaom.
 func TestScanGridColReferenceMVsUsesSBLeftHistory(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	leftMV := motion.Vector{Row: -8, Col: 10}
 	candidate := InterMotionResult{
 		References: target,
@@ -1374,7 +1374,7 @@ func TestScanGridColReferenceMVsUsesSBLeftHistory(t *testing.T) {
 // at the leftmost SB column do not consult a stale snapshot.
 func TestScanGridColReferenceMVsSkipsSBLeftWithoutHaveLeft(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	ctx.SBLeftInterMotionGrid[0][11] = InterMotionResult{
 		References: target,
 		Mode:       InterModeResult{Mode: InterModeNearestMV},
@@ -1422,7 +1422,7 @@ func TestScanGridColReferenceMVsSkipsSBLeftWithoutHaveLeft(t *testing.T) {
 // 75 (case 1, ref_match=2) and steering refmv_cdf one cell off libaom.
 func TestScanGridColReferenceMVsStepsPastIntraNeighborInPriorSB(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	deeperMV := motion.Vector{Row: -4, Col: 23}
 	// depth=4 (x4=-5, depth = -x4-1 = 4): cell five columns into the prior
 	// SB. Seed the row immediately past where libaom's len=2 step would
@@ -1482,7 +1482,7 @@ func TestScanGridColReferenceMVsStepsPastIntraNeighborInPriorSB(t *testing.T) {
 // TestScanGridRowReferenceMVsAdvancesProcessedRowsForIntra.
 func TestScanGridColReferenceMVsAdvancesProcessedColsForIntra(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	// Seed an intra neighbor at (x=3, y=3) within the current SB: the cell
 	// at X4=6 + colOffset=-3, Y4=2 + rowOffset=1 + i=0. MotionValid=0
 	// (intra) but BlockSize recorded so the scan honors libaom's mi_size
@@ -1533,7 +1533,7 @@ func TestScanGridColReferenceMVsAdvancesProcessedColsForIntra(t *testing.T) {
 // Symmetric to TestScanGridColReferenceMVsUsesSBLeftHistory.
 func TestScanGridRowReferenceMVsUsesSBTopHistory(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	aboveMV := motion.Vector{Row: -8, Col: 10}
 	candidate := InterMotionResult{
 		References: target,
@@ -1582,7 +1582,7 @@ func TestScanGridRowReferenceMVsUsesSBTopHistory(t *testing.T) {
 // TestScanGridColReferenceMVsSkipsSBLeftWithoutHaveLeft.
 func TestScanGridRowReferenceMVsSkipsSBTopWithoutHaveTop(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	ctx.SBTopInterMotionGrid[0][5] = InterMotionResult{
 		References: target,
 		Mode:       InterModeResult{Mode: InterModeNearestMV},
@@ -1620,7 +1620,7 @@ func TestScanGridRowReferenceMVsSkipsSBTopWithoutHaveTop(t *testing.T) {
 // *processedRows from the cell's mi_size before checking ref-frame match.
 func TestScanGridRowReferenceMVsAdvancesProcessedRowsForIntra(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	// Seed an intra neighbor at (x=3, y=3) within the current SB: the cell
 	// at X4=2 + colOffset=1 + i=0, Y4=6 + rowOffset=-3. MotionValid=0 (intra)
 	// but BlockSize recorded so the scan honors libaom's mi_size stride.
@@ -1670,7 +1670,7 @@ func TestScanGridRowReferenceMVsAdvancesProcessedRowsForIntra(t *testing.T) {
 // column pixel and chain-corrupting downstream ref-MV stacks.
 func TestBuildReferenceMVStackSingleRefMVsReflectFinalSort(t *testing.T) {
 	var ctx BlockModeContext
-	target := InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}
+	target := InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}
 	// Direct path: build a stack with insertion order != weight order.
 	stack := ReferenceMVStack{}
 	light := motion.Vector{Row: -1, Col: -8}

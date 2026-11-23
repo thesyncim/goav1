@@ -941,8 +941,8 @@ func (b *FrameWorkBatch) PredictBlockLumaInterWithFilters(index int, visit tile.
 	}
 	motionResult := visit.Prediction.InterMotion
 	if motionResult.References.Compound ||
-		!motionResult.References.Ref[0].Valid() ||
-		motionResult.References.Ref[1] != tile.ReferenceFrameNone {
+		!motionResult.References.Ref0.Valid() ||
+		motionResult.References.Ref1 != tile.ReferenceFrameNone {
 		return ErrInvalidBatch
 	}
 	return b.predictBlockInterPlaneWithFilters(index, visit, FrameWorkPlaneY, filters, nil)
@@ -1023,8 +1023,8 @@ func (b *FrameWorkBatch) PredictBlockLumaInterCompoundWithFilters(index int, vis
 	}
 	motionResult := visit.Prediction.InterMotion
 	if !motionResult.References.Compound ||
-		!motionResult.References.Ref[0].Valid() ||
-		!motionResult.References.Ref[1].Valid() {
+		!motionResult.References.Ref0.Valid() ||
+		!motionResult.References.Ref1.Valid() {
 		return ErrInvalidBatch
 	}
 	return b.predictBlockInterCompoundPlaneWithFilters(index, visit, FrameWorkPlaneY, scratch, filters)
@@ -1068,15 +1068,15 @@ func (b *FrameWorkBatch) predictBlockInterPlaneWithFiltersPtr(index int, visit *
 		if warpable {
 			return b.predictBlockInterWarpPlaneWithGeometry(visit, plane, filters, scratch, geom)
 		}
-		return b.predictBlockInterReferencePlaneToOutputWithGeometry(geom, visit.Block, plane, visit.Prediction.InterMotion.References.Ref[0], visit.Prediction.InterMotion.MV[0], filters, scratch)
+		return b.predictBlockInterReferencePlaneToOutputWithGeometry(geom, visit.Block, plane, visit.Prediction.InterMotion.References.Ref0, visit.Prediction.InterMotion.MV[0], filters, scratch)
 	}
 	if visit.Prediction.MotionModeValid && !frameWorkPredictionUsesTranslationPtr(&visit.Prediction) {
 		return ErrInvalidBatch
 	}
 	motionResult := visit.Prediction.InterMotion
 	if motionResult.References.Compound ||
-		!motionResult.References.Ref[0].Valid() ||
-		motionResult.References.Ref[1] != tile.ReferenceFrameNone {
+		!motionResult.References.Ref0.Valid() ||
+		motionResult.References.Ref1 != tile.ReferenceFrameNone {
 		return ErrInvalidBatch
 	}
 	// libaom promotes GLOBALMV blocks with a non-translational frame-level
@@ -1111,7 +1111,7 @@ func (b *FrameWorkBatch) predictBlockInterPlaneWithFiltersPtr(index int, visit *
 	if visit.Prediction.SubChromaInter != nil && (plane == FrameWorkPlaneU || plane == FrameWorkPlaneV) {
 		return b.predictBlockInterSubChromaPlanePtr(index, visit, plane, scratch)
 	}
-	return b.predictBlockInterReferencePlaneToOutput(index, &visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters, scratch)
+	return b.predictBlockInterReferencePlaneToOutput(index, &visit.Block, plane, motionResult.References.Ref0, motionResult.MV[0], filters, scratch)
 }
 
 func (b *FrameWorkBatch) predictBlockInterSubChromaPlanePtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkInterPredictionScratch) error {
@@ -1188,7 +1188,7 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithGeometry(visit *til
 		return ErrInvalidBatch
 	}
 	motionResult := visit.Prediction.InterMotion
-	reference, ok := frameWorkReferenceFromTile(motionResult.References.Ref[0])
+	reference, ok := frameWorkReferenceFromTile(motionResult.References.Ref0)
 	if !ok {
 		return ErrInvalidBatch
 	}
@@ -1373,8 +1373,8 @@ func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFiltersPtr(index int, vi
 	}
 	motionResult := visit.Prediction.InterMotion
 	if motionResult.References.Compound ||
-		!motionResult.References.Ref[0].Valid() ||
-		motionResult.References.Ref[1] != tile.ReferenceFrameNone {
+		!motionResult.References.Ref0.Valid() ||
+		motionResult.References.Ref1 != tile.ReferenceFrameNone {
 		return ErrInvalidBatch
 	}
 	geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
@@ -1399,10 +1399,10 @@ func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFiltersPtr(index int, vi
 		if visit.Prediction.Extras == nil {
 			return ErrInvalidBatch
 		}
-		if err := b.predictBlockInterGlobalWarpToScratch(inter, plane, motionResult.References.Ref[0], visit.Prediction.Extras.GlobalWarpedMotion, motionResult.MV[0], geom, filters, scratch); err != nil {
+		if err := b.predictBlockInterGlobalWarpToScratch(inter, plane, motionResult.References.Ref0, visit.Prediction.Extras.GlobalWarpedMotion, motionResult.MV[0], geom, filters, scratch); err != nil {
 			return err
 		}
-	} else if err := b.predictBlockInterReferencePlaneToScratch(inter, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters, scratch); err != nil {
+	} else if err := b.predictBlockInterReferencePlaneToScratch(inter, visit.Block, plane, motionResult.References.Ref0, motionResult.MV[0], geom, filters, scratch); err != nil {
 		return err
 	}
 	mode, ok := frameWorkInterIntraPredictionMode(visit.Prediction.InterIntra.Mode)
@@ -1491,7 +1491,7 @@ func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithGeometry(visit *tile.Bloc
 		return ErrInvalidBatch
 	}
 	motionResult := visit.Prediction.InterMotion
-	reference, ok := frameWorkReferenceFromTile(motionResult.References.Ref[0])
+	reference, ok := frameWorkReferenceFromTile(motionResult.References.Ref0)
 	if !ok {
 		return ErrInvalidBatch
 	}
@@ -1545,15 +1545,15 @@ func (b *FrameWorkBatch) predictBlockInterOBMCPlaneWithFiltersPtr(index int, vis
 	}
 	motionResult := visit.Prediction.InterMotion
 	if motionResult.References.Compound ||
-		!motionResult.References.Ref[0].Valid() ||
-		motionResult.References.Ref[1] != tile.ReferenceFrameNone {
+		!motionResult.References.Ref0.Valid() ||
+		motionResult.References.Ref1 != tile.ReferenceFrameNone {
 		return ErrInvalidBatch
 	}
 	geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
 	if err != nil || !ok {
 		return err
 	}
-	if err := b.predictBlockInterReferencePlaneToOutput(index, &visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], filters, scratch); err != nil {
+	if err := b.predictBlockInterReferencePlaneToOutput(index, &visit.Block, plane, motionResult.References.Ref0, motionResult.MV[0], filters, scratch); err != nil {
 		return err
 	}
 	tmp, err := frameWorkInterScratchPlane(scratch.First[:], geom.bytesPerSample(), geom.width(), geom.height())
@@ -1612,8 +1612,8 @@ func (b *FrameWorkBatch) predictBlockInterCompoundPlaneWithFiltersPtr(index int,
 	}
 	motionResult := visit.Prediction.InterMotion
 	if !motionResult.References.Compound ||
-		!motionResult.References.Ref[0].Valid() ||
-		!motionResult.References.Ref[1].Valid() {
+		!motionResult.References.Ref0.Valid() ||
+		!motionResult.References.Ref1.Valid() {
 		return ErrInvalidBatch
 	}
 	if b.Sequence.ColorConfig.BitDepth == 8 {
@@ -1654,10 +1654,10 @@ func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *t
 		}
 		models = visit.Prediction.Extras.GlobalWarpedMotionCompound
 	}
-	if err := b.predictBlockInterCompoundRefToConvBuf(&scratch.Conv0, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters, warp0, models[0], &scratch.Scaled, &scratch.Compound); err != nil {
+	if err := b.predictBlockInterCompoundRefToConvBuf(&scratch.Conv0, plane, motionResult.References.Ref0, motionResult.MV[0], geom, filters, warp0, models[0], &scratch.Scaled, &scratch.Compound); err != nil {
 		return err
 	}
-	if err := b.predictBlockInterCompoundRefToConvBuf(&scratch.Conv1, plane, motionResult.References.Ref[1], motionResult.MV[1], geom, filters, warp1, models[1], &scratch.Scaled, &scratch.Compound); err != nil {
+	if err := b.predictBlockInterCompoundRefToConvBuf(&scratch.Conv1, plane, motionResult.References.Ref1, motionResult.MV[1], geom, filters, warp1, models[1], &scratch.Scaled, &scratch.Compound); err != nil {
 		return err
 	}
 	return b.blendCompoundConvBufs(visit, plane, scratch, blend, geom.Output, geom.bytesPerSample(), geom.X, geom.Y, geom.width(), geom.height(), geom.SubsamplingX, geom.SubsamplingY)
@@ -1679,8 +1679,8 @@ func (b *FrameWorkBatch) predictBlockInterCompoundLean(visit *tile.BlockLoopVisi
 		return false, nil
 	}
 	motionResult := &visit.Prediction.InterMotion
-	reference0, ok0 := frameWorkReferenceFromTile(motionResult.References.Ref[0])
-	reference1, ok1 := frameWorkReferenceFromTile(motionResult.References.Ref[1])
+	reference0, ok0 := frameWorkReferenceFromTile(motionResult.References.Ref0)
+	reference1, ok1 := frameWorkReferenceFromTile(motionResult.References.Ref1)
 	if !ok0 || !ok1 {
 		return false, nil
 	}
@@ -1809,11 +1809,11 @@ func (b *FrameWorkBatch) frameWorkCompoundOffsets(refs tile.InterReferencesResul
 		if blend.CompoundIndex != 0 || !b.Sequence.EnableOrderHint || b.Sequence.OrderHintBits == 0 || b.Sequence.OrderHintBits > 8 {
 			return 0, 0, ErrInvalidBatch
 		}
-		if !refs.Compound || !refs.Ref[0].Valid() || !refs.Ref[1].Valid() {
+		if !refs.Compound || !refs.Ref0.Valid() || !refs.Ref1.Valid() {
 			return 0, 0, ErrInvalidBatch
 		}
-		ref0 := b.ReferenceOrderHints[refs.Ref[0]]
-		ref1 := b.ReferenceOrderHints[refs.Ref[1]]
+		ref0 := b.ReferenceOrderHints[refs.Ref0]
+		ref1 := b.ReferenceOrderHints[refs.Ref1]
 		return frameWorkDistanceWeightedCompoundOffsets(b.Sequence.OrderHintBits, b.FrameHeader.OrderHint, ref0, ref1)
 	default:
 		return 0, 0, ErrInvalidBatch
@@ -2324,10 +2324,10 @@ func (b *FrameWorkBatch) predictAndBlendOBMCLeft(plane FrameWorkPlane, geom fram
 
 func (b *FrameWorkBatch) predictOBMCNeighborToScratch(dst frame.Plane, plane FrameWorkPlane, neighbor tile.OverlappableNeighbor, geom frameWorkPredictionPlaneGeometry, dstX int, dstY int, absX int, absY int, width int, height int, filterW int, filterH int, scratch *FrameWorkInterPredictionScratch) error {
 	motionResult := neighbor.Motion
-	if !motionResult.References.Ref[0].Valid() {
+	if !motionResult.References.Ref0.Valid() {
 		return ErrInvalidBatch
 	}
-	return b.predictInterReferenceAreaToScratch(dst, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, dstX, dstY, absX, absY, width, height, filterW, filterH, neighbor.InterpFilters, scratch)
+	return b.predictInterReferenceAreaToScratch(dst, plane, motionResult.References.Ref0, motionResult.MV[0], geom, dstX, dstY, absX, absY, width, height, filterW, filterH, neighbor.InterpFilters, scratch)
 }
 
 func (b *FrameWorkBatch) predictInterReferenceAreaToScratch(dst frame.Plane, plane FrameWorkPlane, refFrame tile.ReferenceFrame, mv motion.Vector, geom frameWorkPredictionPlaneGeometry, dstX int, dstY int, absX int, absY int, width int, height int, filterW int, filterH int, filters motion.InterpFilters, scratch *FrameWorkInterPredictionScratch) error {

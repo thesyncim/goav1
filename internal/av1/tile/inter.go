@@ -62,9 +62,22 @@ type InterReferenceRequest struct {
 
 // InterReferencesResult is the entropy-decoded reference-frame pair.
 type InterReferencesResult struct {
-	Ref      [2]ReferenceFrame
-	Compound bool
-	Unidir   bool
+	Ref0, Ref1 ReferenceFrame
+	Compound   bool
+	Unidir     bool
+}
+
+// At is reference i (0 or 1).
+func (r *InterReferencesResult) At(i int) ReferenceFrame {
+	if i == 0 {
+		return r.Ref0
+	}
+	return r.Ref1
+}
+
+// Pair is the reference pair as an array.
+func (r *InterReferencesResult) Pair() [2]ReferenceFrame {
+	return [2]ReferenceFrame{r.Ref0, r.Ref1}
 }
 
 func (ref ReferenceFrame) Valid() bool {
@@ -379,7 +392,7 @@ func (s *DecodeState) ReadInterReferences(cdfs *InterRefCDFs, ctx *BlockModeCont
 		if !req.SkipModeRefs[0].Valid() || !req.SkipModeRefs[1].Valid() {
 			return InterReferencesResult{}, ErrInvalidDecodeState
 		}
-		return InterReferencesResult{Ref: req.SkipModeRefs, Compound: true}, nil
+		return InterReferencesResult{Ref0: req.SkipModeRefs[0], Ref1: req.SkipModeRefs[1], Compound: true}, nil
 	}
 	if req.SegmentationEnabled {
 		if req.Segment.RefFrame > 0 {
@@ -387,13 +400,13 @@ func (s *DecodeState) ReadInterReferences(cdfs *InterRefCDFs, ctx *BlockModeCont
 			if !ref.Valid() {
 				return InterReferencesResult{}, ErrInvalidDecodeState
 			}
-			return InterReferencesResult{Ref: [2]ReferenceFrame{ref, ReferenceFrameNone}}, nil
+			return InterReferencesResult{Ref0: ref, Ref1: ReferenceFrameNone}, nil
 		}
 		if req.Segment.RefFrame == 0 {
 			return InterReferencesResult{}, ErrInvalidDecodeState
 		}
 		if req.Segment.Skip || req.Segment.GlobalMV {
-			return InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}}, nil
+			return InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone}, nil
 		}
 	}
 
@@ -408,7 +421,7 @@ func (s *DecodeState) ReadInterReferences(cdfs *InterRefCDFs, ctx *BlockModeCont
 	if err != nil {
 		return InterReferencesResult{}, err
 	}
-	return InterReferencesResult{Ref: [2]ReferenceFrame{ref, ReferenceFrameNone}}, nil
+	return InterReferencesResult{Ref0: ref, Ref1: ReferenceFrameNone}, nil
 }
 
 func (s *DecodeState) ReadReferenceMode(cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest) (bool, error) {
@@ -467,23 +480,23 @@ func (s *DecodeState) readUniCompoundReferences(cdfs *InterRefCDFs, ctx *BlockMo
 		return InterReferencesResult{}, err
 	}
 	if bit {
-		return InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameBWD, ReferenceFrameAltref}, Compound: true, Unidir: true}, nil
+		return InterReferencesResult{Ref0: ReferenceFrameBWD, Ref1: ReferenceFrameAltref, Compound: true, Unidir: true}, nil
 	}
 	bit, err = s.readUniCompRefBit(cdfs, ctx, req, 1)
 	if err != nil {
 		return InterReferencesResult{}, err
 	}
 	if !bit {
-		return InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameLast2}, Compound: true, Unidir: true}, nil
+		return InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameLast2, Compound: true, Unidir: true}, nil
 	}
 	bit, err = s.readUniCompRefBit(cdfs, ctx, req, 2)
 	if err != nil {
 		return InterReferencesResult{}, err
 	}
 	if bit {
-		return InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameGolden}, Compound: true, Unidir: true}, nil
+		return InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameGolden, Compound: true, Unidir: true}, nil
 	}
-	return InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameLast3}, Compound: true, Unidir: true}, nil
+	return InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameLast3, Compound: true, Unidir: true}, nil
 }
 
 func (s *DecodeState) readBidirCompoundReferences(cdfs *InterRefCDFs, ctx *BlockModeContext, req InterReferenceRequest) (InterReferencesResult, error) {
@@ -500,9 +513,9 @@ func (s *DecodeState) readBidirCompoundReferences(cdfs *InterRefCDFs, ctx *Block
 			return InterReferencesResult{}, err
 		}
 		if bit {
-			result.Ref[0] = ReferenceFrameLast2
+			result.Ref0 = ReferenceFrameLast2
 		} else {
-			result.Ref[0] = ReferenceFrameLast
+			result.Ref0 = ReferenceFrameLast
 		}
 	} else {
 		bit, err = s.readCompFwdRefBit(cdfs, ctx, req, 2)
@@ -510,9 +523,9 @@ func (s *DecodeState) readBidirCompoundReferences(cdfs *InterRefCDFs, ctx *Block
 			return InterReferencesResult{}, err
 		}
 		if bit {
-			result.Ref[0] = ReferenceFrameGolden
+			result.Ref0 = ReferenceFrameGolden
 		} else {
-			result.Ref[0] = ReferenceFrameLast3
+			result.Ref0 = ReferenceFrameLast3
 		}
 	}
 
@@ -521,7 +534,7 @@ func (s *DecodeState) readBidirCompoundReferences(cdfs *InterRefCDFs, ctx *Block
 		return InterReferencesResult{}, err
 	}
 	if bit {
-		result.Ref[1] = ReferenceFrameAltref
+		result.Ref1 = ReferenceFrameAltref
 		return result, nil
 	}
 	bit, err = s.readCompBwdRefBit(cdfs, ctx, req, 1)
@@ -529,9 +542,9 @@ func (s *DecodeState) readBidirCompoundReferences(cdfs *InterRefCDFs, ctx *Block
 		return InterReferencesResult{}, err
 	}
 	if bit {
-		result.Ref[1] = ReferenceFrameAltref2
+		result.Ref1 = ReferenceFrameAltref2
 	} else {
-		result.Ref[1] = ReferenceFrameBWD
+		result.Ref1 = ReferenceFrameBWD
 	}
 	return result, nil
 }
@@ -752,14 +765,14 @@ func (c *BlockModeContext) validateInterContext(size BlockSize, x4, y4 int, resu
 		y4+int(dims.H4) > MaxBlockModeSlots {
 		return BlockDimensions{}, ErrInvalidDecodeState
 	}
-	if !result.Ref[0].Valid() {
+	if !result.Ref0.Valid() {
 		return BlockDimensions{}, ErrInvalidDecodeState
 	}
 	if result.Compound {
-		if !result.Ref[1].Valid() {
+		if !result.Ref1.Valid() {
 			return BlockDimensions{}, ErrInvalidDecodeState
 		}
-	} else if result.Ref[1] != ReferenceFrameNone {
+	} else if result.Ref1 != ReferenceFrameNone {
 		return BlockDimensions{}, ErrInvalidDecodeState
 	}
 

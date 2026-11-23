@@ -385,17 +385,17 @@ func (b *FrameWorkBatch) predictBlockInterLean(index int, visit *tile.BlockLoopV
 	}
 	if refs.Compound {
 		blend := pred.CompoundBlend
-		if scratch == nil || !refs.Ref[0].Valid() || !refs.Ref[1].Valid() ||
+		if scratch == nil || !refs.Ref0.Valid() || !refs.Ref1.Valid() ||
 			(blend.Type != tile.CompoundTypeAverage && blend.Type != tile.CompoundTypeDistWtd &&
 				blend.Type != tile.CompoundTypeWedge && blend.Type != tile.CompoundTypeDiffWtd) {
 			return false, nil
 		}
 		return true, b.predictBlockInterLeanPlanes(index, visit, scratch, filters, true)
 	}
-	if pred.GlobalWarpedMotionValid || !refs.Ref[0].Valid() || refs.Ref[1] != tile.ReferenceFrameNone {
+	if pred.GlobalWarpedMotionValid || !refs.Ref0.Valid() || refs.Ref1 != tile.ReferenceFrameNone {
 		return false, nil
 	}
-	if _, ok := frameWorkReferenceFromTile(refs.Ref[0]); !ok {
+	if _, ok := frameWorkReferenceFromTile(refs.Ref0); !ok {
 		return false, nil
 	}
 	return true, b.predictBlockInterLeanPlanes(index, visit, scratch, filters, false)
@@ -464,7 +464,7 @@ func (b *FrameWorkBatch) predictBlockInterLeanPlanes(index int, visit *tile.Bloc
 		var tmp frame.Plane
 		var ref *frame.Plane
 		if b.leanSampleWidth(t.bps) {
-			reference, _ := frameWorkReferenceFromTile(visit.Prediction.InterMotion.References.Ref[0])
+			reference, _ := frameWorkReferenceFromTile(visit.Prediction.InterMotion.References.Ref0)
 			ref = b.sameSizeRefPlane(reference, plane, t.codedW, t.codedH, &tmp)
 		}
 		if ref == nil {
@@ -672,12 +672,12 @@ func (b *FrameWorkBatch) reconBInter(index int, l *frameWorkLeanInter, visit *ti
 	compound := refs.Compound
 	if compound {
 		blend := pred.CompoundBlend.Type
-		if scratch == nil || !refs.Ref[0].Valid() || !refs.Ref[1].Valid() ||
+		if scratch == nil || !refs.Ref0.Valid() || !refs.Ref1.Valid() ||
 			(blend != tile.CompoundTypeAverage && blend != tile.CompoundTypeDistWtd &&
 				blend != tile.CompoundTypeWedge && blend != tile.CompoundTypeDiffWtd) {
 			return false, nil
 		}
-	} else if pred.GlobalWarpedMotionValid || !refs.Ref[0].Valid() || refs.Ref[1] != tile.ReferenceFrameNone {
+	} else if pred.GlobalWarpedMotionValid || !refs.Ref0.Valid() || refs.Ref1 != tile.ReferenceFrameNone {
 		return false, nil
 	}
 	// dav1d's b->filter2d: the block's switchable pair, or the frame's.
@@ -704,8 +704,8 @@ func (b *FrameWorkBatch) reconBInter(index int, l *frameWorkLeanInter, visit *ti
 		return true, ErrInvalidBatch
 	}
 	mv := &pred.InterMotion.MV
-	reference, _ := frameWorkReferenceFromTile(refs.Ref[0])
-	reference1, _ := frameWorkReferenceFromTile(refs.Ref[1])
+	reference, _ := frameWorkReferenceFromTile(refs.Ref0)
+	reference1, _ := frameWorkReferenceFromTile(refs.Ref1)
 	// The references' plane views, bound once per job; slot ref*3+plane.
 	slot0, slot1 := uint(reference)*3, uint(reference1)*3
 	if l.refBound>>slot0&7 != 7 {

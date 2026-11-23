@@ -265,10 +265,10 @@ func (rt *refmvsTile) splatInterBlock(size BlockSize, by4, bx4 int32, motionResu
 	refs := motionResult.References
 	mode := motionResult.Mode
 	mv := uint64(packRefmvsMV(motionResult.MV[0]))
-	ref0, ref1 := int8(refs.Ref[0])+1, int8(-1)
+	ref0, ref1 := int8(refs.Ref0)+1, int8(-1)
 	mf := uint8(0)
 	if refs.Compound {
-		ref1 = int8(refs.Ref[1]) + 1
+		ref1 = int8(refs.Ref1) + 1
 		mv |= uint64(packRefmvsMV(motionResult.MV[1])) << 32
 		cm := mode.CompoundMode
 		if cm == CompoundInterModeGlobalGlobal {

@@ -62,7 +62,7 @@ func BenchmarkFrameWorkPredictBlockInterWarm(b *testing.B) {
 				HaveTop: true, HaveLeft: true,
 			}
 			if tc.compound {
-				refs := tile.InterReferencesResult{Compound: true, Ref: [2]tile.ReferenceFrame{tile.ReferenceFrameLast, tile.ReferenceFrameBWD}}
+				refs := tile.InterReferencesResult{Compound: true, Ref0: tile.ReferenceFrameLast, Ref1: tile.ReferenceFrameBWD}
 				visit.Prediction.InterReferences = refs
 				visit.Prediction.InterMotion.References = refs
 				visit.Prediction.InterMotion.MV = [2]motion.Vector{tc.mv, {Col: -7, Row: 9}}

@@ -104,7 +104,7 @@ func TestReferenceMVFrameMarkBlockInterCopiesLibaomMVREFCells(t *testing.T) {
 			Valid:            true,
 			InterMotionValid: true,
 			InterMotion: InterMotionResult{
-				References: InterReferencesResult{Ref: [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameNone}},
+				References: InterReferencesResult{Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone},
 				MV:         [2]motion.Vector{want.MV},
 			},
 		},
@@ -212,7 +212,7 @@ func compoundPredictionForRefMVFrameTest(first motion.Vector, second motion.Vect
 		InterMotionValid: true,
 		InterMotion: InterMotionResult{
 			References: InterReferencesResult{
-				Ref:      [2]ReferenceFrame{ReferenceFrameLast, ReferenceFrameBWD},
+				Ref0: ReferenceFrameLast, Ref1: ReferenceFrameBWD,
 				Compound: true,
 			},
 			MV: [2]motion.Vector{first, second},

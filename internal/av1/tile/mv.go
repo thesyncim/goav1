@@ -447,14 +447,14 @@ func (s *DecodeState) ReadInterMotion(cdfs *MVCDFs, req InterMotionRequest) (Int
 	if s == nil || !req.Precision.Valid() || req.Mode.Compound != req.References.Compound {
 		return InterMotionDecodeResult{}, ErrInvalidDecodeState
 	}
-	if !req.References.Ref[0].Valid() {
+	if !req.References.Ref0.Valid() {
 		return InterMotionDecodeResult{}, ErrInvalidDecodeState
 	}
 	if req.References.Compound {
-		if !req.References.Ref[1].Valid() || !req.Mode.CompoundMode.Valid() {
+		if !req.References.Ref1.Valid() || !req.Mode.CompoundMode.Valid() {
 			return InterMotionDecodeResult{}, ErrInvalidDecodeState
 		}
-	} else if req.References.Ref[1] != ReferenceFrameNone || !req.Mode.Mode.Valid() {
+	} else if req.References.Ref1 != ReferenceFrameNone || !req.Mode.Mode.Valid() {
 		return InterMotionDecodeResult{}, ErrInvalidDecodeState
 	}
 
