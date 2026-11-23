@@ -21,10 +21,8 @@ const frameWorkDeferReconstruction = false
 // frameWorkWavefrontMinSBRowsPerWorker is the SB-row count, per available
 // worker, a tile must clear before the deferred SB-row wavefront engages.
 // Below it the fused single-thread path wins (no buffering, no goroutines), so
-// the wavefront stays off. It defaults to 2 (the diagonal must fill before it
-// drains); focused tests override it through
-// OverrideWavefrontMinSBRowsPerWorkerForTest.
-var frameWorkWavefrontMinSBRowsPerWorker = 2
+// the wavefront stays off. It is 2: the diagonal must fill before it drains.
+const frameWorkWavefrontMinSBRowsPerWorker = 2
 
 // frameWorkReconEventKind distinguishes the deferred reconstruction events: a
 // per-block predict "begin" marker and the per-TXB reconstruction record.
@@ -911,50 +909,6 @@ func (r *FrameWorkTileResidualRunner) RunPtr(b *FrameWorkBatch) error {
 		}
 	}
 	return nil
-}
-
-// ExecuteFrameWorkTileResidualRunner runs residual batches through the concrete
-// no-copy runner path. Keeping this concrete lets escape analysis inspect RunPtr
-// and keep the per-batch context on the stack.
-func ExecuteFrameWorkTileResidualRunner(p *Pool, batches []Batch, jobs []tile.Job, base FrameWorkBatch, runner *FrameWorkTileResidualRunner) error {
-	if p == nil || len(p.workers) == 0 {
-		return ErrInvalidWorkerCount
-	}
-	if runner == nil {
-		return ErrInvalidCallback
-	}
-	if len(batches) == 0 {
-		return nil
-	}
-	if len(batches) > len(p.workers) {
-		return ErrInvalidBatch
-	}
-	if err := validateBatches(batches, jobs, len(p.workers)); err != nil {
-		return err
-	}
-
-	p.mu.Lock()
-	if p.closed {
-		p.mu.Unlock()
-		return ErrPoolClosed
-	}
-	p.mu.Unlock()
-
-	var firstErr error
-	for i := range batches {
-		batch := batches[i]
-		batchJobs, err := batch.jobSlice(jobs)
-		if err != nil {
-			return err
-		}
-		ctx := base
-		ctx.Batch = batch
-		ctx.Jobs = batchJobs
-		if err := runner.RunPtr(&ctx); firstErr == nil && err != nil {
-			firstErr = err
-		}
-	}
-	return firstErr
 }
 
 func (req FrameWorkTileResidualDefaultRequest) withPredictionScratch(scratch *FrameWorkPredictionScratch) FrameWorkTileResidualDefaultRequest {
@@ -1857,76 +1811,6 @@ type frameWorkReconSB struct {
 	start int32
 	end   int32
 	col   int32
-}
-
-// replayDeferredReconstructionWavefront replays the buffered reconstruction
-// events as an SB-row wavefront across wavefrontWorkers goroutines. Worker w
-// statically owns SB rows w, w+W, w+2W, ... and reconstructs each owned row's
-// superblocks left-to-right. Before reconstructing SB column C of row R it
-// waits until done[R-1] >= C+2 so the upper and upper-right neighbor
-// superblocks (R-1,C) and (R-1,C+1) — the furthest an intra top-right edge
-// read reaches — are fully reconstructed; after finishing SB column C it
-// publishes done[R] = C+1. Row 0 is ungated. Each goroutine uses its own
-// reconstruction state (CFL machine, prediction/residual scratch, geometry
-// cache), and the buffered events/arenas are read-only during the replay, so
-// the only cross-goroutine communication is the atomic done counters. The
-// decode path streams the same wavefront while the tile parses
-// (startReconStream); this after-parse form replays a fully buffered tile.
-func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefront() error {
-	region, err := c.batch.JobRegion(c.index)
-	if err != nil {
-		return err
-	}
-	sbSizeMIB := uint32(c.batch.Sequence.SBSizeMIB)
-	if sbSizeMIB == 0 {
-		return ErrInvalidBatch
-	}
-	rowCount := int(region.SBRows)
-	if rowCount <= 0 {
-		return ErrInvalidBatch
-	}
-	workers := min(int(c.wavefrontWorkers), rowCount)
-
-	if c.scratch.wavefront == nil {
-		c.scratch.wavefront = &frameWorkReconWavefront{}
-	}
-	wf := c.scratch.wavefront
-	// Partition the flat event list into per-SB spans and SB rows; a new SB
-	// begins at a blockBegin event whose (sbRow, sbCol) differs from the
-	// previous block's.
-	wf.beginSpans(region, int(sbSizeMIB))
-	for i := range c.scratch.reconEvents {
-		ev := &c.scratch.reconEvents[i]
-		if ev.kind != frameWorkReconEventBlockBegin {
-			continue
-		}
-		idx := int(ev.index)
-		if ev.index < 0 || idx >= len(c.scratch.reconVisits) {
-			return ErrInvalidBatch
-		}
-		visit := &c.scratch.reconVisits[idx]
-		if _, err := wf.noteBlockBegin(i, int(visit.Block.MIRow), int(visit.Block.MICol)); err != nil {
-			return err
-		}
-	}
-	if err := wf.closeSpans(len(c.scratch.reconEvents)); err != nil {
-		return err
-	}
-	wf.ensureDone(rowCount)
-	wf.resetProgress(rowCount)
-	if err := wf.ensureStates(workers, c); err != nil {
-		return err
-	}
-	wf.startLanes(c.batch.wavefrontLanes, workers, rowCount)
-	wf.publishRows(rowCount, frameWorkReconView{
-		rowStart: wf.rowStart,
-		sbs:      wf.sbSpans,
-		events:   c.scratch.reconEvents,
-		visits:   c.scratch.reconVisits,
-		txbs:     c.scratch.reconTXBs,
-		cfArena:  c.scratch.cfArena,
-	})
-	return wf.finishLanes(c.stats)
 }
 
 // wavefrontError boxes a worker error so atomic.Pointer can carry the first one

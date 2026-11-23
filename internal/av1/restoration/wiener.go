@@ -53,38 +53,9 @@ func WienerScratchLen(width int, height int) (int, error) {
 	return width * (height + 2*WienerHalfwin), nil
 }
 
-// ApplyWienerRestoration ports av1_highbd_wiener_convolve_add_src_c for
-// unscaled restoration units. srcOrigin identifies the top-left pixel and src
-// must include a WienerHalfwin-pixel border around that origin.
-func ApplyWienerRestoration(src []uint16, srcStride int, srcOrigin int, dst []uint16, dstStride int, width int, height int, info WienerInfo, bitDepth uint8, scratch []uint16) error {
-	max, err := maxSample(bitDepth)
-	if err != nil {
-		return err
-	}
-	if !validRestorationBlock(width, height) ||
-		!validWienerInfo(info) ||
-		!borderedBlockFits(len(src), srcStride, srcOrigin, width, height, WienerHalfwin, WienerHalfwin) ||
-		!blockFits(len(dst), dstStride, width, height) {
-		return ErrInvalidRestoration
-	}
-	need, err := WienerScratchLen(width, height)
-	if err != nil || len(scratch) < need {
-		return ErrInvalidRestoration
-	}
-
-	round0, round1 := wienerRounds(int(bitDepth))
-	temp := scratch[:need]
-	if !wienerHorizontalImpl(src, srcStride, srcOrigin, width, height, info.HFilter, int(bitDepth), round0, max, temp) {
-		return ErrInvalidRestoration
-	}
-	wienerVerticalImpl(temp, width, dst, dstStride, width, height, info.VFilter, int(bitDepth), round1, max)
-	return nil
-}
-
-// ApplyWienerRestorationTrusted is the decoder-owned variant of
-// ApplyWienerRestoration. It preserves geometry, filter, bit-depth, and scratch
-// validation, but assumes the bordered source samples are already clipped to
-// bitDepth and skips the redundant per-sample validation scan in SIMD wrappers.
+// ApplyWienerRestorationTrusted applies the Wiener filter to one restoration
+// unit. It validates geometry, filter, bit-depth, and scratch, but assumes the
+// bordered source samples are already clipped to bitDepth.
 func ApplyWienerRestorationTrusted(src []uint16, srcStride int, srcOrigin int, dst []uint16, dstStride int, width int, height int, info WienerInfo, bitDepth uint8, scratch []uint16) error {
 	max, err := maxSample(bitDepth)
 	if err != nil {
@@ -108,8 +79,8 @@ func ApplyWienerRestorationTrusted(src []uint16, srcStride int, srcOrigin int, d
 	return nil
 }
 
-// wienerHorizontalImpl and wienerVerticalImpl are the dispatch slots for the two
-// separable Wiener passes. They are resolved exactly once, at package init (see
+// wienerHorizontalTrustedImpl and wienerVerticalImpl are the dispatch slots for
+// the two separable Wiener passes. They are resolved exactly once, at package init (see
 // wiener_dispatch_*.go), so the per-call cost is a single indirect call with no
 // feature-detection branches. wienerHorizontal / wienerVertical below are the
 // canonical bit-exact references; every tuned variant MUST match them sample for
@@ -117,7 +88,6 @@ func ApplyWienerRestorationTrusted(src []uint16, srcStride int, srcOrigin int, d
 // [0,max] clamps). Tests and benchmarks must not mutate these concurrently with
 // live decoding.
 var (
-	wienerHorizontalImpl        = wienerHorizontal
 	wienerHorizontalTrustedImpl = wienerHorizontalTrusted
 	wienerVerticalImpl          = wienerVertical
 )

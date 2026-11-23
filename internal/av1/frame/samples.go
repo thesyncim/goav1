@@ -288,35 +288,6 @@ func StoreSamplePlaneTrusted(dst Plane, bytesPerSample int, src SamplePlane) err
 	return nil
 }
 
-// StoreBorderedSamplePlane writes the visible region from src into an 8-bit or
-// little-endian 16-bit byte plane.
-func StoreBorderedSamplePlane(dst Plane, bytesPerSample int, src BorderedSamplePlane) error {
-	if _, _, err := samplePlaneLayout(dst, bytesPerSample, true); err != nil {
-		return err
-	}
-	if !borderedSamplePlaneFits(src) || src.Width != dst.Width || src.Height != dst.Height {
-		return ErrInvalidPlane
-	}
-	if !storeSampleRows(dst.Pix, dst.Stride, src.Pix[src.Origin:], src.Stride, src.Width, src.Height, bytesPerSample) {
-		return ErrInvalidPlane
-	}
-	return nil
-}
-
-// StoreBorderedSamplePlaneTrusted writes the visible region from src like
-// StoreBorderedSamplePlane, but assumes every sample already fits the
-// destination bit depth. It still validates plane geometry and buffer sizes.
-func StoreBorderedSamplePlaneTrusted(dst Plane, bytesPerSample int, src BorderedSamplePlane) error {
-	if _, _, err := samplePlaneLayout(dst, bytesPerSample, true); err != nil {
-		return err
-	}
-	if !borderedSamplePlaneFits(src) || src.Width != dst.Width || src.Height != dst.Height {
-		return ErrInvalidPlane
-	}
-	storeSampleRowsTrusted(dst.Pix, dst.Stride, src.Pix[src.Origin:], src.Stride, src.Width, src.Height, bytesPerSample)
-	return nil
-}
-
 // StoreBorderedSamplePlaneRectTrusted writes the [x0, x0+width) x [y0, y0+height)
 // sub-rectangle of src's visible region into dst like
 // StoreBorderedSamplePlaneTrusted. Loop restoration uses it to store only

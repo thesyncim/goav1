@@ -12,24 +12,6 @@ const dct16Size = 16
 const dct32Size = 32
 const dct64Size = 64
 
-// ScratchLen returns the generic transform scratch length for size. For exact
-// dispatch scratch sizing, use ScratchLenForType.
-func ScratchLen(size Size) (int, error) {
-	if !size.Valid() {
-		return 0, ErrInvalidTransform
-	}
-	return int(size.Width) * int(size.Height), nil
-}
-
-// InverseDCTBlock writes an AV1 DCT_DCT residual block to dst. The source
-// coefficients are dequantized transform coefficients in AV1 coefficient order:
-// coeff_idx = col * coeffStride + row.
-// The pure-Go DCT path supports AV1 transform sizes with 4, 8, 16, 32, or
-// reduced-coefficient 64 samples on each axis.
-func InverseDCTBlock(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size) error {
-	return inverseSeparableBlock(dst, dstStride, coeff, coeffStride, scratch, size, TypeDCTDCT)
-}
-
 func dctLengthSupported(length int) bool {
 	switch length {
 	case dct4Size, dct8Size, dct16Size, dct32Size, dct64Size:

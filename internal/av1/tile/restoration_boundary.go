@@ -28,16 +28,6 @@ type RestorationStripeBoundaries struct {
 	Bytes bool
 }
 
-// RestorationFrameBoundaryPlane binds one plane's source and boundary buffers
-// for libaom's frame-level loop-restoration boundary save pass.
-type RestorationFrameBoundaryPlane struct {
-	Grid       RestorationPlaneGrid
-	Src        []uint16
-	SrcStride  int
-	SrcOrigin  int
-	Boundaries RestorationStripeBoundaries
-}
-
 // RestorationStripeBoundaryScratchSize reports caller-owned temporary storage
 // required while overwriting a processing stripe's top and bottom borders.
 type RestorationStripeBoundaryScratchSize struct {
@@ -182,78 +172,6 @@ func ExtendRestorationFrame(data []uint16, stride int, origin int, width int, he
 			return ErrInvalidPlan
 		}
 		copy(line, bottom)
-	}
-	return nil
-}
-
-// SaveRestorationBoundaryLines ports save_tile_row_boundary_lines for an
-// already-upscaled whole-frame restoration plane.
-func SaveRestorationBoundaryLines(grid RestorationPlaneGrid, src []uint16, srcStride int, srcOrigin int, boundaries RestorationStripeBoundaries, afterCDEF bool) error {
-	if !grid.validGeometry() || srcStride <= 0 || srcOrigin < 0 {
-		return ErrInvalidPlan
-	}
-	if err := validateRestorationStripeBoundaries(grid, boundaries); err != nil {
-		return err
-	}
-	planeHeight := int(grid.PlaneHeight)
-	stripeHeight := int(av1restoration.ProcUnitSize >> boolToShift(grid.SubsamplingY))
-	stripeOff := int(restorationUnitOffset >> boolToShift(grid.SubsamplingY))
-	if stripeHeight <= 0 {
-		return ErrInvalidPlan
-	}
-	for tileStripe := 0; ; tileStripe++ {
-		relY0 := maxInt(0, tileStripe*stripeHeight-stripeOff)
-		if relY0 >= planeHeight {
-			break
-		}
-		relY1 := minInt((tileStripe+1)*stripeHeight-stripeOff, planeHeight)
-		useDeblockAbove := tileStripe > 0
-		useDeblockBelow := relY1 < planeHeight
-
-		switch {
-		case !afterCDEF:
-			if useDeblockAbove {
-				if err := saveRestorationDeblockBoundaryLines(grid, src, srcStride, srcOrigin, relY0-restorationCtxVert, tileStripe, true, boundaries); err != nil {
-					return err
-				}
-			}
-			if useDeblockBelow {
-				if err := saveRestorationDeblockBoundaryLines(grid, src, srcStride, srcOrigin, relY1, tileStripe, false, boundaries); err != nil {
-					return err
-				}
-			}
-		default:
-			if !useDeblockAbove {
-				if err := saveRestorationCDEFBoundaryLines(grid, src, srcStride, srcOrigin, relY0, tileStripe, true, boundaries); err != nil {
-					return err
-				}
-			}
-			if !useDeblockBelow {
-				if err := saveRestorationCDEFBoundaryLines(grid, src, srcStride, srcOrigin, relY1-1, tileStripe, false, boundaries); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// SaveRestorationFrameBoundaryLines ports av1_loop_restoration_save_boundary_lines
-// for a one-plane monochrome frame or a three-plane color frame.
-func SaveRestorationFrameBoundaryLines(planes []RestorationFrameBoundaryPlane, afterCDEF bool) error {
-	if len(planes) != 1 && len(planes) != 3 {
-		return ErrInvalidPlan
-	}
-	for i := range planes {
-		if planes[i].Grid.Plane != uint8(i) {
-			return ErrInvalidPlan
-		}
-		if planes[i].Grid.Type == parser.RestorationNone {
-			continue
-		}
-		if err := SaveRestorationBoundaryLines(planes[i].Grid, planes[i].Src, planes[i].SrcStride, planes[i].SrcOrigin, planes[i].Boundaries, afterCDEF); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -792,57 +710,6 @@ func restoreRestorationStripeBoundaryOptimized(unitRect RestorationUnitRect, str
 			copy(dst, scratch.Below[:lineWidth])
 		}
 	}
-	return nil
-}
-
-func saveRestorationDeblockBoundaryLines(grid RestorationPlaneGrid, src []uint16, srcStride int, srcOrigin int, row int, stripe int, above bool, boundaries RestorationStripeBoundaries) error {
-	planeHeight := int(grid.PlaneHeight)
-	linesToSave := minInt(restorationCtxVert, planeHeight-row)
-	if row < 0 || linesToSave <= 0 || linesToSave > restorationCtxVert {
-		return ErrInvalidPlan
-	}
-	for i := range linesToSave {
-		if err := saveRestorationBoundaryLine(grid, src, srcStride, srcOrigin, row+i, stripe, i, above, boundaries); err != nil {
-			return err
-		}
-	}
-	if linesToSave == 1 {
-		dst, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+1, int(grid.PlaneWidth))
-		if !ok {
-			return ErrInvalidPlan
-		}
-		srcLine, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert, int(grid.PlaneWidth))
-		if !ok {
-			return ErrInvalidPlan
-		}
-		copy(dst, srcLine)
-	}
-	return extendRestorationBoundaryLines(grid, stripe, above, boundaries)
-}
-
-func saveRestorationCDEFBoundaryLines(grid RestorationPlaneGrid, src []uint16, srcStride int, srcOrigin int, row int, stripe int, above bool, boundaries RestorationStripeBoundaries) error {
-	if row < 0 || row >= int(grid.PlaneHeight) {
-		return ErrInvalidPlan
-	}
-	for i := range restorationCtxVert {
-		if err := saveRestorationBoundaryLine(grid, src, srcStride, srcOrigin, row, stripe, i, above, boundaries); err != nil {
-			return err
-		}
-	}
-	return extendRestorationBoundaryLines(grid, stripe, above, boundaries)
-}
-
-func saveRestorationBoundaryLine(grid RestorationPlaneGrid, src []uint16, srcStride int, srcOrigin int, srcRow int, stripe int, ctxRow int, above bool, boundaries RestorationStripeBoundaries) error {
-	width := int(grid.PlaneWidth)
-	srcOffset, ok := restorationSignedPlaneOffset(srcOrigin, srcStride, 0, srcRow)
-	if !ok || !restorationLineFits(len(src), srcOffset, width) {
-		return ErrInvalidPlan
-	}
-	dst, ok := restorationBoundaryPlaneLine(boundariesForSide(boundaries, above), boundaries.Stride, stripe*restorationCtxVert+ctxRow, width)
-	if !ok {
-		return ErrInvalidPlan
-	}
-	copy(dst[restorationExtraHorz:restorationExtraHorz+width], src[srcOffset:srcOffset+width])
 	return nil
 }
 

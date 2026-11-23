@@ -50,7 +50,7 @@ func TestKeyframeDirectionalModes(t *testing.T) {
 	}{{"vertical-stripes", true}, {"horizontal-stripes", false}} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := mk(tc.vertical)
-			tu, recon, err := encoder.EncodeKeyframe(src, 60)
+			tu, recon, err := encodeKeyframe(t, src, 60)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -88,14 +88,6 @@ func PredictDirectionalIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample
 	return PredictDirectionalIntraPlaneBlockWithExtentBounded(dst, bytesPerSample, bitDepth, x, y, width, height, predWidth, predHeight, angle, edges, false)
 }
 
-// PredictDirectionalIntraPlaneBlockWithByteEdges is for decoder edges just
-// gathered from an 8-bit plane and optionally filtered/upsampled. Every sample
-// in a consumed span must be <=255; geometry and span checks are still applied.
-// The ordinary uint16-edge entry point continues to validate sample values.
-func PredictDirectionalIntraPlaneBlockWithByteEdges(dst frame.Plane, x, y, width, height, predWidth, predHeight, angle int, edges DirectionalEdges) error {
-	return PredictDirectionalIntraPlaneBlockWithExtentBounded(dst, 1, 8, x, y, width, height, predWidth, predHeight, angle, edges, true)
-}
-
 // PredictDirectionalIntraPlaneBlockWithExtentBounded has the same call-scoped sample-bound contract as PredictIntraPlaneBlockWithExtentBounded.
 func PredictDirectionalIntraPlaneBlockWithExtentBounded(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, predWidth int, predHeight int, angle int, edges DirectionalEdges, bounded bool) error {
 	if predWidth < width || predHeight < height || width <= 0 || height <= 0 {

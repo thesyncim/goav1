@@ -20,7 +20,6 @@ func init() {
 	inverseDCT32Col8Impl16 = inverseDCT32Col8SIMD16
 	inverseDCT64Col8Impl16 = inverseDCT64Col8SIMD16
 	clampRoundNarrowInt16Impl = clampRoundNarrowInt16SIMD
-	int16ColumnSIMDInputSafe = int16ColumnSIMDInputSafeSIMD
 	int16ColumnSIMDInputEligible = int16ColumnSIMDInputEligibleSIMD
 	int16ColumnFast = true
 }

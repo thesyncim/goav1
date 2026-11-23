@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -114,57 +113,18 @@ func TestAppendGlobalMotionParamsPayloadRejectsInvalid(t *testing.T) {
 	}
 	var buf [8]byte
 	for _, tc := range cases {
-		if _, err := AppendGlobalMotionParamsPayload(buf[:0], tc.prefix, tc.size, parser.TileInfo{}, tc.refs, tc.params); !errors.Is(err, ErrInvalidFrame) {
-			t.Fatalf("AppendGlobalMotionParamsPayload(%+v) err=%v want ErrInvalidFrame", tc.prefix, err)
+		if _, err := appendGlobalMotionParamsPayload(buf[:0], tc.prefix, tc.size, parser.TileInfo{}, tc.refs, tc.params); !errors.Is(err, ErrInvalidFrame) {
+			t.Fatalf("appendGlobalMotionParamsPayload(%+v) err=%v want ErrInvalidFrame", tc.prefix, err)
 		}
-	}
-}
-
-func TestAppendGlobalMotionParamsPayloadShortBuffer(t *testing.T) {
-	prefix := FrameHeaderPrefix{FrameType: FrameHeaderTypeInter, PrimaryRefFrame: EncoderPrimaryRefNone}
-	size, refs := encoderGlobalMotionRefs()
-	var buf [1]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendGlobalMotionParamsPayload(dst, prefix, size, parser.TileInfo{}, &refs, DefaultGlobalMotionParams())
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want ErrShortBuffer", err)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output=% x", out)
-	}
-}
-
-func TestAppendGlobalMotionParamsPayloadAllocs(t *testing.T) {
-	prefix := FrameHeaderPrefix{FrameType: FrameHeaderTypeInter, PrimaryRefFrame: EncoderPrimaryRefNone}
-	size, refs := encoderGlobalMotionRefs()
-	params := DefaultGlobalMotionParams()
-	var buf [1]byte
-	if _, err := AppendGlobalMotionParamsPayload(buf[:0], prefix, size, parser.TileInfo{}, &refs, params); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = GlobalMotionParamsPayloadSize(prefix, size, parser.TileInfo{}, &refs, params)
-		_, _ = AppendGlobalMotionParamsPayload(buf[:0], prefix, size, parser.TileInfo{}, &refs, params)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendGlobalMotionParamsPayload allocated: %f", allocs)
 	}
 }
 
 func appendAndParseGlobalMotionParams(t *testing.T, prefix FrameHeaderPrefix, size InterFrameSize, tiles parser.TileInfo, refs *parser.ReferenceState, params GlobalMotionParams) ([]byte, parser.GlobalMotionParams) {
 	t.Helper()
-	payloadSize, err := GlobalMotionParamsPayloadSize(prefix, size, tiles, refs, params)
-	if err != nil {
-		t.Fatalf("GlobalMotionParamsPayloadSize: %v", err)
-	}
 	var buf [64]byte
-	payload, err := AppendGlobalMotionParamsPayload(buf[:0], prefix, size, tiles, refs, params)
+	payload, err := appendGlobalMotionParamsPayload(buf[:0], prefix, size, tiles, refs, params)
 	if err != nil {
-		t.Fatalf("AppendGlobalMotionParamsPayload: %v", err)
-	}
-	if len(payload) != payloadSize {
-		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+		t.Fatalf("appendGlobalMotionParamsPayload: %v", err)
 	}
 	parsed, err := parser.ParseGlobalMotionParams(
 		payload,

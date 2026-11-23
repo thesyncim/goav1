@@ -45,16 +45,6 @@ type FrameSize struct {
 	BitsRead uint16
 }
 
-// ParseIntraFrameSize parses the frame-size path used by key and intra-only
-// frames. Inter frames may derive dimensions from references and are handled by
-// a later parser stage that has reference-frame state.
-func ParseIntraFrameSize(payload []byte, seq SequenceHeader, prefix FrameHeaderPrefix, temporalID uint8, spatialID uint8) (FrameSize, error) {
-	if !prefix.UsesIntraFrameSizePath() {
-		return FrameSize{}, ErrReferenceFrameNeeded
-	}
-	return parseFrameSize(payload, seq, prefix, nil, temporalID, spatialID)
-}
-
 // ParseFrameSize parses frame-size and reference routing syntax after
 // ParseFrameHeaderPrefix. refs is required for inter and switch frames.
 func ParseFrameSize(payload []byte, seq SequenceHeader, prefix FrameHeaderPrefix, refs *ReferenceState, temporalID uint8, spatialID uint8) (FrameSize, error) {

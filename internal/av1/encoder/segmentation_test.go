@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -100,59 +99,22 @@ func TestAppendSegmentationParamsPayloadRejectsInvalid(t *testing.T) {
 	}
 	var buf [64]byte
 	for _, seg := range cases {
-		if _, err := AppendSegmentationParamsPayload(buf[:0], prefix, seg); !errors.Is(err, ErrInvalidFrame) {
-			t.Fatalf("AppendSegmentationParamsPayload(%+v) err=%v want ErrInvalidFrame", seg, err)
+		if _, err := appendSegmentationParamsPayload(buf[:0], prefix, seg); !errors.Is(err, ErrInvalidFrame) {
+			t.Fatalf("appendSegmentationParamsPayload(%+v) err=%v want ErrInvalidFrame", seg, err)
 		}
 	}
 	nonNone := FrameHeaderPrefix{PrimaryRefFrame: 0}
-	if _, err := AppendSegmentationParamsPayload(buf[:0], nonNone, SegmentationParams{Enabled: true, TemporalUpdate: true}); !errors.Is(err, ErrInvalidFrame) {
+	if _, err := appendSegmentationParamsPayload(buf[:0], nonNone, SegmentationParams{Enabled: true, TemporalUpdate: true}); !errors.Is(err, ErrInvalidFrame) {
 		t.Fatalf("temporal without update map err=%v want ErrInvalidFrame", err)
-	}
-}
-
-func TestAppendSegmentationParamsPayloadShortBuffer(t *testing.T) {
-	prefix := FrameHeaderPrefix{PrimaryRefFrame: EncoderPrimaryRefNone}
-	var buf [1]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendSegmentationParamsPayload(dst, prefix, SegmentationParams{})
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want ErrShortBuffer", err)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output=% x", out)
-	}
-}
-
-func TestAppendSegmentationParamsPayloadAllocs(t *testing.T) {
-	prefix := FrameHeaderPrefix{PrimaryRefFrame: EncoderPrimaryRefNone}
-	seg := SegmentationParams{}
-	var buf [2]byte
-	if _, err := AppendSegmentationParamsPayload(buf[:0], prefix, seg); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = SegmentationParamsPayloadSize(prefix, seg)
-		_, _ = AppendSegmentationParamsPayload(buf[:0], prefix, seg)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendSegmentationParamsPayload allocated: %f", allocs)
 	}
 }
 
 func appendAndParseSegmentationParams(t *testing.T, prefix FrameHeaderPrefix, parsedPrefix parser.FrameHeaderPrefix, seg SegmentationParams, previous *parser.SegmentationData) ([]byte, parser.SegmentationParams) {
 	t.Helper()
-	size, err := SegmentationParamsPayloadSize(prefix, seg)
-	if err != nil {
-		t.Fatalf("SegmentationParamsPayloadSize: %v", err)
-	}
 	var buf [96]byte
-	out, err := AppendSegmentationParamsPayload(buf[:0], prefix, seg)
+	out, err := appendSegmentationParamsPayload(buf[:0], prefix, seg)
 	if err != nil {
-		t.Fatalf("AppendSegmentationParamsPayload: %v", err)
-	}
-	if len(out) != size {
-		t.Fatalf("payload len=%d want %d", len(out), size)
+		t.Fatalf("appendSegmentationParamsPayload: %v", err)
 	}
 	parsed, err := parser.ParseSegmentationParams(out, parsedPrefix, parser.QuantizationParams{BaseQIdx: 20}, previous)
 	if err != nil {

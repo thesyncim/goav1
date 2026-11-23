@@ -63,9 +63,7 @@ func TestPublicTileRestorationFramePlanAndBuffers(t *testing.T) {
 	}
 	updated := records[0][0]
 	updated.Unit = internaltile.RestorationUnit{Type: internalparser.RestorationWiener, Wiener: internalrestoration.DefaultWienerInfo()}
-	if err := internaltile.StoreRestorationUnitRecords(plan.Grids[0], records[0], []internaltile.RestorationUnitRecord{updated}); err != nil {
-		t.Fatal(err)
-	}
+	records[0][updated.Index] = updated
 	if records[0][0].Unit.Type != internalparser.RestorationWiener {
 		t.Fatalf("stored record=%+v", records[0][0])
 	}

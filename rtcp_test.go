@@ -3145,7 +3145,7 @@ func TestEncoderWebRTCValidateLayerRefreshRequest(t *testing.T) {
 }
 
 func TestEncoderWebRTCValidateLayerRefreshRequestModeMatrix(t *testing.T) {
-	for _, mode := range internalencoder.AppendWebRTCSVCScalabilityModes(nil) {
+	for _, mode := range svcScalabilityModes() {
 		t.Run(mode.String(), func(t *testing.T) {
 			spatialLayers, temporalLayers, _, ok := mode.Layers()
 			if !ok {

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -107,17 +106,10 @@ func TestAppendRestorationParamsInterPayload(t *testing.T) {
 		UnitSizeY:      64,
 		UnitSizeUV:     64,
 	}
-	payloadSize, err := RestorationParamsInterPayloadSize(seq, size, false, restoration)
-	if err != nil {
-		t.Fatalf("RestorationParamsInterPayloadSize: %v", err)
-	}
 	var buf [4]byte
-	payload, err := AppendRestorationParamsInterPayload(buf[:0], seq, size, false, restoration)
+	payload, err := appendRestorationParamsInterPayload(buf[:0], seq, size, false, restoration)
 	if err != nil {
-		t.Fatalf("AppendRestorationParamsInterPayload: %v", err)
-	}
-	if len(payload) != payloadSize {
-		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+		t.Fatalf("appendRestorationParamsInterPayload: %v", err)
 	}
 	parsed, err := parser.ParseRestorationParams(payload, parseEncoderSequenceHeader(t, seq), parser.FrameSize{}, parser.SegmentationParams{}, parser.CDEFParams{})
 	if err != nil {
@@ -147,66 +139,26 @@ func TestAppendRestorationParamsPayloadRejectsInvalid(t *testing.T) {
 	}
 	var buf [8]byte
 	for _, restoration := range cases {
-		if _, err := AppendRestorationParamsPayload(buf[:0], seq, size, false, restoration); !errors.Is(err, ErrInvalidFrame) {
-			t.Fatalf("AppendRestorationParamsPayload(%+v) err=%v want ErrInvalidFrame", restoration, err)
+		if _, err := appendRestorationParamsPayload(buf[:0], seq, size, false, restoration); !errors.Is(err, ErrInvalidFrame) {
+			t.Fatalf("appendRestorationParamsPayload(%+v) err=%v want ErrInvalidFrame", restoration, err)
 		}
 	}
 	mono := seq
 	mono.ColorConfig.MonoChrome = true
-	if _, err := AppendRestorationParamsPayload(buf[:0], mono, size, false, RestorationParams{Type: [3]RestorationType{0, RestorationWiener, 0}}); !errors.Is(err, ErrInvalidFrame) {
+	if _, err := appendRestorationParamsPayload(buf[:0], mono, size, false, RestorationParams{Type: [3]RestorationType{0, RestorationWiener, 0}}); !errors.Is(err, ErrInvalidFrame) {
 		t.Fatalf("mono chroma restoration err=%v want ErrInvalidFrame", err)
 	}
-	if _, err := AppendRestorationParamsPayload(buf[:0], seq, size, true, active); !errors.Is(err, ErrInvalidFrame) {
+	if _, err := appendRestorationParamsPayload(buf[:0], seq, size, true, active); !errors.Is(err, ErrInvalidFrame) {
 		t.Fatalf("lossless disabled restoration err=%v want ErrInvalidFrame", err)
-	}
-}
-
-func TestAppendRestorationParamsPayloadShortBuffer(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	size := IntraFrameSize{UpscaledWidth: 64, Height: 64, SuperResDenominator: 8, RefreshFrameFlags: 0xff}
-	restoration := RestorationParams{UnitSizeYLog2: 8, UnitSizeUVLog2: 8, UnitSizeY: 256, UnitSizeUV: 256}
-	var buf [1]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendRestorationParamsPayload(dst, seq, size, false, restoration)
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want ErrShortBuffer", err)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output=% x", out)
-	}
-}
-
-func TestAppendRestorationParamsPayloadAllocs(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	size := IntraFrameSize{UpscaledWidth: 64, Height: 64, SuperResDenominator: 8, RefreshFrameFlags: 0xff}
-	restoration := RestorationParams{UnitSizeYLog2: 8, UnitSizeUVLog2: 8, UnitSizeY: 256, UnitSizeUV: 256}
-	var buf [4]byte
-	if _, err := AppendRestorationParamsPayload(buf[:0], seq, size, false, restoration); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = RestorationParamsPayloadSize(seq, size, false, restoration)
-		_, _ = AppendRestorationParamsPayload(buf[:0], seq, size, false, restoration)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendRestorationParamsPayload allocated: %f", allocs)
 	}
 }
 
 func appendAndParseRestorationParams(t *testing.T, seq SequenceHeader, size IntraFrameSize, allLossless bool, restoration RestorationParams) ([]byte, parser.RestorationParams) {
 	t.Helper()
-	payloadSize, err := RestorationParamsPayloadSize(seq, size, allLossless, restoration)
-	if err != nil {
-		t.Fatalf("RestorationParamsPayloadSize: %v", err)
-	}
 	var buf [8]byte
-	payload, err := AppendRestorationParamsPayload(buf[:0], seq, size, allLossless, restoration)
+	payload, err := appendRestorationParamsPayload(buf[:0], seq, size, allLossless, restoration)
 	if err != nil {
-		t.Fatalf("AppendRestorationParamsPayload: %v", err)
-	}
-	if len(payload) != payloadSize {
-		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+		t.Fatalf("appendRestorationParamsPayload: %v", err)
 	}
 	parsed, err := parser.ParseRestorationParams(
 		payload,

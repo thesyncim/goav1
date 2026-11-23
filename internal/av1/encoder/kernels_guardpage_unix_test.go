@@ -30,25 +30,11 @@ func guardBytes(t *testing.T, rng *rand.Rand, n int, before bool) []byte {
 	return b
 }
 
-func guardInt16(t *testing.T, rng *rand.Rand, n int, before bool) []int16 {
-	var b []int16
-	if before {
-		b = guardpage.Before[int16](t, n)
-	} else {
-		b = guardpage.After[int16](t, n)
-	}
-	for i := range b {
-		b[i] = int16(rng.Intn(511) - 255)
-	}
-	return b
-}
-
 // blockLen is the shortest buffer holding a w x h block at the given stride.
 func blockLen(w, h, stride int) int { return (h-1)*stride + w }
 
-// TestEncoderKernelsStayInsideGuardedBlocks runs the SAD, pixel statistics,
-// Hadamard, average and reconstruction kernels on buffers exactly as long as
-// the block they cover (stride equal to and wider than the width), against
+// TestEncoderKernelsStayInsideGuardedBlocks runs the SAD, pixel statistics
+// and reconstruction kernels on buffers exactly as long as the block they cover (stride equal to and wider than the width), against
 // a guard page on either side, and compares each result with a heap run.
 func TestEncoderKernelsStayInsideGuardedBlocks(t *testing.T) {
 	rng := rand.New(rand.NewSource(23))
@@ -57,10 +43,8 @@ func TestEncoderKernelsStayInsideGuardedBlocks(t *testing.T) {
 		w, h int
 		f    stats
 	}{
-		{4, 4, pixelStats4x4}, {8, 4, pixelStats8x4}, {4, 8, pixelStats4x8}, {8, 8, pixelStats8x8},
-		{16, 8, pixelStats16x8}, {8, 16, pixelStats8x16}, {16, 4, pixelStats16x4}, {4, 16, pixelStats4x16},
-		{16, 16, pixelStats16x16}, {32, 8, pixelStats32x8}, {8, 32, pixelStats8x32}, {32, 16, pixelStats32x16},
-		{16, 32, pixelStats16x32}, {32, 32, pixelStats32x32}, {64, 16, pixelStats64x16}, {16, 64, pixelStats16x64},
+		{4, 4, pixelStats4x4}, {8, 8, pixelStats8x8}, {16, 8, pixelStats16x8}, {8, 16, pixelStats8x16},
+		{16, 16, pixelStats16x16}, {32, 16, pixelStats32x16}, {16, 32, pixelStats16x32}, {32, 32, pixelStats32x32},
 		{64, 32, pixelStats64x32}, {32, 64, pixelStats32x64},
 	}
 	sads := []struct {
@@ -82,10 +66,6 @@ func TestEncoderKernelsStayInsideGuardedBlocks(t *testing.T) {
 		n int
 		f func(src, r0, r1, r2, r3 []byte, stride int) (int, int, int, int)
 	}{{8, sad8x8x4}, {16, sad16x16x4}, {32, sad32x32x4}}
-	hads := []struct {
-		n int
-		f func([]int16, int, []int32)
-	}{{4, hadamard4x4}, {8, hadamard8x8}, {16, hadamard16x16}, {32, hadamard32x32}}
 
 	for _, before := range []bool{false, true} {
 		for _, pad := range []int{0, 24} {
@@ -141,38 +121,6 @@ func TestEncoderKernelsStayInsideGuardedBlocks(t *testing.T) {
 				m, d = k.f(slices.Clone(s), ss, slices.Clone(r), rs)
 				if e != m || c != d {
 					t.Fatalf("%s stats%dx%d differs", name, k.w, k.h)
-				}
-			}
-			for _, k := range hads {
-				st := k.n + pad
-				src := guardInt16(t, rng, blockLen(k.n, k.n, st), before)
-				var coeff []int32
-				if before {
-					coeff = guardpage.Before[int32](t, k.n*k.n)
-				} else {
-					coeff = guardpage.After[int32](t, k.n*k.n)
-				}
-				want := make([]int32, k.n*k.n)
-				guardpage.Check(t, fmt.Sprintf("%s hadamard%d", name, k.n), func() { k.f(src, st, coeff) })
-				k.f(slices.Clone(src), st, want)
-				if !slices.Equal(coeff, want) {
-					t.Fatalf("%s hadamard%d differs", name, k.n)
-				}
-				var sa int
-				guardpage.Check(t, fmt.Sprintf("%s satd%d", name, k.n), func() { sa = satdCoeffs(coeff, k.n*k.n) })
-				if sa != satdCoeffs(want, k.n*k.n) {
-					t.Fatalf("%s satd%d differs", name, k.n)
-				}
-			}
-			{
-				st := 16 + pad
-				s := guardBytes(t, rng, blockLen(16, 16, st), before)
-				var a [4]int
-				guardpage.Check(t, name+" avg8x8 quad", func() { a[0], a[1], a[2], a[3] = realtimeAvg8x8Quad(s, st) })
-				var b [4]int
-				b[0], b[1], b[2], b[3] = realtimeAvg8x8Quad(slices.Clone(s), st)
-				if a != b {
-					t.Fatalf("%s avg8x8 quad differs", name)
 				}
 			}
 			for _, w := range []int{4, 8, 16, 32, 64} {
@@ -249,14 +197,6 @@ func TestEncoderPlaneKernelsStayInsideGuardedPlanes(t *testing.T) {
 					heapRef := frame.Plane{Pix: slices.Clone(pix), Stride: stride, Width: width, Height: height}
 					if ok != pred8Predict(want, w, &heapRef, refX, refY, w, h, sub[0], sub[1], motion.RegularFilters, &im) || !slices.Equal(dst, want) {
 						t.Fatalf("%s differs from the heap run", name)
-					}
-					if w%16 == 0 {
-						src := guardBytes(t, rng, blockLen(w, h, w)+16, before)
-						var a, b int
-						guardpage.Check(t, name+" sad", func() { a, ok = pred8SAD(src, w, &ref, refX, refY, w, h, sub[0], sub[1], &im) })
-						if b, _ = pred8SAD(slices.Clone(src), w, &heapRef, refX, refY, w, h, sub[0], sub[1], &im); a != b {
-							t.Fatalf("%s sad differs from the heap run", name)
-						}
 					}
 				}
 			}

@@ -11,12 +11,12 @@ import (
 func TestWebRTCStreamQRangeReachesSVTRC(t *testing.T) {
 	const w, h = 192, 128
 	const minQ, maxQ = 120, 140
-	stream, err := NewWebRTCStream(w, h, RateControlConfig{
+	stream, err := NewWebRTCStreamLayers(w, h, RateControlConfig{
 		TargetBitsPerSecond: 5_000_000, // far more than needed: q would fall to the floor
 		FramesPerSecond:     30,
 		MinQIndex:           minQ,
 		MaxQIndex:           maxQ,
-	})
+	}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

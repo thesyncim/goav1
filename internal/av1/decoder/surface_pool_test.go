@@ -117,12 +117,8 @@ func TestFrameFormatHelpersKeepCodedSurfaceSeparateFromOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := frameFormatFromHeaders(testSequence(), size, 32)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if coded != legacy || coded.Width != 16 {
-		t.Fatalf("coded=%+v legacy=%+v", coded, legacy)
+	if coded.Width != 16 {
+		t.Fatalf("coded=%+v", coded)
 	}
 	output, err := outputFrameFormatFromHeaders(testSequence(), size, 32)
 	if err != nil {
@@ -361,48 +357,6 @@ func TestFinishFrameSurfaceRejectsPoolReleaseAtomically(t *testing.T) {
 	}
 	if pool.Available() != 1 {
 		t.Fatalf("available=%d want 1", pool.Available())
-	}
-}
-
-func TestShowExistingFrameSurfaceReleasesPool(t *testing.T) {
-	pool := testFramePool(t, 3)
-	index0, _, err := pool.Acquire()
-	if err != nil {
-		t.Fatal(err)
-	}
-	index1, _, err := pool.Acquire()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var refs SurfaceReferences
-	var releases [parser.RefFrames]int
-	if _, err := refs.Refresh(1<<0, index0, releases[:]); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := refs.Refresh(1<<1, index1, releases[:]); err != nil {
-		t.Fatal(err)
-	}
-
-	surface, count, err := ShowExistingFrameSurface(&refs, &pool, &Event{
-		Kind:          EventExistingFrame,
-		FrameHeader:   parser.FrameHeaderPrefix{ShowExistingFrame: true, ExistingFrameIdx: 1},
-		ExistingFrame: parser.ReferenceFrame{FrameType: parser.FrameTypeKey},
-	}, releases[:])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if surface != index1 || count != 1 || releases[0] != index0 {
-		t.Fatalf("surface=%d count=%d release=%d want %d,1,%d", surface, count, releases[0], index1, index0)
-	}
-	if pool.Available() != 2 {
-		t.Fatalf("available=%d want 2", pool.Available())
-	}
-	for i := range parser.RefFrames {
-		slot, ok := refs.ReferenceSlot(i)
-		if !ok || slot != index1 {
-			t.Fatalf("slot[%d]=%d ok=%v want %d", i, slot, ok, index1)
-		}
 	}
 }
 

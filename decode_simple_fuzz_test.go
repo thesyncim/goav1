@@ -24,7 +24,7 @@ func FuzzPublicSimpleDecoderIVF(f *testing.F) {
 		{payload: switchOnly},
 	}))
 
-	validTilePayload := internalparser.AppendTileListOBU(nil, internalparser.TileList{
+	validTilePayload := appendTileListOBU(nil, internalparser.TileList{
 		OutputFrameWidthInTilesMinus1:  0,
 		OutputFrameHeightInTilesMinus1: 0,
 		TileCountMinus1:                0,

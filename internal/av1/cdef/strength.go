@@ -21,7 +21,7 @@ func DecodeStrength(packed uint8) (level int, secondary int, err error) {
 	return level, secondary, nil
 }
 
-// FrameFilterParamsFromStrength builds FilterFrameBlocks parameters from one
+// FrameFilterParamsFromStrength builds FilterFrameBlocksTrusted parameters from one
 // packed frame-header CDEF strength entry.
 func FrameFilterParamsFromStrength(plane Plane, xDec int, yDec int, packed uint8, damping int, coeffShift int) (FrameFilterParams, error) {
 	level, secondary, err := DecodeStrength(packed)

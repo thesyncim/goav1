@@ -8,8 +8,6 @@ package cdef
 
 import "simd/archsimd"
 
-const cdefUnitInteriorScanFlavor = "simd"
-
 // cdefScanU16RowsAtMost255 checks eight samples per official Go SIMD vector.
 // It only loads complete vectors inside each row and checks the exact row tail
 // with scalar loads, so the final row can end at the slice boundary.

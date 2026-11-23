@@ -35,17 +35,3 @@ func TestDetectedMatchesArch(t *testing.T) {
 		}
 	}
 }
-
-// TestOverrideForTestRestoresPreviousState confirms callers can scope a
-// detection override to a single test without polluting global state.
-func TestOverrideForTestRestoresPreviousState(t *testing.T) {
-	prev := Detected
-	restore := OverrideForTest(Features{})
-	if Detected != (Features{}) {
-		t.Fatalf("override did not take effect: %#v", Detected)
-	}
-	restore()
-	if Detected != prev {
-		t.Fatalf("restore did not bring back previous state: got %#v want %#v", Detected, prev)
-	}
-}

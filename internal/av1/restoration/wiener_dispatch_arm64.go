@@ -16,23 +16,17 @@ import "github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 func init() {
 	_ = cpu.Detected // ensure cpu package init runs before this point
 	if cpu.Detected.NEON {
-		wienerHorizontalImpl = wienerHorizontalSIMD
 		wienerHorizontalTrustedImpl = wienerHorizontalSIMDTrusted
 		wienerVerticalImpl = wienerVerticalSIMD
 		wienerHorizontalU8Impl = wienerHorizontalU8SIMDTaps
 		wienerVerticalU8Impl = wienerVerticalU8SIMDTaps
 		return
 	}
-	wienerHorizontalImpl = wienerHorizontal
 	wienerHorizontalTrustedImpl = wienerHorizontalTrusted
 	wienerVerticalImpl = wienerVertical
 	wienerHorizontalU8Impl = wienerHorizontalU8
 	wienerVerticalU8Impl = wienerVerticalU8
 }
-
-// wienerSIMDDetected reports whether the Go-native SIMD Wiener kernels are bound
-// on this host (NEON is mandatory on arm64).
-func wienerSIMDDetected() bool { return cpu.Detected.NEON }
 
 // wienerFilterFiveTap reports a symmetric filter whose outer tap pair is zero
 // (WienerFilter is [f0 f1 f2 f3 f2 f1 f0 0]): every chroma filter and most luma

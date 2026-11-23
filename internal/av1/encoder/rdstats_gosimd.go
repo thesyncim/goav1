@@ -8,9 +8,9 @@ import (
 )
 
 // rdstats_gosimd.go hosts Go-native SIMD (simd/archsimd) forms of the encoder's
-// residual extraction, skip-decision RD statistics and coefficient block error.
+// residual extraction and skip-decision RD statistics.
 // They are exact against the scalar references (residualBlockPureGo,
-// rdStatsBlockPureGo, blockErrorPureGo): products that can exceed 32 bits widen
+// rdStatsBlockPureGo): products that can exceed 32 bits widen
 // to int64 before they are accumulated, and the int16 narrowing that SVT's
 // load_tran_low_to_s16q applies is reproduced with a shift pair on int32 lanes.
 // The lane moves, widening squares and bit lengths are shared helpers with
@@ -23,7 +23,6 @@ func init() {
 	residualBlockImpl = residualBlockSIMD
 	rdStatsBlockImpl = rdStatsBlockSIMD
 	rdStatsDiffImpl = rdStatsDiffSIMD
-	blockErrorImpl = blockErrorSIMD
 }
 
 // residualBlockSIMD extracts dst[r*w+c] = src - pred with one kernel per block
@@ -119,11 +118,6 @@ func residualRows8(dst []int16, src []byte, off, stride int, pred []byte, predSt
 	}
 }
 
-// sext16 sign-extends the low 16 bits of each int32 lane (the int16 narrowing).
-func sext16(v archsimd.Int32x4) archsimd.Int32x4 {
-	return v.ShiftAllLeft(16).ShiftAllRight(16)
-}
-
 // rdStatsBlockSIMD mirrors rdStatsBlockPureGo. For a zero level the AC-step
 // dequant is zero, so e = c and the code term is c*c, matching the branch in
 // the reference without a branch in the vector body. The 32-bit dequant product
@@ -186,36 +180,4 @@ func rdStatsBlockSIMD(tran []int32, qcoeff []int16, count int, step int32, ts ui
 		}
 	}
 	return dskip, dcode, lanes << 9, allZero
-}
-
-// blockErrorSIMD mirrors blockErrorPureGo: coefficients narrow to int16, the
-// error is the square of the 16-bit difference, and ssz the square of the
-// narrowed coefficient. Products are at most 2^30, so they fit an int32 lane
-// before widening to the int64 accumulators.
-func blockErrorSIMD(coeff []int32, dqcoeff []int32, count int) (err int64, ssz int64) {
-	if count <= 0 {
-		return 0, 0
-	}
-	_ = coeff[count-1]
-	_ = dqcoeff[count-1]
-	errAcc := archsimd.BroadcastInt64x2(0)
-	sszAcc := archsimd.BroadcastInt64x2(0)
-	i := 0
-	for ; i+4 <= count; i += 4 {
-		c := sext16(archsimd.LoadInt32x4(coeff[i : i+4]))
-		d := sext16(archsimd.LoadInt32x4(dqcoeff[i : i+4]))
-		errAcc = sqSumInt32(errAcc, sext16(c.Sub(d)))
-		sszAcc = sqSumInt32(sszAcc, c)
-	}
-	err = errAcc.GetElem(0) + errAcc.GetElem(1)
-	ssz = sszAcc.GetElem(0) + sszAcc.GetElem(1)
-	for ; i < count; i++ {
-		c := int16(coeff[i])
-		d := int16(dqcoeff[i])
-		diff := int64(int16(c - d))
-		err += diff * diff
-		cv := int64(c)
-		ssz += cv * cv
-	}
-	return err, ssz
 }

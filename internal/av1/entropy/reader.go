@@ -164,11 +164,6 @@ func (c *Cursor) CommitStateTo(r *Reader) {
 	r.tellOffs = c.tellOffs
 }
 
-// NewReader initializes an AV1 entropy reader with CDF adaptation enabled.
-func NewReader(src []byte) Reader {
-	return NewReaderWithCDFUpdate(src, true)
-}
-
 // NewReaderWithCDFUpdate initializes an AV1 entropy reader and controls whether
 // ReadSymbol adapts CDF state after each decoded symbol.
 func NewReaderWithCDFUpdate(src []byte, allowCDFUpdate bool) Reader {

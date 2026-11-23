@@ -18,13 +18,13 @@ import (
 // network chosen per pass; a flipped ADST reverses its outputs before the
 // transpose (rows) or before the add (columns), as inverseFlipADST1D does.
 // The ADST networks below are generated from the stage structure of
-// inverseADST16Core and inverseADST8To with the zero operands of each form
+// inverseADST16 and inverseADST8To with the zero operands of each form
 // folded; itx_hybrid_gain_test.go certifies the shared per-lane L1 guard
 // for them.
 
 // itx16ADSTNet16 is inverseADST16 on eight lanes for inputs below 16 (the rest
 // zero): in[k] is coefficient k, out[r] output r. Generated from the stage
-// structure of inverseADST16Core with the zero operands folded.
+// structure of inverseADST16 with the zero operands folded.
 func itx16ADSTNet16(in *[16]archsimd.Int16x8, out *[16]archsimd.Int16x8) {
 	k := func(i int) archsimd.Int16x8 { return archsimd.LoadInt16x8Array(&itx64K[i]) }
 	kn := func(i int) archsimd.Int16x8 { return archsimd.LoadInt16x8Array(&itx64K[64+i]) }
@@ -146,7 +146,7 @@ func itx16ADSTNet16(in *[16]archsimd.Int16x8, out *[16]archsimd.Int16x8) {
 
 // itx16ADSTNet8 is inverseADST16 on eight lanes for inputs below 8 (the rest
 // zero): in[k] is coefficient k, out[r] output r. Generated from the stage
-// structure of inverseADST16Core with the zero operands folded.
+// structure of inverseADST16 with the zero operands folded.
 func itx16ADSTNet8(in *[16]archsimd.Int16x8, out *[16]archsimd.Int16x8) {
 	k := func(i int) archsimd.Int16x8 { return archsimd.LoadInt16x8Array(&itx64K[i]) }
 	kn := func(i int) archsimd.Int16x8 { return archsimd.LoadInt16x8Array(&itx64K[64+i]) }
@@ -268,7 +268,7 @@ func itx16ADSTNet8(in *[16]archsimd.Int16x8, out *[16]archsimd.Int16x8) {
 
 // itx16ADSTNet4 is inverseADST16 on eight lanes for inputs below 4 (the rest
 // zero): in[k] is coefficient k, out[r] output r. Generated from the stage
-// structure of inverseADST16Core with the zero operands folded.
+// structure of inverseADST16 with the zero operands folded.
 func itx16ADSTNet4(in *[16]archsimd.Int16x8, out *[16]archsimd.Int16x8) {
 	k := func(i int) archsimd.Int16x8 { return archsimd.LoadInt16x8Array(&itx64K[i]) }
 	kn := func(i int) archsimd.Int16x8 { return archsimd.LoadInt16x8Array(&itx64K[64+i]) }

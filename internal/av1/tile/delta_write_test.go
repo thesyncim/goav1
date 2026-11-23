@@ -25,7 +25,7 @@ func TestWriteSignedDeltaRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := entropy.NewReader(payload)
+	r := entropy.NewReaderWithCDFUpdate(payload, true)
 	for _, want := range values {
 		got, err := r.ReadSignedDelta(&rcdf, entropy.DeltaSmall)
 		if err != nil {

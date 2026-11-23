@@ -1103,7 +1103,7 @@ func TestSimpleDecoderRejectsSwitchFrameWithoutReferences(t *testing.T) {
 }
 
 func TestSimpleDecoderTileListIVFPlayback(t *testing.T) {
-	tilePayload := internalparser.AppendTileListOBU(nil, internalparser.TileList{
+	tilePayload := appendTileListOBU(nil, internalparser.TileList{
 		OutputFrameWidthInTilesMinus1:  0,
 		OutputFrameHeightInTilesMinus1: 0,
 		TileCountMinus1:                0,
@@ -1354,7 +1354,7 @@ func TestNewDecoderFromRTPPayloadsTileListPlayback(t *testing.T) {
 }
 
 func TestSimpleDecoderTileListIVFPlanErrors(t *testing.T) {
-	validPayload := internalparser.AppendTileListOBU(nil, internalparser.TileList{
+	validPayload := appendTileListOBU(nil, internalparser.TileList{
 		OutputFrameWidthInTilesMinus1:  0,
 		OutputFrameHeightInTilesMinus1: 0,
 		TileCountMinus1:                0,
@@ -1436,7 +1436,7 @@ func publicSimpleDecoderTileListRTPPayload() []byte {
 }
 
 func publicSimpleDecoderTileListPayload() []byte {
-	return internalparser.AppendTileListOBU(nil, internalparser.TileList{
+	return appendTileListOBU(nil, internalparser.TileList{
 		OutputFrameWidthInTilesMinus1:  0,
 		OutputFrameHeightInTilesMinus1: 0,
 		TileCountMinus1:                0,
@@ -1892,7 +1892,7 @@ func TestHighLevelRTPDecodersWebRTCSVCCatalogue(t *testing.T) {
 	limits := RTPPayloadSizeLimits{MaxPayloadLen: 24}
 	covered := 0
 	sharedCovered := 0
-	for step, mode := range internalencoder.AppendWebRTCSVCScalabilityModes(nil) {
+	for step, mode := range svcScalabilityModes() {
 		covered++
 		t.Run(mode.String(), func(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, mode)
@@ -3576,4 +3576,25 @@ func TestRealtimeDecodersKeepZeroFrameDelay(t *testing.T) {
 		}
 		dec.Close()
 	}
+}
+
+// appendTileListOBU serializes a tile_list_obu() payload.
+func appendTileListOBU(dst []byte, list internalparser.TileList) []byte {
+	dst = append(dst,
+		list.OutputFrameWidthInTilesMinus1,
+		list.OutputFrameHeightInTilesMinus1,
+		byte(list.TileCountMinus1>>8),
+		byte(list.TileCountMinus1),
+	)
+	for _, entry := range list.Entries {
+		dst = append(dst,
+			entry.AnchorFrameIdx,
+			entry.AnchorTileRow,
+			entry.AnchorTileCol,
+			byte(entry.TileDataSizeMinus1>>8),
+			byte(entry.TileDataSizeMinus1),
+		)
+		dst = append(dst, entry.TileData...)
+	}
+	return dst
 }

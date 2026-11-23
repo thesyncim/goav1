@@ -8,58 +8,6 @@ import (
 	"unsafe"
 )
 
-// svtBilinearPredictArch is svtBilinearPredict on NEON, shaped like SVT's
-// Source/Lib/ASM_NEON/variance_neon.c SPECIALIZED_SUBPEL_VARIANCE_WXH_NEON:
-// a zero phase skips its pass, the half-pel phase (taps 64/64) is a rounding
-// byte average (vrhadd: (a+b+1)>>1 == (64a+64b+64)>>7), and the other phases
-// run var_filter_block2d_bil_w16 (widening multiply-accumulate, round by 7).
-// Both passes keep 8-bit intermediates as the C reference's values do. The
-// passes are fused per 16-column strip, carrying the previous row's
-// horizontal result in a register; an 8-wide block stores half a strip.
-func svtBilinearPredictArch(scratch *svtSubpelScratch, ref []byte, refStride, bw, bh, xoff, yoff int) {
-	if bw&7 != 0 || bw > 64 || len(ref) < bh*refStride+bw+16 {
-		svtBilinearPredict(scratch, ref, refStride, bw, bh, xoff, yoff)
-		return
-	}
-	fx0 := archsimd.BroadcastUint8x16(uint8(svtBilinearFilters2T[xoff][0]))
-	fx1 := archsimd.BroadcastUint8x16(uint8(svtBilinearFilters2T[xoff][1]))
-	fy0 := archsimd.BroadcastUint8x16(uint8(svtBilinearFilters2T[yoff][0]))
-	fy1 := archsimd.BroadcastUint8x16(uint8(svtBilinearFilters2T[yoff][1]))
-	bias := archsimd.BroadcastUint16x8(64)
-	sh7 := archsimd.BroadcastInt16x8(-7)
-	base := unsafe.Pointer(&ref[0])
-	dst := unsafe.Pointer(&scratch.pred[0])
-	for x := 0; x < bw; x += 16 {
-		p := unsafe.Add(base, x)
-		prev := svtBilRowH(p, xoff, fx0, fx1, bias, sh7)
-		for r := 0; r < bh; r++ {
-			var out archsimd.Uint8x16
-			if yoff == 0 {
-				out = prev
-			} else {
-				p = unsafe.Add(p, refStride)
-				cur := svtBilRowH(p, xoff, fx0, fx1, bias, sh7)
-				if yoff == 4 {
-					out = prev.Average(cur)
-				} else {
-					out = svtBil16(prev, cur, fy0, fy1, bias, sh7)
-				}
-				prev = cur
-			}
-			if yoff == 0 {
-				p = unsafe.Add(p, refStride)
-				prev = svtBilRowH(p, xoff, fx0, fx1, bias, sh7)
-			}
-			d := unsafe.Add(dst, r*bw+x)
-			if x+16 <= bw {
-				out.StoreArray((*[16]uint8)(d))
-			} else {
-				*(*uint64)(d) = out.ReshapeToUint64s().GetElem(0)
-			}
-		}
-	}
-}
-
 // svtBilRowH is the first (horizontal) pass over the 16 samples at p.
 func svtBilRowH(p unsafe.Pointer, xoff int, f0, f1 archsimd.Uint8x16, bias archsimd.Uint16x8, sh7 archsimd.Int16x8) archsimd.Uint8x16 {
 	a := archsimd.LoadUint8x16Array((*[16]uint8)(p))
@@ -86,7 +34,7 @@ func svtBil16(a, b, f0, f1 archsimd.Uint8x16, bias archsimd.Uint16x8, sh7 archsi
 }
 
 // svtSubpelVarianceArch is vfp->svf: the bilinear prediction of
-// svtBilinearPredictArch folded straight into the residual statistics of
+// svtBilinearPredict folded straight into the residual statistics of
 // svt_aom_variance (variance_neon.c variance_large_neon's accumulation:
 // widened differences, int16 sums flushed to int32, squares in int32 lanes)
 // instead of being stored and re-read.

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	av1frame "github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -219,7 +220,7 @@ func TestSaveRestorationBoundaryLinesDeblock(t *testing.T) {
 	}
 	boundaries := makeSentinelRestorationBoundaries(size, 0xeeee)
 
-	if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, false); err != nil {
+	if err := SaveRestorationBoundaryLinesFromFramePlane(grid, restorationBoundaryFramePlane(grid, src, srcStride), 2, boundaries, false); err != nil {
 		t.Fatal(err)
 	}
 	assertSavedBoundaryRow(t, grid, src, srcStride, boundaries.Below, boundaries.Stride, 0, 0, 56)
@@ -242,7 +243,7 @@ func TestSaveRestorationBoundaryLinesCDEF(t *testing.T) {
 	}
 	boundaries := makeSentinelRestorationBoundaries(size, 0xeeee)
 
-	if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, true); err != nil {
+	if err := SaveRestorationBoundaryLinesFromFramePlane(grid, restorationBoundaryFramePlane(grid, src, srcStride), 2, boundaries, true); err != nil {
 		t.Fatal(err)
 	}
 	assertSavedBoundaryRow(t, grid, src, srcStride, boundaries.Above, boundaries.Stride, 0, 0, 0)
@@ -269,7 +270,7 @@ func TestSaveRestorationBoundaryLinesDuplicatesSingleDeblockRow(t *testing.T) {
 	}
 	boundaries := makeSentinelRestorationBoundaries(size, 0xeeee)
 
-	if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, false); err != nil {
+	if err := SaveRestorationBoundaryLinesFromFramePlane(grid, restorationBoundaryFramePlane(grid, src, srcStride), 2, boundaries, false); err != nil {
 		t.Fatal(err)
 	}
 	assertSavedBoundaryRow(t, grid, src, srcStride, boundaries.Below, boundaries.Stride, 0, 0, 56)
@@ -277,30 +278,30 @@ func TestSaveRestorationBoundaryLinesDuplicatesSingleDeblockRow(t *testing.T) {
 }
 
 func TestSaveRestorationFrameBoundaryLinesMatchesPlaneLoop(t *testing.T) {
-	planes := makeRestorationFrameBoundaryPlanes(t, [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}, 10, false)
-	manual := cloneRestorationFrameBoundaryPlanes(planes)
+	planes := makerestorationFrameBoundaryPlanes(t, [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}, 10, false)
+	manual := clonerestorationFrameBoundaryPlanes(planes)
 
-	if err := SaveRestorationFrameBoundaryLines(planes, false); err != nil {
+	if err := saveTestRestorationFrameBoundaryLines(planes, false); err != nil {
 		t.Fatal(err)
 	}
 	saveRestorationFrameBoundaryLinesManually(t, manual, false)
-	assertRestorationFrameBoundaryPlanesEqual(t, planes, manual)
+	assertrestorationFrameBoundaryPlanesEqual(t, planes, manual)
 
-	if err := SaveRestorationFrameBoundaryLines(planes, true); err != nil {
+	if err := saveTestRestorationFrameBoundaryLines(planes, true); err != nil {
 		t.Fatal(err)
 	}
 	saveRestorationFrameBoundaryLinesManually(t, manual, true)
-	assertRestorationFrameBoundaryPlanesEqual(t, planes, manual)
+	assertrestorationFrameBoundaryPlanesEqual(t, planes, manual)
 }
 
 func TestSaveRestorationFrameBoundaryLinesMonochrome(t *testing.T) {
-	planes := makeRestorationFrameBoundaryPlanes(t, [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationNone, parser.RestorationNone}, 8, true)
-	manual := cloneRestorationFrameBoundaryPlanes(planes)
-	if err := SaveRestorationFrameBoundaryLines(planes, false); err != nil {
+	planes := makerestorationFrameBoundaryPlanes(t, [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationNone, parser.RestorationNone}, 8, true)
+	manual := clonerestorationFrameBoundaryPlanes(planes)
+	if err := saveTestRestorationFrameBoundaryLines(planes, false); err != nil {
 		t.Fatal(err)
 	}
 	saveRestorationFrameBoundaryLinesManually(t, manual, false)
-	assertRestorationFrameBoundaryPlanesEqual(t, planes, manual)
+	assertrestorationFrameBoundaryPlanesEqual(t, planes, manual)
 }
 
 func TestRestorationStripeBoundaryRejectsInvalidInputs(t *testing.T) {
@@ -355,34 +356,28 @@ func TestSaveRestorationBoundaryLinesRejectsInvalidInputs(t *testing.T) {
 	boundaries := makeSentinelRestorationBoundaries(size, 0xeeee)
 	short := boundaries
 	short.Above = short.Above[:len(short.Above)-1]
-	if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, short, false); !errors.Is(err, ErrInvalidPlan) {
+	if err := SaveRestorationBoundaryLinesFromFramePlane(grid, restorationBoundaryFramePlane(grid, src, srcStride), 2, short, false); !errors.Is(err, ErrInvalidPlan) {
 		t.Fatalf("short boundary err=%v want %v", err, ErrInvalidPlan)
-	}
-	if err := SaveRestorationBoundaryLines(grid, src[:len(src)-1], srcStride, 0, boundaries, true); !errors.Is(err, ErrInvalidPlan) {
-		t.Fatalf("short src err=%v want %v", err, ErrInvalidPlan)
-	}
-	if err := SaveRestorationBoundaryLines(grid, src, srcStride, -1, boundaries, false); !errors.Is(err, ErrInvalidPlan) {
-		t.Fatalf("bad origin err=%v want %v", err, ErrInvalidPlan)
 	}
 }
 
 func TestSaveRestorationFrameBoundaryLinesRejectsInvalidInputs(t *testing.T) {
-	planes := makeRestorationFrameBoundaryPlanes(t, [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}, 8, false)
-	if err := SaveRestorationFrameBoundaryLines(planes[:2], false); !errors.Is(err, ErrInvalidPlan) {
+	planes := makerestorationFrameBoundaryPlanes(t, [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}, 8, false)
+	if err := saveTestRestorationFrameBoundaryLines(planes[:2], false); !errors.Is(err, ErrInvalidPlan) {
 		t.Fatalf("two-plane frame err=%v want %v", err, ErrInvalidPlan)
 	}
-	bad := append([]RestorationFrameBoundaryPlane(nil), planes...)
+	bad := append([]restorationFrameBoundaryPlane(nil), planes...)
 	bad[1].Grid.Plane = 2
-	if err := SaveRestorationFrameBoundaryLines(bad, false); !errors.Is(err, ErrInvalidPlan) {
+	if err := saveTestRestorationFrameBoundaryLines(bad, false); !errors.Is(err, ErrInvalidPlan) {
 		t.Fatalf("bad plane order err=%v want %v", err, ErrInvalidPlan)
 	}
-	short := append([]RestorationFrameBoundaryPlane(nil), planes...)
+	short := append([]restorationFrameBoundaryPlane(nil), planes...)
 	short[0].Boundaries.Above = short[0].Boundaries.Above[:len(short[0].Boundaries.Above)-1]
-	if err := SaveRestorationFrameBoundaryLines(short, false); !errors.Is(err, ErrInvalidPlan) {
+	if err := saveTestRestorationFrameBoundaryLines(short, false); !errors.Is(err, ErrInvalidPlan) {
 		t.Fatalf("short boundary err=%v want %v", err, ErrInvalidPlan)
 	}
-	disabled := []RestorationFrameBoundaryPlane{{Grid: RestorationPlaneGrid{Plane: 0, Type: parser.RestorationNone}}}
-	if err := SaveRestorationFrameBoundaryLines(disabled, false); err != nil {
+	disabled := []restorationFrameBoundaryPlane{{Grid: RestorationPlaneGrid{Plane: 0, Type: parser.RestorationNone}}}
+	if err := saveTestRestorationFrameBoundaryLines(disabled, false); err != nil {
 		t.Fatalf("disabled frame boundary err=%v", err)
 	}
 }
@@ -433,27 +428,32 @@ func TestSaveRestorationBoundaryLinesAllocs(t *testing.T) {
 		t.Fatal(err)
 	}
 	boundaries := makeSentinelRestorationBoundaries(size, 0)
+	plane := restorationBoundaryFramePlane(grid, src, srcStride)
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, false); err != nil {
+		if err := SaveRestorationBoundaryLinesFromFramePlane(grid, plane, 2, boundaries, false); err != nil {
 			t.Fatal(err)
 		}
-		if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, true); err != nil {
+		if err := SaveRestorationBoundaryLinesFromFramePlane(grid, plane, 2, boundaries, true); err != nil {
 			t.Fatal(err)
 		}
 	})
 	if allocs != 0 {
-		t.Fatalf("SaveRestorationBoundaryLines allocated: %f", allocs)
+		t.Fatalf("SaveRestorationBoundaryLinesFromFramePlane allocated: %f", allocs)
 	}
 }
 
 func TestSaveRestorationFrameBoundaryLinesAllocs(t *testing.T) {
-	planes := makeRestorationFrameBoundaryPlanes(t, [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}, 8, false)
+	planes := makerestorationFrameBoundaryPlanes(t, [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}, 8, false)
+	plan, frm, boundaries, err := restorationBoundaryFrameInputs(planes)
+	if err != nil {
+		t.Fatal(err)
+	}
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := SaveRestorationFrameBoundaryLines(planes, false); err != nil {
+		if err := SaveRestorationFrameBoundaryLinesFromFrame(plan, frm, 2, boundaries, false); err != nil {
 			t.Fatal(err)
 		}
-		if err := SaveRestorationFrameBoundaryLines(planes, true); err != nil {
+		if err := SaveRestorationFrameBoundaryLinesFromFrame(plan, frm, 2, boundaries, true); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -607,8 +607,8 @@ func FuzzSaveRestorationBoundaryLines(f *testing.F) {
 			t.Fatalf("RestorationStripeBoundaryBufferLen err=%v", err)
 		}
 		boundaries := makeSentinelRestorationBoundaries(size, 0xeeee)
-		if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, afterCDEF); err != nil {
-			t.Fatalf("SaveRestorationBoundaryLines err=%v", err)
+		if err := SaveRestorationBoundaryLinesFromFramePlane(grid, restorationBoundaryFramePlane(grid, src, srcStride), 2, boundaries, afterCDEF); err != nil {
+			t.Fatalf("SaveRestorationBoundaryLinesFromFramePlane err=%v", err)
 		}
 		if len(boundaries.Above) < int(size.Len) || len(boundaries.Below) < int(size.Len) {
 			t.Fatalf("bad boundary lengths above=%d below=%d size=%+v", len(boundaries.Above), len(boundaries.Below), size)
@@ -639,7 +639,7 @@ func FuzzSaveRestorationFrameBoundaryLines(f *testing.F) {
 		if mono {
 			numPlanes = 1
 		}
-		planes := make([]RestorationFrameBoundaryPlane, numPlanes)
+		planes := make([]restorationFrameBoundaryPlane, numPlanes)
 		for plane := 0; plane < numPlanes; plane++ {
 			grid, err := BuildRestorationPlaneGrid(params, size, color, plane)
 			if err != nil {
@@ -655,19 +655,19 @@ func FuzzSaveRestorationFrameBoundaryLines(f *testing.F) {
 				}
 				boundaries = makeSentinelRestorationBoundaries(boundarySize, 0xeeee)
 			}
-			planes[plane] = RestorationFrameBoundaryPlane{
+			planes[plane] = restorationFrameBoundaryPlane{
 				Grid:       grid,
 				Src:        src,
 				SrcStride:  srcStride,
 				Boundaries: boundaries,
 			}
 		}
-		manual := cloneRestorationFrameBoundaryPlanes(planes)
-		if err := SaveRestorationFrameBoundaryLines(planes, afterCDEF); err != nil {
+		manual := clonerestorationFrameBoundaryPlanes(planes)
+		if err := saveTestRestorationFrameBoundaryLines(planes, afterCDEF); err != nil {
 			t.Fatalf("SaveRestorationFrameBoundaryLines err=%v", err)
 		}
 		saveRestorationFrameBoundaryLinesManually(t, manual, afterCDEF)
-		assertRestorationFrameBoundaryPlanesEqual(t, planes, manual)
+		assertrestorationFrameBoundaryPlanesEqual(t, planes, manual)
 	})
 }
 
@@ -716,27 +716,32 @@ func BenchmarkSaveRestorationBoundaryLines(b *testing.B) {
 		b.Fatal(err)
 	}
 	boundaries := makeSentinelRestorationBoundaries(size, 0)
+	plane := restorationBoundaryFramePlane(grid, src, srcStride)
 	b.ReportAllocs()
 	b.SetBytes(int64(size.Len) * 2)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := SaveRestorationBoundaryLines(grid, src, srcStride, 0, boundaries, i&1 == 0); err != nil {
+		if err := SaveRestorationBoundaryLinesFromFramePlane(grid, plane, 2, boundaries, i&1 == 0); err != nil {
 			b.Fatal(err)
 		}
 	}
 }
 
 func BenchmarkSaveRestorationFrameBoundaryLines(b *testing.B) {
-	planes := makeRestorationFrameBoundaryPlanes(b, [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}, 12, false)
+	planes := makerestorationFrameBoundaryPlanes(b, [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationSGRProj, parser.RestorationNone}, 12, false)
 	var bytes int64
 	for i := range planes {
 		bytes += int64(planes[i].Grid.PlaneWidth * planes[i].Grid.PlaneHeight * 2)
+	}
+	plan, frm, boundaries, err := restorationBoundaryFrameInputs(planes)
+	if err != nil {
+		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.SetBytes(bytes)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := SaveRestorationFrameBoundaryLines(planes, i&1 == 0); err != nil {
+		if err := SaveRestorationFrameBoundaryLinesFromFrame(plan, frm, 2, boundaries, i&1 == 0); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -771,7 +776,7 @@ func testRestorationBoundaryGrid(tb testing.TB, ssX bool, ssY bool) RestorationP
 	return grid
 }
 
-func makeRestorationFrameBoundaryPlanes(tb testing.TB, types [3]parser.RestorationType, bitDepth uint8, mono bool) []RestorationFrameBoundaryPlane {
+func makerestorationFrameBoundaryPlanes(tb testing.TB, types [3]parser.RestorationType, bitDepth uint8, mono bool) []restorationFrameBoundaryPlane {
 	tb.Helper()
 	params := parser.RestorationParams{
 		Type:       types,
@@ -784,7 +789,7 @@ func makeRestorationFrameBoundaryPlanes(tb testing.TB, types [3]parser.Restorati
 	if mono {
 		numPlanes = 1
 	}
-	planes := make([]RestorationFrameBoundaryPlane, numPlanes)
+	planes := make([]restorationFrameBoundaryPlane, numPlanes)
 	for plane := 0; plane < numPlanes; plane++ {
 		grid, err := BuildRestorationPlaneGrid(params, size, color, plane)
 		if err != nil {
@@ -802,7 +807,7 @@ func makeRestorationFrameBoundaryPlanes(tb testing.TB, types [3]parser.Restorati
 		} else {
 			boundaries = makeRestorationStripeBoundaries(1, 1)
 		}
-		planes[plane] = RestorationFrameBoundaryPlane{
+		planes[plane] = restorationFrameBoundaryPlane{
 			Grid:       grid,
 			Src:        src,
 			SrcStride:  srcStride,
@@ -812,20 +817,20 @@ func makeRestorationFrameBoundaryPlanes(tb testing.TB, types [3]parser.Restorati
 	return planes
 }
 
-func saveRestorationFrameBoundaryLinesManually(tb testing.TB, planes []RestorationFrameBoundaryPlane, afterCDEF bool) {
+func saveRestorationFrameBoundaryLinesManually(tb testing.TB, planes []restorationFrameBoundaryPlane, afterCDEF bool) {
 	tb.Helper()
 	for i := range planes {
 		if planes[i].Grid.Type == parser.RestorationNone {
 			continue
 		}
-		if err := SaveRestorationBoundaryLines(planes[i].Grid, planes[i].Src, planes[i].SrcStride, planes[i].SrcOrigin, planes[i].Boundaries, afterCDEF); err != nil {
+		if err := SaveRestorationBoundaryLinesFromFramePlane(planes[i].Grid, restorationBoundaryFramePlane(planes[i].Grid, planes[i].Src, planes[i].SrcStride), 2, planes[i].Boundaries, afterCDEF); err != nil {
 			tb.Fatal(err)
 		}
 	}
 }
 
-func cloneRestorationFrameBoundaryPlanes(src []RestorationFrameBoundaryPlane) []RestorationFrameBoundaryPlane {
-	dst := make([]RestorationFrameBoundaryPlane, len(src))
+func clonerestorationFrameBoundaryPlanes(src []restorationFrameBoundaryPlane) []restorationFrameBoundaryPlane {
+	dst := make([]restorationFrameBoundaryPlane, len(src))
 	for i := range src {
 		dst[i] = src[i]
 		dst[i].Src = append([]uint16(nil), src[i].Src...)
@@ -835,7 +840,7 @@ func cloneRestorationFrameBoundaryPlanes(src []RestorationFrameBoundaryPlane) []
 	return dst
 }
 
-func assertRestorationFrameBoundaryPlanesEqual(t *testing.T, got []RestorationFrameBoundaryPlane, want []RestorationFrameBoundaryPlane) {
+func assertrestorationFrameBoundaryPlanesEqual(t *testing.T, got []restorationFrameBoundaryPlane, want []restorationFrameBoundaryPlane) {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("planes len=%d want %d", len(got), len(want))
@@ -964,4 +969,77 @@ func assertBoundaryRows(t *testing.T, data []uint16, stride int, origin int, str
 			t.Fatalf("saved len=%d want %d", len(saved), lineWidth)
 		}
 	}
+}
+
+// restorationFrameBoundaryPlane is one plane's grid, 16-bit source samples, and
+// boundary buffers for the frame-level boundary save tests.
+type restorationFrameBoundaryPlane struct {
+	Grid       RestorationPlaneGrid
+	Src        []uint16
+	SrcStride  int
+	Boundaries RestorationStripeBoundaries
+}
+
+// restorationBoundaryFramePlane packs a 16-bit sample window into a
+// little-endian 16-bit frame plane.
+func restorationBoundaryFramePlane(grid RestorationPlaneGrid, src []uint16, srcStride int) av1frame.Plane {
+	width, height := int(grid.PlaneWidth), int(grid.PlaneHeight)
+	pix := make([]byte, 2*width*height)
+	for y := range height {
+		for x := range width {
+			v := src[y*srcStride+x]
+			pix[2*(y*width+x)] = byte(v)
+			pix[2*(y*width+x)+1] = byte(v >> 8)
+		}
+	}
+	return av1frame.Plane{Pix: pix, Stride: 2 * width, Width: width, Height: height}
+}
+
+// saveTestRestorationFrameBoundaryLines saves the frame's boundary lines through
+// SaveRestorationFrameBoundaryLinesFromFrame over a frame and plan built from
+// planes.
+func saveTestRestorationFrameBoundaryLines(planes []restorationFrameBoundaryPlane, afterCDEF bool) error {
+	plan, frm, boundaries, err := restorationBoundaryFrameInputs(planes)
+	if err != nil {
+		return err
+	}
+	return SaveRestorationFrameBoundaryLinesFromFrame(plan, frm, 2, boundaries, afterCDEF)
+}
+
+func restorationBoundaryFrameInputs(planes []restorationFrameBoundaryPlane) (RestorationFramePlan, av1frame.Frame, [3]RestorationStripeBoundaries, error) {
+	var plan RestorationFramePlan
+	var frm av1frame.Frame
+	var boundaries [3]RestorationStripeBoundaries
+	plan.Planes = uint8(len(planes))
+	for i := range planes {
+		grid := planes[i].Grid
+		plan.Grids[i] = grid
+		if grid.Type != parser.RestorationNone {
+			records, err := grid.UnitRecordLen()
+			if err != nil {
+				return plan, frm, boundaries, err
+			}
+			size, err := RestorationStripeBoundaryBufferLen(grid)
+			if err != nil {
+				return plan, frm, boundaries, err
+			}
+			plan.UnitRecords[i] = uint32(records)
+			plan.Boundaries[i] = size
+			plan.Active = true
+		}
+		boundaries[i] = planes[i].Boundaries
+		var plane av1frame.Plane
+		if grid.PlaneWidth > 0 && grid.PlaneHeight > 0 {
+			plane = restorationBoundaryFramePlane(grid, planes[i].Src, planes[i].SrcStride)
+		}
+		switch i {
+		case 0:
+			frm.Y = plane
+		case 1:
+			frm.U = plane
+		case 2:
+			frm.V = plane
+		}
+	}
+	return plan, frm, boundaries, nil
 }

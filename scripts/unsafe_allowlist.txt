@@ -1,6 +1,5 @@
 decode_simple.go
 examples/browser-wasm/encoder/main.go
-internal/av1/cdef/direction_gosimd_amd64.go
 internal/av1/cdef/direction_hbd_avx2_amd64.go
 internal/av1/cdef/direction_u8_avx2_amd64.go
 internal/av1/cdef/filter_hbd_simd_arm64.go
@@ -18,16 +17,12 @@ internal/av1/decoder/postfilter_cdef_u8.go
 internal/av1/decoder/postfilter_filmgrain_direct.go
 internal/av1/decoder/postfilter_filmgrain_direct_le.go
 internal/av1/decoder/postfilter_sbrow.go
-internal/av1/dsp/blend_gosimd_arm64.go
-internal/av1/dsp/minmax_gosimd.go
 internal/av1/dsp/plane_const_gosimd.go
 internal/av1/dsp/plane_gosimd.go
 internal/av1/dsp/plane_gosimd_arm64.go
-internal/av1/encoder/avg8x8_gosimd.go
 internal/av1/encoder/cdef_dist_simd_arm64.go
 internal/av1/encoder/enc_small_amd64.go
 internal/av1/encoder/lpd1_sad_arm64.go
-internal/av1/encoder/metric_gosimd.go
 internal/av1/encoder/pixelstats_rows16_amd64.go
 internal/av1/encoder/pixelstats_rows16_arm64.go
 internal/av1/encoder/pred8.go
@@ -39,7 +34,6 @@ internal/av1/encoder/recon_raw_gosimd_arm64.go
 internal/av1/encoder/sad_simd.go
 internal/av1/encoder/sad_simd_amd64.go
 internal/av1/encoder/sad_simd_arm64.go
-internal/av1/encoder/sad_sub_arm64.go
 internal/av1/encoder/scale_box_amd64.go
 internal/av1/encoder/scale_box_arm64.go
 internal/av1/encoder/subpel_svt_bilinear_amd64.go
@@ -87,7 +81,6 @@ internal/av1/quantize/quantize_block_gosimd_arm64.go
 internal/av1/quantize/quantize_rowgroups_diff_gosimd_arm64.go
 internal/av1/quantize/quantize_rowgroups_gosimd_amd64.go
 internal/av1/quantize/quantize_rowgroups_gosimd_arm64.go
-internal/av1/quantize/quantize_simd_arm64.go
 internal/av1/restoration/selfguided_blend_gosimd_arm64.go
 internal/av1/restoration/selfguided_gosimd_amd64.go
 internal/av1/restoration/selfguided_rolling_gosimd_arm64.go

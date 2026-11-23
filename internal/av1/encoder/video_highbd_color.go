@@ -57,19 +57,6 @@ type HighBitDepth420VideoEncoder struct {
 	tuScratch    []byte
 }
 
-// NewHighBitDepth420VideoEncoder creates a native 10/12-bit 4:2:0 streaming
-// encoder. Render dimensions must be even; the bitstream is coded at padded
-// multiples of eight and signals render_size when needed. qIndex must be
-// non-zero.
-func NewHighBitDepth420VideoEncoder(width, height int, bitDepth uint8, qIndex uint8) (*HighBitDepth420VideoEncoder, error) {
-	profile := Profile0
-	if bitDepth == 12 {
-		profile = Profile2
-	}
-	color := SequenceColorConfig{BitDepth: bitDepth, SubsamplingX: true, SubsamplingY: true}
-	return newHighBitDepth420VideoEncoderWithColor(width, height, profile, color, qIndex)
-}
-
 func newHighBitDepth420VideoEncoderWithColor(width, height int, profile Profile, color SequenceColorConfig, qIndex uint8) (*HighBitDepth420VideoEncoder, error) {
 	if width < 16 || height < 16 || width%2 != 0 || height%2 != 0 {
 		return nil, fmt.Errorf("encoder: dimensions must be even and at least 16x16, got %dx%d", width, height)
@@ -96,17 +83,6 @@ func newHighBitDepth420VideoEncoderWithColor(width, height int, profile Profile,
 		qIndex:      qIndex,
 		goldenEvery: 16,
 	}, nil
-}
-
-// NewHighBitDepth420VideoEncoderCBR creates a native 10/12-bit 4:2:0 streaming
-// encoder under the same CBR controller used by the realtime encoder family.
-func NewHighBitDepth420VideoEncoderCBR(width, height int, bitDepth uint8, rc RateControlConfig) (*HighBitDepth420VideoEncoder, error) {
-	profile := Profile0
-	if bitDepth == 12 {
-		profile = Profile2
-	}
-	color := SequenceColorConfig{BitDepth: bitDepth, SubsamplingX: true, SubsamplingY: true}
-	return newHighBitDepth420VideoEncoderCBRWithColor(width, height, profile, color, rc)
 }
 
 func newHighBitDepth420VideoEncoderCBRWithColor(width, height int, profile Profile, color SequenceColorConfig, rc RateControlConfig) (*HighBitDepth420VideoEncoder, error) {

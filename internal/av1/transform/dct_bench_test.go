@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Extended InverseDCTBlock benchmarks for the 16x16, 32x32, and 64x64
+// Extended DCT_DCT InverseBlock benchmarks for the 16x16, 32x32, and 64x64
 // transform sizes. The 4x4 and 8x8 variants live alongside the unit
 // tests in dct_test.go; this file fills in the rest of the size ladder
 // so callers profiling the inverse transform stage see how cost scales
@@ -32,7 +32,7 @@ func benchmarkInverseDCTBlockSquare(b *testing.B, side int) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if err := InverseDCTBlock(dst, side, coeff, side, scratch, size); err != nil {
+		if err := InverseBlock(dst, side, coeff, side, scratch, size, TypeDCTDCT); err != nil {
 			b.Fatal(err)
 		}
 	}

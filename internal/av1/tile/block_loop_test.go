@@ -184,13 +184,13 @@ func TestBlockLoopContextCarrierRoundTripsRootEdges(t *testing.T) {
 	scratch.CoeffCtx.Left[1][9] = 11
 
 	carrier := BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, 2)}
-	if err := blockLoopStoreRootContext(&scratch, &carrier, 1, 16); err != nil {
+	if err := blockLoopStoreRootContextMotion(&scratch, &carrier, 1, 16, true, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 
 	scratch = BlockLoopScratch{}
 	scratch.CDEF.Read[0] = true
-	if err := blockLoopLoadRootContext(&scratch, &carrier, 1, true, true, 16); err != nil {
+	if err := blockLoopLoadRootContextMotion(&scratch, &carrier, 1, true, true, 16, true, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if scratch.CDEF.Read[0] {
@@ -214,7 +214,7 @@ func TestBlockLoopContextCarrierRoundTripsRootEdges(t *testing.T) {
 		t.Fatalf("coeff context above=%d left=%d", scratch.CoeffCtx.Above[2][8], scratch.CoeffCtx.Left[1][9])
 	}
 
-	if err := blockLoopLoadRootContext(&scratch, &carrier, 1, false, false, 16); err != nil {
+	if err := blockLoopLoadRootContextMotion(&scratch, &carrier, 1, false, false, 16, true, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if scratch.Partition.Above[2] != 0 || scratch.Partition.Left[3] != 0 ||
@@ -236,7 +236,7 @@ func TestBlockLoopContextCarrierRoundTripsRootEdges(t *testing.T) {
 func TestBlockLoopLoadFirstRootIndependentOfCarrierLength(t *testing.T) {
 	baseline := func() BlockLoopScratch {
 		var s BlockLoopScratch
-		if err := blockLoopLoadRootContext(&s, nil, 0, false, false, 16); err != nil {
+		if err := blockLoopLoadRootContextMotion(&s, nil, 0, false, false, 16, true, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 		return s
@@ -270,7 +270,7 @@ func TestBlockLoopLoadFirstRootIndependentOfCarrierLength(t *testing.T) {
 			carrier.Left.Coeff[0][0] = 21
 
 			var scratch BlockLoopScratch
-			if err := blockLoopLoadRootContext(&scratch, &carrier, 0, false, false, 16); err != nil {
+			if err := blockLoopLoadRootContextMotion(&scratch, &carrier, 0, false, false, 16, true, 0, 0); err != nil {
 				t.Fatal(err)
 			}
 			// Partition / Mode / CoeffCtx must all match the single-SB baseline.
@@ -686,7 +686,7 @@ func TestDecodeBlockPredictionModeReadsInterModeDRLAndStack(t *testing.T) {
 	seedAboveMotion(&ctx, 0, BlockSize8x8, aboveMotion)
 	seedLeftMotion(&ctx, 0, BlockSize8x8, leftMotion)
 
-	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{InterMode: &interModeCDFs}, &ctx, BlockLoopRequest{
+	result, err := decodeTestBlockPredictionMode(&state, BlockLoopCDFs{InterMode: &interModeCDFs}, &ctx, BlockLoopRequest{
 		FrameType:             parser.FrameTypeInter,
 		Segmentation:          parser.SegmentationParams{Enabled: true},
 		DecodePredictionModes: true,
@@ -734,7 +734,7 @@ func TestDecodeBlockPredictionModeInterModeRequiresCDFs(t *testing.T) {
 		MV:         [2]motion.Vector{{Row: 3, Col: 5}},
 	})
 
-	_, err := state.decodeBlockPredictionMode(BlockLoopCDFs{}, &ctx, BlockLoopRequest{
+	_, err := decodeTestBlockPredictionMode(&state, BlockLoopCDFs{}, &ctx, BlockLoopRequest{
 		FrameType:             parser.FrameTypeInter,
 		Segmentation:          parser.SegmentationParams{Enabled: true},
 		DecodePredictionModes: true,
@@ -761,7 +761,7 @@ func TestDecodeBlockPredictionModeReadsIntrabcWithoutInterSyntax(t *testing.T) {
 	}
 	var ctx BlockModeContext
 
-	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{Intra: &intraCDFs}, &ctx, BlockLoopRequest{
+	result, err := decodeTestBlockPredictionMode(&state, BlockLoopCDFs{Intra: &intraCDFs}, &ctx, BlockLoopRequest{
 		FrameType:             parser.FrameTypeKey,
 		AllowIntrabc:          true,
 		DecodePredictionModes: true,
@@ -866,7 +866,7 @@ func TestIntrabcDiagonalCornerCarriesAcrossSBRow(t *testing.T) {
 	// Now load into a scratch context as the next-row SB at column 1
 	// would do, and run the diagonal lookup at (x=-1, y=-1).
 	var scratch BlockLoopScratch
-	if err := blockLoopLoadRootContext(&scratch, carrier, 1, true, true, 16); err != nil {
+	if err := blockLoopLoadRootContextMotion(&scratch, carrier, 1, true, true, 16, true, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	got, _, ok := scratch.Mode.crossSBIntrabcGridInterMotion(ReferenceMVStackRequest{
@@ -908,7 +908,7 @@ func TestIntrabcPredictedMVUsesDiagonalCornerBeforeFallback(t *testing.T) {
 	promotePendingDiagonalCarriers(carrier)
 
 	var scratch BlockLoopScratch
-	if err := blockLoopLoadRootContext(&scratch, carrier, 15, true, true, 16); err != nil {
+	if err := blockLoopLoadRootContextMotion(&scratch, carrier, 15, true, true, 16, true, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	got, err := intrabcPredictedMV(&scratch.Mode, BlockLoopRequest{
@@ -991,7 +991,7 @@ func TestDecodeBlockPredictionModeReadsMotionVectorResidual(t *testing.T) {
 		MV:         [2]motion.Vector{{Row: -7, Col: 9}},
 	})
 
-	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{InterMode: &interModeCDFs, MV: &mvCDFs}, &ctx, BlockLoopRequest{
+	result, err := decodeTestBlockPredictionMode(&state, BlockLoopCDFs{InterMode: &interModeCDFs, MV: &mvCDFs}, &ctx, BlockLoopRequest{
 		FrameType:             parser.FrameTypeInter,
 		Segmentation:          parser.SegmentationParams{Enabled: true},
 		DecodePredictionModes: true,
@@ -1049,7 +1049,7 @@ func TestDecodeBlockPredictionModeReadsInterIntraAndMotionMode(t *testing.T) {
 		MV:         [2]motion.Vector{{Row: -7, Col: 9}},
 	})
 
-	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{
+	result, err := decodeTestBlockPredictionMode(&state, BlockLoopCDFs{
 		InterMode: &interModeCDFs,
 		MV:        &mvCDFs,
 		Blend:     &blendCDFs,
@@ -1121,7 +1121,7 @@ func TestDecodeBlockPredictionModeReadsCompoundBlend(t *testing.T) {
 		t.Fatal(err)
 	}
 	var ctx BlockModeContext
-	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{Blend: &blendCDFs}, &ctx, BlockLoopRequest{
+	result, err := decodeTestBlockPredictionMode(&state, BlockLoopCDFs{Blend: &blendCDFs}, &ctx, BlockLoopRequest{
 		FrameType:             parser.FrameTypeInter,
 		DecodePredictionModes: true,
 		DecodeInterModes:      true,
@@ -1494,7 +1494,7 @@ func TestDecodeBlockPredictionModePopulatesGlobalWarpForGlobalMVBlock(t *testing
 	gmTypes := [referenceFrameCount]parser.GlobalMotionType{
 		ReferenceFrameLast: parser.GlobalMotionRotZoom,
 	}
-	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{
+	result, err := decodeTestBlockPredictionMode(&state, BlockLoopCDFs{
 		InterMode: &interModeCDFs,
 		MV:        &mvCDFs,
 		Blend:     &blendCDFs,
@@ -1593,7 +1593,7 @@ func TestDecodeBlockPredictionModeSkipsGlobalWarpForTranslationGM(t *testing.T) 
 	gmTypes := [referenceFrameCount]parser.GlobalMotionType{
 		ReferenceFrameLast: parser.GlobalMotionTranslation,
 	}
-	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{
+	result, err := decodeTestBlockPredictionMode(&state, BlockLoopCDFs{
 		InterMode: &interModeCDFs,
 		MV:        &mvCDFs,
 		Blend:     &blendCDFs,
@@ -1671,7 +1671,7 @@ func TestDecodeBlockPredictionModeSkipsGlobalWarpForSmallBlock(t *testing.T) {
 	gmTypes := [referenceFrameCount]parser.GlobalMotionType{
 		ReferenceFrameLast: parser.GlobalMotionRotZoom,
 	}
-	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{
+	result, err := decodeTestBlockPredictionMode(&state, BlockLoopCDFs{
 		InterMode: &interModeCDFs,
 		MV:        &mvCDFs,
 		Blend:     &blendCDFs,
@@ -1703,134 +1703,6 @@ func TestDecodeBlockPredictionModeSkipsGlobalWarpForSmallBlock(t *testing.T) {
 	}
 }
 
-// TestWarpSampleDiagonalCornerAddsCrossSBContribution pins the WARP
-// num_proj_ref augmentation that closes the libaom_av1_8-bit_monochrome
-// frame 3 SB-layout divergence. WarpSampleCountWithContext addresses the
-// top-left neighbor via the local per-SB grid at (block.X4-1, block.Y4-1),
-// which has no valid entry for negative coordinates, so for an SB top-left
-// block the diagonal-up-left cell (frame mi (X4-1+rootCol, Y4-1+rootRow))
-// would be missed. libaom's av1_findSamples reads it through mi[-mi_stride
-// - 1], so goav1's motion-mode gate underestimates num_proj_ref by one and
-// switches to the 2-symbol OBMC CDF where libaom keeps the 3-symbol
-// motion-mode CDF, desyncing the entropy stream from frame 3 onwards.
-//
-// The fix in block_loop.go augments numProjRef via the
-// SBDiagonal* grids the carrier already captures (intrabc cross-SB scan).
-// This test seeds those grids by hand and verifies warpSampleDiagonalCorner
-// reports the diagonal contribution exactly when libaom's top-left scan
-// would accept it.
-func TestWarpSampleDiagonalCornerAddsCrossSBContribution(t *testing.T) {
-	t.Run("matching single ref adds one", func(t *testing.T) {
-		var ctx BlockModeContext
-		ctx.SBDiagonalMotionValidGrid[0][0] = 1
-		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
-			References: InterReferencesResult{
-				Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone,
-			},
-		}
-		block := BlockVisit{
-			Size: BlockSize64x64, X4: 0, Y4: 0,
-			HaveTop: true, HaveLeft: true,
-		}
-		if got := warpSampleDiagonalCorner(block, &ctx, ReferenceFrameLast); got != 1 {
-			t.Fatalf("matching diagonal corner got=%d want 1", got)
-		}
-	})
-	t.Run("non-corner block returns zero", func(t *testing.T) {
-		var ctx BlockModeContext
-		ctx.SBDiagonalMotionValidGrid[0][0] = 1
-		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
-			References: InterReferencesResult{
-				Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone,
-			},
-		}
-		block := BlockVisit{
-			Size: BlockSize32x32, X4: 4, Y4: 0,
-			HaveTop: true, HaveLeft: true,
-		}
-		if got := warpSampleDiagonalCorner(block, &ctx, ReferenceFrameLast); got != 0 {
-			t.Fatalf("non-corner block got=%d want 0", got)
-		}
-	})
-	t.Run("missing neighbor returns zero", func(t *testing.T) {
-		var ctx BlockModeContext
-		ctx.SBDiagonalMotionValidGrid[0][0] = 1
-		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
-			References: InterReferencesResult{
-				Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone,
-			},
-		}
-		block := BlockVisit{
-			Size: BlockSize64x64, X4: 0, Y4: 0,
-			HaveTop: false, HaveLeft: true,
-		}
-		if got := warpSampleDiagonalCorner(block, &ctx, ReferenceFrameLast); got != 0 {
-			t.Fatalf("no-top got=%d want 0", got)
-		}
-	})
-	t.Run("compound diagonal rejected", func(t *testing.T) {
-		var ctx BlockModeContext
-		ctx.SBDiagonalMotionValidGrid[0][0] = 1
-		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
-			References: InterReferencesResult{
-				Ref0: ReferenceFrameLast, Ref1: ReferenceFrameBWD,
-				Compound: true,
-			},
-		}
-		block := BlockVisit{
-			Size: BlockSize64x64, X4: 0, Y4: 0,
-			HaveTop: true, HaveLeft: true,
-		}
-		if got := warpSampleDiagonalCorner(block, &ctx, ReferenceFrameLast); got != 0 {
-			t.Fatalf("compound diagonal got=%d want 0", got)
-		}
-	})
-	t.Run("ref mismatch rejected", func(t *testing.T) {
-		var ctx BlockModeContext
-		ctx.SBDiagonalMotionValidGrid[0][0] = 1
-		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
-			References: InterReferencesResult{
-				Ref0: ReferenceFrameGolden, Ref1: ReferenceFrameNone,
-			},
-		}
-		block := BlockVisit{
-			Size: BlockSize64x64, X4: 0, Y4: 0,
-			HaveTop: true, HaveLeft: true,
-		}
-		if got := warpSampleDiagonalCorner(block, &ctx, ReferenceFrameLast); got != 0 {
-			t.Fatalf("ref mismatch got=%d want 0", got)
-		}
-	})
-	t.Run("inter intra diagonal rejected", func(t *testing.T) {
-		var ctx BlockModeContext
-		ctx.SBDiagonalMotionValidGrid[0][0] = 1
-		ctx.SBDiagonalInterMotionGrid[0][0] = InterMotionResult{
-			References: InterReferencesResult{
-				Ref0: ReferenceFrameLast, Ref1: ReferenceFrameNone,
-			},
-			InterIntra: true,
-		}
-		block := BlockVisit{
-			Size: BlockSize64x64, X4: 0, Y4: 0,
-			HaveTop: true, HaveLeft: true,
-		}
-		if got := warpSampleDiagonalCorner(block, &ctx, ReferenceFrameLast); got != 0 {
-			t.Fatalf("inter-intra diagonal got=%d want 0", got)
-		}
-	})
-	t.Run("invalid grid returns zero", func(t *testing.T) {
-		var ctx BlockModeContext
-		// SBDiagonalMotionValidGrid[0][0] = 0 → no captured diagonal
-		block := BlockVisit{
-			Size: BlockSize64x64, X4: 0, Y4: 0,
-			HaveTop: true, HaveLeft: true,
-		}
-		if got := warpSampleDiagonalCorner(block, &ctx, ReferenceFrameLast); got != 0 {
-			t.Fatalf("invalid diagonal got=%d want 0", got)
-		}
-	})
-}
-
 // TestDecodeBlockPredictionModeIntraOnInterFrameUsesInterYModeCDF pins the
 // libaom-aligned behavior for an intra block decoded inside an INTER frame.
 // libaom's read_intra_block_mode_info() reads the Y intra mode using
@@ -1857,7 +1729,7 @@ func TestDecodeBlockPredictionModeIntraOnInterFrameUsesInterYModeCDF(t *testing.
 	// is_inter=0 here, matching frame 1 (0,0) of the libaom mv vector.
 	// Seed an intra signal at (0, 0) without HaveTop / HaveLeft to mirror
 	// the first SB of frame 1.
-	result, err := state.decodeBlockPredictionMode(BlockLoopCDFs{Intra: &intraCDFs}, &ctx, BlockLoopRequest{
+	result, err := decodeTestBlockPredictionMode(&state, BlockLoopCDFs{Intra: &intraCDFs}, &ctx, BlockLoopRequest{
 		FrameType:             parser.FrameTypeInter,
 		DecodePredictionModes: true,
 	}, BlockVisit{
@@ -1924,4 +1796,10 @@ func TestDecodeBlockPredictionModeIntraOnInterFrameUsesInterYModeCDF(t *testing.
 		t.Fatalf("MarkChromaIntra did not set uvmode above=%d left=%d want %d",
 			ctx.A.UVMode[0], ctx.L.UVMode[0], result.ChromaMode)
 	}
+}
+
+func decodeTestBlockPredictionMode(s *DecodeState, cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *PaletteModeScratch) (BlockPredictionModeResult, error) {
+	var result BlockPredictionModeResult
+	err := s.decodeBlockPredictionModeInto(&cdfs, ctx, &req, &block, prefix, segmentID, &segment, paletteMap, &result, false, nil)
+	return result, err
 }

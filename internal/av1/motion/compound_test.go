@@ -668,7 +668,7 @@ func TestPredictScaledCompoundRefToConvBufIdentityMatchesUnscaled(t *testing.T) 
 			}
 
 			var scaled, unscaled CompoundConvBuf
-			if err := PredictScaledCompoundRefToConvBuf(&scaled, ref, tc.bps, tc.bitDepth, w, h, startX, xStep, startY, yStep, xTable, yTable); err != nil {
+			if err := PredictScaledCompoundRefToConvBufWithScratch(&scaled, ref, tc.bps, tc.bitDepth, w, h, startX, xStep, startY, yStep, xTable, yTable, nil); err != nil {
 				t.Fatalf("PredictScaledCompoundRefToConvBuf: %v", err)
 			}
 			if err := PredictInterCompoundRefToConvBuf(&unscaled, ref, tc.bps, tc.bitDepth, 0, 0, w, h, w, h, 0, 0, RegularFilters, nil); err != nil {
@@ -735,7 +735,7 @@ func TestPredictScaledCompoundRefToConvBufSubpelIdentityMatchesUnscaled(t *testi
 			startX := int64(refX)*ScaleSubpelScale + int64(tc.subX<<ScaleExtraBits)
 			startY := int64(refY)*ScaleSubpelScale + int64(tc.subY<<ScaleExtraBits)
 			var scaled, unscaled CompoundConvBuf
-			if err := PredictScaledCompoundRefToConvBuf(&scaled, ref, tc.bps, tc.bitDepth, w, h, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable); err != nil {
+			if err := PredictScaledCompoundRefToConvBufWithScratch(&scaled, ref, tc.bps, tc.bitDepth, w, h, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable, nil); err != nil {
 				t.Fatalf("PredictScaledCompoundRefToConvBuf: %v", err)
 			}
 			if err := PredictInterCompoundRefToConvBuf(&unscaled, ref, tc.bps, tc.bitDepth, refX, refY, w, h, w, h, tc.subX, tc.subY, InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapSmooth}, nil); err != nil {

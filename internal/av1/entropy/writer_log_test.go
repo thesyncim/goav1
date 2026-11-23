@@ -133,7 +133,7 @@ func TestWriterLogReplayLiterals(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r := NewReader(data)
+		r := NewReaderWithCDFUpdate(data, true)
 		cdfs := logTestCDFs(t)
 		sb := -1
 		for i, op := range ops {

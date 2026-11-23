@@ -1,7 +1,5 @@
 package encoder
 
-import "github.com/thesyncim/goav1/internal/av1/bitstream"
-
 const MaxCDEFStrengths = 8
 
 // CDEFParams is the encoder-owned view of cdef_params().
@@ -10,56 +8,6 @@ type CDEFParams struct {
 	Bits       uint8
 	YStrength  [MaxCDEFStrengths]uint8
 	UVStrength [MaxCDEFStrengths]uint8
-}
-
-func CDEFParamsPayloadSize(seq SequenceHeader, size IntraFrameSize, allLossless bool, cdef CDEFParams) (int, error) {
-	w := newSizingBitWriter()
-	if err := writeCDEFParamsPayload(&w, seq, size.AllowIntrabc, allLossless, cdef); err != nil {
-		return 0, err
-	}
-	return w.bytesWritten(), nil
-}
-
-func AppendCDEFParamsPayload(dst []byte, seq SequenceHeader, size IntraFrameSize, allLossless bool, cdef CDEFParams) ([]byte, error) {
-	payloadSize, err := CDEFParamsPayloadSize(seq, size, allLossless, cdef)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < payloadSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+payloadSize]
-	w := newBitWriter(out[off:])
-	if err := writeCDEFParamsPayload(&w, seq, size.AllowIntrabc, allLossless, cdef); err != nil {
-		return dst, err
-	}
-	return out, nil
-}
-
-func CDEFParamsInterPayloadSize(seq SequenceHeader, size InterFrameSize, allLossless bool, cdef CDEFParams) (int, error) {
-	w := newSizingBitWriter()
-	if err := writeCDEFParamsPayload(&w, seq, false, allLossless, cdef); err != nil {
-		return 0, err
-	}
-	return w.bytesWritten(), nil
-}
-
-func AppendCDEFParamsInterPayload(dst []byte, seq SequenceHeader, size InterFrameSize, allLossless bool, cdef CDEFParams) ([]byte, error) {
-	payloadSize, err := CDEFParamsInterPayloadSize(seq, size, allLossless, cdef)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < payloadSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+payloadSize]
-	w := newBitWriter(out[off:])
-	if err := writeCDEFParamsPayload(&w, seq, false, allLossless, cdef); err != nil {
-		return dst, err
-	}
-	return out, nil
 }
 
 func writeCDEFParamsPayload(w *bitWriter, seq SequenceHeader, allowIntrabc bool, allLossless bool, cdef CDEFParams) error {

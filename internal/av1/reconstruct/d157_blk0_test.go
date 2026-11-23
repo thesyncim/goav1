@@ -52,9 +52,7 @@ func TestReconstructPlaneBlockD157Block0FullPipeline(t *testing.T) {
 			wantPlane.Pix[r*wantPlane.Stride+c] = d157Block0Predictor[r*W+c]
 		}
 	}
-	if err := dsp.AddResidualPlaneBlock(wantPlane, 1, 8, 0, 0, W, H, wantRes, W); err != nil {
-		t.Fatal(err)
-	}
+	dsp.AddResidualPlaneBlockTrusted(wantPlane.Pix, wantPlane.Stride, 1, 0xff, W, H, wantRes, W)
 
 	// Run ReconstructPlaneBlock on the same predictor and assert byte-exact
 	// equality with the hand-composed reference.

@@ -94,14 +94,6 @@ func BenchmarkAMD64CDEFDist8(b *testing.B) {
 	_ = sink
 }
 
-func BenchmarkAMD64Avg8x8Quad(b *testing.B) {
-	src := benchAMD64Plane(64*16, 8)
-	var sink int
-	benchAMD64Impls(b, func() { a, c, d, e := realtimeAvg8x8QuadWide(src, 64); sink += a + c + d + e },
-		func() { a, c, d, e := realtimeAvg8x8QuadAVX2(src, 64); sink += a + c + d + e })
-	_ = sink
-}
-
 func sizeName(w, h int) string {
 	return "size=" + itoa(w) + "x" + itoa(h)
 }

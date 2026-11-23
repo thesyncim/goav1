@@ -26,8 +26,8 @@ func benchFilterBlockParams() ([]uint16, []uint16, int, BlockFilterParams) {
 
 // BenchmarkFilterBlockPureGo and BenchmarkFilterBlockDispatch bracket the
 // per-kernel speedup: the first always runs the pure-Go reference; the second
-// runs whatever the dispatcher resolved (NEON on arm64). Both skip the
-// FilterBlock validation wrapper so they time only the inner kernel.
+// runs whatever the dispatcher resolved (NEON on arm64). Both time only the
+// inner kernel.
 func BenchmarkFilterBlockPureGo(b *testing.B) {
 	dst, input, origin, params := benchFilterBlockParams()
 	b.ReportAllocs()

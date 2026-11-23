@@ -8,13 +8,7 @@ import (
 )
 
 func TestFullpelVectorAndReferenceOrigin(t *testing.T) {
-	mv, err := FullpelVector(2, -1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if mv != (Vector{Row: -8, Col: 16}) {
-		t.Fatalf("mv=%+v", mv)
-	}
+	mv := Vector{Row: -1 << 3, Col: 2 << 3}
 	if !mv.IsFullpel() {
 		t.Fatal("fullpel vector reported fractional")
 	}
@@ -25,19 +19,8 @@ func TestFullpelVectorAndReferenceOrigin(t *testing.T) {
 	if dx != 2 || dy != -1 {
 		t.Fatalf("offset=%d,%d want 2,-1", dx, dy)
 	}
-	refX, refY, err := FullpelReferenceOrigin(5, 6, mv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if refX != 7 || refY != 5 {
-		t.Fatalf("origin=%d,%d want 7,5", refX, refY)
-	}
-	refX, refY, subX, subY, err := ReferenceOrigin(5, 6, Vector{Col: -1, Row: 5})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if refX != 4 || refY != 6 || subX != 14 || subY != 10 {
-		t.Fatalf("fractional origin=%d,%d sub=%d,%d want 4,6 sub=14,10", refX, refY, subX, subY)
+	if (Vector{Col: 4}).IsFullpel() {
+		t.Fatal("fractional vector reported fullpel")
 	}
 	if _, _, err := (Vector{Col: 4}).FullpelOffset(); !errors.Is(err, ErrInvalidMotion) {
 		t.Fatalf("fractional offset err=%v want %v", err, ErrInvalidMotion)
@@ -53,18 +36,16 @@ func TestReferenceOriginSubsampledMatchesLibaomPositionRule(t *testing.T) {
 		subsamplingY       bool
 		wantX, wantY       int
 		wantSubX, wantSubY int
-		compareLumaOrigin  bool
 	}{
 		{
-			name:              "luma matches existing origin",
-			dstX:              5,
-			dstY:              6,
-			mv:                Vector{Col: -1, Row: 5},
-			wantX:             4,
-			wantY:             6,
-			wantSubX:          14,
-			wantSubY:          10,
-			compareLumaOrigin: true,
+			name:     "luma",
+			dstX:     5,
+			dstY:     6,
+			mv:       Vector{Col: -1, Row: 5},
+			wantX:    4,
+			wantY:    6,
+			wantSubX: 14,
+			wantSubY: 10,
 		},
 		{
 			name:         "subsampled positive fractional",
@@ -111,15 +92,6 @@ func TestReferenceOriginSubsampledMatchesLibaomPositionRule(t *testing.T) {
 			if gotX != tt.wantX || gotY != tt.wantY || gotSubX != tt.wantSubX || gotSubY != tt.wantSubY {
 				t.Fatalf("origin=%d,%d sub=%d,%d want %d,%d sub=%d,%d", gotX, gotY, gotSubX, gotSubY, tt.wantX, tt.wantY, tt.wantSubX, tt.wantSubY)
 			}
-			if tt.compareLumaOrigin {
-				refX, refY, subX, subY, err := ReferenceOrigin(tt.dstX, tt.dstY, tt.mv)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if gotX != refX || gotY != refY || gotSubX != subX || gotSubY != subY {
-					t.Fatalf("subsampled luma origin=%d,%d sub=%d,%d want ReferenceOrigin=%d,%d sub=%d,%d", gotX, gotY, gotSubX, gotSubY, refX, refY, subX, subY)
-				}
-			}
 		})
 	}
 }
@@ -160,11 +132,8 @@ func TestPredictInterPlaneBlock8Bit(t *testing.T) {
 			setSample(src, 1, x, y, uint16(10*y+x))
 		}
 	}
-	mv, err := FullpelVector(-1, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := PredictInterPlaneBlock(dst, src, 1, 2, 1, 3, 2, mv); err != nil {
+	mv := Vector{Row: 1 << 3, Col: -1 << 3}
+	if err := predictLumaWithVector(dst, src, 1, 8, 2, 1, 3, 2, mv, RegularFilters); err != nil {
 		t.Fatal(err)
 	}
 	for y := 0; y < dst.Height; y++ {
@@ -189,11 +158,8 @@ func TestPredictInterPlaneBlockHighBitDepth(t *testing.T) {
 			setSample(src, 2, x, y, uint16(1000+y*10+x))
 		}
 	}
-	mv, err := FullpelVector(1, -1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := PredictInterPlaneBlock(dst, src, 2, 1, 2, 3, 2, mv); err != nil {
+	mv := Vector{Row: -1 << 3, Col: 1 << 3}
+	if err := predictLumaWithVector(dst, src, 2, 12, 1, 2, 3, 2, mv, RegularFilters); err != nil {
 		t.Fatal(err)
 	}
 	for y := range 2 {
@@ -242,7 +208,7 @@ func TestPredictInterPlaneBlockFractionalXMatchesLibaom(t *testing.T) {
 	fillMotionTestPlane(src)
 
 	mv := Vector{Col: 4, Row: 0}
-	if err := PredictInterPlaneBlockWithFilter(dst, src, 1, 8, 8, 8, 8, mv, RegularFilters); err != nil {
+	if err := predictLumaWithVector(dst, src, 1, 8, 8, 8, 8, 8, mv, RegularFilters); err != nil {
 		t.Fatal(err)
 	}
 	kernel, err := interpKernel(InterpEightTapRegular, 8, 8)
@@ -261,7 +227,7 @@ func TestPredictInterPlaneBlockFractionalYMatchesLibaom(t *testing.T) {
 
 	mv := Vector{Col: 0, Row: 6}
 	filters := InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapSmooth}
-	if err := PredictInterPlaneBlockWithFilter(dst, src, 1, 8, 8, 8, 8, mv, filters); err != nil {
+	if err := predictLumaWithVector(dst, src, 1, 8, 8, 8, 8, 8, mv, filters); err != nil {
 		t.Fatal(err)
 	}
 	kernel, err := interpKernel(InterpEightTapSmooth, 8, 12)
@@ -280,7 +246,7 @@ func TestPredictInterPlaneBlockFractional2DMatchesLibaom(t *testing.T) {
 
 	mv := Vector{Col: 3, Row: 5}
 	filters := InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapSmooth}
-	if err := PredictInterPlaneBlockWithFilter(dst, src, 1, 8, 8, 8, 8, mv, filters); err != nil {
+	if err := predictLumaWithVector(dst, src, 1, 8, 8, 8, 8, 8, mv, filters); err != nil {
 		t.Fatal(err)
 	}
 	xKernel, err := interpKernel(InterpMultiTapSharp, 8, 6)
@@ -302,7 +268,7 @@ func TestPredictInterPlaneBlockNegativeFractionalMatchesLibaom(t *testing.T) {
 	fillMotionTestPlane(src)
 
 	mv := Vector{Col: -1, Row: -3}
-	if err := PredictInterPlaneBlockWithFilter(dst, src, 1, 8, 8, 8, 8, mv, RegularFilters); err != nil {
+	if err := predictLumaWithVector(dst, src, 1, 8, 8, 8, 8, 8, mv, RegularFilters); err != nil {
 		t.Fatal(err)
 	}
 	xKernel, err := interpKernel(InterpEightTapRegular, 8, 14)
@@ -325,7 +291,7 @@ func TestPredictInterPlaneBlockFullpelExtendsReferenceEdges(t *testing.T) {
 			setSample(src, 1, x, y, uint16(10*y+x))
 		}
 	}
-	if err := PredictInterPlaneBlockFromOrigin(dst, src, 1, 0, 0, -2, 2, 5, 3, 0, 0); err != nil {
+	if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, src, 1, 8, 0, 0, -2, 2, 5, 3, 0, 0, RegularFilters); err != nil {
 		t.Fatal(err)
 	}
 	for y := range 3 {
@@ -344,7 +310,7 @@ func TestPredictInterPlaneBlockFullpelExtendsReferenceEdges(t *testing.T) {
 			setSample(srcHigh, 2, x, y, uint16(100+10*y+x))
 		}
 	}
-	if err := PredictInterPlaneBlockFromOrigin(dstHigh, srcHigh, 2, 0, 0, 2, -2, 5, 3, 0, 0); err != nil {
+	if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(dstHigh, srcHigh, 2, 12, 0, 0, 2, -2, 5, 3, 0, 0, RegularFilters); err != nil {
 		t.Fatal(err)
 	}
 	for y := range 3 {
@@ -364,7 +330,7 @@ func TestPredictInterPlaneBlockFractionalExtendsReferenceEdges8Bit(t *testing.T)
 	fillMotionTestPlane(src)
 
 	filters := InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapSmooth}
-	if err := PredictInterPlaneBlockFromOriginWithFilter(got, src, 1, 0, 0, 0, 0, 4, 4, 3, 5, filters); err != nil {
+	if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(got, src, 1, 8, 0, 0, 0, 0, 4, 4, 3, 5, filters); err != nil {
 		t.Fatal(err)
 	}
 	xKernel, err := interpKernel(filters.X, 4, 3)
@@ -387,7 +353,7 @@ func TestPredictInterPlaneBlockOneDimensionalFractionalExtendsReferenceEdges8Bit
 	t.Run("x", func(t *testing.T) {
 		got, _ := testPlane(4, 4, 1, 4)
 		want, _ := testPlane(4, 4, 1, 4)
-		if err := PredictInterPlaneBlockFromOriginWithFilter(got, src, 1, 0, 0, 0, 2, 4, 4, 3, 0, filters); err != nil {
+		if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(got, src, 1, 8, 0, 0, 0, 2, 4, 4, 3, 0, filters); err != nil {
 			t.Fatal(err)
 		}
 		kernel, err := interpKernel(filters.X, 4, 3)
@@ -401,7 +367,7 @@ func TestPredictInterPlaneBlockOneDimensionalFractionalExtendsReferenceEdges8Bit
 	t.Run("y", func(t *testing.T) {
 		got, _ := testPlane(4, 4, 1, 4)
 		want, _ := testPlane(4, 4, 1, 4)
-		if err := PredictInterPlaneBlockFromOriginWithFilter(got, src, 1, 0, 0, 2, 0, 4, 4, 0, 5, filters); err != nil {
+		if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(got, src, 1, 8, 0, 0, 2, 0, 4, 4, 0, 5, filters); err != nil {
 			t.Fatal(err)
 		}
 		kernel, err := interpKernel(filters.Y, 4, 5)
@@ -456,10 +422,10 @@ func TestPredictInterPlaneBlockHighBitDepthFractionalMatchesLibaom(t *testing.T)
 			want, _ := testPlane(32, 32, 2, 64)
 			max := uint16((1 << tt.bitDepth) - 1)
 			fillHighBDMotionTestPlane(src, max)
-			if err := PredictInterPlaneBlockWithFilterBitDepth(dst, src, 2, tt.bitDepth, 8, 8, 8, 8, tt.mv, tt.filters); err != nil {
+			if err := predictLumaWithVector(dst, src, 2, tt.bitDepth, 8, 8, 8, 8, tt.mv, tt.filters); err != nil {
 				t.Fatal(err)
 			}
-			_, _, subX, subY, err := referenceOrigin(8, 8, tt.mv)
+			_, _, subX, subY, err := ReferenceOriginSubsampled(8, 8, tt.mv, false, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -533,61 +499,6 @@ func TestPredictInterPlaneBlockOneDimensionalFractionalExtendsReferenceEdgesHigh
 	})
 }
 
-func TestPredictInterPlaneBlockFromOriginMatchesVectorPath(t *testing.T) {
-	tests := []struct {
-		name     string
-		bps      int
-		bitDepth uint8
-		mv       Vector
-		filters  InterpFilters
-	}{
-		{
-			name:    "lowbd",
-			bps:     1,
-			mv:      Vector{Col: 3, Row: 5},
-			filters: InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapSmooth},
-		},
-		{
-			name:     "highbd",
-			bps:      2,
-			bitDepth: 10,
-			mv:       Vector{Col: -1, Row: 6},
-			filters:  InterpFilters{X: InterpEightTapRegular, Y: InterpEightTapSmooth},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			src, _ := testPlane(32, 32, tt.bps, 32*tt.bps)
-			vectorDst, _ := testPlane(32, 32, tt.bps, 32*tt.bps)
-			scratchDst, _ := testPlane(8, 8, tt.bps, 8*tt.bps)
-			if tt.bps == 1 {
-				fillMotionTestPlane(src)
-				if err := PredictInterPlaneBlockWithFilter(vectorDst, src, 1, 8, 8, 8, 8, tt.mv, tt.filters); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				fillHighBDMotionTestPlane(src, 0x3ff)
-				if err := PredictInterPlaneBlockWithFilterBitDepth(vectorDst, src, 2, tt.bitDepth, 8, 8, 8, 8, tt.mv, tt.filters); err != nil {
-					t.Fatal(err)
-				}
-			}
-			refX, refY, subX, subY, err := referenceOrigin(8, 8, tt.mv)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tt.bps == 1 {
-				err = PredictInterPlaneBlockFromOriginWithFilter(scratchDst, src, 1, 0, 0, refX, refY, 8, 8, subX, subY, tt.filters)
-			} else {
-				err = PredictInterPlaneBlockFromOriginWithFilterBitDepth(scratchDst, src, 2, tt.bitDepth, 0, 0, refX, refY, 8, 8, subX, subY, tt.filters)
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			assertPlaneBlocksEqualAt(t, scratchDst, 0, 0, vectorDst, 8, 8, tt.bps, 8, 8)
-		})
-	}
-}
-
 func TestPredictInterPlaneBlockFromOriginLibaomConvolvePort(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -607,7 +518,7 @@ func TestPredictInterPlaneBlockFromOriginLibaomConvolvePort(t *testing.T) {
 			src := libaomConvolveInput8(tt.size)
 			got, _ := testPlane(tt.size.width, tt.size.height, 1, tt.size.width)
 			want, _ := testPlane(tt.size.width, tt.size.height, 1, tt.size.width)
-			if err := PredictInterPlaneBlockFromOriginWithFilter(got, src, 1, 0, 0, libaomInputOrigin, libaomInputOrigin, tt.size.width, tt.size.height, tt.subX, tt.subY, tt.filters); err != nil {
+			if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(got, src, 1, 8, 0, 0, libaomInputOrigin, libaomInputOrigin, tt.size.width, tt.size.height, tt.subX, tt.subY, tt.filters); err != nil {
 				t.Fatal(err)
 			}
 			xKernel, err := interpKernel(tt.filters.X, tt.size.width, tt.subX)
@@ -636,7 +547,7 @@ func TestPredictInterPlaneBlockFromOriginFullpelHighBitDepth(t *testing.T) {
 	got, _ := testPlane(4, 3, 2, 8)
 	fillHighBDMotionTestPlane(src, 0xfff)
 
-	if err := PredictInterPlaneBlockFromOrigin(got, src, 2, 0, 0, 3, 4, 4, 3, 0, 0); err != nil {
+	if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(got, src, 2, 12, 0, 0, 3, 4, 4, 3, 0, 0, RegularFilters); err != nil {
 		t.Fatal(err)
 	}
 	for y := range 3 {
@@ -651,24 +562,21 @@ func TestPredictInterPlaneBlockFromOriginFullpelHighBitDepth(t *testing.T) {
 func TestPredictInterPlaneBlockFromOriginRejectsInvalidInputs(t *testing.T) {
 	src, _ := testPlane(16, 16, 1, 16)
 	dst, _ := testPlane(8, 8, 1, 8)
-	if err := PredictInterPlaneBlockFromOriginWithFilter(dst, src, 1, 0, 0, 4, 4, 4, 4, 16, 0, RegularFilters); !errors.Is(err, ErrInvalidMotion) {
+	if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, src, 1, 8, 0, 0, 4, 4, 4, 4, 16, 0, RegularFilters); !errors.Is(err, ErrInvalidMotion) {
 		t.Fatalf("bad subX err=%v want %v", err, ErrInvalidMotion)
 	}
-	if err := PredictInterPlaneBlockFromOriginWithFilter(dst, src, 1, 0, 0, 4, 4, 4, 4, 0, -1, RegularFilters); !errors.Is(err, ErrInvalidMotion) {
+	if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, src, 1, 8, 0, 0, 4, 4, 4, 4, 0, -1, RegularFilters); !errors.Is(err, ErrInvalidMotion) {
 		t.Fatalf("bad subY err=%v want %v", err, ErrInvalidMotion)
 	}
-	if err := PredictInterPlaneBlockFromOriginWithFilter(dst, src, 1, 0, 0, 4, 4, 4, 4, 0, 0, InterpFilters{X: interpFilterCount}); !errors.Is(err, ErrInvalidMotion) {
+	if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, src, 1, 8, 0, 0, 4, 4, 4, 4, 0, 0, InterpFilters{X: interpFilterCount}); !errors.Is(err, ErrInvalidMotion) {
 		t.Fatalf("bad filter err=%v want %v", err, ErrInvalidMotion)
 	}
-	if err := PredictInterPlaneBlockFromOrigin(dst, src, 1, 0, 0, -1, 0, 4, 4, 0, 0); err != nil {
+	if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, src, 1, 8, 0, 0, -1, 0, 4, 4, 0, 0, RegularFilters); err != nil {
 		t.Fatalf("edge-extended fullpel err=%v", err)
 	}
 
 	srcHigh, _ := testPlane(16, 16, 2, 32)
 	dstHigh, _ := testPlane(8, 8, 2, 16)
-	if err := PredictInterPlaneBlockFromOriginWithFilter(dstHigh, srcHigh, 2, 0, 0, 4, 4, 4, 4, 2, 0, RegularFilters); !errors.Is(err, ErrInvalidMotion) {
-		t.Fatalf("implicit highbd fractional err=%v want %v", err, ErrInvalidMotion)
-	}
 	if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(dstHigh, srcHigh, 2, 8, 0, 0, 4, 4, 4, 4, 0, 0, RegularFilters); !errors.Is(err, ErrInvalidMotion) {
 		t.Fatalf("bad highbd bitdepth err=%v want %v", err, ErrInvalidMotion)
 	}
@@ -680,7 +588,7 @@ func TestPredictInterPlaneBlockFromOriginAllocs(t *testing.T) {
 		dst, _ := testPlane(8, 8, 1, 8)
 		fillMotionTestPlane(src)
 		allocs := testing.AllocsPerRun(1000, func() {
-			if err := PredictInterPlaneBlockFromOriginWithFilter(dst, src, 1, 0, 0, 8, 8, 8, 8, 3, 5, InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapSmooth}); err != nil {
+			if err := PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, src, 1, 8, 0, 0, 8, 8, 8, 8, 3, 5, InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapSmooth}); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -701,216 +609,6 @@ func TestPredictInterPlaneBlockFromOriginAllocs(t *testing.T) {
 			t.Fatalf("explicit-origin highbd inter prediction allocated: %f", allocs)
 		}
 	})
-}
-
-func TestPredictInterPlaneBlockRejectsInvalidInputs(t *testing.T) {
-	src, _ := testPlane(4, 4, 1, 4)
-	dst, _ := testPlane(4, 4, 1, 4)
-	fillMotionTestPlane(src)
-	if err := PredictInterPlaneBlock(dst, src, 1, 0, 0, 1, 1, Vector{Col: 4}); err != nil {
-		t.Fatalf("fractional edge-extended err=%v", err)
-	}
-	mv, err := FullpelVector(-1, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := PredictInterPlaneBlock(dst, src, 1, 0, 0, 1, 1, mv); err != nil {
-		t.Fatalf("fullpel edge-extended err=%v", err)
-	}
-	if got, want := getSample(dst, 1, 0, 0), getSample(src, 1, 0, 0); got != want {
-		t.Fatalf("fullpel clamped sample=%d want %d", got, want)
-	}
-	if err := PredictInterPlaneBlock(dst, src, 3, 0, 0, 1, 1, Vector{}); !errors.Is(err, ErrInvalidMotion) {
-		t.Fatalf("invalid sample width err=%v want %v", err, ErrInvalidMotion)
-	}
-	if err := PredictInterPlaneBlock(dst, src, 2, 1, 1, 1, 1, Vector{Col: 4}); !errors.Is(err, ErrInvalidMotion) {
-		t.Fatalf("highbd fractional err=%v want %v", err, ErrInvalidMotion)
-	}
-	if err := PredictInterPlaneBlockWithFilter(dst, src, 1, 1, 1, 1, 1, Vector{Col: 4}, InterpFilters{X: interpFilterCount}); !errors.Is(err, ErrInvalidMotion) {
-		t.Fatalf("bad filter err=%v want %v", err, ErrInvalidMotion)
-	}
-	if err := PredictInterPlaneBlockWithFilterBitDepth(dst, src, 2, 8, 1, 1, 1, 1, Vector{Col: 4}, RegularFilters); !errors.Is(err, ErrInvalidMotion) {
-		t.Fatalf("bad highbd bitdepth err=%v want %v", err, ErrInvalidMotion)
-	}
-	if _, err := FullpelVector(int(maxInt16)/SubpelScale+1, 0); !errors.Is(err, ErrInvalidMotion) {
-		t.Fatalf("overflow vector err=%v want %v", err, ErrInvalidMotion)
-	}
-}
-
-func TestPredictInterPlaneBlockAllocs(t *testing.T) {
-	src, _ := testPlane(16, 16, 1, 16)
-	dst, _ := testPlane(16, 16, 1, 16)
-	mv, err := FullpelVector(0, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		if err := PredictInterPlaneBlock(dst, src, 1, 0, 0, 16, 16, mv); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if allocs != 0 {
-		t.Fatalf("inter prediction allocated: %f", allocs)
-	}
-}
-
-func TestPredictInterPlaneBlockFractionalAllocs(t *testing.T) {
-	src, _ := testPlane(32, 32, 1, 32)
-	dst, _ := testPlane(32, 32, 1, 32)
-	fillMotionTestPlane(src)
-	mv := Vector{Col: 3, Row: 5}
-	allocs := testing.AllocsPerRun(1000, func() {
-		if err := PredictInterPlaneBlockWithFilter(dst, src, 1, 8, 8, 8, 8, mv, InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapSmooth}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if allocs != 0 {
-		t.Fatalf("fractional inter prediction allocated: %f", allocs)
-	}
-}
-
-func TestPredictInterPlaneBlockHighBitDepthFractionalAllocs(t *testing.T) {
-	src, _ := testPlane(32, 32, 2, 64)
-	dst, _ := testPlane(32, 32, 2, 64)
-	fillHighBDMotionTestPlane(src, 0x3ff)
-	mv := Vector{Col: 3, Row: 5}
-	allocs := testing.AllocsPerRun(1000, func() {
-		if err := PredictInterPlaneBlockWithFilterBitDepth(dst, src, 2, 10, 8, 8, 8, 8, mv, InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapSmooth}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if allocs != 0 {
-		t.Fatalf("highbd fractional inter prediction allocated: %f", allocs)
-	}
-}
-
-func FuzzPredictInterPlaneBlock(f *testing.F) {
-	f.Add(uint8(8), uint8(8), uint8(1), uint8(0), uint8(0), uint8(0), uint8(0), uint8(4), uint8(4))
-	f.Add(uint8(17), uint8(9), uint8(2), uint8(3), uint8(2), uint8(1), uint8(1), uint8(8), uint8(4))
-	f.Add(uint8(5), uint8(5), uint8(1), uint8(4), uint8(4), uint8(2), uint8(2), uint8(1), uint8(1))
-
-	f.Fuzz(func(t *testing.T, rawW uint8, rawH uint8, rawBPS uint8, rawDstX uint8, rawDstY uint8, rawRefX uint8, rawRefY uint8, rawBW uint8, rawBH uint8) {
-		width := int(rawW%32) + 1
-		height := int(rawH%32) + 1
-		bytesPerSample := int(rawBPS%2) + 1
-		stride := (width + 7) * bytesPerSample
-		src, _ := testPlane(width, height, bytesPerSample, stride)
-		dst, _ := testPlane(width, height, bytesPerSample, stride)
-
-		blockW := int(rawBW)%width + 1
-		blockH := int(rawBH)%height + 1
-		dstX := int(rawDstX) % (width - blockW + 1)
-		dstY := int(rawDstY) % (height - blockH + 1)
-		refX := int(rawRefX) % (width - blockW + 1)
-		refY := int(rawRefY) % (height - blockH + 1)
-
-		for y := 0; y < src.Height; y++ {
-			for x := 0; x < src.Width; x++ {
-				value := uint16((y*width + x) & 0xff)
-				if bytesPerSample == 2 {
-					value = uint16((y*width + x) & 0x3ff)
-				}
-				setSample(src, bytesPerSample, x, y, value)
-			}
-		}
-
-		mv, err := FullpelVector(refX-dstX, refY-dstY)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := PredictInterPlaneBlock(dst, src, bytesPerSample, dstX, dstY, blockW, blockH, mv); err != nil {
-			t.Fatalf("PredictInterPlaneBlock err=%v", err)
-		}
-		for y := range blockH {
-			for x := range blockW {
-				got := getSample(dst, bytesPerSample, dstX+x, dstY+y)
-				want := getSample(src, bytesPerSample, refX+x, refY+y)
-				if got != want {
-					t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
-				}
-			}
-		}
-	})
-}
-
-func FuzzPredictInterPlaneBlockFromOriginFullpel(f *testing.F) {
-	f.Add(uint8(8), uint8(8), uint8(1), uint8(0), uint8(0), uint8(0), uint8(0), uint8(4), uint8(4))
-	f.Add(uint8(17), uint8(9), uint8(2), uint8(3), uint8(2), uint8(1), uint8(1), uint8(8), uint8(4))
-	f.Add(uint8(5), uint8(5), uint8(1), uint8(4), uint8(4), uint8(2), uint8(2), uint8(1), uint8(1))
-
-	f.Fuzz(func(t *testing.T, rawW uint8, rawH uint8, rawBPS uint8, rawDstX uint8, rawDstY uint8, rawRefX uint8, rawRefY uint8, rawBW uint8, rawBH uint8) {
-		width := int(rawW%32) + 1
-		height := int(rawH%32) + 1
-		bytesPerSample := int(rawBPS%2) + 1
-		stride := (width + 7) * bytesPerSample
-		src, _ := testPlane(width, height, bytesPerSample, stride)
-		dst, _ := testPlane(width, height, bytesPerSample, stride)
-
-		blockW := int(rawBW)%width + 1
-		blockH := int(rawBH)%height + 1
-		dstX := int(rawDstX) % (width - blockW + 1)
-		dstY := int(rawDstY) % (height - blockH + 1)
-		refX := int(rawRefX) % (width - blockW + 1)
-		refY := int(rawRefY) % (height - blockH + 1)
-
-		for y := 0; y < src.Height; y++ {
-			for x := 0; x < src.Width; x++ {
-				value := uint16((y*width + x) & 0xff)
-				if bytesPerSample == 2 {
-					value = uint16((y*width + x) & 0x3ff)
-				}
-				setSample(src, bytesPerSample, x, y, value)
-			}
-		}
-
-		if err := PredictInterPlaneBlockFromOrigin(dst, src, bytesPerSample, dstX, dstY, refX, refY, blockW, blockH, 0, 0); err != nil {
-			t.Fatalf("PredictInterPlaneBlockFromOrigin err=%v", err)
-		}
-		for y := range blockH {
-			for x := range blockW {
-				got := getSample(dst, bytesPerSample, dstX+x, dstY+y)
-				want := getSample(src, bytesPerSample, refX+x, refY+y)
-				if got != want {
-					t.Fatalf("sample(%d,%d)=%d want %d", x, y, got, want)
-				}
-			}
-		}
-	})
-}
-
-func BenchmarkFullpelReferenceOrigin(b *testing.B) {
-	mv, err := FullpelVector(2, -1)
-	if err != nil {
-		b.Fatal(err)
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		_, _, _ = FullpelReferenceOrigin(64, 64, mv)
-	}
-}
-
-func BenchmarkPredictInterPlaneBlock(b *testing.B) {
-	src, _ := testPlane(64, 64, 1, 64)
-	dst, _ := testPlane(64, 64, 1, 64)
-	mv, err := FullpelVector(0, 0)
-	if err != nil {
-		b.Fatal(err)
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = PredictInterPlaneBlock(dst, src, 1, 0, 0, 64, 64, mv)
-	}
-}
-
-func BenchmarkPredictInterPlaneBlockFractional(b *testing.B) {
-	src, _ := testPlane(64, 64, 1, 64)
-	dst, _ := testPlane(64, 64, 1, 64)
-	fillMotionTestPlane(src)
-	mv := Vector{Col: 3, Row: 5}
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = PredictInterPlaneBlockWithFilter(dst, src, 1, 8, 8, 32, 32, mv, InterpFilters{X: InterpMultiTapSharp, Y: InterpEightTapSmooth})
-	}
 }
 
 // TestConvolveHighBDIdentityKernel asserts that running the High-BD
@@ -1398,19 +1096,6 @@ func assertPlaneBlockEqual(t *testing.T, got frame.Plane, want frame.Plane, byte
 	}
 }
 
-func assertPlaneBlocksEqualAt(t *testing.T, got frame.Plane, gotX int, gotY int, want frame.Plane, wantX int, wantY int, bytesPerSample int, width int, height int) {
-	t.Helper()
-	for row := range height {
-		for col := range width {
-			g := getSample(got, bytesPerSample, gotX+col, gotY+row)
-			w := getSample(want, bytesPerSample, wantX+col, wantY+row)
-			if g != w {
-				t.Fatalf("sample(%d,%d)=%d want sample(%d,%d)=%d", gotX+col, gotY+row, g, wantX+col, wantY+row, w)
-			}
-		}
-	}
-}
-
 func libaomHighBDConvolveXRef(dst frame.Plane, src frame.Plane, max uint16, refX int, refY int, dstX int, dstY int, width int, height int, kernel [filterTaps]int16) {
 	fo := filterTaps/2 - 1
 	for y := range height {
@@ -1664,4 +1349,14 @@ func libaomClipPixelHighBD(value int, max uint16) uint16 {
 		return max
 	}
 	return uint16(value)
+}
+
+// predictLumaWithVector predicts a luma block displaced by mv: the luma
+// ReferenceOriginSubsampled origin fed to the explicit-origin predictor.
+func predictLumaWithVector(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, width int, height int, mv Vector, filters InterpFilters) error {
+	refX, refY, subX, subY, err := ReferenceOriginSubsampled(dstX, dstY, mv, false, false)
+	if err != nil {
+		return err
+	}
+	return PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, ref, bytesPerSample, bitDepth, dstX, dstY, refX, refY, width, height, subX, subY, filters)
 }

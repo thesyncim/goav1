@@ -109,22 +109,8 @@ func (st *lossyEncodeState) predictPlane(dst []byte, refPlane []byte, stride, wi
 	return predictIntoFilters(dst, refPlane, stride, width, height, px, py, bw, bh, mv, ssX, ssY, filters, st.predictScratch())
 }
 
-// pred8SAD returns the SAD between the regular-filter prediction of a w x h
-// block and src (stride srcStride), reporting false when the fast path does
-// not apply.
-func pred8SAD(src []byte, srcStride int, ref *frame.Plane, refX, refY, w, h, subX, subY int, im *[pred8IMLen]int16) (int, bool) {
-	if pred8Impl == nil || !pred8KernelsOK || pred8FullPelOnly && subX|subY != 0 || w&15 != 0 || h < 8 || w > 64 || h > 64 ||
-		!pred8Fits(ref, refX, refY, w, h) || len(src) < (h-1)*srcStride+w+16 {
-		return 0, false
-	}
-	k := &pred8Kernels[motion.InterpEightTapRegular]
-	return pred8Impl(nil, 0, unsafe.Pointer(&src[0]), srcStride,
-		unsafe.Pointer(&ref.Pix[refY*ref.Stride+refX]), ref.Stride, w, h, subX, subY,
-		&k[subX], &k[subY], im), true
-}
-
-// predictIntoFilters is predictInto with a caller-chosen interpolation filter
-// pair; the reference plane must match the current frame dimensions.
+// predictIntoFilters is the inter predictor with a caller-chosen interpolation
+// filter pair; the reference plane must match the current frame dimensions.
 func predictIntoFilters(dst []byte, refPlane []byte, stride, width, height, px, py, bw, bh int, mv motion.Vector, ssX, ssY bool, filters motion.InterpFilters, scratch *motion.ConvolveScratch) error {
 	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(px, py, mv, ssX, ssY)
 	if err != nil {
