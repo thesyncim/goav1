@@ -793,10 +793,6 @@ func (e *HighBitDepth420VideoEncoder) layerQIndex(temporalID uint8) uint8 {
 	return e.qIndex
 }
 
-func alloc42016Frame(dst *SourceFrame42016, src SourceFrame42016) {
-	allocColor16Frame(dst, src, parser.ColorConfig{BitDepth: src.BitDepth, SubsamplingX: true, SubsamplingY: true})
-}
-
 func allocColor16Frame(dst *SourceFrame42016, src SourceFrame42016, color parser.ColorConfig) {
 	chromaWidth, chromaHeight := chromaWidthForColor(src.Width, color), chromaHeightForColor(src.Height, color)
 	yNeed := (src.Height-1)*src.YStride + src.Width
@@ -815,10 +811,6 @@ func allocColor16Frame(dst *SourceFrame42016, src SourceFrame42016, color parser
 	dst.Width = src.Width
 	dst.Height = src.Height
 	dst.BitDepth = src.BitDepth
-}
-
-func copy42016FrameInto(dst *SourceFrame42016, src SourceFrame42016) {
-	copyColor16FrameInto(dst, src, parser.ColorConfig{BitDepth: src.BitDepth, SubsamplingX: true, SubsamplingY: true})
 }
 
 func copyColor16FrameInto(dst *SourceFrame42016, src SourceFrame42016, color parser.ColorConfig) {

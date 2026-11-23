@@ -15,6 +15,11 @@ const layeredDecoderMaxFrameFormats = EncoderWebRTCMaxSpatialLayers + 1
 // spatial layer, shared reference slots, and shared frame contexts, then drives
 // the same residual/event decode path exposed by the lower-level public APIs.
 //
+// It holds one surface pool per coded frame size and has room for one more
+// size than there are spatial layers, so a stream that resizes frame by frame
+// is rejected when it is constructed, and it does not apply super-resolution:
+// such a frame fails with an error. Decoder handles both.
+//
 // The *Frame values returned by DecodeNext, DecodeAll, DecodeRTPPayload, and
 // DecodeRTPPayloadAfterLoss alias decoder-owned layer-pool surfaces. They
 // remain valid only until the next decode call, Reset, or Close unless the AV1

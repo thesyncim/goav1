@@ -9,8 +9,6 @@ import (
 
 func init() {
 	pred8Impl = pred8SIMD
-	pred8IMImpl = pred8IM
-	pred8VIMImpl = pred8VIM
 }
 
 // The AV1 8-tap kernels are all even, so the 8-bit passes accumulate halved

@@ -3166,31 +3166,6 @@ func (st *lossyEncodeState) inter8x8TXCDFAndSymbol(typ transform.Type) (*entropy
 	return cdf, symbol, true
 }
 
-// forwardTransformBlock dispatches the forward transform for every coded
-// DCT_DCT shape and the small square hybrid transforms enabled in the realtime
-// inter tx_type selector.
-func forwardTransformBlock(tran []int32, residual []int16, scratch []int32, w, h int, typ transform.Type) error {
-	if typ == transform.TypeDCTDCT {
-		return forwardDCTBlock(tran, residual, w, h)
-	}
-	if w == 8 && h == 8 {
-		switch typ {
-		case transform.TypeADSTDCT:
-			transform.ForwardBlock8x8ADSTDCTTrusted(tran, h, residual, w, scratch)
-		case transform.TypeDCTADST:
-			transform.ForwardBlock8x8DCTADSTTrusted(tran, h, residual, w, scratch)
-		case transform.TypeADSTADST:
-			transform.ForwardBlock8x8ADSTADSTTrusted(tran, h, residual, w, scratch)
-		case transform.TypeIDTX:
-			transform.ForwardBlock8x8IDTXTrusted(tran, h, residual, w, scratch)
-		default:
-			return transform.ErrInvalidTransform
-		}
-		return nil
-	}
-	return transform.ForwardBlock(tran, h, residual, w, scratch, transform.Size{Width: uint8(w), Height: uint8(h)}, typ)
-}
-
 // forwardTransformBlock8BitResidualTrusted is used only after residuals have
 // been formed from 8-bit source and prediction planes. The residual values are
 // therefore bounded to [-255, 255], allowing narrow transform kernels to skip

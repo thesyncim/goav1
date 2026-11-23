@@ -356,14 +356,6 @@ func lowOverheadWebRTCScalabilityMetadataOBUSizeForFrames(mode ScalabilityMode, 
 	return lowOverheadWebRTCScalabilityMetadataOBUSize(mode, webRTCScalabilityMetadataDimensionsForModeFrames(mode, frames))
 }
 
-func appendLowOverheadWebRTCScalabilityMetadataOBUForConfig(dst []byte, mode ScalabilityMode, config Config) ([]byte, bool, error) {
-	return appendLowOverheadWebRTCScalabilityMetadataOBU(dst, mode, webRTCScalabilityMetadataDimensionsForConfig(config))
-}
-
-func lowOverheadWebRTCScalabilityMetadataOBUSizeForConfig(mode ScalabilityMode, config Config) (size int, ok bool, err error) {
-	return lowOverheadWebRTCScalabilityMetadataOBUSize(mode, webRTCScalabilityMetadataDimensionsForConfig(config))
-}
-
 // LowOverheadTemporalUnitSize returns the exact number of bytes required to emit
 // a low-overhead temporal unit: one temporal-delimiter OBU followed by obus.
 func LowOverheadTemporalUnitSize(obus []OBU) (int, error) {

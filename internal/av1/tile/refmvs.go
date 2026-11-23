@@ -297,12 +297,6 @@ func (rt *refmvsTile) splatIntraBlock(size BlockSize, by4, bx4 int32) {
 	rt.splat(uint64(refmvsInvalidMV), refmvsSplatRest(0, -1, size, 0), by4, bx4, int32(dims.W4), int32(dims.H4))
 }
 
-// splatIntrabcBlock ports splat_intrabc_mv.
-func (rt *refmvsTile) splatIntrabcBlock(size BlockSize, by4, bx4 int32, dv motion.Vector) {
-	dims := blockDimensions[size]
-	rt.splat(uint64(packRefmvsMV(dv)), refmvsSplatRest(0, -1, size, 0), by4, bx4, int32(dims.W4), int32(dims.H4))
-}
-
 // refmvsResult is the output of refmvsFind: dav1d's mvstack, n_mvs and ctx.
 type refmvsResult struct {
 	stack [8]refmvsCandidate
@@ -901,23 +895,6 @@ func refmvsTopHasRight(sbSizeMIB uint8, block *BlockVisit) bool {
 		refmvsOracleTopHasRight(sbSizeMIB, block, has)
 	}
 	return has
-}
-
-// legacyRefmvsTopHasRight derives the same flag from the block position:
-// blockHasTopRight plus the T_LEFT_SPLIT (VERT_A) rule that the bottom-left
-// square is decoded before the right-hand rectangle above-right of it. The
-// goav1_refmvs_oracle build checks the edge tree against it.
-func legacyRefmvsTopHasRight(sbSizeMIB uint8, block BlockVisit) bool {
-	if !blockHasTopRight(sbSizeMIB, block) {
-		return false
-	}
-	if block.Partition == PartitionTLeftSplit {
-		dims := blockDimensions[block.Size]
-		if dims.W4 == dims.H4 && int(block.MIRow)&int(dims.H4) != 0 {
-			return false
-		}
-	}
-	return true
 }
 
 // refmvsPocDiff ports dav1d's get_poc_diff.

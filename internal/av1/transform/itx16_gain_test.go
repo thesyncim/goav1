@@ -17,7 +17,6 @@ import (
 
 type gainRecorder struct {
 	outs    [][]float64 // rotation outputs, one coefficient vector each
-	n       int
 	cur     int
 	perturb int // rotation output index to perturb by +1 (-1 = none)
 	calls   int

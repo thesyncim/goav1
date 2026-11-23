@@ -570,10 +570,6 @@ func scalabilityModeFor2Spatial(temporal uint8, key bool, smallStep bool, simulc
 	}
 }
 
-func scalabilityModeFor3Spatial(temporal uint8, key bool, smallStep bool, simulcast bool) (ScalabilityMode, bool) {
-	return scalabilityModeFor3SpatialShift(temporal, key, smallStep, simulcast, false)
-}
-
 func scalabilityModeFor3SpatialShift(temporal uint8, key bool, smallStep bool, simulcast bool, keyShift bool) (ScalabilityMode, bool) {
 	if simulcast {
 		if key || keyShift {

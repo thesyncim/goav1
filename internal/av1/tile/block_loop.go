@@ -1549,22 +1549,6 @@ func (s *DecodeState) readBlockSkips(cdfs *BlockModeCDFs, ctx *BlockModeContext,
 	return false, s.Reader.ReadBinaryCDFUnchecked(&cdfs.Skip[int(ctx.A.Skip[x4])+int(ctx.L.Skip[y4])]) != 0, nil
 }
 
-func (s *DecodeState) readBlockModePrefixSyntax(cdfs *BlockModeCDFs, ctx *BlockModeContext, req BlockModeRequest, segmentPredicted bool) (BlockModeResult, error) {
-	skipMode, err := s.ReadSkipMode(cdfs, ctx, req)
-	if err != nil {
-		return BlockModeResult{}, err
-	}
-	skip, err := s.ReadSkipTransform(cdfs, ctx, req, skipMode)
-	if err != nil {
-		return BlockModeResult{}, err
-	}
-	return BlockModeResult{
-		SegmentPredicted: segmentPredicted,
-		SkipMode:         skipMode,
-		SkipTransform:    skip,
-	}, nil
-}
-
 func validateBlockLoopRequest(req BlockLoopRequest, hasCoeffController bool) error {
 	if !req.Walk.Root.Valid() || req.SBSizeMIB == 0 ||
 		req.Walk.MIColEnd <= req.Walk.MIColStart ||

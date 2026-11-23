@@ -65,21 +65,6 @@ func pixelStatsRows16(src []byte, srcStride int, ref []byte, refStride int, w, h
 	return pixelStatsRows16Arch(src, srcStride, ref, refStride, w, h)
 }
 
-// pixelStatsRows16Generic is pixelStatsRows16 on the shared lane vocabulary.
-func pixelStatsRows16Generic(src []byte, srcStride int, ref []byte, refStride int, w, h int) (sse uint32, sum int32) {
-	sseAcc := archsimd.BroadcastInt32x4(0)
-	sumAcc := archsimd.BroadcastInt32x4(0)
-	for r := range h {
-		srow := src[r*srcStride : r*srcStride+w]
-		rrow := ref[r*refStride : r*refStride+w]
-		for c := 0; c < w; c += 16 {
-			sseAcc, sumAcc = pixelDiffAcc(sseAcc, sumAcc, archsimd.LoadUint8x16(srow[c:c+16]), archsimd.LoadUint8x16(rrow[c:c+16]))
-		}
-	}
-	total, signed := reducePixelAcc(sseAcc, sumAcc)
-	return uint32(total), int32(signed)
-}
-
 // pixelStatsPairs8 handles the 8-wide shape: rows r and r+1 share one vector.
 func pixelStatsPairs8(src []byte, srcStride int, ref []byte, refStride int, h int) (sse uint32, sum int32) {
 	sseAcc := archsimd.BroadcastInt32x4(0)

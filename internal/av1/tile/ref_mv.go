@@ -1507,25 +1507,6 @@ func (c *BlockModeContext) gridInterMotion(x4 int, y4 int) (InterMotionResult, B
 	return c.GridInterMotion[y4][x4], c.GridBlockSize[y4][x4], true
 }
 
-// gridNeighborBlockSize returns the block size recorded at (x4, y4)
-// regardless of whether the cell carries a usable motion candidate.
-// MarkIntra records the intra block's size in GridBlockSize while clearing
-// GridMotionValid so outer ref-MV scans can advance by libaom's
-// `i += mi_size_*[candidate->bsize]` stride past intra neighbors without
-// oversampling cells the candidate already covers. Returns (size, true) when
-// a Mark*() recorded a size at the slot, (0, false) when the slot is out of
-// range. The "size present" signal is the gridBlockSizeVisited bitmap, which
-// flips only when markGridInterMotion / clearGridInterMotion writes the slot.
-func (c *BlockModeContext) gridNeighborBlockSize(x4 int, y4 int) (BlockSize, bool) {
-	if x4 < 0 || y4 < 0 || x4 >= MaxBlockModeSlots || y4 >= MaxBlockModeSlots {
-		return 0, false
-	}
-	if c.GridBlockSizeVisited[y4][x4] == 0 {
-		return 0, false
-	}
-	return c.GridBlockSize[y4][x4], true
-}
-
 func (c *BlockModeContext) crossSBGridNeighbor(req *ReferenceMVStackRequest, x4, y4 int) (InterMotionResult, BlockSize, bool, bool) {
 	if c == nil || req == nil {
 		return InterMotionResult{}, 0, false, false
@@ -1587,72 +1568,6 @@ func (c *BlockModeContext) crossSBGridNeighbor(req *ReferenceMVStackRequest, x4,
 		return InterMotionResult{}, size, true, false
 	}
 	return c.GridInterMotion[y4][x4], size, true, true
-}
-
-// crossSBGridNeighborBlockSize mirrors gridNeighborBlockSize but transparently
-// falls back to the SB-top / SB-left / SB-diagonal snapshots when the lookup
-// crosses the current superblock boundary. libaom's mi grid is frame-wide so
-// scan_row_mbmi / scan_col_mbmi see prior-SB neighbors without ceremony; goav1
-// keeps a per-SB grid and stages the prior SB's bottom rows in SBTop*Grid /
-// its right columns in SBLeft*Grid (depth 0 = adjacent cell, depth d = d+1
-// cells away). Used by the inter ref-MV outer row/column scan so a block at
-// the top edge (Y4=0) or left edge (X4=0) of an SB still observes deep outer
-// offsets (-3, -5) that would otherwise be clipped at the SB boundary.
-func (c *BlockModeContext) crossSBGridNeighborBlockSize(req ReferenceMVStackRequest, x4, y4 int) (BlockSize, bool) {
-	if c == nil {
-		return 0, false
-	}
-	if y4 < 0 && x4 < 0 {
-		if !req.HaveTop || !req.HaveLeft {
-			return 0, false
-		}
-		d := -y4 - 1
-		e := -x4 - 1
-		if d < 0 || d >= intrabcCrossSBHistory || e < 0 || e >= intrabcCrossSBHistory {
-			return 0, false
-		}
-		// Use BlockSizeVisited (not MotionValid) so intra neighbors in the
-		// prior SB still consume their mi_size when the outer scan steps
-		// across them. libaom's scan_row/col_mbmi advances i += len based
-		// on the candidate's bsize regardless of whether the candidate is
-		// inter or intra; if we gated the lookup on MotionValid here the
-		// intra cell looked "unknown" and the scan fell back to a single-
-		// mi step, then re-entered cells the intra neighbor already covered
-		// and may pick up a stray inter MV one row deeper. mfmv frame 1
-		// block mi=(64,18) outer_col[-5] hit this: libaom visits (19,59)
-		// (intra bsize=BLOCK_16X8, len=2) and exits with col_match=0, while
-		// goav1 stepped to (20,59) (inter, mv=(-4,23)) and inflated
-		// col_match to 1.
-		if c.SBDiagonalBlockSizeVisitedGrid[d][e] == 0 {
-			return 0, false
-		}
-		return c.SBDiagonalBlockSizeGrid[d][e], true
-	}
-	if y4 < 0 {
-		if !req.HaveTop {
-			return 0, false
-		}
-		depth := -y4 - 1
-		if depth < 0 || depth >= intrabcCrossSBHistory ||
-			x4 < 0 || x4 >= MaxBlockModeSlots ||
-			c.SBTopBlockSizeVisitedGrid[depth][x4] == 0 {
-			return 0, false
-		}
-		return c.SBTopBlockSizeGrid[depth][x4], true
-	}
-	if x4 < 0 {
-		if !req.HaveLeft {
-			return 0, false
-		}
-		depth := -x4 - 1
-		if depth < 0 || depth >= intrabcCrossSBHistory ||
-			y4 < 0 || y4 >= MaxBlockModeSlots ||
-			c.SBLeftBlockSizeVisitedGrid[depth][y4] == 0 {
-			return 0, false
-		}
-		return c.SBLeftBlockSizeGrid[depth][y4], true
-	}
-	return c.gridNeighborBlockSize(x4, y4)
 }
 
 // crossSBInterGridInterMotion mirrors gridInterMotion but consults the SB-top
@@ -2145,10 +2060,6 @@ func (stack *ReferenceMVStack) addSingleFallbackCandidate(candidate InterMotionR
 		}
 		stack.addUniqueFallback(ReferenceMVCandidate{This: mv, Weight: 2})
 	}
-}
-
-func (stack *ReferenceMVStack) addOrWeight(candidate ReferenceMVCandidate, weight uint16) {
-	stack.addOrWeightMVs(candidate.This, candidate.Compound, weight)
 }
 
 func (stack *ReferenceMVStack) addOrWeightMVs(this motion.Vector, compound motion.Vector, weight uint16) {

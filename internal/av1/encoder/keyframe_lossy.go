@@ -510,10 +510,6 @@ func runKeyframeTilesDefault(req keyframeTileRun, tilePC func(t int) *pframeCode
 	return nil
 }
 
-func lossyKeyframeHeader(width, height int, qIndex uint8) IntraFrameHeaderParams {
-	return lossyKeyframeHeaderForSequence(losslessKeyframeSequence(width, height), width, height, qIndex)
-}
-
 func lossyKeyframeHeaderForSequence(seq SequenceHeader, width, height int, qIndex uint8) IntraFrameHeaderParams {
 	header := losslessKeyframeHeaderForSequence(seq, width, height)
 	header.Quantization = QuantizationParams{BaseQIdx: qIndex}
@@ -891,23 +887,6 @@ type lossyEncodeState struct {
 	// refmvsScratch is the tile scratch whose dav1d refmvs rows the current
 	// serial walk bound (bindRefmvs), or nil.
 	refmvsScratch *tile.BlockLoopScratch
-}
-
-func encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap) ([]byte, error) {
-	var pc pframeCoder
-	return pc.encodeKeyframeTile(src, recon, qIndex, miColStart, miColEnd, lfMap)
-}
-
-// encodeKeyframeTile codes one keyframe tile reusing the coder's buffers:
-// the symbol contexts reinitialize to the keyframe defaults in place, and
-// the scans, scratch planes, context carrier, and writer buffer carry over
-// from inter coding, so a streaming keyframe allocates nothing per tile.
-func (pc *pframeCoder) encodeKeyframeTile(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap) ([]byte, error) {
-	return pc.encodeKeyframeTileWithOptions(src, recon, qIndex, miColStart, miColEnd, lfMap, false)
-}
-
-func (pc *pframeCoder) encodeKeyframeTileWithOptions(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap, allowScreenContentTools bool) ([]byte, error) {
-	return pc.encodeKeyframeTileWithColorOptions(src, recon, qIndex, miColStart, miColEnd, lfMap, allowScreenContentTools, parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true})
 }
 
 func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap, allowScreenContentTools bool, color parser.ColorConfig) ([]byte, error) {
@@ -1343,36 +1322,6 @@ func (st *lossyEncodeState) writeNoPaletteMode(modeCtx *tile.BlockModeContext, b
 		return fmt.Errorf("mark palette uv: %w", err)
 	}
 	return nil
-}
-
-// encodeTXB codes one square n x n transform block: DC-predict from the recon
-// plane, forward transform the source residual, quantize, write the
-// coefficients, then reconstruct through the decoder's own dequant + inverse
-// transform so recon matches the decoder bit-for-bit.
-func (st *lossyEncodeState) encodeTXB(reconPlane []byte, srcPlane []byte, stride int, px, py, n int, q quantize.Quantizer,
-	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error) error {
-	return st.encodeTXBAvail(reconPlane, srcPlane, stride, px, py, n, q, ctxReq, coeffCtx, scan, afterSkip, py > 0, px > 0)
-}
-
-// encodeTXBAvail is encodeTXB with explicit neighbor availability: inside a
-// tile the left/top edges follow the tile boundary, not the frame's. The
-// prediction is flat DC from the available reconstructed edges.
-func (st *lossyEncodeState) encodeTXBAvail(reconPlane []byte, srcPlane []byte, stride int, px, py, n int, q quantize.Quantizer,
-	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, haveTop, haveLeft bool) error {
-
-	dc := dcPredictN(reconPlane, stride, px, py, n, haveTop, haveLeft)
-	pred := st.predU[:n*n] // free during intra TXB coding at n <= 8
-	memsetBytes(pred, dc)
-	return st.encodeTXBPred(reconPlane, srcPlane, stride, px, py, n, q, ctxReq, coeffCtx, scan, afterSkip, pred)
-}
-
-func (st *lossyEncodeState) encodeTXBAvailRect(reconPlane []byte, srcPlane []byte, stride int, px, py, w, h int, q quantize.Quantizer,
-	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, haveTop, haveLeft bool) error {
-
-	dc := dcPredictRect(reconPlane, stride, px, py, w, h, haveTop, haveLeft)
-	pred := st.predU[:w*h]
-	memsetBytes(pred, dc)
-	return st.encodeTXBPredRect(reconPlane, srcPlane, stride, px, py, w, h, q, ctxReq, coeffCtx, scan, afterSkip, pred)
 }
 
 // encodeTXBPred codes one square n x n transform block against an arbitrary

@@ -78,7 +78,7 @@ func TestSVTBilinearPredictMatchesReference(t *testing.T) {
 // over scalar reference kernels, for the sub-pel search's differential test.
 type svtPrunedTreeModel struct {
 	src, ref         []byte
-	stride, w, h     int
+	stride           int
 	width, height    int
 	px, py, bw, bh   int
 	refMV            motion.Vector

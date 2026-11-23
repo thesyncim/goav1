@@ -31,8 +31,6 @@ const (
 	// NOT rescale this constant or every BitsRead consumer (tile trailing-bit
 	// checks) would shift by ecWindow-32.
 	readerInitTellOffs = 10 - (32 - 8)
-
-	cdf4HighTokenMax = 12
 )
 
 func readerTell(pos int, cnt int32, tellOffs int32) int {

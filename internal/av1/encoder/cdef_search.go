@@ -68,13 +68,6 @@ type svtCDEFSearchCtrls struct {
 	predUVF                int8
 }
 
-// svtCDEFReconCtrls is CdefReconControls.
-type svtCDEFReconCtrls struct {
-	zeroFSCostBias        uint16
-	zeroFilterStrengthLvl uint8
-	prevCDEFDistTH        uint16
-}
-
 // setSVTCDEFSearchControls is set_cdef_search_controls.
 func setSVTCDEFSearchControls(level uint8, isBase, notHighestLayer bool) svtCDEFSearchCtrls {
 	var c svtCDEFSearchCtrls
@@ -206,21 +199,6 @@ func setSVTCDEFSearchControls(level uint8, isBase, notHighestLayer bool) svtCDEF
 		}
 	}
 	return c
-}
-
-// setSVTCDEFReconControls is set_cdef_recon_controls.
-func setSVTCDEFReconControls(level uint8) svtCDEFReconCtrls {
-	switch level {
-	case 1:
-		return svtCDEFReconCtrls{61, 2, 10}
-	case 2:
-		return svtCDEFReconCtrls{61, 3, 10}
-	case 3:
-		return svtCDEFReconCtrls{60, 3, 10}
-	case 4:
-		return svtCDEFReconCtrls{58, 3, 10}
-	}
-	return svtCDEFReconCtrls{}
 }
 
 // svtRTCCDEFSearchLevel is the cdef_search_level of

@@ -109,7 +109,6 @@ type VideoEncoder struct {
 	tileErrs      []error
 	tuGroup       []byte
 	tuScratch     []byte
-	tuScratch2    []byte
 	tileWork      chan tileWorkRange
 	tileWait      sync.WaitGroup
 	tileWorkerWG  sync.WaitGroup // persistent helpers, separate from per-job completion

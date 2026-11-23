@@ -741,10 +741,6 @@ func (st *lossyEncodeState) highBitDepthMonoGoldenPlane(ref SourceFrameMono16) (
 	return highBitDepthReferencePlane(ref.Y, ref.YStride, ref.Width, ref.Height, &st.goldenY16Bytes)
 }
 
-func (st *lossyEncodeState) highBitDepth420ReferencePlanes(ref SourceFrame42016) ([3]av1frame.Plane, error) {
-	return st.highBitDepthColorReferencePlanes(ref, parser.ColorConfig{BitDepth: ref.BitDepth, SubsamplingX: true, SubsamplingY: true})
-}
-
 func (st *lossyEncodeState) highBitDepthColorReferencePlanes(ref SourceFrame42016, color parser.ColorConfig) ([3]av1frame.Plane, error) {
 	if err := validateSourceFrameColor16(ref, color, videoColorLabel(color)); err != nil {
 		return [3]av1frame.Plane{}, err

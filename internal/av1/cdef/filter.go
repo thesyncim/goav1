@@ -520,15 +520,6 @@ func indexFits(length int, index int) bool {
 	return index >= 0 && index < length
 }
 
-func constrain(diff int, threshold int, damping int) int {
-	if threshold == 0 {
-		return 0
-	}
-	shift := max(damping-(bits.Len(uint(threshold))-1), 0)
-	limit := threshold - (absInt(diff) >> shift)
-	return signInt(diff) * clampInt(limit, 0, absInt(diff))
-}
-
 func adjustStrength(strength int, variance int32) int {
 	if variance == 0 {
 		return 0
@@ -586,13 +577,6 @@ func blockFitsAt(length int, origin int, stride int, width int, height int) bool
 
 func clampInt(v int, lo int, hi int) int {
 	return min(max(v, lo), hi)
-}
-
-func signInt(v int) int {
-	if v < 0 {
-		return -1
-	}
-	return 1
 }
 
 func absInt(v int) int {
