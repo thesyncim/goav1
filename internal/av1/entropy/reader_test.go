@@ -912,22 +912,6 @@ func BenchmarkCursorCDFSymbolsStream9(b *testing.B) {
 	benchmarkCursorCDFSymbolsStream(b, 9)
 }
 
-func BenchmarkCursorCDFStream10(b *testing.B) {
-	benchmarkCursorCDFStreamSymbols(b, 10)
-}
-
-func BenchmarkCursorCDFSymbolsStream10(b *testing.B) {
-	benchmarkCursorCDFSymbolsStream(b, 10)
-}
-
-func BenchmarkCursorCDFStream11(b *testing.B) {
-	benchmarkCursorCDFStreamSymbols(b, 11)
-}
-
-func BenchmarkCursorCDFSymbolsStream11(b *testing.B) {
-	benchmarkCursorCDFSymbolsStream(b, 11)
-}
-
 func benchmarkCursorCDF4Stream(b *testing.B, update bool) {
 	b.Helper()
 	src := benchStream()

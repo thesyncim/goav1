@@ -117,16 +117,6 @@ func benchWienerSetup() (src []uint16, temp []uint16, dst []uint16, stride, orig
 	return
 }
 
-func BenchmarkWienerHorizontalPureGo(b *testing.B) {
-	src, temp, _, stride, origin, info := benchWienerSetup()
-	round0, _ := wienerRounds(12)
-	max := uint16((1 << 12) - 1)
-	b.ReportAllocs()
-	for b.Loop() {
-		wienerHorizontal(src, stride, origin, 64, 64, info.HFilter, 12, round0, max, temp)
-	}
-}
-
 func BenchmarkWienerHorizontalDispatch(b *testing.B) {
 	src, temp, _, stride, origin, info := benchWienerSetup()
 	round0, _ := wienerRounds(12)

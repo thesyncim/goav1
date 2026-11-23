@@ -43,7 +43,7 @@ type publicEncoderP720Digest struct {
 // set, it fails on missing, malformed, or mismatched input and logs exact
 // stream/reconstruction digests for comparison between immutable binaries.
 func TestPublicEncoderP720CorpusParity(t *testing.T) {
-	fixture := loadPublicEncoderP720Fixture(t, false)
+	fixture := loadPublicEncoderP720Fixture(t)
 	if fixture == nil {
 		return
 	}
@@ -65,7 +65,10 @@ func TestPublicEncoderP720CorpusParity(t *testing.T) {
 // are outside the timer. This QIndex-80, one-thread corpus case is distinct
 // from the CBR Pan benchmark.
 func BenchmarkPublicEncoderP720CorpusStream(b *testing.B) {
-	fixture := loadPublicEncoderP720Fixture(b, true)
+	fixture := loadPublicEncoderP720Fixture(b)
+	if fixture == nil {
+		return
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	var lastBytes int64
@@ -81,14 +84,11 @@ func BenchmarkPublicEncoderP720CorpusStream(b *testing.B) {
 	b.ReportMetric(float64(lastBytes), "bitstream_B/stream")
 }
 
-func loadPublicEncoderP720Fixture(tb testing.TB, required bool) *publicEncoderP720Fixture {
+func loadPublicEncoderP720Fixture(tb testing.TB) *publicEncoderP720Fixture {
 	tb.Helper()
 	rawPath := os.Getenv(publicEncoderP720RawEnv)
 	if rawPath == "" {
-		if required {
-			tb.Fatalf("set %s to the decoded p720_inter_q32 I420 fixture", publicEncoderP720RawEnv)
-		}
-		tb.Skipf("set %s to run the public p720 encoder parity preflight", publicEncoderP720RawEnv)
+		tb.Skipf("set %s to the decoded p720_inter_q32 I420 fixture", publicEncoderP720RawEnv)
 		return nil
 	}
 	raw, err := os.ReadFile(rawPath)

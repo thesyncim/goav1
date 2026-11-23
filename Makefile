@@ -1,4 +1,4 @@
-.PHONY: test bench bench-all bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish pgo-regenerate qualitybench-publish qualitybench-publish-singlethread gc-metrics compiler-reports unsafe-check fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet vet-tags fmt-check tidy-check webrtc-reference webrtc-browser webrtc-production webrtc-production-ci dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus feature-sweep ci-local help
+.PHONY: test bench bench-all bench-smoke bench-public bench-cross bench-corpus bench-corpus-publish bench-go-publish pgo-regenerate qualitybench-publish qualitybench-publish-singlethread gc-metrics compiler-reports unsafe-check fuzz-smoke testvectors testvectors-fast testvectors-full test-motion-conformance test-transform-conformance alloc trace-zero vet vet-tags fmt-check tidy-check webrtc-reference webrtc-browser webrtc-production webrtc-production-ci dryrun-fast dryrun-relevant-supported dryrun-full dryrun-extended dryrun-profiles dryrun-corpus dryrun-external-corpus feature-sweep ci-local help
 
 FUZZTIME ?= 250000x
 FUZZPARALLEL ?= 8
@@ -160,6 +160,13 @@ bench:
 # (transform, cdef, restoration, motion, prediction, public API, etc.).
 bench-all:
 	go test $(GOAV1_PGO_FLAGS) -run '^$$' -bench=. -benchmem -benchtime=$(BENCHTIME) ./...
+
+# bench-smoke runs every benchmark exactly once so a broken benchmark fails CI
+# instead of rotting. It times nothing and skips benchmarks whose external
+# corpus is absent. CI runs it in the SIMD jobs, which between them compile
+# every arch-specific benchmark file; no PGO, so it reuses the test build cache.
+bench-smoke:
+	go test -run '^$$' -bench . -benchtime 1x -timeout 15m ./...
 
 bench-public:
 	go test $(GOAV1_PGO_FLAGS) -run '^$$' -bench='BenchmarkPublic' -benchmem -benchtime=$(BENCHTIME) .
@@ -691,7 +698,7 @@ feature-sweep: build-cmd
 	go build $(GOAV1_PGO_FLAGS) -o $(dir $(CMDBIN))dump_svc ./cmd/dump_svc
 	./scripts/decoder_feature_sweep.py $(CMDBIN) -l $(dir $(CMDBIN))dump_svc
 
-ci-local: fmt-check vet vet-tags unsafe-check test alloc compiler-reports trace-zero
+ci-local: fmt-check vet vet-tags unsafe-check test bench-smoke alloc compiler-reports trace-zero
 
 # CMDDIR is the source directory of the aom-go-dec CLI. CMDBIN is the path
 # `build-cmd` writes the binary to (bin/aom-go-dec by default). Override
@@ -717,6 +724,7 @@ help:
 	@echo "  test                       go test ./..."
 	@echo "  bench                      end-to-end frames/sec + MB/sec on bundled libaom IVF"
 	@echo "  bench-all                  full microbenchmark sweep across every package"
+	@echo "  bench-smoke                run every benchmark once (CI rot check)"
 	@echo "  bench-public               run public benchmarks"
 	@echo "  bench-cross                goav1 vs aomdec/dav1d/SVT throughput (perf tool, startup-aware)"
 	@echo "  bench-corpus               generated corpus goav1 vs reference decoder throughput"

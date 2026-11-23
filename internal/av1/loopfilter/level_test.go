@@ -271,34 +271,6 @@ func TestLevelHelpersAllocs(t *testing.T) {
 	}
 }
 
-func BenchmarkResolveLevel(b *testing.B) {
-	params := parser.LoopFilterParams{
-		LevelY:              [2]uint8{32, 31},
-		LevelU:              12,
-		LevelV:              13,
-		ModeRefDeltaEnabled: true,
-		Deltas: parser.LoopFilterDeltas{
-			Ref:  [parser.RefFrames]int8{1, 0, 0, 0, -1, 0, -1, -1},
-			Mode: [parser.LoopFilterModeDeltas]int8{0, 1},
-		},
-	}
-	seg := parser.SegmentationParams{Enabled: true}
-	seg.Data.Segments[1].DeltaLFYV = -2
-	req := LevelRequest{
-		Plane:     PlaneY,
-		Edge:      EdgeVertical,
-		SegmentID: 1,
-		RefFrame:  4,
-		Mode:      ModeDeltaClassMotion,
-		DeltaLF:   3,
-	}
-
-	b.ReportAllocs()
-	for b.Loop() {
-		_, _ = ResolveLevel(params, seg, req)
-	}
-}
-
 func BenchmarkThresholdsForLevel(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {

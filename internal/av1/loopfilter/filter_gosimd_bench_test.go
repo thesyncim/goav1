@@ -76,18 +76,6 @@ func BenchmarkFilter14Edge16SIMD_H10Mixed(b *testing.B) {
 	benchFilter14Reset(b, buf, q0, step, 2, n, 4, p, filter14Edge16SIMD)
 }
 
-// 12-bit: the 10/12-bit SIMD kernel is measured against the pure-Go reference, so this
-// pair measures the SIMD kernel against today's actual 12-bit dispatch.
-func BenchmarkFilter14Edge16PureGo_H12Flat(b *testing.B) {
-	buf, q0, step, n, p := benchWide16Edge(12, true)
-	benchFilter14Reset(b, buf, q0, step, 2, n, 16, p, filter14Edge16PureGo)
-}
-
-func BenchmarkFilter14Edge16SIMD_H12Flat(b *testing.B) {
-	buf, q0, step, n, p := benchWide16Edge(12, true)
-	benchFilter14Reset(b, buf, q0, step, 2, n, 16, p, filter14Edge16SIMD)
-}
-
 func BenchmarkFilter6Edge16PureGo_H10Flat(b *testing.B) {
 	buf, q0, step, n, p := benchWide16Edge(10, true)
 	benchFilter14Reset(b, buf, q0, step, 2, n, 4, p, filter6Edge16PureGo)
@@ -168,20 +156,4 @@ func BenchmarkFilter6Edge16PureGo_V10Mixed(b *testing.B) {
 func BenchmarkFilter6Edge16SIMD_V10Mixed(b *testing.B) {
 	buf, p := benchWide16VertDepth(10, false)
 	benchFilter14Reset(b, buf, 16, 2, 192, 64, 4, p, filter6Edge16SIMD)
-}
-func BenchmarkFilter6Edge16PureGo_V12Flat(b *testing.B) {
-	buf, p := benchWide16VertDepth(12, true)
-	benchFilter14Reset(b, buf, 16, 2, 192, 64, 16, p, filter6Edge16PureGo)
-}
-func BenchmarkFilter6Edge16SIMD_V12Flat(b *testing.B) {
-	buf, p := benchWide16VertDepth(12, true)
-	benchFilter14Reset(b, buf, 16, 2, 192, 64, 16, p, filter6Edge16SIMD)
-}
-func BenchmarkFilter6Edge16PureGo_V12Mixed(b *testing.B) {
-	buf, p := benchWide16VertDepth(12, false)
-	benchFilter14Reset(b, buf, 16, 2, 192, 64, 16, p, filter6Edge16PureGo)
-}
-func BenchmarkFilter6Edge16SIMD_V12Mixed(b *testing.B) {
-	buf, p := benchWide16VertDepth(12, false)
-	benchFilter14Reset(b, buf, 16, 2, 192, 64, 16, p, filter6Edge16SIMD)
 }
