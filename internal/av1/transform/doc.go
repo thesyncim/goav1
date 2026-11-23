@@ -4,3 +4,5 @@
 
 // Package transform contains inverse transform implementations.
 package transform
+
+//go:generate go run ./fwdgen
