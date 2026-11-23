@@ -356,20 +356,35 @@ func svtHMESearchColSum(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (b
 		} else {
 			svtColTotalsSlideArch(cw, ref.pix[base-2*stride:], ref.pix[base+2*(rows-1)*stride:], span)
 		}
-		for x := 0; x < w; x += 8 {
-			var t [8]uint32
-			svtHMEEightColSum(&t, sp, unsafe.Pointer(&ref.pix[base+x]), unsafe.Pointer(&cw[x]), s2, bw, rows, srcSum)
-			m := min(min(min(t[0], t[1]), min(t[2], t[3])), min(min(t[4], t[5]), min(t[6], t[7])))
-			if sad := m << 1; sad < bestSAD {
-				k := 0
-				for t[k] != m {
-					k++
-				}
-				bestSAD, bestX, bestY = sad, ox+x+k, oy+y
-			}
+		// update_best_sad_u32 over the row: its minimum SAD at its first
+		// position, taken only when it improves the best (the first strict
+		// minimum of the per-eight updates is the row's first minimum).
+		key := svtHMEColSumRow(nil, sp, unsafe.Pointer(&ref.pix[base]), unsafe.Pointer(&cw[0]), s2, bw, rows, w, srcSum)
+		if sad := key >> 7 << 1; sad < bestSAD {
+			bestSAD, bestX, bestY = sad, ox+int(key&127), oy+y
 		}
 	}
 	return bestSAD, bestX, bestY
+}
+
+// svtHMEColSumRowScalar is the definition of svtHMEColSumRow on
+// svtHMEEightColSumScalar.
+func svtHMEColSumRowScalar(t *[svtHMEMaxCols / 8][8]uint32, sp, rp, cwp unsafe.Pointer, s2, bw, rows, w int, srcSum uint32) uint32 {
+	s := unsafe.Slice((*byte)(sp), (rows-1)*s2+bw)
+	ref := unsafe.Slice((*byte)(rp), (rows-1)*s2+bw+w)
+	cw := unsafe.Slice((*uint16)(cwp), bw+w)
+	key := ^uint32(0)
+	for x := 0; x < w; x += 8 {
+		var e [8]uint32
+		svtHMEEightColSumScalar(&e, s, s2, ref[x:], cw[x:], bw, rows, srcSum)
+		if t != nil {
+			t[x/8] = e
+		}
+		for k, v := range e {
+			key = min(key, v<<7|uint32(x+k))
+		}
+	}
+	return key
 }
 
 // svtColTotals sets cw[c], c < span, to the sum of ref[r*s2+c] over the
