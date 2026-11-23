@@ -40,18 +40,16 @@ func BenchmarkPixelStatsRows16Arch(b *testing.B) {
 	}
 }
 
-func BenchmarkSVTHMEEightColSum(b *testing.B) {
+func BenchmarkSVTHMEColSumRow(b *testing.B) {
 	src, ref := sadVarBenchPlanes()
-	for _, sh := range []struct{ bw, rows int }{{16, 8}, {32, 16}} {
-		b.Run(map[int]string{16: "16x8r8", 32: "32x8r16"}[sh.bw], func(b *testing.B) {
+	for _, sh := range []struct{ bw, rows, w int }{{16, 8, 16}, {32, 16, 8}} {
+		b.Run(map[int]string{16: "L0_16x16w16", 32: "L1_32x32w8"}[sh.bw], func(b *testing.B) {
 			var cw [svtHMEMaxCols]uint16
 			svtColTotalsArch(&cw, ref, 2*192, sh.rows, 64)
 			srcSum := svtBlockSumSubArch(src, 2*192, sh.bw, sh.rows)
 			var sink uint32
 			for b.Loop() {
-				var t [8]uint32
-				svtHMEEightColSum(&t, unsafe.Pointer(&src[0]), unsafe.Pointer(&ref[0]), unsafe.Pointer(&cw[0]), 2*192, sh.bw, sh.rows, srcSum)
-				sink += t[3]
+				sink += svtHMEColSumRow(nil, unsafe.Pointer(&src[0]), unsafe.Pointer(&ref[0]), unsafe.Pointer(&cw[0]), 2*192, sh.bw, sh.rows, sh.w, srcSum)
 			}
 			_ = sink
 		})

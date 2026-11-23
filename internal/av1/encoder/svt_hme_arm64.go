@@ -234,79 +234,110 @@ func svtColTotalsSlideArch(cw *[svtHMEMaxCols]uint16, out, in []byte, span int) 
 	}
 }
 
-// svtHMEEightColSum is svtHMEEightColSumScalar: the eight positions' sums of
-// minima accumulate as svtSAD16xhx8's byte pairs (one MIN per row and
-// position), and the reference window totals are the column totals'
-// sliding sums: with C0 the first eight column totals and Cb the eight
-// starting bw columns later, position k's window is T + sum(Cb[j] - C0[j],
-// j < k), T the first window, as an exclusive prefix sum over int16 lanes
-// (each term is at most 7*16*255 in magnitude).
-func svtHMEEightColSum(t *[8]uint32, sp, rp, cwp unsafe.Pointer, s2, bw, rows int, srcSum uint32) {
-	var s0, s1, s2v, s3, s4, s5, s6, s7 archsimd.Uint16x8
-	var h0, h1, h2, h3, h4, h5, h6, h7 archsimd.Uint16x8
+// svtHMEColSumRow scores one HME search row: the positions x = 0..w-1 (w a
+// multiple of 8, w + bw <= svtHMEMaxCols) of the bw-wide (16 or 32),
+// rows-tall block at sp (stride s2) against rp+x, eight at a time, from the
+// source total srcSum and the row's reference column totals at cwp. It
+// returns the smallest key t<<7 | x (t the SAD; t <= 16*32*255, x < 128): the
+// row's minimum SAD and its first position. When t is not nil, t[x/8][k] is
+// the SAD of position x+k (svtHMEEightColSumScalar).
+//
+// Per eight positions the sums of minima accumulate as svtSAD16xhx8's byte
+// pairs (one MIN per row and position), and the reference window totals are
+// the column totals' sliding sums: with C0 the first eight column totals and
+// Cb the eight starting bw columns later, position k's window is
+// T + sum(Cb[j] - C0[j], j < k), T the first window, as an exclusive prefix
+// sum over int16 lanes (each term is at most 7*16*255 in magnitude). The
+// positions loop inside the kernel so a search row is one call.
+func svtHMEColSumRow(t *[svtHMEMaxCols / 8][8]uint32, sp, rp, cwp unsafe.Pointer, s2, bw, rows, w int, srcSum uint32) uint32 {
+	// Only the shift count stays in a register across the row loop; the
+	// reduction's constants load from one table each step (kept live, the
+	// register allocator reloaded them inside the row loop).
 	hiShift := archsimd.BroadcastInt16x8(-8)
-	for r := 0; r < rows; r++ {
-		for c := 0; c < bw; c += 16 {
-			sv := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, r*s2+c)))
-			p := unsafe.Add(rp, r*s2+c)
-			d := sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p))).ReshapeToUint16s()
-			s0, h0 = s0.Add(d), h0.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 1)))).ReshapeToUint16s()
-			s1, h1 = s1.Add(d), h1.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 2)))).ReshapeToUint16s()
-			s2v, h2 = s2v.Add(d), h2.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 3)))).ReshapeToUint16s()
-			s3, h3 = s3.Add(d), h3.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 4)))).ReshapeToUint16s()
-			s4, h4 = s4.Add(d), h4.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 5)))).ReshapeToUint16s()
-			s5, h5 = s5.Add(d), h5.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 6)))).ReshapeToUint16s()
-			s6, h6 = s6.Add(d), h6.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 7)))).ReshapeToUint16s()
-			s7, h7 = s7.Add(d), h7.Add(d.Shift(hiShift))
+	kc := &svtHMEKeyConsts
+	key := ^uint32(0)
+	for x := 0; x < w; x += 8 {
+		rx := unsafe.Add(rp, x)
+		var s0, s1, s2v, s3, s4, s5, s6, s7 archsimd.Uint16x8
+		var h0, h1, h2, h3, h4, h5, h6, h7 archsimd.Uint16x8
+		for r := 0; r < rows; r++ {
+			for c := 0; c < bw; c += 16 {
+				sv := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, r*s2+c)))
+				p := unsafe.Add(rx, r*s2+c)
+				d := sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p))).ReshapeToUint16s()
+				s0, h0 = s0.Add(d), h0.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 1)))).ReshapeToUint16s()
+				s1, h1 = s1.Add(d), h1.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 2)))).ReshapeToUint16s()
+				s2v, h2 = s2v.Add(d), h2.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 3)))).ReshapeToUint16s()
+				s3, h3 = s3.Add(d), h3.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 4)))).ReshapeToUint16s()
+				s4, h4 = s4.Add(d), h4.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 5)))).ReshapeToUint16s()
+				s5, h5 = s5.Add(d), h5.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 6)))).ReshapeToUint16s()
+				s6, h6 = s6.Add(d), h6.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 7)))).ReshapeToUint16s()
+				s7, h7 = s7.Add(d), h7.Add(d.Shift(hiShift))
+			}
 		}
-	}
-	// Minima: two folds in uint16 (each lane at most 2*16*4*255), the exact
-	// byte-pair correction, the last fold in uint32 (svtSAD32xhx8's).
-	shl8 := archsimd.BroadcastInt16x8(8)
-	sa := s0.ConcatAddPairs(s1).ConcatAddPairs(s2v.ConcatAddPairs(s3))
-	ha := h0.ConcatAddPairs(h1).ConcatAddPairs(h2.ConcatAddPairs(h3))
-	sb := s4.ConcatAddPairs(s5).ConcatAddPairs(s6.ConcatAddPairs(s7))
-	hb := h4.ConcatAddPairs(h5).ConcatAddPairs(h6.ConcatAddPairs(h7))
-	ta := sa.Sub(ha.Shift(shl8)).Add(ha)
-	tb := sb.Sub(hb.Shift(shl8)).Add(hb)
-	mlo := ta.ExtendLo4ToUint32().ConcatAddPairs(ta.HiToLo().ExtendLo4ToUint32())
-	mhi := tb.ExtendLo4ToUint32().ConcatAddPairs(tb.HiToLo().ExtendLo4ToUint32())
+		// Minima: two folds in uint16 (each lane at most 2*16*4*255), the
+		// exact byte-pair correction S - 255*H as one MLA by 0xFF01, the
+		// last fold in uint32.
+		m255 := archsimd.LoadUint32x4Array((*[4]uint32)(kc[0:4])).ReshapeToUint16s()
+		sa := s0.ConcatAddPairs(s1).ConcatAddPairs(s2v.ConcatAddPairs(s3))
+		ha := h0.ConcatAddPairs(h1).ConcatAddPairs(h2.ConcatAddPairs(h3))
+		sb := s4.ConcatAddPairs(s5).ConcatAddPairs(s6.ConcatAddPairs(s7))
+		hb := h4.ConcatAddPairs(h5).ConcatAddPairs(h6.ConcatAddPairs(h7))
+		ta := ha.MulAdd(m255, sa)
+		tb := hb.MulAdd(m255, sb)
+		mlo := ta.ExtendLo4ToUint32().ConcatAddPairs(ta.HiToLo().ExtendLo4ToUint32())
+		mhi := tb.ExtendLo4ToUint32().ConcatAddPairs(tb.HiToLo().ExtendLo4ToUint32())
 
-	// Reference window totals.
-	col := func(off int) archsimd.Uint16x8 {
-		return archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(cwp, 2*off)))
+		// Reference window totals.
+		cw := unsafe.Add(cwp, 2*x)
+		c0 := archsimd.LoadUint16x8Array((*[8]uint16)(cw))
+		win := c0.Add(archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(cw, 16))))
+		cb := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(cw, 32)))
+		if bw == 32 {
+			win = win.Add(cb).Add(archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(cw, 48))))
+			cb = archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(cw, 64)))
+		}
+		// T in every uint32 lane (column-total lanes at most 4*16*255).
+		tv := win.ExtendLo4ToUint32().Add(win.HiToLo().ExtendLo4ToUint32())
+		tv = tv.ConcatAddPairs(tv)
+		tv = tv.ConcatAddPairs(tv)
+		tv = tv.Add(archsimd.BroadcastUint32x4(srcSum))
+		// Exclusive prefix of Cb - C0: lane k gets the sum of lanes j < k.
+		var zero archsimd.Uint8x16
+		e := cb.Sub(c0).ReshapeToUint8s()
+		e = e.ConcatShiftBytesRight(zero, 14)
+		e = e.ReshapeToUint16s().Add(e.ConcatShiftBytesRight(zero, 14).ReshapeToUint16s()).ReshapeToUint8s()
+		e = e.ReshapeToUint16s().Add(e.ConcatShiftBytesRight(zero, 12).ReshapeToUint16s()).ReshapeToUint8s()
+		e = e.ReshapeToUint16s().Add(e.ConcatShiftBytesRight(zero, 8).ReshapeToUint16s()).ReshapeToUint8s()
+		ei := e.ReshapeToUint16s().BitsToInt16()
+		tlo := tv.Add(ei.ExtendLo4ToInt32().ToBits()).Sub(mlo.Add(mlo))
+		thi := tv.Add(ei.HiToLo().ExtendLo4ToInt32().ToBits()).Sub(mhi.Add(mhi))
+		if t != nil {
+			tlo.StoreArray((*[4]uint32)(t[x/8][0:4]))
+			thi.StoreArray((*[4]uint32)(t[x/8][4:8]))
+		}
+		k128 := archsimd.LoadUint32x4Array((*[4]uint32)(kc[4:8]))
+		xv := archsimd.BroadcastUint32x4(uint32(x))
+		klo := archsimd.LoadUint32x4Array((*[4]uint32)(kc[8:12])).Add(xv)
+		khi := archsimd.LoadUint32x4Array((*[4]uint32)(kc[12:16])).Add(xv)
+		key = min(key, tlo.MulAdd(k128, klo).Min(thi.MulAdd(k128, khi)).ReduceMin())
 	}
-	c0 := col(0)
-	win := c0.Add(col(8))
-	cb := col(16)
-	if bw == 32 {
-		win = win.Add(cb).Add(col(24))
-		cb = col(32)
-	}
-	// T in every uint32 lane (column-total lanes at most 4*16*255).
-	tv := win.ExtendLo4ToUint32().Add(win.HiToLo().ExtendLo4ToUint32())
-	tv = tv.ConcatAddPairs(tv)
-	tv = tv.ConcatAddPairs(tv)
-	tv = tv.Add(archsimd.BroadcastUint32x4(srcSum))
-	// Exclusive prefix of Cb - C0: lane k gets the sum of lanes j < k.
-	var zero archsimd.Uint8x16
-	e := cb.Sub(c0).ReshapeToUint8s()
-	e = e.ConcatShiftBytesRight(zero, 14)
-	e = e.ReshapeToUint16s().Add(e.ConcatShiftBytesRight(zero, 14).ReshapeToUint16s()).ReshapeToUint8s()
-	e = e.ReshapeToUint16s().Add(e.ConcatShiftBytesRight(zero, 12).ReshapeToUint16s()).ReshapeToUint8s()
-	e = e.ReshapeToUint16s().Add(e.ConcatShiftBytesRight(zero, 8).ReshapeToUint16s()).ReshapeToUint8s()
-	ei := e.ReshapeToUint16s().BitsToInt16()
-	wlo := tv.Add(ei.ExtendLo4ToInt32().ToBits())
-	whi := tv.Add(ei.HiToLo().ExtendLo4ToInt32().ToBits())
-	wlo.Sub(mlo.Add(mlo)).StoreArray((*[4]uint32)(unsafe.Pointer(&t[0])))
-	whi.Sub(mhi.Add(mhi)).StoreArray((*[4]uint32)(unsafe.Pointer(&t[4])))
+	return key
+}
+
+// svtHMEKeyConsts are svtHMEColSumRow's reduction constants: 0xFF01 in
+// every uint16 lane, 128 in every uint32 lane, positions 0..7.
+var svtHMEKeyConsts = [16]uint32{
+	0xFF01FF01, 0xFF01FF01, 0xFF01FF01, 0xFF01FF01,
+	128, 128, 128, 128,
+	0, 1, 2, 3, 4, 5, 6, 7,
 }
 
 // svtBlockSumSubArch is svtBlockSumSub for bw a multiple of 16 (rows <= 16):
