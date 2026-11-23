@@ -1282,12 +1282,11 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 				// The inter-intra flag keeps the warp findSamples scan from
 				// taking this block as a sample (libaom's ref_frame[1] =
 				// INTRA_FRAME for inter-intra blocks).
-				commit := interBlockCommit{
-					prefix:     prefix,
-					blend:      result.CompoundBlend,
-					blendValid: result.CompoundBlendValid,
-					interIntra: result.InterIntraValid && result.InterIntra.Enabled,
-				}
+				var commit interBlockCommit
+				commit.prefix = prefix
+				commit.blend = result.CompoundBlend
+				commit.blendValid = result.CompoundBlendValid
+				commit.interIntra = result.InterIntraValid && result.InterIntra.Enabled
 				if err := ctx.markInterMotionAndFilters(block.Size, blockX4, blockY4, result.InterMotion, filters, hasChroma, rt == nil || refmvsOracleEnabled, &commit); err != nil {
 					return err
 				}

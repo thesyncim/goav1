@@ -127,11 +127,14 @@ func (c *frameWorkTileResidualLoopController) reconCoefTree(visit *tile.BlockLoo
 // the intra prediction and inverse transform add, or the TXB's cbi entry.
 // visW/visH are the frame-clipped extent in 4x4 units.
 func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisit, b *tile.CoefBlock, dq *[3]tile.CoefDequant, plane uint8, size tile.TransformSize, x4, y4, visW, visH int) error {
-	blk := tile.BlockCoeffBlock{
-		Plane:     plane,
-		Block:     tile.TransformBlock{X4: uint8(x4), Y4: uint8(y4), Size: size, VisibleW4: uint8(visW), VisibleH4: uint8(visH)},
-		Transform: transform.TypeDCTDCT,
-	}
+	// Field stores, not a composite literal: the literal is built in a stack
+	// temporary of byte stores and copied with word loads, a store-forwarding
+	// stall per TXB.
+	var blk tile.BlockCoeffBlock
+	blk.Plane = plane
+	blk.Block.X4, blk.Block.Y4, blk.Block.Size = uint8(x4), uint8(y4), size
+	blk.Block.VisibleW4, blk.Block.VisibleH4 = uint8(visW), uint8(visH)
+	blk.Transform = transform.TypeDCTDCT
 	s := c.scratch
 	var cf *[1024]int32
 	cfOff := 0
@@ -306,11 +309,11 @@ func (s *frameWorkReconState) reconCoefTreeDeferred(visit *tile.BlockLoopVisit, 
 // reconTXBDeferred reconstructs one TXB of a buffered block: a skip block's
 // TXBs are all zero and read no cbi entry.
 func (s *frameWorkReconState) reconTXBDeferred(visit *tile.BlockLoopVisit, cur *frameWorkReconCursor, skip bool, plane uint8, size tile.TransformSize, x4, y4, visW, visH int) error {
-	blk := tile.BlockCoeffBlock{
-		Plane:     plane,
-		Block:     tile.TransformBlock{X4: uint8(x4), Y4: uint8(y4), Size: size, VisibleW4: uint8(visW), VisibleH4: uint8(visH)},
-		Transform: transform.TypeDCTDCT,
-	}
+	var blk tile.BlockCoeffBlock
+	blk.Plane = plane
+	blk.Block.X4, blk.Block.Y4, blk.Block.Size = uint8(x4), uint8(y4), size
+	blk.Block.VisibleW4, blk.Block.VisibleH4 = uint8(visW), uint8(visH)
+	blk.Transform = transform.TypeDCTDCT
 	if skip {
 		blk.Result.AllZero = true
 		return s.reconstructTXBWithDequantized(visit, &blk, nil, 0, 0, false)
