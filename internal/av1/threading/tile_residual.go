@@ -437,8 +437,12 @@ type frameWorkReconWavefront struct {
 	frameThread *FrameThreadRecon
 	// reconTile is the tile whose finished SB rows frameThread.Rows gets.
 	reconTile int32
-	// task is the frame-thread reconstruction task of the tile, or nil.
-	task *frameReconTask
+	// task is the frame-thread reconstruction task of the tile, or nil;
+	// rowNeed is each SB row's reference rows, dav1d's per tile-sbrow
+	// ts->lowest_pixel, accumulated by the parse as it buffers the row's
+	// blocks and final once the row is published.
+	task    *frameReconTask
+	rowNeed []frameThreadRowNeed
 }
 
 type frameWorkReconWavefrontProgress struct {
@@ -470,6 +474,11 @@ func (wf *frameWorkReconWavefront) ensureDone(rowCount int) {
 		wf.doneAlloc = make([]atomic.Int32, rowCount)
 	}
 	wf.done = wf.doneAlloc[:rowCount]
+	if cap(wf.rowNeed) < rowCount {
+		wf.rowNeed = make([]frameThreadRowNeed, rowCount)
+	}
+	wf.rowNeed = wf.rowNeed[:rowCount]
+	clear(wf.rowNeed)
 }
 
 func (wf *frameWorkReconWavefront) ensureProgress() *frameWorkReconWavefrontProgress {
@@ -1728,6 +1737,13 @@ func (c *frameWorkTileResidualLoopController) reconBBegin(visit *tile.BlockLoopV
 			kind:  frameWorkReconEventBlockBegin,
 			index: visitIndex32,
 		})
+		if c.streaming && c.batch.FrameThread != nil {
+			// dav1d's decode_b updates the sbrow's ts->lowest_pixel.
+			wf := c.scratch.wavefront
+			need := &wf.rowNeed[wf.build.prevRow]
+			need.rows.addVisit(visit)
+			need.any = true
+		}
 		if err := c.scratch.rememberDeferredPalette(visitIndex, slots); err != nil {
 			return err
 		}

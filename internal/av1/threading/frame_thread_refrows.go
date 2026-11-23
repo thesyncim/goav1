@@ -94,28 +94,11 @@ func (r *FrameThreadRecon) waitSuperblockReferences(b *FrameWorkBatch, events []
 	return r.waitReferences(b, &need)
 }
 
-// rowReferenceNeed is the reference rows every superblock of SB row row reads
-// (dav1d's per tile-sbrow lowest_pixel); it reports false when the row reads
-// no reference.
-func rowReferenceNeed(view *frameWorkReconView, row int) (frameThreadRefNeed, bool) {
-	var need frameThreadRefNeed
-	if row+1 >= len(view.rowStart) {
-		return need, false
-	}
-	lo, hi := int(view.rowStart[row]), int(view.rowStart[row+1])
-	if lo < 0 || hi < lo || hi > len(view.sbs) {
-		return need, false
-	}
-	any := false
-	for _, sb := range view.sbs[lo:hi] {
-		if sb.start < 0 || sb.end < sb.start || int(sb.end) > len(view.events) {
-			return need, false
-		}
-		if need.addEvents(view.events[sb.start:sb.end], view.visits) {
-			any = true
-		}
-	}
-	return need, any
+// frameThreadRowNeed is the reference rows the blocks of one SB row read;
+// any is false while the row reads no reference.
+type frameThreadRowNeed struct {
+	rows frameThreadRefNeed
+	any  bool
 }
 
 // addEvents adds the reference rows the buffered blocks of events read and

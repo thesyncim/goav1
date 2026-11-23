@@ -545,7 +545,7 @@ func (r *FrameThreadRecon) reconTask(wf *frameWorkReconWavefront, rowCount int) 
 	}
 	t := r.reconTasks[r.usedTasks]
 	r.usedTasks++
-	*t = frameReconTask{wf: wf, rowCount: rowCount, needRow: -1}
+	*t = frameReconTask{wf: wf, rowCount: rowCount}
 	return t
 }
 

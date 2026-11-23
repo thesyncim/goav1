@@ -612,6 +612,9 @@ internal/av1/threading/tile_residual.go:*:*: make([]FrameWorkPredictionScratch, 
 internal/av1/threading/tile_residual.go:*:*: make([]atomic.Int32, rowCount) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]atomic.Int32, rowCount) escapes to heap in (*frameWorkReconWavefront).ensureDone:
 internal/av1/threading/tile_residual.go:*:*: make([]atomic.Int32, rowCount) escapes to heap in (*frameWorkTileResidualLoopController).replayDeferredReconstructionWavefront:
+internal/av1/threading/tile_residual.go:*:*: make([]frameThreadRowNeed, rowCount) escapes to heap
+internal/av1/threading/tile_residual.go:*:*: make([]frameThreadRowNeed, rowCount) escapes to heap in (*frameWorkReconWavefront).ensureDone:
+internal/av1/threading/tile_residual.go:*:*: make([]frameThreadRowNeed, rowCount) escapes to heap in (*frameWorkTileResidualLoopController).replayDeferredReconstructionWavefront:
 internal/av1/threading/tile_residual.go:*:*: make([]frameWorkReconState, workers) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]frameWorkReconState, workers) escapes to heap in (*frameWorkReconWavefront).ensureStates:
 internal/av1/threading/tile_residual.go:*:*: make([]int16, residualTotal) escapes to heap
@@ -631,6 +634,8 @@ internal/av1/threading/tile_residual_testhook.go:*:*: func literal escapes to he
 internal/av1/threading/wavefront_stream.go:*:*: func literal escapes to heap in (*frameWorkReconWavefront).startLanes:
 internal/av1/threading/wavefront_stream.go:*:*: make([]atomic.Int32, rowCount) escapes to heap
 internal/av1/threading/wavefront_stream.go:*:*: make([]atomic.Int32, rowCount) escapes to heap in (*frameWorkTileResidualLoopController).startReconStream:
+internal/av1/threading/wavefront_stream.go:*:*: make([]frameThreadRowNeed, rowCount) escapes to heap
+internal/av1/threading/wavefront_stream.go:*:*: make([]frameThreadRowNeed, rowCount) escapes to heap in (*frameWorkTileResidualLoopController).startReconStream:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap in DecodeBlockLoopSBRow[go.shape.struct {}]:
 internal/av1/tile/block_loop.go:*:*: make([]diagonalCornerSlot, n) escapes to heap in promotePendingDiagonalCarriers:

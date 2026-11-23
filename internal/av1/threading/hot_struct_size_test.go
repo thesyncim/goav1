@@ -47,7 +47,7 @@ func TestHotStructSizes(t *testing.T) {
 		// The wavefront is allocated once per scratch behind a pointer; it carries
 		// the parse-side span cursor and the published row snapshot the lanes
 		// read while the tile is still parsing.
-		{name: "frameWorkReconWavefront", size: unsafe.Sizeof(frameWorkReconWavefront{}), max: 536}, // +8: frameThread, +8: reconTile; +24: the published view snapshots the cf arena
+		{name: "frameWorkReconWavefront", size: unsafe.Sizeof(frameWorkReconWavefront{}), max: 552}, // +8: frameThread, +8: reconTile; +24: the published view snapshots the cf arena; +24: rowNeed (per-sbrow lowest pixels)
 		{name: "frameWorkBlockCoeffGeometry", size: unsafe.Sizeof(frameWorkBlockCoeffGeometry{}), max: 88},
 		// The geometry cache also binds each job's inter-prediction output planes
 		// once (dav1d binds f->cur per frame); it lives in per-worker scratch.

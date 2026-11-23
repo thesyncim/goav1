@@ -476,6 +476,9 @@ func (orig *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWo
 	}
 	if d.units {
 		pp.wg.Wait()
+		// The ended unit task leaves the queue on a worker's next scan; take
+		// it out now, before the next frame rebinds it.
+		p.tasks.RemoveFrameTask(&p.unitTask)
 		if e := pp.err.Load(); e != nil && err == nil {
 			err = e.err
 		}

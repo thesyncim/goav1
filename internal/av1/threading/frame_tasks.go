@@ -37,6 +37,10 @@ type frameTaskPool struct {
 	tasks  []frameTaskEntry
 	parked int
 	closed bool
+	// signaled is dav1d's ttd->cond_signaled: set once a worker is signaled,
+	// cleared by every worker before it scans the queue, so a publish while
+	// a signaled worker has yet to scan sends no further signal.
+	signaled atomic.Bool
 }
 
 type frameTaskEntry struct {
@@ -76,13 +80,16 @@ func (tp *frameTaskPool) insert(e frameTaskEntry) {
 // signalLocked wakes a parked worker.
 func (tp *frameTaskPool) signalLocked() {
 	if tp.parked > 0 {
+		tp.signaled.Store(true)
 		tp.cond.Signal()
 	}
 }
 
-// wake tells a parked worker that progress was published.
+// wake tells a parked worker that progress was published. A worker clears
+// signaled before each scan, so while it is set a worker is still to scan
+// the queue after this publish and the signal can be skipped.
 func (tp *frameTaskPool) wake() {
-	if tp == nil {
+	if tp == nil || tp.signaled.Load() {
 		return
 	}
 	tp.mu.Lock()
@@ -146,6 +153,7 @@ func (tp *frameTaskPool) worker(w int) {
 			tp.mu.Unlock()
 			return
 		}
+		tp.signaled.Store(false)
 		t, step := tp.next()
 		if t == nil {
 			tp.parked++
@@ -239,8 +247,8 @@ func (t *frameEntropyTask) Finish(i int) bool {
 
 // frameReconTask is one tile's reconstruction task (DAV1D_TASK_TYPE_TILE_
 // RECONSTRUCTION): row is the next SB row to reconstruct, taken once the
-// parse published it and the references published the rows it reads. need
-// caches those rows (needRow is the row they were computed for).
+// parse published it and the references published the rows it reads (the
+// row's lowest pixels, recorded by the parse in wf.rowNeed).
 type frameReconTask struct {
 	wf       *frameWorkReconWavefront
 	row      int
@@ -248,9 +256,6 @@ type frameReconTask struct {
 	running  bool
 	ended    bool
 	gone     bool
-	needRow  int
-	need     frameThreadRefNeed
-	needAny  bool
 	view     frameWorkReconView
 }
 
@@ -274,11 +279,7 @@ func (t *frameReconTask) Claim() (int, bool, bool) {
 	if published <= t.row {
 		return 0, false, false
 	}
-	if t.needRow != t.row {
-		t.need, t.needAny = rowReferenceNeed(&view, t.row)
-		t.needRow = t.row
-	}
-	if t.needAny && !wf.frameThread.referencesReady(&wf.states[0].batch, &t.need) {
+	if need := &wf.rowNeed[t.row]; need.any && !wf.frameThread.referencesReady(&wf.states[0].batch, &need.rows) {
 		return 0, false, false
 	}
 	t.running = true
@@ -348,6 +349,18 @@ func (p *Pool) AddFrameInitTask(seq uint64, task FrameTask) bool {
 	}
 	tp.insert(frameTaskEntry{seq: seq, task: task, init: true})
 	return true
+}
+
+// RemoveFrameTask takes task out of the frame-thread queue if it is still
+// queued, so its owner may reuse it.
+func (p *Pool) RemoveFrameTask(task FrameTask) {
+	tp := p.frameTaskPool()
+	if tp == nil {
+		return
+	}
+	tp.mu.Lock()
+	tp.remove(task)
+	tp.mu.Unlock()
 }
 
 // WakeFrameTasks tells the frame-thread workers that progress a task waits
