@@ -60,8 +60,8 @@ func (n *frameThreadRefNeed) addVisit(v *tile.BlockLoopVisit) {
 			n.add(refs.Ref[i], bottom, p.InterMotion.MV[i], warp || p.GlobalWarpedMotionValid || p.GlobalWarpedMotionCompoundValid[i])
 		}
 	}
-	if p.MotionModeValid && p.MotionMode == tile.MotionModeOBMC && p.OverlappableNeighborsValid {
-		s := &p.OverlappableNeighbors
+	if p.MotionModeValid && p.MotionMode == tile.MotionModeOBMC && p.OverlappableNeighborsValid && p.Extras != nil {
+		s := &p.Extras.OverlappableNeighbors
 		for i := range min(int(s.AboveCount), len(s.Above)) {
 			n.addNeighbor(&s.Above[i], bottom)
 		}

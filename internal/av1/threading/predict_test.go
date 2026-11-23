@@ -1344,7 +1344,7 @@ func TestFrameWorkBatchPredictBlockLumaInterWarpIdentityConstant(t *testing.T) {
 	visit.Prediction.MotionMode = tile.MotionModeWarp
 	params := parser.DefaultWarpedMotionParams()
 	params.Type = parser.GlobalMotionAffine
-	visit.Prediction.WarpedMotion = tile.WarpedMotionModel{Params: params}
+	testMotionExtras(&visit.Prediction).WarpedMotion = tile.WarpedMotionModel{Params: params}
 	visit.Prediction.WarpedMotionValid = true
 
 	if err := ctx.PredictBlockLumaInterWithFilters(0, visit, motion.RegularFilters); err != nil {
@@ -1376,7 +1376,7 @@ func TestFrameWorkBatchPredictBlockInterWarpSmallChromaFallsBackToRegular(t *tes
 	params := parser.DefaultWarpedMotionParams()
 	params.Type = parser.GlobalMotionAffine
 	params.Matrix[0] = 1 << 16
-	visit.Prediction.WarpedMotion = tile.WarpedMotionModel{Params: params}
+	testMotionExtras(&visit.Prediction).WarpedMotion = tile.WarpedMotionModel{Params: params}
 	visit.Prediction.WarpedMotionValid = true
 
 	if err := ctx.PredictBlockInterWithFilters(0, visit, nil, filters); err != nil {
@@ -1417,8 +1417,8 @@ func TestFrameWorkBatchPredictBlockLumaInterOBMCLeftMatchesLibaomMask(t *testing
 	visit.Prediction.MotionMode = tile.MotionModeOBMC
 	visit.Prediction.MotionModeValid = true
 	visit.Prediction.OverlappableNeighborsValid = true
-	visit.Prediction.OverlappableNeighbors.LeftCount = 1
-	visit.Prediction.OverlappableNeighbors.Left[0] = tile.OverlappableNeighbor{
+	testMotionExtras(&visit.Prediction).OverlappableNeighbors.LeftCount = 1
+	testMotionExtras(&visit.Prediction).OverlappableNeighbors.Left[0] = tile.OverlappableNeighbor{
 		RelY4: 0,
 		Span4: 4,
 		Size:  tile.BlockSize16x16,
@@ -3124,7 +3124,7 @@ func TestFrameWorkBatchPredictBlockInterWarpFallsBackToScaledTranslation(t *test
 	// translation; the equality check below proves the matrix is unused.
 	params.Matrix[2] = 1<<16 + 123
 	params.Matrix[5] = 1<<16 - 123
-	visit.Prediction.WarpedMotion = tile.WarpedMotionModel{Params: params}
+	testMotionExtras(&visit.Prediction).WarpedMotion = tile.WarpedMotionModel{Params: params}
 	visit.Prediction.WarpedMotionValid = true
 	if err := ctx.PredictBlockLumaInterWithFilters(0, visit, filters); err != nil {
 		t.Fatalf("PredictBlockLumaInterWithFilters err=%v", err)
@@ -3177,7 +3177,7 @@ func TestFrameWorkBatchPredictBlockInterGlobalWarpFallsBackToScaledTranslation(t
 	params.Type = parser.GlobalMotionAffine
 	params.Matrix[2] = 1<<16 + 77
 	params.Matrix[5] = 1<<16 - 77
-	visit.Prediction.GlobalWarpedMotion = tile.WarpedMotionModel{Params: params}
+	testMotionExtras(&visit.Prediction).GlobalWarpedMotion = tile.WarpedMotionModel{Params: params}
 	visit.Prediction.GlobalWarpedMotionValid = true
 	if err := ctx.PredictBlockLumaInterWithFilters(0, visit, filters); err != nil {
 		t.Fatalf("PredictBlockLumaInterWithFilters err=%v", err)
@@ -3239,8 +3239,8 @@ func TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledCon
 	visit.Prediction.MotionMode = tile.MotionModeOBMC
 	visit.Prediction.MotionModeValid = true
 	visit.Prediction.OverlappableNeighborsValid = true
-	visit.Prediction.OverlappableNeighbors.LeftCount = 1
-	visit.Prediction.OverlappableNeighbors.Left[0] = tile.OverlappableNeighbor{
+	testMotionExtras(&visit.Prediction).OverlappableNeighbors.LeftCount = 1
+	testMotionExtras(&visit.Prediction).OverlappableNeighbors.Left[0] = tile.OverlappableNeighbor{
 		RelY4: 0,
 		Span4: 4,
 		Size:  tile.BlockSize16x16,
@@ -3276,7 +3276,7 @@ func TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledCon
 	if overlap <= 0 || overlap > geom.width() {
 		t.Fatalf("unexpected overlap=%d width=%d", overlap, geom.width())
 	}
-	height, ok := frameWorkOBMCPlaneSpan(visit.Prediction.OverlappableNeighbors.Left[0].Span4, geom.SubsamplingY)
+	height, ok := frameWorkOBMCPlaneSpan(testMotionExtras(&visit.Prediction).OverlappableNeighbors.Left[0].Span4, geom.SubsamplingY)
 	if !ok {
 		t.Fatalf("OBMC plane span invalid")
 	}
@@ -3320,7 +3320,7 @@ func TestFrameWorkBatchPredictBlockInterWarpScaledAllocs(t *testing.T) {
 	visit.Prediction.MotionMode = tile.MotionModeWarp
 	params := parser.DefaultWarpedMotionParams()
 	params.Type = parser.GlobalMotionAffine
-	visit.Prediction.WarpedMotion = tile.WarpedMotionModel{Params: params}
+	testMotionExtras(&visit.Prediction).WarpedMotion = tile.WarpedMotionModel{Params: params}
 	visit.Prediction.WarpedMotionValid = true
 	filters := motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapSmooth}
 	allocs := testing.AllocsPerRun(1000, func() {
@@ -3878,8 +3878,8 @@ func testOBMCInterPredictionVisit(baseMV motion.Vector, aboveMV motion.Vector, l
 	visit.Prediction.MotionMode = tile.MotionModeOBMC
 	visit.Prediction.MotionModeValid = true
 	visit.Prediction.OverlappableNeighborsValid = true
-	visit.Prediction.OverlappableNeighbors.AboveCount = 1
-	visit.Prediction.OverlappableNeighbors.Above[0] = tile.OverlappableNeighbor{
+	testMotionExtras(&visit.Prediction).OverlappableNeighbors.AboveCount = 1
+	testMotionExtras(&visit.Prediction).OverlappableNeighbors.Above[0] = tile.OverlappableNeighbor{
 		RelX4: 0,
 		Span4: 4,
 		Size:  tile.BlockSize16x16,
@@ -3890,8 +3890,8 @@ func testOBMCInterPredictionVisit(baseMV motion.Vector, aboveMV motion.Vector, l
 		InterpFilters:      motion.RegularFilters,
 		InterpFiltersValid: true,
 	}
-	visit.Prediction.OverlappableNeighbors.LeftCount = 1
-	visit.Prediction.OverlappableNeighbors.Left[0] = tile.OverlappableNeighbor{
+	testMotionExtras(&visit.Prediction).OverlappableNeighbors.LeftCount = 1
+	testMotionExtras(&visit.Prediction).OverlappableNeighbors.Left[0] = tile.OverlappableNeighbor{
 		RelY4: 0,
 		Span4: 4,
 		Size:  tile.BlockSize16x16,

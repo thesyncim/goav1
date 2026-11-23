@@ -1191,8 +1191,6 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 			}
 			result.InterMotion = motionResult.Motion
 			result.InterMotionValid = true
-			result.MVResiduals = motionResult.Residuals
-			result.MVResidualValid = motionResult.ResidualValid
 			if err := ctx.MarkIntrabcMotion(block.Size, blockX4, blockY4, result.InterMotion, hasChromaForBlock(block.Size, blockX4, blockY4, req.Color)); err != nil {
 				return err
 			}
@@ -1316,12 +1314,12 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 							}
 							result.WarpedMotionInvalid = invalid
 							if !invalid {
-								result.WarpedMotion = model
+								s.blockMotionExtras(result).WarpedMotion = model
 								result.WarpedMotionValid = true
 							}
 						}
 						if motionMode == MotionModeOBMC || motionMode == MotionModeWarp {
-							result.OverlappableNeighbors = overlappableNeighbors
+							s.blockMotionExtras(result).OverlappableNeighbors = overlappableNeighbors
 							result.OverlappableNeighborsValid = true
 						}
 					}
@@ -1340,7 +1338,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 						!blockReferenceScaled(refs, req.ScaledReferences) {
 						params := req.GlobalMotion[refs.Ref[0]]
 						if model, ok := warpShearParams(WarpedMotionModel{Params: params}); ok {
-							result.GlobalWarpedMotion = model
+							s.blockMotionExtras(result).GlobalWarpedMotion = model
 							result.GlobalWarpedMotionValid = true
 						}
 					}
@@ -1359,7 +1357,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 							}
 							params := req.GlobalMotion[refs.Ref[r]]
 							if model, ok := warpShearParams(WarpedMotionModel{Params: params}); ok {
-								result.GlobalWarpedMotionCompound[r] = model
+								s.blockMotionExtras(result).GlobalWarpedMotionCompound[r] = model
 								result.GlobalWarpedMotionCompoundValid[r] = true
 							}
 						}
@@ -1952,17 +1950,14 @@ func (s *DecodeState) decodeInterModeLegacy(cdfs BlockLoopCDFs, ctx *BlockModeCo
 	}
 	result.InterMode = mode
 	result.InterModeValid = true
-	result.ReferenceMVStack = stack
-	result.ReferenceMVStackValid = true
 	result.DRLIndex = uint8(drlIndex)
 	result.DRLIndexValid = drlReq.usesNewMV() || drlReq.usesNearMV()
+	var mvRefs InterMVReferenceSet
 	if !interModeUsesGlobalOnly(mode) {
-		mvRefs, err := stack.Stack.ResolveInterMVReferences(mode, drlIndex, req.AllowHighPrecisionMV, req.ForceIntegerMV)
+		mvRefs, err = stack.Stack.ResolveInterMVReferences(mode, drlIndex, req.AllowHighPrecisionMV, req.ForceIntegerMV)
 		if err != nil {
 			return fmt.Errorf("resolve inter mv references mode=%+v drl=%d stack_count=%d nearest=%d: %w", mode, drlIndex, stack.Stack.Count, stack.NearestCount, err)
 		}
-		result.InterMVReferences = mvRefs
-		result.InterMVReferencesValid = true
 	}
 	if !req.DecodeMotionVectors {
 		return nil
@@ -1970,7 +1965,7 @@ func (s *DecodeState) decodeInterModeLegacy(cdfs BlockLoopCDFs, ctx *BlockModeCo
 	motionResult, err := s.ReadInterMotion(cdfs.MV, InterMotionRequest{
 		References:   refs,
 		Mode:         mode,
-		ReferenceMVs: result.InterMVReferences,
+		ReferenceMVs: mvRefs,
 		GlobalMVs:    globalMVs,
 		Precision:    MVPrecision(req.AllowHighPrecisionMV, req.ForceIntegerMV),
 	})
@@ -1979,8 +1974,6 @@ func (s *DecodeState) decodeInterModeLegacy(cdfs BlockLoopCDFs, ctx *BlockModeCo
 	}
 	result.InterMotion = motionResult.Motion
 	result.InterMotionValid = true
-	result.MVResiduals = motionResult.Residuals
-	result.MVResidualValid = motionResult.ResidualValid
 	return nil
 }
 

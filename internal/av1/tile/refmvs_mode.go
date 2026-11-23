@@ -108,12 +108,12 @@ func (s *DecodeState) decodeMotionModeRefmvs(cdfs *MotionModeCDFs, c *BlockModeC
 		}
 		result.WarpedMotionInvalid = invalid
 		if !invalid {
-			result.WarpedMotion = model
+			s.blockMotionExtras(result).WarpedMotion = model
 			result.WarpedMotionValid = true
 		}
 	}
 	if mode != MotionModeTranslation {
-		result.OverlappableNeighbors = rt.obmcNeighbors(c, block)
+		s.blockMotionExtras(result).OverlappableNeighbors = rt.obmcNeighbors(c, block)
 		result.OverlappableNeighborsValid = true
 	}
 	return mode, nil
@@ -195,7 +195,6 @@ func (s *DecodeState) decodeInterModeRefmvs(cdfs *InterModeCDFs, mvCDFs *MVCDFs,
 				mv, valid := readMVResidualRefmvs(&c, mvCDFs, stack[drlIdx].mv[idx], mvPrec)
 				ok = ok && valid
 				motionResult.MV[idx] = mv.vector()
-				result.MVResidualValid[idx] = true
 			}
 		}
 	} else {
@@ -243,7 +242,6 @@ func (s *DecodeState) decodeInterModeRefmvs(cdfs *InterModeCDFs, mvCDFs *MVCDFs,
 			mv, valid := readMVResidualRefmvs(&c, mvCDFs, ref, mvPrec)
 			ok = valid
 			motionResult.MV[0] = mv.vector()
-			result.MVResidualValid[0] = true
 		}
 		motionResult.Mode = InterModeResult{Mode: mode}
 	}
@@ -253,10 +251,8 @@ func (s *DecodeState) decodeInterModeRefmvs(cdfs *InterModeCDFs, mvCDFs *MVCDFs,
 	}
 	result.InterMode = motionResult.Mode
 	result.InterModeValid = true
-	result.ReferenceMVStackValid = true
 	result.DRLIndex = uint8(drlIdx)
 	result.DRLIndexValid = drlRead
-	result.InterMVReferencesValid = !interModeUsesGlobalOnly(motionResult.Mode)
 	result.InterMotionValid = true
 	return nil
 }

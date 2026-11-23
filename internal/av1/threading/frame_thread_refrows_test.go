@@ -58,10 +58,10 @@ func TestFrameThreadRefNeed(t *testing.T) {
 	v.Prediction.MotionModeValid = true
 	v.Prediction.MotionMode = tile.MotionModeOBMC
 	v.Prediction.OverlappableNeighborsValid = true
-	v.Prediction.OverlappableNeighbors.AboveCount = 1
-	v.Prediction.OverlappableNeighbors.Above[0].MotionValid = true
-	v.Prediction.OverlappableNeighbors.Above[0].Motion.References.Ref = [2]tile.ReferenceFrame{tile.ReferenceFrameGolden, tile.ReferenceFrameNone}
-	v.Prediction.OverlappableNeighbors.Above[0].Motion.MV[0] = motion.Vector{Row: 8 * 64}
+	testMotionExtras(&v.Prediction).OverlappableNeighbors.AboveCount = 1
+	testMotionExtras(&v.Prediction).OverlappableNeighbors.Above[0].MotionValid = true
+	testMotionExtras(&v.Prediction).OverlappableNeighbors.Above[0].Motion.References.Ref = [2]tile.ReferenceFrame{tile.ReferenceFrameGolden, tile.ReferenceFrameNone}
+	testMotionExtras(&v.Prediction).OverlappableNeighbors.Above[0].Motion.MV[0] = motion.Vector{Row: 8 * 64}
 	n.addVisit(&v)
 	if n[tile.ReferenceFrameGolden] != bottom+64+refRowMargin {
 		t.Fatalf("obmc: golden need %d", n[tile.ReferenceFrameGolden])
@@ -104,4 +104,12 @@ func TestFrameThreadRefNeed(t *testing.T) {
 	if n != (frameThreadRefNeed{}) {
 		t.Fatalf("intra: need %v", n)
 	}
+}
+
+// testMotionExtras returns p's out-of-line warp/OBMC payloads, allocating them.
+func testMotionExtras(p *tile.BlockPredictionModeResult) *tile.BlockPredictionMotionExtras {
+	if p.Extras == nil {
+		p.Extras = &tile.BlockPredictionMotionExtras{}
+	}
+	return p.Extras
 }

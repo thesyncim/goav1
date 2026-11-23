@@ -28,6 +28,16 @@ type DecodeState struct {
 	CurrentBaseQIdx uint8
 	DeltaLFFromBase int8
 	DeltaLF         [FrameLoopFilterCount]int8
+
+	// motionExtras backs BlockPredictionModeResult.Extras for the block being
+	// decoded.
+	motionExtras BlockPredictionMotionExtras
+}
+
+// blockMotionExtras points result at the state's out-of-line payload slot.
+func (s *DecodeState) blockMotionExtras(result *BlockPredictionModeResult) *BlockPredictionMotionExtras {
+	result.Extras = &s.motionExtras
+	return result.Extras
 }
 
 // BlockDeltaContext identifies the block currently being decoded for AV1

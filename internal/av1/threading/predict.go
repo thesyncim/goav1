@@ -1210,7 +1210,11 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithGeometry(visit *til
 			geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), filterW, filterH, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters,
 			frameWorkScaledConvolveScratch(scratch))
 	}
-	model := visit.Prediction.GlobalWarpedMotion
+	extras := visit.Prediction.Extras
+	if extras == nil {
+		return ErrInvalidBatch
+	}
+	model := extras.GlobalWarpedMotion
 	if err := motion.PredictWarpedPlaneBlockBitDepth(geom.Output, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
 		return ErrInvalidBatch
 	}
@@ -1392,7 +1396,10 @@ func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFiltersPtr(index int, vi
 	// matching the non-inter-intra global-warp path; chroma planes < 8 and scaled
 	// references fall back to the translational predictor as libaom does.
 	if visit.Prediction.GlobalWarpedMotionValid && geom.width() >= 8 && geom.height() >= 8 {
-		if err := b.predictBlockInterGlobalWarpToScratch(inter, plane, motionResult.References.Ref[0], visit.Prediction.GlobalWarpedMotion, motionResult.MV[0], geom, filters, scratch); err != nil {
+		if visit.Prediction.Extras == nil {
+			return ErrInvalidBatch
+		}
+		if err := b.predictBlockInterGlobalWarpToScratch(inter, plane, motionResult.References.Ref[0], visit.Prediction.Extras.GlobalWarpedMotion, motionResult.MV[0], geom, filters, scratch); err != nil {
 			return err
 		}
 	} else if err := b.predictBlockInterReferencePlaneToScratch(inter, visit.Block, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters, scratch); err != nil {
@@ -1506,7 +1513,11 @@ func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithGeometry(visit *tile.Bloc
 			geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), filterW, filterH, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters,
 			frameWorkScaledConvolveScratch(scratch))
 	}
-	model := visit.Prediction.WarpedMotion
+	extras := visit.Prediction.Extras
+	if extras == nil {
+		return ErrInvalidBatch
+	}
+	model := extras.WarpedMotion
 	if err := motion.PredictWarpedPlaneBlockBitDepth(geom.Output, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), model.Params.Matrix, model.Alpha, model.Beta, model.Gamma, model.Delta, geom.SubsamplingX, geom.SubsamplingY); err != nil {
 		return ErrInvalidBatch
 	}
@@ -1526,7 +1537,7 @@ func (b *FrameWorkBatch) predictBlockInterOBMCPlaneWithFiltersPtr(index int, vis
 		!visit.Prediction.InterMotionValid ||
 		!visit.Prediction.MotionModeValid ||
 		visit.Prediction.MotionMode != tile.MotionModeOBMC ||
-		!visit.Prediction.OverlappableNeighborsValid {
+		!visit.Prediction.OverlappableNeighborsValid || visit.Prediction.Extras == nil {
 		return ErrInvalidBatch
 	}
 	if visit.Prediction.InterIntraValid && visit.Prediction.InterIntra.Enabled {
@@ -1549,7 +1560,7 @@ func (b *FrameWorkBatch) predictBlockInterOBMCPlaneWithFiltersPtr(index int, vis
 	if err != nil {
 		return err
 	}
-	neighbors := visit.Prediction.OverlappableNeighbors
+	neighbors := &visit.Prediction.Extras.OverlappableNeighbors
 	// libaom av1_skip_u4x4_pred_in_obmc(): the above-row OBMC prediction is
 	// skipped for planes whose (subsampled) block size is 4x4, 8x4 or 4x8.
 	// In 4:2:0 an 8x8 luma OBMC block has a 4x4 chroma plane, so its chroma
@@ -1636,10 +1647,17 @@ func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *t
 	warp := geom.width() >= 8 && geom.height() >= 8
 	warp0 := warp && visit.Prediction.GlobalWarpedMotionCompoundValid[0]
 	warp1 := warp && visit.Prediction.GlobalWarpedMotionCompoundValid[1]
-	if err := b.predictBlockInterCompoundRefToConvBuf(&scratch.Conv0, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters, warp0, visit.Prediction.GlobalWarpedMotionCompound[0], &scratch.Scaled, &scratch.Compound); err != nil {
+	var models [2]tile.WarpedMotionModel
+	if warp0 || warp1 {
+		if visit.Prediction.Extras == nil {
+			return ErrInvalidBatch
+		}
+		models = visit.Prediction.Extras.GlobalWarpedMotionCompound
+	}
+	if err := b.predictBlockInterCompoundRefToConvBuf(&scratch.Conv0, plane, motionResult.References.Ref[0], motionResult.MV[0], geom, filters, warp0, models[0], &scratch.Scaled, &scratch.Compound); err != nil {
 		return err
 	}
-	if err := b.predictBlockInterCompoundRefToConvBuf(&scratch.Conv1, plane, motionResult.References.Ref[1], motionResult.MV[1], geom, filters, warp1, visit.Prediction.GlobalWarpedMotionCompound[1], &scratch.Scaled, &scratch.Compound); err != nil {
+	if err := b.predictBlockInterCompoundRefToConvBuf(&scratch.Conv1, plane, motionResult.References.Ref[1], motionResult.MV[1], geom, filters, warp1, models[1], &scratch.Scaled, &scratch.Compound); err != nil {
 		return err
 	}
 	return b.blendCompoundConvBufs(visit, plane, scratch, blend, geom.Output, geom.bytesPerSample(), geom.X, geom.Y, geom.width(), geom.height(), geom.SubsamplingX, geom.SubsamplingY)

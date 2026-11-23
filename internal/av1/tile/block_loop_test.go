@@ -795,17 +795,7 @@ func TestDecodeBlockLoopReadsForcedInterModeAndRefMVStack(t *testing.T) {
 	if !got.Prediction.InterModeValid || got.Prediction.InterMode.Mode != InterModeGlobalMV {
 		t.Fatalf("inter mode=%+v valid=%v", got.Prediction.InterMode, got.Prediction.InterModeValid)
 	}
-	if !got.Prediction.ReferenceMVStackValid || !got.Prediction.ReferenceMVStack.Stack.SingleRefValid {
-		t.Fatalf("ref mv stack=%+v valid=%v", got.Prediction.ReferenceMVStack, got.Prediction.ReferenceMVStackValid)
-	}
-	nearest, near, err := got.Prediction.ReferenceMVStack.Stack.BestSingleReferenceMVs(false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if nearest != (motion.Vector{Row: 4, Col: -6}) || near != (motion.Vector{Row: 4, Col: -6}) {
-		t.Fatalf("global fallback nearest=%+v near=%+v", nearest, near)
-	}
-	if got.Prediction.DRLIndexValid || got.Prediction.InterMVReferencesValid {
+	if got.Prediction.DRLIndexValid {
 		t.Fatalf("unexpected drl/mv refs prediction=%+v", got.Prediction)
 	}
 	if !got.Prediction.InterMotionValid || got.Prediction.InterMotion.MV[0] != (motion.Vector{Row: 4, Col: -6}) {
@@ -912,14 +902,8 @@ func TestDecodeBlockPredictionModeReadsInterModeDRLAndStack(t *testing.T) {
 	if !result.InterModeValid || result.InterMode.Mode != InterModeNewMV {
 		t.Fatalf("inter mode=%+v valid=%v", result.InterMode, result.InterModeValid)
 	}
-	if !result.ReferenceMVStackValid || result.ReferenceMVStack.Stack.Count < 2 {
-		t.Fatalf("ref mv stack=%+v valid=%v", result.ReferenceMVStack, result.ReferenceMVStackValid)
-	}
 	if !result.DRLIndexValid || result.DRLIndex != 0 {
 		t.Fatalf("drl index=%d valid=%v", result.DRLIndex, result.DRLIndexValid)
-	}
-	if !result.InterMVReferencesValid || result.InterMVReferences.Residual[0] != (motion.Vector{Row: 3, Col: 5}) {
-		t.Fatalf("mv refs=%+v valid=%v", result.InterMVReferences, result.InterMVReferencesValid)
 	}
 	if ctx.AboveMotionValid[0] != 0 || ctx.LeftMotionValid[0] != 0 {
 		t.Fatalf("motion context should wait for residuals above=%d left=%d", ctx.AboveMotionValid[0], ctx.LeftMotionValid[0])
@@ -1220,9 +1204,6 @@ func TestDecodeBlockPredictionModeReadsMotionVectorResidual(t *testing.T) {
 	}
 	if !result.InterMotionValid || result.InterMotion.MV[0] != (motion.Vector{Row: 3, Col: 5}) {
 		t.Fatalf("inter motion=%+v valid=%v", result.InterMotion, result.InterMotionValid)
-	}
-	if !result.MVResidualValid[0] || result.MVResiduals[0].Joint != MVJointZero {
-		t.Fatalf("mv residuals=%+v valid=%v", result.MVResiduals, result.MVResidualValid)
 	}
 	if ctx.AboveMotionValid[0] != 1 || ctx.LeftMotionValid[0] != 1 {
 		t.Fatalf("motion context above=%d left=%d", ctx.AboveMotionValid[0], ctx.LeftMotionValid[0])
@@ -1762,13 +1743,13 @@ func TestDecodeBlockPredictionModePopulatesGlobalWarpForGlobalMVBlock(t *testing
 		t.Fatalf("motion mode=%d valid=%v want SIMPLE_TRANSLATION (1)", result.MotionMode, result.MotionModeValid)
 	}
 	if !result.GlobalWarpedMotionValid {
-		t.Fatalf("global warped motion not populated: %+v", result.GlobalWarpedMotion)
+		t.Fatalf("global warped motion not populated: %+v", result.Extras)
 	}
-	if result.GlobalWarpedMotion.Params.Type != parser.GlobalMotionRotZoom {
-		t.Fatalf("global warped motion type=%v want RotZoom", result.GlobalWarpedMotion.Params.Type)
+	if result.Extras.GlobalWarpedMotion.Params.Type != parser.GlobalMotionRotZoom {
+		t.Fatalf("global warped motion type=%v want RotZoom", result.Extras.GlobalWarpedMotion.Params.Type)
 	}
-	if result.GlobalWarpedMotion.Params.Matrix != global[ReferenceFrameLast].Matrix {
-		t.Fatalf("global warped motion matrix=%v want %v", result.GlobalWarpedMotion.Params.Matrix, global[ReferenceFrameLast].Matrix)
+	if result.Extras.GlobalWarpedMotion.Params.Matrix != global[ReferenceFrameLast].Matrix {
+		t.Fatalf("global warped motion matrix=%v want %v", result.Extras.GlobalWarpedMotion.Params.Matrix, global[ReferenceFrameLast].Matrix)
 	}
 	// alpha/beta/gamma/delta should equal the values produced by
 	// warpShearParams on the same matrix; this guards against accidental
@@ -1777,13 +1758,13 @@ func TestDecodeBlockPredictionModePopulatesGlobalWarpForGlobalMVBlock(t *testing
 	if !ok {
 		t.Fatalf("test setup matrix not shear-allowed; pick a different rotzoom")
 	}
-	if result.GlobalWarpedMotion.Alpha != expected.Alpha ||
-		result.GlobalWarpedMotion.Beta != expected.Beta ||
-		result.GlobalWarpedMotion.Gamma != expected.Gamma ||
-		result.GlobalWarpedMotion.Delta != expected.Delta {
+	if result.Extras.GlobalWarpedMotion.Alpha != expected.Alpha ||
+		result.Extras.GlobalWarpedMotion.Beta != expected.Beta ||
+		result.Extras.GlobalWarpedMotion.Gamma != expected.Gamma ||
+		result.Extras.GlobalWarpedMotion.Delta != expected.Delta {
 		t.Fatalf("shear params got alpha=%d beta=%d gamma=%d delta=%d want alpha=%d beta=%d gamma=%d delta=%d",
-			result.GlobalWarpedMotion.Alpha, result.GlobalWarpedMotion.Beta,
-			result.GlobalWarpedMotion.Gamma, result.GlobalWarpedMotion.Delta,
+			result.Extras.GlobalWarpedMotion.Alpha, result.Extras.GlobalWarpedMotion.Beta,
+			result.Extras.GlobalWarpedMotion.Gamma, result.Extras.GlobalWarpedMotion.Delta,
 			expected.Alpha, expected.Beta, expected.Gamma, expected.Delta)
 	}
 }
@@ -1858,7 +1839,7 @@ func TestDecodeBlockPredictionModeSkipsGlobalWarpForTranslationGM(t *testing.T) 
 		t.Fatalf("inter mode=%+v valid=%v want GLOBALMV", result.InterMode, result.InterModeValid)
 	}
 	if result.GlobalWarpedMotionValid {
-		t.Fatalf("global warped motion should not be populated for translational GM: %+v", result.GlobalWarpedMotion)
+		t.Fatalf("global warped motion should not be populated for translational GM: %+v", result.Extras)
 	}
 }
 
@@ -1933,7 +1914,7 @@ func TestDecodeBlockPredictionModeSkipsGlobalWarpForSmallBlock(t *testing.T) {
 		t.Fatalf("decodeBlockPredictionMode: %v", err)
 	}
 	if result.GlobalWarpedMotionValid {
-		t.Fatalf("global warped motion should not be populated for 4x4 block: %+v", result.GlobalWarpedMotion)
+		t.Fatalf("global warped motion should not be populated for 4x4 block: %+v", result.Extras)
 	}
 }
 

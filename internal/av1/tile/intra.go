@@ -186,20 +186,11 @@ type BlockPredictionModeResult struct {
 	InterMode      InterModeResult
 	InterModeValid bool
 
-	ReferenceMVStack      ReferenceMVStackResult
-	ReferenceMVStackValid bool
-
 	DRLIndex      uint8
 	DRLIndexValid bool
 
-	InterMVReferences      InterMVReferenceSet
-	InterMVReferencesValid bool
-
 	InterMotion      InterMotionResult
 	InterMotionValid bool
-
-	MVResiduals     [2]MVResidualResult
-	MVResidualValid [2]bool
 
 	InterpFilters      motion.InterpFilters
 	InterpFiltersValid bool
@@ -213,32 +204,14 @@ type BlockPredictionModeResult struct {
 	// WarpedMotionInvalid mirrors libaom's wm_params.invalid for coded
 	// WARPED_CAUSAL blocks whose local projection cannot produce a usable
 	// affine model. Such blocks fall back to translational prediction.
-	WarpedMotionInvalid bool
-	WarpedMotion        WarpedMotionModel
-	WarpedMotionValid   bool
-
-	// GlobalWarpedMotion carries the frame-level global motion as a warp
-	// model (alpha/beta/gamma/delta reduced) for blocks whose AV1 mode is
-	// GLOBALMV/GLOBAL_GLOBALMV with a non-translational warp type and a
-	// block min-side of at least 8 luma samples. libaom's
-	// av1_init_warp_params(...) promotes such blocks from SIMPLE_TRANSLATION
-	// to WARP_PRED using the frame's global motion params; without this
-	// promotion goav1 produces small (~1 sample) but frame-wide off-by-one
-	// drift versus libaom across affine global-motion content.
-	GlobalWarpedMotion      WarpedMotionModel
-	GlobalWarpedMotionValid bool
-
-	// GlobalWarpedMotionCompound mirrors GlobalWarpedMotion for COMPOUND
-	// GLOBAL_GLOBALMV blocks: libaom's av1_init_warp_params promotes each
-	// reference independently to WARP_PRED using that reference's global
-	// motion params (allow_warp keys off is_global_mv_block per ref), so a
-	// compound block warps ref0 with gm[ref0] and ref1 with gm[ref1]. Index
-	// 0/1 follow InterMotion.References.Ref[0/1].
-	GlobalWarpedMotionCompound      [2]WarpedMotionModel
+	WarpedMotionInvalid             bool
+	WarpedMotionValid               bool
+	GlobalWarpedMotionValid         bool
 	GlobalWarpedMotionCompoundValid [2]bool
-
-	OverlappableNeighbors      OverlappableNeighborSet
-	OverlappableNeighborsValid bool
+	OverlappableNeighborsValid      bool
+	// Extras holds the warp models and OBMC neighbours, set only while one
+	// of the flags above is; dav1d keeps these out of Av1Block too.
+	Extras *BlockPredictionMotionExtras
 
 	CompoundBlend      CompoundBlendResult
 	CompoundBlendValid bool
@@ -253,9 +226,7 @@ type BlockPredictionModeResult struct {
 	SubChromaInterValid bool
 }
 
-// reset clears the result for the next block except the large payloads
-// (reference MV stack, MV residuals, warp models, OBMC neighbours), which
-// are only read when their Valid flags, cleared here, are set. The zero
+// reset clears the result for the next block field by field; the zero
 // stores of adjacent fields merge into wide stores.
 func (r *BlockPredictionModeResult) reset() {
 	r.Valid = false
@@ -278,14 +249,10 @@ func (r *BlockPredictionModeResult) reset() {
 	r.InterReferencesValid = false
 	r.InterMode = InterModeResult{}
 	r.InterModeValid = false
-	r.ReferenceMVStackValid = false
 	r.DRLIndex = 0
 	r.DRLIndexValid = false
-	r.InterMVReferences = InterMVReferenceSet{}
-	r.InterMVReferencesValid = false
 	r.InterMotion = InterMotionResult{}
 	r.InterMotionValid = false
-	r.MVResidualValid = [2]bool{}
 	r.InterpFilters = motion.InterpFilters{}
 	r.InterpFiltersValid = false
 	r.InterpFilterReads = 0
@@ -298,10 +265,32 @@ func (r *BlockPredictionModeResult) reset() {
 	r.GlobalWarpedMotionValid = false
 	r.GlobalWarpedMotionCompoundValid = [2]bool{}
 	r.OverlappableNeighborsValid = false
+	r.Extras = nil
 	r.CompoundBlend = CompoundBlendResult{}
 	r.CompoundBlendValid = false
 	r.SubChromaInter = SubChromaInterResult{}
 	r.SubChromaInterValid = false
+}
+
+// BlockPredictionMotionExtras holds the rarely used warp and OBMC payloads of
+// one block, out of line of BlockPredictionModeResult.
+type BlockPredictionMotionExtras struct {
+	WarpedMotion WarpedMotionModel
+
+	// GlobalWarpedMotion carries the frame-level global motion as a warp
+	// model (alpha/beta/gamma/delta reduced) for blocks whose AV1 mode is
+	// GLOBALMV/GLOBAL_GLOBALMV with a non-translational warp type and a
+	// block min-side of at least 8 luma samples. libaom's
+	// av1_init_warp_params(...) promotes such blocks from SIMPLE_TRANSLATION
+	// to WARP_PRED using the frame's global motion params.
+	GlobalWarpedMotion WarpedMotionModel
+
+	// GlobalWarpedMotionCompound mirrors GlobalWarpedMotion for COMPOUND
+	// GLOBAL_GLOBALMV blocks: each reference warps with its own global
+	// motion params. Index 0/1 follow InterMotion.References.Ref[0/1].
+	GlobalWarpedMotionCompound [2]WarpedMotionModel
+
+	OverlappableNeighbors OverlappableNeighborSet
 }
 
 var yModeSizeContext = [blockSizeCount]uint8{

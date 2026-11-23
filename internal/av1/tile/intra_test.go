@@ -649,22 +649,61 @@ func FuzzReadIntraEntry(f *testing.F) {
 	})
 }
 
-// TestBlockPredictionModeResultResetClearsAllButPayloads guards reset against
-// new fields: everything except the Valid-gated payloads must read as zero.
-func TestBlockPredictionModeResultResetClearsAllButPayloads(t *testing.T) {
-	kept := map[string]bool{"ReferenceMVStack": true, "MVResiduals": true,
-		"WarpedMotion": true, "GlobalWarpedMotion": true, "GlobalWarpedMotionCompound": true, "OverlappableNeighbors": true}
+// TestBlockPredictionModeResultResetClearsEveryField guards reset against new
+// fields: after it every field must read as zero.
+func TestBlockPredictionModeResultResetClearsEveryField(t *testing.T) {
 	var r BlockPredictionModeResult
-	b := unsafe.Slice((*byte)(unsafe.Pointer(&r)), unsafe.Sizeof(r))
-	for i := range b {
-		b[i] = 0xff
+	v := reflect.ValueOf(&r).Elem()
+	for i := range v.NumField() {
+		f := v.Field(i)
+		if f.Kind() == reflect.Pointer {
+			f.Set(reflect.New(f.Type().Elem()))
+			continue
+		}
+		if typeHasPointers(f.Type()) {
+			setAnyNonZero(f)
+			continue
+		}
+		b := unsafe.Slice((*byte)(f.Addr().UnsafePointer()), f.Type().Size())
+		for j := range b {
+			b[j] = 0xff
+		}
 	}
 	r.reset()
-	v := reflect.ValueOf(r)
 	for i := range v.NumField() {
-		name := v.Type().Field(i).Name
-		if !kept[name] && !v.Field(i).IsZero() {
-			t.Errorf("reset leaves %s set", name)
+		if !v.Field(i).IsZero() {
+			t.Errorf("reset leaves %s set", v.Type().Field(i).Name)
+		}
+	}
+}
+
+func typeHasPointers(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Map, reflect.String, reflect.Interface, reflect.Func, reflect.Chan:
+		return true
+	case reflect.Array:
+		return typeHasPointers(t.Elem())
+	case reflect.Struct:
+		for i := range t.NumField() {
+			if typeHasPointers(t.Field(i).Type) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// setAnyNonZero makes one scalar leaf of a pointer-carrying struct non-zero.
+func setAnyNonZero(v reflect.Value) {
+	for i := range v.NumField() {
+		f := v.Field(i)
+		switch f.Kind() {
+		case reflect.Uint8, reflect.Uint16, reflect.Uint32:
+			f.SetUint(1)
+			return
+		case reflect.Bool:
+			f.SetBool(true)
+			return
 		}
 	}
 }
