@@ -1075,10 +1075,10 @@ func TestSimpleDecoderRejectsMalformedIVFInputs(t *testing.T) {
 }
 
 func TestSimpleDecoderRejectsSwitchFrameWithoutReferences(t *testing.T) {
-	payload := appendPublicLowOverheadOBU(nil, av1.OBUSequenceHeader, publicDecoderResidualRealtimeSequenceHeaderPayload())
+	payload := appendOBUForTest(nil, av1.OBUSequenceHeader, publicDecoderResidualRealtimeSequenceHeaderPayload())
 	switchFrame := append([]byte{}, publicSimpleDecoderSwitchFrameHeaderPayload()...)
 	switchFrame = append(switchFrame, 0xbb)
-	payload = appendPublicLowOverheadOBU(payload, av1.OBUFrame, switchFrame)
+	payload = appendOBUForTest(payload, av1.OBUFrame, switchFrame)
 	ivf := appendPublicIVF(nil, 16, 9, 30, 1, []publicIVFFrame{{payload: payload}})
 
 	t.Run("NewDecoderFromIVF", func(t *testing.T) {
@@ -1112,8 +1112,8 @@ func TestSimpleDecoderTileListIVFPlayback(t *testing.T) {
 			TileData:           []byte{0x80},
 		}},
 	})
-	payload := appendPublicLowOverheadOBU(nil, av1.OBUFrameHeader, publicDecoderResidualFrameHeaderPayload())
-	payload = appendPublicLowOverheadOBU(payload, av1.OBUTileList, tilePayload)
+	payload := appendOBUForTest(nil, av1.OBUFrameHeader, publicDecoderResidualFrameHeaderPayload())
+	payload = appendOBUForTest(payload, av1.OBUTileList, tilePayload)
 	ivf := appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
 		{payload: publicDecoderResidualLowOverheadStream()},
 		{timestamp: 1, payload: payload},
@@ -1399,7 +1399,7 @@ func TestSimpleDecoderTileListIVFPlanErrors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			prime := firstProfilePayload(t)
-			payload := appendPublicLowOverheadOBU(nil, av1.OBUTileList, tc.tilePayload)
+			payload := appendOBUForTest(nil, av1.OBUTileList, tc.tilePayload)
 			ivf := appendPublicIVF(nil, 64, 64, 30, 1, []publicIVFFrame{
 				{payload: prime},
 				{timestamp: 1, payload: payload},

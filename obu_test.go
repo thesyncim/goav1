@@ -10,12 +10,12 @@ import (
 func TestPublicTemporalUnitIterator(t *testing.T) {
 	var stream []byte
 	firstStart := len(stream)
-	stream = appendPublicLowOverheadOBU(stream, av1.OBUTemporalDelimiter, nil)
-	stream = appendPublicLowOverheadOBU(stream, av1.OBUSequenceHeader, []byte{0xaa})
-	stream = appendPublicLowOverheadOBU(stream, av1.OBUFrameHeader, []byte{0xbb})
+	stream = appendOBUForTest(stream, av1.OBUTemporalDelimiter, nil)
+	stream = appendOBUForTest(stream, av1.OBUSequenceHeader, []byte{0xaa})
+	stream = appendOBUForTest(stream, av1.OBUFrameHeader, []byte{0xbb})
 	firstEnd := len(stream)
-	stream = appendPublicLowOverheadOBU(stream, av1.OBUTemporalDelimiter, nil)
-	stream = appendPublicLowOverheadOBU(stream, av1.OBUFrame, []byte{0xcc})
+	stream = appendOBUForTest(stream, av1.OBUTemporalDelimiter, nil)
+	stream = appendOBUForTest(stream, av1.OBUFrame, []byte{0xcc})
 	secondEnd := len(stream)
 
 	it := av1.NewTemporalUnitIterator(stream)
@@ -43,7 +43,7 @@ func TestPublicTemporalUnitIterator(t *testing.T) {
 }
 
 func TestPublicTemporalUnitIteratorRejectsMissingDelimiter(t *testing.T) {
-	stream := appendPublicLowOverheadOBU(nil, av1.OBUSequenceHeader, []byte{0xaa})
+	stream := appendOBUForTest(nil, av1.OBUSequenceHeader, []byte{0xaa})
 	it := av1.NewTemporalUnitIterator(stream)
 	_, _, err := it.Next()
 	if !errors.Is(err, av1.ErrOBUMissingTemporalDelimiter) {
@@ -124,8 +124,8 @@ func TestPublicAnnexBIteratorRejectsInvalid(t *testing.T) {
 }
 
 func TestPublicOBUStreamIteratorsAllocs(t *testing.T) {
-	lowOverhead := appendPublicLowOverheadOBU(nil, av1.OBUTemporalDelimiter, nil)
-	lowOverhead = appendPublicLowOverheadOBU(lowOverhead, av1.OBUFrame, []byte{0xaa})
+	lowOverhead := appendOBUForTest(nil, av1.OBUTemporalDelimiter, nil)
+	lowOverhead = appendOBUForTest(lowOverhead, av1.OBUFrame, []byte{0xaa})
 	annexB := appendPublicAnnexBStream(nil, [][][]byte{{{byte(av1.OBUTemporalDelimiter) << 3}, {byte(av1.OBUFrame) << 3, 0xaa}}})
 	annexElement := []byte{0x02, byte(av1.OBUFrame) << 3, 0xdd}
 
@@ -166,8 +166,8 @@ func TestPublicOBUStreamIteratorsAllocs(t *testing.T) {
 }
 
 func FuzzPublicOBUStreamIterators(f *testing.F) {
-	lowOverhead := appendPublicLowOverheadOBU(nil, av1.OBUTemporalDelimiter, nil)
-	lowOverhead = appendPublicLowOverheadOBU(lowOverhead, av1.OBUFrame, []byte{0xaa})
+	lowOverhead := appendOBUForTest(nil, av1.OBUTemporalDelimiter, nil)
+	lowOverhead = appendOBUForTest(lowOverhead, av1.OBUFrame, []byte{0xaa})
 	annexB := appendPublicAnnexBStream(nil, [][][]byte{{{byte(av1.OBUTemporalDelimiter) << 3}, {byte(av1.OBUFrame) << 3, 0xaa}}})
 
 	for _, seed := range [][]byte{
@@ -739,9 +739,9 @@ func TestPublicAnnexBRoundTrip(t *testing.T) {
 	frame := []byte{byte(av1.OBUFrame) << 3, 0xcc, 0xdd}
 
 	// Build a low-overhead stream first (with obu_size fields).
-	low := appendPublicLowOverheadOBU(nil, av1.OBUTemporalDelimiter, nil)
-	low = appendPublicLowOverheadOBU(low, av1.OBUSequenceHeader, seq[1:])
-	low = appendPublicLowOverheadOBU(low, av1.OBUFrame, frame[1:])
+	low := appendOBUForTest(nil, av1.OBUTemporalDelimiter, nil)
+	low = appendOBUForTest(low, av1.OBUSequenceHeader, seq[1:])
+	low = appendOBUForTest(low, av1.OBUFrame, frame[1:])
 
 	annexB, err := av1.LowOverheadToAnnexB(nil, low, nil)
 	if err != nil {
@@ -791,7 +791,7 @@ func TestPublicParseMetadataOBUAllocs(t *testing.T) {
 	}
 }
 
-func appendPublicLowOverheadOBU(dst []byte, typ av1.OBUType, payload []byte) []byte {
+func appendOBUForTest(dst []byte, typ av1.OBUType, payload []byte) []byte {
 	var header [2]byte
 	n, err := av1.PutOBUHeader(header[:], av1.OBUHeader{Type: typ, HasSizeField: true})
 	if err != nil {

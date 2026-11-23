@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func appendPublicLowOverheadOBU(dst []byte, typ OBUType, payload []byte) []byte {
+func appendTestLowOverheadOBU(dst []byte, typ OBUType, payload []byte) []byte {
 	if len(payload) > 0x7f {
 		panic("test payload too large for one-byte LEB128")
 	}
@@ -20,7 +20,7 @@ func appendPublicLowOverheadOBU(dst []byte, typ OBUType, payload []byte) []byte 
 	return dst
 }
 
-func appendPublicLowOverheadOBUExt(dst []byte, typ OBUType, temporalID uint8, spatialID uint8, payload []byte) []byte {
+func appendTestLowOverheadOBUExt(dst []byte, typ OBUType, temporalID uint8, spatialID uint8, payload []byte) []byte {
 	if len(payload) > 0x7f {
 		panic("test payload too large for one-byte LEB128")
 	}
@@ -43,8 +43,8 @@ func appendPublicLowOverheadOBUExt(dst []byte, typ OBUType, temporalID uint8, sp
 
 func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 	var frame []byte
-	frame = appendPublicLowOverheadOBU(frame, OBUSequenceHeader, []byte{0xaa})
-	frame = appendPublicLowOverheadOBU(frame, OBUFrame, []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+	frame = appendTestLowOverheadOBU(frame, OBUSequenceHeader, []byte{0xaa})
+	frame = appendTestLowOverheadOBU(frame, OBUFrame, []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 	limits := RTPPayloadSizeLimits{MaxPayloadLen: 6}
 
 	size, err := RTPPacketizerScratchLen(frame, limits, nil)
@@ -187,10 +187,10 @@ func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 
 func TestPublicRTPPacketizerSplitsLayerTaggedOBUs(t *testing.T) {
 	var frame []byte
-	frame = appendPublicLowOverheadOBU(frame, OBUSequenceHeader, []byte{0xaa})
-	frame = appendPublicLowOverheadOBUExt(frame, OBUFrameHeader, 0, 0, []byte{0x10})
-	frame = appendPublicLowOverheadOBU(frame, OBUSequenceHeader, []byte{0xbb})
-	frame = appendPublicLowOverheadOBUExt(frame, OBUTileGroup, 0, 1, []byte{0x11})
+	frame = appendTestLowOverheadOBU(frame, OBUSequenceHeader, []byte{0xaa})
+	frame = appendTestLowOverheadOBUExt(frame, OBUFrameHeader, 0, 0, []byte{0x10})
+	frame = appendTestLowOverheadOBU(frame, OBUSequenceHeader, []byte{0xbb})
+	frame = appendTestLowOverheadOBUExt(frame, OBUTileGroup, 0, 1, []byte{0x11})
 	limits := RTPPayloadSizeLimits{MaxPayloadLen: 1200}
 
 	size, err := RTPPacketizerScratchLen(frame, limits, nil)
@@ -292,7 +292,7 @@ func publicRTPPacketOBUHeaders(t *testing.T, payload []byte) []OBUHeader {
 }
 
 func TestPublicRTPPacketDependencyDescriptorAllocs(t *testing.T) {
-	frame := appendPublicLowOverheadOBU(nil, OBUFrame, []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+	frame := appendTestLowOverheadOBU(nil, OBUFrame, []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 	limits := RTPPayloadSizeLimits{MaxPayloadLen: 6}
 	var obuScratch [2]RTPPacketizerOBU
 	var packetScratch [8]RTPPacketPlan
@@ -335,10 +335,10 @@ func TestPublicRTPPacketDependencyDescriptorAllocs(t *testing.T) {
 }
 
 func TestPublicRTPScheduledPictureDependencyDescriptor(t *testing.T) {
-	frame := appendPublicLowOverheadOBU(nil, OBUFrame, []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+	frame := appendTestLowOverheadOBU(nil, OBUFrame, []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 	var keyFrame []byte
-	keyFrame = appendPublicLowOverheadOBU(keyFrame, OBUSequenceHeader, []byte{0xaa})
-	keyFrame = appendPublicLowOverheadOBU(keyFrame, OBUFrame, []byte{0, 1, 2, 3})
+	keyFrame = appendTestLowOverheadOBU(keyFrame, OBUSequenceHeader, []byte{0xaa})
+	keyFrame = appendTestLowOverheadOBU(keyFrame, OBUFrame, []byte{0, 1, 2, 3})
 	limits := RTPPayloadSizeLimits{MaxPayloadLen: 64}
 	cfg := EncoderConfig{
 		Resolution:        EncoderResolution{Width: 640, Height: 360},
@@ -669,7 +669,7 @@ func TestPublicRTPDependencyDescriptorActiveDecodeTargetsRoundTrip(t *testing.T)
 }
 
 func TestPublicRTPPacketDependencyDescriptorActiveDecodeTargets(t *testing.T) {
-	frame := appendPublicLowOverheadOBU(nil, OBUFrame, []byte{
+	frame := appendTestLowOverheadOBU(nil, OBUFrame, []byte{
 		0, 1, 2, 3, 4, 5, 6, 7,
 		8, 9, 10, 11, 12, 13, 14, 15,
 		16, 17, 18, 19, 20, 21, 22, 23,
@@ -906,7 +906,7 @@ func convertPublicEncoderRTPDependencyStructure(src EncoderWebRTCFrameDependency
 }
 
 func TestPublicRTPScheduledPictureDependencyDescriptorAllocs(t *testing.T) {
-	frame := appendPublicLowOverheadOBU(nil, OBUFrame, []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+	frame := appendTestLowOverheadOBU(nil, OBUFrame, []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 	limits := RTPPayloadSizeLimits{MaxPayloadLen: 64}
 	cfg := EncoderConfig{
 		Resolution:        EncoderResolution{Width: 640, Height: 360},
@@ -1417,7 +1417,7 @@ func TestPublicRTPNextTemporalUnitFramesRTPPackets(t *testing.T) {
 }
 
 func TestPublicRTPScheduledPictureAppendPackets(t *testing.T) {
-	frame := appendPublicLowOverheadOBU(nil, OBUFrame, []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+	frame := appendTestLowOverheadOBU(nil, OBUFrame, []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 	limits := RTPPayloadSizeLimits{MaxPayloadLen: 6}
 	cfg := EncoderConfig{
 		Resolution:        EncoderResolution{Width: 640, Height: 360},
@@ -1586,8 +1586,8 @@ func TestPublicRTPDepacketizerPushSize(t *testing.T) {
 
 func TestPublicRTPSizingAllocs(t *testing.T) {
 	var frame []byte
-	frame = appendPublicLowOverheadOBU(frame, OBUSequenceHeader, []byte{0xaa})
-	frame = appendPublicLowOverheadOBU(frame, OBUFrameHeader, []byte{0xbb})
+	frame = appendTestLowOverheadOBU(frame, OBUSequenceHeader, []byte{0xaa})
+	frame = appendTestLowOverheadOBU(frame, OBUFrameHeader, []byte{0xbb})
 
 	var packetizerOBUs [4]RTPPacketizerOBU
 	var packets [4]RTPPacketPlan

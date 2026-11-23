@@ -603,7 +603,7 @@ func (d *LayeredDecoder) runEvents(events []DecoderEvent) ([]LayeredFrame, error
 		}
 		batchRunner := d.batchRunnerForEvent(&event)
 		d.bindGlobalSurfacePool(framePool)
-		result, err := runDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
+		result, err := runDecoderFrameWorkEventWithSideRunner(DecoderFrameWorkResidualEventRequest{
 			State:             state,
 			Refs:              &d.refs,
 			FramePool:         framePool,

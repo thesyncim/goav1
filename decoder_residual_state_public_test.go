@@ -2539,9 +2539,9 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerLowOverheadShowExistingOutput
 	keyFrame = append(keyFrame, 0xaa)
 	interFrame := append([]byte{}, publicDecoderResidualInterFrameHeaderPayload()...)
 	interFrame = append(interFrame, 0xbb)
-	prime = appendPublicLowOverheadOBU(prime, av1.OBUSequenceHeader, publicDecoderResidualRealtimeSequenceHeaderPayload())
-	prime = appendPublicLowOverheadOBU(prime, av1.OBUFrame, keyFrame)
-	prime = appendPublicLowOverheadOBU(prime, av1.OBUFrame, interFrame)
+	prime = appendOBUForTest(prime, av1.OBUSequenceHeader, publicDecoderResidualRealtimeSequenceHeaderPayload())
+	prime = appendOBUForTest(prime, av1.OBUFrame, keyFrame)
+	prime = appendOBUForTest(prime, av1.OBUFrame, interFrame)
 	var primeEvents [3]av1.DecoderEvent
 	if count, err := stream.PushLowOverhead(prime, primeEvents[:]); err != nil {
 		t.Fatal(err)
@@ -2550,7 +2550,7 @@ func TestPublicDecoderFrameWorkResidualStreamRunnerLowOverheadShowExistingOutput
 	}
 
 	var showExisting []byte
-	showExisting = appendPublicLowOverheadOBU(showExisting, av1.OBUFrameHeader, publicDecoderResidualShowExistingFrameHeaderPayload(0))
+	showExisting = appendOBUForTest(showExisting, av1.OBUFrameHeader, publicDecoderResidualShowExistingFrameHeaderPayload(0))
 	var events [1]av1.DecoderEvent
 	var scratchSpans [1]av1.TileSpan
 	var scratchJobs [1]av1.TileJob
@@ -2709,9 +2709,9 @@ func TestPublicDecoderFrameWorkResidualEventsBindPlan(t *testing.T) {
 	keyFrame = append(keyFrame, 0xaa)
 	interFrame := append([]byte{}, publicDecoderResidualInterFrameHeaderPayload()...)
 	interFrame = append(interFrame, 0xbb)
-	prime = appendPublicLowOverheadOBU(prime, av1.OBUSequenceHeader, publicDecoderResidualRealtimeSequenceHeaderPayload())
-	prime = appendPublicLowOverheadOBU(prime, av1.OBUFrame, keyFrame)
-	prime = appendPublicLowOverheadOBU(prime, av1.OBUFrame, interFrame)
+	prime = appendOBUForTest(prime, av1.OBUSequenceHeader, publicDecoderResidualRealtimeSequenceHeaderPayload())
+	prime = appendOBUForTest(prime, av1.OBUFrame, keyFrame)
+	prime = appendOBUForTest(prime, av1.OBUFrame, interFrame)
 	var primeEvents [3]av1.DecoderEvent
 	if count, err := realtime.PushLowOverhead(prime, primeEvents[:]); err != nil {
 		t.Fatal(err)
@@ -2723,7 +2723,7 @@ func TestPublicDecoderFrameWorkResidualEventsBindPlan(t *testing.T) {
 		t.Fatal("realtime stream missing sequence")
 	}
 	var showExisting []byte
-	showExisting = appendPublicLowOverheadOBU(showExisting, av1.OBUFrameHeader, publicDecoderResidualShowExistingFrameHeaderPayload(0))
+	showExisting = appendOBUForTest(showExisting, av1.OBUFrameHeader, publicDecoderResidualShowExistingFrameHeaderPayload(0))
 	var outputEvents [1]av1.DecoderEvent
 	outputCount, err := realtime.PushLowOverhead(showExisting, outputEvents[:])
 	if err != nil {
@@ -5519,16 +5519,16 @@ func (w *publicDecoderResidualBitWriter) trailingBits() []byte {
 
 func publicDecoderResidualLowOverheadStream() []byte {
 	var stream []byte
-	stream = appendPublicLowOverheadOBU(stream, av1.OBUSequenceHeader, publicDecoderResidualSequenceHeaderPayload())
-	stream = appendPublicLowOverheadOBU(stream, av1.OBUFrameHeader, publicDecoderResidualFrameHeaderPayload())
-	stream = appendPublicLowOverheadOBU(stream, av1.OBUTileGroup, []byte{0x80})
+	stream = appendOBUForTest(stream, av1.OBUSequenceHeader, publicDecoderResidualSequenceHeaderPayload())
+	stream = appendOBUForTest(stream, av1.OBUFrameHeader, publicDecoderResidualFrameHeaderPayload())
+	stream = appendOBUForTest(stream, av1.OBUTileGroup, []byte{0x80})
 	return stream
 }
 
 func publicDecoderResidualLowOverheadFrameStream() []byte {
 	var stream []byte
-	stream = appendPublicLowOverheadOBU(stream, av1.OBUFrameHeader, publicDecoderResidualFrameHeaderPayload())
-	stream = appendPublicLowOverheadOBU(stream, av1.OBUTileGroup, []byte{0x80})
+	stream = appendOBUForTest(stream, av1.OBUFrameHeader, publicDecoderResidualFrameHeaderPayload())
+	stream = appendOBUForTest(stream, av1.OBUTileGroup, []byte{0x80})
 	return stream
 }
 

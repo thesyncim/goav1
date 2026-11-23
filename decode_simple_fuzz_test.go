@@ -12,13 +12,13 @@ const fuzzSimpleDecoderMaxFrames = 64
 
 func FuzzPublicSimpleDecoderIVF(f *testing.F) {
 	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
-		{payload: appendPublicLowOverheadOBU(nil, av1.OBUTemporalDelimiter, nil)},
+		{payload: appendOBUForTest(nil, av1.OBUTemporalDelimiter, nil)},
 	}))
 
-	switchOnly := appendPublicLowOverheadOBU(nil, av1.OBUSequenceHeader, publicDecoderResidualRealtimeSequenceHeaderPayload())
+	switchOnly := appendOBUForTest(nil, av1.OBUSequenceHeader, publicDecoderResidualRealtimeSequenceHeaderPayload())
 	switchFrame := append([]byte{}, publicSimpleDecoderSwitchFrameHeaderPayload()...)
 	switchFrame = append(switchFrame, 0xbb)
-	switchOnly = appendPublicLowOverheadOBU(switchOnly, av1.OBUFrame, switchFrame)
+	switchOnly = appendOBUForTest(switchOnly, av1.OBUFrame, switchFrame)
 	f.Add(appendPublicIVF(nil, 16, 9, 30, 1, []publicIVFFrame{
 		{payload: switchOnly},
 	}))
@@ -36,19 +36,19 @@ func FuzzPublicSimpleDecoderIVF(f *testing.F) {
 		}},
 	})
 	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
-		{payload: appendPublicLowOverheadOBU(nil, av1.OBUTileList, validTilePayload)},
+		{payload: appendOBUForTest(nil, av1.OBUTileList, validTilePayload)},
 	}))
 	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
-		{payload: appendPublicLowOverheadOBU(nil, av1.OBUTileList, []byte{0x00, 0x00, 0x00, 0x00})},
+		{payload: appendOBUForTest(nil, av1.OBUTileList, []byte{0x00, 0x00, 0x00, 0x00})},
 	}))
 	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
-		{payload: appendPublicLowOverheadOBU(nil, av1.OBUTileList, []byte{0xff, 0xff, 0xff, 0xff})},
+		{payload: appendOBUForTest(nil, av1.OBUTileList, []byte{0xff, 0xff, 0xff, 0xff})},
 	}))
 	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
-		{payload: appendPublicLowOverheadOBU(nil, av1.OBUTileList, []byte{0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0x00, 0x04, 0xaa})},
+		{payload: appendOBUForTest(nil, av1.OBUTileList, []byte{0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0x00, 0x04, 0xaa})},
 	}))
 	f.Add(appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
-		{payload: appendPublicLowOverheadOBU(nil, av1.OBUTileList, append(append([]byte{}, validTilePayload...), 0xff))},
+		{payload: appendOBUForTest(nil, av1.OBUTileList, append(append([]byte{}, validTilePayload...), 0xff))},
 	}))
 	truncatedIVF := appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{
 		{payload: []byte{0xaa, 0xbb}},

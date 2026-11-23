@@ -333,7 +333,7 @@ func BindDecoderFrameWorkResidualEventRunner(size DecoderFrameWorkResidualEventS
 // stable caller-owned state. The sequence, event, side-data, and postfilter
 // callback remain per-event inputs.
 func (r DecoderFrameWorkResidualEventRunner) Run(sequence SequenceHeader, event *DecoderEvent, side *DecoderFrameWorkSideData, post DecoderFrameWorkPostFilterFunc) (DecoderFrameWorkEventResult, error) {
-	return runDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
+	return runDecoderFrameWorkEventWithSideRunner(DecoderFrameWorkResidualEventRequest{
 		State:              r.State,
 		Refs:               r.Refs,
 		FramePool:          r.FramePool,
@@ -361,7 +361,7 @@ func (r DecoderFrameWorkResidualEventRunner) Run(sequence SequenceHeader, event 
 // direct residual and postfilter runners, avoiding callback method values in the
 // final-frame path.
 func (r DecoderFrameWorkResidualEventRunner) RunWithPostFilterRunner(sequence SequenceHeader, event *DecoderEvent, side *DecoderFrameWorkSideData, post DecoderFrameWorkPostFilterRunner) (DecoderFrameWorkEventResult, error) {
-	return runDecoderFrameWorkEventWithResidualRunner(DecoderFrameWorkResidualEventRequest{
+	return runDecoderFrameWorkEventWithSideRunner(DecoderFrameWorkResidualEventRequest{
 		State:              r.State,
 		Refs:               r.Refs,
 		FramePool:          r.FramePool,
@@ -620,9 +620,9 @@ func (r DecoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 			}
 			if compact != nil {
 				internalthreading.InvalidateFrameWorkLoopFilterCompactState(compact)
-				*sidePtr, err = bindDecoderFrameWorkSideData(sequence, events[i].FrameSize, events[i].CDEF, events[i].Restoration, sideScratch, compact, r.compactNoSkip, &events[i], false)
+				*sidePtr, err = bindDecoderFrameWorkSideDataWith(sequence, events[i].FrameSize, events[i].CDEF, events[i].Restoration, sideScratch, compact, r.compactNoSkip, &events[i], false)
 			} else {
-				*sidePtr, err = bindDecoderFrameWorkSideData(sequence, events[i].FrameSize, events[i].CDEF, events[i].Restoration, sideScratch, nil, nil, nil,
+				*sidePtr, err = bindDecoderFrameWorkSideDataWith(sequence, events[i].FrameSize, events[i].CDEF, events[i].Restoration, sideScratch, nil, nil, nil,
 					r.lfLevels != nil && r.lfTileEdges != nil && r.lfNoSkip != nil)
 				if err == nil && r.lfLevels != nil && sidePtr.LoopFilterMasks.Valid() {
 					r.lfLevels.Bind(events[i].LoopFilter, events[i].Segmentation, events[i].Delta)
@@ -747,10 +747,10 @@ func decoderFrameWorkResidualEventOutputLenPtr(event *DecoderEvent) int {
 // is attached to both the active frame-work state and the residual runner after
 // planning and before tile work runs.
 func RunDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEventRequest) (DecoderFrameWorkEventResult, error) {
-	return runDecoderFrameWorkEventWithResidualRunner(req, nil)
+	return runDecoderFrameWorkEventWithSideRunner(req, nil)
 }
 
-func runDecoderFrameWorkEventWithResidualRunner(req DecoderFrameWorkResidualEventRequest, sideRunner DecoderFrameWorkSideDataRunner) (result DecoderFrameWorkEventResult, runErr error) {
+func runDecoderFrameWorkEventWithSideRunner(req DecoderFrameWorkResidualEventRequest, sideRunner DecoderFrameWorkSideDataRunner) (result DecoderFrameWorkEventResult, runErr error) {
 	defer func() {
 		if runErr != nil && req.Runner != nil && req.Runner.compactOwner == req.Runner {
 			internalthreading.InvalidateFrameWorkLoopFilterCompactState(req.Runner.compactState)

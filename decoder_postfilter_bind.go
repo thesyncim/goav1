@@ -373,7 +373,7 @@ func (r *DecoderFrameWorkSupportedPostFilterScratchRunner) applyWithScratchSize(
 	}
 	r.output = nil
 	ctx := &r.work
-	side := decoderFrameWorkPostFilterRequestSideDataFromContext(ctx)
+	side := postFilterRequestSideDataFromContext(ctx)
 	side.RestorationOptimized = r.RestorationOptimized
 	req, err := BindDecoderFrameWorkPostFilterRequestFromScratch(size, side, r.Scratch)
 	if err != nil {
@@ -762,10 +762,10 @@ func DecoderFrameWorkSideDataScratchLen(sequence SequenceHeader, size FrameSize,
 //
 // See also: DecoderFrameWorkSideDataScratchLen, SetDecoderFrameWorkSideData.
 func BindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef CDEFParams, restoration RestorationParams, scratch DecoderFrameWorkSideDataScratch) (DecoderFrameWorkSideData, error) {
-	return bindDecoderFrameWorkSideData(sequence, size, cdef, restoration, scratch, nil, nil, nil, false)
+	return bindDecoderFrameWorkSideDataWith(sequence, size, cdef, restoration, scratch, nil, nil, nil, false)
 }
 
-func bindDecoderFrameWorkSideData(sequence SequenceHeader, size FrameSize, cdef CDEFParams, restoration RestorationParams, scratch DecoderFrameWorkSideDataScratch, compact *internalthreading.FrameWorkLoopFilterCompactState, noSkip []byte, event *DecoderEvent, maskOnlyLoopFilter bool) (DecoderFrameWorkSideData, error) {
+func bindDecoderFrameWorkSideDataWith(sequence SequenceHeader, size FrameSize, cdef CDEFParams, restoration RestorationParams, scratch DecoderFrameWorkSideDataScratch, compact *internalthreading.FrameWorkLoopFilterCompactState, noSkip []byte, event *DecoderEvent, maskOnlyLoopFilter bool) (DecoderFrameWorkSideData, error) {
 	scratchSize, err := DecoderFrameWorkSideDataScratchLen(sequence, size, cdef, restoration)
 	if err != nil {
 		return DecoderFrameWorkSideData{}, err
@@ -871,10 +871,10 @@ func DecoderFrameWorkPostFilterSideData(side DecoderFrameWorkSideData) DecoderFr
 // DecoderFrameWorkPostFilterRequestSideDataFromContext extracts postfilter
 // request side-data views attached to a final-frame postfilter callback.
 func DecoderFrameWorkPostFilterRequestSideDataFromContext(ctx DecoderFrameWorkPostFilterContext) DecoderFrameWorkPostFilterRequestSideData {
-	return decoderFrameWorkPostFilterRequestSideDataFromContext(&ctx)
+	return postFilterRequestSideDataFromContext(&ctx)
 }
 
-func decoderFrameWorkPostFilterRequestSideDataFromContext(ctx *DecoderFrameWorkPostFilterContext) DecoderFrameWorkPostFilterRequestSideData {
+func postFilterRequestSideDataFromContext(ctx *DecoderFrameWorkPostFilterContext) DecoderFrameWorkPostFilterRequestSideData {
 	var side DecoderFrameWorkPostFilterRequestSideData
 	if ctx.LoopFilterMap != nil {
 		side.LoopFilterMap = *ctx.LoopFilterMap

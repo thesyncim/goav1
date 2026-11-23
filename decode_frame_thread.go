@@ -424,7 +424,7 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 	}
 	event := &fc.event
 
-	side, err := bindDecoderFrameWorkSideData(sequence, event.FrameSize, event.CDEF, event.Restoration, fc.sideScratch, nil, nil, nil, true)
+	side, err := bindDecoderFrameWorkSideDataWith(sequence, event.FrameSize, event.CDEF, event.Restoration, fc.sideScratch, nil, nil, nil, true)
 	if err != nil {
 		return DecoderFrameWorkEventResult{}, err
 	}

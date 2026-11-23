@@ -1557,26 +1557,26 @@ func publicBenchmarkDecoderBlockLoopBatch() av1.DecoderFrameWorkBatch {
 
 func publicBenchmarkLowOverheadStream() []byte {
 	stream := make([]byte, 0, 512)
-	stream = appendPublicLowOverheadOBU(stream, av1.OBUTemporalDelimiter, nil)
-	stream = appendPublicLowOverheadOBU(stream, av1.OBUSequenceHeader, []byte{0x12, 0x34, 0x56})
+	stream = appendOBUForTest(stream, av1.OBUTemporalDelimiter, nil)
+	stream = appendOBUForTest(stream, av1.OBUSequenceHeader, []byte{0x12, 0x34, 0x56})
 	for i := range 10 {
 		payload := make([]byte, 24)
 		for j := range payload {
 			payload[j] = byte(i*17 + j)
 		}
-		stream = appendPublicLowOverheadOBU(stream, av1.OBUTileGroup, payload)
+		stream = appendOBUForTest(stream, av1.OBUTileGroup, payload)
 	}
-	stream = appendPublicLowOverheadOBU(stream, av1.OBUFrame, []byte{0xaa, 0xbb, 0xcc})
+	stream = appendOBUForTest(stream, av1.OBUFrame, []byte{0xaa, 0xbb, 0xcc})
 	return stream
 }
 
 func publicBenchmarkTemporalUnitStream() []byte {
 	stream := make([]byte, 0, 512)
 	for i := range 4 {
-		stream = appendPublicLowOverheadOBU(stream, av1.OBUTemporalDelimiter, nil)
-		stream = appendPublicLowOverheadOBU(stream, av1.OBUFrameHeader, []byte{byte(i)})
+		stream = appendOBUForTest(stream, av1.OBUTemporalDelimiter, nil)
+		stream = appendOBUForTest(stream, av1.OBUFrameHeader, []byte{byte(i)})
 		for j := range 2 {
-			stream = appendPublicLowOverheadOBU(stream, av1.OBUTileGroup, []byte{byte(i), byte(j), byte(i + j)})
+			stream = appendOBUForTest(stream, av1.OBUTileGroup, []byte{byte(i), byte(j), byte(i + j)})
 		}
 	}
 	return stream
@@ -1599,14 +1599,14 @@ func publicBenchmarkAnnexBStream() []byte {
 
 func publicBenchmarkRTPFrame() []byte {
 	frame := make([]byte, 0, 512)
-	frame = appendPublicLowOverheadOBU(frame, av1.OBUSequenceHeader, []byte{0xaa, 0xbb, 0xcc})
+	frame = appendOBUForTest(frame, av1.OBUSequenceHeader, []byte{0xaa, 0xbb, 0xcc})
 	for i := range 3 {
 		payload := make([]byte, 96)
 		for j := range payload {
 			payload[j] = byte(i*29 + j)
 		}
-		frame = appendPublicLowOverheadOBU(frame, av1.OBUTileGroup, payload)
+		frame = appendOBUForTest(frame, av1.OBUTileGroup, payload)
 	}
-	frame = appendPublicLowOverheadOBU(frame, av1.OBUFrame, []byte{0xdd, 0xee})
+	frame = appendOBUForTest(frame, av1.OBUFrame, []byte{0xdd, 0xee})
 	return frame
 }
