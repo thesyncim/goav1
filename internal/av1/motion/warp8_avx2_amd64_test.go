@@ -232,29 +232,6 @@ func benchWarpHorizInputs() (frame.Plane, int, int, int, int, int, int) {
 	return ref, 40, 40, 32768, 0, 96, -64
 }
 
-func BenchmarkWarpHorizontal8ResidentScalarGoSIMDOracle(b *testing.B) {
-	ref, ix4, iy4, sx4, sy4, alpha, beta := benchWarpHorizInputs()
-	var tmp warpTmp
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		warpHorizontal8Resident(&tmp, ref, ix4, sx4, iy4, sy4, alpha, beta, round0Bits, 8+filterBits-1)
-	}
-}
-
-func BenchmarkWarpHorizontal8ResidentGoSIMD(b *testing.B) {
-	ref, ix4, iy4, sx4, sy4, alpha, beta := benchWarpHorizInputs()
-	if !warpHorizResidentOffsInRange(sx4, alpha, beta) {
-		b.Skip("bench inputs out of range")
-	}
-	var tmp warpTmp
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		warpHorizontal8ResidentDispatch(&tmp, ref, ix4, sx4, iy4, sy4, alpha, beta, round0Bits, 8+filterBits-1)
-	}
-}
-
 func benchWarpVertTmp() warpTmp {
 	rng := rand.New(rand.NewSource(2))
 	ref := residentRefPlane(rng)
@@ -269,33 +246,12 @@ func benchWarpVerticalInputs() (warpTmp, frame.Plane) {
 	return tmp, dst
 }
 
-func BenchmarkWarpVertical8FullScalarGoSIMDOracle(b *testing.B) {
-	tmp, dst := benchWarpVerticalInputs()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		warpVertical8Full(dst, &tmp, 8, 8, 0, 0, 32768, 96, -64, round1Bits, 8+2*filterBits-round0Bits)
-	}
-}
-
 func BenchmarkWarpVertical8FullGamma0Scalar(b *testing.B) {
 	tmp, dst := benchWarpVerticalInputs()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
 		warpVertical8FullGamma0(dst, &tmp, 8, 8, 0, 0, 32768, -64, round1Bits, 8+2*filterBits-round0Bits)
-	}
-}
-
-func BenchmarkWarpVertical8FullGoSIMD(b *testing.B) {
-	tmp, dst := benchWarpVerticalInputs()
-	if !warpVertFullOffsInRange(32768, 96, -64) {
-		b.Skip("bench inputs out of range")
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		warpVertical8FullDispatch(dst, &tmp, 8, 8, 0, 0, 32768, 96, -64, round1Bits, 8+2*filterBits-round0Bits)
 	}
 }
 
