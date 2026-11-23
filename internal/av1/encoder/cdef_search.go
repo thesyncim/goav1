@@ -375,6 +375,11 @@ type cdefSearcher struct {
 	laneStarted int
 	laneWG      sync.WaitGroup
 	laneDone    sync.WaitGroup
+
+	// sizingOnly (set by VideoEncoder.Prewarm) sizes the frame tables and
+	// starts the lanes, then reports "no CDEF" without searching: the
+	// throwaway prewarm pictures only need the buffers.
+	sizingOnly bool
 }
 
 // svtCDEFDecision is the frame's chosen CDEF parameters and the per-64x64
@@ -620,6 +625,14 @@ func (s *cdefSearcher) search(src, recon *SourceFrame420, m *threading.FrameWork
 	j.planeH = [3]int{recon.Height, (recon.Height + 1) >> 1, (recon.Height + 1) >> 1}
 	lanes := min(s.wantLanes, g.nvfb)
 	s.nextRow.Store(0)
+	if s.sizingOnly {
+		if lanes >= 2 {
+			s.startLanes(lanes)
+		}
+		s.job.m = nil
+		s.job.planes, s.job.srcPlanes = [3][]byte{}, [3][]byte{}
+		return svtCDEFDecision{params: CDEFParams{Damping: j.damping}}
+	}
 	if lanes >= 2 {
 		s.startLanes(lanes)
 		s.laneWG.Add(lanes - 1)

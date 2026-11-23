@@ -1043,6 +1043,8 @@ func (e *VideoEncoder) Prewarm() error {
 		e.tuScratch = make([]byte, 0, bound)
 		e.tuGroup = make([]byte, 0, bound)
 	}
+	e.cdefSearch.sizingOnly = true
+	defer func() { e.cdefSearch.sizingOnly = false }()
 	if _, _, err := e.Encode(src, true); err != nil {
 		return err
 	}
