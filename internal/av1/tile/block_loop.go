@@ -41,10 +41,8 @@ type BlockLoopScratch struct {
 	CoeffCtx  CoeffEntropyContext
 	Palette   PaletteModeScratch
 
-	// coef and coefTree are the block's recon binding and transform-size
-	// request (bindCoefBlock).
-	coef     CoefBlock
-	coefTree TransformTreeRequest
+	// coef is the block's recon binding (bindCoefBlock).
+	coef CoefBlock
 
 	// Refmvs is the tile's dav1d refmvs row storage (see refmvs.go).
 	Refmvs refmvsTile
