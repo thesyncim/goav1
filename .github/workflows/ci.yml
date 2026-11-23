@@ -101,6 +101,8 @@ jobs:
         run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
       - name: build with native SIMD
         run: go build ./...
+      - name: compiler reports with native SIMD
+        run: make compiler-reports
       - name: test with native SIMD
         run: go test -count=1 -timeout 30m ./...
       # The race shards already run these packages under -race on the
@@ -185,6 +187,8 @@ jobs:
         run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
       - name: build with native SIMD
         run: go build ./...
+      - name: compiler reports with native SIMD
+        run: make compiler-reports
       - name: vet with native SIMD
         run: go vet ./...
       - name: test with native SIMD
@@ -324,99 +328,34 @@ jobs:
           FUZZTIME: 50000x
 
   webrtc-reference:
-    name: webrtc reference decoders (${{ matrix.name }})
+    name: webrtc ${{ matrix.name }}
     needs: build
+    # Each job runs several make webrtc-production-ci shards back to back,
+    # balanced by their test time (about 6-8 minutes per job), so the matrix
+    # pays runner setup six times instead of 43 and is not throttled by the
+    # concurrent-job limit.
     strategy:
       fail-fast: false
-      max-parallel: 4
       matrix:
         include:
-          - shard: 1
-            name: controller settings i422 10-bit
-          - shard: 2
-            name: scalability catalogue
-          - shard: 3
-            name: encoder format reference tests
-          - shard: 4
-            name: encoder internal and RTP controls
-          - shard: 5
-            name: direct L1 playback
-          - shard: 6
-            name: shared SVC L2T1 playback
-          - shard: 7
-            name: shared SVC L2T2 playback
-          - shard: 8
-            name: encoder control reference tests
-          - shard: 9
-            name: encoder non-reference tests
-          - shard: 10
-            name: shared-reference SVC L2 modes
-          - shard: 11
-            name: shared-reference SVC L3 modes
-          - shard: 12
-            name: public remainder
-          - shard: 13
-            name: simulcast S2T1 and S2T2 playback
-          - shard: 14
-            name: simulcast S2T3 playback
-          - shard: 15
-            name: shared SVC L2T3 playback
-          - shard: 16
-            name: shared SVC L3T1 playback
-          - shard: 17
-            name: shared SVC L3T2 playback
-          - shard: 18
-            name: shared SVC L3T3 playback
-          - shard: 19
-            name: simulcast S3T1 and S3T2 playback
-          - shard: 20
-            name: simulcast S3T3 playback
-          - shard: 21
-            name: browser playback reconnect
-          - shard: 22
-            name: direct browser playback soak
-          - shard: 23
-            name: shared SVC browser playback soak
-          - shard: 24
-            name: simulcast browser playback soak
-          - shard: 25
-            name: direct browser control churn
-          - shard: 26
-            name: shared SVC browser control churn
-          - shard: 27
-            name: simulcast browser control churn
-          - shard: 28
-            name: browser feedback controls A
-          - shard: 29
-            name: direct L1T3 playback
-          - shard: 30
-            name: shared SVC L2T1 key playback
-          - shard: 31
-            name: shared SVC L2T2 key playback
-          - shard: 32
-            name: simulcast S2T2 playback
-          - shard: 33
-            name: shared SVC L2T3 key playback
-          - shard: 34
-            name: shared SVC L3T1 key playback
-          - shard: 35
-            name: shared SVC L3T2 key playback
-          - shard: 36
-            name: shared SVC L3T3 key playback
-          - shard: 37
-            name: simulcast S3T2 playback
-          - shard: 38
-            name: RTP base and offer endpoint
-          - shard: 39
-            name: RTP control and REMB
-          - shard: 40
-            name: browser feedback controls B
-          - shard: 41
-            name: controller settings i422 12-bit
-          - shard: 42
-            name: controller settings i444 10-bit
-          - shard: 43
-            name: controller settings i444 12-bit
+          - name: reference decoders A
+            shards: '1 2 3 4 11 39 41'
+            reference: true
+          - name: reference decoders B
+            shards: '8 9 10 12 38 42 43'
+            reference: true
+          - name: browser A
+            shards: '6 18 21 25 26 30 40'
+            reference: false
+          - name: browser B
+            shards: '7 13 15 16 17 23 29 34'
+            reference: false
+          - name: browser C
+            shards: '5 14 24 27 28 33 36'
+            reference: false
+          - name: browser D
+            shards: '19 20 22 31 32 35 37'
+            reference: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -426,14 +365,26 @@ jobs:
           check-latest: true
           cache: true
       - name: install reference decoders
-        if: ${{ matrix.shard <= 4 || (matrix.shard >= 8 && matrix.shard <= 12) || (matrix.shard >= 38 && matrix.shard <= 39) || (matrix.shard >= 41 && matrix.shard <= 43) }}
+        if: ${{ matrix.reference }}
         run: |
           sudo apt-get update
           sudo apt-get install -y aom-tools dav1d
           command -v aomdec
           command -v dav1d
-      - name: WebRTC production shard ${{ matrix.shard }}
-        run: make webrtc-production-ci WEBRTC_PRODUCTION_CI_SHARD=${{ matrix.shard }}
+      - name: WebRTC production shards ${{ matrix.shards }}
+        run: |
+          failed=''
+          for shard in ${{ matrix.shards }}; do
+            echo "::group::WebRTC production shard $shard"
+            if ! make webrtc-production-ci WEBRTC_PRODUCTION_CI_SHARD=$shard; then
+              failed="$failed $shard"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::WebRTC production shards failed:$failed"
+            exit 1
+          fi
 
   cli-smoke:
     name: cli smoke (aom-go-dec)

@@ -914,3 +914,43 @@ func TestPredictInterCompoundRefToConvBufErrors(t *testing.T) {
 		t.Errorf("bps mismatch err=%v want ErrInvalidMotion", err)
 	}
 }
+
+// TestPredictScaledCompoundIdentityStep8ZeroAlloc keeps the 1:1-step scaled
+// compound path (a scaled reference whose step resolves to identity)
+// allocation-free for every filter and subpel phase. Its 2D SIMD kernel falls
+// back to a heap intermediate when it is called without scratch, so the path
+// must pass the caller's scratch through.
+func TestPredictScaledCompoundIdentityStep8ZeroAlloc(t *testing.T) {
+	const (
+		w    = 16
+		h    = 16
+		refW = 48
+		refH = 32
+	)
+	ref := frame.Plane{Pix: make([]byte, refW*refH), Stride: refW, Width: refW, Height: refH}
+	for i := range ref.Pix {
+		ref.Pix[i] = byte(i * 37)
+	}
+	var buf CompoundConvBuf
+	scratch := new(ScaledConvolveScratch)
+	for _, filter := range []InterpFilter{InterpEightTapRegular, InterpEightTapSmooth, InterpMultiTapSharp, InterpBilinear} {
+		table, err := SubpelKernelTableFor(filter, w)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Fractional starts in both axes select the separable 2D kernel.
+		for frac := int64(1); frac < 16; frac++ {
+			startX := int64(12)*ScaleSubpelScale + frac*ScaleSubpelScale/16
+			startY := int64(8)*ScaleSubpelScale + (16-frac)*ScaleSubpelScale/16
+			allocs := testing.AllocsPerRun(5, func() {
+				if err := PredictScaledCompoundRefToConvBufWithScratch(&buf, ref, 1, 8, w, h,
+					startX, ScaleSubpelScale, startY, ScaleSubpelScale, table, table, scratch); err != nil {
+					t.Fatal(err)
+				}
+			})
+			if allocs != 0 {
+				t.Fatalf("filter %d frac %d/16: identity-step scaled compound allocates %v times per call", filter, frac, allocs)
+			}
+		}
+	}
+}
