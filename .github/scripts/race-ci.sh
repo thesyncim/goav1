@@ -74,6 +74,7 @@ packages_for() {
         ./conformance \
         ./internal/av1/transform/itxgen \
         ./internal/benchenv \
+        ./internal/guardpage \
         ./tools/itxzero
       ;;
     *)
