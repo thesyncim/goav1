@@ -7964,7 +7964,6 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 
 			want := decodePublicLayeredDecoderLowOverheadDigests(t, lowOverheads...)
 			got := decodePublicLayeredRTPPayloadDigestsWithLabels(t, rtpPayloadLabels, rtpPayloads...)
-			gotLayeredLow := decodePublicLayeredDecoderLowOverheadDigests(t, lowOverheads...)
 			gotLayeredQueued := decodePublicLayeredDecoderRTPPayloadDigests(t, rtpPayloads...)
 			gotLayeredLive := decodePublicLayeredLiveDecoderRTPPayloadDigests(t, rtpPayloads, rtpPayloads...)
 			gotLayeredQueuedPackets := decodePublicLayeredDecoderRTPPacketDigests(t, rtpPackets...)
@@ -7977,10 +7976,10 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 			if len(got) != len(want) || len(got) != len(lowOverheads) {
 				t.Fatalf("decoded frames got=%d want=%d low-overheads=%d", len(got), len(want), len(lowOverheads))
 			}
-			if len(gotLayeredLow) != len(want) || len(gotLayeredQueued) != len(want) || len(gotLayeredLive) != len(want) ||
+			if len(gotLayeredQueued) != len(want) || len(gotLayeredLive) != len(want) ||
 				len(gotLayeredQueuedPackets) != len(want) || len(gotLayeredLivePackets) != len(want) {
-				t.Fatalf("layered decoded frames low=%d payload queued/live=%d/%d packet queued/live=%d/%d want=%d",
-					len(gotLayeredLow), len(gotLayeredQueued), len(gotLayeredLive), len(gotLayeredQueuedPackets), len(gotLayeredLivePackets), len(want))
+				t.Fatalf("layered decoded frames payload queued/live=%d/%d packet queued/live=%d/%d want=%d",
+					len(gotLayeredQueued), len(gotLayeredLive), len(gotLayeredQueuedPackets), len(gotLayeredLivePackets), len(want))
 			}
 			assertPublicLayeredFrameMetadata(t, gotLayeredLowMetadata, wantMetadata)
 			assertPublicLayeredFrameMetadata(t, gotLayeredQueuedMetadata, wantMetadata)
@@ -7990,9 +7989,6 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 			for i := range want {
 				if got[i] != want[i] {
 					t.Fatalf("frame %d digest differs: rtp=%x low=%x", i, got[i], want[i])
-				}
-				if gotLayeredLow[i] != want[i] {
-					t.Fatalf("frame %d layered low-overhead digest differs: got=%x want=%x", i, gotLayeredLow[i], want[i])
 				}
 				if gotLayeredQueued[i] != want[i] {
 					t.Fatalf("frame %d layered queued digest differs: rtp=%x low=%x", i, gotLayeredQueued[i], want[i])
