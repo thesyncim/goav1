@@ -193,12 +193,3 @@ func cdefFilterBlock8InteriorSIMD(ctx *cdefSIMDCtx) {
 		}
 	}
 }
-
-// filterBlockU8InteriorSIMD runs the interior kernel on one fused 8-wide block.
-// It is the test entry: the unit loop reaches the kernel only after
-// cdefUnitInteriorU8 proves the footprint is sentinel-free.
-func filterBlockU8InteriorSIMD(dst []byte, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
-	var ctx cdefSIMDCtx
-	ctx.setBlock(unsafe.Pointer(&dst[dstOrigin]), dstStride, unsafe.Pointer(&input[inputOrigin]), params, true)
-	cdefFilterBlock8InteriorSIMD(&ctx)
-}

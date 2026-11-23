@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -84,56 +83,18 @@ func TestAppendTransformReferenceParamsPayloadRejectsInvalid(t *testing.T) {
 	}
 	var buf [2]byte
 	for _, tc := range cases {
-		if _, err := AppendTransformReferenceParamsPayload(buf[:0], tc.prefix, tc.allLossless, tc.params); !errors.Is(err, ErrInvalidFrame) {
-			t.Fatalf("AppendTransformReferenceParamsPayload(%+v,%v,%+v) err=%v want ErrInvalidFrame", tc.prefix, tc.allLossless, tc.params, err)
+		if _, err := appendTransformReferenceParamsPayload(buf[:0], tc.prefix, tc.allLossless, tc.params); !errors.Is(err, ErrInvalidFrame) {
+			t.Fatalf("appendTransformReferenceParamsPayload(%+v,%v,%+v) err=%v want ErrInvalidFrame", tc.prefix, tc.allLossless, tc.params, err)
 		}
-	}
-}
-
-func TestAppendTransformReferenceParamsPayloadShortBuffer(t *testing.T) {
-	prefix := FrameHeaderPrefix{FrameType: FrameHeaderTypeInter}
-	params := TransformReferenceParams{TransformMode: TransformModeSwitchable, ReferenceMode: ReferenceModeSelect}
-	var buf [1]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendTransformReferenceParamsPayload(dst, prefix, false, params)
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want ErrShortBuffer", err)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output=% x", out)
-	}
-}
-
-func TestAppendTransformReferenceParamsPayloadAllocs(t *testing.T) {
-	prefix := FrameHeaderPrefix{FrameType: FrameHeaderTypeInter}
-	params := TransformReferenceParams{TransformMode: TransformModeSwitchable, ReferenceMode: ReferenceModeSelect}
-	var buf [2]byte
-	if _, err := AppendTransformReferenceParamsPayload(buf[:0], prefix, false, params); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = TransformReferenceParamsPayloadSize(prefix, false, params)
-		_, _ = AppendTransformReferenceParamsPayload(buf[:0], prefix, false, params)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendTransformReferenceParamsPayload allocated: %f", allocs)
 	}
 }
 
 func appendAndParseTransformReferenceParams(t *testing.T, prefix FrameHeaderPrefix, allLossless bool, params TransformReferenceParams) ([]byte, parser.TransformReferenceParams) {
 	t.Helper()
-	payloadSize, err := TransformReferenceParamsPayloadSize(prefix, allLossless, params)
-	if err != nil {
-		t.Fatalf("TransformReferenceParamsPayloadSize: %v", err)
-	}
 	var buf [2]byte
-	payload, err := AppendTransformReferenceParamsPayload(buf[:0], prefix, allLossless, params)
+	payload, err := appendTransformReferenceParamsPayload(buf[:0], prefix, allLossless, params)
 	if err != nil {
-		t.Fatalf("AppendTransformReferenceParamsPayload: %v", err)
-	}
-	if len(payload) != payloadSize {
-		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+		t.Fatalf("appendTransformReferenceParamsPayload: %v", err)
 	}
 	parsed, err := parser.ParseTransformReferenceParams(
 		payload,

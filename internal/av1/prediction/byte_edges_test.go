@@ -102,7 +102,7 @@ func TestByteEdgePredictionMatchesValidated(t *testing.T) {
 				got := want
 				got.Pix = slices.Clone(want.Pix)
 				we := PredictIntraPlaneBlockWithExtent(want, 1, 8, 1, 1, w, h, pw, ph, mode, e)
-				ge := PredictIntraPlaneBlockWithByteEdges(got, 1, 1, w, h, pw, ph, mode, e)
+				ge := PredictIntraPlaneBlockWithExtentBounded(got, 1, 8, 1, 1, w, h, pw, ph, mode, e, true)
 				if we != ge || !bytes.Equal(want.Pix, got.Pix) {
 					t.Fatalf("shape%v mode%d missing%d: error%v/%v or pixels differ", shape, mode, missing, we, ge)
 				}
@@ -113,8 +113,8 @@ func TestByteEdgePredictionMatchesValidated(t *testing.T) {
 				want := frame.Plane{Pix: bytes.Repeat([]byte{0x5a}, (w+4)*(h+2)), Stride: w + 4, Width: w + 4, Height: h + 2}
 				got := want
 				got.Pix = slices.Clone(want.Pix)
-				we := PredictFilterIntraPlaneBlockWithExtent(want, 1, 8, 1, 1, w, h, pw, ph, mode, edges)
-				ge := PredictFilterIntraPlaneBlockWithByteEdges(got, 1, 1, w, h, pw, ph, mode, edges)
+				we := PredictFilterIntraPlaneBlockWithExtentBounded(want, 1, 8, 1, 1, w, h, pw, ph, mode, edges, false)
+				ge := PredictFilterIntraPlaneBlockWithExtentBounded(got, 1, 8, 1, 1, w, h, pw, ph, mode, edges, true)
 				if we != ge || !bytes.Equal(want.Pix, got.Pix) {
 					t.Fatalf("filter shape%v mode%d: %v/%v or pixels differ", shape, mode, we, ge)
 				}
@@ -132,8 +132,8 @@ func TestByteEdgeFiltersMatchValidated(t *testing.T) {
 			}
 			got := slices.Clone(want)
 			ws, gs := make([]uint16, n+2), make([]uint16, n+2)
-			we := FilterIntraEdge(want, ws, strength, 8)
-			ge := FilterIntraEdgeFromBytes(got, gs, strength)
+			we := FilterIntraEdgeBounded(want, ws, strength, 8, false)
+			ge := FilterIntraEdgeBounded(got, gs, strength, 8, true)
 			if we != ge || !slices.Equal(want, got) || !slices.Equal(ws, gs) {
 				t.Fatalf("filter n%d strength%d mismatch", n, strength)
 			}
@@ -146,8 +146,8 @@ func TestByteEdgeFiltersMatchValidated(t *testing.T) {
 		}
 		got := slices.Clone(want)
 		ws, gs := make([]uint16, n+5), make([]uint16, n+5)
-		we := UpsampleIntraEdge(want, 2, n, ws, 8)
-		ge := UpsampleIntraEdgeFromBytes(got, 2, n, gs)
+		we := UpsampleIntraEdgeBounded(want, 2, n, ws, 8, false)
+		ge := UpsampleIntraEdgeBounded(got, 2, n, gs, 8, true)
 		if we != ge || !slices.Equal(want, got) || !slices.Equal(ws, gs) {
 			t.Fatalf("upsample n%d mismatch", n)
 		}

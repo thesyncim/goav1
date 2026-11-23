@@ -9,40 +9,26 @@ func TestCopyRectMatchesLibaomCorpus(t *testing.T) {
 	rnd := newCDEFRandom(cdefDeterministicSeed)
 	for _, width := range []int{4, 8, 16, 64} {
 		for _, height := range []int{2, 4, 17, 64} {
-			src8Stride := width + 5
 			src16Stride := width + 7
 			dstStride := width + 9
-			src8 := make([]uint8, src8Stride*height)
 			src16 := make([]uint16, src16Stride*height)
-			got8 := make([]uint16, dstStride*height)
 			got16 := make([]uint16, dstStride*height)
-			want8 := make([]uint16, dstStride*height)
 			want16 := make([]uint16, dstStride*height)
 			for row := range height {
 				for col := range width {
-					v := uint16(rnd.generate(1 << 16))
-					src8[row*src8Stride+col] = uint8(v)
-					src16[row*src16Stride+col] = v
+					src16[row*src16Stride+col] = uint16(rnd.generate(1 << 16))
 				}
 			}
-			copyRect8To16Reference(want8, dstStride, src8, src8Stride, width, height)
 			copyRect16To16Reference(want16, dstStride, src16, src16Stride, width, height)
-			if err := CopyRect8To16(got8, dstStride, src8, src8Stride, width, height); err != nil {
-				t.Fatalf("CopyRect8To16 width=%d height=%d: %v", width, height, err)
-			}
 			if err := CopyRect16To16(got16, dstStride, src16, src16Stride, width, height); err != nil {
 				t.Fatalf("CopyRect16To16 width=%d height=%d: %v", width, height, err)
 			}
-			assertUint16SlicesEqual(t, got8, want8)
 			assertUint16SlicesEqual(t, got16, want16)
 		}
 	}
 }
 
 func TestCopyRectRejectsInvalidInputs(t *testing.T) {
-	if err := CopyRect8To16(make([]uint16, 4), 2, make([]uint8, 4), 2, 3, 2); !errors.Is(err, ErrInvalidCDEF) {
-		t.Fatalf("CopyRect8To16 err=%v want %v", err, ErrInvalidCDEF)
-	}
 	if err := CopyRect16To16(make([]uint16, 4), 2, make([]uint16, 4), 2, 2, 3); !errors.Is(err, ErrInvalidCDEF) {
 		t.Fatalf("CopyRect16To16 err=%v want %v", err, ErrInvalidCDEF)
 	}
@@ -80,9 +66,7 @@ func TestFilterBlockMatchesLibaomCorpus(t *testing.T) {
 									Height:            uint8(size.height),
 								}
 								filterBlockLibaomReference(want, 8, 0, input, cdefBlockOrigin(), params)
-								if err := FilterBlock(got, 8, 0, input, cdefBlockOrigin(), params); err != nil {
-									t.Fatalf("size=%dx%d boundary=%d depth=%d dir=%d pri=%d sec=%d: %v", size.width, size.height, boundary, depth, dir, pri, sec, err)
-								}
+								filterBlockUnchecked(got, 8, 0, input, cdefBlockOrigin(), params)
 								assertBlockEqual(t, got, want, 8, size.width, size.height)
 							}
 						}
@@ -133,7 +117,7 @@ func TestFilterFrameBlocksMatchesLibaomReference(t *testing.T) {
 	}
 	var gotDirs DirectionGrid
 	var gotVars VarianceGrid
-	if err := FilterFrameBlocks(got, 16, input, cdefBlockOrigin(), blocks, &gotDirs, &gotVars, params); err != nil {
+	if err := FilterFrameBlocksTrusted(got, 16, input, cdefBlockOrigin(), blocks, &gotDirs, &gotVars, params); err != nil {
 		t.Fatal(err)
 	}
 	assertBlockEqual(t, got, want, 16, 16, 16)
@@ -158,7 +142,7 @@ func TestFilterFrameBlocksConvertsChromaDirections(t *testing.T) {
 		dirs[block.BY][block.BX] = uint8(i)
 	}
 	dst := make([]uint16, 16*8)
-	err := FilterFrameBlocks(dst, 16, input, cdefBlockOrigin(), blocks, &dirs, &vars, FrameFilterParams{
+	err := FilterFrameBlocksTrusted(dst, 16, input, cdefBlockOrigin(), blocks, &dirs, &vars, FrameFilterParams{
 		XDec:              1,
 		Plane:             PlaneU,
 		Level:             4,
@@ -176,82 +160,11 @@ func TestFilterFrameBlocksConvertsChromaDirections(t *testing.T) {
 	}
 }
 
-func TestFilterBlockRejectsInvalidInputs(t *testing.T) {
-	input := makeCDEFBlockInput(newCDEFRandom(cdefDeterministicSeed), 8, 0, 0)
-	valid := BlockFilterParams{
-		PrimaryStrength:   4,
-		SecondaryStrength: 2,
-		Direction:         0,
-		PrimaryDamping:    3,
-		SecondaryDamping:  3,
-		Width:             8,
-		Height:            8,
-	}
-	tests := []struct {
-		name   string
-		dst    []uint16
-		stride int
-		origin int
-		input  []uint16
-		inOff  int
-		params BlockFilterParams
-	}{
-		{name: "short-dst", dst: make([]uint16, 63), stride: 8, input: input, inOff: cdefBlockOrigin(), params: valid},
-		{name: "short-input", dst: make([]uint16, 64), stride: 8, input: input[:cdefBlockOrigin()], inOff: cdefBlockOrigin(), params: valid},
-		{name: "bad-dir", dst: make([]uint16, 64), stride: 8, input: input, inOff: cdefBlockOrigin(), params: withCDEFDirection(valid, 8)},
-		{name: "bad-size", dst: make([]uint16, 64), stride: 8, input: input, inOff: cdefBlockOrigin(), params: withCDEFSize(valid, 6, 8)},
-		{name: "bad-coeff-shift", dst: make([]uint16, 64), stride: 8, input: input, inOff: cdefBlockOrigin(), params: withCDEFCoeffShift(valid, 5)},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := FilterBlock(tt.dst, tt.stride, tt.origin, tt.input, tt.inOff, tt.params); !errors.Is(err, ErrInvalidCDEF) {
-				t.Fatalf("err=%v want %v", err, ErrInvalidCDEF)
-			}
-		})
-	}
-}
-
-func TestFilterFrameBlocksRejectsInvalidFrameParams(t *testing.T) {
-	input := make([]uint16, InputBufferSize)
-	dst := make([]uint16, 64)
-	blocks := []BlockPosition{{BY: 0, BX: 0}}
-	var dirs DirectionGrid
-	var vars VarianceGrid
-	valid := FrameFilterParams{
-		Plane:             PlaneY,
-		Level:             4,
-		SecondaryStrength: 2,
-		Damping:           5,
-		CoeffShift:        1,
-	}
-	tests := []struct {
-		name   string
-		params FrameFilterParams
-	}{
-		{name: "bad-xdec", params: withFrameFilterXDec(valid, 2)},
-		{name: "bad-level", params: withFrameFilterLevel(valid, 16)},
-		{name: "bad-secondary", params: withFrameFilterSecondary(valid, 5)},
-		{name: "bad-shift", params: withFrameFilterCoeffShift(valid, 5)},
-		{name: "chroma-damping-underflow", params: FrameFilterParams{Plane: PlaneU, Level: 1}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := FilterFrameBlocks(dst, 8, input, cdefBlockOrigin(), blocks, &dirs, &vars, tt.params); !errors.Is(err, ErrInvalidCDEF) {
-				t.Fatalf("err=%v want %v", err, ErrInvalidCDEF)
-			}
-		})
-	}
-}
-
 func TestCDEFAllocs(t *testing.T) {
 	rnd := newCDEFRandom(cdefDeterministicSeed)
 	input := make([]uint16, InputBufferSize)
 	for i := range input {
 		input[i] = uint16(rnd.generate(1 << 12))
-	}
-	src8 := make([]uint8, 16*8)
-	for i := range src8 {
-		src8[i] = uint8(rnd.generate(256))
 	}
 	dst := make([]uint16, 16*16)
 	blocks := []BlockPosition{{BY: 0, BX: 0}, {BY: 0, BX: 1}, {BY: 1, BX: 0}, {BY: 1, BX: 1}}
@@ -268,16 +181,11 @@ func TestCDEFAllocs(t *testing.T) {
 		Height:            8,
 	}
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := CopyRect8To16(dst, 16, src8, 16, 8, 8); err != nil {
-			t.Fatal(err)
-		}
 		if err := CopyRect16To16(dst, 16, dst, 16, 8, 8); err != nil {
 			t.Fatal(err)
 		}
-		if err := FilterBlock(dst, 16, 0, input, cdefBlockOrigin(), params); err != nil {
-			t.Fatal(err)
-		}
-		if err := FilterFrameBlocks(dst, 16, input, cdefBlockOrigin(), blocks, &dirs, &vars, FrameFilterParams{
+		filterBlockUnchecked(dst, 16, 0, input, cdefBlockOrigin(), params)
+		if err := FilterFrameBlocksTrusted(dst, 16, input, cdefBlockOrigin(), blocks, &dirs, &vars, FrameFilterParams{
 			Plane:             PlaneY,
 			Level:             8,
 			SecondaryStrength: 2,
@@ -289,148 +197,6 @@ func TestCDEFAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("CDEF helpers allocated: %f", allocs)
-	}
-}
-
-func FuzzFilterBlock(f *testing.F) {
-	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7}, uint8(0), uint8(0), uint8(0), uint8(8), uint8(8))
-	f.Add([]byte{255, 128, 64, 32, 16, 8}, uint8(15), uint8(7), uint8(4), uint8(4), uint8(8))
-
-	f.Fuzz(func(t *testing.T, data []byte, rawBoundary uint8, rawDir uint8, rawShift uint8, rawWidth uint8, rawHeight uint8) {
-		shift := int(rawShift % 5)
-		width := 4
-		if rawWidth&1 == 0 {
-			width = 8
-		}
-		height := 4
-		if rawHeight&1 == 0 {
-			height = 8
-		}
-		input := make([]uint16, (8+2*VerticalBorder)*BStride)
-		max := uint16((1 << (8 + shift)) - 1)
-		for i := range input {
-			if len(data) == 0 {
-				input[i] = 0
-				continue
-			}
-			lo := uint16(data[i%len(data)])
-			hi := uint16(data[(i+1)%len(data)])
-			input[i] = (lo | hi<<8) & max
-		}
-		applyCDEFBoundary(input, rawBoundary&15)
-		params := BlockFilterParams{
-			PrimaryStrength:   uint8(int(rawDir%16) << shift),
-			SecondaryStrength: uint8(cdefSecondaryStrengthCorpus(shift)[int(rawBoundary)%4]),
-			Direction:         uint8(rawDir % 8),
-			PrimaryDamping:    uint8(3 + shift + int(rawBoundary%3)),
-			SecondaryDamping:  uint8(3 + shift + int((rawBoundary>>2)%3)),
-			CoeffShift:        uint8(shift),
-			Width:             uint8(width),
-			Height:            uint8(height),
-		}
-		got := make([]uint16, 64)
-		want := make([]uint16, 64)
-		filterBlockLibaomReference(want, 8, 0, input, cdefBlockOrigin(), params)
-		if err := FilterBlock(got, 8, 0, input, cdefBlockOrigin(), params); err != nil {
-			t.Fatalf("FilterBlock err=%v", err)
-		}
-		assertBlockEqual(t, got, want, 8, width, height)
-	})
-}
-
-func FuzzFilterFrameBlocks(f *testing.F) {
-	f.Add([]byte{0, 16, 32, 64, 128, 255}, uint8(0), uint8(0), uint8(2))
-	f.Fuzz(func(t *testing.T, data []byte, rawLevel uint8, rawSecondary uint8, rawShift uint8) {
-		shift := int(rawShift % 5)
-		input := make([]uint16, InputBufferSize)
-		max := uint16((1 << (8 + shift)) - 1)
-		for i := range input {
-			if len(data) == 0 {
-				continue
-			}
-			lo := uint16(data[i%len(data)])
-			hi := uint16(data[(i+1)%len(data)])
-			input[i] = (lo | hi<<8) & max
-		}
-		blocks := []BlockPosition{{BY: 0, BX: 0}, {BY: 0, BX: 1}, {BY: 1, BX: 0}, {BY: 1, BX: 1}}
-		dst := make([]uint16, 16*16)
-		var dirs DirectionGrid
-		var vars VarianceGrid
-		err := FilterFrameBlocks(dst, 16, input, cdefBlockOrigin(), blocks, &dirs, &vars, FrameFilterParams{
-			Plane:             PlaneY,
-			Level:             rawLevel % 16,
-			SecondaryStrength: rawSecondary % 4,
-			Damping:           3 + rawLevel%4,
-			CoeffShift:        uint8(shift),
-		})
-		if err != nil {
-			t.Fatalf("FilterFrameBlocks err=%v", err)
-		}
-		for _, sample := range dst {
-			if sample > max {
-				t.Fatalf("sample=%d max=%d", sample, max)
-			}
-		}
-	})
-}
-
-func BenchmarkFilterBlock(b *testing.B) {
-	input := makeCDEFBlockInput(newCDEFRandom(cdefDeterministicSeed), 12, 0, 0)
-	dst := make([]uint16, 64)
-	params := BlockFilterParams{
-		PrimaryStrength:   15 << 4,
-		SecondaryStrength: 4 << 4,
-		Direction:         4,
-		PrimaryDamping:    7,
-		SecondaryDamping:  7,
-		CoeffShift:        4,
-		Width:             8,
-		Height:            8,
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = FilterBlock(dst, 8, 0, input, cdefBlockOrigin(), params)
-	}
-}
-
-func BenchmarkFilterFrameBlocks(b *testing.B) {
-	rnd := newCDEFRandom(cdefDeterministicSeed)
-	input := make([]uint16, InputBufferSize)
-	for i := range input {
-		input[i] = uint16(rnd.generate(1 << 10))
-	}
-	blocks := []BlockPosition{{BY: 0, BX: 0}, {BY: 0, BX: 1}, {BY: 1, BX: 0}, {BY: 1, BX: 1}}
-	dst := make([]uint16, 16*16)
-	var dirs DirectionGrid
-	var vars VarianceGrid
-	params := FrameFilterParams{
-		Plane:             PlaneY,
-		Level:             9,
-		SecondaryStrength: 2,
-		Damping:           5,
-		CoeffShift:        2,
-	}
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = FilterFrameBlocks(dst, 16, input, cdefBlockOrigin(), blocks, &dirs, &vars, params)
-	}
-}
-
-func BenchmarkCopyRect8To16(b *testing.B) {
-	rnd := newCDEFRandom(cdefDeterministicSeed)
-	const width = 64
-	const height = 64
-	srcStride := width + 5
-	dstStride := width + 9
-	src := make([]uint8, srcStride*height)
-	dst := make([]uint16, dstStride*height)
-	for i := range src {
-		src[i] = uint8(rnd.generate(256))
-	}
-	b.SetBytes(int64(width * height))
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = CopyRect8To16(dst, dstStride, src, srcStride, width, height)
 	}
 }
 
@@ -449,14 +215,6 @@ func BenchmarkCopyRect16To16(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		_ = CopyRect16To16(dst, dstStride, src, srcStride, width, height)
-	}
-}
-
-func copyRect8To16Reference(dst []uint16, dstStride int, src []uint8, srcStride int, width int, height int) {
-	for row := range height {
-		for col := range width {
-			dst[row*dstStride+col] = uint16(src[row*srcStride+col])
-		}
 	}
 }
 
@@ -694,40 +452,4 @@ func assertUint16SlicesEqual(t *testing.T, got []uint16, want []uint16) {
 			t.Fatalf("sample[%d]=%d want %d", i, got[i], want[i])
 		}
 	}
-}
-
-func withCDEFDirection(params BlockFilterParams, dir int) BlockFilterParams {
-	params.Direction = uint8(dir)
-	return params
-}
-
-func withCDEFSize(params BlockFilterParams, width int, height int) BlockFilterParams {
-	params.Width = uint8(width)
-	params.Height = uint8(height)
-	return params
-}
-
-func withCDEFCoeffShift(params BlockFilterParams, coeffShift int) BlockFilterParams {
-	params.CoeffShift = uint8(coeffShift)
-	return params
-}
-
-func withFrameFilterXDec(params FrameFilterParams, xDec int) FrameFilterParams {
-	params.XDec = uint8(xDec)
-	return params
-}
-
-func withFrameFilterLevel(params FrameFilterParams, level int) FrameFilterParams {
-	params.Level = uint8(level)
-	return params
-}
-
-func withFrameFilterSecondary(params FrameFilterParams, secondary int) FrameFilterParams {
-	params.SecondaryStrength = uint8(secondary)
-	return params
-}
-
-func withFrameFilterCoeffShift(params FrameFilterParams, coeffShift int) FrameFilterParams {
-	params.CoeffShift = uint8(coeffShift)
-	return params
 }

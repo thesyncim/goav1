@@ -74,14 +74,10 @@ func TestEncodePFrameDecodeMatchesRecon(t *testing.T) {
 				}
 			}
 
-			const qIndex = 50
-			keyTU, keyRecon, err := encoder.EncodeKeyframe(src1, qIndex)
-			if err != nil {
-				t.Fatalf("encode keyframe: %v", err)
-			}
-			pTU, pRecon, err := encoder.EncodePFrame(src2, keyRecon, qIndex)
-			if err != nil {
-				t.Fatalf("encode p-frame: %v", err)
+			tus, recons, keys := encodeSequence(t, 50, src1, src2)
+			keyTU, pTU, pRecon := tus[0], tus[1], recons[1]
+			if keys[1] {
+				t.Fatal("second frame coded as a keyframe")
 			}
 			t.Logf("key TU %d bytes, P TU %d bytes", len(keyTU), len(pTU))
 			// Size evidence only on the larger frame: the tiny 64x64 gradient
@@ -103,10 +99,11 @@ func TestEncodePFrameDecodeMatchesRecon(t *testing.T) {
 			if len(frames) != 2 {
 				t.Fatalf("decoded %d frames, want 2", len(frames))
 			}
-			f := frames[1]
-			comparePlane(t, "Y", f.Y, pRecon.Y, sz.w, sz.h, sz.w)
-			comparePlane(t, "U", f.U, pRecon.U, cw, ch, cw)
-			comparePlane(t, "V", f.V, pRecon.V, cw, ch, cw)
+			for i, f := range frames {
+				comparePlane(t, fmt.Sprintf("frame%d Y", i), f.Y, recons[i].Y, sz.w, sz.h, sz.w)
+				comparePlane(t, fmt.Sprintf("frame%d U", i), f.U, recons[i].U, cw, ch, cw)
+				comparePlane(t, fmt.Sprintf("frame%d V", i), f.V, recons[i].V, cw, ch, cw)
+			}
 
 			psnr := planePSNR(src2.Y, pRecon.Y)
 			t.Logf("P-frame luma PSNR(src2, recon) = %.2f dB", psnr)
@@ -114,69 +111,6 @@ func TestEncodePFrameDecodeMatchesRecon(t *testing.T) {
 				t.Fatalf("P-frame luma PSNR %.2f dB below sanity floor", psnr)
 			}
 		})
-	}
-}
-
-func TestEncodeLosslessPFrameDecodeMatchesSource(t *testing.T) {
-	const w, h = 96, 64
-	cw, ch := w/2, h/2
-	makeFrame := func(seed int) encoder.SourceFrame420 {
-		rng := rand.New(rand.NewSource(int64(seed)))
-		f := encoder.SourceFrame420{
-			Y:            make([]byte, w*h),
-			U:            make([]byte, cw*ch),
-			V:            make([]byte, cw*ch),
-			YStride:      w,
-			ChromaStride: cw,
-			Width:        w,
-			Height:       h,
-		}
-		for y := range h {
-			for x := range w {
-				f.Y[y*w+x] = uint8((x*3 + y*5 + rng.Intn(37)) & 0xff)
-			}
-		}
-		for y := range ch {
-			for x := range cw {
-				f.U[y*cw+x] = uint8((96 + x*7 + y*3 + rng.Intn(19)) & 0xff)
-				f.V[y*cw+x] = uint8((144 + x*5 + y*11 + rng.Intn(23)) & 0xff)
-			}
-		}
-		return f
-	}
-	src1 := makeFrame(11)
-	src2 := makeFrame(29)
-
-	keyTU, keyRecon, err := encoder.EncodeKeyframe(src1, 72)
-	if err != nil {
-		t.Fatalf("encode keyframe: %v", err)
-	}
-	pTU, pRecon, err := encoder.EncodePFrame(src2, keyRecon, 0)
-	if err != nil {
-		t.Fatalf("encode lossless p-frame: %v", err)
-	}
-	if !bytes.Equal(pRecon.Y, src2.Y) || !bytes.Equal(pRecon.U, src2.U) || !bytes.Equal(pRecon.V, src2.V) {
-		t.Fatal("lossless P-frame reconstruction differs from source")
-	}
-
-	dec, err := goav1.NewDecoder([][]byte{keyTU, pTU})
-	if err != nil {
-		t.Fatalf("new decoder: %v", err)
-	}
-	defer dec.Close()
-	frames, err := dec.DecodeAll()
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(frames) != 2 {
-		t.Fatalf("decoded %d frames, want 2", len(frames))
-	}
-	f := frames[1]
-	comparePlane(t, "decoded Y", f.Y, src2.Y, w, h, w)
-	comparePlane(t, "decoded U", f.U, src2.U, cw, ch, cw)
-	comparePlane(t, "decoded V", f.V, src2.V, cw, ch, cw)
-	if bytes.Equal(pTU, keyTU) {
-		t.Fatal("lossless P-frame unexpectedly matched keyframe bytes")
 	}
 }
 

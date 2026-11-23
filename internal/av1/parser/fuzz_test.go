@@ -67,7 +67,7 @@ func FuzzParseIntraFrameSize(f *testing.F) {
 		if err != nil {
 			return
 		}
-		size, err := ParseIntraFrameSize(payload, seq, prefix, 0, 0)
+		size, err := ParseFrameSize(payload, seq, prefix, nil, 0, 0)
 		if err != nil {
 			return
 		}

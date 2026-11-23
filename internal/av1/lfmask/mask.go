@@ -46,44 +46,6 @@ func (m *FilterMask) Clear() {
 	*m = FilterMask{}
 }
 
-// FilterLUT holds the E/I/H deblocking limits keyed by loop-filter level, plus
-// the two sharpness scalars dav1d caches. Ported from dav1d src/lf_mask.h
-// Av1FilterLUT and src/lf_mask.c dav1d_calc_eih.
-type FilterLUT struct {
-	E     [64]uint8
-	I     [64]uint8
-	Sharp [2]uint64
-}
-
-// CalcEIH fills the E/I/H limit LUT from a loop-filter sharpness value, matching
-// dav1d_calc_eih (src/lf_mask.c:385). E == block limit, I == interior limit,
-// H (per-level) == level>>4 is computed at consume time, not stored here.
-func CalcEIH(sharpness int) FilterLUT {
-	var lut FilterLUT
-	sharp := sharpness
-	for level := 0; level < 64; level++ {
-		limit := level
-		if sharp > 0 {
-			limit >>= (sharp + 3) >> 2
-			if m := 9 - sharp; limit > m {
-				limit = m
-			}
-		}
-		if limit < 1 {
-			limit = 1
-		}
-		lut.I[level] = uint8(limit)
-		lut.E[level] = uint8(2*(level+2) + limit)
-	}
-	lut.Sharp[0] = uint64((sharp + 3) >> 2)
-	if sharp != 0 {
-		lut.Sharp[1] = uint64(9 - sharp)
-	} else {
-		lut.Sharp[1] = 0xff
-	}
-	return lut
-}
-
 // bmin is imin over two tx-context classes, written branch-free: in the edge
 // loops the comparison is data-dependent, and Go lowers min there to a
 // conditional branch where clang emits csel.

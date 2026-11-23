@@ -366,14 +366,6 @@ func CoeffTransformSizeContext(size TransformSize) (uint8, error) {
 	return (dims.Min + dims.Max + 1) >> 1, nil
 }
 
-// EOBMultiSize ports libaom's txsize_log2_minus4[] table.
-func EOBMultiSize(size TransformSize) (uint8, error) {
-	if !size.Valid() {
-		return 0, ErrInvalidDecodeState
-	}
-	return eobMultiSizeTable[size], nil
-}
-
 func EOBPositionToken(eob int) (token int, extra int, err error) {
 	if eob < 0 || eob > 1024 {
 		return 0, 0, ErrInvalidDecodeState
@@ -439,65 +431,6 @@ func coeffInitLevelsPureGo(coeffs []int16, scanWidth int, scanHeight int, levels
 			levels[dst+row] = coeffAbsClamp127(coeffs[src+row])
 		}
 	}
-}
-
-// CoeffNZMapContexts ports libaom's av1_get_nz_map_contexts_c. It writes
-// contexts only for scan positions before eob and preserves all other entries.
-func CoeffNZMapContexts(levels []uint8, size TransformSize, class transform.Class, scan []int16, eob int, contexts []int8) error {
-	if !class.Valid() || eob < 0 {
-		return ErrInvalidDecodeState
-	}
-	txSize, err := size.TransformSize()
-	if err != nil {
-		return ErrInvalidDecodeState
-	}
-	scanSize, err := transform.ScanSize(txSize)
-	if err != nil {
-		return ErrInvalidDecodeState
-	}
-	maxEOB := int(scanSize.Width) * int(scanSize.Height)
-	scratchLen, err := CoeffLevelsScratchLen(size)
-	if err != nil {
-		return err
-	}
-	if eob > maxEOB || len(scan) < eob || len(contexts) < maxEOB || len(levels) < scratchLen {
-		return ErrInvalidDecodeState
-	}
-	if err := coeffNZMapValidateScan(scan, eob, maxEOB); err != nil {
-		return err
-	}
-	if coeffNZMapContextsArch(levels, size, class, scan, eob, contexts, maxEOB) {
-		return nil
-	}
-	return coeffNZMapContextsScalar(levels, size, class, scan, eob, contexts, maxEOB)
-}
-
-func coeffNZMapValidateScan(scan []int16, eob int, maxEOB int) error {
-	for i := range eob {
-		pos := int(scan[i])
-		if pos < 0 || pos >= maxEOB {
-			return ErrInvalidDecodeState
-		}
-	}
-	return nil
-}
-
-func coeffNZMapContextsScalar(levels []uint8, size TransformSize, class transform.Class, scan []int16, eob int, contexts []int8, maxEOB int) error {
-	for i := range eob {
-		pos := int(scan[i])
-		var ctx int
-		var err error
-		if i == eob-1 {
-			ctx = int(coeffLowerLevelsCtxEOBFast(maxEOB, i))
-		} else {
-			ctx, err = CoeffLowerLevelsContext(levels, size, class, pos)
-			if err != nil {
-				return err
-			}
-		}
-		contexts[pos] = int8(ctx)
-	}
-	return nil
 }
 
 var defaultCoeffCDFs = makeDefaultCoeffCDFs()
@@ -766,21 +699,6 @@ func coeff1DContextOffset(position int) int {
 		return 31
 	}
 	return 36
-}
-
-func setCoeffLevel(levels []uint8, size TransformSize, coeffIndex int, level int) error {
-	if level < 0 || level > 255 {
-		return ErrInvalidDecodeState
-	}
-	padded, _, _, _, err := coeffPaddedPosition(size, coeffIndex)
-	if err != nil {
-		return err
-	}
-	if padded >= len(levels) {
-		return ErrInvalidDecodeState
-	}
-	levels[padded] = uint8(level)
-	return nil
 }
 
 func coeffPaddedPosition(size TransformSize, coeffIndex int) (padded int, stride int, row int, col int, err error) {

@@ -4,8 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
-	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -18,14 +16,7 @@ func TestAppendFrameHeaderIntraPayloadShownKeyFrame(t *testing.T) {
 		SuperResDenominator: 8,
 		RefreshFrameFlags:   0xff,
 	}
-	payload, parsedPrefix, parsedSize := appendAndParseFrameHeaderIntra(t, seq, prefix, size)
-	payloadSize, err := FrameHeaderIntraPayloadSize(seq, prefix, size)
-	if err != nil {
-		t.Fatalf("FrameHeaderIntraPayloadSize: %v", err)
-	}
-	if len(payload) != payloadSize {
-		t.Fatalf("payload len=%d bytes=% x want %d", len(payload), payload, payloadSize)
-	}
+	_, parsedPrefix, parsedSize := appendAndParseFrameHeaderIntra(t, seq, prefix, size)
 	if parsedPrefix.BitsRead >= parsedSize.BitsRead {
 		t.Fatalf("bits did not advance: prefix=%d size=%d", parsedPrefix.BitsRead, parsedSize.BitsRead)
 	}
@@ -38,112 +29,6 @@ func TestAppendFrameHeaderIntraPayloadShownKeyFrame(t *testing.T) {
 		parsedSize.SuperResEnabled ||
 		parsedSize.SuperResDenominator != 8 {
 		t.Fatalf("parsed size=%+v", parsedSize)
-	}
-}
-
-func TestAppendLowOverheadFrameHeaderIntraOBU(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	prefix := shownKeyFrameHeaderPrefix(false)
-	size := IntraFrameSize{
-		UpscaledWidth:       seq.MaxFrameWidth,
-		Height:              seq.MaxFrameHeight,
-		SuperResDenominator: 8,
-		RefreshFrameFlags:   0xff,
-	}
-	obuSize, err := LowOverheadFrameHeaderIntraOBUSize(seq, prefix, size)
-	if err != nil {
-		t.Fatalf("LowOverheadFrameHeaderIntraOBUSize: %v", err)
-	}
-	var buf [64]byte
-	out, err := AppendLowOverheadFrameHeaderIntraOBU(buf[:0], seq, prefix, size)
-	if err != nil {
-		t.Fatalf("AppendLowOverheadFrameHeaderIntraOBU: %v", err)
-	}
-	if len(out) != obuSize {
-		t.Fatalf("obu len=%d want %d", len(out), obuSize)
-	}
-	unit, consumed, err := obu.ParseLowOverhead(out)
-	if err != nil {
-		t.Fatalf("ParseLowOverhead: %v", err)
-	}
-	if consumed != len(out) || unit.Header.Type != obu.TypeFrameHeader || !unit.Header.HasSizeField {
-		t.Fatalf("parsed obu header=%+v consumed=%d", unit.Header, consumed)
-	}
-	parsedSeq := parseEncoderSequenceHeader(t, seq)
-	parsedPrefix, err := parser.ParseFrameHeaderPrefix(unit.Payload, parsedSeq)
-	if err != nil {
-		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
-	}
-	parsedSize, err := parser.ParseIntraFrameSize(unit.Payload, parsedSeq, parsedPrefix, 0, 0)
-	if err != nil {
-		t.Fatalf("ParseIntraFrameSize: %v", err)
-	}
-	if parsedSize.RefreshFrameFlags != 0xff || parsedSize.UpscaledWidth != seq.MaxFrameWidth || parsedSize.Height != seq.MaxFrameHeight {
-		t.Fatalf("parsed size=%+v", parsedSize)
-	}
-}
-
-func TestAppendLowOverheadIntraHeaderTemporalUnit(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	prefix := shownKeyFrameHeaderPrefix(false)
-	size := IntraFrameSize{
-		UpscaledWidth:       seq.MaxFrameWidth,
-		Height:              seq.MaxFrameHeight,
-		SuperResDenominator: 8,
-		RefreshFrameFlags:   0xff,
-	}
-	unitSize, err := LowOverheadIntraHeaderTemporalUnitSize(seq, prefix, size)
-	if err != nil {
-		t.Fatalf("LowOverheadIntraHeaderTemporalUnitSize: %v", err)
-	}
-	var buf [192]byte
-	out, err := AppendLowOverheadIntraHeaderTemporalUnit(buf[:0], seq, prefix, size)
-	if err != nil {
-		t.Fatalf("AppendLowOverheadIntraHeaderTemporalUnit: %v", err)
-	}
-	if len(out) != unitSize {
-		t.Fatalf("temporal unit len=%d want %d", len(out), unitSize)
-	}
-
-	it := obu.NewLowOverheadIterator(out)
-	td, ok, err := it.Next()
-	if err != nil || !ok {
-		t.Fatalf("temporal delimiter ok=%v err=%v", ok, err)
-	}
-	if td.Header.Type != obu.TypeTemporalDelimiter || len(td.Payload) != 0 {
-		t.Fatalf("temporal delimiter=%+v payload=% x", td.Header, td.Payload)
-	}
-	seqUnit, ok, err := it.Next()
-	if err != nil || !ok {
-		t.Fatalf("sequence header ok=%v err=%v", ok, err)
-	}
-	if seqUnit.Header.Type != obu.TypeSequenceHeader {
-		t.Fatalf("sequence unit type=%v", seqUnit.Header.Type)
-	}
-	parsedSeq, err := parser.ParseSequenceHeader(seqUnit.Payload)
-	if err != nil {
-		t.Fatalf("ParseSequenceHeader: %v", err)
-	}
-	frameUnit, ok, err := it.Next()
-	if err != nil || !ok {
-		t.Fatalf("frame header ok=%v err=%v", ok, err)
-	}
-	if frameUnit.Header.Type != obu.TypeFrameHeader {
-		t.Fatalf("frame unit type=%v", frameUnit.Header.Type)
-	}
-	parsedPrefix, err := parser.ParseFrameHeaderPrefix(frameUnit.Payload, parsedSeq)
-	if err != nil {
-		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
-	}
-	parsedSize, err := parser.ParseIntraFrameSize(frameUnit.Payload, parsedSeq, parsedPrefix, 0, 0)
-	if err != nil {
-		t.Fatalf("ParseIntraFrameSize: %v", err)
-	}
-	if parsedSize.RefreshFrameFlags != 0xff || parsedSize.UpscaledWidth != seq.MaxFrameWidth || parsedSize.Height != seq.MaxFrameHeight {
-		t.Fatalf("parsed size=%+v", parsedSize)
-	}
-	if extra, ok, err := it.Next(); err != nil || ok {
-		t.Fatalf("extra unit ok=%v err=%v unit=%+v", ok, err, extra.Header)
 	}
 }
 
@@ -222,69 +107,6 @@ func TestAppendFrameHeaderIntraPayloadAllowIntrabc(t *testing.T) {
 	}
 }
 
-func TestAppendFrameHeaderIntraPayloadShortBuffer(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	prefix := shownKeyFrameHeaderPrefix(false)
-	size := IntraFrameSize{
-		UpscaledWidth:       seq.MaxFrameWidth,
-		Height:              seq.MaxFrameHeight,
-		SuperResDenominator: 8,
-		RefreshFrameFlags:   0xff,
-	}
-	var buf [2]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendFrameHeaderIntraPayload(dst, seq, prefix, size)
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want %v", err, bitstream.ErrShortBuffer)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output: % x", out)
-	}
-}
-
-func TestAppendLowOverheadFrameHeaderIntraOBUShortBuffer(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	prefix := shownKeyFrameHeaderPrefix(false)
-	size := IntraFrameSize{
-		UpscaledWidth:       seq.MaxFrameWidth,
-		Height:              seq.MaxFrameHeight,
-		SuperResDenominator: 8,
-		RefreshFrameFlags:   0xff,
-	}
-	var buf [2]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendLowOverheadFrameHeaderIntraOBU(dst, seq, prefix, size)
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want %v", err, bitstream.ErrShortBuffer)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output: % x", out)
-	}
-}
-
-func TestAppendLowOverheadIntraHeaderTemporalUnitShortBuffer(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	prefix := shownKeyFrameHeaderPrefix(false)
-	size := IntraFrameSize{
-		UpscaledWidth:       seq.MaxFrameWidth,
-		Height:              seq.MaxFrameHeight,
-		SuperResDenominator: 8,
-		RefreshFrameFlags:   0xff,
-	}
-	var buf [8]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendLowOverheadIntraHeaderTemporalUnit(dst, seq, prefix, size)
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want %v", err, bitstream.ErrShortBuffer)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output: % x", out)
-	}
-}
-
 func TestAppendFrameHeaderIntraPayloadRejectsInvalid(t *testing.T) {
 	seq := realtimeEncoderSequenceHeader()
 	basePrefix := shownKeyFrameHeaderPrefix(false)
@@ -326,51 +148,9 @@ func TestAppendFrameHeaderIntraPayloadRejectsInvalid(t *testing.T) {
 		prefix := basePrefix
 		size := baseSize
 		tt.mut(&prefix, &size)
-		if _, err := AppendFrameHeaderIntraPayload(buf[:0], seq, prefix, size); !errors.Is(err, ErrInvalidFrame) {
+		if _, err := appendFrameHeaderIntraPayload(buf[:0], seq, prefix, size); !errors.Is(err, ErrInvalidFrame) {
 			t.Fatalf("%s err=%v want %v", tt.name, err, ErrInvalidFrame)
 		}
-	}
-}
-
-func TestAppendFrameHeaderIntraPayloadAllocs(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	prefix := shownKeyFrameHeaderPrefix(false)
-	size := IntraFrameSize{
-		UpscaledWidth:       seq.MaxFrameWidth,
-		Height:              seq.MaxFrameHeight,
-		SuperResDenominator: 8,
-		RefreshFrameFlags:   0xff,
-	}
-	var buf [32]byte
-	if _, err := AppendFrameHeaderIntraPayload(buf[:0], seq, prefix, size); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = AppendFrameHeaderIntraPayload(buf[:0], seq, prefix, size)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendFrameHeaderIntraPayload allocated: %f", allocs)
-	}
-}
-
-func TestAppendLowOverheadFrameHeaderIntraOBUAllocs(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	prefix := shownKeyFrameHeaderPrefix(false)
-	size := IntraFrameSize{
-		UpscaledWidth:       seq.MaxFrameWidth,
-		Height:              seq.MaxFrameHeight,
-		SuperResDenominator: 8,
-		RefreshFrameFlags:   0xff,
-	}
-	var buf [64]byte
-	if _, err := AppendLowOverheadFrameHeaderIntraOBU(buf[:0], seq, prefix, size); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = AppendLowOverheadFrameHeaderIntraOBU(buf[:0], seq, prefix, size)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendLowOverheadFrameHeaderIntraOBU allocated: %f", allocs)
 	}
 }
 
@@ -383,13 +163,9 @@ func TestAppendFrameHeaderInterPayloadDirectSize(t *testing.T) {
 		SuperResDenominator: 8,
 		RefreshFrameFlags:   0x01,
 	}
-	payload, parsedPrefix, parsedSize := appendAndParseFrameHeaderInter(t, seq, prefix, size)
-	payloadSize, err := FrameHeaderInterPayloadSize(seq, prefix, size)
-	if err != nil {
-		t.Fatalf("FrameHeaderInterPayloadSize: %v", err)
-	}
-	if len(payload) != payloadSize || parsedPrefix.FrameType != parser.FrameTypeInter || !parsedPrefix.ShowableFrame {
-		t.Fatalf("payload len=%d want=%d prefix=%+v", len(payload), payloadSize, parsedPrefix)
+	_, parsedPrefix, parsedSize := appendAndParseFrameHeaderInter(t, seq, prefix, size)
+	if parsedPrefix.FrameType != parser.FrameTypeInter || !parsedPrefix.ShowableFrame {
+		t.Fatalf("prefix=%+v", parsedPrefix)
 	}
 	if parsedSize.RefreshFrameFlags != 0x01 || parsedSize.FrameRefsShortSignaling ||
 		parsedSize.UpscaledWidth != seq.MaxFrameWidth || parsedSize.Height != seq.MaxFrameHeight ||
@@ -430,49 +206,6 @@ func TestAppendFrameHeaderInterPayloadOverrideSuperresRender(t *testing.T) {
 	}
 }
 
-func TestAppendLowOverheadFrameHeaderInterOBU(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	prefix := interFrameHeaderPrefix(false)
-	size := InterFrameSize{
-		UpscaledWidth:       seq.MaxFrameWidth,
-		Height:              seq.MaxFrameHeight,
-		SuperResDenominator: 8,
-		RefreshFrameFlags:   0x01,
-	}
-	obuSize, err := LowOverheadFrameHeaderInterOBUSize(seq, prefix, size)
-	if err != nil {
-		t.Fatalf("LowOverheadFrameHeaderInterOBUSize: %v", err)
-	}
-	var buf [64]byte
-	out, err := AppendLowOverheadFrameHeaderInterOBU(buf[:0], seq, prefix, size)
-	if err != nil {
-		t.Fatalf("AppendLowOverheadFrameHeaderInterOBU: %v", err)
-	}
-	if len(out) != obuSize {
-		t.Fatalf("obu len=%d want %d", len(out), obuSize)
-	}
-	unit, consumed, err := obu.ParseLowOverhead(out)
-	if err != nil {
-		t.Fatalf("ParseLowOverhead: %v", err)
-	}
-	if consumed != len(out) || unit.Header.Type != obu.TypeFrameHeader || !unit.Header.HasSizeField {
-		t.Fatalf("parsed obu header=%+v consumed=%d", unit.Header, consumed)
-	}
-	parsedSeq := parseEncoderSequenceHeader(t, seq)
-	parsedPrefix, err := parser.ParseFrameHeaderPrefix(unit.Payload, parsedSeq)
-	if err != nil {
-		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
-	}
-	refs := parserReferenceState(seq, size.RefFrameIdx[:])
-	parsedSize, err := parser.ParseFrameSize(unit.Payload, parsedSeq, parsedPrefix, &refs, 0, 0)
-	if err != nil {
-		t.Fatalf("ParseFrameSize: %v", err)
-	}
-	if parsedSize.RefreshFrameFlags != size.RefreshFrameFlags {
-		t.Fatalf("parsed inter size=%+v", parsedSize)
-	}
-}
-
 func TestAppendFrameHeaderInterPayloadRejectsInvalid(t *testing.T) {
 	seq := realtimeEncoderSequenceHeader()
 	prefix := interFrameHeaderPrefix(false)
@@ -483,59 +216,13 @@ func TestAppendFrameHeaderInterPayloadRejectsInvalid(t *testing.T) {
 		RefreshFrameFlags:   0x01,
 	}
 	var buf [16]byte
-	if _, err := AppendFrameHeaderInterPayload(buf[:0], seq, shownKeyFrameHeaderPrefix(false), size); !errors.Is(err, ErrInvalidFrame) {
+	if _, err := appendFrameHeaderInterPayload(buf[:0], seq, shownKeyFrameHeaderPrefix(false), size); !errors.Is(err, ErrInvalidFrame) {
 		t.Fatalf("intra prefix err=%v want %v", err, ErrInvalidFrame)
 	}
 	bad := size
 	bad.RefFrameIdx[0] = 8
-	if _, err := AppendFrameHeaderInterPayload(buf[:0], seq, prefix, bad); !errors.Is(err, ErrInvalidFrame) {
+	if _, err := appendFrameHeaderInterPayload(buf[:0], seq, prefix, bad); !errors.Is(err, ErrInvalidFrame) {
 		t.Fatalf("bad ref idx err=%v want %v", err, ErrInvalidFrame)
-	}
-	var tiny [1]byte
-	if out, err := AppendFrameHeaderInterPayload(tiny[:0], seq, prefix, size); !errors.Is(err, bitstream.ErrShortBuffer) || len(out) != 0 {
-		t.Fatalf("short buffer out=% x err=%v want %v", out, err, bitstream.ErrShortBuffer)
-	}
-}
-
-func TestAppendFrameHeaderInterPayloadAllocs(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	prefix := interFrameHeaderPrefix(false)
-	size := InterFrameSize{
-		UpscaledWidth:       seq.MaxFrameWidth,
-		Height:              seq.MaxFrameHeight,
-		SuperResDenominator: 8,
-		RefreshFrameFlags:   0x01,
-	}
-	var buf [64]byte
-	if _, err := AppendFrameHeaderInterPayload(buf[:0], seq, prefix, size); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = AppendFrameHeaderInterPayload(buf[:0], seq, prefix, size)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendFrameHeaderInterPayload allocated: %f", allocs)
-	}
-}
-
-func TestAppendLowOverheadIntraHeaderTemporalUnitAllocs(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	prefix := shownKeyFrameHeaderPrefix(false)
-	size := IntraFrameSize{
-		UpscaledWidth:       seq.MaxFrameWidth,
-		Height:              seq.MaxFrameHeight,
-		SuperResDenominator: 8,
-		RefreshFrameFlags:   0xff,
-	}
-	var buf [192]byte
-	if _, err := AppendLowOverheadIntraHeaderTemporalUnit(buf[:0], seq, prefix, size); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = AppendLowOverheadIntraHeaderTemporalUnit(buf[:0], seq, prefix, size)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendLowOverheadIntraHeaderTemporalUnit allocated: %f", allocs)
 	}
 }
 
@@ -544,17 +231,17 @@ func appendAndParseFrameHeaderIntra(t *testing.T, seq SequenceHeader, prefix Fra
 	parsedSeq := parseEncoderSequenceHeader(t, seq)
 
 	var buf [64]byte
-	payload, err := AppendFrameHeaderIntraPayload(buf[:0], seq, prefix, size)
+	payload, err := appendFrameHeaderIntraPayload(buf[:0], seq, prefix, size)
 	if err != nil {
-		t.Fatalf("AppendFrameHeaderIntraPayload: %v", err)
+		t.Fatalf("appendFrameHeaderIntraPayload: %v", err)
 	}
 	parsedPrefix, err := parser.ParseFrameHeaderPrefix(payload, parsedSeq)
 	if err != nil {
 		t.Fatalf("ParseFrameHeaderPrefix: %v", err)
 	}
-	parsedSize, err := parser.ParseIntraFrameSize(payload, parsedSeq, parsedPrefix, 0, 0)
+	parsedSize, err := parser.ParseFrameSize(payload, parsedSeq, parsedPrefix, nil, 0, 0)
 	if err != nil {
-		t.Fatalf("ParseIntraFrameSize: %v", err)
+		t.Fatalf("ParseFrameSize: %v", err)
 	}
 	return payload, parsedPrefix, parsedSize
 }
@@ -564,9 +251,9 @@ func appendAndParseFrameHeaderInter(t *testing.T, seq SequenceHeader, prefix Fra
 	parsedSeq := parseEncoderSequenceHeader(t, seq)
 
 	var buf [64]byte
-	payload, err := AppendFrameHeaderInterPayload(buf[:0], seq, prefix, size)
+	payload, err := appendFrameHeaderInterPayload(buf[:0], seq, prefix, size)
 	if err != nil {
-		t.Fatalf("AppendFrameHeaderInterPayload: %v", err)
+		t.Fatalf("appendFrameHeaderInterPayload: %v", err)
 	}
 	parsedPrefix, err := parser.ParseFrameHeaderPrefix(payload, parsedSeq)
 	if err != nil {
@@ -583,9 +270,9 @@ func appendAndParseFrameHeaderInter(t *testing.T, seq SequenceHeader, prefix Fra
 func parseEncoderSequenceHeader(t *testing.T, seq SequenceHeader) parser.SequenceHeader {
 	t.Helper()
 	var seqBuf [128]byte
-	seqPayload, err := AppendSequenceHeaderPayload(seqBuf[:0], seq)
+	seqPayload, err := appendSequenceHeaderPayload(seqBuf[:0], seq)
 	if err != nil {
-		t.Fatalf("AppendSequenceHeaderPayload: %v", err)
+		t.Fatalf("appendSequenceHeaderPayload: %v", err)
 	}
 	parsedSeq, err := parser.ParseSequenceHeader(seqPayload)
 	if err != nil {

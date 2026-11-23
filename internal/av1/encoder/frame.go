@@ -1,7 +1,5 @@
 package encoder
 
-import "github.com/thesyncim/goav1/internal/av1/bitstream"
-
 const EncoderPrimaryRefNone uint8 = 7
 
 type FrameHeaderType uint8
@@ -46,37 +44,6 @@ type FrameHeaderPrefix struct {
 	FrameSizeOverride      bool
 	OrderHint              uint8
 	PrimaryRefFrame        uint8
-}
-
-// FrameHeaderPrefixPayloadSize returns the byte count for the emitted
-// uncompressed_header() prefix. The payload is intentionally not byte-aligned:
-// later frame-header syntax continues from this bit position.
-func FrameHeaderPrefixPayloadSize(seq SequenceHeader, prefix FrameHeaderPrefix) (int, error) {
-	w := newSizingBitWriter()
-	if err := writeFrameHeaderPrefixPayload(&w, seq, prefix); err != nil {
-		return 0, err
-	}
-	return w.bytesWritten(), nil
-}
-
-// AppendFrameHeaderPrefixPayload appends the initial uncompressed_header()
-// fields into dst without growing it. The result is a frame-header prefix, not
-// a complete frame_header_obu payload.
-func AppendFrameHeaderPrefixPayload(dst []byte, seq SequenceHeader, prefix FrameHeaderPrefix) ([]byte, error) {
-	size, err := FrameHeaderPrefixPayloadSize(seq, prefix)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < size {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+size]
-	w := newBitWriter(out[off:])
-	if err := writeFrameHeaderPrefixPayload(&w, seq, prefix); err != nil {
-		return dst, err
-	}
-	return out, nil
 }
 
 func writeFrameHeaderPrefixPayload(w *bitWriter, seq SequenceHeader, prefix FrameHeaderPrefix) error {

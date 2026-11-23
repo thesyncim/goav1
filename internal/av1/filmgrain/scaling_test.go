@@ -81,20 +81,14 @@ func TestScaleLUT(t *testing.T) {
 		1023: 255,
 	}
 	for index, want := range tests {
-		got, err := ScaleLUT(lut[:], index, 10)
-		if err != nil {
-			t.Fatal(err)
-		}
+		got := scaleLUT(lut[:], index, 10)
 		if got != want {
-			t.Fatalf("ScaleLUT(%d, 10)=%d want %d", index, got, want)
+			t.Fatalf("scaleLUT(%d, 10)=%d want %d", index, got, want)
 		}
 	}
-	got, err := ScaleLUT(lut[:], 4095, 12)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := scaleLUT(lut[:], 4095, 12)
 	if got != 255 {
-		t.Fatalf("ScaleLUT(4095, 12)=%d want 255", got)
+		t.Fatalf("scaleLUT(4095, 12)=%d want 255", got)
 	}
 }
 
@@ -105,15 +99,6 @@ func TestScalingRejectsInvalidInputs(t *testing.T) {
 	}
 	if err := BuildScalingLUT(lut[:], []ScalingPoint{{Value: 10}, {Value: 10}}); !errors.Is(err, ErrInvalidParams) {
 		t.Fatalf("duplicate point err=%v want %v", err, ErrInvalidParams)
-	}
-	if _, err := ScaleLUT(lut[:ScalingLUTSize-1], 0, 8); !errors.Is(err, ErrInvalidParams) {
-		t.Fatalf("short scale err=%v want %v", err, ErrInvalidParams)
-	}
-	if _, err := ScaleLUT(lut[:], 1<<12, 12); !errors.Is(err, ErrInvalidParams) {
-		t.Fatalf("large index err=%v want %v", err, ErrInvalidParams)
-	}
-	if _, err := ScaleLUT(lut[:], 0, 7); !errors.Is(err, ErrInvalidParams) {
-		t.Fatalf("low bit depth err=%v want %v", err, ErrInvalidParams)
 	}
 }
 
@@ -147,10 +132,9 @@ func TestScaleLUTClampsOutOfRangeIndex(t *testing.T) {
 	}
 }
 
-// TestApplyLumaSampleClampsOutOfRangeOrig confirms ApplyLumaSample no longer
-// panics when the original sample is outside the legal bitdepth range. The
-// public entrypoint rejects such samples with ErrInvalidParams, and the
-// internal helper clips defensively so concurrent apply paths cannot OOB.
+// TestApplyLumaSampleClampsOutOfRangeOrig confirms applyLumaSample does not
+// panic when the original sample is outside the legal bitdepth range: it clips
+// defensively so concurrent apply paths cannot OOB.
 func TestApplyLumaSampleClampsOutOfRangeOrig(t *testing.T) {
 	var lut [ScalingLUTSize]uint8
 	if err := BuildScalingLUT(lut[:], []ScalingPoint{{Value: 0, Scaling: 0}, {Value: 255, Scaling: 255}}); err != nil {
@@ -174,9 +158,7 @@ func TestScalingAllocs(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, index := range [...]int{0, 17, 255, 510, 1023, 2047, 4095} {
-			if _, err := ScaleLUT(lut[:], index, 12); err != nil {
-				t.Fatal(err)
-			}
+			_ = scaleLUT(lut[:], index, 12)
 		}
 	})
 	if allocs != 0 {
@@ -190,17 +172,5 @@ func BenchmarkBuildScalingLUT(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		_ = BuildScalingLUT(lut[:], points[:])
-	}
-}
-
-func BenchmarkScaleLUT(b *testing.B) {
-	points := [...]ScalingPoint{{Value: 0, Scaling: 0}, {Value: 255, Scaling: 255}}
-	var lut [ScalingLUTSize]uint8
-	if err := BuildScalingLUT(lut[:], points[:]); err != nil {
-		b.Fatal(err)
-	}
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		_, _ = ScaleLUT(lut[:], i&4095, 12)
 	}
 }

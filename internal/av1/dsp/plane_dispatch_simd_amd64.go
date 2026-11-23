@@ -8,7 +8,7 @@ package dsp
 
 import "simd/archsimd"
 
-// init binds the Go-native SIMD AddResidualPlaneBlock and AddRawTransformPlaneBlock
+// init binds the Go-native SIMD residual-add and raw-transform-add
 // inner loops on amd64 SIMD builds. AVX2 is not part of the GOAMD64=v1 baseline,
 // so the SIMD variants are selected only when archsimd reports AVX2; the pure-Go
 // references are the fallback.

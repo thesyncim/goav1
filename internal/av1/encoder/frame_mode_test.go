@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -75,58 +74,18 @@ func TestAppendFrameModeParamsPayloadRejectsInvalid(t *testing.T) {
 	}
 	var buf [1]byte
 	for _, tc := range cases {
-		if _, err := AppendFrameModeParamsPayload(buf[:0], tc.seq, tc.prefix, tc.params); !errors.Is(err, ErrInvalidFrame) {
-			t.Fatalf("AppendFrameModeParamsPayload(%+v,%+v) err=%v want ErrInvalidFrame", tc.prefix, tc.params, err)
+		if _, err := appendFrameModeParamsPayload(buf[:0], tc.seq, tc.prefix, tc.params); !errors.Is(err, ErrInvalidFrame) {
+			t.Fatalf("appendFrameModeParamsPayload(%+v,%+v) err=%v want ErrInvalidFrame", tc.prefix, tc.params, err)
 		}
-	}
-}
-
-func TestAppendFrameModeParamsPayloadShortBuffer(t *testing.T) {
-	seq := frameModeSequenceHeader()
-	prefix := FrameHeaderPrefix{FrameType: FrameHeaderTypeInter}
-	params := FrameModeParams{AllowWarpedMotion: true, ReducedTxSet: true}
-	var buf [1]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendFrameModeParamsPayload(dst, seq, prefix, params)
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want ErrShortBuffer", err)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output=% x", out)
-	}
-}
-
-func TestAppendFrameModeParamsPayloadAllocs(t *testing.T) {
-	seq := frameModeSequenceHeader()
-	prefix := FrameHeaderPrefix{FrameType: FrameHeaderTypeInter}
-	params := FrameModeParams{AllowWarpedMotion: true, ReducedTxSet: true}
-	var buf [1]byte
-	if _, err := AppendFrameModeParamsPayload(buf[:0], seq, prefix, params); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = FrameModeParamsPayloadSize(seq, prefix, params)
-		_, _ = AppendFrameModeParamsPayload(buf[:0], seq, prefix, params)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendFrameModeParamsPayload allocated: %f", allocs)
 	}
 }
 
 func appendAndParseFrameModeParams(t *testing.T, seq SequenceHeader, prefix FrameHeaderPrefix, params FrameModeParams) ([]byte, parser.FrameModeParams) {
 	t.Helper()
-	payloadSize, err := FrameModeParamsPayloadSize(seq, prefix, params)
-	if err != nil {
-		t.Fatalf("FrameModeParamsPayloadSize: %v", err)
-	}
 	var buf [1]byte
-	payload, err := AppendFrameModeParamsPayload(buf[:0], seq, prefix, params)
+	payload, err := appendFrameModeParamsPayload(buf[:0], seq, prefix, params)
 	if err != nil {
-		t.Fatalf("AppendFrameModeParamsPayload: %v", err)
-	}
-	if len(payload) != payloadSize {
-		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+		t.Fatalf("appendFrameModeParamsPayload: %v", err)
 	}
 	parsed, err := parser.ParseFrameModeParams(
 		payload,

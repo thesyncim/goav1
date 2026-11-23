@@ -16,10 +16,6 @@ func init() {
 	narrowStoreImpl = narrowStoreSIMD
 }
 
-// invGlueSIMDAvailable reports whether init bound the SIMD glue kernels. NEON
-// is part of the arm64 baseline, so the binding is unconditional.
-func invGlueSIMDAvailable() bool { return true }
-
 // invGlueNegShift[s] holds -s in every lane: the variable-shift count that
 // shifts right by s. Loading it from a table costs one vector load, where a
 // broadcast per call is a lane insert plus a dup.

@@ -264,31 +264,6 @@ func ResetRestorationPlaneRecords(grid RestorationPlaneGrid, dst []RestorationUn
 	return nil
 }
 
-// StoreRestorationUnitRecords writes decoded superblock records into their
-// frame-wide unit_info-equivalent slots, matching libaom's runit_idx indexing.
-func StoreRestorationUnitRecords(grid RestorationPlaneGrid, dst []RestorationUnitRecord, records []RestorationUnitRecord) error {
-	need, err := restorationPlaneRecordBufferLen(grid)
-	if err != nil {
-		return err
-	}
-	if len(dst) < need {
-		return ErrJobBufferTooSmall
-	}
-	if len(dst) != need {
-		return ErrInvalidPlan
-	}
-	for i := range records {
-		if err := validateRestorationUnitRecord(grid, records[i]); err != nil {
-			return err
-		}
-		if int(records[i].Index) >= len(dst) {
-			return ErrInvalidPlan
-		}
-		dst[records[i].Index] = records[i]
-	}
-	return nil
-}
-
 func (g RestorationPlaneGrid) UnitsInSuperblock(miCol uint32, miRow uint32, sbSizeMIB uint8) (RestorationUnitRange, bool, error) {
 	if g.Type == parser.RestorationNone {
 		return RestorationUnitRange{}, false, nil

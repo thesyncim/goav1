@@ -160,24 +160,6 @@ func inverseSeparableBlockInt16(dst []int16, dstStride int, coeff []int32, coeff
 	return nil
 }
 
-// InverseBlockBitDepthBoundedRows is InverseBlockBitDepth with the dav1d-style
-// first 1D pass bounded to rows that can contain non-zero dequantized
-// coefficients. activeRows must be exact; callers should derive it from the
-// decoded EOB scan prefix and fall back to InverseBlockBitDepth when unsure.
-func InverseBlockBitDepthBoundedRows(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size, t Type, bitDepth uint8, activeRows int) error {
-	rowMin, rowMax, colMin, colMax, ok := stageRangeBounds(bitDepth)
-	if !ok {
-		return ErrInvalidTransform
-	}
-	if t == TypeIDTX {
-		return inverseIdentityBlockClamped(dst, dstStride, coeff, coeffStride, size, rowMin, rowMax, colMin, colMax)
-	}
-	if !t.Supported(size) {
-		return ErrInvalidTransform
-	}
-	return inverseSeparableBlockClampedRows(dst, dstStride, coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax, activeRows)
-}
-
 // InverseBlockBitDepthRaw writes the post-column inverse-transform values into
 // dst before the final round-by-four and int16 narrow. It is the dav1d/SVT
 // fused-add boundary: callers that are adding into a prediction plane can use

@@ -16,10 +16,8 @@ import (
 // frameWorkWavefrontMinSBRowsPerWorker is the SB-row count, per available
 // worker, a tile must clear before the deferred SB-row wavefront engages.
 // Below it the fused single-thread path wins (no buffering, no goroutines), so
-// the wavefront stays off. It defaults to 2 (the diagonal must fill before it
-// drains); focused tests override it through
-// OverrideWavefrontMinSBRowsPerWorkerForTest.
-var frameWorkWavefrontMinSBRowsPerWorker = 2
+// the wavefront stays off. It is 2: the diagonal must fill before it drains.
+const frameWorkWavefrontMinSBRowsPerWorker = 2
 
 const (
 	frameWorkReconMaxIndex        = int32(1<<31 - 1)
@@ -898,50 +896,6 @@ func (r *FrameWorkTileResidualRunner) RunPtr(b *FrameWorkBatch) error {
 		}
 	}
 	return nil
-}
-
-// ExecuteFrameWorkTileResidualRunner runs residual batches through the concrete
-// no-copy runner path. Keeping this concrete lets escape analysis inspect RunPtr
-// and keep the per-batch context on the stack.
-func ExecuteFrameWorkTileResidualRunner(p *Pool, batches []Batch, jobs []tile.Job, base FrameWorkBatch, runner *FrameWorkTileResidualRunner) error {
-	if p == nil || len(p.workers) == 0 {
-		return ErrInvalidWorkerCount
-	}
-	if runner == nil {
-		return ErrInvalidCallback
-	}
-	if len(batches) == 0 {
-		return nil
-	}
-	if len(batches) > len(p.workers) {
-		return ErrInvalidBatch
-	}
-	if err := validateBatches(batches, jobs, len(p.workers)); err != nil {
-		return err
-	}
-
-	p.mu.Lock()
-	if p.closed {
-		p.mu.Unlock()
-		return ErrPoolClosed
-	}
-	p.mu.Unlock()
-
-	var firstErr error
-	for i := range batches {
-		batch := batches[i]
-		batchJobs, err := batch.jobSlice(jobs)
-		if err != nil {
-			return err
-		}
-		ctx := base
-		ctx.Batch = batch
-		ctx.Jobs = batchJobs
-		if err := runner.RunPtr(&ctx); firstErr == nil && err != nil {
-			firstErr = err
-		}
-	}
-	return firstErr
 }
 
 func (req FrameWorkTileResidualDefaultRequest) withPredictionScratch(scratch *FrameWorkPredictionScratch) FrameWorkTileResidualDefaultRequest {

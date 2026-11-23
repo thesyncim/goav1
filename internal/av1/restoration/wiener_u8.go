@@ -28,7 +28,7 @@ package restoration
 //   - scratch is the same uint16 buffer sized by WienerScratchLen(width,
 //     height); the 16-bit horizontal intermediate is unchanged from the u16
 //     pipeline.
-//   - Output is bit-identical to ApplyWienerRestoration{,Trusted} called with
+//   - Output is bit-identical to ApplyWienerRestorationTrusted called with
 //     the same samples widened to uint16 and bitDepth=8. The trusted/checked
 //     split disappears at 8 bits: a uint8 sample can never exceed max=255, so
 //     the per-sample validation scan is vacuous and this single entry covers

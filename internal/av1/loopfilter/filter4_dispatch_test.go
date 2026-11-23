@@ -7,8 +7,6 @@ package loopfilter
 import (
 	"math/rand"
 	"testing"
-
-	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 )
 
 // filter4DispatchParamsCorpus returns a spread of threshold configurations that
@@ -141,14 +139,10 @@ func TestFilter4DispatchVerticalMatchesPureGo(t *testing.T) {
 }
 
 // TestFilter4DispatchMatchesPureGoForcedPureGo confirms the differential holds
-// when the dispatcher is forced onto the pure-Go branch (CPU override), so the
-// test still has meaning on a SIMD host where the slot would otherwise always
-// pick the SIMD kernel. It re-binds the slot for the duration of the check.
+// when the dispatch slot is pinned to the pure-Go branch, so the test still has
+// meaning on a SIMD host where the slot would otherwise always pick the SIMD
+// kernel. It re-binds the slot for the duration of the check.
 func TestFilter4DispatchMatchesPureGoForcedPureGo(t *testing.T) {
-	restore := cpu.OverrideForTest(cpu.Features{})
-	defer restore()
-	// The dispatch slot resolved at init is not re-evaluated by the override, so
-	// also pin it explicitly and restore afterwards.
 	prev := filter4EdgeImpl
 	filter4EdgeImpl = filter4EdgePureGo
 	defer func() { filter4EdgeImpl = prev }()

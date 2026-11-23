@@ -21,15 +21,6 @@ type Layout struct {
 	Mono  bool
 }
 
-// I420 returns the 4:2:0 layout.
-func I420() Layout { return Layout{SSHor: 1, SSVer: 1} }
-
-// I422 returns the 4:2:2 layout.
-func I422() Layout { return Layout{SSHor: 1, SSVer: 0} }
-
-// I444 returns the 4:4:4 layout.
-func I444() Layout { return Layout{SSHor: 0, SSVer: 0} }
-
 // LevelCache is dav1d's f->lf.level: a frame-wide grid of 4 resolved loop-filter
 // levels per luma 4x4 cell (Y vertical, Y horizontal, U, V). Cells is caller
 // owned and reused; Stride is in cells (each cell is one [4]uint8).

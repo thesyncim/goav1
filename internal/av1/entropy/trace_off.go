@@ -19,9 +19,3 @@ func traceBoolRead(_ uint16, _ uint64, _ uint32, _ int) {}
 
 // TraceLabel is a no-op stub when the goav1_trace_rng build tag is not set.
 func TraceLabel(_ string, _ ...any) {}
-
-// TraceSetFrame is a no-op stub when the goav1_trace_rng build tag is not set.
-func TraceSetFrame(_ int) {}
-
-// TraceResetSeq is a no-op stub when the goav1_trace_rng build tag is not set.
-func TraceResetSeq() {}

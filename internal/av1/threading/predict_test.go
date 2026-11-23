@@ -111,7 +111,7 @@ func TestFrameWorkBatchPredictBlockLumaFilterIntra(t *testing.T) {
 	edges := testFrameWorkIntraEdges(output, output.Y, 16, 16, 16, 16)
 	wantPix := make([]byte, 16*16)
 	want := frame.Plane{Pix: wantPix, Stride: 16, Width: 16, Height: 16}
-	if err := prediction.PredictFilterIntraPlaneBlock(want, 1, 8, 0, 0, 16, 16, prediction.FilterIntraModePaeth, edges); err != nil {
+	if err := prediction.PredictFilterIntraPlaneBlockWithExtentBounded(want, 1, 8, 0, 0, 16, 16, 16, 16, prediction.FilterIntraModePaeth, edges, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -701,7 +701,7 @@ func TestFrameWorkBatchPredictBlockLumaDirectionalIntraEdgeUpsample(t *testing.T
 	left[origin-1] = leftSamples[0]
 	copy(left[origin:], leftSamples)
 	scratch := make([]uint16, frameWorkIntraEdgeScratchSamples)
-	if err := prediction.UpsampleIntraEdge(left, origin, 8, scratch, 8); err != nil {
+	if err := prediction.UpsampleIntraEdgeBounded(left, origin, 8, scratch, 8, false); err != nil {
 		t.Fatal(err)
 	}
 	wantPix := make([]byte, 16)
@@ -1306,9 +1306,7 @@ func TestFrameWorkBatchPredictBlockLumaInterFractionalMatchesMotion(t *testing.T
 	if err := ctx.PredictBlockLumaInterWithFilters(0, visit, filters); err != nil {
 		t.Fatal(err)
 	}
-	if err := motion.PredictInterPlaneBlockWithFilterBitDepth(want.Y, reference.Y, want.Layout.BytesPerSample, want.Format.BitDepth, 16, 16, 16, 16, mv, filters); err != nil {
-		t.Fatal(err)
-	}
+	predictTestInterPlaneBlock(t, want.Y, reference.Y, want.Layout.BytesPerSample, want.Format.BitDepth, 16, 16, 16, 16, mv, filters)
 	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, 16, 16, 16, 16)
 }
 
@@ -1328,9 +1326,7 @@ func TestFrameWorkBatchPredictBlockLumaInterInvalidWarpFallsBackToTranslation(t 
 	if err := ctx.PredictBlockLumaInterWithFilters(0, visit, filters); err != nil {
 		t.Fatal(err)
 	}
-	if err := motion.PredictInterPlaneBlockWithFilterBitDepth(want.Y, reference.Y, want.Layout.BytesPerSample, want.Format.BitDepth, 16, 16, 16, 16, mv, filters); err != nil {
-		t.Fatal(err)
-	}
+	predictTestInterPlaneBlock(t, want.Y, reference.Y, want.Layout.BytesPerSample, want.Format.BitDepth, 16, 16, 16, 16, mv, filters)
 	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, 16, 16, 16, 16)
 }
 
@@ -1401,9 +1397,7 @@ func TestFrameWorkBatchPredictBlockLumaInterHighBitDepthFractionalMatchesMotion(
 	if err := ctx.PredictBlockLumaInterWithFilters(0, visit, filters); err != nil {
 		t.Fatal(err)
 	}
-	if err := motion.PredictInterPlaneBlockWithFilterBitDepth(want.Y, reference.Y, want.Layout.BytesPerSample, want.Format.BitDepth, 16, 16, 16, 16, mv, filters); err != nil {
-		t.Fatal(err)
-	}
+	predictTestInterPlaneBlock(t, want.Y, reference.Y, want.Layout.BytesPerSample, want.Format.BitDepth, 16, 16, 16, 16, mv, filters)
 	assertFrameWorkPlaneBlockEqual(t, output.Y, want.Y, output.Layout.BytesPerSample, 16, 16, 16, 16)
 }
 
@@ -2351,10 +2345,10 @@ func TestFrameWorkBatchPredictBlockChromaCFLMatchesPerPlaneOracle(t *testing.T) 
 			if err := gotCtx.PredictBlockChromaCFL(0, visit, &gotScratch); err != nil {
 				t.Fatal(err)
 			}
-			if err := wantCtx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneU, &wantScratch); err != nil {
+			if err := wantCtx.predictBlockChromaCFLPlanePtr(0, &visit, FrameWorkPlaneU, &wantScratch); err != nil {
 				t.Fatal(err)
 			}
-			if err := wantCtx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneV, &wantScratch); err != nil {
+			if err := wantCtx.predictBlockChromaCFLPlanePtr(0, &visit, FrameWorkPlaneV, &wantScratch); err != nil {
 				t.Fatal(err)
 			}
 			if !slices.Equal(got.U.Pix, want.U.Pix) || !slices.Equal(got.V.Pix, want.V.Pix) {
@@ -2386,10 +2380,10 @@ func TestFrameWorkBatchPredictBlockChromaCFLPreservesAliasAndErrorOrder(t *testi
 		if err := gotCtx.PredictBlockChromaCFL(0, visit, &gotScratch); err != nil {
 			t.Fatal(err)
 		}
-		if err := wantCtx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneU, &wantScratch); err != nil {
+		if err := wantCtx.predictBlockChromaCFLPlanePtr(0, &visit, FrameWorkPlaneU, &wantScratch); err != nil {
 			t.Fatal(err)
 		}
-		if err := wantCtx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneV, &wantScratch); err != nil {
+		if err := wantCtx.predictBlockChromaCFLPlanePtr(0, &visit, FrameWorkPlaneV, &wantScratch); err != nil {
 			t.Fatal(err)
 		}
 		if !slices.Equal(gotShared, wantShared) || !slices.Equal(got.V.Pix, want.V.Pix) {
@@ -2410,10 +2404,10 @@ func TestFrameWorkBatchPredictBlockChromaCFLPreservesAliasAndErrorOrder(t *testi
 		if !errors.Is(gotErr, ErrInvalidBatch) {
 			t.Fatalf("shared error=%v want %v", gotErr, ErrInvalidBatch)
 		}
-		if err := wantCtx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneU, &wantScratch); err != nil {
+		if err := wantCtx.predictBlockChromaCFLPlanePtr(0, &visit, FrameWorkPlaneU, &wantScratch); err != nil {
 			t.Fatal(err)
 		}
-		wantErr := wantCtx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneV, &wantScratch)
+		wantErr := wantCtx.predictBlockChromaCFLPlanePtr(0, &visit, FrameWorkPlaneV, &wantScratch)
 		if !errors.Is(wantErr, ErrInvalidBatch) {
 			t.Fatalf("legacy error=%v want %v", wantErr, ErrInvalidBatch)
 		}
@@ -2563,8 +2557,8 @@ func BenchmarkFrameWorkPredictBlockChromaCFLWarm(b *testing.B) {
 								var err error
 								if method == "shared" {
 									err = ctx.PredictBlockChromaCFL(0, visit, &scratch)
-								} else if err = ctx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneU, &scratch); err == nil {
-									err = ctx.predictBlockChromaCFLPlane(0, visit, FrameWorkPlaneV, &scratch)
+								} else if err = ctx.predictBlockChromaCFLPlanePtr(0, &visit, FrameWorkPlaneU, &scratch); err == nil {
+									err = ctx.predictBlockChromaCFLPlanePtr(0, &visit, FrameWorkPlaneV, &scratch)
 								}
 								if err != nil {
 									b.Fatalf("CfL prediction: %v", err)
@@ -3413,7 +3407,7 @@ func TestFrameWorkBatchPredictBlockInterIntraScaledMatchesScaledTranslation(t *t
 	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
 	var intraScratch FrameWorkIntraPredictionScratch
-	edges, err := frameWorkIntraPredictionEdges(geom.Output, geom.bytesPerSample(), want.Format.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), edgeBlock, &intraScratch, true)
+	edges, err := frameWorkIntraPredictionEdgesWithExtent(geom.Output, geom.bytesPerSample(), want.Format.BitDepth, geom.X, geom.Y, geom.width(), geom.height(), geom.width(), geom.height(), 0, 0, edgeBlock, &intraScratch, true)
 	if err != nil {
 		t.Fatalf("intra edges err=%v", err)
 	}
@@ -4030,7 +4024,7 @@ func testFrameWorkScaledCompoundConvBuf(t *testing.T, reference frame.Plane, cur
 		t.Fatal(err)
 	}
 	buf := &motion.CompoundConvBuf{}
-	if err := motion.PredictScaledCompoundRefToConvBuf(buf, reference, bytesPerSample, bitDepth, width, height, startX, xStep, startY, yStep, xTable, yTable); err != nil {
+	if err := motion.PredictScaledCompoundRefToConvBufWithScratch(buf, reference, bytesPerSample, bitDepth, width, height, startX, xStep, startY, yStep, xTable, yTable, nil); err != nil {
 		t.Fatal(err)
 	}
 	return buf
@@ -4091,7 +4085,7 @@ func testFrameWorkMotionPredictionPlane(t *testing.T, reference frame.Plane, byt
 		Width:  width,
 		Height: height,
 	}
-	refX, refY, subX, subY, err := motion.ReferenceOrigin(dstX, dstY, mv)
+	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(dstX, dstY, mv, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4212,7 +4206,7 @@ func TestFrameWorkApplyDirectionalIntraEdgeFilterCornerBlock32x32D157(t *testing
 		AboveOrigin: origin,
 		LeftOrigin:  origin,
 	}
-	if err := frameWorkApplyDirectionalIntraEdgeFilter(8, width, height, angle, block, false, &edges, &scratch); err != nil {
+	if err := frameWorkApplyDirectionalIntraEdgeFilterBounded(8, width, height, angle, block, false, &edges, &scratch, false); err != nil {
 		t.Fatalf("apply edge filter: %v", err)
 	}
 	// The corner filter rewrites above[-1] and left[-1] to
@@ -4303,5 +4297,16 @@ func TestFrameWorkDirectionalPredictionEdgesCornerBlock32x32D157(t *testing.T) {
 	// and d=|angle-180|=29 in zone 2 (left).
 	if edges.UpsampleAbove || edges.UpsampleLeft {
 		t.Fatalf("upsample flags: above=%v left=%v want both false", edges.UpsampleAbove, edges.UpsampleLeft)
+	}
+}
+
+func predictTestInterPlaneBlock(t *testing.T, dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, width int, height int, mv motion.Vector, filters motion.InterpFilters) {
+	t.Helper()
+	refX, refY, subX, subY, err := motion.ReferenceOriginSubsampled(dstX, dstY, mv, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(dst, ref, bytesPerSample, bitDepth, dstX, dstY, refX, refY, width, height, subX, subY, filters); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -1,7 +1,5 @@
 package encoder
 
-import "github.com/thesyncim/goav1/internal/av1/bitstream"
-
 const MaxSegments = 8
 
 // SegmentData is one segment's frame-header feature data.
@@ -29,31 +27,6 @@ type SegmentationParams struct {
 	TemporalUpdate bool
 	UpdateData     bool
 	Data           SegmentationData
-}
-
-func SegmentationParamsPayloadSize(prefix FrameHeaderPrefix, seg SegmentationParams) (int, error) {
-	w := newSizingBitWriter()
-	if err := writeSegmentationParamsPayload(&w, prefix, seg); err != nil {
-		return 0, err
-	}
-	return w.bytesWritten(), nil
-}
-
-func AppendSegmentationParamsPayload(dst []byte, prefix FrameHeaderPrefix, seg SegmentationParams) ([]byte, error) {
-	payloadSize, err := SegmentationParamsPayloadSize(prefix, seg)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < payloadSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+payloadSize]
-	w := newBitWriter(out[off:])
-	if err := writeSegmentationParamsPayload(&w, prefix, seg); err != nil {
-		return dst, err
-	}
-	return out, nil
 }
 
 func writeSegmentationParamsPayload(w *bitWriter, prefix FrameHeaderPrefix, seg SegmentationParams) error {

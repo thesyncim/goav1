@@ -87,32 +87,6 @@ func TestSizeFromDimensionsMatchesLibaomTable(t *testing.T) {
 	}
 }
 
-func TestInverseBlockDCTMatchesDirect(t *testing.T) {
-	coeff := []int32{
-		100, -20, 30, 7,
-		5, -9, 13, -17,
-		0, 4, -8, 12,
-		-16, 20, -24, 28,
-	}
-	coeff = av1CoeffOrder(coeff, 4, 4)
-	direct := make([]int16, 4*4)
-	dispatched := make([]int16, 4*4)
-	scratchDirect := make([]int32, 4*4)
-	scratchDispatched := make([]int32, 4*4)
-	size := Size{Width: 4, Height: 4}
-	if err := InverseDCTBlock(direct, 4, coeff, 4, scratchDirect, size); err != nil {
-		t.Fatal(err)
-	}
-	if err := InverseBlock(dispatched, 4, coeff, 4, scratchDispatched, size, TypeDCTDCT); err != nil {
-		t.Fatal(err)
-	}
-	for i := range direct {
-		if dispatched[i] != direct[i] {
-			t.Fatalf("dst[%d]=%d want %d", i, dispatched[i], direct[i])
-		}
-	}
-}
-
 func TestInverseDCTDCOnlyBlockBitDepthMatchesFullInverse(t *testing.T) {
 	sizes := []Size{
 		{Width: 4, Height: 4},
@@ -166,53 +140,6 @@ func TestInverseDCTDCOnlyBlockBitDepthMatchesFullInverse(t *testing.T) {
 	}
 }
 
-func TestInverseBlockBitDepthBoundedRowsMatchesFullInverse(t *testing.T) {
-	tests := []struct {
-		name       string
-		size       Size
-		typ        Type
-		bitDepth   uint8
-		activeRows int
-	}{
-		{name: "dct 8x8 two rows", size: Size{Width: 8, Height: 8}, typ: TypeDCTDCT, bitDepth: 8, activeRows: 2},
-		{name: "adst dct 8x8 three rows", size: Size{Width: 8, Height: 8}, typ: TypeADSTDCT, bitDepth: 8, activeRows: 3},
-		{name: "rect dct 16x8 one row", size: Size{Width: 16, Height: 8}, typ: TypeDCTDCT, bitDepth: 10, activeRows: 1},
-		{name: "dct 16x16 five rows", size: Size{Width: 16, Height: 16}, typ: TypeDCTDCT, bitDepth: 10, activeRows: 5},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			width := int(tt.size.Width)
-			height := int(tt.size.Height)
-			coeff := make([]int32, width*height)
-			for col := 0; col < width; col++ {
-				for row := 0; row < tt.activeRows; row++ {
-					if (row+col)%3 == 0 {
-						coeff[col*height+row] = int32((row+1)*(col+2) - 17)
-					}
-				}
-			}
-			want := make([]int16, width*height)
-			got := make([]int16, width*height)
-			fullScratch := make([]int32, width*height)
-			boundedScratch := make([]int32, width*height)
-			for i := range boundedScratch {
-				boundedScratch[i] = 0x123456
-			}
-			if err := InverseBlockBitDepth(want, width, coeff, height, fullScratch, tt.size, tt.typ, tt.bitDepth); err != nil {
-				t.Fatal(err)
-			}
-			if err := InverseBlockBitDepthBoundedRows(got, width, coeff, height, boundedScratch, tt.size, tt.typ, tt.bitDepth, tt.activeRows); err != nil {
-				t.Fatal(err)
-			}
-			for i := range want {
-				if got[i] != want[i] {
-					t.Fatalf("dst[%d]=%d want %d", i, got[i], want[i])
-				}
-			}
-		})
-	}
-}
-
 func TestInverseBlockBitDepthAdjustedScanDirtyScratchMatchesClean(t *testing.T) {
 	size := Size{Width: 64, Height: 64}
 	width := int(size.Width)
@@ -243,19 +170,6 @@ func TestInverseBlockBitDepthAdjustedScanDirtyScratchMatchesClean(t *testing.T) 
 		if got[i] != want[i] {
 			t.Fatalf("dst[%d]=%d want %d", i, got[i], want[i])
 		}
-	}
-}
-
-func TestInverseBlockBitDepthBoundedRowsRejectsInvalidBounds(t *testing.T) {
-	size := Size{Width: 8, Height: 8}
-	coeff := make([]int32, 8*8)
-	dst := make([]int16, 8*8)
-	scratch := make([]int32, 8*8)
-	if err := InverseBlockBitDepthBoundedRows(dst, 8, coeff, 8, scratch, size, TypeDCTDCT, 8, -1); !errors.Is(err, ErrInvalidTransform) {
-		t.Fatalf("negative activeRows err=%v want %v", err, ErrInvalidTransform)
-	}
-	if err := InverseBlockBitDepthBoundedRows(dst, 8, coeff, 8, scratch, size, TypeDCTDCT, 8, 9); !errors.Is(err, ErrInvalidTransform) {
-		t.Fatalf("oversized activeRows err=%v want %v", err, ErrInvalidTransform)
 	}
 }
 

@@ -10,7 +10,6 @@ package restoration
 // kernels: architectures the dispatcher does not special-case, the purego
 // builds, and the default (non-goexperiment.simd) amd64/arm64 builds.
 func init() {
-	wienerHorizontalImpl = wienerHorizontal
 	wienerHorizontalTrustedImpl = wienerHorizontalTrusted
 	wienerVerticalImpl = wienerVertical
 	wienerHorizontalU8Impl = wienerHorizontalU8

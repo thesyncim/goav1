@@ -101,12 +101,6 @@ func int16ColumnSIMDInputBound(height int) int32 {
 // measured slowdown while keeping the low-magnitude SIMD win.
 const dct8SIMDProfitabilityBound int32 = 4095
 
-// int16ColumnSIMDInputSafe checks mathematical exactness after the mid-pass
-// round/clamp. Widths below eight use the scalar int16 DCT implementation and
-// need no SIMD-specific range guard. The Go SIMD build binds a vectorized scan;
-// other builds use this exact scalar one.
-var int16ColumnSIMDInputSafe = int16ColumnSIMDInputSafeScalar
-
 // int16ColumnSIMDInputEligible also applies workload profitability policy to
 // the bound SIMD kernel. It is separate from the exactness predicate because
 // DCT8 is full-range exact but the int32/NEON fallback is faster for large

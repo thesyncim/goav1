@@ -6,7 +6,6 @@ import (
 
 	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
-	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
 )
 
 func TestPublicDecoderFrameLayerPoolProviderAndReleaser(t *testing.T) {
@@ -50,79 +49,6 @@ func TestPublicDecoderFrameLayerPoolProviderAndReleaser(t *testing.T) {
 	}
 	if _, err := layerPool.Frame(id1); err == nil {
 		t.Fatalf("layer1 surface was not released")
-	}
-}
-
-func TestPublicResolveDecoderTileListExternalReferencesWithProvider(t *testing.T) {
-	layerPool := newPublicDecoderLayerPool(t, 1, 2)
-	format := FrameFormat{Width: 128, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 32}
-	id0, want0, err := layerPool.Acquire(format)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id5, want5, err := layerPool.Acquire(format)
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider := internaldecoder.NewFrameLayerPool(&layerPool)
-	list := internalparser.TileList{
-		TileCountMinus1: 1,
-		Entries: []internalparser.TileListEntry{
-			{AnchorFrameIdx: 5},
-			{AnchorFrameIdx: 0},
-		},
-	}
-	surfaces := []int{id0, -1, -1, -1, -1, id5}
-	sentinel := &Frame{}
-	refs := []*Frame{sentinel, sentinel, sentinel, sentinel, sentinel, sentinel}
-
-	count, err := internaldecoder.ResolveTileListExternalReferencesWithProvider(provider, list, surfaces, refs)
-	if err != nil {
-		t.Fatalf("ResolveDecoderTileListExternalReferencesWithProvider: %v", err)
-	}
-	if count != 6 || refs[0] != want0 || refs[5] != want5 {
-		t.Fatalf("count=%d refs[0]=%p refs[5]=%p want %p,%p", count, refs[0], refs[5], want0, want5)
-	}
-	for i := 1; i < 5; i++ {
-		if refs[i] != nil {
-			t.Fatalf("hole refs[%d]=%p want nil", i, refs[i])
-		}
-	}
-	if _, err := internaldecoder.ResolveTileListExternalReferencesWithProvider(provider, list, surfaces[:5], refs); !errors.Is(err, internaldecoder.ErrSurfaceReferenceBufferTooSmall) {
-		t.Fatalf("short surfaces err=%v want %v", err, internaldecoder.ErrSurfaceReferenceBufferTooSmall)
-	}
-}
-
-func TestPublicDecoderAcquireLayerFrameSurface(t *testing.T) {
-	layerPool := newPublicDecoderLayerPool(t, 2, 2)
-	sequence := SequenceHeader{
-		ColorConfig: internalparser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
-	}
-	layer0 := FrameSize{CodedWidth: 640, Height: 360, UpscaledWidth: 640}
-	layer1 := FrameSize{CodedWidth: 1280, Height: 720, UpscaledWidth: 1280}
-
-	sub0, local0, id0, frame0, err := internaldecoder.AcquireLayerFrameSurface(&layerPool, sequence, layer0, 32)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sub1, local1, id1, frame1, err := internaldecoder.AcquireLayerFrameSurface(&layerPool, sequence, layer1, 32)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sub0 == sub1 {
-		t.Fatalf("layer0 and layer1 used the same sub-pool")
-	}
-	if id0 == id1 {
-		t.Fatalf("layer0 and layer1 used the same global surface ID")
-	}
-	if frame0.Format.Width != 640 || frame1.Format.Width != 1280 {
-		t.Fatalf("frame widths=%d,%d want 640,1280", frame0.Format.Width, frame1.Format.Width)
-	}
-	if got := internaldecoder.LayerPoolGlobalSurfaceID(&layerPool, sub0, local0); got != id0 {
-		t.Fatalf("layer0 global id=%d want %d", got, id0)
-	}
-	if got := internaldecoder.LayerPoolGlobalSurfaceID(&layerPool, sub1, local1); got != id1 {
-		t.Fatalf("layer1 global id=%d want %d", got, id1)
 	}
 }
 

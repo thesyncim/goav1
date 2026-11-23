@@ -6,7 +6,7 @@ import (
 )
 
 // The forward DCT's parity proof at this stage is the combined-pipeline check:
-// ForwardDCT then the decoder's byte-exact InverseDCTBlock must reproduce the
+// ForwardDCT then the decoder's byte-exact DCT_DCT InverseBlock must reproduce the
 // residual within the AV1 fixed-point pipeline's known rounding (the same
 // fwd+inv error bound libaom's own unit tests assert, |err| <= 2 at 8-bit
 // magnitudes). The bit-exact end-to-end gate lands with the non-lossless
@@ -27,7 +27,7 @@ func TestForwardDCT4x4InverseRoundTrip(t *testing.T) {
 			t.Fatalf("forward: %v", err)
 		}
 		var dst [16]int16
-		if err := InverseDCTBlock(dst[:], 4, coeff[:], 4, scratch, Size{Width: 4, Height: 4}); err != nil {
+		if err := InverseBlock(dst[:], 4, coeff[:], 4, scratch, Size{Width: 4, Height: 4}, TypeDCTDCT); err != nil {
 			t.Fatalf("inverse: %v", err)
 		}
 		for i := range dst {
@@ -52,7 +52,7 @@ func TestForwardDCT8x8InverseRoundTrip(t *testing.T) {
 			t.Fatalf("forward: %v", err)
 		}
 		var dst [64]int16
-		if err := InverseDCTBlock(dst[:], 8, coeff[:], 8, scratch, Size{Width: 8, Height: 8}); err != nil {
+		if err := InverseBlock(dst[:], 8, coeff[:], 8, scratch, Size{Width: 8, Height: 8}, TypeDCTDCT); err != nil {
 			t.Fatalf("inverse: %v", err)
 		}
 		for i := range dst {
@@ -158,7 +158,7 @@ func TestForwardDCTRectInverseRoundTrip(t *testing.T) {
 				if err := rc.fwd(coeff, rc.h, residual, rc.w); err != nil {
 					t.Fatalf("forward: %v", err)
 				}
-				if err := InverseDCTBlock(dst, rc.w, coeff, rc.h, scratch, Size{Width: uint8(rc.w), Height: uint8(rc.h)}); err != nil {
+				if err := InverseBlock(dst, rc.w, coeff, rc.h, scratch, Size{Width: uint8(rc.w), Height: uint8(rc.h)}, TypeDCTDCT); err != nil {
 					t.Fatalf("inverse: %v", err)
 				}
 				for i := range dst {

@@ -110,22 +110,6 @@ func TestTrialTXBBitsInterMatchesReference(t *testing.T) {
 				transform.TypeIDTX,
 			},
 		},
-		{
-			n:    16,
-			size: tile.TransformSize16x16,
-			types: []transform.Type{
-				transform.TypeDCTDCT,
-				transform.TypeADSTDCT,
-				transform.TypeDCTADST,
-				transform.TypeADSTADST,
-				transform.TypeIDTX,
-			},
-		},
-		{
-			n:     32,
-			size:  tile.TransformSize32x32,
-			types: []transform.Type{transform.TypeDCTDCT, transform.TypeIDTX},
-		},
 	}
 	for _, tc := range cases {
 		for attempt := range 128 {
@@ -145,7 +129,7 @@ func TestTrialTXBBitsInterMatchesReference(t *testing.T) {
 				fast := newTXTypeTestState(t, 96)
 				reference := newTXTypeTestState(t, 96)
 				txBefore := fast.txCDFs
-				got := fast.trialTXBBitsInter(qcoeff, tc.n, tc.size, typ)
+				got := fast.trialTXBBitsInter8x8((*[64]int16)(qcoeff), typ)
 				want := trialTXBBitsInterReference(reference, qcoeff, tc.n, tc.size, typ)
 				if got != want {
 					t.Fatalf("%dx%d attempt %d typ %v: trial bits=%d want %d", tc.n, tc.n, attempt, typ, got, want)
@@ -227,7 +211,7 @@ func chooseInter8x8TXTypeReference(st *lossyEncodeState, src SourceFrame420, lum
 		st.prepareInterTXBTyped(src.U, st.predU[:16], 4, src.ChromaStride, lumaPX/2, lumaPY/2, 4, 4, st.uQuant, tmpU, typ)
 		st.prepareInterTXBTyped(src.V, st.predV[:16], 4, src.ChromaStride, lumaPX/2, lumaPY/2, 4, 4, st.vQuant, tmpV, typ)
 		cost := st.rdDcode << 7
-		cost += st.trialTXBBitsInter(tmpY, 8, tile.TransformSize8x8, typ)
+		cost += st.trialTXBBitsInter8x8((*[64]int16)(tmpY), typ)
 		cost += st.trialTXBBits(tile.CoeffPlaneUV, tmpU, 4)
 		cost += st.trialTXBBits(tile.CoeffPlaneUV, tmpV, 4)
 		if cost < bestCost {

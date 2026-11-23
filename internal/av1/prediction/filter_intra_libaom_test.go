@@ -203,7 +203,7 @@ func TestFilterIntraPredictorMatchesLibaomGolden(t *testing.T) {
 				AboveLeftAvailable: true,
 			}
 			plane, _ := testPlane(tc.width, tc.height, 1, tc.width)
-			if err := PredictFilterIntraPlaneBlock(plane, 1, 8, 0, 0, tc.width, tc.height, tc.mode, edges); err != nil {
+			if err := PredictFilterIntraPlaneBlockWithExtentBounded(plane, 1, 8, 0, 0, tc.width, tc.height, tc.width, tc.height, tc.mode, edges, false); err != nil {
 				t.Fatalf("PredictFilterIntraPlaneBlock err=%v", err)
 			}
 			got := collectPlaneSamples(plane, 1, tc.width, tc.height)

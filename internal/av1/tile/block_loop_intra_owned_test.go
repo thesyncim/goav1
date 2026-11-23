@@ -83,7 +83,7 @@ func TestOwnedIntraRootContextsMatchFullOracle(t *testing.T) {
 			carrier.Above = make([]BlockLoopRootAboveContext, columns)
 			PreallocBlockLoopContextCarrierScratch(&carrier, columns)
 			for col := range columns {
-				if err := blockLoopStoreRootContext(&seed, &carrier, col, sb); err != nil {
+				if err := blockLoopStoreRootContextMotion(&seed, &carrier, col, sb, true, 0, 0); err != nil {
 					t.Fatal(err)
 				}
 				captureDiagonalCornerToPending(&carrier, col, &seed.Mode, sb)
@@ -93,7 +93,7 @@ func TestOwnedIntraRootContextsMatchFullOracle(t *testing.T) {
 				for _, top := range []bool{false, true} {
 					for _, left := range []bool{false, true} {
 						got, want := seed, seed
-						if err := blockLoopLoadRootContext(&want, &carrier, col, top, left, sb); err != nil {
+						if err := blockLoopLoadRootContextMotion(&want, &carrier, col, top, left, sb, true, 0, 0); err != nil {
 							t.Fatal(err)
 						}
 						if err := testLoadIntraRootContext(&got, &carrier, col, top, left, sb); err != nil {
@@ -108,14 +108,14 @@ func TestOwnedIntraRootContextsMatchFullOracle(t *testing.T) {
 						if err := testStoreIntraRootContext(&got, &fast, col); err != nil {
 							t.Fatal(err)
 						}
-						if err := blockLoopStoreRootContext(&want, &full, col, sb); err != nil {
+						if err := blockLoopStoreRootContextMotion(&want, &full, col, sb, true, 0, 0); err != nil {
 							t.Fatal(err)
 						}
 						var reloadedGot, reloadedWant BlockLoopScratch
 						if err := testLoadIntraRootContext(&reloadedGot, &fast, col, true, true, sb); err != nil {
 							t.Fatal(err)
 						}
-						if err := blockLoopLoadRootContext(&reloadedWant, &full, col, true, true, sb); err != nil {
+						if err := blockLoopLoadRootContextMotion(&reloadedWant, &full, col, true, true, sb, true, 0, 0); err != nil {
 							t.Fatal(err)
 						}
 						ownedIntraCompareLive(t, &reloadedGot, &reloadedWant)
@@ -133,7 +133,7 @@ func TestOwnedIntraErrorsPreserveLiveState(t *testing.T) {
 		ownedIntraPoisonMode(&got.Mode, 29)
 		want := got
 		ge := testLoadIntraRootContext(&got, &carrier, col, true, true, 16)
-		we := blockLoopLoadRootContext(&want, &carrier, col, true, true, 16)
+		we := blockLoopLoadRootContextMotion(&want, &carrier, col, true, true, 16, true, 0, 0)
 		if !errors.Is(ge, ErrInvalidDecodeState) || !errors.Is(we, ErrInvalidDecodeState) {
 			t.Fatal("missing invalid carrier error")
 		}
@@ -172,7 +172,7 @@ func TestOwnedIntraThenGenericCarrierTransition(t *testing.T) {
 				if err := testLoadIntraRootContext(&fast, &fc, col, row > 0, col > 0, sb); err != nil {
 					t.Fatal(err)
 				}
-				if err := blockLoopLoadRootContext(&full, &wc, col, row > 0, col > 0, sb); err != nil {
+				if err := blockLoopLoadRootContextMotion(&full, &wc, col, row > 0, col > 0, sb, true, 0, 0); err != nil {
 					t.Fatal(err)
 				}
 				size := BlockSize64x64
@@ -184,7 +184,7 @@ func TestOwnedIntraThenGenericCarrierTransition(t *testing.T) {
 				if err := testStoreIntraRootContext(&fast, &fc, col); err != nil {
 					t.Fatal(err)
 				}
-				if err := blockLoopStoreRootContext(&full, &wc, col, sb); err != nil {
+				if err := blockLoopStoreRootContextMotion(&full, &wc, col, sb, true, 0, 0); err != nil {
 					t.Fatal(err)
 				}
 				captureDiagonalCornerToPending(&wc, col+1, &full.Mode, sb)
@@ -199,10 +199,10 @@ func TestOwnedIntraThenGenericCarrierTransition(t *testing.T) {
 					promotePendingDiagonalCarriers(&fc)
 					promotePendingDiagonalCarriers(&wc)
 				}
-				if err := blockLoopLoadRootContext(&fast, &fc, col, row > 0, col > 0, sb); err != nil {
+				if err := blockLoopLoadRootContextMotion(&fast, &fc, col, row > 0, col > 0, sb, true, 0, 0); err != nil {
 					t.Fatal(err)
 				}
-				if err := blockLoopLoadRootContext(&full, &wc, col, row > 0, col > 0, sb); err != nil {
+				if err := blockLoopLoadRootContextMotion(&full, &wc, col, row > 0, col > 0, sb, true, 0, 0); err != nil {
 					t.Fatal(err)
 				}
 				if !reflect.DeepEqual(fast.Mode, full.Mode) {
@@ -221,10 +221,10 @@ func TestOwnedIntraThenGenericCarrierTransition(t *testing.T) {
 				if err := mark(&full.Mode, BlockSize16x16, 0, 0, result, false); err != nil {
 					t.Fatal(err)
 				}
-				if err := blockLoopStoreRootContext(&fast, &fc, col, sb); err != nil {
+				if err := blockLoopStoreRootContextMotion(&fast, &fc, col, sb, true, 0, 0); err != nil {
 					t.Fatal(err)
 				}
-				if err := blockLoopStoreRootContext(&full, &wc, col, sb); err != nil {
+				if err := blockLoopStoreRootContextMotion(&full, &wc, col, sb, true, 0, 0); err != nil {
 					t.Fatal(err)
 				}
 				captureDiagonalCornerToPending(&fc, col+1, &fast.Mode, sb)

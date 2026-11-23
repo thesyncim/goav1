@@ -84,16 +84,11 @@ func TestPublicDecoderPostFilterTypesAreNameable(t *testing.T) {
 	if !result.Completed.Empty() {
 		t.Fatalf("result=%+v", result)
 	}
-	var callerRunner internaldecoder.FrameWorkCallerPostFilterRunner
-	if callerRunner.Result.Completed != result.Completed {
-		t.Fatalf("caller runner=%+v result=%+v", callerRunner, result)
+	if callerScratch, err := ctx.CallerPostFilterScratchLen(internaldecoder.FrameWorkPostFilterRequest{}); err != nil || callerScratch.SuperRes.OutputFrame != 0 {
+		t.Fatalf("caller scratch=%+v err=%v", callerScratch, err)
 	}
-	if callerScratch, err := callerRunner.ScratchLen(ctx); err != nil || callerScratch.SuperRes.OutputFrame != 0 {
-		t.Fatalf("caller runner scratch=%+v err=%v", callerScratch, err)
-	}
-	var supportedRunner internaldecoder.FrameWorkSupportedPostFilterRunner
-	if supportedScratch, err := supportedRunner.ScratchLen(ctx); err != nil || supportedScratch.LoopFilter.Edges != 0 {
-		t.Fatalf("supported runner scratch=%+v err=%v", supportedScratch, err)
+	if supportedScratch, err := ctx.SupportedPostFilterScratchLen(internaldecoder.FrameWorkPostFilterRequest{}); err != nil || supportedScratch.LoopFilter.Edges != 0 {
+		t.Fatalf("supported scratch=%+v err=%v", supportedScratch, err)
 	}
 
 	var postScratch internaldecoder.FrameWorkPostFilterScratchSize

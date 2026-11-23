@@ -14,8 +14,8 @@ func TestRandomNumber(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got != wantValues[i] || rng.Register() != wantRegisters[i] {
-			t.Fatalf("step %d value=%#x register=%#x want %#x %#x", i, got, rng.Register(), wantValues[i], wantRegisters[i])
+		if got != wantValues[i] || rng.register != wantRegisters[i] {
+			t.Fatalf("step %d value=%#x register=%#x want %#x %#x", i, got, rng.register, wantValues[i], wantRegisters[i])
 		}
 	}
 }
@@ -38,22 +38,22 @@ func TestRandomSeeds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cb.Register() != 0xa710 {
-		t.Fatalf("cb register=%#x", cb.Register())
+	if cb.register != 0xa710 {
+		t.Fatalf("cb register=%#x", cb.register)
 	}
 	cr, err := NewPlaneRandom(0x1234, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cr.Register() != 0x5bec {
-		t.Fatalf("cr register=%#x", cr.Register())
+	if cr.register != 0x5bec {
+		t.Fatalf("cr register=%#x", cr.register)
 	}
 	stripe, err := NewStripeRandom(0x1234, 32)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stripe.Register() != 0xc522 {
-		t.Fatalf("stripe register=%#x", stripe.Register())
+	if stripe.register != 0xc522 {
+		t.Fatalf("stripe register=%#x", stripe.register)
 	}
 }
 
@@ -81,10 +81,10 @@ func TestRandomAllocs(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := NewPlaneRandom(rng.Register(), 1); err != nil {
+		if _, err := NewPlaneRandom(rng.register, 1); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := NewStripeRandom(rng.Register(), 64); err != nil {
+		if _, err := NewStripeRandom(rng.register, 64); err != nil {
 			t.Fatal(err)
 		}
 	})

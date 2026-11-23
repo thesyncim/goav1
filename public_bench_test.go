@@ -139,66 +139,6 @@ func BenchmarkPublicLowOverheadOBUIterator(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
-func BenchmarkPublicTemporalUnitIterator(b *testing.B) {
-	stream := publicBenchmarkTemporalUnitStream()
-	b.SetBytes(int64(len(stream)))
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	sum := 0
-	for i := 0; i < b.N; i++ {
-		it := internalobu.NewTemporalUnitIterator(stream)
-		count := 0
-		rawBytes := 0
-		for {
-			unit, ok, err := it.Next()
-			if err != nil {
-				b.Fatal(err)
-			}
-			if !ok {
-				break
-			}
-			count++
-			rawBytes += len(unit.Raw)
-		}
-		if count != 4 {
-			b.Fatalf("count=%d want 4", count)
-		}
-		sum += rawBytes
-	}
-	publicBenchmarkSink = sum
-}
-
-func BenchmarkPublicAnnexBIterator(b *testing.B) {
-	stream := publicBenchmarkAnnexBStream()
-	b.SetBytes(int64(len(stream)))
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	sum := 0
-	for i := 0; i < b.N; i++ {
-		it := internalobu.NewAnnexBIterator(stream)
-		count := 0
-		rawBytes := 0
-		for {
-			unit, ok, err := it.Next()
-			if err != nil {
-				b.Fatal(err)
-			}
-			if !ok {
-				break
-			}
-			count++
-			rawBytes += len(unit.Raw)
-		}
-		if count != 9 {
-			b.Fatalf("count=%d want 9", count)
-		}
-		sum += rawBytes
-	}
-	publicBenchmarkSink = sum
-}
-
 func BenchmarkPublicRTPPacketizeAndAssemble(b *testing.B) {
 	frame := publicBenchmarkRTPFrame()
 	limits := RTPPayloadSizeLimits{MaxPayloadLen: 120}
@@ -480,7 +420,7 @@ func BenchmarkPublicOutputFilters(b *testing.B) {
 
 	sum := 0
 	for i := 0; i < b.N; i++ {
-		if err := internalsuperres.UpscalePlane(superSrc, superDst, 8); err != nil {
+		if err := internalsuperres.UpscalePlaneCoded(superSrc, superDst, superSrc.Width, 8); err != nil {
 			b.Fatal(err)
 		}
 		if err := internalfilmgrain.ApplyLumaRow(rowDst, rowSrc, lumaGrain, lut[:], lumaParams); err != nil {
@@ -802,33 +742,6 @@ func publicBenchmarkLowOverheadStream() []byte {
 	}
 	stream = appendOBUForTest(stream, internalobu.TypeFrame, []byte{0xaa, 0xbb, 0xcc})
 	return stream
-}
-
-func publicBenchmarkTemporalUnitStream() []byte {
-	stream := make([]byte, 0, 512)
-	for i := range 4 {
-		stream = appendOBUForTest(stream, internalobu.TypeTemporalDelimiter, nil)
-		stream = appendOBUForTest(stream, internalobu.TypeFrameHeader, []byte{byte(i)})
-		for j := range 2 {
-			stream = appendOBUForTest(stream, internalobu.TypeTileGroup, []byte{byte(i), byte(j), byte(i + j)})
-		}
-	}
-	return stream
-}
-
-func publicBenchmarkAnnexBStream() []byte {
-	td := []byte{byte(internalobu.TypeTemporalDelimiter) << 3}
-	seq := []byte{byte(internalobu.TypeSequenceHeader) << 3, 0x01, 0x02}
-	fh0 := []byte{byte(internalobu.TypeFrameHeader) << 3, 0x10}
-	fh1 := []byte{byte(internalobu.TypeFrameHeader) << 3, 0x20}
-	tile0 := []byte{byte(internalobu.TypeTileGroup) << 3, 0x30, 0x31, 0x32}
-	tile1 := []byte{byte(internalobu.TypeTileGroup) << 3, 0x40, 0x41, 0x42}
-	frame0 := []byte{byte(internalobu.TypeFrame) << 3, 0x50}
-	frame1 := []byte{byte(internalobu.TypeFrame) << 3, 0x60}
-	return appendPublicAnnexBStream(nil,
-		[][][]byte{{td, seq}, {fh0, tile0, tile1}},
-		[][][]byte{{td, frame0}, {fh1, frame1}},
-	)
 }
 
 func publicBenchmarkRTPFrame() []byte {

@@ -106,58 +106,9 @@ func TestAppendTileInfoPayloadRejectsInvalid(t *testing.T) {
 	cases := [...]TileInfo{badContext, badMotion, badStarts}
 	var buf [4]byte
 	for _, tiles := range cases {
-		if _, err := AppendTileInfoPayload(buf[:0], seq, prefix, 64, 64, tiles); !errors.Is(err, ErrInvalidFrame) {
-			t.Fatalf("AppendTileInfoPayload err=%v want ErrInvalidFrame", err)
+		if _, err := appendTileInfoPayload(buf[:0], seq, prefix, 64, 64, tiles); !errors.Is(err, ErrInvalidFrame) {
+			t.Fatalf("appendTileInfoPayload err=%v want ErrInvalidFrame", err)
 		}
-	}
-}
-
-func TestAppendTileInfoPayloadShortBuffer(t *testing.T) {
-	seq := tileInfoSequenceHeader()
-	prefix := FrameHeaderPrefix{FrameType: FrameHeaderTypeKey, ShowFrame: true, ErrorResilientMode: true}
-	tiles := TileInfo{
-		RefreshContext: true,
-		SBCols:         1,
-		SBRows:         1,
-		Cols:           1,
-		Rows:           1,
-		ColStartSB:     [MaxTileCols + 1]uint16{0, 1},
-		RowStartSB:     [MaxTileRows + 1]uint16{0, 1},
-	}
-	var buf [1]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendTileInfoPayload(dst, seq, prefix, 64, 64, tiles)
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want ErrShortBuffer", err)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output=% x", out)
-	}
-}
-
-func TestAppendTileInfoPayloadAllocs(t *testing.T) {
-	seq := tileInfoSequenceHeader()
-	prefix := FrameHeaderPrefix{FrameType: FrameHeaderTypeKey, ShowFrame: true, ErrorResilientMode: true}
-	tiles := TileInfo{
-		RefreshContext: true,
-		SBCols:         1,
-		SBRows:         1,
-		Cols:           1,
-		Rows:           1,
-		ColStartSB:     [MaxTileCols + 1]uint16{0, 1},
-		RowStartSB:     [MaxTileRows + 1]uint16{0, 1},
-	}
-	var buf [2]byte
-	if _, err := AppendTileInfoPayload(buf[:0], seq, prefix, 64, 64, tiles); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = TileInfoPayloadSize(seq, prefix, 64, 64, tiles)
-		_, _ = AppendTileInfoPayload(buf[:0], seq, prefix, 64, 64, tiles)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendTileInfoPayload allocated: %f", allocs)
 	}
 }
 
@@ -350,17 +301,10 @@ func TestAppendTileGroupPayloadAllocs(t *testing.T) {
 
 func appendAndParseTileInfo(t *testing.T, seq SequenceHeader, prefix FrameHeaderPrefix, codedWidth uint32, height uint32, tiles TileInfo) ([]byte, parser.TileInfo) {
 	t.Helper()
-	payloadSize, err := TileInfoPayloadSize(seq, prefix, codedWidth, height, tiles)
-	if err != nil {
-		t.Fatalf("TileInfoPayloadSize: %v", err)
-	}
 	var buf [16]byte
-	payload, err := AppendTileInfoPayload(buf[:0], seq, prefix, codedWidth, height, tiles)
+	payload, err := appendTileInfoPayload(buf[:0], seq, prefix, codedWidth, height, tiles)
 	if err != nil {
-		t.Fatalf("AppendTileInfoPayload: %v", err)
-	}
-	if len(payload) != payloadSize {
-		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+		t.Fatalf("appendTileInfoPayload: %v", err)
 	}
 	parsed, err := parser.ParseTileInfo(
 		payload,

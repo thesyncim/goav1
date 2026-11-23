@@ -4,7 +4,6 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
@@ -15,27 +14,6 @@ const (
 	initY  = 2
 	initUV = 1
 )
-
-// TestCalcEIHMatchesThresholds asserts the ported dav1d_calc_eih E/I limits equal
-// the decoder's existing libaom-derived ThresholdsForLevel across every level and
-// sharpness, proving the two limit derivations agree byte-for-byte.
-func TestCalcEIHMatchesThresholds(t *testing.T) {
-	for sharp := 0; sharp <= int(loopfilter.MaxSharpness); sharp++ {
-		lut := CalcEIH(sharp)
-		for level := 0; level <= int(loopfilter.MaxLevel); level++ {
-			th, err := loopfilter.ThresholdsForLevel(uint8(level), uint8(sharp))
-			if err != nil {
-				t.Fatalf("ThresholdsForLevel(%d,%d): %v", level, sharp, err)
-			}
-			if lut.I[level] != th.Limit {
-				t.Fatalf("I[%d] sharp=%d: got %d want %d", level, sharp, lut.I[level], th.Limit)
-			}
-			if lut.E[level] != th.BlockLimit {
-				t.Fatalf("E[%d] sharp=%d: got %d want %d", level, sharp, lut.E[level], th.BlockLimit)
-			}
-		}
-	}
-}
 
 func TestDecompTxLeaf8x8(t *testing.T) {
 	var txa [2][2][32][32]uint8
@@ -363,7 +341,7 @@ func TestBuilderCreateIntraLevelCache(t *testing.T) {
 	}
 	lv := Levels{YVert: 10, YHorz: 11, U: 12, V: 13}
 	// 8x8 intra block at frame origin, 4:2:0.
-	b.CreateIntra(&m, lc, lv, 0, 0, stride, 8, tile.BlockSize8x8, tile.TransformSize8x8, tile.TransformSize4x4, I420(), ay, ly, auv, luv)
+	b.CreateIntra(&m, lc, lv, 0, 0, stride, 8, tile.BlockSize8x8, tile.TransformSize8x8, tile.TransformSize4x4, Layout{SSHor: 1, SSVer: 1}, ay, ly, auv, luv)
 	for y := 0; y < 2; y++ {
 		for x := 0; x < 2; x++ {
 			cell := lc.Cells[y*stride+x]

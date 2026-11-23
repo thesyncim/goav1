@@ -295,21 +295,6 @@ func (w *Writer) WriteBoolQ15(val int, f uint32) {
 	w.normalizeFlush(l, r)
 }
 
-func (w *BitCounter) WriteBoolQ15(val int, f uint32) {
-	if traceEntropyReads {
-		traceWriteBool(uint16(f))
-	}
-	r := w.rng
-	v := ((r >> 8) * (f >> ecProbShift)) >> (7 - ecProbShift)
-	v += ecMinProb
-	if val != 0 {
-		r = v
-	} else {
-		r -= v
-	}
-	w.normalize(r)
-}
-
 // WriteBit codes one equiprobable bit, matching WriteBoolQ15(val, 1<<14).
 func (w *Writer) WriteBit(val int) {
 	if w.log != nil {
@@ -366,27 +351,11 @@ func (w *Writer) WriteSymbol(s int, icdf []uint16, nsyms int) {
 	w.encodeQ15(fl, uint32(icdf[s]), s, nsyms)
 }
 
-func (w *BitCounter) WriteSymbol(s int, icdf []uint16, nsyms int) {
-	if traceEntropyReads {
-		traceWriteCDF(icdf[0], nsyms)
-	}
-	fl := uint32(CDFProbTop)
-	if s > 0 {
-		fl = uint32(icdf[s-1])
-	}
-	w.encodeQ15(fl, uint32(icdf[s]), s, nsyms)
-}
-
 // WriteSymbolAdaptive codes symbol s from the adaptive inverse CDF cdf (len ==
 // nsyms+1, the trailing slot holding the adaptation count) and then adapts cdf in
 // place via the same updateCDFWindow the decoder's ReadSymbol uses, so both sides
 // evolve the CDF identically.
 func (w *Writer) WriteSymbolAdaptive(s int, cdf []uint16) {
-	w.WriteSymbol(s, cdf, len(cdf)-1)
-	updateCDFWindow(cdf, s)
-}
-
-func (w *BitCounter) WriteSymbolAdaptive(s int, cdf []uint16) {
 	w.WriteSymbol(s, cdf, len(cdf)-1)
 	updateCDFWindow(cdf, s)
 }

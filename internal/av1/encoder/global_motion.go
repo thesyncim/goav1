@@ -3,7 +3,6 @@ package encoder
 import (
 	"math/bits"
 
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -55,31 +54,6 @@ func DefaultGlobalMotionParams() GlobalMotionParams {
 		params.Ref[i] = defaultWarp
 	}
 	return params
-}
-
-func GlobalMotionParamsPayloadSize(prefix FrameHeaderPrefix, size InterFrameSize, tiles parser.TileInfo, refs *parser.ReferenceState, params GlobalMotionParams) (int, error) {
-	w := newSizingBitWriter()
-	if err := writeGlobalMotionParamsPayload(&w, prefix, size, tiles, refs, params); err != nil {
-		return 0, err
-	}
-	return w.bytesWritten(), nil
-}
-
-func AppendGlobalMotionParamsPayload(dst []byte, prefix FrameHeaderPrefix, size InterFrameSize, tiles parser.TileInfo, refs *parser.ReferenceState, params GlobalMotionParams) ([]byte, error) {
-	payloadSize, err := GlobalMotionParamsPayloadSize(prefix, size, tiles, refs, params)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < payloadSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+payloadSize]
-	w := newBitWriter(out[off:])
-	if err := writeGlobalMotionParamsPayload(&w, prefix, size, tiles, refs, params); err != nil {
-		return dst, err
-	}
-	return out, nil
 }
 
 func writeGlobalMotionParamsPayload(w *bitWriter, prefix FrameHeaderPrefix, size InterFrameSize, tiles parser.TileInfo, refs *parser.ReferenceState, params GlobalMotionParams) error {

@@ -75,26 +75,6 @@ var filterIntraTaps = [FilterIntraModes][8][8]int8{
 	},
 }
 
-// PredictFilterIntraPlaneBlock writes libaom-compatible filter-intra
-// prediction. The AV1 filter-intra predictor is defined for transform blocks up
-// to 32x32 whose width is a multiple of four and height is a multiple of two.
-func PredictFilterIntraPlaneBlock(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, mode FilterIntraMode, edges IntraEdges) error {
-	return PredictFilterIntraPlaneBlockWithExtent(dst, bytesPerSample, bitDepth, x, y, width, height, width, height, mode, edges)
-}
-
-// PredictFilterIntraPlaneBlockWithExtent writes the visible sub-rectangle of a
-// filter-intra predictor whose coded transform extent may continue past the
-// frame boundary.
-func PredictFilterIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, predWidth int, predHeight int, mode FilterIntraMode, edges IntraEdges) error {
-	return PredictFilterIntraPlaneBlockWithExtentBounded(dst, bytesPerSample, bitDepth, x, y, width, height, predWidth, predHeight, mode, edges, false)
-}
-
-// PredictFilterIntraPlaneBlockWithByteEdges has the same bounded-sample contract
-// as PredictIntraPlaneBlockWithByteEdges; recursive filtering still clips to 255.
-func PredictFilterIntraPlaneBlockWithByteEdges(dst frame.Plane, x, y, width, height, predWidth, predHeight int, mode FilterIntraMode, edges IntraEdges) error {
-	return PredictFilterIntraPlaneBlockWithExtentBounded(dst, 1, 8, x, y, width, height, predWidth, predHeight, mode, edges, true)
-}
-
 // PredictFilterIntraPlaneBlockWithExtentBounded has the same call-scoped sample-bound contract as PredictIntraPlaneBlockWithExtentBounded.
 func PredictFilterIntraPlaneBlockWithExtentBounded(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, predWidth int, predHeight int, mode FilterIntraMode, edges IntraEdges, bounded bool) error {
 	block, err := planeBlockWindow(dst, bytesPerSample, x, y, width, height)

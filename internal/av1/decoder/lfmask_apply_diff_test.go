@@ -36,7 +36,13 @@ func buildLoopFilterMasksFromRecords(t testing.TB, event Event, size parser.Fram
 		t.Fatalf("grid: %v", err)
 	}
 	color := event.SequenceHeader.ColorConfig
-	layout := frameWorkLoopFilterMaskLayout(color)
+	layout := lfmask.Layout{Mono: color.MonoChrome}
+	if color.SubsamplingX {
+		layout.SSHor = 1
+	}
+	if color.SubsamplingY {
+		layout.SSVer = 1
+	}
 	hasChroma := !color.MonoChrome
 	sb128w, sb128h, maskCount := threading.FrameWorkLoopFilterMaskShape(cols, rows)
 	handle := &threading.FrameWorkLoopFilterMasks{

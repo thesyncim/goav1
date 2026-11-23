@@ -86,12 +86,6 @@ func DeactivateFrameWorkLoopFilterCompactState(state *FrameWorkLoopFilterCompact
 	}
 }
 
-// FrameWorkLoopFilterCompactActive reports whether h belongs to an in-progress
-// or completed compact frame. An active-but-not-ready frame must fail closed.
-func FrameWorkLoopFilterCompactActive(state *FrameWorkLoopFilterCompactState) bool {
-	return state != nil && state.active
-}
-
 // FrameWorkLoopFilterCompactStateActive reports the active lifecycle state
 // independently of any copied mask handle. Exact owners use it to reject a
 // missing or detached capability instead of falling back to an absent map.

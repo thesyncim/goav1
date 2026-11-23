@@ -391,7 +391,3 @@ func findDirectionDualU8SIMD(img1 []byte, img2 []byte, stride int) (int, int32, 
 	dir2, var2 := findDirectionU8SIMD(img2, stride)
 	return dir1, var1, dir2, var2
 }
-
-// directionSIMDBound reports whether the Go SIMD direction kernels are the
-// dispatch targets on this build: always, on arm64 (NEON is mandatory).
-func directionSIMDBound() bool { return true }

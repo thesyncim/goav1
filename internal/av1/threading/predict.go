@@ -757,13 +757,6 @@ func (b *FrameWorkBatch) predictBlockChromaCFLShared(index int, visit *tile.Bloc
 	return b.predictBlockChromaCFLPlaneWithAC(visit, FrameWorkPlaneV, geomV, scratch)
 }
 
-// predictBlockChromaCFLPlane retains the original one-plane operation for
-// aliasing and geometry fallbacks, and is also the test oracle for the former
-// U-then-V implementation.
-func (b *FrameWorkBatch) predictBlockChromaCFLPlane(index int, visit tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkCFLPredictionScratch) error {
-	return b.predictBlockChromaCFLPlanePtr(index, &visit, plane, scratch)
-}
-
 func (b *FrameWorkBatch) predictBlockChromaCFLPlanePtr(index int, visit *tile.BlockLoopVisit, plane FrameWorkPlane, scratch *FrameWorkCFLPredictionScratch) error {
 	if visit == nil || scratch == nil {
 		return ErrInvalidBatch
@@ -4183,10 +4176,6 @@ func frameWorkBlockLumaTransformPosition(block tile.BlockVisit, tx tile.Transfor
 	return x, y, nil
 }
 
-func frameWorkIntraPredictionEdges(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, fillMissing bool) (prediction.IntraEdges, error) {
-	return frameWorkIntraPredictionEdgesWithExtent(dst, bytesPerSample, bitDepth, x, y, width, height, width, height, 0, 0, block, scratch, fillMissing)
-}
-
 // frameWorkWindowEdgeReadBound returns the past-end neighbor-read bound (in the
 // window-local coordinate system used by dst) that matches libaom's intra
 // predictor n_top_px / n_left_px truncation. libaom caps real neighbor samples
@@ -4451,10 +4440,6 @@ func frameWorkDirectionalPredictionEdges(dst frame.Plane, bytesPerSample int, bi
 		}
 	}
 	return edges, nil
-}
-
-func frameWorkApplyDirectionalIntraEdgeFilter(bitDepth uint8, width int, height int, angle int, block tile.BlockVisit, smoothNeighbor bool, edges *prediction.DirectionalEdges, scratch *FrameWorkIntraPredictionScratch) error {
-	return frameWorkApplyDirectionalIntraEdgeFilterBounded(bitDepth, width, height, angle, block, smoothNeighbor, edges, scratch, false)
 }
 
 func frameWorkApplyDirectionalIntraEdgeFilterBounded(bitDepth uint8, width int, height int, angle int, block tile.BlockVisit, smoothNeighbor bool, edges *prediction.DirectionalEdges, scratch *FrameWorkIntraPredictionScratch, bounded bool) error {

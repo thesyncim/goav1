@@ -52,7 +52,7 @@ func TestFilterIntraEdgeMatchesLibaomKnownVectors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := slices.Clone(tt.edge)
 			scratch := make([]uint16, len(got))
-			if err := FilterIntraEdge(got, scratch, tt.strength, tt.bitDepth); err != nil {
+			if err := FilterIntraEdgeBounded(got, scratch, tt.strength, tt.bitDepth, false); err != nil {
 				t.Fatal(err)
 			}
 			if !slices.Equal(got, tt.want) {
@@ -81,7 +81,7 @@ func TestFilterIntraEdgeMatchesLibaomOperationCorpus(t *testing.T) {
 			filterIntraEdgeLibaomReference(want, strength)
 
 			scratch := make([]uint16, size)
-			if err := FilterIntraEdge(got, scratch, strength, bitDepth); err != nil {
+			if err := FilterIntraEdgeBounded(got, scratch, strength, bitDepth, false); err != nil {
 				t.Fatalf("bitDepth=%d iter=%d strength=%d size=%d: %v", bitDepth, iter, strength, size, err)
 			}
 			if !slices.Equal(got, want) {
@@ -109,7 +109,7 @@ func TestFilterIntraEdgeRejectsInvalidInputs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := FilterIntraEdge(tt.edge, tt.scratch, tt.strength, tt.bitDepth); !errors.Is(err, ErrInvalidPrediction) {
+			if err := FilterIntraEdgeBounded(tt.edge, tt.scratch, tt.strength, tt.bitDepth, false); !errors.Is(err, ErrInvalidPrediction) {
 				t.Fatalf("err=%v want %v", err, ErrInvalidPrediction)
 			}
 		})
@@ -118,7 +118,7 @@ func TestFilterIntraEdgeRejectsInvalidInputs(t *testing.T) {
 
 func TestFilterIntraEdgeStrengthZeroDoesNotRequireScratch(t *testing.T) {
 	edge := []uint16{1, 2, 3, 4}
-	if err := FilterIntraEdge(edge, nil, 0, 8); err != nil {
+	if err := FilterIntraEdgeBounded(edge, nil, 0, 8, false); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(edge, []uint16{1, 2, 3, 4}) {
@@ -148,7 +148,7 @@ func TestFilterIntraEdgeAllocs(t *testing.T) {
 	}
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := FilterIntraEdge(edge, scratch, 3, 12); err != nil {
+		if err := FilterIntraEdgeBounded(edge, scratch, 3, 12, false); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -179,7 +179,7 @@ func FuzzFilterIntraEdge(f *testing.F) {
 		before := slices.Clone(edge)
 		strength := rawStrength % 4
 		scratch := make([]uint16, size)
-		if err := FilterIntraEdge(edge, scratch, strength, bitDepth); err != nil {
+		if err := FilterIntraEdgeBounded(edge, scratch, strength, bitDepth, false); err != nil {
 			t.Fatalf("FilterIntraEdge err=%v", err)
 		}
 		for i, sample := range edge {
@@ -202,7 +202,7 @@ func BenchmarkFilterIntraEdge(b *testing.B) {
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = FilterIntraEdge(edge, scratch, 3, 12)
+		_ = FilterIntraEdgeBounded(edge, scratch, 3, 12, false)
 	}
 }
 
@@ -236,7 +236,7 @@ func TestUpsampleIntraEdgeMatchesLibaomKnownVectors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := slices.Clone(tt.edge)
 			scratch := make([]uint16, tt.size+3)
-			if err := UpsampleIntraEdge(got, tt.origin, tt.size, scratch, tt.bitDepth); err != nil {
+			if err := UpsampleIntraEdgeBounded(got, tt.origin, tt.size, scratch, tt.bitDepth, false); err != nil {
 				t.Fatal(err)
 			}
 			window := got[tt.origin-2 : tt.origin+2*tt.size-1]
@@ -274,7 +274,7 @@ func TestUpsampleIntraEdgeMatchesLibaomOperationCorpus(t *testing.T) {
 			upsampleIntraEdgeLibaomReference(want, offset, size, bitDepth)
 
 			scratch := make([]uint16, size+3)
-			if err := UpsampleIntraEdge(got, offset, size, scratch, bitDepth); err != nil {
+			if err := UpsampleIntraEdgeBounded(got, offset, size, scratch, bitDepth, false); err != nil {
 				t.Fatalf("bitDepth=%d iter=%d size=%d: %v", bitDepth, iter, size, err)
 			}
 			end := offset + (size-1)*2 + 1
@@ -307,7 +307,7 @@ func TestUpsampleIntraEdgeRejectsInvalidInputs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := UpsampleIntraEdge(tt.edge, tt.origin, tt.size, tt.scratch, tt.bitDepth); !errors.Is(err, ErrInvalidPrediction) {
+			if err := UpsampleIntraEdgeBounded(tt.edge, tt.origin, tt.size, tt.scratch, tt.bitDepth, false); !errors.Is(err, ErrInvalidPrediction) {
 				t.Fatalf("err=%v want %v", err, ErrInvalidPrediction)
 			}
 		})
@@ -327,7 +327,7 @@ func TestUpsampleIntraEdgeAllocs(t *testing.T) {
 	scratch := make([]uint16, size+3)
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := UpsampleIntraEdge(edge, origin, size, scratch, 10); err != nil {
+		if err := UpsampleIntraEdgeBounded(edge, origin, size, scratch, 10, false); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -359,7 +359,7 @@ func FuzzUpsampleIntraEdge(f *testing.F) {
 			edge[i] = edge[origin+size-1]
 		}
 		scratch := make([]uint16, size+3)
-		if err := UpsampleIntraEdge(edge, origin, size, scratch, bitDepth); err != nil {
+		if err := UpsampleIntraEdgeBounded(edge, origin, size, scratch, bitDepth, false); err != nil {
 			t.Fatalf("UpsampleIntraEdge err=%v", err)
 		}
 		for i, sample := range edge[origin-2:] {
@@ -384,7 +384,7 @@ func BenchmarkUpsampleIntraEdge(b *testing.B) {
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = UpsampleIntraEdge(edge, origin, size, scratch, 12)
+		_ = UpsampleIntraEdgeBounded(edge, origin, size, scratch, 12, false)
 	}
 }
 

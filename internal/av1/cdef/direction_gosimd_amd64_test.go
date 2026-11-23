@@ -6,7 +6,13 @@
 
 package cdef
 
-import "testing"
+import (
+	"simd/archsimd"
+	"testing"
+)
+
+// directionSIMDBound reports whether init bound the AVX2 direction kernels.
+func directionSIMDBound() bool { return archsimd.X86.AVX2() }
 
 // The AVX2 Go SIMD direction kernels are called directly (not through the
 // dispatch slot), so they are checked against the scalar reference regardless
@@ -140,9 +146,8 @@ func TestFindDirectionU8AVX2MatchesScalar(t *testing.T) {
 	}
 }
 
-// BenchmarkAMD64CDEFDirection times the 8-bit direction search: dav1d's
-// paired-lane AVX2 cdef_dir port (impl=avx2) against the 128-bit Go SIMD
-// search (impl=generic).
+// BenchmarkAMD64CDEFDirection times the 8-bit direction search, dav1d's
+// paired-lane AVX2 cdef_dir port.
 func BenchmarkAMD64CDEFDirection(b *testing.B) {
 	if !directionSIMDBound() {
 		b.Skip("CPU does not advertise AVX2")
@@ -154,12 +159,6 @@ func BenchmarkAMD64CDEFDirection(b *testing.B) {
 		img[i] = byte(rnd.generate(256))
 	}
 	var sink int
-	b.Run("shape=8x8x2/impl=generic", func(b *testing.B) {
-		for b.Loop() {
-			d1, _, d2, _ := findDirectionDualU8SIMD128(img, img[8:], stride)
-			sink += d1 + d2
-		}
-	})
 	b.Run("shape=8x8x2/impl=avx2", func(b *testing.B) {
 		for b.Loop() {
 			d1, _, d2, _ := findDirectionDualU8SIMD(img, img[8:], stride)
@@ -169,9 +168,8 @@ func BenchmarkAMD64CDEFDirection(b *testing.B) {
 	_ = sink
 }
 
-// BenchmarkAMD64CDEFDirection16 times the high-bitdepth direction search:
-// dav1d's cdef_dir_16bpc port (impl=avx2) against the 128-bit Go SIMD search
-// (impl=generic), at 10 bits.
+// BenchmarkAMD64CDEFDirection16 times the high-bitdepth direction search,
+// dav1d's cdef_dir_16bpc port, at 10 bits.
 func BenchmarkAMD64CDEFDirection16(b *testing.B) {
 	if !directionSIMDBound() {
 		b.Skip("CPU does not advertise AVX2")
@@ -183,12 +181,6 @@ func BenchmarkAMD64CDEFDirection16(b *testing.B) {
 		img[i] = uint16(rnd.generate(1024))
 	}
 	var sink int
-	b.Run("shape=8x8x2/impl=generic", func(b *testing.B) {
-		for b.Loop() {
-			d1, _, d2, _ := findDirectionDualSIMD128(img, img[8:], stride, 2)
-			sink += d1 + d2
-		}
-	})
 	b.Run("shape=8x8x2/impl=avx2", func(b *testing.B) {
 		for b.Loop() {
 			d1, _, d2, _ := findDirectionDualSIMD(img, img[8:], stride, 2)

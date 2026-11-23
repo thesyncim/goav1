@@ -1,7 +1,6 @@
 package encoder
 
 import (
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -43,31 +42,6 @@ type FilmGrainParams struct {
 
 	Overlap               bool
 	ClipToRestrictedRange bool
-}
-
-func FilmGrainParamsPayloadSize(seq SequenceHeader, prefix FrameHeaderPrefix, size InterFrameSize, refs *parser.ReferenceState, params FilmGrainParams) (int, error) {
-	w := newSizingBitWriter()
-	if err := writeFilmGrainParamsPayload(&w, seq, prefix, size, refs, params); err != nil {
-		return 0, err
-	}
-	return w.bytesWritten(), nil
-}
-
-func AppendFilmGrainParamsPayload(dst []byte, seq SequenceHeader, prefix FrameHeaderPrefix, size InterFrameSize, refs *parser.ReferenceState, params FilmGrainParams) ([]byte, error) {
-	payloadSize, err := FilmGrainParamsPayloadSize(seq, prefix, size, refs, params)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < payloadSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+payloadSize]
-	w := newBitWriter(out[off:])
-	if err := writeFilmGrainParamsPayload(&w, seq, prefix, size, refs, params); err != nil {
-		return dst, err
-	}
-	return out, nil
 }
 
 func writeFilmGrainParamsPayload(w *bitWriter, seq SequenceHeader, prefix FrameHeaderPrefix, size InterFrameSize, refs *parser.ReferenceState, params FilmGrainParams) error {

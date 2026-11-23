@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// adst16F follows inverseADST16Core in adst.go stage for stage, with the
+// adst16F follows inverseADST16 in adst.go stage for stage, with the
 // (c-4096)*x + x forms written as the plain rotations they equal.
 func adst16F(c []float64, stride int, g *gainRecorder) {
 	var in [16]float64

@@ -437,7 +437,6 @@ func TestWriteCDF7MatchesWriteCDF(t *testing.T) {
 
 func TestCountingWriterTellMatchesWriter(t *testing.T) {
 	rng := rand.New(rand.NewSource(83))
-	icdf := buildICDF(t, []int{3, 1, 4, 1})
 	var normalBinaryCDF, countBinaryCDF, bitCounterBinaryCDF CDF
 	if err := normalBinaryCDF.Init([]uint16{18000}); err != nil {
 		t.Fatal(err)
@@ -473,19 +472,13 @@ func TestCountingWriterTellMatchesWriter(t *testing.T) {
 	count := NewCountingWriter()
 	bitCounter := NewBitCounter()
 	for i := range 5000 {
-		switch rng.Intn(8) {
+		switch rng.Intn(6) {
 		case 0:
-			bit := rng.Intn(2)
-			p := uint32(1 + rng.Intn(CDFProbTop-1))
-			normal.WriteBoolQ15(bit, p)
-			count.WriteBoolQ15(bit, p)
-			bitCounter.WriteBoolQ15(bit, p)
-		case 1:
 			bit := rng.Intn(2)
 			normal.WriteBit(bit)
 			count.WriteBit(bit)
 			bitCounter.WriteBit(bit)
-		case 2:
+		case 1:
 			sym := rng.Intn(4)
 			if sym == 0 {
 				normal.WriteCDF4Zero(&normalCDF)
@@ -499,7 +492,7 @@ func TestCountingWriterTellMatchesWriter(t *testing.T) {
 			if normalCDF != countCDF || normalCDF != bitCounterCDF {
 				t.Fatalf("cdf diverged after symbol %d: normal=%v count=%v bitCounter=%v", i, normalCDF.Values(), countCDF.Values(), bitCounterCDF.Values())
 			}
-		case 3:
+		case 2:
 			sym := rng.Intn(3)
 			normal.WriteCDF3(&normalCDF3, sym)
 			count.WriteCDF3(&countCDF3, sym)
@@ -507,7 +500,7 @@ func TestCountingWriterTellMatchesWriter(t *testing.T) {
 			if normalCDF3 != countCDF3 || normalCDF3 != bitCounterCDF3 {
 				t.Fatalf("cdf3 diverged after symbol %d: normal=%v count=%v bitCounter=%v", i, normalCDF3.Values(), countCDF3.Values(), bitCounterCDF3.Values())
 			}
-		case 4:
+		case 3:
 			sym := rng.Intn(2)
 			normal.WriteBinaryCDFTrusted(&normalBinaryCDF, sym)
 			count.WriteBinaryCDFTrusted(&countBinaryCDF, sym)
@@ -515,7 +508,7 @@ func TestCountingWriterTellMatchesWriter(t *testing.T) {
 			if normalBinaryCDF != countBinaryCDF || normalBinaryCDF != bitCounterBinaryCDF {
 				t.Fatalf("binary cdf diverged after symbol %d: normal=%v count=%v bitCounter=%v", i, normalBinaryCDF.Values(), countBinaryCDF.Values(), bitCounterBinaryCDF.Values())
 			}
-		case 5:
+		case 4:
 			sym := rng.Intn(5)
 			normal.WriteCDF5(&normalCDF5, sym)
 			count.WriteCDF5(&countCDF5, sym)
@@ -523,7 +516,7 @@ func TestCountingWriterTellMatchesWriter(t *testing.T) {
 			if normalCDF5 != countCDF5 || normalCDF5 != bitCounterCDF5 {
 				t.Fatalf("cdf5 diverged after symbol %d: normal=%v count=%v bitCounter=%v", i, normalCDF5.Values(), countCDF5.Values(), bitCounterCDF5.Values())
 			}
-		case 6:
+		case 5:
 			sym := rng.Intn(7)
 			normal.WriteCDF7(&normalCDF7, sym)
 			count.WriteCDF7(&countCDF7, sym)
@@ -531,11 +524,6 @@ func TestCountingWriterTellMatchesWriter(t *testing.T) {
 			if normalCDF7 != countCDF7 || normalCDF7 != bitCounterCDF7 {
 				t.Fatalf("cdf7 diverged after symbol %d: normal=%v count=%v bitCounter=%v", i, normalCDF7.Values(), countCDF7.Values(), bitCounterCDF7.Values())
 			}
-		default:
-			sym := rng.Intn(4)
-			normal.WriteSymbol(sym, icdf, 4)
-			count.WriteSymbol(sym, icdf, 4)
-			bitCounter.WriteSymbol(sym, icdf, 4)
 		}
 		if normal.Tell() != count.Tell() || normal.Tell() != bitCounter.Tell() {
 			t.Fatalf("tell diverged after op %d: normal=%d count=%d bitCounter=%d", i, normal.Tell(), count.Tell(), bitCounter.Tell())

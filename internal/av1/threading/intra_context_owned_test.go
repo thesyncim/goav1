@@ -1,9 +1,10 @@
 package threading
 
 import (
+	"testing"
+
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/tile"
-	"testing"
 )
 
 func TestFrameWorkOwnedIntraContextsSelection(t *testing.T) {

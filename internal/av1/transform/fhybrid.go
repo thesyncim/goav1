@@ -106,37 +106,6 @@ func forwardDCTBySize8BitResidualTrusted(coeff []int32, coeffStride int, residua
 	return nil
 }
 
-// ForwardBlock8x8HybridTrusted computes the 8x8 non-DCT_DCT forward transform
-// for callers that already proved the block shape and scratch sizes. The
-// coefficient and residual strides must be at least 8, and coeff/residual/scratch
-// must contain the addressed 8x8 region.
-func ForwardBlock8x8HybridTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32, typ Type) error {
-	if !forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, typ) {
-		return ErrInvalidTransform
-	}
-	return nil
-}
-
-// ForwardBlock8x8ADSTDCTTrusted computes the trusted 8x8 ADST_DCT transform.
-func ForwardBlock8x8ADSTDCTTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, TypeADSTDCT)
-}
-
-// ForwardBlock8x8DCTADSTTrusted computes the trusted 8x8 DCT_ADST transform.
-func ForwardBlock8x8DCTADSTTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, TypeDCTADST)
-}
-
-// ForwardBlock8x8ADSTADSTTrusted computes the trusted 8x8 ADST_ADST transform.
-func ForwardBlock8x8ADSTADSTTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, TypeADSTADST)
-}
-
-// ForwardBlock8x8IDTXTrusted computes the trusted 8x8 IDTX transform.
-func ForwardBlock8x8IDTXTrusted(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
-	forwardBlock8x8HybridTyped(coeff, coeffStride, residual, residualStride, scratch, TypeIDTX)
-}
-
 func forwardBlock8x8HybridSupported(typ Type) bool {
 	switch typ {
 	case TypeADSTDCT, TypeDCTADST, TypeADSTADST, TypeIDTX:

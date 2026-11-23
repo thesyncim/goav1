@@ -382,9 +382,7 @@ func TestReconstructPlaneBlockDCT64x64SparseInterShape(t *testing.T) {
 	if err := transform.InverseBlockBitDepth(wantResidual, W, dq, 32, idctScratch, transform.Size{Width: W, Height: H}, transform.TypeDCTDCT, 8); err != nil {
 		t.Fatal(err)
 	}
-	if err := dsp.AddResidualPlaneBlock(wantPlane, 1, 8, 0, 0, W, H, wantResidual, W); err != nil {
-		t.Fatal(err)
-	}
+	dsp.AddResidualPlaneBlockTrusted(wantPlane.Pix, wantPlane.Stride, 1, 0xff, W, H, wantResidual, W)
 
 	// Pin a few characteristic residual samples so any change to the IDCT64
 	// shape (which the prior agent identified as the source of frame-3

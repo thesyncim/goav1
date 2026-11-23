@@ -10,10 +10,6 @@ var residualBlockImpl = residualBlockPureGo
 // unless the Go SIMD kernels bind it in rdstats_gosimd.go).
 var rdStatsBlockImpl = rdStatsBlockPureGo
 
-// blockErrorImpl computes the coefficient block error (scalar reference unless
-// the Go SIMD kernels bind it in rdstats_gosimd.go).
-var blockErrorImpl = blockErrorPureGo
-
 // rdStatsDiffImpl accumulates the skip comparison's terms of a block whose
 // zero levels are left out (scalar reference unless the Go SIMD kernels bind
 // it in rdstats_gosimd.go).

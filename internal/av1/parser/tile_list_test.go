@@ -70,29 +70,13 @@ func TestParseTileListOBU(t *testing.T) {
 
 func TestParseTileListOBURoundTrip(t *testing.T) {
 	tile := []byte{0xaa, 0xbb}
-	list := TileList{
-		OutputFrameWidthInTilesMinus1:  3,
-		OutputFrameHeightInTilesMinus1: 4,
-		TileCountMinus1:                0,
-		Entries: []TileListEntry{
-			{
-				AnchorFrameIdx:     7,
-				AnchorTileRow:      2,
-				AnchorTileCol:      1,
-				TileDataSizeMinus1: uint16(len(tile) - 1),
-				TileData:           tile,
-			},
-		},
-	}
-	buf := AppendTileListOBU(nil, list)
+	buf := appendTileListEntryRaw([]byte{3, 4, 0, 0}, 7, 2, 1, uint16(len(tile)-1), tile)
 	var scratch [1]TileListEntry
 	got, err := ParseTileListOBU(buf, scratch[:0])
 	if err != nil {
 		t.Fatalf("ParseTileListOBU err=%v", err)
 	}
-	if got.OutputFrameWidthInTilesMinus1 != list.OutputFrameWidthInTilesMinus1 ||
-		got.OutputFrameHeightInTilesMinus1 != list.OutputFrameHeightInTilesMinus1 ||
-		got.TileCountMinus1 != list.TileCountMinus1 {
+	if got.OutputFrameWidthInTilesMinus1 != 3 || got.OutputFrameHeightInTilesMinus1 != 4 || got.TileCountMinus1 != 0 {
 		t.Fatalf("header mismatch: %+v", got)
 	}
 	if len(got.Entries) != 1 {
@@ -324,9 +308,6 @@ func FuzzParseTileListOBU(f *testing.F) {
 			if len(entry.TileData) != entry.TileDataSize() {
 				t.Fatalf("entry %d data len=%d want %d", i, len(entry.TileData), entry.TileDataSize())
 			}
-		}
-		if got := AppendTileListOBU(nil, list); !bytes.Equal(got, payload) {
-			t.Fatalf("round trip mismatch\n got=%x\nwant=%x", got, payload)
 		}
 	})
 }

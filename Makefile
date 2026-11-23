@@ -356,8 +356,6 @@ fuzz-smoke:
 	go test ./internal/av1/decoder $(FUZZFLAGS) -fuzz=FuzzStreamPush
 	go test ./internal/av1/ivf $(FUZZFLAGS) -fuzz=FuzzIterator
 	go test ./internal/av1/obu $(FUZZFLAGS) -fuzz=FuzzParseHeader
-	go test ./internal/av1/obu $(FUZZFLAGS) -fuzz=FuzzTemporalUnitIterator
-	go test ./internal/av1/obu $(FUZZFLAGS) -fuzz=FuzzAnnexBIterator
 	go test ./internal/av1/rtp $(FUZZFLAGS) -fuzz=FuzzPayloadIterator
 	go test ./internal/av1/rtp $(FUZZFLAGS) -fuzz=FuzzPacketizer
 	go test ./internal/av1/rtp $(FUZZFLAGS) -fuzz=FuzzAssembleFrame
@@ -375,7 +373,6 @@ fuzz-smoke:
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseTileInfo
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseTileGroupHeader
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseTileListOBU
-	go test ./internal/av1/quantize $(FUZZFLAGS) -fuzz=FuzzQuantizeFPNoQMatrix
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzBuildJobs
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzJobPayload
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzNewEntropyReader
@@ -420,11 +417,7 @@ fuzz-smoke:
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzSaveRestorationBoundaryLines
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzSaveRestorationFrameBoundaryLines
 	go test ./internal/av1/dsp $(FUZZFLAGS) -fuzz=FuzzPlaneBlockOps
-	go test ./internal/av1/dsp $(FUZZFLAGS) -fuzz=FuzzMinMaxAbsDiff8x8
-	go test ./internal/av1/dsp $(FUZZFLAGS) -fuzz=FuzzBlendA64Mask
 	go test ./internal/av1/cdef $(FUZZFLAGS) -fuzz=FuzzFindDirection
-	go test ./internal/av1/cdef $(FUZZFLAGS) -fuzz=FuzzFilterBlock
-	go test ./internal/av1/cdef $(FUZZFLAGS) -fuzz=FuzzFilterFrameBlocks
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzPredictIntraPlaneBlock
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzDCPredictor
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzStaticIntraPredictors
@@ -434,8 +427,6 @@ fuzz-smoke:
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzUpsampleIntraEdge
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzIntraEdgeDecisions
 	go test ./internal/av1/prediction $(FUZZFLAGS) -fuzz=FuzzCFLSubsampleAndPredict
-	go test ./internal/av1/motion $(FUZZFLAGS) -fuzz='^FuzzPredictInterPlaneBlock$$'
-	go test ./internal/av1/motion $(FUZZFLAGS) -fuzz=FuzzPredictInterPlaneBlockFromOriginFullpel
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzBuildBatches
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchJobPayload
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchJobEntropyReader
@@ -464,7 +455,6 @@ fuzz-smoke:
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzResolveLevel
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzThresholdsForLevel
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter4Edge
-	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter4BlockEdge
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter6Edge
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter8Edge
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter14Edge

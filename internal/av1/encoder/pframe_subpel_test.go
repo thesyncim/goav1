@@ -28,14 +28,10 @@ func TestEncodePFrameSubpelMotion(t *testing.T) {
 	cw, ch := w/2, h/2
 	src1, src2 := makeHalfPelMotionFrames(t, w, h)
 
-	const qIndex = 60
-	keyTU, keyRecon, err := encoder.EncodeKeyframe(src1, qIndex)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pTU, pRecon, err := encoder.EncodePFrame(src2, keyRecon, qIndex)
-	if err != nil {
-		t.Fatal(err)
+	tus, recons, keys := encodeSequence(t, 60, src1, src2)
+	keyTU, pTU, keyRecon, pRecon := tus[0], tus[1], recons[0], recons[1]
+	if keys[1] {
+		t.Fatal("half-pel frame coded as a keyframe")
 	}
 	t.Logf("key %d bytes, half-pel P %d bytes", len(keyTU), len(pTU))
 	if len(pTU)*6 >= len(keyTU) {
@@ -51,10 +47,11 @@ func TestEncodePFrameSubpelMotion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	f := frames[1]
-	comparePlane(t, "Y", f.Y, pRecon.Y, w, h, w)
-	comparePlane(t, "U", f.U, pRecon.U, cw, ch, cw)
-	comparePlane(t, "V", f.V, pRecon.V, cw, ch, cw)
+	for i, f := range frames {
+		comparePlane(t, "Y", f.Y, recons[i].Y, w, h, w)
+		comparePlane(t, "U", f.U, recons[i].U, cw, ch, cw)
+		comparePlane(t, "V", f.V, recons[i].V, cw, ch, cw)
+	}
 	psnr := planePSNR(src2.Y, pRecon.Y)
 	t.Logf("half-pel P luma PSNR %.2f dB", psnr)
 	if psnr < 33 {

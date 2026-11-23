@@ -106,8 +106,6 @@ func FuzzStreamPush(f *testing.F) {
 		// Path 2..n: treat the whole input as a raw OBU byte stream in each of
 		// the supported framings.
 		fuzzDriveLowOverhead(data)
-		fuzzDriveAnnexB(data)
-		fuzzDriveTemporalUnit(data)
 		fuzzDriveSingleElement(data)
 	})
 }
@@ -154,42 +152,6 @@ func fuzzDriveLowOverhead(data []byte) {
 		if err := stream.PushUnitInto(&event, unit, units == 1); err != nil {
 			return
 		}
-	}
-}
-
-func fuzzDriveAnnexB(data []byte) {
-	it := obu.NewAnnexBIterator(data)
-	var stream Stream
-	var event Event
-	units := 0
-	for {
-		unit, ok, err := it.Next()
-		if err != nil || !ok {
-			return
-		}
-		units++
-		if units > fuzzMaxUnits {
-			return
-		}
-		if err := stream.PushUnitInto(&event, unit.OBU, false); err != nil {
-			return
-		}
-	}
-}
-
-func fuzzDriveTemporalUnit(data []byte) {
-	it := obu.NewTemporalUnitIterator(data)
-	tus := 0
-	for {
-		tu, ok, err := it.Next()
-		if err != nil || !ok {
-			return
-		}
-		tus++
-		if tus > fuzzMaxUnits {
-			return
-		}
-		fuzzDriveLowOverhead(tu.Raw)
 	}
 }
 

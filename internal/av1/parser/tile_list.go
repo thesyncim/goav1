@@ -322,30 +322,3 @@ func TileListOutputTileRegion(list TileList, geometry TileListOutputGeometry, en
 		Height:  geometry.TileHeightPixels,
 	}, nil
 }
-
-// AppendTileListOBU serialises list into dst as the bytes that would appear in
-// the OBU_TILE_LIST payload (the obu_size prefix is not emitted; callers wrap
-// the result with obu.PutHeader / a leb128 size when constructing a full OBU).
-//
-// AppendTileListOBU returns dst extended in-place so callers can pre-size with
-// AppendLEB128-style usage. The function performs no allocation when dst has
-// sufficient capacity.
-func AppendTileListOBU(dst []byte, list TileList) []byte {
-	dst = append(dst,
-		list.OutputFrameWidthInTilesMinus1,
-		list.OutputFrameHeightInTilesMinus1,
-		byte(list.TileCountMinus1>>8),
-		byte(list.TileCountMinus1),
-	)
-	for _, entry := range list.Entries {
-		dst = append(dst,
-			entry.AnchorFrameIdx,
-			entry.AnchorTileRow,
-			entry.AnchorTileCol,
-			byte(entry.TileDataSizeMinus1>>8),
-			byte(entry.TileDataSizeMinus1),
-		)
-		dst = append(dst, entry.TileData...)
-	}
-	return dst
-}

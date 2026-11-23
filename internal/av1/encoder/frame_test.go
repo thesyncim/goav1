@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -112,27 +111,6 @@ func TestAppendFrameHeaderPrefixPayloadReducedStillPicture(t *testing.T) {
 	}
 }
 
-func TestAppendFrameHeaderPrefixPayloadShortBuffer(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	prefix := FrameHeaderPrefix{
-		FrameType:         FrameHeaderTypeInter,
-		ShowableFrame:     true,
-		FrameSizeOverride: true,
-		OrderHint:         9,
-		PrimaryRefFrame:   3,
-	}
-	var buf [1]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendFrameHeaderPrefixPayload(dst, seq, prefix)
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want %v", err, bitstream.ErrShortBuffer)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output: % x", out)
-	}
-}
-
 func TestAppendFrameHeaderPrefixPayloadRejectsInvalid(t *testing.T) {
 	seq := realtimeEncoderSequenceHeader()
 	tests := []struct {
@@ -174,39 +152,18 @@ func TestAppendFrameHeaderPrefixPayloadRejectsInvalid(t *testing.T) {
 	}
 	var buf [8]byte
 	for _, tt := range tests {
-		if _, err := AppendFrameHeaderPrefixPayload(buf[:0], seq, tt.prefix); !errors.Is(err, tt.want) {
+		if _, err := appendFrameHeaderPrefixPayload(buf[:0], seq, tt.prefix); !errors.Is(err, tt.want) {
 			t.Fatalf("%s err=%v want %v", tt.name, err, tt.want)
 		}
-	}
-}
-
-func TestAppendFrameHeaderPrefixPayloadAllocs(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	prefix := FrameHeaderPrefix{
-		FrameType:         FrameHeaderTypeInter,
-		ShowableFrame:     true,
-		FrameSizeOverride: true,
-		OrderHint:         9,
-		PrimaryRefFrame:   3,
-	}
-	var buf [8]byte
-	if _, err := AppendFrameHeaderPrefixPayload(buf[:0], seq, prefix); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = AppendFrameHeaderPrefixPayload(buf[:0], seq, prefix)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendFrameHeaderPrefixPayload allocated: %f", allocs)
 	}
 }
 
 func appendAndParseFrameHeaderPrefix(t *testing.T, seq SequenceHeader, prefix FrameHeaderPrefix) ([]byte, parser.FrameHeaderPrefix) {
 	t.Helper()
 	var seqBuf [96]byte
-	seqPayload, err := AppendSequenceHeaderPayload(seqBuf[:0], seq)
+	seqPayload, err := appendSequenceHeaderPayload(seqBuf[:0], seq)
 	if err != nil {
-		t.Fatalf("AppendSequenceHeaderPayload: %v", err)
+		t.Fatalf("appendSequenceHeaderPayload: %v", err)
 	}
 	parsedSeq, err := parser.ParseSequenceHeader(seqPayload)
 	if err != nil {
@@ -214,9 +171,9 @@ func appendAndParseFrameHeaderPrefix(t *testing.T, seq SequenceHeader, prefix Fr
 	}
 
 	var buf [16]byte
-	out, err := AppendFrameHeaderPrefixPayload(buf[:0], seq, prefix)
+	out, err := appendFrameHeaderPrefixPayload(buf[:0], seq, prefix)
 	if err != nil {
-		t.Fatalf("AppendFrameHeaderPrefixPayload: %v", err)
+		t.Fatalf("appendFrameHeaderPrefixPayload: %v", err)
 	}
 	parsed, err := parser.ParseFrameHeaderPrefix(out, parsedSeq)
 	if err != nil {
