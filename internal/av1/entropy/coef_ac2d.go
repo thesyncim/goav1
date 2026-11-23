@@ -43,9 +43,12 @@ func (c *Cursor) DecodeCoefsAC2D(scan []int16, shift, stride uint, offsets *[5][
 		rngHi := rng >> 8
 		coded := uint32(dif >> (ecWindow - 16))
 		upper := rng
-		c0 := values[0]
-		c1 := values[1]
-		c2 := values[2]
+		// The three probabilities and the zero terminator as one word, the
+		// four lanes dav1d's asm loads with ld1 {v0.4h}.
+		w := uint64(values[0]) | uint64(values[1])<<16 | uint64(values[2])<<32 | uint64(values[3])<<48
+		c0 := uint16(w)
+		c1 := uint16(w >> 16)
+		c2 := uint16(w >> 32)
 		// dav1d's arm64 msac_decode_symbol_adapt4 evaluates every bound at
 		// once and counts those above the coded value. The inverse CDF is
 		// non-increasing and the EC_MIN_PROB offsets strictly decrease, so
@@ -83,29 +86,33 @@ func (c *Cursor) DecodeCoefsAC2D(scan []int16, shift, stride uint, offsets *[5][
 		}
 		if update {
 			count := values[4]
-			rate := uint(5 + ((count >> 4) & 3))
-			// update_cdf with both adaptations of each entry computed and
-			// the symbol selecting between them (dav1d's asm does the same
-			// with a lane mask).
-			c0u, c1u, c2u := uint32(c0), uint32(c1), uint32(c2)
-			n0 := c0u - c0u>>rate
-			n1 := c1u - c1u>>rate
-			n2 := c2u - c2u>>rate
-			u0 := c0u + (CDFProbTop-c0u)>>rate
-			u1 := c1u + (CDFProbTop-c1u)>>rate
-			u2 := c2u + (CDFProbTop-c2u)>>rate
-			if tok > 0 {
-				n0 = u0
+			rate := uint(5+((count>>4)&3)) & 15
+			// update_cdf on all lanes at once (dav1d's asm does it in a
+			// vector): every lane moves toward 0, c - (c >> rate), or toward
+			// 32768, c + ((32768 - c) >> rate), and the lanes below tok take
+			// the second. Each lane is below 32768, so neither form borrows
+			// or carries across lanes; the masks clear the bits a whole-word
+			// shift brings in from the lane above. The terminator lane stays
+			// zero.
+			const lanes = 0x0000_0001_0001_0001
+			m := (0xffff >> rate) * uint64(lanes)
+			down := w - (w>>rate)&m
+			up := w + ((0x8000*lanes-w)>>rate)&m
+			sel := uint64(0)
+			if coded < l0 {
+				sel = 0xffff
 			}
-			if tok > 1 {
-				n1 = u1
+			if coded < l1 {
+				sel = 0xffff_ffff
 			}
-			if tok > 2 {
-				n2 = u2
+			if coded < l2 {
+				sel = 0xffff_ffff_ffff
 			}
-			values[0] = uint16(n0)
-			values[1] = uint16(n1)
-			values[2] = uint16(n2)
+			w = down ^ (down^up)&sel
+			values[0] = uint16(w)
+			values[1] = uint16(w >> 16)
+			values[2] = uint16(w >> 32)
+			values[3] = uint16(w >> 48)
 			if count < MaxCDFCount {
 				count++
 			}
