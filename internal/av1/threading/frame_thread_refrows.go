@@ -89,18 +89,55 @@ func (n *frameThreadRefNeed) addNeighbor(o *tile.OverlappableNeighbor, bottom in
 // false when a reference failed to decode.
 func (r *FrameThreadRecon) waitSuperblockReferences(b *FrameWorkBatch, events []frameWorkReconEvent, visits []tile.BlockLoopVisit) bool {
 	var need frameThreadRefNeed
+	if !need.addEvents(events, visits) {
+		return true
+	}
+	return r.waitReferences(b, &need)
+}
+
+// waitRowReferences blocks until the references every superblock of SB row
+// row reads have published those rows (dav1d's per tile-sbrow lowest_pixel
+// check), so the row's per-superblock waits pass at once.
+func (r *FrameThreadRecon) waitRowReferences(b *FrameWorkBatch, view *frameWorkReconView, row int) bool {
+	if row+1 >= len(view.rowStart) {
+		return true
+	}
+	lo, hi := int(view.rowStart[row]), int(view.rowStart[row+1])
+	if lo < 0 || hi < lo || hi > len(view.sbs) {
+		return true
+	}
+	var need frameThreadRefNeed
+	any := false
+	for _, sb := range view.sbs[lo:hi] {
+		if sb.start < 0 || sb.end < sb.start || int(sb.end) > len(view.events) {
+			return true
+		}
+		if need.addEvents(view.events[sb.start:sb.end], view.visits) {
+			any = true
+		}
+	}
+	if !any {
+		return true
+	}
+	return r.waitReferences(b, &need)
+}
+
+// addEvents adds the reference rows the buffered blocks of events read and
+// reports whether any block was found.
+func (n *frameThreadRefNeed) addEvents(events []frameWorkReconEvent, visits []tile.BlockLoopVisit) bool {
 	any := false
 	for i := range events {
 		ev := &events[i]
 		if ev.kind != frameWorkReconEventBlockBegin || int(ev.index) >= len(visits) {
 			continue
 		}
-		need.addVisit(&visits[ev.index])
+		n.addVisit(&visits[ev.index])
 		any = true
 	}
-	if !any {
-		return true
-	}
+	return any
+}
+
+func (r *FrameThreadRecon) waitReferences(b *FrameWorkBatch, need *frameThreadRefNeed) bool {
 	for i, rows := range need {
 		p := r.RefProgress[i]
 		if rows == 0 || p == nil {
