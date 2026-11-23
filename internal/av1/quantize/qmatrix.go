@@ -69,15 +69,30 @@ func InverseQMatrix(params parser.QuantizationParams, plane Plane, size transfor
 	if level == QMLevels-1 {
 		return nil, nil
 	}
+	m := QMatrix(level, plane != PlaneY, size)
+	if m == nil {
+		return nil, ErrInvalidQuantizer
+	}
+	return m, nil
+}
+
+// QMatrix is libaom's inverse quantization matrix of level for a luma (chroma
+// false) or chroma transform block of size, in coefficient order
+// (col * scanHeight + row, the decoder's cf order). It is nil for the flat
+// level 15 and for sizes without a matrix.
+func QMatrix(level uint8, chroma bool, size transform.Size) []uint16 {
+	if level >= QMLevels-1 {
+		return nil
+	}
 	offset, length, err := inverseQMatrixOffset(size)
 	if err != nil {
-		return nil, err
+		return nil
 	}
 	class := 0
-	if plane != PlaneY {
+	if chroma {
 		class = 1
 	}
-	return inverseQMatrixRef[level][class][offset : offset+length], nil
+	return inverseQMatrixRef[level][class][offset : offset+length]
 }
 
 func usesInverseQMatrixTransform(typ transform.Type) bool {

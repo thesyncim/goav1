@@ -45,9 +45,47 @@ type CoefBlock struct {
 	Lossless           bool
 }
 
-// CoefDequant is one plane's dav1d dq_tbl[0..1] together with cf_max.
+// CoefDequant is one plane's dav1d dq_tbl[0..1] together with cf_max and the
+// plane's quantizer matrices (dav1d's f->qm[][plane]), nil when the plane
+// dequantizes flat.
 type CoefDequant struct {
 	DC, AC, Max uint32
+	QM          *CoefQMatrices
+}
+
+// CoefQMatrices is one level and plane class of dav1d's dav1d_qm_tbl: the
+// quantizer matrix of every transform size, libaom's tables in coefficient
+// order, which is the cf order DecodeCoefs indexes with rc directly. The
+// 64-sample sizes share the matrix of their 32-sample coefficient scan.
+type CoefQMatrices [transformSizeCount][]uint16
+
+var coefQMTables [quantize.QMLevels - 1][2]CoefQMatrices
+
+func init() {
+	for level := range coefQMTables {
+		for class := range coefQMTables[level] {
+			for size := range TransformSize(transformSizeCount) {
+				ts, err := size.TransformSize()
+				if err != nil {
+					panic(err)
+				}
+				coefQMTables[level][class][size] = quantize.QMatrix(uint8(level), class == 1, ts)
+			}
+		}
+	}
+}
+
+// QMatrices returns the quantizer matrices of level for luma (chroma false)
+// or chroma, nil for the flat level 15.
+func QMatrices(level uint8, chroma bool) *CoefQMatrices {
+	if level >= quantize.QMLevels-1 {
+		return nil
+	}
+	class := 0
+	if chroma {
+		class = 1
+	}
+	return &coefQMTables[level][class]
 }
 
 // CoefResult is what decode_coefs hands back: the TXB result (EOB is dav1d's
@@ -245,6 +283,10 @@ func (b *CoefBlock) DecodeCoefs(plane uint8, size TransformSize, x4, y4, visW, v
 		if geo.txCtx > 2 {
 			txScale = geo.txCtx - 2
 		}
+		var qm []uint16
+		if dq.QM != nil && r.Txtp < transform.TypeIDTX {
+			qm = dq.QM[size]
+		}
 		var c entropy.Cursor
 		c.Load(&s.Reader)
 		t := decodeCoefTokens(&c, b.cdfs, size, geo, coeffPlane, r.Txtp, class, txbCtx.DCSignContext, cf, cfZeroed, &b.scratch.Coeff.CoefLevels, coefDequant{
@@ -252,7 +294,7 @@ func (b *CoefBlock) DecodeCoefs(plane uint8, size TransformSize, x4, y4, visW, v
 			ac:    dq.AC,
 			shift: txScale,
 			cfMax: dq.Max,
-		})
+		}, qm)
 		c.CommitStateTo(&s.Reader)
 		r.TXB = TXBDecodeResult{EOB: uint16(t.eob + 1), CulLevel: t.culLevel}
 		r.ActiveRows, r.ActiveCols = uint8(t.activeRows), uint8(t.activeCols)

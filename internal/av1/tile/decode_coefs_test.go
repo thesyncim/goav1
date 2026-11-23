@@ -10,7 +10,8 @@ import (
 
 // TestDecodeCoefTokensMatchesQuantizedReader decodes the same random payloads
 // through the quantized TXB reader (followed by scalar dequantization) and
-// through the dav1d decode_coefs port, TXB after TXB on one evolving
+// through the dav1d decode_coefs port, with and without quantizer matrices,
+// TXB after TXB on one evolving
 // reader/CDF state, and requires identical range-decoder state, CDFs,
 // dequantized coefficients, EOB and coefficient context.
 func TestDecodeCoefTokensMatchesQuantizedReader(t *testing.T) {
@@ -120,9 +121,13 @@ func runDecodeCoefTokensDiff(t *testing.T, rng *rand.Rand, size TransformSize, g
 			coefLevels[i] = byte(rng.Uint32())
 		}
 		c := newState.Reader.Cursor()
+		var qm []uint16
+		if typ < transform.TypeIDTX && rng.IntN(2) == 0 {
+			qm = QMatrices(uint8(rng.IntN(quantize.QMLevels-1)), plane == CoeffPlaneUV)[size]
+		}
 		r := decodeCoefTokens(&c, &newCDFs, size, geo, plane, typ, class, dcSignCtx, cf, false, &coefLevels, coefDequant{
 			dc: uint32(dcFactor), ac: uint32(acFactor), shift: txScale, cfMax: uint32(dqMax),
-		})
+		}, qm)
 		c.CommitStateTo(&newState.Reader)
 
 		if got, want := newState.Reader.State(), oldState.Reader.State(); got != want {
@@ -145,6 +150,9 @@ func runDecodeCoefTokensDiff(t *testing.T, rng *rand.Rand, size TransformSize, g
 				factor := acFactor
 				if pos == 0 {
 					factor = dcFactor
+				}
+				if qm != nil {
+					factor = (factor*int32(qm[pos]) + 16) >> 5
 				}
 				neg := level < 0
 				if neg {

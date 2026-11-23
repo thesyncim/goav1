@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/quantize"
+	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 func TestFrameWorkBlockDequantIsKeyed(t *testing.T) {
@@ -44,8 +45,26 @@ func TestFrameWorkBlockDequantRejectsDequantizingPaths(t *testing.T) {
 	if dq := c.blockDequant(0, true); dq != nil {
 		t.Fatalf("lossless block received dequant factors %+v", *dq)
 	}
-	c.batch.Quantization.UsingQMatrix = true
-	if dq := c.blockDequant(0, false); dq != nil {
-		t.Fatalf("quantizer-matrix block received dequant factors %+v", *dq)
+}
+
+func TestFrameWorkBlockDequantSelectsQMatrices(t *testing.T) {
+	batch, state, _, _, req := testFrameWorkResidualDriver(t)
+	batch.Quantization.UsingQMatrix = true
+	batch.Quantization.QMatrixLevelY = 3
+	batch.Quantization.QMatrixLevelU = quantize.QMLevels - 1
+	batch.Quantization.QMatrixLevelV = 7
+	c := frameWorkTileResidualLoopController{batch: batch, state: state, req: req}
+	dq := c.blockDequant(0, false)
+	if dq == nil {
+		t.Fatal("quantizer-matrix block: no dequant factors")
+	}
+	want := [3]*tile.CoefQMatrices{tile.QMatrices(3, false), nil, tile.QMatrices(7, true)}
+	for plane := range dq {
+		if dq[plane].QM != want[plane] {
+			t.Fatalf("plane %d matrices %p, want %p", plane, dq[plane].QM, want[plane])
+		}
+	}
+	if want[0] == nil || want[2] == nil || want[0] == want[2] {
+		t.Fatalf("matrix selection %p %p", want[0], want[2])
 	}
 }
