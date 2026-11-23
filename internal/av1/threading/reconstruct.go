@@ -8,20 +8,6 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
-// FrameWorkBlockCoeffReconstruction carries one decoded TXB plus the block-loop
-// position needed to place it in the worker's output frame.
-type FrameWorkBlockCoeffReconstruction struct {
-	Visit tile.BlockVisit
-	Block tile.BlockCoeffBlock
-
-	Transform     transform.Type
-	CurrentQIndex uint8
-	SegmentID     uint8
-
-	Int32Scratch    []int32
-	ResidualScratch []int16
-}
-
 // BlockQuantizer derives the dequantizer and lossless flag for one decoded
 // block using the current delta-q state and, when segmentation is enabled, the
 // block's segment delta.
@@ -34,9 +20,7 @@ func (b *FrameWorkBatch) BlockQuantizer(currentQIndex uint8, segmentID uint8, pl
 }
 
 // blockQuantizerForPlane is BlockQuantizer once the quantize.Plane is already
-// resolved. ReconstructBlockCoeff needs the qPlane for the inverse-quant matrix
-// too, so it resolves frameWorkQuantizePlane once and shares it here instead of
-// having BlockQuantizer derive it a second time per transform block.
+// resolved.
 func (b *FrameWorkBatch) blockQuantizerForPlane(currentQIndex uint8, segmentID uint8, qPlane quantize.Plane) (quantize.Quantizer, bool, error) {
 	if !b.Sequence.Valid() {
 		return quantize.Quantizer{}, false, ErrInvalidBatch
@@ -78,78 +62,6 @@ func (b *FrameWorkBatch) BlockCoeffPlanePosition(index int, visit tile.BlockVisi
 	return geom.plane, int(geom.x), int(geom.y), nil
 }
 
-// ReconstructBlockCoeff dequantizes and adds one decoded transform block into
-// Jobs[index]'s clipped output-plane window.
-func (b *FrameWorkBatch) ReconstructBlockCoeff(index int, req FrameWorkBlockCoeffReconstruction) error {
-	return b.reconstructBlockCoeffCore(index, req.Visit, &req.Block, req.Transform, req.CurrentQIndex, req.SegmentID, req.Int32Scratch, req.ResidualScratch)
-}
-
-type frameWorkReconQuantCache struct {
-	matrix        []uint16
-	quantizer     [3]quantize.Quantizer
-	quantKey      [3]uint16
-	matrixPlane   quantize.Plane
-	matrixSize    transform.Size
-	matrixType    transform.Type
-	losslessPlane uint8
-	matrixValid   bool
-	matrixLoss    bool
-}
-
-// reconstructBlockCoeffCore is the checked by-pointer reconstruction seam used
-// by public callers. It preserves ReconstructBlockCoeff's invalid-input
-// behavior while avoiding the large request struct copy.
-func (b *FrameWorkBatch) reconstructBlockCoeffCore(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16) error {
-	geom, err := b.blockCoeffGeometry(index, visit, block)
-	if err != nil {
-		return err
-	}
-	if geom.visibleWidth == 0 || geom.visibleHeight == 0 {
-		return nil
-	}
-	if block.Result.AllZero || block.Result.EOB == 0 {
-		return nil
-	}
-	relX := int(geom.x) - int(geom.window.X)
-	relY := int(geom.y) - int(geom.window.Y)
-	visibleWidth := int(geom.visibleWidth)
-	visibleHeight := int(geom.visibleHeight)
-	scanStride := int(geom.scanSize.Height)
-	qPlane := quantize.Plane(geom.plane)
-	q, lossless, err := b.blockQuantizerForPlane(currentQIndex, segmentID, qPlane)
-	if err != nil {
-		return err
-	}
-	iqMatrix, err := quantize.InverseQMatrix(b.Quantization, qPlane, geom.size, txType, lossless)
-	if err != nil {
-		return ErrInvalidBatch
-	}
-
-	dst := frameWorkPlaneFromWindow(geom.window)
-	cfg := reconstruct.Block{
-		Size:           geom.size,
-		Transform:      txType,
-		Quantizer:      q,
-		InverseQMatrix: iqMatrix,
-		Lossless:       lossless,
-		EOB:            int16(block.Result.EOB),
-	}
-	if err := reconstruct.ReconstructPlaneBlockVisibleWithGeometryAndScan(dst, int(geom.window.BytesPerSample), b.Sequence.ColorConfig.BitDepth,
-		relX, relY, visibleWidth, visibleHeight,
-		block.Coeffs, scanStride, block.Scan, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
-		return ErrInvalidBatch
-	}
-	return nil
-}
-
-func (b *FrameWorkBatch) reconstructBlockCoeffCoreTrustedWithNonZero(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock, nonzero []int16, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) error {
-	geom, err := b.blockCoeffGeometryTrusted(index, visit, block)
-	if err != nil {
-		return err
-	}
-	return b.reconstructBlockCoeffCoreWithGeometryAndNonZero(geom, block, nonzero, txType, currentQIndex, segmentID, int32Scratch, residualScratch, cache)
-}
-
 func frameWorkPrimeLumaReconGeometry(b *FrameWorkBatch, index int) error {
 	if _, err := b.JobRegion(index); err != nil {
 		return err
@@ -169,86 +81,10 @@ func frameWorkPrimeLumaReconGeometry(b *FrameWorkBatch, index int) error {
 	return nil
 }
 
-// reconstructBlockCoeffLumaPrimed reconstructs the residual for a luma TXB
-// using the job geometry entries that DecodeAndReconstructJobResidualsPtr
-// primes once per tile job. The public path keeps the fully checked geometry
-// route; this hot path only skips the per-TXB cache lookup ladder when the
-// already-keyed region and Y plane are present for the current job.
-func (b *FrameWorkBatch) reconstructBlockCoeffLumaPrimed(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock, nonzero []int16, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) (bool, error) {
-	if block.Plane != 0 {
-		return false, nil
-	}
-	cacheIndex, ok := frameWorkJobCacheIndex(index)
-	c := b.geomCache
-	if c == nil || !ok ||
-		c.validMask&(frameWorkJobGeometryRegionValid|frameWorkJobGeometryPlaneYValid) != frameWorkJobGeometryRegionValid|frameWorkJobGeometryPlaneYValid ||
-		c.regionIndex != cacheIndex || c.planeIndex[FrameWorkPlaneY] != cacheIndex {
-		return false, nil
-	}
-	geom, err := b.blockCoeffGeometryLumaKnown(c.region, c.plane[FrameWorkPlaneY], visit, block)
-	if err != nil {
-		return true, err
-	}
-	return true, b.reconstructBlockCoeffCoreWithGeometryAndNonZero(geom, block, nonzero, txType, currentQIndex, segmentID, int32Scratch, residualScratch, cache)
-}
-
-func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometryAndNonZero(geom frameWorkBlockCoeffGeometry, block *tile.BlockCoeffBlock, nonzero []int16, txType transform.Type, currentQIndex uint8, segmentID uint8, int32Scratch []int32, residualScratch []int16, cache *frameWorkReconQuantCache) error {
-	if geom.visibleWidth == 0 || geom.visibleHeight == 0 {
-		return nil
-	}
-	if block.Result.AllZero || block.Result.EOB == 0 {
-		return nil
-	}
-	relX := int(geom.x) - int(geom.window.X)
-	relY := int(geom.y) - int(geom.window.Y)
-	visibleWidth := int(geom.visibleWidth)
-	visibleHeight := int(geom.visibleHeight)
-	scanStride := int(geom.scanSize.Height)
-	qPlane := quantize.Plane(geom.plane)
-	q, lossless, err := b.cachedBlockQuantizerTrusted(cache, currentQIndex, segmentID, qPlane)
-	if err != nil {
-		return err
-	}
-	iqMatrix, err := b.cachedInverseQMatrixTrusted(cache, qPlane, geom.size, txType, lossless)
-	if err != nil {
-		return ErrInvalidBatch
-	}
-
-	bytesPerSample := int(geom.window.BytesPerSample)
-	dstStride := int(geom.window.Stride)
-	dstOffset := relY*dstStride + relX*bytesPerSample
-	rowBytes := visibleWidth * bytesPerSample
-	dstLen := (visibleHeight-1)*dstStride + rowBytes
-	dst := geom.window.Pix[dstOffset : dstOffset+dstLen : dstOffset+dstLen]
-	cfg := reconstruct.Block{
-		Size:           geom.size,
-		Transform:      txType,
-		Quantizer:      q,
-		InverseQMatrix: iqMatrix,
-		Lossless:       lossless,
-		EOB:            int16(block.Result.EOB),
-	}
-	if len(nonzero) > 0 {
-		if err := reconstruct.ReconstructPlaneBlockVisibleTrustedAtWithGeometryScanAndNonZero(dst, dstStride, bytesPerSample, b.Sequence.ColorConfig.BitDepth,
-			visibleWidth, visibleHeight,
-			block.Coeffs, scanStride, block.Scan, nonzero, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
-			return ErrInvalidBatch
-		}
-	} else {
-		if err := reconstruct.ReconstructPlaneBlockVisibleTrustedAtWithGeometryAndScan(dst, dstStride, bytesPerSample, b.Sequence.ColorConfig.BitDepth,
-			visibleWidth, visibleHeight,
-			block.Coeffs, scanStride, block.Scan, geom.scanSize, geom.txScale, int32Scratch, residualScratch, cfg); err != nil {
-			return ErrInvalidBatch
-		}
-	}
-	return nil
-}
-
-// reconstructBlockCoeffCoreWithGeometryDequantized consumes the private fused
-// coefficient target after the tile reader has completed one tracked 2D TXB.
-// Geometry and the output window are resolved exactly as for the quantized
-// path; only the already-dequantized scratch bypasses quantizer/matrix lookup
-// and coefficient dequantization.
+// reconstructBlockCoeffCoreWithGeometryDequantized adds the inverse transform
+// of one TXB that decode_coefs dequantized into dequant to the output window
+// through the validated block geometry, for a TXB not wholly inside the
+// window's writable extent.
 func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometryDequantized(geom frameWorkBlockCoeffGeometry, block *tile.BlockCoeffBlock, activeRows int, activeCols int, dcOnly bool, dequant []int32, int32Scratch []int32, residualScratch []int16) error {
 	if geom.visibleWidth == 0 || geom.visibleHeight == 0 {
 		return nil
@@ -278,55 +114,8 @@ func (b *FrameWorkBatch) reconstructBlockCoeffCoreWithGeometryDequantized(geom f
 	return nil
 }
 
-func (b *FrameWorkBatch) cachedBlockQuantizerTrusted(cache *frameWorkReconQuantCache, currentQIndex uint8, segmentID uint8, qPlane quantize.Plane) (quantize.Quantizer, bool, error) {
-	idx := int(qPlane)
-	key := frameWorkReconQuantKey(currentQIndex, segmentID)
-	if uint(idx) < uint(len(cache.quantKey)) &&
-		cache.quantKey[idx] == key {
-		return cache.quantizer[idx], cache.losslessPlane&(1<<uint(idx)) != 0, nil
-	}
-	q, lossless, err := b.blockQuantizerForPlane(currentQIndex, segmentID, qPlane)
-	if err != nil {
-		return quantize.Quantizer{}, false, err
-	}
-	if uint(idx) < uint(len(cache.quantKey)) {
-		cache.quantKey[idx] = key
-		cache.quantizer[idx] = q
-		if lossless {
-			cache.losslessPlane |= 1 << uint(idx)
-		} else {
-			cache.losslessPlane &^= 1 << uint(idx)
-		}
-	}
-	return q, lossless, nil
-}
-
 func frameWorkReconQuantKey(currentQIndex uint8, segmentID uint8) uint16 {
 	return 0x8000 | uint16(segmentID)<<8 | uint16(currentQIndex)
-}
-
-func (b *FrameWorkBatch) cachedInverseQMatrixTrusted(cache *frameWorkReconQuantCache, qPlane quantize.Plane, size transform.Size, txType transform.Type, lossless bool) ([]uint16, error) {
-	if !b.Quantization.UsingQMatrix || lossless || txType >= transform.TypeIDTX {
-		return nil, nil
-	}
-	if cache.matrixValid &&
-		cache.matrixPlane == qPlane &&
-		cache.matrixSize == size &&
-		cache.matrixType == txType &&
-		cache.matrixLoss == lossless {
-		return cache.matrix, nil
-	}
-	matrix, err := quantize.InverseQMatrix(b.Quantization, qPlane, size, txType, lossless)
-	if err != nil {
-		return nil, err
-	}
-	cache.matrixValid = true
-	cache.matrixPlane = qPlane
-	cache.matrixSize = size
-	cache.matrixType = txType
-	cache.matrixLoss = lossless
-	cache.matrix = matrix
-	return matrix, nil
 }
 
 type frameWorkBlockCoeffGeometry struct {
@@ -390,70 +179,6 @@ func (b *FrameWorkBatch) blockCoeffGeometry(index int, visit tile.BlockVisit, bl
 		return frameWorkBlockCoeffGeometry{}, err
 	}
 	return b.blockCoeffGeometryKnown(region, window, plane, ssX, ssY, visit, block)
-}
-
-func (b *FrameWorkBatch) blockCoeffGeometryTrusted(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
-	if block.Plane == 0 {
-		return b.blockCoeffGeometryLumaTrusted(index, visit, block)
-	}
-	color := b.Sequence.ColorConfig
-	if color.MonoChrome {
-		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
-	}
-	ssX := uint(frameWorkSubsampleShift(color.SubsamplingX))
-	ssY := uint(frameWorkSubsampleShift(color.SubsamplingY))
-	plane := FrameWorkPlaneU
-	if block.Plane == 2 {
-		plane = FrameWorkPlaneV
-	} else if block.Plane != 1 {
-		return frameWorkBlockCoeffGeometry{}, ErrInvalidBatch
-	}
-	var err error
-	region, regionOK := b.cachedJobRegionTrusted(index)
-	if !regionOK {
-		region, err = b.JobRegion(index)
-		if err != nil {
-			return frameWorkBlockCoeffGeometry{}, err
-		}
-	}
-	window, windowOK := b.cachedJobOutputPlaneTrusted(index, plane)
-	if !windowOK {
-		window, err = b.JobOutputPlane(index, plane)
-		if err != nil {
-			return frameWorkBlockCoeffGeometry{}, err
-		}
-	}
-	return b.blockCoeffGeometryKnown(region, window, plane, ssX, ssY, visit, block)
-}
-
-func (b *FrameWorkBatch) blockCoeffGeometryLumaTrusted(index int, visit tile.BlockVisit, block *tile.BlockCoeffBlock) (frameWorkBlockCoeffGeometry, error) {
-	cacheIndex, cacheOK := frameWorkJobCacheIndex(index)
-	cache := b.geomCache
-	var region FrameWorkJobRegion
-	if cache == nil || !cacheOK ||
-		cache.validMask&frameWorkJobGeometryRegionValid == 0 ||
-		cache.regionIndex != cacheIndex {
-		var err error
-		region, err = b.JobRegion(index)
-		if err != nil {
-			return frameWorkBlockCoeffGeometry{}, err
-		}
-	} else {
-		region = cache.region
-	}
-	var window FrameWorkPlaneRegion
-	if cache == nil || !cacheOK ||
-		cache.validMask&frameWorkJobGeometryPlaneYValid == 0 ||
-		cache.planeIndex[FrameWorkPlaneY] != cacheIndex {
-		var err error
-		window, err = b.JobOutputPlane(index, FrameWorkPlaneY)
-		if err != nil {
-			return frameWorkBlockCoeffGeometry{}, err
-		}
-	} else {
-		window = cache.plane[FrameWorkPlaneY]
-	}
-	return b.blockCoeffGeometryLumaKnown(region, window, visit, block)
 }
 
 func (b *FrameWorkBatch) cachedJobRegionTrusted(index int) (FrameWorkJobRegion, bool) {

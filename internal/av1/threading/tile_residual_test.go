@@ -183,50 +183,6 @@ func TestFrameWorkBatchReferenceMVFrameBindAllocs(t *testing.T) {
 	}
 }
 
-func TestFrameWorkDeferredReconPreservesScanSlice(t *testing.T) {
-	var scratch FrameWorkTileResidualScratch
-	controller := frameWorkTileResidualLoopController{scratch: &scratch}
-	coeffs := []int16{1, 0, 0, 0}
-	scan := []int16{0, 1, 2, 3}
-	block := tile.BlockCoeffBlock{
-		Plane: 0,
-		Block: tile.TransformBlock{
-			Size:      tile.TransformSize4x4,
-			VisibleW4: 1,
-			VisibleH4: 1,
-		},
-		Transform: transform.TypeDCTDCT,
-		Result:    tile.TXBDecodeResult{EOB: 1},
-		Coeffs:    coeffs,
-		Scan:      scan,
-	}
-
-	if err := controller.bufferReconTXB(&block, 0, 0, 0, 0, false, 7); err != nil {
-		t.Fatalf("buffer recon txb: %v", err)
-	}
-
-	if len(scratch.reconBlocks) != 1 {
-		t.Fatalf("recon blocks=%d want 1", len(scratch.reconBlocks))
-	}
-	buffered := scratch.reconBlocks[0]
-	if len(buffered.Scan) != len(scan) {
-		t.Fatalf("buffered scan len=%d want %d", len(buffered.Scan), len(scan))
-	}
-	if len(scan) != 0 && &buffered.Scan[0] != &scan[0] {
-		t.Fatal("buffered scan was copied; expected immutable scan-table alias")
-	}
-	if len(buffered.Coeffs) != len(coeffs) {
-		t.Fatalf("buffered coeff len=%d want %d", len(buffered.Coeffs), len(coeffs))
-	}
-	coeffs[0] = 99
-	if buffered.Coeffs[0] != 1 {
-		t.Fatalf("buffered coeffs alias caller scratch: got %d want 1", buffered.Coeffs[0])
-	}
-	if len(scratch.coeffArena) != len(coeffs) {
-		t.Fatalf("coeff arena len=%d want %d", len(scratch.coeffArena), len(coeffs))
-	}
-}
-
 func TestFrameWorkBlockLoopRefFrameSideMatchesLibaom(t *testing.T) {
 	refs := [parser.InterRefsPerFrame]uint8{7, 8, 9, 24, 4, 5, 6}
 	side, err := frameWorkBlockLoopRefFrameSide(true, 5, 8, refs)
@@ -653,7 +609,7 @@ func TestFrameWorkTileResidualControllerUsesPredictionScratch(t *testing.T) {
 		t.Fatalf("predicted before the first txb: stats=%+v", stats)
 	}
 	skipBlock := testSkipIntraTXB(0, 4, 4, tile.TransformSize16x16, 4)
-	if err := controller.fusedReconState().reconstructTXBWithNonZero(&visit, &skipBlock, nil, 0); err != nil {
+	if err := controller.fusedReconState().reconstructTXBWithDequantized(&visit, &skipBlock, nil, 0, 0, false); err != nil {
 		t.Fatal(err)
 	}
 	if stats.Predictions != 1 || stats.SkippedBlocks != 1 || stats.CoefficientBlocks != 0 {
@@ -731,7 +687,7 @@ func TestFrameWorkTileResidualControllerPredictsCFLOnSkipTransform(t *testing.T)
 		testSkipIntraTXB(1, 2, 2, tile.TransformSize8x8, 2),
 		testSkipIntraTXB(2, 2, 2, tile.TransformSize8x8, 2),
 	} {
-		if err := controller.fusedReconState().reconstructTXBWithNonZero(&visit, &block, nil, 0); err != nil {
+		if err := controller.fusedReconState().reconstructTXBWithDequantized(&visit, &block, nil, 0, 0, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -790,9 +746,8 @@ func TestFrameWorkTileResidualControllerDefersCFLUntilChroma(t *testing.T) {
 		Block:     tile.TransformBlock{X4: 2, Y4: 2, Size: tile.TransformSize8x8, VisibleW4: 2, VisibleH4: 2},
 		Transform: transform.TypeDCTDCT,
 		Result:    tile.TXBDecodeResult{AllZero: true},
-		Coeffs:    make([]int16, 64),
 	}
-	if err := controller.fusedReconState().reconstructTXBWithNonZero(&visit, &chroma, nil, 0); err != nil {
+	if err := controller.fusedReconState().reconstructTXBWithDequantized(&visit, &chroma, nil, 0, 0, false); err != nil {
 		t.Fatal(err)
 	}
 	testPredictFrameWorkCFLWant(t, want, visit, FrameWorkPlaneU)
@@ -1074,14 +1029,13 @@ func mustFrameWorkTileResidualCDFs(t *testing.T, baseQIndex uint8) FrameWorkTile
 
 func testFrameWorkResidualScratch(t *testing.T, ctx FrameWorkBatch, size transform.Size, typ transform.Type) ([]int32, []int16) {
 	t.Helper()
-	q, lossless, err := ctx.BlockQuantizer(ctx.Quantization.BaseQIdx, 0, FrameWorkPlaneY)
+	_, lossless, err := ctx.BlockQuantizer(ctx.Quantization.BaseQIdx, 0, FrameWorkPlaneY)
 	if err != nil {
 		t.Fatal(err)
 	}
 	int32Len, int16Len, err := reconstruct.ScratchLen(reconstruct.Block{
 		Size:      size,
 		Transform: typ,
-		Quantizer: q,
 		Lossless:  lossless,
 	})
 	if err != nil {

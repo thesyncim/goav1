@@ -94,16 +94,15 @@ func buildWavefrontReconController(t testing.TB, output *frame.Frame, sbCols int
 			// (dav1d recon_b_intra). A 16x16 luma / 8x8 chroma transform grid
 			// gives each superblock 16 luma and 2x16 chroma predictions, in
 			// the walk's luma-then-U-then-V order.
-			appendTXB := func(txb tile.BlockCoeffBlock) {
-				txb.Result.AllZero = true
-				blockIndex32, ok := frameWorkReconIndex(len(scratch.reconBlocks))
+			appendTXB := func(txb tile.TransformBlock, plane uint8) {
+				index32, ok := frameWorkReconIndex(len(scratch.reconTXBs))
 				if !ok {
-					t.Fatalf("txb index overflow: %d", len(scratch.reconBlocks))
+					t.Fatalf("txb index overflow: %d", len(scratch.reconTXBs))
 				}
-				scratch.reconBlocks = append(scratch.reconBlocks, txb)
+				scratch.reconTXBs = append(scratch.reconTXBs, frameWorkReconTXB{block: txb, plane: plane, flags: frameWorkReconTXBAllZero})
 				scratch.reconEvents = append(scratch.reconEvents, frameWorkReconEvent{
 					kind:  frameWorkReconEventTXB,
-					index: blockIndex32,
+					index: index32,
 				})
 			}
 			for plane := uint8(0); plane < 3; plane++ {
@@ -113,9 +112,9 @@ func buildWavefrontReconController(t testing.TB, output *frame.Frame, sbCols int
 				}
 				for ty := uint8(0); ty < 4; ty++ {
 					for tx := uint8(0); tx < 4; tx++ {
-						appendTXB(tile.BlockCoeffBlock{Plane: plane, Block: tile.TransformBlock{
+						appendTXB(tile.TransformBlock{
 							X4: x4 + tx*step, Y4: y4 + ty*step, Size: size, VisibleW4: step, VisibleH4: step,
-						}})
+						}, plane)
 					}
 				}
 			}

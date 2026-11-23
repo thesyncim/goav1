@@ -27,25 +27,22 @@ const frameWorkDeferReconstruction = false
 var frameWorkWavefrontMinSBRowsPerWorker = 2
 
 // frameWorkReconEventKind distinguishes the deferred reconstruction events: a
-// per-block predict "begin" marker and the two per-TXB reconstruction records.
+// per-block predict "begin" marker and the per-TXB reconstruction record.
 type frameWorkReconEventKind uint8
 
 const (
 	frameWorkReconEventBlockBegin frameWorkReconEventKind = iota
 	frameWorkReconEventTXB
-	frameWorkReconEventTXBCF
 )
 
 // frameWorkReconEvent records one deferred reconstruction step captured during
 // pass 1 (entropy decode) and replayed in pass 2 (predict+reconstruct) in
 // decode order. blockBegin events index reconVisits so pass 2 runs the predict
-// portion of BeforeBlockCoefficients; txbCF events index reconTXBs, the TXBs of
-// the dav1d block walk; txb events index reconBlocks, TXBs that carry
-// quantized coefficients deep-copied into the scratch arena.
+// portion of BeforeBlockCoefficients; txb events index reconTXBs, the TXBs of
+// the dav1d block walk.
 type frameWorkReconEvent struct {
-	index         int32
-	kind          frameWorkReconEventKind
-	currentQIndex uint8
+	index int32
+	kind  frameWorkReconEventKind
 }
 
 const (
@@ -331,15 +328,10 @@ type FrameWorkTileResidualScratch struct {
 	// once per job and holds capacity across jobs for zero steady-state allocs.
 	lfMask frameWorkLoopFilterMaskScratch
 
-	// reconEvents, reconVisits, reconBlocks, and coeffArena back the deferred
-	// two-pass reconstruction path (frameWorkDeferReconstruction). reconEvents
-	// records the in-order predict/reconstruct op stream; reconVisits holds the
-	// block-loop visits referenced by block-begin events; reconBlocks holds the
-	// transform blocks referenced by TXB events; coeffArena holds the deep-copied
-	// coefficients each TXB block references plus, for non-zero TXBs, the compact
-	// dirty-position tail carried in the buffered coefficient slice capacity.
-	// The live decode reuses one scratch coefficient slice per TXB, so buffered
-	// coefficients must not alias it.
+	// reconEvents and reconVisits back the deferred two-pass reconstruction
+	// path (frameWorkDeferReconstruction). reconEvents records the in-order
+	// predict/reconstruct op stream; reconVisits holds the block-loop visits
+	// referenced by block-begin events.
 	// paletteArena holds deep-copied palette colour maps for buffered visits
 	// whose prediction is palette-coded: the decoded BlockLoopVisit.Prediction
 	// carries YMap/UVMap pointers into a single per-tile PaletteModeScratch that
@@ -350,14 +342,12 @@ type FrameWorkTileResidualScratch struct {
 	// resetDeferredReconBuffers.
 	reconEvents []frameWorkReconEvent
 	reconVisits []tile.BlockLoopVisit
-	reconBlocks []tile.BlockCoeffBlock
 	// reconTXBs holds the TXBs of the dav1d block walk: all-zero ones and those
 	// dequantized into cfArena (dav1d's frame-thread cbi and cf).
 	reconTXBs []frameWorkReconTXB
 	cfArena   []int32
 	// coefBuf is the fused path's dav1d t->cf coefficient buffer.
 	coefBuf         coefBuffer
-	coeffArena      []int16
 	paletteArena    []tile.PaletteModeScratch
 	paletteBindings []frameWorkReconPaletteBinding
 	// extrasArena holds the copied warp/OBMC payloads of buffered visits
@@ -582,7 +572,6 @@ func (wf *frameWorkReconWavefront) ensureStates(workers int, c *frameWorkTileRes
 		st.cflScratch = &wf.cfl[w]
 		st.int32Scratch = wf.workerInt32(w)
 		st.residualScratch = wf.workerResidual(w)
-		st.quant = frameWorkReconQuantCache{}
 		st.pendingCFLPrediction = false
 		st.cflPredictionDone = false
 		st.cflVisit = tile.BlockLoopVisit{}
@@ -639,10 +628,8 @@ func (s *FrameWorkTileResidualScratch) reserveCFArena(walk tile.BlockWalkRequest
 func (s *FrameWorkTileResidualScratch) resetDeferredReconBuffers() {
 	s.reconEvents = s.reconEvents[:0]
 	s.reconVisits = s.reconVisits[:0]
-	s.reconBlocks = s.reconBlocks[:0]
 	s.reconTXBs = s.reconTXBs[:0]
 	s.cfArena = s.cfArena[:0]
-	s.coeffArena = s.coeffArena[:0]
 	s.paletteArena = s.paletteArena[:0]
 	s.paletteBindings = s.paletteBindings[:0]
 	s.extrasArena = s.extrasArena[:0]
@@ -1547,9 +1534,9 @@ type frameWorkTileResidualLoopController struct {
 	recon    frameWorkReconState
 	reconHot *frameWorkReconState
 
-	// dq is the dav1d ts->dq[seg_id] (with cf_max) ReconB resolved for the
-	// (qindex, segment) key dqKey; dqOK is false when that key has no usable
-	// factors and its blocks take the quantized path.
+	// dq is the dav1d ts->dq[seg_id] (with cf_max and f->qm) ReconB resolved
+	// for the (qindex, segment) key dqKey; dqOK is false when that key has no
+	// valid quantizer.
 	dq    [3]tile.CoefDequant
 	dqKey uint16
 	dqOK  bool
@@ -1572,7 +1559,6 @@ type frameWorkReconState struct {
 	cflScratch        *FrameWorkCFLPredictionScratch
 	int32Scratch      []int32
 	residualScratch   []int16
-	quant             frameWorkReconQuantCache
 
 	// geom is this goroutine's private job-geometry cache; batch.geomCache
 	// points at it on the wavefront path so the per-block memoization never
@@ -1811,13 +1797,13 @@ func (s *frameWorkReconState) predictDeferredCFLChroma() error {
 // the CfL luma-first state machine and intra neighbor reads observe identical
 // inputs, producing byte-identical output.
 func (c *frameWorkTileResidualLoopController) replayDeferredReconstruction() error {
-	return frameWorkReplayReconEvents(&c.recon, c.scratch.reconEvents, c.scratch.reconVisits, c.scratch.reconBlocks, c.scratch.reconTXBs, c.scratch.cfArena)
+	return frameWorkReplayReconEvents(&c.recon, c.scratch.reconEvents, c.scratch.reconVisits, c.scratch.reconTXBs, c.scratch.cfArena)
 }
 
 // frameWorkReplayReconEvents runs a span of buffered reconstruction events in
 // decode order on one reconstruction state. It is the shared inner loop of both
 // the serial deferred replay and each wavefront goroutine's per-SB-row work.
-func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconEvent, visits []tile.BlockLoopVisit, blocks []tile.BlockCoeffBlock, txbs []frameWorkReconTXB, cfArena []int32) error {
+func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconEvent, visits []tile.BlockLoopVisit, txbs []frameWorkReconTXB, cfArena []int32) error {
 	var visit *tile.BlockLoopVisit
 	for i := range events {
 		ev := &events[i]
@@ -1831,7 +1817,7 @@ func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconE
 			if err := s.predictBlockBegin(visit); err != nil {
 				return err
 			}
-		case frameWorkReconEventTXBCF:
+		case frameWorkReconEventTXB:
 			idx := int(ev.index)
 			if visit == nil || ev.index < 0 || idx >= len(txbs) {
 				return ErrInvalidBatch
@@ -1844,7 +1830,7 @@ func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconE
 				Result:    tile.TXBDecodeResult{EOB: t.eob, CulLevel: t.culLevel, AllZero: t.flags&frameWorkReconTXBAllZero != 0},
 			}
 			if block.Result.AllZero {
-				if err := s.reconstructTXBWithNonZero(visit, &block, nil, t.qIndex); err != nil {
+				if err := s.reconstructTXBWithDequantized(visit, &block, nil, 0, 0, false); err != nil {
 					return err
 				}
 				continue
@@ -1856,32 +1842,11 @@ func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconE
 			if err := s.reconstructTXBWithDequantized(visit, &block, cfArena[t.cfOff:end:end], int(t.activeRows), int(t.activeCols), t.flags&frameWorkReconTXBDCOnly != 0); err != nil {
 				return err
 			}
-		case frameWorkReconEventTXB:
-			idx := int(ev.index)
-			if visit == nil || ev.index < 0 || idx >= len(blocks) {
-				return ErrInvalidBatch
-			}
-			dirty := bufferedCoeffDirtyPositions(&blocks[idx])
-			if err := s.reconstructTXBWithNonZero(visit, &blocks[idx], dirty, ev.currentQIndex); err != nil {
-				return err
-			}
 		default:
 			return ErrInvalidBatch
 		}
 	}
 	return nil
-}
-
-func bufferedCoeffDirtyPositions(block *tile.BlockCoeffBlock) []int16 {
-	// Deferred reconstruction stores the copied dirty-position list directly
-	// after the coefficient payload and keeps Coeffs length at the real
-	// coefficient count. The spare capacity is an internal side channel, not a
-	// public slice growth promise.
-	if block == nil || len(block.Coeffs) == cap(block.Coeffs) {
-		return nil
-	}
-	n := len(block.Coeffs)
-	return block.Coeffs[n:cap(block.Coeffs):cap(block.Coeffs)]
 }
 
 // frameWorkReconSB records one superblock's span of buffered reconstruction
@@ -1958,7 +1923,6 @@ func (c *frameWorkTileResidualLoopController) replayDeferredReconstructionWavefr
 		sbs:      wf.sbSpans,
 		events:   c.scratch.reconEvents,
 		visits:   c.scratch.reconVisits,
-		blocks:   c.scratch.reconBlocks,
 		txbs:     c.scratch.reconTXBs,
 		cfArena:  c.scratch.cfArena,
 	})
@@ -2036,7 +2000,7 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, view 
 		if ft := wf.frameThread; ft != nil && !ft.waitSuperblockReferences(&st.batch, view.events[sb.start:sb.end], view.visits) {
 			return ErrFrameThreadReference
 		}
-		if err := frameWorkReplayReconEvents(st, view.events[sb.start:sb.end], view.visits, view.blocks, view.txbs, view.cfArena); err != nil {
+		if err := frameWorkReplayReconEvents(st, view.events[sb.start:sb.end], view.visits, view.txbs, view.cfArena); err != nil {
 			return err
 		}
 		wf.publishRowProgress(doneCur, sb.col+1)
@@ -2044,78 +2008,10 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, view 
 	return nil
 }
 
-func (s *frameWorkReconState) reconstructTXBWithNonZero(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, nonzero []int16, currentQIndex uint8) error {
-	if s.predictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra {
-		if block.Plane != 0 && frameWorkVisitUsesCFLPtr(visit) {
-			if err := s.predictDeferredCFLChroma(); err != nil {
-				return err
-			}
-		} else {
-			if err := s.batch.predictBlockIntraCoeffPtr(s.index, visit, block, &s.predictionScratch.Intra); err != nil {
-				return fmt.Errorf("predict intra txb plane=%d visit=%+v block=%+v luma_mode=%d angle_delta=%d: %w", block.Plane, visit.Block, block.Block, visit.Prediction.LumaMode, visit.Prediction.LumaAngleDelta, err)
-			}
-			s.stats.Predictions++
-		}
-	} else if block.Plane != 0 {
-		if err := s.predictDeferredCFLChroma(); err != nil {
-			return err
-		}
-	}
-	if block.Result.AllZero {
-		s.stats.Residuals++
-		return nil
-	}
-	// Hand the live decode block straight to the by-pointer reconstruction core
-	// instead of materializing a FrameWorkBlockCoeffReconstruction per TXB (which
-	// would deep-copy the 120-byte BlockCoeffBlock). Byte-identical: the core
-	// reads exactly the fields the struct path forwarded.
-	if block.Plane == 0 && s.lumaReady {
-		c := s.batch.geomCache
-		geom, err := s.batch.blockCoeffGeometryLumaKnown(c.region, c.plane[FrameWorkPlaneY], visit.Block, block)
-		if err != nil {
-			return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
-		}
-		if err := s.batch.reconstructBlockCoeffCoreWithGeometryAndNonZero(geom, block, nonzero, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
-			return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
-		}
-		s.stats.Residuals++
-		return nil
-	}
-	if block.Plane != 0 && s.chromaReady {
-		plane := FrameWorkPlaneU
-		if block.Plane == 2 {
-			plane = FrameWorkPlaneV
-		} else if block.Plane != 1 {
-			return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, ErrInvalidBatch)
-		}
-		c := s.batch.geomCache
-		geom, err := s.batch.blockCoeffGeometryChromaKnown(c.region, c.plane[plane], plane, visit.Block, block)
-		if err != nil {
-			return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
-		}
-		if err := s.batch.reconstructBlockCoeffCoreWithGeometryAndNonZero(geom, block, nonzero, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
-			return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
-		}
-		s.stats.Residuals++
-		return nil
-	}
-	if ok, err := s.batch.reconstructBlockCoeffLumaPrimed(s.index, visit.Block, block, nonzero, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
-		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
-	} else if ok {
-		s.stats.Residuals++
-		return nil
-	}
-	if err := s.batch.reconstructBlockCoeffCoreTrustedWithNonZero(s.index, visit.Block, block, nonzero, block.Transform, currentQIndex, visit.SegmentID, s.int32Scratch, s.residualScratch, &s.quant); err != nil {
-		return fmt.Errorf("reconstruct plane=%d block=%+v tx=%d: %w", block.Plane, block.Block, block.Transform, err)
-	}
-	s.stats.Residuals++
-	return nil
-}
-
-// reconstructTXBWithDequantized is used only by the synchronous, private
-// tracked-2D route. It deliberately keeps the existing quantized path intact;
-// the predictor/CfL ordering is mirrored here and the narrow reconstruction
-// tail consumes the dequantized scratch before the next TXB reuses it.
+// reconstructTXBWithDequantized is the prediction and inverse transform add of
+// one TXB of recon_b_intra / recon_b_inter: the intra (or deferred CfL)
+// prediction, then the residual of the coefficients decode_coefs dequantized
+// into cf. An all-zero TXB is predicted only.
 func (s *frameWorkReconState) reconstructTXBWithDequantized(visit *tile.BlockLoopVisit, block *tile.BlockCoeffBlock, cf []int32, activeRows int, activeCols int, dcOnly bool) error {
 	if s.predictionScratch != nil && visit.Prediction.Valid && visit.Prediction.Intra {
 		if block.Plane != 0 && frameWorkVisitUsesCFLPtr(visit) {
@@ -2236,7 +2132,6 @@ type frameWorkReconTXB struct {
 	activeRows uint8
 	activeCols uint8
 	flags      uint8
-	qIndex     uint8
 }
 
 const (

@@ -101,27 +101,3 @@ func TestDequantizeBlockScaledBitDepthInt64Multiply(t *testing.T) {
 		t.Fatalf("dst[0]=%d want 524287 (12-bit dq clamp ceiling)", dst[0])
 	}
 }
-
-// TestDequantizeBlockScaledBitDepth8Equivalent confirms the BitDepth(8) entry
-// point reproduces the legacy unscaled-bd path.
-func TestDequantizeBlockScaledBitDepth8Equivalent(t *testing.T) {
-	width, height := 4, 4
-	q := Quantizer{DC: 50, AC: 60}
-	coeff := make([]int16, width*height)
-	for i := range coeff {
-		coeff[i] = int16(i*37 - 200)
-	}
-	dst := make([]int32, width*height)
-	dstBD := make([]int32, width*height)
-	if err := DequantizeBlockScaled(dst, height, coeff, height, width, height, q, 1); err != nil {
-		t.Fatalf("DequantizeBlockScaled: %v", err)
-	}
-	if err := DequantizeBlockScaledBitDepth(dstBD, height, coeff, height, width, height, q, 1, 8); err != nil {
-		t.Fatalf("DequantizeBlockScaledBitDepth(8): %v", err)
-	}
-	for i := range dst {
-		if dst[i] != dstBD[i] {
-			t.Fatalf("idx=%d legacy=%d bitDepth8=%d", i, dst[i], dstBD[i])
-		}
-	}
-}

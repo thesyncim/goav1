@@ -377,8 +377,6 @@ fuzz-smoke:
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseTileInfo
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseTileGroupHeader
 	go test ./internal/av1/parser $(FUZZFLAGS) -fuzz=FuzzParseTileListOBU
-	go test ./internal/av1/quantize $(FUZZFLAGS) -fuzz='^FuzzDequantizeBlock$$'
-	go test ./internal/av1/quantize $(FUZZFLAGS) -fuzz=FuzzDequantizeBlockScaledQMatrix
 	go test ./internal/av1/quantize $(FUZZFLAGS) -fuzz=FuzzQuantizeFPNoQMatrix
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzBuildJobs
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzJobPayload
@@ -401,8 +399,6 @@ fuzz-smoke:
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadMotionMode
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadInterIntra
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadCompoundBlend
-	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadCoeffPrimitives
-	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadCoefficientsTXB
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzCoeffEntropyContext
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzReadPaletteMode
 	go test ./internal/av1/tile $(FUZZFLAGS) -fuzz=FuzzPaletteColorIndexContext
@@ -447,7 +443,6 @@ fuzz-smoke:
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchJobEntropyReader
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchJobRegion
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchLoopRestorationPlan
-	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchReconstructBlockCoeff
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchDecodeAndReconstructJobResiduals
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkDistanceWeightedCompoundOffsets
 	go test ./internal/av1/threading $(FUZZFLAGS) -fuzz=FuzzFrameWorkBatchPredictBlockLumaIntra
@@ -468,7 +463,6 @@ fuzz-smoke:
 	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzFillDefaultScan
 	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzTXBHelpers
 	go test ./internal/av1/transform $(FUZZFLAGS) -fuzz=FuzzTypeClass
-	go test ./internal/av1/reconstruct $(FUZZFLAGS) -fuzz=FuzzReconstructPlaneBlock
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzResolveLevel
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzThresholdsForLevel
 	go test ./internal/av1/loopfilter $(FUZZFLAGS) -fuzz=FuzzFilter4Edge

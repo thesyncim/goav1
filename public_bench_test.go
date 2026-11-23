@@ -446,69 +446,6 @@ func BenchmarkPublicFrameBindAndSampleRoundTrip(b *testing.B) {
 	publicBenchmarkSink = sum
 }
 
-func BenchmarkPublicPredictionReconstructionAndLoopFilter(b *testing.B) {
-	plane := publicPredictionPlane(64, 64, 1, 64)
-	ref := publicPredictionPlane(64, 64, 1, 64)
-	fillPublicMotionPlane(ref, 1)
-	edges := av1.PredictionIntraEdges{
-		Above:              make([]uint16, 16),
-		Left:               make([]uint16, 16),
-		AboveLeft:          96,
-		AboveAvailable:     true,
-		LeftAvailable:      true,
-		AboveLeftAvailable: true,
-	}
-	for i := range edges.Above {
-		edges.Above[i] = uint16(90 + i)
-		edges.Left[i] = uint16(70 + i)
-	}
-	quantized := make([]int16, 8*8)
-	quantized[0] = 4
-	quantized[1] = -2
-	quantized[8] = 3
-	reconstruct := av1.ReconstructBlock{
-		Size:      av1.TransformSize{Width: 8, Height: 8},
-		Transform: av1.TransformTypeDCTDCT,
-		Quantizer: av1.Quantizer{DC: 4, AC: 8},
-	}
-	int32Len, int16Len, err := av1.ReconstructBlockScratchLen(reconstruct)
-	if err != nil {
-		b.Fatal(err)
-	}
-	int32Scratch := make([]int32, int32Len)
-	residualScratch := make([]int16, int16Len)
-	thresholds := av1.LoopFilterThresholds{Limit: 20, BlockLimit: 48, HighEdgeVariance: 1}
-
-	b.SetBytes(64 * 64)
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	sum := 0
-	for i := 0; i < b.N; i++ {
-		if err := av1.FillPlaneBlock(plane, 1, 0, 0, plane.Width, plane.Height, 64); err != nil {
-			b.Fatal(err)
-		}
-		if err := av1.PredictIntraPlaneBlock(plane, 1, 8, 8, 8, 16, 16, av1.PredictionIntraModePaeth, edges); err != nil {
-			b.Fatal(err)
-		}
-		if err := av1.PredictInterPlaneBlockFromOrigin(plane, ref, 1, 24, 24, 20, 20, 16, 16, 0, 0); err != nil {
-			b.Fatal(err)
-		}
-		if err := av1.ReconstructPlaneBlock(plane, 1, 8, 8, 8, quantized, 8, int32Scratch, residualScratch, reconstruct); err != nil {
-			b.Fatal(err)
-		}
-		if err := av1.ApplyLoopFilter4Edge(plane, 1, 8, av1.LoopFilterEdgeHorizontal, 8, 16, 16, thresholds); err != nil {
-			b.Fatal(err)
-		}
-		min, max, err := av1.MinMaxAbsDiff8x8(plane.Pix[8*plane.Stride+8:], plane.Stride, ref.Pix[8*ref.Stride+8:], ref.Stride, 1)
-		if err != nil {
-			b.Fatal(err)
-		}
-		sum += int(min) + int(max)
-	}
-	publicBenchmarkSink = sum
-}
-
 func BenchmarkPublicDecoderPredictionBridge(b *testing.B) {
 	output := publicBenchmarkDecoderFrame(b, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 	batch := publicDecoderPredictionBatch(output)
@@ -1580,27 +1517,6 @@ func BenchmarkPublicDecoderResidualStreamScratchLen(b *testing.B) {
 		}
 		publicBenchmarkSink = sum
 	})
-}
-
-func BenchmarkPublicDecoderBlockCoeffReconstruction(b *testing.B) {
-	output := publicBenchmarkDecoderFrame(b, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
-	batch := publicDecoderBlockCoeffSimpleBatch(output)
-	req := publicDecoderBlockCoeffSimpleRequest()
-	req.Int32Scratch, req.ResidualScratch = publicDecoderBlockCoeffScratch(b, batch, req, av1.DecoderFrameWorkPlaneY)
-
-	b.SetBytes(4 * 4 * 2)
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	sum := 0
-	for i := 0; i < b.N; i++ {
-		fillPublicReconstructPlane(output.Y, output.Layout.BytesPerSample, 128)
-		if err := av1.ReconstructDecoderFrameWorkBlockCoeff(batch, 0, req); err != nil {
-			b.Fatal(err)
-		}
-		sum += int(output.Y.Pix[i%len(output.Y.Pix)])
-	}
-	publicBenchmarkSink = sum
 }
 
 func publicBenchmarkDecoderFrame(b *testing.B, format av1.FrameFormat) *av1.Frame {

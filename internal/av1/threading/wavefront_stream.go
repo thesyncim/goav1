@@ -21,7 +21,6 @@ type frameWorkReconView struct {
 	sbs      []frameWorkReconSB
 	events   []frameWorkReconEvent
 	visits   []tile.BlockLoopVisit
-	blocks   []tile.BlockCoeffBlock
 	txbs     []frameWorkReconTXB
 	cfArena  []int32
 }
@@ -282,7 +281,6 @@ func (c *frameWorkTileResidualLoopController) publishReconRows(rows int) error {
 		sbs:      wf.sbSpans,
 		events:   c.scratch.reconEvents,
 		visits:   c.scratch.reconVisits,
-		blocks:   c.scratch.reconBlocks,
 		txbs:     c.scratch.reconTXBs,
 		cfArena:  c.scratch.cfArena,
 	})

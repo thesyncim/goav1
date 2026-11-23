@@ -7,7 +7,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
-// coeff_write.go is the forward of ReadCoefficientsTXB: it codes one transform
+// coeff_write.go is the forward of decode_coefs (DecodeCoefs): it codes one transform
 // block's quantized coefficients into the bitstream. Source-shaped port of libaom
 // av1_write_coeffs_txb (av1/encoder/encodetxb.c) plus write_golomb and
 // av1_get_eob_pos_token. It shares this package's coefficient context derivation
@@ -50,8 +50,7 @@ func writeGolombCounter(w *entropy.BitCounter, level int) {
 }
 
 // TXBEncodeRequest carries the per-block inputs the coefficient writer needs that
-// it cannot derive from the coefficients alone, mirroring the corresponding
-// fields of TXBDecodeRequest.
+// it cannot derive from the coefficients alone.
 type TXBEncodeRequest struct {
 	Size           TransformSize
 	Plane          CoeffPlaneType
@@ -68,7 +67,7 @@ type TXBEncodeRequest struct {
 
 // WriteCoefficientsTXB codes the quantized coefficients of one transform block
 // (coeffs in raster order, addressed through scan) into w, the exact inverse of
-// ReadCoefficientsTXB. levels is caller-owned scratch of at least
+// the decoder's decode_coefs token pass. levels is caller-owned scratch of at least
 // CoeffLevelsScratchLen(req.Size). cdfs is adapted in place, matching a decoder
 // with CDF update enabled. Port of av1_write_coeffs_txb.
 func WriteCoefficientsTXB(w *entropy.Writer, cdfs *CoeffCDFs, req TXBEncodeRequest, coeffs []int16, scan []int16, levels []uint8) (TXBDecodeResult, error) {
@@ -2457,7 +2456,7 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 // WriteCoefficientsTXBWithContext derives the txb_skip and dc_sign contexts from
 // the caller-owned CoeffEntropyContext carrier, codes the transform block with
 // WriteCoefficientsTXB, and marks the carrier with the block's cumulative level
-// exactly as the decoder's ReadCoefficientsTXBWithContext does, so encoder and
+// exactly as the decoder's DecodeCoefs does, so encoder and
 // decoder carrier state evolve in lockstep. It returns the same TXBDecodeResult
 // the decoder would produce for the block.
 func WriteCoefficientsTXBWithContext(w *entropy.Writer, cdfs *CoeffCDFs, ctx *CoeffEntropyContext, ctxReq CoeffContextRequest, class transform.Class, coeffs []int16, scan []int16, levels []uint8) (TXBDecodeResult, error) {

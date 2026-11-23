@@ -13,7 +13,7 @@ package goav1
 //     with caller-owned context carriers.
 //   - TileBlockCoeff* / TileLuma*/Chroma*CoeffTree* parameterize the
 //     coefficient decode tree the tile entropy reader walks.
-//   - TileTXBContext, TileCoeffContextRequest, TileTXBDecodeRequest /
+//   - TileTXBContext, TileCoeffContextRequest /
 //     TileTXBDecodeResult drive the per-transform-block entropy context.
 //   - TileIntraMode*, TileFilterIntraMode*, TileChromaIntraMode*,
 //     TileCFLAlphaResult, TileInterMode*, TileMVJoint, TileMVSubpelPrecision
@@ -172,16 +172,10 @@ type TileTXBContext = internaltile.TXBContext
 // TileTXBContext slots.
 type TileCoeffContextRequest = internaltile.CoeffContextRequest
 
-// TileTXBDecodeRequest bundles caller-owned inputs for one
-// transform-block coefficient decode call.
-//
-// See also: TileTXBDecodeResult.
-type TileTXBDecodeRequest = internaltile.TXBDecodeRequest
-
 // TileTXBDecodeResult reports the per-transform-block coefficient
 // decode statistics.
 //
-// See also: TileTXBDecodeRequest.
+// See also: TileCoeffCDFs.
 type TileTXBDecodeResult = internaltile.TXBDecodeResult
 
 // TileCoeffCDFs holds the per-tile coefficient CDF tables shared

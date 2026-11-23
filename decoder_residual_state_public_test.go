@@ -5812,3 +5812,13 @@ func publicCDFValuesEqual(a []uint16, b []uint16) bool {
 	}
 	return true
 }
+
+func publicFillDecoderBlockCoeffFrame(frame *av1.Frame, sample uint16) {
+	fillPublicReconstructPlane(frame.Y, frame.Layout.BytesPerSample, sample)
+	if len(frame.U.Pix) != 0 {
+		fillPublicReconstructPlane(frame.U, frame.Layout.BytesPerSample, sample)
+	}
+	if len(frame.V.Pix) != 0 {
+		fillPublicReconstructPlane(frame.V, frame.Layout.BytesPerSample, sample)
+	}
+}

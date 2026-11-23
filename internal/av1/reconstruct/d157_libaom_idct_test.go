@@ -46,17 +46,17 @@ func TestReconstructD157Block0Row0MatchesLibaomIDCT(t *testing.T) {
 			plane.Pix[r*plane.Stride+c] = 0
 		}
 	}
-	cfg := Block{
+	cfg := testBlock{
 		Size:      transform.Size{Width: W, Height: H},
 		Transform: transform.TypeDCTDCT,
 		Quantizer: q,
 		EOB:       845,
 	}
-	int32Len, int16Len, err := ScratchLen(cfg)
+	int32Len, int16Len, err := ScratchLen(cfg.block())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconstructPlaneBlock(plane, 1, 8, 0, 0,
+	if err := reconstructQuantized(plane, 1, 8, 0, 0,
 		d157Block0Coeffs[:], H,
 		make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)

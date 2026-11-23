@@ -87,13 +87,6 @@ func PlaneQuantizer(params parser.QuantizationParams, qIndex uint8, bitDepth uin
 	return Quantizer{DC: dc, AC: ac}, nil
 }
 
-// DequantizeBlock multiplies quantized transform coefficients into dst. Both
-// coeff and dst use AV1 coefficient order: coeff_idx = col * stride + row. The
-// DC coefficient at (0,0) uses q.DC; every other coefficient uses q.AC.
-func DequantizeBlock(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer) error {
-	return DequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, 0)
-}
-
 // TransformScale ports libaom's av1_get_tx_scale() for a validated AV1
 // transform shape. Callers should pass the coded transform dimensions, not the
 // adjusted coefficient scan size used by 64-wide/high transforms.
@@ -115,111 +108,31 @@ func TransformScale(width int, height int) (uint8, error) {
 	return scale, nil
 }
 
-// DequantizeBlockScaled is DequantizeBlock with libaom's transform scale
-// applied after the DC/AC dequant multiply. The scale is the value returned by
-// TransformScale for the coded transform size. The 8-bit dq_coeff clamp is
-// used; high bit-depth callers should use DequantizeBlockScaledBitDepth.
-func DequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8) error {
-	return dequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, txScale, nil, 8)
-}
-
-// DequantizeBlockScaledBitDepth is DequantizeBlockScaled with the bit-depth-
-// dependent post-shift clamp libaom applies in decode_coefs():
+// DequantizeBlockScaledBitDepth multiplies quantized transform coefficients
+// into dst (both in AV1 coefficient order, coeff_idx = col * stride + row; DC
+// uses q.DC, every other coefficient q.AC), applies libaom's transform scale
+// txScale (TransformScale of the coded size) and the bit-depth-dependent
+// post-shift clamp libaom applies in decode_coefs():
 // |dq_coeff| <= (1 << (7 + bd)) - 1, with the symmetric negative bound
 // extending one further. See av1/decoder/decodetxb.c:312 in libaom.
 func DequantizeBlockScaledBitDepth(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, bitDepth uint8) error {
-	return dequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, txScale, nil, bitDepth)
+	return dequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, txScale, bitDepth)
 }
 
-// DequantizeBlockScaledBitDepthFullTrusted is the decoder hot-path variant of
-// DequantizeBlockScaledBitDepth for callers that already validated geometry,
-// scratch capacity, q, txScale, and bitDepth. It handles the common no-qmatrix
-// dense block in one contiguous AC pass when the coefficient planes are flat.
-func DequantizeBlockScaledBitDepthFullTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, bitDepth uint8) {
-	dequantizeBlockScaledFullTrusted(dst, dstStride, coeff, coeffStride, width, height, q, txScale, bitDepth)
-}
-
-// DequantizeBlockScaledQMatrix applies libaom's inverse quantization matrix
-// weighting before the transform-size dequant shift. iqMatrix is indexed by
-// libaom's row-major coefficient position and must cover width*height entries.
-// The 8-bit dq_coeff clamp is used; high bit-depth callers should use
-// DequantizeBlockScaledQMatrixBitDepth.
-func DequantizeBlockScaledQMatrix(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16) error {
-	return dequantizeBlockScaledQMatrix(dst, dstStride, coeff, coeffStride, width, height, q, txScale, iqMatrix, 8)
-}
-
-// DequantizeBlockScaledQMatrixBitDepth is DequantizeBlockScaledQMatrix with
-// the bit-depth-dependent post-shift clamp libaom applies in decode_coefs().
-func DequantizeBlockScaledQMatrixBitDepth(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) error {
-	return dequantizeBlockScaledQMatrix(dst, dstStride, coeff, coeffStride, width, height, q, txScale, iqMatrix, bitDepth)
-}
-
-// DequantizeBlockScaledBitDepthEOB dequantizes only the scan-prefix
+// DequantizeBlockScaledBitDepthEOBTrusted dequantizes only the scan-prefix
 // coefficients [0, eob), clearing the destination block first so unvisited
-// positions remain zero for the inverse transform.
-func DequantizeBlockScaledBitDepthEOB(dst []int32, dstStride int, coeff []int16, coeffStride int, scan []int16, eob int, width int, height int, q Quantizer, txScale uint8, bitDepth uint8) error {
-	return dequantizeBlockScaledEOB(dst, dstStride, coeff, coeffStride, scan, eob, width, height, q, txScale, nil, bitDepth)
-}
-
-// DequantizeBlockScaledQMatrixBitDepthEOB is
-// DequantizeBlockScaledBitDepthEOB with inverse quantization matrix weighting.
-func DequantizeBlockScaledQMatrixBitDepthEOB(dst []int32, dstStride int, coeff []int16, coeffStride int, scan []int16, eob int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) error {
-	return dequantizeBlockScaledEOB(dst, dstStride, coeff, coeffStride, scan, eob, width, height, q, txScale, iqMatrix, bitDepth)
-}
-
-// DequantizeBlockScaledBitDepthEOBTrusted is the decoder hot-path variant of
-// DequantizeBlockScaledBitDepthEOB for callers that already validated geometry,
-// scratch capacity, scan order, q, txScale, and bitDepth.
+// positions remain zero for the inverse transform. Callers have validated
+// geometry, scratch capacity, scan order, q, txScale, and bitDepth.
 func DequantizeBlockScaledBitDepthEOBTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, scan []int16, eob int, width int, height int, q Quantizer, txScale uint8, bitDepth uint8) {
-	dequantizeBlockScaledEOBTrusted(dst, dstStride, coeff, coeffStride, scan, eob, width, height, q, txScale, nil, bitDepth)
+	dequantizeBlockScaledEOBTrusted(dst, dstStride, coeff, coeffStride, scan, eob, width, height, q, txScale, bitDepth)
 }
 
-// DequantizeBlockScaledQMatrixBitDepthEOBTrusted is
-// DequantizeBlockScaledBitDepthEOBTrusted with inverse quantization matrix
-// weighting.
-func DequantizeBlockScaledQMatrixBitDepthEOBTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, scan []int16, eob int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) {
-	dequantizeBlockScaledEOBTrusted(dst, dstStride, coeff, coeffStride, scan, eob, width, height, q, txScale, iqMatrix, bitDepth)
-}
-
-// DequantizeBlockScaledBitDepthNonZeroTrusted is the decoder hot-path variant
-// for callers that already have a compact non-zero coefficient position list.
-// It clears dst first, then visits only actual non-zero coefficients rather than
-// every scan-prefix entry up to EOB.
-func DequantizeBlockScaledBitDepthNonZeroTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, positions []int16, width int, height int, q Quantizer, txScale uint8, bitDepth uint8) {
-	dequantizeBlockScaledNonZeroTrusted(dst, dstStride, coeff, coeffStride, positions, width, height, q, txScale, nil, bitDepth)
-}
-
-// DequantizeBlockScaledBitDepthNonZeroRowsTrusted is
-// DequantizeBlockScaledBitDepthNonZeroTrusted and returns one past the maximum
-// populated transform row while visiting the compact non-zero list.
-func DequantizeBlockScaledBitDepthNonZeroRowsTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, positions []int16, width int, height int, q Quantizer, txScale uint8, bitDepth uint8) int {
-	return dequantizeBlockScaledNonZeroTrusted(dst, dstStride, coeff, coeffStride, positions, width, height, q, txScale, nil, bitDepth)
-}
-
-// DequantizeBlockScaledQMatrixBitDepthNonZeroTrusted is
-// DequantizeBlockScaledBitDepthNonZeroTrusted with inverse quantization matrix
-// weighting.
-func DequantizeBlockScaledQMatrixBitDepthNonZeroTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, positions []int16, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) {
-	dequantizeBlockScaledNonZeroTrusted(dst, dstStride, coeff, coeffStride, positions, width, height, q, txScale, iqMatrix, bitDepth)
-}
-
-// DequantizeBlockScaledQMatrixBitDepthNonZeroRowsTrusted is
-// DequantizeBlockScaledQMatrixBitDepthNonZeroTrusted and returns one past the
-// maximum populated transform row while visiting the compact non-zero list.
-func DequantizeBlockScaledQMatrixBitDepthNonZeroRowsTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, positions []int16, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) int {
-	return dequantizeBlockScaledNonZeroTrusted(dst, dstStride, coeff, coeffStride, positions, width, height, q, txScale, iqMatrix, bitDepth)
-}
-
-// DequantizeDCCoeffBitDepthTrusted dequantizes only the DC coefficient for the
-// decoder's DC-only inverse transform fast path. Callers must have validated
-// q, txScale, iqMatrix, and bitDepth exactly as the trusted block path does.
-func DequantizeDCCoeffBitDepthTrusted(coeff int16, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) int32 {
+// DequantizeDCCoeffBitDepthTrusted dequantizes only the DC coefficient for a
+// DC-only inverse transform. Callers must have validated q, txScale and
+// bitDepth exactly as the trusted block path does.
+func DequantizeDCCoeffBitDepthTrusted(coeff int16, q Quantizer, txScale uint8, bitDepth uint8) int32 {
 	dqMin, dqMax, _ := dqCoeffBounds(bitDepth)
-	scale := q.DC
-	if iqMatrix != nil {
-		scale = (int32(iqMatrix[0])*scale + (1 << (qmBits - 1))) >> qmBits
-	}
-	return dequantScalar(int32(coeff), scale, txScale, dqMin, dqMax)
+	return dequantScalar(int32(coeff), q.DC, txScale, dqMin, dqMax)
 }
 
 // DequantCoefficientBoundsTrusted returns the dq_coeff clamp bounds for a
@@ -230,49 +143,7 @@ func DequantCoefficientBoundsTrusted(bitDepth uint8) (dqMin int32, dqMax int32) 
 	return dqMin, dqMax
 }
 
-// DequantizeCoefficientWithBoundsTrusted applies AV1's scalar dequantization
-// step to one signed quantized level using bounds computed once for the TXB.
-// Callers must supply a positive factor, a signed int16-range level, txScale
-// <= 2, and the validated bounds for the frame bit depth.
-func DequantizeCoefficientWithBoundsTrusted(level int32, factor int32, txScale uint8, dqMin int32, dqMax int32) int32 {
-	return dequantScalar(level, factor, txScale, dqMin, dqMax)
-}
-
-// DequantizeMagnitudeWithBoundsTrusted applies decoder dequantization to a
-// nonnegative coefficient magnitude and its separately decoded sign. The
-// caller supplies a positive factor, magnitude <= 32768, txScale <= 2, and
-// the validated positive dqMax bound. Keeping magnitude and sign separate
-// avoids converting a signed int16 back to its magnitude in the hot parser.
-func DequantizeMagnitudeWithBoundsTrusted(magnitude int32, negative bool, factor int32, txScale uint8, dqMax int32) int32 {
-	product := int32((int64(magnitude) * int64(factor)) & 0xffffff)
-	value := product >> (txScale & 3)
-	maxMagnitude := dqMax
-	if negative {
-		maxMagnitude++ // dqMin is exactly -(dqMax+1).
-	}
-	if value > maxMagnitude {
-		value = maxMagnitude
-	}
-	if negative {
-		value = -value
-	}
-	return value
-}
-
-func dequantizeBlockScaledQMatrix(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) error {
-	if width <= 0 || height <= 0 {
-		return ErrInvalidQuantizer
-	}
-	// Use checkedMul before the slice-length compare so a hostile caller
-	// cannot trigger silent integer overflow on width*height.
-	samples, ok := checkedMul(width, height)
-	if !ok || len(iqMatrix) < samples {
-		return ErrInvalidQuantizer
-	}
-	return dequantizeBlockScaled(dst, dstStride, coeff, coeffStride, width, height, q, txScale, iqMatrix, bitDepth)
-}
-
-func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) error {
+func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, bitDepth uint8) error {
 	if q.DC <= 0 || q.AC <= 0 ||
 		txScale > 2 ||
 		width <= 0 ||
@@ -290,29 +161,8 @@ func dequantizeBlockScaled(dst []int32, dstStride int, coeff []int16, coeffStrid
 		return ErrInvalidQuantizer
 	}
 
-	if iqMatrix == nil {
-		dequantizeBlockScaledNoQMatrixTrusted(dst, dstStride, coeff, coeffStride, width, height, q, txScale, dqMin, dqMax)
-		return nil
-	}
-
-	for col := range width {
-		dstCol := dst[col*dstStride : col*dstStride+height]
-		coeffCol := coeff[col*coeffStride : col*coeffStride+height]
-		for row := range height {
-			scale := q.AC
-			if row == 0 && col == 0 {
-				scale = q.DC
-			}
-			scale = (int32(iqMatrix[col*height+row])*scale + (1 << (qmBits - 1))) >> qmBits
-			dstCol[row] = dequantScalar(int32(coeffCol[row]), scale, txScale, dqMin, dqMax)
-		}
-	}
-	return nil
-}
-
-func dequantizeBlockScaledFullTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, bitDepth uint8) {
-	dqMin, dqMax, _ := dqCoeffBounds(bitDepth)
 	dequantizeBlockScaledNoQMatrixTrusted(dst, dstStride, coeff, coeffStride, width, height, q, txScale, dqMin, dqMax)
+	return nil
 }
 
 func dequantizeBlockScaledNoQMatrixTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, width int, height int, q Quantizer, txScale uint8, dqMin int32, dqMax int32) {
@@ -338,60 +188,7 @@ func dequantizeBlockScaledNoQMatrixTrusted(dst []int32, dstStride int, coeff []i
 	}
 }
 
-func dequantizeBlockScaledEOB(dst []int32, dstStride int, coeff []int16, coeffStride int, scan []int16, eob int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) error {
-	if q.DC <= 0 || q.AC <= 0 ||
-		txScale > 2 ||
-		width <= 0 ||
-		height <= 0 ||
-		dstStride < height ||
-		coeffStride < height ||
-		eob < 0 ||
-		len(scan) < eob {
-		return ErrInvalidQuantizer
-	}
-	samples, ok := checkedMul(width, height)
-	if !ok {
-		return ErrInvalidQuantizer
-	}
-	if !coeffBlockFits(len(dst), dstStride, width, height) ||
-		!coeffBlockFits(len(coeff), coeffStride, width, height) {
-		return ErrInvalidQuantizer
-	}
-	if iqMatrix != nil && len(iqMatrix) < samples {
-		return ErrInvalidQuantizer
-	}
-	dqMin, dqMax, ok := dqCoeffBounds(bitDepth)
-	if !ok {
-		return ErrInvalidQuantizer
-	}
-
-	if dstStride == height {
-		clear(dst[:samples])
-	} else {
-		for col := range width {
-			clear(dst[col*dstStride : col*dstStride+height])
-		}
-	}
-	for i := 0; i < eob; i++ {
-		pos := int(scan[i])
-		if pos < 0 || pos >= samples {
-			return ErrInvalidQuantizer
-		}
-		col := pos / height
-		row := pos - col*height
-		scale := q.AC
-		if pos == 0 {
-			scale = q.DC
-		}
-		if iqMatrix != nil {
-			scale = (int32(iqMatrix[col*height+row])*scale + (1 << (qmBits - 1))) >> qmBits
-		}
-		dst[col*dstStride+row] = dequantScalar(int32(coeff[col*coeffStride+row]), scale, txScale, dqMin, dqMax)
-	}
-	return nil
-}
-
-func dequantizeBlockScaledEOBTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, scan []int16, eob int, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) {
+func dequantizeBlockScaledEOBTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, scan []int16, eob int, width int, height int, q Quantizer, txScale uint8, bitDepth uint8) {
 	samples := width * height
 	dqMin, dqMax, _ := dqCoeffBounds(bitDepth)
 	if dstStride == height {
@@ -401,7 +198,7 @@ func dequantizeBlockScaledEOBTrusted(dst []int32, dstStride int, coeff []int16, 
 			clear(dst[col*dstStride : col*dstStride+height])
 		}
 	}
-	if iqMatrix == nil && dstStride == height && coeffStride == height {
+	if dstStride == height && coeffStride == height {
 		for i := 0; i < eob; i++ {
 			pos := int(scan[i])
 			scale := q.AC
@@ -420,56 +217,8 @@ func dequantizeBlockScaledEOBTrusted(dst []int32, dstStride int, coeff []int16, 
 		if pos == 0 {
 			scale = q.DC
 		}
-		if iqMatrix != nil {
-			scale = (int32(iqMatrix[col*height+row])*scale + (1 << (qmBits - 1))) >> qmBits
-		}
 		dst[col*dstStride+row] = dequantScalar(int32(coeff[col*coeffStride+row]), scale, txScale, dqMin, dqMax)
 	}
-}
-
-func dequantizeBlockScaledNonZeroTrusted(dst []int32, dstStride int, coeff []int16, coeffStride int, positions []int16, width int, height int, q Quantizer, txScale uint8, iqMatrix []uint16, bitDepth uint8) int {
-	samples := width * height
-	dqMin, dqMax, _ := dqCoeffBounds(bitDepth)
-	activeRows := 0
-	if dstStride == height {
-		clear(dst[:samples])
-	} else {
-		for col := range width {
-			clear(dst[col*dstStride : col*dstStride+height])
-		}
-	}
-	if iqMatrix == nil && dstStride == height && coeffStride == height {
-		for _, raw := range positions {
-			pos := int(raw)
-			row := pos % height
-			if row >= activeRows {
-				activeRows = row + 1
-			}
-			scale := q.AC
-			if pos == 0 {
-				scale = q.DC
-			}
-			dst[pos] = dequantScalar(int32(coeff[pos]), scale, txScale, dqMin, dqMax)
-		}
-		return activeRows
-	}
-	for _, raw := range positions {
-		pos := int(raw)
-		col := pos / height
-		row := pos - col*height
-		if row >= activeRows {
-			activeRows = row + 1
-		}
-		scale := q.AC
-		if pos == 0 {
-			scale = q.DC
-		}
-		if iqMatrix != nil {
-			scale = (int32(iqMatrix[col*height+row])*scale + (1 << (qmBits - 1))) >> qmBits
-		}
-		dst[col*dstStride+row] = dequantScalar(int32(coeff[col*coeffStride+row]), scale, txScale, dqMin, dqMax)
-	}
-	return activeRows
 }
 
 // dequantScalar dequantizes a single coefficient. It is the canonical scalar

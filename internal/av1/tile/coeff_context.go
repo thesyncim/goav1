@@ -224,46 +224,6 @@ func (c *CoeffEntropyContext) ResetBlock(plane int, block BlockSize, x4 int, y4 
 	return nil
 }
 
-func (s *DecodeState) ReadCoefficientsTXBWithContext(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, ctxReq CoeffContextRequest, req TXBDecodeRequest, coeffs []int16, scan []int16, levelsScratch []uint8) (TXBDecodeResult, error) {
-	req, allZero, err := s.ReadTXBSkipWithContext(cdfs, ctx, ctxReq, req)
-	if err != nil {
-		return TXBDecodeResult{}, err
-	}
-	req.TXBSkipKnown = true
-	req.TXBSkip = allZero
-	result, err := s.ReadCoefficientsTXB(cdfs, req, coeffs, scan, levelsScratch)
-	if err != nil {
-		return TXBDecodeResult{}, err
-	}
-	if err := ctx.MarkTXB(ctxReq, result); err != nil {
-		return TXBDecodeResult{}, err
-	}
-	return result, nil
-}
-
-func (s *DecodeState) ReadTXBSkipWithContext(cdfs *CoeffCDFs, ctx *CoeffEntropyContext, ctxReq CoeffContextRequest, req TXBDecodeRequest) (TXBDecodeRequest, bool, error) {
-	if ctx == nil {
-		return TXBDecodeRequest{}, false, ErrInvalidDecodeState
-	}
-	plane, err := CoeffPlaneTypeForPlane(int(ctxReq.Plane))
-	if err != nil {
-		return TXBDecodeRequest{}, false, err
-	}
-	txbCtx, err := ctx.TXBContext(ctxReq)
-	if err != nil {
-		return TXBDecodeRequest{}, false, err
-	}
-	req.Size = ctxReq.Size
-	req.Plane = plane
-	req.TXBSkipContext = txbCtx.TXBSkipContext
-	req.DCSignContext = txbCtx.DCSignContext
-	allZero, err := s.ReadTXBSkip(cdfs, TXBSkipRequest{Size: req.Size, Context: req.TXBSkipContext})
-	if err != nil {
-		return TXBDecodeRequest{}, false, err
-	}
-	return req, allZero, nil
-}
-
 func (c *CoeffEntropyContext) setTXBContext(req CoeffContextRequest, value uint8) error {
 	if c == nil || !validCoeffEntropyValue(value) {
 		return ErrInvalidDecodeState

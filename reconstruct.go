@@ -51,15 +51,6 @@ func ReconstructBlockMaxScratchLen(lossless bool) (int32Len int, int16Len int, e
 	return int32Len, int16Len, nil
 }
 
-// ReconstructPlaneBlock dequantizes, inverse-transforms, and residual-adds a
-// single block into dst at (x, y). The quantized coefficients are stored
-// row-major with quantizedStride int16 elements per row; int32Scratch and
-// residualScratch are caller-owned working buffers sized via
-// ReconstructBlockScratchLen.
-func ReconstructPlaneBlock(dst FramePlane, bytesPerSample int, bitDepth uint8, x int, y int, quantized []int16, quantizedStride int, int32Scratch []int32, residualScratch []int16, cfg ReconstructBlock) error {
-	return internalreconstruct.ReconstructPlaneBlock(dst, bytesPerSample, bitDepth, x, y, quantized, quantizedStride, int32Scratch, residualScratch, cfg)
-}
-
 var reconstructBlockScratchSizes = [...]TransformSize{
 	{Width: 4, Height: 4},
 	{Width: 4, Height: 8},

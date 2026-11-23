@@ -3005,7 +3005,7 @@ func (st *lossyEncodeState) reconInterTXBResult(reconPlane, pred []byte, predStr
 		return nil
 	}
 	if txbResult.EOB == 1 && txType == transform.TypeDCTDCT {
-		dc := quantize.DequantizeDCCoeffBitDepthTrusted(qcoeff[0], q, geo.txScale, nil, 8)
+		dc := quantize.DequantizeDCCoeffBitDepthTrusted(qcoeff[0], q, geo.txScale, 8)
 		sample, err := transform.InverseDCTDCOnlySampleBitDepth(dc, st.invScratch[:n], geo.size, 8)
 		if err != nil {
 			return err

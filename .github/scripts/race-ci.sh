@@ -46,7 +46,6 @@ packages_for() {
       printf '%s\n' \
         ./internal/av1/motion \
         ./internal/av1/prediction \
-        ./internal/av1/reconstruct/idcttmp \
         ./internal/av1/restoration \
         ./internal/av1/superres \
         ./internal/av1/transform

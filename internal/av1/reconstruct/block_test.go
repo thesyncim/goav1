@@ -1,7 +1,6 @@
 package reconstruct
 
 import (
-	"bytes"
 	"errors"
 	"testing"
 
@@ -83,18 +82,18 @@ func TestReconstructPlaneBlockDCT4x4(t *testing.T) {
 	fillPlane(plane, 1, 100)
 	quantized := make([]int16, 4*4)
 	quantized[0] = 4
-	cfg := Block{
+	cfg := testBlock{
 		Size:      transform.Size{Width: 4, Height: 4},
 		Transform: transform.TypeDCTDCT,
 		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
 	}
-	int32Len, int16Len, err := ScratchLen(cfg)
+	int32Len, int16Len, err := ScratchLen(cfg.block())
 	if err != nil {
 		t.Fatal(err)
 	}
 	int32Scratch := make([]int32, int32Len)
 	residualScratch := make([]int16, int16Len)
-	if err := ReconstructPlaneBlock(plane, 1, 8, 1, 1, quantized, 4, int32Scratch, residualScratch, cfg); err != nil {
+	if err := reconstructQuantized(plane, 1, 8, 1, 1, quantized, 4, int32Scratch, residualScratch, cfg); err != nil {
 		t.Fatal(err)
 	}
 	for y := 0; y < plane.Height; y++ {
@@ -115,18 +114,18 @@ func TestReconstructPlaneBlockVisibleClipsFrameEdge(t *testing.T) {
 	fillPlane(plane, 1, 100)
 	quantized := make([]int16, 4*4)
 	quantized[0] = 4
-	cfg := Block{
+	cfg := testBlock{
 		Size:      transform.Size{Width: 4, Height: 4},
 		Transform: transform.TypeDCTDCT,
 		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
 	}
-	int32Len, int16Len, err := ScratchLen(cfg)
+	int32Len, int16Len, err := ScratchLen(cfg.block())
 	if err != nil {
 		t.Fatal(err)
 	}
 	int32Scratch := make([]int32, int32Len)
 	residualScratch := make([]int16, int16Len)
-	if err := ReconstructPlaneBlockVisible(plane, 1, 8, 4, 3, 2, 3, quantized, 4, int32Scratch, residualScratch, cfg); err != nil {
+	if err := reconstructQuantizedVisible(plane, 1, 8, 4, 3, 2, 3, quantized, 4, int32Scratch, residualScratch, cfg); err != nil {
 		t.Fatal(err)
 	}
 	for y := 0; y < plane.Height; y++ {
@@ -142,93 +141,23 @@ func TestReconstructPlaneBlockVisibleClipsFrameEdge(t *testing.T) {
 	}
 }
 
-func TestReconstructPlaneBlockVisibleWithGeometryMatchesDefault(t *testing.T) {
-	cfg := Block{
-		Size:      transform.Size{Width: 8, Height: 8},
-		Transform: transform.TypeDCTDCT,
-		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
-		EOB:       4,
-	}
-	scanSize, err := transform.ScanSize(cfg.Size)
-	if err != nil {
-		t.Fatal(err)
-	}
-	txScale, err := quantize.TransformScale(int(cfg.Size.Width), int(cfg.Size.Height))
-	if err != nil {
-		t.Fatal(err)
-	}
-	int32Len, int16Len, err := ScratchLen(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	quantized := make([]int16, int(cfg.Size.Width)*int(cfg.Size.Height))
-	quantized[0] = 8
-	quantized[1] = -3
-	quantized[8] = 5
-	quantized[9] = -2
-
-	want, _ := testPlane(10, 10, 1, 10)
-	got, _ := testPlane(10, 10, 1, 10)
-	gotSparse, _ := testPlane(10, 10, 1, 10)
-	gotTrustedSparse, _ := testPlane(10, 10, 1, 10)
-	fillPlane(want, 1, 100)
-	fillPlane(got, 1, 100)
-	fillPlane(gotSparse, 1, 100)
-	fillPlane(gotTrustedSparse, 1, 100)
-	if err := ReconstructPlaneBlockVisible(want, 1, 8, 2, 1, 6, 7, quantized, int(scanSize.Height), make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
-		t.Fatal(err)
-	}
-	if err := ReconstructPlaneBlockVisibleWithGeometry(got, 1, 8, 2, 1, 6, 7, quantized, int(scanSize.Height), scanSize, txScale, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got.Pix, want.Pix) {
-		t.Fatalf("geometry path output differs from default")
-	}
-	scan := []int16{0, 1, 8, 9}
-	if err := ReconstructPlaneBlockVisibleWithGeometryAndScan(gotSparse, 1, 8, 2, 1, 6, 7, quantized, int(scanSize.Height), scan, scanSize, txScale, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(gotSparse.Pix, want.Pix) {
-		t.Fatalf("scan geometry path output differs from default")
-	}
-	dstOffset := 1*gotTrustedSparse.Stride + 2
-	dstLen := (7-1)*gotTrustedSparse.Stride + 6
-	dst := gotTrustedSparse.Pix[dstOffset : dstOffset+dstLen : dstOffset+dstLen]
-	if err := ReconstructPlaneBlockVisibleTrustedAtWithGeometryAndScan(dst, gotTrustedSparse.Stride, 1, 8, 6, 7, quantized, int(scanSize.Height), scan, scanSize, txScale, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(gotTrustedSparse.Pix, want.Pix) {
-		t.Fatalf("trusted scan geometry path output differs from default")
-	}
-	gotTrustedNonZero, _ := testPlane(10, 10, 1, 10)
-	fillPlane(gotTrustedNonZero, 1, 100)
-	dst = gotTrustedNonZero.Pix[dstOffset : dstOffset+dstLen : dstOffset+dstLen]
-	nonzero := []int16{9, 8, 1, 0}
-	if err := ReconstructPlaneBlockVisibleTrustedAtWithGeometryScanAndNonZero(dst, gotTrustedNonZero.Stride, 1, 8, 6, 7, quantized, int(scanSize.Height), scan, nonzero, scanSize, txScale, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(gotTrustedNonZero.Pix, want.Pix) {
-		t.Fatalf("trusted nonzero geometry path output differs from default")
-	}
-}
-
 func TestReconstructPlaneBlockIDTX4x8(t *testing.T) {
 	plane, _ := testPlane(4, 8, 1, 4)
 	fillPlane(plane, 1, 100)
 	quantized := make([]int16, 4*8)
 	quantized[0] = 16
-	cfg := Block{
+	cfg := testBlock{
 		Size:      transform.Size{Width: 4, Height: 8},
 		Transform: transform.TypeIDTX,
 		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
 	}
-	int32Len, int16Len, err := ScratchLen(cfg)
+	int32Len, int16Len, err := ScratchLen(cfg.block())
 	if err != nil {
 		t.Fatal(err)
 	}
 	int32Scratch := make([]int32, int32Len+3)
 	residualScratch := make([]int16, int16Len+2)
-	if err := ReconstructPlaneBlock(plane, 1, 8, 0, 0, quantized, 8, int32Scratch, residualScratch, cfg); err != nil {
+	if err := reconstructQuantized(plane, 1, 8, 0, 0, quantized, 8, int32Scratch, residualScratch, cfg); err != nil {
 		t.Fatal(err)
 	}
 	if got := getSample(plane, 1, 0, 0); got != 108 {
@@ -253,16 +182,16 @@ func TestReconstructPlaneBlockADST8x8(t *testing.T) {
 	quantized[0] = 4
 	quantized[1*8+0] = -2
 	quantized[0*8+1] = 3
-	cfg := Block{
+	cfg := testBlock{
 		Size:      transform.Size{Width: 8, Height: 8},
 		Transform: transform.TypeADSTDCT,
 		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
 	}
-	int32Len, int16Len, err := ScratchLen(cfg)
+	int32Len, int16Len, err := ScratchLen(cfg.block())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconstructPlaneBlock(plane, 1, 8, 0, 0, quantized, 8, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+	if err := reconstructQuantized(plane, 1, 8, 0, 0, quantized, 8, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)
 	}
 	changed := false
@@ -283,16 +212,16 @@ func TestReconstructPlaneBlockUsesAV1CoeffOrder(t *testing.T) {
 	fillPlane(plane, 1, 100)
 	quantized := make([]int16, 4*4)
 	quantized[2*4+1] = 1
-	cfg := Block{
+	cfg := testBlock{
 		Size:      transform.Size{Width: 4, Height: 4},
 		Transform: transform.TypeIDTX,
 		Quantizer: quantize.Quantizer{DC: 16, AC: 16},
 	}
-	int32Len, int16Len, err := ScratchLen(cfg)
+	int32Len, int16Len, err := ScratchLen(cfg.block())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconstructPlaneBlock(plane, 1, 8, 0, 0, quantized, 4, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+	if err := reconstructQuantized(plane, 1, 8, 0, 0, quantized, 4, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)
 	}
 	for y := 0; y < plane.Height; y++ {
@@ -314,18 +243,18 @@ func TestReconstructPlaneBlockLosslessWHT4x4(t *testing.T) {
 	quantized := make([]int16, 4*4)
 	quantized[0] = 4
 	quantized[1] = 2
-	cfg := Block{
+	cfg := testBlock{
 		Size:      transform.Size{Width: 4, Height: 4},
 		Transform: transform.TypeDCTDCT,
 		Quantizer: quantize.Quantizer{DC: 4, AC: 4},
 		Lossless:  true,
 		EOB:       2,
 	}
-	int32Len, int16Len, err := ScratchLen(cfg)
+	int32Len, int16Len, err := ScratchLen(cfg.block())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconstructPlaneBlock(plane, 1, 8, 0, 0, quantized, 4, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+	if err := reconstructQuantized(plane, 1, 8, 0, 0, quantized, 4, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)
 	}
 	for y := 0; y < plane.Height; y++ {
@@ -348,16 +277,16 @@ func TestReconstructPlaneBlockDCT16x16(t *testing.T) {
 	fillPlane(plane, 1, 90)
 	quantized := make([]int16, 16*16)
 	quantized[0] = 16
-	cfg := Block{
+	cfg := testBlock{
 		Size:      transform.Size{Width: 16, Height: 16},
 		Transform: transform.TypeDCTDCT,
 		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
 	}
-	int32Len, int16Len, err := ScratchLen(cfg)
+	int32Len, int16Len, err := ScratchLen(cfg.block())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconstructPlaneBlock(plane, 1, 8, 1, 1, quantized, 16, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+	if err := reconstructQuantized(plane, 1, 8, 1, 1, quantized, 16, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)
 	}
 	for y := 0; y < plane.Height; y++ {
@@ -378,16 +307,16 @@ func TestReconstructPlaneBlockDCT64x64ReducedCoefficients(t *testing.T) {
 	fillPlane(plane, 1, 100)
 	quantized := make([]int16, 32*32)
 	quantized[0] = 64
-	cfg := Block{
+	cfg := testBlock{
 		Size:      transform.Size{Width: 64, Height: 64},
 		Transform: transform.TypeDCTDCT,
 		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
 	}
-	int32Len, int16Len, err := ScratchLen(cfg)
+	int32Len, int16Len, err := ScratchLen(cfg.block())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconstructPlaneBlock(plane, 1, 8, 0, 0, quantized, 32, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+	if err := reconstructQuantized(plane, 1, 8, 0, 0, quantized, 32, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)
 	}
 	if got := getSample(plane, 1, 0, 0); got == 100 {
@@ -423,7 +352,7 @@ func TestReconstructPlaneBlockDCT64x64SparseInterShape(t *testing.T) {
 	quantized[1*32+0] = -3
 
 	q := quantize.Quantizer{DC: 88, AC: 106}
-	cfg := Block{
+	cfg := testBlock{
 		Size:      transform.Size{Width: W, Height: H},
 		Transform: transform.TypeDCTDCT,
 		Quantizer: q,
@@ -477,11 +406,11 @@ func TestReconstructPlaneBlockDCT64x64SparseInterShape(t *testing.T) {
 		gotPix[i] = predictor
 	}
 	gotPlane := frame.Plane{Pix: gotPix, Stride: W, Width: W, Height: H}
-	int32Len, int16Len, err := ScratchLen(cfg)
+	int32Len, int16Len, err := ScratchLen(cfg.block())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconstructPlaneBlock(gotPlane, 1, 8, 0, 0, quantized, 32,
+	if err := reconstructQuantized(gotPlane, 1, 8, 0, 0, quantized, 32,
 		make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -500,16 +429,16 @@ func TestReconstructPlaneBlockHighBitDepthClips(t *testing.T) {
 	fillPlane(plane, 2, 1020)
 	quantized := make([]int16, 4*4)
 	quantized[0] = 64
-	cfg := Block{
+	cfg := testBlock{
 		Size:      transform.Size{Width: 4, Height: 4},
 		Transform: transform.TypeDCTDCT,
 		Quantizer: quantize.Quantizer{DC: 16, AC: 16},
 	}
-	int32Len, int16Len, err := ScratchLen(cfg)
+	int32Len, int16Len, err := ScratchLen(cfg.block())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconstructPlaneBlock(plane, 2, 10, 0, 0, quantized, 4, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
+	if err := reconstructQuantized(plane, 2, 10, 0, 0, quantized, 4, make([]int32, int32Len), make([]int16, int16Len), cfg); err != nil {
 		t.Fatal(err)
 	}
 	for y := 0; y < plane.Height; y++ {
@@ -521,268 +450,37 @@ func TestReconstructPlaneBlockHighBitDepthClips(t *testing.T) {
 	}
 }
 
-func TestReconstructPlaneBlockRejectsInvalidInputs(t *testing.T) {
-	plane, _ := testPlane(4, 4, 1, 4)
-	quantized := make([]int16, 4*4)
-	cfg := Block{
-		Size:      transform.Size{Width: 4, Height: 4},
-		Transform: transform.TypeDCTDCT,
-		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
-	}
-	int32Scratch := make([]int32, 32)
-	residualScratch := make([]int16, 16)
-	tests := []struct {
-		name            string
-		plane           frame.Plane
-		bytesPerSample  int
-		bitDepth        uint8
-		x               int
-		y               int
-		quantized       []int16
-		quantizedStride int
-		int32Scratch    []int32
-		residualScratch []int16
-		cfg             Block
-	}{
-		{name: "unsupported transform", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: Block{Size: transform.Size{Width: 64, Height: 8}, Transform: transform.TypeDCTDCT, Quantizer: cfg.Quantizer}},
-		{name: "lossless non 4x4", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: Block{Size: transform.Size{Width: 8, Height: 8}, Transform: transform.TypeDCTDCT, Quantizer: cfg.Quantizer, Lossless: true}},
-		{name: "lossless negative eob", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: Block{Size: cfg.Size, Transform: cfg.Transform, Quantizer: cfg.Quantizer, Lossless: true, EOB: -1}},
-		{name: "short int32 scratch", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch[:31], residualScratch: residualScratch, cfg: cfg},
-		{name: "short residual scratch", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch[:15], cfg: cfg},
-		{name: "short quantized stride", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 3, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: cfg},
-		{name: "outside plane", plane: plane, bytesPerSample: 1, bitDepth: 8, x: 1, y: 1, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: cfg},
-		{name: "invalid quantizer", plane: plane, bytesPerSample: 1, bitDepth: 8, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: Block{Size: cfg.Size, Transform: cfg.Transform, Quantizer: quantize.Quantizer{AC: 8}}},
-		{name: "bitdepth mismatch", plane: plane, bytesPerSample: 1, bitDepth: 10, quantized: quantized, quantizedStride: 4, int32Scratch: int32Scratch, residualScratch: residualScratch, cfg: cfg},
-	}
-	for _, tt := range tests {
-		err := ReconstructPlaneBlock(tt.plane, tt.bytesPerSample, tt.bitDepth, tt.x, tt.y, tt.quantized, tt.quantizedStride, tt.int32Scratch, tt.residualScratch, tt.cfg)
-		if !errors.Is(err, ErrInvalidBlock) {
-			t.Fatalf("%s err=%v want %v", tt.name, err, ErrInvalidBlock)
-		}
-	}
-}
-
-func TestReconstructPlaneBlockAllocs(t *testing.T) {
-	plane, _ := testPlane(8, 8, 1, 8)
-	quantized := make([]int16, 8*8)
-	cfg := Block{
-		Size:      transform.Size{Width: 8, Height: 8},
-		Transform: transform.TypeDCTDCT,
-		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
-	}
-	int32Len, int16Len, err := ScratchLen(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	int32Scratch := make([]int32, int32Len)
-	residualScratch := make([]int16, int16Len)
-	allocs := testing.AllocsPerRun(1000, func() {
-		if err := ReconstructPlaneBlock(plane, 1, 8, 0, 0, quantized, 8, int32Scratch, residualScratch, cfg); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if allocs != 0 {
-		t.Fatalf("ReconstructPlaneBlock allocated: %f", allocs)
-	}
-}
-
-func FuzzReconstructPlaneBlock(f *testing.F) {
-	f.Add(uint8(0), uint8(0), int16(0), int16(0))
-	f.Add(uint8(1), uint8(0), int16(4), int16(0))
-	f.Add(uint8(2), uint8(1), int16(16), int16(-2))
-	f.Add(uint8(3), uint8(1), int16(-16), int16(3))
-
-	f.Fuzz(func(t *testing.T, rawMode uint8, rawBPS uint8, dc int16, acDelta int16) {
-		bytesPerSample := int(rawBPS%2) + 1
-		bitDepth := uint8(8)
-		fill := uint16(100)
-		if bytesPerSample == 2 {
-			bitDepth = 10
-			fill = 512
-		}
-		cfg := Block{
-			Size:      transform.Size{Width: 4, Height: 4},
-			Transform: transform.TypeDCTDCT,
-			Quantizer: quantize.Quantizer{DC: 4, AC: 8},
-		}
-		if rawMode&1 == 1 {
-			cfg.Size = transform.Size{Width: 8, Height: 8}
-		}
-		if rawMode&2 != 0 {
-			cfg.Size = transform.Size{Width: 16, Height: 16}
-		}
-		if rawMode&4 != 0 {
-			cfg.Size = transform.Size{Width: 16, Height: 16}
-			cfg.Transform = transform.TypeIDTX
-		}
-		width := int(cfg.Size.Width)
-		height := int(cfg.Size.Height)
-		plane, _ := testPlane(width+2, height+1, bytesPerSample, (width+5)*bytesPerSample)
-		fillPlane(plane, bytesPerSample, fill)
-		coeffSize, err := transform.ScanSize(cfg.Size)
-		if err != nil {
-			t.Fatalf("ScanSize err=%v", err)
-		}
-		coeffWidth := int(coeffSize.Width)
-		coeffHeight := int(coeffSize.Height)
-		quantizedStride := coeffHeight + 2
-		quantized := make([]int16, quantizedStride*coeffWidth)
-		for row := 0; row < height; row++ {
-			for col := 0; col < width; col++ {
-				if row < coeffHeight && col < coeffWidth {
-					quantized[col*quantizedStride+row] = dc + acDelta*int16((row+col)&3)
-				}
-			}
-		}
-		int32Len, int16Len, err := ScratchLen(cfg)
-		if err != nil {
-			t.Fatalf("ScratchLen err=%v", err)
-		}
-		int32Scratch := make([]int32, int32Len+3)
-		residualScratch := make([]int16, int16Len+2)
-		if err := ReconstructPlaneBlock(plane, bytesPerSample, bitDepth, 1, 0, quantized, quantizedStride, int32Scratch, residualScratch, cfg); err != nil {
-			t.Fatalf("ReconstructPlaneBlock err=%v", err)
-		}
-		max := uint16(0xff)
-		if bytesPerSample == 2 {
-			max = 0x3ff
-		}
-		for y := 0; y < plane.Height; y++ {
-			for x := 0; x < plane.Width; x++ {
-				got := getSample(plane, bytesPerSample, x, y)
-				if got > max {
-					t.Fatalf("sample(%d,%d)=%d exceeds max %d", x, y, got, max)
-				}
-				if (x == 0 || x > width || y == height) && got != fill {
-					t.Fatalf("padding sample(%d,%d)=%d want %d", x, y, got, fill)
-				}
-			}
-		}
-		for i := int32Len; i < len(int32Scratch); i++ {
-			if int32Scratch[i] != 0 {
-				t.Fatalf("int32 scratch padding[%d]=%d want 0", i, int32Scratch[i])
-			}
-		}
-		for i := int16Len; i < len(residualScratch); i++ {
-			if residualScratch[i] != 0 {
-				t.Fatalf("residual scratch padding[%d]=%d want 0", i, residualScratch[i])
-			}
-		}
-	})
-}
-
 func BenchmarkReconstructPlaneBlockDCT8x8(b *testing.B) {
 	plane, _ := testPlane(8, 8, 1, 8)
 	quantized := make([]int16, 8*8)
-	cfg := Block{
+	cfg := testBlock{
 		Size:      transform.Size{Width: 8, Height: 8},
 		Transform: transform.TypeDCTDCT,
 		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
 	}
-	int32Len, int16Len, _ := ScratchLen(cfg)
+	int32Len, int16Len, _ := ScratchLen(cfg.block())
 	int32Scratch := make([]int32, int32Len)
 	residualScratch := make([]int16, int16Len)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = ReconstructPlaneBlock(plane, 1, 8, 0, 0, quantized, 8, int32Scratch, residualScratch, cfg)
-	}
-}
-
-func BenchmarkReconstructPlaneBlockTrustedRawDCT(b *testing.B) {
-	for _, tc := range []struct {
-		name string
-		size int
-	}{
-		{name: "DCT8x8", size: 8},
-		{name: "DCT16x16", size: 16},
-		{name: "DCT32x32", size: 32},
-		{name: "DCT64x64", size: 64},
-	} {
-		b.Run(tc.name, func(b *testing.B) {
-			n := tc.size
-			size := transform.Size{Width: uint8(n), Height: uint8(n)}
-			scan, err := transform.DefaultScan(size, transform.Class2D)
-			if err != nil {
-				b.Fatal(err)
-			}
-			scanSize, err := transform.ScanSize(size)
-			if err != nil {
-				b.Fatal(err)
-			}
-			txScale, err := quantize.TransformScale(n, n)
-			if err != nil {
-				b.Fatal(err)
-			}
-			cfg := Block{
-				Size:      size,
-				Transform: transform.TypeDCTDCT,
-				Quantizer: quantize.Quantizer{DC: 4, AC: 8},
-				EOB:       int16(len(scan)),
-			}
-			quantized := make([]int16, n*n)
-			for i := range quantized {
-				quantized[i] = int16((i*7)%17 - 8)
-			}
-			quantized[0] = 5
-			dst := make([]byte, n*n)
-			int32Len, int16Len, err := ScratchLen(cfg)
-			if err != nil {
-				b.Fatal(err)
-			}
-			int32Scratch := make([]int32, int32Len)
-			residualScratch := make([]int16, int16Len)
-			b.ReportAllocs()
-			b.ResetTimer()
-			for b.Loop() {
-				for i := range dst {
-					dst[i] = 128
-				}
-				if err := ReconstructPlaneBlockVisibleTrustedAtWithGeometryAndScan(dst, n, 1, 8, n, n, quantized, n, scan, scanSize, txScale, int32Scratch, residualScratch, cfg); err != nil {
-					b.Fatal(err)
-				}
-				reconstructTrustedRawBenchmarkSink ^= dst[(n/2)*n+n/2]
-			}
-		})
-	}
-}
-
-var reconstructTrustedRawBenchmarkSink byte
-
-func BenchmarkReconstructPlaneBlockTrustedDCT8x8DCOnly(b *testing.B) {
-	const width, height = 8, 8
-	dst := make([]byte, width*height)
-	quantized := make([]int16, width*height)
-	quantized[0] = 3
-	scan := []int16{0}
-	cfg := Block{
-		Size:      transform.Size{Width: width, Height: height},
-		Transform: transform.TypeDCTDCT,
-		Quantizer: quantize.Quantizer{DC: 91, AC: 137},
-		EOB:       1,
-	}
-	int32Len, int16Len, _ := ScratchLen(cfg)
-	int32Scratch := make([]int32, int32Len)
-	residualScratch := make([]int16, int16Len)
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		_ = ReconstructPlaneBlockVisibleTrustedAtWithGeometryAndScan(dst, width, 1, 8, width, height, quantized, height, scan, cfg.Size, 0, int32Scratch, residualScratch, cfg)
+		_ = reconstructQuantized(plane, 1, 8, 0, 0, quantized, 8, int32Scratch, residualScratch, cfg)
 	}
 }
 
 func BenchmarkReconstructPlaneBlockIDTX16x16(b *testing.B) {
 	plane, _ := testPlane(16, 16, 1, 16)
 	quantized := make([]int16, 16*16)
-	cfg := Block{
+	cfg := testBlock{
 		Size:      transform.Size{Width: 16, Height: 16},
 		Transform: transform.TypeIDTX,
 		Quantizer: quantize.Quantizer{DC: 4, AC: 8},
 	}
-	int32Len, int16Len, _ := ScratchLen(cfg)
+	int32Len, int16Len, _ := ScratchLen(cfg.block())
 	int32Scratch := make([]int32, int32Len)
 	residualScratch := make([]int16, int16Len)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = ReconstructPlaneBlock(plane, 1, 8, 0, 0, quantized, 16, int32Scratch, residualScratch, cfg)
+		_ = reconstructQuantized(plane, 1, 8, 0, 0, quantized, 16, int32Scratch, residualScratch, cfg)
 	}
 }
 

@@ -371,11 +371,6 @@ type DecoderFrameWorkTileResidualStats = internalthreading.FrameWorkTileResidual
 // event planning and before tile work executes.
 type DecoderFrameWorkSideDataRunner = internaldecoder.FrameWorkSideDataRunner
 
-// DecoderFrameWorkBlockCoeffReconstruction is the per-block reconstruction
-// request that combines a decoded coefficient block with the prediction
-// scratch needed to assemble the output sample plane.
-type DecoderFrameWorkBlockCoeffReconstruction = internalthreading.FrameWorkBlockCoeffReconstruction
-
 // DecoderFrameWorkTileRestorationRequest carries the caller-owned
 // loop-restoration buffers and references threaded into the residual
 // pipeline when restoration is active for the frame.

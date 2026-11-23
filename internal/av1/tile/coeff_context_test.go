@@ -3,8 +3,6 @@ package tile
 import (
 	"errors"
 	"testing"
-
-	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
 func TestCoeffEntropyContextTXBContextMatchesLibaom(t *testing.T) {
@@ -164,45 +162,6 @@ func TestCoeffEntropyContextMarkAndResetMatchesLibaom(t *testing.T) {
 	}
 }
 
-func TestReadCoefficientsTXBWithContext(t *testing.T) {
-	txSize, err := TransformSize4x4.TransformSize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	scan, scratch := coeffScanAndScratch(t, TransformSize4x4, txSize, transform.Class2D)
-	coeffs := make([]int16, len(scan))
-	var cdfs CoeffCDFs
-	if err := cdfs.InitDefault(0); err != nil {
-		t.Fatal(err)
-	}
-	var state DecodeState
-	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	var ctx CoeffEntropyContext
-	ctxReq := coeffContextReq(0, BlockSize4x4, TransformSize4x4, 0, 0)
-	result, err := state.ReadCoefficientsTXBWithContext(&cdfs, &ctx, ctxReq, TXBDecodeRequest{
-		Class:           transform.Class2D,
-		EOBMultiContext: 0,
-	}, coeffs, scan, scratch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.EOB != 1 || result.CulLevel != 17 || coeffs[0] != 1 {
-		t.Fatalf("result=%+v coeff[0]=%d want eob=1 cul=17 coeff=1", result, coeffs[0])
-	}
-	if ctx.Above[0][0] != 17 || ctx.Left[0][0] != 17 {
-		t.Fatalf("context above=%d left=%d want 17", ctx.Above[0][0], ctx.Left[0][0])
-	}
-	next, err := ctx.TXBContext(ctxReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if next.DCSignContext != 2 || next.TXBSkipContext != 0 {
-		t.Fatalf("next context=%+v want dc sign 2 skip 0", next)
-	}
-}
-
 func TestCoeffEntropyContextRejectsInvalidInputs(t *testing.T) {
 	var nilCtx *CoeffEntropyContext
 	if _, err := nilCtx.TXBContext(coeffContextReq(0, BlockSize4x4, TransformSize4x4, 0, 0)); !errors.Is(err, ErrInvalidDecodeState) {
@@ -232,42 +191,6 @@ func TestCoeffEntropyContextRejectsInvalidInputs(t *testing.T) {
 	ctx.Above[0][0] = 3 << CoeffContextBits
 	if _, err := ctx.TXBContext(coeffContextReq(0, BlockSize4x4, TransformSize4x4, 0, 0)); !errors.Is(err, ErrInvalidDecodeState) {
 		t.Fatalf("bad sign err=%v want %v", err, ErrInvalidDecodeState)
-	}
-}
-
-func TestReadCoefficientsTXBWithContextAllocs(t *testing.T) {
-	txSize, err := TransformSize4x4.TransformSize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	scan, scratch := coeffScanAndScratch(t, TransformSize4x4, txSize, transform.Class2D)
-	coeffs := make([]int16, len(scan))
-	payload := []byte{0x00}
-	ctxReq := coeffContextReq(0, BlockSize4x4, TransformSize4x4, 0, 0)
-	var cdfs CoeffCDFs
-	var state DecodeState
-	var ctx CoeffEntropyContext
-
-	allocs := testing.AllocsPerRun(1000, func() {
-		ctx = CoeffEntropyContext{}
-		if err := cdfs.InitDefault(0); err != nil {
-			t.Fatal(err)
-		}
-		if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
-			t.Fatal(err)
-		}
-		result, err := state.ReadCoefficientsTXBWithContext(&cdfs, &ctx, ctxReq, TXBDecodeRequest{
-			Class: transform.Class2D,
-		}, coeffs, scan, scratch)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if result.EOB != 1 || coeffs[0] != 1 {
-			t.Fatalf("txb result=%+v coeff[0]=%d want eob=1 coeff=1", result, coeffs[0])
-		}
-	})
-	if allocs != 0 {
-		t.Fatalf("contextual txb coefficient decode allocated: %f", allocs)
 	}
 }
 

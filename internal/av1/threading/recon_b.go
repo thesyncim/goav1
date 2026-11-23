@@ -26,7 +26,9 @@ func (c *frameWorkTileResidualLoopController) ReconB(visit *tile.BlockLoopVisit,
 	}
 	var dq *[3]tile.CoefDequant
 	if !b.Skip {
-		dq = c.blockDequant(visit.SegmentID)
+		if dq = c.blockDequant(visit.SegmentID); dq == nil {
+			return ErrInvalidBatch
+		}
 	}
 	tree := &b.Tree
 	yDims, ok := tree.Y.Dimensions()
@@ -122,10 +124,8 @@ func (c *frameWorkTileResidualLoopController) reconCoefTree(visit *tile.BlockLoo
 
 // reconTXB is one transform block of recon_b_* / read_coef_blocks:
 // decode_coefs into t->cf (fused) or the frame-thread cf arena (deferred), then
-// the intra prediction and inverse transform add, or the replay record. A
-// lossless or quantizer-matrix block (dq nil) is read as quantized
-// coefficients and reconstructed through the dequantizing path. visW/visH are
-// the frame-clipped extent in 4x4 units.
+// the intra prediction and inverse transform add, or the replay record.
+// visW/visH are the frame-clipped extent in 4x4 units.
 func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisit, b *tile.CoefBlock, dq *[3]tile.CoefDequant, plane uint8, size tile.TransformSize, x4, y4, visW, visH int) error {
 	blk := tile.BlockCoeffBlock{
 		Plane:     plane,
@@ -139,19 +139,15 @@ func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisi
 	if b.Skip {
 		blk.Result.AllZero = true
 	} else {
-		var dqp *tile.CoefDequant
 		zeroed := false
-		if dq != nil {
-			dqp = &dq[plane]
-			if c.deferReconstruction {
-				cfOff = len(s.cfArena)
-				cf = s.cfArenaSlot()
-			} else {
-				cf, zeroed = s.coefBuf.take(), true
-			}
+		if c.deferReconstruction {
+			cfOff = len(s.cfArena)
+			cf = s.cfArenaSlot()
+		} else {
+			cf, zeroed = s.coefBuf.take(), true
 		}
 		var err error
-		if r, err = b.DecodeCoefs(plane, size, x4, y4, visW, visH, cf, zeroed, dqp); err != nil {
+		if r, err = b.DecodeCoefs(plane, size, x4, y4, visW, visH, cf, zeroed, &dq[plane]); err != nil {
 			return err
 		}
 		blk.Transform, blk.Result = r.Txtp, r.TXB
@@ -161,35 +157,31 @@ func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisi
 		} else {
 			c.stats.NonZero++
 			c.stats.EOBTotal += int32(r.TXB.EOB)
-			if cf == nil {
-				blk.Coeffs, blk.Scan = b.QuantizedCoefs(size, r.Txtp)
-			}
 		}
+	}
+	if blk.Result.AllZero {
+		if c.deferReconstruction {
+			return c.bufferReconTXB(&blk, 0, 0, 0, 0, false)
+		}
+		return c.fusedReconState().reconstructTXBWithDequantized(visit, &blk, nil, 0, 0, false)
 	}
 	dcOnly := blk.Transform == transform.TypeDCTDCT && blk.Result.EOB == 1
-	qIndex := c.state.CurrentBaseQIdx
-	if cf != nil && !blk.Result.AllZero {
-		meta, ok := frameWorkBlockCoeffTransformMeta(size)
-		if !ok {
-			return ErrInvalidBatch
-		}
-		area := int(meta.scanSize.Width) * int(meta.scanSize.Height)
-		if c.deferReconstruction {
-			s.cfArena = s.cfArena[:cfOff+area]
-			return c.bufferReconTXB(&blk, cfOff, area, r.ActiveRows, r.ActiveCols, dcOnly, qIndex)
-		}
-		s.coefBuf.used(r.ActiveRows, r.ActiveCols, meta.scanSize.Height)
-		return c.fusedReconState().reconstructTXBWithDequantized(visit, &blk, cf[:area:area], int(r.ActiveRows), int(r.ActiveCols), dcOnly)
+	meta, ok := frameWorkBlockCoeffTransformMeta(size)
+	if !ok {
+		return ErrInvalidBatch
 	}
+	area := int(meta.scanSize.Width) * int(meta.scanSize.Height)
 	if c.deferReconstruction {
-		return c.bufferReconTXB(&blk, 0, 0, 0, 0, false, qIndex)
+		s.cfArena = s.cfArena[:cfOff+area]
+		return c.bufferReconTXB(&blk, cfOff, area, r.ActiveRows, r.ActiveCols, dcOnly)
 	}
-	return c.fusedReconState().reconstructTXBWithNonZero(visit, &blk, s.Loop.Coeff.CoeffDirtyPositions(), qIndex)
+	s.coefBuf.used(r.ActiveRows, r.ActiveCols, meta.scanSize.Height)
+	return c.fusedReconState().reconstructTXBWithDequantized(visit, &blk, cf[:area:area], int(r.ActiveRows), int(r.ActiveCols), dcOnly)
 }
 
 // blockDequant returns the block's dav1d ts->dq[seg_id] with cf_max and the
 // planes' f->qm, resolved once per (qindex, segment) key, or nil when the
-// block's coefficients are dequantized by the reconstruction instead.
+// key has no valid quantizer.
 func (c *frameWorkTileResidualLoopController) blockDequant(segmentID uint8) *[3]tile.CoefDequant {
 	key := frameWorkReconQuantKey(c.state.CurrentBaseQIdx, segmentID)
 	if c.dqKey != key {
@@ -271,66 +263,34 @@ func growCoefArena(a []int32) []int32 {
 }
 
 // bufferReconTXB records one transform block for the deferred reconstruction
-// pass. An all-zero TXB, or one dequantized into the cf arena at
-// [cfOff, cfOff+cfLen), is one frameWorkReconTXB. A TXB that still carries
-// quantized coefficients is buffered whole: the live decode reuses one
-// coefficient scratch slice per transform block, so the coefficients and their
-// dirty positions are deep-copied into coeffArena behind a three-index slice,
-// and Scan is kept by reference to the immutable scan table.
-func (c *frameWorkTileResidualLoopController) bufferReconTXB(block *tile.BlockCoeffBlock, cfOff, cfLen int, activeRows, activeCols uint8, dcOnly bool, qIndex uint8) error {
+// pass: an all-zero TXB, or one dequantized into the cf arena at
+// [cfOff, cfOff+cfLen).
+func (c *frameWorkTileResidualLoopController) bufferReconTXB(block *tile.BlockCoeffBlock, cfOff, cfLen int, activeRows, activeCols uint8, dcOnly bool) error {
 	s := c.scratch
-	if cfLen > 0 || block.Result.AllZero {
-		rec := frameWorkReconTXB{
-			eob:       block.Result.EOB,
-			block:     block.Block,
-			plane:     block.Plane,
-			transform: block.Transform,
-			culLevel:  block.Result.CulLevel,
-			qIndex:    qIndex,
-		}
-		if block.Result.AllZero {
-			rec.flags = frameWorkReconTXBAllZero
-		} else {
-			if cfLen > 1024 || uint64(cfOff) > math.MaxUint32 {
-				return ErrInvalidBatch
-			}
-			rec.cfOff, rec.cfLen = uint32(cfOff), uint16(cfLen)
-			rec.activeRows, rec.activeCols = activeRows, activeCols
-			if dcOnly {
-				rec.flags = frameWorkReconTXBDCOnly
-			}
-		}
-		index, ok := frameWorkReconIndex(len(s.reconTXBs))
-		if !ok {
+	rec := frameWorkReconTXB{
+		eob:       block.Result.EOB,
+		block:     block.Block,
+		plane:     block.Plane,
+		transform: block.Transform,
+		culLevel:  block.Result.CulLevel,
+	}
+	if block.Result.AllZero {
+		rec.flags = frameWorkReconTXBAllZero
+	} else {
+		if cfLen > 1024 || uint64(cfOff) > math.MaxUint32 {
 			return ErrInvalidBatch
 		}
-		s.reconTXBs = append(s.reconTXBs, rec)
-		s.reconEvents = append(s.reconEvents, frameWorkReconEvent{kind: frameWorkReconEventTXBCF, index: index})
-		return nil
+		rec.cfOff, rec.cfLen = uint32(cfOff), uint16(cfLen)
+		rec.activeRows, rec.activeCols = activeRows, activeCols
+		if dcOnly {
+			rec.flags = frameWorkReconTXBDCOnly
+		}
 	}
-	index, ok := frameWorkReconIndex(len(s.reconBlocks))
+	index, ok := frameWorkReconIndex(len(s.reconTXBs))
 	if !ok {
 		return ErrInvalidBatch
 	}
-	buffered := *block
-	if n := len(block.Coeffs); n > 0 {
-		dirty := s.Loop.Coeff.CoeffDirtyPositions()
-		dirtyLen := len(dirty)
-		if dirtyLen > int(^uint16(0)) {
-			return ErrInvalidBatch
-		}
-		off := len(s.coeffArena)
-		s.coeffArena = append(s.coeffArena, block.Coeffs...)
-		s.coeffArena = append(s.coeffArena, dirty...)
-		buffered.Coeffs = s.coeffArena[off : off+n : off+n+dirtyLen]
-	} else {
-		buffered.Coeffs = nil
-	}
-	s.reconBlocks = append(s.reconBlocks, buffered)
-	s.reconEvents = append(s.reconEvents, frameWorkReconEvent{
-		kind:          frameWorkReconEventTXB,
-		index:         index,
-		currentQIndex: qIndex,
-	})
+	s.reconTXBs = append(s.reconTXBs, rec)
+	s.reconEvents = append(s.reconEvents, frameWorkReconEvent{kind: frameWorkReconEventTXB, index: index})
 	return nil
 }

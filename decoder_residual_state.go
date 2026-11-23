@@ -23,7 +23,7 @@ package goav1
 //     DecoderFrameWorkJobBlockLoopContextRootColumns /
 //     BindTileBlockLoopContextCarrier / DecoderFrameWorkJobBlockLoopRequest:
 //     per-job block-loop setup.
-//   - ReconstructDecoderFrameWorkBlockCoeff / DecodeAndReconstruct /
+//   - DecodeAndReconstruct /
 //     DecodeAndRetain*: the residual decode + reconstruct pipeline.
 //   - DecoderFrameWorkBatchResidualRunner and its
 //     BindDecoderFrameWorkBatchResidualRunner, Run, SetSideData,
@@ -39,14 +39,13 @@ import (
 // scratch lengths required to reconstruct one block at (size, typ) for the
 // given quantizer context.
 func DecoderFrameWorkResidualScratchLen(batch DecoderFrameWorkBatch, currentQIndex uint8, segmentID uint8, plane DecoderFrameWorkPlane, size TransformSize, typ TransformType) (int32Len int, int16Len int, err error) {
-	q, lossless, err := batch.BlockQuantizer(currentQIndex, segmentID, plane)
+	_, lossless, err := batch.BlockQuantizer(currentQIndex, segmentID, plane)
 	if err != nil {
 		return 0, 0, err
 	}
 	return ReconstructBlockScratchLen(ReconstructBlock{
 		Size:      size,
 		Transform: typ,
-		Quantizer: q,
 		Lossless:  lossless,
 	})
 }
@@ -80,13 +79,6 @@ func DecoderFrameWorkBlockQIndex(batch DecoderFrameWorkBatch, currentQIndex uint
 // origin of the coefficient block within the output sample plane.
 func DecoderFrameWorkBlockCoeffPlanePosition(batch DecoderFrameWorkBatch, index int, visit TileBlockVisit, block TileBlockCoeffBlock) (DecoderFrameWorkPlane, int, int, error) {
 	return batch.BlockCoeffPlanePosition(index, visit, block)
-}
-
-// ReconstructDecoderFrameWorkBlockCoeff reconstructs one decoded
-// coefficient block into the output sample plane described by req,
-// using the prediction scratch the caller already populated.
-func ReconstructDecoderFrameWorkBlockCoeff(batch DecoderFrameWorkBatch, index int, req DecoderFrameWorkBlockCoeffReconstruction) error {
-	return batch.ReconstructBlockCoeff(index, req)
 }
 
 // InitDecoderFrameWorkTileResidualCDFStorageDefault initializes storage

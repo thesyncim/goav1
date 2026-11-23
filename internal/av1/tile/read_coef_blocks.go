@@ -222,11 +222,9 @@ func filterIntraTransformMode(mode FilterIntraMode) IntraMode {
 // DecodeCoefs is dav1d's decode_coefs (src/recon_tmpl.c) for one plane TXB at
 // a/l offsets x4, y4 of the bound block, followed by the caller-side updates of
 // read_coef_tree and recon_b_*: the a/l coefficient contexts and, for inter
-// luma, txtp_map. visW/visH are the frame-clipped extent in 4x4 units. With cf
-// and dq set, a coded TXB is dequantized into cf in raster scan order (cf must
-// be zero over the scan area when cfZeroed, see decodeCoefTokens); with cf nil
-// it is read as quantized coefficients into the binding's scratch
-// (QuantizedCoefs), the path lossless and quantizer-matrix blocks take.
+// luma, txtp_map. visW/visH are the frame-clipped extent in 4x4 units. A coded
+// TXB is dequantized with dq into cf in raster scan order (cf must be zero over
+// the scan area when cfZeroed, see decodeCoefTokens).
 func (b *CoefBlock) DecodeCoefs(plane uint8, size TransformSize, x4, y4, visW, visH int, cf *[1024]int32, cfZeroed bool, dq *CoefDequant) (CoefResult, error) {
 	s := b.s
 	if size >= transformSizeCount || plane > 2 {
@@ -272,42 +270,28 @@ func (b *CoefBlock) DecodeCoefs(plane uint8, size TransformSize, x4, y4, visW, v
 			return CoefResult{}, ErrInvalidDecodeState
 		}
 	}
-	if cf == nil || dq == nil {
-		var err error
-		if r.TXB, err = b.readQuantizedTXB(size, coeffPlane, class, txbCtx, geo); err != nil {
-			return CoefResult{}, err
-		}
-	} else {
-		// dav1d's dq_shift: imax(0, t_dim->ctx - 2).
-		txScale := uint8(0)
-		if geo.txCtx > 2 {
-			txScale = geo.txCtx - 2
-		}
-		var qm []uint16
-		if dq.QM != nil && r.Txtp < transform.TypeIDTX {
-			qm = dq.QM[size]
-		}
-		var c entropy.Cursor
-		c.Load(&s.Reader)
-		t := decodeCoefTokens(&c, b.cdfs, size, geo, coeffPlane, r.Txtp, class, txbCtx.DCSignContext, cf, cfZeroed, &b.scratch.Coeff.CoefLevels, coefDequant{
-			dc:    dq.DC,
-			ac:    dq.AC,
-			shift: txScale,
-			cfMax: dq.Max,
-		}, qm)
-		c.CommitStateTo(&s.Reader)
-		r.TXB = TXBDecodeResult{EOB: uint16(t.eob + 1), CulLevel: t.culLevel}
-		r.ActiveRows, r.ActiveCols = uint8(t.activeRows), uint8(t.activeCols)
+	// dav1d's dq_shift: imax(0, t_dim->ctx - 2).
+	txScale := uint8(0)
+	if geo.txCtx > 2 {
+		txScale = geo.txCtx - 2
 	}
+	var qm []uint16
+	if dq.QM != nil && r.Txtp < transform.TypeIDTX {
+		qm = dq.QM[size]
+	}
+	var c entropy.Cursor
+	c.Load(&s.Reader)
+	t := decodeCoefTokens(&c, b.cdfs, size, geo, coeffPlane, r.Txtp, class, txbCtx.DCSignContext, cf, cfZeroed, &b.scratch.Coeff.CoefLevels, coefDequant{
+		dc:    dq.DC,
+		ac:    dq.AC,
+		shift: txScale,
+		cfMax: dq.Max,
+	}, qm)
+	c.CommitStateTo(&s.Reader)
+	r.TXB = TXBDecodeResult{EOB: uint16(t.eob + 1), CulLevel: t.culLevel}
+	r.ActiveRows, r.ActiveCols = uint8(t.activeRows), uint8(t.activeCols)
 	b.ctx.setTXBContextKnown(plane, x4, y4, tw4, th4, visW, visH, r.TXB.CulLevel)
 	return r, nil
-}
-
-// QuantizedCoefs returns the quantized coefficients and scan of the TXB the
-// last cf-less DecodeCoefs read.
-func (b *CoefBlock) QuantizedCoefs(size TransformSize, txtp transform.Type) (coeffs, scan []int16) {
-	coeffs, scan, _, _ = b.scratch.Coeff.coeffBuffersWithGeo(size, mustClass(txtp), &coeffGeometryTable[size])
-	return coeffs, scan
 }
 
 // fillTxtpMap is decode_coefs' dav1d_memset_pow2[t_dim->lw] of txtp into each
@@ -336,11 +320,6 @@ func fillTxtpMap(m *[MaxBlockModeSlots][MaxBlockModeSlots]transform.Type, x4, y4
 			}
 		}
 	}
-}
-
-func mustClass(t transform.Type) transform.Class {
-	c, _ := t.Class()
-	return c
 }
 
 // readTxtp is the transform-type section of dav1d's decode_coefs for a
@@ -394,40 +373,4 @@ func (b *CoefBlock) readTxtp(plane uint8, size TransformSize, x4, y4 int) (trans
 		return 0, err
 	}
 	return p.typeFromSymbol(symbol)
-}
-
-// readQuantizedTXB decodes a nonzero TXB into the quantized coefficient
-// scratch when the plane's dequant factors cannot be prepared; the visitor
-// then dequantizes during reconstruction.
-//
-//go:noinline
-func (b *CoefBlock) readQuantizedTXB(size TransformSize, plane CoeffPlaneType, class transform.Class, txbCtx TXBContext, geo *coeffGeometry) (TXBDecodeResult, error) {
-	scratch := &b.scratch.Coeff
-	coeffs, scan, levels, err := scratch.coeffBuffersWithGeo(size, class, geo)
-	if err != nil {
-		return TXBDecodeResult{}, err
-	}
-	scratch.clearCoeffDirty()
-	req := TXBDecodeRequest{
-		Size:                  size,
-		Plane:                 plane,
-		Class:                 class,
-		TXBSkipContext:        txbCtx.TXBSkipContext,
-		DCSignContext:         txbCtx.DCSignContext,
-		EOBMultiContext:       eobMultiContextForClass(class),
-		TXBSkipKnown:          true,
-		knownNonZero:          true,
-		SkipAllZeroCoeffClear: true,
-		skipNonZeroCoeffClear: true,
-		coeffDirtyPos:         &scratch.InverseScan,
-		coeffDirtyLen:         &scratch.coeffDirtyLen,
-		levelDirtyPos:         &scratch.LevelDirty,
-		levelDirtyLen:         &scratch.levelDirtyLen,
-		levelDirtyScratch:     &scratch.Levels,
-		trustedScan:           true,
-	}
-	if class == transform.Class2D {
-		return b.s.readCoefficientsTXBTracked2DWithGeo(b.cdfs, req, coeffs, scan, levels, geo)
-	}
-	return b.s.readCoefficientsTXBWithGeo(b.cdfs, req, coeffs, scan, levels, geo)
 }

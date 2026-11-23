@@ -2263,15 +2263,12 @@ func publishProfileSuperResTemporalMotionReference(event decoder.Event, globalSu
 }
 
 func residualScratch(ctx decoder.FrameWorkBatch) ([]int32, []int16, error) {
-	q, _, err := ctx.BlockQuantizer(ctx.Quantization.BaseQIdx, 0, threading.FrameWorkPlaneY)
-	if err != nil {
+	if _, _, err := ctx.BlockQuantizer(ctx.Quantization.BaseQIdx, 0, threading.FrameWorkPlaneY); err != nil {
 		return nil, nil, err
 	}
 	int32Len, int16Len, err := reconstruct.ScratchLen(reconstruct.Block{
 		Size:      transform.Size{Width: 64, Height: 64},
 		Transform: transform.TypeDCTDCT,
-		Quantizer: q,
-		Lossless:  false,
 	})
 	if err != nil {
 		return nil, nil, err
