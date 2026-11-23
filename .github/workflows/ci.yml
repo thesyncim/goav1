@@ -101,6 +101,8 @@ jobs:
         run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
       - name: build with native SIMD
         run: go build ./...
+      - name: compiler reports with native SIMD
+        run: make compiler-reports
       - name: test with native SIMD
         run: go test -count=1 -timeout 30m ./...
       # The race shards already run these packages under -race on the
@@ -185,6 +187,8 @@ jobs:
         run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
       - name: build with native SIMD
         run: go build ./...
+      - name: compiler reports with native SIMD
+        run: make compiler-reports
       - name: vet with native SIMD
         run: go vet ./...
       - name: test with native SIMD

@@ -8,23 +8,20 @@ package goav1
 // pool, so the wavefront never engages there. These tests drive the public
 // Decoder with workers > 1 and frame threading off on a
 // single-tile clip, which is exactly the configuration that hands the idle
-// lanes to the wavefront. The threading test hook forces the wavefront on for
-// the small bundled conformance clips (whose SB-row counts are below the
-// production 2-rows-per-worker threshold).
+// lanes to the wavefront. The clip's 720p enhancement layer has six 128x128 SB
+// rows, enough for the production 2-rows-per-worker threshold to engage
+// several lanes.
 
 import (
 	"crypto/sha256"
 	"os"
 	"testing"
-
-	"github.com/thesyncim/goav1/internal/av1/threading"
 )
 
-// wavefrontTestVector is a single-tile all-intra clip with enough superblock
-// rows that a 2-4 worker wavefront overlaps. Intra reconstruction is the
-// neighbor-dependent case the wavefront gate must get right, so it is the
-// strongest byte-identity probe.
-const wavefrontTestVector = "internal/av1/testdata/libaom/av1-1-b10-00-quantizer-00.ivf"
+// wavefrontTestVector is a single-tile two-layer SVC clip whose 1280x720
+// enhancement layer has enough superblock rows that a 2-4 worker wavefront
+// overlaps at the production threshold.
+const wavefrontTestVector = "internal/av1/testdata/libaom/av1-1-b8-22-svc-L2T1.ivf"
 
 func decodeWavefrontFrames(t testing.TB, workers int) []byte {
 	t.Helper()
@@ -93,7 +90,6 @@ func hashFramePlanes(sum interface{ Write([]byte) (int, error) }, f *Frame) {
 // single-worker fused path. Run it under -race to also prove the wavefront is
 // data-race free.
 func TestWavefrontByteIdenticalToSingleWorker(t *testing.T) {
-	defer threading.OverrideWavefrontMinSBRowsPerWorkerForTest(1)()
 	want := decodeWavefrontFrames(t, 1)
 	for _, workers := range []int{2, 3, 4} {
 		got := decodeWavefrontFrames(t, workers)
@@ -109,7 +105,6 @@ func TestWavefrontByteIdenticalToSingleWorker(t *testing.T) {
 // The reconstruction phase alone is BenchmarkReconWavefrontReplay in the
 // threading package.
 func BenchmarkWavefrontDecode(b *testing.B) {
-	defer threading.OverrideWavefrontMinSBRowsPerWorkerForTest(1)()
 	for _, bc := range []struct {
 		name    string
 		workers int

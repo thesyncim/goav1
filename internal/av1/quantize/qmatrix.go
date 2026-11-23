@@ -20,36 +20,6 @@ const (
 	DefaultQMLastAllIntra  = 10
 )
 
-// QMLevel maps qindex to the inter quantization-matrix level range. This is
-// the same increasing formula used by libaom's aom_get_qmlevel().
-func QMLevel(qIndex int, first int, last int) int {
-	return first + (qIndex*(last+1-first))/QIndexRange
-}
-
-// QMLevelAllIntra maps qindex to the all-intra quantization-matrix level range.
-func QMLevelAllIntra(qIndex int, first int, last int) int {
-	level := 4
-	switch {
-	case qIndex <= 40:
-		level = 10
-	case qIndex <= 100:
-		level = 9
-	case qIndex <= 160:
-		level = 8
-	case qIndex <= 200:
-		level = 7
-	case qIndex <= 220:
-		level = 6
-	case qIndex <= 240:
-		level = 5
-	}
-	return clampInt(level, first, last)
-}
-
-func clampInt(v int, lo int, hi int) int {
-	return min(max(v, lo), hi)
-}
-
 // QMatrix is libaom's inverse quantization matrix of level for a luma (chroma
 // false) or chroma transform block of size, in coefficient order
 // (col * scanHeight + row, the decoder's cf order). It is nil for the flat

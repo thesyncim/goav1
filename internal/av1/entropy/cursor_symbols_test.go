@@ -12,8 +12,8 @@ func TestCursorReadCDFSymbolsMatchesReader(t *testing.T) {
 		src[i] = byte(rnd.Uint32())
 	}
 	for n := 2; n <= 16; n++ {
-		r1 := NewReader(src)
-		r2 := NewReader(src)
+		r1 := NewReaderWithCDFUpdate(src, true)
+		r2 := NewReaderWithCDFUpdate(src, true)
 		var a, b [5]CDF
 		for k := range a {
 			a[k].InitUniform(n)

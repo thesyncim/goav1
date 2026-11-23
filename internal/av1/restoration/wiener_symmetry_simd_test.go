@@ -53,7 +53,7 @@ func TestWienerHorizontalSIMDSymmetryRandomTaps(t *testing.T) {
 				want := make([]uint16, tempLen)
 				got := make([]uint16, tempLen)
 				wienerHorizontal(src, stride, origin, sz.width, sz.height, filter, bitDepth, round0, max, want)
-				wienerHorizontalSIMD(src, stride, origin, sz.width, sz.height, filter, bitDepth, round0, max, got)
+				wienerHorizontalSIMDTrusted(src, stride, origin, sz.width, sz.height, filter, bitDepth, round0, max, got)
 				for i := range want {
 					if got[i] != want[i] {
 						t.Fatalf("bd=%d sz=%dx%d filter=%v temp[%d]=%d want %d", bitDepth, sz.width, sz.height, filter, i, got[i], want[i])

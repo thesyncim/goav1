@@ -29,11 +29,6 @@ type BlockCoeffResult struct {
 	Tree TransformTreeResult
 }
 
-const (
-	maxCoeffScanLen    = 32 * 32
-	maxCoeffScratchLen = (32 + txPadHorizontal) * (32 + txPadHorizontal)
-)
-
 type LumaCoeffTreeScratch struct {
 	// CoefLevels is dav1d's t->scratch.levels for decodeCoefTokens, cleared
 	// per TXB by the reader.

@@ -374,11 +374,7 @@ func TestNegDeinterleaveSegmentIDMatchesLibaom(t *testing.T) {
 		{diff: 5, ref: 5, max: 8, want: 2},
 	}
 	for _, tt := range tests {
-		got, err := negDeinterleaveSegmentID(tt.diff, tt.ref, tt.max)
-		if err != nil {
-			t.Fatalf("%+v err=%v", tt, err)
-		}
-		if got != tt.want {
+		if got := negDeinterleave(tt.diff, tt.ref, tt.max); got != tt.want {
 			t.Fatalf("%+v got=%d", tt, got)
 		}
 	}

@@ -188,60 +188,9 @@ func coeffNZMapContextsSIMDFull(levels []uint8, size TransformSize, class transf
 	return true
 }
 
-// coeffNZMapContextsArch is the Go SIMD twin of the scalar nz-map context pass,
-// gated on coeffNZMapSIMDAvailable. It handles the full-eob case directly and
-// the partial case through a full map followed by a scan-ordered copy.
-func coeffNZMapContextsArch(levels []uint8, size TransformSize, class transform.Class, scan []int16, eob int, contexts []int8, maxEOB int) bool {
-	if !coeffNZMapSIMDAvailable() || !class.Valid() || eob <= 1 {
-		return false
-	}
-	geo := coeffGeometryTable[size]
-	if !geo.valid || len(levels) < int(geo.scratchLen) || len(contexts) < maxEOB {
-		return false
-	}
-	switch geo.scanHeight {
-	case 4, 8, 16, 32:
-		if eob == maxEOB {
-			if !coeffNZMapContextsSIMDFull(levels, size, class, contexts) {
-				return false
-			}
-			coeffNZMapFinalizeFullClass(contexts, scan, eob, maxEOB, class)
-			return true
-		}
-		var full [maxCoeffScanLen]int8
-		if !coeffNZMapContextsSIMDFull(levels, size, class, full[:]) {
-			return false
-		}
-		coeffNZMapCopyPartialClass(full[:], contexts, scan, eob, maxEOB, class)
-		return true
-	default:
-		return false
-	}
-}
-
 func coeffNZMapContexts2DFullArch(levels []uint8, size TransformSize, contexts []int8) bool {
 	if !coeffNZMapSIMDAvailable() {
 		return false
 	}
 	return coeffNZMapContextsSIMDFull(levels, size, transform.Class2D, contexts)
-}
-
-func coeffNZMapFinalizeFullClass(contexts []int8, scan []int16, eob int, maxEOB int, class transform.Class) {
-	if class == transform.Class2D {
-		contexts[0] = 0
-	}
-	lastPos := int(scan[eob-1])
-	contexts[lastPos] = int8(coeffLowerLevelsCtxEOBFast(maxEOB, eob-1))
-}
-
-func coeffNZMapCopyPartialClass(full []int8, contexts []int8, scan []int16, eob int, maxEOB int, class transform.Class) {
-	if class == transform.Class2D {
-		full[0] = 0
-	}
-	lastPos := int(scan[eob-1])
-	full[lastPos] = int8(coeffLowerLevelsCtxEOBFast(maxEOB, eob-1))
-	for c := range eob {
-		pos := int(scan[c])
-		contexts[pos] = full[pos]
-	}
 }

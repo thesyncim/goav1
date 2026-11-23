@@ -28,20 +28,15 @@ const (
 	KindParser
 	KindDecoder
 	KindDSP
-	KindAnnexB
 )
 
 const (
 	TagOBULowOverheadTemporalDelimiter  Tag = 0x0001_0001
-	TagOBUAnnexBTemporalUnit            Tag = 0x0001_0002
 	TagRTPPayloadSingleOBU              Tag = 0x0002_0001
 	TagRTPPayloadFragmentedOBU          Tag = 0x0002_0002
 	TagIVFSingleFrameAV1                Tag = 0x0003_0001
 	TagParserSequenceFullLowOverhead    Tag = 0x0004_0001
 	TagParserSequenceReducedLowOverhead Tag = 0x0004_0002
-	TagParserSequenceFullAnnexB         Tag = 0x0004_0003
-	TagParserSequenceReducedAnnexB      Tag = 0x0004_0004
-	TagParserSequenceBuganizer502133197 Tag = 0x0004_0005
 	TagDecoderLibaomQuantizer00         Tag = 0x0005_0001
 	TagDecoderLibaomQuantizer01         Tag = 0x0005_0002
 	TagDecoderLibaomSize16x16           Tag = 0x0005_0003

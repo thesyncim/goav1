@@ -9,9 +9,6 @@ package cdef
 import "testing"
 
 func TestCDEFUnitInteriorScanUsesGoSIMD(t *testing.T) {
-	if cdefUnitInteriorScanFlavor != "simd" {
-		t.Fatalf("interior scan flavor=%q, want simd", cdefUnitInteriorScanFlavor)
-	}
 	input := make([]uint16, BStride+8)
 	for i := range input {
 		input[i] = 255

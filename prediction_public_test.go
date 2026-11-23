@@ -77,7 +77,7 @@ func TestPublicPredictDirectionalIntraPlaneBlock(t *testing.T) {
 func TestPublicPredictFilterIntraAndEdges(t *testing.T) {
 	edge := []uint16{10, 20, 30, 40}
 	scratch := make([]uint16, len(edge))
-	if err := internalprediction.FilterIntraEdge(edge, scratch, 1, 8); err != nil {
+	if err := internalprediction.FilterIntraEdgeBounded(edge, scratch, 1, 8, false); err != nil {
 		t.Fatal(err)
 	}
 	wantEdge := []uint16{10, 20, 30, 38}
@@ -105,7 +105,7 @@ func TestPublicPredictFilterIntraAndEdges(t *testing.T) {
 		LeftAvailable:      true,
 		AboveLeftAvailable: true,
 	}
-	if err := internalprediction.PredictFilterIntraPlaneBlock(plane, 1, 8, 0, 0, 4, 4, internalprediction.FilterIntraModeDC, edges); err != nil {
+	if err := internalprediction.PredictFilterIntraPlaneBlockWithExtentBounded(plane, 1, 8, 0, 0, 4, 4, 4, 4, internalprediction.FilterIntraModeDC, edges, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := getPublicFrameSample(plane, 1, 0, 0); got == 0 {
@@ -163,7 +163,7 @@ func TestPublicPredictionRejectsInvalid(t *testing.T) {
 	if err := internalprediction.PredictDirectionalIntraPlaneBlock(plane, 1, 8, 0, 0, 1, 1, 0, internalprediction.DirectionalEdges{}); !errors.Is(err, internalprediction.ErrInvalidPrediction) {
 		t.Fatalf("directional angle err=%v want %v", err, internalprediction.ErrInvalidPrediction)
 	}
-	if err := internalprediction.FilterIntraEdge([]uint16{1, 2}, nil, 1, 8); !errors.Is(err, internalprediction.ErrInvalidPrediction) {
+	if err := internalprediction.FilterIntraEdgeBounded([]uint16{1, 2}, nil, 1, 8, false); !errors.Is(err, internalprediction.ErrInvalidPrediction) {
 		t.Fatalf("filter edge scratch err=%v want %v", err, internalprediction.ErrInvalidPrediction)
 	}
 	if _, err := internalprediction.CFLAlphaQ3(0, 99, internalprediction.CFLPredU); !errors.Is(err, internalprediction.ErrInvalidPrediction) {
@@ -194,11 +194,11 @@ func TestPublicPredictionAllocs(t *testing.T) {
 		if err := internalprediction.PredictIntraPlaneBlock(plane, 1, 8, 0, 0, 16, 16, internalprediction.IntraModeDC, edges); err != nil {
 			t.Fatalf("PredictIntraPlaneBlock err=%v", err)
 		}
-		if err := internalprediction.PredictFilterIntraPlaneBlock(plane, 1, 8, 0, 0, 16, 16, internalprediction.FilterIntraModeDC, edges); err != nil {
+		if err := internalprediction.PredictFilterIntraPlaneBlockWithExtentBounded(plane, 1, 8, 0, 0, 16, 16, 16, 16, internalprediction.FilterIntraModeDC, edges, false); err != nil {
 			t.Fatalf("PredictFilterIntraPlaneBlock err=%v", err)
 		}
 		copy(edge, edges.Above)
-		if err := internalprediction.FilterIntraEdge(edge, filterScratch, 1, 8); err != nil {
+		if err := internalprediction.FilterIntraEdgeBounded(edge, filterScratch, 1, 8, false); err != nil {
 			t.Fatalf("FilterIntraEdge err=%v", err)
 		}
 		if err := internalprediction.SubtractCFLAverage(recon, ac, 4, 4); err != nil {

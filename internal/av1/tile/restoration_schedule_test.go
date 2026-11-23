@@ -338,29 +338,6 @@ func TestResetRestorationPlaneRecordsMatchesUnitInfoSlots(t *testing.T) {
 	}
 }
 
-func TestStoreRestorationUnitRecordsWritesByIndex(t *testing.T) {
-	grid := testRestorationScheduleGrid(t, parser.RestorationWiener, 64, 128, 128)
-	records := make([]RestorationUnitRecord, 4)
-	if err := ResetRestorationPlaneRecords(grid, records); err != nil {
-		t.Fatal(err)
-	}
-	updates := []RestorationUnitRecord{records[3], records[1]}
-	updates[0].Unit.Type = parser.RestorationWiener
-	updates[1].Unit.Type = parser.RestorationWiener
-	if err := StoreRestorationUnitRecords(grid, records, updates); err != nil {
-		t.Fatal(err)
-	}
-	if records[0].Unit.Type != parser.RestorationNone ||
-		records[1].Unit.Type != parser.RestorationWiener ||
-		records[2].Unit.Type != parser.RestorationNone ||
-		records[3].Unit.Type != parser.RestorationWiener {
-		t.Fatalf("records=%+v", records)
-	}
-	if err := validateRestorationPlaneRecords(grid, records); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestReadRestorationUnitsForSuperblockIntoWritesFrameSlots(t *testing.T) {
 	grid := testRestorationScheduleGrid(t, parser.RestorationWiener, 128, 384, 192)
 	records := make([]RestorationUnitRecord, 6)
@@ -398,11 +375,6 @@ func TestRestorationPlaneRecordBuffersRejectInvalidInputs(t *testing.T) {
 	}
 	if err := ResetRestorationPlaneRecords(grid, records); err != nil {
 		t.Fatal(err)
-	}
-	bad := records[0]
-	bad.Index = 99
-	if err := StoreRestorationUnitRecords(grid, records, []RestorationUnitRecord{bad}); !errors.Is(err, ErrInvalidPlan) {
-		t.Fatalf("bad store err=%v want %v", err, ErrInvalidPlan)
 	}
 	var state DecodeState
 	if err := state.Reset([]byte{0x00}, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
@@ -467,11 +439,6 @@ func TestRestorationPlaneRecordBufferAllocs(t *testing.T) {
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		if err := ResetRestorationPlaneRecords(grid, records[:]); err != nil {
-			t.Fatal(err)
-		}
-		updates := records[1:3]
-		updates[0].Unit.Type = parser.RestorationWiener
-		if err := StoreRestorationUnitRecords(grid, records[:], updates); err != nil {
 			t.Fatal(err)
 		}
 		if err := state.Reset(payload, Job{Offset: 0, Size: 1}, DecodeOptions{}); err != nil {
@@ -724,15 +691,9 @@ func FuzzRestorationPlaneRecordBuffer(f *testing.F) {
 		if err := ResetRestorationPlaneRecords(grid, records); err != nil {
 			t.Fatalf("ResetRestorationPlaneRecords err=%v", err)
 		}
-		updates := make([]RestorationUnitRecord, 0, int(rawCount%5))
 		for i := 0; i < int(rawCount%5); i++ {
 			index := (int(rawIndex) + i*7) % len(records)
-			record := records[index]
-			record.Unit.Type = fuzzRestorationUnitType(grid.Type, rawType+uint8(i))
-			updates = append(updates, record)
-		}
-		if err := StoreRestorationUnitRecords(grid, records, updates); err != nil {
-			t.Fatalf("StoreRestorationUnitRecords err=%v", err)
+			records[index].Unit.Type = fuzzRestorationUnitType(grid.Type, rawType+uint8(i))
 		}
 		if err := validateRestorationPlaneRecords(grid, records); err != nil {
 			t.Fatalf("validateRestorationPlaneRecords err=%v", err)

@@ -540,7 +540,7 @@ func inverseDCT32Col4SIMD(buf []int32, rowStride int, min, max int32) {
 	v194.StoreArray((*[4]int32)(buf[31*rowStride:]))
 }
 
-// inverseADST16Col4SIMD applies inverseADST16Core to 4 adjacent columns of buf in int32 lanes.
+// inverseADST16Col4SIMD applies inverseADST16 to 4 adjacent columns of buf in int32 lanes.
 func inverseADST16Col4SIMD(buf []int32, rowStride int, min, max int32) {
 	minV := archsimd.BroadcastInt32x4(min)
 	maxV := archsimd.BroadcastInt32x4(max)
@@ -704,7 +704,7 @@ func inverseADST16Col4SIMD(buf []int32, rowStride int, min, max int32) {
 	v66.StoreArray((*[4]int32)(buf[15*rowStride:]))
 }
 
-// inverseADST16Col4FlipSIMD applies inverseADST16Core to 4 adjacent columns of buf in int32 lanes.
+// inverseADST16Col4FlipSIMD applies inverseADST16 to 4 adjacent columns of buf in int32 lanes.
 func inverseADST16Col4FlipSIMD(buf []int32, rowStride int, min, max int32) {
 	minV := archsimd.BroadcastInt32x4(min)
 	maxV := archsimd.BroadcastInt32x4(max)
@@ -2117,7 +2117,7 @@ func inverseDCT32Row4SIMD(r0, r1, r2, r3 []int32, min, max int32) {
 	y7_3.StoreArray((*[4]int32)(r3[28:]))
 }
 
-// inverseADST16Row4SIMD applies inverseADST16Core to 4 rows held as lanes of transposed vectors.
+// inverseADST16Row4SIMD applies inverseADST16 to 4 rows held as lanes of transposed vectors.
 func inverseADST16Row4SIMD(r0, r1, r2, r3 []int32, min, max int32) {
 	minV := archsimd.BroadcastInt32x4(min)
 	maxV := archsimd.BroadcastInt32x4(max)
@@ -2273,7 +2273,7 @@ func inverseADST16Row4SIMD(r0, r1, r2, r3 []int32, min, max int32) {
 	y3_3.StoreArray((*[4]int32)(r3[12:]))
 }
 
-// inverseADST16Row4FlipSIMD applies inverseADST16Core to 4 rows held as lanes of transposed vectors.
+// inverseADST16Row4FlipSIMD applies inverseADST16 to 4 rows held as lanes of transposed vectors.
 func inverseADST16Row4FlipSIMD(r0, r1, r2, r3 []int32, min, max int32) {
 	minV := archsimd.BroadcastInt32x4(min)
 	maxV := archsimd.BroadcastInt32x4(max)

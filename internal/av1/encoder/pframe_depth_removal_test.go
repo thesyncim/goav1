@@ -83,11 +83,11 @@ func checkSweepBruteForce(t *testing.T, w, h int, sbs [][2]int) {
 			t.Fatalf("sweep at (%d,%d) not valid", px, py)
 		}
 
-		// The swept window around a (0, 0) center (no pyramid, so no HME),
-		// edge-replicated where it leaves the frame.
-		nx, ny := realtimeSweepSearchW, realtimeSweepSearchH
-		x0 := -(realtimeSweepSearchW >> 1)
-		y0 := -(realtimeSweepSearchH >> 1)
+		// The swept 8x3 preset-12 rtc window around a (0, 0) center (no
+		// pyramid, so no HME), edge-replicated where it leaves the frame.
+		nx, ny := 8, 3
+		x0 := -(nx >> 1)
+		y0 := -(ny >> 1)
 
 		for pu := 0; pu < 85; pu++ {
 			bx, by, n := sweepPUGeometry(pu)

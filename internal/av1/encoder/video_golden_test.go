@@ -208,7 +208,7 @@ func TestHighBitDepthVideoEncoderGoldenReference(t *testing.T) {
 		}
 		frames := []encoder.SourceFrame42016{mk(-1), mk(40), mk(-1)}
 		encode := func(goldenInterval int) ([][]byte, []encoder.SourceFrame42016) {
-			enc, err := encoder.NewHighBitDepth420VideoEncoder(w, h, bitDepth, 64)
+			enc, err := encoder.NewHighBitDepth420VideoEncoderWithColor(w, h, encoder.Profile0, encoder.SequenceColorConfig{BitDepth: bitDepth, SubsamplingX: true, SubsamplingY: true}, 64)
 			if err != nil {
 				t.Fatal(err)
 			}

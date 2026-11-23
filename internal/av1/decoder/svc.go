@@ -24,17 +24,6 @@ type FrameSurfaceProvider interface {
 	FrameSurface(id int) (*frame.Frame, error)
 }
 
-// FrameSurfaceProviderFunc adapts a plain function to FrameSurfaceProvider.
-type FrameSurfaceProviderFunc func(int) (*frame.Frame, error)
-
-// FrameSurface implements FrameSurfaceProvider.
-func (fn FrameSurfaceProviderFunc) FrameSurface(id int) (*frame.Frame, error) {
-	if fn == nil {
-		return nil, ErrInvalidSurfaceReference
-	}
-	return fn(id)
-}
-
 // ResolveFrameReferencesWithProvider converts caller-owned surface IDs into
 // checked frame pointers using a FrameSurfaceProvider rather than a single
 // frame.Pool. dst is published only after every referenced surface has
@@ -71,142 +60,12 @@ func ResolveFrameReferencesWithProvider(provider FrameSurfaceProvider, surfaces 
 	return count, nil
 }
 
-// ResolveTileListExternalReferencesWithProvider resolves the external reference
-// frames named by a tile_list_obu(). surfaces and dst are indexed by
-// TileListEntry.AnchorFrameIdx, matching libaom's ext_refs.refs table and the
-// source slice expected by CopyTileListToOutputFrame. The returned count is
-// max(anchor_frame_idx)+1, and dst[:count] is rewritten atomically so unused
-// holes are cleared to nil.
-func ResolveTileListExternalReferencesWithProvider(provider FrameSurfaceProvider, list parser.TileList, surfaces []int, dst []*frame.Frame) (int, error) {
-	tileCount := list.TileCount()
-	if tileCount <= 0 || tileCount > parser.TileListMaxTiles || tileCount != len(list.Entries) {
-		return 0, parser.ErrTileListInvalidTileCount
-	}
-	if provider == nil {
-		return 0, ErrInvalidSurfaceReference
-	}
-
-	var used [parser.TileListMaxExternalReferences]bool
-	maxAnchor := -1
-	for _, entry := range list.Entries {
-		anchor := int(entry.AnchorFrameIdx)
-		if anchor < 0 || anchor >= parser.TileListMaxExternalReferences {
-			return 0, parser.ErrTileListInvalidAnchorIndex
-		}
-		used[anchor] = true
-		if anchor > maxAnchor {
-			maxAnchor = anchor
-		}
-	}
-	if maxAnchor < 0 {
-		return 0, parser.ErrTileListInvalidTileCount
-	}
-
-	count := maxAnchor + 1
-	if len(surfaces) < count || len(dst) < count {
-		return 0, ErrSurfaceReferenceBufferTooSmall
-	}
-
-	var resolved [parser.TileListMaxExternalReferences]*frame.Frame
-	for anchor := 0; anchor < count; anchor++ {
-		if !used[anchor] {
-			continue
-		}
-		surface := surfaces[anchor]
-		if surface < 0 {
-			return 0, ErrInvalidSurfaceReference
-		}
-		ref, err := provider.FrameSurface(surface)
-		if err != nil {
-			return 0, err
-		}
-		if ref == nil {
-			return 0, ErrInvalidSurfaceReference
-		}
-		resolved[anchor] = ref
-	}
-	for i := 0; i < count; i++ {
-		dst[i] = resolved[i]
-	}
-	return count, nil
-}
-
 // FrameSurfaceReleaser is the caller-owned hook RunEventWithContextAndExternalReferences
 // uses to release overwritten reference surfaces at frame completion. The
 // release IDs use the caller's own surface namespace, matching what is stored
 // in SurfaceReferences.slots and resolved through FrameSurfaceProvider.
 type FrameSurfaceReleaser interface {
 	ReleaseFrameSurfaces(ids []int) error
-}
-
-// TemporalMotionReferenceProvider routes caller-owned surface IDs to the
-// TemporalMotionReferenceFrame metadata that ResolveTemporalMotionReferences
-// would otherwise look up in a single per-surface store. This is the SVC
-// counterpart of indexing into a single per-layer mvStore by surface index.
-type TemporalMotionReferenceProvider interface {
-	TemporalMotionReference(id int) (tile.TemporalMotionReferenceFrame, error)
-}
-
-// TemporalMotionReferenceProviderFunc adapts a plain function to
-// TemporalMotionReferenceProvider.
-type TemporalMotionReferenceProviderFunc func(id int) (tile.TemporalMotionReferenceFrame, error)
-
-// TemporalMotionReference implements TemporalMotionReferenceProvider.
-func (fn TemporalMotionReferenceProviderFunc) TemporalMotionReference(id int) (tile.TemporalMotionReferenceFrame, error) {
-	if fn == nil {
-		return tile.TemporalMotionReferenceFrame{}, ErrInvalidSurfaceReference
-	}
-	return fn(id)
-}
-
-// ResolveTemporalMotionReferencesWithProvider is the multi-pool counterpart
-// of ResolveTemporalMotionReferences. dst is published atomically after every
-// referenced surface has validated.
-func ResolveTemporalMotionReferencesWithProvider(provider TemporalMotionReferenceProvider, surfaces []int, dst []tile.TemporalMotionReferenceFrame) (int, error) {
-	count := len(surfaces)
-	if count > parser.InterRefsPerFrame {
-		return 0, ErrInvalidSurfaceReference
-	}
-	if len(dst) < count {
-		return 0, ErrSurfaceReferenceBufferTooSmall
-	}
-	if provider == nil {
-		return 0, ErrInvalidSurfaceReference
-	}
-
-	var resolved [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
-	for i := range count {
-		surface := surfaces[i]
-		if surface < 0 {
-			return 0, ErrInvalidSurfaceReference
-		}
-		ref, err := provider.TemporalMotionReference(surface)
-		if err != nil {
-			return 0, err
-		}
-		if ref.Frame == nil {
-			return 0, ErrInvalidSurfaceReference
-		}
-		if err := ref.Frame.Validate(); err != nil {
-			return 0, ErrInvalidSurfaceReference
-		}
-		resolved[i] = ref
-	}
-	for i := range count {
-		dst[i] = resolved[i]
-	}
-	return count, nil
-}
-
-// FrameSurfaceReleaserFunc adapts a plain function to FrameSurfaceReleaser.
-type FrameSurfaceReleaserFunc func(ids []int) error
-
-// ReleaseFrameSurfaces implements FrameSurfaceReleaser.
-func (fn FrameSurfaceReleaserFunc) ReleaseFrameSurfaces(ids []int) error {
-	if fn == nil || len(ids) == 0 {
-		return nil
-	}
-	return fn(ids)
 }
 
 // SharedFrameContextStore holds saved entropy (CDF) frame contexts keyed by

@@ -365,7 +365,7 @@ func webRTCTestDTI(symbol byte) DecodeTargetIndication {
 	}
 }
 
-func TestWebRTCTemplateIDForFrame(t *testing.T) {
+func TestWebRTCDependencyDescriptorMatchFrameTemplateID(t *testing.T) {
 	structure, err := WebRTCFrameDependencyStructureForConfig(Config{
 		Resolution:  Resolution{Width: 640, Height: 360},
 		Scalability: ScalabilityModeL2T2,
@@ -383,22 +383,14 @@ func TestWebRTCTemplateIDForFrame(t *testing.T) {
 	}
 	info.Dependencies[0] = 9
 	info.DTIs = structure.Templates[3].DTIs
-	id, err := WebRTCTemplateIDForFrame(structure, WebRTCGenericFrameInfo{
-		FrameID:       info.FrameID,
-		SpatialID:     info.SpatialID,
-		TemporalID:    info.TemporalID,
-		Dependencies:  info.Dependencies,
-		DependencyNum: info.DependencyNum,
-		DTIs:          info.DTIs,
-		DTINum:        info.DTINum,
-	})
+	match, err := webRTCDependencyDescriptorMatchFrame(structure, info)
 	if err != nil {
-		t.Fatalf("WebRTCTemplateIDForFrame: %v", err)
+		t.Fatalf("webRTCDependencyDescriptorMatchFrame: %v", err)
 	}
-	if id != 0 {
+	if id := (structure.StructureID + match.templateIndex) % WebRTCRtpDependencyMaxTemplates; id != 0 {
 		t.Fatalf("template id=%d want 0", id)
 	}
-	if _, err := WebRTCTemplateIDForFrame(structure, WebRTCGenericFrameInfo{SpatialID: 3}); !errors.Is(err, ErrInvalidFrame) {
+	if _, err := webRTCDependencyDescriptorMatchFrame(structure, WebRTCGenericFrameInfo{SpatialID: 3}); !errors.Is(err, ErrInvalidFrame) {
 		t.Fatalf("missing layer err=%v want ErrInvalidFrame", err)
 	}
 }
@@ -470,9 +462,9 @@ func TestWebRTCDependencyStructureStateForTemporalUnit(t *testing.T) {
 		t.Fatalf("key state=%+v structure=%+v control=%+v", state, structure, key.Control.DependencyStructure)
 	}
 
-	delta, err := WebRTCDeltaFrameTemporalUnitForConfig(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 1, 200)
+	delta, err := webRTCDeltaFrameTemporalUnitForConfigWithOrderHint(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 1, 200, 0, 0, false)
 	if err != nil {
-		t.Fatalf("WebRTCDeltaFrameTemporalUnitForConfig: %v", err)
+		t.Fatalf("webRTCDeltaFrameTemporalUnitForConfigWithOrderHint: %v", err)
 	}
 	next, carried, err := WebRTCDependencyStructureStateForTemporalUnit(delta.Control, state)
 	if err != nil {
@@ -508,9 +500,9 @@ func TestWebRTCDependencyStructureStateForTemporalUnitRejectsMissingState(t *tes
 	if err != nil {
 		t.Fatalf("WebRTCKeyFrameTemporalUnitForConfig: %v", err)
 	}
-	delta, err := WebRTCDeltaFrameTemporalUnitForConfig(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 0, 11)
+	delta, err := webRTCDeltaFrameTemporalUnitForConfigWithOrderHint(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 0, 11, 0, 0, false)
 	if err != nil {
-		t.Fatalf("WebRTCDeltaFrameTemporalUnitForConfig: %v", err)
+		t.Fatalf("webRTCDeltaFrameTemporalUnitForConfigWithOrderHint: %v", err)
 	}
 	if _, _, err := WebRTCDependencyStructureStateForTemporalUnit(delta.Control, WebRTCDependencyStructureState{}); !errors.Is(err, ErrInvalidFrame) {
 		t.Fatalf("missing carried structure err=%v want %v", err, ErrInvalidFrame)
@@ -527,9 +519,9 @@ func TestWebRTCDependencyStructureStateForTemporalUnitAllocs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("key structure state: %v", err)
 	}
-	delta, err := WebRTCDeltaFrameTemporalUnitForConfig(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 1, 200)
+	delta, err := webRTCDeltaFrameTemporalUnitForConfigWithOrderHint(cfg, key.Control.ReferenceState, key.Control.FrameIDState, 1, 200, 0, 0, false)
 	if err != nil {
-		t.Fatalf("WebRTCDeltaFrameTemporalUnitForConfig: %v", err)
+		t.Fatalf("webRTCDeltaFrameTemporalUnitForConfigWithOrderHint: %v", err)
 	}
 	allocs := testing.AllocsPerRun(1000, func() {
 		_, _, _ = WebRTCDependencyStructureStateForTemporalUnit(delta.Control, state)

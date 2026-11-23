@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -69,17 +68,10 @@ func TestAppendCDEFParamsInterPayload(t *testing.T) {
 	cdef := CDEFParams{Damping: 3, Bits: 0}
 	cdef.YStrength[0] = 11
 	cdef.UVStrength[0] = 12
-	payloadSize, err := CDEFParamsInterPayloadSize(seq, size, false, cdef)
-	if err != nil {
-		t.Fatalf("CDEFParamsInterPayloadSize: %v", err)
-	}
 	var buf [4]byte
-	payload, err := AppendCDEFParamsInterPayload(buf[:0], seq, size, false, cdef)
+	payload, err := appendCDEFParamsInterPayload(buf[:0], seq, size, false, cdef)
 	if err != nil {
-		t.Fatalf("AppendCDEFParamsInterPayload: %v", err)
-	}
-	if len(payload) != payloadSize {
-		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+		t.Fatalf("appendCDEFParamsInterPayload: %v", err)
 	}
 	parsed, err := parser.ParseCDEFParams(payload, parseEncoderSequenceHeader(t, seq), parser.FrameSize{}, parser.SegmentationParams{}, parser.LoopFilterParams{})
 	if err != nil {
@@ -107,72 +99,28 @@ func TestAppendCDEFParamsPayloadRejectsInvalid(t *testing.T) {
 	}
 	var buf [8]byte
 	for _, cdef := range cases {
-		if _, err := AppendCDEFParamsPayload(buf[:0], seq, size, false, cdef); !errors.Is(err, ErrInvalidFrame) {
-			t.Fatalf("AppendCDEFParamsPayload(%+v) err=%v want ErrInvalidFrame", cdef, err)
+		if _, err := appendCDEFParamsPayload(buf[:0], seq, size, false, cdef); !errors.Is(err, ErrInvalidFrame) {
+			t.Fatalf("appendCDEFParamsPayload(%+v) err=%v want ErrInvalidFrame", cdef, err)
 		}
 	}
-	if _, err := AppendCDEFParamsPayload(buf[:0], seq, size, true, nonzeroDisabled); !errors.Is(err, ErrInvalidFrame) {
+	if _, err := appendCDEFParamsPayload(buf[:0], seq, size, true, nonzeroDisabled); !errors.Is(err, ErrInvalidFrame) {
 		t.Fatalf("lossless nonzero cdef err=%v want ErrInvalidFrame", err)
 	}
 	mono := seq
 	mono.ColorConfig.MonoChrome = true
 	uv := CDEFParams{Damping: 3, Bits: 0}
 	uv.UVStrength[0] = 1
-	if _, err := AppendCDEFParamsPayload(buf[:0], mono, size, false, uv); !errors.Is(err, ErrInvalidFrame) {
+	if _, err := appendCDEFParamsPayload(buf[:0], mono, size, false, uv); !errors.Is(err, ErrInvalidFrame) {
 		t.Fatalf("mono uv cdef err=%v want ErrInvalidFrame", err)
-	}
-}
-
-func TestAppendCDEFParamsPayloadShortBuffer(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	size := IntraFrameSize{UpscaledWidth: 64, Height: 64, SuperResDenominator: 8, RefreshFrameFlags: 0xff}
-	cdef := CDEFParams{Damping: 3, Bits: 0}
-	cdef.YStrength[0] = 7
-	cdef.UVStrength[0] = 9
-	var buf [1]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendCDEFParamsPayload(dst, seq, size, false, cdef)
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want ErrShortBuffer", err)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output=% x", out)
-	}
-}
-
-func TestAppendCDEFParamsPayloadAllocs(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	size := IntraFrameSize{UpscaledWidth: 64, Height: 64, SuperResDenominator: 8, RefreshFrameFlags: 0xff}
-	cdef := CDEFParams{Damping: 3, Bits: 0}
-	cdef.YStrength[0] = 7
-	cdef.UVStrength[0] = 9
-	var buf [4]byte
-	if _, err := AppendCDEFParamsPayload(buf[:0], seq, size, false, cdef); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = CDEFParamsPayloadSize(seq, size, false, cdef)
-		_, _ = AppendCDEFParamsPayload(buf[:0], seq, size, false, cdef)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendCDEFParamsPayload allocated: %f", allocs)
 	}
 }
 
 func appendAndParseCDEFParams(t *testing.T, seq SequenceHeader, size IntraFrameSize, allLossless bool, cdef CDEFParams) ([]byte, parser.CDEFParams) {
 	t.Helper()
-	payloadSize, err := CDEFParamsPayloadSize(seq, size, allLossless, cdef)
-	if err != nil {
-		t.Fatalf("CDEFParamsPayloadSize: %v", err)
-	}
 	var buf [16]byte
-	payload, err := AppendCDEFParamsPayload(buf[:0], seq, size, allLossless, cdef)
+	payload, err := appendCDEFParamsPayload(buf[:0], seq, size, allLossless, cdef)
 	if err != nil {
-		t.Fatalf("AppendCDEFParamsPayload: %v", err)
-	}
-	if len(payload) != payloadSize {
-		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+		t.Fatalf("appendCDEFParamsPayload: %v", err)
 	}
 	parsed, err := parser.ParseCDEFParams(
 		payload,

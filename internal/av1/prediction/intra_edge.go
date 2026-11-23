@@ -22,19 +22,6 @@ var intraEdgeFilterKernels = [3][intraEdgeTaps]int{
 	{2, 4, 4, 4, 2},
 }
 
-// FilterIntraEdge applies libaom's av1_filter_intra_edge_c smoothing kernel to
-// edge in-place. scratch is caller-owned temporary storage and must be at least
-// len(edge) samples when strength is non-zero.
-func FilterIntraEdge(edge []uint16, scratch []uint16, strength uint8, bitDepth uint8) error {
-	return FilterIntraEdgeBounded(edge, scratch, strength, bitDepth, false)
-}
-
-// FilterIntraEdgeFromBytes requires samples just gathered from an 8-bit plane.
-// The nonnegative filter weights sum to16, so output retains that bound.
-func FilterIntraEdgeFromBytes(edge []uint16, scratch []uint16, strength uint8) error {
-	return FilterIntraEdgeBounded(edge, scratch, strength, 8, true)
-}
-
 // FilterIntraEdgeBounded skips the value scan only when bounded is true and the caller has established that every source sample fits bitDepth.
 func FilterIntraEdgeBounded(edge []uint16, scratch []uint16, strength uint8, bitDepth uint8, bounded bool) error {
 	if len(edge) == 0 || len(edge) > intraEdgeMaxSize || strength > 3 {
@@ -73,19 +60,6 @@ func FilterIntraEdgeBounded(edge []uint16, scratch []uint16, strength uint8, bit
 		edge[i] = uint16((sum + 8) >> 4)
 	}
 	return nil
-}
-
-// UpsampleIntraEdge applies libaom's av1_upsample_intra_edge_c interpolation
-// to edge in-place. origin identifies C's p[0] inside edge; edge[origin-1] is
-// p[-1], and the function writes p[-2] through p[2*size-2].
-func UpsampleIntraEdge(edge []uint16, origin int, size int, scratch []uint16, bitDepth uint8) error {
-	return UpsampleIntraEdgeBounded(edge, origin, size, scratch, bitDepth, false)
-}
-
-// UpsampleIntraEdgeFromBytes requires byte-bounded source samples. The original
-// interpolation and clipping retain the8-bit bound for every generated sample.
-func UpsampleIntraEdgeFromBytes(edge []uint16, origin int, size int, scratch []uint16) error {
-	return UpsampleIntraEdgeBounded(edge, origin, size, scratch, 8, true)
 }
 
 // UpsampleIntraEdgeBounded has the same call-scoped sample-bound contract as FilterIntraEdgeBounded; interpolation and clipping are unchanged.

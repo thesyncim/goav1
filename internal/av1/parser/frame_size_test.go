@@ -14,7 +14,7 @@ func TestParseIntraFrameSizeShownKeyFrame(t *testing.T) {
 	w.writeBool(false) // superres_params: use_superres
 	w.writeBool(false) // render_and_frame_size_different
 
-	size, err := ParseIntraFrameSize(w.bytes(), seq, prefix, 0, 0)
+	size, err := ParseFrameSize(w.bytes(), seq, prefix, nil, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestParseIntraFrameSizeOverrideSuperresRender(t *testing.T) {
 	w.writeBits(39, 16)                  // render_width_minus_1
 	w.writeBits(19, 16)                  // render_height_minus_1
 
-	size, err := ParseIntraFrameSize(w.bytes(), seq, prefix, 0, 0)
+	size, err := ParseFrameSize(w.bytes(), seq, prefix, nil, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestParseIntraFrameSizeHiddenKeyReadsRefreshAndOrderHints(t *testing.T) {
 	w.writeBool(false) // use_superres
 	w.writeBool(false) // render_and_frame_size_different
 
-	size, err := ParseIntraFrameSize(w.bytes(), seq, prefix, 0, 0)
+	size, err := ParseFrameSize(w.bytes(), seq, prefix, nil, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestParseIntraFrameSizeBufferRemovalTime(t *testing.T) {
 	w.writeBool(false) // use_superres
 	w.writeBool(false) // render_and_frame_size_different
 
-	size, err := ParseIntraFrameSize(w.bytes(), seq, prefix, 0, 0)
+	size, err := ParseFrameSize(w.bytes(), seq, prefix, nil, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,9 +153,9 @@ func TestParseIntraFrameSizeRejectsIntraOnlyRefreshAll(t *testing.T) {
 	}
 	w.writeBits(0xff, 8)
 
-	_, err = ParseIntraFrameSize(w.bytes(), seq, prefix, 0, 0)
+	_, err = ParseFrameSize(w.bytes(), seq, prefix, nil, 0, 0)
 	if !errors.Is(err, ErrInvalidFrameHeader) {
-		t.Fatalf("ParseIntraFrameSize err=%v want %v", err, ErrInvalidFrameHeader)
+		t.Fatalf("ParseFrameSize err=%v want %v", err, ErrInvalidFrameHeader)
 	}
 }
 
@@ -171,14 +171,15 @@ func TestParseIntraFrameSizeRejectsInterFrame(t *testing.T) {
 	w.writeBool(false)
 	w.writeBits(0, seq.OrderHintBits)
 	w.writeBits(0, 3)
+	w.writeBits(1, 8)
 
 	prefix, err := ParseFrameHeaderPrefix(w.bytes(), seq)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = ParseIntraFrameSize(w.bytes(), seq, prefix, 0, 0)
+	_, err = ParseFrameSize(w.bytes(), seq, prefix, nil, 0, 0)
 	if !errors.Is(err, ErrReferenceFrameNeeded) {
-		t.Fatalf("ParseIntraFrameSize err=%v want %v", err, ErrReferenceFrameNeeded)
+		t.Fatalf("ParseFrameSize err=%v want %v", err, ErrReferenceFrameNeeded)
 	}
 }
 
@@ -348,13 +349,13 @@ func TestParseIntraFrameSizeAllocs(t *testing.T) {
 	payload = w.bytes()
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		_, err := ParseIntraFrameSize(payload, seq, prefix, 0, 0)
+		_, err := ParseFrameSize(payload, seq, prefix, nil, 0, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
 	})
 	if allocs != 0 {
-		t.Fatalf("ParseIntraFrameSize allocated: %f", allocs)
+		t.Fatalf("ParseFrameSize allocated: %f", allocs)
 	}
 }
 
@@ -369,7 +370,7 @@ func BenchmarkParseIntraFrameSize(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		_, _ = ParseIntraFrameSize(payload, seq, prefix, 0, 0)
+		_, _ = ParseFrameSize(payload, seq, prefix, nil, 0, 0)
 	}
 }
 

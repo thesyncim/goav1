@@ -180,13 +180,6 @@ func TestAppendWebRTCDependencyDescriptorL2T2KeyShiftDuplicateTemplates(t *testi
 		if match.templateIndex != tc.templateIndex || match.needCustomDTIs || match.needCustomDiffs {
 			t.Fatalf("%s match=%+v", tc.name, match)
 		}
-		templateID, err := WebRTCTemplateIDForFrame(structure, info)
-		if err != nil {
-			t.Fatalf("%s template id: %v", tc.name, err)
-		}
-		if templateID != tc.templateIndex {
-			t.Fatalf("%s template id=%d want %d", tc.name, templateID, tc.templateIndex)
-		}
 		var buf [16]byte
 		if _, err := AppendWebRTCDependencyDescriptor(buf[:0], structure, info, true, true, false); err != nil {
 			t.Fatalf("%s AppendWebRTCDependencyDescriptor: %v", tc.name, err)

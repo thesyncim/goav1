@@ -267,18 +267,6 @@ func (s *DecodeState) DecodeBlockLoop(cdfs BlockLoopCDFs, scratch *BlockLoopScra
 	return decodeBlockLoopWithCoeffController(s, cdfs, scratch, req, noBlockLoopCoeffController{}, false, visit)
 }
 
-// DecodeBlockLoopWithCoeffController is DecodeBlockLoop with a call-scoped
-// coefficient controller. Passing the controller as an argument lets hot callers
-// keep controller state on the stack instead of storing it in BlockLoopRequest.
-func DecodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, visit BlockLoopVisitor) (BlockLoopStats, error) {
-	if visit == nil {
-		return BlockLoopStats{}, ErrInvalidDecodeState
-	}
-	return decodeBlockLoopWithCoeffControllerPtr(s, cdfs, scratch, req, coeffController, true, false, func(block *BlockLoopVisit) error {
-		return visit(*block)
-	})
-}
-
 func decodeBlockLoopWithCoeffController[T BlockLoopCoeffController](s *DecodeState, cdfs BlockLoopCDFs, scratch *BlockLoopScratch, req BlockLoopRequest, coeffController T, hasCoeffController bool, visit BlockLoopVisitor) (BlockLoopStats, error) {
 	if visit == nil {
 		return BlockLoopStats{}, ErrInvalidDecodeState
@@ -416,10 +404,6 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 		}
 	}
 	return stats, nil
-}
-
-func blockLoopLoadRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, haveTop bool, haveLeft bool, sbSizeMIB uint8) error {
-	return blockLoopLoadRootContextMotion(scratch, carrier, rootColIndex, haveTop, haveLeft, sbSizeMIB, true, 0, 0)
 }
 
 // blockLoopLeftEdge records a left edge left resident in the scratch after a
@@ -595,10 +579,6 @@ func blockLoopLoadRootContextFull(scratch *BlockLoopScratch, carrier *BlockLoopC
 		scratch.Mode.SBDiagonalBlockSizeVisitedGrid = carrier.Diagonal[rootColIndex].BlockSizeVisited
 	}
 	return nil
-}
-
-func blockLoopStoreRootContext(scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, rootColIndex int, sbSizeMIB uint8) error {
-	return blockLoopStoreRootContextMotion(scratch, carrier, rootColIndex, sbSizeMIB, true, 0, 0)
 }
 
 // blockLoopStoreRootContextMotion is the store side of
@@ -1004,14 +984,6 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 		visit.CoefficientsValid = true
 	}
 	return visit, nil
-}
-
-func (s *DecodeState) decodeBlockPredictionMode(cdfs BlockLoopCDFs, ctx *BlockModeContext, req BlockLoopRequest, block BlockVisit, prefix BlockModeResult, segmentID uint8, segment parser.SegmentData, paletteMap *PaletteModeScratch) (BlockPredictionModeResult, error) {
-	var result BlockPredictionModeResult
-	if err := s.decodeBlockPredictionModeInto(&cdfs, ctx, &req, &block, prefix, segmentID, &segment, paletteMap, &result, false, nil); err != nil {
-		return BlockPredictionModeResult{}, err
-	}
-	return result, nil
 }
 
 func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *BlockModeContext, req *BlockLoopRequest, block *BlockVisit, prefix BlockModeResult, segmentID uint8, segment *parser.SegmentData, paletteMap *PaletteModeScratch, result *BlockPredictionModeResult, intraOnlyContexts bool, rt *refmvsTile) error {
@@ -1939,47 +1911,6 @@ func interModeUsesGlobalOnly(mode InterModeResult) bool {
 		return mode.CompoundMode == CompoundInterModeGlobalGlobal
 	}
 	return mode.Mode == InterModeGlobalMV
-}
-
-// warpSampleDiagonalCorner reports the contribution of the bottom-right cell of
-// the superblock diagonally up-and-left of the current SB to libaom's
-// av1_findSamples top-left scan. WarpSampleCountWithContext addresses the
-// top-left neighbor via the per-SB grid at (block.X4-1, block.Y4-1), which
-// has no valid entry for negative coordinates, so the cross-SB diagonal cell
-// is dropped when the current block is at the SB top-left corner. The
-// caller-owned SBDiagonal* grids carry the snapshot of the prior diagonal
-// superblock's bottom-right corner (see captureDiagonalCornerToPending), so
-// this helper looks the cell up there and returns 1 when it matches libaom's
-// findSamples acceptance test (same ref0, no second reference, no
-// inter-intra, valid motion). Any other block position returns 0 because the
-// existing scan already covers it.
-func warpSampleDiagonalCorner(block BlockVisit, ctx *BlockModeContext, ref ReferenceFrame) int {
-	if ctx == nil || !ref.Valid() {
-		return 0
-	}
-	if block.X4 != 0 || block.Y4 != 0 {
-		return 0
-	}
-	if !block.HaveTop || !block.HaveLeft {
-		return 0
-	}
-	if ctx.SBDiagonalMotionValidGrid[0][0] == 0 {
-		return 0
-	}
-	motionResult := ctx.SBDiagonalInterMotionGrid[0][0]
-	if motionResult.References.Compound {
-		return 0
-	}
-	if motionResult.References.Ref0 != ref {
-		return 0
-	}
-	if motionResult.References.Ref1 != ReferenceFrameNone {
-		return 0
-	}
-	if motionResult.InterIntra {
-		return 0
-	}
-	return 1
 }
 
 // intrabcClipDV ports dav1d's intrabc DV clip (decode.c decode_b): the source

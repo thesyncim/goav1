@@ -39,7 +39,7 @@ func kc(c int) string {
 	return fmt.Sprintf("k(%d)", cosIndex[c])
 }
 
-// adst16 emits inverseADST16 (adst.go inverseADST16Core) for inputs below n.
+// adst16 emits inverseADST16 (adst.go) for inputs below n.
 func (g *gen) adst16(n int) string {
 	g.sb.Reset()
 	g.tmpN = 0
@@ -219,7 +219,7 @@ func emitADST() string {
 	for _, n := range []int{16, 8, 4} {
 		g := &gen{}
 		emit(fmt.Sprintf("itx16ADSTNet%d", n),
-			fmt.Sprintf("itx16ADSTNet%d is inverseADST16 on eight lanes for inputs below %d (the rest\n// zero): in[k] is coefficient k, out[r] output r. Generated from the stage\n// structure of inverseADST16Core with the zero operands folded.", n, n),
+			fmt.Sprintf("itx16ADSTNet%d is inverseADST16 on eight lanes for inputs below %d (the rest\n// zero): in[k] is coefficient k, out[r] output r. Generated from the stage\n// structure of inverseADST16 with the zero operands folded.", n, n),
 			"16", g.adst16(n))
 	}
 	for _, n := range []int{8, 4} {

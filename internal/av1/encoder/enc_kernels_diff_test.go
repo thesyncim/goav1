@@ -33,16 +33,10 @@ func TestEncoderSmallKernelsMatchScalar(t *testing.T) {
 				src[i], ref[i] = []byte{0, 255}[rng.Intn(2)], []byte{0, 255}[rng.Intn(2)]
 			}
 		}
-		for trial := range 50 {
+		for range 50 {
 			so := rng.Intn(10*stride) + rng.Intn(16)
 			ro := rng.Intn(10*stride) + rng.Intn(16)
 			got := [4]int{}
-			got[0], got[1], got[2], got[3] = sad8x4x4(src[so:], ref[ro:], ref[ro+1:], ref[ro+5:], ref[ro+stride:], stride)
-			for k, o := range []int{ro, ro + 1, ro + 5, ro + stride} {
-				if want := sad8x4PureGo(src[so:], ref[o:], stride); got[k] != want {
-					t.Fatalf("pattern %d trial %d: sad8x4x4[%d] = %d, want %d", pattern, trial, k, got[k], want)
-				}
-			}
 			for _, rows := range []int{4, 8, 16} {
 				got[0], got[1], got[2], got[3] = sad16xNx4(src[so:], 2*stride, ref[ro:], 2*stride, rows)
 				for k := range 4 {

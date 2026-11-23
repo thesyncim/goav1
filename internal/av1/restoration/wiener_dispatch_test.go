@@ -45,11 +45,10 @@ func TestWienerDispatchMatchesPureGo(t *testing.T) {
 				// Horizontal pass: reference vs dispatch.
 				wantTemp := make([]uint16, tempLen)
 				gotTemp := make([]uint16, tempLen)
-				okWant := wienerHorizontal(src, stride, origin, sz.width, sz.height, info.HFilter, int(bitDepth), round0, max, wantTemp)
-				okGot := wienerHorizontalImpl(src, stride, origin, sz.width, sz.height, info.HFilter, int(bitDepth), round0, max, gotTemp)
-				if okWant != okGot {
-					t.Fatalf("bd=%d sz=%dx%d f=%d horizontal ok mismatch: want=%v got=%v", bitDepth, sz.width, sz.height, fi, okWant, okGot)
+				if !wienerHorizontal(src, stride, origin, sz.width, sz.height, info.HFilter, int(bitDepth), round0, max, wantTemp) {
+					t.Fatalf("bd=%d sz=%dx%d f=%d horizontal reference rejected in-range input", bitDepth, sz.width, sz.height, fi)
 				}
+				wienerHorizontalTrustedImpl(src, stride, origin, sz.width, sz.height, info.HFilter, int(bitDepth), round0, max, gotTemp)
 				for i := range wantTemp {
 					if wantTemp[i] != gotTemp[i] {
 						t.Fatalf("bd=%d sz=%dx%d f=%d horizontal temp[%d]=%d want %d", bitDepth, sz.width, sz.height, fi, i, gotTemp[i], wantTemp[i])
@@ -72,26 +71,6 @@ func TestWienerDispatchMatchesPureGo(t *testing.T) {
 	}
 }
 
-// TestWienerDispatchRejectsOutOfRange verifies that the dispatched horizontal
-// pass reproduces the reference's validity bail-out (sample > max => false).
-func TestWienerDispatchRejectsOutOfRange(t *testing.T) {
-	const width, height = 64, 8
-	const bitDepth uint8 = 8
-	max := uint16((1 << bitDepth) - 1)
-	round0, _ := wienerRounds(int(bitDepth))
-	stride := width + 2*WienerHalfwin
-	origin := WienerHalfwin*stride + WienerHalfwin
-	src := make([]uint16, stride*(height+2*WienerHalfwin))
-	for i := range src {
-		src[i] = uint16(i % int(max+1))
-	}
-	src[origin+2*stride+5] = max + 1 // poison one interior sample
-	temp := make([]uint16, width*(height+2*WienerHalfwin))
-	if wienerHorizontalImpl(src, stride, origin, width, height, DefaultWienerInfo().HFilter, int(bitDepth), round0, max, temp) {
-		t.Fatal("dispatch accepted out-of-range sample")
-	}
-}
-
 // TestWienerDispatchIsZeroAlloc protects the hot-path contract that the
 // dispatched passes do not allocate per call.
 func TestWienerDispatchIsZeroAlloc(t *testing.T) {
@@ -110,7 +89,7 @@ func TestWienerDispatchIsZeroAlloc(t *testing.T) {
 	dst := make([]uint16, width*height)
 	info := DefaultWienerInfo()
 	if allocs := testing.AllocsPerRun(200, func() {
-		wienerHorizontalImpl(src, stride, origin, width, height, info.HFilter, int(bitDepth), round0, max, temp)
+		wienerHorizontalTrustedImpl(src, stride, origin, width, height, info.HFilter, int(bitDepth), round0, max, temp)
 	}); allocs != 0 {
 		t.Fatalf("horizontal dispatch allocated %f times per call", allocs)
 	}
@@ -154,7 +133,7 @@ func BenchmarkWienerHorizontalDispatch(b *testing.B) {
 	max := uint16((1 << 12) - 1)
 	b.ReportAllocs()
 	for b.Loop() {
-		wienerHorizontalImpl(src, stride, origin, 64, 64, info.HFilter, 12, round0, max, temp)
+		wienerHorizontalTrustedImpl(src, stride, origin, 64, 64, info.HFilter, 12, round0, max, temp)
 	}
 }
 

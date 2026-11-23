@@ -111,26 +111,6 @@ func SequenceHeaderPayloadSize(seq SequenceHeader) (int, error) {
 	return w.bytesWritten(), nil
 }
 
-// AppendSequenceHeaderPayload appends sequence_header_obu() payload bytes into
-// dst without growing it. Callers must reserve capacity up front.
-func AppendSequenceHeaderPayload(dst []byte, seq SequenceHeader) ([]byte, error) {
-	size, err := SequenceHeaderPayloadSize(seq)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < size {
-		return dst, bitstream.ErrShortBuffer
-	}
-
-	off := len(dst)
-	out := dst[:off+size]
-	w := newBitWriter(out[off:])
-	if err := writeSequenceHeaderPayload(&w, seq); err != nil {
-		return dst, err
-	}
-	return out, nil
-}
-
 // LowOverheadSequenceHeaderOBUSize returns the exact size of a low-overhead
 // sequence-header OBU with obu_has_size_field set.
 func LowOverheadSequenceHeaderOBUSize(seq SequenceHeader) (int, error) {

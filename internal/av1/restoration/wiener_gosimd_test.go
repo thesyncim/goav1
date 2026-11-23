@@ -28,7 +28,6 @@ func TestWienerSIMDIsBound(t *testing.T) {
 		want any
 	}{
 		{"wienerVerticalImpl", wienerVerticalImpl, wienerVerticalSIMD},
-		{"wienerHorizontalImpl", wienerHorizontalImpl, wienerHorizontalSIMD},
 		{"wienerHorizontalTrustedImpl", wienerHorizontalTrustedImpl, wienerHorizontalSIMDTrusted},
 	} {
 		if got, want := nameOf(c.got), nameOf(c.want); got != want {

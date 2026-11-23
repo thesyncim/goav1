@@ -91,7 +91,7 @@ func TestApplyRestorationUnitWienerMatchesPrimitive(t *testing.T) {
 	if result != (RestorationUnitApplyResult{Type: parser.RestorationWiener, Filtered: true}) {
 		t.Fatalf("result=%+v", result)
 	}
-	if err := av1restoration.ApplyWienerRestoration(src, stride, origin, want, width, width, height, unit.Wiener, bitDepth, make([]uint16, sizes.Wiener)); err != nil {
+	if err := av1restoration.ApplyWienerRestorationTrusted(src, stride, origin, want, width, width, height, unit.Wiener, bitDepth, make([]uint16, sizes.Wiener)); err != nil {
 		t.Fatal(err)
 	}
 	assertSamplesEqual(t, got, want)
@@ -1817,10 +1817,10 @@ func makeRestorationApplyBoundaries(tb testing.TB, grid RestorationPlaneGrid, bi
 	srcStride := int(grid.PlaneWidth) + 3
 	deblock := makeRestorationBoundaryPlaneWithSalt(grid, srcStride, bitDepth, salt)
 	cdef := makeRestorationBoundaryPlaneWithSalt(grid, srcStride, bitDepth, salt+17)
-	if err := SaveRestorationBoundaryLines(grid, deblock, srcStride, 0, boundaries, false); err != nil {
+	if err := SaveRestorationBoundaryLinesFromFramePlane(grid, restorationBoundaryFramePlane(grid, deblock, srcStride), 2, boundaries, false); err != nil {
 		tb.Fatal(err)
 	}
-	if err := SaveRestorationBoundaryLines(grid, cdef, srcStride, 0, boundaries, true); err != nil {
+	if err := SaveRestorationBoundaryLinesFromFramePlane(grid, restorationBoundaryFramePlane(grid, cdef, srcStride), 2, boundaries, true); err != nil {
 		tb.Fatal(err)
 	}
 	return boundaries

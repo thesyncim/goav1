@@ -15,20 +15,14 @@ import "simd/archsimd"
 func init() {
 
 	if archsimd.X86.AVX2() {
-		wienerHorizontalImpl = wienerHorizontalSIMD
 		wienerHorizontalTrustedImpl = wienerHorizontalSIMDTrusted
 		wienerVerticalImpl = wienerVerticalSIMD
 		wienerHorizontalU8Impl = wienerHorizontalU8SIMDChecked
 		wienerVerticalU8Impl = wienerVerticalU8SIMD
 		return
 	}
-	wienerHorizontalImpl = wienerHorizontal
 	wienerHorizontalTrustedImpl = wienerHorizontalTrusted
 	wienerVerticalImpl = wienerVertical
 	wienerHorizontalU8Impl = wienerHorizontalU8
 	wienerVerticalU8Impl = wienerVerticalU8
 }
-
-// wienerSIMDDetected reports whether the Go-native SIMD Wiener kernels are bound
-// on this host (AVX2 is required by the amd64 kernels).
-func wienerSIMDDetected() bool { return archsimd.X86.AVX2() }

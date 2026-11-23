@@ -1,7 +1,6 @@
 package encoder
 
 import (
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -10,31 +9,6 @@ type SkipModeParams struct {
 	Allowed     bool
 	Enabled     bool
 	RefFrameIdx [2]uint8
-}
-
-func SkipModeParamsPayloadSize(seq SequenceHeader, prefix FrameHeaderPrefix, size InterFrameSize, refs *parser.ReferenceState, transformRef TransformReferenceParams, params SkipModeParams) (int, error) {
-	w := newSizingBitWriter()
-	if err := writeSkipModeParamsPayload(&w, seq, prefix, size, refs, transformRef, params); err != nil {
-		return 0, err
-	}
-	return w.bytesWritten(), nil
-}
-
-func AppendSkipModeParamsPayload(dst []byte, seq SequenceHeader, prefix FrameHeaderPrefix, size InterFrameSize, refs *parser.ReferenceState, transformRef TransformReferenceParams, params SkipModeParams) ([]byte, error) {
-	payloadSize, err := SkipModeParamsPayloadSize(seq, prefix, size, refs, transformRef, params)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < payloadSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+payloadSize]
-	w := newBitWriter(out[off:])
-	if err := writeSkipModeParamsPayload(&w, seq, prefix, size, refs, transformRef, params); err != nil {
-		return dst, err
-	}
-	return out, nil
 }
 
 func writeSkipModeParamsPayload(w *bitWriter, seq SequenceHeader, prefix FrameHeaderPrefix, size InterFrameSize, refs *parser.ReferenceState, transformRef TransformReferenceParams, params SkipModeParams) error {

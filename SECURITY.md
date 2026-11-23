@@ -78,15 +78,14 @@ The reachable attack surface from an attacker who controls the input
 bytes:
 
 1. **Transport parsers.** IVF (`NewIVFIterator`), Section 5
-   temporal-unit OBU streams (`NewLowOverheadIterator`,
-   `NewTemporalUnitIterator`), Annex B (`NewAnnexBIterator`), and the
+   temporal-unit OBU streams (`NewLowOverheadIterator`), and the
    AV1 RTP aggregation header / payload iterator / frame assembler
    (`NewRTPPayloadIterator`, `AssembleRTPFrame`). These walk
    length-prefixed and LEB128-framed byte slices and must never run off
    the end of a caller-owned buffer or accept lengths that exceed the
    payload.
 2. **OBU header parser.** Forbidden-bit and reserved-bit checks,
-   size-field presence checks (low-overhead vs. Annex B), temporal
+   size-field presence checks, temporal
    delimiter ordering. Errors are returned, not panicked — see
    `internal/av1/obu/errors.go`.
 3. **Sequence / frame header parser.** Profile, bit depth, chroma
@@ -132,14 +131,14 @@ panicking branches into typed errors.
 #### T2. Truncated frames, oversize headers, corrupt OBUs
 
 An attacker truncates an OBU mid-LEB128, claims a size larger than the
-remaining buffer, or stuffs the temporal-unit / Annex B framing with
+remaining buffer, or stuffs the temporal-unit framing with
 nested oversize lengths.
 
 *Mitigation.* All readers operate on caller-owned byte slices with
 bounds-checked indexing. LEB128 reads (`internal/av1/bitstream`) cap
 at the AV1-defined byte count and reject overlong encodings. The OBU
-iterator surfaces `ErrShortHeader`, `ErrShortPayload`,
-`ErrSizeMismatch`, and `ErrInvalidAnnexB` for these conditions.
+iterator surfaces `ErrShortHeader`, `ErrShortPayload` and
+`ErrSizeMismatch` for these conditions.
 The RTP depacketizer cross-checks fragment lengths against the
 remainder of the payload before reassembly. Fuzz coverage:
 `internal/av1/bitstream/fuzz_test.go::FuzzReadLEB128` and the
@@ -231,7 +230,7 @@ boundary above.
   - Inverse-qmatrix dequant path (commit `455ddac`).
   - Palette mode and color-map decode (commit `133a448`).
   - `internal/av1/bitstream/fuzz_test.go::FuzzReadLEB128`.
-  - Decoder stream dispatch across IVF, low-overhead OBU, Annex B,
+  - Decoder stream dispatch across IVF, low-overhead OBU,
     temporal-unit grouping, and single-OBU input (`FuzzStreamPush`).
   - Tile-list OBU parsing (`FuzzParseTileListOBU`).
   - Entropy reader and CDF state harnesses.

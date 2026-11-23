@@ -51,31 +51,10 @@ func TestPublicCDEFStrengthDirectionAndFrameFilter(t *testing.T) {
 	var directions internalcdef.DirectionGrid
 	var variances internalcdef.VarianceGrid
 	blocks := []internalcdef.BlockPosition{{BY: 0, BX: 0}}
-	if err := internalcdef.FilterFrameBlocks(dst, 8, input, origin, blocks, &directions, &variances, internalcdef.FrameFilterParams{
+	if err := internalcdef.FilterFrameBlocksTrusted(dst, 8, input, origin, blocks, &directions, &variances, internalcdef.FrameFilterParams{
 		Plane:      internalcdef.PlaneY,
 		Damping:    3,
 		CoeffShift: 0,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	for row := range 8 {
-		for col := range 8 {
-			want := uint16(10*row + col)
-			if got := dst[row*8+col]; got != want {
-				t.Fatalf("dst(%d,%d)=%d want %d", col, row, got, want)
-			}
-		}
-	}
-}
-
-func TestPublicCDEFBlockFilter(t *testing.T) {
-	input, origin := publicCDEFInput(8, 8)
-	dst := make([]uint16, 8*8)
-	if err := internalcdef.FilterBlock(dst, 8, 0, input, origin, internalcdef.BlockFilterParams{
-		Direction:      0,
-		PrimaryDamping: 3,
-		Width:          8,
-		Height:         8,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +76,7 @@ func TestPublicRestorationWienerPreservesConstantBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := internalrestoration.ApplyWienerRestoration(src, stride, origin, dst, width, width, height, internalrestoration.DefaultWienerInfo(), 8, make([]uint16, scratchLen)); err != nil {
+	if err := internalrestoration.ApplyWienerRestorationTrusted(src, stride, origin, dst, width, width, height, internalrestoration.DefaultWienerInfo(), 8, make([]uint16, scratchLen)); err != nil {
 		t.Fatal(err)
 	}
 	for i, got := range dst {
@@ -178,10 +157,10 @@ func TestPublicPostFilterAllocs(t *testing.T) {
 		if _, _, err := internalcdef.DecodeStrength(63); err != nil {
 			t.Fatalf("DecodeCDEFStrength err=%v", err)
 		}
-		if err := internalcdef.FilterFrameBlocks(cdefDst, 8, cdefInput, cdefOrigin, blocks, &directions, &variances, internalcdef.FrameFilterParams{Plane: internalcdef.PlaneY, Damping: 3}); err != nil {
+		if err := internalcdef.FilterFrameBlocksTrusted(cdefDst, 8, cdefInput, cdefOrigin, blocks, &directions, &variances, internalcdef.FrameFilterParams{Plane: internalcdef.PlaneY, Damping: 3}); err != nil {
 			t.Fatalf("FilterCDEFFrameBlocks err=%v", err)
 		}
-		if err := internalrestoration.ApplyWienerRestoration(wienerSrc, wienerStride, wienerOrigin, wienerDst, width, width, height, internalrestoration.DefaultWienerInfo(), 8, wienerScratch); err != nil {
+		if err := internalrestoration.ApplyWienerRestorationTrusted(wienerSrc, wienerStride, wienerOrigin, wienerDst, width, width, height, internalrestoration.DefaultWienerInfo(), 8, wienerScratch); err != nil {
 			t.Fatalf("ApplyRestorationWiener err=%v", err)
 		}
 		if err := internalrestoration.ApplySelfguidedRestoration(sgrSrc, sgrStride, sgrOrigin, sgrDst, width, width, height, 0, [2]int8{13, -9}, 10, sgrScratch); err != nil {

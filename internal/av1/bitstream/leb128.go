@@ -70,14 +70,3 @@ func PutLEB128(dst []byte, value uint32) (int, error) {
 	dst[i] = byte(value)
 	return need, nil
 }
-
-// AppendLEB128 appends value as AV1 leb128 to dst.
-//
-// Callers on hot paths should reserve capacity first or use PutLEB128.
-func AppendLEB128(dst []byte, value uint32) []byte {
-	for value >= 0x80 {
-		dst = append(dst, byte(value)|0x80)
-		value >>= 7
-	}
-	return append(dst, byte(value))
-}

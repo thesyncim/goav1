@@ -88,9 +88,9 @@ func TestUpdateRateControlConfigPreservesControllerState(t *testing.T) {
 		{
 			name: "i420-10",
 			run: func(t *testing.T) {
-				enc, err := NewHighBitDepth420VideoEncoderCBR(64, 64, 10, oldRC)
+				enc, err := newHighBitDepth420VideoEncoderCBRWithColor(64, 64, Profile0, SequenceColorConfig{BitDepth: 10, SubsamplingX: true, SubsamplingY: true}, oldRC)
 				if err != nil {
-					t.Fatalf("NewHighBitDepth420VideoEncoderCBR: %v", err)
+					t.Fatalf("newHighBitDepth420VideoEncoderCBRWithColor: %v", err)
 				}
 				if err := enc.SetTemporalLayers(3); err != nil {
 					t.Fatalf("SetTemporalLayers: %v", err)

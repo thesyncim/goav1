@@ -44,13 +44,10 @@ func TestEncodePFrameVariableBlocks(t *testing.T) {
 		}
 	}
 	const qIndex = 60
-	keyTU, keyRecon, err := encoder.EncodeKeyframe(src1, qIndex)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pTU, pRecon, err := encoder.EncodePFrame(src2, keyRecon, qIndex)
-	if err != nil {
-		t.Fatal(err)
+	tus, recons, keys := encodeSequence(t, qIndex, src1, src2)
+	keyTU, pTU, keyRecon, pRecon := tus[0], tus[1], recons[0], recons[1]
+	if keys[1] {
+		t.Fatal("variable-block frame coded as a keyframe")
 	}
 	dec, err := goav1.NewDecoder([][]byte{keyTU, pTU})
 	if err != nil {
@@ -61,10 +58,11 @@ func TestEncodePFrameVariableBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	f := frames[1]
-	comparePlane(t, "Y", f.Y, pRecon.Y, w, h, w)
-	comparePlane(t, "U", f.U, pRecon.U, cw, ch, cw)
-	comparePlane(t, "V", f.V, pRecon.V, cw, ch, cw)
+	for i, f := range frames {
+		comparePlane(t, "Y", f.Y, recons[i].Y, w, h, w)
+		comparePlane(t, "U", f.U, recons[i].U, cw, ch, cw)
+		comparePlane(t, "V", f.V, recons[i].V, cw, ch, cw)
+	}
 	psnr := planePSNR(src2.Y, pRecon.Y)
 	t.Logf("variable-block P: %d bytes, luma PSNR %.2f dB", len(pTU), psnr)
 	if psnr < 30 {
@@ -90,9 +88,10 @@ func TestEncodePFrameVariableBlocks(t *testing.T) {
 			src3.V[y*cw+x] = keyRecon.V[max(0, y-2)*cw+max(0, x-2)]
 		}
 	}
-	gTU, gRecon, err := encoder.EncodePFrame(src3, keyRecon, qIndex)
-	if err != nil {
-		t.Fatal(err)
+	gtus, grecons, gkeys := encodeSequence(t, qIndex, src1, src3)
+	gTU, gRecon := gtus[1], grecons[1]
+	if gkeys[1] {
+		t.Fatal("global-shift frame coded as a keyframe")
 	}
 	t.Logf("global-shift P: %d bytes vs key %d", len(gTU), len(keyTU))
 	// The variance-partitioned inter frame still collapses the clean global

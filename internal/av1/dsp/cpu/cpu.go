@@ -31,18 +31,4 @@ type Features struct {
 // Detected is the result of feature detection, populated exactly once at
 // process start via a per-architecture init() function. It must not be
 // mutated after init; the dispatch layer reads it from many goroutines.
-//
-// Tests that need to force the pure-Go path can use OverrideForTest below.
 var Detected Features
-
-// OverrideForTest replaces Detected with f and returns a restore function.
-// It is intended only for tests that want to exercise a specific dispatch
-// branch. Callers are responsible for serialising access; the dispatcher
-// resolves its function pointer at init time and is not re-evaluated when
-// Detected changes, so this only affects code that consults Detected
-// directly.
-func OverrideForTest(f Features) (restore func()) {
-	prev := Detected
-	Detected = f
-	return func() { Detected = prev }
-}

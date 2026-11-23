@@ -23,18 +23,6 @@ const (
 	filterRoundBits = 7
 )
 
-// UpscalePlane horizontally upscales src into dst using AV1's normative
-// superres filter. The caller supplies already-decimated luma or chroma planes.
-//
-// The whole src plane (src.Width columns) is treated as both the coded
-// (downscaled_plane_width) span used to derive the convolution step/phase and
-// the physical sampling extent. For libaom's MI-aligned super-res source span
-// (where downscaled_plane_width < the physical aligned width), use
-// UpscalePlaneCoded.
-func UpscalePlane(src frame.SamplePlane, dst frame.SamplePlane, bitDepth uint8) error {
-	return UpscalePlaneCoded(src, dst, src.Width, bitDepth)
-}
-
 // UpscalePlaneCoded ports av1_upscale_normative_rows for a single-tile-column
 // frame plane (av1/common/resize.c). It derives the convolution step (x_step_qn)
 // and initial subpel phase (x0_qn) from codedWidth — libaom's

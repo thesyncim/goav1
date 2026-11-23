@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -76,66 +75,23 @@ func TestAppendSkipModeParamsPayloadRejectsInvalid(t *testing.T) {
 	}
 	var buf [1]byte
 	for _, tc := range cases {
-		if _, err := AppendSkipModeParamsPayload(buf[:0], seq, prefix, tc.size, tc.refs, TransformReferenceParams{ReferenceMode: ReferenceModeSelect}, tc.params); !errors.Is(err, ErrInvalidFrame) {
-			t.Fatalf("AppendSkipModeParamsPayload(%+v) err=%v want ErrInvalidFrame", tc.params, err)
+		if _, err := appendSkipModeParamsPayload(buf[:0], seq, prefix, tc.size, tc.refs, TransformReferenceParams{ReferenceMode: ReferenceModeSelect}, tc.params); !errors.Is(err, ErrInvalidFrame) {
+			t.Fatalf("appendSkipModeParamsPayload(%+v) err=%v want ErrInvalidFrame", tc.params, err)
 		}
 	}
 
 	intraPrefix := FrameHeaderPrefix{FrameType: FrameHeaderTypeKey, ErrorResilientMode: true}
-	if _, err := AppendSkipModeParamsPayload(buf[:0], seq, intraPrefix, InterFrameSize{}, nil, TransformReferenceParams{ReferenceMode: ReferenceModeSelect}, SkipModeParams{Allowed: true}); !errors.Is(err, ErrInvalidFrame) {
+	if _, err := appendSkipModeParamsPayload(buf[:0], seq, intraPrefix, InterFrameSize{}, nil, TransformReferenceParams{ReferenceMode: ReferenceModeSelect}, SkipModeParams{Allowed: true}); !errors.Is(err, ErrInvalidFrame) {
 		t.Fatalf("intra skip err=%v want ErrInvalidFrame", err)
-	}
-}
-
-func TestAppendSkipModeParamsPayloadShortBuffer(t *testing.T) {
-	seq := skipModeSequenceHeader()
-	prefix := FrameHeaderPrefix{FrameType: FrameHeaderTypeInter, OrderHint: 16}
-	size, refs := encoderSkipModeRefs(seq, [7]uint8{15, 17, 14, 18, 13, 19, 12})
-	params := SkipModeParams{Allowed: true, Enabled: true, RefFrameIdx: [2]uint8{0, 1}}
-	var buf [1]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendSkipModeParamsPayload(dst, seq, prefix, size, &refs, TransformReferenceParams{ReferenceMode: ReferenceModeSelect}, params)
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want ErrShortBuffer", err)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output=% x", out)
-	}
-}
-
-func TestAppendSkipModeParamsPayloadAllocs(t *testing.T) {
-	seq := skipModeSequenceHeader()
-	prefix := FrameHeaderPrefix{FrameType: FrameHeaderTypeInter, OrderHint: 16}
-	size, refs := encoderSkipModeRefs(seq, [7]uint8{15, 17, 14, 18, 13, 19, 12})
-	transformRef := TransformReferenceParams{ReferenceMode: ReferenceModeSelect}
-	params := SkipModeParams{Allowed: true, Enabled: true, RefFrameIdx: [2]uint8{0, 1}}
-	var buf [1]byte
-	if _, err := AppendSkipModeParamsPayload(buf[:0], seq, prefix, size, &refs, transformRef, params); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = SkipModeParamsPayloadSize(seq, prefix, size, &refs, transformRef, params)
-		_, _ = AppendSkipModeParamsPayload(buf[:0], seq, prefix, size, &refs, transformRef, params)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendSkipModeParamsPayload allocated: %f", allocs)
 	}
 }
 
 func appendAndParseSkipModeParams(t *testing.T, seq SequenceHeader, prefix FrameHeaderPrefix, size InterFrameSize, refs *parser.ReferenceState, transformRef TransformReferenceParams, params SkipModeParams) ([]byte, parser.SkipModeParams) {
 	t.Helper()
-	payloadSize, err := SkipModeParamsPayloadSize(seq, prefix, size, refs, transformRef, params)
-	if err != nil {
-		t.Fatalf("SkipModeParamsPayloadSize: %v", err)
-	}
 	var buf [1]byte
-	payload, err := AppendSkipModeParamsPayload(buf[:0], seq, prefix, size, refs, transformRef, params)
+	payload, err := appendSkipModeParamsPayload(buf[:0], seq, prefix, size, refs, transformRef, params)
 	if err != nil {
-		t.Fatalf("AppendSkipModeParamsPayload: %v", err)
-	}
-	if len(payload) != payloadSize {
-		t.Fatalf("payload len=%d want %d", len(payload), payloadSize)
+		t.Fatalf("appendSkipModeParamsPayload: %v", err)
 	}
 	parsed, err := parser.ParseSkipModeParams(
 		payload,

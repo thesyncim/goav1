@@ -1,7 +1,5 @@
 package encoder
 
-import "github.com/thesyncim/goav1/internal/av1/bitstream"
-
 // QuantizationParams is the encoder-owned, syntax-width view of
 // quantization_params() from uncompressed_header().
 type QuantizationParams struct {
@@ -19,31 +17,6 @@ type QuantizationParams struct {
 	QMatrixLevelY uint8
 	QMatrixLevelU uint8
 	QMatrixLevelV uint8
-}
-
-func QuantizationParamsPayloadSize(seq SequenceHeader, quant QuantizationParams) (int, error) {
-	w := newSizingBitWriter()
-	if err := writeQuantizationParamsPayload(&w, seq, quant); err != nil {
-		return 0, err
-	}
-	return w.bytesWritten(), nil
-}
-
-func AppendQuantizationParamsPayload(dst []byte, seq SequenceHeader, quant QuantizationParams) ([]byte, error) {
-	payloadSize, err := QuantizationParamsPayloadSize(seq, quant)
-	if err != nil {
-		return dst, err
-	}
-	if cap(dst)-len(dst) < payloadSize {
-		return dst, bitstream.ErrShortBuffer
-	}
-	off := len(dst)
-	out := dst[:off+payloadSize]
-	w := newBitWriter(out[off:])
-	if err := writeQuantizationParamsPayload(&w, seq, quant); err != nil {
-		return dst, err
-	}
-	return out, nil
 }
 
 func writeQuantizationParamsPayload(w *bitWriter, seq SequenceHeader, quant QuantizationParams) error {

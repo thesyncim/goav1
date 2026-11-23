@@ -6,6 +6,13 @@ export LC_ALL
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 allowlist="$repo_root/scripts/compiler_hotpath_escape_allowlist.txt"
+# GOEXPERIMENT=simd compiles the archsimd kernels, whose escapes differ per
+# architecture, so those builds compare against their own reviewed list.
+case ",$(go env GOEXPERIMENT)," in
+*,simd,*)
+	allowlist="$repo_root/scripts/compiler_hotpath_escape_allowlist_simd_$(go env GOARCH).txt"
+	;;
+esac
 # This reviewed baseline matches main's Go 1.27 report plus capacity-backed
 # preallocation sites. Recheck warmed call paths before adding compiler escapes.
 tmp=${TMPDIR:-/tmp}/goav1-compiler-reports.$$
@@ -45,6 +52,13 @@ $0 ~ /Found (IsInBounds|IsSliceInBounds|IsSliceInBounds64)/ {
 }
 ' "$raw" | sort -u >"$bce"
 
+if [ -n "${GOAV1_COMPILER_REPORT_DIR:-}" ]; then
+	mkdir -p "$GOAV1_COMPILER_REPORT_DIR"
+	cp "$raw" "$GOAV1_COMPILER_REPORT_DIR/compiler.txt"
+	cp "$escapes" "$GOAV1_COMPILER_REPORT_DIR/hot-escapes.txt"
+	cp "$bce" "$GOAV1_COMPILER_REPORT_DIR/hot-bce.txt"
+fi
+
 if [ ! -f "$allowlist" ]; then
 	echo "missing hot escape allowlist: $allowlist" >&2
 	exit 1
@@ -58,10 +72,3 @@ fi
 escape_count=$(wc -l <"$escapes" | tr -d ' ')
 bce_count=$(wc -l <"$bce" | tr -d ' ')
 printf 'compiler reports: %s hot heap escapes allowlisted; %s hot BCE sites reported\n' "$escape_count" "$bce_count"
-
-if [ -n "${GOAV1_COMPILER_REPORT_DIR:-}" ]; then
-	mkdir -p "$GOAV1_COMPILER_REPORT_DIR"
-	cp "$raw" "$GOAV1_COMPILER_REPORT_DIR/compiler.txt"
-	cp "$escapes" "$GOAV1_COMPILER_REPORT_DIR/hot-escapes.txt"
-	cp "$bce" "$GOAV1_COMPILER_REPORT_DIR/hot-bce.txt"
-fi

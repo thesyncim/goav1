@@ -83,11 +83,21 @@ func realtimeSequenceHeader() []byte {
 }
 
 func realtimeSequenceHeaderWithLevel(level uint8) []byte {
+	return realtimeSequenceHeaderWithTiming(level, false)
+}
+
+func realtimeSequenceHeaderWithTiming(level uint8, timing bool) []byte {
 	var w testBitWriter
-	w.writeBits(0, 3)  // seq_profile
-	w.writeBool(false) // still_picture
-	w.writeBool(false) // reduced_still_picture_header
-	w.writeBool(false) // timing_info_present_flag
+	w.writeBits(0, 3)   // seq_profile
+	w.writeBool(false)  // still_picture
+	w.writeBool(false)  // reduced_still_picture_header
+	w.writeBool(timing) // timing_info_present_flag
+	if timing {
+		w.writeBits(1001, 32)  // num_units_in_display_tick
+		w.writeBits(30000, 32) // time_scale
+		w.writeBool(false)     // equal_picture_interval
+		w.writeBool(false)     // decoder_model_info_present_flag
+	}
 	w.writeBool(false) // initial_display_delay_present_flag
 	w.writeBits(0, 5)  // operating_points_cnt_minus_1
 	w.writeBits(0, 12) // operating_point_idc[0]
@@ -300,5 +310,18 @@ func BenchmarkParseSequenceHeader(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		_, _ = ParseSequenceHeader(payload)
+	}
+}
+
+func TestParseSequenceHeaderTimingInfo(t *testing.T) {
+	sh, err := ParseSequenceHeader(realtimeSequenceHeaderWithTiming(5, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sh.TimingInfoPresent || sh.TimingInfo.NumUnitsInDisplayTick != 1001 || sh.TimingInfo.TimeScale != 30000 || sh.TimingInfo.EqualPictureInterval || sh.DecoderModelInfoPresent {
+		t.Fatalf("timing=%v info=%+v decoderModel=%v", sh.TimingInfoPresent, sh.TimingInfo, sh.DecoderModelInfoPresent)
+	}
+	if sh.OperatingPoints[0].SeqLevelIdx != 5 {
+		t.Fatalf("level=%d want 5", sh.OperatingPoints[0].SeqLevelIdx)
 	}
 }

@@ -103,46 +103,6 @@ func TestRoundShiftNarrowInt32x4ToInt16x8MatchesScalar(t *testing.T) {
 	}
 }
 
-func TestInverseDCT8Col8SIMDMatchesScalar(t *testing.T) {
-	rng := rand.New(rand.NewSource(0xd8c8))
-	ranges := [][2]int32{{-(1 << 11), (1 << 11) - 1}, {-4095, 4095}}
-	for iter := 0; iter < 40000; iter++ {
-		r := ranges[rng.Intn(len(ranges))]
-		min, max := r[0], r[1]
-		stride := 8 + rng.Intn(3)
-		a := make([]int32, 8*stride)
-		for k := 0; k < 8; k++ {
-			for col := 0; col < 8; col++ {
-				a[k*stride+col] = min + int32(rng.Int63n(int64(max)-int64(min)+1))
-			}
-		}
-		b := make([]int32, len(a))
-		asm := make([]int32, len(a))
-		copy(b, a)
-		copy(asm, a)
-		for col := 0; col < 8; col++ {
-			inverseDCT8(a[col:], stride, min, max)
-		}
-		inverseDCT8Col8SIMD(b, stride, min, max)
-		for col := 0; col < 8; col += 2 {
-			inverseDCT8Col2SIMDAdapter(asm[col:], stride, min, max)
-		}
-		for k := 0; k < 8; k++ {
-			for col := 0; col < 8; col++ {
-				i := k*stride + col
-				if a[i] != b[i] {
-					t.Fatalf("iter=%d range=[%d,%d] stride=%d row=%d col=%d: scalar=%d simd=%d",
-						iter, min, max, stride, k, col, a[i], b[i])
-				}
-				if a[i] != asm[i] {
-					t.Fatalf("iter=%d range=[%d,%d] stride=%d row=%d col=%d: scalar=%d neon=%d",
-						iter, min, max, stride, k, col, a[i], asm[i])
-				}
-			}
-		}
-	}
-}
-
 func benchDCT8x8(b *testing.B, fn func([]int32, int, int32, int32)) {
 	rng := rand.New(rand.NewSource(9))
 	const stride = 8
@@ -158,8 +118,6 @@ func benchDCT8x8(b *testing.B, fn func([]int32, int, int32, int32)) {
 	}
 }
 
-// int16 8-wide vs int32 4-wide (x2 for 8 cols) vs NEON asm (x4 Col2).
-func BenchmarkDCT8x8_Int16(b *testing.B) { benchDCT8x8(b, inverseDCT8Col8SIMD) }
 func BenchmarkDCT8x8_ASMCol4(b *testing.B) {
 	benchDCT8x8(b, func(buf []int32, s int, mn, mx int32) {
 		inverseDCT8Col4SIMDAdapter(buf, s, mn, mx)

@@ -50,13 +50,6 @@ func PredictIntraPlaneBlockWithExtent(dst frame.Plane, bytesPerSample int, bitDe
 	return PredictIntraPlaneBlockWithExtentBounded(dst, bytesPerSample, bitDepth, x, y, width, height, predWidth, predHeight, mode, edges, false)
 }
 
-// PredictIntraPlaneBlockWithByteEdges consumes edges just gathered from an
-// 8-bit plane. Available samples must be <=255. Length, availability, mode and
-// destination checks remain identical to PredictIntraPlaneBlockWithExtent.
-func PredictIntraPlaneBlockWithByteEdges(dst frame.Plane, x, y, width, height, predWidth, predHeight int, mode IntraMode, edges IntraEdges) error {
-	return PredictIntraPlaneBlockWithExtentBounded(dst, 1, 8, x, y, width, height, predWidth, predHeight, mode, edges, true)
-}
-
 // PredictIntraPlaneBlockWithExtentBounded is an internal decoder entry. bounded may be true only when the caller has established the value bound of every consumed edge sample. Geometry, availability and mode checks are retained.
 func PredictIntraPlaneBlockWithExtentBounded(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, predWidth int, predHeight int, mode IntraMode, edges IntraEdges, bounded bool) error {
 	if predWidth < width || predHeight < height {

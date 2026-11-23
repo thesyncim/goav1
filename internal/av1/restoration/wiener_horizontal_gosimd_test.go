@@ -172,9 +172,7 @@ func TestWienerHorizontalSIMDExtremeSamples(t *testing.T) {
 					if !wienerHorizontal(src, stride, origin, sz.width, sz.height, info.HFilter, bitDepth, round0, max, want) {
 						t.Fatalf("scalar rejected in-range extremes bd=%d mode=%d", bitDepth, mode)
 					}
-					if !wienerHorizontalSIMD(src, stride, origin, sz.width, sz.height, info.HFilter, bitDepth, round0, max, got) {
-						t.Fatalf("SIMD rejected in-range extremes bd=%d mode=%d sz=%dx%d", bitDepth, mode, sz.width, sz.height)
-					}
+					wienerHorizontalSIMDTrusted(src, stride, origin, sz.width, sz.height, info.HFilter, bitDepth, round0, max, got)
 					for i := range want {
 						if got[i] != want[i] {
 							t.Fatalf("bd=%d mode=%d sz=%dx%d f=%d temp[%d]=%d want %d",

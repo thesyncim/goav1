@@ -263,80 +263,9 @@ func convolveScale2DHighBDYIdentity(dst frame.Plane, ref frame.Plane, bitDepth u
 	}
 }
 
-// ConvolveScale2D8 performs AV1 scaled 8-bit 8-tap 2D interpolation on a
-// rectangular block. dst is the output plane; (dstX, dstY) is the top-left
-// destination sample. ref is the reference plane.
-//
-// (startX, startY) is the absolute Q10 source position of the first output
-// sample (see ScaleFactors.ScaledBlockOrigin), and (xStep, yStep) the per-
-// output Q10 stride through the reference plane. The caller supplies the full
-// Q4 sub-pel kernel tables for both axes; the scaled stepper indexes into
-// them on every output sample.
-//
-// Source tap reads must lie within ref. Use the *Clamped variant when block
-// taps may step outside the reference plane.
-func ConvolveScale2D8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
-	startX int64, xStep int64, startY int64, yStep int64,
-	xTable, yTable *SubpelKernelTable) error {
-	return ConvolveScale2D8WithScratch(dst, ref, dstX, dstY, width, height,
-		startX, xStep, startY, yStep, xTable, yTable, nil)
-}
-
-// ConvolveScale2D8WithScratch is ConvolveScale2D8 using optional caller-owned
-// scratch for the large intermediate block.
-func ConvolveScale2D8WithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
-	startX int64, xStep int64, startY int64, yStep int64,
-	xTable, yTable *SubpelKernelTable, scratch *ScaledConvolveScratch) error {
-	if width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
-		return ErrInvalidMotion
-	}
-	if xStep <= 0 || yStep <= 0 {
-		return ErrInvalidMotion
-	}
-	imH, ok := scaledIMHeight(height, startY, yStep)
-	if !ok {
-		return ErrInvalidMotion
-	}
-	if !planeRegionFits(dst, 1, dstX, dstY, width, height) {
-		return ErrInvalidMotion
-	}
-	if !planeRegionFits(ref, 1, 0, 0, ref.Width, ref.Height) {
-		return ErrInvalidMotion
-	}
-	if !scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {
-		return ErrInvalidMotion
-	}
-	if xStep == ScaleSubpelScale && yStep == ScaleSubpelScale &&
-		convolveScale2D8IdentityStep(dst, ref, dstX, dstY, width, height, startX, startY, xTable, yTable, false) {
-		return nil
-	}
-	if yStep == ScaleSubpelScale {
-		yFilterIdx := int(scaledSubpel(startY) >> ScaleExtraBits)
-		if scaledKernelIsIdentity(yTable[yFilterIdx]) {
-			convolveScale2D8YIdentity(dst, ref, dstX, dstY, width, height, startX, startY, xStep, xTable, false)
-			return nil
-		}
-	}
-	if scratch != nil {
-		convolveScale2D8(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, &scratch.im)
-		return nil
-	}
-	var im scaledIM
-	convolveScale2D8(dst, ref, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, &im)
-	return nil
-}
-
-// ConvolveScale2D8Clamped is ConvolveScale2D8 but replicates the reference
-// plane at its edges when a tap falls outside the plane.
-func ConvolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
-	startX int64, xStep int64, startY int64, yStep int64,
-	xTable, yTable *SubpelKernelTable) error {
-	return ConvolveScale2D8ClampedWithScratch(dst, ref, dstX, dstY, width, height,
-		startX, xStep, startY, yStep, xTable, yTable, nil)
-}
-
-// ConvolveScale2D8ClampedWithScratch is ConvolveScale2D8Clamped using optional
-// caller-owned scratch for the large intermediate block.
+// ConvolveScale2D8ClampedWithScratch is the 8-bit scaled 2D convolution with
+// optional caller-owned scratch for the large intermediate block (nil uses a
+// stack buffer).
 //
 // Accesses stay inside ref.Pix (taps outside the plane are edge-clamped,
 // never read) and inside the width x height block of the destination.
@@ -392,67 +321,9 @@ func ConvolveScale2D8ClampedWithScratch(dst frame.Plane, ref frame.Plane, dstX i
 	return nil
 }
 
-// ConvolveScale2DHighBD is the 10/12-bit variant of ConvolveScale2D8.
-func ConvolveScale2DHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int,
-	startX int64, xStep int64, startY int64, yStep int64,
-	xTable, yTable *SubpelKernelTable) error {
-	return ConvolveScale2DHighBDWithScratch(dst, ref, bitDepth, dstX, dstY, width, height,
-		startX, xStep, startY, yStep, xTable, yTable, nil)
-}
-
-// ConvolveScale2DHighBDWithScratch is ConvolveScale2DHighBD using optional
-// caller-owned scratch for the large intermediate block.
-func ConvolveScale2DHighBDWithScratch(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int,
-	startX int64, xStep int64, startY int64, yStep int64,
-	xTable, yTable *SubpelKernelTable, scratch *ScaledConvolveScratch) error {
-	max, ok := highBDMax(bitDepth)
-	if !ok || width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
-		return ErrInvalidMotion
-	}
-	if xStep <= 0 || yStep <= 0 {
-		return ErrInvalidMotion
-	}
-	imH, ok := scaledIMHeight(height, startY, yStep)
-	if !ok {
-		return ErrInvalidMotion
-	}
-	if !planeRegionFits(dst, 2, dstX, dstY, width, height) {
-		return ErrInvalidMotion
-	}
-	if !planeRegionFits(ref, 2, 0, 0, ref.Width, ref.Height) {
-		return ErrInvalidMotion
-	}
-	if !scaledRefRegionFits(ref, width, imH, startX, xStep, startY) {
-		return ErrInvalidMotion
-	}
-	if xStep == ScaleSubpelScale && yStep == ScaleSubpelScale &&
-		convolveScale2DHighBDIdentityStep(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, startY, xTable, yTable, false) {
-		return nil
-	}
-	if yStep == ScaleSubpelScale {
-		yFilterIdx := int(scaledSubpel(startY) >> ScaleExtraBits)
-		if scaledKernelIsIdentity(yTable[yFilterIdx]) {
-			convolveScale2DHighBDYIdentity(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, startY, xStep, xTable, false)
-			return nil
-		}
-	}
-	im, pooled := scaledHighBDIMForScratch(scratch)
-	convolveScale2DHighBD(dst, ref, bitDepth, max, dstX, dstY, width, height, startX, xStep, startY, yStep, xTable, yTable, imH, im)
-	putScaledHighBDIM(im, pooled)
-	return nil
-}
-
-// ConvolveScale2DHighBDClamped is ConvolveScale2DHighBD but replicates the
-// reference plane at its edges when a tap falls outside the plane.
-func ConvolveScale2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int,
-	startX int64, xStep int64, startY int64, yStep int64,
-	xTable, yTable *SubpelKernelTable) error {
-	return ConvolveScale2DHighBDClampedWithScratch(dst, ref, bitDepth, dstX, dstY, width, height,
-		startX, xStep, startY, yStep, xTable, yTable, nil)
-}
-
-// ConvolveScale2DHighBDClampedWithScratch is ConvolveScale2DHighBDClamped using
-// optional caller-owned scratch for the large intermediate block.
+// ConvolveScale2DHighBDClampedWithScratch is the high-bit-depth scaled 2D
+// convolution with optional caller-owned scratch for the large intermediate
+// block.
 //
 // Accesses stay inside ref.Pix (taps outside the plane are edge-clamped,
 // never read) and inside the width x height block of the destination.

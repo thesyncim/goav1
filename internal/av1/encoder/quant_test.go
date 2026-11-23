@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/thesyncim/goav1/internal/av1/bitstream"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
 
@@ -100,61 +99,24 @@ func TestAppendQuantizationParamsPayloadRejectsInvalid(t *testing.T) {
 	}
 	var buf [8]byte
 	for _, quant := range cases {
-		if _, err := AppendQuantizationParamsPayload(buf[:0], seq, quant); !errors.Is(err, ErrInvalidFrame) {
-			t.Fatalf("AppendQuantizationParamsPayload(%+v) err=%v want ErrInvalidFrame", quant, err)
+		if _, err := appendQuantizationParamsPayload(buf[:0], seq, quant); !errors.Is(err, ErrInvalidFrame) {
+			t.Fatalf("appendQuantizationParamsPayload(%+v) err=%v want ErrInvalidFrame", quant, err)
 		}
 	}
 
 	mono := seq
 	mono.ColorConfig.MonoChrome = true
-	if _, err := AppendQuantizationParamsPayload(buf[:0], mono, QuantizationParams{UDCDelta: 1}); !errors.Is(err, ErrInvalidFrame) {
+	if _, err := appendQuantizationParamsPayload(buf[:0], mono, QuantizationParams{UDCDelta: 1}); !errors.Is(err, ErrInvalidFrame) {
 		t.Fatalf("mono uv delta err=%v want ErrInvalidFrame", err)
-	}
-}
-
-func TestAppendQuantizationParamsPayloadShortBuffer(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	var buf [1]byte
-	dst := buf[:1]
-	dst[0] = 0xee
-	out, err := AppendQuantizationParamsPayload(dst, seq, QuantizationParams{})
-	if !errors.Is(err, bitstream.ErrShortBuffer) {
-		t.Fatalf("short buffer err=%v want ErrShortBuffer", err)
-	}
-	if len(out) != len(dst) || out[0] != 0xee {
-		t.Fatalf("short buffer mutated output=% x", out)
-	}
-}
-
-func TestAppendQuantizationParamsPayloadAllocs(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	quant := QuantizationParams{BaseQIdx: 37}
-	var buf [4]byte
-	if _, err := AppendQuantizationParamsPayload(buf[:0], seq, quant); err != nil {
-		t.Fatalf("preflight: %v", err)
-	}
-	allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = QuantizationParamsPayloadSize(seq, quant)
-		_, _ = AppendQuantizationParamsPayload(buf[:0], seq, quant)
-	})
-	if allocs != 0 {
-		t.Fatalf("AppendQuantizationParamsPayload allocated: %f", allocs)
 	}
 }
 
 func appendAndParseQuantizationParams(t *testing.T, seq SequenceHeader, quant QuantizationParams) ([]byte, parser.QuantizationParams) {
 	t.Helper()
-	size, err := QuantizationParamsPayloadSize(seq, quant)
-	if err != nil {
-		t.Fatalf("QuantizationParamsPayloadSize: %v", err)
-	}
 	var buf [16]byte
-	out, err := AppendQuantizationParamsPayload(buf[:0], seq, quant)
+	out, err := appendQuantizationParamsPayload(buf[:0], seq, quant)
 	if err != nil {
-		t.Fatalf("AppendQuantizationParamsPayload: %v", err)
-	}
-	if len(out) != size {
-		t.Fatalf("payload len=%d want %d", len(out), size)
+		t.Fatalf("appendQuantizationParamsPayload: %v", err)
 	}
 	parsedSeq := parseEncoderSequenceHeader(t, seq)
 	parsed, err := parser.ParseQuantizationParams(out, parsedSeq, parser.TileInfo{})
