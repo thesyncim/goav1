@@ -348,12 +348,10 @@ unsafe-check:
 fuzz-smoke:
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicSimpleDecoderIVF
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicParseTileListOBU
-	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals
-	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecodeAndRetainDecoderFrameWorkBatchResiduals
+	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecoderLowOverhead
+	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecoderRTPPayloads
+	go test . $(FUZZFLAGS) -fuzz=FuzzPublicLayeredDecoder
 	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecoderFrameWorkBatchResidualRunnerSideData
-	go test . $(FUZZFLAGS) -fuzz=FuzzPublicRunDecoderFrameWorkEventWithResidualRunner
-	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecoderFrameWorkSideDataBinding
-	go test . $(FUZZFLAGS) -fuzz=FuzzPublicDecoderFrameWorkPostFilterScratchContext
 	go test ./internal/av1/bitstream $(FUZZFLAGS) -fuzz=FuzzReadLEB128
 	go test ./internal/av1/decoder $(FUZZFLAGS) -fuzz=FuzzStreamPush
 	go test ./internal/av1/ivf $(FUZZFLAGS) -fuzz=FuzzIterator
