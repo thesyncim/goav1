@@ -38,6 +38,8 @@ var blendA64MaskImpl = blendA64MaskPureGo
 // BlendA64Mask blends src0 and src1 into dst using libaom's AOM_BLEND_A64
 // alpha mask. Strides are expressed in samples, not bytes. subX and subY match
 // libaom's subw/subh mask subsampling flags.
+//
+// Accesses stay inside the width x height block of each plane or buffer.
 func BlendA64Mask(dst []uint16, dstStride int, src0 []uint16, src0Stride int, src1 []uint16, src1Stride int, mask []uint8, maskStride int, width int, height int, subX bool, subY bool, bitDepth uint8) error {
 	max, err := sampleMaxForBitDepth(bitDepth)
 	if err != nil {

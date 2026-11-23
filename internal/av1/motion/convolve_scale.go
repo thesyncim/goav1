@@ -337,6 +337,9 @@ func ConvolveScale2D8Clamped(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 
 // ConvolveScale2D8ClampedWithScratch is ConvolveScale2D8Clamped using optional
 // caller-owned scratch for the large intermediate block.
+//
+// Accesses stay inside ref.Pix (taps outside the plane are edge-clamped,
+// never read) and inside the width x height block of the destination.
 func ConvolveScale2D8ClampedWithScratch(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
 	xTable, yTable *SubpelKernelTable, scratch *ScaledConvolveScratch) error {
@@ -450,6 +453,9 @@ func ConvolveScale2DHighBDClamped(dst frame.Plane, ref frame.Plane, bitDepth uin
 
 // ConvolveScale2DHighBDClampedWithScratch is ConvolveScale2DHighBDClamped using
 // optional caller-owned scratch for the large intermediate block.
+//
+// Accesses stay inside ref.Pix (taps outside the plane are edge-clamped,
+// never read) and inside the width x height block of the destination.
 func ConvolveScale2DHighBDClampedWithScratch(dst frame.Plane, ref frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
 	xTable, yTable *SubpelKernelTable, scratch *ScaledConvolveScratch) error {

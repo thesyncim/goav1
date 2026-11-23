@@ -92,6 +92,9 @@ func compoundConvBufView(buf *CompoundConvBuf, width int, height int) ([]uint16,
 // one reference: ReferenceOriginSubsampled followed by
 // PredictInterCompoundRefToConvBuf at bit depth 8, with the dav1d-style prep
 // kernels tried first.
+//
+// Accesses stay inside ref.Pix (taps outside the plane are edge-clamped,
+// never read) and inside the width x height block of the destination.
 func PrepTranslation8(buf *CompoundConvBuf, ref *frame.Plane, dstX int, dstY int, width int, height int, filterW int, filterH int, mv Vector, subsamplingX bool, subsamplingY bool, filters InterpFilters, scratch *CompoundConvolveScratch) error {
 	refX, refY, subX, subY, err := ReferenceOriginSubsampled(dstX, dstY, mv, subsamplingX, subsamplingY)
 	if err != nil {
@@ -108,6 +111,9 @@ func PrepTranslation8(buf *CompoundConvBuf, ref *frame.Plane, dstX int, dstY int
 // PrepTranslation16 is PrepTranslation8 for 10- and 12-bit planes:
 // ReferenceOriginSubsampled followed by PredictInterCompoundRefToConvBuf with
 // 2-byte samples.
+//
+// Accesses stay inside ref.Pix (taps outside the plane are edge-clamped,
+// never read) and inside the width x height block of the destination.
 func PrepTranslation16(buf *CompoundConvBuf, ref *frame.Plane, bitDepth uint8, dstX int, dstY int, width int, height int, filterW int, filterH int, mv Vector, subsamplingX bool, subsamplingY bool, filters InterpFilters, scratch *CompoundConvolveScratch) error {
 	refX, refY, subX, subY, err := ReferenceOriginSubsampled(dstX, dstY, mv, subsamplingX, subsamplingY)
 	if err != nil {
@@ -127,6 +133,9 @@ func PrepTranslation16(buf *CompoundConvBuf, ref *frame.Plane, bitDepth uint8, d
 // full bw4*4 x bh4*4 block in recon_tmpl.c mc()) and libaom
 // (block_size_wide/high[plane_bsize]) keep the 8-tap kernel there. scratch is
 // optional caller-owned storage for the 2D intermediate block.
+//
+// Accesses stay inside ref.Pix (taps outside the plane are edge-clamped,
+// never read) and inside the width x height block of the destination.
 func PredictInterCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, refX int, refY int, width int, height int, filterW int, filterH int, subX int, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) error {
 	if buf == nil || !filters.X.Valid() || !filters.Y.Valid() {
 		return ErrInvalidMotion
@@ -876,6 +885,9 @@ func PredictScaledCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, by
 // PredictScaledCompoundRefToConvBufWithScratch is
 // PredictScaledCompoundRefToConvBuf using optional caller-owned scratch for the
 // large scaled intermediate block.
+//
+// Accesses stay inside ref.Pix (taps outside the plane are edge-clamped,
+// never read) and inside the width x height block of the destination.
 func PredictScaledCompoundRefToConvBufWithScratch(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, width int, height int,
 	startX int64, xStep int64, startY int64, yStep int64,
 	xTable, yTable *SubpelKernelTable, scratch *ScaledConvolveScratch) error {
@@ -1082,6 +1094,9 @@ func predictScaledCompoundRefToConvBufGeneric(out []uint16, ref frame.Plane, byt
 // clipped pixel, so the compound blend can round once after combining the two
 // references. matX/matY are the block's true plane coordinates (libaom
 // p_col/p_row); the result is written into buf at (0,0).
+//
+// Accesses stay inside ref.Pix (taps outside the plane are edge-clamped,
+// never read) and inside the width x height block of the destination.
 func PredictWarpedCompoundToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, matX int, matY int, width int, height int, matrix [6]int32, alpha int16, beta int16, gamma int16, delta int16, subsamplingX bool, subsamplingY bool) error {
 	if buf == nil || width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
 		return ErrInvalidMotion
@@ -1146,6 +1161,9 @@ func PredictWarpedCompoundToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytes
 // BlendAvg8 is BlendCompoundAvg's plain 8-bit average (fwd = bck = 8) for the
 // decoder's lean compound route. It reports false when the kernel does not
 // apply; the caller then runs BlendCompoundAvg, which owns the errors.
+//
+// Accesses stay inside the width x height block of dst and of each
+// CONV_BUF (and of the mask's block rows).
 func BlendAvg8(dst *frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConvBuf, dstX int, dstY int, width int, height int) bool {
 	if buf0 == nil || buf1 == nil ||
 		int(buf0.Width) != width || int(buf0.Height) != height ||
@@ -1159,6 +1177,9 @@ func BlendAvg8(dst *frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConvBuf, d
 // BlendCompoundAvg blends two CONV_BUF predictors with distance weights
 // (fwdOffset/bckOffset; both 8 for a plain average) and writes the final pixels
 // (av1_dist_wtd_convolve_* do_average branch).
+//
+// Accesses stay inside the width x height block of dst and of each
+// CONV_BUF (and of the mask's block rows).
 func BlendCompoundAvg(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConvBuf, bytesPerSample int, bitDepth uint8, dstX int, dstY int, width int, height int, fwdOffset int, bckOffset int) error {
 	if buf0 == nil || buf1 == nil ||
 		int(buf0.Width) != width || int(buf0.Height) != height ||
@@ -1194,6 +1215,9 @@ func BlendCompoundAvg(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConv
 // BlendCompoundMaskD16 blends two CONV_BUF predictors through a per-pixel A64
 // soft mask (wedge / diff-weighted) at the d16 precision and writes the final
 // pixels (aom_*_blend_a64_d16_mask_c).
+//
+// Accesses stay inside the width x height block of dst and of each
+// CONV_BUF (and of the mask's block rows).
 func BlendCompoundMaskD16(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConvBuf, bytesPerSample int, bitDepth uint8, dstX int, dstY int, width int, height int, mask []byte, maskStride int, subX bool, subY bool) error {
 	if buf0 == nil || buf1 == nil ||
 		int(buf0.Width) != width || int(buf0.Height) != height ||
@@ -1243,6 +1267,9 @@ func BlendCompoundMaskD16(dst frame.Plane, buf0 *CompoundConvBuf, buf1 *Compound
 
 // BuildDiffWtdMaskD16 builds the difference-weighted compound mask from two
 // CONV_BUF predictors (av1_build_compound_diffwtd_mask_d16_c).
+//
+// Accesses stay inside the width x height block of dst and of each
+// CONV_BUF (and of the mask's block rows).
 func BuildDiffWtdMaskD16(mask []byte, maskStride int, buf0 *CompoundConvBuf, buf1 *CompoundConvBuf, bitDepth uint8, width int, height int, invert bool) error {
 	if buf0 == nil || buf1 == nil ||
 		int(buf0.Width) != width || int(buf0.Height) != height ||
