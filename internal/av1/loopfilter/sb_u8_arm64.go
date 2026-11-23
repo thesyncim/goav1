@@ -307,20 +307,6 @@ func sbNibbleMask(n uint32) archsimd.Mask8x16 {
 	return archsimd.LoadUint8x16Array(&sbNibbleLanes[n&15]).BitsToInt8().ToMask()
 }
 
-// sbAcc carries goav1's apply counters through a superblock call as vector
-// accumulators (one reduction per call instead of per group); dav1d keeps no
-// such counters.
-type sbAcc struct {
-	cnt, max archsimd.Uint8x16
-}
-
-func (a *sbAcc) stats() SBStats {
-	return SBStats{
-		Applied:  uint32(a.cnt.ReduceSum()) >> 2,
-		MaxLevel: uint8(a.max.BitsToInt8().ReduceMax()),
-	}
-}
-
 // sbGroupLimits is the per-group prologue of dav1d's lpf_{v,h}_sb_{y,uv}
 // drivers (src/arm/64/loopfilter.S lpf_func) across lanes, one unit per
 // 32-bit lane: cur and prev hold the units' own and fallback (left or above)
@@ -330,7 +316,7 @@ func (a *sbAcc) stats() SBStats {
 // nibble restricted to L != 0. ok is false when no selected unit has a level
 // (dav1d "if (!L) continue"). The wider-width masks need no level test: the
 // kernel already ANDs them with fm, which includes m4.
-func sbGroupLimits(cur, prev archsimd.Uint32x4, nAll uint32, sharp0 uint64, sharp1 uint8, acc *sbAcc) (eV, iV, hV archsimd.Uint8x16, m4 archsimd.Mask8x16, ok bool) {
+func sbGroupLimits(cur, prev archsimd.Uint32x4, nAll uint32, sharp0 uint64, sharp1 uint8) (eV, iV, hV archsimd.Uint8x16, m4 archsimd.Mask8x16, ok bool) {
 	zero32 := archsimd.Uint32x4{}
 	L := prev.IfElse(cur.Equal(zero32), cur)
 	lr := L.Mul(archsimd.BroadcastUint32x4(0x01010101)).ReshapeToUint8s()
@@ -340,8 +326,6 @@ func sbGroupLimits(cur, prev archsimd.Uint32x4, nAll uint32, sharp0 uint64, shar
 	if h.GetElem(0)|h.GetElem(1) == 0 {
 		return
 	}
-	acc.cnt = acc.cnt.Sub(act)
-	acc.max = acc.max.Max(lr.And(act))
 	hV = lr.ShiftAllRight(4)
 	iV = lr.ShiftAllRight(sharp0).Min(archsimd.BroadcastUint8x16(sharp1)).Max(archsimd.BroadcastUint8x16(1))
 	e := lr.Add(archsimd.BroadcastUint8x16(2))
@@ -421,9 +405,7 @@ func sbLevelsCol(lvl [][4]uint8, li, lvlStride, comp int, nAll uint32) (cur, pre
 // filterSBHorizontal8Edge is the group-by-group driver for calls whose
 // samples or levels reach the end of their buffers: each group checks its own
 // reach and falls back to the unit-by-unit reference when it would leave pix.
-func filterSBHorizontal8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
-	var st SBStats
-	var acc sbAcc
+func filterSBHorizontal8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	gt4All := vm[1] | vm[2]
 	all := vm[0] | gt4All
 	base := unsafe.Pointer(unsafe.SliceData(pix))
@@ -448,11 +430,11 @@ func filterSBHorizontal8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32
 			for k := range sub {
 				sub[k] = (sub[k] >> sh) & 0xf
 			}
-			st.Add(filterSBHorizontal8Scalar(pix, q0Off, stride, sub, luma, lvl, u0, lvlStride, comp, lut))
+			filterSBHorizontal8Scalar(pix, q0Off, stride, sub, luma, lvl, u0, lvlStride, comp, lut)
 			continue
 		}
 		cur, prev := sbLevelsRow(lvl, u0, lvlStride, comp, nib)
-		eV, iV, hV, m4, ok := sbGroupLimits(cur, prev, nib, sharp0, sharp1, &acc)
+		eV, iV, hV, m4, ok := sbGroupLimits(cur, prev, nib, sharp0, sharp1)
 		if !ok {
 			continue
 		}
@@ -469,14 +451,10 @@ func filterSBHorizontal8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32
 			lpf16U8W[lpfW4](q0, stride, eV, iV, hV, m4, mGt4, m16)
 		}
 	}
-	st.Add(acc.stats())
-	return st
 }
 
 // filterSBVertical8Edge is filterSBHorizontal8Edge for vertical edges.
-func filterSBVertical8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
-	var st SBStats
-	var acc sbAcc
+func filterSBVertical8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	gt4All := vm[1] | vm[2]
 	all := vm[0] | gt4All
 	base := unsafe.Pointer(unsafe.SliceData(pix))
@@ -495,15 +473,15 @@ func filterSBVertical8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, 
 		lastRow := q0Off + 15*stride
 		if wd == 16 {
 			if q0Off-8 < 0 || lastRow+8 > len(pix) {
-				st.Add(sbVerticalScalarGroup(pix, q0Off, stride, vm, sh, luma, lvl, u0, lvlStride, comp, lut))
+				sbVerticalScalarGroup(pix, q0Off, stride, vm, sh, luma, lvl, u0, lvlStride, comp, lut)
 				continue
 			}
 		} else if q0Off-4 < 0 || lastRow+4 > len(pix) {
-			st.Add(sbVerticalScalarGroup(pix, q0Off, stride, vm, sh, luma, lvl, u0, lvlStride, comp, lut))
+			sbVerticalScalarGroup(pix, q0Off, stride, vm, sh, luma, lvl, u0, lvlStride, comp, lut)
 			continue
 		}
 		cur, prev := sbLevelsCol(lvl, u0, lvlStride, comp, nib)
-		eV, iV, hV, m4, ok := sbGroupLimits(cur, prev, nib, sharp0, sharp1, &acc)
+		eV, iV, hV, m4, ok := sbGroupLimits(cur, prev, nib, sharp0, sharp1)
 		if !ok {
 			continue
 		}
@@ -524,8 +502,6 @@ func filterSBVertical8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, 
 			lpfVertical16x8U8(unsafe.Add(base, q0Off-4), stride, wd, eV, iV, hV, m4, sbNibbleMask(nGt4), sbNibbleMask(n16))
 		}
 	}
-	st.Add(acc.stats())
-	return st
 }
 
 // sbLimits is the per-group level prologue of dav1d lpf_func
@@ -536,7 +512,7 @@ func filterSBVertical8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, 
 // floors I; I = imax(imin(L >> sharp[0], sharp[1]), 1) and E = 2*(L+2)+I come
 // from the LUT's replicated sharp vectors, H = L>>4. ok is false when no unit
 // of the nibble has a level ("if (!L) continue").
-func sbLimits(cur, prev archsimd.Uint32x4, nib uint32, lut *SBLUT, acc *sbAcc) (eV, iV, hV archsimd.Uint8x16, m4 archsimd.Mask8x16, ok bool) {
+func sbLimits(cur, prev archsimd.Uint32x4, nib uint32, lut *SBLUT) (eV, iV, hV archsimd.Uint8x16, m4 archsimd.Mask8x16, ok bool) {
 	one := archsimd.BroadcastUint8x16(1)
 	L := prev.IfElse(cur.Equal(archsimd.Uint32x4{}), cur)
 	lr := L.Mul(one.ReshapeToUint32s()).ReshapeToUint8s()
@@ -545,8 +521,6 @@ func sbLimits(cur, prev archsimd.Uint32x4, nib uint32, lut *SBLUT, acc *sbAcc) (
 	if h.GetElem(0)|h.GetElem(1) == 0 {
 		return
 	}
-	acc.cnt = acc.cnt.Sub(act)
-	acc.max = acc.max.Max(lr.And(act))
 	hV = lr.ShiftAllRight(4)
 	iV = lr.Shift(archsimd.LoadInt8x16Array(&lut.SharpShift)).Min(archsimd.LoadUint8x16Array(&lut.SharpCap)).Max(one)
 	e := lr.Add(archsimd.BroadcastUint8x16(2))
@@ -563,7 +537,7 @@ func sbLimits(cur, prev archsimd.Uint32x4, nib uint32, lut *SBLUT, acc *sbAcc) (
 // C side's &lvl[x][comp]), and the widest set nibble picks the kernel. The
 // call's reach is checked once up front, as dav1d trusts its caller; calls
 // that touch the end of pix, the row or the level map take the edge driver.
-func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
+func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	vm0, vm1, vm2 := vm[0]|vm[1]|vm[2], vm[1]|vm[2], vm[2]
 	end := 16 * ((31-bits.LeadingZeros32(vm0))>>2 + 1)
 	reach := 4
@@ -572,11 +546,11 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 	}
 	li, ls4 := 4*lvlOff+comp, 4*lvlStride
 	if end > rowBytes || off < reach*stride || off+(reach-1)*stride+end > len(pix) || li < ls4 || li+end > 4*len(lvl) {
-		return filterSBHorizontal8Edge(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+		filterSBHorizontal8Edge(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+		return
 	}
 	base := unsafe.Pointer(unsafe.SliceData(pix))
 	lb := unsafe.Pointer(unsafe.SliceData(lvl))
-	var acc sbAcc
 	for q0 := off; vm0 != 0; vm0, vm1, vm2, q0, li = vm0>>4, vm1>>4, vm2>>4, q0+16, li+16 {
 		if vm0&15 == 0 {
 			continue
@@ -584,7 +558,7 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 		ff := archsimd.LoadUint32x4Array(&sbLowByteLanes)
 		cur := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(lb, li))).And(ff)
 		prev := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Add(lb, li-ls4))).And(ff)
-		eV, iV, hV, m4, ok := sbLimits(cur, prev, vm0, lut, &acc)
+		eV, iV, hV, m4, ok := sbLimits(cur, prev, vm0, lut)
 		if !ok {
 			continue
 		}
@@ -601,13 +575,12 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 			lpf16U8W[lpfW4](p, stride, eV, iV, hV, m4, archsimd.Mask8x16{}, archsimd.Mask8x16{})
 		}
 	}
-	return acc.stats()
 }
 
 // filterSBVertical8 is dav1d lpf_h_sb_{y,uv}_8bpc_neon in the same shape:
 // each group reads the (l[-1], l[0]) level pairs of its four units (the ld2
 // lane loads) from the component-offset cursor.
-func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) SBStats {
+func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	vm0, vm1, vm2 := vm[0]|vm[1]|vm[2], vm[1]|vm[2], vm[2]
 	hiG := (31 - bits.LeadingZeros32(vm0)) >> 2
 	reach := 4
@@ -616,12 +589,12 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 	}
 	li, ls4 := 4*lvlOff+comp, 4*lvlStride
 	if rowBytes < 12 || off < reach || off+(16*hiG+15)*stride+12 > len(pix) || li < 4 || li+(4*hiG+3)*ls4+4 > 4*len(lvl) {
-		return filterSBVertical8Edge(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+		filterSBVertical8Edge(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+		return
 	}
 	base := unsafe.Pointer(unsafe.SliceData(pix))
 	lb := unsafe.Pointer(unsafe.SliceData(lvl))
 	stride16 := 16 * stride
-	var acc sbAcc
 	for q0 := off; vm0 != 0; vm0, vm1, vm2, q0, li = vm0>>4, vm1>>4, vm2>>4, q0+stride16, li+4*ls4 {
 		if vm0&15 == 0 {
 			continue
@@ -634,7 +607,7 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 		a := archsimd.LoadUint64x2Array((*[2]uint64)(pr[0:2])).ReshapeToUint32s()
 		b := archsimd.LoadUint64x2Array((*[2]uint64)(pr[2:4])).ReshapeToUint32s()
 		ff := archsimd.LoadUint32x4Array(&sbLowByteLanes)
-		eV, iV, hV, m4, ok := sbLimits(a.ConcatOdd(b).And(ff), a.ConcatEven(b).And(ff), vm0, lut, &acc)
+		eV, iV, hV, m4, ok := sbLimits(a.ConcatOdd(b).And(ff), a.ConcatEven(b).And(ff), vm0, lut)
 		if !ok {
 			continue
 		}
@@ -650,15 +623,14 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 			lpfVertical16x8U8WideW[lpfW4](unsafe.Add(base, q0-4), stride, eV, iV, hV, m4, archsimd.Mask8x16{})
 		}
 	}
-	return acc.stats()
 }
 
-func sbVerticalScalarGroup(pix []byte, q0Off, stride int, vm [3]uint32, sh uint, luma bool, lvl [][4]uint8, u0, lvlStride, comp int, lut *SBLUT) SBStats {
+func sbVerticalScalarGroup(pix []byte, q0Off, stride int, vm [3]uint32, sh uint, luma bool, lvl [][4]uint8, u0, lvlStride, comp int, lut *SBLUT) {
 	sub := vm
 	for k := range sub {
 		sub[k] = (sub[k] >> sh) & 0xf
 	}
-	return filterSBVertical8Scalar(pix, q0Off, stride, sub, luma, lvl, u0, lvlStride, comp, lut)
+	filterSBVertical8Scalar(pix, q0Off, stride, sub, luma, lvl, u0, lvlStride, comp, lut)
 }
 
 // lpfVertical16x8U8 filters a vertical edge across sixteen rows using eight

@@ -95,7 +95,6 @@ func TestFilterSB8MatchesScalar(t *testing.T) {
 		vertical := rng.Intn(2) == 0
 		want := append([]byte(nil), pix...)
 		got := append([]byte(nil), pix...)
-		var ws, gs SBStats
 		if vertical {
 			// Column x in 4..(w-8) so every width's taps fit; rows from y0.
 			x := 4 * (2 + rng.Intn(w/4-4))
@@ -105,8 +104,8 @@ func TestFilterSB8MatchesScalar(t *testing.T) {
 			y0 := 4 * rng.Intn(h/4-units+1)
 			off := y0*w + x
 			lvlOff := (y0/4)*lvlStride + x/4
-			ws = filterSBVertical8Scalar(want, off, w, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-			gs = FilterSBVertical8(got, off, w, w-x, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			filterSBVertical8Scalar(want, off, w, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			FilterSBVertical8(got, off, w, w-x, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 		} else {
 			y := 4 * (2 + rng.Intn(h/4-4))
 			if vm[2] != 0 {
@@ -115,11 +114,8 @@ func TestFilterSB8MatchesScalar(t *testing.T) {
 			x0 := 4 * rng.Intn(w/4-units+1)
 			off := y*w + x0
 			lvlOff := (y/4)*lvlStride + x0/4
-			ws = filterSBHorizontal8Scalar(want, off, w, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-			gs = FilterSBHorizontal8(got, off, w, w-x0, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-		}
-		if ws != gs {
-			t.Fatalf("iter %d: stats %+v, want %+v", iter, gs, ws)
+			filterSBHorizontal8Scalar(want, off, w, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			FilterSBHorizontal8(got, off, w, w-x0, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 		}
 		if !bytes.Equal(got, want) {
 			for i := range got {
@@ -223,16 +219,12 @@ func TestFilterSB8TightBuffers(t *testing.T) {
 		lvl := append([][4]uint8(nil), lvlFull[:lvlLen]...)
 		want := append([]byte(nil), full[:pixLen]...)
 		got := append([]byte(nil), full[:pixLen]...)
-		var ws, gs SBStats
 		if vertical {
-			ws = filterSBVertical8Scalar(want, off, w, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-			gs = FilterSBVertical8(got, off, w, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			filterSBVertical8Scalar(want, off, w, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			FilterSBVertical8(got, off, w, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 		} else {
-			ws = filterSBHorizontal8Scalar(want, off, w, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-			gs = FilterSBHorizontal8(got, off, w, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-		}
-		if ws != gs {
-			t.Fatalf("iter %d: stats %+v, want %+v", iter, gs, ws)
+			filterSBHorizontal8Scalar(want, off, w, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			FilterSBHorizontal8(got, off, w, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 		}
 		if !bytes.Equal(got, want) {
 			t.Fatalf("iter %d vertical=%v luma=%v vm=%x: samples differ from the reference", iter, vertical, luma, vm)
