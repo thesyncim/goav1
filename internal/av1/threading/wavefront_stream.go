@@ -50,14 +50,14 @@ func (wf *frameWorkReconWavefront) beginSpans(region FrameWorkJobRegion, sbSizeM
 	}
 }
 
-// noteBlockBegin records that the block at (miRow, miCol) is buffered at
-// visitIndex, with its cbi entries and coefficients starting at cbiIndex and
-// cfIndex. When the block starts a new superblock it closes the previous
-// superblock's span at visitIndex and opens a new one; when it starts a new SB
-// row R it returns R, the number of leading rows whose blocks are now all
-// recorded, and -1 otherwise. Blocks must arrive in SB-raster order for the
-// wavefront gate to be valid; anything else is rejected.
-func (wf *frameWorkReconWavefront) noteBlockBegin(visitIndex, cbiIndex, cfIndex int, miRow int, miCol int) (int, error) {
+// noteSuperblock opens the span of the superblock at (miRow, miCol), whose
+// blocks, cbi entries and coefficients will be buffered from visitIndex,
+// cbiIndex and cfIndex on, and closes the previous superblock's span at
+// visitIndex. When the superblock starts a new SB row R it returns R, the
+// number of leading rows whose blocks are now all recorded, and -1 otherwise.
+// Superblocks must arrive in raster order for the wavefront gate to be valid;
+// anything else is rejected.
+func (wf *frameWorkReconWavefront) noteSuperblock(visitIndex, cbiIndex, cfIndex int, miRow int, miCol int) (int, error) {
 	b := &wf.build
 	if miRow < b.miRowStart || miCol < b.miColStart || b.sbSizeMIB <= 0 {
 		return -1, ErrInvalidBatch
@@ -67,10 +67,7 @@ func (wf *frameWorkReconWavefront) noteBlockBegin(visitIndex, cbiIndex, cfIndex 
 	if sbRow >= b.rowCount {
 		return -1, ErrInvalidBatch
 	}
-	if sbRow == b.prevRow && sbCol == b.prevCol {
-		return -1, nil
-	}
-	if sbRow < b.prevRow || (sbRow == b.prevRow && sbCol < b.prevCol) {
+	if sbRow < b.prevRow || (sbRow == b.prevRow && sbCol <= b.prevCol) {
 		return -1, ErrInvalidBatch
 	}
 	idx, ok := frameWorkReconIndex(visitIndex)
@@ -270,11 +267,12 @@ func (c *frameWorkTileResidualLoopController) startReconStream() error {
 	return nil
 }
 
-// streamBlockBegin runs before a block is buffered; when the block opens a new
-// SB row it publishes the finished rows.
-func (c *frameWorkTileResidualLoopController) streamBlockBegin(visit *tile.BlockLoopVisit) error {
+// streamSuperblock runs before a superblock is parsed; when it opens a new SB
+// row it publishes the finished rows (dav1d signals reconstruction per tile
+// SB row).
+func (c *frameWorkTileResidualLoopController) streamSuperblock(sb tile.BlockLoopSuperblockVisit) error {
 	s := c.scratch
-	rows, err := s.wavefront.noteBlockBegin(len(s.reconVisits), len(s.reconCBI), len(s.cfArena), int(visit.Block.MIRow), int(visit.Block.MICol))
+	rows, err := s.wavefront.noteSuperblock(len(s.reconVisits), len(s.reconCBI), len(s.cfArena), int(sb.MIRow), int(sb.MICol))
 	if err != nil || rows <= 0 {
 		return err
 	}

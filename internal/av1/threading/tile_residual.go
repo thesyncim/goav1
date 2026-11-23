@@ -1327,7 +1327,7 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 	}
 	scratch.controller.recon.bindPrimedLumaReconGeometry()
 	scratch.controller.reconHot = &scratch.controller.recon
-	if loopReq.BeforeSuperblock != nil || readRestoration {
+	if loopReq.BeforeSuperblock != nil || readRestoration || streamRecon {
 		if scratch.beforeSuperblock == nil {
 			scratch.beforeSuperblock = scratch.controller.BeforeSuperblock
 		}
@@ -1582,6 +1582,11 @@ func (c *frameWorkTileResidualLoopController) BeforeSuperblock(visit tile.BlockL
 			return err
 		}
 	}
+	if c.deferReconstruction {
+		if err := c.streamSuperblock(visit); err != nil {
+			return err
+		}
+	}
 	if !c.readRestoration {
 		return nil
 	}
@@ -1610,9 +1615,6 @@ func (c *frameWorkTileResidualLoopController) reconBBegin(visit *tile.BlockLoopV
 		c.stats.CoefficientBlocks++
 	}
 	if c.deferReconstruction {
-		if err := c.streamBlockBegin(visit); err != nil {
-			return err
-		}
 		return c.scratch.rememberDeferredPalette(c.scratch.bufferDeferredVisit(visit))
 	}
 	recon := c.reconHot

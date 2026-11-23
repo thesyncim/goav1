@@ -273,8 +273,9 @@ func (c *frameWorkTileResidualLoopController) testReplayDeferredSerial() error {
 	return nil
 }
 
-// testReplayDeferredWavefront reconstructs a fully buffered tile of skip
-// blocks (no cbi entries or coefficients) through the SB-row wavefront lanes.
+// testReplayDeferredWavefront reconstructs a fully buffered tile of one 64x64
+// skip block (no cbi entries or coefficients) per superblock through the
+// SB-row wavefront lanes.
 func (c *frameWorkTileResidualLoopController) testReplayDeferredWavefront() error {
 	region, err := c.batch.JobRegion(c.index)
 	if err != nil {
@@ -293,10 +294,10 @@ func (c *frameWorkTileResidualLoopController) testReplayDeferredWavefront() erro
 	wf.beginSpans(region, sbSizeMIB)
 	for i := range c.scratch.reconVisits {
 		v := &c.scratch.reconVisits[i]
-		if !v.Prefix.SkipTransform {
+		if !v.Prefix.SkipTransform || v.Block.Size != tile.BlockSize64x64 {
 			return ErrInvalidBatch
 		}
-		if _, err := wf.noteBlockBegin(i, 0, 0, int(v.Block.MIRow), int(v.Block.MICol)); err != nil {
+		if _, err := wf.noteSuperblock(i, 0, 0, int(v.Block.MIRow), int(v.Block.MICol)); err != nil {
 			return err
 		}
 	}
