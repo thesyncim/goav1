@@ -286,7 +286,7 @@ To collect the Go values, set the corpus directory and run:
 ~~~sh
 export GOAV1_PUBLIC_FULLCLIP_SAMPLES=1 GOAV1_BENCH_CORPUS_DIR=/path/to/benchcorpus
 export GOEXPERIMENT=simd GOMAXPROCS=1 GOGC=100 GOTOOLCHAIN=local
-scripts/simdtip.sh test -run '^TestPublicDecoderFullClipCorpusSamples$' -count=1 -v .
+go test -run '^TestPublicDecoderFullClipCorpusSamples$' -count=1 -v .
 ~~~
 
 ## Reproducing the kernel results
@@ -306,7 +306,7 @@ medians; use the listed benchmark selectors at those checkpoints.
 | DSP and CDEF | `ce77788f` | `dsp`: MinMax8x8; `cdef`: FindDirection SIMD and assembly comparisons |
 | Wiener and HBD loop filters | `3298f798` | `restoration`: Wiener horizontal/vertical; `loopfilter`: filter6/filter14 edge cases |
 
-At a checkpoint, run `scripts/simdtip.sh test -run '^$' -cpu=1 -bench '<selector>' -benchmem -benchtime=200ms -count=5 <package>`. Keep `GOMAXPROCS=1`, `GOGC=100`, and `GOFLAGS=`; use `GOTOOLCHAIN=local` with the official Go executable. Run the assembly fallback comparison with `GOEXPERIMENT=nosimd` and the same inverse-DCT selector. The temporary raw logs are not checked into the repository.
+At a checkpoint, run `GOEXPERIMENT=simd go test -run '^$' -cpu=1 -bench '<selector>' -benchmem -benchtime=200ms -count=5 <package>`. Keep `GOMAXPROCS=1`, `GOGC=100`, and `GOFLAGS=`; use `GOTOOLCHAIN=local` with the official Go executable. Run the assembly fallback comparison with `GOEXPERIMENT=nosimd` and the same inverse-DCT selector. The temporary raw logs are not checked into the repository.
 
 These measurements cover one M4 Max and selected kernel shapes. They do not
 establish codec speedups, cross-machine results, or superiority to optimized C

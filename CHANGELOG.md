@@ -17,8 +17,8 @@ The project has not published a release tag yet.
 - Frames split across several tile-group OBUs decode correctly: later tile
   groups keep the CDEF index map, loop-filter masks and restoration records
   the first tile group bound, instead of resetting them.
-- Current committed decoder vector gates are strict-MD5 clean as documented in
-  [CONFORMANCE.md](CONFORMANCE.md).
+- Current committed decoder vector gates are strict-MD5 clean; the gates are
+  described in [docs/quality-and-parity.md](docs/quality-and-parity.md).
 - Hot paths are designed around caller-owned buffers, reusable frame pools,
   explicit scratch sizing, and zero steady-state allocations.
 - Performance work remains active, with dav1d/libaom source-shaped scalar code,

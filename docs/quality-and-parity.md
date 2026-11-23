@@ -50,10 +50,11 @@ reference coverage remain active work.
 
 ## Go-native SIMD
 
-The module minimum is Go 1.27.4. The arm64 Go-native SIMD paths require the
-experimental `GOEXPERIMENT=simd` setting with the official Go toolchain. The
-native arm64 CI lane enables it for build, tests, and strict fast/profile
-decoder gates. See the [SIMD port guide](../SIMD_PORT.md) for local commands and
+The module minimum is Go 1.27.4. The arm64 and amd64 Go-native SIMD paths
+require the experimental `GOEXPERIMENT=simd` setting with the official Go
+toolchain. The native arm64 and amd64 CI lanes enable it for build, tests, race
+and checkptr runs of the kernel packages, and the strict fast/profile decoder
+gates. See the [SIMD port guide](../SIMD_PORT.md) for local commands and
 kernel-level validation expectations.
 
 ## Development checks

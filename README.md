@@ -12,7 +12,7 @@ encoder quality, and throughput coverage continue to expand.
 ## Install
 
 Requires the official Go distribution, version 1.27.4 or newer; no toolchain
-is pinned. The native arm64 SIMD paths use the experimental
+is pinned. The arm64 and amd64 SIMD paths use the experimental
 `GOEXPERIMENT=simd` setting. Build with `GOEXPERIMENT=simd go build ./...` to
 enable them. Without it, normal Go fallbacks are used. Codec implementations,
 including SIMD paths, are written in Go without handwritten assembly.
