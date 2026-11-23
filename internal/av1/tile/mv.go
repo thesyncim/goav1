@@ -301,7 +301,8 @@ func (s *DecodeState) ReadMotionVector(cdfs *MVCDFs, ref motion.Vector, precisio
 	if cdfs == nil || cdfs.Joint.Symbols() != MVJoints {
 		return motion.Vector{}, MVResidualResult{}, entropy.ErrInvalidCDF
 	}
-	reader := s.Reader.Cursor()
+	var reader entropy.Cursor
+	reader.Load(&s.Reader)
 	symbol := reader.ReadCDF4Unchecked(&cdfs.Joint)
 	joint := MVJoint(symbol)
 	if !joint.Valid() {
@@ -355,7 +356,8 @@ func (s *DecodeState) ReadMVComponentDiff(cdfs *MVComponentCDFs, precision MVSub
 	if s == nil || !precision.Valid() {
 		return 0, MVComponentResult{}, ErrInvalidDecodeState
 	}
-	reader := s.Reader.Cursor()
+	var reader entropy.Cursor
+	reader.Load(&s.Reader)
 	diff, result, err := readMVComponentDiffCursor(&reader, cdfs, precision)
 	reader.CommitStateTo(&s.Reader)
 	return diff, result, err

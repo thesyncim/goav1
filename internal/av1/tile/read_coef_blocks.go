@@ -260,13 +260,7 @@ func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T,
 		if x4+w4 > MaxBlockModeSlots || y4+h4 > MaxBlockModeSlots {
 			return ErrInvalidDecodeState
 		}
-		m := &b.inter.Map.Type
-		for y := y4; y < y4+h4; y++ {
-			row := m[y][x4 : x4+w4]
-			for i := range row {
-				row[i] = txtp
-			}
-		}
+		fillTxtpMap(&b.inter.Map.Type, x4, y4, w4, h4, txtp)
 	}
 
 	var result TXBDecodeResult
@@ -302,7 +296,8 @@ func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T,
 			}
 		} else {
 			factors := &target.Factors[plane]
-			c := s.Reader.Cursor()
+			var c entropy.Cursor
+			c.Load(&s.Reader)
 			r := decodeCoefTokens(&c, b.cdfs, size, geo, coeffPlane, txtp, class, txbCtx.DCSignContext, cf, cfZeroed, &b.scratch.Coeff.CoefLevels, coefDequant{
 				dc:    uint32(factors[0]),
 				ac:    uint32(factors[1]),
@@ -338,6 +333,34 @@ func decodeCoefsTXB[T BlockLoopCoeffController](b *coefBlock, coeffController T,
 		blk.Coeffs, blk.Scan = nil, nil
 	}
 	return coeffController.VisitBlockCoeffPtr(loopVisit, blk)
+}
+
+// fillTxtpMap is decode_coefs' dav1d_memset_pow2[t_dim->lw] of txtp into each
+// of the TXB's txtp_map rows: one store per row for widths up to 4, 8-byte
+// stores above. The caller has bounded x4+w4 and y4+h4.
+func fillTxtpMap(m *[MaxBlockModeSlots][MaxBlockModeSlots]transform.Type, x4, y4, w4, h4 int, t transform.Type) {
+	x := ctxSplat(uint8(t))
+	switch w4 {
+	case 1:
+		for y := y4; y < y4+h4; y++ {
+			m[y][x4] = t
+		}
+	case 2:
+		for y := y4; y < y4+h4; y++ {
+			ctxPut2(m[y][x4:], x)
+		}
+	case 4:
+		for y := y4; y < y4+h4; y++ {
+			ctxPut4(m[y][x4:], x)
+		}
+	default:
+		for y := y4; y < y4+h4; y++ {
+			row := m[y][x4:]
+			for i := 0; i < w4; i += 8 {
+				ctxPut8(row[i:], x)
+			}
+		}
+	}
 }
 
 func mustClass(t transform.Type) transform.Class {

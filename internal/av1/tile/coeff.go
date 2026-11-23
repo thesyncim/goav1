@@ -979,7 +979,8 @@ func (s *DecodeState) readCoefficientsTXBWithGeo(cdfs *CoeffCDFs, req TXBDecodeR
 	eobExtraArr := &cdfs.EOBExtra[txCtx][req.Plane]
 	dcSignCDF := &cdfs.DCSign[req.Plane][req.DCSignContext]
 	cdfUpdate := s.Reader.AllowCDFUpdate()
-	reader := s.Reader.Cursor()
+	var reader entropy.Cursor
+	reader.Load(&s.Reader)
 	eob, err := readEOBCursorKnown(&reader, eobCDF, eobSymbols, eobExtraArr)
 	if err != nil {
 		reader.CommitStateTo(&s.Reader)
@@ -1729,7 +1730,8 @@ func (s *DecodeState) readCoefficientsTXBTracked2DWithGeo(cdfs *CoeffCDFs, req T
 	eobExtraArr := &cdfs.EOBExtra[txCtx][req.Plane]
 	dcSignCDF := &cdfs.DCSign[req.Plane][req.DCSignContext]
 	cdfUpdate := s.Reader.AllowCDFUpdate()
-	reader := s.Reader.Cursor()
+	var reader entropy.Cursor
+	reader.Load(&s.Reader)
 	eob, err := readEOBCursorKnown(&reader, eobCDF, eobSymbols, eobExtraArr)
 	if err != nil {
 		reader.CommitStateTo(&s.Reader)

@@ -634,7 +634,8 @@ func (s *DecodeState) readPaletteIndices(cdfs *IntraModeCDFs, uv bool, mapScratc
 	}
 	var order [64][8]uint8
 	var ctx [64]uint8
-	c := s.Reader.Cursor()
+	var c entropy.Cursor
+	c.Load(&s.Reader)
 	for i := 1; i < rows+cols-1; i++ {
 		// top/left-to-bottom/right diagonals (dav1d's "wave-front"): order
 		// the whole diagonal, then decode it.

@@ -313,7 +313,8 @@ func (s *DecodeState) decodeCoefsDequantized(cdfs *CoeffCDFs, req *TXBDecodeRequ
 		return false
 	}
 	factors := &target.Factors[req.dequantPlane]
-	c := s.Reader.Cursor()
+	var c entropy.Cursor
+	c.Load(&s.Reader)
 	r := decodeCoefTokens(&c, cdfs, req.Size, geo, req.Plane, txtp, class, req.DCSignContext, (*[1024]int32)(target.Dst), false, &scratch.CoefLevels, coefDequant{
 		dc:    uint32(factors[0]),
 		ac:    uint32(factors[1]),
