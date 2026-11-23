@@ -96,25 +96,24 @@ func TestFilterSBStaysInsideGuardedPlane(t *testing.T) {
 		bOff := off * bps
 		rowBytes := stride - (bOff % stride)
 		name := fmt.Sprintf("iter %d hbd=%v vertical=%v luma=%v before=%v units=%d w=%d h=%d vm=%x", iter, hbd, vertical, luma, before, units, w, h, vm)
-		var ws, gs SBStats
 		guardpage.Check(t, name, func() {
 			switch {
 			case vertical && !hbd:
-				ws = filterSBVertical8Scalar(want, bOff, stride, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-				gs = FilterSBVertical8(pix, bOff, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+				filterSBVertical8Scalar(want, bOff, stride, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+				FilterSBVertical8(pix, bOff, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 			case !hbd:
-				ws = filterSBHorizontal8Scalar(want, bOff, stride, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-				gs = FilterSBHorizontal8(pix, bOff, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+				filterSBHorizontal8Scalar(want, bOff, stride, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+				FilterSBHorizontal8(pix, bOff, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 			case vertical:
-				ws = filterSBVertical16Scalar(want, bOff, stride, bd, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-				gs = FilterSBVertical16(pix, bOff, stride, rowBytes, bd, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+				filterSBVertical16Scalar(want, bOff, stride, bd, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+				FilterSBVertical16(pix, bOff, stride, rowBytes, bd, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 			default:
-				ws = filterSBHorizontal16Scalar(want, bOff, stride, bd, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-				gs = FilterSBHorizontal16(pix, bOff, stride, rowBytes, bd, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+				filterSBHorizontal16Scalar(want, bOff, stride, bd, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+				FilterSBHorizontal16(pix, bOff, stride, rowBytes, bd, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 			}
 		})
-		if ws != gs || !bytes.Equal(pix, want) {
-			t.Fatalf("%s: guarded filter differs from the C reference (stats %+v want %+v)", name, gs, ws)
+		if !bytes.Equal(pix, want) {
+			t.Fatalf("%s: guarded filter differs from the C reference", name)
 		}
 	}
 }

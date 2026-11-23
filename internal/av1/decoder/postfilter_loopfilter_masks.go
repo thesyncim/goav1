@@ -262,7 +262,8 @@ func (ctx *FrameWorkPostFilterContext) applyLoopFilterEdgesFromMasksInPlanePassO
 // range of 128x128 mask region-rows [rRow0,rRow1), for the directions selected by
 // dirMask (vertical scan before horizontal when both are set). The per-plane setup
 // (aligned destination, bounds, threshold cache, apply closure) stays local so the
-// closure is stack-allocated; result accumulates this call's counts. Filtering a
+// closure is stack-allocated; result accumulates the per-cell path's counts (the
+// superblock path, like dav1d, keeps none). Filtering a
 // region-row band writes only pixels within that band's rows (perpendicular filter
 // taps are bounded by the adjacent transform sizes), so disjoint bands can run on
 // separate goroutines with their own result once a direction barrier is in place.
@@ -286,7 +287,7 @@ func (ctx *FrameWorkPostFilterContext) applyLoopFilterMaskPlaneRange(result *Fra
 		return err
 	}
 	if (bytesPerSample == 1 && bitDepth == 8) || (bytesPerSample == 2 && (bitDepth == 10 || bitDepth == 12)) {
-		ctx.applyLoopFilterMaskPlaneRangeSB(result, masks, lc, sharpness, plane, dirMask, rRow0, rRow1, rCol0, rCol1, dst, bytesPerSample, bitDepth, bounds)
+		ctx.applyLoopFilterMaskPlaneRangeSB(masks, lc, sharpness, plane, dirMask, rRow0, rRow1, rCol0, rCol1, dst, bytesPerSample, bitDepth, bounds)
 		return nil
 	}
 
