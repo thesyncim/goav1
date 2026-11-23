@@ -153,7 +153,6 @@ internal/av1/encoder/cdef_search.go:*:*: make([]int, n) escapes to heap in (*cde
 internal/av1/encoder/cdef_search.go:*:*: make([]uint8, n) escapes to heap
 internal/av1/encoder/cdef_search.go:*:*: make([]uint8, n) escapes to heap in (*cdefSearcher).bind:
 internal/av1/encoder/cdef_search.go:*:*: make([]uint8, n) escapes to heap in (*cdefSearcher).search:
-internal/av1/encoder/config_frame.go:*:*: moved to heap: unit
 internal/av1/encoder/cyclic_refresh.go:*:*: make([]int64, sbCnt) escapes to heap
 internal/av1/encoder/cyclic_refresh.go:*:*: make([]int64, sbCnt) escapes to heap in (*cyclicRefresh).plan:
 internal/av1/encoder/cyclic_refresh.go:*:*: make([]uint8, sbCnt) escapes to heap
@@ -275,10 +274,6 @@ internal/av1/encoder/loopfilter_apply.go:*:*: make([]uint32, size.Schedule) esca
 internal/av1/encoder/loopfilter_apply.go:*:*: make([]uint32, size.Schedule) escapes to heap in (*loopFilterApplier).bindEdgeList:
 internal/av1/encoder/palette_sc.go:*:*: new(paletteSearch) escapes to heap
 internal/av1/encoder/palette_sc.go:*:*: new(paletteSearch) escapes to heap in (*lossyEncodeState).keyframePalette:
-internal/av1/encoder/pframe.go:*:*: make([]byte, 0, 16384) escapes to heap
-internal/av1/encoder/pframe.go:*:*: make([]byte, 0, tdSize + frameSize + groupOBUSize) escapes to heap
-internal/av1/encoder/pframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap
-internal/av1/encoder/pframe.go:*:*: moved to heap: scratch
 internal/av1/encoder/pframe_highbd.go:*:*: func literal escapes to heap
 internal/av1/encoder/pframe_highbd.go:*:*: func literal escapes to heap in (*pframeCoder).encodeHighBitDepthColorPFrameTile:
 internal/av1/encoder/pframe_highbd.go:*:*: func literal escapes to heap in (*pframeCoder).encodeHighBitDepthLosslessIntraInterTile:
@@ -312,8 +307,6 @@ internal/av1/encoder/pframe_residual.go:*:*: make([]byte, 0, total + total / 2) 
 internal/av1/encoder/pframe_residual.go:*:*: make([]byte, 0, total + total / 2) escapes to heap in assembleInterTU:
 internal/av1/encoder/pframe_residual.go:*:*: make([]byte, 262144) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]byte, 262144) escapes to heap in (*pframeCoder).reset:
-internal/av1/encoder/pframe_residual.go:*:*: make([]byte, len(src.U)) escapes to heap
-internal/av1/encoder/pframe_residual.go:*:*: make([]byte, len(src.V)) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]byte, len(src.Y)) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: make([]byte, len(src.Y)) escapes to heap in EncodeMonochromePFrame:
 internal/av1/encoder/pframe_residual.go:*:*: make([]int16, int(sq.n) * int(sq.n)) escapes to heap
@@ -337,7 +330,6 @@ internal/av1/encoder/pframe_residual.go:*:*: make([]uint8, scratchLen) escapes t
 internal/av1/encoder/pframe_residual.go:*:*: make([]uint8, scratchLen) escapes to heap in (*lossyEncodeState).initScans:
 internal/av1/encoder/pframe_residual.go:*:*: moved to heap: g
 internal/av1/encoder/pframe_residual.go:*:*: moved to heap: pc
-internal/av1/encoder/pframe_residual.go:*:*: moved to heap: recon
 internal/av1/encoder/pframe_residual.go:*:*: moved to heap: recon420
 internal/av1/encoder/pframe_residual.go:*:*: new(hmeState) escapes to heap
 internal/av1/encoder/pframe_residual.go:*:*: new(hmeState) escapes to heap in (*pframeCoder).encodeTileWithOptionsColor:
