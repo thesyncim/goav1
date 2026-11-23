@@ -238,7 +238,7 @@ func (s *FrameWorkState) PublishFrameThreaded(refs *SurfaceReferences, event *Ev
 	ft.ReleaseCount = count
 	s.tileResidualRetainedCDFsValid = ft.willRetain
 	s.finishTileResidualCDFs(event, -1)
-	s.publishTemporalMotionFrame(event)
+	s.publishTemporalMotionFrame(event, -1)
 	store := s.segMapStore()
 	store.publish(event.FrameSize.RefreshFrameFlags, s.segFrame.cur)
 	ft.seg = s.segFrame

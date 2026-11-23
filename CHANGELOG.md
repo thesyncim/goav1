@@ -27,6 +27,11 @@ The project has not published a release tag yet.
   correctly. Block-copy vectors adapted the motion-vector contexts instead of
   their own, so the following frames inherited the wrong entropy state (every
   SVT-AV1 screen-content stream was affected).
+- `LayeredDecoder` projects temporal motion vectors. It kept no motion vectors
+  for its reference buffers, so any frame coded with `use_ref_frame_mvs`
+  (the default in libaom and SVT-AV1) decoded to wrong pixels without an
+  error. Its output now matches `Decoder` and the libaom goldens on every
+  vendored clip it accepts.
 - Hot paths are designed around caller-owned buffers, reusable frame pools,
   explicit scratch sizing, and zero steady-state allocations.
 - `WithFrameSizeLimit` makes the high-level decoders reject streams whose

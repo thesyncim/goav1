@@ -279,6 +279,10 @@ type FrameWorkState struct {
 	sharedFrameContexts             *SharedFrameContextStore
 	sharedFrameContextRefs          *SurfaceReferences
 	sharedFrameContextGlobalSurface func(local int) int
+	// sharedMVBacking is the grid the current frame records its motion
+	// vectors into on the shared path. Publishing a reference frame swaps it
+	// with the store's previous grid for that surface.
+	sharedMVBacking []tile.ReferenceMVEntry
 	// tileResidualCurrentCDF is the pool entry holding the current frame's
 	// initial (inherited or default) context; it is immutable for the frame's
 	// duration — per-job adaptation copies out of it (threading
@@ -294,9 +298,8 @@ type FrameWorkState struct {
 	// decode path. AV1 inter frames with use_ref_frame_mvs project a temporal
 	// MV field from previously decoded reference frames' saved per-block MVs
 	// (libaom's cm->cur_frame->mvs + av1_setup_motion_field). The SVC/shared
-	// path (sharedFrameContexts != nil) wires this through the caller's
-	// per-surface store instead, so these fields are only populated when the
-	// shared store is absent.
+	// path (sharedFrameContexts != nil) keeps the saved grids in that store,
+	// keyed by global surface, and uses only the current-frame fields here.
 	//
 	// mvFrameStore is keyed by reference-map slot exactly like
 	// tileResidualFrameContexts: every refresh_frame_flags slot receives the
@@ -410,10 +413,12 @@ func (s *FrameWorkState) Reset() {
 	}
 	segBack := s.segOwn.backing
 	segShared := s.segShared
+	sharedMVBack := s.sharedMVBacking[:0]
 	*s = FrameWorkState{ownedTemporalMotion: ownedTemporalMotion}
 	s.tileResidualCDFPoolExtra = cdfPoolExtra
 	s.temporalMVsBack = temporalBack
 	s.mvFrameBacking = mvBack
+	s.sharedMVBacking = sharedMVBack
 	s.segOwn.backing = segBack
 	s.segShared = segShared
 }
@@ -807,7 +812,7 @@ func (s *FrameWorkState) Finish(refs *SurfaceReferences, pool *frame.Pool, event
 		return 0, err
 	}
 	s.finishTileResidualCDFs(event, -1)
-	s.publishTemporalMotionFrame(event)
+	s.publishTemporalMotionFrame(event, -1)
 	s.segMapStore().publish(event.FrameSize.RefreshFrameFlags, s.segFrame.cur)
 	s.resetActive()
 	return count, nil
@@ -874,25 +879,23 @@ func mvFrameMIExtent(pixels uint32) uint32 {
 // when use_ref_frame_mvs is enabled, resolves the reference frames' saved MV
 // side data and projects the temporal motion field. It is the single-pool
 // counterpart of the per-surface wiring the SVC/shared path performs in its
-// batch callback, so it is skipped entirely when a shared frame-context store
-// is active (the shared path owns CurrentMVFrame/TemporalMVs itself).
+// batch callback.
 //
 // The per-slot MV store is keyed by reference-map slot (RefFrameIdx), exactly
 // like the entropy frame-context store, so no reference surface list is needed
-// here.
+// here. With a shared frame-context store the saved grids live in that store
+// instead, keyed by global surface (prepareSharedTemporalMotionField).
 func (s *FrameWorkState) prepareTemporalMotionField(event *Event) error {
 	s.releaseCurrentMVGrid()
 	s.currentMVIntra = false
 	s.currentMVFrameValid = false
 	s.temporalMVsValid = false
 	s.temporalMVsDeferred = false
-	if s.sharedFrameContexts != nil {
-		// The shared/SVC path wires per-surface MV frames through the caller's
-		// store and batch callback; leave the batch pointers nil here.
-		return nil
-	}
 	if event.FrameHeader.ShowExistingFrame {
 		return nil
+	}
+	if s.sharedFrameContexts != nil {
+		return s.prepareSharedTemporalMotionField(event)
 	}
 
 	miCols := mvFrameMIExtent(event.FrameSize.CodedWidth)
@@ -971,13 +974,87 @@ func (s *FrameWorkState) prepareTemporalMotionField(event *Event) error {
 	return nil
 }
 
+// prepareSharedTemporalMotionField is prepareTemporalMotionField for the
+// shared (SVC, cross-pool) path: the references' saved motion vectors come
+// from the shared store under the global surface each reference slot names,
+// and the frame records its own into a state-owned grid that
+// publishTemporalMotionFrame hands to the store. A sequence that cannot signal
+// use_ref_frame_mvs records nothing.
+func (s *FrameWorkState) prepareSharedTemporalMotionField(event *Event) error {
+	if s.sharedFrameContextRefs == nil || !s.Sequence.EnableRefFrameMVS || !s.Sequence.EnableOrderHint {
+		return nil
+	}
+	miCols := mvFrameMIExtent(event.FrameSize.CodedWidth)
+	miRows := mvFrameMIExtent(event.FrameSize.Height)
+	need, err := tile.ReferenceMVFrameEntries(miRows, miCols)
+	if err != nil {
+		return nil
+	}
+	if !event.FrameSize.AllowIntrabc && !event.TileInfo.UseRefFrameMVS &&
+		(event.FrameHeader.FrameType == parser.FrameTypeKey || event.FrameHeader.FrameType == parser.FrameTypeIntraOnly) {
+		s.currentMVIntra = true
+		return nil
+	}
+	if cap(s.sharedMVBacking) < need {
+		s.sharedMVBacking = make([]tile.ReferenceMVEntry, need)
+	}
+	if err := s.currentMVFrame.Init(miRows, miCols, s.sharedMVBacking[:need]); err != nil {
+		return err
+	}
+	s.currentMVFrameValid = true
+	if !event.TileInfo.UseRefFrameMVS {
+		return nil
+	}
+
+	var refs [parser.InterRefsPerFrame]tile.TemporalMotionReferenceFrame
+	for ref := 0; ref < parser.InterRefsPerFrame; ref++ {
+		slot := int(event.FrameSize.RefFrameIdx[ref])
+		if slot < 0 || slot >= parser.RefFrames {
+			s.currentMVFrameValid = false
+			return ErrInvalidSurfaceReference
+		}
+		globalID, ok := s.sharedFrameContextRefs.ReferenceSlot(slot)
+		if !ok {
+			continue
+		}
+		m := s.sharedFrameContexts.motionFrame(globalID)
+		if m == nil {
+			continue
+		}
+		refs[ref] = tile.TemporalMotionReferenceFrame{
+			Frame:         &m.frame,
+			OrderHint:     m.meta.orderHint,
+			RefOrderHints: m.meta.refOrderHints,
+			IntraOnly:     m.meta.intraOnly,
+		}
+	}
+	s.mvReferences = refs
+	setup := tile.TemporalMotionSetupRequest{
+		EnableOrderHint:  s.Sequence.EnableOrderHint,
+		OrderHintBits:    s.Sequence.OrderHintBits,
+		CurrentOrderHint: event.FrameHeader.OrderHint,
+		References:       s.mvReferences,
+	}
+	if err := setup.Validate(); err != nil {
+		s.currentMVFrameValid = false
+		return err
+	}
+	s.temporalMVsDeferred = true
+	return nil
+}
+
 // publishTemporalMotionFrame publishes the just-decoded frame's MV_REF side data
 // into every reference-map slot named by refresh_frame_flags, mirroring
 // libaom's cm->cur_frame->mvs being reachable through ref_frame_map after the
-// frame is published. It is the single-pool counterpart to the shared path's
-// per-surface MV store and is skipped when that store is active.
-func (s *FrameWorkState) publishTemporalMotionFrame(event *Event) {
-	if s == nil || s.sharedFrameContexts != nil {
+// frame is published. With a shared frame-context store the grid is saved
+// there under publishedGlobalSurface (the frame's own global surface when
+// negative), which is what the refreshed slots name.
+func (s *FrameWorkState) publishTemporalMotionFrame(event *Event, publishedGlobalSurface int) {
+	if s == nil {
+		return
+	}
+	if s.sharedFrameContexts != nil {
+		s.publishSharedTemporalMotionFrame(event, publishedGlobalSurface)
 		return
 	}
 	if !s.currentMVIntra {
@@ -1025,6 +1102,35 @@ func (s *FrameWorkState) publishTemporalMotionFrame(event *Event) {
 		}
 		s.mvFrameStoreMeta[i] = meta
 	}
+}
+
+func (s *FrameWorkState) publishSharedTemporalMotionFrame(event *Event, publishedGlobalSurface int) {
+	if event.FrameSize.RefreshFrameFlags == 0 || s.sharedFrameContextGlobalSurface == nil {
+		// No reference slot will name this frame, so nothing projects from it.
+		return
+	}
+	if !s.currentMVIntra && (!s.currentMVFrameValid || s.currentMVFrame.Validate() != nil) {
+		return
+	}
+	if publishedGlobalSurface < 0 {
+		publishedGlobalSurface = s.sharedFrameContextGlobalSurface(s.Surface)
+	}
+	meta := mvFrameMeta{
+		valid:         true,
+		orderHint:     event.FrameHeader.OrderHint,
+		refOrderHints: event.ReferenceOrderHints,
+		intraOnly: event.FrameHeader.FrameType == parser.FrameTypeKey ||
+			event.FrameHeader.FrameType == parser.FrameTypeIntraOnly,
+	}
+	if s.currentMVIntra {
+		// Keep a descriptor for the buffer: projection skips intra sources
+		// but still uses their presence and order hints.
+		s.sharedFrameContexts.publishMotion(publishedGlobalSurface, tile.ReferenceMVFrame{}, nil, meta)
+		return
+	}
+	s.sharedMVBacking = s.sharedFrameContexts.publishMotion(publishedGlobalSurface, s.currentMVFrame, s.sharedMVBacking, meta)
+	s.currentMVFrame = tile.ReferenceMVFrame{}
+	s.currentMVFrameValid = false
 }
 
 func (s *FrameWorkState) finishTileResidualCDFs(event *Event, publishedGlobalSurface int) {

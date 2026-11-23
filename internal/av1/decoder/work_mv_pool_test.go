@@ -252,7 +252,7 @@ func TestOwnedMVPoolMatchesFrozenCopy(t *testing.T) {
 			fillMVPoolFrame(&s.currentMVFrame, n)
 			fillMVPoolFrame(&old.currentMVFrame, n)
 		}
-		s.publishTemporalMotionFrame(&event)
+		s.publishTemporalMotionFrame(&event, -1)
 		old.publishTemporalMotionFrame(event)
 		if s.mvFrameStoreMeta != old.mvFrameStoreMeta {
 			t.Fatalf("frame %d saved metadata differs", n)
@@ -290,7 +290,7 @@ func TestOwnedMVPoolSharingAndGenericIsolation(t *testing.T) {
 			t.Fatal(err)
 		}
 		fillMVPoolFrame(&s.currentMVFrame, 1)
-		s.publishTemporalMotionFrame(&e)
+		s.publishTemporalMotionFrame(&e, -1)
 		current := &s.currentMVFrame.Entries[0]
 		for i := range s.mvFrameStore {
 			shared := &s.mvFrameStore[i].Entries[0] == current
@@ -351,7 +351,7 @@ func TestOwnedMVPoolIntraMetadataAndFallback(t *testing.T) {
 			if (s.motionFields().current == nil) != omit {
 				t.Fatal("block-loop current-grid binding differs")
 			}
-			s.publishTemporalMotionFrame(&e)
+			s.publishTemporalMotionFrame(&e, -1)
 			s.resetActive()
 			next := mvPoolEvent(1)
 			s.Sequence = threading.FrameWorkSequenceContext{EnableOrderHint: true, OrderHintBits: 8}
@@ -416,7 +416,7 @@ func TestOwnedMVPoolFailureAndReuse(t *testing.T) {
 		if err := s.prepareTemporalMotionField(&e); err != nil {
 			t.Fatal(err)
 		}
-		s.publishTemporalMotionFrame(&e)
+		s.publishTemporalMotionFrame(&e, -1)
 		s.resetActive()
 		checkMVPoolRefs(t, &s)
 	}
@@ -493,7 +493,7 @@ func TestOwnedMVPoolWarmAllocs(t *testing.T) {
 			if err != nil {
 				return
 			}
-			s.publishTemporalMotionFrame(&e)
+			s.publishTemporalMotionFrame(&e, -1)
 			s.resetActive()
 		}
 		s.Reset()
