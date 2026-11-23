@@ -97,9 +97,16 @@ func TestPublicEncoderControlSurface(t *testing.T) {
 		t.Fatalf("temporal-unit control = %+v", control)
 	}
 
-	descriptor, err := encoderWebRTCRTPDependencyDescriptorMandatoryForFrame(structure, control.Frames[0].GenericFrameInfo, true, true)
+	controlInfo := control.Frames[0].GenericFrameInfo
+	templateID, err := internalencoder.WebRTCTemplateIDForFrame(structure, controlInfo)
 	if err != nil {
-		t.Fatalf("EncoderWebRTCRTPDependencyDescriptorMandatoryForFrame: %v", err)
+		t.Fatalf("WebRTCTemplateIDForFrame: %v", err)
+	}
+	descriptor := RTPDependencyDescriptorMandatory{
+		FirstPacketInFrame: true,
+		LastPacketInFrame:  true,
+		TemplateID:         templateID,
+		FrameNumber:        uint16(controlInfo.FrameID),
 	}
 	var descriptorBuf [RTPDependencyDescriptorMandatorySize]byte
 	n, err := PutRTPDependencyDescriptorMandatory(descriptorBuf[:], descriptor)
@@ -334,7 +341,7 @@ func TestPublicValidateEncoderWebRTCActiveScalabilityModes(t *testing.T) {
 		{EncoderScalabilityModeL3T2_KEY_SHIFT},
 		{EncoderScalabilityModeL3T3_KEY_SHIFT},
 	} {
-		if err := validateEncoderWebRTCActiveScalabilityModes(modes...); err != nil {
+		if err := internalencoder.ValidateWebRTCActiveScalabilityModes(modes); err != nil {
 			t.Fatalf("ValidateEncoderWebRTCActiveScalabilityModes(%v): %v", modes, err)
 		}
 	}
@@ -344,7 +351,7 @@ func TestPublicValidateEncoderWebRTCActiveScalabilityModes(t *testing.T) {
 		{EncoderScalabilityModeL1T3, internalencoder.ScalabilityModeS2T1},
 		{internalencoder.ScalabilityModeS2T3h, internalencoder.ScalabilityModeS3T3},
 	} {
-		if err := validateEncoderWebRTCActiveScalabilityModes(modes...); !errors.Is(err, internalencoder.ErrInvalidConfig) {
+		if err := internalencoder.ValidateWebRTCActiveScalabilityModes(modes); !errors.Is(err, internalencoder.ErrInvalidConfig) {
 			t.Fatalf("ValidateEncoderWebRTCActiveScalabilityModes(%v) err=%v want %v", modes, err, internalencoder.ErrInvalidConfig)
 		}
 	}
@@ -393,7 +400,7 @@ func TestPublicEncoderWebRTCScalabilityModeIDC(t *testing.T) {
 		"S3T3":           {idc: internalobu.ScalabilityModeS3T3, ok: true},
 		"S3T3h":          {},
 	}
-	for _, mode := range encoderWebRTCSVCScalabilityModes() {
+	for _, mode := range internalencoder.AppendWebRTCSVCScalabilityModes(nil) {
 		tc, ok := want[mode.String()]
 		if !ok {
 			t.Fatalf("missing expected IDC entry for %s", mode)
@@ -540,7 +547,7 @@ func TestPublicEncoderWebRTCScalabilityMetadataOBU(t *testing.T) {
 }
 
 func TestPublicEncoderWebRTCActiveDecodeTargetsMask(t *testing.T) {
-	for _, mode := range encoderWebRTCSVCScalabilityModes() {
+	for _, mode := range internalencoder.AppendWebRTCSVCScalabilityModes(nil) {
 		t.Run(mode.String(), func(t *testing.T) {
 			spatialLayers, temporalLayers, _, ok := mode.Layers()
 			if !ok {
@@ -601,7 +608,7 @@ func TestPublicEncoderWebRTCActiveDecodeTargetsMask(t *testing.T) {
 }
 
 func TestPublicEncoderWebRTCSpatialDecodeTargetsMask(t *testing.T) {
-	for _, mode := range encoderWebRTCSVCScalabilityModes() {
+	for _, mode := range internalencoder.AppendWebRTCSVCScalabilityModes(nil) {
 		t.Run(mode.String(), func(t *testing.T) {
 			spatialLayers, temporalLayers, _, ok := mode.Layers()
 			if !ok {
@@ -1926,7 +1933,7 @@ func TestPublicEncoderLowOverheadWebRTCKeyFrameTemporalUnitForState(t *testing.T
 	if err != nil || !ok || !bytes.Equal(tu.Raw, out) {
 		t.Fatalf("temporal unit ok=%v err=%v raw=% x", ok, err, tu.Raw)
 	}
-	control, structure, err := encoderWebRTCPictureTemporalUnitFrameControl(
+	control, structure, err := publicRTCUnitFrameControl(
 		internalencoder.WebRTCPictureTemporalUnit{Key: true, KeyUnit: gotUnit},
 		gotState,
 		0,
@@ -2591,7 +2598,7 @@ func TestPublicWebRTCEncoderSetConfigRejectsInvalidControlsWithoutMutation(t *te
 }
 
 func TestPublicWebRTCEncoderSetConfigScalabilityTransitionMatrix(t *testing.T) {
-	modes := encoderWebRTCSVCScalabilityModes()
+	modes := internalencoder.AppendWebRTCSVCScalabilityModes(nil)
 	for fromIndex, fromMode := range modes {
 		fromMode := fromMode
 		for toIndex, toMode := range modes {
@@ -2949,7 +2956,7 @@ type publicWebRTCControllerLayer struct {
 }
 
 func publicWebRTCControllerModeNames() []string {
-	modes := encoderWebRTCSVCScalabilityModes()
+	modes := internalencoder.AppendWebRTCSVCScalabilityModes(nil)
 	names := make([]string, len(modes))
 	for i, mode := range modes {
 		names[i] = mode.String()
@@ -2979,7 +2986,7 @@ func assertPublicWebRTCControllerUnit(t *testing.T, receiver *RTPDependencyDescr
 		t.Fatalf("unit key=%v delta=%v frames=%d want key=%v frames=%d", unit.Key, unit.Delta, frameNum, wantKey, spatialLayers)
 	}
 	for i := uint8(0); i < frameNum; i++ {
-		control, structure, err := encoderWebRTCPictureTemporalUnitFrameControl(unit, descriptorState, i)
+		control, structure, err := publicRTCUnitFrameControl(unit, descriptorState, i)
 		if err != nil {
 			t.Fatalf("frame %d control: %v", i, err)
 		}

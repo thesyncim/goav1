@@ -107,6 +107,7 @@ func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 		t.Fatal(err)
 	}
 	frameControl := control.Frames[0]
+	options := EncoderWebRTCRTPPacketDependencyDescriptorOptions{AttachStructureOnFirstPacket: frameControl.AttachDependencyStructure}
 	for {
 		if payloadCount >= len(payloads) {
 			t.Fatal("too many packets")
@@ -119,14 +120,11 @@ func TestPublicRTPPacketizerScratchAndAssembleSizing(t *testing.T) {
 		if !ok || plan.PacketSize+1 != size {
 			t.Fatalf("packet %d plan=%+v ok=%v size=%d", payloadCount, plan, ok, size)
 		}
-		payloadSize, descriptorSize, ok, err := encoderWebRTCFrameControlRTPPacketSize(&packetizer, frameControl, control.DependencyStructure)
-		if err != nil {
-			t.Fatal(err)
+		descriptorSize, ok, err := publicRTPPacketDescriptorSize(&packetizer, control.DependencyStructure, frameControl.GenericFrameInfo, options)
+		if err != nil || !ok {
+			t.Fatalf("packet %d descriptor size ok=%v err=%v", payloadCount, ok, err)
 		}
-		if !ok || payloadSize != size {
-			t.Fatalf("packet %d payloadSize=%d size=%d ok=%v", payloadCount, payloadSize, size, ok)
-		}
-		payload, descriptor, marker, ok, err := appendEncoderWebRTCFrameControlRTPPacket(packetBytes[payloadCount][:0], descriptors[payloadCount][:0], &packetizer, frameControl, control.DependencyStructure)
+		payload, descriptor, marker, ok, err := appendEncoderWebRTCFrameControlRTPPacketWithOptions(packetBytes[payloadCount][:0], descriptors[payloadCount][:0], &packetizer, frameControl, control.DependencyStructure, options)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -318,7 +316,9 @@ func TestPublicRTPPacketDependencyDescriptorAllocs(t *testing.T) {
 		t.Fatal(err)
 	}
 	frameControl := control.Frames[0]
-	payloadSize, descriptorSize, ok, err := encoderWebRTCFrameControlRTPPacketSize(&packetizer, frameControl, control.DependencyStructure)
+	options := EncoderWebRTCRTPPacketDependencyDescriptorOptions{AttachStructureOnFirstPacket: frameControl.AttachDependencyStructure}
+	payloadSize, _ := packetizer.NextPacketSize()
+	descriptorSize, ok, err := publicRTPPacketDescriptorSize(&packetizer, control.DependencyStructure, frameControl.GenericFrameInfo, options)
 	if err != nil || !ok || payloadSize == 0 || descriptorSize == 0 {
 		t.Fatalf("preflight size payload=%d descriptor=%d ok=%v err=%v", payloadSize, descriptorSize, ok, err)
 	}
@@ -330,8 +330,8 @@ func TestPublicRTPPacketDependencyDescriptorAllocs(t *testing.T) {
 	var buf [32]byte
 	allocs := testing.AllocsPerRun(1000, func() {
 		p := packetizer
-		_, _, _, _ = encoderWebRTCFrameControlRTPPacketSize(&p, frameControl, control.DependencyStructure)
-		_, _, _, _, _ = appendEncoderWebRTCFrameControlRTPPacket(payloadBuf[:0], buf[:0], &p, frameControl, control.DependencyStructure)
+		_, _, _ = publicRTPPacketDescriptorSize(&p, control.DependencyStructure, frameControl.GenericFrameInfo, options)
+		_, _, _, _, _ = appendEncoderWebRTCFrameControlRTPPacketWithOptions(payloadBuf[:0], buf[:0], &p, frameControl, control.DependencyStructure, options)
 	})
 	if allocs != 0 {
 		t.Fatalf("packet descriptor allocs=%f want 0", allocs)
@@ -672,6 +672,18 @@ func TestPublicRTPDependencyDescriptorActiveDecodeTargetsRoundTrip(t *testing.T)
 	}
 }
 
+// publicRTPPacketDescriptorSize is the dependency-descriptor size the next
+// packet from packetizer carries under options, computed independently of the
+// descriptor writer.
+func publicRTPPacketDescriptorSize(packetizer *RTPPacketizer, structure internalencoder.WebRTCFrameDependencyStructure, info internalencoder.WebRTCGenericFrameInfo, options EncoderWebRTCRTPPacketDependencyDescriptorOptions) (int, bool, error) {
+	flags, ok := NextRTPPacketDependencyDescriptorFlags(packetizer)
+	if !ok {
+		return 0, false, nil
+	}
+	size, err := internalencoder.WebRTCDependencyDescriptorSizeWithOptions(structure, info, encoderWebRTCRTPPacketDependencyDescriptorOptions(flags, options))
+	return size, true, err
+}
+
 func TestPublicRTPPacketDependencyDescriptorActiveDecodeTargets(t *testing.T) {
 	frame := appendTestLowOverheadOBU(nil, internalobu.TypeFrame, []byte{
 		0, 1, 2, 3, 4, 5, 6, 7,
@@ -710,9 +722,9 @@ func TestPublicRTPPacketDependencyDescriptorActiveDecodeTargets(t *testing.T) {
 		ActiveDecodeTargetsMask:                 0x03,
 	}
 
-	size, ok, err := encoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions(&packetizer, structure, info, options)
+	size, ok, err := publicRTPPacketDescriptorSize(&packetizer, structure, info, options)
 	if err != nil || !ok {
-		t.Fatalf("EncoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions first size=%d ok=%v err=%v", size, ok, err)
+		t.Fatalf("publicRTPPacketDescriptorSize first size=%d ok=%v err=%v", size, ok, err)
 	}
 	var descriptorBuf [256]byte
 	descriptor, ok, err := appendEncoderWebRTCRTPPacketDependencyDescriptorWithOptions(descriptorBuf[:0], &packetizer, structure, info, options)
@@ -741,9 +753,9 @@ func TestPublicRTPPacketDependencyDescriptorActiveDecodeTargets(t *testing.T) {
 		t.Fatalf("NextPacket first ok=%v err=%v", ok, err)
 	}
 
-	secondSize, ok, err := encoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions(&packetizer, structure, info, options)
+	secondSize, ok, err := publicRTPPacketDescriptorSize(&packetizer, structure, info, options)
 	if err != nil || !ok {
-		t.Fatalf("EncoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions second size=%d ok=%v err=%v", secondSize, ok, err)
+		t.Fatalf("publicRTPPacketDescriptorSize second size=%d ok=%v err=%v", secondSize, ok, err)
 	}
 	secondDescriptor, ok, err := appendEncoderWebRTCRTPPacketDependencyDescriptorWithOptions(descriptorBuf[:0], &packetizer, structure, info, options)
 	if err != nil || !ok || len(secondDescriptor) != secondSize {
@@ -768,7 +780,7 @@ func TestPublicRTPPacketDependencyDescriptorActiveDecodeTargets(t *testing.T) {
 		t.Fatalf("NewRTPPacketizer invalid: %v", err)
 	}
 	options.ActiveDecodeTargetsMask = 1 << structure.NumDecodeTargets
-	if _, ok, err := encoderWebRTCRTPPacketDependencyDescriptorSizeWithOptions(&packetizer, structure, info, options); !ok || !errors.Is(err, ErrEncoderInvalidFrame) {
+	if _, ok, err := publicRTPPacketDescriptorSize(&packetizer, structure, info, options); !ok || !errors.Is(err, ErrEncoderInvalidFrame) {
 		t.Fatalf("invalid active mask packet size ok=%v err=%v want %v", ok, err, ErrEncoderInvalidFrame)
 	}
 	if _, ok, err := appendEncoderWebRTCRTPPacketDependencyDescriptorWithOptions(descriptorBuf[:0], &packetizer, structure, info, options); !ok || !errors.Is(err, ErrEncoderInvalidFrame) {

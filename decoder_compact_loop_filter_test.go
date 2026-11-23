@@ -159,9 +159,6 @@ func TestDecoderCompactLoopFilterOwnerRejectsCopiesAndHooks(t *testing.T) {
 		t.Fatal("copied side-data handle inherited compact ownership")
 	}
 	runner.SideData = side
-	if runner.ownsCompactLoopFilter(sequence, &decoderFrameWorkReusableCallerPostFilterRunner{}, event) {
-		t.Fatal("custom/caller postfilter inherited compact ownership")
-	}
 	customPost := compactLoopFilterTestPostFilter{}
 	if runner.ownsCompactLoopFilter(sequence, customPost, event) {
 		t.Fatal("custom postfilter hook inherited compact ownership")

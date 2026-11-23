@@ -1980,7 +1980,7 @@ func TestHighLevelRTPDecodersWebRTCSVCCatalogue(t *testing.T) {
 	limits := RTPPayloadSizeLimits{MaxPayloadLen: 24}
 	covered := 0
 	sharedCovered := 0
-	for step, mode := range encoderWebRTCSVCScalabilityModes() {
+	for step, mode := range internalencoder.AppendWebRTCSVCScalabilityModes(nil) {
 		covered++
 		t.Run(mode.String(), func(t *testing.T) {
 			width, height := publicRTCMatrixGeometry(t, mode)

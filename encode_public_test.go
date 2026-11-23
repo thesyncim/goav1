@@ -11,12 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 	internalencoder "github.com/thesyncim/goav1/internal/av1/encoder"
 	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
 	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
-	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
-	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 
 	"github.com/thesyncim/goav1/internal/av1/obu"
 )
@@ -99,7 +96,7 @@ func TestPublicEncoderScalabilityModeCatalogueIncludesExplicitModes(t *testing.T
 		"S2T1", "S2T1h", "S2T2", "S2T2h", "S2T3", "S2T3h",
 		"S3T1", "S3T1h", "S3T2", "S3T2h", "S3T3", "S3T3h",
 	}
-	modes := encoderScalabilityModes()
+	modes := internalencoder.AppendScalabilityModes(nil)
 	if len(modes) != len(want) {
 		t.Fatalf("EncoderScalabilityModes len=%d want %d", len(modes), len(want))
 	}
@@ -126,7 +123,7 @@ func TestPublicEncoderScalabilityModeCatalogueIncludesExplicitModes(t *testing.T
 		pinnedLibWebRTCOnly[mode] = true
 	}
 	webRTCSVC := make(map[EncoderScalabilityMode]bool)
-	for _, mode := range encoderWebRTCSVCScalabilityModes() {
+	for _, mode := range internalencoder.AppendWebRTCSVCScalabilityModes(nil) {
 		webRTCSVC[mode] = true
 	}
 	for _, mode := range []EncoderScalabilityMode{
@@ -143,7 +140,7 @@ func TestPublicEncoderScalabilityModeCatalogueIncludesExplicitModes(t *testing.T
 		if !webRTCSVC[mode] {
 			t.Fatalf("EncoderWebRTCSVCScalabilityModes omitted W3C mode %s", mode)
 		}
-		if err := validateEncoderWebRTCActiveScalabilityModes(mode); err != nil {
+		if err := internalencoder.ValidateWebRTCActiveScalabilityModes([]EncoderScalabilityMode{mode}); err != nil {
 			t.Fatalf("ValidateEncoderWebRTCActiveScalabilityModes(%s): %v", mode, err)
 		}
 	}
@@ -161,7 +158,7 @@ func TestPublicEncoderWebRTCSVCScalabilityModeCatalogueIncludesCompleteW3CList(t
 		"S2T1", "S2T1h", "S2T2", "S2T2h", "S2T3", "S2T3h",
 		"S3T1", "S3T1h", "S3T2", "S3T2h", "S3T3", "S3T3h",
 	}
-	modes := encoderWebRTCSVCScalabilityModes()
+	modes := internalencoder.AppendWebRTCSVCScalabilityModes(nil)
 	if len(modes) != len(want) {
 		t.Fatalf("EncoderWebRTCSVCScalabilityModes len=%d want %d", len(modes), len(want))
 	}
@@ -188,7 +185,7 @@ func TestPublicEncoderWebRTCSVCScalabilityModeCatalogueIncludesCompleteW3CList(t
 		seen[mode] = true
 	}
 	modes[0] = internalencoder.ScalabilityModeS3T3h
-	if got := encoderWebRTCSVCScalabilityModes()[0]; got != EncoderScalabilityModeL1T1 {
+	if got := internalencoder.AppendWebRTCSVCScalabilityModes(nil)[0]; got != EncoderScalabilityModeL1T1 {
 		t.Fatalf("EncoderWebRTCSVCScalabilityModes aliased caller mutation: %s", got)
 	}
 }
@@ -3321,9 +3318,9 @@ func TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders(t
 						t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 					}
 					defer rtc.Close()
-					controller, err := newWebRTCEncoder(initial, internalencoder.WebRTCEncoderState{})
+					controller, err := newPublicRTCController(initial)
 					if err != nil {
-						t.Fatalf("NewWebRTCEncoder(%s): %v", mode, err)
+						t.Fatalf("controller(%s): %v", mode, err)
 					}
 
 					var descriptorReceiver RTPDependencyDescriptorState
@@ -3362,7 +3359,7 @@ func TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders(t
 						if err != nil {
 							t.Fatalf("%s step %d EncodeHighBitDepthPicture: %v", mode, step, err)
 						}
-						frameNum := encoderWebRTCPictureTemporalUnitFrameNum(unit)
+						frameNum := publicRTCUnitFrameNum(unit)
 						if picture.FrameNum != int(frameNum) || picture.Keyframe != unit.Key {
 							t.Fatalf("%s step %d picture frames=%d key=%v want frames=%d key=%v",
 								mode, step, picture.FrameNum, picture.Keyframe, frameNum, unit.Key)
@@ -3372,7 +3369,7 @@ func TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders(t
 						assertPublicRTCPictureDescriptors(t, &descriptorReceiver, current, picture, unit.Key, &nextFrameID)
 						for frameIndex := 0; frameIndex < picture.FrameNum; frameIndex++ {
 							frame := picture.Frames[frameIndex]
-							control, _, err := encoderWebRTCPictureTemporalUnitFrameControl(unit, controllerState, uint8(frameIndex))
+							control, _, err := publicRTCUnitFrameControl(unit, controllerState, uint8(frameIndex))
 							if err != nil {
 								t.Fatalf("%s step %d frame %d controller frame control: %v", mode, step, frameIndex, err)
 							}
@@ -6397,7 +6394,7 @@ func TestPublicRTCEncoderSharedSVCSettingsReferenceDecoders(t *testing.T) {
 	assertPublicRTCConfigControls(t, enc.Config(), cbrChange)
 	appendPicture("L2T3_KEY_SHIFT CBR camera delta", 7, false, false, false)
 
-	wantYUV, decodedCount := decodePublicRTCLayerPoolLowOverheadRawYUV(t, lowOverheads...)
+	wantYUV, decodedCount := decodePublicLayeredLowOverheadRawYUV(t, lowOverheads...)
 	if decodedCount != len(lowOverheads) {
 		t.Fatalf("shared-SVC decoded frames=%d want %d", decodedCount, len(lowOverheads))
 	}
@@ -6522,7 +6519,7 @@ func TestPublicRTCEncoderScalabilityModeCatalogueReferenceDecoders(t *testing.T)
 
 			normalized := enc.Config()
 			if publicRTCSharedReferenceSlotMode(mode) {
-				wantYUV, decodedCount := decodePublicRTCLayerPoolLowOverheadRawYUV(t, lowOverheads...)
+				wantYUV, decodedCount := decodePublicLayeredLowOverheadRawYUV(t, lowOverheads...)
 				if decodedCount != len(lowOverheads) {
 					t.Fatalf("%s shared-SVC decoded frames=%d want %d", mode, decodedCount, len(lowOverheads))
 				}
@@ -6625,7 +6622,7 @@ func TestPublicRTCEncoderSetConfigScalabilityTransitionReferenceDecoders(t *test
 					if len(phase.lowOverheads) == 0 || len(phase.orderedFrames) == 0 {
 						t.Fatalf("%s has no shared-reference frames", label)
 					}
-					wantYUV, decodedCount := decodePublicRTCLayerPoolLowOverheadRawYUV(t, phase.lowOverheads...)
+					wantYUV, decodedCount := decodePublicLayeredLowOverheadRawYUV(t, phase.lowOverheads...)
 					if decodedCount != len(phase.lowOverheads) {
 						t.Fatalf("%s shared-SVC decoded frames=%d want %d", label, decodedCount, len(phase.lowOverheads))
 					}
@@ -6823,7 +6820,7 @@ func TestPublicRTCEncoderPairwiseControlRTPReferenceDecoders(t *testing.T) {
 			normalized := enc.Config()
 			assertPublicRTCLayerStreamsDecode(t, normalized, layerTUs, orderedTUs)
 			if publicRTCSharedReferenceSlotMode(normalized.Scalability) {
-				wantYUV, decodedCount := decodePublicRTCLayerPoolLowOverheadRawYUV(t, orderedTUs...)
+				wantYUV, decodedCount := decodePublicLayeredLowOverheadRawYUV(t, orderedTUs...)
 				if decodedCount != len(orderedTUs) {
 					t.Fatalf("%s shared-reference decoded frames=%d want %d", scenario.name, decodedCount, len(orderedTUs))
 				}
@@ -7209,9 +7206,9 @@ func TestPublicRTCEncoderControllerSettingsReferenceDecoders(t *testing.T) {
 				t.Fatalf("NewRTCEncoderWithConfig(%s): %v", mode, err)
 			}
 			defer rtc.Close()
-			controller, err := newWebRTCEncoder(initial, internalencoder.WebRTCEncoderState{})
+			controller, err := newPublicRTCController(initial)
 			if err != nil {
-				t.Fatalf("NewWebRTCEncoder(%s): %v", mode, err)
+				t.Fatalf("controller(%s): %v", mode, err)
 			}
 
 			var descriptorReceiver RTPDependencyDescriptorState
@@ -7245,7 +7242,7 @@ func TestPublicRTCEncoderControllerSettingsReferenceDecoders(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s step %d EncodePicture: %v", mode, step, err)
 				}
-				frameNum := encoderWebRTCPictureTemporalUnitFrameNum(unit)
+				frameNum := publicRTCUnitFrameNum(unit)
 				if picture.FrameNum != int(frameNum) || picture.Keyframe != unit.Key {
 					t.Fatalf("%s step %d picture frames=%d key=%v want frames=%d key=%v",
 						mode, step, picture.FrameNum, picture.Keyframe, frameNum, unit.Key)
@@ -7254,7 +7251,7 @@ func TestPublicRTCEncoderControllerSettingsReferenceDecoders(t *testing.T) {
 				assertPublicRTCPictureDescriptors(t, &descriptorReceiver, current, picture, unit.Key, &nextFrameID)
 				for frameIndex := 0; frameIndex < picture.FrameNum; frameIndex++ {
 					frame := picture.Frames[frameIndex]
-					control, _, err := encoderWebRTCPictureTemporalUnitFrameControl(unit, controllerState, uint8(frameIndex))
+					control, _, err := publicRTCUnitFrameControl(unit, controllerState, uint8(frameIndex))
 					if err != nil {
 						t.Fatalf("%s step %d frame %d controller frame control: %v", mode, step, frameIndex, err)
 					}
@@ -7747,7 +7744,7 @@ func assertPublicRTCRTPReferenceDecoders(
 		if len(orderedTUs) == 0 {
 			t.Fatalf("%s has no shared-reference RTP-assembled frames", name)
 		}
-		wantYUV, decodedCount := decodePublicRTCLayerPoolLowOverheadRawYUV(t, orderedTUs...)
+		wantYUV, decodedCount := decodePublicLayeredLowOverheadRawYUV(t, orderedTUs...)
 		if decodedCount != len(orderedTUs) {
 			t.Fatalf("%s shared-reference decoded frames=%d want %d", name, decodedCount, len(orderedTUs))
 		}
@@ -7787,7 +7784,7 @@ func assertPublicRTCRTPMonochromeReferenceDecoders(
 		if len(orderedTUs) == 0 {
 			t.Fatalf("%s has no shared-reference RTP-assembled frames", name)
 		}
-		wantY, spans := decodePublicRTCLayerPoolLowOverheadMonochromeRawY(t, orderedTUs...)
+		wantY, spans := decodePublicLayeredLowOverheadMonochromeRawY(t, orderedTUs...)
 		frames := make([]publicIVFFrame, 0, len(orderedTUs))
 		for i, payload := range orderedTUs {
 			frames = append(frames, publicIVFFrame{timestamp: uint64(i), payload: append([]byte(nil), payload...)})
@@ -8242,8 +8239,8 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 				}
 			}
 
-			want := decodePublicRTCLayerPoolLowOverheadDigests(t, lowOverheads...)
-			got := decodePublicRTCLayerPoolRTPPayloadDigestsWithLabels(t, rtpPayloadLabels, rtpPayloads...)
+			want := decodePublicLayeredDecoderLowOverheadDigests(t, lowOverheads...)
+			got := decodePublicLayeredRTPPayloadDigestsWithLabels(t, rtpPayloadLabels, rtpPayloads...)
 			gotLayeredLow := decodePublicLayeredDecoderLowOverheadDigests(t, lowOverheads...)
 			gotLayeredQueued := decodePublicLayeredDecoderRTPPayloadDigests(t, rtpPayloads...)
 			gotLayeredLive := decodePublicLayeredLiveDecoderRTPPayloadDigests(t, rtpPayloads, rtpPayloads...)
@@ -8922,7 +8919,7 @@ func TestPublicLayeredDecoderRTPPayloadAfterLossSharedSVC(t *testing.T) {
 	}
 
 	wantPayloads := append(append([][]byte(nil), key0LowOverheads...), key2LowOverheads...)
-	want := decodePublicRTCLayerPoolLowOverheadDigests(t, wantPayloads...)
+	want := decodePublicLayeredDecoderLowOverheadDigests(t, wantPayloads...)
 	if len(got) != len(want) {
 		t.Fatalf("decoded frames got=%d want=%d", len(got), len(want))
 	}
@@ -9089,7 +9086,7 @@ func TestPublicLayeredDecoderRTPPacketRejectsMalformedWithoutMutating(t *testing
 
 	wantPayloads := append(append([][]byte(nil), key0LowOverheads...), deltaLowOverheads...)
 	wantPayloads = append(wantPayloads, key2LowOverheads...)
-	want := decodePublicRTCLayerPoolLowOverheadDigests(t, wantPayloads...)
+	want := decodePublicLayeredDecoderLowOverheadDigests(t, wantPayloads...)
 	if len(got) != len(want) {
 		t.Fatalf("layered RTP packet decoder produced %d frames after malformed packets, low-overhead decoded %d", len(got), len(want))
 	}
@@ -11076,163 +11073,92 @@ func publicRTPPacketSequence(t testing.TB, packet []byte) uint16 {
 
 func assertPublicRTCSharedReferenceStreamDecodes(t *testing.T, tus [][]byte) {
 	t.Helper()
-	frames := decodePublicRTCLayerPoolLowOverheads(t, tus...)
-	if len(frames) != len(tus) {
-		t.Fatalf("shared-reference stream decoded %d frames, want %d", len(frames), len(tus))
-	}
-}
-
-func decodePublicRTCLayerPoolLowOverheads(t *testing.T, payloads ...[]byte) []*Frame {
-	t.Helper()
-
-	h := newPublicRTCLayerPoolDecodeHarness(t, len(payloads))
-	defer h.close(t)
-	events := make([]internaldecoder.Event, 16)
-
-	for payloadIndex, payload := range payloads {
-		count, err := h.stream.PushLowOverhead(payload, events)
-		if err != nil {
-			t.Fatalf("payload %d PushLowOverhead: %v", payloadIndex, err)
-		}
-		h.runEvents(t, payloadIndex, events[:count])
-	}
-	return h.outputs
-}
-
-func decodePublicRTCLayerPoolLowOverheadDigests(t *testing.T, payloads ...[]byte) [][16]byte {
-	t.Helper()
-
-	h := newPublicRTCLayerPoolDecodeHarness(t, len(payloads))
-	defer h.close(t)
-	events := make([]internaldecoder.Event, 16)
-	var out [][16]byte
-
-	for payloadIndex, payload := range payloads {
-		count, err := h.stream.PushLowOverhead(payload, events)
-		if err != nil {
-			t.Fatalf("payload %d PushLowOverhead: %v", payloadIndex, err)
-		}
-		start := len(h.outputs)
-		h.runEvents(t, payloadIndex, events[:count])
-		for _, frame := range h.outputs[start:] {
-			out = append(out, frameMD5Visible(frame))
-		}
-	}
-	return out
-}
-
-func decodePublicRTCLayerPoolLowOverheadRawYUV(t *testing.T, payloads ...[]byte) ([]byte, int) {
-	t.Helper()
-
-	h := newPublicRTCLayerPoolDecodeHarness(t, len(payloads))
-	defer h.close(t)
-	events := make([]internaldecoder.Event, 16)
-	var out []byte
 	frames := 0
-
-	for payloadIndex, payload := range payloads {
-		count, err := h.stream.PushLowOverhead(payload, events)
-		if err != nil {
-			t.Fatalf("payload %d PushLowOverhead: %v", payloadIndex, err)
-		}
-		start := len(h.outputs)
-		h.runEvents(t, payloadIndex, events[:count])
-		for _, frame := range h.outputs[start:] {
-			out = appendPublicFrameRawYUV(out, frame)
-			frames++
-		}
+	decodePublicLayeredLowOverheadFrames(t, tus, func(int, *Frame) { frames++ })
+	if frames != len(tus) {
+		t.Fatalf("shared-reference stream decoded %d frames, want %d", frames, len(tus))
 	}
-	return out, frames
 }
 
-func decodePublicRTCLayerPoolLowOverheadMonochromeRawY(t *testing.T, payloads ...[]byte) ([]byte, []publicMonochromeFrameSpan) {
+// decodePublicLayeredLowOverheadFrames decodes ordered low-overhead temporal
+// units through LayeredDecoder and hands every visible frame to visit before
+// the next decode call can recycle its surface.
+func decodePublicLayeredLowOverheadFrames(t *testing.T, payloads [][]byte, visit func(payloadIndex int, frame *Frame)) {
 	t.Helper()
-
-	h := newPublicRTCLayerPoolDecodeHarness(t, len(payloads))
-	defer h.close(t)
-	events := make([]internaldecoder.Event, 16)
-	var out []byte
-	var spans []publicMonochromeFrameSpan
-
-	for payloadIndex, payload := range payloads {
-		count, err := h.stream.PushLowOverhead(payload, events)
+	dec, err := NewLayeredDecoder(payloads)
+	if err != nil {
+		t.Fatalf("NewLayeredDecoder: %v", err)
+	}
+	defer dec.Close()
+	for payloadIndex := 0; ; payloadIndex++ {
+		frames, ok, err := dec.DecodeNext()
 		if err != nil {
-			t.Fatalf("payload %d PushLowOverhead: %v", payloadIndex, err)
+			t.Fatalf("payload %d LayeredDecoder DecodeNext: %v", payloadIndex, err)
 		}
-		start := len(h.outputs)
-		h.runEvents(t, payloadIndex, events[:count])
-		for _, frame := range h.outputs[start:] {
+		if !ok {
+			return
+		}
+		for _, frame := range frames {
 			if frame == nil {
 				t.Fatalf("payload %d decoded nil frame", payloadIndex)
 			}
-			if !frame.Format.MonoChrome || len(frame.U.Pix) != 0 || len(frame.V.Pix) != 0 {
-				t.Fatalf("payload %d decoded frame format=%+v U=%d V=%d want monochrome", payloadIndex, frame.Format, len(frame.U.Pix), len(frame.V.Pix))
-			}
-			before := len(out)
-			out = appendPublicFramePlaneRawYUV(out, frame.Y, frame.Layout.BytesPerSample)
-			yLen := len(out) - before
-			cw, ch := frame.Y.Width/2, frame.Y.Height/2
-			spans = append(spans, publicMonochromeFrameSpan{
-				yLen:        yLen,
-				expandedLen: yLen + 2*cw*ch*frame.Layout.BytesPerSample,
-			})
+			visit(payloadIndex, frame)
 		}
 	}
+}
+
+func decodePublicLayeredLowOverheadRawYUV(t *testing.T, payloads ...[]byte) ([]byte, int) {
+	t.Helper()
+	var out []byte
+	frames := 0
+	decodePublicLayeredLowOverheadFrames(t, payloads, func(_ int, frame *Frame) {
+		out = appendPublicFrameRawYUV(out, frame)
+		frames++
+	})
+	return out, frames
+}
+
+func decodePublicLayeredLowOverheadMonochromeRawY(t *testing.T, payloads ...[]byte) ([]byte, []publicMonochromeFrameSpan) {
+	t.Helper()
+	var out []byte
+	var spans []publicMonochromeFrameSpan
+	decodePublicLayeredLowOverheadFrames(t, payloads, func(payloadIndex int, frame *Frame) {
+		if !frame.Format.MonoChrome || len(frame.U.Pix) != 0 || len(frame.V.Pix) != 0 {
+			t.Fatalf("payload %d decoded frame format=%+v U=%d V=%d want monochrome", payloadIndex, frame.Format, len(frame.U.Pix), len(frame.V.Pix))
+		}
+		before := len(out)
+		out = appendPublicFramePlaneRawYUV(out, frame.Y, frame.Layout.BytesPerSample)
+		yLen := len(out) - before
+		cw, ch := frame.Y.Width/2, frame.Y.Height/2
+		spans = append(spans, publicMonochromeFrameSpan{
+			yLen:        yLen,
+			expandedLen: yLen + 2*cw*ch*frame.Layout.BytesPerSample,
+		})
+	})
 	return out, spans
 }
 
-func decodePublicRTCLayerPoolRTPPayloadDigestsWithLabels(t *testing.T, labels []string, payloads ...[]byte) [][16]byte {
+func decodePublicLayeredRTPPayloadDigestsWithLabels(t *testing.T, labels []string, payloads ...[]byte) [][16]byte {
 	t.Helper()
-
-	h := newPublicRTCLayerPoolDecodeHarness(t, len(payloads))
-	defer h.close(t)
-	var (
-		rtpUsed   int
-		rtpBuffer []byte
-		rtpSpans  []RTPObuSpan
-		events    []internaldecoder.Event
-		out       [][16]byte
-	)
-
-	for payloadIndex, payload := range payloads {
-		plannedUsed, eventCount, err := h.stream.PushRTPPayloadSize(rtpUsed, payload)
+	dec, err := NewLayeredDecoderFromRTPPayloads(payloads)
+	if err != nil {
+		t.Fatalf("NewLayeredDecoderFromRTPPayloads: %v", err)
+	}
+	defer dec.Close()
+	var out [][16]byte
+	for payloadIndex := 0; ; payloadIndex++ {
+		frames, ok, err := dec.DecodeNext()
 		if err != nil {
-			t.Fatalf("payload %d PushRTPPayloadSize: %v", payloadIndex, err)
+			t.Fatalf("payload %d %s LayeredDecoder RTP DecodeNext %s: %v",
+				payloadIndex, publicRTCPayloadLabel(labels, payloadIndex), publicRTCRTPPayloadSummary(payloads[payloadIndex]), err)
 		}
-		if cap(rtpBuffer) < plannedUsed {
-			next := make([]byte, plannedUsed)
-			copy(next, rtpBuffer[:rtpUsed])
-			rtpBuffer = next
+		if !ok {
+			return out
 		}
-		rtpBuffer = rtpBuffer[:plannedUsed]
-		if cap(rtpSpans) < eventCount {
-			rtpSpans = make([]RTPObuSpan, eventCount)
-		}
-		rtpSpans = rtpSpans[:eventCount]
-		if cap(events) < eventCount {
-			events = make([]internaldecoder.Event, eventCount)
-		}
-		events = events[:eventCount]
-
-		used, count, err := h.stream.PushRTPPayload(rtpBuffer, rtpUsed, rtpSpans, events, payload)
-		if err != nil {
-			t.Fatalf("payload %d %s PushRTPPayload used=%d planned=%d events=%d/%d inFragment=%v %s: %v",
-				payloadIndex, publicRTCPayloadLabel(labels, payloadIndex), used, plannedUsed, count, eventCount, h.stream.InRTPFragment(), publicRTCRTPPayloadSummary(payload), err)
-		}
-		if used != plannedUsed || count > eventCount {
-			t.Fatalf("payload %d RTP used/count=%d/%d planned=%d/%d", payloadIndex, used, count, plannedUsed, eventCount)
-		}
-		rtpUsed = used
-		start := len(h.outputs)
-		h.runEvents(t, payloadIndex, events[:count])
-		for _, frame := range h.outputs[start:] {
+		for _, frame := range frames {
 			out = append(out, frameMD5Visible(frame))
 		}
-		if !h.stream.InRTPFragment() {
-			rtpUsed = 0
-		}
 	}
-	return out
 }
 
 func decodePublicLayeredDecoderLowOverheadDigests(t *testing.T, payloads ...[]byte) [][16]byte {
@@ -11540,215 +11466,83 @@ func publicRTCRTPPayloadSummary(payload []byte) string {
 	}
 }
 
-type publicRTCLayerPoolDecodeHarness struct {
-	workers    int
-	workerPool *internalthreading.Pool
-
-	layerPool internalframe.LayerPool
-	adapter   internaldecoder.FrameLayerPool
-
-	stream        internaldecoder.Stream
-	refs          internaldecoder.SurfaceReferences
-	states        [EncoderWebRTCMaxSpatialLayers]internaldecoder.FrameWorkState
-	frameContexts internaldecoder.SharedFrameContextStore
-	stats         internalthreading.FrameWorkTileResidualStats
-	postFilter    decoderFrameWorkReusableSupportedPostFilterRunner
-	sequence      SequenceHeader
-	haveSequence  bool
-
-	referenceSurfaces []int
-	referenceFrames   []*Frame
-	releases          []int
-	planSpans         []internalparser.TileSpan
-	planJobs          []internaltile.Job
-	planBatches       []internalthreading.Batch
-	outputs           []*Frame
+// publicRTCController replays the WebRTC temporal-unit schedule from the
+// internal encoder state machine so tests can check every RTCEncoder picture
+// against an independently stepped schedule. A config change that alters the
+// sequence header or dependency structure schedules the next key picture.
+type publicRTCController struct {
+	config EncoderConfig
+	state  internalencoder.WebRTCEncoderState
 }
 
-func newPublicRTCLayerPoolDecodeHarness(t *testing.T, outputCap int) *publicRTCLayerPoolDecodeHarness {
-	t.Helper()
-	const workers = 1
-	workerPool, err := internalthreading.NewPool(workers)
+func newPublicRTCController(config EncoderConfig) (*publicRTCController, error) {
+	c := &publicRTCController{}
+	if err := c.SetConfig(config); err != nil {
+		return nil, err
+	}
+	c.state = internalencoder.WebRTCEncoderState{}
+	return c, nil
+}
+
+func (c *publicRTCController) Config() EncoderConfig { return c.config }
+
+func (c *publicRTCController) State() internalencoder.WebRTCEncoderState { return c.state }
+
+func (c *publicRTCController) SetConfig(config EncoderConfig) error {
+	normalized, err := internalencoder.SetWebRTCSVCConfig(config, config.TemporalLayerCount, config.SpatialLayerCount)
 	if err != nil {
-		t.Fatalf("NewTileWorkerPool: %v", err)
+		return err
 	}
-	layerPool := newPublicDecoderLayerPool(t, EncoderWebRTCMaxSpatialLayers+1, internalparser.RefFrames+1)
-	h := &publicRTCLayerPoolDecodeHarness{
-		workers:           workers,
-		workerPool:        workerPool,
-		layerPool:         layerPool,
-		referenceSurfaces: make([]int, internalparser.InterRefsPerFrame),
-		referenceFrames:   make([]*Frame, internalparser.InterRefsPerFrame),
-		releases:          make([]int, internalparser.RefFrames),
-		planSpans:         make([]internalparser.TileSpan, internalparser.MaxTiles),
-		planJobs:          make([]internaltile.Job, internalparser.MaxTiles),
-		planBatches:       make([]internalthreading.Batch, internalparser.MaxTiles),
-		outputs:           make([]*Frame, 0, outputCap),
+	seq, err := internalencoder.SequenceHeaderForConfig(normalized)
+	if err != nil {
+		return err
 	}
-	h.adapter = internaldecoder.NewFrameLayerPool(&h.layerPool)
-	return h
+	structure, err := internalencoder.WebRTCFrameDependencyStructureForConfig(normalized)
+	if err != nil {
+		return err
+	}
+	prevSeq, prevSeqErr := internalencoder.SequenceHeaderForConfig(c.config)
+	prevStructure, prevStructureErr := internalencoder.WebRTCFrameDependencyStructureForConfig(c.config)
+	if prevSeqErr != nil || prevSeq != seq || prevStructureErr != nil || prevStructure != structure {
+		c.state = internalencoder.WebRTCEncoderState{NextOrderHint: c.state.NextOrderHint, NextFrameID: c.state.NextFrameID}
+	}
+	c.config = normalized
+	return nil
 }
 
-func (h *publicRTCLayerPoolDecodeHarness) close(t *testing.T) {
-	t.Helper()
-	h.workerPool.Close()
+func (c *publicRTCController) NextTemporalUnit(forceKeyFrame bool) (internalencoder.WebRTCPictureTemporalUnit, error) {
+	unit, next, err := internalencoder.WebRTCNextTemporalUnitForState(c.config, c.state, forceKeyFrame)
+	if err != nil {
+		return internalencoder.WebRTCPictureTemporalUnit{}, err
+	}
+	c.state = next
+	return unit, nil
 }
 
-func (h *publicRTCLayerPoolDecodeHarness) stateForEvent(t *testing.T, payloadIndex, eventIndex int, event internaldecoder.Event) *internaldecoder.FrameWorkState {
-	t.Helper()
-	if event.SpatialID >= EncoderWebRTCMaxSpatialLayers {
-		t.Fatalf("payload %d event %d spatial id %d exceeds WebRTC maximum %d", payloadIndex, eventIndex, event.SpatialID, EncoderWebRTCMaxSpatialLayers)
+func publicRTCUnitFrameNum(unit internalencoder.WebRTCPictureTemporalUnit) uint8 {
+	if unit.Key {
+		return unit.KeyUnit.FrameNum
 	}
-	return &h.states[event.SpatialID]
+	if unit.Delta {
+		return unit.DeltaUnit.FrameNum
+	}
+	return 0
 }
 
-func (h *publicRTCLayerPoolDecodeHarness) runEvents(t *testing.T, payloadIndex int, events []internaldecoder.Event) {
-	t.Helper()
-	for eventIndex, event := range events {
-		if event.Kind == internaldecoder.EventSequenceHeader {
-			h.sequence = event.SequenceHeader
-			h.haveSequence = true
-		} else if !h.haveSequence {
-			if seq, ok := h.stream.SequenceHeader(); ok {
-				h.sequence = seq
-				h.haveSequence = true
-			}
-		}
-
-		framePool := publicRTCLayerDecodeFramePool(t, &h.layerPool, h.sequence, event)
-		size, err := decoderFrameWorkResidualEventScratchLen(h.sequence, &event, h.workers, h.planSpans, h.planJobs, h.planBatches)
-		if err != nil {
-			t.Fatalf("payload %d event %d scratch len: %v", payloadIndex, eventIndex, err)
-		}
-		scratch := publicRTCLayerDecodeEventScratch(size)
-
-		var batchRunner decoderFrameWorkBatchResidualRunner
-		var batchRunnerPtr *decoderFrameWorkBatchResidualRunner
-		if size.Runner.Workers != 0 {
-			batchRunner, err = bindDecoderFrameWorkBatchResidualRunner(size.Runner, scratch.Runner)
-			if err != nil {
-				t.Fatalf("payload %d event %d bind residual runner: %v", payloadIndex, eventIndex, err)
-			}
-			batchRunnerPtr = &batchRunner
-		}
-
-		var sideData decoderFrameWorkSideData
-		var sideDataPtr *decoderFrameWorkSideData
-		if publicRTCLayerDecodeEventNeedsSideData(event) {
-			sideData, err = bindDecoderFrameWorkSideData(h.sequence, event.FrameSize, event.CDEF, event.Restoration, scratch.SideData)
-			if err != nil {
-				t.Fatalf("payload %d event %d bind side data: %v", payloadIndex, eventIndex, err)
-			}
-			sideDataPtr = &sideData
-		}
-
-		globalSurface := func(local int) int {
-			if framePool == nil {
-				return -1
-			}
-			return internaldecoder.LayerPoolGlobalSurfaceID(&h.layerPool, framePool, local)
-		}
-		state := h.stateForEvent(t, payloadIndex, eventIndex, event)
-		result, err := runDecoderFrameWorkEventWithResidualRunner(decoderFrameWorkResidualEventRequest{
-			State:             state,
-			Refs:              &h.refs,
-			FramePool:         framePool,
-			Sequence:          h.sequence,
-			Event:             event,
-			Align:             64,
-			ReferenceSurfaces: h.referenceSurfaces,
-			ReferenceFrames:   h.referenceFrames,
-			Workers:           h.workers,
-			Spans:             scratch.Spans,
-			Jobs:              scratch.Jobs,
-			Batches:           scratch.Batches,
-			Releases:          h.releases,
-			WorkerPool:        h.workerPool,
-			Runner:            batchRunnerPtr,
-			SideData:          sideDataPtr,
-			PostRunner:        &h.postFilter,
-			Stats:             &h.stats,
-			External: decoderFrameWorkExternalReferenceRuntime{
-				Provider:      h.adapter,
-				GlobalSurface: globalSurface,
-				Releaser:      h.adapter,
-				FrameContexts: &h.frameContexts,
-			},
-		})
-		if err != nil {
-			t.Fatalf("payload %d event %d run kind=%v type=%v newSeq=%v T%d S%d frameType=%v refresh=%#x surfaceRefs=%+v framePoolNil=%v stateSurface=%d frameSize=%+v: %v",
-				payloadIndex, eventIndex, event.Kind, event.Type, event.NewCodedVideoSequence, event.TemporalID, event.SpatialID,
-				event.FrameHeader.FrameType, event.FrameSize.RefreshFrameFlags, h.refs, framePool == nil, state.Surface, event.FrameSize, err)
-		}
-		h.assertReferencedSurfacesResolvable(t, payloadIndex, eventIndex, event)
-		if internaldecoder.EventOutputsFrame(&event) {
-			if result.Output == nil {
-				t.Fatalf("payload %d event %d output frame is nil", payloadIndex, eventIndex)
-			}
-			h.outputs = append(h.outputs, result.Output)
-		}
+func publicRTCUnitFrameControl(unit internalencoder.WebRTCPictureTemporalUnit, state internalencoder.WebRTCEncoderState, frameIndex uint8) (internalencoder.WebRTCFrameControl, internalencoder.WebRTCFrameDependencyStructure, error) {
+	if unit.Key == unit.Delta {
+		return internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
 	}
-}
-
-func (h *publicRTCLayerPoolDecodeHarness) assertReferencedSurfacesResolvable(t *testing.T, payloadIndex, eventIndex int, event internaldecoder.Event) {
-	t.Helper()
-	for slot := 0; slot < internalparser.RefFrames; slot++ {
-		surface, ok := h.refs.ReferenceSlot(slot)
-		if !ok {
-			continue
+	if unit.Key {
+		if frameIndex >= unit.KeyUnit.Control.FrameNum {
+			return internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
 		}
-		if _, err := h.adapter.FrameSurface(surface); err != nil {
-			t.Fatalf("payload %d event %d kind=%v T%d S%d left ref slot %d at unresolved surface %d: %v", payloadIndex, eventIndex, event.Kind, event.TemporalID, event.SpatialID, slot, surface, err)
-		}
+		return unit.KeyUnit.Control.Frames[frameIndex], unit.KeyUnit.Control.DependencyStructure, nil
 	}
-}
-
-func publicRTCLayerDecodeFramePool(t *testing.T, pool *internalframe.LayerPool, sequence SequenceHeader, event internaldecoder.Event) *internalframe.Pool {
-	t.Helper()
-	switch event.Kind {
-	case internaldecoder.EventFrameHeader, internaldecoder.EventFrame, internaldecoder.EventTileGroup:
-		format, err := frameCodedFormatFromHeaders(sequence, event.FrameSize, 64)
-		if err != nil {
-			t.Fatalf("FrameCodedFormatFromHeaders: %v", err)
-		}
-		framePool, err := pool.SubPool(format)
-		if err != nil {
-			t.Fatalf("layer SubPool: %v", err)
-		}
-		return framePool
-	default:
-		return nil
+	if frameIndex >= unit.DeltaUnit.Control.FrameNum || !state.DependencyStructureState.Valid {
+		return internalencoder.WebRTCFrameControl{}, internalencoder.WebRTCFrameDependencyStructure{}, ErrEncoderInvalidFrame
 	}
-}
-
-func publicRTCLayerDecodeEventNeedsSideData(event internaldecoder.Event) bool {
-	switch event.Kind {
-	case internaldecoder.EventFrameHeader, internaldecoder.EventFrame, internaldecoder.EventTileGroup:
-		return true
-	default:
-		return false
-	}
-}
-
-func publicRTCLayerDecodeEventScratch(size decoderFrameWorkResidualEventScratchSize) decoderFrameWorkResidualEventScratch {
-	return decoderFrameWorkResidualEventScratch{
-		Runner: decoderFrameWorkBatchResidualRunnerScratch{
-			States:                  make([]internaltile.DecodeState, size.Runner.Workers),
-			Storages:                make([]internalthreading.FrameWorkTileResidualCDFStorage, size.Runner.Workers),
-			TileScratch:             make([]internalthreading.FrameWorkTileResidualScratch, size.Runner.Workers),
-			RestorationRequests:     make([]internalthreading.FrameWorkTileRestorationRequest, size.Runner.RestorationRequests),
-			PredictionScratch:       make([]internalthreading.FrameWorkPredictionScratch, size.Runner.Workers),
-			InterPredictionScratch:  make([]internalthreading.FrameWorkInterPredictionScratch, size.Runner.Workers),
-			Stats:                   make([]internalthreading.FrameWorkTileResidualStats, size.Runner.Workers),
-			Int32Scratch:            make([]int32, size.Runner.Int32Scratch),
-			ResidualScratch:         make([]int16, size.Runner.ResidualScratch),
-			LoopContextAboveScratch: make([]internaltile.BlockLoopRootAboveContext, size.Runner.LoopContextAbove),
-		},
-		SideData: publicDecoderFrameWorkSideDataScratch(size.SideData),
-		Spans:    make([]internalparser.TileSpan, size.Plan.SpanCount),
-		Jobs:     make([]internaltile.Job, size.Plan.JobCount),
-		Batches:  make([]internalthreading.Batch, size.Plan.BatchCount),
-	}
+	return unit.DeltaUnit.Control.Frames[frameIndex], state.DependencyStructureState.Structure, nil
 }
 
 func rtpPayloadHasLayerOBU(t *testing.T, data []byte, temporalID uint8, spatialID uint8) bool {
