@@ -13,7 +13,6 @@ func TestHotStructSizes(t *testing.T) {
 	}{
 		{name: "LevelRequest", got: unsafe.Sizeof(LevelRequest{}), max: 6},
 		{name: "FilterEdgeRequest", got: unsafe.Sizeof(FilterEdgeRequest{}), max: 12},
-		{name: "FilterBlockRequest", got: unsafe.Sizeof(FilterBlockRequest{}), max: 14},
 		{name: "filter4Params", got: unsafe.Sizeof(filter4Params{}), max: 12},
 	}
 	for _, tt := range tests {

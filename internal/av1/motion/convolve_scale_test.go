@@ -155,8 +155,8 @@ func TestConvolveScale2D8MatchesLibaomIdentity(t *testing.T) {
 		}
 		clearPlane(got)
 		clearPlane(want)
-		if err := ConvolveScale2D8(got, src, 0, 0, w, h, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable); err != nil {
-			t.Fatalf("filter %d: ConvolveScale2D8: %v", filter, err)
+		if err := ConvolveScale2D8ClampedWithScratch(got, src, 0, 0, w, h, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable, nil); err != nil {
+			t.Fatalf("filter %d: ConvolveScale2D8ClampedWithScratch: %v", filter, err)
 		}
 		// Same-size reference convolver uses subpel=0 → integer-pel only.
 		xKern, _ := interpKernel(filter, w, 0)
@@ -203,9 +203,7 @@ func TestConvolveScale2D8MatchesLibaomReference(t *testing.T) {
 					want, _ := testPlane(w, h, 1, w)
 					startX := int64(c.refX0)*ScaleSubpelScale + int64(c.subpelX)
 					startY := int64(c.refY0)*ScaleSubpelScale + int64(c.subpelY)
-					if err := ConvolveScale2D8(got, src, 0, 0, w, h,
-						startX, int64(c.xStep), startY, int64(c.yStep),
-						xTable, yTable); err != nil {
+					if err := ConvolveScale2D8ClampedWithScratch(got, src, 0, 0, w, h, startX, int64(c.xStep), startY, int64(c.yStep), xTable, yTable, nil); err != nil {
 						t.Fatalf("%s X=%d Y=%d: %v", c.name, filterX, filterY, err)
 					}
 					libaomConvolveScale2DRef(want, src, c.refX0, c.refY0, 0, 0, w, h,
@@ -262,8 +260,8 @@ func TestConvolveScale2D8ClampedMatchesLibaomReferenceAtEdge(t *testing.T) {
 	want, _ := testPlane(w, h, 1, w)
 	libaomConvolveScale2DRef(want, padded, pad+refX0, pad+refY0, 0, 0, w, h,
 		0, ScaleSubpelScale, 0, ScaleSubpelScale, xTable, yTable, round0Bits, round1Bits)
-	if err := ConvolveScale2D8Clamped(got, src, 0, 0, w, h, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable); err != nil {
-		t.Fatalf("ConvolveScale2D8Clamped: %v", err)
+	if err := ConvolveScale2D8ClampedWithScratch(got, src, 0, 0, w, h, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable, nil); err != nil {
+		t.Fatalf("ConvolveScale2D8ClampedWithScratch: %v", err)
 	}
 	comparePlanes(t, "clamped_edge", got, want, w, h, 1)
 }
@@ -293,8 +291,7 @@ func TestConvolveScale2DHighBDMatchesLibaomReference(t *testing.T) {
 				const subpelX, subpelY = 31, 47
 				startX := int64(refX0)*ScaleSubpelScale + int64(subpelX)
 				startY := int64(refY0)*ScaleSubpelScale + int64(subpelY)
-				if err := ConvolveScale2DHighBD(got, src, uint8(bd), 0, 0, w, h,
-					startX, int64(step), startY, int64(step), xTable, yTable); err != nil {
+				if err := ConvolveScale2DHighBDClampedWithScratch(got, src, uint8(bd), 0, 0, w, h, startX, int64(step), startY, int64(step), xTable, yTable, nil); err != nil {
 					t.Fatalf("step=%d: %v", step, err)
 				}
 				libaomConvolveScale2DHighBDRef(want, src, bd, refX0, refY0, 0, 0, w, h,
@@ -366,8 +363,8 @@ func TestConvolveScale2DHighBDClampedMatchesSuperResReference(t *testing.T) {
 					t.Fatalf("%s ScaledBlockOrigin: %v", tc.name, err)
 				}
 				got, _ := testPlane(tc.blockW, tc.blockH, 2, tc.blockW*2)
-				if err := ConvolveScale2DHighBDClamped(got, src, uint8(bd), 0, 0, tc.blockW, tc.blockH, startX, xStep, startY, yStep, xTable, yTable); err != nil {
-					t.Fatalf("%s ConvolveScale2DHighBDClamped: %v", tc.name, err)
+				if err := ConvolveScale2DHighBDClampedWithScratch(got, src, uint8(bd), 0, 0, tc.blockW, tc.blockH, startX, xStep, startY, yStep, xTable, yTable, nil); err != nil {
+					t.Fatalf("%s ConvolveScale2DHighBDClampedWithScratch: %v", tc.name, err)
 				}
 
 				intX := int(startX >> ScaleSubpelBits)
@@ -418,8 +415,8 @@ func TestConvolveScale2D8ClampedMatchesLibaomSVCL2T1FrameTopLeft(t *testing.T) {
 	}
 
 	got, _ := testPlane(blockW, blockH, 1, blockW)
-	if err := ConvolveScale2D8Clamped(got, src, 0, 0, blockW, blockH, startX, xStep, startY, yStep, xTable, yTable); err != nil {
-		t.Fatalf("ConvolveScale2D8Clamped: %v", err)
+	if err := ConvolveScale2D8ClampedWithScratch(got, src, 0, 0, blockW, blockH, startX, xStep, startY, yStep, xTable, yTable, nil); err != nil {
+		t.Fatalf("ConvolveScale2D8ClampedWithScratch: %v", err)
 	}
 
 	const pad = 16
@@ -482,8 +479,8 @@ func TestConvolveScale2D8ClampedMatchesLibaomSVCL2T1RightEdge(t *testing.T) {
 	}
 
 	got, _ := testPlane(blockW, blockH, 1, blockW)
-	if err := ConvolveScale2D8Clamped(got, src, 0, 0, blockW, blockH, startX, xStep, startY, yStep, xTable, yTable); err != nil {
-		t.Fatalf("ConvolveScale2D8Clamped: %v", err)
+	if err := ConvolveScale2D8ClampedWithScratch(got, src, 0, 0, blockW, blockH, startX, xStep, startY, yStep, xTable, yTable, nil); err != nil {
+		t.Fatalf("ConvolveScale2D8ClampedWithScratch: %v", err)
 	}
 
 	const pad = 24
@@ -589,8 +586,8 @@ func TestConvolveScale2D8ClampedMatchesLibaomSVCL2T1FuzzGrid(t *testing.T) {
 							t.Fatalf("yTable: %v", err)
 						}
 						got, _ := testPlane(blockW, blockH, 1, blockW)
-						if err := ConvolveScale2D8Clamped(got, src, 0, 0, blockW, blockH, startX, xStep, startY, yStep, xTable, yTable); err != nil {
-							t.Fatalf("ConvolveScale2D8Clamped: %v", err)
+						if err := ConvolveScale2D8ClampedWithScratch(got, src, 0, 0, blockW, blockH, startX, xStep, startY, yStep, xTable, yTable, nil); err != nil {
+							t.Fatalf("ConvolveScale2D8ClampedWithScratch: %v", err)
 						}
 						intX := int(startX >> ScaleSubpelBits)
 						intY := int(startY >> ScaleSubpelBits)
@@ -604,25 +601,6 @@ func TestConvolveScale2D8ClampedMatchesLibaomSVCL2T1FuzzGrid(t *testing.T) {
 				}
 			}
 		}
-	}
-}
-
-func TestConvolveScale2D8RejectsInvalidInputs(t *testing.T) {
-	src := scaledTestSourcePlane(32, 32, 1, 0)
-	dst, _ := testPlane(16, 16, 1, 16)
-	xTable, _ := SubpelKernelTableFor(InterpEightTapRegular, 16)
-	yTable, _ := SubpelKernelTableFor(InterpEightTapRegular, 16)
-	if err := ConvolveScale2D8(dst, src, 0, 0, 0, 16, 0, ScaleSubpelScale, 0, ScaleSubpelScale, xTable, yTable); err == nil {
-		t.Fatal("expected ErrInvalidMotion for width=0")
-	}
-	if err := ConvolveScale2D8(dst, src, 0, 0, 16, 16, 0, 0, 0, ScaleSubpelScale, xTable, yTable); err == nil {
-		t.Fatal("expected ErrInvalidMotion for xStep=0")
-	}
-	if err := ConvolveScale2D8(dst, src, 0, 0, 16, 16, 0, ScaleSubpelScale, 0, 0, xTable, yTable); err == nil {
-		t.Fatal("expected ErrInvalidMotion for yStep=0")
-	}
-	if err := ConvolveScale2D8(dst, src, 0, 0, 16, 16, -1, ScaleSubpelScale, 0, ScaleSubpelScale, xTable, yTable); err == nil {
-		t.Fatal("expected ErrInvalidMotion for negative startX (taps left of plane)")
 	}
 }
 
@@ -642,11 +620,11 @@ func TestConvolveScale2D8ZeroAllocation(t *testing.T) {
 	var scratch ScaledConvolveScratch
 
 	allocs := testing.AllocsPerRun(50, func() {
-		if err := ConvolveScale2D8(dst, src, 0, 0, 16, 16, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable); err != nil {
-			t.Fatalf("ConvolveScale2D8: %v", err)
+		if err := ConvolveScale2D8ClampedWithScratch(dst, src, 0, 0, 16, 16, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable, nil); err != nil {
+			t.Fatalf("ConvolveScale2D8ClampedWithScratch(nil): %v", err)
 		}
-		if err := ConvolveScale2D8WithScratch(dst, src, 0, 0, 16, 16, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable, &scratch); err != nil {
-			t.Fatalf("ConvolveScale2D8WithScratch: %v", err)
+		if err := ConvolveScale2D8ClampedWithScratch(dst, src, 0, 0, 16, 16, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable, &scratch); err != nil {
+			t.Fatalf("ConvolveScale2D8ClampedWithScratch: %v", err)
 		}
 	})
 	if allocs != 0 {
@@ -701,7 +679,7 @@ func BenchmarkConvolveScale2D8ClampedInterior32(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := ConvolveScale2D8Clamped(dst, src, 0, 0, 32, 32, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable); err != nil {
+		if err := ConvolveScale2D8ClampedWithScratch(dst, src, 0, 0, 32, 32, startX, ScaleSubpelScale, startY, ScaleSubpelScale, xTable, yTable, nil); err != nil {
 			b.Fatal(err)
 		}
 	}

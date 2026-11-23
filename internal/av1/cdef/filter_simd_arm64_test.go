@@ -11,6 +11,10 @@ import (
 	"testing"
 )
 
+// directionSIMDBound reports whether the Go SIMD direction kernels are the
+// dispatch targets: always on arm64 (NEON is mandatory).
+func directionSIMDBound() bool { return true }
+
 func TestFilterUnitBlocksSIMDMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x11cdef))
 	input := make([]uint16, InputBufferSize)

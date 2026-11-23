@@ -6,7 +6,7 @@
 
 package dsp
 
-// init binds the pure-Go AddResidualPlaneBlock and AddRawTransformPlaneBlock
+// init binds the pure-Go residual-add and raw-transform-add
 // inner loops wherever no Go SIMD variant is selected: the default build (no
 // GOEXPERIMENT=simd), purego builds, and architectures without archsimd support.
 func init() {

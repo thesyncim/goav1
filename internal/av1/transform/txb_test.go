@@ -21,30 +21,6 @@ func TestMaxEOBMatchesLibaomBlockd(t *testing.T) {
 	}
 }
 
-func TestPaddedCoeffIndexMatchesLibaomTXBCommon(t *testing.T) {
-	tests := []struct {
-		size       Size
-		coeffIndex int
-		want       int
-	}{
-		{size: Size{Width: 8, Height: 4}, coeffIndex: 0, want: 0},
-		{size: Size{Width: 8, Height: 4}, coeffIndex: 3, want: 3},
-		{size: Size{Width: 8, Height: 4}, coeffIndex: 4, want: 8},
-		{size: Size{Width: 4, Height: 8}, coeffIndex: 8, want: 12},
-		{size: Size{Width: 32, Height: 16}, coeffIndex: 16, want: 20},
-		{size: Size{Width: 64, Height: 64}, coeffIndex: 1023, want: 1147},
-	}
-	for _, tt := range tests {
-		got, err := PaddedCoeffIndex(tt.size, tt.coeffIndex)
-		if err != nil {
-			t.Fatalf("PaddedCoeffIndex(%+v,%d): %v", tt.size, tt.coeffIndex, err)
-		}
-		if got != tt.want {
-			t.Fatalf("PaddedCoeffIndex(%+v,%d)=%d want %d", tt.size, tt.coeffIndex, got, tt.want)
-		}
-	}
-}
-
 func TestLowerLevelsCtxEOBMatchesLibaomTXBCommon(t *testing.T) {
 	tests := []struct {
 		size      Size
@@ -76,12 +52,6 @@ func TestTXBHelpersRejectInvalidInputs(t *testing.T) {
 	if _, err := MaxEOB(Size{Width: 4, Height: 12}); !errors.Is(err, ErrInvalidTransform) {
 		t.Fatalf("invalid MaxEOB err=%v want %v", err, ErrInvalidTransform)
 	}
-	if _, err := PaddedCoeffIndex(Size{Width: 4, Height: 4}, -1); !errors.Is(err, ErrInvalidTransform) {
-		t.Fatalf("negative padded index err=%v want %v", err, ErrInvalidTransform)
-	}
-	if _, err := PaddedCoeffIndex(Size{Width: 4, Height: 4}, 16); !errors.Is(err, ErrInvalidTransform) {
-		t.Fatalf("large padded index err=%v want %v", err, ErrInvalidTransform)
-	}
 	if _, err := LowerLevelsCtxEOB(Size{Width: 4, Height: 4}, 16); !errors.Is(err, ErrInvalidTransform) {
 		t.Fatalf("large eob ctx err=%v want %v", err, ErrInvalidTransform)
 	}
@@ -90,9 +60,6 @@ func TestTXBHelpersRejectInvalidInputs(t *testing.T) {
 func TestTXBHelpersAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
 		if _, err := MaxEOB(Size{Width: 64, Height: 64}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := PaddedCoeffIndex(Size{Width: 64, Height: 64}, 1023); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := LowerLevelsCtxEOB(Size{Width: 64, Height: 64}, 257); err != nil {
@@ -116,13 +83,6 @@ func FuzzTXBHelpers(f *testing.F) {
 			t.Fatalf("MaxEOB(%+v): %v", size, err)
 		}
 		index := int(rawIndex) % maxEOB
-		padded, err := PaddedCoeffIndex(size, index)
-		if err != nil {
-			t.Fatalf("PaddedCoeffIndex(%+v,%d): %v", size, index, err)
-		}
-		if padded < index {
-			t.Fatalf("padded index %d before coefficient index %d", padded, index)
-		}
 		ctx, err := LowerLevelsCtxEOB(size, index)
 		if err != nil {
 			t.Fatalf("LowerLevelsCtxEOB(%+v,%d): %v", size, index, err)

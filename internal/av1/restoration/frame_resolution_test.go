@@ -66,7 +66,7 @@ func TestRestorationScratchScalesWithUnitDimensions(t *testing.T) {
 // which is a representative SVC enhancement-layer resolution. The 1280x720
 // plane is decomposed into 64x64 processing units plus a 16-pixel-tall tail
 // row (720 = 11*64 + 16). For each tile we feed a bordered slice of the
-// caller-owned frame buffer to ApplyWienerRestoration / ApplySelfguidedRestoration
+// caller-owned frame buffer to ApplyWienerRestorationTrusted / ApplySelfguidedRestoration
 // and confirm that:
 //   - Every unit invocation succeeds for both filters.
 //   - Output samples remain inside the bit-depth range.
@@ -137,7 +137,7 @@ func TestApplyRestorationCovers1280x720Frame(t *testing.T) {
 			if needW > wienerScratch {
 				t.Fatalf("wiener scratch grew with tile: need=%d cap=%d", needW, wienerScratch)
 			}
-			if err := ApplyWienerRestoration(src, stride, tileOrigin, wienerDst, dstW, w, h, wienerInfo, bitDepth, wienerBuf[:needW]); err != nil {
+			if err := ApplyWienerRestorationTrusted(src, stride, tileOrigin, wienerDst, dstW, w, h, wienerInfo, bitDepth, wienerBuf[:needW]); err != nil {
 				t.Fatalf("ApplyWienerRestoration tile=(%d,%d) %dx%d: %v", left, top, w, h, err)
 			}
 			for i := 0; i < dstW*dstH; i++ {

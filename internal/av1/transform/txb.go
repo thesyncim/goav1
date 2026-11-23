@@ -129,24 +129,6 @@ func MaxEOB(size Size) (int, error) {
 	return int(scanSize.Width) * int(scanSize.Height), nil
 }
 
-// PaddedCoeffIndex returns libaom's get_padded_idx() coefficient index for
-// level buffers that carry four extra horizontal padding slots per column.
-func PaddedCoeffIndex(size Size, coeffIndex int) (int, error) {
-	maxEOB, err := MaxEOB(size)
-	if err != nil {
-		return 0, err
-	}
-	if coeffIndex < 0 || coeffIndex >= maxEOB {
-		return 0, ErrInvalidTransform
-	}
-	scanSize, _ := ScanSize(size)
-	bhl, ok := log2PowerOfTwo(int(scanSize.Height))
-	if !ok {
-		return 0, ErrInvalidTransform
-	}
-	return coeffIndex + ((coeffIndex >> bhl) << txPadHorLog2), nil
-}
-
 // LowerLevelsCtxEOB returns libaom's get_lower_levels_ctx_eob() context.
 func LowerLevelsCtxEOB(size Size, scanIndex int) (int, error) {
 	maxEOB, err := MaxEOB(size)
@@ -166,19 +148,4 @@ func LowerLevelsCtxEOB(size Size, scanIndex int) (int, error) {
 		return 2, nil
 	}
 	return 3, nil
-}
-
-func log2PowerOfTwo(v int) (int, bool) {
-	switch v {
-	case 4:
-		return 2, true
-	case 8:
-		return 3, true
-	case 16:
-		return 4, true
-	case 32:
-		return 5, true
-	default:
-		return 0, false
-	}
 }

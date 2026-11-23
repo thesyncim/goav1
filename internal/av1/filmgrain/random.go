@@ -47,11 +47,6 @@ func NewStripeRandom(seed uint16, lumaLine int) (Random, error) {
 	return Random{register: register}, nil
 }
 
-// Register reports the current 16-bit generator state.
-func (r Random) Register() uint16 {
-	return r.register
-}
-
 // Number advances the generator once and returns the requested high bits.
 func (r *Random) Number(bits uint8) (uint16, error) {
 	if bits == 0 || bits > 16 {

@@ -870,21 +870,9 @@ func predictInterCompoundRef8ToConvBufCopyPureGo(out []uint16, ref frame.Plane, 
 	}
 }
 
-// PredictScaledCompoundRefToConvBuf fills buf with the un-rounded 16-bit
-// CONV_BUF predictor for one scaled reference. It mirrors
-// av1_dist_wtd_convolve_2d_scale_c / av1_highbd_dist_wtd_convolve_2d_scale_c
-// with do_average == 0, so compound blends can keep the scaled predictor at
-// the same precision as the same-size translational path.
-func PredictScaledCompoundRefToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytesPerSample int, bitDepth uint8, width int, height int,
-	startX int64, xStep int64, startY int64, yStep int64,
-	xTable, yTable *SubpelKernelTable) error {
-	return PredictScaledCompoundRefToConvBufWithScratch(buf, ref, bytesPerSample, bitDepth, width, height,
-		startX, xStep, startY, yStep, xTable, yTable, nil)
-}
-
-// PredictScaledCompoundRefToConvBufWithScratch is
-// PredictScaledCompoundRefToConvBuf using optional caller-owned scratch for the
-// large scaled intermediate block.
+// PredictScaledCompoundRefToConvBufWithScratch writes one scaled compound
+// reference into buf, using optional caller-owned scratch for the large scaled
+// intermediate block.
 //
 // Accesses stay inside ref.Pix (taps outside the plane are edge-clamped,
 // never read) and inside the width x height block of the destination.

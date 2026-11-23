@@ -25,11 +25,3 @@ func init() {
 	selfguidedImpl = selfguided
 	selfguidedFastImpl = selfguidedFast
 }
-
-// sgrSIMDBoxsumKernel is the box-sum kernel bound alongside the SIMD self-guided
-// drivers.
-var sgrSIMDBoxsumKernel = boxsumSIMD
-
-// sgrSIMDDetected reports whether the SIMD self-guided kernels are bound on this
-// host (AVX2 is required by the amd64 kernels).
-func sgrSIMDDetected() bool { return archsimd.X86.AVX2() }

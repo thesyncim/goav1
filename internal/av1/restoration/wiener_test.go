@@ -2,7 +2,6 @@ package restoration
 
 import (
 	"errors"
-	"slices"
 	"testing"
 )
 
@@ -58,7 +57,7 @@ func TestWienerRestorationPreservesConstantBlocks(t *testing.T) {
 					t.Fatal(err)
 				}
 				scratch := make([]uint16, scratchLen)
-				if err := ApplyWienerRestoration(src, stride, origin, dst, size.width, size.width, size.height, info, bitDepth, scratch); err != nil {
+				if err := ApplyWienerRestorationTrusted(src, stride, origin, dst, size.width, size.width, size.height, info, bitDepth, scratch); err != nil {
 					t.Fatalf("bitDepth=%d size=%dx%d: %v", bitDepth, size.width, size.height, err)
 				}
 				for i, got := range dst {
@@ -109,7 +108,7 @@ func TestApplyWienerRestorationMatchesReferenceCorpus(t *testing.T) {
 				t.Fatal(err)
 			}
 			scratch := make([]uint16, scratchLen)
-			if err := ApplyWienerRestoration(src, stride, origin, dst, dstStride, tc.width, tc.height, tc.info, tc.bitDepth, scratch); err != nil {
+			if err := ApplyWienerRestorationTrusted(src, stride, origin, dst, dstStride, tc.width, tc.height, tc.info, tc.bitDepth, scratch); err != nil {
 				t.Fatal(err)
 			}
 			for row := 0; row < tc.height; row++ {
@@ -126,38 +125,6 @@ func TestApplyWienerRestorationMatchesReferenceCorpus(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestApplyWienerRestorationTrustedMatchesChecked(t *testing.T) {
-	const width = 64
-	const height = 37
-	const bitDepth = uint8(10)
-	stride := width + 2*WienerHalfwin
-	origin := WienerHalfwin*stride + WienerHalfwin
-	src := make([]uint16, stride*(height+2*WienerHalfwin))
-	rnd := newRestorationRandom(restorationDeterministicSeed ^ 0x91)
-	for i := range src {
-		src[i] = uint16(rnd.pseudoUniform(1 << bitDepth))
-	}
-	info := WienerInfo{
-		VFilter: NewWienerFilter(-4, -13, 29),
-		HFilter: NewWienerFilter(7, -5, 13),
-	}
-	scratchLen, err := WienerScratchLen(width, height)
-	if err != nil {
-		t.Fatal(err)
-	}
-	checked := make([]uint16, width*height)
-	trusted := make([]uint16, width*height)
-	if err := ApplyWienerRestoration(src, stride, origin, checked, width, width, height, info, bitDepth, make([]uint16, scratchLen)); err != nil {
-		t.Fatal(err)
-	}
-	if err := ApplyWienerRestorationTrusted(src, stride, origin, trusted, width, width, height, info, bitDepth, make([]uint16, scratchLen)); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(trusted, checked) {
-		t.Fatal("trusted Wiener output differs from checked output")
 	}
 }
 
@@ -183,7 +150,7 @@ func TestWienerScratchLenAndAllocs(t *testing.T) {
 		HFilter: NewWienerFilter(10, -23, -17),
 	}
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := ApplyWienerRestoration(src, stride, origin, dst, 64, 64, 64, info, 12, scratch); err != nil {
+		if err := ApplyWienerRestorationTrusted(src, stride, origin, dst, 64, 64, 64, info, 12, scratch); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -209,27 +176,22 @@ func TestApplyWienerRestorationRejectsInvalidInputs(t *testing.T) {
 		fn   func() error
 	}{
 		{name: "bad-size", fn: func() error {
-			return ApplyWienerRestoration(src, stride, origin, dst, 8, 0, 8, DefaultWienerInfo(), 8, scratch)
+			return ApplyWienerRestorationTrusted(src, stride, origin, dst, 8, 0, 8, DefaultWienerInfo(), 8, scratch)
 		}},
 		{name: "bad-depth", fn: func() error {
-			return ApplyWienerRestoration(src, stride, origin, dst, 8, 8, 8, DefaultWienerInfo(), 9, scratch)
+			return ApplyWienerRestorationTrusted(src, stride, origin, dst, 8, 8, 8, DefaultWienerInfo(), 9, scratch)
 		}},
 		{name: "bad-filter", fn: func() error {
-			return ApplyWienerRestoration(src, stride, origin, dst, 8, 8, 8, badFilter, 8, scratch)
+			return ApplyWienerRestorationTrusted(src, stride, origin, dst, 8, 8, 8, badFilter, 8, scratch)
 		}},
 		{name: "short-src", fn: func() error {
-			return ApplyWienerRestoration(src[:origin], stride, origin, dst, 8, 8, 8, DefaultWienerInfo(), 8, scratch)
+			return ApplyWienerRestorationTrusted(src[:origin], stride, origin, dst, 8, 8, 8, DefaultWienerInfo(), 8, scratch)
 		}},
 		{name: "short-dst", fn: func() error {
-			return ApplyWienerRestoration(src, stride, origin, dst[:8], 8, 8, 8, DefaultWienerInfo(), 8, scratch)
+			return ApplyWienerRestorationTrusted(src, stride, origin, dst[:8], 8, 8, 8, DefaultWienerInfo(), 8, scratch)
 		}},
 		{name: "short-scratch", fn: func() error {
-			return ApplyWienerRestoration(src, stride, origin, dst, 8, 8, 8, DefaultWienerInfo(), 8, scratch[:scratchLen-1])
-		}},
-		{name: "sample-out-of-range", fn: func() error {
-			bad := slices.Clone(src)
-			bad[origin] = 256
-			return ApplyWienerRestoration(bad, stride, origin, dst, 8, 8, 8, DefaultWienerInfo(), 8, scratch)
+			return ApplyWienerRestorationTrusted(src, stride, origin, dst, 8, 8, 8, DefaultWienerInfo(), 8, scratch[:scratchLen-1])
 		}},
 	}
 	for _, tt := range tests {
@@ -251,7 +213,7 @@ func TestApplyWienerRestorationRejectsOverflowStride(t *testing.T) {
 	const maxInt = int(^uint(0) >> 1)
 	// borderY*stride * 3 should overflow, and origin should be small enough
 	// to require subtraction to remain inside bounds.
-	err := ApplyWienerRestoration(src, maxInt/2, 0, dst, 4, 4, 4, DefaultWienerInfo(), 8, scratch)
+	err := ApplyWienerRestorationTrusted(src, maxInt/2, 0, dst, 4, 4, 4, DefaultWienerInfo(), 8, scratch)
 	if !errors.Is(err, ErrInvalidRestoration) {
 		t.Fatalf("err=%v want %v", err, ErrInvalidRestoration)
 	}
@@ -299,7 +261,7 @@ func FuzzApplyWienerRestoration(f *testing.F) {
 			VFilter: NewWienerFilter(fuzzWienerTap(rawTap0, WienerTap0Min, WienerTap0Max), fuzzWienerTap(rawTap1, WienerTap1Min, WienerTap1Max), fuzzWienerTap(rawTap2, WienerTap2Min, WienerTap2Max)),
 			HFilter: NewWienerFilter(fuzzWienerTap(rawTap2, WienerTap0Min, WienerTap0Max), fuzzWienerTap(rawTap0, WienerTap1Min, WienerTap1Max), fuzzWienerTap(rawTap1, WienerTap2Min, WienerTap2Max)),
 		}
-		if err := ApplyWienerRestoration(src, stride, origin, dst, width, width, height, info, bitDepth, scratch); err != nil {
+		if err := ApplyWienerRestorationTrusted(src, stride, origin, dst, width, width, height, info, bitDepth, scratch); err != nil {
 			t.Fatalf("ApplyWienerRestoration err=%v", err)
 		}
 		for i, sample := range dst {
@@ -335,7 +297,7 @@ func BenchmarkApplyWienerRestoration(b *testing.B) {
 	b.SetBytes(64 * 64 * 2)
 	b.ResetTimer()
 	for b.Loop() {
-		if err := ApplyWienerRestoration(src, stride, origin, dst, 64, 64, 64, info, 12, scratch); err != nil {
+		if err := ApplyWienerRestorationTrusted(src, stride, origin, dst, 64, 64, 64, info, 12, scratch); err != nil {
 			b.Fatal(err)
 		}
 	}

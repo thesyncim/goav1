@@ -241,9 +241,8 @@ func validScaleRatio(refSize int, curSize int) bool {
 	return true
 }
 
-// Scaled 8-tap convolver: see ConvolveScale2D8 /
-// ConvolveScale2D8Clamped / ConvolveScale2DHighBD /
-// ConvolveScale2DHighBDClamped in convolve_scale.go for the kernels matching
+// Scaled 8-tap convolver: see ConvolveScale2D8ClampedWithScratch /
+// ConvolveScale2DHighBDClampedWithScratch in convolve_scale.go for the kernels matching
 // libaom's av1_convolve_2d_scale_c / av1_highbd_convolve_2d_scale_c. They are
 // driven by ScaledBlockOrigin's Q10 source position and per-output stepper,
 // plus a precomputed SubpelKernelTable per axis (SubpelKernelTableFor).

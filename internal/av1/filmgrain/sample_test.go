@@ -1,7 +1,6 @@
 package filmgrain
 
 import (
-	"errors"
 	"testing"
 )
 
@@ -26,40 +25,10 @@ func TestLumaGrainSample(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := LumaGrainSample(grain, tt.offset, tt.blockCol, tt.blockRow, tt.x, tt.y)
-			if err != nil {
-				t.Fatal(err)
-			}
+			got := lumaGrainSample(grain, tt.offset, tt.blockCol, tt.blockRow, tt.x, tt.y)
 			want := int16(tt.wantRow*LumaGrainWidth + tt.wantCol)
 			if got != want {
 				t.Fatalf("sample=%d want %d", got, want)
-			}
-		})
-	}
-}
-
-func TestLumaGrainSampleRejectsInvalidInputs(t *testing.T) {
-	grain := testIndexedLumaGrain()
-	tests := []struct {
-		name     string
-		grain    []int16
-		blockCol int
-		blockRow int
-		x        int
-		y        int
-	}{
-		{name: "short", grain: grain[:LumaGrainSamples-1]},
-		{name: "bad-block-col", grain: grain, blockCol: 2},
-		{name: "bad-block-row", grain: grain, blockRow: 2},
-		{name: "negative-x", grain: grain, x: -1},
-		{name: "negative-y", grain: grain, y: -1},
-		{name: "wide-x", grain: grain, blockCol: 1, x: 31},
-		{name: "wide-y", grain: grain, blockRow: 1, y: 31},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if _, err := LumaGrainSample(tt.grain, 0xff, tt.blockCol, tt.blockRow, tt.x, tt.y); !errors.Is(err, ErrInvalidParams) {
-				t.Fatalf("LumaGrainSample err=%v want %v", err, ErrInvalidParams)
 			}
 		})
 	}
@@ -94,102 +63,12 @@ func TestChromaGrainSample(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ChromaGrainSample(grain, tt.offset, tt.subsamplingX, tt.subsamplingY, tt.blockCol, tt.blockRow, tt.x, tt.y)
-			if err != nil {
-				t.Fatal(err)
-			}
+			got := chromaGrainSample(grain, tt.offset, chromaSubsamplingShift(tt.subsamplingX), chromaSubsamplingShift(tt.subsamplingY), tt.blockCol, tt.blockRow, tt.x, tt.y)
 			want := int16(tt.wantRow*ChromaGrainWidth + tt.wantCol)
 			if got != want {
 				t.Fatalf("sample=%d want %d", got, want)
 			}
 		})
-	}
-}
-
-func TestChromaGrainSampleRejectsInvalidInputs(t *testing.T) {
-	grain := testIndexedChromaGrain()
-	tests := []struct {
-		name         string
-		grain        []int16
-		subsamplingX bool
-		subsamplingY bool
-		blockCol     int
-		blockRow     int
-		x            int
-		y            int
-	}{
-		{name: "short", grain: grain[:ChromaGrainSamples-1], subsamplingX: true, subsamplingY: true},
-		{name: "bad-block-col", grain: grain, blockCol: 2},
-		{name: "bad-block-row", grain: grain, blockRow: 2},
-		{name: "negative-x", grain: grain, x: -1},
-		{name: "negative-y", grain: grain, y: -1},
-		{name: "wide-420-x", grain: grain, subsamplingX: true, subsamplingY: true, x: 16},
-		{name: "wide-420-y", grain: grain, subsamplingX: true, subsamplingY: true, y: 16},
-		{name: "wide-444-x", grain: grain, x: 32},
-		{name: "wide-444-y", grain: grain, y: 32},
-		{name: "bound-420-x", grain: grain, subsamplingX: true, subsamplingY: true, blockCol: 1, x: 15},
-		{name: "bound-420-y", grain: grain, subsamplingX: true, subsamplingY: true, blockRow: 1, y: 15},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if _, err := ChromaGrainSample(tt.grain, 0xff, tt.subsamplingX, tt.subsamplingY, tt.blockCol, tt.blockRow, tt.x, tt.y); !errors.Is(err, ErrInvalidParams) {
-				t.Fatalf("ChromaGrainSample err=%v want %v", err, ErrInvalidParams)
-			}
-		})
-	}
-}
-
-func TestLumaGrainSampleAllocs(t *testing.T) {
-	grain := testIndexedLumaGrain()
-	chroma := testIndexedChromaGrain()
-	allocs := testing.AllocsPerRun(1000, func() {
-		if _, err := LumaGrainSample(grain, 0x21, 0, 0, 4, 5); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := LumaGrainSample(grain, 0x21, 1, 1, 1, 1); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := ChromaGrainSample(chroma, 0x21, true, true, 0, 0, 4, 5); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := ChromaGrainSample(chroma, 0x21, false, false, 1, 1, 1, 1); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if allocs != 0 {
-		t.Fatalf("LumaGrainSample allocated: %f", allocs)
-	}
-}
-
-func BenchmarkLumaGrainSample(b *testing.B) {
-	grain := testIndexedLumaGrain()
-	var sample int16
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		var err error
-		sample, err = LumaGrainSample(grain, uint8(i), 0, 0, i&31, (i>>5)&31)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-	if sample == 0 {
-		b.Fatal("unexpected zero sample")
-	}
-}
-
-func BenchmarkChromaGrainSample(b *testing.B) {
-	grain := testIndexedChromaGrain()
-	var sample int16
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		var err error
-		sample, err = ChromaGrainSample(grain, uint8(i), true, true, 0, 0, i&15, (i>>4)&15)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-	if sample == 0 {
-		b.Fatal("unexpected zero sample")
 	}
 }
 

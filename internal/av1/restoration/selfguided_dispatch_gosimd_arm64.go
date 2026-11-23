@@ -25,11 +25,3 @@ func init() {
 	selfguidedImpl = selfguided
 	selfguidedFastImpl = selfguidedFast
 }
-
-// sgrSIMDBoxsumKernel is the box-sum kernel bound alongside the SIMD self-guided
-// drivers. On arm64 the separable running sum is the production box sum.
-var sgrSIMDBoxsumKernel = boxsumSeparable
-
-// sgrSIMDDetected reports whether the SIMD self-guided kernels are bound on this
-// host (NEON is mandatory on arm64).
-func sgrSIMDDetected() bool { return cpu.Detected.NEON }

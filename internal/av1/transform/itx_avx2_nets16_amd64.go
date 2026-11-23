@@ -1498,7 +1498,7 @@ func itx64Net(n int, in *[32]archsimd.Int16x16, out *[64]archsimd.Int16x16) {
 
 // itx16ADSTNet16 is inverseADST16 on sixteen lanes for inputs below 16 (the rest
 // zero): in[k] is coefficient k, out[r] output r. Generated from the stage
-// structure of inverseADST16Core with the zero operands folded.
+// structure of inverseADST16 with the zero operands folded.
 func itx16ADSTNet16(in *[16]archsimd.Int16x16, out *[16]archsimd.Int16x16) {
 	k := func(i int) archsimd.Int16x16 { return archsimd.LoadInt16x16Array(&itx64K[i]) }
 	kn := func(i int) archsimd.Int16x16 { return archsimd.LoadInt16x16Array(&itx64K[64+i]) }
@@ -1620,7 +1620,7 @@ func itx16ADSTNet16(in *[16]archsimd.Int16x16, out *[16]archsimd.Int16x16) {
 
 // itx16ADSTNet8 is inverseADST16 on sixteen lanes for inputs below 8 (the rest
 // zero): in[k] is coefficient k, out[r] output r. Generated from the stage
-// structure of inverseADST16Core with the zero operands folded.
+// structure of inverseADST16 with the zero operands folded.
 func itx16ADSTNet8(in *[16]archsimd.Int16x16, out *[16]archsimd.Int16x16) {
 	k := func(i int) archsimd.Int16x16 { return archsimd.LoadInt16x16Array(&itx64K[i]) }
 	kn := func(i int) archsimd.Int16x16 { return archsimd.LoadInt16x16Array(&itx64K[64+i]) }
@@ -1742,7 +1742,7 @@ func itx16ADSTNet8(in *[16]archsimd.Int16x16, out *[16]archsimd.Int16x16) {
 
 // itx16ADSTNet4 is inverseADST16 on sixteen lanes for inputs below 4 (the rest
 // zero): in[k] is coefficient k, out[r] output r. Generated from the stage
-// structure of inverseADST16Core with the zero operands folded.
+// structure of inverseADST16 with the zero operands folded.
 func itx16ADSTNet4(in *[16]archsimd.Int16x16, out *[16]archsimd.Int16x16) {
 	k := func(i int) archsimd.Int16x16 { return archsimd.LoadInt16x16Array(&itx64K[i]) }
 	kn := func(i int) archsimd.Int16x16 { return archsimd.LoadInt16x16Array(&itx64K[64+i]) }
