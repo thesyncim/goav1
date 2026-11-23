@@ -723,7 +723,11 @@ func (e *VideoEncoder) EncodeWithTemporalID(src SourceFrame420, forceKey bool, t
 	if src.Width != e.renderWidth || src.Height != e.renderHeight {
 		return nil, false, fmt.Errorf("encoder: frame %dx%d does not match stream %dx%d", src.Width, src.Height, e.renderWidth, e.renderHeight)
 	}
-	if e.renderWidth != e.width || e.renderHeight != e.height {
+	// The coding paths address the reconstruction with the source strides,
+	// so a padded or stride-padded source is first copied to the coded size
+	// at tight strides.
+	if e.renderWidth != e.width || e.renderHeight != e.height || src.YStride != e.width ||
+		src.ChromaStride != chromaWidthForColor(e.width, e.parserColorConfig()) {
 		src = e.padSource(src)
 	}
 	if !e.haveKey || forceKey {
