@@ -59,8 +59,8 @@ updates.
 The fundamental trust boundary is **untrusted compressed AV1 bytes
 entering the decoder from a remote or otherwise attacker-controlled
 source** (WebRTC peer, RTP relay, IVF/OBU file from disk, network
-fetch, etc.). Everything downstream of `DecoderStream` and the public
-transport parsers must assume that input bytes are adversarial.
+fetch, etc.). Everything downstream of the decoder constructors and the
+public transport parsers must assume that input bytes are adversarial.
 
 Out of scope:
 
@@ -153,27 +153,23 @@ amount of allocation, compute, or descriptor churn (a "decoder bomb").
 *Mitigation.*
 
 - **Memory.** The decoder is a zero-allocation-in-steady-state
-  design. With the frame-work API, buffers (`FramePool`, postfilter
-  scratch, residual scratch, loop-restoration frame buffers, side-data
-  arenas) are caller-owned and bound up front via public sizing
-  helpers: if a header asks for more than the caller has bound, the
-  call returns an error. The high-level decoders (`NewDecoder`,
-  `NewDecoderFromIVF`, `NewLayeredDecoder` and their RTP variants)
-  size their own buffers from the stream's headers when they are
-  constructed, so pass `WithFrameSizeLimit` for input that is not
-  trusted: a stream carrying a larger frame is rejected with
+  design. The decoders (`NewDecoder`, `NewDecoderFromIVF`,
+  `NewLayeredDecoder` and their RTP variants) size every buffer (frame
+  pools, residual and post-filter scratch, loop-restoration buffers,
+  side-data arenas) from the stream's headers when they are
+  constructed; a later header that asks for more than was bound is
+  rejected with an error. Pass `WithFrameSizeLimit` for input that is
+  not trusted: a stream carrying a larger frame is rejected with
   `ErrDecoderFrameSizeLimit` before anything is allocated for it. A
   single payload may carry at most 64 OBUs; every OBU is parsed into
   a multi-kilobyte event record, and the bound keeps a payload of
   tiny OBUs from being amplified into gigabytes.
 - **Compute.** Tile counts are capped at 64x64. Per-frame work is
-  bounded by the parsed (and validated) frame dimensions. The tile
-  worker pool is bounded and caller-owned
-  (`NewTileWorkerPool`).
+  bounded by the parsed (and validated) frame dimensions. The worker
+  pool is bounded by `WithWorkers`.
 - **File descriptors.** The library opens no files and no sockets. All
   I/O is owned by the caller; the public API consumes `[]byte` or
-  iterator state. Goroutine fan-out is bounded by the caller-owned
-  worker pool.
+  iterator state. Goroutine fan-out is bounded by the worker count.
 
 #### T4. Side channels (timing, cache)
 
@@ -192,11 +188,9 @@ Race conditions inside the decoder are treated as correctness bugs
 with potential security impact (torn writes into caller planes,
 double-release of frame-pool surfaces).
 
-*Mitigation.* The threading model is documented in `ARCHITECTURE.md`.
-State that crosses goroutines is bound to caller-owned scratch with
-explicit lifecycle helpers (`BeginDecoderFrameWork`,
-`RunDecoderFrameWorkEventWithContext`, batch run/finish helpers).
-Frame-pool acquire/release is checked. CI runs `make test` (which
+*Mitigation.* State that crosses goroutines is bound to decoder-owned scratch with
+an explicit per-frame lifecycle (begin, run, finish). Frame-pool
+acquire/release is checked. CI runs `make test` (which
 includes `-race` coverage for the threading and tile packages).
 
 ### Input validation boundaries
@@ -210,7 +204,7 @@ includes `-race` coverage for the threading and tile packages).
 | `quantize`, `filmgrain`            | Invalid quantizer indices, malformed grain tables (commit `744ef85`).                   |
 | `restoration`                      | Bordered-block layout that would read outside the unit (commit `7c893f5`).              |
 | `frame` / `memory` (pool, scratch) | Surface size mismatch on acquire; capacity vs. requested-size mismatch on bind.         |
-| Decoder lifecycle helpers          | Event ordering (e.g. `BeginDecoderFrameWork` before run/finish), surface double-release.|
+| Decoder frame lifecycle            | Event ordering (begin before run/finish), surface double-release.                       |
 
 Beyond these boundaries the decoder treats bytes as already validated
 for the corresponding layer, so all bounds checks must happen at the
@@ -225,7 +219,7 @@ boundary above.
   `panic()` calls in non-test code paths in the module.
 - **Fuzz harnesses.** The repository ships over 100 `Fuzz*` harnesses
   across the public API and internal packages, including:
-  - Public API: `FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals`,
+  - Decoder pipeline: `FuzzPublicDecodeAndReconstructDecoderFrameWorkJobResiduals`,
     `FuzzPublicDecodeAndRetainDecoderFrameWorkBatchResiduals`,
     `FuzzPublicDecoderFrameWorkBatchResidualRunnerSideData`,
     `FuzzPublicRunDecoderFrameWorkEventWithResidualRunner`,

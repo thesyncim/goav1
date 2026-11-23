@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"sync"
 
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+
 	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 )
@@ -49,22 +52,22 @@ func decoderFrameContextCount(workers, maxFrameDelay int) int {
 // reconstruction / post-filter tail still reads, so the next frame parses into
 // a different context while this one finishes.
 type decoderFrameContext struct {
-	event       DecoderEvent
-	scratch     DecoderFrameWorkResidualEventScratch
-	sideScratch DecoderFrameWorkSideDataScratch
-	batch       DecoderFrameWorkBatchResidualRunner
-	sideData    DecoderFrameWorkSideData
+	event       internaldecoder.Event
+	scratch     decoderFrameWorkResidualEventScratch
+	sideScratch decoderFrameWorkSideDataScratch
+	batch       decoderFrameWorkBatchResidualRunner
+	sideData    decoderFrameWorkSideData
 
 	lfLevels    internalthreading.FrameWorkLoopFilterLevelTable
 	lfTileEdges internalthreading.FrameWorkLoopFilterTileEdges
 	lfNoSkip    internalthreading.FrameWorkLoopFilterNoSkip
 
-	postFilter   DecoderFrameWorkReusableSupportedPostFilterRunner
-	postParallel DecoderFrameWorkPostFilterParallel
+	postFilter   decoderFrameWorkReusableSupportedPostFilterRunner
+	postParallel internaldecoder.FrameWorkPostFilterParallel
 
-	refSurface   [InterRefsPerFrame]int
-	refFrames    [InterRefsPerFrame]*Frame
-	planReleases [RefFrames]int
+	refSurface   [internalparser.InterRefsPerFrame]int
+	refFrames    [internalparser.InterRefsPerFrame]*Frame
+	planReleases [internalparser.RefFrames]int
 
 	ft internaldecoder.FrameThreadFrame
 	// reconRows is the frame's reconstruction progress and parsed its
@@ -81,7 +84,7 @@ type decoderFrameContext struct {
 	// Entropy-pass inputs captured at submission; the context goroutine runs
 	// the pass after the submitting call returned.
 	payload    []byte
-	step       DecoderFrameWorkStep
+	step       internaldecoder.FrameWorkStep
 	target     *Frame
 	references []*Frame
 	show       bool
@@ -143,7 +146,7 @@ type decoderFramePipeline struct {
 	grainUsed int
 	// grainParallel spreads a grained output's stripes across the workers
 	// (dav1d_task_delayed_fg when n_tc > 1).
-	grainParallel DecoderFrameWorkPostFilterParallel
+	grainParallel internaldecoder.FrameWorkPostFilterParallel
 }
 
 func (p *decoderFramePipeline) postLoop(fc *decoderFrameContext) {
@@ -217,7 +220,7 @@ func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
 // does not exclude a frame: it is applied when the frame leaves the ring. A
 // tile group carrying every tile of a frame whose header was deferred (see
 // deferHeader) is taken as the frame.
-func (p *decoderFramePipeline) eligible(event *DecoderEvent) bool {
+func (p *decoderFramePipeline) eligible(event *internaldecoder.Event) bool {
 	return (internaldecoder.EventFrameThreadable(event) || internaldecoder.EventTileGroupFrameThreadable(event)) &&
 		!p.d.state.Active()
 }
@@ -228,9 +231,9 @@ func (p *decoderFramePipeline) eligible(event *DecoderEvent) bool {
 // header OBU into c->frame_hdr and submits the frame when its last tile
 // arrives). It holds when the next event that touches frame state is a tile
 // group carrying every tile of the frame.
-func (p *decoderFramePipeline) deferHeader(events []DecoderEvent, i int) bool {
+func (p *decoderFramePipeline) deferHeader(events []internaldecoder.Event, i int) bool {
 	h := &events[i]
-	if h.Kind != DecoderEventFrameHeader || h.NewCodedVideoSequence || p.d.state.Active() {
+	if h.Kind != internaldecoder.EventFrameHeader || h.NewCodedVideoSequence || p.d.state.Active() {
 		return false
 	}
 	for j := i + 1; j < len(events); j++ {
@@ -295,7 +298,7 @@ func (p *decoderFramePipeline) output(fc *decoderFrameContext) {
 // a frame leaves the ring (dav1d_apply_grain's dav1d_picture_alloc_copy). It
 // stays valid until the next DecodeNext call, like every returned frame.
 type decoderGrainOutput struct {
-	runner DecoderFrameWorkReusableSupportedPostFilterRunner
+	runner decoderFrameWorkReusableSupportedPostFilterRunner
 }
 
 // outputImage is dav1d's output_image for a frame leaving the ring: a frame
@@ -383,7 +386,7 @@ func (p *decoderFramePipeline) retireOldest() bool {
 // the next context, retiring the frame it held, runs the entropy pass and
 // publication on the calling goroutine and hands reconstruction and the
 // post-filter to the context's tail.
-func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEvent) (DecoderFrameWorkEventResult, error) {
+func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *internaldecoder.Event) (internaldecoder.FrameWorkEventResult, error) {
 	d := p.d
 	handed := false
 	if decoderFramePipelineParseHook != nil {
@@ -409,14 +412,14 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 	// A tile group completing a frame whose header was deferred runs as the
 	// frame: its payload carries every tile, and its frame state is the
 	// header's.
-	fc.event.Kind = DecoderEventFrame
+	fc.event.Kind = internaldecoder.EventFrame
 	if fc.payload != nil && len(fc.event.Unit.Raw) != 0 {
 		// The source reuses its payload buffer on the next call, while this
 		// frame's entropy pass may still be reading it (dav1d keeps a
 		// reference on the tile data instead).
 		raw := fc.event.Unit.Raw
 		if len(raw) > len(fc.payload) || len(fc.event.Unit.Payload) > len(raw) {
-			return DecoderFrameWorkEventResult{}, ErrFrameShortBuffer
+			return internaldecoder.FrameWorkEventResult{}, internalframe.ErrShortBuffer
 		}
 		n := copy(fc.payload, raw)
 		fc.event.Unit.Raw = fc.payload[:n:n]
@@ -426,7 +429,7 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 
 	side, err := bindDecoderFrameWorkSideDataWith(sequence, event.FrameSize, event.CDEF, event.Restoration, fc.sideScratch, nil, nil, nil, true)
 	if err != nil {
-		return DecoderFrameWorkEventResult{}, err
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
 	fc.sideData = side
 	if fc.sideData.LoopFilterMasks.Valid() {
@@ -440,33 +443,33 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 		fc.sideData.LoopFilterMasks.BindNoSkip(&fc.lfNoSkip)
 	}
 	if err := fc.batch.ResetStats(); err != nil {
-		return DecoderFrameWorkEventResult{}, err
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
 
 	step, output, err := d.state.PlanEvent(&d.refs, &d.pool, sequence, event, 64, fc.refSurface[:], d.workerPool.WorkerCount(), fc.scratch.Spans, fc.scratch.Jobs, fc.scratch.Batches, fc.planReleases[:])
 	if err != nil {
-		return DecoderFrameWorkEventResult{}, err
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
 	tile, referenceCount, hasTile, err := decoderFrameWorkEventStepTile(step)
 	if err != nil {
-		return DecoderFrameWorkEventResult{}, err
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
-	if !hasTile || tile.JobCount == 0 || step.Kind != DecoderFrameWorkStepBegin {
-		return DecoderFrameWorkEventResult{}, ErrDecoderInvalidFrameWorkStep
+	if !hasTile || tile.JobCount == 0 || step.Kind != internaldecoder.FrameWorkStepBegin {
+		return internaldecoder.FrameWorkEventResult{}, internaldecoder.ErrInvalidFrameWorkStep
 	}
-	if err := SetDecoderFrameWorkBatchResidualRunnerSideData(&fc.batch, fc.sideData); err != nil {
-		return DecoderFrameWorkEventResult{}, err
+	if err := setDecoderFrameWorkBatchResidualRunnerSideData(&fc.batch, fc.sideData); err != nil {
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
-	if err := SetDecoderFrameWorkSideData(&d.state, fc.sideData); err != nil {
-		return DecoderFrameWorkEventResult{}, err
+	if err := setDecoderFrameWorkSideData(&d.state, fc.sideData); err != nil {
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
 	surface, err := decoderFrameWorkEventStepSurface(step)
 	if err != nil {
-		return DecoderFrameWorkEventResult{}, err
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
 	if output == nil {
 		if output, err = d.pool.Frame(surface); err != nil {
-			return DecoderFrameWorkEventResult{}, err
+			return internaldecoder.FrameWorkEventResult{}, err
 		}
 	}
 	fc.ft.Recon.Reset()
@@ -475,12 +478,12 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 	fc.parsed.Reset()
 	var references []*Frame
 	if n := int(referenceCount); n != 0 {
-		count, err := ResolveDecoderFrameReferences(&d.pool, fc.refSurface[:n], fc.refFrames[:])
+		count, err := internaldecoder.ResolveFrameReferences(&d.pool, fc.refSurface[:n], fc.refFrames[:])
 		if err != nil {
-			return DecoderFrameWorkEventResult{}, err
+			return internaldecoder.FrameWorkEventResult{}, err
 		}
 		if count != n {
-			return DecoderFrameWorkEventResult{}, ErrDecoderInvalidFrameWorkStep
+			return internaldecoder.FrameWorkEventResult{}, internaldecoder.ErrInvalidFrameWorkStep
 		}
 		references = fc.refFrames[:n]
 		for i, s := range fc.refSurface[:n] {
@@ -502,7 +505,7 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 	run, err := d.state.PublishFrameThreaded(&d.refs, event, step, &fc.ft)
 	if err != nil {
 		p.progress[surface].Publish(internalthreading.FrameProgressError)
-		return DecoderFrameWorkEventResult{}, err
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
 	fc.surface = surface
 
@@ -513,7 +516,7 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 	currentGrid, refGrids := fc.ft.MotionGrids()
 	// Field resets keep the motion link's per-tile progress table allocated.
 	fc.motion.Progress = nil
-	fc.motion.RefProgress = [InterRefsPerFrame]*internalthreading.FrameProgress{}
+	fc.motion.RefProgress = [internalparser.InterRefsPerFrame]*internalthreading.FrameProgress{}
 	if currentGrid != 0 {
 		p.mvProgress[currentGrid-1].Reset()
 		fc.motion.Progress = &p.mvProgress[currentGrid-1]
@@ -554,7 +557,7 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 	// frame can be submitted at once. A failed pass reports
 	// FrameProgressError to dependents and its error at retire.
 	fc.start <- struct{}{}
-	return DecoderFrameWorkEventResult{
+	return internaldecoder.FrameWorkEventResult{
 		Step:           step,
 		Output:         output,
 		ReferenceCount: referenceCount,
@@ -566,8 +569,8 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *DecoderEve
 // ring instead of draining it. A key frame shown again joins it too (dav1d
 // obu.c): its reference reset takes effect at once for later frames, and the
 // surfaces it drops are released when its slot retires.
-func (p *decoderFramePipeline) showExistingEligible(event *DecoderEvent) bool {
-	return event.Kind == DecoderEventExistingFrame && event.FrameHeader.ShowExistingFrame &&
+func (p *decoderFramePipeline) showExistingEligible(event *internaldecoder.Event) bool {
+	return event.Kind == internaldecoder.EventExistingFrame && event.FrameHeader.ShowExistingFrame &&
 		!event.NewCodedVideoSequence &&
 		!p.d.state.Active()
 }
@@ -578,7 +581,7 @@ func (p *decoderFramePipeline) showExistingEligible(event *DecoderEvent) bool {
 // in decode order behind every frame submitted before it, which includes
 // the frame that produced it. Grain from the stored parameters is applied
 // when it leaves, like any output.
-func (p *decoderFramePipeline) showExisting(sequence SequenceHeader, src *DecoderEvent) (DecoderFrameWorkEventResult, error) {
+func (p *decoderFramePipeline) showExisting(sequence SequenceHeader, src *internaldecoder.Event) (internaldecoder.FrameWorkEventResult, error) {
 	d := p.d
 	fc := &p.fcs[p.next]
 	p.next++
@@ -591,14 +594,14 @@ func (p *decoderFramePipeline) showExisting(sequence SequenceHeader, src *Decode
 	fc.event.SequenceHeader = sequence
 	plan, err := d.state.ShowExistingFrameThreaded(&d.refs, &fc.event, &fc.ft)
 	if err != nil {
-		return DecoderFrameWorkEventResult{}, err
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
 	output, err := d.pool.Frame(plan.Surface)
 	if err != nil {
-		return DecoderFrameWorkEventResult{}, err
+		return internaldecoder.FrameWorkEventResult{}, err
 	}
-	step := DecoderFrameWorkStep{
-		Kind:         DecoderFrameWorkStepShowExisting,
+	step := internaldecoder.FrameWorkStep{
+		Kind:         internaldecoder.FrameWorkStepShowExisting,
 		ReleaseCount: plan.ReleaseCount,
 		ShowExisting: plan,
 	}
@@ -606,7 +609,7 @@ func (p *decoderFramePipeline) showExisting(sequence SequenceHeader, src *Decode
 	fc.output = output
 	fc.existing = true
 	fc.busy = true
-	return DecoderFrameWorkEventResult{Step: step, Output: output}, nil
+	return internaldecoder.FrameWorkEventResult{Step: step, Output: output}, nil
 }
 
 // decoderFramePipelineParseHook, when set by a test, runs before a frame's
@@ -650,7 +653,7 @@ func (p *decoderFramePipeline) close() {
 }
 
 // newDecoderFramePipeline binds n frame contexts from their own arena.
-func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStreamPlan, postArena DecoderFrameWorkPostFilterRequestScratchSize, surfaceCount int) (*decoderFramePipeline, error) {
+func newDecoderFramePipeline(d *Decoder, n int, plan decoderFrameWorkResidualStreamPlan, postArena decoderFrameWorkPostFilterRequestScratchSize, surfaceCount int) (*decoderFramePipeline, error) {
 	var size decoderArenaSize
 	eventSize := plan.Size.Event
 	noSkip := decoderCompactNoSkipBytes(eventSize.SideData.CDEFIndexMap)
@@ -679,7 +682,7 @@ func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStr
 		fcs:      make([]decoderFrameContext, n),
 		laneNeed: 2 * n * workers,
 		progress: make([]internalthreading.FrameProgress, surfaceCount),
-		ready:    make([]*Frame, 0, 2*(RefFrames+n)),
+		ready:    make([]*Frame, 0, 2*(internalparser.RefFrames+n)),
 	}
 	p.grainParallel.Workers = workers
 	for i := range p.progress {
@@ -695,7 +698,7 @@ func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStr
 			set[i].Publish(internalthreading.FrameProgressDone)
 		}
 	}
-	runtime := DecoderFrameWorkResidualEventRuntime{
+	runtime := decoderFrameWorkResidualEventRuntime{
 		State:      &d.state,
 		Refs:       &d.refs,
 		FramePool:  &d.pool,
@@ -717,7 +720,7 @@ func newDecoderFramePipeline(d *Decoder, n int, plan DecoderFrameWorkResidualStr
 		rt.ReferenceFrames = fc.refFrames[:]
 		rt.Releases = fc.planReleases[:]
 		rt.SideData = &fc.sideData
-		bound, _, err := BindDecoderFrameWorkResidualEventRunner(eventSize, plan.Bind.Sequence, &plan.Bind.Event, rt, fc.scratch, &fc.batch)
+		bound, _, err := bindDecoderFrameWorkResidualEventRunner(eventSize, plan.Bind.Sequence, &plan.Bind.Event, rt, fc.scratch, &fc.batch)
 		if err != nil {
 			return nil, err
 		}
@@ -770,7 +773,7 @@ func (d *Decoder) decodeNextFrameThreaded() (frames []*Frame, ok bool, err error
 		p.drain()
 		return nil, false, fmt.Errorf("goav1: frame %d payload: %w", i, err)
 	}
-	var result DecoderFrameWorkResidualStreamResult
+	var result decoderFrameWorkResidualStreamResult
 	err = d.runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, d.postFilterRunner())
 	if err != nil {
 		p.drain()
@@ -803,13 +806,13 @@ func (d *Decoder) publishFrameThreadedOutputs() []*Frame {
 // Temporal delimiters, metadata, padding and sequence headers that do not start
 // a new coded video sequence leave the reference state alone (dav1d keeps
 // parsing OBUs while frame threads run).
-func decoderFramePipelineEventNeedsDrain(event *DecoderEvent) bool {
+func decoderFramePipelineEventNeedsDrain(event *internaldecoder.Event) bool {
 	if event.NewCodedVideoSequence {
 		return true
 	}
 	switch event.Kind {
-	case DecoderEventIgnored, DecoderEventTemporalDelimiter, DecoderEventMetadata,
-		DecoderEventPadding, DecoderEventReserved, DecoderEventSequenceHeader:
+	case internaldecoder.EventIgnored, internaldecoder.EventTemporalDelimiter, internaldecoder.EventMetadata,
+		internaldecoder.EventPadding, internaldecoder.EventReserved, internaldecoder.EventSequenceHeader:
 		return false
 	}
 	return true

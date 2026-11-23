@@ -1,4 +1,4 @@
-package goav1_test
+package goav1
 
 // End-to-end verification that the multi-worker SB-row reconstruction wavefront
 // produces byte-identical output to the single-worker fused path, with a
@@ -17,7 +17,11 @@ import (
 	"os"
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
+
 	"github.com/thesyncim/goav1/internal/av1/threading"
 )
 
@@ -33,7 +37,7 @@ func decodeWavefrontFrames(t testing.TB, workers int) []byte {
 	if err != nil {
 		t.Skipf("read wavefront vector: %v", err)
 	}
-	it, err := av1.NewIVFIterator(raw)
+	it, err := NewIVFIterator(raw)
 	if err != nil {
 		t.Fatalf("NewIVFIterator: %v", err)
 	}
@@ -60,11 +64,11 @@ func decodeWavefrontFrames(t testing.TB, workers int) []byte {
 	// pool can recycle its surface. The pool holds only a bounded set of
 	// surfaces (refs + current), so the final result's Outputs slice does not
 	// retain every decoded frame; the per-frame post-filter hook does.
-	post := func(ctx av1.DecoderFrameWorkPostFilterContext) error {
+	post := func(ctx internaldecoder.FrameWorkPostFilterContext) error {
 		hashFramePlanes(sum, ctx.Output)
 		return nil
 	}
-	var result av1.DecoderFrameWorkResidualStreamResult
+	var result decoderFrameWorkResidualStreamResult
 	if err := h.runner.RunLowOverheadsInto(&result, payloads, post); err != nil {
 		t.Fatalf("decode (workers=%d): %v", workers, err)
 	}
@@ -78,39 +82,39 @@ func decodeWavefrontFrames(t testing.TB, workers int) []byte {
 func newWavefrontHarness(t testing.TB, payloads [][]byte, workers int) *decodeBenchmarkHarness {
 	t.Helper()
 
-	workerPool, err := av1.NewTileWorkerPool(workers)
+	workerPool, err := threading.NewPool(workers)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var probeStream av1.DecoderStream
-	probeEvents := make([]av1.DecoderEvent, benchMaxProbeEvents(payloads))
-	probeSpans := make([]av1.TileSpan, av1.MaxTiles)
-	probeJobs := make([]av1.TileJob, av1.MaxTiles)
-	probeBatches := make([]av1.TileBatch, av1.MaxTiles)
+	var probeStream internaldecoder.Stream
+	probeEvents := make([]internaldecoder.Event, benchMaxProbeEvents(payloads))
+	probeSpans := make([]internalparser.TileSpan, internalparser.MaxTiles)
+	probeJobs := make([]internaltile.Job, internalparser.MaxTiles)
+	probeBatches := make([]threading.Batch, internalparser.MaxTiles)
 
-	plan, err := av1.DecoderFrameWorkResidualLowOverheadStreamsPlan(probeStream, payloads, workers, probeEvents, probeSpans, probeJobs, probeBatches)
+	plan, err := decoderFrameWorkResidualLowOverheadStreamsPlan(probeStream, payloads, workers, probeEvents, probeSpans, probeJobs, probeBatches)
 	if err != nil {
 		workerPool.Close()
 		t.Fatal(err)
 	}
 
-	format, err := av1.FrameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
+	format, err := frameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
 	if err != nil {
 		workerPool.Close()
 		t.Fatalf("FrameCodedFormatFromHeaders: %v", err)
 	}
-	const surfaceCount = av1.RefFrames + 1
+	const surfaceCount = internalparser.RefFrames + 1
 
-	_, backingSize, err := av1.FramePoolRequiredSize(format, surfaceCount)
+	_, backingSize, err := framePoolRequiredSize(format, surfaceCount)
 	if err != nil {
 		workerPool.Close()
 		t.Fatal(err)
 	}
-	frames := make([]av1.Frame, surfaceCount)
+	frames := make([]Frame, surfaceCount)
 	free := make([]int, surfaceCount)
 	used := make([]bool, surfaceCount)
-	pool, err := av1.BindFramePool(make([]byte, backingSize), format, frames, free, used)
+	pool, err := internalframe.BindPool(make([]byte, backingSize), format, frames, free, used)
 	if err != nil {
 		workerPool.Close()
 		t.Fatal(err)
@@ -119,14 +123,14 @@ func newWavefrontHarness(t testing.TB, payloads [][]byte, workers int) *decodeBe
 	h := &decodeBenchmarkHarness{
 		pool:       pool,
 		workerPool: workerPool,
-		refSurface: make([]int, av1.InterRefsPerFrame),
-		refFrames:  make([]*av1.Frame, av1.InterRefsPerFrame),
-		releases:   make([]int, av1.RefFrames),
+		refSurface: make([]int, internalparser.InterRefsPerFrame),
+		refFrames:  make([]*Frame, internalparser.InterRefsPerFrame),
+		releases:   make([]int, internalparser.RefFrames),
 		payloads:   payloads,
 	}
 	h.scratch = newBenchStreamScratch(plan.Size)
 
-	runner, _, err := av1.BindDecoderFrameWorkResidualStreamPlanRunner(plan, &h.stream, av1.DecoderFrameWorkResidualEventRuntime{
+	runner, _, err := bindDecoderFrameWorkResidualStreamPlanRunner(plan, &h.stream, decoderFrameWorkResidualEventRuntime{
 		State:             &h.state,
 		Refs:              &h.refs,
 		FramePool:         &h.pool,
@@ -146,7 +150,7 @@ func newWavefrontHarness(t testing.TB, payloads [][]byte, workers int) *decodeBe
 	return h
 }
 
-func hashFramePlanes(sum interface{ Write([]byte) (int, error) }, f *av1.Frame) {
+func hashFramePlanes(sum interface{ Write([]byte) (int, error) }, f *Frame) {
 	if f == nil {
 		return
 	}

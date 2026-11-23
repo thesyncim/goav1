@@ -1,4 +1,4 @@
-package goav1_test
+package goav1
 
 import (
 	"encoding/hex"
@@ -6,8 +6,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	av1 "github.com/thesyncim/goav1"
 )
 
 // layeredUnsupportedProfileClips are the vendored clips NewLayeredDecoder
@@ -28,7 +26,7 @@ func TestLayeredDecoderRejectsSuperResolution(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read clip: %v", err)
 			}
-			it, err := av1.NewIVFIterator(ivf)
+			it, err := NewIVFIterator(ivf)
 			if err != nil {
 				t.Fatalf("NewIVFIterator: %v", err)
 			}
@@ -43,7 +41,7 @@ func TestLayeredDecoderRejectsSuperResolution(t *testing.T) {
 				}
 				payloads = append(payloads, frame.Payload)
 			}
-			dec, err := av1.NewLayeredDecoder(payloads)
+			dec, err := NewLayeredDecoder(payloads)
 			if err != nil {
 				if strings.Contains(clip.file, "resize-random") && strings.Contains(err.Error(), "layer pool full") {
 					return
@@ -82,7 +80,7 @@ func TestLayeredDecoderProfileClipsMatchGolden(t *testing.T) {
 				if err != nil {
 					t.Fatalf("read clip: %v", err)
 				}
-				it, err := av1.NewIVFIterator(ivf)
+				it, err := NewIVFIterator(ivf)
 				if err != nil {
 					t.Fatalf("NewIVFIterator: %v", err)
 				}
@@ -99,7 +97,7 @@ func TestLayeredDecoderProfileClipsMatchGolden(t *testing.T) {
 				}
 
 				want, unsupported := layeredUnsupportedProfileClips[clip.file]
-				dec, err := av1.NewLayeredDecoder(payloads, av1.WithWorkers(workers))
+				dec, err := NewLayeredDecoder(payloads, WithWorkers(workers))
 				if unsupported {
 					if err == nil {
 						dec.Close()

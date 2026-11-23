@@ -1,34 +1,20 @@
 package goav1
 
-import internalreconstruct "github.com/thesyncim/goav1/internal/av1/reconstruct"
+import (
+	internaltransform "github.com/thesyncim/goav1/internal/av1/transform"
 
-// ReconstructBlock describes the transform-block geometry, transform type,
-// and lossless flag for one residual reconstruction step. It identifies the
-// (size, type) pair the dequantize/inverse-transform/residual-add pipeline
-// must execute for a single block.
-type ReconstructBlock = internalreconstruct.Block
+	internalreconstruct "github.com/thesyncim/goav1/internal/av1/reconstruct"
+)
 
-// ErrReconstructInvalidBlock is returned by the reconstruct helpers when the
-// block configuration is inconsistent with the supplied buffers or with the
-// AV1 transform tables.
-var ErrReconstructInvalidBlock = internalreconstruct.ErrInvalidBlock
-
-// ReconstructBlockScratchLen reports the int32 and int16 scratch lengths
-// required to reconstruct one block with the given configuration. Callers
-// allocate these scratches once for the largest block they expect to process.
-func ReconstructBlockScratchLen(cfg ReconstructBlock) (int32Len int, int16Len int, err error) {
-	return internalreconstruct.ScratchLen(cfg)
-}
-
-// ReconstructBlockMaxScratchLen reports the worst-case int32 and int16 scratch
+// reconstructBlockMaxScratchLen reports the worst-case int32 and int16 scratch
 // lengths required to reconstruct any supported AV1 block, optionally limited
 // to the lossless transform path. Callers typically use it to size persistent
 // per-thread scratches at initialization time.
-func ReconstructBlockMaxScratchLen(lossless bool) (int32Len int, int16Len int, err error) {
+func reconstructBlockMaxScratchLen(lossless bool) (int32Len int, int16Len int, err error) {
 	var found bool
 	for _, size := range reconstructBlockScratchSizes {
 		for _, typ := range reconstructBlockScratchTypes {
-			next32, next16, err := ReconstructBlockScratchLen(ReconstructBlock{
+			next32, next16, err := internalreconstruct.ScratchLen(internalreconstruct.Block{
 				Size:      size,
 				Transform: typ,
 				Lossless:  lossless,
@@ -46,12 +32,12 @@ func ReconstructBlockMaxScratchLen(lossless bool) (int32Len int, int16Len int, e
 		}
 	}
 	if !found {
-		return 0, 0, ErrReconstructInvalidBlock
+		return 0, 0, internalreconstruct.ErrInvalidBlock
 	}
 	return int32Len, int16Len, nil
 }
 
-var reconstructBlockScratchSizes = [...]TransformSize{
+var reconstructBlockScratchSizes = [...]internaltransform.Size{
 	{Width: 4, Height: 4},
 	{Width: 4, Height: 8},
 	{Width: 8, Height: 4},
@@ -73,21 +59,21 @@ var reconstructBlockScratchSizes = [...]TransformSize{
 	{Width: 64, Height: 64},
 }
 
-var reconstructBlockScratchTypes = [...]TransformType{
-	TransformTypeDCTDCT,
-	TransformTypeADSTDCT,
-	TransformTypeDCTADST,
-	TransformTypeADSTADST,
-	TransformTypeFlipADSTDCT,
-	TransformTypeDCTFlipADST,
-	TransformTypeFlipADSTFlipADST,
-	TransformTypeADSTFlipADST,
-	TransformTypeFlipADSTADST,
-	TransformTypeIDTX,
-	TransformTypeVDCT,
-	TransformTypeHDCT,
-	TransformTypeVADST,
-	TransformTypeHADST,
-	TransformTypeVFlipADST,
-	TransformTypeHFlipADST,
+var reconstructBlockScratchTypes = [...]internaltransform.Type{
+	internaltransform.TypeDCTDCT,
+	internaltransform.TypeADSTDCT,
+	internaltransform.TypeDCTADST,
+	internaltransform.TypeADSTADST,
+	internaltransform.TypeFlipADSTDCT,
+	internaltransform.TypeDCTFlipADST,
+	internaltransform.TypeFlipADSTFlipADST,
+	internaltransform.TypeADSTFlipADST,
+	internaltransform.TypeFlipADSTADST,
+	internaltransform.TypeIDTX,
+	internaltransform.TypeVDCT,
+	internaltransform.TypeHDCT,
+	internaltransform.TypeVADST,
+	internaltransform.TypeHADST,
+	internaltransform.TypeVFlipADST,
+	internaltransform.TypeHFlipADST,
 }

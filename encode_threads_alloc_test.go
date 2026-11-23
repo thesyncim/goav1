@@ -1,11 +1,9 @@
-package goav1_test
+package goav1
 
 import (
 	"fmt"
 	"runtime"
 	"testing"
-
-	goav1 "github.com/thesyncim/goav1"
 )
 
 // TestVideoEncoderThreadsSteadyStateZeroAlloc pins the zero-allocation design
@@ -28,7 +26,7 @@ func TestVideoEncoderThreadsSteadyStateZeroAlloc(t *testing.T) {
 		{threads: 4, tiles: 2, keyEvery: 13},
 	} {
 		t.Run(fmt.Sprintf("threads=%d/tiles=%d/key=%d", tc.threads, tc.tiles, tc.keyEvery), func(t *testing.T) {
-			enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{
+			enc, err := NewVideoEncoder(VideoEncoderConfig{
 				Width: w, Height: h, TargetBitrate: 1_000_000, Framerate: 30, MaxThreads: tc.threads,
 			})
 			if err != nil {
@@ -38,7 +36,7 @@ func TestVideoEncoderThreadsSteadyStateZeroAlloc(t *testing.T) {
 			if tc.tiles > 0 {
 				enc.SetTileColumns(tc.tiles)
 			}
-			frame := goav1.I420Frame{
+			frame := I420Frame{
 				Y: make([]byte, w*h), U: make([]byte, w*h/4), V: make([]byte, w*h/4),
 				YStride: w, ChromaStride: w / 2, Width: w, Height: h,
 			}
@@ -71,7 +69,7 @@ func TestVideoEncoderThreadsSteadyStateZeroAlloc(t *testing.T) {
 
 // fillMovingI420 draws a moving XOR texture with a bright disc so that inter
 // frames carry real motion and residual.
-func fillMovingI420(f goav1.I420Frame, t int) {
+func fillMovingI420(f I420Frame, t int) {
 	for y := 0; y < f.Height; y++ {
 		for x := 0; x < f.Width; x++ {
 			v := (x + 2*t) ^ (y + t)

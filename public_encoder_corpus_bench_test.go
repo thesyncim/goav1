@@ -1,4 +1,4 @@
-package goav1_test
+package goav1
 
 import (
 	"crypto/md5"
@@ -11,8 +11,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
-	av1 "github.com/thesyncim/goav1"
 )
 
 const (
@@ -28,7 +26,7 @@ const (
 var publicEncoderP720SampleSink uint64
 
 type publicEncoderP720Fixture struct {
-	frames []av1.I420Frame
+	frames []I420Frame
 	rawSHA string
 	rawMD5 string
 }
@@ -128,7 +126,7 @@ func loadPublicEncoderP720Fixture(tb testing.TB, required bool) *publicEncoderP7
 		tb.Fatalf("decoded raw I420 stream MD5=%s, sidecar %s has %s", gotMD5, sidecarPath, wantMD5)
 	}
 
-	frames := make([]av1.I420Frame, publicEncoderP720Frames)
+	frames := make([]I420Frame, publicEncoderP720Frames)
 	yBytes := publicEncoderP720Width * publicEncoderP720Height
 	cBytes := yBytes / 4
 	for i := range frames {
@@ -136,7 +134,7 @@ func loadPublicEncoderP720Fixture(tb testing.TB, required bool) *publicEncoderP7
 		y := raw[base : base+yBytes]
 		u := raw[base+yBytes : base+yBytes+cBytes]
 		v := raw[base+yBytes+cBytes : base+wantBytes]
-		frames[i] = av1.I420Frame{
+		frames[i] = I420Frame{
 			Y: y, U: u, V: v,
 			YStride: publicEncoderP720Width, ChromaStride: publicEncoderP720Width / 2,
 			Width: publicEncoderP720Width, Height: publicEncoderP720Height,
@@ -146,15 +144,15 @@ func loadPublicEncoderP720Fixture(tb testing.TB, required bool) *publicEncoderP7
 	return &publicEncoderP720Fixture{frames: frames, rawSHA: rawSHA, rawMD5: gotMD5}
 }
 
-func publicEncoderP720Config() av1.VideoEncoderConfig {
-	return av1.VideoEncoderConfig{
+func publicEncoderP720Config() VideoEncoderConfig {
+	return VideoEncoderConfig{
 		Width: publicEncoderP720Width, Height: publicEncoderP720Height,
 		QIndex: 80, MaxThreads: 1,
 	}
 }
 
-func encodePublicEncoderP720Digest(frames []av1.I420Frame) (publicEncoderP720Digest, error) {
-	enc, err := av1.NewVideoEncoder(publicEncoderP720Config())
+func encodePublicEncoderP720Digest(frames []I420Frame) (publicEncoderP720Digest, error) {
+	enc, err := NewVideoEncoder(publicEncoderP720Config())
 	if err != nil {
 		return publicEncoderP720Digest{}, fmt.Errorf("NewVideoEncoder: %w", err)
 	}
@@ -200,8 +198,8 @@ func encodePublicEncoderP720Digest(frames []av1.I420Frame) (publicEncoderP720Dig
 	return result, nil
 }
 
-func encodePublicEncoderP720Observed(frames []av1.I420Frame) (uint64, int64, error) {
-	enc, err := av1.NewVideoEncoder(publicEncoderP720Config())
+func encodePublicEncoderP720Observed(frames []I420Frame) (uint64, int64, error) {
+	enc, err := NewVideoEncoder(publicEncoderP720Config())
 	if err != nil {
 		return 0, 0, fmt.Errorf("NewVideoEncoder: %w", err)
 	}
@@ -231,7 +229,7 @@ func encodePublicEncoderP720Observed(frames []av1.I420Frame) (uint64, int64, err
 	return observed, bitstreamBytes, nil
 }
 
-func writePublicEncoderP720VisibleFrame(h hash.Hash, frame av1.I420Frame) error {
+func writePublicEncoderP720VisibleFrame(h hash.Hash, frame I420Frame) error {
 	if err := writePublicEncoderP720Plane(h, frame.Y, frame.YStride, publicEncoderP720Width, publicEncoderP720Height); err != nil {
 		return fmt.Errorf("Y plane: %w", err)
 	}

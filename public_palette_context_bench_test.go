@@ -1,11 +1,9 @@
-package goav1_test
+package goav1
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	av1 "github.com/thesyncim/goav1"
 )
 
 // The sidecars copy the independent libaom aomdec per-frame MD5s already
@@ -36,7 +34,7 @@ func loadPublicPaletteClips(t testing.TB) []publicFullClip {
 func TestPublicDecoderPaletteMD5(t *testing.T) {
 	for _, clip := range loadPublicPaletteClips(t) {
 		t.Run(clip.name, func(t *testing.T) {
-			dec, err := av1.NewDecoderFromIVF(clip.data, av1.WithWorkers(1))
+			dec, err := NewDecoderFromIVF(clip.data, WithWorkers(1))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -64,7 +62,7 @@ func BenchmarkPublicDecoderPalette(b *testing.B) {
 	for _, clip := range loadPublicPaletteClips(b) {
 		b.Run(clip.name, func(b *testing.B) {
 			b.Run("warm_reset_decode", func(b *testing.B) {
-				dec, err := av1.NewDecoderFromIVF(clip.data, av1.WithWorkers(1))
+				dec, err := NewDecoderFromIVF(clip.data, WithWorkers(1))
 				if err != nil {
 					b.Fatal(err)
 				}

@@ -1,19 +1,23 @@
-package goav1_test
+package goav1
 
 import (
 	"errors"
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internalmotion "github.com/thesyncim/goav1/internal/av1/motion"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 func TestPublicPredictDecoderFrameWorkBlockIntra(t *testing.T) {
-	output := publicDecoderPostFilterFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	output := publicDecoderPostFilterFrame(t, FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 	batch := publicDecoderPredictionBatch(output)
 	publicSeedDecoderPredictionIntraEdges(output, 10, 50)
 
-	var scratch av1.DecoderFrameWorkPredictionScratch
-	if err := av1.PredictDecoderFrameWorkBlock(batch, 0, publicDecoderPredictionIntraVisit(av1.TileIntraModeDC), &scratch); err != nil {
+	var scratch internalthreading.FrameWorkPredictionScratch
+	if err := predictDecoderFrameWorkBlock(batch, 0, publicDecoderPredictionIntraVisit(internaltile.IntraModeDC), &scratch); err != nil {
 		t.Fatal(err)
 	}
 	if got := getPublicFrameSample(output.Y, output.Layout.BytesPerSample, 16, 16); got != 30 {
@@ -22,12 +26,12 @@ func TestPublicPredictDecoderFrameWorkBlockIntra(t *testing.T) {
 }
 
 func TestPublicPredictDecoderFrameWorkBlockLumaInter(t *testing.T) {
-	output := publicDecoderPostFilterFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	output := publicDecoderPostFilterFrame(t, FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 	reference := publicDecoderPostFilterFrame(t, output.Format)
 	publicFillDecoderPostFilterPlane(reference.Y)
 	batch := publicDecoderPredictionInterBatch(output, reference)
 
-	if err := av1.PredictDecoderFrameWorkBlockLumaInter(batch, 0, publicDecoderPredictionInterVisit(av1.MotionVector{})); err != nil {
+	if err := predictDecoderFrameWorkBlockLumaInter(batch, 0, publicDecoderPredictionInterVisit(internalmotion.Vector{})); err != nil {
 		t.Fatal(err)
 	}
 	got := getPublicFrameSample(output.Y, output.Layout.BytesPerSample, 16, 16)
@@ -38,30 +42,30 @@ func TestPublicPredictDecoderFrameWorkBlockLumaInter(t *testing.T) {
 }
 
 func TestPublicPredictDecoderFrameWorkBlockRejectsInvalidInputs(t *testing.T) {
-	output := publicDecoderPostFilterFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	output := publicDecoderPostFilterFrame(t, FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 	batch := publicDecoderPredictionBatch(output)
-	visit := publicDecoderPredictionIntraVisit(av1.TileIntraModeDC)
+	visit := publicDecoderPredictionIntraVisit(internaltile.IntraModeDC)
 
-	if err := av1.PredictDecoderFrameWorkBlock(batch, 0, av1.TileBlockLoopVisit{}, &av1.DecoderFrameWorkPredictionScratch{}); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
-		t.Fatalf("invalid visit err=%v want %v", err, av1.ErrThreadingInvalidBatch)
+	if err := predictDecoderFrameWorkBlock(batch, 0, internaltile.BlockLoopVisit{}, &internalthreading.FrameWorkPredictionScratch{}); !errors.Is(err, internalthreading.ErrInvalidBatch) {
+		t.Fatalf("invalid visit err=%v want %v", err, internalthreading.ErrInvalidBatch)
 	}
-	if err := av1.PredictDecoderFrameWorkBlockLuma(batch, 0, visit, nil); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
-		t.Fatalf("nil luma scratch err=%v want %v", err, av1.ErrThreadingInvalidBatch)
+	if err := predictDecoderFrameWorkBlockLuma(batch, 0, visit, nil); !errors.Is(err, internalthreading.ErrInvalidBatch) {
+		t.Fatalf("nil luma scratch err=%v want %v", err, internalthreading.ErrInvalidBatch)
 	}
-	if err := av1.PredictDecoderFrameWorkBlockChromaCFL(batch, 0, visit, &av1.DecoderFrameWorkCFLPredictionScratch{}); !errors.Is(err, av1.ErrThreadingInvalidBatch) {
-		t.Fatalf("non-cfl chroma err=%v want %v", err, av1.ErrThreadingInvalidBatch)
+	if err := predictDecoderFrameWorkBlockChromaCFL(batch, 0, visit, &internalthreading.FrameWorkCFLPredictionScratch{}); !errors.Is(err, internalthreading.ErrInvalidBatch) {
+		t.Fatalf("non-cfl chroma err=%v want %v", err, internalthreading.ErrInvalidBatch)
 	}
 }
 
 func TestPublicPredictDecoderFrameWorkBlockAllocs(t *testing.T) {
-	output := publicDecoderPostFilterFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	output := publicDecoderPostFilterFrame(t, FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 	batch := publicDecoderPredictionBatch(output)
-	visit := publicDecoderPredictionIntraVisit(av1.TileIntraModeDC)
-	var scratch av1.DecoderFrameWorkIntraPredictionScratch
+	visit := publicDecoderPredictionIntraVisit(internaltile.IntraModeDC)
+	var scratch internalthreading.FrameWorkIntraPredictionScratch
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		publicSeedDecoderPredictionIntraEdges(output, 10, 50)
-		if err := av1.PredictDecoderFrameWorkBlockLumaIntra(batch, 0, visit, &scratch); err != nil {
+		if err := predictDecoderFrameWorkBlockLumaIntra(batch, 0, visit, &scratch); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -70,35 +74,35 @@ func TestPublicPredictDecoderFrameWorkBlockAllocs(t *testing.T) {
 	}
 }
 
-func publicDecoderPredictionBatch(output *av1.Frame) av1.DecoderFrameWorkBatch {
-	return av1.DecoderFrameWorkBatch{
+func publicDecoderPredictionBatch(output *Frame) internaldecoder.FrameWorkBatch {
+	return internaldecoder.FrameWorkBatch{
 		Output: output,
-		FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
-			Sequence: av1.DecoderFrameWorkSequenceContextFromHeader(av1.SequenceHeader{
-				ColorConfig: av1.ColorConfig{
+		FrameWorkFrameContext: internaldecoder.FrameWorkFrameContext{
+			Sequence: internalthreading.FrameWorkSequenceContextFromHeader(SequenceHeader{
+				ColorConfig: internalparser.ColorConfig{
 					BitDepth:     output.Format.BitDepth,
 					MonoChrome:   output.Format.MonoChrome,
 					SubsamplingX: output.Format.SubsamplingX,
 					SubsamplingY: output.Format.SubsamplingY,
 				},
 			}),
-			FrameSize: av1.FrameSize{CodedWidth: uint32(output.Format.Width), Height: uint32(output.Format.Height), SuperResDenominator: 8},
+			FrameSize: FrameSize{CodedWidth: uint32(output.Format.Width), Height: uint32(output.Format.Height), SuperResDenominator: 8},
 		},
-		Jobs: []av1.TileJob{{SBCols: 1, SBRows: 1}},
+		Jobs: []internaltile.Job{{SBCols: 1, SBRows: 1}},
 	}
 }
 
-func publicDecoderPredictionInterBatch(output *av1.Frame, reference *av1.Frame) av1.DecoderFrameWorkBatch {
+func publicDecoderPredictionInterBatch(output *Frame, reference *Frame) internaldecoder.FrameWorkBatch {
 	batch := publicDecoderPredictionBatch(output)
-	batch.References = []*av1.Frame{reference}
-	batch.TileInfo = av1.TileInfo{InterpolationFilter: av1.InterpolationEightTap}
+	batch.References = []*Frame{reference}
+	batch.TileInfo = internalparser.TileInfo{InterpolationFilter: internalparser.InterpolationEightTap}
 	return batch
 }
 
-func publicDecoderPredictionIntraVisit(mode av1.TileIntraMode) av1.TileBlockLoopVisit {
-	return av1.TileBlockLoopVisit{
+func publicDecoderPredictionIntraVisit(mode internaltile.IntraMode) internaltile.BlockLoopVisit {
+	return internaltile.BlockLoopVisit{
 		Block: publicDecoderPredictionBlockVisit(),
-		Prediction: av1.TileBlockPredictionModeResult{
+		Prediction: internaltile.BlockPredictionModeResult{
 			Valid:    true,
 			Intra:    true,
 			LumaMode: mode,
@@ -106,32 +110,32 @@ func publicDecoderPredictionIntraVisit(mode av1.TileIntraMode) av1.TileBlockLoop
 	}
 }
 
-func publicDecoderPredictionInterVisit(mv av1.MotionVector) av1.TileBlockLoopVisit {
-	refs := av1.TileInterReferencesResult{Ref0: av1.TileReferenceFrameLast, Ref1: av1.TileReferenceFrameNone}
-	return av1.TileBlockLoopVisit{
+func publicDecoderPredictionInterVisit(mv internalmotion.Vector) internaltile.BlockLoopVisit {
+	refs := internaltile.InterReferencesResult{Ref0: internaltile.ReferenceFrameLast, Ref1: internaltile.ReferenceFrameNone}
+	return internaltile.BlockLoopVisit{
 		Block: publicDecoderPredictionBlockVisit(),
-		Prediction: av1.TileBlockPredictionModeResult{
+		Prediction: internaltile.BlockPredictionModeResult{
 			Valid:                true,
 			InterReferences:      refs,
 			InterReferencesValid: true,
-			InterMotion: av1.TileInterMotionResult{
+			InterMotion: internaltile.InterMotionResult{
 				References: refs,
-				MV:         [2]av1.MotionVector{mv},
+				MV:         [2]internalmotion.Vector{mv},
 			},
 			InterMotionValid: true,
 		},
 	}
 }
 
-func publicDecoderPredictionBlockVisit() av1.TileBlockVisit {
-	return av1.TileBlockVisit{
+func publicDecoderPredictionBlockVisit() internaltile.BlockVisit {
+	return internaltile.BlockVisit{
 		MICol:     4,
 		MIRow:     4,
 		MIColEnd:  8,
 		MIRowEnd:  8,
 		X4:        4,
 		Y4:        4,
-		Size:      av1.TileBlockSize16x16,
+		Size:      internaltile.BlockSize16x16,
 		VisibleW4: 4,
 		VisibleH4: 4,
 		HaveTop:   true,
@@ -139,7 +143,7 @@ func publicDecoderPredictionBlockVisit() av1.TileBlockVisit {
 	}
 }
 
-func publicSeedDecoderPredictionIntraEdges(output *av1.Frame, above uint16, left uint16) {
+func publicSeedDecoderPredictionIntraEdges(output *Frame, above uint16, left uint16) {
 	for x := 16; x < 32; x++ {
 		setPublicFrameSample(output.Y, output.Layout.BytesPerSample, x, 15, above)
 	}

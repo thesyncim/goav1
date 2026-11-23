@@ -1,16 +1,25 @@
-package goav1_test
+package goav1
 
 import (
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
+	internalcdef "github.com/thesyncim/goav1/internal/av1/cdef"
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internalencoder "github.com/thesyncim/goav1/internal/av1/encoder"
+	internalfilmgrain "github.com/thesyncim/goav1/internal/av1/filmgrain"
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internalobu "github.com/thesyncim/goav1/internal/av1/obu"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+	internalsuperres "github.com/thesyncim/goav1/internal/av1/superres"
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 var publicBenchmarkSink int
 
 func BenchmarkPublicKeyframeEncoderEncode1080p(b *testing.B) {
 	const width, height = 1920, 1080
-	enc, err := av1.NewKeyframeEncoder(width, height, 80)
+	enc, err := NewKeyframeEncoder(width, height, 80)
 	if err != nil {
 		b.Fatalf("NewKeyframeEncoder: %v", err)
 	}
@@ -18,7 +27,7 @@ func BenchmarkPublicKeyframeEncoderEncode1080p(b *testing.B) {
 		b.StopTimer()
 		_ = enc.Close()
 	})
-	frames := [...]av1.I420Frame{
+	frames := [...]I420Frame{
 		publicRTCMatrixFrame(width, height, 0),
 		publicRTCMatrixFrame(width, height, 1),
 		publicRTCMatrixFrame(width, height, 2),
@@ -45,17 +54,17 @@ func BenchmarkPublicKeyframeEncoderEncode1080p(b *testing.B) {
 func BenchmarkPublicRTCEncoderEncodePicture1080p(b *testing.B) {
 	for _, tc := range []struct {
 		name string
-		mode av1.EncoderScalabilityMode
+		mode EncoderScalabilityMode
 	}{
-		{name: "L1T3", mode: av1.EncoderScalabilityModeL1T3},
-		{name: "S3T3", mode: av1.EncoderScalabilityModeS3T3},
+		{name: "L1T3", mode: EncoderScalabilityModeL1T3},
+		{name: "S3T3", mode: internalencoder.ScalabilityModeS3T3},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
 			const width, height = 1920, 1080
 			cfg := publicRTCMatrixConfig(width, height, tc.mode)
 			cfg.TargetBitrateKbps = 1800
 			cfg.MaxBitrateKbps = 2400
-			enc, err := av1.NewRTCEncoderWithConfig(cfg)
+			enc, err := NewRTCEncoderWithConfig(cfg)
 			if err != nil {
 				b.Fatalf("NewRTCEncoderWithConfig: %v", err)
 			}
@@ -64,7 +73,7 @@ func BenchmarkPublicRTCEncoderEncodePicture1080p(b *testing.B) {
 				_ = enc.Close()
 			})
 
-			frames := [...]av1.I420Frame{
+			frames := [...]I420Frame{
 				publicRTCMatrixFrame(width, height, 0),
 				publicRTCMatrixFrame(width, height, 1),
 				publicRTCMatrixFrame(width, height, 2),
@@ -91,7 +100,7 @@ func BenchmarkPublicRTCEncoderEncodePicture1080p(b *testing.B) {
 	}
 }
 
-func publicRTCBenchmarkPictureBytes(config av1.EncoderConfig) int64 {
+func publicRTCBenchmarkPictureBytes(config EncoderConfig) int64 {
 	var bytes int64
 	for i := uint8(0); i < config.SpatialLayerCount; i++ {
 		resolution := config.SpatialLayers[i].Resolution
@@ -108,7 +117,7 @@ func BenchmarkPublicLowOverheadOBUIterator(b *testing.B) {
 
 	sum := 0
 	for i := 0; i < b.N; i++ {
-		it := av1.NewLowOverheadIterator(stream)
+		it := internalobu.NewLowOverheadIterator(stream)
 		count := 0
 		payloadBytes := 0
 		for {
@@ -138,7 +147,7 @@ func BenchmarkPublicTemporalUnitIterator(b *testing.B) {
 
 	sum := 0
 	for i := 0; i < b.N; i++ {
-		it := av1.NewTemporalUnitIterator(stream)
+		it := internalobu.NewTemporalUnitIterator(stream)
 		count := 0
 		rawBytes := 0
 		for {
@@ -168,7 +177,7 @@ func BenchmarkPublicAnnexBIterator(b *testing.B) {
 
 	sum := 0
 	for i := 0; i < b.N; i++ {
-		it := av1.NewAnnexBIterator(stream)
+		it := internalobu.NewAnnexBIterator(stream)
 		count := 0
 		rawBytes := 0
 		for {
@@ -192,16 +201,16 @@ func BenchmarkPublicAnnexBIterator(b *testing.B) {
 
 func BenchmarkPublicRTPPacketizeAndAssemble(b *testing.B) {
 	frame := publicBenchmarkRTPFrame()
-	limits := av1.RTPPayloadSizeLimits{MaxPayloadLen: 120}
-	var packetizerOBUs [16]av1.RTPPacketizerOBU
-	var packets [32]av1.RTPPacketPlan
-	var work [32]av1.RTPPacketPlan
+	limits := RTPPayloadSizeLimits{MaxPayloadLen: 120}
+	var packetizerOBUs [16]RTPPacketizerOBU
+	var packets [32]RTPPacketPlan
+	var work [32]RTPPacketPlan
 	var packetBytes [32][160]byte
 	var payloads [32][]byte
 	var assembled [1024]byte
-	var frameOBUs [16]av1.RTPFrameOBU
+	var frameOBUs [16]RTPFrameOBU
 
-	size, err := av1.RTPPacketizerScratchLen(frame, limits, packetizerOBUs[:])
+	size, err := RTPPacketizerScratchLen(frame, limits, packetizerOBUs[:])
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -215,18 +224,18 @@ func BenchmarkPublicRTPPacketizeAndAssemble(b *testing.B) {
 
 	sum := 0
 	for i := 0; i < b.N; i++ {
-		firstPass, err := av1.RTPPacketizerScratchLen(frame, limits, nil)
+		firstPass, err := RTPPacketizerScratchLen(frame, limits, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
 		if firstPass.OBUs != size.OBUs {
 			b.Fatalf("first pass OBUs=%d want %d", firstPass.OBUs, size.OBUs)
 		}
-		size, err := av1.RTPPacketizerScratchLen(frame, limits, packetizerOBUs[:])
+		size, err := RTPPacketizerScratchLen(frame, limits, packetizerOBUs[:])
 		if err != nil {
 			b.Fatal(err)
 		}
-		packetizer, err := av1.NewRTPPacketizer(frame, limits, true, true, packetizerOBUs[:size.OBUs], packets[:size.Packets], work[:size.Work])
+		packetizer, err := NewRTPPacketizer(frame, limits, true, true, packetizerOBUs[:size.OBUs], packets[:size.Packets], work[:size.Work])
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -249,11 +258,11 @@ func BenchmarkPublicRTPPacketizeAndAssemble(b *testing.B) {
 			payloads[count] = packetBytes[count][:n]
 			count++
 		}
-		assembledLen, obuCount, err := av1.AssembleRTPFrameSize(payloads[:count])
+		assembledLen, obuCount, err := AssembleRTPFrameSize(payloads[:count])
 		if err != nil {
 			b.Fatal(err)
 		}
-		wrote, assembledCount, err := av1.AssembleRTPFrame(assembled[:assembledLen], payloads[:count], frameOBUs[:obuCount])
+		wrote, assembledCount, err := AssembleRTPFrame(assembled[:assembledLen], payloads[:count], frameOBUs[:obuCount])
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -267,7 +276,7 @@ func BenchmarkPublicRTPPacketizeAndAssemble(b *testing.B) {
 
 func BenchmarkPublicDecodeRTPPayload(b *testing.B) {
 	rtpPayloads, wantVisible := publicDecoderAllocRTPPayloads(b)
-	dec, err := av1.NewDecoderFromRTPPayloads(rtpPayloads)
+	dec, err := NewDecoderFromRTPPayloads(rtpPayloads)
 	if err != nil {
 		b.Fatalf("NewDecoderFromRTPPayloads: %v", err)
 	}
@@ -310,8 +319,8 @@ func BenchmarkPublicDecodeRTPPayload(b *testing.B) {
 }
 
 func BenchmarkPublicDecodeRTPPayload1080p(b *testing.B) {
-	rtpPayloads, wantVisible := publicDecoder1080pRTPPayloads(b, av1.EncoderScalabilityModeL1T3)
-	dec, err := av1.NewDecoderFromRTPPayloads(rtpPayloads)
+	rtpPayloads, wantVisible := publicDecoder1080pRTPPayloads(b, EncoderScalabilityModeL1T3)
+	dec, err := NewDecoderFromRTPPayloads(rtpPayloads)
 	if err != nil {
 		b.Fatalf("NewDecoderFromRTPPayloads: %v", err)
 	}
@@ -351,9 +360,9 @@ func BenchmarkPublicDecodeRTPPayload1080p(b *testing.B) {
 }
 
 func BenchmarkPublicLayeredDecodeRTPPayload1080p(b *testing.B) {
-	rtpPayloads, _ := publicDecoder1080pRTPPayloads(b, av1.EncoderScalabilityModeL3T3)
+	rtpPayloads, _ := publicDecoder1080pRTPPayloads(b, internalencoder.ScalabilityModeL3T3)
 	wantVisible := publicLayeredDecoderVisibleRTPPayloadFrames(b, rtpPayloads)
-	dec, err := av1.NewLayeredDecoderFromRTPPayloads(rtpPayloads)
+	dec, err := NewLayeredDecoderFromRTPPayloads(rtpPayloads)
 	if err != nil {
 		b.Fatalf("NewLayeredDecoderFromRTPPayloads: %v", err)
 	}
@@ -401,7 +410,7 @@ func publicRTPPayloadBytes(payloads [][]byte) int {
 }
 
 func BenchmarkPublicFrameBindAndSampleRoundTrip(b *testing.B) {
-	format := av1.FrameFormat{
+	format := FrameFormat{
 		Width:        128,
 		Height:       72,
 		BitDepth:     8,
@@ -409,16 +418,16 @@ func BenchmarkPublicFrameBindAndSampleRoundTrip(b *testing.B) {
 		SubsamplingY: true,
 		Align:        32,
 	}
-	layout, err := av1.FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		b.Fatal(err)
 	}
 	backing := make([]byte, layout.Size)
-	frame, err := av1.BindFrame(backing, format)
+	frame, err := internalframe.Bind(backing, format)
 	if err != nil {
 		b.Fatal(err)
 	}
-	sampleLen, err := av1.FrameSamplePlaneLen(frame.Y, 1)
+	sampleLen, err := internalframe.SamplePlaneLen(frame.Y, 1)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -430,15 +439,15 @@ func BenchmarkPublicFrameBindAndSampleRoundTrip(b *testing.B) {
 
 	sum := 0
 	for i := 0; i < b.N; i++ {
-		frame, err := av1.BindFrame(backing, format)
+		frame, err := internalframe.Bind(backing, format)
 		if err != nil {
 			b.Fatal(err)
 		}
-		plane, err := av1.LoadFrameSamplePlane(samples, frame.Y, 1)
+		plane, err := internalframe.LoadSamplePlane(samples, frame.Y, 1)
 		if err != nil {
 			b.Fatal(err)
 		}
-		if err := av1.StoreFrameSamplePlane(frame.Y, 1, plane); err != nil {
+		if err := internalframe.StoreSamplePlane(frame.Y, 1, plane); err != nil {
 			b.Fatal(err)
 		}
 		sum += plane.Stride + frame.Layout.Size
@@ -447,10 +456,10 @@ func BenchmarkPublicFrameBindAndSampleRoundTrip(b *testing.B) {
 }
 
 func BenchmarkPublicDecoderPredictionBridge(b *testing.B) {
-	output := publicBenchmarkDecoderFrame(b, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	output := publicBenchmarkDecoderFrame(b, FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 	batch := publicDecoderPredictionBatch(output)
-	visit := publicDecoderPredictionIntraVisit(av1.TileIntraModeDC)
-	var scratch av1.DecoderFrameWorkIntraPredictionScratch
+	visit := publicDecoderPredictionIntraVisit(internaltile.IntraModeDC)
+	var scratch internalthreading.FrameWorkIntraPredictionScratch
 	publicSeedDecoderPredictionIntraEdges(output, 10, 50)
 
 	b.SetBytes(16 * 16)
@@ -459,7 +468,7 @@ func BenchmarkPublicDecoderPredictionBridge(b *testing.B) {
 
 	sum := 0
 	for i := 0; i < b.N; i++ {
-		if err := av1.PredictDecoderFrameWorkBlockLumaIntra(batch, 0, visit, &scratch); err != nil {
+		if err := predictDecoderFrameWorkBlockLumaIntra(batch, 0, visit, &scratch); err != nil {
 			b.Fatal(err)
 		}
 		sum += int(output.Y.Pix[16*output.Y.Stride+16])
@@ -468,16 +477,16 @@ func BenchmarkPublicDecoderPredictionBridge(b *testing.B) {
 }
 
 func BenchmarkPublicOutputFilters(b *testing.B) {
-	superSrc := av1.FrameSamplePlane{Pix: make([]uint16, 128*32), Stride: 128, Width: 128, Height: 32}
-	superDst := av1.FrameSamplePlane{Pix: make([]uint16, 192*32), Stride: 192, Width: 192, Height: 32}
+	superSrc := internalframe.SamplePlane{Pix: make([]uint16, 128*32), Stride: 128, Width: 128, Height: 32}
+	superDst := internalframe.SamplePlane{Pix: make([]uint16, 192*32), Stride: 192, Width: 192, Height: 32}
 	for i := range superSrc.Pix {
 		superSrc.Pix[i] = uint16(i & 0xff)
 	}
 	lut := publicFilmGrainScaling(64)
 	rowDst, rowSrc := publicFilmGrainRowBuffers(128, 4, 128, 100)
-	lumaGrain := make([]int16, av1.FilmGrainLumaGrainSamples)
+	lumaGrain := make([]int16, internalfilmgrain.LumaGrainSamples)
 	publicSetFilmGrainLuma(lumaGrain, 0xd9, 0, 0, 0, 0, 64)
-	lumaParams := av1.FilmGrainLumaRowParams{
+	lumaParams := internalfilmgrain.LumaRowParams{
 		Seed:         0,
 		Width:        128,
 		Height:       4,
@@ -492,10 +501,10 @@ func BenchmarkPublicOutputFilters(b *testing.B) {
 
 	sum := 0
 	for i := 0; i < b.N; i++ {
-		if err := av1.UpscaleSuperResPlane(superSrc, superDst, 8); err != nil {
+		if err := internalsuperres.UpscalePlane(superSrc, superDst, 8); err != nil {
 			b.Fatal(err)
 		}
-		if err := av1.ApplyFilmGrainLumaRow(rowDst, rowSrc, lumaGrain, lut[:], lumaParams); err != nil {
+		if err := internalfilmgrain.ApplyLumaRow(rowDst, rowSrc, lumaGrain, lut[:], lumaParams); err != nil {
 			b.Fatal(err)
 		}
 		sum += int(superDst.Pix[i%len(superDst.Pix)]) + int(rowDst[i%len(rowDst)])
@@ -505,24 +514,24 @@ func BenchmarkPublicOutputFilters(b *testing.B) {
 
 func BenchmarkPublicDecoderPostFilterBinding(b *testing.B) {
 	sequence := publicDecoderPostFilterSequence()
-	size := av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}
-	_, _, loopFilterLength, err := av1.DecoderFrameWorkLoopFilterMapShape(sequence, size)
+	size := FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8}
+	_, _, loopFilterLength, err := decoderFrameWorkLoopFilterMapShape(sequence, size)
 	if err != nil {
 		b.Fatal(err)
 	}
-	loopFilterRecords := make([]av1.DecoderFrameWorkLoopFilterBlockRecord, loopFilterLength)
-	loopFilterEdges := make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, 4)
+	loopFilterRecords := make([]internalthreading.FrameWorkLoopFilterBlockRecord, loopFilterLength)
+	loopFilterEdges := make([]internaldecoder.FrameWorkLoopFilterPostFilterEdge, 4)
 	loopFilterSchedule := make([]uint32, len(loopFilterEdges))
-	loopFilterSize := av1.DecoderFrameWorkLoopFilterPostFilterScratchSize{Edges: len(loopFilterEdges), Schedule: len(loopFilterSchedule)}
+	loopFilterSize := internaldecoder.FrameWorkLoopFilterPostFilterScratchSize{Edges: len(loopFilterEdges), Schedule: len(loopFilterSchedule)}
 	index := make([]uint8, 1)
 	read := make([]bool, 1)
-	cdefSize := av1.DecoderFrameWorkCDEFPostFilterScratchSize{
+	cdefSize := internaldecoder.FrameWorkCDEFPostFilterScratchSize{
 		Samples:       [3]int{64, 16, 16},
 		Dst:           [3]int{64, 16, 16},
 		DirectionGrid: 1,
 		VarianceGrid:  1,
-		Input:         av1.CDEFInputBufferSize,
-		UnitDst:       av1.CDEFInputBufferSize,
+		Input:         internalcdef.InputBufferSize,
+		UnitDst:       internalcdef.InputBufferSize,
 	}
 	var sampleScratch [3][]uint16
 	var dstScratch [3][]uint16
@@ -530,15 +539,15 @@ func BenchmarkPublicDecoderPostFilterBinding(b *testing.B) {
 		sampleScratch[plane] = make([]uint16, cdefSize.Samples[plane])
 		dstScratch[plane] = make([]uint16, cdefSize.Dst[plane])
 	}
-	directionGrid := make([]av1.CDEFDirectionGrid, cdefSize.DirectionGrid)
-	varianceGrid := make([]av1.CDEFVarianceGrid, cdefSize.VarianceGrid)
+	directionGrid := make([]internalcdef.DirectionGrid, cdefSize.DirectionGrid)
+	varianceGrid := make([]internalcdef.VarianceGrid, cdefSize.VarianceGrid)
 	inputScratch := make([]uint16, cdefSize.Input)
 	unitDstScratch := make([]uint16, cdefSize.UnitDst)
-	postFilterSize := av1.DecoderFrameWorkPostFilterScratchSize{
+	postFilterSize := internaldecoder.FrameWorkPostFilterScratchSize{
 		LoopFilter: loopFilterSize,
 		CDEF:       cdefSize,
 	}
-	postFilterBuffers := av1.DecoderFrameWorkPostFilterRequestBuffers{
+	postFilterBuffers := decoderFrameWorkPostFilterRequestBuffers{
 		LoopFilterEdges:    loopFilterEdges,
 		LoopFilterSchedule: loopFilterSchedule,
 
@@ -549,13 +558,13 @@ func BenchmarkPublicDecoderPostFilterBinding(b *testing.B) {
 		CDEFInputScratch:   inputScratch,
 		CDEFUnitDstScratch: unitDstScratch,
 	}
-	postFilterArenaSize := av1.DecoderFrameWorkPostFilterRequestScratchLen(postFilterSize)
-	postFilterSide := av1.DecoderFrameWorkPostFilterRequestSideData{}
-	postFilterArena := av1.DecoderFrameWorkPostFilterRequestScratch{
-		LoopFilterEdges:    make([]av1.DecoderFrameWorkLoopFilterPostFilterEdge, postFilterArenaSize.LoopFilterEdges),
+	postFilterArenaSize := decoderFrameWorkPostFilterRequestScratchLen(postFilterSize)
+	postFilterSide := decoderFrameWorkPostFilterRequestSideData{}
+	postFilterArena := decoderFrameWorkPostFilterRequestScratch{
+		LoopFilterEdges:    make([]internaldecoder.FrameWorkLoopFilterPostFilterEdge, postFilterArenaSize.LoopFilterEdges),
 		LoopFilterSchedule: make([]uint32, postFilterArenaSize.LoopFilterSchedule),
-		CDEFDirectionGrid:  make([]av1.CDEFDirectionGrid, postFilterArenaSize.CDEFDirectionGrid),
-		CDEFVarianceGrid:   make([]av1.CDEFVarianceGrid, postFilterArenaSize.CDEFVarianceGrid),
+		CDEFDirectionGrid:  make([]internalcdef.DirectionGrid, postFilterArenaSize.CDEFDirectionGrid),
+		CDEFVarianceGrid:   make([]internalcdef.VarianceGrid, postFilterArenaSize.CDEFVarianceGrid),
 		ByteScratch:        make([]byte, postFilterArenaSize.ByteScratch),
 		Uint16Scratch:      make([]uint16, postFilterArenaSize.Uint16Scratch),
 		Int16Scratch:       make([]int16, postFilterArenaSize.Int16Scratch),
@@ -568,31 +577,31 @@ func BenchmarkPublicDecoderPostFilterBinding(b *testing.B) {
 
 	sum := 0
 	for i := 0; i < b.N; i++ {
-		loopMap, err := av1.BindDecoderFrameWorkLoopFilterMap(sequence, size, loopFilterRecords)
+		loopMap, err := bindDecoderFrameWorkLoopFilterMap(sequence, size, loopFilterRecords)
 		if err != nil {
 			b.Fatal(err)
 		}
 		postFilterBuffers.LoopFilterMap = loopMap
 		postFilterSide.LoopFilterMap = loopMap
-		loopReq, err := av1.BindDecoderFrameWorkLoopFilterPostFilterRequest(loopFilterSize, loopMap, loopFilterEdges, loopFilterSchedule)
+		loopReq, err := bindDecoderFrameWorkLoopFilterPostFilterRequest(loopFilterSize, loopMap, loopFilterEdges, loopFilterSchedule)
 		if err != nil {
 			b.Fatal(err)
 		}
-		cdefMap, err := av1.BindDecoderFrameWorkCDEFIndexMap(sequence, size, av1.CDEFParams{Bits: 1, StrengthCount: 2}, index, read)
+		cdefMap, err := bindDecoderFrameWorkCDEFIndexMap(sequence, size, internalparser.CDEFParams{Bits: 1, StrengthCount: 2}, index, read)
 		if err != nil {
 			b.Fatal(err)
 		}
 		postFilterBuffers.CDEFIndexMap = cdefMap
 		postFilterSide.CDEFIndexMap = cdefMap
-		cdefReq, err := av1.BindDecoderFrameWorkCDEFPostFilterRequest(cdefSize, cdefMap, sampleScratch, dstScratch, directionGrid, varianceGrid, inputScratch, unitDstScratch)
+		cdefReq, err := bindDecoderFrameWorkCDEFPostFilterRequest(cdefSize, cdefMap, sampleScratch, dstScratch, directionGrid, varianceGrid, inputScratch, unitDstScratch)
 		if err != nil {
 			b.Fatal(err)
 		}
-		postReq, err := av1.BindDecoderFrameWorkPostFilterRequest(postFilterSize, postFilterBuffers)
+		postReq, err := bindDecoderFrameWorkPostFilterRequest(postFilterSize, postFilterBuffers)
 		if err != nil {
 			b.Fatal(err)
 		}
-		arenaReq, err := av1.BindDecoderFrameWorkPostFilterRequestFromScratch(postFilterSize, postFilterSide, postFilterArena)
+		arenaReq, err := bindDecoderFrameWorkPostFilterRequestFromScratch(postFilterSize, postFilterSide, postFilterArena)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -606,30 +615,30 @@ func BenchmarkPublicDecoderPostFilterScratchContext(b *testing.B) {
 	sequence.ColorConfig.MonoChrome = true
 	sequence.ColorConfig.SubsamplingX = false
 	sequence.ColorConfig.SubsamplingY = false
-	size := av1.FrameSize{
+	size := FrameSize{
 		CodedWidth:          8,
 		UpscaledWidth:       13,
 		Height:              32,
 		SuperResEnabled:     true,
 		SuperResDenominator: 13,
 	}
-	event := av1.DecoderEvent{
-		Kind:           av1.DecoderEventTileGroup,
+	event := internaldecoder.Event{
+		Kind:           internaldecoder.EventTileGroup,
 		SequenceHeader: sequence,
 		FrameSize:      size,
-		TileGroup:      av1.TileGroup{Final: true},
-		FilmGrain: av1.FilmGrainParams{
+		TileGroup:      internalparser.TileGroup{Final: true},
+		FilmGrain: internalparser.FilmGrainParams{
 			ParamsPresent: true,
 			Apply:         true,
 			Seed:          0x1234,
 			BitDepth:      8,
 			NumYPoints:    1,
-			YPoints:       [av1.MaxFilmGrainYPoints][2]uint8{{0, 64}},
+			YPoints:       [internalparser.MaxFilmGrainYPoints][2]uint8{{0, 64}},
 			ScalingShift:  8,
 			Overlap:       true,
 		},
 	}
-	var output av1.Frame
+	var output Frame
 
 	b.SetBytes(int64(size.CodedWidth * size.Height))
 	b.ReportAllocs()
@@ -637,7 +646,7 @@ func BenchmarkPublicDecoderPostFilterScratchContext(b *testing.B) {
 
 	sum := 0
 	for i := 0; i < b.N; i++ {
-		ctx, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, &event, 32, nil, &output)
+		ctx, err := decoderFrameWorkPostFilterScratchContext(sequence, &event, 32, nil, &output)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -651,51 +660,51 @@ func BenchmarkPublicDecoderCallerPostFilterScratchRunner(b *testing.B) {
 	sequence.ColorConfig.MonoChrome = true
 	sequence.ColorConfig.SubsamplingX = false
 	sequence.ColorConfig.SubsamplingY = false
-	size := av1.FrameSize{
+	size := FrameSize{
 		CodedWidth:          8,
 		UpscaledWidth:       13,
 		Height:              32,
 		SuperResEnabled:     true,
 		SuperResDenominator: 13,
 	}
-	event := av1.DecoderEvent{
-		Kind:           av1.DecoderEventTileGroup,
+	event := internaldecoder.Event{
+		Kind:           internaldecoder.EventTileGroup,
 		SequenceHeader: sequence,
 		FrameSize:      size,
-		TileGroup:      av1.TileGroup{Final: true},
-		FilmGrain: av1.FilmGrainParams{
+		TileGroup:      internalparser.TileGroup{Final: true},
+		FilmGrain: internalparser.FilmGrainParams{
 			ParamsPresent: true,
 			Apply:         true,
 			Seed:          0x1234,
 			BitDepth:      8,
 			NumYPoints:    1,
-			YPoints:       [av1.MaxFilmGrainYPoints][2]uint8{{0, 64}},
+			YPoints:       [internalparser.MaxFilmGrainYPoints][2]uint8{{0, 64}},
 			ScalingShift:  8,
 			Overlap:       true,
 		},
 	}
-	var scratchOutput av1.Frame
-	scratchCtx, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, &event, 32, nil, &scratchOutput)
+	var scratchOutput Frame
+	scratchCtx, err := decoderFrameWorkPostFilterScratchContext(sequence, &event, 32, nil, &scratchOutput)
 	if err != nil {
 		b.Fatal(err)
 	}
-	var runner av1.DecoderFrameWorkCallerPostFilterScratchRunner
+	var runner decoderFrameWorkCallerPostFilterScratchRunner
 	first, err := runner.ScratchLen(scratchCtx)
 	if err != nil {
 		b.Fatal(err)
 	}
-	runner.Scratch = publicDecoderPostFilterRequestScratch(av1.DecoderFrameWorkPostFilterRequestScratchLen(first))
+	runner.Scratch = publicDecoderPostFilterRequestScratch(decoderFrameWorkPostFilterRequestScratchLen(first))
 	full, err := runner.ScratchLen(scratchCtx)
 	if err != nil {
 		b.Fatal(err)
 	}
-	runner.Scratch = publicDecoderPostFilterRequestScratch(av1.DecoderFrameWorkPostFilterRequestScratchLen(full))
+	runner.Scratch = publicDecoderPostFilterRequestScratch(decoderFrameWorkPostFilterRequestScratchLen(full))
 
 	output := publicBenchmarkDecoderFrame(b, scratchOutput.Format)
 	for i := range output.Y.Pix {
 		output.Y.Pix[i] = 100
 	}
-	ctx := av1.DecoderFrameWorkPostFilterContext{Event: event, Output: output}
+	ctx := internaldecoder.FrameWorkPostFilterContext{Event: event, Output: output}
 
 	b.SetBytes(int64(size.CodedWidth*size.Height + size.UpscaledWidth*size.Height))
 	b.ReportAllocs()
@@ -706,7 +715,7 @@ func BenchmarkPublicDecoderCallerPostFilterScratchRunner(b *testing.B) {
 		if err := runner.Apply(ctx); err != nil {
 			b.Fatal(err)
 		}
-		if runner.Result.Completed != av1.DecoderFrameWorkPostFilterSuperRes|av1.DecoderFrameWorkPostFilterFilmGrain ||
+		if runner.Result.Completed != internaldecoder.FrameWorkPostFilterSuperRes|internaldecoder.FrameWorkPostFilterFilmGrain ||
 			!runner.Context.DetachedPostFilterOutput() ||
 			runner.Context.Output.Format.Width != int(size.UpscaledWidth) {
 			b.Fatalf("result=%+v context=%+v", runner.Result, runner.Context)
@@ -721,31 +730,31 @@ func BenchmarkPublicDecoderReusableCallerPostFilterRunner(b *testing.B) {
 	sequence.ColorConfig.MonoChrome = true
 	sequence.ColorConfig.SubsamplingX = false
 	sequence.ColorConfig.SubsamplingY = false
-	size := av1.FrameSize{
+	size := FrameSize{
 		CodedWidth:          8,
 		UpscaledWidth:       13,
 		Height:              32,
 		SuperResEnabled:     true,
 		SuperResDenominator: 13,
 	}
-	event := av1.DecoderEvent{
-		Kind:           av1.DecoderEventTileGroup,
+	event := internaldecoder.Event{
+		Kind:           internaldecoder.EventTileGroup,
 		SequenceHeader: sequence,
 		FrameSize:      size,
-		TileGroup:      av1.TileGroup{Final: true},
-		FilmGrain: av1.FilmGrainParams{
+		TileGroup:      internalparser.TileGroup{Final: true},
+		FilmGrain: internalparser.FilmGrainParams{
 			ParamsPresent: true,
 			Apply:         true,
 			Seed:          0x1234,
 			BitDepth:      8,
 			NumYPoints:    1,
-			YPoints:       [av1.MaxFilmGrainYPoints][2]uint8{{0, 64}},
+			YPoints:       [internalparser.MaxFilmGrainYPoints][2]uint8{{0, 64}},
 			ScalingShift:  8,
 			Overlap:       true,
 		},
 	}
-	var scratchOutput av1.Frame
-	_, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, &event, 32, nil, &scratchOutput)
+	var scratchOutput Frame
+	_, err := decoderFrameWorkPostFilterScratchContext(sequence, &event, 32, nil, &scratchOutput)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -753,8 +762,8 @@ func BenchmarkPublicDecoderReusableCallerPostFilterRunner(b *testing.B) {
 	for i := range output.Y.Pix {
 		output.Y.Pix[i] = 100
 	}
-	ctx := av1.DecoderFrameWorkPostFilterContext{Event: event, Output: output}
-	var runner av1.DecoderFrameWorkReusableCallerPostFilterRunner
+	ctx := internaldecoder.FrameWorkPostFilterContext{Event: event, Output: output}
+	var runner decoderFrameWorkReusableCallerPostFilterRunner
 	if err := runner.Apply(ctx); err != nil {
 		b.Fatal(err)
 	}
@@ -778,33 +787,33 @@ func BenchmarkPublicDecoderReusableCallerPostFilterRunner(b *testing.B) {
 }
 
 func BenchmarkPublicDecoderResidualState(b *testing.B) {
-	var initial av1.DecoderFrameWorkTileResidualCDFStorage
-	if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&initial, 64); err != nil {
+	var initial internalthreading.FrameWorkTileResidualCDFStorage
+	if err := initDecoderFrameWorkTileResidualCDFStorageDefault(&initial, 64); err != nil {
 		b.Fatal(err)
 	}
-	var retained av1.DecoderFrameWorkTileResidualCDFStorage
+	var retained internalthreading.FrameWorkTileResidualCDFStorage
 	retainedValid := false
-	batch := av1.DecoderFrameWorkBatch{
+	batch := internaldecoder.FrameWorkBatch{
 		Payload: []byte{0x00, 0xff},
-		FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
-			Quantization: av1.QuantizationParams{BaseQIdx: 73},
+		FrameWorkFrameContext: internaldecoder.FrameWorkFrameContext{
+			Quantization: internalparser.QuantizationParams{BaseQIdx: 73},
 		},
 		InitialTileResidualCDFs:       &initial,
 		RetainedTileResidualCDFs:      &retained,
 		RetainedTileResidualCDFsValid: &retainedValid,
-		Jobs: []av1.TileJob{
+		Jobs: []internaltile.Job{
 			{Tile: 0, Offset: 0, Size: 1},
 			{Tile: 1, Offset: 1, Size: 1, UpdatesFrameContext: true},
 		},
 	}
-	var storage av1.DecoderFrameWorkTileResidualCDFStorage
-	var state av1.TileDecodeState
+	var storage internalthreading.FrameWorkTileResidualCDFStorage
+	var state internaltile.DecodeState
 	blockLoopBatch := publicBenchmarkDecoderBlockLoopBatch()
-	rootColumns, err := av1.DecoderFrameWorkJobBlockLoopContextRootColumns(blockLoopBatch, 0)
+	rootColumns, err := decoderFrameWorkJobBlockLoopContextRootColumns(blockLoopBatch, 0)
 	if err != nil {
 		b.Fatal(err)
 	}
-	above := make([]av1.TileBlockLoopRootAboveContext, rootColumns)
+	above := make([]internaltile.BlockLoopRootAboveContext, rootColumns)
 	segMap := make([]uint8, 96*96)
 
 	b.SetBytes(int64(len(batch.Payload)))
@@ -813,21 +822,21 @@ func BenchmarkPublicDecoderResidualState(b *testing.B) {
 
 	sum := 0
 	for i := 0; i < b.N; i++ {
-		if err := av1.InitDecoderFrameWorkTileResidualCDFStorage(batch, &storage); err != nil {
+		if err := initDecoderFrameWorkTileResidualCDFStorage(batch, &storage); err != nil {
 			b.Fatal(err)
 		}
-		cdfs := av1.DecoderFrameWorkTileResidualCDFsFromStorage(&storage)
-		if err := av1.InitDecoderFrameWorkJobDecodeState(batch, 1, &state); err != nil {
+		cdfs := decoderFrameWorkTileResidualCDFsFromStorage(&storage)
+		if err := initDecoderFrameWorkJobDecodeState(batch, 1, &state); err != nil {
 			b.Fatal(err)
 		}
-		if err := av1.RetainDecoderFrameWorkTileResidualCDFStorage(batch, 1, &state, &storage); err != nil {
+		if err := retainDecoderFrameWorkTileResidualCDFStorage(batch, 1, &state, &storage); err != nil {
 			b.Fatal(err)
 		}
-		carrier, err := av1.BindTileBlockLoopContextCarrier(rootColumns, above)
+		carrier, err := bindTileBlockLoopContextCarrier(rootColumns, above)
 		if err != nil {
 			b.Fatal(err)
 		}
-		req, err := av1.DecoderFrameWorkJobBlockLoopRequest(blockLoopBatch, 0, segMap, nil, 96, &carrier)
+		req, err := decoderFrameWorkJobBlockLoopRequest(blockLoopBatch, 0, segMap, nil, 96, &carrier)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -840,36 +849,36 @@ func BenchmarkPublicDecoderResidualState(b *testing.B) {
 }
 
 func BenchmarkPublicDecoderResidualDecode(b *testing.B) {
-	output := publicBenchmarkDecoderFrame(b, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
-	batch := av1.DecoderFrameWorkBatch{
+	output := publicBenchmarkDecoderFrame(b, FrameFormat{Width: 64, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	batch := internaldecoder.FrameWorkBatch{
 		Output:  output,
 		Payload: make([]byte, 256),
-		FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
-			Sequence: av1.DecoderFrameWorkSequenceContextFromHeader(av1.SequenceHeader{
-				ColorConfig: av1.ColorConfig{BitDepth: 8, MonoChrome: true},
+		FrameWorkFrameContext: internaldecoder.FrameWorkFrameContext{
+			Sequence: internalthreading.FrameWorkSequenceContextFromHeader(SequenceHeader{
+				ColorConfig: internalparser.ColorConfig{BitDepth: 8, MonoChrome: true},
 			}),
-			FrameSize:    av1.FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8},
-			Quantization: av1.QuantizationParams{BaseQIdx: 64},
-			TransformRef: av1.TransformReferenceParams{TransformMode: av1.TransformModeLargest},
+			FrameSize:    FrameSize{CodedWidth: 64, UpscaledWidth: 64, Height: 64, SuperResDenominator: 8},
+			Quantization: internalparser.QuantizationParams{BaseQIdx: 64},
+			TransformRef: internalparser.TransformReferenceParams{TransformMode: internalparser.TransformModeLargest},
 		},
-		Jobs: []av1.TileJob{{SBCols: 1, SBRows: 1, Offset: 0, Size: 256}},
+		Jobs: []internaltile.Job{{SBCols: 1, SBRows: 1, Offset: 0, Size: 256}},
 	}
-	var state av1.TileDecodeState
-	var storage av1.DecoderFrameWorkTileResidualCDFStorage
-	if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
+	var state internaltile.DecodeState
+	var storage internalthreading.FrameWorkTileResidualCDFStorage
+	if err := initDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
 		b.Fatal(err)
 	}
-	cdfs := av1.DecoderFrameWorkTileResidualCDFsFromStorage(&storage)
-	loopReq, err := av1.DecoderFrameWorkJobBlockLoopRequest(batch, 0, nil, nil, 0, nil)
+	cdfs := decoderFrameWorkTileResidualCDFsFromStorage(&storage)
+	loopReq, err := decoderFrameWorkJobBlockLoopRequest(batch, 0, nil, nil, 0, nil)
 	if err != nil {
 		b.Fatal(err)
 	}
-	int32Len, int16Len, err := av1.DecoderFrameWorkResidualMaxScratchLen(batch, batch.Quantization.BaseQIdx, 0, av1.DecoderFrameWorkPlaneY)
+	int32Len, int16Len, err := decoderFrameWorkResidualMaxScratchLen(batch, batch.Quantization.BaseQIdx, 0, internaldecoder.FrameWorkPlaneY)
 	if err != nil {
 		b.Fatal(err)
 	}
-	var scratch av1.DecoderFrameWorkTileResidualScratch
-	req := av1.DecoderFrameWorkTileResidualRequest{
+	var scratch internalthreading.FrameWorkTileResidualScratch
+	req := internalthreading.FrameWorkTileResidualRequest{
 		Loop:            loopReq,
 		TransformMode:   batch.TransformRef.TransformMode,
 		Int32Scratch:    make([]int32, int32Len),
@@ -882,10 +891,10 @@ func BenchmarkPublicDecoderResidualDecode(b *testing.B) {
 
 	sum := 0
 	for i := 0; i < b.N; i++ {
-		if err := av1.InitDecoderFrameWorkJobDecodeState(batch, 0, &state); err != nil {
+		if err := initDecoderFrameWorkJobDecodeState(batch, 0, &state); err != nil {
 			b.Fatal(err)
 		}
-		stats, err := av1.DecodeAndReconstructDecoderFrameWorkJobResiduals(batch, 0, &state, cdfs, &scratch, req)
+		stats, err := decodeAndReconstructDecoderFrameWorkJobResiduals(batch, 0, &state, cdfs, &scratch, req)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -895,42 +904,42 @@ func BenchmarkPublicDecoderResidualDecode(b *testing.B) {
 }
 
 func BenchmarkPublicDecoderResidualBatchDecode(b *testing.B) {
-	output := publicBenchmarkDecoderFrame(b, av1.FrameFormat{Width: 128, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	output := publicBenchmarkDecoderFrame(b, FrameFormat{Width: 128, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 	publicFillDecoderPostFilterPlane(output.Y)
-	var retained av1.DecoderFrameWorkTileResidualCDFStorage
+	var retained internalthreading.FrameWorkTileResidualCDFStorage
 	retainedValid := false
-	batch := av1.DecoderFrameWorkBatch{
+	batch := internaldecoder.FrameWorkBatch{
 		Output:  output,
 		Payload: make([]byte, 512),
-		FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
-			Sequence: av1.DecoderFrameWorkSequenceContextFromHeader(av1.SequenceHeader{
-				ColorConfig: av1.ColorConfig{BitDepth: 8, MonoChrome: true},
+		FrameWorkFrameContext: internaldecoder.FrameWorkFrameContext{
+			Sequence: internalthreading.FrameWorkSequenceContextFromHeader(SequenceHeader{
+				ColorConfig: internalparser.ColorConfig{BitDepth: 8, MonoChrome: true},
 			}),
-			FrameSize:    av1.FrameSize{CodedWidth: 128, UpscaledWidth: 128, Height: 64, SuperResDenominator: 8},
-			Quantization: av1.QuantizationParams{BaseQIdx: 64},
-			TransformRef: av1.TransformReferenceParams{TransformMode: av1.TransformModeLargest},
+			FrameSize:    FrameSize{CodedWidth: 128, UpscaledWidth: 128, Height: 64, SuperResDenominator: 8},
+			Quantization: internalparser.QuantizationParams{BaseQIdx: 64},
+			TransformRef: internalparser.TransformReferenceParams{TransformMode: internalparser.TransformModeLargest},
 		},
 		RetainedTileResidualCDFs:      &retained,
 		RetainedTileResidualCDFsValid: &retainedValid,
-		Jobs: []av1.TileJob{
+		Jobs: []internaltile.Job{
 			{SBX: 0, SBY: 0, SBCols: 1, SBRows: 1, Offset: 0, Size: 256},
 			{SBX: 1, SBY: 0, SBCols: 1, SBRows: 1, Offset: 256, Size: 256, UpdatesFrameContext: true},
 		},
 	}
-	var storage av1.DecoderFrameWorkTileResidualCDFStorage
-	if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
+	var storage internalthreading.FrameWorkTileResidualCDFStorage
+	if err := initDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
 		b.Fatal(err)
 	}
-	scratchSize, err := av1.DecoderFrameWorkBatchResidualScratchLen(batch, batch.Quantization.BaseQIdx)
+	scratchSize, err := decoderFrameWorkBatchResidualScratchLen(batch, batch.Quantization.BaseQIdx)
 	if err != nil {
 		b.Fatal(err)
 	}
-	state := &av1.TileDecodeState{}
-	var scratch av1.DecoderFrameWorkTileResidualScratch
-	req, err := av1.BindDecoderFrameWorkBatchResidualRequestScratch(scratchSize, av1.DecoderFrameWorkBatchResidualScratch{
+	state := &internaltile.DecodeState{}
+	var scratch internalthreading.FrameWorkTileResidualScratch
+	req, err := bindDecoderFrameWorkBatchResidualRequestScratch(scratchSize, decoderFrameWorkBatchResidualScratch{
 		Int32Scratch:     make([]int32, scratchSize.Int32Scratch),
 		ResidualScratch:  make([]int16, scratchSize.ResidualScratch),
-		LoopContextAbove: make([]av1.TileBlockLoopRootAboveContext, scratchSize.LoopContextAbove),
+		LoopContextAbove: make([]internaltile.BlockLoopRootAboveContext, scratchSize.LoopContextAbove),
 	})
 	if err != nil {
 		b.Fatal(err)
@@ -944,10 +953,10 @@ func BenchmarkPublicDecoderResidualBatchDecode(b *testing.B) {
 	sum := 0
 	for i := 0; i < b.N; i++ {
 		retainedValid = false
-		if err := av1.InitDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
+		if err := initDecoderFrameWorkTileResidualCDFStorageDefault(&storage, batch.Quantization.BaseQIdx); err != nil {
 			b.Fatal(err)
 		}
-		stats, err := av1.DecodeAndRetainDecoderFrameWorkBatchResiduals(batch, state, &storage, &scratch, req)
+		stats, err := decodeAndRetainDecoderFrameWorkBatchResiduals(batch, state, &storage, &scratch, req)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -957,44 +966,44 @@ func BenchmarkPublicDecoderResidualBatchDecode(b *testing.B) {
 }
 
 func BenchmarkPublicDecoderResidualBatchRunner(b *testing.B) {
-	output := publicBenchmarkDecoderFrame(b, av1.FrameFormat{Width: 128, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
+	output := publicBenchmarkDecoderFrame(b, FrameFormat{Width: 128, Height: 64, BitDepth: 8, MonoChrome: true, Align: 64})
 	publicFillDecoderPostFilterPlane(output.Y)
-	var retained av1.DecoderFrameWorkTileResidualCDFStorage
+	var retained internalthreading.FrameWorkTileResidualCDFStorage
 	retainedValid := false
-	batch := av1.DecoderFrameWorkBatch{
+	batch := internaldecoder.FrameWorkBatch{
 		Output:  output,
 		Payload: make([]byte, 512),
-		FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
-			Sequence: av1.DecoderFrameWorkSequenceContextFromHeader(av1.SequenceHeader{
-				ColorConfig: av1.ColorConfig{BitDepth: 8, MonoChrome: true},
+		FrameWorkFrameContext: internaldecoder.FrameWorkFrameContext{
+			Sequence: internalthreading.FrameWorkSequenceContextFromHeader(SequenceHeader{
+				ColorConfig: internalparser.ColorConfig{BitDepth: 8, MonoChrome: true},
 			}),
-			FrameSize:    av1.FrameSize{CodedWidth: 128, UpscaledWidth: 128, Height: 64, SuperResDenominator: 8},
-			Quantization: av1.QuantizationParams{BaseQIdx: 64},
-			TransformRef: av1.TransformReferenceParams{TransformMode: av1.TransformModeLargest},
+			FrameSize:    FrameSize{CodedWidth: 128, UpscaledWidth: 128, Height: 64, SuperResDenominator: 8},
+			Quantization: internalparser.QuantizationParams{BaseQIdx: 64},
+			TransformRef: internalparser.TransformReferenceParams{TransformMode: internalparser.TransformModeLargest},
 		},
 		RetainedTileResidualCDFs:      &retained,
 		RetainedTileResidualCDFsValid: &retainedValid,
-		Batch:                         av1.TileBatch{Worker: 0},
-		Jobs: []av1.TileJob{
+		Batch:                         internalthreading.Batch{Worker: 0},
+		Jobs: []internaltile.Job{
 			{SBX: 0, SBY: 0, SBCols: 1, SBRows: 1, Offset: 0, Size: 256},
 			{SBX: 1, SBY: 0, SBCols: 1, SBRows: 1, Offset: 256, Size: 256, UpdatesFrameContext: true},
 		},
 	}
-	size, err := av1.DecoderFrameWorkBatchResidualRunnerScratchLen(batch, 1)
+	size, err := decoderFrameWorkBatchResidualRunnerScratchLen(batch, 1)
 	if err != nil {
 		b.Fatal(err)
 	}
-	runner, err := av1.BindDecoderFrameWorkBatchResidualRunner(size, av1.DecoderFrameWorkBatchResidualRunnerScratch{
-		States:                  make([]av1.TileDecodeState, size.Workers),
-		Storages:                make([]av1.DecoderFrameWorkTileResidualCDFStorage, size.Workers),
-		TileScratch:             make([]av1.DecoderFrameWorkTileResidualScratch, size.Workers),
-		RestorationRequests:     make([]av1.DecoderFrameWorkTileRestorationRequest, size.RestorationRequests),
-		PredictionScratch:       make([]av1.DecoderFrameWorkPredictionScratch, size.Workers),
-		InterPredictionScratch:  make([]av1.DecoderFrameWorkInterPredictionScratch, size.Workers),
-		Stats:                   make([]av1.DecoderFrameWorkTileResidualStats, size.Workers),
+	runner, err := bindDecoderFrameWorkBatchResidualRunner(size, decoderFrameWorkBatchResidualRunnerScratch{
+		States:                  make([]internaltile.DecodeState, size.Workers),
+		Storages:                make([]internalthreading.FrameWorkTileResidualCDFStorage, size.Workers),
+		TileScratch:             make([]internalthreading.FrameWorkTileResidualScratch, size.Workers),
+		RestorationRequests:     make([]internalthreading.FrameWorkTileRestorationRequest, size.RestorationRequests),
+		PredictionScratch:       make([]internalthreading.FrameWorkPredictionScratch, size.Workers),
+		InterPredictionScratch:  make([]internalthreading.FrameWorkInterPredictionScratch, size.Workers),
+		Stats:                   make([]internalthreading.FrameWorkTileResidualStats, size.Workers),
 		Int32Scratch:            make([]int32, size.Int32Scratch),
 		ResidualScratch:         make([]int16, size.ResidualScratch),
-		LoopContextAboveScratch: make([]av1.TileBlockLoopRootAboveContext, size.LoopContextAbove),
+		LoopContextAboveScratch: make([]internaltile.BlockLoopRootAboveContext, size.LoopContextAbove),
 	})
 	if err != nil {
 		b.Fatal(err)
@@ -1016,48 +1025,48 @@ func BenchmarkPublicDecoderResidualBatchRunner(b *testing.B) {
 }
 
 func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
-	workerPool, err := av1.NewTileWorkerPool(1)
+	workerPool, err := internalthreading.NewPool(1)
 	if err != nil {
 		b.Fatal(err)
 	}
 	defer workerPool.Close()
 
-	sequence := av1.SequenceHeader{
+	sequence := SequenceHeader{
 		EnableCDEF: true,
-		ColorConfig: av1.ColorConfig{
+		ColorConfig: internalparser.ColorConfig{
 			BitDepth:   8,
 			MonoChrome: true,
 		},
 	}
 	event := publicDecoderResidualRunnerFrameEvent()
-	event.CDEF = av1.CDEFParams{
+	event.CDEF = internalparser.CDEFParams{
 		Damping:       5,
 		StrengthCount: 1,
-		YStrength:     [av1.MaxCDEFStrengths]uint8{63},
+		YStrength:     [internalparser.MaxCDEFStrengths]uint8{63},
 	}
-	var scratchSpans [2]av1.TileSpan
-	var scratchJobs [2]av1.TileJob
-	var scratchBatches [1]av1.TileBatch
-	eventScratch, err := av1.DecoderFrameWorkResidualEventScratchLen(sequence, &event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	var scratchSpans [2]internalparser.TileSpan
+	var scratchJobs [2]internaltile.Job
+	var scratchBatches [1]internalthreading.Batch
+	eventScratch, err := decoderFrameWorkResidualEventScratchLen(sequence, &event, 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	pool := publicDecoderPostFilterFramePool(b, av1.FrameFormat{
+	pool := publicDecoderPostFilterFramePool(b, FrameFormat{
 		Width:      int(event.FrameSize.CodedWidth),
 		Height:     int(event.FrameSize.Height),
 		BitDepth:   8,
 		MonoChrome: true,
 		Align:      64,
 	}, 1)
-	var refs av1.DecoderSurfaceReferences
-	var state av1.DecoderFrameWorkState
-	var referenceSurfaces [av1.InterRefsPerFrame]int
-	var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
-	var releases [av1.RefFrames]int
-	var stats av1.DecoderFrameWorkTileResidualStats
-	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
-	eventRunner, side, err := av1.BindDecoderFrameWorkResidualEventRunner(eventScratch, sequence, &event, av1.DecoderFrameWorkResidualEventRuntime{
+	var refs internaldecoder.SurfaceReferences
+	var state internaldecoder.FrameWorkState
+	var referenceSurfaces [internalparser.InterRefsPerFrame]int
+	var referenceFrames [internalparser.InterRefsPerFrame]*Frame
+	var releases [internalparser.RefFrames]int
+	var stats internalthreading.FrameWorkTileResidualStats
+	var batchRunner decoderFrameWorkBatchResidualRunner
+	eventRunner, side, err := bindDecoderFrameWorkResidualEventRunner(eventScratch, sequence, &event, decoderFrameWorkResidualEventRuntime{
 		State:             &state,
 		Refs:              &refs,
 		FramePool:         &pool,
@@ -1071,18 +1080,18 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	var probeOutput av1.Frame
-	probeCtx, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, &event, 64, &side, &probeOutput)
+	var probeOutput Frame
+	probeCtx, err := decoderFrameWorkPostFilterScratchContext(sequence, &event, 64, &side, &probeOutput)
 	if err != nil {
 		b.Fatal(err)
 	}
-	var probe av1.DecoderFrameWorkSupportedPostFilterScratchRunner
+	var probe decoderFrameWorkSupportedPostFilterScratchRunner
 	postScratchSize, err := probe.ScratchLen(probeCtx)
 	if err != nil {
 		b.Fatal(err)
 	}
-	postRunner := av1.DecoderFrameWorkSupportedPostFilterScratchRunner{
-		Scratch: publicDecoderPostFilterRequestScratch(av1.DecoderFrameWorkPostFilterRequestScratchLen(postScratchSize)),
+	postRunner := decoderFrameWorkSupportedPostFilterScratchRunner{
+		Scratch: publicDecoderPostFilterRequestScratch(decoderFrameWorkPostFilterRequestScratchLen(postScratchSize)),
 	}
 
 	b.SetBytes(int64(len(event.Unit.Payload)))
@@ -1098,10 +1107,10 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if result.Output == nil || result.Run != (av1.DecoderFrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) {
+		if result.Output == nil || result.Run != (internaldecoder.FrameWorkStepResult{ExecutedTileWork: true, CompletedFrame: true}) {
 			b.Fatalf("result=%+v", result)
 		}
-		if !postRunner.Result.Completed.Has(av1.DecoderFrameWorkPostFilterCDEF) || postRunner.Context.RemainingPostFilters() != 0 {
+		if !postRunner.Result.Completed.Has(internaldecoder.FrameWorkPostFilterCDEF) || postRunner.Context.RemainingPostFilters() != 0 {
 			b.Fatalf("postfilter result=%+v remaining=%b", postRunner.Result, postRunner.Context.RemainingPostFilters())
 		}
 		sum += int(stats.Residuals + stats.TXBs)
@@ -1110,52 +1119,52 @@ func BenchmarkPublicDecoderResidualEventRunner(b *testing.B) {
 }
 
 func BenchmarkPublicDecoderResidualEventListRunner(b *testing.B) {
-	workerPool, err := av1.NewTileWorkerPool(1)
+	workerPool, err := internalthreading.NewPool(1)
 	if err != nil {
 		b.Fatal(err)
 	}
 	defer workerPool.Close()
 
-	sequence := av1.SequenceHeader{
+	sequence := SequenceHeader{
 		EnableCDEF: true,
-		ColorConfig: av1.ColorConfig{
+		ColorConfig: internalparser.ColorConfig{
 			BitDepth:   8,
 			MonoChrome: true,
 		},
 	}
 	frame := publicDecoderResidualRunnerFrameEvent()
-	events := [...]av1.DecoderEvent{
+	events := [...]internaldecoder.Event{
 		{
-			Kind:                  av1.DecoderEventSequenceHeader,
+			Kind:                  internaldecoder.EventSequenceHeader,
 			SequenceHeader:        sequence,
 			NewCodedVideoSequence: true,
 		},
 		frame,
 	}
-	var scratchSpans [2]av1.TileSpan
-	var scratchJobs [2]av1.TileJob
-	var scratchBatches [1]av1.TileBatch
-	eventScratch, err := av1.DecoderFrameWorkResidualEventsScratchLen(sequence, events[:], 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	var scratchSpans [2]internalparser.TileSpan
+	var scratchJobs [2]internaltile.Job
+	var scratchBatches [1]internalthreading.Batch
+	eventScratch, err := decoderFrameWorkResidualEventsScratchLen(sequence, events[:], 1, scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	if err != nil {
 		b.Fatal(err)
 	}
-	pool := publicDecoderPostFilterFramePool(b, av1.FrameFormat{
+	pool := publicDecoderPostFilterFramePool(b, FrameFormat{
 		Width:      int(frame.FrameSize.CodedWidth),
 		Height:     int(frame.FrameSize.Height),
 		BitDepth:   8,
 		MonoChrome: true,
 		Align:      64,
 	}, 1)
-	var refs av1.DecoderSurfaceReferences
-	var state av1.DecoderFrameWorkState
-	var referenceSurfaces [av1.InterRefsPerFrame]int
-	var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
-	var releases [av1.RefFrames]int
-	var stats av1.DecoderFrameWorkTileResidualStats
-	var eventSideData av1.DecoderFrameWorkSideData
-	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
+	var refs internaldecoder.SurfaceReferences
+	var state internaldecoder.FrameWorkState
+	var referenceSurfaces [internalparser.InterRefsPerFrame]int
+	var referenceFrames [internalparser.InterRefsPerFrame]*Frame
+	var releases [internalparser.RefFrames]int
+	var stats internalthreading.FrameWorkTileResidualStats
+	var eventSideData decoderFrameWorkSideData
+	var batchRunner decoderFrameWorkBatchResidualRunner
 	scratch := publicDecoderResidualEventScratch(eventScratch)
-	eventRunner, _, err := av1.BindDecoderFrameWorkResidualEventRunner(eventScratch, sequence, &frame, av1.DecoderFrameWorkResidualEventRuntime{
+	eventRunner, _, err := bindDecoderFrameWorkResidualEventRunner(eventScratch, sequence, &frame, decoderFrameWorkResidualEventRuntime{
 		State:             &state,
 		Refs:              &refs,
 		FramePool:         &pool,
@@ -1193,7 +1202,7 @@ func BenchmarkPublicDecoderResidualEventListRunner(b *testing.B) {
 }
 
 func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
-	workerPool, err := av1.NewTileWorkerPool(1)
+	workerPool, err := internalthreading.NewPool(1)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -1214,26 +1223,26 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 	for i := range rtpPayloads {
 		rtpPayloadsBytes += len(rtpPayloads[i])
 	}
-	var probeStream av1.DecoderStream
-	var probeEvents [4]av1.DecoderEvent
+	var probeStream internaldecoder.Stream
+	var probeEvents [4]internaldecoder.Event
 	var probeRTPBuffer [256]byte
-	var probeRTPSpans [4]av1.RTPObuSpan
-	var scratchSpans [1]av1.TileSpan
-	var scratchJobs [1]av1.TileJob
-	var scratchBatches [1]av1.TileBatch
-	lowPlan, err := av1.DecoderFrameWorkResidualLowOverheadStreamPlan(probeStream, lowOverhead, 1, probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	var probeRTPSpans [4]RTPObuSpan
+	var scratchSpans [1]internalparser.TileSpan
+	var scratchJobs [1]internaltile.Job
+	var scratchBatches [1]internalthreading.Batch
+	lowPlan, err := decoderFrameWorkResidualLowOverheadStreamPlan(probeStream, lowOverhead, 1, probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	if err != nil {
 		b.Fatal(err)
 	}
-	lowOverheadsPlan, err := av1.DecoderFrameWorkResidualLowOverheadStreamsPlan(probeStream, lowOverheads[:], 1, probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	lowOverheadsPlan, err := decoderFrameWorkResidualLowOverheadStreamsPlan(probeStream, lowOverheads[:], 1, probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	if err != nil {
 		b.Fatal(err)
 	}
-	rtpPlan, err := av1.DecoderFrameWorkResidualRTPPayloadStreamPlan(probeStream, 0, rtpPayload, 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	rtpPlan, err := decoderFrameWorkResidualRTPPayloadStreamPlan(probeStream, 0, rtpPayload, 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	if err != nil {
 		b.Fatal(err)
 	}
-	rtpPayloadsPlan, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamPlan(probeStream, 0, rtpPayloads, 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+	rtpPayloadsPlan, err := decoderFrameWorkResidualRTPPayloadsStreamPlan(probeStream, 0, rtpPayloads, 1, probeRTPBuffer[:], probeRTPSpans[:], probeEvents[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -1241,7 +1250,7 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 	if !streamPlan.HasEvent() {
 		b.Fatal("stream plan missing bind event")
 	}
-	pool := publicDecoderPostFilterFramePool(b, av1.FrameFormat{
+	pool := publicDecoderPostFilterFramePool(b, FrameFormat{
 		Width:        int(streamPlan.Bind.Event.FrameSize.CodedWidth),
 		Height:       int(streamPlan.Bind.Event.FrameSize.Height),
 		BitDepth:     8,
@@ -1250,17 +1259,17 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 		SubsamplingY: true,
 		Align:        64,
 	}, 2)
-	var stream av1.DecoderStream
-	var refs av1.DecoderSurfaceReferences
-	var state av1.DecoderFrameWorkState
-	var referenceSurfaces [av1.InterRefsPerFrame]int
-	var referenceFrames [av1.InterRefsPerFrame]*av1.Frame
-	var releases [av1.RefFrames]int
-	var stats av1.DecoderFrameWorkTileResidualStats
-	var side av1.DecoderFrameWorkSideData
-	var batchRunner av1.DecoderFrameWorkBatchResidualRunner
+	var stream internaldecoder.Stream
+	var refs internaldecoder.SurfaceReferences
+	var state internaldecoder.FrameWorkState
+	var referenceSurfaces [internalparser.InterRefsPerFrame]int
+	var referenceFrames [internalparser.InterRefsPerFrame]*Frame
+	var releases [internalparser.RefFrames]int
+	var stats internalthreading.FrameWorkTileResidualStats
+	var side decoderFrameWorkSideData
+	var batchRunner decoderFrameWorkBatchResidualRunner
 	scratch := publicDecoderResidualStreamScratch(streamPlan.Size)
-	runner, _, err := av1.BindDecoderFrameWorkResidualStreamPlanRunner(streamPlan, &stream, av1.DecoderFrameWorkResidualEventRuntime{
+	runner, _, err := bindDecoderFrameWorkResidualStreamPlanRunner(streamPlan, &stream, decoderFrameWorkResidualEventRuntime{
 		State:             &state,
 		Refs:              &refs,
 		FramePool:         &pool,
@@ -1331,7 +1340,7 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 			if err := runner.Reset(); err != nil {
 				b.Fatal(err)
 			}
-			var result av1.DecoderFrameWorkResidualStreamResult
+			var result decoderFrameWorkResidualStreamResult
 			if err := runner.RunLowOverheadsInto(&result, lowOverheads[:], nil); err != nil {
 				b.Fatal(err)
 			}
@@ -1397,7 +1406,7 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 			if err := runner.Reset(); err != nil {
 				b.Fatal(err)
 			}
-			var result av1.DecoderFrameWorkResidualStreamResult
+			var result decoderFrameWorkResidualStreamResult
 			if err := runner.RunRTPPayloadsInto(&result, rtpPayloads, nil); err != nil {
 				b.Fatal(err)
 			}
@@ -1419,7 +1428,7 @@ func BenchmarkPublicDecoderResidualStreamRunner(b *testing.B) {
 			if err := runner.Reset(); err != nil {
 				b.Fatal(err)
 			}
-			var result av1.DecoderFrameWorkResidualStreamResult
+			var result decoderFrameWorkResidualStreamResult
 			if err := runner.RunRTPPayloadsInto(&result, rtpPayloads[:2], nil); err != nil {
 				b.Fatal(err)
 			}
@@ -1454,20 +1463,20 @@ func BenchmarkPublicDecoderResidualStreamScratchLen(b *testing.B) {
 	for i := range rtpPayloads {
 		rtpPayloadsBytes += len(rtpPayloads[i])
 	}
-	var events [4]av1.DecoderEvent
+	var events [4]internaldecoder.Event
 	var rtpBuffer [128]byte
-	var rtpSpans [4]av1.RTPObuSpan
-	var scratchSpans [1]av1.TileSpan
-	var scratchJobs [1]av1.TileJob
-	var scratchBatches [1]av1.TileBatch
+	var rtpSpans [4]RTPObuSpan
+	var scratchSpans [1]internalparser.TileSpan
+	var scratchJobs [1]internaltile.Job
+	var scratchBatches [1]internalthreading.Batch
 
 	b.Run("low-overhead", func(b *testing.B) {
 		b.SetBytes(int64(len(lowOverhead)))
 		b.ReportAllocs()
 		sum := 0
 		for i := 0; i < b.N; i++ {
-			var stream av1.DecoderStream
-			size, err := av1.DecoderFrameWorkResidualLowOverheadStreamScratchLen(stream, lowOverhead, 1, events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+			var stream internaldecoder.Stream
+			size, err := decoderFrameWorkResidualLowOverheadStreamScratchLen(stream, lowOverhead, 1, events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -1480,8 +1489,8 @@ func BenchmarkPublicDecoderResidualStreamScratchLen(b *testing.B) {
 		b.ReportAllocs()
 		sum := 0
 		for i := 0; i < b.N; i++ {
-			var stream av1.DecoderStream
-			size, err := av1.DecoderFrameWorkResidualLowOverheadStreamsScratchLen(stream, lowOverheads[:], 1, events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+			var stream internaldecoder.Stream
+			size, err := decoderFrameWorkResidualLowOverheadStreamsScratchLen(stream, lowOverheads[:], 1, events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -1494,8 +1503,8 @@ func BenchmarkPublicDecoderResidualStreamScratchLen(b *testing.B) {
 		b.ReportAllocs()
 		sum := 0
 		for i := 0; i < b.N; i++ {
-			var stream av1.DecoderStream
-			size, err := av1.DecoderFrameWorkResidualRTPPayloadStreamScratchLen(stream, 0, rtpPayload, 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+			var stream internaldecoder.Stream
+			size, err := decoderFrameWorkResidualRTPPayloadStreamScratchLen(stream, 0, rtpPayload, 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -1508,8 +1517,8 @@ func BenchmarkPublicDecoderResidualStreamScratchLen(b *testing.B) {
 		b.ReportAllocs()
 		sum := 0
 		for i := 0; i < b.N; i++ {
-			var stream av1.DecoderStream
-			size, err := av1.DecoderFrameWorkResidualRTPPayloadsStreamScratchLen(stream, 0, rtpPayloads, 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
+			var stream internaldecoder.Stream
+			size, err := decoderFrameWorkResidualRTPPayloadsStreamScratchLen(stream, 0, rtpPayloads, 1, rtpBuffer[:], rtpSpans[:], events[:], scratchSpans[:], scratchJobs[:], scratchBatches[:])
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -1519,78 +1528,78 @@ func BenchmarkPublicDecoderResidualStreamScratchLen(b *testing.B) {
 	})
 }
 
-func publicBenchmarkDecoderFrame(b *testing.B, format av1.FrameFormat) *av1.Frame {
+func publicBenchmarkDecoderFrame(b *testing.B, format FrameFormat) *Frame {
 	b.Helper()
-	layout, err := av1.FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		b.Fatal(err)
 	}
-	frame, err := av1.BindFrame(make([]byte, layout.Size), format)
+	frame, err := internalframe.Bind(make([]byte, layout.Size), format)
 	if err != nil {
 		b.Fatal(err)
 	}
 	return &frame
 }
 
-func publicBenchmarkDecoderBlockLoopBatch() av1.DecoderFrameWorkBatch {
-	return av1.DecoderFrameWorkBatch{
-		FrameWorkFrameContext: av1.DecoderFrameWorkFrameContext{
-			Sequence: av1.DecoderFrameWorkSequenceContextFromHeader(av1.SequenceHeader{
+func publicBenchmarkDecoderBlockLoopBatch() internaldecoder.FrameWorkBatch {
+	return internaldecoder.FrameWorkBatch{
+		FrameWorkFrameContext: internaldecoder.FrameWorkFrameContext{
+			Sequence: internalthreading.FrameWorkSequenceContextFromHeader(SequenceHeader{
 				Use128x128Superblock: true,
 				EnableDualFilter:     true,
 				EnableFilterIntra:    true,
 				EnableOrderHint:      true,
 				OrderHintBits:        5,
-				ColorConfig:          av1.ColorConfig{BitDepth: 8, MonoChrome: true},
+				ColorConfig:          internalparser.ColorConfig{BitDepth: 8, MonoChrome: true},
 			}),
-			FrameHeader:         av1.FrameHeaderPrefix{OrderHint: 9},
-			FrameSize:           av1.FrameSize{CodedWidth: 300, UpscaledWidth: 300, Height: 260, SuperResDenominator: 8},
-			TileInfo:            av1.TileInfo{InterpolationFilter: av1.InterpolationSwitchable, UseRefFrameMVS: true},
-			ReferenceOrderHints: [av1.InterRefsPerFrame]uint8{1, 9, 10, 4, 5, 6, 7},
-			SkipMode:            av1.SkipModeParams{Allowed: true, Enabled: true},
-			CDEF:                av1.CDEFParams{Bits: 2, StrengthCount: 4},
-			Delta:               av1.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 1},
+			FrameHeader:         internalparser.FrameHeaderPrefix{OrderHint: 9},
+			FrameSize:           FrameSize{CodedWidth: 300, UpscaledWidth: 300, Height: 260, SuperResDenominator: 8},
+			TileInfo:            internalparser.TileInfo{InterpolationFilter: internalparser.InterpolationSwitchable, UseRefFrameMVS: true},
+			ReferenceOrderHints: [internalparser.InterRefsPerFrame]uint8{1, 9, 10, 4, 5, 6, 7},
+			SkipMode:            internalparser.SkipModeParams{Allowed: true, Enabled: true},
+			CDEF:                internalparser.CDEFParams{Bits: 2, StrengthCount: 4},
+			Delta:               internalparser.DeltaParams{DeltaQPresent: true, DeltaQResLog2: 1},
 		},
-		Jobs: []av1.TileJob{{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2}},
+		Jobs: []internaltile.Job{{Tile: 3, Row: 1, Col: 1, SBX: 1, SBY: 1, SBCols: 2, SBRows: 2}},
 	}
 }
 
 func publicBenchmarkLowOverheadStream() []byte {
 	stream := make([]byte, 0, 512)
-	stream = appendOBUForTest(stream, av1.OBUTemporalDelimiter, nil)
-	stream = appendOBUForTest(stream, av1.OBUSequenceHeader, []byte{0x12, 0x34, 0x56})
+	stream = appendOBUForTest(stream, internalobu.TypeTemporalDelimiter, nil)
+	stream = appendOBUForTest(stream, internalobu.TypeSequenceHeader, []byte{0x12, 0x34, 0x56})
 	for i := range 10 {
 		payload := make([]byte, 24)
 		for j := range payload {
 			payload[j] = byte(i*17 + j)
 		}
-		stream = appendOBUForTest(stream, av1.OBUTileGroup, payload)
+		stream = appendOBUForTest(stream, internalobu.TypeTileGroup, payload)
 	}
-	stream = appendOBUForTest(stream, av1.OBUFrame, []byte{0xaa, 0xbb, 0xcc})
+	stream = appendOBUForTest(stream, internalobu.TypeFrame, []byte{0xaa, 0xbb, 0xcc})
 	return stream
 }
 
 func publicBenchmarkTemporalUnitStream() []byte {
 	stream := make([]byte, 0, 512)
 	for i := range 4 {
-		stream = appendOBUForTest(stream, av1.OBUTemporalDelimiter, nil)
-		stream = appendOBUForTest(stream, av1.OBUFrameHeader, []byte{byte(i)})
+		stream = appendOBUForTest(stream, internalobu.TypeTemporalDelimiter, nil)
+		stream = appendOBUForTest(stream, internalobu.TypeFrameHeader, []byte{byte(i)})
 		for j := range 2 {
-			stream = appendOBUForTest(stream, av1.OBUTileGroup, []byte{byte(i), byte(j), byte(i + j)})
+			stream = appendOBUForTest(stream, internalobu.TypeTileGroup, []byte{byte(i), byte(j), byte(i + j)})
 		}
 	}
 	return stream
 }
 
 func publicBenchmarkAnnexBStream() []byte {
-	td := []byte{byte(av1.OBUTemporalDelimiter) << 3}
-	seq := []byte{byte(av1.OBUSequenceHeader) << 3, 0x01, 0x02}
-	fh0 := []byte{byte(av1.OBUFrameHeader) << 3, 0x10}
-	fh1 := []byte{byte(av1.OBUFrameHeader) << 3, 0x20}
-	tile0 := []byte{byte(av1.OBUTileGroup) << 3, 0x30, 0x31, 0x32}
-	tile1 := []byte{byte(av1.OBUTileGroup) << 3, 0x40, 0x41, 0x42}
-	frame0 := []byte{byte(av1.OBUFrame) << 3, 0x50}
-	frame1 := []byte{byte(av1.OBUFrame) << 3, 0x60}
+	td := []byte{byte(internalobu.TypeTemporalDelimiter) << 3}
+	seq := []byte{byte(internalobu.TypeSequenceHeader) << 3, 0x01, 0x02}
+	fh0 := []byte{byte(internalobu.TypeFrameHeader) << 3, 0x10}
+	fh1 := []byte{byte(internalobu.TypeFrameHeader) << 3, 0x20}
+	tile0 := []byte{byte(internalobu.TypeTileGroup) << 3, 0x30, 0x31, 0x32}
+	tile1 := []byte{byte(internalobu.TypeTileGroup) << 3, 0x40, 0x41, 0x42}
+	frame0 := []byte{byte(internalobu.TypeFrame) << 3, 0x50}
+	frame1 := []byte{byte(internalobu.TypeFrame) << 3, 0x60}
 	return appendPublicAnnexBStream(nil,
 		[][][]byte{{td, seq}, {fh0, tile0, tile1}},
 		[][][]byte{{td, frame0}, {fh1, frame1}},
@@ -1599,14 +1608,14 @@ func publicBenchmarkAnnexBStream() []byte {
 
 func publicBenchmarkRTPFrame() []byte {
 	frame := make([]byte, 0, 512)
-	frame = appendOBUForTest(frame, av1.OBUSequenceHeader, []byte{0xaa, 0xbb, 0xcc})
+	frame = appendOBUForTest(frame, internalobu.TypeSequenceHeader, []byte{0xaa, 0xbb, 0xcc})
 	for i := range 3 {
 		payload := make([]byte, 96)
 		for j := range payload {
 			payload[j] = byte(i*29 + j)
 		}
-		frame = appendOBUForTest(frame, av1.OBUTileGroup, payload)
+		frame = appendOBUForTest(frame, internalobu.TypeTileGroup, payload)
 	}
-	frame = appendOBUForTest(frame, av1.OBUFrame, []byte{0xdd, 0xee})
+	frame = appendOBUForTest(frame, internalobu.TypeFrame, []byte{0xdd, 0xee})
 	return frame
 }

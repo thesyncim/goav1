@@ -1,9 +1,12 @@
-package goav1_test
+package goav1
 
 import (
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
+	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
+	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 func FuzzPublicDecoderFrameWorkSideDataBinding(f *testing.F) {
@@ -22,59 +25,59 @@ func FuzzPublicDecoderFrameWorkSideDataBinding(f *testing.F) {
 			bitDepth = 12
 		}
 		restorationType := publicFuzzRestorationType(rawRestoration)
-		sequence := av1.SequenceHeader{
+		sequence := SequenceHeader{
 			EnableCDEF:        true,
 			EnableRestoration: true,
-			ColorConfig: av1.ColorConfig{
+			ColorConfig: internalparser.ColorConfig{
 				BitDepth:     bitDepth,
 				SubsamplingX: ssX,
 				SubsamplingY: ssY,
 			},
 		}
-		size := av1.FrameSize{
+		size := FrameSize{
 			CodedWidth:          width,
 			UpscaledWidth:       width,
 			Height:              height,
 			SuperResDenominator: 8,
 		}
 		cdefBits := rawCDEFBits & 3
-		cdef := av1.CDEFParams{
+		cdef := internalparser.CDEFParams{
 			Bits:          cdefBits,
 			StrengthCount: uint8(1) << cdefBits,
 		}
-		restoration := av1.RestorationParams{
-			Type:       [3]av1.RestorationType{restorationType, restorationType, restorationType},
+		restoration := internalparser.RestorationParams{
+			Type:       [3]internalparser.RestorationType{restorationType, restorationType, restorationType},
 			UnitSizeY:  64,
 			UnitSizeUV: 64,
 		}
 		if sequence.ColorConfig.MonoChrome {
-			restoration.Type[1] = av1.RestorationNone
-			restoration.Type[2] = av1.RestorationNone
+			restoration.Type[1] = internalparser.RestorationNone
+			restoration.Type[2] = internalparser.RestorationNone
 		}
 
-		scratchSize, err := av1.DecoderFrameWorkSideDataScratchLen(sequence, size, cdef, restoration)
+		scratchSize, err := decoderFrameWorkSideDataScratchLen(sequence, size, cdef, restoration)
 		if err != nil {
 			return
 		}
-		scratch := av1.DecoderFrameWorkSideDataScratch{
+		scratch := decoderFrameWorkSideDataScratch{
 			CDEFIndexMap:             make([]uint8, scratchSize.CDEFIndexMap),
 			CDEFReadMap:              make([]bool, scratchSize.CDEFReadMap),
-			LoopFilterMap:            make([]av1.DecoderFrameWorkLoopFilterBlockRecord, scratchSize.LoopFilterMap),
-			RestorationRecords:       make([]av1.TileRestorationUnitRecord, scratchSize.RestorationRecords),
+			LoopFilterMap:            make([]internalthreading.FrameWorkLoopFilterBlockRecord, scratchSize.LoopFilterMap),
+			RestorationRecords:       make([]internaltile.RestorationUnitRecord, scratchSize.RestorationRecords),
 			RestorationBoundaryAbove: make([]uint16, scratchSize.RestorationBoundaryAbove),
 			RestorationBoundaryBelow: make([]uint16, scratchSize.RestorationBoundaryBelow),
 		}
 		if shortScratch && len(scratch.LoopFilterMap) != 0 {
 			scratch.LoopFilterMap = scratch.LoopFilterMap[:len(scratch.LoopFilterMap)-1]
 		}
-		side, err := av1.BindDecoderFrameWorkSideData(sequence, size, cdef, restoration, scratch)
+		side, err := bindDecoderFrameWorkSideData(sequence, size, cdef, restoration, scratch)
 		if err != nil {
 			return
 		}
 		if shortScratch {
 			t.Fatal("short side-data scratch unexpectedly bound")
 		}
-		postSide := av1.DecoderFrameWorkPostFilterSideData(side)
+		postSide := decoderFrameWorkPostFilterSideData(side)
 		if len(postSide.CDEFIndexMap.Index) != scratchSize.CDEFIndexMap ||
 			len(postSide.CDEFIndexMap.Read) != scratchSize.CDEFReadMap ||
 			len(postSide.LoopFilterMap.Records) != scratchSize.LoopFilterMap ||
@@ -105,16 +108,16 @@ func FuzzPublicDecoderFrameWorkPostFilterScratchContext(f *testing.F) {
 			bitDepth = 12
 		}
 
-		sequence := av1.SequenceHeader{
+		sequence := SequenceHeader{
 			EnableSuperRes: superRes,
-			ColorConfig: av1.ColorConfig{
+			ColorConfig: internalparser.ColorConfig{
 				BitDepth:     bitDepth,
 				MonoChrome:   mono,
 				SubsamplingX: !mono,
 				SubsamplingY: !mono,
 			},
 		}
-		size := av1.FrameSize{
+		size := FrameSize{
 			CodedWidth:          codedWidth,
 			UpscaledWidth:       codedWidth,
 			Height:              height,
@@ -125,27 +128,27 @@ func FuzzPublicDecoderFrameWorkPostFilterScratchContext(f *testing.F) {
 			size.UpscaledWidth = upscaledWidth
 			size.SuperResDenominator = 9 + uint8(flags&7)
 		}
-		event := av1.DecoderEvent{
-			Kind:           av1.DecoderEventTileGroup,
+		event := internaldecoder.Event{
+			Kind:           internaldecoder.EventTileGroup,
 			SequenceHeader: sequence,
 			FrameSize:      size,
-			TileGroup:      av1.TileGroup{Final: true},
+			TileGroup:      internalparser.TileGroup{Final: true},
 		}
 		if filmGrain {
-			event.FilmGrain = av1.FilmGrainParams{
+			event.FilmGrain = internalparser.FilmGrainParams{
 				ParamsPresent: true,
 				Apply:         true,
 				Seed:          uint16(0x1000) | uint16(flags),
 				BitDepth:      bitDepth,
 				NumYPoints:    1,
-				YPoints:       [av1.MaxFilmGrainYPoints][2]uint8{{0, 64}},
+				YPoints:       [internalparser.MaxFilmGrainYPoints][2]uint8{{0, 64}},
 				ScalingShift:  8,
 				Overlap:       true,
 			}
 		}
 
-		var scratchOutput av1.Frame
-		ctx, err := av1.DecoderFrameWorkPostFilterScratchContext(sequence, &event, align, nil, &scratchOutput)
+		var scratchOutput Frame
+		ctx, err := decoderFrameWorkPostFilterScratchContext(sequence, &event, align, nil, &scratchOutput)
 		if err != nil {
 			return
 		}
@@ -153,12 +156,12 @@ func FuzzPublicDecoderFrameWorkPostFilterScratchContext(f *testing.F) {
 			t.Fatalf("ctx=%+v output=%+v codedWidth=%d", ctx, scratchOutput, codedWidth)
 		}
 
-		var runner av1.DecoderFrameWorkCallerPostFilterScratchRunner
+		var runner decoderFrameWorkCallerPostFilterScratchRunner
 		first, err := runner.ScratchLen(ctx)
 		if err != nil {
 			return
 		}
-		runner.Scratch = publicDecoderPostFilterRequestScratch(av1.DecoderFrameWorkPostFilterRequestScratchLen(first))
+		runner.Scratch = publicDecoderPostFilterRequestScratch(decoderFrameWorkPostFilterRequestScratchLen(first))
 		full, err := runner.ScratchLen(ctx)
 		if err != nil {
 			return
@@ -172,13 +175,13 @@ func FuzzPublicDecoderFrameWorkPostFilterScratchContext(f *testing.F) {
 	})
 }
 
-func publicFuzzRestorationType(raw uint8) av1.RestorationType {
+func publicFuzzRestorationType(raw uint8) internalparser.RestorationType {
 	switch raw % 3 {
 	case 1:
-		return av1.RestorationWiener
+		return internalparser.RestorationWiener
 	case 2:
-		return av1.RestorationSGRProj
+		return internalparser.RestorationSGRProj
 	default:
-		return av1.RestorationNone
+		return internalparser.RestorationNone
 	}
 }

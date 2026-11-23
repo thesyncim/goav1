@@ -1,10 +1,8 @@
-package goav1_test
+package goav1
 
 import (
 	"errors"
 	"testing"
-
-	av1 "github.com/thesyncim/goav1"
 )
 
 func TestPublicIVFHeaderAndIterator(t *testing.T) {
@@ -12,18 +10,18 @@ func TestPublicIVFHeaderAndIterator(t *testing.T) {
 		{timestamp: 0, payload: []byte{0x12, 0x00}},
 		{timestamp: 3, payload: []byte{0x30, 0xaa, 0xbb}},
 	})
-	header, consumed, err := av1.ParseIVFHeader(src)
+	header, consumed, err := ParseIVFHeader(src)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if consumed != av1.IVFFileHeaderSize || header.Width != 16 || header.Height != 18 {
+	if consumed != IVFFileHeaderSize || header.Width != 16 || header.Height != 18 {
 		t.Fatalf("header=%+v consumed=%d", header, consumed)
 	}
 	if header.TimebaseNum != 30 || header.TimebaseDen != 1 || header.FrameCount != 2 {
 		t.Fatalf("header timing/count=%+v", header)
 	}
 
-	it, err := av1.NewIVFIterator(src)
+	it, err := NewIVFIterator(src)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,14 +32,14 @@ func TestPublicIVFHeaderAndIterator(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("first ok=%v err=%v", ok, err)
 	}
-	if first.Index != 0 || first.Offset != av1.IVFFileHeaderSize || first.Timestamp != 0 || string(first.Payload) != string([]byte{0x12, 0x00}) {
+	if first.Index != 0 || first.Offset != IVFFileHeaderSize || first.Timestamp != 0 || string(first.Payload) != string([]byte{0x12, 0x00}) {
 		t.Fatalf("first=%+v", first)
 	}
 	second, ok, err := it.Next()
 	if err != nil || !ok {
 		t.Fatalf("second ok=%v err=%v", ok, err)
 	}
-	if second.Index != 1 || second.Offset != av1.IVFFileHeaderSize+av1.IVFFrameHeaderSize+2 || second.Timestamp != 3 || string(second.Payload) != string([]byte{0x30, 0xaa, 0xbb}) {
+	if second.Index != 1 || second.Offset != IVFFileHeaderSize+IVFFrameHeaderSize+2 || second.Timestamp != 3 || string(second.Payload) != string([]byte{0x30, 0xaa, 0xbb}) {
 		t.Fatalf("second=%+v", second)
 	}
 	_, ok, err = it.Next()
@@ -54,9 +52,9 @@ func TestPublicIVFHeaderAndIterator(t *testing.T) {
 }
 
 func TestPublicIVFRejectsInvalid(t *testing.T) {
-	_, _, err := av1.ParseIVFHeader([]byte("DKIF"))
-	if !errors.Is(err, av1.ErrIVFShortHeader) {
-		t.Fatalf("ParseIVFHeader err=%v want %v", err, av1.ErrIVFShortHeader)
+	_, _, err := ParseIVFHeader([]byte("DKIF"))
+	if !errors.Is(err, ErrIVFShortHeader) {
+		t.Fatalf("ParseIVFHeader err=%v want %v", err, ErrIVFShortHeader)
 	}
 
 	src := appendPublicIVF(nil, 16, 16, 30, 1, nil)
@@ -64,27 +62,27 @@ func TestPublicIVFRejectsInvalid(t *testing.T) {
 	src[9] = 'P'
 	src[10] = '9'
 	src[11] = '0'
-	_, err = av1.NewIVFIterator(src)
-	if !errors.Is(err, av1.ErrIVFUnsupportedCodec) {
-		t.Fatalf("NewIVFIterator err=%v want %v", err, av1.ErrIVFUnsupportedCodec)
+	_, err = NewIVFIterator(src)
+	if !errors.Is(err, ErrIVFUnsupportedCodec) {
+		t.Fatalf("NewIVFIterator err=%v want %v", err, ErrIVFUnsupportedCodec)
 	}
 
 	truncatedFrame := appendPublicIVF(nil, 16, 16, 30, 1, nil)
 	truncatedFrame = append(truncatedFrame, 0x01)
-	it, err := av1.NewIVFIterator(truncatedFrame)
+	it, err := NewIVFIterator(truncatedFrame)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, _, err = it.Next()
-	if !errors.Is(err, av1.ErrIVFShortFrameHeader) {
-		t.Fatalf("Next err=%v want %v", err, av1.ErrIVFShortFrameHeader)
+	if !errors.Is(err, ErrIVFShortFrameHeader) {
+		t.Fatalf("Next err=%v want %v", err, ErrIVFShortFrameHeader)
 	}
 }
 
 func TestPublicIVFIteratorAllocs(t *testing.T) {
 	src := appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{{payload: []byte{0x12, 0x00}}})
 	allocs := testing.AllocsPerRun(1000, func() {
-		it, err := av1.NewIVFIterator(src)
+		it, err := NewIVFIterator(src)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -107,7 +105,7 @@ func appendPublicIVF(dst []byte, width uint16, height uint16, timebaseNum uint32
 	dst = append(dst,
 		'D', 'K', 'I', 'F',
 		0, 0,
-		byte(av1.IVFFileHeaderSize), 0,
+		byte(IVFFileHeaderSize), 0,
 		'A', 'V', '0', '1',
 		byte(width), byte(width>>8),
 		byte(height), byte(height>>8),

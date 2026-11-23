@@ -1,11 +1,10 @@
-package goav1_test
+package goav1
 
 import (
 	"fmt"
 	"os"
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 )
 
@@ -32,7 +31,7 @@ func TestDecoderWorkersSteadyStateZeroAlloc(t *testing.T) {
 				if err != nil {
 					t.Fatalf("read clip: %v", err)
 				}
-				dec, err := av1.NewDecoderFromIVF(ivf, av1.WithWorkers(workers))
+				dec, err := NewDecoderFromIVF(ivf, WithWorkers(workers))
 				if err != nil {
 					t.Fatalf("NewDecoderFromIVF: %v", err)
 				}

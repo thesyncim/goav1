@@ -1,63 +1,26 @@
-// Package goav1 is a pure-Go AV1 codec package focused on realtime and
-// WebRTC use.
+// Package goav1 is a pure-Go AV1 decoder and realtime AV1 encoder for WebRTC.
 //
-// The package consumes and produces AV1 Open Bitstream Units, AV1 RTP payload
-// bodies, RTP packet/header syntax, and RFC 4588 RTX repair packet envelopes.
-// SRTP, full SDP assembly, NACK/timer
-// policy, and network scheduling stay caller-owned.
+// Decoding: NewDecoder, NewDecoderFromIVF, NewDecoderFromIVFReaderAt and the
+// RTP payload and packet constructors build a Decoder over a complete stream
+// and size every buffer from its headers; DecodeNext then returns frames
+// without allocating. WithWorkers enables tile, wavefront and frame threading,
+// WithMaxFrameDelay bounds frame threading's output delay and
+// WithFrameSizeLimit rejects streams larger than the caller will allocate for.
+// LayeredDecoder is the receive path for streams whose reference slots span
+// several coded frame sizes, such as WebRTC shared-reference SVC.
+// NewIVFIterator walks IVF files.
 //
-// The implementation is built from byte-exact transport and parser primitives
-// inward. Public helpers expose IVF containers, low-overhead, temporal-unit,
-// and Annex B OBU parsing, AV1 RTP fixed-header and RFC 8285 extension element
-// framing and negotiated-extension lookup, complete RTP packet dependency
-// descriptor extraction, RFC 4588 RTX wrap/parse/restore helpers, AV1 RTP
-// payload iteration, construction, caller-owned
-// RTP sizing, complete RTP packet decode wrappers, generic and compound RTCP packet
-// helpers, RTCP
-// SR/RR/SDES/BYE and RTPFB/PSFB packet helpers, RTCP
-// NACK/Transport-CC/PLI/FIR/REMB FCI helpers, Transport-CC report construction,
-// reception timeline and summary helpers, REMB-to-encoder-bitrate config helpers,
-// AV1 RTCP Layer Refresh Request FCI list and target-selection helpers, RTCP
-// feedback force-key classification for single, parsed compound, and raw
-// compound packets, sequence-header parsing,
-// caller-owned
-// frame pools and sample-plane scratch helpers, DSP block/blend helpers, intra/inter
-// prediction, decoder
-// frame-work prediction bridges, residual reconstruction primitives,
-// post-reconstruction filtering helpers, AV1 SDP/rtpmap/fmtp/rtcp-fb
-// capability parsing and emission, tile block/transform
-// geometry, transform/coefficient context replay helpers, tile coefficient
-// replay, tile block coefficient decode, tile-level restoration orchestration,
-// decoder residual-state setup and residual execution/retention bridges for
-// jobs and worker batches, decoder block coefficient reconstruction,
-// coefficient replay reconstruction adapters, one-block coefficient
-// decode/reconstruct helpers, decoder postfilter scratch binding, superres
-// upscaling, film-grain output helpers, a realtime 8-bit profile-0 AV1 encoder
-// for WebRTC streams with I420/I422/I444/I400/NV12/NV21 and generic Frame
-// input adapters, RTCEncoder config preflight
-// normalization, RTP payload packetization with dependency descriptors, sized
-// complete RTP packet wrapping with dependency-descriptor, MID/RID/RRID, CVO,
-// playout-delay, TWCC/TWCC-02, absolute-send-time, absolute-capture-time,
-// video-content-type, video-timing, video-layers-allocation, and color-space
-// header extensions,
-// multi-spatial EncodePicture output for WebRTC
-// SVC and simulcast modes, key-frame scalability metadata OBUs, and runtime
-// bitrate/framerate/scalability
-// reconfiguration, complete-packet RTP sequencing for duplicate/reorder/gap
-// detection, and after-loss decode routing. Lower-level WebRTC encoder
-// helpers expose W3C SVC mode metadata, temporal/spatial dependency
-// structures, decode-target grids, active decode-target masks, key-shift
-// scheduling, AV1 scalability_mode_idc mapping, predefined and explicit-SS
-// metadata OBU writing,
-// explicit sequence color config, sequence-matched sample-plane loading, and
-// the supported scalabilityMode capability list. High-level
-// decoder helpers cover low-overhead streams, ordered/live AV1 RTP payload
-// bodies or complete packets, retained-fragment reset after RTP loss, and
-// shared-reference SVC RTP receive loops with decoded AV1 layer metadata;
-// frame-work/layer-pool APIs remain available when callers need explicit
-// surface routing.
+// Encoding: NewVideoEncoder and NewRTCEncoderWithConfig encode I420, NV12,
+// NV21, I422, I444, I400 and high-bit-depth frames for realtime use, including
+// temporal and spatial scalability, rate control and runtime reconfiguration.
+// RTCEncoder emits RTP payloads with dependency descriptors.
 //
-// Hot paths use caller-owned buffers and fixed storage. Returned byte slices
-// alias caller-provided input or output buffers unless a future API explicitly
-// documents ownership transfer.
+// WebRTC transport helpers cover AV1 RTP payload packetization and assembly,
+// RTP header and RFC 8285 extension framing, RFC 4588 retransmission, RTCP
+// packets and feedback (NACK, PLI, FIR, REMB, Transport-CC, AV1 layer refresh),
+// packet sequencing and AV1 SDP negotiation. SRTP, ICE, full SDP assembly and
+// network scheduling stay with the caller.
+//
+// Returned byte slices and frames alias decoder- or caller-owned buffers;
+// each function documents how long they stay valid.
 package goav1

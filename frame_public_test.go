@@ -1,14 +1,14 @@
-package goav1_test
+package goav1
 
 import (
 	"errors"
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
 )
 
 func TestPublicFramePoolRequiredSizeAndBind(t *testing.T) {
-	format := av1.FrameFormat{
+	format := FrameFormat{
 		Width:        16,
 		Height:       16,
 		BitDepth:     8,
@@ -16,7 +16,7 @@ func TestPublicFramePoolRequiredSizeAndBind(t *testing.T) {
 		SubsamplingY: true,
 		Align:        32,
 	}
-	layout, backingSize, err := av1.FramePoolRequiredSize(format, 3)
+	layout, backingSize, err := framePoolRequiredSize(format, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,10 +25,10 @@ func TestPublicFramePoolRequiredSizeAndBind(t *testing.T) {
 	}
 
 	backing := make([]byte, backingSize)
-	var frames [3]av1.Frame
+	var frames [3]Frame
 	var free [3]int
 	var used [3]bool
-	pool, err := av1.BindFramePool(backing, format, frames[:], free[:], used[:])
+	pool, err := internalframe.BindPool(backing, format, frames[:], free[:], used[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,8 +45,8 @@ func TestPublicFramePoolRequiredSizeAndBind(t *testing.T) {
 			t.Fatalf("frame %d did not bind expected backing slot", i)
 		}
 	}
-	if _, _, err := pool.Acquire(); !errors.Is(err, av1.ErrFramePoolEmpty) {
-		t.Fatalf("empty acquire err=%v want %v", err, av1.ErrFramePoolEmpty)
+	if _, _, err := pool.Acquire(); !errors.Is(err, internalframe.ErrPoolEmpty) {
+		t.Fatalf("empty acquire err=%v want %v", err, internalframe.ErrPoolEmpty)
 	}
 	if err := pool.ReleaseMany([]int{0, 2}); err != nil {
 		t.Fatal(err)
@@ -57,37 +57,37 @@ func TestPublicFramePoolRequiredSizeAndBind(t *testing.T) {
 }
 
 func TestPublicFramePoolRequiredSizeRejectsInvalid(t *testing.T) {
-	format := av1.FrameFormat{Width: 16, Height: 16, BitDepth: 8}
-	if _, _, err := av1.FramePoolRequiredSize(format, 0); !errors.Is(err, av1.ErrFrameInvalidPool) {
-		t.Fatalf("count err=%v want %v", err, av1.ErrFrameInvalidPool)
+	format := FrameFormat{Width: 16, Height: 16, BitDepth: 8}
+	if _, _, err := framePoolRequiredSize(format, 0); !errors.Is(err, internalframe.ErrInvalidPool) {
+		t.Fatalf("count err=%v want %v", err, internalframe.ErrInvalidPool)
 	}
 
-	layout, err := av1.FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		t.Fatal(err)
 	}
 	overflowCount := int(^uint(0)>>1)/layout.Size + 1
-	if _, _, err := av1.FramePoolRequiredSize(format, overflowCount); !errors.Is(err, av1.ErrFrameInvalidFormat) {
-		t.Fatalf("overflow err=%v want %v", err, av1.ErrFrameInvalidFormat)
+	if _, _, err := framePoolRequiredSize(format, overflowCount); !errors.Is(err, internalframe.ErrInvalidFormat) {
+		t.Fatalf("overflow err=%v want %v", err, internalframe.ErrInvalidFormat)
 	}
 }
 
 func TestPublicFrameSamplePlaneRoundTrip8Bit(t *testing.T) {
-	plane := av1.FramePlane{Pix: make([]byte, 8*3), Stride: 8, Width: 5, Height: 3}
+	plane := FramePlane{Pix: make([]byte, 8*3), Stride: 8, Width: 5, Height: 3}
 	for y := 0; y < plane.Height; y++ {
 		for x := 0; x < plane.Width; x++ {
 			plane.Pix[y*plane.Stride+x] = byte(10*y + x)
 		}
 	}
 
-	need, err := av1.FrameSamplePlaneLen(plane, 1)
+	need, err := internalframe.SamplePlaneLen(plane, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if need != 24 {
 		t.Fatalf("need=%d want 24", need)
 	}
-	samples, err := av1.LoadFrameSamplePlane(make([]uint16, need), plane, 1)
+	samples, err := internalframe.LoadSamplePlane(make([]uint16, need), plane, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,8 +99,8 @@ func TestPublicFrameSamplePlaneRoundTrip8Bit(t *testing.T) {
 	}
 
 	samples.Pix[1*samples.Stride+3] = 201
-	dst := av1.FramePlane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
-	if err := av1.StoreFrameSamplePlane(dst, 1, samples); err != nil {
+	dst := FramePlane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
+	if err := internalframe.StoreSamplePlane(dst, 1, samples); err != nil {
 		t.Fatal(err)
 	}
 	if dst.Pix[1*dst.Stride+3] != 201 || dst.Pix[2*dst.Stride+4] != 24 {
@@ -109,25 +109,25 @@ func TestPublicFrameSamplePlaneRoundTrip8Bit(t *testing.T) {
 }
 
 func TestPublicFrameBorderedSamplePlaneRoundTripHighBitDepth(t *testing.T) {
-	plane := av1.FramePlane{Pix: make([]byte, 12*2), Stride: 12, Width: 4, Height: 2}
+	plane := FramePlane{Pix: make([]byte, 12*2), Stride: 12, Width: 4, Height: 2}
 	for y := 0; y < plane.Height; y++ {
 		for x := 0; x < plane.Width; x++ {
 			setPublicFrameSample(plane, 2, x, y, uint16(1000+y*10+x))
 		}
 	}
 
-	layout, err := av1.FrameBorderedSamplePlaneLen(plane, 2, 5, 1, 16)
+	layout, err := internalframe.BorderedSamplePlaneLen(plane, 2, 5, 1, 16)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (av1.FrameBorderedSamplePlaneLayout{Stride: 16, Origin: 21, Rows: 4, Len: 64}); layout != want {
+	if want := (internalframe.BorderedSamplePlaneLayout{Stride: 16, Origin: 21, Rows: 4, Len: 64}); layout != want {
 		t.Fatalf("layout=%+v want %+v", layout, want)
 	}
 	scratch := make([]uint16, layout.Len)
 	for i := range scratch {
 		scratch[i] = 0xeeee
 	}
-	samples, err := av1.LoadFrameBorderedSamplePlane(scratch, plane, 2, 5, 1, 16)
+	samples, err := internalframe.LoadBorderedSamplePlane(scratch, plane, 2, 5, 1, 16)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,8 +139,8 @@ func TestPublicFrameBorderedSamplePlaneRoundTripHighBitDepth(t *testing.T) {
 	}
 
 	samples.Pix[samples.Origin+1] = 4095
-	dst := av1.FramePlane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
-	if err := av1.StoreFrameBorderedSamplePlane(dst, 2, samples); err != nil {
+	dst := FramePlane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
+	if err := internalframe.StoreBorderedSamplePlane(dst, 2, samples); err != nil {
 		t.Fatal(err)
 	}
 	if got := getPublicFrameSample(dst, 2, 1, 0); got != 4095 {
@@ -150,7 +150,7 @@ func TestPublicFrameBorderedSamplePlaneRoundTripHighBitDepth(t *testing.T) {
 		t.Fatalf("stored=%d want 1012", got)
 	}
 
-	bound, err := av1.BindFrameBorderedSamplePlane(scratch, plane, 2, 5, 1, 16)
+	bound, err := internalframe.BindBorderedSamplePlane(scratch, plane, 2, 5, 1, 16)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,40 +160,40 @@ func TestPublicFrameBorderedSamplePlaneRoundTripHighBitDepth(t *testing.T) {
 }
 
 func TestPublicFrameSamplePlaneRejectsInvalid(t *testing.T) {
-	plane := av1.FramePlane{Pix: make([]byte, 8), Stride: 4, Width: 3, Height: 2}
-	if _, err := av1.FrameSamplePlaneLen(plane, 3); !errors.Is(err, av1.ErrFrameInvalidPlane) {
-		t.Fatalf("bytesPerSample err=%v want %v", err, av1.ErrFrameInvalidPlane)
+	plane := FramePlane{Pix: make([]byte, 8), Stride: 4, Width: 3, Height: 2}
+	if _, err := internalframe.SamplePlaneLen(plane, 3); !errors.Is(err, internalframe.ErrInvalidPlane) {
+		t.Fatalf("bytesPerSample err=%v want %v", err, internalframe.ErrInvalidPlane)
 	}
-	if need, err := av1.FrameSamplePlaneLen(av1.FramePlane{Stride: 4, Width: 4, Height: 2}, 1); err != nil || need != 8 {
+	if need, err := internalframe.SamplePlaneLen(FramePlane{Stride: 4, Width: 4, Height: 2}, 1); err != nil || need != 8 {
 		t.Fatalf("geometry-only len=%d err=%v want 8,nil", need, err)
 	}
-	if _, err := av1.LoadFrameSamplePlane(make([]uint16, 3), plane, 1); !errors.Is(err, av1.ErrFrameShortBuffer) {
-		t.Fatalf("short load err=%v want %v", err, av1.ErrFrameShortBuffer)
+	if _, err := internalframe.LoadSamplePlane(make([]uint16, 3), plane, 1); !errors.Is(err, internalframe.ErrShortBuffer) {
+		t.Fatalf("short load err=%v want %v", err, internalframe.ErrShortBuffer)
 	}
-	overflow := av1.FrameSamplePlane{Pix: []uint16{256}, Stride: 1, Width: 1, Height: 1}
-	dst := av1.FramePlane{Pix: make([]byte, 1), Stride: 1, Width: 1, Height: 1}
-	if err := av1.StoreFrameSamplePlane(dst, 1, overflow); !errors.Is(err, av1.ErrFrameInvalidPlane) {
-		t.Fatalf("overflow store err=%v want %v", err, av1.ErrFrameInvalidPlane)
+	overflow := internalframe.SamplePlane{Pix: []uint16{256}, Stride: 1, Width: 1, Height: 1}
+	dst := FramePlane{Pix: make([]byte, 1), Stride: 1, Width: 1, Height: 1}
+	if err := internalframe.StoreSamplePlane(dst, 1, overflow); !errors.Is(err, internalframe.ErrInvalidPlane) {
+		t.Fatalf("overflow store err=%v want %v", err, internalframe.ErrInvalidPlane)
 	}
-	if _, err := av1.FrameBorderedSamplePlaneLen(plane, 1, 1, 1, 3); !errors.Is(err, av1.ErrFrameInvalidPlane) {
-		t.Fatalf("border align err=%v want %v", err, av1.ErrFrameInvalidPlane)
+	if _, err := internalframe.BorderedSamplePlaneLen(plane, 1, 1, 1, 3); !errors.Is(err, internalframe.ErrInvalidPlane) {
+		t.Fatalf("border align err=%v want %v", err, internalframe.ErrInvalidPlane)
 	}
 }
 
 func TestPublicFrameSamplePlaneAllocs(t *testing.T) {
-	plane := av1.FramePlane{Pix: make([]byte, 16*16), Stride: 16, Width: 16, Height: 16}
-	dst := av1.FramePlane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
-	need, err := av1.FrameSamplePlaneLen(plane, 1)
+	plane := FramePlane{Pix: make([]byte, 16*16), Stride: 16, Width: 16, Height: 16}
+	dst := FramePlane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
+	need, err := internalframe.SamplePlaneLen(plane, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	scratch := make([]uint16, need)
 	allocs := testing.AllocsPerRun(1000, func() {
-		samples, err := av1.LoadFrameSamplePlane(scratch, plane, 1)
+		samples, err := internalframe.LoadSamplePlane(scratch, plane, 1)
 		if err != nil {
 			t.Fatalf("LoadFrameSamplePlane err=%v", err)
 		}
-		if err := av1.StoreFrameSamplePlane(dst, 1, samples); err != nil {
+		if err := internalframe.StoreSamplePlane(dst, 1, samples); err != nil {
 			t.Fatalf("StoreFrameSamplePlane err=%v", err)
 		}
 	})
@@ -201,17 +201,17 @@ func TestPublicFrameSamplePlaneAllocs(t *testing.T) {
 		t.Fatalf("allocs=%v want 0", allocs)
 	}
 
-	layout, err := av1.FrameBorderedSamplePlaneLen(plane, 1, 4, 2, 16)
+	layout, err := internalframe.BorderedSamplePlaneLen(plane, 1, 4, 2, 16)
 	if err != nil {
 		t.Fatal(err)
 	}
 	borderedScratch := make([]uint16, layout.Len)
 	allocs = testing.AllocsPerRun(1000, func() {
-		samples, err := av1.LoadFrameBorderedSamplePlane(borderedScratch, plane, 1, 4, 2, 16)
+		samples, err := internalframe.LoadBorderedSamplePlane(borderedScratch, plane, 1, 4, 2, 16)
 		if err != nil {
 			t.Fatalf("LoadFrameBorderedSamplePlane err=%v", err)
 		}
-		if err := av1.StoreFrameBorderedSamplePlane(dst, 1, samples); err != nil {
+		if err := internalframe.StoreBorderedSamplePlane(dst, 1, samples); err != nil {
 			t.Fatalf("StoreFrameBorderedSamplePlane err=%v", err)
 		}
 	})
@@ -220,7 +220,7 @@ func TestPublicFrameSamplePlaneAllocs(t *testing.T) {
 	}
 }
 
-func setPublicFrameSample(plane av1.FramePlane, bytesPerSample int, x int, y int, sample uint16) {
+func setPublicFrameSample(plane FramePlane, bytesPerSample int, x int, y int, sample uint16) {
 	off := y*plane.Stride + x*bytesPerSample
 	plane.Pix[off] = byte(sample)
 	if bytesPerSample == 2 {
@@ -228,7 +228,7 @@ func setPublicFrameSample(plane av1.FramePlane, bytesPerSample int, x int, y int
 	}
 }
 
-func getPublicFrameSample(plane av1.FramePlane, bytesPerSample int, x int, y int) uint16 {
+func getPublicFrameSample(plane FramePlane, bytesPerSample int, x int, y int) uint16 {
 	off := y*plane.Stride + x*bytesPerSample
 	if bytesPerSample == 1 {
 		return uint16(plane.Pix[off])

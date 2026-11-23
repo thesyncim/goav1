@@ -1,21 +1,27 @@
 package goav1
 
-// TileListOutputFrameFormat returns the frame format needed to store a
+import (
+	internaldsp "github.com/thesyncim/goav1/internal/av1/dsp"
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
+)
+
+// tileListOutputFrameFormat returns the frame format needed to store a
 // tile-list output mosaic described by geometry. The color layout is inherited
-// from sequence, and align has the same meaning as FrameCodedFormatFromHeaders
-// and FrameOutputFormatFromHeaders.
-func TileListOutputFrameFormat(sequence SequenceHeader, geometry TileListOutputGeometry, align int) (FrameFormat, error) {
+// from sequence, and align has the same meaning as frameCodedFormatFromHeaders
+// and frameOutputFormatFromHeaders.
+func tileListOutputFrameFormat(sequence SequenceHeader, geometry internalparser.TileListOutputGeometry, align int) (FrameFormat, error) {
 	if geometry.OutputFrameWidth <= 0 || geometry.OutputFrameHeight <= 0 {
-		return FrameFormat{}, ErrFrameInvalidFormat
+		return FrameFormat{}, internalframe.ErrInvalidFormat
 	}
 	if uint64(geometry.OutputFrameWidth) > uint64(^uint32(0)) ||
 		uint64(geometry.OutputFrameHeight) > uint64(^uint32(0)) {
-		return FrameFormat{}, ErrFrameInvalidFormat
+		return FrameFormat{}, internalframe.ErrInvalidFormat
 	}
 	return frameFormatFromHeaderWidth(sequence, uint32(geometry.OutputFrameWidth), uint32(geometry.OutputFrameHeight), align)
 }
 
-// CopyTileListToOutputFrame copies every already-decoded tile-list entry from
+// copyTileListToOutputFrame copies every already-decoded tile-list entry from
 // sources into dst. sources is indexed by TileListEntry.AnchorFrameIdx, matching
 // libaom's external-reference frame table. The function validates every source
 // and destination plane before copying any pixel so malformed frame storage
@@ -24,9 +30,9 @@ func TileListOutputFrameFormat(sequence SequenceHeader, geometry TileListOutputG
 // This helper does not decode entry.TileData. Callers use it after decoding the
 // tile payloads against their anchor frames, then copy the decoded tile
 // rectangles into the tile-list output mosaic.
-func CopyTileListToOutputFrame(dst *Frame, sources []*Frame, list TileList, geometry TileListOutputGeometry) error {
+func copyTileListToOutputFrame(dst *Frame, sources []*Frame, list internalparser.TileList, geometry internalparser.TileListOutputGeometry) error {
 	if list.TileCount() != len(list.Entries) {
-		return ErrTileListInvalidTileCount
+		return internalparser.ErrTileListInvalidTileCount
 	}
 	for i := range list.Entries {
 		src, err := tileListEntrySource(sources, list.Entries[i])
@@ -53,7 +59,7 @@ func CopyTileListToOutputFrame(dst *Frame, sources []*Frame, list TileList, geom
 	return nil
 }
 
-// CopyTileListEntryToOutputFrame copies one already-decoded tile-list entry
+// copyTileListEntryToOutputFrame copies one already-decoded tile-list entry
 // from src into dst using the source/destination rectangles derived from list
 // and geometry. It is the pixel-copy stage of libaom's
 // copy_decoded_tile_to_tile_list_buffer(): luma coordinates are copied as-is,
@@ -62,7 +68,7 @@ func CopyTileListToOutputFrame(dst *Frame, sources []*Frame, list TileList, geom
 // This helper does not decode entry.TileData. Callers use it after decoding the
 // tile payload against the entry's anchor frame, then copy the decoded tile
 // rectangle into the tile-list output mosaic.
-func CopyTileListEntryToOutputFrame(dst *Frame, src *Frame, list TileList, geometry TileListOutputGeometry, entryIndex int) error {
+func copyTileListEntryToOutputFrame(dst *Frame, src *Frame, list internalparser.TileList, geometry internalparser.TileListOutputGeometry, entryIndex int) error {
 	regions, err := tileListEntryCopyPreflight(dst, src, list, geometry, entryIndex)
 	if err != nil {
 		return err
@@ -71,44 +77,44 @@ func CopyTileListEntryToOutputFrame(dst *Frame, src *Frame, list TileList, geome
 }
 
 type tileListEntryCopyRegions struct {
-	luma      TileListTileRegion
-	chroma    TileListTileRegion
+	luma      internalparser.TileListTileRegion
+	chroma    internalparser.TileListTileRegion
 	hasChroma bool
 }
 
-func tileListEntrySource(sources []*Frame, entry TileListEntry) (*Frame, error) {
+func tileListEntrySource(sources []*Frame, entry internalparser.TileListEntry) (*Frame, error) {
 	index := int(entry.AnchorFrameIdx)
 	if index < 0 || index >= len(sources) || sources[index] == nil {
-		return nil, ErrTileListInvalidAnchorIndex
+		return nil, internalparser.ErrTileListInvalidAnchorIndex
 	}
 	return sources[index], nil
 }
 
-func tileListEntryCopyPreflight(dst *Frame, src *Frame, list TileList, geometry TileListOutputGeometry, entryIndex int) (tileListEntryCopyRegions, error) {
+func tileListEntryCopyPreflight(dst *Frame, src *Frame, list internalparser.TileList, geometry internalparser.TileListOutputGeometry, entryIndex int) (tileListEntryCopyRegions, error) {
 	if dst == nil || src == nil {
-		return tileListEntryCopyRegions{}, ErrFrameInvalidFormat
+		return tileListEntryCopyRegions{}, internalframe.ErrInvalidFormat
 	}
 	if dst.Layout.BytesPerSample != src.Layout.BytesPerSample ||
 		dst.Format.BitDepth != src.Format.BitDepth ||
 		dst.Format.MonoChrome != src.Format.MonoChrome ||
 		dst.Format.SubsamplingX != src.Format.SubsamplingX ||
 		dst.Format.SubsamplingY != src.Format.SubsamplingY {
-		return tileListEntryCopyRegions{}, ErrFrameInvalidFormat
+		return tileListEntryCopyRegions{}, internalframe.ErrInvalidFormat
 	}
 	if dst.Format.Width < geometry.OutputFrameWidth || dst.Format.Height < geometry.OutputFrameHeight {
-		return tileListEntryCopyRegions{}, ErrFrameInvalidFormat
+		return tileListEntryCopyRegions{}, internalframe.ErrInvalidFormat
 	}
-	region, err := TileListOutputTileRegion(list, geometry, entryIndex)
+	region, err := internalparser.TileListOutputTileRegion(list, geometry, entryIndex)
 	if err != nil {
 		return tileListEntryCopyRegions{}, err
 	}
 	bps := dst.Layout.BytesPerSample
 	if bps != 1 && bps != 2 {
-		return tileListEntryCopyRegions{}, ErrFrameInvalidFormat
+		return tileListEntryCopyRegions{}, internalframe.ErrInvalidFormat
 	}
 	if !tileListPlaneRegionFits(dst.Y, bps, region.DestX, region.DestY, region.Width, region.Height) ||
 		!tileListPlaneRegionFits(src.Y, bps, region.SourceX, region.SourceY, region.Width, region.Height) {
-		return tileListEntryCopyRegions{}, ErrFrameInvalidFormat
+		return tileListEntryCopyRegions{}, internalframe.ErrInvalidFormat
 	}
 	regions := tileListEntryCopyRegions{luma: region}
 	if !dst.Format.MonoChrome {
@@ -119,7 +125,7 @@ func tileListEntryCopyPreflight(dst *Frame, src *Frame, list TileList, geometry 
 		if dst.Format.SubsamplingY {
 			shiftY = 1
 		}
-		chroma := TileListTileRegion{
+		chroma := internalparser.TileListTileRegion{
 			SourceX: region.SourceX >> shiftX,
 			SourceY: region.SourceY >> shiftY,
 			DestX:   region.DestX >> shiftX,
@@ -131,7 +137,7 @@ func tileListEntryCopyPreflight(dst *Frame, src *Frame, list TileList, geometry 
 			!tileListPlaneRegionFits(src.U, bps, chroma.SourceX, chroma.SourceY, chroma.Width, chroma.Height) ||
 			!tileListPlaneRegionFits(dst.V, bps, chroma.DestX, chroma.DestY, chroma.Width, chroma.Height) ||
 			!tileListPlaneRegionFits(src.V, bps, chroma.SourceX, chroma.SourceY, chroma.Width, chroma.Height) {
-			return tileListEntryCopyRegions{}, ErrFrameInvalidFormat
+			return tileListEntryCopyRegions{}, internalframe.ErrInvalidFormat
 		}
 		regions.chroma = chroma
 		regions.hasChroma = true
@@ -141,7 +147,7 @@ func tileListEntryCopyPreflight(dst *Frame, src *Frame, list TileList, geometry 
 
 func copyTileListEntryRegions(dst *Frame, src *Frame, regions tileListEntryCopyRegions) error {
 	bps := dst.Layout.BytesPerSample
-	if err := CopyPlaneBlock(dst.Y, src.Y, bps, regions.luma.DestX, regions.luma.DestY, regions.luma.SourceX, regions.luma.SourceY, regions.luma.Width, regions.luma.Height); err != nil {
+	if err := internaldsp.CopyPlaneBlock(dst.Y, src.Y, bps, regions.luma.DestX, regions.luma.DestY, regions.luma.SourceX, regions.luma.SourceY, regions.luma.Width, regions.luma.Height); err != nil {
 		return err
 	}
 	if !regions.hasChroma {
@@ -149,10 +155,10 @@ func copyTileListEntryRegions(dst *Frame, src *Frame, regions tileListEntryCopyR
 	}
 
 	chroma := regions.chroma
-	if err := CopyPlaneBlock(dst.U, src.U, bps, chroma.DestX, chroma.DestY, chroma.SourceX, chroma.SourceY, chroma.Width, chroma.Height); err != nil {
+	if err := internaldsp.CopyPlaneBlock(dst.U, src.U, bps, chroma.DestX, chroma.DestY, chroma.SourceX, chroma.SourceY, chroma.Width, chroma.Height); err != nil {
 		return err
 	}
-	return CopyPlaneBlock(dst.V, src.V, bps, chroma.DestX, chroma.DestY, chroma.SourceX, chroma.SourceY, chroma.Width, chroma.Height)
+	return internaldsp.CopyPlaneBlock(dst.V, src.V, bps, chroma.DestX, chroma.DestY, chroma.SourceX, chroma.SourceY, chroma.Width, chroma.Height)
 }
 
 func tileListPlaneRegionFits(plane FramePlane, bytesPerSample int, x int, y int, width int, height int) bool {

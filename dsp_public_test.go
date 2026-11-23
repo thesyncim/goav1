@@ -1,11 +1,11 @@
-package goav1_test
+package goav1
 
 import (
 	"errors"
 	"slices"
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
+	internaldsp "github.com/thesyncim/goav1/internal/av1/dsp"
 )
 
 func TestPublicDSPPlaneBlockOps(t *testing.T) {
@@ -13,7 +13,7 @@ func TestPublicDSPPlaneBlockOps(t *testing.T) {
 	for i := range plane.Pix {
 		plane.Pix[i] = 0xee
 	}
-	if err := av1.FillPlaneBlock(plane, 1, 2, 1, 3, 2, 0x2a); err != nil {
+	if err := internaldsp.FillPlaneBlock(plane, 1, 2, 1, 3, 2, 0x2a); err != nil {
 		t.Fatal(err)
 	}
 	for y := 0; y < plane.Height; y++ {
@@ -36,7 +36,7 @@ func TestPublicDSPPlaneBlockOps(t *testing.T) {
 			setPublicFrameSample(src, 2, x, y, uint16(1000+y*10+x))
 		}
 	}
-	if err := av1.CopyPlaneBlock(dst, src, 2, 2, 1, 1, 2, 3, 2); err != nil {
+	if err := internaldsp.CopyPlaneBlock(dst, src, 2, 2, 1, 1, 2, 3, 2); err != nil {
 		t.Fatal(err)
 	}
 	for y := range 2 {
@@ -50,14 +50,14 @@ func TestPublicDSPPlaneBlockOps(t *testing.T) {
 	}
 
 	residualPlane := publicPredictionPlane(4, 2, 1, 6)
-	if err := av1.FillPlaneBlock(residualPlane, 1, 0, 0, 4, 2, 100); err != nil {
+	if err := internaldsp.FillPlaneBlock(residualPlane, 1, 0, 0, 4, 2, 100); err != nil {
 		t.Fatal(err)
 	}
 	residual := []int16{
 		-200, -1, 0, 200,
 		20, -20, 155, 156,
 	}
-	if err := av1.AddResidualPlaneBlock(residualPlane, 1, 8, 0, 0, 4, 2, residual, 4); err != nil {
+	if err := internaldsp.AddResidualPlaneBlock(residualPlane, 1, 8, 0, 0, 4, 2, residual, 4); err != nil {
 		t.Fatal(err)
 	}
 	want := []uint16{0, 99, 100, 255, 120, 80, 255, 255}
@@ -90,7 +90,7 @@ func TestPublicDSPBlendAndMinMax(t *testing.T) {
 		0, 64, 32, 32,
 	}
 	dst := make([]uint16, 16)
-	if err := av1.BlendA64Mask(dst, 4, src0, 4, src1, 4, mask, 4, 4, 4, false, false, 8); err != nil {
+	if err := internaldsp.BlendA64Mask(dst, 4, src0, 4, src1, 4, mask, 4, 4, 4, false, false, 8); err != nil {
 		t.Fatal(err)
 	}
 	want := []uint16{
@@ -109,7 +109,7 @@ func TestPublicDSPBlendAndMinMax(t *testing.T) {
 		b[i] = 255
 	}
 	b[17] = 7
-	minDiff, maxDiff, err := av1.MinMaxAbsDiff8x8(a[:], 8, b[:], 8, 1)
+	minDiff, maxDiff, err := internaldsp.MinMaxAbsDiff8x8(a[:], 8, b[:], 8, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestPublicDSPBlendAndMinMax(t *testing.T) {
 		publicPut16(b16[:], i, 65535)
 	}
 	publicPut16(b16[:], 9, 13)
-	minDiff, maxDiff, err = av1.MinMaxAbsDiff8x8(a16[:], 16, b16[:], 16, 2)
+	minDiff, maxDiff, err = internaldsp.MinMaxAbsDiff8x8(a16[:], 16, b16[:], 16, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,23 +134,23 @@ func TestPublicDSPBlendAndMinMax(t *testing.T) {
 
 func TestPublicDSPRejectsInvalid(t *testing.T) {
 	plane := publicPredictionPlane(4, 4, 1, 4)
-	if err := av1.FillPlaneBlock(plane, 3, 0, 0, 1, 1, 0); !errors.Is(err, av1.ErrDSPInvalidBlock) {
-		t.Fatalf("FillPlaneBlock err=%v want %v", err, av1.ErrDSPInvalidBlock)
+	if err := internaldsp.FillPlaneBlock(plane, 3, 0, 0, 1, 1, 0); !errors.Is(err, internaldsp.ErrInvalidBlock) {
+		t.Fatalf("FillPlaneBlock err=%v want %v", err, internaldsp.ErrInvalidBlock)
 	}
-	if err := av1.FillPlaneBlock(plane, 1, 0, 0, 1, 1, 256); !errors.Is(err, av1.ErrDSPInvalidBlock) {
-		t.Fatalf("FillPlaneBlock value err=%v want %v", err, av1.ErrDSPInvalidBlock)
+	if err := internaldsp.FillPlaneBlock(plane, 1, 0, 0, 1, 1, 256); !errors.Is(err, internaldsp.ErrInvalidBlock) {
+		t.Fatalf("FillPlaneBlock value err=%v want %v", err, internaldsp.ErrInvalidBlock)
 	}
-	if err := av1.CopyPlaneBlock(plane, plane, 1, 3, 0, 0, 0, 2, 1); !errors.Is(err, av1.ErrDSPInvalidBlock) {
-		t.Fatalf("CopyPlaneBlock err=%v want %v", err, av1.ErrDSPInvalidBlock)
+	if err := internaldsp.CopyPlaneBlock(plane, plane, 1, 3, 0, 0, 0, 2, 1); !errors.Is(err, internaldsp.ErrInvalidBlock) {
+		t.Fatalf("CopyPlaneBlock err=%v want %v", err, internaldsp.ErrInvalidBlock)
 	}
-	if err := av1.AddResidualPlaneBlock(plane, 1, 10, 0, 0, 1, 1, []int16{0}, 1); !errors.Is(err, av1.ErrDSPInvalidBlock) {
-		t.Fatalf("AddResidualPlaneBlock err=%v want %v", err, av1.ErrDSPInvalidBlock)
+	if err := internaldsp.AddResidualPlaneBlock(plane, 1, 10, 0, 0, 1, 1, []int16{0}, 1); !errors.Is(err, internaldsp.ErrInvalidBlock) {
+		t.Fatalf("AddResidualPlaneBlock err=%v want %v", err, internaldsp.ErrInvalidBlock)
 	}
-	if err := av1.BlendA64Mask(make([]uint16, 16), 4, make([]uint16, 16), 4, make([]uint16, 16), 4, make([]uint8, 16), 4, 3, 4, false, false, 8); !errors.Is(err, av1.ErrDSPInvalidBlock) {
-		t.Fatalf("BlendA64Mask err=%v want %v", err, av1.ErrDSPInvalidBlock)
+	if err := internaldsp.BlendA64Mask(make([]uint16, 16), 4, make([]uint16, 16), 4, make([]uint16, 16), 4, make([]uint8, 16), 4, 3, 4, false, false, 8); !errors.Is(err, internaldsp.ErrInvalidBlock) {
+		t.Fatalf("BlendA64Mask err=%v want %v", err, internaldsp.ErrInvalidBlock)
 	}
-	if _, _, err := av1.MinMaxAbsDiff8x8(make([]byte, 64), 7, make([]byte, 64), 8, 1); !errors.Is(err, av1.ErrDSPInvalidBlock) {
-		t.Fatalf("MinMaxAbsDiff8x8 err=%v want %v", err, av1.ErrDSPInvalidBlock)
+	if _, _, err := internaldsp.MinMaxAbsDiff8x8(make([]byte, 64), 7, make([]byte, 64), 8, 1); !errors.Is(err, internaldsp.ErrInvalidBlock) {
+		t.Fatalf("MinMaxAbsDiff8x8 err=%v want %v", err, internaldsp.ErrInvalidBlock)
 	}
 }
 
@@ -168,19 +168,19 @@ func TestPublicDSPAllocs(t *testing.T) {
 		blendMask[i] = 32
 	}
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := av1.FillPlaneBlock(src, 1, 0, 0, 16, 16, 91); err != nil {
+		if err := internaldsp.FillPlaneBlock(src, 1, 0, 0, 16, 16, 91); err != nil {
 			t.Fatalf("FillPlaneBlock err=%v", err)
 		}
-		if err := av1.CopyPlaneBlock(dst, src, 1, 0, 0, 0, 0, 16, 16); err != nil {
+		if err := internaldsp.CopyPlaneBlock(dst, src, 1, 0, 0, 0, 0, 16, 16); err != nil {
 			t.Fatalf("CopyPlaneBlock err=%v", err)
 		}
-		if err := av1.AddResidualPlaneBlock(dst, 1, 8, 0, 0, 16, 16, residual, 16); err != nil {
+		if err := internaldsp.AddResidualPlaneBlock(dst, 1, 8, 0, 0, 16, 16, residual, 16); err != nil {
 			t.Fatalf("AddResidualPlaneBlock err=%v", err)
 		}
-		if err := av1.BlendA64Mask(blendDst, 64, blend0, 64, blend1, 64, blendMask, 64, 64, 64, false, false, 12); err != nil {
+		if err := internaldsp.BlendA64Mask(blendDst, 64, blend0, 64, blend1, 64, blendMask, 64, 64, 64, false, false, 12); err != nil {
 			t.Fatalf("BlendA64Mask err=%v", err)
 		}
-		if _, _, err := av1.MinMaxAbsDiff8x8(minmaxA[:], 64, minmaxB[:], 64, 1); err != nil {
+		if _, _, err := internaldsp.MinMaxAbsDiff8x8(minmaxA[:], 64, minmaxB[:], 64, 1); err != nil {
 			t.Fatalf("MinMaxAbsDiff8x8 err=%v", err)
 		}
 	})

@@ -1,24 +1,22 @@
-package goav1_test
+package goav1
 
 import (
 	"errors"
 	"runtime"
 	"testing"
-
-	goav1 "github.com/thesyncim/goav1"
 )
 
 // encodeLimitTestStream encodes n small frames and returns the temporal units.
 func encodeLimitTestStream(t *testing.T, w, h, n int) [][]byte {
 	t.Helper()
-	enc, err := goav1.NewVideoEncoder(goav1.VideoEncoderConfig{Width: w, Height: h, QIndex: 80})
+	enc, err := NewVideoEncoder(VideoEncoderConfig{Width: w, Height: h, QIndex: 80})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer enc.Close()
 	var stream [][]byte
 	for i := range n {
-		frame := goav1.I420Frame{
+		frame := I420Frame{
 			Y: make([]byte, w*h), U: make([]byte, w/2*h/2), V: make([]byte, w/2*h/2),
 			YStride: w, ChromaStride: w / 2, Width: w, Height: h,
 		}
@@ -48,11 +46,11 @@ func TestDecoderFrameSizeLimit(t *testing.T) {
 	}{
 		{name: "unlimited", limit: 0},
 		{name: "exact", limit: w * h},
-		{name: "one below", limit: w*h - 1, want: goav1.ErrDecoderFrameSizeLimit},
-		{name: "tiny", limit: 1, want: goav1.ErrDecoderFrameSizeLimit},
+		{name: "one below", limit: w*h - 1, want: ErrDecoderFrameSizeLimit},
+		{name: "tiny", limit: 1, want: ErrDecoderFrameSizeLimit},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dec, err := goav1.NewDecoder(stream, goav1.WithFrameSizeLimit(tc.limit))
+			dec, err := NewDecoder(stream, WithFrameSizeLimit(tc.limit))
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("NewDecoder: err=%v want %v", err, tc.want)
 			}
@@ -63,7 +61,7 @@ func TestDecoderFrameSizeLimit(t *testing.T) {
 					t.Fatalf("DecodeAll: %d frames, err=%v", len(frames), err)
 				}
 			}
-			layered, err := goav1.NewLayeredDecoder(stream, goav1.WithFrameSizeLimit(tc.limit))
+			layered, err := NewLayeredDecoder(stream, WithFrameSizeLimit(tc.limit))
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("NewLayeredDecoder: err=%v want %v", err, tc.want)
 			}
@@ -73,7 +71,7 @@ func TestDecoderFrameSizeLimit(t *testing.T) {
 		})
 	}
 
-	if _, err := goav1.NewDecoder(stream, goav1.WithFrameSizeLimit(-1)); err == nil {
+	if _, err := NewDecoder(stream, WithFrameSizeLimit(-1)); err == nil {
 		t.Fatal("negative frame size limit accepted")
 	}
 }
@@ -94,11 +92,11 @@ func TestDecoderBoundsEventsPerPayload(t *testing.T) {
 			rtp = append(rtp, 0x01, header)
 		}
 		allocated := allocatedBy(func() {
-			if dec, err := goav1.NewDecoderFromRTPPayloads([][]byte{rtp}); err == nil {
+			if dec, err := NewDecoderFromRTPPayloads([][]byte{rtp}); err == nil {
 				dec.Close()
 				t.Errorf("header %#x: NewDecoderFromRTPPayloads accepted %d OBUs in one payload", header, obus)
 			}
-			if dec, err := goav1.NewLayeredDecoderFromRTPPayloads([][]byte{rtp}); err == nil {
+			if dec, err := NewLayeredDecoderFromRTPPayloads([][]byte{rtp}); err == nil {
 				dec.Close()
 				t.Errorf("header %#x: NewLayeredDecoderFromRTPPayloads accepted %d OBUs in one payload", header, obus)
 			}
@@ -114,11 +112,11 @@ func TestDecoderBoundsEventsPerPayload(t *testing.T) {
 		low = append(low, 0x12, 0x00)
 	}
 	allocated := allocatedBy(func() {
-		if dec, err := goav1.NewDecoder([][]byte{low}); err == nil {
+		if dec, err := NewDecoder([][]byte{low}); err == nil {
 			dec.Close()
 			t.Errorf("NewDecoder accepted %d OBUs in one payload", obus)
 		}
-		if dec, err := goav1.NewLayeredDecoder([][]byte{low}); err == nil {
+		if dec, err := NewLayeredDecoder([][]byte{low}); err == nil {
 			dec.Close()
 			t.Errorf("NewLayeredDecoder accepted %d OBUs in one payload", obus)
 		}

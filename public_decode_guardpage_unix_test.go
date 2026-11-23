@@ -4,7 +4,7 @@
 
 //go:build unix
 
-package goav1_test
+package goav1
 
 import (
 	"fmt"
@@ -16,7 +16,6 @@ import (
 	"sort"
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
 	"github.com/thesyncim/goav1/internal/guardpage"
 )
 
@@ -39,7 +38,7 @@ func loadGuardVectors(t *testing.T) []guardVector {
 		if err != nil {
 			t.Fatal(err)
 		}
-		it, err := av1.NewIVFIterator(ivf)
+		it, err := NewIVFIterator(ivf)
 		if err != nil {
 			t.Fatalf("%s: %v", f, err)
 		}
@@ -88,9 +87,9 @@ func decodeDigests(t *testing.T, name string, payloads [][]byte, workers int, la
 			t.Fatalf("%s: decoder panicked: %v", name, r)
 		}
 	}()
-	opts := []av1.Option{av1.WithWorkers(workers)}
+	opts := []Option{WithWorkers(workers)}
 	if layered {
-		d, err := av1.NewLayeredDecoder(payloads, opts...)
+		d, err := NewLayeredDecoder(payloads, opts...)
 		if err != nil {
 			return nil, err
 		}
@@ -105,7 +104,7 @@ func decodeDigests(t *testing.T, name string, payloads [][]byte, workers int, la
 			}
 		}
 	}
-	d, err := av1.NewDecoder(payloads, opts...)
+	d, err := NewDecoder(payloads, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +151,7 @@ func TestPublicDecodeGuardedPayloads(t *testing.T) {
 			ivf := guarded(t, v.ivf, before)
 			func() {
 				defer debug.SetPanicOnFault(debug.SetPanicOnFault(true))
-				d, err := av1.NewDecoderFromIVF(ivf, av1.WithWorkers(8))
+				d, err := NewDecoderFromIVF(ivf, WithWorkers(8))
 				if err != nil {
 					t.Fatalf("%s: NewDecoderFromIVF: %v", v.name, err)
 				}
@@ -166,14 +165,14 @@ func TestPublicDecodeGuardedPayloads(t *testing.T) {
 		var seq uint16
 		var rtp [][]byte
 		for i, p := range v.payloads {
-			payloads, _ := publicPacketizeLowOverheadRTP(t, p, av1.RTPPayloadSizeLimits{MaxPayloadLen: 200}, i == 0, &seq, uint32(i))
+			payloads, _ := publicPacketizeLowOverheadRTP(t, p, RTPPayloadSizeLimits{MaxPayloadLen: 200}, i == 0, &seq, uint32(i))
 			for _, r := range payloads {
 				rtp = append(rtp, guarded(t, r, false))
 			}
 		}
 		func() {
 			defer debug.SetPanicOnFault(debug.SetPanicOnFault(true))
-			d, err := av1.NewDecoderFromRTPPayloads(rtp, av1.WithWorkers(1))
+			d, err := NewDecoderFromRTPPayloads(rtp, WithWorkers(1))
 			if err != nil {
 				t.Fatalf("%s: NewDecoderFromRTPPayloads: %v", v.name, err)
 			}

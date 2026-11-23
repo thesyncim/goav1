@@ -3,11 +3,14 @@ package goav1
 import (
 	"errors"
 	"testing"
+
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
 )
 
 func TestFrameFormatFromHeaders(t *testing.T) {
-	format, err := FrameFormatFromHeaders(
-		SequenceHeader{ColorConfig: ColorConfig{
+	format, err := frameFormatFromHeaders(
+		SequenceHeader{ColorConfig: internalparser.ColorConfig{
 			BitDepth:     10,
 			SubsamplingX: true,
 			SubsamplingY: true,
@@ -25,7 +28,7 @@ func TestFrameFormatFromHeaders(t *testing.T) {
 }
 
 func TestFrameCodedAndOutputFormatFromHeaders(t *testing.T) {
-	sequence := SequenceHeader{ColorConfig: ColorConfig{
+	sequence := SequenceHeader{ColorConfig: internalparser.ColorConfig{
 		BitDepth:     10,
 		SubsamplingX: true,
 		SubsamplingY: true,
@@ -36,11 +39,11 @@ func TestFrameCodedAndOutputFormatFromHeaders(t *testing.T) {
 		Height:        1080,
 	}
 
-	coded, err := FrameCodedFormatFromHeaders(sequence, size, 64)
+	coded, err := frameCodedFormatFromHeaders(sequence, size, 64)
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := FrameFormatFromHeaders(sequence, size, 64)
+	legacy, err := frameFormatFromHeaders(sequence, size, 64)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +51,7 @@ func TestFrameCodedAndOutputFormatFromHeaders(t *testing.T) {
 		t.Fatalf("coded=%+v legacy=%+v", coded, legacy)
 	}
 
-	output, err := FrameOutputFormatFromHeaders(sequence, size, 64)
+	output, err := frameOutputFormatFromHeaders(sequence, size, 64)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,8 +62,8 @@ func TestFrameCodedAndOutputFormatFromHeaders(t *testing.T) {
 }
 
 func TestFrameFormatFromHeadersMonochrome(t *testing.T) {
-	format, err := FrameFormatFromHeaders(
-		SequenceHeader{ColorConfig: ColorConfig{
+	format, err := frameFormatFromHeaders(
+		SequenceHeader{ColorConfig: internalparser.ColorConfig{
 			BitDepth:   8,
 			MonoChrome: true,
 		}},
@@ -70,7 +73,7 @@ func TestFrameFormatFromHeadersMonochrome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	layout, err := FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,16 +87,16 @@ func TestFrameFormatFromHeadersMonochrome(t *testing.T) {
 }
 
 func TestFrameFormatFromHeadersRejectsMissingState(t *testing.T) {
-	_, err := FrameFormatFromHeaders(SequenceHeader{}, FrameSize{CodedWidth: 16, Height: 16}, 1)
-	if !errors.Is(err, ErrFrameInvalidFormat) {
-		t.Fatalf("FrameFormatFromHeaders err=%v want %v", err, ErrFrameInvalidFormat)
+	_, err := frameFormatFromHeaders(SequenceHeader{}, FrameSize{CodedWidth: 16, Height: 16}, 1)
+	if !errors.Is(err, internalframe.ErrInvalidFormat) {
+		t.Fatalf("FrameFormatFromHeaders err=%v want %v", err, internalframe.ErrInvalidFormat)
 	}
-	_, err = FrameOutputFormatFromHeaders(
-		SequenceHeader{ColorConfig: ColorConfig{BitDepth: 8}},
+	_, err = frameOutputFormatFromHeaders(
+		SequenceHeader{ColorConfig: internalparser.ColorConfig{BitDepth: 8}},
 		FrameSize{CodedWidth: 16, Height: 16},
 		1,
 	)
-	if !errors.Is(err, ErrFrameInvalidFormat) {
-		t.Fatalf("FrameOutputFormatFromHeaders err=%v want %v", err, ErrFrameInvalidFormat)
+	if !errors.Is(err, internalframe.ErrInvalidFormat) {
+		t.Fatalf("FrameOutputFormatFromHeaders err=%v want %v", err, internalframe.ErrInvalidFormat)
 	}
 }

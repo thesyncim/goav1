@@ -1,24 +1,26 @@
-package goav1_test
+package goav1
 
 import (
 	"errors"
 	"testing"
 
-	av1 "github.com/thesyncim/goav1"
+	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internalobu "github.com/thesyncim/goav1/internal/av1/obu"
+	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
 )
 
 func TestPublicTemporalUnitIterator(t *testing.T) {
 	var stream []byte
 	firstStart := len(stream)
-	stream = appendOBUForTest(stream, av1.OBUTemporalDelimiter, nil)
-	stream = appendOBUForTest(stream, av1.OBUSequenceHeader, []byte{0xaa})
-	stream = appendOBUForTest(stream, av1.OBUFrameHeader, []byte{0xbb})
+	stream = appendOBUForTest(stream, internalobu.TypeTemporalDelimiter, nil)
+	stream = appendOBUForTest(stream, internalobu.TypeSequenceHeader, []byte{0xaa})
+	stream = appendOBUForTest(stream, internalobu.TypeFrameHeader, []byte{0xbb})
 	firstEnd := len(stream)
-	stream = appendOBUForTest(stream, av1.OBUTemporalDelimiter, nil)
-	stream = appendOBUForTest(stream, av1.OBUFrame, []byte{0xcc})
+	stream = appendOBUForTest(stream, internalobu.TypeTemporalDelimiter, nil)
+	stream = appendOBUForTest(stream, internalobu.TypeFrame, []byte{0xcc})
 	secondEnd := len(stream)
 
-	it := av1.NewTemporalUnitIterator(stream)
+	it := internalobu.NewTemporalUnitIterator(stream)
 	first, ok, err := it.Next()
 	if err != nil || !ok {
 		t.Fatalf("first ok=%v err=%v", ok, err)
@@ -43,19 +45,19 @@ func TestPublicTemporalUnitIterator(t *testing.T) {
 }
 
 func TestPublicTemporalUnitIteratorRejectsMissingDelimiter(t *testing.T) {
-	stream := appendOBUForTest(nil, av1.OBUSequenceHeader, []byte{0xaa})
-	it := av1.NewTemporalUnitIterator(stream)
+	stream := appendOBUForTest(nil, internalobu.TypeSequenceHeader, []byte{0xaa})
+	it := internalobu.NewTemporalUnitIterator(stream)
 	_, _, err := it.Next()
-	if !errors.Is(err, av1.ErrOBUMissingTemporalDelimiter) {
-		t.Fatalf("err=%v want %v", err, av1.ErrOBUMissingTemporalDelimiter)
+	if !errors.Is(err, internalobu.ErrMissingTemporalDelimiter) {
+		t.Fatalf("err=%v want %v", err, internalobu.ErrMissingTemporalDelimiter)
 	}
 }
 
 func TestPublicAnnexBIterator(t *testing.T) {
-	td := []byte{byte(av1.OBUTemporalDelimiter) << 3}
-	seq := []byte{byte(av1.OBUSequenceHeader) << 3, 0xaa}
-	frameHeader := []byte{byte(av1.OBUFrameHeader) << 3, 0xbb}
-	frame := []byte{byte(av1.OBUFrame) << 3, 0xcc}
+	td := []byte{byte(internalobu.TypeTemporalDelimiter) << 3}
+	seq := []byte{byte(internalobu.TypeSequenceHeader) << 3, 0xaa}
+	frameHeader := []byte{byte(internalobu.TypeFrameHeader) << 3, 0xbb}
+	frame := []byte{byte(internalobu.TypeFrame) << 3, 0xcc}
 	stream := appendPublicAnnexBStream(nil,
 		[][][]byte{{td, seq}, {frameHeader}},
 		[][][]byte{{td, frame}},
@@ -63,19 +65,19 @@ func TestPublicAnnexBIterator(t *testing.T) {
 
 	want := []struct {
 		raw      []byte
-		typ      av1.OBUType
+		typ      internalobu.Type
 		temporal uint32
 		frame    uint32
 		obu      uint32
 	}{
-		{raw: td, typ: av1.OBUTemporalDelimiter, temporal: 0, frame: 0, obu: 0},
-		{raw: seq, typ: av1.OBUSequenceHeader, temporal: 0, frame: 0, obu: 1},
-		{raw: frameHeader, typ: av1.OBUFrameHeader, temporal: 0, frame: 1, obu: 0},
-		{raw: td, typ: av1.OBUTemporalDelimiter, temporal: 1, frame: 0, obu: 0},
-		{raw: frame, typ: av1.OBUFrame, temporal: 1, frame: 0, obu: 1},
+		{raw: td, typ: internalobu.TypeTemporalDelimiter, temporal: 0, frame: 0, obu: 0},
+		{raw: seq, typ: internalobu.TypeSequenceHeader, temporal: 0, frame: 0, obu: 1},
+		{raw: frameHeader, typ: internalobu.TypeFrameHeader, temporal: 0, frame: 1, obu: 0},
+		{raw: td, typ: internalobu.TypeTemporalDelimiter, temporal: 1, frame: 0, obu: 0},
+		{raw: frame, typ: internalobu.TypeFrame, temporal: 1, frame: 0, obu: 1},
 	}
 
-	it := av1.NewAnnexBIterator(stream)
+	it := internalobu.NewAnnexBIterator(stream)
 	for i, wantUnit := range want {
 		unit, ok, err := it.Next()
 		if err != nil || !ok {
@@ -105,38 +107,38 @@ func TestPublicAnnexBIterator(t *testing.T) {
 }
 
 func TestPublicParseAnnexBElement(t *testing.T) {
-	src := []byte{0x03, byte(av1.OBUFrame)<<3 | 0x02, 0x01, 0xdd}
-	unit, consumed, err := av1.ParseAnnexBElement(src)
+	src := []byte{0x03, byte(internalobu.TypeFrame)<<3 | 0x02, 0x01, 0xdd}
+	unit, consumed, err := internalobu.ParseAnnexBElement(src)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if consumed != len(src) || unit.Header.Type != av1.OBUFrame || string(unit.Payload) != string([]byte{0xdd}) {
+	if consumed != len(src) || unit.Header.Type != internalobu.TypeFrame || string(unit.Payload) != string([]byte{0xdd}) {
 		t.Fatalf("unit=%+v consumed=%d", unit, consumed)
 	}
 }
 
 func TestPublicAnnexBIteratorRejectsInvalid(t *testing.T) {
-	it := av1.NewAnnexBIterator([]byte{0x00})
+	it := internalobu.NewAnnexBIterator([]byte{0x00})
 	_, _, err := it.Next()
-	if !errors.Is(err, av1.ErrOBUInvalidAnnexB) {
-		t.Fatalf("err=%v want %v", err, av1.ErrOBUInvalidAnnexB)
+	if !errors.Is(err, internalobu.ErrInvalidAnnexB) {
+		t.Fatalf("err=%v want %v", err, internalobu.ErrInvalidAnnexB)
 	}
 }
 
 func TestPublicOBUStreamIteratorsAllocs(t *testing.T) {
-	lowOverhead := appendOBUForTest(nil, av1.OBUTemporalDelimiter, nil)
-	lowOverhead = appendOBUForTest(lowOverhead, av1.OBUFrame, []byte{0xaa})
-	annexB := appendPublicAnnexBStream(nil, [][][]byte{{{byte(av1.OBUTemporalDelimiter) << 3}, {byte(av1.OBUFrame) << 3, 0xaa}}})
-	annexElement := []byte{0x02, byte(av1.OBUFrame) << 3, 0xdd}
+	lowOverhead := appendOBUForTest(nil, internalobu.TypeTemporalDelimiter, nil)
+	lowOverhead = appendOBUForTest(lowOverhead, internalobu.TypeFrame, []byte{0xaa})
+	annexB := appendPublicAnnexBStream(nil, [][][]byte{{{byte(internalobu.TypeTemporalDelimiter) << 3}, {byte(internalobu.TypeFrame) << 3, 0xaa}}})
+	annexElement := []byte{0x02, byte(internalobu.TypeFrame) << 3, 0xdd}
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		tuIt := av1.NewTemporalUnitIterator(lowOverhead)
+		tuIt := internalobu.NewTemporalUnitIterator(lowOverhead)
 		unit, ok, err := tuIt.Next()
 		if err != nil || !ok || len(unit.Raw) == 0 {
 			t.Fatalf("temporal unit=%+v ok=%v err=%v", unit, ok, err)
 		}
 
-		annexIt := av1.NewAnnexBIterator(annexB)
+		annexIt := internalobu.NewAnnexBIterator(annexB)
 		count := 0
 		for {
 			annexUnit, ok, err := annexIt.Next()
@@ -155,8 +157,8 @@ func TestPublicOBUStreamIteratorsAllocs(t *testing.T) {
 			t.Fatalf("annex count=%d want 2", count)
 		}
 
-		element, consumed, err := av1.ParseAnnexBElement(annexElement)
-		if err != nil || consumed != 3 || element.Header.Type != av1.OBUFrame {
+		element, consumed, err := internalobu.ParseAnnexBElement(annexElement)
+		if err != nil || consumed != 3 || element.Header.Type != internalobu.TypeFrame {
 			t.Fatalf("element=%+v consumed=%d err=%v", element, consumed, err)
 		}
 	})
@@ -166,9 +168,9 @@ func TestPublicOBUStreamIteratorsAllocs(t *testing.T) {
 }
 
 func FuzzPublicOBUStreamIterators(f *testing.F) {
-	lowOverhead := appendOBUForTest(nil, av1.OBUTemporalDelimiter, nil)
-	lowOverhead = appendOBUForTest(lowOverhead, av1.OBUFrame, []byte{0xaa})
-	annexB := appendPublicAnnexBStream(nil, [][][]byte{{{byte(av1.OBUTemporalDelimiter) << 3}, {byte(av1.OBUFrame) << 3, 0xaa}}})
+	lowOverhead := appendOBUForTest(nil, internalobu.TypeTemporalDelimiter, nil)
+	lowOverhead = appendOBUForTest(lowOverhead, internalobu.TypeFrame, []byte{0xaa})
+	annexB := appendPublicAnnexBStream(nil, [][][]byte{{{byte(internalobu.TypeTemporalDelimiter) << 3}, {byte(internalobu.TypeFrame) << 3, 0xaa}}})
 
 	for _, seed := range [][]byte{
 		nil,
@@ -193,11 +195,11 @@ func FuzzPublicOBUStreamIterators(f *testing.F) {
 			}
 		}()
 
-		_, _, _ = av1.ParseOBUHeader(data)
-		_, _ = av1.ParseOBUElement(data)
-		_, _, _ = av1.ParseLowOverheadOBU(data)
-		_, _, _ = av1.ParseAnnexBElement(data)
-		_, _ = av1.NormalizeLowOverheadOBU(make([]byte, len(data)*2+16), data)
+		_, _, _ = internalobu.ParseHeader(data)
+		_, _ = internalobu.ParseElement(data)
+		_, _, _ = internalobu.ParseLowOverhead(data)
+		_, _, _ = internalobu.ParseAnnexBElement(data)
+		_, _ = internalobu.NormalizeLowOverhead(make([]byte, len(data)*2+16), data)
 		fuzzPublicDriveLowOverhead(data)
 		fuzzPublicDriveTemporalUnit(data)
 		fuzzPublicDriveAnnexB(data)
@@ -205,7 +207,7 @@ func FuzzPublicOBUStreamIterators(f *testing.F) {
 }
 
 func fuzzPublicDriveLowOverhead(data []byte) {
-	it := av1.NewLowOverheadIterator(data)
+	it := internalobu.NewLowOverheadIterator(data)
 	for range 1 << 12 {
 		if _, ok, err := it.Next(); err != nil || !ok {
 			return
@@ -214,7 +216,7 @@ func fuzzPublicDriveLowOverhead(data []byte) {
 }
 
 func fuzzPublicDriveTemporalUnit(data []byte) {
-	it := av1.NewTemporalUnitIterator(data)
+	it := internalobu.NewTemporalUnitIterator(data)
 	for range 1 << 12 {
 		if _, ok, err := it.Next(); err != nil || !ok {
 			return
@@ -223,7 +225,7 @@ func fuzzPublicDriveTemporalUnit(data []byte) {
 }
 
 func fuzzPublicDriveAnnexB(data []byte) {
-	it := av1.NewAnnexBIterator(data)
+	it := internalobu.NewAnnexBIterator(data)
 	for range 1 << 12 {
 		if _, ok, err := it.Next(); err != nil || !ok {
 			return
@@ -234,18 +236,18 @@ func fuzzPublicDriveAnnexB(data []byte) {
 func TestPublicParseMetadataOBU(t *testing.T) {
 	// HDR-CLL: type=1, max_cll=1000, max_fall=400, trailing 0x80.
 	payload := []byte{0x01, 0x03, 0xE8, 0x01, 0x90, 0x80}
-	meta, err := av1.ParseMetadataOBU(payload)
+	meta, err := internalobu.ParseMetadata(payload)
 	if err != nil {
 		t.Fatalf("ParseMetadataOBU err=%v", err)
 	}
-	if meta.Type != av1.MetadataTypeHDRCLL {
+	if meta.Type != internalobu.MetadataTypeHDRCLL {
 		t.Fatalf("type=%v", meta.Type)
 	}
 	if meta.HDRCLL.MaxCLL != 1000 || meta.HDRCLL.MaxFALL != 400 {
 		t.Fatalf("cll=%#v", meta.HDRCLL)
 	}
 
-	if _, err := av1.ParseMetadataOBU(nil); !errors.Is(err, av1.ErrMetadataShortPayload) {
+	if _, err := internalobu.ParseMetadata(nil); !errors.Is(err, internalobu.ErrMetadataShortPayload) {
 		t.Fatalf("nil payload err=%v want ErrMetadataShortPayload", err)
 	}
 }
@@ -262,8 +264,8 @@ func TestPublicParseTileListOBU(t *testing.T) {
 		0x07, 0x00, 0x01, 0x00, 0x00, 0x30, // entry 1
 	}
 
-	var scratch [4]av1.TileListEntry
-	list, err := av1.ParseTileListOBU(payload, scratch[:0])
+	var scratch [4]internalparser.TileListEntry
+	list, err := internalparser.ParseTileListOBU(payload, scratch[:0])
 	if err != nil {
 		t.Fatalf("ParseTileListOBU err=%v", err)
 	}
@@ -279,51 +281,51 @@ func TestPublicParseTileListOBU(t *testing.T) {
 	}
 
 	// Round-trip via AppendTileListOBU.
-	encoded := av1.AppendTileListOBU(nil, list)
+	encoded := internalparser.AppendTileListOBU(nil, list)
 	if string(encoded) != string(payload) {
 		t.Fatalf("AppendTileListOBU mismatch\n got=%x\nwant=%x", encoded, payload)
 	}
 
-	if _, err := av1.ParseTileListOBU([]byte{0x00}, nil); !errors.Is(err, av1.ErrTileListShortHeader) {
+	if _, err := internalparser.ParseTileListOBU([]byte{0x00}, nil); !errors.Is(err, internalparser.ErrTileListShortHeader) {
 		t.Fatalf("short err=%v want ErrTileListShortHeader", err)
 	}
 	referenceGridAnchor := []byte{0x00, 0x00, 0x00, 0x00, 0, 1, 0, 0, 0, 0xaa}
-	anchored, err := av1.ParseTileListOBU(referenceGridAnchor, nil)
+	anchored, err := internalparser.ParseTileListOBU(referenceGridAnchor, nil)
 	if err != nil {
 		t.Fatalf("ParseTileListOBU reference-grid anchor err=%v", err)
 	}
-	if err := av1.ValidateTileListAnchors(anchored, av1.TileInfo{Cols: 1, Rows: 2}); err != nil {
+	if err := internalparser.ValidateTileListAnchors(anchored, internalparser.TileInfo{Cols: 1, Rows: 2}); err != nil {
 		t.Fatalf("ValidateTileListAnchors err=%v", err)
 	}
-	if err := av1.ValidateTileListAnchors(anchored, av1.TileInfo{Cols: 1, Rows: 1}); !errors.Is(err, av1.ErrTileListInvalidAnchorTile) {
+	if err := internalparser.ValidateTileListAnchors(anchored, internalparser.TileInfo{Cols: 1, Rows: 1}); !errors.Is(err, internalparser.ErrTileListInvalidAnchorTile) {
 		t.Fatalf("anchor tile err=%v want ErrTileListInvalidAnchorTile", err)
 	}
 }
 
 func TestPublicTileListDecodeLayout(t *testing.T) {
 	payload := []byte{0x00, 0x00, 0x00, 0x00, 0, 1, 1, 0, 0, 0xaa}
-	list, err := av1.ParseTileListOBU(payload, nil)
+	list, err := internalparser.ParseTileListOBU(payload, nil)
 	if err != nil {
 		t.Fatalf("ParseTileListOBU: %v", err)
 	}
-	tiles := av1.TileInfo{
+	tiles := internalparser.TileInfo{
 		Cols:       2,
 		Rows:       2,
-		ColStartSB: [av1.MaxTileCols + 1]uint16{0, 2, 4},
-		RowStartSB: [av1.MaxTileRows + 1]uint16{0, 1, 2},
+		ColStartSB: [internalparser.MaxTileCols + 1]uint16{0, 2, 4},
+		RowStartSB: [internalparser.MaxTileRows + 1]uint16{0, 1, 2},
 	}
-	width, height, ok := av1.TileListUniformTileSize(tiles)
+	width, height, ok := internalparser.TileListUniformTileSize(tiles)
 	if !ok || width != 2 || height != 1 {
 		t.Fatalf("TileListUniformTileSize=%d,%d,%v want 2,1,true", width, height, ok)
 	}
-	width, height, err = av1.ValidateTileListDecodeLayout(list, tiles)
+	width, height, err = internalparser.ValidateTileListDecodeLayout(list, tiles)
 	if err != nil || width != 2 || height != 1 {
 		t.Fatalf("ValidateTileListDecodeLayout=%d,%d,%v want 2,1,nil", width, height, err)
 	}
 
 	tiles.ColStartSB[2] = 5
-	if _, _, err := av1.ValidateTileListDecodeLayout(list, tiles); !errors.Is(err, av1.ErrTileListNonUniformTileSize) {
-		t.Fatalf("non-uniform err=%v want %v", err, av1.ErrTileListNonUniformTileSize)
+	if _, _, err := internalparser.ValidateTileListDecodeLayout(list, tiles); !errors.Is(err, internalparser.ErrTileListNonUniformTileSize) {
+		t.Fatalf("non-uniform err=%v want %v", err, internalparser.ErrTileListNonUniformTileSize)
 	}
 }
 
@@ -332,17 +334,17 @@ func TestPublicTileListOutputGeometryAndRegions(t *testing.T) {
 	payload = append(payload, 0, 0, 0, 0, 0, 0xa0)
 	payload = append(payload, 0, 0, 1, 0, 0, 0xa1)
 	payload = append(payload, 0, 1, 1, 0, 0, 0xa2)
-	list, err := av1.ParseTileListOBU(payload, nil)
+	list, err := internalparser.ParseTileListOBU(payload, nil)
 	if err != nil {
 		t.Fatalf("ParseTileListOBU: %v", err)
 	}
-	tiles := av1.TileInfo{
+	tiles := internalparser.TileInfo{
 		Cols:       2,
 		Rows:       2,
-		ColStartSB: [av1.MaxTileCols + 1]uint16{0, 2, 4},
-		RowStartSB: [av1.MaxTileRows + 1]uint16{0, 1, 2},
+		ColStartSB: [internalparser.MaxTileCols + 1]uint16{0, 2, 4},
+		RowStartSB: [internalparser.MaxTileRows + 1]uint16{0, 1, 2},
 	}
-	geom, err := av1.TileListOutputGeometryForGrid(list, tiles, false)
+	geom, err := internalparser.TileListOutputGeometryForGrid(list, tiles, false)
 	if err != nil {
 		t.Fatalf("TileListOutputGeometryForGrid: %v", err)
 	}
@@ -351,14 +353,14 @@ func TestPublicTileListOutputGeometryAndRegions(t *testing.T) {
 		geom.TileCount != 3 {
 		t.Fatalf("geometry=%+v", geom)
 	}
-	region, err := av1.TileListOutputTileRegion(list, geom, 2)
+	region, err := internalparser.TileListOutputTileRegion(list, geom, 2)
 	if err != nil {
 		t.Fatalf("TileListOutputTileRegion: %v", err)
 	}
-	if region != (av1.TileListTileRegion{SourceX: 128, SourceY: 64, DestX: 0, DestY: 64, Width: 128, Height: 64}) {
+	if region != (internalparser.TileListTileRegion{SourceX: 128, SourceY: 64, DestX: 0, DestY: 64, Width: 128, Height: 64}) {
 		t.Fatalf("region=%+v", region)
 	}
-	geom128, err := av1.TileListOutputGeometryForGrid(list, tiles, true)
+	geom128, err := internalparser.TileListOutputGeometryForGrid(list, tiles, true)
 	if err != nil {
 		t.Fatalf("TileListOutputGeometryForGrid 128: %v", err)
 	}
@@ -367,18 +369,18 @@ func TestPublicTileListOutputGeometryAndRegions(t *testing.T) {
 		t.Fatalf("128 geometry=%+v", geom128)
 	}
 
-	sequence := av1.SequenceHeader{
+	sequence := SequenceHeader{
 		Use128x128Superblock: true,
-		ColorConfig: av1.ColorConfig{
+		ColorConfig: internalparser.ColorConfig{
 			BitDepth:     10,
 			SubsamplingX: true,
 		},
 	}
-	format, err := av1.TileListOutputFrameFormat(sequence, geom128, 32)
+	format, err := tileListOutputFrameFormat(sequence, geom128, 32)
 	if err != nil {
 		t.Fatalf("TileListOutputFrameFormat: %v", err)
 	}
-	if format != (av1.FrameFormat{
+	if format != (FrameFormat{
 		Width:        geom128.OutputFrameWidth,
 		Height:       geom128.OutputFrameHeight,
 		BitDepth:     10,
@@ -388,11 +390,11 @@ func TestPublicTileListOutputGeometryAndRegions(t *testing.T) {
 	}) {
 		t.Fatalf("TileListOutputFrameFormat=%+v", format)
 	}
-	if _, err := av1.FrameRequiredSize(format); err != nil {
+	if _, err := internalframe.RequiredSize(format); err != nil {
 		t.Fatalf("FrameRequiredSize(tile-list output): %v", err)
 	}
-	if _, err := av1.TileListOutputFrameFormat(sequence, av1.TileListOutputGeometry{}, 32); !errors.Is(err, av1.ErrFrameInvalidFormat) {
-		t.Fatalf("empty TileListOutputFrameFormat err=%v want %v", err, av1.ErrFrameInvalidFormat)
+	if _, err := tileListOutputFrameFormat(sequence, internalparser.TileListOutputGeometry{}, 32); !errors.Is(err, internalframe.ErrInvalidFormat) {
+		t.Fatalf("empty TileListOutputFrameFormat err=%v want %v", err, internalframe.ErrInvalidFormat)
 	}
 }
 
@@ -411,7 +413,7 @@ func TestPublicCopyTileListEntryToOutputFrame(t *testing.T) {
 		{name: "mono-12", bitDepth: 12, mono: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			format := av1.FrameFormat{
+			format := FrameFormat{
 				Width:        geom.OutputFrameWidth,
 				Height:       geom.OutputFrameHeight,
 				BitDepth:     tc.bitDepth,
@@ -424,7 +426,7 @@ func TestPublicCopyTileListEntryToOutputFrame(t *testing.T) {
 			dst := bindPublicTileListFrame(t, format)
 			fillTileListCopySource(src)
 
-			if err := av1.CopyTileListEntryToOutputFrame(&dst, &src, list, geom, 2); err != nil {
+			if err := copyTileListEntryToOutputFrame(&dst, &src, list, geom, 2); err != nil {
 				t.Fatalf("CopyTileListEntryToOutputFrame: %v", err)
 			}
 			if got, want := getPublicFrameSample(dst.Y, dst.Layout.BytesPerSample, 0, 64), getPublicFrameSample(src.Y, src.Layout.BytesPerSample, 128, 64); got != want {
@@ -462,7 +464,7 @@ func TestPublicCopyTileListEntryToOutputFrame(t *testing.T) {
 func TestPublicCopyTileListToOutputFrame(t *testing.T) {
 	list, geom := publicTileListCopyFixture(t)
 	list.Entries[1].AnchorFrameIdx = 1
-	format := av1.FrameFormat{
+	format := FrameFormat{
 		Width:        geom.OutputFrameWidth,
 		Height:       geom.OutputFrameHeight,
 		BitDepth:     8,
@@ -477,9 +479,9 @@ func TestPublicCopyTileListToOutputFrame(t *testing.T) {
 	fillTileListCopySource(src1)
 	setPublicFrameSample(src1.Y, src1.Layout.BytesPerSample, 128, 0, 77)
 	setPublicFrameSample(src1.U, src1.Layout.BytesPerSample, 64, 0, 88)
-	sources := []*av1.Frame{&src0, &src1}
+	sources := []*Frame{&src0, &src1}
 
-	if err := av1.CopyTileListToOutputFrame(&dst, sources, list, geom); err != nil {
+	if err := copyTileListToOutputFrame(&dst, sources, list, geom); err != nil {
 		t.Fatalf("CopyTileListToOutputFrame: %v", err)
 	}
 	if got, want := getPublicFrameSample(dst.Y, dst.Layout.BytesPerSample, 0, 0), getPublicFrameSample(src0.Y, src0.Layout.BytesPerSample, 0, 0); got != want {
@@ -499,7 +501,7 @@ func TestPublicCopyTileListToOutputFrame(t *testing.T) {
 func TestPublicCopyTileListToOutputFrameRejectsMissingAnchorBeforeCopy(t *testing.T) {
 	list, geom := publicTileListCopyFixture(t)
 	list.Entries[1].AnchorFrameIdx = 1
-	format := av1.FrameFormat{
+	format := FrameFormat{
 		Width:        geom.OutputFrameWidth,
 		Height:       geom.OutputFrameHeight,
 		BitDepth:     8,
@@ -511,8 +513,8 @@ func TestPublicCopyTileListToOutputFrameRejectsMissingAnchorBeforeCopy(t *testin
 	dst := bindPublicTileListFrame(t, format)
 	fillTileListCopySource(src0)
 
-	if err := av1.CopyTileListToOutputFrame(&dst, []*av1.Frame{&src0}, list, geom); !errors.Is(err, av1.ErrTileListInvalidAnchorIndex) {
-		t.Fatalf("CopyTileListToOutputFrame err=%v want %v", err, av1.ErrTileListInvalidAnchorIndex)
+	if err := copyTileListToOutputFrame(&dst, []*Frame{&src0}, list, geom); !errors.Is(err, internalparser.ErrTileListInvalidAnchorIndex) {
+		t.Fatalf("CopyTileListToOutputFrame err=%v want %v", err, internalparser.ErrTileListInvalidAnchorIndex)
 	}
 	if got := getPublicFrameSample(dst.Y, dst.Layout.BytesPerSample, 0, 0); got != 0 {
 		t.Fatalf("destination Y mutated before missing-anchor failure: %d", got)
@@ -521,20 +523,20 @@ func TestPublicCopyTileListToOutputFrameRejectsMissingAnchorBeforeCopy(t *testin
 
 func TestPublicCopyTileListEntryToOutputFrameRejectsInvalid(t *testing.T) {
 	list, geom := publicSingleTileListCopyFixture(t)
-	dst := bindPublicTileListFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 1})
-	src := bindPublicTileListFrame(t, av1.FrameFormat{Width: 64, Height: 64, BitDepth: 10, SubsamplingX: true, SubsamplingY: true, Align: 1})
-	if err := av1.CopyTileListEntryToOutputFrame(&dst, &src, list, geom, 0); !errors.Is(err, av1.ErrFrameInvalidFormat) {
-		t.Fatalf("mismatch err=%v want %v", err, av1.ErrFrameInvalidFormat)
+	dst := bindPublicTileListFrame(t, FrameFormat{Width: 64, Height: 64, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, Align: 1})
+	src := bindPublicTileListFrame(t, FrameFormat{Width: 64, Height: 64, BitDepth: 10, SubsamplingX: true, SubsamplingY: true, Align: 1})
+	if err := copyTileListEntryToOutputFrame(&dst, &src, list, geom, 0); !errors.Is(err, internalframe.ErrInvalidFormat) {
+		t.Fatalf("mismatch err=%v want %v", err, internalframe.ErrInvalidFormat)
 	}
 	src = bindPublicTileListFrame(t, dst.Format)
-	if err := av1.CopyTileListEntryToOutputFrame(&dst, &src, list, geom, 1); !errors.Is(err, av1.ErrTileListInvalidTileCount) {
-		t.Fatalf("index err=%v want %v", err, av1.ErrTileListInvalidTileCount)
+	if err := copyTileListEntryToOutputFrame(&dst, &src, list, geom, 1); !errors.Is(err, internalparser.ErrTileListInvalidTileCount) {
+		t.Fatalf("index err=%v want %v", err, internalparser.ErrTileListInvalidTileCount)
 	}
 }
 
 func TestPublicCopyTileListEntryToOutputFrameRejectsShortPlanesBeforeCopy(t *testing.T) {
 	list, geom := publicSingleTileListCopyFixture(t)
-	format := av1.FrameFormat{
+	format := FrameFormat{
 		Width:        64,
 		Height:       64,
 		BitDepth:     8,
@@ -549,8 +551,8 @@ func TestPublicCopyTileListEntryToOutputFrameRejectsShortPlanesBeforeCopy(t *tes
 		fillTileListCopySource(src)
 		src.U.Pix = src.U.Pix[:len(src.U.Pix)-1]
 
-		if err := av1.CopyTileListEntryToOutputFrame(&dst, &src, list, geom, 0); !errors.Is(err, av1.ErrFrameInvalidFormat) {
-			t.Fatalf("source chroma err=%v want %v", err, av1.ErrFrameInvalidFormat)
+		if err := copyTileListEntryToOutputFrame(&dst, &src, list, geom, 0); !errors.Is(err, internalframe.ErrInvalidFormat) {
+			t.Fatalf("source chroma err=%v want %v", err, internalframe.ErrInvalidFormat)
 		}
 		if got := getPublicFrameSample(dst.Y, dst.Layout.BytesPerSample, 0, 0); got != 0 {
 			t.Fatalf("destination Y mutated before source chroma failure: %d", got)
@@ -563,8 +565,8 @@ func TestPublicCopyTileListEntryToOutputFrameRejectsShortPlanesBeforeCopy(t *tes
 		fillTileListCopySource(src)
 		dst.U.Pix = dst.U.Pix[:len(dst.U.Pix)-1]
 
-		if err := av1.CopyTileListEntryToOutputFrame(&dst, &src, list, geom, 0); !errors.Is(err, av1.ErrFrameInvalidFormat) {
-			t.Fatalf("destination chroma err=%v want %v", err, av1.ErrFrameInvalidFormat)
+		if err := copyTileListEntryToOutputFrame(&dst, &src, list, geom, 0); !errors.Is(err, internalframe.ErrInvalidFormat) {
+			t.Fatalf("destination chroma err=%v want %v", err, internalframe.ErrInvalidFormat)
 		}
 		if got := getPublicFrameSample(dst.Y, dst.Layout.BytesPerSample, 0, 0); got != 0 {
 			t.Fatalf("destination Y mutated before destination chroma failure: %d", got)
@@ -574,7 +576,7 @@ func TestPublicCopyTileListEntryToOutputFrameRejectsShortPlanesBeforeCopy(t *tes
 
 func TestPublicCopyTileListEntryToOutputFrameAllocs(t *testing.T) {
 	list, geom := publicTileListCopyFixture(t)
-	format := av1.FrameFormat{
+	format := FrameFormat{
 		Width:        geom.OutputFrameWidth,
 		Height:       geom.OutputFrameHeight,
 		BitDepth:     10,
@@ -587,7 +589,7 @@ func TestPublicCopyTileListEntryToOutputFrameAllocs(t *testing.T) {
 	fillTileListCopySource(src)
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := av1.CopyTileListEntryToOutputFrame(&dst, &src, list, geom, 2); err != nil {
+		if err := copyTileListEntryToOutputFrame(&dst, &src, list, geom, 2); err != nil {
 			t.Fatalf("CopyTileListEntryToOutputFrame: %v", err)
 		}
 	})
@@ -596,68 +598,68 @@ func TestPublicCopyTileListEntryToOutputFrameAllocs(t *testing.T) {
 	}
 }
 
-func publicTileListCopyFixture(t *testing.T) (av1.TileList, av1.TileListOutputGeometry) {
+func publicTileListCopyFixture(t *testing.T) (internalparser.TileList, internalparser.TileListOutputGeometry) {
 	t.Helper()
 	payload := []byte{0x01, 0x01, 0x00, 0x02}
 	payload = append(payload, 0, 0, 0, 0, 0, 0xa0)
 	payload = append(payload, 0, 0, 1, 0, 0, 0xa1)
 	payload = append(payload, 0, 1, 1, 0, 0, 0xa2)
-	list, err := av1.ParseTileListOBU(payload, nil)
+	list, err := internalparser.ParseTileListOBU(payload, nil)
 	if err != nil {
 		t.Fatalf("ParseTileListOBU: %v", err)
 	}
-	tiles := av1.TileInfo{
+	tiles := internalparser.TileInfo{
 		Cols:       2,
 		Rows:       2,
-		ColStartSB: [av1.MaxTileCols + 1]uint16{0, 2, 4},
-		RowStartSB: [av1.MaxTileRows + 1]uint16{0, 1, 2},
+		ColStartSB: [internalparser.MaxTileCols + 1]uint16{0, 2, 4},
+		RowStartSB: [internalparser.MaxTileRows + 1]uint16{0, 1, 2},
 	}
-	geom, err := av1.TileListOutputGeometryForGrid(list, tiles, false)
+	geom, err := internalparser.TileListOutputGeometryForGrid(list, tiles, false)
 	if err != nil {
 		t.Fatalf("TileListOutputGeometryForGrid: %v", err)
 	}
 	return list, geom
 }
 
-func publicSingleTileListCopyFixture(t *testing.T) (av1.TileList, av1.TileListOutputGeometry) {
+func publicSingleTileListCopyFixture(t *testing.T) (internalparser.TileList, internalparser.TileListOutputGeometry) {
 	t.Helper()
-	list := av1.TileList{
+	list := internalparser.TileList{
 		OutputFrameWidthInTilesMinus1:  0,
 		OutputFrameHeightInTilesMinus1: 0,
 		TileCountMinus1:                0,
-		Entries: []av1.TileListEntry{{
+		Entries: []internalparser.TileListEntry{{
 			AnchorTileRow: 0,
 			AnchorTileCol: 0,
 			TileData:      []byte{0xaa},
 		}},
 	}
-	tiles := av1.TileInfo{
+	tiles := internalparser.TileInfo{
 		Cols:       1,
 		Rows:       1,
-		ColStartSB: [av1.MaxTileCols + 1]uint16{0, 1},
-		RowStartSB: [av1.MaxTileRows + 1]uint16{0, 1},
+		ColStartSB: [internalparser.MaxTileCols + 1]uint16{0, 1},
+		RowStartSB: [internalparser.MaxTileRows + 1]uint16{0, 1},
 	}
-	geom, err := av1.TileListOutputGeometryForGrid(list, tiles, false)
+	geom, err := internalparser.TileListOutputGeometryForGrid(list, tiles, false)
 	if err != nil {
 		t.Fatalf("TileListOutputGeometryForGrid: %v", err)
 	}
 	return list, geom
 }
 
-func bindPublicTileListFrame(t *testing.T, format av1.FrameFormat) av1.Frame {
+func bindPublicTileListFrame(t *testing.T, format FrameFormat) Frame {
 	t.Helper()
-	layout, err := av1.FrameRequiredSize(format)
+	layout, err := internalframe.RequiredSize(format)
 	if err != nil {
 		t.Fatalf("FrameRequiredSize: %v", err)
 	}
-	frame, err := av1.BindFrame(make([]byte, layout.Size), format)
+	frame, err := internalframe.Bind(make([]byte, layout.Size), format)
 	if err != nil {
 		t.Fatalf("BindFrame: %v", err)
 	}
 	return frame
 }
 
-func fillTileListCopySource(frame av1.Frame) {
+func fillTileListCopySource(frame Frame) {
 	for y := 0; y < frame.Y.Height; y++ {
 		for x := 0; x < frame.Y.Width; x++ {
 			setPublicFrameSample(frame.Y, frame.Layout.BytesPerSample, x, y, uint16(0x100+((x*3+y*5)&0x2ff)))
@@ -676,9 +678,9 @@ func TestPublicParseTileListOBUAllocs(t *testing.T) {
 		0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x00, 0x01, 0xaa, 0xbb,
 	}
-	scratch := make([]av1.TileListEntry, 1)
+	scratch := make([]internalparser.TileListEntry, 1)
 	allocs := testing.AllocsPerRun(1000, func() {
-		list, err := av1.ParseTileListOBU(payload, scratch[:0])
+		list, err := internalparser.ParseTileListOBU(payload, scratch[:0])
 		if err != nil || len(list.Entries) != 1 {
 			t.Fatalf("err=%v entries=%d", err, len(list.Entries))
 		}
@@ -705,45 +707,45 @@ func FuzzPublicParseTileListOBU(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, payload []byte) {
-		var scratch [av1.TileListMaxTiles]av1.TileListEntry
-		list, err := av1.ParseTileListOBU(payload, scratch[:0])
+		var scratch [internalparser.TileListMaxTiles]internalparser.TileListEntry
+		list, err := internalparser.ParseTileListOBU(payload, scratch[:0])
 		if err != nil {
 			return
 		}
 		if list.TileCount() != len(list.Entries) {
 			t.Fatalf("tile count=%d entries=%d", list.TileCount(), len(list.Entries))
 		}
-		if list.TileCount() <= 0 || list.TileCount() > av1.TileListMaxTiles {
+		if list.TileCount() <= 0 || list.TileCount() > internalparser.TileListMaxTiles {
 			t.Fatalf("invalid tile count=%d", list.TileCount())
 		}
 		if list.TileCount() > list.OutputFrameWidthInTiles()*list.OutputFrameHeightInTiles() {
 			t.Fatalf("tile count=%d exceeds output %dx%d", list.TileCount(), list.OutputFrameWidthInTiles(), list.OutputFrameHeightInTiles())
 		}
 		for i, entry := range list.Entries {
-			if entry.AnchorFrameIdx >= av1.TileListMaxExternalReferences {
+			if entry.AnchorFrameIdx >= internalparser.TileListMaxExternalReferences {
 				t.Fatalf("entry %d anchor_frame_idx=%d", i, entry.AnchorFrameIdx)
 			}
 			if len(entry.TileData) != entry.TileDataSize() {
 				t.Fatalf("entry %d data len=%d want %d", i, len(entry.TileData), entry.TileDataSize())
 			}
 		}
-		if got := av1.AppendTileListOBU(nil, list); string(got) != string(payload) {
+		if got := internalparser.AppendTileListOBU(nil, list); string(got) != string(payload) {
 			t.Fatalf("round trip mismatch\n got=%x\nwant=%x", got, payload)
 		}
 	})
 }
 
 func TestPublicAnnexBRoundTrip(t *testing.T) {
-	td := []byte{byte(av1.OBUTemporalDelimiter) << 3}
-	seq := []byte{byte(av1.OBUSequenceHeader) << 3, 0xaa}
-	frame := []byte{byte(av1.OBUFrame) << 3, 0xcc, 0xdd}
+	td := []byte{byte(internalobu.TypeTemporalDelimiter) << 3}
+	seq := []byte{byte(internalobu.TypeSequenceHeader) << 3, 0xaa}
+	frame := []byte{byte(internalobu.TypeFrame) << 3, 0xcc, 0xdd}
 
 	// Build a low-overhead stream first (with obu_size fields).
-	low := appendOBUForTest(nil, av1.OBUTemporalDelimiter, nil)
-	low = appendOBUForTest(low, av1.OBUSequenceHeader, seq[1:])
-	low = appendOBUForTest(low, av1.OBUFrame, frame[1:])
+	low := appendOBUForTest(nil, internalobu.TypeTemporalDelimiter, nil)
+	low = appendOBUForTest(low, internalobu.TypeSequenceHeader, seq[1:])
+	low = appendOBUForTest(low, internalobu.TypeFrame, frame[1:])
 
-	annexB, err := av1.LowOverheadToAnnexB(nil, low, nil)
+	annexB, err := internalobu.LowOverheadToAnnexB(nil, low, nil)
 	if err != nil {
 		t.Fatalf("LowOverheadToAnnexB err=%v", err)
 	}
@@ -751,7 +753,7 @@ func TestPublicAnnexBRoundTrip(t *testing.T) {
 		t.Fatal("empty annex b output")
 	}
 
-	roundTripped, err := av1.AnnexBToLowOverhead(nil, annexB)
+	roundTripped, err := internalobu.AnnexBToLowOverhead(nil, annexB)
 	if err != nil {
 		t.Fatalf("AnnexBToLowOverhead err=%v", err)
 	}
@@ -761,11 +763,11 @@ func TestPublicAnnexBRoundTrip(t *testing.T) {
 
 	// AppendAnnexBTemporalUnit + AnnexBToLowOverhead also lets callers
 	// transcode externally-supplied frame_units into the low-overhead form.
-	tu := av1.AppendAnnexBTemporalUnit(nil, [][][]byte{{td, seq, frame}})
+	tu := internalobu.AppendAnnexBTemporalUnit(nil, [][][]byte{{td, seq, frame}})
 	if len(tu) == 0 {
 		t.Fatal("empty temporal unit")
 	}
-	if _, err := av1.AnnexBToLowOverhead(nil, tu); err != nil {
+	if _, err := internalobu.AnnexBToLowOverhead(nil, tu); err != nil {
 		t.Fatalf("AnnexBToLowOverhead err=%v", err)
 	}
 }
@@ -781,8 +783,8 @@ func TestPublicParseMetadataOBUAllocs(t *testing.T) {
 		0x80,
 	}
 	allocs := testing.AllocsPerRun(1000, func() {
-		meta, err := av1.ParseMetadataOBU(payload)
-		if err != nil || meta.Type != av1.MetadataTypeHDRMDCV {
+		meta, err := internalobu.ParseMetadata(payload)
+		if err != nil || meta.Type != internalobu.MetadataTypeHDRMDCV {
 			t.Fatalf("err=%v type=%v", err, meta.Type)
 		}
 	})
@@ -791,9 +793,9 @@ func TestPublicParseMetadataOBUAllocs(t *testing.T) {
 	}
 }
 
-func appendOBUForTest(dst []byte, typ av1.OBUType, payload []byte) []byte {
+func appendOBUForTest(dst []byte, typ internalobu.Type, payload []byte) []byte {
 	var header [2]byte
-	n, err := av1.PutOBUHeader(header[:], av1.OBUHeader{Type: typ, HasSizeField: true})
+	n, err := internalobu.PutHeader(header[:], internalobu.Header{Type: typ, HasSizeField: true})
 	if err != nil {
 		panic(err)
 	}
