@@ -411,7 +411,7 @@ func sbLevels16Row(lvl [][4]uint8, u0, lvlStride, comp int, pair uint32) archsim
 			}
 		}
 	}
-	return archsimd.LoadUint64x2Array(&v).ReshapeToUint32s().ShiftAllRight(uint64(8 * comp)).And(archsimd.BroadcastUint32x4(0xff))
+	return archsimd.LoadUint64x2Array(&v).ReshapeToUint32s().ShiftAllRight(uint64(8 * comp)).And(archsimd.LoadUint32x4Array(&sbLowByteLanes))
 }
 
 // sbLevels16Col loads two vertically stacked units' levels and their left
@@ -432,7 +432,7 @@ func sbLevels16Col(lvl [][4]uint8, li, lvlStride, comp int, pair uint32) archsim
 			}
 		}
 	}
-	return archsimd.LoadUint64x2Array(&v).ReshapeToUint32s().ShiftAllRight(uint64(8 * comp)).And(archsimd.BroadcastUint32x4(0xff))
+	return archsimd.LoadUint64x2Array(&v).ReshapeToUint32s().ShiftAllRight(uint64(8 * comp)).And(archsimd.LoadUint32x4Array(&sbLowByteLanes))
 }
 
 // filterSBHorizontal16Edge is the group-by-group driver for calls whose
@@ -597,7 +597,7 @@ func filterSBHorizontal16(pix []byte, off, stride, rowBytes int, bitDepth uint8,
 		var v [2]uint64
 		v[0] = *(*uint64)(unsafe.Add(lb, li))
 		v[1] = *(*uint64)(unsafe.Add(lb, li-ls4))
-		lv := archsimd.LoadUint64x2Array(&v).ReshapeToUint32s().And(archsimd.BroadcastUint32x4(0xff))
+		lv := archsimd.LoadUint64x2Array(&v).ReshapeToUint32s().And(archsimd.LoadUint32x4Array(&sbLowByteLanes))
 		eV, iV, hV, m4, ok := sbLimits16(lv, vm0, lut, int16(bd8), &acc)
 		if !ok {
 			continue
@@ -634,7 +634,7 @@ func filterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, v
 		var v [2]uint64
 		v[0] = x0>>32 | x1&^0xffffffff
 		v[1] = x0&0xffffffff | x1<<32
-		lv := archsimd.LoadUint64x2Array(&v).ReshapeToUint32s().And(archsimd.BroadcastUint32x4(0xff))
+		lv := archsimd.LoadUint64x2Array(&v).ReshapeToUint32s().And(archsimd.LoadUint32x4Array(&sbLowByteLanes))
 		eV, iV, hV, m4, ok := sbLimits16(lv, vm0, lut, int16(bd8), &acc)
 		if !ok {
 			continue
