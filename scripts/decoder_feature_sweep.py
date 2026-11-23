@@ -7,7 +7,11 @@ that differs is also decoded with aomdec, to tell a goav1 bug from a reference d
 When SvtAv1EncApp is on PATH a second set of cases is encoded with it: its prediction
 structures and headers differ from aomenc's.
 
-usage: scripts/decoder_feature_sweep.py <aom-go-dec binary> [-w workdir] [case-name-substring ...]
+usage: scripts/decoder_feature_sweep.py <aom-go-dec binary> [-l dump_svc binary] [-w workdir] [case-name-substring ...]
+
+With -l every 4:2:0 clip is also decoded through the layered decoder (cmd/dump_svc) and
+compared with dav1d; super-resolution and resizing clips are left out there, because the
+layered decoder rejects them.
 
 Needs aomenc, aomdec, dav1d and ffmpeg on PATH (SvtAv1EncApp is optional). Without -w the clips go to a temporary
 directory that is removed afterwards. Exit status: 0 all cases match, 1 a case differs or
@@ -25,10 +29,12 @@ if not args or args[0].startswith("-"):
     sys.exit(__doc__)
 DEC = args.pop(0)
 WORK = None
-if args and args[0] == "-w":
-    if len(args) < 2:
-        sys.exit(__doc__)
-    WORK = args[1]
+LAYERED = None
+while len(args) >= 2 and args[0] in ("-w", "-l"):
+    if args[0] == "-w":
+        WORK = args[1]
+    else:
+        LAYERED = args[1]
     args = args[2:]
 FILTERS = args
 for tool in ("aomenc", "aomdec", "dav1d", "ffmpeg"):
@@ -326,7 +332,11 @@ for name, args, src, w, h, pix, limit, base in cases:
     ref, refn, refrc, _ = digest(["dav1d", "-q", "-i", ivf, "-o", "-", "--muxer", "yuv"])
     line = []
     ok = True
-    for label, cmd in (("w1", [DEC, "-quiet", "-workers", "1", ivf]), ("w8", [DEC, "-quiet", "-workers", "8", ivf])):
+    runs = [("w1", [DEC, "-quiet", "-workers", "1", ivf]), ("w8", [DEC, "-quiet", "-workers", "8", ivf])]
+    if LAYERED and pix in ("yuv420p", "yuv420p10le") and "superres" not in name and "resize" not in name and "mono" not in name:
+        fmt = "-yuv420p10le" if pix == "yuv420p10le" else "-i420"
+        runs.append(("layered", [LAYERED, "-quiet", fmt, "-workers", "4", ivf]))
+    for label, cmd in runs:
         got, gotn, rc, err = digest(cmd)
         if rc != 0:
             ok = False

@@ -38,10 +38,6 @@
 //	                  value pins emission to that SpatialID; layers
 //	                  the temporal unit does not publish at that ID
 //	                  are skipped.
-//
-// See docs/svc.md for a longer integrator-facing explanation of how SVC
-// is signalled in AV1 and how to drive multi-pool SVC streams through
-// the full goav1 public surface.
 package main
 
 import (

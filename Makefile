@@ -695,11 +695,13 @@ dryrun-extended:
 
 # feature-sweep encodes about 180 small synthetic clips with aomenc and
 # SvtAv1EncApp, one coding tool or header mode each, and compares aom-go-dec's
-# output at one and at eight workers with dav1d's. It needs aomenc, aomdec,
+# output at one and at eight workers, and the layered decoder's through
+# dump_svc, with dav1d's. It needs aomenc, aomdec,
 # dav1d and ffmpeg (SvtAv1EncApp is optional), and is a local gate for decoder
 # changes, not part of CI.
 feature-sweep: build-cmd
-	./scripts/decoder_feature_sweep.py $(CMDBIN)
+	go build $(GOAV1_PGO_FLAGS) -o $(dir $(CMDBIN))dump_svc ./cmd/dump_svc
+	./scripts/decoder_feature_sweep.py $(CMDBIN) -l $(dir $(CMDBIN))dump_svc
 
 ci-local: fmt-check vet unsafe-check test alloc compiler-reports trace-zero
 
