@@ -69,10 +69,9 @@ type OverlappableNeighbor struct {
 
 	Size BlockSize
 
-	Motion             InterMotionResult
-	MotionValid        bool
-	InterpFilters      motion.InterpFilters
-	InterpFiltersValid bool
+	Motion        InterMotionResult
+	MotionValid   bool
+	InterpFilters motion.InterpFilters
 }
 
 // OverlappableNeighborSet carries the above and left OBMC neighbor lists.
@@ -432,25 +431,23 @@ func (c *BlockModeContext) collectOverlappableLeft(y4 int, visibleH4 int, maxNei
 
 func (c *BlockModeContext) aboveOverlappableNeighbor(slot int, rel int, span int) OverlappableNeighbor {
 	return OverlappableNeighbor{
-		RelX4:              int8(rel),
-		Span4:              uint8(maxInt(0, span)),
-		Size:               c.A.BlockSize[slot],
-		Motion:             c.AboveInterMotion[slot],
-		MotionValid:        c.AboveMotionValid[slot] != 0,
-		InterpFilters:      c.A.Interp[slot],
-		InterpFiltersValid: c.A.InterpValid[slot] != 0,
+		RelX4:         int8(rel),
+		Span4:         uint8(maxInt(0, span)),
+		Size:          c.A.BlockSize[slot],
+		Motion:        c.AboveInterMotion[slot],
+		MotionValid:   c.AboveMotionValid[slot] != 0,
+		InterpFilters: c.A.interp(slot),
 	}
 }
 
 func (c *BlockModeContext) leftOverlappableNeighbor(slot int, rel int, span int) OverlappableNeighbor {
 	return OverlappableNeighbor{
-		RelY4:              int8(rel),
-		Span4:              uint8(maxInt(0, span)),
-		Size:               c.L.BlockSize[slot],
-		Motion:             c.LeftInterMotion[slot],
-		MotionValid:        c.LeftMotionValid[slot] != 0,
-		InterpFilters:      c.L.Interp[slot],
-		InterpFiltersValid: c.L.InterpValid[slot] != 0,
+		RelY4:         int8(rel),
+		Span4:         uint8(maxInt(0, span)),
+		Size:          c.L.BlockSize[slot],
+		Motion:        c.LeftInterMotion[slot],
+		MotionValid:   c.LeftMotionValid[slot] != 0,
+		InterpFilters: c.L.interp(slot),
 	}
 }
 

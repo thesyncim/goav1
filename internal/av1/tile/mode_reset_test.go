@@ -46,7 +46,7 @@ func TestBlockModeContextResetLayout(t *testing.T) {
 	}
 	c.sbHistoryDirty = true
 	c.resetForSuperblock()
-	want := BlockModeContext{GridInterMotion: c.GridInterMotion, GridInterp: c.GridInterp}
+	want := resetModeContextWant(&c)
 	if c != want {
 		t.Fatal("resetForSuperblock left a non-payload field set")
 	}
@@ -62,8 +62,18 @@ func TestBlockModeContextResetLayout(t *testing.T) {
 	snap := b[unsafe.Offsetof(c.SBTopInterMotion):unsafe.Offsetof(c.GridMotionValid)]
 	clear(snap)
 	c.resetForSuperblock()
-	want = BlockModeContext{GridInterMotion: c.GridInterMotion, GridInterp: c.GridInterp}
+	want = resetModeContextWant(&c)
 	if c != want {
 		t.Fatal("clean resetForSuperblock left a non-payload field set")
 	}
+}
+
+// resetModeContextWant is the state resetForSuperblock must leave: reset
+// edges, zero per-superblock state, and the payload grids and palette colour
+// caches (read only under their validity and size fields) untouched.
+func resetModeContextWant(c *BlockModeContext) BlockModeContext {
+	want := BlockModeContext{GridInterMotion: c.GridInterMotion, GridInterp: c.GridInterp, PalA: c.PalA, PalL: c.PalL}
+	want.A.reset()
+	want.L.reset()
+	return want
 }

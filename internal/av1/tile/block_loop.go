@@ -98,9 +98,10 @@ type blockModeAboveContext struct {
 	BlockSizeVisitedHistory [intrabcCrossSBHistory][MaxBlockModeSlots]uint8
 }
 
-// blockModeLeftContext is the carried left edge.
+// blockModeLeftContext is the carried left edge, with its palette colours.
 type blockModeLeftContext struct {
 	BlockContext
+	pal         edgePalette
 	InterMotion [MaxBlockModeSlots]InterMotionResult
 	MotionValid [MaxBlockModeSlots]uint8
 
@@ -480,12 +481,12 @@ func blockLoopLoadRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLoo
 		poisonEdge(&scratch.Mode.A)
 		loadAboveEdge(scratch, &carrier.Above[rootColIndex])
 	} else {
-		scratch.Mode.A = BlockContext{}
+		scratch.Mode.A.reset()
 		scratch.Partition.Above = [MaxPartitionSlots]uint8{}
 		scratch.CoeffCtx.Above = [3][MaxBlockModeSlots]uint8{}
 	}
 	if !haveLeft {
-		scratch.Mode.L = BlockContext{}
+		scratch.Mode.L.reset()
 		scratch.Partition.Left = [MaxPartitionSlots]uint8{}
 		scratch.CoeffCtx.Left = [3][MaxBlockModeSlots]uint8{}
 	} else if !resident {
@@ -507,6 +508,7 @@ func loadAboveEdge(scratch *BlockLoopScratch, above *BlockLoopRootAboveContext) 
 func loadLeftEdge(scratch *BlockLoopScratch, left *BlockLoopRootLeftContext) {
 	scratch.Partition.Left = left.Partition
 	scratch.Mode.L = left.mode.BlockContext
+	scratch.Mode.PalL = left.mode.pal
 	scratch.CoeffCtx.Left = left.Coeff
 }
 
@@ -521,6 +523,7 @@ func storeAboveEdge(above *BlockLoopRootAboveContext, scratch *BlockLoopScratch)
 func storeLeftEdge(left *BlockLoopRootLeftContext, scratch *BlockLoopScratch) {
 	left.Partition = scratch.Partition.Left
 	left.mode.BlockContext = scratch.Mode.L
+	left.mode.pal = scratch.Mode.PalL
 	left.Coeff = scratch.CoeffCtx.Left
 }
 
@@ -736,13 +739,10 @@ func extendAboveContextFromRightCarrier(mode *BlockModeContext, carrier *BlockLo
 		mode.A.BlockSize[dst] = right.mode.BlockSize[off]
 		mode.A.Intra[dst] = right.mode.Intra[off]
 		mode.A.Mode[dst] = right.mode.Mode[off]
-		mode.A.ChromaIntra[dst] = right.mode.ChromaIntra[off]
 		mode.A.UVMode[dst] = right.mode.UVMode[off]
 		mode.A.Ref[0][dst] = right.mode.Ref[0][off]
 		mode.A.Ref[1][dst] = right.mode.Ref[1][off]
-		mode.A.Compound[dst] = right.mode.Compound[off]
-		mode.A.CompGroup[dst] = right.mode.CompGroup[off]
-		mode.A.CompIndex[dst] = right.mode.CompIndex[off]
+		mode.A.CompType[dst] = right.mode.CompType[off]
 		mode.A.InterIntra[dst] = right.mode.InterIntra[off]
 		mode.SBTopInterMotion[dst] = right.mode.InterMotion[off]
 		mode.SBTopMotionValid[dst] = right.mode.MotionValid[off]
@@ -908,8 +908,12 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 		return nil, err
 	}
 	prefix.CDEFIndex = cdefIndex
-	if err := ctx.Mark(block.Size, blockX4, blockY4, prefix); err != nil {
-		return nil, err
+	// The prediction-mode commits store seg_pred/skip_mode/skip with the
+	// rest of the block's edge context (decode_b's set_ctx).
+	if !req.DecodePredictionModes {
+		if err := ctx.Mark(block.Size, blockX4, blockY4, prefix); err != nil {
+			return nil, err
+		}
 	}
 
 	// libaom's read_delta_qindex / read_delta_lf gate the delta read on
@@ -1048,11 +1052,9 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 			}
 			result.InterMotion = motionResult.Motion
 			result.InterMotionValid = true
-			if err := ctx.MarkIntrabcMotion(block.Size, blockX4, blockY4, result.InterMotion, hasChromaForBlock(block.Size, blockX4, blockY4, req.Color)); err != nil {
-				return err
-			}
+			return ctx.markIntrabcMotion(block.Size, blockX4, blockY4, result.InterMotion, hasChromaForBlock(block.Size, blockX4, blockY4, req.Color), &prefix)
 		}
-		return nil
+		return ctx.Mark(block.Size, blockX4, blockY4, prefix)
 	}
 	if !intraFlag.Intra {
 		var refs InterReferencesResult
@@ -1298,31 +1300,26 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 						result.SubChromaInterValid = true
 					}
 				}
-				if err := ctx.markInterMotionAndFilters(block.Size, blockX4, blockY4, result.InterMotion, filters, hasChroma, rt == nil || refmvsOracleEnabled); err != nil {
+				// The inter-intra flag keeps the warp findSamples scan from
+				// taking this block as a sample (libaom's ref_frame[1] =
+				// INTRA_FRAME for inter-intra blocks).
+				commit := interBlockCommit{
+					prefix:     prefix,
+					blend:      result.CompoundBlend,
+					blendValid: result.CompoundBlendValid,
+					interIntra: result.InterIntraValid && result.InterIntra.Enabled,
+				}
+				if err := ctx.markInterMotionAndFilters(block.Size, blockX4, blockY4, result.InterMotion, filters, hasChroma, rt == nil || refmvsOracleEnabled, &commit); err != nil {
 					return err
 				}
 				if rt != nil {
 					rt.splatInterBlock(block.Size, int32(block.MIRow), int32(block.MICol), result.InterMotion)
 				}
-				if result.InterIntraValid && result.InterIntra.Enabled {
-					// MarkInterMotion -> MarkInter clears AboveInterIntra /
-					// LeftInterIntra; record the inter-intra status here so
-					// the warp findSamples scan rejects this neighbor for
-					// later blocks (matches libaom's ref_frame[1] =
-					// INTRA_FRAME bookkeeping for inter-intra blocks). The
-					// fallback path below also calls MarkInterIntra after
-					// its MarkInter.
-					if err := ctx.MarkInterIntra(block.Size, blockX4, blockY4); err != nil {
-						return fmt.Errorf("mark inter-intra neighbors: %w", err)
-					}
-				}
-				if result.CompoundBlendValid {
-					if err := ctx.MarkCompoundBlend(block.Size, blockX4, blockY4, result.CompoundBlend); err != nil {
-						return fmt.Errorf("mark compound blend: %w", err)
-					}
-				}
 				return nil
 			}
+		}
+		if err := ctx.Mark(block.Size, blockX4, blockY4, prefix); err != nil {
+			return err
 		}
 		if err := ctx.MarkInter(block.Size, blockX4, blockY4, refs, hasChromaForBlock(block.Size, blockX4, blockY4, req.Color)); err != nil {
 			return fmt.Errorf("mark inter references: %w", err)
@@ -1349,14 +1346,6 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 		return err
 	}
 	result.IntraEdgeSmoothNeighbor = smoothNeighbor
-	if intraOnlyContexts {
-		err = ctx.markOwnedIntra(block.Size, blockX4, blockY4, mode)
-	} else {
-		err = ctx.markIntra(block.Size, blockX4, blockY4, true, mode, rt == nil || refmvsOracleEnabled)
-	}
-	if err != nil {
-		return err
-	}
 	if rt != nil {
 		rt.splatIntraBlock(block.Size, int32(block.MIRow), int32(block.MICol))
 	}
@@ -1395,9 +1384,6 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 			return err
 		}
 		result.ChromaIntraEdgeSmoothNeighbor = chromaSmoothNeighbor
-		if err := ctx.MarkChromaIntra(block.Size, blockX4, blockY4, true, chromaMode); err != nil {
-			return err
-		}
 		if chromaMode == ChromaIntraModeCFL {
 			result.CFLAlpha = cflAlpha
 			result.CFLAlphaValid = true
@@ -1434,12 +1420,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 	}, &result.Palette, paletteMap); err != nil {
 		return err
 	}
-	if err := ctx.MarkPaletteY(block.Size, blockX4, blockY4, result.Palette); err != nil {
-		return err
-	}
-	if err := ctx.MarkPaletteUV(block.Size, blockX4, blockY4, result.Palette); err != nil {
-		return err
-	}
+	ctx.markIntraBlock(block.Size, blockX4, blockY4, mode, result.ChromaMode, hasChroma, &result.Palette, &prefix, !intraOnlyContexts && (rt == nil || refmvsOracleEnabled))
 	filterMode, filterValid, err := s.ReadFilterIntraMode(cdfs.Intra, FilterIntraRequest{
 		EnableFilterIntra: req.EnableFilterIntra,
 		Size:              block.Size,

@@ -2224,9 +2224,6 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpToScratch(dst frame.Plane, p
 }
 
 func (b *FrameWorkBatch) predictAndBlendOBMCAbove(plane FrameWorkPlane, geom frameWorkPredictionPlaneGeometry, tmp frame.Plane, block tile.BlockVisit, neighbor tile.OverlappableNeighbor, scratch *FrameWorkInterPredictionScratch) error {
-	if !neighbor.InterpFiltersValid {
-		return ErrInvalidBatch
-	}
 	relX, ok := frameWorkOBMCPlaneOffset(int(neighbor.RelX4), geom.SubsamplingX)
 	if !ok {
 		return ErrInvalidBatch
@@ -2275,9 +2272,6 @@ func (b *FrameWorkBatch) predictAndBlendOBMCAbove(plane FrameWorkPlane, geom fra
 }
 
 func (b *FrameWorkBatch) predictAndBlendOBMCLeft(plane FrameWorkPlane, geom frameWorkPredictionPlaneGeometry, tmp frame.Plane, block tile.BlockVisit, neighbor tile.OverlappableNeighbor, scratch *FrameWorkInterPredictionScratch) error {
-	if !neighbor.InterpFiltersValid {
-		return ErrInvalidBatch
-	}
 	relY, ok := frameWorkOBMCPlaneOffset(int(neighbor.RelY4), geom.SubsamplingY)
 	if !ok {
 		return ErrInvalidBatch

@@ -6,23 +6,20 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/motion"
 )
 
-// MarkInterMotionAndFilters commits adjacent motion and interpolation-filter
-// updates together, after the caller has collected any sub8x8 chroma cells. It
-// preserves the separate calls' motion-first errors and partial state. Keep the
-// individual methods for callers that observe the intermediate state.
+// MarkInterMotionAndFilters commits an inter block's references, motion and
+// interpolation filters, after the caller has collected any sub8x8 chroma
+// cells.
 func (c *BlockModeContext) MarkInterMotionAndFilters(size BlockSize, x4, y4 int, result InterMotionResult, filters motion.InterpFilters, hasChroma bool) error {
-	return c.markInterMotionAndFilters(size, x4, y4, result, filters, hasChroma, true)
+	return c.markInterMotionAndFilters(size, x4, y4, result, filters, hasChroma, true, nil)
 }
 
-// markInterMotionAndFilters is MarkInterMotionAndFilters; keepMotion false
+// markInterMotionAndFilters is decode_b's inter set_ctx. keepMotion false
 // skips the neighbor-motion arrays and grids (the frame decoder keeps
-// neighbor motion in the dav1d refmvs rows instead). Like dav1d's pal_sz edge
-// bytes, only the palette sizes are reset: the colour caches read a
-// neighbour's colours only up to its size.
-func (c *BlockModeContext) markInterMotionAndFilters(size BlockSize, x4, y4 int, result InterMotionResult, filters motion.InterpFilters, hasChroma bool, keepMotion bool) error {
+// neighbor motion in the dav1d refmvs rows instead). blk, when set, adds the
+// block's seg_pred/skip_mode/skip, its compound blend and inter-intra flag to
+// the same stores.
+func (c *BlockModeContext) markInterMotionAndFilters(size BlockSize, x4, y4 int, result InterMotionResult, filters motion.InterpFilters, hasChroma bool, keepMotion bool, blk *interBlockCommit) error {
 	if !filters.X.Valid() || !filters.Y.Valid() {
-		// Preserve motion-first errors and partial state even for an invalid
-		// filter pair; the decoded valid path below has no failing second phase.
 		if err := c.MarkInterMotion(size, x4, y4, result, hasChroma); err != nil {
 			return fmt.Errorf("mark inter motion: %w", err)
 		}
@@ -38,145 +35,19 @@ func (c *BlockModeContext) markInterMotionAndFilters(size BlockSize, x4, y4 int,
 	if err != nil {
 		return fmt.Errorf("mark inter motion: %w", err)
 	}
-	compound := boolByte(result.References.Compound)
-
-	// dav1d case_set: each edge array gets one store per up to eight
-	// entries, from the replicated value.
-	ref0 := ctxSplat(uint8(result.References.Ref[0]))
-	ref1 := ctxSplat(uint8(result.References.Ref[1]))
-	comp := ctxSplat(compound)
-	bs := ctxSplat(uint8(size))
-	const zero, one = 0, 0x0101010101010101
-	switch dims.W4 {
-	case 1:
-		c.A.Intra[x4] = 0
-		c.A.CompGroup[x4] = 0
-		c.A.InterIntra[x4] = 0
-		c.A.Ref[0][x4] = result.References.Ref[0]
-		c.A.Ref[1][x4] = result.References.Ref[1]
-		c.A.Compound[x4] = compound
-		c.A.CompIndex[x4] = 1
-		c.A.BlockSize[x4] = size
-		c.A.InterpValid[x4] = 1
-		if hasChroma {
-			c.A.ChromaIntra[x4] = 0
-			c.A.UVMode[x4] = 0
+	compType := compInterTypeFor(result.References.Compound)
+	interIntra := false
+	if blk != nil {
+		if blk.blendValid {
+			compType = compInterTypeOfBlend(blk.blend)
 		}
-	case 2:
-		ctxPut2(c.A.Intra[x4:], zero)
-		ctxPut2(c.A.CompGroup[x4:], zero)
-		ctxPut2(c.A.InterIntra[x4:], zero)
-		ctxPut2(c.A.Ref[0][x4:], ref0)
-		ctxPut2(c.A.Ref[1][x4:], ref1)
-		ctxPut2(c.A.Compound[x4:], comp)
-		ctxPut2(c.A.CompIndex[x4:], one)
-		ctxPut2(c.A.BlockSize[x4:], bs)
-		ctxPut2(c.A.InterpValid[x4:], one)
-		if hasChroma {
-			ctxPut2(c.A.ChromaIntra[x4:], 0)
-			ctxPut2(c.A.UVMode[x4:], 0)
-		}
-	case 4:
-		ctxPut4(c.A.Intra[x4:], zero)
-		ctxPut4(c.A.CompGroup[x4:], zero)
-		ctxPut4(c.A.InterIntra[x4:], zero)
-		ctxPut4(c.A.Ref[0][x4:], ref0)
-		ctxPut4(c.A.Ref[1][x4:], ref1)
-		ctxPut4(c.A.Compound[x4:], comp)
-		ctxPut4(c.A.CompIndex[x4:], one)
-		ctxPut4(c.A.BlockSize[x4:], bs)
-		ctxPut4(c.A.InterpValid[x4:], one)
-		if hasChroma {
-			ctxPut4(c.A.ChromaIntra[x4:], 0)
-			ctxPut4(c.A.UVMode[x4:], 0)
-		}
-	default:
-		for i := x4; i < x4+int(dims.W4); i += 8 {
-			ctxPut8(c.A.Intra[i:], zero)
-			ctxPut8(c.A.CompGroup[i:], zero)
-			ctxPut8(c.A.InterIntra[i:], zero)
-			ctxPut8(c.A.Ref[0][i:], ref0)
-			ctxPut8(c.A.Ref[1][i:], ref1)
-			ctxPut8(c.A.Compound[i:], comp)
-			ctxPut8(c.A.CompIndex[i:], one)
-			ctxPut8(c.A.BlockSize[i:], bs)
-			ctxPut8(c.A.InterpValid[i:], one)
-			if hasChroma {
-				ctxPut8(c.A.ChromaIntra[i:], 0)
-				ctxPut8(c.A.UVMode[i:], 0)
-			}
-		}
+		interIntra = blk.interIntra
 	}
-	for i := x4; i < x4+int(dims.W4); i++ {
-		c.A.PaletteY[i].Size = 0
-		c.A.PaletteUV[i].Size = 0
-		c.A.Interp[i] = filters
+	v := interEdgeValues(size, result.References, compType, filters, interIntra, hasChroma)
+	if blk != nil {
+		v.setPrefix(&blk.prefix)
 	}
-	switch dims.H4 {
-	case 1:
-		c.L.Intra[y4] = 0
-		c.L.CompGroup[y4] = 0
-		c.L.InterIntra[y4] = 0
-		c.L.Ref[0][y4] = result.References.Ref[0]
-		c.L.Ref[1][y4] = result.References.Ref[1]
-		c.L.Compound[y4] = compound
-		c.L.CompIndex[y4] = 1
-		c.L.BlockSize[y4] = size
-		c.L.InterpValid[y4] = 1
-		if hasChroma {
-			c.L.ChromaIntra[y4] = 0
-			c.L.UVMode[y4] = 0
-		}
-	case 2:
-		ctxPut2(c.L.Intra[y4:], zero)
-		ctxPut2(c.L.CompGroup[y4:], zero)
-		ctxPut2(c.L.InterIntra[y4:], zero)
-		ctxPut2(c.L.Ref[0][y4:], ref0)
-		ctxPut2(c.L.Ref[1][y4:], ref1)
-		ctxPut2(c.L.Compound[y4:], comp)
-		ctxPut2(c.L.CompIndex[y4:], one)
-		ctxPut2(c.L.BlockSize[y4:], bs)
-		ctxPut2(c.L.InterpValid[y4:], one)
-		if hasChroma {
-			ctxPut2(c.L.ChromaIntra[y4:], 0)
-			ctxPut2(c.L.UVMode[y4:], 0)
-		}
-	case 4:
-		ctxPut4(c.L.Intra[y4:], zero)
-		ctxPut4(c.L.CompGroup[y4:], zero)
-		ctxPut4(c.L.InterIntra[y4:], zero)
-		ctxPut4(c.L.Ref[0][y4:], ref0)
-		ctxPut4(c.L.Ref[1][y4:], ref1)
-		ctxPut4(c.L.Compound[y4:], comp)
-		ctxPut4(c.L.CompIndex[y4:], one)
-		ctxPut4(c.L.BlockSize[y4:], bs)
-		ctxPut4(c.L.InterpValid[y4:], one)
-		if hasChroma {
-			ctxPut4(c.L.ChromaIntra[y4:], 0)
-			ctxPut4(c.L.UVMode[y4:], 0)
-		}
-	default:
-		for i := y4; i < y4+int(dims.H4); i += 8 {
-			ctxPut8(c.L.Intra[i:], zero)
-			ctxPut8(c.L.CompGroup[i:], zero)
-			ctxPut8(c.L.InterIntra[i:], zero)
-			ctxPut8(c.L.Ref[0][i:], ref0)
-			ctxPut8(c.L.Ref[1][i:], ref1)
-			ctxPut8(c.L.Compound[i:], comp)
-			ctxPut8(c.L.CompIndex[i:], one)
-			ctxPut8(c.L.BlockSize[i:], bs)
-			ctxPut8(c.L.InterpValid[i:], one)
-			if hasChroma {
-				ctxPut8(c.L.ChromaIntra[i:], 0)
-				ctxPut8(c.L.UVMode[i:], 0)
-			}
-		}
-	}
-	for i := y4; i < y4+int(dims.H4); i++ {
-		c.L.PaletteY[i].Size = 0
-		c.L.PaletteUV[i].Size = 0
-		c.L.Interp[i] = filters
-	}
+	c.setBlockEdges(x4, y4, int(dims.W4), int(dims.H4), &v)
 	if !keepMotion {
 		return nil
 	}
@@ -213,6 +84,176 @@ func (c *BlockModeContext) markInterMotionAndFilters(size BlockSize, x4, y4 int,
 		copy(c.GridInterpValid[y][x4:xEnd], f0)
 	}
 	return nil
+}
+
+// interBlockCommit carries the decoded block state the decoder's inter
+// set_ctx stores besides the references, motion and filters.
+type interBlockCommit struct {
+	prefix     BlockModeResult
+	blend      CompoundBlendResult
+	blendValid bool
+	interIntra bool
+}
+
+// filterUnsetPair is the filter pair of a block whose filters are not known.
+var filterUnsetPair = motion.InterpFilters{X: filterUnset, Y: filterUnset}
+
+// compInterTypeFor is the comp_type of an inter block before its compound
+// blend is read: a compound block averages (COMP_INTER_AVG, also skip mode).
+func compInterTypeFor(compound bool) uint8 {
+	if compound {
+		return compInterAvg
+	}
+	return compInterNone
+}
+
+// compInterTypeOfBlend maps a decoded compound blend to dav1d's comp_type.
+func compInterTypeOfBlend(b CompoundBlendResult) uint8 {
+	switch {
+	case b.CompoundGroupIndex != 0 && b.Type == CompoundTypeWedge:
+		return compInterWedge
+	case b.CompoundGroupIndex != 0:
+		return compInterSeg
+	case b.CompoundIndex != 0:
+		return compInterAvg
+	default:
+		return compInterWeightedAvg
+	}
+}
+
+// interEdgeValues are an inter block's set_ctx values.
+func interEdgeValues(size BlockSize, refs InterReferencesResult, compType uint8, filters motion.InterpFilters, interIntra, hasChroma bool) blockEdgeValues {
+	return blockEdgeValues{
+		compType:   ctxSplat(compType),
+		ref0:       ctxSplat(uint8(refs.Ref[0])),
+		ref1:       ctxSplat(uint8(refs.Ref[1])),
+		filter0:    ctxSplat(uint8(filters.Y)),
+		filter1:    ctxSplat(uint8(filters.X)),
+		blockSize:  ctxSplat(uint8(size)),
+		interIntra: ctxSplat(boolByte(interIntra)),
+		chroma:     hasChroma,
+	}
+}
+
+// setPrefix adds the block's seg_pred/skip_mode/skip; p nil leaves them.
+func (v *blockEdgeValues) setPrefix(p *BlockModeResult) {
+	if p == nil {
+		return
+	}
+	v.prefix = true
+	v.segPred = ctxSplat(boolByte(p.SegmentPredicted))
+	v.skipMode = ctxSplat(boolByte(p.SkipMode))
+	v.skip = ctxSplat(boolByte(p.SkipTransform))
+}
+
+// setBlockEdges runs setBlockEdge on the above edge over the block's width
+// and on the left edge over its height, decode_b's loop over t->a and t->l.
+func (c *BlockModeContext) setBlockEdges(x4, y4, w4, h4 int, v *blockEdgeValues) {
+	setBlockEdge(&c.A, &c.PalA, x4, w4, v)
+	setBlockEdge(&c.L, &c.PalL, y4, h4, v)
+}
+
+// blockEdgeValues are the per-block values decode_b's set_ctx replicates
+// over the block's span of one edge, each splat to eight bytes (the
+// rep_macro pattern of case_set).
+type blockEdgeValues struct {
+	segPred, skipMode, skip  uint64
+	intra, mode, compType    uint64
+	ref0, ref1, filter0      uint64
+	filter1, blockSize       uint64
+	interIntra, palSz, palUV uint64
+	uvMode                   uint64
+	// prefix writes seg_pred/skip_mode/skip; chroma writes uvmode.
+	prefix, chroma bool
+}
+
+// setBlockEdge is decode_b's case_set over one edge: n (1, 2, 4, 8, 16 or 32)
+// entries from off of every BlockContext field, plus the edge's pal_sz_uv.
+func setBlockEdge(e *BlockContext, p *edgePalette, off, n int, v *blockEdgeValues) {
+	switch n {
+	case 1:
+		if v.prefix {
+			e.SegPred[off] = uint8(v.segPred)
+			e.SkipMode[off] = uint8(v.skipMode)
+			e.Skip[off] = uint8(v.skip)
+		}
+		e.Intra[off] = uint8(v.intra)
+		e.Mode[off] = IntraMode(v.mode)
+		e.CompType[off] = uint8(v.compType)
+		e.Ref[0][off] = ReferenceFrame(v.ref0)
+		e.Ref[1][off] = ReferenceFrame(v.ref1)
+		e.Filter[0][off] = motion.InterpFilter(v.filter0)
+		e.Filter[1][off] = motion.InterpFilter(v.filter1)
+		e.BlockSize[off] = BlockSize(v.blockSize)
+		e.InterIntra[off] = uint8(v.interIntra)
+		e.PalSz[off] = uint8(v.palSz)
+		p.SzUV[off] = uint8(v.palUV)
+		if v.chroma {
+			e.UVMode[off] = ChromaIntraMode(v.uvMode)
+		}
+	case 2:
+		if v.prefix {
+			ctxPut2(e.SegPred[off:], v.segPred)
+			ctxPut2(e.SkipMode[off:], v.skipMode)
+			ctxPut2(e.Skip[off:], v.skip)
+		}
+		ctxPut2(e.Intra[off:], v.intra)
+		ctxPut2(e.Mode[off:], v.mode)
+		ctxPut2(e.CompType[off:], v.compType)
+		ctxPut2(e.Ref[0][off:], v.ref0)
+		ctxPut2(e.Ref[1][off:], v.ref1)
+		ctxPut2(e.Filter[0][off:], v.filter0)
+		ctxPut2(e.Filter[1][off:], v.filter1)
+		ctxPut2(e.BlockSize[off:], v.blockSize)
+		ctxPut2(e.InterIntra[off:], v.interIntra)
+		ctxPut2(e.PalSz[off:], v.palSz)
+		ctxPut2(p.SzUV[off:], v.palUV)
+		if v.chroma {
+			ctxPut2(e.UVMode[off:], v.uvMode)
+		}
+	case 4:
+		if v.prefix {
+			ctxPut4(e.SegPred[off:], v.segPred)
+			ctxPut4(e.SkipMode[off:], v.skipMode)
+			ctxPut4(e.Skip[off:], v.skip)
+		}
+		ctxPut4(e.Intra[off:], v.intra)
+		ctxPut4(e.Mode[off:], v.mode)
+		ctxPut4(e.CompType[off:], v.compType)
+		ctxPut4(e.Ref[0][off:], v.ref0)
+		ctxPut4(e.Ref[1][off:], v.ref1)
+		ctxPut4(e.Filter[0][off:], v.filter0)
+		ctxPut4(e.Filter[1][off:], v.filter1)
+		ctxPut4(e.BlockSize[off:], v.blockSize)
+		ctxPut4(e.InterIntra[off:], v.interIntra)
+		ctxPut4(e.PalSz[off:], v.palSz)
+		ctxPut4(p.SzUV[off:], v.palUV)
+		if v.chroma {
+			ctxPut4(e.UVMode[off:], v.uvMode)
+		}
+	default:
+		for i := off; i < off+n; i += 8 {
+			if v.prefix {
+				ctxPut8(e.SegPred[i:], v.segPred)
+				ctxPut8(e.SkipMode[i:], v.skipMode)
+				ctxPut8(e.Skip[i:], v.skip)
+			}
+			ctxPut8(e.Intra[i:], v.intra)
+			ctxPut8(e.Mode[i:], v.mode)
+			ctxPut8(e.CompType[i:], v.compType)
+			ctxPut8(e.Ref[0][i:], v.ref0)
+			ctxPut8(e.Ref[1][i:], v.ref1)
+			ctxPut8(e.Filter[0][i:], v.filter0)
+			ctxPut8(e.Filter[1][i:], v.filter1)
+			ctxPut8(e.BlockSize[i:], v.blockSize)
+			ctxPut8(e.InterIntra[i:], v.interIntra)
+			ctxPut8(e.PalSz[i:], v.palSz)
+			ctxPut8(p.SzUV[i:], v.palUV)
+			if v.chroma {
+				ctxPut8(e.UVMode[i:], v.uvMode)
+			}
+		}
+	}
 }
 
 // ctxSplat replicates v into every byte, the rep_macro pattern of case_set.

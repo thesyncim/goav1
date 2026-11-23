@@ -112,7 +112,7 @@ func (s *BlockLoopScratch) EncoderCommitInter(block BlockVisit, m InterMotionRes
 	if !s.Refmvs.bound {
 		return s.Mode.MarkInterMotionAndFilters(block.Size, int(block.X4), int(block.Y4), m, filters, hasChroma)
 	}
-	if err := s.Mode.markInterMotionAndFilters(block.Size, int(block.X4), int(block.Y4), m, filters, hasChroma, s.keepLegacyMotion()); err != nil {
+	if err := s.Mode.markInterMotionAndFilters(block.Size, int(block.X4), int(block.Y4), m, filters, hasChroma, s.keepLegacyMotion(), nil); err != nil {
 		return err
 	}
 	s.Refmvs.splatInterBlock(block.Size, int32(block.MIRow), int32(block.MICol), m)

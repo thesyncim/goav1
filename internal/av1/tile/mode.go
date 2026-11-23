@@ -41,34 +41,74 @@ type BlockModeCDFs struct {
 // the same type, so an edge load or store is one struct copy. The coefficient
 // contexts (lcoef/ccoef) live in CoeffEntropyContext.
 type BlockContext struct {
-	Mode      [MaxBlockModeSlots]IntraMode
-	SegPred   [MaxBlockModeSlots]uint8
-	Skip      [MaxBlockModeSlots]uint8
-	SkipMode  [MaxBlockModeSlots]uint8
-	Intra     [MaxBlockModeSlots]uint8
-	Ref       [2][MaxBlockModeSlots]ReferenceFrame
-	TxIntra   [MaxBlockModeSlots]uint8
-	Tx        [MaxBlockModeSlots]uint8
-	UVMode    [MaxBlockModeSlots]ChromaIntraMode
-	PaletteY  [MaxBlockModeSlots]paletteContext
-	PaletteUV [MaxBlockModeSlots]paletteContext
+	Mode     [MaxBlockModeSlots]IntraMode
+	SegPred  [MaxBlockModeSlots]uint8
+	Skip     [MaxBlockModeSlots]uint8
+	SkipMode [MaxBlockModeSlots]uint8
+	Intra    [MaxBlockModeSlots]uint8
+	// CompType is dav1d's comp_type: compInterNone for single-reference and
+	// intra blocks, else the compound blend.
+	CompType [MaxBlockModeSlots]uint8
+	Ref      [2][MaxBlockModeSlots]ReferenceFrame
+	// Filter is the interpolation filter per direction (0: the pair's Y,
+	// 1: its X); filterUnset (dav1d's DAV1D_N_SWITCHABLE_FILTERS) marks
+	// intra and reset entries.
+	Filter  [2][MaxBlockModeSlots]motion.InterpFilter
+	TxIntra [MaxBlockModeSlots]uint8
+	Tx      [MaxBlockModeSlots]uint8
+	UVMode  [MaxBlockModeSlots]ChromaIntraMode
+	PalSz   [MaxBlockModeSlots]uint8
 
-	ChromaIntra [MaxBlockModeSlots]uint8
-	BlockSize   [MaxBlockModeSlots]BlockSize
-	Compound    [MaxBlockModeSlots]uint8
-	CompGroup   [MaxBlockModeSlots]uint8
-	CompIndex   [MaxBlockModeSlots]uint8
-	// InterIntra mirrors libaom's per-MI inter-intra status. libaom records
-	// inter-intra blocks with mbmi->ref_frame[1] = INTRA_FRAME while goav1
-	// keeps Ref[1] = ReferenceFrameNone for them. Neighbor scans that need to
-	// know "has any second ref" (ref_frame[1] != NONE_FRAME) - distinct from
-	// "has an inter second ref" (has_second_ref, i.e. ref_frame[1] >
-	// INTRA_FRAME) - consult this flag. Notably av1_findSamples rejects
-	// inter-intra neighbors as warp-affine sample sources because their
-	// ref_frame[1] is INTRA_FRAME, not NONE_FRAME.
-	InterIntra  [MaxBlockModeSlots]uint8
-	Interp      [MaxBlockModeSlots]motion.InterpFilters
-	InterpValid [MaxBlockModeSlots]uint8
+	// BlockSize and InterIntra feed the libaom-shaped neighbor scans (the
+	// intra tx_size context, warp samples, ref-MV and OBMC scans without
+	// refmvs rows). InterIntra mirrors libaom's ref_frame[1] = INTRA_FRAME
+	// for inter-intra blocks, which goav1 keeps at Ref[1] = ReferenceFrameNone:
+	// av1_findSamples rejects such neighbors as warp sample sources.
+	BlockSize  [MaxBlockModeSlots]BlockSize
+	InterIntra [MaxBlockModeSlots]uint8
+}
+
+// dav1d's CompInterType values for BlockContext.CompType.
+const (
+	compInterNone uint8 = iota
+	compInterWeightedAvg
+	compInterAvg
+	compInterSeg
+	compInterWedge
+)
+
+// filterUnset is dav1d's DAV1D_N_SWITCHABLE_FILTERS edge value.
+const filterUnset = motion.InterpBilinear
+
+var unsetEdgeFilters = func() (f [2][MaxBlockModeSlots]motion.InterpFilter) {
+	for d := range f {
+		for i := range f[d] {
+			f[d][i] = filterUnset
+		}
+	}
+	return f
+}()
+
+// reset is dav1d's reset_context for the fields whose reset value is not
+// zero: the interpolation filters start unset.
+func (e *BlockContext) reset() {
+	*e = BlockContext{}
+	e.Filter = unsetEdgeFilters
+}
+
+// interp is the edge's filter pair at i.
+func (e *BlockContext) interp(i int) motion.InterpFilters {
+	return motion.InterpFilters{X: e.Filter[1][i], Y: e.Filter[0][i]}
+}
+
+// edgePalette is one edge's dav1d t->pal_sz_uv and t->al_pal: the chroma
+// palette size in luma coordinates (aomedia bug 2183) and the Y and U
+// colours, which the colour caches read only up to the sizes. The above
+// caches are read only inside the superblock, so only the left edge is
+// carried between superblocks.
+type edgePalette struct {
+	SzUV   [MaxBlockModeSlots]uint8
+	Colors [MaxBlockModeSlots][2][PaletteMaxSize]uint16
 }
 
 // BlockModeContext is the caller-owned top/left block context for one
@@ -83,6 +123,9 @@ type BlockContext struct {
 type BlockModeContext struct {
 	A BlockContext
 	L BlockContext
+
+	PalA edgePalette
+	PalL edgePalette
 
 	// AboveInterMotion/LeftInterMotion are per-superblock: the carriers
 	// restore them only on the libaom-shaped neighbor-motion path
@@ -224,8 +267,8 @@ type BlockModeContext struct {
 // resetForSuperblock is BlockModeContext{} minus the trailing payload grids
 // (see GridInterMotion): both edges plus the per-superblock state.
 func (c *BlockModeContext) resetForSuperblock() {
-	c.A = BlockContext{}
-	c.L = BlockContext{}
+	c.A.reset()
+	c.L.reset()
 	c.resetSuperblockState()
 }
 

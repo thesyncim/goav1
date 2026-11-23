@@ -420,8 +420,10 @@ func (c *BlockModeContext) MarkInterMotion(size BlockSize, x4 int, y4 int, resul
 	return nil
 }
 
-// MarkIntrabcMotion updates top/left motion context for intra-block-copy DVs.
-func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, result InterMotionResult, hasChroma bool) error {
+// markIntrabcMotion is decode_b's intrabc set_ctx (plus the block's
+// seg_pred/skip_mode/skip when prefix is set) and the libaom-shaped neighbor
+// motion the DV stack scans.
+func (c *BlockModeContext) markIntrabcMotion(size BlockSize, x4 int, y4 int, result InterMotionResult, hasChroma bool, prefix *BlockModeResult) error {
 	if c == nil || !result.Mode.Mode.Valid() {
 		return ErrInvalidDecodeState
 	}
@@ -433,39 +435,23 @@ func (c *BlockModeContext) MarkIntrabcMotion(size BlockSize, x4 int, y4 int, res
 		y4+h4 > MaxBlockModeSlots {
 		return ErrInvalidDecodeState
 	}
-	xEnd := x4 + w4
-	yEnd := y4 + h4
-	clear(c.A.Intra[x4:xEnd])
-	clear(c.A.Mode[x4:xEnd])
-	clear(c.A.Compound[x4:xEnd])
-	clear(c.A.InterpValid[x4:xEnd])
-	clear(c.A.PaletteY[x4:xEnd])
-	clear(c.A.PaletteUV[x4:xEnd])
-	clear(c.L.Intra[y4:yEnd])
-	clear(c.L.Mode[y4:yEnd])
-	clear(c.L.Compound[y4:yEnd])
-	clear(c.L.InterpValid[y4:yEnd])
-	clear(c.L.PaletteY[y4:yEnd])
-	clear(c.L.PaletteUV[y4:yEnd])
-	if hasChroma {
-		clear(c.A.ChromaIntra[x4:xEnd])
-		clear(c.A.UVMode[x4:xEnd])
-		clear(c.L.ChromaIntra[y4:yEnd])
-		clear(c.L.UVMode[y4:yEnd])
+	v := blockEdgeValues{
+		ref0:      ctxSplat(0xff),
+		ref1:      ctxSplat(0xff),
+		filter0:   ctxSplat(uint8(filterUnset)),
+		filter1:   ctxSplat(uint8(filterUnset)),
+		blockSize: ctxSplat(uint8(size)),
+		chroma:    hasChroma,
 	}
+	v.setPrefix(prefix)
+	c.setBlockEdges(x4, y4, w4, h4, &v)
 	for i := 0; i < w4; i++ {
-		c.A.Ref[0][x4+i] = ReferenceFrameNone
-		c.A.Ref[1][x4+i] = ReferenceFrameNone
 		c.AboveInterMotion[x4+i] = result
 		c.AboveMotionValid[x4+i] = 1
-		c.A.BlockSize[x4+i] = size
 	}
 	for i := 0; i < h4; i++ {
-		c.L.Ref[0][y4+i] = ReferenceFrameNone
-		c.L.Ref[1][y4+i] = ReferenceFrameNone
 		c.LeftInterMotion[y4+i] = result
 		c.LeftMotionValid[y4+i] = 1
-		c.L.BlockSize[y4+i] = size
 	}
 	c.markGridInterMotion(size, x4, y4, result, dims)
 	return nil

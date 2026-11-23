@@ -177,7 +177,7 @@ func TestBlockLoopContextCarrierRoundTripsRootEdges(t *testing.T) {
 	scratch.Mode.AboveMotionValid[4] = 1
 	scratch.Mode.L.Skip[5] = 1
 	scratch.Mode.L.Ref[0][6] = ReferenceFrameGolden
-	scratch.Mode.L.CompIndex[6] = 1
+	scratch.Mode.L.CompType[6] = compInterAvg
 	scratch.Mode.LeftInterMotion[6] = InterMotionResult{MV: [2]motion.Vector{{Row: -2, Col: 7}}}
 	scratch.Mode.LeftMotionValid[6] = 1
 	scratch.CoeffCtx.Above[2][8] = 13
@@ -205,7 +205,7 @@ func TestBlockLoopContextCarrierRoundTripsRootEdges(t *testing.T) {
 		scratch.Mode.AboveMotionValid[4] != 1 ||
 		scratch.Mode.L.Skip[5] != 1 ||
 		scratch.Mode.L.Ref[0][6] != ReferenceFrameGolden ||
-		scratch.Mode.L.CompIndex[6] != 1 ||
+		scratch.Mode.L.CompType[6] != compInterAvg ||
 		scratch.Mode.LeftInterMotion[6].MV[0] != (motion.Vector{Row: -2, Col: 7}) ||
 		scratch.Mode.LeftMotionValid[6] != 1 {
 		t.Fatalf("mode context did not round-trip: %+v", scratch.Mode)
@@ -788,7 +788,7 @@ func TestIntrabcPredictedMVUsesNeighborMotionBeforeFallback(t *testing.T) {
 		Mode: InterModeResult{Mode: InterModeNewMV},
 		MV:   [2]motion.Vector{{Row: -512}},
 	}
-	if err := ctx.MarkIntrabcMotion(BlockSize16x16, 0, 0, neighbor, true); err != nil {
+	if err := ctx.markIntrabcMotion(BlockSize16x16, 0, 0, neighbor, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := intrabcPredictedMV(&ctx, BlockLoopRequest{
@@ -895,10 +895,10 @@ func TestIntrabcPredictedMVUsesDiagonalCornerBeforeFallback(t *testing.T) {
 	carrier := &BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, cols)}
 	ensureIntrabcDiagonalCarriers(carrier)
 	var sbMode BlockModeContext
-	if err := sbMode.MarkIntrabcMotion(BlockSize8x16, 14, 12, InterMotionResult{
+	if err := sbMode.markIntrabcMotion(BlockSize8x16, 14, 12, InterMotionResult{
 		Mode: InterModeResult{Mode: InterModeNewMV},
 		MV:   [2]motion.Vector{dvWant},
-	}, true); err != nil {
+	}, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	// Stage the corner into PendingDiagonal[15] then promote (mirrors the
@@ -1150,8 +1150,8 @@ func TestDecodeBlockPredictionModeReadsCompoundBlend(t *testing.T) {
 	if !result.InterMotionValid || !result.InterReferences.Compound {
 		t.Fatalf("motion=%+v refs=%+v", result.InterMotion, result.InterReferences)
 	}
-	if ctx.A.CompIndex[0] != 1 || ctx.L.CompIndex[0] != 1 {
-		t.Fatalf("compound index context above=%d left=%d want 1", ctx.A.CompIndex[0], ctx.L.CompIndex[0])
+	if ctx.A.CompType[0] != compInterAvg || ctx.L.CompType[0] != compInterAvg {
+		t.Fatalf("comp_type above=%d left=%d want %d", ctx.A.CompType[0], ctx.L.CompType[0], compInterAvg)
 	}
 }
 
@@ -1902,10 +1902,10 @@ func TestDecodeBlockPredictionModeIntraOnInterFrameUsesInterYModeCDF(t *testing.
 	if ctx.A.Ref[0][0] != ReferenceFrameNone || ctx.L.Ref[0][0] != ReferenceFrameNone {
 		t.Fatalf("MarkIntra ref above=%d left=%d want None", ctx.A.Ref[0][0], ctx.L.Ref[0][0])
 	}
-	if ctx.A.Compound[0] != 0 || ctx.L.Compound[0] != 0 ||
+	if ctx.A.CompType[0] != 0 || ctx.L.CompType[0] != 0 ||
 		ctx.AboveMotionValid[0] != 0 || ctx.LeftMotionValid[0] != 0 {
 		t.Fatalf("MarkIntra did not clear inter baggage above_compound=%d left_compound=%d above_mv=%d left_mv=%d",
-			ctx.A.Compound[0], ctx.L.Compound[0], ctx.AboveMotionValid[0], ctx.LeftMotionValid[0])
+			ctx.A.CompType[0], ctx.L.CompType[0], ctx.AboveMotionValid[0], ctx.LeftMotionValid[0])
 	}
 	// AboveBlockSize / LeftBlockSize must reflect the current block (64x64)
 	// — libaom's xd->above_mbmi->bsize for the just-decoded block is updated
@@ -1920,8 +1920,8 @@ func TestDecodeBlockPredictionModeIntraOnInterFrameUsesInterYModeCDF(t *testing.
 	if !result.ChromaModeValid {
 		t.Fatalf("expected chroma intra mode read result=%+v", result)
 	}
-	if ctx.A.ChromaIntra[0] != 1 || ctx.L.ChromaIntra[0] != 1 {
-		t.Fatalf("MarkChromaIntra did not set chroma intra flag above=%d left=%d",
-			ctx.A.ChromaIntra[0], ctx.L.ChromaIntra[0])
+	if ctx.A.UVMode[0] != result.ChromaMode || ctx.L.UVMode[0] != result.ChromaMode {
+		t.Fatalf("MarkChromaIntra did not set uvmode above=%d left=%d want %d",
+			ctx.A.UVMode[0], ctx.L.UVMode[0], result.ChromaMode)
 	}
 }

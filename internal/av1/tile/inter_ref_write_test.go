@@ -25,8 +25,8 @@ func TestWriteInterRefSymbolsRoundTrip(t *testing.T) {
 			ctx.A.Ref[r][i] = ReferenceFrame(rng.Intn(7))
 			ctx.L.Ref[r][i] = ReferenceFrame(rng.Intn(7))
 		}
-		ctx.A.Compound[i] = uint8(rng.Intn(2))
-		ctx.L.Compound[i] = uint8(rng.Intn(2))
+		ctx.A.CompType[i] = compInterTypeFor(rng.Intn(2) == 1)
+		ctx.L.CompType[i] = compInterTypeFor(rng.Intn(2) == 1)
 	}
 
 	singles := []ReferenceFrame{

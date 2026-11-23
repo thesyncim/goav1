@@ -292,10 +292,10 @@ func (rt *refmvsTile) subChromaCells(c *BlockModeContext, block *BlockVisit, ssX
 		add(0, 0, topLeft.mv[0].vector(), ReferenceFrame(topLeft.ref[0]-1), rt.tl4x4Filter)
 	}
 	if top != nil {
-		add(offX, 0, top.mv[0].vector(), ReferenceFrame(top.ref[0]-1), c.A.Interp[block.X4])
+		add(offX, 0, top.mv[0].vector(), ReferenceFrame(top.ref[0]-1), c.A.interp(int(block.X4)))
 	}
 	if left != nil {
-		add(0, offY, left.mv[0].vector(), ReferenceFrame(left.ref[0]-1), c.L.Interp[block.Y4])
+		add(0, offY, left.mv[0].vector(), ReferenceFrame(left.ref[0]-1), c.L.interp(int(block.Y4)))
 	}
 	add(offX, offY, mv, ref, filters)
 	out.Count = uint8(n)
@@ -336,13 +336,12 @@ func (rt *refmvsTile) obmcNeighbors(c *BlockModeContext, block *BlockVisit) Over
 			if a.ref[0] > 0 {
 				slot := x4 + x + 1
 				set.Above[i] = OverlappableNeighbor{
-					RelX4:              int8(x),
-					Span4:              uint8(min(step, w4-x)),
-					Size:               a.bs,
-					Motion:             refmvsNeighborMotion(a),
-					MotionValid:        true,
-					InterpFilters:      c.A.Interp[slot],
-					InterpFiltersValid: c.A.InterpValid[slot] != 0,
+					RelX4:         int8(x),
+					Span4:         uint8(min(step, w4-x)),
+					Size:          a.bs,
+					Motion:        refmvsNeighborMotion(a),
+					MotionValid:   true,
+					InterpFilters: c.A.interp(int(slot)),
 				}
 				i++
 				set.AboveCount = uint8(i)
@@ -358,13 +357,12 @@ func (rt *refmvsTile) obmcNeighbors(c *BlockModeContext, block *BlockVisit) Over
 			if l.ref[0] > 0 {
 				slot := y4 + y + 1
 				set.Left[i] = OverlappableNeighbor{
-					RelY4:              int8(y),
-					Span4:              uint8(min(step, h4-y)),
-					Size:               l.bs,
-					Motion:             refmvsNeighborMotion(l),
-					MotionValid:        true,
-					InterpFilters:      c.L.Interp[slot],
-					InterpFiltersValid: c.L.InterpValid[slot] != 0,
+					RelY4:         int8(y),
+					Span4:         uint8(min(step, h4-y)),
+					Size:          l.bs,
+					Motion:        refmvsNeighborMotion(l),
+					MotionValid:   true,
+					InterpFilters: c.L.interp(int(slot)),
 				}
 				i++
 				set.LeftCount = uint8(i)

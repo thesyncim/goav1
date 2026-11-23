@@ -63,10 +63,10 @@ func TestInterReferenceContextsMatchDav1d(t *testing.T) {
 
 	ctx.A.Ref[0][0] = ReferenceFrameLast
 	ctx.A.Ref[1][0] = ReferenceFrameGolden
-	ctx.A.Compound[0] = 1
+	ctx.A.CompType[0] = compInterAvg
 	ctx.L.Ref[0][0] = ReferenceFrameBWD
 	ctx.L.Ref[1][0] = ReferenceFrameAltref
-	ctx.L.Compound[0] = 1
+	ctx.L.CompType[0] = compInterAvg
 	if got, err := ctx.ReferenceModeContext(req); err != nil || got != 4 {
 		t.Fatalf("compound/compound comp ctx=%d err=%v want 4", got, err)
 	}
@@ -83,8 +83,8 @@ func TestInterReferenceContextsMatchDav1d(t *testing.T) {
 	if err := ctx.MarkIntra(BlockSize8x8, 0, 0, true, IntraModeDC); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.A.Ref[0][0] != ReferenceFrameNone || ctx.L.Ref[0][0] != ReferenceFrameNone || ctx.A.Compound[0] != 0 {
-		t.Fatalf("intra refs above=%d left=%d comp=%d", ctx.A.Ref[0][0], ctx.L.Ref[0][0], ctx.A.Compound[0])
+	if ctx.A.Ref[0][0] != ReferenceFrameNone || ctx.L.Ref[0][0] != ReferenceFrameNone || ctx.A.CompType[0] != 0 {
+		t.Fatalf("intra refs above=%d left=%d comp=%d", ctx.A.Ref[0][0], ctx.L.Ref[0][0], ctx.A.CompType[0])
 	}
 	if got, err := ctx.ReferenceModeContext(InterReferenceRequest{Size: BlockSize16x16, HaveTop: true}); err != nil || got != 0 {
 		t.Fatalf("intra edge comp ctx=%d err=%v want 0", got, err)
@@ -278,7 +278,7 @@ func FuzzReadInterReferences(f *testing.F) {
 		if haveTop {
 			ctx.A.Ref[0][x4] = ReferenceFrameLast
 			ctx.A.Ref[1][x4] = ReferenceFrameAltref
-			ctx.A.Compound[x4] = 1
+			ctx.A.CompType[x4] = compInterAvg
 		}
 		if haveLeft {
 			ctx.L.Ref[0][y4] = ReferenceFrameGolden

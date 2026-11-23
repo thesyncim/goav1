@@ -1426,8 +1426,7 @@ func TestFrameWorkBatchPredictBlockLumaInterOBMCLeftMatchesLibaomMask(t *testing
 			References: visit.Prediction.InterMotion.References,
 			MV:         [2]motion.Vector{{Col: 8}},
 		},
-		InterpFilters:      motion.RegularFilters,
-		InterpFiltersValid: true,
+		InterpFilters: motion.RegularFilters,
 	}
 
 	var scratch FrameWorkInterPredictionScratch
@@ -3248,8 +3247,7 @@ func TestFrameWorkBatchPredictBlockInterOBMCScaledRoutesNeighborThroughScaledCon
 			References: visit.Prediction.InterMotion.References,
 			MV:         [2]motion.Vector{leftMV},
 		},
-		InterpFilters:      filters,
-		InterpFiltersValid: true,
+		InterpFilters: filters,
 	}
 	var scratch FrameWorkInterPredictionScratch
 	if err := ctx.PredictBlockLumaInterOBMCWithFilters(0, visit, &scratch, filters); err != nil {
@@ -3887,8 +3885,7 @@ func testOBMCInterPredictionVisit(baseMV motion.Vector, aboveMV motion.Vector, l
 			References: visit.Prediction.InterMotion.References,
 			MV:         [2]motion.Vector{aboveMV},
 		},
-		InterpFilters:      motion.RegularFilters,
-		InterpFiltersValid: true,
+		InterpFilters: motion.RegularFilters,
 	}
 	testMotionExtras(&visit.Prediction).OverlappableNeighbors.LeftCount = 1
 	testMotionExtras(&visit.Prediction).OverlappableNeighbors.Left[0] = tile.OverlappableNeighbor{
@@ -3899,8 +3896,7 @@ func testOBMCInterPredictionVisit(baseMV motion.Vector, aboveMV motion.Vector, l
 			References: visit.Prediction.InterMotion.References,
 			MV:         [2]motion.Vector{leftMV},
 		},
-		InterpFilters:      motion.RegularFilters,
-		InterpFiltersValid: true,
+		InterpFilters: motion.RegularFilters,
 	}
 	return visit
 }

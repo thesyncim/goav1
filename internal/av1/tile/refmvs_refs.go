@@ -31,13 +31,13 @@ func envRefCounts(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool) envRe
 	var cnt envRefCountSet
 	if haveTop && c.A.Intra[x4] == 0 {
 		cnt += envRefCountOf(c.A.Ref[0][x4])
-		if c.A.Compound[x4] != 0 {
+		if c.A.CompType[x4] != 0 {
 			cnt += envRefCountOf(c.A.Ref[1][x4])
 		}
 	}
 	if haveLeft && c.L.Intra[y4] == 0 {
 		cnt += envRefCountOf(c.L.Ref[0][y4])
-		if c.L.Compound[y4] != 0 {
+		if c.L.CompType[y4] != 0 {
 			cnt += envRefCountOf(c.L.Ref[1][y4])
 		}
 	}
@@ -97,24 +97,24 @@ func envCompCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool) int {
 		aRef := c.A.Ref[0][x4]
 		if haveLeft {
 			lRef := c.L.Ref[0][y4]
-			if c.A.Compound[x4] != 0 {
-				if c.L.Compound[y4] != 0 {
+			if c.A.CompType[x4] != 0 {
+				if c.L.CompType[y4] != 0 {
 					return 4
 				}
 				return 2 + boolInt(lRef.Backward() || c.L.Intra[y4] != 0)
 			}
-			if c.L.Compound[y4] != 0 {
+			if c.L.CompType[y4] != 0 {
 				return 2 + boolInt(aRef.Backward() || c.A.Intra[x4] != 0)
 			}
 			return boolInt(lRef.Backward() != aRef.Backward())
 		}
-		if c.A.Compound[x4] != 0 {
+		if c.A.CompType[x4] != 0 {
 			return 3
 		}
 		return boolInt(aRef.Backward())
 	}
 	if haveLeft {
-		if c.L.Compound[y4] != 0 {
+		if c.L.CompType[y4] != 0 {
 			return 3
 		}
 		return boolInt(c.L.Ref[0][y4].Backward())
@@ -132,18 +132,18 @@ func envCompDirCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool) int 
 		}
 		if aIntra || lIntra {
 			if aIntra {
-				if c.L.Compound[y4] == 0 {
+				if c.L.CompType[y4] == 0 {
 					return 2
 				}
 				return 1 + 2*boolInt(envUnidir(c.L.Ref[0][y4], c.L.Ref[1][y4]))
 			}
-			if c.A.Compound[x4] == 0 {
+			if c.A.CompType[x4] == 0 {
 				return 2
 			}
 			return 1 + 2*boolInt(envUnidir(c.A.Ref[0][x4], c.A.Ref[1][x4]))
 		}
-		aComp := c.A.Compound[x4] != 0
-		lComp := c.L.Compound[y4] != 0
+		aComp := c.A.CompType[x4] != 0
+		lComp := c.L.CompType[y4] != 0
 		aRef0 := c.A.Ref[0][x4]
 		lRef0 := c.L.Ref[0][y4]
 		if !aComp && !lComp {
@@ -170,13 +170,13 @@ func envCompDirCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool) int 
 		return 3 + boolInt((aRef0 == ReferenceFrameBWD) == (lRef0 == ReferenceFrameBWD))
 	}
 	if haveLeft {
-		if c.L.Intra[y4] != 0 || c.L.Compound[y4] == 0 {
+		if c.L.Intra[y4] != 0 || c.L.CompType[y4] == 0 {
 			return 2
 		}
 		return 4 * boolInt(envUnidir(c.L.Ref[0][y4], c.L.Ref[1][y4]))
 	}
 	if haveTop {
-		if c.A.Intra[x4] != 0 || c.A.Compound[x4] == 0 {
+		if c.A.Intra[x4] != 0 || c.A.CompType[x4] == 0 {
 			return 2
 		}
 		return 4 * boolInt(envUnidir(c.A.Ref[0][x4], c.A.Ref[1][x4]))
@@ -278,14 +278,15 @@ func readEnvBool(c *entropy.Reader, cdf *entropy.CDF) bool {
 }
 
 // envFilterCtx ports get_filter_ctx: a neighbour contributes its filter for
-// direction dir only when it is an inter block using ref.
+// direction dir only when it is an inter block using ref; intra and bilinear
+// entries hold filterUnset (switchableFilterMissing).
 func envFilterCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool, comp bool, dir int, ref ReferenceFrame) int {
 	aFilter, lFilter := switchableFilterMissing, switchableFilterMissing
-	if haveTop && c.A.InterpValid[x4] != 0 && (c.A.Ref[0][x4] == ref || c.A.Ref[1][x4] == ref) {
-		aFilter = envFilterDir(c.A.Interp[x4], dir)
+	if haveTop && (c.A.Ref[0][x4] == ref || c.A.Ref[1][x4] == ref) {
+		aFilter = int(c.A.Filter[dir][x4])
 	}
-	if haveLeft && c.L.InterpValid[y4] != 0 && (c.L.Ref[0][y4] == ref || c.L.Ref[1][y4] == ref) {
-		lFilter = envFilterDir(c.L.Interp[y4], dir)
+	if haveLeft && (c.L.Ref[0][y4] == ref || c.L.Ref[1][y4] == ref) {
+		lFilter = int(c.L.Filter[dir][y4])
 	}
 	ctx := dir*interFilterDirOffset + boolInt(comp)*interFilterCompOffset
 	switch {
@@ -298,17 +299,6 @@ func envFilterCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool, comp 
 	default:
 		return ctx + switchableFilterMissing
 	}
-}
-
-func envFilterDir(f motion.InterpFilters, dir int) int {
-	filter := f.Y
-	if dir == 1 {
-		filter = f.X
-	}
-	if !switchableMotionFilter(filter) {
-		return switchableFilterMissing
-	}
-	return int(filter)
 }
 
 // readInterpFiltersRefmvs ports decode_b's subpel filter section: no symbol

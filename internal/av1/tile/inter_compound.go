@@ -440,11 +440,11 @@ func (c *BlockModeContext) CompoundGroupIndexContext(req CompoundBlendRequest) (
 	}
 	aboveCtx := 0
 	if req.HaveTop {
-		aboveCtx = compoundGroupNeighborContext(c.A.Intra[req.X4], c.A.Compound[req.X4], c.A.Ref[0][req.X4], c.A.CompGroup[req.X4])
+		aboveCtx = maskCompNeighborContext(&c.A, int(req.X4))
 	}
 	leftCtx := 0
 	if req.HaveLeft {
-		leftCtx = compoundGroupNeighborContext(c.L.Intra[req.Y4], c.L.Compound[req.Y4], c.L.Ref[0][req.Y4], c.L.CompGroup[req.Y4])
+		leftCtx = maskCompNeighborContext(&c.L, int(req.Y4))
 	}
 	return minInt(5, aboveCtx+leftCtx), nil
 }
@@ -462,11 +462,11 @@ func (c *BlockModeContext) CompoundIndexContext(req CompoundBlendRequest) (int, 
 	}
 	aboveCtx := 0
 	if req.HaveTop {
-		aboveCtx = compoundIndexNeighborContext(c.A.Intra[req.X4], c.A.Compound[req.X4], c.A.Ref[0][req.X4], c.A.CompIndex[req.X4])
+		aboveCtx = jntCompNeighborContext(&c.A, int(req.X4))
 	}
 	leftCtx := 0
 	if req.HaveLeft {
-		leftCtx = compoundIndexNeighborContext(c.L.Intra[req.Y4], c.L.Compound[req.Y4], c.L.Ref[0][req.Y4], c.L.CompIndex[req.Y4])
+		leftCtx = jntCompNeighborContext(&c.L, int(req.Y4))
 	}
 	return aboveCtx + leftCtx + 3*boolInt(equalDistance), nil
 }
@@ -484,13 +484,12 @@ func (c *BlockModeContext) MarkCompoundBlend(size BlockSize, x4 int, y4 int, res
 		y4+int(dims.H4) > MaxBlockModeSlots {
 		return ErrInvalidDecodeState
 	}
+	compType := compInterTypeOfBlend(result)
 	for i := 0; i < int(dims.W4); i++ {
-		c.A.CompGroup[x4+i] = result.CompoundGroupIndex
-		c.A.CompIndex[x4+i] = result.CompoundIndex
+		c.A.CompType[x4+i] = compType
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.L.CompGroup[y4+i] = result.CompoundGroupIndex
-		c.L.CompIndex[y4+i] = result.CompoundIndex
+		c.L.CompType[y4+i] = compType
 	}
 	return nil
 }
@@ -544,30 +543,21 @@ func validateCompoundBlendRequest(req CompoundBlendRequest) error {
 	return nil
 }
 
-func compoundGroupNeighborContext(intra uint8, compound uint8, ref0 ReferenceFrame, group uint8) int {
-	if intra != 0 {
-		return 0
-	}
-	if compound != 0 {
-		return int(group)
-	}
-	if ref0 == ReferenceFrameAltref {
+// maskCompNeighborContext is one neighbour's term of dav1d's
+// get_mask_comp_ctx; intra entries hold compInterNone and a negative ref.
+func maskCompNeighborContext(e *BlockContext, i int) int {
+	switch {
+	case e.CompType[i] >= compInterSeg:
+		return 1
+	case e.Ref[0][i] == ReferenceFrameAltref:
 		return 3
 	}
 	return 0
 }
 
-func compoundIndexNeighborContext(intra uint8, compound uint8, ref0 ReferenceFrame, index uint8) int {
-	if intra != 0 {
-		return 0
-	}
-	if compound != 0 {
-		return int(index)
-	}
-	if ref0 == ReferenceFrameAltref {
-		return 1
-	}
-	return 0
+// jntCompNeighborContext is one neighbour's term of dav1d's get_jnt_comp_ctx.
+func jntCompNeighborContext(e *BlockContext, i int) int {
+	return boolInt(e.CompType[i] >= compInterAvg || e.Ref[0][i] == ReferenceFrameAltref)
 }
 
 func compoundReferenceDistancesEqual(req CompoundBlendRequest) (bool, error) {

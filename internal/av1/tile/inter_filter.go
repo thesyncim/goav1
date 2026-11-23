@@ -223,31 +223,14 @@ func (c *BlockModeContext) neighborSwitchableInterpFilter(above bool, slot int, 
 	if slot < 0 || slot >= MaxBlockModeSlots {
 		return switchableFilterMissing
 	}
-	var refs [2]ReferenceFrame
-	var filters motion.InterpFilters
-	valid := uint8(0)
+	e := &c.L
 	if above {
-		refs[0] = c.A.Ref[0][slot]
-		refs[1] = c.A.Ref[1][slot]
-		filters = c.A.Interp[slot]
-		valid = c.A.InterpValid[slot]
-	} else {
-		refs[0] = c.L.Ref[0][slot]
-		refs[1] = c.L.Ref[1][slot]
-		filters = c.L.Interp[slot]
-		valid = c.L.InterpValid[slot]
+		e = &c.A
 	}
-	if valid == 0 || (refs[0] != ref && refs[1] != ref) {
+	if e.Ref[0][slot] != ref && e.Ref[1][slot] != ref {
 		return switchableFilterMissing
 	}
-	filter := filters.Y
-	if dir == 1 {
-		filter = filters.X
-	}
-	if !switchableMotionFilter(filter) {
-		return switchableFilterMissing
-	}
-	return int(filter)
+	return int(e.Filter[dir][slot])
 }
 
 // MarkInterFilters records the decoded interpolation filter pair in the
@@ -270,12 +253,10 @@ func (c *BlockModeContext) MarkInterFilters(size BlockSize, x4 int, y4 int, refs
 		return ErrInvalidDecodeState
 	}
 	for i := 0; i < int(dims.W4); i++ {
-		c.A.Interp[x4+i] = filters
-		c.A.InterpValid[x4+i] = 1
+		c.A.Filter[0][x4+i], c.A.Filter[1][x4+i] = filters.Y, filters.X
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.L.Interp[y4+i] = filters
-		c.L.InterpValid[y4+i] = 1
+		c.L.Filter[0][y4+i], c.L.Filter[1][y4+i] = filters.Y, filters.X
 	}
 	// Record the per-MI filter pair so the sub8x8 chroma predictor can read
 	// each covered luma sub-block's own filters (libaom's this_mbmi->

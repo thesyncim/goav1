@@ -94,10 +94,8 @@ func TestCompoundBlendContextsMatchLibaom(t *testing.T) {
 		HaveLeft:         true,
 	}
 
-	ctx.A.Compound[0] = 1
-	ctx.A.CompGroup[0] = 1
-	ctx.L.Compound[0] = 1
-	ctx.L.CompGroup[0] = 0
+	ctx.A.CompType[0] = compInterWedge
+	ctx.L.CompType[0] = compInterAvg
 	if got, err := ctx.CompoundGroupIndexContext(req); err != nil || got != 1 {
 		t.Fatalf("compound group ctx=%d err=%v want 1", got, err)
 	}
@@ -110,8 +108,7 @@ func TestCompoundBlendContextsMatchLibaom(t *testing.T) {
 	}
 
 	ctx = BlockModeContext{}
-	ctx.A.Compound[0] = 1
-	ctx.A.CompIndex[0] = 0
+	ctx.A.CompType[0] = compInterWeightedAvg
 	ctx.L.Ref[0][0] = ReferenceFrameAltref
 	if got, err := ctx.CompoundIndexContext(req); err != nil || got != 4 {
 		t.Fatalf("equal-distance compound index ctx=%d err=%v want 4", got, err)
@@ -239,22 +236,21 @@ func TestMarkCompoundBlend(t *testing.T) {
 	if err := ctx.MarkInter(BlockSize16x16, 2, 3, refs, true); err != nil {
 		t.Fatal(err)
 	}
-	if ctx.A.CompIndex[2] != 1 || ctx.L.CompIndex[3] != 1 || ctx.A.CompGroup[2] != 0 {
-		t.Fatalf("MarkInter default comp state aboveIdx=%d leftIdx=%d group=%d want idx=1 group=0",
-			ctx.A.CompIndex[2], ctx.L.CompIndex[3], ctx.A.CompGroup[2])
+	if ctx.A.CompType[2] != compInterAvg || ctx.L.CompType[3] != compInterAvg {
+		t.Fatalf("MarkInter default comp_type above=%d left=%d want %d", ctx.A.CompType[2], ctx.L.CompType[3], compInterAvg)
 	}
 	blend := CompoundBlendResult{Type: CompoundTypeWedge, CompoundGroupIndex: 1, CompoundIndex: 0}
 	if err := ctx.MarkCompoundBlend(BlockSize16x16, 2, 3, blend); err != nil {
 		t.Fatal(err)
 	}
 	for x := 2; x < 6; x++ {
-		if ctx.A.CompGroup[x] != 1 || ctx.A.CompIndex[x] != 0 {
-			t.Fatalf("above slot %d group/index=%d/%d want 1/0", x, ctx.A.CompGroup[x], ctx.A.CompIndex[x])
+		if ctx.A.CompType[x] != compInterWedge {
+			t.Fatalf("above slot %d comp_type=%d want %d", x, ctx.A.CompType[x], compInterWedge)
 		}
 	}
 	for y := 3; y < 7; y++ {
-		if ctx.L.CompGroup[y] != 1 || ctx.L.CompIndex[y] != 0 {
-			t.Fatalf("left slot %d group/index=%d/%d want 1/0", y, ctx.L.CompGroup[y], ctx.L.CompIndex[y])
+		if ctx.L.CompType[y] != compInterWedge {
+			t.Fatalf("left slot %d comp_type=%d want %d", y, ctx.L.CompType[y], compInterWedge)
 		}
 	}
 }

@@ -20,8 +20,8 @@ func DecodeBlockLoopWithCoeffControllerPtrOwnedIntra[T BlockLoopCoeffController]
 // until a generic walk invokes resetForSuperblock, which clears every validity
 // field before use.
 func (c *BlockModeContext) resetForIntraSuperblock() {
-	c.A = BlockContext{}
-	c.L = BlockContext{}
+	c.A.reset()
+	c.L.reset()
 	c.resetIntraSuperblockState()
 }
 
@@ -67,24 +67,24 @@ func blockLoopLoadIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoop
 				dst := int(sbSizeMIB) + off
 				scratch.Mode.A.Intra[dst] = right.Intra[off]
 				scratch.Mode.A.Mode[dst] = right.Mode[off]
-				scratch.Mode.A.ChromaIntra[dst] = right.ChromaIntra[off]
 				scratch.Mode.A.UVMode[dst] = right.UVMode[off]
 				scratch.Mode.A.BlockSize[dst] = right.BlockSize[off]
 			}
 		}
 	} else {
-		scratch.Mode.A = BlockContext{}
+		scratch.Mode.A.reset()
 		scratch.Partition.Above = [MaxPartitionSlots]uint8{}
 		scratch.CoeffCtx.Above = [3][MaxBlockModeSlots]uint8{}
 	}
 	if !haveLeft {
-		scratch.Mode.L = BlockContext{}
+		scratch.Mode.L.reset()
 		scratch.Partition.Left = [MaxPartitionSlots]uint8{}
 		scratch.CoeffCtx.Left = [3][MaxBlockModeSlots]uint8{}
 	} else if !resident {
 		edge := &carrier.Left
 		scratch.Partition.Left = edge.Partition
 		scratch.Mode.L = edge.mode.BlockContext
+		scratch.Mode.PalL = edge.mode.pal
 		scratch.CoeffCtx.Left = edge.Coeff
 	}
 	return nil
@@ -109,24 +109,6 @@ func blockLoopStoreIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoo
 func storeIntraLeftEdge(left *BlockLoopRootLeftContext, scratch *BlockLoopScratch) {
 	left.Partition = scratch.Partition.Left
 	left.mode.BlockContext = scratch.Mode.L
+	left.mode.pal = scratch.Mode.PalL
 	left.Coeff = scratch.CoeffCtx.Left
-}
-
-// markOwnedIntra retains the edge sizes used by transform entropy contexts.
-// The full MarkIntra API continues to maintain observable motion/ref grids.
-func (c *BlockModeContext) markOwnedIntra(size BlockSize, x4 int, y4 int, mode IntraMode) error {
-	if err := c.MarkIntraEntry(size, x4, y4, true, mode); err != nil {
-		return err
-	}
-	dims, ok := size.Dimensions()
-	if !ok {
-		return ErrInvalidDecodeState
-	}
-	for i := range int(dims.W4) {
-		c.A.BlockSize[x4+i] = size
-	}
-	for i := range int(dims.H4) {
-		c.L.BlockSize[y4+i] = size
-	}
-	return nil
 }

@@ -750,7 +750,7 @@ func (c *BlockModeContext) ChromaIntraEdgeSmoothNeighbor(x4 int, y4 int, haveTop
 	if aboveX4 < 0 || aboveX4 >= MaxBlockModeSlots || leftY4 < 0 || leftY4 >= MaxBlockModeSlots {
 		return false, ErrInvalidDecodeState
 	}
-	if haveTop && c.A.ChromaIntra[aboveX4] != 0 {
+	if haveTop {
 		smooth, err := chromaModeIsSmooth(c.A.UVMode[aboveX4])
 		if err != nil {
 			return false, err
@@ -759,7 +759,7 @@ func (c *BlockModeContext) ChromaIntraEdgeSmoothNeighbor(x4 int, y4 int, haveTop
 			return true, nil
 		}
 	}
-	if haveLeft && c.L.ChromaIntra[leftY4] != 0 {
+	if haveLeft {
 		smooth, err := chromaModeIsSmooth(c.L.UVMode[leftY4])
 		if err != nil {
 			return false, err
@@ -842,12 +842,16 @@ func (c *BlockModeContext) markIntra(size BlockSize, x4 int, y4 int, intra bool,
 	h4 := int(dims.H4)
 	xEnd := x4 + w4
 	yEnd := y4 + h4
-	clear(c.A.Compound[x4:xEnd])
+	clear(c.A.CompType[x4:xEnd])
 	clear(c.A.InterIntra[x4:xEnd])
-	clear(c.A.InterpValid[x4:xEnd])
-	clear(c.L.Compound[y4:yEnd])
+	clear(c.L.CompType[y4:yEnd])
 	clear(c.L.InterIntra[y4:yEnd])
-	clear(c.L.InterpValid[y4:yEnd])
+	for i := x4; i < xEnd; i++ {
+		c.A.Filter[0][i], c.A.Filter[1][i] = filterUnset, filterUnset
+	}
+	for i := y4; i < yEnd; i++ {
+		c.L.Filter[0][i], c.L.Filter[1][i] = filterUnset, filterUnset
+	}
 	for i := 0; i < w4; i++ {
 		c.A.Ref[0][x4+i] = ref0
 		c.A.Ref[1][x4+i] = ref1
@@ -865,6 +869,52 @@ func (c *BlockModeContext) markIntra(size BlockSize, x4 int, y4 int, intra bool,
 	clear(c.LeftMotionValid[y4:yEnd])
 	c.clearGridInterMotion(size, x4, y4, dims)
 	return nil
+}
+
+// markIntraBlock is decode_b's intra set_ctx: the block's prefix, luma and
+// chroma modes, palette sizes and the unset inter fields, one store per field
+// and edge, then the palette colours of a palette block. keepMotion also
+// clears the libaom-shaped neighbor motion (see markInterMotionAndFilters).
+func (c *BlockModeContext) markIntraBlock(size BlockSize, x4, y4 int, mode IntraMode, uvMode ChromaIntraMode, hasChroma bool, pal *PaletteModeResult, prefix *BlockModeResult, keepMotion bool) {
+	dims := blockDimensions[size]
+	w4, h4 := int(dims.W4), int(dims.H4)
+	v := blockEdgeValues{
+		intra:     ctxSplat(1),
+		mode:      ctxSplat(uint8(mode)),
+		ref0:      ctxSplat(0xff),
+		ref1:      ctxSplat(0xff),
+		filter0:   ctxSplat(uint8(filterUnset)),
+		filter1:   ctxSplat(uint8(filterUnset)),
+		blockSize: ctxSplat(uint8(size)),
+		palSz:     ctxSplat(pal.YSize),
+		palUV:     ctxSplat(pal.UVSize),
+		uvMode:    ctxSplat(uint8(uvMode)),
+		chroma:    hasChroma,
+	}
+	v.setPrefix(prefix)
+	c.setBlockEdges(x4, y4, w4, h4, &v)
+	if pal.YSize != 0 {
+		for i := x4; i < x4+w4; i++ {
+			c.PalA.Colors[i][0] = pal.YColors
+		}
+		for i := y4; i < y4+h4; i++ {
+			c.PalL.Colors[i][0] = pal.YColors
+		}
+	}
+	if pal.UVSize != 0 {
+		for i := x4; i < x4+w4; i++ {
+			c.PalA.Colors[i][1] = pal.UColors
+		}
+		for i := y4; i < y4+h4; i++ {
+			c.PalL.Colors[i][1] = pal.UColors
+		}
+	}
+	if !keepMotion {
+		return
+	}
+	clear(c.AboveMotionValid[x4 : x4+w4])
+	clear(c.LeftMotionValid[y4 : y4+h4])
+	c.clearGridInterMotion(size, x4, y4, dims)
 }
 
 // MarkIntraEntry updates only the intra/inter entry context and, for intra
@@ -916,13 +966,10 @@ func (c *BlockModeContext) MarkChromaIntra(size BlockSize, x4 int, y4 int, intra
 		y4+int(dims.H4) > MaxBlockModeSlots {
 		return ErrInvalidDecodeState
 	}
-	intraValue := boolByte(intra)
 	for i := 0; i < int(dims.W4); i++ {
-		c.A.ChromaIntra[x4+i] = intraValue
 		c.A.UVMode[x4+i] = mode
 	}
 	for i := 0; i < int(dims.H4); i++ {
-		c.L.ChromaIntra[y4+i] = intraValue
 		c.L.UVMode[y4+i] = mode
 	}
 	return nil

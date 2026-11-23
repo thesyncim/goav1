@@ -876,7 +876,7 @@ func seedAboveMotion(ctx *BlockModeContext, x4 int, size BlockSize, result Inter
 		ctx.A.Intra[slot] = 0
 		ctx.A.Ref[0][slot] = result.References.Ref[0]
 		ctx.A.Ref[1][slot] = result.References.Ref[1]
-		ctx.A.Compound[slot] = boolByte(result.References.Compound)
+		ctx.A.CompType[slot] = compInterTypeFor(result.References.Compound)
 		ctx.AboveInterMotion[slot] = result
 		ctx.AboveMotionValid[slot] = 1
 		ctx.A.BlockSize[slot] = size
@@ -890,7 +890,7 @@ func seedLeftMotion(ctx *BlockModeContext, y4 int, size BlockSize, result InterM
 		ctx.L.Intra[slot] = 0
 		ctx.L.Ref[0][slot] = result.References.Ref[0]
 		ctx.L.Ref[1][slot] = result.References.Ref[1]
-		ctx.L.Compound[slot] = boolByte(result.References.Compound)
+		ctx.L.CompType[slot] = compInterTypeFor(result.References.Compound)
 		ctx.LeftInterMotion[slot] = result
 		ctx.LeftMotionValid[slot] = 1
 		ctx.L.BlockSize[slot] = size
