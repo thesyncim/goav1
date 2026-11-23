@@ -21,7 +21,7 @@ if ! sort -c "$allowlist" 2>/dev/null; then
 	status=1
 fi
 
-actual=$(git grep -lE '^[[:space:]]*(import[[:space:]]+)?"unsafe"' -- '*.go' ':!*_test.go' | sort)
+actual=$(git grep -lE '^[[:space:]]*(import[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*[[:space:]]+)?"unsafe"' -- '*.go' ':!*_test.go' | sort)
 unlisted=$(printf '%s\n' "$actual" | comm -23 - "$allowlist")
 stale=$(printf '%s\n' "$actual" | comm -13 - "$allowlist")
 if [ -n "$unlisted" ]; then
