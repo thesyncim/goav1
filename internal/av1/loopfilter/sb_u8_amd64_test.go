@@ -35,19 +35,18 @@ func TestAMD64LPFSBDispatch(t *testing.T) {
 				c := newCheckasmSBCase(int64(77+s), vertical, luma, s)
 				want := append([]byte(nil), c.pix...)
 				got := append([]byte(nil), c.pix...)
-				var ws, gs SBStats
 				var simd int
 				if vertical {
-					ws = filterSBVertical8Scalar(want, c.off, c.stride, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
-					gs, simd = avxSBVertical8(got, c.off, c.stride, c.rowBytes, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
+					filterSBVertical8Scalar(want, c.off, c.stride, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
+					simd = avxSBVertical8(got, c.off, c.stride, c.rowBytes, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
 				} else {
-					ws = filterSBHorizontal8Scalar(want, c.off, c.stride, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
-					gs, simd = avxSBHorizontal8(got, c.off, c.stride, c.rowBytes, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
+					filterSBHorizontal8Scalar(want, c.off, c.stride, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
+					simd = avxSBHorizontal8(got, c.off, c.stride, c.rowBytes, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
 				}
 				if simd == 0 {
 					t.Fatalf("vertical=%v luma=%v s=%d: no group took the AVX2 kernel", vertical, luma, s)
 				}
-				if ws != gs || !bytes.Equal(got, want) {
+				if !bytes.Equal(got, want) {
 					t.Fatalf("vertical=%v luma=%v s=%d: AVX2 differs from the reference", vertical, luma, s)
 				}
 			}
@@ -93,7 +92,6 @@ func TestAMD64LPFSBMatchesScalar(t *testing.T) {
 		vm := sbTestMasks(rng, luma, units)
 		want := append([]byte(nil), pix...)
 		got := append([]byte(nil), pix...)
-		var ws, gs SBStats
 		var simd int
 		if rng.Intn(2) == 0 {
 			x := 4 * (2 + rng.Intn(w/4-4))
@@ -103,8 +101,8 @@ func TestAMD64LPFSBMatchesScalar(t *testing.T) {
 			y0 := 4 * rng.Intn(h/4-units+1)
 			off := y0*w + x
 			lvlOff := (y0/4)*lvlStride + x/4
-			ws = filterSBVertical8Scalar(want, off, w, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-			gs, simd = avxSBVertical8(got, off, w, w-x, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			filterSBVertical8Scalar(want, off, w, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			simd = avxSBVertical8(got, off, w, w-x, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 		} else {
 			y := 4 * (2 + rng.Intn(h/4-4))
 			if vm[2] != 0 {
@@ -113,13 +111,10 @@ func TestAMD64LPFSBMatchesScalar(t *testing.T) {
 			x0 := 4 * rng.Intn(w/4-units+1)
 			off := y*w + x0
 			lvlOff := (y/4)*lvlStride + x0/4
-			ws = filterSBHorizontal8Scalar(want, off, w, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-			gs, simd = avxSBHorizontal8(got, off, w, w-x0, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			filterSBHorizontal8Scalar(want, off, w, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			simd = avxSBHorizontal8(got, off, w, w-x0, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 		}
 		simdGroups += simd
-		if ws != gs {
-			t.Fatalf("iter %d: stats %+v, want %+v", iter, gs, ws)
-		}
 		if !bytes.Equal(got, want) {
 			for i := range got {
 				if got[i] != want[i] {

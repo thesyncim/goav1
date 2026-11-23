@@ -155,16 +155,12 @@ func TestFilterSB16CheckasmMatchesScalar(t *testing.T) {
 					}
 					want := append([]byte(nil), c.pix...)
 					got := append([]byte(nil), c.pix...)
-					var ws, gs SBStats
 					if vertical {
-						ws = filterSBVertical16Scalar(want, c.off, c.stride, c.bitDepth, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
-						gs = FilterSBVertical16(got, c.off, c.stride, c.rowBytes, c.bitDepth, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
+						filterSBVertical16Scalar(want, c.off, c.stride, c.bitDepth, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
+						FilterSBVertical16(got, c.off, c.stride, c.rowBytes, c.bitDepth, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
 					} else {
-						ws = filterSBHorizontal16Scalar(want, c.off, c.stride, c.bitDepth, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
-						gs = FilterSBHorizontal16(got, c.off, c.stride, c.rowBytes, c.bitDepth, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
-					}
-					if ws != gs {
-						t.Fatalf("seed %d vertical=%v luma=%v s=%d: stats %+v, want %+v", seed, vertical, luma, s, gs, ws)
+						filterSBHorizontal16Scalar(want, c.off, c.stride, c.bitDepth, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
+						FilterSBHorizontal16(got, c.off, c.stride, c.rowBytes, c.bitDepth, vm, luma, lvl, c.lvlOff, c.lvlStride, comp, &c.lut)
 					}
 					if !bytes.Equal(got, want) {
 						t.Fatalf("seed %d vertical=%v luma=%v s=%d bd=%d: pixels differ", seed, vertical, luma, s, c.bitDepth)

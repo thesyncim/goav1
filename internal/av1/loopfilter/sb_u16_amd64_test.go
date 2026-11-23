@@ -34,19 +34,18 @@ func TestAMD64LPFSB16Dispatch(t *testing.T) {
 				c := newCheckasmSB16Case(int64(77+s), vertical, luma, s)
 				want := append([]byte(nil), c.pix...)
 				got := append([]byte(nil), c.pix...)
-				var ws, gs SBStats
 				var simd int
 				if vertical {
-					ws = filterSBVertical16Scalar(want, c.off, c.stride, c.bitDepth, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
-					gs, simd = avx16SBVertical(got, c.off, c.stride, c.rowBytes, c.bitDepth, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
+					filterSBVertical16Scalar(want, c.off, c.stride, c.bitDepth, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
+					simd = avx16SBVertical(got, c.off, c.stride, c.rowBytes, c.bitDepth, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
 				} else {
-					ws = filterSBHorizontal16Scalar(want, c.off, c.stride, c.bitDepth, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
-					gs, simd = avx16SBHorizontal(got, c.off, c.stride, c.rowBytes, c.bitDepth, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
+					filterSBHorizontal16Scalar(want, c.off, c.stride, c.bitDepth, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
+					simd = avx16SBHorizontal(got, c.off, c.stride, c.rowBytes, c.bitDepth, c.vm, luma, c.lvl, c.lvlOff, c.lvlStride, 0, &c.lut)
 				}
 				if simd == 0 {
 					t.Fatalf("vertical=%v luma=%v s=%d: no group took the AVX2 kernel", vertical, luma, s)
 				}
-				if ws != gs || !bytes.Equal(got, want) {
+				if !bytes.Equal(got, want) {
 					t.Fatalf("vertical=%v luma=%v s=%d: AVX2 differs from the reference", vertical, luma, s)
 				}
 			}
@@ -79,7 +78,6 @@ func TestAMD64LPFSB16MatchesScalar(t *testing.T) {
 		vm := sbTestMasks(rng, luma, units)
 		want := append([]byte(nil), pix...)
 		got := append([]byte(nil), pix...)
-		var ws, gs SBStats
 		var simd int
 		if rng.Intn(2) == 0 {
 			x := 4 * (1 + rng.Intn(w/4-1))
@@ -89,8 +87,8 @@ func TestAMD64LPFSB16MatchesScalar(t *testing.T) {
 			y0 := 4 * rng.Intn(h/4-units+1)
 			off := y0*stride + 2*x
 			lvlOff := (y0/4)*lvlStride + x/4
-			ws = filterSBVertical16Scalar(want, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-			gs, simd = avx16SBVertical(got, off, stride, 2*(w-x), bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			filterSBVertical16Scalar(want, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			simd = avx16SBVertical(got, off, stride, 2*(w-x), bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 		} else {
 			y := 4 * (1 + rng.Intn(h/4-1))
 			if vm[2] != 0 {
@@ -99,13 +97,10 @@ func TestAMD64LPFSB16MatchesScalar(t *testing.T) {
 			x0 := 4 * rng.Intn(w/4-units+1)
 			off := y*stride + 2*x0
 			lvlOff := (y/4)*lvlStride + x0/4
-			ws = filterSBHorizontal16Scalar(want, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-			gs, simd = avx16SBHorizontal(got, off, stride, 2*(w-x0), bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			filterSBHorizontal16Scalar(want, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			simd = avx16SBHorizontal(got, off, stride, 2*(w-x0), bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 		}
 		simdGroups += simd
-		if ws != gs {
-			t.Fatalf("iter %d: stats %+v, want %+v", iter, gs, ws)
-		}
 		if !bytes.Equal(got, want) {
 			for i := 0; i < len(got); i += 2 {
 				if got[i] != want[i] || got[i+1] != want[i+1] {

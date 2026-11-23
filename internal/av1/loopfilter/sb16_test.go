@@ -73,7 +73,6 @@ func TestFilterSB16MatchesScalar(t *testing.T) {
 		vertical := rng.Intn(2) == 0
 		want := append([]byte(nil), pix...)
 		got := append([]byte(nil), pix...)
-		var ws, gs SBStats
 		if vertical {
 			x := 4 * (1 + rng.Intn(w/4-1))
 			if vm[2] != 0 {
@@ -82,8 +81,8 @@ func TestFilterSB16MatchesScalar(t *testing.T) {
 			y0 := 4 * rng.Intn(h/4-units+1)
 			off := y0*stride + 2*x
 			lvlOff := (y0/4)*lvlStride + x/4
-			ws = filterSBVertical16Scalar(want, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-			gs = FilterSBVertical16(got, off, stride, 2*(w-x), bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			filterSBVertical16Scalar(want, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			FilterSBVertical16(got, off, stride, 2*(w-x), bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 		} else {
 			y := 4 * (1 + rng.Intn(h/4-1))
 			if vm[2] != 0 {
@@ -92,11 +91,8 @@ func TestFilterSB16MatchesScalar(t *testing.T) {
 			x0 := 4 * rng.Intn(w/4-units+1)
 			off := y*stride + 2*x0
 			lvlOff := (y/4)*lvlStride + x0/4
-			ws = filterSBHorizontal16Scalar(want, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-			gs = FilterSBHorizontal16(got, off, stride, 2*(w-x0), bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-		}
-		if ws != gs {
-			t.Fatalf("iter %d: stats %+v, want %+v", iter, gs, ws)
+			filterSBHorizontal16Scalar(want, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			FilterSBHorizontal16(got, off, stride, 2*(w-x0), bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 		}
 		if !bytes.Equal(got, want) {
 			for i := 0; i < len(got); i += 2 {
@@ -210,16 +206,12 @@ func TestFilterSB16TightBuffers(t *testing.T) {
 		lvl := append([][4]uint8(nil), lvlFull[:lvlLen]...)
 		want := append([]byte(nil), full[:pixLen]...)
 		got := append([]byte(nil), full[:pixLen]...)
-		var ws, gs SBStats
 		if vertical {
-			ws = filterSBVertical16Scalar(want, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-			gs = FilterSBVertical16(got, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			filterSBVertical16Scalar(want, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			FilterSBVertical16(got, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 		} else {
-			ws = filterSBHorizontal16Scalar(want, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-			gs = FilterSBHorizontal16(got, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
-		}
-		if ws != gs {
-			t.Fatalf("iter %d: stats %+v, want %+v", iter, gs, ws)
+			filterSBHorizontal16Scalar(want, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
+			FilterSBHorizontal16(got, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, &lut)
 		}
 		if !bytes.Equal(got, want) {
 			t.Fatalf("iter %d vertical=%v luma=%v bd=%d vm=%x: samples differ from the reference", iter, vertical, luma, bitDepth, vm)
