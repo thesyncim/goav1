@@ -21,7 +21,7 @@ var inverseDCT64Col8Impl16 = inverseDCT64Col8Scalar16
 
 // int16ColumnFast is set when a SIMD int16 column kernel is bound. Without one
 // the int16 pipeline would be no faster than (and adds conversion over) the
-// int32 SIMD/asm path, so hasFastInt16Column stays false and the int32 pipeline
+// int32 SIMD path, so hasFastInt16Column stays false and the int32 pipeline
 // is used. GOEXPERIMENT=simd flips it on.
 var int16ColumnFast = false
 

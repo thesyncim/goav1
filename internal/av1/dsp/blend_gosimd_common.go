@@ -8,8 +8,8 @@ package dsp
 
 // Go-native SIMD (simd/archsimd) BlendA64Mask kernels shared by arm64 and amd64.
 // They cover the two vectorised mask layouts (no subsampling and 2x2
-// subsampling) for widths that are a multiple of eight, exactly the shapes the
-// retired assembly served; every other shape routes to blendA64MaskPureGo. The
+// subsampling) for widths that are a multiple of eight; every other shape
+// routes to blendA64MaskPureGo. The
 // per-architecture files provide the row loops (blend_gosimd_{arm64,amd64}.go).
 //
 // Bit-exactness with blendA64MaskPureGo:

@@ -14,8 +14,7 @@ package dsp
 // Shapes: blocks whose width is a multiple of eight run eight samples per
 // vector (sixteen for 8-bit residuals with width a multiple of sixteen), and
 // width four runs two rows per vector. Any other width routes to
-// addResidualPlaneBlockPureGo / addRawTransformPlaneBlockPureGo, as the retired
-// assembly did.
+// addResidualPlaneBlockPureGo / addRawTransformPlaneBlockPureGo.
 //
 // Bit-exactness with the scalar references, for the full input domain:
 //   - the output is clamp(d + r, 0, max) with d the u16 sample (any value) and
