@@ -14,8 +14,57 @@ import (
 // refuses: its layer pools hold one coded size per spatial layer, so streams
 // that change the coded size from frame to frame do not fit.
 var layeredUnsupportedProfileClips = map[string]string{
-	"profile0-420-8bit-resize-random-192x108.ivf":          "layer pool full",
-	"profile0-420-8bit-superres-resize-random-192x108.ivf": "layer pool full",
+	"profile0-420-8bit-resize-random-192x108.ivf": "layer pool full",
+}
+
+// TestLayeredDecoderRejectsSuperResolution pins the layered decoder's other
+// limit: it does not apply super-resolution, and says so instead of returning
+// frames at the coded width. The clip that also resizes every frame is already
+// refused when the decoder is constructed.
+func TestLayeredDecoderRejectsSuperResolution(t *testing.T) {
+	for _, clip := range superResProfileClips {
+		t.Run(clip.file, func(t *testing.T) {
+			ivf, err := os.ReadFile(profileClipPath(clip.file))
+			if err != nil {
+				t.Fatalf("read clip: %v", err)
+			}
+			it, err := av1.NewIVFIterator(ivf)
+			if err != nil {
+				t.Fatalf("NewIVFIterator: %v", err)
+			}
+			var payloads [][]byte
+			for {
+				frame, ok, err := it.Next()
+				if err != nil {
+					t.Fatalf("ivf next: %v", err)
+				}
+				if !ok {
+					break
+				}
+				payloads = append(payloads, frame.Payload)
+			}
+			dec, err := av1.NewLayeredDecoder(payloads)
+			if err != nil {
+				if strings.Contains(clip.file, "resize-random") && strings.Contains(err.Error(), "layer pool full") {
+					return
+				}
+				t.Fatalf("NewLayeredDecoder: %v", err)
+			}
+			defer dec.Close()
+			for {
+				_, ok, err := dec.DecodeNext()
+				if err != nil {
+					if !strings.Contains(err.Error(), "unsupported postfilter") {
+						t.Fatalf("DecodeNext: %v, want an unsupported postfilter error", err)
+					}
+					return
+				}
+				if !ok {
+					t.Fatal("decoded a super-resolution clip without an error")
+				}
+			}
+		})
+	}
 }
 
 // TestLayeredDecoderProfileClipsMatchGolden decodes the vendored profile clips
