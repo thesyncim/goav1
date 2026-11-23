@@ -21,44 +21,6 @@ func tileListOutputFrameFormat(sequence SequenceHeader, geometry internalparser.
 	return frameFormatFromHeaderWidth(sequence, uint32(geometry.OutputFrameWidth), uint32(geometry.OutputFrameHeight), align)
 }
 
-// copyTileListToOutputFrame copies every already-decoded tile-list entry from
-// sources into dst. sources is indexed by TileListEntry.AnchorFrameIdx, matching
-// libaom's external-reference frame table. The function validates every source
-// and destination plane before copying any pixel so malformed frame storage
-// cannot leave dst partially updated.
-//
-// This helper does not decode entry.TileData. Callers use it after decoding the
-// tile payloads against their anchor frames, then copy the decoded tile
-// rectangles into the tile-list output mosaic.
-func copyTileListToOutputFrame(dst *Frame, sources []*Frame, list internalparser.TileList, geometry internalparser.TileListOutputGeometry) error {
-	if list.TileCount() != len(list.Entries) {
-		return internalparser.ErrTileListInvalidTileCount
-	}
-	for i := range list.Entries {
-		src, err := tileListEntrySource(sources, list.Entries[i])
-		if err != nil {
-			return err
-		}
-		if _, err := tileListEntryCopyPreflight(dst, src, list, geometry, i); err != nil {
-			return err
-		}
-	}
-	for i := range list.Entries {
-		src, err := tileListEntrySource(sources, list.Entries[i])
-		if err != nil {
-			return err
-		}
-		regions, err := tileListEntryCopyPreflight(dst, src, list, geometry, i)
-		if err != nil {
-			return err
-		}
-		if err := copyTileListEntryRegions(dst, src, regions); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // copyTileListEntryToOutputFrame copies one already-decoded tile-list entry
 // from src into dst using the source/destination rectangles derived from list
 // and geometry. It is the pixel-copy stage of libaom's
@@ -80,14 +42,6 @@ type tileListEntryCopyRegions struct {
 	luma      internalparser.TileListTileRegion
 	chroma    internalparser.TileListTileRegion
 	hasChroma bool
-}
-
-func tileListEntrySource(sources []*Frame, entry internalparser.TileListEntry) (*Frame, error) {
-	index := int(entry.AnchorFrameIdx)
-	if index < 0 || index >= len(sources) || sources[index] == nil {
-		return nil, internalparser.ErrTileListInvalidAnchorIndex
-	}
-	return sources[index], nil
 }
 
 func tileListEntryCopyPreflight(dst *Frame, src *Frame, list internalparser.TileList, geometry internalparser.TileListOutputGeometry, entryIndex int) (tileListEntryCopyRegions, error) {

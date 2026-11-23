@@ -2259,7 +2259,7 @@ func EncoderWebRTCRTCPCompoundPacketsReceiverEstimatedMaximumBitrate(
 
 // EncoderWebRTCApplyReceiverEstimatedMaximumBitrate applies one REMB bitrate
 // estimate to config's WebRTC target bitrate fields and returns a normalized
-// config suitable for RTCEncoder.SetConfig or webRTCEncoder.SetConfig. The
+// config suitable for RTCEncoder.SetConfig. The
 // estimate is rounded up to kbps, clamped by configured min/max bitrate limits,
 // and distributed across active spatial layers in proportion to their current
 // targets. Rate-control mode, framerate, scalability, and keyframe policy are

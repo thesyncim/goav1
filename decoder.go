@@ -34,7 +34,6 @@ package goav1
 
 import (
 	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
-	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
 	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
@@ -54,20 +53,4 @@ var (
 
 func planDecoderTileWorkPtr(event *internaldecoder.Event, workers int, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch) (internaldecoder.TileWorkPlan, error) {
 	return internaldecoder.PlanTileWorkPtr(event, workers, spans, jobs, batches)
-}
-
-// runDecoderFrameWorkEventWithContext drives one decoder event through the
-// caller-owned DecoderFrameWorkState, performing surface acquisition,
-// reference resolution, tile-work dispatch, and surface release in one call.
-// It returns the event result describing what happened (frame completed,
-// dropped, in flight).
-func runDecoderFrameWorkEventWithContext(state *internaldecoder.FrameWorkState, refs *internaldecoder.SurfaceReferences, framePool *internalframe.Pool, sequence SequenceHeader, event *internaldecoder.Event, align int, referenceSurfaces []int, referenceFrames []*Frame, workers int, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch, releases []int, workerPool *internalthreading.Pool, fn internaldecoder.FrameWorkBatchFunc) (internaldecoder.FrameWorkEventResult, error) {
-	return state.RunEventWithContext(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases, workerPool, fn)
-}
-
-// runDecoderFrameWorkEventWithContextAndPostFilter is
-// runDecoderFrameWorkEventWithContext with an additional post-filter
-// callback invoked once per completed frame.
-func runDecoderFrameWorkEventWithContextAndPostFilter(state *internaldecoder.FrameWorkState, refs *internaldecoder.SurfaceReferences, framePool *internalframe.Pool, sequence SequenceHeader, event *internaldecoder.Event, align int, referenceSurfaces []int, referenceFrames []*Frame, workers int, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch, releases []int, workerPool *internalthreading.Pool, fn internaldecoder.FrameWorkBatchFunc, post internaldecoder.FrameWorkPostFilterFunc) (internaldecoder.FrameWorkEventResult, error) {
-	return state.RunEventWithContextAndPostFilter(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases, workerPool, fn, post)
 }

@@ -43,13 +43,6 @@ func framePoolRequiredSize(format FrameFormat, count int) (FrameLayout, int, err
 	return layout, layout.Size * count, nil
 }
 
-// frameFormatFromHeaders is an alias for frameCodedFormatFromHeaders kept for
-// callers that target the coded-pixel surface and do not need to distinguish
-// the coded and upscaled output formats.
-func frameFormatFromHeaders(sequence SequenceHeader, size FrameSize, align int) (FrameFormat, error) {
-	return frameCodedFormatFromHeaders(sequence, size, align)
-}
-
 // frameCodedFormatFromHeaders returns the FrameFormat sized to the coded
 // (pre-super-res) frame width and the frame height taken from size, using the
 // bit depth and chroma layout from sequence. align is propagated into the
@@ -91,12 +84,4 @@ func frameFormatFromHeaderWidth(sequence SequenceHeader, width uint32, height ui
 		SBSizeLog2:   sbSizeLog2,
 		Align:        align,
 	}, nil
-}
-
-// framePoolFormatFromSequence returns the FrameFormat for frame-pool slots
-// that fit every frame of the sequence: the maximum frame size from the
-// sequence header with its bit depth and chroma layout. A pool bound with it
-// acquires each frame at that frame's own size (FramePool.AcquireFormat).
-func framePoolFormatFromSequence(sequence SequenceHeader, align int) (FrameFormat, error) {
-	return frameFormatFromHeaderWidth(sequence, sequence.MaxFrameWidth, sequence.MaxFrameHeight, align)
 }

@@ -7,7 +7,6 @@ import (
 	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
 	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
-	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 func TestPublicDecoderFrameLayerPoolProviderAndReleaser(t *testing.T) {
@@ -124,57 +123,6 @@ func TestPublicDecoderAcquireLayerFrameSurface(t *testing.T) {
 	}
 	if got := internaldecoder.LayerPoolGlobalSurfaceID(&layerPool, sub1, local1); got != id1 {
 		t.Fatalf("layer1 global id=%d want %d", got, id1)
-	}
-}
-
-func TestPublicDecoderTemporalMotionReferenceHelpers(t *testing.T) {
-	sequence := SequenceHeader{
-		ColorConfig: internalparser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true},
-	}
-	size := FrameSize{CodedWidth: 64, Height: 64, UpscaledWidth: 64}
-	_, _, length, err := decoderFrameWorkReferenceMVFrameShape(sequence, size)
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries := make([]internaltile.ReferenceMVEntry, length)
-	mvFrame, err := bindDecoderFrameWorkReferenceMVFrame(sequence, size, entries)
-	if err != nil {
-		t.Fatal(err)
-	}
-	event := internaldecoder.Event{
-		Kind:      internaldecoder.EventFrame,
-		FrameSize: size,
-		TileGroup: internalparser.TileGroup{Final: true},
-		FrameHeader: internalparser.FrameHeaderPrefix{
-			OrderHint: 9,
-			FrameType: internalparser.FrameTypeKey,
-		},
-	}
-	store := make([]internaltile.TemporalMotionReferenceFrame, 3)
-	if err := internaldecoder.PublishTemporalMotionReference(&event, 1, &mvFrame, store); err != nil {
-		t.Fatalf("PublishDecoderTemporalMotionReference: %v", err)
-	}
-	var dst [1]internaltile.TemporalMotionReferenceFrame
-	count, err := internaldecoder.ResolveTemporalMotionReferences([]int{1}, store, dst[:])
-	if err != nil {
-		t.Fatalf("ResolveDecoderTemporalMotionReferences: %v", err)
-	}
-	if count != 1 || dst[0].Frame != &mvFrame || dst[0].OrderHint != 9 || !dst[0].IntraOnly {
-		t.Fatalf("resolved=%+v count=%d", dst[0], count)
-	}
-
-	provider := internaldecoder.TemporalMotionReferenceProviderFunc(func(id int) (internaltile.TemporalMotionReferenceFrame, error) {
-		if id != 256 {
-			return internaltile.TemporalMotionReferenceFrame{}, internaldecoder.ErrInvalidSurfaceReference
-		}
-		return store[1], nil
-	})
-	count, err = internaldecoder.ResolveTemporalMotionReferencesWithProvider(provider, []int{256}, dst[:])
-	if err != nil {
-		t.Fatalf("ResolveDecoderTemporalMotionReferencesWithProvider: %v", err)
-	}
-	if count != 1 || dst[0].Frame != &mvFrame {
-		t.Fatalf("provider resolved=%+v count=%d", dst[0], count)
 	}
 }
 

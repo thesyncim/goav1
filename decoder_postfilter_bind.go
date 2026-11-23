@@ -72,33 +72,6 @@ func bindDecoderFrameWorkLoopFilterMasks(sequence SequenceHeader, size FrameSize
 	return batch.BindLoopFilterMasks(masks, levelCache)
 }
 
-// resetDecoderFrameWorkCDEFIndexMap clears indexMap so it can be reused
-// for the next frame's CDEF post-filter pass.
-func resetDecoderFrameWorkCDEFIndexMap(indexMap internaldecoder.FrameWorkCDEFIndexMap) error {
-	return indexMap.Reset()
-}
-
-// markDecoderFrameWorkCDEFIndexMapBlock records the CDEF index for the
-// block visited at visit, using the active frame's cdef parameters. It
-// is invoked from the block-loop visitor during reconstruction.
-func markDecoderFrameWorkCDEFIndexMapBlock(indexMap internaldecoder.FrameWorkCDEFIndexMap, cdef internalparser.CDEFParams, visit internaltile.BlockLoopVisit) error {
-	return indexMap.MarkBlock(cdef, visit)
-}
-
-// resetDecoderFrameWorkLoopFilterMap clears filterMap so it can be
-// reused for the next frame's loop-filter post-filter pass.
-func resetDecoderFrameWorkLoopFilterMap(filterMap internaldecoder.FrameWorkLoopFilterMap) error {
-	return filterMap.Reset()
-}
-
-// markDecoderFrameWorkLoopFilterMapBlock records the per-block
-// loop-filter metadata for the block visited at visit, drawing the
-// delta-loopfilter state from state. It is invoked from the block-loop
-// visitor during reconstruction.
-func markDecoderFrameWorkLoopFilterMapBlock(filterMap internaldecoder.FrameWorkLoopFilterMap, visit internaltile.BlockLoopVisit, state *internaltile.DecodeState) error {
-	return filterMap.MarkBlock(visit, state)
-}
-
 // decoderFrameWorkPostFilterRequestBuffers groups caller-owned side data and
 // scratch slices used to bind a full postfilter request.
 type decoderFrameWorkPostFilterRequestBuffers struct {
@@ -277,20 +250,6 @@ type decoderFrameWorkPostFilterOutputProvider interface {
 	PostFilterOutput() (*Frame, bool)
 }
 
-// decoderFrameWorkCallerPostFilterScratchRunner binds caller-owned full
-// postfilter request views from typed scratch at final-frame callback time. It
-// allows superres to switch Context.Output to detached caller-owned storage.
-type decoderFrameWorkCallerPostFilterScratchRunner struct {
-	Scratch              decoderFrameWorkPostFilterRequestScratch
-	RestorationOptimized bool
-	SuperResOutput       Frame
-
-	Size    internaldecoder.FrameWorkPostFilterScratchSize
-	Request internaldecoder.FrameWorkPostFilterRequest
-	Context internaldecoder.FrameWorkPostFilterContext
-	Result  internaldecoder.FrameWorkCallerPostFilterResult
-}
-
 // ScratchLen reports the exact scratch size required for ctx using side data
 // carried by the context.
 func (r *decoderFrameWorkSupportedPostFilterScratchRunner) ScratchLen(ctx internaldecoder.FrameWorkPostFilterContext) (internaldecoder.FrameWorkPostFilterScratchSize, error) {
@@ -420,9 +379,8 @@ func (r *decoderFrameWorkSupportedPostFilterScratchRunner) PostFilterOutput() (*
 // frame-pool references. Each Apply computes the exact scratch the supported
 // post-filter chain (loop filter, CDEF, loop restoration, and display-only film
 // grain) needs for the completed frame, grows its caller-owned arena when a
-// frame needs more than any prior frame, then applies the chain. Super-res
-// output uses detached caller-owned storage and is handled by
-// decoderFrameWorkReusableCallerPostFilterRunner. This type implements
+// frame needs more than any prior frame, then applies the chain. This type
+// implements
 // DecoderFrameWorkPostFilterRunner and
 // decoderFrameWorkPostFilterOutputProvider, so it can be passed directly to
 // RunLowOverheadIntoWithPostFilterRunner and the event runner will route the
@@ -444,18 +402,6 @@ type decoderFrameWorkReusableSupportedPostFilterRunner struct {
 	Parallel *internaldecoder.FrameWorkPostFilterParallel
 
 	runner decoderFrameWorkSupportedPostFilterScratchRunner
-	size   decoderFrameWorkPostFilterRequestScratchSize
-}
-
-// decoderFrameWorkReusableCallerPostFilterRunner is a self-sizing runner for
-// the caller-owned full postfilter chain. It permits super-res to return a
-// detached display frame in caller-owned scratch, so it is appropriate for
-// output/display integrations that can keep that scratch alive.
-type decoderFrameWorkReusableCallerPostFilterRunner struct {
-	// RestorationOptimized selects the optimized loop-restoration apply path.
-	RestorationOptimized bool
-
-	runner decoderFrameWorkCallerPostFilterScratchRunner
 	size   decoderFrameWorkPostFilterRequestScratchSize
 }
 
@@ -503,55 +449,6 @@ func decoderFrameWorkPostFilterArenaTooSmall(s decoderFrameWorkPostFilterRequest
 		len(s.Int32Scratch) < arena.Int32Scratch
 }
 
-func (r *decoderFrameWorkReusableCallerPostFilterRunner) decoderFrameWorkReusablePostFilterArenaTooSmall(arena decoderFrameWorkPostFilterRequestScratchSize) bool {
-	return decoderFrameWorkPostFilterArenaTooSmall(r.runner.Scratch, arena)
-}
-
-func (r *decoderFrameWorkReusableCallerPostFilterRunner) ensureScratch(ctx internaldecoder.FrameWorkPostFilterContext) (internaldecoder.FrameWorkPostFilterScratchSize, bool, error) {
-	byteScratchLen := len(r.runner.Scratch.ByteScratch)
-	exact, err := r.runner.ScratchLen(ctx)
-	if err != nil {
-		return internaldecoder.FrameWorkPostFilterScratchSize{}, false, err
-	}
-	superResBootstrap := exact.SuperRes.OutputFrame != 0 && byteScratchLen < exact.SuperRes.OutputFrame
-	arena := decoderFrameWorkPostFilterRequestScratchLen(exact)
-	if r.decoderFrameWorkReusablePostFilterArenaTooSmall(arena) {
-		r.size = r.size.Max(arena)
-		r.runner.Scratch = decoderFrameWorkReusablePostFilterScratch(r.size)
-	}
-	return exact, superResBootstrap, nil
-}
-
-// Apply sizes scratch for ctx, grows the caller-owned arena if needed, and runs
-// the full caller postfilter chain. Super-res sizing is two-pass: first the
-// output frame backing is allocated, then the post-super-res tail scratch is
-// measured against the detached output view.
-func (r *decoderFrameWorkReusableCallerPostFilterRunner) Apply(ctx internaldecoder.FrameWorkPostFilterContext) error {
-	if r == nil {
-		return internaldecoder.ErrInvalidFrameWorkState
-	}
-	r.runner.RestorationOptimized = r.RestorationOptimized
-	exact, superResBootstrap, err := r.ensureScratch(ctx)
-	if err != nil {
-		return err
-	}
-	if superResBootstrap {
-		exact, _, err = r.ensureScratch(ctx)
-		if err != nil {
-			return err
-		}
-	}
-	return r.runner.applyWithScratchSize(ctx, exact)
-}
-
-// PostFilterOutput returns the final display output after Apply.
-func (r *decoderFrameWorkReusableCallerPostFilterRunner) PostFilterOutput() (*Frame, bool) {
-	if r == nil {
-		return nil, false
-	}
-	return r.runner.PostFilterOutput()
-}
-
 func decoderFrameWorkReusablePostFilterScratch(size decoderFrameWorkPostFilterRequestScratchSize) decoderFrameWorkPostFilterRequestScratch {
 	return decoderFrameWorkPostFilterRequestScratch{
 		LoopFilterEdges:    make([]internaldecoder.FrameWorkLoopFilterPostFilterEdge, size.LoopFilterEdges),
@@ -563,78 +460,6 @@ func decoderFrameWorkReusablePostFilterScratch(size decoderFrameWorkPostFilterRe
 		Int16Scratch:       make([]int16, size.Int16Scratch),
 		Int32Scratch:       make([]int32, size.Int32Scratch),
 	}
-}
-
-// ScratchLen reports caller-owned scratch for ctx. When superres is active,
-// the first call may only report pre/post-superres bootstrap scratch; after
-// Scratch.ByteScratch is sized for the superres output frame, this reports the
-// full tail scratch for loop restoration and film grain.
-func (r *decoderFrameWorkCallerPostFilterScratchRunner) ScratchLen(ctx internaldecoder.FrameWorkPostFilterContext) (internaldecoder.FrameWorkPostFilterScratchSize, error) {
-	if r == nil {
-		return internaldecoder.FrameWorkPostFilterScratchSize{}, internaldecoder.ErrInvalidFrameWorkState
-	}
-	req := internaldecoder.FrameWorkPostFilterRequest{
-		Restoration: internaldecoder.FrameWorkRestorationPostFilterRequest{Optimized: r.RestorationOptimized},
-	}
-	size, err := ctx.CallerPostFilterScratchLen(req)
-	if err != nil {
-		return internaldecoder.FrameWorkPostFilterScratchSize{}, err
-	}
-	if size.SuperRes.OutputFrame != 0 && len(r.Scratch.ByteScratch) >= size.SuperRes.OutputFrame {
-		req.SuperRes.OutputFrame = r.Scratch.ByteScratch[:size.SuperRes.OutputFrame]
-		req.SuperRes.OutputView = &r.SuperResOutput
-		size, err = ctx.CallerPostFilterScratchLen(req)
-		if err != nil {
-			return internaldecoder.FrameWorkPostFilterScratchSize{}, err
-		}
-	}
-	return size, nil
-}
-
-// Apply binds caller-owned request views from Scratch and runs the full
-// postfilter chain, allowing Context.Output to become detached scratch.
-func (r *decoderFrameWorkCallerPostFilterScratchRunner) Apply(ctx internaldecoder.FrameWorkPostFilterContext) error {
-	if r == nil {
-		return internaldecoder.ErrInvalidFrameWorkState
-	}
-	size, err := r.ScratchLen(ctx)
-	if err != nil {
-		return err
-	}
-	return r.applyWithScratchSize(ctx, size)
-}
-
-func (r *decoderFrameWorkCallerPostFilterScratchRunner) applyWithScratchSize(ctx internaldecoder.FrameWorkPostFilterContext, size internaldecoder.FrameWorkPostFilterScratchSize) error {
-	if r == nil {
-		return internaldecoder.ErrInvalidFrameWorkState
-	}
-	side := decoderFrameWorkPostFilterRequestSideDataFromContext(ctx)
-	side.RestorationOptimized = r.RestorationOptimized
-	req, err := bindDecoderFrameWorkPostFilterRequestFromScratch(size, side, r.Scratch)
-	if err != nil {
-		return err
-	}
-	req.SuperRes.OutputView = &r.SuperResOutput
-	next, result, err := ctx.ApplyCallerPostFilters(req)
-	if err != nil {
-		return err
-	}
-	if err := next.RequireNoRemainingPostFilters(); err != nil {
-		return err
-	}
-	r.Size = size
-	r.Request = req
-	r.Context = next
-	r.Result = result
-	return nil
-}
-
-// PostFilterOutput returns the final display output after Apply.
-func (r *decoderFrameWorkCallerPostFilterScratchRunner) PostFilterOutput() (*Frame, bool) {
-	if r == nil || r.Context.Output == nil {
-		return nil, false
-	}
-	return r.Context.Output, true
 }
 
 // decoderFrameWorkPostFilterScratchContext builds a header-derived final-frame
@@ -860,19 +685,6 @@ func bindDecoderFrameWorkSideDataWith(sequence SequenceHeader, size FrameSize, c
 	}, nil
 }
 
-// decoderFrameWorkPostFilterSideData projects a decoderFrameWorkSideData
-// value into the lighter decoderFrameWorkPostFilterRequestSideData view
-// consumed by the post-filter binding helpers.
-func decoderFrameWorkPostFilterSideData(side decoderFrameWorkSideData) decoderFrameWorkPostFilterRequestSideData {
-	return decoderFrameWorkPostFilterRequestSideData{
-		LoopFilterMap:             side.LoopFilterMap,
-		LoopFilterTrustedCoverage: true,
-		CDEFIndexMap:              side.CDEFIndexMap,
-		RestorationRecords:        side.RestorationFrameBuffers.Records,
-		RestorationBoundaries:     side.RestorationFrameBuffers.Boundaries,
-	}
-}
-
 // decoderFrameWorkPostFilterRequestSideDataFromContext extracts postfilter
 // request side-data views attached to a final-frame postfilter callback.
 func decoderFrameWorkPostFilterRequestSideDataFromContext(ctx internaldecoder.FrameWorkPostFilterContext) decoderFrameWorkPostFilterRequestSideData {
@@ -1032,26 +844,10 @@ func bindDecoderFrameWorkPostFilterRequestBuffersFromScratch(size internaldecode
 	return buffers, nil
 }
 
-// bindDecoderFrameWorkPostFilterRequestBuffersFromSideData slices flat typed
-// arenas into postfilter buffers using frame-work side data directly.
-func bindDecoderFrameWorkPostFilterRequestBuffersFromSideData(size internaldecoder.FrameWorkPostFilterScratchSize, side decoderFrameWorkSideData, scratch decoderFrameWorkPostFilterRequestScratch) (decoderFrameWorkPostFilterRequestBuffers, error) {
-	return bindDecoderFrameWorkPostFilterRequestBuffersFromScratch(size, decoderFrameWorkPostFilterSideData(side), scratch)
-}
-
 // bindDecoderFrameWorkPostFilterRequestFromScratch binds flat typed arenas
 // directly into a full postfilter request.
 func bindDecoderFrameWorkPostFilterRequestFromScratch(size internaldecoder.FrameWorkPostFilterScratchSize, side decoderFrameWorkPostFilterRequestSideData, scratch decoderFrameWorkPostFilterRequestScratch) (internaldecoder.FrameWorkPostFilterRequest, error) {
 	buffers, err := bindDecoderFrameWorkPostFilterRequestBuffersFromScratch(size, side, scratch)
-	if err != nil {
-		return internaldecoder.FrameWorkPostFilterRequest{}, err
-	}
-	return bindDecoderFrameWorkPostFilterRequest(size, buffers)
-}
-
-// bindDecoderFrameWorkPostFilterRequestFromSideData binds flat typed arenas
-// and frame-work side data directly into a full postfilter request.
-func bindDecoderFrameWorkPostFilterRequestFromSideData(size internaldecoder.FrameWorkPostFilterScratchSize, side decoderFrameWorkSideData, scratch decoderFrameWorkPostFilterRequestScratch) (internaldecoder.FrameWorkPostFilterRequest, error) {
-	buffers, err := bindDecoderFrameWorkPostFilterRequestBuffersFromSideData(size, side, scratch)
 	if err != nil {
 		return internaldecoder.FrameWorkPostFilterRequest{}, err
 	}

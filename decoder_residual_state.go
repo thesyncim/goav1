@@ -1,30 +1,21 @@
 package goav1
 
-// This file exposes the caller-owned residual-decode state and the helpers
-// that drive coefficient decode, block reconstruction, and the per-job
+// This file holds the caller-owned residual-decode state and the helpers
+// that drive coefficient decode, block reconstruction, and the per-batch
 // residual runner.
 //
 // The helpers fall into these groups:
 //
-//   - decoderFrameWorkResidualScratchLen / MaxScratchLen /
-//     MaxFrameScratchLen / BatchResidualScratchLen /
-//     BatchResidualRunnerScratchLen: shape helpers that report the
-//     caller-owned scratch lengths required for per-block, per-job, and
+//   - decoderFrameWorkResidualMaxScratchLen / MaxFrameScratchLen /
+//     BatchResidualScratchLen / BatchResidualRunnerScratchLen: shape helpers
+//     that report the caller-owned scratch lengths required for per-job and
 //     per-batch residual processing.
-//   - decoderFrameWorkBlockQuantizer / BlockQIndex /
-//     BlockCoeffPlanePosition: per-block helpers that resolve the
-//     quantizer, q-index, and plane position for one block.
-//   - initDecoderFrameWorkTileResidualCDFStorage{,Default} /
-//     decoderFrameWorkTileResidualCDFsFromStorage: caller-owned CDF
-//     storage and binding.
-//   - initDecoderFrameWorkJobDecodeState /
-//     retainDecoderFrameWorkTileResidualCDFStorage: per-job CDF lifecycle.
+//   - initDecoderFrameWorkTileResidualCDFStorage /
+//     decoderFrameWorkTileResidualCDFsFromStorage: caller-owned CDF storage
+//     and binding.
 //   - initDecoderFrameWorkTileRestorationRequestReferences /
 //     decoderFrameWorkJobBlockLoopContextRootColumns /
-//     bindTileBlockLoopContextCarrier / decoderFrameWorkJobBlockLoopRequest:
-//     per-job block-loop setup.
-//   - DecodeAndReconstruct /
-//     DecodeAndRetain*: the residual decode + reconstruct pipeline.
+//     bindTileBlockLoopContextCarrier: per-job block-loop setup.
 //   - decoderFrameWorkBatchResidualRunner and its
 //     bindDecoderFrameWorkBatchResidualRunner, Run, SetSideData,
 //     ResetStats, TotalStats helpers: the bounded per-batch executor that
@@ -34,26 +25,9 @@ import (
 	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
 	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
 	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
-	internalreconstruct "github.com/thesyncim/goav1/internal/av1/reconstruct"
 	internalthreading "github.com/thesyncim/goav1/internal/av1/threading"
 	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
-	internaltransform "github.com/thesyncim/goav1/internal/av1/transform"
 )
-
-// decoderFrameWorkResidualScratchLen reports the int32 and int16 residual
-// scratch lengths required to reconstruct one block at (size, typ) for the
-// given quantizer context.
-func decoderFrameWorkResidualScratchLen(batch internaldecoder.FrameWorkBatch, currentQIndex uint8, segmentID uint8, plane internaldecoder.FrameWorkPlane, size internaltransform.Size, typ internaltransform.Type) (int32Len int, int16Len int, err error) {
-	_, lossless, err := batch.BlockQuantizer(currentQIndex, segmentID, plane)
-	if err != nil {
-		return 0, 0, err
-	}
-	return internalreconstruct.ScratchLen(internalreconstruct.Block{
-		Size:      size,
-		Transform: typ,
-		Lossless:  lossless,
-	})
-}
 
 // decoderFrameWorkResidualMaxScratchLen reports the worst-case int32 and
 // int16 residual scratch lengths needed for any block in the given
@@ -64,13 +38,6 @@ func decoderFrameWorkResidualMaxScratchLen(batch internaldecoder.FrameWorkBatch,
 		return 0, 0, err
 	}
 	return reconstructBlockMaxScratchLen(lossless)
-}
-
-// initDecoderFrameWorkTileResidualCDFStorageDefault initializes storage
-// with the AV1 default CDF tables for baseQIndex. Use it once before
-// decoding the first frame of a coded video sequence.
-func initDecoderFrameWorkTileResidualCDFStorageDefault(storage *internalthreading.FrameWorkTileResidualCDFStorage, baseQIndex uint8) error {
-	return storage.InitDefault(baseQIndex)
 }
 
 // decoderFrameWorkTileResidualCDFsFromStorage returns the CDF view
@@ -84,21 +51,6 @@ func decoderFrameWorkTileResidualCDFsFromStorage(storage *internalthreading.Fram
 // is keyframe / has no primary reference) using the batch context.
 func initDecoderFrameWorkTileResidualCDFStorage(batch internaldecoder.FrameWorkBatch, storage *internalthreading.FrameWorkTileResidualCDFStorage) error {
 	return batch.InitTileResidualCDFStorage(storage)
-}
-
-// initDecoderFrameWorkJobDecodeState populates state from the per-job
-// metadata in batch (tile payload span, entropy reader setup,
-// segmentation/loop-filter cache, CDF retention flag).
-func initDecoderFrameWorkJobDecodeState(batch internaldecoder.FrameWorkBatch, index int, state *internaltile.DecodeState) error {
-	return batch.JobDecodeState(index, state)
-}
-
-// retainDecoderFrameWorkTileResidualCDFStorage copies the adapted CDF
-// state from state into storage when index identifies the
-// context-update tile for the frame. Other jobs leave storage
-// unchanged.
-func retainDecoderFrameWorkTileResidualCDFStorage(batch internaldecoder.FrameWorkBatch, index int, state *internaltile.DecodeState, storage *internalthreading.FrameWorkTileResidualCDFStorage) error {
-	return batch.RetainTileResidualCDFStorage(index, state, storage)
 }
 
 // initDecoderFrameWorkTileRestorationRequestReferences populates the
@@ -132,14 +84,6 @@ func bindTileBlockLoopContextCarrier(rootColumns int, above []internaltile.Block
 	}, nil
 }
 
-// decoderFrameWorkJobBlockLoopRequest builds a TileBlockLoopRequest
-// for one job in batch, wiring the caller-owned segmentation maps,
-// segment-map stride, and block-loop context carrier into the
-// returned request.
-func decoderFrameWorkJobBlockLoopRequest(batch internaldecoder.FrameWorkBatch, index int, currentSegmentMap []uint8, previousSegmentMap []uint8, segmentMapStride uint16, carrier *internaltile.BlockLoopContextCarrier) (internaltile.BlockLoopRequest, error) {
-	return decoderFrameWorkJobBlockLoopRequestPtr(&batch, index, currentSegmentMap, previousSegmentMap, segmentMapStride, carrier)
-}
-
 func decoderFrameWorkJobBlockLoopRequestPtr(batch *internaldecoder.FrameWorkBatch, index int, currentSegmentMap []uint8, previousSegmentMap []uint8, segmentMapStride uint16, carrier *internaltile.BlockLoopContextCarrier) (internaltile.BlockLoopRequest, error) {
 	if batch == nil {
 		return internaltile.BlockLoopRequest{}, internalthreading.ErrInvalidBatch
@@ -163,36 +107,6 @@ func decoderFrameWorkJobBlockLoopRequestPtr(batch *internaldecoder.FrameWorkBatc
 	req.DecodeMotionModes = true
 	req.DecodeCompoundBlend = true
 	return req, nil
-}
-
-// decodeAndReconstructDecoderFrameWorkJobResiduals decodes and
-// reconstructs every residual in one tile job. It uses cdfs as the
-// per-job CDF view and scratch for residual int32/int16 scratch.
-//
-// See also: decodeAndRetainDecoderFrameWorkJobResiduals.
-func decodeAndReconstructDecoderFrameWorkJobResiduals(batch internaldecoder.FrameWorkBatch, index int, state *internaltile.DecodeState, cdfs internalthreading.FrameWorkTileResidualCDFs, scratch *internalthreading.FrameWorkTileResidualScratch, req internalthreading.FrameWorkTileResidualRequest) (internalthreading.FrameWorkTileResidualStats, error) {
-	return batch.DecodeAndReconstructJobResiduals(index, state, cdfs, scratch, req)
-}
-
-// decodeAndRetainDecoderFrameWorkJobResiduals is
-// decodeAndReconstructDecoderFrameWorkJobResiduals with automatic
-// per-job decode-state setup and CDF retention into storage when this
-// job's tile is the context-update tile.
-func decodeAndRetainDecoderFrameWorkJobResiduals(batch internaldecoder.FrameWorkBatch, index int, state *internaltile.DecodeState, storage *internalthreading.FrameWorkTileResidualCDFStorage, scratch *internalthreading.FrameWorkTileResidualScratch, req internalthreading.FrameWorkTileResidualRequest) (internalthreading.FrameWorkTileResidualStats, error) {
-	if storage == nil {
-		return internalthreading.FrameWorkTileResidualStats{}, internalthreading.ErrInvalidBatch
-	}
-	if err := initDecoderFrameWorkJobDecodeState(batch, index, state); err != nil {
-		return internalthreading.FrameWorkTileResidualStats{}, err
-	}
-	stats, err := decodeAndReconstructDecoderFrameWorkJobResiduals(batch, index, state, decoderFrameWorkTileResidualCDFsFromStorage(storage), scratch, req)
-	if err != nil {
-		return stats, err
-	}
-	if err := retainDecoderFrameWorkTileResidualCDFStorage(batch, index, state, storage); err != nil {
-		return stats, err
-	}
-	return stats, nil
 }
 
 // decoderFrameWorkBatchResidualRequest carries caller-owned state for decoding
@@ -672,15 +586,6 @@ func decoderFrameWorkBatchResidualLoopContextAboveLen(batch internaldecoder.Fram
 	return maxRootColumns, nil
 }
 
-// decodeAndRetainDecoderFrameWorkBatchResiduals decodes every job in
-// batch in order, accumulating per-tile statistics and retaining the
-// adapted CDF state for the context-update tile. It is the
-// reusable, lower-level building block underneath
-// decoderFrameWorkBatchResidualRunner.Run.
-func decodeAndRetainDecoderFrameWorkBatchResiduals(batch internaldecoder.FrameWorkBatch, state *internaltile.DecodeState, storage *internalthreading.FrameWorkTileResidualCDFStorage, scratch *internalthreading.FrameWorkTileResidualScratch, req decoderFrameWorkBatchResidualRequest) (internalthreading.FrameWorkTileResidualStats, error) {
-	return decodeAndRetainDecoderFrameWorkBatchResidualsPtr(&batch, state, storage, scratch, req, nil)
-}
-
 func decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch *internaldecoder.FrameWorkBatch, state *internaltile.DecodeState, storage *internalthreading.FrameWorkTileResidualCDFStorage, scratch *internalthreading.FrameWorkTileResidualScratch, req decoderFrameWorkBatchResidualRequest, compact *internalthreading.FrameWorkLoopFilterCompactState) (internalthreading.FrameWorkTileResidualStats, error) {
 	if state == nil || storage == nil || scratch == nil {
 		return internalthreading.FrameWorkTileResidualStats{}, internalthreading.ErrInvalidBatch
@@ -698,8 +603,8 @@ func decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch *internaldecoder.Fra
 		// first tile decodes correctly but every subsequent tile in the same
 		// batch starts from desynced CDFs and produces wrong pixels. The per-job
 		// retain that follows still captures the context_update_tile_id tile's
-		// adapted CDFs (retainDecoderFrameWorkTileResidualCDFStorage copies them
-		// out before the next iteration re-initializes the shared storage).
+		// adapted CDFs (the retain copies them out before the next iteration
+		// re-initializes the shared storage).
 		if i > 0 {
 			if err := batch.InitTileResidualCDFStorage(storage); err != nil {
 				return total, err
