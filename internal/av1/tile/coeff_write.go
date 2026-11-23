@@ -922,19 +922,25 @@ func CountCoefficientsTXB16x16UV2DTrustedArray(cdfs *CoeffCDFs, coeff256 *[256]i
 	}, w.Tell() - base
 }
 
+// EOBUnknown is the eob argument of the trusted-array coefficient writers for
+// a block whose end of block the caller does not know: the writer scans the
+// levels for it. Any other value must be the block's end of block, the one
+// quantize_b reports (one past the largest scan position of a non-zero level).
+const EOBUnknown = -1
+
 // WriteCoefficientsTXB16x16Y2DContextTrustedArray is the pointer-shaped form
 // for real 16x16 luma coding with already-derived coefficient contexts.
-func WriteCoefficientsTXB16x16Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[256]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
-	return writeCoefficientsTXB16x16Plane2DContextTrustedArray(w, cdfs, coeffs, CoeffPlaneY, txbSkipContext, dcSignContext, txCDF, txSymbol)
+func WriteCoefficientsTXB16x16Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[256]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int, eob int) TXBDecodeResult {
+	return writeCoefficientsTXB16x16Plane2DContextTrustedArray(w, cdfs, coeffs, CoeffPlaneY, txbSkipContext, dcSignContext, txCDF, txSymbol, eob)
 }
 
 // WriteCoefficientsTXB16x16UV2DContextTrustedArray is the pointer-shaped form
 // for real 16x16 chroma coding with already-derived coefficient contexts.
-func WriteCoefficientsTXB16x16UV2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[256]int16, txbSkipContext, dcSignContext uint8) TXBDecodeResult {
-	return writeCoefficientsTXB16x16Plane2DContextTrustedArray(w, cdfs, coeffs, CoeffPlaneUV, txbSkipContext, dcSignContext, nil, 0)
+func WriteCoefficientsTXB16x16UV2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[256]int16, txbSkipContext, dcSignContext uint8, eob int) TXBDecodeResult {
+	return writeCoefficientsTXB16x16Plane2DContextTrustedArray(w, cdfs, coeffs, CoeffPlaneUV, txbSkipContext, dcSignContext, nil, 0, eob)
 }
 
-func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeff256 *[256]int16, plane CoeffPlaneType, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
+func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeff256 *[256]int16, plane CoeffPlaneType, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int, eob int) TXBDecodeResult {
 	const (
 		maxEOB     = 256
 		scratchLen = 400
@@ -944,7 +950,9 @@ func writeCoefficientsTXB16x16Plane2DContextTrustedArray(w *entropy.Writer, cdfs
 	)
 	scanHot := &coeffScanHot16x16Y2D
 
-	eob := txbEOB256(coeff256)
+	if eob < 0 {
+		eob = txbEOB256(coeff256)
+	}
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
@@ -1238,34 +1246,34 @@ func countCoefficientsTXB32x32Plane2DTrustedArray(cdfs *CoeffCDFs, coeff1024 *[1
 
 // WriteCoefficientsTXB32x32Y2DContextTrustedArray is the pointer-shaped form
 // for real 32x32 luma coding with already-derived coefficient contexts.
-func WriteCoefficientsTXB32x32Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[1024]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
-	return writeCoefficientsTXB32x32Plane2DContextTrustedArray(w, cdfs, coeffs, CoeffPlaneY, txbSkipContext, dcSignContext, txCDF, txSymbol)
+func WriteCoefficientsTXB32x32Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[1024]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int, eob int) TXBDecodeResult {
+	return writeCoefficientsTXB32x32Plane2DContextTrustedArray(w, cdfs, coeffs, CoeffPlaneY, txbSkipContext, dcSignContext, txCDF, txSymbol, eob)
 }
 
 // WriteCoefficientsTXB32x32Y2DContextTrustedZeroedLevels is the encoder-owned
 // scratch form of WriteCoefficientsTXB32x32Y2DContextTrustedArray. levelsScratch
 // must be zeroed on entry and is restored to zero before return.
-func WriteCoefficientsTXB32x32Y2DContextTrustedZeroedLevels(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[1024]int16, levelsScratch []uint8, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
+func WriteCoefficientsTXB32x32Y2DContextTrustedZeroedLevels(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[1024]int16, levelsScratch []uint8, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int, eob int) TXBDecodeResult {
 	const scratchLen = 1296
 	if len(levelsScratch) < scratchLen {
-		return WriteCoefficientsTXB32x32Y2DContextTrustedArray(w, cdfs, coeffs, txbSkipContext, dcSignContext, txCDF, txSymbol)
+		return WriteCoefficientsTXB32x32Y2DContextTrustedArray(w, cdfs, coeffs, txbSkipContext, dcSignContext, txCDF, txSymbol, eob)
 	}
-	return writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w, cdfs, coeffs, (*[scratchLen]uint8)(levelsScratch[:scratchLen]), true, CoeffPlaneY, txbSkipContext, dcSignContext, txCDF, txSymbol)
+	return writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w, cdfs, coeffs, (*[scratchLen]uint8)(levelsScratch[:scratchLen]), true, CoeffPlaneY, txbSkipContext, dcSignContext, txCDF, txSymbol, eob)
 }
 
 // WriteCoefficientsTXB32x32UV2DContextTrustedArray is the pointer-shaped form
 // for real 32x32 chroma coding with already-derived coefficient contexts.
-func WriteCoefficientsTXB32x32UV2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[1024]int16, txbSkipContext, dcSignContext uint8) TXBDecodeResult {
-	return writeCoefficientsTXB32x32Plane2DContextTrustedArray(w, cdfs, coeffs, CoeffPlaneUV, txbSkipContext, dcSignContext, nil, 0)
+func WriteCoefficientsTXB32x32UV2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[1024]int16, txbSkipContext, dcSignContext uint8, eob int) TXBDecodeResult {
+	return writeCoefficientsTXB32x32Plane2DContextTrustedArray(w, cdfs, coeffs, CoeffPlaneUV, txbSkipContext, dcSignContext, nil, 0, eob)
 }
 
-func writeCoefficientsTXB32x32Plane2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeff1024 *[1024]int16, plane CoeffPlaneType, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
+func writeCoefficientsTXB32x32Plane2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeff1024 *[1024]int16, plane CoeffPlaneType, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int, eob int) TXBDecodeResult {
 	const scratchLen = 1296
 	var levels [scratchLen]uint8
-	return writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w, cdfs, coeff1024, &levels, false, plane, txbSkipContext, dcSignContext, txCDF, txSymbol)
+	return writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w, cdfs, coeff1024, &levels, false, plane, txbSkipContext, dcSignContext, txCDF, txSymbol, eob)
 }
 
-func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer, cdfs *CoeffCDFs, coeff1024 *[1024]int16, levels *[1296]uint8, clearLevels bool, plane CoeffPlaneType, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
+func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer, cdfs *CoeffCDFs, coeff1024 *[1024]int16, levels *[1296]uint8, clearLevels bool, plane CoeffPlaneType, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int, eob int) TXBDecodeResult {
 	const (
 		maxEOB = 1024
 		stride = uint16(36)
@@ -1274,7 +1282,9 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 	)
 	scanHot := &coeffScanHot32x32Y2D
 
-	eob := txbEOB1024(coeff1024)
+	if eob < 0 {
+		eob = txbEOB1024(coeff1024)
+	}
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
@@ -1430,12 +1440,12 @@ func writeCoefficientsTXB32x32Plane2DContextTrustedArrayLevels(w *entropy.Writer
 
 // WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray is the pointer-shaped form
 // for real 4x4 luma coding with a pre-resolved inter tx_type symbol.
-func WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[16]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
-	result, _ := writeCoefficientsTXB4x4Y2DContextTrustedArray(w, cdfs, coeffs, txbSkipContext, dcSignContext, nil, txCDF, txSymbol)
+func WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[16]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int, eob int) TXBDecodeResult {
+	result, _ := writeCoefficientsTXB4x4Y2DContextTrustedArray(w, cdfs, coeffs, txbSkipContext, dcSignContext, nil, txCDF, txSymbol, eob)
 	return result
 }
 
-func writeCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[16]int16, txbSkipContext, dcSignContext uint8, afterSkip func() error, txCDF *entropy.CDF, txSymbol int) (TXBDecodeResult, error) {
+func writeCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[16]int16, txbSkipContext, dcSignContext uint8, afterSkip func() error, txCDF *entropy.CDF, txSymbol int, eob int) (TXBDecodeResult, error) {
 	const (
 		maxEOB = 16
 		stride = uint16(8)
@@ -1444,7 +1454,9 @@ func writeCoefficientsTXB4x4Y2DContextTrustedArray(w *entropy.Writer, cdfs *Coef
 	)
 	scanHot := &coeffScanHot4x4Y2D
 
-	eob := txbEOB16(coeffs)
+	if eob < 0 {
+		eob = txbEOB16(coeffs)
+	}
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
@@ -1714,7 +1726,7 @@ func CountCoefficientsTXB4x4Y2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16)
 
 // WriteCoefficientsTXB4x4UV2DContextTrustedArray is the pointer-shaped form for
 // real 4x4 chroma coding with already-derived coefficient contexts.
-func WriteCoefficientsTXB4x4UV2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[16]int16, txbSkipContext, dcSignContext uint8) TXBDecodeResult {
+func WriteCoefficientsTXB4x4UV2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[16]int16, txbSkipContext, dcSignContext uint8, eob int) TXBDecodeResult {
 	const (
 		maxEOB = 16
 		stride = uint16(8)
@@ -1723,7 +1735,9 @@ func WriteCoefficientsTXB4x4UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 	)
 	scanHot := &coeffScanHot4x4Y2D
 
-	eob := txbEOB16(coeffs)
+	if eob < 0 {
+		eob = txbEOB16(coeffs)
+	}
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
@@ -1987,11 +2001,11 @@ func CountCoefficientsTXB4x4UV2DTrustedArray(cdfs *CoeffCDFs, coeff16 *[16]int16
 
 // WriteCoefficientsTXB8x8Y2DContextTrustedArray is the pointer-shaped form for
 // real 8x8 luma coding with already-derived coefficient contexts.
-func WriteCoefficientsTXB8x8Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[64]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int) TXBDecodeResult {
-	return writeCoefficientsTXB8x8Y2DTrustedArray(w, cdfs, coeffs, txbSkipContext, dcSignContext, txCDF, txSymbol, false)
+func WriteCoefficientsTXB8x8Y2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[64]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int, eob int) TXBDecodeResult {
+	return writeCoefficientsTXB8x8Y2DTrustedArray(w, cdfs, coeffs, txbSkipContext, dcSignContext, txCDF, txSymbol, false, eob)
 }
 
-func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeff64 *[64]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int, restoreTXCDF bool) TXBDecodeResult {
+func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeff64 *[64]int16, txbSkipContext, dcSignContext uint8, txCDF *entropy.CDF, txSymbol int, restoreTXCDF bool, eob int) TXBDecodeResult {
 	const (
 		maxEOB = 64
 		stride = uint16(12)
@@ -2000,7 +2014,9 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 	)
 	scanHot := &coeffScanHot8x8Y2D
 
-	eob := txbEOB64(coeff64)
+	if eob < 0 {
+		eob = txbEOB64(coeff64)
+	}
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {
@@ -2136,11 +2152,11 @@ func writeCoefficientsTXB8x8Y2DTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, 
 
 // WriteCoefficientsTXB8x8UV2DContextTrustedArray is the pointer-shaped form for
 // real 8x8 chroma coding with already-derived coefficient contexts.
-func WriteCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[64]int16, txbSkipContext, dcSignContext uint8) TXBDecodeResult {
-	return writeCoefficientsTXB8x8UV2DContextTrustedArray(w, cdfs, coeffs, txbSkipContext, dcSignContext)
+func WriteCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[64]int16, txbSkipContext, dcSignContext uint8, eob int) TXBDecodeResult {
+	return writeCoefficientsTXB8x8UV2DContextTrustedArray(w, cdfs, coeffs, txbSkipContext, dcSignContext, eob)
 }
 
-func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[64]int16, txbSkipContext, dcSignContext uint8) TXBDecodeResult {
+func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *CoeffCDFs, coeffs *[64]int16, txbSkipContext, dcSignContext uint8, eob int) TXBDecodeResult {
 	const (
 		maxEOB = 64
 		stride = uint16(12)
@@ -2149,7 +2165,9 @@ func writeCoefficientsTXB8x8UV2DContextTrustedArray(w *entropy.Writer, cdfs *Coe
 	)
 	scanHot := &coeffScanHot8x8Y2D
 
-	eob := txbEOB64(coeffs)
+	if eob < 0 {
+		eob = txbEOB64(coeffs)
+	}
 
 	w.WriteBinaryCDFTrusted(&cdfs.TXBSkip[txCtx][txbSkipContext], boolToSym(eob == 0))
 	if eob == 0 {

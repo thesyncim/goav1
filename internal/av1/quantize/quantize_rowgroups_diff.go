@@ -13,14 +13,30 @@ import "math/bits"
 // the encoder's SIMD statistics. Rate is sum((2+bits.Len16(abs(level)))<<9)
 // for nonzero levels, so rate==0 is exactly the all-zero result. This helper
 // never replaces the absolute distortion needed by transform-type trials.
-func TryQuantizeBRowGroupsDiffTrusted(qcoeff []int16, coeff []int32, n int, live uint8, q Quantizer, txScale uint8) (diff, rate int64, handled bool) {
-	if quantizeBRowGroupsDiffImpl == nil {
-		return 0, 0, false
+//
+// eob is the end of block quantize_b reports: one past the largest scan
+// position iscan[pos] of a nonzero level (iscan covers the n*n block).
+func TryQuantizeBRowGroupsDiffTrusted(qcoeff []int16, coeff []int32, n int, live uint8, q Quantizer, txScale uint8, iscan []int16) (diff, rate int64, eob int, handled bool) {
+	if quantizeBRowGroupsDiffImpl == nil || len(iscan) < n*n {
+		return 0, 0, 0, false
 	}
-	return quantizeBRowGroupsDiffImpl(qcoeff, coeff, n, live, q, txScale)
+	return quantizeBRowGroupsDiffImpl(qcoeff, coeff, n, live, q, txScale, iscan)
 }
 
-var quantizeBRowGroupsDiffImpl func([]int16, []int32, int, uint8, Quantizer, uint8) (int64, int64, bool)
+var quantizeBRowGroupsDiffImpl func([]int16, []int32, int, uint8, Quantizer, uint8, []int16) (int64, int64, int, bool)
+
+// rowGroupDCEOB folds the DC level into an end of block taken over the AC
+// rule's levels: the DC sits at scan position 0, so it decides the result
+// only when no AC level survived.
+func rowGroupDCEOB(eob int, dc int16) int {
+	if eob > 1 {
+		return eob
+	}
+	if dc != 0 {
+		return 1
+	}
+	return 0
+}
 
 // rowGroupLevelRate is one level's coarse rate: 2 + bits.Len16(|v|) when
 // non-zero.

@@ -45,23 +45,31 @@ func quantizeFPBlockSIMD(qcoeff []int16, coeff []int32, n int, q Quantizer, txSc
 //   - invert_quant's power-of-two multiply folds into the right shift by
 //     l-txScale, which is exact because l >= txScale is required here.
 func quantizeBBlockSIMD(qcoeff []int16, coeff []int32, n int, q Quantizer, txScale uint8) bool {
+	_, ok := quantizeBBlockEOBSIMD(qcoeff, coeff, n, q, txScale, nil)
+	return ok
+}
+
+// quantizeBBlockEOBSIMD is quantizeBBlockSIMD that also returns the block's
+// end of block over iscan (0 for a nil iscan), as quantize_b reports it.
+func quantizeBBlockEOBSIMD(qcoeff []int16, coeff []int32, n int, q Quantizer, txScale uint8, iscan []int16) (int, bool) {
 	count := n * n
-	if count%16 != 0 || q.AC > quantizeVectorMaxStep || q.DC > quantizeVectorMaxStep {
-		return false
+	if count%16 != 0 || q.AC > quantizeVectorMaxStep || q.DC > quantizeVectorMaxStep ||
+		iscan != nil && len(iscan) < count {
+		return 0, false
 	}
 	l := 31 - int64(bits.LeadingZeros32(uint32(q.AC)))
 	if l < int64(txScale) {
-		return false
+		return 0, false
 	}
 	zbinFactor := int32(80)
 	if q.DC < 148 {
 		zbinFactor = 84
 	}
 	acQuant, _ := invertQuant(q.AC)
-	quantizeBVectors(qcoeff[:count], coeff[:count], acQuant,
+	eob := quantizeBVectors(qcoeff[:count], coeff[:count], acQuant,
 		roundPowerOfTwo((48*q.AC)>>7, txScale),
 		roundPowerOfTwo(roundPowerOfTwo(zbinFactor*q.AC, 7), txScale),
-		uint64(l-int64(txScale)))
+		uint64(l-int64(txScale)), iscan)
 	dcQuant, dcShift := invertQuant(q.DC)
 	dc := quantBParams{
 		zbin:  roundPowerOfTwo(roundPowerOfTwo(zbinFactor*q.DC, 7), txScale),
@@ -70,5 +78,8 @@ func quantizeBBlockSIMD(qcoeff []int16, coeff []int32, n int, q Quantizer, txSca
 		shift: dcShift,
 	}
 	qcoeff[0] = quantizeScalarB(coeff[0], &dc, txScale)
-	return true
+	if iscan == nil {
+		return 0, true
+	}
+	return rowGroupDCEOB(eob, qcoeff[0]), true
 }

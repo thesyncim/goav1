@@ -564,7 +564,7 @@ func (st *lossyEncodeState) writeKeyBlock(block tile.BlockVisit, scratch *tile.B
 		st.intraLumaDCT = true
 		_, err = st.writeIntraTXB(tn, tn, qY, tile.CoeffContextRequest{
 			Plane: 0, PlaneBlock: block.Size, Size: yTX, X4: block.X4 + dx4, Y4: block.Y4 + dy4,
-		}, coeffCtx, lumaScan, st.afterSkipIntra)
+		}, coeffCtx, lumaScan, st.afterSkipIntra, tile.EOBUnknown)
 		st.intraLumaDCT = false
 		if err != nil {
 			return fmt.Errorf("luma txb: %w", err)
@@ -581,7 +581,7 @@ func (st *lossyEncodeState) writeKeyBlock(block tile.BlockVisit, scratch *tile.B
 		}
 		if _, err := st.writeIntraTXB(cg.cw, cg.ch, qc, tile.CoeffContextRequest{
 			Plane: uint8(plane), PlaneBlock: cg.block, Size: cg.tx, X4: cg.x4, Y4: cg.y4,
-		}, coeffCtx, cg.scan, nil); err != nil {
+		}, coeffCtx, cg.scan, nil, tile.EOBUnknown); err != nil {
 			return fmt.Errorf("chroma %d txb: %w", plane, err)
 		}
 	}

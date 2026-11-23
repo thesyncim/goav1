@@ -201,7 +201,7 @@ func TestReduced64ExtentTXBEncoderHelpers(t *testing.T) {
 			}
 			var interCtx tile.CoeffEntropyContext
 			recon = make([]byte, tc.w*tc.h)
-			if err := st.finishInterTXB(recon, pred, tc.w, tc.w, 0, 0, tc.w, tc.h, st.yQuant, qcoeff, ctxReq, &interCtx, scan, st.afterSkipInter); err != nil {
+			if err := st.finishInterTXB(recon, pred, tc.w, tc.w, 0, 0, tc.w, tc.h, st.yQuant, qcoeff, ctxReq, &interCtx, scan, st.afterSkipInter, tile.EOBUnknown); err != nil {
 				t.Fatalf("finishInterTXB: %v", err)
 			}
 		})

@@ -136,23 +136,23 @@ func quantizeBRowGroupsAVX2(qcoeff []int16, coeff []int32, n int, live uint8, q 
 // skip-minus-code distortion and the coarse rate directly. The products
 // dq*(2c-dq) keep the NEON kernel's int32 operands and widen to int64 with
 // VPMULDQ on the even lanes and on the odd lanes shifted down.
-func quantizeBRowGroupsDiffAVX2(qcoeff []int16, coeff []int32, n int, live uint8, q Quantizer, txScale uint8) (diff, rate int64, handled bool) {
+func quantizeBRowGroupsDiffAVX2(qcoeff []int16, coeff []int32, n int, live uint8, q Quantizer, txScale uint8, iscan []int16) (diff, rate int64, eob int, handled bool) {
 	if (n != 8 && n != 16 && n != 32) || txScale > 2 ||
 		q.AC <= 0 || q.DC <= 0 || q.AC >= 1<<16 || q.DC >= 1<<16 {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	count := n * n
 	if len(qcoeff) < count || len(coeff) < count {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	cp := unsafe.Pointer(&coeff[0])
 	qp := unsafe.Pointer(&qcoeff[0])
 	if uintptr(qp) < uintptr(cp)+uintptr(4*count) && uintptr(cp) < uintptr(qp)+uintptr(2*count) {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	l := 31 - int64(bits.LeadingZeros32(uint32(q.AC)))
 	if l < int64(txScale) {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	zbinFactor := int32(80)
 	if q.DC < 148 {
@@ -185,6 +185,11 @@ func quantizeBRowGroupsDiffAVX2(qcoeff []int16, coeff []int32, n int, live uint8
 			if level.IsZero() {
 				continue
 			}
+			for j, v := range dst {
+				if v != 0 {
+					eob = max(eob, int(iscan[off+j])+1)
+				}
+			}
 			// A dead half has zero levels, so its dq is zero and its terms
 			// vanish whatever its coefficients.
 			dq := level.Mul(stepV).ShiftRight(txShiftV)
@@ -216,6 +221,7 @@ func quantizeBRowGroupsDiffAVX2(qcoeff []int16, coeff []int32, n int, live uint8
 		acDC := qcoeff[0]
 		dcLevel := quantizeScalarB(coeff[0], &dc, txScale)
 		qcoeff[0] = dcLevel
+		eob = rowGroupDCEOB(eob, dcLevel)
 		oldDQ := (int32(acDC) * q.AC) >> txScale
 		newDQ := (int32(dcLevel) * q.AC) >> txScale
 		diff -= int64(oldDQ) * int64(2*coeff[0]-oldDQ)
@@ -228,5 +234,5 @@ func quantizeBRowGroupsDiffAVX2(qcoeff []int16, coeff []int32, n int, live uint8
 			diff += eAC*eAC - eDC*eDC
 		}
 	}
-	return diff, rate << 9, true
+	return diff, rate << 9, eob, true
 }

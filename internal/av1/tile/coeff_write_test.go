@@ -537,7 +537,7 @@ func TestWriteCoefficientsTXB4x4Y2DContextTrustedTXTypeMatchesHook(t *testing.T)
 		if err != nil {
 			t.Fatalf("hook attempt %d: %v", attempt, err)
 		}
-		directResult := WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(&directWriter, &directCoeffCDFs, (*[16]int16)(coeffs), txbCtx, dcCtx, directTXCDF, txSymbol)
+		directResult := WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(&directWriter, &directCoeffCDFs, (*[16]int16)(coeffs), txbCtx, dcCtx, directTXCDF, txSymbol, EOBUnknown)
 		if directResult != hookResult {
 			t.Fatalf("attempt %d result=%+v want %+v", attempt, directResult, hookResult)
 		}
@@ -645,7 +645,7 @@ func TestWriteCoefficientsTXB4x4UV2DContextTrustedMatchesGeneric(t *testing.T) {
 		if err != nil {
 			t.Fatalf("generic attempt %d: %v", attempt, err)
 		}
-		fastResult := WriteCoefficientsTXB4x4UV2DContextTrustedArray(&fastWriter, &fastCDFs, (*[16]int16)(coeffs), txbCtx, dcCtx)
+		fastResult := WriteCoefficientsTXB4x4UV2DContextTrustedArray(&fastWriter, &fastCDFs, (*[16]int16)(coeffs), txbCtx, dcCtx, EOBUnknown)
 		if fastResult != genericResult {
 			t.Fatalf("attempt %d result=%+v want %+v", attempt, fastResult, genericResult)
 		}
@@ -714,7 +714,7 @@ func TestWriteCoefficientsTXB8x8Y2DContextTrustedMatchesGeneric(t *testing.T) {
 		if err != nil {
 			t.Fatalf("generic attempt %d: %v", attempt, err)
 		}
-		fastResult := WriteCoefficientsTXB8x8Y2DContextTrustedArray(&fastWriter, &fastCDFs, (*[64]int16)(coeffs), txbCtx, dcCtx, &fastTXCDF, symbol)
+		fastResult := WriteCoefficientsTXB8x8Y2DContextTrustedArray(&fastWriter, &fastCDFs, (*[64]int16)(coeffs), txbCtx, dcCtx, &fastTXCDF, symbol, EOBUnknown)
 		if fastResult != genericResult {
 			t.Fatalf("attempt %d result=%+v want %+v", attempt, fastResult, genericResult)
 		}
@@ -775,7 +775,7 @@ func TestWriteCoefficientsTXB8x8UV2DContextTrustedMatchesGeneric(t *testing.T) {
 		if err != nil {
 			t.Fatalf("generic attempt %d: %v", attempt, err)
 		}
-		fastResult := WriteCoefficientsTXB8x8UV2DContextTrustedArray(&fastWriter, &fastCDFs, (*[64]int16)(coeffs), txbCtx, dcCtx)
+		fastResult := WriteCoefficientsTXB8x8UV2DContextTrustedArray(&fastWriter, &fastCDFs, (*[64]int16)(coeffs), txbCtx, dcCtx, EOBUnknown)
 		if fastResult != genericResult {
 			t.Fatalf("attempt %d result=%+v want %+v", attempt, fastResult, genericResult)
 		}
@@ -844,7 +844,7 @@ func TestWriteCoefficientsTXB16x16Y2DContextTrustedMatchesGeneric(t *testing.T) 
 		if err != nil {
 			t.Fatalf("generic attempt %d: %v", attempt, err)
 		}
-		fastResult := WriteCoefficientsTXB16x16Y2DContextTrustedArray(&fastWriter, &fastCDFs, (*[256]int16)(coeffs), txbCtx, dcCtx, &fastTXCDF, symbol)
+		fastResult := WriteCoefficientsTXB16x16Y2DContextTrustedArray(&fastWriter, &fastCDFs, (*[256]int16)(coeffs), txbCtx, dcCtx, &fastTXCDF, symbol, EOBUnknown)
 		if fastResult != genericResult {
 			t.Fatalf("attempt %d result=%+v want %+v", attempt, fastResult, genericResult)
 		}
@@ -905,7 +905,7 @@ func TestWriteCoefficientsTXB16x16UV2DContextTrustedMatchesGeneric(t *testing.T)
 		if err != nil {
 			t.Fatalf("generic attempt %d: %v", attempt, err)
 		}
-		fastResult := WriteCoefficientsTXB16x16UV2DContextTrustedArray(&fastWriter, &fastCDFs, (*[256]int16)(coeffs), txbCtx, dcCtx)
+		fastResult := WriteCoefficientsTXB16x16UV2DContextTrustedArray(&fastWriter, &fastCDFs, (*[256]int16)(coeffs), txbCtx, dcCtx, EOBUnknown)
 		if fastResult != genericResult {
 			t.Fatalf("attempt %d result=%+v want %+v", attempt, fastResult, genericResult)
 		}
@@ -974,7 +974,7 @@ func TestWriteCoefficientsTXB32x32Y2DContextTrustedMatchesGeneric(t *testing.T) 
 		if err != nil {
 			t.Fatalf("generic attempt %d: %v", attempt, err)
 		}
-		fastResult := WriteCoefficientsTXB32x32Y2DContextTrustedArray(&fastWriter, &fastCDFs, (*[1024]int16)(coeffs), txbCtx, dcCtx, &fastTXCDF, symbol)
+		fastResult := WriteCoefficientsTXB32x32Y2DContextTrustedArray(&fastWriter, &fastCDFs, (*[1024]int16)(coeffs), txbCtx, dcCtx, &fastTXCDF, symbol, EOBUnknown)
 		if fastResult != genericResult {
 			t.Fatalf("attempt %d result=%+v want %+v", attempt, fastResult, genericResult)
 		}
@@ -1047,7 +1047,7 @@ func TestWriteCoefficientsTXB32x32Y2DContextTrustedZeroedLevelsMatchesGeneric(t 
 		if err != nil {
 			t.Fatalf("generic attempt %d: %v", attempt, err)
 		}
-		fastResult := WriteCoefficientsTXB32x32Y2DContextTrustedZeroedLevels(&fastWriter, &fastCDFs, (*[1024]int16)(coeffs), levelsScratch, txbCtx, dcCtx, &fastTXCDF, symbol)
+		fastResult := WriteCoefficientsTXB32x32Y2DContextTrustedZeroedLevels(&fastWriter, &fastCDFs, (*[1024]int16)(coeffs), levelsScratch, txbCtx, dcCtx, &fastTXCDF, symbol, EOBUnknown)
 		if fastResult != genericResult {
 			t.Fatalf("attempt %d result=%+v want %+v", attempt, fastResult, genericResult)
 		}
@@ -1111,7 +1111,7 @@ func TestWriteCoefficientsTXB32x32UV2DContextTrustedMatchesGeneric(t *testing.T)
 		if err != nil {
 			t.Fatalf("generic attempt %d: %v", attempt, err)
 		}
-		fastResult := WriteCoefficientsTXB32x32UV2DContextTrustedArray(&fastWriter, &fastCDFs, (*[1024]int16)(coeffs), txbCtx, dcCtx)
+		fastResult := WriteCoefficientsTXB32x32UV2DContextTrustedArray(&fastWriter, &fastCDFs, (*[1024]int16)(coeffs), txbCtx, dcCtx, EOBUnknown)
 		if fastResult != genericResult {
 			t.Fatalf("attempt %d result=%+v want %+v", attempt, fastResult, genericResult)
 		}
@@ -1421,7 +1421,7 @@ func BenchmarkWriteCoefficientsTXB8x8Y2D(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			w := entropy.NewWriter(buf[:0])
-			WriteCoefficientsTXB8x8Y2DContextTrustedArray(&w, &cdfs, (*[64]int16)(blocks[i&255]), 0, 0, nil, 0)
+			WriteCoefficientsTXB8x8Y2DContextTrustedArray(&w, &cdfs, (*[64]int16)(blocks[i&255]), 0, 0, nil, 0, EOBUnknown)
 		}
 	})
 	b.Run("trusted-count", func(b *testing.B) {
@@ -1480,7 +1480,7 @@ func BenchmarkWriteCoefficientsTXB8x8UV2D(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			w := entropy.NewWriter(buf[:0])
-			WriteCoefficientsTXB8x8UV2DContextTrustedArray(&w, &cdfs, (*[64]int16)(blocks[i&255]), 1, 2)
+			WriteCoefficientsTXB8x8UV2DContextTrustedArray(&w, &cdfs, (*[64]int16)(blocks[i&255]), 1, 2, EOBUnknown)
 		}
 	})
 }
@@ -1678,7 +1678,7 @@ func BenchmarkWriteCoefficientsTXB16x16Y2D(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			w := entropy.NewWriter(buf[:0])
-			WriteCoefficientsTXB16x16Y2DContextTrustedArray(&w, &cdfs, (*[256]int16)(blocks[i&255]), 1, 2, nil, 0)
+			WriteCoefficientsTXB16x16Y2DContextTrustedArray(&w, &cdfs, (*[256]int16)(blocks[i&255]), 1, 2, nil, 0, EOBUnknown)
 		}
 	})
 }
@@ -1726,7 +1726,7 @@ func BenchmarkWriteCoefficientsTXB16x16UV2D(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			w := entropy.NewWriter(buf[:0])
-			WriteCoefficientsTXB16x16UV2DContextTrustedArray(&w, &cdfs, (*[256]int16)(blocks[i&255]), 1, 2)
+			WriteCoefficientsTXB16x16UV2DContextTrustedArray(&w, &cdfs, (*[256]int16)(blocks[i&255]), 1, 2, EOBUnknown)
 		}
 	})
 }
@@ -1883,7 +1883,7 @@ func BenchmarkWriteCoefficientsTXB32x32Y2D(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			w := entropy.NewWriter(buf[:0])
-			WriteCoefficientsTXB32x32Y2DContextTrustedArray(&w, &cdfs, (*[1024]int16)(blocks[i&255]), 1, 2, nil, 0)
+			WriteCoefficientsTXB32x32Y2DContextTrustedArray(&w, &cdfs, (*[1024]int16)(blocks[i&255]), 1, 2, nil, 0, EOBUnknown)
 		}
 	})
 	b.Run("trusted-zeroed-levels", func(b *testing.B) {
@@ -1897,7 +1897,7 @@ func BenchmarkWriteCoefficientsTXB32x32Y2D(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			w := entropy.NewWriter(buf[:0])
-			WriteCoefficientsTXB32x32Y2DContextTrustedZeroedLevels(&w, &cdfs, (*[1024]int16)(blocks[i&255]), levelsScratch, 1, 2, nil, 0)
+			WriteCoefficientsTXB32x32Y2DContextTrustedZeroedLevels(&w, &cdfs, (*[1024]int16)(blocks[i&255]), levelsScratch, 1, 2, nil, 0, EOBUnknown)
 		}
 	})
 }
@@ -1945,7 +1945,7 @@ func BenchmarkWriteCoefficientsTXB32x32UV2D(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			w := entropy.NewWriter(buf[:0])
-			WriteCoefficientsTXB32x32UV2DContextTrustedArray(&w, &cdfs, (*[1024]int16)(blocks[i&255]), 1, 2)
+			WriteCoefficientsTXB32x32UV2DContextTrustedArray(&w, &cdfs, (*[1024]int16)(blocks[i&255]), 1, 2, EOBUnknown)
 		}
 	})
 }
@@ -2000,7 +2000,7 @@ func BenchmarkWriteCoefficientsTXB4x4Y2DContextTrusted(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			w := entropy.NewWriter(buf[:0])
-			WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(&w, &coeffCDFs, (*[16]int16)(blocks[i&255]), 0, 0, txCDF, txSymbol)
+			WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(&w, &coeffCDFs, (*[16]int16)(blocks[i&255]), 0, 0, txCDF, txSymbol, EOBUnknown)
 		}
 	})
 }

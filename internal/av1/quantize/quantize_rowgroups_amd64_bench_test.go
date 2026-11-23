@@ -20,6 +20,7 @@ func BenchmarkAMD64QuantizeBRowGroups(b *testing.B) {
 			coeff[i] = rng.Int31n(401) - 200
 		}
 		qcoeff := make([]int16, n*n)
+		iscan := make([]int16, n*n)
 		q := Quantizer{DC: 120, AC: 140}
 		txScale := uint8(0)
 		if n == 32 {
@@ -38,7 +39,7 @@ func BenchmarkAMD64QuantizeBRowGroups(b *testing.B) {
 				}
 				for b.Loop() {
 					if kind == "diff" {
-						quantizeBRowGroupsDiffAVX2(qcoeff, coeff, n, live, q, txScale)
+						quantizeBRowGroupsDiffAVX2(qcoeff, coeff, n, live, q, txScale, iscan)
 					} else {
 						quantizeBRowGroupsAVX2(qcoeff, coeff, n, live, q, txScale)
 					}

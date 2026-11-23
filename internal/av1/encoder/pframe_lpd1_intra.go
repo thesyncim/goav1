@@ -39,9 +39,11 @@ type intraChromaGeom struct {
 	planeBlock tile.BlockSize
 }
 
-// intraFullLoopResult reports the quantized planes of an intra block.
+// intraFullLoopResult reports the quantized planes of an intra block and
+// their ends of block (prepareIntraTXB's; 0 for a plane the loop zeroes).
 type intraFullLoopResult struct {
 	lumaGeo, chromaGeo     txBlockGeometry
+	lumaEOB, uEOB, vEOB    int
 	lumaZero, uZero, vZero bool
 }
 
@@ -73,10 +75,11 @@ func (st *lossyEncodeState) lpd1IntraFullLoop(src SourceFrame420, recon *SourceF
 	}
 	var err error
 	if performTX {
-		res.lumaGeo, res.lumaZero, err = st.prepareIntraTXB(src.Y, src.YStride, lumaPX, lumaPY, n, n, st.yQuant, lumaTX, pred, qY)
+		res.lumaGeo, res.lumaEOB, err = st.prepareIntraTXB(src.Y, src.YStride, lumaPX, lumaPY, n, n, st.yQuant, lumaTX, pred, qY)
 		if err != nil {
 			return res, err
 		}
+		res.lumaZero = res.lumaEOB == 0
 	} else {
 		// perform_tx = 0: no luma coefficients (y_has_coeff = 0).
 		if res.lumaGeo, err = txBlockGeometryForTransformSize(lumaTX); err != nil {
@@ -136,7 +139,8 @@ func (st *lossyEncodeState) lpd1IntraFullLoop(src SourceFrame420, recon *SourceF
 	}
 	if comp == lpd1ComponentChroma || comp == lpd1ComponentChromaCb {
 		st.pfN4 = n4U
-		_, res.uZero, err = st.prepareIntraTXB(src.U, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, st.uQuant, cg.tx, predU, qU)
+		_, res.uEOB, err = st.prepareIntraTXB(src.U, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, st.uQuant, cg.tx, predU, qU)
+		res.uZero = res.uEOB == 0
 		st.pfN4 = false
 		if err != nil {
 			return res, err
@@ -146,7 +150,8 @@ func (st *lossyEncodeState) lpd1IntraFullLoop(src SourceFrame420, recon *SourceF
 	}
 	if comp == lpd1ComponentChroma || comp == lpd1ComponentChromaCr {
 		st.pfN4 = n4V
-		_, res.vZero, err = st.prepareIntraTXB(src.V, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, st.vQuant, cg.tx, predV, qV)
+		_, res.vEOB, err = st.prepareIntraTXB(src.V, src.ChromaStride, cg.x, cg.y, cg.cw, cg.ch, st.vQuant, cg.tx, predV, qV)
+		res.vZero = res.vEOB == 0
 		st.pfN4 = false
 		if err != nil {
 			return res, err

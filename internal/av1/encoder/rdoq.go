@@ -671,26 +671,27 @@ func rdoqSquareGeometry(n int, plane int) (*rdoqTXB, bool) {
 
 // rdoqQuantize quantizes the n x n DCT_DCT coefficients tran into qcoeff with
 // SVT's RDOQ pipeline (svt_aom_quantize_inv_quantize with perform_rdoq: the
-// fp quantizer, then svt_av1_optimize_b) and reports whether every level is
-// zero. The caller has armed the RDOQ tables (rdoqTab).
-func (st *lossyEncodeState) rdoqQuantize(tran []int32, qcoeff []int16, n int, plane int, q quantize.Quantizer) bool {
+// fp quantizer, then svt_av1_optimize_b) and returns the resulting end of
+// block (eobUnknown when the geometry is unsupported). The caller has armed
+// the RDOQ tables (rdoqTab).
+func (st *lossyEncodeState) rdoqQuantize(tran []int32, qcoeff []int16, n int, plane int, q quantize.Quantizer) int {
 	g, ok := rdoqSquareGeometry(n, plane)
 	if !ok {
-		return false
+		return eobUnknown
 	}
 	return st.rdoqQuantizeTX(tran, qcoeff, g, q)
 }
 
 // rdoqQuantizeTX is rdoqQuantize for the transform geometry g (any DCT_DCT
 // size, 64-point extents coding their low 32).
-func (st *lossyEncodeState) rdoqQuantizeTX(tran []int32, qcoeff []int16, g *rdoqTXB, q quantize.Quantizer) bool {
+func (st *lossyEncodeState) rdoqQuantizeTX(tran []int32, qcoeff []int16, g *rdoqTXB, q quantize.Quantizer) int {
 	plane := g.plane
 	if err := quantize.QuantizeBlockScaledFP(qcoeff[:g.area], g.ch, tran[:g.area], g.ch, g.cw, g.ch, q, uint8(g.shift)); err != nil {
-		return false
+		return eobUnknown
 	}
 	eob := rdoqEOBFromIScan(qcoeff[:g.area], g.iscan)
 	if eob == 0 {
-		return true
+		return 0
 	}
 	s := rdoqState{
 		g:       g,
@@ -705,7 +706,7 @@ func (st *lossyEncodeState) rdoqQuantizeTX(tran []int32, qcoeff []int16, g *rdoq
 		dqDC:    q.DC,
 		dqAC:    q.AC,
 	}
-	return s.optimizeB(eob, 0, 0) == 0
+	return s.optimizeB(eob, 0, 0)
 }
 
 // rdoqPlaneRDMult is SVT's plane_rd_mult[allintra || rtc][is_inter] row for
@@ -765,7 +766,7 @@ func svtDepth0TXLeaf(block tile.BlockSize) (int, bool) {
 // whose residual is in resScratch: the row-skipping DCT at the fp zero bins
 // (the quantizer RDOQ starts from), the RDOQ quantizer, and the skip
 // comparison's difference terms of the surviving levels.
-func (st *lossyEncodeState) prepareInterTXBDecideRDOQ(geo *txBlockGeometry, w int, q quantize.Quantizer, qcoeff []int16) bool {
+func (st *lossyEncodeState) prepareInterTXBDecideRDOQ(geo *txBlockGeometry, w int, q quantize.Quantizer, qcoeff []int16) int {
 	dcZero, acZero := quantize.ZeroBinFP(q, geo.txScale)
 	thr0, thr := min(dcZero, acZero), acZero
 	var mask uint8
@@ -791,12 +792,16 @@ func (st *lossyEncodeState) prepareInterTXBDecideRDOQ(geo *txBlockGeometry, w in
 	}
 	if mask == 0 {
 		clear(qcoeff[:cn])
-		return true
+		return 0
 	}
-	if st.rdoqQuantize(st.tranScratch[:cn], qcoeff[:cn], w, int(st.rdoqArm-1), q) {
-		return true
+	eob := st.rdoqQuantize(st.tranScratch[:cn], qcoeff[:cn], w, int(st.rdoqArm-1), q)
+	if eob == 0 {
+		return 0
 	}
-	return st.accumulateInterTXBStatsDiff(geo, q, qcoeff)
+	if st.accumulateInterTXBStatsDiff(geo, q, qcoeff) {
+		return 0
+	}
+	return eob
 }
 
 // rdoqEOBFromIScan returns the end of block of qcoeff: one past the largest
@@ -831,15 +836,10 @@ func rdoqEOBPureGo(qcoeff []int16, iscan []int16) int {
 	return eob
 }
 
-// svtCoeffCost is svt_av1_cost_coeffs_txb without CDF updates for one n x n
-// DCT_DCT TXB of plane type plane (txb_skip_ctx 0 and dc_sign_ctx 0, as the
-// light-PD1 path passes), in 512-per-bit units. It overwrites st.levels.
-func (st *lossyEncodeState) svtCoeffCost(qcoeff []int16, size tile.TransformSize, plane int) int64 {
-	g := rdoqGeometry(size, plane)
-	return st.svtCoeffCostEOB(qcoeff, g, rdoqEOBFromIScan(qcoeff[:g.area], g.iscan))
-}
-
-// svtCoeffCostEOB is svtCoeffCost for a TXB whose end of block is known.
+// svtCoeffCostEOB is svt_av1_cost_coeffs_txb without CDF updates for one
+// DCT_DCT TXB of geometry g whose end of block is eob (txb_skip_ctx 0 and
+// dc_sign_ctx 0, as the light-PD1 path passes), in 512-per-bit units. It
+// overwrites st.levels.
 func (st *lossyEncodeState) svtCoeffCostEOB(qcoeff []int16, g *rdoqTXB, eob int) int64 {
 	plane := g.plane
 	tc := &st.rdoqTab().coeff[g.txCtx][plane]
@@ -889,9 +889,13 @@ func (st *lossyEncodeState) svtCoeffCostEOB(qcoeff []int16, g *rdoqTXB, eob int)
 // extents included) at coeff_rate_est_lvl 2 (rate_est_level 4, LPD1_LVL_0)
 // and 0 (rate_est_level 0, LPD1_LVL_1 and above); otherwise the table cost
 // at level 2 and 6000 + 400*eob at level 0 (lvl0).
-func (st *lossyEncodeState) svtLumaCoeffBits(qcoeff []int16, size tile.TransformSize, lvl0 bool) int64 {
+//
+// eob is the TXB's end of block, or eobUnknown to scan qcoeff for it.
+func (st *lossyEncodeState) svtLumaCoeffBits(qcoeff []int16, size tile.TransformSize, lvl0 bool, eob int) int64 {
 	g := rdoqGeometry(size, 0)
-	eob := rdoqEOBFromIScan(qcoeff[:g.area], g.iscan)
+	if eob < 0 {
+		eob = rdoqEOBFromIScan(qcoeff[:g.area], g.iscan)
+	}
 	if eob < g.txArea>>6 {
 		return 6000 + int64(eob)*1000
 	}
@@ -902,7 +906,7 @@ func (st *lossyEncodeState) svtLumaCoeffBits(qcoeff []int16, size tile.Transform
 }
 
 // svtInterCoeffCost prices the coded alternative of the skip decision the
-// light-PD1 way (svtLumaCoeffBits per luma TXB, svtCoeffCost per chroma TXB),
+// light-PD1 way (svtLumaCoeffBits per luma TXB, svtCoeffCostEOB per chroma TXB),
 // scaled by full_lambda (lpd1FullLambda).
 func (st *lossyEncodeState) svtInterCoeffCost(txPlan realtimeInterTXPlan, lumaTX, chromaTX tile.TransformSize, hasChroma bool, lumaLvl0 bool, lambda int64, extraBits int64) (int64, bool) {
 	cost := extraBits
@@ -910,29 +914,22 @@ func (st *lossyEncodeState) svtInterCoeffCost(txPlan realtimeInterTXPlan, lumaTX
 		leaf := txPlan.leafSize
 		area := leaf * leaf
 		if err := txPlan.ForEachLeaf(func(i, dx, dy int) error {
-			cost += st.svtLumaCoeffBits(st.lumaQ2[i*area:(i+1)*area], txPlan.leafTX, lumaLvl0)
+			cost += st.svtLumaCoeffBits(st.lumaQ2[i*area:(i+1)*area], txPlan.leafTX, lumaLvl0, st.leafEOB[i])
 			return nil
 		}); err != nil {
 			return 0, false
 		}
 	} else {
-		if st.txbZero[0] {
-			cost += 6000 // eob 0 < (w*h)>>6: 6000 + 1000*eob
-		} else {
-			cost += st.svtLumaCoeffBits(st.lumaQ[:], lumaTX, lumaLvl0)
-		}
+		cost += st.svtLumaCoeffBits(st.lumaQ[:], lumaTX, lumaLvl0, st.txbEOB[0])
 	}
 	if hasChroma {
 		g := rdoqGeometry(chromaTX, 1)
-		if st.txbZero[1] {
-			cost += st.svtCoeffCostEOB(st.uQ[:], g, 0)
-		} else {
-			cost += st.svtCoeffCost(st.uQ[:], chromaTX, 1)
-		}
-		if st.txbZero[2] {
-			cost += st.svtCoeffCostEOB(st.vQ[:], g, 0)
-		} else {
-			cost += st.svtCoeffCost(st.vQ[:], chromaTX, 1)
+		for plane, qc := range [2][]int16{st.uQ[:], st.vQ[:]} {
+			eob := st.txbEOB[plane+1]
+			if eob < 0 {
+				eob = rdoqEOBFromIScan(qc[:g.area], g.iscan)
+			}
+			cost += st.svtCoeffCostEOB(qc, g, eob)
 		}
 	}
 	return (cost*lambda + 256) >> 9, true

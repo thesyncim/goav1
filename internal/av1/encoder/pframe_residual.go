@@ -1369,7 +1369,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 				Size:       txPlan.leafTX,
 				X4:         block.X4 + uint8(dx/4),
 				Y4:         block.Y4 + uint8(dy/4),
-			}, coeffCtx, childScan, st.afterSkipInter)
+			}, coeffCtx, childScan, st.afterSkipInter, st.emitLeafEOB(i))
 		}); err != nil {
 			return fmt.Errorf("luma realtime tx: %w", err)
 		}
@@ -1382,7 +1382,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 			Size:       lumaTX,
 			X4:         block.X4,
 			Y4:         block.Y4,
-		}, coeffCtx, lumaScan, st.afterSkipInter, txType); err != nil {
+		}, coeffCtx, lumaScan, st.afterSkipInter, txType, st.emitEOB(0)); err != nil {
 			return fmt.Errorf("luma txb: %w", err)
 		}
 	}
@@ -1404,7 +1404,7 @@ func (st *lossyEncodeState) encodePBlock(src, ref SourceFrame420, golden *Source
 				Size:       chromaTX,
 				X4:         chromaX4,
 				Y4:         chromaY4,
-			}, coeffCtx, chromaScan, nil, chromaTxType); err != nil {
+			}, coeffCtx, chromaScan, nil, chromaTxType, st.emitEOB(plane)); err != nil {
 				return fmt.Errorf("chroma %d txb: %w", plane, err)
 			}
 		}
@@ -1668,7 +1668,7 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 		Size:       lumaTX,
 		X4:         block.X4,
 		Y4:         block.Y4,
-	}, coeffCtx, lumaScan, st.afterSkipIntra, st.lumaQ[:lumaGeo.coeffCount], lumaGeo)
+	}, coeffCtx, lumaScan, st.afterSkipIntra, st.lumaQ[:lumaGeo.coeffCount], lumaGeo, fl.lumaEOB)
 	st.intraLumaDCT = false
 	st.intraTxTypeReq.Size = tile.TransformSize8x8
 	if err != nil {
@@ -1682,9 +1682,9 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 	st.intraUVTxType = svtIntraUVTxType(uvMode, chromaTX)
 	defer func() { st.intraUVTxType = transform.TypeDCTDCT }()
 	for plane := 1; plane <= 2; plane++ {
-		rdata, cpred, qc, q := recon.U, st.predU[:cw*ch], st.uQ[:chromaGeo.coeffCount], st.uQuant
+		rdata, cpred, qc, q, eob := recon.U, st.predU[:cw*ch], st.uQ[:chromaGeo.coeffCount], st.uQuant, fl.uEOB
 		if plane == 2 {
-			rdata, cpred, qc, q = recon.V, st.predV[:cw*ch], st.vQ[:chromaGeo.coeffCount], st.vQuant
+			rdata, cpred, qc, q, eob = recon.V, st.predV[:cw*ch], st.vQ[:chromaGeo.coeffCount], st.vQuant, fl.vEOB
 		}
 		if err := st.emitIntraTXB(rdata, cpred, src.ChromaStride, chromaX, chromaY, cw, ch, q, tile.CoeffContextRequest{
 			Plane:      uint8(plane),
@@ -1692,7 +1692,7 @@ func (st *lossyEncodeState) encodeIntraPBlock(src SourceFrame420, recon *SourceF
 			Size:       chromaTX,
 			X4:         chromaX4,
 			Y4:         chromaY4,
-		}, coeffCtx, chromaScan, nil, qc, chromaGeo); err != nil {
+		}, coeffCtx, chromaScan, nil, qc, chromaGeo, eob); err != nil {
 			return fmt.Errorf("intra chroma %d txb: %w", plane, err)
 		}
 	}
@@ -2318,7 +2318,10 @@ func (st *lossyEncodeState) accumulateInterTXBStats(geo *txBlockGeometry, q quan
 // difference of the non-zero levels), so no caller may read the absolute
 // rdDcode/rdDskip after it (the 8x8 TX-type trial's DCT baseline must keep
 // using prepareInterTXB).
-func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16) bool {
+//
+// It returns the TXB's end of block: 0 when every level is zero, eobUnknown
+// for a non-zero TXB whose quantizer path does not report it.
+func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16) int {
 	var geo *txBlockGeometry
 	switch {
 	case w == 8 && h == 8:
@@ -2329,7 +2332,7 @@ func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStr
 		geo = &txBlockGeometry32x32
 	}
 	if geo == nil || len(qcoeff) < geo.coeffCount {
-		return st.prepareInterTXB(srcPlane, pred, predStride, stride, px, py, w, h, q, qcoeff)
+		return zeroEOB(st.prepareInterTXB(srcPlane, pred, predStride, stride, px, py, w, h, q, qcoeff))
 	}
 	residualBlockImpl(st.resScratch[:geo.sampleCount], srcPlane, py*stride+px, stride, pred, predStride, w, h)
 	if st.rdoqArm != 0 {
@@ -2359,21 +2362,34 @@ func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStr
 	}
 	if mask == 0 {
 		clear(qcoeff[:geo.coeffCount])
-		return true
+		return 0
 	}
 	// Keep the quantizer's loaded coefficients and levels for the following
 	// skip-only statistics when the architecture can fuse the two passes.
-	if diff, rate, handled := quantize.TryQuantizeBRowGroupsDiffTrusted(qcoeff[:geo.coeffCount], st.tranScratch[:geo.coeffCount], w, mask, q, geo.txScale); handled {
+	if diff, rate, eob, handled := quantize.TryQuantizeBRowGroupsDiffTrusted(qcoeff[:geo.coeffCount], st.tranScratch[:geo.coeffCount], w, mask, q, geo.txScale, rdoqGeometry(geo.tx, 0).iscan); handled {
 		st.rdDskip += st.svtTXDist(diff, geo.txScale)
 		st.rdRcode += rate
-		return rate == 0
+		return eob
 	}
 	// Quantize only the live rows; when every level is zero the block adds
 	// nothing to the skip comparison.
 	if !quantize.QuantizeBRowGroupsTrusted(qcoeff[:geo.coeffCount], st.tranScratch[:geo.coeffCount], w, mask, q, geo.txScale) {
-		return true
+		return 0
 	}
-	return st.accumulateInterTXBStatsDiff(geo, q, qcoeff)
+	return zeroEOB(st.accumulateInterTXBStatsDiff(geo, q, qcoeff))
+}
+
+// eobUnknown is the end of block of a non-zero TXB whose quantizer did not
+// report it; its consumers scan the levels.
+const eobUnknown = -1
+
+// zeroEOB is the end-of-block knowledge of a TXB known only to be all zero
+// (0) or not (eobUnknown).
+func zeroEOB(allZero bool) int {
+	if allZero {
+		return 0
+	}
+	return eobUnknown
 }
 
 // accumulateInterTXBStatsDiff is accumulateInterTXBStats for the skip
@@ -2454,6 +2470,7 @@ func (st *lossyEncodeState) chooseInter8x8TXType(src SourceFrame420, lumaPX, lum
 			bestCost = cost
 			bestType = typ
 			copy(st.lumaQ[:64], tmpY)
+			st.txbEOB = [3]int{eobUnknown, eobUnknown, eobUnknown}
 			if hasChroma {
 				copy(st.uQ[:16], tmpU)
 				copy(st.vQ[:16], tmpV)
@@ -2565,12 +2582,12 @@ func rdStatsBlockPureGo(tran []int32, qcoeff []int16, count int, step int32, ts 
 // finishInterTXB codes the prepared coefficients and rebuilds the recon block
 // from the prediction through the decoder's dequant + inverse transform.
 func (st *lossyEncodeState) finishInterTXB(reconPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16,
-	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error) error {
-	return st.finishInterTXBTyped(reconPlane, pred, predStride, stride, px, py, w, h, q, qcoeff, ctxReq, coeffCtx, scan, afterSkip, transform.TypeDCTDCT)
+	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, eob int) error {
+	return st.finishInterTXBTyped(reconPlane, pred, predStride, stride, px, py, w, h, q, qcoeff, ctxReq, coeffCtx, scan, afterSkip, transform.TypeDCTDCT, eob)
 }
 
 func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStride, stride, px, py, w, h int, q quantize.Quantizer, qcoeff []int16,
-	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, txType transform.Type) error {
+	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, txType transform.Type, eob int) error {
 	geo, err := txBlockGeometryForTransformSize(ctxReq.Size)
 	if err != nil {
 		return err
@@ -2579,21 +2596,22 @@ func (st *lossyEncodeState) finishInterTXBTyped(reconPlane, pred []byte, predStr
 		return tile.ErrInvalidDecodeState
 	}
 	qcoeff = qcoeff[:geo.coeffCount]
-	txbResult, err := st.emitInterTXBTyped(w, h, qcoeff, ctxReq, coeffCtx, scan, afterSkip, txType)
+	txbResult, err := st.emitInterTXBTyped(w, h, qcoeff, ctxReq, coeffCtx, scan, afterSkip, txType, eob)
 	if err != nil {
 		return err
 	}
 	return st.reconInterTXBResult(reconPlane, pred, predStride, stride, px, py, w, h, q, qcoeff, geo, scan, txType, txbResult)
 }
 
-// emitInterTXBTyped is the entropy-write half of finishInterTXBTyped: it codes
+// emitInterTXBTyped is the entropy-write half of finishInterTXBTyped (eob is
+// the quantizer's end of block for qcoeff, or tile.EOBUnknown): it codes
 // the prepared coefficients (dispatching to the specialized trusted-context
 // writers where available) and marks the coefficient contexts, without touching
 // the reconstruction. The libaom pack phase (av1_write_coeffs_txb in
 // av1/encoder/bitstream.c) performs exactly this work when replaying stored
 // tokens after encode_sb.
 func (st *lossyEncodeState) emitInterTXBTyped(w, h int, qcoeff []int16,
-	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, txType transform.Type) (tile.TXBDecodeResult, error) {
+	ctxReq tile.CoeffContextRequest, coeffCtx *tile.CoeffEntropyContext, scan []int16, afterSkip func() error, txType transform.Type, eob int) (tile.TXBDecodeResult, error) {
 	var txbResult tile.TXBDecodeResult
 	if w == 4 && h == 4 && ctxReq.Plane == 0 && ctxReq.Size == tile.TransformSize4x4 && afterSkip != nil {
 		qcoeff4 := (*[16]int16)(qcoeff)
@@ -2612,7 +2630,7 @@ func (st *lossyEncodeState) emitInterTXBTyped(w, h int, qcoeff []int16,
 				return tile.TXBDecodeResult{}, tile.ErrInvalidDecodeState
 			}
 			txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 1, H4: 1}, blockDims)
-			txbResult = tile.WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(st.w, &st.coeffCDFs, qcoeff4, txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
+			txbResult = tile.WriteCoefficientsTXB4x4Y2DContextTrustedTXTypeArray(st.w, &st.coeffCDFs, qcoeff4, txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol, eob)
 			if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 				return tile.TXBDecodeResult{}, err
 			}
@@ -2634,7 +2652,7 @@ func (st *lossyEncodeState) emitInterTXBTyped(w, h int, qcoeff []int16,
 				return tile.TXBDecodeResult{}, tile.ErrInvalidDecodeState
 			}
 			txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 2, H4: 2}, blockDims)
-			txbResult = tile.WriteCoefficientsTXB8x8Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
+			txbResult = tile.WriteCoefficientsTXB8x8Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol, eob)
 			if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 				return tile.TXBDecodeResult{}, err
 			}
@@ -2656,7 +2674,7 @@ func (st *lossyEncodeState) emitInterTXBTyped(w, h int, qcoeff []int16,
 				return tile.TXBDecodeResult{}, tile.ErrInvalidDecodeState
 			}
 			txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 4, H4: 4}, blockDims)
-			txbResult = tile.WriteCoefficientsTXB16x16Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[256]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
+			txbResult = tile.WriteCoefficientsTXB16x16Y2DContextTrustedArray(st.w, &st.coeffCDFs, (*[256]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol, eob)
 			if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 				return tile.TXBDecodeResult{}, err
 			}
@@ -2678,7 +2696,7 @@ func (st *lossyEncodeState) emitInterTXBTyped(w, h int, qcoeff []int16,
 				return tile.TXBDecodeResult{}, tile.ErrInvalidDecodeState
 			}
 			txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 8, H4: 8}, blockDims)
-			txbResult = tile.WriteCoefficientsTXB32x32Y2DContextTrustedZeroedLevels(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), st.levels32Zeroed[:], txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol)
+			txbResult = tile.WriteCoefficientsTXB32x32Y2DContextTrustedZeroedLevels(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), st.levels32Zeroed[:], txbCtx.TXBSkipContext, txbCtx.DCSignContext, txCDF, txSymbol, eob)
 			if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 				return tile.TXBDecodeResult{}, err
 			}
@@ -2698,7 +2716,7 @@ func (st *lossyEncodeState) emitInterTXBTyped(w, h int, qcoeff []int16,
 			return tile.TXBDecodeResult{}, tile.ErrInvalidDecodeState
 		}
 		txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 1, H4: 1}, blockDims)
-		txbResult = tile.WriteCoefficientsTXB4x4UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[16]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
+		txbResult = tile.WriteCoefficientsTXB4x4UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[16]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, eob)
 		if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 			return tile.TXBDecodeResult{}, err
 		}
@@ -2711,7 +2729,7 @@ func (st *lossyEncodeState) emitInterTXBTyped(w, h int, qcoeff []int16,
 			return tile.TXBDecodeResult{}, tile.ErrInvalidDecodeState
 		}
 		txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 2, H4: 2}, blockDims)
-		txbResult = tile.WriteCoefficientsTXB8x8UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
+		txbResult = tile.WriteCoefficientsTXB8x8UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[64]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, eob)
 		if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 			return tile.TXBDecodeResult{}, err
 		}
@@ -2724,7 +2742,7 @@ func (st *lossyEncodeState) emitInterTXBTyped(w, h int, qcoeff []int16,
 			return tile.TXBDecodeResult{}, tile.ErrInvalidDecodeState
 		}
 		txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 4, H4: 4}, blockDims)
-		txbResult = tile.WriteCoefficientsTXB16x16UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[256]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
+		txbResult = tile.WriteCoefficientsTXB16x16UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[256]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, eob)
 		if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 			return tile.TXBDecodeResult{}, err
 		}
@@ -2737,7 +2755,7 @@ func (st *lossyEncodeState) emitInterTXBTyped(w, h int, qcoeff []int16,
 			return tile.TXBDecodeResult{}, tile.ErrInvalidDecodeState
 		}
 		txbCtx := coeffCtx.TXBContextTrusted(ctxReq, tile.TransformDimensions{W4: 8, H4: 8}, blockDims)
-		txbResult = tile.WriteCoefficientsTXB32x32UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext)
+		txbResult = tile.WriteCoefficientsTXB32x32UV2DContextTrustedArray(st.w, &st.coeffCDFs, (*[1024]int16)(qcoeff), txbCtx.TXBSkipContext, txbCtx.DCSignContext, eob)
 		if err := coeffCtx.MarkTXB(ctxReq, txbResult); err != nil {
 			return tile.TXBDecodeResult{}, err
 		}

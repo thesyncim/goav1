@@ -19,23 +19,24 @@ func init() {
 // quantizeBRowGroupsDiffSIMD retains the quantizer's loaded coefficients and
 // levels for the following statistics, instead of storing then reloading them.
 // Both arithmetic rules and the AC-first/DC-overwrite order are unchanged.
-func quantizeBRowGroupsDiffSIMD(qcoeff []int16, coeff []int32, n int, live uint8, q Quantizer, txScale uint8) (diff, rate int64, handled bool) {
+func quantizeBRowGroupsDiffSIMD(qcoeff []int16, coeff []int32, n int, live uint8, q Quantizer, txScale uint8, iscan []int16) (diff, rate int64, eob int, handled bool) {
 	if (n != 8 && n != 16 && n != 32) || txScale > 2 ||
 		q.AC <= 0 || q.DC <= 0 || q.AC >= 1<<16 || q.DC >= 1<<16 {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	count := n * n
 	if len(qcoeff) < count || len(coeff) < count {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	cp := unsafe.Pointer(&coeff[0])
 	qp := unsafe.Pointer(&qcoeff[0])
+	sp := unsafe.Pointer(&iscan[:count][0])
 	if uintptr(qp) < uintptr(cp)+uintptr(4*count) && uintptr(cp) < uintptr(qp)+uintptr(2*count) {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	l := 31 - int64(bits.LeadingZeros32(uint32(q.AC)))
 	if l < int64(txScale) {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	zbinFactor := int32(80)
 	if q.DC < 148 {
@@ -60,6 +61,11 @@ func quantizeBRowGroupsDiffSIMD(qcoeff []int16, coeff []int32, n int, live uint8
 	zero := archsimd.BroadcastInt32x4(0)
 	diffAcc := archsimd.BroadcastInt64x2(0)
 	rateAcc := zero
+	// eobAcc keeps, per lane, the largest iscan+1 of a nonzero level
+	// (quantize_b's eob, as svt_aom_quantize_b_neon tracks it).
+	var eobAcc archsimd.Int16x8
+	one16 := archsimd.BroadcastInt16x8(1)
+	zero16 := archsimd.BroadcastInt16x8(0)
 	for col := 0; col < n; col++ {
 		for g := 0; g < n/4; g += 2 {
 			off := col*n + 4*g
@@ -85,6 +91,8 @@ func quantizeBRowGroupsDiffSIMD(qcoeff []int16, coeff []int32, n int, live uint8
 			if u.GetElem(0)|u.GetElem(1) == 0 {
 				continue
 			}
+			pos1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(sp, 2*off))).Add(one16)
+			eobAcc = eobAcc.Max(pos1.Masked(levels.NotEqual(zero16)))
 			dq0 := lo.Mul(stepV).Shift(txShiftV)
 			dq1 := hi.Mul(stepV).Shift(txShiftV)
 			d0 := c0.Add(c0).Sub(dq0)
@@ -95,6 +103,7 @@ func quantizeBRowGroupsDiffSIMD(qcoeff []int16, coeff []int32, n int, live uint8
 				Add(rowGroupLaneRateSIMD(hi, expShiftV, rateBiasV))
 		}
 	}
+	eob = int(eobAcc.ReduceMax())
 	diff = diffAcc.GetElem(0) + diffAcc.GetElem(1)
 	for lane := range uint8(4) {
 		rate += int64(rateAcc.GetElem(lane))
@@ -113,6 +122,7 @@ func quantizeBRowGroupsDiffSIMD(qcoeff []int16, coeff []int32, n int, live uint8
 		acDC := qcoeff[0]
 		dcLevel := quantizeScalarB(coeff[0], &dc, txScale)
 		qcoeff[0] = dcLevel
+		eob = rowGroupDCEOB(eob, dcLevel)
 		oldDQ := (int32(acDC) * q.AC) >> txScale
 		newDQ := (int32(dcLevel) * q.AC) >> txScale
 		// Match the old SIMD pass's int32 intermediate before widening.
@@ -126,7 +136,7 @@ func quantizeBRowGroupsDiffSIMD(qcoeff []int16, coeff []int32, n int, live uint8
 			diff += eAC*eAC - eDC*eDC
 		}
 	}
-	return diff, rate << 9, true
+	return diff, rate << 9, eob, true
 }
 
 // rowGroupLaneRateSIMD is rowGroupLevelRate per lane: 2 + bits.Len32(|v|)

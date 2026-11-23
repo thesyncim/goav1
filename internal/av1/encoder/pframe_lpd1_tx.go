@@ -223,13 +223,16 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 	}
 	st.mds0BestRate = -1
 	dctRdD := int64(0)
+	st.txbEOBLive = false
 	if !skip {
 		st.rdDcode, st.rdDskip, st.rdRcode = 0, 0, 0
-		st.txbZero = [3]bool{false, true, true}
+		st.txbEOB = [3]int{eobUnknown, 0, 0}
 		st.svtDistShift = lightPath
 		st.setRDOQArm(0)
 		lumaZero := true
 		if lumaBypass {
+			st.txbEOB[0] = 0
+			clear(st.leafEOB[:])
 			if txPlan.Variable() {
 				clear(st.lumaQ2[:bw*bh])
 			} else {
@@ -238,7 +241,9 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 		} else if txPlan.Variable() {
 			leafArea := txPlan.leafSize * txPlan.leafSize
 			if lerr := txPlan.ForEachLeaf(func(i, dx, dy int) error {
-				if !st.prepareInterTXBDecide(src.Y, st.predY[dy*bw+dx:], bw, src.YStride, lumaPX+dx, lumaPY+dy, txPlan.leafSize, txPlan.leafSize, st.yQuant, st.lumaQ2[i*leafArea:(i+1)*leafArea]) {
+				eob := st.prepareInterTXBDecide(src.Y, st.predY[dy*bw+dx:], bw, src.YStride, lumaPX+dx, lumaPY+dy, txPlan.leafSize, txPlan.leafSize, st.yQuant, st.lumaQ2[i*leafArea:(i+1)*leafArea])
+				st.leafEOB[i] = eob
+				if eob != 0 {
 					lumaZero = false
 				}
 				return nil
@@ -250,10 +255,11 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 			// alternatives against this block's absolute DCT distortion, so
 			// the luma terms stay complete here.
 			lumaZero = st.prepareInterTXB(src.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh])
+			st.txbEOB[0] = zeroEOB(lumaZero)
 		} else {
-			lumaZero = st.prepareInterTXBDecide(src.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh])
+			st.txbEOB[0] = st.prepareInterTXBDecide(src.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh])
+			lumaZero = st.txbEOB[0] == 0
 		}
-		st.txbZero[0] = lumaZero
 		if hasChroma {
 			// zero_y_coeff_exit: an all-zero luma block skips the chroma TX
 			// unless the chroma complexity detector flags a plane
@@ -284,22 +290,20 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 					lumaTX, _ := st.interLumaTXAndScan(bw, bh)
 					n4U, n4V = st.lpd1ChromaN4(block.Size, lpd1UseShortcuts, complexity, lumaZero, lumaBypass, st.lumaQ[:], lumaTX, txPlan.Variable())
 				}
-				uZero, vZero := true, true
 				if comp == lpd1ComponentChroma || comp == lpd1ComponentChromaCb {
 					st.pfN4 = n4U
-					uZero = st.prepareInterTXBDecide(src.U, st.predU[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.uQuant, st.uQ[:cbw*cbh])
+					st.txbEOB[1] = st.prepareInterTXBDecide(src.U, st.predU[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.uQuant, st.uQ[:cbw*cbh])
 				} else {
 					clear(st.uQ[:cbw*cbh])
 				}
 				if comp == lpd1ComponentChroma || comp == lpd1ComponentChromaCr {
 					st.pfN4 = n4V
-					vZero = st.prepareInterTXBDecide(src.V, st.predV[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.vQuant, st.vQ[:cbw*cbh])
+					st.txbEOB[2] = st.prepareInterTXBDecide(src.V, st.predV[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.vQuant, st.vQ[:cbw*cbh])
 				} else {
 					clear(st.vQ[:cbw*cbh])
 				}
 				st.pfN4 = false
-				skip = lumaZero && uZero && vZero
-				st.txbZero = [3]bool{lumaZero, uZero, vZero}
+				skip = lumaZero && st.txbEOB[1] == 0 && st.txbEOB[2] == 0
 			} else {
 				skip = lumaZero
 			}
@@ -307,6 +311,7 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 			skip = lumaZero
 		}
 		st.rdoqArm = 0
+		st.txbEOBLive = true
 		dctRdD = st.rdDcode
 		if !skip {
 			// Rate-priced skip (RDCOST shapes): code when distortion saved
@@ -720,4 +725,22 @@ func (st *lossyEncodeState) forwardIntraTXB(tran []int32, residual []int16, cn, 
 		}
 	}
 	return forwardTransformBlock8BitResidualTrusted(tran[:cn], residual[:n], st.dqScratch[:n], w, h, st.intraUVTxType)
+}
+
+// emitEOB is the end of block the emission of plane's TXB may pass to the
+// coefficient writer: the decision's quantizer eob when this block's
+// decision recorded it, else tile.EOBUnknown.
+func (st *lossyEncodeState) emitEOB(plane int) int {
+	if !st.txbEOBLive || st.txbEOB[plane] < 0 {
+		return tile.EOBUnknown
+	}
+	return st.txbEOB[plane]
+}
+
+// emitLeafEOB is emitEOB for leaf i of a split luma plan.
+func (st *lossyEncodeState) emitLeafEOB(i int) int {
+	if !st.txbEOBLive || st.leafEOB[i] < 0 {
+		return tile.EOBUnknown
+	}
+	return st.leafEOB[i]
 }
