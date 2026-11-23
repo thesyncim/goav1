@@ -13,35 +13,11 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
-// frameWorkDeferReconstruction keeps the serial deferred two-pass
-// reconstruction harness frozen at its production default. The real wavefront
-// path still enables deferred reconstruction when worker lanes are available.
-const frameWorkDeferReconstruction = false
-
 // frameWorkWavefrontMinSBRowsPerWorker is the SB-row count, per available
 // worker, a tile must clear before the deferred SB-row wavefront engages.
 // Below it the fused single-thread path wins (no buffering, no goroutines), so
 // the wavefront stays off. It is 2: the diagonal must fill before it drains.
 const frameWorkWavefrontMinSBRowsPerWorker = 2
-
-// frameWorkReconEventKind distinguishes the deferred reconstruction events: a
-// per-block predict "begin" marker and the per-TXB reconstruction record.
-type frameWorkReconEventKind uint8
-
-const (
-	frameWorkReconEventBlockBegin frameWorkReconEventKind = iota
-	frameWorkReconEventTXB
-)
-
-// frameWorkReconEvent records one deferred reconstruction step captured during
-// pass 1 (entropy decode) and replayed in pass 2 (predict+reconstruct) in
-// decode order. blockBegin events index reconVisits so pass 2 runs the predict
-// portion of BeforeBlockCoefficients; txb events index reconTXBs, the TXBs of
-// the dav1d block walk.
-type frameWorkReconEvent struct {
-	index int32
-	kind  frameWorkReconEventKind
-}
 
 const (
 	frameWorkReconMaxIndex        = int32(1<<31 - 1)
@@ -326,10 +302,11 @@ type FrameWorkTileResidualScratch struct {
 	// once per job and holds capacity across jobs for zero steady-state allocs.
 	lfMask frameWorkLoopFilterMaskScratch
 
-	// reconEvents and reconVisits back the deferred two-pass reconstruction
-	// path (frameWorkDeferReconstruction). reconEvents records the in-order
-	// predict/reconstruct op stream; reconVisits holds the block-loop visits
-	// referenced by block-begin events.
+	// reconVisits, reconCBI and cfArena are the frame-thread buffers of
+	// dav1d's two-pass decode (f->frame_thread.b, .cbi and .cf): the parse
+	// appends each block's visit, each coded TXB's cbi entry and its
+	// coefficients, and reconstruction re-walks the blocks' transform layout
+	// reading them back in the same order.
 	// paletteArena holds deep-copied palette colour maps for buffered visits
 	// whose prediction is palette-coded: the decoded BlockLoopVisit.Prediction
 	// carries YMap/UVMap pointers into a single per-tile PaletteModeScratch that
@@ -338,12 +315,17 @@ type FrameWorkTileResidualScratch struct {
 	// final value arena are installed immediately before replay. All buffers
 	// retain capacity across tiles and are sliced to zero length per job by
 	// resetDeferredReconBuffers.
-	reconEvents []frameWorkReconEvent
 	reconVisits []tile.BlockLoopVisit
-	// reconTXBs holds the TXBs of the dav1d block walk: all-zero ones and those
-	// dequantized into cfArena (dav1d's frame-thread cbi and cf).
-	reconTXBs []frameWorkReconTXB
-	cfArena   []int32
+	reconCBI    []frameWorkReconCBI
+	cfArena     []int32
+	// cfOverflow reports that a TXB did not fit the job's cf reservation; it
+	// then decoded into cfSpare.
+	cfOverflow bool
+	cfSpare    [1024]int32
+	// cfDirty bounds the arena prefix earlier jobs may have left
+	// coefficients in, including the slot a failed decode_coefs wrote past
+	// the committed length.
+	cfDirty int
 	// coefBuf is the fused path's dav1d t->cf coefficient buffer.
 	coefBuf         coefBuffer
 	paletteArena    []tile.PaletteModeScratch
@@ -392,8 +374,8 @@ func (s *FrameWorkTileResidualScratch) PreallocLoopFilterMaskScratch(cols int) {
 }
 
 // frameWorkReconWavefront owns the reusable per-tile SB-row bucketing and
-// wavefront scheduling state. rowStart partitions the flat reconEvents list
-// into per-SB-row spans ([rowStart[r], rowStart[r+1])); done[r] counts the SBs
+// wavefront scheduling state. rowStart partitions the superblock spans into
+// per-SB-row ranges ([rowStart[r], rowStart[r+1])); done[r] counts the SBs
 // completed in row r so a goroutine reconstructing row r+1 can gate its reads of
 // the upper-right neighbor. states holds one reconstruction state per wavefront
 // goroutine (each with its own CFL state machine, prediction/residual scratch,
@@ -429,6 +411,9 @@ type frameWorkReconWavefront struct {
 	frameThread *FrameThreadRecon
 	// reconTile is the tile whose finished SB rows frameThread.Rows gets.
 	reconTile int32
+	// cfZero records that the last tile's lanes reconstructed, and so
+	// cleared, every coefficient of the scratch's cf arena.
+	cfZero bool
 }
 
 type frameWorkReconWavefrontProgress struct {
@@ -617,6 +602,7 @@ func (s *FrameWorkTileResidualScratch) reserveCFArena(walk tile.BlockWalkRequest
 		arena := make([]int32, len(s.cfArena), need)
 		copy(arena, s.cfArena)
 		s.cfArena = arena
+		s.cfDirty = 0
 	}
 }
 
@@ -624,10 +610,11 @@ func (s *FrameWorkTileResidualScratch) reserveCFArena(walk tile.BlockWalkRequest
 // zero length while retaining their capacity, so a worker reusing this scratch
 // across jobs never replays a previous job's events or coefficients.
 func (s *FrameWorkTileResidualScratch) resetDeferredReconBuffers() {
-	s.reconEvents = s.reconEvents[:0]
 	s.reconVisits = s.reconVisits[:0]
-	s.reconTXBs = s.reconTXBs[:0]
+	s.reconCBI = s.reconCBI[:0]
+	s.cfDirty = max(s.cfDirty, min(len(s.cfArena)+1024, cap(s.cfArena)))
 	s.cfArena = s.cfArena[:0]
+	s.cfOverflow = false
 	s.paletteArena = s.paletteArena[:0]
 	s.paletteBindings = s.paletteBindings[:0]
 	s.extrasArena = s.extrasArena[:0]
@@ -1262,8 +1249,7 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 		wavefrontWorkers = max(wavefrontWorkers, 1)
 		streamRecon = true
 	}
-	deferReconstruction := frameWorkDeferReconstruction || streamRecon
-	if deferReconstruction {
+	if streamRecon {
 		scratch.reserveCFArena(loopReq.Walk, b.Sequence.ColorConfig)
 	}
 	batchValue := *b
@@ -1278,7 +1264,7 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 		userBeforeSuperblock: loopReq.BeforeSuperblock,
 		restoration:          restoration,
 		readRestoration:      readRestoration,
-		deferReconstruction:  deferReconstruction,
+		deferReconstruction:  streamRecon,
 		wavefrontWorkers:     wavefrontWorkers,
 	}
 	// Wire the fused / serial-deferred reconstruction state to the controller's
@@ -1296,7 +1282,7 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 	}
 	scratch.controller.recon.bindPrimedLumaReconGeometry()
 	scratch.controller.reconHot = &scratch.controller.recon
-	if loopReq.BeforeSuperblock != nil || readRestoration {
+	if loopReq.BeforeSuperblock != nil || readRestoration || streamRecon {
 		if scratch.beforeSuperblock == nil {
 			scratch.beforeSuperblock = scratch.controller.BeforeSuperblock
 		}
@@ -1367,14 +1353,6 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 	}
 	if err != nil {
 		return scratch.stats, err
-	}
-	if scratch.controller.deferReconstruction && !streamRecon {
-		if err := scratch.finalizeDeferredPalettes(); err != nil {
-			return scratch.stats, err
-		}
-		if err := scratch.controller.replayDeferredReconstruction(); err != nil {
-			return scratch.stats, err
-		}
 	}
 	if ft := b.FrameThread; !streamRecon && ft != nil && ft.Rows != nil && index < len(b.Jobs) {
 		// A tile reconstructed without lanes finished every row here.
@@ -1465,10 +1443,9 @@ type frameWorkTileResidualLoopController struct {
 	restoration          FrameWorkTileRestorationRequest
 	readRestoration      bool
 
-	// deferReconstruction selects the buffered two-pass path: pass 1 buffers
-	// predict/reconstruct events instead of running them inline, and
-	// replayDeferredReconstruction runs them after the whole tile's entropy
-	// decode completes.
+	// deferReconstruction selects dav1d's two-pass frame-thread path: the
+	// parse buffers each block's visit, cbi entries and coefficients instead
+	// of reconstructing inline, and the wavefront lanes reconstruct them.
 	deferReconstruction bool
 
 	// wavefrontWorkers is the number of idle pool goroutines available to fan
@@ -1560,6 +1537,11 @@ func (c *frameWorkTileResidualLoopController) BeforeSuperblock(visit tile.BlockL
 			return err
 		}
 	}
+	if c.deferReconstruction {
+		if err := c.streamSuperblock(visit); err != nil {
+			return err
+		}
+	}
 	if !c.readRestoration {
 		return nil
 	}
@@ -1588,24 +1570,7 @@ func (c *frameWorkTileResidualLoopController) reconBBegin(visit *tile.BlockLoopV
 		c.stats.CoefficientBlocks++
 	}
 	if c.deferReconstruction {
-		if c.streaming {
-			if err := c.streamBlockBegin(visit); err != nil {
-				return err
-			}
-		}
-		visitIndex, slots := c.scratch.bufferDeferredVisit(visit)
-		visitIndex32, ok := frameWorkReconIndex(visitIndex)
-		if !ok {
-			return ErrInvalidBatch
-		}
-		c.scratch.reconEvents = append(c.scratch.reconEvents, frameWorkReconEvent{
-			kind:  frameWorkReconEventBlockBegin,
-			index: visitIndex32,
-		})
-		if err := c.scratch.rememberDeferredPalette(visitIndex, slots); err != nil {
-			return err
-		}
-		return nil
+		return c.scratch.rememberDeferredPalette(c.scratch.bufferDeferredVisit(visit))
 	}
 	recon := c.reconHot
 	if recon == nil {
@@ -1745,72 +1710,17 @@ func (s *frameWorkReconState) predictDeferredCFLChroma() error {
 	return nil
 }
 
-// replayDeferredReconstruction runs the buffered predict and reconstruct events
-// in decode order after the whole tile's entropy decode has completed. Because
-// the events are replayed in the same order the fused path interleaved them,
-// the CfL luma-first state machine and intra neighbor reads observe identical
-// inputs, producing byte-identical output.
-func (c *frameWorkTileResidualLoopController) replayDeferredReconstruction() error {
-	return frameWorkReplayReconEvents(&c.recon, c.scratch.reconEvents, c.scratch.reconVisits, c.scratch.reconTXBs, c.scratch.cfArena)
-}
-
-// frameWorkReplayReconEvents runs a span of buffered reconstruction events in
-// decode order on one reconstruction state. It is the shared inner loop of both
-// the serial deferred replay and each wavefront goroutine's per-SB-row work.
-func frameWorkReplayReconEvents(s *frameWorkReconState, events []frameWorkReconEvent, visits []tile.BlockLoopVisit, txbs []frameWorkReconTXB, cfArena []int32) error {
-	var visit *tile.BlockLoopVisit
-	for i := range events {
-		ev := &events[i]
-		switch ev.kind {
-		case frameWorkReconEventBlockBegin:
-			idx := int(ev.index)
-			if ev.index < 0 || idx >= len(visits) {
-				return ErrInvalidBatch
-			}
-			visit = &visits[idx]
-			if err := s.predictBlockBegin(visit); err != nil {
-				return err
-			}
-		case frameWorkReconEventTXB:
-			idx := int(ev.index)
-			if visit == nil || ev.index < 0 || idx >= len(txbs) {
-				return ErrInvalidBatch
-			}
-			t := &txbs[idx]
-			block := tile.BlockCoeffBlock{
-				Plane:     t.plane,
-				Block:     t.block,
-				Transform: t.transform,
-				Result:    tile.TXBDecodeResult{EOB: t.eob, CulLevel: t.culLevel, AllZero: t.flags&frameWorkReconTXBAllZero != 0},
-			}
-			if block.Result.AllZero {
-				if err := s.reconstructTXBWithDequantized(visit, &block, nil, 0, 0, false); err != nil {
-					return err
-				}
-				continue
-			}
-			end := uint64(t.cfOff) + uint64(t.cfLen)
-			if end > uint64(len(cfArena)) {
-				return ErrInvalidBatch
-			}
-			if err := s.reconstructTXBWithDequantized(visit, &block, cfArena[t.cfOff:end:end], int(t.activeRows), int(t.activeCols), t.flags&frameWorkReconTXBDCOnly != 0); err != nil {
-				return err
-			}
-		default:
-			return ErrInvalidBatch
-		}
-	}
-	return nil
-}
-
-// frameWorkReconSB records one superblock's span of buffered reconstruction
-// events: the half-open [start, end) range into the flat reconEvents list and
-// the SB column within its row. Events for one SB are contiguous because the
-// block loop decodes superblocks in raster order.
+// frameWorkReconSB is one superblock of the frame-thread buffers: its blocks
+// [start, end) in reconVisits, where its cbi entries and coefficients begin
+// (dav1d's per-superblock ts->frame_thread[0].cbi / .cf cursors), and its SB
+// column within its row. A superblock's blocks, cbi entries and coefficients
+// are contiguous because the block loop decodes superblocks in raster order.
 type frameWorkReconSB struct {
 	start int32
 	end   int32
 	col   int32
+	cbi   int32
+	cf    int32
 }
 
 // wavefrontError boxes a worker error so atomic.Pointer can carry the first one
@@ -1857,7 +1767,7 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, view 
 		aboveCount = int(curStart - prevStart)
 		donePrev = &wf.done[row-1]
 	}
-	eventCount, ok := frameWorkReconIndex(len(view.events))
+	visitCount, ok := frameWorkReconIndex(len(view.visits))
 	if !ok {
 		return ErrInvalidBatch
 	}
@@ -1878,14 +1788,18 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, view 
 				return nil
 			}
 		}
-		if sb.start < 0 || sb.end < sb.start || sb.end > eventCount {
+		if sb.start < 0 || sb.end < sb.start || sb.end > visitCount {
 			return ErrInvalidBatch
 		}
-		if ft := wf.frameThread; ft != nil && !ft.waitSuperblockReferences(&st.batch, view.events[sb.start:sb.end], view.visits) {
+		visits := view.visits[sb.start:sb.end]
+		if ft := wf.frameThread; ft != nil && !ft.waitSuperblockReferences(&st.batch, visits) {
 			return ErrFrameThreadReference
 		}
-		if err := frameWorkReplayReconEvents(st, view.events[sb.start:sb.end], view.visits, view.txbs, view.cfArena); err != nil {
-			return err
+		cur := frameWorkReconCursor{cbi: view.cbi, cf: view.cfArena, cbiOff: int(sb.cbi), cfOff: int(sb.cf)}
+		for i := range visits {
+			if err := st.reconBDeferred(&visits[i], &cur); err != nil {
+				return err
+			}
 		}
 		wf.publishRowProgress(doneCur, sb.col+1)
 	}
@@ -2001,24 +1915,22 @@ func frameWorkVisitUsesCFLPtr(visit *tile.BlockLoopVisit) bool {
 		visit.Prediction.ChromaMode == tile.ChromaIntraModeCFL
 }
 
-// frameWorkReconTXB is one deferred TXB of the dav1d block walk: what
-// reconstruction reads of tile.BlockCoeffBlock, and the TXB's slot in the
-// frame-thread cf arena with what itxfm_add needs to consume it (dav1d keeps
-// the same facts in frame_thread.cbi and ts->frame_thread[p].cf).
-type frameWorkReconTXB struct {
-	cfOff      uint32
-	cfLen      uint16
+// frameWorkReconCBI is dav1d's frame_thread.cbi entry of one TXB of a coded
+// block: its eob (zero when the TXB is all zero) and transform type, plus the
+// extent of the nonzero coefficients the inverse transform reads. A TXB with a
+// nonzero eob owns the next scan area of the cf arena.
+type frameWorkReconCBI struct {
 	eob        uint16
-	block      tile.TransformBlock
-	plane      uint8
-	transform  transform.Type
-	culLevel   uint8
+	txtp       transform.Type
 	activeRows uint8
 	activeCols uint8
-	flags      uint8
 }
 
-const (
-	frameWorkReconTXBAllZero = 1 << iota
-	frameWorkReconTXBDCOnly
-)
+// frameWorkReconCursor walks the cbi entries and cf arena of the blocks being
+// reconstructed, dav1d's ts->frame_thread[0].cbi / .cf in pass 2.
+type frameWorkReconCursor struct {
+	cbi    []frameWorkReconCBI
+	cf     []int32
+	cbiOff int
+	cfOff  int
+}
