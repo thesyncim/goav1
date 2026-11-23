@@ -6,7 +6,9 @@ shards=(
   public-1
   public-2
   public-3
-  encoder
+  encoder-0
+  encoder-1
+  encoder-2
   testvector
   decode
   kernels-a
@@ -17,12 +19,45 @@ shards=(
 # CI timed out the root package after 45 minutes with its shared SVC decode
 # matrix still on L3T3. Stable name buckets split that package while retaining
 # every top-level test and all of its subtests under the same per-shard timeout.
-public_shard_count=4
+# The encoder package took 28 minutes under -race in one shard and is split the
+# same way. A split shard is <prefix>-<bucket>.
+split_prefixes=(public encoder)
+
+split_package() {
+  case "$1" in
+    public) printf '%s\n' . ;;
+    encoder) printf '%s\n' ./internal/av1/encoder ;;
+    *) return 2 ;;
+  esac
+}
+
+split_count() {
+  case "$1" in
+    public) printf '4\n' ;;
+    encoder) printf '3\n' ;;
+    *) return 2 ;;
+  esac
+}
+
+# split_prefix prints the prefix of a split shard name and fails for others.
+split_prefix() {
+  local prefix count
+  for prefix in "${split_prefixes[@]}"; do
+    if [[ "$1" =~ ^${prefix}-([0-9]+)$ ]]; then
+      count="$(split_count "$prefix")"
+      if ((BASH_REMATCH[1] < count)); then
+        printf '%s\n' "$prefix"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
 
 packages_for() {
   case "$1" in
-    public-[0-3]) printf '%s\n' . ;;
-    encoder) printf '%s\n' ./internal/av1/encoder ;;
+    public-[0-3]) split_package public ;;
+    encoder-[0-2]) split_package encoder ;;
     testvector) printf '%s\n' ./internal/av1/testvector ;;
     decode)
       printf '%s\n' \
@@ -82,14 +117,10 @@ packages_for() {
   esac
 }
 
-is_public_shard() {
-  [[ "$1" =~ ^public-[0-3]$ ]]
-}
-
-public_test_names() {
-  local listed_names name
-  if ! listed_names="$(go test -race -list '^(Test|Example|Fuzz)' .)"; then
-    printf 'failed to enumerate runnable root-package tests with go test -race -list\n' >&2
+split_test_names() {
+  local package="$1" listed_names name
+  if ! listed_names="$(go test -race -list '^(Test|Example|Fuzz)' "$package")"; then
+    printf 'failed to enumerate runnable tests in %s with go test -race -list\n' "$package" >&2
     return 1
   fi
 
@@ -100,24 +131,24 @@ public_test_names() {
   done <<<"$listed_names"
 }
 
-public_test_bucket() {
+split_test_bucket() {
   local checksum
   checksum="$(printf '%s' "$1" | cksum)"
   checksum="${checksum%% *}"
-  printf '%s\n' "$((checksum % public_shard_count))"
+  printf '%s\n' "$((checksum % $2))"
 }
 
-public_test_names_for_bucket() {
-  local all_names="$1" target_bucket="$2" name
+split_test_names_for_bucket() {
+  local all_names="$1" target_bucket="$2" count="$3" name
   while IFS= read -r name; do
     [[ -z "$name" ]] && continue
-    if [[ "$(public_test_bucket "$name")" == "$target_bucket" ]]; then
+    if [[ "$(split_test_bucket "$name" "$count")" == "$target_bucket" ]]; then
       printf '%s\n' "$name"
     fi
   done <<<"$all_names"
 }
 
-public_test_filter_for_names() {
+split_test_filter_for_names() {
   local names="$1" name filter='^(' separator=''
   while IFS= read -r name; do
     [[ -z "$name" ]] && continue
@@ -128,26 +159,32 @@ public_test_filter_for_names() {
     separator=1
   done <<<"$names"
   if [[ -z "$separator" ]]; then
-    printf 'public race shard has no runnable tests\n' >&2
+    printf 'split race shard has no runnable tests\n' >&2
     return 1
   fi
   filter+=')$'
   printf '%s\n' "$filter"
 }
 
-count_public_test_names() {
+count_split_test_names() {
   awk 'NF { count++ } END { print count + 0 }' <<<"$1"
 }
 
-audit_public_test_coverage() {
+audit_split_test_coverage() {
+  local prefix="$1" package count
   local all_names name bucket expected_names filter matched_names matched_name matched_count total_count=0
   local shard_index
   local -a expected_by_bucket=()
-  local -a expected_counts=(0 0 0 0)
+  local -a expected_counts=()
   local -A expected_bucket_for_name=()
   local -A matched_bucket_for_name=()
 
-  if ! all_names="$(public_test_names)"; then
+  package="$(split_package "$prefix")"
+  count="$(split_count "$prefix")"
+  for ((shard_index = 0; shard_index < count; shard_index++)); do
+    expected_counts[shard_index]=0
+  done
+  if ! all_names="$(split_test_names "$package")"; then
     return 1
   fi
 
@@ -157,7 +194,7 @@ audit_public_test_coverage() {
       printf 'go test -list returned duplicate runnable name: %s\n' "$name" >&2
       return 1
     fi
-    bucket="$(public_test_bucket "$name")"
+    bucket="$(split_test_bucket "$name" "$count")"
     expected_bucket_for_name["$name"]="$bucket"
     expected_by_bucket[$bucket]+="$name"$'\n'
     ((expected_counts[bucket] += 1))
@@ -165,21 +202,21 @@ audit_public_test_coverage() {
   done <<<"$all_names"
 
   if ((total_count == 0)); then
-    printf 'go test -list returned no runnable root-package tests\n' >&2
+    printf 'go test -list returned no runnable tests in %s\n' "$package" >&2
     return 1
   fi
 
-  for ((shard_index = 0; shard_index < public_shard_count; shard_index++)); do
+  for ((shard_index = 0; shard_index < count; shard_index++)); do
     expected_names="${expected_by_bucket[$shard_index]:-}"
     if ((expected_counts[shard_index] == 0)); then
-      printf 'public-%d has no runnable tests\n' "$shard_index" >&2
+      printf '%s-%d has no runnable tests\n' "$prefix" "$shard_index" >&2
       return 1
     fi
-    if ! filter="$(public_test_filter_for_names "$expected_names")"; then
+    if ! filter="$(split_test_filter_for_names "$expected_names")"; then
       return 1
     fi
-    if ! matched_names="$(go test -race -list "$filter" .)"; then
-      printf 'go test -list failed for public-%d filter\n' "$shard_index" >&2
+    if ! matched_names="$(go test -race -list "$filter" "$package")"; then
+      printf 'go test -list failed for %s-%d filter\n' "$prefix" "$shard_index" >&2
       return 1
     fi
 
@@ -190,16 +227,16 @@ audit_public_test_coverage() {
         *) continue ;;
       esac
       if [[ ! ${expected_bucket_for_name[$matched_name]+present} ]]; then
-        printf 'public-%d filter matched unexpected test: %s\n' "$shard_index" "$matched_name" >&2
+        printf '%s-%d filter matched unexpected test: %s\n' "$prefix" "$shard_index" "$matched_name" >&2
         return 1
       fi
       if [[ "${expected_bucket_for_name[$matched_name]}" != "$shard_index" ]]; then
-        printf 'public-%d filter matched test assigned to public-%s: %s\n' \
-          "$shard_index" "${expected_bucket_for_name[$matched_name]}" "$matched_name" >&2
+        printf '%s-%d filter matched test assigned to %s-%s: %s\n' \
+          "$prefix" "$shard_index" "$prefix" "${expected_bucket_for_name[$matched_name]}" "$matched_name" >&2
         return 1
       fi
       if [[ ${matched_bucket_for_name[$matched_name]+present} ]]; then
-        printf 'runnable test appears in multiple public filters: %s\n' "$matched_name" >&2
+        printf 'runnable test appears in multiple %s filters: %s\n' "$prefix" "$matched_name" >&2
         return 1
       fi
       matched_bucket_for_name["$matched_name"]="$shard_index"
@@ -207,28 +244,28 @@ audit_public_test_coverage() {
     done <<<"$matched_names"
 
     if ((matched_count != expected_counts[shard_index])); then
-      printf 'public-%d filter matched %d/%d runnable tests\n' \
-        "$shard_index" "$matched_count" "${expected_counts[$shard_index]}" >&2
+      printf '%s-%d filter matched %d/%d runnable tests\n' \
+        "$prefix" "$shard_index" "$matched_count" "${expected_counts[$shard_index]}" >&2
       return 1
     fi
-    printf 'public-%d count=%d exact -run filter: %s\n' \
-      "$shard_index" "$matched_count" "$filter"
+    printf '%s-%d count=%d exact -run filter: %s\n' \
+      "$prefix" "$shard_index" "$matched_count" "$filter"
   done
 
   for name in "${!expected_bucket_for_name[@]}"; do
     if [[ ! ${matched_bucket_for_name[$name]+present} ]]; then
-      printf 'runnable test is missing from public filters: %s\n' "$name" >&2
+      printf 'runnable test is missing from %s filters: %s\n' "$prefix" "$name" >&2
       return 1
     fi
   done
   if ((${#matched_bucket_for_name[@]} != total_count)); then
-    printf 'public filter union contains %d/%d runnable tests\n' \
-      "${#matched_bucket_for_name[@]}" "$total_count" >&2
+    printf '%s filter union contains %d/%d runnable tests\n' \
+      "$prefix" "${#matched_bucket_for_name[@]}" "$total_count" >&2
     return 1
   fi
 
-  printf 'public race coverage passed: %d runnable Test/Example/Fuzz names assigned exactly once across %d shards\n' \
-    "$total_count" "$public_shard_count"
+  printf '%s race coverage passed: %d runnable Test/Example/Fuzz names in %s assigned exactly once across %d shards\n' \
+    "$prefix" "$total_count" "$package" "$count"
 }
 
 audit_coverage() {
@@ -256,8 +293,8 @@ audit_coverage() {
         return 1
       fi
       if [[ ${assigned[$import_path]+present} ]]; then
-        if [[ "$import_path" == "$module_path" && \
-          "${assigned[$import_path]}" == public-[0-3] && "$shard" == public-[0-3] ]]; then
+        if prefix="$(split_prefix "$shard")" && \
+          [[ "$(split_prefix "${assigned[$import_path]}" || true)" == "$prefix" ]]; then
           continue
         fi
         printf 'race package %s appears in both %s and %s\n' \
@@ -283,8 +320,10 @@ case "${1:-}" in
   audit)
     audit_coverage
     ;;
-  audit-public)
-    audit_public_test_coverage
+  audit-split)
+    for prefix in "${split_prefixes[@]}"; do
+      audit_split_test_coverage "$prefix"
+    done
     ;;
   run)
     shard="${2:-}"
@@ -307,22 +346,22 @@ case "${1:-}" in
       exit 2
     fi
     mapfile -t packages <<<"$packages_output"
-    if is_public_shard "$shard"; then
-      test_names="$(public_test_names)"
-      shard_index="${shard#public-}"
-      shard_names="$(public_test_names_for_bucket "$test_names" "$shard_index")"
-      if ! test_filter="$(public_test_filter_for_names "$shard_names")"; then
+    if prefix="$(split_prefix "$shard")"; then
+      test_names="$(split_test_names "${packages[0]}")"
+      shard_index="${shard#"$prefix"-}"
+      shard_names="$(split_test_names_for_bucket "$test_names" "$shard_index" "$(split_count "$prefix")")"
+      if ! test_filter="$(split_test_filter_for_names "$shard_names")"; then
         exit 2
       fi
       printf 'race %s selected %s/%s runnable tests\n' \
-        "$shard" "$(count_public_test_names "$shard_names")" "$(count_public_test_names "$test_names")"
+        "$shard" "$(count_split_test_names "$shard_names")" "$(count_split_test_names "$test_names")"
       go test -race -count=1 -timeout 45m -p 2 -run "$test_filter" "${packages[@]}"
     else
       go test -race -count=1 -timeout 45m -p 2 "${packages[@]}"
     fi
     ;;
   *)
-    printf 'usage: %s audit | audit-public | run <shard>\n' "$0" >&2
+    printf 'usage: %s audit | audit-split | run <shard>\n' "$0" >&2
     exit 2
     ;;
 esac

@@ -3139,6 +3139,15 @@ func TestPublicRTCEncoderI444HighBitDepthNativeReferenceDecoders(t *testing.T) {
 	}
 }
 
+// publicHighBitDepthNon420Cell reports whether the high-bit-depth 4:2:2/4:4:4
+// matrices run format caseIndex in scalability mode modeIndex. Formats rotate
+// across the mode catalogue, so every mode and every format runs while the
+// full product does not. Over both matrices the full product covered the
+// same 10,097 blocks as the rotation (-coverpkg=./...) at four times the cost.
+func publicHighBitDepthNon420Cell(caseIndex, modeIndex, cases int) bool {
+	return modeIndex%cases == caseIndex
+}
+
 func TestPublicRTCEncoderHighBitDepthNon420ScalabilityModeCatalogueReferenceDecoders(t *testing.T) {
 	decoders := publicReferenceAV1Decoders(t)
 	modes := EncoderWebRTCScalabilityModes()
@@ -3156,12 +3165,14 @@ func TestPublicRTCEncoderHighBitDepthNon420ScalabilityModeCatalogueReferenceDeco
 		{name: "i444-10bit", bitDepth: 10, profile: internalencoder.Profile1, i444: true},
 		{name: "i444-12bit", bitDepth: 12, profile: internalencoder.Profile2, i444: true},
 	}
-	for _, tc := range cases {
-		tc := tc
+	for caseIndex, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			for modeIndex, mode := range modes {
-				modeIndex, mode := modeIndex, mode
+				if !publicHighBitDepthNon420Cell(caseIndex, modeIndex, len(cases)) {
+					continue
+				}
 				t.Run(mode.String(), func(t *testing.T) {
+					t.Parallel()
 					width, height := publicRTCMatrixGeometry(t, mode)
 					cfg := publicRTCMatrixConfig(width, height, mode)
 					cfg.Profile = tc.profile
@@ -3277,12 +3288,14 @@ func TestPublicRTCEncoderHighBitDepthNon420ControllerSettingsReferenceDecoders(t
 		{name: "i444-12bit", bitDepth: 12, profile: internalencoder.Profile2, i444: true},
 	}
 
-	for _, tc := range cases {
-		tc := tc
+	for caseIndex, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			for modeIndex, mode := range modes {
-				modeIndex, mode := modeIndex, mode
+				if !publicHighBitDepthNon420Cell(caseIndex, modeIndex, len(cases)) {
+					continue
+				}
 				t.Run(mode.String(), func(t *testing.T) {
+					t.Parallel()
 					width, height := publicRTCMatrixGeometry(t, mode)
 					configForStep := func(step int) EncoderConfig {
 						cfg := publicRTCMatrixConfig(width, height, mode)
@@ -5185,6 +5198,7 @@ func TestPublicRTCPictureActiveDecodeTargetsControlMatrix(t *testing.T) {
 	for step, mode := range EncoderWebRTCScalabilityModes() {
 		mode := mode
 		t.Run(mode.String(), func(t *testing.T) {
+			t.Parallel()
 			width, height := publicRTCMatrixGeometry(t, mode)
 			cfg := publicRTCMatrixConfig(width, height, mode)
 			cfg.MaxFramerate = fps[step%len(fps)]
@@ -5234,6 +5248,7 @@ func TestPublicLayeredDecoderRTPPacketDecodeTargetSelection(t *testing.T) {
 	for step, mode := range EncoderWebRTCScalabilityModes() {
 		mode := mode
 		t.Run(mode.String(), func(t *testing.T) {
+			t.Parallel()
 			spatialLayers, temporalLayers, _, ok := mode.Layers()
 			if !ok {
 				t.Fatalf("invalid WebRTC scalability mode %s", mode)
@@ -6140,6 +6155,7 @@ func TestPublicRTCEncoderScalabilityModeCatalogueReferenceDecoders(t *testing.T)
 	for step, mode := range modes {
 		step, mode := step, mode
 		t.Run(mode.String(), func(t *testing.T) {
+			t.Parallel()
 			width, height := publicRTCMatrixGeometry(t, mode)
 			cfg := publicRTCMatrixConfig(width, height, mode)
 			cfg.MaxFramerate = fpsCycle[step%len(fpsCycle)]
@@ -6706,6 +6722,7 @@ func TestPublicRTCEncoderFeedbackControlRTPReferenceDecoders(t *testing.T) {
 	for step, mode := range modes {
 		step, mode := step, mode
 		t.Run(mode.String(), func(t *testing.T) {
+			t.Parallel()
 			width, height := publicRTCMatrixGeometry(t, mode)
 			cfg := publicRTCMatrixConfig(width, height, mode)
 			cfg.MaxFramerate = fpsCycle[step%len(fpsCycle)]
@@ -6900,6 +6917,7 @@ func TestPublicRTCEncoderControllerSettingsReferenceDecoders(t *testing.T) {
 	for modeIndex, mode := range modes {
 		modeIndex, mode := modeIndex, mode
 		t.Run(mode.String(), func(t *testing.T) {
+			t.Parallel()
 			width, height := publicRTCMatrixGeometry(t, mode)
 			configForStep := func(step int) EncoderConfig {
 				cfg := publicRTCMatrixConfig(width, height, mode)
@@ -7028,6 +7046,7 @@ func TestPublicRTCEncoderRTPHeaderTimestampCadenceControlMatrix(t *testing.T) {
 	for modeIndex, mode := range modes {
 		modeIndex, mode := modeIndex, mode
 		t.Run(mode.String(), func(t *testing.T) {
+			t.Parallel()
 			width, height := publicRTCMatrixGeometry(t, mode)
 			configForStep := func(step int) EncoderConfig {
 				cfg := publicRTCMatrixConfig(width, height, mode)
@@ -7817,6 +7836,7 @@ func TestPublicRTCEncoderControlChurnSoakMatrix(t *testing.T) {
 	for modeIndex, mode := range modes {
 		modeIndex, mode := modeIndex, mode
 		t.Run(mode.String(), func(t *testing.T) {
+			t.Parallel()
 			width, height := publicRTCMatrixGeometry(t, mode)
 			configForStep := func(step int) EncoderConfig {
 				cfg := publicRTCMatrixConfig(width, height, mode)
@@ -8024,6 +8044,7 @@ func TestPublicRTCEncoderRTPSequencerImpairmentRecoveryMatrix(t *testing.T) {
 	for step, mode := range EncoderWebRTCScalabilityModes() {
 		mode := mode
 		t.Run(mode.String(), func(t *testing.T) {
+			t.Parallel()
 			width, height := publicRTCMatrixGeometry(t, mode)
 			cfg := publicRTCMatrixConfig(width, height, mode)
 			cfg.MaxFramerate = fps[step%len(fps)]

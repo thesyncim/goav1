@@ -103,9 +103,12 @@ jobs:
         run: go build ./...
       - name: test with native SIMD
         run: go test -count=1 -timeout 30m ./...
-      - name: focused SIMD race and checkptr tests
+      # The race shards already run these packages under -race on the
+      # generic kernels; here the SIMD kernels need checkptr, which -race
+      # would enable at about five times the cost.
+      - name: focused SIMD checkptr tests
         run: >-
-          go test -race -count=1 -timeout 45m
+          go test -count=1 -timeout 45m -gcflags=all=-d=checkptr
           ./internal/av1/dsp
           ./internal/av1/cdef
           ./internal/av1/loopfilter
@@ -186,9 +189,12 @@ jobs:
         run: go vet ./...
       - name: test with native SIMD
         run: go test -count=1 -timeout 30m ./...
-      - name: focused SIMD race and checkptr tests
+      # The race shards already run these packages under -race on the
+      # generic kernels; here the SIMD kernels need checkptr, which -race
+      # would enable at about five times the cost.
+      - name: focused SIMD checkptr tests
         run: >-
-          go test -race -count=1 -timeout 45m
+          go test -count=1 -timeout 45m -gcflags=all=-d=checkptr
           ./internal/av1/dsp
           ./internal/av1/cdef
           ./internal/av1/loopfilter
@@ -236,14 +242,15 @@ jobs:
     needs: build
     strategy:
       fail-fast: false
-      max-parallel: 4
       matrix:
         shard:
           - public-0
           - public-1
           - public-2
           - public-3
-          - encoder
+          - encoder-0
+          - encoder-1
+          - encoder-2
           - testvector
           - decode
           - kernels-a
@@ -269,9 +276,9 @@ jobs:
         run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
       - name: audit race shard coverage
         run: bash .github/scripts/race-ci.sh audit
-      - name: audit public race test coverage
+      - name: audit split race test coverage
         if: ${{ matrix.shard == 'public-0' }}
-        run: bash .github/scripts/race-ci.sh audit-public
+        run: bash .github/scripts/race-ci.sh audit-split
       - name: go test -race
         run: bash .github/scripts/race-ci.sh run "${{ matrix.shard }}"
 
