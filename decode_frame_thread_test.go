@@ -167,6 +167,7 @@ func TestFrameThreadedParseNeverReadsReferencePixels(t *testing.T) {
 		// Retiring frames needs the caller's next DecodeNext, so the lock is
 		// taken only after the waits.
 		outputMu.Lock()
+		gate.BindTaskWake(p.d.workerPool)
 		gate.Reset()
 		var saved [][]byte
 		seen := map[*Frame]bool{}

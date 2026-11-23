@@ -1030,6 +1030,9 @@ type Pool struct {
 	lanes       chan wavefrontLaneTask
 	laneCount   int
 	lanesClosed bool
+	// frameTasks is the frame-threaded decode's reconstruction workers,
+	// started with the first frame-threaded frame (guarded by laneMu).
+	frameTasks *frameTaskPool
 }
 
 type poolWorker struct {
@@ -1542,6 +1545,9 @@ func (p *Pool) Close() {
 		close(p.lanes)
 	}
 	p.lanesClosed = true
+	if p.frameTasks != nil {
+		p.frameTasks.close()
+	}
 	p.laneMu.Unlock()
 	p.mu.Unlock()
 }
@@ -1638,6 +1644,23 @@ func (p *Pool) wavefrontLaneGroupLocked(need int) chan<- wavefrontLaneTask {
 		go poolWavefrontLaneLoop(p.lanes)
 	}
 	return p.lanes
+}
+
+// frameTaskPool returns the pool's frame-thread workers, one per pool
+// worker, starting them on first use; nil once the pool is closed.
+func (p *Pool) frameTaskPool() *frameTaskPool {
+	if p == nil {
+		return nil
+	}
+	p.laneMu.Lock()
+	defer p.laneMu.Unlock()
+	if p.lanesClosed {
+		return nil
+	}
+	if p.frameTasks == nil {
+		p.frameTasks = newFrameTaskPool(len(p.workers))
+	}
+	return p.frameTasks
 }
 
 func poolWavefrontLaneLoop(tasks <-chan wavefrontLaneTask) {

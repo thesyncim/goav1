@@ -33,6 +33,21 @@ type FrameProgress struct {
 	mu      sync.Mutex
 	cond    sync.Cond
 	waiters int32
+	// tasks, when set, is woken on every publish: its reconstruction tasks
+	// check this progress before they are taken.
+	tasks *frameTaskPool
+}
+
+// BindTaskWake makes every publish wake pool's frame-thread workers.
+func (p *FrameProgress) BindTaskWake(pool *Pool) {
+	p.tasks = pool.frameTaskPool()
+}
+
+// Ready reports whether at least need rows are published or the surface's
+// frame failed, so Wait would return at once.
+func (p *FrameProgress) Ready(need int32) bool {
+	v := p.rows.Load()
+	return v >= need || v == FrameProgressError
 }
 
 // Reset marks the surface as not yet decoded: no row is available.
@@ -49,6 +64,7 @@ func (p *FrameProgress) Publish(rows int32) {
 		p.cond.Broadcast()
 	}
 	p.mu.Unlock()
+	p.tasks.wake()
 }
 
 // Wait blocks until at least need rows are published. It reports false when
@@ -109,6 +125,14 @@ type FrameThreadRecon struct {
 	// lanes finish them, so the post-filter can follow reconstruction row
 	// by row (dav1d's filter tasks wait on the tiles' recon progress).
 	Rows *FrameThreadReconRows
+	// Seq is the frame's decode order: the pool's workers take the oldest
+	// frame's tasks first.
+	Seq uint64
+	// tasks runs the tiles' reconstruction tasks; reconTasks holds them,
+	// usedTasks of them this frame (guarded by mu).
+	tasks      *frameTaskPool
+	reconTasks []*frameReconTask
+	usedTasks  int
 
 	// pending holds the tiles whose reconstruction lanes still run after
 	// their parse returned; the tile parses append to it concurrently.
@@ -135,6 +159,7 @@ func (r *FrameThreadRecon) Reset() {
 	r.CDFOut = nil
 	r.Rows = nil
 	r.mu.Lock()
+	r.usedTasks = 0
 	clear(r.pending)
 	r.pending = r.pending[:0]
 	r.mu.Unlock()
@@ -227,16 +252,15 @@ func (r *FrameThreadRecon) runBatch(i int) {
 	}
 }
 
-// ExecuteFrameWorkRunnerFrameThread runs a frame's tile entropy passes while
-// their SB-row reconstruction lanes run on the pool's persistent lane group
-// (dav1d's per-tile DAV1D_TASK_TYPE_TILE_ENTROPY tasks). Batch 0 runs on the
-// calling goroutine and every other batch on a lane goroutine; it returns once
-// every parse finished. The parses must not hold the pool, because the
-// post-filter of the previous frame fans its row bands across the pool workers
-// at the same time. Each tile reconstructs on one lane. laneNeed is the total
-// number of lane goroutines that may be live at once across every in-flight
-// frame (two per worker per frame: the batch parses plus the reconstruction
-// lanes), so a lane send always finds an idle goroutine.
+// ExecuteFrameWorkRunnerFrameThread runs a frame's tile entropy passes
+// (dav1d's per-tile DAV1D_TASK_TYPE_TILE_ENTROPY tasks) while each tile's
+// reconstruction task runs its SB rows on the pool's frame-thread workers.
+// Batch 0 runs on the calling goroutine and every other batch on a lane
+// goroutine; it returns once every parse finished. The parses must not hold
+// the pool, because the post-filter of the previous frame fans its row bands
+// across the pool workers at the same time. laneNeed is the total number of
+// lane goroutines that may be live at once across every in-flight frame (one
+// per worker per frame), so a lane send always finds an idle goroutine.
 func (p *Pool) ExecuteFrameWorkRunnerFrameThread(batches []Batch, jobs []tile.Job, base FrameWorkBatch, runner FrameWorkBatchRunner, laneNeed int) error {
 	if p == nil || len(p.workers) == 0 {
 		return ErrInvalidWorkerCount
@@ -251,6 +275,9 @@ func (p *Pool) ExecuteFrameWorkRunnerFrameThread(batches []Batch, jobs []tile.Jo
 		return err
 	}
 	ft := base.FrameThread
+	if ft.tasks = p.frameTaskPool(); ft.tasks == nil {
+		return ErrPoolClosed
+	}
 	if m := ft.Motion; m != nil {
 		if err := m.bindTiles(base, jobs); err != nil {
 			return err
@@ -431,4 +458,16 @@ func (b *FrameWorkBatch) frameThreadMotionProgress(index int) tile.FrameMotionPr
 		}
 	}
 	return m
+}
+
+// reconTask returns a reconstruction task for one of the frame's tiles.
+func (r *FrameThreadRecon) reconTask() *frameReconTask {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.usedTasks == len(r.reconTasks) {
+		r.reconTasks = append(r.reconTasks, &frameReconTask{})
+	}
+	t := r.reconTasks[r.usedTasks]
+	r.usedTasks++
+	return t
 }
