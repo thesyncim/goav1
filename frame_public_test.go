@@ -140,7 +140,7 @@ func TestPublicFrameBorderedSamplePlaneRoundTripHighBitDepth(t *testing.T) {
 
 	samples.Pix[samples.Origin+1] = 4095
 	dst := FramePlane{Pix: make([]byte, len(plane.Pix)), Stride: plane.Stride, Width: plane.Width, Height: plane.Height}
-	if err := internalframe.StoreBorderedSamplePlane(dst, 2, samples); err != nil {
+	if err := internalframe.StoreBorderedSamplePlaneRectTrusted(dst, 2, samples, 0, 0, samples.Width, samples.Height); err != nil {
 		t.Fatal(err)
 	}
 	if got := getPublicFrameSample(dst, 2, 1, 0); got != 4095 {
@@ -211,7 +211,7 @@ func TestPublicFrameSamplePlaneAllocs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LoadFrameBorderedSamplePlane err=%v", err)
 		}
-		if err := internalframe.StoreBorderedSamplePlane(dst, 1, samples); err != nil {
+		if err := internalframe.StoreBorderedSamplePlaneRectTrusted(dst, 1, samples, 0, 0, samples.Width, samples.Height); err != nil {
 			t.Fatalf("StoreFrameBorderedSamplePlane err=%v", err)
 		}
 	})

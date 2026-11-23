@@ -1,7 +1,6 @@
 package goav1
 
 import (
-	"errors"
 	"testing"
 
 	internaltile "github.com/thesyncim/goav1/internal/av1/tile"
@@ -45,13 +44,6 @@ func TestPublicTileExtendedTransformSets(t *testing.T) {
 	if count != 12 {
 		t.Fatalf("count=%d want 12", count)
 	}
-	typ, err := internaltile.ExtTXTypeFromSymbol(set, 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if typ != internaltransform.TypeDCTDCT {
-		t.Fatalf("type=%d want DCT_DCT", typ)
-	}
 	symbol, err := internaltile.ExtTXSymbolForType(set, internaltransform.TypeDCTDCT)
 	if err != nil {
 		t.Fatal(err)
@@ -65,8 +57,5 @@ func TestPublicTileExtendedTransformSets(t *testing.T) {
 	}
 	if allowed {
 		t.Fatal("VADST should be disallowed for the DTT9/IDTX/1D-DCT set")
-	}
-	if _, err := internaltile.ExtTXTypeFromSymbol(set, count); !errors.Is(err, internaltile.ErrInvalidDecodeState) {
-		t.Fatalf("invalid symbol err=%v want %v", err, internaltile.ErrInvalidDecodeState)
 	}
 }

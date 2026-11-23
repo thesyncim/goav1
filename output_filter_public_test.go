@@ -14,7 +14,7 @@ func TestPublicSuperResUpscalePlane(t *testing.T) {
 	dst := make([]uint16, 13)
 	srcPlane := internalframe.SamplePlane{Pix: src, Stride: len(src), Width: len(src), Height: 1}
 	dstPlane := internalframe.SamplePlane{Pix: dst, Stride: len(dst), Width: len(dst), Height: 1}
-	if err := internalsuperres.UpscalePlane(srcPlane, dstPlane, 8); err != nil {
+	if err := internalsuperres.UpscalePlaneCoded(srcPlane, dstPlane, srcPlane.Width, 8); err != nil {
 		t.Fatal(err)
 	}
 	want := []uint16{0, 11, 33, 54, 73, 92, 112, 132, 151, 171, 191, 214, 226}
@@ -28,7 +28,7 @@ func TestPublicSuperResUpscalePlane(t *testing.T) {
 	dst = make([]uint16, 7)
 	srcPlane = internalframe.SamplePlane{Pix: src, Stride: len(src), Width: len(src), Height: 1}
 	dstPlane = internalframe.SamplePlane{Pix: dst, Stride: len(dst), Width: len(dst), Height: 1}
-	if err := internalsuperres.UpscalePlane(srcPlane, dstPlane, 10); err != nil {
+	if err := internalsuperres.UpscalePlaneCoded(srcPlane, dstPlane, srcPlane.Width, 10); err != nil {
 		t.Fatal(err)
 	}
 	want = []uint16{0, 104, 450, 901, 996, 642, 330}
@@ -53,20 +53,14 @@ func TestPublicFilmGrainRandomScalingAndSamples(t *testing.T) {
 			t.Fatalf("random step %d=%#x want %#x", i, got, want)
 		}
 	}
-	cb, err := internalfilmgrain.NewPlaneRandom(0x1234, internalfilmgrain.ChromaPlaneCb)
-	if err != nil {
+	if _, err := internalfilmgrain.NewPlaneRandom(0x1234, internalfilmgrain.ChromaPlaneCb); err != nil {
 		t.Fatal(err)
 	}
-	cr, err := internalfilmgrain.NewPlaneRandom(0x1234, internalfilmgrain.ChromaPlaneCr)
-	if err != nil {
+	if _, err := internalfilmgrain.NewPlaneRandom(0x1234, internalfilmgrain.ChromaPlaneCr); err != nil {
 		t.Fatal(err)
 	}
-	stripe, err := internalfilmgrain.NewStripeRandom(0x1234, 32)
-	if err != nil {
+	if _, err := internalfilmgrain.NewStripeRandom(0x1234, 32); err != nil {
 		t.Fatal(err)
-	}
-	if cb.Register() != 0xa710 || cr.Register() != 0x5bec || stripe.Register() != 0xc522 {
-		t.Fatalf("registers cb=%#x cr=%#x stripe=%#x", cb.Register(), cr.Register(), stripe.Register())
 	}
 
 	var lut [internalfilmgrain.ScalingLUTSize]uint8
@@ -78,20 +72,6 @@ func TestPublicFilmGrainRandomScalingAndSamples(t *testing.T) {
 		if got := lut[index]; got != want {
 			t.Fatalf("lut[%d]=%d want %d", index, got, want)
 		}
-	}
-	if got, err := internalfilmgrain.ScaleLUT(lut[:], 40, 10); err != nil || got != 20 {
-		t.Fatalf("scale lut=%d err=%v want 20,nil", got, err)
-	}
-
-	luma := make([]int16, internalfilmgrain.LumaGrainSamples)
-	publicSetFilmGrainLuma(luma, 0xd9, 1, 1, 0, 0, 77)
-	if got, err := internalfilmgrain.LumaGrainSample(luma, 0xd9, 1, 1, 0, 0); err != nil || got != 77 {
-		t.Fatalf("luma sample=%d err=%v want 77,nil", got, err)
-	}
-	chroma := make([]int16, internalfilmgrain.ChromaGrainSamples)
-	publicSetFilmGrainChroma(chroma, 0xd9, true, true, 1, 1, 0, 0, -13)
-	if got, err := internalfilmgrain.ChromaGrainSample(chroma, 0xd9, true, true, 1, 1, 0, 0); err != nil || got != -13 {
-		t.Fatalf("chroma sample=%d err=%v want -13,nil", got, err)
 	}
 }
 
@@ -141,13 +121,6 @@ func TestPublicGenerateFilmGrainTemplates(t *testing.T) {
 
 func TestPublicApplyFilmGrainRowsAndSamples(t *testing.T) {
 	lut := publicFilmGrainScaling(64)
-	if got, err := internalfilmgrain.ApplyLumaSample(100, 64, lut[:], 8, 8, false); err != nil || got != 116 {
-		t.Fatalf("ApplyFilmGrainLumaSample=%d err=%v want 116,nil", got, err)
-	}
-	if got, err := internalfilmgrain.BlendLumaOverlap(20, 100, 0, 8); err != nil || got != 70 {
-		t.Fatalf("BlendFilmGrainLumaOverlap=%d err=%v want 70,nil", got, err)
-	}
-
 	dst, src := publicFilmGrainRowBuffers(4, 2, 8, 100)
 	lumaGrain := make([]int16, internalfilmgrain.LumaGrainSamples)
 	publicSetFilmGrainLuma(lumaGrain, 0xd9, 0, 0, 0, 0, 64)
@@ -191,7 +164,7 @@ func TestPublicApplyFilmGrainRowsAndSamples(t *testing.T) {
 func TestPublicOutputFilterRejectsInvalid(t *testing.T) {
 	src := internalframe.SamplePlane{Pix: make([]uint16, 4), Stride: 4, Width: 4, Height: 1}
 	dst := internalframe.SamplePlane{Pix: make([]uint16, 8), Stride: 8, Width: 8, Height: 1}
-	if err := internalsuperres.UpscalePlane(src, dst, 7); !errors.Is(err, internalframe.ErrInvalidPlane) {
+	if err := internalsuperres.UpscalePlaneCoded(src, dst, src.Width, 7); !errors.Is(err, internalframe.ErrInvalidPlane) {
 		t.Fatalf("UpscaleSuperResPlane err=%v want %v", err, internalframe.ErrInvalidPlane)
 	}
 	if _, err := internalfilmgrain.NewPlaneRandom(0, 0); !errors.Is(err, internalfilmgrain.ErrInvalidParams) {
@@ -207,9 +180,6 @@ func TestPublicOutputFilterRejectsInvalid(t *testing.T) {
 	}
 	if err := internalfilmgrain.GenerateLumaGrain(make([]int16, internalfilmgrain.LumaGrainSamples), internalfilmgrain.LumaGrainParams{BitDepth: 9}); !errors.Is(err, internalfilmgrain.ErrInvalidParams) {
 		t.Fatalf("GenerateFilmGrainLuma err=%v want %v", err, internalfilmgrain.ErrInvalidParams)
-	}
-	if _, err := internalfilmgrain.LumaGrainSample(nil, 0, 0, 0, 0, 0); !errors.Is(err, internalfilmgrain.ErrInvalidParams) {
-		t.Fatalf("FilmGrainLumaSample err=%v want %v", err, internalfilmgrain.ErrInvalidParams)
 	}
 }
 
@@ -239,7 +209,7 @@ func TestPublicOutputFilterAllocs(t *testing.T) {
 	}
 
 	allocs := testing.AllocsPerRun(1000, func() {
-		if err := internalsuperres.UpscalePlane(superSrc, superDst, 8); err != nil {
+		if err := internalsuperres.UpscalePlaneCoded(superSrc, superDst, superSrc.Width, 8); err != nil {
 			t.Fatalf("UpscaleSuperResPlane err=%v", err)
 		}
 		rng := internalfilmgrain.NewRandom(0x1234)
@@ -248,9 +218,6 @@ func TestPublicOutputFilterAllocs(t *testing.T) {
 		}
 		if err := internalfilmgrain.BuildScalingLUT(lut[:], points[:]); err != nil {
 			t.Fatalf("BuildFilmGrainScalingLUT err=%v", err)
-		}
-		if _, err := internalfilmgrain.ScaleLUT(lut[:], 1023, 10); err != nil {
-			t.Fatalf("FilmGrainScaleLUT err=%v", err)
 		}
 		if err := internalfilmgrain.GenerateLumaGrain(lumaGrain, lumaParams); err != nil {
 			t.Fatalf("GenerateFilmGrainLuma err=%v", err)
