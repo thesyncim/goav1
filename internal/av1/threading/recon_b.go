@@ -408,6 +408,17 @@ func (b *coefBuffer) used(rows, cols, stride uint8) {
 	b.rows, b.cols, b.colStride = rows, cols, stride
 }
 
+// zeroCFArena makes the cf arena zero for the next job's decode_coefs. The
+// lanes clear every coefficient they reconstruct, so after a tile whose lanes
+// all completed (clean) it already is; otherwise the prefix earlier jobs used
+// is cleared.
+func (s *FrameWorkTileResidualScratch) zeroCFArena(clean bool) {
+	if !clean {
+		clear(s.cfArena[:min(s.cfDirty, cap(s.cfArena))])
+	}
+	s.cfDirty = 0
+}
+
 // cfArenaSlot returns the next TXB slot of the frame-thread cf arena, dav1d's
 // ts->frame_thread[p].cf. reserveCFArena sized the arena for the whole job, as
 // dav1d sizes frame_thread.cf per frame: it never grows while the lanes read

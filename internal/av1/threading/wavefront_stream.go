@@ -250,13 +250,7 @@ func (c *frameWorkTileResidualLoopController) startReconStream() error {
 	if err := wf.ensureStates(workers, c); err != nil {
 		return err
 	}
-	// The lanes clear every coefficient they reconstruct, so after a tile
-	// that completed the arena is zero again; anything else may have left
-	// coefficients behind.
-	if s := c.scratch; !wf.cfZero {
-		clear(s.cfArena[:min(s.cfDirty, cap(s.cfArena))])
-	}
-	c.scratch.cfDirty = 0
+	c.scratch.zeroCFArena(wf.cfZero)
 	wf.cfZero = false
 	wf.frameThread = c.batch.FrameThread
 	if c.index >= 0 && c.index < len(c.batch.Jobs) {

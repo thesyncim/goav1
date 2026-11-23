@@ -325,7 +325,8 @@ type FrameWorkTileResidualScratch struct {
 	cfOverflow bool
 	cfSpare    [1024]int32
 	// cfDirty bounds the arena prefix earlier jobs may have left
-	// coefficients in.
+	// coefficients in, including the slot a failed decode_coefs wrote past
+	// the committed length.
 	cfDirty int
 	// coefBuf is the fused path's dav1d t->cf coefficient buffer.
 	coefBuf         coefBuffer
@@ -613,7 +614,7 @@ func (s *FrameWorkTileResidualScratch) reserveCFArena(walk tile.BlockWalkRequest
 func (s *FrameWorkTileResidualScratch) resetDeferredReconBuffers() {
 	s.reconVisits = s.reconVisits[:0]
 	s.reconCBI = s.reconCBI[:0]
-	s.cfDirty = max(s.cfDirty, len(s.cfArena))
+	s.cfDirty = max(s.cfDirty, min(len(s.cfArena)+1024, cap(s.cfArena)))
 	s.cfArena = s.cfArena[:0]
 	s.cfOverflow = false
 	s.paletteArena = s.paletteArena[:0]

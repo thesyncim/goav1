@@ -1099,3 +1099,25 @@ func TestFrameWorkDeferredPaletteInstallIncremental(t *testing.T) {
 		t.Fatal("cursor past the bindings accepted")
 	}
 }
+
+// TestFrameWorkCFArenaZeroAfterFailedJob checks that a job that failed with
+// coefficients still in the arena, including a decode_coefs slot written past
+// the committed length, leaves the next job a zero arena.
+func TestFrameWorkCFArenaZeroAfterFailedJob(t *testing.T) {
+	var s FrameWorkTileResidualScratch
+	full := make([]int32, 4096)
+	for i := range full[:100+1024] {
+		full[i] = int32(i + 1)
+	}
+	s.cfArena = full[:100]
+	s.resetDeferredReconBuffers()
+	s.zeroCFArena(false)
+	for i, v := range full {
+		if v != 0 {
+			t.Fatalf("cf arena[%d] = %d after a failed job, want 0", i, v)
+		}
+	}
+	if s.cfDirty != 0 {
+		t.Fatalf("cfDirty = %d after clearing", s.cfDirty)
+	}
+}
