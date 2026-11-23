@@ -3,6 +3,7 @@ package threading
 import (
 	"testing"
 
+	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
@@ -16,7 +17,7 @@ func TestFrameWorkBlockDequantIsKeyed(t *testing.T) {
 	c := frameWorkTileResidualLoopController{batch: batch, state: state, req: req}
 	check := func(segmentID uint8) {
 		t.Helper()
-		dq := c.blockDequant(segmentID, false)
+		dq := c.blockDequant(segmentID)
 		if dq == nil {
 			t.Fatalf("segment %d: no dequant factors", segmentID)
 		}
@@ -39,11 +40,19 @@ func TestFrameWorkBlockDequantIsKeyed(t *testing.T) {
 	check(1)
 }
 
-func TestFrameWorkBlockDequantRejectsDequantizingPaths(t *testing.T) {
+func TestFrameWorkBlockDequantLossless(t *testing.T) {
 	batch, state, _, _, req := testFrameWorkResidualDriver(t)
+	batch.Quantization = parser.QuantizationParams{UsingQMatrix: true, QMatrixLevelY: 3, QMatrixLevelU: 3, QMatrixLevelV: 3}
+	state.CurrentBaseQIdx = 0
 	c := frameWorkTileResidualLoopController{batch: batch, state: state, req: req}
-	if dq := c.blockDequant(0, true); dq != nil {
-		t.Fatalf("lossless block received dequant factors %+v", *dq)
+	dq := c.blockDequant(0)
+	if dq == nil {
+		t.Fatal("lossless block: no dequant factors")
+	}
+	for plane, p := range dq {
+		if p.DC != 4 || p.AC != 4 || p.QM != nil {
+			t.Fatalf("lossless plane %d factors %+v, want DC/AC 4/4 without matrices", plane, p)
+		}
 	}
 }
 
@@ -54,7 +63,7 @@ func TestFrameWorkBlockDequantSelectsQMatrices(t *testing.T) {
 	batch.Quantization.QMatrixLevelU = quantize.QMLevels - 1
 	batch.Quantization.QMatrixLevelV = 7
 	c := frameWorkTileResidualLoopController{batch: batch, state: state, req: req}
-	dq := c.blockDequant(0, false)
+	dq := c.blockDequant(0)
 	if dq == nil {
 		t.Fatal("quantizer-matrix block: no dequant factors")
 	}

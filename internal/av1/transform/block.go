@@ -33,6 +33,10 @@ const (
 	TypeCount
 )
 
+// TypeWHTWHT is dav1d's WHT_WHT (N_TX_TYPES): the 4x4 Walsh-Hadamard
+// transform of lossless blocks, which is not a coded tx_type.
+const TypeWHTWHT = TypeCount
+
 var typeClasses = [TypeCount]Class{
 	TypeDCTDCT:           Class2D,
 	TypeADSTDCT:          Class2D,

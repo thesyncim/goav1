@@ -129,6 +129,14 @@ func ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst []byte, dstStride 
 	// 64x64 TXBs whose coefficient scan is adjusted to 32x32.
 	transformScratch := int32Scratch[blockLen:needed32:needed32]
 	residual := residualScratch[:blockLen:blockLen]
+	if cfg.Transform == transform.TypeWHTWHT {
+		if err := transform.InverseWHT4x4Block(residual, width, dequant, scanHeight, int(cfg.EOB)); err != nil {
+			return ErrInvalidBlock
+		}
+		max := uint16((1 << bitDepth) - 1)
+		dsp.AddResidualPlaneBlockTrusted(dst, dstStride, bytesPerSample, max, visibleWidth, visibleHeight, residual, width)
+		return nil
+	}
 	if dcOnly {
 		sample := transform.InverseDCTDCOnlySample(dequant[0], cfg.Size, bitDepth)
 		max := uint16((1 << bitDepth) - 1)

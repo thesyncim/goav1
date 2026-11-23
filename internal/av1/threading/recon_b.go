@@ -26,7 +26,7 @@ func (c *frameWorkTileResidualLoopController) ReconB(visit *tile.BlockLoopVisit,
 	}
 	var dq *[3]tile.CoefDequant
 	if !b.Skip {
-		dq = c.blockDequant(visit.SegmentID, b.Lossless)
+		dq = c.blockDequant(visit.SegmentID)
 	}
 	tree := &b.Tree
 	yDims, ok := tree.Y.Dimensions()
@@ -189,12 +189,8 @@ func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisi
 
 // blockDequant returns the block's dav1d ts->dq[seg_id] with cf_max and the
 // planes' f->qm, resolved once per (qindex, segment) key, or nil when the
-// block's coefficients are dequantized by the reconstruction instead
-// (lossless).
-func (c *frameWorkTileResidualLoopController) blockDequant(segmentID uint8, lossless bool) *[3]tile.CoefDequant {
-	if lossless {
-		return nil
-	}
+// block's coefficients are dequantized by the reconstruction instead.
+func (c *frameWorkTileResidualLoopController) blockDequant(segmentID uint8) *[3]tile.CoefDequant {
 	key := frameWorkReconQuantKey(c.state.CurrentBaseQIdx, segmentID)
 	if c.dqKey != key {
 		c.dqKey = key
@@ -218,11 +214,11 @@ func (c *frameWorkTileResidualLoopController) resolveDequant(segmentID uint8) bo
 	levels := [3]uint8{qp.QMatrixLevelY, qp.QMatrixLevelU, qp.QMatrixLevelV}
 	for plane := range c.dq {
 		q, lossless, err := c.batch.blockQuantizerForPlane(c.state.CurrentBaseQIdx, segmentID, quantize.Plane(plane))
-		if err != nil || lossless || q.DC <= 0 || q.AC <= 0 {
+		if err != nil || q.DC <= 0 || q.AC <= 0 {
 			return false
 		}
 		c.dq[plane] = tile.CoefDequant{DC: uint32(q.DC), AC: uint32(q.AC), Max: uint32(dqMax)}
-		if qp.UsingQMatrix {
+		if qp.UsingQMatrix && !lossless {
 			c.dq[plane].QM = tile.QMatrices(levels[plane], plane != 0)
 		}
 	}

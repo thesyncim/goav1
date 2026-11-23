@@ -266,7 +266,7 @@ func (b *CoefBlock) DecodeCoefs(plane uint8, size TransformSize, x4, y4, visW, v
 		return r, nil
 	}
 	class := transform.Class2D
-	if r.Txtp >= transform.TypeIDTX {
+	if r.Txtp >= transform.TypeIDTX && r.Txtp != transform.TypeWHTWHT {
 		var err error
 		if class, err = r.Txtp.Class(); err != nil {
 			return CoefResult{}, ErrInvalidDecodeState
@@ -346,11 +346,10 @@ func mustClass(t transform.Type) transform.Class {
 // readTxtp is the transform-type section of dav1d's decode_coefs for a
 // non-skipped TXB: chroma types are derived (intra from the UV mode, inter
 // from the co-located luma type in txtp_map), luma types are read from the
-// per-size set unless qidx is zero. A lossless TXB is a WHT_WHT, which the
-// reconstruction keys on the block's quantizer and reads as DCT_DCT.
+// per-size set unless qidx is zero. A lossless TXB is a WHT_WHT.
 func (b *CoefBlock) readTxtp(plane uint8, size TransformSize, x4, y4 int) (transform.Type, error) {
 	if b.Lossless {
-		return transform.TypeDCTDCT, nil
+		return transform.TypeWHTWHT, nil
 	}
 	if plane != 0 {
 		if b.Intra {
