@@ -770,14 +770,6 @@ func TestFrameWorkDeferredPaletteArenaFinalizesAfterGrowth(t *testing.T) {
 
 	appendVisit := func(visit tile.BlockLoopVisit) {
 		visitIndex, slots := scratch.bufferDeferredVisit(&visit)
-		visitIndex32, ok := frameWorkReconIndex(visitIndex)
-		if !ok {
-			t.Fatalf("visit index overflow: %d", visitIndex)
-		}
-		scratch.reconEvents = append(scratch.reconEvents, frameWorkReconEvent{
-			kind:  frameWorkReconEventBlockBegin,
-			index: visitIndex32,
-		})
 		if err := scratch.rememberDeferredPalette(visitIndex, slots); err != nil {
 			t.Fatalf("remember deferred palette: %v", err)
 		}

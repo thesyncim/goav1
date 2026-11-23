@@ -19,15 +19,14 @@ import (
 type frameWorkReconView struct {
 	rowStart []int32
 	sbs      []frameWorkReconSB
-	events   []frameWorkReconEvent
 	visits   []tile.BlockLoopVisit
-	txbs     []frameWorkReconTXB
+	cbi      []frameWorkReconCBI
 	cfArena  []int32
 }
 
-// frameWorkReconSpanBuilder is the parse-side cursor that partitions the flat
-// event list into per-SB spans and SB rows as block-begin events arrive. Only
-// the parsing goroutine touches it.
+// frameWorkReconSpanBuilder is the parse-side cursor that partitions the
+// buffered blocks into per-SB spans and SB rows as they arrive. Only the
+// parsing goroutine touches it.
 type frameWorkReconSpanBuilder struct {
 	miRowStart    int
 	miColStart    int
@@ -51,13 +50,14 @@ func (wf *frameWorkReconWavefront) beginSpans(region FrameWorkJobRegion, sbSizeM
 	}
 }
 
-// noteBlockBegin records that the block-begin event at eventIndex opens the
-// block at (miRow, miCol). When the block starts a new superblock it closes the
-// previous superblock's span at eventIndex and opens a new one; when it starts
-// a new SB row R it returns R, the number of leading rows whose events are now
-// all recorded, and -1 otherwise. Events must arrive in SB-raster order for the
+// noteBlockBegin records that the block at (miRow, miCol) is buffered at
+// visitIndex, with its cbi entries and coefficients starting at cbiIndex and
+// cfIndex. When the block starts a new superblock it closes the previous
+// superblock's span at visitIndex and opens a new one; when it starts a new SB
+// row R it returns R, the number of leading rows whose blocks are now all
+// recorded, and -1 otherwise. Blocks must arrive in SB-raster order for the
 // wavefront gate to be valid; anything else is rejected.
-func (wf *frameWorkReconWavefront) noteBlockBegin(eventIndex int, miRow int, miCol int) (int, error) {
+func (wf *frameWorkReconWavefront) noteBlockBegin(visitIndex, cbiIndex, cfIndex int, miRow int, miCol int) (int, error) {
 	b := &wf.build
 	if miRow < b.miRowStart || miCol < b.miColStart || b.sbSizeMIB <= 0 {
 		return -1, ErrInvalidBatch
@@ -73,7 +73,15 @@ func (wf *frameWorkReconWavefront) noteBlockBegin(eventIndex int, miRow int, miC
 	if sbRow < b.prevRow || (sbRow == b.prevRow && sbCol < b.prevCol) {
 		return -1, ErrInvalidBatch
 	}
-	idx, ok := frameWorkReconIndex(eventIndex)
+	idx, ok := frameWorkReconIndex(visitIndex)
+	if !ok {
+		return -1, ErrInvalidBatch
+	}
+	cbi, ok := frameWorkReconIndex(cbiIndex)
+	if !ok {
+		return -1, ErrInvalidBatch
+	}
+	cf, ok := frameWorkReconIndex(cfIndex)
 	if !ok {
 		return -1, ErrInvalidBatch
 	}
@@ -89,7 +97,7 @@ func (wf *frameWorkReconWavefront) noteBlockBegin(eventIndex int, miRow int, miC
 			return -1, err
 		}
 	}
-	wf.sbSpans = append(wf.sbSpans, frameWorkReconSB{start: idx, end: idx, col: col})
+	wf.sbSpans = append(wf.sbSpans, frameWorkReconSB{start: idx, end: idx, col: col, cbi: cbi, cf: cf})
 	newRow := sbRow != b.prevRow
 	b.prevRow, b.prevCol = sbRow, sbCol
 	if newRow {
@@ -98,10 +106,10 @@ func (wf *frameWorkReconWavefront) noteBlockBegin(eventIndex int, miRow int, miC
 	return -1, nil
 }
 
-// closeSpans ends the last superblock at eventCount and opens the row starts
+// closeSpans ends the last superblock at visitCount and opens the row starts
 // of every remaining row, so rowStart holds rowCount+1 entries.
-func (wf *frameWorkReconWavefront) closeSpans(eventCount int) error {
-	idx, ok := frameWorkReconIndex(eventCount)
+func (wf *frameWorkReconWavefront) closeSpans(visitCount int) error {
+	idx, ok := frameWorkReconIndex(visitCount)
 	if !ok {
 		return ErrInvalidBatch
 	}
@@ -253,11 +261,11 @@ func (c *frameWorkTileResidualLoopController) startReconStream() error {
 	return nil
 }
 
-// streamBlockBegin runs before a block-begin event at the next event index is
-// buffered; when the block opens a new SB row it publishes the finished rows.
+// streamBlockBegin runs before a block is buffered; when the block opens a new
+// SB row it publishes the finished rows.
 func (c *frameWorkTileResidualLoopController) streamBlockBegin(visit *tile.BlockLoopVisit) error {
-	wf := c.scratch.wavefront
-	rows, err := wf.noteBlockBegin(len(c.scratch.reconEvents), int(visit.Block.MIRow), int(visit.Block.MICol))
+	s := c.scratch
+	rows, err := s.wavefront.noteBlockBegin(len(s.reconVisits), len(s.reconCBI), len(s.cfArena), int(visit.Block.MIRow), int(visit.Block.MICol))
 	if err != nil || rows <= 0 {
 		return err
 	}
@@ -279,9 +287,8 @@ func (c *frameWorkTileResidualLoopController) publishReconRows(rows int) error {
 	wf.publishRows(rows, frameWorkReconView{
 		rowStart: wf.rowStart,
 		sbs:      wf.sbSpans,
-		events:   c.scratch.reconEvents,
 		visits:   c.scratch.reconVisits,
-		txbs:     c.scratch.reconTXBs,
+		cbi:      c.scratch.reconCBI,
 		cfArena:  c.scratch.cfArena,
 	})
 	return nil
@@ -297,7 +304,7 @@ func (c *frameWorkTileResidualLoopController) finishReconStream(parseErr error) 
 		wf.cancelLanes()
 		return parseErr
 	}
-	if err := wf.closeSpans(len(c.scratch.reconEvents)); err != nil {
+	if err := wf.closeSpans(len(c.scratch.reconVisits)); err != nil {
 		wf.cancelLanes()
 		return err
 	}
