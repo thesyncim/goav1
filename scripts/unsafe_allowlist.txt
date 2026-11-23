@@ -53,7 +53,6 @@ internal/av1/encoder/svt_hme_default.go
 internal/av1/encoder/svt_sadloop_amd64.go
 internal/av1/encoder/svt_sweep_amd64.go
 internal/av1/encoder/svt_sweep_arm64.go
-internal/av1/entropy/writer_asm_arm64_spec.go
 internal/av1/frame/samples_gosimd_arm64.go
 internal/av1/frame/samples_le.go
 internal/av1/loopfilter/filter4_wide_arm64.go
