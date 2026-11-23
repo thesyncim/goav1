@@ -940,16 +940,19 @@ func predictScaledCompoundRefToConvBufIdentityStep(out []uint16, ref frame.Plane
 	round0 := compoundRound0(bitDepth)
 	offsetBits := int(bitDepth) + 2*filterBits - round0
 	roundOffset := (1 << (offsetBits - compoundRound1Bits)) + (1 << (offsetBits - compoundRound1Bits - 1))
+	var compoundScratch *CompoundConvolveScratch
+	if scratch != nil {
+		compoundScratch = &scratch.compound
+	}
 	if bytesPerSample == 1 {
-		predictInterCompoundRef8ToConvBuf(out, ref, refX, refY, width, height, subX, subY, xKernel, yKernel, round0, offsetBits, roundOffset, nil)
+		// Pass the caller's scratch as the high-bit-depth branch does: without
+		// it the 2D SIMD kernel stages on large stack arrays, or on the heap
+		// for taps without a u8 half-tap form.
+		predictInterCompoundRef8ToConvBuf(out, ref, refX, refY, width, height, subX, subY, xKernel, yKernel, round0, offsetBits, roundOffset, compoundScratch)
 		return true
 	}
 	if subX != 0 && subY != 0 && scratch == nil {
 		return false
-	}
-	var compoundScratch *CompoundConvolveScratch
-	if scratch != nil {
-		compoundScratch = &scratch.compound
 	}
 	predictInterCompoundRefHighBDToConvBuf(out, ref, int(bitDepth), refX, refY, width, height, subX, subY, xKernel, yKernel, round0, offsetBits, roundOffset, compoundScratch)
 	return true
