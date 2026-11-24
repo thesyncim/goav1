@@ -39,6 +39,12 @@ func wienerFilterFiveTap(filter WienerFilter) bool {
 // filters to the kernels that skip the zero outer tap pair.
 func wienerHorizontalU8SIMDTaps(src []uint8, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, round0 int, temp []uint16) {
 	if wienerFilterFiveTap(filter) {
+		if round0 == WienerRound0Bits && wienerFilterSymmetric(filter) && wienerU8Dav1dTapsFit(filter) &&
+			wienerHorizontalU8SIMDCanRun(len(src), srcStride, srcOrigin, width, height) &&
+			blockFits(len(temp), width, width, height+2*WienerHalfwin) {
+			wienerHorizontalU8Dav1d5(src, srcStride, srcOrigin, width, height, filter, temp)
+			return
+		}
 		wienerHorizontalU8SIMD5(src, srcStride, srcOrigin, width, height, filter, round0, temp)
 		return
 	}
