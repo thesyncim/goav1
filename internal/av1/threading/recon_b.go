@@ -144,7 +144,7 @@ func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisi
 			cf = s.coefBuf.take()
 		}
 		var err error
-		if r, err = b.DecodeCoefs(plane, size, x4, y4, visW, visH, cf, true, &dq[plane]); err != nil {
+		if r, err = b.DecodeCoefs(plane, size, x4, y4, visW, visH, cf, &dq[plane]); err != nil {
 			return err
 		}
 		c.stats.TXBs++

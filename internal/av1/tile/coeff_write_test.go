@@ -66,6 +66,10 @@ func TestWriteCoefficientsTXBRoundTrip(t *testing.T) {
 			if class != transform.Class2D && size == TransformSize32x32 {
 				continue // AV1 codes 32-point transforms in 2D only.
 			}
+			typ, ok := coefTestType(t, size, class)
+			if !ok {
+				continue
+			}
 			scan, encScratch := coeffScanAndScratch(t, size, txSize, class)
 			maxEOB := len(scan)
 
@@ -75,12 +79,17 @@ func TestWriteCoefficientsTXBRoundTrip(t *testing.T) {
 			if err := encCDFs.InitDefault(q); err != nil {
 				t.Fatal(err)
 			}
+			var encTx TransformTypeCDFs
+			if err := encTx.InitDefault(); err != nil {
+				t.Fatal(err)
+			}
 			w := entropy.NewWriter(make([]byte, 0, 1<<16))
 			for n := range nTXB {
 				coeffs := randomCoeffs(rng, scan, maxEOB)
 				recs[n] = coeffs
 				if _, err := WriteCoefficientsTXB(&w, &encCDFs, TXBEncodeRequest{
 					Size: size, Plane: CoeffPlaneY, Class: class,
+					AfterSkip: coefTestTxtpWriter(&w, &encTx, size, 0, typ),
 				}, coeffs, scan, encScratch); err != nil {
 					t.Fatalf("size=%v class=%v txb=%d write: %v", size, class, n, err)
 				}
@@ -94,13 +103,14 @@ func TestWriteCoefficientsTXBRoundTrip(t *testing.T) {
 			if err := decCDFs.InitDefault(q); err != nil {
 				t.Fatal(err)
 			}
+			d := newCoefTestDecoder(t, &decCDFs, nil)
 			var state DecodeState
 			if err := state.Reset(buf, Job{Offset: 0, Size: uint32(len(buf))}, DecodeOptions{}); err != nil {
 				t.Fatal(err)
 			}
 			for n := range nTXB {
 				out := make([]int16, maxEOB)
-				result := decodeTXBForTest(&state, &decCDFs, size, CoeffPlaneY, class, 0, 0, out)
+				result := decodeTXBForTest(t, &state, d, size, typ, out)
 				want := recs[n]
 				wantEOB := 0
 				for c := range maxEOB {
@@ -1256,6 +1266,7 @@ func TestWriteCoefficientsTXBWithContextRoundTrip(t *testing.T) {
 	type rec struct {
 		ctxReq  CoeffContextRequest
 		class   transform.Class
+		typ     transform.Type
 		coeffs  []int16
 		result  TXBDecodeResult
 		carrier CoeffEntropyContext // encoder carrier snapshot after this TXB
@@ -1266,6 +1277,10 @@ func TestWriteCoefficientsTXBWithContextRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	var encCarrier CoeffEntropyContext
+	var encTx TransformTypeCDFs
+	if err := encTx.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
 	w := entropy.NewWriter(make([]byte, 0, 1<<17))
 
 	const n = 400
@@ -1295,12 +1310,16 @@ func TestWriteCoefficientsTXBWithContextRoundTrip(t *testing.T) {
 			X4:         uint8(rng.Intn(MaxBlockModeSlots - int(txDims.W4) + 1)),
 			Y4:         uint8(rng.Intn(MaxBlockModeSlots - int(txDims.H4) + 1)),
 		}
+		typ, ok := coefTestType(t, size, class)
+		if !ok {
+			t.Fatalf("%v class %v: no inter type", size, class)
+		}
 		coeffs := randomCoeffs(rng, scan, maxEOB)
-		result, err := WriteCoefficientsTXBWithContextHook(&w, &encCDFs, &encCarrier, ctxReq, class, coeffs, scan, scratch, nil)
+		result, err := WriteCoefficientsTXBWithContextHook(&w, &encCDFs, &encCarrier, ctxReq, class, coeffs, scan, scratch, coefTestTxtpWriter(&w, &encTx, size, plane, typ))
 		if err != nil {
 			t.Fatalf("write with context: %v", err)
 		}
-		recs = append(recs, rec{ctxReq: ctxReq, class: class, coeffs: coeffs, result: result, carrier: encCarrier})
+		recs = append(recs, rec{ctxReq: ctxReq, class: class, typ: typ, coeffs: coeffs, result: result, carrier: encCarrier})
 	}
 	buf, err := w.Finish()
 	if err != nil {
@@ -1312,6 +1331,7 @@ func TestWriteCoefficientsTXBWithContextRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	var decCarrier CoeffEntropyContext
+	d := newCoefTestDecoder(t, &decCDFs, &decCarrier)
 	var state DecodeState
 	if err := state.Reset(buf, Job{Offset: 0, Size: uint32(len(buf))}, DecodeOptions{}); err != nil {
 		t.Fatal(err)
@@ -1322,25 +1342,20 @@ func TestWriteCoefficientsTXBWithContextRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 		scan, _ := coeffScanAndScratch(t, r.ctxReq.Size, txSize, r.class)
-		out := make([]int16, len(scan))
-		plane, err := CoeffPlaneTypeForPlane(int(r.ctxReq.Plane))
-		if err != nil {
-			t.Fatal(err)
+		bd, ok := r.ctxReq.PlaneBlock.Dimensions()
+		if !ok {
+			t.Fatal("plane block dims")
 		}
-		txbCtx, err := decCarrier.TXBContext(r.ctxReq)
-		if err != nil {
-			t.Fatal(err)
+		sz := &coefSizeTable[r.ctxReq.Size]
+		unit := uint32(1) << (max(sz.Ctx, 2) - 2)
+		var cf [1024]int32
+		eob, typ, _, _ := d.decode(&state, r.ctxReq.Size, r.ctxReq.Plane, int(r.ctxReq.X4), int(r.ctxReq.Y4), bd.W4, bd.H4, r.typ, &cf, &CoefDequant{DC: unit, AC: unit, Max: 1 << 24})
+		if (eob < 0) != r.result.AllZero || (eob >= 0 && (eob+1 != int(r.result.EOB) || typ != r.typ)) {
+			t.Fatalf("rec %d eob=%d txtp=%v want %+v %v", i, eob, typ, r.result, r.typ)
 		}
-		result := decodeTXBForTest(&state, &decCDFs, r.ctxReq.Size, plane, r.class, txbCtx.TXBSkipContext, txbCtx.DCSignContext, out)
-		if err := decCarrier.MarkTXB(r.ctxReq, result); err != nil {
-			t.Fatal(err)
-		}
-		if result.AllZero != r.result.AllZero || result.EOB != r.result.EOB || result.CulLevel != r.result.CulLevel {
-			t.Fatalf("rec %d result=%+v want %+v", i, result, r.result)
-		}
-		for p := range out {
-			if out[p] != r.coeffs[p] {
-				t.Fatalf("rec %d coeff[%d]=%d want %d", i, p, out[p], r.coeffs[p])
+		for p := range scan {
+			if int16(cf[p]) != r.coeffs[p] {
+				t.Fatalf("rec %d coeff[%d]=%d want %d", i, p, cf[p], r.coeffs[p])
 			}
 		}
 		if decCarrier != r.carrier {
