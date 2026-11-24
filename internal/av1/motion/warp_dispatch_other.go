@@ -24,3 +24,8 @@ func warpVertical8FullDispatch(dst frame.Plane, tmp *warpTmp, i, j, rowShift, co
 func warpVertical8FullGamma0Dispatch(dst frame.Plane, tmp *warpTmp, i, j, rowShift, colShift, baseSY, delta, reduceBitsVert, offsetBitsVert int) {
 	warpVertical8FullGamma0(dst, tmp, i, j, rowShift, colShift, baseSY, delta, reduceBitsVert, offsetBitsVert)
 }
+
+// warpCompound8x8Dispatch has no kernel here: the scalar compound block runs.
+func warpCompound8x8Dispatch(out []uint16, stride int, ref frame.Plane, ix4, sx4, iy4, sy4, alpha, beta, gamma, delta int) bool {
+	return false
+}
