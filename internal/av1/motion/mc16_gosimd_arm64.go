@@ -120,9 +120,9 @@ func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, fi
 		case ty == 8:
 			mc16V8FromI32(im, w, h, &mc16SharpPhases[subY].p, mc16PrepV6Rnd, false, 0, o, 2*w)
 		case w == 4:
-			mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], o, mc16PrepV6Rnd)
+			mc8PrepV6FromI32W4(scratch.im[:], h, &mc8Phases[ky][subY], out[:w*h], mc16PrepV6Rnd)
 		default:
-			mc8PrepV6FromI32(im, w, h, &mc8Phases[ky][subY], o, mc16PrepV6Rnd)
+			mc8PrepV6FromI32(scratch.im[:], w, h, &mc8Phases[ky][subY], out[:w*h], mc16PrepV6Rnd)
 		}
 	case tx == 8:
 		mc16PrepH8(src, stride, w, h, &mc16SharpPhases[subX], sh, o)
