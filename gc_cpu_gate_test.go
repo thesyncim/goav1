@@ -31,6 +31,9 @@ func TestGCInvisibleCodecCPU(t *testing.T) {
 	if _, ok := threadCPU(); !ok {
 		t.Skip("no thread CPU clock on this platform")
 	}
+	if raceEnabled {
+		t.Skip("race instrumentation distorts codec CPU and takes too long for this gate")
+	}
 	if os.Getenv(isolatedEnv) != "1" {
 		if testing.Short() {
 			t.Skip("spawns a child test process")
