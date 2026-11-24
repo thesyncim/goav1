@@ -232,15 +232,17 @@ type decoderFrameWorkSupportedPostFilterScratchRunner struct {
 	// the serial path.
 	Parallel *internaldecoder.FrameWorkPostFilterParallel
 
-	Size    internaldecoder.FrameWorkPostFilterScratchSize
-	Request internaldecoder.FrameWorkPostFilterRequest
-	Context internaldecoder.FrameWorkPostFilterContext
-	Result  internaldecoder.FrameWorkPostFilterResult
+	Size   internaldecoder.FrameWorkPostFilterScratchSize
+	Result internaldecoder.FrameWorkPostFilterResult
 
 	output *Frame
+	// source is the last successful Apply's reconstructed (pre-grain)
+	// output. Only this pointer is kept, not a copy of the whole context:
+	// copying the pointerful context every frame runs bulk write barriers
+	// while the application's GC is marking.
+	source *Frame
 
-	// work holds the in-flight context so the chain runs on it by pointer;
-	// Context is updated only after a successful Apply.
+	// work holds the in-flight context so the chain runs on it by pointer.
 	work internaldecoder.FrameWorkPostFilterContext
 }
 
@@ -353,8 +355,9 @@ func (r *decoderFrameWorkSupportedPostFilterScratchRunner) applyWithScratchSize(
 		return err
 	}
 	r.Size = size
-	r.Request = req
-	r.Context = *ctx
+	if r.source != ctx.Output {
+		r.source = ctx.Output
+	}
 	r.Result = result
 	r.output = output
 	return nil
@@ -368,10 +371,10 @@ func (r *decoderFrameWorkSupportedPostFilterScratchRunner) PostFilterOutput() (*
 	if r.output != nil {
 		return r.output, true
 	}
-	if r.Context.Output == nil {
+	if r.source == nil {
 		return nil, false
 	}
-	return r.Context.Output, true
+	return r.source, true
 }
 
 // decoderFrameWorkReusableSupportedPostFilterRunner is a self-sizing
@@ -1066,8 +1069,8 @@ func decoderFrameWorkFrameBatch(sequence SequenceHeader, size FrameSize) interna
 // runner's detached film-grain display view (dav1d applies grain into a new
 // output picture while the source stays the reference), or f itself.
 func (r *decoderFrameWorkReusableSupportedPostFilterRunner) postFilterSource(f *Frame) *Frame {
-	if r != nil && f == &r.runner.FilmGrainOutput && r.runner.Context.Output != nil {
-		return r.runner.Context.Output
+	if r != nil && f == &r.runner.FilmGrainOutput && r.runner.source != nil {
+		return r.runner.source
 	}
 	return f
 }

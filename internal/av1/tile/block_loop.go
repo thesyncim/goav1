@@ -415,41 +415,53 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 // blockLoopLeftEdge records a left edge left resident in the scratch after a
 // superblock store, dav1d's t->l: the SB row's left context is indexed in
 // place by the next superblock instead of being stored to and reloaded from
-// carrier.Left. carrier is nil when nothing is pending; otherwise carrier.Left
-// is stale until flushLeftEdge writes the edge back.
+// carrier.Left. Nothing is pending unless pending is set; otherwise
+// carrier.Left is stale until flushLeftEdge writes the edge back. Clearing
+// leaves carrier in place and keepLeftEdge stores it only when it changes, so
+// the per-superblock bookkeeping runs no write barrier while the
+// application's GC is marking.
 type blockLoopLeftEdge struct {
 	carrier   *BlockLoopContextCarrier
 	miRow     uint16
 	nextMICol uint16
 	intra     bool
+	pending   bool
 }
 
 // leftEdgeResident reports whether the superblock at (miRow, miCol) continues
 // the walk that left its left edge in the scratch.
 func (s *BlockLoopScratch) leftEdgeResident(carrier *BlockLoopContextCarrier, miRow, miCol uint32, intra bool) bool {
-	return s.leftEdge.carrier == carrier && uint32(s.leftEdge.miRow) == miRow && uint32(s.leftEdge.nextMICol) == miCol && s.leftEdge.intra == intra
+	e := &s.leftEdge
+	return e.pending && e.carrier == carrier && uint32(e.miRow) == miRow && uint32(e.nextMICol) == miCol && e.intra == intra
 }
 
 // keepLeftEdge marks the stored superblock's left edge resident for the
 // superblock at (miRow, nextMICol).
 func (s *BlockLoopScratch) keepLeftEdge(carrier *BlockLoopContextCarrier, miRow, nextMICol uint32, intra bool) {
-	s.leftEdge = blockLoopLeftEdge{carrier: carrier, miRow: uint16(miRow), nextMICol: uint16(nextMICol), intra: intra}
+	e := &s.leftEdge
+	if e.carrier != carrier {
+		e.carrier = carrier
+	}
+	e.miRow, e.nextMICol, e.intra, e.pending = uint16(miRow), uint16(nextMICol), intra, true
 }
+
+// clearLeftEdge drops a resident left edge without writing it back.
+func (s *BlockLoopScratch) clearLeftEdge() { s.leftEdge.pending = false }
 
 // flushLeftEdge writes a pending resident left edge back to its carrier, so
 // carrier.Left holds the last stored superblock's left edge exactly as a
 // per-superblock store would have left it.
 func (s *BlockLoopScratch) flushLeftEdge() {
-	carrier := s.leftEdge.carrier
-	if carrier == nil {
+	if !s.leftEdge.pending {
 		return
 	}
+	carrier := s.leftEdge.carrier
 	if s.leftEdge.intra {
 		storeIntraLeftEdge(&carrier.Left, s)
 	} else {
 		storeLeftEdge(&carrier.Left, s)
 	}
-	s.leftEdge = blockLoopLeftEdge{}
+	s.leftEdge.pending = false
 }
 
 // blockLoopLoadRootContextMotion loads one root's edge contexts. keepMotion
@@ -469,7 +481,7 @@ func blockLoopLoadRootContextMotion(scratch *BlockLoopScratch, carrier *BlockLoo
 	if !resident {
 		scratch.flushLeftEdge()
 	}
-	scratch.leftEdge = blockLoopLeftEdge{}
+	scratch.clearLeftEdge()
 	scratch.Mode.resetSuperblockStateRefmvs()
 	scratch.CDEF.Reset()
 	if haveTop {
