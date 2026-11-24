@@ -178,6 +178,26 @@ func LoadSampleRows8Trusted(dst []uint16, dstStride int, src []byte, srcStride i
 	loadSampleRows8(dst, dstStride, src, srcStride, width, height)
 }
 
+// LoadSampleRows16Trusted decodes a strided little-endian 16-bit sample
+// rectangle into strided uint16 storage: dst[y*dstStride+x] is the sample at
+// src[y*srcStride+2*x:] for x in [0, width), y in [0, height); srcStride is in
+// bytes. Callers own the geometry contract, as for LoadSampleRows8Trusted.
+func LoadSampleRows16Trusted(dst []uint16, dstStride int, src []byte, srcStride int, width int, height int) {
+	if width <= 0 || height <= 0 {
+		return
+	}
+	loadSampleRows16(dst, dstStride, src, srcStride, width, height)
+}
+
+// StoreSampleRows16Trusted is LoadSampleRows16Trusted in reverse: it encodes
+// a strided uint16 rectangle as little-endian bytes (dstStride in bytes).
+func StoreSampleRows16Trusted(dst []byte, dstStride int, src []uint16, srcStride int, width int, height int) {
+	if width <= 0 || height <= 0 {
+		return
+	}
+	storeSampleRows16(dst, dstStride, src, srcStride, width, height)
+}
+
 // LoadBorderedSamplePlane expands an 8-bit or little-endian 16-bit byte plane
 // into caller-owned bordered uint16 sample storage. Border samples are left
 // unchanged for callers such as loop restoration to fill with their normal
