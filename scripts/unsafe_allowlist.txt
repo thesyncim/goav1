@@ -3,5 +3,6 @@
 #
 # Only internal/unsafeutil may appear here: every function there validates
 # its inputs at entry, documents its bounds proof, and has a guard-page test.
+internal/unsafeutil/grid.go  # Grid[E] (a footprint-checked strided view of uint8, uint16 or int32 elements: GridFit/NewGrid, Fits, Sub, Row[A] fixed-size row windows) and CopyBlock (whole-row copies between two Grids) for the motion-compensation kernels; bounds proofs in the doc comments, guard-page tests in grid_guardpage_unix_test.go
 internal/unsafeutil/rows.go  # Rows (a footprint-checked strided byte view: RowsFit/NewRows, Sub, Row8) and Block[R] (a len(R)-row, 16-byte-wide view with constant-indexed rows and lane stores) for the 8-bit loop-filter superblock drivers and kernels; bounds proofs in the doc comments, guard-page tests in rows_guardpage_unix_test.go
 internal/unsafeutil/unsafeutil.go  # BytesOfUint16 (a uint16 slice as its 2*len bytes) and View[T] (length- and alignment-checked view of pointer-free T over bytes); bounds proofs in the doc comments, guard-page tests in guardpage_unix_test.go

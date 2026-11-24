@@ -12,6 +12,7 @@ import (
 	"simd/archsimd"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/unsafeutil"
 )
 
 // dav1d-style 8-bit translational motion compensation (src/mc_tmpl.c put_8tap
@@ -237,17 +238,22 @@ func Put8UV(dstU, dstV, refU, refV *frame.Plane, dstX, dstY, refX, refY, w, h, f
 		if w&3 != 0 || w > maxBlockSize || h <= 0 {
 			return false
 		}
-		dOff, dExt, ok := mc8DstWindow(dstU, dstX, dstY, w, h)
-		if !ok || refX < 0 || refY < 0 || refX+w > refU.Width || refY+h > refU.Height || refU.Stride < refU.Width {
+		if dstX < 0 || dstY < 0 || dstX+w > dstU.Width || dstY+h > dstU.Height || dstU.Stride < dstU.Width ||
+			refX < 0 || refY < 0 || refX+w > refU.Width || refY+h > refU.Height || refU.Stride < refU.Width {
 			return false
 		}
-		sOff, sExt := refY*refU.Stride+refX, (h-1)*refU.Stride+w
-		if sOff+sExt > len(refU.Pix) || sExt > mc8WindowMax {
+		// The planes of each pair share their geometry, so the V copy fits
+		// exactly when the U copy does.
+		dOff, sOff := dstY*dstU.Stride+dstX, refY*refU.Stride+refX
+		if !unsafeutil.GridFit(len(dstU.Pix), dOff, dstU.Stride, w, h) || !unsafeutil.GridFit(len(refU.Pix), sOff, refU.Stride, w, h) {
 			return false
 		}
-		mc8Copy(dstU.Pix[dOff:dOff+dExt], dstU.Stride, refU.Pix[sOff:sOff+sExt], refU.Stride, w, h)
-		mc8Copy(dstV.Pix[dOff:dOff+dExt], dstV.Stride, refV.Pix[sOff:sOff+sExt], refV.Stride, w, h)
-		return true
+		du, su := unsafeutil.NewGrid(dstU.Pix, dOff, dstU.Stride, w, h), unsafeutil.NewGrid(refU.Pix, sOff, refU.Stride, w, h)
+		dv, sv := unsafeutil.NewGrid(dstV.Pix, dOff, dstV.Stride, w, h), unsafeutil.NewGrid(refV.Pix, sOff, refV.Stride, w, h)
+		if w&(w-1) == 0 {
+			return unsafeutil.CopyBlock(du, su) && unsafeutil.CopyBlock(dv, sv)
+		}
+		return mc8CopyStrips(du, su) && mc8CopyStrips(dv, sv)
 	}
 	if (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil {
 		return false
@@ -435,73 +441,15 @@ func mc8CopyFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, 
 	if refX < 0 || refY < 0 || refX+w > ref.Width || refY+h > ref.Height || ref.Stride < ref.Width {
 		return false
 	}
-	dOff := dstY*dst.Stride + dstX
-	sOff := refY*ref.Stride + refX
-	dExt, sExt := (h-1)*dst.Stride+w, (h-1)*ref.Stride+w
-	if dOff+dExt > len(dst.Pix) || sOff+sExt > len(ref.Pix) || max(dExt, sExt) > mc8WindowMax {
+	dOff, sOff := dstY*dst.Stride+dstX, refY*ref.Stride+refX
+	if !unsafeutil.GridFit(len(dst.Pix), dOff, dst.Stride, w, h) || !unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, w, h) {
 		return false
 	}
-	mc8Copy(dst.Pix[dOff:dOff+dExt], dst.Stride, ref.Pix[sOff:sOff+sExt], ref.Stride, w, h)
-	return true
-}
-
-// mc8Copy copies h rows of w bytes (w a multiple of 4); each row is one
-// window of each slice.
-func mc8Copy(dst []byte, dstStride int, src []byte, srcStride int, w, h int) {
-	ss, ds := uint32(srcStride), uint32(dstStride)
-	var s, d uint32
-	switch {
-	case w == 16:
-		for r := 0; r < h; r++ {
-			archsimd.LoadUint8x16Array(mc8W16(src, s)).StoreArray(mc8W16(dst, d))
-			s, d = s+ss, d+ds
-		}
-	case w == 32:
-		for r := 0; r < h; r++ {
-			*mc8W32(dst, d) = *mc8W32(src, s)
-			s, d = s+ss, d+ds
-		}
-	case w == 64:
-		for r := 0; r < h; r++ {
-			*mc8W64(dst, d) = *mc8W64(src, s)
-			s, d = s+ss, d+ds
-		}
-	case w == 128:
-		for r := 0; r < h; r++ {
-			*mc8W128(dst, d) = *mc8W128(src, s)
-			s, d = s+ss, d+ds
-		}
-	case w&31 == 0:
-		for r := 0; r < h; r++ {
-			for c := uint32(0); c < uint32(w); c += 32 {
-				sw, dw := mc8W32(src, s+c), mc8W32(dst, d+c)
-				v0 := archsimd.LoadUint8x16Array((*[16]uint8)(sw[0:16]))
-				v1 := archsimd.LoadUint8x16Array((*[16]uint8)(sw[16:32]))
-				v0.StoreArray((*[16]uint8)(dw[0:16]))
-				v1.StoreArray((*[16]uint8)(dw[16:32]))
-			}
-			s, d = s+ss, d+ds
-		}
-	case w&15 == 0:
-		for r := 0; r < h; r++ {
-			for c := uint32(0); c < uint32(w); c += 16 {
-				archsimd.LoadUint8x16Array(mc8W16(src, s+c)).StoreArray(mc8W16(dst, d+c))
-			}
-			s, d = s+ss, d+ds
-		}
-	case w == 8:
-		for r := 0; r < h; r++ {
-			*mc8W8(dst, d) = *mc8W8(src, s)
-			s, d = s+ss, d+ds
-		}
-	default:
-		for r := 0; r < h; r++ {
-			for c := uint32(0); c < uint32(w); c += 4 {
-				*mc8W4(dst, d+c) = *mc8W4(src, s+c)
-			}
-			s, d = s+ss, d+ds
-		}
+	dg, sg := unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, w, h), unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, w, h)
+	if w&(w-1) == 0 {
+		return unsafeutil.CopyBlock(dg, sg) // every AV1 block width
 	}
+	return mc8CopyStrips(dg, sg)
 }
 
 // Window helpers. Offsets are uint32 so o+N cannot overflow and each window
@@ -598,7 +546,12 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 	case subX != 0:
 		mc8PrepH6(src, stride, w, h, &mc8Phases[kx][subX], o)
 	case subY != 0:
-		mc8PrepV6(src, stride, w, h, &mc8Phases[ky][subY], o)
+		// mc8Source's window: h+5 rows, each readable for max(w+8, 16) bytes.
+		sw := max(w+8, 16)
+		if !unsafeutil.GridFit(len(src), 0, stride, sw, h+5) || !unsafeutil.GridFit(len(o), 0, w, w, h) {
+			return false
+		}
+		mc8PrepV6(unsafeutil.NewGrid(src, 0, stride, sw, h+5), &mc8Phases[ky][subY], unsafeutil.NewGrid(o, 0, w, w, h))
 	default:
 		mc8PrepCopy(src, stride, w, h, o)
 	}
@@ -1172,62 +1125,6 @@ func mc8PutV6W16(src []byte, ss uint32, w, h int, ph *mc8Phase, dst []byte, ds u
 			pack(a, b).StoreArray(mc8R16(dst, d, dl))
 			d += dst16
 			l0, h0, l1, h1, l2, h2, l3, h3, l4, h4 = l1, h1, l2, h2, l3, h3, l4, h4, l5, h5
-		}
-	}
-}
-
-// mc8PrepV6 is the prep vertical-only pass: ((s + 2) >> 2) + 6144.
-func mc8PrepV6(src []byte, srcStride, w, h int, ph *mc8Phase, out []uint16) {
-	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
-	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
-	c2 := archsimd.LoadInt16x8Array(&ph.h[2])
-	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
-	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
-	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
-	rnd := archsimd.BroadcastInt16x8(2 + 6144<<2)
-	sh := archsimd.BroadcastInt16x8(-2)
-	ss, ws := uint32(srcStride), uint32(w)
-	for c := uint32(0); c < ws; c += 8 {
-		so := c
-		r0 := mc8LoadRow16(mc8W16(src, so))
-		r1 := mc8LoadRow16(mc8W16(src, so+ss))
-		r2 := mc8LoadRow16(mc8W16(src, so+2*ss))
-		r3 := mc8LoadRow16(mc8W16(src, so+3*ss))
-		so += 4 * ss
-		r4 := mc8LoadRow16(mc8W16(src, so))
-		o := c
-		r := 0
-		for ; r+2 <= h; r += 2 {
-			so += ss
-			r5 := mc8LoadRow16(mc8W16(src, so))
-			so += ss
-			r6 := mc8LoadRow16(mc8W16(src, so))
-			a := r0.MulAdd(c0, rnd)
-			b := r1.MulAdd(c0, rnd)
-			a = r1.MulAdd(c1, a)
-			b = r2.MulAdd(c1, b)
-			a = r2.MulAdd(c2, a)
-			b = r3.MulAdd(c2, b)
-			a = r3.MulAdd(c3, a)
-			b = r4.MulAdd(c3, b)
-			a = r4.MulAdd(c4, a)
-			b = r5.MulAdd(c4, b)
-			a = r5.MulAdd(c5, a)
-			b = r6.MulAdd(c5, b)
-			a.ToBits().Shift(sh).StoreArray(mc8WU8(out, o))
-			b.ToBits().Shift(sh).StoreArray(mc8WU8(out, o+ws))
-			o += 2 * ws
-			r0, r1, r2, r3, r4 = r2, r3, r4, r5, r6
-		}
-		if r < h {
-			r5 := mc8LoadRow16(mc8W16(src, so+ss))
-			a := r0.MulAdd(c0, rnd)
-			a = r1.MulAdd(c1, a)
-			a = r2.MulAdd(c2, a)
-			a = r3.MulAdd(c3, a)
-			a = r4.MulAdd(c4, a)
-			a = r5.MulAdd(c5, a)
-			a.ToBits().Shift(sh).StoreArray(mc8WU8(out, o))
 		}
 	}
 }

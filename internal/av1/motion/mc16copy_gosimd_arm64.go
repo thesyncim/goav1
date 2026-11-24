@@ -6,11 +6,14 @@
 
 package motion
 
-import "github.com/thesyncim/goav1/internal/av1/frame"
+import (
+	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/unsafeutil"
+)
 
 // mc16CopyFast is the 16bpc put copy (dav1d mc16.S put_neon): an in-plane
 // w x h block of a 2-byte-sample plane, w a multiple of 4, moved as vector
-// rows by mc8Copy over 2w bytes instead of one memmove per row. It returns
+// rows by unsafeutil.CopyBlock over 2w bytes instead of one memmove per row. It returns
 // false when the source leaves the plane (the clamped copy runs).
 func mc16CopyFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h int) bool {
 	if w&3 != 0 || w > maxBlockSize || h <= 0 {
@@ -22,12 +25,13 @@ func mc16CopyFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w,
 	if refX < 0 || refY < 0 || refX+w > ref.Width || refY+h > ref.Height || ref.Stride < 2*ref.Width {
 		return false
 	}
-	dOff := dstY*dst.Stride + 2*dstX
-	sOff := refY*ref.Stride + 2*refX
-	dExt, sExt := (h-1)*dst.Stride+2*w, (h-1)*ref.Stride+2*w
-	if dOff+dExt > len(dst.Pix) || sOff+sExt > len(ref.Pix) || max(dExt, sExt) > mc8WindowMax {
+	dOff, sOff := dstY*dst.Stride+2*dstX, refY*ref.Stride+2*refX
+	if !unsafeutil.GridFit(len(dst.Pix), dOff, dst.Stride, 2*w, h) || !unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, 2*w, h) {
 		return false
 	}
-	mc8Copy(dst.Pix[dOff:dOff+dExt], dst.Stride, ref.Pix[sOff:sOff+sExt], ref.Stride, 2*w, h)
-	return true
+	dg, sg := unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, 2*w, h), unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, 2*w, h)
+	if w&(w-1) == 0 {
+		return unsafeutil.CopyBlock(dg, sg) // every AV1 block width
+	}
+	return mc8CopyStrips(dg, sg)
 }
