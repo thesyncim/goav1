@@ -311,8 +311,24 @@ var cos64 = [64]int{
 	1567, 1474, 1380, 1285, 1189, 1092, 995, 897, 799, 700, 601, 501, 401, 301, 201, 101,
 }
 
+// adst4 is inverseADST4To (adst.go) with each roundShift(a, 12) + x
+// written as the one product sum Round2(a + 4096x, 12) it equals and
+// Round2(209s, 8) as Round2(3344s, 12); the sums of inputs are inside the
+// products, so nothing is clamped before the final rounding, as in the
+// scalar transform.
+func (g *fgen) adst4(in []fv) []fv {
+	return []fv{
+		g.dot([]term{{in[0], 1321}, {in[1], 3344}, {in[2], 3803}, {in[3], 2482}}),
+		g.dot([]term{{in[0], 2482}, {in[1], 3344}, {in[2], -1321}, {in[3], -3803}}),
+		g.dot([]term{{in[0], 3344}, {in[2], -3344}, {in[3], 3344}}),
+		g.dot([]term{{in[0], 3803}, {in[1], -3344}, {in[2], 2482}, {in[3], -1321}}),
+	}
+}
+
 func (g *fgen) network(n int, in []fv) []fv {
 	switch n {
+	case 4:
+		return g.dct4(in)
 	case 8:
 		return g.dct8(in)
 	case 16:
