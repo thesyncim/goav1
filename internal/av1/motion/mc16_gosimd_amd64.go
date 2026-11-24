@@ -7,8 +7,8 @@
 package motion
 
 import (
+	"encoding/binary"
 	"simd/archsimd"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
@@ -58,13 +58,18 @@ func init() {
 
 const mc16PrepOffset = 1<<14 + 1<<13
 
+// mc16IM is the int32 2D intermediate: ConvolveScratch.imHBD and
+// CompoundConvolveScratch.im share this shape.
+type mc16IM = [compoundIMMaxSamples]int32
+
 // mc16SourceAVX2 resolves the eight-tap source window of a w x h block: an
 // axis with a filter reads from three samples before the block. The kernels
 // load sixteen (or eight, for the tails and w == 4) samples per tap, so the
 // window must stay readable for max(w, 8) + 7 samples per row when filtered
 // horizontally (max(w, 8) otherwise). Overhanging blocks materialize the
-// window with emuEdge16.
-func mc16SourceAVX2(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *emuEdge16Buf) (src unsafe.Pointer, stride int, ok bool) {
+// window with emuEdge16. The returned window is exactly bh rows of that
+// footprint, so the kernels' checked row loads stay inside it.
+func mc16SourceAVX2(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *emuEdge16Buf) (src []byte, stride int, ok bool) {
 	x0, y0, bw, bh := refX, refY, w, h
 	read := max(w, 8)
 	if hx {
@@ -77,13 +82,13 @@ func mc16SourceAVX2(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *e
 		bh += 7
 	}
 	read *= 2
-	if ref.Width <= 0 || ref.Height <= 0 || ref.Stride < 2*ref.Width {
+	if ref.Width <= 0 || ref.Height <= 0 || ref.Stride < 2*ref.Width || ref.Stride > mc8MaxStride {
 		return nil, 0, false
 	}
 	if x0 >= 0 && y0 >= 0 && x0+bw <= ref.Width && y0+bh <= ref.Height {
 		start := y0*ref.Stride + 2*x0
-		if start+(bh-1)*ref.Stride+read <= len(ref.Pix) {
-			return unsafe.Pointer(unsafe.SliceData(ref.Pix[start:])), ref.Stride, true
+		if end := start + (bh-1)*ref.Stride + read; end <= len(ref.Pix) {
+			return ref.Pix[start:end], ref.Stride, true
 		}
 	}
 	if len(ref.Pix) < (ref.Height-1)*ref.Stride+2*ref.Width {
@@ -91,8 +96,12 @@ func mc16SourceAVX2(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *e
 	}
 	// emuEdge16Rows (136) rows of emuEdge16Stride (144) samples hold the
 	// window (bw <= 135, bh <= 135) and the kernels' over-read.
+	end := (bh-1)*2*emuEdge16Stride + read
+	if end > len(edge) {
+		return nil, 0, false
+	}
 	emuEdge16(bw, bh, *ref, x0, y0, edge[:], 2*emuEdge16Stride)
-	return unsafe.Pointer(&edge[0]), 2 * emuEdge16Stride, true
+	return edge[:end], 2 * emuEdge16Stride, true
 }
 
 // mc16Shape reports whether the fast kernels cover a w x h block.
@@ -106,32 +115,31 @@ func mc16PutFast(dst *frame.Plane, ref *frame.Plane, bitDepth, dstX, dstY, refX,
 	if subX|subY == 0 || !mc16Shape(bitDepth, w, h) || scratch == nil {
 		return false
 	}
-	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < 2*dst.Width {
+	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < 2*dst.Width || dst.Stride > mc8MaxStride {
 		return false
 	}
 	dOff := dstY*dst.Stride + 2*dstX
-	if dOff+(h-1)*dst.Stride+2*w > len(dst.Pix) {
+	dEnd := dOff + (h-1)*dst.Stride + 2*w
+	if dEnd > len(dst.Pix) {
 		return false
 	}
 	src, stride, ok := mc16SourceAVX2(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge16)
 	if !ok {
 		return false
 	}
-	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
-	d := unsafe.Pointer(&dst.Pix[dOff])
+	d := dst.Pix[dOff:dEnd]
 	maxV := int16(1)<<bitDepth - 1
 	round0, round1 := highBDRoundBits(uint8(bitDepth))
 	px := &mc16Pairs[mc8Kind(filters.X, filterW)][subX]
 	py := &mc16Pairs[mc8Kind(filters.Y, filterH)][subY]
 	switch {
 	case subX != 0 && subY != 0:
-		im := unsafe.Pointer(&scratch.imHBD[0])
-		mc16HToI32(src, stride, w, h+7, px, round0, im)
-		mc16VFromI32(im, w, h, py, true, round1, maxV, d, dst.Stride)
+		mc16HToI32(src, stride, w, h+7, px, round0, &scratch.imHBD)
+		mc16VFromI32(&scratch.imHBD, w, h, py, true, round1, maxV, d, nil, dst.Stride)
 	case subX != 0:
-		mc16H(src, stride, w, h, px, true, round0, maxV, d, dst.Stride)
+		mc16H(src, stride, w, h, px, true, round0, maxV, d, nil, dst.Stride)
 	default:
-		mc16V(src, stride, w, h, py, true, 0, maxV, d, dst.Stride)
+		mc16V(src, stride, w, h, py, true, 0, maxV, d, nil, dst.Stride)
 	}
 	return true
 }
@@ -147,19 +155,18 @@ func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, fi
 		return false
 	}
 	rc := compoundRound0(uint8(bitDepth))
-	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
-	o := unsafe.Pointer(&out[0])
+	o := out[:w*h]
 	px := &mc16Pairs[mc8Kind(filters.X, filterW)][subX]
 	py := &mc16Pairs[mc8Kind(filters.Y, filterH)][subY]
 	switch {
 	case subX != 0 && subY != 0:
-		im := unsafe.Pointer(&scratch.im[0])
+		im := (*mc16IM)(&scratch.im)
 		mc16HToI32(src, stride, w, h+7, px, rc, im)
-		mc16VFromI32(im, w, h, py, false, 0, 0, o, 2*w)
+		mc16VFromI32(im, w, h, py, false, 0, 0, nil, o, w)
 	case subX != 0:
-		mc16H(src, stride, w, h, px, false, rc, 0, o, 2*w)
+		mc16H(src, stride, w, h, px, false, rc, 0, nil, o, w)
 	case subY != 0:
-		mc16V(src, stride, w, h, py, false, rc, 0, o, 2*w)
+		mc16V(src, stride, w, h, py, false, rc, 0, nil, o, w)
 	default:
 		mc16PrepCopy(src, stride, w, h, 7-rc, o)
 	}
@@ -172,14 +179,18 @@ func mc16TapPairs16(p *[4]int32) (k0, k1, k2, k3 archsimd.Int16x16) {
 		archsimd.BroadcastInt32x8(p[2]).AsInt16x16(), archsimd.BroadcastInt32x8(p[3]).AsInt16x16()
 }
 
-// mc16Ld16 loads sixteen samples at p.
-func mc16Ld16(p unsafe.Pointer) archsimd.Int16x16 {
-	return archsimd.LoadInt16x16Array((*[16]int16)(p))
+// Sample windows: offsets are in bytes of the 16-bit plane rows (or in
+// elements of the uint16 / int32 buffers); the kernels bound their dimensions
+// first (mc8Dims), so each checked window is one compare.
+
+// mc16Ld16 loads the sixteen samples at s[o:].
+func mc16Ld16(s []byte, o int) archsimd.Int16x16 {
+	return archsimd.LoadUint8x32Array((*[32]byte)(s[uint(o) : uint(o)+32])).AsInt16x16()
 }
 
-// mc16Ld8 loads eight samples at p into the low lane.
-func mc16Ld8(p unsafe.Pointer) archsimd.Int16x16 {
-	return archsimd.Int16x16{}.SetLo(archsimd.LoadInt16x8Array((*[8]int16)(p)))
+// mc16Ld8 loads the eight samples at s[o:] into the low lane.
+func mc16Ld8(s []byte, o int) archsimd.Int16x16 {
+	return archsimd.Int16x16{}.SetLo(archsimd.LoadUint8x16Array((*[16]byte)(s[uint(o) : uint(o)+16])).AsInt16x8())
 }
 
 // mc16Dot8 is the eight-tap sum of the sample rows (or shifted sample
@@ -193,49 +204,63 @@ func mc16Dot8(a0, a1, a2, a3, a4, a5, a6, a7, k0, k1, k2, k3 archsimd.Int16x16) 
 	return lo, hi
 }
 
-// mc16HDot loads the eight shifted windows of the sixteen (or, with n8, the
-// eight) outputs at p and returns their tap sums. The loads are spelled out
-// (not through mc16Ld16) so none is left as an outlined call.
-func mc16HDot(p unsafe.Pointer, n8 bool, k0, k1, k2, k3 archsimd.Int16x16) (lo, hi archsimd.Int32x8) {
-	if n8 {
-		var z archsimd.Int16x16
-		l := func(o uintptr) archsimd.Int16x16 {
-			return z.SetLo(archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(p, o))))
-		}
-		return mc16Dot8(l(0), l(2), l(4), l(6), l(8), l(10), l(12), l(14), k0, k1, k2, k3)
+// mc16HDot loads the eight shifted windows of the sixteen outputs at s[o:]
+// (one checked 46-byte window) and returns their tap sums.
+func mc16HDot(s []byte, o int, k0, k1, k2, k3 archsimd.Int16x16) (lo, hi archsimd.Int32x8) {
+	x := (*[46]byte)(s[uint(o) : uint(o)+46])
+	l := func(k int) archsimd.Int16x16 {
+		return archsimd.LoadUint8x32Array((*[32]byte)(x[k : k+32])).AsInt16x16()
 	}
-	return mc16Dot8(archsimd.LoadInt16x16Array((*[16]int16)(p)), archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Add(p, 2))),
-		archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Add(p, 4))), archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Add(p, 6))),
-		archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Add(p, 8))), archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Add(p, 10))),
-		archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Add(p, 12))), archsimd.LoadInt16x16Array((*[16]int16)(unsafe.Add(p, 14))), k0, k1, k2, k3)
+	return mc16Dot8(l(0), l(2), l(4), l(6), l(8), l(10), l(12), l(14), k0, k1, k2, k3)
+}
+
+// mc16HDot8 is mc16HDot for eight outputs (one checked 30-byte window).
+func mc16HDot8(s []byte, o int, k0, k1, k2, k3 archsimd.Int16x16) (lo, hi archsimd.Int32x8) {
+	x := (*[30]byte)(s[uint(o) : uint(o)+30])
+	var z archsimd.Int16x16
+	l := func(k int) archsimd.Int16x16 {
+		return z.SetLo(archsimd.LoadUint8x16Array((*[16]byte)(x[k : k+16])).AsInt16x8())
+	}
+	return mc16Dot8(l(0), l(2), l(4), l(6), l(8), l(10), l(12), l(14), k0, k1, k2, k3)
 }
 
 // mc16Out finishes sixteen (n = 16), eight or four sums in the in-lane order
-// and stores them at d: put clips (lo, hi) >> sh to [0, maxV]; prep adds the
-// CONV_BUF offset and keeps the low 16 bits (libaom's uint16 cast).
-func mc16Out(lo, hi archsimd.Int32x8, n int, put bool, shV archsimd.Uint32x8, maxV archsimd.Int16x16, d unsafe.Pointer) {
+// and stores them: put clips (lo, hi) >> sh to [0, maxV] into the plane bytes
+// d at byte offset do; prep adds the CONV_BUF offset, keeps the low 16 bits
+// (libaom's uint16 cast) and stores into out at element offset oo.
+func mc16Out(lo, hi archsimd.Int32x8, n int, put bool, shV archsimd.Uint32x8, maxV archsimd.Int16x16, d []byte, do int, out []uint16, oo int) {
 	lo, hi = lo.ShiftRight(shV), hi.ShiftRight(shV)
 	var v archsimd.Int16x16
 	if put {
 		v = lo.SaturateToInt16ConcatGrouped(hi).Max(archsimd.Int16x16{}).Min(maxV)
-	} else {
-		off := archsimd.BroadcastInt32x8(mc16PrepOffset)
-		mask := archsimd.BroadcastInt32x8(0xffff)
-		v = lo.Add(off).And(mask).SaturateToUint16ConcatGrouped(hi.Add(off).And(mask)).AsInt16x16()
+		switch n {
+		case 16:
+			v.AsUint8x32().StoreArray((*[32]byte)(d[uint(do) : uint(do)+32]))
+		case 8:
+			v.GetLo().AsUint8x16().StoreArray((*[16]byte)(d[uint(do) : uint(do)+16]))
+		default:
+			binary.LittleEndian.PutUint64(d[uint(do):uint(do)+8], v.GetLo().AsUint64x2().GetElem(0))
+		}
+		return
 	}
+	off := archsimd.BroadcastInt32x8(mc16PrepOffset)
+	mask := archsimd.BroadcastInt32x8(0xffff)
+	u := lo.Add(off).And(mask).SaturateToUint16ConcatGrouped(hi.Add(off).And(mask))
 	switch n {
 	case 16:
-		v.StoreArray((*[16]int16)(d))
+		u.StoreArray((*[16]uint16)(out[uint(oo) : uint(oo)+16]))
 	case 8:
-		v.GetLo().StoreArray((*[8]int16)(d))
+		u.GetLo().StoreArray((*[8]uint16)(out[uint(oo) : uint(oo)+8]))
 	default:
-		*(*uint64)(d) = v.GetLo().AsUint64x2().GetElem(0)
+		mc8StU16x4(out, oo, u.GetLo().ReshapeToUint64s().GetElem(0))
 	}
 }
 
-// mc16H is the horizontal-only pass: put (clip((S + rnd) >> 7)) or prep
-// (((S + rnd) >> rc) + offset). r is round0 (put) or rc (prep).
-func mc16H(src unsafe.Pointer, ss, w, h int, pairs *[4]int32, put bool, r int, maxPix int16, dst unsafe.Pointer, ds int) {
+// mc16H is the horizontal-only pass: put (clip((S + rnd) >> 7)) into dst
+// (row stride ds bytes) or prep (((S + rnd) >> rc) + offset) into out (row
+// stride ds elements). r is round0 (put) or rc (prep).
+func mc16H(src []byte, ss, w, h int, pairs *[4]int32, put bool, r int, maxPix int16, dst []byte, out []uint16, ds int) {
+	mc8Dims(w, h, ss, ds)
 	k0, k1, k2, k3 := mc16TapPairs16(pairs)
 	var rnd int32
 	var shV archsimd.Uint32x8
@@ -249,16 +274,15 @@ func mc16H(src unsafe.Pointer, ss, w, h int, pairs *[4]int32, put bool, r int, m
 	rndV := archsimd.BroadcastInt32x8(rnd)
 	maxV := archsimd.BroadcastInt16x16(maxPix)
 	for y := 0; y < h; y++ {
-		s := unsafe.Add(src, y*ss)
-		d := unsafe.Add(dst, y*ds)
-		c := 0
-		for ; c+16 <= w; c += 16 {
-			lo, hi := mc16HDot(unsafe.Add(s, 2*c), false, k0, k1, k2, k3)
-			mc16Out(lo.Add(rndV), hi.Add(rndV), 16, put, shV, maxV, unsafe.Add(d, 2*c))
+		s, d := y*ss, y*ds
+		for uc := uint(0); uc < uint(w&^15); uc += 16 {
+			c := int(uc)
+			lo, hi := mc16HDot(src, s+2*c, k0, k1, k2, k3)
+			mc16Out(lo.Add(rndV), hi.Add(rndV), 16, put, shV, maxV, dst, d+2*c, out, d+c)
 		}
-		if c < w {
-			lo, hi := mc16HDot(unsafe.Add(s, 2*c), true, k0, k1, k2, k3)
-			mc16Out(lo.Add(rndV), hi.Add(rndV), w-c, put, shV, maxV, unsafe.Add(d, 2*c))
+		if c := w &^ 15; c < w {
+			lo, hi := mc16HDot8(src, s+2*c, k0, k1, k2, k3)
+			mc16Out(lo.Add(rndV), hi.Add(rndV), w-c, put, shV, maxV, dst, d+2*c, out, d+c)
 		}
 	}
 	archsimd.ClearAVXUpperBits()
@@ -266,7 +290,8 @@ func mc16H(src unsafe.Pointer, ss, w, h int, pairs *[4]int32, put bool, r int, m
 
 // mc16V is the vertical-only pass (put: clip((S + 64) >> 7); prep: as
 // mc16H), sliding an eight-row window down each column strip.
-func mc16V(src unsafe.Pointer, ss, w, h int, pairs *[4]int32, put bool, rc int, maxPix int16, dst unsafe.Pointer, ds int) {
+func mc16V(src []byte, ss, w, h int, pairs *[4]int32, put bool, rc int, maxPix int16, dst []byte, out []uint16, ds int) {
+	mc8Dims(w, h, ss, ds)
 	k0, k1, k2, k3 := mc16TapPairs16(pairs)
 	var rnd int32
 	var shV archsimd.Uint32x8
@@ -279,25 +304,24 @@ func mc16V(src unsafe.Pointer, ss, w, h int, pairs *[4]int32, put bool, rc int, 
 	}
 	rndV := archsimd.BroadcastInt32x8(rnd)
 	maxV := archsimd.BroadcastInt16x16(maxPix)
-	for c := 0; c < w; c += 16 {
+	for uc := uint(0); uc < uint(w); uc += 16 {
+		c := int(uc)
 		n := min(16, w-c)
-		ld := func(p unsafe.Pointer) archsimd.Int16x16 {
+		sc := src[2*c:]
+		ld := func(o int) archsimd.Int16x16 {
 			if n == 16 {
-				return archsimd.LoadInt16x16Array((*[16]int16)(p))
+				return mc16Ld16(sc, o)
 			}
-			return archsimd.Int16x16{}.SetLo(archsimd.LoadInt16x8Array((*[8]int16)(p)))
+			return mc16Ld8(sc, o)
 		}
-		s := unsafe.Add(src, 2*c)
-		r0, r1, r2, r3 := ld(s), ld(unsafe.Add(s, ss)), ld(unsafe.Add(s, 2*ss)), ld(unsafe.Add(s, 3*ss))
-		r4, r5, r6 := ld(unsafe.Add(s, 4*ss)), ld(unsafe.Add(s, 5*ss)), ld(unsafe.Add(s, 6*ss))
-		so, do := 2*c+7*ss, 2*c
+		r0, r1, r2, r3 := ld(0), ld(ss), ld(2*ss), ld(3*ss)
+		r4, r5, r6 := ld(4*ss), ld(5*ss), ld(6*ss)
 		for y := 0; y < h; y++ {
-			r7 := ld(unsafe.Add(src, so))
+			r7 := ld((y + 7) * ss)
 			lo, hi := mc16Dot8(r0, r1, r2, r3, r4, r5, r6, r7, k0, k1, k2, k3)
-			mc16Out(lo.Add(rndV), hi.Add(rndV), n, put, shV, maxV, unsafe.Add(dst, do))
+			d := y * ds
+			mc16Out(lo.Add(rndV), hi.Add(rndV), n, put, shV, maxV, dst, d+2*c, out, d+c)
 			r0, r1, r2, r3, r4, r5, r6 = r1, r2, r3, r4, r5, r6, r7
-			so += ss
-			do += ds
 		}
 	}
 	archsimd.ClearAVXUpperBits()
@@ -305,29 +329,31 @@ func mc16V(src unsafe.Pointer, ss, w, h int, pairs *[4]int32, put bool, rc int, 
 
 // mc16HToI32 writes rows x w rounded horizontal sums m = (S + 2^(r-1)) >> r
 // as int32 with row stride w (r is round0 for put, rc for prep).
-func mc16HToI32(src unsafe.Pointer, ss, w, rows int, pairs *[4]int32, r int, im unsafe.Pointer) {
+func mc16HToI32(src []byte, ss, w, rows int, pairs *[4]int32, r int, im *mc16IM) {
+	mc8Dims(w, rows, ss, 0)
+	_ = im[0] // one nil check, ahead of the loops
 	k0, k1, k2, k3 := mc16TapPairs16(pairs)
 	rndV := archsimd.BroadcastInt32x8(int32(1) << (r - 1))
 	shV := archsimd.BroadcastUint32x8(uint32(r))
 	for y := 0; y < rows; y++ {
-		s := unsafe.Add(src, y*ss)
-		o := unsafe.Add(im, 4*y*w)
-		c := 0
-		for ; c+16 <= w; c += 16 {
-			lo, hi := mc16HDot(unsafe.Add(s, 2*c), false, k0, k1, k2, k3)
+		s, o := y*ss, y*w
+		for uc := uint(0); uc < uint(w&^15); uc += 16 {
+			c := int(uc)
+			lo, hi := mc16HDot(src, s+2*c, k0, k1, k2, k3)
 			lo, hi = lo.Add(rndV).ShiftRight(shV), hi.Add(rndV).ShiftRight(shV)
 			// Undo the in-lane order: outputs 0-7, then 8-15.
-			lo.ConcatPermute128Scalars(0, 2, hi).StoreArray((*[8]int32)(unsafe.Add(o, 4*c)))
-			lo.ConcatPermute128Scalars(1, 3, hi).StoreArray((*[8]int32)(unsafe.Add(o, 4*c+32)))
+			p := (*[16]int32)(im[uint(o+c) : uint(o+c)+16])
+			lo.ConcatPermute128Scalars(0, 2, hi).StoreArray((*[8]int32)(p[:8]))
+			lo.ConcatPermute128Scalars(1, 3, hi).StoreArray((*[8]int32)(p[8:]))
 		}
-		if c < w {
-			lo, hi := mc16HDot(unsafe.Add(s, 2*c), true, k0, k1, k2, k3)
+		if c := w &^ 15; c < w {
+			lo, hi := mc16HDot8(src, s+2*c, k0, k1, k2, k3)
 			lo, hi = lo.Add(rndV).ShiftRight(shV), hi.Add(rndV).ShiftRight(shV)
 			v := lo.ConcatPermute128Scalars(0, 2, hi)
 			if w-c == 8 {
-				v.StoreArray((*[8]int32)(unsafe.Add(o, 4*c)))
+				v.StoreArray((*[8]int32)(im[uint(o+c) : uint(o+c)+8]))
 			} else {
-				v.GetLo().StoreArray((*[4]int32)(unsafe.Add(o, 4*c)))
+				v.GetLo().StoreArray((*[4]int32)(im[uint(o+c) : uint(o+c)+4]))
 			}
 		}
 	}
@@ -340,9 +366,11 @@ var mc16PairOrder = [8]uint32{0, 1, 4, 5, 2, 3, 6, 7}
 
 // mc16VFromI32 is the 2D vertical pass over the int32 intermediate (row
 // stride w): sum(f * m) in int32 (vpmulld), then put clips
-// (sum + 2^(round1-1)) >> round1 and prep stores (sum + 2^21 + 2^20 + 64) >> 7
-// as uint16.
-func mc16VFromI32(im unsafe.Pointer, w, h int, pairs *[4]int32, put bool, round1 int, maxPix int16, dst unsafe.Pointer, ds int) {
+// (sum + 2^(round1-1)) >> round1 into dst and prep stores
+// (sum + 2^21 + 2^20 + 64) >> 7 as uint16 into out (strides as mc16H).
+func mc16VFromI32(im *mc16IM, w, h int, pairs *[4]int32, put bool, round1 int, maxPix int16, dst []byte, out []uint16, ds int) {
+	mc8Dims(w, h, 0, ds)
+	_ = im[0] // one nil check, ahead of the loops
 	var f [8]archsimd.Int32x8
 	for i := range 4 {
 		f[2*i] = archsimd.BroadcastInt32x8(int32(int16(pairs[i])))
@@ -361,40 +389,44 @@ func mc16VFromI32(im unsafe.Pointer, w, h int, pairs *[4]int32, put bool, round1
 	maxV := archsimd.BroadcastInt16x16(maxPix)
 	mask := archsimd.BroadcastInt32x8(0xffff)
 	perm := archsimd.LoadUint32x8Array(&mc16PairOrder)
-	rs := 4 * w
-	ld := func(p unsafe.Pointer, n int) archsimd.Int32x8 {
+	ld := func(o, n int) archsimd.Int32x8 {
 		if n == 4 {
-			return archsimd.Int32x8{}.SetLo(archsimd.LoadInt32x4Array((*[4]int32)(p)))
+			return archsimd.Int32x8{}.SetLo(archsimd.LoadInt32x4Array((*[4]int32)(im[uint(o) : uint(o)+4])))
 		}
-		return archsimd.LoadInt32x8Array((*[8]int32)(p))
+		return archsimd.LoadInt32x8Array((*[8]int32)(im[uint(o) : uint(o)+8]))
 	}
-	for c := 0; c < w; c += 8 {
+	for uc := uint(0); uc < uint(w); uc += 8 {
+		c := int(uc)
 		n := min(8, w-c)
-		q := unsafe.Add(im, 4*c)
-		d := unsafe.Add(dst, 2*c)
 		for y := 0; y < h; y++ {
-			p := unsafe.Add(q, y*rs)
+			p := c + y*w
 			acc := rndV.Add(ld(p, n).Mul(f[0]))
-			acc = acc.Add(ld(unsafe.Add(p, rs), n).Mul(f[1]))
-			acc = acc.Add(ld(unsafe.Add(p, 2*rs), n).Mul(f[2]))
-			acc = acc.Add(ld(unsafe.Add(p, 3*rs), n).Mul(f[3]))
-			acc = acc.Add(ld(unsafe.Add(p, 4*rs), n).Mul(f[4]))
-			acc = acc.Add(ld(unsafe.Add(p, 5*rs), n).Mul(f[5]))
-			acc = acc.Add(ld(unsafe.Add(p, 6*rs), n).Mul(f[6]))
-			acc = acc.Add(ld(unsafe.Add(p, 7*rs), n).Mul(f[7]))
+			acc = acc.Add(ld(p+w, n).Mul(f[1]))
+			acc = acc.Add(ld(p+2*w, n).Mul(f[2]))
+			acc = acc.Add(ld(p+3*w, n).Mul(f[3]))
+			acc = acc.Add(ld(p+4*w, n).Mul(f[4]))
+			acc = acc.Add(ld(p+5*w, n).Mul(f[5]))
+			acc = acc.Add(ld(p+6*w, n).Mul(f[6]))
+			acc = acc.Add(ld(p+7*w, n).Mul(f[7]))
 			acc = acc.ShiftRight(shV)
-			var v archsimd.Int16x16
+			d := y * ds
 			if put {
-				v = acc.SaturateToInt16ConcatGrouped(acc).AsInt32x8().Permute(perm).AsInt16x16().Max(archsimd.Int16x16{}).Min(maxV)
+				v := acc.SaturateToInt16ConcatGrouped(acc).AsInt32x8().Permute(perm).AsInt16x16().Max(archsimd.Int16x16{}).Min(maxV)
+				o := d + 2*c
+				if n == 8 {
+					v.GetLo().AsUint8x16().StoreArray((*[16]byte)(dst[uint(o) : uint(o)+16]))
+				} else {
+					binary.LittleEndian.PutUint64(dst[uint(o):uint(o)+8], v.GetLo().AsUint64x2().GetElem(0))
+				}
 			} else {
 				a := acc.And(mask)
-				v = a.SaturateToUint16ConcatGrouped(a).AsInt32x8().Permute(perm).AsInt16x16()
-			}
-			o := unsafe.Add(d, y*ds)
-			if n == 8 {
-				v.GetLo().StoreArray((*[8]int16)(o))
-			} else {
-				*(*uint64)(o) = v.GetLo().AsUint64x2().GetElem(0)
+				v := a.SaturateToUint16ConcatGrouped(a).AsInt32x8().Permute(perm).AsUint16x16()
+				o := d + c
+				if n == 8 {
+					v.GetLo().StoreArray((*[8]uint16)(out[uint(o) : uint(o)+8]))
+				} else {
+					mc8StU16x4(out, o, v.GetLo().ReshapeToUint64s().GetElem(0))
+				}
 			}
 		}
 	}
@@ -403,22 +435,22 @@ func mc16VFromI32(im unsafe.Pointer, w, h int, pairs *[4]int32, put bool, round1
 
 // mc16PrepCopy is the prep copy: (px << shl) + offset, in uint16 lanes (the
 // result stays below 2^16 at 10 and 12 bits).
-func mc16PrepCopy(src unsafe.Pointer, ss, w, h, shl int, out unsafe.Pointer) {
+func mc16PrepCopy(src []byte, ss, w, h, shl int, out []uint16) {
+	mc8Dims(w, h, ss, 0)
 	mul := archsimd.BroadcastInt16x16(int16(1) << shl)
 	off := archsimd.BroadcastInt16x16(mc16PrepOffset) // wraps mod 2^16 like the uint16 sum
 	for y := 0; y < h; y++ {
-		s := unsafe.Add(src, y*ss)
-		o := unsafe.Add(out, 2*y*w)
-		c := 0
-		for ; c+16 <= w; c += 16 {
-			mc16Ld16(unsafe.Add(s, 2*c)).Mul(mul).Add(off).StoreArray((*[16]int16)(unsafe.Add(o, 2*c)))
+		s, o := y*ss, y*w
+		for uc := uint(0); uc < uint(w&^15); uc += 16 {
+			c := int(uc)
+			mc16Ld16(src, s+2*c).Mul(mul).Add(off).AsUint16x16().StoreArray((*[16]uint16)(out[uint(o+c) : uint(o+c)+16]))
 		}
-		if c < w {
-			v := mc16Ld8(unsafe.Add(s, 2*c)).Mul(mul).Add(off)
+		if c := w &^ 15; c < w {
+			v := mc16Ld8(src, s+2*c).Mul(mul).Add(off).GetLo().AsUint16x8()
 			if w-c == 8 {
-				v.GetLo().StoreArray((*[8]int16)(unsafe.Add(o, 2*c)))
+				v.StoreArray((*[8]uint16)(out[uint(o+c) : uint(o+c)+8]))
 			} else {
-				*(*uint64)(unsafe.Add(o, 2*c)) = v.GetLo().AsUint64x2().GetElem(0)
+				mc8StU16x4(out, o+c, v.ReshapeToUint64s().GetElem(0))
 			}
 		}
 	}
