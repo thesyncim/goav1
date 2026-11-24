@@ -28,6 +28,12 @@ type Event struct {
 	Type obu.Type
 	Unit obu.Unit
 
+	// DroppedKind is the kind a frame-header event had before its frame was
+	// dropped incomplete (Kind is then EventIgnored). Nothing decodes such a
+	// frame; its parsed header still sizes the decoder, as dav1d applies the
+	// frame size limit when it parses the header.
+	DroppedKind EventKind
+
 	TemporalID uint8
 	SpatialID  uint8
 
@@ -97,11 +103,26 @@ type Stream struct {
 	sequence     parser.SequenceHeader
 	haveSequence bool
 
+	// haveFrameHeader and nextTile are dav1d's c->frame_hdr and c->n_tiles:
+	// the frame whose header was parsed and the tiles its groups have carried
+	// so far. The frame is complete (dav1d submits it) when nextTile wraps on
+	// its final group; until then its reference updates are held in frame.
 	haveFrameHeader bool
 	tileGroups      uint32
 	tileInfo        parser.TileInfo
 	nextTile        uint16
 	frame           frameState
+	frameSerial     uint32
+	// frameListed marks a frame header consumed by a tile list, which decodes
+	// the frame's tiles without tile groups (large scale tile; dav1d has no
+	// tile lists).
+	frameListed bool
+	// lowOverhead is set while PushLowOverhead parses a whole temporal unit
+	// before any of its events run. dav1d checks the reference pictures when
+	// it submits a complete frame, so the check waits for the final tile
+	// group there; units pushed one at a time (RTP) start decoding a frame
+	// at its header, so they keep the check at the header.
+	lowOverhead bool
 
 	references parser.ReferenceState
 	rtp        rtp.Depacketizer
@@ -140,24 +161,72 @@ func (s *Stream) PushRTPPayloadSize(used int, payload []byte) (newUsed int, even
 	return newUsed, eventCount, err
 }
 
+// PushLowOverhead parses one temporal unit. As dav1d decodes a frame only
+// once its last tile group arrives (obu.c submits it when c->n_tiles reaches
+// the tile count), the events of a frame that is replaced by a later frame
+// header, cut off by a sequence change or shown-existing frame, or left
+// incomplete at the end of the unit are returned as EventIgnored: no consumer
+// begins, splits, decodes, outputs or references that frame.
 func (s *Stream) PushLowOverhead(src []byte, events []Event) (int, error) {
+	s.lowOverhead = true
+	defer func() { s.lowOverhead = false }()
 	it := obu.NewLowOverheadIterator(src)
 	count := 0
+	pending := -1 // first event of the frame still waiting for tiles
 	for {
 		unit, ok, err := it.Next()
 		if err != nil {
+			s.ignoreIncompleteFrame(events, pending, count)
 			return count, err
 		}
 		if !ok {
+			s.ignoreIncompleteFrame(events, pending, count)
 			return count, nil
 		}
 		if count >= len(events) {
+			s.ignoreIncompleteFrame(events, pending, count)
 			return count, ErrEventBufferTooSmall
 		}
+		serial, wasPending := s.frameSerial, s.haveFrameHeader
 		if err := s.PushUnitInto(&events[count], unit, false); err != nil {
+			s.ignoreIncompleteFrame(events, pending, count)
 			return count, err
 		}
+		e := &events[count]
+		if wasPending && pending >= 0 && (s.frameSerial != serial || (!s.haveFrameHeader && !e.TileGroup.Final)) {
+			// dav1d: a new frame header resets c->n_tile_data and c->n_tiles,
+			// and a new sequence or a shown-existing frame replaces
+			// c->frame_hdr; the earlier frame is never submitted.
+			ignoreFrameEvents(events[pending:count])
+			pending = -1
+		}
+		switch {
+		case !s.haveFrameHeader || s.frameListed:
+			pending = -1
+		case s.frameSerial != serial:
+			pending = count
+		}
 		count++
+	}
+}
+
+// ignoreIncompleteFrame drops the events of a frame still waiting for tiles.
+func (s *Stream) ignoreIncompleteFrame(events []Event, pending, count int) {
+	if pending >= 0 && s.haveFrameHeader {
+		ignoreFrameEvents(events[pending:count])
+	}
+}
+
+func ignoreFrameEvents(events []Event) {
+	for i := range events {
+		e := &events[i]
+		switch e.Kind {
+		case EventFrameHeader, EventRedundantFrameHeader, EventFrame:
+			e.DroppedKind = e.Kind
+			e.Kind = EventIgnored
+		case EventTileGroup:
+			e.Kind = EventIgnored
+		}
 	}
 }
 
@@ -264,8 +333,10 @@ func (s *Stream) PushUnitInto(event *Event, unit obu.Unit, newCodedVideoSequence
 			if err != nil {
 				return err
 			}
-			if err := parser.ValidateReferenceScale(frameHeader, frameSize, &s.references); err != nil {
-				return err
+			if !s.lowOverhead {
+				if err := parser.ValidateReferenceScale(frameHeader, frameSize, &s.references); err != nil {
+					return err
+				}
 			}
 			tileInfo, err := parser.ParseTileInfo(unit.Payload, s.sequence, frameHeader, frameSize)
 			if err != nil {
@@ -334,16 +405,13 @@ func (s *Stream) PushUnitInto(event *Event, unit obu.Unit, newCodedVideoSequence
 			event.FilmGrain = filmGrain
 			event.ReferenceOrderHints = referenceOrderHints(frameSize, &s.references)
 			event.TileGroup = tileGroup
-			s.references.UpdateWithDecodeState(frameHeader, frameSize, segmentation.Data, loopFilter.Deltas, globalMotion, filmGrain)
 			s.tileInfo = tileInfo
-			s.nextTile = tileGroup.NextTile
 			s.storeFrameState(event)
-			s.haveFrameHeader = !tileGroup.Final
+			s.haveFrameHeader = true
+			s.frameSerial++
+			s.frameListed = false
 			s.tileGroups = 1
-			if tileGroup.Final {
-				s.clearPendingFrame()
-			}
-			return nil
+			return s.acceptTileGroup(event)
 		}
 		s.haveFrameHeader = true
 		s.tileGroups = 0
@@ -362,11 +430,7 @@ func (s *Stream) PushUnitInto(event *Event, unit obu.Unit, newCodedVideoSequence
 		s.applyFrameState(event)
 		event.TileGroup = tileGroup
 		s.tileGroups++
-		s.nextTile = tileGroup.NextTile
-		if tileGroup.Final {
-			s.clearPendingFrame()
-		}
-		return nil
+		return s.acceptTileGroup(event)
 
 	case obu.TypeMetadata:
 		if err := obu.CheckMetadataPayload(unit.Payload); err != nil {
@@ -396,6 +460,13 @@ func (s *Stream) PushUnitInto(event *Event, unit obu.Unit, newCodedVideoSequence
 		s.applyFrameState(event)
 		if _, _, err := parser.ValidateTileListDecodeLayout(list, event.TileInfo); err != nil {
 			event.TileListErr = err
+		}
+		if !s.frameListed {
+			if err := s.submitReferenceCheck(); err != nil {
+				return err
+			}
+			s.frameListed = true
+			s.updateReferences()
 		}
 		return nil
 
@@ -429,8 +500,10 @@ func (s *Stream) acceptFrameHeader(event *Event) error {
 	if err != nil {
 		return err
 	}
-	if err := parser.ValidateReferenceScale(frameHeader, frameSize, &s.references); err != nil {
-		return err
+	if !s.lowOverhead {
+		if err := parser.ValidateReferenceScale(frameHeader, frameSize, &s.references); err != nil {
+			return err
+		}
 	}
 	tileInfo, err := parser.ParseTileInfo(event.Unit.Payload, s.sequence, frameHeader, frameSize)
 	if err != nil {
@@ -497,13 +570,58 @@ func (s *Stream) acceptFrameHeader(event *Event) error {
 	event.GlobalMotion = globalMotion
 	event.FilmGrain = filmGrain
 	event.ReferenceOrderHints = referenceOrderHints(frameSize, &s.references)
-	s.references.UpdateWithDecodeState(frameHeader, frameSize, segmentation.Data, loopFilter.Deltas, globalMotion, filmGrain)
 	s.tileInfo = tileInfo
 	s.nextTile = 0
 	s.storeFrameState(event)
 	s.haveFrameHeader = true
+	s.frameSerial++
+	s.frameListed = false
 	s.tileGroups = 0
 	return nil
+}
+
+// acceptTileGroup adds a parsed tile group to the pending frame. dav1d counts
+// the group's tiles into c->n_tiles and submits the frame only when the count
+// reaches the tile grid size: dav1d_submit_frame checks the reference
+// pictures' scale and then updates the reference slots. A group ending past
+// the last tile can never complete its frame, so nothing decodes it.
+func (s *Stream) acceptTileGroup(event *Event) error {
+	group := event.TileGroup
+	s.nextTile = group.NextTile
+	if group.EndTile >= uint16(s.tileInfo.Cols)*uint16(s.tileInfo.Rows) {
+		if event.Kind == EventFrame {
+			event.DroppedKind = EventFrame
+		}
+		event.Kind = EventIgnored
+		return nil
+	}
+	if !group.Final {
+		return nil
+	}
+	if err := s.submitReferenceCheck(); err != nil {
+		s.clearPendingFrame()
+		return err
+	}
+	if !s.frameListed {
+		s.updateReferences()
+	}
+	s.clearPendingFrame()
+	return nil
+}
+
+// submitReferenceCheck is dav1d_submit_frame's reference picture check, for a
+// frame whose header was parsed inside PushLowOverhead (see lowOverhead).
+func (s *Stream) submitReferenceCheck() error {
+	if !s.lowOverhead {
+		return nil
+	}
+	return parser.ValidateReferenceScale(s.frame.FrameHeader, s.frame.FrameSize, &s.references)
+}
+
+// updateReferences applies the pending frame's reference_frame_update_process.
+func (s *Stream) updateReferences() {
+	f := &s.frame
+	s.references.UpdateWithDecodeState(f.FrameHeader, f.FrameSize, f.Segmentation.Data, f.LoopFilter.Deltas, f.GlobalMotion, f.FilmGrain)
 }
 
 func (s *Stream) acceptExistingFrame(event *Event) error {
@@ -542,6 +660,7 @@ func (s *Stream) acceptExistingFrame(event *Event) error {
 
 func (s *Stream) clearPendingFrame() {
 	s.haveFrameHeader = false
+	s.frameListed = false
 	s.tileGroups = 0
 	s.tileInfo = parser.TileInfo{}
 	s.nextTile = 0

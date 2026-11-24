@@ -251,7 +251,10 @@ func TestParseFrameSizeUsesReferenceDimensions(t *testing.T) {
 	}
 }
 
-func TestParseFrameSizeRejectsMissingReference(t *testing.T) {
+// dav1d parse_frame_hdr reads ref_frame_idx without the slots' headers when
+// frame ids are absent; the missing reference picture fails at submit, which
+// ValidateReferenceScale models.
+func TestParseFrameSizeMissingReferenceFailsAtSubmit(t *testing.T) {
 	seq := mustParseTestSequenceHeader(t, realtimeSequenceHeader())
 	payload, prefix := buildInterFramePrefix(t, seq, false, false, 4)
 	var refs ReferenceState
@@ -263,10 +266,14 @@ func TestParseFrameSizeRejectsMissingReference(t *testing.T) {
 	for range InterRefsPerFrame {
 		w.writeBits(0, 3)
 	}
+	w.writeBits(0, 32)
 
-	_, err := ParseFrameSize(w.bytes(), seq, prefix, &refs, 0, 0)
-	if !errors.Is(err, ErrReferenceFrameNeeded) {
-		t.Fatalf("ParseFrameSize err=%v want %v", err, ErrReferenceFrameNeeded)
+	size, err := ParseFrameSize(w.bytes(), seq, prefix, &refs, 0, 0)
+	if err != nil {
+		t.Fatalf("ParseFrameSize err=%v", err)
+	}
+	if err := ValidateReferenceScale(prefix, size, &refs); !errors.Is(err, ErrReferenceFrameNeeded) {
+		t.Fatalf("ValidateReferenceScale err=%v want %v", err, ErrReferenceFrameNeeded)
 	}
 }
 

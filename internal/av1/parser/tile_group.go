@@ -74,10 +74,9 @@ func ParseTileGroupHeader(payload []byte, tiles TileInfo, startBits int, expecte
 		if err != nil {
 			return TileGroup{}, err
 		}
+		// dav1d parse_tile_hdr (obu.c) reads tile_start_and_end_present_flag
+		// in an OBU_FRAME too, without rejecting a set flag.
 		group.TileStartAndEndPresent = present
-		if frameOBU && present {
-			return TileGroup{}, ErrInvalidTileGroup
-		}
 	}
 
 	if numTiles == 1 || !group.TileStartAndEndPresent {
@@ -100,10 +99,16 @@ func ParseTileGroupHeader(payload []byte, tiles TileInfo, startBits int, expecte
 		group.EndTile = uint16(v)
 	}
 
-	if group.StartTile != expectedStart || group.StartTile > group.EndTile || group.EndTile >= numTiles {
+	// dav1d obu.c: tile groups must be in order and sane (start <= end and
+	// start == the tiles seen so far). An end past the last tile is not an
+	// error there: the frame's tile count never reaches the grid size, so the
+	// frame is never submitted. Final reports only the group completing it.
+	if group.StartTile > group.EndTile || group.StartTile != expectedStart {
 		return TileGroup{}, ErrInvalidTileGroup
 	}
-	if err := readByteAlignment(&r); err != nil {
+	// dav1d_bytealign_get_bits discards the alignment bits without checking
+	// them.
+	if err := skipByteAlignment(&r); err != nil {
 		return TileGroup{}, err
 	}
 
@@ -172,14 +177,10 @@ func SplitTileGroup(payload []byte, tiles TileInfo, group TileGroup, spans []Til
 	return count, nil
 }
 
-func readByteAlignment(r *bitstream.Reader) error {
+func skipByteAlignment(r *bitstream.Reader) error {
 	for !r.ByteAligned() {
-		b, err := r.ReadBit()
-		if err != nil {
+		if _, err := r.ReadBit(); err != nil {
 			return err
-		}
-		if b != 0 {
-			return ErrInvalidTileGroup
 		}
 	}
 	return nil
