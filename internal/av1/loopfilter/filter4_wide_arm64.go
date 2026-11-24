@@ -6,14 +6,7 @@
 
 package loopfilter
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
-
-// unsafe: strided tap rows inside a window range-checked once per call; the
-// same shape as sb_u8_arm64.go, where the bounds-checked slice form measured
-// +20-61%.
+import "simd/archsimd"
 
 // lfFilter4U8Wide follows the byte-domain sixteen-lane dataflow of the old
 // NEON path. The block-limit gate excludes 255, so saturating the byte-domain
@@ -29,13 +22,18 @@ func lfFilter4U8Wide(pix []byte, q0Base, step, length int, params filter4Params,
 	one8 := archsimd.BroadcastInt8x16(1)
 	shift1 := archsimd.BroadcastInt8x16(-1)
 	shift3 := archsimd.BroadcastInt8x16(-3)
-	p := unsafe.Pointer(unsafe.SliceData(pix))
-	for x := 0; x < length; x += 16 {
-		base := q0Base + x
-		p1p := (*[16]uint8)(unsafe.Add(p, base-2*step))
-		p0p := (*[16]uint8)(unsafe.Add(p, base-step))
-		q0p := (*[16]uint8)(unsafe.Add(p, base))
-		q1p := (*[16]uint8)(unsafe.Add(p, base+step))
+	// The four tap rows are windows of pix taken once per call, all
+	// len(p1Row) long; with the loop bound written x <= len-16 the
+	// sixteen-lane groups index them with no bounds checks.
+	p1Row := pix[q0Base-2*step:][:length:length]
+	p0Row := pix[q0Base-step:][:len(p1Row)]
+	q0Row := pix[q0Base:][:len(p1Row)]
+	q1Row := pix[q0Base+step:][:len(p1Row)]
+	for x := 0; x <= len(p1Row)-16; x += 16 {
+		p1p := (*[16]uint8)(p1Row[x : x+16])
+		p0p := (*[16]uint8)(p0Row[x : x+16])
+		q0p := (*[16]uint8)(q0Row[x : x+16])
+		q1p := (*[16]uint8)(q1Row[x : x+16])
 		p1 := archsimd.LoadUint8x16Array(p1p)
 		p0 := archsimd.LoadUint8x16Array(p0p)
 		q0 := archsimd.LoadUint8x16Array(q0p)

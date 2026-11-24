@@ -52,12 +52,17 @@ func lfFilter4Core[S lfSample](pix []byte, q0Base int, step int, length int, _ i
 	shift1 := archsimd.BroadcastInt16x8(-1)
 	shift3 := archsimd.BroadcastInt16x8(-3)
 	var changed uint
-	for g := 0; g < length/8; g++ {
-		base := q0Base + g*8*sz
-		p1 := lfLoad[S](pix, base-2*step)
-		p0 := lfLoad[S](pix, base-step)
-		q0 := lfLoad[S](pix, base)
-		q1 := lfLoad[S](pix, base+step)
+	// Each tap row is one window of pix taken per call, all len(r0) long,
+	// so the groups index them with no bounds checks.
+	r0 := pix[q0Base:][: length*sz : length*sz]
+	rm2 := pix[q0Base-2*step:][:len(r0):len(r0)]
+	rm1 := pix[q0Base-step:][:len(r0):len(r0)]
+	rp1 := pix[q0Base+step:][:len(r0):len(r0)]
+	for g, o := 0, 0; o <= len(r0)-8*sz; g, o = g+1, o+8*sz {
+		p1 := lfLoad[S](rm2, o)
+		p0 := lfLoad[S](rm1, o)
+		q0 := lfLoad[S](r0, o)
+		q1 := lfLoad[S](rp1, o)
 
 		d0q0 := lfAbsDiff[S](p0, q0)
 		need := lfAbsDiff[S](p1, p0).LessEqual(limit).
@@ -84,10 +89,10 @@ func lfFilter4Core[S lfSample](pix []byte, q0Base int, step int, length int, _ i
 		np1 := p1.IfElse(hev, ps1.Add(ov).Max(minV).Min(maxV).Add(center))
 		nq1 := q1.IfElse(hev, qs1.Sub(ov).Max(minV).Min(maxV).Add(center))
 
-		lfStore[S](pix, base-2*step, np1.IfElse(need, p1))
-		lfStore[S](pix, base-step, np0.IfElse(need, p0))
-		lfStore[S](pix, base, nq0.IfElse(need, q0))
-		lfStore[S](pix, base+step, nq1.IfElse(need, q1))
+		lfStore[S](rm2, o, np1.IfElse(need, p1))
+		lfStore[S](rm1, o, np0.IfElse(need, p0))
+		lfStore[S](r0, o, nq0.IfElse(need, q0))
+		lfStore[S](rp1, o, nq1.IfElse(need, q1))
 	}
 	return changed
 }

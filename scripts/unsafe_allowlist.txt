@@ -39,9 +39,6 @@ internal/av1/encoder/svt_sweep_amd64.go
 internal/av1/encoder/svt_sweep_arm64.go
 internal/av1/frame/samples_gosimd_arm64.go
 internal/av1/frame/samples_le.go
-internal/av1/loopfilter/filter4_wide_arm64.go
-internal/av1/loopfilter/filter_lanes_arm64.go
-internal/av1/loopfilter/filter_lanes_gosimd.go
 internal/av1/loopfilter/filter_transpose_arm64.go
 internal/av1/loopfilter/sb_u16_amd64.go
 internal/av1/loopfilter/sb_u16_arm64.go
