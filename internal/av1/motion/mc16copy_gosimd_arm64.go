@@ -6,11 +6,7 @@
 
 package motion
 
-import (
-	"unsafe"
-
-	"github.com/thesyncim/goav1/internal/av1/frame"
-)
+import "github.com/thesyncim/goav1/internal/av1/frame"
 
 // mc16CopyFast is the 16bpc put copy (dav1d mc16.S put_neon): an in-plane
 // w x h block of a 2-byte-sample plane, w a multiple of 4, moved as vector
@@ -28,10 +24,10 @@ func mc16CopyFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w,
 	}
 	dOff := dstY*dst.Stride + 2*dstX
 	sOff := refY*ref.Stride + 2*refX
-	if dOff+(h-1)*dst.Stride+2*w > len(dst.Pix) || sOff+(h-1)*ref.Stride+2*w > len(ref.Pix) {
+	dExt, sExt := (h-1)*dst.Stride+2*w, (h-1)*ref.Stride+2*w
+	if dOff+dExt > len(dst.Pix) || sOff+sExt > len(ref.Pix) || max(dExt, sExt) > mc8WindowMax {
 		return false
 	}
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	mc8Copy(unsafe.Pointer(&dst.Pix[dOff]), dst.Stride, unsafe.Pointer(&ref.Pix[sOff]), ref.Stride, 2*w, h)
+	mc8Copy(dst.Pix[dOff:dOff+dExt], dst.Stride, ref.Pix[sOff:sOff+sExt], ref.Stride, 2*w, h)
 	return true
 }

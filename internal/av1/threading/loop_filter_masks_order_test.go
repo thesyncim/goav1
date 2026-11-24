@@ -25,7 +25,7 @@ func newOrderTestMasks(t *testing.T, cols, rows int) (*FrameWorkLoopFilterMasks,
 	sb128w, sb128h, maskCount := FrameWorkLoopFilterMaskShape(cols, rows)
 	h := &FrameWorkLoopFilterMasks{
 		Masks:      make([]lfmask.FilterMask, maskCount),
-		LevelCache: make([][4]uint8, cols*rows),
+		LevelCache: make([]uint8, 4*(cols*rows)),
 		Cols:       cols, Rows: rows, SB128W: sb128w, SB128H: sb128h,
 		Layout:    lfmask.Layout{SSHor: 1, SSVer: 1},
 		HasChroma: true,

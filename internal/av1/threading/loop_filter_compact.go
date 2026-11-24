@@ -34,7 +34,7 @@ type FrameWorkLoopFilterCompactState struct {
 // call this function.
 func BindFrameWorkLoopFilterCompactState(h *FrameWorkLoopFilterMasks, state *FrameWorkLoopFilterCompactState, noSkip []byte, loopFilter parser.LoopFilterParams, segmentation parser.SegmentationParams, delta parser.DeltaParams, monoChrome bool) error {
 	if h == nil || state == nil || h.Masks == nil || h.Cols <= 0 || h.Rows <= 0 || h.SB128W <= 0 ||
-		h.Cols&1 != 0 || h.Rows&1 != 0 || len(h.LevelCache) < h.Cols*h.Rows {
+		h.Cols&1 != 0 || h.Rows&1 != 0 || len(h.LevelCache) < 4*h.Cols*h.Rows {
 		return ErrInvalidBatch
 	}
 	unitCols := (h.Cols + 15) >> 4
@@ -100,7 +100,7 @@ func FrameWorkLoopFilterCompactMatchesMasks(h *FrameWorkLoopFilterMasks, state *
 	return h != nil && state != nil && state.active && h.Valid() &&
 		h.Cols == state.cols && h.Rows == state.rows && h.Layout == state.layout &&
 		h.HasChroma == state.hasChroma && h.SB128W > 0 && h.SB128H > 0 &&
-		len(h.LevelCache) >= state.cols*state.rows &&
+		len(h.LevelCache) >= 4*state.cols*state.rows &&
 		state.unitCols == (state.cols+15)>>4 && state.unitRows == (state.rows+15)>>4 &&
 		len(state.noskip) >= state.unitCols*state.unitRows*8
 }
@@ -122,7 +122,7 @@ func FrameWorkLoopFilterCompactReady(h *FrameWorkLoopFilterMasks, state *FrameWo
 	return FrameWorkLoopFilterCompactMatchesMasks(h, state) && state.ready &&
 		state.cols == cols && state.rows == rows &&
 		state.cells == int32(cols*rows) && state.blocks > 0 &&
-		len(h.LevelCache) >= cols*rows
+		len(h.LevelCache) >= 4*cols*rows
 }
 
 // FrameWorkLoopFilterCompactUnitGridMatches reports whether the ready compact

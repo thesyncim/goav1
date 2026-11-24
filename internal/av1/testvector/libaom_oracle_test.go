@@ -822,7 +822,7 @@ type frameWorkSideData struct {
 	cdefRead           []bool
 	loopFilterRecords  []threading.FrameWorkLoopFilterBlockRecord
 	lfMasks            []lfmask.FilterMask
-	lfLevelCache       [][4]uint8
+	lfLevelCache       []uint8
 	restorationRecords []tile.RestorationUnitRecord
 	restorationAbove   []uint16
 	restorationBelow   []uint16
@@ -862,7 +862,7 @@ func (r *frameWorkSideData) BindFrameWorkSideData(s *decoder.FrameWorkState, b d
 		if lfActive {
 			sb128w, sb128h, maskCount := threading.FrameWorkLoopFilterMaskShape(cols, rows)
 			r.lfMasks = sideDataBuffer(r.lfMasks, maskCount)
-			r.lfLevelCache = sideDataBuffer(r.lfLevelCache, threading.FrameWorkLoopFilterLevelCacheLen(cols, rows))
+			r.lfLevelCache = sideDataBuffer(r.lfLevelCache, 4*threading.FrameWorkLoopFilterLevelCacheLen(cols, rows))
 			levelCache := threading.FrameWorkLoopFilterLevelCacheBind(r.lfLevelCache, cols, rows)
 			clear(r.lfMasks)
 			clear(levelCache)

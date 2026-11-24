@@ -7,24 +7,19 @@
 package loopfilter
 
 import (
+	"encoding/binary"
 	"simd/archsimd"
-	"unsafe"
 )
-
-// unsafe: strided tap rows inside a window range-checked once per call; the
-// same shape as sb_u8_arm64.go, where the bounds-checked slice form measured
-// +20-61%.
 
 // lfStore8 narrows eight in-range lanes and writes exactly eight bytes. The
 // narrow is a NEON SQXTUN and the low 64-bit lane becomes one store.
 func lfStore8(pix []byte, off int, v archsimd.Int16x8) {
-	*(*uint64)(unsafe.Add(unsafe.Pointer(unsafe.SliceData(pix)), off)) = v.ToBits().SaturateToUint8().ReshapeToUint64s().GetElem(0)
+	binary.LittleEndian.PutUint64(pix[off:off+8], v.ToBits().SaturateToUint8().ReshapeToUint64s().GetElem(0))
 }
 
 // lfLoad8 reads exactly eight bytes and zero-extends them to signed lanes.
 func lfLoad8(pix []byte, off int) archsimd.Int16x8 {
-	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(pix)), off)
-	return archsimd.BroadcastUint64x2(*(*uint64)(p)).ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()
+	return archsimd.BroadcastUint64x2(binary.LittleEndian.Uint64(pix[off : off+8])).ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()
 }
 
 // lfAny reports whether any lane of the mask is set.

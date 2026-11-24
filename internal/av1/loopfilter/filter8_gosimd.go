@@ -43,16 +43,25 @@ func lfFilter8Core[S lfSample](pix []byte, q0Base int, step int, length int, sca
 	shift1 := archsimd.BroadcastInt16x8(-1)
 	shift3 := archsimd.BroadcastInt16x8(-3)
 	var changed uint
-	for g := 0; g < length/8; g++ {
-		base := q0Base + g*8*sz
-		p3 := lfLoad[S](pix, base-4*step)
-		p2 := lfLoad[S](pix, base-3*step)
-		p1 := lfLoad[S](pix, base-2*step)
-		p0 := lfLoad[S](pix, base-step)
-		q0 := lfLoad[S](pix, base)
-		q1 := lfLoad[S](pix, base+step)
-		q2 := lfLoad[S](pix, base+2*step)
-		q3 := lfLoad[S](pix, base+3*step)
+	// Each tap row is one window of pix taken per call, all len(r0) long,
+	// so the groups index them with no bounds checks.
+	r0 := pix[q0Base:][: length*sz : length*sz]
+	rm4 := pix[q0Base-4*step:][:len(r0):len(r0)]
+	rm3 := pix[q0Base-3*step:][:len(r0):len(r0)]
+	rm2 := pix[q0Base-2*step:][:len(r0):len(r0)]
+	rm1 := pix[q0Base-step:][:len(r0):len(r0)]
+	rp1 := pix[q0Base+step:][:len(r0):len(r0)]
+	rp2 := pix[q0Base+2*step:][:len(r0):len(r0)]
+	rp3 := pix[q0Base+3*step:][:len(r0):len(r0)]
+	for g, o := 0, 0; o <= len(r0)-8*sz; g, o = g+1, o+8*sz {
+		p3 := lfLoad[S](rm4, o)
+		p2 := lfLoad[S](rm3, o)
+		p1 := lfLoad[S](rm2, o)
+		p0 := lfLoad[S](rm1, o)
+		q0 := lfLoad[S](r0, o)
+		q1 := lfLoad[S](rp1, o)
+		q2 := lfLoad[S](rp2, o)
+		q3 := lfLoad[S](rp3, o)
 
 		d0q0 := lfAbsDiff[S](p0, q0)
 		need := lfAbsDiff[S](p3, p2).LessEqual(limit).
@@ -76,17 +85,17 @@ func lfFilter8Core[S lfSample](pix []byte, q0Base int, step int, length int, sca
 			And(lfAbsDiff[S](q3, q0).LessEqual(flatThr))
 		if lfAll(need.And(flat)) {
 			acc := p3.Add(p3).Add(p3).Add(p2.Add(p2)).Add(p1).Add(p0).Add(q0).Add(four)
-			lfStore[S](pix, base-3*step, lfShift3(acc, shift3))
+			lfStore[S](rm3, o, lfShift3(acc, shift3))
 			acc = acc.Add(p1.Add(q1)).Sub(p3.Add(p2))
-			lfStore[S](pix, base-2*step, lfShift3(acc, shift3))
+			lfStore[S](rm2, o, lfShift3(acc, shift3))
 			acc = acc.Add(p0.Add(q2)).Sub(p3.Add(p1))
-			lfStore[S](pix, base-step, lfShift3(acc, shift3))
+			lfStore[S](rm1, o, lfShift3(acc, shift3))
 			acc = acc.Add(q0.Add(q3)).Sub(p3.Add(p0))
-			lfStore[S](pix, base, lfShift3(acc, shift3))
+			lfStore[S](r0, o, lfShift3(acc, shift3))
 			acc = acc.Add(q1.Add(q3)).Sub(p2.Add(q0))
-			lfStore[S](pix, base+step, lfShift3(acc, shift3))
+			lfStore[S](rp1, o, lfShift3(acc, shift3))
 			acc = acc.Add(q2.Add(q3)).Sub(p1.Add(q1))
-			lfStore[S](pix, base+2*step, lfShift3(acc, shift3))
+			lfStore[S](rp2, o, lfShift3(acc, shift3))
 			continue
 		}
 		hev := lfAbsDiff[S](p1, p0).Greater(hevT).Or(lfAbsDiff[S](q1, q0).Greater(hevT))
@@ -106,10 +115,10 @@ func lfFilter8Core[S lfSample](pix []byte, q0Base int, step int, length int, sca
 
 		gate := need.And(flat)
 		if !lfAny(gate) {
-			lfStore[S](pix, base-2*step, np1.IfElse(need, p1))
-			lfStore[S](pix, base-step, np0.IfElse(need, p0))
-			lfStore[S](pix, base, nq0.IfElse(need, q0))
-			lfStore[S](pix, base+step, nq1.IfElse(need, q1))
+			lfStore[S](rm2, o, np1.IfElse(need, p1))
+			lfStore[S](rm1, o, np0.IfElse(need, p0))
+			lfStore[S](r0, o, nq0.IfElse(need, q0))
+			lfStore[S](rp1, o, nq1.IfElse(need, q1))
 			continue
 		}
 
@@ -117,22 +126,22 @@ func lfFilter8Core[S lfSample](pix []byte, q0Base int, step int, length int, sca
 		// advanced one tap pair at a time through the six outputs.
 		accB := p3.Add(p3).Add(p3).Add(p2.Add(p2)).Add(p1).Add(p0).Add(q0).Add(four)
 		f8p2 := lfShift3(accB, shift3)
-		lfStore[S](pix, base-3*step, f8p2.IfElse(gate, p2))
+		lfStore[S](rm3, o, f8p2.IfElse(gate, p2))
 		accB = accB.Add(p1.Add(q1)).Sub(p3.Add(p2))
 		f8p1 := lfShift3(accB, shift3)
-		lfStore[S](pix, base-2*step, f8p1.IfElse(gate, np1.IfElse(need, p1)))
+		lfStore[S](rm2, o, f8p1.IfElse(gate, np1.IfElse(need, p1)))
 		accB = accB.Add(p0.Add(q2)).Sub(p3.Add(p1))
 		f8p0 := lfShift3(accB, shift3)
-		lfStore[S](pix, base-step, f8p0.IfElse(gate, np0.IfElse(need, p0)))
+		lfStore[S](rm1, o, f8p0.IfElse(gate, np0.IfElse(need, p0)))
 		accB = accB.Add(q0.Add(q3)).Sub(p3.Add(p0))
 		f8q0 := lfShift3(accB, shift3)
-		lfStore[S](pix, base, f8q0.IfElse(gate, nq0.IfElse(need, q0)))
+		lfStore[S](r0, o, f8q0.IfElse(gate, nq0.IfElse(need, q0)))
 		accB = accB.Add(q1.Add(q3)).Sub(p2.Add(q0))
 		f8q1 := lfShift3(accB, shift3)
-		lfStore[S](pix, base+step, f8q1.IfElse(gate, nq1.IfElse(need, q1)))
+		lfStore[S](rp1, o, f8q1.IfElse(gate, nq1.IfElse(need, q1)))
 		accB = accB.Add(q2.Add(q3)).Sub(p1.Add(q1))
 		f8q2 := lfShift3(accB, shift3)
-		lfStore[S](pix, base+2*step, f8q2.IfElse(gate, q2))
+		lfStore[S](rp2, o, f8q2.IfElse(gate, q2))
 	}
 	return changed
 }

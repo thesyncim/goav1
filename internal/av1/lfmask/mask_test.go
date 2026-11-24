@@ -330,7 +330,7 @@ func TestBuilderCreateIntraLevelCache(t *testing.T) {
 	var b Builder
 	var m FilterMask
 	stride := 8
-	lc := LevelCache{Cells: make([][4]uint8, stride*8), Stride: stride}
+	lc := LevelCache{Cells: make([]uint8, 4*(stride*8)), Stride: stride}
 	ay := make([]uint8, 32)
 	ly := make([]uint8, 32)
 	auv := make([]uint8, 32)
@@ -344,14 +344,14 @@ func TestBuilderCreateIntraLevelCache(t *testing.T) {
 	b.CreateIntra(&m, lc, lv, 0, 0, stride, 8, tile.BlockSize8x8, tile.TransformSize8x8, tile.TransformSize4x4, Layout{SSHor: 1, SSVer: 1}, ay, ly, auv, luv)
 	for y := 0; y < 2; y++ {
 		for x := 0; x < 2; x++ {
-			cell := lc.Cells[y*stride+x]
+			cell := lc.Cells[4*(y*stride+x) : 4*(y*stride+x)+4]
 			if cell[0] != 10 || cell[1] != 11 {
 				t.Fatalf("luma level cache (%d,%d)=%v want [10 11 ..]", x, y, cell)
 			}
 		}
 	}
 	// One chroma cell at (0,0).
-	if lc.Cells[0][2] != 12 || lc.Cells[0][3] != 13 {
-		t.Fatalf("chroma level cache = %v want [.. 12 13]", lc.Cells[0])
+	if lc.Cells[4*(0)+2] != 12 || lc.Cells[4*(0)+3] != 13 {
+		t.Fatalf("chroma level cache = %v want [.. 12 13]", lc.Cells[:4])
 	}
 }

@@ -118,10 +118,10 @@ func (ctx *FrameWorkPostFilterContext) beginLoopFilterEdgesFromMasks(masks *thre
 // The level cells are order-independent, so a raster walk over block origins is
 // sufficient.
 func (ctx *FrameWorkPostFilterContext) populateLoopFilterLevelCacheFromMap(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap, levelCtx *frameWorkLoopFilterLevelContext, plan *FrameWorkLoopFilterPostFilterPlan) error {
-	if len(masks.LevelCache) < masks.Cols*masks.Rows {
+	if len(masks.LevelCache) < 4*masks.Cols*masks.Rows {
 		return threading.ErrInvalidBatch
 	}
-	clear(masks.LevelCache[:masks.Cols*masks.Rows])
+	clear(masks.LevelCache[:4*masks.Cols*masks.Rows])
 	return ctx.populateLoopFilterLevelCacheRange(masks, filterMap, levelCtx, plan, 0, masks.Rows)
 }
 
@@ -135,7 +135,7 @@ func (ctx *FrameWorkPostFilterContext) populateLoopFilterLevelCacheFromMap(masks
 func (ctx *FrameWorkPostFilterContext) populateLoopFilterLevelCacheRange(masks *threading.FrameWorkLoopFilterMasks, filterMap FrameWorkLoopFilterMap, levelCtx *frameWorkLoopFilterLevelContext, plan *FrameWorkLoopFilterPostFilterPlan, rowStart, rowEnd int) error {
 	cols := masks.Cols
 	rows := masks.Rows
-	if len(masks.LevelCache) < cols*rows {
+	if len(masks.LevelCache) < 4*cols*rows {
 		return threading.ErrInvalidBatch
 	}
 	if rowStart < 0 || rowStart > rowEnd || rowEnd > rows {
@@ -182,7 +182,7 @@ func (ctx *FrameWorkPostFilterContext) populateLoopFilterLevelCacheRange(masks *
 			for y := 0; y < bh4; y++ {
 				rowBase := (by + y) * cols
 				for x := 0; x < bw4; x++ {
-					cell := &masks.LevelCache[rowBase+bx+x]
+					cell := (*[4]uint8)(masks.LevelCache[4*(rowBase+bx+x):])
 					cell[0] = yVert
 					cell[1] = yHorz
 				}
@@ -204,7 +204,7 @@ func (ctx *FrameWorkPostFilterContext) populateLoopFilterLevelCacheRange(masks *
 			for y := 0; y < cbh4; y++ {
 				rowBase := (cby + y) * cols
 				for x := 0; x < cbw4; x++ {
-					cell := &masks.LevelCache[rowBase+cbx+x]
+					cell := (*[4]uint8)(masks.LevelCache[4*(rowBase+cbx+x):])
 					cell[2] = uLevel
 					cell[3] = vLevel
 				}
@@ -469,9 +469,9 @@ func (ctx *FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threadi
 					}
 					lfmask.ScanLuma(&region.Y[0][pos], 0, extentRows, func(off, widthClass int) {
 						y4 := baseRow + off
-						level := lc.Cells[y4*cols+col][loopfilter.EdgeVertical]
+						level := lc.Cells[4*(y4*cols+col)+int(loopfilter.EdgeVertical)]
 						if level == 0 {
-							level = lc.Cells[y4*cols+col-1][loopfilter.EdgeVertical]
+							level = lc.Cells[4*(y4*cols+col-1)+int(loopfilter.EdgeVertical)]
 						}
 						if level == 0 {
 							return
@@ -504,9 +504,9 @@ func (ctx *FrameWorkPostFilterContext) scanLoopFilterMaskLumaBand(masks *threadi
 				}
 				lfmask.ScanLuma(&region.Y[1][pos], 0, extentCols, func(off, widthClass int) {
 					x4 := baseCol + off
-					level := lc.Cells[row*cols+x4][loopfilter.EdgeHorizontal]
+					level := lc.Cells[4*(row*cols+x4)+int(loopfilter.EdgeHorizontal)]
 					if level == 0 {
-						level = lc.Cells[(row-1)*cols+x4][loopfilter.EdgeHorizontal]
+						level = lc.Cells[4*((row-1)*cols+x4)+int(loopfilter.EdgeHorizontal)]
 					}
 					if level == 0 {
 						return
@@ -559,9 +559,9 @@ func (ctx *FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *threa
 					}
 					lfmask.ScanChroma(&region.UV[0][pos], 0, extentCRows, laneBitsV, func(off, widthClass int) {
 						crow := baseCRow + off
-						level := lc.Cells[crow*cols+ccol][levelIdx]
+						level := lc.Cells[4*(crow*cols+ccol)+levelIdx]
 						if level == 0 {
-							level = lc.Cells[crow*cols+ccol-1][levelIdx]
+							level = lc.Cells[4*(crow*cols+ccol-1)+levelIdx]
 						}
 						if level == 0 {
 							return
@@ -594,9 +594,9 @@ func (ctx *FrameWorkPostFilterContext) scanLoopFilterMaskChromaBand(masks *threa
 				}
 				lfmask.ScanChroma(&region.UV[1][pos], 0, extentCCols, laneBitsH, func(off, widthClass int) {
 					ccol := baseCCol + off
-					level := lc.Cells[crow*cols+ccol][levelIdx]
+					level := lc.Cells[4*(crow*cols+ccol)+levelIdx]
 					if level == 0 {
-						level = lc.Cells[(crow-1)*cols+ccol][levelIdx]
+						level = lc.Cells[4*((crow-1)*cols+ccol)+levelIdx]
 					}
 					if level == 0 {
 						return
@@ -711,12 +711,12 @@ func (ctx *FrameWorkPostFilterContext) PrepareLoopFilterMaskBands(masks *threadi
 			return FrameWorkLoopFilterMaskBands{}, err
 		}
 	}
-	if len(masks.LevelCache) < cols*rows {
+	if len(masks.LevelCache) < 4*cols*rows {
 		return FrameWorkLoopFilterMaskBands{}, threading.ErrInvalidBatch
 	}
 	levelsAtDecode := masks.LevelsAtDecode()
 	if !levelsAtDecode {
-		clear(masks.LevelCache[:cols*rows])
+		clear(masks.LevelCache[:4*cols*rows])
 	}
 	levelCtx := frameWorkLoopFilterLevelContextFor(&ctx.Event)
 	maxPlane := loopfilter.PlaneV

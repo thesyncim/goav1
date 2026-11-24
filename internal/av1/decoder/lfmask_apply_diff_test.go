@@ -47,7 +47,7 @@ func buildLoopFilterMasksFromRecords(t testing.TB, event Event, size parser.Fram
 	sb128w, sb128h, maskCount := threading.FrameWorkLoopFilterMaskShape(cols, rows)
 	handle := &threading.FrameWorkLoopFilterMasks{
 		Masks:      make([]lfmask.FilterMask, maskCount),
-		LevelCache: make([][4]uint8, cols*rows),
+		LevelCache: make([]uint8, 4*(cols*rows)),
 		Cols:       cols,
 		Rows:       rows,
 		SB128W:     sb128w,

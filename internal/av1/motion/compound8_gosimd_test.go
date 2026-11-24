@@ -7,6 +7,7 @@
 package motion
 
 import (
+	"fmt"
 	"math/rand"
 	"testing"
 
@@ -147,4 +148,53 @@ func BenchmarkBlendCompoundAvg8GoSIMD_32(b *testing.B) {
 
 func BenchmarkBlendCompoundAvg8Scalar_32(b *testing.B) {
 	benchBlendCompoundAvg8Fair(b, blendCompoundAvg8PureGo)
+}
+
+// BenchmarkU8GoSIMDDirect measures the general 8-bit Go SIMD convolve and
+// CONV_BUF kernels (the resident halved-tap forms) called directly.
+func BenchmarkU8GoSIMDDirect(b *testing.B) {
+	rng := rand.New(rand.NewSource(9))
+	ref := frame.Plane{Pix: make([]byte, 192*192), Stride: 192, Width: 192, Height: 192}
+	for i := range ref.Pix {
+		ref.Pix[i] = byte(rng.Intn(256))
+	}
+	dst := frame.Plane{Pix: make([]byte, 192*192), Stride: 192, Width: 192, Height: 192}
+	out := make([]uint16, 128*128)
+	var scratch ConvolveScratch
+	cscratch := new(CompoundConvolveScratch)
+	xk, yk := subpelFilters8[5], subpelFilters8[11]
+	const roundOffset = 6144
+	for _, w := range []int{8, 16, 32} {
+		h := w
+		b.Run(fmt.Sprintf("x_%dx%d", w, h), func(b *testing.B) {
+			for b.Loop() {
+				convolveX8GoSIMD(dst, ref, 0, 0, 40, 40, w, h, xk)
+			}
+		})
+		b.Run(fmt.Sprintf("y_%dx%d", w, h), func(b *testing.B) {
+			for b.Loop() {
+				convolveY8GoSIMD(dst, ref, 0, 0, 40, 40, w, h, yk)
+			}
+		})
+		b.Run(fmt.Sprintf("2d_%dx%d", w, h), func(b *testing.B) {
+			for b.Loop() {
+				convolve2D8GoSIMDWithScratch(dst, ref, 0, 0, 40, 40, w, h, xk, yk, &scratch)
+			}
+		})
+		b.Run(fmt.Sprintf("cx_%dx%d", w, h), func(b *testing.B) {
+			for b.Loop() {
+				predictInterCompoundRef8ToConvBufXGoSIMD(out, ref, 40, 40, w, h, xk, roundOffset)
+			}
+		})
+		b.Run(fmt.Sprintf("cy_%dx%d", w, h), func(b *testing.B) {
+			for b.Loop() {
+				predictInterCompoundRef8ToConvBufYGoSIMD(out, ref, 40, 40, w, h, yk, compoundRound0Bits, roundOffset)
+			}
+		})
+		b.Run(fmt.Sprintf("c2d_%dx%d", w, h), func(b *testing.B) {
+			for b.Loop() {
+				predictInterCompoundRef8ToConvBuf2DGoSIMD(out, ref, 40, 40, w, h, xk, yk, 19, cscratch)
+			}
+		})
+	}
 }

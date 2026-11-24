@@ -15,7 +15,7 @@ func compactTestHandle(cols, rows int, layout lfmask.Layout) *FrameWorkLoopFilte
 	sb128w, sb128h, count := FrameWorkLoopFilterMaskShape(cols, rows)
 	return &FrameWorkLoopFilterMasks{
 		Masks:      make([]lfmask.FilterMask, count),
-		LevelCache: make([][4]uint8, cols*rows),
+		LevelCache: make([]uint8, 4*(cols*rows)),
 		Cols:       cols,
 		Rows:       rows,
 		SB128W:     sb128w,
@@ -228,9 +228,9 @@ func compactTestExpectedNoSkip(records FrameWorkLoopFilterMap, cols, rows int) [
 	return got
 }
 
-func compactTestExpectedLevels(t *testing.T, records FrameWorkLoopFilterMap, cols, rows int, layout lfmask.Layout, hasChroma bool, params parser.LoopFilterParams, seg parser.SegmentationParams, delta parser.DeltaParams) [][4]uint8 {
+func compactTestExpectedLevels(t *testing.T, records FrameWorkLoopFilterMap, cols, rows int, layout lfmask.Layout, hasChroma bool, params parser.LoopFilterParams, seg parser.SegmentationParams, delta parser.DeltaParams) []uint8 {
 	t.Helper()
-	levels := make([][4]uint8, cols*rows)
+	levels := make([]uint8, 4*(cols*rows))
 	for row := 0; row < rows; row++ {
 		for col := 0; col < cols; {
 			rec := records.Records[row*int(records.Stride)+col]
@@ -271,7 +271,7 @@ func compactTestExpectedLevels(t *testing.T, records FrameWorkLoopFilterMap, col
 			yHorz := resolve(loopfilter.PlaneY, loopfilter.EdgeHorizontal)
 			for y := 0; y < bh4; y++ {
 				for x := 0; x < bw4; x++ {
-					cell := &levels[(by+y)*cols+bx+x]
+					cell := (*[4]uint8)(levels[4*((by+y)*cols+bx+x):])
 					cell[0], cell[1] = yVert, yHorz
 				}
 			}
@@ -285,7 +285,7 @@ func compactTestExpectedLevels(t *testing.T, records FrameWorkLoopFilterMap, col
 				cbx, cby := bx>>layout.SSHor, by>>layout.SSVer
 				for y := 0; y < cbh4; y++ {
 					for x := 0; x < cbw4; x++ {
-						cell := &levels[(cby+y)*cols+cbx+x]
+						cell := (*[4]uint8)(levels[4*((cby+y)*cols+cbx+x):])
 						cell[2], cell[3] = uLevel, vLevel
 					}
 				}

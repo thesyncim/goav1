@@ -65,12 +65,12 @@ func sbTestMasks(rng *rand.Rand, luma bool, units int) [3]uint32 {
 	return vm
 }
 
-func sbTestLevels(rng *rand.Rand, n int) [][4]uint8 {
-	lvl := make([][4]uint8, n)
-	for i := range lvl {
+func sbTestLevels(rng *rand.Rand, n int) []uint8 {
+	lvl := make([]uint8, 4*(n))
+	for i := range len(lvl) / 4 {
 		for c := 0; c < 4; c++ {
 			if rng.Intn(6) != 0 {
-				lvl[i][c] = uint8(rng.Intn(MaxLevel + 1))
+				lvl[4*(i)+c] = uint8(rng.Intn(MaxLevel + 1))
 			}
 		}
 	}
@@ -214,9 +214,9 @@ func TestFilterSB8TightBuffers(t *testing.T) {
 		}
 		pixLen = min(pixLen, len(full))
 		if rng.Intn(2) == 0 {
-			lvlLen = len(lvlFull)
+			lvlLen = len(lvlFull) / 4
 		}
-		lvl := append([][4]uint8(nil), lvlFull[:lvlLen]...)
+		lvl := append([]uint8(nil), lvlFull[:4*lvlLen]...)
 		want := append([]byte(nil), full[:pixLen]...)
 		got := append([]byte(nil), full[:pixLen]...)
 		if vertical {

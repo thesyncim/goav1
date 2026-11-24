@@ -42,9 +42,9 @@ func sbExtremeRun(t *testing.T, name string, sharp uint8, luma bool, vm [3]uint3
 				}
 			}
 		}
-		lvl := make([][4]uint8, 256)
-		for i := range lvl {
-			lvl[i][0] = MaxLevel
+		lvl := make([]uint8, 4*(256))
+		for i := range len(lvl) / 4 {
+			lvl[4*(i)+0] = MaxLevel
 		}
 		want := append([]byte(nil), pix...)
 		got := append([]byte(nil), pix...)
