@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -130,12 +131,7 @@ func gcSynthPool(workers int) (func(), func()) {
 	for range workers {
 		go func() {
 			for i := range work {
-				buf := bufs[i%workers]
-				for range 12 {
-					for j := 64; j < len(buf); j += 16 {
-						buf[j] += buf[j-64] >> 1
-					}
-				}
+				gcSynthWork(bufs[i%workers])
 				done <- struct{}{}
 			}
 		}()
@@ -150,6 +146,200 @@ func gcSynthPool(workers int) (func(), func()) {
 			}
 		}
 	}, func() { close(work) }
+}
+
+// gcSynthWork streams one worker's share of the synthetic working set.
+func gcSynthWork(buf []byte) {
+	for range 12 {
+		for j := 64; j < len(buf); j += 16 {
+			buf[j] += buf[j-64] >> 1
+		}
+	}
+}
+
+// gcSynthRespawn is gcSynthPool with workers that exit when their share is
+// done and are spawned again for the next one, instead of parking on a
+// channel. Each worker is a preallocated no-argument func value, so the go
+// statement allocates no closure and reuses a dead g; the workers' result
+// sends go to a buffered channel and never block. Only the caller's join
+// parks.
+func gcSynthRespawn(workers int) (func(), func()) {
+	done := make(chan struct{}, workers)
+	fns := make([]func(), workers)
+	for i := range fns {
+		buf := make([]byte, (4<<20)/workers)
+		fns[i] = func() {
+			gcSynthWork(buf)
+			done <- struct{}{}
+		}
+	}
+	return func() {
+		for range 16 {
+			for _, fn := range fns {
+				go fn()
+			}
+			for range workers {
+				<-done
+			}
+		}
+	}, func() {}
+}
+
+// gcSynthStocked is gcSynthPool with a sudog stocker: after every
+// collection (which empties the runtime's central sudog list) a herd of
+// goroutines parks on one channel at once and is then released, so the
+// sudogs the herd allocates (on its own goroutines, paying any sweep debt
+// there) spill from the P caches back into the central list, where a worker
+// whose P ran dry may find them. It is probabilistic: measured with forced
+// collections it cuts the pool's sudog allocations about 8x, not to zero,
+// and allocates about 136 sudogs per collection on the herd, most of which
+// the next collection drops from the central list again.
+func gcSynthStocked(workers int) (func(), func()) {
+	op, closePool := gcSynthPool(workers)
+	var stopped atomic.Bool
+	var arm func()
+	arm = func() {
+		sentinel := new(struct {
+			p   *int
+			pad [32]byte
+		})
+		runtime.AddCleanup(sentinel, func(struct{}) {
+			if stopped.Load() {
+				return
+			}
+			gcSynthStockerHerd(256)
+			arm()
+		}, struct{}{})
+	}
+	arm()
+	return op, func() {
+		stopped.Store(true)
+		closePool()
+	}
+}
+
+// gcSynthStockerHerd parks n goroutines on one channel together, then
+// releases them.
+func gcSynthStockerHerd(n int) {
+	gate := make(chan struct{})
+	var parked, exited sync.WaitGroup
+	parked.Add(n)
+	exited.Add(n)
+	for range n {
+		go func() {
+			parked.Done()
+			<-gate
+			exited.Done()
+		}()
+	}
+	parked.Wait()
+	for range 64 {
+		runtime.Gosched() // let the herd reach the receive
+	}
+	close(gate)
+	exited.Wait()
+}
+
+// gcSynthDepth grows the calling goroutine's stack by about kib KiB, the way a
+// codec worker's call chain does before its first block.
+//
+//go:noinline
+func gcSynthDepth(kib int) byte {
+	var frame [1024]byte
+	frame[kib&1023] = byte(kib)
+	if kib > 1 {
+		frame[0] += gcSynthDepth(kib - 1)
+	}
+	return frame[0] + frame[kib&1023]
+}
+
+// BenchmarkGCSynthRespawnCost is the scheduling cost of one dispatch-and-join
+// of 8 workers whose call chain needs a codec-sized stack, with persistent
+// workers parked on a channel against workers that exit and are respawned (a
+// dead g keeps only a starting-size stack, so a respawned worker grows its
+// stack again from 2 KiB). The work
+// itself is the stack growth plus a token store, so cpu-ns/op is the
+// scheduling and stack overhead. No collection runs.
+func BenchmarkGCSynthRespawnCost(b *testing.B) {
+	const workers = 8
+	for _, kib := range []int{4, 16, 32, 64} {
+		b.Run(fmt.Sprintf("chan/stack=%dKiB", kib), func(b *testing.B) {
+			work := make(chan int, workers)
+			done := make(chan struct{}, workers)
+			for range workers {
+				go func() {
+					for k := range work {
+						gcPressureSink.Add(uint64(gcSynthDepth(k)))
+						done <- struct{}{}
+					}
+				}()
+			}
+			defer close(work)
+			gcSynthRespawnBench(b, func() {
+				for range workers {
+					work <- kib
+				}
+				for range workers {
+					<-done
+				}
+			})
+		})
+		b.Run(fmt.Sprintf("respawn/stack=%dKiB", kib), func(b *testing.B) {
+			done := make(chan struct{}, workers)
+			fn := func() {
+				gcPressureSink.Add(uint64(gcSynthDepth(kib)))
+				done <- struct{}{}
+			}
+			gcSynthRespawnBench(b, func() {
+				for range workers {
+					go fn()
+				}
+				for range workers {
+					<-done
+				}
+			})
+		})
+	}
+}
+
+func gcSynthRespawnBench(b *testing.B, op func()) {
+	op()
+	runtime.GC()
+	b.ResetTimer()
+	p0 := procCPU()
+	for b.Loop() {
+		op()
+	}
+	b.ReportMetric(float64(procCPU()-p0)/float64(b.N), "cpu-ns/op")
+}
+
+// TestGCParkProbe counts, per park site, the sudog and g allocations of the
+// synthetic pools and the codec workloads with a collection forced before
+// every op. A measurement tool: set GOAV1_GC_PRESSURE_MULTI=1.
+func TestGCParkProbe(t *testing.T) {
+	if os.Getenv("GOAV1_GC_PRESSURE_MULTI") == "" {
+		t.Skip("set GOAV1_GC_PRESSURE_MULTI=1")
+	}
+	synthSite := func(f runtime.Frame) bool {
+		return strings.Contains(f.Function, "gcSynth") && !strings.Contains(f.Function, "gcSynthStockerHerd")
+	}
+	for _, s := range []struct {
+		name string
+		mk   func(int) (func(), func())
+	}{{"synth chan", gcSynthPool}, {"synth respawn", gcSynthRespawn}, {"synth stocked", gcSynthStocked}} {
+		op, closeFn := s.mk(8)
+		op()
+		measureParkAllocs(200, op, synthSite).check(t, s.name)
+		closeFn()
+	}
+	dec, closeDec := gcPressureDecodeOp(t, 8)
+	dec()
+	measureParkAllocs(8, dec, isCodecFrame).check(t, "decode w8 (per clip)")
+	closeDec()
+	enc, closeEnc := gcPressureEncodeOp(t, 0)
+	enc()
+	measureParkAllocs(8, enc, isCodecFrame).check(t, "encode t0 (16 frames)")
+	closeEnc()
 }
 
 // gcPressureMark spins a few milliseconds in a function named after the
@@ -194,7 +384,8 @@ func gcPressureSpin() {
 // churner and the collector's background work) per regime relative to idle,
 // next to a synthetic worker-pool kernel. Regimes are interleaved round by
 // round. It is a measurement tool: set GOAV1_GC_PRESSURE_MULTI=1 and pin
-// GOMAXPROCS. GOAV1_GC_PRESSURE_WORK (decode, encode, synth; comma list)
+// GOMAXPROCS. GOAV1_GC_PRESSURE_WORK (decode, encode, synth, synthrespawn,
+// synthstock; comma list)
 // and GOAV1_GC_PRESSURE_REGIMES select a subset, which makes single-regime
 // processes for cycle-sampled traces; GOAV1_GC_PRESSURE_ROUNDS sets the
 // round count; GOAV1_GC_PRESSURE_IVF picks the decode clip.
@@ -236,10 +427,15 @@ func TestGCPressureMulti(t *testing.T) {
 		defer closeFn()
 		works = append(works, workload{"encode t0", enc, 2})
 	}
-	if want["synth"] {
-		synth, closeFn := gcSynthPool(8)
-		defer closeFn()
-		works = append(works, workload{"synth pool8", synth, 3})
+	for _, sw := range []struct {
+		key, name string
+		mk        func(int) (func(), func())
+	}{{"synth", "synth pool8", gcSynthPool}, {"synthrespawn", "synth respawn8", gcSynthRespawn}, {"synthstock", "synth stocked8", gcSynthStocked}} {
+		if want[sw.key] {
+			synth, closeFn := sw.mk(8)
+			defer closeFn()
+			works = append(works, workload{sw.name, synth, 3})
+		}
 	}
 	for _, w := range works {
 		w.op() // warm

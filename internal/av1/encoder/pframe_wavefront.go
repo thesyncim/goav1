@@ -33,6 +33,7 @@ import (
 	"sync/atomic"
 
 	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
@@ -119,11 +120,17 @@ type pframeWavefront struct {
 	refmvsRows tile.EncoderRefmvsRows
 	doneAlloc  []atomic.Int32
 	done       []atomic.Int32
-	nextRow    atomic.Int32
+	// rowWaiters counts the goroutines parked (or about to park) on each
+	// row's progress, so a publish takes the lock only when its row has one.
+	rowWaitersAlloc []atomic.Int32
+	rowWaiters      []atomic.Int32
+	nextRow         atomic.Int32
 
+	// waitList holds the parked waiters keyed by row: a publish wakes only
+	// the waiters of its row whose need it meets, where a broadcast woke the
+	// waiters of every row on every superblock.
 	mu       sync.Mutex
-	cond     *sync.Cond
-	waiters  atomic.Int32
+	waitList threading.WaitList
 	aborted  atomic.Bool
 	launched int
 
@@ -142,30 +149,25 @@ type pframeWavefront struct {
 	key bool
 }
 
-func (wf *pframeWavefront) ensureCond() {
-	if wf.cond == nil {
-		wf.cond = sync.NewCond(&wf.mu)
-	}
-}
-
 func (wf *pframeWavefront) ensureDone(rows int) {
 	if cap(wf.doneAlloc) < rows {
 		wf.doneAlloc = make([]atomic.Int32, rows)
+		wf.rowWaitersAlloc = make([]atomic.Int32, rows)
 	}
 	wf.done = wf.doneAlloc[:rows]
+	wf.rowWaiters = wf.rowWaitersAlloc[:rows]
 }
 
 // publishRowProgress makes row's first cols superblocks visible to waiters.
 // The sequentially-consistent atomic store orders every write the lane made
 // before it (recon pixels, carrier slots, records) ahead of any reader that
 // observes the new value, so the lock-free fast path in waitRowProgress is
-// sound; the lock+broadcast runs only when someone is actually parked, which
-// keeps the steady wavefront free of thundering-herd wakeups.
+// sound; the lock and wake run only when a waiter of this row is parked.
 func (wf *pframeWavefront) publishRowProgress(row int, cols int32) {
 	wf.done[row].Store(cols)
-	if wf.waiters.Load() > 0 {
+	if wf.rowWaiters[row].Load() > 0 {
 		wf.mu.Lock()
-		wf.cond.Broadcast()
+		wf.waitList.Wake(int32(row), cols)
 		wf.mu.Unlock()
 	}
 }
@@ -192,29 +194,30 @@ func (wf *pframeWavefront) waitRowProgress(row int, need int32) bool {
 			return false
 		}
 	}
-	// Registration order matters for the lost-wakeup guarantee: the waiter
-	// count rises before the parked re-check, and the publisher stores the
-	// progress before loading the count, so either the publisher sees the
+	// Registration order matters for the lost-wakeup guarantee: the row's
+	// waiter count rises before the parked re-check, and the publisher stores
+	// the progress before loading the count, so either the publisher sees the
 	// waiter or the waiter sees the progress.
-	wf.waiters.Add(1)
+	waiters := &wf.rowWaiters[row]
+	waiters.Add(1)
 	wf.mu.Lock()
 	for wf.done[row].Load() < need {
 		if wf.aborted.Load() {
 			wf.mu.Unlock()
-			wf.waiters.Add(-1)
+			waiters.Add(-1)
 			return false
 		}
-		wf.cond.Wait()
+		wf.waitList.Park(&wf.mu, int32(row), need)
 	}
 	wf.mu.Unlock()
-	wf.waiters.Add(-1)
+	waiters.Add(-1)
 	return !wf.aborted.Load()
 }
 
 func (wf *pframeWavefront) abort() {
 	wf.mu.Lock()
 	wf.aborted.Store(true)
-	wf.cond.Broadcast()
+	wf.waitList.WakeAll()
 	wf.mu.Unlock()
 }
 
@@ -260,6 +263,11 @@ func (wf *pframeWavefront) ensureWorkers(n int, pc *pframeCoder) {
 			}
 		}()
 	}
+	// Every lane and the entropy pass may wait at once; the helpers are
+	// parked between frames, so no waiter holds the list here.
+	wf.mu.Lock()
+	wf.waitList.Reserve(n + 1)
+	wf.mu.Unlock()
 	wf.coder = pc
 }
 
@@ -282,6 +290,7 @@ func (wf *pframeWavefront) close() {
 	wf.src, wf.ref = SourceFrame420{}, SourceFrame420{}
 	wf.golden, wf.recon = nil, nil
 	wf.doneAlloc, wf.done = nil, nil
+	wf.rowWaitersAlloc, wf.rowWaiters = nil, nil
 	wf.carriers = tile.BlockLoopWavefrontCarriers{}
 	wf.referenceMode = 0
 	wf.walkReq = tile.BlockWalkRequest{}
@@ -382,7 +391,6 @@ func (wf *pframeWavefront) runRow(w *pframeDecideWorker, row int) error {
 // calling; every lane adopts that state here.
 func (wf *pframeWavefront) start(pc *pframeCoder, n int, src, ref SourceFrame420, golden *SourceFrame420, recon *SourceFrame420,
 	referenceMode parser.ReferenceMode, walkReq tile.BlockWalkRequest, miCols, miRows uint16, rows, cols int, scaledReference bool) {
-	wf.ensureCond()
 	wf.ensureWorkers(n, pc)
 	wf.ensureDone(rows)
 	wf.carriers.Reset(cols)
@@ -450,7 +458,6 @@ func (wf *pframeWavefront) join(pc *pframeCoder) error {
 // bind no refmvs store.
 func (wf *pframeWavefront) startKey(pc *pframeCoder, n int, src SourceFrame420, recon *SourceFrame420,
 	walkReq tile.BlockWalkRequest, miRows uint16, rows, cols int) {
-	wf.ensureCond()
 	wf.ensureWorkers(n, pc)
 	wf.ensureDone(rows)
 	wf.carriers.Reset(cols)
