@@ -210,6 +210,60 @@ func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisi
 	return rs.reconstructTXBWithDequantized(visit, &blk, coefs, int(r.ActiveRows), int(r.ActiveCols), dcOnly)
 }
 
+// itxfmAdd8 is dav1d's dsp->itx.itxfm_add[tx][txtp] table for the 8-bit fused
+// kernels: the inverse transform of the coefficients in cf (column stride
+// scanH) added to the full tx-size block at dst. It takes every type but IDTX
+// and WHT_WHT, which the caller excludes, and reports false, writing nothing,
+// for a shape or extent no fused kernel takes. The kernel choice is the one
+// reconstruct.ReconstructPlaneBlockVisibleTrustedAtFromDequantized makes.
+func itxfmAdd8(dst []byte, stride int, cf []int32, tx tile.TransformSize, txtp transform.Type, scanH, rows, cols int) bool {
+	dct := txtp == transform.TypeDCTDCT
+	switch tx {
+	case tile.TransformSize4x4:
+		return transform.InverseAdd4x4(dst, stride, dst, stride, cf, scanH, txtp, rows)
+	case tile.TransformSize8x8:
+		if dct {
+			return transform.InverseAddDCT8x8(dst, stride, dst, stride, cf, scanH, rows, cols)
+		}
+		return transform.InverseAdd8x8Hybrid(dst, stride, dst, stride, cf, scanH, txtp, rows, cols)
+	case tile.TransformSize16x16:
+		if dct {
+			return transform.InverseAddDCT16x16(dst, stride, dst, stride, cf, scanH, rows, cols)
+		}
+		return transform.InverseAdd16x16Hybrid(dst, stride, dst, stride, cf, scanH, txtp, rows, cols)
+	case tile.TransformSize32x32:
+		if !dct {
+			return false
+		}
+		if rows <= 8 && cols <= 8 {
+			return transform.InverseAddDCT32x32Low8(dst, stride, dst, stride, cf, scanH)
+		}
+		if rows <= 16 && cols <= 16 && transform.InverseAddDCT32x32Low16(dst, stride, dst, stride, cf, scanH, rows) {
+			return true
+		}
+		return transform.InverseAddDCT32x32Full(dst, stride, dst, stride, cf, scanH, rows, cols)
+	case tile.TransformSize64x64:
+		return dct && transform.InverseAddDCT64x64(dst, stride, dst, stride, cf, scanH, rows, cols)
+	case tile.TransformSize4x8:
+		return transform.InverseAdd4x8(dst, stride, dst, stride, cf, scanH, txtp, rows, cols)
+	case tile.TransformSize8x4:
+		return transform.InverseAdd8x4(dst, stride, dst, stride, cf, scanH, txtp, rows, cols)
+	case tile.TransformSize4x16:
+		return transform.InverseAdd4x16(dst, stride, dst, stride, cf, scanH, txtp, rows, cols)
+	case tile.TransformSize16x4:
+		return transform.InverseAdd16x4(dst, stride, dst, stride, cf, scanH, txtp, rows, cols)
+	case tile.TransformSize8x16:
+		return transform.InverseAdd8x16(dst, stride, dst, stride, cf, scanH, txtp, rows, cols)
+	case tile.TransformSize16x8:
+		return transform.InverseAdd16x8(dst, stride, dst, stride, cf, scanH, txtp, rows, cols)
+	case tile.TransformSize16x32:
+		return dct && transform.InverseAddDCT16x32(dst, stride, dst, stride, cf, scanH, rows, cols)
+	case tile.TransformSize32x16:
+		return dct && transform.InverseAddDCT32x16(dst, stride, dst, stride, cf, scanH, rows, cols)
+	}
+	return false
+}
+
 func fillTXBRecord(blk *tile.BlockCoeffBlock, plane uint8, size tile.TransformSize, x4, y4, visW, visH int, txtp transform.Type) {
 	blk.Plane = plane
 	blk.Block.X4, blk.Block.Y4, blk.Block.Size = uint8(x4), uint8(y4), size
@@ -380,8 +434,21 @@ func (s *frameWorkReconState) reconTXBDeferred(visit *tile.BlockLoopVisit, cur *
 	// dav1d's inverse transforms clear the coefficients they read, so the
 	// next frame's decode_coefs finds the arena zero: the nonzero
 	// coefficients lie in the first activeCols columns of activeRows.
-	clear(cf[:min(len(cf), (int(e.activeCols)-1)*int(meta.scanSize.Height)+int(e.activeRows))])
+	clearCoefPrefix(cf, (int(e.activeCols)-1)*int(meta.scanSize.Height)+int(e.activeRows))
 	return err
+}
+
+// clearCoefPrefix zeroes the first n coefficients of cf (at most len(cf)),
+// a short prefix with inline stores rather than a memclr call.
+func clearCoefPrefix(cf []int32, n int) {
+	switch {
+	case n <= 16 && len(cf) >= 16:
+		*(*[16]int32)(cf) = [16]int32{}
+	case n <= 64 && len(cf) >= 64:
+		*(*[64]int32)(cf) = [64]int32{}
+	default:
+		clear(cf[:min(len(cf), n)])
+	}
 }
 
 // blockDequant returns the block's dav1d ts->dq[seg_id] with cf_max and the
@@ -435,7 +502,16 @@ type coefBuffer struct {
 func (b *coefBuffer) take() *[1024]int32 {
 	// One contiguous clear through the last active row of the last active
 	// column; per-column clears of the active rows measured slower.
-	if n := (int(b.cols)-1)*int(b.colStride) + int(b.rows); n > 0 {
+	// A prefix of up to 64 coefficients (most TXBs: DC-only, 4x4, low-eob
+	// 8x8) is cleared with inline stores, like dav1d's itx zeroing the
+	// coefficients it read; only a longer one calls memclr.
+	switch n := (int(b.cols)-1)*int(b.colStride) + int(b.rows); {
+	case n <= 0:
+	case n <= 16:
+		*(*[16]int32)(b.cf[:]) = [16]int32{}
+	case n <= 64:
+		*(*[64]int32)(b.cf[:]) = [64]int32{}
+	default:
 		clear(b.cf[:n])
 	}
 	b.rows, b.cols = 0, 0
