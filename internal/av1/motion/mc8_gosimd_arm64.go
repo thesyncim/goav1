@@ -296,14 +296,15 @@ func Put8UV(dstU, dstV, refU, refV *frame.Plane, dstX, dstY, refX, refY, w, h, f
 		// The planes of each pair share their geometry, so the V views fit
 		// exactly when the U views do.
 		dOff, sOff := dstY*dstU.Stride+dstX, refY*refU.Stride+refX
+		if w&(w-1) == 0 { // every AV1 block width
+			return unsafeutil.CopyRect(dstU.Pix, dOff, dstU.Stride, refU.Pix, sOff, refU.Stride, w, h) &&
+				unsafeutil.CopyRect(dstV.Pix, dOff, dstV.Stride, refV.Pix, sOff, refV.Stride, w, h)
+		}
 		if !unsafeutil.GridFit(len(dstU.Pix), dOff, dstU.Stride, w, h) || !unsafeutil.GridFit(len(refU.Pix), sOff, refU.Stride, w, h) {
 			return false
 		}
 		du, su := unsafeutil.NewGrid(dstU.Pix, dOff, dstU.Stride, w, h), unsafeutil.NewGrid(refU.Pix, sOff, refU.Stride, w, h)
 		dv, sv := unsafeutil.NewGrid(dstV.Pix, dOff, dstV.Stride, w, h), unsafeutil.NewGrid(refV.Pix, sOff, refV.Stride, w, h)
-		if w&(w-1) == 0 {
-			return unsafeutil.CopyBlock(du, su) && unsafeutil.CopyBlock(dv, sv)
-		}
 		return mc8CopyStrips(du, su) && mc8CopyStrips(dv, sv)
 	}
 	if (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil {
@@ -501,14 +502,13 @@ func mc8CopyFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, 
 		return false
 	}
 	dOff, sOff := dstY*dst.Stride+dstX, refY*ref.Stride+refX
+	if w&(w-1) == 0 { // every AV1 block width
+		return unsafeutil.CopyRect(dst.Pix, dOff, dst.Stride, ref.Pix, sOff, ref.Stride, w, h)
+	}
 	if !unsafeutil.GridFit(len(dst.Pix), dOff, dst.Stride, w, h) || !unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, w, h) {
 		return false
 	}
-	dg, sg := unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, w, h), unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, w, h)
-	if w&(w-1) == 0 {
-		return unsafeutil.CopyBlock(dg, sg) // every AV1 block width
-	}
-	return mc8CopyStrips(dg, sg)
+	return mc8CopyStrips(unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, w, h), unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, w, h))
 }
 
 // Window helpers. Offsets are uint32 so o+N cannot overflow and each window

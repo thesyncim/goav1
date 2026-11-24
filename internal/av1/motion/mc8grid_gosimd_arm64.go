@@ -31,7 +31,7 @@ import (
 // the compiler drops the repeated test inside each Sub.
 
 // mc8CopyStrips is the put copy (dav1d put_neon) for the widths
-// unsafeutil.CopyBlock leaves to its caller (no
+// unsafeutil.CopyRect leaves to its caller (no
 // AV1 block has one).
 func mc8CopyStrips(dg, sg unsafeutil.Grid[uint8]) bool {
 	h, n := dg.Height(), dg.Width()
