@@ -5,19 +5,19 @@ package encoder
 import (
 	"math/bits"
 	"simd/archsimd"
-	"unsafe"
 )
 
-// svtBilRowH is the first (horizontal) pass over the 16 samples at p.
-func svtBilRowH(p unsafe.Pointer, xoff int, f0, f1 archsimd.Uint8x16, bias archsimd.Uint16x8, sh7 archsimd.Int16x8) archsimd.Uint8x16 {
-	a := archsimd.LoadUint8x16Array((*[16]uint8)(p))
+// svtBilRowH is the first (horizontal) pass over the 16 samples at p[0:16]
+// (the taps' second sample at p[1:17]).
+func svtBilRowH(p *[17]uint8, xoff int, f0, f1 archsimd.Uint8x16, bias archsimd.Uint16x8, sh7 archsimd.Int16x8) archsimd.Uint8x16 {
+	a := archsimd.LoadUint8x16Array((*[16]uint8)(p[0:16]))
 	switch xoff {
 	case 0:
 		return a
 	case 4:
-		return a.Average(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 1))))
+		return a.Average(archsimd.LoadUint8x16Array((*[16]uint8)(p[1:17])))
 	}
-	return svtBil16(a, archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 1))), f0, f1, bias, sh7)
+	return svtBil16(a, archsimd.LoadUint8x16Array((*[16]uint8)(p[1:17])), f0, f1, bias, sh7)
 }
 
 // svtBil16 is var_filter_block2d_bil_w16's arithmetic on 16 lanes:
@@ -37,7 +37,8 @@ func svtBil16(a, b, f0, f1 archsimd.Uint8x16, bias archsimd.Uint16x8, sh7 archsi
 // svtBilinearPredict folded straight into the residual statistics of
 // svt_aom_variance (variance_neon.c variance_large_neon's accumulation:
 // widened differences, int16 sums flushed to int32, squares in int32 lanes)
-// instead of being stored and re-read.
+// instead of being stored and re-read. Each row is one bounds-checked
+// window per array.
 func svtSubpelVarianceArch(scratch *svtSubpelScratch, ref []byte, refStride int, src []byte, srcStride, bw, bh, xoff, yoff int) uint32 {
 	if bw&7 != 0 || bw > 64 || bh <= 0 || len(ref) < bh*refStride+bw+16 || len(src) < (bh-1)*srcStride+max(bw, 16) {
 		svtBilinearPredict(scratch, ref, refStride, bw, bh, xoff, yoff)
@@ -50,16 +51,13 @@ func svtSubpelVarianceArch(scratch *svtSubpelScratch, ref []byte, refStride int,
 	fy1 := archsimd.BroadcastUint8x16(uint8(svtBilinearFilters2T[yoff][1]))
 	bias := archsimd.BroadcastUint16x8(64)
 	sh7 := archsimd.BroadcastInt16x8(-7)
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
-	base := unsafe.Pointer(&ref[0])
-	sbase := unsafe.Pointer(&src[0])
+	if uint(refStride) > rowStrideMax || uint(srcStride) > rowStrideMax || uint(bh) > rowsMax {
+		panic(errKernelArgs)
+	}
 	var sse0, sse1, sum32 archsimd.Int32x4
 	for x := 0; x < bw; x += 16 {
-		p := unsafe.Add(base, x)
-		s := unsafe.Add(sbase, x)
-		last := bh - 1
 		wide := x+16 <= bw
-		prev := svtBilRowH(p, xoff, fx0, fx1, bias, sh7)
+		prev := svtBilRowH((*[17]uint8)(ref[x:x+17]), xoff, fx0, fx1, bias, sh7)
 		// The int16 sum flushes after every 32 rows of the strip rather than on a
 		// per-row counter, whose conditional reset made the register allocator
 		// swap the accumulator with its zero on every back edge. The integer
@@ -68,7 +66,8 @@ func svtSubpelVarianceArch(scratch *svtSubpelScratch, ref []byte, refStride int,
 			group := min(r+32, bh)
 			var sum16 archsimd.Int16x8
 			for ; r < group; r++ {
-				p = unsafe.Add(p, refStride)
+				po := (r+1)*refStride + x
+				p := (*[17]uint8)(ref[po : po+17])
 				var out archsimd.Uint8x16
 				switch yoff {
 				case 0:
@@ -83,11 +82,8 @@ func svtSubpelVarianceArch(scratch *svtSubpelScratch, ref []byte, refStride int,
 					out = svtBil16(prev, cur, fy0, fy1, bias, sh7)
 					prev = cur
 				}
-				sv := archsimd.LoadUint8x16Array((*[16]uint8)(s))
-				if r < last {
-					// Stepping past the last row would leave src under checkptr.
-					s = unsafe.Add(s, srcStride)
-				}
+				so := r*srcStride + x
+				sv := archsimd.LoadUint8x16Array((*[16]uint8)(src[so : so+16]))
 				dl := out.ExtendLo8ToUint16().BitsToInt16().Sub(sv.ExtendLo8ToUint16().BitsToInt16())
 				if wide {
 					dh := widenHi8(out).BitsToInt16().Sub(widenHi8(sv).BitsToInt16())

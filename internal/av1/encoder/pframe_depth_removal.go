@@ -51,8 +51,10 @@ type realtimeSBMultiSizeME struct {
 	valid   bool
 	bestSAD [85]uint32
 	// bestMV holds FULL-PEL offsets (x, y) relative to the block position,
-	// not eighth-pel motion.Vector units.
-	bestMV [85][2]int16
+	// not eighth-pel motion.Vector units, packed as SVT's (y << 16) |
+	// (x & 0xFFFF) (svtPackMV) so the vector kernels update four at a time;
+	// mvAt unpacks one.
+	bestMV [85]uint32
 
 	// compute_distortion (motion_estimation.c:2739-2785) sums. The SB-area
 	// normalization ((dist * 64*64) / pix_num) is the identity here because
@@ -67,7 +69,7 @@ func (me *realtimeSBMultiSizeME) reset() {
 	me.valid = false
 	for i := range me.bestSAD {
 		me.bestSAD[i] = realtimeSweepSADMax
-		me.bestMV[i] = [2]int16{}
+		me.bestMV[i] = 0
 	}
 }
 
@@ -76,8 +78,14 @@ func (me *realtimeSBMultiSizeME) update(pu int, sad uint32, mvX, mvY int) {
 	// svt_ext_sad_calculation_8x8_16x16_c's improvement checks.
 	if sad < me.bestSAD[pu] {
 		me.bestSAD[pu] = sad
-		me.bestMV[pu] = [2]int16{int16(mvX), int16(mvY)}
+		me.bestMV[pu] = svtPackMV(mvX, mvY)
 	}
+}
+
+// mvAt returns PU pu's best full-pel offset (x, y).
+func (me *realtimeSBMultiSizeME) mvAt(pu int) (x, y int16) {
+	v := me.bestMV[pu]
+	return int16(uint16(v)), int16(uint16(v >> 16))
 }
 
 // sweepSearchPoint1 ports open_loop_me_get_search_point_results_block

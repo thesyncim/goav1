@@ -1,7 +1,5 @@
 package encoder
 
-import "unsafe"
-
 // svt_hme.go is SVT-AV1's hierarchical ME for one 64x64 superblock at
 // preset 12 rtc, the search center of the open-loop ME sweep
 // (pframe_depth_removal.go):
@@ -347,7 +345,6 @@ func svtHMESearchColSum(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (b
 	_ = s[(rows-1)*s2+bw-1]
 	_ = ref.pix[base0+(h-1+2*(rows-1))*stride+span-1]
 	var cols [2][svtHMEMaxCols]uint16
-	sp := unsafe.Pointer(&s[0])
 	for y := 0; y < h; y++ {
 		base := base0 + y*stride
 		cw := &cols[y&1]
@@ -359,7 +356,7 @@ func svtHMESearchColSum(cur, ref *svtPlane, bx, by, bw, bh, ox, oy, w, h int) (b
 		// update_best_sad_u32 over the row: its minimum SAD at its first
 		// position, taken only when it improves the best (the first strict
 		// minimum of the per-eight updates is the row's first minimum).
-		key := svtHMEColSumRow(nil, sp, unsafe.Pointer(&ref.pix[base]), unsafe.Pointer(&cw[0]), s2, bw, rows, w, srcSum)
+		key := svtHMEColSumRow(nil, s, s2, ref.pix[base:], cw, bw, rows, w, srcSum)
 		if sad := key >> 7 << 1; sad < bestSAD {
 			bestSAD, bestX, bestY = sad, ox+int(key&127), oy+y
 		}

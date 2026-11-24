@@ -1,8 +1,6 @@
 package encoder
 
 import (
-	"unsafe"
-
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 )
@@ -20,11 +18,14 @@ import (
 const pred8IMLen = (64 + 7) * 64
 
 // pred8Impl, when non-nil, predicts (dst != nil) or SADs against src
-// (src != nil) one w x h block whose reference origin ref is the full-pel
-// sample (refX, refY); subX/subY are the Q4 fractions and xk/yk the 8-tap
-// kernels. Store mode needs w a multiple of 8, SAD mode a multiple of 16.
-var pred8Impl func(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride int,
-	ref unsafe.Pointer, refStride, w, h, subX, subY int, xk, yk *[8]int16, im *[pred8IMLen]int16) int
+// (src != nil) one w x h block whose reference origin ref[refOff] is the
+// full-pel sample (refX, refY); subX/subY are the Q4 fractions and xk/yk the
+// 8-tap kernels. dst and src start at the block's first sample. Store mode
+// needs w a multiple of 8, SAD mode a multiple of 16. The kernels read and
+// write through bounds-checked windows, so a footprint outside the slices
+// panics.
+var pred8Impl func(dst []byte, dstStride int, src []byte, srcStride int,
+	ref []byte, refOff, refStride, w, h, subX, subY int, xk, yk *[8]int16, im *[pred8IMLen]int16) int
 
 // pred8FullPelOnly limits pred8Impl to full-pel blocks (subX == subY == 0);
 // sub-pel blocks then take the motion package predictor.
@@ -70,8 +71,7 @@ func pred8Predict(dst []byte, dstStride int, ref *frame.Plane, refX, refY, w, h,
 		!pred8Fits(ref, refX, refY, w, h) || len(dst) < (h-1)*dstStride+w {
 		return false
 	}
-	pred8Impl(unsafe.Pointer(&dst[0]), dstStride, nil, 0,
-		unsafe.Pointer(&ref.Pix[refY*ref.Stride+refX]), ref.Stride, w, h, subX, subY,
+	pred8Impl(dst, dstStride, nil, 0, ref.Pix, refY*ref.Stride+refX, ref.Stride, w, h, subX, subY,
 		&pred8Kernels[filters.X][subX], &pred8Kernels[filters.Y][subY], im)
 	return true
 }

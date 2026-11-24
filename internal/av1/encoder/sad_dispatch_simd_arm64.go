@@ -28,11 +28,11 @@ func init() {
 // --- lowercase wrappers (the hot-path dispatch surface) ---------------------
 
 func sad8x8(src, ref []byte, stride int, limit int) int {
-	return sad8x8SIMD(src, stride, ref, stride)
+	return sad8x8Same(src, ref, stride)
 }
 
 func sad16x16(src, ref []byte, stride int) int {
-	return sad16x16SIMD(src, stride, ref, stride)
+	return sad16x16Same(src, ref, stride)
 }
 
 func sad32x32(src, ref []byte, stride int) int {

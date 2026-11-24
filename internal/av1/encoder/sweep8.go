@@ -32,8 +32,8 @@ func sweepBlock16(n int) (x16, y16 int) {
 	return (q&1)*32 + (w&1)*16, (q>>1)*32 + (w>>1)*16
 }
 
-// svtPackMV is SVT's packed motion vector, (y << 16) | (x & 0xFFFF); the
-// bestMV [2]int16{x, y} pairs hold the same bits.
+// svtPackMV is SVT's packed motion vector, (y << 16) | (x & 0xFFFF), the
+// layout of realtimeSBMultiSizeME.bestMV.
 func svtPackMV(x, y int) uint32 {
 	return uint32(uint16(int16(y)))<<16 | uint32(uint16(int16(x)))
 }
@@ -72,7 +72,7 @@ func svtAllSAD8x8_16x16SubScalar(me *realtimeSBMultiSizeME, src, ref []byte, str
 		pu8 := 21 + n*4
 		o := y16*stride + x16
 		svtEightSAD8x8SubScalar(src[o:], ref[o:], stride, (*[4]uint32)(me.bestSAD[pu8:pu8+4]),
-			(*[4][2]int16)(me.bestMV[pu8:pu8+4]), mvX, mvY, &sad16[n])
+			(*[4]uint32)(me.bestMV[pu8:pu8+4]), mvX, mvY, &sad16[n])
 		for k, s := range sad16[n] {
 			me.update(5+n, s, mvX+k, mvY)
 		}
@@ -84,7 +84,7 @@ func svtAllSAD8x8_16x16SubScalar(me *realtimeSBMultiSizeME, src, ref []byte, str
 // ref[k:]), the SUB_SAD of each 8x8 quadrant c (rows 0, 2, 4, 6 of the
 // quadrant, sum doubled) updates (best[c], bestMV[c]) with strict '<', and
 // sad16[k] is the four quadrants' sum.
-func svtEightSAD8x8SubScalar(src, ref []byte, stride int, best *[4]uint32, bestMV *[4][2]int16, mvX, mvY int, sad16 *[8]uint32) {
+func svtEightSAD8x8SubScalar(src, ref []byte, stride int, best *[4]uint32, bestMV *[4]uint32, mvX, mvY int, sad16 *[8]uint32) {
 	for k := range 8 {
 		var sum uint32
 		for c := range 4 {
@@ -104,7 +104,7 @@ func svtEightSAD8x8SubScalar(src, ref []byte, stride int, best *[4]uint32, bestM
 			s <<= 1
 			if s < best[c] {
 				best[c] = s
-				bestMV[c] = [2]int16{int16(mvX + k), int16(mvY)}
+				bestMV[c] = svtPackMV(mvX+k, mvY)
 			}
 			sum += s
 		}

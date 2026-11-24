@@ -2,10 +2,7 @@
 
 package encoder
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // svtDownsample2DArch is svtDownsample2D on AVX2: VPMADDUBSW by ones sums the
 // horizontal sample pairs of each row into int16 lanes, the two rows add, and
@@ -23,13 +20,17 @@ func svtDownsample2DArch(dst []byte, dstStride int, src []byte, srcStride, w, h 
 		d := dst[y*dstStride : y*dstStride+w]
 		x := 0
 		if len(r0) >= 2*w && len(r1) >= 2*w {
-			p0 := unsafe.Pointer(&r0[0])
-			p1 := unsafe.Pointer(&r1[0])
-			for ; x+16 <= w; x += 16 {
-				a := archsimd.LoadUint8x32Array((*[32]uint8)(unsafe.Add(p0, 2*x))).DotProductPairsSaturated(ones)
-				b := archsimd.LoadUint8x32Array((*[32]uint8)(unsafe.Add(p1, 2*x))).DotProductPairsSaturated(ones)
-				packU16x16ToU8(a.Add(b).Add(two).ShiftAllRight(2).AsUint16x16()).StoreArray((*[16]uint8)(unsafe.Pointer(&d[x])))
+			// One 32-byte window per input row and 16 outputs: j = 2x
+			// steps by 32 so each window is one compare.
+			r0, r1 := r0[:2*w], r1[:2*w]
+			r1 = r1[:len(r0)]
+			for j := 0; j+32 <= len(r0); j += 32 {
+				a := archsimd.LoadUint8x32Array((*[32]uint8)(r0[j : j+32])).DotProductPairsSaturated(ones)
+				b := archsimd.LoadUint8x32Array((*[32]uint8)(r1[j : j+32])).DotProductPairsSaturated(ones)
+				x = j >> 1
+				packU16x16ToU8(a.Add(b).Add(two).ShiftAllRight(2).AsUint16x16()).StoreArray((*[16]uint8)(d[x : x+16]))
 			}
+			x = w &^ 15
 		}
 		for ; x < w; x++ {
 			s := uint32(r0[2*x]) + uint32(r0[2*x+1]) + uint32(r1[2*x]) + uint32(r1[2*x+1])
@@ -71,9 +72,8 @@ func svtColTotalsSlideArch(cw *[svtHMEMaxCols]uint16, out, in []byte, span int) 
 	svtColTotalsSlide(cw, out, in, span)
 }
 
-func svtHMEColSumRow(t *[svtHMEMaxCols / 8][8]uint32, sp, rp, cwp unsafe.Pointer, s2, bw, rows, w int, srcSum uint32) uint32 {
-	return svtHMEColSumRowScalar(t, unsafe.Slice((*byte)(sp), (rows-1)*s2+bw), s2,
-		unsafe.Slice((*byte)(rp), (rows-1)*s2+bw+w), unsafe.Slice((*uint16)(cwp), bw+w), bw, rows, w, srcSum)
+func svtHMEColSumRow(t *[svtHMEMaxCols / 8][8]uint32, s []byte, s2 int, ref []byte, cw *[svtHMEMaxCols]uint16, bw, rows, w int, srcSum uint32) uint32 {
+	return svtHMEColSumRowScalar(t, s, s2, ref, cw[:], bw, rows, w, srcSum)
 }
 
 func svtBlockSumSubArch(s []byte, s2, bw, rows int) uint32 {

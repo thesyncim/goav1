@@ -2,10 +2,7 @@
 
 package encoder
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // svtEightSAD8x8Sub is svt_ext_all_sad_calculation_8x8_16x16_avx2's SUB_SAD
 // pass (Source/Lib/ASM_AVX2/compute_sad_intrin_avx2.c) for one 16x16 block
@@ -16,28 +13,30 @@ import (
 // them to four 32-bit SADs. The per-8x8 bests are a vector compare and blend
 // per position in position order, which keeps the first strict minimum as
 // _mm_minpos_epu16 does; sad16[k] is the four quadrants' sum. An 8x8 SUB_SAD
-// is at most 2*32*255, so the signed pack is exact.
-func svtEightSAD8x8Sub(src, ref []byte, stride int, best *[4]uint32, bestMV *[4][2]int16, mvX, mvY int, sad16 *[8]uint32) {
-	_ = src[14*stride+15]
-	_ = ref[14*stride+22]
-	sp := unsafe.Pointer(&src[0])
-	rp := unsafe.Pointer(&ref[0])
+// is at most 2*32*255, so the signed pack is exact. The rows are
+// bounds-checked windows taken once: the source's 16 bytes and the
+// reference's 23 (the eight positions at constant offsets).
+func svtEightSAD8x8Sub(src, ref []byte, stride int, best *[4]uint32, bestMV *[4]uint32, mvX, mvY int, sad16 *[8]uint32) {
+	if uint(stride) > rowStrideMax {
+		panic(errKernelArgs)
+	}
 	s2 := 2 * stride
 	s8 := 8 * stride
-	a0 := archsimd.Uint8x32{}.SetLo(load16(sp)).SetHi(load16(unsafe.Add(sp, s8)))
-	a1 := archsimd.Uint8x32{}.SetLo(load16(unsafe.Add(sp, s2))).SetHi(load16(unsafe.Add(sp, s2+s8)))
-	a2 := archsimd.Uint8x32{}.SetLo(load16(unsafe.Add(sp, 2*s2))).SetHi(load16(unsafe.Add(sp, 2*s2+s8)))
-	a3 := archsimd.Uint8x32{}.SetLo(load16(unsafe.Add(sp, 3*s2))).SetHi(load16(unsafe.Add(sp, 3*s2+s8)))
-	bp := (*[4]uint32)(unsafe.Pointer(best))
-	mp := (*[4]uint32)(unsafe.Pointer(bestMV))
-	bestV := archsimd.LoadUint32x4Array(bp)
-	bestMVV := archsimd.LoadUint32x4Array(mp)
+	a0 := sweepRows16(src, 0, s8)
+	a1 := sweepRows16(src, s2, s2+s8)
+	a2 := sweepRows16(src, 2*s2, 2*s2+s8)
+	a3 := sweepRows16(src, 3*s2, 3*s2+s8)
+	w0, w1 := (*[23]uint8)(ref[0:23]), (*[23]uint8)(ref[s8:s8+23])
+	w2, w3 := (*[23]uint8)(ref[s2:s2+23]), (*[23]uint8)(ref[s2+s8:s2+s8+23])
+	w4, w5 := (*[23]uint8)(ref[2*s2:2*s2+23]), (*[23]uint8)(ref[2*s2+s8:2*s2+s8+23])
+	w6, w7 := (*[23]uint8)(ref[3*s2:3*s2+23]), (*[23]uint8)(ref[3*s2+s8:3*s2+s8+23])
+	bestV := archsimd.LoadUint32x4Array(best)
+	bestMVV := archsimd.LoadUint32x4Array(bestMV)
 	for k := range 8 {
-		r := unsafe.Add(rp, k)
-		acc := a0.SumOf8AbsDiff(archsimd.Uint8x32{}.SetLo(load16(r)).SetHi(load16(unsafe.Add(r, s8)))).
-			Add(a1.SumOf8AbsDiff(archsimd.Uint8x32{}.SetLo(load16(unsafe.Add(r, s2))).SetHi(load16(unsafe.Add(r, s2+s8))))).
-			Add(a2.SumOf8AbsDiff(archsimd.Uint8x32{}.SetLo(load16(unsafe.Add(r, 2*s2))).SetHi(load16(unsafe.Add(r, 2*s2+s8))))).
-			Add(a3.SumOf8AbsDiff(archsimd.Uint8x32{}.SetLo(load16(unsafe.Add(r, 3*s2))).SetHi(load16(unsafe.Add(r, 3*s2+s8)))))
+		acc := a0.SumOf8AbsDiff(sweepPos16(w0, w1, k)).
+			Add(a1.SumOf8AbsDiff(sweepPos16(w2, w3, k))).
+			Add(a2.SumOf8AbsDiff(sweepPos16(w4, w5, k))).
+			Add(a3.SumOf8AbsDiff(sweepPos16(w6, w7, k)))
 		acc = acc.ShiftAllLeft(1)
 		v := acc.AsInt32x8()
 		sad := v.GetLo().SaturateToInt16Concat(v.GetHi()).AsUint32x4()
@@ -47,9 +46,20 @@ func svtEightSAD8x8Sub(src, ref []byte, stride int, best *[4]uint32, bestMV *[4]
 		h := acc.GetLo().Add(acc.GetHi())
 		sad16[k] = uint32(h.GetElem(0) + h.GetElem(1))
 	}
-	bestV.StoreArray(bp)
-	bestMVV.StoreArray(mp)
+	bestV.StoreArray(best)
+	bestMVV.StoreArray(bestMV)
 	archsimd.ClearAVXUpperBits()
+}
+
+// sweepRows16 joins the 16-byte rows of s at a and b into one vector.
+func sweepRows16(s []byte, a, b int) archsimd.Uint8x32 {
+	return archsimd.Uint8x32{}.SetLo(archsimd.LoadUint8x16Array((*[16]uint8)(s[a : a+16]))).SetHi(archsimd.LoadUint8x16Array((*[16]uint8)(s[b : b+16])))
+}
+
+// sweepPos16 joins position k's 16 bytes of the reference row windows w and
+// v into one vector.
+func sweepPos16(w, v *[23]uint8, k int) archsimd.Uint8x32 {
+	return archsimd.Uint8x32{}.SetLo(archsimd.LoadUint8x16Array((*[16]uint8)(w[k : k+16]))).SetHi(archsimd.LoadUint8x16Array((*[16]uint8)(v[k : k+16])))
 }
 
 // svtAllSAD8x8_16x16Sub is svt_ext_all_sad_calculation_8x8_16x16 (SUB_SAD)
@@ -62,7 +72,7 @@ func svtAllSAD8x8_16x16Sub(me *realtimeSBMultiSizeME, src, ref []byte, stride, m
 		pu8 := 21 + n*4
 		o := y16*stride + x16
 		svtEightSAD8x8Sub(src[o:], ref[o:], stride, (*[4]uint32)(me.bestSAD[pu8:pu8+4]),
-			(*[4][2]int16)(me.bestMV[pu8:pu8+4]), mvX, mvY, &sad16[n])
+			(*[4]uint32)(me.bestMV[pu8:pu8+4]), mvX, mvY, &sad16[n])
 		for k, s := range sad16[n] {
 			me.update(5+n, s, mvX+k, mvY)
 		}
@@ -78,33 +88,33 @@ func svtAllSAD8x8_16x16Sub(me *realtimeSBMultiSizeME, src, ref []byte, stride, m
 // The 32x32 and 64x64 SADs are the sums of the 16x16s
 // (svt_ext_sad_calculation_32x32_64x64). ref needs no slack past the 64x64
 // block. An 8x8 SUB_SAD is at most 2*32*255, so the signed pack is exact.
+// Rows r and r+8 are one bounds-checked window per array.
 func svtSweepPoint1(me *realtimeSBMultiSizeME, src, ref []byte, stride, mvX, mvY int) {
-	_ = src[63*stride+63]
-	_ = ref[63*stride+63]
-	sp := unsafe.Pointer(&src[0])
-	rp := unsafe.Pointer(&ref[0])
+	if uint(stride) > rowStrideMax {
+		panic(errKernelArgs)
+	}
 	s2 := 2 * stride
 	s8 := 8 * stride
+	n8 := s8 + 16
 	mv := archsimd.BroadcastUint32x4(svtPackMV(mvX, mvY))
 	var sad16 [16]uint32
 	for n := range 16 {
 		x16, y16 := sweepBlock16(n)
 		off := y16*stride + x16
-		a := unsafe.Add(sp, off)
-		r := unsafe.Add(rp, off)
 		var acc archsimd.Uint64x4
 		for row := range 4 {
-			o := row * s2
-			p := archsimd.Uint8x32{}.SetLo(load16(unsafe.Add(a, o))).SetHi(load16(unsafe.Add(a, o+s8)))
-			q := archsimd.Uint8x32{}.SetLo(load16(unsafe.Add(r, o))).SetHi(load16(unsafe.Add(r, o+s8)))
+			o := off + row*s2
+			aw, rw := src[o:o+n8:o+n8], ref[o:o+n8:o+n8]
+			p := archsimd.Uint8x32{}.SetLo(archsimd.LoadUint8x16Array((*[16]uint8)(aw))).SetHi(archsimd.LoadUint8x16Array((*[16]uint8)(aw[s8:])))
+			q := archsimd.Uint8x32{}.SetLo(archsimd.LoadUint8x16Array((*[16]uint8)(rw))).SetHi(archsimd.LoadUint8x16Array((*[16]uint8)(rw[s8:])))
 			acc = acc.Add(p.SumOf8AbsDiff(q))
 		}
 		acc = acc.ShiftAllLeft(1)
 		v := acc.AsInt32x8()
 		sad := v.GetLo().SaturateToInt16Concat(v.GetHi()).AsUint32x4()
 		pu8 := 21 + n*4
-		bp := (*[4]uint32)(me.bestSAD[pu8:])
-		mp := (*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8]))
+		bp := (*[4]uint32)(me.bestSAD[pu8 : pu8+4])
+		mp := (*[4]uint32)(me.bestMV[pu8 : pu8+4])
 		best := archsimd.LoadUint32x4Array(bp)
 		lt := sad.Less(best)
 		sad.IfElse(lt, best).StoreArray(bp)

@@ -3,7 +3,6 @@ package encoder
 import (
 	"math/rand"
 	"testing"
-	"unsafe"
 )
 
 // randomSVTPlane is a padded w x h plane of random samples, or of a smooth
@@ -83,9 +82,9 @@ func TestSVTHMEColSumRowMatchesScalar(t *testing.T) {
 			t.Fatalf("iter %d: block sum %d, want %d", iter, got, srcSum)
 		}
 		var got, want [svtHMEMaxCols / 8][8]uint32
-		key := svtHMEColSumRow(&got, unsafe.Pointer(&s[0]), unsafe.Pointer(&refPix[0]), unsafe.Pointer(&cw[0]), s2, bw, rows, w, srcSum)
+		key := svtHMEColSumRow(&got, s, s2, refPix, &cw, bw, rows, w, srcSum)
 		wantKey := svtHMEColSumRowScalar(&want, s, s2, refPix, cw[:], bw, rows, w, srcSum)
-		if nilKey := svtHMEColSumRow(nil, unsafe.Pointer(&s[0]), unsafe.Pointer(&refPix[0]), unsafe.Pointer(&cw[0]), s2, bw, rows, w, srcSum); nilKey != key {
+		if nilKey := svtHMEColSumRow(nil, s, s2, refPix, &cw, bw, rows, w, srcSum); nilKey != key {
 			t.Fatalf("iter %d: key %#x without SADs, %#x with", iter, nilKey, key)
 		}
 		best := ^uint32(0)

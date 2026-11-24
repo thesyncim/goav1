@@ -1784,7 +1784,8 @@ func compoundGoldenLikely(st *lossyEncodeState, src, ref SourceFrame420, golden 
 			var lmv motion.Vector
 			if me := st.hme.sbME(px, py); me != nil {
 				pu := svtMEBlockOffset(px&63, py&63, blockSize)
-				lmv = motion.Vector{Row: me.bestMV[pu][1] * 8, Col: me.bestMV[pu][0] * 8}
+				x, y := me.mvAt(pu)
+				lmv = motion.Vector{Row: y * 8, Col: x * 8}
 			}
 			ldx, ldy := int(lmv.Col>>3), int(lmv.Row>>3)
 			if px+ldx < 0 || py+ldy < 0 || px+ldx+blockSize > ref.Width || py+ldy+blockSize > ref.Height {
