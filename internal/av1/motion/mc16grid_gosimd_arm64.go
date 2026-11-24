@@ -76,7 +76,7 @@ func mc16LoadTaps32(ph *mc8Phase) (c0, c1, c2, c3, c4, c5 archsimd.Int32x4) {
 func mc16PutH6G(sg unsafeutil.Grid[uint8], ph *mc8Phase, rndC int32, maxPix int16, dg unsafeutil.Grid[uint8]) {
 	c0, c1, c2, c3, c4, c5 := mc16LoadTaps32(ph)
 	rnd := archsimd.BroadcastInt32x4(rndC)
-	shv := archsimd.BroadcastInt32x4(-6)
+	shv := archsimd.LoadInt32x4Array(&mc8Vec.wsh6)
 	zero := archsimd.BroadcastInt16x8(0)
 	maxV := archsimd.BroadcastInt16x8(maxPix)
 	h, w := dg.Height(), dg.Width()/2
@@ -217,7 +217,7 @@ func mc16PutV6FromI32G(im []int32, w, h int, ph *mc8Phase, maxPix int16, dg unsa
 	c3 := archsimd.LoadInt32x4Array(&ph.v[3])
 	c4 := archsimd.LoadInt32x4Array(&ph.v[4])
 	c5 := archsimd.LoadInt32x4Array(&ph.v[5])
-	rnd := archsimd.BroadcastInt32x4(1 << 15)
+	rnd := archsimd.LoadInt32x4Array(&mc8Vec.w15)
 	zero := archsimd.BroadcastInt16x8(0)
 	maxV := archsimd.BroadcastInt16x8(maxPix)
 	rows := h + 5
@@ -298,7 +298,7 @@ func mc16PutV6FromI32GW4(im []int32, h int, ph *mc8Phase, maxPix int16, dg unsaf
 	c3 := archsimd.LoadInt32x4Array(&ph.v[3])
 	c4 := archsimd.LoadInt32x4Array(&ph.v[4])
 	c5 := archsimd.LoadInt32x4Array(&ph.v[5])
-	rnd := archsimd.BroadcastInt32x4(1 << 15)
+	rnd := archsimd.LoadInt32x4Array(&mc8Vec.w15)
 	zero := archsimd.BroadcastInt16x8(0)
 	maxV := archsimd.BroadcastInt16x8(maxPix)
 	st := im[: (h+5)*4 : (h+5)*4]

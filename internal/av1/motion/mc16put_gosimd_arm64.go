@@ -46,52 +46,85 @@ func mc16PutFast(dst *frame.Plane, ref *frame.Plane, bitDepth, dstX, dstY, refX,
 	if tx == 8 && w == 4 {
 		return false
 	}
-	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < 2*dst.Width {
-		return false
-	}
-	dOff := dstY*dst.Stride + 2*dstX
-	dExt := (h-1)*dst.Stride + 2*w
-	if dOff+dExt > len(dst.Pix) || dExt > mc8WindowMax {
-		return false
-	}
 	maxV := int16(1)<<bitDepth - 1
-	if tx != 8 && ty != 8 {
-		if !unsafeutil.GridFit(len(dst.Pix), dOff, dst.Stride, 2*w, h) {
+	if tx == 8 || ty == 8 {
+		if dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < 2*dst.Width {
 			return false
 		}
-		hx, hy := mc8Halo(subX), mc8Halo(subY)
-		x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
-		sOff, read := y0*ref.Stride+2*x0, 2*max(w+5, 13)
-		var sg unsafeutil.Grid[uint8]
-		if x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= ref.Width && y0+bh <= ref.Height && ref.Stride >= 2*ref.Width &&
-			unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, read, bh) {
-			sg = unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, read, bh)
-		} else if g, ok := mc16SourceGrid(ref, refX, refY, w, h, tx, ty, &scratch.edge16); ok {
-			sg = g
-		} else {
+		dOff := dstY*dst.Stride + 2*dstX
+		dExt := (h-1)*dst.Stride + 2*w
+		if dOff+dExt > len(dst.Pix) || dExt > mc8WindowMax {
 			return false
 		}
-		dg := unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, 2*w, h)
-		switch {
-		case tx != 0 && ty != 0:
-			im := scratch.imHBD[:]
-			mc16H6ToI32G(sg, w, h+5, &mc8Phases[kx][subX], 2, im)
-			if w == 4 {
-				mc16PutV6FromI32GW4(im, h, &mc8Phases[ky][subY], maxV, dg)
-			} else {
-				mc16PutV6FromI32G(im, w, h, &mc8Phases[ky][subY], maxV, dg)
-			}
-		case tx != 0:
-			round0, _ := highBDRoundBits(uint8(bitDepth))
-			mc16PutH6G(sg, &mc8Phases[kx][subX], int32(1)<<(round0-2)+32, maxV, dg)
-		case w == 4:
-			mc16PutV6GW4(sg, &mc8Phases[ky][subY], maxV, dg)
-		default:
-			mc16PutV6G(sg, &mc8Phases[ky][subY], maxV, dg)
-		}
-		return true
+		return mc16PutSharp(dst, ref, bitDepth, dOff, dExt, refX, refY, w, h, kx, ky, tx, ty, subX, subY, maxV, scratch)
 	}
-	return mc16PutSharp(dst, ref, bitDepth, dOff, dExt, refX, refY, w, h, kx, ky, tx, ty, subX, subY, maxV, scratch)
+	// The six-tap source window (mc16SourceGrid), in place when it lies
+	// inside the plane. As in Put8, the in-plane case checks both views in
+	// line and runs its kernel with no call before it; mc16PutEdge takes the
+	// rest.
+	hx, hy := mc8Halo(subX), mc8Halo(subY)
+	x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
+	dOff, sOff, read := dstY*dst.Stride+2*dstX, y0*ref.Stride+2*x0, 2*max(w+5, 13)
+	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < 2*dst.Width ||
+		x0 < 0 || y0 < 0 || x0+w+hx+hx+hx>>1 > ref.Width || y0+bh > ref.Height || ref.Stride < 2*ref.Width ||
+		!unsafeutil.GridFit(len(dst.Pix), dOff, dst.Stride, 2*w, h) || !unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, read, bh) {
+		return mc16PutEdge(dst, ref, bitDepth, dstX, dstY, refX, refY, w, h, kx, ky, tx, ty, subX, subY, maxV, scratch)
+	}
+	dg, sg := unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, 2*w, h), unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, read, bh)
+	// mc16PutGrid written out, as in Put8.
+	switch {
+	case tx != 0 && ty != 0:
+		im := scratch.imHBD[:]
+		mc16H6ToI32G(sg, w, h+5, &mc8Phases[kx][subX], 2, im)
+		if w == 4 {
+			mc16PutV6FromI32GW4(im, h, &mc8Phases[ky][subY], maxV, dg)
+		} else {
+			mc16PutV6FromI32G(im, w, h, &mc8Phases[ky][subY], maxV, dg)
+		}
+	case tx != 0:
+		round0, _ := highBDRoundBits(uint8(bitDepth))
+		mc16PutH6G(sg, &mc8Phases[kx][subX], int32(1)<<(round0-2)+32, maxV, dg)
+	case w == 4:
+		mc16PutV6GW4(sg, &mc8Phases[ky][subY], maxV, dg)
+	default:
+		mc16PutV6G(sg, &mc8Phases[ky][subY], maxV, dg)
+	}
+	return true
+}
+
+// mc16PutEdge is mc16PutFast's six-tap path for a destination or source
+// window that is not inside its plane (or views that do not fit): the
+// checked destination view and the source window from mc16SourceGrid, which
+// clamps it.
+func mc16PutEdge(dst *frame.Plane, ref *frame.Plane, bitDepth, dstX, dstY, refX, refY, w, h, kx, ky, tx, ty, subX, subY int, maxV int16, scratch *ConvolveScratch) bool {
+	dOff := dstY*dst.Stride + 2*dstX
+	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < 2*dst.Width ||
+		!unsafeutil.GridFit(len(dst.Pix), dOff, dst.Stride, 2*w, h) {
+		return false
+	}
+	sg, ok := mc16SourceGrid(ref, refX, refY, w, h, tx, ty, &scratch.edge16)
+	if !ok {
+		return false
+	}
+	dg := unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, 2*w, h)
+	switch {
+	case tx != 0 && ty != 0:
+		im := scratch.imHBD[:]
+		mc16H6ToI32G(sg, w, h+5, &mc8Phases[kx][subX], 2, im)
+		if w == 4 {
+			mc16PutV6FromI32GW4(im, h, &mc8Phases[ky][subY], maxV, dg)
+		} else {
+			mc16PutV6FromI32G(im, w, h, &mc8Phases[ky][subY], maxV, dg)
+		}
+	case tx != 0:
+		round0, _ := highBDRoundBits(uint8(bitDepth))
+		mc16PutH6G(sg, &mc8Phases[kx][subX], int32(1)<<(round0-2)+32, maxV, dg)
+	case w == 4:
+		mc16PutV6GW4(sg, &mc8Phases[ky][subY], maxV, dg)
+	default:
+		mc16PutV6G(sg, &mc8Phases[ky][subY], maxV, dg)
+	}
+	return true
 }
 
 // mc16PutSharp is mc16PutFast for blocks with an eight-tap (sharp) axis,
