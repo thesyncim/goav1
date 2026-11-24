@@ -5,7 +5,6 @@ package quantize
 import (
 	"math/bits"
 	"simd/archsimd"
-	"unsafe"
 )
 
 func init() {
@@ -150,12 +149,6 @@ func quantizeBRowGroupsDiffAVX2(qcoeff []int16, coeff []int32, n int, live uint8
 		return 0, 0, 0, false
 	}
 	cs, qs := coeff[:count], qcoeff[:count]
-	// unsafe: address-only overlap test of the int32 source and int16
-	// destination (different element types, so no safe comparison exists);
-	// nothing is dereferenced through these pointers.
-	if cp, qp := uintptr(unsafe.Pointer(&cs[0])), uintptr(unsafe.Pointer(&qs[0])); qp < cp+uintptr(4*count) && cp < qp+uintptr(2*count) {
-		return 0, 0, 0, false
-	}
 	l := 31 - int64(bits.LeadingZeros32(uint32(q.AC)))
 	if l < int64(txScale) {
 		return 0, 0, 0, false
