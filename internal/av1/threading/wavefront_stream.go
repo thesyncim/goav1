@@ -128,7 +128,7 @@ func (wf *frameWorkReconWavefront) publishRows(rows int, view frameWorkReconView
 	p.mu.Lock()
 	wf.pub = view
 	wf.published = rows
-	p.cond.Broadcast()
+	p.rowWaiters.Wake(0, int32(rows))
 	p.mu.Unlock()
 }
 
@@ -142,7 +142,7 @@ func (wf *frameWorkReconWavefront) waitRows(need int) (frameWorkReconView, bool)
 			p.mu.Unlock()
 			return frameWorkReconView{}, false
 		}
-		p.cond.Wait()
+		p.rowWaiters.Park(&p.mu, 0, int32(need))
 	}
 	view := wf.pub
 	ok := !p.aborted.Load()
@@ -248,6 +248,7 @@ func (c *frameWorkTileResidualLoopController) startReconStream() error {
 	wf.beginSpans(region, sbSizeMIB)
 	wf.ensureDone(rowCount)
 	wf.resetProgress(rowCount)
+	wf.progress.rowWaiters.Reserve(workers) // no lane runs yet
 	if err := wf.ensureStates(workers, c); err != nil {
 		return err
 	}

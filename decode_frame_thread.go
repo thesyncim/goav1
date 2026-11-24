@@ -7,6 +7,7 @@ package goav1
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
 	internalparser "github.com/thesyncim/goav1/internal/av1/parser"
@@ -75,11 +76,16 @@ type decoderFrameContext struct {
 	reconRows internalthreading.FrameThreadReconRows
 	parsed    internalthreading.FrameProgress
 	// The post-filter goroutine runs ApplyPost from the frame's StartPost
-	// (dav1d queues the filter tasks with the tile tasks) and reports on
-	// postDone; postStarted is owned by the tail goroutine.
+	// (dav1d queues the filter tasks with the tile tasks); postStarted is
+	// owned by the tail goroutine. Of the entropy pass and the post-filter,
+	// the one that returns last finishes the frame (finishFrame): ends counts
+	// the two returns, and parseErr / postErr carry each one's error to the
+	// other. Neither goroutine parks waiting for the other.
 	postStart   chan struct{}
-	postDone    chan error
 	postStarted bool
+	ends        atomic.Int32
+	parseErr    error
+	postErr     error
 
 	// Entropy-pass inputs captured at submission; the context goroutine runs
 	// the pass after the submitting call returned.
@@ -151,13 +157,17 @@ type decoderFramePipeline struct {
 
 func (p *decoderFramePipeline) postLoop(fc *decoderFrameContext) {
 	for range fc.postStart {
-		fc.postDone <- fc.ft.ApplyPost(&fc.postFilter, &fc.parsed, &fc.reconRows.Progress)
+		fc.postErr = fc.ft.ApplyPost(&fc.postFilter, &fc.parsed, &fc.reconRows.Progress)
+		if fc.ends.Add(1) == 2 {
+			p.finishFrame(fc, fc.parseErr, true)
+		}
 	}
 }
 
 func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
 	for range fc.start {
 		fc.postStarted = false
+		fc.ends.Store(0)
 		err := p.parseFrame(fc)
 		parsed := internalthreading.FrameProgressDone
 		if err != nil {
@@ -180,40 +190,57 @@ func (p *decoderFramePipeline) tailLoop(fc *decoderFrameContext) {
 		if fc.segOut != nil {
 			fc.segOut.Publish(entropy)
 		}
-		switch {
-		case fc.postStarted:
-			postErr := <-fc.postDone
-			if ferr := fc.ft.FinishPost(postErr); err == nil {
-				err = ferr
-			}
-		case err != nil:
-			_ = fc.ft.Recon.Join()
-		default:
-			err = fc.ft.Tail(&fc.postFilter)
+		if !fc.postStarted {
+			p.finishFrame(fc, err, false)
+			continue
 		}
-		fc.output = nil
-		if err == nil && fc.show {
-			fc.output = fc.target
+		// The post-filter goroutine finishes the frame unless it returned
+		// first.
+		fc.parseErr = err
+		if fc.ends.Add(1) == 2 {
+			p.finishFrame(fc, err, true)
 		}
-		if err == nil && fc.output != nil {
-			if out, ok := fc.postFilter.PostFilterOutput(); ok && out != nil {
-				fc.output = out
-			}
-		}
-		state := internalthreading.FrameProgressDone
-		if err != nil {
-			state = internalthreading.FrameProgressError
-		}
-		if err == nil && decoderFramePipelineTailHook != nil {
-			decoderFramePipelineTailHook(fc.target, &p.progress[fc.surface])
-		}
-		if err == nil && decoderFramePipelineDoneHook != nil {
-			decoderFramePipelineDoneHook(fc.target)
-		}
-		p.progress[fc.surface].Publish(state)
-		fc.tailErr = err
-		fc.done <- struct{}{}
 	}
+}
+
+// finishFrame ends fc's frame once its entropy pass returned err (and, when
+// post, its post-filter returned fc.postErr): it joins the reconstruction,
+// runs the post-filter unless it already ran, publishes the surface and hands
+// the frame to retire.
+func (p *decoderFramePipeline) finishFrame(fc *decoderFrameContext, err error, post bool) {
+	switch {
+	case post:
+		if ferr := fc.ft.FinishPost(fc.postErr); err == nil {
+			err = ferr
+		}
+		fc.parseErr, fc.postErr = nil, nil
+	case err != nil:
+		_ = fc.ft.Recon.Join()
+	default:
+		err = fc.ft.Tail(&fc.postFilter)
+	}
+	fc.output = nil
+	if err == nil && fc.show {
+		fc.output = fc.target
+	}
+	if err == nil && fc.output != nil {
+		if out, ok := fc.postFilter.PostFilterOutput(); ok && out != nil {
+			fc.output = out
+		}
+	}
+	state := internalthreading.FrameProgressDone
+	if err != nil {
+		state = internalthreading.FrameProgressError
+	}
+	if err == nil && decoderFramePipelineTailHook != nil {
+		decoderFramePipelineTailHook(fc.target, &p.progress[fc.surface])
+	}
+	if err == nil && decoderFramePipelineDoneHook != nil {
+		decoderFramePipelineDoneHook(fc.target)
+	}
+	p.progress[fc.surface].Publish(state)
+	fc.tailErr = err
+	fc.done <- struct{}{}
 }
 
 // eligible reports whether event takes the frame-threaded path. Film grain
@@ -711,8 +738,12 @@ func newDecoderFramePipeline(d *Decoder, n int, plan decoderFrameWorkResidualStr
 		ready:    make([]*Frame, 0, 2*(internalparser.RefFrames+n)),
 	}
 	p.grainParallel.Workers = workers
+	// Every Wait a frame-threaded decode can have pending at once has a
+	// wait slot from the start: the reconstruction lanes of the other frames
+	// in flight on a reference surface, the entropy passes on the MV, CDF
+	// and segmentation progress.
 	for i := range p.progress {
-		p.progress[i].Init()
+		p.progress[i].Reserve(n*workers + 2)
 		p.progress[i].Publish(internalthreading.FrameProgressDone)
 	}
 	p.mvProgress = make([]internalthreading.FrameProgress, internaldecoder.FrameWorkMVGrids)
@@ -720,7 +751,7 @@ func newDecoderFramePipeline(d *Decoder, n int, plan decoderFrameWorkResidualStr
 	p.segProgress = make([]internalthreading.FrameProgress, internaldecoder.FrameWorkSegMaps)
 	for _, set := range [][]internalthreading.FrameProgress{p.mvProgress, p.cdfProgress, p.segProgress} {
 		for i := range set {
-			set[i].Init()
+			set[i].Reserve(n + 1)
 			set[i].Publish(internalthreading.FrameProgressDone)
 		}
 	}
@@ -756,12 +787,14 @@ func newDecoderFramePipeline(d *Decoder, n int, plan decoderFrameWorkResidualStr
 		if n := d.payloadSource.payloadBufferLen(); n > 0 {
 			fc.payload = make([]byte, n)
 		}
-		fc.start = make(chan struct{})
-		fc.done = make(chan struct{})
-		fc.postStart = make(chan struct{})
-		fc.postDone = make(chan error)
-		fc.parsed.Init()
-		fc.reconRows.Progress.Init()
+		// Buffered: the decode goroutine hands a frame over and the
+		// finishing goroutine hands it back without waiting for the other
+		// side to park on the channel first.
+		fc.start = make(chan struct{}, 1)
+		fc.done = make(chan struct{}, 1)
+		fc.postStart = make(chan struct{}, 1)
+		fc.parsed.Reserve(2)
+		fc.reconRows.Progress.Reserve(2)
 		fc.postParallel.BindReconProgress(&fc.reconRows.Progress)
 		fc.postParallel.BindParseProgress(&fc.parsed)
 		fc.ft.StartPost = func() {

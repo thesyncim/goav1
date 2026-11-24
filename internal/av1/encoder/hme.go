@@ -1,6 +1,9 @@
 package encoder
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // hme.go is the encoder's frame-level motion estimation, SVT-AV1's ME
 // process (Source/Lib/Codec/motion_estimation.c svt_aom_motion_estimation_b64)
@@ -66,8 +69,12 @@ type hmeState struct {
 	// runs counts prepare calls (frames whose ME ran).
 	runs uint64
 
+	// The calling goroutine runs the first band and the workers the rest;
+	// left counts the bands still running, and the band that finishes last
+	// sends the one done token the caller may wait for.
 	work     chan hmeJob
 	done     chan struct{}
+	left     atomic.Int32
 	started  bool
 	workerWG sync.WaitGroup
 }
@@ -105,7 +112,9 @@ func (h *hmeState) startWorkers() {
 			defer h.workerWG.Done()
 			for j := range work {
 				h.meRows(j.src, j.r0, j.r1)
-				done <- struct{}{}
+				if h.left.Add(-1) == 0 {
+					done <- struct{}{}
+				}
 			}
 		}()
 	}
@@ -202,18 +211,32 @@ func (h *hmeState) run(src SourceFrame420, isRef bool, ref, store int) {
 	h.prepare(src, isRef, ref)
 	if h.fme.valid {
 		h.startWorkers()
-		jobs := 0
+		bands := 0
+		for b := range hmeBands {
+			if b*h.fme.rows/hmeBands < (b+1)*h.fme.rows/hmeBands {
+				bands++
+			}
+		}
+		h.left.Store(int32(bands))
+		first := true
+		var own hmeJob
 		for b := range hmeBands {
 			r0 := b * h.fme.rows / hmeBands
 			r1 := (b + 1) * h.fme.rows / hmeBands
 			if r0 >= r1 {
 				continue
 			}
+			if first {
+				own, first = hmeJob{r0: r0, r1: r1, src: src}, false
+				continue
+			}
 			h.work <- hmeJob{r0: r0, r1: r1, src: src}
-			jobs++
 		}
-		for range jobs {
-			<-h.done
+		if !first {
+			h.meRows(own.src, own.r0, own.r1)
+			if h.left.Add(-1) != 0 {
+				<-h.done
+			}
 		}
 	}
 	h.finish(store)
