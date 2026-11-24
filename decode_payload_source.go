@@ -257,7 +257,7 @@ func decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(stream internaldec
 			return err
 		}
 		nextBind := decoderFrameWorkResidualEventsBindPlan(sequence, events[:count])
-		if nextBind.HasEvent() {
+		if plan.Bind.prefer(nextBind) {
 			plan.Bind = nextBind
 		} else if !plan.Bind.HasEvent() {
 			plan.Bind.Sequence = nextBind.Sequence
@@ -316,7 +316,7 @@ func decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(stream internaldeco
 			return err
 		}
 		nextBind := decoderFrameWorkResidualEventsBindPlan(sequence, events[:count])
-		if nextBind.HasEvent() {
+		if plan.Bind.prefer(nextBind) {
 			plan.Bind = nextBind
 		} else if !plan.Bind.HasEvent() {
 			plan.Bind.Sequence = nextBind.Sequence

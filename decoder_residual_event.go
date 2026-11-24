@@ -190,6 +190,15 @@ type decoderFrameWorkResidualEventBindPlan struct {
 	Sequence   SequenceHeader
 	Event      internaldecoder.Event
 	EventIndex int
+	// Dropped reports that Event is the header of a frame dropped incomplete
+	// (restored to its parsed kind); it binds only a stream that decodes no
+	// frame.
+	Dropped bool
+}
+
+// prefer reports whether next should replace p as a stream's bind plan.
+func (p decoderFrameWorkResidualEventBindPlan) prefer(next decoderFrameWorkResidualEventBindPlan) bool {
+	return next.HasEvent() && (!next.Dropped || !p.HasEvent() || p.Dropped)
 }
 
 // HasEvent reports whether Event/EventIndex refer to a bind-relevant parsed
@@ -263,10 +272,15 @@ func decoderFrameWorkResidualEventsBindPlan(sequence SequenceHeader, events []in
 	for i := range events {
 		event := &events[i]
 		sequence = decoderFrameWorkResidualEventSequencePtr(sequence, event)
-		if decoderFrameWorkResidualEventBindCandidatePtr(event) {
+		dropped := event.DroppedKind != internaldecoder.EventIgnored
+		if decoderFrameWorkResidualEventBindCandidatePtr(event) && (!dropped || plan.EventIndex < 0 || plan.Dropped) {
 			plan.Sequence = sequence
 			plan.Event = *event
 			plan.EventIndex = i
+			plan.Dropped = dropped
+			if dropped {
+				plan.Event.Kind = event.DroppedKind
+			}
 		}
 	}
 	if plan.EventIndex < 0 {
@@ -422,8 +436,17 @@ func decoderFrameWorkResidualEventsScratchLen(sequence SequenceHeader, events []
 		event := &events[i]
 		sequence = decoderFrameWorkResidualEventSequencePtr(sequence, event)
 		size.Outputs += decoderFrameWorkResidualEventOutputLenPtr(event)
-		if decoderFrameWorkResidualEventNeedsSideDataPtr(event) {
-			side, err := decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence, event)
+		sideEvent := event
+		if event.DroppedKind != internaldecoder.EventIgnored {
+			// The header of a frame dropped incomplete can bind the runner
+			// (decoderFrameWorkResidualEventsBindPlan), so its side data is
+			// sized; its tiles are never split or decoded.
+			restored := *event
+			restored.Kind = event.DroppedKind
+			sideEvent = &restored
+		}
+		if decoderFrameWorkResidualEventNeedsSideDataPtr(sideEvent) {
+			side, err := decoderFrameWorkResidualEventSideDataScratchLenPtr(sequence, sideEvent)
 			if err != nil {
 				return decoderFrameWorkResidualEventScratchSize{}, err
 			}
@@ -1335,7 +1358,13 @@ func decoderFrameWorkResidualEventBindCandidate(event *internaldecoder.Event) bo
 	return decoderFrameWorkResidualEventBindCandidatePtr(event)
 }
 
+// decoderFrameWorkResidualEventBindCandidatePtr reports whether event sizes or
+// binds the decoder. The header of a frame dropped incomplete still does, as
+// it did before the frame was dropped.
 func decoderFrameWorkResidualEventBindCandidatePtr(event *internaldecoder.Event) bool {
+	if event != nil && event.DroppedKind != internaldecoder.EventIgnored {
+		return true
+	}
 	return decoderFrameWorkResidualEventNeedsSideDataPtr(event) ||
 		decoderFrameWorkResidualEventHasTilePayloadPtr(event) ||
 		(event != nil && internaldecoder.EventOutputsFrame(&*event))

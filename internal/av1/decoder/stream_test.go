@@ -663,8 +663,17 @@ func TestStreamNewCodedVideoSequenceFlagResetsSameSequence(t *testing.T) {
 	if _, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrameHeader, reducedStillFrameHeaderPayload()), false); err != nil {
 		t.Fatal(err)
 	}
-	if !dec.haveFrameHeader || !dec.references.Frames[0].Valid {
-		t.Fatalf("frame header did not populate pending/reference state: pending=%v ref0=%+v", dec.haveFrameHeader, dec.references.Frames[0])
+	if !dec.haveFrameHeader || dec.references.Frames[0].Valid {
+		t.Fatalf("frame header: pending=%v ref0=%+v, want pending and no reference update before the last tile", dec.haveFrameHeader, dec.references.Frames[0])
+	}
+	if _, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeTileGroup, []byte{0}), false); err != nil {
+		t.Fatal(err)
+	}
+	if dec.haveFrameHeader || !dec.references.Frames[0].Valid {
+		t.Fatalf("last tile did not complete the frame: pending=%v ref0=%+v", dec.haveFrameHeader, dec.references.Frames[0])
+	}
+	if _, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrameHeader, reducedStillFrameHeaderPayload()), false); err != nil {
+		t.Fatal(err)
 	}
 
 	event, err := pushOBU(&dec, sequence, true)
@@ -942,75 +951,78 @@ func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 	// Both headers end on a byte boundary, so each frame_header_obu's
 	// trailing one bit is a whole 0x80 byte.
 	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, append(shownKeyFrameHeaderPayload(), 0x80))
+	// The key frame's single tile completes it; only a completed frame
+	// refreshes the reference slots (dav1d submits it on its last tile).
+	stream = appendLowOverheadOBU(stream, obu.TypeTileGroup, []byte{0})
 	stream = appendLowOverheadOBU(stream, obu.TypeTemporalDelimiter, nil)
 	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, append(interFrameHeaderPayload(), 0x80))
 
 	var dec Stream
-	var events [4]Event
+	var events [5]Event
 	count, err := dec.PushLowOverhead(stream, events[:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 4 {
+	if count != 5 {
 		t.Fatalf("count=%d", count)
 	}
 	if events[1].FrameSize.RefreshFrameFlags != 0xff {
 		t.Fatalf("key frame size=%+v", events[1].FrameSize)
 	}
-	if events[3].FrameHeader.FrameType != parser.FrameTypeInter {
-		t.Fatalf("inter header=%+v", events[3].FrameHeader)
+	if events[4].FrameHeader.FrameType != parser.FrameTypeInter {
+		t.Fatalf("inter header=%+v", events[4].FrameHeader)
 	}
-	if events[3].FrameSize.RefreshFrameFlags != 0x01 {
-		t.Fatalf("inter frame size=%+v", events[3].FrameSize)
+	if events[4].FrameSize.RefreshFrameFlags != 0x01 {
+		t.Fatalf("inter frame size=%+v", events[4].FrameSize)
 	}
-	if events[3].TileInfo.Cols != 1 || events[3].TileInfo.Rows != 1 {
-		t.Fatalf("inter tile info=%+v", events[3].TileInfo)
+	if events[4].TileInfo.Cols != 1 || events[4].TileInfo.Rows != 1 {
+		t.Fatalf("inter tile info=%+v", events[4].TileInfo)
 	}
-	if events[3].Quantization.BaseQIdx != 0 {
-		t.Fatalf("inter quantization=%+v", events[3].Quantization)
+	if events[4].Quantization.BaseQIdx != 0 {
+		t.Fatalf("inter quantization=%+v", events[4].Quantization)
 	}
-	if events[3].Segmentation.Enabled || !events[3].Segmentation.AllLossless {
-		t.Fatalf("inter segmentation=%+v", events[3].Segmentation)
+	if events[4].Segmentation.Enabled || !events[4].Segmentation.AllLossless {
+		t.Fatalf("inter segmentation=%+v", events[4].Segmentation)
 	}
-	if events[3].Delta.DeltaQPresent || events[3].Delta.BitsRead != events[3].Segmentation.BitsRead {
-		t.Fatalf("inter delta=%+v", events[3].Delta)
+	if events[4].Delta.DeltaQPresent || events[4].Delta.BitsRead != events[4].Segmentation.BitsRead {
+		t.Fatalf("inter delta=%+v", events[4].Delta)
 	}
-	if !events[3].LoopFilter.ModeRefDeltaEnabled || !events[3].LoopFilter.ModeRefDeltaUpdate {
-		t.Fatalf("inter loopfilter=%+v", events[3].LoopFilter)
+	if !events[4].LoopFilter.ModeRefDeltaEnabled || !events[4].LoopFilter.ModeRefDeltaUpdate {
+		t.Fatalf("inter loopfilter=%+v", events[4].LoopFilter)
 	}
-	if events[3].CDEF.BitsRead != events[3].LoopFilter.BitsRead {
-		t.Fatalf("inter cdef=%+v", events[3].CDEF)
+	if events[4].CDEF.BitsRead != events[4].LoopFilter.BitsRead {
+		t.Fatalf("inter cdef=%+v", events[4].CDEF)
 	}
-	if events[3].Restoration.BitsRead != events[3].CDEF.BitsRead {
-		t.Fatalf("inter restoration=%+v", events[3].Restoration)
+	if events[4].Restoration.BitsRead != events[4].CDEF.BitsRead {
+		t.Fatalf("inter restoration=%+v", events[4].Restoration)
 	}
-	if events[3].TransformRef.TransformMode != parser.TransformMode4x4Only ||
-		events[3].TransformRef.ReferenceMode != parser.ReferenceModeSingle ||
-		events[3].TransformRef.BitsRead != events[3].Restoration.BitsRead+1 {
-		t.Fatalf("inter transform/reference=%+v", events[3].TransformRef)
+	if events[4].TransformRef.TransformMode != parser.TransformMode4x4Only ||
+		events[4].TransformRef.ReferenceMode != parser.ReferenceModeSingle ||
+		events[4].TransformRef.BitsRead != events[4].Restoration.BitsRead+1 {
+		t.Fatalf("inter transform/reference=%+v", events[4].TransformRef)
 	}
-	if events[3].SkipMode.Allowed || events[3].SkipMode.Enabled ||
-		events[3].SkipMode.BitsRead != events[3].TransformRef.BitsRead {
-		t.Fatalf("inter skip mode=%+v", events[3].SkipMode)
+	if events[4].SkipMode.Allowed || events[4].SkipMode.Enabled ||
+		events[4].SkipMode.BitsRead != events[4].TransformRef.BitsRead {
+		t.Fatalf("inter skip mode=%+v", events[4].SkipMode)
 	}
-	if events[3].FrameMode.AllowWarpedMotion || events[3].FrameMode.ReducedTxSet ||
-		events[3].FrameMode.BitsRead != events[3].SkipMode.BitsRead+1 {
-		t.Fatalf("inter frame mode=%+v", events[3].FrameMode)
+	if events[4].FrameMode.AllowWarpedMotion || events[4].FrameMode.ReducedTxSet ||
+		events[4].FrameMode.BitsRead != events[4].SkipMode.BitsRead+1 {
+		t.Fatalf("inter frame mode=%+v", events[4].FrameMode)
 	}
-	if events[3].GlobalMotion.BitsRead != events[3].FrameMode.BitsRead+parser.InterRefsPerFrame {
-		t.Fatalf("inter global motion=%+v", events[3].GlobalMotion)
+	if events[4].GlobalMotion.BitsRead != events[4].FrameMode.BitsRead+parser.InterRefsPerFrame {
+		t.Fatalf("inter global motion=%+v", events[4].GlobalMotion)
 	}
-	if events[3].FilmGrain.Apply || events[3].FilmGrain.BitsRead != events[3].GlobalMotion.BitsRead {
-		t.Fatalf("inter film grain=%+v", events[3].FilmGrain)
+	if events[4].FilmGrain.Apply || events[4].FilmGrain.BitsRead != events[4].GlobalMotion.BitsRead {
+		t.Fatalf("inter film grain=%+v", events[4].FilmGrain)
 	}
 	for i := range parser.InterRefsPerFrame {
-		if events[3].GlobalMotion.Ref[i].Type != parser.GlobalMotionIdentity {
-			t.Fatalf("inter global motion ref[%d]=%+v", i, events[3].GlobalMotion.Ref[i])
+		if events[4].GlobalMotion.Ref[i].Type != parser.GlobalMotionIdentity {
+			t.Fatalf("inter global motion ref[%d]=%+v", i, events[4].GlobalMotion.Ref[i])
 		}
 	}
 	for i := range parser.InterRefsPerFrame {
-		if events[3].FrameSize.RefFrameIdx[i] != 0 {
-			t.Fatalf("inter RefFrameIdx[%d]=%d", i, events[3].FrameSize.RefFrameIdx[i])
+		if events[4].FrameSize.RefFrameIdx[i] != 0 {
+			t.Fatalf("inter RefFrameIdx[%d]=%d", i, events[4].FrameSize.RefFrameIdx[i])
 		}
 	}
 }
@@ -1359,5 +1371,55 @@ func TestStreamFrameHeaderOBUNeedsTrailingBit(t *testing.T) {
 				t.Fatalf("PushLowOverhead err=%v want %v", err, bitstream.ErrNotEnoughBits)
 			}
 		})
+	}
+}
+
+// dav1d submits a frame, and updates the reference slots, only when its tile
+// groups have carried every tile. The events of a frame that is replaced by
+// a later frame header or left incomplete at the end of the temporal unit are
+// returned as EventIgnored and leave the references untouched.
+func TestStreamIncompleteFrameIsIgnored(t *testing.T) {
+	key := append(shownKeyFrameHeaderPayload(), 0x80)
+	var stream []byte
+	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload())
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, key)
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, key)
+	stream = appendLowOverheadOBU(stream, obu.TypeTileGroup, []byte{0})
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, key)
+
+	var dec Stream
+	var events [5]Event
+	count, err := dec.PushLowOverhead(stream, events[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 5 {
+		t.Fatalf("count=%d", count)
+	}
+	want := []struct{ kind, dropped EventKind }{
+		{EventSequenceHeader, EventIgnored},
+		{EventIgnored, EventFrameHeader}, // replaced by the next frame header
+		{EventFrameHeader, EventIgnored},
+		{EventTileGroup, EventIgnored},
+		{EventIgnored, EventFrameHeader}, // no tile group before the unit ends
+	}
+	for i, w := range want {
+		if events[i].Kind != w.kind || events[i].DroppedKind != w.dropped {
+			t.Fatalf("event %d kind=%d dropped=%d, want %d/%d", i, events[i].Kind, events[i].DroppedKind, w.kind, w.dropped)
+		}
+	}
+	if !dec.references.Frames[0].Valid {
+		t.Fatal("the completed key frame did not refresh the references")
+	}
+
+	var fresh Stream
+	stream = appendLowOverheadOBU(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload())
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, key)
+	count, err = fresh.PushLowOverhead(stream, events[:])
+	if err != nil || count != 2 || events[1].Kind != EventIgnored {
+		t.Fatalf("count=%d err=%v kind=%d", count, err, events[1].Kind)
+	}
+	if fresh.references.Frames[0].Valid {
+		t.Fatal("an incomplete frame refreshed the references")
 	}
 }

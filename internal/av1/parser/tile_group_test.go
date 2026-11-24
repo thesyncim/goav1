@@ -72,11 +72,34 @@ func TestParseTileGroupHeaderExplicitAndSplit(t *testing.T) {
 	}
 }
 
-func TestParseTileGroupHeaderRejectsExplicitFrameOBU(t *testing.T) {
+// dav1d parse_tile_hdr reads tile_start_and_end_present_flag in an OBU_FRAME
+// like in an OBU_TILE_GROUP and does not reject it.
+func TestParseTileGroupHeaderAcceptsExplicitFrameOBU(t *testing.T) {
 	tiles := TileInfo{Cols: 2, Rows: 2, Log2Cols: 1, Log2Rows: 1}
-	_, err := ParseTileGroupHeader(explicitTileGroupPayload(0, 3), tiles, 0, 0, true)
-	if !errors.Is(err, ErrInvalidTileGroup) {
-		t.Fatalf("ParseTileGroupHeader err=%v want %v", err, ErrInvalidTileGroup)
+	group, err := ParseTileGroupHeader(explicitTileGroupPayload(0, 1), tiles, 0, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if group.StartTile != 0 || group.EndTile != 1 || group.Final || group.NextTile != 2 {
+		t.Fatalf("group=%+v", group)
+	}
+}
+
+// An end past the last tile is not an error in dav1d: the frame's tile count
+// never reaches the grid size, so it is never submitted.
+func TestParseTileGroupHeaderEndPastLastTileIsNotFinal(t *testing.T) {
+	tiles := TileInfo{Cols: 3, Rows: 1, Log2Cols: 2}
+	var w testBitWriter
+	w.writeBool(true)
+	w.writeBits(0, 2)
+	w.writeBits(3, 2)
+	w.writeBits(0, 3)
+	group, err := ParseTileGroupHeader(w.bytes(), tiles, 0, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if group.EndTile != 3 || group.Final || group.NextTile != 4 {
+		t.Fatalf("group=%+v", group)
 	}
 }
 
@@ -96,17 +119,23 @@ func TestParseTileGroupHeaderRejectsEndBeforeStart(t *testing.T) {
 	}
 }
 
-func TestParseTileGroupHeaderRejectsNonZeroAlignment(t *testing.T) {
+// dav1d_bytealign_get_bits discards the byte_alignment bits after the tile
+// group header without checking them.
+func TestParseTileGroupHeaderIgnoresAlignmentBits(t *testing.T) {
 	tiles := TileInfo{Cols: 2, Rows: 2, Log2Cols: 1, Log2Rows: 1}
 	var w testBitWriter
 	w.writeBool(true)
 	w.writeBits(0, 2)
 	w.writeBits(0, 2)
-	w.writeBool(true) // byte_alignment zero_bit violation
+	w.writeBits(7, 3) // nonzero byte_alignment bits
+	w.writeBits(0xaa, 8)
 
-	_, err := ParseTileGroupHeader(w.bytes(), tiles, 0, 0, false)
-	if !errors.Is(err, ErrInvalidTileGroup) {
-		t.Fatalf("ParseTileGroupHeader err=%v want %v", err, ErrInvalidTileGroup)
+	group, err := ParseTileGroupHeader(w.bytes(), tiles, 0, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if group.StartTile != 0 || group.EndTile != 0 || group.DataOffset != 1 || group.DataSize != 1 {
+		t.Fatalf("group=%+v", group)
 	}
 }
 

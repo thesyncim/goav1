@@ -194,16 +194,18 @@ func parseInterReferences(r *bitstream.Reader, seq SequenceHeader, prefix FrameH
 			}
 			size.RefFrameIdx[i] = uint8(v)
 		}
-		ref := refs.Frames[size.RefFrameIdx[i]]
-		if !ref.Valid {
-			return ErrReferenceFrameNeeded
-		}
+		// dav1d parse_frame_hdr needs the slot's header here only to check
+		// its frame id; a missing reference picture fails at submit.
 		if seq.FrameIDNumbersPresent {
+			ref := refs.Frames[size.RefFrameIdx[i]]
 			v, err := r.ReadBits(seq.DeltaFrameIDLength)
 			if err != nil {
 				return err
 			}
 			size.DeltaFrameIDMinus1[i] = uint16(v)
+			if !ref.Valid {
+				return ErrReferenceFrameNeeded
+			}
 			if ref.FrameID != expectedReferenceFrameID(prefix.FrameID, uint16(v)+1, seq.FrameIDBits()) {
 				return ErrInvalidFrameHeader
 			}
