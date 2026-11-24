@@ -19,10 +19,11 @@ or less. Other agents were running builds and tests during the session. Of
 10.4. Blocks whose first pass ran above 10.5 were discarded and re-run in a
 quiet window.
 
-Compare cycles, not seconds, with earlier reports. Both decoders' cycle counts
-match the November 23 runs to within 1-2% (dav1d corpus 68.6G then, 69.0G now),
-but the seconds do not: this session ran at about 4.0 GHz effective, against
-about 2.7 GHz on November 23. Cycles include kernel time.
+Compare cycles, not seconds, with earlier reports. dav1d, the same binary in
+both sessions, used 68.6G corpus cycles on November 23 and 69.0G now, but
+17.2 CPU-seconds now against 25.8 then: cycles per CPU-second, derived from the
+two reports, are about 4.0 G now and about 2.7 G then. Cycles include kernel
+time.
 
 | Measure | 20261123 (`9451293c`) | 20261124 (`5ceb50f0`) |
 | --- | ---: | ---: |
@@ -38,7 +39,9 @@ The decoder's single-thread gap went from 32% to 21% more cycles than dav1d. On
 one thread the encoder now needs fewer total cycles than SVT-AV1, but SVT
 spends about 0.2 s of each run in the kernel; on user CPU alone goav1 is still
 10-14% behind. With threads, the encoder finishes in 0.50-0.61 times SVT-AV1's
-wall time. At 8 and 16 threads the decoder is within 6% of dav1d on the corpus.
+wall time. On the corpus the decoder is 1.06× dav1d's wall time at 8 threads
+and 0.97× at 16; without the 30-tile `goav1_crowdrun` stream, which the
+November 23 report called unrepresentative, it is 1.14× and 1.06×.
 
 ## Decoder: real-content corpus
 
@@ -145,8 +148,7 @@ count. Mcycles, Go / dav1d:
 
 | Stage | aomrt_crowdrun (8 tiles) | svtrtc_crowdrun (1 tile) |
 | --- | ---: | ---: |
-| mode parse + block loop | 927 / 481 (+446) | 493 / 253 (+240) |
-| coefficients + symbol decoder (msac) | 1375 / 1277 (+98) | 1267 / 1182 (+85) |
+| parse chain: mode parse, block loop, coefficients, symbol decoder | 2302 / 1758 (+544) | 1760 / 1435 (+325) |
 | reconstruction glue (recon_b) | 464 / 105 (+359) | 385 / 137 (+249) |
 | motion compensation | 969 / 738 (+231) | 593 / 504 (+90) |
 | refmvs | 393 / 315 (+78) | 245 / 216 (+29) |
@@ -159,12 +161,22 @@ count. Mcycles, Go / dav1d:
 | runtime / libc | 179 / 245 (−66) | 145 / 187 (−42) |
 | total | 6653 / 5344 (+1309) | 4861 / 4145 (+716) |
 
-The coefficient decoder and the symbol decoder share one row because #338
-moved range decoding into `DecodeCoefs`, and dav1d's `msac` bucket includes
-the mode-parse symbol reads. Taken together they are now within 7-8% of
-dav1d's. On November 23, goav1 spent about 1,960 Mcycles in these stages on
-`aomrt_crowdrun`; it now spends 1,375. svtrtc_crowdrun codes no deblocking, so
-it has no loop-filter or mask rows. The `sample` profile of dav1d resolves the
+Mode parse, coefficient decoding and the symbol decoder share one row. Their
+split does not line up between the two profiles: #338 moved range decoding
+into `DecodeCoefs`, goav1 inlines most mode-parse symbol reads into the
+`tile` functions, dav1d's `msac` bucket holds all of them, and the
+`CoefBlock.DecodeCoefs` wrapper classifies as mode parse. #338 itself measured
+coefficient decode plus all entropy reads on `aomrt_crowdrun` going from 1770
+to 1530 Mcycles.
+
+Noise: three goav1 profiles of `aomrt_crowdrun` vary per stage by 50-110
+Mcycles (MC 887-954, coefficients 1007-1123, mode parse 809-913, refmvs
+328-387), while the parse-chain sum stays within 2267-2339. dav1d's shares vary
+as much across its three `sample` runs: MC 11.0-13.2% (590-705 Mcycles) and
+CDEF 20.1-22.5%. Differences under about 100 Mcycles in one row, such as
+loop-filter masks or refmvs, are inside that spread.
+
+svtrtc_crowdrun codes no deblocking, so it has no loop-filter or mask rows. The `sample` profile of dav1d resolves the
 unexported loop-filter kernels to `ipred_cfl_ac_444_8bpc_neon`; they are
 counted as loop filter here.
 
@@ -197,7 +209,7 @@ goav1's output is byte-identical at one thread and at default threads; so is
 SVT-AV1's at `--lp 1` and `--lp 0`. The quality figures therefore apply to
 every timed row.
 
-| Target | Go kbps | SVT kbps | PSNR-Y Go / SVT, dB | PSNR-YUV (6:1:1) Go / SVT | SSIM-Y Go / SVT |
+| Target | Go kbps | SVT kbps | PSNR-Y Go / SVT, dB | PSNR-YUV (4:1:1) Go / SVT | SSIM-Y Go / SVT |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | 500 | 514.8 | 522.6 | 37.13 / 37.03 | 38.28 / 38.22 | 0.9499 / 0.9507 |
 | 700 | 715.3 | 718.4 | 38.86 / 38.67 | 39.92 / 39.77 | 0.9632 / 0.9631 |
@@ -237,8 +249,8 @@ kernel rows as lower bounds. Mcycles, Go / SVT:
 
 SVT's runtime row is mostly `__mmap` page faults, about 17% of its busy
 samples, plus `memcpy`/`memset`. That kernel time is why total cycles favour
-goav1 while user CPU does not. On SVT's own compute, goav1 is about 0.65 G
-cycles behind per 240 frames. Three rows account for 0.76 G: SAD, variance and
+goav1 while user CPU does not. Leaving the runtime rows out, goav1 is about
+0.81 G cycles behind SVT's own compute per 240 frames (4.65G against 3.84G). Three rows account for 0.76 G: SAD, variance and
 quantization.
 
 ## Ranked levers
@@ -258,14 +270,16 @@ loop codegen variants, eob-threshold itx dispatch, the int16 column pipe, MC
 codegen, the refmvs store variants, in-place CDEF staging and PGO
 regeneration.
 
-1. **Decoder mode parse and the block loop: +446 / +240 Mcyc.**
-   *Addressable.* `decodeBlockLoopVisitWithCoeffControllerPtr`,
+1. **Decoder parse chain: +544 / +325 Mcyc.** *Addressable.* This is
+   mode parse, the block loop, coefficients and the symbol decoder. The mode
+   side leads: `decodeBlockLoopVisitWithCoeffControllerPtr`,
    `decodeBlockPredictionModeInto`, `txTreeReader.read`, `walkNode` and
-   `setBlockEdge` lead. The loop is still one generic instantiation, so it
+   `setBlockEdge`. The loop is still one generic instantiation, so it
    makes indirect calls per block and per TXB through the coefficient
    controller, and it carries an 880-byte block visit. dav1d's `decode_b`
-   writes one `Av1Block` and `BlockContext` per edge. This is also the serial
-   chain that bounds threaded decode of single-tile streams.
+   writes one `Av1Block` and `BlockContext` per edge. The coefficient token
+   loop is not the lever: recorded variants there are within noise. This is
+   also the serial chain that bounds threaded decode of single-tile streams.
 2. **Decoder reconstruction glue: +359 / +249 Mcyc.** *Addressable.*
    `reconBInter`, `reconCoefTree`, `ReconB` and `reconTXB` against dav1d's
    `recon_b_inter`/`read_coef_tree`, which call `itxfm_add` and MC directly.
@@ -284,17 +298,12 @@ regeneration.
    `TryQuantizeBRowGroupsDiffTrusted` + `quantizeBVectors` take 168 Mcyc
    against `svt_aom_quantize_b_neon`'s 45 samples (about 75 Mcyc). An October
    note points at about 16 GPR-to-lane moves of glue per call.
-6. **Decoder loop-filter masks: +75 Mcyc.** *Addressable.*
+6. **Decoder loop-filter masks: +75 Mcyc, inside the profile noise.**
+   *Addressable.*
    `FrameWorkLoopFilterMasks.buildBlockWithLevels` (130) and `maskEdgesInter`
    (107) against dav1d's `dav1d_create_lf_mask_inter` path. This work is also
    on the parse chain at high thread counts.
-7. **Threaded decode of multi-tile streams.** *Addressable.* At 8 threads,
-   the single-tile SVT-AV1 realtime streams are 1.02-1.06× dav1d's wall time, but
-   `aomrt_crowdrun` (8 tiles) is 1.30× and `aomrt_mtbike_1080p` 1.30-1.42×.
-   The cause is the scheduling difference described on November 23. The port
-   of dav1d's pull-model worker loop is parked in #308 behind a tile parse
-   that can stop and resume per superblock row.
-8. **Decoder warped compound and the aomenc good-quality streams.**
+7. **Decoder warped compound and the aomenc good-quality streams.**
    *Addressable.* These seven streams are 1.40-2.03× dav1d's cycles, the worst
    ratios in the corpus, and none is in the attribution above. On
    `aomgood_parkjoy_360p`, `motion.PredictWarpedCompoundToConvBuf` is 81 of
@@ -304,13 +313,21 @@ regeneration.
    (`predictFilterIntraBlockDirect8SIMD`) and CDEF lead on
    `aomgood_mtbike_720p`. These streams are small, so this is a coverage
    lever rather than a corpus-total one.
-9. **Encoder CDEF, inverse transform and reconstruction, forward transform:
+8. **Encoder CDEF, inverse transform and reconstruction, forward transform:
    +90 / +88 / +64 Mcyc.** *Addressable.* The per-kernel forward DCTs are at
    SVT's cycles (#321, #323), so what is left is per-block glue: residual
    formation, the reconstruction copy and the CDEF search loop
    (`searchOneDual`, `searchBlocksU8SIMD`).
-10. **Decoder refmvs: +78 / +29 Mcyc.** *ABI.* `refmvsTile.find` is a
-    line-for-line port of dav1d's; what remains is stack traffic, about 430
+9. **Threaded decode of multi-tile streams.** *Addressable.* At 8 threads,
+   the single-tile SVT-AV1 realtime streams are 1.02-1.06× dav1d's wall time,
+   but `aomrt_crowdrun` (8 tiles) is 1.30× and `aomrt_mtbike_1080p` 1.30-1.42×.
+   Most of that is the single-thread gap carried through: `aomrt_crowdrun`
+   is 1.24× at one thread, and goav1 scales 6.7× from 1 to 8 threads against
+   dav1d's 7.05×, a loss of about 5%. The port of dav1d's pull-model worker
+   loop is parked in #308 behind a tile parse that can stop and resume per
+   superblock row.
+10. **Decoder refmvs: +78 / +29 Mcyc, inside the profile noise.** *ABI.*
+    `refmvsTile.find` is a line-for-line port of dav1d's; what remains is stack traffic, about 430
     references in about 1,460 instructions, because Go has no callee-saved
     registers. The store-layout variants are recorded dead ends.
 
