@@ -1316,14 +1316,20 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 		return nil
 	}
 
-	mode, err := s.ReadLumaIntraMode(cdfs.Intra, ctx, LumaIntraModeRequest{
-		FrameType: req.FrameType,
-		Size:      block.Size,
-		X4:        block.X4,
-		Y4:        block.Y4,
-	})
-	if err != nil {
-		return err
+	// dav1d decode_b's intra arm: y_mode, the angle deltas, uv_mode with
+	// CfL and filter_intra are read in one go with the range state in
+	// registers; the palette syntax between uv_mode and filter_intra is read
+	// separately when the block can code one.
+	intraCDFs := cdfs.Intra
+	if intraCDFs == nil {
+		return entropy.ErrInvalidCDF
+	}
+	dims := &blockDimensions[block.Size]
+	var yCDF *entropy.CDF
+	if frameTypeIsInterOrSwitch(req.FrameType) {
+		yCDF = &intraCDFs.YMode[yModeSizeContext[block.Size]]
+	} else {
+		yCDF = &intraCDFs.KeyframeYMode[intraModeContext[ctx.A.Mode[blockX4]]][intraModeContext[ctx.L.Mode[blockY4]]]
 	}
 	smoothNeighbor, err := ctx.IntraEdgeSmoothNeighbor(blockX4, blockY4, block.HaveTop, block.HaveLeft)
 	if err != nil {
@@ -1333,30 +1339,37 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 	if rt != nil {
 		rt.splatIntraBlock(block.Size, int32(block.MIRow), int32(block.MICol))
 	}
-	result.LumaMode = mode
-	lumaAngleDelta, err := s.ReadIntraAngleDelta(cdfs.Intra, IntraAngleDeltaRequest{
-		Size: block.Size,
-		Mode: mode,
-	})
+	flags := uint(0)
+	if dims.Log2W+dims.Log2H >= 2 {
+		flags |= entropy.IntraAngle
+	}
+	hasChroma := hasChromaForBlock(block.Size, blockX4, blockY4, req.Color)
+	if hasChroma {
+		flags |= entropy.IntraChroma
+		cflAllowed, err := ChromaIntraCFLAllowed(block.Size, req.Color, req.Lossless || req.Segmentation.Lossless[segmentID])
+		if err != nil {
+			return err
+		}
+		if cflAllowed {
+			flags |= entropy.IntraCFL
+		}
+	}
+	palette, err := PaletteAllowed(req.AllowScreenContentTools, block.Size)
 	if err != nil {
 		return err
 	}
-	result.LumaAngleDelta = lumaAngleDelta
-	hasChroma := hasChromaForBlock(block.Size, blockX4, blockY4, req.Color)
+	filterIntra := req.EnableFilterIntra && dims.W4 <= 8 && dims.H4 <= 8
+	if filterIntra && !palette {
+		flags |= entropy.IntraFilter
+	}
+	icdfs := entropy.IntraCDFs{Angle: &intraCDFs.AngleDelta, UV: &intraCDFs.UVMode, CFLSign: &intraCDFs.CFLSign, CFLAlpha: &intraCDFs.CFLAlpha, FilterMode: &intraCDFs.FilterIntraMode}
+	var im entropy.IntraModes
+	(*entropy.Cursor)(&s.Reader).DecodeIntraModes(&im, &icdfs, yCDF, &intraCDFs.FilterIntra[block.Size], flags)
+	mode := IntraMode(im.Y)
+	result.LumaMode = mode
+	result.LumaAngleDelta = int8(im.YAngle) - AngleDeltaMax
 	if hasChroma {
-		lossless := req.Lossless || req.Segmentation.Lossless[segmentID]
-		cflAllowed, err := ChromaIntraCFLAllowed(block.Size, req.Color, lossless)
-		if err != nil {
-			return err
-		}
-		chromaMode, cflAlpha, err := s.ReadChromaIntraMode(cdfs.Intra, ChromaIntraModeRequest{
-			Size:       block.Size,
-			LumaMode:   mode,
-			CFLAllowed: cflAllowed,
-		})
-		if err != nil {
-			return err
-		}
+		chromaMode := ChromaIntraMode(im.UV)
 		result.ChromaMode = chromaMode
 		result.ChromaModeValid = true
 		chromaHaveTop, chromaHaveLeft, err := blockChromaNeighborAvailability(req, block)
@@ -1369,53 +1382,52 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 		}
 		result.ChromaIntraEdgeSmoothNeighbor = chromaSmoothNeighbor
 		if chromaMode == ChromaIntraModeCFL {
-			result.CFLAlpha = cflAlpha
+			result.CFLAlpha = CFLAlphaResult{Index: im.CFLU<<4 + im.CFLV, JointSign: int8(im.CFLSign)}
 			result.CFLAlphaValid = true
 		} else {
-			chromaLumaMode, err := chromaMode.LumaMode()
-			if err != nil {
-				return err
-			}
-			chromaAngleDelta, err := s.ReadIntraAngleDelta(cdfs.Intra, IntraAngleDeltaRequest{
-				Size: block.Size,
-				Mode: chromaLumaMode,
-			})
-			if err != nil {
-				return err
-			}
-			result.ChromaAngleDelta = chromaAngleDelta
+			result.ChromaAngleDelta = int8(im.UVAngle) - AngleDeltaMax
 		}
 	}
-	if err := s.ReadPaletteMode(cdfs.Intra, ctx, PaletteModeRequest{
-		AllowScreenContentTools: req.AllowScreenContentTools,
-		Size:                    block.Size,
-		LumaMode:                mode,
-		X4:                      block.X4,
-		Y4:                      block.Y4,
-		HaveTop:                 block.HaveTop,
-		HaveLeft:                block.HaveLeft,
-		BitDepth:                req.Color.BitDepth,
-		Color:                   req.Color,
-		ChromaMode:              result.ChromaMode,
-		ChromaModeValid:         result.ChromaModeValid,
-		HasChroma:               hasChroma,
-		VisibleW4:               block.VisibleW4,
-		VisibleH4:               block.VisibleH4,
-	}, &result.Palette, paletteMap); err != nil {
-		return err
+	if palette {
+		if err := s.ReadPaletteMode(intraCDFs, ctx, PaletteModeRequest{
+			AllowScreenContentTools: req.AllowScreenContentTools,
+			Size:                    block.Size,
+			LumaMode:                mode,
+			X4:                      block.X4,
+			Y4:                      block.Y4,
+			HaveTop:                 block.HaveTop,
+			HaveLeft:                block.HaveLeft,
+			BitDepth:                req.Color.BitDepth,
+			Color:                   req.Color,
+			ChromaMode:              result.ChromaMode,
+			ChromaModeValid:         result.ChromaModeValid,
+			HasChroma:               hasChroma,
+			VisibleW4:               block.VisibleW4,
+			VisibleH4:               block.VisibleH4,
+		}, &result.Palette, paletteMap); err != nil {
+			return err
+		}
 	}
 	ctx.markIntraBlock(block.Size, blockX4, blockY4, mode, result.ChromaMode, hasChroma, &result.Palette, &prefix, !intraOnlyContexts && (rt == nil || refmvsOracleEnabled))
-	filterMode, filterValid, err := s.ReadFilterIntraMode(cdfs.Intra, FilterIntraRequest{
-		EnableFilterIntra: req.EnableFilterIntra,
-		Size:              block.Size,
-		LumaMode:          mode,
-		PaletteYSize:      result.Palette.YSize,
-	})
-	if err != nil {
-		return err
+	if filterIntra && palette {
+		filterMode, filterValid, err := s.ReadFilterIntraMode(intraCDFs, FilterIntraRequest{
+			EnableFilterIntra: req.EnableFilterIntra,
+			Size:              block.Size,
+			LumaMode:          mode,
+			PaletteYSize:      result.Palette.YSize,
+		})
+		if err != nil {
+			return err
+		}
+		result.FilterIntraMode = filterMode
+		result.FilterIntraValid = filterValid
+	} else if im.Filter != 0 {
+		result.FilterIntraMode = FilterIntraMode(im.FilterMode)
+		result.FilterIntraValid = true
 	}
-	result.FilterIntraMode = filterMode
-	result.FilterIntraValid = filterValid
+	if !palette {
+		return nil
+	}
 	if err := s.ReadPaletteTokens(cdfs.Intra, PaletteModeRequest{
 		AllowScreenContentTools: req.AllowScreenContentTools,
 		Size:                    block.Size,
@@ -1516,14 +1528,15 @@ func (s *DecodeState) readBlockSkips(cdfs *BlockModeCDFs, ctx *BlockModeContext,
 		return false, false, ErrInvalidDecodeState
 	}
 	segEnabled := req.Segmentation.Enabled
+	var smCDF *entropy.CDF
 	if req.SkipMode.Enabled && min(dims.W4, dims.H4) > 1 &&
 		!(segEnabled && (segment.Skip || segment.GlobalMV || segment.RefFrame >= 0)) {
-		skipMode = s.Reader.ReadBinaryCDFUnchecked(&cdfs.SkipMode[int(ctx.A.SkipMode[x4])+int(ctx.L.SkipMode[y4])]) != 0
+		smCDF = &cdfs.SkipMode[int(ctx.A.SkipMode[x4])+int(ctx.L.SkipMode[y4])]
 	}
-	if skipMode || segEnabled && segment.Skip {
-		return skipMode, true, nil
-	}
-	return false, s.Reader.ReadBinaryCDFUnchecked(&cdfs.Skip[int(ctx.A.Skip[x4])+int(ctx.L.Skip[y4])]) != 0, nil
+	// The symbols are read straight from the tile's range decoder, as
+	// dav1d reads through &ts->msac.
+	skipMode, skip = (*entropy.Cursor)(&s.Reader).DecodeSkips(smCDF, &cdfs.Skip[int(ctx.A.Skip[x4])+int(ctx.L.Skip[y4])], segEnabled && segment.Skip)
+	return skipMode, skip, nil
 }
 
 func validateBlockLoopRequest(req BlockLoopRequest, hasCoeffController bool) error {

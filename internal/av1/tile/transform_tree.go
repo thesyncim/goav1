@@ -1,6 +1,9 @@
 package tile
 
-import "github.com/thesyncim/goav1/internal/av1/parser"
+import (
+	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/av1/parser"
+)
 
 // TransformTreeRequest describes the AV1 transform-size decisions for one
 // decoded block. X4/Y4 are superblock-local 4x4 coordinates.
@@ -82,7 +85,7 @@ func uvTxLayoutColumn(color *parser.ColorConfig) int {
 // readTxSizes is the transform-size step of dav1d's decode_b: read_vartx_tree
 // (src/decode.c) for inter blocks and the read_tx_size depth read for intra
 // blocks. max_ytx and uvtx come straight from dav1d_max_txfm_size_for_bs, the
-// var-tx tree is read per max_ytx unit by txTreeReader.read, and the fixed-size paths
+// var-tx tree is read per max_ytx unit by entropy's DecodeTxTree, and the fixed-size paths
 // set the transform contexts with dav1d_memset_pow2 stores. The result is
 // written in place into out.
 func (s *DecodeState) readTxSizes(cdfs *TransformCDFs, ctx *BlockModeContext, block *BlockVisit, color *parser.ColorConfig, mode parser.TransformMode, inter, skip, lossless bool, out *TransformTreeResult) error {
@@ -112,13 +115,16 @@ func (s *DecodeState) readTxSizes(cdfs *TransformCDFs, ctx *BlockModeContext, bl
 		// first row/column has its prior sibling as top/left neighbour.
 		out.Variable = true
 		ytx := maxYtx.Dims()
-		t := txTreeReader{s: s, cdfs: cdfs, ctx: ctx, right: bx4 + vw4, bottom: by4 + vh4}
+		t := entropy.TxTree{CDF: &cdfs.TxPartition, A: &ctx.A.Tx, L: &ctx.L.Tx, Right: bx4 + vw4, Bottom: by4 + vh4}
+		// The symbols are read straight from the tile's range decoder, as
+		// dav1d reads through &ts->msac.
+		c := (*entropy.Cursor)(&s.Reader)
 		for y, yOff := 0, 0; y < vh4; y, yOff = y+int(ytx.H4), yOff+1 {
 			for x, xOff := 0, 0; x < vw4; x, xOff = x+int(ytx.W4), xOff+1 {
-				t.read(maxYtx, 0, xOff, yOff, bx4+x, by4+y, block.HaveTop || y > 0, block.HaveLeft || x > 0)
+				c.DecodeTxTree(&t, uint(maxYtx), xOff, yOff, bx4+x, by4+y, block.HaveTop || y > 0, block.HaveLeft || x > 0)
 			}
 		}
-		out.Split = t.split
+		out.Split = t.Split
 		return nil
 	}
 

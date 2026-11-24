@@ -14,60 +14,20 @@ import (
 // DRL index is dav1d's absolute mvstack slot, and MVs are assigned from that
 // slot exactly like decode_b's assign_comp_mv and single-reference branches.
 
-// refmvsDRLContext ports dav1d's get_drl_context.
-func refmvsDRLContext(stack *[8]refmvsCandidate, idx int32) int {
-	if stack[idx].weight >= 640 {
-		return int(boolInt32(stack[idx+1].weight < 640))
-	}
-	if stack[idx+1].weight < 640 {
-		return 2
-	}
-	return 0
-}
-
-// readMVComponentDiffRefmvs ports dav1d's read_mv_component_diff. mvPrec is
-// hp - force_integer_mv (-1, 0 or 1).
-func readMVComponentDiffRefmvs(c *entropy.Cursor, comp *MVComponentCDFs, mvPrec int) int32 {
-	sign := c.ReadBinaryCDFUnchecked(&comp.Sign)
-	cl := c.ReadCDFSymbolsUnchecked(&comp.Classes, MVClasses)
-	var up int
-	fp, hp := 3, 1
-	if cl == 0 {
-		up = c.ReadBinaryCDFUnchecked(&comp.Class0)
-		if mvPrec >= 0 {
-			fp = c.ReadCDF4Unchecked(&comp.Class0FP[up])
-			if mvPrec > 0 {
-				hp = c.ReadBinaryCDFUnchecked(&comp.Class0HP)
-			}
-		}
-	} else {
-		up = 1 << cl
-		for n := range cl {
-			up |= c.ReadBinaryCDFUnchecked(&comp.Bits[n]) << n
-		}
-		if mvPrec >= 0 {
-			fp = c.ReadCDF4Unchecked(&comp.FP)
-			if mvPrec > 0 {
-				hp = c.ReadBinaryCDFUnchecked(&comp.HP)
-			}
-		}
-	}
-	// sign ? -diff : diff without a branch on the (unpredictable) sign bit.
-	s := -int32(sign)
-	return (int32((up<<3)|(fp<<1)|hp) + 1 ^ s) - s
+// refmvsDRLContexts is dav1d's get_drl_context for stack indices 0, 1 and 2,
+// packed two bits each for entropy.DecodeInterMode: with a = weight[i] < 640
+// and b = weight[i+1] < 640 the context is b << a.
+func refmvsDRLContexts(stack *[8]refmvsCandidate) uint {
+	a0, a1 := uint(boolInt32(stack[0].weight < 640)), uint(boolInt32(stack[1].weight < 640))
+	a2, a3 := uint(boolInt32(stack[2].weight < 640)), uint(boolInt32(stack[3].weight < 640))
+	return a1<<a0 | (a2<<a1)<<2 | (a3<<a2)<<4
 }
 
 // readMVResidualRefmvs ports dav1d's read_mv_residual: returns ref + residual
 // and whether the result stays inside the legal MV range.
 func readMVResidualRefmvs(c *entropy.Cursor, cdfs *MVCDFs, ref refmvsMV, mvPrec int) (refmvsMV, bool) {
-	joint := c.ReadCDF4Unchecked(&cdfs.Joint)
-	row, col := ref.row(), ref.col()
-	if joint&2 != 0 { // MV_JOINT_V
-		row += readMVComponentDiffRefmvs(c, &cdfs.Components[mvComponentRow], mvPrec)
-	}
-	if joint&1 != 0 { // MV_JOINT_H
-		col += readMVComponentDiffRefmvs(c, &cdfs.Components[mvComponentCol], mvPrec)
-	}
+	row, col := c.DecodeMVResidual(&cdfs.Joint, (*entropy.MVComponentCDFs)(&cdfs.Components[mvComponentRow]),
+		(*entropy.MVComponentCDFs)(&cdfs.Components[mvComponentCol]), ref.row(), ref.col(), mvPrec)
 	ok := row > MVLower && row < MVUpper && col > MVLower && col < MVUpper
 	return makeRefmvsMV(row, col), ok
 }
@@ -119,12 +79,6 @@ func (s *DecodeState) decodeMotionModeRefmvs(cdfs *MotionModeCDFs, c *BlockModeC
 	return mode, nil
 }
 
-var compoundModeHasNear = [compoundInterModeCount]bool{
-	CompoundInterModeNearNear: true,
-	CompoundInterModeNearNew:  true,
-	CompoundInterModeNewNear:  true,
-}
-
 // decodeInterModeRefmvs ports decode_b's inter-mode syntax after the
 // reference frames are known: dav1d_refmvs_find, the (comp_)inter_mode
 // symbols, the DRL bits and the MV assignment/residuals. It fills the mode,
@@ -150,109 +104,68 @@ func (s *DecodeState) decodeInterModeRefmvs(cdfs *InterModeCDFs, mvCDFs *MVCDFs,
 	if rf.forceIntegerMV {
 		mvPrec--
 	}
-	var c entropy.Cursor
-	c.Load(&s.Reader)
+	// The symbols are read straight from the tile's range decoder, as
+	c := (*entropy.Cursor)(&s.Reader) // dav1d reads through &ts->msac.
 	motionResult := &result.InterMotion
 	motionResult.References = refs // the rest was cleared with the result
-	drlIdx := int32(0)
-	drlRead := false
 	ok := true
 
 	if refs.Compound {
 		var mode CompoundInterMode
+		var drlIdx int
 		if skipMode {
 			mode = CompoundInterModeNearestNearest
 		} else {
-			mode = CompoundInterMode(c.ReadCDFSymbolsUnchecked(&cdfs.Compound[ctx], int(compoundInterModeCount)))
-			if mode == CompoundInterModeNewNew {
-				drlRead = true
-				if nMVs > 1 {
-					drlIdx += int32(c.ReadBinaryCDFUnchecked(&cdfs.DRL[refmvsDRLContext(stack, 0)]))
-					if drlIdx == 1 && nMVs > 2 {
-						drlIdx += int32(c.ReadBinaryCDFUnchecked(&cdfs.DRL[refmvsDRLContext(stack, 1)]))
-					}
-				}
-			} else if compoundModeHasNear[mode] {
-				drlRead = true
-				drlIdx = 1
-				if nMVs > 2 {
-					drlIdx += int32(c.ReadBinaryCDFUnchecked(&cdfs.DRL[refmvsDRLContext(stack, 1)]))
-					if drlIdx == 2 && nMVs > 3 {
-						drlIdx += int32(c.ReadBinaryCDFUnchecked(&cdfs.DRL[refmvsDRLContext(stack, 2)]))
-					}
-				}
-			}
+			var m uint
+			m, drlIdx, result.DRLIndexValid = c.DecodeInterMode((*entropy.InterModeCDFs)(cdfs), true, false, uint(ctx), int(nMVs), refmvsDRLContexts(stack))
+			mode = CompoundInterMode(m)
 		}
+		result.DRLIndex = uint8(drlIdx)
 		motionResult.Mode = InterModeResult{Compound: true, CompoundMode: mode}
 		comps := compoundInterModeComponents[mode]
+		cand := &stack[drlIdx&7]
 		for idx, im := range [2]InterMode{comps.First, comps.Second} {
 			switch im {
 			case InterModeNearMV, InterModeNearestMV:
-				motionResult.MV[idx] = rf.fixMVPrecision(stack[drlIdx].mv[idx]).vector()
+				motionResult.MV[idx] = rf.fixMVPrecision(cand.mv[idx]).vector()
 			case InterModeGlobalMV:
 				motionResult.MV[idx] = globalMVs[idx]
 			case InterModeNewMV:
-				mv, valid := readMVResidualRefmvs(&c, mvCDFs, stack[drlIdx].mv[idx], mvPrec)
+				mv, valid := readMVResidualRefmvs(c, mvCDFs, cand.mv[idx], mvPrec)
 				ok = ok && valid
 				motionResult.MV[idx] = mv.vector()
 			}
 		}
 	} else {
-		var mode InterMode
 		segForced := req.Segmentation.Enabled && (segment.Skip || segment.GlobalMV)
-		if segForced || c.ReadBinaryCDFUnchecked(&cdfs.NewMV[ctx&7]) != 0 {
-			if segForced || c.ReadBinaryCDFUnchecked(&cdfs.GlobalMV[(ctx>>3)&1]) == 0 {
-				mode = InterModeGlobalMV
-				motionResult.MV[0] = globalMVs[0]
-			} else {
-				if c.ReadBinaryCDFUnchecked(&cdfs.RefMV[(ctx>>4)&15]) != 0 {
-					mode = InterModeNearMV
-					drlRead = true
-					drlIdx = 1
-					if nMVs > 2 {
-						drlIdx += int32(c.ReadBinaryCDFUnchecked(&cdfs.DRL[refmvsDRLContext(stack, 1)]))
-						if drlIdx == 2 && nMVs > 3 {
-							drlIdx += int32(c.ReadBinaryCDFUnchecked(&cdfs.DRL[refmvsDRLContext(stack, 2)]))
-						}
-					}
-				} else {
-					mode = InterModeNearestMV
-				}
-				mv := stack[drlIdx].mv[0]
-				if drlIdx < 2 {
-					mv = rf.fixMVPrecision(mv)
-				}
-				motionResult.MV[0] = mv.vector()
-			}
-		} else {
-			mode = InterModeNewMV
-			drlRead = true
-			if nMVs > 1 {
-				drlIdx += int32(c.ReadBinaryCDFUnchecked(&cdfs.DRL[refmvsDRLContext(stack, 0)]))
-				if drlIdx == 1 && nMVs > 2 {
-					drlIdx += int32(c.ReadBinaryCDFUnchecked(&cdfs.DRL[refmvsDRLContext(stack, 1)]))
-				}
-			}
-			ref := stack[0].mv[0]
-			if nMVs > 1 {
-				ref = stack[drlIdx].mv[0]
-			} else {
+		m, drlIdx, drl := c.DecodeInterMode((*entropy.InterModeCDFs)(cdfs), false, segForced, uint(ctx), int(nMVs), refmvsDRLContexts(stack))
+		mode := InterMode(m)
+		result.DRLIndex, result.DRLIndexValid = uint8(drlIdx), drl
+		switch mode {
+		case InterModeGlobalMV:
+			motionResult.MV[0] = globalMVs[0]
+		case InterModeNewMV:
+			ref := stack[drlIdx&7].mv[0]
+			if nMVs <= 1 {
 				ref = rf.fixMVPrecision(ref)
 			}
-			mv, valid := readMVResidualRefmvs(&c, mvCDFs, ref, mvPrec)
+			mv, valid := readMVResidualRefmvs(c, mvCDFs, ref, mvPrec)
 			ok = valid
+			motionResult.MV[0] = mv.vector()
+		default:
+			mv := stack[drlIdx&7].mv[0]
+			if drlIdx < 2 {
+				mv = rf.fixMVPrecision(mv)
+			}
 			motionResult.MV[0] = mv.vector()
 		}
 		motionResult.Mode = InterModeResult{Mode: mode}
 	}
-	c.CommitStateTo(&s.Reader)
 	if !ok {
 		return ErrInvalidDecodeState
 	}
 	result.InterMode = motionResult.Mode
 	result.InterModeValid = true
-	result.DRLIndex = uint8(drlIdx)
-	result.DRLIndexValid = drlRead
 	result.InterMotionValid = true
 	return nil
 }
