@@ -994,6 +994,7 @@ func collectTemporalUnitsWithBudget(
 	overallDeadline := started.Add(maxWait)
 	progressDeadline := started.Add(noProgress)
 	tus := make([][]byte, 0, want)
+	restarts, droppedPackets := 0, 0
 	for len(tus) < want {
 		deadline := overallDeadline
 		noProgressDeadline := progressDeadline.Before(overallDeadline)
@@ -1012,17 +1013,19 @@ func collectTemporalUnitsWithBudget(
 				// be want consecutive loss-free units. Recovery from loss is
 				// covered by the explicit loss tests.
 				tus = tus[:0]
+				restarts++
+				droppedPackets += int(unit.dropped)
 			}
 			tus = append(tus, unit.data)
 			progressDeadline = time.Now().Add(noProgress)
 		case <-timer.C:
 			elapsed := time.Since(started).Round(time.Millisecond)
 			if noProgressDeadline {
-				return nil, fmt.Errorf("no temporal-unit progress for %s: received %d/%d after %s",
-					noProgress, len(tus), want, elapsed)
+				return nil, fmt.Errorf("no temporal-unit progress for %s: received %d/%d after %s (window restarted %d times after %d dropped RTP packets)",
+					noProgress, len(tus), want, elapsed, restarts, droppedPackets)
 			}
-			return nil, fmt.Errorf("overall temporal-unit collection timeout after %s: received %d/%d",
-				maxWait, len(tus), want)
+			return nil, fmt.Errorf("overall temporal-unit collection timeout after %s: received %d/%d (window restarted %d times after %d dropped RTP packets)",
+				maxWait, len(tus), want, restarts, droppedPackets)
 		}
 	}
 	return tus, nil
