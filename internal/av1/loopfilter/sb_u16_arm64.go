@@ -386,12 +386,11 @@ func filterSBVertical16Edge(pix []byte, off, stride, rowBytes int, bitDepth uint
 		wd := sbWidth(nGt4, n16, luma)
 		u0 := lvlOff + 2*g*lvlStride
 		q0Off := off + 8*g*stride
-		lastRow := q0Off + 7*stride
 		reach := 8 // bytes on each side: p3..q3
 		if wd == 16 {
 			reach = 16 // p7..q7
 		}
-		if rowBytes < reach || q0Off-reach < 0 || lastRow+reach > len(pix) {
+		if rowBytes < reach || !unsafeutil.RowsFit(len(pix), q0Off-reach, stride, 2*reach, 8) {
 			sub := vm
 			for k := range sub {
 				sub[k] = (sub[k] >> sh) & 3
@@ -403,7 +402,7 @@ func filterSBVertical16Edge(pix []byte, off, stride, rowBytes int, bitDepth uint
 		if !ok {
 			continue
 		}
-		lpfCols16(pix, q0Off, stride, wd, k, eV, iV, hV, m4, sbPairMask16(nGt4), sbPairMask16(n16))
+		lpfCols16(unsafeutil.NewRows(pix, q0Off-reach, stride, 2*reach, 8), 0, reach, wd, k, eV, iV, hV, m4, sbPairMask16(nGt4), sbPairMask16(n16))
 	}
 }
 
@@ -536,22 +535,29 @@ func filterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, v
 		filterSBVertical16Scalar(pix, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 		return
 	}
-	if rowBytes < reach || off < reach || off+(8*hiG+7)*stride+reach > len(pix) || li < 4 || li+(2*hiG+1)*ls4+4 > len(lvl) {
+	// One view of the call's samples (its 8*(hiG+1) rows, reach bytes each
+	// side of the edge) and one of its level pairs (the (l[-1], l[0]) cell
+	// pairs of its 2*(hiG+1) units) replace the reach checks; each group is
+	// then an eight-row block of the sample view and two rows of the level
+	// view.
+	if rowBytes < reach || !unsafeutil.RowsFit(len(pix), off-reach, stride, 2*reach, 8*hiG+8) || !unsafeutil.RowsFit(len(lvl), li-4, ls4, 8, 2*hiG+2) {
 		filterSBVertical16Edge(pix, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 		return
 	}
-	bd8 := uint(bitDepth - 8)
+	v := unsafeutil.NewRows(pix, off-reach, stride, 2*reach, 8*hiG+8)
+	lv := unsafeutil.NewRows(lvl, li-4, ls4, 8, 2*hiG+2)
+	bd8 := int16(bitDepth - 8)
 	k := &lpf16Tab[bd8>>1]
-	stride8 := 8 * stride
-	for q0 := off; vm0 != 0; vm0, vm1, vm2, q0, li = vm0>>2, vm1>>2, vm2>>2, q0+stride8, li+2*ls4 {
+	for g := 0; vm0 != 0; vm0, vm1, vm2, g = vm0>>2, vm1>>2, vm2>>2, g+1 {
 		if vm0&3 == 0 {
 			continue
 		}
-		lv := sbLevels16Pairs(lvl, li, ls4)
-		eV, iV, hV, m4, ok := sbLimits16(lv, vm0, lut, int16(bd8))
-		if !ok {
-			continue
+		// sbLevels16Pairs on the group's two level rows.
+		x0, x1 := binary.LittleEndian.Uint64(lv.Row8(2*g, 0)[:]), binary.LittleEndian.Uint64(lv.Row8(2*g+1, 0)[:])
+		lp := [2]uint64{x0>>32 | x1&^0xffffffff, x0&0xffffffff | x1<<32}
+		lw := archsimd.LoadUint64x2Array(&lp).ReshapeToUint32s().And(archsimd.LoadUint32x4Array(&sbLowByteLanes))
+		if eV, iV, hV, m4, ok := sbLimits16(lw, vm0, lut, bd8); ok {
+			lpfCols16(v, 8*g, reach, sbWidth16(vm1, vm2, luma), k, eV, iV, hV, m4, sbPairMask16(vm1), sbPairMask16(vm2))
 		}
-		lpfCols16(pix, q0, stride, sbWidth16(vm1, vm2, luma), k, eV, iV, hV, m4, sbPairMask16(vm1), sbPairMask16(vm2))
 	}
 }

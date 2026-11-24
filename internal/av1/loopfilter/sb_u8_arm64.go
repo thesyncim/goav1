@@ -19,28 +19,9 @@ import (
 // unsafeutil.Block: the kernels name their rows by constant row numbers, so
 // no tap access costs a check (dav1d trusts its caller the same way, with
 // the check moved to the view). The transposes run through local arrays.
-// The 16-bit kernels (sb_u16_arm64.go) take checked row windows (lpfWin2,
-// lpfWin4).
+// The 16-bit drivers (sb_u16_arm64.go) work the same way.
 
-// lpfWin2 is the two row windows at b and b+st: both are slices ending at
-// the second row's end, so the pair costs one compare. Callers pass b and st
-// below 1<<32 (int(uint32(x))), which proves the offsets non-negative and
-// overflow-free.
-func lpfWin2(pix []byte, b, st int) (*[16]byte, *[16]byte) {
-	e := b + st + 16
-	return (*[16]byte)(pix[b:e]), (*[16]byte)(pix[b+st : e])
-}
-
-// lpfWin4 is the four row windows from b at stride st, two compares.
-func lpfWin4(pix []byte, b, st int) (*[16]byte, *[16]byte, *[16]byte, *[16]byte) {
-	e := b + st + 16
-	b2 := b + 2*st
-	e2 := b2 + st + 16
-	return (*[16]byte)(pix[b:e]), (*[16]byte)(pix[b+st : e]), (*[16]byte)(pix[b2:e2]), (*[16]byte)(pix[b2+st : e2])
-}
-
-// lpfMaxPlane bounds the planes the vector drivers take: every row offset of
-// a plane up to 1<<32 bytes fits the 32-bit offsets of lpfWin4. Larger planes
+// lpfMaxPlane bounds the planes the vector drivers take; larger planes
 // (beyond any AV1 frame) take the scalar reference.
 const lpfMaxPlane = 1 << 32
 
