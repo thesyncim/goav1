@@ -11,6 +11,10 @@ import (
 	"unsafe"
 )
 
+// unsafe: strided tap rows inside a window range-checked once per call; the
+// same shape as sb_u8_arm64.go, where the bounds-checked slice form measured
+// +20-61%.
+
 // lfFilter4U8Wide follows the byte-domain sixteen-lane dataflow of the old
 // NEON path. The block-limit gate excludes 255, so saturating the byte-domain
 // threshold sum cannot turn a rejected lane into an accepted one.

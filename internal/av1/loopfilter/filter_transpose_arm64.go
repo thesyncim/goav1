@@ -12,6 +12,10 @@ import (
 	"unsafe"
 )
 
+// unsafe: strided tap rows inside a window range-checked once per call; the
+// same shape as sb_u8_arm64.go, where the bounds-checked slice form measured
+// +20-61%.
+
 // lfTranspose8x8U8 transposes eight rows of eight bytes. Both source and
 // destination strides may differ, so the same register ladder serves gather
 // and scatter. Every load and store covers exactly one eight-byte row.

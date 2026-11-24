@@ -11,6 +11,10 @@ import (
 	"unsafe"
 )
 
+// unsafe: strided tap rows inside a window range-checked once per call; the
+// same shape as sb_u8_arm64.go, where the bounds-checked slice form measured
+// +20-61%.
+
 // lfStore8 narrows eight in-range lanes and writes exactly eight bytes. The
 // narrow is a NEON SQXTUN and the low 64-bit lane becomes one store.
 func lfStore8(pix []byte, off int, v archsimd.Int16x8) {

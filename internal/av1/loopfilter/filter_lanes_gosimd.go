@@ -11,6 +11,10 @@ import (
 	"unsafe"
 )
 
+// unsafe: strided tap rows inside a window range-checked once per call; the
+// same shape as sb_u8_arm64.go, where the bounds-checked slice form measured
+// +20-61%.
+
 // lfSample is the sample width a Go-native SIMD deblocking kernel is
 // instantiated for: one byte per sample at 8-bit, two bytes at 10/12-bit.
 type lfSample interface {

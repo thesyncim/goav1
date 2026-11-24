@@ -12,6 +12,10 @@ import (
 	"unsafe"
 )
 
+// unsafe: strided tap rows inside a window range-checked once per call; the
+// same shape as sb_u8_arm64.go, where the bounds-checked slice form measured
+// +20-61%.
+
 // sbPairLanes16[b] selects the four uint16 lanes of every unit of a two-unit
 // half group whose bit is set in b (unit k owns lanes 4k..4k+3).
 var sbPairLanes16 = func() (t [4][8]uint16) {

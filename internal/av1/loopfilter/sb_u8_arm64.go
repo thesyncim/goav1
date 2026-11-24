@@ -12,6 +12,12 @@ import (
 	"unsafe"
 )
 
+// unsafe: every tap row sits at q0 + k*stride inside the window the drivers
+// range-check once per call (and the transpose buffers are local arrays).
+// Reslicing pix per row, (*[16]uint8)(s[off:]), costs a bounds-check pair per
+// row: +20-61% on BenchmarkCheckasmLPF{H,V}SB{Y,UV}8 and 1.5-2.9x the kernel
+// instructions (lpf8U8W wd4 cols 204 -> 584), so the pointer form stays.
+
 func lpfLoad(p unsafe.Pointer, off int) archsimd.Uint8x16 {
 	return archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, off)))
 }
@@ -44,7 +50,7 @@ func lpfAny(m archsimd.Mask8x16) bool {
 // shares.
 func lpf16U8W[W lpfWidth](p unsafe.Pointer, stride int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) bool {
 	var wdT W
-	if unsafe.Sizeof(wdT) == 16 {
+	if len(wdT) == 16 {
 		return lpf16U8Wd16(p, stride, eV, iV, hV, m4, mGt4, m16)
 	}
 	return lpf8U8W[W, lpfRows](p, stride, eV, iV, hV, m4, mGt4)
@@ -780,8 +786,8 @@ type lpfLayout interface {
 func lpf8U8W[W lpfWidth, L lpfLayout](p unsafe.Pointer, stride int, eV, iV, hV archsimd.Uint8x16, m4, mGt4 archsimd.Mask8x16) bool {
 	var wdT W
 	var lT L
-	wd := int(unsafe.Sizeof(wdT))
-	cols := unsafe.Sizeof(lT) == 2
+	wd := len(wdT)
+	cols := len(lT) == 2
 	var p3, p2, p1, p0, q0, q1, q2, q3 archsimd.Uint8x16
 	if cols {
 		r0, r8 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 0))), archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 8*stride)))

@@ -12,6 +12,10 @@ import (
 	"unsafe"
 )
 
+// unsafe: strided tap rows inside a window range-checked once per call; the
+// same shape as sb_u8_arm64.go, where the bounds-checked slice form measured
+// +20-61%.
+
 // This file ports dav1d's AVX2 superblock deblock drivers and their FILTER
 // macro (src/x86/loopfilter_avx2.asm lpf_{v,h}_sb_{y,uv}_8bpc) to archsimd.
 // One kernel call covers 32 samples, eight 4x4 units, which is one byte of
@@ -135,7 +139,7 @@ func avxJoin(even, odd archsimd.Uint16x16) archsimd.Uint8x32 {
 // lanes wider than 4); ok is false when no lane passed the filter mask.
 func avxLpfCore[W avxWidth](p3, p2, p1, p0, q0, q1, q2, q3, eV, iV, hV, m4, mGt4 archsimd.Uint8x32) (o2, o1, o0, n0, n1, n2, mFlat archsimd.Uint8x32, ok bool) {
 	var wdT W
-	wd := int(unsafe.Sizeof(wdT))
+	wd := len(wdT)
 	o2, o1, o0, n0, n1, n2 = p2, p1, p0, q0, q1, q2
 	maxd := avxAbsd(p1, p0).Max(avxAbsd(q1, q0))
 	t := maxd
