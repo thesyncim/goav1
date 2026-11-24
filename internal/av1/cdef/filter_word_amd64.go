@@ -20,28 +20,28 @@ package cdef
 // amd64, so the constrain stays in words. Output is byte-identical to
 // filterBlockPureGo / filterBlockU8PureGo.
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
-func cdefWordLd(p unsafe.Pointer) archsimd.Int16x8 {
-	return archsimd.LoadInt16x8Array((*[8]int16)(p))
+// cdefWordLd loads the 8 samples of w at i as Int16x8.
+func cdefWordLd(w *[cdefWin1]uint16, i uint) archsimd.Int16x8 {
+	return archsimd.LoadUint16x8Array((*[8]uint16)(w[i : i+8])).AsInt16x8()
 }
 
-// cdefWordLoad8 packs the 8 samples at p and at p+BStride as [r0 | r1].
-func cdefWordLoad8(p unsafe.Pointer) archsimd.Int16x16 {
+// cdefWordLoad8W packs the 8 samples at window index i of two rows' windows
+// as [r0 | r1].
+func cdefWordLoad8W(w0, w1 *[cdefWin1]uint16, i uint) archsimd.Int16x16 {
 	var z archsimd.Int16x16
-	return z.SetLo(cdefWordLd(p)).SetHi(cdefWordLd(unsafe.Add(p, BStride*2)))
+	return z.SetLo(cdefWordLd(w0, i)).SetHi(cdefWordLd(w1, i))
 }
 
-// cdefWordLoad4 packs the 4 samples of four rows at p as [r0 r1 | r2 r3]
-// (BORDER_LOAD_BLOCK w=4: movq / movhps / vinserti128). The full-width loads
-// read four halo samples past each row segment, inside the 8-column border.
-func cdefWordLoad4(p unsafe.Pointer) archsimd.Int16x16 {
+// cdefWordLoad4W packs the 4 samples at window index i of four rows' windows
+// as [r0 r1 | r2 r3] (BORDER_LOAD_BLOCK w=4: movq / movhps /
+// vinserti128). The full-width loads read four halo samples past each row
+// segment, inside the 8-column border.
+func cdefWordLoad4W(w0, w1, w2, w3 *[cdefWin1]uint16, i uint) archsimd.Int16x16 {
 	var z archsimd.Int16x16
-	ac := z.SetLo(cdefWordLd(p)).SetHi(cdefWordLd(unsafe.Add(p, 2*BStride*2))).AsUint64x4()
-	bd := z.SetLo(cdefWordLd(unsafe.Add(p, BStride*2))).SetHi(cdefWordLd(unsafe.Add(p, 3*BStride*2))).AsUint64x4()
+	ac := z.SetLo(cdefWordLd(w0, i)).SetHi(cdefWordLd(w2, i)).AsUint64x4()
+	bd := z.SetLo(cdefWordLd(w1, i)).SetHi(cdefWordLd(w3, i)).AsUint64x4()
 	return ac.InterleaveLoGrouped(bd).AsInt16x16()
 }
 
@@ -80,20 +80,23 @@ func cdefWordFilter8(ctx *cdefSIMDCtx) {
 	noSentinel := archsimd.BroadcastInt16x16(int16(^VeryLarge))
 	priOn, secOn, u8 := ctx.enablePrimary, ctx.enableSecondary, ctx.u8
 	clip := priOn && secOn
-	pri0, pri1 := ctx.pri0*2, ctx.pri1*2
-	sec0, sec1, sec2, sec3 := ctx.sec0*2, ctx.sec1*2, ctx.sec2*2, ctx.sec3*2
-	src := ctx.input
-	dst := ctx.dst
-	dstStr := ctx.dstStr
-	for h := ctx.height; h > 0; h -= 2 {
-		x := cdefWordLoad8(src)
+	p0p, p0m, p1p, p1m := ctx.priTaps()
+	s0p, s0m, s1p, s1m := ctx.secTaps0()
+	s2p, s2m, s3p, s3m := ctx.secTaps1()
+	in, base, height := ctx.rows()
+	out16, out8, do, ds := ctx.outRows()
+	// Counted by row pair: a step-2 counter keeps a second check per window.
+	for i := 0; i < height>>1; i++ {
+		r := 2 * i
+		w0, w1 := cdefRow(in, base+r*BStride), cdefRow(in, base+(r+1)*BStride)
+		x := cdefWordLoad8W(w0, w1, cdefWinReach)
 		var sum archsimd.Int16x16
 		mx, mn := x, x
 		if priOn {
-			t0 := cdefWordLoad8(unsafe.Add(src, pri0))
-			t1 := cdefWordLoad8(unsafe.Add(src, -pri0))
-			t2 := cdefWordLoad8(unsafe.Add(src, pri1))
-			t3 := cdefWordLoad8(unsafe.Add(src, -pri1))
+			t0 := cdefWordLoad8W(w0, w1, p0p)
+			t1 := cdefWordLoad8W(w0, w1, p0m)
+			t2 := cdefWordLoad8W(w0, w1, p1p)
+			t3 := cdefWordLoad8W(w0, w1, p1m)
 			sum = cdefWordConstrain(t0, x, priStr, priSh, priM).Add(cdefWordConstrain(t1, x, priStr, priSh, priM)).Mul(priTap0).
 				Add(cdefWordConstrain(t2, x, priStr, priSh, priM).Add(cdefWordConstrain(t3, x, priStr, priSh, priM)).Mul(priTap1))
 			if clip {
@@ -102,20 +105,20 @@ func cdefWordFilter8(ctx *cdefSIMDCtx) {
 			}
 		}
 		if secOn {
-			s0 := cdefWordLoad8(unsafe.Add(src, sec0))
-			s1 := cdefWordLoad8(unsafe.Add(src, -sec0))
-			s2 := cdefWordLoad8(unsafe.Add(src, sec1))
-			s3 := cdefWordLoad8(unsafe.Add(src, -sec1))
+			s0 := cdefWordLoad8W(w0, w1, s0p)
+			s1 := cdefWordLoad8W(w0, w1, s0m)
+			s2 := cdefWordLoad8W(w0, w1, s1p)
+			s3 := cdefWordLoad8W(w0, w1, s1m)
 			sum = sum.Add(cdefWordConstrain(s0, x, secStr, secSh, secM).Add(cdefWordConstrain(s1, x, secStr, secSh, secM)).
 				Add(cdefWordConstrain(s2, x, secStr, secSh, secM)).Add(cdefWordConstrain(s3, x, secStr, secSh, secM)).Mul(secTap0))
 			if clip {
 				mx = mx.Max(s0.And(noSentinel)).Max(s1.And(noSentinel)).Max(s2.And(noSentinel)).Max(s3.And(noSentinel))
 				mn = mn.Min(s0).Min(s1).Min(s2).Min(s3)
 			}
-			s4 := cdefWordLoad8(unsafe.Add(src, sec2))
-			s5 := cdefWordLoad8(unsafe.Add(src, -sec2))
-			s6 := cdefWordLoad8(unsafe.Add(src, sec3))
-			s7 := cdefWordLoad8(unsafe.Add(src, -sec3))
+			s4 := cdefWordLoad8W(w0, w1, s2p)
+			s5 := cdefWordLoad8W(w0, w1, s2m)
+			s6 := cdefWordLoad8W(w0, w1, s3p)
+			s7 := cdefWordLoad8W(w0, w1, s3m)
 			sum = sum.Add(cdefWordConstrain(s4, x, secStr, secSh, secM).Add(cdefWordConstrain(s5, x, secStr, secSh, secM)).
 				Add(cdefWordConstrain(s6, x, secStr, secSh, secM)).Add(cdefWordConstrain(s7, x, secStr, secSh, secM)).Mul(secTap1))
 			if clip {
@@ -129,15 +132,11 @@ func cdefWordFilter8(ctx *cdefSIMDCtx) {
 		}
 		if u8 {
 			b := y.AsUint8x32().PermuteOrZeroGrouped(archsimd.LoadInt8x32Array(&cdefWordLowBytes))
-			*(*uint64)(dst) = b.GetLo().AsUint64x2().GetElem(0)
-			*(*uint64)(unsafe.Add(dst, dstStr)) = b.GetHi().AsUint64x2().GetElem(0)
+			cdefPut8(out8, do+r*ds, b.GetLo().AsUint64x2().GetElem(0))
+			cdefPut8(out8, do+(r+1)*ds, b.GetHi().AsUint64x2().GetElem(0))
 		} else {
-			y.GetLo().StoreArray((*[8]int16)(dst))
-			y.GetHi().StoreArray((*[8]int16)(unsafe.Add(dst, dstStr)))
-		}
-		if h > 2 {
-			src = unsafe.Add(src, 2*BStride*2)
-			dst = unsafe.Add(dst, 2*dstStr)
+			y.GetLo().AsUint16x8().StoreArray(cdefOut16(out16, do+r*ds))
+			y.GetHi().AsUint16x8().StoreArray(cdefOut16(out16, do+(r+1)*ds))
 		}
 	}
 	archsimd.ClearAVXUpperBits()
@@ -158,20 +157,23 @@ func cdefWordFilter4(ctx *cdefSIMDCtx) {
 	noSentinel := archsimd.BroadcastInt16x16(int16(^VeryLarge))
 	priOn, secOn, u8 := ctx.enablePrimary, ctx.enableSecondary, ctx.u8
 	clip := priOn && secOn
-	pri0, pri1 := ctx.pri0*2, ctx.pri1*2
-	sec0, sec1, sec2, sec3 := ctx.sec0*2, ctx.sec1*2, ctx.sec2*2, ctx.sec3*2
-	src := ctx.input
-	dst := ctx.dst
-	dstStr := ctx.dstStr
-	for h := ctx.height; h > 0; h -= 4 {
-		x := cdefWordLoad4(src)
+	p0p, p0m, p1p, p1m := ctx.priTaps()
+	s0p, s0m, s1p, s1m := ctx.secTaps0()
+	s2p, s2m, s3p, s3m := ctx.secTaps1()
+	in, base, height := ctx.rows()
+	out16, out8, do, ds := ctx.outRows()
+	for i := 0; i < height>>2; i++ {
+		r := 4 * i
+		w0, w1 := cdefRow(in, base+r*BStride), cdefRow(in, base+(r+1)*BStride)
+		w2, w3 := cdefRow(in, base+(r+2)*BStride), cdefRow(in, base+(r+3)*BStride)
+		x := cdefWordLoad4W(w0, w1, w2, w3, cdefWinReach)
 		var sum archsimd.Int16x16
 		mx, mn := x, x
 		if priOn {
-			t0 := cdefWordLoad4(unsafe.Add(src, pri0))
-			t1 := cdefWordLoad4(unsafe.Add(src, -pri0))
-			t2 := cdefWordLoad4(unsafe.Add(src, pri1))
-			t3 := cdefWordLoad4(unsafe.Add(src, -pri1))
+			t0 := cdefWordLoad4W(w0, w1, w2, w3, p0p)
+			t1 := cdefWordLoad4W(w0, w1, w2, w3, p0m)
+			t2 := cdefWordLoad4W(w0, w1, w2, w3, p1p)
+			t3 := cdefWordLoad4W(w0, w1, w2, w3, p1m)
 			sum = cdefWordConstrain(t0, x, priStr, priSh, priM).Add(cdefWordConstrain(t1, x, priStr, priSh, priM)).Mul(priTap0).
 				Add(cdefWordConstrain(t2, x, priStr, priSh, priM).Add(cdefWordConstrain(t3, x, priStr, priSh, priM)).Mul(priTap1))
 			if clip {
@@ -180,20 +182,20 @@ func cdefWordFilter4(ctx *cdefSIMDCtx) {
 			}
 		}
 		if secOn {
-			s0 := cdefWordLoad4(unsafe.Add(src, sec0))
-			s1 := cdefWordLoad4(unsafe.Add(src, -sec0))
-			s2 := cdefWordLoad4(unsafe.Add(src, sec1))
-			s3 := cdefWordLoad4(unsafe.Add(src, -sec1))
+			s0 := cdefWordLoad4W(w0, w1, w2, w3, s0p)
+			s1 := cdefWordLoad4W(w0, w1, w2, w3, s0m)
+			s2 := cdefWordLoad4W(w0, w1, w2, w3, s1p)
+			s3 := cdefWordLoad4W(w0, w1, w2, w3, s1m)
 			sum = sum.Add(cdefWordConstrain(s0, x, secStr, secSh, secM).Add(cdefWordConstrain(s1, x, secStr, secSh, secM)).
 				Add(cdefWordConstrain(s2, x, secStr, secSh, secM)).Add(cdefWordConstrain(s3, x, secStr, secSh, secM)).Mul(secTap0))
 			if clip {
 				mx = mx.Max(s0.And(noSentinel)).Max(s1.And(noSentinel)).Max(s2.And(noSentinel)).Max(s3.And(noSentinel))
 				mn = mn.Min(s0).Min(s1).Min(s2).Min(s3)
 			}
-			s4 := cdefWordLoad4(unsafe.Add(src, sec2))
-			s5 := cdefWordLoad4(unsafe.Add(src, -sec2))
-			s6 := cdefWordLoad4(unsafe.Add(src, sec3))
-			s7 := cdefWordLoad4(unsafe.Add(src, -sec3))
+			s4 := cdefWordLoad4W(w0, w1, w2, w3, s2p)
+			s5 := cdefWordLoad4W(w0, w1, w2, w3, s2m)
+			s6 := cdefWordLoad4W(w0, w1, w2, w3, s3p)
+			s7 := cdefWordLoad4W(w0, w1, w2, w3, s3m)
 			sum = sum.Add(cdefWordConstrain(s4, x, secStr, secSh, secM).Add(cdefWordConstrain(s5, x, secStr, secSh, secM)).
 				Add(cdefWordConstrain(s6, x, secStr, secSh, secM)).Add(cdefWordConstrain(s7, x, secStr, secSh, secM)).Mul(secTap1))
 			if clip {
@@ -208,20 +210,16 @@ func cdefWordFilter4(ctx *cdefSIMDCtx) {
 		if u8 {
 			b := y.AsUint8x32().PermuteOrZeroGrouped(archsimd.LoadInt8x32Array(&cdefWordLowBytes))
 			lo, hi := b.GetLo().AsUint32x4(), b.GetHi().AsUint32x4()
-			*(*uint32)(dst) = lo.GetElem(0)
-			*(*uint32)(unsafe.Add(dst, dstStr)) = lo.GetElem(1)
-			*(*uint32)(unsafe.Add(dst, 2*dstStr)) = hi.GetElem(0)
-			*(*uint32)(unsafe.Add(dst, 3*dstStr)) = hi.GetElem(1)
+			cdefPut4(out8, do+r*ds, lo.GetElem(0))
+			cdefPut4(out8, do+(r+1)*ds, lo.GetElem(1))
+			cdefPut4(out8, do+(r+2)*ds, hi.GetElem(0))
+			cdefPut4(out8, do+(r+3)*ds, hi.GetElem(1))
 		} else {
 			lo, hi := y.GetLo().AsUint64x2(), y.GetHi().AsUint64x2()
-			*(*uint64)(dst) = lo.GetElem(0)
-			*(*uint64)(unsafe.Add(dst, dstStr)) = lo.GetElem(1)
-			*(*uint64)(unsafe.Add(dst, 2*dstStr)) = hi.GetElem(0)
-			*(*uint64)(unsafe.Add(dst, 3*dstStr)) = hi.GetElem(1)
-		}
-		if h > 4 {
-			src = unsafe.Add(src, 4*BStride*2)
-			dst = unsafe.Add(dst, 4*dstStr)
+			cdefPutU16x4(out16, do+r*ds, lo.GetElem(0))
+			cdefPutU16x4(out16, do+(r+1)*ds, lo.GetElem(1))
+			cdefPutU16x4(out16, do+(r+2)*ds, hi.GetElem(0))
+			cdefPutU16x4(out16, do+(r+3)*ds, hi.GetElem(1))
 		}
 	}
 	archsimd.ClearAVXUpperBits()
@@ -247,7 +245,7 @@ func filterBlockAVX2(dst []uint16, dstStride int, dstOrigin int, input []uint16,
 		return
 	}
 	var ctx cdefSIMDCtx
-	ctx.setBlock(unsafe.Pointer(&dst[dstOrigin]), dstStride*2, unsafe.Pointer(&input[inputOrigin]), params, false)
+	ctx.setBlock(dst, nil, dstOrigin, dstStride, input, inputOrigin, params, false)
 	if params.Width == 8 {
 		cdefWordFilter8(&ctx)
 	} else {
@@ -263,7 +261,7 @@ func filterBlockU8AVX2(dst []byte, dstStride int, dstOrigin int, input []uint16,
 		return
 	}
 	var ctx cdefSIMDCtx
-	ctx.setBlock(unsafe.Pointer(&dst[dstOrigin]), dstStride, unsafe.Pointer(&input[inputOrigin]), params, true)
+	ctx.setBlock(nil, dst, dstOrigin, dstStride, input, inputOrigin, params, true)
 	if params.Width == 8 {
 		cdefWordFilter8(&ctx)
 	} else {
