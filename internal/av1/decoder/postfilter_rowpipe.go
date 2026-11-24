@@ -160,11 +160,10 @@ func (ctx *FrameWorkPostFilterContext) multiTile() bool {
 // threads while the next rows deblock. Unit rows are filtered in place
 // against two-row boundary snapshots taken before any neighbour is filtered
 // (the parallel 8-bit band walk), on goroutines owned by the
-// FrameWorkPostFilterParallel.
+// FrameWorkPostFilterParallel and on the driver.
 type frameWorkRowPipe struct {
-	units   chan int
+	crew    *rowPipeCrew
 	started int
-	wg      sync.WaitGroup
 	err     atomic.Pointer[wavefrontPostFilterError]
 
 	// The frame's unit-row job, written by the driver before it sends the
@@ -204,30 +203,161 @@ type frameWorkRowPipe struct {
 
 type wavefrontPostFilterError struct{ err error }
 
+// rowPipeCrew queues a frame's unit rows for the unit workers and the driver,
+// which take them in order (dav1d's workers walk the task list before they
+// sleep). The driver queues unit rows as their inputs become final and wakes
+// a parked worker only for rows that wait while it deblocks; while it would
+// otherwise wait for reconstruction it runs the queued rows itself. A frame
+// whose post-filter keeps pace with reconstruction then wakes few workers,
+// where handing each unit row to a parked worker cost a park and a wake per
+// row. mu guards every field; a closed crew is dropped, never reused.
+type rowPipeCrew struct {
+	mu       sync.Mutex
+	queued   int // unit rows handed to the crew this frame
+	claimed  int // unit rows taken by a worker or the driver
+	inFlight int // claimed unit rows still running
+	// idle holds the parked workers, each waiting on its wake channel.
+	idle []int
+	wake []chan struct{}
+	// The driver parks on driverWake for the last running unit row.
+	driverWake    chan struct{}
+	driverWaiting bool
+	closed        bool
+}
+
 // startRowPipeWorkers makes sure n unit workers run.
 func (p *FrameWorkPostFilterParallel) startRowPipeWorkers(n int) {
 	pp := &p.pipe
-	if pp.units == nil {
-		pp.units = make(chan int, 64)
+	if pp.crew == nil {
+		pp.crew = &rowPipeCrew{driverWake: make(chan struct{}, 1)}
 	}
+	c := pp.crew
 	for ; pp.started < n; pp.started++ {
-		go p.rowPipeWorker(pp.started, pp.units)
+		c.mu.Lock()
+		c.wake = append(c.wake, make(chan struct{}, 1))
+		c.mu.Unlock()
+		go p.rowPipeWorker(c, pp.started)
 	}
 }
 
-func (p *FrameWorkPostFilterParallel) rowPipeWorker(w int, units <-chan int) {
-	for u := range units {
-		p.rowPipeUnit(w, u)
+func (p *FrameWorkPostFilterParallel) rowPipeWorker(c *rowPipeCrew, w int) {
+	c.mu.Lock()
+	for !c.closed {
+		if u, ok := c.claimLocked(); ok {
+			c.mu.Unlock()
+			p.rowPipeUnit(w, u)
+			c.mu.Lock()
+			c.finishLocked()
+			continue
+		}
+		c.idle = append(c.idle, w)
+		ch := c.wake[w]
+		c.mu.Unlock()
+		<-ch
+		c.mu.Lock()
+	}
+	c.mu.Unlock()
+}
+
+func (c *rowPipeCrew) claimLocked() (int, bool) {
+	if c.claimed >= c.queued {
+		return 0, false
+	}
+	u := c.claimed
+	c.claimed++
+	c.inFlight++
+	return u, true
+}
+
+func (c *rowPipeCrew) finishLocked() {
+	c.inFlight--
+	if c.inFlight == 0 && c.claimed == c.queued && c.driverWaiting {
+		c.driverWaiting = false
+		c.driverWake <- struct{}{}
+	}
+}
+
+// begin starts a frame with no unit row queued. Every unit row of the last
+// frame finished (join), so no worker runs one.
+func (c *rowPipeCrew) begin() {
+	c.mu.Lock()
+	c.queued, c.claimed = 0, 0
+	c.mu.Unlock()
+}
+
+// queue makes unit rows [0, end) available.
+func (c *rowPipeCrew) queue(end int) {
+	c.mu.Lock()
+	c.queued = end
+	c.mu.Unlock()
+}
+
+// kick wakes one parked worker when more than keep queued unit rows are left
+// over by the awake workers free to take them. The woken worker takes queued
+// rows until none is left, so one wake covers a run of rows.
+func (c *rowPipeCrew) kick(keep int) {
+	c.mu.Lock()
+	// Awake workers not running a unit row take queued rows without a wake.
+	spare := len(c.wake) - len(c.idle) - c.inFlight
+	if c.queued-c.claimed-keep-spare > 0 && len(c.idle) > 0 {
+		w := c.idle[len(c.idle)-1]
+		c.idle = c.idle[:len(c.idle)-1]
+		c.wake[w] <- struct{}{}
+	}
+	c.mu.Unlock()
+}
+
+// help runs one queued unit row on the driver's scratch (worker index w) and
+// reports whether there was one.
+func (p *FrameWorkPostFilterParallel) rowPipeHelp(w int) bool {
+	c := p.pipe.crew
+	c.mu.Lock()
+	u, ok := c.claimLocked()
+	c.mu.Unlock()
+	if !ok {
+		return false
+	}
+	p.rowPipeUnit(w, u)
+	c.mu.Lock()
+	c.finishLocked()
+	c.mu.Unlock()
+	return true
+}
+
+// rowPipeJoin runs the queued unit rows on the driver, with a woken worker
+// when more than one is left, then waits for the ones still running.
+func (p *FrameWorkPostFilterParallel) rowPipeJoin(w int) {
+	c := p.pipe.crew
+	c.kick(1)
+	for {
+		for p.rowPipeHelp(w) {
+		}
+		c.mu.Lock()
+		if c.inFlight == 0 && c.claimed == c.queued {
+			c.mu.Unlock()
+			return
+		}
+		c.driverWaiting = true
+		c.mu.Unlock()
+		<-c.driverWake
 	}
 }
 
 // closeRowPipe stops the unit workers.
 func (p *FrameWorkPostFilterParallel) closeRowPipe() {
-	if p.pipe.units != nil {
-		close(p.pipe.units)
-		p.pipe.units = nil
-		p.pipe.started = 0
+	c := p.pipe.crew
+	if c == nil {
+		return
 	}
+	c.mu.Lock()
+	c.closed = true
+	for _, w := range c.idle {
+		c.wake[w] <- struct{}{}
+	}
+	c.idle = c.idle[:0]
+	c.mu.Unlock()
+	p.pipe.crew = nil
+	p.pipe.started = 0
 }
 
 func (pp *frameWorkRowPipe) fail(err error) {
@@ -239,7 +369,6 @@ func (pp *frameWorkRowPipe) fail(err error) {
 // then publishes the finished prefix.
 func (p *FrameWorkPostFilterParallel) rowPipeUnit(w, u int) {
 	pp := &p.pipe
-	defer pp.wg.Done()
 	if pp.err.Load() != nil {
 		return
 	}
@@ -397,8 +526,23 @@ func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWor
 	if ctx.Event.SequenceHeader.Use128x128Superblock {
 		sbPx = 128
 	}
+	units := false
+	driver := 0
+	// waitRecon waits until reconstruction reached luma row n. Until then
+	// the driver runs the queued unit rows itself; once it can go on, it
+	// wakes workers for the rows still queued.
 	waitRecon := func(n int) error {
-		if !recon.Wait(int32(min(n, int(threading.FrameProgressDone)))) {
+		need := int32(min(n, int(threading.FrameProgressDone)))
+		for units {
+			if recon.Ready(need) {
+				p.pipe.crew.kick(0)
+				break
+			}
+			if !p.rowPipeHelp(driver) {
+				break
+			}
+		}
+		if !recon.Wait(need) {
 			return threading.ErrFrameThreadReference
 		}
 		return nil
@@ -443,7 +587,7 @@ func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWor
 			saveDeblockLines = ctx.shouldSaveRestorationDeblockBoundaries()
 		}
 	}
-	units := cdefOn || pp.lrOn
+	units = cdefOn || pp.lrOn
 	workers := 0
 	next := 0
 	if units {
@@ -454,7 +598,9 @@ func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWor
 		}
 		// Every started unit worker indexes its own scratch, so the scratch
 		// covers all of them, not just the ones this frame needs.
-		workers = max(1, p.Workers, pp.started)
+		// The driver runs unit rows too, on the scratch after the workers'.
+		driver = max(1, p.Workers, pp.started)
+		workers = driver + 1
 		pp.hbd = out.Layout.BytesPerSample == 2
 		if cdefOn {
 			lumaWidth, chromaWidth := frameWorkCDEFParallelPlaneWidths(ctx)
@@ -483,10 +629,11 @@ func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWor
 		frameWorkMarkCompletedPostFilters(&pp.ctx, FrameWorkPostFilterLoopFilter)
 		pp.req = req.CDEF
 		pp.err.Store(nil)
-		p.startRowPipeWorkers(workers)
+		p.startRowPipeWorkers(driver)
+		pp.crew.begin()
 	}
-	// dispatch hands unit rows [next, end) to the workers once what their
-	// neighbours read from them is saved.
+	// dispatch queues unit rows [next, end) once what their neighbours read
+	// from them is saved.
 	dispatch := func(end int) error {
 		for u := next; u < end; u++ {
 			if cdefOn && pp.hbd {
@@ -513,18 +660,16 @@ func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWor
 				}
 			}
 		}
-		for ; next < end; next++ {
-			if pp.err.Load() != nil {
-				return nil
-			}
-			pp.wg.Add(1)
-			pp.units <- next
+		if next >= end || pp.err.Load() != nil {
+			return nil
 		}
+		next = end
+		pp.crew.queue(end)
 		return nil
 	}
 	finish := func(err error) error {
 		if units {
-			pp.wg.Wait()
+			p.rowPipeJoin(driver)
 			if e := pp.err.Load(); e != nil && err == nil {
 				err = e.err
 			}
