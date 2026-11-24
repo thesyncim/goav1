@@ -63,7 +63,7 @@ func mc8RefPut(dst frame.Plane, ref frame.Plane, dstX, dstY, refX, refY, w, h, f
 
 func TestMC8PutFastMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
-	sizes := [][2]int{{4, 4}, {4, 8}, {4, 16}, {4, 2}, {4, 5}, {8, 5}, {16, 7}, {8, 8}, {16, 16}, {32, 32}, {8, 4}, {16, 4}, {8, 2}, {8, 16}, {16, 8}, {24, 8}, {64, 64}, {128, 128}, {32, 8}, {64, 16}, {16, 64}, {8, 32}}
+	sizes := [][2]int{{4, 4}, {4, 8}, {4, 16}, {4, 2}, {4, 5}, {8, 5}, {16, 7}, {8, 8}, {16, 16}, {32, 32}, {8, 4}, {16, 4}, {8, 2}, {8, 16}, {16, 8}, {24, 8}, {64, 64}, {128, 128}, {32, 8}, {64, 16}, {16, 64}, {8, 32}, {4, 1}, {4, 3}, {8, 1}, {4, 9}, {4, 13}, {8, 15}, {16, 11}, {32, 14}, {8, 12}, {64, 6}}
 	const rw, rh = 200, 180
 	for pattern := range 5 {
 		ref := mc8TestRef(rng, rw, rh, rw+24, pattern)
@@ -148,7 +148,7 @@ func mc8RefPrep(out []uint16, ref frame.Plane, refX, refY, w, h, subX, subY int,
 
 func TestMC8PrepFastMatchesPureGo(t *testing.T) {
 	rng := rand.New(rand.NewSource(2))
-	sizes := [][2]int{{4, 4}, {4, 8}, {4, 16}, {4, 2}, {4, 5}, {8, 5}, {16, 7}, {8, 8}, {16, 16}, {32, 32}, {8, 4}, {16, 4}, {8, 16}, {16, 8}, {64, 64}, {128, 128}, {32, 8}, {16, 64}}
+	sizes := [][2]int{{4, 4}, {4, 8}, {4, 16}, {4, 2}, {4, 5}, {8, 5}, {16, 7}, {8, 8}, {16, 16}, {32, 32}, {8, 4}, {16, 4}, {8, 16}, {16, 8}, {64, 64}, {128, 128}, {32, 8}, {16, 64}, {4, 1}, {4, 3}, {8, 1}, {4, 9}, {4, 13}, {8, 15}, {16, 11}, {32, 14}, {8, 12}, {64, 6}}
 	const rw, rh = 200, 180
 	scratch := new(CompoundConvolveScratch)
 	for pattern := range 5 {
@@ -218,7 +218,7 @@ func TestMC8CopyFastMatchesClampedCopy(t *testing.T) {
 	rng := rand.New(rand.NewSource(7))
 	const rw, rh = 200, 180
 	ref := mc8TestRef(rng, rw, rh, rw+24, 0)
-	for _, sz := range [][2]int{{4, 4}, {4, 16}, {8, 8}, {12, 4}, {16, 16}, {24, 8}, {32, 32}, {64, 64}, {128, 128}} {
+	for _, sz := range [][2]int{{4, 4}, {4, 16}, {8, 8}, {12, 4}, {16, 16}, {24, 8}, {32, 32}, {64, 64}, {128, 128}, {4, 3}, {8, 1}, {8, 7}, {16, 9}, {32, 5}, {64, 3}, {128, 3}} {
 		w, h := sz[0], sz[1]
 		for iter := range 50 {
 			refX := rng.Intn(rw+2*w) - w
