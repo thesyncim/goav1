@@ -7,6 +7,7 @@
 package prediction
 
 import (
+	"fmt"
 	"runtime"
 	"simd/archsimd"
 	"testing"
@@ -155,6 +156,32 @@ func TestStaticSIMDMatchesPureGo(t *testing.T) {
 					mode.simd(got, d.bytesPerSample, above, left, al)
 					mode.ref(want, d.bytesPerSample, above, left, al)
 					diffBlocks(t, mode.name, int(d.max), sz.width*d.bytesPerSample, sz.height, got, want)
+				}
+			}
+		}
+	}
+}
+
+// TestStaticSIMDSmoothClipped runs 2D SMOOTH on blocks clipped below their
+// predicted extent: the weights and edges come from the full predHeight
+// while only the visible rows are written, as the general entry does for a
+// transform that crosses the frame edge.
+func TestStaticSIMDSmoothClipped(t *testing.T) {
+	for _, d := range staticSIMDDepths {
+		for _, w := range []int{4, 8, 16, 32, 64} {
+			for _, ph := range []int{8, 16, 32, 64} {
+				for _, h := range []int{4, 8, 16, 32} {
+					if h >= ph {
+						continue
+					}
+					above, left, _ := staticSIMDEdges(w, ph, d.max, uint32(w*ph+h))
+					wW, _ := smoothWeightsForSize(w)
+					wH, _ := smoothWeightsForSize(ph)
+					base := makeDispatchBlock(w, h, d.bytesPerSample)
+					got, want := cloneBlock(base), cloneBlock(base)
+					predictSmoothSIMD(got, d.bytesPerSample, wW, wH, above, left, left[ph-1], above[w-1])
+					predictSmoothPureGo(want, d.bytesPerSample, wW, wH, above, left, left[ph-1], above[w-1])
+					diffBlocks(t, fmt.Sprintf("smooth %dx%d of %d", w, h, ph), int(d.max), w*d.bytesPerSample, h, got, want)
 				}
 			}
 		}
