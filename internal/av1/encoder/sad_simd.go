@@ -9,9 +9,10 @@
 // sad_simd_{arm64,amd64}.go and returns exact integer sums matching the
 // sadNxNPureGo references in sad.go.
 //
-// Every slice entry point proves the exact bytes it reads with one bounds
-// check on the last element it touches, so the raw-pointer primitives can never
-// read past a caller's slice.
+// The single-reference entry points prove the exact bytes they read with one
+// bounds check on the last element they touch, so the raw-pointer primitives
+// can never read past a caller's slice. The four-reference kernels take
+// bounds-checked row windows.
 
 package encoder
 
@@ -66,23 +67,13 @@ func sad16x16SIMD(src []byte, srcStride int, ref []byte, refStride int) int {
 // sad16x16x4SIMD computes four 16x16 SADs against reference origins sharing
 // stride.
 func sad16x16x4SIMD(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int, int) {
-	_ = src[15*stride+15]
-	_ = ref0[15*stride+15]
-	_ = ref1[15*stride+15]
-	_ = ref2[15*stride+15]
-	_ = ref3[15*stride+15]
-	return sad16ColsX4Ptr(unsafe.Pointer(&src[0]), unsafe.Pointer(&ref0[0]), unsafe.Pointer(&ref1[0]),
-		unsafe.Pointer(&ref2[0]), unsafe.Pointer(&ref3[0]), stride, 16)
+	return sad16ColsX4(src, ref0, ref1, ref2, ref3, stride, 16)
 }
 
 // sad16x16x4Step4SIMD computes four 16x16 SADs against ref+0, ref+4, ref+8, and
 // ref+12. The last candidate reads 12 bytes past each 16-byte row.
 func sad16x16x4Step4SIMD(src, ref []byte, stride int) (int, int, int, int) {
-	_ = src[15*stride+15]
-	_ = ref[15*stride+27]
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
-	rp := unsafe.Pointer(&ref[0])
-	return sad16ColsX4Ptr(unsafe.Pointer(&src[0]), rp, step(rp, 4), step(rp, 8), step(rp, 12), stride, 16)
+	return sad16ColsX4(src, ref, ref[4:], ref[8:], ref[12:], stride, 16)
 }
 
 // sad32x32SIMD is the 32x32 SAD with independent source and reference strides.
@@ -100,19 +91,8 @@ func sad32x32SIMD(src []byte, srcStride int, ref []byte, refStride int) int {
 // sad32x32x4SIMD computes four 32x32 SADs against reference origins sharing
 // stride, as two 16-column strips.
 func sad32x32x4SIMD(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int, int) {
-	_ = src[31*stride+31]
-	_ = ref0[31*stride+31]
-	_ = ref1[31*stride+31]
-	_ = ref2[31*stride+31]
-	_ = ref3[31*stride+31]
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
-	sp := unsafe.Pointer(&src[0])
-	p0 := unsafe.Pointer(&ref0[0])
-	p1 := unsafe.Pointer(&ref1[0])
-	p2 := unsafe.Pointer(&ref2[0])
-	p3 := unsafe.Pointer(&ref3[0])
-	l0, l1, l2, l3 := sad16ColsX4Ptr(sp, p0, p1, p2, p3, stride, 32)
-	r0, r1, r2, r3 := sad16ColsX4Ptr(step(sp, 16), step(p0, 16), step(p1, 16), step(p2, 16), step(p3, 16), stride, 32)
+	l0, l1, l2, l3 := sad16ColsX4(src, ref0, ref1, ref2, ref3, stride, 32)
+	r0, r1, r2, r3 := sad16ColsX4(src[16:], ref0[16:], ref1[16:], ref2[16:], ref3[16:], stride, 32)
 	return l0 + r0, l1 + r1, l2 + r2, l3 + r3
 }
 
@@ -120,13 +100,8 @@ func sad32x32x4SIMD(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, i
 // ref+12, as two 16-column strips. The last candidate reads 12 bytes past each
 // 32-byte row.
 func sad32x32x4Step4SIMD(src, ref []byte, stride int) (int, int, int, int) {
-	_ = src[31*stride+31]
-	_ = ref[31*stride+43]
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
-	sp := unsafe.Pointer(&src[0])
-	rp := unsafe.Pointer(&ref[0])
-	l0, l1, l2, l3 := sad16ColsX4Ptr(sp, rp, step(rp, 4), step(rp, 8), step(rp, 12), stride, 32)
-	r0, r1, r2, r3 := sad16ColsX4Ptr(step(sp, 16), step(rp, 16), step(rp, 20), step(rp, 24), step(rp, 28), stride, 32)
+	l0, l1, l2, l3 := sad16ColsX4(src, ref, ref[4:], ref[8:], ref[12:], stride, 32)
+	r0, r1, r2, r3 := sad16ColsX4(src[16:], ref[16:], ref[20:], ref[24:], ref[28:], stride, 32)
 	return l0 + r0, l1 + r1, l2 + r2, l3 + r3
 }
 

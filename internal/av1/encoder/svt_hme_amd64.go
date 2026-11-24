@@ -43,8 +43,6 @@ func svtDownsample2DArch(dst []byte, dstStride int, src []byte, srcStride, w, h 
 // reference origins ref+0..ref+3 (svt_sad_loop_kernel's per-row position
 // batch), VPSADBW per row and position.
 func sad16xNx4(src []byte, srcStride int, ref []byte, refStride, rows int) (int, int, int, int) {
-	_ = src[(rows-1)*srcStride+15]
-	_ = ref[(rows-1)*refStride+18]
 	if !encAVX2 || srcStride != refStride {
 		var s [4]int
 		for k := range s {
@@ -58,8 +56,7 @@ func sad16xNx4(src []byte, srcStride int, ref []byte, refStride, rows int) (int,
 		}
 		return s[0], s[1], s[2], s[3]
 	}
-	return sad16ColsX4Ptr(unsafe.Pointer(&src[0]), unsafe.Pointer(&ref[0]), unsafe.Pointer(&ref[1]),
-		unsafe.Pointer(&ref[2]), unsafe.Pointer(&ref[3]), srcStride, rows)
+	return sad16ColsX4(src, ref, ref[1:], ref[2:], ref[3:], srcStride, rows)
 }
 
 // The column-sum HME kernels serve NEON, which has no absolute difference;
