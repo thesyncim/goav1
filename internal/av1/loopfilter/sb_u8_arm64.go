@@ -641,27 +641,27 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 		if vm0&15 == 0 {
 			continue
 		}
-		// sbLevelsPairs, written out so the group's live values stay in
-		// registers.
-		lg := lv.Sub(4*g, 0, 8, 4)
-		cur, prev := sbPairs(binary.LittleEndian.Uint64(lg.Row8(0, 0)[:]), binary.LittleEndian.Uint64(lg.Row8(1, 0)[:]),
-			binary.LittleEndian.Uint64(lg.Row8(2, 0)[:]), binary.LittleEndian.Uint64(lg.Row8(3, 0)[:]))
-		lr, act, any := sbActive(cur, prev, vm0)
-		if !any {
+		// sbLevelsPairs written out, each helper on the line of an
+		// instruction of this function (no inline marks): the group's four
+		// (l[-1], l[0]) pairs go to two vectors through the array stores.
+		l0 := [2]uint64{binary.LittleEndian.Uint64(lv.Sub(4*g, 0, 8, 4).Row8(0, 0)[:]), binary.LittleEndian.Uint64(lv.Sub(4*g, 0, 8, 4).Row8(1, 0)[:])}
+		l1 := [2]uint64{binary.LittleEndian.Uint64(lv.Sub(4*g, 0, 8, 4).Row8(2, 0)[:]), binary.LittleEndian.Uint64(lv.Sub(4*g, 0, 8, 4).Row8(3, 0)[:])}
+		la := archsimd.LoadUint64x2Array(&l0).ReshapeToUint32s()
+		lb := archsimd.LoadUint64x2Array(&l1).ReshapeToUint32s()
+		ff := archsimd.LoadUint32x4Array(&sbLowByteLanes)
+		var lr, act archsimd.Uint8x16
+		var any bool
+		if lr, act, any = sbActive(la.ConcatOdd(lb).And(ff), la.ConcatEven(lb).And(ff), vm0); !any {
 			continue
 		}
-		eV, iV, hV, m4 := sbLimitsOf(lr, act, lut)
-		if vm2&15 != 0 {
+		if eV, iV, hV, m4 := sbLimitsOf(lr, act, lut); vm2&15 != 0 {
 			lpfVertical16x16U8(unsafeutil.BlockAt[lpfR16](v, 16*g, c16), eV, iV, hV, m4, sbNibbleMask(vm1), sbNibbleMask(vm2))
-			continue
-		}
-		b := unsafeutil.BlockAt[lpfR16](v, 16*g, c8)
-		if vm1&15 == 0 {
-			lpfVertical16x8U8WideW[lpfW4](b, eV, iV, hV, m4, archsimd.Mask8x16{})
+		} else if vm1&15 == 0 {
+			lpfVertical16x8U8WideW[lpfW4](unsafeutil.BlockAt[lpfR16](v, 16*g, c8), eV, iV, hV, m4, archsimd.Mask8x16{})
 		} else if luma {
-			lpfVertical16x8U8WideW[lpfW8](b, eV, iV, hV, m4, sbNibbleMask(vm1))
+			lpfVertical16x8U8WideW[lpfW8](unsafeutil.BlockAt[lpfR16](v, 16*g, c8), eV, iV, hV, m4, sbNibbleMask(vm1))
 		} else {
-			lpfVertical16x8U8WideW[lpfW6](b, eV, iV, hV, m4, sbNibbleMask(vm1))
+			lpfVertical16x8U8WideW[lpfW6](unsafeutil.BlockAt[lpfR16](v, 16*g, c8), eV, iV, hV, m4, sbNibbleMask(vm1))
 		}
 	}
 }
