@@ -227,54 +227,12 @@ func (s *DecodeState) readInterRefsRefmvs(cdfs *InterRefCDFs, c *BlockModeContex
 		}
 	}
 	n := envRefCounts(c, x4, y4, haveTop, haveLeft)
-	var refs InterReferencesResult
+	dirCtx := 0
 	if compound {
-		refs.Compound = true
-		if readEnvBool(cur, &cdfs.CompRefType[envCompDirCtx(c, x4, y4, haveTop, haveLeft)]) {
-			// bidir - first reference (fw)
-			if readEnvBool(cur, &cdfs.CompFwdRef[0][envFwdRefCtx(n)]) {
-				refs.Ref0 = ReferenceFrameLast3 + ReferenceFrame(cur.ReadBinaryCDFUnchecked(&cdfs.CompFwdRef[2][envFwdRef2Ctx(n)]))
-			} else {
-				refs.Ref0 = ReferenceFrameLast + ReferenceFrame(cur.ReadBinaryCDFUnchecked(&cdfs.CompFwdRef[1][envFwdRef1Ctx(n)]))
-			}
-			// second reference (bw)
-			if readEnvBool(cur, &cdfs.CompBwdRef[0][envBwdRefCtx(n)]) {
-				refs.Ref1 = ReferenceFrameAltref
-			} else {
-				refs.Ref1 = ReferenceFrameBWD + ReferenceFrame(cur.ReadBinaryCDFUnchecked(&cdfs.CompBwdRef[1][envBwdRef1Ctx(n)]))
-			}
-		} else {
-			// unidir
-			refs.Unidir = true
-			if readEnvBool(cur, &cdfs.UniCompRef[0][envRefCtx(n)]) {
-				refs.Ref0, refs.Ref1 = ReferenceFrameBWD, ReferenceFrameAltref
-			} else {
-				refs.Ref0 = ReferenceFrameLast
-				refs.Ref1 = ReferenceFrameLast2 + ReferenceFrame(cur.ReadBinaryCDFUnchecked(&cdfs.UniCompRef[1][envUniP1Ctx(n)]))
-				if refs.Ref1 == ReferenceFrameLast3 {
-					refs.Ref1 += ReferenceFrame(cur.ReadBinaryCDFUnchecked(&cdfs.UniCompRef[2][envFwdRef2Ctx(n)]))
-				}
-			}
-		}
-	} else {
-		refs.Ref1 = ReferenceFrameNone
-		if readEnvBool(cur, &cdfs.SingleRef[0][envRefCtx(n)]) {
-			if readEnvBool(cur, &cdfs.SingleRef[1][envBwdRefCtx(n)]) {
-				refs.Ref0 = ReferenceFrameAltref
-			} else {
-				refs.Ref0 = ReferenceFrameBWD + ReferenceFrame(cur.ReadBinaryCDFUnchecked(&cdfs.SingleRef[5][envBwdRef1Ctx(n)]))
-			}
-		} else if readEnvBool(cur, &cdfs.SingleRef[2][envFwdRefCtx(n)]) {
-			refs.Ref0 = ReferenceFrameLast3 + ReferenceFrame(cur.ReadBinaryCDFUnchecked(&cdfs.SingleRef[4][envFwdRef2Ctx(n)]))
-		} else {
-			refs.Ref0 = ReferenceFrameLast + ReferenceFrame(cur.ReadBinaryCDFUnchecked(&cdfs.SingleRef[3][envFwdRef1Ctx(n)]))
-		}
+		dirCtx = envCompDirCtx(c, x4, y4, haveTop, haveLeft)
 	}
-	return refs, nil
-}
-
-func readEnvBool(c *entropy.Reader, cdf *entropy.CDF) bool {
-	return c.ReadBinaryCDFUnchecked(cdf) != 0
+	r0, r1, unidir := (*entropy.Cursor)(cur).DecodeRefs((*entropy.InterRefCDFs)(cdfs), compound, uint(dirCtx), uint64(n))
+	return InterReferencesResult{Ref0: ReferenceFrame(r0), Ref1: ReferenceFrame(r1), Compound: compound, Unidir: unidir}, nil
 }
 
 // envFilterCtx ports get_filter_ctx: a neighbour contributes its filter for
@@ -315,14 +273,16 @@ func (s *DecodeState) readInterpFiltersRefmvs(cdfs *InterpFilterCDFs, c *BlockMo
 		filter, err := fixedMotionFilter(req.InterpolationFilter)
 		return motion.InterpFilters{X: filter, Y: filter}, 0, err
 	}
-	// The symbols are read straight from the tile's range decoder, as
-	cur := &s.Reader // dav1d reads through &ts->msac.
-	y := motion.InterpFilter(cur.ReadCDF3Unchecked(&cdfs.Switchable[envFilterCtx(c, int(block.X4), int(block.Y4), block.HaveTop, block.HaveLeft, refs.Compound, 0, refs.Ref0)]))
-	x, reads := y, 1
+	x4, y4 := int(block.X4), int(block.Y4)
+	ctxY := envFilterCtx(c, x4, y4, block.HaveTop, block.HaveLeft, refs.Compound, 0, refs.Ref0)
+	ctxX, reads := 0, 1
 	if req.EnableDualFilter {
-		x = motion.InterpFilter(cur.ReadCDF3Unchecked(&cdfs.Switchable[envFilterCtx(c, int(block.X4), int(block.Y4), block.HaveTop, block.HaveLeft, refs.Compound, 1, refs.Ref0)]))
-		reads++
+		ctxX, reads = envFilterCtx(c, x4, y4, block.HaveTop, block.HaveLeft, refs.Compound, 1, refs.Ref0), 2
 	}
+	// The symbols are read straight from the tile's range decoder, as
+	// dav1d reads through &ts->msac.
+	fy, fx := (*entropy.Cursor)(&s.Reader).DecodeFilters(&cdfs.Switchable, req.EnableDualFilter, uint(ctxY), uint(ctxX))
+	x, y := motion.InterpFilter(fx), motion.InterpFilter(fy)
 	return motion.InterpFilters{X: x, Y: y}, reads, nil
 }
 
