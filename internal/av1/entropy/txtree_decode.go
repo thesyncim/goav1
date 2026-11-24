@@ -43,6 +43,26 @@ type TxTree struct {
 	Split         [2]uint16
 }
 
+// DecodeVarTxTree runs dav1d's read_vartx_tree over all max_ytx units of a
+// block while keeping the range coder state (dif, rng, cnt) in registers.
+func (c *Cursor) DecodeVarTxTree(t *TxTree, from uint, bx4, by4, vw4, vh4 int, haveTop, haveLeft bool) {
+	d := &TxDims[from]
+	tw4, th4 := int(d.W4), int(d.H4)
+	update := c.allowCDFUpdate
+	dif, rng, cnt := c.dif, uint32(c.rng), int32(c.cnt)
+	if vw4 <= tw4 && vh4 <= th4 {
+		dif, rng, cnt = c.txTree(t, update, from, 0, 0, 0, bx4, by4, haveTop, haveLeft, dif, rng, cnt)
+	} else {
+		for y, yOff := 0, 0; y < vh4; y, yOff = y+th4, yOff+1 {
+			ht := haveTop || y > 0
+			for x, xOff := 0, 0; x < vw4; x, xOff = x+tw4, xOff+1 {
+				dif, rng, cnt = c.txTree(t, update, from, 0, xOff, yOff, bx4+x, by4+y, ht, haveLeft || x > 0, dif, rng, cnt)
+			}
+		}
+	}
+	c.dif, c.rng, c.cnt = dif, uint16(rng), int16(cnt)
+}
+
 // DecodeTxTree is one read_tx_tree call of dav1d's read_vartx_tree for the
 // max_ytx unit at (x4, y4) with offsets (xOff, yOff), the range state in
 // registers through the recursion. haveTop and haveLeft gate the split

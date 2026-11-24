@@ -44,7 +44,30 @@ func (c *frameWorkTileResidualLoopController) ReconB(visit *tile.BlockLoopVisit,
 		}
 		uvW, uvH = int(uvDims.W4), int(uvDims.H4)
 	}
-	variable := tree.Variable && !b.Skip
+	variable := tree.Variable && !b.Skip && tree.Split[0] != 0
+	if !variable && b.W4 <= txW && b.H4 <= txH {
+		if err := c.reconTXB(visit, b, dq, 0, tree.Y, b.X4, b.Y4, b.W4, b.H4); err != nil {
+			return err
+		}
+		if b.HasChroma {
+			if b.CW4 <= uvW && b.CH4 <= uvH {
+				if err := c.reconTXB(visit, b, dq, 1, tree.UV, b.CX4, b.CY4, b.CW4, b.CH4); err != nil {
+					return err
+				}
+				return c.reconTXB(visit, b, dq, 2, tree.UV, b.CX4, b.CY4, b.CW4, b.CH4)
+			}
+			for pl := uint8(1); pl <= 2; pl++ {
+				for y := 0; y < b.CH4; y += uvH {
+					for x := 0; x < b.CW4; x += uvW {
+						if err := c.reconTXB(visit, b, dq, pl, tree.UV, b.CX4+x, b.CY4+y, min(uvW, b.CW4-x), min(uvH, b.CH4-y)); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}
+		return nil
+	}
 	txWLog2, txHLog2 := uint(bits.TrailingZeros(uint(txW))), uint(bits.TrailingZeros(uint(txH)))
 	for initY := 0; initY < b.H4; initY += 16 {
 		subH4 := min(b.H4, initY+16)

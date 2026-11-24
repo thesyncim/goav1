@@ -114,16 +114,11 @@ func (s *DecodeState) readTxSizes(cdfs *TransformCDFs, ctx *BlockModeContext, bl
 		// read_vartx_tree: one read_tx_tree per max_ytx unit. A unit past the
 		// first row/column has its prior sibling as top/left neighbour.
 		out.Variable = true
-		ytx := maxYtx.Dims()
 		t := entropy.TxTree{CDF: &cdfs.TxPartition, A: &ctx.A.Tx, L: &ctx.L.Tx, Right: bx4 + vw4, Bottom: by4 + vh4}
 		// The symbols are read straight from the tile's range decoder, as
 		// dav1d reads through &ts->msac.
 		c := (*entropy.Cursor)(&s.Reader)
-		for y, yOff := 0, 0; y < vh4; y, yOff = y+int(ytx.H4), yOff+1 {
-			for x, xOff := 0, 0; x < vw4; x, xOff = x+int(ytx.W4), xOff+1 {
-				c.DecodeTxTree(&t, uint(maxYtx), xOff, yOff, bx4+x, by4+y, block.HaveTop || y > 0, block.HaveLeft || x > 0)
-			}
-		}
+		c.DecodeVarTxTree(&t, uint(maxYtx), bx4, by4, vw4, vh4, block.HaveTop, block.HaveLeft)
 		out.Split = t.Split
 		return nil
 	}

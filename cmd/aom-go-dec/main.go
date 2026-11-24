@@ -65,6 +65,10 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	}
 	if *workers == 0 {
 		*workers = runtime.NumCPU()
+	} else if *workers < runtime.GOMAXPROCS(0) {
+		// Match dav1d --threads N: cap active OS threads to the requested
+		// worker budget so extra Ps do not spin or spill onto efficiency cores.
+		runtime.GOMAXPROCS(*workers)
 	}
 
 	inputPath := fs.Arg(0)

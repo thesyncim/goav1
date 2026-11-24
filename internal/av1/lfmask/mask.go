@@ -108,6 +108,76 @@ func decompTx(txa *[2][2][32][32]uint8, yBase, xBase int, from tile.TransformSiz
 // dav1d's C does not carry.
 func maskEdgesInter(masks *[2][32][3][2]uint16, by4, bx4, w4, h4, skip int, maxTx tile.TransformSize, txMasks [2]uint16, a, l []uint8, txa *[2][2][32][32]uint8) {
 	td := maxTx.Dims()
+	if txMasks[0] == 0 || maxTx == tile.TransformSize4x4 {
+		// Unsplit inter block (including all skip blocks): every cell shares
+		// maxTx's clamped dimensions and steps, so skip decompTx and txa.
+		twl4c := min(td.Log2W, 2)
+		thl4c := min(td.Log2H, 2)
+		a = a[:w4]
+		l = l[:h4]
+
+		// left block edge
+		mask := uint32(1) << uint(by4&31)
+		col := &masks[0][bx4&31]
+		for y := range l {
+			sidx := 0
+			if mask >= 0x10000 {
+				sidx = 1
+			}
+			smask := uint16(mask >> (uint(sidx<<4) & 31))
+			col[bmin(twl4c, l[y])][sidx] |= smask
+			l[y] = twl4c
+			mask <<= 1
+		}
+
+		// top block edge
+		mask = uint32(1) << uint(bx4&31)
+		row := &masks[1][by4&31]
+		for x := range a {
+			sidx := 0
+			if mask >= 0x10000 {
+				sidx = 1
+			}
+			smask := uint16(mask >> (uint(sidx<<4) & 31))
+			row[bmin(thl4c, a[x])][sidx] |= smask
+			a[x] = thl4c
+			mask <<= 1
+		}
+
+		if skip == 0 {
+			hstep := int(td.W4)
+			if hstep < w4 {
+				t := uint64(1) << uint(by4&31)
+				inner := uint32((t << uint(h4)) - t)
+				inner1 := uint16(inner & 0xffff)
+				inner2 := uint16(inner >> 16)
+				for x := hstep; x < w4; x += hstep {
+					if inner1 != 0 {
+						masks[0][(bx4+x)&31][twl4c][0] |= inner1
+					}
+					if inner2 != 0 {
+						masks[0][(bx4+x)&31][twl4c][1] |= inner2
+					}
+				}
+			}
+			vstep := int(td.H4)
+			if vstep < h4 {
+				t := uint64(1) << uint(bx4&31)
+				inner := uint32((t << uint(w4)) - t)
+				inner1 := uint16(inner & 0xffff)
+				inner2 := uint16(inner >> 16)
+				for y := vstep; y < h4; y += vstep {
+					if inner1 != 0 {
+						masks[1][(by4+y)&31][thl4c][0] |= inner1
+					}
+					if inner2 != 0 {
+						masks[1][(by4+y)&31][thl4c][1] |= inner2
+					}
+				}
+			}
+		}
+		return
+	}
 	tw4, th4 := int(td.W4), int(td.H4)
 	yOff := 0
 	for y := 0; y < h4; y += th4 {

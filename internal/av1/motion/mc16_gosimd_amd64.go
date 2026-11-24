@@ -319,24 +319,24 @@ func mc16VCols(sg unsafeutil.Grid[uint8], w, h int, pairs *[4]int32, put bool, r
 			return
 		}
 		s := sg.Sub(0, 2*c, 32, h+7)
-		r0 := archsimd.LoadUint8x32Array(unsafeutil.Row[[32]byte](s, 0, 0)).AsInt16x16()
-		r1 := archsimd.LoadUint8x32Array(unsafeutil.Row[[32]byte](s, 1, 0)).AsInt16x16()
-		r2 := archsimd.LoadUint8x32Array(unsafeutil.Row[[32]byte](s, 2, 0)).AsInt16x16()
-		r3 := archsimd.LoadUint8x32Array(unsafeutil.Row[[32]byte](s, 3, 0)).AsInt16x16()
-		r4 := archsimd.LoadUint8x32Array(unsafeutil.Row[[32]byte](s, 4, 0)).AsInt16x16()
-		r5 := archsimd.LoadUint8x32Array(unsafeutil.Row[[32]byte](s, 5, 0)).AsInt16x16()
-		r6 := archsimd.LoadUint8x32Array(unsafeutil.Row[[32]byte](s, 6, 0)).AsInt16x16()
+		r0 := archsimd.LoadUint8x32Array(s.Row32(0, 0)).AsInt16x16()
+		r1 := archsimd.LoadUint8x32Array(s.Row32(1, 0)).AsInt16x16()
+		r2 := archsimd.LoadUint8x32Array(s.Row32(2, 0)).AsInt16x16()
+		r3 := archsimd.LoadUint8x32Array(s.Row32(3, 0)).AsInt16x16()
+		r4 := archsimd.LoadUint8x32Array(s.Row32(4, 0)).AsInt16x16()
+		r5 := archsimd.LoadUint8x32Array(s.Row32(5, 0)).AsInt16x16()
+		r6 := archsimd.LoadUint8x32Array(s.Row32(6, 0)).AsInt16x16()
 		t := s.Sub(7, 0, 32, h)
 		var d unsafeutil.Grid[uint8]
 		if put {
 			d = dg.Sub(0, 2*c, 32, h)
 		}
 		for y := 0; y < h; y++ {
-			r7 := archsimd.LoadUint8x32Array(unsafeutil.Row[[32]byte](t, y, 0)).AsInt16x16()
+			r7 := archsimd.LoadUint8x32Array(t.Row32(y, 0)).AsInt16x16()
 			lo, hi := mc16Dot8(r0, r1, r2, r3, r4, r5, r6, r7, k0, k1, k2, k3)
 			lo, hi = lo.Add(rndV).ShiftRight(shV), hi.Add(rndV).ShiftRight(shV)
 			if put {
-				lo.SaturateToInt16ConcatGrouped(hi).Max(zero).Min(maxV).AsUint8x32().StoreArray(unsafeutil.Row[[32]byte](d, y, 0))
+				lo.SaturateToInt16ConcatGrouped(hi).Max(zero).Min(maxV).AsUint8x32().StoreArray(d.Row32(y, 0))
 			} else {
 				o := y*w + c
 				lo.Add(off).And(mask).SaturateToUint16ConcatGrouped(hi.Add(off).And(mask)).StoreArray((*[16]uint16)(out[uint(o) : uint(o)+16]))
@@ -350,28 +350,28 @@ func mc16VCols(sg unsafeutil.Grid[uint8], w, h int, pairs *[4]int32, put bool, r
 			return
 		}
 		s := sg.Sub(0, 2*c, 16, h+7)
-		r0 := zero.SetLo(archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 0, 0)).AsInt16x8())
-		r1 := zero.SetLo(archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 1, 0)).AsInt16x8())
-		r2 := zero.SetLo(archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 2, 0)).AsInt16x8())
-		r3 := zero.SetLo(archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 3, 0)).AsInt16x8())
-		r4 := zero.SetLo(archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 4, 0)).AsInt16x8())
-		r5 := zero.SetLo(archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 5, 0)).AsInt16x8())
-		r6 := zero.SetLo(archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 6, 0)).AsInt16x8())
+		r0 := zero.SetLo(archsimd.LoadUint8x16Array(s.Row16(0, 0)).AsInt16x8())
+		r1 := zero.SetLo(archsimd.LoadUint8x16Array(s.Row16(1, 0)).AsInt16x8())
+		r2 := zero.SetLo(archsimd.LoadUint8x16Array(s.Row16(2, 0)).AsInt16x8())
+		r3 := zero.SetLo(archsimd.LoadUint8x16Array(s.Row16(3, 0)).AsInt16x8())
+		r4 := zero.SetLo(archsimd.LoadUint8x16Array(s.Row16(4, 0)).AsInt16x8())
+		r5 := zero.SetLo(archsimd.LoadUint8x16Array(s.Row16(5, 0)).AsInt16x8())
+		r6 := zero.SetLo(archsimd.LoadUint8x16Array(s.Row16(6, 0)).AsInt16x8())
 		t := s.Sub(7, 0, 16, h)
 		var d unsafeutil.Grid[uint8]
 		if put {
 			d = dg.Sub(0, 2*c, 2*n, h)
 		}
 		for y := 0; y < h; y++ {
-			r7 := zero.SetLo(archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](t, y, 0)).AsInt16x8())
+			r7 := zero.SetLo(archsimd.LoadUint8x16Array(t.Row16(y, 0)).AsInt16x8())
 			lo, hi := mc16Dot8(r0, r1, r2, r3, r4, r5, r6, r7, k0, k1, k2, k3)
 			lo, hi = lo.Add(rndV).ShiftRight(shV), hi.Add(rndV).ShiftRight(shV)
 			o := y*w + c
 			switch {
 			case put && n == 8:
-				lo.SaturateToInt16ConcatGrouped(hi).Max(zero).Min(maxV).GetLo().AsUint8x16().StoreArray(unsafeutil.Row[[16]byte](d, y, 0))
+				lo.SaturateToInt16ConcatGrouped(hi).Max(zero).Min(maxV).GetLo().AsUint8x16().StoreArray(d.Row16(y, 0))
 			case put:
-				binary.LittleEndian.PutUint64(unsafeutil.Row[[8]byte](d, y, 0)[:], lo.SaturateToInt16ConcatGrouped(hi).Max(zero).Min(maxV).GetLo().AsUint64x2().GetElem(0))
+				binary.LittleEndian.PutUint64(d.Row8(y, 0)[:], lo.SaturateToInt16ConcatGrouped(hi).Max(zero).Min(maxV).GetLo().AsUint64x2().GetElem(0))
 			case n == 8:
 				lo.Add(off).And(mask).SaturateToUint16ConcatGrouped(hi.Add(off).And(mask)).GetLo().StoreArray((*[8]uint16)(out[uint(o) : uint(o)+8]))
 			default:
@@ -470,17 +470,17 @@ func mc16VFromI32Cols(im *mc16IM, w, h int, pairs *[4]int32, put bool, round1 in
 			d = dg.Sub(0, 2*c, 16, h)
 		}
 		for y := 0; y < h; y++ {
-			acc := rndV.Add(archsimd.LoadInt32x8Array(unsafeutil.Row[[8]int32](s0, y, 0)).Mul(f[0]))
-			acc = acc.Add(archsimd.LoadInt32x8Array(unsafeutil.Row[[8]int32](s1, y, 0)).Mul(f[1]))
-			acc = acc.Add(archsimd.LoadInt32x8Array(unsafeutil.Row[[8]int32](s2, y, 0)).Mul(f[2]))
-			acc = acc.Add(archsimd.LoadInt32x8Array(unsafeutil.Row[[8]int32](s3, y, 0)).Mul(f[3]))
-			acc = acc.Add(archsimd.LoadInt32x8Array(unsafeutil.Row[[8]int32](s4, y, 0)).Mul(f[4]))
-			acc = acc.Add(archsimd.LoadInt32x8Array(unsafeutil.Row[[8]int32](s5, y, 0)).Mul(f[5]))
-			acc = acc.Add(archsimd.LoadInt32x8Array(unsafeutil.Row[[8]int32](s6, y, 0)).Mul(f[6]))
-			acc = acc.Add(archsimd.LoadInt32x8Array(unsafeutil.Row[[8]int32](s7, y, 0)).Mul(f[7]))
+			acc := rndV.Add(archsimd.LoadInt32x8Array(s0.Row8(y, 0)).Mul(f[0]))
+			acc = acc.Add(archsimd.LoadInt32x8Array(s1.Row8(y, 0)).Mul(f[1]))
+			acc = acc.Add(archsimd.LoadInt32x8Array(s2.Row8(y, 0)).Mul(f[2]))
+			acc = acc.Add(archsimd.LoadInt32x8Array(s3.Row8(y, 0)).Mul(f[3]))
+			acc = acc.Add(archsimd.LoadInt32x8Array(s4.Row8(y, 0)).Mul(f[4]))
+			acc = acc.Add(archsimd.LoadInt32x8Array(s5.Row8(y, 0)).Mul(f[5]))
+			acc = acc.Add(archsimd.LoadInt32x8Array(s6.Row8(y, 0)).Mul(f[6]))
+			acc = acc.Add(archsimd.LoadInt32x8Array(s7.Row8(y, 0)).Mul(f[7]))
 			acc = acc.ShiftRight(shV)
 			if put {
-				acc.SaturateToInt16ConcatGrouped(acc).AsInt32x8().Permute(perm).AsInt16x16().Max(archsimd.Int16x16{}).Min(maxV).GetLo().AsUint8x16().StoreArray(unsafeutil.Row[[16]byte](d, y, 0))
+				acc.SaturateToInt16ConcatGrouped(acc).AsInt32x8().Permute(perm).AsInt16x16().Max(archsimd.Int16x16{}).Min(maxV).GetLo().AsUint8x16().StoreArray(d.Row16(y, 0))
 			} else {
 				a := acc.And(mask)
 				o := y*w + c
@@ -507,18 +507,18 @@ func mc16VFromI32Cols(im *mc16IM, w, h int, pairs *[4]int32, put bool, round1 in
 		}
 		var z archsimd.Int32x8
 		for y := 0; y < h; y++ {
-			acc := rndV.Add(z.SetLo(archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](s0, y, 0))).Mul(f[0]))
-			acc = acc.Add(z.SetLo(archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](s1, y, 0))).Mul(f[1]))
-			acc = acc.Add(z.SetLo(archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](s2, y, 0))).Mul(f[2]))
-			acc = acc.Add(z.SetLo(archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](s3, y, 0))).Mul(f[3]))
-			acc = acc.Add(z.SetLo(archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](s4, y, 0))).Mul(f[4]))
-			acc = acc.Add(z.SetLo(archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](s5, y, 0))).Mul(f[5]))
-			acc = acc.Add(z.SetLo(archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](s6, y, 0))).Mul(f[6]))
-			acc = acc.Add(z.SetLo(archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](s7, y, 0))).Mul(f[7]))
+			acc := rndV.Add(z.SetLo(archsimd.LoadInt32x4Array(s0.Row4(y, 0))).Mul(f[0]))
+			acc = acc.Add(z.SetLo(archsimd.LoadInt32x4Array(s1.Row4(y, 0))).Mul(f[1]))
+			acc = acc.Add(z.SetLo(archsimd.LoadInt32x4Array(s2.Row4(y, 0))).Mul(f[2]))
+			acc = acc.Add(z.SetLo(archsimd.LoadInt32x4Array(s3.Row4(y, 0))).Mul(f[3]))
+			acc = acc.Add(z.SetLo(archsimd.LoadInt32x4Array(s4.Row4(y, 0))).Mul(f[4]))
+			acc = acc.Add(z.SetLo(archsimd.LoadInt32x4Array(s5.Row4(y, 0))).Mul(f[5]))
+			acc = acc.Add(z.SetLo(archsimd.LoadInt32x4Array(s6.Row4(y, 0))).Mul(f[6]))
+			acc = acc.Add(z.SetLo(archsimd.LoadInt32x4Array(s7.Row4(y, 0))).Mul(f[7]))
 			acc = acc.ShiftRight(shV)
 			if put {
 				v := acc.SaturateToInt16ConcatGrouped(acc).AsInt32x8().Permute(perm).AsInt16x16().Max(archsimd.Int16x16{}).Min(maxV)
-				binary.LittleEndian.PutUint64(unsafeutil.Row[[8]byte](d, y, 0)[:], v.GetLo().AsUint64x2().GetElem(0))
+				binary.LittleEndian.PutUint64(d.Row8(y, 0)[:], v.GetLo().AsUint64x2().GetElem(0))
 			} else {
 				a := acc.And(mask)
 				v := a.SaturateToUint16ConcatGrouped(a).AsInt32x8().Permute(perm).AsUint16x16()
@@ -549,7 +549,7 @@ func mc16PrepCopyCols(sg unsafeutil.Grid[uint8], w, h, shl int, out []uint16) {
 		s := sg.Sub(0, 2*c, 32, h)
 		for y := 0; y < h; y++ {
 			o := y*w + c
-			archsimd.LoadUint8x32Array(unsafeutil.Row[[32]byte](s, y, 0)).AsInt16x16().Mul(mul).Add(off).AsUint16x16().StoreArray((*[16]uint16)(out[uint(o) : uint(o)+16]))
+			archsimd.LoadUint8x32Array(s.Row32(y, 0)).AsInt16x16().Mul(mul).Add(off).AsUint16x16().StoreArray((*[16]uint16)(out[uint(o) : uint(o)+16]))
 		}
 	}
 	if n := w - c; n > 0 {
@@ -559,7 +559,7 @@ func mc16PrepCopyCols(sg unsafeutil.Grid[uint8], w, h, shl int, out []uint16) {
 		s := sg.Sub(0, 2*c, 16, h)
 		for y := 0; y < h; y++ {
 			o := y*w + c
-			v := archsimd.Int16x16{}.SetLo(archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, y, 0)).AsInt16x8()).Mul(mul).Add(off).GetLo().AsUint16x8()
+			v := archsimd.Int16x16{}.SetLo(archsimd.LoadUint8x16Array(s.Row16(y, 0)).AsInt16x8()).Mul(mul).Add(off).GetLo().AsUint16x8()
 			if n == 8 {
 				v.StoreArray((*[8]uint16)(out[uint(o) : uint(o)+8]))
 			} else {

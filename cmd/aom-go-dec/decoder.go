@@ -59,8 +59,8 @@ func (d *decoder) Decode(dst io.Writer, quiet bool, log io.Writer) (int64, int, 
 	return totalBytes, completed, err
 }
 
-// decodeOutputBufferSize matches a typical stdio file buffer.
-const decodeOutputBufferSize = 64 << 10
+// decodeOutputBufferSize buffers non-contiguous row writes into large writes.
+const decodeOutputBufferSize = 1 << 20
 
 func (d *decoder) decodeTo(dst io.Writer, quiet bool, log io.Writer) (int64, int, error) {
 	if err := d.dec.Reset(); err != nil {
@@ -112,6 +112,14 @@ func writeYUVFrame(dst io.Writer, frame *av1.Frame) (int64, error) {
 			continue
 		}
 		rowBytes := plane.Width * frame.Layout.BytesPerSample
+		if plane.Stride == rowBytes {
+			n, err := dst.Write(plane.Pix[:plane.Height*rowBytes])
+			written += int64(n)
+			if err != nil {
+				return written, err
+			}
+			continue
+		}
 		for row := 0; row < plane.Height; row++ {
 			off := row * plane.Stride
 			n, err := dst.Write(plane.Pix[off : off+rowBytes])

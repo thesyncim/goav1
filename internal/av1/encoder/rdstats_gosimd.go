@@ -97,6 +97,25 @@ func residualRow16(d *[16]int16, s, p *[16]uint8) {
 // row pair with 16 readable bytes from each row start loads two vectors and
 // joins their low halves, which keeps the rows out of general registers.
 func residualRows8(dst []int16, src []byte, off, stride int, pred []byte, predStride, h int) {
+	if h <= 0 {
+		return
+	}
+	if predStride == 8 && off >= 0 && stride >= 0 && off+(h-1)*stride+16 <= len(src) && h*8 <= len(pred) && h*8 <= len(dst) {
+		s := src[off : off+(h-1)*stride+16]
+		p := pred[:h*8]
+		d := dst[:h*8]
+		for r := 0; r < h; r += 2 {
+			so := r * stride
+			a0 := archsimd.LoadUint8x16Array((*[16]uint8)(s[so:]))
+			a1 := archsimd.LoadUint8x16Array((*[16]uint8)(s[so+stride:]))
+			a := a0.ReshapeToUint64s().InterleaveLo(a1.ReshapeToUint64s()).ReshapeToUint8s()
+			b := archsimd.LoadUint8x16Array((*[16]uint8)(p[r*8:]))
+			dr := (*[16]int16)(d[r*8:])
+			a.ExtendLo8ToUint16().BitsToInt16().Sub(b.ExtendLo8ToUint16().BitsToInt16()).StoreArray((*[8]int16)(dr[:8]))
+			widenHi8(a).BitsToInt16().Sub(widenHi8(b).BitsToInt16()).StoreArray((*[8]int16)(dr[8:]))
+		}
+		return
+	}
 	for r := 0; r < h; r += 2 {
 		so := off + r*stride
 		var a, b archsimd.Uint8x16

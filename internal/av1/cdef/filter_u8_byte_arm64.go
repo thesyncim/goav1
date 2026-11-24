@@ -35,6 +35,61 @@ const (
 
 func u8ByteInteriorAvailable() bool { return true }
 
+type cdefByteDirOffs struct {
+	p0p, p0m uint
+	p1p, p1m uint
+	s0p, s0m uint
+	s1p, s1m uint
+	s2p, s2m uint
+	s3p, s3m uint
+}
+
+var cdefByteDirTable = func() (t [8]cdefByteDirOffs) {
+	for dir := range 8 {
+		pri0 := int(cdefDirections[dir+2][0])
+		pri1 := int(cdefDirections[dir+2][1])
+		sec0, sec1 := int(cdefDirections[dir+4][0]), int(cdefDirections[dir][0])
+		sec2, sec3 := int(cdefDirections[dir+4][1]), int(cdefDirections[dir][1])
+		t[dir] = cdefByteDirOffs{
+			p0p: uint(cdefByteCenter + pri0), p0m: uint(cdefByteCenter - pri0),
+			p1p: uint(cdefByteCenter + pri1), p1m: uint(cdefByteCenter - pri1),
+			s0p: uint(cdefByteCenter + sec0), s0m: uint(cdefByteCenter - sec0),
+			s1p: uint(cdefByteCenter + sec1), s1m: uint(cdefByteCenter - sec1),
+			s2p: uint(cdefByteCenter + sec2), s2m: uint(cdefByteCenter - sec2),
+			s3p: uint(cdefByteCenter + sec3), s3m: uint(cdefByteCenter - sec3),
+		}
+	}
+	return t
+}()
+
+var cdefByteSplatU8 = func() (t [16][16]uint8) {
+	for v := range 16 {
+		for i := range 16 {
+			t[v][i] = uint8(v)
+		}
+	}
+	return t
+}()
+
+var cdefByteSplatNegI8 = func() (t [8][16]int8) {
+	for v := range 8 {
+		for i := range 16 {
+			t[v][i] = -int8(v)
+		}
+	}
+	return t
+}()
+
+var cdefByteTapVecs = func() (t [2][2][16]int8) {
+	for p := range 2 {
+		for i := range 16 {
+			t[p][0][i] = int8(cdefPrimaryTaps[p][0])
+			t[p][1][i] = int8(cdefPrimaryTaps[p][1])
+		}
+	}
+	return t
+}()
+
 type cdefByteCtx struct {
 	input  []byte
 	dst    []byte
@@ -66,8 +121,8 @@ func filterUnitBlocksU8Byte(dst []byte, dstStride int, input []byte, inputOrigin
 		dst:    dst,
 		dstStr: dstStride,
 		height: u.blockHeight,
-		secStr: archsimd.BroadcastUint8x16(uint8(sec)),
-		secSh:  archsimd.BroadcastInt8x16(-int8(constrainShift(sec, u.damping))),
+		secStr: archsimd.LoadUint8x16Array(&cdefByteSplatU8[sec&15]),
+		secSh:  archsimd.LoadInt8x16Array(&cdefByteSplatNegI8[constrainShift(sec, u.damping)&7]),
 	}
 
 	strength := u.primaryStrength
@@ -75,11 +130,10 @@ func filterUnitBlocksU8Byte(dst []byte, dstStride int, input []byte, inputOrigin
 	if !u.lumaAdjust {
 		prevStrength = strength
 		if strength != 0 {
-			taps := cdefPrimaryTaps[strength&1]
-			ctx.priStr = archsimd.BroadcastUint8x16(uint8(strength))
-			ctx.priSh = archsimd.BroadcastInt8x16(-int8(constrainShift(strength, u.damping)))
-			ctx.tap0 = archsimd.BroadcastInt8x16(int8(taps[0]))
-			ctx.tap1 = archsimd.BroadcastInt8x16(int8(taps[1]))
+			ctx.priStr = archsimd.LoadUint8x16Array(&cdefByteSplatU8[strength&15])
+			ctx.priSh = archsimd.LoadInt8x16Array(&cdefByteSplatNegI8[constrainShift(strength, u.damping)&7])
+			ctx.tap0 = archsimd.LoadInt8x16Array(&cdefByteTapVecs[strength&1][0])
+			ctx.tap1 = archsimd.LoadInt8x16Array(&cdefByteTapVecs[strength&1][1])
 		}
 	}
 
@@ -95,11 +149,10 @@ func filterUnitBlocksU8Byte(dst []byte, dstStride int, input []byte, inputOrigin
 			if strength != prevStrength {
 				prevStrength = strength
 				if strength != 0 {
-					taps := cdefPrimaryTaps[strength&1]
-					ctx.priStr = archsimd.BroadcastUint8x16(uint8(strength))
-					ctx.priSh = archsimd.BroadcastInt8x16(-int8(constrainShift(strength, u.damping)))
-					ctx.tap0 = archsimd.BroadcastInt8x16(int8(taps[0]))
-					ctx.tap1 = archsimd.BroadcastInt8x16(int8(taps[1]))
+					ctx.priStr = archsimd.LoadUint8x16Array(&cdefByteSplatU8[strength&15])
+					ctx.priSh = archsimd.LoadInt8x16Array(&cdefByteSplatNegI8[constrainShift(strength, u.damping)&7])
+					ctx.tap0 = archsimd.LoadInt8x16Array(&cdefByteTapVecs[strength&1][0])
+					ctx.tap1 = archsimd.LoadInt8x16Array(&cdefByteTapVecs[strength&1][1])
 				}
 			}
 		}
@@ -108,23 +161,20 @@ func filterUnitBlocksU8Byte(dst []byte, dstStride int, input []byte, inputOrigin
 		}
 		dir := 0
 		if u.primaryStrength != 0 {
-			dir = int(directions[by][bx])
+			dir = int(directions[by][bx]) & 7
 		}
 		ctx.srcOff = inputOrigin + ((by * BStride) << bhLog2) + (bx << bwLog2)
 		ctx.dstOff = (by<<bhLog2)*dstStride + (bx << bwLog2)
+		d := &cdefByteDirTable[dir]
 		if strength != 0 {
-			pri0 := int(cdefDirections[dir+2][0])
-			pri1 := int(cdefDirections[dir+2][1])
-			ctx.p0p, ctx.p0m = uint(cdefByteCenter+pri0), uint(cdefByteCenter-pri0)
-			ctx.p1p, ctx.p1m = uint(cdefByteCenter+pri1), uint(cdefByteCenter-pri1)
+			ctx.p0p, ctx.p0m = d.p0p, d.p0m
+			ctx.p1p, ctx.p1m = d.p1p, d.p1m
 		}
 		if sec != 0 {
-			sec0, sec1 := int(cdefDirections[dir+4][0]), int(cdefDirections[dir][0])
-			sec2, sec3 := int(cdefDirections[dir+4][1]), int(cdefDirections[dir][1])
-			ctx.s0p, ctx.s0m = uint(cdefByteCenter+sec0), uint(cdefByteCenter-sec0)
-			ctx.s1p, ctx.s1m = uint(cdefByteCenter+sec1), uint(cdefByteCenter-sec1)
-			ctx.s2p, ctx.s2m = uint(cdefByteCenter+sec2), uint(cdefByteCenter-sec2)
-			ctx.s3p, ctx.s3m = uint(cdefByteCenter+sec3), uint(cdefByteCenter-sec3)
+			ctx.s0p, ctx.s0m = d.s0p, d.s0m
+			ctx.s1p, ctx.s1m = d.s1p, d.s1m
+			ctx.s2p, ctx.s2m = d.s2p, d.s2m
+			ctx.s3p, ctx.s3m = d.s3p, d.s3m
 		}
 		if isW8 {
 			switch {

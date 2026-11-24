@@ -34,10 +34,10 @@ import (
 const mc8MaxRows = maxBlockSize + 8
 
 // mc8G4..mc8G24 are row r of g from column 0, as a fixed-size window.
-func mc8G4(g unsafeutil.Grid[uint8], r int) *[4]byte   { return unsafeutil.Row[[4]byte](g, r, 0) }
-func mc8G8(g unsafeutil.Grid[uint8], r int) *[8]byte   { return unsafeutil.Row[[8]byte](g, r, 0) }
-func mc8G16(g unsafeutil.Grid[uint8], r int) *[16]byte { return unsafeutil.Row[[16]byte](g, r, 0) }
-func mc8G24(g unsafeutil.Grid[uint8], r int) *[24]byte { return unsafeutil.Row[[24]byte](g, r, 0) }
+func mc8G4(g unsafeutil.Grid[uint8], r int) *[4]byte   { return g.Row4(r, 0) }
+func mc8G8(g unsafeutil.Grid[uint8], r int) *[8]byte   { return g.Row8(r, 0) }
+func mc8G16(g unsafeutil.Grid[uint8], r int) *[16]byte { return g.Row16(r, 0) }
+func mc8G24(g unsafeutil.Grid[uint8], r int) *[24]byte { return g.Row24(r, 0) }
 
 // mc8Halo is the source window halo of an axis: 2 when its phase is nonzero.
 func mc8Halo(sub int) int {

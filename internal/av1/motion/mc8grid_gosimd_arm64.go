@@ -41,7 +41,7 @@ func mc8CopyStrips(dg, sg unsafeutil.Grid[uint8]) bool {
 	for c := 0; c+4 <= n; c += 4 {
 		d, s := dg.Sub(0, c, 4, h), sg.Sub(0, c, 4, h)
 		for r := 0; r < h; r++ {
-			*unsafeutil.Row[[4]byte](d, r, 0) = *unsafeutil.Row[[4]byte](s, r, 0)
+			*d.Row4(r, 0) = *s.Row4(r, 0)
 		}
 	}
 	return true
@@ -82,8 +82,8 @@ func mc8PrepCopy(sg unsafeutil.Grid[uint8], og unsafeutil.Grid[uint16]) {
 		}
 		s := sg.Sub(0, 0, 16, h)
 		for r := 0; r < h; r++ {
-			v := archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, r, 0)).MulWidenLo(mul).Add(off)
-			mc8Store4U16(unsafeutil.Row[[4]uint16](og, r, 0), v.ReshapeToUint64s().GetElem(0))
+			v := archsimd.LoadUint8x16Array(s.Row16(r, 0)).MulWidenLo(mul).Add(off)
+			mc8Store4U16(og.Row4(r, 0), v.ReshapeToUint64s().GetElem(0))
 		}
 		return
 	}
@@ -94,8 +94,8 @@ func mc8PrepCopy(sg unsafeutil.Grid[uint8], og unsafeutil.Grid[uint16]) {
 		}
 		s, o := sg.Sub(0, c, 16, h), og.Sub(0, c, 16, h)
 		for r := 0; r < h; r++ {
-			a := archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, r, 0))
-			p := unsafeutil.Row[[16]uint16](o, r, 0)
+			a := archsimd.LoadUint8x16Array(s.Row16(r, 0))
+			p := o.Row16(r, 0)
 			a.MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(p[0:8]))
 			a.HiToLo().MulWidenLo(mulHi).Add(off).StoreArray((*[8]uint16)(p[8:16]))
 		}
@@ -106,7 +106,7 @@ func mc8PrepCopy(sg unsafeutil.Grid[uint8], og unsafeutil.Grid[uint16]) {
 		}
 		s, o := sg.Sub(0, c, 16, h), og.Sub(0, c, 8, h)
 		for r := 0; r < h; r++ {
-			archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, r, 0)).MulWidenLo(mul).Add(off).StoreArray(unsafeutil.Row[[8]uint16](o, r, 0))
+			archsimd.LoadUint8x16Array(s.Row16(r, 0)).MulWidenLo(mul).Add(off).StoreArray(o.Row8(r, 0))
 		}
 	}
 }
@@ -123,19 +123,19 @@ func mc8PrepCopyW8(sg unsafeutil.Grid[uint8], out []uint16, h int) {
 			return
 		}
 		s, o := sg.Sub(r, 0, 16, 8), (*[64]uint16)(out[8*r:8*r+64])
-		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 0, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[0:8]))
-		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 1, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[8:16]))
-		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 2, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[16:24]))
-		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 3, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[24:32]))
-		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 4, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[32:40]))
-		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 5, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[40:48]))
-		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 6, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[48:56]))
-		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 7, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[56:64]))
+		archsimd.LoadUint8x16Array(s.Row16(0, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[0:8]))
+		archsimd.LoadUint8x16Array(s.Row16(1, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[8:16]))
+		archsimd.LoadUint8x16Array(s.Row16(2, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[16:24]))
+		archsimd.LoadUint8x16Array(s.Row16(3, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[24:32]))
+		archsimd.LoadUint8x16Array(s.Row16(4, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[32:40]))
+		archsimd.LoadUint8x16Array(s.Row16(5, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[40:48]))
+		archsimd.LoadUint8x16Array(s.Row16(6, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[48:56]))
+		archsimd.LoadUint8x16Array(s.Row16(7, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[56:64]))
 	}
 	for ; r < h; r++ {
 		if !sg.Fits(r, 0, 16, 1) || 8*r+8 > len(out) {
 			return
 		}
-		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](sg.Sub(r, 0, 16, 1), 0, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(out[8*r : 8*r+8]))
+		archsimd.LoadUint8x16Array(sg.Sub(r, 0, 16, 1).Row16(0, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(out[8*r : 8*r+8]))
 	}
 }

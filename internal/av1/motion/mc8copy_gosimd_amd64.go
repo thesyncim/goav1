@@ -72,24 +72,24 @@ func mc8CopyGrid(dg, sg unsafeutil.Grid[uint8]) {
 	switch {
 	case n == 4:
 		for r := 0; r < h; r++ {
-			*unsafeutil.Row[[4]byte](dg, r, 0) = *unsafeutil.Row[[4]byte](sg, r, 0)
+			*dg.Row4(r, 0) = *sg.Row4(r, 0)
 		}
 	case n == 8:
 		for r := 0; r < h; r++ {
-			*unsafeutil.Row[[8]byte](dg, r, 0) = *unsafeutil.Row[[8]byte](sg, r, 0)
+			*dg.Row8(r, 0) = *sg.Row8(r, 0)
 		}
 	case n == 16:
 		for r := 0; r < h; r++ {
-			archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](sg, r, 0)).StoreArray(unsafeutil.Row[[16]byte](dg, r, 0))
+			archsimd.LoadUint8x16Array(sg.Row16(r, 0)).StoreArray(dg.Row16(r, 0))
 		}
 	case n == 32:
 		for r := 0; r < h; r++ {
-			archsimd.LoadUint8x32Array(unsafeutil.Row[[32]byte](sg, r, 0)).StoreArray(unsafeutil.Row[[32]byte](dg, r, 0))
+			archsimd.LoadUint8x32Array(sg.Row32(r, 0)).StoreArray(dg.Row32(r, 0))
 		}
 		archsimd.ClearAVXUpperBits()
 	case n == 64:
 		for r := 0; r < h; r++ {
-			s, d := unsafeutil.Row[[64]byte](sg, r, 0), unsafeutil.Row[[64]byte](dg, r, 0)
+			s, d := sg.Row64(r, 0), dg.Row64(r, 0)
 			a := archsimd.LoadUint8x32Array((*[32]byte)(s[0:32]))
 			b := archsimd.LoadUint8x32Array((*[32]byte)(s[32:64]))
 			a.StoreArray((*[32]byte)(d[0:32]))

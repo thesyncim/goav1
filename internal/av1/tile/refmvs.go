@@ -340,29 +340,33 @@ func addSpatialCandidate(stack *[8]refmvsCandidate, cnt *int32, weight int32, b 
 		return // intra block, no intrabc
 	}
 	if ref.ref1() == -1 {
-		for n := range 2 {
-			if b.ref.at(n) == ref.ref0() {
-				candMV := b.mv[n]
-				if b.mf&1 != 0 && gmv[0] != refmvsInvalidMV {
-					candMV = gmv[0]
-				}
-				*haveRefMVMatch = 1
-				*haveNewMVMatch |= int32(b.mf >> 1)
-				last := *cnt
-				for m := int32(0); m < last; m++ {
-					if stack[m].mv[0] == candMV {
-						stack[m].weight += weight
-						return
-					}
-				}
-				if last < 8 {
-					stack[last].mv[0] = candMV
-					stack[last].weight = weight
-					*cnt = last + 1
-				}
+		ref0 := ref.ref0()
+		var candMV refmvsMV
+		if b.ref.at(0) == ref0 {
+			candMV = b.mv[0]
+		} else if b.ref.at(1) == ref0 {
+			candMV = b.mv[1]
+		} else {
+			return
+		}
+		if b.mf&1 != 0 && gmv[0] != refmvsInvalidMV {
+			candMV = gmv[0]
+		}
+		*haveRefMVMatch = 1
+		*haveNewMVMatch |= int32(b.mf >> 1)
+		last := *cnt
+		for m := int32(0); m < last; m++ {
+			if stack[m].mv[0] == candMV {
+				stack[m].weight += weight
 				return
 			}
 		}
+		if last < 8 {
+			stack[last].mv[0] = candMV
+			stack[last].weight = weight
+			*cnt = last + 1
+		}
+		return
 	} else if b.ref == ref {
 		cand := b.mv
 		if b.mf&1 != 0 {

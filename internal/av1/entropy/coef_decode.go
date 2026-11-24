@@ -706,7 +706,8 @@ func (r *Reader) DecodeCoefs(s *CoefState, plane uint, sz *CoefSize, cf *[1024]i
 				stride := uint(4<<slh) & 63
 				shift := slh + 2
 				mask := stride - 1
-				clearCoefLevels(levels, stride*((4<<slw)+2))
+				clearCols := min((4<<slw)+2, uint(eob)+3)
+				clearCoefLevels(levels, stride*clearCols)
 
 				// eob
 				tok := eobTok + 1
@@ -771,7 +772,8 @@ func (r *Reader) DecodeCoefs(s *CoefState, plane uint, sz *CoefSize, cf *[1024]i
 				var shift, shift2, mask uint
 				if vert {
 					shift, shift2, mask = slw+2, slh+2, (4<<slw)-1
-					clearCoefLevels(levels, stride*((4<<slw)+2))
+					clearCols := min((4<<slw)+2, uint(eob)+3)
+				clearCoefLevels(levels, stride*clearCols)
 				} else {
 					shift, shift2, mask = slh+2, 0, (4<<slh)-1
 					clearCoefLevels(levels, stride*((4<<slh)+2))

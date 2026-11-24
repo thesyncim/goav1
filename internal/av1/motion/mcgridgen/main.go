@@ -265,7 +265,7 @@ func mc8Prologue(put bool, hw string) []string {
 
 func mc8Load(two bool) func(v string, k, i int) []string {
 	return func(v string, k, i int) []string {
-		ld := fmt.Sprintf("archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](%s, %d, 0))", v, k)
+		ld := fmt.Sprintf("archsimd.LoadUint8x16Array(%s.Row16(%d, 0))", v, k)
 		if !two {
 			return []string{fmt.Sprintf("r%d := %s.ExtendLo8ToUint16().BitsToInt16()", i, ld)}
 		}
@@ -282,23 +282,23 @@ func mc8Load(two bool) func(v string, k, i int) []string {
 
 // The 8-bit store expressions, from a filtered Int16x8 sum expression.
 func put8x16(lo, hi string, k int) string {
-	return fmt.Sprintf("%s.Shift(sh).SaturateToUint8().ReshapeToUint64s().InterleaveLo(%s.Shift(sh).SaturateToUint8().ReshapeToUint64s()).ReshapeToUint8s().StoreArray(unsafeutil.Row[[16]byte](ow, %d, 0))", lo, hi, k)
+	return fmt.Sprintf("%s.Shift(sh).SaturateToUint8().ReshapeToUint64s().InterleaveLo(%s.Shift(sh).SaturateToUint8().ReshapeToUint64s()).ReshapeToUint8s().StoreArray(ow.Row16(%d, 0))", lo, hi, k)
 }
 
 func put8x8(sum string, k int) string {
-	return fmt.Sprintf("binary.LittleEndian.PutUint64(unsafeutil.Row[[8]byte](ow, %d, 0)[:], %s.Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0))", k, sum)
+	return fmt.Sprintf("binary.LittleEndian.PutUint64(ow.Row8(%d, 0)[:], %s.Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0))", k, sum)
 }
 
 func put8x4(sum string, k int) string {
-	return fmt.Sprintf("binary.LittleEndian.PutUint32(unsafeutil.Row[[4]byte](ow, %d, 0)[:], uint32(%s.Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))", k, sum)
+	return fmt.Sprintf("binary.LittleEndian.PutUint32(ow.Row4(%d, 0)[:], uint32(%s.Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))", k, sum)
 }
 
 func prep8x8(sum string, k, c int) string {
-	return fmt.Sprintf("%s.ToBits().Shift(sh).StoreArray(unsafeutil.Row[[8]uint16](ow, %d, %d))", sum, k, c)
+	return fmt.Sprintf("%s.ToBits().Shift(sh).StoreArray(ow.Row8(%d, %d))", sum, k, c)
 }
 
 func prep8x4(sum string, k int) string {
-	return fmt.Sprintf("mc8Store4U16(unsafeutil.Row[[4]uint16](ow, %d, 0), %s.ToBits().Shift(sh).ReshapeToUint64s().GetElem(0))", k, sum)
+	return fmt.Sprintf("mc8Store4U16(ow.Row4(%d, 0), %s.ToBits().Shift(sh).ReshapeToUint64s().GetElem(0))", k, sum)
 }
 
 func v6(p string, base int) string { return fmt.Sprintf("mc8V6(%s, %s)", regs(p, base), taps) }
@@ -404,8 +404,8 @@ uses it leaves no inline-mark NOP.`)
 
 	h6 := func(win string) string { return fmt.Sprintf("mc8H6S(%s, %s)", win, taps) }
 	const lo, hi = "(*[16]uint8)(win[0:16])", "(*[16]uint8)(win[8:24])"
-	winRow := func(k int) string { return fmt.Sprintf("win = unsafeutil.Row[[24]byte](sw, %d, 0)", k) }
-	row16 := func(k int) string { return fmt.Sprintf("unsafeutil.Row[[16]byte](sw, %d, 0)", k) }
+	winRow := func(k int) string { return fmt.Sprintf("win = sw.Row24(%d, 0)", k) }
+	row16 := func(k int) string { return fmt.Sprintf("sw.Row16(%d, 0)", k) }
 	for _, put := range []bool{true, false} {
 		name, desc, dst, dstName := "Put", putH6Desc, "uint8", "destination"
 		pro := func(hw string) []string {
@@ -492,7 +492,7 @@ unreachable, so the kernels stay leaf functions.`)
 
 	load := func(two bool) func(v string, k, i int) []string {
 		return func(v string, k, i int) []string {
-			l := []string{fmt.Sprintf("x = archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](%s, %d, 0)).ReshapeToUint16s().BitsToInt16()", v, k)}
+			l := []string{fmt.Sprintf("x = archsimd.LoadUint8x16Array(%s.Row16(%d, 0)).ReshapeToUint16s().BitsToInt16()", v, k)}
 			if two {
 				return append(l, fmt.Sprintf("l%d, h%d := x.ExtendLo4ToInt32(), x.HiToLo().ExtendLo4ToInt32()", i, i))
 			}
@@ -527,7 +527,7 @@ strip, and og the h destination rows.`,
 		headDecl: "var x archsimd.Int16x8",
 		load:     load(true),
 		store: func(k, b int) []string {
-			return []string{fmt.Sprintf("mc16Clip(%s, %s, zero, maxV).ToBits().ReshapeToUint8s().StoreArray(unsafeutil.Row[[16]byte](ow, %d, 0))", v6i("l", b), v6i("h", b), k)}
+			return []string{fmt.Sprintf("mc16Clip(%s, %s, zero, maxV).ToBits().ReshapeToUint8s().StoreArray(ow.Row16(%d, 0))", v6i("l", b), v6i("h", b), k)}
 		},
 		rot: pair,
 	})
@@ -539,7 +539,7 @@ strip, and og the h destination rows.`,
 		headDecl: "var x archsimd.Int16x8",
 		load:     load(false),
 		store: func(k, b int) []string {
-			return []string{fmt.Sprintf("binary.LittleEndian.PutUint64(unsafeutil.Row[[8]byte](ow, %d, 0)[:], mc16Clip(%s, zero32, zero, maxV).ToBits().ReshapeToUint64s().GetElem(0))", k, v6i("l", b))}
+			return []string{fmt.Sprintf("binary.LittleEndian.PutUint64(ow.Row8(%d, 0)[:], mc16Clip(%s, zero32, zero, maxV).ToBits().ReshapeToUint64s().GetElem(0))", k, v6i("l", b))}
 		},
 		rot: single("l"),
 	})
@@ -555,7 +555,7 @@ strip, and og the h CONV_BUF rows.`,
 		headDecl: "var x archsimd.Int16x8",
 		load:     load(true),
 		store: func(k, b int) []string {
-			return []string{fmt.Sprintf("mc16PackU16(%s, %s).StoreArray(unsafeutil.Row[[8]uint16](ow, %d, 0))", v6i("l", b), v6i("h", b), k)}
+			return []string{fmt.Sprintf("mc16PackU16(%s, %s).StoreArray(ow.Row8(%d, 0))", v6i("l", b), v6i("h", b), k)}
 		},
 		rot: pair,
 	})
@@ -567,7 +567,7 @@ strip, and og the h CONV_BUF rows.`,
 		headDecl: "var x archsimd.Int16x8",
 		load:     load(false),
 		store: func(k, b int) []string {
-			return []string{fmt.Sprintf("mc8Store4U16(unsafeutil.Row[[4]uint16](ow, %d, 0), mc16PackU16(%s, zero32).ReshapeToUint64s().GetElem(0))", k, v6i("l", b))}
+			return []string{fmt.Sprintf("mc8Store4U16(ow.Row4(%d, 0), mc16PackU16(%s, zero32).ReshapeToUint64s().GetElem(0))", k, v6i("l", b))}
 		},
 		rot: single("l"),
 	})

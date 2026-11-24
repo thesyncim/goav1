@@ -106,6 +106,65 @@ func (g Grid[E]) Sub(r, c, width, height int) Grid[E] {
 	return Grid[E]{p: unsafe.Add(g.p, uint(r)*g.stride+uint(c)*uint(unsafe.Sizeof(e))), stride: g.stride, height: uint(height), width: uint(width)}
 }
 
+// Row4, Row8, Row16, Row24, Row26, Row30, Row32, Row64 return fixed-size row
+// windows of g using the same bounds proof as Row.
+func (g Grid[E]) Row4(r, c int) *[4]E {
+	if uint(r) >= g.height || uint(c) >= rowsDimMax || uint(c)+4 > g.width {
+		panic(errRows)
+	}
+	var e E
+	return (*[4]E)(unsafe.Add(g.p, uint(r)*g.stride+uint(c)*uint(unsafe.Sizeof(e))))
+}
+func (g Grid[E]) Row8(r, c int) *[8]E {
+	if uint(r) >= g.height || uint(c) >= rowsDimMax || uint(c)+8 > g.width {
+		panic(errRows)
+	}
+	var e E
+	return (*[8]E)(unsafe.Add(g.p, uint(r)*g.stride+uint(c)*uint(unsafe.Sizeof(e))))
+}
+func (g Grid[E]) Row16(r, c int) *[16]E {
+	if uint(r) >= g.height || uint(c) >= rowsDimMax || uint(c)+16 > g.width {
+		panic(errRows)
+	}
+	var e E
+	return (*[16]E)(unsafe.Add(g.p, uint(r)*g.stride+uint(c)*uint(unsafe.Sizeof(e))))
+}
+func (g Grid[E]) Row24(r, c int) *[24]E {
+	if uint(r) >= g.height || uint(c) >= rowsDimMax || uint(c)+24 > g.width {
+		panic(errRows)
+	}
+	var e E
+	return (*[24]E)(unsafe.Add(g.p, uint(r)*g.stride+uint(c)*uint(unsafe.Sizeof(e))))
+}
+func (g Grid[E]) Row26(r, c int) *[26]E {
+	if uint(r) >= g.height || uint(c) >= rowsDimMax || uint(c)+26 > g.width {
+		panic(errRows)
+	}
+	var e E
+	return (*[26]E)(unsafe.Add(g.p, uint(r)*g.stride+uint(c)*uint(unsafe.Sizeof(e))))
+}
+func (g Grid[E]) Row30(r, c int) *[30]E {
+	if uint(r) >= g.height || uint(c) >= rowsDimMax || uint(c)+30 > g.width {
+		panic(errRows)
+	}
+	var e E
+	return (*[30]E)(unsafe.Add(g.p, uint(r)*g.stride+uint(c)*uint(unsafe.Sizeof(e))))
+}
+func (g Grid[E]) Row32(r, c int) *[32]E {
+	if uint(r) >= g.height || uint(c) >= rowsDimMax || uint(c)+32 > g.width {
+		panic(errRows)
+	}
+	var e E
+	return (*[32]E)(unsafe.Add(g.p, uint(r)*g.stride+uint(c)*uint(unsafe.Sizeof(e))))
+}
+func (g Grid[E]) Row64(r, c int) *[64]E {
+	if uint(r) >= g.height || uint(c) >= rowsDimMax || uint(c)+64 > g.width {
+		panic(errRows)
+	}
+	var e E
+	return (*[64]E)(unsafe.Add(g.p, uint(r)*g.stride+uint(c)*uint(unsafe.Sizeof(e))))
+}
+
 // Row returns the len(A) elements at column c of row r of g. It panics
 // unless r is below g's height and c+len(A) <= g's width.
 //
