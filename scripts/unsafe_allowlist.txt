@@ -9,7 +9,6 @@ internal/av1/cdef/filter_simd_arm64.go
 internal/av1/cdef/filter_u8_byte_amd64.go
 internal/av1/cdef/filter_u8_interior_simd_arm64.go
 internal/av1/cdef/filter_u8_secondary_byte_amd64.go
-internal/av1/cdef/filter_u8_secondary_byte_arm64.go
 internal/av1/cdef/filter_word_amd64.go
 internal/av1/decoder/postfilter_cdef_hbd_le.go
 internal/av1/decoder/postfilter_cdef_sparse.go
