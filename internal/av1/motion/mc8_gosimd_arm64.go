@@ -441,7 +441,7 @@ func mc8H6ToI32(src []byte, srcStride, w, rows int, ph *mc8Phase, im []int32) {
 	for c := 0; c < w; c += 8 {
 		// Strip c/8 of the strip-major intermediate: its rows are contiguous
 		// eight-sample groups, so the stores below are proven in bounds.
-		st := im[c*rows : c*rows+n]
+		st := im[c*rows : c*rows+n : c*rows+n]
 		so := uint32(c)
 		q := 0
 		for ; q <= len(st)-16; q += 16 {
@@ -485,7 +485,7 @@ func mc8PutV6FromI32(im []int32, w, h int, ph *mc8Phase, dst []byte, dstStride i
 	for c := 0; c < w; c += 8 {
 		// Strip c/8 of the strip-major intermediate (rows of eight
 		// contiguous samples): every window below is proven in bounds.
-		st := im[c*rows : c*rows+n]
+		st := im[c*rows : c*rows+n : c*rows+n]
 		head := (*[40]int32)(st[0:40])
 		x0, y0 := mc8LoadI32x8((*[8]int32)(head[0:8]))
 		x1, y1 := mc8LoadI32x8((*[8]int32)(head[8:16]))
@@ -665,7 +665,7 @@ func mc8PrepV6FromI32S(im []int32, w, h int, ph *mc8Phase, out []uint16, rndCons
 	for c := 0; c < w; c += 8 {
 		// Strip c/8 of the strip-major intermediate (rows of eight
 		// contiguous samples): every window below is proven in bounds.
-		st := im[c*rows : c*rows+n]
+		st := im[c*rows : c*rows+n : c*rows+n]
 		head := (*[40]int32)(st[0:40])
 		x0, y0 := mc8LoadI32x8((*[8]int32)(head[0:8]))
 		x1, y1 := mc8LoadI32x8((*[8]int32)(head[8:16]))
@@ -1060,31 +1060,63 @@ func mc8BlendAvg(dst []byte, dstStride int, a, b []uint16, w, h int) {
 	// those bytes.
 	bias := archsimd.BroadcastUint16x8(12272)
 	sh := archsimd.BroadcastInt16x8(3)
-	ds, ws := uint32(dstStride), uint32(w)
-	var d, i uint32
-	if w == 4 {
-		for r := 0; r+2 <= h; r += 2 {
-			v := archsimd.LoadUint16x8Array(mc8WU8(a, i)).Add(archsimd.LoadUint16x8Array(mc8WU8(b, i))).SubSaturated(bias).ShiftSaturated(sh).ReshapeToUint8s()
+	avg := func(pa, pb *[8]uint16) archsimd.Uint8x16 {
+		return archsimd.LoadUint16x8Array(pa).Add(archsimd.LoadUint16x8Array(pb)).SubSaturated(bias).ShiftSaturated(sh).ReshapeToUint8s()
+	}
+	// The predictors are contiguous: they are walked as one stream whose
+	// loop bound proves each window; only the destination rows are checked.
+	n := w * h
+	a, b = a[:n:n], b[:n:n]
+	ds := uint32(dstStride)
+	var d uint32
+	switch {
+	case w == 4:
+		for i := 0; i <= len(a)-8; i += 8 {
+			pa, pb := (*[8]uint16)(a[i:i+8]), (*[8]uint16)(b[i:i+8])
+			v := avg(pa, pb)
 			x := v.ConcatOdd(v).ReshapeToUint64s().GetElem(0)
 			binary.LittleEndian.PutUint32(mc8W4(dst, d)[:], uint32(x))
 			binary.LittleEndian.PutUint32(mc8W4(dst, d+ds)[:], uint32(x>>32))
-			d, i = d+2*ds, i+8
+			d += 2 * ds
 		}
-		return
-	}
-	for r := 0; r < h; r++ {
-		for c := uint32(0); c < ws; c += 16 {
-			if ws-c == 8 {
-				v := archsimd.LoadUint16x8Array(mc8WU8(a, i+c)).Add(archsimd.LoadUint16x8Array(mc8WU8(b, i+c))).SubSaturated(bias).ShiftSaturated(sh).ReshapeToUint8s()
-				binary.LittleEndian.PutUint64(mc8W8(dst, d+c)[:], v.ConcatOdd(v).ReshapeToUint64s().GetElem(0))
-				break
-			}
-			pa, pb := mc8WU16(a, i+c), mc8WU16(b, i+c)
-			v0 := mc8L16U(pa[0:8]).Add(mc8L16U(pb[0:8])).SubSaturated(bias).ShiftSaturated(sh).ReshapeToUint8s()
-			v1 := mc8L16U(pa[8:16]).Add(mc8L16U(pb[8:16])).SubSaturated(bias).ShiftSaturated(sh).ReshapeToUint8s()
+	case w == 8:
+		for i := 0; i <= len(a)-8; i += 8 {
+			pa, pb := (*[8]uint16)(a[i:i+8]), (*[8]uint16)(b[i:i+8])
+			v := avg(pa, pb)
+			binary.LittleEndian.PutUint64(mc8W8(dst, d)[:], v.ConcatOdd(v).ReshapeToUint64s().GetElem(0))
+			d += ds
+		}
+	case w&15 == 0:
+		ws := uint32(w)
+		var c uint32
+		for i := 0; i <= len(a)-16; i += 16 {
+			pa, pb := (*[16]uint16)(a[i:i+16]), (*[16]uint16)(b[i:i+16])
+			v0 := avg((*[8]uint16)(pa[0:8]), (*[8]uint16)(pb[0:8]))
+			v1 := avg((*[8]uint16)(pa[8:16]), (*[8]uint16)(pb[8:16]))
 			v0.ConcatOdd(v1).StoreArray(mc8W16(dst, d+c))
+			if c += 16; c == ws {
+				c, d = 0, d+ds
+			}
 		}
-		d, i = d+ds, i+ws
+	default: // w = 16k + 8
+		ws := uint32(w)
+		var c uint32
+		for i := 0; i <= len(a)-8; {
+			if ws-c == 8 {
+				pa, pb := (*[8]uint16)(a[i:i+8]), (*[8]uint16)(b[i:i+8])
+				v := avg(pa, pb)
+				binary.LittleEndian.PutUint64(mc8W8(dst, d+c)[:], v.ConcatOdd(v).ReshapeToUint64s().GetElem(0))
+				i += 8
+				c, d = 0, d+ds
+				continue
+			}
+			pa, pb := (*[16]uint16)(a[i:i+16]), (*[16]uint16)(b[i:i+16])
+			v0 := avg((*[8]uint16)(pa[0:8]), (*[8]uint16)(pb[0:8]))
+			v1 := avg((*[8]uint16)(pa[8:16]), (*[8]uint16)(pb[8:16]))
+			v0.ConcatOdd(v1).StoreArray(mc8W16(dst, d+c))
+			i += 16
+			c += 16
+		}
 	}
 }
 
