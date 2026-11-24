@@ -322,29 +322,87 @@ func Put8UV(dstU, dstV, refU, refV *frame.Plane, dstX, dstY, refX, refY, w, h, f
 		return w&7 == 0 && mc8Put8TapChecked(dstU, refU, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch) &&
 			mc8Put8TapChecked(dstV, refV, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
+	// The source window, in-plane for both planes at once: that case checks
+	// the U views in line (the V planes share their geometry, so the V views
+	// fit exactly when they do) and runs the two planes' kernels back to back
+	// with no call before them; mc8PutUVEdge takes the rest.
+	hx, hy := mc8Halo(subX), mc8Halo(subY)
+	x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
+	dOff, sOff, sw := dstY*dstU.Stride+dstX, y0*refU.Stride+x0, max(w+8, 16)
+	if dstX < 0 || dstY < 0 || dstX+w > dstU.Width || dstY+h > dstU.Height || dstU.Stride < dstU.Width ||
+		x0 < 0 || y0 < 0 || x0+w+hx+hx+hx>>1 > refU.Width || y0+bh > refU.Height || refU.Stride < refU.Width ||
+		!unsafeutil.GridFit(len(dstU.Pix), dOff, dstU.Stride, w, h) || !unsafeutil.GridFit(len(refU.Pix), sOff, refU.Stride, sw, bh) {
+		return mc8PutUVEdge(dstU, dstV, refU, refV, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch)
+	}
+	du, su := unsafeutil.NewGrid(dstU.Pix, dOff, dstU.Stride, w, h), unsafeutil.NewGrid(refU.Pix, sOff, refU.Stride, sw, bh)
+	dv, sv := unsafeutil.NewGrid(dstV.Pix, dOff, dstV.Stride, w, h), unsafeutil.NewGrid(refV.Pix, sOff, refV.Stride, sw, bh)
+	phx, phy := &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15]
+	switch {
+	case subX != 0 && subY != 0:
+		im := scratch.imHBD[:]
+		if w == 4 {
+			mc8H6ToI32W4(su, h+5, phx, im)
+			mc8PutV6FromI32W4(im, h, phy, du)
+			mc8H6ToI32W4(sv, h+5, phx, im)
+			mc8PutV6FromI32W4(im, h, phy, dv)
+		} else {
+			mc8H6ToI32(su, w, h+5, phx, im, mc8PutH6ToI32Rnd)
+			mc8PutV6FromI32(im, w, h, phy, du)
+			mc8H6ToI32(sv, w, h+5, phx, im, mc8PutH6ToI32Rnd)
+			mc8PutV6FromI32(im, w, h, phy, dv)
+		}
+	case subX != 0:
+		switch {
+		case w == 4:
+			mc8PutH6S4(su, phx, du)
+			mc8PutH6S4(sv, phx, dv)
+		case w == 8:
+			mc8PutH6S8(su, phx, du)
+			mc8PutH6S8(sv, phx, dv)
+		case w&15 == 0:
+			mc8PutH6W16(su, phx, du)
+			mc8PutH6W16(sv, phx, dv)
+		default:
+			mc8PutH6Split(su, phx, du)
+			mc8PutH6Split(sv, phx, dv)
+		}
+	default:
+		switch {
+		case w == 4:
+			mc8PutV6S4(su, phy, du)
+			mc8PutV6S4(sv, phy, dv)
+		case w == 8:
+			mc8PutV6S8(su, phy, du)
+			mc8PutV6S8(sv, phy, dv)
+		case w&15 == 0:
+			mc8PutV6W16(su, phy, du)
+			mc8PutV6W16(sv, phy, dv)
+		default:
+			mc8PutV6Split(su, phy, du)
+			mc8PutV6Split(sv, phy, dv)
+		}
+	}
+	return true
+}
+
+// mc8PutUVEdge is Put8UV's six-tap path when the destination or the shared
+// source window is not inside its planes (or the views do not fit): the
+// checked destination views, and each plane's clamped window materialized in
+// turn in the shared edge buffer.
+func mc8PutUVEdge(dstU, dstV, refU, refV *frame.Plane, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky int, scratch *ConvolveScratch) bool {
 	dOff := dstY*dstU.Stride + dstX
 	if dstX < 0 || dstY < 0 || dstX+w > dstU.Width || dstY+h > dstU.Height || dstU.Stride < dstU.Width ||
 		!unsafeutil.GridFit(len(dstU.Pix), dOff, dstU.Stride, w, h) {
 		return false
 	}
 	phx, phy := &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15]
-	// The source window: in-plane for both planes at once, or each plane's
-	// clamped window materialized in turn in the shared edge buffer.
-	hx, hy := mc8Halo(subX), mc8Halo(subY)
-	x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
-	sOff, sw := y0*refU.Stride+x0, max(w+8, 16)
-	inPlane := x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= refU.Width && y0+bh <= refU.Height && refU.Stride >= refU.Width &&
-		unsafeutil.GridFit(len(refU.Pix), sOff, refU.Stride, sw, bh)
 	for p := 0; p < 2; p++ {
 		dst, ref := dstU, refU
 		if p == 1 {
 			dst, ref = dstV, refV
 		}
-		var sg unsafeutil.Grid[uint8]
-		ok := true
-		if inPlane {
-			sg = unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, sw, bh)
-		} else if sg, ok = mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge); !ok {
+		sg, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge)
+		if !ok {
 			return false
 		}
 		mc8PutGrid(unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, w, h), sg, w, h, subX, subY, phx, phy, scratch)
