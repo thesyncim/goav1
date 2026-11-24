@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // itx_fused8: dav1d's pass structure (itx_fused32) for the 8-bit 8x8
 // DCT_DCT block: one eight-row strip straight from the column-major
@@ -71,16 +68,14 @@ func InverseAddDCT8x8(dst []byte, dstStride int, pred []byte, predStride int, co
 	// The kernel switch is written here rather than in a dispatch function:
 	// one call level less for the most frequent block.
 	c := (*[64]int32)(coeff[:64])
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	dp, pp := unsafe.Pointer(unsafe.SliceData(dst)), unsafe.Pointer(unsafe.SliceData(pred))
 	switch {
 	case activeCols <= 4 && activeRows <= 4:
-		return itxGenDCT8x8C4R4(c, dp, dstStride, pp, predStride)
+		return itxGenDCT8x8C4R4(c, dst, dstStride, pred, predStride)
 	case activeCols <= 4:
-		return itxGenDCT8x8C4R8(c, dp, dstStride, pp, predStride)
+		return itxGenDCT8x8C4R8(c, dst, dstStride, pred, predStride)
 	case activeRows <= 4:
-		return itxGenDCT8x8C8R4(c, dp, dstStride, pp, predStride)
+		return itxGenDCT8x8C8R4(c, dst, dstStride, pred, predStride)
 	default:
-		return itxGenDCT8x8C8R8(c, dp, dstStride, pp, predStride)
+		return itxGenDCT8x8C8R8(c, dst, dstStride, pred, predStride)
 	}
 }

@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // 10- and 12-bit forms of the fused 16x16 and 8x8 DCT/ADST/flipped-ADST
 // pairings (itx_fused_hybrid). As for the DCT_DCT blocks
@@ -25,7 +22,11 @@ import (
 
 // itx16ColStripAddTHBD runs the 16x16 column network t for columns
 // c0..c0+7 from tmp rows 0..inRows-1 and adds the result onto 16bpc samples.
-func itx16ColStripAddTHBD(tmp *[16 * 16]int16, c0 int, inRows int, t tx1DType, dst unsafe.Pointer, dstStride int, pred unsafe.Pointer, predStride int, maxV archsimd.Int16x8) {
+func itx16ColStripAddTHBD(tmp *[16 * 16]int16, c0 int, inRows int, t tx1DType, dst []byte, dstStride int, pred []byte, predStride int, maxV archsimd.Int16x8) {
+	dst, pred = dst[2*c0:], pred[2*c0:]
+	// itxHBDFits checked the strides against itxGenMaxStride; the conversion
+	// carries that range, so each row window is one bounds check.
+	ds, ps := int(uint32(dstStride)), int(uint32(predStride))
 	var in [16]archsimd.Int16x8
 	for r := 0; r < inRows; r++ {
 		in[r] = archsimd.LoadInt16x8Array((*[8]int16)(tmp[r*16+c0:]))
@@ -37,7 +38,7 @@ func itx16ColStripAddTHBD(tmp *[16 * 16]int16, c0 int, inRows int, t tx1DType, d
 	sh3 := archsimd.BroadcastInt16x8(-3)
 	zero := archsimd.BroadcastInt16x8(0)
 	for r := 0; r < 16; r++ {
-		itxAddRow16(unsafe.Add(dst, r*dstStride+2*c0), unsafe.Add(pred, r*predStride+2*c0), itx32Round2(out[r], sh3, sh1, one), zero, maxV)
+		itxAddRow16(dst, r*ds, pred, r*ps, itx32Round2(out[r], sh3, sh1, one), zero, maxV)
 	}
 }
 
@@ -66,11 +67,8 @@ func InverseAdd16x16HybridHBD(dst []byte, dstStride int, pred []byte, predStride
 	if colL1[0].Max(colL1[1]).ReduceMax() > itx16ColumnL1Bound {
 		return false
 	}
-	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	pp := unsafe.Pointer(unsafe.SliceData(pred))
-	itx16ColStripAddTHBD(&tmp, 0, inRows, vertical, dp, dstStride, pp, predStride, maxV)
-	itx16ColStripAddTHBD(&tmp, 8, inRows, vertical, dp, dstStride, pp, predStride, maxV)
+	itx16ColStripAddTHBD(&tmp, 0, inRows, vertical, dst, dstStride, pred, predStride, maxV)
+	itx16ColStripAddTHBD(&tmp, 8, inRows, vertical, dst, dstStride, pred, predStride, maxV)
 	return true
 }
 
@@ -114,11 +112,11 @@ func InverseAdd8x8HybridHBD(dst []byte, dstStride int, pred []byte, predStride i
 	itx8Net1D(vertical, activeRows, &mid, &out)
 	sh3 := archsimd.BroadcastInt16x8(-3)
 	zero := archsimd.BroadcastInt16x8(0)
-	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	pp := unsafe.Pointer(unsafe.SliceData(pred))
+	// itxHBDFits checked the strides against itxGenMaxStride; the conversion
+	// carries that range, so each row window is one bounds check.
+	ds, ps := int(uint32(dstStride)), int(uint32(predStride))
 	for r := 0; r < 8; r++ {
-		itxAddRow16(unsafe.Add(dp, r*dstStride), unsafe.Add(pp, r*predStride), itx32Round2(out[r], sh3, sh1, one), zero, maxV)
+		itxAddRow16(dst, r*ds, pred, r*ps, itx32Round2(out[r], sh3, sh1, one), zero, maxV)
 	}
 	return true
 }

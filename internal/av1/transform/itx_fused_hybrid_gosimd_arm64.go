@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // itx_fused_hybrid: the fused two-pass structure of itx_fused16 and
 // itx_fused8 for the 8-bit 16x16 and 8x8 blocks whose transform pairs the
@@ -576,9 +573,7 @@ func InverseAdd16x16Hybrid(dst []byte, dstStride int, pred []byte, predStride in
 		len(dst) < 15*dstStride+16 || len(pred) < 15*predStride+16 {
 		return false
 	}
-	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	return itxGen16x16Hybrid((*[256]int32)(coeff[:256]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
+	return itxGen16x16Hybrid((*[256]int32)(coeff[:256]), dst, dstStride, pred, predStride, txType, activeCols, activeRows)
 }
 
 // InverseAdd8x8Hybrid is InverseAdd16x16Hybrid for the 8x8 block (every
@@ -589,9 +584,7 @@ func InverseAdd8x8Hybrid(dst []byte, dstStride int, pred []byte, predStride int,
 		len(dst) < 7*dstStride+8 || len(pred) < 7*predStride+8 {
 		return false
 	}
-	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	return itxGen8x8Hybrid((*[64]int32)(coeff[:64]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
+	return itxGen8x8Hybrid((*[64]int32)(coeff[:64]), dst, dstStride, pred, predStride, txType, activeCols, activeRows)
 }
 
 // The 4x4 and the 4- and 8/16-point rectangular 8-bit blocks of every type
@@ -618,9 +611,7 @@ func InverseAdd4x4(dst []byte, dstStride int, pred []byte, predStride int, coeff
 	if !itxSmallFits(4, 4, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, 4) {
 		return false
 	}
-	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	return itxGen4x4((*[16]int32)(coeff[:16]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, 4, activeRows)
+	return itxGen4x4((*[16]int32)(coeff[:16]), dst, dstStride, pred, predStride, txType, 4, activeRows)
 }
 
 // InverseAdd4x8 is InverseAdd4x4 for the 4 wide, 8 high block.
@@ -628,9 +619,7 @@ func InverseAdd4x8(dst []byte, dstStride int, pred []byte, predStride int, coeff
 	if !itxSmallFits(4, 8, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
 		return false
 	}
-	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	return itxGen4x8((*[32]int32)(coeff[:32]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
+	return itxGen4x8((*[32]int32)(coeff[:32]), dst, dstStride, pred, predStride, txType, activeCols, activeRows)
 }
 
 // InverseAdd8x4 is InverseAdd4x4 for the 8 wide, 4 high block.
@@ -638,9 +627,7 @@ func InverseAdd8x4(dst []byte, dstStride int, pred []byte, predStride int, coeff
 	if !itxSmallFits(8, 4, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
 		return false
 	}
-	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	return itxGen8x4((*[32]int32)(coeff[:32]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
+	return itxGen8x4((*[32]int32)(coeff[:32]), dst, dstStride, pred, predStride, txType, activeCols, activeRows)
 }
 
 // InverseAdd4x16 is InverseAdd4x4 for the 4 wide, 16 high block.
@@ -648,9 +635,7 @@ func InverseAdd4x16(dst []byte, dstStride int, pred []byte, predStride int, coef
 	if !itxSmallFits(4, 16, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
 		return false
 	}
-	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	return itxGen4x16((*[64]int32)(coeff[:64]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
+	return itxGen4x16((*[64]int32)(coeff[:64]), dst, dstStride, pred, predStride, txType, activeCols, activeRows)
 }
 
 // InverseAdd16x4 is InverseAdd4x4 for the 16 wide, 4 high block.
@@ -658,9 +643,7 @@ func InverseAdd16x4(dst []byte, dstStride int, pred []byte, predStride int, coef
 	if !itxSmallFits(16, 4, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
 		return false
 	}
-	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	return itxGen16x4((*[64]int32)(coeff[:64]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
+	return itxGen16x4((*[64]int32)(coeff[:64]), dst, dstStride, pred, predStride, txType, activeCols, activeRows)
 }
 
 // InverseAdd8x16 is InverseAdd4x4 for the 8 wide, 16 high block.
@@ -668,9 +651,7 @@ func InverseAdd8x16(dst []byte, dstStride int, pred []byte, predStride int, coef
 	if !itxSmallFits(8, 16, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
 		return false
 	}
-	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	return itxGen8x16((*[128]int32)(coeff[:128]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
+	return itxGen8x16((*[128]int32)(coeff[:128]), dst, dstStride, pred, predStride, txType, activeCols, activeRows)
 }
 
 // InverseAdd16x8 is InverseAdd4x4 for the 16 wide, 8 high block.
@@ -678,7 +659,5 @@ func InverseAdd16x8(dst []byte, dstStride int, pred []byte, predStride int, coef
 	if !itxSmallFits(16, 8, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
 		return false
 	}
-	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	return itxGen16x8((*[128]int32)(coeff[:128]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
+	return itxGen16x8((*[128]int32)(coeff[:128]), dst, dstStride, pred, predStride, txType, activeCols, activeRows)
 }
