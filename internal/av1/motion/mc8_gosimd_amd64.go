@@ -651,7 +651,7 @@ func mc8AVX2PrepH6(src []byte, ss, w, h int, ph *mc8Phase, out []uint16) {
 		for ur := uint(0); ur < uint(h&^1); ur += 2 {
 			r := int(ur)
 			s0 := r * ss
-			a := mc8H6(mc8Ld2At(src, s0, s0+ss), sA, sB, sC, t0, t1, t2).Add(rnd)
+			a := mc8H6(mc8Ld2(mc8Rows2(src, s0, ss)), sA, sB, sC, t0, t1, t2).Add(rnd)
 			mc8StU16(out, r*8, a.ToBits().ShiftAllRight(2))
 		}
 		r := h &^ 1
@@ -692,7 +692,7 @@ func mc8AVX2H6Mid(src []byte, ss, w, rows int, ph *mc8Phase, im *mc8IM) {
 		for ur := uint(0); ur < uint(rows&^1); ur += 2 {
 			r := int(ur)
 			s0 := r * ss
-			a := mc8H6(mc8Ld2At(src, s0, s0+ss), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(2)
+			a := mc8H6(mc8Ld2(mc8Rows2(src, s0, ss)), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(2)
 			mc8StI16(im, r*8, a)
 		}
 		r := rows &^ 1
@@ -1262,7 +1262,7 @@ func mc8AVX2PrepH8(src []byte, ss, w, h int, ph *mc8Phase, out []uint16) {
 		for ur := uint(0); ur < uint(h&^1); ur += 2 {
 			r := int(ur)
 			s0 := r * ss
-			a := mc8H8(mc8Ld2At(src, s0, s0+ss), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd)
+			a := mc8H8(mc8Ld2(mc8Rows2(src, s0, ss)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd)
 			mc8StU16(out, r*8, a.ToBits().ShiftAllRight(2))
 		}
 		r := h &^ 1
@@ -1303,7 +1303,7 @@ func mc8AVX2H8Mid(src []byte, ss, w, rows int, ph *mc8Phase, im *mc8IM) {
 		for ur := uint(0); ur < uint(rows&^1); ur += 2 {
 			r := int(ur)
 			s0 := r * ss
-			a := mc8H8(mc8Ld2At(src, s0, s0+ss), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(2)
+			a := mc8H8(mc8Ld2(mc8Rows2(src, s0, ss)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(2)
 			mc8StI16(im, r*8, a)
 		}
 		r := rows &^ 1
@@ -1673,6 +1673,22 @@ func mc8H4x4(s []byte, o0, o1, o2, o3 int, sA, sB, t0, t1 archsimd.Int8x32) arch
 	return y.PermuteOrZeroGrouped(sA).DotProductPairsSaturated(t0).Add(y.PermuteOrZeroGrouped(sB).DotProductPairsSaturated(t1))
 }
 
+// mc8H4x4Q is mc8H4x4 over the eight bytes at window tap 1 of four rows.
+func mc8H4x4Q(q0, q1, q2, q3 uint64, sA, sB, t0, t1 archsimd.Int8x32) archsimd.Int16x16 {
+	var z2 archsimd.Uint64x2
+	var z4 archsimd.Uint64x4
+	lo := z2.SetElem(0, q0).SetElem(1, q1)
+	hi := z2.SetElem(0, q2).SetElem(1, q3)
+	y := z4.SetLo(lo).SetHi(hi).ReshapeToUint8s()
+	return y.PermuteOrZeroGrouped(sA).DotProductPairsSaturated(t0).Add(y.PermuteOrZeroGrouped(sB).DotProductPairsSaturated(t1))
+}
+
+// mc8Rows2x9 is mc8Rows2 for 9-byte rows.
+func mc8Rows2x9(s []byte, o, ss int) (*[9]byte, *[9]byte) {
+	win := s[uint(o) : uint(o)+uint(ss)+9]
+	return (*[9]byte)(win), (*[9]byte)(win[ss:])
+}
+
 // mc8Rows4 returns the offsets of the source rows r..r+3 of a rows-row window,
 // repeating the last row past the end.
 func mc8Rows4(ss, r, rows int) (int, int, int, int) {
@@ -1735,8 +1751,16 @@ func mc8AVX2PutH4W4(src []byte, ss, h int, ph *mc8Phase, dst []byte, ds int) {
 	rnd := archsimd.BroadcastInt16x16(34)
 	zero := archsimd.Int16x16{}
 	c255 := archsimd.BroadcastInt16x16(255)
-	for ur := uint(0); ur < uint(h); ur += 4 {
+	for ur := uint(0); ur < uint(h&^3); ur += 4 {
 		r := int(ur)
+		x0, x1 := mc8Rows2x9(src, r*ss, ss)
+		x2, x3 := mc8Rows2x9(src, (r+2)*ss, ss)
+		le := binary.LittleEndian
+		q0, q1, q2, q3 := le.Uint64(x0[1:]), le.Uint64(x1[1:]), le.Uint64(x2[1:]), le.Uint64(x3[1:])
+		a := mc8H4x4Q(q0, q1, q2, q3, sA, sB, t0, t1).Add(rnd).ShiftAllRight(6)
+		mc8StPutW4(dst, ds, r, h, mc8Pack(a, a, zero, c255, deint))
+	}
+	if r := h &^ 3; r < h {
 		o0, o1, o2, o3 := mc8Rows4(ss, r, h)
 		a := mc8H4x4(src, o0, o1, o2, o3, sA, sB, t0, t1).Add(rnd).ShiftAllRight(6)
 		mc8StPutW4(dst, ds, r, h, mc8Pack(a, a, zero, c255, deint))
@@ -1750,8 +1774,16 @@ func mc8AVX2PrepH4W4(src []byte, ss, h int, ph *mc8Phase, out []uint16) {
 	sB := archsimd.LoadInt8x32Array(&mc8Shuf4B)
 	t0, t1 := mc8TapsB(ph.f[0]), mc8TapsB(ph.f[1])
 	rnd := archsimd.BroadcastInt16x16(2 + 6144<<2)
-	for ur := uint(0); ur < uint(h); ur += 4 {
+	for ur := uint(0); ur < uint(h&^3); ur += 4 {
 		r := int(ur)
+		x0, x1 := mc8Rows2x9(src, r*ss, ss)
+		x2, x3 := mc8Rows2x9(src, (r+2)*ss, ss)
+		le := binary.LittleEndian
+		q0, q1, q2, q3 := le.Uint64(x0[1:]), le.Uint64(x1[1:]), le.Uint64(x2[1:]), le.Uint64(x3[1:])
+		a := mc8H4x4Q(q0, q1, q2, q3, sA, sB, t0, t1).Add(rnd)
+		mc8StU16(out, r*4, a.ToBits().ShiftAllRight(2))
+	}
+	if r := h &^ 3; r < h {
 		o0, o1, o2, o3 := mc8Rows4(ss, r, h)
 		a := mc8H4x4(src, o0, o1, o2, o3, sA, sB, t0, t1).Add(rnd)
 		mc8StPrepW4(out, r, h, a.ToBits().ShiftAllRight(2))
