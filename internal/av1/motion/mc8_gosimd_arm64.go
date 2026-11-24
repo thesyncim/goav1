@@ -64,6 +64,23 @@ type mc8Phase struct {
 
 var mc8Phases [mc8KindCount][16]mc8Phase
 
+// mc8Vec holds the kernels' constant rounding and shift vectors. A kernel
+// loads them (one table address, one vector load each) rather than
+// broadcasting: a broadcast builds the value in a general register, inserts
+// it into a lane and duplicates it.
+var mc8Vec = struct {
+	rnd32, rnd34, prepRnd, sh6, sh2 [8]int16
+	w32, wsh6                       [4]int32
+}{
+	rnd32:   [8]int16{32, 32, 32, 32, 32, 32, 32, 32},
+	rnd34:   [8]int16{34, 34, 34, 34, 34, 34, 34, 34},
+	prepRnd: [8]int16{2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2},
+	sh6:     [8]int16{-6, -6, -6, -6, -6, -6, -6, -6},
+	sh2:     [8]int16{-2, -2, -2, -2, -2, -2, -2, -2},
+	w32:     [4]int32{32, 32, 32, 32},
+	wsh6:    [4]int32{-6, -6, -6, -6},
+}
+
 // mc8SixTap reports whether every phase of kind lies inside window taps 1..6.
 var mc8SixTap [mc8KindCount]bool
 

@@ -174,7 +174,15 @@ func (w *writer) kernel(k kernel) {
 		last := i == len(chunks)-1
 		switch {
 		case i == 0:
+			// The loop sits in its own block, so the row offsets its
+			// chunks hoist are formed only for blocks that reach it.
+			w.line("if h >= %d {", n)
 			w.line("for ; r+%d <= h; r += %d {", n, n)
+		case i == 1:
+			// The tail runs only when rows remain (one test for the
+			// common multiple-of-eight heights).
+			w.line("if r < h {")
+			w.line("if r+%d <= h {", n)
 		case n == 1:
 			w.line("if r < h {")
 		default:
@@ -210,6 +218,12 @@ func (w *writer) kernel(k kernel) {
 			w.line("r += %d", n)
 		}
 		w.line("}")
+		if i == 0 {
+			w.line("}")
+		}
+		if i > 0 && last {
+			w.line("}")
+		}
 	}
 	if k.strip != nil {
 		w.line("}")
@@ -237,14 +251,14 @@ func single(p string) func(int) string {
 
 // 8-bit prologues: halved taps on int16 lanes.
 func mc8Prologue(put bool, hw string) []string {
-	rnd, sh := "2 + 6144<<2", "-2"
+	rnd, sh := "prepRnd", "sh2"
 	if put {
-		rnd, sh = "32", "-6"
+		rnd, sh = "rnd32", "sh6"
 	}
 	return []string{
 		"c# := archsimd.LoadInt16x8Array(&ph.h[#])",
-		fmt.Sprintf("rnd := archsimd.BroadcastInt16x8(%s)", rnd),
-		fmt.Sprintf("sh := archsimd.BroadcastInt16x8(%s)", sh),
+		fmt.Sprintf("rnd := archsimd.LoadInt16x8Array(&mc8Vec.%s)", rnd),
+		fmt.Sprintf("sh := archsimd.LoadInt16x8Array(&mc8Vec.%s)", sh),
 		hw,
 	}
 }
@@ -396,7 +410,7 @@ uses it leaves no inline-mark NOP.`)
 		name, desc, dst, dstName := "Put", putH6Desc, "uint8", "destination"
 		pro := func(hw string) []string {
 			p := mc8Prologue(put, hw)
-			p[1] = "rnd := archsimd.BroadcastInt16x8(34)"
+			p[1] = "rnd := archsimd.LoadInt16x8Array(&mc8Vec.rnd34)"
 			return p
 		}
 		if !put {
@@ -490,8 +504,8 @@ unreachable, so the kernels stay leaf functions.`)
 	}
 	coef := "c# := archsimd.LoadInt32x4Array(&ph.w[#])"
 	putPro := []string{coef,
-		"rnd := archsimd.BroadcastInt32x4(32)",
-		"shv := archsimd.BroadcastInt32x4(-6)",
+		"rnd := archsimd.LoadInt32x4Array(&mc8Vec.w32)",
+		"shv := archsimd.LoadInt32x4Array(&mc8Vec.wsh6)",
 		"zero := archsimd.BroadcastInt16x8(0)",
 		"maxV := archsimd.BroadcastInt16x8(maxPix)",
 	}
