@@ -35,12 +35,10 @@ func lpfSpread3(a, b, d, c archsimd.Uint8x16) archsimd.Uint8x16 {
 // byte is then the high byte of each 16-bit lane, one uzp2 per sixteen
 // outputs where dav1d spends rshrn + rshrn2. Every intermediate is exact mod
 // 2^16 and every output sum is below 2^16 (8*255+4 scaled by 32, 16*255+8 by
-// 16), so the high byte is exactly (sum + bias) >> shift.
-
-// lpfNarrowHi packs the high bytes of the low- and high-half sums (uzp2).
-func lpfNarrowHi(lo, hi archsimd.Uint16x8) archsimd.Uint8x16 {
-	return lo.ReshapeToUint8s().ConcatOdd(hi.ReshapeToUint8s())
-}
+// 16), so the high byte is exactly (sum + bias) >> shift. The kernels write
+// the scaled widen (x.MulWidenLo(k), x.HiToLo().MulWidenLo(k.HiToLo())) and
+// the high-byte narrow (lo.ReshapeToUint8s().ConcatOdd(hi...)) out at each
+// use: as inlined helpers, each call left an inline-mark NOP.
 
 // lpfFlat6Half is the dav1d wd6 sliding sum (out p1, p0, q0, q1) on scaled
 // widened lanes; s is the scaled, biased 3*p2 + 2*p1 + 2*p0 + q0 + 4.
@@ -68,10 +66,4 @@ func lpfFlat8Half(P3, P2, P1, P0, Q0, Q1, Q2, Q3, s archsimd.Uint16x8) (a2, a1, 
 	b1 = s
 	b2 = s.Add(Q2.Add(Q3)).Sub(P1.Add(Q1))
 	return
-}
-
-// lpfWiden widens both halves of x scaled by k (umull/umull2): the scaled
-// widen the flat filters accumulate in.
-func lpfWiden(x, k archsimd.Uint8x16) (lo, hi archsimd.Uint16x8) {
-	return x.MulWidenLo(k), x.HiToLo().MulWidenLo(k.HiToLo())
 }

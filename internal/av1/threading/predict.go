@@ -1176,7 +1176,13 @@ func (b *FrameWorkBatch) predictBlockInterSubChromaPlanePtr(index int, visit *ti
 		if err != nil {
 			return ErrInvalidBatch
 		}
-		if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepth(geom.Output, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, cellX, cellY, refX, refY, width, height, subX, subY, cell.InterpFilters); err != nil {
+		// 8-bit cells take the mc() put kernels (dav1d's w2/w4 put_8tap for
+		// recon_b_inter's sub-8x8 chroma), which need the convolve scratch.
+		var cs *motion.ConvolveScratch
+		if geom.bytesPerSample() == 1 {
+			cs = frameWorkConvolveScratch(scratch)
+		}
+		if err := motion.PredictInterPlaneBlockFromOriginWithFilterBitDepthFilterSizeScratch(geom.Output, ref, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, cellX, cellY, refX, refY, width, height, width, height, subX, subY, cell.InterpFilters, cs); err != nil {
 			return ErrInvalidBatch
 		}
 	}

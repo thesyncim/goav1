@@ -792,6 +792,53 @@ func (b *FrameWorkBatch) reconBInter(index int, l *frameWorkLeanInter, visit *ti
 	return b.reconBInterPlanes(index, l, visit, scratch, filters, dims, compound, slot0, slot1)
 }
 
+// reconBInterSubChroma8 is dav1d recon_b_inter's is_sub8x8 arm at 8 bits:
+// the chroma block of a sub-8x8 luma group (at x, y, w x h, wholly visible)
+// is predicted sub-block by sub-block, each one mc() put from its own
+// reference and mv into the bound output plane, U then V. It reports false
+// when a sub-block needs what the bound views cannot give (an unbound or
+// scaled reference, a block leaving the writable window); the caller then
+// runs the general per-plane route, which rewrites every sub-block, so cells
+// already written here are simply predicted again.
+func (b *FrameWorkBatch) reconBInterSubChroma8(l *frameWorkLeanInter, sub *tile.SubChromaInterResult, x, y, w, h int, ssX, ssY bool, scratch *FrameWorkInterPredictionScratch) bool {
+	if l.bps != 1 || sub.Count == 0 || int(sub.Count) > len(sub.Cells) {
+		return false
+	}
+	cs := frameWorkConvolveScratch(scratch)
+	for plane := FrameWorkPlaneU; plane <= FrameWorkPlaneV; plane++ {
+		p := &l.plane[plane]
+		if !p.holds(x, y, w, h) {
+			return false
+		}
+		for i := range int(sub.Count) {
+			c := &sub.Cells[i]
+			reference, ok := frameWorkReferenceFromTile(c.Reference)
+			if !ok {
+				return false
+			}
+			slot := uint(reference) * 3
+			if l.refBound>>slot&7 != 7 {
+				b.bindSameRefs(l, reference)
+			}
+			idx := slot + uint(plane)
+			if idx >= uint(len(l.ref)) || l.refSame>>idx&1 == 0 {
+				return false
+			}
+			cx, cy, cw, ch := x+int(c.OffsetX), y+int(c.OffsetY), int(c.Width), int(c.Height)
+			if cw <= 0 || ch <= 0 || cx+cw > x+w || cy+ch > y+h {
+				return false
+			}
+			ref := l.ref[idx]
+			refX, refY, subX, subY := motion.TranslationOrigin(cx, cy, c.MV, ssX, ssY)
+			if !motion.Put8(&p.output, ref, cx, cy, refX, refY, cw, ch, cw, ch, subX, subY, c.InterpFilters, cs) &&
+				motion.PredictTranslation8(&p.output, ref, cx, cy, cw, ch, cw, ch, c.MV, ssX, ssY, c.InterpFilters, cs) != nil {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // holds reports whether a plane block at (x, y) of full extent w x h lies
 // inside the plane's writable window and starts inside its aligned plane
 // (dav1d mc() writes the whole block at its position in f->cur), so it needs
@@ -922,12 +969,6 @@ func (b *FrameWorkBatch) reconBInterPlanes(index int, l *frameWorkLeanInter, vis
 		if !ok {
 			return true, ErrInvalidBatch
 		}
-		if !compound && pred.SubChromaInter != nil {
-			if err := b.predictBlockInterSubChromaPlanePtr(index, visit, FrameWorkPlaneU, scratch); err != nil {
-				return true, err
-			}
-			return true, b.predictBlockInterSubChromaPlanePtr(index, visit, FrameWorkPlaneV, scratch)
-		}
 		sx, sy := int(l.ssX), int(l.ssY)
 		miCol, miRow := int(block.MICol), int(block.MIRow)
 		if sx != 0 && miCol&1 != 0 && dims.W4 == 1 {
@@ -939,6 +980,17 @@ func (b *FrameWorkBatch) reconBInterPlanes(index int, l *frameWorkLeanInter, vis
 		blockX4, blockY4 := int(block.X4), int(block.Y4)
 		width = (((blockX4 + int(block.VisibleW4) + sx) >> sx) - (blockX4 >> sx)) * 4
 		height = (((blockY4 + int(block.VisibleH4) + sy) >> sy) - (blockY4 >> sy)) * 4
+		if !compound && pred.SubChromaInter != nil {
+			cx, cy := (miCol*4)>>sx, (miRow*4)>>sy
+			cfw, cfh := int(cdims.W4)*4, int(cdims.H4)*4
+			if width == cfw && height == cfh && b.reconBInterSubChroma8(l, pred.SubChromaInter, cx, cy, cfw, cfh, sx != 0, sy != 0, scratch) {
+				return true, nil
+			}
+			if err := b.predictBlockInterSubChromaPlanePtr(index, visit, FrameWorkPlaneU, scratch); err != nil {
+				return true, err
+			}
+			return true, b.predictBlockInterSubChromaPlanePtr(index, visit, FrameWorkPlaneV, scratch)
+		}
 		if width <= 0 || height <= 0 {
 			return true, ErrInvalidBatch
 		}
