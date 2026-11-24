@@ -35,9 +35,10 @@ func ParseHeader(src []byte) (Header, int, error) {
 	if b&0x80 != 0 {
 		return Header{}, 0, ErrForbiddenBit
 	}
-	if b&0x01 != 0 {
-		return Header{}, 0, ErrReservedBit
-	}
+	// obu_reserved_1bit and extension_header_reserved_3bits "must be set to
+	// 0. The value is ignored by a decoder." (AV1 spec, OBU header semantics);
+	// libaom's aom_read_obu_header (av1/common/obu_util.c) and dav1d's
+	// dav1d_parse_obus (src/obu.c) both skip them.
 
 	h := Header{
 		Type:         Type((b >> 3) & 0x0f),
@@ -50,9 +51,6 @@ func ParseHeader(src []byte) (Header, int, error) {
 			return Header{}, 0, ErrShortHeader
 		}
 		ext := src[1]
-		if ext&0x07 != 0 {
-			return Header{}, 0, ErrReservedBit
-		}
 		h.TemporalID = (ext >> 5) & 0x07
 		h.SpatialID = (ext >> 3) & 0x03
 		return h, 2, nil
