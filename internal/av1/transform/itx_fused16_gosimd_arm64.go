@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // itx_fused16: dav1d's pass structure (itx_fused32) for the 8-bit 16x16
 // DCT_DCT block. The row pass runs one or two eight-row strips straight
@@ -325,35 +322,33 @@ func InverseAddDCT16x16(dst []byte, dstStride int, pred []byte, predStride int, 
 	// The kernel switch is written here rather than in a dispatch function:
 	// one call level less.
 	c := (*[256]int32)(coeff[:256])
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	dp, pp := unsafe.Pointer(unsafe.SliceData(dst)), unsafe.Pointer(unsafe.SliceData(pred))
 	switch {
 	case activeCols <= 4:
 		switch {
 		case activeRows <= 4:
-			return itxGenDCT16x16C4R4(c, dp, dstStride, pp, predStride)
+			return itxGenDCT16x16C4R4(c, dst, dstStride, pred, predStride)
 		case activeRows <= 8:
-			return itxGenDCT16x16C4R8(c, dp, dstStride, pp, predStride)
+			return itxGenDCT16x16C4R8(c, dst, dstStride, pred, predStride)
 		default:
-			return itxGenDCT16x16C4R16(c, dp, dstStride, pp, predStride)
+			return itxGenDCT16x16C4R16(c, dst, dstStride, pred, predStride)
 		}
 	case activeCols <= 8:
 		switch {
 		case activeRows <= 4:
-			return itxGenDCT16x16C8R4(c, dp, dstStride, pp, predStride)
+			return itxGenDCT16x16C8R4(c, dst, dstStride, pred, predStride)
 		case activeRows <= 8:
-			return itxGenDCT16x16C8R8(c, dp, dstStride, pp, predStride)
+			return itxGenDCT16x16C8R8(c, dst, dstStride, pred, predStride)
 		default:
-			return itxGenDCT16x16C8R16(c, dp, dstStride, pp, predStride)
+			return itxGenDCT16x16C8R16(c, dst, dstStride, pred, predStride)
 		}
 	default:
 		switch {
 		case activeRows <= 4:
-			return itxGenDCT16x16C16R4(c, dp, dstStride, pp, predStride)
+			return itxGenDCT16x16C16R4(c, dst, dstStride, pred, predStride)
 		case activeRows <= 8:
-			return itxGenDCT16x16C16R8(c, dp, dstStride, pp, predStride)
+			return itxGenDCT16x16C16R8(c, dst, dstStride, pred, predStride)
 		default:
-			return itxGenDCT16x16C16R16(c, dp, dstStride, pp, predStride)
+			return itxGenDCT16x16C16R16(c, dst, dstStride, pred, predStride)
 		}
 	}
 }

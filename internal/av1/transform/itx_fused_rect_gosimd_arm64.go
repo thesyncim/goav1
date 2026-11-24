@@ -7,8 +7,8 @@
 package transform
 
 import (
+	"encoding/binary"
 	"simd/archsimd"
-	"unsafe"
 )
 
 // itx_fused_rect: the fused two-pass inverse transform (itx_fused16,
@@ -104,7 +104,11 @@ func itx16x32RowStrip(coeff []int32, stride int, r0 int, inCols int, tmp *[32 * 
 
 // itx16x32ColStripAdd runs the 16x32 column pass (DCT32 columns) for columns
 // c0..c0+7 from inRows coded tmp rows (8, 16 or 32) and adds the result.
-func itx16x32ColStripAdd(tmp *[32 * 16]int16, c0 int, inRows int, dst unsafe.Pointer, dstStride int, pred unsafe.Pointer, predStride int) {
+func itx16x32ColStripAdd(tmp *[32 * 16]int16, c0 int, inRows int, dst []byte, dstStride int, pred []byte, predStride int) {
+	dst, pred = dst[c0:], pred[c0:]
+	// The entry point checked the strides against itxGenMaxStride; the
+	// conversion carries that range, so each row window is one bounds check.
+	ds, ps := int(uint32(dstStride)), int(uint32(predStride))
 	var in [32]archsimd.Int16x8
 	for r := 0; r < inRows; r++ {
 		in[r] = archsimd.LoadInt16x8Array((*[8]int16)(tmp[r*16+c0:]))
@@ -116,9 +120,10 @@ func itx16x32ColStripAdd(tmp *[32 * 16]int16, c0 int, inRows int, dst unsafe.Poi
 	sh3 := archsimd.BroadcastInt16x8(-3)
 	for r := 0; r < 32; r++ {
 		res := itx32Round2(out[r], sh3, sh1, one)
-		rows := [2]uint64{*(*uint64)(unsafe.Add(pred, r*predStride+c0)), 0}
+		d, q := (*[8]byte)(dst[r*ds:r*ds+8]), (*[8]byte)(pred[r*ps:r*ps+8])
+		rows := [2]uint64{binary.LittleEndian.Uint64(q[:]), 0}
 		p := archsimd.LoadUint64x2Array(&rows).ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()
-		*(*uint64)(unsafe.Add(dst, r*dstStride+c0)) = p.Add(res).SaturateToUint8().ReshapeToUint64s().GetElem(0)
+		binary.LittleEndian.PutUint64(d[:], p.Add(res).SaturateToUint8().ReshapeToUint64s().GetElem(0))
 	}
 }
 
@@ -131,7 +136,7 @@ func itx16x32ColStripAdd(tmp *[32 * 16]int16, c0 int, inRows int, dst unsafe.Poi
 // the same bytes.
 func InverseAddDCT16x32(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
 	if activeRows <= 0 || activeRows > 32 || activeCols <= 0 || activeCols > 16 ||
-		coeffStride < 32 || len(coeff) < 15*coeffStride+32 || dstStride < 16 || predStride < 16 ||
+		coeffStride < 32 || len(coeff) < 15*coeffStride+32 || dstStride < 16 || predStride < 16 || dstStride > itxGenMaxStride || predStride > itxGenMaxStride ||
 		len(dst) < 31*dstStride+16 || len(pred) < 31*predStride+16 {
 		return false
 	}
@@ -153,11 +158,8 @@ func InverseAddDCT16x32(dst []byte, dstStride int, pred []byte, predStride int, 
 	if colL1[0].Max(colL1[1]).ReduceMax() > itx16ColumnL1Bound {
 		return false
 	}
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	pp := unsafe.Pointer(unsafe.SliceData(pred))
-	itx16x32ColStripAdd(&tmp, 0, inRows, dp, dstStride, pp, predStride)
-	itx16x32ColStripAdd(&tmp, 8, inRows, dp, dstStride, pp, predStride)
+	itx16x32ColStripAdd(&tmp, 0, inRows, dst, dstStride, pred, predStride)
+	itx16x32ColStripAdd(&tmp, 8, inRows, dst, dstStride, pred, predStride)
 	return true
 }
 
@@ -198,7 +200,11 @@ func itx32x16RowStrip(coeff []int32, stride int, r0 int, inCols int, tmp *[16 * 
 
 // itx32x16ColStripAdd runs the 32x16 column pass (DCT16 columns) for columns
 // c0..c0+7 from inRows coded tmp rows (4, 8 or 16) and adds the result.
-func itx32x16ColStripAdd(tmp *[16 * 32]int16, c0 int, inRows int, dst unsafe.Pointer, dstStride int, pred unsafe.Pointer, predStride int) {
+func itx32x16ColStripAdd(tmp *[16 * 32]int16, c0 int, inRows int, dst []byte, dstStride int, pred []byte, predStride int) {
+	dst, pred = dst[c0:], pred[c0:]
+	// The entry point checked the strides against itxGenMaxStride; the
+	// conversion carries that range, so each row window is one bounds check.
+	ds, ps := int(uint32(dstStride)), int(uint32(predStride))
 	var in [16]archsimd.Int16x8
 	for r := 0; r < inRows; r++ {
 		in[r] = archsimd.LoadInt16x8Array((*[8]int16)(tmp[r*32+c0:]))
@@ -210,16 +216,17 @@ func itx32x16ColStripAdd(tmp *[16 * 32]int16, c0 int, inRows int, dst unsafe.Poi
 	sh3 := archsimd.BroadcastInt16x8(-3)
 	for r := 0; r < 16; r++ {
 		res := itx32Round2(out[r], sh3, sh1, one)
-		rows := [2]uint64{*(*uint64)(unsafe.Add(pred, r*predStride+c0)), 0}
+		d, q := (*[8]byte)(dst[r*ds:r*ds+8]), (*[8]byte)(pred[r*ps:r*ps+8])
+		rows := [2]uint64{binary.LittleEndian.Uint64(q[:]), 0}
 		p := archsimd.LoadUint64x2Array(&rows).ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()
-		*(*uint64)(unsafe.Add(dst, r*dstStride+c0)) = p.Add(res).SaturateToUint8().ReshapeToUint64s().GetElem(0)
+		binary.LittleEndian.PutUint64(d[:], p.Add(res).SaturateToUint8().ReshapeToUint64s().GetElem(0))
 	}
 }
 
 // InverseAddDCT32x16 is InverseAddDCT16x32 for the 32 wide, 16 high block.
 func InverseAddDCT32x16(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
 	if activeRows <= 0 || activeRows > 16 || activeCols <= 0 || activeCols > 32 ||
-		coeffStride < 16 || len(coeff) < 31*coeffStride+16 || dstStride < 32 || predStride < 32 ||
+		coeffStride < 16 || len(coeff) < 31*coeffStride+16 || dstStride < 32 || predStride < 32 || dstStride > itxGenMaxStride || predStride > itxGenMaxStride ||
 		len(dst) < 15*dstStride+32 || len(pred) < 15*predStride+32 {
 		return false
 	}
@@ -239,11 +246,8 @@ func InverseAddDCT32x16(dst []byte, dstStride int, pred []byte, predStride int, 
 	if colL1[0].Max(colL1[1]).Max(colL1[2].Max(colL1[3])).ReduceMax() > itx16ColumnL1Bound {
 		return false
 	}
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	pp := unsafe.Pointer(unsafe.SliceData(pred))
 	for c0 := 0; c0 < 32; c0 += 8 {
-		itx32x16ColStripAdd(&tmp, c0, inRows, dp, dstStride, pp, predStride)
+		itx32x16ColStripAdd(&tmp, c0, inRows, dst, dstStride, pred, predStride)
 	}
 	return true
 }
