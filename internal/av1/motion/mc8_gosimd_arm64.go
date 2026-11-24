@@ -344,7 +344,7 @@ func mc8PutRun(d []byte, ds int, src []byte, ss, w, h, subX, subY int, phx, phy 
 	switch {
 	case subX != 0 && subY != 0:
 		im := scratch.imHBD[:]
-		mc8H6ToI32(src, ss, w, h+5, phx, im)
+		mc8H6ToI32(src, ss, w, h+5, phx, im, mc8PutH6ToI32Rnd)
 		mc8PutV6FromI32(im, w, h, phy, d, ds)
 	case subX != 0:
 		mc8PutH6(src, ss, w, h, phx, d, ds)
@@ -575,7 +575,7 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 	switch {
 	case subX != 0 && subY != 0:
 		im := scratch.im[:]
-		mc8H6ToI32(src, stride, w, h+5, &mc8Phases[kx][subX], im)
+		mc8H6ToI32(src, stride, w, h+5, &mc8Phases[kx][subX], im, 2)
 		mc8PrepV6FromI32S(im, w, h, &mc8Phases[ky][subY], o, mc8PrepV6Rnd)
 	case subX != 0:
 		mc8PrepH6(src, stride, w, h, &mc8Phases[kx][subX], o)
@@ -618,14 +618,14 @@ func mc8Lo64(v archsimd.Uint8x16) uint64 {
 
 // mc8H6ToI32 writes rows x w rounded horizontal sums ((s + 2) >> 2) as int32
 // with row stride w.
-func mc8H6ToI32(src []byte, srcStride, w, rows int, ph *mc8Phase, im []int32) {
+func mc8H6ToI32(src []byte, srcStride, w, rows int, ph *mc8Phase, im []int32, round int16) {
 	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
 	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
 	c2 := archsimd.LoadInt16x8Array(&ph.h[2])
 	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
 	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
 	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
-	rnd := archsimd.BroadcastInt16x8(2)
+	rnd := archsimd.BroadcastInt16x8(round)
 	sh := archsimd.BroadcastInt16x8(-2)
 	ss, sl := srcStride, len(src)-16
 	n := rows * 8
@@ -703,7 +703,6 @@ func mc8PutV6FromI32(im []int32, w, h int, ph *mc8Phase, dst []byte, dstStride i
 	c3 := archsimd.LoadInt32x4Array(&ph.v[3])
 	c4 := archsimd.LoadInt32x4Array(&ph.v[4])
 	c5 := archsimd.LoadInt32x4Array(&ph.v[5])
-	rnd := archsimd.BroadcastInt32x4(1 << 15)
 	ds := uint32(dstStride)
 	rows := h + 5
 	n := rows * 8
@@ -729,16 +728,16 @@ func mc8PutV6FromI32(im []int32, w, h int, ph *mc8Phase, dst []byte, dstStride i
 			x10, y10 := archsimd.LoadInt32x4Array((*[4]int32)(win[40:44])), archsimd.LoadInt32x4Array((*[4]int32)(win[44:48]))
 			x11, y11 := archsimd.LoadInt32x4Array((*[4]int32)(win[48:52])), archsimd.LoadInt32x4Array((*[4]int32)(win[52:56]))
 			x12, y12 := archsimd.LoadInt32x4Array((*[4]int32)(win[56:60])), archsimd.LoadInt32x4Array((*[4]int32)(win[60:64]))
-			u0, u1 := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5, rnd)
+			u0, u1 := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o)[:], u0)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+1*ds)[:], u1)
-			u0, u1 = mc8V6PutPair(x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, x7, y7, x8, y8, c0, c1, c2, c3, c4, c5, rnd)
+			u0, u1 = mc8V6PutPair(x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, x7, y7, x8, y8, c0, c1, c2, c3, c4, c5)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+2*ds)[:], u0)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+3*ds)[:], u1)
-			u0, u1 = mc8V6PutPair(x4, y4, x5, y5, x6, y6, x7, y7, x8, y8, x9, y9, x10, y10, c0, c1, c2, c3, c4, c5, rnd)
+			u0, u1 = mc8V6PutPair(x4, y4, x5, y5, x6, y6, x7, y7, x8, y8, x9, y9, x10, y10, c0, c1, c2, c3, c4, c5)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+4*ds)[:], u0)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+5*ds)[:], u1)
-			u0, u1 = mc8V6PutPair(x6, y6, x7, y7, x8, y8, x9, y9, x10, y10, x11, y11, x12, y12, c0, c1, c2, c3, c4, c5, rnd)
+			u0, u1 = mc8V6PutPair(x6, y6, x7, y7, x8, y8, x9, y9, x10, y10, x11, y11, x12, y12, c0, c1, c2, c3, c4, c5)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+6*ds)[:], u0)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+7*ds)[:], u1)
 			o += 8 * ds
@@ -748,7 +747,7 @@ func mc8PutV6FromI32(im []int32, w, h int, ph *mc8Phase, dst []byte, dstStride i
 			win := (*[16]int32)(st[q : q+16])
 			x5, y5 := archsimd.LoadInt32x4Array((*[4]int32)(win[0:4])), archsimd.LoadInt32x4Array((*[4]int32)(win[4:8]))
 			x6, y6 := archsimd.LoadInt32x4Array((*[4]int32)(win[8:12])), archsimd.LoadInt32x4Array((*[4]int32)(win[12:16]))
-			u0, u1 := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5, rnd)
+			u0, u1 := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o)[:], u0)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+ds)[:], u1)
 			o += 2 * ds
@@ -756,19 +755,25 @@ func mc8PutV6FromI32(im []int32, w, h int, ph *mc8Phase, dst []byte, dstStride i
 		}
 		if q <= len(st)-8 {
 			x5, y5 := mc8LoadI32x8((*[8]int32)(st[q : q+8]))
-			u0, _ := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x5, y5, c0, c1, c2, c3, c4, c5, rnd)
+			u0, _ := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x5, y5, c0, c1, c2, c3, c4, c5)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o)[:], u0)
 		}
 	}
 }
 
+// mc8PutH6ToI32Rnd is the put 2D horizontal rounding constant: (s + 2) >> 2
+// plus a bias of 8 on every intermediate sample, ((s + 34) >> 2) exactly
+// (floor division by 4 commutes with adding a multiple of 4). The six
+// vertical taps of every six-tap phase sum to 128, scaled by 32 to 4096, so
+// the bias adds 8 * 4096 = 2^15 to every vertical sum: the vertical pass's
+// rounding, which mc8V6PutPair therefore no longer adds. The biased samples
+// stay below 2^15 (|s| < 20000) and the vertical sums inside int32.
+const mc8PutH6ToI32Rnd = 2 + 4*8
+
 // mc8V6PutPair is the put 2D vertical chain of output rows r and r+1 from
-// the seven intermediate rows (x, y halves) r..r+6, saturated to bytes.
-func mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5, rnd archsimd.Int32x4) (uint64, uint64) {
-	// The chains start with a multiply and add rnd last: a MulAdd onto rnd
-	// first needs a copy of rnd per accumulator (VMLA is destructive), and
-	// the register allocator chained those copies serially at the head of
-	// every chain.
+// the seven intermediate rows (x, y halves) r..r+6, saturated to bytes. The
+// intermediate carries the vertical rounding (mc8PutH6ToI32Rnd).
+func mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5 archsimd.Int32x4) (uint64, uint64) {
 	a0 := x0.Mul(c0)
 	b0 := y0.Mul(c0)
 	a1 := x1.Mul(c0)
@@ -793,7 +798,6 @@ func mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1
 	b0 = y5.MulAdd(c5, b0)
 	a1 = x6.MulAdd(c5, a1)
 	b1 = y6.MulAdd(c5, b1)
-	a0, b0, a1, b1 = a0.Add(rnd), b0.Add(rnd), a1.Add(rnd), b1.Add(rnd)
 	v0 := a0.ToBits().ReshapeToUint16s().ConcatOdd(b0.ToBits().ReshapeToUint16s()).BitsToInt16()
 	v1 := a1.ToBits().ReshapeToUint16s().ConcatOdd(b1.ToBits().ReshapeToUint16s()).BitsToInt16()
 	return mc8Lo64(v0.SaturateToUint8()), mc8Lo64(v1.SaturateToUint8())
