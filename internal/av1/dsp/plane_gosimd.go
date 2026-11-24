@@ -29,12 +29,9 @@ package dsp
 import (
 	"encoding/binary"
 	"simd/archsimd"
-	"unsafe"
 )
 
-// unsafe: the rows are resliced before the pointer loops; the safe form of
-// the 16-bit loop (two induction variables) measured +34-44% on the arm64
-// twin, and the 8-bit form added per-row work on amd64.
+// The rows are resliced once; the column chunks are array windows of them.
 
 // addResidualPlaneBlockSIMD is the Go SIMD residual add for 8-bit and 16-bit
 // samples.
@@ -68,24 +65,23 @@ func addResidualPlaneBlockSIMD(block planeBlock, bytesPerSample int, max uint16,
 	for row := range block.height {
 		dst := block.pix[row*block.stride : row*block.stride+rowBytes]
 		res := residual[row*residualStride : row*residualStride+width]
-		// The row slices were validated by the caller, so the loops walk raw
-		// pointers: the vector loads and stores stay inside dst and res.
-		dp := unsafe.Pointer(&dst[0])
-		rp := unsafe.Pointer(&res[0])
 		if bytesPerSample == 2 {
-			for x := 0; x < width; x += 8 {
-				d := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(dp, 2*x))).ReshapeToUint16s()
-				r := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rp, 2*x)))
-				planeClampAddU16(d, r, zero, zeroU, maxv).ReshapeToUint8s().StoreArray((*[16]uint8)(unsafe.Add(dp, 2*x)))
+			for x := 0; x+8 <= len(res); x += 8 {
+				p := (*[16]uint8)(dst[2*x : 2*x+16])
+				d := archsimd.LoadUint8x16Array(p).ReshapeToUint16s()
+				r := archsimd.LoadInt16x8Array((*[8]int16)(res[x : x+8]))
+				planeClampAddU16(d, r, zero, zeroU, maxv).ReshapeToUint8s().StoreArray(p)
 			}
 			continue
 		}
 		x := 0
-		for ; x+16 <= width; x += 16 {
-			v := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(dp, x)))
-			lo := planeClampAddU16(v.ExtendLo8ToUint16(), archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rp, 2*x))), zero, zeroU, maxv)
-			hi := planeClampAddU16(v.ConcatShiftBytesRight(v, 8).ExtendLo8ToUint16(), archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rp, 2*x+16))), zero, zeroU, maxv)
-			planeNarrow16to8(lo, hi).StoreArray((*[16]uint8)(unsafe.Add(dp, x)))
+		for ; x+16 <= len(dst); x += 16 {
+			p := (*[16]uint8)(dst[x : x+16])
+			rr := (*[16]int16)(res[x : x+16])
+			v := archsimd.LoadUint8x16Array(p)
+			lo := planeClampAddU16(v.ExtendLo8ToUint16(), archsimd.LoadInt16x8Array((*[8]int16)(rr[0:8])), zero, zeroU, maxv)
+			hi := planeClampAddU16(v.ConcatShiftBytesRight(v, 8).ExtendLo8ToUint16(), archsimd.LoadInt16x8Array((*[8]int16)(rr[8:16])), zero, zeroU, maxv)
+			planeNarrow16to8(lo, hi).StoreArray(p)
 		}
 		for ; x < width; x += 8 {
 			d := planeLoadSamples8(dst[x:])
@@ -132,19 +128,20 @@ func addRawTransformPlaneBlockSIMD(block planeBlock, bytesPerSample int, max uin
 	for row := range block.height {
 		dst := block.pix[row*block.stride : row*block.stride+rowBytes]
 		src := raw[row*rawStride : row*rawStride+width]
-		dp := unsafe.Pointer(&dst[0])
-		sp := unsafe.Pointer(&src[0])
-		for x := 0; x < width; x += 8 {
+		for x := 0; x+8 <= len(src); x += 8 {
+			sr := (*[8]int32)(src[x : x+8])
 			r := planePackPairI16(
-				planeRawResidual(archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(sp, 4*x))), c15, c8, sh4),
-				planeRawResidual(archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(sp, 4*x+16))), c15, c8, sh4))
+				planeRawResidual(archsimd.LoadInt32x4Array((*[4]int32)(sr[0:4])), c15, c8, sh4),
+				planeRawResidual(archsimd.LoadInt32x4Array((*[4]int32)(sr[4:8])), c15, c8, sh4))
 			if bytesPerSample == 2 {
-				d := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(dp, 2*x))).ReshapeToUint16s()
-				planeClampAddU16(d, r, zero, zeroU, maxv).ReshapeToUint8s().StoreArray((*[16]uint8)(unsafe.Add(dp, 2*x)))
+				p := (*[16]uint8)(dst[2*x : 2*x+16])
+				d := archsimd.LoadUint8x16Array(p).ReshapeToUint16s()
+				planeClampAddU16(d, r, zero, zeroU, maxv).ReshapeToUint8s().StoreArray(p)
 				continue
 			}
-			d := planeLoadSamples8(unsafe.Slice((*byte)(unsafe.Add(dp, x)), 8))
-			planeStoreSamples8(planeClampAddU16(d, r, zero, zeroU, maxv), unsafe.Slice((*byte)(unsafe.Add(dp, x)), 8))
+			row := dst[x : x+8]
+			d := planeLoadSamples8(row)
+			planeStoreSamples8(planeClampAddU16(d, r, zero, zeroU, maxv), row)
 		}
 	}
 }

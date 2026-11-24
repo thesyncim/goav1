@@ -6,13 +6,7 @@
 
 package dsp
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
-
-// unsafe: rows at y*stride inside the extents checked once per call; the same
-// shape as plane_gosimd_arm64.go, where the safe form measured +9-44%.
+import "simd/archsimd"
 
 // addConstantPlaneBlock8SIMD is the 8-bit DC-only reconstruction of dav1d's
 // inv_txfm_add_dct_dct eob == 0 path: one constant residual added to every
@@ -20,58 +14,99 @@ import (
 // byte d equals satsub(satadd(d, p), n) with p = min(max(r, 0), 255) and
 // n = min(max(-r, 0), 255): one of them is zero, and the other saturates
 // exactly where d + r leaves [0, 255].
+// Exact-width 4- and 8-byte row accesses, merged by the compiler into single
+// loads and stores.
+
+func planeLE32(b *[4]byte) uint32 {
+	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
+}
+
+func planeLE64(b *[8]byte) uint64 {
+	return uint64(b[0]) | uint64(b[1])<<8 | uint64(b[2])<<16 | uint64(b[3])<<24 |
+		uint64(b[4])<<32 | uint64(b[5])<<40 | uint64(b[6])<<48 | uint64(b[7])<<56
+}
+
+func planePut32(b *[4]byte, v uint32) {
+	b[0], b[1], b[2], b[3] = byte(v), byte(v>>8), byte(v>>16), byte(v>>24)
+}
+
+func planePut64(b *[8]byte, v uint64) {
+	b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7] = byte(v), byte(v>>8), byte(v>>16), byte(v>>24), byte(v>>32), byte(v>>40), byte(v>>48), byte(v>>56)
+}
+
 func addConstantPlaneBlock8SIMD(dst []byte, ds int, width int, height int, residual int16) {
 	if width != 4 && width%8 != 0 {
 		addConstantPlaneBlock8PureGo(dst, ds, width, height, residual)
 		return
 	}
-	_ = dst[(height-1)*ds+width-1]
+	if height <= 0 || height > 1<<16 || uint(ds) > 1<<30 {
+		addConstantPlaneBlock8PureGo(dst, ds, width, height, residual)
+		return
+	}
 	r := int(residual)
 	pv := archsimd.BroadcastUint8x16(uint8(min(max(r, 0), 0xff)))
 	nv := archsimd.BroadcastUint8x16(uint8(min(max(-r, 0), 0xff)))
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
 	switch width {
 	case 4:
-		y := 0
-		for ; y+1 < height; y += 2 {
-			pa := unsafe.Add(dp, y*ds)
-			pb := unsafe.Add(pa, ds)
-			d := archsimd.BroadcastUint64x2(uint64(*(*uint32)(pa)) | uint64(*(*uint32)(pb))<<32).ReshapeToUint8s()
+		for i := 0; i < height>>1; i++ {
+			y := 2 * i
+			pa, pb := (*[4]byte)(dst[y*ds:y*ds+4]), (*[4]byte)(dst[(y+1)*ds:(y+1)*ds+4])
+			d := archsimd.BroadcastUint64x2(uint64(planeLE32(pa)) | uint64(planeLE32(pb))<<32).ReshapeToUint8s()
 			w := d.AddSaturated(pv).SubSaturated(nv).ReshapeToUint64s().GetElem(0)
-			*(*uint32)(pa) = uint32(w)
-			*(*uint32)(pb) = uint32(w >> 32)
+			planePut32(pa, uint32(w))
+			planePut32(pb, uint32(w>>32))
 		}
-		if y < height {
-			pa := unsafe.Add(dp, y*ds)
-			d := archsimd.BroadcastUint64x2(uint64(*(*uint32)(pa))).ReshapeToUint8s()
-			*(*uint32)(pa) = uint32(d.AddSaturated(pv).SubSaturated(nv).ReshapeToUint64s().GetElem(0))
+		if y := height &^ 1; y < height {
+			pa := (*[4]byte)(dst[y*ds : y*ds+4])
+			d := archsimd.BroadcastUint64x2(uint64(planeLE32(pa))).ReshapeToUint8s()
+			planePut32(pa, uint32(d.AddSaturated(pv).SubSaturated(nv).ReshapeToUint64s().GetElem(0)))
 		}
 	case 8:
-		y := 0
-		for ; y+1 < height; y += 2 {
-			pa := unsafe.Add(dp, y*ds)
-			pb := unsafe.Add(pa, ds)
-			o := archsimd.LoadUint64x2Array(&[2]uint64{*(*uint64)(pa), *(*uint64)(pb)}).ReshapeToUint8s().AddSaturated(pv).SubSaturated(nv).ReshapeToUint64s()
-			*(*uint64)(pa) = o.GetElem(0)
-			*(*uint64)(pb) = o.GetElem(1)
+		for i := 0; i < height>>1; i++ {
+			y := 2 * i
+			pa, pb := (*[8]byte)(dst[y*ds:y*ds+8]), (*[8]byte)(dst[(y+1)*ds:(y+1)*ds+8])
+			o := archsimd.LoadUint64x2Array(&[2]uint64{planeLE64(pa), planeLE64(pb)}).ReshapeToUint8s().AddSaturated(pv).SubSaturated(nv).ReshapeToUint64s()
+			planePut64(pa, o.GetElem(0))
+			planePut64(pb, o.GetElem(1))
 		}
-		if y < height {
-			pa := unsafe.Add(dp, y*ds)
-			d := archsimd.BroadcastUint64x2(*(*uint64)(pa)).ReshapeToUint8s()
-			*(*uint64)(pa) = d.AddSaturated(pv).SubSaturated(nv).ReshapeToUint64s().GetElem(0)
+		if y := height &^ 1; y < height {
+			pa := (*[8]byte)(dst[y*ds : y*ds+8])
+			d := archsimd.BroadcastUint64x2(planeLE64(pa)).ReshapeToUint8s()
+			planePut64(pa, d.AddSaturated(pv).SubSaturated(nv).ReshapeToUint64s().GetElem(0))
+		}
+	case 16:
+		for y := 0; y < height; y++ {
+			p := (*[16]uint8)(dst[y*ds : y*ds+16])
+			archsimd.LoadUint8x16Array(p).AddSaturated(pv).SubSaturated(nv).StoreArray(p)
+		}
+	case 32:
+		for y := 0; y < height; y++ {
+			pa := (*[32]byte)(dst[y*ds : y*ds+32])
+			for k := 0; k < 2; k++ {
+				p := (*[16]uint8)(pa[16*k : 16*k+16])
+				archsimd.LoadUint8x16Array(p).AddSaturated(pv).SubSaturated(nv).StoreArray(p)
+			}
+		}
+	case 64:
+		for y := 0; y < height; y++ {
+			pa := (*[64]byte)(dst[y*ds : y*ds+64])
+			for k := 0; k < 4; k++ {
+				p := (*[16]uint8)(pa[16*k : 16*k+16])
+				archsimd.LoadUint8x16Array(p).AddSaturated(pv).SubSaturated(nv).StoreArray(p)
+			}
 		}
 	default:
 		for y := 0; y < height; y++ {
-			pa := unsafe.Add(dp, y*ds)
+			pa := dst[y*ds : y*ds+width]
 			x := 0
-			for ; x+16 <= width; x += 16 {
-				p := (*[16]uint8)(unsafe.Add(pa, x))
+			for ; x+16 <= len(pa); x += 16 {
+				p := (*[16]uint8)(pa[x : x+16])
 				archsimd.LoadUint8x16Array(p).AddSaturated(pv).SubSaturated(nv).StoreArray(p)
 			}
-			if x < width {
-				p := unsafe.Add(pa, x)
-				d := archsimd.BroadcastUint64x2(*(*uint64)(p)).ReshapeToUint8s()
-				*(*uint64)(p) = d.AddSaturated(pv).SubSaturated(nv).ReshapeToUint64s().GetElem(0)
+			if x+8 <= len(pa) {
+				p := (*[8]byte)(pa[x : x+8])
+				d := archsimd.BroadcastUint64x2(planeLE64(p)).ReshapeToUint8s()
+				planePut64(p, d.AddSaturated(pv).SubSaturated(nv).ReshapeToUint64s().GetElem(0))
 			}
 		}
 	}
@@ -86,36 +121,61 @@ func addConstantPlaneBlock16SIMD(dst []byte, ds int, width int, height int, maxV
 		addConstantPlaneBlock16PureGo(dst, ds, width, height, maxV, residual)
 		return
 	}
-	_ = dst[(height-1)*ds+2*width-1]
+	if height <= 0 || height > 1<<16 || uint(ds) > 1<<30 {
+		addConstantPlaneBlock16PureGo(dst, ds, width, height, maxV, residual)
+		return
+	}
 	r := int(residual)
 	pv := archsimd.BroadcastUint16x8(uint16(max(r, 0)))
 	nv := archsimd.BroadcastUint16x8(uint16(max(-r, 0)))
 	mv := archsimd.BroadcastUint16x8(maxV)
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
 	if width == 4 {
-		y := 0
-		for ; y+1 < height; y += 2 {
-			pa := unsafe.Add(dp, y*ds)
-			pb := unsafe.Add(pa, ds)
-			o := archsimd.LoadUint64x2Array(&[2]uint64{*(*uint64)(pa), *(*uint64)(pb)}).ReshapeToUint16s().
+		for i := 0; i < height>>1; i++ {
+			y := 2 * i
+			pa, pb := (*[8]byte)(dst[y*ds:y*ds+8]), (*[8]byte)(dst[(y+1)*ds:(y+1)*ds+8])
+			o := archsimd.LoadUint64x2Array(&[2]uint64{planeLE64(pa), planeLE64(pb)}).ReshapeToUint16s().
 				AddSaturated(pv).SubSaturated(nv).Min(mv).ReshapeToUint64s()
-			*(*uint64)(pa) = o.GetElem(0)
-			*(*uint64)(pb) = o.GetElem(1)
+			planePut64(pa, o.GetElem(0))
+			planePut64(pb, o.GetElem(1))
 		}
-		if y < height {
-			pa := unsafe.Add(dp, y*ds)
-			o := archsimd.BroadcastUint64x2(*(*uint64)(pa)).ReshapeToUint16s().
+		if y := height &^ 1; y < height {
+			pa := (*[8]byte)(dst[y*ds : y*ds+8])
+			o := archsimd.BroadcastUint64x2(planeLE64(pa)).ReshapeToUint16s().
 				AddSaturated(pv).SubSaturated(nv).Min(mv).ReshapeToUint64s()
-			*(*uint64)(pa) = o.GetElem(0)
+			planePut64(pa, o.GetElem(0))
+		}
+		return
+	}
+	if width == 8 || width == 16 || width == 32 {
+		// Width-specialized: a fixed-size row window, constant chunk offsets.
+		for y := 0; y < height; y++ {
+			o := y * ds
+			switch width {
+			case 8:
+				p := (*[16]uint8)(dst[o : o+16])
+				archsimd.LoadUint8x16Array(p).ReshapeToUint16s().AddSaturated(pv).SubSaturated(nv).Min(mv).ReshapeToUint8s().StoreArray(p)
+			case 16:
+				row := (*[32]byte)(dst[o : o+32])
+				for k := 0; k < 2; k++ {
+					p := (*[16]uint8)(row[16*k : 16*k+16])
+					archsimd.LoadUint8x16Array(p).ReshapeToUint16s().AddSaturated(pv).SubSaturated(nv).Min(mv).ReshapeToUint8s().StoreArray(p)
+				}
+			default:
+				row := (*[64]byte)(dst[o : o+64])
+				for k := 0; k < 4; k++ {
+					p := (*[16]uint8)(row[16*k : 16*k+16])
+					archsimd.LoadUint8x16Array(p).ReshapeToUint16s().AddSaturated(pv).SubSaturated(nv).Min(mv).ReshapeToUint8s().StoreArray(p)
+				}
+			}
 		}
 		return
 	}
 	rowBytes := 2 * width
 	for y := 0; y < height; y++ {
-		row := unsafe.Add(dp, y*ds)
-		for c := 0; c < rowBytes; c += 16 {
-			p := (*[8]uint16)(unsafe.Add(row, c))
-			archsimd.LoadUint16x8Array(p).AddSaturated(pv).SubSaturated(nv).Min(mv).StoreArray(p)
+		row := dst[y*ds : y*ds+rowBytes]
+		for c := 0; c+16 <= len(row); c += 16 {
+			p := (*[16]uint8)(row[c : c+16])
+			archsimd.LoadUint8x16Array(p).ReshapeToUint16s().AddSaturated(pv).SubSaturated(nv).Min(mv).ReshapeToUint8s().StoreArray(p)
 		}
 	}
 }
