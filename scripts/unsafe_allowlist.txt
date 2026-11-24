@@ -59,9 +59,7 @@ internal/av1/motion/mc16mask_gosimd_amd64.go
 internal/av1/motion/mc16mask_gosimd_arm64.go
 internal/av1/motion/mc16put_gosimd_arm64.go
 internal/av1/motion/mc16sharp_gosimd_arm64.go
-internal/av1/motion/mc8_gosimd_amd64.go
 internal/av1/motion/mc8_gosimd_arm64.go
-internal/av1/motion/mc8mask_gosimd_amd64.go
 internal/av1/motion/mc8mask_gosimd_arm64.go
 internal/av1/motion/mc8w4_gosimd_arm64.go
 internal/av1/quantize/quantize_rowgroups_diff_gosimd_arm64.go
