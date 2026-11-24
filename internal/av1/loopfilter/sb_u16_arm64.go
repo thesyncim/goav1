@@ -32,12 +32,15 @@ var sbPairLanes16 = func() (t [4][8]uint16) {
 	return t
 }()
 
-func lpf16Load(pix []byte, o int) archsimd.Uint16x8 {
-	return archsimd.LoadUint8x16Array(lpfRow(pix, o)).ReshapeToUint16s()
+func lpf16Ld(w *[16]byte) archsimd.Uint16x8 {
+	return archsimd.LoadUint8x16Array(w).ReshapeToUint16s()
 }
 
-func lpf16Store(pix []byte, o int, v archsimd.Uint16x8) {
-	v.ReshapeToUint8s().StoreArray(lpfRow(pix, o))
+// lpfWin2d is lpfWin2 for two rows d bytes apart (b and d below 1<<32): both
+// windows end at the second row's end, one compare for the pair.
+func lpfWin2d(pix []byte, b, d int) (*[16]byte, *[16]byte) {
+	e := b + d + 16
+	return (*[16]byte)(pix[b:e]), (*[16]byte)(pix[b+d : e])
 }
 
 func lpf16Any(m archsimd.Mask16x8) bool {
@@ -53,24 +56,31 @@ func lpf16Any(m archsimd.Mask16x8) bool {
 // Taps are rows around q0 (a byte offset into pix), stride in bytes. Vertical
 // edges run lpfCols16.
 func lpf8U16(pix []byte, q0Off, stride int, wd int, k *lpf16Consts, eV, iV, hV archsimd.Uint16x8, m4, mGt4, m16 archsimd.Mask16x8) {
-	// Tap rows p3..q3 from t4 (the p3 row); at wd 16 p6..p4 from t7.
-	st, t4, t7 := int(uint32(stride)), int(uint32(q0Off-4*stride)), int(uint32(q0Off-7*stride))
-	p1 := lpf16Load(pix, t4+2*st)
-	p0 := lpf16Load(pix, t4+3*st)
-	q0 := lpf16Load(pix, t4+4*st)
-	q1 := lpf16Load(pix, t4+5*st)
+	// Tap rows p3..q3 from t4 (the p3 row); at wd 16 p6..p4 from t7. Each
+	// row pair is one window pair (one compare), taken once and reused by
+	// the stores; offsets below 1<<32 (the drivers send larger planes to the
+	// scalar reference).
+	st, t4 := int(uint32(stride)), int(uint32(q0Off-4*stride))
+	w1, w0, v0, v1 := lpfWin4(pix, t4+2*st, st)
+	p1 := lpf16Ld(w1)
+	p0 := lpf16Ld(w0)
+	q0 := lpf16Ld(v0)
+	q1 := lpf16Ld(v1)
+	var w3, w2, v2, v3 *[16]byte
 	d10 := lpf16Abd(p1, p0)
 	dq := lpf16Abd(q1, q0)
 	maxd := d10.Max(dq)
 	t := maxd
 	var p2, q2, p3, q3 archsimd.Uint16x8
 	if wd >= 6 {
-		p2 = lpf16Load(pix, t4+st)
-		q2 = lpf16Load(pix, t4+6*st)
+		w2, v2 = lpfWin2d(pix, t4+st, int(uint32(5*stride)))
+		p2 = lpf16Ld(w2)
+		q2 = lpf16Ld(v2)
 		tt := lpf16Abd(p2, p1).Max(lpf16Abd(q2, q1))
 		if wd >= 8 {
-			p3 = lpf16Load(pix, t4)
-			q3 = lpf16Load(pix, t4+7*st)
+			w3, v3 = lpfWin2d(pix, t4, int(uint32(7*stride)))
+			p3 = lpf16Ld(w3)
+			q3 = lpf16Ld(v3)
 			tt = tt.Max(lpf16Abd(p3, p2).Max(lpf16Abd(q3, q2)))
 		}
 		t = t.Max(tt.Masked(mGt4))
@@ -85,6 +95,7 @@ func lpf8U16(pix []byte, q0Off, stride int, wd int, k *lpf16Consts, eV, iV, hV a
 	mF4 := fm
 	var mFlat, mFlat16 archsimd.Mask16x8
 	var p6, p5, p4, q4, q5, q6 archsimd.Uint16x8
+	var w5, w4, v4, v5 *[16]byte
 	if wd >= 6 {
 		fl := lpf16Abd(p2, p0).Max(maxd).Max(lpf16Abd(q2, q0))
 		if wd >= 8 {
@@ -93,12 +104,17 @@ func lpf8U16(pix []byte, q0Off, stride int, wd int, k *lpf16Consts, eV, iV, hV a
 		mFlat = fV.GreaterEqual(fl).And(mGt4).And(fm)
 		mF4 = fm.And(mFlat.Not())
 		if wd == 16 {
-			p6 = lpf16Load(pix, t7)
-			p5 = lpf16Load(pix, t7+st)
-			p4 = lpf16Load(pix, t7+2*st)
-			q4 = lpf16Load(pix, t4+8*st)
-			q5 = lpf16Load(pix, t4+9*st)
-			q6 = lpf16Load(pix, t4+10*st)
+			t7 := int(uint32(q0Off - 7*stride))
+			w6, w5x := lpfWin2(pix, t7, st)
+			w4x, v4x := lpfWin2d(pix, t7+2*st, int(uint32(9*stride)))
+			v5x, v6 := lpfWin2(pix, t4+9*st, st)
+			w5, w4, v4, v5 = w5x, w4x, v4x, v5x
+			p6 = lpf16Ld(w6)
+			p5 = lpf16Ld(w5)
+			p4 = lpf16Ld(w4)
+			q4 = lpf16Ld(v4)
+			q5 = lpf16Ld(v5)
+			q6 = lpf16Ld(v6)
 			fo := lpf16Abd(p6, p0).Max(lpf16Abd(p5, p0)).Max(lpf16Abd(p4, p0)).
 				Max(lpf16Abd(q4, q0)).Max(lpf16Abd(q5, q0)).Max(lpf16Abd(q6, q0))
 			mFlat16 = fV.GreaterEqual(fo).And(m16).And(mFlat)
@@ -137,10 +153,10 @@ func lpf8U16(pix []byte, q0Off, stride int, wd int, k *lpf16Consts, eV, iV, hV a
 			s = s.Add(q2.Add(q2)).Sub(p1.Add(p0))
 			n1 = s.Shift(archsimd.LoadInt16x8Array(&k.shr3)).IfElse(mFlat, n1)
 		}
-		lpf16Store(pix, t4+2*st, o1)
-		lpf16Store(pix, t4+3*st, o0)
-		lpf16Store(pix, t4+4*st, n0)
-		lpf16Store(pix, t4+5*st, n1)
+		o1.ReshapeToUint8s().StoreArray(w1)
+		o0.ReshapeToUint8s().StoreArray(w0)
+		n0.ReshapeToUint8s().StoreArray(v0)
+		n1.ReshapeToUint8s().StoreArray(v1)
 		return
 	}
 
@@ -165,11 +181,11 @@ func lpf8U16(pix []byte, q0Off, stride int, wd int, k *lpf16Consts, eV, iV, hV a
 		p6x2 := p6.Add(p6)
 		s := p6.Add(p6x2).Add(p6x2.Add(p6x2))
 		s = s.Add(p5.Add(p5)).Add(p4.Add(p4)).Add(p3.Add(p2)).Add(p1.Add(p0)).Add(q0).Add(archsimd.LoadUint16x8Array(&k.rnd8))
-		lpf16Store(pix, t7+st, s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, p5))
+		s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, p5).ReshapeToUint8s().StoreArray(w5)
 		s = s.Add(p3.Add(q1)).Sub(p6x2)
-		lpf16Store(pix, t7+2*st, s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, p4))
+		s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, p4).ReshapeToUint8s().StoreArray(w4)
 		s = s.Add(p2.Add(q2)).Sub(p6.Add(p5))
-		lpf16Store(pix, t4, s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, p3))
+		s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, p3).ReshapeToUint8s().StoreArray(w3)
 		s = s.Add(p1.Add(q3)).Sub(p6.Add(p4))
 		o2 = s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, o2)
 		s = s.Add(p0.Add(q4)).Sub(p6.Add(p3))
@@ -183,20 +199,20 @@ func lpf8U16(pix []byte, q0Off, stride int, wd int, k *lpf16Consts, eV, iV, hV a
 		s = s.Add(q3.Add(q6)).Sub(p4.Add(q0))
 		n2 = s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, n2)
 		s = s.Add(q4.Add(q6)).Sub(p3.Add(q1))
-		lpf16Store(pix, t4+7*st, s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, q3))
+		s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, q3).ReshapeToUint8s().StoreArray(v3)
 		s = s.Add(q5.Add(q6)).Sub(p2.Add(q2))
-		lpf16Store(pix, t4+8*st, s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, q4))
+		s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, q4).ReshapeToUint8s().StoreArray(v4)
 		s = s.Add(q6.Add(q6)).Sub(p1.Add(q3))
-		lpf16Store(pix, t4+9*st, s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, q5))
+		s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, q5).ReshapeToUint8s().StoreArray(v5)
 	}
 	if wd >= 8 {
-		lpf16Store(pix, t4+st, o2)
-		lpf16Store(pix, t4+6*st, n2)
+		o2.ReshapeToUint8s().StoreArray(w2)
+		n2.ReshapeToUint8s().StoreArray(v2)
 	}
-	lpf16Store(pix, t4+2*st, o1)
-	lpf16Store(pix, t4+3*st, o0)
-	lpf16Store(pix, t4+4*st, n0)
-	lpf16Store(pix, t4+5*st, n1)
+	o1.ReshapeToUint8s().StoreArray(w1)
+	o0.ReshapeToUint8s().StoreArray(w0)
+	n0.ReshapeToUint8s().StoreArray(v0)
+	n1.ReshapeToUint8s().StoreArray(v1)
 }
 
 // lpfTranspose8x8U16Regs transposes an 8x8 matrix of uint16 rows.
