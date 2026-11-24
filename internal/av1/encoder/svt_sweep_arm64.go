@@ -7,6 +7,9 @@ import (
 	"unsafe"
 )
 
+// unsafe: strided block rows inside extents checked once per call; the same
+// shape as sad_simd_arm64.go, where the bounds-checked row form measured +86%.
+
 // svtAllSAD8x8_16x16Sub is svt_ext_all_sad_calculation_8x8_16x16_neon_dotprod
 // with sub_sad (Source/Lib/ASM_NEON_DOTPROD/sad_neon_dotprod.c) over the
 // superblock at src[0] / ref[0]: for each 16x16 block (offsets[] order),
@@ -43,7 +46,7 @@ func svtAllSAD8x8_16x16Sub(me *realtimeSBMultiSizeME, src, ref []byte, stride, m
 		a6 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sbp, 6*s2)))
 		a7 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sbp, 7*s2)))
 		pu8 := 21 + n*4
-		best := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Pointer(&me.bestSAD[pu8])))
+		best := archsimd.LoadUint32x4Array((*[4]uint32)(me.bestSAD[pu8:]))
 		bestMV := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8])))
 		rb := unsafe.Add(rp, y16*stride+x16)
 		for k := range 8 {
@@ -83,7 +86,7 @@ func svtAllSAD8x8_16x16Sub(me *realtimeSBMultiSizeME, src, ref []byte, stride, m
 			bestMV = mvs[k].IfElse(lt, bestMV)
 			sad16[n][k] = sad.ReduceSum()
 		}
-		best.StoreArray((*[4]uint32)(unsafe.Pointer(&me.bestSAD[pu8])))
+		best.StoreArray((*[4]uint32)(me.bestSAD[pu8:]))
 		bestMV.StoreArray((*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8])))
 		for k := range 8 {
 			me.update(5+n, sad16[n][k], mvX+k, mvY)
@@ -131,10 +134,10 @@ func svtSweepPoint1(me *realtimeSBMultiSizeME, src, ref []byte, stride, mvX, mvY
 		sad := sv.Sub(hv.Shift(loShift)).Add(hv).ExtendLo4ToUint32()
 		sad = sad.Add(sad)
 		pu8 := 21 + n*4
-		best := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Pointer(&me.bestSAD[pu8])))
+		best := archsimd.LoadUint32x4Array((*[4]uint32)(me.bestSAD[pu8:]))
 		bestMV := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8])))
 		lt := sad.Less(best)
-		sad.IfElse(lt, best).StoreArray((*[4]uint32)(unsafe.Pointer(&me.bestSAD[pu8])))
+		sad.IfElse(lt, best).StoreArray((*[4]uint32)(me.bestSAD[pu8:]))
 		mv.IfElse(lt, bestMV).StoreArray((*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8])))
 		s := sad.ReduceSum()
 		sad16[n] = s

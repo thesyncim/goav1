@@ -16,6 +16,9 @@ import (
 	"unsafe"
 )
 
+// unsafe: strided block rows inside extents checked once per call; the same
+// shape as sad_simd_arm64.go, where the bounds-checked row form measured +86%.
+
 // step advances a raw byte pointer by n bytes.
 func step(p unsafe.Pointer, n int) unsafe.Pointer { return unsafe.Add(p, n) }
 

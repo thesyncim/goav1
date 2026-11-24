@@ -7,6 +7,9 @@ import (
 	"unsafe"
 )
 
+// unsafe: strided block rows inside extents checked once per call; the same
+// shape as sad_simd_arm64.go, where the bounds-checked row form measured +86%.
+
 // svtDownsample2DArch is svtDownsample2D on NEON: the 2x2 sums of 16 output
 // samples are two row-widened adds folded by pairwise adds, then
 // (sum + 2) >> 2 exactly as svt_aom_downsample_2d_c.
@@ -124,8 +127,8 @@ func svtSAD16xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStri
 	hv := h0.ConcatAddPairs(h1).ConcatAddPairs(h2.ConcatAddPairs(h3)).
 		ConcatAddPairs(h4.ConcatAddPairs(h5).ConcatAddPairs(h6.ConcatAddPairs(h7)))
 	t := sv.Sub(hv.Shift(archsimd.BroadcastInt16x8(8))).Add(hv)
-	lo := (*[4]uint32)(unsafe.Pointer(&acc[0]))
-	hi := (*[4]uint32)(unsafe.Pointer(&acc[4]))
+	lo := (*[4]uint32)(acc[0:4])
+	hi := (*[4]uint32)(acc[4:8])
 	archsimd.LoadUint32x4Array(lo).Add(t.ExtendLo4ToUint32()).StoreArray(lo)
 	archsimd.LoadUint32x4Array(hi).Add(t.HiToLo().ExtendLo4ToUint32()).StoreArray(hi)
 }
@@ -184,8 +187,8 @@ func svtSAD32xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStri
 	hb := h4.ConcatAddPairs(h5).ConcatAddPairs(h6.ConcatAddPairs(h7))
 	ta := sa.Sub(ha.Shift(shl8)).Add(ha)
 	tb := sb.Sub(hb.Shift(shl8)).Add(hb)
-	lo := (*[4]uint32)(unsafe.Pointer(&acc[0]))
-	hi := (*[4]uint32)(unsafe.Pointer(&acc[4]))
+	lo := (*[4]uint32)(acc[0:4])
+	hi := (*[4]uint32)(acc[4:8])
 	archsimd.LoadUint32x4Array(lo).Add(ta.ExtendLo4ToUint32().ConcatAddPairs(ta.HiToLo().ExtendLo4ToUint32())).StoreArray(lo)
 	archsimd.LoadUint32x4Array(hi).Add(tb.ExtendLo4ToUint32().ConcatAddPairs(tb.HiToLo().ExtendLo4ToUint32())).StoreArray(hi)
 }
@@ -305,8 +308,8 @@ func svtHMEEightColSum(t *[8]uint32, sp, rp, cwp unsafe.Pointer, s2, bw, rows in
 	ei := e.ReshapeToUint16s().BitsToInt16()
 	wlo := tv.Add(ei.ExtendLo4ToInt32().ToBits())
 	whi := tv.Add(ei.HiToLo().ExtendLo4ToInt32().ToBits())
-	wlo.Sub(mlo.Add(mlo)).StoreArray((*[4]uint32)(unsafe.Pointer(&t[0])))
-	whi.Sub(mhi.Add(mhi)).StoreArray((*[4]uint32)(unsafe.Pointer(&t[4])))
+	wlo.Sub(mlo.Add(mlo)).StoreArray((*[4]uint32)(t[0:4]))
+	whi.Sub(mhi.Add(mhi)).StoreArray((*[4]uint32)(t[4:8]))
 }
 
 // svtBlockSumSubArch is svtBlockSumSub for bw a multiple of 16 (rows <= 16):
