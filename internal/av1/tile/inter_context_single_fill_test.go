@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/motion"
+	"github.com/thesyncim/goav1/internal/poison"
 )
 
 // The oracle bodies below freeze MarkInter and MarkInterMotion from clean
@@ -108,13 +108,23 @@ func seededBlockModeContext(t *testing.T, seed byte) BlockModeContext {
 		t.Fatal("BlockModeContext must remain pointer-free for the poisoned-context oracle")
 	}
 	var ctx BlockModeContext
-	bytes := unsafe.Slice((*byte)(unsafe.Pointer(&ctx)), int(unsafe.Sizeof(ctx)))
-	for i := range bytes {
-		bytes[i] = byte((i*37+int(seed))%255 + 1)
-	}
 	boolIndex := 0
-	setContextBools(typ, unsafe.Pointer(&ctx), &boolIndex)
+	alternate := func() bool { boolIndex++; return boolIndex&1 == 1 }
+	ro := poison.Leaves(&ctx, func(i int) byte { return byte((i*37+int(seed))%255 + 1) }, alternate)
+	requireOnlySBHistoryDirtyReadOnly(t, ro)
+	// The one leaf reflection cannot set. It is the struct's last field, so
+	// it takes the last bool of the alternating pattern.
+	ctx.sbHistoryDirty = alternate()
 	return ctx
+}
+
+// requireOnlySBHistoryDirtyReadOnly fails t unless the poison reached every
+// BlockModeContext leaf except sbHistoryDirty, which callers set directly.
+func requireOnlySBHistoryDirtyReadOnly(t testing.TB, readOnly []string) {
+	t.Helper()
+	if len(readOnly) != 1 || readOnly[0] != ".sbHistoryDirty" {
+		t.Fatalf("BlockModeContext leaves the poison cannot set: %q", readOnly)
+	}
 }
 
 func blockModeContextHasPointers(typ reflect.Type) bool {
@@ -131,23 +141,6 @@ func blockModeContextHasPointers(typ reflect.Type) bool {
 		}
 	}
 	return false
-}
-
-func setContextBools(typ reflect.Type, ptr unsafe.Pointer, index *int) {
-	switch typ.Kind() {
-	case reflect.Bool:
-		reflect.NewAt(typ, ptr).Elem().SetBool(*index&1 == 0)
-		*index = *index + 1
-	case reflect.Array:
-		for i := 0; i < typ.Len(); i++ {
-			setContextBools(typ.Elem(), unsafe.Add(ptr, uintptr(i)*typ.Elem().Size()), index)
-		}
-	case reflect.Struct:
-		for i := 0; i < typ.NumField(); i++ {
-			field := typ.Field(i)
-			setContextBools(field.Type, unsafe.Add(ptr, field.Offset), index)
-		}
-	}
 }
 
 func validInterMotionForOracle(refs InterReferencesResult, n int) InterMotionResult {

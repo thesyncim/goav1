@@ -7,7 +7,8 @@ package tile
 import (
 	"reflect"
 	"testing"
-	"unsafe"
+
+	"github.com/thesyncim/goav1/internal/poison"
 )
 
 // TestBlockModeContextResetLayout pins the invariants resetForSuperblock relies
@@ -40,10 +41,13 @@ func TestBlockModeContextResetLayout(t *testing.T) {
 	}
 
 	var c BlockModeContext
-	b := unsafe.Slice((*byte)(unsafe.Pointer(&c)), unsafe.Offsetof(c.sbHistoryDirty))
-	for i := range b {
-		b[i] = 0xa5
+	// Every field before sbHistoryDirty: integers 0xa5 in each byte, bools
+	// true.
+	poisonBeforeSBHistoryDirty := func() {
+		ro := poison.Leaves(&c, func(int) byte { return 0xa5 }, func() bool { return true })
+		requireOnlySBHistoryDirtyReadOnly(t, ro)
 	}
+	poisonBeforeSBHistoryDirty()
 	c.sbHistoryDirty = true
 	c.resetForSuperblock()
 	want := resetModeContextWant(&c)
@@ -56,9 +60,7 @@ func TestBlockModeContextResetLayout(t *testing.T) {
 	}
 	// Without a keepMotion load the snapshots stay zero, and the clean reset
 	// must still zero every other non-payload field.
-	for i := range b {
-		b[i] = 0xa5
-	}
+	poisonBeforeSBHistoryDirty()
 	c.blockModeSBHistory = blockModeSBHistory{}
 	c.resetForSuperblock()
 	want = resetModeContextWant(&c)

@@ -1,8 +1,11 @@
 package threading
 
 import (
+	"reflect"
 	"testing"
-	"unsafe"
+
+	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/poison"
 )
 
 // TestCopyCDFStorageCoversEveryField fills every byte of a source storage
@@ -10,9 +13,28 @@ import (
 // storage (or to one of its CDF tables) without a copy fails here.
 func TestCopyCDFStorageCoversEveryField(t *testing.T) {
 	src := new(FrameWorkTileResidualCDFStorage)
-	b := unsafe.Slice((*byte)(unsafe.Pointer(src)), unsafe.Sizeof(*src))
-	for i := range b {
-		b[i] = byte(i*7 + 1)
+	// entropy.CDF keeps its fields unexported, so each CDF is filled through
+	// its API: all MaxSymbols+1 lanes (the whole values array) get a value
+	// unique to that CDF.
+	cdfType := reflect.TypeFor[entropy.CDF]()
+	lane := uint16(0)
+	fillCDF := func(v reflect.Value) bool {
+		if v.Type() != cdfType {
+			return false
+		}
+		c := v.Addr().Interface().(*entropy.CDF)
+		if err := c.InitUniform(entropy.MaxSymbols); err != nil {
+			t.Fatal(err)
+		}
+		for i := range c.Values() {
+			lane++
+			c.Values()[i] = lane
+		}
+		return true
+	}
+	n := 0
+	if ro := poison.LeavesWith(src, func(i int) byte { return byte(i*7 + 1) }, func() bool { n++; return n&1 == 1 }, fillCDF); len(ro) != 0 {
+		t.Fatalf("storage leaves the poison cannot set: %q", ro)
 	}
 	dst := new(FrameWorkTileResidualCDFStorage)
 	copyCDFStorage(dst, src)

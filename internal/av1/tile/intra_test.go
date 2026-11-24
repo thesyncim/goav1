@@ -4,7 +4,6 @@ import (
 	"errors"
 	"reflect"
 	"testing"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -677,10 +676,7 @@ func TestBlockPredictionModeResultResetClearsEveryField(t *testing.T) {
 			setAnyNonZero(f)
 			continue
 		}
-		b := unsafe.Slice((*byte)(f.Addr().UnsafePointer()), f.Type().Size())
-		for j := range b {
-			b[j] = 0xff
-		}
+		setAllOnes(t, f, v.Type().Field(i).Name)
 	}
 	r.reset()
 	for i := range v.NumField() {
@@ -707,6 +703,38 @@ func typeHasPointers(t reflect.Type) bool {
 }
 
 // setAnyNonZero makes one scalar leaf of a pointer-carrying struct non-zero.
+// setAllOnes sets every bit of every leaf of the pointer-free value v: bools
+// true, integers all ones. A leaf reflection cannot set, or of another kind,
+// fails the test, so a new field cannot slip past the reset check.
+func setAllOnes(t *testing.T, v reflect.Value, path string) {
+	t.Helper()
+	switch v.Kind() {
+	case reflect.Array:
+		for i := range v.Len() {
+			setAllOnes(t, v.Index(i), path)
+		}
+		return
+	case reflect.Struct:
+		for i := range v.NumField() {
+			setAllOnes(t, v.Field(i), path+"."+v.Type().Field(i).Name)
+		}
+		return
+	}
+	if !v.CanSet() {
+		t.Fatalf("%s cannot be set through reflection", path)
+	}
+	switch v.Kind() {
+	case reflect.Bool:
+		v.SetBool(true)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		v.SetInt(-1)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		v.SetUint(^uint64(0))
+	default:
+		t.Fatalf("%s has kind %v, which setAllOnes does not cover", path, v.Kind())
+	}
+}
+
 func setAnyNonZero(v reflect.Value) {
 	for i := range v.NumField() {
 		f := v.Field(i)

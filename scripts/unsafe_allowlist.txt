@@ -1,28 +1,33 @@
-internal/av1/loopfilter/filter4_wide_arm64.go
-internal/av1/loopfilter/filter_lanes_arm64.go
-internal/av1/loopfilter/filter_lanes_gosimd.go
-internal/av1/loopfilter/filter_transpose_arm64.go
-internal/av1/loopfilter/sb_u16_amd64.go
-internal/av1/loopfilter/sb_u16_arm64.go
-internal/av1/loopfilter/sb_u8_amd64.go
-internal/av1/loopfilter/sb_u8_arm64.go
-internal/av1/motion/compound8_gosimd.go
-internal/av1/motion/convolve8_gosimd.go
-internal/av1/motion/convolve_scale_step2_arch_gosimd_amd64.go
-internal/av1/motion/convolve_scale_step2_arch_gosimd_arm64.go
-internal/av1/motion/convolve_scale_step2_gosimd.go
-internal/av1/motion/mc16_gosimd_amd64.go
-internal/av1/motion/mc16_gosimd_arm64.go
-internal/av1/motion/mc16copy_gosimd_arm64.go
-internal/av1/motion/mc16mask_gosimd_amd64.go
-internal/av1/motion/mc16mask_gosimd_arm64.go
-internal/av1/motion/mc16put_gosimd_arm64.go
-internal/av1/motion/mc16sharp_gosimd_arm64.go
-internal/av1/motion/mc8_gosimd_amd64.go
-internal/av1/motion/mc8_gosimd_arm64.go
-internal/av1/motion/mc8mask_gosimd_amd64.go
-internal/av1/motion/mc8mask_gosimd_arm64.go
-internal/av1/motion/mc8w4_gosimd_arm64.go
-internal/av1/tile/restoration_apply_u8.go
-internal/av1/tile/restoration_boundary.go
-internal/guardpage/guardpage.go
+# Non-test files that may import unsafe, sorted, one per line as
+# "path  # justification" (checked by scripts/check_unsafe.sh).
+#
+# internal/unsafeutil is the only permanent home: every function there
+# validates its inputs at entry and documents its bounds proof, and has a
+# guard-page test. Entries outside it must say "pending:" and are deleted by
+# the branch that moves them behind internal/unsafeutil.
+internal/av1/loopfilter/filter4_wide_arm64.go  # pending: safety/unsafe-motion-lf
+internal/av1/loopfilter/filter_lanes_arm64.go  # pending: safety/unsafe-motion-lf
+internal/av1/loopfilter/filter_lanes_gosimd.go  # pending: safety/unsafe-motion-lf
+internal/av1/loopfilter/filter_transpose_arm64.go  # pending: safety/unsafe-motion-lf
+internal/av1/loopfilter/sb_u16_amd64.go  # pending: safety/unsafe-motion-lf
+internal/av1/loopfilter/sb_u16_arm64.go  # pending: safety/unsafe-motion-lf
+internal/av1/loopfilter/sb_u8_amd64.go  # pending: safety/unsafe-motion-lf
+internal/av1/loopfilter/sb_u8_arm64.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/compound8_gosimd.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/convolve8_gosimd.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/convolve_scale_step2_arch_gosimd_amd64.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/convolve_scale_step2_arch_gosimd_arm64.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/convolve_scale_step2_gosimd.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/mc16_gosimd_amd64.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/mc16_gosimd_arm64.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/mc16copy_gosimd_arm64.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/mc16mask_gosimd_amd64.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/mc16mask_gosimd_arm64.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/mc16put_gosimd_arm64.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/mc16sharp_gosimd_arm64.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/mc8_gosimd_amd64.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/mc8_gosimd_arm64.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/mc8mask_gosimd_amd64.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/mc8mask_gosimd_arm64.go  # pending: safety/unsafe-motion-lf
+internal/av1/motion/mc8w4_gosimd_arm64.go  # pending: safety/unsafe-motion-lf
+internal/unsafeutil/unsafeutil.go  # BytesOfUint16 (a uint16 slice as its 2*len bytes) and View[T] (length- and alignment-checked view of pointer-free T over bytes); bounds proofs in the doc comments, guard-page tests in guardpage_unix_test.go
