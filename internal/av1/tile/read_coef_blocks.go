@@ -214,51 +214,36 @@ func filterIntraTransformMode(mode FilterIntraMode) IntraMode {
 	}
 }
 
-// DecodeCoefs is dav1d's decode_coefs (src/recon_tmpl.c) for one plane TXB at
-// a/l offsets x4, y4 of the bound block, followed by the caller-side updates of
-// read_coef_tree and recon_b_*: the a/l coefficient contexts and, for inter
-// luma, txtp_map. visW/visH are the frame-clipped extent in 4x4 units. A coded
-// TXB is dequantized with dq into cf in raster scan order; cf must be zero
-// over the scan area on entry (dav1d's inverse transforms clear what they
-// read). One function carries every read from the skip flag to the last sign.
-func (b *CoefBlock) DecodeCoefs(plane uint8, size TransformSize, x4, y4, visW, visH int, cf *[1024]int32, dq *CoefDequant) (CoefResult, error) {
-	if size >= transformSizeCount || plane > 2 {
-		return CoefResult{}, ErrInvalidDecodeState
-	}
-	sz := &coefSizeTable[size]
-	tw4, th4 := int(sz.W4), int(sz.H4)
-	if uint(x4)+uint(tw4) > MaxBlockModeSlots || uint(y4)+uint(th4) > MaxBlockModeSlots {
-		return CoefResult{}, ErrInvalidDecodeState
-	}
-	// recon_b_inter's chroma txtp: txtp_map[(by4 + (y << ss_ver)) * 32 +
-	// bx4 + (x << ss_hor)], with x/y the TXB offset in the chroma block.
-	ytxtp := uint(0)
-	if plane != 0 && b.txtpMap != nil {
-		lx := uint(b.X4 + (x4-b.CX4)<<b.SSX)
-		ly := uint(b.Y4 + (y4-b.CY4)<<b.SSY)
-		if lx >= MaxBlockModeSlots || ly >= MaxBlockModeSlots {
-			return CoefResult{}, ErrInvalidDecodeState
-		}
-		ytxtp = uint(b.txtpMap[ly][lx])
-	}
-	eob, txtp, ext := b.s.Reader.DecodeCoefs(&b.e, uint(plane), sz, cf, dq, uint(x4), uint(y4), uint(visW), uint(visH), ytxtp)
-	r := CoefResult{Txtp: transform.Type(txtp)}
-	if plane == 0 && b.txtpMap != nil {
-		fillTxtpMap(b.txtpMap, x4, y4, tw4, th4, r.Txtp)
-	}
-	if eob < 0 {
-		r.TXB.AllZero = true
-		return r, nil
-	}
-	r.TXB.EOB = uint16(eob + 1)
-	r.ActiveRows, r.ActiveCols = uint8(ext), uint8(ext>>8)
-	return r, nil
+// The transform-block walk (threading's reconTXB, dav1d's read_coef_tree)
+// calls entropy.Reader.DecodeCoefs, dav1d's decode_coefs, itself: no wrapper
+// frame sits between the walk and the symbol reads. These accessors hand it
+// the bound block's operands.
+
+// CoefEntropy returns the tile's symbol reader and the block's decode_coefs
+// state.
+func (b *CoefBlock) CoefEntropy() (*entropy.Reader, *entropy.CoefState) {
+	return &b.s.Reader, &b.e
 }
 
-// fillTxtpMap is decode_coefs' dav1d_memset_pow2[t_dim->lw] of txtp into each
+// TxtpMap is dav1d's t->scratch.txtp_map for an inter block (the luma
+// transform types its chroma TXBs derive theirs from), nil for intra.
+func (b *CoefBlock) TxtpMap() *[MaxBlockModeSlots][MaxBlockModeSlots]transform.Type {
+	return b.txtpMap
+}
+
+// CoefSizeOf is decode_coefs' t_dim for size; ok is false outside the
+// transform sizes.
+func CoefSizeOf(size TransformSize) (sz *entropy.CoefSize, ok bool) {
+	if size >= transformSizeCount {
+		return nil, false
+	}
+	return &coefSizeTable[size], true
+}
+
+// FillTxtpMap is decode_coefs' dav1d_memset_pow2[t_dim->lw] of txtp into each
 // of the TXB's txtp_map rows: one store per row for widths up to 4, 8-byte
 // stores above. The caller has bounded x4+w4 and y4+h4.
-func fillTxtpMap(m *[MaxBlockModeSlots][MaxBlockModeSlots]transform.Type, x4, y4, w4, h4 int, t transform.Type) {
+func FillTxtpMap(m *[MaxBlockModeSlots][MaxBlockModeSlots]transform.Type, x4, y4, w4, h4 int, t transform.Type) {
 	x := ctxSplat(uint8(t))
 	switch w4 {
 	case 1:
