@@ -177,7 +177,8 @@ func coefNorm(dif uint64, rng uint32, cnt int32) (uint64, uint32, int32) {
 }
 
 // coefRefill is dav1d's ctx_refill with the range state in registers and the
-// byte position in c: refillState's whole-window fast path, kept in one call.
+// byte position in c: refillState's whole-window fast path, small enough to
+// inline into the hot entropy loops.
 func (c *Cursor) coefRefill(dif uint64, cnt int32) (uint64, int32) {
 	pos := int(c.pos)
 	shift := int32(ecWindow) - 9 - (cnt + 15)
@@ -188,7 +189,12 @@ func (c *Cursor) coefRefill(dif uint64, cnt int32) (uint64, int32) {
 		c.pos = uint32(pos + int(n))
 		return dif, cnt + 8*n
 	}
-	pos, dif, cnt, tellOffs := refillStateSlow(c.src, pos, dif, cnt, int32(c.tellOffs))
+	return c.coefRefillSlow(dif, cnt)
+}
+
+//go:noinline
+func (c *Cursor) coefRefillSlow(dif uint64, cnt int32) (uint64, int32) {
+	pos, dif, cnt, tellOffs := refillStateSlow(c.src, int(c.pos), dif, cnt, int32(c.tellOffs))
 	c.pos = uint32(pos)
 	c.tellOffs = int16(tellOffs)
 	return dif, cnt
@@ -908,6 +914,10 @@ func (r *Reader) DecodeCoefs(s *CoefState, plane uint, sz *CoefSize, cf *[1024]i
 // stride = scan height; cf receives the token chain, cf[rc] = tok << 11 | rc
 // of the previous nonzero. It returns the chain head rc.
 func (c *Cursor) coefAC2D(scan []int16, stride uint, offsets *[5][5]uint8, levels *[CoefLevelsLen]uint8, cf *[1024]int32, lo *[42]CDF, hi *[21]CDF, rc uint, dif uint64, rng uint32, cnt int32) (uint, uint64, uint32, int32) {
+	_ = levels[0]
+	_ = cf[0]
+	_ = offsets[0]
+	_ = lo[0]
 	stride &= 63
 	shift := uint(bits.TrailingZeros(stride)) & 63
 	mask := stride - 1
@@ -924,7 +934,7 @@ func (c *Cursor) coefAC2D(scan []int16, stride uint, offsets *[5][5]uint8, level
 		if x > 4 {
 			x = 4
 		}
-		ctx := uint(offsets[y][x]) + min((mag+64)>>7, 4)
+		ctx := uint(offsets[y][x])&31 + min((mag+64)>>7, 4)
 
 		// dav1d_msac_decode_symbol_adapt4(lo_cdf[ctx], 3)
 		values := &lo[ctx].values
@@ -971,7 +981,7 @@ func (c *Cursor) coefAC2D(scan []int16, stride uint, offsets *[5][5]uint8, level
 			// update_cdf with both adaptations of each entry computed and
 			// the symbol selecting between them (dav1d's asm does the same
 			// with a lane mask).
-			c0u, c1u, c2u := uint32(c0), uint32(c1), uint32(c2)
+			c0u, c1u, c2u := uint(c0), uint(c1), uint(c2)
 			n0 := c0u - c0u>>rate
 			n1 := c1u - c1u>>rate
 			n2 := c2u - c2u>>rate

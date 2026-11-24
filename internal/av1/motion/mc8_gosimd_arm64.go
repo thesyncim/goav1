@@ -230,9 +230,19 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 	switch {
 	case subX != 0 && subY != 0:
 		if w == 4 {
-			im := scratch.imHBD[:]
-			mc8H6ToI32W4(sg, h+5, phx, im)
-			mc8PutV6FromI32W4(im, h, phy, dg)
+			if kx >= mc8KindBilinear {
+				if ky >= mc8KindBilinear {
+					mc8PutHV4x4W4(sg, h, phx, phy, dg)
+				} else {
+					mc8PutHV4W4(sg, h, phx, phy, dg)
+				}
+			} else {
+				im := scratch.imHBD[:]
+				mc8H6ToI32W4(sg, h+5, phx, im)
+				mc8PutV6FromI32W4(im, h, phy, dg)
+			}
+		} else if kx == mc8KindBilinear && ky == mc8KindBilinear {
+			mc8PutHV2(sg, w, h, phx, phy, dg)
 		} else {
 			mc8PutHV6(sg, w, h, phx, phy, dg)
 		}
@@ -345,12 +355,25 @@ func Put8UV(dstU, dstV, refU, refV *frame.Plane, dstX, dstY, refX, refY, w, h, f
 	phx, phy := &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15]
 	switch {
 	case subX != 0 && subY != 0:
-		im := scratch.imHBD[:]
 		if w == 4 {
-			mc8H6ToI32W4(su, h+5, phx, im)
-			mc8PutV6FromI32W4(im, h, phy, du)
-			mc8H6ToI32W4(sv, h+5, phx, im)
-			mc8PutV6FromI32W4(im, h, phy, dv)
+			if kx >= mc8KindBilinear {
+				if ky >= mc8KindBilinear {
+					mc8PutHV4x4W4(su, h, phx, phy, du)
+					mc8PutHV4x4W4(sv, h, phx, phy, dv)
+				} else {
+					mc8PutHV4W4(su, h, phx, phy, du)
+					mc8PutHV4W4(sv, h, phx, phy, dv)
+				}
+			} else {
+				im := scratch.imHBD[:]
+				mc8H6ToI32W4(su, h+5, phx, im)
+				mc8PutV6FromI32W4(im, h, phy, du)
+				mc8H6ToI32W4(sv, h+5, phx, im)
+				mc8PutV6FromI32W4(im, h, phy, dv)
+			}
+		} else if kx == mc8KindBilinear && ky == mc8KindBilinear {
+			mc8PutHV2(su, w, h, phx, phy, du)
+			mc8PutHV2(sv, w, h, phx, phy, dv)
 		} else {
 			mc8PutHV6(su, w, h, phx, phy, du)
 			mc8PutHV6(sv, w, h, phx, phy, dv)
@@ -440,9 +463,13 @@ func mc8PutGrid(dg, sg unsafeutil.Grid[uint8], w, h, subX, subY int, phx, phy *m
 	switch {
 	case subX != 0 && subY != 0:
 		if w == 4 {
-			im := scratch.imHBD[:]
-			mc8H6ToI32W4(sg, h+5, phx, im)
-			mc8PutV6FromI32W4(im, h, phy, dg)
+			if phx.h[0][0]|phx.h[5][0] == 0 {
+				mc8PutHV4W4(sg, h, phx, phy, dg)
+			} else {
+				im := scratch.imHBD[:]
+				mc8H6ToI32W4(sg, h+5, phx, im)
+				mc8PutV6FromI32W4(im, h, phy, dg)
+			}
 		} else {
 			mc8PutHV6(sg, w, h, phx, phy, dg)
 		}

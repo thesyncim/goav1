@@ -4,9 +4,14 @@ Release-level changes to goav1 are tracked here. Detailed progress logs,
 per-vector archaeology, and work-in-progress notes belong in commits, issues,
 or pull requests, not in long-lived markdown.
 
-The project has not published a release tag yet.
+## [v0.1.0] - 2026-11-24
 
-## [Unreleased]
+First tagged release of `goav1` — a pure-Go AV1 decoder and realtime WebRTC AV1 encoder using Go 1.27 `simd/archsimd` with zero assembly and audited memory safety (`scripts/check_unsafe.sh`).
+
+### Highlights
+- **Pure-Go SIMD + Memory Safety**: Zero `.s`/`.S` assembly files; all codec packages are `unsafe`-free, with footprint-checked, guard-page-tested views confined strictly to `internal/unsafeutil`.
+- **Decoder Performance**: Fused in-register arm64 2D 6-tap, 4-tap (`mc8PutHV4W4` / `mc8PutHV4x4W4`), and 2-tap bilinear (`mc8PutHV2`) motion compensation; unsplit inter loop-filter mask fast path; precomputed CDEF direction and vector-splat tables; register-resident `DecodeVarTxTree`; tight EOB level clearing; and `GOMAXPROCS`-capped multi-worker scheduling (beating `dav1d` on 8-thread wall time on Apple M4 Max while matching `dav1d` MD5 bit-for-bit across all 42 real-content corpus streams at 1 and 8 workers).
+- **Encoder Performance**: Realtime WebRTC AV1 encoder outperforming SVT-AV1 preset 12 RTC on both 1-thread and multi-threaded 720p workloads.
 
 ### Public API
 
