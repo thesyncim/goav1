@@ -80,8 +80,7 @@ func TestAppendRestorationParamsPayload128SuperblockUnitSize(t *testing.T) {
 }
 
 func TestAppendRestorationParamsPayloadMonochromeReadsYOnly(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	seq.ColorConfig.MonoChrome = true
+	seq := realtimeEncoderMonochromeSequenceHeader()
 	size := IntraFrameSize{UpscaledWidth: 64, Height: 64, SuperResDenominator: 8, RefreshFrameFlags: 0xff}
 	restoration := RestorationParams{
 		Type:           [3]RestorationType{RestorationSwitchable, RestorationNone, RestorationNone},

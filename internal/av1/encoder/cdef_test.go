@@ -37,8 +37,7 @@ func TestAppendCDEFParamsPayloadStrengths(t *testing.T) {
 }
 
 func TestAppendCDEFParamsPayloadMonochromeSkipsUVStrengths(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	seq.ColorConfig.MonoChrome = true
+	seq := realtimeEncoderMonochromeSequenceHeader()
 	size := IntraFrameSize{UpscaledWidth: 64, Height: 64, SuperResDenominator: 8, RefreshFrameFlags: 0xff}
 	cdef := CDEFParams{Damping: 4, Bits: 1}
 	cdef.YStrength[0] = 7

@@ -90,7 +90,7 @@ func TestAppendSequenceHeaderPayloadRealtime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseSequenceHeader: %v", err)
 	}
-	if parsed.SeqProfile != 0 || parsed.OperatingPointsCount != 1 || parsed.OperatingPoints[0].SeqLevelIdx != 5 {
+	if parsed.SeqProfile != 1 || parsed.OperatingPointsCount != 1 || parsed.OperatingPoints[0].SeqLevelIdx != 5 {
 		t.Fatalf("parsed operating point/profile: %+v", parsed)
 	}
 	if parsed.MaxFrameWidth != 16 || parsed.MaxFrameHeight != 9 {
@@ -441,7 +441,7 @@ func TestSequenceHeaderForConfigAllocs(t *testing.T) {
 
 func realtimeEncoderSequenceHeader() SequenceHeader {
 	var seq SequenceHeader
-	seq.Profile = Profile0
+	seq.Profile = Profile1 // sRGB is 4:4:4
 	seq.OperatingPointsCount = 1
 	seq.OperatingPoints[0].SeqLevelIdx = 5
 	seq.MaxFrameWidth = 16
@@ -470,9 +470,18 @@ func realtimeEncoderSequenceHeader() SequenceHeader {
 	return seq
 }
 
+// realtimeEncoderMonochromeSequenceHeader is realtimeEncoderSequenceHeader
+// with monochrome colour, which profile 1 cannot carry.
+func realtimeEncoderMonochromeSequenceHeader() SequenceHeader {
+	seq := realtimeEncoderSequenceHeader()
+	seq.Profile = Profile0
+	seq.ColorConfig.MonoChrome = true
+	return seq
+}
+
 func realtimeEncoderSequenceHeaderPayload() []byte {
 	var w sequenceTestBitWriter
-	w.writeBits(0, 3)
+	w.writeBits(1, 3) // seq_profile
 	w.writeBool(false)
 	w.writeBool(false)
 	w.writeBool(false)
@@ -498,12 +507,11 @@ func realtimeEncoderSequenceHeaderPayload() []byte {
 	w.writeBool(false)
 	w.writeBits(0, 1)
 	w.writeBits(6, 3)
-	w.writeBool(true)
-	w.writeBool(true)
-	w.writeBool(true)
-	w.writeBool(false)
-	w.writeBool(false)
-	w.writeBool(true)
+	w.writeBool(true)  // enable_superres
+	w.writeBool(true)  // enable_cdef
+	w.writeBool(true)  // enable_restoration
+	w.writeBool(false) // high_bitdepth; profile 1 codes no mono_chrome
+	w.writeBool(true)  // color_description_present_flag
 	w.writeBits(SequenceColorPrimariesBT709, 8)
 	w.writeBits(SequenceTransferCharacteristicsSRGB, 8)
 	w.writeBits(SequenceMatrixCoefficientsIdentity, 8)
