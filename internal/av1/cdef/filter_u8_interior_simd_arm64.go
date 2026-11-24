@@ -19,7 +19,10 @@ package cdef
 // [0, 255]. The sum is then taken in 16-bit lanes, one half of the 16 bytes at
 // a time (row r in the low half, row r+1 in the high half).
 
-import "simd/archsimd"
+import (
+	"simd/archsimd"
+	"unsafe"
+)
 
 // cdefTapReach is the maximum |offset|, in samples, that any CDEF tap reads
 // beyond the current pixel along either axis (cdefDirections secondary taps
@@ -110,28 +113,26 @@ func cdefFilterBlock8InteriorSIMD(ctx *cdefSIMDCtx) {
 	secTap1 := archsimd.BroadcastInt16x8(int16(ctx.secTap1))
 	eight := archsimd.BroadcastInt16x8(8)
 	wtot := archsimd.BroadcastInt16x8(int16(2*ctx.priTap0 + 2*ctx.priTap1 + 4*ctx.secTap0 + 4*ctx.secTap1))
-	p0p, p0m, p1p, p1m := ctx.priTaps()
-	s0p, s0m, s1p, s1m := ctx.secTaps0()
-	s2p, s2m, s3p, s3m := ctx.secTaps1()
-	in, base, height := ctx.rows()
-	_, out8, do, ds := ctx.outRows()
-	// Counted by row pair: a step-2 counter keeps a second check per window.
-	for i := 0; i < height>>1; i++ {
-		r := 2 * i
-		w0, w1 := cdefRow(in, base+r*BStride), cdefRow(in, base+(r+1)*BStride)
-		x := cdefPack2Rows(cdefLdW1(w0, cdefWinReach), cdefLdW1(w1, cdefWinReach))
-		p0 := cdefPack2Rows(cdefLdW1(w0, p0p), cdefLdW1(w1, p0p))
-		p1 := cdefPack2Rows(cdefLdW1(w0, p0m), cdefLdW1(w1, p0m))
-		p2 := cdefPack2Rows(cdefLdW1(w0, p1p), cdefLdW1(w1, p1p))
-		p3 := cdefPack2Rows(cdefLdW1(w0, p1m), cdefLdW1(w1, p1m))
-		s0 := cdefPack2Rows(cdefLdW1(w0, s0p), cdefLdW1(w1, s0p))
-		s1 := cdefPack2Rows(cdefLdW1(w0, s0m), cdefLdW1(w1, s0m))
-		s2 := cdefPack2Rows(cdefLdW1(w0, s1p), cdefLdW1(w1, s1p))
-		s3 := cdefPack2Rows(cdefLdW1(w0, s1m), cdefLdW1(w1, s1m))
-		s4 := cdefPack2Rows(cdefLdW1(w0, s2p), cdefLdW1(w1, s2p))
-		s5 := cdefPack2Rows(cdefLdW1(w0, s2m), cdefLdW1(w1, s2m))
-		s6 := cdefPack2Rows(cdefLdW1(w0, s3p), cdefLdW1(w1, s3p))
-		s7 := cdefPack2Rows(cdefLdW1(w0, s3m), cdefLdW1(w1, s3m))
+	pri0, pri1 := ctx.pri0*2, ctx.pri1*2
+	sec0, sec1, sec2, sec3 := ctx.sec0*2, ctx.sec1*2, ctx.sec2*2, ctx.sec3*2
+	src := ctx.input
+	dst := ctx.dst
+	dstStr := ctx.dstStr
+	for h := ctx.height; h > 0; h -= 2 {
+		src2 := unsafe.Add(src, BStride*2)
+		x := cdefPack2Rows(cdefLoadU16P(src), cdefLoadU16P(src2))
+		p0 := cdefPack2Rows(cdefLoadU16P(unsafe.Add(src, pri0)), cdefLoadU16P(unsafe.Add(src2, pri0)))
+		p1 := cdefPack2Rows(cdefLoadU16P(unsafe.Add(src, -pri0)), cdefLoadU16P(unsafe.Add(src2, -pri0)))
+		p2 := cdefPack2Rows(cdefLoadU16P(unsafe.Add(src, pri1)), cdefLoadU16P(unsafe.Add(src2, pri1)))
+		p3 := cdefPack2Rows(cdefLoadU16P(unsafe.Add(src, -pri1)), cdefLoadU16P(unsafe.Add(src2, -pri1)))
+		s0 := cdefPack2Rows(cdefLoadU16P(unsafe.Add(src, sec0)), cdefLoadU16P(unsafe.Add(src2, sec0)))
+		s1 := cdefPack2Rows(cdefLoadU16P(unsafe.Add(src, -sec0)), cdefLoadU16P(unsafe.Add(src2, -sec0)))
+		s2 := cdefPack2Rows(cdefLoadU16P(unsafe.Add(src, sec1)), cdefLoadU16P(unsafe.Add(src2, sec1)))
+		s3 := cdefPack2Rows(cdefLoadU16P(unsafe.Add(src, -sec1)), cdefLoadU16P(unsafe.Add(src2, -sec1)))
+		s4 := cdefPack2Rows(cdefLoadU16P(unsafe.Add(src, sec2)), cdefLoadU16P(unsafe.Add(src2, sec2)))
+		s5 := cdefPack2Rows(cdefLoadU16P(unsafe.Add(src, -sec2)), cdefLoadU16P(unsafe.Add(src2, -sec2)))
+		s6 := cdefPack2Rows(cdefLoadU16P(unsafe.Add(src, sec3)), cdefLoadU16P(unsafe.Add(src2, sec3)))
+		s7 := cdefPack2Rows(cdefLoadU16P(unsafe.Add(src, -sec3)), cdefLoadU16P(unsafe.Add(src2, -sec3)))
 
 		// Clamp bounds fold over the raw taps and the centre, as maxClip/min4 do.
 		mx := x.Max(p0).Max(p1).Max(p2).Max(p3).Max(s0).Max(s1).Max(s2).Max(s3)
@@ -184,7 +185,11 @@ func cdefFilterBlock8InteriorSIMD(ctx *cdefSIMDCtx) {
 		// y = x + ((8 + sum - (sum<0)) >> 4), clamped to [min, max].
 		yL := xl.Add(sumL.Add(sumL.ShiftAllRight(15)).Add(eight).ShiftAllRight(4)).Max(nl).Min(ml)
 		yH := xh.Add(sumH.Add(sumH.ShiftAllRight(15)).Add(eight).ShiftAllRight(4)).Max(nh).Min(mh)
-		cdefPut8(out8, do+r*ds, yL.ToBits().TruncToUint8().ReshapeToUint64s().GetElem(0))
-		cdefPut8(out8, do+(r+1)*ds, yH.ToBits().TruncToUint8().ReshapeToUint64s().GetElem(0))
+		*(*uint64)(dst) = yL.ToBits().TruncToUint8().ReshapeToUint64s().GetElem(0)
+		*(*uint64)(unsafe.Add(dst, dstStr)) = yH.ToBits().TruncToUint8().ReshapeToUint64s().GetElem(0)
+		if h > 2 {
+			src = unsafe.Add(src, 2*BStride*2)
+			dst = unsafe.Add(dst, 2*dstStr)
+		}
 	}
 }
