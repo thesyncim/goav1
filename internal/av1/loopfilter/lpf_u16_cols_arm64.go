@@ -7,8 +7,9 @@
 package loopfilter
 
 import (
-	"encoding/binary"
 	"simd/archsimd"
+
+	"github.com/thesyncim/goav1/internal/unsafeutil"
 )
 
 // The 10/12-bit vertical-edge kernels, dav1d's lpf_h_{4,6,8,16}_8_neon
@@ -21,9 +22,8 @@ import (
 // 8-byte store per row) when only the wd4 filter ran, p3..q3 (8x8, sixteen
 // bytes) when the flat8in filter ran but flat8out did not.
 //
-// Every row is one bounds-checked window of the plane, taken once and reused
-// for the store; the drivers have already range-checked the call, so the
-// checks never fail.
+// The rows are unsafeutil.Blocks of the drivers' checked views, named by
+// constant row numbers at each load and store.
 
 // lpf16Consts holds the kernels' vector constants, loaded from memory (one
 // LDR each) where an archsimd broadcast or constant shift costs a MOVD, an
@@ -76,29 +76,13 @@ func lpf16Transpose4x8(a, b, c, d archsimd.Uint16x8) (r04, r15, r26, r37 archsim
 	return
 }
 
-// lpfCols16W is dav1d lpf_h_{4,6,8}_8_neon for one two-unit group: o is the
-// byte offset of q0 in the first of eight rows, p3..q3 sit at o-8..o+8.
-func lpfCols16W[W lpfWidth](pix []byte, o, stride int, k *lpf16Consts, eV, iV, hV archsimd.Uint16x8, m4, mGt4 archsimd.Mask16x8) {
+// lpfCols16W is dav1d lpf_h_{4,6,8}_8_neon for one two-unit group: the eight
+// rows of tv, sixteen bytes p3..q3 each.
+func lpfCols16W[W lpfWidth](tv unsafeutil.Block[lpfR8], k *lpf16Consts, eV, iV, hV archsimd.Uint16x8, m4, mGt4 archsimd.Mask16x8) {
 	var wdT W
 	wd := len(wdT)
-	b := o - 8
-	w0 := (*[16]byte)(pix[b : b+16])
-	b += stride
-	w1 := (*[16]byte)(pix[b : b+16])
-	b += stride
-	w2 := (*[16]byte)(pix[b : b+16])
-	b += stride
-	w3 := (*[16]byte)(pix[b : b+16])
-	b += stride
-	w4 := (*[16]byte)(pix[b : b+16])
-	b += stride
-	w5 := (*[16]byte)(pix[b : b+16])
-	b += stride
-	w6 := (*[16]byte)(pix[b : b+16])
-	b += stride
-	w7 := (*[16]byte)(pix[b : b+16])
-	p3, p2, p1, p0, q0, q1, q2, q3 := lpfTranspose8x8U16Regs(archsimd.LoadUint8x16Array(w0).ReshapeToUint16s(), archsimd.LoadUint8x16Array(w1).ReshapeToUint16s(), archsimd.LoadUint8x16Array(w2).ReshapeToUint16s(), archsimd.LoadUint8x16Array(w3).ReshapeToUint16s(),
-		archsimd.LoadUint8x16Array(w4).ReshapeToUint16s(), archsimd.LoadUint8x16Array(w5).ReshapeToUint16s(), archsimd.LoadUint8x16Array(w6).ReshapeToUint16s(), archsimd.LoadUint8x16Array(w7).ReshapeToUint16s())
+	p3, p2, p1, p0, q0, q1, q2, q3 := lpfTranspose8x8U16Regs(archsimd.LoadUint8x16Array(tv.Row16(0)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tv.Row16(1)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tv.Row16(2)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tv.Row16(3)).ReshapeToUint16s(),
+		archsimd.LoadUint8x16Array(tv.Row16(4)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tv.Row16(5)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tv.Row16(6)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tv.Row16(7)).ReshapeToUint16s())
 
 	maxd := lpf16Abd(p1, p0).Max(lpf16Abd(q1, q0))
 	t := maxd
@@ -172,52 +156,37 @@ func lpfCols16W[W lpfWidth](pix []byte, o, stride int, k *lpf16Consts, eV, iV, h
 		n2 = s.Shift(archsimd.LoadInt16x8Array(&k.shr3)).IfElse(mFlat, n2)
 
 		r0, r1, r2, r3, r4, r5, r6, r7 := lpfTranspose8x8U16Regs(p3, o2, o1, o0, n0, n1, n2, q3)
-		r0.ReshapeToUint8s().StoreArray(w0)
-		r1.ReshapeToUint8s().StoreArray(w1)
-		r2.ReshapeToUint8s().StoreArray(w2)
-		r3.ReshapeToUint8s().StoreArray(w3)
-		r4.ReshapeToUint8s().StoreArray(w4)
-		r5.ReshapeToUint8s().StoreArray(w5)
-		r6.ReshapeToUint8s().StoreArray(w6)
-		r7.ReshapeToUint8s().StoreArray(w7)
+		r0.ReshapeToUint8s().StoreArray(tv.Row16(0))
+		r1.ReshapeToUint8s().StoreArray(tv.Row16(1))
+		r2.ReshapeToUint8s().StoreArray(tv.Row16(2))
+		r3.ReshapeToUint8s().StoreArray(tv.Row16(3))
+		r4.ReshapeToUint8s().StoreArray(tv.Row16(4))
+		r5.ReshapeToUint8s().StoreArray(tv.Row16(5))
+		r6.ReshapeToUint8s().StoreArray(tv.Row16(6))
+		r7.ReshapeToUint8s().StoreArray(tv.Row16(7))
 		return
 	}
 	r04, r15, r26, r37 := lpf16Transpose4x8(o1, o0, n0, n1)
-	binary.LittleEndian.PutUint64(w0[4:12], r04.GetElem(0))
-	binary.LittleEndian.PutUint64(w1[4:12], r15.GetElem(0))
-	binary.LittleEndian.PutUint64(w2[4:12], r26.GetElem(0))
-	binary.LittleEndian.PutUint64(w3[4:12], r37.GetElem(0))
-	binary.LittleEndian.PutUint64(w4[4:12], r04.GetElem(1))
-	binary.LittleEndian.PutUint64(w5[4:12], r15.GetElem(1))
-	binary.LittleEndian.PutUint64(w6[4:12], r26.GetElem(1))
-	binary.LittleEndian.PutUint64(w7[4:12], r37.GetElem(1))
+	tv.PutF64(0, 4, r04.BitsToFloat64().GetElem(0))
+	tv.PutF64(1, 4, r15.BitsToFloat64().GetElem(0))
+	tv.PutF64(2, 4, r26.BitsToFloat64().GetElem(0))
+	tv.PutF64(3, 4, r37.BitsToFloat64().GetElem(0))
+	tv.PutF64(4, 4, r04.BitsToFloat64().GetElem(1))
+	tv.PutF64(5, 4, r15.BitsToFloat64().GetElem(1))
+	tv.PutF64(6, 4, r26.BitsToFloat64().GetElem(1))
+	tv.PutF64(7, 4, r37.BitsToFloat64().GetElem(1))
 }
 
-// lpfCols16Wd16 is dav1d lpf_h_16_8_neon for one two-unit group: o is the
-// byte offset of q0 in the first of eight rows, p7..q7 sit at o-16..o+16.
-func lpfCols16Wd16(pix []byte, o, stride int, k *lpf16Consts, eV, iV, hV archsimd.Uint16x8, m4, mGt4, m16 archsimd.Mask16x8) {
-	b := o - 16
-	w0 := (*[32]byte)(pix[b : b+32])
-	b += stride
-	w1 := (*[32]byte)(pix[b : b+32])
-	b += stride
-	w2 := (*[32]byte)(pix[b : b+32])
-	b += stride
-	w3 := (*[32]byte)(pix[b : b+32])
-	b += stride
-	w4 := (*[32]byte)(pix[b : b+32])
-	b += stride
-	w5 := (*[32]byte)(pix[b : b+32])
-	b += stride
-	w6 := (*[32]byte)(pix[b : b+32])
-	b += stride
-	w7 := (*[32]byte)(pix[b : b+32])
+// lpfCols16Wd16 is dav1d lpf_h_16_8_neon for one two-unit group: eight rows
+// of p7..q7, sixteen bytes p7..p0 in tl, q0..q7 in tr, and p3..q3 in tm
+// (all three Blocks of the same eight rows).
+func lpfCols16Wd16(tl, tm, tr unsafeutil.Block[lpfR8], k *lpf16Consts, eV, iV, hV archsimd.Uint16x8, m4, mGt4, m16 archsimd.Mask16x8) {
 	p7, p6, p5, p4, p3, p2, p1, p0 := lpfTranspose8x8U16Regs(
-		archsimd.LoadUint8x16Array((*[16]byte)(w0[:16])).ReshapeToUint16s(), archsimd.LoadUint8x16Array((*[16]byte)(w1[:16])).ReshapeToUint16s(), archsimd.LoadUint8x16Array((*[16]byte)(w2[:16])).ReshapeToUint16s(), archsimd.LoadUint8x16Array((*[16]byte)(w3[:16])).ReshapeToUint16s(),
-		archsimd.LoadUint8x16Array((*[16]byte)(w4[:16])).ReshapeToUint16s(), archsimd.LoadUint8x16Array((*[16]byte)(w5[:16])).ReshapeToUint16s(), archsimd.LoadUint8x16Array((*[16]byte)(w6[:16])).ReshapeToUint16s(), archsimd.LoadUint8x16Array((*[16]byte)(w7[:16])).ReshapeToUint16s())
+		archsimd.LoadUint8x16Array(tl.Row16(0)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tl.Row16(1)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tl.Row16(2)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tl.Row16(3)).ReshapeToUint16s(),
+		archsimd.LoadUint8x16Array(tl.Row16(4)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tl.Row16(5)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tl.Row16(6)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tl.Row16(7)).ReshapeToUint16s())
 	q0, q1, q2, q3, q4, q5, q6, q7 := lpfTranspose8x8U16Regs(
-		archsimd.LoadUint8x16Array((*[16]byte)(w0[16:])).ReshapeToUint16s(), archsimd.LoadUint8x16Array((*[16]byte)(w1[16:])).ReshapeToUint16s(), archsimd.LoadUint8x16Array((*[16]byte)(w2[16:])).ReshapeToUint16s(), archsimd.LoadUint8x16Array((*[16]byte)(w3[16:])).ReshapeToUint16s(),
-		archsimd.LoadUint8x16Array((*[16]byte)(w4[16:])).ReshapeToUint16s(), archsimd.LoadUint8x16Array((*[16]byte)(w5[16:])).ReshapeToUint16s(), archsimd.LoadUint8x16Array((*[16]byte)(w6[16:])).ReshapeToUint16s(), archsimd.LoadUint8x16Array((*[16]byte)(w7[16:])).ReshapeToUint16s())
+		archsimd.LoadUint8x16Array(tr.Row16(0)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tr.Row16(1)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tr.Row16(2)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tr.Row16(3)).ReshapeToUint16s(),
+		archsimd.LoadUint8x16Array(tr.Row16(4)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tr.Row16(5)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tr.Row16(6)).ReshapeToUint16s(), archsimd.LoadUint8x16Array(tr.Row16(7)).ReshapeToUint16s())
 
 	maxd := lpf16Abd(p1, p0).Max(lpf16Abd(q1, q0))
 	tt := lpf16Abd(p2, p1).Max(lpf16Abd(q2, q1)).Max(lpf16Abd(p3, p2).Max(lpf16Abd(q3, q2)))
@@ -301,58 +270,60 @@ func lpfCols16Wd16(pix []byte, o, stride int, k *lpf16Consts, eV, iV, hV archsim
 		n5 := s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, q5)
 
 		a0, a1, a2, a3, a4, a5, a6, a7 := lpfTranspose8x8U16Regs(p7, p6, o5, o4, o3, o2, o1, o0)
-		a0.ReshapeToUint8s().StoreArray((*[16]byte)(w0[:16]))
-		a1.ReshapeToUint8s().StoreArray((*[16]byte)(w1[:16]))
-		a2.ReshapeToUint8s().StoreArray((*[16]byte)(w2[:16]))
-		a3.ReshapeToUint8s().StoreArray((*[16]byte)(w3[:16]))
-		a4.ReshapeToUint8s().StoreArray((*[16]byte)(w4[:16]))
-		a5.ReshapeToUint8s().StoreArray((*[16]byte)(w5[:16]))
-		a6.ReshapeToUint8s().StoreArray((*[16]byte)(w6[:16]))
-		a7.ReshapeToUint8s().StoreArray((*[16]byte)(w7[:16]))
+		a0.ReshapeToUint8s().StoreArray(tl.Row16(0))
+		a1.ReshapeToUint8s().StoreArray(tl.Row16(1))
+		a2.ReshapeToUint8s().StoreArray(tl.Row16(2))
+		a3.ReshapeToUint8s().StoreArray(tl.Row16(3))
+		a4.ReshapeToUint8s().StoreArray(tl.Row16(4))
+		a5.ReshapeToUint8s().StoreArray(tl.Row16(5))
+		a6.ReshapeToUint8s().StoreArray(tl.Row16(6))
+		a7.ReshapeToUint8s().StoreArray(tl.Row16(7))
 		c0, c1, c2, c3, c4, c5, c6, c7 := lpfTranspose8x8U16Regs(n0, n1, n2, n3, n4, n5, q6, q7)
-		c0.ReshapeToUint8s().StoreArray((*[16]byte)(w0[16:]))
-		c1.ReshapeToUint8s().StoreArray((*[16]byte)(w1[16:]))
-		c2.ReshapeToUint8s().StoreArray((*[16]byte)(w2[16:]))
-		c3.ReshapeToUint8s().StoreArray((*[16]byte)(w3[16:]))
-		c4.ReshapeToUint8s().StoreArray((*[16]byte)(w4[16:]))
-		c5.ReshapeToUint8s().StoreArray((*[16]byte)(w5[16:]))
-		c6.ReshapeToUint8s().StoreArray((*[16]byte)(w6[16:]))
-		c7.ReshapeToUint8s().StoreArray((*[16]byte)(w7[16:]))
+		c0.ReshapeToUint8s().StoreArray(tr.Row16(0))
+		c1.ReshapeToUint8s().StoreArray(tr.Row16(1))
+		c2.ReshapeToUint8s().StoreArray(tr.Row16(2))
+		c3.ReshapeToUint8s().StoreArray(tr.Row16(3))
+		c4.ReshapeToUint8s().StoreArray(tr.Row16(4))
+		c5.ReshapeToUint8s().StoreArray(tr.Row16(5))
+		c6.ReshapeToUint8s().StoreArray(tr.Row16(6))
+		c7.ReshapeToUint8s().StoreArray(tr.Row16(7))
 		return
 	}
 	if anyFlat {
 		r0, r1, r2, r3, r4, r5, r6, r7 := lpfTranspose8x8U16Regs(p3, o2, o1, o0, n0, n1, n2, q3)
-		r0.ReshapeToUint8s().StoreArray((*[16]byte)(w0[8:24]))
-		r1.ReshapeToUint8s().StoreArray((*[16]byte)(w1[8:24]))
-		r2.ReshapeToUint8s().StoreArray((*[16]byte)(w2[8:24]))
-		r3.ReshapeToUint8s().StoreArray((*[16]byte)(w3[8:24]))
-		r4.ReshapeToUint8s().StoreArray((*[16]byte)(w4[8:24]))
-		r5.ReshapeToUint8s().StoreArray((*[16]byte)(w5[8:24]))
-		r6.ReshapeToUint8s().StoreArray((*[16]byte)(w6[8:24]))
-		r7.ReshapeToUint8s().StoreArray((*[16]byte)(w7[8:24]))
+		r0.ReshapeToUint8s().StoreArray(tm.Row16(0))
+		r1.ReshapeToUint8s().StoreArray(tm.Row16(1))
+		r2.ReshapeToUint8s().StoreArray(tm.Row16(2))
+		r3.ReshapeToUint8s().StoreArray(tm.Row16(3))
+		r4.ReshapeToUint8s().StoreArray(tm.Row16(4))
+		r5.ReshapeToUint8s().StoreArray(tm.Row16(5))
+		r6.ReshapeToUint8s().StoreArray(tm.Row16(6))
+		r7.ReshapeToUint8s().StoreArray(tm.Row16(7))
 		return
 	}
 	r04, r15, r26, r37 := lpf16Transpose4x8(o1, o0, n0, n1)
-	binary.LittleEndian.PutUint64(w0[12:20], r04.GetElem(0))
-	binary.LittleEndian.PutUint64(w1[12:20], r15.GetElem(0))
-	binary.LittleEndian.PutUint64(w2[12:20], r26.GetElem(0))
-	binary.LittleEndian.PutUint64(w3[12:20], r37.GetElem(0))
-	binary.LittleEndian.PutUint64(w4[12:20], r04.GetElem(1))
-	binary.LittleEndian.PutUint64(w5[12:20], r15.GetElem(1))
-	binary.LittleEndian.PutUint64(w6[12:20], r26.GetElem(1))
-	binary.LittleEndian.PutUint64(w7[12:20], r37.GetElem(1))
+	tm.PutF64(0, 4, r04.BitsToFloat64().GetElem(0))
+	tm.PutF64(1, 4, r15.BitsToFloat64().GetElem(0))
+	tm.PutF64(2, 4, r26.BitsToFloat64().GetElem(0))
+	tm.PutF64(3, 4, r37.BitsToFloat64().GetElem(0))
+	tm.PutF64(4, 4, r04.BitsToFloat64().GetElem(1))
+	tm.PutF64(5, 4, r15.BitsToFloat64().GetElem(1))
+	tm.PutF64(6, 4, r26.BitsToFloat64().GetElem(1))
+	tm.PutF64(7, 4, r37.BitsToFloat64().GetElem(1))
 }
 
-// lpfCols16 runs the width-specialized vertical-edge kernel.
-func lpfCols16(pix []byte, o, stride, wd int, k *lpf16Consts, eV, iV, hV archsimd.Uint16x8, m4, mGt4, m16 archsimd.Mask16x8) {
+// lpfCols16 runs the width-specialized vertical-edge kernel on the eight
+// rows of v from row r whose q0 is column c (p7..q7, c-16..c+15, at wd 16;
+// p3..q3, c-8..c+7, otherwise), all inside v.
+func lpfCols16(v unsafeutil.Rows, r, c, wd int, k *lpf16Consts, eV, iV, hV archsimd.Uint16x8, m4, mGt4, m16 archsimd.Mask16x8) {
 	switch wd {
 	case 16:
-		lpfCols16Wd16(pix, o, stride, k, eV, iV, hV, m4, mGt4, m16)
+		lpfCols16Wd16(unsafeutil.BlockAt[lpfR8](v, r, c-16), unsafeutil.BlockAt[lpfR8](v, r, c-8), unsafeutil.BlockAt[lpfR8](v, r, c), k, eV, iV, hV, m4, mGt4, m16)
 	case 8:
-		lpfCols16W[lpfW8](pix, o, stride, k, eV, iV, hV, m4, mGt4)
+		lpfCols16W[lpfW8](unsafeutil.BlockAt[lpfR8](v, r, c-8), k, eV, iV, hV, m4, mGt4)
 	case 6:
-		lpfCols16W[lpfW6](pix, o, stride, k, eV, iV, hV, m4, mGt4)
+		lpfCols16W[lpfW6](unsafeutil.BlockAt[lpfR8](v, r, c-8), k, eV, iV, hV, m4, mGt4)
 	default:
-		lpfCols16W[lpfW4](pix, o, stride, k, eV, iV, hV, m4, mGt4)
+		lpfCols16W[lpfW4](unsafeutil.BlockAt[lpfR8](v, r, c-8), k, eV, iV, hV, m4, mGt4)
 	}
 }

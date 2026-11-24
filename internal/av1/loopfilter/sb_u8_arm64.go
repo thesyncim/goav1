@@ -19,28 +19,9 @@ import (
 // unsafeutil.Block: the kernels name their rows by constant row numbers, so
 // no tap access costs a check (dav1d trusts its caller the same way, with
 // the check moved to the view). The transposes run through local arrays.
-// The 16-bit kernels (sb_u16_arm64.go) take checked row windows (lpfWin2,
-// lpfWin4).
+// The 16-bit drivers (sb_u16_arm64.go) work the same way.
 
-// lpfWin2 is the two row windows at b and b+st: both are slices ending at
-// the second row's end, so the pair costs one compare. Callers pass b and st
-// below 1<<32 (int(uint32(x))), which proves the offsets non-negative and
-// overflow-free.
-func lpfWin2(pix []byte, b, st int) (*[16]byte, *[16]byte) {
-	e := b + st + 16
-	return (*[16]byte)(pix[b:e]), (*[16]byte)(pix[b+st : e])
-}
-
-// lpfWin4 is the four row windows from b at stride st, two compares.
-func lpfWin4(pix []byte, b, st int) (*[16]byte, *[16]byte, *[16]byte, *[16]byte) {
-	e := b + st + 16
-	b2 := b + 2*st
-	e2 := b2 + st + 16
-	return (*[16]byte)(pix[b:e]), (*[16]byte)(pix[b+st : e]), (*[16]byte)(pix[b2:e2]), (*[16]byte)(pix[b2+st : e2])
-}
-
-// lpfMaxPlane bounds the planes the vector drivers take: every row offset of
-// a plane up to 1<<32 bytes fits the 32-bit offsets of lpfWin4. Larger planes
+// lpfMaxPlane bounds the planes the vector drivers take; larger planes
 // (beyond any AV1 frame) take the scalar reference.
 const lpfMaxPlane = 1 << 32
 
@@ -65,16 +46,16 @@ func lpfAny(m archsimd.Mask8x16) bool {
 // lanes run in one body, each lane at its own width exactly as the C reference
 // does. Widths up to 8 run lpf8U8W, which the transposed vertical path shares.
 func lpf16U8Wd16(tv unsafeutil.Block[lpfR14], eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) bool {
-	wp6, wp5, wp4, wp3, wp2, wp1, wp0 := tv.Row16(0), tv.Row16(1), tv.Row16(2), tv.Row16(3), tv.Row16(4), tv.Row16(5), tv.Row16(6)
-	wq0, wq1, wq2, wq3, wq4, wq5, wq6 := tv.Row16(7), tv.Row16(8), tv.Row16(9), tv.Row16(10), tv.Row16(11), tv.Row16(12), tv.Row16(13)
-	p3 := archsimd.LoadUint8x16Array(wp3)
-	p2 := archsimd.LoadUint8x16Array(wp2)
-	p1 := archsimd.LoadUint8x16Array(wp1)
-	p0 := archsimd.LoadUint8x16Array(wp0)
-	q0 := archsimd.LoadUint8x16Array(wq0)
-	q1 := archsimd.LoadUint8x16Array(wq1)
-	q2 := archsimd.LoadUint8x16Array(wq2)
-	q3 := archsimd.LoadUint8x16Array(wq3)
+	// Each row is named at its load and its store, on the line of the
+	// access, so the accessor leaves no inline mark (CSE shares the address).
+	p3 := archsimd.LoadUint8x16Array(tv.Row16(3))
+	p2 := archsimd.LoadUint8x16Array(tv.Row16(4))
+	p1 := archsimd.LoadUint8x16Array(tv.Row16(5))
+	p0 := archsimd.LoadUint8x16Array(tv.Row16(6))
+	q0 := archsimd.LoadUint8x16Array(tv.Row16(7))
+	q1 := archsimd.LoadUint8x16Array(tv.Row16(8))
+	q2 := archsimd.LoadUint8x16Array(tv.Row16(9))
+	q3 := archsimd.LoadUint8x16Array(tv.Row16(10))
 	maxd := lpfAbsDiff(p1, p0).Max(lpfAbsDiff(q1, q0))
 	tt := lpfAbsDiff(p2, p1).Max(lpfAbsDiff(q2, q1)).Max(lpfAbsDiff(p3, p2).Max(lpfAbsDiff(q3, q2)))
 	t := maxd.Max(tt.Masked(mGt4))
@@ -87,12 +68,12 @@ func lpf16U8Wd16(tv unsafeutil.Block[lpfR14], eV, iV, hV archsimd.Uint8x16, m4, 
 	one := archsimd.BroadcastUint8x16(1)
 	mFlat := one.GreaterEqual(lpfSpread(p2, p3, p0).Max(lpfSpread(q2, q3, q0)).Max(maxd)).And(mGt4).And(fm)
 	mF4 := fm.And(mFlat.Not())
-	p6 := archsimd.LoadUint8x16Array(wp6)
-	p5 := archsimd.LoadUint8x16Array(wp5)
-	p4 := archsimd.LoadUint8x16Array(wp4)
-	q4 := archsimd.LoadUint8x16Array(wq4)
-	q5 := archsimd.LoadUint8x16Array(wq5)
-	q6 := archsimd.LoadUint8x16Array(wq6)
+	p6 := archsimd.LoadUint8x16Array(tv.Row16(0))
+	p5 := archsimd.LoadUint8x16Array(tv.Row16(1))
+	p4 := archsimd.LoadUint8x16Array(tv.Row16(2))
+	q4 := archsimd.LoadUint8x16Array(tv.Row16(11))
+	q5 := archsimd.LoadUint8x16Array(tv.Row16(12))
+	q6 := archsimd.LoadUint8x16Array(tv.Row16(13))
 	fo := lpfSpread3(p4, p5, p6, p0).Max(lpfSpread3(q4, q5, q6, q0))
 	mFlat16 := one.GreaterEqual(fo).And(m16).And(mFlat)
 	mFlat = mFlat.And(mFlat16.Not())
@@ -148,21 +129,53 @@ func lpf16U8Wd16(tv unsafeutil.Block[lpfR14], eV, iV, hV archsimd.Uint8x16, m4, 
 		n2 = lb2.ReshapeToUint8s().ConcatOdd(hb2.ReshapeToUint8s()).IfElse(mFlat, n2)
 	}
 	if lpfAny(mFlat16) {
-		o5, o4, o3, n3, n4, n5 := lpfFlat16U8(p6, p5, p4, p3, p2, p1, p0, q0, q1, q2, q3, q4, q5, q6, mFlat16, &o2, &o1, &o0, &n0, &n1, &n2)
-		o5.StoreArray(wp5)
-		o4.StoreArray(wp4)
-		o3.StoreArray(wp3)
-		n3.StoreArray(wq3)
-		n4.StoreArray(wq4)
-		n5.StoreArray(wq5)
+		// The flat16 lanes finish in their own frame, which reloads the
+		// (still unmodified) taps and stores every output row, so nothing of
+		// this frame stays live across the call.
+		lpfFlat16U8Store(tv, mFlat16, o2, o1, o0, n0, n1, n2)
+		return true
 	}
-	o2.StoreArray(wp2)
-	n2.StoreArray(wq2)
-	o1.StoreArray(wp1)
-	o0.StoreArray(wp0)
-	n0.StoreArray(wq0)
-	n1.StoreArray(wq1)
+	o2.StoreArray(tv.Row16(4))
+	n2.StoreArray(tv.Row16(9))
+	o1.StoreArray(tv.Row16(5))
+	o0.StoreArray(tv.Row16(6))
+	n0.StoreArray(tv.Row16(7))
+	n1.StoreArray(tv.Row16(8))
 	return true
+}
+
+// lpfFlat16U8Store is lpfFlat16U8 for lpf16U8Wd16: it loads the taps p6..q6
+// from tv (rows 0..13, not yet written), blends the 13-tap outputs on the
+// lanes in m into the caller's p2..q2 outputs (o2..n2) and stores the twelve
+// rows p5..q5.
+func lpfFlat16U8Store(tv unsafeutil.Block[lpfR14], m archsimd.Mask8x16, o2, o1, o0, n0, n1, n2 archsimd.Uint8x16) {
+	p6 := archsimd.LoadUint8x16Array(tv.Row16(0))
+	p5 := archsimd.LoadUint8x16Array(tv.Row16(1))
+	p4 := archsimd.LoadUint8x16Array(tv.Row16(2))
+	p3 := archsimd.LoadUint8x16Array(tv.Row16(3))
+	p2 := archsimd.LoadUint8x16Array(tv.Row16(4))
+	p1 := archsimd.LoadUint8x16Array(tv.Row16(5))
+	p0 := archsimd.LoadUint8x16Array(tv.Row16(6))
+	q0 := archsimd.LoadUint8x16Array(tv.Row16(7))
+	q1 := archsimd.LoadUint8x16Array(tv.Row16(8))
+	q2 := archsimd.LoadUint8x16Array(tv.Row16(9))
+	q3 := archsimd.LoadUint8x16Array(tv.Row16(10))
+	q4 := archsimd.LoadUint8x16Array(tv.Row16(11))
+	q5 := archsimd.LoadUint8x16Array(tv.Row16(12))
+	q6 := archsimd.LoadUint8x16Array(tv.Row16(13))
+	r5, r4, r3, s3, s4, s5 := lpfFlat16U8(p6, p5, p4, p3, p2, p1, p0, q0, q1, q2, q3, q4, q5, q6, m, &o2, &o1, &o0, &n0, &n1, &n2)
+	r5.StoreArray(tv.Row16(1))
+	r4.StoreArray(tv.Row16(2))
+	r3.StoreArray(tv.Row16(3))
+	o2.StoreArray(tv.Row16(4))
+	o1.StoreArray(tv.Row16(5))
+	o0.StoreArray(tv.Row16(6))
+	n0.StoreArray(tv.Row16(7))
+	n1.StoreArray(tv.Row16(8))
+	n2.StoreArray(tv.Row16(9))
+	s3.StoreArray(tv.Row16(10))
+	s4.StoreArray(tv.Row16(11))
+	s5.StoreArray(tv.Row16(12))
 }
 
 // lpfFlat16U8 computes the 13-tap flat filter (dav1d wd16, AV1 filter14) on
@@ -250,7 +263,7 @@ var sbNibbleLanes = func() (t [16][16]uint8) {
 }()
 
 func sbNibbleMask(n uint32) archsimd.Mask8x16 {
-	return archsimd.LoadUint8x16Array(&sbNibbleLanes[n&15]).BitsToInt8().ToMask()
+	return archsimd.Int8x16{}.Greater(archsimd.LoadUint8x16Array(&sbNibbleLanes[n&15]).BitsToInt8())
 }
 
 // sbGroupLimits is the per-group prologue of dav1d's lpf_{v,h}_sb_{y,uv}
@@ -276,7 +289,7 @@ func sbGroupLimits(cur, prev archsimd.Uint32x4, nAll uint32, sharp0 uint64, shar
 	iV = lr.ShiftAllRight(sharp0).Min(archsimd.BroadcastUint8x16(sharp1)).Max(archsimd.BroadcastUint8x16(1))
 	e := lr.Add(archsimd.BroadcastUint8x16(2))
 	eV = e.Add(e).Add(iV)
-	m4 = act.BitsToInt8().ToMask()
+	m4 = archsimd.Int8x16{}.Greater(act.BitsToInt8())
 	ok = true
 	return
 }
@@ -448,10 +461,10 @@ func filterSBVertical8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, 
 			continue
 		}
 		if wd == 16 {
-			lpfVertical16x16U8(lpfBlock16(gv, 0, 0), eV, iV, hV, m4, sbNibbleMask(nGt4), sbNibbleMask(n16))
+			lpfVertical16x16U8(unsafeutil.BlockAt[lpfR16](gv, 0, 0), eV, iV, hV, m4, sbNibbleMask(nGt4), sbNibbleMask(n16))
 		} else if wide {
 			mGt4 := sbNibbleMask(nGt4)
-			gb := lpfBlock16(gv, 0, 0)
+			gb := unsafeutil.BlockAt[lpfR16](gv, 0, 0)
 			switch wd {
 			case 8:
 				lpfVertical16x8U8WideW[lpfW8](gb, eV, iV, hV, m4, mGt4)
@@ -493,7 +506,7 @@ func sbLimitsOf(lr, act archsimd.Uint8x16, lut *SBLUT) (eV, iV, hV archsimd.Uint
 	iV = lr.Shift(archsimd.LoadInt8x16Array(&lut.SharpShift)).Min(archsimd.LoadUint8x16Array(&lut.SharpCap)).Max(archsimd.BroadcastUint8x16(1))
 	e := lr.Add(archsimd.BroadcastUint8x16(2))
 	eV = e.Add(e).Add(iV)
-	m4 = act.BitsToInt8().ToMask()
+	m4 = archsimd.Int8x16{}.Greater(act.BitsToInt8())
 	return
 }
 
@@ -556,24 +569,26 @@ func sbRowsU8[W lpfWidth](pix []byte, off, stride, n int, vm0, vm1, vm2 uint32, 
 		if vm0&15 == 0 {
 			continue
 		}
-		lb := lpfBlock2(lv, x)
-		cur := archsimd.LoadUint8x16Array(lb.Row16(1)).ReshapeToUint32s().And(ff)
-		prev := archsimd.LoadUint8x16Array(lb.Row16(0)).ReshapeToUint32s().And(ff)
-		lr, act, any := sbActive(cur, prev, vm0)
-		if !any {
+		// The level block is named at each load (no inline mark of its own).
+		cur := archsimd.LoadUint8x16Array(unsafeutil.BlockAt[lpfR2](lv, 0, x).Row16(1)).ReshapeToUint32s().And(ff)
+		prev := archsimd.LoadUint8x16Array(unsafeutil.BlockAt[lpfR2](lv, 0, x).Row16(0)).ReshapeToUint32s().And(ff)
+		// The helpers share their lines with the tests, so they leave no
+		// inline marks.
+		var lr, act archsimd.Uint8x16
+		var any bool
+		if lr, act, any = sbActive(cur, prev, vm0); !any {
 			continue
 		}
-		eV, iV, hV, m4 := sbLimitsOf(lr, act, lut)
-		if wd == 16 && vm2&15 != 0 {
-			lpf16U8Wd16(lpfBlock14(v, 0, x), eV, iV, hV, m4, sbNibbleMask(vm1), sbNibbleMask(vm2))
+		if eV, iV, hV, m4 := sbLimitsOf(lr, act, lut); wd == 16 && vm2&15 != 0 {
+			lpf16U8Wd16(unsafeutil.BlockAt[lpfR14](v, 0, x), eV, iV, hV, m4, sbNibbleMask(vm1), sbNibbleMask(vm2))
 		} else if wd >= 6 && vm1&15 != 0 {
 			if luma {
-				lpf8U8W[lpfW8, lpfRows](lpfBlock8(v, rh-4, x), eV, iV, hV, m4, sbNibbleMask(vm1))
+				lpf8U8W[lpfW8, lpfRows](unsafeutil.BlockAt[lpfR8](v, rh-4, x), eV, iV, hV, m4, sbNibbleMask(vm1))
 			} else {
-				lpf8U8W[lpfW6, lpfRows](lpfBlock6(v, rh-3, x), eV, iV, hV, m4, sbNibbleMask(vm1))
+				lpf8U8W[lpfW6, lpfRows](unsafeutil.BlockAt[lpfR6](v, rh-3, x), eV, iV, hV, m4, sbNibbleMask(vm1))
 			}
 		} else {
-			lpf8U8W[lpfW4, lpfRows](lpfBlock4(v, rh-2, x), eV, iV, hV, m4, archsimd.Mask8x16{})
+			lpf8U8W[lpfW4, lpfRows](unsafeutil.BlockAt[lpfR4](v, rh-2, x), eV, iV, hV, m4, archsimd.Mask8x16{})
 		}
 	}
 	return true
@@ -585,13 +600,13 @@ func sbRowsU8[W lpfWidth](pix []byte, off, stride, n int, vm0, vm1, vm2 uint32, 
 func lpfRowsU8(gv unsafeutil.Rows, wd int, eV, iV, hV archsimd.Uint8x16, m4, mGt4, m16 archsimd.Mask8x16) {
 	switch wd {
 	case 16:
-		lpf16U8Wd16(lpfBlock14(gv, 0, 0), eV, iV, hV, m4, mGt4, m16)
+		lpf16U8Wd16(unsafeutil.BlockAt[lpfR14](gv, 0, 0), eV, iV, hV, m4, mGt4, m16)
 	case 8:
-		lpf8U8W[lpfW8, lpfRows](lpfBlock8(gv, 0, 0), eV, iV, hV, m4, mGt4)
+		lpf8U8W[lpfW8, lpfRows](unsafeutil.BlockAt[lpfR8](gv, 0, 0), eV, iV, hV, m4, mGt4)
 	case 6:
-		lpf8U8W[lpfW6, lpfRows](lpfBlock6(gv, 0, 0), eV, iV, hV, m4, mGt4)
+		lpf8U8W[lpfW6, lpfRows](unsafeutil.BlockAt[lpfR6](gv, 0, 0), eV, iV, hV, m4, mGt4)
 	default:
-		lpf8U8W[lpfW4, lpfRows](lpfBlock4(gv, 0, 0), eV, iV, hV, m4, mGt4)
+		lpf8U8W[lpfW4, lpfRows](unsafeutil.BlockAt[lpfR4](gv, 0, 0), eV, iV, hV, m4, mGt4)
 	}
 }
 
@@ -626,27 +641,27 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 		if vm0&15 == 0 {
 			continue
 		}
-		// sbLevelsPairs, written out so the group's live values stay in
-		// registers.
-		lg := lv.Sub(4*g, 0, 8, 4)
-		cur, prev := sbPairs(binary.LittleEndian.Uint64(lg.Row8(0, 0)[:]), binary.LittleEndian.Uint64(lg.Row8(1, 0)[:]),
-			binary.LittleEndian.Uint64(lg.Row8(2, 0)[:]), binary.LittleEndian.Uint64(lg.Row8(3, 0)[:]))
-		lr, act, any := sbActive(cur, prev, vm0)
-		if !any {
+		// sbLevelsPairs written out, each helper on the line of an
+		// instruction of this function (no inline marks): the group's four
+		// (l[-1], l[0]) pairs go to two vectors through the array stores.
+		l0 := [2]uint64{binary.LittleEndian.Uint64(lv.Sub(4*g, 0, 8, 4).Row8(0, 0)[:]), binary.LittleEndian.Uint64(lv.Sub(4*g, 0, 8, 4).Row8(1, 0)[:])}
+		l1 := [2]uint64{binary.LittleEndian.Uint64(lv.Sub(4*g, 0, 8, 4).Row8(2, 0)[:]), binary.LittleEndian.Uint64(lv.Sub(4*g, 0, 8, 4).Row8(3, 0)[:])}
+		la := archsimd.LoadUint64x2Array(&l0).ReshapeToUint32s()
+		lb := archsimd.LoadUint64x2Array(&l1).ReshapeToUint32s()
+		ff := archsimd.LoadUint32x4Array(&sbLowByteLanes)
+		var lr, act archsimd.Uint8x16
+		var any bool
+		if lr, act, any = sbActive(la.ConcatOdd(lb).And(ff), la.ConcatEven(lb).And(ff), vm0); !any {
 			continue
 		}
-		eV, iV, hV, m4 := sbLimitsOf(lr, act, lut)
-		if vm2&15 != 0 {
-			lpfVertical16x16U8(lpfBlock16(v, 16*g, c16), eV, iV, hV, m4, sbNibbleMask(vm1), sbNibbleMask(vm2))
-			continue
-		}
-		b := lpfBlock16(v, 16*g, c8)
-		if vm1&15 == 0 {
-			lpfVertical16x8U8WideW[lpfW4](b, eV, iV, hV, m4, archsimd.Mask8x16{})
+		if eV, iV, hV, m4 := sbLimitsOf(lr, act, lut); vm2&15 != 0 {
+			lpfVertical16x16U8(unsafeutil.BlockAt[lpfR16](v, 16*g, c16), eV, iV, hV, m4, sbNibbleMask(vm1), sbNibbleMask(vm2))
+		} else if vm1&15 == 0 {
+			lpfVertical16x8U8WideW[lpfW4](unsafeutil.BlockAt[lpfR16](v, 16*g, c8), eV, iV, hV, m4, archsimd.Mask8x16{})
 		} else if luma {
-			lpfVertical16x8U8WideW[lpfW8](b, eV, iV, hV, m4, sbNibbleMask(vm1))
+			lpfVertical16x8U8WideW[lpfW8](unsafeutil.BlockAt[lpfR16](v, 16*g, c8), eV, iV, hV, m4, sbNibbleMask(vm1))
 		} else {
-			lpfVertical16x8U8WideW[lpfW6](b, eV, iV, hV, m4, sbNibbleMask(vm1))
+			lpfVertical16x8U8WideW[lpfW6](unsafeutil.BlockAt[lpfR16](v, 16*g, c8), eV, iV, hV, m4, sbNibbleMask(vm1))
 		}
 	}
 }
@@ -748,37 +763,10 @@ func lpfVertical16x16U8(tv unsafeutil.Block[lpfR16], eV, iV, hV archsimd.Uint8x1
 	var buf [256]byte
 	lpfTranspose16x16FromPix(tv, &buf)
 	bv := unsafeutil.NewRows(buf[:], 0, 16, 16, 16)
-	if !lpf16U8Wd16(lpfBlock14(bv, 1, 0), eV, iV, hV, m4, mGt4, m16) {
+	if !lpf16U8Wd16(unsafeutil.BlockAt[lpfR14](bv, 1, 0), eV, iV, hV, m4, mGt4, m16) {
 		return
 	}
 	lpfTranspose16x16ToPix(&buf, tv)
-}
-
-// lpfBlock2..lpfBlock16 are the Blocks of v from row r, column c, which the
-// caller's footprint check already covers (a block outside v is a caller bug
-// and panics).
-func lpfBlock2(v unsafeutil.Rows, c int) unsafeutil.Block[lpfR2] {
-	return unsafeutil.BlockAt[lpfR2](v, 0, c)
-}
-
-func lpfBlock4(v unsafeutil.Rows, r, c int) unsafeutil.Block[lpfR4] {
-	return unsafeutil.BlockAt[lpfR4](v, r, c)
-}
-
-func lpfBlock6(v unsafeutil.Rows, r, c int) unsafeutil.Block[lpfR6] {
-	return unsafeutil.BlockAt[lpfR6](v, r, c)
-}
-
-func lpfBlock8(v unsafeutil.Rows, r, c int) unsafeutil.Block[lpfR8] {
-	return unsafeutil.BlockAt[lpfR8](v, r, c)
-}
-
-func lpfBlock14(v unsafeutil.Rows, r, c int) unsafeutil.Block[lpfR14] {
-	return unsafeutil.BlockAt[lpfR14](v, r, c)
-}
-
-func lpfBlock16(v unsafeutil.Rows, r, c int) unsafeutil.Block[lpfR16] {
-	return unsafeutil.BlockAt[lpfR16](v, r, c)
 }
 
 // lpfR4..lpfR16 are the tap-row counts of the kernels' Blocks.
@@ -1120,10 +1108,10 @@ type lpfWidth interface {
 func lpf8U8(wd int, v unsafeutil.Rows, r0, c0 int, eV, iV, hV archsimd.Uint8x16, m4, mGt4 archsimd.Mask8x16) bool {
 	switch wd {
 	case 8:
-		return lpf8U8W[lpfW8, lpfRows](lpfBlock8(v, r0, c0), eV, iV, hV, m4, mGt4)
+		return lpf8U8W[lpfW8, lpfRows](unsafeutil.BlockAt[lpfR8](v, r0, c0), eV, iV, hV, m4, mGt4)
 	case 6:
-		return lpf8U8W[lpfW6, lpfRows](lpfBlock6(v, r0+1, c0), eV, iV, hV, m4, mGt4)
+		return lpf8U8W[lpfW6, lpfRows](unsafeutil.BlockAt[lpfR6](v, r0+1, c0), eV, iV, hV, m4, mGt4)
 	default:
-		return lpf8U8W[lpfW4, lpfRows](lpfBlock4(v, r0+2, c0), eV, iV, hV, m4, mGt4)
+		return lpf8U8W[lpfW4, lpfRows](unsafeutil.BlockAt[lpfR4](v, r0+2, c0), eV, iV, hV, m4, mGt4)
 	}
 }
