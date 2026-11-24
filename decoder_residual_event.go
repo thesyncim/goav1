@@ -483,7 +483,11 @@ func decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence SequenceHeader, e
 		FrameWorkFrameContext: decoderFrameWorkResidualEventContextPtr(sequence, event),
 		Jobs:                  jobs[:plan.JobCount],
 	}
-	size, err := decoderFrameWorkBatchResidualRunnerScratchLen(batch, workers)
+	// A batch's worker index is its position in the plan (BuildBatches), so
+	// the runner needs per-worker state for the planned batches only, not for
+	// every configured worker: a single-tile stream decoded with 8 workers
+	// keeps one tile scratch per frame context instead of eight.
+	size, err := decoderFrameWorkBatchResidualRunnerScratchLen(batch, max(1, min(workers, plan.BatchCount)))
 	if err != nil {
 		return decoderFrameWorkBatchResidualRunnerScratchSize{}, internaldecoder.TileWorkPlan{}, err
 	}
@@ -1276,8 +1280,8 @@ func decoderFrameWorkResidualPostFilterOutput(output *Frame, run internaldecoder
 	if !run.CompletedFrame || post == nil {
 		return output
 	}
-	provider, ok := post.(decoderFrameWorkPostFilterOutputProvider)
-	if !ok {
+	provider := decoderPostFilterOutputProviderOf(post)
+	if provider == nil {
 		return output
 	}
 	postOutput, ok := provider.PostFilterOutput()
@@ -1461,8 +1465,25 @@ func decoderResolvePostPublisher(publisher internaldecoder.FrameWorkPostFilterGl
 		return nil
 	case *decoderExternalPostFilterRunner:
 		return r
-	case *decoderFrameWorkReusableSupportedPostFilterRunner, decoderFrameWorkResidualPostFuncRunner:
+	case *decoderFrameWorkReusableSupportedPostFilterRunner, *decoderFrameWorkSupportedPostFilterScratchRunner, decoderFrameWorkResidualPostFuncRunner:
 		return decoderNoGlobalSurfacePublisher{}
+	}
+	return nil
+}
+
+// decoderPostFilterOutputProviderOf returns the display-output provider of the
+// decoder's own post-filter runners through a concrete type switch, nil when
+// post has none. An interface-to-interface assertion here would warm the
+// runtime's per-site assertion cache, which allocates at random calls until
+// every runner type seen at the site is cached.
+func decoderPostFilterOutputProviderOf(post internaldecoder.FrameWorkPostFilterRunner) decoderFrameWorkPostFilterOutputProvider {
+	switch r := post.(type) {
+	case *decoderFrameWorkReusableSupportedPostFilterRunner:
+		return r
+	case *decoderFrameWorkSupportedPostFilterScratchRunner:
+		return r
+	case *decoderExternalPostFilterRunner:
+		return r
 	}
 	return nil
 }
@@ -1489,8 +1510,8 @@ func decoderFrameWorkOutputFilmGrain(event *internaldecoder.Event, step internal
 	if output == nil || post == nil || !event.FilmGrain.Apply {
 		return output, nil
 	}
-	provider, ok := post.(decoderFrameWorkPostFilterOutputProvider)
-	if !ok {
+	provider := decoderPostFilterOutputProviderOf(post)
+	if provider == nil {
 		return output, nil
 	}
 	ctx := internaldecoder.FrameWorkPostFilterContext{Event: *event, Step: step, Output: output}

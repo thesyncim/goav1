@@ -2,19 +2,20 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
-func inverseDCT32Lanes4Narrow(p unsafe.Pointer, stride uintptr, min, max int32) {
+func inverseDCT32Lanes4Narrow(p []int32, stride int, min, max int32) {
 	k := itxCoefsPtr
 	mn, mx := archsimd.BroadcastInt32x4(min), archsimd.BroadcastInt32x4(max)
 	r12, n12 := itxRoundBias(12), itxShiftAmount(12)
-	ld := func(i uintptr) archsimd.Int32x4 {
-		return archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(p, i*stride)))
+	ld := func(i int) archsimd.Int32x4 {
+		o := i * stride
+		return archsimd.LoadInt32x4Array((*[4]int32)(p[o : o+4]))
 	}
-	st := func(i uintptr, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(unsafe.Add(p, i*stride))) }
+	st := func(i int, v archsimd.Int32x4) {
+		o := i * stride
+		v.StoreArray((*[4]int32)(p[o : o+4]))
+	}
 	clamp := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(mn).Min(mx) }
 	mac := func(acc, x archsimd.Int32x4, c int) archsimd.Int32x4 {
 		return itxMulAcc(acc, x, archsimd.LoadInt32x4Array(&k[c]))
@@ -283,14 +284,18 @@ func inverseDCT32Lanes4Narrow(p unsafe.Pointer, stride uintptr, min, max int32) 
 	st(31, t31_10)
 }
 
-func inverseDCT32Lanes4Wide(p unsafe.Pointer, stride uintptr, min, max int32) {
+func inverseDCT32Lanes4Wide(p []int32, stride int, min, max int32) {
 	k := itxCoefsPtr
 	mn, mx := archsimd.BroadcastInt32x4(min), archsimd.BroadcastInt32x4(max)
 	r12, n12 := itxRoundBias(12), itxShiftAmount(12)
-	ld := func(i uintptr) archsimd.Int32x4 {
-		return archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(p, i*stride)))
+	ld := func(i int) archsimd.Int32x4 {
+		o := i * stride
+		return archsimd.LoadInt32x4Array((*[4]int32)(p[o : o+4]))
 	}
-	st := func(i uintptr, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(unsafe.Add(p, i*stride))) }
+	st := func(i int, v archsimd.Int32x4) {
+		o := i * stride
+		v.StoreArray((*[4]int32)(p[o : o+4]))
+	}
 	clamp := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(mn).Min(mx) }
 	mac := func(acc, x archsimd.Int32x4, c int) archsimd.Int32x4 {
 		return itxMulAcc(acc, x, archsimd.LoadInt32x4Array(&k[c]))

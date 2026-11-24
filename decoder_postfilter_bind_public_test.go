@@ -228,10 +228,10 @@ func TestPublicDecoderFrameWorkSupportedPostFilterScratchRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !runner.Result.Completed.Has(internaldecoder.FrameWorkPostFilterCDEF) ||
-		runner.Context.RemainingPostFilters() != 0 ||
+		runner.work.RemainingPostFilters() != 0 ||
 		runner.Size.CDEF.Input != exact.CDEF.Input ||
-		runner.Request.CDEF.IndexMap.Rows != side.CDEFIndexMap.Rows {
-		t.Fatalf("runner size=%+v request=%+v result=%+v remaining=%b", runner.Size, runner.Request, runner.Result, runner.Context.RemainingPostFilters())
+		runner.source != ctx.Output {
+		t.Fatalf("runner size=%+v result=%+v remaining=%b", runner.Size, runner.Result, runner.work.RemainingPostFilters())
 	}
 	if string(output.Y.Pix[:output.Y.Width]) == string(before) {
 		t.Fatal("runner did not apply CDEF")

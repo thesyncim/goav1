@@ -605,6 +605,15 @@ func (s *FrameWorkTileResidualScratch) reserveCFArena(walk tile.BlockWalkRequest
 		s.cfArena = arena
 		s.cfDirty = 0
 	}
+	// Every TXB, coded or not, takes one cbi entry and covers at least a 4x4
+	// area of its plane, so the same plane areas bound the job's cbi entries
+	// (dav1d sizes frame_thread.cbi per 4x4 block). Without the reservation
+	// the slice grows whenever a frame codes more TXBs than any earlier one.
+	if cbiNeed := need / 16; cap(s.reconCBI) < cbiNeed {
+		cbi := make([]frameWorkReconCBI, len(s.reconCBI), cbiNeed)
+		copy(cbi, s.reconCBI)
+		s.reconCBI = cbi
+	}
 }
 
 // resetDeferredReconBuffers slices the deferred reconstruction buffers back to
@@ -1233,7 +1242,9 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 			scratch.lfMask.setTile(region)
 		}
 	}
-	b.geomCache = &scratch.geomCache
+	if b.geomCache != &scratch.geomCache {
+		b.geomCache = &scratch.geomCache
+	}
 	if err := frameWorkPrimeLumaReconGeometry(b, index); err != nil {
 		return FrameWorkTileResidualStats{}, err
 	}

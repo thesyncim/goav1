@@ -54,9 +54,17 @@ type arm64Round struct{ add, shr string }
 // 0..n-2 load the eight samples from column g (the read ends inside the next
 // row) and keep the low four; the last row takes the in-row load. The kept
 // outputs are rounded and stored transposed into out: out[c*stride+k] is
-// output k of column c.
-func arm64Col(w *writer, nw *network, fn, tab string, shl bool, rnd arm64Round, stride int) {
-	w.line("func %s(out []int32, g int, residual []int16, rs int) {", fn)
+// output k of column c. A packed pass reads a fixed n x n residual (row
+// stride n): with g masked to the lane groups every row offset is a constant
+// plus g, so no load needs a bounds check.
+func arm64Col(w *writer, nw *network, fn, tab string, shl bool, rnd arm64Round, stride int, packed bool) {
+	n := nw.n
+	if packed {
+		w.line("func %s(out []int32, g int, residual *[%d]int16) {", fn, n*n)
+		w.line("\tg &= %d - fwdLanes", n)
+	} else {
+		w.line("func %s(out []int32, g int, residual []int16, rs int) {", fn)
+	}
 	w.line("\tt := %s", tab)
 	w.line("\tr, s := %s, %s", rnd.add, rnd.shr)
 	ext, last := ".ExtendLo4ToInt32()", "fwdLoadResRawAt"
@@ -64,15 +72,23 @@ func arm64Col(w *writer, nw *network, fn, tab string, shl bool, rnd arm64Round, 
 		w.line("\tsh := fwdShlPos2")
 		ext, last = ".ExtendLo4ToInt32().Shift(sh)", "fwdLoadResAt"
 	}
-	w.line("\to := g")
-	n := nw.n
-	for i := range n - 1 {
-		if i > 0 {
-			w.line("\to += rs")
+	if packed {
+		w.line("\tsrc := (*[%d*%d + 8]int16)(residual[g:])", n-2, n)
+		for i := range n - 1 {
+			w.line("\tx%d := fwdLoadI16At(src[:], %d*%d)%s", i, i, n, ext)
 		}
-		w.line("\tx%d := fwdLoadI16At(residual, o)%s", i, ext)
+		// g&^7 of a g below n, written as a mask the bound check can use.
+		w.line("\tx%d := %s(residual[:], %d+g&%d, g)", n-1, last, (n-1)*n, n-8)
+	} else {
+		w.line("\to := g")
+		for i := range n - 1 {
+			if i > 0 {
+				w.line("\to += rs")
+			}
+			w.line("\tx%d := fwdLoadI16At(residual, o)%s", i, ext)
+		}
+		w.line("\tx%d := %s(residual, %d*rs+g&^7, g)", n-1, last, n-1)
 	}
-	w.line("\tx%d := %s(residual, %d*rs+g&^7, g)", n-1, last, n-1)
 	w.body(nw, arm64Btf)
 	w.line("\tdst := (*[4*%d]int32)(out[g*%d:])", stride, stride)
 	for k := 0; k < len(nw.out); k += 4 {

@@ -549,10 +549,87 @@ func (st *lossyEncodeState) predictScratch() *motion.ConvolveScratch {
 // lossyEncodeState carries the per-tile coding state of the non-lossless
 // keyframe encoder.
 type lossyEncodeState struct {
+	// Every pointer-carrying field sits in this leading block and the
+	// pointer-free scratch, CDFs and tables follow it. The garbage collector
+	// scans a large object only up to the farthest pointer of each 128 KiB
+	// oblet, so grouping them keeps the ~300 KiB per-lane state (one per tile
+	// coder and wavefront lane) almost entirely out of its mark work.
+	w                            *entropy.Writer
+	scan8, scan4, scan16, scan32 []int16
+	scan16x8, scan8x16           []int16
+	scan32x16, scan16x32         []int16
+	scan8x4, scan4x8             []int16
+	scan4x16, scan16x4           []int16
+	scan8x32, scan32x8           []int16
+	scan16x64, scan64x16         []int16
+	levels                       []uint8
+	// rdoqShared points at a process-wide immutable default-CDF rate table
+	// (rdoq.go), nil when rdoqOwn holds the tables; struct copies keep both
+	// meanings intact.
+	rdoqShared *rdoqCosts
+	// keyTrialPristine, when set (keyframe tiles), is the frame-start trial
+	// context set that restoreKeyTrial puts back the contexts keyTrialDirty
+	// marks after each decision unit (keyframe_split.go). Shared read-only by
+	// the wavefront lanes.
+	keyTrialPristine *tile.CoeffCDFs
+	invScratch       []int32
+	afterSkipInter   func() error
+	afterSkipIntra   func() error
+	// The 16-bit reference planes of the motion-compensated prediction
+	// scratch (predY and its siblings below).
+	refY16Bytes    []byte
+	refU16Bytes    []byte
+	refV16Bytes    []byte
+	goldenY16Bytes []byte
+	goldenU16Bytes []byte
+	goldenV16Bytes []byte
+	// mc is the compound and scaled-reference convolution scratch (about
+	// 750 KiB), held by pointer so a wavefront lane adopting this state
+	// (pframeDecideWorker.adopt) does not copy it; each lane owns its own.
+	mc *lossyMCScratch
+	// subpelCache is the lane-owned motion-search scratch (subpel_cache.go).
+	subpelCache *subpelProbeCache
+	// lfMap, when non-nil, collects per-MI loop-filter records for the
+	// frame-level deblocking pass (the decoder's own map type, filled with
+	// the same per-block syntax the decoder records).
+	lfMap *threading.FrameWorkLoopFilterMap
+	// hme, when non-nil, supplies the coarse-search seeds that recenter the
+	// full-pel refinement windows.
+	hme *hmeState
+	// pal is the screen-content keyframe palette search scratch (palette_sc.go),
+	// allocated on first use.
+	pal *paletteSearch
+	// sbQPending and sbQIndex are the cyclic-refresh superblock qindex grids
+	// (see sbQPendingCols below).
+	sbQPending []uint8
+	sbQIndex   []uint8
+	// refPads holds the padded copies of the frame's references (refpad.go),
+	// nil on paths that read the planes directly.
+	refPads *refPads
+	// lpd1 and lpd1Pending are the light-PD1 picture setups (see lpd1Dec
+	// below).
+	lpd1        lpd1PictureSetup
+	lpd1Pending lpd1PictureSetup
+	// decisionStats is nil on the production hot path. When diagnostics are
+	// explicitly enabled, it points at the owning tile coder's frame-local
+	// counter buffer.
+	decisionStats *EncoderDecisionStats
+	// keyPD0 is the keyframe light-PD0 pass scratch (keyframe_pd0.go); keyTXS
+	// and keyTXSCoeffTab belong to the transform-size search (see keyTXSOn
+	// below).
+	keyPD0         *keyPD0
+	keyTXS         *keyTXSScratch
+	keyTXSCoeffTab *rdoqCosts
+	// pd0Grid holds the per-SB VERY_LIGHT_PD0 trees (pframe_vlpd0.go; see
+	// pd0Cols below).
+	pd0Grid []svtPD0SB
+	// refmvsScratch is the tile scratch whose dav1d refmvs rows the current
+	// serial walk bound (bindRefmvs), or nil.
+	refmvsScratch *tile.BlockLoopScratch
+
 	// zmvCtrl is the picture's zero-mv static-superblock exit controls
 	// (zeromv_skip.go).
 	zmvCtrl   zmvCtrl
-	w         *entropy.Writer
 	modeCDFs  tile.BlockModeCDFs
 	intraCDFs tile.IntraModeCDFs
 	coeffCDFs tile.CoeffCDFs
@@ -571,25 +648,13 @@ type lossyEncodeState struct {
 	// (SVT's per-qindex quants tables), keyed by quantizer and tx scale.
 	quantB quantize.BParamsCache
 
-	scan8, scan4, scan16, scan32 []int16
-	scan16x8, scan8x16           []int16
-	scan32x16, scan16x32         []int16
-	scan8x4, scan4x8             []int16
-	scan4x16, scan16x4           []int16
-	scan8x32, scan32x8           []int16
-	scan16x64, scan64x16         []int16
-	levels                       []uint8
-	levels32Zeroed               [1296]uint8
-	trialCDFs                    tile.CoeffCDFs
-	trialReady                   bool
+	levels32Zeroed [1296]uint8
+	trialCDFs      tile.CoeffCDFs
+	trialReady     bool
 	// RDOQ state (rdoq.go): the coefficient rate tables of the trial CDFs,
 	// the qindex they were built for, the dequantized-coefficient scratch,
 	// and 1 + the plane type of the inter TXB being prepared (0 when RDOQ
 	// is not armed for it).
-	// rdoqShared points at a process-wide immutable default-CDF rate table
-	// (rdoq.go), nil when rdoqOwn holds the tables; struct copies keep both
-	// meanings intact.
-	rdoqShared     *rdoqCosts
 	rdoqOwn        rdoqCosts
 	rdoqReady      bool
 	rdoqQIndex     uint8
@@ -605,17 +670,11 @@ type lossyEncodeState struct {
 	// at frame start). Inter tiles set it so decisions are independent of
 	// coding order — required for the SB-row wavefront to be byte-identical
 	// to the serial walk. Keyframe paths leave it false (unchanged behavior).
-	trialBlockLocal bool
-	// keyTrialPristine, when set (keyframe tiles), is the frame-start trial
-	// context set that restoreKeyTrial puts back the contexts keyTrialDirty
-	// marks after each decision unit (keyframe_split.go). Shared read-only by
-	// the wavefront lanes.
-	keyTrialPristine         *tile.CoeffCDFs
+	trialBlockLocal          bool
 	keyTrialDirty            uint16
 	intraEdgeScratch         threading.FrameWorkIntraPredictionScratch
 	keyMIColEnd, keyMIRowEnd uint32
 	keyVisW, keyVisH         int
-	invScratch               []int32
 	color                    parser.ColorConfig
 	transformMode            parser.TransformMode
 
@@ -628,24 +687,16 @@ type lossyEncodeState struct {
 	uQ, vQ         [1024]int16
 	interTxTypeReq tile.InterTransformTypeRequest
 	interTxType    transform.Type
-	afterSkipInter func() error
 	intraTxTypeReq tile.IntraTransformTypeRequest
-	afterSkipIntra func() error
 
 	// Motion-compensated prediction scratch, filled per block through the
 	// decoder's own convolve so subpel predictions match bit for bit.
-	predY          [4096]byte
-	predY16        [4096]uint16
-	predY16Bytes   [8192]byte
-	refY16Bytes    []byte
-	refU16Bytes    []byte
-	refV16Bytes    []byte
-	goldenY16Bytes []byte
-	goldenU16Bytes []byte
-	goldenV16Bytes []byte
-	predU          [1024]byte
-	predV          [1024]byte
-	sadScratch     [4096]byte
+	predY        [4096]byte
+	predY16      [4096]uint16
+	predY16Bytes [8192]byte
+	predU        [1024]byte
+	predV        [1024]byte
+	sadScratch   [4096]byte
 	// Keyframe CfL search scratch (keyframe_cfl.go): the subsampled luma,
 	// its AC and one candidate chroma prediction (chroma blocks are at most
 	// 16x16 where CfL is allowed).
@@ -654,10 +705,6 @@ type lossyEncodeState struct {
 	cflPred [256]byte
 	// mds0Scratch is MDS0's second candidate buffer (pframe_mds0.go).
 	mds0Scratch [4096]byte
-	// mc is the compound and scaled-reference convolution scratch (about
-	// 750 KiB), held by pointer so a wavefront lane adopting this state
-	// (pframeDecideWorker.adopt) does not copy it; each lane owns its own.
-	mc *lossyMCScratch
 
 	// Transform/quant scratch for the inter TXB pipeline (residual in,
 	// forward transform out, dequant + inverse residual back), state-owned so
@@ -706,23 +753,12 @@ type lossyEncodeState struct {
 	// avg_frame_low_motion statistic driving adaptive golden refresh.
 	cntZeroMV int
 
-	// subpelCache is the lane-owned motion-search scratch (subpel_cache.go).
-	subpelCache *subpelProbeCache
 	// mePredY says predY holds LAST's refined ME prediction (pframe_motion.go).
 	mePredY mePredYKey
 	// predStats and predYKey carry the luma prediction statistics of the
 	// current inter block between its stages (pred_stats.go).
 	predStats lumaPredStats
 	predYKey  lumaPredKey
-
-	// lfMap, when non-nil, collects per-MI loop-filter records for the
-	// frame-level deblocking pass (the decoder's own map type, filled with
-	// the same per-block syntax the decoder records).
-	lfMap *threading.FrameWorkLoopFilterMap
-
-	// hme, when non-nil, supplies the coarse-search seeds that recenter the
-	// full-pel refinement windows.
-	hme *hmeState
 
 	// mds0Level arms the light-PD1 MDS0 inter candidate decision, mirroring
 	// SVT-AV1 preset 12's temporal-layer modulation (enc_mode_config.c:
@@ -754,9 +790,6 @@ type lossyEncodeState struct {
 	intraEdgeAbove, intraEdgeLeft [64]uint16
 	intraPredScratch              [2][64 * 64]byte
 	intraUVTxType                 transform.Type
-	// pal is the screen-content keyframe palette search scratch (palette_sc.go),
-	// allocated on first use.
-	pal *paletteSearch
 
 	// skipRateCDFs prices the inter skip decision's coded alternative
 	// (pframe_lpd1_tx.go exactInterCoeffCost), restarting from skipRateBase
@@ -776,9 +809,7 @@ type lossyEncodeState struct {
 	// the adaptive delta_q_abs CDF.
 	// sbQPending/sbQPendingCols hand the next tile encode its grid; the
 	// tile consumes them so no other inter path inherits a stale grid.
-	sbQPending     []uint8
 	sbQPendingCols int
-	sbQIndex       []uint8
 	sbQCols        int
 	quantQ         uint8
 	baseQAC        int32
@@ -794,16 +825,11 @@ type lossyEncodeState struct {
 	// block (mds0IntraWins): the inputs of the intra full loop's TX
 	// shortcuts (pframe_lpd1_intra.go).
 	mds0Intra mds0IntraStats
-	// refPads holds the padded copies of the frame's references (refpad.go),
-	// nil on paths that read the planes directly.
-	refPads *refPads
 	// lpd1 carries the picture's light-PD1 level setup and statistics
 	// (pframe_lpd1_level.go); lpd1Pending hands the next tile encode its
 	// setup the way sbQPending does. lpd1Dec caches the current SB's
 	// decision, lpd1TileSBCol0 is the tile's first SB column, and
 	// lpd1SkipBits the frame-frozen skip_fac_bits of skip_coeff_ctx 0.
-	lpd1           lpd1PictureSetup
-	lpd1Pending    lpd1PictureSetup
 	lpd1Dec        lpd1SBDecision
 	lpd1TileSBCol0 int
 	lpd1SkipBits   [2]int64
@@ -826,27 +852,19 @@ type lossyEncodeState struct {
 	depthRemovalLevel uint8
 	depthRemovalIsRef bool
 
-	// decisionStats is nil on the production hot path. When diagnostics are
-	// explicitly enabled, it points at the owning tile coder's frame-local
-	// counter buffer.
-	decisionStats *EncoderDecisionStats
-
 	// grid64Cols is the tile's width in 64x64 superblocks (the PD0 grid).
 	grid64Cols int
 
-	// keyPD0 / keyPD0Rates are the keyframe light-PD0 pass scratch and its
-	// frame-start rates (keyframe_pd0.go).
-	keyPD0      *keyPD0
+	// keyPD0Rates are the keyframe light-PD0 pass's frame-start rates
+	// (keyframe_pd0.go).
 	keyPD0Rates keyPD0Rates
 	keyPD0On    bool
 	// keyTXSOn runs SVT's I-slice transform-size search on the keyframe's
 	// DC_PRED leaves under TX_MODE_SELECT (keyframe_txs.go); keyTXS is its
 	// lane-owned scratch, keyTXSLambda its full lambda and keyTXSCoeffTab
 	// the frame-start coefficient rates.
-	keyTXSOn       bool
-	keyTXS         *keyTXSScratch
-	keyTXSLambda   int64
-	keyTXSCoeffTab *rdoqCosts
+	keyTXSOn     bool
+	keyTXSLambda int64
 	// keyLumaEOB is the last keyframe leaf's luma EOB sum and keyLumaSubDC
 	// its first depth-1 transform's DC prediction (keyframe_txs.go).
 	keyLumaEOB   int
@@ -861,14 +879,9 @@ type lossyEncodeState struct {
 	// pd0Grid holds the per-SB VERY_LIGHT_PD0 trees (pframe_vlpd0.go),
 	// pd0Rates the frame-frozen partition rates they price with and
 	// pd0EdgeRef the edge-replicated reference block of off-frame vectors.
-	pd0Grid    []svtPD0SB
 	pd0Cols    int
 	pd0Rates   svtPD0PartitionRates
 	pd0EdgeRef [64 * 64]byte
-
-	// refmvsScratch is the tile scratch whose dav1d refmvs rows the current
-	// serial walk bound (bindRefmvs), or nil.
-	refmvsScratch *tile.BlockLoopScratch
 }
 
 func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, recon *SourceFrame420, qIndex uint8, miColStart, miColEnd uint16, lfMap *threading.FrameWorkLoopFilterMap, allowScreenContentTools bool, color parser.ColorConfig) ([]byte, error) {

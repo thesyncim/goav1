@@ -8,8 +8,6 @@
 
 package transform
 
-import "unsafe"
-
 // Type identifies the AV1 inverse transform kind for a residual block.
 type Type uint8
 
@@ -135,20 +133,18 @@ func InverseBlockBitDepth(dst []int16, dstStride int, coeff []int32, coeffStride
 }
 
 // inverseSeparableBlockInt16 runs the row pass in int32, narrows into an int16
-// column scratch (reusing the int32 scratch's backing store in place), runs the
-// int16 DCT column pass, then writes the residual. Byte-identical to the int32
-// path for bitDepth==8.
+// column scratch, runs the int16 DCT column pass, then rounds the residual in
+// place. The int16 column scratch is dst itself, so it needs a packed dst
+// (dstStride == width); a strided dst takes the int32 pipeline, which is
+// byte-identical. Byte-identical to the int32 path for bitDepth==8.
 func inverseSeparableBlockInt16(dst []int16, dstStride int, coeff []int32, coeffStride int, scratch []int32, size Size, t Type, rowMin int32, rowMax int32, colMin int32, colMax int32) error {
 	width := int(size.Width)
 	height := int(size.Height)
-	if dstStride < width || !blockFits(len(dst), dstStride, width, height) || len(scratch) < width*height {
-		return ErrInvalidTransform
+	if dstStride != width || len(dst) < width*height || len(scratch) < width*height {
+		return inverseSeparableBlockClamped(dst, dstStride, coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax)
 	}
-	// The int16 column scratch aliases the front of the int32 scratch: after the
-	// mid-pass narrow, scratch[i] (4 bytes) is consumed before col16[i] (2 bytes)
-	// can reach it, so the in-place narrow never clobbers an unread element.
-	col16 := unsafe.Slice((*int16)(unsafe.Pointer(&scratch[0])), width*height)
-	usedInt16, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax, 0, 0, col16, true)
+	col16 := dst[:width*height]
+	usedInt16, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, scratch, size, t, rowMin, rowMax, colMin, colMax, 0, 0, col16)
 	if err != nil {
 		return err
 	}
@@ -180,7 +176,7 @@ func InverseBlockBitDepthRawBounded(dst []int32, coeff []int32, coeffStride int,
 	}
 	// inverseSeparableBlockClampedRowsToScratch validates the size, the 1D
 	// types against it (rejecting IDTX) and the scratch extent.
-	_, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, dst, size, t, rowMin, rowMax, colMin, colMax, activeRows, activeCols, nil, false)
+	_, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, dst, size, t, rowMin, rowMax, colMin, colMax, activeRows, activeCols, nil)
 	return err
 }
 

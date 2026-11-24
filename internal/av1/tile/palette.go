@@ -30,6 +30,16 @@ type PaletteModeResult struct {
 	UVMap   *[MaxPalettePixels]uint8
 }
 
+// clear zeroes p. It clears the colour-map pointers only when set, so the
+// per-block reset of a non-palette block (nearly all of them) runs no write
+// barrier while a garbage collection is marking.
+func (p *PaletteModeResult) clear() {
+	p.YSize, p.UVSize = 0, 0
+	p.YColors, p.UColors, p.VColors = [PaletteMaxSize]uint16{}, [PaletteMaxSize]uint16{}, [PaletteMaxSize]uint16{}
+	setPtr(&p.YMap, nil)
+	setPtr(&p.UVMap, nil)
+}
+
 type PaletteModeScratch struct {
 	Y  [MaxPalettePixels]uint8
 	UV [MaxPalettePixels]uint8
@@ -187,7 +197,7 @@ func (s *DecodeState) ReadPaletteMode(cdfs *IntraModeCDFs, ctx *BlockModeContext
 	if s == nil || cdfs == nil || ctx == nil || dst == nil || mapScratch == nil {
 		return ErrInvalidDecodeState
 	}
-	*dst = PaletteModeResult{}
+	dst.clear()
 	allowed, err := PaletteAllowed(req.AllowScreenContentTools, req.Size)
 	if err != nil || !allowed {
 		return err

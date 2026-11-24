@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // fwdVec is one 128-bit lane group of the forward-transform networks: four
 // independent 1-D lines per vector (fdct_gosimd_net.go).
@@ -107,21 +104,18 @@ func fwdI64AsI32(v archsimd.Int64x2) fwdVec {
 	return v.ToBits().ReshapeToUint32s().BitsToInt32()
 }
 
-// The network drivers have already validated their buffers. Addressing through
-// a base pointer keeps per-row bounds checks out of the vector butterflies.
+// The network drivers have already validated their buffers; each access is
+// one checked fixed-length window.
 func fwdLoadI32At(s []int32, i int) fwdVec {
-	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), i*4)
-	return archsimd.LoadInt32x4Array((*[4]int32)(p))
+	return archsimd.LoadInt32x4Array((*[4]int32)(s[i : i+4]))
 }
 
 func fwdStoreI32At(s []int32, i int, v fwdVec) {
-	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), i*4)
-	v.StoreArray((*[4]int32)(p))
+	v.StoreArray((*[4]int32)(s[i : i+4]))
 }
 
 func fwdLoadResAt(s []int16, i, g int) fwdVec {
-	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), i*2)
-	w := archsimd.LoadInt16x8Array((*[8]int16)(p))
+	w := archsimd.LoadInt16x8Array((*[8]int16)(s[i : i+8]))
 	if g&4 == 0 {
 		return fwdShl(w.ExtendLo4ToInt32(), 2)
 	}
@@ -129,8 +123,7 @@ func fwdLoadResAt(s []int16, i, g int) fwdVec {
 }
 
 func fwdLoadI16At(s []int16, i int) archsimd.Int16x8 {
-	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), i*2)
-	return archsimd.LoadInt16x8Array((*[8]int16)(p))
+	return archsimd.LoadInt16x8Array((*[8]int16)(s[i : i+8]))
 }
 
 // fwdLoadI32Arr and fwdStoreI32Arr address a fixed-length view at a constant
@@ -163,8 +156,7 @@ func fwdHalfBtf12V(w0, a, w1, b fwdVec) fwdVec {
 // 64-point transforms take shift[0] = 0): i addresses the 8-sample chunk
 // containing column group g.
 func fwdLoadResRawAt(s []int16, i, g int) fwdVec {
-	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), i*2)
-	w := archsimd.LoadInt16x8Array((*[8]int16)(p))
+	w := archsimd.LoadInt16x8Array((*[8]int16)(s[i : i+8]))
 	if g&4 == 0 {
 		return w.ExtendLo4ToInt32()
 	}
