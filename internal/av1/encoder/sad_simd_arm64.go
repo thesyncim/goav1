@@ -21,8 +21,9 @@ import (
 // blocks whose last sample the sad*SIMD wrappers bounds-check up front. Their
 // rows carry ~7 vector ops, so a checked window per row is a real loss: with
 // the best checked form (one compare per window) BenchmarkSAD16x16 measured
-// +31% cycles, SAD64x64 +25% and SAD8x8 +18%. The four-reference kernel
-// (sad16ColsX4) takes checked windows at no measured cost.
+// +36% cycles, SAD64x64 +25% and SAD8x8 +24% (min of 5, process start-up
+// subtracted). The four-reference kernel (sad16ColsX4) takes checked windows
+// at no measured cost.
 
 // step advances a raw byte pointer by n bytes.
 func step(p unsafe.Pointer, n int) unsafe.Pointer { return unsafe.Add(p, n) }
