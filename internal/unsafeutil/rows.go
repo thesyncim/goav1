@@ -10,13 +10,13 @@ import (
 )
 
 // Rows is a footprint-validated view of a strided block of a byte slice:
-// Height() rows of Width() bytes, row r starting r*stride bytes after row 0.
-// It is what the strided kernels (motion compensation, the loop filter) index
-// instead of the plane slice: the whole block is checked once, at NewRows, so
-// a kernel whose row and column indices are constants, or loop variables
-// bounded by Height() and Width(), pays no check per row.
+// height rows of Width() bytes, row r starting r*stride bytes after row 0.
+// The 8-bit loop-filter drivers index it instead of the plane slice: the
+// whole block is checked once, at NewRows, and the per-group blocks of it
+// (Sub, BlockAt) cost one check each rather than one per tap row.
 //
-// The zero Rows has no rows; every accessor on it panics.
+// Only NewRows and Sub make a usable Rows. The zero Rows has no rows; every
+// accessor on it panics.
 type Rows struct {
 	p      unsafe.Pointer // first byte of row 0 (nil for the zero Rows)
 	stride uint
@@ -63,14 +63,8 @@ func NewRows(s []byte, off, stride, width, height int) Rows {
 	return Rows{p: unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), off), stride: uint(stride), height: uint(height), width: uint(width)}
 }
 
-// Height is the number of rows.
-func (v Rows) Height() int { return int(v.height) }
-
 // Width is the number of bytes per row.
 func (v Rows) Width() int { return int(v.width) }
-
-// Stride is the distance in bytes between the starts of consecutive rows.
-func (v Rows) Stride() int { return int(v.stride) }
 
 // Sub returns the view of height rows of width bytes starting at row r,
 // column c of v (rows r..r+height-1, columns c..c+width-1, at v's stride). It
@@ -78,7 +72,7 @@ func (v Rows) Stride() int { return int(v.stride) }
 // (a caller whose view covers its blocks never trips it; panicking rather
 // than reporting keeps the result's dimensions the caller's constants).
 //
-// Bounds proof: r+height <= Height() and c+width <= Width() (each tested
+// Bounds proof: r+height <= v's height and c+width <= v's width (each tested
 // without overflow on non-negative operands), so every byte of the result's
 // footprint is a byte of v's, which NewRows checked; the new first byte is
 // v's row r, column c, inside v's footprint because height, width >= 1.
@@ -87,6 +81,30 @@ func (v Rows) Sub(r, c, width, height int) Rows {
 		panic(errRows)
 	}
 	return Rows{p: v.at(r, c), stride: v.stride, height: uint(height), width: uint(width)}
+}
+
+// Row8 returns the 8 bytes at column c of row r. It panics unless r is below
+// v's height and c+8 <= Width().
+//
+// Bounds proof: in(r, c, 8) puts the 8 bytes inside row r of the footprint
+// NewRows checked.
+func (v Rows) Row8(r, c int) *[8]byte {
+	if !v.in(r, c, 8) {
+		panic(errRows)
+	}
+	return (*[8]byte)(v.at(r, c))
+}
+
+// in reports whether row r, columns c..c+n-1 lie inside the view (n is at
+// most 16 and c below 2^31 when it passes, so c+n cannot wrap).
+func (v Rows) in(r, c int, n uint) bool {
+	return uint(r) < v.height && uint(c) < rowsDimMax && uint(c)+n <= v.width
+}
+
+// at is the address of row r, column c of the footprint; the callers have
+// checked that the bytes they reach from it lie inside it.
+func (v Rows) at(r, c int) unsafe.Pointer {
+	return unsafe.Add(v.p, uint(r)*v.stride+uint(c))
 }
 
 // BlockRows is the row count of a Block, as the length of an array type
@@ -100,6 +118,10 @@ type BlockRows interface {
 // count in the type. Its accessors check constant indices against constants,
 // so a kernel that names its tap rows by constant row numbers pays nothing
 // per access.
+//
+// Only BlockAt makes a usable Block. The zero Block is not one: its
+// accessors would address memory from a nil base, so it must never be used
+// (Row16(0) on it faults; the others are not guaranteed to).
 type Block[R BlockRows] struct {
 	p      unsafe.Pointer
 	stride uint
@@ -109,8 +131,8 @@ type Block[R BlockRows] struct {
 // column c. It panics unless those rows and columns lie inside v.
 //
 // Bounds proof: r and c are below 2^31 (so non-negative, and the sums below
-// cannot wrap), r+len(R) <= Height() keeps rows r..r+len(R)-1 inside v, and
-// c+16 <= Width() keeps their columns c..c+15 inside it; every byte the
+// cannot wrap), r+len(R) <= v's height keeps rows r..r+len(R)-1 inside v,
+// and c+16 <= Width() keeps their columns c..c+15 inside it; every byte the
 // Block's accessors reach is one of those rows' sixteen bytes from column c,
 // a byte of v's footprint.
 func BlockAt[R BlockRows](v Rows, r, c int) Block[R] {
@@ -122,6 +144,8 @@ func BlockAt[R BlockRows](v Rows, r, c int) Block[R] {
 }
 
 // Row16 returns row k's sixteen bytes. It panics unless k < len(R).
+//
+// Bounds proof: row k is one of the rows BlockAt checked.
 func (b Block[R]) Row16(k int) *[16]byte {
 	var n R
 	if uint(k) >= uint(len(n)) {
@@ -130,34 +154,14 @@ func (b Block[R]) Row16(k int) *[16]byte {
 	return (*[16]byte)(unsafe.Add(b.p, uint(k)*b.stride))
 }
 
-// Row8 returns bytes c..c+7 of row k. It panics unless k < len(R) and
-// c <= 8.
-func (b Block[R]) Row8(k, c int) *[8]byte {
-	var n R
-	if uint(k) >= uint(len(n)) || uint(c) > 8 {
-		panic(errRows)
-	}
-	return (*[8]byte)(unsafe.Add(b.p, uint(k)*b.stride+uint(c)))
-}
-
-// Row4 returns bytes c..c+3 of row k. It panics unless k < len(R) and
-// c <= 12.
-func (b Block[R]) Row4(k, c int) *[4]byte {
-	var n R
-	if uint(k) >= uint(len(n)) || uint(c) > 12 {
-		panic(errRows)
-	}
-	return (*[4]byte)(unsafe.Add(b.p, uint(k)*b.stride+uint(c)))
-}
-
 // PutF32 stores the four bytes of v (its IEEE 754 bits in host byte order)
 // at bytes c..c+3 of row k: a vector lane store (STR S) of four samples. It
 // panics unless k < len(R) and c <= 12.
 //
-// Bounds proof: as Row4; float32 holds no pointers and the store needs no
-// alignment on the platforms this runs on (unaligned scalar stores are
-// architecturally allowed on arm64 and amd64, and checkptr checks alignment
-// only for pointer-holding types).
+// Bounds proof: bytes c..c+3 <= 15 of row k, a row BlockAt checked. float32
+// holds no pointers, and the store needs no alignment on the platforms this
+// runs on (unaligned scalar stores are architecturally allowed on arm64 and
+// amd64, and checkptr checks alignment only for pointer-holding types).
 func (b Block[R]) PutF32(k, c int, v float32) {
 	var n R
 	if uint(k) >= uint(len(n)) || uint(c) > 12 {
@@ -167,66 +171,12 @@ func (b Block[R]) PutF32(k, c int, v float32) {
 }
 
 // PutF64 stores the eight bytes of v at bytes c..c+7 of row k (STR D). It
-// panics unless k < len(R) and c <= 8. Bounds proof: as Row8 and PutF32.
+// panics unless k < len(R) and c <= 8. Bounds proof: as PutF32, bytes
+// c..c+7 <= 15.
 func (b Block[R]) PutF64(k, c int, v float64) {
 	var n R
 	if uint(k) >= uint(len(n)) || uint(c) > 8 {
 		panic(errRows)
 	}
 	*(*float64)(unsafe.Add(unsafe.Add(b.p, uint(c)), uint(k)*b.stride)) = v
-}
-
-// in reports whether row r, columns c..c+n-1 lie inside the view.
-// (n is at most 32 and c below 2^31 when it passes, so c+n cannot wrap.)
-func (v Rows) in(r, c int, n uint) bool {
-	return uint(r) < v.height && uint(c) < rowsDimMax && uint(c)+n <= v.width
-}
-
-// at is the address of row r, column c; in(r, c, n) must hold.
-//
-// Bounds proof: r < height and c + n <= width, so the n bytes from the
-// result are bytes of row r of the footprint NewRows checked.
-func (v Rows) at(r, c int) unsafe.Pointer {
-	return unsafe.Add(v.p, uint(r)*v.stride+uint(c))
-}
-
-// Row4 returns the 4 bytes at column c of row r. It panics unless r <
-// Height() and c+4 <= Width().
-func (v Rows) Row4(r, c int) *[4]byte {
-	if !v.in(r, c, 4) {
-		panic(errRows)
-	}
-	return (*[4]byte)(v.at(r, c))
-}
-
-// Row8 is Row4 for 8 bytes.
-func (v Rows) Row8(r, c int) *[8]byte {
-	if !v.in(r, c, 8) {
-		panic(errRows)
-	}
-	return (*[8]byte)(v.at(r, c))
-}
-
-// Row16 is Row4 for 16 bytes.
-func (v Rows) Row16(r, c int) *[16]byte {
-	if !v.in(r, c, 16) {
-		panic(errRows)
-	}
-	return (*[16]byte)(v.at(r, c))
-}
-
-// Row24 is Row4 for 24 bytes.
-func (v Rows) Row24(r, c int) *[24]byte {
-	if !v.in(r, c, 24) {
-		panic(errRows)
-	}
-	return (*[24]byte)(v.at(r, c))
-}
-
-// Row32 is Row4 for 32 bytes.
-func (v Rows) Row32(r, c int) *[32]byte {
-	if !v.in(r, c, 32) {
-		panic(errRows)
-	}
-	return (*[32]byte)(v.at(r, c))
 }

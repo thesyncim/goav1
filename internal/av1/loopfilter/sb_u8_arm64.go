@@ -466,27 +466,18 @@ func filterSBVertical8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, 
 	}
 }
 
-// sbLimits is the per-group level prologue of dav1d lpf_func
+// sbActive and sbLimitsOf are the per-group level prologue of dav1d lpf_func
 // (src/arm/64/loopfilter.S), one unit per 32-bit lane: cur and prev hold each
 // unit's own and fallback (left or above) level in the low byte of its lane
 // with the other bytes zero. L = cur ? cur : prev is replicated over the
-// unit's four bytes by a multiply with the bytes-of-one vector that also
+// unit's four bytes (lr) by a multiply with the bytes-of-one vector that also
 // floors I; I = imax(imin(L >> sharp[0], sharp[1]), 1) and E = 2*(L+2)+I come
-// from the LUT's replicated sharp vectors, H = L>>4. ok is false when no unit
-// of the nibble has a level ("if (!L) continue").
-func sbLimits(cur, prev archsimd.Uint32x4, nib uint32, lut *SBLUT) (eV, iV, hV archsimd.Uint8x16, m4 archsimd.Mask8x16, ok bool) {
-	lr, act, ok := sbActive(cur, prev, nib)
-	if !ok {
-		return
-	}
-	eV, iV, hV, m4 = sbLimitsOf(lr, act, lut)
-	return
-}
-
-// sbActive is sbLimits' first half: the replicated levels lr and the active
-// lanes act ("wd >= 4" restricted to L != 0), and whether any lane is active.
-// The drivers test ok before sbLimitsOf builds the limits, so a skipped group
-// carries no zeroed limit vectors.
+// from the LUT's replicated sharp vectors, H = L>>4.
+//
+// sbActive is the first half: lr and the active lanes act ("wd >= 4"
+// restricted to L != 0), and whether any lane is active ("if (!L)
+// continue"). The drivers test it before sbLimitsOf builds the limits, so a
+// skipped group carries no zeroed limit vectors.
 func sbActive(cur, prev archsimd.Uint32x4, nib uint32) (lr, act archsimd.Uint8x16, ok bool) {
 	L := prev.IfElse(cur.Equal(archsimd.Uint32x4{}), cur)
 	lr = L.Mul(archsimd.BroadcastUint8x16(1).ReshapeToUint32s()).ReshapeToUint8s()
