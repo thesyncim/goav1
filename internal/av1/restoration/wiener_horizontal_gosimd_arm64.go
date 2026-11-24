@@ -71,7 +71,8 @@ func wienerHorizontalSIMDKernel(src []uint16, srcStride int, srcOrigin int, widt
 	hg2, hg3 := g2.HiToLo(), g3.HiToLo()
 
 	rows := height + 2*WienerHalfwin
-	// Strided rows inside the checked footprint; same shape as the loop-filter rows (checked rows +9-86%).
+	// Strided rows inside the footprint the callers checked
+	// (wienerHorizontalU16SIMDCanRun, blockFits); same shape as the loop-filter rows (checked rows +9-86%).
 	sp := unsafe.Pointer(unsafe.SliceData(src))
 	tp := unsafe.Pointer(unsafe.SliceData(temp))
 	for row := 0; row < rows; row++ {
@@ -142,7 +143,8 @@ func wienerHorizontalU16PackedKernel(src []uint16, srcStride int, srcOrigin int,
 	negK := archsimd.BroadcastUint32x4(0xffff0000)
 	zero := archsimd.BroadcastInt16x8(0)
 	maxV := archsimd.BroadcastInt16x8(int16((1 << (bitDepth + 1 + WienerFilterBits - round0)) - 1))
-	// Strided rows inside the checked footprint; same shape as the loop-filter rows (checked rows +9-86%).
+	// Strided rows inside the footprint wienerHorizontalSIMDKernel's callers
+	// checked (wienerHorizontalU16SIMDCanRun, blockFits); same shape as the loop-filter rows (checked rows +9-86%).
 	sp := unsafe.Pointer(unsafe.SliceData(src))
 	tp := unsafe.Pointer(unsafe.SliceData(temp))
 	for row := 0; row < height+2*WienerHalfwin; row++ {

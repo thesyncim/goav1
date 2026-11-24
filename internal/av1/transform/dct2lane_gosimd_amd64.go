@@ -127,6 +127,7 @@ func inverseDCT8Row2SIMDAdapter(r0, r1 []int32, min, max int32) {
 		inverseDCT8Row2PureGo(r0, r1, min, max)
 		return
 	}
+	// rows inside the extent checked above; same shape as the residual-add rows (checked rows +9-86%).
 	inverseDCT8PairSIMD(unsafe.Pointer(&r0[0]), unsafe.Pointer(&r1[0]), 4, min, max)
 }
 
@@ -135,6 +136,7 @@ func inverseDCT8Col2SIMDAdapter(buf []int32, rowStride int, min, max int32) {
 		inverseDCT8Col2PureGo(buf, rowStride, min, max)
 		return
 	}
+	// rows inside the extent checked above; same shape as the residual-add rows (checked rows +9-86%).
 	base := unsafe.Pointer(&buf[0])
 	inverseDCT8PairSIMD(base, unsafe.Add(base, 4), uintptr(rowStride)*4, min, max)
 }
@@ -271,6 +273,7 @@ func inverseDCT16Row2SIMDAdapter(r0, r1 []int32, min, max int32) {
 		inverseDCT16Row2PureGo(r0, r1, min, max)
 		return
 	}
+	// rows inside the extent checked above; same shape as the residual-add rows (checked rows +9-86%).
 	inverseDCT16PairSIMD(unsafe.Pointer(&r0[0]), unsafe.Pointer(&r1[0]), 4, min, max)
 }
 
@@ -279,6 +282,7 @@ func inverseDCT16Col2SIMDAdapter(buf []int32, rowStride int, min, max int32) {
 		inverseDCT16Col2PureGo(buf, rowStride, min, max)
 		return
 	}
+	// rows inside the extent checked above; same shape as the residual-add rows (checked rows +9-86%).
 	base := unsafe.Pointer(&buf[0])
 	inverseDCT16PairSIMD(base, unsafe.Add(base, 4), uintptr(rowStride)*4, min, max)
 }

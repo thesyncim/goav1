@@ -233,7 +233,8 @@ func compoundX8HalfResident(ctx *compoundFilterGoSIMDCtx) {
 	round := archsimd.BroadcastInt16x8(2)
 	right2 := archsimd.BroadcastInt16x8(-2)
 	off := archsimd.BroadcastUint16x8(uint16(ctx.roundOffset))
-	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
+	// Strided rows inside the len(ctx.ref) >= need extent the dispatching kernel
+	// checked; same shape as the residual-add rows (checked rows +9-86%).
 	base := unsafe.Pointer(unsafe.SliceData(ctx.ref))
 	for y := range ctx.height {
 		out := ctx.out[y*ctx.width:]
@@ -331,7 +332,8 @@ func compoundY8HalfResident(ctx *compoundFilterGoSIMDCtx) {
 	round := archsimd.BroadcastInt16x8(2)
 	right2 := archsimd.BroadcastInt16x8(-2)
 	off := archsimd.BroadcastUint16x8(uint16(ctx.roundOffset))
-	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
+	// Strided rows inside the len(ctx.ref) >= need extent the dispatching kernel
+	// checked; same shape as the residual-add rows (checked rows +9-86%).
 	base := unsafe.Pointer(unsafe.SliceData(ctx.ref))
 	step := ctx.refStr
 	load := func(offset int) archsimd.Int16x8 {
@@ -413,7 +415,8 @@ func compound2D8HalfKernel(ctx *compound2DGoSIMDCtx, im []int16, xTaps *hbdTaps1
 	c7 := archsimd.BroadcastInt16x8(ctx.kernel[7])
 	yRound := archsimd.BroadcastInt32x4(int32(ctx.yBias) + 64)
 	right7 := archsimd.BroadcastInt32x4(-7)
-	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
+	// im rows (stride maxBlockSize) inside the height+taps-1 rows the wrapper
+	// supplies; same shape as the residual-add rows (checked rows +9-86%).
 	imBase := unsafe.Pointer(unsafe.SliceData(im))
 	load := func(y, x int) archsimd.Int16x8 {
 		return archsimd.LoadInt16x8((*[8]int16)(unsafe.Add(imBase, (y*maxBlockSize+x)*2))[:])

@@ -114,7 +114,8 @@ func forwardDCT4x4SIMDCore(coeff []int32, coeffStride int, residual []int16, res
 		o3 = s2.MulAdd(wn16, s3.MulAdd(w48, round)).ShiftAllRight(13)
 	}
 
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
+	// Strided coeff rows inside the extent ForwardDCT4x4 and the trusted 4x4 entry
+	// checked (coeffBlockFits); same shape as the residual-add rows (checked rows +9-86%).
 	obase := unsafe.Pointer(unsafe.SliceData(coeff))
 	ostep := uintptr(coeffStride) * 4
 	o0.StoreArray((*[4]int32)(obase))

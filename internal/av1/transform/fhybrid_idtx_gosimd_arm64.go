@@ -59,7 +59,8 @@ func idtxStoreInt16x8ToInt32(base unsafe.Pointer, v archsimd.Int16x8) {
 // forwardBlock8x8IDTXSIMD is the IDTX identity scale (coeff[c*stride+r]=res[r][c]<<3).
 func forwardBlock8x8IDTXSIMD(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
 	_ = scratch[63]
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
+	// Strided rows inside the residual and coeff extents ForwardBlock and
+	// ForwardBlock8BitResidualTrusted checked (blockFits, coeffBlockFits); same shape as the residual-add rows (checked rows +9-86%).
 	rbase := unsafe.Pointer(unsafe.SliceData(residual))
 	rstep := uintptr(residualStride) * 2
 	l0 := archsimd.LoadInt16x8Array((*[8]int16)(rbase))
