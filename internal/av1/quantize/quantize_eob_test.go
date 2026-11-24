@@ -54,3 +54,87 @@ func TestQuantizeBlockScaledBEOB(t *testing.T) {
 		}
 	}
 }
+
+// TestTryQuantizeBBlockEOBTrusted checks the prebuilt-constant square kernel
+// against the independent scalar rule (originalRowGroupLevel) over every
+// size, tx scale and live-column bound, on sparse blocks around both zero
+// bins with int32 extremes mixed in. The columns past the bound hold
+// garbage that must be neither read nor coded.
+func TestTryQuantizeBBlockEOBTrusted(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x5eb))
+	quants := []Quantizer{{4, 4}, {120, 140}, {147, 148}, {148, 147}, {1828, 4}, {4, 1828}, {29247, 29247}, {65535, 65535}}
+	handledCount := 0
+	for _, n := range []int{8, 16, 32} {
+		for ts := uint8(0); ts <= 2; ts++ {
+			for qi, q := range quants {
+				p := testBParams(q, ts)
+				dcZ, acZ := ZeroBinB(q, ts)
+				for trial := range 24 {
+					cols := []int{n, n / 2, max(n/4, 1), 1}[trial%4]
+					coeff := make([]int32, n*n)
+					for i := range coeff {
+						switch {
+						case i/n >= cols:
+							coeff[i] = int32(rng.Uint32()) // garbage
+						case rng.Intn(3) == 0:
+							z := []int32{acZ, dcZ}[i%2]
+							coeff[i] = rng.Int31n(2*z+5) - z - 2
+						}
+					}
+					edges := []int32{acZ, -acZ, acZ - 1, dcZ, -dcZ, dcZ - 1, -2147483648, 2147483647, 32767, -32768}
+					for range trial % 5 {
+						coeff[rng.Intn(cols*n)] = edges[rng.Intn(len(edges))]
+					}
+					if trial%6 == 0 {
+						coeff[0] = []int32{dcZ, -dcZ, dcZ - 1, acZ}[trial/6%4]
+					}
+					want := make([]int16, n*n)
+					for i := range want[:cols*n] {
+						step := q.AC
+						if i == 0 {
+							step = q.DC
+						}
+						want[i] = originalRowGroupLevel(coeff[i], step, q.DC, ts)
+					}
+					iscan := testISCAN(rng, n)
+					got := make([]int16, n*n+8)
+					for i := range got {
+						got[i] = 0x5a5a
+					}
+					before := append([]int32(nil), coeff...)
+					eob, handled := TryQuantizeBBlockEOBTrusted(got, coeff, n, cols, p, iscan)
+					wantHandled := quantizeBBlockEOBTrustedImpl != nil && p.vector
+					if handled != wantHandled {
+						t.Fatalf("n=%d ts=%d q=%+v: handled=%v want %v", n, ts, q, handled, wantHandled)
+					}
+					if !handled {
+						for _, v := range got {
+							if v != 0x5a5a {
+								t.Fatal("declined call wrote levels")
+							}
+						}
+						continue
+					}
+					handledCount++
+					if !reflect.DeepEqual(got[:n*n], want) {
+						t.Fatalf("n=%d ts=%d q=%d cols=%d trial=%d: levels differ", n, ts, qi, cols, trial)
+					}
+					if wantEOB := testEOB(want, iscan); eob != wantEOB {
+						t.Fatalf("n=%d ts=%d q=%d cols=%d: eob %d want %d", n, ts, qi, cols, eob, wantEOB)
+					}
+					for _, v := range got[n*n:] {
+						if v != 0x5a5a {
+							t.Fatal("output tail changed")
+						}
+					}
+					if !reflect.DeepEqual(coeff, before) {
+						t.Fatal("input changed")
+					}
+				}
+			}
+		}
+	}
+	if quantizeBBlockEOBTrustedImpl != nil && handledCount == 0 {
+		t.Fatal("kernel did not execute")
+	}
+}

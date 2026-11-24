@@ -10,5 +10,6 @@ func init() {
 		quantizeFPBlockImpl = quantizeFPBlockSIMD
 		quantizeBBlockImpl = quantizeBBlockSIMD
 		quantizeBBlockEOBImpl = quantizeBBlockEOBSIMD
+		quantizeBBlockEOBTrustedImpl = quantizeBBlockEOBTrustedSIMD
 	}
 }

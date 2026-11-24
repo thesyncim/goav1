@@ -19,14 +19,16 @@ import "math/bits"
 //
 // eob is the end of block quantize_b reports: one past the largest scan
 // position iscan[pos] of a nonzero level (iscan covers the n*n block).
-func TryQuantizeBRowGroupsDiffTrusted(qcoeff []int16, coeff []int32, n int, live uint8, cols int, q Quantizer, txScale uint8, iscan []int16) (diff, rate int64, eob int, handled bool) {
+//
+// p carries the quantizer and transform scale (BParams.Set).
+func TryQuantizeBRowGroupsDiffTrusted(qcoeff []int16, coeff []int32, n int, live uint8, cols int, p *BParams, iscan []int16) (diff, rate int64, eob int, handled bool) {
 	if quantizeBRowGroupsDiffImpl == nil || len(iscan) < n*n {
 		return 0, 0, 0, false
 	}
-	return quantizeBRowGroupsDiffImpl(qcoeff, coeff, n, live, cols, q, txScale, iscan)
+	return quantizeBRowGroupsDiffImpl(qcoeff, coeff, n, live, cols, p, iscan)
 }
 
-var quantizeBRowGroupsDiffImpl func([]int16, []int32, int, uint8, int, Quantizer, uint8, []int16) (int64, int64, int, bool)
+var quantizeBRowGroupsDiffImpl func([]int16, []int32, int, uint8, int, *BParams, []int16) (int64, int64, int, bool)
 
 // rowGroupDCEOB folds the DC level into an end of block taken over the AC
 // rule's levels: the DC sits at scan position 0, so it decides the result

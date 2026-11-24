@@ -2372,7 +2372,7 @@ func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStr
 	if st.pfN4 {
 		cols = max(w>>2, 1)
 	}
-	if diff, rate, eob, handled := quantize.TryQuantizeBRowGroupsDiffTrusted(qcoeff[:geo.coeffCount], st.tranScratch[:geo.coeffCount], w, mask, cols, q, geo.txScale, rdoqGeometry(geo.tx, 0).iscan); handled {
+	if diff, rate, eob, handled := quantize.TryQuantizeBRowGroupsDiffTrusted(qcoeff[:geo.coeffCount], st.tranScratch[:geo.coeffCount], w, mask, cols, st.quantB.Get(q, geo.txScale), rdoqGeometry(geo.tx, 0).iscan); handled {
 		st.rdDskip += st.svtTXDist(diff, geo.txScale)
 		st.rdRcode += rate
 		return eob

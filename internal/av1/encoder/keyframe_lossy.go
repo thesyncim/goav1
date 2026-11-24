@@ -567,6 +567,9 @@ type lossyEncodeState struct {
 	yQuant                  quantize.Quantizer
 	uQuant                  quantize.Quantizer
 	vQuant                  quantize.Quantizer
+	// quantB holds the quantize_b constants of the recently used quantizers
+	// (SVT's per-qindex quants tables), keyed by quantizer and tx scale.
+	quantB quantize.BParamsCache
 
 	scan8, scan4, scan16, scan32 []int16
 	scan16x8, scan8x16           []int16
@@ -1369,6 +1372,17 @@ func (st *lossyEncodeState) prepareIntraTXB(srcPlane []byte, stride int, px, py,
 			return geo, 0, err
 		}
 		return geo, zeroEOB(levelsAllZero(qcoeff[:cn])), nil
+	}
+	if cw := geo.coeffWidth; cw == geo.coeffHeight {
+		// Under N4_SHAPE only the low max(w/4, 1) columns can hold a
+		// coefficient (svtPFN4Zero zeroed the rest).
+		cols := cw
+		if st.pfN4 {
+			cols = min(max(w>>2, 1), cw)
+		}
+		if eob, ok := quantize.TryQuantizeBBlockEOBTrusted(qcoeff[:cn], tran[:cn], cw, cols, st.quantB.Get(q, geo.txScale), iscan); ok {
+			return geo, eob, nil
+		}
 	}
 	eob, err := quantize.QuantizeBlockScaledBEOB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale, iscan)
 	return geo, eob, err

@@ -136,3 +136,68 @@ func quantizeBLane4SIMD(c, quant, round archsimd.Int32x4, zbinU, maxU archsimd.U
 	mask := c.Shift(signShift)
 	return level.Xor(mask).Sub(mask).Masked(keep)
 }
+
+// quantizeBBlockEOBTrustedSIMD is svt_aom_quantize_b_neon on a contiguous
+// square block with bp's prebuilt constants: eight coefficients per group,
+// the zero-bin test first, the DC constants in lane 0 of the first group and
+// the end of block kept per lane. Columns at or past cols are trusted to
+// quantize to zero; they are stored as zero levels without being read.
+func quantizeBBlockEOBTrustedSIMD(qcoeff []int16, coeff []int32, n, cols int, bp *BParams, iscan []int16) (int, bool) {
+	if !bp.vector || (n != 8 && n != 16 && n != 32) || cols < 1 || cols > n {
+		return 0, false
+	}
+	count := n * n
+	if len(qcoeff) < count || len(coeff) < count || len(iscan) < count {
+		return 0, false
+	}
+	cs, qs, ss := coeff[:count], qcoeff[:count], iscan[:count]
+	ln := &bp.lanes
+	quantV := archsimd.LoadInt32x4Array(&ln.quant)
+	roundV := archsimd.LoadInt32x4Array(&ln.round)
+	zbinU := archsimd.LoadInt32x4Array(&ln.zbin).ToBits()
+	maxV := archsimd.LoadInt32x4Array(&ln.max)
+	maxU := maxV.ToBits()
+	sixteenV := archsimd.LoadInt32x4Array(&ln.sixteen)
+	shiftV := archsimd.LoadInt32x4Array(&ln.shift)
+	signShiftV := archsimd.LoadInt32x4Array(&ln.signShift)
+	zbinTest := bp.acZbin
+	var zero16, eobAcc archsimd.Int16x8
+	// The first group carries DC in lane 0 and tests against the smaller of
+	// the two bins.
+	{
+		c := (*[8]int32)(cs[0:8])
+		c0 := archsimd.LoadInt32x4Array((*[4]int32)(c[0:4]))
+		c1 := archsimd.LoadInt32x4Array((*[4]int32)(c[4:8]))
+		if c0.Abs().ToBits().Max(c1.Abs().ToBits()).ReduceMax() < bp.minZbin {
+			zero16.StoreArray((*[8]int16)(qs[0:8]))
+		} else {
+			lo := quantizeBLane4SIMD(c0, archsimd.LoadInt32x4Array(&ln.dcQuant), archsimd.LoadInt32x4Array(&ln.dcRound),
+				archsimd.LoadInt32x4Array(&ln.dcZbin).ToBits(), maxU, maxV, sixteenV, archsimd.LoadInt32x4Array(&ln.dcShift), signShiftV)
+			hi := quantizeBLane4SIMD(c1, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+			levels := quantizePackInt16x8SIMD(lo, hi)
+			levels.StoreArray((*[8]int16)(qs[0:8]))
+			eobAcc = rowGroupEOBSIMD(eobAcc, levels, archsimd.LoadInt16x8Array((*[8]int16)(ss[0:8])), ln)
+		}
+	}
+	// The live columns are the contiguous first cols*n coefficients.
+	lim := cols * n
+	for i := 8; i < lim && i <= len(cs)-8 && i <= len(qs)-8 && i <= len(ss)-8; i += 8 {
+		c := (*[8]int32)(cs[i:])
+		dst := (*[8]int16)(qs[i:])
+		c0 := archsimd.LoadInt32x4Array((*[4]int32)(c[0:4]))
+		c1 := archsimd.LoadInt32x4Array((*[4]int32)(c[4:8]))
+		if c0.Abs().ToBits().Max(c1.Abs().ToBits()).ReduceMax() < zbinTest {
+			zero16.StoreArray(dst)
+			continue
+		}
+		lo := quantizeBLane4SIMD(c0, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+		hi := quantizeBLane4SIMD(c1, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+		levels := quantizePackInt16x8SIMD(lo, hi)
+		levels.StoreArray(dst)
+		eobAcc = rowGroupEOBSIMD(eobAcc, levels, archsimd.LoadInt16x8Array((*[8]int16)(ss[i:])), ln)
+	}
+	for i := lim; i <= len(qs)-8; i += 8 {
+		zero16.StoreArray((*[8]int16)(qs[i:]))
+	}
+	return int(eobAcc.ReduceMax()), true
+}
