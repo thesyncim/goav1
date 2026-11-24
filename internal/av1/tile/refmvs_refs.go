@@ -239,24 +239,30 @@ func (s *DecodeState) readInterRefsRefmvs(cdfs *InterRefCDFs, c *BlockModeContex
 // direction dir only when it is an inter block using ref; intra and bilinear
 // entries hold filterUnset (switchableFilterMissing).
 func envFilterCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool, comp bool, dir int, ref ReferenceFrame) int {
-	aFilter, lFilter := switchableFilterMissing, switchableFilterMissing
-	if haveTop && (c.A.Ref[0][x4] == ref || c.A.Ref[1][x4] == ref) {
-		aFilter = int(c.A.Filter[dir][x4])
+	// The neighbour tests and the final choice are selects, not branches:
+	// the filters of neighbouring blocks are poorly predicted.
+	dir &= 1
+	x4, y4 = x4&(MaxBlockModeSlots-1), y4&(MaxBlockModeSlots-1)
+	aUse := boolInt(haveTop) & (boolInt(c.A.Ref[0][x4] == ref) | boolInt(c.A.Ref[1][x4] == ref))
+	lUse := boolInt(haveLeft) & (boolInt(c.L.Ref[0][y4] == ref) | boolInt(c.L.Ref[1][y4] == ref))
+	aFilter, lFilter := int(c.A.Filter[dir][x4]), int(c.L.Filter[dir][y4])
+	if aUse == 0 {
+		aFilter = switchableFilterMissing
 	}
-	if haveLeft && (c.L.Ref[0][y4] == ref || c.L.Ref[1][y4] == ref) {
-		lFilter = int(c.L.Filter[dir][y4])
+	if lUse == 0 {
+		lFilter = switchableFilterMissing
 	}
-	ctx := dir*interFilterDirOffset + boolInt(comp)*interFilterCompOffset
-	switch {
-	case aFilter == lFilter:
-		return ctx + aFilter
-	case aFilter == switchableFilterMissing:
-		return ctx + lFilter
-	case lFilter == switchableFilterMissing:
-		return ctx + aFilter
-	default:
-		return ctx + switchableFilterMissing
+	// get_filter_ctx: equal filters or a missing left one give the above
+	// filter, a missing above one the left filter, two different ones
+	// DAV1D_N_SWITCHABLE_FILTERS.
+	f := switchableFilterMissing
+	if boolInt(aFilter == lFilter)|boolInt(lFilter == switchableFilterMissing) != 0 {
+		f = aFilter
 	}
+	if aFilter == switchableFilterMissing {
+		f = lFilter
+	}
+	return dir*interFilterDirOffset + boolInt(comp)*interFilterCompOffset + f
 }
 
 // readInterpFiltersRefmvs ports decode_b's subpel filter section: no symbol
