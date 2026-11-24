@@ -7,8 +7,8 @@
 package restoration
 
 import (
+	"encoding/binary"
 	"simd/archsimd"
-	"unsafe"
 )
 
 // Packed-pair Wiener vertical passes for arm64.
@@ -73,8 +73,7 @@ func wienerVerticalPackedTaps(filter WienerFilter, bitDepth int, round1 int) (t0
 
 // wienerVerticalFootprintFits reports whether the vertical pass's whole read
 // footprint (height+6 temp rows of width samples) and write footprint (height
-// dst rows of width samples) are resident, with overflow-checked arithmetic, so
-// the SIMD kernels can address both buffers without per-access bounds checks.
+// dst rows of width samples) are resident, with overflow-checked arithmetic.
 func wienerVerticalFootprintFits(tempLen int, tempStride int, dstLen int, dstStride int, width int, height int) bool {
 	tempRows, ok := checkedAdd(height, 2*WienerHalfwin)
 	return ok && height > 0 &&
@@ -94,7 +93,9 @@ func wienerVerticalFootprintFits(tempLen int, tempStride int, dstLen int, dstStr
 // reference.
 func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride int, width int, height int, filter WienerFilter, round1 int) {
 	t0, t1, t2, t3, seedA, seedO, ok := wienerVerticalPackedTaps(filter, 8, round1)
-	if width < 8 || !ok || !wienerVerticalFootprintFits(len(temp), tempStride, len(dst), dstStride, width, height) {
+	// The stride and height bounds make each row window below one compare.
+	if width < 8 || !ok || height > rowsMax || uint(tempStride) > rowStrideMax || uint(dstStride) > rowStrideMax ||
+		!wienerVerticalFootprintFits(len(temp), tempStride, len(dst), dstStride, width, height) {
 		wienerVerticalU8(temp, tempStride, dst, dstStride, width, height, filter, round1)
 		return
 	}
@@ -107,39 +108,33 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 	negK := archsimd.BroadcastUint32x4(0xffff0000) // -65536
 	shr16 := archsimd.BroadcastInt32x4(-16)
 
-	// The footprint check above proves every load and store below is in bounds,
-	// so the hot loops address both buffers by byte offset from their bases
-	// (same shape as the loop-filter rows, where checked rows cost +9-86%).
-	tp := unsafe.Pointer(unsafe.SliceData(temp))
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	ts := tempStride * 2
+	// Each row is read and written through one bounds-checked window.
 
 	col := 0
 	for ; col+16 <= width; col += 16 {
-		t := col * 2
-		d := col
-		a0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
-		a1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
-		a2 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b2 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
-		a3 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b3 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
-		a4 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b4 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
-		a5 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b5 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
+		tc, dc := temp[col:], dst[col:]
+		w1 := (*[16]uint16)(tc[0*tempStride : 0*tempStride+16])
+		a0 := archsimd.LoadUint16x8Array((*[8]uint16)(w1[0:8]))
+		b0 := archsimd.LoadUint16x8Array((*[8]uint16)(w1[8:16]))
+		w2 := (*[16]uint16)(tc[1*tempStride : 1*tempStride+16])
+		a1 := archsimd.LoadUint16x8Array((*[8]uint16)(w2[0:8]))
+		b1 := archsimd.LoadUint16x8Array((*[8]uint16)(w2[8:16]))
+		w3 := (*[16]uint16)(tc[2*tempStride : 2*tempStride+16])
+		a2 := archsimd.LoadUint16x8Array((*[8]uint16)(w3[0:8]))
+		b2 := archsimd.LoadUint16x8Array((*[8]uint16)(w3[8:16]))
+		w4 := (*[16]uint16)(tc[3*tempStride : 3*tempStride+16])
+		a3 := archsimd.LoadUint16x8Array((*[8]uint16)(w4[0:8]))
+		b3 := archsimd.LoadUint16x8Array((*[8]uint16)(w4[8:16]))
+		w5 := (*[16]uint16)(tc[4*tempStride : 4*tempStride+16])
+		a4 := archsimd.LoadUint16x8Array((*[8]uint16)(w5[0:8]))
+		b4 := archsimd.LoadUint16x8Array((*[8]uint16)(w5[8:16]))
+		w6 := (*[16]uint16)(tc[5*tempStride : 5*tempStride+16])
+		a5 := archsimd.LoadUint16x8Array((*[8]uint16)(w6[0:8]))
+		b5 := archsimd.LoadUint16x8Array((*[8]uint16)(w6[8:16]))
 		for row := 0; row < height; row++ {
-			a6 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-			b6 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-			t += ts
+			w7 := (*[16]uint16)(tc[(row+6)*tempStride : (row+6)*tempStride+16])
+			a6 := archsimd.LoadUint16x8Array((*[8]uint16)(w7[0:8]))
+			b6 := archsimd.LoadUint16x8Array((*[8]uint16)(w7[8:16]))
 
 			pa0 := a0.Add(a6).ReshapeToUint32s()
 			pa1 := a1.Add(a5).ReshapeToUint32s()
@@ -171,8 +166,7 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 			evenB := oddB.MulAdd(negK, accB)
 			vb := evenB.ReshapeToUint16s().InterleaveOdd(oddB.ReshapeToUint16s()).BitsToInt16()
 
-			restorationSaturateInt16PairToUint8(va, vb).StoreArray((*[16]uint8)(unsafe.Add(dp, d)))
-			d += dstStride
+			restorationSaturateInt16PairToUint8(va, vb).StoreArray((*[16]uint8)(dc[row*dstStride : row*dstStride+16]))
 			a0, a1, a2, a3, a4, a5 = a1, a2, a3, a4, a5, a6
 			b0, b1, b2, b3, b4, b5 = b1, b2, b3, b4, b5, b6
 
@@ -182,23 +176,15 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 	// width so it overlaps already-written columns instead of running past them.
 	for ; col < width; col += 8 {
 		c := min(col, width-8)
-		t := c * 2
-		a0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		a1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		a2 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		a3 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		a4 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		a5 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		d := c
+		tc, dc := temp[c:], dst[c:]
+		a0 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[0*tempStride : 0*tempStride+8]))
+		a1 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[1*tempStride : 1*tempStride+8]))
+		a2 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[2*tempStride : 2*tempStride+8]))
+		a3 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[3*tempStride : 3*tempStride+8]))
+		a4 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[4*tempStride : 4*tempStride+8]))
+		a5 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[5*tempStride : 5*tempStride+8]))
 		for row := 0; row < height; row++ {
-			a6 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-			t += ts
+			a6 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[(row+6)*tempStride : (row+6)*tempStride+8]))
 
 			p0 := a0.Add(a6).ReshapeToUint32s()
 			p1 := a1.Add(a5).ReshapeToUint32s()
@@ -214,8 +200,7 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 			odd = p0.Shift(shr16).MulAdd(t0V, odd)
 			even := odd.MulAdd(negK, acc)
 			v := even.ReshapeToUint16s().InterleaveOdd(odd.ReshapeToUint16s()).BitsToInt16()
-			*(*uint64)(unsafe.Add(dp, d)) = v.SaturateToUint8().ReshapeToUint64s().GetElem(0)
-			d += dstStride
+			binary.LittleEndian.PutUint64(dc[row*dstStride:row*dstStride+8], v.SaturateToUint8().ReshapeToUint64s().GetElem(0))
 
 			a0, a1, a2, a3, a4, a5 = a1, a2, a3, a4, a5, a6
 		}
@@ -226,7 +211,9 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 // is zero (dav1d wiener_filter5): rows 0 and 6 of each window carry no weight.
 func wienerVerticalU8SIMD5(temp []uint16, tempStride int, dst []uint8, dstStride int, width int, height int, filter WienerFilter, round1 int) {
 	_, t1, t2, t3, seedA, seedO, ok := wienerVerticalPackedTaps(filter, 8, round1)
-	if width < 8 || !ok || !wienerVerticalFootprintFits(len(temp), tempStride, len(dst), dstStride, width, height) {
+	// The stride and height bounds make each row window below one compare.
+	if width < 8 || !ok || height > rowsMax || uint(tempStride) > rowStrideMax || uint(dstStride) > rowStrideMax ||
+		!wienerVerticalFootprintFits(len(temp), tempStride, len(dst), dstStride, width, height) {
 		wienerVerticalU8(temp, tempStride, dst, dstStride, width, height, filter, round1)
 		return
 	}
@@ -238,37 +225,30 @@ func wienerVerticalU8SIMD5(temp []uint16, tempStride int, dst []uint8, dstStride
 	negK := archsimd.BroadcastUint32x4(0xffff0000) // -65536
 	shr16 := archsimd.BroadcastInt32x4(-16)
 
-	// The footprint check above proves every load and store below is in bounds,
-	// so the hot loops address both buffers by byte offset from their bases
-	// (same shape as the loop-filter rows, where checked rows cost +9-86%).
-	tp := unsafe.Pointer(unsafe.SliceData(temp))
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	ts := tempStride * 2
+	// Each row is read and written through one bounds-checked window.
 
 	col := 0
 	for ; col+16 <= width; col += 16 {
-		t := col * 2
-		d := col
-		t += ts
-		a1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
-		a2 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b2 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
-		a3 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b3 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
-		a4 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b4 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
-		a5 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b5 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
+		tc, dc := temp[col:], dst[col:]
+		w8 := (*[16]uint16)(tc[1*tempStride : 1*tempStride+16])
+		a1 := archsimd.LoadUint16x8Array((*[8]uint16)(w8[0:8]))
+		b1 := archsimd.LoadUint16x8Array((*[8]uint16)(w8[8:16]))
+		w9 := (*[16]uint16)(tc[2*tempStride : 2*tempStride+16])
+		a2 := archsimd.LoadUint16x8Array((*[8]uint16)(w9[0:8]))
+		b2 := archsimd.LoadUint16x8Array((*[8]uint16)(w9[8:16]))
+		w10 := (*[16]uint16)(tc[3*tempStride : 3*tempStride+16])
+		a3 := archsimd.LoadUint16x8Array((*[8]uint16)(w10[0:8]))
+		b3 := archsimd.LoadUint16x8Array((*[8]uint16)(w10[8:16]))
+		w11 := (*[16]uint16)(tc[4*tempStride : 4*tempStride+16])
+		a4 := archsimd.LoadUint16x8Array((*[8]uint16)(w11[0:8]))
+		b4 := archsimd.LoadUint16x8Array((*[8]uint16)(w11[8:16]))
+		w12 := (*[16]uint16)(tc[5*tempStride : 5*tempStride+16])
+		a5 := archsimd.LoadUint16x8Array((*[8]uint16)(w12[0:8]))
+		b5 := archsimd.LoadUint16x8Array((*[8]uint16)(w12[8:16]))
 		for row := 0; row < height; row++ {
-			a6 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-			b6 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-			t += ts
+			w13 := (*[16]uint16)(tc[(row+6)*tempStride : (row+6)*tempStride+16])
+			a6 := archsimd.LoadUint16x8Array((*[8]uint16)(w13[0:8]))
+			b6 := archsimd.LoadUint16x8Array((*[8]uint16)(w13[8:16]))
 
 			pa1 := a1.Add(a5).ReshapeToUint32s()
 			pa2 := a2.Add(a4).ReshapeToUint32s()
@@ -294,8 +274,7 @@ func wienerVerticalU8SIMD5(temp []uint16, tempStride int, dst []uint8, dstStride
 			evenB := oddB.MulAdd(negK, accB)
 			vb := evenB.ReshapeToUint16s().InterleaveOdd(oddB.ReshapeToUint16s()).BitsToInt16()
 
-			restorationSaturateInt16PairToUint8(va, vb).StoreArray((*[16]uint8)(unsafe.Add(dp, d)))
-			d += dstStride
+			restorationSaturateInt16PairToUint8(va, vb).StoreArray((*[16]uint8)(dc[row*dstStride : row*dstStride+16]))
 			a1, a2, a3, a4, a5 = a2, a3, a4, a5, a6
 			b1, b2, b3, b4, b5 = b2, b3, b4, b5, b6
 
@@ -305,22 +284,14 @@ func wienerVerticalU8SIMD5(temp []uint16, tempStride int, dst []uint8, dstStride
 	// width so it overlaps already-written columns instead of running past them.
 	for ; col < width; col += 8 {
 		c := min(col, width-8)
-		t := c * 2
-		t += ts
-		a1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		a2 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		a3 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		a4 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		a5 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		d := c
+		tc, dc := temp[c:], dst[c:]
+		a1 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[1*tempStride : 1*tempStride+8]))
+		a2 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[2*tempStride : 2*tempStride+8]))
+		a3 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[3*tempStride : 3*tempStride+8]))
+		a4 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[4*tempStride : 4*tempStride+8]))
+		a5 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[5*tempStride : 5*tempStride+8]))
 		for row := 0; row < height; row++ {
-			a6 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-			t += ts
+			a6 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[(row+6)*tempStride : (row+6)*tempStride+8]))
 
 			p1 := a1.Add(a5).ReshapeToUint32s()
 			p2 := a2.Add(a4).ReshapeToUint32s()
@@ -333,8 +304,7 @@ func wienerVerticalU8SIMD5(temp []uint16, tempStride int, dst []uint8, dstStride
 			odd = p1.Shift(shr16).MulAdd(t1V, odd)
 			even := odd.MulAdd(negK, acc)
 			v := even.ReshapeToUint16s().InterleaveOdd(odd.ReshapeToUint16s()).BitsToInt16()
-			*(*uint64)(unsafe.Add(dp, d)) = v.SaturateToUint8().ReshapeToUint64s().GetElem(0)
-			d += dstStride
+			binary.LittleEndian.PutUint64(dc[row*dstStride:row*dstStride+8], v.SaturateToUint8().ReshapeToUint64s().GetElem(0))
 
 			a1, a2, a3, a4, a5 = a2, a3, a4, a5, a6
 		}

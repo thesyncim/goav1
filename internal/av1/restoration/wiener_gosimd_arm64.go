@@ -6,10 +6,7 @@
 
 package restoration
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // wienerVerticalSIMD is the Go-native SIMD uint16 Wiener vertical pass for arm64,
 // using the packed-pair form described in wiener_vertical_gosimd_arm64.go: the
@@ -26,7 +23,9 @@ import (
 // the scalar reference.
 func wienerVerticalSIMD(temp []uint16, tempStride int, dst []uint16, dstStride int, width int, height int, filter WienerFilter, bitDepth int, round1 int, max uint16) {
 	t0, t1, t2, t3, seedA, seedO, ok := wienerVerticalPackedTaps(filter, bitDepth, round1)
-	if width < 8 || max > 32767 || !ok || !wienerVerticalFootprintFits(len(temp), tempStride, len(dst), dstStride, width, height) {
+	// The stride and height bounds make each row window below one compare.
+	if width < 8 || max > 32767 || !ok || height > rowsMax || uint(tempStride) > rowStrideMax || uint(dstStride) > rowStrideMax ||
+		!wienerVerticalFootprintFits(len(temp), tempStride, len(dst), dstStride, width, height) {
 		wienerVertical(temp, tempStride, dst, dstStride, width, height, filter, bitDepth, round1, max)
 		return
 	}
@@ -41,37 +40,32 @@ func wienerVerticalSIMD(temp []uint16, tempStride int, dst []uint16, dstStride i
 	zero := archsimd.BroadcastInt16x8(0)
 	maxV := archsimd.BroadcastInt16x8(int16(max))
 
-	// Strided rows inside the extents checked above; same shape as the loop-filter rows (checked rows +9-86%).
-	tp := unsafe.Pointer(unsafe.SliceData(temp))
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	ts := tempStride * 2
-	ds := dstStride * 2
+	// Each row is read and written through one bounds-checked window.
 	col := 0
 	for ; col+16 <= width; col += 16 {
-		t := col * 2
-		d := col * 2
-		a0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
-		a1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
-		a2 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b2 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
-		a3 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b3 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
-		a4 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b4 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
-		a5 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		b5 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-		t += ts
+		tc, dc := temp[col:], dst[col:]
+		w1 := (*[16]uint16)(tc[0*tempStride : 0*tempStride+16])
+		a0 := archsimd.LoadUint16x8Array((*[8]uint16)(w1[0:8]))
+		b0 := archsimd.LoadUint16x8Array((*[8]uint16)(w1[8:16]))
+		w2 := (*[16]uint16)(tc[1*tempStride : 1*tempStride+16])
+		a1 := archsimd.LoadUint16x8Array((*[8]uint16)(w2[0:8]))
+		b1 := archsimd.LoadUint16x8Array((*[8]uint16)(w2[8:16]))
+		w3 := (*[16]uint16)(tc[2*tempStride : 2*tempStride+16])
+		a2 := archsimd.LoadUint16x8Array((*[8]uint16)(w3[0:8]))
+		b2 := archsimd.LoadUint16x8Array((*[8]uint16)(w3[8:16]))
+		w4 := (*[16]uint16)(tc[3*tempStride : 3*tempStride+16])
+		a3 := archsimd.LoadUint16x8Array((*[8]uint16)(w4[0:8]))
+		b3 := archsimd.LoadUint16x8Array((*[8]uint16)(w4[8:16]))
+		w5 := (*[16]uint16)(tc[4*tempStride : 4*tempStride+16])
+		a4 := archsimd.LoadUint16x8Array((*[8]uint16)(w5[0:8]))
+		b4 := archsimd.LoadUint16x8Array((*[8]uint16)(w5[8:16]))
+		w6 := (*[16]uint16)(tc[5*tempStride : 5*tempStride+16])
+		a5 := archsimd.LoadUint16x8Array((*[8]uint16)(w6[0:8]))
+		b5 := archsimd.LoadUint16x8Array((*[8]uint16)(w6[8:16]))
 		for row := 0; row < height; row++ {
-			a6 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-			b6 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t+16)))
-			t += ts
+			w7 := (*[16]uint16)(tc[(row+6)*tempStride : (row+6)*tempStride+16])
+			a6 := archsimd.LoadUint16x8Array((*[8]uint16)(w7[0:8]))
+			b6 := archsimd.LoadUint16x8Array((*[8]uint16)(w7[8:16]))
 
 			pa0 := a0.Add(a6).ReshapeToUint32s()
 			pa1 := a1.Add(a5).ReshapeToUint32s()
@@ -87,7 +81,8 @@ func wienerVerticalSIMD(temp []uint16, tempStride int, dst []uint16, dstStride i
 			oddA = pa0.Shift(shr16).MulAdd(t0V, oddA)
 			evenA := oddA.MulAdd(negK, accA)
 			va := evenA.ReshapeToUint16s().InterleaveOdd(oddA.ReshapeToUint16s()).BitsToInt16()
-			va.Max(zero).Min(maxV).ToBits().StoreArray((*[8]uint16)(unsafe.Add(dp, d)))
+			dw := (*[16]uint16)(dc[row*dstStride : row*dstStride+16])
+			va.Max(zero).Min(maxV).ToBits().StoreArray((*[8]uint16)(dw[0:8]))
 
 			pb0 := b0.Add(b6).ReshapeToUint32s()
 			pb1 := b1.Add(b5).ReshapeToUint32s()
@@ -103,8 +98,7 @@ func wienerVerticalSIMD(temp []uint16, tempStride int, dst []uint16, dstStride i
 			oddB = pb0.Shift(shr16).MulAdd(t0V, oddB)
 			evenB := oddB.MulAdd(negK, accB)
 			vb := evenB.ReshapeToUint16s().InterleaveOdd(oddB.ReshapeToUint16s()).BitsToInt16()
-			vb.Max(zero).Min(maxV).ToBits().StoreArray((*[8]uint16)(unsafe.Add(dp, d+16)))
-			d += ds
+			vb.Max(zero).Min(maxV).ToBits().StoreArray((*[8]uint16)(dw[8:16]))
 			a0, a1, a2, a3, a4, a5 = a1, a2, a3, a4, a5, a6
 			b0, b1, b2, b3, b4, b5 = b1, b2, b3, b4, b5, b6
 		}
@@ -113,23 +107,15 @@ func wienerVerticalSIMD(temp []uint16, tempStride int, dst []uint16, dstStride i
 	// width so it overlaps already-written columns instead of running past them.
 	for ; col < width; col += 8 {
 		c := min(col, width-8)
-		t := c * 2
-		d := c * 2
-		a0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		a1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		a2 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		a3 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		a4 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
-		a5 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-		t += ts
+		tc, dc := temp[c:], dst[c:]
+		a0 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[0*tempStride : 0*tempStride+8]))
+		a1 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[1*tempStride : 1*tempStride+8]))
+		a2 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[2*tempStride : 2*tempStride+8]))
+		a3 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[3*tempStride : 3*tempStride+8]))
+		a4 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[4*tempStride : 4*tempStride+8]))
+		a5 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[5*tempStride : 5*tempStride+8]))
 		for row := 0; row < height; row++ {
-			a6 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(tp, t)))
-			t += ts
+			a6 := archsimd.LoadUint16x8Array((*[8]uint16)(tc[(row+6)*tempStride : (row+6)*tempStride+8]))
 
 			p0 := a0.Add(a6).ReshapeToUint32s()
 			p1 := a1.Add(a5).ReshapeToUint32s()
@@ -145,8 +131,7 @@ func wienerVerticalSIMD(temp []uint16, tempStride int, dst []uint16, dstStride i
 			odd = p0.Shift(shr16).MulAdd(t0V, odd)
 			even := odd.MulAdd(negK, acc)
 			v := even.ReshapeToUint16s().InterleaveOdd(odd.ReshapeToUint16s()).BitsToInt16()
-			v.Max(zero).Min(maxV).ToBits().StoreArray((*[8]uint16)(unsafe.Add(dp, d)))
-			d += ds
+			v.Max(zero).Min(maxV).ToBits().StoreArray((*[8]uint16)(dc[row*dstStride : row*dstStride+8]))
 			a0, a1, a2, a3, a4, a5 = a1, a2, a3, a4, a5, a6
 		}
 	}
