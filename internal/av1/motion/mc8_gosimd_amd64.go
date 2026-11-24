@@ -603,30 +603,37 @@ func mc8AVX2PutH6(src []byte, ss, w, h int, ph *mc8Phase, dst []byte, ds int) {
 	c255 := archsimd.BroadcastInt16x16(255)
 	for ur := uint(0); ur < uint(h); ur += 2 {
 		r := int(ur)
-		r1 := min(r+1, h-1) // the last row of an odd h pairs with itself
+		// The second row of the pair is st (dt) bytes down; the last row of
+		// an odd h pairs with itself. One two-row window covers both rows.
+		st, dt := ss, ds
+		if r+1 >= h {
+			st, dt = 0, 0
+		}
 		s0, d0 := r*ss, r*ds
-		s1, d1 := r1*ss, r1*ds
 		if w == 8 {
-			a := mc8H6(mc8Ld2At(src, s0, s1), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(6)
-			v := mc8Pack(a, a, zero, c255, deint)
-			mc8St8(dst, d0, v.GetLo())
-			mc8St8(dst, d1, v.GetHi())
+			a := mc8H6(mc8Ld2(mc8Rows2(src, s0, st)), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(6)
+			v := mc8Pack(a, a, zero, c255, deint).ReshapeToUint64s()
+			y0, y1 := mc8Rows2x8(dst, d0, dt)
+			binary.LittleEndian.PutUint64(y0[:], v.GetLo().GetElem(0))
+			binary.LittleEndian.PutUint64(y1[:], v.GetHi().GetElem(0))
 			continue
 		}
 		for uc := uint(0); uc < uint(w&^15); uc += 16 {
 			c := int(uc)
-			x0, x1 := mc8W24(src, s0+c), mc8W24(src, s1+c)
+			x0, x1 := mc8Rows2x24(src, s0+c, st)
 			a := mc8H6(mc8Ld2(mc8Lo16(x0), mc8Lo16(x1)), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(6)
 			b := mc8H6(mc8Ld2(mc8Hi16(x0), mc8Hi16(x1)), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(6)
 			v := mc8Pack(a, b, zero, c255, deint)
-			mc8St16(dst, d1+c, v.GetHi())
-			mc8St16(dst, d0+c, v.GetLo())
+			y0, y1 := mc8Rows2(dst, d0+c, dt)
+			v.GetHi().StoreArray(y1)
+			v.GetLo().StoreArray(y0)
 		}
 		if c := w &^ 15; c < w {
-			a := mc8H6(mc8Ld2At(src, s0+c, s1+c), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(6)
-			v := mc8Pack(a, a, zero, c255, deint)
-			mc8St8(dst, d1+c, v.GetHi())
-			mc8St8(dst, d0+c, v.GetLo())
+			a := mc8H6(mc8Ld2(mc8Rows2(src, s0+c, st)), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(6)
+			v := mc8Pack(a, a, zero, c255, deint).ReshapeToUint64s()
+			y0, y1 := mc8Rows2x8(dst, d0+c, dt)
+			binary.LittleEndian.PutUint64(y1[:], v.GetHi().GetElem(0))
+			binary.LittleEndian.PutUint64(y0[:], v.GetLo().GetElem(0))
 		}
 	}
 }
@@ -790,6 +797,24 @@ func mc8AVX2PutV6Strip(sc []byte, ss, h int, ph *mc8Phase, dc []byte, ds int) {
 func mc8Rows2(s []byte, o, ss int) (*[16]byte, *[16]byte) {
 	win := s[uint(o) : uint(o)+uint(ss)+16]
 	return (*[16]byte)(win), (*[16]byte)(win[ss:])
+}
+
+// mc8Rows2x8 is mc8Rows2 for 8-byte rows.
+// mc8Rows2x4 is mc8Rows2 for 4-byte rows.
+func mc8Rows2x4(s []byte, o, ss int) (*[4]byte, *[4]byte) {
+	win := s[uint(o) : uint(o)+uint(ss)+4]
+	return (*[4]byte)(win), (*[4]byte)(win[ss:])
+}
+
+func mc8Rows2x8(s []byte, o, ss int) (*[8]byte, *[8]byte) {
+	win := s[uint(o) : uint(o)+uint(ss)+8]
+	return (*[8]byte)(win), (*[8]byte)(win[ss:])
+}
+
+// mc8Rows2x24 is mc8Rows2 for 24-byte rows.
+func mc8Rows2x24(s []byte, o, ss int) (*[24]byte, *[24]byte) {
+	win := s[uint(o) : uint(o)+uint(ss)+24]
+	return (*[24]byte)(win), (*[24]byte)(win[ss:])
 }
 
 // The eight-column vertical helpers stay in 256-bit registers (a 128-bit
@@ -1189,30 +1214,37 @@ func mc8AVX2PutH8(src []byte, ss, w, h int, ph *mc8Phase, dst []byte, ds int) {
 	c255 := archsimd.BroadcastInt16x16(255)
 	for ur := uint(0); ur < uint(h); ur += 2 {
 		r := int(ur)
-		r1 := min(r+1, h-1) // the last row of an odd h pairs with itself
+		// The second row of the pair is st (dt) bytes down; the last row of
+		// an odd h pairs with itself. One two-row window covers both rows.
+		st, dt := ss, ds
+		if r+1 >= h {
+			st, dt = 0, 0
+		}
 		s0, d0 := r*ss, r*ds
-		s1, d1 := r1*ss, r1*ds
 		if w == 8 {
-			a := mc8H8(mc8Ld2At(src, s0, s1), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
-			v := mc8Pack(a, a, zero, c255, deint)
-			mc8St8(dst, d0, v.GetLo())
-			mc8St8(dst, d1, v.GetHi())
+			a := mc8H8(mc8Ld2(mc8Rows2(src, s0, st)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
+			v := mc8Pack(a, a, zero, c255, deint).ReshapeToUint64s()
+			y0, y1 := mc8Rows2x8(dst, d0, dt)
+			binary.LittleEndian.PutUint64(y0[:], v.GetLo().GetElem(0))
+			binary.LittleEndian.PutUint64(y1[:], v.GetHi().GetElem(0))
 			continue
 		}
 		for uc := uint(0); uc < uint(w&^15); uc += 16 {
 			c := int(uc)
-			x0, x1 := mc8W24(src, s0+c), mc8W24(src, s1+c)
+			x0, x1 := mc8Rows2x24(src, s0+c, st)
 			a := mc8H8(mc8Ld2(mc8Lo16(x0), mc8Lo16(x1)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
 			b := mc8H8(mc8Ld2(mc8Hi16(x0), mc8Hi16(x1)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
 			v := mc8Pack(a, b, zero, c255, deint)
-			mc8St16(dst, d1+c, v.GetHi())
-			mc8St16(dst, d0+c, v.GetLo())
+			y0, y1 := mc8Rows2(dst, d0+c, dt)
+			v.GetHi().StoreArray(y1)
+			v.GetLo().StoreArray(y0)
 		}
 		if c := w &^ 15; c < w {
-			a := mc8H8(mc8Ld2At(src, s0+c, s1+c), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
-			v := mc8Pack(a, a, zero, c255, deint)
-			mc8St8(dst, d1+c, v.GetHi())
-			mc8St8(dst, d0+c, v.GetLo())
+			a := mc8H8(mc8Ld2(mc8Rows2(src, s0+c, st)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
+			v := mc8Pack(a, a, zero, c255, deint).ReshapeToUint64s()
+			y0, y1 := mc8Rows2x8(dst, d0+c, dt)
+			binary.LittleEndian.PutUint64(y1[:], v.GetHi().GetElem(0))
+			binary.LittleEndian.PutUint64(y0[:], v.GetLo().GetElem(0))
 		}
 	}
 }
@@ -1653,6 +1685,15 @@ func mc8StPutW4(dst []byte, ds, r, h int, v archsimd.Uint8x32) {
 	u := v.ReshapeToUint32s()
 	lo, hi := u.GetLo(), u.GetHi()
 	d := r * ds
+	if r+4 <= h { // a full group: two two-row windows
+		a0, a1 := mc8Rows2x4(dst, d, ds)
+		b0, b1 := mc8Rows2x4(dst, d+2*ds, ds)
+		binary.LittleEndian.PutUint32(a0[:], lo.GetElem(0))
+		binary.LittleEndian.PutUint32(a1[:], lo.GetElem(1))
+		binary.LittleEndian.PutUint32(b0[:], hi.GetElem(0))
+		binary.LittleEndian.PutUint32(b1[:], hi.GetElem(1))
+		return
+	}
 	mc8St4(dst, d, lo.GetElem(0))
 	if r+1 < h {
 		mc8St4(dst, d+ds, lo.GetElem(1))

@@ -90,17 +90,18 @@ func mc16BlendAvgAVX2(dst []byte, ds int, a, b []uint16, w, h, rb int, biasC, ma
 		for ur := uint(0); ur < uint(h&^3); ur += 4 {
 			r := int(ur)
 			v := mc16Avg16(mc16LdU16(a, 4*r), mc16LdU16(b, 4*r), one, bias, mul, maxV).AsUint64x4()
-			d := r * ds
-			mc8St64(dst, d, v.GetLo().GetElem(0))
-			mc8St64(dst, d+ds, v.GetLo().GetElem(1))
-			mc8St64(dst, d+2*ds, v.GetHi().GetElem(0))
-			mc8St64(dst, d+3*ds, v.GetHi().GetElem(1))
+			a0, a1 := mc8Rows2x8(dst, r*ds, ds)
+			b0, b1 := mc8Rows2x8(dst, (r+2)*ds, ds)
+			binary.LittleEndian.PutUint64(a0[:], v.GetLo().GetElem(0))
+			binary.LittleEndian.PutUint64(a1[:], v.GetLo().GetElem(1))
+			binary.LittleEndian.PutUint64(b0[:], v.GetHi().GetElem(0))
+			binary.LittleEndian.PutUint64(b1[:], v.GetHi().GetElem(1))
 		}
 		if r := h &^ 3; r < h {
 			v := mc16Avg16(mc16LdU16x8(a, 4*r), mc16LdU16x8(b, 4*r), one, bias, mul, maxV).GetLo().AsUint64x2()
-			d := r * ds
-			mc8St64(dst, d, v.GetElem(0))
-			mc8St64(dst, d+ds, v.GetElem(1))
+			y0, y1 := mc8Rows2x8(dst, r*ds, ds)
+			binary.LittleEndian.PutUint64(y0[:], v.GetElem(0))
+			binary.LittleEndian.PutUint64(y1[:], v.GetElem(1))
 		}
 	default:
 		for r := 0; r < h; r++ {
