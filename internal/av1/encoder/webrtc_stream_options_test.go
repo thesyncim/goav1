@@ -3,6 +3,7 @@ package encoder
 import (
 	"errors"
 	"runtime"
+	"sync/atomic"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/obu"
@@ -1943,54 +1944,61 @@ func TestWebRTCStreamSharedSlotFlipResetsReferences(t *testing.T) {
 			t.Fatalf("%s: pool refs %v, slots imply %v", when, s.refPoolRefs, want)
 		}
 	}
-	flips := 0
-	for a := ScalabilityMode(0); a < scalabilityModeCount; a++ {
-		cfgA, ok := webRTCStreamDescriptorMatrixConfig(a)
-		if !ok {
-			continue
-		}
-		for b := ScalabilityMode(0); b < scalabilityModeCount; b++ {
-			cfgB, ok := webRTCStreamDescriptorMatrixConfig(b)
-			// Same resolution keeps SetConfig on its in-place path; only a
-			// simulcast flip can flip shared-slot coding there.
-			if !ok || a == b || cfgA.Resolution != cfgB.Resolution || a.IsSimulcast() == b.IsSimulcast() {
+	var flips atomic.Int64
+	// Each starting mode runs as a parallel subtest; the group returns once
+	// every pair has run, so the flip count below covers all of them.
+	t.Run("pairs", func(t *testing.T) {
+		for a := ScalabilityMode(0); a < scalabilityModeCount; a++ {
+			cfgA, ok := webRTCStreamDescriptorMatrixConfig(a)
+			if !ok {
 				continue
 			}
-			stream, err := NewWebRTCStreamConfig(cfgA)
-			if err != nil {
-				continue
-			}
-			src := testWebRTCStreamFrame(int(cfgA.Resolution.Width), int(cfgA.Resolution.Height))
-			for i := 0; i < 1; i++ {
-				if _, err := stream.EncodePicture(src, false); err != nil {
-					t.Fatalf("%s picture %d: %v", a, i, err)
-				}
-			}
-			checkPool(t, stream, a.String())
-			sharedA := webRTCStreamUsesSharedReferenceSlotCoding(stream.config)
-			if err := stream.SetConfig(cfgB); err != nil {
-				_ = stream.Close()
-				continue
-			}
-			if sharedA != webRTCStreamUsesSharedReferenceSlotCoding(stream.config) {
-				flips++
-				for slot, valid := range stream.referenceValid {
-					if valid {
-						t.Fatalf("%s -> %s: slot %d survived a shared-slot mode flip", a, b, slot)
+			t.Run(a.String(), func(t *testing.T) {
+				t.Parallel()
+				for b := ScalabilityMode(0); b < scalabilityModeCount; b++ {
+					cfgB, ok := webRTCStreamDescriptorMatrixConfig(b)
+					// Same resolution keeps SetConfig on its in-place path; only a
+					// simulcast flip can flip shared-slot coding there.
+					if !ok || a == b || cfgA.Resolution != cfgB.Resolution || a.IsSimulcast() == b.IsSimulcast() {
+						continue
 					}
+					stream, err := NewWebRTCStreamConfig(cfgA)
+					if err != nil {
+						continue
+					}
+					src := testWebRTCStreamFrame(int(cfgA.Resolution.Width), int(cfgA.Resolution.Height))
+					for i := 0; i < 1; i++ {
+						if _, err := stream.EncodePicture(src, false); err != nil {
+							t.Fatalf("%s picture %d: %v", a, i, err)
+						}
+					}
+					checkPool(t, stream, a.String())
+					sharedA := webRTCStreamUsesSharedReferenceSlotCoding(stream.config)
+					if err := stream.SetConfig(cfgB); err != nil {
+						_ = stream.Close()
+						continue
+					}
+					if sharedA != webRTCStreamUsesSharedReferenceSlotCoding(stream.config) {
+						flips.Add(1)
+						for slot, valid := range stream.referenceValid {
+							if valid {
+								t.Fatalf("%s -> %s: slot %d survived a shared-slot mode flip", a, b, slot)
+							}
+						}
+					}
+					for i := 0; i < 2; i++ {
+						if _, err := stream.EncodePicture(src, false); err != nil {
+							t.Fatalf("%s -> %s picture %d: %v", a, b, i, err)
+						}
+					}
+					checkPool(t, stream, a.String()+"->"+b.String())
+					_ = stream.Close()
 				}
-			}
-			for i := 0; i < 2; i++ {
-				if _, err := stream.EncodePicture(src, false); err != nil {
-					t.Fatalf("%s -> %s picture %d: %v", a, b, i, err)
-				}
-			}
-			checkPool(t, stream, a.String()+"->"+b.String())
-			_ = stream.Close()
+			})
 		}
-	}
-	if flips == 0 {
+	})
+	if flips.Load() == 0 {
 		t.Fatal("no mode pair flipped shared-slot coding")
 	}
-	t.Logf("%d shared-slot flips checked", flips)
+	t.Logf("%d shared-slot flips checked", flips.Load())
 }

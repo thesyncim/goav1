@@ -132,21 +132,43 @@ split_test_names() {
   done <<<"$listed_names"
 }
 
-split_test_bucket() {
-  local checksum
-  checksum="$(printf '%s' "$1" | cksum)"
-  checksum="${checksum%% *}"
-  printf '%s\n' "$((checksum % $2))"
+# race_weights lists the measured -race seconds of the slow tests of each
+# split package ("<prefix> <test> <seconds>"). Under -race a few tests run
+# 50-80 times slower than the rest, so hashing names left one root shard at
+# 1,191 s and another at 285 s.
+race_weights="$(dirname "$0")/race-weights.txt"
+
+# split_assign prints "<test> <bucket>" for every name: tests sorted by weight
+# (listed seconds, otherwise 1) and then name, each placed on the least-loaded
+# bucket. The result depends only on the names and the weights file.
+split_assign() {
+  local prefix="$1" all_names="$2" count="$3"
+  awk -v prefix="$prefix" -v count="$count" '
+    FNR == NR {
+      if (NF == 3 && $1 == prefix) weight[$2] = $3 + 0
+      next
+    }
+    NF { names[++n] = $1 }
+    END {
+      for (i = 1; i <= n; i++) {
+        w = (names[i] in weight) ? weight[names[i]] : 1
+        printf "%012.3f %s\n", w, names[i] | "sort -k1,1r -k2,2"
+      }
+      close("sort -k1,1r -k2,2")
+    }
+  ' "$race_weights" - <<<"$all_names" | awk -v count="$count" '
+    {
+      best = 0
+      for (b = 1; b < count; b++) if (load[b] < load[best]) best = b
+      load[best] += $1 + 0
+      print $2, best
+    }
+  '
 }
 
 split_test_names_for_bucket() {
-  local all_names="$1" target_bucket="$2" count="$3" name
-  while IFS= read -r name; do
-    [[ -z "$name" ]] && continue
-    if [[ "$(split_test_bucket "$name" "$count")" == "$target_bucket" ]]; then
-      printf '%s\n' "$name"
-    fi
-  done <<<"$all_names"
+  local prefix="$1" all_names="$2" target_bucket="$3" count="$4"
+  split_assign "$prefix" "$all_names" "$count" | awk -v b="$target_bucket" '$2 == b { print $1 }'
 }
 
 split_test_filter_for_names() {
@@ -189,18 +211,17 @@ audit_split_test_coverage() {
     return 1
   fi
 
-  while IFS= read -r name; do
+  while read -r name bucket; do
     [[ -z "$name" ]] && continue
     if [[ ${expected_bucket_for_name[$name]+present} ]]; then
       printf 'go test -list returned duplicate runnable name: %s\n' "$name" >&2
       return 1
     fi
-    bucket="$(split_test_bucket "$name" "$count")"
     expected_bucket_for_name["$name"]="$bucket"
     expected_by_bucket[$bucket]+="$name"$'\n'
     ((expected_counts[bucket] += 1))
     ((total_count += 1))
-  done <<<"$all_names"
+  done < <(split_assign "$prefix" "$all_names" "$count")
 
   if ((total_count == 0)); then
     printf 'go test -list returned no runnable tests in %s\n' "$package" >&2
@@ -350,7 +371,7 @@ case "${1:-}" in
     if prefix="$(split_prefix "$shard")"; then
       test_names="$(split_test_names "${packages[0]}")"
       shard_index="${shard#"$prefix"-}"
-      shard_names="$(split_test_names_for_bucket "$test_names" "$shard_index" "$(split_count "$prefix")")"
+      shard_names="$(split_test_names_for_bucket "$prefix" "$test_names" "$shard_index" "$(split_count "$prefix")")"
       if ! test_filter="$(split_test_filter_for_names "$shard_names")"; then
         exit 2
       fi

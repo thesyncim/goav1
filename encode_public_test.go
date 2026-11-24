@@ -7803,6 +7803,7 @@ func TestPublicRTCSharedReferenceSVCDecodeRTPPayloads(t *testing.T) {
 		}
 		covered++
 		t.Run(mode.String(), func(t *testing.T) {
+			t.Parallel()
 			width, height := publicRTCMatrixGeometry(t, mode)
 			cfg := publicRTCMatrixConfig(width, height, mode)
 			cfg.MaxFramerate = []EncoderRational{
