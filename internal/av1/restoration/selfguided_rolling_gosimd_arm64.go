@@ -6,15 +6,7 @@
 
 package restoration
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
-
-// unsafe: the box-sum windows stay inside the 70-element local storage and the
-// A/B rows (see the bound below); the bounds-checked slice form (a second loop
-// condition plus a per-row reslice) measured +1.2-1.9% on
-// BenchmarkApplySelfguidedRestorationSIMD, so the pointer form stays.
+import "simd/archsimd"
 
 // calculateIntermediateSIMD retains the scalar dispatch domain. The ARM64
 // SIMD drivers alone use this producer; selfguided and selfguidedFast keep
@@ -84,7 +76,11 @@ func calculateIntermediateRollingSIMD(dgd []int32, origin, width, height, stride
 	vzShift := archsimd.BroadcastInt32x4(-SGRProjMTableBits)
 	vbrShift := archsimd.BroadcastInt32x4(-SGRProjRecipBits)
 	vecCols := (width + 2) &^ 3
-	sp, qp := unsafe.Pointer(&sumStorage[0]), unsafe.Pointer(&squareStorage[0])
+	// validSGRBlock bounds width by ProcUnitSize, so vecCols/4 <= 16 and each
+	// 8-element box-sum window at col = 4k stays inside the 70-element storage.
+	if vecCols > ProcUnitSize+2 {
+		panic("restoration: SGR block wider than a processing unit")
+	}
 	for y := -1; y < height+1; y += step {
 		ar := aBuf[aOrigin+y*bufStride-1 : aOrigin+y*bufStride+width+1]
 		br := bBuf[aOrigin+y*bufStride-1 : aOrigin+y*bufStride+width+1]
@@ -92,16 +88,15 @@ func calculateIntermediateRollingSIMD(dgd []int32, origin, width, height, stride
 		// col+2*r+3 <= vecCols+2*r-1 <= width+2*r+1 == span-1.
 		// span <= 70 is checked by the slices above; r is 1 or 2.
 		// The two stores end at col+3 < vecCols <= len(ar)==len(br).
-		// All pointers stay within these live, disjoint int32 arrays; ARM64
-		// vector loads permit their ordinary int32 alignment.
-		ap, bp := unsafe.Pointer(unsafe.SliceData(ar)), unsafe.Pointer(unsafe.SliceData(br))
-		for col := 0; col < vecCols; col += 4 {
-			s, q := unsafe.Add(sp, 4*col), unsafe.Add(qp, 4*col)
-			sum := archsimd.LoadInt32x4Array((*[4]int32)(s)).Add(archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(s, 4)))).Add(archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(s, 8))))
-			square := archsimd.LoadInt32x4Array((*[4]int32)(q)).Add(archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 4)))).Add(archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 8))))
+		for k := 0; k < vecCols>>2; k++ {
+			col := 4 * k
+			sw := (*[8]int32)(sumStorage[col : col+8])
+			qw := (*[8]int32)(squareStorage[col : col+8])
+			sum := archsimd.LoadInt32x4Array((*[4]int32)(sw[0:4])).Add(archsimd.LoadInt32x4Array((*[4]int32)(sw[1:5]))).Add(archsimd.LoadInt32x4Array((*[4]int32)(sw[2:6])))
+			square := archsimd.LoadInt32x4Array((*[4]int32)(qw[0:4])).Add(archsimd.LoadInt32x4Array((*[4]int32)(qw[1:5]))).Add(archsimd.LoadInt32x4Array((*[4]int32)(qw[2:6])))
 			if r == 2 {
-				sum = sum.Add(archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(s, 12)))).Add(archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(s, 16))))
-				square = square.Add(archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 12)))).Add(archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 16))))
+				sum = sum.Add(archsimd.LoadInt32x4Array((*[4]int32)(sw[3:7]))).Add(archsimd.LoadInt32x4Array((*[4]int32)(sw[4:8])))
+				square = square.Add(archsimd.LoadInt32x4Array((*[4]int32)(qw[3:7]))).Add(archsimd.LoadInt32x4Array((*[4]int32)(qw[4:8])))
 			}
 			a := square.Add(vaRound).Shift(vaShift).ToBits()
 			b := sum.Add(vbRound).Shift(vbShift).ToBits()
@@ -112,8 +107,8 @@ func calculateIntermediateRollingSIMD(dgd []int32, origin, width, height, stride
 			aa = aa.SetElem(1, uint32(xByXPlus1[uint8(z.GetElem(1))]))
 			aa = aa.SetElem(2, uint32(xByXPlus1[uint8(z.GetElem(2))]))
 			aa = aa.SetElem(3, uint32(xByXPlus1[uint8(z.GetElem(3))]))
-			aa.BitsToInt32().StoreArray((*[4]int32)(unsafe.Add(ap, 4*col)))
-			vSgr.Sub(aa).Mul(sum.ToBits()).Mul(vr).Add(vbrRound).Shift(vbrShift).BitsToInt32().StoreArray((*[4]int32)(unsafe.Add(bp, 4*col)))
+			aa.BitsToInt32().StoreArray((*[4]int32)(ar[col : col+4]))
+			vSgr.Sub(aa).Mul(sum.ToBits()).Mul(vr).Add(vbrRound).Shift(vbrShift).BitsToInt32().StoreArray((*[4]int32)(br[col : col+4]))
 		}
 		sum, square := int32(0), int32(0)
 		if vecCols < width+2 {
