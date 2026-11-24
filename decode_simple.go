@@ -261,9 +261,11 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		return nil, errors.New("goav1: stream plan did not identify a bind event")
 	}
 
-	// Derive the pool format from the bound headers so the superblock alignment
-	// (64 vs 128) matches the surface the decoder reconstructs into.
-	format, err := frameCodedFormatFromHeaders(plan.Bind.Sequence, plan.Bind.Event.FrameSize, 64)
+	// Pool slots fit the largest coded frame layout in the stream; each frame
+	// binds a slot at its own size and format (dav1d allocates every picture at
+	// its frame size and its sequence's bit depth, chroma layout and superblock
+	// size, so a new coded video sequence may change any of them).
+	format, err := decoderCodedPoolFormatFromSource(source, kind, 64, probePayload)
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: frame format from stream plan: %w", err)
@@ -312,17 +314,6 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: postfilter scratch plan: %w", err)
-	}
-	// Pool slots fit the largest coded frame in the stream; each frame binds a
-	// slot at its own size (dav1d allocates every picture at its frame size).
-	if motionSize.CodedWidth > uint32(format.Width) || motionSize.Height > uint32(format.Height) {
-		maxSize := plan.Bind.Event.FrameSize
-		maxSize.CodedWidth = max(maxSize.CodedWidth, motionSize.CodedWidth)
-		maxSize.Height = max(maxSize.Height, motionSize.Height)
-		if format, err = frameCodedFormatFromHeaders(plan.Bind.Sequence, maxSize, 64); err != nil {
-			workerPool.Close()
-			return nil, fmt.Errorf("goav1: frame format from stream plan: %w", err)
-		}
 	}
 	arenaSize, err := decoderArenaSizeFor(format, outputFormat, useExternal, surfaceCount, plan.Size, postArena)
 	if err != nil {

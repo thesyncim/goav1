@@ -335,11 +335,119 @@ func decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(stream internaldeco
 }
 
 func decoderExternalOutputFormatFromSource(source decoderPayloadSource, align int, payloadBuf []byte) (bool, FrameFormat, error) {
+	var formats []FrameFormat
+	err := decoderForEachLowOverheadEventFromSource(source, payloadBuf, func(sequence SequenceHeader, event *internaldecoder.Event) error {
+		return decoderAddExternalOutputFormat(&formats, sequence, event, align)
+	})
+	if err != nil || len(formats) == 0 {
+		return false, FrameFormat{}, err
+	}
+	format, err := decoderLargestFrameFormat(formats)
+	return err == nil, format, err
+}
+
+func decoderExternalOutputFormatFromRTPSource(source decoderPayloadSource, align int) (bool, FrameFormat, error) {
+	var formats []FrameFormat
+	err := decoderForEachRTPEventFromSource(source, func(sequence SequenceHeader, event internaldecoder.Event) error {
+		return decoderAddExternalOutputFormat(&formats, sequence, &event, align)
+	})
+	if err != nil || len(formats) == 0 {
+		return false, FrameFormat{}, err
+	}
+	format, err := decoderLargestFrameFormat(formats)
+	return err == nil, format, err
+}
+
+func decoderAddExternalOutputFormat(formats *[]FrameFormat, sequence SequenceHeader, event *internaldecoder.Event, align int) error {
+	if !decoderFrameWorkResidualEventBindCandidate(event) {
+		return nil
+	}
+	next, ok, err := decoderExternalOutputFormatForEvent(sequence, event, align)
+	if err != nil || !ok {
+		return err
+	}
+	*formats = decoderAddFrameFormat(*formats, next)
+	return nil
+}
+
+// decoderCodedPoolFormatFromSource returns the frame-pool slot format for a
+// stream: the largest layout over every sample format its coded frames use,
+// each at that format's largest frame size. A new coded video sequence may
+// change bit depth, chroma layout or superblock size; every slot fits any
+// picture of the stream, as dav1d's picture pool serves every picture of a
+// stream whatever its format.
+func decoderCodedPoolFormatFromSource(source decoderPayloadSource, kind decoderPayloadKind, align int, payloadBuf []byte) (FrameFormat, error) {
+	var formats []FrameFormat
+	add := func(sequence SequenceHeader, event *internaldecoder.Event) error {
+		if !decoderFrameWorkResidualEventBindCandidate(event) {
+			return nil
+		}
+		format, err := frameCodedFormatFromHeaders(sequence, event.FrameSize, align)
+		if err != nil {
+			return err
+		}
+		formats = decoderAddFrameFormat(formats, format)
+		return nil
+	}
+	var err error
+	switch kind {
+	case decoderPayloadLowOverhead:
+		err = decoderForEachLowOverheadEventFromSource(source, payloadBuf, add)
+	case decoderPayloadRTP:
+		err = decoderForEachRTPEventFromSource(source, func(sequence SequenceHeader, event internaldecoder.Event) error {
+			return add(sequence, &event)
+		})
+	default:
+		err = internaldecoder.ErrInvalidFrameWorkState
+	}
+	if err != nil {
+		return FrameFormat{}, err
+	}
+	if len(formats) == 0 {
+		return FrameFormat{}, internalframe.ErrInvalidFormat
+	}
+	return decoderLargestFrameFormat(formats)
+}
+
+// decoderAddFrameFormat folds next into formats, which holds one entry per
+// sample format (everything but the frame size) at the largest width and
+// height seen for it.
+func decoderAddFrameFormat(formats []FrameFormat, next FrameFormat) []FrameFormat {
+	for i := range formats {
+		f := formats[i]
+		f.Width, f.Height = next.Width, next.Height
+		if f == next {
+			formats[i].Width = max(formats[i].Width, next.Width)
+			formats[i].Height = max(formats[i].Height, next.Height)
+			return formats
+		}
+	}
+	return append(formats, next)
+}
+
+// decoderLargestFrameFormat returns the entry of formats with the largest
+// frame layout. Pool slots are sized for it, and every other entry fits one.
+func decoderLargestFrameFormat(formats []FrameFormat) (FrameFormat, error) {
+	best, bestSize := FrameFormat{}, -1
+	for _, f := range formats {
+		layout, err := internalframe.RequiredSize(f)
+		if err != nil {
+			return FrameFormat{}, err
+		}
+		if layout.Size > bestSize {
+			best, bestSize = f, layout.Size
+		}
+	}
+	return best, nil
+}
+
+// decoderForEachLowOverheadEventFromSource parses every low-overhead payload
+// of source and calls fn with each event and the sequence header it decodes
+// under.
+func decoderForEachLowOverheadEventFromSource(source decoderPayloadSource, payloadBuf []byte, fn func(SequenceHeader, *internaldecoder.Event) error) error {
 	var stream internaldecoder.Stream
-	var format FrameFormat
 	events := make([]internaldecoder.Event, decoderMaxPayloadEvents)
-	have := false
-	err := source.forEachPayload(payloadBuf, func(payload []byte) error {
+	return source.forEachPayload(payloadBuf, func(payload []byte) error {
 		eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(payload)
 		if err != nil {
 			return err
@@ -353,49 +461,13 @@ func decoderExternalOutputFormatFromSource(source decoderPayloadSource, align in
 			return err
 		}
 		for i := range count {
-			event := events[i]
-			sequence = decoderFrameWorkResidualEventSequence(sequence, &event)
-			if !decoderFrameWorkResidualEventBindCandidate(&event) {
-				continue
-			}
-			next, ok, err := decoderExternalOutputFormatForEvent(sequence, &event, align)
-			if err != nil {
+			sequence = decoderFrameWorkResidualEventSequence(sequence, &events[i])
+			if err := fn(sequence, &events[i]); err != nil {
 				return err
 			}
-			if !ok {
-				continue
-			}
-			if format, err = decoderMergeOutputFormat(have, format, next); err != nil {
-				return err
-			}
-			have = true
 		}
 		return nil
 	})
-	return have, format, err
-}
-
-func decoderExternalOutputFormatFromRTPSource(source decoderPayloadSource, align int) (bool, FrameFormat, error) {
-	var format FrameFormat
-	have := false
-	err := decoderForEachRTPEventFromSource(source, func(sequence SequenceHeader, event internaldecoder.Event) error {
-		if !decoderFrameWorkResidualEventBindCandidate(&event) {
-			return nil
-		}
-		next, ok, err := decoderExternalOutputFormatForEvent(sequence, &event, align)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return nil
-		}
-		if format, err = decoderMergeOutputFormat(have, format, next); err != nil {
-			return err
-		}
-		have = true
-		return nil
-	})
-	return have, format, err
 }
 
 func decoderExternalOutputFormatForEvent(sequence SequenceHeader, event *internaldecoder.Event, align int) (FrameFormat, bool, error) {
@@ -589,20 +661,4 @@ func decoderShortRead(err error) bool {
 
 func decoderMaxInt() int {
 	return int(^uint(0) >> 1)
-}
-
-// decoderMergeOutputFormat folds next into the output pool format: slots fit
-// the largest upscaled frame and each output binds a slot at its own size, so
-// only the sample format must agree.
-func decoderMergeOutputFormat(have bool, format FrameFormat, next FrameFormat) (FrameFormat, error) {
-	if !have {
-		return next, nil
-	}
-	w, h := max(format.Width, next.Width), max(format.Height, next.Height)
-	format.Width, format.Height = next.Width, next.Height
-	if format != next {
-		return FrameFormat{}, internalframe.ErrInvalidFormat
-	}
-	next.Width, next.Height = w, h
-	return next, nil
 }

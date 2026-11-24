@@ -556,6 +556,11 @@ func (r decoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 			if decoderFramePipelineEventNeedsDrain(&events[i]) {
 				r.fp.drain()
 			}
+			if events[i].NewCodedVideoSequence {
+				if err := r.fp.resetReferences(); err != nil {
+					return result, err
+				}
+			}
 		}
 
 		sidePtr := (*decoderFrameWorkSideData)(nil)
