@@ -3282,54 +3282,112 @@ func frameWorkOBMCMask(length int) ([]uint8, bool) {
 	}
 }
 
+// frameWorkBlendOBMCV blends the above-neighbour prediction into dst: row r
+// uses mask[r] (dav1d blend_h). Rows whose mask is 64 keep dst exactly
+// ((64*a + 32) >> 6 == a), so only the leading rows below 64 are visited, as
+// dav1d does with its h*3/4 bound.
 func frameWorkBlendOBMCV(dst frame.Plane, tmp frame.Plane, bytesPerSample int, dstX int, dstY int, tmpX int, tmpY int, width int, height int, mask []uint8) error {
 	if len(mask) < height ||
 		!frameWorkPlaneBlockAddressable(dst, bytesPerSample, dstX, dstY, width, height) ||
 		!frameWorkPlaneBlockAddressable(tmp, bytesPerSample, tmpX, tmpY, width, height) {
 		return ErrInvalidBatch
 	}
-	for row := range height {
-		m := uint16(mask[row])
-		for col := range width {
-			a, ok := frameWorkLoadSample(&dst, bytesPerSample, dstX+col, dstY+row)
-			if !ok {
-				return ErrInvalidBatch
-			}
-			b, ok := frameWorkLoadSample(&tmp, bytesPerSample, tmpX+col, tmpY+row)
-			if !ok {
-				return ErrInvalidBatch
-			}
-			if !frameWorkStoreSample(dst, bytesPerSample, dstX+col, dstY+row, frameWorkBlendA64(m, a, b)) {
-				return ErrInvalidBatch
-			}
+	rowBytes := width * bytesPerSample
+	for row, m := range mask[:height] {
+		if m == frameWorkBlendA64MaxAlpha {
+			continue
+		}
+		d0 := (dstY+row)*dst.Stride + dstX*bytesPerSample
+		t0 := (tmpY+row)*tmp.Stride + tmpX*bytesPerSample
+		d := dst.Pix[d0 : d0+rowBytes]
+		t := tmp.Pix[t0 : t0+rowBytes]
+		if bytesPerSample == 1 {
+			frameWorkBlendOBMCRow8(d, t, m)
+		} else {
+			frameWorkBlendOBMCRow16(d, t, m)
 		}
 	}
 	return nil
 }
 
+// frameWorkBlendOBMCH blends the left-neighbour prediction into dst: column c
+// uses mask[c] (dav1d blend_v). Only the leading columns whose mask is below
+// 64 change dst.
 func frameWorkBlendOBMCH(dst frame.Plane, tmp frame.Plane, bytesPerSample int, dstX int, dstY int, tmpX int, tmpY int, width int, height int, mask []uint8) error {
 	if len(mask) < width ||
 		!frameWorkPlaneBlockAddressable(dst, bytesPerSample, dstX, dstY, width, height) ||
 		!frameWorkPlaneBlockAddressable(tmp, bytesPerSample, tmpX, tmpY, width, height) {
 		return ErrInvalidBatch
 	}
+	cols := width
+	for cols > 0 && mask[cols-1] == frameWorkBlendA64MaxAlpha {
+		cols--
+	}
+	if cols == 0 {
+		return nil
+	}
+	m := mask[:cols]
+	rowBytes := cols * bytesPerSample
 	for row := range height {
-		for col := range width {
-			m := uint16(mask[col])
-			a, ok := frameWorkLoadSample(&dst, bytesPerSample, dstX+col, dstY+row)
-			if !ok {
-				return ErrInvalidBatch
-			}
-			b, ok := frameWorkLoadSample(&tmp, bytesPerSample, tmpX+col, tmpY+row)
-			if !ok {
-				return ErrInvalidBatch
-			}
-			if !frameWorkStoreSample(dst, bytesPerSample, dstX+col, dstY+row, frameWorkBlendA64(m, a, b)) {
-				return ErrInvalidBatch
-			}
+		d0 := (dstY+row)*dst.Stride + dstX*bytesPerSample
+		t0 := (tmpY+row)*tmp.Stride + tmpX*bytesPerSample
+		d := dst.Pix[d0 : d0+rowBytes]
+		t := tmp.Pix[t0 : t0+rowBytes]
+		if bytesPerSample == 1 {
+			frameWorkBlendOBMCMaskRow8(d, t, m)
+		} else {
+			frameWorkBlendOBMCMaskRow16(d, t, m)
 		}
 	}
 	return nil
+}
+
+// frameWorkBlendOBMCRow8 is one 8-bit row of frameWorkBlendA64 with a
+// constant mask.
+func frameWorkBlendOBMCRow8(d []byte, t []byte, m uint8) {
+	t = t[:len(d)]
+	a := uint32(m)
+	b := frameWorkBlendA64MaxAlpha - a
+	for i, x := range d {
+		d[i] = byte((a*uint32(x) + b*uint32(t[i]) + 32) >> 6)
+	}
+}
+
+func frameWorkBlendOBMCRow16(d []byte, t []byte, m uint8) {
+	t = t[:len(d)]
+	a := uint32(m)
+	b := frameWorkBlendA64MaxAlpha - a
+	for i := 0; i+1 < len(d); i += 2 {
+		x := uint32(d[i]) | uint32(d[i+1])<<8
+		y := uint32(t[i]) | uint32(t[i+1])<<8
+		v := (a*x + b*y + 32) >> 6
+		d[i] = byte(v)
+		d[i+1] = byte(v >> 8)
+	}
+}
+
+// frameWorkBlendOBMCMaskRow8 is one 8-bit row of frameWorkBlendA64 with a
+// per-column mask; len(m) == len(d).
+func frameWorkBlendOBMCMaskRow8(d []byte, t []byte, m []uint8) {
+	t = t[:len(d)]
+	m = m[:len(d)]
+	for i, x := range d {
+		a := uint32(m[i])
+		d[i] = byte((a*uint32(x) + (frameWorkBlendA64MaxAlpha-a)*uint32(t[i]) + 32) >> 6)
+	}
+}
+
+func frameWorkBlendOBMCMaskRow16(d []byte, t []byte, m []uint8) {
+	m = m[:len(d)/2]
+	t = t[:len(d)]
+	for i, mv := range m {
+		a := uint32(mv)
+		x := uint32(d[2*i]) | uint32(d[2*i+1])<<8
+		y := uint32(t[2*i]) | uint32(t[2*i+1])<<8
+		v := (a*x + (frameWorkBlendA64MaxAlpha-a)*y + 32) >> 6
+		d[2*i] = byte(v)
+		d[2*i+1] = byte(v >> 8)
+	}
 }
 
 func frameWorkBuildInterIntraMask(mask []byte, maskStride int, width int, height int, mode tile.InterIntraMode) error {
