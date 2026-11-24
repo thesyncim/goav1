@@ -8,7 +8,8 @@ package transform
 
 // The hybrid cores keep both passes and the 8x8 transpose in vector locals.
 // The guarded public bindings preserve the scalar path for wider residuals.
-func fwd8ADSTDCTCore(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
+func fwd8ADSTDCTCore(coeffArr *[64]int32, residualArr *[64]int16) {
+	coeff, coeffStride, residual, residualStride := coeffArr[:], 8, residualArr[:], 8
 	var c0l, c1l, c2l, c3l, c4l, c5l, c6l, c7l, c0h, c1h, c2h, c3h, c4h, c5h, c6h, c7h fwdVec
 	{
 		g := 0

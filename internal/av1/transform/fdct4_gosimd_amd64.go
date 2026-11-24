@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // Pre-broadcast fdct4 twiddles, kept as package-level rodata so each loads with
 // one instruction (the same tables the arm64 4x4 kernel uses).
@@ -91,14 +88,24 @@ func forwardDCT4x4SIMDCore(coeff []int32, coeffStride int, residual []int16, res
 		o3 = s2.Mul(wn16).Add(s3.Mul(w48).Add(round)).ShiftAllRight(13)
 	}
 
-	// Strided coeff rows inside the extent ForwardDCT4x4 and the trusted 4x4 entry
-	// checked (coeffBlockFits); same shape as the residual-add rows (checked rows +9-86%).
-	obase := unsafe.Pointer(unsafe.SliceData(coeff))
-	ostep := uintptr(coeffStride) * 4
-	o0.StoreArray((*[4]int32)(obase))
-	o1.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*1)))
-	o2.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*2)))
-	o3.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*3)))
+	// The encoder's 4x4 coefficients are packed (stride 4): one fixed view, no
+	// row checks. Other strides take four checked row windows, all taken
+	// before the stores.
+	if coeffStride == 4 {
+		c := (*[16]int32)(coeff[:16])
+		o0.StoreArray((*[4]int32)(c[0:4]))
+		o1.StoreArray((*[4]int32)(c[4:8]))
+		o2.StoreArray((*[4]int32)(c[8:12]))
+		o3.StoreArray((*[4]int32)(c[12:16]))
+		return
+	}
+	cs := coeffStride
+	w0, w1 := (*[4]int32)(coeff[0:4]), (*[4]int32)(coeff[cs:cs+4])
+	w2, w3 := (*[4]int32)(coeff[2*cs:2*cs+4]), (*[4]int32)(coeff[3*cs:3*cs+4])
+	o0.StoreArray(w0)
+	o1.StoreArray(w1)
+	o2.StoreArray(w2)
+	o3.StoreArray(w3)
 }
 
 func fdctInt32AsInt64Amd(v archsimd.Int32x4) archsimd.Int64x2 {

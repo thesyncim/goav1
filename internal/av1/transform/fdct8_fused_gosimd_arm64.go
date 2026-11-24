@@ -9,7 +9,8 @@ package transform
 // fwd8DCTCore keeps the block register-resident through the column pass, a
 // transpose and the row pass. Each cNr vector holds four adjacent spatial columns at
 // transformed row N; the interleaves gather four rows for the row pass.
-func fwd8DCTCore(coeff []int32, coeffStride int, residual []int16, residualStride int) {
+func fwd8DCTCore(coeffArr *[64]int32, residualArr *[64]int16) {
+	coeff, coeffStride, residual, residualStride := coeffArr[:], 8, residualArr[:], 8
 	var c0l, c1l, c2l, c3l, c4l, c5l, c6l, c7l, c0h, c1h, c2h, c3h, c4h, c5h, c6h, c7h fwdVec
 	{
 		g := 0

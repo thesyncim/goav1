@@ -6,14 +6,11 @@
 
 package transform
 
-// The amd64 core retains the eight-lane scratch transpose.
-func fwd8DCTCore(coeff []int32, coeffStride int, residual []int16, residualStride int) {
-	var buf, bufT [64]int32
-	for g := 0; g < 8; g += fwdLanes {
-		fwdColDCT8(buf[:], g, residual, residualStride)
-	}
-	fwdTranspose(bufT[:], buf[:], 8)
-	for h := 0; h < 8; h += fwdLanes {
-		fwdRowDCT8(coeff, coeffStride, bufT[:], h)
-	}
+// The amd64 cores are the eight-lane scratch-transpose network.
+func fwd8DCTCore(coeff *[64]int32, residual *[64]int16) {
+	fwd8x8NetPacked(coeff, residual, false, false)
+}
+
+func fwd8ADSTDCTCore(coeff *[64]int32, residual *[64]int16) {
+	fwd8x8NetPacked(coeff, residual, true, false)
 }

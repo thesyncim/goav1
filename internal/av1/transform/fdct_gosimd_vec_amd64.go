@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // fwdVec is one 256-bit lane group of the forward-transform networks: eight
 // independent 1-D lines per vector (fdct_gosimd_net.go). Only AVX2 operations
@@ -99,21 +96,18 @@ func fwdI64AsI32x8(v archsimd.Int64x4) fwdVec {
 	return v.AsInt32x8()
 }
 
-// The network drivers have already validated their buffers. Addressing through
-// a base pointer keeps per-row bounds checks out of the vector butterflies.
+// The network drivers have already validated their buffers; each access is
+// one checked fixed-length window.
 func fwdLoadI32At(s []int32, i int) fwdVec {
-	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), i*4)
-	return archsimd.LoadInt32x8Array((*[8]int32)(p))
+	return archsimd.LoadInt32x8Array((*[8]int32)(s[i : i+8]))
 }
 
 func fwdStoreI32At(s []int32, i int, v fwdVec) {
-	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), i*4)
-	v.StoreArray((*[8]int32)(p))
+	v.StoreArray((*[8]int32)(s[i : i+8]))
 }
 
 func fwdLoadResAt(s []int16, i, g int) fwdVec {
-	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), i*2)
-	w := archsimd.LoadInt16x8Array((*[8]int16)(p))
+	w := archsimd.LoadInt16x8Array((*[8]int16)(s[i : i+8]))
 	return fwdShl(w.ExtendToInt32(), 2)
 }
 
@@ -136,8 +130,7 @@ func fwdHalfBtf12V(w0, a, w1, b fwdVec) fwdVec {
 // fwdLoadResRawAt is fwdLoadResAt without the shift[0] = 2 pre-scale (the
 // 64-point transforms take shift[0] = 0).
 func fwdLoadResRawAt(s []int16, i, g int) fwdVec {
-	p := unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), i*2)
-	return archsimd.LoadInt16x8Array((*[8]int16)(p)).ExtendToInt32()
+	return archsimd.LoadInt16x8Array((*[8]int16)(s[i : i+8])).ExtendToInt32()
 }
 
 // fwdTransposeRect writes the transpose of the rows x cols row-major matrix

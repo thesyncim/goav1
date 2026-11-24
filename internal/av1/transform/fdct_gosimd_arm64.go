@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // Every forward DCT dispatch slot is Go SIMD on arm64.
 var forwardDCT4x4Impl = forwardDCT4x4SIMD
@@ -39,7 +36,7 @@ var (
 func forwardDCT4x4SIMD(coeff []int32, coeffStride int, residual []int16, residualStride int) {
 	// One straight-line pass: load 4 rows of int16 residual widened to int32
 	// (<<2), fdct4 column butterfly, in-register 4x4 int32 transpose, fdct4 row
-	// butterfly, raw-pointer store. shift[1]=shift[2]=0 for 4x4 so there is no
+	// butterfly, row store. shift[1]=shift[2]=0 for 4x4 so there is no
 	// inter-pass round-shift; everything stays in Int32x4 registers.
 	// The first-pass output magnitude is at most 46341 and the largest
 	// second-pass accumulator at most 2147446036 for |residual| <= 2048. Larger
@@ -114,14 +111,24 @@ func forwardDCT4x4SIMDCore(coeff []int32, coeffStride int, residual []int16, res
 		o3 = s2.MulAdd(wn16, s3.MulAdd(w48, round)).ShiftAllRight(13)
 	}
 
-	// Strided coeff rows inside the extent ForwardDCT4x4 and the trusted 4x4 entry
-	// checked (coeffBlockFits); same shape as the residual-add rows (checked rows +9-86%).
-	obase := unsafe.Pointer(unsafe.SliceData(coeff))
-	ostep := uintptr(coeffStride) * 4
-	o0.StoreArray((*[4]int32)(obase))
-	o1.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*1)))
-	o2.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*2)))
-	o3.StoreArray((*[4]int32)(unsafe.Add(obase, ostep*3)))
+	// The encoder's 4x4 coefficients are packed (stride 4): one fixed view, no
+	// row checks. Other strides take four checked row windows, all taken
+	// before the stores.
+	if coeffStride == 4 {
+		c := (*[16]int32)(coeff[:16])
+		o0.StoreArray((*[4]int32)(c[0:4]))
+		o1.StoreArray((*[4]int32)(c[4:8]))
+		o2.StoreArray((*[4]int32)(c[8:12]))
+		o3.StoreArray((*[4]int32)(c[12:16]))
+		return
+	}
+	cs := coeffStride
+	w0, w1 := (*[4]int32)(coeff[0:4]), (*[4]int32)(coeff[cs:cs+4])
+	w2, w3 := (*[4]int32)(coeff[2*cs:2*cs+4]), (*[4]int32)(coeff[3*cs:3*cs+4])
+	o0.StoreArray(w0)
+	o1.StoreArray(w1)
+	o2.StoreArray(w2)
+	o3.StoreArray(w3)
 }
 
 func fdctInt32AsInt64(v archsimd.Int32x4) archsimd.Int64x2 {
