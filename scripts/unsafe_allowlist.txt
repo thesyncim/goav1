@@ -1,4 +1,3 @@
-decode_simple.go
 examples/browser-wasm/encoder/main.go
 internal/av1/cdef/direction_hbd_avx2_amd64.go
 internal/av1/cdef/direction_u8_avx2_amd64.go
