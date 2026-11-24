@@ -2279,8 +2279,12 @@ func (st *lossyEncodeState) quantizeInterTXBStats(geo *txBlockGeometry, q quanti
 		st.keyRDOQQuantize(tran[:cn], qcoeff[:cn], geo.tx, q)
 		return st.accumulateInterTXBStats(geo, q, qcoeff)
 	}
-	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
-		return false
+	// svt_aom_quantize_b over the contiguous coefficients with the cached
+	// constants; its end of block is not needed here.
+	if _, ok := quantize.TryQuantizeBBlockEOBTrusted(qcoeff[:cn], tran[:cn], cn, cn, st.quantB.Get(q, geo.txScale), rdoqGeometry(geo.tx, 0).iscan); !ok {
+		if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
+			return false
+		}
 	}
 	return st.accumulateInterTXBStats(geo, q, qcoeff)
 }

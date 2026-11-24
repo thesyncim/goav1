@@ -1373,16 +1373,15 @@ func (st *lossyEncodeState) prepareIntraTXB(srcPlane []byte, stride int, px, py,
 		}
 		return geo, zeroEOB(levelsAllZero(qcoeff[:cn])), nil
 	}
-	if cw := geo.coeffWidth; cw == geo.coeffHeight {
-		// Under N4_SHAPE only the low max(w/4, 1) columns can hold a
-		// coefficient (svtPFN4Zero zeroed the rest).
-		cols := cw
-		if st.pfN4 {
-			cols = min(max(w>>2, 1), cw)
-		}
-		if eob, ok := quantize.TryQuantizeBBlockEOBTrusted(qcoeff[:cn], tran[:cn], cw, cols, st.quantB.Get(q, geo.txScale), iscan); ok {
-			return geo, eob, nil
-		}
+	// Under N4_SHAPE only the low max(w/4, 1) columns can hold a coefficient
+	// (svtPFN4Zero zeroed the rest); the bound rounds up to whole groups of
+	// eight, which only adds zeroed coefficients.
+	live := cn
+	if st.pfN4 {
+		live = min((min(max(w>>2, 1), geo.coeffWidth)*geo.coeffHeight+7)&^7, cn)
+	}
+	if eob, ok := quantize.TryQuantizeBBlockEOBTrusted(qcoeff[:cn], tran[:cn], cn, live, st.quantB.Get(q, geo.txScale), iscan); ok {
+		return geo, eob, nil
 	}
 	eob, err := quantize.QuantizeBlockScaledBEOB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale, iscan)
 	return geo, eob, err

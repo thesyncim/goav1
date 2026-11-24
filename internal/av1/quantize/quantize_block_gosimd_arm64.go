@@ -137,16 +137,16 @@ func quantizeBLane4SIMD(c, quant, round archsimd.Int32x4, zbinU, maxU archsimd.U
 	return level.Xor(mask).Sub(mask).Masked(keep)
 }
 
-// quantizeBBlockEOBTrustedSIMD is svt_aom_quantize_b_neon on a contiguous
-// square block with bp's prebuilt constants: eight coefficients per group,
-// the zero-bin test first, the DC constants in lane 0 of the first group and
-// the end of block kept per lane. Columns at or past cols are trusted to
-// quantize to zero; they are stored as zero levels without being read.
-func quantizeBBlockEOBTrustedSIMD(qcoeff []int16, coeff []int32, n, cols int, bp *BParams, iscan []int16) (int, bool) {
-	if !bp.vector || (n != 8 && n != 16 && n != 32) || cols < 1 || cols > n {
+// quantizeBBlockEOBTrustedSIMD is svt_aom_quantize_b_neon on count
+// contiguous coefficients with bp's prebuilt constants: eight coefficients
+// per group, the zero-bin test first, the DC constants in lane 0 of the
+// first group and the end of block kept per lane. The coefficients at or
+// past live are trusted to quantize to zero; they are stored as zero levels
+// without being read.
+func quantizeBBlockEOBTrustedSIMD(qcoeff []int16, coeff []int32, count, live int, bp *BParams, iscan []int16) (int, bool) {
+	if !bp.vector || count < 8 || count%8 != 0 || live < 8 || live > count || live%8 != 0 {
 		return 0, false
 	}
-	count := n * n
 	if len(qcoeff) < count || len(coeff) < count || len(iscan) < count {
 		return 0, false
 	}
@@ -179,11 +179,12 @@ func quantizeBBlockEOBTrustedSIMD(qcoeff []int16, coeff []int32, n, cols int, bp
 			eobAcc = rowGroupEOBSIMD(eobAcc, levels, archsimd.LoadInt16x8Array((*[8]int16)(ss[0:8])), ln)
 		}
 	}
-	// The live columns are the contiguous first cols*n coefficients.
-	lim := cols * n
-	for i := 8; i < lim && i <= len(cs)-8 && i <= len(qs)-8 && i <= len(ss)-8; i += 8 {
-		c := (*[8]int32)(cs[i:])
-		dst := (*[8]int16)(qs[i:])
+	// The three live windows share one length, so one bound proves every
+	// access.
+	lc, lq, ls := cs[:live], qs[:live], ss[:live]
+	for i := 8; i <= len(lc)-8; i += 8 {
+		c := (*[8]int32)(lc[i:])
+		dst := (*[8]int16)(lq[i:])
 		c0 := archsimd.LoadInt32x4Array((*[4]int32)(c[0:4]))
 		c1 := archsimd.LoadInt32x4Array((*[4]int32)(c[4:8]))
 		if c0.Abs().ToBits().Max(c1.Abs().ToBits()).ReduceMax() < zbinTest {
@@ -194,9 +195,9 @@ func quantizeBBlockEOBTrustedSIMD(qcoeff []int16, coeff []int32, n, cols int, bp
 		hi := quantizeBLane4SIMD(c1, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
 		levels := quantizePackInt16x8SIMD(lo, hi)
 		levels.StoreArray(dst)
-		eobAcc = rowGroupEOBSIMD(eobAcc, levels, archsimd.LoadInt16x8Array((*[8]int16)(ss[i:])), ln)
+		eobAcc = rowGroupEOBSIMD(eobAcc, levels, archsimd.LoadInt16x8Array((*[8]int16)(ls[i:])), ln)
 	}
-	for i := lim; i <= len(qs)-8; i += 8 {
+	for i := live; i <= len(qs)-8; i += 8 {
 		zero16.StoreArray((*[8]int16)(qs[i:]))
 	}
 	return int(eobAcc.ReduceMax()), true

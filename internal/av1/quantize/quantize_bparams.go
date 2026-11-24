@@ -125,21 +125,22 @@ func (c *BParamsCache) find(q Quantizer, txScale uint8) *BParams {
 	return p
 }
 
-// TryQuantizeBBlockEOBTrusted is QuantizeBlockScaledBEOB for a contiguous
-// square n x n block (n = 8, 16 or 32, both strides n) with p's quantizer
-// and tx scale, plus a trusted live-column bound: every coefficient of the
-// columns at or past cols (1 <= cols <= n) must lie below its zero bin, and
-// those columns are not read (SVT's N2/N4 forward transforms leave them
-// zero). iscan must put DC first (iscan[0] == 0), as every AV1 scan does.
-// When handled is false nothing has been written and the caller must use
-// QuantizeBlockScaledBEOB.
-func TryQuantizeBBlockEOBTrusted(qcoeff []int16, coeff []int32, n, cols int, p *BParams, iscan []int16) (eob int, handled bool) {
+// TryQuantizeBBlockEOBTrusted is QuantizeBlockScaledBEOB for count
+// contiguous coefficients (a column-major block whose strides equal its
+// height; count a multiple of 8) with p's quantizer and tx scale, as
+// svt_aom_quantize_b runs over n_coeffs. It adds a trusted live bound: every
+// coefficient at or past live (a multiple of 8, 8 <= live <= count) must lie
+// below its zero bin, and those are not read (SVT's N2/N4 forward transforms
+// leave the high columns zero). iscan must put DC first (iscan[0] == 0), as
+// every AV1 scan does. When handled is false nothing has been written and the
+// caller must use QuantizeBlockScaledBEOB.
+func TryQuantizeBBlockEOBTrusted(qcoeff []int16, coeff []int32, count, live int, p *BParams, iscan []int16) (eob int, handled bool) {
 	if quantizeBBlockEOBTrustedImpl == nil {
 		return 0, false
 	}
-	return quantizeBBlockEOBTrustedImpl(qcoeff, coeff, n, cols, p, iscan)
+	return quantizeBBlockEOBTrustedImpl(qcoeff, coeff, count, live, p, iscan)
 }
 
 // quantizeBBlockEOBTrustedImpl binds the architecture's kernel; nil keeps the
 // generic path.
-var quantizeBBlockEOBTrustedImpl func(qcoeff []int16, coeff []int32, n, cols int, p *BParams, iscan []int16) (int, bool)
+var quantizeBBlockEOBTrustedImpl func(qcoeff []int16, coeff []int32, count, live int, p *BParams, iscan []int16) (int, bool)

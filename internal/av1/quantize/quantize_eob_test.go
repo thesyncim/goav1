@@ -63,18 +63,26 @@ func TestQuantizeBlockScaledBEOB(t *testing.T) {
 func TestTryQuantizeBBlockEOBTrusted(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x5eb))
 	quants := []Quantizer{{4, 4}, {120, 140}, {147, 148}, {148, 147}, {1828, 4}, {4, 1828}, {29247, 29247}, {65535, 65535}}
+	dims := [][2]int{{4, 4}, {8, 8}, {16, 16}, {32, 32}, {8, 4}, {4, 8}, {16, 8}, {8, 32}, {32, 16}, {16, 4}, {4, 16}}
 	handledCount := 0
-	for _, n := range []int{8, 16, 32} {
+	for _, d := range dims {
+		w, h := d[0], d[1]
+		count := w * h
 		for ts := uint8(0); ts <= 2; ts++ {
 			for qi, q := range quants {
 				p := testBParams(q, ts)
 				dcZ, acZ := ZeroBinB(q, ts)
 				for trial := range 24 {
-					cols := []int{n, n / 2, max(n/4, 1), 1}[trial%4]
-					coeff := make([]int32, n*n)
+					// Live column counts whose coefficients fill whole
+					// groups of eight.
+					cols := []int{w, w / 2, max(w/4, 1), 1}[trial%4]
+					if cols*h%8 != 0 {
+						cols = w
+					}
+					coeff := make([]int32, count)
 					for i := range coeff {
 						switch {
-						case i/n >= cols:
+						case i/h >= cols:
 							coeff[i] = int32(rng.Uint32()) // garbage
 						case rng.Intn(3) == 0:
 							z := []int32{acZ, dcZ}[i%2]
@@ -83,29 +91,32 @@ func TestTryQuantizeBBlockEOBTrusted(t *testing.T) {
 					}
 					edges := []int32{acZ, -acZ, acZ - 1, dcZ, -dcZ, dcZ - 1, -2147483648, 2147483647, 32767, -32768}
 					for range trial % 5 {
-						coeff[rng.Intn(cols*n)] = edges[rng.Intn(len(edges))]
+						coeff[rng.Intn(cols*h)] = edges[rng.Intn(len(edges))]
 					}
 					if trial%6 == 0 {
 						coeff[0] = []int32{dcZ, -dcZ, dcZ - 1, acZ}[trial/6%4]
 					}
-					want := make([]int16, n*n)
-					for i := range want[:cols*n] {
+					want := make([]int16, count)
+					for i := range want[:cols*h] {
 						step := q.AC
 						if i == 0 {
 							step = q.DC
 						}
 						want[i] = originalRowGroupLevel(coeff[i], step, q.DC, ts)
 					}
-					iscan := testISCAN(rng, n)
-					got := make([]int16, n*n+8)
+					iscan := make([]int16, count)
+					for i, v := range rng.Perm(count - 1) {
+						iscan[i+1] = int16(v + 1)
+					}
+					got := make([]int16, count+8)
 					for i := range got {
 						got[i] = 0x5a5a
 					}
 					before := append([]int32(nil), coeff...)
-					eob, handled := TryQuantizeBBlockEOBTrusted(got, coeff, n, cols, p, iscan)
+					eob, handled := TryQuantizeBBlockEOBTrusted(got, coeff, count, cols*h, p, iscan)
 					wantHandled := quantizeBBlockEOBTrustedImpl != nil && p.vector
 					if handled != wantHandled {
-						t.Fatalf("n=%d ts=%d q=%+v: handled=%v want %v", n, ts, q, handled, wantHandled)
+						t.Fatalf("%dx%d ts=%d q=%+v: handled=%v want %v", w, h, ts, q, handled, wantHandled)
 					}
 					if !handled {
 						for _, v := range got {
@@ -116,13 +127,13 @@ func TestTryQuantizeBBlockEOBTrusted(t *testing.T) {
 						continue
 					}
 					handledCount++
-					if !reflect.DeepEqual(got[:n*n], want) {
-						t.Fatalf("n=%d ts=%d q=%d cols=%d trial=%d: levels differ", n, ts, qi, cols, trial)
+					if !reflect.DeepEqual(got[:count], want) {
+						t.Fatalf("%dx%d ts=%d q=%d cols=%d trial=%d: levels differ", w, h, ts, qi, cols, trial)
 					}
 					if wantEOB := testEOB(want, iscan); eob != wantEOB {
-						t.Fatalf("n=%d ts=%d q=%d cols=%d: eob %d want %d", n, ts, qi, cols, eob, wantEOB)
+						t.Fatalf("%dx%d ts=%d q=%d cols=%d: eob %d want %d", w, h, ts, qi, cols, eob, wantEOB)
 					}
-					for _, v := range got[n*n:] {
+					for _, v := range got[count:] {
 						if v != 0x5a5a {
 							t.Fatal("output tail changed")
 						}
