@@ -298,6 +298,13 @@ func TestGCInvisibleScannableHeap(t *testing.T) {
 			}
 			return func() { decodeAllFrames(t, dec) }, dec.Close
 		}},
+		{"decode/workers=8", 3 << 20, func() (func(), func()) {
+			dec, err := NewDecoder(tus, WithWorkers(8))
+			if err != nil {
+				t.Fatalf("NewDecoder: %v", err)
+			}
+			return func() { decodeAllFrames(t, dec) }, dec.Close
+		}},
 		{"encode/MaxThreads=1", 2 << 20, func() (func(), func()) {
 			enc, err := NewVideoEncoder(VideoEncoderConfig{
 				Width: gcInvisibleW, Height: gcInvisibleH, TargetBitrate: 1_500_000, Framerate: 30, MaxThreads: 1,

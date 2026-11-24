@@ -483,7 +483,11 @@ func decoderFrameWorkResidualEventRunnerScratchLenPtr(sequence SequenceHeader, e
 		FrameWorkFrameContext: decoderFrameWorkResidualEventContextPtr(sequence, event),
 		Jobs:                  jobs[:plan.JobCount],
 	}
-	size, err := decoderFrameWorkBatchResidualRunnerScratchLen(batch, workers)
+	// A batch's worker index is its position in the plan (BuildBatches), so
+	// the runner needs per-worker state for the planned batches only, not for
+	// every configured worker: a single-tile stream decoded with 8 workers
+	// keeps one tile scratch per frame context instead of eight.
+	size, err := decoderFrameWorkBatchResidualRunnerScratchLen(batch, max(1, min(workers, plan.BatchCount)))
 	if err != nil {
 		return decoderFrameWorkBatchResidualRunnerScratchSize{}, internaldecoder.TileWorkPlan{}, err
 	}
