@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // The 8x8 hybrid kernels and the IDTX kernel are Go SIMD (fhybrid_idtx and
 // fdct_gosimd_net.go).
@@ -47,30 +44,46 @@ func adstInt64AsInt16(v archsimd.Int64x2) archsimd.Int16x8 {
 	return v.ToBits().ReshapeToUint16s().BitsToInt16()
 }
 
-func idtxStoreInt16x8ToInt32(base unsafe.Pointer, v archsimd.Int16x8) {
+func idtxStoreInt16x8ToInt32(dst *[8]int32, v archsimd.Int16x8) {
 	// Scale after sign extension so every int16 residual preserves its full
 	// public value range before being promoted to the coefficient type.
 	lo := v.ExtendLo4ToInt32().ShiftAllLeft(3)
 	hi := v.HiToLo().ExtendLo4ToInt32().ShiftAllLeft(3)
-	lo.StoreArray((*[4]int32)(base))
-	hi.StoreArray((*[4]int32)(unsafe.Add(base, 16)))
+	lo.StoreArray((*[4]int32)(dst[0:4]))
+	hi.StoreArray((*[4]int32)(dst[4:8]))
 }
 
 // forwardBlock8x8IDTXSIMD is the IDTX identity scale (coeff[c*stride+r]=res[r][c]<<3).
+// The encoder's 8x8 blocks are packed (both strides 8), so that shape reads
+// and writes one fixed 64-entry view of each buffer with no row checks; any
+// other stride stages its rows through a packed copy.
 func forwardBlock8x8IDTXSIMD(coeff []int32, coeffStride int, residual []int16, residualStride int, scratch []int32) {
 	_ = scratch[63]
-	// Strided rows inside the residual and coeff extents ForwardBlock and
-	// ForwardBlock8BitResidualTrusted checked (blockFits, coeffBlockFits); same shape as the residual-add rows (checked rows +9-86%).
-	rbase := unsafe.Pointer(unsafe.SliceData(residual))
-	rstep := uintptr(residualStride) * 2
-	l0 := archsimd.LoadInt16x8Array((*[8]int16)(rbase))
-	l1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*1)))
-	l2 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*2)))
-	l3 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*3)))
-	l4 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*4)))
-	l5 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*5)))
-	l6 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*6)))
-	l7 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(rbase, rstep*7)))
+	if residualStride == 8 && coeffStride == 8 {
+		forwardBlock8x8IDTXPacked((*[64]int32)(coeff[:64]), (*[64]int16)(residual[:64]))
+		return
+	}
+	var r [64]int16
+	var c [64]int32
+	for i := range 8 {
+		copy(r[i*8:i*8+8], residual[i*residualStride:i*residualStride+8])
+	}
+	forwardBlock8x8IDTXPacked(&c, &r)
+	for i := range 8 {
+		copy(coeff[i*coeffStride:i*coeffStride+8], c[i*8:i*8+8])
+	}
+}
+
+// forwardBlock8x8IDTXPacked is forwardBlock8x8IDTXSIMD on packed 8x8 blocks.
+func forwardBlock8x8IDTXPacked(coeff *[64]int32, residual *[64]int16) {
+	l0 := archsimd.LoadInt16x8Array((*[8]int16)(residual[0:8]))
+	l1 := archsimd.LoadInt16x8Array((*[8]int16)(residual[8:16]))
+	l2 := archsimd.LoadInt16x8Array((*[8]int16)(residual[16:24]))
+	l3 := archsimd.LoadInt16x8Array((*[8]int16)(residual[24:32]))
+	l4 := archsimd.LoadInt16x8Array((*[8]int16)(residual[32:40]))
+	l5 := archsimd.LoadInt16x8Array((*[8]int16)(residual[40:48]))
+	l6 := archsimd.LoadInt16x8Array((*[8]int16)(residual[48:56]))
+	l7 := archsimd.LoadInt16x8Array((*[8]int16)(residual[56:64]))
 
 	// Transpose the residual and widen the result to coeff layout on store.
 	a0 := l0.InterleaveLo(l1)
@@ -98,14 +111,12 @@ func forwardBlock8x8IDTXSIMD(coeff []int32, coeffStride int, residual []int16, r
 	o6 := adstInt64AsInt16(adstInt16AsInt64(b3).InterleaveLo(adstInt16AsInt64(b7)))
 	o7 := adstInt64AsInt16(adstInt16AsInt64(b3).InterleaveHi(adstInt16AsInt64(b7)))
 
-	obase := unsafe.Pointer(unsafe.SliceData(coeff))
-	ostep := uintptr(coeffStride) * 4
-	idtxStoreInt16x8ToInt32(obase, o0)
-	idtxStoreInt16x8ToInt32(unsafe.Add(obase, ostep*1), o1)
-	idtxStoreInt16x8ToInt32(unsafe.Add(obase, ostep*2), o2)
-	idtxStoreInt16x8ToInt32(unsafe.Add(obase, ostep*3), o3)
-	idtxStoreInt16x8ToInt32(unsafe.Add(obase, ostep*4), o4)
-	idtxStoreInt16x8ToInt32(unsafe.Add(obase, ostep*5), o5)
-	idtxStoreInt16x8ToInt32(unsafe.Add(obase, ostep*6), o6)
-	idtxStoreInt16x8ToInt32(unsafe.Add(obase, ostep*7), o7)
+	idtxStoreInt16x8ToInt32((*[8]int32)(coeff[0:8]), o0)
+	idtxStoreInt16x8ToInt32((*[8]int32)(coeff[8:16]), o1)
+	idtxStoreInt16x8ToInt32((*[8]int32)(coeff[16:24]), o2)
+	idtxStoreInt16x8ToInt32((*[8]int32)(coeff[24:32]), o3)
+	idtxStoreInt16x8ToInt32((*[8]int32)(coeff[32:40]), o4)
+	idtxStoreInt16x8ToInt32((*[8]int32)(coeff[40:48]), o5)
+	idtxStoreInt16x8ToInt32((*[8]int32)(coeff[48:56]), o6)
+	idtxStoreInt16x8ToInt32((*[8]int32)(coeff[56:64]), o7)
 }

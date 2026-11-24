@@ -83,6 +83,5 @@ internal/av1/transform/fdct4_gosimd_amd64.go
 internal/av1/transform/fdct_gosimd_arm64.go
 internal/av1/transform/fdct_gosimd_vec_amd64.go
 internal/av1/transform/fdct_gosimd_vec_arm64.go
-internal/av1/transform/fhybrid_idtx_gosimd_arm64.go
 internal/av1/transform/itx_lanes4_gosimd.go
 internal/guardpage/guardpage.go
