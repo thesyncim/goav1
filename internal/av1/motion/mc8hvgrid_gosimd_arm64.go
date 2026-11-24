@@ -31,7 +31,7 @@ func mc8H6ToI32(sg unsafeutil.Grid[uint8], w, rows int, ph *mc8Phase, im []int32
 	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
 	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
 	rnd := archsimd.BroadcastInt16x8(round)
-	sh := archsimd.BroadcastInt16x8(-2)
+	sh := archsimd.LoadInt16x8Array(&mc8Vec.sh2)
 	c := 0
 	for ; c+16 <= w; c += 16 {
 		// Two strips per pass: one 24-byte window per row, whose bytes 0..15
@@ -78,8 +78,8 @@ func mc8H6ToI32W4(sg unsafeutil.Grid[uint8], rows int, ph *mc8Phase, im []int32)
 	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
 	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
 	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
-	rnd := archsimd.BroadcastInt16x8(2)
-	sh := archsimd.BroadcastInt16x8(-2)
+	rnd := archsimd.LoadInt16x8Array(&mc8Vec.rnd2)
+	sh := archsimd.LoadInt16x8Array(&mc8Vec.sh2)
 	if !sg.Fits(0, 0, 16, rows) || !unsafeutil.GridFit(len(im), 0, 4, 4, rows) {
 		return
 	}
@@ -258,7 +258,7 @@ func mc8PutV6FromI32W4(im []int32, h int, ph *mc8Phase, dg unsafeutil.Grid[uint8
 	c3 := archsimd.LoadInt32x4Array(&ph.v[3])
 	c4 := archsimd.LoadInt32x4Array(&ph.v[4])
 	c5 := archsimd.LoadInt32x4Array(&ph.v[5])
-	rnd := archsimd.BroadcastInt32x4(1 << 15)
+	rnd := archsimd.LoadInt32x4Array(&mc8Vec.w15)
 	st := im[: (h+5)*4 : (h+5)*4]
 	head := (*[20]int32)(st[0:20])
 	x0 := archsimd.LoadInt32x4Array((*[4]int32)(head[0:4]))

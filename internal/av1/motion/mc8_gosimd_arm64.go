@@ -69,9 +69,15 @@ var mc8Phases [mc8KindCount][16]mc8Phase
 // broadcasting: a broadcast builds the value in a general register, inserts
 // it into a lane and duplicates it.
 var mc8Vec = struct {
-	rnd32, rnd34, prepRnd, sh6, sh2 [8]int16
-	w32, wsh6                       [4]int32
+	rnd32, rnd34, prepRnd, rnd2, sh6, sh2 [8]int16
+	w32, wsh6, w15                        [4]int32
+	mul16                                 [16]uint8
+	off6144                               [8]uint16
 }{
+	rnd2:    [8]int16{2, 2, 2, 2, 2, 2, 2, 2},
+	w15:     [4]int32{1 << 15, 1 << 15, 1 << 15, 1 << 15},
+	mul16:   [16]uint8{16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16},
+	off6144: [8]uint16{6144, 6144, 6144, 6144, 6144, 6144, 6144, 6144},
 	rnd32:   [8]int16{32, 32, 32, 32, 32, 32, 32, 32},
 	rnd34:   [8]int16{34, 34, 34, 34, 34, 34, 34, 34},
 	prepRnd: [8]int16{2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2},
@@ -556,32 +562,26 @@ var errMC8Window = errors.New("motion: kernel window out of range")
 // mc8PrepFast fills a w x h CONV_BUF (row stride w) with the dav1d-style prep
 // kernels. It returns false for shapes it does not cover.
 func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) bool {
-	if (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil || len(out) < w*h {
+	if (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil {
 		return false
 	}
 	kx := mc8Kind(filters.X, filterW)
 	ky := mc8Kind(filters.Y, filterH)
 	if mc8NeedsEightTaps(subX, subY, kx, ky) {
-		return w&7 == 0 && mc8Prep8Tap(out[:w*h], ref, refX, refY, w, h, subX, subY, kx, ky, scratch)
-	}
-	if !unsafeutil.GridFit(len(out), 0, w, w, h) {
-		return false
+		return w&7 == 0 && len(out) >= w*h && mc8Prep8Tap(out[:w*h], ref, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
 	// The six-tap source window (mc8Source), in place when it lies inside
-	// the plane, as in Put8.
+	// the plane, as in Put8: that case is checked in line and runs its
+	// kernel with no call before it; mc8PrepEdge takes the rest.
 	hx, hy := mc8Halo(subX), mc8Halo(subY)
 	x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
 	sOff, sw := y0*ref.Stride+x0, max(w+8, 16)
-	var sg unsafeutil.Grid[uint8]
-	if x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= ref.Width && y0+bh <= ref.Height && ref.Stride >= ref.Width &&
-		unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, sw, bh) {
-		sg = unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, sw, bh)
-	} else if g, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge); ok {
-		sg = g
-	} else {
-		return false
+	if x0 < 0 || y0 < 0 || x0+w+hx+hx+hx>>1 > ref.Width || y0+bh > ref.Height || ref.Stride < ref.Width ||
+		!unsafeutil.GridFit(len(out), 0, w, w, h) || !unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, sw, bh) {
+		return mc8PrepEdge(out, ref, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
-	og := unsafeutil.NewGrid(out, 0, w, w, h)
+	og, sg := unsafeutil.NewGrid(out, 0, w, w, h), unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, sw, bh)
+	// mc8PrepGrid written out, as in Put8.
 	switch {
 	case subX != 0 && subY != 0:
 		im := scratch.im[:]
@@ -624,6 +624,66 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 		}
 	}
 	return true
+}
+
+// mc8PrepEdge is mc8PrepFast's six-tap path for a source window that is not
+// inside the plane (or views that do not fit): the window from mc8Source,
+// which clamps it.
+func mc8PrepEdge(out []uint16, ref *frame.Plane, refX, refY, w, h, subX, subY, kx, ky int, scratch *CompoundConvolveScratch) bool {
+	if !unsafeutil.GridFit(len(out), 0, w, w, h) {
+		return false
+	}
+	sg, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge)
+	if !ok {
+		return false
+	}
+	mc8PrepGrid(out, unsafeutil.NewGrid(out, 0, w, w, h), sg, w, h, subX, subY, &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15], scratch)
+	return true
+}
+
+// mc8PrepGrid runs the six-tap prep kernel of a validated block (w 4 or a
+// multiple of 8): og is the w x h CONV_BUF view of out, sg the source window
+// (mc8Source).
+func mc8PrepGrid(out []uint16, og unsafeutil.Grid[uint16], sg unsafeutil.Grid[uint8], w, h, subX, subY int, phx, phy *mc8Phase, scratch *CompoundConvolveScratch) {
+	switch {
+	case subX != 0 && subY != 0:
+		im := scratch.im[:]
+		if w == 4 {
+			mc8H6ToI32W4(sg, h+5, phx, im)
+			mc8PrepV6FromI32W4(im, h, phy, out[:4*h], mc8PrepV6Rnd)
+		} else {
+			mc8H6ToI32(sg, w, h+5, phx, im, 2)
+			mc8PrepV6FromI32S(im, w, h, phy, og, mc8PrepV6Rnd)
+		}
+	case subX != 0:
+		switch {
+		case w == 4:
+			mc8PrepH6S4(sg, phx, og)
+		case w == 8:
+			mc8PrepH6S8(sg, phx, og)
+		case w&15 == 0:
+			mc8PrepH6W16(sg, phx, og)
+		default:
+			mc8PrepH6Split(sg, phx, og)
+		}
+	case subY != 0:
+		switch {
+		case w == 4:
+			mc8PrepV6S4(sg, phy, og)
+		case w == 8:
+			mc8PrepV6S8(sg, phy, og)
+		case w&15 == 0:
+			mc8PrepV6W16(sg, phy, og)
+		default:
+			mc8PrepV6Split(sg, phy, og)
+		}
+	default:
+		if w == 8 {
+			mc8PrepCopyW8(sg, out, h)
+		} else {
+			mc8PrepCopy(sg, og)
+		}
+	}
 }
 
 // mc8LoadWiden widens the 16 bytes of p to two uint16 vectors, returned as
