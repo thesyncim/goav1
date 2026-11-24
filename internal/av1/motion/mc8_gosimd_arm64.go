@@ -162,6 +162,9 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 	if subX|subY == 0 {
 		return mc8CopyFast(dst, ref, dstX, dstY, refX, refY, w, h)
 	}
+	if w == 2 {
+		return mc8PutW2(dst, ref, dstX, dstY, refX, refY, h, filterW, filterH, subX, subY, filters, scratch)
+	}
 	if (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil {
 		return false
 	}
@@ -208,6 +211,56 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 	}
 	return true
 }
+
+// mc8PutW2 is Put8 at width 2, dav1d's put_8tap w2 for the sub-8x8 chroma
+// blocks of recon_b_inter: the width-4 kernels filter into a local block of
+// 4-byte rows whose first two columns are copied out, so nothing past the
+// block is written. Output columns 0 and 1 read only the taps a 2-wide filter
+// reads; mc8Source sizes the window for the 4-wide kernels, and any taps it
+// edge-extends past the plane feed only the discarded columns.
+func mc8PutW2(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *ConvolveScratch) bool {
+	if h <= 0 || h > mc8W2MaxH || scratch == nil {
+		return false
+	}
+	kx := mc8Kind(filters.X, filterW)
+	ky := mc8Kind(filters.Y, filterH)
+	if mc8NeedsEightTaps(subX, subY, kx, ky) {
+		return false
+	}
+	if dstX < 0 || dstY < 0 || dstX+2 > dst.Width || dstY+h > dst.Height || dst.Stride < dst.Width {
+		return false
+	}
+	dOff := dstY*dst.Stride + dstX
+	if dOff+(h-1)*dst.Stride+2 > len(dst.Pix) {
+		return false
+	}
+	src, stride, ok := mc8Source(ref, refX, refY, 4, h, subX != 0, subY != 0, &scratch.edge)
+	if !ok {
+		return false
+	}
+	var tmp [4 * mc8W2MaxH]byte
+	t := unsafe.Pointer(&tmp[0])
+	switch {
+	case subX != 0 && subY != 0:
+		im := unsafe.Pointer(&scratch.imHBD[0])
+		mc8H6ToI32W4(src, stride, h+5, &mc8Phases[kx][subX], im)
+		mc8PutV6FromI32W4(im, h, &mc8Phases[ky][subY], t, 4)
+	case subX != 0:
+		mc8PutH6W4(src, stride, h, &mc8Phases[kx][subX], t, 4)
+	default:
+		mc8PutV6W4(src, stride, h, &mc8Phases[ky][subY], t, 4)
+	}
+	rows := dst.Pix[dOff : dOff+(h-1)*dst.Stride+2]
+	for r := 0; r < h; r++ {
+		row := rows[r*dst.Stride : r*dst.Stride+2]
+		row[0], row[1] = tmp[4*r], tmp[4*r+1]
+	}
+	return true
+}
+
+// mc8W2MaxH bounds mc8PutW2's block height: a 2-wide chroma block comes from
+// a 4-wide luma block, at most 4x16 (2x16 under 4:2:2).
+const mc8W2MaxH = 16
 
 // mc8CopyFast is the put copy (dav1d put_neon) for an in-plane w x h 8-bit
 // block with w a multiple of 4: vector rows instead of one memmove per row.
