@@ -8,7 +8,6 @@ package motion
 
 import (
 	"simd/archsimd"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
@@ -126,13 +125,13 @@ func convolveX8HalfResident(ctx *convolve8GoSIMDCtx) {
 	round4 := archsimd.BroadcastInt16x8(8)
 	right2 := archsimd.BroadcastInt16x8(-2)
 	right4 := archsimd.BroadcastInt16x8(-4)
-	// Strided rows inside the len(ctx.ref) >= need extent the dispatching kernel
-	// checked; same shape as the residual-add rows (checked rows +9-86%).
-	base := unsafe.Pointer(unsafe.SliceData(ctx.ref))
+	// Each row is a width+8 byte window of the len(ctx.ref) >= need extent the
+	// dispatching kernel checked; the loop bound proves each 16-byte load.
 	for y := range ctx.height {
 		dst := ctx.dst[y*ctx.dstStr:]
-		for x := 0; x < ctx.width; x += 8 {
-			a := archsimd.LoadUint8x16((*[16]byte)(unsafe.Add(base, y*ctx.refStr+x))[:])
+		src := ctx.ref[y*ctx.refStr:][: ctx.width+8 : ctx.width+8]
+		for x := 0; x <= len(src)-16; x += 8 {
+			a := archsimd.LoadUint8x16Array((*[16]byte)(src[x : x+16]))
 			sum := u8HalfMAC(a.ExtendLo8ToUint16().BitsToInt16(), c0, round3)
 			sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 1).ExtendLo8ToUint16().BitsToInt16(), c1, sum)
 			sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 2).ExtendLo8ToUint16().BitsToInt16(), c2, sum)
@@ -154,7 +153,7 @@ func convolveY8HalfKernel(ctx *convolve8GoSIMDCtx, taps *hbdTaps16) {
 	// The resident fast path loads 16 bytes for each eight output columns.
 	// Its final load is checked once here; exact-minimum slices use the safe
 	// staged-load path below.
-	need := (ctx.height+ctx.tapsY-2)*ctx.refStr + ctx.width + 8
+	need := (ctx.height+u8LoadedTaps(ctx.tapsY)-2)*ctx.refStr + ctx.width + 8
 	if ctx.width%8 == 0 && ctx.refStr > 0 && need >= 0 && len(ctx.ref) >= need {
 		convolveY8HalfResident(ctx)
 		return
@@ -192,12 +191,12 @@ func convolveY8HalfResident(ctx *convolve8GoSIMDCtx) {
 	c7 := archsimd.BroadcastInt16x8(ctx.kernel[7] / 2)
 	round := archsimd.BroadcastInt16x8(32)
 	right6 := archsimd.BroadcastInt16x8(-6)
-	// Strided rows inside the len(ctx.ref) >= need extent the dispatching kernel
-	// checked; same shape as the residual-add rows (checked rows +9-86%).
-	base := unsafe.Pointer(unsafe.SliceData(ctx.ref))
+	// Each tap row is a 16-byte window of the len(ctx.ref) >= need extent the
+	// dispatching kernel checked.
+	ref := ctx.ref
 	step := ctx.refStr
 	load := func(off int) archsimd.Int16x8 {
-		return archsimd.LoadUint8x16((*[16]byte)(unsafe.Add(base, off))[:]).ExtendLo8ToUint16().BitsToInt16()
+		return archsimd.LoadUint8x16Array((*[16]byte)(ref[off : off+16])).ExtendLo8ToUint16().BitsToInt16()
 	}
 	for y := range ctx.height {
 		dst := ctx.dst[y*ctx.dstStr:]
@@ -218,6 +217,18 @@ func convolveY8HalfResident(ctx *convolve8GoSIMDCtx) {
 			u8StoreHalf8(dst[x:], u8Right16(sum, right6, 6))
 		}
 	}
+}
+
+// u8LoadedTaps is the number of rows a resident vertical kernel loads for a
+// trimmed span of n taps: its tap chains run in groups of 4, 6 or 8.
+func u8LoadedTaps(n int) int {
+	switch {
+	case n <= 4:
+		return 4
+	case n <= 6:
+		return 6
+	}
+	return 8
 }
 
 // convolveX8Kernel is the 1D horizontal 8-bit convolve: clip(round4(round3(sum))).
@@ -358,11 +369,10 @@ func convolve2D8HalfKernel(ctx *convolve8GoSIMDCtx, im []int16, xTaps *hbdTaps16
 			}
 		}
 	}
-	// im rows (stride maxBlockSize) inside the height+taps-1 rows the wrapper
-	// supplies; same shape as the residual-add rows (checked rows +9-86%).
-	imBase := unsafe.Pointer(unsafe.SliceData(im))
+	// im rows (stride maxBlockSize): the height+taps-1 rows the wrapper supplies.
 	load := func(y, x int) archsimd.Int16x8 {
-		return archsimd.LoadInt16x8((*[8]int16)(unsafe.Add(imBase, (y*maxBlockSize+x)*2))[:])
+		o := y*maxBlockSize + x
+		return archsimd.LoadInt16x8Array((*[8]int16)(im[o : o+8]))
 	}
 	for y := range ctx.height {
 		dst := ctx.dst[y*ctx.dstStr:]
@@ -412,13 +422,13 @@ func u8HorizontalHalfIMResident(ctx *convolve8GoSIMDCtx, im []int16) {
 	c7 := archsimd.BroadcastInt16x8(ctx.xKern[7] / 2)
 	xRound := archsimd.BroadcastInt16x8(8194)
 	right2 := archsimd.BroadcastInt16x8(-2)
-	// Strided rows inside the len(ctx.ref) >= need extent the dispatching kernel
-	// checked; same shape as the residual-add rows (checked rows +9-86%).
-	base := unsafe.Pointer(unsafe.SliceData(ctx.ref))
+	// Each row is a width+8 byte window of the len(ctx.ref) >= need extent the
+	// dispatching kernel checked; the loop bound proves each 16-byte load.
 	for y := 0; y < ctx.height+ctx.tapsY-1; y++ {
 		row := im[y*maxBlockSize:]
-		for x := 0; x < ctx.width; x += 8 {
-			a := archsimd.LoadUint8x16((*[16]byte)(unsafe.Add(base, y*ctx.refStr+x))[:])
+		src := ctx.ref[y*ctx.refStr:][: ctx.width+8 : ctx.width+8]
+		for x := 0; x <= len(src)-16; x += 8 {
+			a := archsimd.LoadUint8x16Array((*[16]byte)(src[x : x+16]))
 			sum := u8HalfMAC(a.ExtendLo8ToUint16().BitsToInt16(), c0, xRound)
 			sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 1).ExtendLo8ToUint16().BitsToInt16(), c1, sum)
 			sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 2).ExtendLo8ToUint16().BitsToInt16(), c2, sum)
