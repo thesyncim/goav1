@@ -12,6 +12,9 @@ env.sh.
   single-thread decodes (GOMAXPROCS=1 -workers 1, /usr/bin/time -l).
 - abenc.sh bitrate runs binA binB: the same for encbench 720p.
 - ident.sh base new: encoder IVF byte-identity at 0.5/1/2 Mbps and
-  1 Mbps -threads 4.
+  1 Mbps -threads 4. Exit 1 on a DIFF; exit 2 (FAIL, with the command and
+  its stderr) when an encode fails, so a crashed run is never read as a
+  DIFF. Outputs go to a per-run directory, so concurrent runs sharing
+  ITX_WORK do not overwrite each other's streams.
 - realgate.sh bin [workers]: MD5 of every realcorpus stream (incl. aq0)
   against its dav1d .md5.
