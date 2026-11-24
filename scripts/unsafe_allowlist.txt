@@ -47,11 +47,6 @@ internal/av1/loopfilter/sb_u16_amd64.go
 internal/av1/loopfilter/sb_u16_arm64.go
 internal/av1/loopfilter/sb_u8_amd64.go
 internal/av1/loopfilter/sb_u8_arm64.go
-internal/av1/motion/compound8_gosimd.go
-internal/av1/motion/convolve8_gosimd.go
-internal/av1/motion/convolve_scale_step2_arch_gosimd_amd64.go
-internal/av1/motion/convolve_scale_step2_arch_gosimd_arm64.go
-internal/av1/motion/convolve_scale_step2_gosimd.go
 internal/av1/motion/mc16_gosimd_arm64.go
 internal/av1/motion/mc16copy_gosimd_arm64.go
 internal/av1/motion/mc16mask_gosimd_arm64.go

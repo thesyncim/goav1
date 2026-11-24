@@ -8,7 +8,6 @@ package motion
 
 import (
 	"simd/archsimd"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
@@ -56,10 +55,12 @@ func convolveScale2D8Step2GoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dst
 		coef[t] = archsimd.LoadInt16x8(c[:])
 	}
 	im := imBuf[:]
-	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
-	base := unsafe.Pointer(unsafe.SliceData(ref.Pix))
+	// Each source row is a window of the extent checked above: the
+	// (w8-8)/2+16 bytes from xi0 the eight-column loads read.
+	rowLen := (w8-8)/2 + 16
 	for y := range imH {
-		scaledStep2HorizontalRow(unsafe.Add(base, (startRow+y)*ref.Stride+xi0), w8, odd, &coef, im[y*maxBlockSize:])
+		o := (startRow+y)*ref.Stride + xi0
+		scaledStep2HorizontalRow(ref.Pix[o:o+rowLen], w8, odd, &coef, im[y*maxBlockSize:])
 	}
 
 	baseY := int(scaledIntFloor(startY))
@@ -68,9 +69,9 @@ func convolveScale2D8Step2GoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dst
 	rndOff := archsimd.BroadcastInt32x4(convolve8RoundOffset)
 	zero := archsimd.BroadcastInt32x4(0)
 	maxV := archsimd.BroadcastInt32x4(255)
-	imBase := unsafe.Pointer(unsafe.SliceData(im))
 	load := func(y, x int) archsimd.Int16x8 {
-		return archsimd.LoadInt16x8((*[8]int16)(unsafe.Add(imBase, (y*maxBlockSize+x)*2))[:])
+		o := y*maxBlockSize + x
+		return archsimd.LoadInt16x8Array((*[8]int16)(im[o : o+8]))
 	}
 	yPos := startY
 	for y := range height {

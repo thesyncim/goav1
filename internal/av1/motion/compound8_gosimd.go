@@ -8,7 +8,6 @@ package motion
 
 import (
 	"simd/archsimd"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
@@ -233,13 +232,13 @@ func compoundX8HalfResident(ctx *compoundFilterGoSIMDCtx) {
 	round := archsimd.BroadcastInt16x8(2)
 	right2 := archsimd.BroadcastInt16x8(-2)
 	off := archsimd.BroadcastUint16x8(uint16(ctx.roundOffset))
-	// Strided rows inside the len(ctx.ref) >= need extent the dispatching kernel
-	// checked; same shape as the residual-add rows (checked rows +9-86%).
-	base := unsafe.Pointer(unsafe.SliceData(ctx.ref))
+	// Each row is a width+8 byte window of the len(ctx.ref) >= need extent the
+	// dispatching kernel checked; the loop bound proves each 16-byte load.
 	for y := range ctx.height {
 		out := ctx.out[y*ctx.width:]
-		for x := 0; x < ctx.width; x += 8 {
-			a := archsimd.LoadUint8x16((*[16]byte)(unsafe.Add(base, y*ctx.refStr+x))[:])
+		src := ctx.ref[y*ctx.refStr:][: ctx.width+8 : ctx.width+8]
+		for x := 0; x <= len(src)-16; x += 8 {
+			a := archsimd.LoadUint8x16Array((*[16]byte)(src[x : x+16]))
 			sum := u8HalfMAC(a.ExtendLo8ToUint16().BitsToInt16(), c0, round)
 			sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 1).ExtendLo8ToUint16().BitsToInt16(), c1, sum)
 			sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 2).ExtendLo8ToUint16().BitsToInt16(), c2, sum)
@@ -293,7 +292,7 @@ func compoundY8Kernel(ctx *compoundFilterGoSIMDCtx) {
 
 func compoundY8HalfKernel(ctx *compoundFilterGoSIMDCtx, taps *hbdTaps16) {
 	width, height, n := ctx.width, ctx.height, ctx.taps
-	need := (height+n-2)*ctx.refStr + width + 8
+	need := (height+u8LoadedTaps(n)-2)*ctx.refStr + width + 8
 	if width%8 == 0 && ctx.refStr > 0 && need >= 0 && len(ctx.ref) >= need {
 		compoundY8HalfResident(ctx)
 		return
@@ -332,12 +331,12 @@ func compoundY8HalfResident(ctx *compoundFilterGoSIMDCtx) {
 	round := archsimd.BroadcastInt16x8(2)
 	right2 := archsimd.BroadcastInt16x8(-2)
 	off := archsimd.BroadcastUint16x8(uint16(ctx.roundOffset))
-	// Strided rows inside the len(ctx.ref) >= need extent the dispatching kernel
-	// checked; same shape as the residual-add rows (checked rows +9-86%).
-	base := unsafe.Pointer(unsafe.SliceData(ctx.ref))
+	// Each tap row is a 16-byte window of the len(ctx.ref) >= need extent the
+	// dispatching kernel checked.
+	ref := ctx.ref
 	step := ctx.refStr
 	load := func(offset int) archsimd.Int16x8 {
-		return archsimd.LoadUint8x16((*[16]byte)(unsafe.Add(base, offset))[:]).ExtendLo8ToUint16().BitsToInt16()
+		return archsimd.LoadUint8x16Array((*[16]byte)(ref[offset : offset+16])).ExtendLo8ToUint16().BitsToInt16()
 	}
 	for y := range ctx.height {
 		out := ctx.out[y*ctx.width:]
@@ -415,11 +414,10 @@ func compound2D8HalfKernel(ctx *compound2DGoSIMDCtx, im []int16, xTaps *hbdTaps1
 	c7 := archsimd.BroadcastInt16x8(ctx.kernel[7])
 	yRound := archsimd.BroadcastInt32x4(int32(ctx.yBias) + 64)
 	right7 := archsimd.BroadcastInt32x4(-7)
-	// im rows (stride maxBlockSize) inside the height+taps-1 rows the wrapper
-	// supplies; same shape as the residual-add rows (checked rows +9-86%).
-	imBase := unsafe.Pointer(unsafe.SliceData(im))
+	// im rows (stride maxBlockSize): the height+taps-1 rows the wrapper supplies.
 	load := func(y, x int) archsimd.Int16x8 {
-		return archsimd.LoadInt16x8((*[8]int16)(unsafe.Add(imBase, (y*maxBlockSize+x)*2))[:])
+		o := y*maxBlockSize + x
+		return archsimd.LoadInt16x8Array((*[8]int16)(im[o : o+8]))
 	}
 	for y := range ctx.height {
 		out := ctx.out[y*ctx.width:]
