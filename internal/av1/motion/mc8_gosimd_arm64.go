@@ -191,7 +191,14 @@ func mc8Source(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEd
 // caller then runs the general path.
 func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *ConvolveScratch) bool {
 	if subX|subY == 0 {
-		return mc8CopyFast(dst, ref, dstX, dstY, refX, refY, w, h)
+		// mc8CopyFast written out for the power-of-two widths (every AV1
+		// block width): one call, CopyRect's.
+		if w&(w-1) != 0 || w&3 != 0 || w > maxBlockSize || h <= 0 ||
+			dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < dst.Width ||
+			refX < 0 || refY < 0 || refX+w > ref.Width || refY+h > ref.Height || ref.Stride < ref.Width {
+			return mc8CopyFast(dst, ref, dstX, dstY, refX, refY, w, h)
+		}
+		return unsafeutil.CopyRect(dst.Pix, dstY*dst.Stride+dstX, dst.Stride, ref.Pix, refY*ref.Stride+refX, ref.Stride, w, h)
 	}
 	if w == 2 {
 		return mc8PutW2(dst, ref, dstX, dstY, refX, refY, h, filterW, filterH, subX, subY, filters, scratch)
