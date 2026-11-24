@@ -121,13 +121,13 @@ var mc8KindTab = [2][interpFilterCount]uint8{
 
 // mc8Source resolves the six-tap source window of a w x h block whose
 // first output sample reads ref at (refX, refY). halo selects the filtered
-// axes. The window is returned as a slice from its top-left tap sample plus a
-// stride; when any tap falls outside the plane the clamped window is first
-// materialized in edge (dav1d src/recon_tmpl.c mc() emu_edge). Every kernel
-// loads 16 bytes per eight output columns, so the window stays readable
-// for max(w+8, 16) bytes from its left edge on every row. ok is false only when the
-// reference plane itself is unusable.
-func mc8Source(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEdgeStride * emuEdgeRows]byte) (src []byte, stride int, ok bool) {
+// axes. The window is returned as a Grid view from its top-left tap sample:
+// bh rows (h, plus 5 on a filtered vertical axis) of max(w+8, 16) bytes, the
+// bytes every kernel may load (16 per eight output columns). When any tap
+// falls outside the plane the clamped window is first materialized in edge
+// (dav1d src/recon_tmpl.c mc() emu_edge). ok is false only when the reference
+// plane itself is unusable.
+func mc8Source(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEdgeStride * emuEdgeRows]byte) (src unsafeutil.Grid[uint8], ok bool) {
 	x0, y0, bw, bh := refX, refY, w, h
 	if hx {
 		x0 -= 2
@@ -138,22 +138,25 @@ func mc8Source(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEd
 		bh += 5
 	}
 	if ref.Width <= 0 || ref.Height <= 0 || ref.Stride < ref.Width {
-		return nil, 0, false
+		return src, false
 	}
+	sw := max(w+8, 16)
 	if x0 >= 0 && y0 >= 0 && x0+bw <= ref.Width && y0+bh <= ref.Height {
 		start := y0*ref.Stride + x0
-		ext := (bh-1)*ref.Stride + max(w+8, 16)
-		if start+ext <= len(ref.Pix) && ext <= mc8WindowMax {
-			return ref.Pix[start : start+ext], ref.Stride, true
+		if unsafeutil.GridFit(len(ref.Pix), start, ref.Stride, sw, bh) {
+			return unsafeutil.NewGrid(ref.Pix, start, ref.Stride, sw, bh), true
 		}
 	}
 	if len(ref.Pix) < (ref.Height-1)*ref.Stride+ref.Width {
-		return nil, 0, false
+		return src, false
 	}
 	// The edge window holds 135 rows of 136 bytes; bh <= 133 and the
 	// kernels read at most max(w+8, 16) <= 136 bytes per row.
 	emuEdge8(bw, bh, *ref, x0, y0, edge[:], emuEdgeStride)
-	return edge[:], emuEdgeStride, true
+	if !unsafeutil.GridFit(len(edge), 0, emuEdgeStride, sw, bh) {
+		return src, false
+	}
+	return unsafeutil.NewGrid(edge[:], 0, emuEdgeStride, sw, bh), true
 }
 
 // Put8 is dav1d's mc() put for an unscaled 8-bit single-reference block:
@@ -176,7 +179,7 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 	if mc8NeedsEightTaps(subX, subY, kx, ky) {
 		return w&7 == 0 && mc8Put8TapChecked(dst, ref, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
-	dOff, dExt, ok := mc8DstWindow(dst, dstX, dstY, w, h)
+	dg, ok := mc8DstGrid(dst, dstX, dstY, w, h)
 	if !ok {
 		return false
 	}
@@ -184,33 +187,48 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 	// the plane: halo 2 before and 3 after each sample on a filtered axis.
 	hx, hy := mc8Halo(subX), mc8Halo(subY)
 	x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
-	sOff, sExt := y0*ref.Stride+x0, (bh-1)*ref.Stride+max(w+8, 16)
-	var src []byte
-	stride := ref.Stride
+	sOff, sw := y0*ref.Stride+x0, max(w+8, 16)
+	var sg unsafeutil.Grid[uint8]
 	if x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= ref.Width && y0+bh <= ref.Height && ref.Stride >= ref.Width &&
-		sOff+sExt <= len(ref.Pix) && sExt <= mc8WindowMax {
-		src = ref.Pix[sOff : sOff+sExt]
-	} else if src, stride, ok = mc8SourceEdge(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge); !ok {
+		unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, sw, bh) {
+		sg = unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, sw, bh)
+	} else if sg, ok = mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge); !ok {
 		return false
 	}
-	// mc8PutRun written out: one call level less for the single-pass kernels.
-	d, ds := dst.Pix[dOff:dOff+dExt], dst.Stride
+	// mc8PutGrid written out: one call level less for the common kernels.
 	phx, phy := &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15]
-	if w == 4 {
-		mc8PutRun(d, ds, src, stride, w, h, subX, subY, phx, phy, scratch)
-		return true
-	}
 	switch {
 	case subX != 0 && subY != 0:
 		im := scratch.imHBD[:]
-		mc8H6ToI32(src, stride, w, h+5, phx, im, mc8PutH6ToI32Rnd)
-		mc8PutV6FromI32(im, w, h, phy, d, ds)
+		if w == 4 {
+			mc8H6ToI32W4(sg, h+5, phx, im)
+			mc8PutV6FromI32W4(im, h, phy, dg)
+		} else {
+			mc8H6ToI32(sg, w, h+5, phx, im, mc8PutH6ToI32Rnd)
+			mc8PutV6FromI32(im, w, h, phy, dg)
+		}
 	case subX != 0:
-		mc8PutH6(src, stride, w, h, phx, d, ds)
-	case w&15 == 0:
-		mc8PutV6W16(src, uint32(stride), w, h, phy, d, uint32(ds))
+		switch {
+		case w == 4:
+			mc8PutH6S4(sg, phx, dg)
+		case w == 8:
+			mc8PutH6S8(sg, phx, dg)
+		case w&15 == 0:
+			mc8PutH6W16(sg, phx, dg)
+		default:
+			mc8PutH6Split(sg, phx, dg)
+		}
 	default:
-		mc8PutV6(src, stride, w, h, phy, d, ds)
+		switch {
+		case w == 4:
+			mc8PutV6S4(sg, phy, dg)
+		case w == 8:
+			mc8PutV6S8(sg, phy, dg)
+		case w&15 == 0:
+			mc8PutV6W16(sg, phy, dg)
+		default:
+			mc8PutV6Split(sg, phy, dg)
+		}
 	}
 	return true
 }
@@ -242,8 +260,8 @@ func Put8UV(dstU, dstV, refU, refV *frame.Plane, dstX, dstY, refX, refY, w, h, f
 			refX < 0 || refY < 0 || refX+w > refU.Width || refY+h > refU.Height || refU.Stride < refU.Width {
 			return false
 		}
-		// The planes of each pair share their geometry, so the V copy fits
-		// exactly when the U copy does.
+		// The planes of each pair share their geometry, so the V views fit
+		// exactly when the U views do.
 		dOff, sOff := dstY*dstU.Stride+dstX, refY*refU.Stride+refX
 		if !unsafeutil.GridFit(len(dstU.Pix), dOff, dstU.Stride, w, h) || !unsafeutil.GridFit(len(refU.Pix), sOff, refU.Stride, w, h) {
 			return false
@@ -264,80 +282,45 @@ func Put8UV(dstU, dstV, refU, refV *frame.Plane, dstX, dstY, refX, refY, w, h, f
 		return w&7 == 0 && mc8Put8TapChecked(dstU, refU, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch) &&
 			mc8Put8TapChecked(dstV, refV, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
-	dOff, dExt, ok := mc8DstWindow(dstU, dstX, dstY, w, h)
-	if !ok {
+	dOff := dstY*dstU.Stride + dstX
+	if dstX < 0 || dstY < 0 || dstX+w > dstU.Width || dstY+h > dstU.Height || dstU.Stride < dstU.Width ||
+		!unsafeutil.GridFit(len(dstU.Pix), dOff, dstU.Stride, w, h) {
 		return false
 	}
-	ds := dstU.Stride
 	phx, phy := &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15]
 	// The source window: in-plane for both planes at once, or each plane's
 	// clamped window materialized in turn in the shared edge buffer.
 	hx, hy := mc8Halo(subX), mc8Halo(subY)
 	x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
-	sOff, sExt := y0*refU.Stride+x0, (bh-1)*refU.Stride+max(w+8, 16)
+	sOff, sw := y0*refU.Stride+x0, max(w+8, 16)
 	inPlane := x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= refU.Width && y0+bh <= refU.Height && refU.Stride >= refU.Width &&
-		sOff+sExt <= len(refU.Pix) && sExt <= mc8WindowMax
+		unsafeutil.GridFit(len(refU.Pix), sOff, refU.Stride, sw, bh)
 	for p := 0; p < 2; p++ {
 		dst, ref := dstU, refU
 		if p == 1 {
 			dst, ref = dstV, refV
 		}
-		var src []byte
-		stride := ref.Stride
+		var sg unsafeutil.Grid[uint8]
+		ok := true
 		if inPlane {
-			src = ref.Pix[sOff : sOff+sExt]
-		} else if src, stride, ok = mc8SourceEdge(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge); !ok {
+			sg = unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, sw, bh)
+		} else if sg, ok = mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge); !ok {
 			return false
 		}
-		mc8PutRun(dst.Pix[dOff:dOff+dExt], ds, src, stride, w, h, subX, subY, phx, phy, scratch)
+		mc8PutGrid(unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, w, h), sg, w, h, subX, subY, phx, phy, scratch)
 	}
 	return true
 }
 
-// mc8DstWindow is Put8's destination check: the offset and extent of the
-// w x h block at (x, y) inside dst.
-func mc8DstWindow(dst *frame.Plane, x, y, w, h int) (off, ext int, ok bool) {
-	if x < 0 || y < 0 || x+w > dst.Width || y+h > dst.Height || dst.Stride < dst.Width {
-		return 0, 0, false
+// mc8DstGrid is Put8's destination check: the w x h block at (x, y) of dst as
+// a Grid view.
+func mc8DstGrid(dst *frame.Plane, x, y, w, h int) (unsafeutil.Grid[uint8], bool) {
+	off := y*dst.Stride + x
+	if x < 0 || y < 0 || x+w > dst.Width || y+h > dst.Height || dst.Stride < dst.Width ||
+		!unsafeutil.GridFit(len(dst.Pix), off, dst.Stride, w, h) {
+		return unsafeutil.Grid[uint8]{}, false
 	}
-	off = y*dst.Stride + x
-	ext = (h-1)*dst.Stride + w
-	if off+ext > len(dst.Pix) || ext > mc8WindowMax {
-		return 0, 0, false
-	}
-	return off, ext, true
-}
-
-// mc8SourceEdge is mc8Source's clamped path: it materializes the six-tap
-// source window in edge (dav1d emu_edge). ok is false only when the
-// reference plane itself is unusable.
-func mc8SourceEdge(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEdgeStride * emuEdgeRows]byte) (src []byte, stride int, ok bool) {
-	x0, y0, bw, bh := refX, refY, w, h
-	if hx {
-		x0 -= 2
-		bw += 5
-	}
-	if hy {
-		y0 -= 2
-		bh += 5
-	}
-	if ref.Width <= 0 || ref.Height <= 0 || ref.Stride < ref.Width {
-		return nil, 0, false
-	}
-	if x0 >= 0 && y0 >= 0 && x0+bw <= ref.Width && y0+bh <= ref.Height {
-		start := y0*ref.Stride + x0
-		ext := (bh-1)*ref.Stride + max(w+8, 16)
-		if start+ext <= len(ref.Pix) && ext <= mc8WindowMax {
-			return ref.Pix[start : start+ext], ref.Stride, true
-		}
-	}
-	if len(ref.Pix) < (ref.Height-1)*ref.Stride+ref.Width {
-		return nil, 0, false
-	}
-	// The edge window holds 135 rows of 136 bytes; bh <= 133 and the
-	// kernels read at most max(w+8, 16) <= 136 bytes per row.
-	emuEdge8(bw, bh, *ref, x0, y0, edge[:], emuEdgeStride)
-	return edge[:], emuEdgeStride, true
+	return unsafeutil.NewGrid(dst.Pix, off, dst.Stride, w, h), true
 }
 
 // mc8Halo is the source window halo of an axis: 2 when its phase is nonzero.
@@ -348,35 +331,77 @@ func mc8Halo(sub int) int {
 	return 0
 }
 
-// mc8PutRun runs the six-tap put kernel of a validated block (w 4 or a
-// multiple of 8, a nonzero phase on some axis): d is the destination window
-// at stride ds, src the source window at stride ss.
-func mc8PutRun(d []byte, ds int, src []byte, ss, w, h, subX, subY int, phx, phy *mc8Phase, scratch *ConvolveScratch) {
-	if w == 4 {
-		switch {
-		case subX != 0 && subY != 0:
-			im := scratch.imHBD[:]
-			mc8H6ToI32W4(src, ss, h+5, phx, im)
-			mc8PutV6FromI32W4(im, h, phy, d, ds)
-		case subX != 0:
-			mc8PutH6W4(src, ss, h, phx, d, ds)
-		default:
-			mc8PutV6W4(src, ss, h, phy, d, ds)
-		}
-		return
-	}
+// mc8PutGrid runs the six-tap put kernel of a validated block (w 4 or a
+// multiple of 8, a nonzero phase on some axis): dg is the w x h destination,
+// sg the source window (mc8Source).
+func mc8PutGrid(dg, sg unsafeutil.Grid[uint8], w, h, subX, subY int, phx, phy *mc8Phase, scratch *ConvolveScratch) {
 	switch {
 	case subX != 0 && subY != 0:
 		im := scratch.imHBD[:]
-		mc8H6ToI32(src, ss, w, h+5, phx, im, mc8PutH6ToI32Rnd)
-		mc8PutV6FromI32(im, w, h, phy, d, ds)
+		if w == 4 {
+			mc8H6ToI32W4(sg, h+5, phx, im)
+			mc8PutV6FromI32W4(im, h, phy, dg)
+		} else {
+			mc8H6ToI32(sg, w, h+5, phx, im, mc8PutH6ToI32Rnd)
+			mc8PutV6FromI32(im, w, h, phy, dg)
+		}
 	case subX != 0:
-		mc8PutH6(src, ss, w, h, phx, d, ds)
-	case w&15 == 0:
-		mc8PutV6W16(src, uint32(ss), w, h, phy, d, uint32(ds))
+		switch {
+		case w == 4:
+			mc8PutH6S4(sg, phx, dg)
+		case w == 8:
+			mc8PutH6S8(sg, phx, dg)
+		case w&15 == 0:
+			mc8PutH6W16(sg, phx, dg)
+		default:
+			mc8PutH6Split(sg, phx, dg)
+		}
 	default:
-		mc8PutV6(src, ss, w, h, phy, d, ds)
+		switch {
+		case w == 4:
+			mc8PutV6S4(sg, phy, dg)
+		case w == 8:
+			mc8PutV6S8(sg, phy, dg)
+		case w&15 == 0:
+			mc8PutV6W16(sg, phy, dg)
+		default:
+			mc8PutV6Split(sg, phy, dg)
+		}
 	}
+}
+
+// mc8PutH6Split is the put horizontal pass of a block 16k+8 wide (no AV1
+// block is; the kernels allow it): the sixteen-column strips, then the last
+// eight columns.
+func mc8PutH6Split(sg unsafeutil.Grid[uint8], ph *mc8Phase, dg unsafeutil.Grid[uint8]) {
+	w, h := dg.Width(), dg.Height()
+	w16 := w &^ 15
+	mc8PutH6W16(sg, ph, dg.Sub(0, 0, w16, h))
+	mc8PutH6S8(sg.Sub(0, w16, 16, h), ph, dg.Sub(0, w16, 8, h))
+}
+
+// mc8PutV6Split is mc8PutH6Split for the vertical pass.
+func mc8PutV6Split(sg unsafeutil.Grid[uint8], ph *mc8Phase, dg unsafeutil.Grid[uint8]) {
+	w, h := dg.Width(), dg.Height()
+	w16 := w &^ 15
+	mc8PutV6W16(sg, ph, dg.Sub(0, 0, w16, h))
+	mc8PutV6S8(sg.Sub(0, w16, 16, h+5), ph, dg.Sub(0, w16, 8, h))
+}
+
+// mc8PrepH6Split is mc8PutH6Split for the prep horizontal pass.
+func mc8PrepH6Split(sg unsafeutil.Grid[uint8], ph *mc8Phase, og unsafeutil.Grid[uint16]) {
+	w, h := og.Width(), og.Height()
+	w16 := w &^ 15
+	mc8PrepH6W16(sg, ph, og.Sub(0, 0, w16, h))
+	mc8PrepH6S8(sg.Sub(0, w16, 16, h), ph, og.Sub(0, w16, 8, h))
+}
+
+// mc8PrepV6Split is mc8PutH6Split for the prep vertical pass.
+func mc8PrepV6Split(sg unsafeutil.Grid[uint8], ph *mc8Phase, og unsafeutil.Grid[uint16]) {
+	w, h := og.Width(), og.Height()
+	w16 := w &^ 15
+	mc8PrepV6W16(sg, ph, og.Sub(0, 0, w16, h))
+	mc8PrepV6S8(sg.Sub(0, w16, 16, h+5), ph, og.Sub(0, w16, 8, h))
 }
 
 // mc8PutW2 is Put8 at width 2, dav1d's put_8tap w2 for the sub-8x8 chroma
@@ -401,20 +426,21 @@ func mc8PutW2(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, h, fil
 	if dOff+(h-1)*dst.Stride+2 > len(dst.Pix) {
 		return false
 	}
-	src, stride, ok := mc8Source(ref, refX, refY, 4, h, subX != 0, subY != 0, &scratch.edge)
+	sg, ok := mc8Source(ref, refX, refY, 4, h, subX != 0, subY != 0, &scratch.edge)
 	if !ok {
 		return false
 	}
 	var tmp [4 * mc8W2MaxH]byte
+	tg := unsafeutil.NewGrid(tmp[:], 0, 4, 4, h)
 	switch {
 	case subX != 0 && subY != 0:
 		im := scratch.imHBD[:]
-		mc8H6ToI32W4(src, stride, h+5, &mc8Phases[kx][subX], im)
-		mc8PutV6FromI32W4(im, h, &mc8Phases[ky][subY], tmp[:], 4)
+		mc8H6ToI32W4(sg, h+5, &mc8Phases[kx][subX], im)
+		mc8PutV6FromI32W4(im, h, &mc8Phases[ky][subY], tg)
 	case subX != 0:
-		mc8PutH6W4(src, stride, h, &mc8Phases[kx][subX], tmp[:], 4)
+		mc8PutH6S4(sg, &mc8Phases[kx][subX], tg)
 	default:
-		mc8PutV6W4(src, stride, h, &mc8Phases[ky][subY], tmp[:], 4)
+		mc8PutV6S4(sg, &mc8Phases[ky][subY], tg)
 	}
 	rows := dst.Pix[dOff : dOff+(h-1)*dst.Stride+2]
 	for r := 0; r < h; r++ {
@@ -518,42 +544,47 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 	if mc8NeedsEightTaps(subX, subY, kx, ky) {
 		return w&7 == 0 && mc8Prep8Tap(out[:w*h], ref, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
-	src, stride, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge)
-	if !ok {
+	sg, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge)
+	if !ok || !unsafeutil.GridFit(len(out), 0, w, w, h) {
 		return false
 	}
-	o := out[:w*h]
-	if w == 4 {
-		switch {
-		case subX != 0 && subY != 0:
-			im := scratch.im[:]
-			mc8H6ToI32W4(src, stride, h+5, &mc8Phases[kx][subX], im)
-			mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], o, mc8PrepV6Rnd)
-		case subX != 0:
-			mc8PrepH6W4(src, stride, h, &mc8Phases[kx][subX], o)
-		case subY != 0:
-			mc8PrepV6W4(src, stride, h, &mc8Phases[ky][subY], o)
-		default:
-			mc8PrepCopyW4(src, stride, h, o)
-		}
-		return true
-	}
+	og := unsafeutil.NewGrid(out, 0, w, w, h)
 	switch {
 	case subX != 0 && subY != 0:
 		im := scratch.im[:]
-		mc8H6ToI32(src, stride, w, h+5, &mc8Phases[kx][subX], im, 2)
-		mc8PrepV6FromI32S(im, w, h, &mc8Phases[ky][subY], o, mc8PrepV6Rnd)
-	case subX != 0:
-		mc8PrepH6(src, stride, w, h, &mc8Phases[kx][subX], o)
-	case subY != 0:
-		// mc8Source's window: h+5 rows, each readable for max(w+8, 16) bytes.
-		sw := max(w+8, 16)
-		if !unsafeutil.GridFit(len(src), 0, stride, sw, h+5) || !unsafeutil.GridFit(len(o), 0, w, w, h) {
-			return false
+		if w == 4 {
+			mc8H6ToI32W4(sg, h+5, &mc8Phases[kx][subX], im)
+			mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], out[:4*h], mc8PrepV6Rnd)
+		} else {
+			mc8H6ToI32(sg, w, h+5, &mc8Phases[kx][subX], im, 2)
+			mc8PrepV6FromI32S(im, w, h, &mc8Phases[ky][subY], og, mc8PrepV6Rnd)
 		}
-		mc8PrepV6(unsafeutil.NewGrid(src, 0, stride, sw, h+5), &mc8Phases[ky][subY], unsafeutil.NewGrid(o, 0, w, w, h))
+	case subX != 0:
+		ph := &mc8Phases[kx][subX]
+		switch {
+		case w == 4:
+			mc8PrepH6S4(sg, ph, og)
+		case w == 8:
+			mc8PrepH6S8(sg, ph, og)
+		case w&15 == 0:
+			mc8PrepH6W16(sg, ph, og)
+		default:
+			mc8PrepH6Split(sg, ph, og)
+		}
+	case subY != 0:
+		ph := &mc8Phases[ky][subY]
+		switch {
+		case w == 4:
+			mc8PrepV6S4(sg, ph, og)
+		case w == 8:
+			mc8PrepV6S8(sg, ph, og)
+		case w&15 == 0:
+			mc8PrepV6W16(sg, ph, og)
+		default:
+			mc8PrepV6Split(sg, ph, og)
+		}
 	default:
-		mc8PrepCopy(src, stride, w, h, o)
+		mc8PrepCopy(sg, og)
 	}
 	return true
 }
@@ -587,149 +618,9 @@ func mc8Lo64(v archsimd.Uint8x16) uint64 {
 	return v.ReshapeToUint64s().GetElem(0)
 }
 
-// mc8H6ToI32 writes rows x w rounded horizontal sums ((s + 2) >> 2) as int32
-// with row stride w.
-func mc8H6ToI32(src []byte, srcStride, w, rows int, ph *mc8Phase, im []int32, round int16) {
-	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
-	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
-	c2 := archsimd.LoadInt16x8Array(&ph.h[2])
-	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
-	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
-	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
-	rnd := archsimd.BroadcastInt16x8(round)
-	sh := archsimd.BroadcastInt16x8(-2)
-	ss, sl := srcStride, len(src)-16
-	n := rows * 8
-	sum6 := func(lo, hi archsimd.Uint8x16) archsimd.Int16x8 {
-		sum := mc8I16(lo).MulAdd(c0, rnd)
-		sum = mc8I16(hi.ConcatShiftBytesRight(lo, 2)).MulAdd(c1, sum)
-		sum = mc8I16(hi.ConcatShiftBytesRight(lo, 4)).MulAdd(c2, sum)
-		sum = mc8I16(hi.ConcatShiftBytesRight(lo, 6)).MulAdd(c3, sum)
-		sum = mc8I16(hi.ConcatShiftBytesRight(lo, 8)).MulAdd(c4, sum)
-		sum = mc8I16(hi.ConcatShiftBytesRight(lo, 10)).MulAdd(c5, sum)
-		return sum.Shift(sh)
-	}
-	c := 0
-	if w&15 == 0 {
-		// Two strips per pass: each row is one 24-byte window (one compare
-		// for sixteen outputs) whose two eight-column tap windows are
-		// constant sub-windows.
-		sl24 := len(src) - 24
-		for ; c < w; c += 16 {
-			st0 := im[c*rows : c*rows+n : c*rows+n]
-			st1 := im[(c+8)*rows : (c+8)*rows+n : (c+8)*rows+n]
-			so := c
-			for q := 0; q <= len(st0)-8 && q <= len(st1)-8; q += 8 {
-				win, so1 := mc8R24(src, so, sl24), so+ss
-				lo, hi := mc8LoadWiden((*[16]uint8)(win[0:16]))
-				lo1, hi1 := mc8LoadWiden((*[16]uint8)(win[8:24]))
-				sum, sum1 := sum6(lo, hi), sum6(lo1, hi1)
-				w0, w1 := (*[8]int32)(st0[q:q+8]), (*[8]int32)(st1[q:q+8])
-				sum.ExtendLo4ToInt32().StoreArray((*[4]int32)(w0[0:4]))
-				sum.HiToLo().ExtendLo4ToInt32().StoreArray((*[4]int32)(w0[4:8]))
-				sum1.ExtendLo4ToInt32().StoreArray((*[4]int32)(w1[0:4]))
-				sum1.HiToLo().ExtendLo4ToInt32().StoreArray((*[4]int32)(w1[4:8]))
-				so = so1
-			}
-		}
-		return
-	}
-	for ; c < w; c += 8 {
-		// Strip c/8 of the strip-major intermediate: its rows are contiguous
-		// eight-sample groups, so the stores below are proven in bounds.
-		st := im[c*rows : c*rows+n : c*rows+n]
-		so := c
-		q := 0
-		for ; q <= len(st)-16; q += 16 {
-			lo, hi := mc8LoadWiden(mc8R16(src, so, sl))
-			lo1, hi1, so1 := mc8LoadWiden3(mc8R16(src, so+ss, sl), so+ss)
-			sum, sum1 := sum6(lo, hi), sum6(lo1, hi1)
-			win := (*[16]int32)(st[q : q+16])
-			sum.ExtendLo4ToInt32().StoreArray((*[4]int32)(win[0:4]))
-			sum.HiToLo().ExtendLo4ToInt32().StoreArray((*[4]int32)(win[4:8]))
-			sum1.ExtendLo4ToInt32().StoreArray((*[4]int32)(win[8:12]))
-			sum1.HiToLo().ExtendLo4ToInt32().StoreArray((*[4]int32)(win[12:16]))
-			so = so1 + ss
-		}
-		if q <= len(st)-8 {
-			lo, hi := mc8LoadWiden(mc8R16(src, so, sl))
-			sum := sum6(lo, hi)
-			win := (*[8]int32)(st[q : q+8])
-			sum.ExtendLo4ToInt32().StoreArray((*[4]int32)(win[0:4]))
-			sum.HiToLo().ExtendLo4ToInt32().StoreArray((*[4]int32)(win[4:8]))
-		}
-	}
-}
-
 // mc8LoadI32x8 loads the eight int32 intermediate samples at p as two halves.
 func mc8LoadI32x8(p *[8]int32) (archsimd.Int32x4, archsimd.Int32x4) {
 	return archsimd.LoadInt32x4Array((*[4]int32)(p[0:4])), archsimd.LoadInt32x4Array((*[4]int32)(p[4:8]))
-}
-
-// mc8PutV6FromI32 is the put 2D vertical pass over the int32 intermediate.
-func mc8PutV6FromI32(im []int32, w, h int, ph *mc8Phase, dst []byte, dstStride int) {
-	c0 := archsimd.LoadInt32x4Array(&ph.v[0])
-	c1 := archsimd.LoadInt32x4Array(&ph.v[1])
-	c2 := archsimd.LoadInt32x4Array(&ph.v[2])
-	c3 := archsimd.LoadInt32x4Array(&ph.v[3])
-	c4 := archsimd.LoadInt32x4Array(&ph.v[4])
-	c5 := archsimd.LoadInt32x4Array(&ph.v[5])
-	ds := uint32(dstStride)
-	rows := h + 5
-	n := rows * 8
-	for c := 0; c < w; c += 8 {
-		// Strip c/8 of the strip-major intermediate (rows of eight
-		// contiguous samples): every window below is proven in bounds.
-		st := im[c*rows : c*rows+n : c*rows+n]
-		head := (*[40]int32)(st[0:40])
-		x0, y0 := archsimd.LoadInt32x4Array((*[4]int32)(head[0:4])), archsimd.LoadInt32x4Array((*[4]int32)(head[4:8]))
-		x1, y1 := archsimd.LoadInt32x4Array((*[4]int32)(head[8:12])), archsimd.LoadInt32x4Array((*[4]int32)(head[12:16]))
-		x2, y2 := archsimd.LoadInt32x4Array((*[4]int32)(head[16:20])), archsimd.LoadInt32x4Array((*[4]int32)(head[20:24]))
-		x3, y3 := archsimd.LoadInt32x4Array((*[4]int32)(head[24:28])), archsimd.LoadInt32x4Array((*[4]int32)(head[28:32]))
-		x4, y4 := archsimd.LoadInt32x4Array((*[4]int32)(head[32:36])), archsimd.LoadInt32x4Array((*[4]int32)(head[36:40]))
-		o := uint32(c)
-		q := 40
-		for ; q <= len(st)-64; q += 64 {
-			win := (*[64]int32)(st[q : q+64])
-			x5, y5 := archsimd.LoadInt32x4Array((*[4]int32)(win[0:4])), archsimd.LoadInt32x4Array((*[4]int32)(win[4:8]))
-			x6, y6 := archsimd.LoadInt32x4Array((*[4]int32)(win[8:12])), archsimd.LoadInt32x4Array((*[4]int32)(win[12:16]))
-			x7, y7 := archsimd.LoadInt32x4Array((*[4]int32)(win[16:20])), archsimd.LoadInt32x4Array((*[4]int32)(win[20:24]))
-			x8, y8 := archsimd.LoadInt32x4Array((*[4]int32)(win[24:28])), archsimd.LoadInt32x4Array((*[4]int32)(win[28:32]))
-			x9, y9 := archsimd.LoadInt32x4Array((*[4]int32)(win[32:36])), archsimd.LoadInt32x4Array((*[4]int32)(win[36:40]))
-			x10, y10 := archsimd.LoadInt32x4Array((*[4]int32)(win[40:44])), archsimd.LoadInt32x4Array((*[4]int32)(win[44:48]))
-			x11, y11 := archsimd.LoadInt32x4Array((*[4]int32)(win[48:52])), archsimd.LoadInt32x4Array((*[4]int32)(win[52:56]))
-			x12, y12 := archsimd.LoadInt32x4Array((*[4]int32)(win[56:60])), archsimd.LoadInt32x4Array((*[4]int32)(win[60:64]))
-			u0, u1 := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5)
-			binary.LittleEndian.PutUint64(mc8W8(dst, o)[:], u0)
-			binary.LittleEndian.PutUint64(mc8W8(dst, o+1*ds)[:], u1)
-			u0, u1 = mc8V6PutPair(x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, x7, y7, x8, y8, c0, c1, c2, c3, c4, c5)
-			binary.LittleEndian.PutUint64(mc8W8(dst, o+2*ds)[:], u0)
-			binary.LittleEndian.PutUint64(mc8W8(dst, o+3*ds)[:], u1)
-			u0, u1 = mc8V6PutPair(x4, y4, x5, y5, x6, y6, x7, y7, x8, y8, x9, y9, x10, y10, c0, c1, c2, c3, c4, c5)
-			binary.LittleEndian.PutUint64(mc8W8(dst, o+4*ds)[:], u0)
-			binary.LittleEndian.PutUint64(mc8W8(dst, o+5*ds)[:], u1)
-			u0, u1 = mc8V6PutPair(x6, y6, x7, y7, x8, y8, x9, y9, x10, y10, x11, y11, x12, y12, c0, c1, c2, c3, c4, c5)
-			binary.LittleEndian.PutUint64(mc8W8(dst, o+6*ds)[:], u0)
-			binary.LittleEndian.PutUint64(mc8W8(dst, o+7*ds)[:], u1)
-			o += 8 * ds
-			x0, y0, x1, y1, x2, y2, x3, y3, x4, y4 = x8, y8, x9, y9, x10, y10, x11, y11, x12, y12
-		}
-		for ; q <= len(st)-16; q += 16 {
-			win := (*[16]int32)(st[q : q+16])
-			x5, y5 := archsimd.LoadInt32x4Array((*[4]int32)(win[0:4])), archsimd.LoadInt32x4Array((*[4]int32)(win[4:8]))
-			x6, y6 := archsimd.LoadInt32x4Array((*[4]int32)(win[8:12])), archsimd.LoadInt32x4Array((*[4]int32)(win[12:16]))
-			u0, u1 := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5)
-			binary.LittleEndian.PutUint64(mc8W8(dst, o)[:], u0)
-			binary.LittleEndian.PutUint64(mc8W8(dst, o+ds)[:], u1)
-			o += 2 * ds
-			x0, y0, x1, y1, x2, y2, x3, y3, x4, y4 = x2, y2, x3, y3, x4, y4, x5, y5, x6, y6
-		}
-		if q <= len(st)-8 {
-			x5, y5 := mc8LoadI32x8((*[8]int32)(st[q : q+8]))
-			u0, _ := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x5, y5, c0, c1, c2, c3, c4, c5)
-			binary.LittleEndian.PutUint64(mc8W8(dst, o)[:], u0)
-		}
-	}
 }
 
 // mc8PutH6ToI32Rnd is the put 2D horizontal rounding constant: (s + 2) >> 2
@@ -778,74 +669,6 @@ func mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1
 // by the 512x vertical taps: (64 + 6144 << 7) << 9.
 const mc8PrepV6Rnd = (64 + 6144<<7) << 9
 
-// mc8PrepV6FromI32S is mc8PrepV6FromI32 over the strip-major intermediate
-// of mc8H6ToI32.
-func mc8PrepV6FromI32S(im []int32, w, h int, ph *mc8Phase, out []uint16, rndConst int32) {
-	c0 := archsimd.LoadInt32x4Array(&ph.p[0])
-	c1 := archsimd.LoadInt32x4Array(&ph.p[1])
-	c2 := archsimd.LoadInt32x4Array(&ph.p[2])
-	c3 := archsimd.LoadInt32x4Array(&ph.p[3])
-	c4 := archsimd.LoadInt32x4Array(&ph.p[4])
-	c5 := archsimd.LoadInt32x4Array(&ph.p[5])
-	rnd := archsimd.BroadcastInt32x4(rndConst)
-	ds := uint32(w)
-	rows := h + 5
-	n := rows * 8
-	for c := 0; c < w; c += 8 {
-		// Strip c/8 of the strip-major intermediate (rows of eight
-		// contiguous samples): every window below is proven in bounds.
-		st := im[c*rows : c*rows+n : c*rows+n]
-		head := (*[40]int32)(st[0:40])
-		x0, y0 := archsimd.LoadInt32x4Array((*[4]int32)(head[0:4])), archsimd.LoadInt32x4Array((*[4]int32)(head[4:8]))
-		x1, y1 := archsimd.LoadInt32x4Array((*[4]int32)(head[8:12])), archsimd.LoadInt32x4Array((*[4]int32)(head[12:16]))
-		x2, y2 := archsimd.LoadInt32x4Array((*[4]int32)(head[16:20])), archsimd.LoadInt32x4Array((*[4]int32)(head[20:24]))
-		x3, y3 := archsimd.LoadInt32x4Array((*[4]int32)(head[24:28])), archsimd.LoadInt32x4Array((*[4]int32)(head[28:32]))
-		x4, y4 := archsimd.LoadInt32x4Array((*[4]int32)(head[32:36])), archsimd.LoadInt32x4Array((*[4]int32)(head[36:40]))
-		o := uint32(c)
-		q := 40
-		for ; q <= len(st)-64; q += 64 {
-			win := (*[64]int32)(st[q : q+64])
-			x5, y5 := archsimd.LoadInt32x4Array((*[4]int32)(win[0:4])), archsimd.LoadInt32x4Array((*[4]int32)(win[4:8]))
-			x6, y6 := archsimd.LoadInt32x4Array((*[4]int32)(win[8:12])), archsimd.LoadInt32x4Array((*[4]int32)(win[12:16]))
-			x7, y7 := archsimd.LoadInt32x4Array((*[4]int32)(win[16:20])), archsimd.LoadInt32x4Array((*[4]int32)(win[20:24]))
-			x8, y8 := archsimd.LoadInt32x4Array((*[4]int32)(win[24:28])), archsimd.LoadInt32x4Array((*[4]int32)(win[28:32]))
-			x9, y9 := archsimd.LoadInt32x4Array((*[4]int32)(win[32:36])), archsimd.LoadInt32x4Array((*[4]int32)(win[36:40]))
-			x10, y10 := archsimd.LoadInt32x4Array((*[4]int32)(win[40:44])), archsimd.LoadInt32x4Array((*[4]int32)(win[44:48]))
-			x11, y11 := archsimd.LoadInt32x4Array((*[4]int32)(win[48:52])), archsimd.LoadInt32x4Array((*[4]int32)(win[52:56]))
-			x12, y12 := archsimd.LoadInt32x4Array((*[4]int32)(win[56:60])), archsimd.LoadInt32x4Array((*[4]int32)(win[60:64]))
-			u0, u1 := mc8V6PrepPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5, rnd)
-			u0.StoreArray(mc8WU8(out, o))
-			u1.StoreArray(mc8WU8(out, o+1*ds))
-			u0, u1 = mc8V6PrepPair(x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, x7, y7, x8, y8, c0, c1, c2, c3, c4, c5, rnd)
-			u0.StoreArray(mc8WU8(out, o+2*ds))
-			u1.StoreArray(mc8WU8(out, o+3*ds))
-			u0, u1 = mc8V6PrepPair(x4, y4, x5, y5, x6, y6, x7, y7, x8, y8, x9, y9, x10, y10, c0, c1, c2, c3, c4, c5, rnd)
-			u0.StoreArray(mc8WU8(out, o+4*ds))
-			u1.StoreArray(mc8WU8(out, o+5*ds))
-			u0, u1 = mc8V6PrepPair(x6, y6, x7, y7, x8, y8, x9, y9, x10, y10, x11, y11, x12, y12, c0, c1, c2, c3, c4, c5, rnd)
-			u0.StoreArray(mc8WU8(out, o+6*ds))
-			u1.StoreArray(mc8WU8(out, o+7*ds))
-			o += 8 * ds
-			x0, y0, x1, y1, x2, y2, x3, y3, x4, y4 = x8, y8, x9, y9, x10, y10, x11, y11, x12, y12
-		}
-		for ; q <= len(st)-16; q += 16 {
-			win := (*[16]int32)(st[q : q+16])
-			x5, y5 := archsimd.LoadInt32x4Array((*[4]int32)(win[0:4])), archsimd.LoadInt32x4Array((*[4]int32)(win[4:8]))
-			x6, y6 := archsimd.LoadInt32x4Array((*[4]int32)(win[8:12])), archsimd.LoadInt32x4Array((*[4]int32)(win[12:16]))
-			u0, u1 := mc8V6PrepPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5, rnd)
-			u0.StoreArray(mc8WU8(out, o))
-			u1.StoreArray(mc8WU8(out, o+ds))
-			o += 2 * ds
-			x0, y0, x1, y1, x2, y2, x3, y3, x4, y4 = x2, y2, x3, y3, x4, y4, x5, y5, x6, y6
-		}
-		if q <= len(st)-8 {
-			x5, y5 := mc8LoadI32x8((*[8]int32)(st[q : q+8]))
-			u0, _ := mc8V6PrepPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x5, y5, c0, c1, c2, c3, c4, c5, rnd)
-			u0.StoreArray(mc8WU8(out, o))
-		}
-	}
-}
-
 // mc8V6PrepPair is the prep 2D vertical chain of CONV_BUF rows r and r+1
 // from the seven intermediate rows r..r+6.
 func mc8V6PrepPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5, rnd archsimd.Int32x4) (archsimd.Uint16x8, archsimd.Uint16x8) {
@@ -878,68 +701,6 @@ func mc8V6PrepPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c
 	return a0.ToBits().ReshapeToUint16s().ConcatOdd(b0.ToBits().ReshapeToUint16s()), a1.ToBits().ReshapeToUint16s().ConcatOdd(b1.ToBits().ReshapeToUint16s())
 }
 
-// mc8PutH6 is the put horizontal-only pass: clip((s + 34) >> 6).
-func mc8PutH6(src []byte, srcStride, w, h int, ph *mc8Phase, dst []byte, dstStride int) {
-	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
-	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
-	c2 := archsimd.LoadInt16x8Array(&ph.h[2])
-	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
-	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
-	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
-	rnd := archsimd.BroadcastInt16x8(34)
-	sh := archsimd.BroadcastInt16x8(-6)
-	ss, ds := uint32(srcStride), uint32(dstStride)
-	if w&15 == 0 {
-		// Sixteen columns per window: one 24-byte source window per row and
-		// one 16-byte store.
-		for r := 0; r < h; r++ {
-			so, do := uint32(r)*ss, uint32(r)*ds
-			for c := uint32(0); c < uint32(w); c += 16 {
-				win := mc8W24(src, so+c)
-				a := mc8H6Sum((*[16]uint8)(win[0:16]), c0, c1, c2, c3, c4, c5, rnd).Shift(sh).SaturateToUint8()
-				b := mc8H6Sum((*[16]uint8)(win[8:24]), c0, c1, c2, c3, c4, c5, rnd).Shift(sh).SaturateToUint8()
-				a.ReshapeToUint64s().InterleaveLo(b.ReshapeToUint64s()).ReshapeToUint8s().StoreArray(mc8W16(dst, do+c))
-			}
-		}
-		return
-	}
-	var so, do uint32
-	r := 0
-	for ; r+2 <= h; r += 2 {
-		for c := uint32(0); c < uint32(w); c += 8 {
-			lo, hi := mc8LoadWiden(mc8W16(src, so+c))
-			lo1, hi1 := mc8LoadWiden(mc8W16(src, so+ss+c))
-			sum := mc8I16(lo).MulAdd(c0, rnd)
-			sum1 := mc8I16(lo1).MulAdd(c0, rnd)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 2)).MulAdd(c1, sum)
-			sum1 = mc8I16(hi1.ConcatShiftBytesRight(lo1, 2)).MulAdd(c1, sum1)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 4)).MulAdd(c2, sum)
-			sum1 = mc8I16(hi1.ConcatShiftBytesRight(lo1, 4)).MulAdd(c2, sum1)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 6)).MulAdd(c3, sum)
-			sum1 = mc8I16(hi1.ConcatShiftBytesRight(lo1, 6)).MulAdd(c3, sum1)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 8)).MulAdd(c4, sum)
-			sum1 = mc8I16(hi1.ConcatShiftBytesRight(lo1, 8)).MulAdd(c4, sum1)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 10)).MulAdd(c5, sum)
-			sum1 = mc8I16(hi1.ConcatShiftBytesRight(lo1, 10)).MulAdd(c5, sum1)
-			binary.LittleEndian.PutUint64(mc8W8(dst, do+c)[:], mc8Lo64(sum.Shift(sh).SaturateToUint8()))
-			binary.LittleEndian.PutUint64(mc8W8(dst, do+ds+c)[:], mc8Lo64(sum1.Shift(sh).SaturateToUint8()))
-		}
-		so, do = so+2*ss, do+2*ds
-	}
-	if r < h {
-		for c := uint32(0); c < uint32(w); c += 8 {
-			lo, hi := mc8LoadWiden(mc8W16(src, so+c))
-			sum := mc8I16(lo).MulAdd(c0, rnd)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 2)).MulAdd(c1, sum)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 4)).MulAdd(c2, sum)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 6)).MulAdd(c3, sum)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 8)).MulAdd(c4, sum)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 10)).MulAdd(c5, sum)
-			binary.LittleEndian.PutUint64(mc8W8(dst, do+c)[:], mc8Lo64(sum.Shift(sh).SaturateToUint8()))
-		}
-	}
-}
-
 // mc8H6Sum is the six-tap halved horizontal sum (plus rnd) of the eight
 // output columns whose window starts at p.
 func mc8H6Sum(p *[16]uint8, c0, c1, c2, c3, c4, c5, rnd archsimd.Int16x8) archsimd.Int16x8 {
@@ -950,212 +711,6 @@ func mc8H6Sum(p *[16]uint8, c0, c1, c2, c3, c4, c5, rnd archsimd.Int16x8) archsi
 	sum = mc8I16(hi.ConcatShiftBytesRight(lo, 6)).MulAdd(c3, sum)
 	sum = mc8I16(hi.ConcatShiftBytesRight(lo, 8)).MulAdd(c4, sum)
 	return mc8I16(hi.ConcatShiftBytesRight(lo, 10)).MulAdd(c5, sum)
-}
-
-// mc8PrepH6 is the prep horizontal-only pass: ((s + 2) >> 2) + 6144.
-func mc8PrepH6(src []byte, srcStride, w, h int, ph *mc8Phase, out []uint16) {
-	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
-	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
-	c2 := archsimd.LoadInt16x8Array(&ph.h[2])
-	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
-	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
-	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
-	rnd := archsimd.BroadcastInt16x8(2 + 6144<<2)
-	sh := archsimd.BroadcastInt16x8(-2)
-	ss, ws := uint32(srcStride), uint32(w)
-	if w&15 == 0 {
-		// Sixteen columns per window: one 24-byte source window per row and
-		// one 16-sample CONV_BUF window.
-		var so, oo uint32
-		for r := 0; r < h; r++ {
-			for c := uint32(0); c < ws; c += 16 {
-				win := mc8W24(src, so+c)
-				o := mc8WU16(out, oo+c)
-				// The offset sums lie in [0, 2^16): shift them as unsigned.
-				mc8H6Sum((*[16]uint8)(win[0:16]), c0, c1, c2, c3, c4, c5, rnd).ToBits().Shift(sh).StoreArray((*[8]uint16)(o[0:8]))
-				mc8H6Sum((*[16]uint8)(win[8:24]), c0, c1, c2, c3, c4, c5, rnd).ToBits().Shift(sh).StoreArray((*[8]uint16)(o[8:16]))
-			}
-			so, oo = so+ss, oo+ws
-		}
-		return
-	}
-	var so, oo uint32
-	r := 0
-	for ; r+2 <= h; r += 2 {
-		for c := uint32(0); c < ws; c += 8 {
-			lo, hi := mc8LoadWiden(mc8W16(src, so+c))
-			lo1, hi1 := mc8LoadWiden(mc8W16(src, so+ss+c))
-			sum := mc8I16(lo).MulAdd(c0, rnd)
-			sum1 := mc8I16(lo1).MulAdd(c0, rnd)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 2)).MulAdd(c1, sum)
-			sum1 = mc8I16(hi1.ConcatShiftBytesRight(lo1, 2)).MulAdd(c1, sum1)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 4)).MulAdd(c2, sum)
-			sum1 = mc8I16(hi1.ConcatShiftBytesRight(lo1, 4)).MulAdd(c2, sum1)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 6)).MulAdd(c3, sum)
-			sum1 = mc8I16(hi1.ConcatShiftBytesRight(lo1, 6)).MulAdd(c3, sum1)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 8)).MulAdd(c4, sum)
-			sum1 = mc8I16(hi1.ConcatShiftBytesRight(lo1, 8)).MulAdd(c4, sum1)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 10)).MulAdd(c5, sum)
-			sum1 = mc8I16(hi1.ConcatShiftBytesRight(lo1, 10)).MulAdd(c5, sum1)
-			// The offset sums lie in [0, 2^16): shift them as unsigned.
-			sum.ToBits().Shift(sh).StoreArray(mc8WU8(out, oo+c))
-			sum1.ToBits().Shift(sh).StoreArray(mc8WU8(out, oo+ws+c))
-		}
-		so, oo = so+2*ss, oo+2*ws
-	}
-	if r < h {
-		for c := uint32(0); c < ws; c += 8 {
-			lo, hi := mc8LoadWiden(mc8W16(src, so+c))
-			sum := mc8I16(lo).MulAdd(c0, rnd)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 2)).MulAdd(c1, sum)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 4)).MulAdd(c2, sum)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 6)).MulAdd(c3, sum)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 8)).MulAdd(c4, sum)
-			sum = mc8I16(hi.ConcatShiftBytesRight(lo, 10)).MulAdd(c5, sum)
-			sum.ToBits().Shift(sh).StoreArray(mc8WU8(out, oo+c))
-		}
-	}
-}
-
-// mc8PutV6 is the put vertical-only pass: clip((s + 32) >> 6). Each eight
-// column strip keeps its source rows resident, loads two new rows per two
-// output rows and runs the two rows' tap chains interleaved.
-func mc8PutV6(src []byte, srcStride, w, h int, ph *mc8Phase, dst []byte, dstStride int) {
-	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
-	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
-	c2 := archsimd.LoadInt16x8Array(&ph.h[2])
-	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
-	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
-	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
-	rnd := archsimd.BroadcastInt16x8(32)
-	sh := archsimd.BroadcastInt16x8(-6)
-	ss, ds := srcStride, dstStride
-	sl, dl := len(src)-16, len(dst)-8
-	for c := 0; c < w; c += 8 {
-		r0, o := mc8LoadRow16(mc8R16(src, c, sl)), c+ss
-		r1, o := mc8LoadRow16(mc8R16(src, o, sl)), o+ss
-		r2, o := mc8LoadRow16(mc8R16(src, o, sl)), o+ss
-		r3, o := mc8LoadRow16(mc8R16(src, o, sl)), o+ss
-		r4 := mc8LoadRow16(mc8R16(src, o, sl))
-		d := c
-		r := 0
-		for ; r+2 <= h; r += 2 {
-			r5, o5 := mc8LoadRow16(mc8R16(src, o+ss, sl)), o+ss
-			r6, o6 := mc8LoadRow16(mc8R16(src, o5+ss, sl)), o5+ss
-			o = o6
-			a := r0.MulAdd(c0, rnd)
-			b := r1.MulAdd(c0, rnd)
-			a = r1.MulAdd(c1, a)
-			b = r2.MulAdd(c1, b)
-			a = r2.MulAdd(c2, a)
-			b = r3.MulAdd(c2, b)
-			a = r3.MulAdd(c3, a)
-			b = r4.MulAdd(c3, b)
-			a = r4.MulAdd(c4, a)
-			b = r5.MulAdd(c4, b)
-			a = r5.MulAdd(c5, a)
-			b = r6.MulAdd(c5, b)
-			binary.LittleEndian.PutUint64(mc8R8(dst, d, dl)[:], a.Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0))
-			d += ds
-			binary.LittleEndian.PutUint64(mc8R8(dst, d, dl)[:], b.Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0))
-			d += ds
-			r0, r1, r2, r3, r4 = r2, r3, r4, r5, r6
-		}
-		if r < h {
-			r5 := mc8LoadRow16(mc8R16(src, o+ss, sl))
-			a := r0.MulAdd(c0, rnd)
-			a = r1.MulAdd(c1, a)
-			a = r2.MulAdd(c2, a)
-			a = r3.MulAdd(c3, a)
-			a = r4.MulAdd(c4, a)
-			a = r5.MulAdd(c5, a)
-			binary.LittleEndian.PutUint64(mc8R8(dst, d, dl)[:], a.Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0))
-		}
-	}
-}
-
-// mc8PutV6W16 is mc8PutV6 over 16-column strips (dav1d's w16 v path): each
-// source row is one 16-byte window widened to two halves, and each output
-// row one 16-byte store.
-func mc8PutV6W16(src []byte, ss uint32, w, h int, ph *mc8Phase, dst []byte, ds uint32) {
-	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
-	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
-	c2 := archsimd.LoadInt16x8Array(&ph.h[2])
-	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
-	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
-	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
-	rnd := archsimd.BroadcastInt16x8(32)
-	sh := archsimd.BroadcastInt16x8(-6)
-	sl, dl := len(src)-16, len(dst)-16
-	sst, dst16 := int(ss), int(ds)
-	ld := func(o int) (archsimd.Int16x8, archsimd.Int16x8) {
-		a := archsimd.LoadUint8x16Array(mc8R16(src, o, sl))
-		return a.ExtendLo8ToUint16().BitsToInt16(), a.HiToLo().ExtendLo8ToUint16().BitsToInt16()
-	}
-	pack := func(lo, hi archsimd.Int16x8) archsimd.Uint8x16 {
-		return lo.Shift(sh).SaturateToUint8().ReshapeToUint64s().InterleaveLo(hi.Shift(sh).SaturateToUint8().ReshapeToUint64s()).ReshapeToUint8s()
-	}
-	for c := 0; c < w; c += 16 {
-		o := c
-		l0, h0 := ld(o)
-		o += sst
-		l1, h1 := ld(o)
-		o += sst
-		l2, h2 := ld(o)
-		o += sst
-		l3, h3 := ld(o)
-		o += sst
-		l4, h4 := ld(o)
-		d := c
-		for r := 0; r < h; r++ {
-			o += sst
-			l5, h5 := ld(o)
-			a := l0.MulAdd(c0, rnd)
-			b := h0.MulAdd(c0, rnd)
-			a = l1.MulAdd(c1, a)
-			b = h1.MulAdd(c1, b)
-			a = l2.MulAdd(c2, a)
-			b = h2.MulAdd(c2, b)
-			a = l3.MulAdd(c3, a)
-			b = h3.MulAdd(c3, b)
-			a = l4.MulAdd(c4, a)
-			b = h4.MulAdd(c4, b)
-			a = l5.MulAdd(c5, a)
-			b = h5.MulAdd(c5, b)
-			pack(a, b).StoreArray(mc8R16(dst, d, dl))
-			d += dst16
-			l0, h0, l1, h1, l2, h2, l3, h3, l4, h4 = l1, h1, l2, h2, l3, h3, l4, h4, l5, h5
-		}
-	}
-}
-
-// mc8PrepCopy is the prep copy: 16 * px + 6144 (UMULL by 16, then the
-// offset), one source and one CONV_BUF row window per row.
-func mc8PrepCopy(src []byte, srcStride, w, h int, out []uint16) {
-	mul := archsimd.BroadcastUint8x16(16)
-	mulHi := mul.HiToLo()
-	off := archsimd.BroadcastUint16x8(6144)
-	ss, ws := uint32(srcStride), uint32(w)
-	var so, oo uint32
-	if w == 8 {
-		for r := 0; r < h; r++ {
-			a := archsimd.LoadUint8x16Array(mc8W16(src, so))
-			a.MulWidenLo(mul).Add(off).StoreArray(mc8WU8(out, oo))
-			so, oo = so+ss, oo+8
-		}
-		return
-	}
-	for r := 0; r < h; r++ {
-		for c := uint32(0); c < ws; c += 16 {
-			a := archsimd.LoadUint8x16Array(mc8W16(src, so+c))
-			a.MulWidenLo(mul).Add(off).StoreArray(mc8WU8(out, oo+c))
-			if ws-c == 8 {
-				break
-			}
-			a.HiToLo().MulWidenLo(mulHi).Add(off).StoreArray(mc8WU8(out, oo+c+8))
-		}
-		so, oo = so+ss, oo+ws
-	}
 }
 
 // mc8BlendAvgFast is the 8-bit plain compound average (fwd = bck = 8) over

@@ -78,17 +78,20 @@ func (g Grid[E]) Width() int { return int(g.width) }
 // height at least 1, rows r..r+height-1 and columns c..c+width-1 inside g.
 // A kernel that tests it and returns early (or a caller that takes its
 // fallback) before Sub pays for the test once: Sub repeats it, and the
-// compiler drops the repeat and with it Sub's panic.
+// compiler drops the repeat and with it Sub's panic. The test is written so
+// constant operands fold: r, c, width-1 and height-1 below 2^31 (one OR'd
+// test), then r+height <= height of g and c+width <= width of g, sums that
+// cannot wrap.
 func (g Grid[E]) Fits(r, c, width, height int) bool {
-	return uint(r) < g.height && uint(height-1) < g.height-uint(r) && uint(c) < g.width && uint(width-1) < g.width-uint(c)
+	return uint(r)|uint(c)|uint(width-1)|uint(height-1) < rowsDimMax && uint(r)+uint(height) <= g.height && uint(c)+uint(width) <= g.width
 }
 
 // Sub returns the view of height rows of width elements starting at row r,
 // column c of g. It panics unless that block lies inside g and width and
 // height are at least 1.
 //
-// Bounds proof: r+height <= g's height and c+width <= g's width (each tested
-// without overflow on non-negative operands), so every element of the
+// Bounds proof: r+height <= g's height and c+width <= g's width (each sum of
+// operands below 2^31, so exact), so every element of the
 // result's footprint is one of g's; the new first element is g's row r,
 // column c, inside g's footprint because height, width >= 1. The stride is
 // g's, so the result's footprint arithmetic is g's restricted.

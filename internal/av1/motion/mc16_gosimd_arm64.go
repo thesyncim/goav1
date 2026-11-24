@@ -11,6 +11,7 @@ import (
 	"simd/archsimd"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/unsafeutil"
 )
 
 // dav1d-style 16bpc compound prep (src/mc_tmpl.c prep_8tap, src/arm/64/mc16.S
@@ -129,7 +130,10 @@ func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, fi
 		case w == 4:
 			mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], o, mc16PrepV6Rnd)
 		default:
-			mc8PrepV6FromI32S(im, w, h, &mc8Phases[ky][subY], o, mc16PrepV6Rnd)
+			if !unsafeutil.GridFit(len(o), 0, w, w, h) {
+				return false
+			}
+			mc8PrepV6FromI32S(im, w, h, &mc8Phases[ky][subY], unsafeutil.NewGrid(o, 0, w, w, h), mc16PrepV6Rnd)
 		}
 	case tx == 8:
 		mc16PrepH8(src, stride, w, h, &mc16SharpPhases[subX], sh, o)
