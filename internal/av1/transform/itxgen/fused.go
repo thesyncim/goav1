@@ -49,6 +49,84 @@ type fgen struct {
 	raw map[string]int
 	// half marks a four-lane network instance.
 	half bool
+	// split runs a 32- or 64-point strip in dav1d's halves: the even half
+	// parked in a stack array while the odd half runs, the inputs loaded at
+	// their first use and the output butterflies written as they are
+	// consumed. Without it the scheduler keeps all 32 inputs and their
+	// widened halves live at once and spills them.
+	split bool
+	// inner marks the 32-point even half of a split 64-point network, whose
+	// own even half stays in registers (parking both measured slower).
+	inner bool
+	// pend holds the values written at their first use (use).
+	pend map[string]func()
+}
+
+// use writes the pending definition of v, if any, and returns its name.
+func (g *fgen) use(v fv) string {
+	if f, ok := g.pend[v.name]; ok {
+		delete(g.pend, v.name)
+		f()
+	}
+	return v.name
+}
+
+// lazy returns the vector name whose definition emit writes at its first
+// use.
+func (g *fgen) lazy(name string, emit func()) fv {
+	if g.pend == nil {
+		g.pend = map[string]func(){}
+	}
+	g.pend[name] = emit
+	return fv{name: name}
+}
+
+// park stores the live vectors of vs in a stack array and returns them as
+// reloads at their first use (dav1d's idct32 keeps its even half in memory
+// while the odd half runs).
+func (g *fgen) park(vs []fv) []fv {
+	if !g.split || g.inner {
+		return vs
+	}
+	a := g.tmp("pk")
+	var live []fv
+	for _, v := range vs {
+		if !v.zero {
+			live = append(live, v)
+		}
+	}
+	g.line("var %s [%d]archsimd.Int16x8", a, len(live))
+	out := make([]fv, len(vs))
+	j := 0
+	for i, v := range vs {
+		if v.zero {
+			out[i] = v
+			continue
+		}
+		g.line("%s[%d] = %s", a, j, g.use(v))
+		n, slot := g.tmp("e"), j
+		out[i] = g.lazy(n, func() { g.line("%s := %s[%d]", n, a, slot) })
+		j++
+	}
+	return out
+}
+
+// combineAll returns the output butterflies out[i] = e[i] + o[i] and
+// out[n-1-i] = e[i] - o[i]; split writes each when it is first used.
+func (g *fgen) combineAll(e, o []fv) []fv {
+	h := len(e)
+	out := make([]fv, 2*h)
+	for i := 0; i < h; i++ {
+		ei, oi := e[i], o[i]
+		if !g.split || ei.zero || oi.zero {
+			out[i], out[2*h-1-i] = g.combine(ei, oi)
+			continue
+		}
+		s, d := g.tmp("a"), g.tmp("a")
+		out[i] = g.lazy(s, func() { g.line("%s := %s.AddSaturated(%s)", s, g.use(ei), g.use(oi)) })
+		out[2*h-1-i] = g.lazy(d, func() { g.line("%s := %s.SubSaturated(%s)", d, g.use(ei), g.use(oi)) })
+	}
+	return out
 }
 
 // The 10- and 12-bit (16bpc) kernels run the same int16 passes under the
@@ -99,7 +177,7 @@ func (g *fgen) widen(v fv) (string, string) {
 		return w[0], w[1]
 	}
 	lo, hi := g.tmp("w"), ""
-	x := v.name
+	x := g.use(v)
 	g.line("%s := %s.ExtendLo4ToInt32()", lo, x)
 	if !g.half {
 		hi = g.tmp("w")
@@ -186,7 +264,7 @@ func (g *fgen) add(a, b fv) fv {
 		return a
 	}
 	n := g.tmp("a")
-	x, y := a.name, b.name
+	x, y := g.use(a), g.use(b)
 	g.line("%s := %s.AddSaturated(%s)", n, x, y)
 	return fv{name: n}
 }
@@ -197,11 +275,11 @@ func (g *fgen) sub(a, b fv) fv {
 		return a
 	case a.zero:
 		n := g.tmp("a")
-		g.line("%s := zero.SubSaturated(%s)", n, b.name)
+		g.line("%s := zero.SubSaturated(%s)", n, g.use(b))
 		return fv{name: n}
 	}
 	n := g.tmp("a")
-	x, y := a.name, b.name
+	x, y := g.use(a), g.use(b)
 	g.line("%s := %s.SubSaturated(%s)", n, x, y)
 	return fv{name: n}
 }
@@ -226,9 +304,9 @@ func (g *fgen) l1(acc string, decl bool, vs []fv) bool {
 		}
 		switch {
 		case decl && !any:
-			g.line("%s := %s.Abs().ToBits()", acc, v.name)
+			g.line("%s := %s.Abs().ToBits()", acc, g.use(v))
 		default:
-			g.line("%s = %s.AddSaturated(%s.Abs().ToBits())", acc, acc, v.name)
+			g.line("%s = %s.AddSaturated(%s.Abs().ToBits())", acc, acc, g.use(v))
 		}
 		any = true
 	}
@@ -266,7 +344,7 @@ func (g *fgen) transpose8(rows []fv) []fv {
 		if rows[i].zero && rows[i+1].zero {
 			continue
 		}
-		x, y := op(rows[i].name, rows[i+1].name, "zero")
+		x, y := op(g.use(rows[i]), g.use(rows[i+1]), "zero")
 		a[i], a[i+1] = fmt.Sprintf("%sa%d", p, i), fmt.Sprintf("%sa%d", p, i+1)
 		g.line("%s := %s.InterleaveLo(%s).ToBits().ReshapeToUint32s()", a[i], x, y)
 		g.line("%s := %s.InterleaveHi(%s).ToBits().ReshapeToUint32s()", a[i+1], x, y)
@@ -309,9 +387,9 @@ func (g *fgen) round2(v fv, s int) fv {
 	}
 	n := g.tmp("s")
 	if s == 1 {
-		g.line("%s := %s.Average(zero)", n, v.name)
+		g.line("%s := %s.Average(zero)", n, g.use(v))
 	} else {
-		g.line("%s := %s.Shift(sh%d).Average(zero)", n, v.name, s-1)
+		g.line("%s := %s.Shift(sh%d).Average(zero)", n, g.use(v), s-1)
 	}
 	return fv{name: n}
 }
@@ -322,6 +400,12 @@ func (g *fgen) round2(v fv, s int) fv {
 // (with x first clamped to +-2^22, which keeps the product inside int32
 // and changes no result: the scaled value saturates either way).
 func (g *fgen) load(off, lanes int, rect2 bool) fv {
+	return fv{name: g.loadAs("", off, lanes, rect2)}
+}
+
+// loadAs is load into the vector named v (a new one if v is empty), whose
+// name it returns.
+func (g *fgen) loadAs(v string, off, lanes int, rect2 bool) string {
 	half := func(o int) string {
 		x := fmt.Sprintf("archsimd.LoadInt32x4Array((*[4]int32)(c[%d:%d]))", o, o+4)
 		if rect2 {
@@ -331,16 +415,20 @@ func (g *fgen) load(off, lanes int, rect2 bool) fv {
 		return x + ".SaturateToInt16()"
 	}
 	if lanes == 4 {
-		v := g.tmp("c")
+		if v == "" {
+			v = g.tmp("c")
+		}
 		g.line("%s := %s", v, half(off))
-		return fv{name: v}
+		return v
 	}
 	n := g.tmp("c")
 	g.line("%s := %s.ToBits().ReshapeToUint64s().BitsToFloat64()", n, half(off))
 	g.line("%s = %s.SetElem(1, %s.ToBits().ReshapeToUint64s().BitsToFloat64().GetElem(0))", n, n, half(off+4))
-	v := g.tmp("c")
+	if v == "" {
+		v = g.tmp("c")
+	}
 	g.line("%s := %s.ToBits().ReshapeToUint16s().BitsToInt16()", v, n)
-	return fv{name: v}
+	return v
 }
 
 // Prediction row loads of an eight-column strip. Every load stays inside
@@ -633,15 +721,20 @@ func (g *fgen) rowStrip(t string, n, cols int) string {
 	g.n = 0
 	cs := coeffStride(n)
 	var live []fv
-	for c := 0; c < cols; c++ {
-		live = append(live, g.load(c*cs, 8, false))
-	}
-	if t != tIden {
-		g.guard(live)
+	g.split = splitOn(t, n, cols)
+	if g.split {
+		live = g.guardedLoads(cols, cs)
+	} else {
+		for c := 0; c < cols; c++ {
+			live = append(live, g.load(c*cs, 8, false))
+		}
+		if t != tIden {
+			g.guard(live)
+		}
 	}
 	g.reset()
 	out := g.network1D(t, n, inputs(live, n))
-	for q := 0; q < n/8; q++ {
+	for _, q := range g.tileOrder(n) {
 		rows := make([]fv, 8)
 		for j := range rows {
 			rows[j] = g.round2(out[8*q+j], rowShift(n))
@@ -660,6 +753,7 @@ func (g *fgen) rowStrip(t string, n, cols int) string {
 		g.l1(acc, false, tr)
 		g.line("gc[%d] = %s", q, acc)
 	}
+	g.done()
 	body := deadStrip(g.sb.String())
 	var out2 strings.Builder
 	name := rowStripName(t, n, cols)
@@ -672,6 +766,64 @@ func (g *fgen) rowStrip(t string, n, cols int) string {
 	out2.WriteString(body)
 	out2.WriteString("\treturn true\n}\n\n")
 	return out2.String()
+}
+
+// splitOn reports whether the n-point strip of type t over f coded inputs
+// runs split (fgen.split): only the 32-input forms spill enough to pay for
+// the parked half (the 8- and 16-input forms measured neutral to +3%).
+func splitOn(t string, n, f int) bool {
+	return t == tDCT && n >= 32 && f == 32
+}
+
+// guardedLoads returns the loads of a row strip's cols coded columns, each
+// written at its first use with its L1 added to the row guard, which the
+// last one checks.
+func (g *fgen) guardedLoads(cols, cs int) []fv {
+	acc := g.tmp("g")
+	left := cols
+	live := make([]fv, cols)
+	for c := range live {
+		v := g.tmp("c")
+		live[c] = g.lazy(v, func() {
+			g.loadAs(v, c*cs, 8, false)
+			if left == cols {
+				g.line("%s := %s.Abs().ToBits()", acc, v)
+			} else {
+				g.line("%s = %s.AddSaturated(%s.Abs().ToBits())", acc, acc, v)
+			}
+			left--
+			if left == 0 {
+				g.line("if %s.ReduceMax() > itx16ColumnL1Bound {", acc)
+				g.line("\treturn false")
+				g.line("}")
+			}
+		})
+	}
+	return live
+}
+
+// tileOrder is the order a row strip writes its n/8 output tiles: a split
+// strip takes tile q with tile n/8-1-q, which share their butterflies.
+func (g *fgen) tileOrder(n int) []int {
+	var qs []int
+	if g.split {
+		for q := 0; q < n/16; q++ {
+			qs = append(qs, q, n/8-1-q)
+		}
+		return qs
+	}
+	for q := 0; q < n/8; q++ {
+		qs = append(qs, q)
+	}
+	return qs
+}
+
+// done ends a strip: every pending value was written.
+func (g *fgen) done() {
+	if len(g.pend) != 0 {
+		panic(fmt.Sprintf("itxgen: %d values never used", len(g.pend)))
+	}
+	g.split = false
 }
 
 // colStrip writes the column pass of one eight-column strip of an n x n
@@ -687,9 +839,15 @@ func (g *fgen) colStripDepth(t string, n, rows int, hbd bool) string {
 	g.sb.Reset()
 	g.n = 0
 	var live []fv
+	g.split = splitOn(t, n, rows)
 	for r := 0; r < rows; r++ {
 		v := g.tmp("m")
-		g.line("%s := archsimd.LoadInt16x8Array((*[8]int16)(m[%d:%d]))", v, r*n, r*n+8)
+		ld := func() { g.line("%s := archsimd.LoadInt16x8Array((*[8]int16)(m[%d:%d]))", v, r*n, r*n+8) }
+		if g.split {
+			live = append(live, g.lazy(v, ld))
+			continue
+		}
+		ld()
 		live = append(live, fv{name: v})
 	}
 	g.reset()
@@ -698,6 +856,7 @@ func (g *fgen) colStripDepth(t string, n, rows int, hbd bool) string {
 		pred = predH16
 	}
 	g.addRows(g.network1D(t, n, inputs(live, n)), ":=", pred)
+	g.done()
 	body := deadStrip(g.sb.String())
 	var out strings.Builder
 	if hbd {
