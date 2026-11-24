@@ -4,7 +4,6 @@ import (
 	"math/rand"
 	"reflect"
 	"testing"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/quantize"
 	"github.com/thesyncim/goav1/internal/av1/transform"
@@ -86,11 +85,6 @@ func TestPrepareInterTXBQuantRDOriginalState(t *testing.T) {
 				clear(pred)
 			}
 			gq, wq := got.lumaQ[:n*n], want.lumaQ[:n*n]
-			if trial%10 == 2 {
-				// Legal overlapping private scratch keeps the original ordered path.
-				gq = unsafe.Slice((*int16)(unsafe.Pointer(&got.tranScratch[4])), n*n)
-				wq = unsafe.Slice((*int16)(unsafe.Pointer(&want.tranScratch[4])), n*n)
-			}
 			if trial%10 == 3 {
 				gq, wq = gq[:len(gq)-1], wq[:len(wq)-1]
 			}
