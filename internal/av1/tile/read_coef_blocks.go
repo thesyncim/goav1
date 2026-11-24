@@ -111,18 +111,24 @@ func (s *DecodeState) bindCoefBlock(cdfs *BlockLoopCDFs, scratch *BlockLoopScrat
 	}
 
 	b := &scratch.coef
-	b.s, b.ctx = s, &scratch.CoeffCtx
+	// The binding's pointers are the same for every block of a tile. Store
+	// them only when they change: a pointer store runs the write barrier
+	// while a garbage collection is marking, and this runs once per block.
+	setPtr(&b.s, s)
+	setPtr(&b.ctx, &scratch.CoeffCtx)
 	e := &b.e
-	e.CDF = (*entropy.CoefCDFs)(cdfs.Coeff)
-	e.TxIntra, e.TxInter = &cdfs.TransformType.Intra, &cdfs.TransformType.Inter
-	e.A, e.L = &scratch.CoeffCtx.Above, &scratch.CoeffCtx.Left
-	e.Levels = &scratch.Coeff.Coeff.CoefLevels
+	setPtr(&e.CDF, (*entropy.CoefCDFs)(cdfs.Coeff))
+	setPtr(&e.TxIntra, &cdfs.TransformType.Intra)
+	setPtr(&e.TxInter, &cdfs.TransformType.Inter)
+	setPtr(&e.A, &scratch.CoeffCtx.Above)
+	setPtr(&e.L, &scratch.CoeffCtx.Left)
+	setPtr(&e.Levels, &scratch.Coeff.Coeff.CoefLevels)
 	e.Reduced = req.ReducedTxSet
 	e.QZero = qIndex == 0
 	e.Intra, e.Lossless = intra, lossless
 	b.Intra, b.Skip, b.Lossless = intra, skip, lossless
-	b.txtpMap = nil
 	if intra {
+		setPtr(&b.txtpMap, nil)
 		lumaMode := pred.LumaMode
 		if pred.FilterIntraValid {
 			lumaMode = filterIntraTransformMode(pred.FilterIntraMode)
@@ -134,7 +140,7 @@ func (s *DecodeState) bindCoefBlock(cdfs *BlockLoopCDFs, scratch *BlockLoopScrat
 		e.YMode = uint8(lumaMode % intraModeCount)
 		e.UVTxtp = uint8(txtpFromUVMode[chromaMode%chromaIntraModeCount])
 	} else {
-		b.txtpMap = &scratch.Coeff.txtpMap
+		setPtr(&b.txtpMap, &scratch.Coeff.txtpMap)
 	}
 	b.Tree = *tree
 	b.X4, b.Y4 = int(block.X4), int(block.Y4)

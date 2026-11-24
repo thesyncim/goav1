@@ -41,7 +41,6 @@ import (
 // is private), a block-loop scratch, and a carrier whose above/diagonal slots
 // are rebound per row while the left context stays lane-owned.
 type pframeDecideWorker struct {
-	st      lossyEncodeState
 	scratch tile.BlockLoopScratch
 	carrier tile.BlockLoopContextCarrier
 
@@ -54,6 +53,11 @@ type pframeDecideWorker struct {
 
 	wf  *pframeWavefront
 	err error
+
+	// st comes last: its pointers lead it and its ~300 KiB of value scratch
+	// trails, so a lane's pointers stay in one short run the garbage
+	// collector's scan stops after.
+	st lossyEncodeState
 }
 
 // adopt refreshes the lane's encode state from the tile's frame-configured

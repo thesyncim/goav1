@@ -121,17 +121,11 @@ type frameCDFs = threading.FrameWorkTileResidualCDFStorage
 type pframeCoder struct {
 	// ownHME is the frame ME of coders not driven by a VideoEncoder.
 	ownHME               *hmeState
-	st                   lossyEncodeState
 	effortLevel          int8
-	partCDFs             tile.PartitionCDFs
-	refCDFs              tile.InterRefCDFs
-	modeCDFs             tile.InterModeCDFs
-	interpCDFs           tile.InterpFilterCDFs
 	scratch              tile.BlockLoopScratch
 	carrier              tile.BlockLoopContextCarrier
 	writerBuf            []byte
 	writer               entropy.Writer
-	decisionStats        EncoderDecisionStats
 	decisionStatsEnabled bool
 
 	// forceSplit runs the decision/write split pipeline (pframe_split.go) even
@@ -145,9 +139,6 @@ type pframeCoder struct {
 	// lanes fill disjoint records; the serial decision pass uses the same
 	// layout and the write pass replays rows in raster order either way.
 	splitRowRecs []pframeSplitRecord
-	// keyTrialPristine is the keyframe's frame-start trial context set
-	// (lossyEncodeState.keyTrialPristine).
-	keyTrialPristine tile.CoeffCDFs
 	// wavefront, when non-nil with wavefrontLanes >= 2, runs the decision
 	// pass as an SB-row wavefront (pframe_wavefront.go). Only the single-tile
 	// coder gets one: tile columns already parallelize the multi-tile path.
@@ -159,6 +150,19 @@ type pframeCoder struct {
 	// cdef_idx literals the SVT CDEF search picks after the frame is
 	// reconstructed (cdef_frame.go). The driver owns the logs per tile.
 	cdefLog *entropy.WriterLog
+
+	// The pointer-free state trails, st (whose pointers lead it) first, so
+	// the coder's pointers stay in one short leading run the garbage
+	// collector's scan stops after.
+	st            lossyEncodeState
+	partCDFs      tile.PartitionCDFs
+	refCDFs       tile.InterRefCDFs
+	modeCDFs      tile.InterModeCDFs
+	interpCDFs    tile.InterpFilterCDFs
+	decisionStats EncoderDecisionStats
+	// keyTrialPristine is the keyframe's frame-start trial context set
+	// (lossyEncodeState.keyTrialPristine).
+	keyTrialPristine tile.CoeffCDFs
 }
 
 // reset (re)initializes the per-frame CDF and quantizer state. Buffers are

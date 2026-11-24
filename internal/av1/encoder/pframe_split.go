@@ -64,10 +64,28 @@ type pblockRecord struct {
 	uvMode     tile.ChromaIntraMode
 	cfl        tile.CFLAlphaResult
 
-	// pal is a keyframe leaf's luma palette (YMap nil); palMap indexes its
-	// color index map in the record's map arena, -1 for none.
-	pal    tile.PaletteModeResult
+	// pal is a keyframe leaf's luma palette; palMap indexes its color index
+	// map in the record's map arena, -1 for none.
+	pal    recordPalette
 	palMap int32
+}
+
+// recordPalette is tile.PaletteModeResult without its color-map pointers. A
+// split row holds a record per leaf block, so keeping the record pointer-free
+// keeps the whole record arena out of the garbage collector's scan work; the
+// map lives in the record's palMaps arena and is rebound at write time.
+type recordPalette struct {
+	ySize, uvSize             uint8
+	yColors, uColors, vColors [tile.PaletteMaxSize]uint16
+}
+
+func recordPaletteOf(p tile.PaletteModeResult) recordPalette {
+	return recordPalette{ySize: p.YSize, uvSize: p.UVSize, yColors: p.YColors, uColors: p.UColors, vColors: p.VColors}
+}
+
+// result returns the palette with nil color maps.
+func (p *recordPalette) result() tile.PaletteModeResult {
+	return tile.PaletteModeResult{YSize: p.ySize, UVSize: p.uvSize, YColors: p.yColors, UColors: p.uColors, VColors: p.vColors}
 }
 
 // pframeSplitRecord is the preallocated frame-level decision store for one

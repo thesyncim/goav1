@@ -1014,6 +1014,16 @@ type FrameWorkBatchRunner interface {
 	Run(FrameWorkBatch) error
 }
 
+// FrameWorkBatchPtrRunner is a FrameWorkBatchRunner that also runs a batch in
+// place, so the frame-thread dispatch hands it a pointer to the batch context
+// it owns instead of a copy. The frame-thread path takes it statically: a
+// per-frame interface-to-interface assertion would warm the runtime's
+// assertion cache, which allocates at random calls.
+type FrameWorkBatchPtrRunner interface {
+	FrameWorkBatchRunner
+	RunPtr(*FrameWorkBatch) error
+}
+
 // Pool is a reusable bounded worker pool for frame/tile work.
 type Pool struct {
 	mu      sync.Mutex
