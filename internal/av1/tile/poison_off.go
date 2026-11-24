@@ -7,3 +7,7 @@ package tile
 // gate run under the tag proves the skip is exact (any stale read changes the
 // output).
 const poisonSkippedClears = false
+
+// poisonFill is a no-op without the goav1_poison tag; every call sits behind
+// poisonSkippedClears.
+func poisonFill[T any](*T) {}

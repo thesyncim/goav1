@@ -559,6 +559,12 @@ func TestCoeffGeometryTxScaleMatchesQuantizeTransformScale(t *testing.T) {
 // TestCoeffCDFsEqualMatchesOperator pins Equal to the == it replaces: the
 // default sets compare equal to a copy, and adapting any single CDF makes
 // them differ.
+// coeffCDFCount is the number of CDFs in a CoeffCDFs; the assertion fails to
+// compile if a field that is not an array of CDFs is ever added.
+const coeffCDFCount = unsafe.Sizeof(CoeffCDFs{}) / unsafe.Sizeof(entropy.CDF{})
+
+var _ [0]struct{} = [unsafe.Sizeof(CoeffCDFs{}) % unsafe.Sizeof(entropy.CDF{})]struct{}{}
+
 func TestCoeffCDFsEqualMatchesOperator(t *testing.T) {
 	for q := range CoeffQContexts {
 		def := &defaultCoeffCDFs[q]
@@ -570,7 +576,7 @@ func TestCoeffCDFsEqualMatchesOperator(t *testing.T) {
 		if uintptr(len(flat)) != coeffCDFCount {
 			t.Fatalf("flat length %d want %d", len(flat), coeffCDFCount)
 		}
-		for i := 0; i < len(flat); i += 29 {
+		for i := range flat {
 			save := flat[i]
 			if err := flat[i].Update(0); err != nil {
 				t.Fatalf("q context %d CDF %d: %v", q, i, err)
@@ -582,6 +588,11 @@ func TestCoeffCDFsEqualMatchesOperator(t *testing.T) {
 				t.Fatalf("q context %d CDF %d: modified copy compares equal", q, i)
 			}
 			flat[i] = save
+		}
+		var cpy CoeffCDFs
+		cpy.CopyFrom(&cp)
+		if cpy != cp {
+			t.Fatalf("q context %d: CopyFrom missed a field", q)
 		}
 		last := len(flat) - 1
 		save := flat[last]
