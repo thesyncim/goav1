@@ -58,6 +58,12 @@ func warpVertical8FullGamma0Dispatch(dst frame.Plane, tmp *warpTmp, i, j, rowShi
 	warpVertical8AVX2(dst, tmp, i, j, rowShift, colShift, baseSY, 0, delta)
 }
 
+// warpCompound8x8Dispatch has no AVX2 kernel yet: the scalar compound block
+// runs.
+func warpCompound8x8Dispatch(out []uint16, stride int, ref frame.Plane, ix4, sx4, iy4, sy4, alpha, beta, gamma, delta int) bool {
+	return false
+}
+
 // warpFilterPair loads the int16 filter rows of the phases a and b into the
 // low and high 128-bit lanes.
 func warpFilterPair(a, b int) archsimd.Int16x16 {

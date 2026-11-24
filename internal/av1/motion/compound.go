@@ -1120,6 +1120,13 @@ func PredictWarpedCompoundToConvBuf(buf *CompoundConvBuf, ref frame.Plane, bytes
 	var tmp [warpedIntermediateRows * warpedIntermediateColumns]int32
 	for i := matY; i < matY+height; i += 8 {
 		for j := matX; j < matX+width; j += 8 {
+			if bytesPerSample == 1 && i+8 <= matY+height && j+8 <= matX+width {
+				ix4, sx4, iy4, sy4 := warpBlockOrigin(i, j, matrix, a, be, g, d, ssX, ssY)
+				o := (i-matY)*width + (j - matX)
+				if warpCompound8x8Dispatch(out[o:], width, ref, ix4, sx4, iy4, sy4, a, be, g, d) {
+					continue
+				}
+			}
 			var baseSY int
 			if bytesPerSample == 1 {
 				baseSY = warpHorizontal8(&tmp, ref, i, j, matrix, a, be, g, d, ssX, ssY, reduceBitsHoriz, offsetBitsHoriz)
