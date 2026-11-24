@@ -137,7 +137,7 @@ func Row[A GridRowArray[E], E GridElem](g Grid[E], r, c int) *A {
 // 0..h-1, bytes 0..n-1 (h = height >= 1, n = width) at each side's stride
 // lie inside that slice. The loops form only the addresses p + k*stride + c,
 // for rows k from 0 to the last row copied and columns c a multiple of the
-// copy size below n (0, or the 64-byte quarters of a 128- or 256-byte row):
+// copy size below n (0, or the 64-byte pieces of a 128- or 256-byte row):
 // addresses of bytes of those rows, each reaching bytes c..c+size-1 <= n-1
 // of its row. Slices that overlap copy each row piece as a load then a store.
 func CopyRect(dst []byte, dOff, dStride int, src []byte, sOff, sStride int, width, height int) bool {
@@ -235,13 +235,23 @@ func CopyRect(dst []byte, dOff, dStride int, src []byte, sOff, sStride int, widt
 			}
 			d, s, d1, s1 = unsafe.Add(d, 2*ds), unsafe.Add(s, 2*ss), unsafe.Add(d1, 2*ds), unsafe.Add(s1, 2*ss)
 		}
-	case 128, 256:
-		// 64-byte column quarters: one larger array copy would call memmove.
-		// (rows of these widths are rare; one row per iteration).
+	case 128:
+		// 64-byte column halves (and quarters below): one larger array copy
+		// would call memmove. One row per iteration.
 		for {
-			for c := uint(0); c < n; c += 64 {
-				*(*[64]byte)(unsafe.Add(d, c)) = *(*[64]byte)(unsafe.Add(s, c))
+			*(*[64]byte)(d) = *(*[64]byte)(s)
+			*(*[64]byte)(unsafe.Add(d, 64)) = *(*[64]byte)(unsafe.Add(s, 64))
+			if h--; h == 0 {
+				break
 			}
+			d, s = unsafe.Add(d, ds), unsafe.Add(s, ss)
+		}
+	case 256:
+		for {
+			*(*[64]byte)(d) = *(*[64]byte)(s)
+			*(*[64]byte)(unsafe.Add(d, 64)) = *(*[64]byte)(unsafe.Add(s, 64))
+			*(*[64]byte)(unsafe.Add(d, 128)) = *(*[64]byte)(unsafe.Add(s, 128))
+			*(*[64]byte)(unsafe.Add(d, 192)) = *(*[64]byte)(unsafe.Add(s, 192))
 			if h--; h == 0 {
 				break
 			}

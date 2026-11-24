@@ -315,7 +315,7 @@ func mc8V6File() string {
 	w.line("")
 	w.comment(`The 8-bit six-tap vertical kernels (dav1d put_6tap/prep_6tap v) over Grid
 views. Each column strip keeps five source rows in registers and filters
-eight output rows per chunk (two, then one, for the last rows), so the
+eight output rows per chunk (then at most one chunk each of four, two and one rows), so the
 resident rows rotate once per eight output rows. Every chunk is a
 fixed-shape sub-view whose Fits test is the only check its rows pay; the
 tests cannot fail (the entries sized the views), and with no panic behind
@@ -382,7 +382,7 @@ func mc8H6File() string {
 	var w writer
 	w.line("")
 	w.comment(`The 8-bit six-tap horizontal kernels (dav1d put_6tap/prep_6tap h) over
-Grid views, eight rows per chunk (two, then one, for the last rows) of each
+Grid views, eight rows per chunk (then at most one chunk each of four, two and one rows) of each
 column strip. Sixteen-column strips read one 24-byte window per row (the
 two eight-output tap windows are its bytes 0..15 and 8..23); every chunk is
 a fixed-shape sub-view whose Fits test is the only check its rows pay, a
@@ -477,7 +477,7 @@ halved-tap sum of 10- or 12-bit samples needs 32-bit lanes, and widening
 the rows instead of the products drops the per-tap widening multiplies,
 their adds and the high-half moves (the sums are the same integers). Each
 eight-sample column strip keeps five rows resident and filters eight
-output rows per chunk (two, then one, for the last rows); the chunks'
+output rows per chunk (then at most one chunk each of four, two and one rows); the chunks'
 Fits tests are the only checks the rows pay, and the entries make them
 unreachable, so the kernels stay leaf functions.`)
 	w.line("")

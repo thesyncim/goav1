@@ -20,7 +20,7 @@ import (
 // the rows instead of the products drops the per-tap widening multiplies,
 // their adds and the high-half moves (the sums are the same integers). Each
 // eight-sample column strip keeps five rows resident and filters eight
-// output rows per chunk (two, then one, for the last rows); the chunks'
+// output rows per chunk (then at most one chunk each of four, two and one rows); the chunks'
 // Fits tests are the only checks the rows pay, and the entries make them
 // unreachable, so the kernels stay leaf functions.
 

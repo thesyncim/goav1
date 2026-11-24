@@ -15,7 +15,7 @@ import (
 
 // The 8-bit six-tap vertical kernels (dav1d put_6tap/prep_6tap v) over Grid
 // views. Each column strip keeps five source rows in registers and filters
-// eight output rows per chunk (two, then one, for the last rows), so the
+// eight output rows per chunk (then at most one chunk each of four, two and one rows), so the
 // resident rows rotate once per eight output rows. Every chunk is a
 // fixed-shape sub-view whose Fits test is the only check its rows pay; the
 // tests cannot fail (the entries sized the views), and with no panic behind

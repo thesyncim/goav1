@@ -14,7 +14,7 @@ import (
 )
 
 // The 8-bit six-tap horizontal kernels (dav1d put_6tap/prep_6tap h) over
-// Grid views, eight rows per chunk (two, then one, for the last rows) of each
+// Grid views, eight rows per chunk (then at most one chunk each of four, two and one rows) of each
 // column strip. Sixteen-column strips read one 24-byte window per row (the
 // two eight-output tap windows are its bytes 0..15 and 8..23); every chunk is
 // a fixed-shape sub-view whose Fits test is the only check its rows pay, a
