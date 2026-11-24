@@ -580,6 +580,8 @@ internal/av1/threading/tile_residual.go:*:*: make([]FrameWorkPredictionScratch, 
 internal/av1/threading/tile_residual.go:*:*: make([]FrameWorkPredictionScratch, workers) escapes to heap in (*frameWorkReconWavefront).ensureStates:
 internal/av1/threading/tile_residual.go:*:*: make([]atomic.Int32, rowCount) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]atomic.Int32, rowCount) escapes to heap in (*frameWorkReconWavefront).ensureDone:
+internal/av1/threading/tile_residual.go:*:*: make([]frameWorkReconCBI, len(s.reconCBI), cbiNeed) escapes to heap
+internal/av1/threading/tile_residual.go:*:*: make([]frameWorkReconCBI, len(s.reconCBI), cbiNeed) escapes to heap in (*FrameWorkTileResidualScratch).reserveCFArena:
 internal/av1/threading/tile_residual.go:*:*: make([]frameWorkReconState, workers) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]frameWorkReconState, workers) escapes to heap in (*frameWorkReconWavefront).ensureStates:
 internal/av1/threading/tile_residual.go:*:*: make([]int16, residualTotal) escapes to heap
