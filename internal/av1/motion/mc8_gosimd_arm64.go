@@ -300,6 +300,21 @@ func mc8Copy(dst []byte, dstStride int, src []byte, srcStride int, w, h int) {
 			archsimd.LoadUint8x16Array(mc8W16(src, s)).StoreArray(mc8W16(dst, d))
 			s, d = s+ss, d+ds
 		}
+	case w == 32:
+		for r := 0; r < h; r++ {
+			*mc8W32(dst, d) = *mc8W32(src, s)
+			s, d = s+ss, d+ds
+		}
+	case w == 64:
+		for r := 0; r < h; r++ {
+			*mc8W64(dst, d) = *mc8W64(src, s)
+			s, d = s+ss, d+ds
+		}
+	case w == 128:
+		for r := 0; r < h; r++ {
+			*mc8W128(dst, d) = *mc8W128(src, s)
+			s, d = s+ss, d+ds
+		}
 	case w&31 == 0:
 		for r := 0; r < h; r++ {
 			for c := uint32(0); c < uint32(w); c += 32 {
@@ -339,6 +354,9 @@ func mc8Copy(dst []byte, dstStride int, src []byte, srcStride int, w, h int) {
 func mc8W4(s []byte, o uint32) *[4]byte        { return (*[4]byte)(s[uint(o) : uint(o)+4]) }
 func mc8W8(s []byte, o uint32) *[8]byte        { return (*[8]byte)(s[uint(o) : uint(o)+8]) }
 func mc8W16(s []byte, o uint32) *[16]byte      { return (*[16]byte)(s[uint(o) : uint(o)+16]) }
+func mc8W24(s []byte, o uint32) *[24]byte      { return (*[24]byte)(s[uint(o) : uint(o)+24]) }
+func mc8W128(s []byte, o uint32) *[128]byte    { return (*[128]byte)(s[uint(o) : uint(o)+128]) }
+func mc8W64(s []byte, o uint32) *[64]byte      { return (*[64]byte)(s[uint(o) : uint(o)+64]) }
 func mc8W32(s []byte, o uint32) *[32]byte      { return (*[32]byte)(s[uint(o) : uint(o)+32]) }
 func mc8WU4(s []uint16, o uint32) *[4]uint16   { return (*[4]uint16)(s[uint(o) : uint(o)+4]) }
 func mc8WU8(s []uint16, o uint32) *[8]uint16   { return (*[8]uint16)(s[uint(o) : uint(o)+8]) }
@@ -758,6 +776,20 @@ func mc8PutH6(src []byte, srcStride, w, h int, ph *mc8Phase, dst []byte, dstStri
 	rnd := archsimd.BroadcastInt16x8(34)
 	sh := archsimd.BroadcastInt16x8(-6)
 	ss, ds := uint32(srcStride), uint32(dstStride)
+	if w&15 == 0 {
+		// Sixteen columns per window: one 24-byte source window per row and
+		// one 16-byte store.
+		for r := 0; r < h; r++ {
+			so, do := uint32(r)*ss, uint32(r)*ds
+			for c := uint32(0); c < uint32(w); c += 16 {
+				win := mc8W24(src, so+c)
+				a := mc8H6Sum((*[16]uint8)(win[0:16]), c0, c1, c2, c3, c4, c5, rnd).Shift(sh).SaturateToUint8()
+				b := mc8H6Sum((*[16]uint8)(win[8:24]), c0, c1, c2, c3, c4, c5, rnd).Shift(sh).SaturateToUint8()
+				a.ReshapeToUint64s().InterleaveLo(b.ReshapeToUint64s()).ReshapeToUint8s().StoreArray(mc8W16(dst, do+c))
+			}
+		}
+		return
+	}
 	var so, do uint32
 	r := 0
 	for ; r+2 <= h; r += 2 {
@@ -795,6 +827,18 @@ func mc8PutH6(src []byte, srcStride, w, h int, ph *mc8Phase, dst []byte, dstStri
 	}
 }
 
+// mc8H6Sum is the six-tap halved horizontal sum (plus rnd) of the eight
+// output columns whose window starts at p.
+func mc8H6Sum(p *[16]uint8, c0, c1, c2, c3, c4, c5, rnd archsimd.Int16x8) archsimd.Int16x8 {
+	lo, hi := mc8LoadWiden(p)
+	sum := mc8I16(lo).MulAdd(c0, rnd)
+	sum = mc8I16(hi.ConcatShiftBytesRight(lo, 2)).MulAdd(c1, sum)
+	sum = mc8I16(hi.ConcatShiftBytesRight(lo, 4)).MulAdd(c2, sum)
+	sum = mc8I16(hi.ConcatShiftBytesRight(lo, 6)).MulAdd(c3, sum)
+	sum = mc8I16(hi.ConcatShiftBytesRight(lo, 8)).MulAdd(c4, sum)
+	return mc8I16(hi.ConcatShiftBytesRight(lo, 10)).MulAdd(c5, sum)
+}
+
 // mc8PrepH6 is the prep horizontal-only pass: ((s + 2) >> 2) + 6144.
 func mc8PrepH6(src []byte, srcStride, w, h int, ph *mc8Phase, out []uint16) {
 	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
@@ -806,6 +850,22 @@ func mc8PrepH6(src []byte, srcStride, w, h int, ph *mc8Phase, out []uint16) {
 	rnd := archsimd.BroadcastInt16x8(2 + 6144<<2)
 	sh := archsimd.BroadcastInt16x8(-2)
 	ss, ws := uint32(srcStride), uint32(w)
+	if w&15 == 0 {
+		// Sixteen columns per window: one 24-byte source window per row and
+		// one 16-sample CONV_BUF window.
+		var so, oo uint32
+		for r := 0; r < h; r++ {
+			for c := uint32(0); c < ws; c += 16 {
+				win := mc8W24(src, so+c)
+				o := mc8WU16(out, oo+c)
+				// The offset sums lie in [0, 2^16): shift them as unsigned.
+				mc8H6Sum((*[16]uint8)(win[0:16]), c0, c1, c2, c3, c4, c5, rnd).ToBits().Shift(sh).StoreArray((*[8]uint16)(o[0:8]))
+				mc8H6Sum((*[16]uint8)(win[8:24]), c0, c1, c2, c3, c4, c5, rnd).ToBits().Shift(sh).StoreArray((*[8]uint16)(o[8:16]))
+			}
+			so, oo = so+ss, oo+ws
+		}
+		return
+	}
 	var so, oo uint32
 	r := 0
 	for ; r+2 <= h; r += 2 {
