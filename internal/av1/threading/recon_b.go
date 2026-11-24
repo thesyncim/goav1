@@ -143,14 +143,41 @@ func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisi
 		} else {
 			cf = s.coefBuf.take()
 		}
-		var err error
-		if r, err = b.DecodeCoefs(plane, size, x4, y4, visW, visH, cf, &dq[plane]); err != nil {
-			return err
+		// dav1d's read_coef_tree / read_coef_blocks call decode_coefs
+		// directly, the txtp_map lookup and fill around it.
+		sz, ok := tile.CoefSizeOf(size)
+		if !ok || plane > 2 {
+			return tile.ErrInvalidDecodeState
+		}
+		tw4, th4 := int(sz.W4), int(sz.H4)
+		if uint(x4)+uint(tw4) > tile.MaxBlockModeSlots || uint(y4)+uint(th4) > tile.MaxBlockModeSlots {
+			return tile.ErrInvalidDecodeState
+		}
+		// recon_b_inter's chroma txtp: txtp_map[(by4 + (y << ss_ver)) * 32 +
+		// bx4 + (x << ss_hor)], with x/y the TXB offset in the chroma block.
+		m := b.TxtpMap()
+		ytxtp := uint(0)
+		if plane != 0 && m != nil {
+			lx := uint(b.X4 + (x4-b.CX4)<<b.SSX)
+			ly := uint(b.Y4 + (y4-b.CY4)<<b.SSY)
+			if lx >= tile.MaxBlockModeSlots || ly >= tile.MaxBlockModeSlots {
+				return tile.ErrInvalidDecodeState
+			}
+			ytxtp = uint(m[ly][lx])
+		}
+		rd, st := b.CoefEntropy()
+		eob, txtp, ext := rd.DecodeCoefs(st, uint(plane), sz, cf, &dq[plane], uint(x4), uint(y4), uint(visW), uint(visH), ytxtp)
+		r.Txtp = transform.Type(txtp)
+		if plane == 0 && m != nil {
+			tile.FillTxtpMap(m, x4, y4, tw4, th4, r.Txtp)
 		}
 		c.stats.TXBs++
-		if r.TXB.AllZero {
+		if eob < 0 {
+			r.TXB.AllZero = true
 			c.stats.AllZero++
 		} else {
+			r.TXB.EOB = uint16(eob + 1)
+			r.ActiveRows, r.ActiveCols = uint8(ext), uint8(ext>>8)
 			coded = true
 			c.stats.NonZero++
 			c.stats.EOBTotal += int32(r.TXB.EOB)

@@ -14,9 +14,10 @@ type GridElem interface {
 }
 
 // GridRowArray is the fixed-size run of elements a Grid accessor returns:
-// the motion-compensation kernels' row windows.
+// the motion-compensation kernels' row windows, and the encoder's HME SAD
+// windows (16 or 32 source bytes plus the seven bytes of eight positions).
 type GridRowArray[E GridElem] interface {
-	[4]E | [8]E | [16]E | [24]E | [26]E | [30]E | [32]E | [64]E
+	[4]E | [8]E | [16]E | [23]E | [24]E | [26]E | [30]E | [32]E | [39]E | [64]E
 }
 
 // Grid is a footprint-validated view of a strided block of a slice of E:
