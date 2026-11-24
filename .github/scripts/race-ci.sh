@@ -9,6 +9,7 @@ shards=(
   encoder-0
   encoder-1
   encoder-2
+  encoder-3
   testvector
   decode
   kernels-a
@@ -34,7 +35,7 @@ split_package() {
 split_count() {
   case "$1" in
     public) printf '4\n' ;;
-    encoder) printf '3\n' ;;
+    encoder) printf '4\n' ;;
     *) return 2 ;;
   esac
 }
@@ -57,7 +58,7 @@ split_prefix() {
 packages_for() {
   case "$1" in
     public-[0-3]) split_package public ;;
-    encoder-[0-2]) split_package encoder ;;
+    encoder-[0-3]) split_package encoder ;;
     testvector) printf '%s\n' ./internal/av1/testvector ;;
     decode)
       printf '%s\n' \
