@@ -82,12 +82,12 @@ func forwardDCT32x32N4RowSkip(coeff *[1024]int32, residual *[1024]int16, thr0, t
 
 func fwdN4Cols16(buf *[16 * 4]int32, residual *[256]int16) {
 	for g := 0; g < 16; g += fwdLanes {
-		fwdColDCT16N4T(buf[:], g, residual[:], 16)
+		fwdColDCT16N4T(buf[:], g, residual)
 	}
 }
 
 func fwdN4Cols32(buf *[32 * 8]int32, residual *[1024]int16) {
 	for g := 0; g < 32; g += fwdLanes {
-		fwdColDCT32N4T(buf[:], g, residual[:], 32)
+		fwdColDCT32N4T(buf[:], g, residual)
 	}
 }

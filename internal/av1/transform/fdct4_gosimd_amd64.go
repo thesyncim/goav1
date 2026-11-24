@@ -32,18 +32,36 @@ func forwardDCT4x4SIMD(coeff []int32, coeffStride int, residual []int16, residua
 
 // forwardDCT4x4SIMDCore runs one straight-line pass: widen four residual rows,
 // the fdct4 column butterfly, an in-register 4x4 transpose, the fdct4 row
-// butterfly, and a raw-pointer store. shift[1]=shift[2]=0 for 4x4.
+// butterfly, and the row stores. shift[1]=shift[2]=0 for 4x4.
 func forwardDCT4x4SIMDCore(coeff []int32, coeffStride int, residual []int16, residualStride int) {
-	loadRow := func(row int) archsimd.Int32x4 {
-		// Only the four samples of this row: a full 8-lane load would read past an
-		// exact 4x4 residual buffer.
-		v, _ := archsimd.LoadInt16x8Part(residual[row*residualStride : row*residualStride+4])
-		return v.ExtendLo4ToInt32().ShiftAllLeft(2)
+	if coeffStride == 4 && residualStride == 4 {
+		forwardDCT4x4Packed((*[16]int32)(coeff[:16]), (*[16]int16)(residual[:16]))
+		return
 	}
-	r0 := loadRow(0)
-	r1 := loadRow(1)
-	r2 := loadRow(2)
-	r3 := loadRow(3)
+	var r [16]int16
+	var c [16]int32
+	for i := range 4 {
+		copy(r[4*i:4*i+4], residual[i*residualStride:i*residualStride+4])
+	}
+	forwardDCT4x4Packed(&c, &r)
+	for i := range 4 {
+		copy(coeff[i*coeffStride:i*coeffStride+4], c[4*i:4*i+4])
+	}
+}
+
+// forwardDCT4x4Packed is forwardDCT4x4SIMDCore on a packed 4x4 block (both
+// strides 4, the encoder's layout): two eight-sample loads cover the four
+// residual rows, and the rows are stored at constant offsets.
+func forwardDCT4x4Packed(coeff *[16]int32, residual *[16]int16) {
+	// 128-bit only: the high row of each pair moves down with PUNPCKHQDQ.
+	v01 := archsimd.LoadInt16x8Array((*[8]int16)(residual[0:8]))
+	v23 := archsimd.LoadInt16x8Array((*[8]int16)(residual[8:16]))
+	v11 := v01.AsInt64x2().InterleaveHi(v01.AsInt64x2()).AsInt16x8()
+	v33 := v23.AsInt64x2().InterleaveHi(v23.AsInt64x2()).AsInt16x8()
+	r0 := v01.ExtendLo4ToInt32().ShiftAllLeft(2)
+	r1 := v11.ExtendLo4ToInt32().ShiftAllLeft(2)
+	r2 := v23.ExtendLo4ToInt32().ShiftAllLeft(2)
+	r3 := v33.ExtendLo4ToInt32().ShiftAllLeft(2)
 
 	w32 := archsimd.LoadInt32x4Array(&fdct4W32)
 	wn32 := archsimd.LoadInt32x4Array(&fdct4Wn32)
@@ -88,24 +106,10 @@ func forwardDCT4x4SIMDCore(coeff []int32, coeffStride int, residual []int16, res
 		o3 = s2.Mul(wn16).Add(s3.Mul(w48).Add(round)).ShiftAllRight(13)
 	}
 
-	// The encoder's 4x4 coefficients are packed (stride 4): one fixed view, no
-	// row checks. Other strides take four checked row windows, all taken
-	// before the stores.
-	if coeffStride == 4 {
-		c := (*[16]int32)(coeff[:16])
-		o0.StoreArray((*[4]int32)(c[0:4]))
-		o1.StoreArray((*[4]int32)(c[4:8]))
-		o2.StoreArray((*[4]int32)(c[8:12]))
-		o3.StoreArray((*[4]int32)(c[12:16]))
-		return
-	}
-	cs := coeffStride
-	w0, w1 := (*[4]int32)(coeff[0:4]), (*[4]int32)(coeff[cs:cs+4])
-	w2, w3 := (*[4]int32)(coeff[2*cs:2*cs+4]), (*[4]int32)(coeff[3*cs:3*cs+4])
-	o0.StoreArray(w0)
-	o1.StoreArray(w1)
-	o2.StoreArray(w2)
-	o3.StoreArray(w3)
+	o0.StoreArray((*[4]int32)(coeff[0:4]))
+	o1.StoreArray((*[4]int32)(coeff[4:8]))
+	o2.StoreArray((*[4]int32)(coeff[8:12]))
+	o3.StoreArray((*[4]int32)(coeff[12:16]))
 }
 
 func fdctInt32AsInt64Amd(v archsimd.Int32x4) archsimd.Int64x2 {
