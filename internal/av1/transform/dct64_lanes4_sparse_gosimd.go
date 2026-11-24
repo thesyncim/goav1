@@ -8,21 +8,22 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // inverseDCT64Lanes4NarrowLow8 is inverseDCT64Lanes4Narrow with inputs 8.. known zero, derived mechanically by
 // zero propagation (exact identities only); all output stores are kept.
-func inverseDCT64Lanes4NarrowLow8(p unsafe.Pointer, stride uintptr, min, max int32) {
+func inverseDCT64Lanes4NarrowLow8(p []int32, stride int, min, max int32) {
 	k := itxCoefsPtr
 	mn, mx := archsimd.BroadcastInt32x4(min), archsimd.BroadcastInt32x4(max)
 	r12, n12 := itxRoundBias(12), itxShiftAmount(12)
-	ld := func(i uintptr) archsimd.Int32x4 {
-		return archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(p, i*stride)))
+	ld := func(i int) archsimd.Int32x4 {
+		o := i * stride
+		return archsimd.LoadInt32x4Array((*[4]int32)(p[o : o+4]))
 	}
-	st := func(i uintptr, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(unsafe.Add(p, i*stride))) }
+	st := func(i int, v archsimd.Int32x4) {
+		o := i * stride
+		v.StoreArray((*[4]int32)(p[o : o+4]))
+	}
 	clamp := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(mn).Min(mx) }
 	mac := func(acc, x archsimd.Int32x4, c int) archsimd.Int32x4 {
 		return itxMulAcc(acc, x, archsimd.LoadInt32x4Array(&k[c]))
@@ -435,14 +436,18 @@ func inverseDCT64Lanes4NarrowLow8(p unsafe.Pointer, stride uintptr, min, max int
 
 // inverseDCT64Lanes4NarrowLow16 is inverseDCT64Lanes4Narrow with inputs 16.. known zero, derived mechanically by
 // zero propagation (exact identities only); all output stores are kept.
-func inverseDCT64Lanes4NarrowLow16(p unsafe.Pointer, stride uintptr, min, max int32) {
+func inverseDCT64Lanes4NarrowLow16(p []int32, stride int, min, max int32) {
 	k := itxCoefsPtr
 	mn, mx := archsimd.BroadcastInt32x4(min), archsimd.BroadcastInt32x4(max)
 	r12, n12 := itxRoundBias(12), itxShiftAmount(12)
-	ld := func(i uintptr) archsimd.Int32x4 {
-		return archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(p, i*stride)))
+	ld := func(i int) archsimd.Int32x4 {
+		o := i * stride
+		return archsimd.LoadInt32x4Array((*[4]int32)(p[o : o+4]))
 	}
-	st := func(i uintptr, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(unsafe.Add(p, i*stride))) }
+	st := func(i int, v archsimd.Int32x4) {
+		o := i * stride
+		v.StoreArray((*[4]int32)(p[o : o+4]))
+	}
 	clamp := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(mn).Min(mx) }
 	mac := func(acc, x archsimd.Int32x4, c int) archsimd.Int32x4 {
 		return itxMulAcc(acc, x, archsimd.LoadInt32x4Array(&k[c]))
@@ -951,14 +956,18 @@ func inverseDCT64Lanes4NarrowLow16(p unsafe.Pointer, stride uintptr, min, max in
 
 // inverseDCT64Lanes4NarrowLow32 is inverseDCT64Lanes4Narrow with inputs 32.. known zero, derived mechanically by
 // zero propagation (exact identities only); all output stores are kept.
-func inverseDCT64Lanes4NarrowLow32(p unsafe.Pointer, stride uintptr, min, max int32) {
+func inverseDCT64Lanes4NarrowLow32(p []int32, stride int, min, max int32) {
 	k := itxCoefsPtr
 	mn, mx := archsimd.BroadcastInt32x4(min), archsimd.BroadcastInt32x4(max)
 	r12, n12 := itxRoundBias(12), itxShiftAmount(12)
-	ld := func(i uintptr) archsimd.Int32x4 {
-		return archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(p, i*stride)))
+	ld := func(i int) archsimd.Int32x4 {
+		o := i * stride
+		return archsimd.LoadInt32x4Array((*[4]int32)(p[o : o+4]))
 	}
-	st := func(i uintptr, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(unsafe.Add(p, i*stride))) }
+	st := func(i int, v archsimd.Int32x4) {
+		o := i * stride
+		v.StoreArray((*[4]int32)(p[o : o+4]))
+	}
 	clamp := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(mn).Min(mx) }
 	mac := func(acc, x archsimd.Int32x4, c int) archsimd.Int32x4 {
 		return itxMulAcc(acc, x, archsimd.LoadInt32x4Array(&k[c]))
@@ -1525,14 +1534,18 @@ func inverseDCT64Lanes4NarrowLow32(p unsafe.Pointer, stride uintptr, min, max in
 
 // inverseDCT64Lanes4WideLow8 is inverseDCT64Lanes4Wide with inputs 8.. known zero, derived mechanically by
 // zero propagation (exact identities only); all output stores are kept.
-func inverseDCT64Lanes4WideLow8(p unsafe.Pointer, stride uintptr, min, max int32) {
+func inverseDCT64Lanes4WideLow8(p []int32, stride int, min, max int32) {
 	k := itxCoefsPtr
 	mn, mx := archsimd.BroadcastInt32x4(min), archsimd.BroadcastInt32x4(max)
 	r12, n12 := itxRoundBias(12), itxShiftAmount(12)
-	ld := func(i uintptr) archsimd.Int32x4 {
-		return archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(p, i*stride)))
+	ld := func(i int) archsimd.Int32x4 {
+		o := i * stride
+		return archsimd.LoadInt32x4Array((*[4]int32)(p[o : o+4]))
 	}
-	st := func(i uintptr, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(unsafe.Add(p, i*stride))) }
+	st := func(i int, v archsimd.Int32x4) {
+		o := i * stride
+		v.StoreArray((*[4]int32)(p[o : o+4]))
+	}
 	clamp := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(mn).Min(mx) }
 	mac := func(acc, x archsimd.Int32x4, c int) archsimd.Int32x4 {
 		return itxMulAcc(acc, x, archsimd.LoadInt32x4Array(&k[c]))
@@ -1978,14 +1991,18 @@ func inverseDCT64Lanes4WideLow8(p unsafe.Pointer, stride uintptr, min, max int32
 
 // inverseDCT64Lanes4WideLow16 is inverseDCT64Lanes4Wide with inputs 16.. known zero, derived mechanically by
 // zero propagation (exact identities only); all output stores are kept.
-func inverseDCT64Lanes4WideLow16(p unsafe.Pointer, stride uintptr, min, max int32) {
+func inverseDCT64Lanes4WideLow16(p []int32, stride int, min, max int32) {
 	k := itxCoefsPtr
 	mn, mx := archsimd.BroadcastInt32x4(min), archsimd.BroadcastInt32x4(max)
 	r12, n12 := itxRoundBias(12), itxShiftAmount(12)
-	ld := func(i uintptr) archsimd.Int32x4 {
-		return archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(p, i*stride)))
+	ld := func(i int) archsimd.Int32x4 {
+		o := i * stride
+		return archsimd.LoadInt32x4Array((*[4]int32)(p[o : o+4]))
 	}
-	st := func(i uintptr, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(unsafe.Add(p, i*stride))) }
+	st := func(i int, v archsimd.Int32x4) {
+		o := i * stride
+		v.StoreArray((*[4]int32)(p[o : o+4]))
+	}
 	clamp := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(mn).Min(mx) }
 	mac := func(acc, x archsimd.Int32x4, c int) archsimd.Int32x4 {
 		return itxMulAcc(acc, x, archsimd.LoadInt32x4Array(&k[c]))
@@ -2528,14 +2545,18 @@ func inverseDCT64Lanes4WideLow16(p unsafe.Pointer, stride uintptr, min, max int3
 
 // inverseDCT64Lanes4WideLow32 is inverseDCT64Lanes4Wide with inputs 32.. known zero, derived mechanically by
 // zero propagation (exact identities only); all output stores are kept.
-func inverseDCT64Lanes4WideLow32(p unsafe.Pointer, stride uintptr, min, max int32) {
+func inverseDCT64Lanes4WideLow32(p []int32, stride int, min, max int32) {
 	k := itxCoefsPtr
 	mn, mx := archsimd.BroadcastInt32x4(min), archsimd.BroadcastInt32x4(max)
 	r12, n12 := itxRoundBias(12), itxShiftAmount(12)
-	ld := func(i uintptr) archsimd.Int32x4 {
-		return archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(p, i*stride)))
+	ld := func(i int) archsimd.Int32x4 {
+		o := i * stride
+		return archsimd.LoadInt32x4Array((*[4]int32)(p[o : o+4]))
 	}
-	st := func(i uintptr, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(unsafe.Add(p, i*stride))) }
+	st := func(i int, v archsimd.Int32x4) {
+		o := i * stride
+		v.StoreArray((*[4]int32)(p[o : o+4]))
+	}
 	clamp := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(mn).Min(mx) }
 	mac := func(acc, x archsimd.Int32x4, c int) archsimd.Int32x4 {
 		return itxMulAcc(acc, x, archsimd.LoadInt32x4Array(&k[c]))

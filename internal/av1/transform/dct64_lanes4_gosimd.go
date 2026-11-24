@@ -12,10 +12,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // itxCoefs holds every butterfly multiplier of the four-lane kernels,
 // pre-broadcast so each use is a single vector load.
@@ -368,18 +365,22 @@ var itxCoefs = [...][4]int32{
 var itxCoefsPtr = &itxCoefs
 
 // inverseDCT64Lanes4Narrow applies inverseDCT64 to four adjacent columns of int32 lanes: lane j
-// of row i is p+i*stride+4*j. Every input must lie in [min, max] and
+// of row i is p[i*stride+j]. Every input must lie in [min, max] and
 // -1<<17 <= min, max < 1<<17; under that bound every product sum below fits in
 // int32 (checked when this file was generated), so the result is
 // bit-identical to the scalar kernel run on each lane.
-func inverseDCT64Lanes4Narrow(p unsafe.Pointer, stride uintptr, min, max int32) {
+func inverseDCT64Lanes4Narrow(p []int32, stride int, min, max int32) {
 	k := itxCoefsPtr
 	mn, mx := archsimd.BroadcastInt32x4(min), archsimd.BroadcastInt32x4(max)
 	r12, n12 := itxRoundBias(12), itxShiftAmount(12)
-	ld := func(i uintptr) archsimd.Int32x4 {
-		return archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(p, i*stride)))
+	ld := func(i int) archsimd.Int32x4 {
+		o := i * stride
+		return archsimd.LoadInt32x4Array((*[4]int32)(p[o : o+4]))
 	}
-	st := func(i uintptr, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(unsafe.Add(p, i*stride))) }
+	st := func(i int, v archsimd.Int32x4) {
+		o := i * stride
+		v.StoreArray((*[4]int32)(p[o : o+4]))
+	}
 	clamp := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(mn).Min(mx) }
 	mac := func(acc, x archsimd.Int32x4, c int) archsimd.Int32x4 {
 		return itxMulAcc(acc, x, archsimd.LoadInt32x4Array(&k[c]))
@@ -956,20 +957,24 @@ func inverseDCT64Lanes4Narrow(p unsafe.Pointer, stride uintptr, min, max int32) 
 }
 
 // inverseDCT64Lanes4Wide applies inverseDCT64 to four adjacent columns of int32 lanes: lane j
-// of row i is p+i*stride+4*j. Every input must lie in [min, max] and
+// of row i is p[i*stride+j]. Every input must lie in [min, max] and
 // -1<<19 <= min, max < 1<<19; under that bound every product sum below fits in
 // int32 (checked when this file was generated), so the result is
 // bit-identical to the scalar kernel run on each lane.
 // Multipliers above 2048 are applied as (w-4096)*x with x added back after
 // the shift, an exact identity that keeps the accumulator within int32.
-func inverseDCT64Lanes4Wide(p unsafe.Pointer, stride uintptr, min, max int32) {
+func inverseDCT64Lanes4Wide(p []int32, stride int, min, max int32) {
 	k := itxCoefsPtr
 	mn, mx := archsimd.BroadcastInt32x4(min), archsimd.BroadcastInt32x4(max)
 	r12, n12 := itxRoundBias(12), itxShiftAmount(12)
-	ld := func(i uintptr) archsimd.Int32x4 {
-		return archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(p, i*stride)))
+	ld := func(i int) archsimd.Int32x4 {
+		o := i * stride
+		return archsimd.LoadInt32x4Array((*[4]int32)(p[o : o+4]))
 	}
-	st := func(i uintptr, v archsimd.Int32x4) { v.StoreArray((*[4]int32)(unsafe.Add(p, i*stride))) }
+	st := func(i int, v archsimd.Int32x4) {
+		o := i * stride
+		v.StoreArray((*[4]int32)(p[o : o+4]))
+	}
 	clamp := func(v archsimd.Int32x4) archsimd.Int32x4 { return v.Max(mn).Min(mx) }
 	mac := func(acc, x archsimd.Int32x4, c int) archsimd.Int32x4 {
 		return itxMulAcc(acc, x, archsimd.LoadInt32x4Array(&k[c]))

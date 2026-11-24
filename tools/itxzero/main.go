@@ -147,14 +147,23 @@ func main() {
 	n := flag.Int("n", 8, "")
 	name := flag.String("name", "", "")
 	flag.Parse()
+	fmt.Print(derive(*src, *fn, *n, *name))
+}
+
+// derive returns the sparse variant name of function fn in the file src with
+// inputs n.. known zero.
+func derive(src, fn string, n int, name string) string {
+	zeros = map[string]bool{"zero": true}
+	alias = map[string]string{}
+	seen = map[string]string{}
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, *src, nil, parser.ParseComments)
+	f, err := parser.ParseFile(fset, src, nil, parser.ParseComments)
 	if err != nil {
 		panic(err)
 	}
 	var fd *ast.FuncDecl
 	for _, d := range f.Decls {
-		if g, ok := d.(*ast.FuncDecl); ok && g.Name.Name == *fn {
+		if g, ok := d.(*ast.FuncDecl); ok && g.Name.Name == fn {
 			fd = g
 		}
 	}
@@ -184,7 +193,7 @@ func main() {
 				allInputs = false
 				break
 			}
-			if k < *n {
+			if k < n {
 				allZero = false
 			}
 		}
@@ -196,7 +205,7 @@ func main() {
 				continue
 			}
 			for _, l := range as.Lhs {
-				if k, _ := inputIndex(l.(*ast.Ident).Name); k >= *n {
+				if k, _ := inputIndex(l.(*ast.Ident).Name); k >= n {
 					panic("mixed input group straddles n")
 				}
 			}
@@ -260,7 +269,7 @@ func main() {
 		}
 	}
 	fd.Body.List = out
-	fd.Name = ast.NewIdent(*name)
+	fd.Name = ast.NewIdent(name)
 	fd.Doc = nil
 	var buf bytes.Buffer
 	if err := format.Node(&buf, fset, fd); err != nil {
@@ -276,7 +285,7 @@ func main() {
 	} else if strings.Contains(s, "zero") {
 		s = strings.Replace(s, "{\n", "{\n\tvar zero archsimd.Int32x4\n", 1)
 	}
-	fmt.Printf("// %s is %s with inputs %d.. known zero, derived mechanically by\n// zero propagation (exact identities only); all output stores are kept.\n%s\n\n", *name, *fn, *n, s)
+	return fmt.Sprintf("// %s is %s with inputs %d.. known zero, derived mechanically by\n// zero propagation (exact identities only); all output stores are kept.\n%s\n\n", name, fn, n, s)
 }
 
 // biasName is the rounding-bias seed of the closure-style kernels
