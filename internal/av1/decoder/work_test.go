@@ -1812,7 +1812,7 @@ func TestFrameWorkStateRunEventWithResidualRunnerSideDataPostFilter(t *testing.T
 	side := testLoopFilterSideDataRunner{
 		records:    make([]threading.FrameWorkLoopFilterBlockRecord, 256),
 		masks:      make([]lfmask.FilterMask, 16),
-		levelCache: make([][4]uint8, 256),
+		levelCache: make([]uint8, 4*(256)),
 	}
 	post := testSupportedPostFilterRunner{
 		scratch: FrameWorkPostFilterScratch{
@@ -4139,7 +4139,7 @@ func TestFrameWorkStateRunEventWithResidualRunnerSideDataPostFilterAllocs(t *tes
 	side := testLoopFilterSideDataRunner{
 		records:    make([]threading.FrameWorkLoopFilterBlockRecord, 256),
 		masks:      make([]lfmask.FilterMask, 16),
-		levelCache: make([][4]uint8, 256),
+		levelCache: make([]uint8, 4*(256)),
 	}
 	post := testSupportedPostFilterRunner{
 		scratch: FrameWorkPostFilterScratch{
@@ -4648,7 +4648,7 @@ func BenchmarkFrameWorkStateRunEventWithResidualSideDataPostFilter(b *testing.B)
 	side := testLoopFilterSideDataRunner{
 		records:    make([]threading.FrameWorkLoopFilterBlockRecord, 256),
 		masks:      make([]lfmask.FilterMask, 16),
-		levelCache: make([][4]uint8, 256),
+		levelCache: make([]uint8, 4*(256)),
 	}
 	post := testSupportedPostFilterRunner{
 		scratch: FrameWorkPostFilterScratch{
@@ -5004,7 +5004,7 @@ func executeTestFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Poo
 type testLoopFilterSideDataRunner struct {
 	records       []threading.FrameWorkLoopFilterBlockRecord
 	masks         []lfmask.FilterMask
-	levelCache    [][4]uint8
+	levelCache    []uint8
 	loopFilterMap threading.FrameWorkLoopFilterMap
 }
 

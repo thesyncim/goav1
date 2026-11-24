@@ -86,7 +86,7 @@ func lfmaskLumaCells(t *testing.T, event Event, size parser.FrameSize, records [
 
 	var builder lfmask.Builder
 	var mask lfmask.FilterMask
-	lc := lfmask.LevelCache{Cells: make([][4]uint8, cols*rows), Stride: cols}
+	lc := lfmask.LevelCache{Cells: make([]uint8, 4*(cols*rows)), Stride: cols}
 	aY := make([]uint8, cols)
 	for i := range aY {
 		aY[i] = 2
@@ -122,9 +122,9 @@ func lfmaskLumaCells(t *testing.T, event Event, size parser.FrameSize, records [
 		// dir 0 (columns): position = column (x4), scan bits = rows (y4).
 		for col := 1; col < cols; col++ {
 			lfmask.ScanLuma(&mask.Y[0][col], 0, rows, func(off, widthClass int) {
-				L := lc.Cells[off*cols+col][loopfilter.EdgeVertical]
+				L := lc.Cells[4*(off*cols+col)+int(loopfilter.EdgeVertical)]
 				if L == 0 {
-					L = lc.Cells[off*cols+col-1][loopfilter.EdgeVertical]
+					L = lc.Cells[4*(off*cols+col-1)+int(loopfilter.EdgeVertical)]
 				}
 				if L == 0 {
 					return
@@ -136,9 +136,9 @@ func lfmaskLumaCells(t *testing.T, event Event, size parser.FrameSize, records [
 		// dir 1 (rows): position = row (y4), scan bits = columns (x4).
 		for row := 1; row < rows; row++ {
 			lfmask.ScanLuma(&mask.Y[1][row], 0, cols, func(off, widthClass int) {
-				L := lc.Cells[row*cols+off][loopfilter.EdgeHorizontal]
+				L := lc.Cells[4*(row*cols+off)+int(loopfilter.EdgeHorizontal)]
 				if L == 0 {
-					L = lc.Cells[(row-1)*cols+off][loopfilter.EdgeHorizontal]
+					L = lc.Cells[4*((row-1)*cols+off)+int(loopfilter.EdgeHorizontal)]
 				}
 				if L == 0 {
 					return
@@ -262,7 +262,7 @@ func lfmaskChromaCells(t *testing.T, event Event, size parser.FrameSize, records
 
 	var builder lfmask.Builder
 	var mask lfmask.FilterMask
-	lc := lfmask.LevelCache{Cells: make([][4]uint8, cols*rows), Stride: cols}
+	lc := lfmask.LevelCache{Cells: make([]uint8, 4*(cols*rows)), Stride: cols}
 	aY := make([]uint8, cols)
 	auv := make([]uint8, cols)
 	for i := range aY {
@@ -310,9 +310,9 @@ func lfmaskChromaCells(t *testing.T, event Event, size parser.FrameSize, records
 	if edge == loopfilter.EdgeVertical {
 		for ccol := 1; ccol < ccols; ccol++ {
 			lfmask.ScanChroma(&mask.UV[0][ccol], 0, crows, laneBits, func(off, widthClass int) {
-				L := lc.Cells[off*cols+ccol][levelIdx]
+				L := lc.Cells[4*(off*cols+ccol)+levelIdx]
 				if L == 0 {
-					L = lc.Cells[off*cols+ccol-1][levelIdx]
+					L = lc.Cells[4*(off*cols+ccol-1)+levelIdx]
 				}
 				if L == 0 {
 					return
@@ -323,9 +323,9 @@ func lfmaskChromaCells(t *testing.T, event Event, size parser.FrameSize, records
 	} else {
 		for crow := 1; crow < crows; crow++ {
 			lfmask.ScanChroma(&mask.UV[1][crow], 0, ccols, laneBits, func(off, widthClass int) {
-				L := lc.Cells[crow*cols+off][levelIdx]
+				L := lc.Cells[4*(crow*cols+off)+levelIdx]
 				if L == 0 {
-					L = lc.Cells[(crow-1)*cols+off][levelIdx]
+					L = lc.Cells[4*((crow-1)*cols+off)+levelIdx]
 				}
 				if L == 0 {
 					return

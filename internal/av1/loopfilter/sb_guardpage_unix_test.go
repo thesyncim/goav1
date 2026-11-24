@@ -75,13 +75,13 @@ func TestFilterSBStaysInsideGuardedPlane(t *testing.T) {
 		stride := w * bps
 		n := (h-1)*stride + w*bps
 		var pix []byte
-		var lvl [][4]uint8
+		var lvl []uint8
 		if before {
 			pix = guardpage.Before[byte](t, n)
-			lvl = guardpage.Before[[4]uint8](t, lvlN)
+			lvl = guardpage.Before[uint8](t, 4*lvlN)
 		} else {
 			pix = guardpage.After[byte](t, n)
-			lvl = guardpage.After[[4]uint8](t, lvlN)
+			lvl = guardpage.After[uint8](t, 4*lvlN)
 		}
 		if hbd {
 			for i := 0; i < n; i += 2 {

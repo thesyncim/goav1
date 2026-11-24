@@ -652,7 +652,7 @@ func SetOwnedFrameWorkLoopFilterSideData(s *FrameWorkState, cdefMap threading.Fr
 		return ErrInvalidFrameWorkState
 	}
 	if compact == nil || !threading.FrameWorkLoopFilterCompactMatchesMasks(&masks, compact) ||
-		masks.Cols <= 0 || masks.Rows <= 0 || len(masks.LevelCache) < masks.Cols*masks.Rows {
+		masks.Cols <= 0 || masks.Rows <= 0 || len(masks.LevelCache) < 4*masks.Cols*masks.Rows {
 		return threading.ErrInvalidBatch
 	}
 	if err := cdefMap.Reset(); err != nil {

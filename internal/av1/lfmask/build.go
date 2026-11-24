@@ -23,9 +23,10 @@ type Layout struct {
 
 // LevelCache is dav1d's f->lf.level: a frame-wide grid of 4 resolved loop-filter
 // levels per luma 4x4 cell (Y vertical, Y horizontal, U, V). Cells is caller
-// owned and reused; Stride is in cells (each cell is one [4]uint8).
+// owned and reused, four bytes per cell (cell i's level k is Cells[4*i+k], so
+// consumers can load several cells as one vector); Stride is in cells.
 type LevelCache struct {
-	Cells  [][4]uint8
+	Cells  []uint8
 	Stride int
 }
 
@@ -232,12 +233,13 @@ func (c LevelCache) fill(bx, by, w, h, comp int, l0, l1 uint8) {
 	// (Y) or 2 (U/V), and the other pair of the cell is left untouched.
 	v := uint16(l0) | uint16(l1)<<8
 	comp &= 2
-	base := by*c.Stride + bx
+	base := 4 * (by*c.Stride + bx)
 	for y := 0; y < h; y++ {
-		row := c.Cells[base : base+w]
-		for x := range row {
-			binary.LittleEndian.PutUint16(row[x][comp:comp+2], v)
+		row := c.Cells[base : base+4*w]
+		for x := 0; x <= len(row)-4; x += 4 {
+			cell := (*[4]uint8)(row[x : x+4])
+			binary.LittleEndian.PutUint16(cell[comp:comp+2], v)
 		}
-		base += c.Stride
+		base += 4 * c.Stride
 	}
 }

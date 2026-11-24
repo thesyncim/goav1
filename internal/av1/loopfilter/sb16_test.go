@@ -201,9 +201,9 @@ func TestFilterSB16TightBuffers(t *testing.T) {
 		}
 		pixLen = min(pixLen, len(full))
 		if rng.Intn(2) == 0 {
-			lvlLen = len(lvlFull)
+			lvlLen = len(lvlFull) / 4
 		}
-		lvl := append([][4]uint8(nil), lvlFull[:lvlLen]...)
+		lvl := append([]uint8(nil), lvlFull[:4*lvlLen]...)
 		want := append([]byte(nil), full[:pixLen]...)
 		got := append([]byte(nil), full[:pixLen]...)
 		if vertical {

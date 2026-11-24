@@ -262,23 +262,22 @@ func avx16Both(v archsimd.Uint8x16) archsimd.Uint8x32 {
 }
 
 // avx16Levels4 loads the four level cells from u.
-func avx16Levels4(lvl [][4]uint8, u int) archsimd.Uint8x16 {
-	l := (*[4][4]uint8)(lvl[u : u+4])
-	c := [4]uint32{binary.LittleEndian.Uint32(l[0][:]), binary.LittleEndian.Uint32(l[1][:]), binary.LittleEndian.Uint32(l[2][:]), binary.LittleEndian.Uint32(l[3][:])}
-	return archsimd.LoadUint32x4Array(&c).ReshapeToUint8s()
+func avx16Levels4(lvl []uint8, u int) archsimd.Uint8x16 {
+	o := int(uint32(4 * u))
+	return archsimd.LoadUint8x16Array((*[16]uint8)(lvl[o : o+16]))
 }
 
 // avx16LevelsRow loads four consecutive units' levels and their above
 // fallbacks (dav1d 16bpc lpf_v_sb) into both 128-bit lanes.
-func avx16LevelsRow(lvl [][4]uint8, u0, lvlStride int, nAll uint32) (cur, prev archsimd.Uint8x32) {
-	if u0-lvlStride >= 0 && u0+4 <= len(lvl) {
+func avx16LevelsRow(lvl []uint8, u0, lvlStride int, nAll uint32) (cur, prev archsimd.Uint8x32) {
+	if u0-lvlStride >= 0 && 4*(u0+4) <= len(lvl) {
 		return avx16Both(avx16Levels4(lvl, u0)), avx16Both(avx16Levels4(lvl, u0-lvlStride))
 	}
 	var c, p [4]uint32
 	for k := 0; k < 4; k++ {
 		if nAll&(1<<uint(k)) != 0 {
-			c[k] = binary.LittleEndian.Uint32(lvl[u0+k][:])
-			p[k] = binary.LittleEndian.Uint32(lvl[u0+k-lvlStride][:])
+			c[k] = binary.LittleEndian.Uint32(lvl[4*(u0+k):])
+			p[k] = binary.LittleEndian.Uint32(lvl[4*(u0+k-lvlStride):])
 		}
 	}
 	return avx16Both(archsimd.LoadUint32x4Array(&c).ReshapeToUint8s()), avx16Both(archsimd.LoadUint32x4Array(&p).ReshapeToUint8s())
@@ -286,14 +285,14 @@ func avx16LevelsRow(lvl [][4]uint8, u0, lvlStride int, nAll uint32) (cur, prev a
 
 // avx16LevelsCol gathers four stacked units' levels and their left
 // fallbacks (dav1d 16bpc lpf_h_sb) into both 128-bit lanes.
-func avx16LevelsCol(lvl [][4]uint8, li, lvlStride int, nAll uint32) (cur, prev archsimd.Uint8x32) {
+func avx16LevelsCol(lvl []uint8, li, lvlStride int, nAll uint32) (cur, prev archsimd.Uint8x32) {
 	var c, p [8]uint32
-	full := li-1 >= 0 && li+3*lvlStride < len(lvl)
+	full := li-1 >= 0 && 4*(li+3*lvlStride+1) <= len(lvl)
 	for k := 0; k < 4; k++ {
 		if full || nAll&(1<<uint(k)) != 0 {
 			i := li + k*lvlStride
-			c[k] = binary.LittleEndian.Uint32(lvl[i][:])
-			p[k] = binary.LittleEndian.Uint32(lvl[i-1][:])
+			c[k] = binary.LittleEndian.Uint32(lvl[4*i:])
+			p[k] = binary.LittleEndian.Uint32(lvl[4*(i-1):])
 			c[k+4], p[k+4] = c[k], p[k]
 		}
 	}
@@ -311,7 +310,7 @@ func avx16LevelSel(comp int) archsimd.Int8x32 {
 	return archsimd.LoadInt8x32Array(&avx16LevelSel16[comp&3])
 }
 
-func filterSBHorizontal16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+func filterSBHorizontal16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	if !sbAVX2 || (bitDepth != 10 && bitDepth != 12) || len(pix) > lfMaxPlane {
 		filterSBHorizontal16Scalar(pix, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 		return
@@ -320,7 +319,7 @@ func filterSBHorizontal16(pix []byte, off, stride, rowBytes int, bitDepth uint8,
 	archsimd.ClearAVXUpperBits()
 }
 
-func filterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+func filterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	if !sbAVX2 || (bitDepth != 10 && bitDepth != 12) || len(pix) > lfMaxPlane {
 		filterSBVertical16Scalar(pix, off, stride, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 		return
@@ -332,7 +331,7 @@ func filterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, v
 // avx16SBHorizontal is dav1d lpf_v_sb_{y,uv}_16bpc: the horizontal edges of
 // one row of units, sixteen samples per kernel call. simd counts the groups
 // the vector kernel handled.
-func avx16SBHorizontal(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) (simd int) {
+func avx16SBHorizontal(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) (simd int) {
 	bd8 := uint(bitDepth - 8)
 	k := newAVX16K(bd8)
 	gt4All := vm[1] | vm[2]
@@ -480,7 +479,7 @@ func avx16Vertical16(k *avx16K, pix []byte, p7, stride int, eV, iV, hV, m4, mGt4
 // avx16SBVertical is dav1d lpf_h_sb_{y,uv}_16bpc: the vertical edges of one
 // column of units, sixteen rows per kernel call, with arm64's footprint (p3..q3,
 // or p7..q7 at width 16).
-func avx16SBVertical(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) (simd int) {
+func avx16SBVertical(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) (simd int) {
 	bd8 := uint(bitDepth - 8)
 	k := newAVX16K(bd8)
 	gt4All := vm[1] | vm[2]
