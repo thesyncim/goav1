@@ -500,7 +500,18 @@ func parkAllocFunc(fn string) string {
 }
 
 func isCodecFrame(f runtime.Frame) bool {
-	return strings.HasPrefix(f.Function, "github.com/thesyncim/goav1") && !strings.HasSuffix(f.File, "_test.go")
+	return strings.HasPrefix(f.Function, "github.com/thesyncim/goav1") && !strings.HasSuffix(f.File, "_test.go") &&
+		!parkPrimitives[parkAllocFunc(f.Function)]
+}
+
+// parkPrimitives are the codec's shared wait primitives: a park inside one is
+// attributed to the frame that called it.
+var parkPrimitives = map[string]bool{
+	"threading.(*WaitList).Park":                         true,
+	"threading.(*FrameProgress).Wait":                    true,
+	"threading.(*frameWorkReconWavefront).waitRows":      true,
+	"encoder.(*pframeWavefront).waitRowProgress":         true,
+	"decoder.(*FrameWorkPostFilterParallel).rowPipeHelp": true,
 }
 
 func (a parkAllocs) check(t *testing.T, what string) {
