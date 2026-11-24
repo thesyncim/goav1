@@ -41,6 +41,10 @@ import (
 	"unsafe"
 )
 
+// unsafe: rows at y*stride inside the extents checked once at the entry
+// points; per-row reslicing with bounds-checked loads measured +9-44% on
+// BenchmarkPlaneResidualShapes and BenchmarkPlaneRawShapes (16x16..64x64).
+
 // addResidualPlaneBlockSIMD is the Go SIMD residual add for 8-bit and 16-bit
 // samples.
 func addResidualPlaneBlockSIMD(block planeBlock, bytesPerSample int, max uint16, width int, residual []int16, residualStride int) {

@@ -11,6 +11,9 @@ import (
 	"unsafe"
 )
 
+// unsafe: rows at y*stride inside the extents checked once per call; the same
+// shape as plane_gosimd_arm64.go, where the safe form measured +9-44%.
+
 // addConstantPlaneBlock8SIMD is the 8-bit DC-only reconstruction of dav1d's
 // inv_txfm_add_dct_dct eob == 0 path: one constant residual added to every
 // sample of the block with unsigned saturation. clamp(d + r, 0, 255) for a
