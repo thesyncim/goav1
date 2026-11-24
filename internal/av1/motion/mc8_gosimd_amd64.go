@@ -1967,9 +1967,3 @@ func mc8AVX2PrepCopy(src []byte, ss, w, h int, out []uint16) {
 		}
 	}
 }
-
-// The remaining dav1d-style fast paths are arm64-only for now.
-
-func mc8CopyFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h int) bool {
-	return false
-}
