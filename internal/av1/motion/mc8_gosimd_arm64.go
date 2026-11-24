@@ -102,24 +102,20 @@ func init() {
 	}
 }
 
-// mc8Kind mirrors interpKernel's table selection.
+// mc8Kind mirrors interpKernel's table selection: one table load indexed by
+// the filter (values past the last filter select bilinear, as interpKernel's
+// default arm does) and whether the block is at most four samples wide.
 func mc8Kind(f InterpFilter, blockSize int) int {
-	if blockSize <= 4 && f != InterpBilinear {
-		if f == InterpEightTapSmooth {
-			return mc8KindSmooth4
-		}
-		return mc8KindRegular4
+	small := 0
+	if blockSize <= 4 {
+		small = 1
 	}
-	switch f {
-	case InterpEightTapRegular:
-		return mc8KindRegular
-	case InterpEightTapSmooth:
-		return mc8KindSmooth
-	case InterpMultiTapSharp:
-		return mc8KindSharp
-	default:
-		return mc8KindBilinear
-	}
+	return int(mc8KindTab[small][min(f, InterpBilinear)])
+}
+
+var mc8KindTab = [2][interpFilterCount]uint8{
+	{mc8KindRegular, mc8KindSmooth, mc8KindSharp, mc8KindBilinear},
+	{mc8KindRegular4, mc8KindSmooth4, mc8KindRegular4, mc8KindBilinear},
 }
 
 // mc8Source resolves the six-tap source window of a w x h block whose
@@ -179,45 +175,202 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 	if mc8NeedsEightTaps(subX, subY, kx, ky) {
 		return w&7 == 0 && mc8Put8TapChecked(dst, ref, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
-	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < dst.Width {
-		return false
-	}
-	dOff := dstY*dst.Stride + dstX
-	dExt := (h-1)*dst.Stride + w
-	if dOff+dExt > len(dst.Pix) || dExt > mc8WindowMax {
-		return false
-	}
-	src, stride, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge)
+	dOff, dExt, ok := mc8DstWindow(dst, dstX, dstY, w, h)
 	if !ok {
 		return false
 	}
-	d := dst.Pix[dOff : dOff+dExt]
+	// The six-tap source window (mc8Source), in place when it lies inside
+	// the plane: halo 2 before and 3 after each sample on a filtered axis.
+	hx, hy := mc8Halo(subX), mc8Halo(subY)
+	x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
+	sOff, sExt := y0*ref.Stride+x0, (bh-1)*ref.Stride+max(w+8, 16)
+	var src []byte
+	stride := ref.Stride
+	if x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= ref.Width && y0+bh <= ref.Height && ref.Stride >= ref.Width &&
+		sOff+sExt <= len(ref.Pix) && sExt <= mc8WindowMax {
+		src = ref.Pix[sOff : sOff+sExt]
+	} else if src, stride, ok = mc8SourceEdge(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge); !ok {
+		return false
+	}
+	// mc8PutRun written out: one call level less for the single-pass kernels.
+	d, ds := dst.Pix[dOff:dOff+dExt], dst.Stride
+	phx, phy := &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15]
 	if w == 4 {
-		switch {
-		case subX != 0 && subY != 0:
-			im := scratch.imHBD[:]
-			mc8H6ToI32W4(src, stride, h+5, &mc8Phases[kx][subX], im)
-			mc8PutV6FromI32W4(im, h, &mc8Phases[ky][subY], d, dst.Stride)
-		case subX != 0:
-			mc8PutH6W4(src, stride, h, &mc8Phases[kx][subX], d, dst.Stride)
-		default:
-			mc8PutV6W4(src, stride, h, &mc8Phases[ky][subY], d, dst.Stride)
-		}
+		mc8PutRun(d, ds, src, stride, w, h, subX, subY, phx, phy, scratch)
 		return true
 	}
 	switch {
 	case subX != 0 && subY != 0:
 		im := scratch.imHBD[:]
-		mc8H6ToI32(src, stride, w, h+5, &mc8Phases[kx][subX], im)
-		mc8PutV6FromI32(im, w, h, &mc8Phases[ky][subY], d, dst.Stride)
+		mc8H6ToI32(src, stride, w, h+5, phx, im, mc8PutH6ToI32Rnd)
+		mc8PutV6FromI32(im, w, h, phy, d, ds)
 	case subX != 0:
-		mc8PutH6(src, stride, w, h, &mc8Phases[kx][subX], d, dst.Stride)
+		mc8PutH6(src, stride, w, h, phx, d, ds)
 	case w&15 == 0:
-		mc8PutV6W16(src, uint32(stride), w, h, &mc8Phases[ky][subY], d, uint32(dst.Stride))
+		mc8PutV6W16(src, uint32(stride), w, h, phy, d, uint32(ds))
 	default:
-		mc8PutV6(src, stride, w, h, &mc8Phases[ky][subY], d, dst.Stride)
+		mc8PutV6(src, stride, w, h, phy, d, ds)
 	}
 	return true
+}
+
+// mc8SameGeometry reports whether two planes have the same dimensions,
+// stride and buffer length, so one footprint check covers both.
+func mc8SameGeometry(a, b *frame.Plane) bool {
+	return a.Width == b.Width && a.Height == b.Height && a.Stride == b.Stride && len(a.Pix) == len(b.Pix)
+}
+
+// Put8UV is Put8 for the U and V blocks of one chroma prediction: both planes
+// share the block, the reference origin, the phase and the filters (dav1d
+// recon_b_inter's two chroma mc() calls). When the two destination planes and
+// the two reference planes have the same geometry, the shape, kernel and phase
+// selection and every footprint check run once for the pair; the per-plane
+// kernels then run back to back. It returns false when some plane was not
+// written; the caller then predicts both planes plane by plane (rewriting a
+// plane already written here yields the same samples).
+func Put8UV(dstU, dstV, refU, refV *frame.Plane, dstX, dstY, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *ConvolveScratch) bool {
+	if w == 2 || !mc8SameGeometry(dstU, dstV) || !mc8SameGeometry(refU, refV) {
+		return Put8(dstU, refU, dstX, dstY, refX, refY, w, h, filterW, filterH, subX, subY, filters, scratch) &&
+			Put8(dstV, refV, dstX, dstY, refX, refY, w, h, filterW, filterH, subX, subY, filters, scratch)
+	}
+	if subX|subY == 0 {
+		if w&3 != 0 || w > maxBlockSize || h <= 0 {
+			return false
+		}
+		dOff, dExt, ok := mc8DstWindow(dstU, dstX, dstY, w, h)
+		if !ok || refX < 0 || refY < 0 || refX+w > refU.Width || refY+h > refU.Height || refU.Stride < refU.Width {
+			return false
+		}
+		sOff, sExt := refY*refU.Stride+refX, (h-1)*refU.Stride+w
+		if sOff+sExt > len(refU.Pix) || sExt > mc8WindowMax {
+			return false
+		}
+		mc8Copy(dstU.Pix[dOff:dOff+dExt], dstU.Stride, refU.Pix[sOff:sOff+sExt], refU.Stride, w, h)
+		mc8Copy(dstV.Pix[dOff:dOff+dExt], dstV.Stride, refV.Pix[sOff:sOff+sExt], refV.Stride, w, h)
+		return true
+	}
+	if (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil {
+		return false
+	}
+	kx := mc8Kind(filters.X, filterW)
+	ky := mc8Kind(filters.Y, filterH)
+	if mc8NeedsEightTaps(subX, subY, kx, ky) {
+		return w&7 == 0 && mc8Put8TapChecked(dstU, refU, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch) &&
+			mc8Put8TapChecked(dstV, refV, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch)
+	}
+	dOff, dExt, ok := mc8DstWindow(dstU, dstX, dstY, w, h)
+	if !ok {
+		return false
+	}
+	ds := dstU.Stride
+	phx, phy := &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15]
+	// The source window: in-plane for both planes at once, or each plane's
+	// clamped window materialized in turn in the shared edge buffer.
+	hx, hy := mc8Halo(subX), mc8Halo(subY)
+	x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
+	sOff, sExt := y0*refU.Stride+x0, (bh-1)*refU.Stride+max(w+8, 16)
+	inPlane := x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= refU.Width && y0+bh <= refU.Height && refU.Stride >= refU.Width &&
+		sOff+sExt <= len(refU.Pix) && sExt <= mc8WindowMax
+	for p := 0; p < 2; p++ {
+		dst, ref := dstU, refU
+		if p == 1 {
+			dst, ref = dstV, refV
+		}
+		var src []byte
+		stride := ref.Stride
+		if inPlane {
+			src = ref.Pix[sOff : sOff+sExt]
+		} else if src, stride, ok = mc8SourceEdge(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge); !ok {
+			return false
+		}
+		mc8PutRun(dst.Pix[dOff:dOff+dExt], ds, src, stride, w, h, subX, subY, phx, phy, scratch)
+	}
+	return true
+}
+
+// mc8DstWindow is Put8's destination check: the offset and extent of the
+// w x h block at (x, y) inside dst.
+func mc8DstWindow(dst *frame.Plane, x, y, w, h int) (off, ext int, ok bool) {
+	if x < 0 || y < 0 || x+w > dst.Width || y+h > dst.Height || dst.Stride < dst.Width {
+		return 0, 0, false
+	}
+	off = y*dst.Stride + x
+	ext = (h-1)*dst.Stride + w
+	if off+ext > len(dst.Pix) || ext > mc8WindowMax {
+		return 0, 0, false
+	}
+	return off, ext, true
+}
+
+// mc8SourceEdge is mc8Source's clamped path: it materializes the six-tap
+// source window in edge (dav1d emu_edge). ok is false only when the
+// reference plane itself is unusable.
+func mc8SourceEdge(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEdgeStride * emuEdgeRows]byte) (src []byte, stride int, ok bool) {
+	x0, y0, bw, bh := refX, refY, w, h
+	if hx {
+		x0 -= 2
+		bw += 5
+	}
+	if hy {
+		y0 -= 2
+		bh += 5
+	}
+	if ref.Width <= 0 || ref.Height <= 0 || ref.Stride < ref.Width {
+		return nil, 0, false
+	}
+	if x0 >= 0 && y0 >= 0 && x0+bw <= ref.Width && y0+bh <= ref.Height {
+		start := y0*ref.Stride + x0
+		ext := (bh-1)*ref.Stride + max(w+8, 16)
+		if start+ext <= len(ref.Pix) && ext <= mc8WindowMax {
+			return ref.Pix[start : start+ext], ref.Stride, true
+		}
+	}
+	if len(ref.Pix) < (ref.Height-1)*ref.Stride+ref.Width {
+		return nil, 0, false
+	}
+	// The edge window holds 135 rows of 136 bytes; bh <= 133 and the
+	// kernels read at most max(w+8, 16) <= 136 bytes per row.
+	emuEdge8(bw, bh, *ref, x0, y0, edge[:], emuEdgeStride)
+	return edge[:], emuEdgeStride, true
+}
+
+// mc8Halo is the source window halo of an axis: 2 when its phase is nonzero.
+func mc8Halo(sub int) int {
+	if sub != 0 {
+		return 2
+	}
+	return 0
+}
+
+// mc8PutRun runs the six-tap put kernel of a validated block (w 4 or a
+// multiple of 8, a nonzero phase on some axis): d is the destination window
+// at stride ds, src the source window at stride ss.
+func mc8PutRun(d []byte, ds int, src []byte, ss, w, h, subX, subY int, phx, phy *mc8Phase, scratch *ConvolveScratch) {
+	if w == 4 {
+		switch {
+		case subX != 0 && subY != 0:
+			im := scratch.imHBD[:]
+			mc8H6ToI32W4(src, ss, h+5, phx, im)
+			mc8PutV6FromI32W4(im, h, phy, d, ds)
+		case subX != 0:
+			mc8PutH6W4(src, ss, h, phx, d, ds)
+		default:
+			mc8PutV6W4(src, ss, h, phy, d, ds)
+		}
+		return
+	}
+	switch {
+	case subX != 0 && subY != 0:
+		im := scratch.imHBD[:]
+		mc8H6ToI32(src, ss, w, h+5, phx, im, mc8PutH6ToI32Rnd)
+		mc8PutV6FromI32(im, w, h, phy, d, ds)
+	case subX != 0:
+		mc8PutH6(src, ss, w, h, phx, d, ds)
+	case w&15 == 0:
+		mc8PutV6W16(src, uint32(ss), w, h, phy, d, uint32(ds))
+	default:
+		mc8PutV6(src, ss, w, h, phy, d, ds)
+	}
 }
 
 // mc8PutW2 is Put8 at width 2, dav1d's put_8tap w2 for the sub-8x8 chroma
@@ -440,7 +593,7 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 	switch {
 	case subX != 0 && subY != 0:
 		im := scratch.im[:]
-		mc8H6ToI32(src, stride, w, h+5, &mc8Phases[kx][subX], im)
+		mc8H6ToI32(src, stride, w, h+5, &mc8Phases[kx][subX], im, 2)
 		mc8PrepV6FromI32S(im, w, h, &mc8Phases[ky][subY], o, mc8PrepV6Rnd)
 	case subX != 0:
 		mc8PrepH6(src, stride, w, h, &mc8Phases[kx][subX], o)
@@ -483,14 +636,14 @@ func mc8Lo64(v archsimd.Uint8x16) uint64 {
 
 // mc8H6ToI32 writes rows x w rounded horizontal sums ((s + 2) >> 2) as int32
 // with row stride w.
-func mc8H6ToI32(src []byte, srcStride, w, rows int, ph *mc8Phase, im []int32) {
+func mc8H6ToI32(src []byte, srcStride, w, rows int, ph *mc8Phase, im []int32, round int16) {
 	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
 	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
 	c2 := archsimd.LoadInt16x8Array(&ph.h[2])
 	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
 	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
 	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
-	rnd := archsimd.BroadcastInt16x8(2)
+	rnd := archsimd.BroadcastInt16x8(round)
 	sh := archsimd.BroadcastInt16x8(-2)
 	ss, sl := srcStride, len(src)-16
 	n := rows * 8
@@ -568,7 +721,6 @@ func mc8PutV6FromI32(im []int32, w, h int, ph *mc8Phase, dst []byte, dstStride i
 	c3 := archsimd.LoadInt32x4Array(&ph.v[3])
 	c4 := archsimd.LoadInt32x4Array(&ph.v[4])
 	c5 := archsimd.LoadInt32x4Array(&ph.v[5])
-	rnd := archsimd.BroadcastInt32x4(1 << 15)
 	ds := uint32(dstStride)
 	rows := h + 5
 	n := rows * 8
@@ -594,16 +746,16 @@ func mc8PutV6FromI32(im []int32, w, h int, ph *mc8Phase, dst []byte, dstStride i
 			x10, y10 := archsimd.LoadInt32x4Array((*[4]int32)(win[40:44])), archsimd.LoadInt32x4Array((*[4]int32)(win[44:48]))
 			x11, y11 := archsimd.LoadInt32x4Array((*[4]int32)(win[48:52])), archsimd.LoadInt32x4Array((*[4]int32)(win[52:56]))
 			x12, y12 := archsimd.LoadInt32x4Array((*[4]int32)(win[56:60])), archsimd.LoadInt32x4Array((*[4]int32)(win[60:64]))
-			u0, u1 := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5, rnd)
+			u0, u1 := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o)[:], u0)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+1*ds)[:], u1)
-			u0, u1 = mc8V6PutPair(x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, x7, y7, x8, y8, c0, c1, c2, c3, c4, c5, rnd)
+			u0, u1 = mc8V6PutPair(x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, x7, y7, x8, y8, c0, c1, c2, c3, c4, c5)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+2*ds)[:], u0)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+3*ds)[:], u1)
-			u0, u1 = mc8V6PutPair(x4, y4, x5, y5, x6, y6, x7, y7, x8, y8, x9, y9, x10, y10, c0, c1, c2, c3, c4, c5, rnd)
+			u0, u1 = mc8V6PutPair(x4, y4, x5, y5, x6, y6, x7, y7, x8, y8, x9, y9, x10, y10, c0, c1, c2, c3, c4, c5)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+4*ds)[:], u0)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+5*ds)[:], u1)
-			u0, u1 = mc8V6PutPair(x6, y6, x7, y7, x8, y8, x9, y9, x10, y10, x11, y11, x12, y12, c0, c1, c2, c3, c4, c5, rnd)
+			u0, u1 = mc8V6PutPair(x6, y6, x7, y7, x8, y8, x9, y9, x10, y10, x11, y11, x12, y12, c0, c1, c2, c3, c4, c5)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+6*ds)[:], u0)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+7*ds)[:], u1)
 			o += 8 * ds
@@ -613,7 +765,7 @@ func mc8PutV6FromI32(im []int32, w, h int, ph *mc8Phase, dst []byte, dstStride i
 			win := (*[16]int32)(st[q : q+16])
 			x5, y5 := archsimd.LoadInt32x4Array((*[4]int32)(win[0:4])), archsimd.LoadInt32x4Array((*[4]int32)(win[4:8]))
 			x6, y6 := archsimd.LoadInt32x4Array((*[4]int32)(win[8:12])), archsimd.LoadInt32x4Array((*[4]int32)(win[12:16]))
-			u0, u1 := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5, rnd)
+			u0, u1 := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o)[:], u0)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o+ds)[:], u1)
 			o += 2 * ds
@@ -621,19 +773,25 @@ func mc8PutV6FromI32(im []int32, w, h int, ph *mc8Phase, dst []byte, dstStride i
 		}
 		if q <= len(st)-8 {
 			x5, y5 := mc8LoadI32x8((*[8]int32)(st[q : q+8]))
-			u0, _ := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x5, y5, c0, c1, c2, c3, c4, c5, rnd)
+			u0, _ := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x5, y5, c0, c1, c2, c3, c4, c5)
 			binary.LittleEndian.PutUint64(mc8W8(dst, o)[:], u0)
 		}
 	}
 }
 
+// mc8PutH6ToI32Rnd is the put 2D horizontal rounding constant: (s + 2) >> 2
+// plus a bias of 8 on every intermediate sample, ((s + 34) >> 2) exactly
+// (floor division by 4 commutes with adding a multiple of 4). The six
+// vertical taps of every six-tap phase sum to 128, scaled by 32 to 4096, so
+// the bias adds 8 * 4096 = 2^15 to every vertical sum: the vertical pass's
+// rounding, which mc8V6PutPair therefore no longer adds. The biased samples
+// stay below 2^15 (|s| < 20000) and the vertical sums inside int32.
+const mc8PutH6ToI32Rnd = 2 + 4*8
+
 // mc8V6PutPair is the put 2D vertical chain of output rows r and r+1 from
-// the seven intermediate rows (x, y halves) r..r+6, saturated to bytes.
-func mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5, rnd archsimd.Int32x4) (uint64, uint64) {
-	// The chains start with a multiply and add rnd last: a MulAdd onto rnd
-	// first needs a copy of rnd per accumulator (VMLA is destructive), and
-	// the register allocator chained those copies serially at the head of
-	// every chain.
+// the seven intermediate rows (x, y halves) r..r+6, saturated to bytes. The
+// intermediate carries the vertical rounding (mc8PutH6ToI32Rnd).
+func mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5 archsimd.Int32x4) (uint64, uint64) {
 	a0 := x0.Mul(c0)
 	b0 := y0.Mul(c0)
 	a1 := x1.Mul(c0)
@@ -658,7 +816,6 @@ func mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1
 	b0 = y5.MulAdd(c5, b0)
 	a1 = x6.MulAdd(c5, a1)
 	b1 = y6.MulAdd(c5, b1)
-	a0, b0, a1, b1 = a0.Add(rnd), b0.Add(rnd), a1.Add(rnd), b1.Add(rnd)
 	v0 := a0.ToBits().ReshapeToUint16s().ConcatOdd(b0.ToBits().ReshapeToUint16s()).BitsToInt16()
 	v1 := a1.ToBits().ReshapeToUint16s().ConcatOdd(b1.ToBits().ReshapeToUint16s()).BitsToInt16()
 	return mc8Lo64(v0.SaturateToUint8()), mc8Lo64(v1.SaturateToUint8())

@@ -3,11 +3,12 @@
 // See LICENSE for the BSD-2-Clause grant.
 
 // Package unsafeutil is the only non-test package in goav1 that imports
-// unsafe (scripts/check_unsafe.sh enforces it). Each function takes and
-// returns ordinary slices, checks its preconditions at entry, and keeps the
-// pointer arithmetic inside; its doc comment carries the bounds proof. Add a
-// function here only with that proof and a test that exercises it against a
-// guard page.
+// unsafe (scripts/check_unsafe.sh enforces it). Each function takes ordinary
+// slices (or a view one of them made), checks its preconditions at entry,
+// returns slices, array pointers or views confined to its checked footprint,
+// and keeps the pointer arithmetic inside; its doc comment carries the bounds
+// proof. Add a function here only with that proof and a test that exercises
+// it against a guard page.
 package unsafeutil
 
 import (
