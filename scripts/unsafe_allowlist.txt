@@ -34,7 +34,6 @@ internal/av1/encoder/recon_raw_gosimd_arm64.go
 internal/av1/encoder/sad_simd.go
 internal/av1/encoder/sad_simd_amd64.go
 internal/av1/encoder/sad_simd_arm64.go
-internal/av1/encoder/scale_box_amd64.go
 internal/av1/encoder/scale_box_arm64.go
 internal/av1/encoder/subpel_svt_bilinear_amd64.go
 internal/av1/encoder/subpel_svt_bilinear_arm64.go
