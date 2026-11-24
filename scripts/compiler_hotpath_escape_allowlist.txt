@@ -53,6 +53,7 @@ internal/av1/decoder/postfilter_restoration_pool.go:*:*: moved to heap: puAcc
 internal/av1/decoder/postfilter_restoration_pool.go:*:*: moved to heap: recAcc
 internal/av1/decoder/postfilter_restoration_pool.go:*:*: moved to heap: req
 internal/av1/decoder/postfilter_restoration_pool.go:*:*: moved to heap: stripeAcc
+internal/av1/decoder/postfilter_rowpipe.go:*:*: append(c.wake, make(chan struct {}, 1)) escapes to heap in (*FrameWorkPostFilterParallel).startRowPipeWorkers:
 internal/av1/decoder/postfilter_rowpipe.go:*:*: append(p.lr, make([]frameWorkParallelRestorationScratch, workers - len(p.lr))...) escapes to heap in (*FrameWorkPostFilterContext).applyRowPipelinedPostFilters:
 internal/av1/decoder/postfilter_rowpipe.go:*:*: func literal escapes to heap in (*FrameWorkPostFilterParallel).startRowPipeWorkers:
 internal/av1/decoder/postfilter_rowpipe.go:*:*: make([]bool, n) escapes to heap
