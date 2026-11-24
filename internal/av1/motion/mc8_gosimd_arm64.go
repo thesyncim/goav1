@@ -181,22 +181,20 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 	if mc8NeedsEightTaps(subX, subY, kx, ky) {
 		return w&7 == 0 && mc8Put8TapChecked(dst, ref, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
-	dg, ok := mc8DstGrid(dst, dstX, dstY, w, h)
-	if !ok {
-		return false
-	}
 	// The six-tap source window (mc8Source), in place when it lies inside
 	// the plane: halo 2 before and 3 after each sample on a filtered axis.
+	// The common case, destination and source window both in their planes,
+	// is checked in line with one footprint test for the pair and runs the
+	// kernel with no call before it; everything else is mc8PutEdge.
 	hx, hy := mc8Halo(subX), mc8Halo(subY)
 	x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
-	sOff, sw := y0*ref.Stride+x0, max(w+8, 16)
-	var sg unsafeutil.Grid[uint8]
-	if x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= ref.Width && y0+bh <= ref.Height && ref.Stride >= ref.Width &&
-		unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, sw, bh) {
-		sg = unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, sw, bh)
-	} else if sg, ok = mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge); !ok {
-		return false
+	dOff, sOff, sw := dstY*dst.Stride+dstX, y0*ref.Stride+x0, max(w+8, 16)
+	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < dst.Width ||
+		x0 < 0 || y0 < 0 || x0+w+hx+hx+hx>>1 > ref.Width || y0+bh > ref.Height || ref.Stride < ref.Width ||
+		!unsafeutil.GridFit(len(dst.Pix), dOff, dst.Stride, w, h) || !unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, sw, bh) {
+		return mc8PutEdge(dst, ref, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
+	dg, sg := unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, w, h), unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, sw, bh)
 	// mc8PutGrid written out: one call level less for the common kernels.
 	phx, phy := &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15]
 	switch {
@@ -232,6 +230,22 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 			mc8PutV6Split(sg, phy, dg)
 		}
 	}
+	return true
+}
+
+// mc8PutEdge is Put8's six-tap path for a block whose destination or source
+// window is not inside its plane (or whose views do not fit): the checked
+// destination view and the source window from mc8Source, which clamps it.
+func mc8PutEdge(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky int, scratch *ConvolveScratch) bool {
+	dg, ok := mc8DstGrid(dst, dstX, dstY, w, h)
+	if !ok {
+		return false
+	}
+	sg, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge)
+	if !ok {
+		return false
+	}
+	mc8PutGrid(dg, sg, w, h, subX, subY, &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15], scratch)
 	return true
 }
 

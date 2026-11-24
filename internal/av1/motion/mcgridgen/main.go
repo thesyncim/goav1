@@ -13,9 +13,9 @@
 //   - mc16v6grid_gosimd_arm64.go: the 16bpc vertical-only put and prep passes
 //     over eight-sample strips and a four-sample block.
 //
-// Every kernel walks its rows in chunks of eight, then two, then one; each
-// chunk is a fixed-shape sub-view whose Fits test is the only check its rows
-// pay. The vertical kernels keep five source rows resident and rotate them
+// Every kernel walks its rows in chunks of eight, then at most one chunk each
+// of four, two and one rows; each chunk is a fixed-shape sub-view whose Fits
+// test is the only check its rows pay. The vertical kernels keep five source rows resident and rotate them
 // once per chunk. The generator spells out each chunk's rows, so a change to
 // the row pattern is made once here rather than in every copy.
 //
@@ -80,7 +80,7 @@ func generate(dir string) (map[string][]byte, error) {
 }
 
 // chunks are the row counts of the chunk loops, in order.
-var chunks = []int{8, 2, 1}
+var chunks = []int{8, 4, 2, 1}
 
 // kernel describes one generated function.
 type kernel struct {
@@ -168,11 +168,17 @@ func (w *writer) kernel(k kernel) {
 		}
 	}
 	w.line("r := 0")
-	for _, n := range chunks {
-		if n == 1 {
-			w.line("for ; r < h; r += 1 {")
-		} else {
+	for i, n := range chunks {
+		// The first tier loops; the rest run at most once each (after the
+		// eight-row chunks fewer than eight rows remain, 4a + 2b + c).
+		last := i == len(chunks)-1
+		switch {
+		case i == 0:
 			w.line("for ; r+%d <= h; r += %d {", n, n)
+		case n == 1:
+			w.line("if r < h {")
+		default:
+			w.line("if r+%d <= h {", n)
 		}
 		row := "r"
 		if k.vert {
@@ -192,13 +198,16 @@ func (w *writer) kernel(k kernel) {
 				w.line("%s", l)
 			}
 		}
-		if k.vert {
+		if k.vert && !last {
 			var lhs, rhs []string
-			for i := 0; i < 5; i++ {
-				lhs = append(lhs, k.rot(i))
-				rhs = append(rhs, k.rot(n+i))
+			for j := 0; j < 5; j++ {
+				lhs = append(lhs, k.rot(j))
+				rhs = append(rhs, k.rot(n+j))
 			}
 			w.line("%s = %s", strings.Join(lhs, ", "), strings.Join(rhs, ", "))
+		}
+		if i > 0 && !last {
+			w.line("r += %d", n)
 		}
 		w.line("}")
 	}
