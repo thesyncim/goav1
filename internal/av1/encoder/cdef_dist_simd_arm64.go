@@ -8,7 +8,6 @@ package encoder
 
 import (
 	"simd/archsimd"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 )
@@ -26,27 +25,26 @@ func cdefDist8(src []byte, sstride int, filtered []byte, fstride int, dlist []cd
 	if len(dlist) == 0 {
 		return 0
 	}
-	// Bounds: every block reads up to 7 rows and 7 columns past its origin.
-	maxSO, maxFO := 0, 0
-	for _, b := range dlist {
-		maxSO = max(maxSO, (int(b.BY)*8+7)*sstride+int(b.BX)*8+7)
-		maxFO = max(maxFO, (int(b.BY)*8+7)*fstride+int(b.BX)*8+7)
+	if uint(sstride) > rowStrideMax || uint(fstride) > rowStrideMax {
+		panic(errKernelArgs)
 	}
-	_ = src[maxSO]
-	_ = filtered[maxFO]
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
-	sp := unsafe.Pointer(unsafe.SliceData(src))
-	fp := unsafe.Pointer(unsafe.SliceData(filtered))
+	// Each row pair (i, i+subsampling) is one bounds-checked window: the
+	// first row at w[:8], the second at w[sd:].
+	sd, fd := subsampling*sstride, subsampling*fstride
+	sn, fn := sd+8, fd+8
+	pairs := 4 / subsampling
 	acc := archsimd.BroadcastUint32x4(0)
 	// Rows (i, i+subsampling) form a pair; pairs advance by twice that,
 	// so subsampling 4 measures rows 0 and 4 only.
-	pairStep := 2 * subsampling
 	for _, b := range dlist {
 		so := int(b.BY)*8*sstride + int(b.BX)*8
 		fo := int(b.BY)*8*fstride + int(b.BX)*8
-		for i := 0; i < 8; i += pairStep {
-			s := cdefPackRows(unsafe.Add(sp, so+i*sstride), subsampling*sstride)
-			f := cdefPackRows(unsafe.Add(fp, fo+i*fstride), subsampling*fstride)
+		for k := 0; k < pairs; k++ {
+			o, q := so+2*k*sd, fo+2*k*fd
+			sw := src[o : o+sn : o+sn]
+			fw := filtered[q : q+fn : q+fn]
+			s := pack2((*[8]byte)(sw), (*[8]byte)(sw[sd:]))
+			f := pack2((*[8]byte)(fw), (*[8]byte)(fw[fd:]))
 			d := s.Max(f).Sub(s.Min(f))
 			lo := d.ExtendLo8ToUint16()
 			hi := d.HiToLo().ExtendLo8ToUint16()
@@ -57,10 +55,4 @@ func cdefDist8(src []byte, sstride int, filtered []byte, fstride int, dlist []cd
 		}
 	}
 	return uint64(acc.ReduceSum())
-}
-
-// cdefPackRows loads two 8-byte rows (p and p+stride) into one vector.
-func cdefPackRows(p unsafe.Pointer, stride int) archsimd.Uint8x16 {
-	rows := [2]uint64{*(*uint64)(p), *(*uint64)(unsafe.Add(p, stride))}
-	return archsimd.LoadUint64x2Array(&rows).ReshapeToUint8s()
 }
