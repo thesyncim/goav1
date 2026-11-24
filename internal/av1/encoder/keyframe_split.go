@@ -284,7 +284,7 @@ func (st *lossyEncodeState) decideKeyBlock(src SourceFrame420, recon *SourceFram
 		if pal != nil {
 			res = pal.res
 			res.YMap = nil
-			r.pal = res
+			r.pal = recordPaletteOf(res)
 			r.palMap = int32(rec.storePalMap(pal.m[:n*n]))
 		}
 		if err := modeCtx.MarkPaletteY(block.Size, int(block.X4), int(block.Y4), res); err != nil {
@@ -507,7 +507,7 @@ func (st *lossyEncodeState) writeKeyBlock(block tile.BlockVisit, scratch *tile.B
 			st.pal = new(paletteSearch)
 		}
 		pal = &st.pal.cands[0]
-		pal.res = r.pal
+		pal.res = r.pal.result()
 		copy(pal.m[:n*n], rec.palMap(int(r.palMap), n*n))
 		pal.res.YMap = &pal.m
 		if err := st.writeKeyframePalette(modeCtx, block, mode, r.uvMode, pal); err != nil {

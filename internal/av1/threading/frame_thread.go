@@ -118,7 +118,7 @@ type FrameThreadRecon struct {
 	// batches holds each tile batch's context, kept here so the frame-thread
 	// dispatch hands the runner a pointer without a per-frame heap copy.
 	batches  []FrameWorkBatch
-	runner   FrameWorkBatchRunner
+	runner   FrameWorkBatchPtrRunner
 	parseWG  sync.WaitGroup
 	parseErr atomic.Pointer[wavefrontError]
 }
@@ -217,12 +217,7 @@ func (r *FrameThreadRecon) Join() error {
 func (r *FrameThreadRecon) runBatch(i int) {
 	ctx := &r.batches[i]
 	var err error
-	if ptr, ok := r.runner.(interface{ RunPtr(*FrameWorkBatch) error }); ok {
-		err = ptr.RunPtr(ctx)
-	} else {
-		err = r.runner.Run(*ctx)
-	}
-	if err != nil {
+	if err = r.runner.RunPtr(ctx); err != nil {
 		r.parseErr.CompareAndSwap(nil, &wavefrontError{err: err})
 	}
 }
@@ -237,7 +232,7 @@ func (r *FrameThreadRecon) runBatch(i int) {
 // number of lane goroutines that may be live at once across every in-flight
 // frame (two per worker per frame: the batch parses plus the reconstruction
 // lanes), so a lane send always finds an idle goroutine.
-func (p *Pool) ExecuteFrameWorkRunnerFrameThread(batches []Batch, jobs []tile.Job, base FrameWorkBatch, runner FrameWorkBatchRunner, laneNeed int) error {
+func (p *Pool) ExecuteFrameWorkRunnerFrameThread(batches []Batch, jobs []tile.Job, base FrameWorkBatch, runner FrameWorkBatchPtrRunner, laneNeed int) error {
 	if p == nil || len(p.workers) == 0 {
 		return ErrInvalidWorkerCount
 	}

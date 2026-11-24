@@ -239,7 +239,7 @@ func (r *BlockPredictionModeResult) reset() {
 	r.ChromaIntraEdgeSmoothNeighbor = false
 	r.FilterIntraMode = 0
 	r.FilterIntraValid = false
-	r.Palette = PaletteModeResult{}
+	r.Palette.clear()
 	r.ChromaMode = 0
 	r.ChromaModeValid = false
 	r.ChromaAngleDelta = 0
@@ -265,10 +265,10 @@ func (r *BlockPredictionModeResult) reset() {
 	r.GlobalWarpedMotionValid = false
 	r.GlobalWarpedMotionCompoundValid = [2]bool{}
 	r.OverlappableNeighborsValid = false
-	r.Extras = nil
+	setPtr(&r.Extras, nil)
 	r.CompoundBlend = CompoundBlendResult{}
 	r.CompoundBlendValid = false
-	r.SubChromaInter = nil
+	setPtr(&r.SubChromaInter, nil)
 }
 
 // BlockPredictionMotionExtras holds the rarely used warp and OBMC payloads of

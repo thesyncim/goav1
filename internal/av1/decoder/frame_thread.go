@@ -324,7 +324,7 @@ func (s *FrameWorkState) ReleaseFrameThreadHolds(ft *FrameThreadFrame) {
 // bounds the reconstruction lanes live at once across every in-flight frame.
 // It reads the shared CDF pool only through the entries ft holds, so it may
 // run while the planning goroutine begins later frames.
-func (s *FrameWorkState) RunStepFrameThreaded(event *Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, runner threading.FrameWorkBatchRunner, ft *FrameThreadFrame, laneNeed int) error {
+func (s *FrameWorkState) RunStepFrameThreaded(event *Event, step FrameWorkStep, workerPool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, runner threading.FrameWorkBatchPtrRunner, ft *FrameThreadFrame, laneNeed int) error {
 	if s == nil || ft == nil || !ft.published || !ft.cdfHeld || output == nil {
 		return ErrInvalidFrameWorkState
 	}
