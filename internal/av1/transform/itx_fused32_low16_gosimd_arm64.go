@@ -277,60 +277,16 @@ func itx32RowStripLow16(coeff []int32, stride int, r0 int, tmp *[16 * 32]int16, 
 	return true
 }
 
-// itx32ColStripLow16Add runs the column pass for columns c0..c0+7 from tmp
-// rows 0..15 and adds the result to the block (see itx32ColStripLow8Add).
-func itx32ColStripLow16Add(tmp *[16 * 32]int16, c0 int, dst unsafe.Pointer, dstStride int, pred unsafe.Pointer, predStride int) {
-	var in [16]archsimd.Int16x8
-	for r := 0; r < 16; r++ {
-		in[r] = archsimd.LoadInt16x8Array((*[8]int16)(tmp[r*32+c0:]))
-	}
-	var out [32]archsimd.Int16x8
-	itx32Low16Net(&in, &out)
-	one := archsimd.BroadcastInt16x8(1)
-	sh1 := archsimd.BroadcastInt16x8(-1)
-	sh3 := archsimd.BroadcastInt16x8(-3)
-	for r := 0; r < 32; r++ {
-		res := itx32Round2(out[r], sh3, sh1, one)
-		rows := [2]uint64{*(*uint64)(unsafe.Add(pred, r*predStride+c0)), 0}
-		p := archsimd.LoadUint64x2Array(&rows).ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()
-		*(*uint64)(unsafe.Add(dst, r*dstStride+c0)) = p.Add(res).SaturateToUint8().ReshapeToUint64s().GetElem(0)
-	}
-}
-
 // InverseAddDCT32x32Low16 is InverseAddDCT32x32Low8 for a block whose coded
 // coefficients lie in rows and columns 0..15 (activeRows and activeCols at
 // most 16); activeRows tells it whether coefficient rows 8..15 hold
 // anything, so a block with eight coded rows but up to sixteen coded
 // columns skips its second row strip.
 func InverseAddDCT32x32Low16(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows int) bool {
-	if coeffStride < 16 || len(coeff) < 15*coeffStride+16 || dstStride < 32 || predStride < 32 ||
+	if coeffStride != 32 || len(coeff) < 1024 || activeRows <= 0 || activeRows > 16 || dstStride < 32 || predStride < 32 ||
 		len(dst) < 31*dstStride+32 || len(pred) < 31*predStride+32 {
 		return false
 	}
-	if coeffStride == 32 && len(coeff) >= 1024 && activeRows > 0 && activeRows <= 16 {
-		return itxGenDCT32x32((*[1024]int32)(coeff[:1024]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-			unsafe.Pointer(unsafe.SliceData(pred)), predStride, 16, activeRows)
-	}
-	var tmp [16 * 32]int16
-	var colL1 [4]archsimd.Uint16x8
-	if !itx32RowStripLow16(coeff, coeffStride, 0, &tmp, &colL1) {
-		return false
-	}
-	if activeRows > 8 {
-		if !itx32RowStripLow16(coeff, coeffStride, 8, &tmp, &colL1) {
-			return false
-		}
-	} else {
-		clear(tmp[8*32:])
-	}
-	l1 := colL1[0].Max(colL1[1]).Max(colL1[2].Max(colL1[3]))
-	if l1.ReduceMax() > itx16ColumnL1Bound {
-		return false
-	}
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	pp := unsafe.Pointer(unsafe.SliceData(pred))
-	for g := 0; g < 4; g++ {
-		itx32ColStripLow16Add(&tmp, 8*g, dp, dstStride, pp, predStride)
-	}
-	return true
+	return itxGenDCT32x32((*[1024]int32)(coeff[:1024]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
+		unsafe.Pointer(unsafe.SliceData(pred)), predStride, 16, activeRows)
 }

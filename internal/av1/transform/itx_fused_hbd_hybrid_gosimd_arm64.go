@@ -23,7 +23,8 @@ import (
 // the saturating add clipped to the bit depth. A declined block is left
 // untouched for the staged path.
 
-// itx16ColStripAddTHBD is itx16ColStripAddT onto 16bpc samples.
+// itx16ColStripAddTHBD runs the 16x16 column network t for columns
+// c0..c0+7 from tmp rows 0..inRows-1 and adds the result onto 16bpc samples.
 func itx16ColStripAddTHBD(tmp *[16 * 16]int16, c0 int, inRows int, t tx1DType, dst unsafe.Pointer, dstStride int, pred unsafe.Pointer, predStride int, maxV archsimd.Int16x8) {
 	var in [16]archsimd.Int16x8
 	for r := 0; r < inRows; r++ {

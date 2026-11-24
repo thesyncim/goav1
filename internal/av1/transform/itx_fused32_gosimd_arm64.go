@@ -254,27 +254,6 @@ func itx32RowStripLow8(coeff []int32, stride int, tmp *[8 * 32]int16) bool {
 	return colL1.ReduceMax() <= itx16ColumnL1Bound
 }
 
-// itx32ColStripLow8Add runs the column pass for columns c0..c0+7 from tmp
-// rows 0..7 and adds the result to the block: output row r is
-// Round2(., 4) plus the prediction row, saturated to bytes, stored to dst.
-func itx32ColStripLow8Add(tmp *[8 * 32]int16, c0 int, dst unsafe.Pointer, dstStride int, pred unsafe.Pointer, predStride int) {
-	var in [8]archsimd.Int16x8
-	for r := 0; r < 8; r++ {
-		in[r] = archsimd.LoadInt16x8Array((*[8]int16)(tmp[r*32+c0:]))
-	}
-	var out [32]archsimd.Int16x8
-	itx32Low8Net(&in, &out)
-	one := archsimd.BroadcastInt16x8(1)
-	sh1 := archsimd.BroadcastInt16x8(-1)
-	sh3 := archsimd.BroadcastInt16x8(-3)
-	for r := 0; r < 32; r++ {
-		res := itx32Round2(out[r], sh3, sh1, one)
-		rows := [2]uint64{*(*uint64)(unsafe.Add(pred, r*predStride+c0)), 0}
-		p := archsimd.LoadUint64x2Array(&rows).ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()
-		*(*uint64)(unsafe.Add(dst, r*dstStride+c0)) = p.Add(res).SaturateToUint8().ReshapeToUint64s().GetElem(0)
-	}
-}
-
 // InverseAddDCT32x32Low8 reconstructs one 8-bit 32x32 DCT_DCT block whose
 // coded coefficients lie in rows and columns 0..7 (the caller's activeRows
 // and activeCols are at most 8): dst = clip(pred + inverse(coeff)), with
@@ -283,22 +262,10 @@ func itx32ColStripLow8Add(tmp *[8 * 32]int16, c0 int, dst unsafe.Pointer, dstStr
 // kernel's contract or a guard declines; the caller then runs the staged
 // path, which produces the same bytes.
 func InverseAddDCT32x32Low8(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int) bool {
-	if coeffStride < 8 || len(coeff) < 7*coeffStride+8 || dstStride < 32 || predStride < 32 ||
+	if coeffStride != 32 || len(coeff) < 1024 || dstStride < 32 || predStride < 32 ||
 		len(dst) < 31*dstStride+32 || len(pred) < 31*predStride+32 {
 		return false
 	}
-	if coeffStride == 32 && len(coeff) >= 1024 {
-		return itxGenDCT32x32C8R8((*[1024]int32)(coeff[:1024]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-			unsafe.Pointer(unsafe.SliceData(pred)), predStride, 8)
-	}
-	var tmp [8 * 32]int16
-	if !itx32RowStripLow8(coeff, coeffStride, &tmp) {
-		return false
-	}
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	pp := unsafe.Pointer(unsafe.SliceData(pred))
-	for g := 0; g < 4; g++ {
-		itx32ColStripLow8Add(&tmp, 8*g, dp, dstStride, pp, predStride)
-	}
-	return true
+	return itxGenDCT32x32C8R8((*[1024]int32)(coeff[:1024]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
+		unsafe.Pointer(unsafe.SliceData(pred)), predStride, 8)
 }

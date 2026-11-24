@@ -11,10 +11,15 @@ import (
 	"testing"
 )
 
+// itxHybridTypesUnderTest are the 16x16 hybrid types; the 8x8 kernels
+// also cover the four ADST/identity pairings (itxHybridTypesUnderTest8).
 var itxHybridTypesUnderTest = []Type{
 	TypeADSTDCT, TypeDCTADST, TypeADSTADST, TypeFlipADSTDCT, TypeDCTFlipADST,
-	TypeFlipADSTFlipADST, TypeADSTFlipADST, TypeFlipADSTADST,
+	TypeFlipADSTFlipADST, TypeADSTFlipADST, TypeFlipADSTADST, TypeVDCT, TypeHDCT,
 }
+
+var itxHybridTypesUnderTest8 = append(append([]Type{}, itxHybridTypesUnderTest...),
+	TypeVADST, TypeHADST, TypeVFlipADST, TypeHFlipADST)
 
 // itxFusedHybridOracle is the staged path the fused hybrid kernels replace.
 func itxFusedHybridOracle(t *testing.T, n int, dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, txType Type, activeRows, activeCols int) {
@@ -38,12 +43,16 @@ func testInverseAddHybrid(t *testing.T, n int, trials int, fused func(dst []byte
 	pred := make([]byte, n*stride)
 	got := make([]byte, n*stride)
 	want := make([]byte, n*stride)
+	types := itxHybridTypesUnderTest
+	if n == 8 {
+		types = itxHybridTypesUnderTest8
+	}
 	accepted, declined, realistic, realisticDeclined := 0, 0, 0, 0
 	for trial := 0; trial < trials; trial++ {
 		clear(coeff)
-		txType := itxHybridTypesUnderTest[trial%len(itxHybridTypesUnderTest)]
+		txType := types[trial%len(types)]
 		activeRows, activeCols := 1+rng.Intn(n), 1+rng.Intn(n)
-		switch (trial / len(itxHybridTypesUnderTest)) % 3 {
+		switch (trial / len(types)) % 3 {
 		case 0:
 			activeRows, activeCols = 1+rng.Intn(4), 1+rng.Intn(4)
 		case 1:

@@ -549,25 +549,6 @@ func itx16RowStripT(coeff []int32, stride int, r0 int, inCols int, t tx1DType, t
 	return true
 }
 
-// itx16ColStripAddT is itx16ColStripAdd with the column network t.
-func itx16ColStripAddT(tmp *[16 * 16]int16, c0 int, inRows int, t tx1DType, dst unsafe.Pointer, dstStride int, pred unsafe.Pointer, predStride int) {
-	var in [16]archsimd.Int16x8
-	for r := 0; r < inRows; r++ {
-		in[r] = archsimd.LoadInt16x8Array((*[8]int16)(tmp[r*16+c0:]))
-	}
-	var out [16]archsimd.Int16x8
-	itx16Net1D(t, inRows, &in, &out)
-	one := archsimd.BroadcastInt16x8(1)
-	sh1 := archsimd.BroadcastInt16x8(-1)
-	sh3 := archsimd.BroadcastInt16x8(-3)
-	for r := 0; r < 16; r++ {
-		res := itx32Round2(out[r], sh3, sh1, one)
-		rows := [2]uint64{*(*uint64)(unsafe.Add(pred, r*predStride+c0)), 0}
-		p := archsimd.LoadUint64x2Array(&rows).ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()
-		*(*uint64)(unsafe.Add(dst, r*dstStride+c0)) = p.Add(res).SaturateToUint8().ReshapeToUint64s().GetElem(0)
-	}
-}
-
 // itxHybridTypes returns the per-pass networks of the DCT/ADST/flipped-ADST
 // pairings the fused hybrid kernels cover; ok is false for every other
 // transform type (including DCT_DCT, which has its own kernels).
@@ -581,84 +562,114 @@ func itxHybridTypes(txType Type) (vertical, horizontal tx1DType, ok bool) {
 }
 
 // InverseAdd16x16Hybrid reconstructs one 8-bit 16x16 block of a
-// DCT/ADST/flipped-ADST transform pairing (see itxHybridTypes) with coded
-// coefficients in rows 0..activeRows-1 and columns 0..activeCols-1:
-// dst = clip(pred + inverse(coeff)), with the dequantized coefficients
-// column-major at coeffStride. pred may be dst. It reports false, with dst
-// untouched, when the block is outside the kernel's contract or a guard
-// declines; the caller then runs the staged path, which produces the same
-// bytes.
+// DCT/ADST/flipped-ADST/identity transform pairing other than DCT_DCT and
+// IDTX with coded coefficients in rows 0..activeRows-1 and columns
+// 0..activeCols-1: dst = clip(pred + inverse(coeff)), with the dequantized
+// coefficients column-major at coeffStride (16). pred may be dst. It
+// reports false, with dst untouched, when the block is outside the
+// kernel's contract or a guard declines; the caller then runs the staged
+// path, which produces the same bytes. The kernels are generated
+// (itx_fused_gen_arm64.go) per type and network form.
 func InverseAdd16x16Hybrid(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
-	vertical, horizontal, ok := itxHybridTypes(txType)
-	if !ok || activeRows <= 0 || activeRows > 16 || activeCols <= 0 || activeCols > 16 ||
-		coeffStride < 16 || len(coeff) < 15*coeffStride+16 || dstStride < 16 || predStride < 16 ||
+	if activeRows <= 0 || activeRows > 16 || activeCols <= 0 || activeCols > 16 ||
+		coeffStride != 16 || len(coeff) < 256 || dstStride < 16 || predStride < 16 ||
 		len(dst) < 15*dstStride+16 || len(pred) < 15*predStride+16 {
 		return false
 	}
-	inCols := itx16Form(activeCols)
-	inRows := itx16Form(activeRows)
-	var tmp [16 * 16]int16
-	var colL1 [2]archsimd.Uint16x8
-	if !itx16RowStripT(coeff, coeffStride, 0, inCols, horizontal, &tmp, &colL1) {
-		return false
-	}
-	if activeRows > 8 && !itx16RowStripT(coeff, coeffStride, 8, inCols, horizontal, &tmp, &colL1) {
-		return false
-	}
-	if colL1[0].Max(colL1[1]).ReduceMax() > itx16ColumnL1Bound {
-		return false
-	}
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	pp := unsafe.Pointer(unsafe.SliceData(pred))
-	itx16ColStripAddT(&tmp, 0, inRows, vertical, dp, dstStride, pp, predStride)
-	itx16ColStripAddT(&tmp, 8, inRows, vertical, dp, dstStride, pp, predStride)
-	return true
+	return itxGen16x16Hybrid((*[256]int32)(coeff[:256]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
+		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
 }
 
-// InverseAdd8x8Hybrid is InverseAdd16x16Hybrid for the 8x8 block, which
-// stays in registers end to end like InverseAddDCT8x8.
+// InverseAdd8x8Hybrid is InverseAdd16x16Hybrid for the 8x8 block (every
+// pairing but DCT_DCT and IDTX; coeffStride 8).
 func InverseAdd8x8Hybrid(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
-	vertical, horizontal, ok := itxHybridTypes(txType)
-	if !ok || activeRows <= 0 || activeRows > 8 || activeCols <= 0 || activeCols > 8 ||
-		coeffStride < 8 || len(coeff) < 7*coeffStride+8 || dstStride < 8 || predStride < 8 ||
+	if activeRows <= 0 || activeRows > 8 || activeCols <= 0 || activeCols > 8 ||
+		coeffStride != 8 || len(coeff) < 64 || dstStride < 8 || predStride < 8 ||
 		len(dst) < 7*dstStride+8 || len(pred) < 7*predStride+8 {
 		return false
 	}
-	var in [8]archsimd.Int16x8
-	var l1 archsimd.Uint16x8
-	for k := 0; k < activeCols; k++ {
-		x := itx16LoadNarrow(coeff[k*coeffStride : k*coeffStride+8])
-		l1 = l1.AddSaturated(x.Abs().ToBits())
-		in[k] = x
-	}
-	if l1.ReduceMax() > itx16ColumnL1Bound {
+	return itxGen8x8Hybrid((*[64]int32)(coeff[:64]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
+		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
+}
+
+// The 4x4 and the 4- and 8/16-point rectangular 8-bit blocks of every type
+// but IDTX: the generated kernels (itx_fused_gen_arm64.go), DCT_DCT per
+// network form of the coded columns and rows, every other type in the
+// full form.
+
+// itxSmallFits reports whether a w x h block's buffers satisfy the
+// generated kernels' contract: coefficients column-major at stride h, dst
+// and pred rows of w bytes at their strides.
+func itxSmallFits(w, h int, dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride, activeRows, activeCols int) bool {
+	return activeRows > 0 && activeRows <= h && activeCols > 0 && activeCols <= w &&
+		coeffStride == h && len(coeff) >= w*h && dstStride >= w && predStride >= w &&
+		len(dst) >= (h-1)*dstStride+w && len(pred) >= (h-1)*predStride+w
+}
+
+// InverseAdd4x4 reconstructs one 8-bit 4x4 block of any type but IDTX:
+// dst = clip(pred + inverse(coeff)), with the dequantized coefficients
+// column-major at coeffStride (4). pred may be dst. It reports false, with
+// dst untouched, when the block is outside the kernels' contract or a
+// guard declines; the caller then runs the staged path, which produces the
+// same bytes.
+func InverseAdd4x4(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows int) bool {
+	if !itxSmallFits(4, 4, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, 4) {
 		return false
 	}
-	var mid [8]archsimd.Int16x8
-	itx8Net1D(horizontal, activeCols, &in, &mid)
-	one := archsimd.BroadcastInt16x8(1)
-	sh1 := archsimd.BroadcastInt16x8(-1)
-	var colL1 archsimd.Uint16x8
-	for j := range mid {
-		mid[j] = mid[j].Shift(sh1).Add(mid[j].And(one))
-	}
-	itx16Transpose8x8(&mid)
-	for r := range mid {
-		colL1 = colL1.AddSaturated(mid[r].Abs().ToBits())
-	}
-	if colL1.ReduceMax() > itx16ColumnL1Bound {
+	return itxGen4x4((*[16]int32)(coeff[:16]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
+		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, 4, activeRows)
+}
+
+// InverseAdd4x8 is InverseAdd4x4 for the 4 wide, 8 high block.
+func InverseAdd4x8(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
+	if !itxSmallFits(4, 8, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
 		return false
 	}
-	var out [8]archsimd.Int16x8
-	itx8Net1D(vertical, activeRows, &mid, &out)
-	sh3 := archsimd.BroadcastInt16x8(-3)
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	pp := unsafe.Pointer(unsafe.SliceData(pred))
-	for r := 0; r < 8; r++ {
-		res := itx32Round2(out[r], sh3, sh1, one)
-		rows := [2]uint64{*(*uint64)(unsafe.Add(pp, r*predStride)), 0}
-		p := archsimd.LoadUint64x2Array(&rows).ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()
-		*(*uint64)(unsafe.Add(dp, r*dstStride)) = p.Add(res).SaturateToUint8().ReshapeToUint64s().GetElem(0)
+	return itxGen4x8((*[32]int32)(coeff[:32]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
+		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
+}
+
+// InverseAdd8x4 is InverseAdd4x4 for the 8 wide, 4 high block.
+func InverseAdd8x4(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
+	if !itxSmallFits(8, 4, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
 	}
-	return true
+	return itxGen8x4((*[32]int32)(coeff[:32]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
+		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
+}
+
+// InverseAdd4x16 is InverseAdd4x4 for the 4 wide, 16 high block.
+func InverseAdd4x16(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
+	if !itxSmallFits(4, 16, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	return itxGen4x16((*[64]int32)(coeff[:64]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
+		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
+}
+
+// InverseAdd16x4 is InverseAdd4x4 for the 16 wide, 4 high block.
+func InverseAdd16x4(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
+	if !itxSmallFits(16, 4, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	return itxGen16x4((*[64]int32)(coeff[:64]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
+		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
+}
+
+// InverseAdd8x16 is InverseAdd4x4 for the 8 wide, 16 high block.
+func InverseAdd8x16(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
+	if !itxSmallFits(8, 16, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	return itxGen8x16((*[128]int32)(coeff[:128]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
+		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
+}
+
+// InverseAdd16x8 is InverseAdd4x4 for the 16 wide, 8 high block.
+func InverseAdd16x8(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, txType Type, activeRows, activeCols int) bool {
+	if !itxSmallFits(16, 8, dst, dstStride, pred, predStride, coeff, coeffStride, activeRows, activeCols) {
+		return false
+	}
+	return itxGen16x8((*[128]int32)(coeff[:128]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
+		unsafe.Pointer(unsafe.SliceData(pred)), predStride, txType, activeCols, activeRows)
 }
