@@ -528,6 +528,12 @@ func parseColorConfig(r *bitstream.Reader, sh *SequenceHeader) error {
 		cfg.ColorRange = true
 		cfg.SubsamplingX = false
 		cfg.SubsamplingY = false
+		// sRGB implies 4:4:4, which only profile 1 and 12-bit profile 2
+		// carry; dav1d (obu.c parse_seq_hdr) and libaom
+		// (av1_read_color_config) reject it elsewhere.
+		if sh.SeqProfile != 1 && (sh.SeqProfile != 2 || cfg.BitDepth != 12) {
+			return ErrInvalidSequenceHeader
+		}
 	} else {
 		if cfg.ColorRange, err = r.ReadBool(); err != nil {
 			return err

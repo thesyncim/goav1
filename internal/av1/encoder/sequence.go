@@ -600,10 +600,22 @@ func validateSequenceColorConfig(profile Profile, cfg SequenceColorConfig) error
 		return ErrInvalidConfig
 	}
 	if sequenceColorIsIdentity(cfg) {
+		// sRGB implies full-range 4:4:4 without coding it, and only profile
+		// 1 and 12-bit profile 2 carry 4:4:4: dav1d (obu.c) and libaom
+		// reject the triple in any other profile.
+		if profile != Profile1 && (profile != Profile2 || bitDepth != 12) {
+			return ErrInvalidConfig
+		}
 		if !cfg.ColorRange || cfg.SubsamplingX || cfg.SubsamplingY || cfg.ChromaSamplePosition != 0 {
 			return ErrInvalidConfig
 		}
 		return nil
+	}
+	// The identity matrix is a conformance requirement for 4:4:4 (AV1 spec
+	// color_config semantics); libaom rejects it with subsampled chroma.
+	if cfg.ColorDescriptionPresent && cfg.MatrixCoefficients == SequenceMatrixCoefficientsIdentity &&
+		(cfg.SubsamplingX || cfg.SubsamplingY) {
+		return ErrInvalidConfig
 	}
 	switch profile {
 	case Profile0:

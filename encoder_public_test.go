@@ -778,7 +778,7 @@ func TestPublicEncoderWebRTCTemporalIDForDeltaPicture(t *testing.T) {
 
 func TestPublicEncoderSequenceHeaderOBU(t *testing.T) {
 	seq := internalencoder.SequenceHeader{
-		Profile:               EncoderProfile0,
+		Profile:               internalencoder.Profile1, // sRGB is 4:4:4
 		OperatingPointsCount:  1,
 		MaxFrameWidth:         16,
 		MaxFrameHeight:        9,

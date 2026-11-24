@@ -71,8 +71,7 @@ func TestAppendQuantizationParamsPayloadSharedUV(t *testing.T) {
 }
 
 func TestAppendQuantizationParamsPayloadMonoChrome(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	seq.ColorConfig.MonoChrome = true
+	seq := realtimeEncoderMonochromeSequenceHeader()
 	quant := QuantizationParams{
 		BaseQIdx: 3,
 		YDCDelta: -1,

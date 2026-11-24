@@ -88,7 +88,7 @@ func realtimeSequenceHeaderWithLevel(level uint8) []byte {
 
 func realtimeSequenceHeaderWithTiming(level uint8, timing bool) []byte {
 	var w testBitWriter
-	w.writeBits(0, 3)   // seq_profile
+	w.writeBits(1, 3)   // seq_profile: sRGB is 4:4:4, profile 1
 	w.writeBool(false)  // still_picture
 	w.writeBool(false)  // reduced_still_picture_header
 	w.writeBool(timing) // timing_info_present_flag
@@ -127,7 +127,6 @@ func realtimeSequenceHeaderWithTiming(level uint8, timing bool) []byte {
 	w.writeBool(true)  // enable_cdef
 	w.writeBool(true)  // enable_restoration
 	w.writeBool(false) // high_bitdepth
-	w.writeBool(false) // mono_chrome
 	w.writeBool(true)  // color_description_present_flag
 	w.writeBits(ColorPrimariesBT709, 8)
 	w.writeBits(TransferCharacteristicsSRGB, 8)
@@ -139,7 +138,7 @@ func realtimeSequenceHeaderWithTiming(level uint8, timing bool) []byte {
 
 func realtimeSequenceHeaderWithFrameIDLengths(deltaMinus2 uint8, additionalMinus1 uint8) []byte {
 	var w testBitWriter
-	w.writeBits(0, 3)  // seq_profile
+	w.writeBits(1, 3)  // seq_profile: sRGB is 4:4:4, profile 1
 	w.writeBool(false) // still_picture
 	w.writeBool(false) // reduced_still_picture_header
 	w.writeBool(false) // timing_info_present_flag
@@ -171,7 +170,6 @@ func realtimeSequenceHeaderWithFrameIDLengths(deltaMinus2 uint8, additionalMinus
 	w.writeBool(true)  // enable_cdef
 	w.writeBool(true)  // enable_restoration
 	w.writeBool(false) // high_bitdepth
-	w.writeBool(false) // mono_chrome
 	w.writeBool(true)  // color_description_present_flag
 	w.writeBits(ColorPrimariesBT709, 8)
 	w.writeBits(TransferCharacteristicsSRGB, 8)

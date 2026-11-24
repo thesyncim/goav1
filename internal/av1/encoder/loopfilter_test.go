@@ -52,8 +52,7 @@ func TestAppendLoopFilterParamsPayloadLevelsAndUpdates(t *testing.T) {
 }
 
 func TestAppendLoopFilterParamsPayloadMonochromeSkipsUVLevels(t *testing.T) {
-	seq := realtimeEncoderSequenceHeader()
-	seq.ColorConfig.MonoChrome = true
+	seq := realtimeEncoderMonochromeSequenceHeader()
 	prefix := FrameHeaderPrefix{PrimaryRefFrame: EncoderPrimaryRefNone}
 	size := IntraFrameSize{UpscaledWidth: 64, Height: 64, SuperResDenominator: 8, RefreshFrameFlags: 0xff}
 	lf := LoopFilterParams{
