@@ -82,25 +82,43 @@ func quantizeBVectors(qcoeff []int16, coeff []int32, quant int32, round int32, z
 	sixteenV := archsimd.BroadcastInt32x4(-16)
 	shiftV := archsimd.BroadcastInt32x4(-int32(shift))
 	signShiftV := archsimd.BroadcastInt32x4(-31)
+	// svt_aom_quantize_b_neon's zero-bin test: a group whose magnitudes all
+	// lie below the zero bin (compared unsigned, so INT32_MIN passes as the
+	// scalar rule keeps it) stores zero levels and skips the quantizer.
+	zbinTest := uint32(zbin)
+	var zero16 archsimd.Int16x8
 	if iscan == nil {
 		for i := 0; i <= len(coeff)-8 && i <= len(q)-8; i += 8 {
 			c := (*[8]int32)(coeff[i:])
-			lo := quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[0:4])), quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
-			hi := quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[4:8])), quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
-			quantizePackInt16x8SIMD(lo, hi).StoreArray((*[8]int16)(q[i:]))
+			dst := (*[8]int16)(q[i:])
+			c0 := archsimd.LoadInt32x4Array((*[4]int32)(c[0:4]))
+			c1 := archsimd.LoadInt32x4Array((*[4]int32)(c[4:8]))
+			if c0.Abs().ToBits().Max(c1.Abs().ToBits()).ReduceMax() < zbinTest {
+				zero16.StoreArray(dst)
+				continue
+			}
+			lo := quantizeBLane4SIMD(c0, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+			hi := quantizeBLane4SIMD(c1, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+			quantizePackInt16x8SIMD(lo, hi).StoreArray(dst)
 		}
 		return 0
 	}
 	sc := iscan[:n]
 	one16 := archsimd.BroadcastInt16x8(1)
-	zero16 := archsimd.BroadcastInt16x8(0)
 	var eobAcc archsimd.Int16x8
 	for i := 0; i <= len(coeff)-8 && i <= len(q)-8 && i <= len(sc)-8; i += 8 {
 		c := (*[8]int32)(coeff[i:])
-		lo := quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[0:4])), quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
-		hi := quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[4:8])), quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+		dst := (*[8]int16)(q[i:])
+		c0 := archsimd.LoadInt32x4Array((*[4]int32)(c[0:4]))
+		c1 := archsimd.LoadInt32x4Array((*[4]int32)(c[4:8]))
+		if c0.Abs().ToBits().Max(c1.Abs().ToBits()).ReduceMax() < zbinTest {
+			zero16.StoreArray(dst)
+			continue
+		}
+		lo := quantizeBLane4SIMD(c0, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+		hi := quantizeBLane4SIMD(c1, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
 		levels := quantizePackInt16x8SIMD(lo, hi)
-		levels.StoreArray((*[8]int16)(q[i:]))
+		levels.StoreArray(dst)
 		pos1 := archsimd.LoadInt16x8Array((*[8]int16)(sc[i:])).Add(one16)
 		eobAcc = eobAcc.Max(pos1.Masked(levels.NotEqual(zero16)))
 	}

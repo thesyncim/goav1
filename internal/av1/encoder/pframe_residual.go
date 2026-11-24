@@ -2366,7 +2366,13 @@ func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStr
 	}
 	// Keep the quantizer's loaded coefficients and levels for the following
 	// skip-only statistics when the architecture can fuse the two passes.
-	if diff, rate, eob, handled := quantize.TryQuantizeBRowGroupsDiffTrusted(qcoeff[:geo.coeffCount], st.tranScratch[:geo.coeffCount], w, mask, q, geo.txScale, rdoqGeometry(geo.tx, 0).iscan); handled {
+	// Under N4_SHAPE only the low max(w/4, 1) columns can hold a coefficient
+	// (the 8x8 N4 kernel and svtPFN4Zero zero the rest).
+	cols := w
+	if st.pfN4 {
+		cols = max(w>>2, 1)
+	}
+	if diff, rate, eob, handled := quantize.TryQuantizeBRowGroupsDiffTrusted(qcoeff[:geo.coeffCount], st.tranScratch[:geo.coeffCount], w, mask, cols, q, geo.txScale, rdoqGeometry(geo.tx, 0).iscan); handled {
 		st.rdDskip += st.svtTXDist(diff, geo.txScale)
 		st.rdRcode += rate
 		return eob
