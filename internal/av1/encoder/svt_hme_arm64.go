@@ -2,7 +2,11 @@
 
 package encoder
 
-import "simd/archsimd"
+import (
+	"simd/archsimd"
+
+	"github.com/thesyncim/goav1/internal/unsafeutil"
+)
 
 // svtDownsample2DArch is svtDownsample2D on NEON: the 2x2 sums of 16 output
 // samples are two row-widened adds folded by pairwise adds, then
@@ -256,26 +260,32 @@ func svtColTotalsSlideArch(cw *[svtHMEMaxCols]uint16, out, in []byte, span int) 
 // sum over int16 lanes (each term is at most 7*16*255 in magnitude). The
 // positions loop inside the kernel so a search row is one call.
 func svtHMEColSumRow(t *[svtHMEMaxCols / 8][8]uint32, s []byte, s2 int, ref []byte, cw *[svtHMEMaxCols]uint16, bw, rows, w int, srcSum uint32) uint32 {
-	if uint(s2) > rowStrideMax || uint(rows) > rowsMax || uint(w) > svtHMEMaxCols || (bw != 16 && bw != 32) {
+	if uint(s2) > rowStrideMax || uint(rows) > rowsMax || uint(w) > svtHMEMaxCols || (bw != 16 && bw != 32) || w&7 != 0 || rows < 1 {
 		panic(errKernelArgs)
 	}
-	// Each step reads one 16-byte source window and one 23-byte reference
-	// window (the eight positions at constant offsets inside it).
+	// The block and the reference footprint ((rows-1)*s2 + bw + w bytes) are
+	// checked once, as grids. For the eight positions from x the reference is
+	// the (bw+8)-column view gx: each step's 24-byte window (the positions'
+	// 16-byte windows at constant offsets, plus one spare byte still inside
+	// gx) sits at a constant column of a row the loop bound proves, so a step
+	// pays no check. Rows run as their own loop, one per block width.
+	if !unsafeutil.GridFit(len(s), 0, s2, bw, rows) || !unsafeutil.GridFit(len(ref), 0, s2, bw+w, rows) {
+		panic(errKernelArgs)
+	}
+	gs := unsafeutil.NewGrid(s, 0, s2, bw, rows)
+	gr := unsafeutil.NewGrid(ref, 0, s2, bw+w, rows)
 	// Only the shift count stays in a register across the row loop; the
 	// reduction's constants load from one table each step (kept live, the
 	// register allocator reloaded them inside the row loop).
 	hiShift := archsimd.BroadcastInt16x8(-8)
 	kc := &svtHMEKeyConsts
 	key := ^uint32(0)
-	cShift := bw >> 5 // 16-column steps per row: 1 << cShift
-	cMask := cShift
-	steps := rows << cShift
 	for x := 0; x < w; x += 8 {
-		rx := ref[x:]
-		// The rows x 16-column steps run as one loop; the first seeds the
-		// accumulators, so no zero vector stays live across it.
-		sv := archsimd.LoadUint8x16Array((*[16]uint8)(s[0:16]))
-		p := (*[23]uint8)(rx[0:23])
+		gx := gr.Sub(0, x, bw+8, rows)
+		// The first step seeds the accumulators, so no zero vector stays
+		// live across the row loop.
+		sv := archsimd.LoadUint8x16Array(unsafeutil.Row[[16]uint8](gs, 0, 0))
+		p := unsafeutil.Row[[24]uint8](gx, 0, 0)
 		var d archsimd.Uint16x8
 		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[0:16]))).ReshapeToUint16s()
 		s0, h0 := d, d.Shift(hiShift)
@@ -293,27 +303,68 @@ func svtHMEColSumRow(t *[svtHMEMaxCols / 8][8]uint32, s []byte, s2 int, ref []by
 		s6, h6 := d, d.Shift(hiShift)
 		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[7:23]))).ReshapeToUint16s()
 		s7, h7 := d, d.Shift(hiShift)
-		for i := 1; i < steps; i++ {
-			off := (i>>cShift)*s2 + (i&cMask)<<4
-			sw := (*[16]uint8)(s[off : off+16])
-			p = (*[23]uint8)(rx[off : off+23])
-			sv = archsimd.LoadUint8x16Array(sw)
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[0:16]))).ReshapeToUint16s()
-			s0, h0 = s0.Add(d), h0.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[1:17]))).ReshapeToUint16s()
-			s1, h1 = s1.Add(d), h1.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[2:18]))).ReshapeToUint16s()
-			s2v, h2 = s2v.Add(d), h2.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[3:19]))).ReshapeToUint16s()
-			s3, h3 = s3.Add(d), h3.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[4:20]))).ReshapeToUint16s()
-			s4, h4 = s4.Add(d), h4.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[5:21]))).ReshapeToUint16s()
-			s5, h5 = s5.Add(d), h5.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[6:22]))).ReshapeToUint16s()
-			s6, h6 = s6.Add(d), h6.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[7:23]))).ReshapeToUint16s()
-			s7, h7 = s7.Add(d), h7.Add(d.Shift(hiShift))
+		if bw == 16 {
+			for r := 1; r < gx.Height(); r++ {
+				sv = archsimd.LoadUint8x16Array(unsafeutil.Row[[16]uint8](gs, r, 0))
+				p = unsafeutil.Row[[24]uint8](gx, r, 0)
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[0:16]))).ReshapeToUint16s()
+				s0, h0 = s0.Add(d), h0.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[1:17]))).ReshapeToUint16s()
+				s1, h1 = s1.Add(d), h1.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[2:18]))).ReshapeToUint16s()
+				s2v, h2 = s2v.Add(d), h2.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[3:19]))).ReshapeToUint16s()
+				s3, h3 = s3.Add(d), h3.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[4:20]))).ReshapeToUint16s()
+				s4, h4 = s4.Add(d), h4.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[5:21]))).ReshapeToUint16s()
+				s5, h5 = s5.Add(d), h5.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[6:22]))).ReshapeToUint16s()
+				s6, h6 = s6.Add(d), h6.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[7:23]))).ReshapeToUint16s()
+				s7, h7 = s7.Add(d), h7.Add(d.Shift(hiShift))
+			}
+		} else {
+			for r := 0; r < gx.Height(); r++ {
+				if r > 0 {
+					sv = archsimd.LoadUint8x16Array(unsafeutil.Row[[16]uint8](gs, r, 0))
+					p = unsafeutil.Row[[24]uint8](gx, r, 0)
+					d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[0:16]))).ReshapeToUint16s()
+					s0, h0 = s0.Add(d), h0.Add(d.Shift(hiShift))
+					d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[1:17]))).ReshapeToUint16s()
+					s1, h1 = s1.Add(d), h1.Add(d.Shift(hiShift))
+					d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[2:18]))).ReshapeToUint16s()
+					s2v, h2 = s2v.Add(d), h2.Add(d.Shift(hiShift))
+					d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[3:19]))).ReshapeToUint16s()
+					s3, h3 = s3.Add(d), h3.Add(d.Shift(hiShift))
+					d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[4:20]))).ReshapeToUint16s()
+					s4, h4 = s4.Add(d), h4.Add(d.Shift(hiShift))
+					d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[5:21]))).ReshapeToUint16s()
+					s5, h5 = s5.Add(d), h5.Add(d.Shift(hiShift))
+					d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[6:22]))).ReshapeToUint16s()
+					s6, h6 = s6.Add(d), h6.Add(d.Shift(hiShift))
+					d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[7:23]))).ReshapeToUint16s()
+					s7, h7 = s7.Add(d), h7.Add(d.Shift(hiShift))
+				}
+				sv = archsimd.LoadUint8x16Array(unsafeutil.Row[[16]uint8](gs, r, 16))
+				p = unsafeutil.Row[[24]uint8](gx, r, 16)
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[0:16]))).ReshapeToUint16s()
+				s0, h0 = s0.Add(d), h0.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[1:17]))).ReshapeToUint16s()
+				s1, h1 = s1.Add(d), h1.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[2:18]))).ReshapeToUint16s()
+				s2v, h2 = s2v.Add(d), h2.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[3:19]))).ReshapeToUint16s()
+				s3, h3 = s3.Add(d), h3.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[4:20]))).ReshapeToUint16s()
+				s4, h4 = s4.Add(d), h4.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[5:21]))).ReshapeToUint16s()
+				s5, h5 = s5.Add(d), h5.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[6:22]))).ReshapeToUint16s()
+				s6, h6 = s6.Add(d), h6.Add(d.Shift(hiShift))
+				d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[7:23]))).ReshapeToUint16s()
+				s7, h7 = s7.Add(d), h7.Add(d.Shift(hiShift))
+			}
 		}
 		// Minima: two folds in uint16 (each lane at most 2*16*4*255), the
 		// exact byte-pair correction S - 255*H as one MLA by 0xFF01, the
