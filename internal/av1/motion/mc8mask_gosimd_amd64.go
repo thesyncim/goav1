@@ -133,7 +133,7 @@ func mc8Ld4x8(p unsafe.Pointer, ms int) archsimd.Uint8x32 {
 // mc8Mask16 returns the mask of the 16 columns at row r, column c.
 func mc8Mask16(mask unsafe.Pointer, ms, r, c int, sub bool, ones archsimd.Int8x32, two archsimd.Int16x16) archsimd.Uint16x16 {
 	if !sub {
-		return mc8Zx(unsafe.Add(mask, r*ms+c))
+		return mc8ZxP(unsafe.Add(mask, r*ms+c))
 	}
 	p := unsafe.Add(mask, 2*(r*ms+c))
 	return mc8Mask420(mc8Ld32B(p), mc8Ld32B(unsafe.Add(p, ms)), ones, two)
@@ -198,7 +198,7 @@ func mc8AVX2Blend(dst unsafe.Pointer, ds int, a, b []uint16, w, h int, mask unsa
 					m = mc8Mask420(mc8Ld4x8(p, ms), mc8Ld4x8(unsafe.Add(p, ms), ms), ones, two)
 				default:
 					p := unsafe.Add(mask, 2*r*ms)
-					m = mc8Mask420(mc8Ld2(p, unsafe.Add(p, 2*ms)), mc8Ld2(unsafe.Add(p, ms), unsafe.Add(p, 3*ms)), ones, two)
+					m = mc8Mask420(mc8Ld2P(p, unsafe.Add(p, 2*ms)), mc8Ld2P(unsafe.Add(p, ms), unsafe.Add(p, 3*ms)), ones, two)
 				}
 			}
 			o := 2 * r * w
@@ -208,8 +208,8 @@ func mc8AVX2Blend(dst unsafe.Pointer, ds int, a, b []uint16, w, h int, mask unsa
 				mc8StPutW4(dst, ds, r, h, v)
 			} else {
 				d := unsafe.Add(dst, r*ds)
-				mc8St8(d, v.GetLo())
-				mc8St8(unsafe.Add(d, ds), v.GetHi())
+				mc8St8P(d, v.GetLo())
+				mc8St8P(unsafe.Add(d, ds), v.GetHi())
 			}
 		}
 	case 16:
@@ -295,8 +295,8 @@ func mc8AVX2DiffWtd(mask unsafe.Pointer, ms int, a, b []uint16, w, h int, invert
 				mc8StPutW4(mask, ms, r, h, v)
 			} else {
 				d := unsafe.Add(mask, r*ms)
-				mc8St8(d, v.GetLo())
-				mc8St8(unsafe.Add(d, ms), v.GetHi())
+				mc8St8P(d, v.GetLo())
+				mc8St8P(unsafe.Add(d, ms), v.GetHi())
 			}
 		}
 	case 16:

@@ -273,7 +273,7 @@ func mc8Kind(f InterpFilter, blockSize int) int {
 // When any tap falls outside the plane the clamped window is materialized in
 // edge first (dav1d src/recon_tmpl.c mc() emu_edge). Every kernel reads at
 // most max(w+8, 16) bytes per row from the window's left edge.
-func mc8Source(ref *frame.Plane, refX, refY, w, h, taps int, hx, hy bool, edge *[emuEdgeStride * emuEdgeRows]byte) (src unsafe.Pointer, stride int, ok bool) {
+func mc8Source(ref *frame.Plane, refX, refY, w, h, taps int, hx, hy bool, edge *[emuEdgeStride * emuEdgeRows]byte) (src []byte, stride int, ok bool) {
 	x0, y0, bw, bh := refX, refY, w, h
 	if hx {
 		x0 -= taps/2 - 1
@@ -289,14 +289,14 @@ func mc8Source(ref *frame.Plane, refX, refY, w, h, taps int, hx, hy bool, edge *
 	if x0 >= 0 && y0 >= 0 && x0+bw <= ref.Width && y0+bh <= ref.Height {
 		start := y0*ref.Stride + x0
 		if start+(bh-1)*ref.Stride+max(w+8, 16) <= len(ref.Pix) {
-			return unsafe.Pointer(unsafe.SliceData(ref.Pix[start:])), ref.Stride, true
+			return ref.Pix[start:], ref.Stride, true
 		}
 	}
 	if len(ref.Pix) < (ref.Height-1)*ref.Stride+ref.Width {
 		return nil, 0, false
 	}
 	emuEdge8(bw, bh, *ref, x0, y0, edge[:], emuEdgeStride)
-	return unsafe.Pointer(&edge[0]), emuEdgeStride, true
+	return edge[:], emuEdgeStride, true
 }
 
 // mc8Taps picks the kernel family for a block: the six-tap kernels (four-tap
@@ -339,44 +339,46 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 		taps = 8
 	}
 	src, stride, ok := mc8Source(ref, refX, refY, w, h, taps, subX != 0, subY != 0, &scratch.edge)
-	if !ok {
+	if !ok || uint(stride) > rowStrideMax || uint(dst.Stride) > rowStrideMax {
 		return false
 	}
-	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
-	d := unsafe.Pointer(&dst.Pix[dOff])
+	d := dst.Pix[dOff:]
 	if eight {
 		switch {
 		case subX != 0 && subY != 0:
-			im := unsafe.Pointer(&scratch.im[0])
-			mc8AVX2H8Mid(src, stride, w, h+7, &mc8Phases[kx][subX], im)
-			mc8AVX2V8Mid(im, w, h, &mc8Phases[ky][subY], d, dst.Stride, true)
+			mc8AVX2H8Mid(src, stride, w, h+7, &mc8Phases[kx][subX], scratch.im[:])
+			mc8AVX2V8Mid(scratch.im[:], w, h, &mc8Phases[ky][subY], d, nil, dst.Stride, true)
 		case subX != 0:
 			mc8AVX2PutH8(src, stride, w, h, &mc8Phases[kx][subX], d, dst.Stride)
 		default:
-			mc8AVX2V8(src, stride, w, h, &mc8Phases[ky][subY], d, dst.Stride, true)
+			mc8AVX2V8(src, stride, w, h, &mc8Phases[ky][subY], d, nil, dst.Stride, true)
 		}
 		archsimd.ClearAVXUpperBits()
 		return true
 	}
 	if w == 4 {
-		im := unsafe.Pointer(&scratch.im[0])
+		// The w = 4 kernels keep row pointers: a strided 4-sample row feeds
+		// only a few vector ops (single-reference SAD shape, where checked
+		// rows cost +24-36% on arm64). The pointers stay inside the windows
+		// checked above (mc8Source; dOff + (h-1)*Stride + w <= len(dst.Pix)).
+		sp := unsafe.Pointer(unsafe.SliceData(src))
+		dp := unsafe.Pointer(&d[0])
 		switch {
 		case subX != 0 && subY != 0:
-			mc8AVX2MidH4W4(src, stride, h+5, &mc8Phases[kx][subX], im)
-			mc8AVX2V6MidW4(im, h, &mc8Phases[ky][subY], d, dst.Stride, true)
+			mc8AVX2MidH4W4(sp, stride, h+5, &mc8Phases[kx][subX], unsafe.Pointer(&scratch.im[0]))
+			mc8AVX2V6MidW4(scratch.im[:], h, &mc8Phases[ky][subY], dp, dst.Stride, true)
 		case subX != 0:
-			mc8AVX2PutH4W4(src, stride, h, &mc8Phases[kx][subX], d, dst.Stride)
+			mc8AVX2PutH4W4(sp, stride, h, &mc8Phases[kx][subX], dp, dst.Stride)
 		default:
-			mc8AVX2V6W4(src, stride, h, &mc8Phases[ky][subY], im, d, dst.Stride, true)
+			mc8AVX2V6W4(sp, stride, h, &mc8Phases[ky][subY], unsafe.Pointer(&scratch.im[0]), dp, dst.Stride, true)
 		}
 		archsimd.ClearAVXUpperBits()
 		return true
 	}
 	switch {
 	case subX != 0 && subY != 0:
-		im := unsafe.Pointer(&scratch.im[0])
-		mc8AVX2H6Mid(src, stride, w, h+5, &mc8Phases[kx][subX], im)
-		mc8AVX2PutV6Mid(im, w, h, &mc8Phases[ky][subY], d, dst.Stride)
+		mc8AVX2H6Mid(src, stride, w, h+5, &mc8Phases[kx][subX], scratch.im[:])
+		mc8AVX2PutV6Mid(scratch.im[:], w, h, &mc8Phases[ky][subY], d, dst.Stride)
 	case subX != 0:
 		mc8AVX2PutH6(src, stride, w, h, &mc8Phases[kx][subX], d, dst.Stride)
 	default:
@@ -403,53 +405,55 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 		taps = 8
 	}
 	src, stride, ok := mc8Source(ref, refX, refY, w, h, taps, subX != 0, subY != 0, &scratch.edge)
-	if !ok {
+	if !ok || uint(stride) > rowStrideMax {
 		return false
 	}
-	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
-	o := unsafe.Pointer(&out[0])
 	if subX|subY == 0 {
-		mc8AVX2PrepCopy(src, stride, w, h, o)
+		// The copy keeps row pointers: a strided row feeds one or two
+		// vector ops (single-reference SAD shape, where checked rows cost
+		// +24-36% on arm64). The pointers stay inside the windows checked
+		// above (mc8Source; len(out) >= w*h).
+		mc8AVX2PrepCopy(unsafe.Pointer(unsafe.SliceData(src)), stride, w, h, unsafe.Pointer(&out[0]))
 		archsimd.ClearAVXUpperBits()
 		return true
 	}
 	if eight {
 		switch {
 		case subX != 0 && subY != 0:
-			im := unsafe.Pointer(&scratch.im8[0])
-			mc8AVX2H8Mid(src, stride, w, h+7, &mc8Phases[kx][subX], im)
-			mc8AVX2V8Mid(im, w, h, &mc8Phases[ky][subY], o, 0, false)
+			mc8AVX2H8Mid(src, stride, w, h+7, &mc8Phases[kx][subX], scratch.im8[:])
+			mc8AVX2V8Mid(scratch.im8[:], w, h, &mc8Phases[ky][subY], nil, out, 0, false)
 		case subX != 0:
-			mc8AVX2PrepH8(src, stride, w, h, &mc8Phases[kx][subX], o)
+			mc8AVX2PrepH8(src, stride, w, h, &mc8Phases[kx][subX], out)
 		default:
-			mc8AVX2V8(src, stride, w, h, &mc8Phases[ky][subY], o, 0, false)
+			mc8AVX2V8(src, stride, w, h, &mc8Phases[ky][subY], nil, out, 0, false)
 		}
 		archsimd.ClearAVXUpperBits()
 		return true
 	}
 	if w == 4 {
-		im := unsafe.Pointer(&scratch.im8[0])
+		// Row pointers for the w = 4 rows, as in Put8.
+		sp := unsafe.Pointer(unsafe.SliceData(src))
+		op := unsafe.Pointer(&out[0])
 		switch {
 		case subX != 0 && subY != 0:
-			mc8AVX2MidH4W4(src, stride, h+5, &mc8Phases[kx][subX], im)
-			mc8AVX2V6MidW4(im, h, &mc8Phases[ky][subY], o, 0, false)
+			mc8AVX2MidH4W4(sp, stride, h+5, &mc8Phases[kx][subX], unsafe.Pointer(&scratch.im8[0]))
+			mc8AVX2V6MidW4(scratch.im8[:], h, &mc8Phases[ky][subY], op, 0, false)
 		case subX != 0:
-			mc8AVX2PrepH4W4(src, stride, h, &mc8Phases[kx][subX], o)
+			mc8AVX2PrepH4W4(sp, stride, h, &mc8Phases[kx][subX], op)
 		default:
-			mc8AVX2V6W4(src, stride, h, &mc8Phases[ky][subY], im, o, 0, false)
+			mc8AVX2V6W4(sp, stride, h, &mc8Phases[ky][subY], unsafe.Pointer(&scratch.im8[0]), op, 0, false)
 		}
 		archsimd.ClearAVXUpperBits()
 		return true
 	}
 	switch {
 	case subX != 0 && subY != 0:
-		im := unsafe.Pointer(&scratch.im8[0])
-		mc8AVX2H6Mid(src, stride, w, h+5, &mc8Phases[kx][subX], im)
-		mc8AVX2PrepV6Mid(im, w, h, &mc8Phases[ky][subY], o)
+		mc8AVX2H6Mid(src, stride, w, h+5, &mc8Phases[kx][subX], scratch.im8[:])
+		mc8AVX2PrepV6Mid(scratch.im8[:], w, h, &mc8Phases[ky][subY], out)
 	case subX != 0:
-		mc8AVX2PrepH6(src, stride, w, h, &mc8Phases[kx][subX], o)
+		mc8AVX2PrepH6(src, stride, w, h, &mc8Phases[kx][subX], out)
 	default:
-		mc8AVX2PrepV6(src, stride, w, h, &mc8Phases[ky][subY], o)
+		mc8AVX2PrepV6(src, stride, w, h, &mc8Phases[ky][subY], out)
 	}
 	archsimd.ClearAVXUpperBits()
 	return true
@@ -480,11 +484,16 @@ func mc8Ld16(p unsafe.Pointer) archsimd.Uint8x16 {
 	return archsimd.LoadUint8x16Array((*[16]uint8)(p))
 }
 
-// mc8Ld2 loads 16 bytes at p into the low lane and 16 bytes at q into the high
+// mc8Ld2 loads the 16 bytes of p into the low lane and of q into the high
 // lane.
-func mc8Ld2(p, q unsafe.Pointer) archsimd.Uint8x32 {
+func mc8Ld2(p, q *[16]uint8) archsimd.Uint8x32 {
 	var z archsimd.Uint8x32
-	return z.SetLo(mc8Ld16(p)).SetHi(mc8Ld16(q))
+	return z.SetLo(archsimd.LoadUint8x16Array(p)).SetHi(archsimd.LoadUint8x16Array(q))
+}
+
+// mc8Ld2P is mc8Ld2 over pointers (kernels not yet on row windows).
+func mc8Ld2P(p, q unsafe.Pointer) archsimd.Uint8x32 {
+	return mc8Ld2((*[16]uint8)(p), (*[16]uint8)(q))
 }
 
 // mc8H6 is the six-tap halved horizontal sum of the eight output columns of
@@ -507,12 +516,24 @@ func mc8St16(p unsafe.Pointer, v archsimd.Uint8x16) {
 	v.StoreArray((*[16]uint8)(p))
 }
 
-func mc8St8(p unsafe.Pointer, v archsimd.Uint8x16) {
+func mc8St8P(p unsafe.Pointer, v archsimd.Uint8x16) {
 	*(*uint64)(p) = v.ReshapeToUint64s().GetElem(0)
 }
 
+func mc8St8(d *[8]byte, v archsimd.Uint8x16) {
+	mc8Put64(d, v.ReshapeToUint64s().GetElem(0))
+}
+
 // mc8AVX2PutH6 is the put horizontal-only pass: clip((s + 34) >> 6).
-func mc8AVX2PutH6(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, dst unsafe.Pointer, ds int) {
+//
+// Rows run in pairs (one per 128-bit lane) and each row of a pair is read
+// and written through checked windows: 24 bytes of source and 16 of
+// destination per 16 columns, 16 and 8 for an 8-column step. Every offset
+// is compared once against its window's limit (len - size).
+func mc8AVX2PutH6(src []byte, ss, w, h int, ph *mc8Phase, dst []byte, ds int) {
+	if uint(ss) > rowStrideMax || uint(ds) > rowStrideMax || uint(w) > rowsMax || uint(h) > rowsMax {
+		panic(errKernelArgs)
+	}
 	sA := archsimd.LoadInt8x32Array(&mc8ShufA)
 	sB := archsimd.LoadInt8x32Array(&mc8ShufB)
 	sC := archsimd.LoadInt8x32Array(&mc8ShufC)
@@ -521,117 +542,190 @@ func mc8AVX2PutH6(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, dst unsafe.Poi
 	rnd := archsimd.BroadcastInt16x16(34)
 	zero := archsimd.Int16x16{}
 	c255 := archsimd.BroadcastInt16x16(255)
-	for r := 0; r < h; r += 2 {
-		s0 := unsafe.Add(src, r*ss)
-		d0 := unsafe.Add(dst, r*ds)
-		s1, d1 := s0, d0
-		two := r+1 < h
-		if two {
-			s1, d1 = unsafe.Add(s0, ss), unsafe.Add(d0, ds)
-		}
-		if w == 8 {
-			a := mc8H6(mc8Ld2(s0, s1), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(6)
+	if w == 8 {
+		sl, dl := len(src)-16, len(dst)-8
+		for p := 0; p < (h+1)>>1; p++ {
+			r0 := 2 * p
+			r1 := min(r0+1, h-1)
+			o0, o1, q0, q1 := r0*ss, r1*ss, r0*ds, r1*ds
+			if o0 > sl || o1 > sl || q0 > dl || q1 > dl {
+				panic(errKernelArgs)
+			}
+			x0, x1 := (*[16]uint8)(src[o0:o0+16]), (*[16]uint8)(src[o1:o1+16])
+			e0, e1 := (*[8]byte)(dst[q0:q0+8]), (*[8]byte)(dst[q1:q1+8])
+			a := mc8H6(mc8Ld2(x0, x1), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(6)
 			v := mc8Pack(a, a, zero, c255, deint)
-			mc8St8(d0, v.GetLo())
-			mc8St8(d1, v.GetHi())
-			continue
+			mc8St8(e0, v.GetLo())
+			mc8St8(e1, v.GetHi())
 		}
-		c := 0
-		for ; c+16 <= w; c += 16 {
-			a := mc8H6(mc8Ld2(unsafe.Add(s0, c), unsafe.Add(s1, c)), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(6)
-			b := mc8H6(mc8Ld2(unsafe.Add(s0, c+8), unsafe.Add(s1, c+8)), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(6)
+		return
+	}
+	sl, dl := len(src)-24, len(dst)-16
+	n := w >> 4
+	for p := 0; p < (h+1)>>1; p++ {
+		// Rows 2p and 2p+1 (2p again for an odd last row).
+		r0 := 2 * p
+		r1 := min(r0+1, h-1)
+		o0, o1, q0, q1 := r0*ss, r1*ss, r0*ds, r1*ds
+		for k := 0; k < n; k++ {
+			c := 16 * k
+			a0, a1, b0, b1 := o0+c, o1+c, q0+c, q1+c
+			if a0 > sl || a1 > sl || b0 > dl || b1 > dl {
+				panic(errKernelArgs)
+			}
+			x0, x1 := (*[24]uint8)(src[a0:a0+24]), (*[24]uint8)(src[a1:a1+24])
+			e0, e1 := (*[16]uint8)(dst[b0:b0+16]), (*[16]uint8)(dst[b1:b1+16])
+			a := mc8H6(mc8Ld2((*[16]uint8)(x0[0:16]), (*[16]uint8)(x1[0:16])), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(6)
+			b := mc8H6(mc8Ld2((*[16]uint8)(x0[8:24]), (*[16]uint8)(x1[8:24])), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(6)
 			v := mc8Pack(a, b, zero, c255, deint)
-			mc8St16(unsafe.Add(d1, c), v.GetHi())
-			mc8St16(unsafe.Add(d0, c), v.GetLo())
+			v.GetHi().StoreArray(e1)
+			v.GetLo().StoreArray(e0)
 		}
-		if c < w {
-			a := mc8H6(mc8Ld2(unsafe.Add(s0, c), unsafe.Add(s1, c)), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(6)
+		if w&8 != 0 {
+			c := 16 * n
+			a0, a1, b0, b1 := o0+c, o1+c, q0+c, q1+c
+			if a0 > sl+8 || a1 > sl+8 || b0 > dl+8 || b1 > dl+8 {
+				panic(errKernelArgs)
+			}
+			x0, x1 := (*[16]uint8)(src[a0:a0+16]), (*[16]uint8)(src[a1:a1+16])
+			e0, e1 := (*[8]byte)(dst[b0:b0+8]), (*[8]byte)(dst[b1:b1+8])
+			a := mc8H6(mc8Ld2(x0, x1), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(6)
 			v := mc8Pack(a, a, zero, c255, deint)
-			mc8St8(unsafe.Add(d1, c), v.GetHi())
-			mc8St8(unsafe.Add(d0, c), v.GetLo())
+			mc8St8(e1, v.GetHi())
+			mc8St8(e0, v.GetLo())
 		}
 	}
 }
 
 // mc8AVX2HPrepLike runs the horizontal pass into int16 rows of stride w,
 // each sample ((s + rnd) >> 2) as unsigned (prep) or signed (2D mid).
-func mc8AVX2PrepH6(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, out unsafe.Pointer) {
+// Row windows as in mc8AVX2PutH6; at w = 8 two rows fill one 16-sample
+// output window.
+func mc8AVX2PrepH6(src []byte, ss, w, h int, ph *mc8Phase, out []uint16) {
+	if uint(ss) > rowStrideMax || uint(w) > rowsMax || uint(h) > rowsMax {
+		panic(errKernelArgs)
+	}
 	sA := archsimd.LoadInt8x32Array(&mc8ShufA)
 	sB := archsimd.LoadInt8x32Array(&mc8ShufB)
 	sC := archsimd.LoadInt8x32Array(&mc8ShufC)
 	t0, t1, t2 := mc8TapsB(ph.b[0]), mc8TapsB(ph.b[1]), mc8TapsB(ph.b[2])
 	rnd := archsimd.BroadcastInt16x16(2 + 6144<<2)
 	if w == 8 {
-		r := 0
-		for ; r+2 <= h; r += 2 {
-			s0 := unsafe.Add(src, r*ss)
-			a := mc8H6(mc8Ld2(s0, unsafe.Add(s0, ss)), sA, sB, sC, t0, t1, t2).Add(rnd)
-			a.ToBits().ShiftAllRight(2).StoreArray((*[16]uint16)(unsafe.Add(out, r*16)))
+		sl, ol := len(src)-16, len(out)-16
+		for p := 0; p < h>>1; p++ {
+			o0, q := 2*p*ss, 16*p
+			o1 := o0 + ss
+			if o0 > sl || o1 > sl || q > ol {
+				panic(errKernelArgs)
+			}
+			x0, x1 := (*[16]uint8)(src[o0:o0+16]), (*[16]uint8)(src[o1:o1+16])
+			a := mc8H6(mc8Ld2(x0, x1), sA, sB, sC, t0, t1, t2).Add(rnd)
+			a.ToBits().ShiftAllRight(2).StoreArray((*[16]uint16)(out[q : q+16]))
 		}
-		if r < h {
-			s0 := unsafe.Add(src, r*ss)
-			a := mc8H6(mc8Ld2(s0, s0), sA, sB, sC, t0, t1, t2).Add(rnd)
-			a.ToBits().ShiftAllRight(2).GetLo().StoreArray((*[8]uint16)(unsafe.Add(out, r*16)))
+		if h&1 != 0 {
+			o, q := (h-1)*ss, 8*(h-1)
+			if o > sl || q > ol+8 {
+				panic(errKernelArgs)
+			}
+			x := (*[16]uint8)(src[o : o+16])
+			a := mc8H6(mc8Ld2(x, x), sA, sB, sC, t0, t1, t2).Add(rnd)
+			a.ToBits().ShiftAllRight(2).GetLo().StoreArray((*[8]uint16)(out[q : q+8]))
 		}
 		return
 	}
+	sl, ol := len(src)-24, len(out)-16
+	n := w >> 4
 	for r := 0; r < h; r++ {
-		s0 := unsafe.Add(src, r*ss)
-		o := unsafe.Add(out, r*w*2)
-		c := 0
-		for ; c+16 <= w; c += 16 {
-			a := mc8H6(mc8Ld2(unsafe.Add(s0, c), unsafe.Add(s0, c+8)), sA, sB, sC, t0, t1, t2).Add(rnd)
-			a.ToBits().ShiftAllRight(2).StoreArray((*[16]uint16)(unsafe.Add(o, c*2)))
+		o, q := r*ss, r*w
+		for k := 0; k < n; k++ {
+			a, b := o+16*k, q+16*k
+			if a > sl || b > ol {
+				panic(errKernelArgs)
+			}
+			x := (*[24]uint8)(src[a : a+24])
+			v := mc8H6(mc8Ld2((*[16]uint8)(x[0:16]), (*[16]uint8)(x[8:24])), sA, sB, sC, t0, t1, t2).Add(rnd)
+			v.ToBits().ShiftAllRight(2).StoreArray((*[16]uint16)(out[b : b+16]))
 		}
-		if c < w {
-			p := unsafe.Add(s0, c)
-			a := mc8H6(mc8Ld2(p, p), sA, sB, sC, t0, t1, t2).Add(rnd)
-			a.ToBits().ShiftAllRight(2).GetLo().StoreArray((*[8]uint16)(unsafe.Add(o, c*2)))
+		if w&8 != 0 {
+			a, b := o+16*n, q+16*n
+			if a > sl+8 || b > ol+8 {
+				panic(errKernelArgs)
+			}
+			x := (*[16]uint8)(src[a : a+16])
+			v := mc8H6(mc8Ld2(x, x), sA, sB, sC, t0, t1, t2).Add(rnd)
+			v.ToBits().ShiftAllRight(2).GetLo().StoreArray((*[8]uint16)(out[b : b+8]))
 		}
 	}
 }
 
 // mc8AVX2H6Mid writes rows x w rounded horizontal sums m = (s + 2) >> 2 as
-// int16 with row stride w (the 2D intermediate).
-func mc8AVX2H6Mid(src unsafe.Pointer, ss, w, rows int, ph *mc8Phase, im unsafe.Pointer) {
+// int16 with row stride w (the 2D intermediate), with mc8AVX2PrepH6's
+// windows.
+func mc8AVX2H6Mid(src []byte, ss, w, rows int, ph *mc8Phase, im []int16) {
+	if uint(ss) > rowStrideMax || uint(w) > rowsMax || uint(rows) > rowsMax {
+		panic(errKernelArgs)
+	}
 	sA := archsimd.LoadInt8x32Array(&mc8ShufA)
 	sB := archsimd.LoadInt8x32Array(&mc8ShufB)
 	sC := archsimd.LoadInt8x32Array(&mc8ShufC)
 	t0, t1, t2 := mc8TapsB(ph.b[0]), mc8TapsB(ph.b[1]), mc8TapsB(ph.b[2])
 	rnd := archsimd.BroadcastInt16x16(2)
 	if w == 8 {
-		r := 0
-		for ; r+2 <= rows; r += 2 {
-			s0 := unsafe.Add(src, r*ss)
-			a := mc8H6(mc8Ld2(s0, unsafe.Add(s0, ss)), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(2)
-			a.StoreArray((*[16]int16)(unsafe.Add(im, r*16)))
+		sl, ol := len(src)-16, len(im)-16
+		for p := 0; p < rows>>1; p++ {
+			o0, q := 2*p*ss, 16*p
+			o1 := o0 + ss
+			if o0 > sl || o1 > sl || q > ol {
+				panic(errKernelArgs)
+			}
+			x0, x1 := (*[16]uint8)(src[o0:o0+16]), (*[16]uint8)(src[o1:o1+16])
+			a := mc8H6(mc8Ld2(x0, x1), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(2)
+			a.StoreArray((*[16]int16)(im[q : q+16]))
 		}
-		if r < rows {
-			s0 := unsafe.Add(src, r*ss)
-			a := mc8H6(mc8Ld2(s0, s0), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(2)
-			a.GetLo().StoreArray((*[8]int16)(unsafe.Add(im, r*16)))
+		if rows&1 != 0 {
+			o, q := (rows-1)*ss, 8*(rows-1)
+			if o > sl || q > ol+8 {
+				panic(errKernelArgs)
+			}
+			x := (*[16]uint8)(src[o : o+16])
+			a := mc8H6(mc8Ld2(x, x), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(2)
+			a.GetLo().StoreArray((*[8]int16)(im[q : q+8]))
 		}
 		return
 	}
+	sl, ol := len(src)-24, len(im)-16
+	n := w >> 4
 	for r := 0; r < rows; r++ {
-		s0 := unsafe.Add(src, r*ss)
-		o := unsafe.Add(im, r*w*2)
-		c := 0
-		for ; c+16 <= w; c += 16 {
-			a := mc8H6(mc8Ld2(unsafe.Add(s0, c), unsafe.Add(s0, c+8)), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(2)
-			a.StoreArray((*[16]int16)(unsafe.Add(o, c*2)))
+		o, q := r*ss, r*w
+		for k := 0; k < n; k++ {
+			a, b := o+16*k, q+16*k
+			if a > sl || b > ol {
+				panic(errKernelArgs)
+			}
+			x := (*[24]uint8)(src[a : a+24])
+			v := mc8H6(mc8Ld2((*[16]uint8)(x[0:16]), (*[16]uint8)(x[8:24])), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(2)
+			v.StoreArray((*[16]int16)(im[b : b+16]))
 		}
-		if c < w {
-			p := unsafe.Add(s0, c)
-			a := mc8H6(mc8Ld2(p, p), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(2)
-			a.GetLo().StoreArray((*[8]int16)(unsafe.Add(o, c*2)))
+		if w&8 != 0 {
+			a, b := o+16*n, q+16*n
+			if a > sl+8 || b > ol+8 {
+				panic(errKernelArgs)
+			}
+			x := (*[16]uint8)(src[a : a+16])
+			v := mc8H6(mc8Ld2(x, x), sA, sB, sC, t0, t1, t2).Add(rnd).ShiftAllRight(2)
+			v.GetLo().StoreArray((*[8]int16)(im[b : b+8]))
 		}
 	}
 }
 
-// mc8Zx zero-extends the 16 bytes at p to words.
-func mc8Zx(p unsafe.Pointer) archsimd.Uint16x16 {
-	return mc8Ld16(p).ExtendToUint16()
+// mc8Zx zero-extends the 16 bytes of p to words.
+func mc8Zx(p *[16]uint8) archsimd.Uint16x16 {
+	return archsimd.LoadUint8x16Array(p).ExtendToUint16()
+}
+
+// mc8ZxP is mc8Zx at a pointer, for the w = 4 row-pointer kernels.
+func mc8ZxP(p unsafe.Pointer) archsimd.Uint16x16 {
+	return mc8Zx((*[16]uint8)(p))
 }
 
 // mc8Pair puts row a in the low and row b in the high byte of each word: the
@@ -645,7 +739,14 @@ func mc8V6(p0, p2, p4 archsimd.Uint8x32, t0, t1, t2 archsimd.Int8x32) archsimd.I
 }
 
 // mc8AVX2PutV6 is the put vertical-only pass: clip((s + 32) >> 6).
-func mc8AVX2PutV6(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, dst unsafe.Pointer, ds int) {
+//
+// Each source row of a 16-column strip is one checked 16-byte window and
+// each output row one 16- (or, for an 8-column last strip, 8-) byte window;
+// the offsets come from the row counter, one compare each.
+func mc8AVX2PutV6(src []byte, ss, w, h int, ph *mc8Phase, dst []byte, ds int) {
+	if uint(ss) > rowStrideMax || uint(ds) > rowStrideMax || uint(w) > rowsMax || uint(h) > rowsMax {
+		panic(errKernelArgs)
+	}
 	t0, t1, t2 := mc8TapsB(ph.b[0]), mc8TapsB(ph.b[1]), mc8TapsB(ph.b[2])
 	deint := archsimd.LoadInt8x32Array(&mc8Deint)
 	q3120 := archsimd.LoadUint32x8Array(&mc8Q3120)
@@ -656,46 +757,73 @@ func mc8AVX2PutV6(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, dst unsafe.Poi
 		mc8AVX2PutV6W8(src, ss, h, t0, t1, t2, dst, ds)
 		return
 	}
-	for c := 0; c < w; c += 16 {
-		s := unsafe.Add(src, c)
-		z0 := mc8Zx(s)
-		z1 := mc8Zx(unsafe.Add(s, ss))
-		z2 := mc8Zx(unsafe.Add(s, 2*ss))
-		z3 := mc8Zx(unsafe.Add(s, 3*ss))
-		z4 := mc8Zx(unsafe.Add(s, 4*ss))
-		p0, p1, p2, p3 := mc8Pair(z0, z1), mc8Pair(z1, z2), mc8Pair(z2, z3), mc8Pair(z3, z4)
-		so, do := c+5*ss, c
+	for k := 0; k < (w+15)>>4; k++ {
+		// The strip's columns start each window: src and dst are re-sliced
+		// at c, so the row loop carries no column offset.
+		c := 16 * k
 		full := c+16 <= w
-		r := 0
-		for ; r+2 <= h; r += 2 {
-			s, d := unsafe.Add(src, so), unsafe.Add(dst, do)
-			z5 := mc8Zx(s)
-			z6 := mc8Zx(unsafe.Add(s, ss))
+		if c > len(src) || c > len(dst) {
+			panic(errKernelArgs)
+		}
+		src, dst := src[c:], dst[c:]
+		sl, dl := len(src)-16, len(dst)-16
+		o1, o2, o3, o4 := ss, 2*ss, 3*ss, 4*ss
+		if sl < 0 || o1 > sl || o2 > sl || o3 > sl || o4 > sl {
+			panic(errKernelArgs)
+		}
+		z0 := mc8Zx((*[16]uint8)(src[0:16]))
+		z1 := mc8Zx((*[16]uint8)(src[o1 : o1+16]))
+		z2 := mc8Zx((*[16]uint8)(src[o2 : o2+16]))
+		z3 := mc8Zx((*[16]uint8)(src[o3 : o3+16]))
+		z4 := mc8Zx((*[16]uint8)(src[o4 : o4+16]))
+		p0, p1, p2, p3 := mc8Pair(z0, z1), mc8Pair(z1, z2), mc8Pair(z2, z3), mc8Pair(z3, z4)
+		for p := 0; p < h>>1; p++ {
+			r := 2 * p
+			a0, b0 := (r+5)*ss, r*ds
+			a1, b1 := a0+ss, b0+ds
+			if a0 > sl || a1 > sl {
+				panic(errKernelArgs)
+			}
+			z5 := mc8Zx((*[16]uint8)(src[a0 : a0+16]))
+			z6 := mc8Zx((*[16]uint8)(src[a1 : a1+16]))
 			p4 := mc8Pair(z4, z5)
 			p5 := mc8Pair(z5, z6)
 			a := mc8V6(p0, p2, p4, t0, t1, t2).Add(rnd).ShiftAllRight(6)
 			b := mc8V6(p1, p3, p5, t0, t1, t2).Add(rnd).ShiftAllRight(6)
 			v := mc8Pack(a, b, zero, c255, deint).ReshapeToUint32s().Permute(q3120).ReshapeToUint8s()
 			if full {
-				mc8St16(d, v.GetLo())
-				mc8St16(unsafe.Add(d, ds), v.GetHi())
+				if b0 > dl || b1 > dl {
+					panic(errKernelArgs)
+				}
+				v.GetLo().StoreArray((*[16]uint8)(dst[b0 : b0+16]))
+				v.GetHi().StoreArray((*[16]uint8)(dst[b1 : b1+16]))
 			} else {
-				mc8St8(d, v.GetLo())
-				mc8St8(unsafe.Add(d, ds), v.GetHi())
+				if b0 > dl+8 || b1 > dl+8 {
+					panic(errKernelArgs)
+				}
+				mc8St8((*[8]byte)(dst[b0:b0+8]), v.GetLo())
+				mc8St8((*[8]byte)(dst[b1:b1+8]), v.GetHi())
 			}
 			p0, p1, p2, p3, z4 = p2, p3, p4, p5, z6
-			so += 2 * ss
-			do += 2 * ds
 		}
-		if r < h {
-			s, d := unsafe.Add(src, so), unsafe.Add(dst, do)
-			z5 := mc8Zx(s)
+		if h&1 != 0 {
+			a0, b0 := (h+4)*ss, (h-1)*ds
+			if a0 > sl {
+				panic(errKernelArgs)
+			}
+			z5 := mc8Zx((*[16]uint8)(src[a0 : a0+16]))
 			a := mc8V6(p0, p2, mc8Pair(z4, z5), t0, t1, t2).Add(rnd).ShiftAllRight(6)
 			v := mc8Pack(a, a, zero, c255, deint).ReshapeToUint32s().Permute(q3120).ReshapeToUint8s()
 			if full {
-				mc8St16(d, v.GetLo())
+				if b0 > dl {
+					panic(errKernelArgs)
+				}
+				v.GetLo().StoreArray((*[16]uint8)(dst[b0 : b0+16]))
 			} else {
-				mc8St8(d, v.GetLo())
+				if b0 > dl+8 {
+					panic(errKernelArgs)
+				}
+				mc8St8((*[8]byte)(dst[b0:b0+8]), v.GetLo())
 			}
 		}
 	}
@@ -707,7 +835,7 @@ func mc8AVX2PutV6(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, dst unsafe.Poi
 
 // mc8ZxW8 zero-extends the 16 bytes at p to words; the low lane holds the
 // eight columns used.
-func mc8ZxW8(p unsafe.Pointer) archsimd.Uint16x16 {
+func mc8ZxW8(p *[16]uint8) archsimd.Uint16x16 {
 	return mc8Zx(p)
 }
 
@@ -721,106 +849,147 @@ func mc8Join(a, b archsimd.Uint8x32) archsimd.Uint8x32 {
 	return a.ConcatPermute128Scalars(0, 2, b)
 }
 
-// mc8AVX2V6W8 runs the eight-column vertical pass two rows per vector (row r
-// in the low lane, r+1 in the high lane) and hands each pair of output rows to
-// emit.
-func mc8AVX2PutV6W8(src unsafe.Pointer, ss, h int, t0, t1, t2 archsimd.Int8x32, dst unsafe.Pointer, ds int) {
+// mc8AVX2PutV6W8 runs the eight-column vertical pass two rows per vector (row r
+// in the low lane, r+1 in the high lane), with mc8AVX2PutV6's windows.
+func mc8AVX2PutV6W8(src []byte, ss, h int, t0, t1, t2 archsimd.Int8x32, dst []byte, ds int) {
+	if uint(ss) > rowStrideMax || uint(ds) > rowStrideMax || uint(h) > rowsMax {
+		panic(errKernelArgs)
+	}
 	deint := archsimd.LoadInt8x32Array(&mc8Deint)
 	rnd := archsimd.BroadcastInt16x16(32)
 	zero := archsimd.Int16x16{}
 	c255 := archsimd.BroadcastInt16x16(255)
-	z0 := mc8ZxW8(src)
-	z1 := mc8ZxW8(unsafe.Add(src, ss))
-	z2 := mc8ZxW8(unsafe.Add(src, 2*ss))
-	z3 := mc8ZxW8(unsafe.Add(src, 3*ss))
-	z4 := mc8ZxW8(unsafe.Add(src, 4*ss))
+	sl, dl := len(src)-16, len(dst)-8
+	o1, o2, o3, o4 := ss, 2*ss, 3*ss, 4*ss
+	if sl < 0 || o1 > sl || o2 > sl || o3 > sl || o4 > sl {
+		panic(errKernelArgs)
+	}
+	z0 := mc8ZxW8((*[16]uint8)(src[0:16]))
+	z1 := mc8ZxW8((*[16]uint8)(src[o1 : o1+16]))
+	z2 := mc8ZxW8((*[16]uint8)(src[o2 : o2+16]))
+	z3 := mc8ZxW8((*[16]uint8)(src[o3 : o3+16]))
+	z4 := mc8ZxW8((*[16]uint8)(src[o4 : o4+16]))
 	p2 := mc8PairW8(z2, z3)
 	q0 := mc8Join(mc8PairW8(z0, z1), mc8PairW8(z1, z2))
 	q2 := mc8Join(p2, mc8PairW8(z3, z4))
-	so, do := 5*ss, 0
-	for r := 0; r < h; r += 2 {
-		s, d := unsafe.Add(src, so), unsafe.Add(dst, do)
-		z5 := mc8ZxW8(s)
+	for p := 0; p < (h+1)>>1; p++ {
+		r := 2 * p
+		two := r+1 < h
+		a0, b0 := (r+5)*ss, r*ds
+		if a0 > sl || b0 > dl {
+			panic(errKernelArgs)
+		}
+		z5 := mc8ZxW8((*[16]uint8)(src[a0 : a0+16]))
 		z6 := z5
-		if r+1 < h {
-			z6 = mc8ZxW8(unsafe.Add(s, ss))
+		if two {
+			a1 := a0 + ss
+			if a1 > sl {
+				panic(errKernelArgs)
+			}
+			z6 = mc8ZxW8((*[16]uint8)(src[a1 : a1+16]))
 		}
 		p4 := mc8PairW8(z4, z5)
 		q4 := mc8Join(p4, mc8PairW8(z5, z6))
 		a := mc8V6(q0, q2, q4, t0, t1, t2).Add(rnd).ShiftAllRight(6)
 		v := mc8Pack(a, a, zero, c255, deint)
-		mc8St8(d, v.GetLo())
-		if r+1 < h {
-			mc8St8(unsafe.Add(d, ds), v.GetHi())
+		mc8St8((*[8]byte)(dst[b0:b0+8]), v.GetLo())
+		if two {
+			b1 := b0 + ds
+			if b1 > dl {
+				panic(errKernelArgs)
+			}
+			mc8St8((*[8]byte)(dst[b1:b1+8]), v.GetHi())
 		}
 		q0, q2, z4 = q2, q4, z6
-		so += 2 * ss
-		do += 2 * ds
 	}
 }
 
-// mc8AVX2PrepV6 is the prep vertical-only pass: ((s + 2) >> 2) + 6144.
-func mc8AVX2PrepV6(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, out unsafe.Pointer) {
+// mc8AVX2PrepV6 is the prep vertical-only pass: ((s + 2) >> 2) + 6144,
+// with mc8AVX2PutV6's windows.
+func mc8AVX2PrepV6(src []byte, ss, w, h int, ph *mc8Phase, out []uint16) {
+	if uint(ss) > rowStrideMax || uint(w) > rowsMax || uint(h) > rowsMax {
+		panic(errKernelArgs)
+	}
 	t0, t1, t2 := mc8TapsB(ph.b[0]), mc8TapsB(ph.b[1]), mc8TapsB(ph.b[2])
 	rnd := archsimd.BroadcastInt16x16(2 + 6144<<2)
+	sl, ol := len(src)-16, len(out)-16
 	if w == 8 {
-		z0 := mc8ZxW8(src)
-		z1 := mc8ZxW8(unsafe.Add(src, ss))
-		z2 := mc8ZxW8(unsafe.Add(src, 2*ss))
-		z3 := mc8ZxW8(unsafe.Add(src, 3*ss))
-		z4 := mc8ZxW8(unsafe.Add(src, 4*ss))
+		o1, o2, o3, o4 := ss, 2*ss, 3*ss, 4*ss
+		if sl < 0 || o1 > sl || o2 > sl || o3 > sl || o4 > sl {
+			panic(errKernelArgs)
+		}
+		z0 := mc8ZxW8((*[16]uint8)(src[0:16]))
+		z1 := mc8ZxW8((*[16]uint8)(src[o1 : o1+16]))
+		z2 := mc8ZxW8((*[16]uint8)(src[o2 : o2+16]))
+		z3 := mc8ZxW8((*[16]uint8)(src[o3 : o3+16]))
+		z4 := mc8ZxW8((*[16]uint8)(src[o4 : o4+16]))
 		q0 := mc8Join(mc8PairW8(z0, z1), mc8PairW8(z1, z2))
 		q2 := mc8Join(mc8PairW8(z2, z3), mc8PairW8(z3, z4))
-		so := 5 * ss
-		r := 0
-		for ; r+2 <= h; r += 2 {
-			s := unsafe.Add(src, so)
-			z5 := mc8ZxW8(s)
-			z6 := mc8ZxW8(unsafe.Add(s, ss))
+		for p := 0; p < h>>1; p++ {
+			r := 2 * p
+			a0, b := (r+5)*ss, 16*p
+			a1 := a0 + ss
+			if a0 > sl || a1 > sl || b > ol {
+				panic(errKernelArgs)
+			}
+			z5 := mc8ZxW8((*[16]uint8)(src[a0 : a0+16]))
+			z6 := mc8ZxW8((*[16]uint8)(src[a1 : a1+16]))
 			q4 := mc8Join(mc8PairW8(z4, z5), mc8PairW8(z5, z6))
 			a := mc8V6(q0, q2, q4, t0, t1, t2).Add(rnd)
-			a.ToBits().ShiftAllRight(2).StoreArray((*[16]uint16)(unsafe.Add(out, r*16)))
+			a.ToBits().ShiftAllRight(2).StoreArray((*[16]uint16)(out[b : b+16]))
 			q0, q2, z4 = q2, q4, z6
-			so += 2 * ss
 		}
-		if r < h {
-			z5 := mc8ZxW8(unsafe.Add(src, so))
+		if h&1 != 0 {
+			a0, b := (h+4)*ss, 8*(h-1)
+			if a0 > sl || b > ol+8 {
+				panic(errKernelArgs)
+			}
+			z5 := mc8ZxW8((*[16]uint8)(src[a0 : a0+16]))
 			q4 := mc8Join(mc8PairW8(z4, z5), mc8PairW8(z5, z5))
 			a := mc8V6(q0, q2, q4, t0, t1, t2).Add(rnd)
-			a.ToBits().ShiftAllRight(2).GetLo().StoreArray((*[8]uint16)(unsafe.Add(out, r*16)))
+			a.ToBits().ShiftAllRight(2).GetLo().StoreArray((*[8]uint16)(out[b : b+8]))
 		}
 		return
 	}
-	ro := w * 2
-	for c := 0; c < w; c += 16 {
-		s := unsafe.Add(src, c)
-		z0 := mc8Zx(s)
-		z1 := mc8Zx(unsafe.Add(s, ss))
-		z2 := mc8Zx(unsafe.Add(s, 2*ss))
-		z3 := mc8Zx(unsafe.Add(s, 3*ss))
-		z4 := mc8Zx(unsafe.Add(s, 4*ss))
-		p0, p1, p2, p3 := mc8Pair(z0, z1), mc8Pair(z1, z2), mc8Pair(z2, z3), mc8Pair(z3, z4)
-		so, oo := c+5*ss, c*2
+	for k := 0; k < (w+15)>>4; k++ {
+		c := 16 * k
 		full := c+16 <= w
+		o0, o1, o2, o3, o4 := c, ss+c, 2*ss+c, 3*ss+c, 4*ss+c
+		if o0 > sl || o1 > sl || o2 > sl || o3 > sl || o4 > sl {
+			panic(errKernelArgs)
+		}
+		z0 := mc8Zx((*[16]uint8)(src[o0 : o0+16]))
+		z1 := mc8Zx((*[16]uint8)(src[o1 : o1+16]))
+		z2 := mc8Zx((*[16]uint8)(src[o2 : o2+16]))
+		z3 := mc8Zx((*[16]uint8)(src[o3 : o3+16]))
+		z4 := mc8Zx((*[16]uint8)(src[o4 : o4+16]))
+		p0, p1, p2, p3 := mc8Pair(z0, z1), mc8Pair(z1, z2), mc8Pair(z2, z3), mc8Pair(z3, z4)
 		for r := 0; r < h; r++ {
-			s, o := unsafe.Add(src, so), unsafe.Add(out, oo)
-			z5 := mc8Zx(s)
+			a0, b := (r+5)*ss+c, r*w+c
+			if a0 > sl {
+				panic(errKernelArgs)
+			}
+			z5 := mc8Zx((*[16]uint8)(src[a0 : a0+16]))
 			p4 := mc8Pair(z4, z5)
 			a := mc8V6(p0, p2, p4, t0, t1, t2).Add(rnd).ToBits().ShiftAllRight(2)
 			if full {
-				a.StoreArray((*[16]uint16)(o))
+				if b > ol {
+					panic(errKernelArgs)
+				}
+				a.StoreArray((*[16]uint16)(out[b : b+16]))
 			} else {
-				a.GetLo().StoreArray((*[8]uint16)(o))
+				if b > ol+8 {
+					panic(errKernelArgs)
+				}
+				a.GetLo().StoreArray((*[8]uint16)(out[b : b+8]))
 			}
 			p0, p1, p2, p3, z4 = p1, p2, p3, p4, z5
-			so += ss
-			oo += ro
 		}
 	}
 }
 
-func mc8LdI16(p unsafe.Pointer) archsimd.Int16x16 {
-	return archsimd.LoadInt16x16Array((*[16]int16)(p))
+func mc8LdI16(p *[16]int16) archsimd.Int16x16 {
+	return archsimd.LoadInt16x16Array(p)
 }
 
 // mc8VMid is the six-tap vertical VPMADDWD sum over word-interleaved row
@@ -829,7 +998,7 @@ func mc8VMid(p0, p2, p4, d0, d1, d2 archsimd.Int16x16, rnd archsimd.Int32x8) arc
 	return p0.DotProductPairs(d0).Add(rnd).Add(p2.DotProductPairs(d1)).Add(p4.DotProductPairs(d2))
 }
 
-// mc8AVX2V6Mid runs the 2D vertical pass over the int16 intermediate (row
+// mc8AVX2PutV6Mid runs the 2D vertical pass over the int16 intermediate (row
 // stride w) and returns each output pair of rows (or one 16-column row) as
 // uint16 lanes in natural order; shift and rnd select put or prep.
 //
@@ -838,59 +1007,88 @@ func mc8VMid(p0, p2, p4, d0, d1, d2 archsimd.Int16x16, rnd archsimd.Int32x8) arc
 // (k+1, k+2) in the high lane: output rows r and r+1 come out one per lane.
 // Wider blocks run 16-column strips one row at a time, where the per-lane
 // interleave and VPACKUSDW undo each other's lane split.
-func mc8AVX2PutV6Mid(im unsafe.Pointer, w, h int, ph *mc8Phase, dst unsafe.Pointer, ds int) {
+//
+// The two new intermediate rows of a w == 8 step are one 24-sample window;
+// a strip's rows are 16-sample windows. im is the whole scratch block: the
+// last step of an odd h reads one row past the h+5 written.
+func mc8AVX2PutV6Mid(im []int16, w, h int, ph *mc8Phase, dst []byte, ds int) {
+	if uint(ds) > rowStrideMax || uint(w) > rowsMax || uint(h) > rowsMax {
+		panic(errKernelArgs)
+	}
 	d0, d1, d2 := mc8TapsD(ph.d[0]), mc8TapsD(ph.d[1]), mc8TapsD(ph.d[2])
 	rnd := archsimd.BroadcastInt32x8(512)
 	c255 := archsimd.BroadcastUint16x16(255)
 	deint := archsimd.LoadInt8x32Array(&mc8Deint)
 	if w == 8 {
-		l0 := mc8LdI16(im)
-		l1 := mc8LdI16(unsafe.Add(im, 16))
-		l2 := mc8LdI16(unsafe.Add(im, 32))
-		l3 := mc8LdI16(unsafe.Add(im, 48))
+		if len(im) < 40 {
+			panic(errKernelArgs)
+		}
+		il, dl := len(im)-24, len(dst)-8
+		l0 := mc8LdI16((*[16]int16)(im[0:16]))
+		l1 := mc8LdI16((*[16]int16)(im[8:24]))
+		l2 := mc8LdI16((*[16]int16)(im[16:32]))
+		l3 := mc8LdI16((*[16]int16)(im[24:40]))
 		a0, b0 := l0.InterleaveLoGrouped(l1), l0.InterleaveHiGrouped(l1)
 		a2, b2 := l2.InterleaveLoGrouped(l3), l2.InterleaveHiGrouped(l3)
-		qo, do := 64, 0
-		for r := 0; r < h; r += 2 {
-			q, d := unsafe.Add(im, qo), unsafe.Add(dst, do)
-			l4 := mc8LdI16(q)
-			l5 := mc8LdI16(unsafe.Add(q, 16))
+		for p := 0; p < (h+1)>>1; p++ {
+			r := 2 * p
+			q, e := 16*(p+2), r*ds
+			if q > il || e > dl {
+				panic(errKernelArgs)
+			}
+			x := (*[24]int16)(im[q : q+24])
+			l4 := mc8LdI16((*[16]int16)(x[0:16]))
+			l5 := mc8LdI16((*[16]int16)(x[8:24]))
 			a4, b4 := l4.InterleaveLoGrouped(l5), l4.InterleaveHiGrouped(l5)
 			lo := mc8VMid(a0, a2, a4, d0, d1, d2, rnd).ShiftAllRight(10)
 			hi := mc8VMid(b0, b2, b4, d0, d1, d2, rnd).ShiftAllRight(10)
 			u := lo.SaturateToUint16ConcatGrouped(hi).Min(c255)
 			v := u.ReshapeToUint8s().PermuteOrZeroGrouped(deint)
-			mc8St8(d, v.GetLo())
+			mc8St8((*[8]byte)(dst[e:e+8]), v.GetLo())
 			if r+1 < h {
-				mc8St8(unsafe.Add(d, ds), v.GetHi())
+				e1 := e + ds
+				if e1 > dl {
+					panic(errKernelArgs)
+				}
+				mc8St8((*[8]byte)(dst[e1:e1+8]), v.GetHi())
 			}
 			a0, b0, a2, b2 = a2, b2, a4, b4
-			qo += 32
-			do += 2 * ds
 		}
 		return
 	}
 	q3120 := archsimd.LoadUint32x8Array(&mc8Q3120)
-	rs := w * 2
-	for c := 0; c < w; c += 16 {
-		q := unsafe.Add(im, c*2)
-		l0 := mc8LdI16(q)
-		l1 := mc8LdI16(unsafe.Add(q, rs))
-		l2 := mc8LdI16(unsafe.Add(q, 2*rs))
-		l3 := mc8LdI16(unsafe.Add(q, 3*rs))
-		l4 := mc8LdI16(unsafe.Add(q, 4*rs))
+	il, dl := len(im)-16, len(dst)-16
+	for k := 0; k < (w+15)>>4; k++ {
+		c := 16 * k
+		full := c+16 <= w
+		i0, i1, i2, i3, i4 := c, w+c, 2*w+c, 3*w+c, 4*w+c
+		if i0 > il || i1 > il || i2 > il || i3 > il || i4 > il {
+			panic(errKernelArgs)
+		}
+		l0 := mc8LdI16((*[16]int16)(im[i0 : i0+16]))
+		l1 := mc8LdI16((*[16]int16)(im[i1 : i1+16]))
+		l2 := mc8LdI16((*[16]int16)(im[i2 : i2+16]))
+		l3 := mc8LdI16((*[16]int16)(im[i3 : i3+16]))
+		l4 := mc8LdI16((*[16]int16)(im[i4 : i4+16]))
 		a0, b0 := l0.InterleaveLoGrouped(l1), l0.InterleaveHiGrouped(l1)
 		a1, b1 := l1.InterleaveLoGrouped(l2), l1.InterleaveHiGrouped(l2)
 		a2, b2 := l2.InterleaveLoGrouped(l3), l2.InterleaveHiGrouped(l3)
 		a3, b3 := l3.InterleaveLoGrouped(l4), l3.InterleaveHiGrouped(l4)
-		qo, do := c*2+5*rs, c
-		full := c+16 <= w
-		for r := 0; r < h; r += 2 {
-			q, d := unsafe.Add(im, qo), unsafe.Add(dst, do)
-			l5 := mc8LdI16(q)
+		for p := 0; p < (h+1)>>1; p++ {
+			r := 2 * p
+			two := r+1 < h
+			q, e := (r+5)*w+c, r*ds+c
+			if q > il {
+				panic(errKernelArgs)
+			}
+			l5 := mc8LdI16((*[16]int16)(im[q : q+16]))
 			l6 := l5
-			if r+1 < h {
-				l6 = mc8LdI16(unsafe.Add(q, rs))
+			if two {
+				q1 := q + w
+				if q1 > il {
+					panic(errKernelArgs)
+				}
+				l6 = mc8LdI16((*[16]int16)(im[q1 : q1+16]))
 			}
 			a4, b4 := l4.InterleaveLoGrouped(l5), l4.InterleaveHiGrouped(l5)
 			a5, b5 := l5.InterleaveLoGrouped(l6), l5.InterleaveHiGrouped(l6)
@@ -899,86 +1097,120 @@ func mc8AVX2PutV6Mid(im unsafe.Pointer, w, h int, ph *mc8Phase, dst unsafe.Point
 			// x and y are rows r and r+1 in natural order, each word < 256.
 			v := x.Or(y.ShiftAllLeft(8)).ReshapeToUint8s().PermuteOrZeroGrouped(deint).ReshapeToUint32s().Permute(q3120).ReshapeToUint8s()
 			if full {
-				mc8St16(d, v.GetLo())
-				if r+1 < h {
-					mc8St16(unsafe.Add(d, ds), v.GetHi())
+				if e > dl {
+					panic(errKernelArgs)
+				}
+				v.GetLo().StoreArray((*[16]uint8)(dst[e : e+16]))
+				if two {
+					e1 := e + ds
+					if e1 > dl {
+						panic(errKernelArgs)
+					}
+					v.GetHi().StoreArray((*[16]uint8)(dst[e1 : e1+16]))
 				}
 			} else {
-				mc8St8(d, v.GetLo())
-				if r+1 < h {
-					mc8St8(unsafe.Add(d, ds), v.GetHi())
+				if e > dl+8 {
+					panic(errKernelArgs)
+				}
+				mc8St8((*[8]byte)(dst[e:e+8]), v.GetLo())
+				if two {
+					e1 := e + ds
+					if e1 > dl+8 {
+						panic(errKernelArgs)
+					}
+					mc8St8((*[8]byte)(dst[e1:e1+8]), v.GetHi())
 				}
 			}
 			a0, b0, a1, b1, a2, b2, a3, b3, l4 = a2, b2, a3, b3, a4, b4, a5, b5, l6
-			qo += 2 * rs
-			do += 2 * ds
 		}
 	}
 }
 
 // mc8AVX2PrepV6Mid is the prep 2D vertical pass:
-// (sum(half tap * m) + 32 + 6144 << 6) >> 6.
-func mc8AVX2PrepV6Mid(im unsafe.Pointer, w, h int, ph *mc8Phase, out unsafe.Pointer) {
+// (sum(half tap * m) + 32 + 6144 << 6) >> 6, with mc8AVX2PutV6Mid's windows.
+func mc8AVX2PrepV6Mid(im []int16, w, h int, ph *mc8Phase, out []uint16) {
+	if uint(w) > rowsMax || uint(h) > rowsMax {
+		panic(errKernelArgs)
+	}
 	d0, d1, d2 := mc8TapsD(ph.d[0]), mc8TapsD(ph.d[1]), mc8TapsD(ph.d[2])
 	rnd := archsimd.BroadcastInt32x8(32 + 6144<<6)
 	if w == 8 {
-		l0 := mc8LdI16(im)
-		l1 := mc8LdI16(unsafe.Add(im, 16))
-		l2 := mc8LdI16(unsafe.Add(im, 32))
-		l3 := mc8LdI16(unsafe.Add(im, 48))
+		if len(im) < 40 {
+			panic(errKernelArgs)
+		}
+		il, ol := len(im)-24, len(out)-16
+		l0 := mc8LdI16((*[16]int16)(im[0:16]))
+		l1 := mc8LdI16((*[16]int16)(im[8:24]))
+		l2 := mc8LdI16((*[16]int16)(im[16:32]))
+		l3 := mc8LdI16((*[16]int16)(im[24:40]))
 		a0, b0 := l0.InterleaveLoGrouped(l1), l0.InterleaveHiGrouped(l1)
 		a2, b2 := l2.InterleaveLoGrouped(l3), l2.InterleaveHiGrouped(l3)
-		qo := 64
-		r := 0
-		for ; r+2 <= h; r += 2 {
-			q := unsafe.Add(im, qo)
-			l4 := mc8LdI16(q)
-			l5 := mc8LdI16(unsafe.Add(q, 16))
+		for p := 0; p < h>>1; p++ {
+			q, b := 16*(p+2), 16*p
+			if q > il || b > ol {
+				panic(errKernelArgs)
+			}
+			x := (*[24]int16)(im[q : q+24])
+			l4 := mc8LdI16((*[16]int16)(x[0:16]))
+			l5 := mc8LdI16((*[16]int16)(x[8:24]))
 			a4, b4 := l4.InterleaveLoGrouped(l5), l4.InterleaveHiGrouped(l5)
 			lo := mc8VMid(a0, a2, a4, d0, d1, d2, rnd).ShiftAllRight(6)
 			hi := mc8VMid(b0, b2, b4, d0, d1, d2, rnd).ShiftAllRight(6)
-			lo.SaturateToUint16ConcatGrouped(hi).StoreArray((*[16]uint16)(unsafe.Add(out, r*16)))
+			lo.SaturateToUint16ConcatGrouped(hi).StoreArray((*[16]uint16)(out[b : b+16]))
 			a0, b0, a2, b2 = a2, b2, a4, b4
-			qo += 32
 		}
-		if r < h {
-			q := unsafe.Add(im, qo)
-			l4 := mc8LdI16(q)
-			l5 := mc8LdI16(unsafe.Add(q, 16))
+		if h&1 != 0 {
+			q, b := 8*(h+3), 8*(h-1)
+			if q > il || b > ol+8 {
+				panic(errKernelArgs)
+			}
+			x := (*[24]int16)(im[q : q+24])
+			l4 := mc8LdI16((*[16]int16)(x[0:16]))
+			l5 := mc8LdI16((*[16]int16)(x[8:24]))
 			a4, b4 := l4.InterleaveLoGrouped(l5), l4.InterleaveHiGrouped(l5)
 			lo := mc8VMid(a0, a2, a4, d0, d1, d2, rnd).ShiftAllRight(6)
 			hi := mc8VMid(b0, b2, b4, d0, d1, d2, rnd).ShiftAllRight(6)
-			lo.SaturateToUint16ConcatGrouped(hi).GetLo().StoreArray((*[8]uint16)(unsafe.Add(out, r*16)))
+			lo.SaturateToUint16ConcatGrouped(hi).GetLo().StoreArray((*[8]uint16)(out[b : b+8]))
 		}
 		return
 	}
-	rs := w * 2
-	for c := 0; c < w; c += 16 {
-		q := unsafe.Add(im, c*2)
-		l0 := mc8LdI16(q)
-		l1 := mc8LdI16(unsafe.Add(q, rs))
-		l2 := mc8LdI16(unsafe.Add(q, 2*rs))
-		l3 := mc8LdI16(unsafe.Add(q, 3*rs))
-		l4 := mc8LdI16(unsafe.Add(q, 4*rs))
+	il, ol := len(im)-16, len(out)-16
+	for k := 0; k < (w+15)>>4; k++ {
+		c := 16 * k
+		full := c+16 <= w
+		i0, i1, i2, i3, i4 := c, w+c, 2*w+c, 3*w+c, 4*w+c
+		if i0 > il || i1 > il || i2 > il || i3 > il || i4 > il {
+			panic(errKernelArgs)
+		}
+		l0 := mc8LdI16((*[16]int16)(im[i0 : i0+16]))
+		l1 := mc8LdI16((*[16]int16)(im[i1 : i1+16]))
+		l2 := mc8LdI16((*[16]int16)(im[i2 : i2+16]))
+		l3 := mc8LdI16((*[16]int16)(im[i3 : i3+16]))
+		l4 := mc8LdI16((*[16]int16)(im[i4 : i4+16]))
 		a0, b0 := l0.InterleaveLoGrouped(l1), l0.InterleaveHiGrouped(l1)
 		a1, b1 := l1.InterleaveLoGrouped(l2), l1.InterleaveHiGrouped(l2)
 		a2, b2 := l2.InterleaveLoGrouped(l3), l2.InterleaveHiGrouped(l3)
 		a3, b3 := l3.InterleaveLoGrouped(l4), l3.InterleaveHiGrouped(l4)
-		qo, oo := c*2+5*rs, c*2
-		full := c+16 <= w
 		for r := 0; r < h; r++ {
-			q, o := unsafe.Add(im, qo), unsafe.Add(out, oo)
-			l5 := mc8LdI16(q)
+			q, b := (r+5)*w+c, r*w+c
+			if q > il {
+				panic(errKernelArgs)
+			}
+			l5 := mc8LdI16((*[16]int16)(im[q : q+16]))
 			a4, b4 := l4.InterleaveLoGrouped(l5), l4.InterleaveHiGrouped(l5)
 			x := mc8VMid(a0, a2, a4, d0, d1, d2, rnd).ShiftAllRight(6).SaturateToUint16ConcatGrouped(mc8VMid(b0, b2, b4, d0, d1, d2, rnd).ShiftAllRight(6))
 			if full {
-				x.StoreArray((*[16]uint16)(o))
+				if b > ol {
+					panic(errKernelArgs)
+				}
+				x.StoreArray((*[16]uint16)(out[b : b+16]))
 			} else {
-				x.GetLo().StoreArray((*[8]uint16)(o))
+				if b > ol+8 {
+					panic(errKernelArgs)
+				}
+				x.GetLo().StoreArray((*[8]uint16)(out[b : b+8]))
 			}
 			a0, b0, a1, b1, a2, b2, a3, b3, l4 = a1, b1, a2, b2, a3, b3, a4, b4, l5
-			qo += rs
-			oo += 2 * w
 		}
 	}
 }
@@ -988,14 +1220,15 @@ func mc8AVX2PrepV6Mid(im unsafe.Pointer, w, h int, ph *mc8Phase, out unsafe.Poin
 // clip(round4(((a*8 + b*8) >> 4) - 6144)) is (a + b - 12272) >> 5 by nested
 // floor division, in int16 lanes (8-bit CONV_BUF values stay below 2^14).
 func mc8BlendAvgFast(dst *frame.Plane, a, b []uint16, dstX, dstY, w, h int) bool {
-	if !mc8AVX2 || w <= 0 || (w != 4 && w&7 != 0) || h <= 0 || len(a) < w*h || len(b) < w*h {
+	if !mc8AVX2 || w <= 0 || (w != 4 && w&7 != 0) || w > maxBlockSize || h <= 0 || h > maxBlockSize ||
+		len(a) < w*h || len(b) < w*h || uint(dst.Stride) > rowStrideMax {
 		return false
 	}
 	off := dstY*dst.Stride + dstX
 	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || off+(h-1)*dst.Stride+w > len(dst.Pix) {
 		return false
 	}
-	mc8AVX2BlendAvg(unsafe.Pointer(&dst.Pix[off]), dst.Stride, a[:w*h], b[:w*h], w, h)
+	mc8AVX2BlendAvg(dst.Pix[off:], dst.Stride, a[:w*h], b[:w*h], w, h)
 	archsimd.ClearAVXUpperBits()
 	return true
 }
@@ -1007,7 +1240,16 @@ func mc8AvgSum(a, b []uint16, bias archsimd.Int16x16) archsimd.Int16x16 {
 }
 
 // mc8AVX2BlendAvg writes the averages; a and b hold exactly w*h samples.
-func mc8AVX2BlendAvg(dst unsafe.Pointer, ds int, a, b []uint16, w, h int) {
+//
+// From w = 16 each output row is one checked window per 16 or 32 samples.
+// The w = 4 and w = 8 rows keep pointers: a 4- or 8-byte row store carries
+// a few vector ops (single-reference SAD shape, where checked rows cost
+// +24-36% on arm64); they stay inside the rows the caller checked
+// (off + (h-1)*Stride + w <= len(dst.Pix)).
+func mc8AVX2BlendAvg(dst []byte, ds int, a, b []uint16, w, h int) {
+	if uint(ds) > rowStrideMax || uint(w) > rowsMax || uint(h) > rowsMax {
+		panic(errKernelArgs)
+	}
 	bias := archsimd.BroadcastInt16x16(-12272)
 	zero := archsimd.Int16x16{}
 	c255 := archsimd.BroadcastInt16x16(255)
@@ -1015,26 +1257,28 @@ func mc8AVX2BlendAvg(dst unsafe.Pointer, ds int, a, b []uint16, w, h int) {
 	n := w * h
 	switch w {
 	case 4:
+		dp := unsafe.Pointer(unsafe.SliceData(dst))
 		// Four rows per vector; the last group may be partial.
 		r := 0
 		for ; (r+4)*4 <= n; r += 4 {
 			x := mc8AvgSum(a[r*4:], b[r*4:], bias)
 			v := mc8Pack(x, x, zero, c255, deint).ReshapeToUint32s()
 			lo, hi := v.GetLo(), v.GetHi()
-			d := unsafe.Add(dst, r*ds)
+			d := unsafe.Add(dp, r*ds)
 			*(*uint32)(d) = lo.GetElem(0)
 			*(*uint32)(unsafe.Add(d, ds)) = lo.GetElem(1)
 			*(*uint32)(unsafe.Add(d, 2*ds)) = hi.GetElem(0)
 			*(*uint32)(unsafe.Add(d, 3*ds)) = hi.GetElem(1)
 		}
 		for ; r < h; r++ {
-			d := unsafe.Add(dst, r*ds)
+			d := unsafe.Add(dp, r*ds)
 			for c := range 4 {
 				v := (int(a[r*4+c]) + int(b[r*4+c]) - 12272) >> 5
 				*(*byte)(unsafe.Add(d, c)) = byte(min(max(v, 0), 255))
 			}
 		}
 	case 8:
+		dp := unsafe.Pointer(unsafe.SliceData(dst))
 		r := 0
 		for ; r+4 <= h; r += 4 {
 			x := mc8AvgSum(a[r*8:], b[r*8:], bias)
@@ -1042,7 +1286,7 @@ func mc8AVX2BlendAvg(dst unsafe.Pointer, ds int, a, b []uint16, w, h int) {
 			// lanes: [r, r+2 | r+1, r+3]
 			v := mc8Pack(x, y, zero, c255, deint).ReshapeToUint64s()
 			lo, hi := v.GetLo(), v.GetHi()
-			d := unsafe.Add(dst, r*ds)
+			d := unsafe.Add(dp, r*ds)
 			*(*uint64)(d) = lo.GetElem(0)
 			*(*uint64)(unsafe.Add(d, ds)) = hi.GetElem(0)
 			*(*uint64)(unsafe.Add(d, 2*ds)) = lo.GetElem(1)
@@ -1051,52 +1295,65 @@ func mc8AVX2BlendAvg(dst unsafe.Pointer, ds int, a, b []uint16, w, h int) {
 		for ; r+2 <= h; r += 2 {
 			x := mc8AvgSum(a[r*8:], b[r*8:], bias)
 			v := mc8Pack(x, x, zero, c255, deint).ReshapeToUint64s()
-			d := unsafe.Add(dst, r*ds)
+			d := unsafe.Add(dp, r*ds)
 			*(*uint64)(d) = v.GetLo().GetElem(0)
 			*(*uint64)(unsafe.Add(d, ds)) = v.GetHi().GetElem(0)
 		}
 		if r < h {
-			d := unsafe.Add(dst, r*ds)
+			d := unsafe.Add(dp, r*ds)
 			for c := range 8 {
 				v := (int(a[r*8+c]) + int(b[r*8+c]) - 12272) >> 5
 				*(*byte)(unsafe.Add(d, c)) = byte(min(max(v, 0), 255))
 			}
 		}
 	case 16:
-		r := 0
-		for ; r+2 <= h; r += 2 {
-			x := mc8AvgSum(a[r*16:], b[r*16:], bias)
-			y := mc8AvgSum(a[r*16+16:], b[r*16+16:], bias)
+		q3120 := archsimd.LoadUint32x8Array(&mc8Q3120)
+		dl := len(dst) - 16
+		for p := 0; p < h>>1; p++ {
+			e := 2 * p * ds
+			e1 := e + ds
+			if e > dl || e1 > dl {
+				panic(errKernelArgs)
+			}
+			x := mc8AvgSum(a[32*p:], b[32*p:], bias)
+			y := mc8AvgSum(a[32*p+16:], b[32*p+16:], bias)
 			// lanes: [r c0-7, r+1 c0-7 | r c8-15, r+1 c8-15]
-			q3120 := archsimd.LoadUint32x8Array(&mc8Q3120)
 			v := mc8Pack(x, y, zero, c255, deint).ReshapeToUint32s().Permute(q3120).ReshapeToUint8s()
-			d := unsafe.Add(dst, r*ds)
-			mc8St16(d, v.GetLo())
-			mc8St16(unsafe.Add(d, ds), v.GetHi())
+			v.GetLo().StoreArray((*[16]uint8)(dst[e : e+16]))
+			v.GetHi().StoreArray((*[16]uint8)(dst[e1 : e1+16]))
 		}
-		if r < h {
-			x := mc8AvgSum(a[r*16:], b[r*16:], bias)
-			q3120 := archsimd.LoadUint32x8Array(&mc8Q3120)
+		if h&1 != 0 {
+			e := (h - 1) * ds
+			if e > dl {
+				panic(errKernelArgs)
+			}
+			x := mc8AvgSum(a[16*(h-1):], b[16*(h-1):], bias)
 			v := mc8Pack(x, x, zero, c255, deint).ReshapeToUint32s().Permute(q3120).ReshapeToUint8s()
-			mc8St16(unsafe.Add(dst, r*ds), v.GetLo())
+			v.GetLo().StoreArray((*[16]uint8)(dst[e : e+16]))
 		}
 	default:
 		q3120 := archsimd.LoadUint32x8Array(&mc8Q3120)
+		dl := len(dst) - 32
 		for r := 0; r < h; r++ {
 			pa := a[r*w : r*w+w]
 			pb := b[r*w : r*w+w]
-			d := unsafe.Add(dst, r*ds)
-			c := 0
-			for ; c+32 <= w; c += 32 {
+			o := r * ds
+			for k := 0; k < w>>5; k++ {
+				c := 32 * k
+				e := o + c
+				if e > dl {
+					panic(errKernelArgs)
+				}
 				x := mc8AvgSum(pa[c:], pb[c:], bias)
 				y := mc8AvgSum(pa[c+16:], pb[c+16:], bias)
 				v := mc8Pack(x, y, zero, c255, deint).ReshapeToUint32s().Permute(q3120).ReshapeToUint8s()
-				v.StoreArray((*[32]uint8)(unsafe.Add(d, c)))
+				v.StoreArray((*[32]uint8)(dst[e : e+32]))
 			}
-			for ; c < w; c += 8 {
-				for k := range 8 {
+			if c := w &^ 31; c < w {
+				d := dst[o+c : o+w]
+				for k := range d {
 					v := (int(pa[c+k]) + int(pb[c+k]) - 12272) >> 5
-					*(*byte)(unsafe.Add(d, c+k)) = byte(min(max(v, 0), 255))
+					d[k] = byte(min(max(v, 0), 255))
 				}
 			}
 		}
@@ -1104,7 +1361,10 @@ func mc8AVX2BlendAvg(dst unsafe.Pointer, ds int, a, b []uint16, w, h int) {
 }
 
 // mc8AVX2PutH8 is mc8AVX2PutH6 with the eight-tap window (dav1d put_8tap/prep_8tap).
-func mc8AVX2PutH8(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, dst unsafe.Pointer, ds int) {
+func mc8AVX2PutH8(src []byte, ss, w, h int, ph *mc8Phase, dst []byte, ds int) {
+	if uint(ss) > rowStrideMax || uint(ds) > rowStrideMax || uint(w) > rowsMax || uint(h) > rowsMax {
+		panic(errKernelArgs)
+	}
 	sA := archsimd.LoadInt8x32Array(&mc8ShufA)
 	sB := archsimd.LoadInt8x32Array(&mc8ShufB)
 	sC := archsimd.LoadInt8x32Array(&mc8ShufC)
@@ -1114,40 +1374,65 @@ func mc8AVX2PutH8(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, dst unsafe.Poi
 	rnd := archsimd.BroadcastInt16x16(34)
 	zero := archsimd.Int16x16{}
 	c255 := archsimd.BroadcastInt16x16(255)
-	for r := 0; r < h; r += 2 {
-		s0 := unsafe.Add(src, r*ss)
-		d0 := unsafe.Add(dst, r*ds)
-		s1, d1 := s0, d0
-		two := r+1 < h
-		if two {
-			s1, d1 = unsafe.Add(s0, ss), unsafe.Add(d0, ds)
-		}
-		if w == 8 {
-			a := mc8H8(mc8Ld2(s0, s1), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
+	if w == 8 {
+		sl, dl := len(src)-16, len(dst)-8
+		for p := 0; p < (h+1)>>1; p++ {
+			r0 := 2 * p
+			r1 := min(r0+1, h-1)
+			o0, o1, q0, q1 := r0*ss, r1*ss, r0*ds, r1*ds
+			if o0 > sl || o1 > sl || q0 > dl || q1 > dl {
+				panic(errKernelArgs)
+			}
+			x0, x1 := (*[16]uint8)(src[o0:o0+16]), (*[16]uint8)(src[o1:o1+16])
+			e0, e1 := (*[8]byte)(dst[q0:q0+8]), (*[8]byte)(dst[q1:q1+8])
+			a := mc8H8(mc8Ld2(x0, x1), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
 			v := mc8Pack(a, a, zero, c255, deint)
-			mc8St8(d0, v.GetLo())
-			mc8St8(d1, v.GetHi())
-			continue
+			mc8St8(e0, v.GetLo())
+			mc8St8(e1, v.GetHi())
 		}
-		c := 0
-		for ; c+16 <= w; c += 16 {
-			a := mc8H8(mc8Ld2(unsafe.Add(s0, c), unsafe.Add(s1, c)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
-			b := mc8H8(mc8Ld2(unsafe.Add(s0, c+8), unsafe.Add(s1, c+8)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
+		return
+	}
+	sl, dl := len(src)-24, len(dst)-16
+	n := w >> 4
+	for p := 0; p < (h+1)>>1; p++ {
+		r0 := 2 * p
+		r1 := min(r0+1, h-1)
+		o0, o1, q0, q1 := r0*ss, r1*ss, r0*ds, r1*ds
+		for k := 0; k < n; k++ {
+			c := 16 * k
+			a0, a1, b0, b1 := o0+c, o1+c, q0+c, q1+c
+			if a0 > sl || a1 > sl || b0 > dl || b1 > dl {
+				panic(errKernelArgs)
+			}
+			x0, x1 := (*[24]uint8)(src[a0:a0+24]), (*[24]uint8)(src[a1:a1+24])
+			e0, e1 := (*[16]uint8)(dst[b0:b0+16]), (*[16]uint8)(dst[b1:b1+16])
+			a := mc8H8(mc8Ld2((*[16]uint8)(x0[0:16]), (*[16]uint8)(x1[0:16])), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
+			b := mc8H8(mc8Ld2((*[16]uint8)(x0[8:24]), (*[16]uint8)(x1[8:24])), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
 			v := mc8Pack(a, b, zero, c255, deint)
-			mc8St16(unsafe.Add(d1, c), v.GetHi())
-			mc8St16(unsafe.Add(d0, c), v.GetLo())
+			v.GetHi().StoreArray(e1)
+			v.GetLo().StoreArray(e0)
 		}
-		if c < w {
-			a := mc8H8(mc8Ld2(unsafe.Add(s0, c), unsafe.Add(s1, c)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
+		if w&8 != 0 {
+			c := 16 * n
+			a0, a1, b0, b1 := o0+c, o1+c, q0+c, q1+c
+			if a0 > sl+8 || a1 > sl+8 || b0 > dl+8 || b1 > dl+8 {
+				panic(errKernelArgs)
+			}
+			x0, x1 := (*[16]uint8)(src[a0:a0+16]), (*[16]uint8)(src[a1:a1+16])
+			e0, e1 := (*[8]byte)(dst[b0:b0+8]), (*[8]byte)(dst[b1:b1+8])
+			a := mc8H8(mc8Ld2(x0, x1), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(6)
 			v := mc8Pack(a, a, zero, c255, deint)
-			mc8St8(unsafe.Add(d1, c), v.GetHi())
-			mc8St8(unsafe.Add(d0, c), v.GetLo())
+			mc8St8(e1, v.GetHi())
+			mc8St8(e0, v.GetLo())
 		}
 	}
 }
 
 // mc8AVX2PrepH8 is mc8AVX2PrepH6 with the eight-tap window (dav1d put_8tap/prep_8tap).
-func mc8AVX2PrepH8(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, out unsafe.Pointer) {
+func mc8AVX2PrepH8(src []byte, ss, w, h int, ph *mc8Phase, out []uint16) {
+	if uint(ss) > rowStrideMax || uint(w) > rowsMax || uint(h) > rowsMax {
+		panic(errKernelArgs)
+	}
 	sA := archsimd.LoadInt8x32Array(&mc8ShufA)
 	sB := archsimd.LoadInt8x32Array(&mc8ShufB)
 	sC := archsimd.LoadInt8x32Array(&mc8ShufC)
@@ -1155,37 +1440,58 @@ func mc8AVX2PrepH8(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, out unsafe.Po
 	t0, t1, t2, t3 := mc8TapsB(ph.b8[0]), mc8TapsB(ph.b8[1]), mc8TapsB(ph.b8[2]), mc8TapsB(ph.b8[3])
 	rnd := archsimd.BroadcastInt16x16(2 + 6144<<2)
 	if w == 8 {
-		r := 0
-		for ; r+2 <= h; r += 2 {
-			s0 := unsafe.Add(src, r*ss)
-			a := mc8H8(mc8Ld2(s0, unsafe.Add(s0, ss)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd)
-			a.ToBits().ShiftAllRight(2).StoreArray((*[16]uint16)(unsafe.Add(out, r*16)))
+		sl, ol := len(src)-16, len(out)-16
+		for p := 0; p < h>>1; p++ {
+			o0, q := 2*p*ss, 16*p
+			o1 := o0 + ss
+			if o0 > sl || o1 > sl || q > ol {
+				panic(errKernelArgs)
+			}
+			x0, x1 := (*[16]uint8)(src[o0:o0+16]), (*[16]uint8)(src[o1:o1+16])
+			a := mc8H8(mc8Ld2(x0, x1), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd)
+			a.ToBits().ShiftAllRight(2).StoreArray((*[16]uint16)(out[q : q+16]))
 		}
-		if r < h {
-			s0 := unsafe.Add(src, r*ss)
-			a := mc8H8(mc8Ld2(s0, s0), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd)
-			a.ToBits().ShiftAllRight(2).GetLo().StoreArray((*[8]uint16)(unsafe.Add(out, r*16)))
+		if h&1 != 0 {
+			o, q := (h-1)*ss, 8*(h-1)
+			if o > sl || q > ol+8 {
+				panic(errKernelArgs)
+			}
+			x := (*[16]uint8)(src[o : o+16])
+			a := mc8H8(mc8Ld2(x, x), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd)
+			a.ToBits().ShiftAllRight(2).GetLo().StoreArray((*[8]uint16)(out[q : q+8]))
 		}
 		return
 	}
+	sl, ol := len(src)-24, len(out)-16
+	n := w >> 4
 	for r := 0; r < h; r++ {
-		s0 := unsafe.Add(src, r*ss)
-		o := unsafe.Add(out, r*w*2)
-		c := 0
-		for ; c+16 <= w; c += 16 {
-			a := mc8H8(mc8Ld2(unsafe.Add(s0, c), unsafe.Add(s0, c+8)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd)
-			a.ToBits().ShiftAllRight(2).StoreArray((*[16]uint16)(unsafe.Add(o, c*2)))
+		o, q := r*ss, r*w
+		for k := 0; k < n; k++ {
+			a, b := o+16*k, q+16*k
+			if a > sl || b > ol {
+				panic(errKernelArgs)
+			}
+			x := (*[24]uint8)(src[a : a+24])
+			v := mc8H8(mc8Ld2((*[16]uint8)(x[0:16]), (*[16]uint8)(x[8:24])), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd)
+			v.ToBits().ShiftAllRight(2).StoreArray((*[16]uint16)(out[b : b+16]))
 		}
-		if c < w {
-			p := unsafe.Add(s0, c)
-			a := mc8H8(mc8Ld2(p, p), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd)
-			a.ToBits().ShiftAllRight(2).GetLo().StoreArray((*[8]uint16)(unsafe.Add(o, c*2)))
+		if w&8 != 0 {
+			a, b := o+16*n, q+16*n
+			if a > sl+8 || b > ol+8 {
+				panic(errKernelArgs)
+			}
+			x := (*[16]uint8)(src[a : a+16])
+			v := mc8H8(mc8Ld2(x, x), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd)
+			v.ToBits().ShiftAllRight(2).GetLo().StoreArray((*[8]uint16)(out[b : b+8]))
 		}
 	}
 }
 
 // mc8AVX2H8Mid is mc8AVX2H6Mid with the eight-tap window (dav1d put_8tap/prep_8tap).
-func mc8AVX2H8Mid(src unsafe.Pointer, ss, w, rows int, ph *mc8Phase, im unsafe.Pointer) {
+func mc8AVX2H8Mid(src []byte, ss, w, rows int, ph *mc8Phase, im []int16) {
+	if uint(ss) > rowStrideMax || uint(w) > rowsMax || uint(rows) > rowsMax {
+		panic(errKernelArgs)
+	}
 	sA := archsimd.LoadInt8x32Array(&mc8ShufA)
 	sB := archsimd.LoadInt8x32Array(&mc8ShufB)
 	sC := archsimd.LoadInt8x32Array(&mc8ShufC)
@@ -1193,31 +1499,49 @@ func mc8AVX2H8Mid(src unsafe.Pointer, ss, w, rows int, ph *mc8Phase, im unsafe.P
 	t0, t1, t2, t3 := mc8TapsB(ph.b8[0]), mc8TapsB(ph.b8[1]), mc8TapsB(ph.b8[2]), mc8TapsB(ph.b8[3])
 	rnd := archsimd.BroadcastInt16x16(2)
 	if w == 8 {
-		r := 0
-		for ; r+2 <= rows; r += 2 {
-			s0 := unsafe.Add(src, r*ss)
-			a := mc8H8(mc8Ld2(s0, unsafe.Add(s0, ss)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(2)
-			a.StoreArray((*[16]int16)(unsafe.Add(im, r*16)))
+		sl, ol := len(src)-16, len(im)-16
+		for p := 0; p < rows>>1; p++ {
+			o0, q := 2*p*ss, 16*p
+			o1 := o0 + ss
+			if o0 > sl || o1 > sl || q > ol {
+				panic(errKernelArgs)
+			}
+			x0, x1 := (*[16]uint8)(src[o0:o0+16]), (*[16]uint8)(src[o1:o1+16])
+			a := mc8H8(mc8Ld2(x0, x1), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(2)
+			a.StoreArray((*[16]int16)(im[q : q+16]))
 		}
-		if r < rows {
-			s0 := unsafe.Add(src, r*ss)
-			a := mc8H8(mc8Ld2(s0, s0), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(2)
-			a.GetLo().StoreArray((*[8]int16)(unsafe.Add(im, r*16)))
+		if rows&1 != 0 {
+			o, q := (rows-1)*ss, 8*(rows-1)
+			if o > sl || q > ol+8 {
+				panic(errKernelArgs)
+			}
+			x := (*[16]uint8)(src[o : o+16])
+			a := mc8H8(mc8Ld2(x, x), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(2)
+			a.GetLo().StoreArray((*[8]int16)(im[q : q+8]))
 		}
 		return
 	}
+	sl, ol := len(src)-24, len(im)-16
+	n := w >> 4
 	for r := 0; r < rows; r++ {
-		s0 := unsafe.Add(src, r*ss)
-		o := unsafe.Add(im, r*w*2)
-		c := 0
-		for ; c+16 <= w; c += 16 {
-			a := mc8H8(mc8Ld2(unsafe.Add(s0, c), unsafe.Add(s0, c+8)), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(2)
-			a.StoreArray((*[16]int16)(unsafe.Add(o, c*2)))
+		o, q := r*ss, r*w
+		for k := 0; k < n; k++ {
+			a, b := o+16*k, q+16*k
+			if a > sl || b > ol {
+				panic(errKernelArgs)
+			}
+			x := (*[24]uint8)(src[a : a+24])
+			v := mc8H8(mc8Ld2((*[16]uint8)(x[0:16]), (*[16]uint8)(x[8:24])), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(2)
+			v.StoreArray((*[16]int16)(im[b : b+16]))
 		}
-		if c < w {
-			p := unsafe.Add(s0, c)
-			a := mc8H8(mc8Ld2(p, p), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(2)
-			a.GetLo().StoreArray((*[8]int16)(unsafe.Add(o, c*2)))
+		if w&8 != 0 {
+			a, b := o+16*n, q+16*n
+			if a > sl+8 || b > ol+8 {
+				panic(errKernelArgs)
+			}
+			x := (*[16]uint8)(src[a : a+16])
+			v := mc8H8(mc8Ld2(x, x), sA, sB, sC, sD, t0, t1, t2, t3).Add(rnd).ShiftAllRight(2)
+			v.GetLo().StoreArray((*[8]int16)(im[b : b+8]))
 		}
 	}
 }
@@ -1242,8 +1566,12 @@ func mc8VMid8(p0, p2, p4, p6, d0, d1, d2, d3 archsimd.Int16x16, rnd archsimd.Int
 }
 
 // mc8AVX2V8 is the eight-tap vertical-only pass (put: clip((s + 32) >> 6);
-// prep: ((s + 2) >> 2) + 6144), laid out as mc8AVX2PutV6 / mc8AVX2PrepV6.
-func mc8AVX2V8(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, dst unsafe.Pointer, ds int, put bool) {
+// prep: ((s + 2) >> 2) + 6144), laid out as mc8AVX2PutV6 / mc8AVX2PrepV6
+// with their windows. For prep, dst is the CONV_BUF and ds is unused.
+func mc8AVX2V8(src []byte, ss, w, h int, ph *mc8Phase, dst []byte, out []uint16, ds int, put bool) {
+	if uint(ss) > rowStrideMax || uint(ds) > rowStrideMax || uint(w) > rowsMax || uint(h) > rowsMax {
+		panic(errKernelArgs)
+	}
 	t0, t1, t2, t3 := mc8TapsB(ph.b8[0]), mc8TapsB(ph.b8[1]), mc8TapsB(ph.b8[2]), mc8TapsB(ph.b8[3])
 	deint := archsimd.LoadInt8x32Array(&mc8Deint)
 	q3120 := archsimd.LoadUint32x8Array(&mc8Q3120)
@@ -1251,69 +1579,105 @@ func mc8AVX2V8(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, dst unsafe.Pointe
 	rndPrep := archsimd.BroadcastInt16x16(2 + 6144<<2)
 	zero := archsimd.Int16x16{}
 	c255 := archsimd.BroadcastInt16x16(255)
+	sl, dl, ol := len(src)-16, len(dst)-16, len(out)-16
 	if w == 8 {
-		z0 := mc8ZxW8(src)
-		z1 := mc8ZxW8(unsafe.Add(src, ss))
-		z2 := mc8ZxW8(unsafe.Add(src, 2*ss))
-		z3 := mc8ZxW8(unsafe.Add(src, 3*ss))
-		z4 := mc8ZxW8(unsafe.Add(src, 4*ss))
-		z5 := mc8ZxW8(unsafe.Add(src, 5*ss))
-		z6 := mc8ZxW8(unsafe.Add(src, 6*ss))
+		o1, o2, o3, o4, o5, o6 := ss, 2*ss, 3*ss, 4*ss, 5*ss, 6*ss
+		if sl < 0 || o1 > sl || o2 > sl || o3 > sl || o4 > sl || o5 > sl || o6 > sl {
+			panic(errKernelArgs)
+		}
+		z0 := mc8ZxW8((*[16]uint8)(src[0:16]))
+		z1 := mc8ZxW8((*[16]uint8)(src[o1 : o1+16]))
+		z2 := mc8ZxW8((*[16]uint8)(src[o2 : o2+16]))
+		z3 := mc8ZxW8((*[16]uint8)(src[o3 : o3+16]))
+		z4 := mc8ZxW8((*[16]uint8)(src[o4 : o4+16]))
+		z5 := mc8ZxW8((*[16]uint8)(src[o5 : o5+16]))
+		z6 := mc8ZxW8((*[16]uint8)(src[o6 : o6+16]))
 		q0 := mc8Join(mc8PairW8(z0, z1), mc8PairW8(z1, z2))
 		q2 := mc8Join(mc8PairW8(z2, z3), mc8PairW8(z3, z4))
 		q4 := mc8Join(mc8PairW8(z4, z5), mc8PairW8(z5, z6))
-		so := 7 * ss
-		for r := 0; r < h; r += 2 {
-			s := unsafe.Add(src, so)
-			z7 := mc8ZxW8(s)
+		for p := 0; p < (h+1)>>1; p++ {
+			r := 2 * p
+			two := r+1 < h
+			a0 := (r + 7) * ss
+			if a0 > sl {
+				panic(errKernelArgs)
+			}
+			z7 := mc8ZxW8((*[16]uint8)(src[a0 : a0+16]))
 			z8 := z7
-			if r+1 < h {
-				z8 = mc8ZxW8(unsafe.Add(s, ss))
+			if two {
+				a1 := a0 + ss
+				if a1 > sl {
+					panic(errKernelArgs)
+				}
+				z8 = mc8ZxW8((*[16]uint8)(src[a1 : a1+16]))
 			}
 			q6 := mc8Join(mc8PairW8(z6, z7), mc8PairW8(z7, z8))
 			a := mc8V8(q0, q2, q4, q6, t0, t1, t2, t3)
 			if put {
 				a = a.Add(rndPut).ShiftAllRight(6)
 				v := mc8Pack(a, a, zero, c255, deint)
-				d := unsafe.Add(dst, r*ds)
-				mc8St8(d, v.GetLo())
-				if r+1 < h {
-					mc8St8(unsafe.Add(d, ds), v.GetHi())
+				e := r * ds
+				if e > dl+8 {
+					panic(errKernelArgs)
+				}
+				mc8St8((*[8]byte)(dst[e:e+8]), v.GetLo())
+				if two {
+					e1 := e + ds
+					if e1 > dl+8 {
+						panic(errKernelArgs)
+					}
+					mc8St8((*[8]byte)(dst[e1:e1+8]), v.GetHi())
 				}
 			} else {
 				u := a.Add(rndPrep).ToBits().ShiftAllRight(2)
-				if r+1 < h {
-					u.StoreArray((*[16]uint16)(unsafe.Add(dst, r*16)))
+				b := 16 * p
+				if two {
+					if b > ol {
+						panic(errKernelArgs)
+					}
+					u.StoreArray((*[16]uint16)(out[b : b+16]))
 				} else {
-					u.GetLo().StoreArray((*[8]uint16)(unsafe.Add(dst, r*16)))
+					if b > ol+8 {
+						panic(errKernelArgs)
+					}
+					u.GetLo().StoreArray((*[8]uint16)(out[b : b+8]))
 				}
 			}
 			q0, q2, q4, z6 = q2, q4, q6, z8
-			so += 2 * ss
 		}
 		return
 	}
-	ro := 2 * w
-	for c := 0; c < w; c += 16 {
-		s := unsafe.Add(src, c)
-		z0 := mc8Zx(s)
-		z1 := mc8Zx(unsafe.Add(s, ss))
-		z2 := mc8Zx(unsafe.Add(s, 2*ss))
-		z3 := mc8Zx(unsafe.Add(s, 3*ss))
-		z4 := mc8Zx(unsafe.Add(s, 4*ss))
-		z5 := mc8Zx(unsafe.Add(s, 5*ss))
-		z6 := mc8Zx(unsafe.Add(s, 6*ss))
+	for k := 0; k < (w+15)>>4; k++ {
+		c := 16 * k
+		full := c+16 <= w
+		o0, o1, o2, o3, o4, o5, o6 := c, ss+c, 2*ss+c, 3*ss+c, 4*ss+c, 5*ss+c, 6*ss+c
+		if o0 > sl || o1 > sl || o2 > sl || o3 > sl || o4 > sl || o5 > sl || o6 > sl {
+			panic(errKernelArgs)
+		}
+		z0 := mc8Zx((*[16]uint8)(src[o0 : o0+16]))
+		z1 := mc8Zx((*[16]uint8)(src[o1 : o1+16]))
+		z2 := mc8Zx((*[16]uint8)(src[o2 : o2+16]))
+		z3 := mc8Zx((*[16]uint8)(src[o3 : o3+16]))
+		z4 := mc8Zx((*[16]uint8)(src[o4 : o4+16]))
+		z5 := mc8Zx((*[16]uint8)(src[o5 : o5+16]))
+		z6 := mc8Zx((*[16]uint8)(src[o6 : o6+16]))
 		p0, p1, p2, p3 := mc8Pair(z0, z1), mc8Pair(z1, z2), mc8Pair(z2, z3), mc8Pair(z3, z4)
 		p4, p5 := mc8Pair(z4, z5), mc8Pair(z5, z6)
-		so := c + 7*ss
-		full := c+16 <= w
-		for r := 0; r < h; r += 2 {
+		for p := 0; p < (h+1)>>1; p++ {
+			r := 2 * p
 			two := r+1 < h
-			s := unsafe.Add(src, so)
-			z7 := mc8Zx(s)
+			a0 := (r+7)*ss + c
+			if a0 > sl {
+				panic(errKernelArgs)
+			}
+			z7 := mc8Zx((*[16]uint8)(src[a0 : a0+16]))
 			z8 := z7
 			if two {
-				z8 = mc8Zx(unsafe.Add(s, ss))
+				a1 := a0 + ss
+				if a1 > sl {
+					panic(errKernelArgs)
+				}
+				z8 = mc8Zx((*[16]uint8)(src[a1 : a1+16]))
 			}
 			p6, p7 := mc8Pair(z6, z7), mc8Pair(z7, z8)
 			a := mc8V8(p0, p2, p4, p6, t0, t1, t2, t3)
@@ -1322,43 +1686,74 @@ func mc8AVX2V8(src unsafe.Pointer, ss, w, h int, ph *mc8Phase, dst unsafe.Pointe
 				a = a.Add(rndPut).ShiftAllRight(6)
 				b = b.Add(rndPut).ShiftAllRight(6)
 				v := mc8Pack(a, b, zero, c255, deint).ReshapeToUint32s().Permute(q3120).ReshapeToUint8s()
-				d := unsafe.Add(dst, r*ds+c)
+				e := r*ds + c
 				if full {
-					mc8St16(d, v.GetLo())
+					if e > dl {
+						panic(errKernelArgs)
+					}
+					v.GetLo().StoreArray((*[16]uint8)(dst[e : e+16]))
 					if two {
-						mc8St16(unsafe.Add(d, ds), v.GetHi())
+						e1 := e + ds
+						if e1 > dl {
+							panic(errKernelArgs)
+						}
+						v.GetHi().StoreArray((*[16]uint8)(dst[e1 : e1+16]))
 					}
 				} else {
-					mc8St8(d, v.GetLo())
+					if e > dl+8 {
+						panic(errKernelArgs)
+					}
+					mc8St8((*[8]byte)(dst[e:e+8]), v.GetLo())
 					if two {
-						mc8St8(unsafe.Add(d, ds), v.GetHi())
+						e1 := e + ds
+						if e1 > dl+8 {
+							panic(errKernelArgs)
+						}
+						mc8St8((*[8]byte)(dst[e1:e1+8]), v.GetHi())
 					}
 				}
 			} else {
-				o := unsafe.Add(dst, r*ro+2*c)
 				x := a.Add(rndPrep).ToBits().ShiftAllRight(2)
 				y := b.Add(rndPrep).ToBits().ShiftAllRight(2)
+				o := r*w + c
 				if full {
-					x.StoreArray((*[16]uint16)(o))
+					if o > ol {
+						panic(errKernelArgs)
+					}
+					x.StoreArray((*[16]uint16)(out[o : o+16]))
 					if two {
-						y.StoreArray((*[16]uint16)(unsafe.Add(o, ro)))
+						o1 := o + w
+						if o1 > ol {
+							panic(errKernelArgs)
+						}
+						y.StoreArray((*[16]uint16)(out[o1 : o1+16]))
 					}
 				} else {
-					x.GetLo().StoreArray((*[8]uint16)(o))
+					if o > ol+8 {
+						panic(errKernelArgs)
+					}
+					x.GetLo().StoreArray((*[8]uint16)(out[o : o+8]))
 					if two {
-						y.GetLo().StoreArray((*[8]uint16)(unsafe.Add(o, ro)))
+						o1 := o + w
+						if o1 > ol+8 {
+							panic(errKernelArgs)
+						}
+						y.GetLo().StoreArray((*[8]uint16)(out[o1 : o1+8]))
 					}
 				}
 			}
 			p0, p1, p2, p3, p4, p5, z6 = p2, p3, p4, p5, p6, p7, z8
-			so += 2 * ss
 		}
 	}
 }
 
 // mc8AVX2V8Mid is the eight-tap 2D vertical pass over the int16 intermediate
-// (h+7 rows, stride w), laid out as mc8AVX2PutV6Mid.
-func mc8AVX2V8Mid(im unsafe.Pointer, w, h int, ph *mc8Phase, dst unsafe.Pointer, ds int, put bool) {
+// (h+7 rows, stride w), laid out as mc8AVX2PutV6Mid with its windows. For
+// prep, out is the CONV_BUF and ds is unused.
+func mc8AVX2V8Mid(im []int16, w, h int, ph *mc8Phase, dst []byte, out []uint16, ds int, put bool) {
+	if uint(ds) > rowStrideMax || uint(w) > rowsMax || uint(h) > rowsMax {
+		panic(errKernelArgs)
+	}
 	d0, d1, d2, d3 := mc8TapsD(ph.d8[0]), mc8TapsD(ph.d8[1]), mc8TapsD(ph.d8[2]), mc8TapsD(ph.d8[3])
 	// put: clip((S + 512) >> 10) is ((S + 512) >> 6) >> 4 after the
 	// unsigned-saturating pack (nested floor division; the >> 6 values fit).
@@ -1370,68 +1765,100 @@ func mc8AVX2V8Mid(im unsafe.Pointer, w, h int, ph *mc8Phase, dst unsafe.Pointer,
 	}
 	c255 := archsimd.BroadcastUint16x16(255)
 	deint := archsimd.LoadInt8x32Array(&mc8Deint)
+	dl, ol := len(dst)-16, len(out)-16
 	if w == 8 {
-		l0 := mc8LdI16(im)
-		l1 := mc8LdI16(unsafe.Add(im, 16))
-		l2 := mc8LdI16(unsafe.Add(im, 32))
-		l3 := mc8LdI16(unsafe.Add(im, 48))
-		l4 := mc8LdI16(unsafe.Add(im, 64))
-		l5 := mc8LdI16(unsafe.Add(im, 80))
+		if len(im) < 56 {
+			panic(errKernelArgs)
+		}
+		il := len(im) - 24
+		l0 := mc8LdI16((*[16]int16)(im[0:16]))
+		l1 := mc8LdI16((*[16]int16)(im[8:24]))
+		l2 := mc8LdI16((*[16]int16)(im[16:32]))
+		l3 := mc8LdI16((*[16]int16)(im[24:40]))
+		l4 := mc8LdI16((*[16]int16)(im[32:48]))
+		l5 := mc8LdI16((*[16]int16)(im[40:56]))
 		a0, b0 := l0.InterleaveLoGrouped(l1), l0.InterleaveHiGrouped(l1)
 		a2, b2 := l2.InterleaveLoGrouped(l3), l2.InterleaveHiGrouped(l3)
 		a4, b4 := l4.InterleaveLoGrouped(l5), l4.InterleaveHiGrouped(l5)
-		qo := 96
-		for r := 0; r < h; r += 2 {
-			q := unsafe.Add(im, qo)
-			l6 := mc8LdI16(q)
-			l7 := mc8LdI16(unsafe.Add(q, 16))
+		for p := 0; p < (h+1)>>1; p++ {
+			r := 2 * p
+			q := 16 * (p + 3)
+			if q > il {
+				panic(errKernelArgs)
+			}
+			x := (*[24]int16)(im[q : q+24])
+			l6 := mc8LdI16((*[16]int16)(x[0:16]))
+			l7 := mc8LdI16((*[16]int16)(x[8:24]))
 			a6, b6 := l6.InterleaveLoGrouped(l7), l6.InterleaveHiGrouped(l7)
 			lo := mc8VMid8(a0, a2, a4, a6, d0, d1, d2, d3, rnd).ShiftAllRight(6)
 			hi := mc8VMid8(b0, b2, b4, b6, d0, d1, d2, d3, rnd).ShiftAllRight(6)
 			u := lo.SaturateToUint16ConcatGrouped(hi)
 			if put {
 				v := u.ShiftAllRight(4).Min(c255).ReshapeToUint8s().PermuteOrZeroGrouped(deint)
-				d := unsafe.Add(dst, r*ds)
-				mc8St8(d, v.GetLo())
-				if r+1 < h {
-					mc8St8(unsafe.Add(d, ds), v.GetHi())
+				e := r * ds
+				if e > dl+8 {
+					panic(errKernelArgs)
 				}
-			} else if r+1 < h {
-				u.StoreArray((*[16]uint16)(unsafe.Add(dst, r*16)))
+				mc8St8((*[8]byte)(dst[e:e+8]), v.GetLo())
+				if r+1 < h {
+					e1 := e + ds
+					if e1 > dl+8 {
+						panic(errKernelArgs)
+					}
+					mc8St8((*[8]byte)(dst[e1:e1+8]), v.GetHi())
+				}
+			} else if b := 16 * p; r+1 < h {
+				if b > ol {
+					panic(errKernelArgs)
+				}
+				u.StoreArray((*[16]uint16)(out[b : b+16]))
 			} else {
-				u.GetLo().StoreArray((*[8]uint16)(unsafe.Add(dst, r*16)))
+				if b > ol+8 {
+					panic(errKernelArgs)
+				}
+				u.GetLo().StoreArray((*[8]uint16)(out[b : b+8]))
 			}
 			a0, b0, a2, b2, a4, b4 = a2, b2, a4, b4, a6, b6
-			qo += 32
 		}
 		return
 	}
 	q3120 := archsimd.LoadUint32x8Array(&mc8Q3120)
-	rs := w * 2
-	for c := 0; c < w; c += 16 {
-		q := unsafe.Add(im, c*2)
-		l0 := mc8LdI16(q)
-		l1 := mc8LdI16(unsafe.Add(q, rs))
-		l2 := mc8LdI16(unsafe.Add(q, 2*rs))
-		l3 := mc8LdI16(unsafe.Add(q, 3*rs))
-		l4 := mc8LdI16(unsafe.Add(q, 4*rs))
-		l5 := mc8LdI16(unsafe.Add(q, 5*rs))
-		l6 := mc8LdI16(unsafe.Add(q, 6*rs))
+	il := len(im) - 16
+	for k := 0; k < (w+15)>>4; k++ {
+		c := 16 * k
+		full := c+16 <= w
+		i0, i1, i2, i3, i4, i5, i6 := c, w+c, 2*w+c, 3*w+c, 4*w+c, 5*w+c, 6*w+c
+		if i0 > il || i1 > il || i2 > il || i3 > il || i4 > il || i5 > il || i6 > il {
+			panic(errKernelArgs)
+		}
+		l0 := mc8LdI16((*[16]int16)(im[i0 : i0+16]))
+		l1 := mc8LdI16((*[16]int16)(im[i1 : i1+16]))
+		l2 := mc8LdI16((*[16]int16)(im[i2 : i2+16]))
+		l3 := mc8LdI16((*[16]int16)(im[i3 : i3+16]))
+		l4 := mc8LdI16((*[16]int16)(im[i4 : i4+16]))
+		l5 := mc8LdI16((*[16]int16)(im[i5 : i5+16]))
+		l6 := mc8LdI16((*[16]int16)(im[i6 : i6+16]))
 		a0, b0 := l0.InterleaveLoGrouped(l1), l0.InterleaveHiGrouped(l1)
 		a1, b1 := l1.InterleaveLoGrouped(l2), l1.InterleaveHiGrouped(l2)
 		a2, b2 := l2.InterleaveLoGrouped(l3), l2.InterleaveHiGrouped(l3)
 		a3, b3 := l3.InterleaveLoGrouped(l4), l3.InterleaveHiGrouped(l4)
 		a4, b4 := l4.InterleaveLoGrouped(l5), l4.InterleaveHiGrouped(l5)
 		a5, b5 := l5.InterleaveLoGrouped(l6), l5.InterleaveHiGrouped(l6)
-		qo := c*2 + 7*rs
-		full := c+16 <= w
-		for r := 0; r < h; r += 2 {
+		for p := 0; p < (h+1)>>1; p++ {
+			r := 2 * p
 			two := r+1 < h
-			q := unsafe.Add(im, qo)
-			l7 := mc8LdI16(q)
+			q := (r+7)*w + c
+			if q > il {
+				panic(errKernelArgs)
+			}
+			l7 := mc8LdI16((*[16]int16)(im[q : q+16]))
 			l8 := l7
 			if two {
-				l8 = mc8LdI16(unsafe.Add(q, rs))
+				q1 := q + w
+				if q1 > il {
+					panic(errKernelArgs)
+				}
+				l8 = mc8LdI16((*[16]int16)(im[q1 : q1+16]))
 			}
 			a6, b6 := l6.InterleaveLoGrouped(l7), l6.InterleaveHiGrouped(l7)
 			a7, b7 := l7.InterleaveLoGrouped(l8), l7.InterleaveHiGrouped(l8)
@@ -1440,34 +1867,61 @@ func mc8AVX2V8Mid(im unsafe.Pointer, w, h int, ph *mc8Phase, dst unsafe.Pointer,
 			if put {
 				x, y = x.ShiftAllRight(4).Min(c255), y.ShiftAllRight(4).Min(c255)
 				v := x.Or(y.ShiftAllLeft(8)).ReshapeToUint8s().PermuteOrZeroGrouped(deint).ReshapeToUint32s().Permute(q3120).ReshapeToUint8s()
-				d := unsafe.Add(dst, r*ds+c)
+				e := r*ds + c
 				if full {
-					mc8St16(d, v.GetLo())
+					if e > dl {
+						panic(errKernelArgs)
+					}
+					v.GetLo().StoreArray((*[16]uint8)(dst[e : e+16]))
 					if two {
-						mc8St16(unsafe.Add(d, ds), v.GetHi())
+						e1 := e + ds
+						if e1 > dl {
+							panic(errKernelArgs)
+						}
+						v.GetHi().StoreArray((*[16]uint8)(dst[e1 : e1+16]))
 					}
 				} else {
-					mc8St8(d, v.GetLo())
+					if e > dl+8 {
+						panic(errKernelArgs)
+					}
+					mc8St8((*[8]byte)(dst[e:e+8]), v.GetLo())
 					if two {
-						mc8St8(unsafe.Add(d, ds), v.GetHi())
+						e1 := e + ds
+						if e1 > dl+8 {
+							panic(errKernelArgs)
+						}
+						mc8St8((*[8]byte)(dst[e1:e1+8]), v.GetHi())
 					}
 				}
 			} else {
-				o := unsafe.Add(dst, r*rs+2*c)
+				o := r*w + c
 				if full {
-					x.StoreArray((*[16]uint16)(o))
+					if o > ol {
+						panic(errKernelArgs)
+					}
+					x.StoreArray((*[16]uint16)(out[o : o+16]))
 					if two {
-						y.StoreArray((*[16]uint16)(unsafe.Add(o, rs)))
+						o1 := o + w
+						if o1 > ol {
+							panic(errKernelArgs)
+						}
+						y.StoreArray((*[16]uint16)(out[o1 : o1+16]))
 					}
 				} else {
-					x.GetLo().StoreArray((*[8]uint16)(o))
+					if o > ol+8 {
+						panic(errKernelArgs)
+					}
+					x.GetLo().StoreArray((*[8]uint16)(out[o : o+8]))
 					if two {
-						y.GetLo().StoreArray((*[8]uint16)(unsafe.Add(o, rs)))
+						o1 := o + w
+						if o1 > ol+8 {
+							panic(errKernelArgs)
+						}
+						y.GetLo().StoreArray((*[8]uint16)(out[o1 : o1+8]))
 					}
 				}
 			}
 			a0, b0, a1, b1, a2, b2, a3, b3, a4, b4, a5, b5, l6 = a2, b2, a3, b3, a4, b4, a5, b5, a6, b6, a7, b7, l8
-			qo += 2 * rs
 		}
 	}
 }
@@ -1526,6 +1980,12 @@ func mc8StPutW4(dst unsafe.Pointer, ds, r, h int, v archsimd.Uint8x32) {
 
 // mc8StPrepW4 stores the rows r..r+3 (r+3 < h only) of u to a stride-4
 // CONV_BUF.
+//
+// The w = 4 horizontal and vertical-only kernels and the prep copy keep
+// row pointers: each strided row feeds only a few vector ops, the
+// single-reference SAD shape whose checked rows cost +24-36% on arm64 (as
+// windows here they grew 117 -> 210 instructions with stack reloads in the
+// loop). Their callers check the windows the pointers stay inside.
 func mc8StPrepW4(out unsafe.Pointer, r, h int, u archsimd.Uint16x16) {
 	o := unsafe.Add(out, r*8)
 	if r+4 <= h {
@@ -1604,13 +2064,13 @@ func mc8AVX2V6W4(src unsafe.Pointer, ss, h int, ph *mc8Phase, buf, dst unsafe.Po
 	c255 := archsimd.BroadcastInt16x16(255)
 	rndPut := archsimd.BroadcastInt16x16(32)
 	rndPrep := archsimd.BroadcastInt16x16(2 + 6144<<2)
-	z1 := mc8Zx(unsafe.Add(buf, 4))
-	pa := mc8Pair(mc8Zx(buf), z1)
-	z3 := mc8Zx(unsafe.Add(buf, 12))
-	pb := mc8Pair(mc8Zx(unsafe.Add(buf, 8)), z3)
+	z1 := mc8ZxP(unsafe.Add(buf, 4))
+	pa := mc8Pair(mc8ZxP(buf), z1)
+	z3 := mc8ZxP(unsafe.Add(buf, 12))
+	pb := mc8Pair(mc8ZxP(unsafe.Add(buf, 8)), z3)
 	for r := 0; r < h; r += 4 {
 		q := unsafe.Add(buf, 4*(r+4))
-		pc := mc8Pair(mc8Zx(q), mc8Zx(unsafe.Add(q, 4)))
+		pc := mc8Pair(mc8ZxP(q), mc8ZxP(unsafe.Add(q, 4)))
 		s := mc8V6(pa, pb, pc, t0, t1, t2)
 		if put {
 			a := s.Add(rndPut).ShiftAllRight(6)
@@ -1619,7 +2079,7 @@ func mc8AVX2V6W4(src unsafe.Pointer, ss, h int, ph *mc8Phase, buf, dst unsafe.Po
 			mc8StPrepW4(dst, r, h, s.Add(rndPrep).ToBits().ShiftAllRight(2))
 		}
 		pa = pc
-		pb = mc8Pair(mc8Zx(unsafe.Add(q, 8)), mc8Zx(unsafe.Add(q, 12)))
+		pb = mc8Pair(mc8ZxP(unsafe.Add(q, 8)), mc8ZxP(unsafe.Add(q, 12)))
 	}
 }
 
@@ -1628,7 +2088,15 @@ func mc8AVX2V6W4(src unsafe.Pointer, ss, h int, ph *mc8Phase, buf, dst unsafe.Po
 // the load at row k+1 gives the row pairs (k, k+1) | (k+2, k+3) (low halves)
 // and (k+1, k+2) | (k+3, k+4) (high halves), so VPACKUSDW of the two sums is
 // rows r..r+3 in order.
-func mc8AVX2V6MidW4(im unsafe.Pointer, h int, ph *mc8Phase, dst unsafe.Pointer, ds int, put bool) {
+//
+// The intermediate rows read per step are one checked 28-sample window of
+// the scratch block; the 4-sample output rows stay on pointers like the
+// other w = 4 kernels (see mc8StPrepW4). put selects the put store;
+// otherwise dst is the CONV_BUF.
+func mc8AVX2V6MidW4(im []int16, h int, ph *mc8Phase, dst unsafe.Pointer, ds int, put bool) {
+	if uint(h) > rowsMax {
+		panic(errKernelArgs)
+	}
 	d0, d1, d2 := mc8TapsD(ph.d[0]), mc8TapsD(ph.d[1]), mc8TapsD(ph.d[2])
 	// put: clip((S + 512) >> 10) is ((S + 512) >> 6) >> 4 after the
 	// unsigned-saturating pack (nested floor division; the >> 6 values fit).
@@ -1640,24 +2108,32 @@ func mc8AVX2V6MidW4(im unsafe.Pointer, h int, ph *mc8Phase, dst unsafe.Pointer, 
 	}
 	c255 := archsimd.BroadcastUint16x16(255)
 	deint := archsimd.LoadInt8x32Array(&mc8Deint)
-	l0, l1 := mc8LdI16(im), mc8LdI16(unsafe.Add(im, 8))
-	l2, l3 := mc8LdI16(unsafe.Add(im, 16)), mc8LdI16(unsafe.Add(im, 24))
+	if len(im) < 28 {
+		panic(errKernelArgs)
+	}
+	l0, l1 := mc8LdI16((*[16]int16)(im[0:16])), mc8LdI16((*[16]int16)(im[4:20]))
+	l2, l3 := mc8LdI16((*[16]int16)(im[8:24])), mc8LdI16((*[16]int16)(im[12:28]))
 	pa, qa := l0.InterleaveLoGrouped(l1), l0.InterleaveHiGrouped(l1)
 	pb, qb := l2.InterleaveLoGrouped(l3), l2.InterleaveHiGrouped(l3)
-	for r := 0; r < h; r += 4 {
-		q := unsafe.Add(im, 8*(r+4))
-		l4, l5 := mc8LdI16(q), mc8LdI16(unsafe.Add(q, 8))
+	il := len(im) - 28
+	for g := 0; g < (h+3)>>2; g++ {
+		r, q := 4*g, 16*(g+1)
+		if q > il {
+			panic(errKernelArgs)
+		}
+		x := (*[28]int16)(im[q : q+28])
+		l4, l5 := mc8LdI16((*[16]int16)(x[0:16])), mc8LdI16((*[16]int16)(x[4:20]))
 		pc, qc := l4.InterleaveLoGrouped(l5), l4.InterleaveHiGrouped(l5)
-		x := mc8VMid(pa, pb, pc, d0, d1, d2, rnd).ShiftAllRight(6)
-		y := mc8VMid(qa, qb, qc, d0, d1, d2, rnd).ShiftAllRight(6)
-		u := x.SaturateToUint16ConcatGrouped(y)
+		y0 := mc8VMid(pa, pb, pc, d0, d1, d2, rnd).ShiftAllRight(6)
+		y1 := mc8VMid(qa, qb, qc, d0, d1, d2, rnd).ShiftAllRight(6)
+		u := y0.SaturateToUint16ConcatGrouped(y1)
 		if put {
 			mc8StPutW4(dst, ds, r, h, u.ShiftAllRight(4).Min(c255).ReshapeToUint8s().PermuteOrZeroGrouped(deint))
 		} else {
 			mc8StPrepW4(dst, r, h, u)
 		}
 		pa, qa = pc, qc
-		l6, l7 := mc8LdI16(unsafe.Add(q, 16)), mc8LdI16(unsafe.Add(q, 24))
+		l6, l7 := mc8LdI16((*[16]int16)(x[8:24])), mc8LdI16((*[16]int16)(x[12:28]))
 		pb, qb = l6.InterleaveLoGrouped(l7), l6.InterleaveHiGrouped(l7)
 	}
 }
@@ -1691,10 +2167,10 @@ func mc8AVX2PrepCopy(src unsafe.Pointer, ss, w, h int, out unsafe.Pointer) {
 			o := unsafe.Add(out, r*w*2)
 			c := 0
 			for ; c+16 <= w; c += 16 {
-				mc8Zx(unsafe.Add(s, c)).ShiftAllLeft(4).Add(off).StoreArray((*[16]uint16)(unsafe.Add(o, 2*c)))
+				mc8ZxP(unsafe.Add(s, c)).ShiftAllLeft(4).Add(off).StoreArray((*[16]uint16)(unsafe.Add(o, 2*c)))
 			}
 			if c < w {
-				mc8Zx(unsafe.Add(s, c)).ShiftAllLeft(4).Add(off).GetLo().StoreArray((*[8]uint16)(unsafe.Add(o, 2*c)))
+				mc8ZxP(unsafe.Add(s, c)).ShiftAllLeft(4).Add(off).GetLo().StoreArray((*[8]uint16)(unsafe.Add(o, 2*c)))
 			}
 		}
 	}
