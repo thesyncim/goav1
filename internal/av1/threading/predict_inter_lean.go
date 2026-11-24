@@ -778,6 +778,13 @@ func (b *FrameWorkBatch) reconBInter(index int, l *frameWorkLeanInter, visit *ti
 				}
 				ssX, ssY := l.ssX != 0, l.ssY != 0
 				refX, refY, subX, subY = motion.TranslationOrigin(cx, cy, mv[0], ssX, ssY)
+				// U and V share the block, origin, phase and filters: one
+				// paired put, or the per-plane chain when it declines.
+				if motion.Put8UV(&l.plane[FrameWorkPlaneU].output, &l.plane[FrameWorkPlaneV].output,
+					l.ref[slot0+uint(FrameWorkPlaneU)], l.ref[slot0+uint(FrameWorkPlaneV)],
+					cx, cy, refX, refY, cfw, cfh, cfw, cfh, subX, subY, filters, cs) {
+					return true, nil
+				}
 				for plane := FrameWorkPlaneU; plane <= FrameWorkPlaneV; plane++ {
 					out, ref := &l.plane[plane].output, l.ref[slot0+uint(plane)]
 					if !motion.Put8(out, ref, cx, cy, refX, refY, cfw, cfh, cfw, cfh, subX, subY, filters, cs) &&
@@ -805,33 +812,38 @@ func (b *FrameWorkBatch) reconBInterSubChroma8(l *frameWorkLeanInter, sub *tile.
 		return false
 	}
 	cs := frameWorkConvolveScratch(scratch)
-	for plane := FrameWorkPlaneU; plane <= FrameWorkPlaneV; plane++ {
-		p := &l.plane[plane]
-		if !p.holds(x, y, w, h) {
+	pu, pv := &l.plane[FrameWorkPlaneU], &l.plane[FrameWorkPlaneV]
+	if !pu.holds(x, y, w, h) || !pv.holds(x, y, w, h) {
+		return false
+	}
+	// Sub-block by sub-block, U and V of each cell together (the cells
+	// never overlap, so the order across planes does not change a sample).
+	for i := range int(sub.Count) {
+		c := &sub.Cells[i]
+		reference, ok := frameWorkReferenceFromTile(c.Reference)
+		if !ok {
 			return false
 		}
-		for i := range int(sub.Count) {
-			c := &sub.Cells[i]
-			reference, ok := frameWorkReferenceFromTile(c.Reference)
-			if !ok {
-				return false
-			}
-			slot := uint(reference) * 3
-			if l.refBound>>slot&7 != 7 {
-				b.bindSameRefs(l, reference)
-			}
-			idx := slot + uint(plane)
-			if idx >= uint(len(l.ref)) || l.refSame>>idx&1 == 0 {
-				return false
-			}
-			cx, cy, cw, ch := x+int(c.OffsetX), y+int(c.OffsetY), int(c.Width), int(c.Height)
-			if cw <= 0 || ch <= 0 || cx+cw > x+w || cy+ch > y+h {
-				return false
-			}
-			ref := l.ref[idx]
-			refX, refY, subX, subY := motion.TranslationOrigin(cx, cy, c.MV, ssX, ssY)
-			if !motion.Put8(&p.output, ref, cx, cy, refX, refY, cw, ch, cw, ch, subX, subY, c.InterpFilters, cs) &&
-				motion.PredictTranslation8(&p.output, ref, cx, cy, cw, ch, cw, ch, c.MV, ssX, ssY, c.InterpFilters, cs) != nil {
+		slot := uint(reference) * 3
+		if l.refBound>>slot&7 != 7 {
+			b.bindSameRefs(l, reference)
+		}
+		iu, iv := slot+uint(FrameWorkPlaneU), slot+uint(FrameWorkPlaneV)
+		if iv >= uint(len(l.ref)) || l.refSame>>iu&1 == 0 || l.refSame>>iv&1 == 0 {
+			return false
+		}
+		cx, cy, cw, ch := x+int(c.OffsetX), y+int(c.OffsetY), int(c.Width), int(c.Height)
+		if cw <= 0 || ch <= 0 || cx+cw > x+w || cy+ch > y+h {
+			return false
+		}
+		refX, refY, subX, subY := motion.TranslationOrigin(cx, cy, c.MV, ssX, ssY)
+		if motion.Put8UV(&pu.output, &pv.output, l.ref[iu], l.ref[iv], cx, cy, refX, refY, cw, ch, cw, ch, subX, subY, c.InterpFilters, cs) {
+			continue
+		}
+		for plane := FrameWorkPlaneU; plane <= FrameWorkPlaneV; plane++ {
+			out, ref := &l.plane[plane].output, l.ref[slot+uint(plane)]
+			if !motion.Put8(out, ref, cx, cy, refX, refY, cw, ch, cw, ch, subX, subY, c.InterpFilters, cs) &&
+				motion.PredictTranslation8(out, ref, cx, cy, cw, ch, cw, ch, c.MV, ssX, ssY, c.InterpFilters, cs) != nil {
 				return false
 			}
 		}

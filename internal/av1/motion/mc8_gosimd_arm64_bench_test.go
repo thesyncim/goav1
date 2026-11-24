@@ -42,6 +42,42 @@ func BenchmarkMC8Put(b *testing.B) {
 	}
 }
 
+// BenchmarkMC8PutUV measures a chroma block pair: two Put8 calls (one per
+// plane) against one Put8UV.
+func BenchmarkMC8PutUV(b *testing.B) {
+	rng := rand.New(rand.NewSource(5))
+	refU := mc8TestRef(rng, 320, 320, 352, 0)
+	refV := mc8TestRef(rng, 320, 320, 352, 0)
+	var scratch ConvolveScratch
+	dstU := frame.Plane{Pix: make([]byte, 128*128), Stride: 128, Width: 128, Height: 128}
+	dstV := frame.Plane{Pix: make([]byte, 128*128), Stride: 128, Width: 128, Height: 128}
+	for _, sz := range [][2]int{{4, 4}, {8, 8}, {16, 16}, {32, 32}} {
+		w, h := sz[0], sz[1]
+		for _, mode := range []string{"hv", "h", "v", "copy"} {
+			subX, subY := 5, 11
+			switch mode {
+			case "h":
+				subY = 0
+			case "v":
+				subX = 0
+			case "copy":
+				subX, subY = 0, 0
+			}
+			b.Run(fmt.Sprintf("pair_%s_%dx%d", mode, w, h), func(b *testing.B) {
+				for b.Loop() {
+					Put8(&dstU, &refU, 0, 0, 40, 40, w, h, w, h, subX, subY, RegularFilters, &scratch)
+					Put8(&dstV, &refV, 0, 0, 40, 40, w, h, w, h, subX, subY, RegularFilters, &scratch)
+				}
+			})
+			b.Run(fmt.Sprintf("uv_%s_%dx%d", mode, w, h), func(b *testing.B) {
+				for b.Loop() {
+					Put8UV(&dstU, &dstV, &refU, &refV, 0, 0, 40, 40, w, h, w, h, subX, subY, RegularFilters, &scratch)
+				}
+			})
+		}
+	}
+}
+
 // BenchmarkMC8Prep measures the dav1d-style prep kernels on interior blocks.
 func BenchmarkMC8Prep(b *testing.B) {
 	rng := rand.New(rand.NewSource(4))
