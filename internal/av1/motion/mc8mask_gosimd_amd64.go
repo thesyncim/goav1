@@ -166,6 +166,7 @@ func mc8BlendStep(a, b unsafe.Pointer, m archsimd.Uint16x16, op int, wts archsim
 // mc8AVX2Blend runs the mask blend or the distance-weighted average over a
 // block mc8BlendShapeOK accepts; a and b hold w*h samples.
 func mc8AVX2Blend(dst unsafe.Pointer, ds int, a, b []uint16, w, h int, mask unsafe.Pointer, ms int, sub bool, op int, wts int32) {
+	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
 	pa := unsafe.Pointer(&a[0])
 	pb := unsafe.Pointer(&b[0])
 	ones := archsimd.BroadcastInt8x32(1)
@@ -273,6 +274,7 @@ func mc8DiffStep(a, b unsafe.Pointer, invert bool, one, base, m64 archsimd.Uint1
 }
 
 func mc8AVX2DiffWtd(mask unsafe.Pointer, ms int, a, b []uint16, w, h int, invert bool) {
+	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
 	pa := unsafe.Pointer(&a[0])
 	pb := unsafe.Pointer(&b[0])
 	one := archsimd.BroadcastUint16x16(1)

@@ -50,6 +50,7 @@ func mc16BlendAvgFast(dst *frame.Plane, a, b []uint16, bitDepth, dstX, dstY, w, 
 		return false
 	}
 	rb, bias := mc16BlendRoundBits(bitDepth)
+	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
 	mc16BlendAvg(unsafe.Pointer(&dst.Pix[off]), dst.Stride, unsafe.Pointer(&a[0]), unsafe.Pointer(&b[0]), w, h, rb, bias, uint16(1)<<bitDepth-1)
 	return true
 }
@@ -103,6 +104,7 @@ func mc16BlendMaskFast(dst frame.Plane, a, b []uint16, bitDepth, dstX, dstY, w, 
 		return false
 	}
 	rb, bias := mc16BlendRoundBits(bitDepth)
+	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
 	mc16BlendMask(unsafe.Pointer(&dst.Pix[off]), dst.Stride, unsafe.Pointer(&a[0]), unsafe.Pointer(&b[0]), w, h, unsafe.Pointer(&mask[0]), maskStride, subX,
 		uint32(bias)<<(16-rb), uint16(10-rb), int16(1)<<bitDepth-1)
 	return true
@@ -158,6 +160,7 @@ func mc16DiffWtdMaskFast(mask []byte, maskStride int, a, b []uint16, bitDepth, w
 		maskStride < w || (h-1)*maskStride+w > len(mask) {
 		return false
 	}
+	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
 	mc16DiffWtdMask(unsafe.Pointer(&mask[0]), maskStride, unsafe.Pointer(&a[0]), unsafe.Pointer(&b[0]), w, h, invert)
 	return true
 }

@@ -9,7 +9,6 @@ package motion
 import (
 	"os"
 	"simd/archsimd"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -147,16 +146,16 @@ func warpVertical8FullGamma0GoSIMD(dst frame.Plane, tmp *warpTmp, i, j, rowShift
 // final subtraction into the accumulator seed is exact for the arithmetic
 // right shift: (sum >> 11) - 384 == (sum - 384*2048) >> 11.
 // The caller has proved that all eight destination columns fit.
-// All intermediate pointer loads stay within the 15x8 fixed array.
 func warpVertical8Gamma0Kernel(dst frame.Plane, tmp *warpTmp, i, j, rowShift, colShift, baseSY, delta int) {
 	const seed = (1 << (8 + 2*filterBits - round0Bits)) + (1 << (round1Bits - 1)) - ((1<<7)+(1<<8))*(1<<round1Bits)
 	bias := archsimd.BroadcastInt32x4(seed)
 	right := archsimd.BroadcastInt32x4(-round1Bits)
-	tmpBase := unsafe.Pointer(&tmp[0])
-	load := func(off int) archsimd.Int32x4 {
-		return archsimd.LoadInt32x4((*[4]int32)(unsafe.Add(tmpBase, off*4))[:])
-	}
 	for row := 0; row < 8; row++ {
+		// The eight taps of this output row read tmp rows row..row+7.
+		win := (*[8 * warpedIntermediateColumns]int32)(tmp[row*warpedIntermediateColumns:])
+		load := func(off int) archsimd.Int32x4 {
+			return archsimd.LoadInt32x4Array((*[4]int32)(win[off : off+4]))
+		}
 		coeff := &warpedFilter[warp8FilterIndex(baseSY+delta*row)]
 		c0 := archsimd.BroadcastInt32x4(int32(coeff[0]))
 		c1 := archsimd.BroadcastInt32x4(int32(coeff[1]))
@@ -166,7 +165,7 @@ func warpVertical8Gamma0Kernel(dst frame.Plane, tmp *warpTmp, i, j, rowShift, co
 		c5 := archsimd.BroadcastInt32x4(int32(coeff[5]))
 		c6 := archsimd.BroadcastInt32x4(int32(coeff[6]))
 		c7 := archsimd.BroadcastInt32x4(int32(coeff[7]))
-		p := row * warpedIntermediateColumns
+		const p = 0
 		lo := load(p).MulAdd(c0, bias)
 		hi := load(p+4).MulAdd(c0, bias)
 		lo = load(p+8).MulAdd(c1, lo)
@@ -192,22 +191,22 @@ func warpVertical8Gamma0Kernel(dst frame.Plane, tmp *warpTmp, i, j, rowShift, co
 // filter rows are transposed in registers so each tap vector contains the
 // coefficients for eight columns. The int32 horizontal intermediate fits
 // signed int16, so widening products preserve the scalar dot product.
-// All intermediate pointer loads stay within the 15x8 fixed array.
 func warpVerticalGoSIMDCommon(dst frame.Plane, tmp *warpTmp, i, j, rowShift, colShift, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert int) {
 	const seed = (1 << (8 + 2*filterBits - round0Bits)) + (1 << (round1Bits - 1)) - ((1<<7)+(1<<8))*(1<<round1Bits)
 	bias := archsimd.BroadcastInt32x4(seed)
 	right := archsimd.BroadcastInt32x4(-round1Bits)
-	tmpBase := unsafe.Pointer(&tmp[0])
-	load := func(off int) archsimd.Int16x8 {
-		lo := archsimd.LoadInt32x4((*[4]int32)(unsafe.Add(tmpBase, off*4))[:])
-		hi := archsimd.LoadInt32x4((*[4]int32)(unsafe.Add(tmpBase, (off+4)*4))[:])
-		// u8PackU16From32 written out, with the second narrow as XTN2 into the
-		// high half: through the helper each load left an inline-mark NOP and
-		// joined two XTN results with a ZIP1.
-		n := lo.TruncToInt16().ToBits().ReshapeToUint64s().BitsToFloat64()
-		return n.SetElem(1, hi.TruncToInt16().ToBits().ReshapeToUint64s().BitsToFloat64().GetElem(0)).ToBits().ReshapeToUint16s().BitsToInt16()
-	}
 	for row := 0; row < 8; row++ {
+		// The eight taps of this output row read tmp rows row..row+7.
+		win := (*[8 * warpedIntermediateColumns]int32)(tmp[row*warpedIntermediateColumns:])
+		load := func(off int) archsimd.Int16x8 {
+			lo := archsimd.LoadInt32x4Array((*[4]int32)(win[off : off+4]))
+			hi := archsimd.LoadInt32x4Array((*[4]int32)(win[off+4 : off+8]))
+			// u8PackU16From32 written out, with the second narrow as XTN2 into
+			// the high half: through the helper each load left an inline-mark
+			// NOP and joined two XTN results with a ZIP1.
+			n := lo.TruncToInt16().ToBits().ReshapeToUint64s().BitsToFloat64()
+			return n.SetElem(1, hi.TruncToInt16().ToBits().ReshapeToUint64s().BitsToFloat64().GetElem(0)).ToBits().ReshapeToUint16s().BitsToInt16()
+		}
 		sy := baseSY + delta*row + 512
 		f0 := archsimd.LoadInt8x16(warp8FilterPadded[(64+(sy>>10))&255][:])
 		f1 := archsimd.LoadInt8x16(warp8FilterPadded[(64+((sy+gamma)>>10))&255][:])
@@ -237,7 +236,7 @@ func warpVerticalGoSIMDCommon(dst frame.Plane, tmp *warpTmp, i, j, rowShift, col
 		t5 := c45.BitsToInt8().HiToLo().ExtendLo8ToInt16()
 		t6 := c67.BitsToInt8().ExtendLo8ToInt16()
 		t7 := c67.BitsToInt8().HiToLo().ExtendLo8ToInt16()
-		p := row * warpedIntermediateColumns
+		const p = 0
 		lo, hi := u8WideMAC8(bias, bias, load(p), t0)
 		lo, hi = u8WideMAC8(lo, hi, load(p+8), t1)
 		lo, hi = u8WideMAC8(lo, hi, load(p+16), t2)

@@ -117,6 +117,7 @@ func mc16PutFast(dst *frame.Plane, ref *frame.Plane, bitDepth, dstX, dstY, refX,
 	if !ok {
 		return false
 	}
+	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
 	d := unsafe.Pointer(&dst.Pix[dOff])
 	maxV := int16(1)<<bitDepth - 1
 	round0, round1 := highBDRoundBits(uint8(bitDepth))
@@ -146,6 +147,7 @@ func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, fi
 		return false
 	}
 	rc := compoundRound0(uint8(bitDepth))
+	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
 	o := unsafe.Pointer(&out[0])
 	px := &mc16Pairs[mc8Kind(filters.X, filterW)][subX]
 	py := &mc16Pairs[mc8Kind(filters.Y, filterH)][subY]

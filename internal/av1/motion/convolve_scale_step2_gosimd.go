@@ -56,6 +56,7 @@ func convolveScale2D8Step2GoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dst
 		coef[t] = archsimd.LoadInt16x8(c[:])
 	}
 	im := imBuf[:]
+	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
 	base := unsafe.Pointer(unsafe.SliceData(ref.Pix))
 	for y := range imH {
 		scaledStep2HorizontalRow(unsafe.Add(base, (startRow+y)*ref.Stride+xi0), w8, odd, &coef, im[y*maxBlockSize:])

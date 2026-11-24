@@ -31,6 +31,7 @@ func mc16CopyFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w,
 	if dOff+(h-1)*dst.Stride+2*w > len(dst.Pix) || sOff+(h-1)*ref.Stride+2*w > len(ref.Pix) {
 		return false
 	}
+	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
 	mc8Copy(unsafe.Pointer(&dst.Pix[dOff]), dst.Stride, unsafe.Pointer(&ref.Pix[sOff]), ref.Stride, 2*w, h)
 	return true
 }

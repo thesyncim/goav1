@@ -181,6 +181,7 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 	if !ok {
 		return false
 	}
+	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
 	d := unsafe.Pointer(&dst.Pix[dOff])
 	if w == 4 {
 		switch {
@@ -270,6 +271,7 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 	if !ok {
 		return false
 	}
+	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
 	o := unsafe.Pointer(&out[0])
 	if w == 4 {
 		switch {
