@@ -11,7 +11,7 @@ import (
 // field of tile.PaletteModeResult, so a field added there cannot be silently
 // dropped by the pointer-free split record.
 func TestRecordPaletteCoversPaletteModeResult(t *testing.T) {
-	want := map[string]bool{"YSize": true, "UVSize": true, "YColors": true, "UColors": true, "VColors": true, "YMap": true, "UVMap": true}
+	want := map[string]bool{"YSize": true, "UVSize": true, "YColors": true, "UColors": true, "VColors": true, "YMapSlot": true, "UVMapSlot": true}
 	typ := reflect.TypeFor[tile.PaletteModeResult]()
 	for i := range typ.NumField() {
 		if name := typ.Field(i).Name; !want[name] {

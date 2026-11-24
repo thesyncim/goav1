@@ -126,8 +126,8 @@ func FuzzReadPaletteMode(f *testing.F) {
 					t.Fatalf("YColors[%d]=%d exceeds bitdepth max %d", i, result.YColors[i], maxSample)
 				}
 			}
-			if result.YMap != nil {
-				for _, v := range result.YMap {
+			if result.YMapSlot != 0 {
+				for _, v := range scratch.Y {
 					if v >= result.YSize {
 						t.Fatalf("YMap entry=%d >= size=%d", v, result.YSize)
 					}
@@ -138,8 +138,8 @@ func FuzzReadPaletteMode(f *testing.F) {
 			if result.UVSize < PaletteMinSize || result.UVSize > PaletteMaxSize {
 				t.Fatalf("UVSize=%d out of range", result.UVSize)
 			}
-			if result.UVMap != nil {
-				for _, v := range result.UVMap {
+			if result.UVMapSlot != 0 {
+				for _, v := range scratch.UV {
 					if v >= result.UVSize {
 						t.Fatalf("UVMap entry=%d >= size=%d", v, result.UVSize)
 					}

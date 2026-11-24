@@ -39,32 +39,6 @@ func frameWorkReconWavefrontCol(v int) (int32, bool) {
 	return int32(v), true
 }
 
-const (
-	frameWorkReconPaletteY uint8 = 1 << iota
-	frameWorkReconPaletteUV
-	frameWorkReconMotionExtras
-	frameWorkReconSubChroma
-)
-
-// frameWorkReconPaletteBinding records which buffered reconstruction event
-// should be rebound to which value-arena palette maps once event collection is
-// complete. Keeping the binding out of frameWorkReconEvent avoids growing every
-// non-palette event for a rare screen-content path.
-type frameWorkReconPaletteBinding struct {
-	visitIndex     int32
-	paletteIndex   int32
-	extrasIndex    int32
-	subChromaIndex int32
-	mask           uint8
-}
-
-// frameWorkDeferredSlots are the value-arena slots bufferDeferredVisit copied
-// a visit's out-of-line payloads into; mask says which are set.
-type frameWorkDeferredSlots struct {
-	palette, extras, subChroma int
-	mask                       uint8
-}
-
 // FrameWorkTileResidualCDFs groups the caller-owned entropy states needed to
 // walk block syntax, decode transform trees, and decode residual coefficients.
 type FrameWorkTileResidualCDFs struct {
@@ -308,14 +282,13 @@ type FrameWorkTileResidualScratch struct {
 	// appends each block's visit, each coded TXB's cbi entry and its
 	// coefficients, and reconstruction re-walks the blocks' transform layout
 	// reading them back in the same order.
-	// paletteArena holds deep-copied palette colour maps for buffered visits
-	// whose prediction is palette-coded: the decoded BlockLoopVisit.Prediction
-	// carries YMap/UVMap pointers into a single per-tile PaletteModeScratch that
-	// later blocks overwrite, so a buffered visit must own its own copy. Palette
-	// events store indexes while the arena is still appendable; pointers into the
-	// final value arena are installed immediately before replay. All buffers
-	// retain capacity across tiles and are sliced to zero length per job by
-	// resetDeferredReconBuffers.
+	// The visits name their out-of-line payloads (palette colour maps,
+	// warp/OBMC extras, sub8x8 chroma cells) by slot. A decoded visit's slots
+	// point into the tile's single-slot payloads (fused), which later blocks
+	// overwrite, so bufferDeferredVisit copies each payload into the arenas
+	// and renumbers the slots; the lanes read them through the published
+	// view. All buffers retain capacity across tiles and are sliced to zero
+	// length per job by resetDeferredReconBuffers.
 	reconVisits []tile.BlockLoopVisit
 	reconCBI    []frameWorkReconCBI
 	cfArena     []int32
@@ -328,14 +301,14 @@ type FrameWorkTileResidualScratch struct {
 	// the committed length.
 	cfDirty int
 	// coefBuf is the fused path's dav1d t->cf coefficient buffer.
-	coefBuf         coefBuffer
-	paletteArena    []tile.PaletteModeScratch
-	paletteBindings []frameWorkReconPaletteBinding
-	// extrasArena holds the copied warp/OBMC payloads of buffered visits
-	// (BlockPredictionModeResult.Extras points into per-tile decode state);
-	// they are bound like the palette maps.
-	extrasArena []tile.BlockPredictionMotionExtras
-	// subChromaArena holds the copied sub8x8 chroma cells, bound the same way.
+	coefBuf coefBuffer
+	// fused is the decode state's single-slot payloads for the current job:
+	// what a just-decoded visit's slots name.
+	fused tile.BlockPayloads
+	// paletteArena, extrasArena and subChromaArena hold the payloads of
+	// buffered visits; a buffered visit's slot n is element n-1.
+	paletteArena   []tile.PaletteModeScratch
+	extrasArena    []tile.BlockPredictionMotionExtras
 	subChromaArena []tile.SubChromaInterResult
 
 	// wavefront holds the reusable SB-row wavefront scheduling state used when
@@ -548,6 +521,7 @@ func (wf *frameWorkReconWavefront) ensureStates(workers int, c *frameWorkTileRes
 		st.index = c.index
 		st.geom.reset()
 		st.batch.geomCache = &st.geom
+		st.batch.payloads = &st.payloads
 		_ = frameWorkPrimeLumaReconGeometry(&st.batch, c.index)
 		st.bindPrimedLumaReconGeometry()
 		st.localStats = FrameWorkTileResidualStats{}
@@ -626,36 +600,22 @@ func (s *FrameWorkTileResidualScratch) resetDeferredReconBuffers() {
 	s.cfArena = s.cfArena[:0]
 	s.cfOverflow = false
 	s.paletteArena = s.paletteArena[:0]
-	s.paletteBindings = s.paletteBindings[:0]
 	s.extrasArena = s.extrasArena[:0]
 	s.subChromaArena = s.subChromaArena[:0]
 }
 
-// nextPaletteScratch returns the value-arena index for a per-block palette map
-// backing. Callers must store the index, not a pointer, while event collection
-// is still appending: slice growth may move value elements.
-func (s *FrameWorkTileResidualScratch) nextPaletteScratch() int {
-	n := len(s.paletteArena)
-	if n < cap(s.paletteArena) {
-		s.paletteArena = s.paletteArena[:n+1]
-		return n
-	}
-	s.paletteArena = append(s.paletteArena, tile.PaletteModeScratch{})
-	return n
-}
-
 // bufferDeferredVisit appends a copy of visit to reconVisits for deferred
-// replay and returns its index. The visit is copied once, straight into its
-// slot (a BlockLoopVisit is close to 1 KiB, and this runs for every block of a
-// deferred tile). The decoded visit's palette colour maps (YMap/UVMap) point
-// into a single per-tile PaletteModeScratch that subsequent palette-coded
-// blocks overwrite during pass 1; the fused path reads them immediately, but
-// the deferred path replays prediction later, by which time the shared scratch
-// holds a later block's map. Deep-copy the referenced map(s) into the scratch
-// palette arena and return an index binding so pass 2 can install stable
-// pointers after event collection. Non-palette visits (the overwhelming
-// majority) pay no palette copy.
-func (s *FrameWorkTileResidualScratch) bufferDeferredVisit(visit *tile.BlockLoopVisit) (int, frameWorkDeferredSlots) {
+// replay. The visit is copied once, straight into its slot (a BlockLoopVisit
+// is close to 1 KiB, and this runs for every block of a deferred tile; it
+// holds no pointers, so the copy runs no write barrier). The decoded visit's
+// payload slots name the tile's single-slot payloads, which subsequent blocks
+// overwrite during the parse; the fused path reads them immediately, but the
+// deferred path replays prediction later. Each named payload is copied into
+// its arena and the slot renumbered to it. The arena elements are written
+// before the visit's row is published and never again, so a lane reading a
+// published view sees them final even after a later append moves an arena.
+// Visits without payloads (the overwhelming majority) pay no copy.
+func (s *FrameWorkTileResidualScratch) bufferDeferredVisit(visit *tile.BlockLoopVisit) {
 	n := len(s.reconVisits)
 	if n < cap(s.reconVisits) {
 		s.reconVisits = s.reconVisits[:n+1]
@@ -664,118 +624,50 @@ func (s *FrameWorkTileResidualScratch) bufferDeferredVisit(visit *tile.BlockLoop
 		s.reconVisits = append(s.reconVisits, *visit)
 	}
 	p := &s.reconVisits[n].Prediction
-	slots := frameWorkDeferredSlots{palette: -1, extras: -1, subChroma: -1}
-	if p.Extras != nil {
-		slots.extras = len(s.extrasArena)
-		s.extrasArena = append(s.extrasArena, *p.Extras)
-		p.Extras = nil
-		slots.mask |= frameWorkReconMotionExtras
+	if p.ExtrasSlot|p.SubChromaSlot|p.Palette.YMapSlot|p.Palette.UVMapSlot == 0 {
+		return
 	}
-	if p.SubChromaInter != nil {
-		slots.subChroma = len(s.subChromaArena)
-		s.subChromaArena = append(s.subChromaArena, *p.SubChromaInter)
-		p.SubChromaInter = nil
-		slots.mask |= frameWorkReconSubChroma
+	src := &s.fused
+	if e := src.MotionExtras(p); e != nil {
+		s.extrasArena = append(s.extrasArena, *e)
+		p.ExtrasSlot = uint32(len(s.extrasArena))
+	} else {
+		p.ExtrasSlot = 0
+	}
+	if c := src.SubChromaInter(p); c != nil {
+		s.subChromaArena = append(s.subChromaArena, *c)
+		p.SubChromaSlot = uint32(len(s.subChromaArena))
+	} else {
+		p.SubChromaSlot = 0
 	}
 	pal := &p.Palette
-	if pal.YMap == nil && pal.UVMap == nil {
-		return n, slots
+	y, uv := src.PaletteYMap(pal), src.PaletteUVMap(pal)
+	pal.YMapSlot, pal.UVMapSlot = 0, 0
+	if y == nil && uv == nil {
+		return
 	}
-	slots.palette = s.nextPaletteScratch()
-	store := &s.paletteArena[slots.palette]
-	if pal.YMap != nil {
-		store.Y = *pal.YMap
-		pal.YMap = nil
-		slots.mask |= frameWorkReconPaletteY
+	// The arena keeps its capacity across jobs; a reused element needs no
+	// clearing, since only the maps the slots name are read.
+	if k := len(s.paletteArena); k < cap(s.paletteArena) {
+		s.paletteArena = s.paletteArena[:k+1]
+	} else {
+		s.paletteArena = append(s.paletteArena, tile.PaletteModeScratch{})
 	}
-	if pal.UVMap != nil {
-		store.UV = *pal.UVMap
-		pal.UVMap = nil
-		slots.mask |= frameWorkReconPaletteUV
+	slot := uint32(len(s.paletteArena))
+	store := &s.paletteArena[slot-1]
+	if y != nil {
+		store.Y = *y
+		pal.YMapSlot = slot
 	}
-	return n, slots
+	if uv != nil {
+		store.UV = *uv
+		pal.UVMapSlot = slot
+	}
 }
 
-func (s *FrameWorkTileResidualScratch) rememberDeferredPalette(visitIndex int, slots frameWorkDeferredSlots) error {
-	mask := slots.mask
-	if mask == 0 {
-		return nil
-	}
-	visitIndex32, ok := frameWorkReconIndex(visitIndex)
-	if !ok {
-		return ErrInvalidBatch
-	}
-	binding := frameWorkReconPaletteBinding{visitIndex: visitIndex32, paletteIndex: -1, extrasIndex: -1, subChromaIndex: -1, mask: mask}
-	if mask&(frameWorkReconPaletteY|frameWorkReconPaletteUV) != 0 {
-		if binding.paletteIndex, ok = frameWorkReconIndex(slots.palette); !ok {
-			return ErrInvalidBatch
-		}
-	}
-	if mask&frameWorkReconMotionExtras != 0 {
-		if binding.extrasIndex, ok = frameWorkReconIndex(slots.extras); !ok {
-			return ErrInvalidBatch
-		}
-	}
-	if mask&frameWorkReconSubChroma != 0 {
-		if binding.subChromaIndex, ok = frameWorkReconIndex(slots.subChroma); !ok {
-			return ErrInvalidBatch
-		}
-	}
-	s.paletteBindings = append(s.paletteBindings, binding)
-	return nil
-}
-
-func (s *FrameWorkTileResidualScratch) finalizeDeferredPalettes() error {
-	_, err := s.installDeferredPalettes(0)
-	return err
-}
-
-// installDeferredPalettes installs the colour-map pointers of the palette
-// bindings recorded since from and returns the new cursor. The arena slots are
-// fully written before their binding is recorded and never written again, so
-// a pointer stays valid after a later append moves the arena.
-func (s *FrameWorkTileResidualScratch) installDeferredPalettes(from int) (int, error) {
-	if from < 0 || from > len(s.paletteBindings) {
-		return from, ErrInvalidBatch
-	}
-	for i := from; i < len(s.paletteBindings); i++ {
-		binding := &s.paletteBindings[i]
-		visitIndex := int(binding.visitIndex)
-		if binding.visitIndex < 0 || visitIndex >= len(s.reconVisits) {
-			return i, ErrInvalidBatch
-		}
-		visit := &s.reconVisits[visitIndex]
-		if binding.mask&frameWorkReconMotionExtras != 0 {
-			extrasIndex := int(binding.extrasIndex)
-			if binding.extrasIndex < 0 || extrasIndex >= len(s.extrasArena) {
-				return i, ErrInvalidBatch
-			}
-			visit.Prediction.Extras = &s.extrasArena[extrasIndex]
-		}
-		if binding.mask&frameWorkReconSubChroma != 0 {
-			subChromaIndex := int(binding.subChromaIndex)
-			if binding.subChromaIndex < 0 || subChromaIndex >= len(s.subChromaArena) {
-				return i, ErrInvalidBatch
-			}
-			visit.Prediction.SubChromaInter = &s.subChromaArena[subChromaIndex]
-		}
-		if binding.mask&(frameWorkReconPaletteY|frameWorkReconPaletteUV) == 0 {
-			continue
-		}
-		paletteIndex := int(binding.paletteIndex)
-		if binding.paletteIndex < 0 || paletteIndex >= len(s.paletteArena) {
-			return i, ErrInvalidBatch
-		}
-		store := &s.paletteArena[paletteIndex]
-		pal := &visit.Prediction.Palette
-		if binding.mask&frameWorkReconPaletteY != 0 {
-			pal.YMap = &store.Y
-		}
-		if binding.mask&frameWorkReconPaletteUV != 0 {
-			pal.UVMap = &store.UV
-		}
-	}
-	return len(s.paletteBindings), nil
+// deferredPayloads is the arenas buffered visits' slots name.
+func (s *FrameWorkTileResidualScratch) deferredPayloads() tile.BlockPayloads {
+	return tile.BlockPayloads{Extras: s.extrasArena, SubChroma: s.subChromaArena, Palette: s.paletteArena}
 }
 
 // FrameWorkTileRestorationRequest carries frame-wide restoration unit storage
@@ -1292,6 +1184,9 @@ func decodeAndReconstructJobResidualsPtr(b *FrameWorkBatch, index int, state *ti
 		int32Scratch:      req.Int32Scratch,
 		residualScratch:   req.ResidualScratch,
 	}
+	scratch.fused = state.Payloads(&scratch.Loop)
+	scratch.controller.batch.payloads = &scratch.fused
+	scratch.controller.recon.batch.payloads = &scratch.fused
 	scratch.controller.recon.bindPrimedLumaReconGeometry()
 	scratch.controller.reconHot = &scratch.controller.recon
 	if loopReq.BeforeSuperblock != nil || readRestoration || streamRecon {
@@ -1507,8 +1402,11 @@ type frameWorkReconState struct {
 	// points at it on the wavefront path so the per-block memoization never
 	// races. localStats accumulates the goroutine's reconstruction counters,
 	// merged into the controller stats after the wavefront joins.
-	geom        frameWorkJobGeometryCache
-	localStats  FrameWorkTileResidualStats
+	geom       frameWorkJobGeometryCache
+	localStats FrameWorkTileResidualStats
+	// payloads is a lane's view of the deferred payload arenas, refreshed
+	// from the published view per SB row; batch.payloads points at it.
+	payloads    tile.BlockPayloads
 	lumaReady   bool
 	chromaReady bool
 
@@ -1582,7 +1480,8 @@ func (c *frameWorkTileResidualLoopController) reconBBegin(visit *tile.BlockLoopV
 		c.stats.CoefficientBlocks++
 	}
 	if c.deferReconstruction {
-		return c.scratch.rememberDeferredPalette(c.scratch.bufferDeferredVisit(visit))
+		c.scratch.bufferDeferredVisit(visit)
+		return nil
 	}
 	recon := c.reconHot
 	if recon == nil {
@@ -1613,6 +1512,10 @@ func (c *frameWorkTileResidualLoopController) fusedReconState() *frameWorkReconS
 		}
 		if c.scratch != nil {
 			c.recon.cflScratch = &c.scratch.CFL
+			if c.state != nil {
+				c.scratch.fused = c.state.Payloads(&c.scratch.Loop)
+				c.recon.batch.payloads = &c.scratch.fused
+			}
 		}
 		c.recon.bindPrimedLumaReconGeometry()
 	}
@@ -1783,6 +1686,7 @@ func (wf *frameWorkReconWavefront) reconstructRow(st *frameWorkReconState, view 
 	if !ok {
 		return ErrInvalidBatch
 	}
+	st.payloads = view.payloads
 	for k := range sbs {
 		sb := sbs[k]
 		if row > 0 {

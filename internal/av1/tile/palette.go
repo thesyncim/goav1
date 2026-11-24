@@ -26,18 +26,16 @@ type PaletteModeResult struct {
 	YColors [PaletteMaxSize]uint16
 	UColors [PaletteMaxSize]uint16
 	VColors [PaletteMaxSize]uint16
-	YMap    *[MaxPalettePixels]uint8
-	UVMap   *[MaxPalettePixels]uint8
+	// YMapSlot and UVMapSlot name the colour index maps as BlockPayloads
+	// palette slots (0 is none): ReadPaletteTokens decodes into the caller's
+	// map scratch and sets slot 1, the single-slot payloads of the decoding
+	// tile.
+	YMapSlot  uint32
+	UVMapSlot uint32
 }
 
-// clear zeroes p. It clears the colour-map pointers only when set, so the
-// per-block reset of a non-palette block (nearly all of them) runs no write
-// barrier while a garbage collection is marking.
 func (p *PaletteModeResult) clear() {
-	p.YSize, p.UVSize = 0, 0
-	p.YColors, p.UColors, p.VColors = [PaletteMaxSize]uint16{}, [PaletteMaxSize]uint16{}, [PaletteMaxSize]uint16{}
-	setPtr(&p.YMap, nil)
-	setPtr(&p.UVMap, nil)
+	*p = PaletteModeResult{}
 }
 
 type PaletteModeScratch struct {
@@ -285,13 +283,13 @@ func (s *DecodeState) ReadPaletteTokens(cdfs *IntraModeCDFs, req PaletteModeRequ
 		if err := s.readPaletteColorMapY(cdfs, req, dst, &mapScratch.Y); err != nil {
 			return fmt.Errorf("palette map y size=%d block=%v x4=%d y4=%d colors=%v: %w", dst.YSize, req.Size, req.X4, req.Y4, dst.YColors, err)
 		}
-		dst.YMap = &mapScratch.Y
+		dst.YMapSlot = 1
 	}
 	if dst.UVSize > 0 {
 		if err := s.readPaletteColorMapUV(cdfs, req, dst, &mapScratch.UV); err != nil {
 			return fmt.Errorf("palette map uv size=%d block=%v x4=%d y4=%d u=%v v=%v: %w", dst.UVSize, req.Size, req.X4, req.Y4, dst.UColors, dst.VColors, err)
 		}
-		dst.UVMap = &mapScratch.UV
+		dst.UVMapSlot = 1
 	}
 	return nil
 }

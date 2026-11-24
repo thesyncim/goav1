@@ -18,7 +18,7 @@ func TestHotStructSizes(t *testing.T) {
 		// persistent lane goroutines instead of spawning them per frame.
 		// DeferredTemporalReferences (8 bytes) hands the tile loops the
 		// references they project per superblock row (dav1d load_tmvs).
-		{name: "FrameWorkBatch", size: unsafe.Sizeof(FrameWorkBatch{}), max: 1640}, // +8: FrameThread (dav1d frame-thread split); +8: SegmentMaps (dav1d cur/prev_segmap)
+		{name: "FrameWorkBatch", size: unsafe.Sizeof(FrameWorkBatch{}), max: 1648}, // +8: FrameThread (dav1d frame-thread split); +8: SegmentMaps (dav1d cur/prev_segmap); +8: visit payload slots
 		{name: "FrameWorkFrameContext", size: unsafe.Sizeof(FrameWorkFrameContext{}), max: 1152},
 		{name: "FrameWorkPlaneRegion", size: unsafe.Sizeof(FrameWorkPlaneRegion{}), max: 72},
 		{name: "FrameWorkTileResidualCDFStorage", size: unsafe.Sizeof(FrameWorkTileResidualCDFStorage{}), max: 57 * hotStructKiB}, // +508: DV, the intra block copy MV context
@@ -40,14 +40,13 @@ func TestHotStructSizes(t *testing.T) {
 		// typed runner adds no space beyond the former function-plus-range fields.
 		// It also embeds a FrameWorkBatch, hence the wavefront lane channel and
 		// the deferred temporal-reference pointer.
-		{name: "poolTask", size: unsafe.Sizeof(poolTask{}), max: 1752}, // +8: FrameWorkBatch.FrameThread; +8: FrameWorkBatch.SegmentMaps
+		{name: "poolTask", size: unsafe.Sizeof(poolTask{}), max: 1760}, // +8: FrameWorkBatch.FrameThread; +8: FrameWorkBatch.SegmentMaps; +8: FrameWorkBatch.payloads
 		{name: "frameWorkReconCBI", size: unsafe.Sizeof(frameWorkReconCBI{}), max: 6},
-		{name: "frameWorkReconPaletteBinding", size: unsafe.Sizeof(frameWorkReconPaletteBinding{}), max: 20}, // +4: the sub8x8 chroma cells arena slot
-		{name: "frameWorkReconSB", size: unsafe.Sizeof(frameWorkReconSB{}), max: 20},                         // +8: the superblock's cbi and cf cursors
+		{name: "frameWorkReconSB", size: unsafe.Sizeof(frameWorkReconSB{}), max: 20}, // +8: the superblock's cbi and cf cursors
 		// The wavefront is allocated once per scratch behind a pointer; it carries
 		// the parse-side span cursor and the published row snapshot the lanes
 		// read while the tile is still parsing.
-		{name: "frameWorkReconWavefront", size: unsafe.Sizeof(frameWorkReconWavefront{}), max: 536}, // +8: frameThread, +8: reconTile; +24: the published view snapshots the cf arena
+		{name: "frameWorkReconWavefront", size: unsafe.Sizeof(frameWorkReconWavefront{}), max: 552}, // +8: frameThread, +8: reconTile; +24: the published view snapshots the cf arena; +72: the published view carries the payload arenas, -8: no palette install cursor
 		{name: "frameWorkBlockCoeffGeometry", size: unsafe.Sizeof(frameWorkBlockCoeffGeometry{}), max: 88},
 		// The geometry cache also binds each job's inter-prediction output planes
 		// once (dav1d binds f->cur per frame); it lives in per-worker scratch.

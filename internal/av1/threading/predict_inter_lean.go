@@ -415,7 +415,7 @@ func (b *FrameWorkBatch) predictBlockInterLeanPlanes(index int, visit *tile.Bloc
 	// target serves all three planes without re-zeroing it per plane.
 	var t frameWorkInterTarget
 	for plane := FrameWorkPlaneY; plane <= FrameWorkPlaneV; plane++ {
-		if !compound && plane != FrameWorkPlaneY && visit.Prediction.SubChromaInter != nil {
+		if !compound && plane != FrameWorkPlaneY && visit.Prediction.SubChromaSlot != 0 {
 			if err := b.predictBlockInterSubChromaPlanePtr(index, visit, plane, scratch); err != nil {
 				return err
 			}
@@ -728,7 +728,7 @@ func (b *FrameWorkBatch) reconBInter(index int, l *frameWorkLeanInter, visit *ti
 	// same-size reference (the views and the verdicts are block invariants, so
 	// they are tested once, before anything is written); any other block takes
 	// the per-plane chain, which clips or reroutes plane by plane.
-	if !compound && l.bps == 1 && pred.SubChromaInter == nil {
+	if !compound && l.bps == 1 && pred.SubChromaSlot == 0 {
 		need := uint32(1)
 		if l.chroma {
 			need = 7
@@ -980,10 +980,10 @@ func (b *FrameWorkBatch) reconBInterPlanes(index int, l *frameWorkLeanInter, vis
 		blockX4, blockY4 := int(block.X4), int(block.Y4)
 		width = (((blockX4 + int(block.VisibleW4) + sx) >> sx) - (blockX4 >> sx)) * 4
 		height = (((blockY4 + int(block.VisibleH4) + sy) >> sy) - (blockY4 >> sy)) * 4
-		if !compound && pred.SubChromaInter != nil {
+		if !compound && pred.SubChromaSlot != 0 {
 			cx, cy := (miCol*4)>>sx, (miRow*4)>>sy
 			cfw, cfh := int(cdims.W4)*4, int(cdims.H4)*4
-			if width == cfw && height == cfh && b.reconBInterSubChroma8(l, pred.SubChromaInter, cx, cy, cfw, cfh, sx != 0, sy != 0, scratch) {
+			if width == cfw && height == cfh && b.reconBInterSubChroma8(l, b.payloads.SubChromaInter(pred), cx, cy, cfw, cfh, sx != 0, sy != 0, scratch) {
 				return true, nil
 			}
 			if err := b.predictBlockInterSubChromaPlanePtr(index, visit, FrameWorkPlaneU, scratch); err != nil {

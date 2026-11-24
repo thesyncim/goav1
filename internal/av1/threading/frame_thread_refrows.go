@@ -45,7 +45,7 @@ func (n *frameThreadRefNeed) add(ref tile.ReferenceFrame, bottom int32, mv motio
 }
 
 // addVisit adds the reference rows one buffered block's inter prediction reads.
-func (n *frameThreadRefNeed) addVisit(v *tile.BlockLoopVisit) {
+func (n *frameThreadRefNeed) addVisit(v *tile.BlockLoopVisit, pl *tile.BlockPayloads) {
 	p := &v.Prediction
 	if !p.Valid || p.Intra || p.Intrabc {
 		return
@@ -60,8 +60,8 @@ func (n *frameThreadRefNeed) addVisit(v *tile.BlockLoopVisit) {
 			n.add(refs.At(i), bottom, p.InterMotion.MV[i], warp || p.GlobalWarpedMotionValid || p.GlobalWarpedMotionCompoundValid[i])
 		}
 	}
-	if p.MotionModeValid && p.MotionMode == tile.MotionModeOBMC && p.OverlappableNeighborsValid && p.Extras != nil {
-		s := &p.Extras.OverlappableNeighbors
+	if extras := pl.MotionExtras(p); extras != nil && p.MotionModeValid && p.MotionMode == tile.MotionModeOBMC && p.OverlappableNeighborsValid {
+		s := &extras.OverlappableNeighbors
 		for i := range min(int(s.AboveCount), len(s.Above)) {
 			n.addNeighbor(&s.Above[i], bottom)
 		}
@@ -69,7 +69,7 @@ func (n *frameThreadRefNeed) addVisit(v *tile.BlockLoopVisit) {
 			n.addNeighbor(&s.Left[i], bottom)
 		}
 	}
-	if c := p.SubChromaInter; c != nil {
+	if c := pl.SubChromaInter(p); c != nil {
 		for i := range min(int(c.Count), len(c.Cells)) {
 			n.add(c.Cells[i].Reference, bottom, c.Cells[i].MV, false)
 		}
@@ -91,7 +91,7 @@ func (r *FrameThreadRecon) waitSuperblockReferences(b *FrameWorkBatch, visits []
 		return true
 	}
 	var need frameThreadRefNeed
-	need.addVisits(visits)
+	need.addVisits(visits, b.payloads)
 	return r.waitReferences(b, &need)
 }
 
@@ -113,7 +113,7 @@ func (r *FrameThreadRecon) waitRowReferences(b *FrameWorkBatch, view *frameWorkR
 			return true
 		}
 		if sb.end > sb.start {
-			need.addVisits(view.visits[sb.start:sb.end])
+			need.addVisits(view.visits[sb.start:sb.end], &view.payloads)
 			any = true
 		}
 	}
@@ -124,9 +124,9 @@ func (r *FrameThreadRecon) waitRowReferences(b *FrameWorkBatch, view *frameWorkR
 }
 
 // addVisits adds the reference rows the buffered blocks read.
-func (n *frameThreadRefNeed) addVisits(visits []tile.BlockLoopVisit) {
+func (n *frameThreadRefNeed) addVisits(visits []tile.BlockLoopVisit, pl *tile.BlockPayloads) {
 	for i := range visits {
-		n.addVisit(&visits[i])
+		n.addVisit(&visits[i], pl)
 	}
 }
 

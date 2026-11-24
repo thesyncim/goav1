@@ -209,9 +209,11 @@ type BlockPredictionModeResult struct {
 	GlobalWarpedMotionValid         bool
 	GlobalWarpedMotionCompoundValid [2]bool
 	OverlappableNeighborsValid      bool
-	// Extras holds the warp models and OBMC neighbours, set only while one
-	// of the flags above is; dav1d keeps these out of Av1Block too.
-	Extras *BlockPredictionMotionExtras
+	// ExtrasSlot names the block's warp models and OBMC neighbours, set only
+	// while one of the flags above is; dav1d keeps these out of Av1Block too.
+	// It is a BlockPayloads slot (0 is none), not a pointer, so a buffered
+	// visit holds no pointers for the garbage collector to scan or barrier.
+	ExtrasSlot uint32
 
 	CompoundBlend      CompoundBlendResult
 	CompoundBlendValid bool
@@ -221,9 +223,10 @@ type BlockPredictionModeResult struct {
 	// luma width or height is 4 under chroma subsampling. The chroma plane
 	// of the anchor block is split into the 1-4 luma 4x4 cells of its
 	// chroma footprint, each predicted with its own luma neighbor's MV.
-	// See tile.SubChromaInterResult for the full rationale. Like Extras it
-	// points into the decode state, out of line of the per-block result.
-	SubChromaInter *SubChromaInterResult
+	// See tile.SubChromaInterResult for the full rationale. Like ExtrasSlot
+	// it is a BlockPayloads slot (0 is none), out of line of the per-block
+	// result.
+	SubChromaSlot uint32
 }
 
 // reset clears the result for the next block field by field; the zero
@@ -265,10 +268,10 @@ func (r *BlockPredictionModeResult) reset() {
 	r.GlobalWarpedMotionValid = false
 	r.GlobalWarpedMotionCompoundValid = [2]bool{}
 	r.OverlappableNeighborsValid = false
-	setPtr(&r.Extras, nil)
+	r.ExtrasSlot = 0
 	r.CompoundBlend = CompoundBlendResult{}
 	r.CompoundBlendValid = false
-	setPtr(&r.SubChromaInter, nil)
+	r.SubChromaSlot = 0
 }
 
 // BlockPredictionMotionExtras holds the rarely used warp and OBMC payloads of

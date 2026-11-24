@@ -28,7 +28,7 @@ func TestFrameThreadRefNeed(t *testing.T) {
 
 	var n frameThreadRefNeed
 	v := refRowsTestVisit(8, tile.ReferenceFrameLast, 8*10+3) // 10 rows + a fraction
-	n.addVisit(&v)
+	n.addVisit(&v, &testPayloads)
 	if want := int32(bottom + 10 + refRowMargin); n[tile.ReferenceFrameLast] != want {
 		t.Fatalf("translation: need %d, want %d", n[tile.ReferenceFrameLast], want)
 	}
@@ -36,7 +36,7 @@ func TestFrameThreadRefNeed(t *testing.T) {
 	// Upward motion never needs fewer than one row.
 	n = frameThreadRefNeed{}
 	v = refRowsTestVisit(0, tile.ReferenceFrameLast, -8*500)
-	n.addVisit(&v)
+	n.addVisit(&v, &testPayloads)
 	if n[tile.ReferenceFrameLast] != 1 {
 		t.Fatalf("upward: need %d, want 1", n[tile.ReferenceFrameLast])
 	}
@@ -47,7 +47,7 @@ func TestFrameThreadRefNeed(t *testing.T) {
 	v.Prediction.InterMotion.References.Ref1 = tile.ReferenceFrameAltref
 	v.Prediction.InterMotion.References.Compound = true
 	v.Prediction.InterMotion.MV[1] = motion.Vector{Row: 8 * 40}
-	n.addVisit(&v)
+	n.addVisit(&v, &testPayloads)
 	if n[tile.ReferenceFrameLast] != bottom+4+refRowMargin || n[tile.ReferenceFrameAltref] != bottom+40+refRowMargin {
 		t.Fatalf("compound: need %v", n)
 	}
@@ -62,7 +62,7 @@ func TestFrameThreadRefNeed(t *testing.T) {
 	testMotionExtras(&v.Prediction).OverlappableNeighbors.Above[0].MotionValid = true
 	testMotionExtras(&v.Prediction).OverlappableNeighbors.Above[0].Motion.References = tile.InterReferencesResult{Ref0: tile.ReferenceFrameGolden, Ref1: tile.ReferenceFrameNone}
 	testMotionExtras(&v.Prediction).OverlappableNeighbors.Above[0].Motion.MV[0] = motion.Vector{Row: 8 * 64}
-	n.addVisit(&v)
+	n.addVisit(&v, &testPayloads)
 	if n[tile.ReferenceFrameGolden] != bottom+64+refRowMargin {
 		t.Fatalf("obmc: golden need %d", n[tile.ReferenceFrameGolden])
 	}
@@ -70,10 +70,11 @@ func TestFrameThreadRefNeed(t *testing.T) {
 	// Sub-8x8 chroma cells use their own (neighbouring) vectors.
 	n = frameThreadRefNeed{}
 	v = refRowsTestVisit(8, tile.ReferenceFrameLast, 0)
-	v.Prediction.SubChromaInter = &tile.SubChromaInterResult{Count: 1}
-	v.Prediction.SubChromaInter.Cells[0].Reference = tile.ReferenceFrameLast2
-	v.Prediction.SubChromaInter.Cells[0].MV = motion.Vector{Row: 8 * 30}
-	n.addVisit(&v)
+	sub := testSubChroma(&v.Prediction)
+	sub.Count = 1
+	sub.Cells[0].Reference = tile.ReferenceFrameLast2
+	sub.Cells[0].MV = motion.Vector{Row: 8 * 30}
+	n.addVisit(&v, &testPayloads)
 	if n[tile.ReferenceFrameLast2] != bottom+30+refRowMargin {
 		t.Fatalf("sub-chroma: last2 need %d", n[tile.ReferenceFrameLast2])
 	}
@@ -89,7 +90,7 @@ func TestFrameThreadRefNeed(t *testing.T) {
 		n = frameThreadRefNeed{}
 		v = refRowsTestVisit(8, tile.ReferenceFrameLast, 0)
 		mod(&v)
-		n.addVisit(&v)
+		n.addVisit(&v, &testPayloads)
 		if n[tile.ReferenceFrameLast] != FrameProgressDone {
 			t.Fatalf("warp: need %d, want the whole reference", n[tile.ReferenceFrameLast])
 		}
@@ -99,16 +100,36 @@ func TestFrameThreadRefNeed(t *testing.T) {
 	n = frameThreadRefNeed{}
 	v = refRowsTestVisit(8, tile.ReferenceFrameLast, 0)
 	v.Prediction.Intra = true
-	n.addVisit(&v)
+	n.addVisit(&v, &testPayloads)
 	if n != (frameThreadRefNeed{}) {
 		t.Fatalf("intra: need %v", n)
 	}
 }
 
-// testMotionExtras returns p's out-of-line warp/OBMC payloads, allocating them.
+// testPayloads backs the payload slots of test visits; the test prediction
+// batches resolve through it. Tests in this package do not run in parallel.
+var testPayloads = tile.BlockPayloads{
+	Extras:    make([]tile.BlockPredictionMotionExtras, 1),
+	SubChroma: make([]tile.SubChromaInterResult, 1),
+	Palette:   make([]tile.PaletteModeScratch, 1),
+}
+
+// testMotionExtras returns p's out-of-line warp/OBMC payloads, naming a
+// cleared test slot the first time.
 func testMotionExtras(p *tile.BlockPredictionModeResult) *tile.BlockPredictionMotionExtras {
-	if p.Extras == nil {
-		p.Extras = &tile.BlockPredictionMotionExtras{}
+	if p.ExtrasSlot == 0 {
+		testPayloads.Extras[0] = tile.BlockPredictionMotionExtras{}
+		p.ExtrasSlot = 1
 	}
-	return p.Extras
+	return &testPayloads.Extras[0]
+}
+
+// testSubChroma returns p's sub8x8 chroma cells, naming a cleared test slot
+// the first time.
+func testSubChroma(p *tile.BlockPredictionModeResult) *tile.SubChromaInterResult {
+	if p.SubChromaSlot == 0 {
+		testPayloads.SubChroma[0] = tile.SubChromaInterResult{}
+		p.SubChromaSlot = 1
+	}
+	return &testPayloads.SubChroma[0]
 }

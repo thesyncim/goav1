@@ -97,7 +97,6 @@ func TestWritePaletteRoundTrip(t *testing.T) {
 			for y := h4 * 4; y < bh4*4; y++ {
 				copy(r.m[y*stride:(y+1)*stride], r.m[(h4*4-1)*stride:h4*4*stride])
 			}
-			r.res.YMap = &r.m
 		}
 		if c, err := PaletteModeCost(&encCDFs, &encCtx, req, &r.res); err != nil || (r.res.YSize > 0 && c < 8<<9) {
 			t.Fatalf("block %d mode cost %d err %v", b, c, err)
@@ -105,11 +104,10 @@ func TestWritePaletteRoundTrip(t *testing.T) {
 		if err := WritePaletteMode(&w, &encCDFs, &encCtx, req, &r.res); err != nil {
 			t.Fatalf("block %d write mode: %v", b, err)
 		}
-		if err := WritePaletteTokens(&w, &encCDFs, req, &r.res); err != nil {
+		if err := WritePaletteTokens(&w, &encCDFs, req, &r.res, &r.m); err != nil {
 			t.Fatalf("block %d write tokens: %v", b, err)
 		}
 		mark := r.res
-		mark.YMap = nil
 		if err := encCtx.MarkPaletteY(size, x4, y4, mark); err != nil {
 			t.Fatal(err)
 		}
@@ -148,12 +146,11 @@ func TestWritePaletteRoundTrip(t *testing.T) {
 		if got.YSize > 0 {
 			dims, _ := r.req.Size.Dimensions()
 			n := int(dims.W4) * int(dims.H4) * 16
-			if got.YMap == nil || !bytes.Equal(got.YMap[:n], r.m[:n]) {
+			if got.YMapSlot != 1 || !bytes.Equal(scratch.Y[:n], r.m[:n]) {
 				t.Fatalf("block %d: color map mismatch", i)
 			}
 		}
 		mark := got
-		mark.YMap = nil
 		if err := decCtx.MarkPaletteY(r.req.Size, int(r.req.X4), int(r.req.Y4), mark); err != nil {
 			t.Fatal(err)
 		}

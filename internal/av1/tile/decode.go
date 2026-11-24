@@ -29,17 +29,68 @@ type DecodeState struct {
 	DeltaLFFromBase int8
 	DeltaLF         [FrameLoopFilterCount]int8
 
-	// motionExtras backs BlockPredictionModeResult.Extras for the block being
-	// decoded.
-	motionExtras BlockPredictionMotionExtras
-	// subChroma backs BlockPredictionModeResult.SubChromaInter.
-	subChroma SubChromaInterResult
+	// motionExtras backs slot 1 of BlockPredictionModeResult.ExtrasSlot for
+	// the block being decoded.
+	motionExtras [1]BlockPredictionMotionExtras
+	// subChroma backs slot 1 of BlockPredictionModeResult.SubChromaSlot.
+	subChroma [1]SubChromaInterResult
 }
 
 // blockMotionExtras points result at the state's out-of-line payload slot.
 func (s *DecodeState) blockMotionExtras(result *BlockPredictionModeResult) *BlockPredictionMotionExtras {
-	result.Extras = &s.motionExtras
-	return result.Extras
+	result.ExtrasSlot = 1
+	return &s.motionExtras[0]
+}
+
+// Payloads returns the single-slot payloads the block loop's visits name
+// while they are current: the state's motion extras and sub8x8 chroma cells
+// and the loop scratch's palette maps.
+func (s *DecodeState) Payloads(scratch *BlockLoopScratch) BlockPayloads {
+	return BlockPayloads{Extras: s.motionExtras[:], SubChroma: s.subChroma[:], Palette: scratch.Palette[:]}
+}
+
+// BlockPayloads holds the out-of-line payloads that BlockPredictionModeResult
+// names by slot: slot n is element n-1, slot 0 is none. The block loop's own
+// payloads have one slot each (DecodeState.Payloads); buffered visits are
+// renumbered into their owner's arenas. Slots keep BlockLoopVisit free of
+// pointers, so buffers of visits are never scanned by the garbage collector
+// and copying one runs no write barrier.
+type BlockPayloads struct {
+	Extras    []BlockPredictionMotionExtras
+	SubChroma []SubChromaInterResult
+	Palette   []PaletteModeScratch
+}
+
+// MotionExtras returns r's warp/OBMC payload, or nil.
+func (p *BlockPayloads) MotionExtras(r *BlockPredictionModeResult) *BlockPredictionMotionExtras {
+	if r.ExtrasSlot == 0 || p == nil || int(r.ExtrasSlot) > len(p.Extras) {
+		return nil
+	}
+	return &p.Extras[r.ExtrasSlot-1]
+}
+
+// SubChromaInter returns r's sub8x8 chroma cells, or nil.
+func (p *BlockPayloads) SubChromaInter(r *BlockPredictionModeResult) *SubChromaInterResult {
+	if r.SubChromaSlot == 0 || p == nil || int(r.SubChromaSlot) > len(p.SubChroma) {
+		return nil
+	}
+	return &p.SubChroma[r.SubChromaSlot-1]
+}
+
+// PaletteYMap returns r's luma colour index map, or nil.
+func (p *BlockPayloads) PaletteYMap(r *PaletteModeResult) *[MaxPalettePixels]uint8 {
+	if r.YMapSlot == 0 || p == nil || int(r.YMapSlot) > len(p.Palette) {
+		return nil
+	}
+	return &p.Palette[r.YMapSlot-1].Y
+}
+
+// PaletteUVMap returns r's chroma colour index map, or nil.
+func (p *BlockPayloads) PaletteUVMap(r *PaletteModeResult) *[MaxPalettePixels]uint8 {
+	if r.UVMapSlot == 0 || p == nil || int(r.UVMapSlot) > len(p.Palette) {
+		return nil
+	}
+	return &p.Palette[r.UVMapSlot-1].UV
 }
 
 // BlockDeltaContext identifies the block currently being decoded for AV1

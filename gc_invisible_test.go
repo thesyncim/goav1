@@ -282,10 +282,13 @@ func TestGCInvisibleEncodeSteadyState(t *testing.T) {
 
 // TestGCInvisibleScannableHeap bounds the pointerful (GC-scanned) heap a warm
 // codec keeps alive. Large scratch must stay pointer-free or keep its
-// pointers in a short leading run; the ceilings carry about 2x headroom over the
-// measured footprint (0.25, 1.5 and 0.66 MiB; origin/main before this gate
-// measured 3.7 MiB at 8 workers and 1.9 MiB for the encoder). A reading below the floor
-// means the measurement was disturbed, and fails rather than passing
+// pointers in a short leading run. The measured footprint is 0.24, 0.79 and
+// 0.65 MiB (1-worker decode, 8-worker decode, encoder). The 8-worker ceiling
+// sits below the 1.49 MiB measured while the buffered block visits still
+// carried payload pointers, so it catches pointers coming back into them; the
+// others carry about 2x headroom (origin/main before this gate measured
+// 3.7 MiB at 8 workers and 1.9 MiB for the encoder). A reading below the
+// floor means the measurement was disturbed, and fails rather than passing
 // vacuously.
 //
 // The scannable heap is a process-wide metric, so other tests in the package
@@ -330,7 +333,7 @@ func TestGCInvisibleScannableHeap(t *testing.T) {
 			}
 			return func() { decodeAllFrames(t, dec) }, dec.Close
 		}},
-		{"decode/workers=8", 3 << 20, func() (func(), func()) {
+		{"decode/workers=8", 1280 << 10, func() (func(), func()) {
 			dec, err := NewDecoder(tus, WithWorkers(8))
 			if err != nil {
 				t.Fatalf("NewDecoder: %v", err)

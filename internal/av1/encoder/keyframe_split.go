@@ -283,7 +283,6 @@ func (st *lossyEncodeState) decideKeyBlock(src SourceFrame420, recon *SourceFram
 		res := tile.PaletteModeResult{}
 		if pal != nil {
 			res = pal.res
-			res.YMap = nil
 			r.pal = recordPaletteOf(res)
 			r.palMap = int32(rec.storePalMap(pal.m[:n*n]))
 		}
@@ -509,7 +508,6 @@ func (st *lossyEncodeState) writeKeyBlock(block tile.BlockVisit, scratch *tile.B
 		pal = &st.pal.cands[0]
 		pal.res = r.pal.result()
 		copy(pal.m[:n*n], rec.palMap(int(r.palMap), n*n))
-		pal.res.YMap = &pal.m
 		if err := st.writeKeyframePalette(modeCtx, block, mode, r.uvMode, pal); err != nil {
 			return fmt.Errorf("palette: %w", err)
 		}
@@ -519,7 +517,7 @@ func (st *lossyEncodeState) writeKeyBlock(block tile.BlockVisit, scratch *tile.B
 	if pal != nil {
 		req := st.paletteRequest(block, mode)
 		req.ChromaMode = r.uvMode
-		if err := tile.WritePaletteTokens(st.w, &st.intraCDFs, req, &pal.res); err != nil {
+		if err := tile.WritePaletteTokens(st.w, &st.intraCDFs, req, &pal.res, &pal.m); err != nil {
 			return fmt.Errorf("palette tokens: %w", err)
 		}
 	}

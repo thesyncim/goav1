@@ -421,7 +421,7 @@ func (b *FrameWorkBatch) PredictBlockLumaIntra(index int, visit tile.BlockLoopVi
 	y -= int(window.Y)
 
 	if visit.Prediction.Palette.YSize > 0 {
-		if err := frameWorkPredictLumaPalette(dst, int(window.BytesPerSample), x, y, width, height, visit.Block, visit.Prediction.Palette, 0, 0); err != nil {
+		if err := frameWorkPredictLumaPalette(dst, int(window.BytesPerSample), x, y, width, height, visit.Block, visit.Prediction.Palette, b.payloads.PaletteYMap(&visit.Prediction.Palette), 0, 0); err != nil {
 			return err
 		}
 		return nil
@@ -527,7 +527,7 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 		if err != nil {
 			return err
 		}
-		if err := frameWorkPredictLumaPalette(dst, int(window.BytesPerSample), x, y, width, height, visit.Block, visit.Prediction.Palette, absX-baseX, absY-baseY); err != nil {
+		if err := frameWorkPredictLumaPalette(dst, int(window.BytesPerSample), x, y, width, height, visit.Block, visit.Prediction.Palette, b.payloads.PaletteYMap(&visit.Prediction.Palette), absX-baseX, absY-baseY); err != nil {
 			return err
 		}
 		return nil
@@ -607,7 +607,7 @@ func (b *FrameWorkBatch) predictBlockChromaIntraPlane(index int, visit tile.Bloc
 	}
 	edgeBlock := frameWorkPredictionPlaneEdgeBlock(visit.Block, geom)
 	if visit.Prediction.Palette.UVSize > 0 {
-		if err := frameWorkPredictChromaPalette(geom.Output, geom.bytesPerSample(), geom.X, geom.Y, geom.width(), geom.height(), visit.Block, b.Sequence.ColorConfig, plane, visit.Prediction.Palette, 0, 0); err != nil {
+		if err := frameWorkPredictChromaPalette(geom.Output, geom.bytesPerSample(), geom.X, geom.Y, geom.width(), geom.height(), visit.Block, b.Sequence.ColorConfig, plane, visit.Prediction.Palette, b.payloads.PaletteUVMap(&visit.Prediction.Palette), 0, 0); err != nil {
 			return err
 		}
 		return nil
@@ -686,7 +686,7 @@ func (b *FrameWorkBatch) predictBlockChromaIntraTransformGeneric(index int, visi
 	edgeBlock = frameWorkPredictionEdgeBlockForWindow(edgeBlock, absX, absY, geom.Window)
 
 	if visit.Prediction.Palette.UVSize > 0 {
-		if err := frameWorkPredictChromaPalette(geom.Output, geom.bytesPerSample(), x, y, width, height, visit.Block, b.Sequence.ColorConfig, plane, visit.Prediction.Palette, absX-geom.X, absY-geom.Y); err != nil {
+		if err := frameWorkPredictChromaPalette(geom.Output, geom.bytesPerSample(), x, y, width, height, visit.Block, b.Sequence.ColorConfig, plane, visit.Prediction.Palette, b.payloads.PaletteUVMap(&visit.Prediction.Palette), absX-geom.X, absY-geom.Y); err != nil {
 			return err
 		}
 		return nil
@@ -1106,9 +1106,9 @@ func (b *FrameWorkBatch) predictBlockInterPlaneWithFiltersPtr(index int, visit *
 	// inter block whose luma width or height is 4 (under chroma
 	// subsampling) into per-luma-cell sub-blocks, each predicted with
 	// its own neighbor's MV. The tile decoder pre-computed those cells in
-	// visit.Prediction.SubChromaInter; we drive them here for U/V only,
+	// visit.Prediction.SubChromaSlot; we drive them here for U/V only,
 	// keeping luma on the standard single-MV path.
-	if visit.Prediction.SubChromaInter != nil && (plane == FrameWorkPlaneU || plane == FrameWorkPlaneV) {
+	if visit.Prediction.SubChromaSlot != 0 && (plane == FrameWorkPlaneU || plane == FrameWorkPlaneV) {
 		return b.predictBlockInterSubChromaPlanePtr(index, visit, plane, scratch)
 	}
 	return b.predictBlockInterReferencePlaneToOutput(index, &visit.Block, plane, motionResult.References.Ref0, motionResult.MV[0], filters, scratch)
@@ -1118,7 +1118,8 @@ func (b *FrameWorkBatch) predictBlockInterSubChromaPlanePtr(index int, visit *ti
 	if visit == nil || (plane != FrameWorkPlaneU && plane != FrameWorkPlaneV) {
 		return ErrInvalidBatch
 	}
-	if visit.Prediction.SubChromaInter == nil {
+	sub := b.payloads.SubChromaInter(&visit.Prediction)
+	if sub == nil {
 		return ErrInvalidBatch
 	}
 	geom, ok, err := b.blockPredictionPlaneGeometry(index, visit.Block, plane)
@@ -1128,7 +1129,6 @@ func (b *FrameWorkBatch) predictBlockInterSubChromaPlanePtr(index int, visit *ti
 	if !ok {
 		return nil
 	}
-	sub := visit.Prediction.SubChromaInter
 	if sub.Count <= 0 {
 		return ErrInvalidBatch
 	}
@@ -1216,7 +1216,7 @@ func (b *FrameWorkBatch) predictBlockInterGlobalWarpPlaneWithGeometry(visit *til
 			geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), filterW, filterH, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters,
 			frameWorkScaledConvolveScratch(scratch))
 	}
-	extras := visit.Prediction.Extras
+	extras := b.payloads.MotionExtras(&visit.Prediction)
 	if extras == nil {
 		return ErrInvalidBatch
 	}
@@ -1402,10 +1402,11 @@ func (b *FrameWorkBatch) predictBlockInterIntraPlaneWithFiltersPtr(index int, vi
 	// matching the non-inter-intra global-warp path; chroma planes < 8 and scaled
 	// references fall back to the translational predictor as libaom does.
 	if visit.Prediction.GlobalWarpedMotionValid && geom.width() >= 8 && geom.height() >= 8 {
-		if visit.Prediction.Extras == nil {
+		extras := b.payloads.MotionExtras(&visit.Prediction)
+		if extras == nil {
 			return ErrInvalidBatch
 		}
-		if err := b.predictBlockInterGlobalWarpToScratch(inter, plane, motionResult.References.Ref0, visit.Prediction.Extras.GlobalWarpedMotion, motionResult.MV[0], geom, filters, scratch); err != nil {
+		if err := b.predictBlockInterGlobalWarpToScratch(inter, plane, motionResult.References.Ref0, extras.GlobalWarpedMotion, motionResult.MV[0], geom, filters, scratch); err != nil {
 			return err
 		}
 	} else if err := b.predictBlockInterReferencePlaneToScratch(inter, visit.Block, plane, motionResult.References.Ref0, motionResult.MV[0], geom, filters, scratch); err != nil {
@@ -1519,7 +1520,7 @@ func (b *FrameWorkBatch) predictBlockInterWarpPlaneWithGeometry(visit *tile.Bloc
 			geom.X, geom.Y, geom.X, geom.Y, geom.width(), geom.height(), filterW, filterH, motionResult.MV[0], geom.SubsamplingX, geom.SubsamplingY, filters,
 			frameWorkScaledConvolveScratch(scratch))
 	}
-	extras := visit.Prediction.Extras
+	extras := b.payloads.MotionExtras(&visit.Prediction)
 	if extras == nil {
 		return ErrInvalidBatch
 	}
@@ -1543,7 +1544,11 @@ func (b *FrameWorkBatch) predictBlockInterOBMCPlaneWithFiltersPtr(index int, vis
 		!visit.Prediction.InterMotionValid ||
 		!visit.Prediction.MotionModeValid ||
 		visit.Prediction.MotionMode != tile.MotionModeOBMC ||
-		!visit.Prediction.OverlappableNeighborsValid || visit.Prediction.Extras == nil {
+		!visit.Prediction.OverlappableNeighborsValid {
+		return ErrInvalidBatch
+	}
+	extras := b.payloads.MotionExtras(&visit.Prediction)
+	if extras == nil {
 		return ErrInvalidBatch
 	}
 	if visit.Prediction.InterIntraValid && visit.Prediction.InterIntra.Enabled {
@@ -1566,7 +1571,7 @@ func (b *FrameWorkBatch) predictBlockInterOBMCPlaneWithFiltersPtr(index int, vis
 	if err != nil {
 		return err
 	}
-	neighbors := &visit.Prediction.Extras.OverlappableNeighbors
+	neighbors := &extras.OverlappableNeighbors
 	// libaom av1_skip_u4x4_pred_in_obmc(): the above-row OBMC prediction is
 	// skipped for planes whose (subsampled) block size is 4x4, 8x4 or 4x8.
 	// In 4:2:0 an 8x8 luma OBMC block has a 4x4 chroma plane, so its chroma
@@ -1655,10 +1660,11 @@ func (b *FrameWorkBatch) predictBlockInterCompoundConvBufPtr(index int, visit *t
 	warp1 := warp && visit.Prediction.GlobalWarpedMotionCompoundValid[1]
 	var models [2]tile.WarpedMotionModel
 	if warp0 || warp1 {
-		if visit.Prediction.Extras == nil {
+		extras := b.payloads.MotionExtras(&visit.Prediction)
+		if extras == nil {
 			return ErrInvalidBatch
 		}
-		models = visit.Prediction.Extras.GlobalWarpedMotionCompound
+		models = extras.GlobalWarpedMotionCompound
 	}
 	if err := b.predictBlockInterCompoundRefToConvBuf(&scratch.Conv0, plane, motionResult.References.Ref0, motionResult.MV[0], geom, filters, warp0, models[0], &scratch.Scaled, &scratch.Compound); err != nil {
 		return err
@@ -5123,8 +5129,8 @@ func frameWorkStoreSample(plane frame.Plane, bytesPerSample int, x int, y int, v
 	return true
 }
 
-func frameWorkPredictChromaPalette(dst frame.Plane, bytesPerSample int, x int, y int, width int, height int, block tile.BlockVisit, color parser.ColorConfig, plane FrameWorkPlane, palette tile.PaletteModeResult, mapX int, mapY int) error {
-	if palette.UVSize == 0 || palette.UVSize > tile.PaletteMaxSize || palette.UVMap == nil || (plane != FrameWorkPlaneU && plane != FrameWorkPlaneV) {
+func frameWorkPredictChromaPalette(dst frame.Plane, bytesPerSample int, x int, y int, width int, height int, block tile.BlockVisit, color parser.ColorConfig, plane FrameWorkPlane, palette tile.PaletteModeResult, cmap *[tile.MaxPalettePixels]uint8, mapX int, mapY int) error {
+	if palette.UVSize == 0 || palette.UVSize > tile.PaletteMaxSize || cmap == nil || (plane != FrameWorkPlaneU && plane != FrameWorkPlaneV) {
 		return ErrInvalidBatch
 	}
 	planeSize, err := tile.PlaneBlockSize(block.Size, color, int(plane))
@@ -5144,11 +5150,11 @@ func frameWorkPredictChromaPalette(dst frame.Plane, bytesPerSample int, x int, y
 	if plane == FrameWorkPlaneV {
 		colors = palette.VColors
 	}
-	return frameWorkPaletteFill(dst, bytesPerSample, x, y, width, height, palette.UVMap[:], mapStride, mapX, mapY, &colors, palette.UVSize)
+	return frameWorkPaletteFill(dst, bytesPerSample, x, y, width, height, cmap[:], mapStride, mapX, mapY, &colors, palette.UVSize)
 }
 
-func frameWorkPredictLumaPalette(dst frame.Plane, bytesPerSample int, x int, y int, width int, height int, block tile.BlockVisit, palette tile.PaletteModeResult, mapX int, mapY int) error {
-	if palette.YSize == 0 || palette.YSize > tile.PaletteMaxSize || palette.YMap == nil {
+func frameWorkPredictLumaPalette(dst frame.Plane, bytesPerSample int, x int, y int, width int, height int, block tile.BlockVisit, palette tile.PaletteModeResult, cmap *[tile.MaxPalettePixels]uint8, mapX int, mapY int) error {
+	if palette.YSize == 0 || palette.YSize > tile.PaletteMaxSize || cmap == nil {
 		return ErrInvalidBatch
 	}
 	dims, ok := block.Size.Dimensions()
@@ -5160,7 +5166,7 @@ func frameWorkPredictLumaPalette(dst frame.Plane, bytesPerSample int, x int, y i
 	if mapX < 0 || mapY < 0 || mapX+width > mapStride || mapY+height > mapHeight {
 		return ErrInvalidBatch
 	}
-	return frameWorkPaletteFill(dst, bytesPerSample, x, y, width, height, palette.YMap[:], mapStride, mapX, mapY, &palette.YColors, palette.YSize)
+	return frameWorkPaletteFill(dst, bytesPerSample, x, y, width, height, cmap[:], mapStride, mapX, mapY, &palette.YColors, palette.YSize)
 }
 
 // frameWorkPaletteFill is dav1d's pal_pred (src/ipred_tmpl.c): each output

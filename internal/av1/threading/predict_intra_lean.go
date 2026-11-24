@@ -97,7 +97,7 @@ func (b *FrameWorkBatch) predictBlockChromaIntraTransformPtr(index int, visit *t
 	bitDepth := b.Sequence.ColorConfig.BitDepth
 	bounded := bps == 1 && bitDepth == 8
 	if pred.Palette.UVSize > 0 {
-		return frameWorkPredictChromaPalette(*output, bps, absX, absY, width, height, *blk, b.Sequence.ColorConfig, plane, pred.Palette, absX-originX, absY-originY)
+		return frameWorkPredictChromaPalette(*output, bps, absX, absY, width, height, *blk, b.Sequence.ColorConfig, plane, pred.Palette, b.payloads.PaletteUVMap(&pred.Palette), absX-originX, absY-originY)
 	}
 	readW, readH := frameWorkWindowEdgeReadBoundPtr(window)
 	readBoundX, readBoundY := winX+readW, winY+readH

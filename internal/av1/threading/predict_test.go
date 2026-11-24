@@ -53,7 +53,7 @@ func TestFrameWorkBatchPredictBlockPalette10Bit444(t *testing.T) {
 	testFillFrame(output, 0)
 	ctx := testIntraPredictionBatch(output)
 
-	var maps tile.PaletteModeScratch
+	maps := &testPayloads.Palette[0]
 	for y := range 16 {
 		for x := range 16 {
 			maps.Y[y*16+x] = uint8((x/5 + y/7) % 3)
@@ -61,13 +61,13 @@ func TestFrameWorkBatchPredictBlockPalette10Bit444(t *testing.T) {
 		}
 	}
 	palette := tile.PaletteModeResult{
-		YSize:   3,
-		UVSize:  3,
-		YColors: [tile.PaletteMaxSize]uint16{17, 511, 1000},
-		UColors: [tile.PaletteMaxSize]uint16{33, 444, 901},
-		VColors: [tile.PaletteMaxSize]uint16{55, 666, 990},
-		YMap:    &maps.Y,
-		UVMap:   &maps.UV,
+		YSize:     3,
+		UVSize:    3,
+		YColors:   [tile.PaletteMaxSize]uint16{17, 511, 1000},
+		UColors:   [tile.PaletteMaxSize]uint16{33, 444, 901},
+		VColors:   [tile.PaletteMaxSize]uint16{55, 666, 990},
+		YMapSlot:  1,
+		UVMapSlot: 1,
 	}
 	visit := testIntraPredictionVisit(tile.IntraModeDC)
 	visit.Prediction.ChromaModeValid = true
@@ -3775,7 +3775,8 @@ func testIntraPredictionBatch(output *frame.Frame) FrameWorkBatch {
 			}),
 			FrameSize: parser.FrameSize{CodedWidth: uint32(output.Format.Width), Height: uint32(output.Format.Height)},
 		},
-		Jobs: []tile.Job{{SBCols: 1, SBRows: 1}},
+		Jobs:     []tile.Job{{SBCols: 1, SBRows: 1}},
+		payloads: &testPayloads,
 	}
 }
 
@@ -3795,7 +3796,8 @@ func testInterPredictionBatch(output *frame.Frame, reference *frame.Frame) Frame
 			FrameSize: parser.FrameSize{CodedWidth: uint32(output.Format.Width), Height: uint32(output.Format.Height)},
 			TileInfo:  parser.TileInfo{InterpolationFilter: parser.InterpolationEightTap},
 		},
-		Jobs: []tile.Job{{SBCols: 1, SBRows: 1}},
+		Jobs:     []tile.Job{{SBCols: 1, SBRows: 1}},
+		payloads: &testPayloads,
 	}
 	return ctx
 }
