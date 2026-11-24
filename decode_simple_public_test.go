@@ -1111,8 +1111,8 @@ func TestSimpleDecoderTileListIVFPlayback(t *testing.T) {
 			AnchorFrameIdx:     0,
 			AnchorTileRow:      0,
 			AnchorTileCol:      0,
-			TileDataSizeMinus1: 0,
-			TileData:           []byte{0x80},
+			TileDataSizeMinus1: uint16(len(publicDecoderResidualTileData()) - 1),
+			TileData:           publicDecoderResidualTileData(),
 		}},
 	})
 	payload := appendOBUForTest(nil, internalobu.TypeFrameHeader, publicDecoderResidualFrameHeaderPayload())
@@ -1444,8 +1444,8 @@ func publicSimpleDecoderTileListPayload() []byte {
 			AnchorFrameIdx:     0,
 			AnchorTileRow:      0,
 			AnchorTileCol:      0,
-			TileDataSizeMinus1: 0,
-			TileData:           []byte{0x80},
+			TileDataSizeMinus1: uint16(len(publicDecoderResidualTileData()) - 1),
+			TileData:           publicDecoderResidualTileData(),
 		}},
 	})
 }
