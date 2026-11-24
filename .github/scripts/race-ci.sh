@@ -110,6 +110,8 @@ packages_for() {
         ./internal/av1/transform/itxgen \
         ./internal/benchenv \
         ./internal/guardpage \
+        ./internal/poison \
+        ./internal/unsafeutil \
         ./tools/itxzero
       ;;
     *)
