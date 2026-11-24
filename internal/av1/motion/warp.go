@@ -114,6 +114,13 @@ func warpAffine8Offset(dst frame.Plane, ref frame.Plane, matX int, matY int, wri
 	rowShift := writeY - matY
 	for i := matY; i < matY+height; i += 8 {
 		for j := matX; j < matX+width; j += 8 {
+			if i+8 <= matY+height && j+8 <= matX+width {
+				ix4, sx4, iy4, sy4 := warpBlockOrigin(i, j, matrix, alpha, beta, gamma, delta, ssX, ssY)
+				o := (i+rowShift)*dst.Stride + j + colShift
+				if warpPut8x8Dispatch(dst.Pix[o:], dst.Stride, ref, ix4, sx4, iy4, sy4, alpha, beta, gamma, delta) {
+					continue
+				}
+			}
 			baseSY := warpHorizontal8(&tmp, ref, i, j, matrix, alpha, beta, gamma, delta, ssX, ssY, reduceBitsHoriz, offsetBitsHoriz)
 			if i+8 <= matY+height && j+8 <= matX+width {
 				if gamma == 0 {
