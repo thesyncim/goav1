@@ -324,12 +324,17 @@ func TestGCInvisibleScannableHeap(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// The codec's share is what appears with it alive and goes away
+			// once it is closed and dropped; taking the smaller of the two
+			// deltas keeps other tests' live heap in the same process from
+			// being charged to it.
 			base := scan()
 			run, closeFn := tc.build()
 			run()
-			got := scan() - base
-			runtime.KeepAlive(run)
+			with := scan()
 			closeFn()
+			run, closeFn = nil, nil
+			got := min(with-base, with-scan())
 			t.Logf("scannable heap %.2f MiB (ceiling %.2f MiB)", float64(got)/(1<<20), float64(tc.ceiling)/(1<<20))
 			if got > tc.ceiling {
 				t.Fatalf("scannable heap %d bytes, ceiling %d", got, tc.ceiling)
