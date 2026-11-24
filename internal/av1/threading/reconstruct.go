@@ -134,28 +134,29 @@ type frameWorkTransformMeta struct {
 	size     transform.Size
 	scanSize transform.Size
 	txScale  uint8
+	tx       tile.TransformSize
 }
 
 var frameWorkTransformMetaBySize = [...]frameWorkTransformMeta{
-	tile.TransformSize4x4:   {size: transform.Size{Width: 4, Height: 4}, scanSize: transform.Size{Width: 4, Height: 4}, txScale: 0},
-	tile.TransformSize8x8:   {size: transform.Size{Width: 8, Height: 8}, scanSize: transform.Size{Width: 8, Height: 8}, txScale: 0},
-	tile.TransformSize16x16: {size: transform.Size{Width: 16, Height: 16}, scanSize: transform.Size{Width: 16, Height: 16}, txScale: 0},
-	tile.TransformSize32x32: {size: transform.Size{Width: 32, Height: 32}, scanSize: transform.Size{Width: 32, Height: 32}, txScale: 1},
-	tile.TransformSize64x64: {size: transform.Size{Width: 64, Height: 64}, scanSize: transform.Size{Width: 32, Height: 32}, txScale: 2},
-	tile.TransformSize4x8:   {size: transform.Size{Width: 4, Height: 8}, scanSize: transform.Size{Width: 4, Height: 8}, txScale: 0},
-	tile.TransformSize8x4:   {size: transform.Size{Width: 8, Height: 4}, scanSize: transform.Size{Width: 8, Height: 4}, txScale: 0},
-	tile.TransformSize8x16:  {size: transform.Size{Width: 8, Height: 16}, scanSize: transform.Size{Width: 8, Height: 16}, txScale: 0},
-	tile.TransformSize16x8:  {size: transform.Size{Width: 16, Height: 8}, scanSize: transform.Size{Width: 16, Height: 8}, txScale: 0},
-	tile.TransformSize16x32: {size: transform.Size{Width: 16, Height: 32}, scanSize: transform.Size{Width: 16, Height: 32}, txScale: 1},
-	tile.TransformSize32x16: {size: transform.Size{Width: 32, Height: 16}, scanSize: transform.Size{Width: 32, Height: 16}, txScale: 1},
-	tile.TransformSize32x64: {size: transform.Size{Width: 32, Height: 64}, scanSize: transform.Size{Width: 32, Height: 32}, txScale: 2},
-	tile.TransformSize64x32: {size: transform.Size{Width: 64, Height: 32}, scanSize: transform.Size{Width: 32, Height: 32}, txScale: 2},
-	tile.TransformSize4x16:  {size: transform.Size{Width: 4, Height: 16}, scanSize: transform.Size{Width: 4, Height: 16}, txScale: 0},
-	tile.TransformSize16x4:  {size: transform.Size{Width: 16, Height: 4}, scanSize: transform.Size{Width: 16, Height: 4}, txScale: 0},
-	tile.TransformSize8x32:  {size: transform.Size{Width: 8, Height: 32}, scanSize: transform.Size{Width: 8, Height: 32}, txScale: 0},
-	tile.TransformSize32x8:  {size: transform.Size{Width: 32, Height: 8}, scanSize: transform.Size{Width: 32, Height: 8}, txScale: 0},
-	tile.TransformSize16x64: {size: transform.Size{Width: 16, Height: 64}, scanSize: transform.Size{Width: 16, Height: 32}, txScale: 1},
-	tile.TransformSize64x16: {size: transform.Size{Width: 64, Height: 16}, scanSize: transform.Size{Width: 32, Height: 16}, txScale: 1},
+	tile.TransformSize4x4:   {size: transform.Size{Width: 4, Height: 4}, scanSize: transform.Size{Width: 4, Height: 4}, txScale: 0, tx: tile.TransformSize4x4},
+	tile.TransformSize8x8:   {size: transform.Size{Width: 8, Height: 8}, scanSize: transform.Size{Width: 8, Height: 8}, txScale: 0, tx: tile.TransformSize8x8},
+	tile.TransformSize16x16: {size: transform.Size{Width: 16, Height: 16}, scanSize: transform.Size{Width: 16, Height: 16}, txScale: 0, tx: tile.TransformSize16x16},
+	tile.TransformSize32x32: {size: transform.Size{Width: 32, Height: 32}, scanSize: transform.Size{Width: 32, Height: 32}, txScale: 1, tx: tile.TransformSize32x32},
+	tile.TransformSize64x64: {size: transform.Size{Width: 64, Height: 64}, scanSize: transform.Size{Width: 32, Height: 32}, txScale: 2, tx: tile.TransformSize64x64},
+	tile.TransformSize4x8:   {size: transform.Size{Width: 4, Height: 8}, scanSize: transform.Size{Width: 4, Height: 8}, txScale: 0, tx: tile.TransformSize4x8},
+	tile.TransformSize8x4:   {size: transform.Size{Width: 8, Height: 4}, scanSize: transform.Size{Width: 8, Height: 4}, txScale: 0, tx: tile.TransformSize8x4},
+	tile.TransformSize8x16:  {size: transform.Size{Width: 8, Height: 16}, scanSize: transform.Size{Width: 8, Height: 16}, txScale: 0, tx: tile.TransformSize8x16},
+	tile.TransformSize16x8:  {size: transform.Size{Width: 16, Height: 8}, scanSize: transform.Size{Width: 16, Height: 8}, txScale: 0, tx: tile.TransformSize16x8},
+	tile.TransformSize16x32: {size: transform.Size{Width: 16, Height: 32}, scanSize: transform.Size{Width: 16, Height: 32}, txScale: 1, tx: tile.TransformSize16x32},
+	tile.TransformSize32x16: {size: transform.Size{Width: 32, Height: 16}, scanSize: transform.Size{Width: 32, Height: 16}, txScale: 1, tx: tile.TransformSize32x16},
+	tile.TransformSize32x64: {size: transform.Size{Width: 32, Height: 64}, scanSize: transform.Size{Width: 32, Height: 32}, txScale: 2, tx: tile.TransformSize32x64},
+	tile.TransformSize64x32: {size: transform.Size{Width: 64, Height: 32}, scanSize: transform.Size{Width: 32, Height: 32}, txScale: 2, tx: tile.TransformSize64x32},
+	tile.TransformSize4x16:  {size: transform.Size{Width: 4, Height: 16}, scanSize: transform.Size{Width: 4, Height: 16}, txScale: 0, tx: tile.TransformSize4x16},
+	tile.TransformSize16x4:  {size: transform.Size{Width: 16, Height: 4}, scanSize: transform.Size{Width: 16, Height: 4}, txScale: 0, tx: tile.TransformSize16x4},
+	tile.TransformSize8x32:  {size: transform.Size{Width: 8, Height: 32}, scanSize: transform.Size{Width: 8, Height: 32}, txScale: 0, tx: tile.TransformSize8x32},
+	tile.TransformSize32x8:  {size: transform.Size{Width: 32, Height: 8}, scanSize: transform.Size{Width: 32, Height: 8}, txScale: 0, tx: tile.TransformSize32x8},
+	tile.TransformSize16x64: {size: transform.Size{Width: 16, Height: 64}, scanSize: transform.Size{Width: 16, Height: 32}, txScale: 1, tx: tile.TransformSize16x64},
+	tile.TransformSize64x16: {size: transform.Size{Width: 64, Height: 16}, scanSize: transform.Size{Width: 32, Height: 16}, txScale: 1, tx: tile.TransformSize64x16},
 }
 
 func frameWorkBlockCoeffTransformMeta(size tile.TransformSize) (frameWorkTransformMeta, bool) {
