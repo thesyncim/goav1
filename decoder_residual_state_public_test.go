@@ -1822,7 +1822,10 @@ func publicDecoderResidualFrameHeaderPayload() []byte {
 	w.writeBool(false) // using_qmatrix
 	w.writeBool(false) // segmentation_enabled
 	w.writeBool(false) // reduced_tx_set
-	return w.bytes()
+	// The parser reads one more zero bit from the padding of the second
+	// byte, so the header ends on a byte boundary; every caller sends this as
+	// a frame_header_obu, whose trailing one bit is then a whole 0x80 byte.
+	return append(w.bytes(), 0x80)
 }
 
 func publicDecoderResidualRunnerFrameEvent() internaldecoder.Event {
