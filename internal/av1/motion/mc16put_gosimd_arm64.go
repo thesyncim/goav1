@@ -7,8 +7,8 @@
 package motion
 
 import (
+	"encoding/binary"
 	"simd/archsimd"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
@@ -49,19 +49,19 @@ func mc16PutFast(dst *frame.Plane, ref *frame.Plane, bitDepth, dstX, dstY, refX,
 		return false
 	}
 	dOff := dstY*dst.Stride + 2*dstX
-	if dOff+(h-1)*dst.Stride+2*w > len(dst.Pix) {
+	dExt := (h-1)*dst.Stride + 2*w
+	if dOff+dExt > len(dst.Pix) || dExt > mc8WindowMax {
 		return false
 	}
 	src, stride, ok := mc16Source(ref, refX, refY, w, h, tx, ty, &scratch.edge16)
 	if !ok {
 		return false
 	}
-	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
-	d := unsafe.Pointer(&dst.Pix[dOff])
+	d := dst.Pix[dOff : dOff+dExt]
 	maxV := int16(1)<<bitDepth - 1
 	switch {
 	case tx != 0 && ty != 0:
-		im := unsafe.Pointer(&scratch.imHBD[0])
+		im := scratch.imHBD[:]
 		rows := h + ty - 1
 		switch {
 		case tx == 8:
@@ -73,7 +73,7 @@ func mc16PutFast(dst *frame.Plane, ref *frame.Plane, bitDepth, dstX, dstY, refX,
 		}
 		switch {
 		case ty == 8:
-			mc16V8FromI32(im, w, h, &mc16SharpPhases[subY].v, 1<<15, true, maxV, d, dst.Stride)
+			mc16V8FromI32(im, w, h, &mc16SharpPhases[subY].v, 1<<15, true, maxV, d, dst.Stride, nil)
 		case w == 4:
 			mc16PutV6FromI32W4(im, h, &mc8Phases[ky][subY], maxV, d, dst.Stride)
 		default:
@@ -101,48 +101,31 @@ func mc16Clip(lo, hi archsimd.Int32x4, zero, maxV archsimd.Int16x8) archsimd.Int
 }
 
 // mc16PutH6 is the put horizontal-only pass: clip((hs + rnd) >> 6).
-func mc16PutH6(src unsafe.Pointer, srcStride, w, h int, ph *mc8Phase, rndC int32, maxPix int16, dst unsafe.Pointer, dstStride int) {
-	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
-	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
-	c2 := archsimd.LoadInt16x8Array(&ph.h[2])
-	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
-	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
-	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
-	h0 := c0.HiToLo()
-	h1 := c1.HiToLo()
-	h2 := c2.HiToLo()
-	h3 := c3.HiToLo()
-	h4 := c4.HiToLo()
-	h5 := c5.HiToLo()
+func mc16PutH6(src []byte, srcStride, w, h int, ph *mc8Phase, rndC int32, maxPix int16, dst []byte, dstStride int) {
+	c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5 := mc16LoadTaps6(ph)
 	rnd := archsimd.BroadcastInt32x4(rndC)
 	shv := archsimd.BroadcastInt32x4(-6)
 	zero := archsimd.BroadcastInt16x8(0)
 	maxV := archsimd.BroadcastInt16x8(maxPix)
+	ss, ds := uint32(srcStride), uint32(dstStride)
+	var so, do uint32
 	if w == 4 {
 		for r := 0; r < h; r++ {
-			p := unsafe.Add(src, r*srcStride)
-			lo := rnd.Add(mc16L16(p).MulWidenLo(c0))
-			lo = lo.Add(mc16L16(unsafe.Add(p, 2)).MulWidenLo(c1))
-			lo = lo.Add(mc16L16(unsafe.Add(p, 4)).MulWidenLo(c2))
-			lo = lo.Add(mc16L16(unsafe.Add(p, 6)).MulWidenLo(c3))
-			lo = lo.Add(mc16L16(unsafe.Add(p, 8)).MulWidenLo(c4))
-			lo = lo.Add(mc16L16(unsafe.Add(p, 10)).MulWidenLo(c5))
-			lo = lo.Shift(shv)
-			*(*uint64)(unsafe.Add(dst, r*dstStride)) = mc16Clip(lo, lo, zero, maxV).ToBits().ReshapeToUint64s().GetElem(0)
+			lo := mc16H6Lo(mc16W26(src, so), c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd).Shift(shv)
+			binary.LittleEndian.PutUint64(mc8W8(dst, do)[:], mc16Clip(lo, lo, zero, maxV).ToBits().ReshapeToUint64s().GetElem(0))
+			so, do = so+ss, do+ds
 		}
 		return
 	}
 	for r := 0; r < h; r++ {
-		s := unsafe.Add(src, r*srcStride)
-		o := unsafe.Add(dst, r*dstStride)
-		for col := 0; col < w; col += 8 {
-			p := unsafe.Add(s, 2*col)
-			x0 := mc16L16(p)
-			x1 := mc16L16(unsafe.Add(p, 2))
-			x2 := mc16L16(unsafe.Add(p, 4))
-			x3 := mc16L16(unsafe.Add(p, 6))
-			x4 := mc16L16(unsafe.Add(p, 8))
-			x5 := mc16L16(unsafe.Add(p, 10))
+		for col := uint32(0); col < uint32(2*w); col += 16 {
+			hw := mc16W26(src, so+col)
+			x0 := mc16LB((*[16]byte)(hw[0:16]))
+			x1 := mc16LB((*[16]byte)(hw[2:18]))
+			x2 := mc16LB((*[16]byte)(hw[4:20]))
+			x3 := mc16LB((*[16]byte)(hw[6:22]))
+			x4 := mc16LB((*[16]byte)(hw[8:24]))
+			x5 := mc16LB((*[16]byte)(hw[10:26]))
 			lo := rnd.Add(x0.MulWidenLo(c0))
 			hi := rnd.Add(x0.HiToLo().MulWidenLo(h0))
 			lo = lo.Add(x1.MulWidenLo(c1))
@@ -155,137 +138,114 @@ func mc16PutH6(src unsafe.Pointer, srcStride, w, h int, ph *mc8Phase, rndC int32
 			hi = hi.Add(x4.HiToLo().MulWidenLo(h4))
 			lo = lo.Add(x5.MulWidenLo(c5))
 			hi = hi.Add(x5.HiToLo().MulWidenLo(h5))
-			mc16Clip(lo.Shift(shv), hi.Shift(shv), zero, maxV).StoreArray((*[8]int16)(unsafe.Add(o, 2*col)))
+			mc16St16(dst, do+col, mc16Clip(lo.Shift(shv), hi.Shift(shv), zero, maxV))
 		}
+		so, do = so+ss, do+ds
 	}
 }
 
 // mc16PutV6 is the put vertical-only pass: clip((hs + 32) >> 6), sliding a
 // six-row window down each column strip, two output rows per iteration.
-func mc16PutV6(src unsafe.Pointer, srcStride, w, h int, ph *mc8Phase, maxPix int16, dst unsafe.Pointer, dstStride int) {
-	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
-	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
-	c2 := archsimd.LoadInt16x8Array(&ph.h[2])
-	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
-	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
-	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
-	h0 := c0.HiToLo()
-	h1 := c1.HiToLo()
-	h2 := c2.HiToLo()
-	h3 := c3.HiToLo()
-	h4 := c4.HiToLo()
-	h5 := c5.HiToLo()
+func mc16PutV6(src []byte, srcStride, w, h int, ph *mc8Phase, maxPix int16, dst []byte, dstStride int) {
+	c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5 := mc16LoadTaps6(ph)
 	rnd := archsimd.BroadcastInt32x4(32)
 	shv := archsimd.BroadcastInt32x4(-6)
 	zero := archsimd.BroadcastInt16x8(0)
 	maxV := archsimd.BroadcastInt16x8(maxPix)
+	ss, ds := uint32(srcStride), uint32(dstStride)
 	if w == 4 {
-		r0 := mc16L16(src)
-		r1 := mc16L16(unsafe.Add(src, srcStride))
-		r2 := mc16L16(unsafe.Add(src, 2*srcStride))
-		r3 := mc16L16(unsafe.Add(src, 3*srcStride))
-		r4 := mc16L16(unsafe.Add(src, 4*srcStride))
-		s0 := unsafe.Add(src, 5*srcStride)
+		r0 := mc16L16(src, 0)
+		r1 := mc16L16(src, ss)
+		r2 := mc16L16(src, 2*ss)
+		r3 := mc16L16(src, 3*ss)
+		so := 4 * ss
+		r4 := mc16L16(src, so)
+		var d uint32
 		r := 0
 		for ; r+2 <= h; r += 2 {
-			s, d := unsafe.Add(s0, r*srcStride), unsafe.Add(dst, r*dstStride)
-			r5 := mc16L16(s)
-			r6 := mc16L16(unsafe.Add(s, srcStride))
-			a := rnd.Add(r0.MulWidenLo(c0))
-			a = a.Add(r1.MulWidenLo(c1))
-			a = a.Add(r2.MulWidenLo(c2))
-			a = a.Add(r3.MulWidenLo(c3))
-			a = a.Add(r4.MulWidenLo(c4))
-			a = a.Add(r5.MulWidenLo(c5))
-			b := rnd.Add(r1.MulWidenLo(c0))
-			b = b.Add(r2.MulWidenLo(c1))
-			b = b.Add(r3.MulWidenLo(c2))
-			b = b.Add(r4.MulWidenLo(c3))
-			b = b.Add(r5.MulWidenLo(c4))
-			b = b.Add(r6.MulWidenLo(c5))
+			r5 := mc16L16(src, so+ss)
+			so += 2 * ss
+			r6 := mc16L16(src, so)
+			a := mc16V6Lo(r0, r1, r2, r3, r4, r5, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd)
+			b := mc16V6Lo(r1, r2, r3, r4, r5, r6, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd)
 			v := mc16Clip(a.Shift(shv), b.Shift(shv), zero, maxV).ToBits().ReshapeToUint64s()
-			*(*uint64)(d) = v.GetElem(0)
-			*(*uint64)(unsafe.Add(d, dstStride)) = v.GetElem(1)
+			binary.LittleEndian.PutUint64(mc8W8(dst, d)[:], v.GetElem(0))
+			binary.LittleEndian.PutUint64(mc8W8(dst, d+ds)[:], v.GetElem(1))
+			d += 2 * ds
 			r0, r1, r2, r3, r4 = r2, r3, r4, r5, r6
 		}
 		if r < h {
-			s, d := unsafe.Add(s0, r*srcStride), unsafe.Add(dst, r*dstStride)
-			r5 := mc16L16(s)
-			a := rnd.Add(r0.MulWidenLo(c0))
-			a = a.Add(r1.MulWidenLo(c1))
-			a = a.Add(r2.MulWidenLo(c2))
-			a = a.Add(r3.MulWidenLo(c3))
-			a = a.Add(r4.MulWidenLo(c4))
-			a = a.Add(r5.MulWidenLo(c5))
-			a = a.Shift(shv)
-			*(*uint64)(d) = mc16Clip(a, a, zero, maxV).ToBits().ReshapeToUint64s().GetElem(0)
+			r5 := mc16L16(src, so+ss)
+			a := mc16V6Lo(r0, r1, r2, r3, r4, r5, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd).Shift(shv)
+			binary.LittleEndian.PutUint64(mc8W8(dst, d)[:], mc16Clip(a, a, zero, maxV).ToBits().ReshapeToUint64s().GetElem(0))
 		}
 		return
 	}
-	for col := 0; col < w; col += 8 {
-		s := unsafe.Add(src, 2*col)
-		r0 := mc16L16(s)
-		r1 := mc16L16(unsafe.Add(s, srcStride))
-		r2 := mc16L16(unsafe.Add(s, 2*srcStride))
-		r3 := mc16L16(unsafe.Add(s, 3*srcStride))
-		r4 := mc16L16(unsafe.Add(s, 4*srcStride))
-		s0, d0 := unsafe.Add(src, 2*col+5*srcStride), unsafe.Add(dst, 2*col)
+	for col := uint32(0); col < uint32(2*w); col += 16 {
+		so := col
+		r0 := mc16L16(src, so)
+		r1 := mc16L16(src, so+ss)
+		r2 := mc16L16(src, so+2*ss)
+		r3 := mc16L16(src, so+3*ss)
+		so += 4 * ss
+		r4 := mc16L16(src, so)
+		d := col
 		r := 0
 		for ; r+2 <= h; r += 2 {
-			s, d := unsafe.Add(s0, r*srcStride), unsafe.Add(d0, r*dstStride)
-			r5 := mc16L16(s)
-			r6 := mc16L16(unsafe.Add(s, srcStride))
-			alo := rnd.Add(r0.MulWidenLo(c0))
-			ahi := rnd.Add(r0.HiToLo().MulWidenLo(h0))
-			alo = alo.Add(r1.MulWidenLo(c1))
-			ahi = ahi.Add(r1.HiToLo().MulWidenLo(h1))
-			alo = alo.Add(r2.MulWidenLo(c2))
-			ahi = ahi.Add(r2.HiToLo().MulWidenLo(h2))
-			alo = alo.Add(r3.MulWidenLo(c3))
-			ahi = ahi.Add(r3.HiToLo().MulWidenLo(h3))
-			alo = alo.Add(r4.MulWidenLo(c4))
-			ahi = ahi.Add(r4.HiToLo().MulWidenLo(h4))
-			alo = alo.Add(r5.MulWidenLo(c5))
-			ahi = ahi.Add(r5.HiToLo().MulWidenLo(h5))
-			blo := rnd.Add(r1.MulWidenLo(c0))
-			bhi := rnd.Add(r1.HiToLo().MulWidenLo(h0))
-			blo = blo.Add(r2.MulWidenLo(c1))
-			bhi = bhi.Add(r2.HiToLo().MulWidenLo(h1))
-			blo = blo.Add(r3.MulWidenLo(c2))
-			bhi = bhi.Add(r3.HiToLo().MulWidenLo(h2))
-			blo = blo.Add(r4.MulWidenLo(c3))
-			bhi = bhi.Add(r4.HiToLo().MulWidenLo(h3))
-			blo = blo.Add(r5.MulWidenLo(c4))
-			bhi = bhi.Add(r5.HiToLo().MulWidenLo(h4))
-			blo = blo.Add(r6.MulWidenLo(c5))
-			bhi = bhi.Add(r6.HiToLo().MulWidenLo(h5))
-			mc16Clip(alo.Shift(shv), ahi.Shift(shv), zero, maxV).StoreArray((*[8]int16)(d))
-			mc16Clip(blo.Shift(shv), bhi.Shift(shv), zero, maxV).StoreArray((*[8]int16)(unsafe.Add(d, dstStride)))
+			r5 := mc16L16(src, so+ss)
+			so += 2 * ss
+			r6 := mc16L16(src, so)
+			alo, ahi := mc16V6(r0, r1, r2, r3, r4, r5, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd)
+			blo, bhi := mc16V6(r1, r2, r3, r4, r5, r6, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd)
+			mc16St16(dst, d, mc16Clip(alo.Shift(shv), ahi.Shift(shv), zero, maxV))
+			mc16St16(dst, d+ds, mc16Clip(blo.Shift(shv), bhi.Shift(shv), zero, maxV))
+			d += 2 * ds
 			r0, r1, r2, r3, r4 = r2, r3, r4, r5, r6
 		}
 		if r < h {
-			s, d := unsafe.Add(s0, r*srcStride), unsafe.Add(d0, r*dstStride)
-			r5 := mc16L16(s)
-			alo := rnd.Add(r0.MulWidenLo(c0))
-			ahi := rnd.Add(r0.HiToLo().MulWidenLo(h0))
-			alo = alo.Add(r1.MulWidenLo(c1))
-			ahi = ahi.Add(r1.HiToLo().MulWidenLo(h1))
-			alo = alo.Add(r2.MulWidenLo(c2))
-			ahi = ahi.Add(r2.HiToLo().MulWidenLo(h2))
-			alo = alo.Add(r3.MulWidenLo(c3))
-			ahi = ahi.Add(r3.HiToLo().MulWidenLo(h3))
-			alo = alo.Add(r4.MulWidenLo(c4))
-			ahi = ahi.Add(r4.HiToLo().MulWidenLo(h4))
-			alo = alo.Add(r5.MulWidenLo(c5))
-			ahi = ahi.Add(r5.HiToLo().MulWidenLo(h5))
-			mc16Clip(alo.Shift(shv), ahi.Shift(shv), zero, maxV).StoreArray((*[8]int16)(d))
+			r5 := mc16L16(src, so+ss)
+			alo, ahi := mc16V6(r0, r1, r2, r3, r4, r5, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd)
+			mc16St16(dst, d, mc16Clip(alo.Shift(shv), ahi.Shift(shv), zero, maxV))
 		}
 	}
 }
 
-// mc16PutV6FromI32 is the 10-bit put 2D vertical pass over the int32
-// intermediate (mc8PutV6FromI32 with a 16bpc clip and store).
-func mc16PutV6FromI32(im unsafe.Pointer, w, h int, ph *mc8Phase, maxPix int16, dst unsafe.Pointer, dstStride int) {
+// mc16V6PutPair is the 10-bit put 2D vertical chain of output rows r and r+1
+// from the seven strip-major intermediate rows r..r+6, clamped to
+// [0, maxV].
+func mc16V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5, rnd archsimd.Int32x4, zero, maxV archsimd.Int16x8) (archsimd.Int16x8, archsimd.Int16x8) {
+	a0 := x0.MulAdd(c0, rnd)
+	b0 := y0.MulAdd(c0, rnd)
+	a0 = x1.MulAdd(c1, a0)
+	b0 = y1.MulAdd(c1, b0)
+	a0 = x2.MulAdd(c2, a0)
+	b0 = y2.MulAdd(c2, b0)
+	a0 = x3.MulAdd(c3, a0)
+	b0 = y3.MulAdd(c3, b0)
+	a0 = x4.MulAdd(c4, a0)
+	b0 = y4.MulAdd(c4, b0)
+	a0 = x5.MulAdd(c5, a0)
+	b0 = y5.MulAdd(c5, b0)
+	a1 := x1.MulAdd(c0, rnd)
+	b1 := y1.MulAdd(c0, rnd)
+	a1 = x2.MulAdd(c1, a1)
+	b1 = y2.MulAdd(c1, b1)
+	a1 = x3.MulAdd(c2, a1)
+	b1 = y3.MulAdd(c2, b1)
+	a1 = x4.MulAdd(c3, a1)
+	b1 = y4.MulAdd(c3, b1)
+	a1 = x5.MulAdd(c4, a1)
+	b1 = y5.MulAdd(c4, b1)
+	a1 = x6.MulAdd(c5, a1)
+	b1 = y6.MulAdd(c5, b1)
+	v0 := a0.ToBits().ReshapeToUint16s().ConcatOdd(b0.ToBits().ReshapeToUint16s()).BitsToInt16().Max(zero).Min(maxV)
+	v1 := a1.ToBits().ReshapeToUint16s().ConcatOdd(b1.ToBits().ReshapeToUint16s()).BitsToInt16().Max(zero).Min(maxV)
+	return v0, v1
+}
+
+// mc16PutV6FromI32 is the 10-bit put 2D vertical pass over the strip-major
+// int32 intermediate (mc8PutV6FromI32 with a 16bpc clip and store).
+func mc16PutV6FromI32(im []int32, w, h int, ph *mc8Phase, maxPix int16, dst []byte, dstStride int) {
 	c0 := archsimd.LoadInt32x4Array(&ph.v[0])
 	c1 := archsimd.LoadInt32x4Array(&ph.v[1])
 	c2 := archsimd.LoadInt32x4Array(&ph.v[2])
@@ -295,76 +255,40 @@ func mc16PutV6FromI32(im unsafe.Pointer, w, h int, ph *mc8Phase, maxPix int16, d
 	rnd := archsimd.BroadcastInt32x4(1 << 15)
 	zero := archsimd.BroadcastInt16x8(0)
 	maxV := archsimd.BroadcastInt16x8(maxPix)
-	rs := w * 4
+	ds := uint32(dstStride)
+	rows := h + 5
+	n := rows * 8
 	for c := 0; c < w; c += 8 {
-		q := unsafe.Add(im, c*4)
-		x0, y0 := archsimd.LoadInt32x4Array((*[4]int32)(q)), archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 16)))
-		q = unsafe.Add(q, rs)
-		x1, y1 := archsimd.LoadInt32x4Array((*[4]int32)(q)), archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 16)))
-		q = unsafe.Add(q, rs)
-		x2, y2 := archsimd.LoadInt32x4Array((*[4]int32)(q)), archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 16)))
-		q = unsafe.Add(q, rs)
-		x3, y3 := archsimd.LoadInt32x4Array((*[4]int32)(q)), archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 16)))
-		q = unsafe.Add(q, rs)
-		x4, y4 := archsimd.LoadInt32x4Array((*[4]int32)(q)), archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 16)))
-		q0, d0 := unsafe.Add(im, c*4+5*rs), unsafe.Add(dst, 2*c)
-		r := 0
-		for ; r+2 <= h; r += 2 {
-			q, d := unsafe.Add(q0, r*rs), unsafe.Add(d0, r*dstStride)
-			x5, y5 := archsimd.LoadInt32x4Array((*[4]int32)(q)), archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 16)))
-			q = unsafe.Add(q, rs)
-			x6, y6 := archsimd.LoadInt32x4Array((*[4]int32)(q)), archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 16)))
-			a0 := x0.MulAdd(c0, rnd)
-			b0 := y0.MulAdd(c0, rnd)
-			a0 = x1.MulAdd(c1, a0)
-			b0 = y1.MulAdd(c1, b0)
-			a0 = x2.MulAdd(c2, a0)
-			b0 = y2.MulAdd(c2, b0)
-			a0 = x3.MulAdd(c3, a0)
-			b0 = y3.MulAdd(c3, b0)
-			a0 = x4.MulAdd(c4, a0)
-			b0 = y4.MulAdd(c4, b0)
-			a0 = x5.MulAdd(c5, a0)
-			b0 = y5.MulAdd(c5, b0)
-			a1 := x1.MulAdd(c0, rnd)
-			b1 := y1.MulAdd(c0, rnd)
-			a1 = x2.MulAdd(c1, a1)
-			b1 = y2.MulAdd(c1, b1)
-			a1 = x3.MulAdd(c2, a1)
-			b1 = y3.MulAdd(c2, b1)
-			a1 = x4.MulAdd(c3, a1)
-			b1 = y4.MulAdd(c3, b1)
-			a1 = x5.MulAdd(c4, a1)
-			b1 = y5.MulAdd(c4, b1)
-			a1 = x6.MulAdd(c5, a1)
-			b1 = y6.MulAdd(c5, b1)
-			a0.ToBits().ReshapeToUint16s().ConcatOdd(b0.ToBits().ReshapeToUint16s()).BitsToInt16().Max(zero).Min(maxV).StoreArray((*[8]int16)(d))
-			a1.ToBits().ReshapeToUint16s().ConcatOdd(b1.ToBits().ReshapeToUint16s()).BitsToInt16().Max(zero).Min(maxV).StoreArray((*[8]int16)(unsafe.Add(d, dstStride)))
+		st := im[c*rows : c*rows+n : c*rows+n]
+		head := (*[40]int32)(st[0:40])
+		x0, y0 := mc8LoadI32x8((*[8]int32)(head[0:8]))
+		x1, y1 := mc8LoadI32x8((*[8]int32)(head[8:16]))
+		x2, y2 := mc8LoadI32x8((*[8]int32)(head[16:24]))
+		x3, y3 := mc8LoadI32x8((*[8]int32)(head[24:32]))
+		x4, y4 := mc8LoadI32x8((*[8]int32)(head[32:40]))
+		d := uint32(2 * c)
+		q := 40
+		for ; q <= len(st)-16; q += 16 {
+			win := (*[16]int32)(st[q : q+16])
+			x5, y5 := mc8LoadI32x8((*[8]int32)(win[0:8]))
+			x6, y6 := mc8LoadI32x8((*[8]int32)(win[8:16]))
+			v0, v1 := mc16V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5, rnd, zero, maxV)
+			mc16St16(dst, d, v0)
+			mc16St16(dst, d+ds, v1)
+			d += 2 * ds
 			x0, y0, x1, y1, x2, y2, x3, y3, x4, y4 = x2, y2, x3, y3, x4, y4, x5, y5, x6, y6
 		}
-		if r < h {
-			q, d := unsafe.Add(q0, r*rs), unsafe.Add(d0, r*dstStride)
-			x5, y5 := archsimd.LoadInt32x4Array((*[4]int32)(q)), archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 16)))
-			a0 := x0.MulAdd(c0, rnd)
-			b0 := y0.MulAdd(c0, rnd)
-			a0 = x1.MulAdd(c1, a0)
-			b0 = y1.MulAdd(c1, b0)
-			a0 = x2.MulAdd(c2, a0)
-			b0 = y2.MulAdd(c2, b0)
-			a0 = x3.MulAdd(c3, a0)
-			b0 = y3.MulAdd(c3, b0)
-			a0 = x4.MulAdd(c4, a0)
-			b0 = y4.MulAdd(c4, b0)
-			a0 = x5.MulAdd(c5, a0)
-			b0 = y5.MulAdd(c5, b0)
-			a0.ToBits().ReshapeToUint16s().ConcatOdd(b0.ToBits().ReshapeToUint16s()).BitsToInt16().Max(zero).Min(maxV).StoreArray((*[8]int16)(d))
+		if q <= len(st)-8 {
+			x5, y5 := mc8LoadI32x8((*[8]int32)(st[q : q+8]))
+			v0, _ := mc16V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x5, y5, c0, c1, c2, c3, c4, c5, rnd, zero, maxV)
+			mc16St16(dst, d, v0)
 		}
 	}
 }
 
 // mc16PutV6FromI32W4 is the width-4 form: two output rows per vector (the
 // intermediate rows of a width-4 block are contiguous).
-func mc16PutV6FromI32W4(im unsafe.Pointer, h int, ph *mc8Phase, maxPix int16, dst unsafe.Pointer, dstStride int) {
+func mc16PutV6FromI32W4(im []int32, h int, ph *mc8Phase, maxPix int16, dst []byte, dstStride int) {
 	c0 := archsimd.LoadInt32x4Array(&ph.v[0])
 	c1 := archsimd.LoadInt32x4Array(&ph.v[1])
 	c2 := archsimd.LoadInt32x4Array(&ph.v[2])
@@ -374,28 +298,31 @@ func mc16PutV6FromI32W4(im unsafe.Pointer, h int, ph *mc8Phase, maxPix int16, ds
 	rnd := archsimd.BroadcastInt32x4(1 << 15)
 	zero := archsimd.BroadcastInt16x8(0)
 	maxV := archsimd.BroadcastInt16x8(maxPix)
-	x0 := archsimd.LoadInt32x4Array((*[4]int32)(im))
-	x1 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(im, 16)))
-	x2 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(im, 32)))
-	x3 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(im, 48)))
-	x4 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(im, 64)))
-	q0 := unsafe.Add(im, 80)
-	r := 0
-	for ; r+2 <= h; r += 2 {
-		q, d := unsafe.Add(q0, r*16), unsafe.Add(dst, r*dstStride)
-		x5 := archsimd.LoadInt32x4Array((*[4]int32)(q))
-		x6 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(q, 16)))
+	st := im[: (h+5)*4 : (h+5)*4]
+	head := (*[20]int32)(st[0:20])
+	x0 := archsimd.LoadInt32x4Array((*[4]int32)(head[0:4]))
+	x1 := archsimd.LoadInt32x4Array((*[4]int32)(head[4:8]))
+	x2 := archsimd.LoadInt32x4Array((*[4]int32)(head[8:12]))
+	x3 := archsimd.LoadInt32x4Array((*[4]int32)(head[12:16]))
+	x4 := archsimd.LoadInt32x4Array((*[4]int32)(head[16:20]))
+	ds := uint32(dstStride)
+	var d uint32
+	q := 20
+	for ; q <= len(st)-8; q += 8 {
+		win := (*[8]int32)(st[q : q+8])
+		x5 := archsimd.LoadInt32x4Array((*[4]int32)(win[0:4]))
+		x6 := archsimd.LoadInt32x4Array((*[4]int32)(win[4:8]))
 		a, b := mc8V6I32W4(x0, x1, x2, x3, x4, x5, x6, c0, c1, c2, c3, c4, c5, rnd)
 		v := a.ToBits().ReshapeToUint16s().ConcatOdd(b.ToBits().ReshapeToUint16s()).BitsToInt16().Max(zero).Min(maxV).ToBits().ReshapeToUint64s()
-		*(*uint64)(d) = v.GetElem(0)
-		*(*uint64)(unsafe.Add(d, dstStride)) = v.GetElem(1)
+		binary.LittleEndian.PutUint64(mc8W8(dst, d)[:], v.GetElem(0))
+		binary.LittleEndian.PutUint64(mc8W8(dst, d+ds)[:], v.GetElem(1))
+		d += 2 * ds
 		x0, x1, x2, x3, x4 = x2, x3, x4, x5, x6
 	}
-	if r < h {
-		q, d := unsafe.Add(q0, r*16), unsafe.Add(dst, r*dstStride)
-		x5 := archsimd.LoadInt32x4Array((*[4]int32)(q))
+	if q <= len(st)-4 {
+		x5 := archsimd.LoadInt32x4Array((*[4]int32)(st[q : q+4]))
 		a, _ := mc8V6I32W4(x0, x1, x2, x3, x4, x5, x5, c0, c1, c2, c3, c4, c5, rnd)
 		v := a.ToBits().ReshapeToUint16s().ConcatOdd(a.ToBits().ReshapeToUint16s()).BitsToInt16().Max(zero).Min(maxV)
-		*(*uint64)(d) = v.ToBits().ReshapeToUint64s().GetElem(0)
+		binary.LittleEndian.PutUint64(mc8W8(dst, d)[:], v.ToBits().ReshapeToUint64s().GetElem(0))
 	}
 }
