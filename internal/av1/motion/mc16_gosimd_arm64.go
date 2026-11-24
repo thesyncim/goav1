@@ -390,36 +390,51 @@ func mc16PrepV6(src []byte, srcStride, w, h int, ph *mc8Phase, sh int, out []uin
 func mc16PrepCopy(src []byte, srcStride, w, h, shl int, out []uint16) {
 	mul := archsimd.BroadcastUint16x8(uint16(1) << shl)
 	off := archsimd.BroadcastUint16x8(mc16PrepRoundOffset)
-	ss := uint32(srcStride)
+	ss := srcStride
 	out = out[: w*h : w*h]
-	var so uint32
-	ld := func(o uint32) archsimd.Uint16x8 {
-		return archsimd.LoadUint8x16Array(mc8W16(src, o)).ReshapeToUint16s()
-	}
+	// The CONV_BUF is walked as one stream whose loop bound proves its
+	// windows; the source rows are limit-checked windows (mc8R8/16/32).
 	switch {
 	case w == 4:
-		q := 0
+		sl := len(src) - 8
+		q, so := 0, 0
 		for ; q <= len(out)-8; q += 8 {
-			a := binary.LittleEndian.Uint64(mc8W8(src, so)[:])
-			b := binary.LittleEndian.Uint64(mc8W8(src, so+ss)[:])
+			a, so1 := binary.LittleEndian.Uint64(mc8R8(src, so, sl)[:]), so+ss
+			b := binary.LittleEndian.Uint64(mc8R8(src, so1, sl)[:])
 			v := archsimd.LoadUint64x2Array(&[2]uint64{a, b})
 			v.ReshapeToUint16s().MulAdd(mul, off).StoreArray((*[8]uint16)(out[q : q+8]))
-			so += 2 * ss
+			so = so1 + ss
 		}
 		if q <= len(out)-4 {
-			v := archsimd.BroadcastUint64x2(binary.LittleEndian.Uint64(mc8W8(src, so)[:])).ReshapeToUint16s().MulAdd(mul, off)
+			v := archsimd.BroadcastUint64x2(binary.LittleEndian.Uint64(mc8R8(src, so, sl)[:])).ReshapeToUint16s().MulAdd(mul, off)
 			mc8Store4U16((*[4]uint16)(out[q:q+4]), v.ReshapeToUint64s().GetElem(0))
 		}
 	case w == 8:
+		sl := len(src) - 16
+		so := 0
 		for q := 0; q <= len(out)-8; q += 8 {
-			ld(so).MulAdd(mul, off).StoreArray((*[8]uint16)(out[q : q+8]))
+			archsimd.LoadUint8x16Array(mc8R16(src, so, sl)).ReshapeToUint16s().MulAdd(mul, off).StoreArray((*[8]uint16)(out[q : q+8]))
 			so += ss
 		}
-	default:
-		c, ws := uint32(0), uint32(w)
+	case w&15 != 0:
+		sl := len(src) - 16
+		c, so, rb := 0, 0, 2*w
 		for q := 0; q <= len(out)-8; q += 8 {
-			ld(so+2*c).MulAdd(mul, off).StoreArray((*[8]uint16)(out[q : q+8]))
-			if c += 8; c == ws {
+			archsimd.LoadUint8x16Array(mc8R16(src, so+c, sl)).ReshapeToUint16s().MulAdd(mul, off).StoreArray((*[8]uint16)(out[q : q+8]))
+			if c += 16; c == rb {
+				c, so = 0, so+ss
+			}
+		}
+	default:
+		// w a multiple of 16: sixteen samples (one 32-byte source window)
+		// per step.
+		sl := len(src) - 32
+		c, so, rb := 0, 0, 2*w
+		for q := 0; q <= len(out)-16; q += 16 {
+			win, o := mc8R32(src, so+c, sl), (*[16]uint16)(out[q:q+16])
+			archsimd.LoadUint8x16Array((*[16]byte)(win[0:16])).ReshapeToUint16s().MulAdd(mul, off).StoreArray((*[8]uint16)(o[0:8]))
+			archsimd.LoadUint8x16Array((*[16]byte)(win[16:32])).ReshapeToUint16s().MulAdd(mul, off).StoreArray((*[8]uint16)(o[8:16]))
+			if c += 32; c == rb {
 				c, so = 0, so+ss
 			}
 		}

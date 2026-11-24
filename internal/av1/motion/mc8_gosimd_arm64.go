@@ -388,6 +388,13 @@ func mc8R16(s []byte, o, lim int) *[16]byte {
 	return (*[16]byte)(s[o : o+16])
 }
 
+func mc8R32(s []byte, o, lim int) *[32]byte {
+	if o < 0 || o > lim {
+		panic(errMC8Window)
+	}
+	return (*[32]byte)(s[o : o+32])
+}
+
 func mc8R24(s []byte, o, lim int) *[24]byte {
 	if o < 0 || o > lim {
 		panic(errMC8Window)
@@ -623,10 +630,14 @@ func mc8PutV6FromI32(im []int32, w, h int, ph *mc8Phase, dst []byte, dstStride i
 // mc8V6PutPair is the put 2D vertical chain of output rows r and r+1 from
 // the seven intermediate rows (x, y halves) r..r+6, saturated to bytes.
 func mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5, rnd archsimd.Int32x4) (uint64, uint64) {
-	a0 := x0.MulAdd(c0, rnd)
-	b0 := y0.MulAdd(c0, rnd)
-	a1 := x1.MulAdd(c0, rnd)
-	b1 := y1.MulAdd(c0, rnd)
+	// The chains start with a multiply and add rnd last: a MulAdd onto rnd
+	// first needs a copy of rnd per accumulator (VMLA is destructive), and
+	// the register allocator chained those copies serially at the head of
+	// every chain.
+	a0 := x0.Mul(c0)
+	b0 := y0.Mul(c0)
+	a1 := x1.Mul(c0)
+	b1 := y1.Mul(c0)
 	a0 = x1.MulAdd(c1, a0)
 	b0 = y1.MulAdd(c1, b0)
 	a1 = x2.MulAdd(c1, a1)
@@ -647,6 +658,7 @@ func mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1
 	b0 = y5.MulAdd(c5, b0)
 	a1 = x6.MulAdd(c5, a1)
 	b1 = y6.MulAdd(c5, b1)
+	a0, b0, a1, b1 = a0.Add(rnd), b0.Add(rnd), a1.Add(rnd), b1.Add(rnd)
 	v0 := a0.ToBits().ReshapeToUint16s().ConcatOdd(b0.ToBits().ReshapeToUint16s()).BitsToInt16()
 	v1 := a1.ToBits().ReshapeToUint16s().ConcatOdd(b1.ToBits().ReshapeToUint16s()).BitsToInt16()
 	return mc8Lo64(v0.SaturateToUint8()), mc8Lo64(v1.SaturateToUint8())
@@ -727,10 +739,11 @@ func mc8PrepV6FromI32S(im []int32, w, h int, ph *mc8Phase, out []uint16, rndCons
 // mc8V6PrepPair is the prep 2D vertical chain of CONV_BUF rows r and r+1
 // from the seven intermediate rows r..r+6.
 func mc8V6PrepPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c1, c2, c3, c4, c5, rnd archsimd.Int32x4) (archsimd.Uint16x8, archsimd.Uint16x8) {
-	a0 := x0.MulAdd(c0, rnd)
-	b0 := y0.MulAdd(c0, rnd)
-	a1 := x1.MulAdd(c0, rnd)
-	b1 := y1.MulAdd(c0, rnd)
+	// Multiply first and add rnd last, as in mc8V6PutPair.
+	a0 := x0.Mul(c0)
+	b0 := y0.Mul(c0)
+	a1 := x1.Mul(c0)
+	b1 := y1.Mul(c0)
 	a0 = x1.MulAdd(c1, a0)
 	b0 = y1.MulAdd(c1, b0)
 	a1 = x2.MulAdd(c1, a1)
@@ -751,6 +764,7 @@ func mc8V6PrepPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, c0, c
 	b0 = y5.MulAdd(c5, b0)
 	a1 = x6.MulAdd(c5, a1)
 	b1 = y6.MulAdd(c5, b1)
+	a0, b0, a1, b1 = a0.Add(rnd), b0.Add(rnd), a1.Add(rnd), b1.Add(rnd)
 	return a0.ToBits().ReshapeToUint16s().ConcatOdd(b0.ToBits().ReshapeToUint16s()), a1.ToBits().ReshapeToUint16s().ConcatOdd(b1.ToBits().ReshapeToUint16s())
 }
 
