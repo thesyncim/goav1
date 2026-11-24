@@ -739,43 +739,57 @@ func mc8AVX2PutV6(src []byte, ss, w, h int, ph *mc8Phase, dst []byte, ds int) {
 		return
 	}
 	mc8Dims(w, h, ss, ds)
+	for c0 := 0; c0 < w; c0 += 16 {
+		c := max(min(c0, w-16), 0)
+		mc8AVX2PutV6Strip(src[c:], ss, h, ph, dst[c:], ds)
+	}
+}
+
+// mc8AVX2PutV6Strip is one 16-column strip of mc8AVX2PutV6. Its own frame
+// keeps the row loop's integer state (two windows, two strides, the row) in
+// registers; each row pair loads and stores through one two-row window.
+func mc8AVX2PutV6Strip(sc []byte, ss, h int, ph *mc8Phase, dc []byte, ds int) {
+	mc8Dims(16, h, ss, ds)
+	t0, t1, t2 := mc8TapsB(ph.b[0]), mc8TapsB(ph.b[1]), mc8TapsB(ph.b[2])
 	deint := archsimd.LoadInt8x32Array(&mc8Deint)
 	q3120 := archsimd.LoadUint32x8Array(&mc8Q3120)
 	rnd := archsimd.BroadcastInt16x16(32)
 	zero := archsimd.Int16x16{}
 	c255 := archsimd.BroadcastInt16x16(255)
-	for c0 := 0; c0 < w; c0 += 16 {
-		c := max(min(c0, w-16), 0)
-		sc, dc := src[c:], dst[c:]
-		z0 := mc8Zx(sc, 0)
-		z1 := mc8Zx(sc, ss)
-		z2 := mc8Zx(sc, 2*ss)
-		z3 := mc8Zx(sc, 3*ss)
-		z4 := mc8Zx(sc, 4*ss)
-		p0, p1, p2, p3 := mc8Pair(z0, z1), mc8Pair(z1, z2), mc8Pair(z2, z3), mc8Pair(z3, z4)
-		for ur := uint(0); ur < uint(h&^1); ur += 2 {
-			r := int(ur)
-			s, d := (r+5)*ss, r*ds
-			z5 := mc8Zx(sc, s)
-			z6 := mc8Zx(sc, s+ss)
-			p4 := mc8Pair(z4, z5)
-			p5 := mc8Pair(z5, z6)
-			a := mc8V6(p0, p2, p4, t0, t1, t2).Add(rnd).ShiftAllRight(6)
-			b := mc8V6(p1, p3, p5, t0, t1, t2).Add(rnd).ShiftAllRight(6)
-			v := mc8Pack(a, b, zero, c255, deint).ReshapeToUint32s().Permute(q3120).ReshapeToUint8s()
-			mc8St16(dc, d, v.GetLo())
-			mc8St16(dc, d+ds, v.GetHi())
-			p0, p1, p2, p3, z4 = p2, p3, p4, p5, z6
-		}
-		r := h &^ 1
-		if r < h {
-			s, d := (r+5)*ss, r*ds
-			z5 := mc8Zx(sc, s)
-			a := mc8V6(p0, p2, mc8Pair(z4, z5), t0, t1, t2).Add(rnd).ShiftAllRight(6)
-			v := mc8Pack(a, a, zero, c255, deint).ReshapeToUint32s().Permute(q3120).ReshapeToUint8s()
-			mc8St16(dc, d, v.GetLo())
-		}
+	z0 := mc8Zx(sc, 0)
+	z1 := mc8Zx(sc, ss)
+	z2 := mc8Zx(sc, 2*ss)
+	z3 := mc8Zx(sc, 3*ss)
+	z4 := mc8Zx(sc, 4*ss)
+	p0, p1, p2, p3 := mc8Pair(z0, z1), mc8Pair(z1, z2), mc8Pair(z2, z3), mc8Pair(z3, z4)
+	for ur := uint(0); ur < uint(h&^1); ur += 2 {
+		r := int(ur)
+		x5, x6 := mc8Rows2(sc, (r+5)*ss, ss)
+		z5 := archsimd.LoadUint8x16Array(x5).ExtendToUint16()
+		z6 := archsimd.LoadUint8x16Array(x6).ExtendToUint16()
+		p4 := mc8Pair(z4, z5)
+		p5 := mc8Pair(z5, z6)
+		a := mc8V6(p0, p2, p4, t0, t1, t2).Add(rnd).ShiftAllRight(6)
+		b := mc8V6(p1, p3, p5, t0, t1, t2).Add(rnd).ShiftAllRight(6)
+		v := mc8Pack(a, b, zero, c255, deint).ReshapeToUint32s().Permute(q3120).ReshapeToUint8s()
+		d0, d1 := mc8Rows2(dc, r*ds, ds)
+		v.GetLo().StoreArray(d0)
+		v.GetHi().StoreArray(d1)
+		p0, p1, p2, p3, z4 = p2, p3, p4, p5, z6
 	}
+	if r := h &^ 1; r < h {
+		z5 := mc8Zx(sc, (r+5)*ss)
+		a := mc8V6(p0, p2, mc8Pair(z4, z5), t0, t1, t2).Add(rnd).ShiftAllRight(6)
+		v := mc8Pack(a, a, zero, c255, deint).ReshapeToUint32s().Permute(q3120).ReshapeToUint8s()
+		mc8St16(dc, r*ds, v.GetLo())
+	}
+}
+
+// mc8Rows2 returns the 16-byte windows at s[o:] and s[o+ss:] through one
+// checked slice (both rows must exist).
+func mc8Rows2(s []byte, o, ss int) (*[16]byte, *[16]byte) {
+	win := s[uint(o) : uint(o)+uint(ss)+16]
+	return (*[16]byte)(win), (*[16]byte)(win[ss:])
 }
 
 // The eight-column vertical helpers stay in 256-bit registers (a 128-bit
@@ -839,9 +853,9 @@ func mc8AVX2PrepV6(src []byte, ss, w, h int, ph *mc8Phase, out []uint16) {
 		q2 := mc8Join(mc8Pair(z2, z3), mc8Pair(z3, z4))
 		for ur := uint(0); ur < uint(h&^1); ur += 2 {
 			r := int(ur)
-			s := (r + 5) * ss
-			z5 := mc8Zx(src, s)
-			z6 := mc8Zx(src, s+ss)
+			x5, x6 := mc8Rows2(src, (r+5)*ss, ss)
+			z5 := archsimd.LoadUint8x16Array(x5).ExtendToUint16()
+			z6 := archsimd.LoadUint8x16Array(x6).ExtendToUint16()
 			q4 := mc8Join(mc8Pair(z4, z5), mc8Pair(z5, z6))
 			a := mc8V6(q0, q2, q4, t0, t1, t2).Add(rnd)
 			mc8StU16(out, r*8, a.ToBits().ShiftAllRight(2))
@@ -858,21 +872,40 @@ func mc8AVX2PrepV6(src []byte, ss, w, h int, ph *mc8Phase, out []uint16) {
 	}
 	for c0 := 0; c0 < w; c0 += 16 {
 		c := max(min(c0, w-16), 0)
-		sc, oc := src[c:], out[c:]
-		z0 := mc8Zx(sc, 0)
-		z1 := mc8Zx(sc, ss)
-		z2 := mc8Zx(sc, 2*ss)
-		z3 := mc8Zx(sc, 3*ss)
-		z4 := mc8Zx(sc, 4*ss)
-		p0, p1, p2, p3 := mc8Pair(z0, z1), mc8Pair(z1, z2), mc8Pair(z2, z3), mc8Pair(z3, z4)
-		for r := 0; r < h; r++ {
-			z5 := mc8Zx(sc, (r+5)*ss)
-			p4 := mc8Pair(z4, z5)
-			a := mc8V6(p0, p2, p4, t0, t1, t2).Add(rnd).ToBits().ShiftAllRight(2)
-			o := r * w
-			mc8StU16(oc, o, a)
-			p0, p1, p2, p3, z4 = p1, p2, p3, p4, z5
-		}
+		mc8AVX2PrepV6Strip(src[c:], ss, w, h, ph, out[c:])
+	}
+}
+
+// mc8AVX2PrepV6Strip is one 16-column strip of mc8AVX2PrepV6 (out row
+// stride w), two rows per step through two-row windows, in its own frame so
+// the row loop's integer state stays in registers.
+func mc8AVX2PrepV6Strip(sc []byte, ss, w, h int, ph *mc8Phase, oc []uint16) {
+	mc8Dims(w, h, ss, 0)
+	t0, t1, t2 := mc8TapsB(ph.b[0]), mc8TapsB(ph.b[1]), mc8TapsB(ph.b[2])
+	rnd := archsimd.BroadcastInt16x16(2 + 6144<<2)
+	z0 := mc8Zx(sc, 0)
+	z1 := mc8Zx(sc, ss)
+	z2 := mc8Zx(sc, 2*ss)
+	z3 := mc8Zx(sc, 3*ss)
+	z4 := mc8Zx(sc, 4*ss)
+	p0, p1, p2, p3 := mc8Pair(z0, z1), mc8Pair(z1, z2), mc8Pair(z2, z3), mc8Pair(z3, z4)
+	for ur := uint(0); ur < uint(h&^1); ur += 2 {
+		r := int(ur)
+		x5, x6 := mc8Rows2(sc, (r+5)*ss, ss)
+		z5 := archsimd.LoadUint8x16Array(x5).ExtendToUint16()
+		z6 := archsimd.LoadUint8x16Array(x6).ExtendToUint16()
+		p4, p5 := mc8Pair(z4, z5), mc8Pair(z5, z6)
+		a := mc8V6(p0, p2, p4, t0, t1, t2).Add(rnd).ToBits().ShiftAllRight(2)
+		b := mc8V6(p1, p3, p5, t0, t1, t2).Add(rnd).ToBits().ShiftAllRight(2)
+		win := oc[uint(r*w) : uint(r*w)+uint(w)+16]
+		a.StoreArray((*[16]uint16)(win))
+		b.StoreArray((*[16]uint16)(win[w:]))
+		p0, p1, p2, p3, z4 = p2, p3, p4, p5, z6
+	}
+	if r := h &^ 1; r < h {
+		z5 := mc8Zx(sc, (r+5)*ss)
+		a := mc8V6(p0, p2, mc8Pair(z4, z5), t0, t1, t2).Add(rnd).ToBits().ShiftAllRight(2)
+		mc8StU16(oc, r*w, a)
 	}
 }
 
