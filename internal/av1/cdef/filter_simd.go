@@ -44,8 +44,7 @@ type cdefSIMDCtx struct {
 	// Tap window indices cdefWinReach +- the direction's tap offsets: the
 	// primary taps (direction+2) and the secondary taps (direction+4,
 	// direction).
-	p0p, p0m, p1p, p1m                     uint
-	s0p, s0m, s1p, s1m, s2p, s2m, s3p, s3m uint
+	taps *[12]uint
 
 	priTap0, priTap1 int
 	secTap0, secTap1 int
@@ -93,7 +92,8 @@ func (ctx *cdefSIMDCtx) outRows() ([]uint16, []byte, int, int) {
 // priTaps returns the primary tap window indices, checked against the
 // window so the tap loads need no bounds checks.
 func (ctx *cdefSIMDCtx) priTaps() (uint, uint, uint, uint) {
-	a, b, c, d := ctx.p0p, ctx.p0m, ctx.p1p, ctx.p1m
+	t := ctx.taps
+	a, b, c, d := t[0], t[1], t[2], t[3]
 	if a > cdefTapMax || b > cdefTapMax || c > cdefTapMax || d > cdefTapMax {
 		panic(errCDEFWindow)
 	}
@@ -103,7 +103,8 @@ func (ctx *cdefSIMDCtx) priTaps() (uint, uint, uint, uint) {
 // secTaps0 returns the window indices of the weight-2 secondary taps
 // (direction+4 and direction, first tap), checked as priTaps.
 func (ctx *cdefSIMDCtx) secTaps0() (uint, uint, uint, uint) {
-	a, b, c, d := ctx.s0p, ctx.s0m, ctx.s1p, ctx.s1m
+	t := ctx.taps
+	a, b, c, d := t[4], t[5], t[6], t[7]
 	if a > cdefTapMax || b > cdefTapMax || c > cdefTapMax || d > cdefTapMax {
 		panic(errCDEFWindow)
 	}
@@ -114,27 +115,34 @@ func (ctx *cdefSIMDCtx) secTaps0() (uint, uint, uint, uint) {
 // (Two functions rather than one: eight returns exceed the inlining budget,
 // and the checks only help the kernels where they are inlined.)
 func (ctx *cdefSIMDCtx) secTaps1() (uint, uint, uint, uint) {
-	a, b, c, d := ctx.s2p, ctx.s2m, ctx.s3p, ctx.s3m
+	t := ctx.taps
+	a, b, c, d := t[8], t[9], t[10], t[11]
 	if a > cdefTapMax || b > cdefTapMax || c > cdefTapMax || d > cdefTapMax {
 		panic(errCDEFWindow)
 	}
 	return a, b, c, d
 }
 
-// setDirection fills the direction-dependent tap window indices.
+// cdefTapIdx holds, per direction, the tap window indices cdefWinReach +- t
+// of the primary taps (direction+2) and the secondary taps (direction+4,
+// direction): p0+, p0-, p1+, p1-, s0+, s0-, s1+, s1-, s2+, s2-, s3+, s3-.
+var cdefTapIdx = func() (t [8][12]uint) {
+	for d := range t {
+		offs := [6]int{
+			int(cdefDirections[d+2][0]), int(cdefDirections[d+2][1]),
+			int(cdefDirections[d+4][0]), int(cdefDirections[d][0]),
+			int(cdefDirections[d+4][1]), int(cdefDirections[d][1]),
+		}
+		for k, o := range offs {
+			t[d][2*k], t[d][2*k+1] = uint(cdefWinReach+o), uint(cdefWinReach-o)
+		}
+	}
+	return
+}()
+
+// setDirection points the context at the direction's tap window indices.
 func (ctx *cdefSIMDCtx) setDirection(direction int) {
-	pri0 := int(cdefDirections[direction+2][0])
-	pri1 := int(cdefDirections[direction+2][1])
-	sec0 := int(cdefDirections[direction+4][0])
-	sec1 := int(cdefDirections[direction][0])
-	sec2 := int(cdefDirections[direction+4][1])
-	sec3 := int(cdefDirections[direction][1])
-	ctx.p0p, ctx.p0m = uint(cdefWinReach+pri0), uint(cdefWinReach-pri0)
-	ctx.p1p, ctx.p1m = uint(cdefWinReach+pri1), uint(cdefWinReach-pri1)
-	ctx.s0p, ctx.s0m = uint(cdefWinReach+sec0), uint(cdefWinReach-sec0)
-	ctx.s1p, ctx.s1m = uint(cdefWinReach+sec1), uint(cdefWinReach-sec1)
-	ctx.s2p, ctx.s2m = uint(cdefWinReach+sec2), uint(cdefWinReach-sec2)
-	ctx.s3p, ctx.s3m = uint(cdefWinReach+sec3), uint(cdefWinReach-sec3)
+	ctx.taps = &cdefTapIdx[direction&7]
 }
 
 // setPrimary fills the primary-strength-dependent fields.
@@ -201,6 +209,21 @@ func cdefLdW1(w *[cdefWin1]uint16, i uint) archsimd.Int16x8 {
 // cdefRow is the tap window of the row whose window starts at o.
 func cdefRow(in []uint16, o int) *[cdefWin1]uint16 {
 	return (*[cdefWin1]uint16)(in[o : o+cdefWin1])
+}
+
+// cdefRows2 returns the tap windows of two consecutive rows, the window of
+// the first starting at o: one bounds check for the pair, the second row's
+// window a constant-offset slice of the same array.
+func cdefRows2(in []uint16, o int) (*[cdefWin1]uint16, *[cdefWin1]uint16) {
+	g := (*[cdefWin1 + BStride]uint16)(in[o : o+cdefWin1+BStride])
+	return (*[cdefWin1]uint16)(g[0:cdefWin1]), (*[cdefWin1]uint16)(g[BStride : BStride+cdefWin1])
+}
+
+// cdefRows4 is cdefRows2 for four consecutive rows.
+func cdefRows4(in []uint16, o int) (*[cdefWin1]uint16, *[cdefWin1]uint16, *[cdefWin1]uint16, *[cdefWin1]uint16) {
+	g := (*[cdefWin1 + 3*BStride]uint16)(in[o : o+cdefWin1+3*BStride])
+	return (*[cdefWin1]uint16)(g[0:cdefWin1]), (*[cdefWin1]uint16)(g[BStride : BStride+cdefWin1]),
+		(*[cdefWin1]uint16)(g[2*BStride : 2*BStride+cdefWin1]), (*[cdefWin1]uint16)(g[3*BStride : 3*BStride+cdefWin1])
 }
 
 // cdefLdPair zips the low four samples at window index i of two rows' windows
@@ -350,7 +373,7 @@ func cdefFilterBlock4SIMD(ctx *cdefSIMDCtx) {
 	// Counted by row pair: a step-2 counter keeps a second check per window.
 	for i := 0; i < height>>1; i++ {
 		r := 2 * i
-		w0, w1 := cdefRow(in, base+r*BStride), cdefRow(in, base+(r+1)*BStride)
+		w0, w1 := cdefRows2(in, base+r*BStride)
 		x := cdefLdPair(w0, w1, cdefWinReach)
 		sum := zero
 		mx, mn := x, x

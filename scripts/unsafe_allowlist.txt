@@ -1,9 +1,5 @@
 decode_simple.go
 examples/browser-wasm/encoder/main.go
-internal/av1/cdef/direction_hbd_avx2_amd64.go
-internal/av1/cdef/direction_u8_avx2_amd64.go
-internal/av1/cdef/filter_u8_byte_amd64.go
-internal/av1/cdef/filter_u8_secondary_byte_amd64.go
 internal/av1/decoder/postfilter_cdef_hbd_le.go
 internal/av1/decoder/postfilter_cdef_sparse.go
 internal/av1/decoder/postfilter_cdef_u8.go

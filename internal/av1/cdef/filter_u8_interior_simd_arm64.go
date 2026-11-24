@@ -118,7 +118,7 @@ func cdefFilterBlock8InteriorSIMD(ctx *cdefSIMDCtx) {
 	// Counted by row pair: a step-2 counter keeps a second check per window.
 	for i := 0; i < height>>1; i++ {
 		r := 2 * i
-		w0, w1 := cdefRow(in, base+r*BStride), cdefRow(in, base+(r+1)*BStride)
+		w0, w1 := cdefRows2(in, base+r*BStride)
 		x := cdefPack2Rows(cdefLdW1(w0, cdefWinReach), cdefLdW1(w1, cdefWinReach))
 		p0 := cdefPack2Rows(cdefLdW1(w0, p0p), cdefLdW1(w1, p0p))
 		p1 := cdefPack2Rows(cdefLdW1(w0, p0m), cdefLdW1(w1, p0m))
