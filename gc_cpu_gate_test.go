@@ -17,9 +17,12 @@ import (
 // the codec's churn/idle thread-CPU ratio divided by the synthetic kernel's:
 // what any busy neighbour costs a thread (shared cache, memory bandwidth,
 // clock, core placement) cancels, and what is left is the codec's own
-// exposure: write barriers, mark assists from allocation, stack growth. The
-// threshold is generous so loaded CI runners stay green; a hot-path
-// allocation or pointer store per block shows up far above it.
+// exposure: write barriers, mark assists from allocation, stack growth.
+// Calibration on a loaded M4 Max (load average 70-90): the codec measures
+// 0.93-1.06, and 30000 small pointerful allocations per decode op (about
+// 2 MiB, the size of one stray allocation per block) measure 1.38. The
+// per-op allocation tests catch allocations directly; this gate catches GC
+// exposure that allocates nothing, at a threshold loaded CI runners clear.
 //
 // The check runs in a child process with GOMAXPROCS=4, so parallel tests in
 // this package cannot disturb it.
@@ -47,7 +50,7 @@ func TestGCInvisibleCodecCPU(t *testing.T) {
 	}
 	const (
 		rounds    = 7
-		threshold = 1.40
+		threshold = 1.20
 	)
 	dec, decClose := gcPressureDecodeOp(t, 1)
 	defer decClose()
