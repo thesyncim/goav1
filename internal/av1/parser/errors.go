@@ -11,4 +11,5 @@ var (
 	ErrInvalidFrameHeader    = errors.New("parser: invalid frame header")
 	ErrInvalidTileGroup      = errors.New("parser: invalid tile group")
 	ErrReferenceFrameNeeded  = errors.New("parser: reference frame state required")
+	ErrInvalidReferenceScale = errors.New("parser: reference frame size out of the prediction scale range")
 )

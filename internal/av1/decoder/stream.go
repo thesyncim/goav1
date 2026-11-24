@@ -264,6 +264,9 @@ func (s *Stream) PushUnitInto(event *Event, unit obu.Unit, newCodedVideoSequence
 			if err != nil {
 				return err
 			}
+			if err := parser.ValidateReferenceScale(frameHeader, frameSize, &s.references); err != nil {
+				return err
+			}
 			tileInfo, err := parser.ParseTileInfo(unit.Payload, s.sequence, frameHeader, frameSize)
 			if err != nil {
 				return err
@@ -366,6 +369,9 @@ func (s *Stream) PushUnitInto(event *Event, unit obu.Unit, newCodedVideoSequence
 		return nil
 
 	case obu.TypeMetadata:
+		if err := obu.CheckMetadataPayload(unit.Payload); err != nil {
+			return err
+		}
 		event.Kind = EventMetadata
 		meta, mErr := obu.ParseMetadata(unit.Payload)
 		event.Metadata = meta
@@ -413,11 +419,17 @@ func (s *Stream) acceptFrameHeader(event *Event) error {
 	}
 	event.FrameHeader = frameHeader
 	if frameHeader.ShowExistingFrame {
+		if err := parser.RequireFrameHeaderTrailingBit(event.Unit.Payload, int(frameHeader.BitsRead)); err != nil {
+			return err
+		}
 		return s.acceptExistingFrame(event)
 	}
 
 	frameSize, err := parser.ParseFrameSize(event.Unit.Payload, s.sequence, frameHeader, &s.references, event.TemporalID, event.SpatialID)
 	if err != nil {
+		return err
+	}
+	if err := parser.ValidateReferenceScale(frameHeader, frameSize, &s.references); err != nil {
 		return err
 	}
 	tileInfo, err := parser.ParseTileInfo(event.Unit.Payload, s.sequence, frameHeader, frameSize)
@@ -466,6 +478,9 @@ func (s *Stream) acceptFrameHeader(event *Event) error {
 	}
 	filmGrain, err := parser.ParseFilmGrainParams(event.Unit.Payload, s.sequence, frameHeader, frameSize, &s.references, globalMotion)
 	if err != nil {
+		return err
+	}
+	if err := parser.RequireFrameHeaderTrailingBit(event.Unit.Payload, int(filmGrain.BitsRead)); err != nil {
 		return err
 	}
 	event.FrameSize = frameSize

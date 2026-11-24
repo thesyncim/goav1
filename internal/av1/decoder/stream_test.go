@@ -589,6 +589,16 @@ func TestStreamMetadataOBUCapturesParseError(t *testing.T) {
 	}
 }
 
+// TestStreamRejectsMetadataDav1dRejects: an HDR CLL metadata OBU without the
+// bit after its two fields fails the OBU, as in dav1d (src/obu.c).
+func TestStreamRejectsMetadataDav1dRejects(t *testing.T) {
+	var dec Stream
+	_, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeMetadata, []byte{0x01, 0, 0, 0, 0}), false)
+	if !errors.Is(err, obu.ErrMetadataShortPayload) {
+		t.Fatalf("PushOBUInto err=%v want %v", err, obu.ErrMetadataShortPayload)
+	}
+}
+
 func TestStreamRejectsFrameBeforeSequenceHeader(t *testing.T) {
 	var dec Stream
 	_, err := pushOBU(&dec, appendRTPElement(nil, obu.TypeFrameHeader, []byte{0x80}), false)
@@ -929,9 +939,11 @@ func BenchmarkStreamRTPPayload(b *testing.B) {
 func TestStreamInterFrameUsesReferenceState(t *testing.T) {
 	var stream []byte
 	stream = appendLowOverheadOBU(stream, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload())
-	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, shownKeyFrameHeaderPayload())
+	// Both headers end on a byte boundary, so each frame_header_obu's
+	// trailing one bit is a whole 0x80 byte.
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, append(shownKeyFrameHeaderPayload(), 0x80))
 	stream = appendLowOverheadOBU(stream, obu.TypeTemporalDelimiter, nil)
-	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, interFrameHeaderPayload())
+	stream = appendLowOverheadOBU(stream, obu.TypeFrameHeader, append(interFrameHeaderPayload(), 0x80))
 
 	var dec Stream
 	var events [4]Event
@@ -1311,5 +1323,41 @@ func BenchmarkStreamPushOBUInto(b *testing.B) {
 		var dec Stream
 		var event Event
 		_ = dec.PushOBUInto(&event, raw, false)
+	}
+}
+
+// TestStreamFrameHeaderOBUNeedsTrailingBit ports dav1d's non-strict
+// check_trailing_bits for OBU_FRAME_HDR and OBU_REDUNDANT_FRAME_HDR
+// (src/obu.c): a frame_header_obu whose payload ends exactly where
+// uncompressed_header() ends has no trailing one bit and is rejected. The
+// bit's value and the padding are not checked.
+func TestStreamFrameHeaderOBUNeedsTrailingBit(t *testing.T) {
+	seq := appendLowOverheadOBU(nil, obu.TypeSequenceHeader, testRealtimeNoOrderSequenceHeaderPayload())
+	key := shownKeyFrameHeaderPayload() // ends on a byte boundary
+	for _, tc := range []struct {
+		name string
+		typ  obu.Type
+		tail []byte
+		ok   bool
+	}{
+		{"frame header without trailing bit", obu.TypeFrameHeader, nil, false},
+		{"frame header with trailing byte", obu.TypeFrameHeader, []byte{0x80}, true},
+		{"frame header with non-strict trailing bytes", obu.TypeFrameHeader, []byte{0x00, 0x01}, true},
+		{"redundant frame header without trailing bit", obu.TypeRedundantFrameHeader, nil, false},
+		{"redundant frame header with trailing byte", obu.TypeRedundantFrameHeader, []byte{0x80}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := append(append([]byte{}, key...), tc.tail...)
+			stream := appendLowOverheadOBU(append([]byte{}, seq...), tc.typ, payload)
+			var dec Stream
+			var events [2]Event
+			_, err := dec.PushLowOverhead(stream, events[:])
+			if tc.ok && err != nil {
+				t.Fatalf("PushLowOverhead: %v", err)
+			}
+			if !tc.ok && !errors.Is(err, bitstream.ErrNotEnoughBits) {
+				t.Fatalf("PushLowOverhead err=%v want %v", err, bitstream.ErrNotEnoughBits)
+			}
+		})
 	}
 }

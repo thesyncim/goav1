@@ -571,3 +571,30 @@ func lastNonZero(src []byte) byte {
 	}
 	return src[i]
 }
+
+// CheckMetadataPayload reports the metadata_obu() damage that dav1d rejects
+// with strict_std_compliance off (dav1d_parse_obus, src/obu.c): a
+// metadata_type that overruns the payload or is not a valid leb128, and an
+// HDR CLL or MDCV payload too short for its fields plus the trailing one bit
+// (check_trailing_bits reads one bit past them). dav1d ignores every other
+// malformed metadata payload: it drops a bad ITU-T T.35 message and skips
+// the remaining types unparsed, so those stay non-fatal here and are reported
+// through ParseMetadata.
+func CheckMetadataPayload(payload []byte) error {
+	typ, n, err := bitstream.ReadLEB128(payload)
+	if err != nil {
+		return err
+	}
+	bits := (len(payload) - n) * 8
+	switch MetadataType(typ) {
+	case MetadataTypeHDRCLL:
+		if bits <= 2*16 {
+			return ErrMetadataShortPayload
+		}
+	case MetadataTypeHDRMDCV:
+		if bits <= 3*2*16+2*16+2*32 {
+			return ErrMetadataShortPayload
+		}
+	}
+	return nil
+}
