@@ -42,6 +42,10 @@ type gcPressureNode struct {
 //     stop-the-world phases dominate).
 var gcPressureRegimes = []string{"idle", "churn100", "churn10", "memlimit", "forcegc"}
 
+// gcChurnCPU accumulates the churn goroutine's thread CPU time, in threadCPU
+// units, published every few thousand allocations.
+var gcChurnCPU atomic.Uint64
+
 // startGCPressure starts the regime's background load and returns its stop
 // function.
 func startGCPressure(mode string) func() {
@@ -55,6 +59,12 @@ func startGCPressure(mode string) func() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// The churner owns its OS thread and publishes that thread's CPU
+			// time, so multi-worker measurements can take it out of the
+			// process total.
+			runtime.LockOSThread()
+			defer runtime.UnlockOSThread()
+			c0, _ := threadCPU()
 			const live = 64 << 20 / 64
 			ring := make([]*gcPressureNode, live)
 			v := new(int)
@@ -62,11 +72,20 @@ func startGCPressure(mode string) func() {
 				ring[i] = &gcPressureNode{}
 			}
 			close(ready)
+			publish := func() {
+				c, _ := threadCPU()
+				gcChurnCPU.Add(c - c0)
+				c0 = c
+			}
 			for i := 0; !stop.Load(); i++ {
 				n := &gcPressureNode{next: ring[(i+1)%live]}
 				n.payload[0] = v
 				ring[i%live] = n
+				if i&(1<<12-1) == 0 {
+					publish()
+				}
 			}
+			publish()
 		}()
 		<-ready
 	}
