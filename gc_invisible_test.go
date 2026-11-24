@@ -3,6 +3,8 @@ package goav1
 import (
 	"fmt"
 	"math"
+	"os"
+	"os/exec"
 	"runtime"
 	"runtime/metrics"
 	"strings"
@@ -285,7 +287,29 @@ func TestGCInvisibleEncodeSteadyState(t *testing.T) {
 // measured 3.7 MiB at 8 workers and 1.9 MiB for the encoder). A reading below the floor
 // means the measurement was disturbed, and fails rather than passing
 // vacuously.
+//
+// The scannable heap is a process-wide metric, so other tests in the package
+// (parallel ones especially) inflate it. The check therefore re-runs itself in
+// a child test process where nothing else is alive.
 func TestGCInvisibleScannableHeap(t *testing.T) {
+	const isolatedEnv = "GOAV1_GC_INVISIBLE_ISOLATED"
+	if os.Getenv(isolatedEnv) != "1" {
+		if testing.Short() {
+			t.Skip("spawns a child test process")
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatalf("os.Executable: %v", err)
+		}
+		cmd := exec.Command(exe, "-test.run=^TestGCInvisibleScannableHeap$", "-test.count=1", "-test.v")
+		cmd.Env = append(os.Environ(), isolatedEnv+"=1")
+		out, err := cmd.CombinedOutput()
+		t.Logf("isolated run:\n%s", out)
+		if err != nil {
+			t.Fatalf("isolated scannable-heap check failed: %v", err)
+		}
+		return
+	}
 	scan := func() int64 {
 		runtime.GC()
 		runtime.GC()
