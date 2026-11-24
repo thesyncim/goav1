@@ -92,24 +92,24 @@ func (g *fgen) dct32(in []fv) []fv {
 	for i := range ev {
 		ev[i] = in[2*i]
 	}
-	e := g.dct16(ev)
+	e := g.park(g.dct16(ev))
 
 	t16a := g.rot(in[1], 201, in[31], -4091)
+	t31a := g.rot(in[1], 4091, in[31], 201)
 	t17a := g.rot(in[17], 3035, in[15], -2751)
+	t30a := g.rot(in[17], 2751, in[15], 3035)
 	t18a := g.rot(in[9], 1751, in[23], -3703)
+	t29a := g.rot(in[9], 3703, in[23], 1751)
 	t19a := g.rot(in[25], 3857, in[7], -1380)
+	t28a := g.rot(in[25], 1380, in[7], 3857)
 	t20a := g.rot(in[5], 995, in[27], -3973)
+	t27a := g.rot(in[5], 3973, in[27], 995)
 	t21a := g.rot(in[21], 3513, in[11], -2106)
+	t26a := g.rot(in[21], 2106, in[11], 3513)
 	t22a := g.rot(in[13], 2440, in[19], -3290)
+	t25a := g.rot(in[13], 3290, in[19], 2440)
 	t23a := g.rot(in[29], 4052, in[3], -601)
 	t24a := g.rot(in[29], 601, in[3], 4052)
-	t25a := g.rot(in[13], 3290, in[19], 2440)
-	t26a := g.rot(in[21], 2106, in[11], 3513)
-	t27a := g.rot(in[5], 3973, in[27], 995)
-	t28a := g.rot(in[25], 1380, in[7], 3857)
-	t29a := g.rot(in[9], 3703, in[23], 1751)
-	t30a := g.rot(in[17], 2751, in[15], 3035)
-	t31a := g.rot(in[1], 4091, in[31], 201)
 
 	t16 := g.add(t16a, t17a)
 	t17 := g.sub(t16a, t17a)
@@ -190,11 +190,7 @@ func (g *fgen) dct32(in []fv) []fv {
 	t24a = g.rot(t24, 2896, t23, 2896)
 
 	o := []fv{t31, t30a, t29, t28a, t27, t26a, t25, t24a, t23a, t22, t21a, t20, t19a, t18, t17a, t16}
-	out := make([]fv, 32)
-	for i := 0; i < 16; i++ {
-		out[i], out[31-i] = g.combine(e[i], o[i])
-	}
-	return out
+	return g.combineAll(e, o)
 }
 
 // dct64 is inverseDCT64 for inputs 32..63 zero (the AV1 64-point rows and
@@ -205,7 +201,10 @@ func (g *fgen) dct64(in []fv) []fv {
 	for i := range ev {
 		ev[i] = in[2*i]
 	}
-	e := g.dct32(ev)
+	g.inner = true
+	e32 := g.dct32(ev)
+	g.inner = false
+	e := g.park(e32)
 	kp := func(i int) int { return cos64[i] }
 	kn := func(i int) int { return -cos64[i] }
 	var x [64]fv
@@ -296,11 +295,11 @@ func (g *fgen) dct64(in []fv) []fv {
 		y[40+i] = g.rot(x[40+i], kn(32), x[55-i], kp(32))
 		y[55-i] = g.rot(x[40+i], kp(32), x[55-i], kp(32))
 	}
-	out := make([]fv, 64)
-	for i := 0; i < 32; i++ {
-		out[i], out[63-i] = g.combine(e[i], y[32+31-i])
+	o := make([]fv, 32)
+	for i := range o {
+		o[i] = y[63-i]
 	}
-	return out
+	return g.combineAll(e, o)
 }
 
 // cos64 is itx64Cos: cospi(i) = round(4096 * cos(i*pi/128)).
