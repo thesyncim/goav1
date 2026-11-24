@@ -69,8 +69,6 @@ internal/av1/motion/mc8mask_gosimd_amd64.go
 internal/av1/motion/mc8mask_gosimd_arm64.go
 internal/av1/motion/mc8w4_gosimd_arm64.go
 internal/av1/restoration/selfguided_rolling_gosimd_arm64.go
-internal/av1/threading/cdf_storage_copy.go
-internal/av1/threading/predict.go
 internal/av1/tile/restoration_apply_u8.go
 internal/av1/tile/restoration_boundary.go
 internal/av1/transform/block.go
