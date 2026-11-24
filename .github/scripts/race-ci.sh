@@ -377,7 +377,21 @@ case "${1:-}" in
       fi
       printf 'race %s selected %s/%s runnable tests\n' \
         "$shard" "$(count_split_test_names "$shard_names")" "$(count_split_test_names "$test_names")"
-      go test -race -count=1 -timeout 45m -p 2 -run "$test_filter" "${packages[@]}"
+      # -json so the shard can report each top-level test's -race seconds
+      # (RACE_TIMINGS_OUT, "<prefix> <test> <seconds>"); the text output is
+      # the same as without -json. scripts/race_weights_from_ci.sh turns the
+      # uploaded files into race-weights.txt.
+      json="$(mktemp)"
+      status=0
+      go test -race -count=1 -timeout 45m -p 2 -json -run "$test_filter" "${packages[@]}" >"$json" || status=$?
+      jq -rj 'select(.Action == "output") | .Output' "$json"
+      if [[ -n "${RACE_TIMINGS_OUT:-}" ]]; then
+        jq -r --arg prefix "$prefix" \
+          'select((.Action == "pass" or .Action == "fail") and .Test != null and (.Test | contains("/") | not)) | "\($prefix) \(.Test) \(.Elapsed)"' \
+          "$json" >"$RACE_TIMINGS_OUT"
+      fi
+      rm -f "$json"
+      exit "$status"
     else
       go test -race -count=1 -timeout 45m -p 2 "${packages[@]}"
     fi

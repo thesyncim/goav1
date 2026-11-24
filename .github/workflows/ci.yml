@@ -265,7 +265,17 @@ jobs:
         if: ${{ matrix.shard == 'public-0' }}
         run: bash .github/scripts/race-ci.sh audit-split
       - name: go test -race
+        env:
+          RACE_TIMINGS_OUT: race-timings-${{ matrix.shard }}.txt
         run: bash .github/scripts/race-ci.sh run "${{ matrix.shard }}"
+      - name: upload race timings
+        if: ${{ always() && (startsWith(matrix.shard, 'public-') || startsWith(matrix.shard, 'encoder-')) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: race-timings-${{ matrix.shard }}
+          path: race-timings-${{ matrix.shard }}.txt
+          if-no-files-found: ignore
+          retention-days: 30
 
   alloc:
     name: alloc regression
