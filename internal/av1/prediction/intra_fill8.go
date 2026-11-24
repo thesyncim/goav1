@@ -11,10 +11,10 @@ import (
 )
 
 // 8-bit DC / vertical / horizontal stores. Like dav1d's ipred_dc, ipred_v and
-// ipred_h (src/arm/64/ipred.S), 4- and 8-wide blocks build the row pattern
-// once and write each row with a single word store instead of a per-row copy
-// call; wider blocks fill one row and copy it, which memmove already does with
-// wide vector stores.
+// ipred_h (src/arm/64/ipred.S), the row pattern is built once and each row is
+// written with word stores (4 and 8 wide) or the wide stores of
+// fillWide8, verticalWide8 and horizontalWide8 (16, 32 and 64 wide) instead of
+// a per-row copy call.
 
 const bytes8Splat = 0x0101010101010101
 
@@ -23,14 +23,18 @@ func fillBlock8(block planeBlock, value byte) {
 	switch w {
 	case 4:
 		p := uint32(value) * 0x01010101
-		for row := range block.height {
-			binary.LittleEndian.PutUint32(block.pix[row*stride:][:4], p)
+		for o, h := 0, block.height; h > 0; h-- {
+			binary.LittleEndian.PutUint32(block.pix[o:o+4], p)
+			o += stride
 		}
 	case 8:
 		p := uint64(value) * bytes8Splat
-		for row := range block.height {
-			binary.LittleEndian.PutUint64(block.pix[row*stride:][:8], p)
+		for o, h := 0, block.height; h > 0; h-- {
+			binary.LittleEndian.PutUint64(block.pix[o:o+8], p)
+			o += stride
 		}
+	case 16, 32, 64:
+		fillWide8(block, value)
 	default:
 		if block.height == 0 {
 			return
@@ -48,12 +52,16 @@ func predictHorizontal8(block planeBlock, left []uint16) {
 	left = left[:block.height]
 	switch w {
 	case 4:
-		for row, v := range left {
-			binary.LittleEndian.PutUint32(block.pix[row*stride:][:4], uint32(byte(v))*0x01010101)
+		o := 0
+		for _, v := range left {
+			binary.LittleEndian.PutUint32(block.pix[o:o+4], uint32(byte(v))*0x01010101)
+			o += stride
 		}
 	case 8:
-		for row, v := range left {
-			binary.LittleEndian.PutUint64(block.pix[row*stride:][:8], uint64(byte(v))*bytes8Splat)
+		o := 0
+		for _, v := range left {
+			binary.LittleEndian.PutUint64(block.pix[o:o+8], uint64(byte(v))*bytes8Splat)
+			o += stride
 		}
 	default:
 		for row, v := range left {
@@ -90,5 +98,49 @@ func predictVertical8(block planeBlock, above []uint16) {
 		for row := 1; row < block.height; row++ {
 			copy(block.pix[row*stride:][:w], first)
 		}
+	}
+}
+
+// predictVertical8Bytes is predictVertical8 with the top row read in place
+// from the plane; top holds at least the block width.
+func predictVertical8Bytes(block planeBlock, top []byte) {
+	w, stride := block.width, block.stride
+	switch w {
+	case 4:
+		p := binary.LittleEndian.Uint32(top)
+		for o, h := 0, block.height; h > 0; h-- {
+			binary.LittleEndian.PutUint32(block.pix[o:o+4], p)
+			o += stride
+		}
+	case 8:
+		p := binary.LittleEndian.Uint64(top)
+		for o, h := 0, block.height; h > 0; h-- {
+			binary.LittleEndian.PutUint64(block.pix[o:o+8], p)
+			o += stride
+		}
+	default:
+		verticalWide8(block, top)
+	}
+}
+
+// predictHorizontal8Bytes is predictHorizontal8 with the left column as
+// pixels.
+func predictHorizontal8Bytes(block planeBlock, left []byte) {
+	stride := block.stride
+	switch block.width {
+	case 4:
+		o := 0
+		for _, v := range left {
+			binary.LittleEndian.PutUint32(block.pix[o:o+4], uint32(v)*0x01010101)
+			o += stride
+		}
+	case 8:
+		o := 0
+		for _, v := range left {
+			binary.LittleEndian.PutUint64(block.pix[o:o+8], uint64(v)*bytes8Splat)
+			o += stride
+		}
+	default:
+		horizontalWide8(block, left)
 	}
 }

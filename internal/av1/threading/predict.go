@@ -74,6 +74,8 @@ type FrameWorkIntraPredictionScratch struct {
 	Above [frameWorkDirectionalEdgeSamples]uint16
 	Left  [frameWorkDirectionalEdgeSamples]uint16
 	Edge  [frameWorkIntraEdgeScratchSamples]uint16
+	// Left8 is the 8-bit left edge frameWorkPredictIntra8 gathers.
+	Left8 [frameWorkIntraPredictionMaxEdgeSamples]byte
 }
 
 // FrameWorkCFLPredictionScratch carries caller-owned CfL luma AC buffers.
@@ -565,6 +567,11 @@ func (b *FrameWorkBatch) predictBlockLumaIntraTransformPtr(index int, visit *til
 		return ErrInvalidBatch
 	}
 	readBoundX, readBoundY := frameWorkWindowEdgeReadBoundPtr(window)
+	if window.BytesPerSample == 1 && b.Sequence.ColorConfig.BitDepth == 8 && width == predWidth && height == predHeight {
+		if done, err := frameWorkPredictIntra8(&dst, x, y, width, height, readBoundX, readBoundY, edgeBlock.HaveTop, edgeBlock.HaveLeft, mode, scratch); done {
+			return err
+		}
+	}
 	edges, err := frameWorkIntraPredictionEdgesWithExtent(dst, int(window.BytesPerSample), b.Sequence.ColorConfig.BitDepth, x, y, width, height, predWidth, predHeight, readBoundX, readBoundY, edgeBlock, scratch, mode != prediction.IntraModeDC)
 	if err != nil {
 		return err
@@ -4396,6 +4403,57 @@ func frameWorkIntraPredictionEdgesWithExtent(dst frame.Plane, bytesPerSample int
 		edges.AboveLeftAvailable = true
 	}
 	return edges, nil
+}
+
+// frameWorkPredictIntra8 is dav1d_prepare_intra_edges followed by the ipred
+// call for an 8-bit DC, V, H, Paeth or smooth block of w x h samples at (x, y)
+// whose edges lie inside the read bounds (the same bounds
+// frameWorkIntraPredictionEdgesWithExtent applies to visibleW / visibleH). As
+// dav1d's av1_intra_prediction_edges table, it gathers only the edges the mode
+// reads, straight from the plane bytes. It returns false without writing for
+// the cases the general gather keeps: a block whose edge would be truncated or
+// that lies outside the plane, and a non-DC mode with a missing edge.
+func frameWorkPredictIntra8(dst *frame.Plane, x int, y int, w int, h int, visibleW int, visibleH int, haveTop bool, haveLeft bool, mode prediction.IntraMode, scratch *FrameWorkIntraPredictionScratch) (bool, error) {
+	readBoundX := dst.Width
+	if visibleW > 0 && visibleW < readBoundX {
+		readBoundX = visibleW
+	}
+	readBoundY := dst.Height
+	if visibleH > 0 && visibleH < readBoundY {
+		readBoundY = visibleH
+	}
+	stride := dst.Stride
+	if mode != prediction.IntraModeDC && (!haveTop || !haveLeft) ||
+		haveTop && (y <= 0 || w > readBoundX-x) ||
+		haveLeft && (x <= 0 || h > readBoundY-y) ||
+		x < 0 || y < 0 || w <= 0 || h <= 0 || w+h > len(scratch.Above) || h > len(scratch.Left8) ||
+		w > dst.Width-x || h > dst.Height-y || stride < w {
+		return false, nil
+	}
+	off := y*stride + x
+	end := off + (h-1)*stride + w
+	if end > len(dst.Pix) {
+		return false, nil
+	}
+	var top, left []byte
+	var aboveLeft byte
+	if haveTop && mode != prediction.IntraModeHorizontal {
+		top = dst.Pix[off-stride : end]
+	}
+	if haveLeft && mode != prediction.IntraModeVertical {
+		left = scratch.Left8[:h]
+		col := dst.Pix[off-1 : end]
+		for i := range left {
+			left[i] = col[i*stride]
+		}
+	}
+	if mode == prediction.IntraModePaeth {
+		aboveLeft = dst.Pix[off-stride-1]
+	}
+	if err := prediction.PredictIntra8(dst.Pix[off:end], stride, w, h, mode, top, left, aboveLeft, scratch.Above[:]); err != nil {
+		return true, ErrInvalidBatch
+	}
+	return true, nil
 }
 
 func frameWorkDirectionalPredictionEdges(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, angle int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, enableIntraEdgeFilter bool, smoothNeighbor bool, allowTopRight bool, allowBottomLeft bool, visibleW int, visibleH int) (prediction.DirectionalEdges, error) {
