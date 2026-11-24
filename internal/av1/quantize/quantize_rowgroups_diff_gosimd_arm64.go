@@ -28,10 +28,11 @@ func quantizeBRowGroupsDiffSIMD(qcoeff []int16, coeff []int32, n int, live uint8
 	if len(qcoeff) < count || len(coeff) < count {
 		return 0, 0, 0, false
 	}
-	cp := unsafe.Pointer(&coeff[0])
-	qp := unsafe.Pointer(&qcoeff[0])
-	sp := unsafe.Pointer(&iscan[:count][0])
-	if uintptr(qp) < uintptr(cp)+uintptr(4*count) && uintptr(cp) < uintptr(qp)+uintptr(2*count) {
+	cs, qs, ss := coeff[:count], qcoeff[:count], iscan[:count]
+	// unsafe: address-only overlap test of the int32 source and int16
+	// destination (different element types, so no safe comparison exists);
+	// nothing is dereferenced through these pointers.
+	if cp, qp := uintptr(unsafe.Pointer(&cs[0])), uintptr(unsafe.Pointer(&qs[0])); qp < cp+uintptr(4*count) && cp < qp+uintptr(2*count) {
 		return 0, 0, 0, false
 	}
 	l := 31 - int64(bits.LeadingZeros32(uint32(q.AC)))
@@ -66,42 +67,45 @@ func quantizeBRowGroupsDiffSIMD(qcoeff []int16, coeff []int32, n int, live uint8
 	var eobAcc archsimd.Int16x8
 	one16 := archsimd.BroadcastInt16x8(1)
 	zero16 := archsimd.BroadcastInt16x8(0)
-	for col := 0; col < n; col++ {
-		for g := 0; g < n/4; g += 2 {
-			off := col*n + 4*g
-			pair := (live >> g) & 3
-			dst := unsafe.Add(qp, 2*off)
-			if pair == 0 {
-				zero.TruncToInt16().StoreArray((*[8]int16)(dst))
-				continue
-			}
-			c0, c1 := zero, zero
-			lo, hi := zero, zero
-			if pair&1 != 0 {
-				c0 = archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(cp, 4*off)))
-				lo = quantizeBLane4SIMD(c0, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
-			}
-			if pair&2 != 0 {
-				c1 = archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(cp, 4*off+16)))
-				hi = quantizeBLane4SIMD(c1, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
-			}
-			levels := quantizePackInt16x8SIMD(lo, hi)
-			levels.StoreArray((*[8]int16)(dst))
-			u := levels.ToBits().ReshapeToUint64s()
-			if u.GetElem(0)|u.GetElem(1) == 0 {
-				continue
-			}
-			pos1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(sp, 2*off))).Add(one16)
-			eobAcc = eobAcc.Max(pos1.Masked(levels.NotEqual(zero16)))
-			dq0 := lo.Mul(stepV).Shift(txShiftV)
-			dq1 := hi.Mul(stepV).Shift(txShiftV)
-			d0 := c0.Add(c0).Sub(dq0)
-			d1 := c1.Add(c1).Sub(dq1)
-			diffAcc = diffAcc.Add(dq0.MulWidenLo(d0)).Add(dq0.HiToLo().MulWidenLo(d0.HiToLo())).
-				Add(dq1.MulWidenLo(d1)).Add(dq1.HiToLo().MulWidenLo(d1.HiToLo()))
-			rateAcc = rateAcc.Add(rowGroupLaneRateSIMD(lo, expShiftV, rateBiasV)).
-				Add(rowGroupLaneRateSIMD(hi, expShiftV, rateBiasV))
+	// One linear walk over the contiguous column-major group pairs (see
+	// quantizeBRowGroupsSIMD); the off <= len-8 form proves every access.
+	for off, g := 0, 0; off <= len(cs)-8 && off <= len(qs)-8 && off <= len(ss)-8; off, g = off+8, g+2 {
+		if 4*g >= n {
+			g = 0
 		}
+		pair := (live >> g) & 3
+		dst := (*[8]int16)(qs[off:])
+		c := (*[8]int32)(cs[off:])
+		if pair == 0 {
+			zero.TruncToInt16().StoreArray(dst)
+			continue
+		}
+		c0, c1 := zero, zero
+		lo, hi := zero, zero
+		if pair&1 != 0 {
+			c0 = archsimd.LoadInt32x4Array((*[4]int32)(c[0:4]))
+			lo = quantizeBLane4SIMD(c0, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+		}
+		if pair&2 != 0 {
+			c1 = archsimd.LoadInt32x4Array((*[4]int32)(c[4:8]))
+			hi = quantizeBLane4SIMD(c1, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+		}
+		levels := quantizePackInt16x8SIMD(lo, hi)
+		levels.StoreArray(dst)
+		u := levels.ToBits().ReshapeToUint64s()
+		if u.GetElem(0)|u.GetElem(1) == 0 {
+			continue
+		}
+		pos1 := archsimd.LoadInt16x8Array((*[8]int16)(ss[off:])).Add(one16)
+		eobAcc = eobAcc.Max(pos1.Masked(levels.NotEqual(zero16)))
+		dq0 := lo.Mul(stepV).Shift(txShiftV)
+		dq1 := hi.Mul(stepV).Shift(txShiftV)
+		d0 := c0.Add(c0).Sub(dq0)
+		d1 := c1.Add(c1).Sub(dq1)
+		diffAcc = diffAcc.Add(dq0.MulWidenLo(d0)).Add(dq0.HiToLo().MulWidenLo(d0.HiToLo())).
+			Add(dq1.MulWidenLo(d1)).Add(dq1.HiToLo().MulWidenLo(d1.HiToLo()))
+		rateAcc = rateAcc.Add(rowGroupLaneRateSIMD(lo, expShiftV, rateBiasV)).
+			Add(rowGroupLaneRateSIMD(hi, expShiftV, rateBiasV))
 	}
 	eob = int(eobAcc.ReduceMax())
 	diff = diffAcc.GetElem(0) + diffAcc.GetElem(1)

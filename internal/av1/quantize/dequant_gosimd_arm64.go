@@ -8,7 +8,6 @@ package quantize
 
 import (
 	"simd/archsimd"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 )
@@ -46,14 +45,14 @@ func dequantColumnSIMD(dst []int32, coeff []int16, scale int32, txScale uint8, d
 		shiftV := archsimd.BroadcastInt32x4(-int32(txScale))
 		loV := archsimd.BroadcastInt32x4(dqMin)
 		hiV := archsimd.BroadcastInt32x4(dqMax)
-		cp := unsafe.Pointer(&coeff[0])
-		dp := unsafe.Pointer(&dst[0])
-		for i := 0; i < blocks8; i += 8 {
-			c := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(cp, 2*i)))
+		cs, ds := coeff[:blocks8], dst[:blocks8]
+		for i := 0; i <= len(cs)-8 && i <= len(ds)-8; i += 8 {
+			c := archsimd.LoadInt16x8Array((*[8]int16)(cs[i:]))
 			lo := dequantLane4SIMD(c.ExtendLo4ToInt32(), scaleV, maskV, oneV, negOneV, shiftV, loV, hiV)
 			hi := dequantLane4SIMD(c.HiToLo().ExtendLo4ToInt32(), scaleV, maskV, oneV, negOneV, shiftV, loV, hiV)
-			lo.StoreArray((*[4]int32)(unsafe.Add(dp, 4*i)))
-			hi.StoreArray((*[4]int32)(unsafe.Add(dp, 4*i+16)))
+			d := (*[8]int32)(ds[i:])
+			lo.StoreArray((*[4]int32)(d[0:4]))
+			hi.StoreArray((*[4]int32)(d[4:8]))
 		}
 	}
 	if blocks8 < n {

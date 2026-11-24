@@ -80,26 +80,28 @@ func quantizeBRowGroupsAVX2(qcoeff []int16, coeff []int32, n int, live uint8, q 
 	}
 	var k rowGroupQuantAVX2
 	k.init(q, txScale, l, zbinFactor)
-	cp := unsafe.Pointer(&coeff[0])
-	qp := unsafe.Pointer(&qcoeff[0])
+	cs, qs := coeff[:n*n], qcoeff[:n*n]
 	var orAcc archsimd.Int32x8
 	var zero16 archsimd.Int16x8
-	for col := 0; col < n; col++ {
-		for g := 0; g < n/4; g += 2 {
-			off := col*n + 4*g
-			pair := (live >> g) & 3
-			dst := (*[8]int16)(unsafe.Add(qp, 2*off))
-			if pair == 0 {
-				zero16.StoreArray(dst)
-				continue
-			}
-			level := k.lane8(archsimd.LoadInt32x8Array((*[8]int32)(unsafe.Add(cp, 4*off))))
-			if pair != 3 {
-				level = level.And(archsimd.LoadInt32x8Array(&rowGroupPairMask[pair]))
-			}
-			orAcc = orAcc.Or(level)
-			level.GetLo().SaturateToInt16Concat(level.GetHi()).StoreArray(dst)
+	// The column-major pairs of four-row groups tile cs contiguously (off =
+	// col*n + 4*g steps by eight), so one linear walk with g wrapping at n/4
+	// visits them in order and the off <= len-8 form proves every access.
+	for off, g := 0, 0; off <= len(cs)-8 && off <= len(qs)-8; off, g = off+8, g+2 {
+		if 4*g >= n {
+			g = 0
 		}
+		pair := (live >> g) & 3
+		dst := (*[8]int16)(qs[off:])
+		if pair == 0 {
+			zero16.StoreArray(dst)
+			continue
+		}
+		level := k.lane8(archsimd.LoadInt32x8Array((*[8]int32)(cs[off:])))
+		if pair != 3 {
+			level = level.And(archsimd.LoadInt32x8Array(&rowGroupPairMask[pair]))
+		}
+		orAcc = orAcc.Or(level)
+		level.GetLo().SaturateToInt16Concat(level.GetHi()).StoreArray(dst)
 	}
 	nonZero := !orAcc.IsZero()
 	archsimd.ClearAVXUpperBits()
@@ -145,9 +147,11 @@ func quantizeBRowGroupsDiffAVX2(qcoeff []int16, coeff []int32, n int, live uint8
 	if len(qcoeff) < count || len(coeff) < count {
 		return 0, 0, 0, false
 	}
-	cp := unsafe.Pointer(&coeff[0])
-	qp := unsafe.Pointer(&qcoeff[0])
-	if uintptr(qp) < uintptr(cp)+uintptr(4*count) && uintptr(cp) < uintptr(qp)+uintptr(2*count) {
+	cs, qs := coeff[:count], qcoeff[:count]
+	// unsafe: address-only overlap test of the int32 source and int16
+	// destination (different element types, so no safe comparison exists);
+	// nothing is dereferenced through these pointers.
+	if cp, qp := uintptr(unsafe.Pointer(&cs[0])), uintptr(unsafe.Pointer(&qs[0])); qp < cp+uintptr(4*count) && cp < qp+uintptr(2*count) {
 		return 0, 0, 0, false
 	}
 	l := 31 - int64(bits.LeadingZeros32(uint32(q.AC)))
@@ -167,41 +171,44 @@ func quantizeBRowGroupsDiffAVX2(qcoeff []int16, coeff []int32, n int, live uint8
 	var zero16 archsimd.Int16x8
 	var diffAcc archsimd.Int64x4
 	var rateAcc archsimd.Int32x8
-	for col := 0; col < n; col++ {
-		for g := 0; g < n/4; g += 2 {
-			off := col*n + 4*g
-			pair := (live >> g) & 3
-			dst := (*[8]int16)(unsafe.Add(qp, 2*off))
-			if pair == 0 {
-				zero16.StoreArray(dst)
-				continue
-			}
-			c := archsimd.LoadInt32x8Array((*[8]int32)(unsafe.Add(cp, 4*off)))
-			level := k.lane8(c)
-			if pair != 3 {
-				level = level.And(archsimd.LoadInt32x8Array(&rowGroupPairMask[pair]))
-			}
-			level.GetLo().SaturateToInt16Concat(level.GetHi()).StoreArray(dst)
-			if level.IsZero() {
-				continue
-			}
-			for j, v := range dst {
-				if v != 0 {
-					eob = max(eob, int(iscan[off+j])+1)
-				}
-			}
-			// A dead half has zero levels, so its dq is zero and its terms
-			// vanish whatever its coefficients.
-			dq := level.Mul(stepV).ShiftRight(txShiftV)
-			d := c.Add(c).Sub(dq)
-			oddDQ := dq.ToBits().ReshapeToUint64s().ShiftAllRight(32).ReshapeToUint32s().BitsToInt32()
-			oddD := d.ToBits().ReshapeToUint64s().ShiftAllRight(32).ReshapeToUint32s().BitsToInt32()
-			diffAcc = diffAcc.Add(dq.MulWidenEven(d)).Add(oddDQ.MulWidenEven(oddD))
-			// 2 + bits.Len32(|v|) for a nonzero level: the biased float32
-			// exponent of |v| (exact below 2^24) minus 124, floored at zero.
-			e := level.Abs().ConvertToFloat32().ToBits().ShiftAllRight(23).BitsToInt32()
-			rateAcc = rateAcc.Add(e.Sub(rateBiasV).Max(zero32))
+	// The column-major pairs of four-row groups tile cs contiguously (off =
+	// col*n + 4*g steps by eight), so one linear walk with g wrapping at n/4
+	// visits them in order and the off <= len-8 form proves every access.
+	for off, g := 0, 0; off <= len(cs)-8 && off <= len(qs)-8; off, g = off+8, g+2 {
+		if 4*g >= n {
+			g = 0
 		}
+		pair := (live >> g) & 3
+		dst := (*[8]int16)(qs[off:])
+		if pair == 0 {
+			zero16.StoreArray(dst)
+			continue
+		}
+		c := archsimd.LoadInt32x8Array((*[8]int32)(cs[off:]))
+		level := k.lane8(c)
+		if pair != 3 {
+			level = level.And(archsimd.LoadInt32x8Array(&rowGroupPairMask[pair]))
+		}
+		level.GetLo().SaturateToInt16Concat(level.GetHi()).StoreArray(dst)
+		if level.IsZero() {
+			continue
+		}
+		for j, v := range dst {
+			if v != 0 {
+				eob = max(eob, int(iscan[off+j])+1)
+			}
+		}
+		// A dead half has zero levels, so its dq is zero and its terms
+		// vanish whatever its coefficients.
+		dq := level.Mul(stepV).ShiftRight(txShiftV)
+		d := c.Add(c).Sub(dq)
+		oddDQ := dq.ToBits().ReshapeToUint64s().ShiftAllRight(32).ReshapeToUint32s().BitsToInt32()
+		oddD := d.ToBits().ReshapeToUint64s().ShiftAllRight(32).ReshapeToUint32s().BitsToInt32()
+		diffAcc = diffAcc.Add(dq.MulWidenEven(d)).Add(oddDQ.MulWidenEven(oddD))
+		// 2 + bits.Len32(|v|) for a nonzero level: the biased float32
+		// exponent of |v| (exact below 2^24) minus 124, floored at zero.
+		e := level.Abs().ConvertToFloat32().ToBits().ShiftAllRight(23).BitsToInt32()
+		rateAcc = rateAcc.Add(e.Sub(rateBiasV).Max(zero32))
 	}
 	dl := diffAcc.GetLo().Add(diffAcc.GetHi())
 	diff = dl.GetElem(0) + dl.GetElem(1)
