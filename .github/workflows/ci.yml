@@ -16,31 +16,8 @@ env:
   GOTOOLCHAIN: local
 
 jobs:
-  build:
-    name: build (${{ matrix.os }}, go${{ matrix.go }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ['1.27.x']
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ matrix.go }}
-          check-latest: true
-          cache: true
-      - name: go env
-        run: go env
-      - name: go build
-        run: go build ./...
-      - name: go vet
-        run: go vet ./...
-
   test:
     name: test (${{ matrix.os }}, go${{ matrix.go }})
-    needs: build
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +41,10 @@ jobs:
       - name: fetch example fixture
         shell: bash
         run: bash .github/scripts/fetch-libaom-ci-fixtures.sh
+      - name: go build
+        run: go build ./...
+      - name: go vet
+        run: go vet ./...
       - name: go test (Windows, streaming output)
         if: ${{ matrix.os == 'windows-latest' }}
         run: go test -json -count=1 -timeout 30m ./...
@@ -73,7 +54,6 @@ jobs:
 
   simd-arm64:
     name: SIMD (linux/arm64, Go 1.27.x)
-    needs: build
     runs-on: ubuntu-24.04-arm
     env:
       GOEXPERIMENT: simd
@@ -135,7 +115,6 @@ jobs:
 
   simd-amd64:
     name: SIMD (linux/amd64 AVX2, Go 1.27.x)
-    needs: build
     runs-on: ubuntu-latest
     env:
       GOEXPERIMENT: simd
@@ -220,7 +199,6 @@ jobs:
 
   linux-386-bounds:
     name: linux/386 bounds and parser regressions
-    needs: build
     runs-on: ubuntu-latest
     env:
       GOARCH: '386'
@@ -247,7 +225,6 @@ jobs:
 
   race:
     name: race (${{ matrix.shard }})
-    needs: build
     strategy:
       fail-fast: false
       matrix:
@@ -288,11 +265,20 @@ jobs:
         if: ${{ matrix.shard == 'public-0' }}
         run: bash .github/scripts/race-ci.sh audit-split
       - name: go test -race
+        env:
+          RACE_TIMINGS_OUT: race-timings-${{ matrix.shard }}.txt
         run: bash .github/scripts/race-ci.sh run "${{ matrix.shard }}"
+      - name: upload race timings
+        if: ${{ always() && (startsWith(matrix.shard, 'public-') || startsWith(matrix.shard, 'encoder-')) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: race-timings-${{ matrix.shard }}
+          path: race-timings-${{ matrix.shard }}.txt
+          if-no-files-found: ignore
+          retention-days: 30
 
   alloc:
     name: alloc regression
-    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -317,7 +303,6 @@ jobs:
 
   fuzz-smoke:
     name: fuzz smoke
-    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -333,7 +318,6 @@ jobs:
 
   webrtc-reference:
     name: webrtc ${{ matrix.name }}
-    needs: build
     # Each job runs several make webrtc-production-ci shards back to back,
     # balanced by their test time (about 6-8 minutes per job), so the matrix
     # pays runner setup six times instead of 43 and is not throttled by the
@@ -392,7 +376,6 @@ jobs:
 
   cli-smoke:
     name: cli smoke (aom-go-dec)
-    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

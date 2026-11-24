@@ -54,7 +54,7 @@ func TestSVTColTotalsMatchScalar(t *testing.T) {
 	}
 }
 
-func TestSVTHMEEightColSumMatchesScalar(t *testing.T) {
+func TestSVTHMEColSumRowMatchesScalar(t *testing.T) {
 	rng := rand.New(rand.NewSource(2))
 	for iter := 0; iter < 400; iter++ {
 		smooth := iter%3 == 0
@@ -70,30 +70,43 @@ func TestSVTHMEEightColSumMatchesScalar(t *testing.T) {
 		}
 		bw := []int{16, 32}[iter&1]
 		rows := 1 + rng.Intn(16)
+		w := 8 * (1 + rng.Intn(4))
 		s2 := 2 * ref.stride
 		r0 := rng.Intn(ref.h + 2*ref.border - 2*rows)
-		c0 := rng.Intn(ref.stride - bw - 16)
+		c0 := rng.Intn(ref.stride - bw - w - 16)
 		s := cur.pix[rng.Intn(4)*cur.stride+rng.Intn(40):]
 		refPix := ref.pix[r0*ref.stride+c0:]
 		var cw [svtHMEMaxCols]uint16
-		svtColTotals(&cw, refPix, s2, rows, bw+16)
+		svtColTotals(&cw, refPix, s2, rows, bw+w+8)
 		srcSum := svtBlockSumSub(s, s2, bw, rows)
 		if got := svtBlockSumSubArch(s, s2, bw, rows); got != srcSum {
 			t.Fatalf("iter %d: block sum %d, want %d", iter, got, srcSum)
 		}
-		var got, want, direct [8]uint32
-		svtHMEEightColSum(&got, unsafe.Pointer(&s[0]), unsafe.Pointer(&refPix[0]), unsafe.Pointer(&cw[0]), s2, bw, rows, srcSum)
-		svtHMEEightColSumScalar(&want, s, s2, refPix, cw[:], bw, rows, srcSum)
-		for k := range direct {
+		var got, want [svtHMEMaxCols / 8][8]uint32
+		key := svtHMEColSumRow(&got, unsafe.Pointer(&s[0]), unsafe.Pointer(&refPix[0]), unsafe.Pointer(&cw[0]), s2, bw, rows, w, srcSum)
+		wantKey := svtHMEColSumRowScalar(&want, s, s2, refPix, cw[:], bw, rows, w, srcSum)
+		if nilKey := svtHMEColSumRow(nil, unsafe.Pointer(&s[0]), unsafe.Pointer(&refPix[0]), unsafe.Pointer(&cw[0]), s2, bw, rows, w, srcSum); nilKey != key {
+			t.Fatalf("iter %d: key %#x without SADs, %#x with", iter, nilKey, key)
+		}
+		best := ^uint32(0)
+		for x := 0; x < w; x++ {
+			var direct uint32
 			for r := 0; r < rows; r++ {
 				for c := 0; c < bw; c++ {
-					a, b := int(s[r*s2+c]), int(refPix[r*s2+k+c])
-					direct[k] += uint32(max(a-b, b-a))
+					a, b := int(s[r*s2+c]), int(refPix[r*s2+x+c])
+					direct += uint32(max(a-b, b-a))
 				}
 			}
+			if g, wv := got[x/8][x%8], want[x/8][x%8]; g != wv || g != direct {
+				t.Fatalf("iter %d bw %d rows %d x %d: got %d scalar %d direct %d", iter, bw, rows, x, g, wv, direct)
+			}
+			// The key is the minimum SAD and its first position.
+			if direct<<7|uint32(x) < best {
+				best = direct<<7 | uint32(x)
+			}
 		}
-		if got != want || got != direct {
-			t.Fatalf("iter %d bw %d rows %d: got %v scalar %v direct %v", iter, bw, rows, got, want, direct)
+		if key != wantKey || key != best {
+			t.Fatalf("iter %d bw %d rows %d: key %#x scalar %#x direct %#x", iter, bw, rows, key, wantKey, best)
 		}
 	}
 }

@@ -222,6 +222,14 @@ func (g *gen) network(n int) string {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "-w" {
+		// go generate runs in the transform package directory.
+		if err := writeFused("."); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "dct8" {
 		os.Stdout.WriteString(emitDCT8())
 		return

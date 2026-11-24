@@ -84,6 +84,41 @@ func TestSVTAllSAD8x8_16x16SubMatchesScalar(t *testing.T) {
 	}
 }
 
+// TestSVTAllSAD8x8_16x16SubExtremes runs the kernel on all-0 against
+// all-255 (every 8x8 SUB_SAD at its 2*32*255 maximum, every position tied)
+// both ways, and on ref columns that alternate so the positions alternate
+// between the extremes.
+func TestSVTAllSAD8x8_16x16SubExtremes(t *testing.T) {
+	const stride = 80
+	n := 63*stride + 71
+	for trial := range 4 {
+		src := make([]byte, n)
+		ref := make([]byte, n)
+		for i := range ref {
+			switch trial {
+			case 0:
+				ref[i] = 255
+			case 1:
+				src[i] = 255
+			case 2:
+				ref[i] = byte(255 * (i & 1))
+			default:
+				src[i] = byte(255 * (i & 1))
+				ref[i] = byte(255 * ((i >> 1) & 1))
+			}
+		}
+		var a realtimeSBMultiSizeME
+		a.reset()
+		b := a
+		var gA, gB [16][8]uint32
+		svtAllSAD8x8_16x16Sub(&a, src[:63*stride+64], ref, stride, -3, 2, &gA)
+		svtAllSAD8x8_16x16SubScalar(&b, src[:63*stride+64], ref, stride, -3, 2, &gB)
+		if gA != gB || a.bestSAD != b.bestSAD || a.bestMV != b.bestMV {
+			t.Fatalf("trial %d: kernel and scalar differ: %v vs %v", trial, gA[0], gB[0])
+		}
+	}
+}
+
 // eightSAD32x32_64x64Scalar is svt_ext_eight_sad_calculation_32x32_64x64_c.
 func (me *realtimeSBMultiSizeME) eightSAD32x32_64x64Scalar(sad16 *[16][8]uint32, mvX, mvY int) {
 	for k := range 8 {

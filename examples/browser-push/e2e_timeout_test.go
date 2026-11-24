@@ -81,3 +81,33 @@ func TestCollectTemporalUnitsWithBudgetReportsClosedStream(t *testing.T) {
 		}
 	})
 }
+
+func TestCollectTemporalUnitsWithBudgetRestartsAfterTransportLoss(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		decoded := make(chan receivedTemporalUnit)
+		go func() {
+			for _, unit := range []receivedTemporalUnit{
+				{data: []byte{1}},
+				{data: []byte{2}},
+				{data: []byte{3}, dropped: 2},
+				{data: []byte{4}},
+				{data: []byte{5}},
+			} {
+				decoded <- unit
+			}
+		}()
+
+		got, err := collectTemporalUnitsWithBudget(decoded, 3, time.Second, time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("collected %v, want the three units from the loss on", got)
+		}
+		for i, want := range [][]byte{{3}, {4}, {5}} {
+			if !bytes.Equal(got[i], want) {
+				t.Fatalf("collected %v, want [[3] [4] [5]]", got)
+			}
+		}
+	})
+}

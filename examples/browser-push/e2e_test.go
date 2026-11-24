@@ -370,6 +370,12 @@ func TestEndToEndAV1OverRTPRTCEncoderREMBBitrateControl(t *testing.T) {
 
 type receivedTemporalUnit struct {
 	data []byte
+	// dropped is the number of RTP packets the sample builder gave up on
+	// before this unit (media.Sample.PrevDroppedPackets). The test transport
+	// has no retransmission, so a loaded runner's UDP buffer can drop
+	// packets; the units before the loss then no longer form a decodable
+	// stream.
+	dropped uint16
 }
 
 func newAV1ReceivingPeer(t *testing.T) (*webrtc.PeerConnection, <-chan receivedTemporalUnit, <-chan uint32) {
@@ -404,7 +410,7 @@ func newAV1ReceivingPeer(t *testing.T) (*webrtc.PeerConnection, <-chan receivedT
 			}
 			sb.Push(pkt)
 			for s := sb.Pop(); s != nil; s = sb.Pop() {
-				decoded <- receivedTemporalUnit{data: s.Data}
+				decoded <- receivedTemporalUnit{data: s.Data, dropped: s.PrevDroppedPackets}
 			}
 		}
 	})
@@ -1000,6 +1006,12 @@ func collectTemporalUnitsWithBudget(
 			timer.Stop()
 			if !ok {
 				return nil, fmt.Errorf("decoded stream closed after %d/%d temporal units", len(tus), want)
+			}
+			if unit.dropped > 0 {
+				// Restart the window after transport loss: the stream must
+				// be want consecutive loss-free units. Recovery from loss is
+				// covered by the explicit loss tests.
+				tus = tus[:0]
 			}
 			tus = append(tus, unit.data)
 			progressDeadline = time.Now().Add(noProgress)
