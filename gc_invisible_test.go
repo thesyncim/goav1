@@ -30,6 +30,7 @@ import (
 type gcInvisibleAllocs struct {
 	codec  []string
 	sudogs int64
+	other  int64 // test code, the profile snapshot, runtime internals
 }
 
 // gcInvisibleProfile snapshots the cumulative allocation counts of every
@@ -71,6 +72,8 @@ func measureCodecAllocs(t *testing.T, fn func()) gcInvisibleAllocs {
 			res.codec = append(res.codec, fmt.Sprintf("%d objects at\n%s", d, desc))
 		case allocSudog:
 			res.sudogs += d
+		default:
+			res.other += d
 		}
 	}
 	return res
@@ -116,7 +119,7 @@ func classifyAllocStack(stack [32]uintptr) (int, string) {
 
 func (a gcInvisibleAllocs) check(t *testing.T, what string) {
 	t.Helper()
-	t.Logf("%s: %d codec allocation sites, %d runtime sudog refills", what, len(a.codec), a.sudogs)
+	t.Logf("%s: %d codec allocation sites, %d runtime sudog refills, %d other (test/runtime) objects", what, len(a.codec), a.sudogs, a.other)
 	for _, site := range a.codec {
 		t.Errorf("%s allocated %s", what, site)
 	}
@@ -248,7 +251,8 @@ func TestGCInvisibleRTPDecodeSteadyState(t *testing.T) {
 }
 
 func TestGCInvisibleEncodeSteadyState(t *testing.T) {
-	for _, threads := range []int{1, 0} {
+	// MaxThreads=4 pins wavefront lanes whatever the runner's CPU count.
+	for _, threads := range []int{1, 0, 4} {
 		t.Run(fmt.Sprintf("MaxThreads=%d", threads), func(t *testing.T) {
 			enc, err := NewVideoEncoder(VideoEncoderConfig{
 				Width: gcInvisibleW, Height: gcInvisibleH, TargetBitrate: 1_500_000, Framerate: 30, MaxThreads: threads,
@@ -276,8 +280,11 @@ func TestGCInvisibleEncodeSteadyState(t *testing.T) {
 
 // TestGCInvisibleScannableHeap bounds the pointerful (GC-scanned) heap a warm
 // codec keeps alive. Large scratch must stay pointer-free or keep its
-// pointers in a short leading run; the ceilings carry about 2x headroom over
-// the measured footprint.
+// pointers in a short leading run; the ceilings carry about 2x headroom over the
+// measured footprint (0.25, 1.5 and 0.66 MiB; origin/main before this gate
+// measured 3.7 MiB at 8 workers and 1.9 MiB for the encoder). A reading below the floor
+// means the measurement was disturbed, and fails rather than passing
+// vacuously.
 func TestGCInvisibleScannableHeap(t *testing.T) {
 	scan := func() int64 {
 		runtime.GC()
@@ -292,7 +299,7 @@ func TestGCInvisibleScannableHeap(t *testing.T) {
 		ceiling int64
 		build   func() (func(), func())
 	}{
-		{"decode/workers=1", 1 << 20, func() (func(), func()) {
+		{"decode/workers=1", 512 << 10, func() (func(), func()) {
 			dec, err := NewDecoder(tus, WithWorkers(1))
 			if err != nil {
 				t.Fatalf("NewDecoder: %v", err)
@@ -306,7 +313,7 @@ func TestGCInvisibleScannableHeap(t *testing.T) {
 			}
 			return func() { decodeAllFrames(t, dec) }, dec.Close
 		}},
-		{"encode/MaxThreads=1", 2 << 20, func() (func(), func()) {
+		{"encode/MaxThreads=1", 1280 << 10, func() (func(), func()) {
 			enc, err := NewVideoEncoder(VideoEncoderConfig{
 				Width: gcInvisibleW, Height: gcInvisibleH, TargetBitrate: 1_500_000, Framerate: 30, MaxThreads: 1,
 			})
@@ -329,6 +336,7 @@ func TestGCInvisibleScannableHeap(t *testing.T) {
 			// once it is closed and dropped. Other tests in the same process
 			// can leave live or churning heap behind, so take the smaller of
 			// the two deltas, and the best of three attempts.
+			const floor = 64 << 10
 			got := int64(math.MaxInt64)
 			for range 3 {
 				base := scan()
@@ -337,12 +345,20 @@ func TestGCInvisibleScannableHeap(t *testing.T) {
 				with := scan()
 				closeFn()
 				run, closeFn = nil, nil
-				got = min(got, with-base, with-scan())
+				if d := min(with-base, with-scan()); d >= floor {
+					got = min(got, d)
+				}
 				if got <= tc.ceiling {
 					break
 				}
 			}
+			if got == math.MaxInt64 {
+				t.Fatalf("every scannable-heap reading fell below the %d-byte floor: measurement disturbed", floor)
+			}
 			t.Logf("scannable heap %.2f MiB (ceiling %.2f MiB)", float64(got)/(1<<20), float64(tc.ceiling)/(1<<20))
+			if got < floor {
+				t.Fatalf("scannable heap %d bytes, below the %d-byte floor: measurement disturbed", got, floor)
+			}
 			if got > tc.ceiling {
 				t.Fatalf("scannable heap %d bytes, ceiling %d", got, tc.ceiling)
 			}
