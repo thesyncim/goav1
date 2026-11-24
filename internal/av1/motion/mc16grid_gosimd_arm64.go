@@ -334,3 +334,31 @@ func mc16PutV6FromI32GW4(im []int32, h int, ph *mc8Phase, maxPix int16, dg unsaf
 		binary.LittleEndian.PutUint64(unsafeutil.Row[[8]byte](dg.Sub(r, 0, 8, 1), 0, 0)[:], v.ToBits().ReshapeToUint64s().GetElem(0))
 	}
 }
+
+// mc16PrepCopyW8 is mc16PrepCopyG for an eight-wide block (contiguous
+// CONV_BUF rows): eight rows per chunk, as mc8PrepCopyW8.
+func mc16PrepCopyW8(sg unsafeutil.Grid[uint8], shl int, out []uint16, h int) {
+	off := archsimd.BroadcastUint16x8(mc16PrepRoundOffset)
+	sv := archsimd.BroadcastInt16x8(int16(shl))
+	r := 0
+	for ; r+8 <= h; r += 8 {
+		if !sg.Fits(r, 0, 16, 8) || 8*r+64 > len(out) {
+			return
+		}
+		s, o := sg.Sub(r, 0, 16, 8), (*[64]uint16)(out[8*r:8*r+64])
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 0, 0)).ReshapeToUint16s().Shift(sv).Add(off).StoreArray((*[8]uint16)(o[0:8]))
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 1, 0)).ReshapeToUint16s().Shift(sv).Add(off).StoreArray((*[8]uint16)(o[8:16]))
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 2, 0)).ReshapeToUint16s().Shift(sv).Add(off).StoreArray((*[8]uint16)(o[16:24]))
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 3, 0)).ReshapeToUint16s().Shift(sv).Add(off).StoreArray((*[8]uint16)(o[24:32]))
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 4, 0)).ReshapeToUint16s().Shift(sv).Add(off).StoreArray((*[8]uint16)(o[32:40]))
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 5, 0)).ReshapeToUint16s().Shift(sv).Add(off).StoreArray((*[8]uint16)(o[40:48]))
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 6, 0)).ReshapeToUint16s().Shift(sv).Add(off).StoreArray((*[8]uint16)(o[48:56]))
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 7, 0)).ReshapeToUint16s().Shift(sv).Add(off).StoreArray((*[8]uint16)(o[56:64]))
+	}
+	for ; r < h; r++ {
+		if !sg.Fits(r, 0, 16, 1) || 8*r+8 > len(out) {
+			return
+		}
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](sg.Sub(r, 0, 16, 1), 0, 0)).ReshapeToUint16s().Shift(sv).Add(off).StoreArray((*[8]uint16)(out[8*r : 8*r+8]))
+	}
+}

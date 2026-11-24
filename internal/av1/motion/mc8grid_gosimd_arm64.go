@@ -110,3 +110,32 @@ func mc8PrepCopy(sg unsafeutil.Grid[uint8], og unsafeutil.Grid[uint16]) {
 		}
 	}
 }
+
+// mc8PrepCopyW8 is mc8PrepCopy for an eight-wide block, whose CONV_BUF rows
+// are contiguous: eight rows per chunk are one 64-sample window of out
+// (constant store offsets) and one fixed-shape sub-view of sg.
+func mc8PrepCopyW8(sg unsafeutil.Grid[uint8], out []uint16, h int) {
+	mul := archsimd.BroadcastUint8x16(16)
+	off := archsimd.BroadcastUint16x8(6144)
+	r := 0
+	for ; r+8 <= h; r += 8 {
+		if !sg.Fits(r, 0, 16, 8) || 8*r+64 > len(out) {
+			return
+		}
+		s, o := sg.Sub(r, 0, 16, 8), (*[64]uint16)(out[8*r:8*r+64])
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 0, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[0:8]))
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 1, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[8:16]))
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 2, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[16:24]))
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 3, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[24:32]))
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 4, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[32:40]))
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 5, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[40:48]))
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 6, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[48:56]))
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](s, 7, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o[56:64]))
+	}
+	for ; r < h; r++ {
+		if !sg.Fits(r, 0, 16, 1) || 8*r+8 > len(out) {
+			return
+		}
+		archsimd.LoadUint8x16Array(unsafeutil.Row[[16]byte](sg.Sub(r, 0, 16, 1), 0, 0)).MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(out[8*r : 8*r+8]))
+	}
+}

@@ -59,8 +59,16 @@ func mc16PutFast(dst *frame.Plane, ref *frame.Plane, bitDepth, dstX, dstY, refX,
 		if !unsafeutil.GridFit(len(dst.Pix), dOff, dst.Stride, 2*w, h) {
 			return false
 		}
-		sg, ok := mc16SourceGrid(ref, refX, refY, w, h, tx, ty, &scratch.edge16)
-		if !ok {
+		hx, hy := mc8Halo(subX), mc8Halo(subY)
+		x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
+		sOff, read := y0*ref.Stride+2*x0, 2*max(w+5, 13)
+		var sg unsafeutil.Grid[uint8]
+		if x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= ref.Width && y0+bh <= ref.Height && ref.Stride >= 2*ref.Width &&
+			unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, read, bh) {
+			sg = unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, read, bh)
+		} else if g, ok := mc16SourceGrid(ref, refX, refY, w, h, tx, ty, &scratch.edge16); ok {
+			sg = g
+		} else {
 			return false
 		}
 		dg := unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, 2*w, h)

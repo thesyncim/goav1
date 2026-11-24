@@ -143,8 +143,21 @@ func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, fi
 	// Halved taps: the round0 shift drops by one.
 	sh := compoundRound0(uint8(bitDepth)) - 1
 	if tx != 8 && ty != 8 {
-		sg, ok := mc16SourceGrid(ref, refX, refY, w, h, tx, ty, &scratch.edge16)
-		if !ok || !unsafeutil.GridFit(len(out), 0, w, w, h) {
+		if !unsafeutil.GridFit(len(out), 0, w, w, h) {
+			return false
+		}
+		// The source window (mc16SourceGrid), in place when it lies inside
+		// the plane.
+		hx, hy := mc8Halo(subX), mc8Halo(subY)
+		x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
+		sOff, read := y0*ref.Stride+2*x0, 2*max(w+5, 13)
+		var sg unsafeutil.Grid[uint8]
+		if x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= ref.Width && y0+bh <= ref.Height && ref.Stride >= 2*ref.Width &&
+			unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, read, bh) {
+			sg = unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, read, bh)
+		} else if g, ok := mc16SourceGrid(ref, refX, refY, w, h, tx, ty, &scratch.edge16); ok {
+			sg = g
+		} else {
 			return false
 		}
 		og := unsafeutil.NewGrid(out, 0, w, w, h)
@@ -166,7 +179,11 @@ func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, fi
 				mc16PrepV6G(sg, &mc8Phases[ky][subY], sh, og)
 			}
 		default:
-			mc16PrepCopyG(sg, 6-sh, og)
+			if w == 8 {
+				mc16PrepCopyW8(sg, 6-sh, out, h)
+			} else {
+				mc16PrepCopyG(sg, 6-sh, og)
+			}
 		}
 		return true
 	}

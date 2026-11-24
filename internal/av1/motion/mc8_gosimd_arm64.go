@@ -546,8 +546,21 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 	if mc8NeedsEightTaps(subX, subY, kx, ky) {
 		return w&7 == 0 && mc8Prep8Tap(out[:w*h], ref, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
-	sg, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge)
-	if !ok || !unsafeutil.GridFit(len(out), 0, w, w, h) {
+	if !unsafeutil.GridFit(len(out), 0, w, w, h) {
+		return false
+	}
+	// The six-tap source window (mc8Source), in place when it lies inside
+	// the plane, as in Put8.
+	hx, hy := mc8Halo(subX), mc8Halo(subY)
+	x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
+	sOff, sw := y0*ref.Stride+x0, max(w+8, 16)
+	var sg unsafeutil.Grid[uint8]
+	if x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= ref.Width && y0+bh <= ref.Height && ref.Stride >= ref.Width &&
+		unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, sw, bh) {
+		sg = unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, sw, bh)
+	} else if g, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge); ok {
+		sg = g
+	} else {
 		return false
 	}
 	og := unsafeutil.NewGrid(out, 0, w, w, h)
@@ -586,7 +599,11 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 			mc8PrepV6Split(sg, ph, og)
 		}
 	default:
-		mc8PrepCopy(sg, og)
+		if w == 8 {
+			mc8PrepCopyW8(sg, out, h)
+		} else {
+			mc8PrepCopy(sg, og)
+		}
 	}
 	return true
 }
