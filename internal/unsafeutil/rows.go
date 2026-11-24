@@ -80,32 +80,24 @@ func (v Rows) Sub(r, c, width, height int) Rows {
 	if uint(r) >= v.height || uint(height-1) >= v.height-uint(r) || uint(c) >= v.width || uint(width-1) >= v.width-uint(c) {
 		panic(errRows)
 	}
-	return Rows{p: v.at(r, c), stride: v.stride, height: uint(height), width: uint(width)}
+	return Rows{p: unsafe.Add(v.p, uint(r)*v.stride+uint(c)), stride: v.stride, height: uint(height), width: uint(width)}
 }
 
 // Row8 returns the 8 bytes at column c of row r. It panics unless r is below
 // v's height and c+8 <= Width().
 //
-// Bounds proof: in(r, c, 8) puts the 8 bytes inside row r of the footprint
+// Bounds proof: r < height and c + 8 <= width (c below 2^31, so the sum
+// cannot wrap) put the 8 bytes inside row r of the footprint
 // NewRows checked.
 func (v Rows) Row8(r, c int) *[8]byte {
-	if !v.in(r, c, 8) {
+	if uint(r) >= v.height || uint(c) >= rowsDimMax || uint(c)+8 > v.width {
 		panic(errRows)
 	}
-	return (*[8]byte)(v.at(r, c))
+	return (*[8]byte)(unsafe.Add(v.p, uint(r)*v.stride+uint(c)))
 }
 
-// in reports whether row r, columns c..c+n-1 lie inside the view (n is at
-// most 16 and c below 2^31 when it passes, so c+n cannot wrap).
-func (v Rows) in(r, c int, n uint) bool {
-	return uint(r) < v.height && uint(c) < rowsDimMax && uint(c)+n <= v.width
-}
-
-// at is the address of row r, column c of the footprint; the callers have
-// checked that the bytes they reach from it lie inside it.
-func (v Rows) at(r, c int) unsafe.Pointer {
-	return unsafe.Add(v.p, uint(r)*v.stride+uint(c))
-}
+// The accessors write the row address p + r*stride + c out rather than
+// calling a helper, so each leaves one inline mark at its call site.
 
 // BlockRows is the row count of a Block, as the length of an array type
 // (the kernels' compile-time tap-row counts).
@@ -140,7 +132,7 @@ func BlockAt[R BlockRows](v Rows, r, c int) Block[R] {
 	if uint(r)|uint(c) >= rowsDimMax || uint(r)+uint(len(n)) > v.height || uint(c)+16 > v.width {
 		panic(errRows)
 	}
-	return Block[R]{p: v.at(r, c), stride: v.stride}
+	return Block[R]{p: unsafe.Add(v.p, uint(r)*v.stride+uint(c)), stride: v.stride}
 }
 
 // Row16 returns row k's sixteen bytes. It panics unless k < len(R).

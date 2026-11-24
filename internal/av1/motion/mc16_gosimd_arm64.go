@@ -7,10 +7,10 @@
 package motion
 
 import (
-	"encoding/binary"
 	"simd/archsimd"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/unsafeutil"
 )
 
 // dav1d-style 16bpc compound prep (src/mc_tmpl.c prep_8tap, src/arm/64/mc16.S
@@ -89,6 +89,41 @@ func mc16Source(ref *frame.Plane, refX, refY, w, h, tx, ty int, edge *emuEdge16B
 	return edge[:], 2 * emuEdge16Stride, true
 }
 
+// mc16SourceGrid is mc16Source for six-tap (or unfiltered) axes as a Grid
+// view: bh rows of 2*max(w+5, 13) bytes from the window's top-left tap
+// sample.
+func mc16SourceGrid(ref *frame.Plane, refX, refY, w, h, tx, ty int, edge *emuEdge16Buf) (src unsafeutil.Grid[uint8], ok bool) {
+	x0, y0, bw, bh := refX, refY, w, h
+	read := 2 * max(w+5, 13)
+	if tx != 0 {
+		x0 -= 2
+		bw += 5
+	}
+	if ty != 0 {
+		y0 -= 2
+		bh += 5
+	}
+	if ref.Width <= 0 || ref.Height <= 0 || ref.Stride < 2*ref.Width {
+		return src, false
+	}
+	if x0 >= 0 && y0 >= 0 && x0+bw <= ref.Width && y0+bh <= ref.Height {
+		start := y0*ref.Stride + 2*x0
+		if unsafeutil.GridFit(len(ref.Pix), start, ref.Stride, read, bh) {
+			return unsafeutil.NewGrid(ref.Pix, start, ref.Stride, read, bh), true
+		}
+	}
+	if len(ref.Pix) < (ref.Height-1)*ref.Stride+2*ref.Width {
+		return src, false
+	}
+	// The edge window holds emuEdge16Rows (136) rows of emuEdge16Stride (144)
+	// samples; bh <= 133 and the kernels read at most 133 samples per row.
+	emuEdge16(bw, bh, *ref, x0, y0, edge[:], 2*emuEdge16Stride)
+	if !unsafeutil.GridFit(len(edge), 0, 2*emuEdge16Stride, read, bh) {
+		return src, false
+	}
+	return unsafeutil.NewGrid(edge[:], 0, 2*emuEdge16Stride, read, bh), true
+}
+
 // mc16PrepFast fills a w x h CONV_BUF (row stride w) from a 10- or 12-bit
 // reference with the dav1d-style prep kernels. It returns false for shapes it
 // does not cover (widths other than 4 or a multiple of 8, or a width-4 block
@@ -104,12 +139,64 @@ func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, fi
 	if tx == 8 && w == 4 {
 		return false
 	}
+	// Halved taps: the round0 shift drops by one.
+	sh := compoundRound0(uint8(bitDepth)) - 1
+	if tx != 8 && ty != 8 {
+		if !unsafeutil.GridFit(len(out), 0, w, w, h) {
+			return false
+		}
+		// The source window (mc16SourceGrid), in place when it lies inside
+		// the plane.
+		hx, hy := mc8Halo(subX), mc8Halo(subY)
+		x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
+		sOff, read := y0*ref.Stride+2*x0, 2*max(w+5, 13)
+		var sg unsafeutil.Grid[uint8]
+		if x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= ref.Width && y0+bh <= ref.Height && ref.Stride >= 2*ref.Width &&
+			unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, read, bh) {
+			sg = unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, read, bh)
+		} else if g, ok := mc16SourceGrid(ref, refX, refY, w, h, tx, ty, &scratch.edge16); ok {
+			sg = g
+		} else {
+			return false
+		}
+		og := unsafeutil.NewGrid(out, 0, w, w, h)
+		switch {
+		case tx != 0 && ty != 0:
+			im := scratch.im[:]
+			mc16H6ToI32G(sg, w, h+5, &mc8Phases[kx][subX], sh, im)
+			if w == 4 {
+				mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], out[:4*h], mc16PrepV6Rnd)
+			} else {
+				mc8PrepV6FromI32S(im, w, h, &mc8Phases[ky][subY], og, mc16PrepV6Rnd)
+			}
+		case tx != 0:
+			mc16PrepH6G(sg, &mc8Phases[kx][subX], sh, og)
+		case ty != 0:
+			if w == 4 {
+				mc16PrepV6GW4(sg, &mc8Phases[ky][subY], sh, og)
+			} else {
+				mc16PrepV6G(sg, &mc8Phases[ky][subY], sh, og)
+			}
+		default:
+			if w == 8 {
+				mc16PrepCopyW8(sg, 6-sh, out, h)
+			} else {
+				mc16PrepCopyG(sg, 6-sh, og)
+			}
+		}
+		return true
+	}
+	return mc16PrepSharp(out, ref, refX, refY, w, h, kx, ky, tx, ty, subX, subY, sh, scratch)
+}
+
+// mc16PrepSharp is mc16PrepFast for blocks with an eight-tap (sharp) axis,
+// over the slice source window of mc16Source; kept out of mc16PrepFast so the
+// six-tap path carries no sharp state.
+func mc16PrepSharp(out []uint16, ref *frame.Plane, refX, refY, w, h, kx, ky, tx, ty, subX, subY, sh int, scratch *CompoundConvolveScratch) bool {
 	src, stride, ok := mc16Source(ref, refX, refY, w, h, tx, ty, &scratch.edge16)
 	if !ok {
 		return false
 	}
-	// Halved taps: the round0 shift drops by one.
-	sh := compoundRound0(uint8(bitDepth)) - 1
 	o := out[: w*h : w*h]
 	switch {
 	case tx != 0 && ty != 0:
@@ -129,18 +216,15 @@ func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, fi
 		case w == 4:
 			mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], o, mc16PrepV6Rnd)
 		default:
-			mc8PrepV6FromI32S(im, w, h, &mc8Phases[ky][subY], o, mc16PrepV6Rnd)
+			if !unsafeutil.GridFit(len(o), 0, w, w, h) {
+				return false
+			}
+			mc8PrepV6FromI32S(im, w, h, &mc8Phases[ky][subY], unsafeutil.NewGrid(o, 0, w, w, h), mc16PrepV6Rnd)
 		}
 	case tx == 8:
 		mc16PrepH8(src, stride, w, h, &mc16SharpPhases[subX], sh, o)
-	case tx != 0:
-		mc16PrepH6(src, stride, w, h, &mc8Phases[kx][subX], sh, o)
-	case ty == 8:
+	default: // ty == 8
 		mc16PrepV8(src, stride, w, h, &mc16SharpPhases[subY], sh, o)
-	case ty != 0:
-		mc16PrepV6(src, stride, w, h, &mc8Phases[ky][subY], sh, o)
-	default:
-		mc16PrepCopy(src, stride, w, h, 6-sh, o)
 	}
 	return true
 }
@@ -271,172 +355,5 @@ func mc16H6ToI32W4(src []byte, srcStride, rows int, ph *mc8Phase, sh int, im []i
 	for q := 0; q <= len(st)-4; q += 4 {
 		mc16H6Lo(mc16W26(src, so), c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd).Shift(shv).StoreArray((*[4]int32)(st[q : q+4]))
 		so += ss
-	}
-}
-
-// mc16PrepH6 is the prep horizontal-only pass. roundOffset is folded into the
-// rounding constant (a multiple of 2^sh commutes with the floor). The
-// CONV_BUF is walked as one stream whose loop bound proves each window.
-func mc16PrepH6(src []byte, srcStride, w, h int, ph *mc8Phase, sh int, out []uint16) {
-	c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5 := mc16LoadTaps6(ph)
-	rnd := archsimd.BroadcastInt32x4(int32(1)<<(sh-1) + int32(mc16PrepRoundOffset)<<sh)
-	shv := archsimd.BroadcastInt32x4(int32(-sh))
-	ss := uint32(srcStride)
-	out = out[: w*h : w*h]
-	var so uint32
-	if w == 4 {
-		for q := 0; q <= len(out)-4; q += 4 {
-			lo := mc16H6Lo(mc16W26(src, so), c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd).Shift(shv)
-			mc8Store4U16((*[4]uint16)(out[q:q+4]), mc16PackU16(lo, lo).ReshapeToUint64s().GetElem(0))
-			so += ss
-		}
-		return
-	}
-	c, ws := uint32(0), uint32(w)
-	for q := 0; q <= len(out)-8; q += 8 {
-		hw := mc16W26(src, so+2*c)
-		x0 := mc16LB((*[16]byte)(hw[0:16]))
-		x1 := mc16LB((*[16]byte)(hw[2:18]))
-		x2 := mc16LB((*[16]byte)(hw[4:20]))
-		x3 := mc16LB((*[16]byte)(hw[6:22]))
-		x4 := mc16LB((*[16]byte)(hw[8:24]))
-		x5 := mc16LB((*[16]byte)(hw[10:26]))
-		lo := rnd.Add(x0.MulWidenLo(c0))
-		hi := rnd.Add(x0.HiToLo().MulWidenLo(h0))
-		lo = lo.Add(x1.MulWidenLo(c1))
-		hi = hi.Add(x1.HiToLo().MulWidenLo(h1))
-		lo = lo.Add(x2.MulWidenLo(c2))
-		hi = hi.Add(x2.HiToLo().MulWidenLo(h2))
-		lo = lo.Add(x3.MulWidenLo(c3))
-		hi = hi.Add(x3.HiToLo().MulWidenLo(h3))
-		lo = lo.Add(x4.MulWidenLo(c4))
-		hi = hi.Add(x4.HiToLo().MulWidenLo(h4))
-		lo = lo.Add(x5.MulWidenLo(c5))
-		hi = hi.Add(x5.HiToLo().MulWidenLo(h5))
-		mc16PackU16(lo.Shift(shv), hi.Shift(shv)).StoreArray((*[8]uint16)(out[q : q+8]))
-		if c += 8; c == ws {
-			c, so = 0, so+ss
-		}
-	}
-}
-
-// mc16PrepV6 is the prep vertical-only pass; each column strip slides a
-// six-row window down the block (dav1d's register-resident v path), two
-// output rows per iteration.
-func mc16PrepV6(src []byte, srcStride, w, h int, ph *mc8Phase, sh int, out []uint16) {
-	c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5 := mc16LoadTaps6(ph)
-	rnd := archsimd.BroadcastInt32x4(int32(1)<<(sh-1) + int32(mc16PrepRoundOffset)<<sh)
-	shv := archsimd.BroadcastInt32x4(int32(-sh))
-	ss, ws := uint32(srcStride), uint32(w)
-	if w == 4 {
-		// Two output rows share one vector: the low lanes of rows r and r+1
-		// (the CONV_BUF rows are contiguous, walked as one proven stream).
-		out = out[: 4*h : 4*h]
-		r0 := mc16L16(src, 0)
-		r1 := mc16L16(src, ss)
-		r2 := mc16L16(src, 2*ss)
-		r3 := mc16L16(src, 3*ss)
-		so := 4 * ss
-		r4 := mc16L16(src, so)
-		q := 0
-		for ; q <= len(out)-8; q += 8 {
-			r5 := mc16L16(src, so+ss)
-			so += 2 * ss
-			r6 := mc16L16(src, so)
-			a := mc16V6Lo(r0, r1, r2, r3, r4, r5, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd)
-			b := mc16V6Lo(r1, r2, r3, r4, r5, r6, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd)
-			mc16PackU16(a.Shift(shv), b.Shift(shv)).StoreArray((*[8]uint16)(out[q : q+8]))
-			r0, r1, r2, r3, r4 = r2, r3, r4, r5, r6
-		}
-		if q <= len(out)-4 {
-			r5 := mc16L16(src, so+ss)
-			a := mc16V6Lo(r0, r1, r2, r3, r4, r5, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd).Shift(shv)
-			mc8Store4U16((*[4]uint16)(out[q:q+4]), mc16PackU16(a, a).ReshapeToUint64s().GetElem(0))
-		}
-		return
-	}
-	for col := uint32(0); col < ws; col += 8 {
-		so := 2 * col
-		r0 := mc16L16(src, so)
-		r1 := mc16L16(src, so+ss)
-		r2 := mc16L16(src, so+2*ss)
-		r3 := mc16L16(src, so+3*ss)
-		so += 4 * ss
-		r4 := mc16L16(src, so)
-		o := col
-		r := 0
-		for ; r+2 <= h; r += 2 {
-			r5 := mc16L16(src, so+ss)
-			so += 2 * ss
-			r6 := mc16L16(src, so)
-			alo, ahi := mc16V6(r0, r1, r2, r3, r4, r5, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd)
-			blo, bhi := mc16V6(r1, r2, r3, r4, r5, r6, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd)
-			mc16PackU16(alo.Shift(shv), ahi.Shift(shv)).StoreArray(mc8WU8(out, o))
-			mc16PackU16(blo.Shift(shv), bhi.Shift(shv)).StoreArray(mc8WU8(out, o+ws))
-			o += 2 * ws
-			r0, r1, r2, r3, r4 = r2, r3, r4, r5, r6
-		}
-		if r < h {
-			r5 := mc16L16(src, so+ss)
-			alo, ahi := mc16V6(r0, r1, r2, r3, r4, r5, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd)
-			mc16PackU16(alo.Shift(shv), ahi.Shift(shv)).StoreArray(mc8WU8(out, o))
-		}
-	}
-}
-
-// mc16PrepCopy is the prep copy: (px << shl) + roundOffset, in uint16 lanes
-// (the result stays below 2^16 at 10 and 12 bits). The CONV_BUF is walked
-// as one proven stream; each source row group is one window.
-func mc16PrepCopy(src []byte, srcStride, w, h, shl int, out []uint16) {
-	mul := archsimd.BroadcastUint16x8(uint16(1) << shl)
-	off := archsimd.BroadcastUint16x8(mc16PrepRoundOffset)
-	ss := srcStride
-	out = out[: w*h : w*h]
-	// The CONV_BUF is walked as one stream whose loop bound proves its
-	// windows; the source rows are limit-checked windows (mc8R8/16/32).
-	switch {
-	case w == 4:
-		sl := len(src) - 8
-		q, so := 0, 0
-		for ; q <= len(out)-8; q += 8 {
-			a, so1 := binary.LittleEndian.Uint64(mc8R8(src, so, sl)[:]), so+ss
-			b := binary.LittleEndian.Uint64(mc8R8(src, so1, sl)[:])
-			v := archsimd.LoadUint64x2Array(&[2]uint64{a, b})
-			v.ReshapeToUint16s().MulAdd(mul, off).StoreArray((*[8]uint16)(out[q : q+8]))
-			so = so1 + ss
-		}
-		if q <= len(out)-4 {
-			v := archsimd.BroadcastUint64x2(binary.LittleEndian.Uint64(mc8R8(src, so, sl)[:])).ReshapeToUint16s().MulAdd(mul, off)
-			mc8Store4U16((*[4]uint16)(out[q:q+4]), v.ReshapeToUint64s().GetElem(0))
-		}
-	case w == 8:
-		sl := len(src) - 16
-		so := 0
-		for q := 0; q <= len(out)-8; q += 8 {
-			archsimd.LoadUint8x16Array(mc8R16(src, so, sl)).ReshapeToUint16s().MulAdd(mul, off).StoreArray((*[8]uint16)(out[q : q+8]))
-			so += ss
-		}
-	case w&15 != 0:
-		sl := len(src) - 16
-		c, so, rb := 0, 0, 2*w
-		for q := 0; q <= len(out)-8; q += 8 {
-			archsimd.LoadUint8x16Array(mc8R16(src, so+c, sl)).ReshapeToUint16s().MulAdd(mul, off).StoreArray((*[8]uint16)(out[q : q+8]))
-			if c += 16; c == rb {
-				c, so = 0, so+ss
-			}
-		}
-	default:
-		// w a multiple of 16: sixteen samples (one 32-byte source window)
-		// per step.
-		sl := len(src) - 32
-		c, so, rb := 0, 0, 2*w
-		for q := 0; q <= len(out)-16; q += 16 {
-			win, o := mc8R32(src, so+c, sl), (*[16]uint16)(out[q:q+16])
-			archsimd.LoadUint8x16Array((*[16]byte)(win[0:16])).ReshapeToUint16s().MulAdd(mul, off).StoreArray((*[8]uint16)(o[0:8]))
-			archsimd.LoadUint8x16Array((*[16]byte)(win[16:32])).ReshapeToUint16s().MulAdd(mul, off).StoreArray((*[8]uint16)(o[8:16]))
-			if c += 32; c == rb {
-				c, so = 0, so+ss
-			}
-		}
 	}
 }
