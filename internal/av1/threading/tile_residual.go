@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/thesyncim/goav1/internal/av1/dsp"
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
@@ -1907,7 +1908,23 @@ func (s *frameWorkReconState) addResidualInWindow(vb *tile.BlockVisit, plane, x4
 	stride := int(window.Stride)
 	off := int(y-window.Y)*stride + int(x-window.X)*bps
 	n := (int(h)-1)*stride + int(w)*bps
-	if reconstruct.ReconstructPlaneBlockVisibleTrustedAtFromDequantized(window.Pix[off:off+n:off+n], stride, bps, s.batch.Sequence.ColorConfig.BitDepth,
+	dst := window.Pix[off : off+n : off+n]
+	if bps == 1 && s.batch.Sequence.ColorConfig.BitDepth == 8 && txtp != transform.TypeIDTX && txtp != transform.TypeWHTWHT &&
+		activeRows > 0 && activeCols > 0 {
+		// dav1d's dsp->itx.itxfm_add[tx][txtp](dst, stride, cf, eob): the
+		// 8-bit TXB goes straight to its kernel; a kernel that declines writes
+		// nothing and the TXB takes the staged path below.
+		if dcOnly {
+			dsp.AddConstantResidualPlaneBlockTrusted(dst, stride, 1, 0xff, int(w), int(h), transform.InverseDCTDCOnlySample(cf[0], meta.size, 8))
+			s.stats.Residuals++
+			return true, nil
+		}
+		if itxfmAdd8(dst, stride, cf, meta.tx, txtp, int(meta.scanSize.Height), activeRows, activeCols) {
+			s.stats.Residuals++
+			return true, nil
+		}
+	}
+	if reconstruct.ReconstructPlaneBlockVisibleTrustedAtFromDequantized(dst, stride, bps, s.batch.Sequence.ColorConfig.BitDepth,
 		int(w), int(h), meta.scanSize, activeRows, activeCols, dcOnly, cf, s.int32Scratch, s.residualScratch,
 		reconstruct.Block{Size: meta.size, Transform: txtp, EOB: int16(eob)}) != nil {
 		return true, ErrInvalidBatch
