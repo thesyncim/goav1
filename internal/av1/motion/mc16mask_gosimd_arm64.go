@@ -7,8 +7,8 @@
 package motion
 
 import (
+	"encoding/binary"
 	"simd/archsimd"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
@@ -38,6 +38,10 @@ func mc16BlendRoundBits(bitDepth int) (rb int, bias uint16) {
 
 const mc16PrepRoundOffsetBlend = 1<<14 + 1<<13
 
+// The blends walk the two CONV_BUF predictors as one stream under
+// three-index slices, so the loop bounds prove their windows; the plane and
+// mask rows are uint32-offset windows (one compare each, see mc8W16).
+
 // mc16BlendAvgFast is the 16bpc plain compound average (fwd = bck = 8) over
 // two CONV_BUF predictors with row stride w (w a multiple of 8, or 4 with an
 // even height).
@@ -46,69 +50,60 @@ func mc16BlendAvgFast(dst *frame.Plane, a, b []uint16, bitDepth, dstX, dstY, w, 
 		return false
 	}
 	off := dstY*dst.Stride + 2*dstX
-	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || off+(h-1)*dst.Stride+2*w > len(dst.Pix) {
+	ext := (h-1)*dst.Stride + 2*w
+	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || off+ext > len(dst.Pix) || ext > mc8WindowMax {
 		return false
 	}
 	rb, bias := mc16BlendRoundBits(bitDepth)
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	mc16BlendAvg(unsafe.Pointer(&dst.Pix[off]), dst.Stride, unsafe.Pointer(&a[0]), unsafe.Pointer(&b[0]), w, h, rb, bias, uint16(1)<<bitDepth-1)
+	mc16BlendAvg(dst.Pix[off:off+ext], dst.Stride, a, b, w, h, rb, bias, uint16(1)<<bitDepth-1)
 	return true
 }
 
-func mc16BlendAvg(dst unsafe.Pointer, dstStride int, a, b unsafe.Pointer, w, h, rb int, biasC, maxC uint16) {
+func mc16BlendAvg(dst []byte, dstStride int, a, b []uint16, w, h, rb int, biasC, maxC uint16) {
 	one := archsimd.BroadcastUint16x8(1)
 	bias := archsimd.BroadcastUint16x8(biasC)
 	maxV := archsimd.BroadcastUint16x8(maxC)
 	sh := archsimd.BroadcastInt16x8(int16(-rb))
-	if w == 4 {
-		for r := 0; r < h; r += 2 {
-			o := r * 8
-			va := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(a, o)))
-			vb := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(b, o)))
-			v := va.Average(vb).Sub(va.Xor(vb).And(one)).SubSaturated(bias).Shift(sh).Min(maxV).ReshapeToUint64s()
-			d := unsafe.Add(dst, r*dstStride)
-			*(*uint64)(d) = v.GetElem(0)
-			*(*uint64)(unsafe.Add(d, dstStride)) = v.GetElem(1)
-		}
-		return
+	avg := func(pa, pb *[8]uint16) archsimd.Uint16x8 {
+		va := archsimd.LoadUint16x8Array(pa)
+		vb := archsimd.LoadUint16x8Array(pb)
+		return va.Average(vb).Sub(va.Xor(vb).And(one)).SubSaturated(bias).Shift(sh).Min(maxV)
 	}
-	avg := func(pa, pb, d unsafe.Pointer) {
-		va := archsimd.LoadUint16x8Array((*[8]uint16)(pa))
-		vb := archsimd.LoadUint16x8Array((*[8]uint16)(pb))
-		va.Average(vb).Sub(va.Xor(vb).And(one)).SubSaturated(bias).Shift(sh).Min(maxV).StoreArray((*[8]uint16)(d))
-	}
-	ro := w * 2
+	n := w * h
+	a, b = a[:n:n], b[:n:n]
+	ds := uint32(dstStride)
+	var d uint32
 	switch {
-	case w == 8:
-		// Two rows per step (dav1d avg_16bpc's w8 loop).
-		r := 0
-		for ; r+2 <= h; r += 2 {
-			o := r * 16
-			d := unsafe.Add(dst, r*dstStride)
-			avg(unsafe.Add(a, o), unsafe.Add(b, o), d)
-			avg(unsafe.Add(a, o+16), unsafe.Add(b, o+16), unsafe.Add(d, dstStride))
+	case w == 4:
+		for q := 0; q <= len(a)-8; q += 8 {
+			v := avg((*[8]uint16)(a[q:q+8]), (*[8]uint16)(b[q:q+8])).ReshapeToUint64s()
+			binary.LittleEndian.PutUint64(mc8W8(dst, d)[:], v.GetElem(0))
+			binary.LittleEndian.PutUint64(mc8W8(dst, d+ds)[:], v.GetElem(1))
+			d += 2 * ds
 		}
-		if r < h {
-			avg(unsafe.Add(a, r*16), unsafe.Add(b, r*16), unsafe.Add(dst, r*dstStride))
+	case w == 8:
+		for q := 0; q <= len(a)-8; q += 8 {
+			avg((*[8]uint16)(a[q:q+8]), (*[8]uint16)(b[q:q+8])).ReshapeToUint8s().StoreArray(mc8W16(dst, d))
+			d += ds
 		}
 	case w&15 == 0:
-		// Sixteen samples per step.
-		for r := 0; r < h; r++ {
-			pa := unsafe.Add(a, r*ro)
-			pb := unsafe.Add(b, r*ro)
-			d := unsafe.Add(dst, r*dstStride)
-			for c := 0; c < ro; c += 32 {
-				avg(unsafe.Add(pa, c), unsafe.Add(pb, c), unsafe.Add(d, c))
-				avg(unsafe.Add(pa, c+16), unsafe.Add(pb, c+16), unsafe.Add(d, c+16))
+		// Sixteen samples per step: one 32-byte destination window.
+		c, rs := uint32(0), uint32(2*w)
+		for q := 0; q <= len(a)-16; q += 16 {
+			pa, pb := (*[16]uint16)(a[q:q+16]), (*[16]uint16)(b[q:q+16])
+			dw := mc8W32(dst, d+c)
+			avg((*[8]uint16)(pa[0:8]), (*[8]uint16)(pb[0:8])).ReshapeToUint8s().StoreArray((*[16]byte)(dw[0:16]))
+			avg((*[8]uint16)(pa[8:16]), (*[8]uint16)(pb[8:16])).ReshapeToUint8s().StoreArray((*[16]byte)(dw[16:32]))
+			if c += 32; c == rs {
+				c, d = 0, d+ds
 			}
 		}
 	default:
-		for r := 0; r < h; r++ {
-			pa := unsafe.Add(a, r*ro)
-			pb := unsafe.Add(b, r*ro)
-			d := unsafe.Add(dst, r*dstStride)
-			for c := 0; c < ro; c += 16 {
-				avg(unsafe.Add(pa, c), unsafe.Add(pb, c), unsafe.Add(d, c))
+		c, rs := uint32(0), uint32(2*w)
+		for q := 0; q <= len(a)-8; q += 8 {
+			avg((*[8]uint16)(a[q:q+8]), (*[8]uint16)(b[q:q+8])).ReshapeToUint8s().StoreArray(mc8W16(dst, d+c))
+			if c += 16; c == rs {
+				c, d = 0, d+ds
 			}
 		}
 	}
@@ -121,7 +116,8 @@ func mc16BlendMaskFast(dst frame.Plane, a, b []uint16, bitDepth, dstX, dstY, w, 
 		return false
 	}
 	off := dstY*dst.Stride + 2*dstX
-	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || off+(h-1)*dst.Stride+2*w > len(dst.Pix) {
+	ext := (h-1)*dst.Stride + 2*w
+	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || off+ext > len(dst.Pix) || ext > mc8WindowMax {
 		return false
 	}
 	mw, mh := w, h
@@ -129,17 +125,17 @@ func mc16BlendMaskFast(dst frame.Plane, a, b []uint16, bitDepth, dstX, dstY, w, 
 		mw, mh = 2*w, 2*h
 	}
 	// The unsubsampled path loads 16 mask bytes per eight columns.
-	if maskStride < mw || (mh-1)*maskStride+mw > len(mask) || (mh-1)*maskStride+mw+8 > cap(mask) {
+	mExt := (mh-1)*maskStride + mw + 8
+	if maskStride < mw || mExt-8 > len(mask) || mExt > cap(mask) || mExt > mc8WindowMax {
 		return false
 	}
 	rb, bias := mc16BlendRoundBits(bitDepth)
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	mc16BlendMask(unsafe.Pointer(&dst.Pix[off]), dst.Stride, unsafe.Pointer(&a[0]), unsafe.Pointer(&b[0]), w, h, unsafe.Pointer(&mask[0]), maskStride, subX,
+	mc16BlendMask(dst.Pix[off:off+ext], dst.Stride, a, b, w, h, mask[:mExt], maskStride, subX,
 		uint32(bias)<<(16-rb), uint16(10-rb), int16(1)<<bitDepth-1)
 	return true
 }
 
-func mc16BlendMask(dst unsafe.Pointer, dstStride int, a, b unsafe.Pointer, w, h int, mask unsafe.Pointer, maskStride int, sub bool, biasC uint32, mshift uint16, maxPix int16) {
+func mc16BlendMask(dst []byte, dstStride int, a, b []uint16, w, h int, mask []byte, maskStride int, sub bool, biasC uint32, mshift uint16, maxPix int16) {
 	bias := archsimd.BroadcastUint32x4(biasC)
 	m64 := archsimd.BroadcastUint16x8(64)
 	two := archsimd.BroadcastUint16x8(2)
@@ -147,37 +143,35 @@ func mc16BlendMask(dst unsafe.Pointer, dstStride int, a, b unsafe.Pointer, w, h 
 	msh := archsimd.BroadcastInt16x8(int16(mshift))
 	zero := archsimd.BroadcastInt16x8(0)
 	maxV := archsimd.BroadcastInt16x8(maxPix)
-	ro := w * 2
-	for r := 0; r < h; r++ {
-		pa := unsafe.Add(a, r*ro)
-		pb := unsafe.Add(b, r*ro)
-		d := unsafe.Add(dst, r*dstStride)
-		var mrow, mrow1 unsafe.Pointer
+	n := w * h
+	a, b = a[:n:n], b[:n:n]
+	ds, ms, ws := uint32(dstStride), uint32(maskStride), uint32(w)
+	mstep := ms
+	if sub {
+		mstep = 2 * ms
+	}
+	var c, d, mo uint32
+	for q := 0; q <= len(a)-8; q += 8 {
+		var m archsimd.Uint16x8
 		if sub {
-			mrow = unsafe.Add(mask, 2*r*maskStride)
-			mrow1 = unsafe.Add(mrow, maskStride)
+			v0 := archsimd.LoadUint8x16Array(mc8W16(mask, mo+2*c))
+			v1 := archsimd.LoadUint8x16Array(mc8W16(mask, mo+ms+2*c))
+			lo := v0.ExtendLo8ToUint16().Add(v1.ExtendLo8ToUint16())
+			hi := v0.HiToLo().ExtendLo8ToUint16().Add(v1.HiToLo().ExtendLo8ToUint16())
+			m = lo.ConcatAddPairs(hi).Add(two).Shift(right2)
 		} else {
-			mrow = unsafe.Add(mask, r*maskStride)
+			m = archsimd.LoadUint8x16Array(mc8W16(mask, mo+c)).ExtendLo8ToUint16()
 		}
-		for c := 0; c < w; c += 8 {
-			var m archsimd.Uint16x8
-			if sub {
-				v0 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(mrow, 2*c)))
-				v1 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(mrow1, 2*c)))
-				lo := v0.ExtendLo8ToUint16().Add(v1.ExtendLo8ToUint16())
-				hi := v0.HiToLo().ExtendLo8ToUint16().Add(v1.HiToLo().ExtendLo8ToUint16())
-				m = lo.ConcatAddPairs(hi).Add(two).Shift(right2)
-			} else {
-				m = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(mrow, c))).ExtendLo8ToUint16()
-			}
-			ms := m.Shift(msh)
-			mi := m64.Sub(m).Shift(msh)
-			va := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(pa, 2*c)))
-			vb := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(pb, 2*c)))
-			lo := va.MulWidenLo(ms).Add(vb.MulWidenLo(mi)).Sub(bias)
-			hi := va.HiToLo().MulWidenLo(ms.HiToLo()).Add(vb.HiToLo().MulWidenLo(mi.HiToLo())).Sub(bias)
-			v := lo.ReshapeToUint16s().ConcatOdd(hi.ReshapeToUint16s()).BitsToInt16()
-			v.Max(zero).Min(maxV).StoreArray((*[8]int16)(unsafe.Add(d, 2*c)))
+		mshv := m.Shift(msh)
+		mi := m64.Sub(m).Shift(msh)
+		va := archsimd.LoadUint16x8Array((*[8]uint16)(a[q : q+8]))
+		vb := archsimd.LoadUint16x8Array((*[8]uint16)(b[q : q+8]))
+		lo := va.MulWidenLo(mshv).Add(vb.MulWidenLo(mi)).Sub(bias)
+		hi := va.HiToLo().MulWidenLo(mshv.HiToLo()).Add(vb.HiToLo().MulWidenLo(mi.HiToLo())).Sub(bias)
+		v := lo.ReshapeToUint16s().ConcatOdd(hi.ReshapeToUint16s()).BitsToInt16()
+		mc16St16(dst, d+2*c, v.Max(zero).Min(maxV))
+		if c += 8; c == ws {
+			c, d, mo = 0, d+ds, mo+mstep
 		}
 	}
 }
@@ -186,33 +180,50 @@ func mc16BlendMask(dst unsafe.Pointer, dstStride int, a, b unsafe.Pointer, w, h 
 // must be a multiple of 8.
 func mc16DiffWtdMaskFast(mask []byte, maskStride int, a, b []uint16, bitDepth, w, h int, invert bool) bool {
 	if (bitDepth != 10 && bitDepth != 12) || w&7 != 0 || w > maxBlockSize || h <= 0 || len(a) < w*h || len(b) < w*h ||
-		maskStride < w || (h-1)*maskStride+w > len(mask) {
+		maskStride < w || (h-1)*maskStride+w > len(mask) || (h-1)*maskStride+w > mc8WindowMax {
 		return false
 	}
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	mc16DiffWtdMask(unsafe.Pointer(&mask[0]), maskStride, unsafe.Pointer(&a[0]), unsafe.Pointer(&b[0]), w, h, invert)
+	mc16DiffWtdMask(mask[:(h-1)*maskStride+w], maskStride, a, b, w, h, invert)
 	return true
 }
 
-func mc16DiffWtdMask(mask unsafe.Pointer, maskStride int, a, b unsafe.Pointer, w, h int, invert bool) {
+func mc16DiffWtdMask(mask []byte, maskStride int, a, b []uint16, w, h int, invert bool) {
 	right5 := archsimd.BroadcastInt16x8(-5)
 	one := archsimd.BroadcastUint16x8(1)
 	base := archsimd.BroadcastUint16x8(38)
 	maxM := archsimd.BroadcastUint16x8(64)
-	ro := w * 2
-	for r := 0; r < h; r++ {
-		pa := unsafe.Add(a, r*ro)
-		pb := unsafe.Add(b, r*ro)
-		mrow := unsafe.Add(mask, r*maskStride)
-		for c := 0; c < w; c += 8 {
-			va := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(pa, 2*c)))
-			vb := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(pb, 2*c)))
-			diff := va.Max(vb).Sub(va.Min(vb))
-			m := diff.Shift(right5).Add(one).Shift(right5).Add(base).Min(maxM)
-			if invert {
-				m = maxM.Sub(m)
+	n := w * h
+	a, b = a[:n:n], b[:n:n]
+	ms, ws := uint32(maskStride), uint32(w)
+	var c, mo uint32
+	mk := func(pa, pb *[8]uint16) archsimd.Uint16x8 {
+		va := archsimd.LoadUint16x8Array(pa)
+		vb := archsimd.LoadUint16x8Array(pb)
+		diff := va.Max(vb).Sub(va.Min(vb))
+		m := diff.Shift(right5).Add(one).Shift(right5).Add(base).Min(maxM)
+		if invert {
+			m = maxM.Sub(m)
+		}
+		return m
+	}
+	if w&15 == 0 {
+		// Sixteen samples per step: one 16-byte mask window.
+		for q := 0; q <= len(a)-16; q += 16 {
+			pa, pb := (*[16]uint16)(a[q:q+16]), (*[16]uint16)(b[q:q+16])
+			m0 := mk((*[8]uint16)(pa[0:8]), (*[8]uint16)(pb[0:8])).TruncToUint8().ReshapeToUint64s()
+			m1 := mk((*[8]uint16)(pa[8:16]), (*[8]uint16)(pb[8:16])).TruncToUint8().ReshapeToUint64s()
+			m0.InterleaveLo(m1).ReshapeToUint8s().StoreArray(mc8W16(mask, mo+c))
+			if c += 16; c == ws {
+				c, mo = 0, mo+ms
 			}
-			*(*uint64)(unsafe.Add(mrow, c)) = m.TruncToUint8().ReshapeToUint64s().GetElem(0)
+		}
+		return
+	}
+	for q := 0; q <= len(a)-8; q += 8 {
+		m := mk((*[8]uint16)(a[q:q+8]), (*[8]uint16)(b[q:q+8]))
+		binary.LittleEndian.PutUint64(mc8W8(mask, mo+c)[:], m.TruncToUint8().ReshapeToUint64s().GetElem(0))
+		if c += 8; c == ws {
+			c, mo = 0, mo+ms
 		}
 	}
 }
