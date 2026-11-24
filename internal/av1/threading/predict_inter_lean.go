@@ -511,15 +511,19 @@ func (b *FrameWorkBatch) prepTranslation16(buf *motion.CompoundConvBuf, t *frame
 // recon_b_inter reads f->cur: the output plane extended to the writable clip
 // window, the window origin and clip extent, and the raw plane extent.
 type frameWorkLeanInterPlane struct {
-	output    frame.Plane
-	winX      int
-	winY      int
-	clipW     int
-	clipH     int
-	codedW    int
-	codedH    int
-	rawStride int
-	rawLen    int
+	output frame.Plane
+	winX   int
+	winY   int
+	// winX1/winY1 end the writable window (winX+clipW, winY+clipH).
+	winX1  int
+	winY1  int
+	codedW int
+	codedH int
+	// alignW/alignH are the aligned plane extent max(codedW, Stride/bps) and
+	// max(codedH, len/Stride) of the raw output plane: a block starting at or
+	// past them starts beyond the plane (frameWorkPlaneBlockStartsBeyondPlane).
+	alignW int
+	alignH int
 }
 
 // frameWorkLeanInter is the job-invariant state of the bound inter path: every
@@ -587,9 +591,10 @@ func (b *FrameWorkBatch) leanInter(index int) *frameWorkLeanInter {
 		p := &l.plane[plane]
 		p.output = bind.output
 		p.winX, p.winY = int(window.X), int(window.Y)
-		p.clipW, p.clipH = clipW, clipH
+		p.winX1, p.winY1 = p.winX+clipW, p.winY+clipH
 		p.codedW, p.codedH = bind.codedW, bind.codedH
-		p.rawStride, p.rawLen = bind.raw.Stride, len(bind.raw.Pix)
+		p.alignW = max(p.codedW, bind.raw.Stride/bind.bps)
+		p.alignH = max(p.codedH, len(bind.raw.Pix)/bind.raw.Stride)
 		if plane == FrameWorkPlaneY {
 			l.bps = bind.bps
 		} else if bind.bps != l.bps {
@@ -714,6 +719,94 @@ func (b *FrameWorkBatch) reconBInter(index int, l *frameWorkLeanInter, visit *ti
 	if compound && l.refBound>>slot1&7 != 7 {
 		b.bindSameRefs(l, reference1)
 	}
+	x, y := int(block.MICol)*4, int(block.MIRow)*4
+	width, height := int(block.VisibleW4)*4, int(block.VisibleH4)*4
+	fullW, fullH := int(dims.W4)*4, int(dims.H4)*4
+	// dav1d's COMP_INTER_NONE arm at 8 bits: one mc() put per plane, the luma
+	// block and then U and V at the shared chroma block. The arm is taken when
+	// every plane writes its full block inside the writable window from a
+	// same-size reference (the views and the verdicts are block invariants, so
+	// they are tested once, before anything is written); any other block takes
+	// the per-plane chain, which clips or reroutes plane by plane.
+	if !compound && l.bps == 1 && pred.SubChromaInter == nil {
+		need := uint32(1)
+		if l.chroma {
+			need = 7
+		}
+		if l.refSame>>slot0&need == need && width <= fullW && height <= fullH &&
+			frameWorkPredictionExtentValid(fullW) && frameWorkPredictionExtentValid(fullH) &&
+			l.plane[FrameWorkPlaneY].holds(x, y, fullW, fullH) {
+			// The chroma block (cbx4/cby4/cbw4/cbh4), shared by U and V.
+			var cx, cy, cfw, cfh int
+			chroma := l.chroma
+			inside := true
+			if chroma {
+				var cb tile.BlockSize
+				var ok bool
+				cb, chroma, ok = tile.ChromaPlaneBlock(block.Size, int(block.X4), int(block.Y4), l.ssX, l.ssY)
+				inside = ok
+				if ok && chroma {
+					cdims, ok := cb.Dimensions()
+					sx, sy := int(l.ssX), int(l.ssY)
+					miCol, miRow := int(block.MICol), int(block.MIRow)
+					if sx != 0 && miCol&1 != 0 && dims.W4 == 1 {
+						miCol--
+					}
+					if sy != 0 && miRow&1 != 0 && dims.H4 == 1 {
+						miRow--
+					}
+					blockX4, blockY4 := int(block.X4), int(block.Y4)
+					cw := (((blockX4 + int(block.VisibleW4) + sx) >> sx) - (blockX4 >> sx)) * 4
+					ch := (((blockY4 + int(block.VisibleH4) + sy) >> sy) - (blockY4 >> sy)) * 4
+					cx, cy = (miCol*4)>>sx, (miRow*4)>>sy
+					cfw, cfh = int(cdims.W4)*4, int(cdims.H4)*4
+					inside = ok && cw > 0 && ch > 0 && cw <= cfw && ch <= cfh &&
+						frameWorkPredictionExtentValid(cfw) && frameWorkPredictionExtentValid(cfh) &&
+						l.plane[FrameWorkPlaneU].holds(cx, cy, cfw, cfh) && l.plane[FrameWorkPlaneV].holds(cx, cy, cfw, cfh)
+				}
+			}
+			if inside {
+				cs := frameWorkConvolveScratch(scratch)
+				refX, refY, subX, subY := motion.TranslationOrigin(x, y, mv[0], false, false)
+				out, ref := &l.plane[FrameWorkPlaneY].output, l.ref[slot0]
+				if !motion.Put8(out, ref, x, y, refX, refY, fullW, fullH, fullW, fullH, subX, subY, filters, cs) &&
+					motion.PredictTranslation8(out, ref, x, y, fullW, fullH, fullW, fullH, mv[0], false, false, filters, cs) != nil {
+					return true, ErrInvalidBatch
+				}
+				if !chroma {
+					return true, nil
+				}
+				ssX, ssY := l.ssX != 0, l.ssY != 0
+				refX, refY, subX, subY = motion.TranslationOrigin(cx, cy, mv[0], ssX, ssY)
+				for plane := FrameWorkPlaneU; plane <= FrameWorkPlaneV; plane++ {
+					out, ref := &l.plane[plane].output, l.ref[slot0+uint(plane)]
+					if !motion.Put8(out, ref, cx, cy, refX, refY, cfw, cfh, cfw, cfh, subX, subY, filters, cs) &&
+						motion.PredictTranslation8(out, ref, cx, cy, cfw, cfh, cfw, cfh, mv[0], ssX, ssY, filters, cs) != nil {
+						return true, ErrInvalidBatch
+					}
+				}
+				return true, nil
+			}
+		}
+	}
+	return b.reconBInterPlanes(index, l, visit, scratch, filters, dims, compound, slot0, slot1)
+}
+
+// holds reports whether a plane block at (x, y) of full extent w x h lies
+// inside the plane's writable window and starts inside its aligned plane
+// (dav1d mc() writes the whole block at its position in f->cur), so it needs
+// no clipping. It is the window test of reconBInterPlanes in bound form.
+func (p *frameWorkLeanInterPlane) holds(x, y, w, h int) bool {
+	return x >= p.winX && y >= p.winY && x+w <= p.winX1 && y+h <= p.winY1 && x < p.alignW && y < p.alignH
+}
+
+// reconBInterPlanes is reconBInter's per-plane chain: each plane is clipped to
+// the writable window when it leaves it and routed to its mc() kernel, or to
+// the general per-plane route when the bound views cannot take it.
+func (b *FrameWorkBatch) reconBInterPlanes(index int, l *frameWorkLeanInter, visit *tile.BlockLoopVisit, scratch *FrameWorkInterPredictionScratch, filters motion.InterpFilters, dims tile.BlockDimensions, compound bool, slot0, slot1 uint) (bool, error) {
+	pred := &visit.Prediction
+	block := &visit.Block
+	mv := &pred.InterMotion.MV
 	// Luma first; the chroma geometry is derived once for both planes below.
 	plane := FrameWorkPlaneY
 	x, y := int(block.MICol)*4, int(block.MIRow)*4
@@ -733,10 +826,8 @@ func (b *FrameWorkBatch) reconBInter(index int, l *frameWorkLeanInter, visit *ti
 		filterW, filterH := fullW, fullH
 		codedW, codedH := p.codedW, p.codedH
 		bps := l.bps
-		if rx, ry := x-p.winX, y-p.winY; rx < 0 || ry < 0 || rx+fullW > p.clipW || ry+fullH > p.clipH ||
-			width > fullW || height > fullH ||
-			!frameWorkPredictionExtentValid(fullW) || !frameWorkPredictionExtentValid(fullH) ||
-			(x >= p.codedW && l.bps*(x+1) > p.rawStride) || (y >= p.codedH && p.rawStride*(y+1) > p.rawLen) {
+		if !p.holds(x, y, fullW, fullH) || width > fullW || height > fullH ||
+			!frameWorkPredictionExtentValid(fullW) || !frameWorkPredictionExtentValid(fullH) {
 			present, err := b.interTargetAt(index, block, plane, x, y, width, height, ssX, ssY, &t)
 			if err != nil {
 				return true, err
