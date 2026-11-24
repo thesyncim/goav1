@@ -343,6 +343,32 @@ func (p *decoderFramePipeline) readyHolds(surface int) bool {
 	return false
 }
 
+// resetReferences drops every reference slot at a new coded video sequence
+// (dav1d obu.c unrefs c->refs[i] when the sequence header changes) once the
+// ring is drained. A picture drained into this call's output keeps its surface
+// - dav1d's output queue holds its own picture reference - and the
+// shown-surface bookkeeping returns it to the pool on the next call; without
+// that the new sequence's first frame could take the surface of a frame this
+// call still returns.
+func (p *decoderFramePipeline) resetReferences() error {
+	d := p.d
+	next := d.refs
+	count, err := next.ReleaseAll(d.releases[:])
+	if err != nil {
+		return err
+	}
+	for _, s := range d.releases[:count] {
+		if p.readyHolds(s) {
+			continue
+		}
+		if err := d.pool.Release(s); err != nil {
+			return err
+		}
+	}
+	d.refs = next
+	return nil
+}
+
 // deferredRelease reports whether an in-flight frame will return surface to
 // the pool when it retires.
 func (p *decoderFramePipeline) deferredRelease(surface int) bool {

@@ -529,6 +529,52 @@ func TestFramePoolAcquireFormatBindsSmallerFrames(t *testing.T) {
 		t.Fatalf("re-acquired slot %d format %+v", index2, f2.Format)
 	}
 	if _, _, err := pool.AcquireFormat(Format{Width: 140, Height: 79, BitDepth: 10, SubsamplingX: true, SubsamplingY: true, Align: 32}); !errors.Is(err, ErrInvalidFormat) {
-		t.Fatalf("bit-depth mismatch err=%v", err)
+		t.Fatalf("10-bit frame larger than the slot: err=%v", err)
+	}
+}
+
+// TestFramePoolAcquireFormatBindsOtherSampleFormats checks that a slot takes a
+// frame of another bit depth, chroma layout or superblock size when its layout
+// fits, as a new coded video sequence may change all three.
+func TestFramePoolAcquireFormatBindsOtherSampleFormats(t *testing.T) {
+	format := Format{Width: 192, Height: 108, BitDepth: 10, Align: 32}
+	layout, err := RequiredSize(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backing := make([]byte, layout.Size)
+	var frames [1]Frame
+	var free [1]int
+	var used [1]bool
+	pool, err := BindPool(backing, format, frames[:], free[:], used[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []Format{
+		{Width: 192, Height: 108, BitDepth: 8, Align: 32},
+		{Width: 192, Height: 108, BitDepth: 8, SubsamplingX: true, SubsamplingY: true, SBSizeLog2: 7, Align: 32},
+		{Width: 100, Height: 60, BitDepth: 12, SubsamplingX: true, Align: 32},
+		{Width: 192, Height: 108, BitDepth: 10, MonoChrome: true, Align: 32},
+	} {
+		index, got, err := pool.AcquireFormat(f)
+		if err != nil {
+			t.Fatalf("AcquireFormat(%+v): %v", f, err)
+		}
+		want, err := normalizeFormat(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Format != want {
+			t.Fatalf("bound %+v, want %+v", got.Format, want)
+		}
+		if err := pool.Release(index); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := pool.AcquireFormat(Format{Width: 192, Height: 108, BitDepth: 10, Align: 64}); !errors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("other stride alignment: err=%v", err)
+	}
+	if pool.Available() != 1 {
+		t.Fatalf("rejected format consumed a slot, available=%d", pool.Available())
 	}
 }

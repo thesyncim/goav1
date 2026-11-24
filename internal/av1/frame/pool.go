@@ -5,9 +5,9 @@
 package frame
 
 // Pool is a deterministic LIFO pool over caller-owned frame storage. Each slot
-// is sized for the pool format (normally the sequence's maximum frame size);
-// AcquireFormat binds a slot to any frame size that fits, as dav1d allocates
-// each picture at its own frame size.
+// is sized for the pool format (normally the largest frame layout in the
+// stream); AcquireFormat binds a slot to any frame format whose layout fits, as
+// dav1d allocates each picture at its own size and format.
 type Pool struct {
 	frames  []Frame
 	free    []int
@@ -212,15 +212,15 @@ func (p *Pool) Reset() {
 }
 
 // poolFormatFits reports whether format can be bound into a slot of the pool
-// format: the same sample format and superblock alignment, and a layout no
-// larger than the slot.
+// format: the same stride alignment and a layout no larger than the slot. The
+// sample format (bit depth, chroma layout, superblock size) may differ, as
+// dav1d's picture pool hands out one buffer per picture whatever its layout,
+// so a new coded video sequence with another format reuses the same slots.
 func poolFormatFits(pool Format, slot Layout, format Format) bool {
 	if format == pool {
 		return true
 	}
-	if format.BitDepth != pool.BitDepth || format.MonoChrome != pool.MonoChrome ||
-		format.SubsamplingX != pool.SubsamplingX || format.SubsamplingY != pool.SubsamplingY ||
-		format.SBSizeLog2 != pool.SBSizeLog2 || format.Align != pool.Align {
+	if format.Align != pool.Align {
 		return false
 	}
 	layout, err := RequiredSize(format)
