@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // The Low16 form of itx_fused32: the 8-bit 32x32 DCT_DCT block whose coded
 // coefficients lie in rows and columns 0..15. Two row strips of eight rows
@@ -287,7 +284,5 @@ func InverseAddDCT32x32Low16(dst []byte, dstStride int, pred []byte, predStride 
 		len(dst) < 31*dstStride+32 || len(pred) < 31*predStride+32 {
 		return false
 	}
-	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	return itxGenDCT32x32((*[1024]int32)(coeff[:1024]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-		unsafe.Pointer(unsafe.SliceData(pred)), predStride, 16, activeRows)
+	return itxGenDCT32x32((*[1024]int32)(coeff[:1024]), dst, dstStride, pred, predStride, 16, activeRows)
 }

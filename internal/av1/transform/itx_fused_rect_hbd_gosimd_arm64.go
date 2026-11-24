@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // 10- and 12-bit forms of the fused 2:1 rectangular DCT_DCT blocks 16x32
 // and 32x16 (itx_fused_rect). dav1d's itx16 runs their 10 bpc column pass
@@ -25,7 +22,11 @@ import (
 // block is left untouched for the staged path.
 
 // itx16x32ColStripAddHBD is itx16x32ColStripAdd onto 16bpc samples.
-func itx16x32ColStripAddHBD(tmp *[32 * 16]int16, c0 int, inRows int, dst unsafe.Pointer, dstStride int, pred unsafe.Pointer, predStride int, maxV archsimd.Int16x8) {
+func itx16x32ColStripAddHBD(tmp *[32 * 16]int16, c0 int, inRows int, dst []byte, dstStride int, pred []byte, predStride int, maxV archsimd.Int16x8) {
+	dst, pred = dst[2*c0:], pred[2*c0:]
+	// itxHBDRectFits checked the strides against itxGenMaxStride; the conversion
+	// carries that range, so each row window is one bounds check.
+	ds, ps := int(uint32(dstStride)), int(uint32(predStride))
 	var in [32]archsimd.Int16x8
 	for r := 0; r < inRows; r++ {
 		in[r] = archsimd.LoadInt16x8Array((*[8]int16)(tmp[r*16+c0:]))
@@ -37,7 +38,7 @@ func itx16x32ColStripAddHBD(tmp *[32 * 16]int16, c0 int, inRows int, dst unsafe.
 	sh3 := archsimd.BroadcastInt16x8(-3)
 	zero := archsimd.BroadcastInt16x8(0)
 	for r := 0; r < 32; r++ {
-		itxAddRow16(unsafe.Add(dst, r*dstStride+2*c0), unsafe.Add(pred, r*predStride+2*c0), itx32Round2(out[r], sh3, sh1, one), zero, maxV)
+		itxAddRow16(dst, r*ds, pred, r*ps, itx32Round2(out[r], sh3, sh1, one), zero, maxV)
 	}
 }
 
@@ -67,16 +68,17 @@ func InverseAddDCT16x32HBD(dst []byte, dstStride int, pred []byte, predStride in
 	if colL1[0].Max(colL1[1]).ReduceMax() > itx16ColumnL1Bound {
 		return false
 	}
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	pp := unsafe.Pointer(unsafe.SliceData(pred))
-	itx16x32ColStripAddHBD(&tmp, 0, inRows, dp, dstStride, pp, predStride, maxV)
-	itx16x32ColStripAddHBD(&tmp, 8, inRows, dp, dstStride, pp, predStride, maxV)
+	itx16x32ColStripAddHBD(&tmp, 0, inRows, dst, dstStride, pred, predStride, maxV)
+	itx16x32ColStripAddHBD(&tmp, 8, inRows, dst, dstStride, pred, predStride, maxV)
 	return true
 }
 
 // itx32x16ColStripAddHBD is itx32x16ColStripAdd onto 16bpc samples.
-func itx32x16ColStripAddHBD(tmp *[16 * 32]int16, c0 int, inRows int, dst unsafe.Pointer, dstStride int, pred unsafe.Pointer, predStride int, maxV archsimd.Int16x8) {
+func itx32x16ColStripAddHBD(tmp *[16 * 32]int16, c0 int, inRows int, dst []byte, dstStride int, pred []byte, predStride int, maxV archsimd.Int16x8) {
+	dst, pred = dst[2*c0:], pred[2*c0:]
+	// itxHBDRectFits checked the strides against itxGenMaxStride; the conversion
+	// carries that range, so each row window is one bounds check.
+	ds, ps := int(uint32(dstStride)), int(uint32(predStride))
 	var in [16]archsimd.Int16x8
 	for r := 0; r < inRows; r++ {
 		in[r] = archsimd.LoadInt16x8Array((*[8]int16)(tmp[r*32+c0:]))
@@ -88,7 +90,7 @@ func itx32x16ColStripAddHBD(tmp *[16 * 32]int16, c0 int, inRows int, dst unsafe.
 	sh3 := archsimd.BroadcastInt16x8(-3)
 	zero := archsimd.BroadcastInt16x8(0)
 	for r := 0; r < 16; r++ {
-		itxAddRow16(unsafe.Add(dst, r*dstStride+2*c0), unsafe.Add(pred, r*predStride+2*c0), itx32Round2(out[r], sh3, sh1, one), zero, maxV)
+		itxAddRow16(dst, r*ds, pred, r*ps, itx32Round2(out[r], sh3, sh1, one), zero, maxV)
 	}
 }
 
@@ -115,11 +117,8 @@ func InverseAddDCT32x16HBD(dst []byte, dstStride int, pred []byte, predStride in
 	if colL1[0].Max(colL1[1]).Max(colL1[2].Max(colL1[3])).ReduceMax() > itx16ColumnL1Bound {
 		return false
 	}
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	pp := unsafe.Pointer(unsafe.SliceData(pred))
 	for c0 := 0; c0 < 32; c0 += 8 {
-		itx32x16ColStripAddHBD(&tmp, c0, inRows, dp, dstStride, pp, predStride, maxV)
+		itx32x16ColStripAddHBD(&tmp, c0, inRows, dst, dstStride, pred, predStride, maxV)
 	}
 	return true
 }
@@ -127,5 +126,5 @@ func InverseAddDCT32x16HBD(dst []byte, dstStride int, pred []byte, predStride in
 // itxHBDRectFits reports whether a w x h block of 2-byte samples at stride
 // (bytes) fits buf.
 func itxHBDRectFits(buf []byte, stride, w, h int) bool {
-	return stride >= 2*w && len(buf) >= (h-1)*stride+2*w
+	return stride >= 2*w && stride <= itxGenMaxStride && len(buf) >= (h-1)*stride+2*w
 }
