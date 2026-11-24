@@ -30,7 +30,7 @@ type GridRowArray[E GridElem] interface {
 // accessor on it panics.
 type Grid[E GridElem] struct {
 	p      unsafe.Pointer // first element of row 0 (nil for the zero Grid)
-	stride uint           // in elements
+	stride uint           // in bytes (stride elements of E)
 	height uint
 	width  uint // in elements
 }
@@ -53,19 +53,21 @@ func GridFit(n, off, stride, width, height int) bool {
 //
 // Bounds proof: with off, stride and height-1 below 2^31 and width at most
 // 2^31, the footprint end off + (height-1)*stride + width is below 2^63,
-// exact in uint64, and at most len(s), so the element at off + r*stride + c for r < height and c <
-// width is an element of s. Its byte offset from &s[0] is that index times
-// unsafe.Sizeof(E) <= 4, below len(s)*Sizeof(E), the size of s's elements
-// (which is at most MaxInt, so the uintptr offsets the accessors form cannot
-// wrap). Every element of s is aligned for E, so is every element the view
-// addresses. p is &s[off] (off < end <= len(s) because width >= 1), inside
-// s's allocation, and keeps it alive.
+// exact in uint64, and at most len(s), so the element at off + r*stride + c
+// for r < height and c < width is an element of s. The view keeps the stride
+// in bytes, stride*Sizeof(E), and the accessors address that element as
+// p + r*(stride*Sizeof(E)) + c*Sizeof(E): its byte offset from &s[0],
+// (off + r*stride + c)*Sizeof(E) with Sizeof(E) <= 4, is below
+// len(s)*Sizeof(E), the size of s's elements (at most MaxInt, so the uintptr
+// offsets cannot wrap). Every element of s is aligned for E, so is every
+// element the view addresses. p is &s[off] (off < end <= len(s) because
+// width >= 1), inside s's allocation, and keeps it alive.
 func NewGrid[E GridElem](s []E, off, stride, width, height int) Grid[E] {
 	if !(uint(width-1)|uint(height-1)|uint(off)|uint(stride) < rowsDimMax &&
 		uint64(off)+uint64(height-1)*uint64(stride)+uint64(width) <= uint64(len(s))) {
 		panic(errRows)
 	}
-	return Grid[E]{p: unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), uintptr(off)*unsafe.Sizeof(s[0])), stride: uint(stride), height: uint(height), width: uint(width)}
+	return Grid[E]{p: unsafe.Add(unsafe.Pointer(unsafe.SliceData(s)), uintptr(off)*unsafe.Sizeof(s[0])), stride: uint(stride) * uint(unsafe.Sizeof(s[0])), height: uint(height), width: uint(width)}
 }
 
 // Height is the number of rows.
@@ -100,7 +102,7 @@ func (g Grid[E]) Sub(r, c, width, height int) Grid[E] {
 		panic(errRows)
 	}
 	var e E
-	return Grid[E]{p: unsafe.Add(g.p, (uint(r)*g.stride+uint(c))*uint(unsafe.Sizeof(e))), stride: g.stride, height: uint(height), width: uint(width)}
+	return Grid[E]{p: unsafe.Add(g.p, uint(r)*g.stride+uint(c)*uint(unsafe.Sizeof(e))), stride: g.stride, height: uint(height), width: uint(width)}
 }
 
 // Row returns the len(A) elements at column c of row r of g. It panics
@@ -117,7 +119,7 @@ func Row[A GridRowArray[E], E GridElem](g Grid[E], r, c int) *A {
 	// The address of row r, column c, written out rather than called so the
 	// accessor leaves one inline mark at its call site.
 	var e E
-	return (*A)(unsafe.Add(g.p, (uint(r)*g.stride+uint(c))*uint(unsafe.Sizeof(e))))
+	return (*A)(unsafe.Add(g.p, uint(r)*g.stride+uint(c)*uint(unsafe.Sizeof(e))))
 }
 
 // CopyBlock copies the dst.Height() rows of dst.Width() bytes from the same

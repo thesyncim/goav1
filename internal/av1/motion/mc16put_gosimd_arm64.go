@@ -11,6 +11,7 @@ import (
 	"simd/archsimd"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
+	"github.com/thesyncim/goav1/internal/unsafeutil"
 )
 
 // dav1d-style 16bpc single-reference put (src/mc_tmpl.c put_8tap,
@@ -53,12 +54,46 @@ func mc16PutFast(dst *frame.Plane, ref *frame.Plane, bitDepth, dstX, dstY, refX,
 	if dOff+dExt > len(dst.Pix) || dExt > mc8WindowMax {
 		return false
 	}
+	maxV := int16(1)<<bitDepth - 1
+	if tx != 8 && ty != 8 {
+		if !unsafeutil.GridFit(len(dst.Pix), dOff, dst.Stride, 2*w, h) {
+			return false
+		}
+		sg, ok := mc16SourceGrid(ref, refX, refY, w, h, tx, ty, &scratch.edge16)
+		if !ok {
+			return false
+		}
+		dg := unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, 2*w, h)
+		switch {
+		case tx != 0 && ty != 0:
+			im := scratch.imHBD[:]
+			mc16H6ToI32G(sg, w, h+5, &mc8Phases[kx][subX], 2, im)
+			if w == 4 {
+				mc16PutV6FromI32GW4(im, h, &mc8Phases[ky][subY], maxV, dg)
+			} else {
+				mc16PutV6FromI32G(im, w, h, &mc8Phases[ky][subY], maxV, dg)
+			}
+		case tx != 0:
+			round0, _ := highBDRoundBits(uint8(bitDepth))
+			mc16PutH6G(sg, &mc8Phases[kx][subX], int32(1)<<(round0-2)+32, maxV, dg)
+		case w == 4:
+			mc16PutV6GW4(sg, &mc8Phases[ky][subY], maxV, dg)
+		default:
+			mc16PutV6G(sg, &mc8Phases[ky][subY], maxV, dg)
+		}
+		return true
+	}
+	return mc16PutSharp(dst, ref, bitDepth, dOff, dExt, refX, refY, w, h, kx, ky, tx, ty, subX, subY, maxV, scratch)
+}
+
+// mc16PutSharp is mc16PutFast for blocks with an eight-tap (sharp) axis,
+// over the slice source window of mc16Source.
+func mc16PutSharp(dst *frame.Plane, ref *frame.Plane, bitDepth, dOff, dExt, refX, refY, w, h, kx, ky, tx, ty, subX, subY int, maxV int16, scratch *ConvolveScratch) bool {
 	src, stride, ok := mc16Source(ref, refX, refY, w, h, tx, ty, &scratch.edge16)
 	if !ok {
 		return false
 	}
 	d := dst.Pix[dOff : dOff+dExt]
-	maxV := int16(1)<<bitDepth - 1
 	switch {
 	case tx != 0 && ty != 0:
 		im := scratch.imHBD[:]

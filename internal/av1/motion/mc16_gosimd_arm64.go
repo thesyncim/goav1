@@ -90,6 +90,41 @@ func mc16Source(ref *frame.Plane, refX, refY, w, h, tx, ty int, edge *emuEdge16B
 	return edge[:], 2 * emuEdge16Stride, true
 }
 
+// mc16SourceGrid is mc16Source for six-tap (or unfiltered) axes as a Grid
+// view: bh rows of 2*max(w+5, 13) bytes from the window's top-left tap
+// sample.
+func mc16SourceGrid(ref *frame.Plane, refX, refY, w, h, tx, ty int, edge *emuEdge16Buf) (src unsafeutil.Grid[uint8], ok bool) {
+	x0, y0, bw, bh := refX, refY, w, h
+	read := 2 * max(w+5, 13)
+	if tx != 0 {
+		x0 -= 2
+		bw += 5
+	}
+	if ty != 0 {
+		y0 -= 2
+		bh += 5
+	}
+	if ref.Width <= 0 || ref.Height <= 0 || ref.Stride < 2*ref.Width {
+		return src, false
+	}
+	if x0 >= 0 && y0 >= 0 && x0+bw <= ref.Width && y0+bh <= ref.Height {
+		start := y0*ref.Stride + 2*x0
+		if unsafeutil.GridFit(len(ref.Pix), start, ref.Stride, read, bh) {
+			return unsafeutil.NewGrid(ref.Pix, start, ref.Stride, read, bh), true
+		}
+	}
+	if len(ref.Pix) < (ref.Height-1)*ref.Stride+2*ref.Width {
+		return src, false
+	}
+	// The edge window holds emuEdge16Rows (136) rows of emuEdge16Stride (144)
+	// samples; bh <= 133 and the kernels read at most 133 samples per row.
+	emuEdge16(bw, bh, *ref, x0, y0, edge[:], 2*emuEdge16Stride)
+	if !unsafeutil.GridFit(len(edge), 0, 2*emuEdge16Stride, read, bh) {
+		return src, false
+	}
+	return unsafeutil.NewGrid(edge[:], 0, 2*emuEdge16Stride, read, bh), true
+}
+
 // mc16PrepFast fills a w x h CONV_BUF (row stride w) from a 10- or 12-bit
 // reference with the dav1d-style prep kernels. It returns false for shapes it
 // does not cover (widths other than 4 or a multiple of 8, or a width-4 block
@@ -105,12 +140,47 @@ func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, fi
 	if tx == 8 && w == 4 {
 		return false
 	}
+	// Halved taps: the round0 shift drops by one.
+	sh := compoundRound0(uint8(bitDepth)) - 1
+	if tx != 8 && ty != 8 {
+		sg, ok := mc16SourceGrid(ref, refX, refY, w, h, tx, ty, &scratch.edge16)
+		if !ok || !unsafeutil.GridFit(len(out), 0, w, w, h) {
+			return false
+		}
+		og := unsafeutil.NewGrid(out, 0, w, w, h)
+		switch {
+		case tx != 0 && ty != 0:
+			im := scratch.im[:]
+			mc16H6ToI32G(sg, w, h+5, &mc8Phases[kx][subX], sh, im)
+			if w == 4 {
+				mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], out[:4*h], mc16PrepV6Rnd)
+			} else {
+				mc8PrepV6FromI32S(im, w, h, &mc8Phases[ky][subY], og, mc16PrepV6Rnd)
+			}
+		case tx != 0:
+			mc16PrepH6G(sg, &mc8Phases[kx][subX], sh, og)
+		case ty != 0:
+			if w == 4 {
+				mc16PrepV6GW4(sg, &mc8Phases[ky][subY], sh, og)
+			} else {
+				mc16PrepV6G(sg, &mc8Phases[ky][subY], sh, og)
+			}
+		default:
+			mc16PrepCopyG(sg, 6-sh, og)
+		}
+		return true
+	}
+	return mc16PrepSharp(out, ref, refX, refY, w, h, kx, ky, tx, ty, subX, subY, sh, scratch)
+}
+
+// mc16PrepSharp is mc16PrepFast for blocks with an eight-tap (sharp) axis,
+// over the slice source window of mc16Source; kept out of mc16PrepFast so the
+// six-tap path carries no sharp state.
+func mc16PrepSharp(out []uint16, ref *frame.Plane, refX, refY, w, h, kx, ky, tx, ty, subX, subY, sh int, scratch *CompoundConvolveScratch) bool {
 	src, stride, ok := mc16Source(ref, refX, refY, w, h, tx, ty, &scratch.edge16)
 	if !ok {
 		return false
 	}
-	// Halved taps: the round0 shift drops by one.
-	sh := compoundRound0(uint8(bitDepth)) - 1
 	o := out[: w*h : w*h]
 	switch {
 	case tx != 0 && ty != 0:

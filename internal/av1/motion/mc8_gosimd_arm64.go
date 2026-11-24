@@ -59,6 +59,7 @@ type mc8Phase struct {
 	h [6][8]int16 // halved taps
 	v [6][4]int32 // put 2D vertical: 32 * tap
 	p [6][4]int32 // prep 2D vertical: 512 * tap
+	w [6][4]int32 // 16bpc one-axis passes: halved taps on int32 lanes
 }
 
 var mc8Phases [mc8KindCount][16]mc8Phase
@@ -96,6 +97,7 @@ func init() {
 				for l := range 4 {
 					ph.v[i][l] = int32(c) * 32
 					ph.p[i][l] = int32(c) * 512
+					ph.w[i][l] = int32(c / 2)
 				}
 			}
 		}
