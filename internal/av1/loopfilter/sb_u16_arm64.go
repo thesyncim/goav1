@@ -39,10 +39,6 @@ func lpf16Store(p unsafe.Pointer, off int, v archsimd.Uint16x8) {
 	v.StoreArray((*[8]uint16)(unsafe.Add(p, off)))
 }
 
-func lpf16AbsDiff(a, b archsimd.Uint16x8) archsimd.Uint16x8 {
-	return a.SubSaturated(b).Or(b.SubSaturated(a))
-}
-
 func lpf16Any(m archsimd.Mask16x8) bool {
 	b := m.ToInt16x8().ToBits().ReshapeToUint64s()
 	return b.GetElem(0)|b.GetElem(1) != 0
@@ -50,45 +46,46 @@ func lpf16Any(m archsimd.Mask16x8) bool {
 
 // lpf8U16 is the high-bit-depth counterpart of lpf16U8 on eight uint16 lanes
 // (two 4-sample units): dav1d's loop_filter() with E/I/H and the flatness
-// threshold scaled by bd8 = bitDepth-8, filter4 in signed 16-bit lanes with
-// the iclip_diff/iclip_pixel bounds, and the flat filters' sums held exactly
-// in uint16 lanes (at most 16*4095+8). Taps are rows around q0 at p, stride
-// in bytes.
-func lpf8U16(p unsafe.Pointer, stride int, wd int, bd8 uint, eV, iV, hV archsimd.Uint16x8, m4, mGt4, m16 archsimd.Mask16x8) {
+// threshold scaled by bitdepth_min_8 (the bitdepth's lpf16Tab row k),
+// filter4 in signed 16-bit lanes with the iclip_diff/iclip_pixel bounds, and
+// the flat filters' sums held exactly in uint16 lanes (at most 16*4095+8).
+// Taps are rows around q0 at p, stride in bytes. Vertical edges run
+// lpfCols16.
+func lpf8U16(p unsafe.Pointer, stride int, wd int, k *lpf16Consts, eV, iV, hV archsimd.Uint16x8, m4, mGt4, m16 archsimd.Mask16x8) {
 	p1 := lpf16Load(p, -2*stride)
 	p0 := lpf16Load(p, -stride)
 	q0 := lpf16Load(p, 0)
 	q1 := lpf16Load(p, stride)
-	d10 := lpf16AbsDiff(p1, p0)
-	dq := lpf16AbsDiff(q1, q0)
+	d10 := lpf16Abd(p1, p0)
+	dq := lpf16Abd(q1, q0)
 	maxd := d10.Max(dq)
 	t := maxd
 	var p2, q2, p3, q3 archsimd.Uint16x8
 	if wd >= 6 {
 		p2 = lpf16Load(p, -3*stride)
 		q2 = lpf16Load(p, 2*stride)
-		tt := lpf16AbsDiff(p2, p1).Max(lpf16AbsDiff(q2, q1))
+		tt := lpf16Abd(p2, p1).Max(lpf16Abd(q2, q1))
 		if wd >= 8 {
 			p3 = lpf16Load(p, -4*stride)
 			q3 = lpf16Load(p, 3*stride)
-			tt = tt.Max(lpf16AbsDiff(p3, p2).Max(lpf16AbsDiff(q3, q2)))
+			tt = tt.Max(lpf16Abd(p3, p2).Max(lpf16Abd(q3, q2)))
 		}
 		t = t.Max(tt.Masked(mGt4))
 	}
-	d00 := lpf16AbsDiff(p0, q0)
-	sum := d00.Add(d00).Add(lpf16AbsDiff(p1, q1).ShiftAllRight(1))
+	d00 := lpf16Abd(p0, q0)
+	sum := d00.Add(d00).Add(lpf16Abd(p1, q1).Shift(archsimd.LoadInt16x8Array(&k.shr1)))
 	fm := iV.GreaterEqual(t).And(eV.GreaterEqual(sum)).And(m4)
 	if !lpf16Any(fm) {
 		return
 	}
-	fV := archsimd.BroadcastUint16x8(uint16(1) << bd8)
+	fV := archsimd.LoadUint16x8Array(&k.flat)
 	mF4 := fm
 	var mFlat, mFlat16 archsimd.Mask16x8
 	var p6, p5, p4, q4, q5, q6 archsimd.Uint16x8
 	if wd >= 6 {
-		fl := lpf16AbsDiff(p2, p0).Max(maxd).Max(lpf16AbsDiff(q2, q0))
+		fl := lpf16Abd(p2, p0).Max(maxd).Max(lpf16Abd(q2, q0))
 		if wd >= 8 {
-			fl = fl.Max(lpf16AbsDiff(p3, p0)).Max(lpf16AbsDiff(q3, q0))
+			fl = fl.Max(lpf16Abd(p3, p0)).Max(lpf16Abd(q3, q0))
 		}
 		mFlat = fV.GreaterEqual(fl).And(mGt4).And(fm)
 		mF4 = fm.And(mFlat.Not())
@@ -99,8 +96,8 @@ func lpf8U16(p unsafe.Pointer, stride int, wd int, bd8 uint, eV, iV, hV archsimd
 			q4 = lpf16Load(p, 4*stride)
 			q5 = lpf16Load(p, 5*stride)
 			q6 = lpf16Load(p, 6*stride)
-			fo := lpf16AbsDiff(p6, p0).Max(lpf16AbsDiff(p5, p0)).Max(lpf16AbsDiff(p4, p0)).
-				Max(lpf16AbsDiff(q4, q0)).Max(lpf16AbsDiff(q5, q0)).Max(lpf16AbsDiff(q6, q0))
+			fo := lpf16Abd(p6, p0).Max(lpf16Abd(p5, p0)).Max(lpf16Abd(p4, p0)).
+				Max(lpf16Abd(q4, q0)).Max(lpf16Abd(q5, q0)).Max(lpf16Abd(q6, q0))
 			mFlat16 = fV.GreaterEqual(fo).And(m16).And(mFlat)
 			mFlat = mFlat.And(mFlat16.Not())
 		}
@@ -109,18 +106,18 @@ func lpf8U16(p unsafe.Pointer, stride int, wd int, bd8 uint, eV, iV, hV archsimd
 	o1, o0, n0, n1 := p1, p0, q0, q1
 	if lpf16Any(mF4) {
 		hev := maxd.Greater(hV)
-		dmin := archsimd.BroadcastInt16x8(int16(-128 << bd8))
-		dmax := archsimd.BroadcastInt16x8(int16(128<<bd8 - 1))
+		dmin := archsimd.LoadInt16x8Array(&k.dmin)
+		dmax := archsimd.LoadInt16x8Array(&k.dmax)
 		zero := archsimd.Int16x8{}
-		maxPix := archsimd.BroadcastInt16x8(int16(256<<bd8 - 1))
+		maxPix := archsimd.LoadInt16x8Array(&k.maxPix)
 		p1s, p0s, q0s, q1s := p1.BitsToInt16(), p0.BitsToInt16(), q0.BitsToInt16(), q1.BitsToInt16()
 		f := p1s.Sub(q1s).Max(dmin).Min(dmax).Masked(hev)
-		f = q0s.Sub(p0s).Mul(archsimd.BroadcastInt16x8(3)).Add(f).Max(dmin).Min(dmax)
-		f1 := f.Add(archsimd.BroadcastInt16x8(4)).Min(dmax).ShiftAllRight(3)
-		f2 := f.Add(archsimd.BroadcastInt16x8(3)).Min(dmax).ShiftAllRight(3)
+		f = q0s.Sub(p0s).Mul(archsimd.LoadInt16x8Array(&k.three)).Add(f).Max(dmin).Min(dmax)
+		f1 := f.Add(archsimd.LoadInt16x8Array(&k.four)).Min(dmax).Shift(archsimd.LoadInt16x8Array(&k.shr3))
+		f2 := f.Add(archsimd.LoadInt16x8Array(&k.three)).Min(dmax).Shift(archsimd.LoadInt16x8Array(&k.shr3))
 		o0 = p0s.Add(f2).Max(zero).Min(maxPix).ToBits().IfElse(mF4, p0)
 		n0 = q0s.Sub(f1).Max(zero).Min(maxPix).ToBits().IfElse(mF4, q0)
-		f3 := f1.Add(archsimd.BroadcastInt16x8(1)).ShiftAllRight(1)
+		f3 := f1.Add(archsimd.LoadInt16x8Array(&k.one)).Shift(archsimd.LoadInt16x8Array(&k.shr1))
 		mOuter := mF4.And(hev.Not())
 		o1 = p1s.Add(f3).Max(zero).Min(maxPix).ToBits().IfElse(mOuter, p1)
 		n1 = q1s.Sub(f3).Max(zero).Min(maxPix).ToBits().IfElse(mOuter, q1)
@@ -128,14 +125,14 @@ func lpf8U16(p unsafe.Pointer, stride int, wd int, bd8 uint, eV, iV, hV archsimd
 
 	if wd == 6 {
 		if lpf16Any(mFlat) {
-			s := p2.Add(p2).Add(p2).Add(p1.Add(p0).Add(p1.Add(p0))).Add(q0).Add(archsimd.BroadcastUint16x8(4))
-			o1 = s.ShiftAllRight(3).IfElse(mFlat, o1)
+			s := p2.Add(p2).Add(p2).Add(p1.Add(p0).Add(p1.Add(p0))).Add(q0).Add(archsimd.LoadUint16x8Array(&k.rnd4))
+			o1 = s.Shift(archsimd.LoadInt16x8Array(&k.shr3)).IfElse(mFlat, o1)
 			s = s.Add(q0.Add(q1)).Sub(p2.Add(p2))
-			o0 = s.ShiftAllRight(3).IfElse(mFlat, o0)
+			o0 = s.Shift(archsimd.LoadInt16x8Array(&k.shr3)).IfElse(mFlat, o0)
 			s = s.Add(q1.Add(q2)).Sub(p2.Add(p1))
-			n0 = s.ShiftAllRight(3).IfElse(mFlat, n0)
+			n0 = s.Shift(archsimd.LoadInt16x8Array(&k.shr3)).IfElse(mFlat, n0)
 			s = s.Add(q2.Add(q2)).Sub(p1.Add(p0))
-			n1 = s.ShiftAllRight(3).IfElse(mFlat, n1)
+			n1 = s.Shift(archsimd.LoadInt16x8Array(&k.shr3)).IfElse(mFlat, n1)
 		}
 		lpf16Store(p, -2*stride, o1)
 		lpf16Store(p, -stride, o0)
@@ -146,48 +143,48 @@ func lpf8U16(p unsafe.Pointer, stride int, wd int, bd8 uint, eV, iV, hV archsimd
 
 	o2, n2 := p2, q2
 	if wd >= 8 && lpf16Any(mFlat) {
-		s := p3.Add(p3).Add(p3).Add(p2.Add(p2)).Add(p1.Add(p0)).Add(q0.Add(archsimd.BroadcastUint16x8(4)))
-		o2 = s.ShiftAllRight(3).IfElse(mFlat, o2)
+		s := p3.Add(p3).Add(p3).Add(p2.Add(p2)).Add(p1.Add(p0)).Add(q0.Add(archsimd.LoadUint16x8Array(&k.rnd4)))
+		o2 = s.Shift(archsimd.LoadInt16x8Array(&k.shr3)).IfElse(mFlat, o2)
 		s = s.Add(p1.Add(q1)).Sub(p3.Add(p2))
-		o1 = s.ShiftAllRight(3).IfElse(mFlat, o1)
+		o1 = s.Shift(archsimd.LoadInt16x8Array(&k.shr3)).IfElse(mFlat, o1)
 		s = s.Add(p0.Add(q2)).Sub(p3.Add(p1))
-		o0 = s.ShiftAllRight(3).IfElse(mFlat, o0)
+		o0 = s.Shift(archsimd.LoadInt16x8Array(&k.shr3)).IfElse(mFlat, o0)
 		s = s.Add(q0.Add(q3)).Sub(p3.Add(p0))
-		n0 = s.ShiftAllRight(3).IfElse(mFlat, n0)
+		n0 = s.Shift(archsimd.LoadInt16x8Array(&k.shr3)).IfElse(mFlat, n0)
 		s = s.Add(q1.Add(q3)).Sub(p2.Add(q0))
-		n1 = s.ShiftAllRight(3).IfElse(mFlat, n1)
+		n1 = s.Shift(archsimd.LoadInt16x8Array(&k.shr3)).IfElse(mFlat, n1)
 		s = s.Add(q2.Add(q3)).Sub(p1.Add(q1))
-		n2 = s.ShiftAllRight(3).IfElse(mFlat, n2)
+		n2 = s.Shift(archsimd.LoadInt16x8Array(&k.shr3)).IfElse(mFlat, n2)
 	}
 
 	if wd == 16 && lpf16Any(mFlat16) {
 		m := mFlat16
 		p6x2 := p6.Add(p6)
 		s := p6.Add(p6x2).Add(p6x2.Add(p6x2))
-		s = s.Add(p5.Add(p5)).Add(p4.Add(p4)).Add(p3.Add(p2)).Add(p1.Add(p0)).Add(q0).Add(archsimd.BroadcastUint16x8(8))
-		lpf16Store(p, -6*stride, s.ShiftAllRight(4).IfElse(m, p5))
+		s = s.Add(p5.Add(p5)).Add(p4.Add(p4)).Add(p3.Add(p2)).Add(p1.Add(p0)).Add(q0).Add(archsimd.LoadUint16x8Array(&k.rnd8))
+		lpf16Store(p, -6*stride, s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, p5))
 		s = s.Add(p3.Add(q1)).Sub(p6x2)
-		lpf16Store(p, -5*stride, s.ShiftAllRight(4).IfElse(m, p4))
+		lpf16Store(p, -5*stride, s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, p4))
 		s = s.Add(p2.Add(q2)).Sub(p6.Add(p5))
-		lpf16Store(p, -4*stride, s.ShiftAllRight(4).IfElse(m, p3))
+		lpf16Store(p, -4*stride, s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, p3))
 		s = s.Add(p1.Add(q3)).Sub(p6.Add(p4))
-		o2 = s.ShiftAllRight(4).IfElse(m, o2)
+		o2 = s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, o2)
 		s = s.Add(p0.Add(q4)).Sub(p6.Add(p3))
-		o1 = s.ShiftAllRight(4).IfElse(m, o1)
+		o1 = s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, o1)
 		s = s.Add(q0.Add(q5)).Sub(p6.Add(p2))
-		o0 = s.ShiftAllRight(4).IfElse(m, o0)
+		o0 = s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, o0)
 		s = s.Add(q1.Add(q6)).Sub(p6.Add(p1))
-		n0 = s.ShiftAllRight(4).IfElse(m, n0)
+		n0 = s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, n0)
 		s = s.Add(q2.Add(q6)).Sub(p5.Add(p0))
-		n1 = s.ShiftAllRight(4).IfElse(m, n1)
+		n1 = s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, n1)
 		s = s.Add(q3.Add(q6)).Sub(p4.Add(q0))
-		n2 = s.ShiftAllRight(4).IfElse(m, n2)
+		n2 = s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, n2)
 		s = s.Add(q4.Add(q6)).Sub(p3.Add(q1))
-		lpf16Store(p, 3*stride, s.ShiftAllRight(4).IfElse(m, q3))
+		lpf16Store(p, 3*stride, s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, q3))
 		s = s.Add(q5.Add(q6)).Sub(p2.Add(q2))
-		lpf16Store(p, 4*stride, s.ShiftAllRight(4).IfElse(m, q4))
+		lpf16Store(p, 4*stride, s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, q4))
 		s = s.Add(q6.Add(q6)).Sub(p1.Add(q3))
-		lpf16Store(p, 5*stride, s.ShiftAllRight(4).IfElse(m, q5))
+		lpf16Store(p, 5*stride, s.Shift(archsimd.LoadInt16x8Array(&k.shr4)).IfElse(m, q5))
 	}
 	if wd >= 8 {
 		lpf16Store(p, -3*stride, o2)
@@ -197,86 +194,6 @@ func lpf8U16(p unsafe.Pointer, stride int, wd int, bd8 uint, eV, iV, hV archsimd
 	lpf16Store(p, -stride, o0)
 	lpf16Store(p, 0, n0)
 	lpf16Store(p, stride, n1)
-}
-
-// lpf8U16Regs is lpf8U16 for widths up to 8 on taps held in registers: p3..q3
-// in, the filtered p2..q2 out (p3/q3 never change at these widths); ok is
-// false when no lane passed the filter mask and nothing changed.
-func lpf8U16Regs(wd int, bd8 uint, p3, p2, p1, p0, q0, q1, q2, q3, eV, iV, hV archsimd.Uint16x8, m4, mGt4 archsimd.Mask16x8) (o2, o1, o0, n0, n1, n2 archsimd.Uint16x8, ok bool) {
-	o2, o1, o0, n0, n1, n2 = p2, p1, p0, q0, q1, q2
-	d10 := lpf16AbsDiff(p1, p0)
-	dq := lpf16AbsDiff(q1, q0)
-	maxd := d10.Max(dq)
-	t := maxd
-	if wd >= 6 {
-		tt := lpf16AbsDiff(p2, p1).Max(lpf16AbsDiff(q2, q1))
-		if wd >= 8 {
-			tt = tt.Max(lpf16AbsDiff(p3, p2).Max(lpf16AbsDiff(q3, q2)))
-		}
-		t = t.Max(tt.Masked(mGt4))
-	}
-	d00 := lpf16AbsDiff(p0, q0)
-	sum := d00.Add(d00).Add(lpf16AbsDiff(p1, q1).ShiftAllRight(1))
-	fm := iV.GreaterEqual(t).And(eV.GreaterEqual(sum)).And(m4)
-	if !lpf16Any(fm) {
-		return
-	}
-	ok = true
-	mF4 := fm
-	var mFlat archsimd.Mask16x8
-	if wd >= 6 {
-		fl := lpf16AbsDiff(p2, p0).Max(maxd).Max(lpf16AbsDiff(q2, q0))
-		if wd >= 8 {
-			fl = fl.Max(lpf16AbsDiff(p3, p0)).Max(lpf16AbsDiff(q3, q0))
-		}
-		mFlat = archsimd.BroadcastUint16x8(uint16(1) << bd8).GreaterEqual(fl).And(mGt4).And(fm)
-		mF4 = fm.And(mFlat.Not())
-	}
-	if lpf16Any(mF4) {
-		hev := maxd.Greater(hV)
-		dmin := archsimd.BroadcastInt16x8(int16(-128 << bd8))
-		dmax := archsimd.BroadcastInt16x8(int16(128<<bd8 - 1))
-		zero := archsimd.Int16x8{}
-		maxPix := archsimd.BroadcastInt16x8(int16(256<<bd8 - 1))
-		p1s, p0s, q0s, q1s := p1.BitsToInt16(), p0.BitsToInt16(), q0.BitsToInt16(), q1.BitsToInt16()
-		f := p1s.Sub(q1s).Max(dmin).Min(dmax).Masked(hev)
-		f = q0s.Sub(p0s).Mul(archsimd.BroadcastInt16x8(3)).Add(f).Max(dmin).Min(dmax)
-		f1 := f.Add(archsimd.BroadcastInt16x8(4)).Min(dmax).ShiftAllRight(3)
-		f2 := f.Add(archsimd.BroadcastInt16x8(3)).Min(dmax).ShiftAllRight(3)
-		o0 = p0s.Add(f2).Max(zero).Min(maxPix).ToBits().IfElse(mF4, p0)
-		n0 = q0s.Sub(f1).Max(zero).Min(maxPix).ToBits().IfElse(mF4, q0)
-		f3 := f1.Add(archsimd.BroadcastInt16x8(1)).ShiftAllRight(1)
-		mOuter := mF4.And(hev.Not())
-		o1 = p1s.Add(f3).Max(zero).Min(maxPix).ToBits().IfElse(mOuter, p1)
-		n1 = q1s.Sub(f3).Max(zero).Min(maxPix).ToBits().IfElse(mOuter, q1)
-	}
-	if !lpf16Any(mFlat) {
-		return
-	}
-	if wd == 6 {
-		s := p2.Add(p2).Add(p2).Add(p1.Add(p0).Add(p1.Add(p0))).Add(q0).Add(archsimd.BroadcastUint16x8(4))
-		o1 = s.ShiftAllRight(3).IfElse(mFlat, o1)
-		s = s.Add(q0.Add(q1)).Sub(p2.Add(p2))
-		o0 = s.ShiftAllRight(3).IfElse(mFlat, o0)
-		s = s.Add(q1.Add(q2)).Sub(p2.Add(p1))
-		n0 = s.ShiftAllRight(3).IfElse(mFlat, n0)
-		s = s.Add(q2.Add(q2)).Sub(p1.Add(p0))
-		n1 = s.ShiftAllRight(3).IfElse(mFlat, n1)
-		return
-	}
-	s := p3.Add(p3).Add(p3).Add(p2.Add(p2)).Add(p1.Add(p0)).Add(q0.Add(archsimd.BroadcastUint16x8(4)))
-	o2 = s.ShiftAllRight(3).IfElse(mFlat, o2)
-	s = s.Add(p1.Add(q1)).Sub(p3.Add(p2))
-	o1 = s.ShiftAllRight(3).IfElse(mFlat, o1)
-	s = s.Add(p0.Add(q2)).Sub(p3.Add(p1))
-	o0 = s.ShiftAllRight(3).IfElse(mFlat, o0)
-	s = s.Add(q0.Add(q3)).Sub(p3.Add(p0))
-	n0 = s.ShiftAllRight(3).IfElse(mFlat, n0)
-	s = s.Add(q1.Add(q3)).Sub(p2.Add(q0))
-	n1 = s.ShiftAllRight(3).IfElse(mFlat, n1)
-	s = s.Add(q2.Add(q3)).Sub(p1.Add(q1))
-	n2 = s.ShiftAllRight(3).IfElse(mFlat, n2)
-	return
 }
 
 // lpfTranspose8x8U16Regs transposes an 8x8 matrix of uint16 rows.
@@ -298,55 +215,6 @@ func lpfTranspose8x8U16Regs(a, b, c, d, e, f, g, h archsimd.Uint16x8) (o0, o1, o
 	o6 = ac2.ReshapeToUint64s().InterleaveHi(eg2.ReshapeToUint64s()).ReshapeToUint16s()
 	o7 = ac3.ReshapeToUint64s().InterleaveHi(eg3.ReshapeToUint64s()).ReshapeToUint16s()
 	return
-}
-
-// lpfTransposeRows8U16 loads eight rows of eight uint16 samples from src
-// (byte stride), transposes them and stores eight rows at dst.
-func lpfTransposeRows8U16(src unsafe.Pointer, srcStride int, dst unsafe.Pointer, dstStride int) {
-	o0, o1, o2, o3, o4, o5, o6, o7 := lpfTranspose8x8U16Regs(
-		lpf16Load(src, 0), lpf16Load(src, srcStride), lpf16Load(src, 2*srcStride), lpf16Load(src, 3*srcStride),
-		lpf16Load(src, 4*srcStride), lpf16Load(src, 5*srcStride), lpf16Load(src, 6*srcStride), lpf16Load(src, 7*srcStride))
-	lpf16Store(dst, 0, o0)
-	lpf16Store(dst, dstStride, o1)
-	lpf16Store(dst, 2*dstStride, o2)
-	lpf16Store(dst, 3*dstStride, o3)
-	lpf16Store(dst, 4*dstStride, o4)
-	lpf16Store(dst, 5*dstStride, o5)
-	lpf16Store(dst, 6*dstStride, o6)
-	lpf16Store(dst, 7*dstStride, o7)
-}
-
-// lpfVertical8x8U16 filters a vertical edge across eight rows: p points at p3
-// of the first row (eight samples p3..q3 per row). The rows are transposed,
-// filtered and transposed back in registers.
-func lpfVertical8x8U16(p unsafe.Pointer, stride int, wd int, bd8 uint, eV, iV, hV archsimd.Uint16x8, m4, mGt4 archsimd.Mask16x8) {
-	p3, p2, p1, p0, q0, q1, q2, q3 := lpfTranspose8x8U16Regs(
-		lpf16Load(p, 0), lpf16Load(p, stride), lpf16Load(p, 2*stride), lpf16Load(p, 3*stride),
-		lpf16Load(p, 4*stride), lpf16Load(p, 5*stride), lpf16Load(p, 6*stride), lpf16Load(p, 7*stride))
-	o2, o1, o0, n0, n1, n2, ok := lpf8U16Regs(wd, bd8, p3, p2, p1, p0, q0, q1, q2, q3, eV, iV, hV, m4, mGt4)
-	if !ok {
-		return
-	}
-	r0, r1, r2, r3, r4, r5, r6, r7 := lpfTranspose8x8U16Regs(p3, o2, o1, o0, n0, n1, n2, q3)
-	lpf16Store(p, 0, r0)
-	lpf16Store(p, stride, r1)
-	lpf16Store(p, 2*stride, r2)
-	lpf16Store(p, 3*stride, r3)
-	lpf16Store(p, 4*stride, r4)
-	lpf16Store(p, 5*stride, r5)
-	lpf16Store(p, 6*stride, r6)
-	lpf16Store(p, 7*stride, r7)
-}
-
-// lpfVertical8x16U16 is the wd16 form: sixteen samples p7..q7 per row, p
-// points at p7 of the first row.
-func lpfVertical8x16U16(p unsafe.Pointer, stride int, bd8 uint, eV, iV, hV archsimd.Uint16x8, m4, mGt4, m16 archsimd.Mask16x8) {
-	var buf [16][8]uint16
-	lpfTransposeRows8U16(p, stride, unsafe.Pointer(&buf[0]), 16)
-	lpfTransposeRows8U16(unsafe.Add(p, 16), stride, unsafe.Pointer(&buf[8]), 16)
-	lpf8U16(unsafe.Pointer(&buf[8]), 16, 16, bd8, eV, iV, hV, m4, mGt4, m16)
-	lpfTransposeRows8U16(unsafe.Pointer(&buf[0]), 16, p, stride)
-	lpfTransposeRows8U16(unsafe.Pointer(&buf[8]), 16, unsafe.Add(p, 16), stride)
 }
 
 // sbHalf16Limits is the per-group prologue of dav1d's 16bpc
@@ -429,6 +297,7 @@ func sbLevels16Col(lvl [][4]uint8, li, lvlStride, comp int, pair uint32) archsim
 // samples or levels reach the end of their buffers.
 func filterSBHorizontal16Edge(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	bd8 := uint(bitDepth - 8)
+	k := &lpf16Tab[bd8>>1]
 	gt4All := vm[1] | vm[2]
 	all := vm[0] | gt4All
 	base := unsafe.Pointer(unsafe.SliceData(pix))
@@ -460,16 +329,16 @@ func filterSBHorizontal16Edge(pix []byte, off, stride, rowBytes int, bitDepth ui
 		if !ok {
 			continue
 		}
-		lpf8U16(unsafe.Add(base, q0Off), stride, wd, bd8, eV, iV, hV, m4, sbPairMask16(nGt4), sbPairMask16(n16))
+		lpf8U16(unsafe.Add(base, q0Off), stride, wd, k, eV, iV, hV, m4, sbPairMask16(nGt4), sbPairMask16(n16))
 	}
 }
 
 // filterSBVertical16Edge is filterSBHorizontal16Edge for vertical edges.
 func filterSBVertical16Edge(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	bd8 := uint(bitDepth - 8)
+	k := &lpf16Tab[bd8>>1]
 	gt4All := vm[1] | vm[2]
 	all := vm[0] | gt4All
-	base := unsafe.Pointer(unsafe.SliceData(pix))
 	sharp0, sharp1 := uint64(lut.Sharp[0]), lut.Sharp[1]
 	for g := 0; g < 16 && all>>(2*uint(g)) != 0; g++ {
 		sh := 2 * uint(g)
@@ -499,11 +368,7 @@ func filterSBVertical16Edge(pix []byte, off, stride, rowBytes int, bitDepth uint
 		if !ok {
 			continue
 		}
-		if wd == 16 {
-			lpfVertical8x16U16(unsafe.Add(base, q0Off-16), stride, bd8, eV, iV, hV, m4, sbPairMask16(nGt4), sbPairMask16(n16))
-		} else {
-			lpfVertical8x8U16(unsafe.Add(base, q0Off-8), stride, wd, bd8, eV, iV, hV, m4, sbPairMask16(nGt4))
-		}
+		lpfCols16(pix, q0Off, stride, wd, k, eV, iV, hV, m4, sbPairMask16(nGt4), sbPairMask16(n16))
 	}
 }
 
@@ -570,6 +435,7 @@ func filterSBHorizontal16(pix []byte, off, stride, rowBytes int, bitDepth uint8,
 	base := unsafe.Pointer(unsafe.SliceData(pix))
 	lb := unsafe.Pointer(unsafe.SliceData(lvl))
 	bd8 := uint(bitDepth - 8)
+	k := &lpf16Tab[bd8>>1]
 	for q0 := off; vm0 != 0; vm0, vm1, vm2, q0, li = vm0>>2, vm1>>2, vm2>>2, q0+16, li+8 {
 		if vm0&3 == 0 {
 			continue
@@ -582,7 +448,7 @@ func filterSBHorizontal16(pix []byte, off, stride, rowBytes int, bitDepth uint8,
 		if !ok {
 			continue
 		}
-		lpf8U16(unsafe.Add(base, q0), stride, sbWidth16(vm1, vm2, luma), bd8, eV, iV, hV, m4, sbPairMask16(vm1), sbPairMask16(vm2))
+		lpf8U16(unsafe.Add(base, q0), stride, sbWidth16(vm1, vm2, luma), k, eV, iV, hV, m4, sbPairMask16(vm1), sbPairMask16(vm2))
 	}
 }
 
@@ -600,9 +466,9 @@ func filterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, v
 		filterSBVertical16Edge(pix, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 		return
 	}
-	base := unsafe.Pointer(unsafe.SliceData(pix))
 	lb := unsafe.Pointer(unsafe.SliceData(lvl))
 	bd8 := uint(bitDepth - 8)
+	k := &lpf16Tab[bd8>>1]
 	stride8 := 8 * stride
 	for q0 := off; vm0 != 0; vm0, vm1, vm2, q0, li = vm0>>2, vm1>>2, vm2>>2, q0+stride8, li+2*ls4 {
 		if vm0&3 == 0 {
@@ -618,10 +484,6 @@ func filterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, v
 		if !ok {
 			continue
 		}
-		if vm2&3 != 0 {
-			lpfVertical8x16U16(unsafe.Add(base, q0-16), stride, bd8, eV, iV, hV, m4, sbPairMask16(vm1), sbPairMask16(vm2))
-		} else {
-			lpfVertical8x8U16(unsafe.Add(base, q0-8), stride, sbWidth16(vm1, vm2, luma), bd8, eV, iV, hV, m4, sbPairMask16(vm1))
-		}
+		lpfCols16(pix, q0, stride, sbWidth16(vm1, vm2, luma), k, eV, iV, hV, m4, sbPairMask16(vm1), sbPairMask16(vm2))
 	}
 }
