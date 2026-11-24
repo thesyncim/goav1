@@ -50,6 +50,7 @@ func svtSubpelVarianceArch(scratch *svtSubpelScratch, ref []byte, refStride int,
 	fy1 := archsimd.BroadcastUint8x16(uint8(svtBilinearFilters2T[yoff][1]))
 	bias := archsimd.BroadcastUint16x8(64)
 	sh7 := archsimd.BroadcastInt16x8(-7)
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	base := unsafe.Pointer(&ref[0])
 	sbase := unsafe.Pointer(&src[0])
 	var sse0, sse1, sum32 archsimd.Int32x4

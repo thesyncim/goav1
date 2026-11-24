@@ -19,6 +19,7 @@ func addRawResidualToPredReconBlock(dst []byte, stride int, pred []byte, predStr
 // complete prediction-copy pass before any residual is added: a row can still
 // read prediction bytes written by an earlier row of that copy.
 func rawPredReconNeedsCopy(dst []byte, stride int, pred []byte, predStride, w, h int) bool {
+	// Address comparison only (no access): Go has no safe overlap test.
 	d := uintptr(unsafe.Pointer(unsafe.SliceData(dst)))
 	p := uintptr(unsafe.Pointer(unsafe.SliceData(pred)))
 	return (d != p || stride != predStride) &&

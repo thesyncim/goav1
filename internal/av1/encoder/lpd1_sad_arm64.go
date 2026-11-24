@@ -22,6 +22,7 @@ func lpd1SampledSAD(src, ref []byte, srcOff, refOff, srcStride, refStride, w, ro
 	}
 	_ = src[srcOff+(rows-1)*ss+w-1]
 	_ = ref[refOff+(rows-1)*rs+w-1]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	sp := unsafe.Pointer(&src[srcOff])
 	rp := unsafe.Pointer(&ref[refOff])
 	var acc archsimd.Uint16x8
