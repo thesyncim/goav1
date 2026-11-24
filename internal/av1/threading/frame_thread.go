@@ -30,9 +30,10 @@ const (
 type FrameProgress struct {
 	rows atomic.Int32
 
+	// waiters holds the parked Wait calls; a Publish wakes only the ones
+	// whose need it meets.
 	mu      sync.Mutex
-	cond    sync.Cond
-	waiters int32
+	waiters WaitList
 }
 
 // Reset marks the surface as not yet decoded: no row is available.
@@ -45,10 +46,18 @@ func (p *FrameProgress) Reset() {
 func (p *FrameProgress) Publish(rows int32) {
 	p.mu.Lock()
 	p.rows.Store(rows)
-	if p.waiters != 0 {
-		p.cond.Broadcast()
+	if rows == FrameProgressError {
+		p.waiters.WakeAll()
+	} else {
+		p.waiters.Wake(0, rows)
 	}
 	p.mu.Unlock()
+}
+
+// Ready reports, without blocking, whether Wait(need) would return at once.
+func (p *FrameProgress) Ready(need int32) bool {
+	v := p.rows.Load()
+	return v >= need || v == FrameProgressError
 }
 
 // Wait blocks until at least need rows are published. It reports false when
@@ -58,25 +67,14 @@ func (p *FrameProgress) Wait(need int32) bool {
 		return v != FrameProgressError
 	}
 	p.mu.Lock()
-	if p.cond.L == nil {
-		p.cond.L = &p.mu
-	}
-	p.waiters++
 	for {
 		v := p.rows.Load()
 		if v >= need || v == FrameProgressError {
-			p.waiters--
 			p.mu.Unlock()
 			return v != FrameProgressError
 		}
-		p.cond.Wait()
+		p.waiters.Park(&p.mu, 0, need)
 	}
-}
-
-// Init prepares the condition variable; it must run before any Publish or
-// Wait races with another goroutine.
-func (p *FrameProgress) Init() {
-	p.cond.L = &p.mu
 }
 
 // FrameThreadRecon carries one frame's reconstruction across the frame-thread

@@ -399,6 +399,9 @@ type frameWorkReconWavefrontProgress struct {
 	// waiter registers under the lock before rechecking, so with sequentially
 	// consistent atomics one of the two always sees the other.
 	waiters atomic.Int32
+	// rowWaiters holds the lanes waiting for the parse to publish their SB
+	// row (waitRows); each publish wakes only the lanes it releases.
+	rowWaiters WaitList
 }
 
 func (wf *frameWorkReconWavefront) appendRowStart(sbCount int) error {
@@ -447,6 +450,7 @@ func (wf *frameWorkReconWavefront) abortProgress() {
 	p.mu.Lock()
 	p.aborted.Store(true)
 	p.cond.Broadcast()
+	p.rowWaiters.WakeAll()
 	p.mu.Unlock()
 }
 

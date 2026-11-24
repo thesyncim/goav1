@@ -146,7 +146,6 @@ func TestFrameThreadedParseNeverReadsReferencePixels(t *testing.T) {
 	want, wantFrames := decodeFrameThreadDigest(t, clip, WithWorkers(1))
 
 	var gate internalthreading.FrameProgress
-	gate.Init()
 	var outputMu sync.Mutex
 	poisoned := 0
 	decoderFramePipelineParseHook = func(p *decoderFramePipeline, fc *decoderFrameContext, references []*Frame) func() {

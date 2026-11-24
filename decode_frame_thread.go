@@ -712,7 +712,6 @@ func newDecoderFramePipeline(d *Decoder, n int, plan decoderFrameWorkResidualStr
 	}
 	p.grainParallel.Workers = workers
 	for i := range p.progress {
-		p.progress[i].Init()
 		p.progress[i].Publish(internalthreading.FrameProgressDone)
 	}
 	p.mvProgress = make([]internalthreading.FrameProgress, internaldecoder.FrameWorkMVGrids)
@@ -720,7 +719,6 @@ func newDecoderFramePipeline(d *Decoder, n int, plan decoderFrameWorkResidualStr
 	p.segProgress = make([]internalthreading.FrameProgress, internaldecoder.FrameWorkSegMaps)
 	for _, set := range [][]internalthreading.FrameProgress{p.mvProgress, p.cdfProgress, p.segProgress} {
 		for i := range set {
-			set[i].Init()
 			set[i].Publish(internalthreading.FrameProgressDone)
 		}
 	}
@@ -760,8 +758,6 @@ func newDecoderFramePipeline(d *Decoder, n int, plan decoderFrameWorkResidualStr
 		fc.done = make(chan struct{})
 		fc.postStart = make(chan struct{})
 		fc.postDone = make(chan error)
-		fc.parsed.Init()
-		fc.reconRows.Progress.Init()
 		fc.postParallel.BindReconProgress(&fc.reconRows.Progress)
 		fc.postParallel.BindParseProgress(&fc.parsed)
 		fc.ft.StartPost = func() {
