@@ -98,7 +98,6 @@ internal/av1/transform/fdct_gosimd_arm64.go
 internal/av1/transform/fdct_gosimd_vec_amd64.go
 internal/av1/transform/fdct_gosimd_vec_arm64.go
 internal/av1/transform/fhybrid_idtx_gosimd_arm64.go
-internal/av1/transform/itx_avx2_amd64.go
 internal/av1/transform/itx_fused16_gosimd_arm64.go
 internal/av1/transform/itx_fused32_full_gosimd_arm64.go
 internal/av1/transform/itx_fused32_gosimd_arm64.go
