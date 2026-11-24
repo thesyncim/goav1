@@ -142,24 +142,17 @@ func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, fi
 	// Halved taps: the round0 shift drops by one.
 	sh := compoundRound0(uint8(bitDepth)) - 1
 	if tx != 8 && ty != 8 {
-		if !unsafeutil.GridFit(len(out), 0, w, w, h) {
-			return false
-		}
 		// The source window (mc16SourceGrid), in place when it lies inside
-		// the plane.
+		// the plane: as in Put8, that case is checked in line and runs its
+		// kernel with no call before it.
 		hx, hy := mc8Halo(subX), mc8Halo(subY)
 		x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
 		sOff, read := y0*ref.Stride+2*x0, 2*max(w+5, 13)
-		var sg unsafeutil.Grid[uint8]
-		if x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= ref.Width && y0+bh <= ref.Height && ref.Stride >= 2*ref.Width &&
-			unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, read, bh) {
-			sg = unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, read, bh)
-		} else if g, ok := mc16SourceGrid(ref, refX, refY, w, h, tx, ty, &scratch.edge16); ok {
-			sg = g
-		} else {
-			return false
+		if x0 < 0 || y0 < 0 || x0+w+hx+hx+hx>>1 > ref.Width || y0+bh > ref.Height || ref.Stride < 2*ref.Width ||
+			!unsafeutil.GridFit(len(out), 0, w, w, h) || !unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, read, bh) {
+			return mc16PrepEdge(out, ref, refX, refY, w, h, kx, ky, tx, ty, subX, subY, sh, scratch)
 		}
-		og := unsafeutil.NewGrid(out, 0, w, w, h)
+		og, sg := unsafeutil.NewGrid(out, 0, w, w, h), unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, read, bh)
 		switch {
 		case tx != 0 && ty != 0:
 			im := scratch.im[:]
@@ -187,6 +180,45 @@ func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, fi
 		return true
 	}
 	return mc16PrepSharp(out, ref, refX, refY, w, h, kx, ky, tx, ty, subX, subY, sh, scratch)
+}
+
+// mc16PrepEdge is mc16PrepFast's six-tap path for a source window that is
+// not inside the plane (or views that do not fit): the window from
+// mc16SourceGrid, which clamps it.
+func mc16PrepEdge(out []uint16, ref *frame.Plane, refX, refY, w, h, kx, ky, tx, ty, subX, subY, sh int, scratch *CompoundConvolveScratch) bool {
+	if !unsafeutil.GridFit(len(out), 0, w, w, h) {
+		return false
+	}
+	sg, ok := mc16SourceGrid(ref, refX, refY, w, h, tx, ty, &scratch.edge16)
+	if !ok {
+		return false
+	}
+	og := unsafeutil.NewGrid(out, 0, w, w, h)
+	switch {
+	case tx != 0 && ty != 0:
+		im := scratch.im[:]
+		mc16H6ToI32G(sg, w, h+5, &mc8Phases[kx][subX], sh, im)
+		if w == 4 {
+			mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], out[:4*h], mc16PrepV6Rnd)
+		} else {
+			mc8PrepV6FromI32S(im, w, h, &mc8Phases[ky][subY], og, mc16PrepV6Rnd)
+		}
+	case tx != 0:
+		mc16PrepH6G(sg, &mc8Phases[kx][subX], sh, og)
+	case ty != 0:
+		if w == 4 {
+			mc16PrepV6GW4(sg, &mc8Phases[ky][subY], sh, og)
+		} else {
+			mc16PrepV6G(sg, &mc8Phases[ky][subY], sh, og)
+		}
+	default:
+		if w == 8 {
+			mc16PrepCopyW8(sg, 6-sh, out, h)
+		} else {
+			mc16PrepCopyG(sg, 6-sh, og)
+		}
+	}
+	return true
 }
 
 // mc16PrepSharp is mc16PrepFast for blocks with an eight-tap (sharp) axis,

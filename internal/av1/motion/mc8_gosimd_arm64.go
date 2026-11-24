@@ -64,6 +64,29 @@ type mc8Phase struct {
 
 var mc8Phases [mc8KindCount][16]mc8Phase
 
+// mc8Vec holds the kernels' constant rounding and shift vectors. A kernel
+// loads them (one table address, one vector load each) rather than
+// broadcasting: a broadcast builds the value in a general register, inserts
+// it into a lane and duplicates it.
+var mc8Vec = struct {
+	rnd32, rnd34, prepRnd, rnd2, sh6, sh2 [8]int16
+	w32, wsh6, w15                        [4]int32
+	mul16                                 [16]uint8
+	off6144                               [8]uint16
+}{
+	rnd2:    [8]int16{2, 2, 2, 2, 2, 2, 2, 2},
+	w15:     [4]int32{1 << 15, 1 << 15, 1 << 15, 1 << 15},
+	mul16:   [16]uint8{16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16},
+	off6144: [8]uint16{6144, 6144, 6144, 6144, 6144, 6144, 6144, 6144},
+	rnd32:   [8]int16{32, 32, 32, 32, 32, 32, 32, 32},
+	rnd34:   [8]int16{34, 34, 34, 34, 34, 34, 34, 34},
+	prepRnd: [8]int16{2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2, 2 + 6144<<2},
+	sh6:     [8]int16{-6, -6, -6, -6, -6, -6, -6, -6},
+	sh2:     [8]int16{-2, -2, -2, -2, -2, -2, -2, -2},
+	w32:     [4]int32{32, 32, 32, 32},
+	wsh6:    [4]int32{-6, -6, -6, -6},
+}
+
 // mc8SixTap reports whether every phase of kind lies inside window taps 1..6.
 var mc8SixTap [mc8KindCount]bool
 
@@ -168,7 +191,14 @@ func mc8Source(ref *frame.Plane, refX, refY, w, h int, hx, hy bool, edge *[emuEd
 // caller then runs the general path.
 func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *ConvolveScratch) bool {
 	if subX|subY == 0 {
-		return mc8CopyFast(dst, ref, dstX, dstY, refX, refY, w, h)
+		// mc8CopyFast written out for the power-of-two widths (every AV1
+		// block width): one call, CopyRect's.
+		if w&(w-1) != 0 || w&3 != 0 || w > maxBlockSize || h <= 0 ||
+			dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < dst.Width ||
+			refX < 0 || refY < 0 || refX+w > ref.Width || refY+h > ref.Height || ref.Stride < ref.Width {
+			return mc8CopyFast(dst, ref, dstX, dstY, refX, refY, w, h)
+		}
+		return unsafeutil.CopyRect(dst.Pix, dstY*dst.Stride+dstX, dst.Stride, ref.Pix, refY*ref.Stride+refX, ref.Stride, w, h)
 	}
 	if w == 2 {
 		return mc8PutW2(dst, ref, dstX, dstY, refX, refY, h, filterW, filterH, subX, subY, filters, scratch)
@@ -181,22 +211,20 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 	if mc8NeedsEightTaps(subX, subY, kx, ky) {
 		return w&7 == 0 && mc8Put8TapChecked(dst, ref, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
-	dg, ok := mc8DstGrid(dst, dstX, dstY, w, h)
-	if !ok {
-		return false
-	}
 	// The six-tap source window (mc8Source), in place when it lies inside
 	// the plane: halo 2 before and 3 after each sample on a filtered axis.
+	// The common case, destination and source window both in their planes,
+	// is checked in line with one footprint test for the pair and runs the
+	// kernel with no call before it; everything else is mc8PutEdge.
 	hx, hy := mc8Halo(subX), mc8Halo(subY)
 	x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
-	sOff, sw := y0*ref.Stride+x0, max(w+8, 16)
-	var sg unsafeutil.Grid[uint8]
-	if x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= ref.Width && y0+bh <= ref.Height && ref.Stride >= ref.Width &&
-		unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, sw, bh) {
-		sg = unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, sw, bh)
-	} else if sg, ok = mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge); !ok {
-		return false
+	dOff, sOff, sw := dstY*dst.Stride+dstX, y0*ref.Stride+x0, max(w+8, 16)
+	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < dst.Width ||
+		x0 < 0 || y0 < 0 || x0+w+hx+hx+hx>>1 > ref.Width || y0+bh > ref.Height || ref.Stride < ref.Width ||
+		!unsafeutil.GridFit(len(dst.Pix), dOff, dst.Stride, w, h) || !unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, sw, bh) {
+		return mc8PutEdge(dst, ref, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
+	dg, sg := unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, w, h), unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, sw, bh)
 	// mc8PutGrid written out: one call level less for the common kernels.
 	phx, phy := &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15]
 	switch {
@@ -235,6 +263,22 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 	return true
 }
 
+// mc8PutEdge is Put8's six-tap path for a block whose destination or source
+// window is not inside its plane (or whose views do not fit): the checked
+// destination view and the source window from mc8Source, which clamps it.
+func mc8PutEdge(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky int, scratch *ConvolveScratch) bool {
+	dg, ok := mc8DstGrid(dst, dstX, dstY, w, h)
+	if !ok {
+		return false
+	}
+	sg, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge)
+	if !ok {
+		return false
+	}
+	mc8PutGrid(dg, sg, w, h, subX, subY, &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15], scratch)
+	return true
+}
+
 // mc8SameGeometry reports whether two planes have the same dimensions,
 // stride and buffer length, so one footprint check covers both.
 func mc8SameGeometry(a, b *frame.Plane) bool {
@@ -265,14 +309,15 @@ func Put8UV(dstU, dstV, refU, refV *frame.Plane, dstX, dstY, refX, refY, w, h, f
 		// The planes of each pair share their geometry, so the V views fit
 		// exactly when the U views do.
 		dOff, sOff := dstY*dstU.Stride+dstX, refY*refU.Stride+refX
+		if w&(w-1) == 0 { // every AV1 block width
+			return unsafeutil.CopyRect(dstU.Pix, dOff, dstU.Stride, refU.Pix, sOff, refU.Stride, w, h) &&
+				unsafeutil.CopyRect(dstV.Pix, dOff, dstV.Stride, refV.Pix, sOff, refV.Stride, w, h)
+		}
 		if !unsafeutil.GridFit(len(dstU.Pix), dOff, dstU.Stride, w, h) || !unsafeutil.GridFit(len(refU.Pix), sOff, refU.Stride, w, h) {
 			return false
 		}
 		du, su := unsafeutil.NewGrid(dstU.Pix, dOff, dstU.Stride, w, h), unsafeutil.NewGrid(refU.Pix, sOff, refU.Stride, w, h)
 		dv, sv := unsafeutil.NewGrid(dstV.Pix, dOff, dstV.Stride, w, h), unsafeutil.NewGrid(refV.Pix, sOff, refV.Stride, w, h)
-		if w&(w-1) == 0 {
-			return unsafeutil.CopyBlock(du, su) && unsafeutil.CopyBlock(dv, sv)
-		}
 		return mc8CopyStrips(du, su) && mc8CopyStrips(dv, sv)
 	}
 	if (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil {
@@ -284,29 +329,87 @@ func Put8UV(dstU, dstV, refU, refV *frame.Plane, dstX, dstY, refX, refY, w, h, f
 		return w&7 == 0 && mc8Put8TapChecked(dstU, refU, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch) &&
 			mc8Put8TapChecked(dstV, refV, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
+	// The source window, in-plane for both planes at once: that case checks
+	// the U views in line (the V planes share their geometry, so the V views
+	// fit exactly when they do) and runs the two planes' kernels back to back
+	// with no call before them; mc8PutUVEdge takes the rest.
+	hx, hy := mc8Halo(subX), mc8Halo(subY)
+	x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
+	dOff, sOff, sw := dstY*dstU.Stride+dstX, y0*refU.Stride+x0, max(w+8, 16)
+	if dstX < 0 || dstY < 0 || dstX+w > dstU.Width || dstY+h > dstU.Height || dstU.Stride < dstU.Width ||
+		x0 < 0 || y0 < 0 || x0+w+hx+hx+hx>>1 > refU.Width || y0+bh > refU.Height || refU.Stride < refU.Width ||
+		!unsafeutil.GridFit(len(dstU.Pix), dOff, dstU.Stride, w, h) || !unsafeutil.GridFit(len(refU.Pix), sOff, refU.Stride, sw, bh) {
+		return mc8PutUVEdge(dstU, dstV, refU, refV, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch)
+	}
+	du, su := unsafeutil.NewGrid(dstU.Pix, dOff, dstU.Stride, w, h), unsafeutil.NewGrid(refU.Pix, sOff, refU.Stride, sw, bh)
+	dv, sv := unsafeutil.NewGrid(dstV.Pix, dOff, dstV.Stride, w, h), unsafeutil.NewGrid(refV.Pix, sOff, refV.Stride, sw, bh)
+	phx, phy := &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15]
+	switch {
+	case subX != 0 && subY != 0:
+		im := scratch.imHBD[:]
+		if w == 4 {
+			mc8H6ToI32W4(su, h+5, phx, im)
+			mc8PutV6FromI32W4(im, h, phy, du)
+			mc8H6ToI32W4(sv, h+5, phx, im)
+			mc8PutV6FromI32W4(im, h, phy, dv)
+		} else {
+			mc8H6ToI32(su, w, h+5, phx, im, mc8PutH6ToI32Rnd)
+			mc8PutV6FromI32(im, w, h, phy, du)
+			mc8H6ToI32(sv, w, h+5, phx, im, mc8PutH6ToI32Rnd)
+			mc8PutV6FromI32(im, w, h, phy, dv)
+		}
+	case subX != 0:
+		switch {
+		case w == 4:
+			mc8PutH6S4(su, phx, du)
+			mc8PutH6S4(sv, phx, dv)
+		case w == 8:
+			mc8PutH6S8(su, phx, du)
+			mc8PutH6S8(sv, phx, dv)
+		case w&15 == 0:
+			mc8PutH6W16(su, phx, du)
+			mc8PutH6W16(sv, phx, dv)
+		default:
+			mc8PutH6Split(su, phx, du)
+			mc8PutH6Split(sv, phx, dv)
+		}
+	default:
+		switch {
+		case w == 4:
+			mc8PutV6S4(su, phy, du)
+			mc8PutV6S4(sv, phy, dv)
+		case w == 8:
+			mc8PutV6S8(su, phy, du)
+			mc8PutV6S8(sv, phy, dv)
+		case w&15 == 0:
+			mc8PutV6W16(su, phy, du)
+			mc8PutV6W16(sv, phy, dv)
+		default:
+			mc8PutV6Split(su, phy, du)
+			mc8PutV6Split(sv, phy, dv)
+		}
+	}
+	return true
+}
+
+// mc8PutUVEdge is Put8UV's six-tap path when the destination or the shared
+// source window is not inside its planes (or the views do not fit): the
+// checked destination views, and each plane's clamped window materialized in
+// turn in the shared edge buffer.
+func mc8PutUVEdge(dstU, dstV, refU, refV *frame.Plane, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky int, scratch *ConvolveScratch) bool {
 	dOff := dstY*dstU.Stride + dstX
 	if dstX < 0 || dstY < 0 || dstX+w > dstU.Width || dstY+h > dstU.Height || dstU.Stride < dstU.Width ||
 		!unsafeutil.GridFit(len(dstU.Pix), dOff, dstU.Stride, w, h) {
 		return false
 	}
 	phx, phy := &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15]
-	// The source window: in-plane for both planes at once, or each plane's
-	// clamped window materialized in turn in the shared edge buffer.
-	hx, hy := mc8Halo(subX), mc8Halo(subY)
-	x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
-	sOff, sw := y0*refU.Stride+x0, max(w+8, 16)
-	inPlane := x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= refU.Width && y0+bh <= refU.Height && refU.Stride >= refU.Width &&
-		unsafeutil.GridFit(len(refU.Pix), sOff, refU.Stride, sw, bh)
 	for p := 0; p < 2; p++ {
 		dst, ref := dstU, refU
 		if p == 1 {
 			dst, ref = dstV, refV
 		}
-		var sg unsafeutil.Grid[uint8]
-		ok := true
-		if inPlane {
-			sg = unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, sw, bh)
-		} else if sg, ok = mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge); !ok {
+		sg, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge)
+		if !ok {
 			return false
 		}
 		mc8PutGrid(unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, w, h), sg, w, h, subX, subY, phx, phy, scratch)
@@ -470,14 +573,13 @@ func mc8CopyFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, 
 		return false
 	}
 	dOff, sOff := dstY*dst.Stride+dstX, refY*ref.Stride+refX
+	if w&(w-1) == 0 { // every AV1 block width
+		return unsafeutil.CopyRect(dst.Pix, dOff, dst.Stride, ref.Pix, sOff, ref.Stride, w, h)
+	}
 	if !unsafeutil.GridFit(len(dst.Pix), dOff, dst.Stride, w, h) || !unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, w, h) {
 		return false
 	}
-	dg, sg := unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, w, h), unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, w, h)
-	if w&(w-1) == 0 {
-		return unsafeutil.CopyBlock(dg, sg) // every AV1 block width
-	}
-	return mc8CopyStrips(dg, sg)
+	return mc8CopyStrips(unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, w, h), unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, w, h))
 }
 
 // Window helpers. Offsets are uint32 so o+N cannot overflow and each window
@@ -525,32 +627,26 @@ var errMC8Window = errors.New("motion: kernel window out of range")
 // mc8PrepFast fills a w x h CONV_BUF (row stride w) with the dav1d-style prep
 // kernels. It returns false for shapes it does not cover.
 func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) bool {
-	if (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil || len(out) < w*h {
+	if (w&7 != 0 && w != 4) || w > maxBlockSize || h <= 0 || h > maxBlockSize || scratch == nil {
 		return false
 	}
 	kx := mc8Kind(filters.X, filterW)
 	ky := mc8Kind(filters.Y, filterH)
 	if mc8NeedsEightTaps(subX, subY, kx, ky) {
-		return w&7 == 0 && mc8Prep8Tap(out[:w*h], ref, refX, refY, w, h, subX, subY, kx, ky, scratch)
-	}
-	if !unsafeutil.GridFit(len(out), 0, w, w, h) {
-		return false
+		return w&7 == 0 && len(out) >= w*h && mc8Prep8Tap(out[:w*h], ref, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
 	// The six-tap source window (mc8Source), in place when it lies inside
-	// the plane, as in Put8.
+	// the plane, as in Put8: that case is checked in line and runs its
+	// kernel with no call before it; mc8PrepEdge takes the rest.
 	hx, hy := mc8Halo(subX), mc8Halo(subY)
 	x0, y0, bh := refX-hx, refY-hy, h+hy+hy+hy>>1
 	sOff, sw := y0*ref.Stride+x0, max(w+8, 16)
-	var sg unsafeutil.Grid[uint8]
-	if x0 >= 0 && y0 >= 0 && x0+w+hx+hx+hx>>1 <= ref.Width && y0+bh <= ref.Height && ref.Stride >= ref.Width &&
-		unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, sw, bh) {
-		sg = unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, sw, bh)
-	} else if g, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge); ok {
-		sg = g
-	} else {
-		return false
+	if x0 < 0 || y0 < 0 || x0+w+hx+hx+hx>>1 > ref.Width || y0+bh > ref.Height || ref.Stride < ref.Width ||
+		!unsafeutil.GridFit(len(out), 0, w, w, h) || !unsafeutil.GridFit(len(ref.Pix), sOff, ref.Stride, sw, bh) {
+		return mc8PrepEdge(out, ref, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
-	og := unsafeutil.NewGrid(out, 0, w, w, h)
+	og, sg := unsafeutil.NewGrid(out, 0, w, w, h), unsafeutil.NewGrid(ref.Pix, sOff, ref.Stride, sw, bh)
+	// mc8PrepGrid written out, as in Put8.
 	switch {
 	case subX != 0 && subY != 0:
 		im := scratch.im[:]
@@ -593,6 +689,66 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 		}
 	}
 	return true
+}
+
+// mc8PrepEdge is mc8PrepFast's six-tap path for a source window that is not
+// inside the plane (or views that do not fit): the window from mc8Source,
+// which clamps it.
+func mc8PrepEdge(out []uint16, ref *frame.Plane, refX, refY, w, h, subX, subY, kx, ky int, scratch *CompoundConvolveScratch) bool {
+	if !unsafeutil.GridFit(len(out), 0, w, w, h) {
+		return false
+	}
+	sg, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge)
+	if !ok {
+		return false
+	}
+	mc8PrepGrid(out, unsafeutil.NewGrid(out, 0, w, w, h), sg, w, h, subX, subY, &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15], scratch)
+	return true
+}
+
+// mc8PrepGrid runs the six-tap prep kernel of a validated block (w 4 or a
+// multiple of 8): og is the w x h CONV_BUF view of out, sg the source window
+// (mc8Source).
+func mc8PrepGrid(out []uint16, og unsafeutil.Grid[uint16], sg unsafeutil.Grid[uint8], w, h, subX, subY int, phx, phy *mc8Phase, scratch *CompoundConvolveScratch) {
+	switch {
+	case subX != 0 && subY != 0:
+		im := scratch.im[:]
+		if w == 4 {
+			mc8H6ToI32W4(sg, h+5, phx, im)
+			mc8PrepV6FromI32W4(im, h, phy, out[:4*h], mc8PrepV6Rnd)
+		} else {
+			mc8H6ToI32(sg, w, h+5, phx, im, 2)
+			mc8PrepV6FromI32S(im, w, h, phy, og, mc8PrepV6Rnd)
+		}
+	case subX != 0:
+		switch {
+		case w == 4:
+			mc8PrepH6S4(sg, phx, og)
+		case w == 8:
+			mc8PrepH6S8(sg, phx, og)
+		case w&15 == 0:
+			mc8PrepH6W16(sg, phx, og)
+		default:
+			mc8PrepH6Split(sg, phx, og)
+		}
+	case subY != 0:
+		switch {
+		case w == 4:
+			mc8PrepV6S4(sg, phy, og)
+		case w == 8:
+			mc8PrepV6S8(sg, phy, og)
+		case w&15 == 0:
+			mc8PrepV6W16(sg, phy, og)
+		default:
+			mc8PrepV6Split(sg, phy, og)
+		}
+	default:
+		if w == 8 {
+			mc8PrepCopyW8(sg, out, h)
+		} else {
+			mc8PrepCopy(sg, og)
+		}
+	}
 }
 
 // mc8LoadWiden widens the 16 bytes of p to two uint16 vectors, returned as

@@ -96,11 +96,11 @@ func TestGridOffset(t *testing.T) {
 	guardpage.Check(t, "after", func() { gridAllRows(g) })
 }
 
-// TestCopyBlockGuardPage copies blocks of every supported width (and odd and
-// even heights) between views that end at, or start at, inaccessible pages,
-// and checks every byte: the copy reaches exactly the dst.Height() rows of
-// dst.Width() bytes.
-func TestCopyBlockGuardPage(t *testing.T) {
+// TestCopyRectGuardPage copies blocks of every supported width (and odd and
+// even heights) between slices that end at, or start at, inaccessible pages,
+// and checks every byte: the copy reaches exactly the height rows of width
+// bytes.
+func TestCopyRectGuardPage(t *testing.T) {
 	for _, w := range []int{4, 8, 16, 32, 64, 128, 256} {
 		for _, h := range []int{1, 2, 3, 8, 9} {
 			for _, pad := range []int{0, 3} {
@@ -112,10 +112,9 @@ func TestCopyBlockGuardPage(t *testing.T) {
 						src[i] = byte(i*7 + 1)
 						dst[i] = 0xee
 					}
-					sg, dg := unsafeutil.NewGrid(src, 0, stride, w, h), unsafeutil.NewGrid(dst, 0, stride, w, h)
 					guardpage.Check(t, side, func() {
-						if !unsafeutil.CopyBlock(dg, sg) {
-							t.Fatalf("%s w=%d h=%d: CopyBlock declined", side, w, h)
+						if !unsafeutil.CopyRect(dst, 0, stride, src, 0, stride, w, h) {
+							t.Fatalf("%s w=%d h=%d: CopyRect declined", side, w, h)
 						}
 					})
 					for i := range dst {
@@ -175,18 +174,22 @@ func TestGridRejects(t *testing.T) {
 		t.Error("the zero Grid fits a block")
 	}
 	b := make([]byte, 64)
-	src, dst := unsafeutil.NewGrid(b, 0, 16, 16, 2), unsafeutil.NewGrid(b, 32, 16, 16, 2)
-	if unsafeutil.CopyBlock(unsafeutil.NewGrid(b, 0, 16, 16, 3), src) {
-		t.Error("CopyBlock copied from a shorter source")
+	for _, c := range []struct{ dOff, dStride, sOff, sStride, w, h int }{
+		{32, 16, 0, 16, 16, 3},    // destination past the end
+		{0, 16, 49, 16, 16, 1},    // source past the end
+		{0, 16, 32, 16, 12, 2},    // unsupported width
+		{0, 16, 32, 16, 0, 2},     // no columns
+		{0, 16, 32, 16, 16, 0},    // no rows
+		{-1, 16, 32, 16, 4, 1},    // negative offset
+		{0, -16, 32, 16, 4, 1},    // negative stride
+		{0, 16, 0, 1 << 31, 4, 1}, // stride out of range
+		{0, 16, 0, math.MaxInt / 2, 4, 3},
+	} {
+		if unsafeutil.CopyRect(b, c.dOff, c.dStride, b, c.sOff, c.sStride, c.w, c.h) {
+			t.Errorf("CopyRect(%+v) copied", c)
+		}
 	}
-	if unsafeutil.CopyBlock(dst, unsafeutil.NewGrid(b, 0, 16, 8, 2)) {
-		t.Error("CopyBlock copied from a narrower source")
-	}
-	if unsafeutil.CopyBlock(unsafeutil.NewGrid(b, 0, 16, 12, 2), src) {
-		t.Error("CopyBlock copied an unsupported width")
-	}
-	var zb unsafeutil.Grid[uint8]
-	if unsafeutil.CopyBlock(zb, src) || unsafeutil.CopyBlock(dst, zb) {
-		t.Error("CopyBlock copied to or from the zero Grid")
+	if !unsafeutil.CopyRect(b, 32, 16, b, 0, 16, 16, 2) || !unsafeutil.CopyRect(b, 0, 16, b, 48, 16, 16, 1) {
+		t.Error("CopyRect declined an in-range block")
 	}
 }

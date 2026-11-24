@@ -122,30 +122,33 @@ func Row[A GridRowArray[E], E GridElem](g Grid[E], r, c int) *A {
 	return (*A)(unsafe.Add(g.p, uint(r)*g.stride+uint(c)*uint(unsafe.Sizeof(e))))
 }
 
-// CopyBlock copies the dst.Height() rows of dst.Width() bytes from the same
-// rows and columns of src onto dst, as whole-array row copies (vector loads
-// and stores), and reports true: the motion compensation put copy. It copies
-// nothing and reports false unless src has at least as many rows and bytes
-// per row as dst, and dst.Width() is 4, 8, 16, 32, 64, 128 or 256 (callers
-// copy other widths themselves). It is a leaf: an odd first row alone, then
-// two rows per iteration through a pointer pair per view, each pointer
-// stepped only while rows remain.
+// CopyRect copies height rows of width bytes from src, row r at
+// sOff+r*sStride, onto dst, row r at dOff+r*dStride, as whole-array row
+// copies (vector loads and stores), and reports true: the motion
+// compensation put copy. It copies nothing and reports false unless
+// GridFit(len(dst), dOff, dStride, width, height) and GridFit(len(src), sOff,
+// sStride, width, height) both hold and width is 4, 8, 16, 32, 64, 128 or 256
+// (callers copy other widths themselves). The two views' range tests are one
+// (the OR of the six operands is below 2^31 exactly when each is). It is a
+// leaf: an odd first row alone, then two rows per iteration through a pointer
+// pair per side, each pointer stepped only while rows remain.
 //
-// Bounds proof: the test puts rows 0..h-1, bytes 0..n-1 (h = dst.Height(),
-// n = dst.Width()) inside both views' footprints. Every Grid NewGrid or Sub
-// makes has height and width at least 1 and the zero Grid has width 0, so a
-// dst that reaches a copying case has h >= 1. The loops form only the
-// addresses p + k*stride + c, for rows k from 0 to the last row copied and
-// columns c a multiple of the copy size below n (0, or the 64-byte quarters
-// of a 128- or 256-byte row): the addresses the accessors would form, inside
-// each footprint, each reaching bytes c..c+size-1 <= n-1 of its row. Views
-// that overlap copy each row piece as a load then a store.
-func CopyBlock(dst, src Grid[uint8]) bool {
-	h, n := dst.height, dst.width
-	if h > src.height || n > src.width {
+// Bounds proof: the test is GridFit for each side (see NewGrid), so rows
+// 0..h-1, bytes 0..n-1 (h = height >= 1, n = width) at each side's stride
+// lie inside that slice. The loops form only the addresses p + k*stride + c,
+// for rows k from 0 to the last row copied and columns c a multiple of the
+// copy size below n (0, or the 64-byte pieces of a 128- or 256-byte row):
+// addresses of bytes of those rows, each reaching bytes c..c+size-1 <= n-1
+// of its row. Slices that overlap copy each row piece as a load then a store.
+func CopyRect(dst []byte, dOff, dStride int, src []byte, sOff, sStride int, width, height int) bool {
+	h, n := uint(height), uint(width)
+	if !(uint((width-1)|(height-1)|dOff|dStride|sOff|sStride) < rowsDimMax &&
+		uint64(dOff)+uint64(h-1)*uint64(dStride)+uint64(n) <= uint64(len(dst)) &&
+		uint64(sOff)+uint64(h-1)*uint64(sStride)+uint64(n) <= uint64(len(src))) {
 		return false
 	}
-	d, s, ds, ss := dst.p, src.p, dst.stride, src.stride
+	d, s := unsafe.Add(unsafe.Pointer(unsafe.SliceData(dst)), dOff), unsafe.Add(unsafe.Pointer(unsafe.SliceData(src)), sOff)
+	ds, ss := uintptr(dStride), uintptr(sStride)
 	switch n {
 	case 4:
 		if h&1 != 0 {
@@ -232,13 +235,23 @@ func CopyBlock(dst, src Grid[uint8]) bool {
 			}
 			d, s, d1, s1 = unsafe.Add(d, 2*ds), unsafe.Add(s, 2*ss), unsafe.Add(d1, 2*ds), unsafe.Add(s1, 2*ss)
 		}
-	case 128, 256:
-		// 64-byte column quarters: one larger array copy would call memmove.
-		// (rows of these widths are rare; one row per iteration).
+	case 128:
+		// 64-byte column halves (and quarters below): one larger array copy
+		// would call memmove. One row per iteration.
 		for {
-			for c := uint(0); c < n; c += 64 {
-				*(*[64]byte)(unsafe.Add(d, c)) = *(*[64]byte)(unsafe.Add(s, c))
+			*(*[64]byte)(d) = *(*[64]byte)(s)
+			*(*[64]byte)(unsafe.Add(d, 64)) = *(*[64]byte)(unsafe.Add(s, 64))
+			if h--; h == 0 {
+				break
 			}
+			d, s = unsafe.Add(d, ds), unsafe.Add(s, ss)
+		}
+	case 256:
+		for {
+			*(*[64]byte)(d) = *(*[64]byte)(s)
+			*(*[64]byte)(unsafe.Add(d, 64)) = *(*[64]byte)(unsafe.Add(s, 64))
+			*(*[64]byte)(unsafe.Add(d, 128)) = *(*[64]byte)(unsafe.Add(s, 128))
+			*(*[64]byte)(unsafe.Add(d, 192)) = *(*[64]byte)(unsafe.Add(s, 192))
 			if h--; h == 0 {
 				break
 			}

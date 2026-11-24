@@ -31,7 +31,7 @@ func mc8H6ToI32(sg unsafeutil.Grid[uint8], w, rows int, ph *mc8Phase, im []int32
 	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
 	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
 	rnd := archsimd.BroadcastInt16x8(round)
-	sh := archsimd.BroadcastInt16x8(-2)
+	sh := archsimd.LoadInt16x8Array(&mc8Vec.sh2)
 	c := 0
 	for ; c+16 <= w; c += 16 {
 		// Two strips per pass: one 24-byte window per row, whose bytes 0..15
@@ -78,8 +78,8 @@ func mc8H6ToI32W4(sg unsafeutil.Grid[uint8], rows int, ph *mc8Phase, im []int32)
 	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
 	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
 	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
-	rnd := archsimd.BroadcastInt16x8(2)
-	sh := archsimd.BroadcastInt16x8(-2)
+	rnd := archsimd.LoadInt16x8Array(&mc8Vec.rnd2)
+	sh := archsimd.LoadInt16x8Array(&mc8Vec.sh2)
 	if !sg.Fits(0, 0, 16, rows) || !unsafeutil.GridFit(len(im), 0, 4, 4, rows) {
 		return
 	}
@@ -248,9 +248,12 @@ func mc8PrepV6FromI32S(im []int32, w, h int, ph *mc8Phase, og unsafeutil.Grid[ui
 	}
 }
 
-// mc8PutV6FromI32W4 is the width-4 put 2D vertical pass into the 4 x h
-// destination view dg. The two output rows' high halves pack into one vector
-// (UZP2) that saturates to rows r and r+1.
+// mc8PutV6FromI32W4 is the width-4 put 2D vertical pass from the h+5 rows of
+// four int32 sums at the start of im (row stride 4) into the 4 x h
+// destination view dg: four output rows per chunk (then at most one chunk of
+// two and one of one row). Two output rows' high halves pack into one vector
+// (UZP2) that saturates to both rows. The intermediate is a Grid view checked
+// once, so, as the other kernels, the pass is a leaf.
 func mc8PutV6FromI32W4(im []int32, h int, ph *mc8Phase, dg unsafeutil.Grid[uint8]) {
 	c0 := archsimd.LoadInt32x4Array(&ph.v[0])
 	c1 := archsimd.LoadInt32x4Array(&ph.v[1])
@@ -258,23 +261,47 @@ func mc8PutV6FromI32W4(im []int32, h int, ph *mc8Phase, dg unsafeutil.Grid[uint8
 	c3 := archsimd.LoadInt32x4Array(&ph.v[3])
 	c4 := archsimd.LoadInt32x4Array(&ph.v[4])
 	c5 := archsimd.LoadInt32x4Array(&ph.v[5])
-	rnd := archsimd.BroadcastInt32x4(1 << 15)
-	st := im[: (h+5)*4 : (h+5)*4]
-	head := (*[20]int32)(st[0:20])
-	x0 := archsimd.LoadInt32x4Array((*[4]int32)(head[0:4]))
-	x1 := archsimd.LoadInt32x4Array((*[4]int32)(head[4:8]))
-	x2 := archsimd.LoadInt32x4Array((*[4]int32)(head[8:12]))
-	x3 := archsimd.LoadInt32x4Array((*[4]int32)(head[12:16]))
-	x4 := archsimd.LoadInt32x4Array((*[4]int32)(head[16:20]))
-	r, q := 0, 20
-	for ; q <= len(st)-8; q += 8 {
-		if !dg.Fits(r, 0, 4, 2) {
+	rnd := archsimd.LoadInt32x4Array(&mc8Vec.w15)
+	if !unsafeutil.GridFit(len(im), 0, 4, 4, h+5) {
+		return
+	}
+	m := unsafeutil.NewGrid(im, 0, 4, 4, h+5)
+	if !m.Fits(0, 0, 4, 5) {
+		return
+	}
+	hd := m.Sub(0, 0, 4, 5)
+	x0 := archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](hd, 0, 0))
+	x1 := archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](hd, 1, 0))
+	x2 := archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](hd, 2, 0))
+	x3 := archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](hd, 3, 0))
+	x4 := archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](hd, 4, 0))
+	r := 0
+	for ; r+4 <= h; r += 4 {
+		if !m.Fits(r+5, 0, 4, 4) || !dg.Fits(r, 0, 4, 4) {
 			return
 		}
-		d := dg.Sub(r, 0, 4, 2)
-		win := (*[8]int32)(st[q : q+8])
-		x5 := archsimd.LoadInt32x4Array((*[4]int32)(win[0:4]))
-		x6 := archsimd.LoadInt32x4Array((*[4]int32)(win[4:8]))
+		mw, d := m.Sub(r+5, 0, 4, 4), dg.Sub(r, 0, 4, 4)
+		x5 := archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](mw, 0, 0))
+		x6 := archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](mw, 1, 0))
+		a, b := mc8V6I32W4(x0, x1, x2, x3, x4, x5, x6, c0, c1, c2, c3, c4, c5, rnd)
+		u := a.ToBits().ReshapeToUint16s().ConcatOdd(b.ToBits().ReshapeToUint16s()).BitsToInt16().SaturateToUint8().ReshapeToUint64s().GetElem(0)
+		binary.LittleEndian.PutUint32(unsafeutil.Row[[4]byte](d, 0, 0)[:], uint32(u))
+		binary.LittleEndian.PutUint32(unsafeutil.Row[[4]byte](d, 1, 0)[:], uint32(u>>32))
+		x7 := archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](mw, 2, 0))
+		x8 := archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](mw, 3, 0))
+		a, b = mc8V6I32W4(x2, x3, x4, x5, x6, x7, x8, c0, c1, c2, c3, c4, c5, rnd)
+		u = a.ToBits().ReshapeToUint16s().ConcatOdd(b.ToBits().ReshapeToUint16s()).BitsToInt16().SaturateToUint8().ReshapeToUint64s().GetElem(0)
+		binary.LittleEndian.PutUint32(unsafeutil.Row[[4]byte](d, 2, 0)[:], uint32(u))
+		binary.LittleEndian.PutUint32(unsafeutil.Row[[4]byte](d, 3, 0)[:], uint32(u>>32))
+		x0, x1, x2, x3, x4 = x4, x5, x6, x7, x8
+	}
+	if r+2 <= h {
+		if !m.Fits(r+5, 0, 4, 2) || !dg.Fits(r, 0, 4, 2) {
+			return
+		}
+		mw, d := m.Sub(r+5, 0, 4, 2), dg.Sub(r, 0, 4, 2)
+		x5 := archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](mw, 0, 0))
+		x6 := archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](mw, 1, 0))
 		a, b := mc8V6I32W4(x0, x1, x2, x3, x4, x5, x6, c0, c1, c2, c3, c4, c5, rnd)
 		u := a.ToBits().ReshapeToUint16s().ConcatOdd(b.ToBits().ReshapeToUint16s()).BitsToInt16().SaturateToUint8().ReshapeToUint64s().GetElem(0)
 		binary.LittleEndian.PutUint32(unsafeutil.Row[[4]byte](d, 0, 0)[:], uint32(u))
@@ -282,13 +309,14 @@ func mc8PutV6FromI32W4(im []int32, h int, ph *mc8Phase, dg unsafeutil.Grid[uint8
 		r += 2
 		x0, x1, x2, x3, x4 = x2, x3, x4, x5, x6
 	}
-	if q <= len(st)-4 {
-		if !dg.Fits(r, 0, 4, 1) {
+	if r < h {
+		if !m.Fits(r+5, 0, 4, 1) || !dg.Fits(r, 0, 4, 1) {
 			return
 		}
-		x5 := archsimd.LoadInt32x4Array((*[4]int32)(st[q : q+4]))
+		mw, d := m.Sub(r+5, 0, 4, 1), dg.Sub(r, 0, 4, 1)
+		x5 := archsimd.LoadInt32x4Array(unsafeutil.Row[[4]int32](mw, 0, 0))
 		a, _ := mc8V6I32W4(x0, x1, x2, x3, x4, x5, x5, c0, c1, c2, c3, c4, c5, rnd)
 		v := a.ToBits().ReshapeToUint16s().ConcatOdd(a.ToBits().ReshapeToUint16s()).BitsToInt16()
-		binary.LittleEndian.PutUint32(unsafeutil.Row[[4]byte](dg.Sub(r, 0, 4, 1), 0, 0)[:], uint32(v.SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+		binary.LittleEndian.PutUint32(unsafeutil.Row[[4]byte](d, 0, 0)[:], uint32(v.SaturateToUint8().ReshapeToUint64s().GetElem(0)))
 	}
 }

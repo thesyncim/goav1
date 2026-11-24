@@ -31,7 +31,7 @@ import (
 // the compiler drops the repeated test inside each Sub.
 
 // mc8CopyStrips is the put copy (dav1d put_neon) for the widths
-// unsafeutil.CopyBlock leaves to its caller (no
+// unsafeutil.CopyRect leaves to its caller (no
 // AV1 block has one).
 func mc8CopyStrips(dg, sg unsafeutil.Grid[uint8]) bool {
 	h, n := dg.Height(), dg.Width()
@@ -72,9 +72,9 @@ func mc8U8Hi(a archsimd.Uint8x16) archsimd.Int16x8 {
 // offset), from the source view sg (rows of max(w+8, 16) readable bytes) into
 // the CONV_BUF view og (w = og.Width() a multiple of 8, or 4).
 func mc8PrepCopy(sg unsafeutil.Grid[uint8], og unsafeutil.Grid[uint16]) {
-	mul := archsimd.BroadcastUint8x16(16)
+	mul := archsimd.LoadUint8x16Array(&mc8Vec.mul16)
 	mulHi := mul.HiToLo()
-	off := archsimd.BroadcastUint16x8(6144)
+	off := archsimd.LoadUint16x8Array(&mc8Vec.off6144)
 	h, w := og.Height(), og.Width()
 	if w == 4 {
 		if !sg.Fits(0, 0, 16, h) {
@@ -115,8 +115,8 @@ func mc8PrepCopy(sg unsafeutil.Grid[uint8], og unsafeutil.Grid[uint16]) {
 // are contiguous: eight rows per chunk are one 64-sample window of out
 // (constant store offsets) and one fixed-shape sub-view of sg.
 func mc8PrepCopyW8(sg unsafeutil.Grid[uint8], out []uint16, h int) {
-	mul := archsimd.BroadcastUint8x16(16)
-	off := archsimd.BroadcastUint16x8(6144)
+	mul := archsimd.LoadUint8x16Array(&mc8Vec.mul16)
+	off := archsimd.LoadUint16x8Array(&mc8Vec.off6144)
 	r := 0
 	for ; r+8 <= h; r += 8 {
 		if !sg.Fits(r, 0, 16, 8) || 8*r+64 > len(out) {

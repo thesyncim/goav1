@@ -22,7 +22,7 @@ func TestMC16CopyFastMatchesClampedCopy(t *testing.T) {
 	for i := range ref.Pix {
 		ref.Pix[i] = byte(rng.Intn(256))
 	}
-	for _, sz := range [][2]int{{4, 4}, {4, 16}, {8, 8}, {12, 4}, {16, 16}, {24, 8}, {32, 32}, {64, 64}, {128, 128}, {4, 1}} {
+	for _, sz := range [][2]int{{4, 4}, {4, 16}, {8, 8}, {12, 4}, {16, 16}, {24, 8}, {32, 32}, {64, 64}, {128, 128}, {4, 1}, {8, 3}, {32, 5}, {64, 3}, {128, 3}} {
 		w, h := sz[0], sz[1]
 		for iter := range 50 {
 			refX := rng.Intn(rw+2*w) - w
