@@ -409,23 +409,54 @@ func mc16PrepV6(src unsafe.Pointer, srcStride, w, h int, ph *mc8Phase, sh int, o
 }
 
 // mc16PrepCopy is the prep copy: (px << shl) + roundOffset, in uint16 lanes
-// (the result stays below 2^16 at 10 and 12 bits).
+// (the result stays below 2^16 at 10 and 12 bits). As dav1d's prep_16bpc
+// copy, each width has its own loop: two rows per step at widths 4 and 8, 16
+// samples per step from 16 up.
 func mc16PrepCopy(src unsafe.Pointer, srcStride, w, h, shl int, out unsafe.Pointer) {
 	mul := archsimd.BroadcastUint16x8(uint16(1) << shl)
 	off := archsimd.BroadcastUint16x8(mc16PrepRoundOffset)
 	ro := w * 2
-	if w == 4 {
-		for r := 0; r < h; r++ {
-			v := archsimd.BroadcastUint64x2(*(*uint64)(unsafe.Add(src, r*srcStride))).ReshapeToUint16s().MulAdd(mul, off)
-			*(*uint64)(unsafe.Add(out, r*ro)) = v.ReshapeToUint64s().GetElem(0)
+	r := 0
+	switch {
+	case w == 4:
+		for ; r+2 <= h; r += 2 {
+			s := unsafe.Add(src, r*srcStride)
+			v := archsimd.LoadUint64x2Array(&[2]uint64{*(*uint64)(s), *(*uint64)(unsafe.Add(s, srcStride))})
+			v.ReshapeToUint16s().MulAdd(mul, off).StoreArray((*[8]uint16)(unsafe.Add(out, r*8)))
 		}
-		return
-	}
-	for r := 0; r < h; r++ {
-		s := unsafe.Add(src, r*srcStride)
-		o := unsafe.Add(out, r*ro)
-		for col := 0; col < w; col += 8 {
-			archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(s, 2*col))).MulAdd(mul, off).StoreArray((*[8]uint16)(unsafe.Add(o, 2*col)))
+		for ; r < h; r++ {
+			v := archsimd.BroadcastUint64x2(*(*uint64)(unsafe.Add(src, r*srcStride))).ReshapeToUint16s().MulAdd(mul, off)
+			*(*uint64)(unsafe.Add(out, r*8)) = v.ReshapeToUint64s().GetElem(0)
+		}
+	case w == 8:
+		for ; r+2 <= h; r += 2 {
+			s, o := unsafe.Add(src, r*srcStride), unsafe.Add(out, r*16)
+			a := archsimd.LoadUint16x8Array((*[8]uint16)(s))
+			b := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(s, srcStride)))
+			a.MulAdd(mul, off).StoreArray((*[8]uint16)(o))
+			b.MulAdd(mul, off).StoreArray((*[8]uint16)(unsafe.Add(o, 16)))
+		}
+		if r < h {
+			archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(src, r*srcStride))).MulAdd(mul, off).StoreArray((*[8]uint16)(unsafe.Add(out, r*16)))
+		}
+	case w&15 != 0:
+		for ; r < h; r++ {
+			s := unsafe.Add(src, r*srcStride)
+			o := unsafe.Add(out, r*ro)
+			for c := 0; c < ro; c += 16 {
+				archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(s, c))).MulAdd(mul, off).StoreArray((*[8]uint16)(unsafe.Add(o, c)))
+			}
+		}
+	default:
+		for ; r < h; r++ {
+			s := unsafe.Add(src, r*srcStride)
+			o := unsafe.Add(out, r*ro)
+			for c := 0; c < ro; c += 32 {
+				a := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(s, c)))
+				b := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(s, c+16)))
+				a.MulAdd(mul, off).StoreArray((*[8]uint16)(unsafe.Add(o, c)))
+				b.MulAdd(mul, off).StoreArray((*[8]uint16)(unsafe.Add(o, c+16)))
+			}
 		}
 	}
 }
