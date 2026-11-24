@@ -738,7 +738,12 @@ func newDecoderFramePipeline(d *Decoder, n int, plan decoderFrameWorkResidualStr
 		ready:    make([]*Frame, 0, 2*(internalparser.RefFrames+n)),
 	}
 	p.grainParallel.Workers = workers
+	// Every Wait a frame-threaded decode can have pending at once has a
+	// wait slot from the start: the reconstruction lanes of the other frames
+	// in flight on a reference surface, the entropy passes on the MV, CDF
+	// and segmentation progress.
 	for i := range p.progress {
+		p.progress[i].Reserve(n*workers + 2)
 		p.progress[i].Publish(internalthreading.FrameProgressDone)
 	}
 	p.mvProgress = make([]internalthreading.FrameProgress, internaldecoder.FrameWorkMVGrids)
@@ -746,6 +751,7 @@ func newDecoderFramePipeline(d *Decoder, n int, plan decoderFrameWorkResidualStr
 	p.segProgress = make([]internalthreading.FrameProgress, internaldecoder.FrameWorkSegMaps)
 	for _, set := range [][]internalthreading.FrameProgress{p.mvProgress, p.cdfProgress, p.segProgress} {
 		for i := range set {
+			set[i].Reserve(n + 1)
 			set[i].Publish(internalthreading.FrameProgressDone)
 		}
 	}
@@ -787,6 +793,8 @@ func newDecoderFramePipeline(d *Decoder, n int, plan decoderFrameWorkResidualStr
 		fc.start = make(chan struct{}, 1)
 		fc.done = make(chan struct{}, 1)
 		fc.postStart = make(chan struct{}, 1)
+		fc.parsed.Reserve(2)
+		fc.reconRows.Progress.Reserve(2)
 		fc.postParallel.BindReconProgress(&fc.reconRows.Progress)
 		fc.postParallel.BindParseProgress(&fc.parsed)
 		fc.ft.StartPost = func() {

@@ -263,6 +263,11 @@ func (wf *pframeWavefront) ensureWorkers(n int, pc *pframeCoder) {
 			}
 		}()
 	}
+	// Every lane and the entropy pass may wait at once; the helpers are
+	// parked between frames, so no waiter holds the list here.
+	wf.mu.Lock()
+	wf.waitList.Reserve(n + 1)
+	wf.mu.Unlock()
 	wf.coder = pc
 }
 

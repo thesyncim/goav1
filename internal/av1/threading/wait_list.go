@@ -37,6 +37,14 @@ const (
 	waitSlotWoken   // released; its waiter has not yet reclaimed it
 )
 
+// Reserve makes room for n waiters, so a list whose waiters never exceed n
+// parks without allocating. More waiters still park; the list grows.
+func (l *WaitList) Reserve(n int) {
+	for len(l.slots) < n {
+		l.slots = append(l.slots, waitSlot{ch: make(chan struct{}, 1)})
+	}
+}
+
 // Waiting reports how many registered goroutines no Wake has released yet.
 func (l *WaitList) Waiting() int { return l.waiting }
 

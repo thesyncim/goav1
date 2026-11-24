@@ -54,6 +54,14 @@ func (p *FrameProgress) Publish(rows int32) {
 	p.mu.Unlock()
 }
 
+// Reserve makes room for n concurrent waiters, so a steady-state Wait parks
+// without allocating.
+func (p *FrameProgress) Reserve(n int) {
+	p.mu.Lock()
+	p.waiters.Reserve(n)
+	p.mu.Unlock()
+}
+
 // Ready reports, without blocking, whether Wait(need) would return at once.
 func (p *FrameProgress) Ready(need int32) bool {
 	v := p.rows.Load()

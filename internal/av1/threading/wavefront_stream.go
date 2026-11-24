@@ -248,6 +248,7 @@ func (c *frameWorkTileResidualLoopController) startReconStream() error {
 	wf.beginSpans(region, sbSizeMIB)
 	wf.ensureDone(rowCount)
 	wf.resetProgress(rowCount)
+	wf.progress.rowWaiters.Reserve(workers) // no lane runs yet
 	if err := wf.ensureStates(workers, c); err != nil {
 		return err
 	}
