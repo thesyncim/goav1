@@ -258,7 +258,7 @@ func (p *FrameWorkPostFilterParallel) runCDEFU8Range(job *frameWorkPostFilterPar
 		rowStart := band * job.unitRowsPerBand
 		rowEnd := min(rowStart+job.unitRowsPerBand, job.rows)
 		request := job.request
-		request.SampleScratch = p.cdef[worker].line
+		request.SampleBytes = p.cdef[worker].line
 		request.InputScratch = p.cdef[worker].input
 		bandResult, err := job.ctx.ApplyCDEFPostFilterUnitRowsU8(request, p.cdefU8[band], rowStart, rowEnd)
 		if err != nil {
@@ -329,12 +329,12 @@ func (r *frameWorkPostFilterRowProgress) publish(out *frame.Frame, rows int) {
 // frameWorkParallelCDEFScratch is one worker's private CDEF band scratch. It
 // mirrors the per-band buffers the serial banded CDEF apply threads through a
 // single request: the uint16 tap ring (InputScratch), the uint16 unit dst
-// (UnitDstScratch, unused by the 8-bit in-place walk), and the byte line-backup
-// arena the 8-bit walk carves from SampleScratch.
+// (UnitDstScratch, unused by the 8-bit in-place walk), and the 8-bit walk's
+// byte line-backup and tap arena (SampleBytes).
 type frameWorkParallelCDEFScratch struct {
 	input   []uint16
 	unitDst []uint16
-	line    [3][]uint16
+	line    [3][]byte
 	result  FrameWorkCDEFPostFilterResult
 }
 
@@ -349,8 +349,7 @@ func (p *FrameWorkPostFilterParallel) workers() int {
 
 // ensureCDEFScratch grows the per-worker CDEF scratch to the current worker
 // count and plane width. lineWidth is the luma plane width in samples; the U8
-// line-backup arena needs 2*width uint16 for luma and width for each chroma
-// plane (matching testCDEFU8LineScratch / the 4*width byte view the walk uses).
+// byte arena of each plane is CDEFU8LineScratchLen(plane width).
 func (p *FrameWorkPostFilterParallel) ensureCDEFScratch(workers, lumaWidth, chromaWidth int, wantU8 bool, bands int) {
 	if cap(p.cdef) < workers {
 		p.cdef = make([]frameWorkParallelCDEFScratch, workers)
@@ -366,19 +365,16 @@ func (p *FrameWorkPostFilterParallel) ensureCDEFScratch(workers, lumaWidth, chro
 				s.unitDst = make([]uint16, cdef.InputBufferSize)
 			}
 		} else {
-			// The 8-bit walk carves a 4*plane-width byte line arena from each
-			// SampleScratch[plane] (cdefByteScratchView needs 4*width <= 2*len(seg)
-			// uint16 => len >= 2*width). Every plane needs 2*plane-width uint16.
-			need0 := 2 * lumaWidth
-			needC := 2 * chromaWidth
+			need0 := CDEFU8LineScratchLen(lumaWidth)
+			needC := CDEFU8LineScratchLen(chromaWidth)
 			if len(s.line[0]) < need0 {
-				s.line[0] = make([]uint16, need0)
+				s.line[0] = make([]byte, need0)
 			}
 			if len(s.line[1]) < needC {
-				s.line[1] = make([]uint16, needC)
+				s.line[1] = make([]byte, needC)
 			}
 			if len(s.line[2]) < needC {
-				s.line[2] = make([]uint16, needC)
+				s.line[2] = make([]byte, needC)
 			}
 		}
 	}

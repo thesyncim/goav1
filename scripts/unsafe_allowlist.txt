@@ -1,11 +1,3 @@
-decode_simple.go
-examples/browser-wasm/encoder/main.go
-internal/av1/decoder/postfilter_cdef_hbd_le.go
-internal/av1/decoder/postfilter_cdef_sparse.go
-internal/av1/decoder/postfilter_cdef_u8.go
-internal/av1/decoder/postfilter_filmgrain_direct.go
-internal/av1/decoder/postfilter_filmgrain_direct_le.go
-internal/av1/decoder/postfilter_sbrow.go
 internal/av1/loopfilter/filter4_wide_arm64.go
 internal/av1/loopfilter/filter_lanes_arm64.go
 internal/av1/loopfilter/filter_lanes_gosimd.go
@@ -31,13 +23,6 @@ internal/av1/motion/mc8_gosimd_arm64.go
 internal/av1/motion/mc8mask_gosimd_amd64.go
 internal/av1/motion/mc8mask_gosimd_arm64.go
 internal/av1/motion/mc8w4_gosimd_arm64.go
-internal/av1/threading/cdf_storage_copy.go
-internal/av1/threading/predict.go
-internal/av1/tile/coeff.go
-internal/av1/tile/coeff_init_levels_gosimd_arm64.go
-internal/av1/tile/coeff_nz_map_contexts_gosimd.go
-internal/av1/tile/mode.go
-internal/av1/tile/refmvs_tmvs.go
 internal/av1/tile/restoration_apply_u8.go
 internal/av1/tile/restoration_boundary.go
 internal/guardpage/guardpage.go

@@ -1,35 +1,23 @@
 package threading
 
 import (
-	"reflect"
 	"testing"
+	"unsafe"
 )
 
-// TestCDFStorageIsPointerFree guards copyCDFStorage's byte copy: it is only
-// equivalent to assignment while the storage holds no pointers.
-func TestCDFStorageIsPointerFree(t *testing.T) {
-	var walk func(reflect.Type) bool
-	walk = func(typ reflect.Type) bool {
-		switch typ.Kind() {
-		case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
-			reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128:
-			return true
-		case reflect.Array:
-			return walk(typ.Elem())
-		case reflect.Struct:
-			for i := range typ.NumField() {
-				if !walk(typ.Field(i).Type) {
-					return false
-				}
-			}
-			return true
-		default:
-			return false
-		}
+// TestCopyCDFStorageCoversEveryField fills every byte of a source storage
+// and checks that copyCDFStorage reproduces it, so a field added to the
+// storage (or to one of its CDF tables) without a copy fails here.
+func TestCopyCDFStorageCoversEveryField(t *testing.T) {
+	src := new(FrameWorkTileResidualCDFStorage)
+	b := unsafe.Slice((*byte)(unsafe.Pointer(src)), unsafe.Sizeof(*src))
+	for i := range b {
+		b[i] = byte(i*7 + 1)
 	}
-	if !walk(reflect.TypeFor[FrameWorkTileResidualCDFStorage]()) {
-		t.Fatal("FrameWorkTileResidualCDFStorage contains pointers; copyCDFStorage must not byte-copy it")
+	dst := new(FrameWorkTileResidualCDFStorage)
+	copyCDFStorage(dst, src)
+	if *dst != *src {
+		t.Fatal("copyCDFStorage left a field uncopied")
 	}
 }
 

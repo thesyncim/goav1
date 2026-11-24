@@ -8,7 +8,6 @@ package tile
 
 import (
 	"simd/archsimd"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 )
@@ -34,12 +33,12 @@ func coeffInitLevelsArch(coeffs []int16, scanWidth int, scanHeight int, levels [
 	return true
 }
 
-// coeffInitAbs127x8 loads eight int16 coefficients at p and returns
-// min(|c|, 127) in the low eight bytes of the result (upper eight zero). The
-// unsigned min after Abs maps INT16_MIN (|c| wraps to 0x8000) to 127, matching
+// coeffInitAbs127x8 loads eight int16 coefficients and returns min(|c|, 127)
+// in the low eight bytes of the result (upper eight zero). The unsigned min
+// after Abs maps INT16_MIN (|c| wraps to 0x8000) to 127, matching
 // coeffAbsClamp127.
-func coeffInitAbs127x8(p unsafe.Pointer, cap127 archsimd.Uint16x8) archsimd.Uint8x16 {
-	return archsimd.LoadInt16x8Array((*[8]int16)(p)).Abs().ToBits().Min(cap127).SaturateToUint8()
+func coeffInitAbs127x8(p *[8]int16, cap127 archsimd.Uint16x8) archsimd.Uint8x16 {
+	return archsimd.LoadInt16x8Array(p).Abs().ToBits().Min(cap127).SaturateToUint8()
 }
 
 // coeffInitPack2x8 joins two packed eight-byte halves into one 16-byte vector
@@ -48,58 +47,73 @@ func coeffInitPack2x8(lo, hi archsimd.Uint8x16) archsimd.Uint8x16 {
 	return lo.Or(hi.ConcatShiftBytesRight(lo, 8))
 }
 
-// coeffInitStore16 writes all sixteen bytes of v at p.
-func coeffInitStore16(p unsafe.Pointer, v archsimd.Uint8x16) {
-	v.Store(unsafe.Slice((*uint8)(p), 16))
-}
-
 // coeffInitLevelsSIMD fills the live rows of each column. Columns are written in
 // increasing order and a store may spill into the next column's leading bytes
 // or the padding; those spilled bytes are zero and are overwritten by the next
 // column's own store, while the final spill stays inside the scratch window
 // ((scanWidth+TX_PAD_HOR) columns long), so the padding of every column ends up
-// zero as the clear left it.
+// zero as the clear left it. The loop bounds the coefficient windows and the
+// explicit length test bounds each column's store window.
 func coeffInitLevelsSIMD(coeffs []int16, scanWidth int, scanHeight int, levels []uint8) {
 	stride := scanHeight + txPadHorizontal
-	coeffs = coeffs[:scanWidth*scanHeight]
-	levels = levels[:(scanWidth+txPadHorizontal)*stride]
-	// Column pointers: coeffs and levels are cut to their full extents above,
-	// and the per-column checked slices cost +7-31% cycles on
-	// BenchmarkCoeffInitLevels.
-	src := unsafe.Pointer(unsafe.SliceData(coeffs))
-	dst := unsafe.Pointer(unsafe.SliceData(levels))
+	n := scanWidth * scanHeight
+	src := coeffs[:n:n]
+	m := (scanWidth + txPadHorizontal) * stride
+	dst := levels[:m:m]
 	cap127 := archsimd.BroadcastUint16x8(127)
 	switch scanHeight {
 	case 4:
 		// One vector covers two 4-row columns: bytes 0..3 are column c, bytes
 		// 4..7 are column c+1. The lookup spreads them to the padded stride.
 		pad4 := archsimd.LoadUint8x16Array(&coeffInitLevelsPad4)
-		for col := 0; col < scanWidth; col += 2 {
-			v := coeffInitAbs127x8(unsafe.Add(src, 2*col*4), cap127)
-			coeffInitStore16(unsafe.Add(dst, col*stride), v.LookupOrZero(pad4))
+		o := 0
+		for i := 0; i <= len(src)-8; i += 8 {
+			if o > len(dst)-16 {
+				panic("tile: coefficient level scratch too short")
+			}
+			v := coeffInitAbs127x8((*[8]int16)(src[i:i+8]), cap127)
+			v.LookupOrZero(pad4).StoreArray((*[16]uint8)(dst[o : o+16]))
+			o += 2 * (4 + txPadHorizontal)
 		}
 	case 8:
-		for col := range scanWidth {
-			v := coeffInitAbs127x8(unsafe.Add(src, 2*col*8), cap127)
-			*(*uint64)(unsafe.Add(dst, col*stride)) = v.ReshapeToUint64s().GetElem(0)
+		o := 0
+		for i := 0; i <= len(src)-8; i += 8 {
+			if o > len(dst)-16 {
+				panic("tile: coefficient level scratch too short")
+			}
+			v := coeffInitAbs127x8((*[8]int16)(src[i:i+8]), cap127)
+			// The upper eight bytes are zero: they land in this column's
+			// padding and the next column's head, which its own store rewrites.
+			v.StoreArray((*[16]uint8)(dst[o : o+16]))
+			o += 8 + txPadHorizontal
 		}
 	case 16:
-		for col := range scanWidth {
-			p := unsafe.Add(src, 2*col*16)
-			lo := coeffInitAbs127x8(p, cap127)
-			hi := coeffInitAbs127x8(unsafe.Add(p, 16), cap127)
-			coeffInitStore16(unsafe.Add(dst, col*stride), coeffInitPack2x8(lo, hi))
+		o := 0
+		for i := 0; i <= len(src)-16; i += 16 {
+			if o > len(dst)-16 {
+				panic("tile: coefficient level scratch too short")
+			}
+			w := (*[16]int16)(src[i : i+16])
+			lo := coeffInitAbs127x8((*[8]int16)(w[0:8]), cap127)
+			hi := coeffInitAbs127x8((*[8]int16)(w[8:16]), cap127)
+			coeffInitPack2x8(lo, hi).StoreArray((*[16]uint8)(dst[o : o+16]))
+			o += 16 + txPadHorizontal
 		}
 	case 32:
-		for col := range scanWidth {
-			p := unsafe.Add(src, 2*col*32)
-			a := coeffInitAbs127x8(p, cap127)
-			b := coeffInitAbs127x8(unsafe.Add(p, 16), cap127)
-			c := coeffInitAbs127x8(unsafe.Add(p, 32), cap127)
-			d := coeffInitAbs127x8(unsafe.Add(p, 48), cap127)
-			out := unsafe.Add(dst, col*stride)
-			coeffInitStore16(out, coeffInitPack2x8(a, b))
-			coeffInitStore16(unsafe.Add(out, 16), coeffInitPack2x8(c, d))
+		o := 0
+		for i := 0; i <= len(src)-32; i += 32 {
+			if o > len(dst)-32 {
+				panic("tile: coefficient level scratch too short")
+			}
+			w := (*[32]int16)(src[i : i+32])
+			a := coeffInitAbs127x8((*[8]int16)(w[0:8]), cap127)
+			b := coeffInitAbs127x8((*[8]int16)(w[8:16]), cap127)
+			c := coeffInitAbs127x8((*[8]int16)(w[16:24]), cap127)
+			d := coeffInitAbs127x8((*[8]int16)(w[24:32]), cap127)
+			out := (*[32]uint8)(dst[o : o+32])
+			coeffInitPack2x8(a, b).StoreArray((*[16]uint8)(out[0:16]))
+			coeffInitPack2x8(c, d).StoreArray((*[16]uint8)(out[16:32]))
+			o += 32 + txPadHorizontal
 		}
 	}
 }

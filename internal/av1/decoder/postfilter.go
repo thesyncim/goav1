@@ -104,6 +104,7 @@ type FrameWorkPostFilterScratch struct {
 	LoopFilterSchedule []uint32
 
 	CDEFSamples       [3][]uint16
+	CDEFSampleBytes   [3][]byte
 	CDEFDst           [3][]uint16
 	CDEFDirectionGrid []cdef.DirectionGrid
 	CDEFVarianceGrid  []cdef.VarianceGrid
@@ -147,6 +148,11 @@ func (s FrameWorkPostFilterScratchSize) BindRequest(options FrameWorkPostFilterB
 	cdefReq, err := s.CDEF.BindRequest(options.CDEFIndexMap, scratch.CDEFSamples, scratch.CDEFDst, scratch.CDEFDirectionGrid, scratch.CDEFVarianceGrid, scratch.CDEFInput, scratch.CDEFUnitDst)
 	if err != nil {
 		return FrameWorkPostFilterRequest{}, err
+	}
+	if scratch.CDEFSampleBytes[0] != nil || scratch.CDEFSampleBytes[1] != nil || scratch.CDEFSampleBytes[2] != nil {
+		if err := s.CDEF.BindSampleBytes(&cdefReq, scratch.CDEFSampleBytes); err != nil {
+			return FrameWorkPostFilterRequest{}, err
+		}
 	}
 	superResReq, err := s.SuperRes.BindRequest(scratch.SuperResOutputFrame, scratch.SuperResCoded, scratch.SuperResOutput, options.SuperResOutputView)
 	if err != nil {

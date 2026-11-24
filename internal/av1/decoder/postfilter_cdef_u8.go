@@ -2,7 +2,6 @@ package decoder
 
 import (
 	"encoding/binary"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -40,17 +39,53 @@ import (
 // cross-band halo and private line/input scratch for every worker. 10/12-bit
 // frames keep the uint16 path unchanged.
 
-// cdefByteScratchView reinterprets a segment of the uint16 sample scratch
-// arena as byte storage for 8-bit CDEF line backups or a real-tap unit. The
-// 8-bit walk needs only 4 plane-width rows for its line buffers, far below
-// the arena's plane-sized allocation; the arena is otherwise unused on the
-// u8 path (no snapshot).
-func cdefByteScratchView(seg []uint16, n int) ([]byte, bool) {
-	if n <= 0 || len(seg) == 0 || n > 2*len(seg) {
-		return nil, false
-	}
-	return unsafe.Slice((*byte)(unsafe.Pointer(unsafe.SliceData(seg))), n), true
+// cdefU8TapBytes is the 8-bit walk's byte tap buffer: the uint16 tap
+// buffer's footprint.
+const cdefU8TapBytes = 2 * cdef.InputBufferSize
+
+// CDEFU8LineScratchLen is the byte scratch the 8-bit in-place CDEF walk needs
+// for one plane of the given (MI-aligned) width: two ping-pong pairs of
+// pre-filter rows (dav1d's backup2lines / cdef_line[tf]) and the byte tap
+// buffer of one unit.
+func CDEFU8LineScratchLen(width int) int { return 4*width + cdefU8TapBytes }
+
+// cdefU8PackedMaxWidth bounds the plane width of the packed-line walk, whose
+// unpacked top rows and byte tap live on the stack.
+const cdefU8PackedMaxWidth = 8192
+
+// cdefU8Lines is the 8-bit walk's pre-filter line store: two ping-pong pairs
+// of plane-width rows, held as bytes, or, for callers that hand over only
+// uint16 sample scratch (2*width elements, the encoder's CDEF bands), packed
+// two pixels per uint16 in little-endian order. A packed store unpacks the
+// pair a unit row reads into top.
+type cdefU8Lines struct {
+	bytes  []byte
+	packed []uint16
+	top    []byte
 }
+
+// put stores the row bytes src at byte offset off (even in packed form: the
+// plane widths are MI-aligned, hence even).
+func (l *cdefU8Lines) put(off int, src []byte) {
+	if l.packed == nil {
+		copy(l.bytes[off:off+len(src)], src)
+		return
+	}
+	frame.LoadSampleRows16Trusted(l.packed[off/2:], 0, src, 0, len(src)/2, 1)
+}
+
+// pair returns the two rows (n bytes) stored at byte offset off.
+func (l *cdefU8Lines) pair(off, n int) []byte {
+	if l.packed == nil {
+		return l.bytes[off:]
+	}
+	frame.StoreSampleRows16Trusted(l.top[:n], 0, l.packed[off/2:], 0, n/2, 1)
+	return l.top[:n]
+}
+
+// lines returns the whole store as bytes for the overlap test (nil when
+// packed: uint16 storage cannot alias the byte buffers).
+func (l *cdefU8Lines) lines() []byte { return l.bytes }
 
 // frameWorkApplyCDEFPlaneRowsU8 is the 8-bit in-place counterpart of
 // frameWorkApplyCDEFPlaneRows. dst is the MI-aligned plane view
@@ -59,7 +94,37 @@ func cdefByteScratchView(seg []uint16, n int) ([]byte, bool) {
 // plane, reused as the line-backup arena. Whole-frame callers pass
 // rowStart=0,rowEnd=rows and an empty boundary; banded callers pass immutable
 // boundary strips for any cross-band top/bottom halos.
-func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, dst frame.Plane, byteScratch []uint16, boundary FrameWorkCDEFPostFilterU8BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
+func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, dst frame.Plane, byteScratch []byte, boundary FrameWorkCDEFPostFilterU8BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
+	width := dst.Width
+	if width <= 0 || len(byteScratch) < CDEFU8LineScratchLen(width) {
+		return 0, 0, threading.ErrInvalidBatch
+	}
+	lines := cdefU8Lines{bytes: byteScratch[:4*width]}
+	return frameWorkApplyCDEFPlaneRowsU8Lines(params, indexMap, skipMap, cols, rows, rowStart, rowEnd, dst, &lines, byteScratch[4*width:4*width+cdefU8TapBytes], boundary, input, blockStorage, directions, variances, directionGrid, varianceGrid, plane, xDec, yDec, forceLumaDirections, unitMasks)
+}
+
+// frameWorkCDEFU8PackedLinesFit reports whether the packed-line walk can run
+// a plane of the given width on lineScratch.
+func frameWorkCDEFU8PackedLinesFit(lineScratch []uint16, width int) bool {
+	return width > 0 && width%2 == 0 && width <= cdefU8PackedMaxWidth && len(lineScratch) >= 2*width
+}
+
+// frameWorkApplyCDEFPlaneRowsU8Packed is frameWorkApplyCDEFPlaneRowsU8 for a
+// caller that provides only uint16 line scratch (2*width elements): the line
+// pairs are stored packed there, and the unpacked pair and the byte tap
+// buffer live on this frame.
+func frameWorkApplyCDEFPlaneRowsU8Packed(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, dst frame.Plane, lineScratch []uint16, boundary FrameWorkCDEFPostFilterU8BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
+	width := dst.Width
+	if !frameWorkCDEFU8PackedLinesFit(lineScratch, width) {
+		return 0, 0, threading.ErrInvalidBatch
+	}
+	var top [cdef.VerticalBorder * cdefU8PackedMaxWidth]byte
+	var tap [cdefU8TapBytes]byte
+	lines := cdefU8Lines{packed: lineScratch[:2*width], top: top[:]}
+	return frameWorkApplyCDEFPlaneRowsU8Lines(params, indexMap, skipMap, cols, rows, rowStart, rowEnd, dst, &lines, tap[:], boundary, input, blockStorage, directions, variances, directionGrid, varianceGrid, plane, xDec, yDec, forceLumaDirections, unitMasks)
+}
+
+func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, dst frame.Plane, lines *cdefU8Lines, byteInput []byte, boundary FrameWorkCDEFPostFilterU8BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
 	var units uint32
 	var blocksTotal uint32
 	width := dst.Width
@@ -88,10 +153,6 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 	// buffers of 2 rows x plane width (backup2lines / cdef_line[tf]) carved
 	// from the sample scratch arena, and an 8-column x unit-height left
 	// backup (backup2x8 / lr_bak) on the stack.
-	lineBuf, ok := cdefByteScratchView(byteScratch, 4*width)
-	if !ok {
-		return 0, 0, threading.ErrInvalidBatch
-	}
 	if rowStart > 0 && !boundary.resume {
 		top := boundary.Top[plane]
 		need := cdef.VerticalBorder * width
@@ -99,7 +160,7 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 			return 0, 0, frame.ErrShortBuffer
 		}
 		topSlot := ((rowStart ^ 1) & 1) * cdef.VerticalBorder * width
-		copy(lineBuf[topSlot:topSlot+need], top[:need])
+		lines.put(topSlot, top[:need])
 	}
 	var bottomBoundary []byte
 	if rowEnd < rows && !boundary.resume {
@@ -112,7 +173,7 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 	// Ping-pong two 8-column x unit-height left backups (dav1d lr_bak[2]) so
 	// taking the next unit's backup never overwrites the current unit's halo
 	// and never copies 512 bytes on the byte-interior fast path.
-	sparseIndependent := frameWorkCDEFSparseScratchIndependent(input, dst.Pix, lineBuf, boundary.Top[plane], bottomBoundary)
+	sparseIndependent := frameWorkCDEFSparseScratchIndependent(byteInput, dst.Pix, lines.lines(), boundary.Top[plane], bottomBoundary)
 	var leftStorage [2][cdef.HorizontalBorder * cdef.BlockSize]byte
 	leftIdx := 0
 
@@ -122,16 +183,16 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 		// halo before any unit in this row overwrites them.
 		if unitRow+1 < rowEnd || (boundary.resume && unitRow+1 < rows) {
 			nextTopY := unitY + unitSizeY
-			save := lineBuf[(unitRow&1)*2*width:]
+			save := (unitRow & 1) * 2 * width
 			for r := 0; r < cdef.VerticalBorder; r++ {
 				y := nextTopY - cdef.VerticalBorder + r
 				if y < 0 || y >= height {
 					continue
 				}
-				copy(save[r*width:r*width+width], dst.Pix[y*stride:y*stride+width])
+				lines.put(save+r*width, dst.Pix[y*stride:y*stride+width])
 			}
 		}
-		topBuf := lineBuf[((unitRow^1)&1)*2*width:]
+		topBuf := lines.pair(((unitRow^1)&1)*2*width, 2*width)
 		bottomBuf := []byte(nil)
 		if unitRow+1 == rowEnd {
 			bottomBuf = bottomBoundary
@@ -210,15 +271,12 @@ func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkC
 			nextLeft := leftStorage[leftIdx^1][:]
 			secondaryOnlyByte := frameWorkCDEFCanUseSecondaryByteUnit(cdef.U8SecondaryOnlyByteInteriorAvailable(), needPrimaryDirection, filterParams, unitX, unitY, unitW, unitH, width, height, blockWidth, blockHeight, cdefDebugUnit(plane, unitRow, unitCol))
 			if secondaryOnlyByte || frameWorkCDEFCanUseByteUnit(cdef.U8ByteInteriorAvailable(), filterParams, unitX, unitY, unitW, unitH, width, height, blockWidth, blockHeight, cdefDebugUnit(plane, unitRow, unitCol)) {
-				byteInput, byteOK := cdefByteScratchView(input, 2*len(input))
 				assembled := false
-				if byteOK {
-					if stageRect.active {
-						assembled = frameWorkAssembleCDEFSparseByteInputU8(byteInput, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitX, unitY, unitW, unitH, stageRect)
-					}
-					if !assembled {
-						assembled = frameWorkAssembleCDEFSecondaryByteInputU8(byteInput, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitX, unitY, unitW, unitH) == nil
-					}
+				if stageRect.active {
+					assembled = frameWorkAssembleCDEFSparseByteInputU8(byteInput, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitX, unitY, unitW, unitH, stageRect)
+				}
+				if !assembled {
+					assembled = frameWorkAssembleCDEFSecondaryByteInputU8(byteInput, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitX, unitY, unitW, unitH) == nil
 				}
 				if assembled {
 					nextUnitX := unitX + unitSizeX

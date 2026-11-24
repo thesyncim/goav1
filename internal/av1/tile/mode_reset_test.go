@@ -59,8 +59,7 @@ func TestBlockModeContextResetLayout(t *testing.T) {
 	for i := range b {
 		b[i] = 0xa5
 	}
-	snap := b[unsafe.Offsetof(c.SBTopInterMotion):unsafe.Offsetof(c.GridMotionValid)]
-	clear(snap)
+	c.blockModeSBHistory = blockModeSBHistory{}
 	c.resetForSuperblock()
 	want = resetModeContextWant(&c)
 	if c != want {

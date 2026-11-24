@@ -253,7 +253,7 @@ func (p *FrameWorkPostFilterParallel) rowPipeUnit(w, u int) {
 			request.UnitDstScratch = p.cdef[w].unitDst
 			res, err = pp.ctx.applyCDEFPostFilterRows(request, u, u+1, false, nil)
 		} else {
-			request.SampleScratch = p.cdef[w].line
+			request.SampleBytes = p.cdef[w].line
 			res, err = pp.ctx.applyCDEFPostFilterRows(request, u, u+1, false, &p.cdefU8[u])
 		}
 		if err != nil {
