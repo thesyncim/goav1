@@ -211,8 +211,10 @@ func TestEndToEndAV1OverRTPRTCEncoderControlChurn(t *testing.T) {
 	}()
 	startPictureLossFeedback(t, receiver, trackSSRC, doneFeedback)
 
+	// Control churn drives picture-loss recovery, so units are counted
+	// across transport loss rather than restarting the window.
 	tus, err := collectTemporalUnitsWithBudget(
-		decoded, 70, rtcTemporalUnitCollectionTimeout, rtcTemporalUnitNoProgressTimeout)
+		decoded, 70, rtcTemporalUnitCollectionTimeout, rtcTemporalUnitNoProgressTimeout, false)
 	if err != nil {
 		select {
 		case streamErr := <-streamErr:
@@ -336,7 +338,7 @@ func TestEndToEndAV1OverRTPRTCEncoderREMBBitrateControl(t *testing.T) {
 	startReceiverEstimatedMaximumBitrateFeedback(t, receiver, trackSSRC, rembBitrateBps, doneFeedback)
 
 	tus, err := collectTemporalUnitsWithBudget(
-		decoded, 70, rtcREMBTemporalUnitCollectionTimeout, rtcTemporalUnitNoProgressTimeout)
+		decoded, 70, rtcREMBTemporalUnitCollectionTimeout, rtcTemporalUnitNoProgressTimeout, false)
 	if err != nil {
 		select {
 		case streamErr := <-streamErr:
@@ -969,15 +971,20 @@ const (
 func collectTemporalUnits(t *testing.T, decoded <-chan receivedTemporalUnit, want int) [][]byte {
 	t.Helper()
 	tus, err := collectTemporalUnitsWithBudget(
-		decoded, want, rtcTemporalUnitCollectionTimeout, rtcTemporalUnitNoProgressTimeout)
+		decoded, want, rtcTemporalUnitCollectionTimeout, rtcTemporalUnitNoProgressTimeout, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return tus
 }
 
+// collectTemporalUnitsWithBudget collects want temporal units. With
+// restartOnLoss the window restarts after a unit that follows dropped RTP
+// packets, so callers comparing against reference decoders get a run of
+// consecutive loss-free units; tests that exercise loss recovery count units
+// across loss instead.
 func collectTemporalUnitsWithBudget(
-	decoded <-chan receivedTemporalUnit, want int, maxWait, noProgress time.Duration,
+	decoded <-chan receivedTemporalUnit, want int, maxWait, noProgress time.Duration, restartOnLoss bool,
 ) ([][]byte, error) {
 	if want < 0 {
 		return nil, fmt.Errorf("cannot collect a negative number of temporal units: %d", want)
@@ -1008,13 +1015,12 @@ func collectTemporalUnitsWithBudget(
 			if !ok {
 				return nil, fmt.Errorf("decoded stream closed after %d/%d temporal units", len(tus), want)
 			}
-			if unit.dropped > 0 {
+			droppedPackets += int(unit.dropped)
+			if unit.dropped > 0 && restartOnLoss {
 				// Restart the window after transport loss: the stream must
-				// be want consecutive loss-free units. Recovery from loss is
-				// covered by the explicit loss tests.
+				// be want consecutive loss-free units.
 				tus = tus[:0]
 				restarts++
-				droppedPackets += int(unit.dropped)
 			}
 			tus = append(tus, unit.data)
 			progressDeadline = time.Now().Add(noProgress)

@@ -18,7 +18,7 @@ func TestCollectTemporalUnitsWithBudgetProgressResetsInactivityDeadline(t *testi
 			}
 		}()
 
-		got, err := collectTemporalUnitsWithBudget(decoded, 3, 200*time.Millisecond, 50*time.Millisecond)
+		got, err := collectTemporalUnitsWithBudget(decoded, 3, 200*time.Millisecond, 50*time.Millisecond, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -36,7 +36,7 @@ func TestCollectTemporalUnitsWithBudgetProgressResetsInactivityDeadline(t *testi
 func TestCollectTemporalUnitsWithBudgetStopsOnInactivityDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		_, err := collectTemporalUnitsWithBudget(
-			make(chan receivedTemporalUnit), 1, 200*time.Millisecond, 20*time.Millisecond)
+			make(chan receivedTemporalUnit), 1, 200*time.Millisecond, 20*time.Millisecond, false)
 		if err == nil || !strings.Contains(err.Error(), "no temporal-unit progress") {
 			t.Fatalf("error = %v, want no-progress timeout", err)
 		}
@@ -62,7 +62,7 @@ func TestCollectTemporalUnitsWithBudgetStopsOnOverallDeadlineDuringProgress(t *t
 			}
 		}()
 
-		_, err := collectTemporalUnitsWithBudget(decoded, 10, 25*time.Millisecond, 10*time.Millisecond)
+		_, err := collectTemporalUnitsWithBudget(decoded, 10, 25*time.Millisecond, 10*time.Millisecond, false)
 		close(stop)
 		synctest.Wait()
 		if err == nil || !strings.Contains(err.Error(), "overall temporal-unit collection timeout") {
@@ -75,7 +75,7 @@ func TestCollectTemporalUnitsWithBudgetReportsClosedStream(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		decoded := make(chan receivedTemporalUnit)
 		close(decoded)
-		_, err := collectTemporalUnitsWithBudget(decoded, 1, time.Second, time.Second)
+		_, err := collectTemporalUnitsWithBudget(decoded, 1, time.Second, time.Second, false)
 		if err == nil || !strings.Contains(err.Error(), "decoded stream closed after 0/1 temporal units") {
 			t.Fatalf("error = %v, want closed-stream error", err)
 		}
@@ -97,7 +97,7 @@ func TestCollectTemporalUnitsWithBudgetRestartsAfterTransportLoss(t *testing.T) 
 			}
 		}()
 
-		got, err := collectTemporalUnitsWithBudget(decoded, 3, time.Second, time.Second)
+		got, err := collectTemporalUnitsWithBudget(decoded, 3, time.Second, time.Second, true)
 		if err != nil {
 			t.Fatal(err)
 		}
