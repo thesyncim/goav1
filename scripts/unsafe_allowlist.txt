@@ -73,7 +73,6 @@ internal/av1/tile/mode.go
 internal/av1/tile/refmvs_tmvs.go
 internal/av1/tile/restoration_apply_u8.go
 internal/av1/tile/restoration_boundary.go
-internal/av1/transform/block.go
 internal/av1/transform/dct2lane_gosimd_amd64.go
 internal/av1/transform/dct32_lanes4_adapters_gosimd.go
 internal/av1/transform/dct32_lanes4_gosimd.go
