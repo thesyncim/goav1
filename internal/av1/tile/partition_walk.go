@@ -4,6 +4,13 @@ package tile
 // coordinates are AV1 4x4 units; Root is normally RootBlockLevel(sequence).
 type BlockWalkRequest struct {
 	Root BlockLevel
+	// Layout422 rejects the partitions whose blocks are taller than wide
+	// (PARTITION_V, V4, T_LEFT_SPLIT, T_RIGHT_SPLIT): their 4:2:2 chroma
+	// block size is BLOCK_INVALID, which dav1d's decode_sb refuses
+	// (src/decode.c, the DAV1D_PIXEL_LAYOUT_I422 checks after the partition
+	// symbol and after the bottom-edge split bool). It sits next to Root so
+	// the request stays 16 bytes.
+	Layout422 bool
 
 	MIColStart uint16
 	MIRowStart uint16
@@ -168,6 +175,9 @@ func (w *partitionWalker) walkNode(level BlockLevel, node uint16, rootCol uint32
 	}
 	if !partition.ValidForLevel(level) {
 		return ErrInvalidDecodeState
+	}
+	if w.req.Layout422 && partition.splitsVertically() {
+		return ErrInvalid422Partition
 	}
 
 	if partition == PartitionSplit && level != BlockLevel8x8 {

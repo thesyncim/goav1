@@ -377,6 +377,12 @@ func (s *DecodeState) ReadPartition(cdfs *PartitionCDFs, level BlockLevel, ctx i
 	return nonSplit, nil
 }
 
+// splitsVertically reports whether p yields blocks taller than wide, the
+// partitions dav1d's decode_sb rejects in 4:2:2.
+func (p Partition) splitsVertically() bool {
+	return p == PartitionV || p == PartitionV4 || p == PartitionTLeftSplit || p == PartitionTRightSplit
+}
+
 // Context returns dav1d's get_partition_ctx() value.
 func (c *PartitionContext) Context(level BlockLevel, yb8 int, xb8 int) (int, error) {
 	if c == nil || !level.Valid() || xb8 < 0 || yb8 < 0 ||

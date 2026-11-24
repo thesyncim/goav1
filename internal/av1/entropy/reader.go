@@ -10,6 +10,7 @@ package entropy
 
 import (
 	"encoding/binary"
+	"math"
 	"math/bits"
 )
 
@@ -31,6 +32,8 @@ const (
 	// NOT rescale this constant or every BitsRead consumer (tile trailing-bit
 	// checks) would shift by ecWindow-32.
 	readerInitTellOffs = 10 - (32 - 8)
+	// maxTellOffs is the largest tellOffs the int16 state fields hold.
+	maxTellOffs = math.MaxInt16
 )
 
 func readerTell(pos int, cnt int32, tellOffs int32) int {
@@ -84,6 +87,13 @@ func refillStateSlow(src []byte, pos int, dif uint64, cnt int32, tellOffs int32)
 	if pos >= len(src) {
 		tellOffs += ecLotsBits - cnt
 		cnt = ecLotsBits
+		// Reader and Cursor keep tellOffs in an int16. Only the first
+		// end-of-buffer refill can come from a valid tile: a second one means
+		// ecLotsBits padding bits have already been decoded, so the reader is
+		// overread. Saturating keeps BitsRead past the end from there on;
+		// letting tellOffs wrap would bring BitsRead back under the payload
+		// size and hide the overread from Overread.
+		tellOffs = min(tellOffs, maxTellOffs)
 	}
 	return pos, dif, cnt, tellOffs
 }
@@ -202,8 +212,11 @@ func (r *Reader) BitsRead() int {
 // Overread reports whether the decoder has consumed more bits than the tile
 // payload holds: past the end it decodes padding ones, so every symbol from
 // there on is invented. It is libaom's aom_reader_has_overflowed
-// (aom_dsp/bitreader.c); dav1d checks the same condition after each
-// superblock row (msac.cnt <= -15 in dav1d_decode_tile_sbrow).
+// (aom_dsp/bitreader.c) and the same predicate as dav1d's msac.cnt <= -15
+// (src/decode.c dav1d_decode_tile_sbrow): dav1d's cnt is 8*bytesLoaded - 15
+// minus the renormalization shifts, its padding adds nothing, and BitsRead is
+// those shifts + 1, so both fire once the shifts reach 8*len(src).
+// TestReaderOverreadMatchesDav1dCnt checks the two step for step.
 func (r *Reader) Overread() bool {
 	if r == nil {
 		return false

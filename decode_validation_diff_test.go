@@ -426,9 +426,12 @@ func vdRun(tus [][]byte, workers int, layered bool) vdResult {
 	for i := 0; ; i++ {
 		frames, ok, err := dec.DecodeNext()
 		if err != nil {
-			if res.errTU < 0 {
+			// The clean prefix before a constructor failure can still fail
+			// to decode earlier; the first rejecting TU is the verdict.
+			if res.errTU < 0 || i < res.errTU {
 				res.errTU = i
 				res.err = err.Error()
+				res.construct = false
 			}
 			return res
 		}
