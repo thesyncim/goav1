@@ -63,6 +63,9 @@ func coeffInitLevelsSIMD(coeffs []int16, scanWidth int, scanHeight int, levels [
 	stride := scanHeight + txPadHorizontal
 	coeffs = coeffs[:scanWidth*scanHeight]
 	levels = levels[:(scanWidth+txPadHorizontal)*stride]
+	// Column pointers: coeffs and levels are cut to their full extents above,
+	// and the per-column checked slices cost +7-31% cycles on
+	// BenchmarkCoeffInitLevels.
 	src := unsafe.Pointer(unsafe.SliceData(coeffs))
 	dst := unsafe.Pointer(unsafe.SliceData(levels))
 	cap127 := archsimd.BroadcastUint16x8(127)
