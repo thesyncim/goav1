@@ -970,7 +970,7 @@ func newDecoderSideDataScratch(size decoderFrameWorkSideDataScratchSize, arena *
 		CDEFReadMap:              arena.takeBools(size.CDEFReadMap),
 		LoopFilterMap:            make([]internalthreading.FrameWorkLoopFilterBlockRecord, size.LoopFilterMap),
 		LoopFilterMasks:          make([]internallfmask.FilterMask, size.LoopFilterMasks),
-		LoopFilterLevelCache:     make([][4]uint8, size.LoopFilterLevelCache),
+		LoopFilterLevelCache:     make([]uint8, size.LoopFilterLevelCache),
 		RestorationRecords:       make([]internaltile.RestorationUnitRecord, size.RestorationRecords),
 		RestorationBoundaryAbove: arena.takeUint16s(size.RestorationBoundaryAbove),
 		RestorationBoundaryBelow: arena.takeUint16s(size.RestorationBoundaryBelow),

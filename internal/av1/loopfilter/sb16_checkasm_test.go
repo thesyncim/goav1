@@ -32,18 +32,18 @@ func newCheckasmSB16Case(seed int64, vertical, luma bool, strength int) checkasm
 	if rng.Intn(2) == 1 {
 		c.bitDepth = 12
 	}
-	c.lvl = make([][4]uint8, 64)
+	c.lvl = make([]uint8, 4*(64))
 	for j := 0; j < nBlks; j++ {
 		idx := rng.Intn(strength + 2)
 		if idx != 0 {
 			c.vm[idx-1] |= 1 << uint(j)
 		}
 		if vertical {
-			c.lvl[2*j][0] = uint8(rng.Intn(64))
-			c.lvl[2*j+1][0] = uint8(rng.Intn(64))
+			c.lvl[4*(2*j)+0] = uint8(rng.Intn(64))
+			c.lvl[4*(2*j+1)+0] = uint8(rng.Intn(64))
 		} else {
-			c.lvl[j][0] = uint8(rng.Intn(64))
-			c.lvl[32+j][0] = uint8(rng.Intn(64))
+			c.lvl[4*(j)+0] = uint8(rng.Intn(64))
+			c.lvl[4*(32+j)+0] = uint8(rng.Intn(64))
 		}
 	}
 	if vertical {
@@ -66,14 +66,14 @@ func newCheckasmSB16Case(seed int64, vertical, luma bool, strength int) checkasm
 		x := i >> 2
 		var L uint8
 		if vertical {
-			L = c.lvl[2*x+1][0]
+			L = c.lvl[4*(2*x+1)+0]
 			if L == 0 {
-				L = c.lvl[2*x][0]
+				L = c.lvl[4*(2*x)+0]
 			}
 		} else {
-			L = c.lvl[32+x][0]
+			L = c.lvl[4*(32+x)+0]
 			if L == 0 {
-				L = c.lvl[x][0]
+				L = c.lvl[4*(x)+0]
 			}
 		}
 		E, I := int(c.lut.E[L])<<bd8, int(c.lut.I[L])<<bd8
@@ -141,14 +141,14 @@ func TestFilterSB16CheckasmMatchesScalar(t *testing.T) {
 				for s := 0; s < n; s++ {
 					c := newCheckasmSB16Case(seed*7+int64(s), vertical, luma, s)
 					comp := int(seed & 3)
-					lvl := make([][4]uint8, len(c.lvl))
-					for i := range c.lvl {
-						lvl[i][comp] = c.lvl[i][0]
-						lvl[i][(comp+1)&3] = uint8(i)
+					lvl := make([]uint8, len(c.lvl))
+					for i := range len(c.lvl) / 4 {
+						lvl[4*(i)+comp] = c.lvl[4*(i)+0]
+						lvl[4*(i)+(comp+1)&3] = uint8(i)
 					}
 					vm := c.vm
 					if seed&1 == 1 && !vertical {
-						lvl = lvl[:c.lvlOff+31]
+						lvl = lvl[:4*(c.lvlOff+31)]
 						for k := range vm {
 							vm[k] &= 0x7fffffff
 						}

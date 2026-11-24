@@ -387,27 +387,24 @@ func avxSBWidth(nGt4, n16 uint32, luma bool) int {
 	}
 }
 
-// avxLevels8 loads the eight level cells from u (dav1d's movu of l[0]).
-func avxLevels8(lvl [][4]uint8, u int) archsimd.Uint8x32 {
-	l := (*[8][4]uint8)(lvl[u : u+8])
-	var c [8]uint32
-	for k := range c {
-		c[k] = binary.LittleEndian.Uint32(l[k][:])
-	}
-	return archsimd.LoadUint32x8Array(&c).ReshapeToUint8s()
+// avxLevels8 loads the eight level cells from u (dav1d's movu of l[0]): the
+// level map holds four bytes per cell, so this is one 32-byte load.
+func avxLevels8(lvl []uint8, u int) archsimd.Uint8x32 {
+	o := int(uint32(4 * u))
+	return archsimd.LoadUint8x32Array((*[32]uint8)(lvl[o : o+32]))
 }
 
 // avxLevelsRow loads the levels of eight consecutive units (horizontal
 // edges: dav1d lpf_v_sb movu of l[0] and l[-b4_stride]).
-func avxLevelsRow(lvl [][4]uint8, u0, lvlStride int, nAll uint32) (cur, prev archsimd.Uint8x32) {
-	if u0-lvlStride >= 0 && u0+8 <= len(lvl) {
+func avxLevelsRow(lvl []uint8, u0, lvlStride int, nAll uint32) (cur, prev archsimd.Uint8x32) {
+	if u0-lvlStride >= 0 && 4*(u0+8) <= len(lvl) {
 		return avxLevels8(lvl, u0), avxLevels8(lvl, u0-lvlStride)
 	}
 	var c, p [8]uint32
 	for k := 0; k < 8; k++ {
 		if nAll&(1<<uint(k)) != 0 {
-			c[k] = binary.LittleEndian.Uint32(lvl[u0+k][:])
-			p[k] = binary.LittleEndian.Uint32(lvl[u0+k-lvlStride][:])
+			c[k] = binary.LittleEndian.Uint32(lvl[4*(u0+k):])
+			p[k] = binary.LittleEndian.Uint32(lvl[4*(u0+k-lvlStride):])
 		}
 	}
 	return archsimd.LoadUint32x8Array(&c).ReshapeToUint8s(), archsimd.LoadUint32x8Array(&p).ReshapeToUint8s()
@@ -415,20 +412,20 @@ func avxLevelsRow(lvl [][4]uint8, u0, lvlStride int, nAll uint32) (cur, prev arc
 
 // avxLevelsCol gathers the levels of eight units stacked lvlStride cells
 // apart and of their left neighbours (vertical edges: dav1d lpf_h_sb).
-func avxLevelsCol(lvl [][4]uint8, li, lvlStride int, nAll uint32) (cur, prev archsimd.Uint8x32) {
+func avxLevelsCol(lvl []uint8, li, lvlStride int, nAll uint32) (cur, prev archsimd.Uint8x32) {
 	var c, p [8]uint32
-	if li-1 >= 0 && li+7*lvlStride < len(lvl) {
+	if li-1 >= 0 && 4*(li+7*lvlStride+1) <= len(lvl) {
 		for k := 0; k < 8; k++ {
-			i := li + k*lvlStride
-			c[k] = binary.LittleEndian.Uint32(lvl[i][:])
-			p[k] = binary.LittleEndian.Uint32(lvl[i-1][:])
+			i := 4 * (li + k*lvlStride)
+			c[k] = binary.LittleEndian.Uint32(lvl[i:])
+			p[k] = binary.LittleEndian.Uint32(lvl[i-4:])
 		}
 	} else {
 		for k := 0; k < 8; k++ {
 			if nAll&(1<<uint(k)) != 0 {
-				i := li + k*lvlStride
-				c[k] = binary.LittleEndian.Uint32(lvl[i][:])
-				p[k] = binary.LittleEndian.Uint32(lvl[i-1][:])
+				i := 4 * (li + k*lvlStride)
+				c[k] = binary.LittleEndian.Uint32(lvl[i:])
+				p[k] = binary.LittleEndian.Uint32(lvl[i-4:])
 			}
 		}
 	}
@@ -442,7 +439,7 @@ func sbGroupSub(vm [3]uint32, sh uint) [3]uint32 {
 	return vm
 }
 
-func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	if !sbAVX2 || len(pix) > lfMaxPlane {
 		filterSBHorizontal8Scalar(pix, off, stride, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 		return
@@ -452,7 +449,7 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 	archsimd.ClearAVXUpperBits()
 }
 
-func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	if !sbAVX2 || len(pix) > lfMaxPlane {
 		filterSBVertical8Scalar(pix, off, stride, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 		return
@@ -466,7 +463,7 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 // row of units, 32 columns per kernel call. Groups that would cross rowBytes,
 // the plane or the tap reach take the unit-by-unit reference instead. simd
 // counts the groups the vector kernel handled.
-func avxSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) (simd int) {
+func avxSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) (simd int) {
 	gt4All := vm[1] | vm[2]
 	all := vm[0] | gt4All
 	sel := archsimd.LoadInt8x32Array(&avxConst.levelSel[comp&3])
@@ -678,7 +675,7 @@ func avxVertical16(pix []byte, p7, stride int, eV, iV, hV, m4, mGt4, m16 archsim
 // column of units, 32 rows per kernel call. Groups whose rows do not fit the
 // footprint arm64 uses (sixteen bytes from p3, or p7 at width 16) take the
 // unit-by-unit reference.
-func avxSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) (simd int) {
+func avxSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) (simd int) {
 	gt4All := vm[1] | vm[2]
 	all := vm[0] | gt4All
 	sel := archsimd.LoadInt8x32Array(&avxConst.levelSel[comp&3])

@@ -259,7 +259,7 @@ func compactRootSideData(t *testing.T) (*decoderFrameWorkSideData, *internalthre
 		},
 		LoopFilterMasks: internalthreading.FrameWorkLoopFilterMasks{
 			Masks:      make([]lfmask.FilterMask, 1),
-			LevelCache: make([][4]uint8, 16),
+			LevelCache: make([]uint8, 4*(16)),
 			Cols:       4,
 			Rows:       4,
 			SB128W:     1,

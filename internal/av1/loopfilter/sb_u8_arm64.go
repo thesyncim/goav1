@@ -22,24 +22,21 @@ func lpfRow(pix []byte, o int) *[16]byte {
 	return (*[16]byte)(pix[o : o+16])
 }
 
-// lpfWin2 is the two row windows at b and b+st, taken through one slice of
-// both rows capped at its end: one compare for the pair. Callers pass b and st
+// lpfWin2 is the two row windows at b and b+st: both are slices ending at
+// the second row's end, so the pair costs one compare. Callers pass b and st
 // below 1<<32 (int(uint32(x))), which proves the offsets non-negative and
 // overflow-free.
 func lpfWin2(pix []byte, b, st int) (*[16]byte, *[16]byte) {
 	e := b + st + 16
-	s := pix[b:e:e]
-	return (*[16]byte)(s[:16]), (*[16]byte)(s[st : st+16])
+	return (*[16]byte)(pix[b:e]), (*[16]byte)(pix[b+st : e])
 }
 
 // lpfWin4 is the four row windows from b at stride st, two compares.
 func lpfWin4(pix []byte, b, st int) (*[16]byte, *[16]byte, *[16]byte, *[16]byte) {
 	e := b + st + 16
-	s := pix[b:e:e]
 	b2 := b + 2*st
 	e2 := b2 + st + 16
-	t := pix[b2:e2:e2]
-	return (*[16]byte)(s[:16]), (*[16]byte)(s[st : st+16]), (*[16]byte)(t[:16]), (*[16]byte)(t[st : st+16])
+	return (*[16]byte)(pix[b:e]), (*[16]byte)(pix[b+st : e]), (*[16]byte)(pix[b2:e2]), (*[16]byte)(pix[b2+st : e2])
 }
 
 // lpfMaxPlane bounds the planes the vector drivers take: every row offset of
@@ -312,54 +309,46 @@ func sbWidth(nGt4, n16 uint32, luma bool) int {
 	}
 }
 
-// sbLevelPair moves component sh/8 of the two level cells in l to the low
-// bytes of two 32-bit lanes (the other bytes zero).
-func sbLevelPair(l *[2][4]uint8, sh uint) uint64 {
-	x := uint64(binary.LittleEndian.Uint32(l[0][:])) | uint64(binary.LittleEndian.Uint32(l[1][:]))<<32
-	return x >> (sh & 63) & 0x000000ff000000ff
+// The level map holds four bytes per 4x4 cell (lfmask.LevelCache), so a
+// byte cursor li = 4*cell + comp reads component comp of a cell; loads of
+// whole cells keep comp in the low byte of each 32-bit lane after an AND with
+// sbLowByteLanes, as dav1d's lpf_func does.
+
+// sbLevels4 is component comp of the four cells from the byte cursor li, one
+// per 32-bit lane (dav1d's ld1 of l[0]): one sixteen-byte load.
+func sbLevels4(lvl []uint8, li int) archsimd.Uint32x4 {
+	return archsimd.LoadUint8x16Array((*[16]uint8)(lvl[li : li+16])).ReshapeToUint32s().And(archsimd.LoadUint32x4Array(&sbLowByteLanes))
 }
 
-// sbLevelCells4 is component sh/8 of the four level cells l, one per 32-bit
-// lane.
-func sbLevelCells4(l *[4][4]uint8, sh uint) archsimd.Uint32x4 {
-	t := [2]uint64{sbLevelPair((*[2][4]uint8)(l[0:2]), sh), sbLevelPair((*[2][4]uint8)(l[2:4]), sh)}
-	return archsimd.LoadUint64x2Array(&t).ReshapeToUint32s()
-}
-
-// sbLevels4 is component sh/8 of the four level cells from u, one per 32-bit
-// lane (dav1d's ld1 of l[0]).
-func sbLevels4(lvl [][4]uint8, u int, sh uint) archsimd.Uint32x4 {
-	l := (*[4][4]uint8)(lvl[u : u+4])
-	t := [2]uint64{sbLevelPair((*[2][4]uint8)(l[0:2]), sh), sbLevelPair((*[2][4]uint8)(l[2:4]), sh)}
-	return archsimd.LoadUint64x2Array(&t).ReshapeToUint32s()
-}
-
-// sbLevelsPairs is component sh/8 of the (l[-1], l[0]) cell pairs of four
-// units stacked ls cells apart from li (dav1d's ld2 lane loads): cur holds
-// each unit's l[0], prev its l[-1].
-func sbLevelsPairs(lvl [][4]uint8, li, ls int, sh uint) (cur, prev archsimd.Uint32x4) {
-	i := li - 1
-	x := [2]uint64{sbLevelPair((*[2][4]uint8)(lvl[i:i+2]), sh), sbLevelPair((*[2][4]uint8)(lvl[i+ls:i+ls+2]), sh)}
-	i += 2 * ls
-	y := [2]uint64{sbLevelPair((*[2][4]uint8)(lvl[i:i+2]), sh), sbLevelPair((*[2][4]uint8)(lvl[i+ls:i+ls+2]), sh)}
+// sbLevelsPairs is component comp of the (l[-1], l[0]) cell pairs of four
+// units ls4 bytes apart from the byte cursor li (dav1d's ld2 lane loads): cur
+// holds each unit's l[0], prev its l[-1]. Two units share one window of their
+// pairs, one compare from 32-bit offsets.
+func sbLevelsPairs(lvl []uint8, li, ls4 int) (cur, prev archsimd.Uint32x4) {
+	o, l := int(uint32(li-4)), int(uint32(ls4))
+	e := o + l + 8
+	o2 := o + 2*l
+	e2 := o2 + l + 8
+	x := [2]uint64{binary.LittleEndian.Uint64(lvl[o:e]), binary.LittleEndian.Uint64(lvl[o+l : e])}
+	y := [2]uint64{binary.LittleEndian.Uint64(lvl[o2:e2]), binary.LittleEndian.Uint64(lvl[o2+l : e2])}
 	a := archsimd.LoadUint64x2Array(&x).ReshapeToUint32s()
 	b := archsimd.LoadUint64x2Array(&y).ReshapeToUint32s()
-	return a.ConcatOdd(b), a.ConcatEven(b)
+	ff := archsimd.LoadUint32x4Array(&sbLowByteLanes)
+	return a.ConcatOdd(b).And(ff), a.ConcatEven(b).And(ff)
 }
 
 // sbLevelsRow loads the levels of four consecutive units (horizontal edges:
 // dav1d lpf_v_sb ld1 of l[0] and l[-b4_stride]) with component comp moved to
 // the low byte of each lane.
-func sbLevelsRow(lvl [][4]uint8, u0, lvlStride, comp int, nAll uint32) (cur, prev archsimd.Uint32x4) {
-	if u0-lvlStride >= 0 && u0+4 <= len(lvl) {
-		sh := uint(8 * (comp & 3))
-		return sbLevels4(lvl, u0, sh), sbLevels4(lvl, u0-lvlStride, sh)
+func sbLevelsRow(lvl []uint8, u0, lvlStride, comp int, nAll uint32) (cur, prev archsimd.Uint32x4) {
+	if li := 4*u0 + comp; u0-lvlStride >= 0 && li+16 <= len(lvl) {
+		return sbLevels4(lvl, li), sbLevels4(lvl, li-4*lvlStride)
 	}
 	var c, p [4]uint32
 	for k := 0; k < 4; k++ {
 		if nAll&(1<<uint(k)) != 0 {
-			c[k] = uint32(lvl[u0+k][comp])
-			p[k] = uint32(lvl[u0+k-lvlStride][comp])
+			c[k] = uint32(lvl[4*(u0+k)+comp])
+			p[k] = uint32(lvl[4*(u0+k-lvlStride)+comp])
 		}
 	}
 	return archsimd.LoadUint32x4Array(&c), archsimd.LoadUint32x4Array(&p)
@@ -368,15 +357,15 @@ func sbLevelsRow(lvl [][4]uint8, u0, lvlStride, comp int, nAll uint32) (cur, pre
 // sbLevelsCol loads the levels of four units stacked lvlStride cells apart
 // (vertical edges: dav1d lpf_h_sb ld2 of the l[-1], l[0] pairs) with
 // component comp moved to the low byte of each lane.
-func sbLevelsCol(lvl [][4]uint8, li, lvlStride, comp int, nAll uint32) (cur, prev archsimd.Uint32x4) {
-	if li-1 >= 0 && li+3*lvlStride < len(lvl) {
-		return sbLevelsPairs(lvl, li, lvlStride, uint(8*(comp&3)))
+func sbLevelsCol(lvl []uint8, li, lvlStride, comp int, nAll uint32) (cur, prev archsimd.Uint32x4) {
+	if li-1 >= 0 && 4*(li+3*lvlStride)+comp+4 <= len(lvl) {
+		return sbLevelsPairs(lvl, 4*li+comp, 4*lvlStride)
 	}
 	var c, p [4]uint32
 	for k := 0; k < 4; k++ {
 		if nAll&(1<<uint(k)) != 0 {
-			c[k] = uint32(lvl[li+k*lvlStride][comp])
-			p[k] = uint32(lvl[li+k*lvlStride-1][comp])
+			c[k] = uint32(lvl[4*(li+k*lvlStride)+comp])
+			p[k] = uint32(lvl[4*(li+k*lvlStride-1)+comp])
 		}
 	}
 	return archsimd.LoadUint32x4Array(&c), archsimd.LoadUint32x4Array(&p)
@@ -385,7 +374,7 @@ func sbLevelsCol(lvl [][4]uint8, li, lvlStride, comp int, nAll uint32) (cur, pre
 // filterSBHorizontal8Edge is the group-by-group driver for calls whose
 // samples or levels reach the end of their buffers: each group checks its own
 // reach and falls back to the unit-by-unit reference when it would leave pix.
-func filterSBHorizontal8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+func filterSBHorizontal8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	gt4All := vm[1] | vm[2]
 	all := vm[0] | gt4All
 	sharp0, sharp1 := uint64(lut.Sharp[0]), lut.Sharp[1]
@@ -422,7 +411,7 @@ func filterSBHorizontal8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32
 }
 
 // filterSBVertical8Edge is filterSBHorizontal8Edge for vertical edges.
-func filterSBVertical8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+func filterSBVertical8Edge(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	gt4All := vm[1] | vm[2]
 	all := vm[0] | gt4All
 	sharp0, sharp1 := uint64(lut.Sharp[0]), lut.Sharp[1]
@@ -504,7 +493,7 @@ func sbLimits(cur, prev archsimd.Uint32x4, nib uint32, lut *SBLUT) (eV, iV, hV a
 // C side's &lvl[x][comp]), and the widest set nibble picks the kernel. The
 // call's reach is checked once up front, as dav1d trusts its caller; calls
 // that touch the end of pix, the row or the level map take the edge driver.
-func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	vm0, vm1, vm2 := vm[0]|vm[1]|vm[2], vm[1]|vm[2], vm[2]
 	end := 16 * ((31-bits.LeadingZeros32(vm0))>>2 + 1)
 	reach := 4
@@ -516,22 +505,21 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 		filterSBHorizontal8Scalar(pix, off, stride, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 		return
 	}
-	if end > rowBytes || off < reach*stride || off+(reach-1)*stride+end > len(pix) || li < ls4 || li+end > 4*len(lvl) {
+	if end > rowBytes || off < reach*stride || off+(reach-1)*stride+end > len(pix) || li < ls4 || li+end > len(lvl) {
 		filterSBHorizontal8Edge(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 		return
 	}
-	sh := uint(8 * (comp & 3))
 	b, st := int(uint32(off)), int(uint32(stride))
-	u, ls := int(uint32(lvlOff)), int(uint32(lvlStride))
+	li, ls4 = int(uint32(li)), int(uint32(ls4))
 	switch {
 	case vm2 != 0:
-		sbRowsU8[lpfW16](pix, b, st, end, vm0, vm1, vm2, luma, lvl, u, ls, sh, lut)
+		sbRowsU8[lpfW16](pix, b, st, end, vm0, vm1, vm2, luma, lvl, li, ls4, lut)
 	case vm1 != 0 && luma:
-		sbRowsU8[lpfW8](pix, b, st, end, vm0, vm1, 0, luma, lvl, u, ls, sh, lut)
+		sbRowsU8[lpfW8](pix, b, st, end, vm0, vm1, 0, luma, lvl, li, ls4, lut)
 	case vm1 != 0:
-		sbRowsU8[lpfW6](pix, b, st, end, vm0, vm1, 0, luma, lvl, u, ls, sh, lut)
+		sbRowsU8[lpfW6](pix, b, st, end, vm0, vm1, 0, luma, lvl, li, ls4, lut)
 	default:
-		sbRowsU8[lpfW4](pix, b, st, end, vm0, 0, 0, luma, lvl, u, ls, sh, lut)
+		sbRowsU8[lpfW4](pix, b, st, end, vm0, 0, 0, luma, lvl, li, ls4, lut)
 	}
 }
 
@@ -540,7 +528,7 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 // window of the call's n columns, taken once from 32-bit offsets (one compare
 // each); the loop bounds prove every group's sixteen-byte (four-cell) window,
 // so the groups pay no checks. Rows a call's width never reads alias q0's.
-func sbRowsU8[W lpfWidth](pix []byte, b, st, n int, vm0, vm1, vm2 uint32, luma bool, lvl [][4]uint8, u, ls int, sh uint, lut *SBLUT) {
+func sbRowsU8[W lpfWidth](pix []byte, b, st, n int, vm0, vm1, vm2 uint32, luma bool, lvl []uint8, li, ls4 int, lut *SBLUT) {
 	var wdT W
 	wd := len(wdT)
 	n = int(uint32(n))
@@ -561,14 +549,18 @@ func sbRowsU8[W lpfWidth](pix []byte, b, st, n int, vm0, vm1, vm2 uint32, luma b
 		rp4, rp5, rp6 = pix[b-5*st:b-5*st+n:b-5*st+n], pix[b-6*st:b-6*st+n:b-6*st+n], pix[b-7*st:b-7*st+n:b-7*st+n]
 		rq4, rq5, rq6 = row(4), row(5), row(6)
 	}
-	m := n / 4
-	lc := lvl[u : u+m : u+m]
-	lp := lvl[u-ls : u-ls+m : u-ls+m]
-	for x, c := 0, 0; vm0 != 0 && x <= len(rq0)-16 && c <= len(lc)-4 && c <= len(lp)-4; vm0, vm1, vm2, x, c = vm0>>4, vm1>>4, vm2>>4, x+16, c+4 {
+	// The level rows (l[0] and l[-b4_stride]) from the byte cursor li: four
+	// cells per sixteen-column group, so the groups index them like the rows.
+	lc := lvl[li : li+n : li+n]
+	lp := lvl[li-ls4 : li-ls4+n : li-ls4+n]
+	ff := archsimd.LoadUint32x4Array(&sbLowByteLanes)
+	for x := 0; vm0 != 0 && x <= len(rq0)-16; vm0, vm1, vm2, x = vm0>>4, vm1>>4, vm2>>4, x+16 {
 		if vm0&15 == 0 {
 			continue
 		}
-		eV, iV, hV, m4, ok := sbLimits(sbLevelCells4((*[4][4]uint8)(lc[c:c+4]), sh), sbLevelCells4((*[4][4]uint8)(lp[c:c+4]), sh), vm0, lut)
+		cur := archsimd.LoadUint8x16Array((*[16]uint8)(lc[x : x+16])).ReshapeToUint32s().And(ff)
+		prev := archsimd.LoadUint8x16Array((*[16]uint8)(lp[x : x+16])).ReshapeToUint32s().And(ff)
+		eV, iV, hV, m4, ok := sbLimits(cur, prev, vm0, lut)
 		if !ok {
 			continue
 		}
@@ -621,7 +613,7 @@ func lpfRowsU8(pix []byte, q0, stride, wd int, eV, iV, hV archsimd.Uint8x16, m4,
 // filterSBVertical8 is dav1d lpf_h_sb_{y,uv}_8bpc_neon in the same shape:
 // each group reads the (l[-1], l[0]) level pairs of its four units (the ld2
 // lane loads) from the component-offset cursor.
-func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	vm0, vm1, vm2 := vm[0]|vm[1]|vm[2], vm[1]|vm[2], vm[2]
 	hiG := (31 - bits.LeadingZeros32(vm0)) >> 2
 	reach := 4
@@ -633,17 +625,16 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 		filterSBVertical8Scalar(pix, off, stride, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 		return
 	}
-	if rowBytes < 12 || off < reach || off+(16*hiG+15)*stride+12 > len(pix) || li < 4 || li+(4*hiG+3)*ls4+4 > 4*len(lvl) {
+	if rowBytes < 12 || off < reach || off+(16*hiG+15)*stride+12 > len(pix) || li < 4 || li+(4*hiG+3)*ls4+4 > len(lvl) {
 		filterSBVertical8Edge(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 		return
 	}
-	sh := uint(8 * (comp & 3))
 	stride16 := 16 * stride
-	for q0, u := off, lvlOff; vm0 != 0; vm0, vm1, vm2, q0, u = vm0>>4, vm1>>4, vm2>>4, q0+stride16, u+4*lvlStride {
+	for q0 := off; vm0 != 0; vm0, vm1, vm2, q0, li = vm0>>4, vm1>>4, vm2>>4, q0+stride16, li+4*ls4 {
 		if vm0&15 == 0 {
 			continue
 		}
-		cur, prev := sbLevelsPairs(lvl, u, lvlStride, sh)
+		cur, prev := sbLevelsPairs(lvl, li, ls4)
 		eV, iV, hV, m4, ok := sbLimits(cur, prev, vm0, lut)
 		if !ok {
 			continue
@@ -662,7 +653,7 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 	}
 }
 
-func sbVerticalScalarGroup(pix []byte, q0Off, stride int, vm [3]uint32, sh uint, luma bool, lvl [][4]uint8, u0, lvlStride, comp int, lut *SBLUT) {
+func sbVerticalScalarGroup(pix []byte, q0Off, stride int, vm [3]uint32, sh uint, luma bool, lvl []uint8, u0, lvlStride, comp int, lut *SBLUT) {
 	sub := vm
 	for k := range sub {
 		sub[k] = (sub[k] >> sh) & 0xf

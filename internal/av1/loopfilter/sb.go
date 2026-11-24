@@ -66,11 +66,12 @@ func NewSBLUT(sharpness uint8) SBLUT {
 
 // FilterSBVertical8 filters the vertical edges of one 4-pixel column of 4x4
 // units in an 8-bit plane. pix[off] is the sample just right of the edge (q0)
-// on the first unit's first row; unit n starts 4*n rows below. lvl[lvlOff +
-// n*lvlStride][comp] is unit n's level; a zero level falls back to the unit on
-// the left (lvl[... - 1]). vm[2] must be zero for chroma. rowBytes is how many
-// bytes from off to the end of the row the call may read and rewrite.
-func FilterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+// on the first unit's first row; unit n starts 4*n rows below. lvl holds four
+// level bytes per 4x4 cell (lfmask.LevelCache): lvl[4*(lvlOff+n*lvlStride)+comp]
+// is unit n's level; a zero level falls back to the cell on the left. vm[2]
+// must be zero for chroma. rowBytes is how many bytes from off to the end of
+// the row the call may read and rewrite.
+func FilterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	if vm[0]|vm[1]|vm[2] == 0 {
 		return
 	}
@@ -80,11 +81,11 @@ func FilterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 // FilterSBHorizontal8 filters the horizontal edges of one 4-pixel row of 4x4
 // units in an 8-bit plane. pix[off] is the sample just below the edge (q0) at
 // the first unit's first column; unit n starts 4*n samples to the right.
-// lvl[lvlOff + n][comp] is unit n's level; a zero level falls back to the unit
-// above (lvl[... - lvlStride]). rowBytes is how many bytes from off to the end
+// lvl[4*(lvlOff+n)+comp] is unit n's level (four bytes per cell); a zero level
+// falls back to the cell above. rowBytes is how many bytes from off to the end
 // of the row the call may read and rewrite; whole sixteen-sample groups that
 // would cross it are filtered unit by unit instead.
-func FilterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+func FilterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	if vm[0]|vm[1]|vm[2] == 0 {
 		return
 	}
@@ -108,16 +109,16 @@ func sbUnitWidth(vm *[3]uint32, luma bool, bit uint32) int {
 
 // filterSBVertical8Scalar is the unit-by-unit reference: dav1d
 // loop_filter_h_sb128{y,uv}_c over loop_filter() with stridea = row stride.
-func filterSBVertical8Scalar(pix []byte, off, stride int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+func filterSBVertical8Scalar(pix []byte, off, stride int, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	all := vm[0] | vm[1] | vm[2]
 	for all != 0 {
 		n := bits.TrailingZeros32(all)
 		bit := uint32(1) << uint(n)
 		all &^= bit
 		li := lvlOff + n*lvlStride
-		L := lvl[li][comp]
+		L := lvl[4*(li)+comp]
 		if L == 0 {
-			L = lvl[li-1][comp]
+			L = lvl[4*(li-1)+comp]
 		}
 		if L == 0 {
 			continue
@@ -128,16 +129,16 @@ func filterSBVertical8Scalar(pix []byte, off, stride int, vm [3]uint32, luma boo
 
 // filterSBHorizontal8Scalar is the unit-by-unit reference for horizontal edges:
 // dav1d loop_filter_v_sb128{y,uv}_c with stridea = 1, strideb = row stride.
-func filterSBHorizontal8Scalar(pix []byte, off, stride int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+func filterSBHorizontal8Scalar(pix []byte, off, stride int, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	all := vm[0] | vm[1] | vm[2]
 	for all != 0 {
 		n := bits.TrailingZeros32(all)
 		bit := uint32(1) << uint(n)
 		all &^= bit
 		li := lvlOff + n
-		L := lvl[li][comp]
+		L := lvl[4*(li)+comp]
 		if L == 0 {
-			L = lvl[li-lvlStride][comp]
+			L = lvl[4*(li-lvlStride)+comp]
 		}
 		if L == 0 {
 			continue
@@ -275,7 +276,7 @@ func SBLUTFor(sharpness uint8) *SBLUT {
 
 // FilterSBVertical16 is FilterSBVertical8 for 10/12-bit planes stored as
 // little-endian uint16 samples: off, stride and rowBytes are in bytes.
-func FilterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+func FilterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	if vm[0]|vm[1]|vm[2] == 0 {
 		return
 	}
@@ -283,23 +284,23 @@ func FilterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, v
 }
 
 // FilterSBHorizontal16 is FilterSBHorizontal8 for 10/12-bit planes.
-func FilterSBHorizontal16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+func FilterSBHorizontal16(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	if vm[0]|vm[1]|vm[2] == 0 {
 		return
 	}
 	filterSBHorizontal16(pix, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 }
 
-func filterSBVertical16Scalar(pix []byte, off, stride int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+func filterSBVertical16Scalar(pix []byte, off, stride int, bitDepth uint8, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	all := vm[0] | vm[1] | vm[2]
 	for all != 0 {
 		n := bits.TrailingZeros32(all)
 		bit := uint32(1) << uint(n)
 		all &^= bit
 		li := lvlOff + n*lvlStride
-		L := lvl[li][comp]
+		L := lvl[4*(li)+comp]
 		if L == 0 {
-			L = lvl[li-1][comp]
+			L = lvl[4*(li-1)+comp]
 		}
 		if L == 0 {
 			continue
@@ -308,16 +309,16 @@ func filterSBVertical16Scalar(pix []byte, off, stride int, bitDepth uint8, vm [3
 	}
 }
 
-func filterSBHorizontal16Scalar(pix []byte, off, stride int, bitDepth uint8, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
+func filterSBHorizontal16Scalar(pix []byte, off, stride int, bitDepth uint8, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) {
 	all := vm[0] | vm[1] | vm[2]
 	for all != 0 {
 		n := bits.TrailingZeros32(all)
 		bit := uint32(1) << uint(n)
 		all &^= bit
 		li := lvlOff + n
-		L := lvl[li][comp]
+		L := lvl[4*(li)+comp]
 		if L == 0 {
-			L = lvl[li-lvlStride][comp]
+			L = lvl[4*(li-lvlStride)+comp]
 		}
 		if L == 0 {
 			continue

@@ -67,7 +67,7 @@ func bindDecoderFrameWorkLoopFilterMap(sequence SequenceHeader, size FrameSize, 
 // size). masks length must be >= the FrameWorkLoopFilterMaskShape mask count and
 // levelCache >= the loop-filter map length. The handle is cleared; attach it via
 // the side-data so the tile block walk builds it during decode.
-func bindDecoderFrameWorkLoopFilterMasks(sequence SequenceHeader, size FrameSize, masks []internallfmask.FilterMask, levelCache [][4]uint8) (internalthreading.FrameWorkLoopFilterMasks, error) {
+func bindDecoderFrameWorkLoopFilterMasks(sequence SequenceHeader, size FrameSize, masks []internallfmask.FilterMask, levelCache []uint8) (internalthreading.FrameWorkLoopFilterMasks, error) {
 	batch := decoderFrameWorkFrameBatch(sequence, size)
 	return batch.BindLoopFilterMasks(masks, levelCache)
 }
@@ -188,7 +188,7 @@ type decoderFrameWorkSideDataScratch struct {
 
 	LoopFilterMap        []internalthreading.FrameWorkLoopFilterBlockRecord
 	LoopFilterMasks      []internallfmask.FilterMask
-	LoopFilterLevelCache [][4]uint8
+	LoopFilterLevelCache []uint8
 
 	RestorationRecords       []internaltile.RestorationUnitRecord
 	RestorationBoundaryAbove []uint16
@@ -579,7 +579,7 @@ func decoderFrameWorkSideDataScratchLen(sequence SequenceHeader, size FrameSize,
 		CDEFReadMap:              cdefLength,
 		LoopFilterMap:            loopFilterLength,
 		LoopFilterMasks:          maskCount,
-		LoopFilterLevelCache:     internalthreading.FrameWorkLoopFilterLevelCacheLen(lfCols, lfRows),
+		LoopFilterLevelCache:     4 * internalthreading.FrameWorkLoopFilterLevelCacheLen(lfCols, lfRows),
 		RestorationRecords:       restorationPlan.UnitRecordLen(),
 		RestorationBoundaryAbove: boundaryLength,
 		RestorationBoundaryBelow: boundaryLength,

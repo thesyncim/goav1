@@ -213,8 +213,8 @@ func newVideoSBCase(seed int64, vertical, luma bool, strength int) checkasmSBCas
 	for j := 0; j < nBlks; j++ {
 		c.vm[strength] |= 1 << uint(j)
 	}
-	for i := range c.lvl {
-		c.lvl[i][0] = uint8(16 + rng.Intn(24))
+	for i := range len(c.lvl) / 4 {
+		c.lvl[4*(i)+0] = uint8(16 + rng.Intn(24))
 	}
 	for i := 0; i < 4*nBlks; i++ {
 		base := 60 + rng.Intn(120)

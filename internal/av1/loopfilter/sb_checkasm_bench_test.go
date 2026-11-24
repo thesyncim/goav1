@@ -36,7 +36,7 @@ type checkasmSBCase struct {
 	stride    int
 	rowBytes  int
 	vm        [3]uint32
-	lvl       [][4]uint8
+	lvl       []uint8
 	lvlOff    int
 	lvlStride int
 	lut       SBLUT
@@ -54,18 +54,18 @@ func newCheckasmSBCase(seed int64, vertical, luma bool, strength int) checkasmSB
 	c := checkasmSBCase{lut: NewSBLUT(uint8(sharp))}
 	// checkasm: l[32*2][4]; vertical edges read l[2j+1] (fallback l[2j]),
 	// horizontal edges read l[32+j] (fallback l[j]).
-	c.lvl = make([][4]uint8, 64)
+	c.lvl = make([]uint8, 4*(64))
 	for j := 0; j < nBlks; j++ {
 		idx := rng.Intn(strength + 2)
 		if idx != 0 {
 			c.vm[idx-1] |= 1 << uint(j)
 		}
 		if vertical {
-			c.lvl[2*j][0] = uint8(rng.Intn(64))
-			c.lvl[2*j+1][0] = uint8(rng.Intn(64))
+			c.lvl[4*(2*j)+0] = uint8(rng.Intn(64))
+			c.lvl[4*(2*j+1)+0] = uint8(rng.Intn(64))
 		} else {
-			c.lvl[j][0] = uint8(rng.Intn(64))
-			c.lvl[32+j][0] = uint8(rng.Intn(64))
+			c.lvl[4*(j)+0] = uint8(rng.Intn(64))
+			c.lvl[4*(32+j)+0] = uint8(rng.Intn(64))
 		}
 	}
 	if vertical {
@@ -87,14 +87,14 @@ func newCheckasmSBCase(seed int64, vertical, luma bool, strength int) checkasmSB
 		x := i >> 2
 		var L uint8
 		if vertical {
-			L = c.lvl[2*x+1][0]
+			L = c.lvl[4*(2*x+1)+0]
 			if L == 0 {
-				L = c.lvl[2*x][0]
+				L = c.lvl[4*(2*x)+0]
 			}
 		} else {
-			L = c.lvl[32+x][0]
+			L = c.lvl[4*(32+x)+0]
 			if L == 0 {
-				L = c.lvl[x][0]
+				L = c.lvl[4*(x)+0]
 			}
 		}
 		E, I := int(c.lut.E[L]), int(c.lut.I[L])
@@ -210,13 +210,13 @@ func TestFilterSB8CheckasmMatchesScalar(t *testing.T) {
 				for s := 0; s < n; s++ {
 					c := newCheckasmSBCase(seed*7+int64(s), vertical, luma, s)
 					comp := int(seed & 3)
-					lvl := make([][4]uint8, len(c.lvl))
-					for i := range c.lvl {
-						lvl[i][comp] = c.lvl[i][0]
-						lvl[i][(comp+1)&3] = uint8(i) // junk in the other components
+					lvl := make([]uint8, len(c.lvl))
+					for i := range len(c.lvl) / 4 {
+						lvl[4*(i)+comp] = c.lvl[4*(i)+0]
+						lvl[4*(i)+(comp+1)&3] = uint8(i) // junk in the other components
 					}
 					if seed&1 == 1 && !vertical {
-						lvl = lvl[:c.lvlOff+31]
+						lvl = lvl[:4*(c.lvlOff+31)]
 					}
 					want := append([]byte(nil), c.pix...)
 					got := append([]byte(nil), c.pix...)
