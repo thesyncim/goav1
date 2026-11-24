@@ -6,7 +6,10 @@
 
 package cdef
 
-import "simd/archsimd"
+import (
+	"simd/archsimd"
+	"unsafe"
+)
 
 // cdefShiftCount is the per-block constrain() shift in the form the NEON
 // variable shift consumes: a broadcast negative count, so USHL shifts right.
@@ -42,9 +45,7 @@ func filterUnitBlocksSIMD(dst []uint16, dstStride int, input []uint16, inputOrig
 	}
 	secondaryStrength := u.secondaryStrength
 	ctx := cdefSIMDCtx{
-		in:     input,
-		out16:  dst,
-		dstStr: dstStride,
+		dstStr: dstStride * 2,
 		height: u.blockHeight,
 	}
 	ctx.setSecondary(secondaryStrength, u.damping)
@@ -71,7 +72,8 @@ func filterUnitBlocksSIMD(dst []uint16, dstStride int, input []uint16, inputOrig
 			dir = int(directions[by][bx])
 		}
 		ctx.setDirection(dir)
-		ctx.do, ctx.io = dstOrigin, srcOrigin
+		ctx.dst = unsafe.Pointer(&dst[dstOrigin])
+		ctx.input = unsafe.Pointer(&input[srcOrigin])
 		cdefFilterBlock16(&ctx, u.blockWidth)
 	}
 	return nil
@@ -95,8 +97,6 @@ func filterUnitBlocksU8SIMD(dst []byte, dstStride int, input []uint16, inputOrig
 	}
 	secondaryStrength := u.secondaryStrength
 	ctx := cdefSIMDCtx{
-		in:     input,
-		out8:   dst,
 		dstStr: dstStride,
 		height: u.blockHeight,
 		u8:     true,
@@ -132,7 +132,8 @@ func filterUnitBlocksU8SIMD(dst []byte, dstStride int, input []uint16, inputOrig
 			dir = int(directions[by][bx])
 		}
 		ctx.setDirection(dir)
-		ctx.do, ctx.io = dstOrigin, srcOrigin
+		ctx.dst = unsafe.Pointer(&dst[dstOrigin])
+		ctx.input = unsafe.Pointer(&input[srcOrigin])
 		if useInterior && strength != 0 && secondaryStrength != 0 {
 			cdefFilterBlock8InteriorSIMD(&ctx)
 		} else {
