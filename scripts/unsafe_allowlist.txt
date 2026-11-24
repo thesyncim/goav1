@@ -6,8 +6,6 @@ internal/av1/decoder/postfilter_cdef_u8.go
 internal/av1/decoder/postfilter_filmgrain_direct.go
 internal/av1/decoder/postfilter_filmgrain_direct_le.go
 internal/av1/decoder/postfilter_sbrow.go
-internal/av1/frame/samples_gosimd_arm64.go
-internal/av1/frame/samples_le.go
 internal/av1/loopfilter/filter4_wide_arm64.go
 internal/av1/loopfilter/filter_lanes_arm64.go
 internal/av1/loopfilter/filter_lanes_gosimd.go
@@ -33,9 +31,6 @@ internal/av1/motion/mc8_gosimd_arm64.go
 internal/av1/motion/mc8mask_gosimd_amd64.go
 internal/av1/motion/mc8mask_gosimd_arm64.go
 internal/av1/motion/mc8w4_gosimd_arm64.go
-internal/av1/quantize/quantize_rowgroups_diff_gosimd_arm64.go
-internal/av1/quantize/quantize_rowgroups_gosimd_amd64.go
-internal/av1/superres/upscale_gosimd.go
 internal/av1/threading/cdf_storage_copy.go
 internal/av1/threading/predict.go
 internal/av1/tile/coeff.go

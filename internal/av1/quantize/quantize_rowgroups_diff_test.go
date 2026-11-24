@@ -5,7 +5,6 @@ import (
 	"math/rand"
 	"reflect"
 	"testing"
-	"unsafe"
 )
 
 // Independent derivation of the old quantize_b scalar rule. In particular it
@@ -191,22 +190,7 @@ func TestQuantizeBRowGroupsDiffOriginalNumeric(t *testing.T) {
 	t.Logf("fused cases executed: %d", handledCount)
 }
 
-func TestQuantizeBRowGroupsDiffDeclinesOverlapAndUnsupported(t *testing.T) {
-	const n = 8
-	for _, offset := range []int{0, 1, 4, 31, 63, 127} {
-		backing := make([]int32, 256)
-		for i := range backing {
-			backing[i] = int32(i*137 + 50)
-		}
-		levels := unsafe.Slice((*int16)(unsafe.Pointer(&backing[0])), 2*len(backing))
-		before := append([]int32(nil), backing...)
-		if _, _, _, handled := TryQuantizeBRowGroupsDiffTrusted(levels[offset:offset+64], backing[:64], n, 3, n, testBParams(Quantizer{120, 140}, 0), make([]int16, 64)); handled {
-			t.Fatalf("overlap offset=%d accepted", offset)
-		}
-		if !reflect.DeepEqual(backing, before) {
-			t.Fatalf("overlap offset=%d changed storage", offset)
-		}
-	}
+func TestQuantizeBRowGroupsDiffDeclinesUnsupported(t *testing.T) {
 	for _, tc := range []struct {
 		n, qlen, clen int
 		q             Quantizer

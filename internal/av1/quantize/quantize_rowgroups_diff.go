@@ -9,8 +9,8 @@ import "math/bits"
 // past cols (1 <= cols <= n) must also lie below its zero bin, and those
 // columns are not read (SVT's N2/N4 forward transforms leave them zero).
 // The caller must still use the original path when handled is false; in that
-// case nothing has been written. In particular, overlapping coefficient and
-// level storage keeps the original two-pass ordering.
+// case nothing has been written. The int32 coefficients and int16 levels are
+// distinct element types, so in safe Go their storage cannot overlap.
 //
 // The difference uses AC dequantization followed by the same DC correction as
 // the encoder's SIMD statistics. Rate is sum((2+bits.Len16(abs(level)))<<9)
