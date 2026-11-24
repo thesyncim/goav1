@@ -7,6 +7,7 @@
 package motion
 
 import (
+	"encoding/binary"
 	"simd/archsimd"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -203,9 +204,10 @@ func mc8AVX2Blend(dst []byte, ds int, a, b []uint16, w, h int, mask []byte, ms i
 			if w == 4 {
 				mc8StPutW4(dst, ds, r, h, v)
 			} else {
-				d := r * ds
-				mc8St8(dst, d, v.GetLo())
-				mc8St8(dst, d+ds, v.GetHi())
+				y0, y1 := mc8Rows2x8(dst, r*ds, ds)
+				u := v.ReshapeToUint64s()
+				binary.LittleEndian.PutUint64(y0[:], u.GetLo().GetElem(0))
+				binary.LittleEndian.PutUint64(y1[:], u.GetHi().GetElem(0))
 			}
 		}
 	case 16:
@@ -289,9 +291,10 @@ func mc8AVX2DiffWtd(mask []byte, ms int, a, b []uint16, w, h int, invert bool) {
 			if w == 4 {
 				mc8StPutW4(mask, ms, r, h, v)
 			} else {
-				d := r * ms
-				mc8St8(mask, d, v.GetLo())
-				mc8St8(mask, d+ms, v.GetHi())
+				y0, y1 := mc8Rows2x8(mask, r*ms, ms)
+				u := v.ReshapeToUint64s()
+				binary.LittleEndian.PutUint64(y0[:], u.GetLo().GetElem(0))
+				binary.LittleEndian.PutUint64(y1[:], u.GetHi().GetElem(0))
 			}
 		}
 	case 16:
