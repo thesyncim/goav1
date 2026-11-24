@@ -41,6 +41,7 @@ func wienerVerticalSIMD(temp []uint16, tempStride int, dst []uint16, dstStride i
 	zero := archsimd.BroadcastInt16x8(0)
 	maxV := archsimd.BroadcastInt16x8(int16(max))
 
+	// Strided rows inside the extents checked above; same shape as the loop-filter rows (checked rows +9-86%).
 	tp := unsafe.Pointer(unsafe.SliceData(temp))
 	dp := unsafe.Pointer(unsafe.SliceData(dst))
 	ts := tempStride * 2

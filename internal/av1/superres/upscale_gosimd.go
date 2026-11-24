@@ -11,6 +11,10 @@ import (
 	"unsafe"
 )
 
+// unsafe: superresFold's 8-tap window lies in the central span the caller
+// bounds; the checked (*[8]uint16)(srcRow[base:]) load measured +34-37% on
+// BenchmarkRowSIMD and BenchmarkUpscalePlane{8,10}bit.
+
 // Go-native SIMD super-res horizontal upscale row kernel (simd/archsimd,
 // GOEXPERIMENT=simd). The AV1 normative super-res filter is a per-output-pixel
 // 8-tap polyphase resampler: each destination pixel x derives its own source

@@ -22,7 +22,8 @@ import (
 // to the 16bpc prediction with the saturating add clipped to the bit depth.
 // A declined block is left untouched for the staged path.
 
-// itx64ColStripAddHBD is itx64ColStripAdd onto 16bpc samples.
+// itx64ColStripAddHBD runs the 64x64 column pass for columns c0..c0+7 from
+// tmp rows 0..inRows-1 and adds the result onto 16bpc samples.
 func itx64ColStripAddHBD(tmp *[32 * 64]int16, c0 int, inRows int, dst unsafe.Pointer, dstStride int, pred unsafe.Pointer, predStride int, maxV archsimd.Int16x8) {
 	var in [32]archsimd.Int16x8
 	for r := 0; r < inRows; r++ {
@@ -69,6 +70,7 @@ func InverseAddDCT64x64HBD(dst []byte, dstStride int, pred []byte, predStride in
 	if m.ReduceMax() > itx16ColumnL1Bound {
 		return false
 	}
+	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
 	dp := unsafe.Pointer(unsafe.SliceData(dst))
 	pp := unsafe.Pointer(unsafe.SliceData(pred))
 	for c0 := 0; c0 < 64; c0 += 8 {

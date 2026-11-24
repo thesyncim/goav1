@@ -126,6 +126,8 @@ func convolveX8HalfResident(ctx *convolve8GoSIMDCtx) {
 	round4 := archsimd.BroadcastInt16x8(8)
 	right2 := archsimd.BroadcastInt16x8(-2)
 	right4 := archsimd.BroadcastInt16x8(-4)
+	// Strided rows inside the len(ctx.ref) >= need extent the dispatching kernel
+	// checked; same shape as the residual-add rows (checked rows +9-86%).
 	base := unsafe.Pointer(unsafe.SliceData(ctx.ref))
 	for y := range ctx.height {
 		dst := ctx.dst[y*ctx.dstStr:]
@@ -190,6 +192,8 @@ func convolveY8HalfResident(ctx *convolve8GoSIMDCtx) {
 	c7 := archsimd.BroadcastInt16x8(ctx.kernel[7] / 2)
 	round := archsimd.BroadcastInt16x8(32)
 	right6 := archsimd.BroadcastInt16x8(-6)
+	// Strided rows inside the len(ctx.ref) >= need extent the dispatching kernel
+	// checked; same shape as the residual-add rows (checked rows +9-86%).
 	base := unsafe.Pointer(unsafe.SliceData(ctx.ref))
 	step := ctx.refStr
 	load := func(off int) archsimd.Int16x8 {
@@ -354,6 +358,8 @@ func convolve2D8HalfKernel(ctx *convolve8GoSIMDCtx, im []int16, xTaps *hbdTaps16
 			}
 		}
 	}
+	// im rows (stride maxBlockSize) inside the height+taps-1 rows the wrapper
+	// supplies; same shape as the residual-add rows (checked rows +9-86%).
 	imBase := unsafe.Pointer(unsafe.SliceData(im))
 	load := func(y, x int) archsimd.Int16x8 {
 		return archsimd.LoadInt16x8((*[8]int16)(unsafe.Add(imBase, (y*maxBlockSize+x)*2))[:])
@@ -406,6 +412,8 @@ func u8HorizontalHalfIMResident(ctx *convolve8GoSIMDCtx, im []int16) {
 	c7 := archsimd.BroadcastInt16x8(ctx.xKern[7] / 2)
 	xRound := archsimd.BroadcastInt16x8(8194)
 	right2 := archsimd.BroadcastInt16x8(-2)
+	// Strided rows inside the len(ctx.ref) >= need extent the dispatching kernel
+	// checked; same shape as the residual-add rows (checked rows +9-86%).
 	base := unsafe.Pointer(unsafe.SliceData(ctx.ref))
 	for y := 0; y < ctx.height+ctx.tapsY-1; y++ {
 		row := im[y*maxBlockSize:]

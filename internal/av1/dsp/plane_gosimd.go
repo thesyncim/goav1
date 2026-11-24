@@ -32,6 +32,10 @@ import (
 	"unsafe"
 )
 
+// unsafe: the rows are resliced before the pointer loops; the safe form of
+// the 16-bit loop (two induction variables) measured +34-44% on the arm64
+// twin, and the 8-bit form added per-row work on amd64.
+
 // addResidualPlaneBlockSIMD is the Go SIMD residual add for 8-bit and 16-bit
 // samples.
 func addResidualPlaneBlockSIMD(block planeBlock, bytesPerSample int, max uint16, width int, residual []int16, residualStride int) {

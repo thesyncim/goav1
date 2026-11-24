@@ -103,7 +103,7 @@ func svtSweepPoint1(me *realtimeSBMultiSizeME, src, ref []byte, stride, mvX, mvY
 		v := acc.AsInt32x8()
 		sad := v.GetLo().SaturateToInt16Concat(v.GetHi()).AsUint32x4()
 		pu8 := 21 + n*4
-		bp := (*[4]uint32)(unsafe.Pointer(&me.bestSAD[pu8]))
+		bp := (*[4]uint32)(me.bestSAD[pu8:])
 		mp := (*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8]))
 		best := archsimd.LoadUint32x4Array(bp)
 		lt := sad.Less(best)

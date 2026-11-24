@@ -37,6 +37,8 @@ const coeffNZMapWindowLen = 96
 // a group whose loads would leave the level scratch is staged through a
 // zero-padded window instead, so the kernel never reads past the buffers.
 func coeffNZMapContextsSIMD(levels []uint8, offsets []uint8, contexts []int8, scanWidth int, scanHeight int, stride int, nb [5]int) {
+	// Strided columns: each group's extent is checked before its loads (else staged);
+	// same shape as the SAD rows (checked rows +9-86%).
 	lv := unsafe.Pointer(unsafe.SliceData(levels))
 	off := unsafe.Pointer(unsafe.SliceData(offsets))
 	out := unsafe.Pointer(unsafe.SliceData(contexts))

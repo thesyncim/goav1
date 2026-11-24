@@ -41,6 +41,7 @@ func sad8x8x4SIMD(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int
 func sad8x8x4Step4SIMD(src, ref []byte, stride int) (int, int, int, int) {
 	_ = src[7*stride+7]
 	_ = ref[7*stride+19]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	rp := unsafe.Pointer(&ref[0])
 	return sad8x8x4Ptr(unsafe.Pointer(&src[0]), rp, step(rp, 4), step(rp, 8), step(rp, 12), stride)
 }
@@ -79,6 +80,7 @@ func sad16x16x4SIMD(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, i
 func sad16x16x4Step4SIMD(src, ref []byte, stride int) (int, int, int, int) {
 	_ = src[15*stride+15]
 	_ = ref[15*stride+27]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	rp := unsafe.Pointer(&ref[0])
 	return sad16ColsX4Ptr(unsafe.Pointer(&src[0]), rp, step(rp, 4), step(rp, 8), step(rp, 12), stride, 16)
 }
@@ -88,6 +90,7 @@ func sad16x16x4Step4SIMD(src, ref []byte, stride int) (int, int, int, int) {
 func sad32x32SIMD(src []byte, srcStride int, ref []byte, refStride int) int {
 	_ = src[31*srcStride+31]
 	_ = ref[31*refStride+31]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	sp := unsafe.Pointer(&src[0])
 	rp := unsafe.Pointer(&ref[0])
 	return sad16ColsDualPtr(sp, srcStride, rp, refStride, 32) +
@@ -102,6 +105,7 @@ func sad32x32x4SIMD(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, i
 	_ = ref1[31*stride+31]
 	_ = ref2[31*stride+31]
 	_ = ref3[31*stride+31]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	sp := unsafe.Pointer(&src[0])
 	p0 := unsafe.Pointer(&ref0[0])
 	p1 := unsafe.Pointer(&ref1[0])
@@ -118,6 +122,7 @@ func sad32x32x4SIMD(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, i
 func sad32x32x4Step4SIMD(src, ref []byte, stride int) (int, int, int, int) {
 	_ = src[31*stride+31]
 	_ = ref[31*stride+43]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	sp := unsafe.Pointer(&src[0])
 	rp := unsafe.Pointer(&ref[0])
 	l0, l1, l2, l3 := sad16ColsX4Ptr(sp, rp, step(rp, 4), step(rp, 8), step(rp, 12), stride, 32)
@@ -130,6 +135,7 @@ func sad32x32x4Step4SIMD(src, ref []byte, stride int) (int, int, int, int) {
 func sad64x64SIMD(src []byte, srcStride int, ref []byte, refStride int) int {
 	_ = src[63*srcStride+63]
 	_ = ref[63*refStride+63]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	sp := unsafe.Pointer(&src[0])
 	rp := unsafe.Pointer(&ref[0])
 	return sad16ColsDualPtr(sp, srcStride, rp, refStride, 64) +

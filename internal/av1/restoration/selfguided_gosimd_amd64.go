@@ -6,10 +6,7 @@
 
 package restoration
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // AVX2 Go-native SIMD self-guided kernels: the box sums, the nine-tap blend, and
 // the 8-bit final projection. Eight int32 lanes per vector (one Int32x8) throughout.
@@ -135,14 +132,14 @@ func sgrWeightedRowU8SIMD(dst []uint8, src []uint8, f0 []int32, f1 []int32, xq0 
 	lowBytes := archsimd.LoadInt8x16Array(&u8LowByteIdx)
 	zeroBytes := archsimd.BroadcastUint8x16(0)
 	col := 0
-	for ; col+16 <= width; col += 16 {
+	for ; col <= len(dst)-16; col += 16 {
 		sv := archsimd.LoadUint8x16(src[col:])
 		// zeroBytes.ConcatShiftBytesRight(sv, 8) yields sv[8..15] in the low eight bytes.
 		upper := zeroBytes.ConcatShiftBytesRight(sv, 8)
 		outA := sgrWeightedU8Project8(sv.ExtendLo8ToUint32(), f0, f1, col, c, lowBytes)
 		outB := sgrWeightedU8Project8(upper.ExtendLo8ToUint32(), f0, f1, col+8, c, lowBytes)
 		joined := outA.ReshapeToUint64s().InterleaveLo(outB.ReshapeToUint64s()).ReshapeToUint8s()
-		joined.StoreArray((*[16]uint8)(unsafe.Pointer(&dst[col])))
+		joined.StoreArray((*[16]uint8)(dst[col:]))
 	}
 	if col < width {
 		sgrWeightedRowU8(dst[col:], src[col:], f0[col:], f1[col:], xq0, xq1)

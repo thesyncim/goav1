@@ -7,6 +7,9 @@ import (
 	"unsafe"
 )
 
+// unsafe: strided block rows inside extents checked once per call; the same
+// shape as sad_simd_arm64.go, where the bounds-checked row form measured +86%.
+
 func init() {
 	if gosimdKernelsSupported() {
 		pred8Impl = pred8AVX2

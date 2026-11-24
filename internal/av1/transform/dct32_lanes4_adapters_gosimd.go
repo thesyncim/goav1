@@ -20,6 +20,7 @@ func inverseDCT32Lanes4(pointer unsafe.Pointer, stride uintptr, min, max int32) 
 }
 
 func inverseDCT32Lanes4ColSIMD(buffer []int32, stride int, min, max int32) {
+	// lane rows inside the buffer extent checked here (or the fixed staging); same shape as the residual-add rows (checked rows +9-86%).
 	if stride < 4 || len(buffer) < 4 || stride > (len(buffer)-4)/(dct32Size-1) ||
 		!inverseDCT32Lanes4(unsafe.Pointer(&buffer[0]), uintptr(stride)*4, min, max) {
 		inverseDCT32Col4PureGo(buffer, stride, min, max)
@@ -44,6 +45,7 @@ func inverseDCT32Lanes4RowSIMD(row0, row1, row2, row3 []int32, min, max int32) {
 		value2.StoreArray(&staging[index+2])
 		value3.StoreArray(&staging[index+3])
 	}
+	// lane rows inside the buffer extent checked here (or the fixed staging); same shape as the residual-add rows (checked rows +9-86%).
 	inverseDCT32Lanes4(unsafe.Pointer(&staging), 16, min, max)
 	for index := 0; index < dct32Size; index += 4 {
 		value0, value1, value2, value3 := itxTranspose4(

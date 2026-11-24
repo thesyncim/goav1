@@ -207,26 +207,6 @@ func itx32RowStrip(coeff []int32, stride int, r0 int, inCols int, tmp *[32 * 32]
 	return true
 }
 
-// itx32ColStripAdd runs the 32x32 column pass for columns c0..c0+7 from
-// inRows coded tmp rows (8, 16 or 32) and adds the result to the block.
-func itx32ColStripAdd(tmp *[32 * 32]int16, c0 int, inRows int, dst unsafe.Pointer, dstStride int, pred unsafe.Pointer, predStride int) {
-	var in [32]archsimd.Int16x8
-	for r := 0; r < inRows; r++ {
-		in[r] = archsimd.LoadInt16x8Array((*[8]int16)(tmp[r*32+c0:]))
-	}
-	var out [32]archsimd.Int16x8
-	itx32Net(inRows, &in, &out)
-	one := archsimd.BroadcastInt16x8(1)
-	sh1 := archsimd.BroadcastInt16x8(-1)
-	sh3 := archsimd.BroadcastInt16x8(-3)
-	for r := 0; r < 32; r++ {
-		res := itx32Round2(out[r], sh3, sh1, one)
-		rows := [2]uint64{*(*uint64)(unsafe.Add(pred, r*predStride+c0)), 0}
-		p := archsimd.LoadUint64x2Array(&rows).ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()
-		*(*uint64)(unsafe.Add(dst, r*dstStride+c0)) = p.Add(res).SaturateToUint8().ReshapeToUint64s().GetElem(0)
-	}
-}
-
 // InverseAddDCT32x32Full reconstructs one 8-bit 32x32 DCT_DCT block with
 // coded coefficients in rows 0..activeRows-1 and columns 0..activeCols-1,
 // whichever network forms that takes: dst = clip(pred + inverse(coeff)),
@@ -237,36 +217,11 @@ func itx32ColStripAdd(tmp *[32 * 32]int16, c0 int, inRows int, dst unsafe.Pointe
 // 16x16 corner are served faster by InverseAddDCT32x32Low8 and Low16.
 func InverseAddDCT32x32Full(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
 	if activeRows <= 0 || activeRows > 32 || activeCols <= 0 || activeCols > 32 ||
-		coeffStride < 32 || len(coeff) < 31*coeffStride+32 || dstStride < 32 || predStride < 32 ||
+		coeffStride != 32 || len(coeff) < 1024 || dstStride < 32 || predStride < 32 ||
 		len(dst) < 31*dstStride+32 || len(pred) < 31*predStride+32 {
 		return false
 	}
-	inCols := itx64Form(activeCols)
-	inRows := itx64Form(activeRows)
-	if coeffStride == 32 && len(coeff) >= 1024 {
-		return itxGenDCT32x32((*[1024]int32)(coeff[:1024]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-			unsafe.Pointer(unsafe.SliceData(pred)), predStride, activeCols, activeRows)
-	}
-	var tmp [32 * 32]int16
-	var colL1 [4]archsimd.Uint16x8
-	written := 0
-	for ; written < activeRows; written += 8 {
-		if !itx32RowStrip(coeff, coeffStride, written, inCols, &tmp, &colL1) {
-			return false
-		}
-	}
-	// The column form may read tmp rows past the strips that ran; those
-	// rows are the transform of zero coefficient rows, so zero.
-	if written < inRows {
-		clear(tmp[written*32 : inRows*32])
-	}
-	if colL1[0].Max(colL1[1]).Max(colL1[2].Max(colL1[3])).ReduceMax() > itx16ColumnL1Bound {
-		return false
-	}
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	pp := unsafe.Pointer(unsafe.SliceData(pred))
-	for c0 := 0; c0 < 32; c0 += 8 {
-		itx32ColStripAdd(&tmp, c0, inRows, dp, dstStride, pp, predStride)
-	}
-	return true
+	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
+	return itxGenDCT32x32((*[1024]int32)(coeff[:1024]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
+		unsafe.Pointer(unsafe.SliceData(pred)), predStride, activeCols, activeRows)
 }

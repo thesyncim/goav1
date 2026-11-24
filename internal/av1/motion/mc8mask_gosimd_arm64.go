@@ -44,6 +44,7 @@ func mc8BlendMaskFast(dst frame.Plane, a, b []uint16, dstX, dstY, w, h int, mask
 	if maskStride < mw || (mh-1)*maskStride+mw > len(mask) || (mh-1)*maskStride+mw+8 > cap(mask) {
 		return false
 	}
+	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
 	mc8BlendMask(unsafe.Pointer(&dst.Pix[off]), dst.Stride, unsafe.Pointer(&a[0]), unsafe.Pointer(&b[0]), w, h, unsafe.Pointer(&mask[0]), maskStride, subX)
 	return true
 }
@@ -96,6 +97,7 @@ func mc8DiffWtdMaskFast(mask []byte, maskStride int, a, b []uint16, w, h int, in
 		maskStride < w || (h-1)*maskStride+w > len(mask) {
 		return false
 	}
+	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
 	mc8DiffWtdMask(unsafe.Pointer(&mask[0]), maskStride, unsafe.Pointer(&a[0]), unsafe.Pointer(&b[0]), w, h, invert)
 	return true
 }

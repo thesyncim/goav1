@@ -31,9 +31,12 @@ import (
 // adds are the 8-bit int16 clamps of the scalar transforms.
 
 // fv is one symbolic eight-lane int16 vector; zero marks a known-zero one.
+// A nonzero id marks the pending n-point identity of the named vector: the
+// rounding that follows it (round2) evaluates both exactly in one step.
 type fv struct {
 	zero bool
 	name string
+	id   int
 }
 
 type fgen struct {
@@ -42,6 +45,10 @@ type fgen struct {
 	memo   map[string]fv
 	wide   map[string][2]string
 	consts map[int]bool
+	// raw holds the int32 constants loaded as they are (field name to value).
+	raw map[string]int
+	// half marks a four-lane network instance.
+	half bool
 }
 
 // combine returns the butterfly e + o, e - o of a network's output stage.
@@ -77,52 +84,89 @@ func (g *fgen) k(c int) string {
 }
 
 // widen returns the sign-extended low and high halves of v, once per
-// network instance.
+// network instance (only the low half in a four-lane network).
 func (g *fgen) widen(v fv) (string, string) {
 	if w, ok := g.wide[v.name]; ok {
 		return w[0], w[1]
 	}
-	lo, hi := g.tmp("w"), g.tmp("w")
+	lo, hi := g.tmp("w"), ""
 	x := v.name
 	g.line("%s := %s.ExtendLo4ToInt32()", lo, x)
-	g.line("%s := %s.HiToLo().ExtendLo4ToInt32()", hi, x)
+	if !g.half {
+		hi = g.tmp("w")
+		g.line("%s := %s.HiToLo().ExtendLo4ToInt32()", hi, x)
+	}
 	g.wide[v.name] = [2]string{lo, hi}
 	return lo, hi
 }
 
-// rot is Round2(a*ca + b*cb, 12) on eight int16 lanes: on each
-// sign-extended half, 2^15 + a*(16ca) + b*(16cb) by multiply-accumulate
-// (the final sum fits int32, so a wrapped partial sum is harmless), then
-// the high halves of the 32-bit sums. Zero operands fold away and a
-// repeated rotation is computed once.
+// term is one operand of a dot product: v times the cospi-scale constant c.
+type term struct {
+	v fv
+	c int
+}
+
+// rot is Round2(a*ca + b*cb, 12) on eight int16 lanes (dot).
 func (g *fgen) rot(a fv, ca int, b fv, cb int) fv {
-	if a.zero && b.zero {
+	return g.dot([]term{{a, ca}, {b, cb}})
+}
+
+// dot is Round2(sum v*c, 12) on eight int16 lanes: on each sign-extended
+// half, 2^15 + sum v*(16c) by multiply-accumulate (the final sum fits
+// int32, so a wrapped partial sum is harmless), then the high halves of
+// the 32-bit sums. Zero operands fold away and a repeated product is
+// computed once. A four-lane network computes the low half only (the high
+// lanes of its vectors are don't-cares).
+func (g *fgen) dot(ts []term) fv {
+	var live []term
+	var key strings.Builder
+	// The key keeps the zero operands' constants (as #328's rotation did):
+	// folding a*c + 0*c1 and a*c + 0*c2 into one product saves an
+	// instruction but moves the register allocation of the 64-point strips
+	// (+3% cycles on DCT64 Col8).
+	for _, t := range ts {
+		if !t.v.zero {
+			live = append(live, t)
+		}
+		fmt.Fprintf(&key, "%s|%d|", t.v.name, t.c)
+	}
+	if len(live) == 0 {
 		return fv{zero: true}
 	}
-	if a.zero {
-		a, ca, b, cb = b, cb, fv{zero: true}, 0
-	}
-	key := fmt.Sprintf("%s|%d|%s|%d", a.name, ca, b.name, cb)
-	if v, ok := g.memo[key]; ok {
+	if v, ok := g.memo[key.String()]; ok {
 		return v
 	}
 	n := g.tmp("r")
-	al, ah := g.widen(a)
-	ka := g.tmp("k")
-	g.line("%s := %s", ka, g.k(ca))
-	g.line("%sl := %s.MulAdd(%s, bias)", n, al, ka)
-	g.line("%sh := %s.MulAdd(%s, bias)", n, ah, ka)
-	if !b.zero {
-		bl, bh := g.widen(b)
-		kb := g.tmp("k")
-		g.line("%s := %s", kb, g.k(cb))
-		g.line("%sl = %s.MulAdd(%s, %sl)", n, bl, kb, n)
-		g.line("%sh = %s.MulAdd(%s, %sh)", n, bh, kb, n)
+	for i, t := range live {
+		lo, hi := g.widen(t.v)
+		k := g.tmp("k")
+		g.line("%s := %s", k, g.k(t.c))
+		if i == 0 {
+			g.line("%sl := %s.MulAdd(%s, bias)", n, lo, k)
+			if !g.half {
+				g.line("%sh := %s.MulAdd(%s, bias)", n, hi, k)
+			}
+		} else {
+			g.line("%sl = %s.MulAdd(%s, %sl)", n, lo, k, n)
+			if !g.half {
+				g.line("%sh = %s.MulAdd(%s, %sh)", n, hi, k, n)
+			}
+		}
 	}
-	g.line("%s := %sl.ToBits().ReshapeToUint16s().ConcatOdd(%sh.ToBits().ReshapeToUint16s()).BitsToInt16()", n, n, n)
+	g.narrowHi(n)
 	v := fv{name: n}
-	g.memo[key] = v
+	g.memo[key.String()] = v
 	return v
+}
+
+// narrowHi writes n, the high halves of the 32-bit sums nl and nh (nl and
+// nl again in a four-lane network).
+func (g *fgen) narrowHi(n string) {
+	hi := n + "h"
+	if g.half {
+		hi = n + "l"
+	}
+	g.line("%s := %sl.ToBits().ReshapeToUint16s().ConcatOdd(%s.ToBits().ReshapeToUint16s()).BitsToInt16()", n, n, hi)
 }
 
 func (g *fgen) add(a, b fv) fv {
@@ -194,28 +238,49 @@ func (g *fgen) guard(vs []fv) {
 }
 
 // transpose8 transposes the 8x8 int16 matrix rows (rows[r] = row r) with
-// three interleave stages; a zero row is a zero operand.
+// three interleave stages; a zero row is a zero operand and an interleave
+// of two zero operands is a zero result.
 func (g *fgen) transpose8(rows []fv) []fv {
-	name := func(v fv) string {
-		if v.zero {
-			return "zero"
-		}
-		return v.name
-	}
 	p := g.tmp("x")
+	// a/b stage values, named or zero ("").
+	var a, b [8]string
+	op := func(x, y, zeroOf string) (string, string) {
+		if x == "" {
+			x = zeroOf
+		}
+		if y == "" {
+			y = zeroOf
+		}
+		return x, y
+	}
 	for i := 0; i < 8; i += 2 {
-		g.line("%sa%d := %s.InterleaveLo(%s).ToBits().ReshapeToUint32s()", p, i, name(rows[i]), name(rows[i+1]))
-		g.line("%sa%d := %s.InterleaveHi(%s).ToBits().ReshapeToUint32s()", p, i+1, name(rows[i]), name(rows[i+1]))
+		if rows[i].zero && rows[i+1].zero {
+			continue
+		}
+		x, y := op(rows[i].name, rows[i+1].name, "zero")
+		a[i], a[i+1] = fmt.Sprintf("%sa%d", p, i), fmt.Sprintf("%sa%d", p, i+1)
+		g.line("%s := %s.InterleaveLo(%s).ToBits().ReshapeToUint32s()", a[i], x, y)
+		g.line("%s := %s.InterleaveHi(%s).ToBits().ReshapeToUint32s()", a[i+1], x, y)
 	}
 	for _, q := range [][4]int{{0, 1, 0, 2}, {2, 3, 1, 3}, {4, 5, 4, 6}, {6, 7, 5, 7}} {
-		g.line("%sb%d := %sa%d.InterleaveLo(%sa%d).ReshapeToUint64s()", p, q[0], p, q[2], p, q[3])
-		g.line("%sb%d := %sa%d.InterleaveHi(%sa%d).ReshapeToUint64s()", p, q[1], p, q[2], p, q[3])
+		if a[q[2]] == "" && a[q[3]] == "" {
+			continue
+		}
+		x, y := op(a[q[2]], a[q[3]], "zero.ToBits().ReshapeToUint32s()")
+		b[q[0]], b[q[1]] = fmt.Sprintf("%sb%d", p, q[0]), fmt.Sprintf("%sb%d", p, q[1])
+		g.line("%s := %s.InterleaveLo(%s).ReshapeToUint64s()", b[q[0]], x, y)
+		g.line("%s := %s.InterleaveHi(%s).ReshapeToUint64s()", b[q[1]], x, y)
 	}
 	out := make([]fv, 8)
 	for i, q := range [][2]int{{0, 4}, {1, 5}, {2, 6}, {3, 7}} {
+		if b[q[0]] == "" && b[q[1]] == "" {
+			out[2*i], out[2*i+1] = fv{zero: true}, fv{zero: true}
+			continue
+		}
+		x, y := op(b[q[0]], b[q[1]], "zero.ToBits().ReshapeToUint64s()")
 		lo, hi := fmt.Sprintf("%st%d", p, 2*i), fmt.Sprintf("%st%d", p, 2*i+1)
-		g.line("%s := %sb%d.InterleaveLo(%sb%d).ReshapeToUint16s().BitsToInt16()", lo, p, q[0], p, q[1])
-		g.line("%s := %sb%d.InterleaveHi(%sb%d).ReshapeToUint16s().BitsToInt16()", hi, p, q[0], p, q[1])
+		g.line("%s := %s.InterleaveLo(%s).ReshapeToUint16s().BitsToInt16()", lo, x, y)
+		g.line("%s := %s.InterleaveHi(%s).ReshapeToUint16s().BitsToInt16()", hi, x, y)
 		out[2*i], out[2*i+1] = fv{name: lo}, fv{name: hi}
 	}
 	return out
@@ -227,6 +292,12 @@ func (g *fgen) round2(v fv, s int) fv {
 	if v.zero {
 		return v
 	}
+	if v.id != 0 {
+		return g.idRound(v, s)
+	}
+	if s == 0 {
+		return v
+	}
 	n := g.tmp("s")
 	if s == 1 {
 		g.line("%s := %s.Average(zero)", n, v.name)
@@ -236,12 +307,28 @@ func (g *fgen) round2(v fv, s int) fv {
 	return fv{name: n}
 }
 
-// load writes the int16-saturating load of the eight int32 coefficients at
-// c[off:off+8] (the row clamp of the 8-bit row pass).
-func (g *fgen) load(off int) fv {
+// load writes the int16-saturating load of the lanes (8 or 4) int32
+// coefficients at c[off:] (the row clamp of the 8-bit row pass), after the
+// rect2 scale Round2(x*2896, 12) = (x*181 + 128) >> 8 when rect2 is set
+// (with x first clamped to +-2^22, which keeps the product inside int32
+// and changes no result: the scaled value saturates either way).
+func (g *fgen) load(off, lanes int, rect2 bool) fv {
+	half := func(o int) string {
+		x := fmt.Sprintf("archsimd.LoadInt32x4Array((*[4]int32)(c[%d:%d]))", o, o+4)
+		if rect2 {
+			x += fmt.Sprintf(".Max(%s).Min(%s).MulAdd(%s, %s).ShiftAllRight(8)",
+				g.kraw("rlo", -(1<<22)), g.kraw("rhi", 1<<22), g.kraw("r181", 181), g.kraw("r128", 128))
+		}
+		return x + ".SaturateToInt16()"
+	}
+	if lanes == 4 {
+		v := g.tmp("c")
+		g.line("%s := %s", v, half(off))
+		return fv{name: v}
+	}
 	n := g.tmp("c")
-	g.line("%s := archsimd.LoadInt32x4Array((*[4]int32)(c[%d:%d])).SaturateToInt16().ToBits().ReshapeToUint64s().BitsToFloat64()", n, off, off+4)
-	g.line("%s = %s.SetElem(1, archsimd.LoadInt32x4Array((*[4]int32)(c[%d:%d])).SaturateToInt16().ToBits().ReshapeToUint64s().BitsToFloat64().GetElem(0))", n, n, off+4, off+8)
+	g.line("%s := %s.ToBits().ReshapeToUint64s().BitsToFloat64()", n, half(off))
+	g.line("%s = %s.SetElem(1, %s.ToBits().ReshapeToUint64s().BitsToFloat64().GetElem(0))", n, n, half(off+4))
 	v := g.tmp("c")
 	g.line("%s := %s.ToBits().ReshapeToUint16s().BitsToInt16()", v, n)
 	return fv{name: v}
@@ -252,12 +339,14 @@ func (g *fgen) load(off int) fv {
 // neighbouring blocks): predLo loads the strip's eight bytes and the next
 // eight, predHi the eight before and the strip's (pq is the strip's column
 // minus 8), predSel sixteen bytes zero-extended by the caller's TBL
-// selector (either of the two), predD8 only the eight bytes (8x8).
+// selector (either of the two), predD8 only the eight bytes (8 wide) and
+// predD4 the four (4 wide).
 const (
 	predLo = iota
 	predHi
 	predSel
 	predD8
+	predD4
 )
 
 // addRows writes the column output of one eight-column strip: Round2(., 4)
@@ -281,6 +370,16 @@ func (g *fgen) addRows(out []fv, first string, pred int) {
 			g.line("%s := archsimd.LoadUint8x16Array((*[16]uint8)(pq)).LookupOrZero(sel).ReshapeToUint16s().BitsToInt16()", p)
 		case predD8:
 			g.line("%s := pz.SetElem(0, *(*float64)(pq)).ToBits().ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()", p)
+		case predD4:
+			g.line("%s := pf.SetElem(0, *(*float32)(pq)).ToBits().ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()", p)
+		}
+		if pred == predD4 {
+			sum := p
+			if !res.zero {
+				sum = fmt.Sprintf("%s.Add(%s)", p, res.name)
+			}
+			g.line("*(*float32)(dq) = %s.SaturateToUint8().ReshapeToUint32s().BitsToFloat32().GetElem(0)", sum)
+			continue
 		}
 		if res.zero {
 			g.line("*(*float64)(dq) = %s.SaturateToUint8().ReshapeToUint64s().BitsToFloat64().GetElem(0)", p)
@@ -290,22 +389,48 @@ func (g *fgen) addRows(out []fv, first string, pred int) {
 	}
 }
 
-// kernel is one generated block function: an n x n DCT_DCT block with
+// kernel is one generated block function: an n wide, m high (m 0: n) block
+// of the vertical (column) and horizontal (row) 1-D types v and h with
 // coded coefficients within the cols x rows network forms.
 type kernel struct {
-	n, cols, rows int
+	n, m, cols, rows int
+	v, h             string
+}
+
+// height is the block's height.
+func (k kernel) height() int {
+	if k.m == 0 {
+		return k.n
+	}
+	return k.m
 }
 
 func (k kernel) name() string {
-	return fmt.Sprintf("itxGenDCT%dx%dC%dR%d", k.n, k.n, k.cols, k.rows)
+	if k.m == 0 && k.v == tDCT && k.h == tDCT {
+		return fmt.Sprintf("itxGenDCT%dx%dC%dR%d", k.n, k.n, k.cols, k.rows)
+	}
+	return fmt.Sprintf("itxGen%dx%d%s%sC%dR%d", k.n, k.height(), k.v, k.h, k.cols, k.rows)
+}
+
+// typeDoc is the block type's name in comments.
+func (k kernel) typeDoc() string {
+	return typeDoc(k.v) + "_" + typeDoc(k.h)
 }
 
 // rowShift is the inter-pass Round2 of the n x n 8-bit transform.
-func rowShift(n int) int {
-	if n == 8 {
-		return 1
+func rowShift(n int) int { return rowShiftWH(n, n) }
+
+// rowShiftWH is the inter-pass Round2 of the w x h 8-bit transform
+// (sizeShiftTable, precompute.go).
+func rowShiftWH(w, h int) int {
+	switch {
+	case w == h:
+		return min(w/8, 2)
+	case w == 2*h || h == 2*w:
+		return min(w*h/64, 1)
 	}
-	return 2
+	// 4:1
+	return min(w*h/64, 2)
 }
 
 // coeffStride is the column-major coefficient stride of an n x n block
@@ -325,6 +450,9 @@ func header(body string) string {
 	if strings.Contains(body, "pz.") {
 		out.WriteString("\tvar pz archsimd.Float64x2\n")
 	}
+	if strings.Contains(body, "pf.") {
+		out.WriteString("\tvar pf archsimd.Float32x4\n")
+	}
 	for s := 1; s <= 3; s++ {
 		if strings.Contains(body, fmt.Sprintf("sh%d)", s)) {
 			fmt.Fprintf(&out, "\tsh%d := archsimd.LoadInt16x8Array(&t.shr%d)\n", s, s)
@@ -333,41 +461,53 @@ func header(body string) string {
 	return out.String()
 }
 
-// wholeKernel writes an 8x8 or 16x16 block function. The row pass runs
-// eight-row strips (lanes = rows) over the coded columns; strips past the
-// coded rows are zero. Each strip's outputs are rounded and transposed in
-// 8x8 tiles; the column strips (lanes = columns) then run over the coded
-// rows, round by 4 and add to the prediction.
+// wholeKernel writes a block function with the whole block in registers.
+// The row pass runs row strips of up to eight rows (lanes = rows) over the
+// coded columns; strips past the coded rows are zero. Each strip's outputs
+// are rounded and transposed in 8x8 tiles; the column strips of up to
+// eight columns (lanes = columns) then run over the coded rows, round by 4
+// and add to the prediction. Four-row and four-column strips run four-lane
+// networks.
 func (g *fgen) wholeKernel(k kernel) string {
 	g.sb.Reset()
 	g.n = 0
-	n := k.n
-	strips := n / 8
-	// tile[s][q]: the transposed 8x8 tile of row strip s, column strip q;
-	// tile rows are block rows 8s..8s+7, lanes the columns 8q..8q+7.
-	tile := make([][][]fv, strips)
-	for s := 0; s < strips; s++ {
-		tile[s] = make([][]fv, strips)
+	w, ht := k.n, k.height()
+	cs := min(ht, 32)
+	rect2 := w == 2*ht || ht == 2*w
+	rl, cl := min(ht, 8), min(w, 8)
+	rs, cq := (ht+7)/8, (w+7)/8
+	// tile[s][q]: the transposed tile of row strip s, column strip q; tile
+	// rows are block rows 8s.., lanes the columns 8q...
+	tile := make([][][]fv, rs)
+	for s := 0; s < rs; s++ {
+		tile[s] = make([][]fv, cq)
 		if 8*s >= k.rows {
 			for q := range tile[s] {
-				tile[s][q] = inputs(nil, 8)
+				tile[s][q] = inputs(nil, rl)
 			}
 			continue
 		}
-		g.line("// Row strip %d: rows %d..%d, coded columns 0..%d.", s, 8*s, 8*s+7, k.cols-1)
+		g.line("// Row strip %d: rows %d..%d, coded columns 0..%d.", s, 8*s, 8*s+rl-1, k.cols-1)
 		var live []fv
 		for c := 0; c < k.cols; c++ {
-			live = append(live, g.load(c*n+8*s))
+			live = append(live, g.load(c*cs+8*s, rl, rect2))
 		}
-		g.guard(live)
+		if k.h != tIden {
+			g.guard(live)
+		}
 		g.reset()
-		out := g.network(n, inputs(live, n))
-		for q := 0; q < strips; q++ {
+		g.half = rl == 4
+		out := g.network1D(k.h, w, inputs(live, w))
+		for q := 0; q < cq; q++ {
 			rows := make([]fv, 8)
 			for j := range rows {
-				rows[j] = g.round2(out[8*q+j], rowShift(n))
+				if 8*q+j < w {
+					rows[j] = g.round2(out[8*q+j], rowShiftWH(w, ht))
+				} else {
+					rows[j] = fv{zero: true}
+				}
 			}
-			t := g.transpose8(rows)
+			t := g.transpose8(rows)[:rl]
 			// Rows past the coded ones transform to zero lanes, so the
 			// transposed rows 8s+r for 8s+r >= k.rows are zero.
 			for r := range t {
@@ -378,84 +518,95 @@ func (g *fgen) wholeKernel(k kernel) string {
 			tile[s][q] = t
 		}
 	}
+	g.half = false
 	col := func(q int) []fv {
 		var c []fv
-		for s := 0; s < strips; s++ {
+		for s := 0; s < rs; s++ {
 			c = append(c, tile[s][q]...)
 		}
 		return c
 	}
-	for q := 0; q < strips; q++ {
+	for q := 0; q < cq && k.v != tIden; q++ {
 		g.guard(col(q))
 	}
-	for q := 0; q < strips; q++ {
-		g.line("// Column strip %d: columns %d..%d.", q, 8*q, 8*q+7)
+	for q := 0; q < cq; q++ {
+		g.line("// Column strip %d: columns %d..%d.", q, 8*q, 8*q+cl-1)
 		g.reset()
-		out := g.network(n, col(q))
+		g.half = cl == 4
+		out := g.network1D(k.v, ht, col(q))
 		switch {
-		case n == 8:
+		case w == 4:
+			g.addRows(out, ":=", predD4)
+		case w == 8:
 			g.addRows(out, ":=", predD8)
 		case q == 0:
 			g.addRows(out, ":=", predLo)
 		default:
-			// The right strip of 16x16: its prediction loads start at
-			// the block's row start (column 8q-8 = 0).
+			// The right strip of a 16-wide block: its prediction loads
+			// start at the block's row start (column 8q-8 = 0).
 			g.line("dp = unsafe.Add(dp, 8)")
 			g.addRows(out, "=", predHi)
 		}
+		g.half = false
 	}
 	body := deadStrip(g.sb.String())
 	var out strings.Builder
-	fmt.Fprintf(&out, "// %s is the 8-bit %dx%d DCT_DCT inverse transform and add for\n", k.name(), n, n)
+	fmt.Fprintf(&out, "// %s is the 8-bit %dx%d %s inverse transform and add for\n", k.name(), w, ht, k.typeDoc())
 	fmt.Fprintf(&out, "// coefficients in the first %d columns and %d rows (column-major at stride\n", k.cols, k.rows)
-	fmt.Fprintf(&out, "// %d); dp/pp address the destination and prediction at strides ds/ps,\n", coeffStride(n))
+	fmt.Fprintf(&out, "// %d); dp/pp address the destination and prediction at strides ds/ps,\n", cs)
 	fmt.Fprintf(&out, "// which the caller has bounds-checked. It reports false, with dst\n// untouched, when a guard declines.\n")
-	fmt.Fprintf(&out, "func %s(c *[%d]int32, dp unsafe.Pointer, ds int, pp unsafe.Pointer, ps int) bool {\n", k.name(), n*n)
+	fmt.Fprintf(&out, "func %s(c *[%d]int32, dp unsafe.Pointer, ds int, pp unsafe.Pointer, ps int) bool {\n", k.name(), w*cs)
 	out.WriteString(header(body))
 	out.WriteString(body)
 	out.WriteString("\treturn true\n}\n\n")
 	return out.String()
 }
 
-func rowStripName(n, cols int) string { return fmt.Sprintf("itxGenDCT%dRow%d", n, cols) }
-func colStripName(n, rows int) string { return fmt.Sprintf("itxGenDCT%dCol%d", n, rows) }
+func rowStripName(t string, n, cols int) string { return fmt.Sprintf("itxGen%s%dRow%d", t, n, cols) }
+func colStripName(t string, n, rows int) string { return fmt.Sprintf("itxGen%s%dCol%d", t, n, rows) }
 
 // rowStrip writes the row pass of one eight-row strip of an n x n block
 // with cols coded columns: the narrowed coefficient loads and their guard,
 // the network, the inter-pass rounding and the 8x8 transposes into the
 // strip's eight n-wide tmp rows, whose magnitudes it adds to the column
 // strips' guards gc.
-func (g *fgen) rowStrip(n, cols int) string {
+func (g *fgen) rowStrip(t string, n, cols int) string {
 	g.sb.Reset()
 	g.n = 0
 	cs := coeffStride(n)
 	var live []fv
 	for c := 0; c < cols; c++ {
-		live = append(live, g.load(c*cs))
+		live = append(live, g.load(c*cs, 8, false))
 	}
-	g.guard(live)
+	if t != tIden {
+		g.guard(live)
+	}
 	g.reset()
-	out := g.network(n, inputs(live, n))
+	out := g.network1D(t, n, inputs(live, n))
 	for q := 0; q < n/8; q++ {
 		rows := make([]fv, 8)
 		for j := range rows {
 			rows[j] = g.round2(out[8*q+j], rowShift(n))
 		}
-		t := g.transpose8(rows)
+		tr := g.transpose8(rows)
 		acc := g.tmp("g")
 		g.line("%s := gc[%d]", acc, q)
-		for r, v := range t {
+		for r, v := range tr {
+			// A zero row stays as the zeroed tmp has it.
+			if v.zero {
+				continue
+			}
 			off := r*n + 8*q
 			g.line("%s.StoreArray((*[8]int16)(m[%d:%d]))", v.name, off, off+8)
 		}
-		g.l1(acc, false, t)
+		g.l1(acc, false, tr)
 		g.line("gc[%d] = %s", q, acc)
 	}
 	body := deadStrip(g.sb.String())
 	var out2 strings.Builder
-	name := rowStripName(n, cols)
-	fmt.Fprintf(&out2, "// %s is the row pass of one eight-row strip of the 8-bit %dx%d\n", name, n, n)
-	fmt.Fprintf(&out2, "// DCT_DCT block for %d coded columns: c holds the strip's coefficients\n", cols)
+	name := rowStripName(t, n, cols)
+	fmt.Fprintf(&out2, "// %s is the %s row pass of one eight-row strip of an 8-bit %dx%d\n", name, typeDoc(t), n, n)
+	fmt.Fprintf(&out2, "// block for %d coded columns: c holds the strip's coefficients\n", cols)
 	fmt.Fprintf(&out2, "// (column-major at stride %d), m receives its eight %d-wide rows and gc\n", cs, n)
 	fmt.Fprintf(&out2, "// accumulates the column strips' guards. It reports false when the row\n// guard declines.\n")
 	fmt.Fprintf(&out2, "func %s(c *[%d]int32, m *[%d]int16, gc *[%d]archsimd.Uint16x8) bool {\n", name, (cols-1)*cs+8, 8*n, n/8)
@@ -468,7 +619,7 @@ func (g *fgen) rowStrip(n, cols int) string {
 // colStrip writes the column pass of one eight-column strip of an n x n
 // block from its rows coded tmp rows, with the Round2(., 4) and the
 // prediction add.
-func (g *fgen) colStrip(n, rows int) string {
+func (g *fgen) colStrip(t string, n, rows int) string {
 	g.sb.Reset()
 	g.n = 0
 	var live []fv
@@ -478,12 +629,12 @@ func (g *fgen) colStrip(n, rows int) string {
 		live = append(live, fv{name: v})
 	}
 	g.reset()
-	g.addRows(g.network(n, inputs(live, n)), ":=", predSel)
+	g.addRows(g.network1D(t, n, inputs(live, n)), ":=", predSel)
 	body := deadStrip(g.sb.String())
 	var out strings.Builder
-	name := colStripName(n, rows)
-	fmt.Fprintf(&out, "// %s is the column pass of one eight-column strip of the 8-bit\n", name)
-	fmt.Fprintf(&out, "// %dx%d DCT_DCT block from %d coded tmp rows (m, %d wide), added to the\n", n, n, rows, n)
+	name := colStripName(t, n, rows)
+	fmt.Fprintf(&out, "// %s is the %s column pass of one eight-column strip of an\n", name, typeDoc(t))
+	fmt.Fprintf(&out, "// 8-bit %dx%d block from %d coded tmp rows (m, %d wide), added to the\n", n, n, rows, n)
 	fmt.Fprintf(&out, "// prediction into dp (strides ps/ds, bounds-checked by the caller): pp\n")
 	fmt.Fprintf(&out, "// addresses sixteen prediction bytes of each row inside the block and\n")
 	fmt.Fprintf(&out, "// selp the TBL selector that zero-extends the strip's eight.\n")
@@ -495,32 +646,34 @@ func (g *fgen) colStrip(n, rows int) string {
 	return out.String()
 }
 
-// stripKernel writes a 32x32 or 64x64 block function over the strip
-// functions.
+// stripKernel writes a block function over the strip functions.
 func stripKernel(k kernel) string {
 	n, cs := k.n, coeffStride(k.n)
+	rows8 := (k.rows + 7) / 8 * 8
 	var b strings.Builder
-	fmt.Fprintf(&b, "// %s is the 8-bit %dx%d DCT_DCT inverse transform and add for\n", k.name(), n, n)
+	fmt.Fprintf(&b, "// %s is the 8-bit %dx%d %s inverse transform and add for\n", k.name(), n, n, k.typeDoc())
 	fmt.Fprintf(&b, "// coefficients in the first %d columns and %d rows (column-major at stride\n", k.cols, k.rows)
 	fmt.Fprintf(&b, "// %d); dp/pp address the destination and prediction at strides ds/ps,\n", cs)
 	fmt.Fprintf(&b, "// which the caller has bounds-checked. Coefficient rows from rows on are\n")
 	fmt.Fprintf(&b, "// zero: the row strips past them are skipped (tmp starts zero). It reports\n// false, with dst untouched, when a guard declines.\n")
 	fmt.Fprintf(&b, "func %s(c *[%d]int32, dp unsafe.Pointer, ds int, pp unsafe.Pointer, ps int, rows int) bool {\n", k.name(), cs*cs)
-	fmt.Fprintf(&b, "\tvar tmp [%d]int16\n", k.rows*n)
+	fmt.Fprintf(&b, "\tvar tmp [%d]int16\n", rows8*n)
 	fmt.Fprintf(&b, "\tvar gc [%d]archsimd.Uint16x8\n", n/8)
-	for s := 0; s < k.rows/8; s++ {
+	for s := 0; s < rows8/8; s++ {
 		cond := ""
 		if s > 0 {
 			cond = fmt.Sprintf("rows > %d && ", 8*s)
 		}
 		fmt.Fprintf(&b, "\tif %s!%s((*[%d]int32)(c[%d:]), (*[%d]int16)(tmp[%d:]), &gc) {\n\t\treturn false\n\t}\n",
-			cond, rowStripName(n, k.cols), (k.cols-1)*cs+8, 8*s, 8*n, 8*n*s)
+			cond, rowStripName(k.h, n, k.cols), (k.cols-1)*cs+8, 8*s, 8*n, 8*n*s)
 	}
-	b.WriteString("\tm := gc[0]")
-	for q := 1; q < n/8; q++ {
-		fmt.Fprintf(&b, ".Max(gc[%d])", q)
+	if k.v != tIden {
+		b.WriteString("\tm := gc[0]")
+		for q := 1; q < n/8; q++ {
+			fmt.Fprintf(&b, ".Max(gc[%d])", q)
+		}
+		b.WriteString("\n\tif m.ReduceMax() > itx16ColumnL1Bound {\n\t\treturn false\n\t}\n")
 	}
-	b.WriteString("\n\tif m.ReduceMax() > itx16ColumnL1Bound {\n\t\treturn false\n\t}\n")
 	// Strip 0 zero-extends the low eight of the sixteen bytes at its own
 	// columns, every later strip the high eight of the sixteen ending at
 	// its last column.
@@ -528,9 +681,9 @@ func stripKernel(k kernel) string {
 	for q := 0; q < n/8; q++ {
 		switch q {
 		case 0:
-			fmt.Fprintf(&b, "\t%s((*[%d]int16)(tmp[0:]), dp, ds, pp, ps, &sel[0])\n", colStripName(n, k.rows), (k.rows-1)*n+8)
+			fmt.Fprintf(&b, "\t%s((*[%d]int16)(tmp[0:]), dp, ds, pp, ps, &sel[0])\n", colStripName(k.v, n, k.rows), (k.rows-1)*n+8)
 		default:
-			fmt.Fprintf(&b, "\t%s((*[%d]int16)(tmp[%d:]), unsafe.Add(dp, %d), ds, unsafe.Add(pp, %d), ps, &sel[1])\n", colStripName(n, k.rows), (k.rows-1)*n+8, 8*q, 8*q, 8*q-8)
+			fmt.Fprintf(&b, "\t%s((*[%d]int16)(tmp[%d:]), unsafe.Add(dp, %d), ds, unsafe.Add(pp, %d), ps, &sel[1])\n", colStripName(k.v, n, k.rows), (k.rows-1)*n+8, 8*q, 8*q, 8*q-8)
 		}
 	}
 	b.WriteString("\treturn true\n}\n\n")
@@ -550,7 +703,7 @@ var fusedKernels = func() []kernel {
 	for _, f := range fusedSizes {
 		for _, c := range f.forms {
 			for _, r := range f.forms {
-				ks = append(ks, kernel{n: f.n, cols: c, rows: r})
+				ks = append(ks, kernel{n: f.n, cols: c, rows: r, v: tDCT, h: tDCT})
 			}
 		}
 	}
@@ -583,7 +736,7 @@ func dispatch(n int, forms []int) string {
 	}
 	sw("cols", func(c int) {
 		sw("rows", func(r int) {
-			fmt.Fprintf(&b, "\t\treturn %s(c, dp, ds, pp, ps%s)\n", kernel{n: n, cols: c, rows: r}.name(), extra)
+			fmt.Fprintf(&b, "\t\treturn %s(c, dp, ds, pp, ps%s)\n", kernel{n: n, cols: c, rows: r, v: tDCT, h: tDCT}.name(), extra)
 		})
 	})
 	b.WriteString("}\n\n")
@@ -592,7 +745,7 @@ func dispatch(n int, forms []int) string {
 
 // generateFused returns the generated kernel file keyed by its path under dir.
 func generateFused(dir string) map[string][]byte {
-	g := &fgen{consts: map[int]bool{}}
+	g := &fgen{consts: map[int]bool{}, raw: map[string]int{}}
 	var funcs strings.Builder
 	// 8x8 and 16x16 switch in their entry points (one call level less).
 	for _, f := range fusedSizes {
@@ -609,12 +762,13 @@ func generateFused(dir string) map[string][]byte {
 	}
 	for _, n := range []int{32, 64} {
 		for _, f := range []int{8, 16, 32} {
-			funcs.WriteString(g.rowStrip(n, f))
+			funcs.WriteString(g.rowStrip(tDCT, n, f))
 		}
 		for _, f := range []int{8, 16, 32} {
-			funcs.WriteString(g.colStrip(n, f))
+			funcs.WriteString(g.colStrip(tDCT, n, f))
 		}
 	}
+	g.generateHybrid(&funcs)
 	var cs []int
 	for c := range g.consts {
 		cs = append(cs, c)
@@ -625,6 +779,9 @@ func generateFused(dir string) map[string][]byte {
 	out.WriteString("//go:build goexperiment.simd && arm64 && !purego\n\n")
 	out.WriteString("package transform\n\n")
 	out.WriteString("import (\n\t\"simd/archsimd\"\n\t\"unsafe\"\n)\n\n")
+	out.WriteString("// The kernels step dp/pp through the destination and prediction rows as\n")
+	out.WriteString("// pointers inside the extent their callers checked: these are residual-add\n")
+	out.WriteString("// rows, where per-row checked slices measured 9-86% slower.\n\n")
 	out.WriteString("// itxGenConsts holds the constants of the generated kernels: the rotation\n")
 	out.WriteString("// multipliers 16*C (pC / nC for the cospi constant +C / -C), the negated\n")
 	out.WriteString("// shift counts, the Round2(., 12) bias 2^15 of the multiply-accumulate and\n")
@@ -634,14 +791,27 @@ func generateFused(dir string) map[string][]byte {
 	for _, c := range cs {
 		fmt.Fprintf(&out, "\t%s [4]int32\n", constField(c))
 	}
-	out.WriteString("\tshr1, shr3 [8]int16\n")
+	var rs []string
+	for f := range g.raw {
+		rs = append(rs, f)
+	}
+	slices.Sort(rs)
+	for _, f := range rs {
+		fmt.Fprintf(&out, "\t%s [4]int32\n", f)
+	}
+	out.WriteString("\tshr1, shr2, shr3 [8]int16\n")
 	out.WriteString("\tbias       [4]int32\n")
 	out.WriteString("\tsel        [2][16]uint8\n}\n\n")
 	out.WriteString("var itxGenK = itxGenConsts{\n")
 	for _, c := range cs {
 		fmt.Fprintf(&out, "\t%s: [4]int32{%d, %d, %d, %d},\n", constField(c), 16*c, 16*c, 16*c, 16*c)
 	}
+	for _, f := range rs {
+		v := g.raw[f]
+		fmt.Fprintf(&out, "\t%s: [4]int32{%d, %d, %d, %d},\n", f, v, v, v, v)
+	}
 	out.WriteString("\tshr1: [8]int16{-1, -1, -1, -1, -1, -1, -1, -1},\n")
+	out.WriteString("\tshr2: [8]int16{-2, -2, -2, -2, -2, -2, -2, -2},\n")
 	out.WriteString("\tshr3: [8]int16{-3, -3, -3, -3, -3, -3, -3, -3},\n")
 	out.WriteString("\tbias: [4]int32{32768, 32768, 32768, 32768},\n")
 	out.WriteString("\tsel: [2][16]uint8{\n")

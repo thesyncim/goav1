@@ -29,6 +29,7 @@ import (
 func svtAllSAD8x8_16x16Sub(me *realtimeSBMultiSizeME, src, ref []byte, stride, mvX, mvY int, sad16 *[16][8]uint32) {
 	_ = src[63*stride+63]
 	_ = ref[63*stride+63+7]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	sp := unsafe.Pointer(&src[0])
 	rp := unsafe.Pointer(&ref[0])
 	s2 := 2 * stride
@@ -128,6 +129,10 @@ func svtAllSAD8x8_16x16Sub(me *realtimeSBMultiSizeME, src, ref []byte, stride, m
 		km := keyMin.Min(keyMin.HiToLo()).ExtendLo4ToUint32()
 		sad := km.Shift(keyShift).And(keyMask)
 		pu8 := 21 + n*4
+		// pu8+4 <= 85 (n < 16). The checked bestSAD[pu8:pu8+4] view adds a
+		// bounds check per block (+0.4% instructions on
+		// BenchmarkSweepSearchPoint8); bestMV as packed uint32s is a
+		// layout pun with no safe form.
 		bp := (*[4]uint32)(unsafe.Pointer(&me.bestSAD[pu8]))
 		mp := (*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8]))
 		best := archsimd.LoadUint32x4Array(bp)
@@ -161,6 +166,7 @@ func svtAllSAD8x8_16x16Sub(me *realtimeSBMultiSizeME, src, ref []byte, stride, m
 func svtSweepPoint1(me *realtimeSBMultiSizeME, src, ref []byte, stride, mvX, mvY int) {
 	_ = src[63*stride+63]
 	_ = ref[63*stride+63]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	sp := unsafe.Pointer(&src[0])
 	rp := unsafe.Pointer(&ref[0])
 	s2 := 2 * stride
@@ -193,11 +199,17 @@ func svtSweepPoint1(me *realtimeSBMultiSizeME, src, ref []byte, stride, mvX, mvY
 		sad := sv.Sub(hv.Shift(loShift)).Add(hv).ExtendLo4ToUint32()
 		sad = sad.Add(sad)
 		pu8 := 21 + n*4
-		best := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Pointer(&me.bestSAD[pu8])))
-		bestMV := archsimd.LoadUint32x4Array((*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8])))
+		// pu8+4 <= 85 (n < 16). The checked bestSAD[pu8:pu8+4] view adds a
+		// bounds check per block (+0.4% instructions on
+		// BenchmarkSweepSearchPoint8); bestMV as packed uint32s is a
+		// layout pun with no safe form.
+		bp := (*[4]uint32)(unsafe.Pointer(&me.bestSAD[pu8]))
+		mp := (*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8]))
+		best := archsimd.LoadUint32x4Array(bp)
+		bestMV := archsimd.LoadUint32x4Array(mp)
 		lt := sad.Less(best)
-		sad.IfElse(lt, best).StoreArray((*[4]uint32)(unsafe.Pointer(&me.bestSAD[pu8])))
-		mv.IfElse(lt, bestMV).StoreArray((*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8])))
+		sad.IfElse(lt, best).StoreArray(bp)
+		mv.IfElse(lt, bestMV).StoreArray(mp)
 		s := sad.ReduceSum()
 		sad16[n] = s
 		me.update(5+n, s, mvX, mvY)

@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // Bind the int16 8-wide SIMD DCT column kernels under GOEXPERIMENT=simd.
 // The public path keeps the int16 buffer between passes and uses these kernels
@@ -109,20 +106,21 @@ func clampRoundNarrowInt16SIMD(src []int32, dst []int16, shift int, lo int32, hi
 		return
 	}
 	n := len(src)
+	dst = dst[:n]
 	i := 0
 	if shift == 1 {
-		for ; i+8 <= n; i += 8 {
-			v0 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Pointer(&src[i])))
-			v1 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Pointer(&src[i+4])))
-			roundShiftNarrowInt32x4ToInt16x8(v0, v1, 1).
-				StoreArray((*[8]int16)(unsafe.Pointer(&dst[i])))
+		for ; i <= len(src)-8 && i <= len(dst)-8; i += 8 {
+			s := (*[8]int32)(src[i:])
+			v0 := archsimd.LoadInt32x4Array((*[4]int32)(s[0:4]))
+			v1 := archsimd.LoadInt32x4Array((*[4]int32)(s[4:8]))
+			roundShiftNarrowInt32x4ToInt16x8(v0, v1, 1).StoreArray((*[8]int16)(dst[i:]))
 		}
 	} else {
-		for ; i+8 <= n; i += 8 {
-			v0 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Pointer(&src[i])))
-			v1 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Pointer(&src[i+4])))
-			roundShiftNarrowInt32x4ToInt16x8(v0, v1, 2).
-				StoreArray((*[8]int16)(unsafe.Pointer(&dst[i])))
+		for ; i <= len(src)-8 && i <= len(dst)-8; i += 8 {
+			s := (*[8]int32)(src[i:])
+			v0 := archsimd.LoadInt32x4Array((*[4]int32)(s[0:4]))
+			v1 := archsimd.LoadInt32x4Array((*[4]int32)(s[4:8]))
+			roundShiftNarrowInt32x4ToInt16x8(v0, v1, 2).StoreArray((*[8]int16)(dst[i:]))
 		}
 	}
 	if i < n {

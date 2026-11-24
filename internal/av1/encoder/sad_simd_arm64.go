@@ -17,6 +17,10 @@ import (
 	"unsafe"
 )
 
+// unsafe: the SAD kernels walk rows at k*stride inside blocks whose last
+// sample the sad*SIMD wrappers bounds-check up front; reslicing each row,
+// (*[16]uint8)(src[so+row*stride:]), measured +86% on BenchmarkSAD16x16.
+
 // step advances a raw byte pointer by n bytes.
 func step(p unsafe.Pointer, n int) unsafe.Pointer { return unsafe.Add(p, n) }
 

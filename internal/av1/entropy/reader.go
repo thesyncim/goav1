@@ -199,6 +199,18 @@ func (r *Reader) BitsRead() int {
 	return readerTell(int(r.pos), int32(r.cnt), int32(r.tellOffs))
 }
 
+// Overread reports whether the decoder has consumed more bits than the tile
+// payload holds: past the end it decodes padding ones, so every symbol from
+// there on is invented. It is libaom's aom_reader_has_overflowed
+// (aom_dsp/bitreader.c); dav1d checks the same condition after each
+// superblock row (msac.cnt <= -15 in dav1d_decode_tile_sbrow).
+func (r *Reader) Overread() bool {
+	if r == nil {
+		return false
+	}
+	return (r.BitsRead()+7)>>3 > len(r.src)
+}
+
 // ReadBit decodes one equiprobable bit.
 func (r *Reader) ReadBit() (uint8, error) {
 	if r == nil {

@@ -11,6 +11,11 @@ import (
 	"unsafe"
 )
 
+// unsafe: the box-sum windows stay inside the 70-element local storage and the
+// A/B rows (see the bound below); the bounds-checked slice form (a second loop
+// condition plus a per-row reslice) measured +1.2-1.9% on
+// BenchmarkApplySelfguidedRestorationSIMD, so the pointer form stays.
+
 // calculateIntermediateSIMD retains the scalar dispatch domain. The ARM64
 // SIMD drivers alone use this producer; selfguided and selfguidedFast keep
 // calculateIntermediate as the independent scalar coefficient route.

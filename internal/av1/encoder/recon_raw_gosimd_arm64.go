@@ -23,6 +23,7 @@ func addRawResidualToPredReconBlockSIMD(dst []byte, stride int, pred []byte, pre
 	_ = dst[(h-1)*stride+w-1]
 	_ = pred[(h-1)*predStride+w-1]
 	_ = raw[h*w-1]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	dp := unsafe.Pointer(unsafe.SliceData(dst))
 	pp := unsafe.Pointer(unsafe.SliceData(pred))
 	rp := unsafe.Pointer(unsafe.SliceData(raw))

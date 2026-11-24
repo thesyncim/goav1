@@ -5,7 +5,6 @@ package quantize
 import (
 	"math/bits"
 	"simd/archsimd"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 )
@@ -46,30 +45,33 @@ func quantizeBRowGroupsSIMD(qcoeff []int16, coeff []int32, n int, live uint8, q 
 	shiftV := archsimd.BroadcastInt32x4(-int32(l - int64(txScale)))
 	signShiftV := archsimd.BroadcastInt32x4(-31)
 	zero := archsimd.BroadcastInt32x4(0)
-	cp := unsafe.Pointer(&coeff[0])
-	qp := unsafe.Pointer(&qcoeff[0])
+	cs, qs := coeff[:n*n], qcoeff[:n*n]
 	orAcc := zero
-	for col := 0; col < n; col++ {
-		for g := 0; g < n/4; g += 2 {
-			off := col*n + 4*g
-			pair := (live >> g) & 3
-			dst := unsafe.Add(qp, 2*off)
-			if pair == 0 {
-				zero.TruncToInt16().StoreArray((*[8]int16)(dst))
-				continue
-			}
-			lo, hi := zero, zero
-			if pair&1 != 0 {
-				lo = quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(cp, 4*off))),
-					quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
-			}
-			if pair&2 != 0 {
-				hi = quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(cp, 4*off+16))),
-					quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
-			}
-			orAcc = orAcc.Or(lo).Or(hi)
-			quantizePackInt16x8SIMD(lo, hi).StoreArray((*[8]int16)(dst))
+	// The column-major pairs of four-row groups tile cs contiguously (off =
+	// col*n + 4*g steps by eight), so one linear walk with g wrapping at n/4
+	// visits them in order and the off <= len-8 form proves every access.
+	for off, g := 0, 0; off <= len(cs)-8 && off <= len(qs)-8; off, g = off+8, g+2 {
+		if 4*g >= n {
+			g = 0
 		}
+		pair := (live >> g) & 3
+		dst := (*[8]int16)(qs[off:])
+		c := (*[8]int32)(cs[off:])
+		if pair == 0 {
+			zero.TruncToInt16().StoreArray(dst)
+			continue
+		}
+		lo, hi := zero, zero
+		if pair&1 != 0 {
+			lo = quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[0:4])),
+				quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+		}
+		if pair&2 != 0 {
+			hi = quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[4:8])),
+				quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+		}
+		orAcc = orAcc.Or(lo).Or(hi)
+		quantizePackInt16x8SIMD(lo, hi).StoreArray(dst)
 	}
 	nonZero := orAcc.ReduceMax() != 0 || orAcc.ReduceMin() != 0
 	if live&1 != 0 {
