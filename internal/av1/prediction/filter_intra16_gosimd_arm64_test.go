@@ -13,6 +13,39 @@ import "testing"
 // exercise the 32-bit widening path).
 var filterIntra16Depths = [...]int{1023, 4095}
 
+// filterIntra16Kernels are the arm64 high-bit-depth filter-intra kernels: the
+// 10-bit int16 TBL kernel (which hands every other depth to the 32-bit one)
+// and the 32-bit kernel itself.
+var filterIntra16Kernels = []struct {
+	name string
+	fn   func(planeBlock, int, int, FilterIntraMode, IntraEdges, int)
+}{
+	{"tbl10", predictFilterIntraBlockDirect10TBL},
+	{"simd32", predictFilterIntraBlockDirect16SIMD},
+}
+
+// TestFilterIntra10SumFitsInt16 proves the int16 arithmetic of the 10-bit
+// kernel exact: for every mode and output, the rounding bias plus the largest
+// and smallest tap sums over neighbours in [0, 1023] stay inside int16.
+func TestFilterIntra10SumFitsInt16(t *testing.T) {
+	for mode := range filterIntraTaps {
+		for out, taps := range filterIntraTaps[mode] {
+			pos, neg := 0, 0
+			for _, c := range taps {
+				if c > 0 {
+					pos += int(c)
+				} else {
+					neg += int(c)
+				}
+			}
+			hi, lo := 1023*pos+8, 1023*neg+8
+			if hi > 32767 || lo < -32768 {
+				t.Fatalf("mode %d output %d: sums [%d, %d] leave int16", mode, out, lo, hi)
+			}
+		}
+	}
+}
+
 func filterIntra16SIMDEdges(width, height int, max int, seed uint32) IntraEdges {
 	above, s1 := samplesFor(width, uint16(max), seed)
 	left, _ := samplesFor(height, uint16(max), s1)
@@ -31,7 +64,7 @@ func filterIntra16SIMDEdges(width, height int, max int, seed uint32) IntraEdges 
 // dispatch target.
 func TestFilterIntraSIMDBinding(t *testing.T) {
 	assertDispatchTarget(t, "predictFilterIntra8Impl", predictFilterIntra8Impl, "predictFilterIntraBlockDirect8TBL")
-	assertDispatchTarget(t, "predictFilterIntra16Impl", predictFilterIntra16Impl, "predictFilterIntraBlockDirect16SIMD")
+	assertDispatchTarget(t, "predictFilterIntra16Impl", predictFilterIntra16Impl, "predictFilterIntraBlockDirect10TBL")
 }
 
 // TestFilterIntra16SIMDMatchesPureGo executes the 16-bit SIMD kernel directly
@@ -44,11 +77,13 @@ func TestFilterIntra16SIMDMatchesPureGo(t *testing.T) {
 				for _, seed := range []uint32{0x1, 0xabcd, 0x5f3759df, 0xdeadbeef} {
 					edges := filterIntra16SIMDEdges(sz.width, sz.height, max, seed+uint32(mode)*131)
 					base := makeDispatchBlock(sz.width, sz.height, 2)
-					got := cloneBlock(base)
 					want := cloneBlock(base)
-					predictFilterIntraBlockDirect16SIMD(got, sz.width, sz.height, mode, edges, max)
 					predictFilterIntraBlockDirect16(want, sz.width, sz.height, mode, edges, max)
-					diffBlocks(t, "filter-intra16-simd", max, sz.width*2, sz.height, got, want)
+					for _, k := range filterIntra16Kernels {
+						got := cloneBlock(base)
+						k.fn(got, sz.width, sz.height, mode, edges, max)
+						diffBlocks(t, "filter-intra16-simd/"+k.name, max, sz.width*2, sz.height, got, want)
+					}
 				}
 			}
 		}
@@ -86,11 +121,13 @@ func TestFilterIntra16SIMDEdgeValues(t *testing.T) {
 							AboveLeftAvailable: true,
 						}
 						base := makeDispatchBlock(sz.width, sz.height, 2)
-						got := cloneBlock(base)
 						want := cloneBlock(base)
-						predictFilterIntraBlockDirect16SIMD(got, sz.width, sz.height, mode, edges, max)
 						predictFilterIntraBlockDirect16(want, sz.width, sz.height, mode, edges, max)
-						diffBlocks(t, "filter-intra16-simd-edge", max, sz.width*2, sz.height, got, want)
+						for _, k := range filterIntra16Kernels {
+							got := cloneBlock(base)
+							k.fn(got, sz.width, sz.height, mode, edges, max)
+							diffBlocks(t, "filter-intra16-simd-edge/"+k.name, max, sz.width*2, sz.height, got, want)
+						}
 					}
 				}
 			}
@@ -105,7 +142,7 @@ func TestFilterIntra16SIMDZeroAlloc(t *testing.T) {
 	edges := filterIntra16SIMDEdges(w, h, 1023, 0x24)
 	block := makeDispatchBlock(w, h, 2)
 	fn := func() {
-		predictFilterIntraBlockDirect16SIMD(block, w, h, FilterIntraModePaeth, edges, 1023)
+		predictFilterIntraBlockDirect10TBL(block, w, h, FilterIntraModePaeth, edges, 1023)
 	}
 	if allocs := testing.AllocsPerRun(1000, fn); allocs != 0 {
 		t.Fatalf("filter-intra16 SIMD allocated %f times per call", allocs)
