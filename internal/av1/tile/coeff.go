@@ -47,78 +47,79 @@ var _ [maxEOBFlagContexts]struct{} = [len(CoeffCDFs{}.EOBFlag16[0])]struct{}{}
 // would make, written as one loop per CDF row. TinyGo expands == on an
 // aggregate into one comparison per element, so comparing a CoeffCDFs inline
 // costs hundreds of kilobytes of wasm in the caller, and that makes wasm-opt
-// run for many minutes and tens of gigabytes. TestCoeffCDFsEqualMatchesOperator
+// run for many minutes and tens of gigabytes. The loops range over lengths:
+// TinyGo copies a ranged array. TestCoeffCDFsEqualMatchesOperator
 // pins that every field is compared.
 func (c *CoeffCDFs) Equal(o *CoeffCDFs) bool {
-	for i := range c.TXBSkip {
+	for i := range len(c.TXBSkip) {
 		if !cdfsEqual(c.TXBSkip[i][:], o.TXBSkip[i][:]) {
 			return false
 		}
 	}
-	for i := range c.EOBExtra {
-		for j := range c.EOBExtra[i] {
+	for i := range len(c.EOBExtra) {
+		for j := range len(c.EOBExtra[i]) {
 			if !cdfsEqual(c.EOBExtra[i][j][:], o.EOBExtra[i][j][:]) {
 				return false
 			}
 		}
 	}
-	for i := range c.DCSign {
+	for i := range len(c.DCSign) {
 		if !cdfsEqual(c.DCSign[i][:], o.DCSign[i][:]) {
 			return false
 		}
 	}
-	for i := range c.CoeffBR {
-		for j := range c.CoeffBR[i] {
+	for i := range len(c.CoeffBR) {
+		for j := range len(c.CoeffBR[i]) {
 			if !cdfsEqual(c.CoeffBR[i][j][:], o.CoeffBR[i][j][:]) {
 				return false
 			}
 		}
 	}
-	for i := range c.CoeffBase {
-		for j := range c.CoeffBase[i] {
+	for i := range len(c.CoeffBase) {
+		for j := range len(c.CoeffBase[i]) {
 			if !cdfsEqual(c.CoeffBase[i][j][:], o.CoeffBase[i][j][:]) {
 				return false
 			}
 		}
 	}
-	for i := range c.CoeffBaseEOB {
-		for j := range c.CoeffBaseEOB[i] {
+	for i := range len(c.CoeffBaseEOB) {
+		for j := range len(c.CoeffBaseEOB[i]) {
 			if !cdfsEqual(c.CoeffBaseEOB[i][j][:], o.CoeffBaseEOB[i][j][:]) {
 				return false
 			}
 		}
 	}
-	for i := range c.EOBFlag16 {
+	for i := range len(c.EOBFlag16) {
 		if !cdfsEqual(c.EOBFlag16[i][:], o.EOBFlag16[i][:]) {
 			return false
 		}
 	}
-	for i := range c.EOBFlag32 {
+	for i := range len(c.EOBFlag32) {
 		if !cdfsEqual(c.EOBFlag32[i][:], o.EOBFlag32[i][:]) {
 			return false
 		}
 	}
-	for i := range c.EOBFlag64 {
+	for i := range len(c.EOBFlag64) {
 		if !cdfsEqual(c.EOBFlag64[i][:], o.EOBFlag64[i][:]) {
 			return false
 		}
 	}
-	for i := range c.EOBFlag128 {
+	for i := range len(c.EOBFlag128) {
 		if !cdfsEqual(c.EOBFlag128[i][:], o.EOBFlag128[i][:]) {
 			return false
 		}
 	}
-	for i := range c.EOBFlag256 {
+	for i := range len(c.EOBFlag256) {
 		if !cdfsEqual(c.EOBFlag256[i][:], o.EOBFlag256[i][:]) {
 			return false
 		}
 	}
-	for i := range c.EOBFlag512 {
+	for i := range len(c.EOBFlag512) {
 		if !cdfsEqual(c.EOBFlag512[i][:], o.EOBFlag512[i][:]) {
 			return false
 		}
 	}
-	for i := range c.EOBFlag1024 {
+	for i := range len(c.EOBFlag1024) {
 		if !cdfsEqual(c.EOBFlag1024[i][:], o.EOBFlag1024[i][:]) {
 			return false
 		}
@@ -605,7 +606,7 @@ func (c *CoeffCDFs) InitDefault(baseQIndex uint8) error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
 	}
-	*c = defaultCoeffCDFs[CoeffQContext(baseQIndex)]
+	c.CopyFrom(&defaultCoeffCDFs[CoeffQContext(baseQIndex)])
 	return nil
 }
 
