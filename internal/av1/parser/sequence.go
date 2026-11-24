@@ -197,6 +197,11 @@ func parseSequenceHeaderTiming(r *bitstream.Reader, sh *SequenceHeader) error {
 			return err
 		}
 		op.IDC = uint16(idc)
+		// dav1d parse_seq_hdr: an operating point that selects layers must
+		// select at least one temporal and one spatial layer.
+		if op.IDC != 0 && (op.IDC&0xff == 0 || op.IDC&0xf00 == 0) {
+			return ErrInvalidSequenceHeader
+		}
 		level, err := readSequenceLevel(r)
 		if err != nil {
 			return err

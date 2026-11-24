@@ -79,3 +79,33 @@ func defaultSegmentationData() SegmentationData {
 	clearSegmentationRefs(&data)
 	return data
 }
+
+// ValidateReferenceScale ports the reference check in dav1d_submit_frame()
+// (decode.c): every reference an inter or switch frame names must hold a
+// picture whose size is within the 2x-downscale / 16x-upscale prediction
+// range of the frame (the spec's conformance requirement
+// 2 * FrameWidth >= RefUpscaledWidth, 2 * FrameHeight >= RefFrameHeight,
+// FrameWidth <= 16 * RefUpscaledWidth, FrameHeight <= 16 * RefFrameHeight).
+// Intra frames read no references.
+// dav1d also compares pixel layout and bit depth, which cannot differ here:
+// a sequence header that changes them resets the reference state.
+func ValidateReferenceScale(prefix FrameHeaderPrefix, size FrameSize, refs *ReferenceState) error {
+	if !frameTypeIsInterOrSwitch(prefix.FrameType) {
+		return nil
+	}
+	if refs == nil {
+		return ErrReferenceFrameNeeded
+	}
+	w, h := uint64(size.CodedWidth), uint64(size.Height)
+	for _, slot := range size.RefFrameIdx {
+		if slot >= RefFrames || !refs.Frames[slot].Valid {
+			return ErrReferenceFrameNeeded
+		}
+		ref := &refs.Frames[slot].Size
+		rw, rh := uint64(ref.UpscaledWidth), uint64(ref.Height)
+		if 2*w < rw || 2*h < rh || w > 16*rw || h > 16*rh {
+			return ErrInvalidReferenceScale
+		}
+	}
+	return nil
+}

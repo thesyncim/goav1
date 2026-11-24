@@ -257,3 +257,16 @@ func (h FrameHeaderPrefix) UsesIntraFrameSizePath() bool {
 	}
 	return frameTypeIsKeyOrIntra(h.FrameType)
 }
+
+// RequireFrameHeaderTrailingBit reports bitstream.ErrNotEnoughBits when a
+// frame_header_obu payload ends at or before headerBits, the bit count of its
+// uncompressed_header(). It ports dav1d's check_trailing_bits() with
+// strict_std_compliance off (obu.c, called for OBU_FRAME_HDR and
+// OBU_REDUNDANT_FRAME_HDR): the trailing one bit must be present, but its
+// value and the zero padding after it are only checked in strict mode.
+func RequireFrameHeaderTrailingBit(payload []byte, headerBits int) error {
+	if headerBits >= len(payload)*8 {
+		return bitstream.ErrNotEnoughBits
+	}
+	return nil
+}

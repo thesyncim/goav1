@@ -261,3 +261,36 @@ func (w *bitWriter) writeBits(v uint64, n int) {
 }
 
 func (w *bitWriter) bytes() []byte { return w.buf }
+
+// TestCheckMetadataPayloadMatchesDav1d pins the metadata payloads dav1d
+// 1.5.4 rejects in its default mode (checked against libdav1d with
+// strict_std_compliance = 0): a broken metadata_type leb128, and HDR CLL or
+// MDCV fields without the bit after them. Everything else is accepted.
+func TestCheckMetadataPayloadMatchesDav1d(t *testing.T) {
+	zeros := func(n int) []byte { return make([]byte, n) }
+	for _, tc := range []struct {
+		name    string
+		payload []byte
+		ok      bool
+	}{
+		{"empty", nil, false},
+		{"truncated leb128 type", []byte{0x81}, false},
+		{"nine-byte leb128 type", []byte{0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0x01}, false},
+		{"cll short", append([]byte{0x01}, zeros(3)...), false},
+		{"cll without trailing bit", append([]byte{0x01}, zeros(4)...), false},
+		{"cll with trailing byte", append(append([]byte{0x01}, zeros(4)...), 0x80), true},
+		{"cll with zero trailing byte", append([]byte{0x01}, zeros(5)...), true},
+		{"mdcv without trailing bit", append([]byte{0x02}, zeros(24)...), false},
+		{"mdcv with trailing byte", append(append([]byte{0x02}, zeros(24)...), 0x80), true},
+		{"t35 without country code", []byte{0x04}, true},
+		{"scalability without payload", []byte{0x03}, true},
+		{"timecode without payload", []byte{0x05}, true},
+		{"reserved type 0", []byte{0x00}, true},
+		{"private type 6", []byte{0x06}, true},
+	} {
+		err := CheckMetadataPayload(tc.payload)
+		if tc.ok != (err == nil) {
+			t.Errorf("%s: err=%v, want ok=%v", tc.name, err, tc.ok)
+		}
+	}
+}

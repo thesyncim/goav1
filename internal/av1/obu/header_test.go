@@ -38,20 +38,23 @@ func TestParseHeaderExtensionLayerIDs(t *testing.T) {
 	}
 }
 
-// TestParseHeaderExtensionRejectsAllReservedBits verifies that every nonzero
-// pattern of the reserved 3-bit tail in obu_extension_header() is rejected
-// (one bit at a time and all together). The spec requires the reserved bits
-// to be exactly zero; libaom raises a corrupt-frame error otherwise and
-// goav1 surfaces ErrReservedBit.
-func TestParseHeaderExtensionRejectsAllReservedBits(t *testing.T) {
+// TestParseHeaderIgnoresReservedBits verifies that obu_reserved_1bit and
+// every pattern of extension_header_reserved_3bits are ignored, as the spec
+// requires of a decoder and as libaom (av1/common/obu_util.c) and dav1d
+// (src/obu.c) do: the header still parses with its type and layer IDs.
+func TestParseHeaderIgnoresReservedBits(t *testing.T) {
+	h, n, err := ParseHeader([]byte{byte(TypeTemporalDelimiter)<<3 | 0x02 | 0x01})
+	if err != nil || n != 1 || h.Type != TypeTemporalDelimiter || !h.HasSizeField || h.Extension {
+		t.Fatalf("obu_reserved_1bit set: header=%+v n=%d err=%v", h, n, err)
+	}
 	for reserved := uint8(1); reserved <= 0x07; reserved++ {
 		src := []byte{
-			byte(TypeFrameHeader)<<3 | 0x04,
-			reserved, // temporal_id=0, spatial_id=0, reserved=reserved
+			byte(TypeFrameHeader)<<3 | 0x04 | 0x01,
+			5<<5 | 2<<3 | reserved, // temporal_id=5, spatial_id=2
 		}
-		_, _, err := ParseHeader(src)
-		if !errors.Is(err, ErrReservedBit) {
-			t.Fatalf("reserved=%#x: err=%v want %v", reserved, err, ErrReservedBit)
+		h, n, err := ParseHeader(src)
+		if err != nil || n != 2 || h.Type != TypeFrameHeader || h.TemporalID != 5 || h.SpatialID != 2 {
+			t.Fatalf("reserved=%#x: header=%+v n=%d err=%v", reserved, h, n, err)
 		}
 	}
 }

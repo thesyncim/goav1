@@ -32,16 +32,14 @@ func TestParseHeader(t *testing.T) {
 	}
 }
 
-func TestParseHeaderRejectsReservedBits(t *testing.T) {
+func TestParseHeaderRejectsForbiddenBitAndShortExtension(t *testing.T) {
 	tests := []struct {
 		name string
 		in   []byte
 		err  error
 	}{
 		{name: "forbidden", in: []byte{0x80}, err: ErrForbiddenBit},
-		{name: "obu reserved", in: []byte{0x01}, err: ErrReservedBit},
 		{name: "short extension", in: []byte{0x04}, err: ErrShortHeader},
-		{name: "extension reserved", in: []byte{0x04, 0x01}, err: ErrReservedBit},
 	}
 
 	for _, tt := range tests {

@@ -1040,13 +1040,6 @@ func TestSimpleDecoderRejectsMalformedIVFInputs(t *testing.T) {
 			}}),
 			wantErr: internalobu.ErrForbiddenBit,
 		},
-		{
-			name: "reserved OBU header bit",
-			ivf: appendPublicIVF(nil, 16, 16, 30, 1, []publicIVFFrame{{
-				payload: lowOverhead(0x13, 0x00),
-			}}),
-			wantErr: internalobu.ErrReservedBit,
-		},
 	}
 
 	for _, tc := range tests {
