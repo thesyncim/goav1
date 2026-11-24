@@ -2,6 +2,7 @@ package tile
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 	"unsafe"
 
@@ -559,6 +560,12 @@ func TestCoeffGeometryTxScaleMatchesQuantizeTransformScale(t *testing.T) {
 // TestCoeffCDFsEqualMatchesOperator pins Equal to the == it replaces: the
 // default sets compare equal to a copy, and adapting any single CDF makes
 // them differ.
+// coeffCDFCount is the number of CDFs in a CoeffCDFs; the assertion fails to
+// compile if a field that is not an array of CDFs is ever added.
+const coeffCDFCount = unsafe.Sizeof(CoeffCDFs{}) / unsafe.Sizeof(entropy.CDF{})
+
+var _ [0]struct{} = [unsafe.Sizeof(CoeffCDFs{}) % unsafe.Sizeof(entropy.CDF{})]struct{}{}
+
 func TestCoeffCDFsEqualMatchesOperator(t *testing.T) {
 	for q := range CoeffQContexts {
 		def := &defaultCoeffCDFs[q]
@@ -566,34 +573,67 @@ func TestCoeffCDFsEqualMatchesOperator(t *testing.T) {
 		if !def.Equal(&cp) || *def != cp {
 			t.Fatalf("q context %d: copy does not compare equal", q)
 		}
-		flat := unsafe.Slice((*entropy.CDF)(unsafe.Pointer(&cp)), coeffCDFCount)
+		flat := coeffCDFPointers(t, &cp)
 		if uintptr(len(flat)) != coeffCDFCount {
 			t.Fatalf("flat length %d want %d", len(flat), coeffCDFCount)
 		}
-		for i := 0; i < len(flat); i += 29 {
-			save := flat[i]
+		for i := range flat {
+			save := *flat[i]
 			if err := flat[i].Update(0); err != nil {
 				t.Fatalf("q context %d CDF %d: %v", q, i, err)
 			}
-			if flat[i] == save {
+			if *flat[i] == save {
 				t.Fatalf("q context %d CDF %d: Update left the CDF unchanged", q, i)
 			}
 			if def.Equal(&cp) || *def == cp {
 				t.Fatalf("q context %d CDF %d: modified copy compares equal", q, i)
 			}
-			flat[i] = save
+			*flat[i] = save
+		}
+		var cpy CoeffCDFs
+		cpy.CopyFrom(&cp)
+		if cpy != cp {
+			t.Fatalf("q context %d: CopyFrom missed a field", q)
 		}
 		last := len(flat) - 1
-		save := flat[last]
+		save := *flat[last]
 		flat[last].Update(1)
 		if def.Equal(&cp) {
 			t.Fatalf("q context %d: last CDF change not detected", q)
 		}
-		flat[last] = save
+		*flat[last] = save
 		if !def.Equal(&cp) {
 			t.Fatalf("q context %d: restored copy does not compare equal", q)
 		}
 	}
+}
+
+// coeffCDFPointers returns a pointer to every CDF in c, in field order. Any
+// leaf that is not an entropy.CDF fails the test, so a new non-CDF field
+// cannot hide from TestCoeffCDFsEqualMatchesOperator.
+func coeffCDFPointers(t *testing.T, c *CoeffCDFs) []*entropy.CDF {
+	t.Helper()
+	cdfType := reflect.TypeFor[entropy.CDF]()
+	var out []*entropy.CDF
+	var walk func(v reflect.Value, path string)
+	walk = func(v reflect.Value, path string) {
+		switch {
+		case v.Type() == cdfType:
+			out = append(out, v.Addr().Interface().(*entropy.CDF))
+		case v.Kind() == reflect.Array:
+			for i := range v.Len() {
+				walk(v.Index(i), path)
+			}
+		case v.Kind() == reflect.Struct:
+			for i := range v.NumField() {
+				walk(v.Field(i), path+"."+v.Type().Field(i).Name)
+			}
+		default:
+			t.Fatalf("CoeffCDFs%s is a %v, not an entropy.CDF", path, v.Type())
+		}
+	}
+	walk(reflect.ValueOf(c).Elem(), "")
+	return out
 }
 
 func TestCoeffContextsMatchLibaom(t *testing.T) {

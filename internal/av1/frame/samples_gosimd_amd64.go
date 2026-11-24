@@ -60,3 +60,7 @@ func loadSampleRows8SIMD(dst []uint16, dstStride int, src []byte, srcStride int,
 	// Return with clean upper ymm state (the compiler emits no vzeroupper).
 	archsimd.ClearAVXUpperBits()
 }
+
+// sampleRows16UseSIMD reports whether the 16-bit staging rows take the Go
+// SIMD body (VEX-encoded 128-bit moves).
+func sampleRows16UseSIMD() bool { return archsimd.X86.AVX2() }

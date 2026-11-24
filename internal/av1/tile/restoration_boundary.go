@@ -1,12 +1,11 @@
 package tile
 
 import (
-	"unsafe"
-
 	av1frame "github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	av1restoration "github.com/thesyncim/goav1/internal/av1/restoration"
 	"github.com/thesyncim/goav1/internal/av1/superres"
+	"github.com/thesyncim/goav1/internal/unsafeutil"
 )
 
 const (
@@ -930,7 +929,7 @@ func restorationBoundaryLineU8(buf []uint16, stride int, row int, x0 int, lineWi
 	if len(buf) == 0 {
 		return nil, false
 	}
-	b := unsafe.Slice((*uint8)(unsafe.Pointer(unsafe.SliceData(buf))), len(buf))
+	b := unsafeutil.BytesOfUint16(buf)[:len(buf)]
 	if stride <= 0 || row < 0 || x0 < 0 {
 		return nil, false
 	}

@@ -2,10 +2,7 @@
 
 package encoder
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // boxInterpolateRow8 is InterpolateRow_C for 8-bit samples on NEON, as
 // libyuv's InterpolateRow_NEON: (s0*(256-f) + s1*f + 128) >> 8 by widening
@@ -140,38 +137,45 @@ func (p *boxColsPlan) build(sw, dw, x, dx int) {
 	}
 }
 
-// boxColsBlend is the blend of one 8-output half; q points at its weights.
-func boxColsBlend(a, b archsimd.Uint16x8, q unsafe.Pointer, k128 archsimd.Uint16x8, sh8 archsimd.Int16x8) archsimd.Uint16x8 {
-	gh := archsimd.LoadUint16x8Array((*[8]uint16)(q))
-	fh := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(q, 16)))
-	gl := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(q, 32)))
-	fl := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(q, 48)))
+// boxColsBlend is the blend of one 8-output half; q holds its weights.
+func boxColsBlend(a, b archsimd.Uint16x8, q *[64]uint8, k128 archsimd.Uint16x8, sh8 archsimd.Int16x8) archsimd.Uint16x8 {
+	gh := archsimd.LoadUint8x16Array((*[16]uint8)(q[0:16])).ReshapeToUint16s()
+	fh := archsimd.LoadUint8x16Array((*[16]uint8)(q[16:32])).ReshapeToUint16s()
+	gl := archsimd.LoadUint8x16Array((*[16]uint8)(q[32:48])).ReshapeToUint16s()
+	fl := archsimd.LoadUint8x16Array((*[16]uint8)(q[48:64])).ReshapeToUint16s()
 	u := fh.MulAdd(b, gh.MulAdd(a, k128))
 	v := fl.MulAdd(b, gl.Mul(a))
 	return u.Add(v.Shift(sh8))
 }
 
-// filter is boxFilterCols for one row. It stays on unsafe: build keeps every
-// chunk's window inside s[:sw] and its 16 outputs inside dst[:dw], and the
-// checked form (per-chunk window, table and output slices) measured 15-27%
-// slower on BenchmarkBoxColsPlan8.
+// filter is boxFilterCols for one row. Each chunk's table is one checked
+// 192-byte array of the plan's table; its source window and its 16 outputs
+// are one bounds-checked window each (build keeps them inside s[:sw] and
+// dst[:dw]).
 func (p *boxColsPlan) filter(dst, s []uint8) {
 	dst, s = dst[:p.dw], s[:p.sw]
-	ps, pd, pt := unsafe.Pointer(&s[0]), unsafe.Pointer(&dst[0]), unsafe.Pointer(&p.tab[0])
 	zero := archsimd.BroadcastUint8x16(0)
 	k128 := archsimd.BroadcastUint16x8(128)
 	sh8 := archsimd.BroadcastInt16x8(-8)
-	for c, pos := range p.pos {
-		t := unsafe.Add(pt, c*boxColsEntry)
-		w := unsafe.Add(ps, pos.base)
-		s0 := archsimd.LoadUint8x16Array((*[16]uint8)(w))
-		s1 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(w, 16)))
-		a := s0.LookupOrZero(archsimd.LoadUint8x16Array((*[16]uint8)(t))).
-			Or(s1.LookupOrZero(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(t, 16)))))
-		b := s0.LookupOrZero(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(t, 32)))).
-			Or(s1.LookupOrZero(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(t, 48)))))
-		lo := boxColsBlend(a.InterleaveLo(zero).ReshapeToUint16s(), b.InterleaveLo(zero).ReshapeToUint16s(), unsafe.Add(t, boxColsCoefOff), k128, sh8)
-		hi := boxColsBlend(a.InterleaveHi(zero).ReshapeToUint16s(), b.InterleaveHi(zero).ReshapeToUint16s(), unsafe.Add(t, boxColsCoefOff+64), k128, sh8)
-		lo.ReshapeToUint8s().ConcatOdd(hi.ReshapeToUint8s()).StoreArray((*[16]uint8)(unsafe.Add(pd, pos.out)))
+	tab, chunks := p.tab, p.pos
+	if len(chunks) > 1<<20 {
+		panic(errKernelArgs)
+	}
+	for c, pos := range chunks {
+		o := c * boxColsEntry
+		t := (*[boxColsEntry]uint8)(tab[o : o+boxColsEntry])
+		// Through uint32 the offsets are non-negative, so each window is
+		// one compare.
+		base, out := int(uint32(pos.base)), int(uint32(pos.out))
+		w := (*[boxColsWindow]uint8)(s[base : base+boxColsWindow])
+		s0 := archsimd.LoadUint8x16Array((*[16]uint8)(w[0:16]))
+		s1 := archsimd.LoadUint8x16Array((*[16]uint8)(w[16:32]))
+		a := s0.LookupOrZero(archsimd.LoadUint8x16Array((*[16]uint8)(t[0:16]))).
+			Or(s1.LookupOrZero(archsimd.LoadUint8x16Array((*[16]uint8)(t[16:32]))))
+		b := s0.LookupOrZero(archsimd.LoadUint8x16Array((*[16]uint8)(t[32:48]))).
+			Or(s1.LookupOrZero(archsimd.LoadUint8x16Array((*[16]uint8)(t[48:64]))))
+		lo := boxColsBlend(a.InterleaveLo(zero).ReshapeToUint16s(), b.InterleaveLo(zero).ReshapeToUint16s(), (*[64]uint8)(t[boxColsCoefOff:boxColsCoefOff+64]), k128, sh8)
+		hi := boxColsBlend(a.InterleaveHi(zero).ReshapeToUint16s(), b.InterleaveHi(zero).ReshapeToUint16s(), (*[64]uint8)(t[boxColsCoefOff+64:boxColsCoefOff+128]), k128, sh8)
+		lo.ReshapeToUint8s().ConcatOdd(hi.ReshapeToUint8s()).StoreArray((*[16]uint8)(dst[out : out+boxColsChunk]))
 	}
 }

@@ -92,14 +92,14 @@ func checkSweepBruteForce(t *testing.T, w, h int, sbs [][2]int) {
 		for pu := 0; pu < 85; pu++ {
 			bx, by, n := sweepPUGeometry(pu)
 			bestSAD := ^uint32(0)
-			bestMV := [2]int16{}
+			bestMV := uint32(0)
 			for yi := 0; yi < ny; yi++ {
 				for xi := 0; xi < nx; xi++ {
 					mvX, mvY := x0+xi, y0+yi
 					s := bruteSAD(src.Y, w, px+bx, py+by, ref.Y, w, px+bx+mvX, py+by+mvY, n, w, h)
 					if s < bestSAD {
 						bestSAD = s
-						bestMV = [2]int16{int16(mvX), int16(mvY)}
+						bestMV = svtPackMV(mvX, mvY)
 					}
 				}
 			}

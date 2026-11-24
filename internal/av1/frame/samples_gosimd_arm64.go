@@ -7,8 +7,8 @@
 package frame
 
 import (
+	"encoding/binary"
 	"simd/archsimd"
-	"unsafe"
 )
 
 // loadSampleRows8 binds the Go SIMD 8-bit widen on arm64. NEON (AdvSIMD) is
@@ -22,81 +22,62 @@ func loadSampleRows8(dst []uint16, dstStride int, src []byte, srcStride int, wid
 // columns per iteration: one 16-byte load, the low and high eight bytes each
 // zero-extended to eight uint16 lanes, and two 8-lane stores. A partial row
 // ends with an overlapping 16- or 8-column group; widths below eight use
-// scalar stores. No access leaves the row and output matches loadSampleRows8PureGo.
-//
-// The vector body addresses rows through raw pointers after checking the last
-// row's extent. Every vector access stays inside [0, width) of its row.
+// scalar stores. Each row is one checked window of each buffer, so no access
+// leaves the row and output matches loadSampleRows8PureGo.
 func loadSampleRows8SIMD(dst []uint16, dstStride int, src []byte, srcStride int, width int, height int) {
 	if width <= 0 || height <= 0 {
 		return
 	}
-	// Bounds contract identical to the pure-Go reference slices: the last
-	// row's [0, width) region must be resident in both buffers.
-	_ = src[(height-1)*srcStride+width-1]
-	_ = dst[(height-1)*dstStride+width-1]
-	sp := unsafe.Pointer(unsafe.SliceData(src))
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	dstByteStride := 2 * dstStride
-	if width < 16 {
-		if width == 8 {
-			var word [2]uint64
-			for y := 0; y < height; y++ {
-				word[0] = *(*uint64)(sp)
-				v := archsimd.LoadUint64x2Array(&word).ReshapeToUint8s()
-				v.ExtendLo8ToUint16().StoreArray((*[8]uint16)(dp))
-				if y+1 < height {
-					sp = unsafe.Add(sp, srcStride)
-					dp = unsafe.Add(dp, dstByteStride)
-				}
-			}
-			return
-		}
-		if width > 8 {
-			var word [2]uint64
-			off := width - 8
-			for y := 0; y < height; y++ {
-				word[0] = *(*uint64)(sp)
-				v := archsimd.LoadUint64x2Array(&word).ReshapeToUint8s()
-				v.ExtendLo8ToUint16().StoreArray((*[8]uint16)(dp))
-				word[0] = *(*uint64)(unsafe.Add(sp, off))
-				v = archsimd.LoadUint64x2Array(&word).ReshapeToUint8s()
-				v.ExtendLo8ToUint16().StoreArray((*[8]uint16)(unsafe.Add(dp, 2*off)))
-				if y+1 < height {
-					sp = unsafe.Add(sp, srcStride)
-					dp = unsafe.Add(dp, dstByteStride)
-				}
-			}
-			return
-		}
+	srcOff := 0
+	dstOff := 0
+	if width < 8 {
 		for y := 0; y < height; y++ {
-			for x := 0; x < width; x++ {
-				*(*uint16)(unsafe.Add(dp, 2*x)) = uint16(*(*byte)(unsafe.Add(sp, x)))
+			s := src[srcOff : srcOff+width]
+			d := dst[dstOff : dstOff+width]
+			for x := 0; x < len(s) && x < len(d); x++ {
+				d[x] = uint16(s[x])
 			}
-			if y+1 < height {
-				sp = unsafe.Add(sp, srcStride)
-				dp = unsafe.Add(dp, dstByteStride)
+			srcOff += srcStride
+			dstOff += dstStride
+		}
+		return
+	}
+	if width < 16 {
+		// One 8-byte group, plus an overlapping one when width > 8.
+		var word [2]uint64
+		off := width - 8
+		for y := 0; y < height; y++ {
+			word[0] = binary.LittleEndian.Uint64(src[srcOff : srcOff+8])
+			archsimd.LoadUint64x2Array(&word).ReshapeToUint8s().ExtendLo8ToUint16().StoreArray((*[8]uint16)(dst[dstOff : dstOff+8]))
+			if off > 0 {
+				word[0] = binary.LittleEndian.Uint64(src[srcOff+off : srcOff+width])
+				archsimd.LoadUint64x2Array(&word).ReshapeToUint8s().ExtendLo8ToUint16().StoreArray((*[8]uint16)(dst[dstOff+off : dstOff+width]))
 			}
+			srcOff += srcStride
+			dstOff += dstStride
 		}
 		return
 	}
 	for y := 0; y < height; y++ {
-		x := 0
-		for ; x+16 <= width; x += 16 {
-			v := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, x)))
-			d := unsafe.Add(dp, 2*x)
-			v.ExtendLo8ToUint16().StoreArray((*[8]uint16)(d))
-			v.HiToLo().ExtendLo8ToUint16().StoreArray((*[8]uint16)(unsafe.Add(d, 16)))
+		s := src[srcOff : srcOff+width]
+		d := dst[dstOff : dstOff+width]
+		for x := 0; x < len(s)-16 && x < len(d)-16; x += 16 {
+			loadSampleRows8Widen16((*[16]uint8)(s[x:x+16]), (*[16]uint16)(d[x:x+16]))
 		}
-		if x < width {
-			off := width - 16
-			v := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, off)))
-			d := unsafe.Add(dp, 2*off)
-			v.ExtendLo8ToUint16().StoreArray((*[8]uint16)(d))
-			v.HiToLo().ExtendLo8ToUint16().StoreArray((*[8]uint16)(unsafe.Add(d, 16)))
-		}
-		if y+1 < height {
-			sp = unsafe.Add(sp, srcStride)
-			dp = unsafe.Add(dp, dstByteStride)
-		}
+		// The last group overlaps the previous one when width%16 != 0.
+		loadSampleRows8Widen16((*[16]uint8)(s[len(s)-16:]), (*[16]uint16)(d[len(d)-16:]))
+		srcOff += srcStride
+		dstOff += dstStride
 	}
 }
+
+// loadSampleRows8Widen16 zero-extends sixteen bytes to sixteen uint16s.
+func loadSampleRows8Widen16(s *[16]uint8, d *[16]uint16) {
+	v := archsimd.LoadUint8x16Array(s)
+	v.ExtendLo8ToUint16().StoreArray((*[8]uint16)(d[0:8]))
+	v.HiToLo().ExtendLo8ToUint16().StoreArray((*[8]uint16)(d[8:16]))
+}
+
+// sampleRows16UseSIMD reports whether the 16-bit staging rows take the Go
+// SIMD body; AdvSIMD is mandatory on arm64.
+func sampleRows16UseSIMD() bool { return true }

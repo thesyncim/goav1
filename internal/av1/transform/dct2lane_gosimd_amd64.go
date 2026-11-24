@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // These index vectors duplicate each qword's low and high dwords. That lets
 // one AVX2 widening multiply handle all four paired row/column lanes.
@@ -18,17 +15,17 @@ var (
 	dctPairHighWords = [8]uint32{1, 1, 3, 3, 5, 5, 7, 7}
 )
 
-func dctPairLoad(p0, p1 unsafe.Pointer, stride uintptr, index uintptr) archsimd.Int64x4 {
-	a := *(*int32)(unsafe.Add(p0, index*stride))
-	b := *(*int32)(unsafe.Add(p1, index*stride))
+func dctPairLoad(p0, p1 []int32, stride int, index int) archsimd.Int64x4 {
+	o := index * stride
+	a, b := p0[o], p1[o]
 	return archsimd.BroadcastInt64x4(int64(a)).InterleaveLoGrouped(archsimd.BroadcastInt64x4(int64(b)))
 }
 
-func dctPairStore(p0, p1 unsafe.Pointer, stride uintptr, index uintptr, v archsimd.Int64x4) {
+func dctPairStore(p0, p1 []int32, stride int, index int, v archsimd.Int64x4) {
 	var pair [4]int64
 	v.StoreArray(&pair)
-	*(*int32)(unsafe.Add(p0, index*stride)) = int32(pair[0])
-	*(*int32)(unsafe.Add(p1, index*stride)) = int32(pair[1])
+	o := index * stride
+	p0[o], p1[o] = int32(pair[0]), int32(pair[1])
 }
 
 // dctPairMul multiplies the signed qword lanes by a small signed coefficient.
@@ -66,9 +63,9 @@ func dctPairClip(v, minv, maxv archsimd.Int64x4) archsimd.Int64x4 {
 }
 
 // inverseDCT8PairSIMD applies the scalar inverseDCT8 butterfly to two values
-// per coefficient. Its input and output pointers may describe two rows or two
-// adjacent columns; stride is the byte distance between successive samples.
-func inverseDCT8PairSIMD(p0, p1 unsafe.Pointer, stride uintptr, min, max int32) {
+// per coefficient. Its inputs and outputs p0 and p1 may describe two rows or
+// two adjacent columns; sample i of each is at i*stride.
+func inverseDCT8PairSIMD(p0, p1 []int32, stride int, min, max int32) {
 	lowIndex := archsimd.LoadUint32x8Array(&dctPairLowWords)
 	highIndex := archsimd.LoadUint32x8Array(&dctPairHighWords)
 	minv := archsimd.BroadcastInt64x4(int64(min))
@@ -127,8 +124,7 @@ func inverseDCT8Row2SIMDAdapter(r0, r1 []int32, min, max int32) {
 		inverseDCT8Row2PureGo(r0, r1, min, max)
 		return
 	}
-	// rows inside the extent checked above; same shape as the residual-add rows (checked rows +9-86%).
-	inverseDCT8PairSIMD(unsafe.Pointer(&r0[0]), unsafe.Pointer(&r1[0]), 4, min, max)
+	inverseDCT8PairSIMD(r0, r1, 1, min, max)
 }
 
 func inverseDCT8Col2SIMDAdapter(buf []int32, rowStride int, min, max int32) {
@@ -136,14 +132,12 @@ func inverseDCT8Col2SIMDAdapter(buf []int32, rowStride int, min, max int32) {
 		inverseDCT8Col2PureGo(buf, rowStride, min, max)
 		return
 	}
-	// rows inside the extent checked above; same shape as the residual-add rows (checked rows +9-86%).
-	base := unsafe.Pointer(&buf[0])
-	inverseDCT8PairSIMD(base, unsafe.Add(base, 4), uintptr(rowStride)*4, min, max)
+	inverseDCT8PairSIMD(buf, buf[1:], rowStride, min, max)
 }
 
 // inverseDCT16PairSIMD applies inverseDCT16 to two rows or columns. The
 // inverseDCT8 even pass is written inline so vectors stay live across stages.
-func inverseDCT16PairSIMD(p0, p1 unsafe.Pointer, stride uintptr, min, max int32) {
+func inverseDCT16PairSIMD(p0, p1 []int32, stride int, min, max int32) {
 	lowIndex := archsimd.LoadUint32x8Array(&dctPairLowWords)
 	highIndex := archsimd.LoadUint32x8Array(&dctPairHighWords)
 	minv := archsimd.BroadcastInt64x4(int64(min))
@@ -273,8 +267,7 @@ func inverseDCT16Row2SIMDAdapter(r0, r1 []int32, min, max int32) {
 		inverseDCT16Row2PureGo(r0, r1, min, max)
 		return
 	}
-	// rows inside the extent checked above; same shape as the residual-add rows (checked rows +9-86%).
-	inverseDCT16PairSIMD(unsafe.Pointer(&r0[0]), unsafe.Pointer(&r1[0]), 4, min, max)
+	inverseDCT16PairSIMD(r0, r1, 1, min, max)
 }
 
 func inverseDCT16Col2SIMDAdapter(buf []int32, rowStride int, min, max int32) {
@@ -282,9 +275,7 @@ func inverseDCT16Col2SIMDAdapter(buf []int32, rowStride int, min, max int32) {
 		inverseDCT16Col2PureGo(buf, rowStride, min, max)
 		return
 	}
-	// rows inside the extent checked above; same shape as the residual-add rows (checked rows +9-86%).
-	base := unsafe.Pointer(&buf[0])
-	inverseDCT16PairSIMD(base, unsafe.Add(base, 4), uintptr(rowStride)*4, min, max)
+	inverseDCT16PairSIMD(buf, buf[1:], rowStride, min, max)
 }
 
 func init() {

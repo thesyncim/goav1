@@ -1,8 +1,6 @@
 package tile
 
 import (
-	"unsafe"
-
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
@@ -45,26 +43,118 @@ var _ [CoeffBaseContexts]struct{} = [len(CoeffCDFs{}.CoeffBase[0][0])]struct{}{}
 var _ [EOBBaseContexts]struct{} = [len(CoeffCDFs{}.CoeffBaseEOB[0][0])]struct{}{}
 var _ [maxEOBFlagContexts]struct{} = [len(CoeffCDFs{}.EOBFlag16[0])]struct{}{}
 
-// coeffCDFCount is the number of CDFs in a CoeffCDFs. The assertion below
-// fails to compile if a field that is not an array of CDFs is ever added.
-const coeffCDFCount = unsafe.Sizeof(CoeffCDFs{}) / unsafe.Sizeof(entropy.CDF{})
-
-var _ [0]struct{} = [unsafe.Sizeof(CoeffCDFs{}) % unsafe.Sizeof(entropy.CDF{})]struct{}{}
-
 // Equal reports whether c and o hold identical CDFs; it is the test c == *o
-// would make, written as one loop over the flattened CDF array. TinyGo
-// expands == on an aggregate into one comparison per element, so comparing a
-// CoeffCDFs inline costs hundreds of kilobytes of wasm in the caller, and
-// that makes wasm-opt run for many minutes and tens of gigabytes.
+// would make, written as one loop per CDF row. TinyGo expands == on an
+// aggregate into one comparison per element, so comparing a CoeffCDFs inline
+// costs hundreds of kilobytes of wasm in the caller, and that makes wasm-opt
+// run for many minutes and tens of gigabytes. The loops range over lengths:
+// TinyGo copies a ranged array. TestCoeffCDFsEqualMatchesOperator
+// pins that every field is compared.
 func (c *CoeffCDFs) Equal(o *CoeffCDFs) bool {
-	a := unsafe.Slice((*entropy.CDF)(unsafe.Pointer(c)), coeffCDFCount)
-	b := unsafe.Slice((*entropy.CDF)(unsafe.Pointer(o)), coeffCDFCount)
+	for i := range len(c.TXBSkip) {
+		if !cdfsEqual(c.TXBSkip[i][:], o.TXBSkip[i][:]) {
+			return false
+		}
+	}
+	for i := range len(c.EOBExtra) {
+		for j := range len(c.EOBExtra[i]) {
+			if !cdfsEqual(c.EOBExtra[i][j][:], o.EOBExtra[i][j][:]) {
+				return false
+			}
+		}
+	}
+	for i := range len(c.DCSign) {
+		if !cdfsEqual(c.DCSign[i][:], o.DCSign[i][:]) {
+			return false
+		}
+	}
+	for i := range len(c.CoeffBR) {
+		for j := range len(c.CoeffBR[i]) {
+			if !cdfsEqual(c.CoeffBR[i][j][:], o.CoeffBR[i][j][:]) {
+				return false
+			}
+		}
+	}
+	for i := range len(c.CoeffBase) {
+		for j := range len(c.CoeffBase[i]) {
+			if !cdfsEqual(c.CoeffBase[i][j][:], o.CoeffBase[i][j][:]) {
+				return false
+			}
+		}
+	}
+	for i := range len(c.CoeffBaseEOB) {
+		for j := range len(c.CoeffBaseEOB[i]) {
+			if !cdfsEqual(c.CoeffBaseEOB[i][j][:], o.CoeffBaseEOB[i][j][:]) {
+				return false
+			}
+		}
+	}
+	for i := range len(c.EOBFlag16) {
+		if !cdfsEqual(c.EOBFlag16[i][:], o.EOBFlag16[i][:]) {
+			return false
+		}
+	}
+	for i := range len(c.EOBFlag32) {
+		if !cdfsEqual(c.EOBFlag32[i][:], o.EOBFlag32[i][:]) {
+			return false
+		}
+	}
+	for i := range len(c.EOBFlag64) {
+		if !cdfsEqual(c.EOBFlag64[i][:], o.EOBFlag64[i][:]) {
+			return false
+		}
+	}
+	for i := range len(c.EOBFlag128) {
+		if !cdfsEqual(c.EOBFlag128[i][:], o.EOBFlag128[i][:]) {
+			return false
+		}
+	}
+	for i := range len(c.EOBFlag256) {
+		if !cdfsEqual(c.EOBFlag256[i][:], o.EOBFlag256[i][:]) {
+			return false
+		}
+	}
+	for i := range len(c.EOBFlag512) {
+		if !cdfsEqual(c.EOBFlag512[i][:], o.EOBFlag512[i][:]) {
+			return false
+		}
+	}
+	for i := range len(c.EOBFlag1024) {
+		if !cdfsEqual(c.EOBFlag1024[i][:], o.EOBFlag1024[i][:]) {
+			return false
+		}
+	}
+	return true
+}
+
+func cdfsEqual(a, b []entropy.CDF) bool {
+	if len(a) != len(b) {
+		return false
+	}
 	for i := range a {
 		if a[i] != b[i] {
 			return false
 		}
 	}
 	return true
+}
+
+// CopyFrom is *c = *o as one copy per field: TinyGo lowers the assignment of
+// a struct this large through a heap temporary.
+func (c *CoeffCDFs) CopyFrom(o *CoeffCDFs) {
+	copy(c.TXBSkip[:], o.TXBSkip[:])
+	copy(c.EOBExtra[:], o.EOBExtra[:])
+	copy(c.DCSign[:], o.DCSign[:])
+	copy(c.CoeffBR[:], o.CoeffBR[:])
+	copy(c.CoeffBase[:], o.CoeffBase[:])
+	copy(c.CoeffBaseEOB[:], o.CoeffBaseEOB[:])
+	copy(c.EOBFlag16[:], o.EOBFlag16[:])
+	copy(c.EOBFlag32[:], o.EOBFlag32[:])
+	copy(c.EOBFlag64[:], o.EOBFlag64[:])
+	copy(c.EOBFlag128[:], o.EOBFlag128[:])
+	copy(c.EOBFlag256[:], o.EOBFlag256[:])
+	copy(c.EOBFlag512[:], o.EOBFlag512[:])
+	copy(c.EOBFlag1024[:], o.EOBFlag1024[:])
 }
 
 type TXBDecodeResult struct {
@@ -516,7 +606,7 @@ func (c *CoeffCDFs) InitDefault(baseQIndex uint8) error {
 	if c == nil {
 		return entropy.ErrInvalidCDF
 	}
-	*c = defaultCoeffCDFs[CoeffQContext(baseQIndex)]
+	c.CopyFrom(&defaultCoeffCDFs[CoeffQContext(baseQIndex)])
 	return nil
 }
 

@@ -243,7 +243,7 @@ func typeDispatch(name string, w, h int, es []tdEntry, extra string) string {
 	fmt.Fprintf(&b, "// %s runs the generated %dx%d kernel of type t and the network forms\n", name, w, h)
 	fmt.Fprintf(&b, "// covering cols coded columns and rows coded rows; it reports false for a\n")
 	fmt.Fprintf(&b, "// type without one and when a guard declines.\n")
-	fmt.Fprintf(&b, "func %s(c *[%d]int32, dp unsafe.Pointer, ds int, pp unsafe.Pointer, ps int, t Type, cols, rows int) bool {\n", name, w*min(h, 32))
+	fmt.Fprintf(&b, "func %s(c *[%d]int32, d []byte, ds int, p []byte, ps int, t Type, cols, rows int) bool {\n", name, w*min(h, 32))
 	m := h
 	if w == h {
 		m = 0
@@ -253,7 +253,7 @@ func typeDispatch(name string, w, h int, es []tdEntry, extra string) string {
 		fmt.Fprintf(&b, "\tcase %s:\n", e.t.goName)
 		for i, f := range e.forms {
 			k := kernel{n: w, m: m, cols: f[0], rows: f[1], v: e.t.v, h: e.t.h}
-			call := fmt.Sprintf("return %s(c, dp, ds, pp, ps%s)", k.name(), extra)
+			call := fmt.Sprintf("return %s(c, d, ds, p, ps%s)", k.name(), extra)
 			var cond []string
 			if f[0] < w {
 				cond = append(cond, fmt.Sprintf("cols <= %d", f[0]))

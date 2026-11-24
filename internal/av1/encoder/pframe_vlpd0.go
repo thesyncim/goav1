@@ -368,7 +368,8 @@ func (st *lossyEncodeState) svtPD0BlockDist(src, ref SourceFrame420, me *realtim
 	dx, dy := 0, 0
 	if me != nil {
 		pu := svtMEBlockOffset(x, y, max(w, h))
-		dx, dy = int(me.bestMV[pu][0]), int(me.bestMV[pu][1])
+		x, y := me.mvAt(pu)
+		dx, dy = int(x), int(y)
 	}
 	bx, by := sbX+x, sbY+y
 	rx, ry := bx+dx, by+dy

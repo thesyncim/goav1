@@ -163,7 +163,7 @@ func TestRefmvsSaveTmvsMatchesScalar(t *testing.T) {
 				rt.saveTmvs(got, &side, colStart8, colEnd8, sby*8, sby*8+8)
 				saveTmvsScalarRef(rt, want, &side, colStart8, colEnd8, sby*8, sby*8+8)
 				for i := range got.Entries {
-					if refMVEntryBits(&got.Entries[i]) != refMVEntryBits(&want.Entries[i]) {
+					if got.Entries[i] != want.Entries[i] {
 						t.Fatalf("%dx%d sby %d trial %d: entry %d = %+v, want %+v", iw4, ih4, sby, trial, i, got.Entries[i], want.Entries[i])
 					}
 				}

@@ -4,7 +4,6 @@ package quantize
 
 import (
 	"simd/archsimd"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 )
@@ -42,12 +41,6 @@ func quantizeBRowGroupsDiffSIMD(qcoeff []int16, coeff []int32, n int, live uint8
 		return 0, 0, 0, false
 	}
 	cs, qs, ss := coeff[:count], qcoeff[:count], iscan[:count]
-	// unsafe: address-only overlap test of the int32 source and int16
-	// destination (different element types, so no safe comparison exists);
-	// nothing is dereferenced through these pointers.
-	if cp, qp := uintptr(unsafe.Pointer(&cs[0])), uintptr(unsafe.Pointer(&qs[0])); qp < cp+uintptr(4*count) && cp < qp+uintptr(2*count) {
-		return 0, 0, 0, false
-	}
 	ln := &bp.lanes
 	quantV := archsimd.LoadInt32x4Array(&ln.quant)
 	roundV := archsimd.LoadInt32x4Array(&ln.round)

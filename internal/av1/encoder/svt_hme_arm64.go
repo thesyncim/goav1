@@ -2,10 +2,7 @@
 
 package encoder
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // svtDownsample2DArch is svtDownsample2D on NEON: the 2x2 sums of 16 output
 // samples are two row-widened adds folded by pairwise adds, then
@@ -22,22 +19,25 @@ func svtDownsample2DArch(dst []byte, dstStride int, src []byte, srcStride, w, h 
 		d := dst[y*dstStride : y*dstStride+w]
 		x := 0
 		if len(r0) >= 2*w && len(r1) >= 2*w {
-			// Pointer loads: the checked forms (2*x-indexed or advancing
-			// slices) cost +26-35% instructions and +1-9% cycles.
-			p0 := unsafe.Pointer(&r0[0])
-			p1 := unsafe.Pointer(&r1[0])
-			for ; x+16 <= w; x += 16 {
-				a := load16(unsafe.Add(p0, 2*x))
-				b := load16(unsafe.Add(p1, 2*x))
-				c := load16(unsafe.Add(p0, 2*x+16))
-				e := load16(unsafe.Add(p1, 2*x+16))
+			// One 32-byte window per input row and 16 outputs: j = 2x
+			// steps by 32 so each window is one compare.
+			r0, r1 := r0[:2*w], r1[:2*w]
+			r1 = r1[:len(r0)]
+			for j := 0; j+32 <= len(r0); j += 32 {
+				q0, q1 := (*[32]uint8)(r0[j:j+32]), (*[32]uint8)(r1[j:j+32])
+				a := archsimd.LoadUint8x16Array((*[16]uint8)(q0[0:16]))
+				b := archsimd.LoadUint8x16Array((*[16]uint8)(q1[0:16]))
+				c := archsimd.LoadUint8x16Array((*[16]uint8)(q0[16:32]))
+				e := archsimd.LoadUint8x16Array((*[16]uint8)(q1[16:32]))
 				lo := a.ExtendLo8ToUint16().Add(b.ExtendLo8ToUint16()).ConcatAddPairs(widenHi8(a).Add(widenHi8(b)))
 				hi := c.ExtendLo8ToUint16().Add(e.ExtendLo8ToUint16()).ConcatAddPairs(widenHi8(c).Add(widenHi8(e)))
 				lf := lo.Add(two).Shift(sh2).SaturateToUint8().ReshapeToUint64s().BitsToFloat64()
 				hf := hi.Add(two).Shift(sh2).SaturateToUint8().ReshapeToUint64s().BitsToFloat64()
 				out := lf.SetElem(1, hf.GetElem(0)).ToBits().ReshapeToUint8s()
-				out.StoreArray((*[16]uint8)(unsafe.Pointer(&d[x])))
+				x = j >> 1
+				out.StoreArray((*[16]uint8)(d[x : x+16]))
 			}
+			x = w &^ 15
 		}
 		for ; x < w; x++ {
 			s := uint32(r0[2*x]) + uint32(r0[2*x+1]) + uint32(r1[2*x]) + uint32(r1[2*x+1])
@@ -50,19 +50,18 @@ func svtDownsample2DArch(dst []byte, dstStride int, src []byte, srcStride, w, h 
 // reference origins ref+0..ref+3 (svt_sad_loop_kernel's per-row position
 // batch).
 func sad16xNx4(src []byte, srcStride int, ref []byte, refStride, rows int) (int, int, int, int) {
-	_ = src[(rows-1)*srcStride+15]
-	_ = ref[(rows-1)*refStride+18]
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
-	sp := unsafe.Pointer(&src[0])
-	rp := unsafe.Pointer(&ref[0])
+	if uint(rows) > rowsMax || uint(srcStride) > rowStrideMax || uint(refStride) > rowStrideMax {
+		panic(errKernelArgs)
+	}
 	var c0, c1, c2, c3 archsimd.Uint16x8
 	for r := 0; r < rows; r++ {
-		s := load16(unsafe.Add(sp, r*srcStride))
-		p := unsafe.Add(rp, r*refStride)
-		c0 = c0.Add(widen16(absDiffU8x16(s, load16(p))))
-		c1 = c1.Add(widen16(absDiffU8x16(s, load16(unsafe.Add(p, 1)))))
-		c2 = c2.Add(widen16(absDiffU8x16(s, load16(unsafe.Add(p, 2)))))
-		c3 = c3.Add(widen16(absDiffU8x16(s, load16(unsafe.Add(p, 3)))))
+		so, ro := r*srcStride, r*refStride
+		s := archsimd.LoadUint8x16Array((*[16]uint8)(src[so : so+16]))
+		p := (*[19]uint8)(ref[ro : ro+19])
+		c0 = c0.Add(widen16(absDiffU8x16(s, archsimd.LoadUint8x16Array((*[16]uint8)(p[0:16])))))
+		c1 = c1.Add(widen16(absDiffU8x16(s, archsimd.LoadUint8x16Array((*[16]uint8)(p[1:17])))))
+		c2 = c2.Add(widen16(absDiffU8x16(s, archsimd.LoadUint8x16Array((*[16]uint8)(p[2:18])))))
+		c3 = c3.Add(widen16(absDiffU8x16(s, archsimd.LoadUint8x16Array((*[16]uint8)(p[3:19])))))
 	}
 	return sumU16(c0), sumU16(c1), sumU16(c2), sumU16(c3)
 }
@@ -81,11 +80,9 @@ func sad16xNx4(src []byte, srcStride int, ref []byte, refStride, rows int) (int,
 // 16*16*255 = 65280. The pairwise reduction is linear, so it runs on S and H
 // before the single correction.
 func svtSAD16xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStride, rows int) {
-	_ = src[(rows-1)*srcStride+15]
-	_ = ref[(rows-1)*refStride+22]
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
-	sp := unsafe.Pointer(&src[0])
-	rp := unsafe.Pointer(&ref[0])
+	if uint(rows) > rowsMax || uint(srcStride) > rowStrideMax || uint(refStride) > rowStrideMax {
+		panic(errKernelArgs)
+	}
 	var s0, s1, s2, s3, s4, s5, s6, s7 archsimd.Uint16x8
 	var h0, h1, h2, h3, h4, h5, h6, h7 archsimd.Uint16x8
 	// USHL by a hoisted -8: stock archsimd lowers ShiftAllRight to a
@@ -93,31 +90,33 @@ func svtSAD16xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStri
 	hiShift := archsimd.BroadcastInt16x8(-8)
 	for r := 0; r < rows; r++ {
 		// Written out rather than through load16 / absDiffU8x16: each inlined
-		// helper call leaves an inline-mark NOP in the loop.
-		s := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, r*srcStride)))
-		p := unsafe.Add(rp, r*refStride)
-		q := archsimd.LoadUint8x16Array((*[16]uint8)(p))
+		// helper call leaves an inline-mark NOP in the loop. One window per
+		// row: the eight reference loads sit at constant offsets inside it.
+		so, ro := r*srcStride, r*refStride
+		s := archsimd.LoadUint8x16Array((*[16]uint8)(src[so : so+16]))
+		p := (*[23]uint8)(ref[ro : ro+23])
+		q := archsimd.LoadUint8x16Array((*[16]uint8)(p[0:16]))
 		d := s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 		s0, h0 = s0.Add(d), h0.Add(d.Shift(hiShift))
-		q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 1)))
+		q = archsimd.LoadUint8x16Array((*[16]uint8)(p[1:17]))
 		d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 		s1, h1 = s1.Add(d), h1.Add(d.Shift(hiShift))
-		q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 2)))
+		q = archsimd.LoadUint8x16Array((*[16]uint8)(p[2:18]))
 		d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 		s2, h2 = s2.Add(d), h2.Add(d.Shift(hiShift))
-		q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 3)))
+		q = archsimd.LoadUint8x16Array((*[16]uint8)(p[3:19]))
 		d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 		s3, h3 = s3.Add(d), h3.Add(d.Shift(hiShift))
-		q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 4)))
+		q = archsimd.LoadUint8x16Array((*[16]uint8)(p[4:20]))
 		d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 		s4, h4 = s4.Add(d), h4.Add(d.Shift(hiShift))
-		q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 5)))
+		q = archsimd.LoadUint8x16Array((*[16]uint8)(p[5:21]))
 		d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 		s5, h5 = s5.Add(d), h5.Add(d.Shift(hiShift))
-		q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 6)))
+		q = archsimd.LoadUint8x16Array((*[16]uint8)(p[6:22]))
 		d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 		s6, h6 = s6.Add(d), h6.Add(d.Shift(hiShift))
-		q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 7)))
+		q = archsimd.LoadUint8x16Array((*[16]uint8)(p[7:23]))
 		d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 		s7, h7 = s7.Add(d), h7.Add(d.Shift(hiShift))
 	}
@@ -142,40 +141,41 @@ func svtSAD16xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStri
 // so the S - 255*H correction is exact there and the last fold runs in
 // uint32. rows <= 16.
 func svtSAD32xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStride, rows int) {
-	_ = src[(rows-1)*srcStride+31]
-	_ = ref[(rows-1)*refStride+38]
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
-	sp := unsafe.Pointer(&src[0])
-	rp := unsafe.Pointer(&ref[0])
+	if uint(rows) > rowsMax || uint(srcStride) > rowStrideMax || uint(refStride) > rowStrideMax {
+		panic(errKernelArgs)
+	}
 	var s0, s1, s2, s3, s4, s5, s6, s7 archsimd.Uint16x8
 	var h0, h1, h2, h3, h4, h5, h6, h7 archsimd.Uint16x8
 	hiShift := archsimd.BroadcastInt16x8(-8)
 	for r := 0; r < rows; r++ {
+		so, ro := r*srcStride, r*refStride
+		sw := (*[32]uint8)(src[so : so+32])
+		rw := (*[39]uint8)(ref[ro : ro+39])
 		for c := 0; c < 32; c += 16 {
-			s := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, r*srcStride+c)))
-			p := unsafe.Add(rp, r*refStride+c)
-			q := archsimd.LoadUint8x16Array((*[16]uint8)(p))
+			s := archsimd.LoadUint8x16Array((*[16]uint8)(sw[c : c+16]))
+			p := (*[23]uint8)(rw[c : c+23])
+			q := archsimd.LoadUint8x16Array((*[16]uint8)(p[0:16]))
 			d := s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 			s0, h0 = s0.Add(d), h0.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 1)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(p[1:17]))
 			d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 			s1, h1 = s1.Add(d), h1.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 2)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(p[2:18]))
 			d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 			s2, h2 = s2.Add(d), h2.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 3)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(p[3:19]))
 			d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 			s3, h3 = s3.Add(d), h3.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 4)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(p[4:20]))
 			d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 			s4, h4 = s4.Add(d), h4.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 5)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(p[5:21]))
 			d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 			s5, h5 = s5.Add(d), h5.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 6)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(p[6:22]))
 			d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 			s6, h6 = s6.Add(d), h6.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 7)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(p[7:23]))
 			d = s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 			s7, h7 = s7.Add(d), h7.Add(d.Shift(hiShift))
 		}
@@ -205,15 +205,17 @@ const svtHMEColSums = true
 // shift-add; the even columns' totals are S - 256*H (each total is at most
 // 16*255) and the two are zipped back into column order.
 func svtColTotalsArch(cw *[svtHMEMaxCols]uint16, ref []byte, s2, rows, span int) {
-	_ = ref[(rows-1)*s2+span-1]
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
-	rp := unsafe.Pointer(&ref[0])
+	if uint(rows) > rowsMax || uint(s2) > rowStrideMax {
+		panic(errKernelArgs)
+	}
 	hiShift := archsimd.BroadcastInt16x8(-8)
 	loShift := archsimd.BroadcastInt16x8(8)
 	for c := 0; c < span; c += 16 {
 		var sv, hv archsimd.Uint16x8
+		col := ref[c:]
 		for r := 0; r < rows; r++ {
-			v := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(rp, r*s2+c))).ReshapeToUint16s()
+			o := r * s2
+			v := archsimd.LoadUint8x16Array((*[16]uint8)(col[o : o+16])).ReshapeToUint16s()
 			sv, hv = sv.Add(v), hv.Add(v.Shift(hiShift))
 		}
 		ev := sv.Sub(hv.Shift(loShift))
@@ -240,8 +242,8 @@ func svtColTotalsSlideArch(cw *[svtHMEMaxCols]uint16, out, in []byte, span int) 
 
 // svtHMEColSumRow scores one HME search row: the positions x = 0..w-1 (w a
 // multiple of 8, w + bw <= svtHMEMaxCols) of the bw-wide (16 or 32),
-// rows-tall block at sp (stride s2) against rp+x, eight at a time, from the
-// source total srcSum and the row's reference column totals at cwp. It
+// rows-tall block s (stride s2) against ref[x:], eight at a time, from the
+// source total srcSum and the row's reference column totals cw. It
 // returns the smallest key t<<7 | x (t the SAD; t <= 16*32*255, x < 128): the
 // row's minimum SAD and its first position. When t is not nil, t[x/8][k] is
 // the SAD of position x+k (svtHMEEightColSumScalar).
@@ -253,10 +255,12 @@ func svtColTotalsSlideArch(cw *[svtHMEMaxCols]uint16, out, in []byte, span int) 
 // T + sum(Cb[j] - C0[j], j < k), T the first window, as an exclusive prefix
 // sum over int16 lanes (each term is at most 7*16*255 in magnitude). The
 // positions loop inside the kernel so a search row is one call.
-func svtHMEColSumRow(t *[svtHMEMaxCols / 8][8]uint32, sp, rp, cwp unsafe.Pointer, s2, bw, rows, w int, srcSum uint32) uint32 {
-	// sp/rp/cwp address extents svtHMESearchColSum checked ((rows-1)*s2+bw,
-	// (rows-1)*s2+bw+w, bw+w); slice parameters with a re-check here cost
-	// +0.09-0.17% encoder instructions.
+func svtHMEColSumRow(t *[svtHMEMaxCols / 8][8]uint32, s []byte, s2 int, ref []byte, cw *[svtHMEMaxCols]uint16, bw, rows, w int, srcSum uint32) uint32 {
+	if uint(s2) > rowStrideMax || uint(rows) > rowsMax || uint(w) > svtHMEMaxCols || (bw != 16 && bw != 32) {
+		panic(errKernelArgs)
+	}
+	// Each step reads one 16-byte source window and one 23-byte reference
+	// window (the eight positions at constant offsets inside it).
 	// Only the shift count stays in a register across the row loop; the
 	// reduction's constants load from one table each step (kept live, the
 	// register allocator reloaded them inside the row loop).
@@ -267,47 +271,48 @@ func svtHMEColSumRow(t *[svtHMEMaxCols / 8][8]uint32, sp, rp, cwp unsafe.Pointer
 	cMask := cShift
 	steps := rows << cShift
 	for x := 0; x < w; x += 8 {
-		rx := unsafe.Add(rp, x)
+		rx := ref[x:]
 		// The rows x 16-column steps run as one loop; the first seeds the
 		// accumulators, so no zero vector stays live across it.
-		sv := archsimd.LoadUint8x16Array((*[16]uint8)(sp))
-		p := rx
+		sv := archsimd.LoadUint8x16Array((*[16]uint8)(s[0:16]))
+		p := (*[23]uint8)(rx[0:23])
 		var d archsimd.Uint16x8
-		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p))).ReshapeToUint16s()
+		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[0:16]))).ReshapeToUint16s()
 		s0, h0 := d, d.Shift(hiShift)
-		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 1)))).ReshapeToUint16s()
+		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[1:17]))).ReshapeToUint16s()
 		s1, h1 := d, d.Shift(hiShift)
-		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 2)))).ReshapeToUint16s()
+		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[2:18]))).ReshapeToUint16s()
 		s2v, h2 := d, d.Shift(hiShift)
-		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 3)))).ReshapeToUint16s()
+		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[3:19]))).ReshapeToUint16s()
 		s3, h3 := d, d.Shift(hiShift)
-		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 4)))).ReshapeToUint16s()
+		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[4:20]))).ReshapeToUint16s()
 		s4, h4 := d, d.Shift(hiShift)
-		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 5)))).ReshapeToUint16s()
+		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[5:21]))).ReshapeToUint16s()
 		s5, h5 := d, d.Shift(hiShift)
-		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 6)))).ReshapeToUint16s()
+		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[6:22]))).ReshapeToUint16s()
 		s6, h6 := d, d.Shift(hiShift)
-		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 7)))).ReshapeToUint16s()
+		d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[7:23]))).ReshapeToUint16s()
 		s7, h7 := d, d.Shift(hiShift)
 		for i := 1; i < steps; i++ {
 			off := (i>>cShift)*s2 + (i&cMask)<<4
-			sv = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, off)))
-			p = unsafe.Add(rx, off)
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p))).ReshapeToUint16s()
+			sw := (*[16]uint8)(s[off : off+16])
+			p = (*[23]uint8)(rx[off : off+23])
+			sv = archsimd.LoadUint8x16Array(sw)
+			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[0:16]))).ReshapeToUint16s()
 			s0, h0 = s0.Add(d), h0.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 1)))).ReshapeToUint16s()
+			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[1:17]))).ReshapeToUint16s()
 			s1, h1 = s1.Add(d), h1.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 2)))).ReshapeToUint16s()
+			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[2:18]))).ReshapeToUint16s()
 			s2v, h2 = s2v.Add(d), h2.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 3)))).ReshapeToUint16s()
+			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[3:19]))).ReshapeToUint16s()
 			s3, h3 = s3.Add(d), h3.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 4)))).ReshapeToUint16s()
+			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[4:20]))).ReshapeToUint16s()
 			s4, h4 = s4.Add(d), h4.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 5)))).ReshapeToUint16s()
+			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[5:21]))).ReshapeToUint16s()
 			s5, h5 = s5.Add(d), h5.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 6)))).ReshapeToUint16s()
+			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[6:22]))).ReshapeToUint16s()
 			s6, h6 = s6.Add(d), h6.Add(d.Shift(hiShift))
-			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 7)))).ReshapeToUint16s()
+			d = sv.Min(archsimd.LoadUint8x16Array((*[16]uint8)(p[7:23]))).ReshapeToUint16s()
 			s7, h7 = s7.Add(d), h7.Add(d.Shift(hiShift))
 		}
 		// Minima: two folds in uint16 (each lane at most 2*16*4*255), the
@@ -324,13 +329,18 @@ func svtHMEColSumRow(t *[svtHMEMaxCols / 8][8]uint32, sp, rp, cwp unsafe.Pointer
 		mhi := tb.ExtendLo4ToUint32().ConcatAddPairs(tb.HiToLo().ExtendLo4ToUint32())
 
 		// Reference window totals.
-		cw := unsafe.Add(cwp, 2*x)
-		c0 := archsimd.LoadUint16x8Array((*[8]uint16)(cw))
-		win := c0.Add(archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(cw, 16))))
-		cb := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(cw, 32)))
+		var c0, win, cb archsimd.Uint16x8
 		if bw == 32 {
-			win = win.Add(cb).Add(archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(cw, 48))))
-			cb = archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(cw, 64)))
+			c := (*[40]uint16)(cw[x : x+40])
+			c0 = archsimd.LoadUint16x8Array((*[8]uint16)(c[0:8]))
+			win = c0.Add(archsimd.LoadUint16x8Array((*[8]uint16)(c[8:16])))
+			win = win.Add(archsimd.LoadUint16x8Array((*[8]uint16)(c[16:24]))).Add(archsimd.LoadUint16x8Array((*[8]uint16)(c[24:32])))
+			cb = archsimd.LoadUint16x8Array((*[8]uint16)(c[32:40]))
+		} else {
+			c := (*[24]uint16)(cw[x : x+24])
+			c0 = archsimd.LoadUint16x8Array((*[8]uint16)(c[0:8]))
+			win = c0.Add(archsimd.LoadUint16x8Array((*[8]uint16)(c[8:16])))
+			cb = archsimd.LoadUint16x8Array((*[8]uint16)(c[16:24]))
 		}
 		// T in every uint32 lane (column-total lanes at most 4*16*255).
 		tv := win.ExtendLo4ToUint32().Add(win.HiToLo().ExtendLo4ToUint32())
@@ -380,14 +390,15 @@ var svtHMEKeyConsts = [20]uint32{
 // byte pairs accumulate as wrapping uint16 S plus high bytes H, corrected
 // as S - 255*H per lane (each lane's pair total is at most 2*2*16*255).
 func svtBlockSumSubArch(s []byte, s2, bw, rows int) uint32 {
-	_ = s[(rows-1)*s2+bw-1]
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
-	sp := unsafe.Pointer(&s[0])
+	if uint(rows) > rowsMax || uint(s2) > rowStrideMax || uint(bw) > rowsMax {
+		panic(errKernelArgs)
+	}
 	hiShift := archsimd.BroadcastInt16x8(-8)
 	var sa, ha archsimd.Uint16x8
 	for r := 0; r < rows; r++ {
-		for c := 0; c < bw; c += 16 {
-			v := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, r*s2+c))).ReshapeToUint16s()
+		row := s[r*s2 : r*s2+bw]
+		for c := 0; c+16 <= len(row); c += 16 {
+			v := archsimd.LoadUint8x16Array((*[16]uint8)(row[c : c+16])).ReshapeToUint16s()
 			sa, ha = sa.Add(v), ha.Add(v.Shift(hiShift))
 		}
 	}

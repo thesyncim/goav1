@@ -1,8 +1,6 @@
 package decoder
 
 import (
-	"unsafe"
-
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/tile"
@@ -86,14 +84,7 @@ func (ctx *FrameWorkPostFilterContext) sbrowPostFilterEligible(req FrameWorkPost
 }
 
 // frameWorkU16Overlap reports whether two slices share backing memory.
-func frameWorkU16Overlap(a, b []uint16) bool {
-	if len(a) == 0 || len(b) == 0 {
-		return false
-	}
-	a0 := uintptr(unsafe.Pointer(unsafe.SliceData(a)))
-	b0 := uintptr(unsafe.Pointer(unsafe.SliceData(b)))
-	return a0 < b0+2*uintptr(len(b)) && b0 < a0+2*uintptr(len(a))
-}
+func frameWorkU16Overlap(a, b []uint16) bool { return frame.SlicesOverlap(a, b) }
 
 // applySbrowPostFilters runs deblock, CDEF and loop restoration as the
 // superblock-row pipeline and marks the three stages complete.

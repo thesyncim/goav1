@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // 10- and 12-bit forms of the fused two-pass DCT_DCT inverse transform plus
 // add. dav1d's 16bpc NEON (src/arm/64/itx16.S) runs the row pass in 32-bit
@@ -37,9 +34,10 @@ import (
 // produces the same samples.
 
 // itxAddRow16 stores clip(pred + res, 0, maxV) for the eight 16bpc samples
-// at pred into dst.
-func itxAddRow16(dst, pred unsafe.Pointer, res, zero, maxV archsimd.Int16x8) {
-	archsimd.LoadInt16x8Array((*[8]int16)(pred)).AddSaturated(res).Max(zero).Min(maxV).StoreArray((*[8]int16)(dst))
+// at pred[po:] into dst[do:].
+func itxAddRow16(dst []byte, do int, pred []byte, po int, res, zero, maxV archsimd.Int16x8) {
+	d, p := (*[16]byte)(dst[do:do+16]), (*[16]byte)(pred[po:po+16])
+	archsimd.LoadUint8x16Array(p).ReshapeToUint16s().BitsToInt16().AddSaturated(res).Max(zero).Min(maxV).ToBits().ReshapeToUint8s().StoreArray(d)
 }
 
 // itxHBDMax returns the broadcast pixel maximum for a 10- or 12-bit block,
@@ -52,9 +50,9 @@ func itxHBDMax(bitDepth uint8) (archsimd.Int16x8, bool) {
 }
 
 // itxHBDFits reports whether an n x n block of 2-byte samples at stride
-// (bytes) fits buf.
+// (bytes, at most itxGenMaxStride) fits buf.
 func itxHBDFits(buf []byte, stride, n int) bool {
-	return stride >= 2*n && len(buf) >= (n-1)*stride+2*n
+	return stride >= 2*n && stride <= itxGenMaxStride && len(buf) >= (n-1)*stride+2*n
 }
 
 // itxHBDSquareOK checks the contract of the n x n 10/12-bit kernels (coded
@@ -75,9 +73,7 @@ func InverseAddDCT8x8HBD(dst []byte, dstStride int, pred []byte, predStride int,
 	if !ok {
 		return false
 	}
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	return itxGenHBDDCT8x8((*[64]int32)(coeff[:64]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-		unsafe.Pointer(unsafe.SliceData(pred)), predStride, activeCols, activeRows, mx)
+	return itxGenHBDDCT8x8((*[64]int32)(coeff[:64]), dst, dstStride, pred, predStride, activeCols, activeRows, mx)
 }
 
 // InverseAddDCT16x16HBD is InverseAddDCT16x16 for a 10- or 12-bit block.
@@ -86,9 +82,7 @@ func InverseAddDCT16x16HBD(dst []byte, dstStride int, pred []byte, predStride in
 	if !ok {
 		return false
 	}
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	return itxGenHBDDCT16x16((*[256]int32)(coeff[:256]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-		unsafe.Pointer(unsafe.SliceData(pred)), predStride, activeCols, activeRows, mx)
+	return itxGenHBDDCT16x16((*[256]int32)(coeff[:256]), dst, dstStride, pred, predStride, activeCols, activeRows, mx)
 }
 
 // InverseAddDCT32x32HBD is the 10- or 12-bit 32x32 DCT_DCT block with coded
@@ -98,9 +92,7 @@ func InverseAddDCT32x32HBD(dst []byte, dstStride int, pred []byte, predStride in
 	if !ok {
 		return false
 	}
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	return itxGenHBDDCT32x32((*[1024]int32)(coeff[:1024]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-		unsafe.Pointer(unsafe.SliceData(pred)), predStride, activeCols, activeRows, mx)
+	return itxGenHBDDCT32x32((*[1024]int32)(coeff[:1024]), dst, dstStride, pred, predStride, activeCols, activeRows, mx)
 }
 
 // InverseAddDCT64x64HBD is InverseAddDCT64x64 for a 10- or 12-bit block
@@ -112,7 +104,5 @@ func InverseAddDCT64x64HBD(dst []byte, dstStride int, pred []byte, predStride in
 	if !ok {
 		return false
 	}
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	return itxGenHBDDCT64x64((*[1024]int32)(coeff[:1024]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-		unsafe.Pointer(unsafe.SliceData(pred)), predStride, activeCols, activeRows, mx)
+	return itxGenHBDDCT64x64((*[1024]int32)(coeff[:1024]), dst, dstStride, pred, predStride, activeCols, activeRows, mx)
 }

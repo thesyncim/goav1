@@ -8,6 +8,7 @@ import (
 
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/parser"
+	"github.com/thesyncim/goav1/internal/poison"
 )
 
 // The full root load/store, MarkIntra and resetForSuperblock are unchanged from
@@ -44,37 +45,19 @@ func ownedIntraCompareLive(t *testing.T, got, want *BlockLoopScratch) {
 	}
 }
 
-// Use fixed byte poison only on pointer-free mode data, then normalize bools.
-func ownedIntraPoisonMode(c *BlockModeContext, seed byte) {
-	b := unsafe.Slice((*byte)(unsafe.Pointer(c)), unsafe.Sizeof(*c))
-	for i := range b {
-		b[i] = seed + byte(i*37)
-	}
-	var normalize func(reflect.Value)
-	normalize = func(v reflect.Value) {
-		switch v.Kind() {
-		case reflect.Struct:
-			for i := 0; i < v.NumField(); i++ {
-				normalize(v.Field(i))
-			}
-		case reflect.Array:
-			for i := 0; i < v.Len(); i++ {
-				normalize(v.Index(i))
-			}
-		case reflect.Bool:
-			if v.CanSet() {
-				v.SetBool(true)
-			}
-		}
-	}
-	normalize(reflect.ValueOf(c).Elem())
+// ownedIntraPoisonMode gives every integer field of the mode data the byte
+// poison seed+i*37 of its offsets i and every bool true.
+func ownedIntraPoisonMode(t testing.TB, c *BlockModeContext, seed byte) {
+	ro := poison.Leaves(c, func(i int) byte { return seed + byte(i*37) }, func() bool { return true })
+	requireOnlySBHistoryDirtyReadOnly(t, ro)
+	c.sbHistoryDirty = true
 }
 
 func TestOwnedIntraRootContextsMatchFullOracle(t *testing.T) {
 	for _, sb := range []uint8{16, 32} {
 		for _, columns := range []int{1, 2, 4} {
 			var seed BlockLoopScratch
-			ownedIntraPoisonMode(&seed.Mode, 51)
+			ownedIntraPoisonMode(t, &seed.Mode, 51)
 			for i := range seed.Partition.Above {
 				seed.Partition.Above[i] = uint8(i)
 				seed.Partition.Left[i] = uint8(i + 1)
@@ -130,7 +113,7 @@ func TestOwnedIntraErrorsPreserveLiveState(t *testing.T) {
 	for _, col := range []int{-1, 1} {
 		carrier := BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, 1)}
 		var got BlockLoopScratch
-		ownedIntraPoisonMode(&got.Mode, 29)
+		ownedIntraPoisonMode(t, &got.Mode, 29)
 		want := got
 		ge := testLoadIntraRootContext(&got, &carrier, col, true, true, 16)
 		we := blockLoopLoadRootContextMotion(&want, &carrier, col, true, true, 16, true, 0, 0)
@@ -153,7 +136,7 @@ func TestOwnedIntraThenGenericCarrierTransition(t *testing.T) {
 		for _, stop := range []int{1, 2, 5, 6} {
 			const cols = 3
 			var fast, full BlockLoopScratch
-			ownedIntraPoisonMode(&fast.Mode, 71)
+			ownedIntraPoisonMode(t, &fast.Mode, 71)
 			full = fast
 			fc := BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, cols)}
 			wc := BlockLoopContextCarrier{Above: make([]BlockLoopRootAboveContext, cols)}

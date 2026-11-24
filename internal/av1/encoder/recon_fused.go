@@ -9,10 +9,11 @@ import (
 // (itx_fused*), which write the bytes of the staged inverse transform plus
 // addRawResidualToPredReconBlock. The coded coefficients lie in rows
 // 0..activeRows-1 of the default scan prefix [0,eob). It reports false when
-// no kernel covers the block (size, build, partial pred overlap, or a kernel
-// guard), and the caller then runs the staged path.
+// no kernel covers the block (size, build, or a kernel guard), and the
+// caller then runs the staged path. pred is dst itself or disjoint from it
+// (see addRawResidualToPredReconBlock).
 func reconFusedDCT(dst []byte, stride int, pred []byte, predStride int, coeff []int32, geo txBlockGeometry, w, h int, activeRows int, eob int) bool {
-	if w != h || activeRows <= 0 || rawPredReconNeedsCopy(dst, stride, pred, predStride, w, h) {
+	if w != h || activeRows <= 0 {
 		return false
 	}
 	activeCols, ok := transform.DefaultScanActiveCols(geo.size, transform.Class2D, eob)

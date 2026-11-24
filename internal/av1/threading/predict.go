@@ -1,9 +1,7 @@
 package threading
 
 import (
-	"encoding/binary"
 	"fmt"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/motion"
@@ -85,6 +83,9 @@ type FrameWorkCFLPredictionScratch struct {
 	Intra   FrameWorkIntraPredictionScratch
 	ReconQ3 [prediction.CFLBufSquare]uint16
 	ACQ3    [prediction.CFLBufSquare]int16
+	// LumaStage holds a 10/12-bit luma block decoded from the frame's
+	// little-endian bytes for the CfL subsample.
+	LumaStage [prediction.CFLBufSquare]uint16
 }
 
 // FrameWorkInterPredictionScratch carries caller-owned temporary buffers for
@@ -857,7 +858,7 @@ func (b *FrameWorkBatch) prepareBlockChromaCFL(index int, visit *tile.BlockLoopV
 	if lumaW <= 0 || lumaH <= 0 || bufWidth <= 0 || bufHeight <= 0 {
 		return ErrInvalidBatch
 	}
-	if err := frameWorkSubsampleLumaCFLQ3(scratch.ReconQ3[:], luma, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, lumaX, lumaY, lumaW, lumaH, geom.SubsamplingX, geom.SubsamplingY); err != nil {
+	if err := frameWorkSubsampleLumaCFLQ3(scratch.ReconQ3[:], &scratch.LumaStage, luma, geom.bytesPerSample(), b.Sequence.ColorConfig.BitDepth, lumaX, lumaY, lumaW, lumaH, geom.SubsamplingX, geom.SubsamplingY); err != nil {
 		return err
 	}
 	if _, _, err := prediction.PadCFLReconQ3(scratch.ReconQ3[:], bufWidth, bufHeight, fullWidth, fullHeight); err != nil {
@@ -4058,24 +4059,10 @@ func frameWorkCFLYMayAliasChroma(output *frame.Frame) bool {
 }
 
 func frameWorkByteSlicesOverlap(a []byte, b []byte) bool {
-	if len(a) == 0 || len(b) == 0 {
-		return false
-	}
-	aStart := uintptr(unsafe.Pointer(unsafe.SliceData(a)))
-	bStart := uintptr(unsafe.Pointer(unsafe.SliceData(b)))
-	aEnd := aStart + uintptr(len(a))
-	bEnd := bStart + uintptr(len(b))
-	// An address-range overflow is not a plausible Go slice, but treating it as
-	// overlap keeps the fallback conservative if one is ever presented.
-	if aEnd < aStart || bEnd < bStart {
-		return true
-	}
-	return aStart < bEnd && bStart < aEnd
+	return frame.SlicesOverlap(a, b)
 }
 
-var frameWorkNativeLittleEndian = binary.NativeEndian.Uint16([]byte{1, 0}) == 1
-
-func frameWorkSubsampleLumaCFLQ3(dst []uint16, plane frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, subX bool, subY bool) error {
+func frameWorkSubsampleLumaCFLQ3(dst []uint16, stage *[prediction.CFLBufSquare]uint16, plane frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, subX bool, subY bool) error {
 	if !frameWorkPlaneBlockAddressable(plane, bytesPerSample, x, y, width, height) {
 		return ErrInvalidBatch
 	}
@@ -4122,11 +4109,11 @@ func frameWorkSubsampleLumaCFLQ3(dst []uint16, plane frame.Plane, bytesPerSample
 	if !ok || bitDepth <= 8 {
 		return ErrInvalidBatch
 	}
-	// The frame API stores HBD samples as little-endian bytes. Reuse the
-	// prediction package's HBD CfL kernel when the source can be viewed as a
-	// naturally aligned native-endian []uint16; unusual caller layouts retain
-	// the byte-wise fallback below.
-	if frameWorkNativeLittleEndian && plane.Stride&1 == 0 && (subX || !subY) {
+	// The frame API stores HBD samples as little-endian bytes: decode the
+	// block (at most CFLBufLine square) into the stage and reuse the
+	// prediction package's HBD CfL kernel; other layouts keep the byte-wise
+	// fallback below.
+	if plane.Stride&1 == 0 && (subX || !subY) {
 		rowOffset, ok := frameWorkCheckedMul(y, plane.Stride)
 		if !ok {
 			return ErrInvalidBatch
@@ -4139,14 +4126,11 @@ func frameWorkSubsampleLumaCFLQ3(dst []uint16, plane frame.Plane, bytesPerSample
 		if !ok || offset < 0 || offset >= len(plane.Pix) {
 			return ErrInvalidBatch
 		}
-		ptr := unsafe.Pointer(&plane.Pix[offset])
-		if uintptr(ptr)&(unsafe.Alignof(uint16(0))-1) == 0 {
-			input := unsafe.Slice((*uint16)(ptr), (len(plane.Pix)-offset)/bytesPerSample)
-			if err := prediction.SubsampleLuma16ToQ3(dst, input, plane.Stride/bytesPerSample, width, height, subX, subY, bitDepth); err != nil {
-				return ErrInvalidBatch
-			}
-			return nil
+		frame.LoadSampleRows16Trusted(stage[:], width, plane.Pix[offset:], plane.Stride, width, height)
+		if err := prediction.SubsampleLuma16ToQ3(dst, stage[:width*height], width, width, height, subX, subY, bitDepth); err != nil {
+			return ErrInvalidBatch
 		}
+		return nil
 	}
 	switch {
 	case subX && subY:

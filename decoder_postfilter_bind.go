@@ -82,6 +82,7 @@ type decoderFrameWorkPostFilterRequestBuffers struct {
 
 	CDEFIndexMap       internaldecoder.FrameWorkCDEFIndexMap
 	CDEFSampleScratch  [3][]uint16
+	CDEFSampleBytes    [3][]byte
 	CDEFDstScratch     [3][]uint16
 	CDEFDirectionGrid  []internalcdef.DirectionGrid
 	CDEFVarianceGrid   []internalcdef.VarianceGrid
@@ -544,7 +545,7 @@ func decoderFrameWorkPostFilterRequestScratchLen(size internaldecoder.FrameWorkP
 		LoopFilterSchedule: size.LoopFilter.Schedule,
 		CDEFDirectionGrid:  size.CDEF.DirectionGrid,
 		CDEFVarianceGrid:   size.CDEF.VarianceGrid,
-		ByteScratch:        size.SuperRes.OutputFrame + size.FilmGrain.OutputFrame,
+		ByteScratch:        size.SuperRes.OutputFrame + size.FilmGrain.OutputFrame + size.CDEF.SampleBytes[0] + size.CDEF.SampleBytes[1] + size.CDEF.SampleBytes[2],
 		Uint16Scratch:      uint16Scratch,
 		Int16Scratch:       int16Scratch,
 		Int32Scratch:       size.Restoration.Apply.Unit.SGRProj,
@@ -780,6 +781,12 @@ func bindDecoderFrameWorkPostFilterRequestBuffersFromScratch(size internaldecode
 		return decoderFrameWorkPostFilterRequestBuffers{}, err
 	}
 	for plane := range 3 {
+		buffers.CDEFSampleBytes[plane], byteScratch, err = decoderFrameWorkPostFilterTakeScratch(byteScratch, size.CDEF.SampleBytes[plane])
+		if err != nil {
+			return decoderFrameWorkPostFilterRequestBuffers{}, err
+		}
+	}
+	for plane := range 3 {
 		buffers.SuperResCodedScratch[plane], uint16Scratch, err = decoderFrameWorkPostFilterTakeScratch(uint16Scratch, size.SuperRes.CodedSamples[plane])
 		if err != nil {
 			return decoderFrameWorkPostFilterRequestBuffers{}, err
@@ -867,6 +874,9 @@ func bindDecoderFrameWorkPostFilterRequest(size internaldecoder.FrameWorkPostFil
 	loopFilterReq.TrustedCoverage = buffers.LoopFilterTrustedCoverage
 	cdefReq, err := bindDecoderFrameWorkCDEFPostFilterRequest(size.CDEF, buffers.CDEFIndexMap, buffers.CDEFSampleScratch, buffers.CDEFDstScratch, buffers.CDEFDirectionGrid, buffers.CDEFVarianceGrid, buffers.CDEFInputScratch, buffers.CDEFUnitDstScratch)
 	if err != nil {
+		return internaldecoder.FrameWorkPostFilterRequest{}, err
+	}
+	if err := size.CDEF.BindSampleBytes(&cdefReq, buffers.CDEFSampleBytes); err != nil {
 		return internaldecoder.FrameWorkPostFilterRequest{}, err
 	}
 	superResReq, err := bindDecoderFrameWorkSuperResPostFilterRequest(size.SuperRes, buffers.SuperResOutputFrame, buffers.SuperResCodedScratch, buffers.SuperResOutputScratch)

@@ -10,22 +10,24 @@
 package guardpage
 
 import (
+	"reflect"
 	"runtime/debug"
 	"syscall"
 	"testing"
-	"unsafe"
+
+	"github.com/thesyncim/goav1/internal/unsafeutil"
 )
 
 // After returns n elements whose last byte is followed by a PROT_NONE page.
 func After[T any](tb testing.TB, n int) []T {
-	b, _ := mapGuarded(tb, n*int(unsafe.Sizeof(*new(T))))
-	return cast[T](b, n)
+	b, _, _ := mapGuarded(tb, n*sizeOf[T]())
+	return unsafeutil.View[T](b)
 }
 
 // Before returns n elements whose first byte follows a PROT_NONE page.
 func Before[T any](tb testing.TB, n int) []T {
-	_, b := mapGuarded(tb, n*int(unsafe.Sizeof(*new(T))))
-	return cast[T](b, n)
+	_, b, _ := mapGuarded(tb, n*sizeOf[T]())
+	return unsafeutil.View[T](b)
 }
 
 // Check runs f and fails tb with the fault address if f touches a guard page.
@@ -43,10 +45,14 @@ func Check(tb testing.TB, name string, f func()) {
 	f()
 }
 
+func sizeOf[T any]() int { return int(reflect.TypeFor[T]().Size()) }
+
 // mapGuarded maps size usable bytes between two PROT_NONE pages and returns
-// the window ending at the trailing guard and the one starting at the
-// leading guard.
-func mapGuarded(tb testing.TB, size int) (tail, head []byte) {
+// the window ending at the trailing guard, the one starting at the leading
+// guard, and the whole mapping including both guard pages. The windows
+// start aligned for any element type whose size divides size: tail ends on
+// a page boundary and head starts on one.
+func mapGuarded(tb testing.TB, size int) (tail, head, mem []byte) {
 	tb.Helper()
 	page := syscall.Getpagesize()
 	data := (size + page - 1) / page * page
@@ -68,12 +74,5 @@ func mapGuarded(tb testing.TB, size int) (tail, head []byte) {
 	if err := syscall.Mprotect(mem[page+data:], syscall.PROT_NONE); err != nil {
 		tb.Skipf("mprotect: %v", err)
 	}
-	return mem[page+data-size : page+data : page+data], mem[page : page+size : page+size]
-}
-
-func cast[T any](b []byte, n int) []T {
-	if n == 0 {
-		return nil
-	}
-	return unsafe.Slice((*T)(unsafe.Pointer(unsafe.SliceData(b))), n)
+	return mem[page+data-size : page+data : page+data], mem[page : page+size : page+size], mem
 }

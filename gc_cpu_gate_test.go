@@ -2,6 +2,7 @@ package goav1
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"slices"
@@ -51,24 +52,58 @@ func TestGCInvisibleCodecCPU(t *testing.T) {
 		}
 		return
 	}
-	const (
-		rounds    = 7
-		threshold = 1.20
-	)
 	dec, decClose := gcPressureDecodeOp(t, 1)
 	defer decClose()
 	enc, encClose := gcPressureEncodeOp(t, 1)
 	defer encClose()
 	synth := gcSynthMem(make([]byte, 4<<20))
-	works := []struct {
-		name string
-		op   func()
-		reps int
-	}{
+	works := []gcCPUWork{
 		{"decode", dec, 4},
 		{"encode", enc, 2},
 		{"synth", synth, 4},
 	}
+	// A shared runner can be noisy for a whole measurement (the synthetic
+	// kernel's own churn ratio has been seen at 1.31 and 1.39 on runs of the
+	// same commit), so a work that is over the limit is measured once more
+	// and fails only if it is over the limit both times. A real regression is
+	// over on every attempt (the injected 30000 allocations per decode op
+	// measured 1.38 on the loaded calibration machine).
+	var over map[string]string
+	for attempt := 1; attempt <= 2; attempt++ {
+		rel, msgs := measureGCInvisibleCPU(t, works)
+		next := map[string]string{}
+		for name, r := range rel {
+			t.Logf("attempt %d: %s", attempt, msgs[name])
+			if r > gcCPUThreshold && (attempt == 1 || over[name] != "") {
+				next[name] = msgs[name]
+			}
+		}
+		over = next
+		if len(over) == 0 {
+			return
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(over)) {
+		t.Errorf("over the limit on both attempts; last: %s", over[name])
+	}
+}
+
+// gcCPUThreshold is TestGCInvisibleCodecCPU's limit on a codec's churn10/idle
+// thread-CPU ratio relative to the synthetic kernel's.
+const gcCPUThreshold = 1.20
+
+type gcCPUWork struct {
+	name string
+	op   func()
+	reps int
+}
+
+// measureGCInvisibleCPU runs the idle/churn10 rounds once and returns, for
+// every work but the last (the synthetic kernel), its churn10/idle
+// thread-CPU ratio relative to the synthetic kernel's, with a log line each.
+func measureGCInvisibleCPU(t *testing.T, works []gcCPUWork) (rel map[string]float64, msgs map[string]string) {
+	t.Helper()
+	const rounds = 7
 	modes := []string{"idle", "churn10"}
 	cpu := make([][][]float64, len(modes)) // [mode][work][round]
 	for m := range cpu {
@@ -100,13 +135,12 @@ func TestGCInvisibleCodecCPU(t *testing.T) {
 	ratio := func(w int) float64 { return med(cpu[1][w]) / med(cpu[0][w]) }
 	synthRatio := ratio(len(works) - 1)
 	t.Logf("churn10: %.0f collections; synthetic kernel thread-CPU ratio %.3f", churnCycles, synthRatio)
+	rel = map[string]float64{}
+	msgs = map[string]string{}
 	for w, wk := range works[:len(works)-1] {
 		raw := ratio(w)
-		rel := raw / synthRatio
-		msg := fmt.Sprintf("%s: thread-CPU churn10/idle %.3f, relative to the synthetic kernel %.3f (limit %.2f)", wk.name, raw, rel, threshold)
-		t.Log(msg)
-		if rel > threshold {
-			t.Error(msg)
-		}
+		rel[wk.name] = raw / synthRatio
+		msgs[wk.name] = fmt.Sprintf("%s: thread-CPU churn10/idle %.3f, relative to the synthetic kernel %.3f (limit %.2f)", wk.name, raw, rel[wk.name], gcCPUThreshold)
 	}
+	return rel, msgs
 }

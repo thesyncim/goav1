@@ -25,7 +25,6 @@ package cdef
 
 import (
 	"simd/archsimd"
-	"unsafe"
 )
 
 var (
@@ -52,8 +51,10 @@ var (
 // cdefDirRowPair loads row i (low 8 bytes of a 16-byte load) and the 8 bytes
 // of row j, and widens them to [row i | row j] biased by -128. Only rows
 // 0..3 take the 16-byte load, so nothing is read past row 7's last byte.
-func cdefDirRowPair(pi, pj unsafe.Pointer, bias archsimd.Int16x16) archsimd.Int16x16 {
-	v := archsimd.LoadUint8x16Array((*[16]uint8)(pi)).AsUint64x2().SetElem(1, *(*uint64)(pj))
+func cdefDirRowPair(pi *[16]byte, pj *[8]byte, bias archsimd.Int16x16) archsimd.Int16x16 {
+	j := uint64(pj[0]) | uint64(pj[1])<<8 | uint64(pj[2])<<16 | uint64(pj[3])<<24 |
+		uint64(pj[4])<<32 | uint64(pj[5])<<40 | uint64(pj[6])<<48 | uint64(pj[7])<<56
+	v := archsimd.LoadUint8x16Array(pi).AsUint64x2().SetElem(1, j)
 	return v.AsUint8x16().ExtendToUint16().AsInt16x16().Sub(bias)
 }
 
@@ -78,12 +79,16 @@ func cdefDirOddCost(left, right archsimd.Int16x16, shuf archsimd.Int8x32, divAlt
 
 func findDirectionU8SIMD(img []byte, stride int) (int, int32) {
 	bias := archsimd.BroadcastInt16x16(128)
-	p := unsafe.Pointer(unsafe.SliceData(img[:7*stride+8]))
-	sb := uintptr(stride)
-	m0 := cdefDirRowPair(p, unsafe.Add(p, 7*sb), bias)
-	m1 := cdefDirRowPair(unsafe.Add(p, sb), unsafe.Add(p, 6*sb), bias)
-	m2 := cdefDirRowPair(unsafe.Add(p, 2*sb), unsafe.Add(p, 5*sb), bias)
-	m3 := cdefDirRowPair(unsafe.Add(p, 3*sb), unsafe.Add(p, 4*sb), bias)
+	if uint(stride) > 1<<20 {
+		panic("cdef: direction stride out of range")
+	}
+	s := stride
+	r16 := func(i int) *[16]byte { return (*[16]byte)(img[i*s : i*s+16]) }
+	r8 := func(i int) *[8]byte { return (*[8]byte)(img[i*s : i*s+8]) }
+	m0 := cdefDirRowPair(r16(0), r8(7), bias)
+	m1 := cdefDirRowPair(r16(1), r8(6), bias)
+	m2 := cdefDirRowPair(r16(2), r8(5), bias)
+	m3 := cdefDirRowPair(r16(3), r8(4), bias)
 	return cdefDirSearchAVX2(m0, m1, m2, m3)
 }
 

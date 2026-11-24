@@ -1,5 +1,3 @@
-//go:build 386 || amd64 || arm || arm64 || loong64 || mips64le || mipsle || ppc64le || riscv64 || wasm
-
 package decoder
 
 import (
@@ -13,9 +11,6 @@ import (
 )
 
 func TestCDEFHBDInPlaceMatchesSnapshot(t *testing.T) {
-	if !frameWorkCDEFHBDInPlaceAvailable() {
-		t.Fatal("little-endian HBD in-place path is unavailable in its build-tagged test")
-	}
 	tests := []struct {
 		name             string
 		width, height    int
@@ -34,7 +29,7 @@ func TestCDEFHBDInPlaceMatchesSnapshot(t *testing.T) {
 		{name: "10bit_422_secondary_only", width: 137, height: 131, bitDepth: 10, subsamplingX: true, secondaryOnly: true},
 		{name: "12bit_444_secondary_only", width: 137, height: 131, bitDepth: 12, secondaryOnly: true},
 		{name: "12bit_monochrome_secondary_only", width: 137, height: 131, bitDepth: 12, mono: true, secondaryOnly: true},
-		{name: "10bit_420_unaligned_luma_fallback", width: 137, height: 131, bitDepth: 10, subsamplingX: true, subsamplingY: true, unalignedY: true},
+		{name: "10bit_420_unaligned_luma", width: 137, height: 131, bitDepth: 10, subsamplingX: true, subsamplingY: true, unalignedY: true},
 		{name: "10bit_420_odd_sample_stride", width: 137, height: 131, bitDepth: 10, subsamplingX: true, subsamplingY: true, oddSampleStrideY: true},
 	}
 	for _, tt := range tests {
@@ -83,8 +78,8 @@ func runCDEFHBDInPlaceDifferential(t *testing.T, width, height int, bitDepth uin
 		if oddSampleStrideY {
 			out.Y = cdefHBDPlaneWithOddSampleStride(out.Y)
 		}
-		if unalignedY && frameWorkCDEFHBDPlaneViewAvailable(out.Y) {
-			t.Fatal("unaligned luma unexpectedly eligible for the in-place uint16 view")
+		if unalignedY && !frameWorkCDEFHBDPlaneViewAvailable(out.Y) {
+			t.Fatal("byte-addressed in-place walk should accept unaligned luma")
 		}
 		if oddSampleStrideY {
 			if out.Y.Stride/2%2 == 0 {

@@ -322,9 +322,10 @@ func (h *hmeState) seedCenter(px, py int) (seeds [3][2]int, n int) {
 		seeds[n] = [2]int{x, y}
 		n++
 	}
-	mv := sb.bestMV[1+((py>>6)&1)*2+((px>>6)&1)]
-	add(int(mv[0]), int(mv[1]))
-	add(int(sb.bestMV[0][0]), int(sb.bestMV[0][1]))
+	mx, my := sb.mvAt(1 + ((py>>6)&1)*2 + ((px >> 6) & 1))
+	add(int(mx), int(my))
+	mx, my = sb.mvAt(0)
+	add(int(mx), int(my))
 	add(0, 0)
 	return seeds, n
 }

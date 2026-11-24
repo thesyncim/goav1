@@ -2447,7 +2447,7 @@ func TestFrameWorkSubsampleLumaCFLQ3HBDUnalignedFallbackAndMaxValidation(t *test
 					}
 				}
 				var got, want [prediction.CFLBufSquare]uint16
-				if err := frameWorkSubsampleLumaCFLQ3(got[:], plane, 2, tt.bitDepth, 2, 0, width, height, tt.subX, tt.subY); err != nil {
+				if err := frameWorkSubsampleLumaCFLQ3(got[:], new([prediction.CFLBufSquare]uint16), plane, 2, tt.bitDepth, 2, 0, width, height, tt.subX, tt.subY); err != nil {
 					t.Fatal(err)
 				}
 				outW, outH := width, height
@@ -2483,7 +2483,7 @@ func TestFrameWorkSubsampleLumaCFLQ3HBDUnalignedFallbackAndMaxValidation(t *test
 				}
 				badOffset := 5*stride + (2+7)*2
 				plane.Pix[badOffset], plane.Pix[badOffset+1] = byte(max+1), byte((max+1)>>8)
-				if err := frameWorkSubsampleLumaCFLQ3(got[:], plane, 2, tt.bitDepth, 2, 0, width, height, tt.subX, tt.subY); !errors.Is(err, ErrInvalidBatch) {
+				if err := frameWorkSubsampleLumaCFLQ3(got[:], new([prediction.CFLBufSquare]uint16), plane, 2, tt.bitDepth, 2, 0, width, height, tt.subX, tt.subY); !errors.Is(err, ErrInvalidBatch) {
 					t.Fatalf("sample above bit-depth maximum err=%v want %v", err, ErrInvalidBatch)
 				}
 			})
@@ -2493,14 +2493,14 @@ func TestFrameWorkSubsampleLumaCFLQ3HBDUnalignedFallbackAndMaxValidation(t *test
 
 func TestFrameWorkSubsampleLumaCFLQ3HBDAlignedMaxValidation(t *testing.T) {
 	output := testBatchFrame(t, frame.Format{Width: 64, Height: 64, BitDepth: 10, SubsamplingX: true, SubsamplingY: true, Align: 128})
-	if !frameWorkNativeLittleEndian || output.Y.Stride&1 != 0 {
-		t.Skip("requires the native-endian aligned HBD view")
+	if output.Y.Stride&1 != 0 {
+		t.Skip("requires an even-stride HBD plane")
 	}
 	const x, y, width, height = 16, 16, 16, 16
 	offset := y*output.Y.Stride + x*output.Layout.BytesPerSample
 	output.Y.Pix[offset], output.Y.Pix[offset+1] = 0, 0x04 // 1024 is outside the 10-bit range.
 	var got [prediction.CFLBufSquare]uint16
-	if err := frameWorkSubsampleLumaCFLQ3(got[:], output.Y, output.Layout.BytesPerSample, 10, x, y, width, height, true, true); !errors.Is(err, ErrInvalidBatch) {
+	if err := frameWorkSubsampleLumaCFLQ3(got[:], new([prediction.CFLBufSquare]uint16), output.Y, output.Layout.BytesPerSample, 10, x, y, width, height, true, true); !errors.Is(err, ErrInvalidBatch) {
 		t.Fatalf("aligned SIMD-route sample above maximum err=%v want %v", err, ErrInvalidBatch)
 	}
 }
@@ -2686,7 +2686,7 @@ func TestFrameWorkSubsampleLumaCFLQ3MatchesPrimitives(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := frameWorkSubsampleLumaCFLQ3(got[:], output.Y, bytesPerSample, tt.bitDepth, x, y, width, height, tt.subX, tt.subY); err != nil {
+			if err := frameWorkSubsampleLumaCFLQ3(got[:], new([prediction.CFLBufSquare]uint16), output.Y, bytesPerSample, tt.bitDepth, x, y, width, height, tt.subX, tt.subY); err != nil {
 				t.Fatal(err)
 			}
 			if !slices.Equal(got[:], want[:]) {

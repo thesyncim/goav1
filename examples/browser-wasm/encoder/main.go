@@ -10,7 +10,6 @@ package main
 
 import (
 	"time"
-	"unsafe"
 
 	goav1 "github.com/thesyncim/goav1"
 	"github.com/thesyncim/goav1/examples/browser-wasm/pattern"
@@ -34,7 +33,7 @@ var (
 	yuvBuf    []byte // I420 scratch for RGB sources
 	out       []byte // last temporal unit (copied: Encode reuses its buffer)
 	lastKey   bool
-	lastError string
+	lastError []byte // last error message, read by JS through avErrPtr
 )
 
 // main stays blocked so the //go:wasmexport entry points remain callable;
@@ -57,7 +56,7 @@ func avInit(w, h, bitrate, fps, speed int32) int32 {
 		Content:       goav1.EncoderContentCamera,
 	})
 	if err != nil {
-		lastError = err.Error()
+		setError(err.Error())
 		return -1
 	}
 	enc, width, height = e, int(w), int(h)
@@ -66,15 +65,17 @@ func avInit(w, h, bitrate, fps, speed int32) int32 {
 	return 0
 }
 
+// The pointer results below reach JS as wasm32 linear-memory addresses.
+
 //go:wasmexport avFrameBuf
-func avFrameBuf() uint32 { return uint32(uintptr(unsafe.Pointer(&frameBuf[0]))) }
+func avFrameBuf() *byte { return &frameBuf[0] }
 
 //go:wasmexport avOutPtr
-func avOutPtr() uint32 {
+func avOutPtr() *byte {
 	if len(out) == 0 {
-		return 0
+		return nil
 	}
-	return uint32(uintptr(unsafe.Pointer(&out[0])))
+	return &out[0]
 }
 
 //go:wasmexport avOutLen
@@ -92,12 +93,14 @@ func avIsKey() int32 {
 func avQIndex() int32 { return int32(enc.QIndex()) }
 
 //go:wasmexport avErrPtr
-func avErrPtr() uint32 {
-	if lastError == "" {
-		return 0
+func avErrPtr() *byte {
+	if len(lastError) == 0 {
+		return nil
 	}
-	return uint32(uintptr(unsafe.Pointer(unsafe.StringData(lastError))))
+	return &lastError[0]
 }
+
+func setError(msg string) { lastError = append(lastError[:0], msg...) }
 
 //go:wasmexport avErrLen
 func avErrLen() int32 { return int32(len(lastError)) }
@@ -132,11 +135,11 @@ func avEncode(format, forceKey int32) int32 {
 			YStride: width, ChromaStride: width / 2, Width: width, Height: height,
 		}, forceKey != 0)
 	default:
-		lastError = "unsupported pixel format"
+		setError("unsupported pixel format")
 		return -1
 	}
 	if err != nil {
-		lastError = err.Error()
+		setError(err.Error())
 		return -1
 	}
 	out = append(out[:0], res.Data...)
@@ -198,7 +201,7 @@ func avBench(frames int32) float64 {
 		Content: goav1.EncoderContentCamera,
 	})
 	if err != nil {
-		lastError = err.Error()
+		setError(err.Error())
 		return -1
 	}
 	defer e.Close()
@@ -211,7 +214,7 @@ func avBench(frames int32) float64 {
 		pattern.Fill(f, t)
 		start := time.Now()
 		if _, err := e.Encode(f, t == 0); err != nil {
-			lastError = err.Error()
+			setError(err.Error())
 			return -1
 		}
 		total += time.Since(start)

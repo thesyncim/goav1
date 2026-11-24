@@ -2,8 +2,6 @@
 
 package encoder
 
-import "unsafe"
-
 func svtDownsample2DArch(dst []byte, dstStride int, src []byte, srcStride, w, h int) {
 	svtDownsample2D(dst, dstStride, src, srcStride, w, h)
 }
@@ -36,9 +34,8 @@ func svtColTotalsSlideArch(cw *[svtHMEMaxCols]uint16, out, in []byte, span int) 
 	svtColTotalsSlide(cw, out, in, span)
 }
 
-func svtHMEColSumRow(t *[svtHMEMaxCols / 8][8]uint32, sp, rp, cwp unsafe.Pointer, s2, bw, rows, w int, srcSum uint32) uint32 {
-	return svtHMEColSumRowScalar(t, unsafe.Slice((*byte)(sp), (rows-1)*s2+bw), s2,
-		unsafe.Slice((*byte)(rp), (rows-1)*s2+bw+w), unsafe.Slice((*uint16)(cwp), bw+w), bw, rows, w, srcSum)
+func svtHMEColSumRow(t *[svtHMEMaxCols / 8][8]uint32, s []byte, s2 int, ref []byte, cw *[svtHMEMaxCols]uint16, bw, rows, w int, srcSum uint32) uint32 {
+	return svtHMEColSumRowScalar(t, s, s2, ref, cw[:], bw, rows, w, srcSum)
 }
 
 func svtBlockSumSubArch(s []byte, s2, bw, rows int) uint32 {

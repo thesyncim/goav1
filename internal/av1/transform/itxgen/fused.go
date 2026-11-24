@@ -448,52 +448,122 @@ const (
 	predH16
 )
 
+// addRowsGroup is the number of rows whose dst and prediction windows
+// addRows takes before their loads and stores: the bounds checks of a group
+// run back to back ahead of its rows, so the transform's outputs are not
+// split across a branch per row (which spilled vector registers).
+const addRowsGroup = 8
+
 // addRows writes the column output of one eight-column strip: Round2(., 4)
-// of out[r], added to prediction row r at pq and saturated into dst row r
-// at dq, for the n rows, with the dst and prediction strip pointers taken
-// from dp and pp.
-func (g *fgen) addRows(out []fv, first string, pred int) {
-	g.line("dq, pq %s dp, pp", first)
+// of out[r], added to prediction row r and saturated into dst row r, for
+// the n rows, through bounds-checked row windows of d and p (row r at
+// r*ds / r*ps).
+func (g *fgen) addRows(out []fv, pred int) {
+	dw, pw := 8, 16
+	switch pred {
+	case predD8:
+		pw = 8
+	case predD4:
+		dw, pw = 4, 4
+	case predH16:
+		dw = 16
+	}
+	// One compare per window: with the row offset o in [0, len-w] the
+	// window [o, o+w) is in bounds, which the compiler proves from the
+	// explicit test (the slice expression alone costs an add and a compare).
+	dl, pl := g.tmp("dl"), g.tmp("pl")
+	g.line("%s, %s := len(d)-%d, len(p)-%d", dl, pl, dw, pw)
+	wins := make([][2]string, len(out))
 	for r := range out {
-		res := g.round2(out[r], 4)
-		if r > 0 {
-			g.line("dq, pq = unsafe.Add(dq, ds), unsafe.Add(pq, ps)")
+		if r%addRowsGroup == 0 {
+			for j := r; j < min(r+addRowsGroup, len(out)); j++ {
+				dn, pn := g.tmp("dw"), g.tmp("pw")
+				do, po := "0", "0"
+				if j > 0 {
+					do, po = fmt.Sprintf("%d*ds", j), fmt.Sprintf("%d*ps", j)
+				}
+				g.line("if %s > %s || %s > %s {\n\t\tpanic(errItxGenWindow)\n\t}", do, dl, po, pl)
+				g.line("%s, %s := (*[%d]byte)(d[%s:%s+%d]), (*[%d]byte)(p[%s:%s+%d])", dn, pn, dw, do, do, dw, pw, po, po, pw)
+				wins[j] = [2]string{dn, pn}
+			}
 		}
+		dq, pq := wins[r][0], wins[r][1]
+		res := g.round2(out[r], 4)
 		p := g.tmp("p")
 		switch pred {
 		case predLo:
-			g.line("%s := archsimd.LoadUint8x16Array((*[16]uint8)(pq)).ExtendLo8ToUint16().BitsToInt16()", p)
+			g.line("%s := archsimd.LoadUint8x16Array(%s).ExtendLo8ToUint16().BitsToInt16()", p, pq)
 		case predHi:
-			g.line("%s := archsimd.LoadUint8x16Array((*[16]uint8)(pq)).HiToLo().ExtendLo8ToUint16().BitsToInt16()", p)
+			g.line("%s := archsimd.LoadUint8x16Array(%s).HiToLo().ExtendLo8ToUint16().BitsToInt16()", p, pq)
 		case predSel:
-			g.line("%s := archsimd.LoadUint8x16Array((*[16]uint8)(pq)).LookupOrZero(sel).ReshapeToUint16s().BitsToInt16()", p)
+			g.line("%s := archsimd.LoadUint8x16Array(%s).LookupOrZero(sel).ReshapeToUint16s().BitsToInt16()", p, pq)
 		case predD8:
-			g.line("%s := pz.SetElem(0, *(*float64)(pq)).ToBits().ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()", p)
+			g.line("%s := pz.SetElem(0, %s).ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()", p, leLoad(pq, 8))
 		case predD4:
-			g.line("%s := pf.SetElem(0, *(*float32)(pq)).ToBits().ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()", p)
+			g.line("%s := pf.SetElem(0, %s).ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()", p, leLoad(pq, 4))
 		case predH16:
-			g.line("%s := archsimd.LoadInt16x8Array((*[8]int16)(pq))", p)
+			g.line("%s := archsimd.LoadUint8x16Array(%s).ReshapeToUint16s().BitsToInt16()", p, pq)
 			if res.zero {
-				g.line("%s.StoreArray((*[8]int16)(dq))", p)
+				g.line("%s.ToBits().ReshapeToUint8s().StoreArray(%s)", p, dq)
 			} else {
-				g.line("%s.AddSaturated(%s).Max(zero).Min(mxv).StoreArray((*[8]int16)(dq))", p, res.name)
+				g.line("%s.AddSaturated(%s).Max(zero).Min(mxv).ToBits().ReshapeToUint8s().StoreArray(%s)", p, res.name, dq)
 			}
 			continue
 		}
+		sum := p
+		if !res.zero {
+			sum = fmt.Sprintf("%s.Add(%s)", p, res.name)
+		}
+		v := g.tmp("o")
 		if pred == predD4 {
-			sum := p
-			if !res.zero {
-				sum = fmt.Sprintf("%s.Add(%s)", p, res.name)
-			}
-			g.line("*(*float32)(dq) = %s.SaturateToUint8().ReshapeToUint32s().BitsToFloat32().GetElem(0)", sum)
+			g.line("%s := %s.SaturateToUint8().ReshapeToUint32s().GetElem(0)", v, sum)
+			g.line("%s", leStore(dq, v, 4))
 			continue
 		}
-		if res.zero {
-			g.line("*(*float64)(dq) = %s.SaturateToUint8().ReshapeToUint64s().BitsToFloat64().GetElem(0)", p)
-		} else {
-			g.line("*(*float64)(dq) = %s.Add(%s).SaturateToUint8().ReshapeToUint64s().BitsToFloat64().GetElem(0)", p, res.name)
+		g.line("%s := %s.SaturateToUint8().ReshapeToUint64s().GetElem(0)", v, sum)
+		g.line("%s", leStore(dq, v, 8))
+	}
+}
+
+// strideGuard declines strides above itxGenMaxStride. With the strides in
+// that range the row offsets r*ds stay far from overflow, so each row
+// window d[r*ds : r*ds+8] is one bounds check.
+const strideGuard = "\tif uint(ds) > itxGenMaxStride || uint(ps) > itxGenMaxStride {\n\t\treturn false\n\t}\n"
+
+// leLoad is the little-endian load of the n (4 or 8) bytes of the array
+// window w, written out: the compiler merges it into one load, where a call
+// to encoding/binary would not be inlined into the larger kernels.
+func leLoad(w string, n int) string {
+	t := "uint64"
+	if n == 4 {
+		t = "uint32"
+	}
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteString(" | ")
+		}
+		fmt.Fprintf(&b, "%s(%s[%d])", t, w, i)
+		if i > 0 {
+			fmt.Fprintf(&b, "<<%d", 8*i)
 		}
 	}
+	return b.String()
+}
+
+// leStore is the little-endian store of v into the n (4 or 8) bytes of the
+// array window w, merged by the compiler into one store.
+func leStore(w, v string, n int) string {
+	var l, r []string
+	for i := 0; i < n; i++ {
+		l = append(l, fmt.Sprintf("%s[%d]", w, i))
+		if i == 0 {
+			r = append(r, fmt.Sprintf("byte(%s)", v))
+		} else {
+			r = append(r, fmt.Sprintf("byte(%s>>%d)", v, 8*i))
+		}
+	}
+	return strings.Join(l, ", ") + " = " + strings.Join(r, ", ")
 }
 
 // kernel is one generated block function: an n wide, m high (m 0: n) block
@@ -573,10 +643,10 @@ func header(body string) string {
 		out.WriteString("\tvar zero archsimd.Int16x8\n")
 	}
 	if strings.Contains(body, "pz.") {
-		out.WriteString("\tvar pz archsimd.Float64x2\n")
+		out.WriteString("\tvar pz archsimd.Uint64x2\n")
 	}
 	if strings.Contains(body, "pf.") {
-		out.WriteString("\tvar pf archsimd.Float32x4\n")
+		out.WriteString("\tvar pf archsimd.Uint32x4\n")
 	}
 	if strings.Contains(body, "mxv") {
 		out.WriteString("\tmxv := archsimd.BroadcastInt16x8(mx)\n")
@@ -667,21 +737,21 @@ func (g *fgen) wholeKernel(k kernel) string {
 		out := g.network1D(k.v, ht, col(q))
 		switch {
 		case k.hbd && q == 0:
-			g.addRows(out, ":=", predH16)
+			g.addRows(out, predH16)
 		case k.hbd:
-			g.line("dp, pp = unsafe.Add(dp, 16), unsafe.Add(pp, 16)")
-			g.addRows(out, "=", predH16)
+			g.line("d, p = d[16:], p[16:]")
+			g.addRows(out, predH16)
 		case w == 4:
-			g.addRows(out, ":=", predD4)
+			g.addRows(out, predD4)
 		case w == 8:
-			g.addRows(out, ":=", predD8)
+			g.addRows(out, predD8)
 		case q == 0:
-			g.addRows(out, ":=", predLo)
+			g.addRows(out, predLo)
 		default:
 			// The right strip of a 16-wide block: its prediction loads
 			// start at the block's row start (column 8q-8 = 0).
-			g.line("dp = unsafe.Add(dp, 8)")
-			g.addRows(out, "=", predHi)
+			g.line("d = d[8:]")
+			g.addRows(out, predHi)
 		}
 		g.half = false
 	}
@@ -689,14 +759,15 @@ func (g *fgen) wholeKernel(k kernel) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "// %s is the %s %dx%d %s inverse transform and add for\n", k.name(), depthDoc(k.hbd), w, ht, k.typeDoc())
 	fmt.Fprintf(&out, "// coefficients in the first %d columns and %d rows (column-major at stride\n", k.cols, k.rows)
-	fmt.Fprintf(&out, "// %d); dp/pp address the destination and prediction at strides ds/ps,\n", cs)
+	fmt.Fprintf(&out, "// %d); d/p hold the destination and prediction rows at strides ds/ps.\n", cs)
 	if k.hbd {
-		fmt.Fprintf(&out, "// which the caller has bounds-checked, and mx is the pixel maximum. It\n// reports false, with dst untouched, when a guard declines.\n")
-		fmt.Fprintf(&out, "func %s(c *[%d]int32, dp unsafe.Pointer, ds int, pp unsafe.Pointer, ps int, mx int16) bool {\n", k.name(), w*cs)
+		fmt.Fprintf(&out, "// mx is the pixel maximum. It reports false, with dst untouched, when a\n// guard declines or a stride exceeds itxGenMaxStride.\n")
+		fmt.Fprintf(&out, "func %s(c *[%d]int32, d []byte, ds int, p []byte, ps int, mx int16) bool {\n", k.name(), w*cs)
 	} else {
-		fmt.Fprintf(&out, "// which the caller has bounds-checked. It reports false, with dst\n// untouched, when a guard declines.\n")
-		fmt.Fprintf(&out, "func %s(c *[%d]int32, dp unsafe.Pointer, ds int, pp unsafe.Pointer, ps int) bool {\n", k.name(), w*cs)
+		fmt.Fprintf(&out, "// It reports false, with dst untouched, when a guard declines or a stride\n// exceeds itxGenMaxStride.\n")
+		fmt.Fprintf(&out, "func %s(c *[%d]int32, d []byte, ds int, p []byte, ps int) bool {\n", k.name(), w*cs)
 	}
+	out.WriteString(strideGuard)
 	out.WriteString(header(body))
 	out.WriteString(body)
 	out.WriteString("\treturn true\n}\n\n")
@@ -855,7 +926,7 @@ func (g *fgen) colStripDepth(t string, n, rows int, hbd bool) string {
 	if hbd {
 		pred = predH16
 	}
-	g.addRows(g.network1D(t, n, inputs(live, n)), ":=", pred)
+	g.addRows(g.network1D(t, n, inputs(live, n)), pred)
 	g.done()
 	body := deadStrip(g.sb.String())
 	var out strings.Builder
@@ -863,9 +934,13 @@ func (g *fgen) colStripDepth(t string, n, rows int, hbd bool) string {
 		name := colStripNameHBD(t, n, rows)
 		fmt.Fprintf(&out, "// %s is the %s column pass of one eight-column strip of a\n", name, typeDoc(t))
 		fmt.Fprintf(&out, "// 10/12-bit %dx%d block from %d coded tmp rows (m, %d wide), added to the\n", n, n, rows, n)
-		fmt.Fprintf(&out, "// eight 16-bit prediction samples of each row at pp into dp (strides\n")
-		fmt.Fprintf(&out, "// ps/ds in bytes, bounds-checked by the caller), clipped to [0, mx].\n")
-		fmt.Fprintf(&out, "func %s(m *[%d]int16, dp unsafe.Pointer, ds int, pp unsafe.Pointer, ps int, mx int16) {\n", name, (rows-1)*n+8)
+		fmt.Fprintf(&out, "// eight 16-bit prediction samples of each row of p into d (strides ps/ds\n")
+		fmt.Fprintf(&out, "// in bytes, at most itxGenMaxStride, checked by the block function),\n")
+		fmt.Fprintf(&out, "// clipped to [0, mx].\n")
+		fmt.Fprintf(&out, "func %s(m *[%d]int16, d []byte, ds int, p []byte, ps int, mx int16) {\n", name, (rows-1)*n+8)
+		out.WriteString("\t// The block function checked the strides; the conversion carries that\n")
+		out.WriteString("\t// range here, so each row window costs one bounds check.\n")
+		out.WriteString("\tds, ps = int(uint32(ds)), int(uint32(ps))\n")
 		out.WriteString(header(body))
 		out.WriteString(body)
 		out.WriteString("}\n\n")
@@ -874,10 +949,13 @@ func (g *fgen) colStripDepth(t string, n, rows int, hbd bool) string {
 	name := colStripName(t, n, rows)
 	fmt.Fprintf(&out, "// %s is the %s column pass of one eight-column strip of an\n", name, typeDoc(t))
 	fmt.Fprintf(&out, "// 8-bit %dx%d block from %d coded tmp rows (m, %d wide), added to the\n", n, n, rows, n)
-	fmt.Fprintf(&out, "// prediction into dp (strides ps/ds, bounds-checked by the caller): pp\n")
-	fmt.Fprintf(&out, "// addresses sixteen prediction bytes of each row inside the block and\n")
-	fmt.Fprintf(&out, "// selp the TBL selector that zero-extends the strip's eight.\n")
-	fmt.Fprintf(&out, "func %s(m *[%d]int16, dp unsafe.Pointer, ds int, pp unsafe.Pointer, ps int, selp *[16]uint8) {\n", name, (rows-1)*n+8)
+	fmt.Fprintf(&out, "// prediction into d (strides ds/ps, at most itxGenMaxStride, checked by\n")
+	fmt.Fprintf(&out, "// the block function): p holds sixteen prediction bytes of each row\n")
+	fmt.Fprintf(&out, "// inside the block and selp the TBL selector that zero-extends the\n// strip's eight.\n")
+	fmt.Fprintf(&out, "func %s(m *[%d]int16, d []byte, ds int, p []byte, ps int, selp *[16]uint8) {\n", name, (rows-1)*n+8)
+	out.WriteString("\t// The block function checked the strides; the conversion carries that\n")
+	out.WriteString("\t// range here, so each row window costs one bounds check.\n")
+	out.WriteString("\tds, ps = int(uint32(ds)), int(uint32(ps))\n")
 	out.WriteString("\tsel := archsimd.LoadUint8x16Array(selp)\n")
 	out.WriteString(header(body))
 	out.WriteString(body)
@@ -892,14 +970,15 @@ func stripKernel(k kernel) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "// %s is the %s %dx%d %s inverse transform and add for\n", k.name(), depthDoc(k.hbd), n, n, k.typeDoc())
 	fmt.Fprintf(&b, "// coefficients in the first %d columns and %d rows (column-major at stride\n", k.cols, k.rows)
-	fmt.Fprintf(&b, "// %d); dp/pp address the destination and prediction at strides ds/ps,\n", cs)
-	fmt.Fprintf(&b, "// which the caller has bounds-checked. Coefficient rows from rows on are\n")
-	fmt.Fprintf(&b, "// zero: the row strips past them are skipped (tmp starts zero). It reports\n// false, with dst untouched, when a guard declines.\n")
+	fmt.Fprintf(&b, "// %d); d/p hold the destination and prediction rows at strides ds/ps.\n", cs)
+	fmt.Fprintf(&b, "// Coefficient rows from rows on are zero: the row strips past them are\n")
+	fmt.Fprintf(&b, "// skipped (tmp starts zero). It reports false, with dst untouched, when a\n// guard declines or a stride exceeds itxGenMaxStride.\n")
 	mx := ""
 	if k.hbd {
 		mx = ", mx int16"
 	}
-	fmt.Fprintf(&b, "func %s(c *[%d]int32, dp unsafe.Pointer, ds int, pp unsafe.Pointer, ps int, rows int%s) bool {\n", k.name(), cs*cs, mx)
+	fmt.Fprintf(&b, "func %s(c *[%d]int32, d []byte, ds int, p []byte, ps int, rows int%s) bool {\n", k.name(), cs*cs, mx)
+	b.WriteString(strideGuard)
 	fmt.Fprintf(&b, "\tvar tmp [%d]int16\n", rows8*n)
 	fmt.Fprintf(&b, "\tvar gc [%d]archsimd.Uint16x8\n", n/8)
 	for s := 0; s < rows8/8; s++ {
@@ -921,10 +1000,10 @@ func stripKernel(k kernel) string {
 		// Strip q reads and writes its own eight 16-bit samples per row.
 		for q := 0; q < n/8; q++ {
 			if q == 0 {
-				fmt.Fprintf(&b, "\t%s((*[%d]int16)(tmp[0:]), dp, ds, pp, ps, mx)\n", colStripNameHBD(k.v, n, k.rows), (k.rows-1)*n+8)
+				fmt.Fprintf(&b, "\t%s((*[%d]int16)(tmp[0:]), d, ds, p, ps, mx)\n", colStripNameHBD(k.v, n, k.rows), (k.rows-1)*n+8)
 				continue
 			}
-			fmt.Fprintf(&b, "\t%s((*[%d]int16)(tmp[%d:]), unsafe.Add(dp, %d), ds, unsafe.Add(pp, %d), ps, mx)\n", colStripNameHBD(k.v, n, k.rows), (k.rows-1)*n+8, 8*q, 16*q, 16*q)
+			fmt.Fprintf(&b, "\t%s((*[%d]int16)(tmp[%d:]), d[%d:], ds, p[%d:], ps, mx)\n", colStripNameHBD(k.v, n, k.rows), (k.rows-1)*n+8, 8*q, 16*q, 16*q)
 		}
 		b.WriteString("\treturn true\n}\n\n")
 		return b.String()
@@ -936,9 +1015,9 @@ func stripKernel(k kernel) string {
 	for q := 0; q < n/8; q++ {
 		switch q {
 		case 0:
-			fmt.Fprintf(&b, "\t%s((*[%d]int16)(tmp[0:]), dp, ds, pp, ps, &sel[0])\n", colStripName(k.v, n, k.rows), (k.rows-1)*n+8)
+			fmt.Fprintf(&b, "\t%s((*[%d]int16)(tmp[0:]), d, ds, p, ps, &sel[0])\n", colStripName(k.v, n, k.rows), (k.rows-1)*n+8)
 		default:
-			fmt.Fprintf(&b, "\t%s((*[%d]int16)(tmp[%d:]), unsafe.Add(dp, %d), ds, unsafe.Add(pp, %d), ps, &sel[1])\n", colStripName(k.v, n, k.rows), (k.rows-1)*n+8, 8*q, 8*q, 8*q-8)
+			fmt.Fprintf(&b, "\t%s((*[%d]int16)(tmp[%d:]), d[%d:], ds, p[%d:], ps, &sel[1])\n", colStripName(k.v, n, k.rows), (k.rows-1)*n+8, 8*q, 8*q, 8*q-8)
 		}
 	}
 	b.WriteString("\treturn true\n}\n\n")
@@ -978,9 +1057,9 @@ func dispatchDepth(n int, forms []int, hbd bool) string {
 	if n > 16 {
 		extra = ", rows"
 	}
-	d, mx := "", ""
+	dep, mx := "", ""
 	if hbd {
-		d, mx = "HBD", ", mx int16"
+		dep, mx = "HBD", ", mx int16"
 		extra += ", mx"
 		fmt.Fprintf(&b, "// itxGenHBDDCT%dx%d runs the generated 10/12-bit %dx%d kernel of the network\n", n, n, n, n)
 		fmt.Fprintf(&b, "// forms covering cols coded columns and rows coded rows (1..%d each).\n", forms[len(forms)-1])
@@ -988,7 +1067,7 @@ func dispatchDepth(n int, forms []int, hbd bool) string {
 		fmt.Fprintf(&b, "// itxGenDCT%dx%d runs the generated %dx%d kernel of the network forms covering\n", n, n, n, n)
 		fmt.Fprintf(&b, "// cols coded columns and rows coded rows (1..%d each).\n", forms[len(forms)-1])
 	}
-	fmt.Fprintf(&b, "func itxGen%sDCT%dx%d(c *[%d]int32, dp unsafe.Pointer, ds int, pp unsafe.Pointer, ps int, cols, rows int%s) bool {\n", d, n, n, cs*cs, mx)
+	fmt.Fprintf(&b, "func itxGen%sDCT%dx%d(c *[%d]int32, d []byte, ds int, p []byte, ps int, cols, rows int%s) bool {\n", dep, n, n, cs*cs, mx)
 	sw := func(v string, body func(f int)) {
 		b.WriteString("\tswitch {\n")
 		for i, f := range forms {
@@ -1003,7 +1082,7 @@ func dispatchDepth(n int, forms []int, hbd bool) string {
 	}
 	sw("cols", func(c int) {
 		sw("rows", func(r int) {
-			fmt.Fprintf(&b, "\t\treturn %s(c, dp, ds, pp, ps%s)\n", kernel{n: n, cols: c, rows: r, v: tDCT, h: tDCT, hbd: hbd}.name(), extra)
+			fmt.Fprintf(&b, "\t\treturn %s(c, d, ds, p, ps%s)\n", kernel{n: n, cols: c, rows: r, v: tDCT, h: tDCT, hbd: hbd}.name(), extra)
 		})
 	})
 	b.WriteString("}\n\n")
@@ -1063,10 +1142,14 @@ func generateFused(dir string) map[string][]byte {
 	out.WriteString("// Code generated by itxgen from the DCT networks of dct.go. DO NOT EDIT.\n\n")
 	out.WriteString("//go:build goexperiment.simd && arm64 && !purego\n\n")
 	out.WriteString("package transform\n\n")
-	out.WriteString("import (\n\t\"simd/archsimd\"\n\t\"unsafe\"\n)\n\n")
-	out.WriteString("// The kernels step dp/pp through the destination and prediction rows as\n")
-	out.WriteString("// pointers inside the extent their callers checked: these are residual-add\n")
-	out.WriteString("// rows, where per-row checked slices measured 9-86% slower.\n\n")
+	out.WriteString("import (\n\t\"errors\"\n\t\"simd/archsimd\"\n)\n\n")
+	out.WriteString("// The kernels read the prediction and write the destination through\n")
+	out.WriteString("// bounds-checked row windows of d and p. The block functions decline\n")
+	out.WriteString("// strides above itxGenMaxStride (the caller then runs the staged path).\n")
+	out.WriteString("const itxGenMaxStride = 1 << 30\n\n")
+	out.WriteString("// errItxGenWindow reports a row window outside d or p: a caller that\n")
+	out.WriteString("// passed slices shorter than the block's rows.\n")
+	out.WriteString("var errItxGenWindow = errors.New(\"transform: inverse-add row outside the destination or prediction\")\n\n")
 	out.WriteString("// itxGenConsts holds the constants of the generated kernels: the rotation\n")
 	out.WriteString("// multipliers 16*C (pC / nC for the cospi constant +C / -C), the negated\n")
 	out.WriteString("// shift counts, the Round2(., 12) bias 2^15 of the multiply-accumulate and\n")

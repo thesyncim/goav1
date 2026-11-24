@@ -1,7 +1,5 @@
 package tile
 
-import "unsafe"
-
 // This file ports dav1d's temporal-MV projection: the mfmv setup of
 // dav1d_refmvs_init_frame and load_tmvs_c, which projects the saved motion
 // of up to three reference frames into a 16-row rp_proj window one tile
@@ -150,9 +148,8 @@ func (rt *refmvsTile) loadTmvs(colStart8, colEnd8, rowStart8, rowEnd8 int32) {
 					i++
 					continue
 				}
-				// dav1d compares rb->ref and rb->mv.n; one 64-bit
-				// compare covers the whole entry.
-				rbBits := refMVEntryBits(&r[i])
+				// dav1d compares rb->ref and rb->mv.n; the entry is eight
+				// pad-free bytes, so == is one 64-bit compare.
 				ref2ref := ref2refs[uint8(rb.Ref)]
 				if ref2ref == 0 {
 					i++
@@ -185,14 +182,14 @@ func (rt *refmvsTile) loadTmvs(colStart8, colEnd8, rowStart8, rowEnd8 int32) {
 							dst[posX] = entry
 						}
 						i++
-						if i >= len(r) || refMVEntryBits(&r[i]) != rbBits {
+						if i >= len(r) || r[i] != rb {
 							break
 						}
 						x++
 						posX++
 					}
 				} else {
-					for i++; i < len(r) && refMVEntryBits(&r[i]) == rbBits; i++ {
+					for i++; i < len(r) && r[i] == rb; i++ {
 					}
 				}
 			}
@@ -201,11 +198,4 @@ func (rt *refmvsTile) loadTmvs(colStart8, colEnd8, rowStart8, rowEnd8 int32) {
 	if refmvsOracleEnabled {
 		refmvsOracleTmvs(rt, colStart8, colEnd8, rowStart8, rowEnd8)
 	}
-}
-
-// refMVEntryBits loads a ReferenceMVEntry as one word; the struct has no
-// implicit padding and its pad bytes stay zero, so equal words are equal
-// entries.
-func refMVEntryBits(e *ReferenceMVEntry) uint64 {
-	return *(*uint64)(unsafe.Pointer(e))
 }

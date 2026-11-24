@@ -1,11 +1,10 @@
 package tile
 
 import (
-	"unsafe"
-
 	av1frame "github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	av1restoration "github.com/thesyncim/goav1/internal/av1/restoration"
+	"github.com/thesyncim/goav1/internal/unsafeutil"
 )
 
 // 8-bit-pixel loop-restoration frame walk. dav1d's 8bpc restoration
@@ -115,16 +114,15 @@ func applyRestorationPlaneSnapshotU8(grid RestorationPlaneGrid, records []Restor
 	return applyRestorationPlaneRecordsFilteredU8(grid, records, boundaries, dataView.Pix, dataView.Stride, dataView.Origin, buffer.Pix, buffer.Stride, 0, scratch, optimized)
 }
 
-// restorationByteScratchView reinterprets a segment of the uint16 sample
-// scratch arena as byte storage for the uint8 plane snapshot. The snapshot
-// needs n bytes and the segment holds len(seg) uint16s (2*len(seg) bytes), so
-// the view always fits inside the arena's allocation; the 8-bit path simply
+// restorationByteScratchView views a segment of the uint16 sample scratch
+// arena as byte storage for the uint8 plane snapshot: the first n of the
+// segment's 2*len(seg) bytes (unsafeutil.BytesOfUint16), so the 8-bit path
 // uses half the arena's footprint.
 func restorationByteScratchView(seg []uint16, n int) ([]uint8, bool) {
 	if n <= 0 || len(seg) == 0 || n > 2*len(seg) {
 		return nil, false
 	}
-	return unsafe.Slice((*uint8)(unsafe.Pointer(unsafe.SliceData(seg))), n), true
+	return unsafeutil.BytesOfUint16(seg)[:n:n], true
 }
 
 // applyRestorationPlaneRecordsFilteredU8 is the uint8 counterpart of

@@ -10,7 +10,6 @@ import (
 	"math/rand"
 	"reflect"
 	"testing"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/dsp/cpu"
 )
@@ -57,7 +56,7 @@ func lanes4Fill(rng *rand.Rand, pattern int, min, max int32) func() int32 {
 var dct64Lanes4Kernels = []struct {
 	name  string
 	bound int32
-	fn    func(p unsafe.Pointer, stride uintptr, min, max int32)
+	fn    func(p []int32, stride int, min, max int32)
 }{
 	{"Narrow", itxNarrowBound, inverseDCT64Lanes4Narrow},
 	{"Wide", itxWideBound, inverseDCT64Lanes4Wide},
@@ -84,7 +83,7 @@ func TestDCT64Lanes4MatchesScalar(t *testing.T) {
 						inverseDCT64(want[off+c:], rowStride, min, max)
 					}
 					got := append([]int32(nil), buf...)
-					kern.fn(unsafe.Pointer(&got[off]), uintptr(rowStride)*4, min, max)
+					kern.fn(got[off:], rowStride, min, max)
 					if !eqInt32(got, want) {
 						t.Fatalf("%s clamp=[%d,%d] stride=%d iter=%d\n in=%v\n got=%v\nwant=%v",
 							kern.name, min, max, rowStride, iter, buf, got, want)

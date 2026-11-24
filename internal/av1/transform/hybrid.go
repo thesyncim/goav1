@@ -87,7 +87,7 @@ func inverseSeparableBlockClampedRows(dst []int16, dstStride int, coeff []int32,
 	if dstStride < width || !blockFits(len(dst), dstStride, width, height) {
 		return ErrInvalidTransform
 	}
-	if _, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, scratch, size, typ, rowMin, rowMax, colMin, colMax, activeRows, 0, nil, false); err != nil {
+	if _, err := inverseSeparableBlockClampedRowsToScratch(coeff, coeffStride, scratch, size, typ, rowMin, rowMax, colMin, colMax, activeRows, 0, nil); err != nil {
 		return err
 	}
 	narrowStoreImpl(dst, dstStride, scratch, width, height)
@@ -117,7 +117,7 @@ func stageTransposeClampScalar(scratch []int32, width int, coeff []int32, coeffS
 	}
 }
 
-func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, scratch []int32, size Size, typ Type, rowMin int32, rowMax int32, colMin int32, colMax int32, activeRows int, activeCols int, col16 []int16, col16AliasesScratch bool) (bool, error) {
+func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, scratch []int32, size Size, typ Type, rowMin int32, rowMax int32, colMin int32, colMax int32, activeRows int, activeCols int, col16 []int16) (bool, error) {
 	// Resolve every per-size datum from a single compact index instead of
 	// re-deriving it through size.shift(), adjustedScanSize() and IsRect2(),
 	// each of which would recompute sizeIndex on this hot path.
@@ -283,7 +283,6 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 	// int16 scratch during the round/clamp (free), then run the int16 DCT column
 	// pass with no boundary conversion. col16 is only supplied for bitDepth==8
 	// blocks whose vertical transform is a DCT.
-	midPassClamped := false
 	if col16 != nil {
 		total := width * height
 		if rowLimit == height {
@@ -301,25 +300,16 @@ func inverseSeparableBlockClampedRowsToScratch(coeff []int32, coeffStride int, s
 			inverseDCTColumnPassInt16(col16, width, height, colMin, colMax)
 			return true, nil
 		}
-		if col16AliasesScratch {
-			// The in-place narrow already applied the mid-pass round/clamp. Restore
-			// those values to int32 before continuing through the exact int32 column
-			// path. Descending order preserves unread packed int16 lanes.
-			for i := total - 1; i >= 0; i-- {
-				scratch[i] = int32(col16[i])
-			}
-			midPassClamped = true
-		}
+		// col16 is separate storage: scratch still holds the row output, so
+		// the exact int32 column path below runs from it unchanged.
 	}
 
 	// Rows beyond rowLimit have already been zeroed; zero is unchanged by the
 	// round/shift and lies inside every supported column clamp range.
-	if !midPassClamped {
-		if rowLimit == height {
-			clampRoundImpl(scratch, shift, colMin, colMax)
-		} else {
-			clampRoundImpl(scratch[:rowLimit*width], shift, colMin, colMax)
-		}
+	if rowLimit == height {
+		clampRoundImpl(scratch, shift, colMin, colMax)
+	} else {
+		clampRoundImpl(scratch[:rowLimit*width], shift, colMin, colMax)
 	}
 
 	// int16 DCT16 column pass (dav1d 8bpc form) over the raw scratch: exact

@@ -2,7 +2,6 @@ package tile
 
 import (
 	"encoding/binary"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/motion"
@@ -127,6 +126,28 @@ type BlockModeContext struct {
 	PalA edgePalette
 	PalL edgePalette
 
+	blockModeMotion
+	blockModeTxNeighbor
+	blockModeSBHistory
+	blockModeGrids
+
+	// The per-cell payload grids stay LAST: resetForSuperblock clears only
+	// the fields before GridInterMotion. Every reader gates GridInterMotion on
+	// GridMotionValid and GridInterp on GridInterpValid (both cleared per
+	// superblock), so stale payload from the previous superblock is never
+	// observed and its 18 KB need not be zeroed.
+	GridInterMotion [MaxBlockModeSlots][MaxBlockModeSlots]InterMotionResult
+	GridInterp      [MaxBlockModeSlots][MaxBlockModeSlots]motion.InterpFilters
+
+	// sbHistoryDirty says the cross-SB motion snapshots (SBTopInterMotion
+	// through SBDiagonalBlockSizeVisitedGrid) may be non-zero. Only the
+	// keepMotion superblock load writes them, so a stream that keeps
+	// neighbour motion in the dav1d refmvs rows never re-zeroes their 8 KB.
+	sbHistoryDirty bool
+}
+
+// blockModeMotion is BlockModeContext's per-superblock neighbour motion.
+type blockModeMotion struct {
 	// AboveInterMotion/LeftInterMotion are per-superblock: the carriers
 	// restore them only on the libaom-shaped neighbor-motion path
 	// (keepMotion); with dav1d refmvs rows bound they start every superblock
@@ -135,7 +156,10 @@ type BlockModeContext struct {
 	LeftInterMotion  [MaxBlockModeSlots]InterMotionResult
 	AboveMotionValid [MaxBlockModeSlots]uint8
 	LeftMotionValid  [MaxBlockModeSlots]uint8
+}
 
+// blockModeTxNeighbor is BlockModeContext's tx_size neighbour snapshot.
+type blockModeTxNeighbor struct {
 	// TxNeighborSnapshot captures the above/left neighbor state at slots
 	// touched by the current block, taken before the current block's
 	// MarkIntra/MarkIntrabcMotion overwrites those slots. It is consumed by
@@ -150,7 +174,11 @@ type BlockModeContext struct {
 	TxAboveNeighborBlockSize BlockSize
 	TxLeftNeighborIntra      uint8
 	TxLeftNeighborBlockSize  BlockSize
+}
 
+// blockModeSBHistory holds BlockModeContext's cross-SB motion snapshots;
+// see sbHistoryDirty.
+type blockModeSBHistory struct {
 	// The cross-SB motion snapshots below (SBTopInterMotion through
 	// SBDiagonalBlockSizeVisitedGrid) are contiguous: see sbHistoryDirty.
 
@@ -223,7 +251,11 @@ type BlockModeContext struct {
 	SBDiagonalMotionValidGrid      [intrabcCrossSBHistory][intrabcCrossSBHistory]uint8
 	SBDiagonalBlockSizeGrid        [intrabcCrossSBHistory][intrabcCrossSBHistory]BlockSize
 	SBDiagonalBlockSizeVisitedGrid [intrabcCrossSBHistory][intrabcCrossSBHistory]uint8
+}
 
+// blockModeGrids is BlockModeContext's per-cell validity and size grids,
+// cleared per superblock (the payload grids they gate are not).
+type blockModeGrids struct {
 	GridMotionValid [MaxBlockModeSlots][MaxBlockModeSlots]uint8
 	GridBlockSize   [MaxBlockModeSlots][MaxBlockModeSlots]BlockSize
 
@@ -248,20 +280,6 @@ type BlockModeContext struct {
 	// and forces the scan to fall back to a 4x4 stride past intra neighbors,
 	// oversampling deeper cells libaom never visits.
 	GridBlockSizeVisited [MaxBlockModeSlots][MaxBlockModeSlots]uint8
-
-	// The per-cell payload grids stay LAST: resetForSuperblock clears only
-	// the fields before GridInterMotion. Every reader gates GridInterMotion on
-	// GridMotionValid and GridInterp on GridInterpValid (both cleared per
-	// superblock), so stale payload from the previous superblock is never
-	// observed and its 18 KB need not be zeroed.
-	GridInterMotion [MaxBlockModeSlots][MaxBlockModeSlots]InterMotionResult
-	GridInterp      [MaxBlockModeSlots][MaxBlockModeSlots]motion.InterpFilters
-
-	// sbHistoryDirty says the cross-SB motion snapshots (SBTopInterMotion
-	// through SBDiagonalBlockSizeVisitedGrid) may be non-zero. Only the
-	// keepMotion superblock load writes them, so a stream that keeps
-	// neighbour motion in the dav1d refmvs rows never re-zeroes their 8 KB.
-	sbHistoryDirty bool
 }
 
 // resetForSuperblock is BlockModeContext{} minus the trailing payload grids
@@ -276,34 +294,25 @@ func (c *BlockModeContext) resetForSuperblock() {
 // that must overwrite all of it.
 func poisonEdge(e *BlockContext) {
 	if poisonSkippedClears {
-		b := unsafe.Slice((*byte)(unsafe.Pointer(e)), unsafe.Sizeof(*e))
-		for i := range b {
-			b[i] = 0xA5
-		}
+		poisonFill(e)
 	}
 }
 
-// resetSuperblockState zeroes the per-superblock range, from
-// AboveInterMotion up to the payload grids. The struct holds no pointers, so
-// a byte clear is a plain zero-assignment.
+// resetSuperblockState zeroes the per-superblock state: the neighbour
+// motion, the tx_size snapshot, the cross-SB history when it may be dirty,
+// and the validity grids.
 func (c *BlockModeContext) resetSuperblockState() {
-	base := unsafe.Offsetof(c.AboveInterMotion)
-	b := unsafe.Slice((*byte)(unsafe.Pointer(&c.AboveInterMotion)), unsafe.Offsetof(c.GridInterMotion)-base)
+	c.blockModeMotion = blockModeMotion{}
+	c.blockModeTxNeighbor = blockModeTxNeighbor{}
+	c.blockModeGrids = blockModeGrids{}
 	if c.sbHistoryDirty {
-		clear(b)
+		c.blockModeSBHistory = blockModeSBHistory{}
 		c.sbHistoryDirty = false
 		return
 	}
-	// The snapshots are contiguous from SBTopInterMotion up to
-	// GridMotionValid and already zero.
-	snapStart := unsafe.Offsetof(c.SBTopInterMotion) - base
-	snapEnd := unsafe.Offsetof(c.GridMotionValid) - base
-	clear(b[:snapStart])
-	clear(b[snapEnd:])
+	// The snapshots are already zero.
 	if poisonSkippedClears {
-		for i := range b[snapStart:snapEnd] {
-			b[int(snapStart)+i] = 0xA5
-		}
+		poisonFill(&c.blockModeSBHistory)
 	}
 }
 
@@ -946,15 +955,8 @@ func (c *BlockModeContext) resetSuperblockStateRefmvs() {
 	c.TxLeftNeighborIntra = 0
 	c.TxLeftNeighborBlockSize = 0
 	if poisonSkippedClears {
-		base := unsafe.Offsetof(c.AboveInterMotion)
-		b := unsafe.Slice((*byte)(unsafe.Pointer(&c.AboveInterMotion)), unsafe.Offsetof(c.GridInterMotion)-base)
-		motionEnd := unsafe.Offsetof(c.TxNeighborValid) - base
-		for i := range b[:motionEnd] {
-			b[i] = 0xA5
-		}
-		snapStart := unsafe.Offsetof(c.SBTopInterMotion) - base
-		for i := range b[snapStart:] {
-			b[int(snapStart)+i] = 0xA5
-		}
+		poisonFill(&c.blockModeMotion)
+		poisonFill(&c.blockModeSBHistory)
+		poisonFill(&c.blockModeGrids)
 	}
 }

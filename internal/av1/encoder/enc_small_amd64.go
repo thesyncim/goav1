@@ -4,7 +4,6 @@ package encoder
 
 import (
 	"simd/archsimd"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 )
@@ -29,21 +28,25 @@ func lpd1SampledSAD(src, ref []byte, srcOff, refOff, srcStride, refStride, w, ro
 	if !encAVX2 || (w != 8 && w&15 != 0) || rows > 8 || w > 32 {
 		return lpd1SampledSADPureGo(src, ref, srcOff, refOff, srcStride, refStride, w, rows, step)
 	}
-	_ = src[srcOff+(rows-1)*ss+w-1]
-	_ = ref[refOff+(rows-1)*rs+w-1]
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
-	sp := unsafe.Pointer(&src[srcOff])
-	rp := unsafe.Pointer(&ref[refOff])
+	if uint(ss) > rowStrideMax || uint(rs) > rowStrideMax {
+		panic(errKernelArgs)
+	}
+	src, ref = src[srcOff:], ref[refOff:]
 	var acc archsimd.Uint64x2
 	if w == 8 {
-		r := 0
-		for ; r+2 <= rows; r += 2 {
-			acc = acc.Add(pack2Rows(unsafe.Add(sp, r*ss), ss).SumOf8AbsDiff(pack2Rows(unsafe.Add(rp, r*rs), rs)))
+		// One window per row pair: row 2i at w[:8], row 2i+1 at w[ss:].
+		sn, rn := ss+8, rs+8
+		for i := 0; i < rows/2; i++ {
+			so, ro := 2*i*ss, 2*i*rs
+			sw := src[so : so+sn : so+sn]
+			rw := ref[ro : ro+rn : ro+rn]
+			acc = acc.Add(pack2((*[8]byte)(sw), (*[8]byte)(sw[ss:])).SumOf8AbsDiff(pack2((*[8]byte)(rw), (*[8]byte)(rw[rs:]))))
 		}
 		total := sumU64(acc)
-		if r < rows {
-			s := src[srcOff+r*ss : srcOff+r*ss+8]
-			d := ref[refOff+r*rs : refOff+r*rs+8]
+		if rows&1 != 0 {
+			r := rows - 1
+			s := src[r*ss : r*ss+8]
+			d := ref[r*rs : r*rs+8]
 			for c := range s {
 				diff := int(s[c]) - int(d[c])
 				total += max(diff, -diff)
@@ -52,9 +55,9 @@ func lpd1SampledSAD(src, ref []byte, srcOff, refOff, srcStride, refStride, w, ro
 		return total
 	}
 	for r := range rows {
-		s, d := unsafe.Add(sp, r*ss), unsafe.Add(rp, r*rs)
-		for c := 0; c < w; c += 16 {
-			acc = acc.Add(load16(unsafe.Add(s, c)).SumOf8AbsDiff(load16(unsafe.Add(d, c))))
+		s, d := src[r*ss:r*ss+w], ref[r*rs:r*rs+w]
+		for c := 0; c+16 <= len(s) && c+16 <= len(d); c += 16 {
+			acc = acc.Add(archsimd.LoadUint8x16Array((*[16]uint8)(s[c : c+16])).SumOf8AbsDiff(archsimd.LoadUint8x16Array((*[16]uint8)(d[c : c+16]))))
 		}
 	}
 	return sumU64(acc)
@@ -87,26 +90,25 @@ func cdefDist8(src []byte, sstride int, filtered []byte, fstride int, dlist []cd
 	if len(dlist) == 0 {
 		return 0
 	}
-	// Bounds: every block reads up to 7 rows and 7 columns past its origin.
-	maxSO, maxFO := 0, 0
-	for _, b := range dlist {
-		maxSO = max(maxSO, (int(b.BY)*8+7)*sstride+int(b.BX)*8+7)
-		maxFO = max(maxFO, (int(b.BY)*8+7)*fstride+int(b.BX)*8+7)
+	if uint(sstride) > rowStrideMax || uint(fstride) > rowStrideMax {
+		panic(errKernelArgs)
 	}
-	_ = src[maxSO]
-	_ = filtered[maxFO]
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
-	sp := unsafe.Pointer(unsafe.SliceData(src))
-	fp := unsafe.Pointer(unsafe.SliceData(filtered))
+	// Each row pair (i, i+subsampling) is one bounds-checked window: the
+	// first row at w[:8], the second at w[sd:].
+	sd, fd := subsampling*sstride, subsampling*fstride
+	sn, fn := sd+8, fd+8
+	pairs := 4 / subsampling
 	var acc archsimd.Int32x8
-	pairStep := 2 * subsampling
 	var total uint64
 	for n, b := range dlist {
 		so := int(b.BY)*8*sstride + int(b.BX)*8
 		fo := int(b.BY)*8*fstride + int(b.BX)*8
-		for i := 0; i < 8; i += pairStep {
-			s := pack2Rows(unsafe.Add(sp, so+i*sstride), subsampling*sstride).ExtendToUint16().AsInt16x16()
-			f := pack2Rows(unsafe.Add(fp, fo+i*fstride), subsampling*fstride).ExtendToUint16().AsInt16x16()
+		for k := 0; k < pairs; k++ {
+			o, q := so+2*k*sd, fo+2*k*fd
+			sw := src[o : o+sn : o+sn]
+			fw := filtered[q : q+fn : q+fn]
+			s := pack2((*[8]byte)(sw), (*[8]byte)(sw[sd:])).ExtendToUint16().AsInt16x16()
+			f := pack2((*[8]byte)(fw), (*[8]byte)(fw[fd:])).ExtendToUint16().AsInt16x16()
 			d := s.Sub(f)
 			acc = acc.Add(d.DotProductPairs(d))
 		}

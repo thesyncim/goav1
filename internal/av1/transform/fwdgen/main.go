@@ -105,12 +105,12 @@ func generate(dir string) (map[string][]byte, error) {
 	// (rows); 32x32: shift {2, -4, 0}, cos_bit 12 both ways.
 	a16.line("// fwdColDCT16 is the 16-point column pass of forwardDCT16x16PureGo: fwdDCT16 at")
 	a16.line("// cos_bit 13 after the shift[0] = 2 pre-scale, then the shift[1] = -2 round.")
-	arm64Col(&a16, net16, "fwdColDCT16", "fwd64Tw13", true, round2, 16)
+	arm64Col(&a16, net16, "fwdColDCT16", "fwd64Tw13", true, round2, 16, false)
 	a16.line("\n// fwdRowDCT16 is the 16-point row pass (cos_bit 12), in place over coeff.")
 	arm64Row(&a16, net16, "fwdRowDCT16(coeff []int32, h int)", "fwdTw12", "coeff", "coeff", nil, false, 16, 16)
 	a16.line("\n// fwdColDCT32 is the 32-point column pass of forwardDCT32x32PureGo: fwdDCT32 at")
 	a16.line("// cos_bit 12 after the shift[0] = 2 pre-scale, then the shift[1] = -4 round.")
-	arm64Col(&a16, net32, "fwdColDCT32", "fwdTw12", true, round4, 32)
+	arm64Col(&a16, net32, "fwdColDCT32", "fwdTw12", true, round4, 32, false)
 	a16.line("\n// fwdRowDCT32 is the 32-point row pass (cos_bit 12), in place over coeff.")
 	arm64Row(&a16, net32, "fwdRowDCT32(coeff []int32, h int)", "fwdTw12", "coeff", "coeff", nil, false, 32, 32)
 
@@ -118,7 +118,7 @@ func generate(dir string) (map[string][]byte, error) {
 	// the low 32x32 coefficients are coded.
 	a64.line("// fwdColDCT64N2 is the 64-point column pass of the 64x64 DCT_DCT (cos_bit 13,")
 	a64.line("// no pre-scale) rounded by shift[1] = -2: outputs 0..31, stored transposed.")
-	arm64Col(&a64, net64, "fwdColDCT64N2", "fwd64Tw13", false, round2, 32)
+	arm64Col(&a64, net64, "fwdColDCT64N2", "fwd64Tw13", false, round2, 32, false)
 	a64.line("\n// fwdRowDCT64N2 is the 64-point row pass (cos_bit 10) over four rows of the")
 	a64.line("// transposed column output, rounded by shift[2] = -2 into coeff[k*32+r].")
 	arm64Row(&a64, net64, "fwdRowDCT64N2(coeff []int32, bufT []int32, h int)", "fwd64Tw10", "bufT", "coeff", &round2, false, 32, 32)
@@ -130,10 +130,10 @@ func generate(dir string) (map[string][]byte, error) {
 	// fwdColDCT16 and fwdColDCT32.
 	ar.line("// fwdColDCT8T is the 8-point column pass of the 16x8 DCT_DCT (cos_bit 13,")
 	ar.line("// shift {2, -2}), stored transposed with stride 8.")
-	arm64Col(&ar, net8, "fwdColDCT8T", "fwd64Tw13", true, round2, 8)
+	arm64Col(&ar, net8, "fwdColDCT8T", "fwd64Tw13", true, round2, 8, false)
 	ar.line("\n// fwdColDCT16R4 is the 16-point column pass of the 32x16 DCT_DCT (cos_bit")
 	ar.line("// 13, shift {2, -4}), stored transposed with stride 16.")
-	arm64Col(&ar, net16, "fwdColDCT16R4", "fwd64Tw13", true, round4, 16)
+	arm64Col(&ar, net16, "fwdColDCT16R4", "fwd64Tw13", true, round4, 16, false)
 	for _, rp := range []struct {
 		nw     *network
 		name   string
@@ -154,10 +154,10 @@ func generate(dir string) (map[string][]byte, error) {
 	// into the n/4 low coefficients coeff[k*n+r].
 	an4.line("// fwdColDCT16N4T is the N4 column pass of the 16x16 DCT_DCT (outputs 0..3,")
 	an4.line("// cos_bit 13, shift {2, -2}), stored transposed: out[c*4+k].")
-	arm64Col(&an4, net16N4, "fwdColDCT16N4T", "fwd64Tw13", true, round2, 4)
+	arm64Col(&an4, net16N4, "fwdColDCT16N4T", "fwd64Tw13", true, round2, 4, true)
 	an4.line("\n// fwdColDCT32N4T is the N4 column pass of the 32x32 DCT_DCT (outputs 0..7,")
 	an4.line("// cos_bit 12, shift {2, -4}), stored transposed: out[c*8+k].")
-	arm64Col(&an4, net32N4, "fwdColDCT32N4T", "fwdTw12", true, round4, 8)
+	arm64Col(&an4, net32N4, "fwdColDCT32N4T", "fwdTw12", true, round4, 8, true)
 	an4.line("\n// fwdRowDCT16N4T is the N4 row pass (cos_bit 12) of rows h..h+3 of buf,")
 	an4.line("// written to coeff[k*16+h], k < 4.")
 	arm64Row(&an4, net16N4, "fwdRowDCT16N4T(coeff []int32, buf []int32, h int)", "fwdTw12", "buf", "coeff", nil, false, 4, 16)

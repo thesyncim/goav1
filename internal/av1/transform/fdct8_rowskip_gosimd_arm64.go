@@ -246,9 +246,15 @@ func forwardDCT8x8RowSkipSIMD(coeffArr *[64]int32, residualArr *[64]int16, thr0,
 		fwdStoreI32At(coeff, 7*coeffStride+h, s7)
 	}
 	if mask&2 == 0 {
-		for l := range 8 {
-			fwdStoreI32At(coeff, l*coeffStride+4, zero)
-		}
+		// Unrolled: the loop form leaves one bounds check (l*8+8 <= 64 is not proven).
+		fwdStoreI32At(coeff, 0*coeffStride+4, zero)
+		fwdStoreI32At(coeff, 1*coeffStride+4, zero)
+		fwdStoreI32At(coeff, 2*coeffStride+4, zero)
+		fwdStoreI32At(coeff, 3*coeffStride+4, zero)
+		fwdStoreI32At(coeff, 4*coeffStride+4, zero)
+		fwdStoreI32At(coeff, 5*coeffStride+4, zero)
+		fwdStoreI32At(coeff, 6*coeffStride+4, zero)
+		fwdStoreI32At(coeff, 7*coeffStride+4, zero)
 	} else {
 		h := 4
 

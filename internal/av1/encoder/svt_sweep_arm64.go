@@ -2,10 +2,7 @@
 
 package encoder
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // svtAllSAD8x8_16x16Sub is svt_ext_all_sad_calculation_8x8_16x16_neon_dotprod
 // with sub_sad (Source/Lib/ASM_NEON_DOTPROD/sad_neon_dotprod.c) over the
@@ -26,13 +23,16 @@ import (
 // sequential compare-and-select keeps; it replaces the stored best only when
 // 2*t is below it. The 16x16 sums (<= 2*4*8160) fold from the t vectors in
 // uint16 and widen once.
+//
+// Rows are bounds-checked windows, one per row pair (rows 2i and 2i+2 of the
+// block, s2 apart): the source's 16 bytes and the reference's 23 (the eight
+// positions at constant offsets), taken once per 16x16 block.
 func svtAllSAD8x8_16x16Sub(me *realtimeSBMultiSizeME, src, ref []byte, stride, mvX, mvY int, sad16 *[16][8]uint32) {
-	_ = src[63*stride+63]
-	_ = ref[63*stride+63+7]
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
-	sp := unsafe.Pointer(&src[0])
-	rp := unsafe.Pointer(&ref[0])
+	if uint(stride) > rowStrideMax {
+		panic(errKernelArgs)
+	}
 	s2 := 2 * stride
+	sn, rn := s2+16, s2+23
 	hiShift := archsimd.BroadcastInt16x8(-8)
 	m255 := archsimd.BroadcastUint16x8(0xFF01)
 	eight := archsimd.BroadcastUint16x8(8)
@@ -48,68 +48,77 @@ func svtAllSAD8x8_16x16Sub(me *realtimeSBMultiSizeME, src, ref []byte, stride, m
 	k47 := archsimd.LoadUint32x4Array(&[4]uint32{4, 5, 6, 7})
 	for n := range 16 {
 		x16, y16 := sweepBlock16(n)
-		sbp := unsafe.Add(sp, y16*stride+x16)
-		a0 := archsimd.LoadUint8x16Array((*[16]uint8)(sbp))
-		a1 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sbp, s2)))
-		a2 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sbp, 2*s2)))
-		a3 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sbp, 3*s2)))
-		a4 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sbp, 4*s2)))
-		a5 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sbp, 5*s2)))
-		a6 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sbp, 6*s2)))
-		a7 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sbp, 7*s2)))
-		rb := unsafe.Add(rp, y16*stride+x16)
+		o := y16*stride + x16
+		sw := src[o : o+sn : o+sn]
+		a0, a1 := archsimd.LoadUint8x16Array((*[16]uint8)(sw)), archsimd.LoadUint8x16Array((*[16]uint8)(sw[s2:]))
+		o2 := o + 2*s2
+		sw = src[o2 : o2+sn : o2+sn]
+		a2, a3 := archsimd.LoadUint8x16Array((*[16]uint8)(sw)), archsimd.LoadUint8x16Array((*[16]uint8)(sw[s2:]))
+		o4 := o + 4*s2
+		sw = src[o4 : o4+sn : o4+sn]
+		a4, a5 := archsimd.LoadUint8x16Array((*[16]uint8)(sw)), archsimd.LoadUint8x16Array((*[16]uint8)(sw[s2:]))
+		o6 := o + 6*s2
+		sw = src[o6 : o6+sn : o6+sn]
+		a6, a7 := archsimd.LoadUint8x16Array((*[16]uint8)(sw)), archsimd.LoadUint8x16Array((*[16]uint8)(sw[s2:]))
+		rw := ref[o : o+rn : o+rn]
+		w0, w1 := (*[23]uint8)(rw), (*[23]uint8)(rw[s2:])
+		rw = ref[o2 : o2+rn : o2+rn]
+		w2, w3 := (*[23]uint8)(rw), (*[23]uint8)(rw[s2:])
+		rw = ref[o4 : o4+rn : o4+rn]
+		w4, w5 := (*[23]uint8)(rw), (*[23]uint8)(rw[s2:])
+		rw = ref[o6 : o6+rn : o6+rn]
+		w6, w7 := (*[23]uint8)(rw), (*[23]uint8)(rw[s2:])
 		var tv [4]archsimd.Uint16x8
 		var keyMin archsimd.Uint16x8
 		kv := k01
 		for j := range 4 {
-			r := unsafe.Add(rb, 2*j)
-			r1 := unsafe.Add(r, 1)
-			q := archsimd.LoadUint8x16Array((*[16]uint8)(r))
+			c := 2 * j
+			q := archsimd.LoadUint8x16Array((*[16]uint8)(w0[c : c+16]))
 			d := a0.Max(q).Sub(a0.Min(q)).ReshapeToUint16s()
 			st0, ht0 := d, d.Shift(hiShift)
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r, s2)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(w1[c : c+16]))
 			d = a1.Max(q).Sub(a1.Min(q)).ReshapeToUint16s()
 			st0, ht0 = st0.Add(d), ht0.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r, 2*s2)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(w2[c : c+16]))
 			d = a2.Max(q).Sub(a2.Min(q)).ReshapeToUint16s()
 			st0, ht0 = st0.Add(d), ht0.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r, 3*s2)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(w3[c : c+16]))
 			d = a3.Max(q).Sub(a3.Min(q)).ReshapeToUint16s()
 			st0, ht0 = st0.Add(d), ht0.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r, 4*s2)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(w4[c : c+16]))
 			d = a4.Max(q).Sub(a4.Min(q)).ReshapeToUint16s()
 			sb0, hb0 := d, d.Shift(hiShift)
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r, 5*s2)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(w5[c : c+16]))
 			d = a5.Max(q).Sub(a5.Min(q)).ReshapeToUint16s()
 			sb0, hb0 = sb0.Add(d), hb0.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r, 6*s2)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(w6[c : c+16]))
 			d = a6.Max(q).Sub(a6.Min(q)).ReshapeToUint16s()
 			sb0, hb0 = sb0.Add(d), hb0.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r, 7*s2)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(w7[c : c+16]))
 			d = a7.Max(q).Sub(a7.Min(q)).ReshapeToUint16s()
 			sb0, hb0 = sb0.Add(d), hb0.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(r1))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(w0[c+1 : c+17]))
 			d = a0.Max(q).Sub(a0.Min(q)).ReshapeToUint16s()
 			st1, ht1 := d, d.Shift(hiShift)
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r1, s2)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(w1[c+1 : c+17]))
 			d = a1.Max(q).Sub(a1.Min(q)).ReshapeToUint16s()
 			st1, ht1 = st1.Add(d), ht1.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r1, 2*s2)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(w2[c+1 : c+17]))
 			d = a2.Max(q).Sub(a2.Min(q)).ReshapeToUint16s()
 			st1, ht1 = st1.Add(d), ht1.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r1, 3*s2)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(w3[c+1 : c+17]))
 			d = a3.Max(q).Sub(a3.Min(q)).ReshapeToUint16s()
 			st1, ht1 = st1.Add(d), ht1.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r1, 4*s2)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(w4[c+1 : c+17]))
 			d = a4.Max(q).Sub(a4.Min(q)).ReshapeToUint16s()
 			sb1, hb1 := d, d.Shift(hiShift)
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r1, 5*s2)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(w5[c+1 : c+17]))
 			d = a5.Max(q).Sub(a5.Min(q)).ReshapeToUint16s()
 			sb1, hb1 = sb1.Add(d), hb1.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r1, 6*s2)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(w6[c+1 : c+17]))
 			d = a6.Max(q).Sub(a6.Min(q)).ReshapeToUint16s()
 			sb1, hb1 = sb1.Add(d), hb1.Add(d.Shift(hiShift))
-			q = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r1, 7*s2)))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(w7[c+1 : c+17]))
 			d = a7.Max(q).Sub(a7.Min(q)).ReshapeToUint16s()
 			sb1, hb1 = sb1.Add(d), hb1.Add(d.Shift(hiShift))
 			sv := st0.ConcatAddPairs(sb0).ConcatAddPairs(st1.ConcatAddPairs(sb1))
@@ -129,12 +138,8 @@ func svtAllSAD8x8_16x16Sub(me *realtimeSBMultiSizeME, src, ref []byte, stride, m
 		km := keyMin.Min(keyMin.HiToLo()).ExtendLo4ToUint32()
 		sad := km.Shift(keyShift).And(keyMask)
 		pu8 := 21 + n*4
-		// pu8+4 <= 85 (n < 16). The checked bestSAD[pu8:pu8+4] view adds a
-		// bounds check per block (+0.4% instructions on
-		// BenchmarkSweepSearchPoint8); bestMV as packed uint32s is a
-		// layout pun with no safe form.
-		bp := (*[4]uint32)(unsafe.Pointer(&me.bestSAD[pu8]))
-		mp := (*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8]))
+		bp := (*[4]uint32)(me.bestSAD[pu8 : pu8+4])
+		mp := (*[4]uint32)(me.bestMV[pu8 : pu8+4])
 		best := archsimd.LoadUint32x4Array(bp)
 		lt := sad.Less(best)
 		sad.IfElse(lt, best).StoreArray(bp)
@@ -153,7 +158,7 @@ func svtAllSAD8x8_16x16Sub(me *realtimeSBMultiSizeME, src, ref []byte, stride, m
 		key := lo.MulAdd(eight32, k03).Min(hi.MulAdd(eight32, k47)).ReduceMin()
 		if m := key >> 3; m < me.bestSAD[5+n] {
 			me.bestSAD[5+n] = m
-			me.bestMV[5+n] = [2]int16{int16(mvX + int(key&7)), int16(mvY)}
+			me.bestMV[5+n] = svtPackMV(mvX+int(key&7), mvY)
 		}
 	}
 }
@@ -163,13 +168,13 @@ func svtAllSAD8x8_16x16Sub(me *realtimeSBMultiSizeME, src, ref []byte, stride, m
 // open_loop_me_get_search_point_results_block: the four 8x8 SUB_SADs of each
 // 16x16 block in one vector with a compare-and-select best update, then the
 // 16x16, 32x32 and 64x64 sums. ref needs no slack past the 64x64 block.
+// Rows are bounds-checked windows, one per row pair and array.
 func svtSweepPoint1(me *realtimeSBMultiSizeME, src, ref []byte, stride, mvX, mvY int) {
-	_ = src[63*stride+63]
-	_ = ref[63*stride+63]
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
-	sp := unsafe.Pointer(&src[0])
-	rp := unsafe.Pointer(&ref[0])
+	if uint(stride) > rowStrideMax {
+		panic(errKernelArgs)
+	}
 	s2 := 2 * stride
+	n2 := s2 + 16
 	hiShift := archsimd.BroadcastInt16x8(-8)
 	loShift := archsimd.BroadcastInt16x8(8)
 	mv := archsimd.BroadcastUint32x4(svtPackMV(mvX, mvY))
@@ -177,19 +182,29 @@ func svtSweepPoint1(me *realtimeSBMultiSizeME, src, ref []byte, stride, mvX, mvY
 	for n := range 16 {
 		x16, y16 := sweepBlock16(n)
 		off := y16*stride + x16
-		a := unsafe.Add(sp, off)
-		r := unsafe.Add(rp, off)
 		var st, ht, sb, hb archsimd.Uint16x8
-		for row := range 4 {
-			p := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(a, row*s2)))
-			q := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r, row*s2)))
+		for i := range 2 {
+			o := off + 2*i*s2
+			aw, rw := src[o:o+n2:o+n2], ref[o:o+n2:o+n2]
+			p := archsimd.LoadUint8x16Array((*[16]uint8)(aw))
+			q := archsimd.LoadUint8x16Array((*[16]uint8)(rw))
 			d := p.Max(q).Sub(p.Min(q)).ReshapeToUint16s()
 			st, ht = st.Add(d), ht.Add(d.Shift(hiShift))
+			p = archsimd.LoadUint8x16Array((*[16]uint8)(aw[s2:]))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(rw[s2:]))
+			d = p.Max(q).Sub(p.Min(q)).ReshapeToUint16s()
+			st, ht = st.Add(d), ht.Add(d.Shift(hiShift))
 		}
-		for row := 4; row < 8; row++ {
-			p := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(a, row*s2)))
-			q := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(r, row*s2)))
+		for i := 2; i < 4; i++ {
+			o := off + 2*i*s2
+			aw, rw := src[o:o+n2:o+n2], ref[o:o+n2:o+n2]
+			p := archsimd.LoadUint8x16Array((*[16]uint8)(aw))
+			q := archsimd.LoadUint8x16Array((*[16]uint8)(rw))
 			d := p.Max(q).Sub(p.Min(q)).ReshapeToUint16s()
+			sb, hb = sb.Add(d), hb.Add(d.Shift(hiShift))
+			p = archsimd.LoadUint8x16Array((*[16]uint8)(aw[s2:]))
+			q = archsimd.LoadUint8x16Array((*[16]uint8)(rw[s2:]))
+			d = p.Max(q).Sub(p.Min(q)).ReshapeToUint16s()
 			sb, hb = sb.Add(d), hb.Add(d.Shift(hiShift))
 		}
 		sv := st.ConcatAddPairs(sb)
@@ -199,12 +214,8 @@ func svtSweepPoint1(me *realtimeSBMultiSizeME, src, ref []byte, stride, mvX, mvY
 		sad := sv.Sub(hv.Shift(loShift)).Add(hv).ExtendLo4ToUint32()
 		sad = sad.Add(sad)
 		pu8 := 21 + n*4
-		// pu8+4 <= 85 (n < 16). The checked bestSAD[pu8:pu8+4] view adds a
-		// bounds check per block (+0.4% instructions on
-		// BenchmarkSweepSearchPoint8); bestMV as packed uint32s is a
-		// layout pun with no safe form.
-		bp := (*[4]uint32)(unsafe.Pointer(&me.bestSAD[pu8]))
-		mp := (*[4]uint32)(unsafe.Pointer(&me.bestMV[pu8]))
+		bp := (*[4]uint32)(me.bestSAD[pu8 : pu8+4])
+		mp := (*[4]uint32)(me.bestMV[pu8 : pu8+4])
 		best := archsimd.LoadUint32x4Array(bp)
 		bestMV := archsimd.LoadUint32x4Array(mp)
 		lt := sad.Less(best)

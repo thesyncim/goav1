@@ -61,7 +61,7 @@ func TestSVTAllSAD8x8_16x16SubMatchesScalar(t *testing.T) {
 			// Random running bests, including ties with the new SADs.
 			if trial%3 != 0 {
 				a.bestSAD[i] = uint32(rng.Intn(20000))
-				a.bestMV[i] = [2]int16{int16(rng.Intn(9) - 4), 1}
+				a.bestMV[i] = svtPackMV(rng.Intn(9)-4, 1)
 			}
 		}
 		b := a
@@ -168,7 +168,7 @@ func TestSweepPoint1ArchMatchesGeneric(t *testing.T) {
 		for i := range a.bestSAD {
 			if trial%3 != 0 {
 				a.bestSAD[i] = uint32(rng.Intn(20000))
-				a.bestMV[i] = [2]int16{int16(rng.Intn(9) - 4), 1}
+				a.bestMV[i] = svtPackMV(rng.Intn(9)-4, 1)
 			}
 		}
 		b := a

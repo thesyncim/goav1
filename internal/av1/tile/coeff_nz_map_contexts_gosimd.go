@@ -8,7 +8,6 @@ package tile
 
 import (
 	"simd/archsimd"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
@@ -36,60 +35,85 @@ const coeffNZMapWindowLen = 96
 // and 8 groups use 16-byte loads that may read unused lanes past the live rows;
 // a group whose loads would leave the level scratch is staged through a
 // zero-padded window instead, so the kernel never reads past the buffers.
-func coeffNZMapContextsSIMD(levels []uint8, offsets []uint8, contexts []int8, scanWidth int, scanHeight int, stride int, nb [5]int) {
-	// Strided columns: each group's extent is checked before its loads (else staged);
-	// same shape as the SAD rows (checked rows +9-86%).
-	lv := unsafe.Pointer(unsafe.SliceData(levels))
-	off := unsafe.Pointer(unsafe.SliceData(offsets))
-	out := unsafe.Pointer(unsafe.SliceData(contexts))
-	n0, n1, n2, n3, n4 := uintptr(nb[0]), uintptr(nb[1]), uintptr(nb[2]), uintptr(nb[3]), uintptr(nb[4])
+//
+// The 2D class of the square 16- and 32-row maps (the encoder's lower-context
+// maps) reads each column through one checked window at constant neighbour
+// offsets and writes through windows of the whole map; the other shapes take
+// one checked load per neighbour.
+func coeffNZMapContextsSIMD(levels []uint8, offsets []uint8, contexts []int8, scanWidth int, scanHeight int, stride int, nb [5]int, class transform.Class) {
 	nMax := max(nb[0], nb[1], nb[2], nb[3], nb[4])
 	levelsLen := len(levels)
 	three := archsimd.BroadcastUint8x16(3)
 	four := archsimd.BroadcastUint8x16(4)
 	zero := archsimd.BroadcastUint8x16(0)
 	c := 0
-	switch scanHeight {
-	case 4:
+	switch {
+	case scanWidth == 16 && scanHeight == 16 && stride == 16+txPadHorizontal && class == transform.Class2D &&
+		len(contexts) >= 256 && len(offsets) >= 256:
+		const s = 16 + txPadHorizontal
+		ctxs, offs := (*[256]int8)(contexts[:256]), (*[256]uint8)(offsets[:256])
+		for o := 0; o <= 256-16; o += 16 {
+			at := (o >> 4) * s
+			if at > levelsLen-coeffNZMap2DWin16 {
+				break
+			}
+			w := (*[coeffNZMap2DWin16]uint8)(levels[at : at+coeffNZMap2DWin16])
+			ctx := coeffNZMap2D16(w, three, four, zero)
+			coeffNZMapStoreWin(ctxs[o:o+16], offs[o:o+16], ctx)
+			c++
+		}
+	case scanWidth == 32 && scanHeight == 32 && stride == 32+txPadHorizontal && class == transform.Class2D &&
+		len(contexts) >= 1024 && len(offsets) >= 1024:
+		const s = 32 + txPadHorizontal
+		ctxs, offs := (*[1024]int8)(contexts[:1024]), (*[1024]uint8)(offsets[:1024])
+		for o := 0; o <= 1024-32; o += 32 {
+			at := (o >> 5) * s
+			if at > levelsLen-coeffNZMap2DWin32 {
+				break
+			}
+			w := (*[coeffNZMap2DWin32]uint8)(levels[at : at+coeffNZMap2DWin32])
+			cw, ow := (*[32]int8)(ctxs[o:o+32]), (*[32]uint8)(offs[o:o+32])
+			coeffNZMapStoreWin(cw[0:16], ow[0:16], coeffNZMap2D32(w, 0, three, four, zero))
+			coeffNZMapStoreWin(cw[16:32], ow[16:32], coeffNZMap2D32(w, 16, three, four, zero))
+			c++
+		}
+	case scanHeight == 4:
 		for ; c+4 <= scanWidth; c += 4 {
 			var a, b archsimd.Uint8x16
 			if (c+2)*stride+nMax+16 <= levelsLen {
-				a = coeffNZMapCompress(coeffNZMapCtx16(unsafe.Add(lv, c*stride), n0, n1, n2, n3, n4, three, four, zero), &coeffNZMapPick4x2)
-				b = coeffNZMapCompress(coeffNZMapCtx16(unsafe.Add(lv, (c+2)*stride), n0, n1, n2, n3, n4, three, four, zero), &coeffNZMapPick4x2)
+				a = coeffNZMapCompress(coeffNZMapCtx16(levels, c*stride, nb, three, four, zero), &coeffNZMapPick4x2)
+				b = coeffNZMapCompress(coeffNZMapCtx16(levels, (c+2)*stride, nb, three, four, zero), &coeffNZMapPick4x2)
 			} else {
 				var win [coeffNZMapWindowLen]uint8
 				copy(win[:], levels[c*stride:])
-				a = coeffNZMapCompress(coeffNZMapCtx16Win(&win, 0, nb, three, four, zero), &coeffNZMapPick4x2)
-				b = coeffNZMapCompress(coeffNZMapCtx16Win(&win, 2*stride, nb, three, four, zero), &coeffNZMapPick4x2)
+				a = coeffNZMapCompress(coeffNZMapCtx16(win[:], 0, nb, three, four, zero), &coeffNZMapPick4x2)
+				b = coeffNZMapCompress(coeffNZMapCtx16(win[:], 2*stride, nb, three, four, zero), &coeffNZMapPick4x2)
 			}
-			coeffNZMapStore16(out, c*4, coeffNZMapPack2(a, b).Add(coeffNZMapLoad16(off, c*4)))
+			coeffNZMapStore16(contexts, offsets, c*4, coeffNZMapPack2(a, b))
 		}
-	case 8:
+	case scanHeight == 8:
 		for ; c+2 <= scanWidth; c += 2 {
 			var a, b archsimd.Uint8x16
 			if (c+1)*stride+nMax+16 <= levelsLen {
-				a = coeffNZMapCompress(coeffNZMapCtx16(unsafe.Add(lv, c*stride), n0, n1, n2, n3, n4, three, four, zero), &coeffNZMapPickLo8)
-				b = coeffNZMapCompress(coeffNZMapCtx16(unsafe.Add(lv, (c+1)*stride), n0, n1, n2, n3, n4, three, four, zero), &coeffNZMapPickLo8)
+				a = coeffNZMapCompress(coeffNZMapCtx16(levels, c*stride, nb, three, four, zero), &coeffNZMapPickLo8)
+				b = coeffNZMapCompress(coeffNZMapCtx16(levels, (c+1)*stride, nb, three, four, zero), &coeffNZMapPickLo8)
 			} else {
 				var win [coeffNZMapWindowLen]uint8
 				copy(win[:], levels[c*stride:])
-				a = coeffNZMapCompress(coeffNZMapCtx16Win(&win, 0, nb, three, four, zero), &coeffNZMapPickLo8)
-				b = coeffNZMapCompress(coeffNZMapCtx16Win(&win, stride, nb, three, four, zero), &coeffNZMapPickLo8)
+				a = coeffNZMapCompress(coeffNZMapCtx16(win[:], 0, nb, three, four, zero), &coeffNZMapPickLo8)
+				b = coeffNZMapCompress(coeffNZMapCtx16(win[:], stride, nb, three, four, zero), &coeffNZMapPickLo8)
 			}
-			coeffNZMapStore16(out, c*8, coeffNZMapPack2(a, b).Add(coeffNZMapLoad16(off, c*8)))
+			coeffNZMapStore16(contexts, offsets, c*8, coeffNZMapPack2(a, b))
 		}
-	case 16:
+	case scanHeight == 16:
 		for ; c < scanWidth && c*stride+nMax+16 <= levelsLen; c++ {
-			ctx := coeffNZMapCtx16(unsafe.Add(lv, c*stride), n0, n1, n2, n3, n4, three, four, zero)
-			coeffNZMapStore16(out, c*16, ctx.Add(coeffNZMapLoad16(off, c*16)))
+			coeffNZMapStore16(contexts, offsets, c*16, coeffNZMapCtx16(levels, c*stride, nb, three, four, zero))
 		}
-	case 32:
+	case scanHeight == 32:
 		for ; c < scanWidth && c*stride+nMax+32 <= levelsLen; c++ {
-			p := unsafe.Add(lv, c*stride)
-			lo := coeffNZMapCtx16(p, n0, n1, n2, n3, n4, three, four, zero)
-			hi := coeffNZMapCtx16(unsafe.Add(p, 16), n0, n1, n2, n3, n4, three, four, zero)
-			coeffNZMapStore16(out, c*32, lo.Add(coeffNZMapLoad16(off, c*32)))
-			coeffNZMapStore16(out, c*32+16, hi.Add(coeffNZMapLoad16(off, c*32+16)))
+			base := c * stride
+			coeffNZMapStore16(contexts, offsets, c*32, coeffNZMapCtx16(levels, base, nb, three, four, zero))
+			coeffNZMapStore16(contexts, offsets, c*32+16, coeffNZMapCtx16(levels, base+16, nb, three, four, zero))
 		}
 	}
 	for ; c < scanWidth; c++ {
@@ -104,31 +128,62 @@ func coeffNZMapContextsSIMD(levels []uint8, offsets []uint8, contexts []int8, sc
 	}
 }
 
-// coeffNZMapClip3 loads sixteen levels at p+n and clamps each to 3.
-func coeffNZMapClip3(p unsafe.Pointer, n uintptr, three archsimd.Uint8x16) archsimd.Uint8x16 {
-	return archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, n))).Min(three)
+// The 2D neighbour offsets {1, s, s+1, 2s, 2} of the 16- and 32-row maps
+// (s = height+TX_PAD_HOR) reach at most 2s past a column's first level; the
+// windows add the rows one load group covers.
+const (
+	coeffNZMap2DWin16 = 2*(16+txPadHorizontal) + 16
+	coeffNZMap2DWin32 = 2*(32+txPadHorizontal) + 32
+)
+
+// coeffNZMapClip3 loads sixteen levels and clamps each to 3.
+func coeffNZMapClip3(p *[16]uint8, three archsimd.Uint8x16) archsimd.Uint8x16 {
+	return archsimd.LoadUint8x16Array(p).Min(three)
 }
 
-// coeffNZMapCtx16 returns min((sum of the five clipped neighbours + 1) >> 1, 4)
-// for sixteen consecutive rows at p. Average with zero is the rounding half-sum
-// (x+0+1)>>1, and the five clipped neighbours sum to at most 15 per lane.
-func coeffNZMapCtx16(p unsafe.Pointer, n0, n1, n2, n3, n4 uintptr, three, four, zero archsimd.Uint8x16) archsimd.Uint8x16 {
-	sum := coeffNZMapClip3(p, n0, three).Add(coeffNZMapClip3(p, n1, three))
-	sum = sum.Add(coeffNZMapClip3(p, n2, three)).Add(coeffNZMapClip3(p, n3, three)).Add(coeffNZMapClip3(p, n4, three))
-	return sum.Average(zero).Min(four)
+// coeffNZMapCtxSum returns min((sum of the five clipped neighbours + 1) >> 1,
+// 4). Average with zero is the rounding half-sum (x+0+1)>>1, and the five
+// clipped neighbours sum to at most 15 per lane.
+func coeffNZMapCtxSum(a, b, c, d, e, four, zero archsimd.Uint8x16) archsimd.Uint8x16 {
+	return a.Add(b).Add(c).Add(d).Add(e).Average(zero).Min(four)
 }
 
-// coeffNZMapCtx16Win is coeffNZMapCtx16 over a staged window. It stays in slice
-// form (no unsafe pointers) so the window never escapes under -d=checkptr.
-func coeffNZMapCtx16Win(w *[coeffNZMapWindowLen]uint8, base int, nb [5]int, three, four, zero archsimd.Uint8x16) archsimd.Uint8x16 {
-	sum := coeffNZMapLoadClip3(w, base+nb[0], three).Add(coeffNZMapLoadClip3(w, base+nb[1], three))
-	sum = sum.Add(coeffNZMapLoadClip3(w, base+nb[2], three)).Add(coeffNZMapLoadClip3(w, base+nb[3], three))
-	sum = sum.Add(coeffNZMapLoadClip3(w, base+nb[4], three))
-	return sum.Average(zero).Min(four)
+// coeffNZMap2D16 is the 2D context of a 16-row map column window.
+func coeffNZMap2D16(w *[coeffNZMap2DWin16]uint8, three, four, zero archsimd.Uint8x16) archsimd.Uint8x16 {
+	const s = 16 + txPadHorizontal
+	return coeffNZMapCtxSum(
+		coeffNZMapClip3((*[16]uint8)(w[1:17]), three),
+		coeffNZMapClip3((*[16]uint8)(w[s:s+16]), three),
+		coeffNZMapClip3((*[16]uint8)(w[s+1:s+17]), three),
+		coeffNZMapClip3((*[16]uint8)(w[2*s:2*s+16]), three),
+		coeffNZMapClip3((*[16]uint8)(w[2:18]), three),
+		four, zero)
 }
 
-func coeffNZMapLoadClip3(w *[coeffNZMapWindowLen]uint8, at int, three archsimd.Uint8x16) archsimd.Uint8x16 {
-	return archsimd.LoadUint8x16Array((*[16]uint8)(w[at : at+16])).Min(three)
+// coeffNZMap2D32 is the 2D context of the sixteen rows at w[r:] (r is 0 or
+// 16) of a 32-row map column window.
+func coeffNZMap2D32(w *[coeffNZMap2DWin32]uint8, r int, three, four, zero archsimd.Uint8x16) archsimd.Uint8x16 {
+	const s = 32 + txPadHorizontal
+	r &= 16
+	return coeffNZMapCtxSum(
+		coeffNZMapClip3((*[16]uint8)(w[r+1:r+17]), three),
+		coeffNZMapClip3((*[16]uint8)(w[r+s:r+s+16]), three),
+		coeffNZMapClip3((*[16]uint8)(w[r+s+1:r+s+17]), three),
+		coeffNZMapClip3((*[16]uint8)(w[r+2*s:r+2*s+16]), three),
+		coeffNZMapClip3((*[16]uint8)(w[r+2:r+18]), three),
+		four, zero)
+}
+
+// coeffNZMapCtx16 returns the context of sixteen consecutive rows at
+// levels[base:], one checked load per neighbour.
+func coeffNZMapCtx16(levels []uint8, base int, nb [5]int, three, four, zero archsimd.Uint8x16) archsimd.Uint8x16 {
+	return coeffNZMapCtxSum(
+		coeffNZMapClip3((*[16]uint8)(levels[base+nb[0]:base+nb[0]+16]), three),
+		coeffNZMapClip3((*[16]uint8)(levels[base+nb[1]:base+nb[1]+16]), three),
+		coeffNZMapClip3((*[16]uint8)(levels[base+nb[2]:base+nb[2]+16]), three),
+		coeffNZMapClip3((*[16]uint8)(levels[base+nb[3]:base+nb[3]+16]), three),
+		coeffNZMapClip3((*[16]uint8)(levels[base+nb[4]:base+nb[4]+16]), three),
+		four, zero)
 }
 
 // coeffNZMapPack2 joins two vectors whose live bytes are in 0..7 (upper eight
@@ -137,12 +192,17 @@ func coeffNZMapPack2(lo, hi archsimd.Uint8x16) archsimd.Uint8x16 {
 	return lo.Or(hi.ConcatShiftBytesRight(lo, 8))
 }
 
-func coeffNZMapLoad16(p unsafe.Pointer, off int) archsimd.Uint8x16 {
-	return archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, off)))
+// coeffNZMapStoreWin adds the sixteen position offsets o to ctx and stores
+// the contexts at c.
+func coeffNZMapStoreWin(c []int8, o []uint8, ctx archsimd.Uint8x16) {
+	ctx.Add(archsimd.LoadUint8x16Array((*[16]uint8)(o))).BitsToInt8().StoreArray((*[16]int8)(c))
 }
 
-func coeffNZMapStore16(p unsafe.Pointer, off int, v archsimd.Uint8x16) {
-	v.Store(unsafe.Slice((*uint8)(unsafe.Add(p, off)), 16))
+// coeffNZMapStore16 adds the sixteen position offsets at off to ctx and
+// stores the contexts there.
+func coeffNZMapStore16(contexts []int8, offsets []uint8, off int, ctx archsimd.Uint8x16) {
+	o := archsimd.LoadUint8x16Array((*[16]uint8)(offsets[off : off+16]))
+	ctx.Add(o).BitsToInt8().StoreArray((*[16]int8)(contexts[off : off+16]))
 }
 
 // coeffNZMapContextsSIMDFull fills every dense context of size/class in
@@ -183,7 +243,7 @@ func coeffNZMapContextsSIMDFull(levels []uint8, size TransformSize, class transf
 	case transform.ClassVert:
 		nb = [5]int{1, stride, 2, 3, 4}
 	}
-	coeffNZMapContextsSIMD(levels, offsets, contexts, int(geo.scanWidth), int(geo.scanHeight), stride, nb)
+	coeffNZMapContextsSIMD(levels, offsets, contexts, int(geo.scanWidth), int(geo.scanHeight), stride, nb, class)
 	if class == transform.Class2D {
 		contexts[0] = 0
 	}

@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // itx_fused64: dav1d's pass structure (itx_fused32) for the 8-bit 64x64
 // DCT_DCT block, whose coded coefficients lie in the 32x32 corner. The row
@@ -781,7 +778,5 @@ func InverseAddDCT64x64(dst []byte, dstStride int, pred []byte, predStride int, 
 		len(dst) < 63*dstStride+64 || len(pred) < 63*predStride+64 {
 		return false
 	}
-	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	return itxGenDCT64x64((*[1024]int32)(coeff[:1024]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
-		unsafe.Pointer(unsafe.SliceData(pred)), predStride, activeCols, activeRows)
+	return itxGenDCT64x64((*[1024]int32)(coeff[:1024]), dst, dstStride, pred, predStride, activeCols, activeRows)
 }

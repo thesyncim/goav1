@@ -6,14 +6,7 @@
 
 package superres
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
-
-// unsafe: superresFold's 8-tap window lies in the central span the caller
-// bounds; the checked (*[8]uint16)(srcRow[base:]) load measured +34-37% on
-// BenchmarkRowSIMD and BenchmarkUpscalePlane{8,10}bit.
+import "simd/archsimd"
 
 // Go-native SIMD super-res horizontal upscale row kernel (simd/archsimd,
 // GOEXPERIMENT=simd). The AV1 normative super-res filter is a per-output-pixel
@@ -75,27 +68,38 @@ func upscaleRowSIMD(srcRow []uint16, dstRow []uint16, dstWidth, stepX, initialSu
 	zero := archsimd.BroadcastInt32x4(0)
 	high := archsimd.BroadcastInt32x4(int32(maxValue))
 	srcX := -(1 << ScaleBits) + initialSubpelX + xLo*stepX
+	// A group's eight windows start (r0+k*stepX)>>ScaleBits samples after its
+	// first column, r0 < 1<<ScaleBits, so they stay within 15 when
+	// 7*stepX <= 15<<ScaleBits (every AV1 super-res ratio, at most 2x).
+	winStep := 7*stepX <= 15<<ScaleBits
 	x := xLo
-	for ; x+8 <= xHi; x += 8 {
-		// Eight pixels' four partial sums each, held in registers (no array:
-		// a stack-resident array of vectors spilled on every pixel).
-		t0 := superresFold(srcRow, srcX)
-		t1 := superresFold(srcRow, srcX+stepX)
-		t2 := superresFold(srcRow, srcX+2*stepX)
-		t3 := superresFold(srcRow, srcX+3*stepX)
-		t4 := superresFold(srcRow, srcX+4*stepX)
-		t5 := superresFold(srcRow, srcX+5*stepX)
-		t6 := superresFold(srcRow, srcX+6*stepX)
-		t7 := superresFold(srcRow, srcX+7*stepX)
+	// Eight pixels' four partial sums each are held in registers (no array:
+	// a stack-resident array of vectors spilled on every pixel). One checked
+	// window holds all eight 8-tap windows; the windows near the row's end
+	// that it would overrun take one checked load each.
+	for ; winStep && x+8 <= xHi; x += 8 {
+		w0 := (srcX >> ScaleBits) - FilterOffset
+		if w0 > len(srcRow)-superresWinLen {
+			break
+		}
+		w := (*[superresWinLen]uint16)(srcRow[w0 : w0+superresWinLen])
+		r0, us := uint(srcX)&ScaleMask, uint(stepX)
+		superresStore8(dstRow, x,
+			superresFoldWin(w, r0), superresFoldWin(w, r0+us),
+			superresFoldWin(w, r0+2*us), superresFoldWin(w, r0+3*us),
+			superresFoldWin(w, r0+4*us), superresFoldWin(w, r0+5*us),
+			superresFoldWin(w, r0+6*us), superresFoldWin(w, r0+7*us),
+			round, zero, high)
 		srcX += 8 * stepX
-		// Two levels of pairwise adds reduce each pixel's four partials to a
-		// single lane: pairs of pixels interleave first, then the pair results
-		// gather the four pixel sums (one per lane).
-		lo := t0.ConcatAddPairs(t1).ConcatAddPairs(t2.ConcatAddPairs(t3))
-		hi := t4.ConcatAddPairs(t5).ConcatAddPairs(t6.ConcatAddPairs(t7))
-		lo = lo.Add(round).ShiftAllRight(filterRoundBits).Max(zero).Min(high)
-		hi = hi.Add(round).ShiftAllRight(filterRoundBits).Max(zero).Min(high)
-		superresPack8(lo, hi).StoreArray((*[8]uint16)(dstRow[x:]))
+	}
+	for ; x+8 <= xHi; x += 8 {
+		superresStore8(dstRow, x,
+			superresFold(srcRow, srcX), superresFold(srcRow, srcX+stepX),
+			superresFold(srcRow, srcX+2*stepX), superresFold(srcRow, srcX+3*stepX),
+			superresFold(srcRow, srcX+4*stepX), superresFold(srcRow, srcX+5*stepX),
+			superresFold(srcRow, srcX+6*stepX), superresFold(srcRow, srcX+7*stepX),
+			round, zero, high)
+		srcX += 8 * stepX
 	}
 	for ; x < xHi; x++ {
 		t := superresFold(srcRow, srcX)
@@ -115,11 +119,38 @@ func upscaleRowSIMD(srcRow []uint16, dstRow []uint16, dstWidth, stepX, initialSu
 // for the output pixel whose fixed-point source cursor is srcX: it loads the
 // window srcRow[base..base+7] and the phase coefficients upscaleFilter[subpel]
 // exactly as upscaleRowPureGo derives them. The caller guarantees the window is
-// in bounds (central span), so the raw 16-byte load stays inside srcRow.
+// in bounds (central span), so the checked 16-byte load never fails.
 func superresFold(srcRow []uint16, srcX int) archsimd.Int32x4 {
 	base := (srcX >> ScaleBits) - FilterOffset
 	filter := &upscaleFilter[(srcX&ScaleMask)>>ExtraBits]
-	s := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Pointer(&srcRow[base])))
+	s := archsimd.LoadUint16x8Array((*[8]uint16)(srcRow[base : base+8])).BitsToInt16()
+	return superresTapFold(s, archsimd.LoadInt16x8Array(filter))
+}
+
+// superresStore8 reduces eight pixels' four partial sums to one sum each,
+// rounds, clamps and stores them at dstRow[x:x+8]. Two levels of pairwise adds
+// do the reduction: pairs of pixels interleave first, then the pair results
+// gather the four pixel sums (one per lane).
+func superresStore8(dstRow []uint16, x int, t0, t1, t2, t3, t4, t5, t6, t7, round, zero, high archsimd.Int32x4) {
+	lo := t0.ConcatAddPairs(t1).ConcatAddPairs(t2.ConcatAddPairs(t3))
+	hi := t4.ConcatAddPairs(t5).ConcatAddPairs(t6.ConcatAddPairs(t7))
+	lo = lo.Add(round).ShiftAllRight(filterRoundBits).Max(zero).Min(high)
+	hi = hi.Add(round).ShiftAllRight(filterRoundBits).Max(zero).Min(high)
+	superresPack8(lo, hi).StoreArray((*[8]uint16)(dstRow[x:]))
+}
+
+// superresWinLen spans eight consecutive 8-tap windows: starts 0..15 past
+// the first window plus the 8 taps.
+const superresWinLen = 24
+
+// superresFoldWin is superresFold for a window w starting at source column
+// (srcX>>ScaleBits)-FilterOffset of the group's first pixel; r is the pixel's
+// cursor relative to that column, so its window starts r>>ScaleBits samples
+// in, a value in [0, 15] that the mask states for the bounds prover.
+func superresFoldWin(w *[superresWinLen]uint16, r uint) archsimd.Int32x4 {
+	d := (r >> ScaleBits) & 15
+	filter := &upscaleFilter[(r&ScaleMask)>>ExtraBits]
+	s := archsimd.LoadUint16x8Array((*[8]uint16)(w[d : d+8])).BitsToInt16()
 	return superresTapFold(s, archsimd.LoadInt16x8Array(filter))
 }
 

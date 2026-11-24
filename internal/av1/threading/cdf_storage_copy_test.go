@@ -3,33 +3,43 @@ package threading
 import (
 	"reflect"
 	"testing"
+
+	"github.com/thesyncim/goav1/internal/av1/entropy"
+	"github.com/thesyncim/goav1/internal/poison"
 )
 
-// TestCDFStorageIsPointerFree guards copyCDFStorage's byte copy: it is only
-// equivalent to assignment while the storage holds no pointers.
-func TestCDFStorageIsPointerFree(t *testing.T) {
-	var walk func(reflect.Type) bool
-	walk = func(typ reflect.Type) bool {
-		switch typ.Kind() {
-		case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
-			reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128:
-			return true
-		case reflect.Array:
-			return walk(typ.Elem())
-		case reflect.Struct:
-			for i := range typ.NumField() {
-				if !walk(typ.Field(i).Type) {
-					return false
-				}
-			}
-			return true
-		default:
+// TestCopyCDFStorageCoversEveryField fills every byte of a source storage
+// and checks that copyCDFStorage reproduces it, so a field added to the
+// storage (or to one of its CDF tables) without a copy fails here.
+func TestCopyCDFStorageCoversEveryField(t *testing.T) {
+	src := new(FrameWorkTileResidualCDFStorage)
+	// entropy.CDF keeps its fields unexported, so each CDF is filled through
+	// its API: all MaxSymbols+1 lanes (the whole values array) get a value
+	// unique to that CDF.
+	cdfType := reflect.TypeFor[entropy.CDF]()
+	lane := uint16(0)
+	fillCDF := func(v reflect.Value) bool {
+		if v.Type() != cdfType {
 			return false
 		}
+		c := v.Addr().Interface().(*entropy.CDF)
+		if err := c.InitUniform(entropy.MaxSymbols); err != nil {
+			t.Fatal(err)
+		}
+		for i := range c.Values() {
+			lane++
+			c.Values()[i] = lane
+		}
+		return true
 	}
-	if !walk(reflect.TypeFor[FrameWorkTileResidualCDFStorage]()) {
-		t.Fatal("FrameWorkTileResidualCDFStorage contains pointers; copyCDFStorage must not byte-copy it")
+	n := 0
+	if ro := poison.LeavesWith(src, func(i int) byte { return byte(i*7 + 1) }, func() bool { n++; return n&1 == 1 }, fillCDF); len(ro) != 0 {
+		t.Fatalf("storage leaves the poison cannot set: %q", ro)
+	}
+	dst := new(FrameWorkTileResidualCDFStorage)
+	copyCDFStorage(dst, src)
+	if *dst != *src {
+		t.Fatal("copyCDFStorage left a field uncopied")
 	}
 }
 

@@ -6,10 +6,7 @@
 
 package transform
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // Go-native SIMD four-lane inverse DCT64 (dav1d's high-bitdepth itx shape,
 // src/arm/64/itx16.S): four adjacent columns, or four transposed rows, ride
@@ -27,7 +24,7 @@ const (
 
 // inverseDCT64Lanes4 picks the kernel for the clamp bounds; it reports false
 // when the bounds exceed the int32-exact envelope.
-func inverseDCT64Lanes4(p unsafe.Pointer, stride uintptr, min, max int32) bool {
+func inverseDCT64Lanes4(p []int32, stride int, min, max int32) bool {
 	switch {
 	case min >= -itxNarrowBound && max < itxNarrowBound:
 		inverseDCT64Lanes4Narrow(p, stride, min, max)
@@ -40,9 +37,8 @@ func inverseDCT64Lanes4(p unsafe.Pointer, stride uintptr, min, max int32) bool {
 }
 
 func inverseDCT64Col4SIMD(buf []int32, rowStride int, min, max int32) {
-	// lane rows inside the buffer extent checked here (or the fixed staging); same shape as the residual-add rows (checked rows +9-86%).
 	if rowStride < 4 || len(buf) < 4 || rowStride > (len(buf)-4)/(dct64Size-1) ||
-		!inverseDCT64Lanes4(unsafe.Pointer(&buf[0]), uintptr(rowStride)*4, min, max) {
+		!inverseDCT64Lanes4(buf, rowStride, min, max) {
 		inverseDCT64Col4PureGo(buf, rowStride, min, max)
 	}
 }
@@ -55,23 +51,24 @@ func inverseDCT64Row4SIMD(r0, r1, r2, r3 []int32, min, max int32) {
 		inverseDCT64Row4PureGo(r0, r1, r2, r3, min, max)
 		return
 	}
-	var t [dct64Size][4]int32
+	var t [dct64Size * 4]int32
 	a, b, c, d := (*[dct64Size]int32)(r0), (*[dct64Size]int32)(r1), (*[dct64Size]int32)(r2), (*[dct64Size]int32)(r3)
 	for i := 0; i < dct64Size; i += 4 {
+		w := (*[16]int32)(t[4*i : 4*i+16])
 		t0, t1, t2, t3 := itxTranspose4(
 			archsimd.LoadInt32x4Array((*[4]int32)(a[i:])), archsimd.LoadInt32x4Array((*[4]int32)(b[i:])),
 			archsimd.LoadInt32x4Array((*[4]int32)(c[i:])), archsimd.LoadInt32x4Array((*[4]int32)(d[i:])))
-		t0.StoreArray(&t[i])
-		t1.StoreArray(&t[i+1])
-		t2.StoreArray(&t[i+2])
-		t3.StoreArray(&t[i+3])
+		t0.StoreArray((*[4]int32)(w[0:4]))
+		t1.StoreArray((*[4]int32)(w[4:8]))
+		t2.StoreArray((*[4]int32)(w[8:12]))
+		t3.StoreArray((*[4]int32)(w[12:16]))
 	}
-	// lane rows inside the buffer extent checked here (or the fixed staging); same shape as the residual-add rows (checked rows +9-86%).
-	inverseDCT64Lanes4(unsafe.Pointer(&t), 16, min, max)
+	inverseDCT64Lanes4(t[:], 4, min, max)
 	for i := 0; i < dct64Size; i += 4 {
+		w := (*[16]int32)(t[4*i : 4*i+16])
 		o0, o1, o2, o3 := itxTranspose4(
-			archsimd.LoadInt32x4Array(&t[i]), archsimd.LoadInt32x4Array(&t[i+1]),
-			archsimd.LoadInt32x4Array(&t[i+2]), archsimd.LoadInt32x4Array(&t[i+3]))
+			archsimd.LoadInt32x4Array((*[4]int32)(w[0:4])), archsimd.LoadInt32x4Array((*[4]int32)(w[4:8])),
+			archsimd.LoadInt32x4Array((*[4]int32)(w[8:12])), archsimd.LoadInt32x4Array((*[4]int32)(w[12:16])))
 		o0.StoreArray((*[4]int32)(a[i:]))
 		o1.StoreArray((*[4]int32)(b[i:]))
 		o2.StoreArray((*[4]int32)(c[i:]))
@@ -93,7 +90,7 @@ func itxTranspose4(v0, v1, v2, v3 archsimd.Int32x4) (archsimd.Int32x4, archsimd.
 // lowN.. (lowN = 8, 16 or 32) are exactly zero. AV1 never codes DCT64
 // coefficients past 32, so lowN = 32 holds for every 64-point transform, as
 // in dav1d's dct64 kernels.
-func inverseDCT64Lanes4Low(p unsafe.Pointer, stride uintptr, lowN int, min, max int32) bool {
+func inverseDCT64Lanes4Low(p []int32, stride int, lowN int, min, max int32) bool {
 	if min > 0 || max < 0 {
 		return inverseDCT64Lanes4(p, stride, min, max)
 	}
@@ -123,9 +120,8 @@ func inverseDCT64Lanes4Low(p unsafe.Pointer, stride uintptr, lowN int, min, max 
 }
 
 func inverseDCT64LowCol4SIMD(buf []int32, rowStride int, lowN int, min, max int32) {
-	// lane rows inside the buffer extent checked here (or the fixed staging); same shape as the residual-add rows (checked rows +9-86%).
 	if rowStride < 4 || len(buf) < 4 || rowStride > (len(buf)-4)/(dct64Size-1) ||
-		!inverseDCT64Lanes4Low(unsafe.Pointer(&buf[0]), uintptr(rowStride)*4, lowN, min, max) {
+		!inverseDCT64Lanes4Low(buf, rowStride, lowN, min, max) {
 		inverseDCT64Col4PureGo(buf, rowStride, min, max)
 	}
 }
@@ -140,23 +136,24 @@ func inverseDCT64Row4LowSIMD(r0, r1, r2, r3 []int32, lowN int, lo, hi int32) {
 	}
 	lowN = min(max(lowN, 8), 32)
 	lowN = (lowN + 7) &^ 7
-	var t [dct64Size][4]int32
+	var t [dct64Size * 4]int32
 	a, b, c, d := (*[dct64Size]int32)(r0), (*[dct64Size]int32)(r1), (*[dct64Size]int32)(r2), (*[dct64Size]int32)(r3)
 	for i := 0; i < lowN; i += 4 {
+		w := (*[16]int32)(t[4*i : 4*i+16])
 		t0, t1, t2, t3 := itxTranspose4(
 			archsimd.LoadInt32x4Array((*[4]int32)(a[i:])), archsimd.LoadInt32x4Array((*[4]int32)(b[i:])),
 			archsimd.LoadInt32x4Array((*[4]int32)(c[i:])), archsimd.LoadInt32x4Array((*[4]int32)(d[i:])))
-		t0.StoreArray(&t[i])
-		t1.StoreArray(&t[i+1])
-		t2.StoreArray(&t[i+2])
-		t3.StoreArray(&t[i+3])
+		t0.StoreArray((*[4]int32)(w[0:4]))
+		t1.StoreArray((*[4]int32)(w[4:8]))
+		t2.StoreArray((*[4]int32)(w[8:12]))
+		t3.StoreArray((*[4]int32)(w[12:16]))
 	}
-	// lane rows inside the buffer extent checked here (or the fixed staging); same shape as the residual-add rows (checked rows +9-86%).
-	inverseDCT64Lanes4Low(unsafe.Pointer(&t), 16, lowN, lo, hi)
+	inverseDCT64Lanes4Low(t[:], 4, lowN, lo, hi)
 	for i := 0; i < dct64Size; i += 4 {
+		w := (*[16]int32)(t[4*i : 4*i+16])
 		o0, o1, o2, o3 := itxTranspose4(
-			archsimd.LoadInt32x4Array(&t[i]), archsimd.LoadInt32x4Array(&t[i+1]),
-			archsimd.LoadInt32x4Array(&t[i+2]), archsimd.LoadInt32x4Array(&t[i+3]))
+			archsimd.LoadInt32x4Array((*[4]int32)(w[0:4])), archsimd.LoadInt32x4Array((*[4]int32)(w[4:8])),
+			archsimd.LoadInt32x4Array((*[4]int32)(w[8:12])), archsimd.LoadInt32x4Array((*[4]int32)(w[12:16])))
 		o0.StoreArray((*[4]int32)(a[i:]))
 		o1.StoreArray((*[4]int32)(b[i:]))
 		o2.StoreArray((*[4]int32)(c[i:]))

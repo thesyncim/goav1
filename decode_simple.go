@@ -3,7 +3,6 @@ package goav1
 import (
 	"errors"
 	"fmt"
-	"unsafe"
 
 	internalcdef "github.com/thesyncim/goav1/internal/av1/cdef"
 	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
@@ -1161,41 +1160,27 @@ type decoderArena struct {
 	bools   []bool
 }
 
-// newDecoderArena backs every typed region with one zeroed allocation instead
-// of one per element type. All arena types are pointer-free, and the regions
-// are laid out widest element first so each starts aligned for its type.
+// newDecoderArena backs each typed region with one zeroed allocation per
+// element type in use.
 func newDecoderArena(size decoderArenaSize) decoderArena {
-	intBytes := size.ints * int(unsafe.Sizeof(int(0)))
-	int32Bytes := size.int32s * 4
-	uint16Bytes := size.uint16s * 2
-	int16Bytes := size.int16s * 2
-	total := intBytes + int32Bytes + uint16Bytes + int16Bytes + size.bytes + size.bools
-	backing := make([]uint64, (total+7)/8)
-	base := unsafe.Pointer(unsafe.SliceData(backing))
-	off := 0
 	var a decoderArena
 	if size.ints > 0 {
-		a.ints = unsafe.Slice((*int)(unsafe.Add(base, off)), size.ints)
+		a.ints = make([]int, size.ints)
 	}
-	off += intBytes
 	if size.int32s > 0 {
-		a.int32s = unsafe.Slice((*int32)(unsafe.Add(base, off)), size.int32s)
+		a.int32s = make([]int32, size.int32s)
 	}
-	off += int32Bytes
 	if size.uint16s > 0 {
-		a.uint16s = unsafe.Slice((*uint16)(unsafe.Add(base, off)), size.uint16s)
+		a.uint16s = make([]uint16, size.uint16s)
 	}
-	off += uint16Bytes
 	if size.int16s > 0 {
-		a.int16s = unsafe.Slice((*int16)(unsafe.Add(base, off)), size.int16s)
+		a.int16s = make([]int16, size.int16s)
 	}
-	off += int16Bytes
 	if size.bytes > 0 {
-		a.bytes = unsafe.Slice((*byte)(unsafe.Add(base, off)), size.bytes)
+		a.bytes = make([]byte, size.bytes)
 	}
-	off += size.bytes
 	if size.bools > 0 {
-		a.bools = unsafe.Slice((*bool)(unsafe.Add(base, off)), size.bools)
+		a.bools = make([]bool, size.bools)
 	}
 	return a
 }

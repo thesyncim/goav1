@@ -7,6 +7,7 @@
 package tile
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/thesyncim/goav1/internal/av1/transform"
@@ -91,5 +92,22 @@ func TestCoeffNZMapContextsSIMDFullZeroAlloc(t *testing.T) {
 		if allocs != 0 {
 			t.Fatalf("coeffNZMapContextsSIMDFull size=%d class=%d allocs = %v, want 0", s.size, s.class, allocs)
 		}
+	}
+}
+
+// BenchmarkCoeffNZMapContexts2D times the encoder's lower-context maps.
+func BenchmarkCoeffNZMapContexts2D(b *testing.B) {
+	for _, size := range [...]TransformSize{TransformSize16x16, TransformSize32x32} {
+		geo := coeffGeometryTable[size]
+		levels := make([]uint8, int(geo.scratchLen))
+		for i := range levels {
+			levels[i] = uint8(i*37) & 3
+		}
+		contexts := make([]int8, int(geo.maxEOB))
+		b.Run(fmt.Sprintf("%dx%d", geo.scanWidth, geo.scanHeight), func(b *testing.B) {
+			for b.Loop() {
+				coeffNZMapContextsSIMDFull(levels, size, transform.Class2D, contexts)
+			}
+		})
 	}
 }

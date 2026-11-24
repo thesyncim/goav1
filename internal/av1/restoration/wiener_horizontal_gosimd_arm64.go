@@ -6,10 +6,7 @@
 
 package restoration
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // Go-native SIMD Wiener horizontal passes for arm64.
 //
@@ -71,16 +68,19 @@ func wienerHorizontalSIMDKernel(src []uint16, srcStride int, srcOrigin int, widt
 	hg2, hg3 := g2.HiToLo(), g3.HiToLo()
 
 	rows := height + 2*WienerHalfwin
-	// Strided rows inside the footprint the callers checked
-	// (wienerHorizontalU16SIMDCanRun, blockFits); same shape as the loop-filter rows (checked rows +9-86%).
-	sp := unsafe.Pointer(unsafe.SliceData(src))
-	tp := unsafe.Pointer(unsafe.SliceData(temp))
+	if uint(width) > 1<<17 {
+		panic("restoration: Wiener row wider than any frame")
+	}
+	// Each row is a window of the checked footprint (width+8 samples from
+	// sBase: the 3-sample border each side and the 2-sample load overrun);
+	// with width bounded below, each load and store in it is one compare.
 	for row := 0; row < rows; row++ {
 		sBase := srcOrigin + (row-WienerHalfwin)*srcStride - WienerHalfwin
 		dBase := row * width
+		srow, trow := src[sBase:sBase+width+8], temp[dBase:dBase+width]
 		for col := 0; col < width; col += 8 {
-			v0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(sp, (sBase+col)*2)))   // s0..s7
-			v1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(sp, (sBase+col+8)*2))) // s8..s15
+			v0 := archsimd.LoadUint16x8Array((*[8]uint16)(srow[col : col+8]))    // s0..s7
+			v1 := archsimd.LoadUint16x8Array((*[8]uint16)(srow[col+8 : col+16])) // s8..s15
 			lb := v0.ReshapeToUint8s()
 			hb := v1.ReshapeToUint8s()
 			w1 := hb.ConcatShiftBytesRight(lb, 2*1).ReshapeToUint16s().BitsToInt16() // s1..s8
@@ -99,7 +99,7 @@ func wienerHorizontalSIMDKernel(src []uint16, srcStride int, srcOrigin int, widt
 			lo = lo.Shift(shV)
 			hi = hi.Shift(shV)
 			out := restorationSaturateInt32PairToUint16(lo, hi).Min(maxV)
-			out.StoreArray((*[8]uint16)(unsafe.Add(tp, (dBase+col)*2)))
+			out.StoreArray((*[8]uint16)(trow[col : col+8]))
 		}
 	}
 }
@@ -143,16 +143,19 @@ func wienerHorizontalU16PackedKernel(src []uint16, srcStride int, srcOrigin int,
 	negK := archsimd.BroadcastUint32x4(0xffff0000)
 	zero := archsimd.BroadcastInt16x8(0)
 	maxV := archsimd.BroadcastInt16x8(int16((1 << (bitDepth + 1 + WienerFilterBits - round0)) - 1))
-	// Strided rows inside the footprint wienerHorizontalSIMDKernel's callers
-	// checked (wienerHorizontalU16SIMDCanRun, blockFits); same shape as the loop-filter rows (checked rows +9-86%).
-	sp := unsafe.Pointer(unsafe.SliceData(src))
-	tp := unsafe.Pointer(unsafe.SliceData(temp))
+	// Each row is a window of the footprint the callers checked
+	// (wienerHorizontalU16SIMDCanRun, blockFits): width+8 samples from sBase.
+	// With width bounded, each load and store in it is one compare.
+	if uint(width) > 1<<17 {
+		panic("restoration: Wiener row wider than any frame")
+	}
 	for row := 0; row < height+2*WienerHalfwin; row++ {
 		sBase := srcOrigin + (row-WienerHalfwin)*srcStride - WienerHalfwin
 		dBase := row * width
-		v0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(sp, sBase*2)))
+		srow, trow := src[sBase:sBase+width+8], temp[dBase:dBase+width]
+		v0 := archsimd.LoadUint16x8Array((*[8]uint16)(srow[0:8]))
 		for col := 0; col < width; col += 8 {
-			v1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(sp, (sBase+col+8)*2)))
+			v1 := archsimd.LoadUint16x8Array((*[8]uint16)(srow[col+8 : col+16]))
 			lb, hb := v0.ReshapeToUint8s(), v1.ReshapeToUint8s()
 			w1 := hb.ConcatShiftBytesRight(lb, 2).ReshapeToUint16s()
 			w2 := hb.ConcatShiftBytesRight(lb, 4).ReshapeToUint16s()
@@ -174,7 +177,7 @@ func wienerHorizontalU16PackedKernel(src []uint16, srcStride int, srcOrigin int,
 			odd = p0.Shift(shr16).MulAdd(t0V, odd)
 			even := odd.MulAdd(negK, acc)
 			out := even.ReshapeToUint16s().InterleaveOdd(odd.ReshapeToUint16s()).BitsToInt16().Max(zero).Min(maxV).ToBits()
-			out.StoreArray((*[8]uint16)(unsafe.Add(tp, (dBase+col)*2)))
+			out.StoreArray((*[8]uint16)(trow[col : col+8]))
 			v0 = v1
 		}
 	}
@@ -223,19 +226,23 @@ func wienerHorizontalU8SIMD(src []uint8, srcStride int, srcOrigin int, width int
 	max16 := archsimd.BroadcastInt16x8(8191)
 
 	rows := height + 2*WienerHalfwin
+	if uint(width) > 1<<17 {
+		panic("restoration: Wiener row wider than any frame")
+	}
 	w16 := width &^ 15
-	// Strided rows inside the checked footprint; same shape as the loop-filter rows (checked rows +9-86%).
-	sp := unsafe.Pointer(unsafe.SliceData(src))
-	tp := unsafe.Pointer(unsafe.SliceData(temp))
+	// Each row is a window of the checked footprint (width+8 samples from
+	// sBase: the 3-sample border each side and the 2-sample load overrun);
+	// with width bounded below, each load and store in it is one compare.
 	for row := 0; row < rows; row++ {
 		sBase := srcOrigin + (row-WienerHalfwin)*srcStride - WienerHalfwin
 		dBase := row * width
+		srow, trow := src[sBase:sBase+width+8], temp[dBase:dBase+width]
 		for col := 0; col < w16; col += 16 {
-			v0 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, sBase+col)))   // s0..s15
-			v1 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, sBase+col+8))) // s8..s23
-			l0 := v0.ExtendLo8ToUint16()                                                // s0..s7  (u16)
-			m0 := v0.HiToLo().ExtendLo8ToUint16()                                       // s8..s15 (u16)
-			h1 := v1.HiToLo().ExtendLo8ToUint16()                                       // s16..s23 (u16)
+			v0 := archsimd.LoadUint8x16Array((*[16]uint8)(srow[col : col+16]))   // s0..s15
+			v1 := archsimd.LoadUint8x16Array((*[16]uint8)(srow[col+8 : col+24])) // s8..s23
+			l0 := v0.ExtendLo8ToUint16()                                         // s0..s7  (u16)
+			m0 := v0.HiToLo().ExtendLo8ToUint16()                                // s8..s15 (u16)
+			h1 := v1.HiToLo().ExtendLo8ToUint16()                                // s16..s23 (u16)
 			lb := l0.ReshapeToUint8s()
 			mb := m0.ReshapeToUint8s()
 			hb := h1.ReshapeToUint8s()
@@ -265,7 +272,7 @@ func wienerHorizontalU8SIMD(src []uint8, srcStride int, srcOrigin int, width int
 			oddA = pA0.Shift(shr16).MulAdd(t0V, oddA)
 			evenA := oddA.MulAdd(negK, accA)
 			outA := evenA.ReshapeToUint16s().InterleaveOdd(oddA.ReshapeToUint16s()).BitsToInt16().Max(zero16).Min(max16).ToBits()
-			outA.StoreArray((*[8]uint16)(unsafe.Add(tp, (dBase+col)*2)))
+			outA.StoreArray((*[8]uint16)(trow[col : col+8]))
 
 			// Group B: outputs col+8..col+15, windows over s8..s21.
 			w1b := hb.ConcatShiftBytesRight(mb, 2).ReshapeToUint16s()  // s9..s16
@@ -292,10 +299,10 @@ func wienerHorizontalU8SIMD(src []uint8, srcStride int, srcOrigin int, width int
 			oddB = pB0.Shift(shr16).MulAdd(t0V, oddB)
 			evenB := oddB.MulAdd(negK, accB)
 			outB := evenB.ReshapeToUint16s().InterleaveOdd(oddB.ReshapeToUint16s()).BitsToInt16().Max(zero16).Min(max16).ToBits()
-			outB.StoreArray((*[8]uint16)(unsafe.Add(tp, (dBase+col+8)*2)))
+			outB.StoreArray((*[8]uint16)(trow[col+8 : col+16]))
 		}
 		if w16 != width { // trailing width%16 == 8 group
-			v0 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, sBase+w16))) // s0..s15 (needs s0..s13)
+			v0 := archsimd.LoadUint8x16Array((*[16]uint8)(srow[w16 : w16+16])) // s0..s15 (needs s0..s13)
 			l0 := v0.ExtendLo8ToUint16()
 			m0 := v0.HiToLo().ExtendLo8ToUint16()
 			lb := l0.ReshapeToUint8s()
@@ -324,7 +331,7 @@ func wienerHorizontalU8SIMD(src []uint8, srcStride int, srcOrigin int, width int
 			odd = p0.Shift(shr16).MulAdd(t0V, odd)
 			even := odd.MulAdd(negK, acc)
 			out := even.ReshapeToUint16s().InterleaveOdd(odd.ReshapeToUint16s()).BitsToInt16().Max(zero16).Min(max16).ToBits()
-			out.StoreArray((*[8]uint16)(unsafe.Add(tp, (dBase+w16)*2)))
+			out.StoreArray((*[8]uint16)(trow[w16 : w16+8]))
 		}
 	}
 }
@@ -350,19 +357,23 @@ func wienerHorizontalU8SIMD5(src []uint8, srcStride int, srcOrigin int, width in
 	max16 := archsimd.BroadcastInt16x8(8191)
 
 	rows := height + 2*WienerHalfwin
+	if uint(width) > 1<<17 {
+		panic("restoration: Wiener row wider than any frame")
+	}
 	w16 := width &^ 15
-	// Strided rows inside the checked footprint; same shape as the loop-filter rows (checked rows +9-86%).
-	sp := unsafe.Pointer(unsafe.SliceData(src))
-	tp := unsafe.Pointer(unsafe.SliceData(temp))
+	// Each row is a window of the checked footprint (width+8 samples from
+	// sBase: the 3-sample border each side and the 2-sample load overrun);
+	// with width bounded below, each load and store in it is one compare.
 	for row := 0; row < rows; row++ {
 		sBase := srcOrigin + (row-WienerHalfwin)*srcStride - WienerHalfwin
 		dBase := row * width
+		srow, trow := src[sBase:sBase+width+8], temp[dBase:dBase+width]
 		for col := 0; col < w16; col += 16 {
-			v0 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, sBase+col)))   // s0..s15
-			v1 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, sBase+col+8))) // s8..s23
-			l0 := v0.ExtendLo8ToUint16()                                                // s0..s7  (u16)
-			m0 := v0.HiToLo().ExtendLo8ToUint16()                                       // s8..s15 (u16)
-			h1 := v1.HiToLo().ExtendLo8ToUint16()                                       // s16..s23 (u16)
+			v0 := archsimd.LoadUint8x16Array((*[16]uint8)(srow[col : col+16]))   // s0..s15
+			v1 := archsimd.LoadUint8x16Array((*[16]uint8)(srow[col+8 : col+24])) // s8..s23
+			l0 := v0.ExtendLo8ToUint16()                                         // s0..s7  (u16)
+			m0 := v0.HiToLo().ExtendLo8ToUint16()                                // s8..s15 (u16)
+			h1 := v1.HiToLo().ExtendLo8ToUint16()                                // s16..s23 (u16)
 			lb := l0.ReshapeToUint8s()
 			mb := m0.ReshapeToUint8s()
 			hb := h1.ReshapeToUint8s()
@@ -387,7 +398,7 @@ func wienerHorizontalU8SIMD5(src []uint8, srcStride int, srcOrigin int, width in
 			oddA = pA1.Shift(shr16).MulAdd(t1V, oddA)
 			evenA := oddA.MulAdd(negK, accA)
 			outA := evenA.ReshapeToUint16s().InterleaveOdd(oddA.ReshapeToUint16s()).BitsToInt16().Max(zero16).Min(max16).ToBits()
-			outA.StoreArray((*[8]uint16)(unsafe.Add(tp, (dBase+col)*2)))
+			outA.StoreArray((*[8]uint16)(trow[col : col+8]))
 
 			// Group B: outputs col+8..col+15, windows over s8..s21.
 			w1b := hb.ConcatShiftBytesRight(mb, 2).ReshapeToUint16s()  // s9..s16
@@ -409,10 +420,10 @@ func wienerHorizontalU8SIMD5(src []uint8, srcStride int, srcOrigin int, width in
 			oddB = pB1.Shift(shr16).MulAdd(t1V, oddB)
 			evenB := oddB.MulAdd(negK, accB)
 			outB := evenB.ReshapeToUint16s().InterleaveOdd(oddB.ReshapeToUint16s()).BitsToInt16().Max(zero16).Min(max16).ToBits()
-			outB.StoreArray((*[8]uint16)(unsafe.Add(tp, (dBase+col+8)*2)))
+			outB.StoreArray((*[8]uint16)(trow[col+8 : col+16]))
 		}
 		if w16 != width { // trailing width%16 == 8 group
-			v0 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sp, sBase+w16))) // s0..s15 (needs s0..s13)
+			v0 := archsimd.LoadUint8x16Array((*[16]uint8)(srow[w16 : w16+16])) // s0..s15 (needs s0..s13)
 			l0 := v0.ExtendLo8ToUint16()
 			m0 := v0.HiToLo().ExtendLo8ToUint16()
 			lb := l0.ReshapeToUint8s()
@@ -436,7 +447,7 @@ func wienerHorizontalU8SIMD5(src []uint8, srcStride int, srcOrigin int, width in
 			odd = p1.Shift(shr16).MulAdd(t1V, odd)
 			even := odd.MulAdd(negK, acc)
 			out := even.ReshapeToUint16s().InterleaveOdd(odd.ReshapeToUint16s()).BitsToInt16().Max(zero16).Min(max16).ToBits()
-			out.StoreArray((*[8]uint16)(unsafe.Add(tp, (dBase+w16)*2)))
+			out.StoreArray((*[8]uint16)(trow[w16 : w16+8]))
 		}
 	}
 }

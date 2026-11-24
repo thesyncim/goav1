@@ -9,7 +9,7 @@ import (
 
 // Frozen original complete unit staging walk from 5484d71c. Assembly and
 // filter helpers used here retain their original implementation.
-func frameWorkApplyCDEFPlaneRowsU8FrozenSparse(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, dst frame.Plane, byteScratch []uint16, boundary FrameWorkCDEFPostFilterU8BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
+func frameWorkApplyCDEFPlaneRowsU8FrozenSparse(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, dst frame.Plane, byteScratch []byte, boundary FrameWorkCDEFPostFilterU8BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
 	var units uint32
 	var blocksTotal uint32
 	width := dst.Width
@@ -38,10 +38,10 @@ func frameWorkApplyCDEFPlaneRowsU8FrozenSparse(params parser.CDEFParams, indexMa
 	// buffers of 2 rows x plane width (backup2lines / cdef_line[tf]) carved
 	// from the sample scratch arena, and an 8-column x unit-height left
 	// backup (backup2x8 / lr_bak) on the stack.
-	lineBuf, ok := cdefByteScratchView(byteScratch, 4*width)
-	if !ok {
+	if len(byteScratch) < CDEFU8LineScratchLen(width) {
 		return 0, 0, threading.ErrInvalidBatch
 	}
+	lineBuf := byteScratch[:4*width]
 	if rowStart > 0 {
 		top := boundary.Top[plane]
 		need := cdef.VerticalBorder * width
@@ -147,7 +147,7 @@ func frameWorkApplyCDEFPlaneRowsU8FrozenSparse(params parser.CDEFParams, indexMa
 				continue
 			}
 			if frameWorkCDEFCanUseSecondaryByteUnit(cdef.U8SecondaryOnlyByteInteriorAvailable(), needPrimaryDirection, filterParams, unitX, unitY, unitW, unitH, width, height, blockWidth, blockHeight, cdefDebugUnit(plane, unitRow, unitCol)) {
-				byteInput, byteOK := cdefByteScratchView(input, 2*len(input))
+				byteInput, byteOK := byteScratch[4*width:4*width+cdefU8TapBytes], true
 				if byteOK && frameWorkAssembleCDEFSecondaryByteInputU8(byteInput, dst, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitX, unitY, unitW, unitH) == nil {
 					// Preserve the previous left halo until the byte filter accepts
 					// the unit. Its entry validates the complete read window before

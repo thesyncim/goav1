@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"slices"
 	"testing"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -118,34 +117,36 @@ func TestCDEFSparseFullPlaneSnapshot(t *testing.T) {
 	}
 }
 
-// Compare the entire backing arrays and error/panic outcome with the frozen
-// original walk, including overlapping uint16 line/input storage and an
-// intentionally overlapping byte plane. The candidate must take its old path.
+// Compare the entire byte scratch and error/panic outcome with the frozen
+// original walk, including a byte plane and boundaries that overlap the byte
+// tap buffer. The candidate must take its old path.
 func TestCDEFSparseAliasesAndErrorsFrozen(t *testing.T) {
-	for _, mode := range []string{"disjoint", "input-lines", "input-plane", "input-top", "input-bottom", "band-first", "band-middle", "band-last", "short-input", "short-lines", "bad-index", "bad-plane"} {
+	const tapAt = 4 * 192
+	for _, mode := range []string{"disjoint", "input-plane", "input-top", "input-bottom", "band-first", "band-middle", "band-last", "short-input", "short-lines", "bad-index", "bad-plane"} {
 		t.Run(mode, func(t *testing.T) {
-			run := func(frozen bool) (backing []uint16, pix []byte, outcome string) {
+			run := func(frozen bool) (backing []byte, pix []byte, outcome string) {
 				defer func() {
 					if p := recover(); p != nil {
 						outcome = fmt.Sprint(p)
 					}
 				}()
 				const width, height, stride = 192, 192, 208
-				backing = make([]uint16, stride*height+3*cdef.InputBufferSize)
+				backing = make([]byte, stride*height+CDEFU8LineScratchLen(width))
 				for i := range backing {
-					backing[i] = uint16(i*31 + 7)
+					backing[i] = byte(i*31 + 7)
 				}
 				pix = make([]byte, stride*height)
 				for i := range pix {
 					pix[i] = byte((i * 29) ^ (i >> 3))
 				}
-				input := backing[:cdef.InputBufferSize]
-				lines := backing[cdef.InputBufferSize : 2*cdef.InputBufferSize]
-				if mode == "input-lines" {
-					lines = input
+				input := make([]uint16, cdef.InputBufferSize)
+				for i := range input {
+					input[i] = uint16(i*31 + 7)
 				}
+				lines := backing[:CDEFU8LineScratchLen(width)]
 				if mode == "input-plane" {
-					pix = unsafe.Slice((*byte)(unsafe.Pointer(unsafe.SliceData(backing))), len(pix))
+					// The plane starts inside the byte tap buffer.
+					pix = backing[tapAt : tapAt+len(pix)]
 				}
 				if mode == "short-input" {
 					input = input[:3]
@@ -219,7 +220,7 @@ func TestCDEFSparseAliasesAndErrorsFrozen(t *testing.T) {
 					rowStart, rowEnd = 1, 2
 					boundary.Top[0] = make([]byte, 2*width)
 					boundary.Bottom[0] = make([]byte, 2*width)
-					view := unsafe.Slice((*byte)(unsafe.Pointer(unsafe.SliceData(input))), 2*width)
+					view := lines[tapAt : tapAt+2*width]
 					if mode == "input-top" {
 						boundary.Top[0] = view
 					} else {
@@ -238,8 +239,8 @@ func TestCDEFSparseAliasesAndErrorsFrozen(t *testing.T) {
 			// Independent input is temporary staging: unused samples are left
 			// untouched, including when a later unit reports an invalid index.
 			// Line backups/canaries still match; alias routes match everything.
-			if mode != "input-lines" && mode != "input-plane" && mode != "input-top" && mode != "input-bottom" {
-				wb, gb = wb[cdef.InputBufferSize:], gb[cdef.InputBufferSize:]
+			if mode != "input-plane" && mode != "input-top" && mode != "input-bottom" {
+				wb, gb = append(wb[:tapAt:tapAt], wb[tapAt+cdefU8TapBytes:]...), append(gb[:tapAt:tapAt], gb[tapAt+cdefU8TapBytes:]...)
 			}
 			if !slices.Equal(wb, gb) {
 				t.Fatal("alias/line/canary backing mutation differs")
@@ -308,7 +309,7 @@ func TestCDEFSparseHelpersNoAllocs(t *testing.T) {
 	blocks := []cdef.BlockPosition{{BX: 2, BY: 3}, {BX: 4, BY: 5}}
 	if n := testing.AllocsPerRun(100, func() {
 		r := frameWorkCDEFSparseStageRect(blocks, 64, 64, 8, 8)
-		if !frameWorkCDEFSparseScratchIndependent(input, plane.Pix, top, top, bottom) || !frameWorkAssembleCDEFSparseInputU8(input, plane, top, bottom, left, true, 1, 64, 64, 64, 64, r) || !frameWorkAssembleCDEFSparseByteInputU8(bytes, plane, top, bottom, left, true, 64, 64, 64, 64, r) {
+		if !frameWorkCDEFSparseScratchIndependent(bytes, plane.Pix, top, top, bottom) || !frameWorkAssembleCDEFSparseInputU8(input, plane, top, bottom, left, true, 1, 64, 64, 64, 64, r) || !frameWorkAssembleCDEFSparseByteInputU8(bytes, plane, top, bottom, left, true, 64, 64, 64, 64, r) {
 			panic("valid stage declined")
 		}
 	}); n != 0 {

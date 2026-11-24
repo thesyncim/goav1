@@ -5,7 +5,6 @@ package encoder
 import (
 	"math/bits"
 	"simd/archsimd"
-	"unsafe"
 )
 
 // svtSubpelAVX2 gates the AVX2 sub-pel variance kernel.
@@ -36,15 +35,17 @@ func svtSubpelVarianceArch(scratch *svtSubpelScratch, ref []byte, refStride int,
 	if bw == 8 {
 		mask = archsimd.LoadInt16x16Array(&svtSubpelLo8Mask)
 	}
-	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
-	base := unsafe.Pointer(&ref[0])
-	sbase := unsafe.Pointer(&src[0])
+	if uint(refStride) > rowStrideMax || uint(srcStride) > rowStrideMax {
+		panic(errKernelArgs)
+	}
+	// Each row is one bounds-checked window per array.
 	var sse, sum32 archsimd.Int32x8
 	for x := 0; x < bw; x += 16 {
-		prev := svtBilRowHAVX2(unsafe.Add(base, x), xoff, tx, bias)
+		prev := svtBilRowHAVX2((*[17]uint8)(ref[x:x+17]), xoff, tx, bias)
 		var sum16 archsimd.Int16x16
 		for r := 0; r < bh; r++ {
-			cur := svtBilRowHAVX2(unsafe.Add(base, (r+1)*refStride+x), xoff, tx, bias)
+			po := (r+1)*refStride + x
+			cur := svtBilRowHAVX2((*[17]uint8)(ref[po:po+17]), xoff, tx, bias)
 			var out archsimd.Int16x16
 			switch yoff {
 			case 0:
@@ -55,7 +56,8 @@ func svtSubpelVarianceArch(scratch *svtSubpelScratch, ref []byte, refStride int,
 				out = svtBilPairAVX2(prev, cur, ty, bias)
 			}
 			prev = cur
-			s := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(sbase, r*srcStride+x))).ExtendToUint16().AsInt16x16()
+			so := r*srcStride + x
+			s := archsimd.LoadUint8x16Array((*[16]uint8)(src[so : so+16])).ExtendToUint16().AsInt16x16()
 			d := out.Sub(s).And(mask)
 			sum16 = sum16.Add(d)
 			sse = sse.Add(d.DotProductPairs(d))
@@ -89,15 +91,15 @@ func svtBilPairAVX2(a, b archsimd.Int16x16, taps archsimd.Int8x32, bias archsimd
 }
 
 // svtBilRowHAVX2 is the first (horizontal) pass over the sixteen samples at
-// p, as int16 lanes.
-func svtBilRowHAVX2(p unsafe.Pointer, xoff int, taps archsimd.Int8x32, bias archsimd.Int16x16) archsimd.Int16x16 {
-	a := archsimd.LoadUint8x16Array((*[16]uint8)(p)).ExtendToUint16()
+// p[0:16] (the taps' second sample at p[1:17]), as int16 lanes.
+func svtBilRowHAVX2(p *[17]uint8, xoff int, taps archsimd.Int8x32, bias archsimd.Int16x16) archsimd.Int16x16 {
+	a := archsimd.LoadUint8x16Array((*[16]uint8)(p[0:16])).ExtendToUint16()
 	switch xoff {
 	case 0:
 		return a.AsInt16x16()
 	case 4:
-		return a.Average(archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 1))).ExtendToUint16()).AsInt16x16()
+		return a.Average(archsimd.LoadUint8x16Array((*[16]uint8)(p[1:17])).ExtendToUint16()).AsInt16x16()
 	}
-	b := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p, 1))).ExtendToUint16()
+	b := archsimd.LoadUint8x16Array((*[16]uint8)(p[1:17])).ExtendToUint16()
 	return svtBilPairAVX2(a.AsInt16x16(), b.AsInt16x16(), taps, bias)
 }
