@@ -167,9 +167,8 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 	}
 	kx := mc8Kind(filters.X, filterW)
 	ky := mc8Kind(filters.Y, filterH)
-	eight := mc8NeedsEightTaps(subX, subY, kx, ky)
-	if eight && w&7 != 0 {
-		return false
+	if mc8NeedsEightTaps(subX, subY, kx, ky) {
+		return w&7 == 0 && mc8Put8TapChecked(dst, ref, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
 	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < dst.Width {
 		return false
@@ -177,9 +176,6 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 	dOff := dstY*dst.Stride + dstX
 	if dOff+(h-1)*dst.Stride+w > len(dst.Pix) {
 		return false
-	}
-	if eight {
-		return mc8Put8Tap(dst.Pix[dOff:], dst.Stride, ref, refX, refY, w, h, subX, subY, kx, ky, scratch)
 	}
 	src, stride, ok := mc8Source(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge)
 	if !ok {

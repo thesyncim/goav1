@@ -90,6 +90,20 @@ func mc8NeedsEightTaps(subX, subY, kx, ky int) bool {
 	return (subX != 0 && !mc8SixTap[kx]) || (subY != 0 && !mc8SixTap[ky])
 }
 
+// mc8Put8TapChecked is Put8 for blocks with an eight-tap axis (w a multiple
+// of 8): Put8's destination checks, then mc8Put8Tap. Keeping it out of line
+// leaves Put8's six-tap body (and its PGO call-site offsets) unchanged.
+func mc8Put8TapChecked(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, subX, subY, kx, ky int, scratch *ConvolveScratch) bool {
+	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || dstY+h > dst.Height || dst.Stride < dst.Width {
+		return false
+	}
+	dOff := dstY*dst.Stride + dstX
+	if dOff+(h-1)*dst.Stride+w > len(dst.Pix) {
+		return false
+	}
+	return mc8Put8Tap(dst.Pix[dOff:], dst.Stride, ref, refX, refY, w, h, subX, subY, kx, ky, scratch)
+}
+
 // mc8Put8Tap is Put8 for blocks with an eight-tap axis (w a multiple of 8).
 func mc8Put8Tap(dst []byte, dstStride int, ref *frame.Plane, refX, refY, w, h, subX, subY, kx, ky int, scratch *ConvolveScratch) bool {
 	src, stride, ok := mc8Source8(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge)
