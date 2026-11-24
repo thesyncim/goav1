@@ -57,64 +57,29 @@ func itx8Net(in *[8]archsimd.Int16x8, out *[8]archsimd.Int16x8) {
 // InverseAddDCT8x8 reconstructs one 8-bit 8x8 DCT_DCT block with coded
 // coefficients in rows 0..activeRows-1 and columns 0..activeCols-1:
 // dst = clip(pred + inverse(coeff)), with the dequantized coefficients
-// column-major at coeffStride. pred may be dst. It reports false, with dst
-// untouched, when the block is outside the kernel's contract or a guard
+// column-major at coeffStride (8). pred may be dst. It reports false, with
+// dst untouched, when the block is outside the kernel's contract or a guard
 // declines; the caller then runs the staged path, which produces the same
-// bytes.
+// bytes. The kernels are generated (itx_fused_gen_arm64.go) per network
+// form of the coded columns and rows.
 func InverseAddDCT8x8(dst []byte, dstStride int, pred []byte, predStride int, coeff []int32, coeffStride int, activeRows, activeCols int) bool {
 	if activeRows <= 0 || activeRows > 8 || activeCols <= 0 || activeCols > 8 ||
-		coeffStride < 8 || len(coeff) < 7*coeffStride+8 || dstStride < 8 || predStride < 8 ||
+		coeffStride != 8 || len(coeff) < 64 || dstStride < 8 || predStride < 8 ||
 		len(dst) < 7*dstStride+8 || len(pred) < 7*predStride+8 {
 		return false
 	}
-	// Row pass: coefficient k of rows 0..7 is one contiguous load; columns
-	// past the coded ones are zero inputs.
-	var in [8]archsimd.Int16x8
-	var l1 archsimd.Uint16x8
-	for k := 0; k < activeCols; k++ {
-		x := itx16LoadNarrow(coeff[k*coeffStride : k*coeffStride+8])
-		l1 = l1.AddSaturated(x.Abs().ToBits())
-		in[k] = x
+	// The kernel switch is written here rather than in a dispatch function:
+	// one call level less for the most frequent block.
+	c := (*[64]int32)(coeff[:64])
+	dp, pp := unsafe.Pointer(unsafe.SliceData(dst)), unsafe.Pointer(unsafe.SliceData(pred))
+	switch {
+	case activeCols <= 4 && activeRows <= 4:
+		return itxGenDCT8x8C4R4(c, dp, dstStride, pp, predStride)
+	case activeCols <= 4:
+		return itxGenDCT8x8C4R8(c, dp, dstStride, pp, predStride)
+	case activeRows <= 4:
+		return itxGenDCT8x8C8R4(c, dp, dstStride, pp, predStride)
+	default:
+		return itxGenDCT8x8C8R8(c, dp, dstStride, pp, predStride)
 	}
-	if l1.ReduceMax() > itx16ColumnL1Bound {
-		return false
-	}
-	var mid [8]archsimd.Int16x8
-	if activeCols <= 4 {
-		itx8NetLow4(&in, &mid)
-	} else {
-		itx8Net(&in, &mid)
-	}
-	// Round2(x, 1) = (x >> 1) + (x & 1): exact and overflow-free.
-	one := archsimd.BroadcastInt16x8(1)
-	sh1 := archsimd.BroadcastInt16x8(-1)
-	var colL1 archsimd.Uint16x8
-	for j := range mid {
-		v := mid[j].Shift(sh1).Add(mid[j].And(one))
-		mid[j] = v
-	}
-	itx16Transpose8x8(&mid)
-	for r := range mid {
-		colL1 = colL1.AddSaturated(mid[r].Abs().ToBits())
-	}
-	if colL1.ReduceMax() > itx16ColumnL1Bound {
-		return false
-	}
-	// Column pass on the transposed rows (lanes = columns), then the add.
-	var out [8]archsimd.Int16x8
-	if activeRows <= 4 {
-		itx8NetLow4(&mid, &out)
-	} else {
-		itx8Net(&mid, &out)
-	}
-	sh3 := archsimd.BroadcastInt16x8(-3)
-	dp := unsafe.Pointer(unsafe.SliceData(dst))
-	pp := unsafe.Pointer(unsafe.SliceData(pred))
-	for r := 0; r < 8; r++ {
-		res := itx32Round2(out[r], sh3, sh1, one)
-		rows := [2]uint64{*(*uint64)(unsafe.Add(pp, r*predStride)), 0}
-		p := archsimd.LoadUint64x2Array(&rows).ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()
-		*(*uint64)(unsafe.Add(dp, r*dstStride)) = p.Add(res).SaturateToUint8().ReshapeToUint64s().GetElem(0)
-	}
-	return true
 }
