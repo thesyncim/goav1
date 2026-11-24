@@ -6,15 +6,12 @@
 
 package cdef
 
-import (
-	"testing"
-	"unsafe"
-)
+import "testing"
 
 // filterBlockU8InteriorSIMD runs the interior kernel on one fused 8-wide block.
 func filterBlockU8InteriorSIMD(dst []byte, dstStride int, dstOrigin int, input []uint16, inputOrigin int, params BlockFilterParams) {
 	var ctx cdefSIMDCtx
-	ctx.setBlock(unsafe.Pointer(&dst[dstOrigin]), dstStride, unsafe.Pointer(&input[inputOrigin]), params, true)
+	ctx.setBlock(nil, dst, dstOrigin, dstStride, input, inputOrigin, params, true)
 	cdefFilterBlock8InteriorSIMD(&ctx)
 }
 

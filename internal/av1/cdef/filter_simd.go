@@ -26,22 +26,26 @@ package cdef
 //   - the 8-bit store narrows with unsigned saturation. Under the 8-bit
 //     contract the value is already in [0, 255], so this equals byte(y).
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
-// cdefSIMDCtx is the per-block context shared by the Go SIMD kernels. Tap
-// offsets are signed sample offsets into the uint16 input buffer; dstStr is in
-// bytes. dst points at the first output sample (*uint16 or *byte when u8).
+// cdefSIMDCtx is the per-block context shared by the Go SIMD kernels. The
+// kernels read the uint16 tap buffer in at io (the block's first sample)
+// through one bounds-checked window per row group and write out16 or out8
+// (u8) at do, stride dstStr samples.
 type cdefSIMDCtx struct {
-	dst    unsafe.Pointer
-	input  unsafe.Pointer // input[inputOrigin]
+	in     []uint16
+	io     int
+	out16  []uint16
+	out8   []byte
+	do     int
 	dstStr int
 	height int
 
-	pri0, pri1             int // primary tap offsets (direction+2)
-	sec0, sec1, sec2, sec3 int // secondary tap offsets (direction+4, direction)
+	// Tap window indices cdefWinReach +- the direction's tap offsets: the
+	// primary taps (direction+2) and the secondary taps (direction+4,
+	// direction).
+	p0p, p0m, p1p, p1m                     uint
+	s0p, s0m, s1p, s1m, s2p, s2m, s3p, s3m uint
 
 	priTap0, priTap1 int
 	secTap0, secTap1 int
@@ -54,14 +58,83 @@ type cdefSIMDCtx struct {
 	u8              bool
 }
 
-// setDirection fills the direction-dependent tap offsets.
+// The kernels take each row's taps from one window of the tap buffer that
+// starts cdefWinReach samples (two rows and two columns, the farthest tap)
+// before the row's first sample and holds an 8-wide row's taps. A tap at
+// offset t sits at cdefWinReach + t in the window. (Multi-row kernels take
+// one window per row: a window index plus a row stride is not something the
+// compiler proves in bounds.)
+const (
+	cdefWinReach = 2*BStride + 2
+	cdefTapMax   = 2 * cdefWinReach
+	cdefWin1     = cdefTapMax + 8
+)
+
+const errCDEFWindow = "cdef: block outside the tap buffer or destination"
+
+// rows returns the tap buffer, the window base of the block's first row and
+// the height, checked so that each row window below is one compare.
+func (ctx *cdefSIMDCtx) rows() ([]uint16, int, int) {
+	if ctx.io < cdefWinReach || ctx.io > 1<<24 || uint(ctx.height) > 128 {
+		panic(errCDEFWindow)
+	}
+	return ctx.in, ctx.io - cdefWinReach, ctx.height
+}
+
+// outRows returns the destinations, the first output index and the stride,
+// checked so that each output row costs one compare.
+func (ctx *cdefSIMDCtx) outRows() ([]uint16, []byte, int, int) {
+	if uint(ctx.do) > 1<<30 || uint(ctx.dstStr) > 1<<20 {
+		panic(errCDEFWindow)
+	}
+	return ctx.out16, ctx.out8, ctx.do, ctx.dstStr
+}
+
+// priTaps returns the primary tap window indices, checked against the
+// window so the tap loads need no bounds checks.
+func (ctx *cdefSIMDCtx) priTaps() (uint, uint, uint, uint) {
+	a, b, c, d := ctx.p0p, ctx.p0m, ctx.p1p, ctx.p1m
+	if a > cdefTapMax || b > cdefTapMax || c > cdefTapMax || d > cdefTapMax {
+		panic(errCDEFWindow)
+	}
+	return a, b, c, d
+}
+
+// secTaps0 returns the window indices of the weight-2 secondary taps
+// (direction+4 and direction, first tap), checked as priTaps.
+func (ctx *cdefSIMDCtx) secTaps0() (uint, uint, uint, uint) {
+	a, b, c, d := ctx.s0p, ctx.s0m, ctx.s1p, ctx.s1m
+	if a > cdefTapMax || b > cdefTapMax || c > cdefTapMax || d > cdefTapMax {
+		panic(errCDEFWindow)
+	}
+	return a, b, c, d
+}
+
+// secTaps1 returns the window indices of the weight-1 secondary taps.
+// (Two functions rather than one: eight returns exceed the inlining budget,
+// and the checks only help the kernels where they are inlined.)
+func (ctx *cdefSIMDCtx) secTaps1() (uint, uint, uint, uint) {
+	a, b, c, d := ctx.s2p, ctx.s2m, ctx.s3p, ctx.s3m
+	if a > cdefTapMax || b > cdefTapMax || c > cdefTapMax || d > cdefTapMax {
+		panic(errCDEFWindow)
+	}
+	return a, b, c, d
+}
+
+// setDirection fills the direction-dependent tap window indices.
 func (ctx *cdefSIMDCtx) setDirection(direction int) {
-	ctx.pri0 = int(cdefDirections[direction+2][0])
-	ctx.pri1 = int(cdefDirections[direction+2][1])
-	ctx.sec0 = int(cdefDirections[direction+4][0])
-	ctx.sec1 = int(cdefDirections[direction][0])
-	ctx.sec2 = int(cdefDirections[direction+4][1])
-	ctx.sec3 = int(cdefDirections[direction][1])
+	pri0 := int(cdefDirections[direction+2][0])
+	pri1 := int(cdefDirections[direction+2][1])
+	sec0 := int(cdefDirections[direction+4][0])
+	sec1 := int(cdefDirections[direction][0])
+	sec2 := int(cdefDirections[direction+4][1])
+	sec3 := int(cdefDirections[direction][1])
+	ctx.p0p, ctx.p0m = uint(cdefWinReach+pri0), uint(cdefWinReach-pri0)
+	ctx.p1p, ctx.p1m = uint(cdefWinReach+pri1), uint(cdefWinReach-pri1)
+	ctx.s0p, ctx.s0m = uint(cdefWinReach+sec0), uint(cdefWinReach-sec0)
+	ctx.s1p, ctx.s1m = uint(cdefWinReach+sec1), uint(cdefWinReach-sec1)
+	ctx.s2p, ctx.s2m = uint(cdefWinReach+sec2), uint(cdefWinReach-sec2)
+	ctx.s3p, ctx.s3m = uint(cdefWinReach+sec3), uint(cdefWinReach-sec3)
 }
 
 // setPrimary fills the primary-strength-dependent fields.
@@ -85,9 +158,9 @@ func (ctx *cdefSIMDCtx) setSecondary(strength, damping int) {
 
 // setBlock fills the full context for one block in place; a by-value return
 // would copy the struct through the stack on every block.
-func (ctx *cdefSIMDCtx) setBlock(dst unsafe.Pointer, dstStr int, input unsafe.Pointer, params BlockFilterParams, u8 bool) {
-	ctx.dst = dst
-	ctx.input = input
+func (ctx *cdefSIMDCtx) setBlock(out16 []uint16, out8 []byte, do, dstStr int, in []uint16, io int, params BlockFilterParams, u8 bool) {
+	ctx.out16, ctx.out8, ctx.do = out16, out8, do
+	ctx.in, ctx.io = in, io
 	ctx.dstStr = dstStr
 	ctx.height = int(params.Height)
 	ctx.u8 = u8
@@ -115,25 +188,53 @@ func filterBlockSIMD(dst []uint16, dstStride int, dstOrigin int, input []uint16,
 		return
 	}
 	var ctx cdefSIMDCtx
-	ctx.setBlock(unsafe.Pointer(&dst[dstOrigin]), dstStride*2, unsafe.Pointer(&input[inputOrigin]), params, false)
+	ctx.setBlock(dst, nil, dstOrigin, dstStride, input, inputOrigin, params, false)
 	cdefFilterBlockSIMD(&ctx, int(params.Width))
 }
 
-// cdefLoadU16P loads 8 uint16 CDEF samples at a raw pointer as Int16x8
-// (samples <= 0x4000, the bit pattern is a non-negative int16).
-func cdefLoadU16P(p unsafe.Pointer) archsimd.Int16x8 {
-	return archsimd.LoadInt16x8Array((*[8]int16)(p))
+// cdefLdW1 loads the 8 samples at window index i as Int16x8 (samples <=
+// 0x4000, the bit pattern is a non-negative int16).
+func cdefLdW1(w *[cdefWin1]uint16, i uint) archsimd.Int16x8 {
+	return archsimd.LoadUint16x8Array((*[8]uint16)(w[i : i+8])).BitsToInt16()
 }
 
-// cdefLoadPairU16P zips the low four uint16 samples of two rows into one
-// Int16x8 (lanes 0..3 = row r, lanes 4..7 = row r+1), the vector shape the
-// 4-wide kernel filters two rows at a time with. The full-width loads read
-// four halo samples past each 4-wide row segment; the CDEF input buffer's
-// 8-column horizontal border keeps them in bounds.
-func cdefLoadPairU16P(p, q unsafe.Pointer) archsimd.Int16x8 {
-	lo := archsimd.LoadInt16x8Array((*[8]int16)(p)).ToBits().ReshapeToUint64s()
-	hi := archsimd.LoadInt16x8Array((*[8]int16)(q)).ToBits().ReshapeToUint64s()
+// cdefRow is the tap window of the row whose window starts at o.
+func cdefRow(in []uint16, o int) *[cdefWin1]uint16 {
+	return (*[cdefWin1]uint16)(in[o : o+cdefWin1])
+}
+
+// cdefLdPair zips the low four samples at window index i of two rows' windows
+// into one Int16x8 (lanes 0..3 = row r, lanes 4..7 = row r+1), the vector
+// shape the 4-wide kernel filters two rows at a time with. The full-width
+// loads read four halo samples past each 4-wide row segment; the CDEF input
+// buffer's 8-column horizontal border keeps them in bounds.
+func cdefLdPair(w0, w1 *[cdefWin1]uint16, i uint) archsimd.Int16x8 {
+	lo := archsimd.LoadUint16x8Array((*[8]uint16)(w0[i : i+8])).ReshapeToUint64s()
+	hi := archsimd.LoadUint16x8Array((*[8]uint16)(w1[i : i+8])).ReshapeToUint64s()
 	return lo.InterleaveLo(hi).ReshapeToUint16s().BitsToInt16()
+}
+
+// cdefOut16 is the 8-sample output row of out at o.
+func cdefOut16(out []uint16, o int) *[8]uint16 {
+	return (*[8]uint16)(out[o : o+8])
+}
+
+// cdefPut8 stores the 8 bytes of v at out[o:].
+func cdefPut8(out []byte, o int, v uint64) {
+	b := (*[8]byte)(out[o : o+8])
+	b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7] = byte(v), byte(v>>8), byte(v>>16), byte(v>>24), byte(v>>32), byte(v>>40), byte(v>>48), byte(v>>56)
+}
+
+// cdefPut4 stores the 4 bytes of v at out[o:].
+func cdefPut4(out []byte, o int, v uint32) {
+	b := (*[4]byte)(out[o : o+4])
+	b[0], b[1], b[2], b[3] = byte(v), byte(v>>8), byte(v>>16), byte(v>>24)
+}
+
+// cdefPutU16x4 stores the four uint16 samples packed in v at out[o:].
+func cdefPutU16x4(out []uint16, o int, v uint64) {
+	b := (*[4]uint16)(out[o : o+4])
+	b[0], b[1], b[2], b[3] = uint16(v), uint16(v>>16), uint16(v>>32), uint16(v>>48)
 }
 
 // cdefConstrain is constrain() on eight lanes: t and x are non-negative
@@ -162,20 +263,21 @@ func cdefFilterBlock8SIMD(ctx *cdefSIMDCtx) {
 	sar4 := cdefShiftCountOf(4)
 	priOn, secOn, u8 := ctx.enablePrimary, ctx.enableSecondary, ctx.u8
 	clip := priOn && secOn
-	pri0, pri1 := ctx.pri0*2, ctx.pri1*2
-	sec0, sec1, sec2, sec3 := ctx.sec0*2, ctx.sec1*2, ctx.sec2*2, ctx.sec3*2
-	src := ctx.input
-	dst := ctx.dst
-	dstStr := ctx.dstStr
-	for h := ctx.height; h > 0; h-- {
-		x := cdefLoadU16P(src)
+	p0p, p0m, p1p, p1m := ctx.priTaps()
+	s0p, s0m, s1p, s1m := ctx.secTaps0()
+	s2p, s2m, s3p, s3m := ctx.secTaps1()
+	in, base, height := ctx.rows()
+	out16, out8, do, ds := ctx.outRows()
+	for r := 0; r < height; r++ {
+		w := cdefRow(in, base+r*BStride)
+		x := cdefLdW1(w, cdefWinReach)
 		sum := zero
 		mx, mn := x, x
 		if priOn {
-			t0 := cdefLoadU16P(unsafe.Add(src, pri0))
-			t1 := cdefLoadU16P(unsafe.Add(src, -pri0))
-			t2 := cdefLoadU16P(unsafe.Add(src, pri1))
-			t3 := cdefLoadU16P(unsafe.Add(src, -pri1))
+			t0 := cdefLdW1(w, p0p)
+			t1 := cdefLdW1(w, p0m)
+			t2 := cdefLdW1(w, p1p)
+			t3 := cdefLdW1(w, p1m)
 			// Each constrain result feeds an Add on its own line: a call that is
 			// alone on its line leaves an inline-mark NOP in the row loop.
 			sum = cdefConstrain(t0, x, priStr, priSh).Add(cdefConstrain(t1, x, priStr, priSh)).Mul(priTap0).
@@ -186,10 +288,10 @@ func cdefFilterBlock8SIMD(ctx *cdefSIMDCtx) {
 			}
 		}
 		if secOn {
-			s0 := cdefLoadU16P(unsafe.Add(src, sec0))
-			s1 := cdefLoadU16P(unsafe.Add(src, -sec0))
-			s2 := cdefLoadU16P(unsafe.Add(src, sec1))
-			s3 := cdefLoadU16P(unsafe.Add(src, -sec1))
+			s0 := cdefLdW1(w, s0p)
+			s1 := cdefLdW1(w, s0m)
+			s2 := cdefLdW1(w, s1p)
+			s3 := cdefLdW1(w, s1m)
 			// Each half of the secondary taps folds into sum, max and min before the
 			// next half loads, so only four taps are live at once.
 			sum = sum.Add(cdefConstrain(s0, x, secStr, secSh).Add(cdefConstrain(s1, x, secStr, secSh)).
@@ -198,10 +300,10 @@ func cdefFilterBlock8SIMD(ctx *cdefSIMDCtx) {
 				mx = mx.Max(s0.And(noSentinel)).Max(s1.And(noSentinel)).Max(s2.And(noSentinel)).Max(s3.And(noSentinel))
 				mn = mn.Min(s0).Min(s1).Min(s2).Min(s3)
 			}
-			s4 := cdefLoadU16P(unsafe.Add(src, sec2))
-			s5 := cdefLoadU16P(unsafe.Add(src, -sec2))
-			s6 := cdefLoadU16P(unsafe.Add(src, sec3))
-			s7 := cdefLoadU16P(unsafe.Add(src, -sec3))
+			s4 := cdefLdW1(w, s2p)
+			s5 := cdefLdW1(w, s2m)
+			s6 := cdefLdW1(w, s3p)
+			s7 := cdefLdW1(w, s3m)
 			sum = sum.Add(cdefConstrain(s4, x, secStr, secSh).Add(cdefConstrain(s5, x, secStr, secSh)).
 				Add(cdefConstrain(s6, x, secStr, secSh)).Add(cdefConstrain(s7, x, secStr, secSh)).Mul(secTap1))
 			if clip {
@@ -215,13 +317,9 @@ func cdefFilterBlock8SIMD(ctx *cdefSIMDCtx) {
 			y = y.Max(mn).Min(mx)
 		}
 		if u8 {
-			*(*uint64)(dst) = cdefNarrowU8(y).ReshapeToUint64s().GetElem(0)
+			cdefPut8(out8, do+r*ds, cdefNarrowU8(y).ReshapeToUint64s().GetElem(0))
 		} else {
-			y.ToBits().StoreArray((*[8]uint16)(dst))
-		}
-		if h > 1 {
-			src = unsafe.Add(src, BStride*2)
-			dst = unsafe.Add(dst, dstStr)
+			y.ToBits().StoreArray(cdefOut16(out16, do+r*ds))
 		}
 	}
 }
@@ -244,21 +342,23 @@ func cdefFilterBlock4SIMD(ctx *cdefSIMDCtx) {
 	sar4 := cdefShiftCountOf(4)
 	priOn, secOn, u8 := ctx.enablePrimary, ctx.enableSecondary, ctx.u8
 	clip := priOn && secOn
-	pri0, pri1 := ctx.pri0*2, ctx.pri1*2
-	sec0, sec1, sec2, sec3 := ctx.sec0*2, ctx.sec1*2, ctx.sec2*2, ctx.sec3*2
-	src := ctx.input
-	dst := ctx.dst
-	dstStr := ctx.dstStr
-	for h := ctx.height; h > 0; h -= 2 {
-		src2 := unsafe.Add(src, BStride*2)
-		x := cdefLoadPairU16P(src, src2)
+	p0p, p0m, p1p, p1m := ctx.priTaps()
+	s0p, s0m, s1p, s1m := ctx.secTaps0()
+	s2p, s2m, s3p, s3m := ctx.secTaps1()
+	in, base, height := ctx.rows()
+	out16, out8, do, ds := ctx.outRows()
+	// Counted by row pair: a step-2 counter keeps a second check per window.
+	for i := 0; i < height>>1; i++ {
+		r := 2 * i
+		w0, w1 := cdefRow(in, base+r*BStride), cdefRow(in, base+(r+1)*BStride)
+		x := cdefLdPair(w0, w1, cdefWinReach)
 		sum := zero
 		mx, mn := x, x
 		if priOn {
-			t0 := cdefLoadPairU16P(unsafe.Add(src, pri0), unsafe.Add(src2, pri0))
-			t1 := cdefLoadPairU16P(unsafe.Add(src, -pri0), unsafe.Add(src2, -pri0))
-			t2 := cdefLoadPairU16P(unsafe.Add(src, pri1), unsafe.Add(src2, pri1))
-			t3 := cdefLoadPairU16P(unsafe.Add(src, -pri1), unsafe.Add(src2, -pri1))
+			t0 := cdefLdPair(w0, w1, p0p)
+			t1 := cdefLdPair(w0, w1, p0m)
+			t2 := cdefLdPair(w0, w1, p1p)
+			t3 := cdefLdPair(w0, w1, p1m)
 			sum = cdefConstrain(t0, x, priStr, priSh).Add(cdefConstrain(t1, x, priStr, priSh)).Mul(priTap0).
 				Add(cdefConstrain(t2, x, priStr, priSh).Add(cdefConstrain(t3, x, priStr, priSh)).Mul(priTap1))
 			if clip {
@@ -267,10 +367,10 @@ func cdefFilterBlock4SIMD(ctx *cdefSIMDCtx) {
 			}
 		}
 		if secOn {
-			s0 := cdefLoadPairU16P(unsafe.Add(src, sec0), unsafe.Add(src2, sec0))
-			s1 := cdefLoadPairU16P(unsafe.Add(src, -sec0), unsafe.Add(src2, -sec0))
-			s2 := cdefLoadPairU16P(unsafe.Add(src, sec1), unsafe.Add(src2, sec1))
-			s3 := cdefLoadPairU16P(unsafe.Add(src, -sec1), unsafe.Add(src2, -sec1))
+			s0 := cdefLdPair(w0, w1, s0p)
+			s1 := cdefLdPair(w0, w1, s0m)
+			s2 := cdefLdPair(w0, w1, s1p)
+			s3 := cdefLdPair(w0, w1, s1m)
 			// Each half of the secondary taps folds into sum, max and min before the
 			// next half loads, so only four taps are live at once.
 			sum = sum.Add(cdefConstrain(s0, x, secStr, secSh).Add(cdefConstrain(s1, x, secStr, secSh)).
@@ -279,10 +379,10 @@ func cdefFilterBlock4SIMD(ctx *cdefSIMDCtx) {
 				mx = mx.Max(s0.And(noSentinel)).Max(s1.And(noSentinel)).Max(s2.And(noSentinel)).Max(s3.And(noSentinel))
 				mn = mn.Min(s0).Min(s1).Min(s2).Min(s3)
 			}
-			s4 := cdefLoadPairU16P(unsafe.Add(src, sec2), unsafe.Add(src2, sec2))
-			s5 := cdefLoadPairU16P(unsafe.Add(src, -sec2), unsafe.Add(src2, -sec2))
-			s6 := cdefLoadPairU16P(unsafe.Add(src, sec3), unsafe.Add(src2, sec3))
-			s7 := cdefLoadPairU16P(unsafe.Add(src, -sec3), unsafe.Add(src2, -sec3))
+			s4 := cdefLdPair(w0, w1, s2p)
+			s5 := cdefLdPair(w0, w1, s2m)
+			s6 := cdefLdPair(w0, w1, s3p)
+			s7 := cdefLdPair(w0, w1, s3m)
 			sum = sum.Add(cdefConstrain(s4, x, secStr, secSh).Add(cdefConstrain(s5, x, secStr, secSh)).
 				Add(cdefConstrain(s6, x, secStr, secSh)).Add(cdefConstrain(s7, x, secStr, secSh)).Mul(secTap1))
 			if clip {
@@ -296,16 +396,12 @@ func cdefFilterBlock4SIMD(ctx *cdefSIMDCtx) {
 		}
 		if u8 {
 			out := cdefNarrowU8(y).ReshapeToUint32s()
-			*(*uint32)(dst) = out.GetElem(0)
-			*(*uint32)(unsafe.Add(dst, dstStr)) = out.GetElem(1)
+			cdefPut4(out8, do+r*ds, out.GetElem(0))
+			cdefPut4(out8, do+(r+1)*ds, out.GetElem(1))
 		} else {
 			out := y.ToBits().ReshapeToUint64s()
-			*(*uint64)(dst) = out.GetElem(0)
-			*(*uint64)(unsafe.Add(dst, dstStr)) = out.GetElem(1)
-		}
-		if h > 2 {
-			src = unsafe.Add(src, 2*BStride*2)
-			dst = unsafe.Add(dst, 2*dstStr)
+			cdefPutU16x4(out16, do+r*ds, out.GetElem(0))
+			cdefPutU16x4(out16, do+(r+1)*ds, out.GetElem(1))
 		}
 	}
 }
@@ -320,6 +416,6 @@ func filterBlockU8SIMD(dst []byte, dstStride int, dstOrigin int, input []uint16,
 		return
 	}
 	var ctx cdefSIMDCtx
-	ctx.setBlock(unsafe.Pointer(&dst[dstOrigin]), dstStride, unsafe.Pointer(&input[inputOrigin]), params, true)
+	ctx.setBlock(nil, dst, dstOrigin, dstStride, input, inputOrigin, params, true)
 	cdefFilterBlockSIMD(&ctx, int(params.Width))
 }
