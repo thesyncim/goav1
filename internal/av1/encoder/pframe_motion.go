@@ -147,7 +147,8 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 		// when the frame has no ME), scored with its exact SAD.
 		if me := st.hme.sbME(lumaPX, lumaPY); me != nil {
 			pu := svtMEBlockOffset(lumaPX&63, lumaPY&63, max(bw, bh))
-			mv = motion.Vector{Row: me.bestMV[pu][1] * 8, Col: me.bestMV[pu][0] * 8}
+			x, y := me.mvAt(pu)
+			mv = motion.Vector{Row: y * 8, Col: x * 8}
 		}
 		fullSAD = st.leafFullPelSAD(src, ref, lumaPX, lumaPY, bw, bh, mv)
 		// read_refine_me_mvs_light_pd1: refine LAST's ME vector with the

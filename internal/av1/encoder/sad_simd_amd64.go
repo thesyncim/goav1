@@ -15,26 +15,7 @@
 
 package encoder
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
-
-// step advances a raw byte pointer by n bytes.
-func step(p unsafe.Pointer, n int) unsafe.Pointer { return unsafe.Add(p, n) }
-
-// load16 loads the 16 bytes at p. Callers guarantee they are readable.
-func load16(p unsafe.Pointer) archsimd.Uint8x16 {
-	return archsimd.LoadUint8x16Array((*[16]uint8)(p))
-}
-
-// pack2Rows loads two 8-byte rows (at base p and base+stride) into one
-// 16-byte vector: lanes 0..7 are the first row and lanes 8..15 are the second.
-func pack2Rows(p unsafe.Pointer, stride int) archsimd.Uint8x16 {
-	lo := *(*uint64)(p)
-	hi := *(*uint64)(step(p, stride))
-	return archsimd.BroadcastUint64x2(lo).SetElem(1, hi).ReshapeToUint8s()
-}
+import "simd/archsimd"
 
 // le64 is the little-endian uint64 of the eight bytes of b; the compiler
 // combines the byte loads into one 8-byte load.
@@ -119,6 +100,32 @@ func sad8x8x4Rows(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int
 		c2 = c2.Add(s.SumOf8AbsDiff(pack2((*[8]byte)(w), (*[8]byte)(w[stride:]))))
 		w = ref3[o : o+n : o+n]
 		c3 = c3.Add(s.SumOf8AbsDiff(pack2((*[8]byte)(w), (*[8]byte)(w[stride:]))))
+	}
+	return sumU64(c0), sumU64(c1), sumU64(c2), sumU64(c3)
+}
+
+// sad8x8x4Step4Rows is sad8x8x4Rows for the reference origins ref+0, ref+4,
+// ref+8 and ref+12: one 20-byte reference window per row (two per row-pair
+// window) holds all four candidates at constant offsets.
+func sad8x8x4Step4Rows(src, ref []byte, stride int) (int, int, int, int) {
+	if uint(stride) > rowStrideMax {
+		panic(errKernelArgs)
+	}
+	sn, rn := stride+8, stride+20
+	c0 := archsimd.BroadcastUint64x2(0)
+	c1 := archsimd.BroadcastUint64x2(0)
+	c2 := archsimd.BroadcastUint64x2(0)
+	c3 := archsimd.BroadcastUint64x2(0)
+	for i := 0; i < 4; i++ {
+		o := 2 * i * stride
+		w := src[o : o+sn : o+sn]
+		s := pack2((*[8]byte)(w), (*[8]byte)(w[stride:]))
+		rw := ref[o : o+rn : o+rn]
+		r0, r1 := (*[20]byte)(rw), (*[20]byte)(rw[stride:])
+		c0 = c0.Add(s.SumOf8AbsDiff(pack2((*[8]byte)(r0[0:8]), (*[8]byte)(r1[0:8]))))
+		c1 = c1.Add(s.SumOf8AbsDiff(pack2((*[8]byte)(r0[4:12]), (*[8]byte)(r1[4:12]))))
+		c2 = c2.Add(s.SumOf8AbsDiff(pack2((*[8]byte)(r0[8:16]), (*[8]byte)(r1[8:16]))))
+		c3 = c3.Add(s.SumOf8AbsDiff(pack2((*[8]byte)(r0[12:20]), (*[8]byte)(r1[12:20]))))
 	}
 	return sumU64(c0), sumU64(c1), sumU64(c2), sumU64(c3)
 }

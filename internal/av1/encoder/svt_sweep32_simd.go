@@ -37,7 +37,7 @@ func (me *realtimeSBMultiSizeME) eightSAD32x32_64x64(sad16 *[16][8]uint32, mvX, 
 		}
 		if bk >= 0 {
 			me.bestSAD[pu] = best
-			me.bestMV[pu] = [2]int16{int16(mvX + bk), int16(mvY)}
+			me.bestMV[pu] = svtPackMV(mvX+bk, mvY)
 		}
 	}
 }

@@ -5,7 +5,6 @@ package encoder
 import (
 	"math/rand"
 	"testing"
-	"unsafe"
 )
 
 // Per-call benchmarks of the arm64 variance, ME sweep and HME kernels at the
@@ -49,7 +48,7 @@ func BenchmarkSVTHMEColSumRow(b *testing.B) {
 			srcSum := svtBlockSumSubArch(src, 2*192, sh.bw, sh.rows)
 			var sink uint32
 			for b.Loop() {
-				sink += svtHMEColSumRow(nil, unsafe.Pointer(&src[0]), unsafe.Pointer(&ref[0]), unsafe.Pointer(&cw[0]), 2*192, sh.bw, sh.rows, sh.w, srcSum)
+				sink += svtHMEColSumRow(nil, src, 2*192, ref, &cw, sh.bw, sh.rows, sh.w, srcSum)
 			}
 			_ = sink
 		})

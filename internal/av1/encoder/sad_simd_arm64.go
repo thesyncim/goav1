@@ -12,26 +12,7 @@
 
 package encoder
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
-
-// unsafe: the single-reference SAD kernels walk rows at k*stride inside
-// blocks whose last sample the sad*SIMD wrappers bounds-check up front. Their
-// rows carry ~7 vector ops, so a checked window per row is a real loss: with
-// the best checked form (one compare per window) BenchmarkSAD16x16 measured
-// +36% cycles, SAD64x64 +25% and SAD8x8 +24% (min of 5, process start-up
-// subtracted). The four-reference kernel (sad16ColsX4) takes checked windows
-// at no measured cost.
-
-// step advances a raw byte pointer by n bytes.
-func step(p unsafe.Pointer, n int) unsafe.Pointer { return unsafe.Add(p, n) }
-
-// load16 loads the 16 bytes at p. Callers guarantee they are readable.
-func load16(p unsafe.Pointer) archsimd.Uint8x16 {
-	return archsimd.LoadUint8x16Array((*[16]uint8)(p))
-}
+import "simd/archsimd"
 
 // absDiffU8x16 computes unsigned byte absolute differences using only the
 // public archsimd API. The maximum is never below the minimum, so subtraction
@@ -59,13 +40,6 @@ func absAcc16(acc archsimd.Uint16x8, s, r archsimd.Uint8x16) archsimd.Uint16x8 {
 // most 2*32*255 for the largest caller, so a pair fits in uint16.
 func sumU16(acc archsimd.Uint16x8) int {
 	return int(acc.ConcatAddPairs(acc).ExtendLo4ToUint32().ReduceSum())
-}
-
-// pack2Rows loads two 8-byte rows (at base p and base+stride) into one
-// 16-byte vector: lanes 0..7 are the first row and lanes 8..15 are the second.
-func pack2Rows(p unsafe.Pointer, stride int) archsimd.Uint8x16 {
-	rows := [2]uint64{*(*uint64)(p), *(*uint64)(step(p, stride))}
-	return archsimd.LoadUint64x2Array(&rows).ReshapeToUint8s()
 }
 
 // le64 is the little-endian uint64 of the eight bytes of b; the compiler
@@ -132,6 +106,32 @@ func sad8x8x4Rows(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int
 		c2 = c2.Add(widen16(absDiffU8x16(s, pack2((*[8]byte)(w), (*[8]byte)(w[stride:])))))
 		w = ref3[o : o+n : o+n]
 		c3 = c3.Add(widen16(absDiffU8x16(s, pack2((*[8]byte)(w), (*[8]byte)(w[stride:])))))
+	}
+	return int(c0.ReduceSum()), int(c1.ReduceSum()), int(c2.ReduceSum()), int(c3.ReduceSum())
+}
+
+// sad8x8x4Step4Rows is sad8x8x4Rows for the reference origins ref+0, ref+4,
+// ref+8 and ref+12: one 20-byte reference window per row (two per row-pair
+// window) holds all four candidates at constant offsets.
+func sad8x8x4Step4Rows(src, ref []byte, stride int) (int, int, int, int) {
+	if uint(stride) > rowStrideMax {
+		panic(errKernelArgs)
+	}
+	sn, rn := stride+8, stride+20
+	c0 := archsimd.BroadcastUint16x8(0)
+	c1 := archsimd.BroadcastUint16x8(0)
+	c2 := archsimd.BroadcastUint16x8(0)
+	c3 := archsimd.BroadcastUint16x8(0)
+	for i := 0; i < 4; i++ {
+		o := 2 * i * stride
+		w := src[o : o+sn : o+sn]
+		s := pack2((*[8]byte)(w), (*[8]byte)(w[stride:]))
+		rw := ref[o : o+rn : o+rn]
+		r0, r1 := (*[20]byte)(rw), (*[20]byte)(rw[stride:])
+		c0 = c0.Add(widen16(absDiffU8x16(s, pack2((*[8]byte)(r0[0:8]), (*[8]byte)(r1[0:8])))))
+		c1 = c1.Add(widen16(absDiffU8x16(s, pack2((*[8]byte)(r0[4:12]), (*[8]byte)(r1[4:12])))))
+		c2 = c2.Add(widen16(absDiffU8x16(s, pack2((*[8]byte)(r0[8:16]), (*[8]byte)(r1[8:16])))))
+		c3 = c3.Add(widen16(absDiffU8x16(s, pack2((*[8]byte)(r0[12:20]), (*[8]byte)(r1[12:20])))))
 	}
 	return int(c0.ReduceSum()), int(c1.ReduceSum()), int(c2.ReduceSum()), int(c3.ReduceSum())
 }
@@ -325,10 +325,9 @@ func sad8x8Same(src, ref []byte, stride int) int {
 	return int(acc.ReduceSum())
 }
 
-// sad16ColsX4 is sad16ColsDual for four references sharing one stride,
-// as bounds-checked row windows (this shape measured neutral against the
-// pointer form; the single-reference SAD rows did not, see the unsafe note
-// above). Each source row is loaded once and reused across the four
+// sad16ColsX4 is sad16ColsDual for four references sharing one stride, as
+// bounds-checked row windows (this shape measured neutral against the
+// pointer form). Each source row is loaded once and reused across the four
 // candidates. With stride and h checked against rowStrideMax and rowsMax,
 // each row window is one bounds check.
 func sad16ColsX4(src, ref0, ref1, ref2, ref3 []byte, stride int, h int) (int, int, int, int) {

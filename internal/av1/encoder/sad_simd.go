@@ -28,7 +28,7 @@ func sad8x8x4SIMD(src, ref0, ref1, ref2, ref3 []byte, stride int) (int, int, int
 // sad8x8x4Step4SIMD computes four 8x8 SADs against reference origins ref+0,
 // ref+4, ref+8, and ref+12 (the raster step-4 candidate group).
 func sad8x8x4Step4SIMD(src, ref []byte, stride int) (int, int, int, int) {
-	return sad8x8x4Rows(src, ref, ref[4:], ref[8:], ref[12:], stride)
+	return sad8x8x4Step4Rows(src, ref, stride)
 }
 
 // sad8x8CompoundAvgSIMD computes SAD(src, round((ref0+ref1)/2)) over one 8x8
