@@ -109,6 +109,8 @@ func itx16x32ColStripAdd(tmp *[32 * 16]int16, c0 int, inRows int, dst []byte, ds
 	// The entry point checked the strides against itxGenMaxStride; the
 	// conversion carries that range, so each row window is one bounds check.
 	ds, ps := int(uint32(dstStride)), int(uint32(predStride))
+	// One compare per row window (see addRows in itxgen).
+	dl, pl := len(dst)-8, len(pred)-8
 	var in [32]archsimd.Int16x8
 	for r := 0; r < inRows; r++ {
 		in[r] = archsimd.LoadInt16x8Array((*[8]int16)(tmp[r*16+c0:]))
@@ -120,7 +122,11 @@ func itx16x32ColStripAdd(tmp *[32 * 16]int16, c0 int, inRows int, dst []byte, ds
 	sh3 := archsimd.BroadcastInt16x8(-3)
 	for r := 0; r < 32; r++ {
 		res := itx32Round2(out[r], sh3, sh1, one)
-		d, q := (*[8]byte)(dst[r*ds:r*ds+8]), (*[8]byte)(pred[r*ps:r*ps+8])
+		o, po := r*ds, r*ps
+		if o > dl || po > pl {
+			panic(errItxGenWindow)
+		}
+		d, q := (*[8]byte)(dst[o:o+8]), (*[8]byte)(pred[po:po+8])
 		rows := [2]uint64{binary.LittleEndian.Uint64(q[:]), 0}
 		p := archsimd.LoadUint64x2Array(&rows).ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()
 		binary.LittleEndian.PutUint64(d[:], p.Add(res).SaturateToUint8().ReshapeToUint64s().GetElem(0))
@@ -205,6 +211,8 @@ func itx32x16ColStripAdd(tmp *[16 * 32]int16, c0 int, inRows int, dst []byte, ds
 	// The entry point checked the strides against itxGenMaxStride; the
 	// conversion carries that range, so each row window is one bounds check.
 	ds, ps := int(uint32(dstStride)), int(uint32(predStride))
+	// One compare per row window (see addRows in itxgen).
+	dl, pl := len(dst)-8, len(pred)-8
 	var in [16]archsimd.Int16x8
 	for r := 0; r < inRows; r++ {
 		in[r] = archsimd.LoadInt16x8Array((*[8]int16)(tmp[r*32+c0:]))
@@ -216,7 +224,11 @@ func itx32x16ColStripAdd(tmp *[16 * 32]int16, c0 int, inRows int, dst []byte, ds
 	sh3 := archsimd.BroadcastInt16x8(-3)
 	for r := 0; r < 16; r++ {
 		res := itx32Round2(out[r], sh3, sh1, one)
-		d, q := (*[8]byte)(dst[r*ds:r*ds+8]), (*[8]byte)(pred[r*ps:r*ps+8])
+		o, po := r*ds, r*ps
+		if o > dl || po > pl {
+			panic(errItxGenWindow)
+		}
+		d, q := (*[8]byte)(dst[o:o+8]), (*[8]byte)(pred[po:po+8])
 		rows := [2]uint64{binary.LittleEndian.Uint64(q[:]), 0}
 		p := archsimd.LoadUint64x2Array(&rows).ReshapeToUint8s().ExtendLo8ToUint16().BitsToInt16()
 		binary.LittleEndian.PutUint64(d[:], p.Add(res).SaturateToUint8().ReshapeToUint64s().GetElem(0))
