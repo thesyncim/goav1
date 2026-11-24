@@ -52,7 +52,7 @@ func blockLoopLoadIntraRootContext(scratch *BlockLoopScratch, carrier *BlockLoop
 	if !resident {
 		scratch.flushLeftEdge()
 	}
-	scratch.leftEdge = blockLoopLeftEdge{}
+	scratch.clearLeftEdge()
 	scratch.Mode.resetIntraSuperblockState()
 	scratch.CDEF.Reset()
 	if haveTop {

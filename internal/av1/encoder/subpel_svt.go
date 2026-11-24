@@ -114,7 +114,11 @@ func (st *lossyEncodeState) svtSubpelSearch(src, refPlane []byte, stride, width,
 
 	st.ensureSubpelProbeCache()
 	scratch := &st.subpelCache.svt
-	scratch.pad = st.refPads.lookup(refPlane, width, height)
+	// Store only on change: the searched reference repeats across calls, and
+	// a pointer store runs a write barrier while the application's GC marks.
+	if pad := st.refPads.lookup(refPlane, width, height); scratch.pad != pad {
+		scratch.pad = pad
+	}
 	qp := uint64(st.qIndex) >> 2 // pcs->ppcs->picture_qp
 	epb := fullLambda >> 6       // error_per_bit = AOMMAX(rdmult >> RD_EPB_SHIFT, 1)
 	if epb < 1 {
