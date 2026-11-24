@@ -3,6 +3,7 @@ package tile
 import (
 	"testing"
 
+	"github.com/thesyncim/goav1/internal/av1/entropy"
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
@@ -32,7 +33,8 @@ func TestUVInterTransformTypeMatchesSetRules(t *testing.T) {
 				if ok, err := ExtTXTypeAllowed(lumaSet, typ); err != nil || !ok || !typ.Supported(txSize) {
 					want = transform.TypeDCTDCT
 				}
-				got := uvInterTxtp(&transformDimensions[size], typ)
+				d := &transformDimensions[size]
+				got := transform.Type(entropy.CoefUVInterTxtp(d.Max, d.Min, uint8(typ)))
 				// The old rule used the chroma size's own set, the same set the
 				// luma type was drawn from when sizes match; check that set too.
 				if got != want {

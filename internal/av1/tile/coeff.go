@@ -33,21 +33,17 @@ const (
 	CoeffPlaneUV
 )
 
-type CoeffCDFs struct {
-	TXBSkip      [CoeffTxSizeContexts][TXBSkipContexts]entropy.CDF
-	EOBExtra     [CoeffTxSizeContexts][CoeffPlaneTypes][EOBCoefContexts]entropy.CDF
-	DCSign       [CoeffPlaneTypes][3]entropy.CDF
-	CoeffBR      [CoeffTxSizeContexts][CoeffPlaneTypes][CoeffBRContexts]entropy.CDF
-	CoeffBase    [CoeffTxSizeContexts][CoeffPlaneTypes][CoeffBaseContexts]entropy.CDF
-	CoeffBaseEOB [CoeffTxSizeContexts][CoeffPlaneTypes][EOBBaseContexts]entropy.CDF
-	EOBFlag16    [CoeffPlaneTypes][maxEOBFlagContexts]entropy.CDF
-	EOBFlag32    [CoeffPlaneTypes][maxEOBFlagContexts]entropy.CDF
-	EOBFlag64    [CoeffPlaneTypes][maxEOBFlagContexts]entropy.CDF
-	EOBFlag128   [CoeffPlaneTypes][maxEOBFlagContexts]entropy.CDF
-	EOBFlag256   [CoeffPlaneTypes][maxEOBFlagContexts]entropy.CDF
-	EOBFlag512   [CoeffPlaneTypes][maxEOBFlagContexts]entropy.CDF
-	EOBFlag1024  [CoeffPlaneTypes][maxEOBFlagContexts]entropy.CDF
-}
+// CoeffCDFs is dav1d's CdfCoefContext; entropy.(*Reader).DecodeCoefs reads
+// it as an entropy.CoefCDFs.
+type CoeffCDFs entropy.CoefCDFs
+
+var _ [0]struct{} = [CoeffTxSizeContexts - len(CoeffCDFs{}.TXBSkip)]struct{}{}
+var _ [TXBSkipContexts]struct{} = [len(CoeffCDFs{}.TXBSkip[0])]struct{}{}
+var _ [EOBCoefContexts]struct{} = [len(CoeffCDFs{}.EOBExtra[0][0])]struct{}{}
+var _ [CoeffBRContexts]struct{} = [len(CoeffCDFs{}.CoeffBR[0][0])]struct{}{}
+var _ [CoeffBaseContexts]struct{} = [len(CoeffCDFs{}.CoeffBase[0][0])]struct{}{}
+var _ [EOBBaseContexts]struct{} = [len(CoeffCDFs{}.CoeffBaseEOB[0][0])]struct{}{}
+var _ [maxEOBFlagContexts]struct{} = [len(CoeffCDFs{}.EOBFlag16[0])]struct{}{}
 
 // coeffCDFCount is the number of CDFs in a CoeffCDFs. The assertion below
 // fails to compile if a field that is not an array of CDFs is ever added.

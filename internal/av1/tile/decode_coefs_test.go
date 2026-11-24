@@ -9,41 +9,109 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/transform"
 )
 
-// decodeTXBForTest is DecodeCoefs' TXB read without the binding: the
-// txb_skip symbol, then decode_coefs at unit dequantization, so out (raster
-// order, scan area) receives the signed quantized levels.
-func decodeTXBForTest(s *DecodeState, cdfs *CoeffCDFs, size TransformSize, plane CoeffPlaneType, class transform.Class, txbSkipCtx, dcSignCtx uint8, out []int16) TXBDecodeResult {
-	geo := &coeffGeometryTable[size]
+// coefTestDecoder drives entropy.(*Reader).DecodeCoefs as an inter block at
+// qindex > 0: luma transform types are read (the writer codes them through
+// coefTestTxtpWriter), chroma types derive from the co-located luma type.
+type coefTestDecoder struct {
+	tx     TransformTypeCDFs
+	ctx    CoeffEntropyContext
+	levels [coefLevelsLen]uint8
+	e      entropy.CoefState
+}
+
+func newCoefTestDecoder(t testing.TB, cdfs *CoeffCDFs, ctx *CoeffEntropyContext) *coefTestDecoder {
+	t.Helper()
+	d := new(coefTestDecoder)
+	if err := d.tx.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
+	if ctx == nil {
+		ctx = &d.ctx
+	}
+	d.e = entropy.CoefState{
+		CDF:     (*entropy.CoefCDFs)(cdfs),
+		TxIntra: &d.tx.Intra,
+		TxInter: &d.tx.Inter,
+		A:       &ctx.Above,
+		L:       &ctx.Left,
+		Levels:  &d.levels,
+	}
+	return d
+}
+
+// decode reads one TXB of the plane block bw4 x bh4. typ is the co-located
+// luma type a chroma TXB derives its own from.
+func (d *coefTestDecoder) decode(s *DecodeState, size TransformSize, plane uint8, x4, y4 int, bw4, bh4 uint8, typ transform.Type, cf *[1024]int32, dq *CoefDequant) (eob int, txtp transform.Type, rows, cols int) {
+	chroma := min(plane, 1)
+	d.e.BW4[chroma], d.e.BH4[chroma] = bw4, bh4
+	sz := &coefSizeTable[size]
+	e, tt, ext := s.Reader.DecodeCoefs(&d.e, uint(plane), sz, cf, dq, uint(x4), uint(y4), uint(sz.W4), uint(sz.H4), uint(typ))
+	return e, transform.Type(tt), int(uint8(ext)), int(uint8(ext >> 8))
+}
+
+// coefTestTxtpWriter returns the TXBEncodeRequest.AfterSkip hook that codes a
+// luma inter transform type as coefTestDecoder reads it (nil for chroma).
+func coefTestTxtpWriter(w *entropy.Writer, tx *TransformTypeCDFs, size TransformSize, plane uint8, typ transform.Type) func() error {
+	if plane != 0 {
+		return nil
+	}
+	return func() error {
+		return WriteInterTransformType(w, tx, InterTransformTypeRequest{Size: size, QIndexKnown: true, QIndex: 1}, typ)
+	}
+}
+
+// coefTestType is a transform type of class for size whose inter luma set
+// allows it.
+func coefTestType(t testing.TB, size TransformSize, class transform.Class) (transform.Type, bool) {
+	t.Helper()
+	typ := transform.TypeDCTDCT
+	switch class {
+	case transform.ClassHoriz:
+		typ = transform.TypeHDCT
+	case transform.ClassVert:
+		typ = transform.TypeVDCT
+	}
+	set, err := ExtTXSetTypeFor(size, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := ExtTXTypeAllowed(set, typ)
+	return typ, err == nil && ok
+}
+
+// decodeTXBForTest is DecodeCoefs for a TXB at (0, 0) of an equally sized
+// plane block with zero a/l contexts (skip and dc_sign contexts 0 for luma),
+// at unit dequantization: out (raster order, scan area) receives the signed
+// quantized levels.
+func decodeTXBForTest(t testing.TB, s *DecodeState, d *coefTestDecoder, size TransformSize, typ transform.Type, out []int16) TXBDecodeResult {
+	t.Helper()
+	d.ctx = CoeffEntropyContext{}
+	sz := &coefSizeTable[size]
+	unit := uint32(1) << (max(sz.Ctx, 2) - 2)
+	var cf [1024]int32
+	eob, got, _, _ := d.decode(s, size, 0, 0, 0, sz.W4, sz.H4, 0, &cf, &CoefDequant{DC: unit, AC: unit, Max: 1 << 24})
 	clear(out)
-	if s.Reader.ReadBinaryCDFUnchecked(&cdfs.TXBSkip[geo.txCtx][txbSkipCtx]) != 0 {
+	if eob < 0 {
 		return TXBDecodeResult{AllZero: true}
 	}
-	var cf [1024]int32
-	var levels [coefLevelsLen]uint8
-	c := s.Reader.Cursor()
-	r := decodeCoefsForTest(&c, cdfs, size, geo, plane, transform.TypeDCTDCT, class, dcSignCtx, &cf, true, &levels, coefDequant{dc: 1, ac: 1, cfMax: 1 << 24}, nil)
-	c.CommitStateTo(&s.Reader)
+	if got != typ {
+		t.Fatalf("size %v: decoded txtp %v, want %v", size, got, typ)
+	}
 	for i := range out {
 		out[i] = int16(cf[i])
 	}
-	return TXBDecodeResult{EOB: uint16(r.eob + 1), CulLevel: r.culLevel}
-}
-
-// decodeCoefsForTest is DecodeCoefs from the eob read on, with the dc_sign
-// context given.
-func decodeCoefsForTest(c *entropy.Cursor, cdfs *CoeffCDFs, size TransformSize, geo *coeffGeometry, plane CoeffPlaneType, txtp transform.Type, class transform.Class, dcSignCtx uint8, cf *[1024]int32, cfZeroed bool, levels *[coefLevelsLen]uint8, dq coefDequant, qm []uint16) coefDecodeResult {
-	eob, rc, dcTok := decodeCoefTokens(c, cdfs, size, geo, plane, txtp, class, cf, cfZeroed, levels)
-	return decodeCoefResidual(c, &cdfs.DCSign[plane][dcSignCtx], eob, rc, dcTok, cf, dq, qm, geo)
+	return TXBDecodeResult{EOB: uint16(eob + 1)}
 }
 
 // TestDecodeCoefTokensDequantizes codes random quantized TXBs with the
 // coefficient writer and decodes them through the dav1d decode_coefs port with
 // random dequantization factors, with and without quantizer matrices, TXB after
-// TXB on one evolving reader/CDF state. Every dequantized coefficient must
-// match AV1's dequantization of the written level: (factor * level) & 0xffffff
-// shifted by dq_shift and clamped to cf_max, with the factor first weighted
-// by the matrix entry, (factor * qm + 16) >> 5. The active row/column extent
-// and the coefficient context byte must match the writer's.
+// TXB on one evolving reader/CDF state, in both plane types and with every
+// dc_sign context. Every dequantized coefficient must match AV1's
+// dequantization of the written level: (factor * level) & 0xffffff shifted by
+// dq_shift and clamped to cf_max, with the factor first weighted by the matrix
+// entry, (factor * qm + 16) >> 5. The active row/column extent and the a/l
+// coefficient context byte must match the writer's.
 func TestDecodeCoefTokensDequantizes(t *testing.T) {
 	types := []transform.Type{
 		transform.TypeDCTDCT, transform.TypeADSTADST, transform.TypeIDTX,
@@ -52,15 +120,26 @@ func TestDecodeCoefTokensDequantizes(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
 	checked := 0
 	for size := TransformSize(0); size < transformSizeCount; size++ {
-		geo := &coeffGeometryTable[size]
-		for _, typ := range types {
-			class, _ := typ.Class()
-			if class != transform.Class2D && (geo.scanWidth > 16 || geo.scanHeight > 16) {
-				continue
-			}
-			for _, plane := range []CoeffPlaneType{CoeffPlaneY, CoeffPlaneUV} {
+		dims := &transformDimensions[size]
+		for _, ytyp := range types {
+			for _, plane := range []uint8{0, 1} {
+				typ := ytyp
+				if plane != 0 {
+					if dims.Max == 4 {
+						continue // chroma transforms are at most 32x32
+					}
+					typ = transform.Type(entropy.CoefUVInterTxtp(dims.Max, dims.Min, uint8(ytyp)))
+				} else if dims.Max+1 > 4 {
+					if ytyp != transform.TypeDCTDCT {
+						continue // 64-sample sides code DCT_DCT only
+					}
+				} else if set, err := ExtTXSetTypeFor(size, true, false); err != nil {
+					t.Fatal(err)
+				} else if ok, err := ExtTXTypeAllowed(set, typ); err != nil || !ok {
+					continue
+				}
 				bitDepth := []uint8{8, 10, 12}[rng.Intn(3)]
-				checked += runDecodeCoefTokensDequant(t, rng, size, geo, typ, class, plane, bitDepth)
+				checked += runDecodeCoefTokensDequant(t, rng, size, ytyp, typ, plane, bitDepth)
 			}
 		}
 	}
@@ -69,14 +148,23 @@ func TestDecodeCoefTokensDequantizes(t *testing.T) {
 	}
 }
 
-func runDecodeCoefTokensDequant(t *testing.T, rng *rand.Rand, size TransformSize, geo *coeffGeometry, typ transform.Type, class transform.Class, plane CoeffPlaneType, bitDepth uint8) int {
+func runDecodeCoefTokensDequant(t *testing.T, rng *rand.Rand, size TransformSize, ytyp, typ transform.Type, plane uint8, bitDepth uint8) int {
 	t.Helper()
 	txSize, err := size.TransformSize()
 	if err != nil {
 		t.Fatal(err)
 	}
+	class, err := typ.Class()
+	if err != nil {
+		t.Fatal(err)
+	}
+	geo := &coeffGeometryTable[size]
 	scan, levels := coeffScanAndScratch(t, size, txSize, class)
 	maxEOB := len(scan)
+	planeType := CoeffPlaneY
+	if plane != 0 {
+		planeType = CoeffPlaneUV
+	}
 	const nTXB = 24
 	type rec struct {
 		coeffs    []int16
@@ -91,6 +179,10 @@ func runDecodeCoefTokensDequant(t *testing.T, rng *rand.Rand, size TransformSize
 	if err := encCDFs.InitDefault(q); err != nil {
 		t.Fatal(err)
 	}
+	var encTx TransformTypeCDFs
+	if err := encTx.InitDefault(); err != nil {
+		t.Fatal(err)
+	}
 	w := entropy.NewWriter(make([]byte, 0, 1<<16))
 	for n := range recs {
 		r := &recs[n]
@@ -100,10 +192,18 @@ func runDecodeCoefTokensDequant(t *testing.T, rng *rand.Rand, size TransformSize
 		r.dc <<= 2 * ((bitDepth - 8) / 2)
 		r.ac <<= 2 * ((bitDepth - 8) / 2)
 		if typ < transform.TypeIDTX && rng.Intn(2) == 0 {
-			r.qm = QMatrices(uint8(rng.Intn(quantize.QMLevels-1)), plane == CoeffPlaneUV)[size]
+			r.qm = QMatrices(uint8(rng.Intn(quantize.QMLevels-1)), plane != 0)[size]
+		}
+		skipCtx := uint8(0)
+		if plane != 0 {
+			skipCtx = 7 // chroma, block == TXB, left context zero
+			if r.dcSignCtx != 0 {
+				skipCtx++ // the above context carries the dc_sign flag
+			}
 		}
 		if r.result, err = WriteCoefficientsTXB(&w, &encCDFs, TXBEncodeRequest{
-			Size: size, Plane: plane, Class: class, DCSignContext: r.dcSignCtx,
+			Size: size, Plane: planeType, Class: class, TXBSkipContext: skipCtx, DCSignContext: r.dcSignCtx,
+			AfterSkip: coefTestTxtpWriter(&w, &encTx, size, plane, typ),
 		}, r.coeffs, scan, levels); err != nil {
 			t.Fatalf("%v %v txb=%d write: %v", size, typ, n, err)
 		}
@@ -117,6 +217,7 @@ func runDecodeCoefTokensDequant(t *testing.T, rng *rand.Rand, size TransformSize
 	if err := decCDFs.InitDefault(q); err != nil {
 		t.Fatal(err)
 	}
+	d := newCoefTestDecoder(t, &decCDFs, nil)
 	var state DecodeState
 	if err := state.Reset(buf, Job{Offset: 0, Size: uint32(len(buf))}, DecodeOptions{}); err != nil {
 		t.Fatal(err)
@@ -126,29 +227,38 @@ func runDecodeCoefTokensDequant(t *testing.T, rng *rand.Rand, size TransformSize
 	if geo.txCtx > 2 {
 		txScale = geo.txCtx - 2
 	}
+	dims := &transformDimensions[size]
 	cf := new([1024]int32)
-	var coefLevels [coefLevelsLen]uint8
 	for n := range recs {
 		r := &recs[n]
-		if state.Reader.ReadBinaryCDFUnchecked(&decCDFs.TXBSkip[geo.txCtx][0]) != 0 {
+		// dc_sign context r.dcSignCtx: 1 for a negative, 2 for a positive
+		// above neighbour.
+		d.ctx = CoeffEntropyContext{}
+		d.ctx.Above[plane][0] = [3]uint8{0, 1 << CoeffContextBits, 2 << CoeffContextBits}[r.dcSignCtx]
+		clear(cf[:])
+		var qm *CoefQMatrices
+		if r.qm != nil {
+			qm = new(CoefQMatrices)
+			qm[size] = r.qm
+		}
+		eob, gotTyp, rows, cols := d.decode(&state, size, plane, 0, 0, dims.W4, dims.H4, ytyp, cf, &CoefDequant{
+			DC: uint32(r.dc), AC: uint32(r.ac), Max: uint32(dqMax), QM: qm,
+		})
+		if eob < 0 {
 			if !r.result.AllZero {
 				t.Fatalf("%v %v txb=%d: read as all-zero", size, typ, n)
 			}
+			if d.ctx.Above[plane][0] != 0 {
+				t.Fatalf("%v %v txb=%d: all-zero context %#x", size, typ, n, d.ctx.Above[plane][0])
+			}
 			continue
 		}
-		// Stale data: the zero-on-entry contract covers only the scan area.
-		for i := range cf {
-			cf[i] = int32(rng.Uint32())
+		if gotTyp != typ {
+			t.Fatalf("%v plane=%d txb=%d: txtp %v, want %v", size, plane, n, gotTyp, typ)
 		}
-		c := state.Reader.Cursor()
-		got := decodeCoefsForTest(&c, &decCDFs, size, geo, plane, typ, class, r.dcSignCtx, cf, false, &coefLevels, coefDequant{
-			dc: uint32(r.dc), ac: uint32(r.ac), shift: txScale, cfMax: uint32(dqMax),
-		}, r.qm)
-		c.CommitStateTo(&state.Reader)
-		if got.eob+1 != int(r.result.EOB) || got.culLevel != r.result.CulLevel {
-			t.Fatalf("%v %v txb=%d: eob %d cul %#x, want %d %#x", size, typ, n, got.eob+1, got.culLevel, r.result.EOB, r.result.CulLevel)
+		if eob+1 != int(r.result.EOB) || d.ctx.Above[plane][0] != r.result.CulLevel || d.ctx.Left[plane][0] != r.result.CulLevel {
+			t.Fatalf("%v %v txb=%d: eob %d ctx %#x, want %d %#x", size, typ, n, eob+1, d.ctx.Above[plane][0], r.result.EOB, r.result.CulLevel)
 		}
-		dcOnly := got.eob == 0 && typ == transform.TypeDCTDCT
 		height := int(geo.scanHeight)
 		activeRows, activeCols := 0, 0
 		for pos := range maxEOB {
@@ -170,15 +280,12 @@ func runDecodeCoefTokensDequant(t *testing.T, rng *rand.Rand, size TransformSize
 				activeRows = max(activeRows, pos%height+1)
 				activeCols = max(activeCols, pos/height+1)
 			}
-			if dcOnly && pos > 0 {
-				continue
-			}
 			if int64(cf[pos]) != want {
-				t.Fatalf("%v %v plane=%d txb=%d eob=%d qm=%v: cf[%d] = %d, want %d", size, typ, plane, n, got.eob, r.qm != nil, pos, cf[pos], want)
+				t.Fatalf("%v %v plane=%d txb=%d eob=%d qm=%v: cf[%d] = %d, want %d", size, typ, plane, n, eob, r.qm != nil, pos, cf[pos], want)
 			}
 		}
-		if got.activeRows != activeRows || got.activeCols != activeCols {
-			t.Fatalf("%v %v txb=%d: active %dx%d, want %dx%d", size, typ, n, got.activeRows, got.activeCols, activeRows, activeCols)
+		if rows != activeRows || cols != activeCols {
+			t.Fatalf("%v %v txb=%d: active %dx%d, want %dx%d", size, typ, n, rows, cols, activeRows, activeCols)
 		}
 	}
 	return nTXB
