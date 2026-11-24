@@ -122,17 +122,11 @@ func mc16PutSharp(dst *frame.Plane, ref *frame.Plane, bitDepth, dOff, dExt, refX
 		default:
 			mc16PutV6FromI32(im, w, h, &mc8Phases[ky][subY], maxV, d, dst.Stride)
 		}
-	case tx != 0:
+	case tx == 8:
 		round0, _ := highBDRoundBits(uint8(bitDepth))
-		if tx == 8 {
-			mc16PutH8(src, stride, w, h, &mc16SharpPhases[subX], int32(1)<<(round0-2)+32, maxV, d, dst.Stride)
-		} else {
-			mc16PutH6(src, stride, w, h, &mc8Phases[kx][subX], int32(1)<<(round0-2)+32, maxV, d, dst.Stride)
-		}
-	case ty == 8:
+		mc16PutH8(src, stride, w, h, &mc16SharpPhases[subX], int32(1)<<(round0-2)+32, maxV, d, dst.Stride)
+	default: // ty == 8
 		mc16PutV8(src, stride, w, h, &mc16SharpPhases[subY], maxV, d, dst.Stride)
-	default:
-		mc16PutV6(src, stride, w, h, &mc8Phases[ky][subY], maxV, d, dst.Stride)
 	}
 	return true
 }
@@ -141,116 +135,6 @@ func mc16PutSharp(dst *frame.Plane, ref *frame.Plane, bitDepth, dOff, dExt, refX
 // range) and clamps them to [0, maxV].
 func mc16Clip(lo, hi archsimd.Int32x4, zero, maxV archsimd.Int16x8) archsimd.Int16x8 {
 	return mc16PackU16(lo, hi).BitsToInt16().Max(zero).Min(maxV)
-}
-
-// mc16PutH6 is the put horizontal-only pass: clip((hs + rnd) >> 6).
-func mc16PutH6(src []byte, srcStride, w, h int, ph *mc8Phase, rndC int32, maxPix int16, dst []byte, dstStride int) {
-	c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5 := mc16LoadTaps6(ph)
-	rnd := archsimd.BroadcastInt32x4(rndC)
-	shv := archsimd.BroadcastInt32x4(-6)
-	zero := archsimd.BroadcastInt16x8(0)
-	maxV := archsimd.BroadcastInt16x8(maxPix)
-	ss, ds := uint32(srcStride), uint32(dstStride)
-	var so, do uint32
-	if w == 4 {
-		for r := 0; r < h; r++ {
-			lo := mc16H6Lo(mc16W26(src, so), c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd).Shift(shv)
-			binary.LittleEndian.PutUint64(mc8W8(dst, do)[:], mc16Clip(lo, lo, zero, maxV).ToBits().ReshapeToUint64s().GetElem(0))
-			so, do = so+ss, do+ds
-		}
-		return
-	}
-	for r := 0; r < h; r++ {
-		for col := uint32(0); col < uint32(2*w); col += 16 {
-			hw := mc16W26(src, so+col)
-			x0 := mc16LB((*[16]byte)(hw[0:16]))
-			x1 := mc16LB((*[16]byte)(hw[2:18]))
-			x2 := mc16LB((*[16]byte)(hw[4:20]))
-			x3 := mc16LB((*[16]byte)(hw[6:22]))
-			x4 := mc16LB((*[16]byte)(hw[8:24]))
-			x5 := mc16LB((*[16]byte)(hw[10:26]))
-			lo := rnd.Add(x0.MulWidenLo(c0))
-			hi := rnd.Add(x0.HiToLo().MulWidenLo(h0))
-			lo = lo.Add(x1.MulWidenLo(c1))
-			hi = hi.Add(x1.HiToLo().MulWidenLo(h1))
-			lo = lo.Add(x2.MulWidenLo(c2))
-			hi = hi.Add(x2.HiToLo().MulWidenLo(h2))
-			lo = lo.Add(x3.MulWidenLo(c3))
-			hi = hi.Add(x3.HiToLo().MulWidenLo(h3))
-			lo = lo.Add(x4.MulWidenLo(c4))
-			hi = hi.Add(x4.HiToLo().MulWidenLo(h4))
-			lo = lo.Add(x5.MulWidenLo(c5))
-			hi = hi.Add(x5.HiToLo().MulWidenLo(h5))
-			mc16St16(dst, do+col, mc16Clip(lo.Shift(shv), hi.Shift(shv), zero, maxV))
-		}
-		so, do = so+ss, do+ds
-	}
-}
-
-// mc16PutV6 is the put vertical-only pass: clip((hs + 32) >> 6), sliding a
-// six-row window down each column strip, two output rows per iteration.
-func mc16PutV6(src []byte, srcStride, w, h int, ph *mc8Phase, maxPix int16, dst []byte, dstStride int) {
-	c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5 := mc16LoadTaps6(ph)
-	rnd := archsimd.BroadcastInt32x4(32)
-	shv := archsimd.BroadcastInt32x4(-6)
-	zero := archsimd.BroadcastInt16x8(0)
-	maxV := archsimd.BroadcastInt16x8(maxPix)
-	ss, ds := uint32(srcStride), uint32(dstStride)
-	if w == 4 {
-		r0 := mc16L16(src, 0)
-		r1 := mc16L16(src, ss)
-		r2 := mc16L16(src, 2*ss)
-		r3 := mc16L16(src, 3*ss)
-		so := 4 * ss
-		r4 := mc16L16(src, so)
-		var d uint32
-		r := 0
-		for ; r+2 <= h; r += 2 {
-			r5 := mc16L16(src, so+ss)
-			so += 2 * ss
-			r6 := mc16L16(src, so)
-			a := mc16V6Lo(r0, r1, r2, r3, r4, r5, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd)
-			b := mc16V6Lo(r1, r2, r3, r4, r5, r6, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd)
-			v := mc16Clip(a.Shift(shv), b.Shift(shv), zero, maxV).ToBits().ReshapeToUint64s()
-			binary.LittleEndian.PutUint64(mc8W8(dst, d)[:], v.GetElem(0))
-			binary.LittleEndian.PutUint64(mc8W8(dst, d+ds)[:], v.GetElem(1))
-			d += 2 * ds
-			r0, r1, r2, r3, r4 = r2, r3, r4, r5, r6
-		}
-		if r < h {
-			r5 := mc16L16(src, so+ss)
-			a := mc16V6Lo(r0, r1, r2, r3, r4, r5, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd).Shift(shv)
-			binary.LittleEndian.PutUint64(mc8W8(dst, d)[:], mc16Clip(a, a, zero, maxV).ToBits().ReshapeToUint64s().GetElem(0))
-		}
-		return
-	}
-	for col := uint32(0); col < uint32(2*w); col += 16 {
-		so := col
-		r0 := mc16L16(src, so)
-		r1 := mc16L16(src, so+ss)
-		r2 := mc16L16(src, so+2*ss)
-		r3 := mc16L16(src, so+3*ss)
-		so += 4 * ss
-		r4 := mc16L16(src, so)
-		d := col
-		r := 0
-		for ; r+2 <= h; r += 2 {
-			r5 := mc16L16(src, so+ss)
-			so += 2 * ss
-			r6 := mc16L16(src, so)
-			alo, ahi := mc16V6(r0, r1, r2, r3, r4, r5, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd)
-			blo, bhi := mc16V6(r1, r2, r3, r4, r5, r6, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd)
-			mc16St16(dst, d, mc16Clip(alo.Shift(shv), ahi.Shift(shv), zero, maxV))
-			mc16St16(dst, d+ds, mc16Clip(blo.Shift(shv), bhi.Shift(shv), zero, maxV))
-			d += 2 * ds
-			r0, r1, r2, r3, r4 = r2, r3, r4, r5, r6
-		}
-		if r < h {
-			r5 := mc16L16(src, so+ss)
-			alo, ahi := mc16V6(r0, r1, r2, r3, r4, r5, c0, c1, c2, c3, c4, c5, h0, h1, h2, h3, h4, h5, rnd)
-			mc16St16(dst, d, mc16Clip(alo.Shift(shv), ahi.Shift(shv), zero, maxV))
-		}
-	}
 }
 
 // mc16V6PutPair is the 10-bit put 2D vertical chain of output rows r and r+1

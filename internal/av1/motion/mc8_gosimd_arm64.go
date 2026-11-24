@@ -483,18 +483,12 @@ func mc8CopyFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, 
 // Window helpers. Offsets are uint32 so o+N cannot overflow and each window
 // costs one compare; the entries keep every window slice below 1<<32
 // elements (mc8WindowMax), so the offsets never wrap.
-func mc8W4(s []byte, o uint32) *[4]byte        { return (*[4]byte)(s[uint(o) : uint(o)+4]) }
-func mc8W8(s []byte, o uint32) *[8]byte        { return (*[8]byte)(s[uint(o) : uint(o)+8]) }
-func mc8W16(s []byte, o uint32) *[16]byte      { return (*[16]byte)(s[uint(o) : uint(o)+16]) }
-func mc8W24(s []byte, o uint32) *[24]byte      { return (*[24]byte)(s[uint(o) : uint(o)+24]) }
-func mc8W128(s []byte, o uint32) *[128]byte    { return (*[128]byte)(s[uint(o) : uint(o)+128]) }
-func mc8W64(s []byte, o uint32) *[64]byte      { return (*[64]byte)(s[uint(o) : uint(o)+64]) }
-func mc8W32(s []byte, o uint32) *[32]byte      { return (*[32]byte)(s[uint(o) : uint(o)+32]) }
-func mc8WU4(s []uint16, o uint32) *[4]uint16   { return (*[4]uint16)(s[uint(o) : uint(o)+4]) }
-func mc8WU8(s []uint16, o uint32) *[8]uint16   { return (*[8]uint16)(s[uint(o) : uint(o)+8]) }
-func mc8WU16(s []uint16, o uint32) *[16]uint16 { return (*[16]uint16)(s[uint(o) : uint(o)+16]) }
-func mc8WI4(s []int32, o uint32) *[4]int32     { return (*[4]int32)(s[uint(o) : uint(o)+4]) }
-func mc8WI8(s []int32, o uint32) *[8]int32     { return (*[8]int32)(s[uint(o) : uint(o)+8]) }
+func mc8W4(s []byte, o uint32) *[4]byte      { return (*[4]byte)(s[uint(o) : uint(o)+4]) }
+func mc8W8(s []byte, o uint32) *[8]byte      { return (*[8]byte)(s[uint(o) : uint(o)+8]) }
+func mc8W16(s []byte, o uint32) *[16]byte    { return (*[16]byte)(s[uint(o) : uint(o)+16]) }
+func mc8W32(s []byte, o uint32) *[32]byte    { return (*[32]byte)(s[uint(o) : uint(o)+32]) }
+func mc8WU4(s []uint16, o uint32) *[4]uint16 { return (*[4]uint16)(s[uint(o) : uint(o)+4]) }
+func mc8WU8(s []uint16, o uint32) *[8]uint16 { return (*[8]uint16)(s[uint(o) : uint(o)+8]) }
 
 // mc8WindowMax bounds the window slices handed to the kernels (see mc8W16).
 const mc8WindowMax = 1<<32 - 1
@@ -522,13 +516,6 @@ func mc8R32(s []byte, o, lim int) *[32]byte {
 		panic(errMC8Window)
 	}
 	return (*[32]byte)(s[o : o+32])
-}
-
-func mc8R24(s []byte, o, lim int) *[24]byte {
-	if o < 0 || o > lim {
-		panic(errMC8Window)
-	}
-	return (*[24]byte)(s[o : o+24])
 }
 
 // errMC8Window is the panic value of a window past its limit (a caller bug:
