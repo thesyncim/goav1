@@ -22,11 +22,24 @@ func lpfRow(pix []byte, o int) *[16]byte {
 	return (*[16]byte)(pix[o : o+16])
 }
 
-// lpfWin4 is the four row windows from b at stride st. Callers pass b and st
-// below 1<<32 (int(uint32(x))), which proves every row offset non-negative and
-// overflow-free, so each window costs one compare against len(pix).
+// lpfWin2 is the two row windows at b and b+st, taken through one slice of
+// both rows capped at its end: one compare for the pair. Callers pass b and st
+// below 1<<32 (int(uint32(x))), which proves the offsets non-negative and
+// overflow-free.
+func lpfWin2(pix []byte, b, st int) (*[16]byte, *[16]byte) {
+	e := b + st + 16
+	s := pix[b:e:e]
+	return (*[16]byte)(s[:16]), (*[16]byte)(s[st : st+16])
+}
+
+// lpfWin4 is the four row windows from b at stride st, two compares.
 func lpfWin4(pix []byte, b, st int) (*[16]byte, *[16]byte, *[16]byte, *[16]byte) {
-	return lpfRow(pix, b), lpfRow(pix, b+st), lpfRow(pix, b+2*st), lpfRow(pix, b+3*st)
+	e := b + st + 16
+	s := pix[b:e:e]
+	b2 := b + 2*st
+	e2 := b2 + st + 16
+	t := pix[b2:e2:e2]
+	return (*[16]byte)(s[:16]), (*[16]byte)(s[st : st+16]), (*[16]byte)(t[:16]), (*[16]byte)(t[st : st+16])
 }
 
 // lpfMaxPlane bounds the planes the vector drivers take: every row offset of
@@ -34,15 +47,18 @@ func lpfWin4(pix []byte, b, st int) (*[16]byte, *[16]byte, *[16]byte, *[16]byte)
 // (beyond any AV1 frame) take the scalar reference.
 const lpfMaxPlane = 1 << 32
 
-// lpfPut32 stores a row's p1..q1 (bytes 2..5 of a column-layout window that
-// starts at p3); the float lane keeps the store a single STR S.
-func lpfPut32(w *[16]byte, v float32) {
-	binary.LittleEndian.PutUint32(w[2:6], math.Float32bits(v))
+// lpfB4 and lpfB8 are the bytes of a float lane, for stores written as
+// *(*[4]byte)(w[2:6]) = lpfB4(lane): the byte stores merge into one STR S
+// (STR D) of the lane, and an assignment (not a call statement) leaves no
+// inline-mark NOP.
+func lpfB4(v float32) [4]byte {
+	x := math.Float32bits(v)
+	return [4]byte{byte(x), byte(x >> 8), byte(x >> 16), byte(x >> 24)}
 }
 
-// lpfPut64 stores a row's p3..q3 (bytes 0..7 of the window) as one STR D.
-func lpfPut64(w *[16]byte, v float64) {
-	binary.LittleEndian.PutUint64(w[0:8], math.Float64bits(v))
+func lpfB8(v float64) [8]byte {
+	x := math.Float64bits(v)
+	return [8]byte{byte(x), byte(x >> 8), byte(x >> 16), byte(x >> 24), byte(x >> 32), byte(x >> 40), byte(x >> 48), byte(x >> 56)}
 }
 
 func lpfAbsDiff(a, b archsimd.Uint8x16) archsimd.Uint8x16 {
@@ -300,7 +316,7 @@ func sbWidth(nGt4, n16 uint32, luma bool) int {
 // bytes of two 32-bit lanes (the other bytes zero).
 func sbLevelPair(l *[2][4]uint8, sh uint) uint64 {
 	x := uint64(binary.LittleEndian.Uint32(l[0][:])) | uint64(binary.LittleEndian.Uint32(l[1][:]))<<32
-	return x >> sh & 0x000000ff000000ff
+	return x >> (sh & 63) & 0x000000ff000000ff
 }
 
 // sbLevelCells4 is component sh/8 of the four level cells l, one per 32-bit
@@ -505,49 +521,68 @@ func filterSBHorizontal8(pix []byte, off, stride, rowBytes int, vm [3]uint32, lu
 		return
 	}
 	sh := uint(8 * (comp & 3))
-	// Each tap row (and the two level rows) is one window of the call's end
-	// columns, taken once; the group loop's bounds prove every group's
-	// sixteen-byte (four-cell) window, so the groups pay no checks. Without a
-	// wd 16 group the outer rows p6..p4, q4..q6 alias q0's row (never read).
-	n, far := end, 0
-	if vm2 != 0 {
-		far = stride
+	b, st := int(uint32(off)), int(uint32(stride))
+	u, ls := int(uint32(lvlOff)), int(uint32(lvlStride))
+	switch {
+	case vm2 != 0:
+		sbRowsU8[lpfW16](pix, b, st, end, vm0, vm1, vm2, luma, lvl, u, ls, sh, lut)
+	case vm1 != 0 && luma:
+		sbRowsU8[lpfW8](pix, b, st, end, vm0, vm1, 0, luma, lvl, u, ls, sh, lut)
+	case vm1 != 0:
+		sbRowsU8[lpfW6](pix, b, st, end, vm0, vm1, 0, luma, lvl, u, ls, sh, lut)
+	default:
+		sbRowsU8[lpfW4](pix, b, st, end, vm0, 0, 0, luma, lvl, u, ls, sh, lut)
 	}
-	rq0 := pix[off:][:n:n]
-	rp0 := pix[off-stride:][:n:n]
-	rp1 := pix[off-2*stride:][:n:n]
-	rp2 := pix[off-3*stride:][:n:n]
-	rp3 := pix[off-4*stride:][:n:n]
-	rq1 := pix[off+stride:][:n:n]
-	rq2 := pix[off+2*stride:][:n:n]
-	rq3 := pix[off+3*stride:][:n:n]
-	rp4 := pix[off-5*far:][:n:n]
-	rp5 := pix[off-6*far:][:n:n]
-	rp6 := pix[off-7*far:][:n:n]
-	rq4 := pix[off+4*far:][:n:n]
-	rq5 := pix[off+5*far:][:n:n]
-	rq6 := pix[off+6*far:][:n:n]
-	lc := lvl[lvlOff:][: n/4 : n/4]
-	lp := lvl[lvlOff-lvlStride:][: n/4 : n/4]
-	for x, u := 0, 0; vm0 != 0 && x <= len(rq0)-16 && u <= len(lc)-4 && u <= len(lp)-4; vm0, vm1, vm2, x, u = vm0>>4, vm1>>4, vm2>>4, x+16, u+4 {
+}
+
+// sbRowsU8 is filterSBHorizontal8's group loop for calls whose widest group
+// is W. The tap rows that width reads (and the two level rows) are each one
+// window of the call's n columns, taken once from 32-bit offsets (one compare
+// each); the loop bounds prove every group's sixteen-byte (four-cell) window,
+// so the groups pay no checks. Rows a call's width never reads alias q0's.
+func sbRowsU8[W lpfWidth](pix []byte, b, st, n int, vm0, vm1, vm2 uint32, luma bool, lvl [][4]uint8, u, ls int, sh uint, lut *SBLUT) {
+	var wdT W
+	wd := len(wdT)
+	n = int(uint32(n))
+	row := func(k int) []byte {
+		o := b + k*st
+		return pix[o : o+n : o+n]
+	}
+	rq0, rp0, rp1, rq1 := row(0), pix[b-st:b-st+n:b-st+n], pix[b-2*st:b-2*st+n:b-2*st+n], row(1)
+	rp2, rq2, rp3, rq3 := rq0, rq0, rq0, rq0
+	rp4, rp5, rp6, rq4, rq5, rq6 := rq0, rq0, rq0, rq0, rq0, rq0
+	if wd >= 6 {
+		rp2, rq2 = pix[b-3*st:b-3*st+n:b-3*st+n], row(2)
+	}
+	if wd >= 8 {
+		rp3, rq3 = pix[b-4*st:b-4*st+n:b-4*st+n], row(3)
+	}
+	if wd == 16 {
+		rp4, rp5, rp6 = pix[b-5*st:b-5*st+n:b-5*st+n], pix[b-6*st:b-6*st+n:b-6*st+n], pix[b-7*st:b-7*st+n:b-7*st+n]
+		rq4, rq5, rq6 = row(4), row(5), row(6)
+	}
+	m := n / 4
+	lc := lvl[u : u+m : u+m]
+	lp := lvl[u-ls : u-ls+m : u-ls+m]
+	for x, c := 0, 0; vm0 != 0 && x <= len(rq0)-16 && c <= len(lc)-4 && c <= len(lp)-4; vm0, vm1, vm2, x, c = vm0>>4, vm1>>4, vm2>>4, x+16, c+4 {
 		if vm0&15 == 0 {
 			continue
 		}
-		eV, iV, hV, m4, ok := sbLimits(sbLevelCells4((*[4][4]uint8)(lc[u:u+4]), sh), sbLevelCells4((*[4][4]uint8)(lp[u:u+4]), sh), vm0, lut)
+		eV, iV, hV, m4, ok := sbLimits(sbLevelCells4((*[4][4]uint8)(lc[c:c+4]), sh), sbLevelCells4((*[4][4]uint8)(lp[c:c+4]), sh), vm0, lut)
 		if !ok {
 			continue
 		}
-		wp3, wp2, wp1, wp0 := (*[16]byte)(rp3[x:x+16]), (*[16]byte)(rp2[x:x+16]), (*[16]byte)(rp1[x:x+16]), (*[16]byte)(rp0[x:x+16])
-		wq0, wq1, wq2, wq3 := (*[16]byte)(rq0[x:x+16]), (*[16]byte)(rq1[x:x+16]), (*[16]byte)(rq2[x:x+16]), (*[16]byte)(rq3[x:x+16])
-		if vm2&15 != 0 {
-			wp6, wp5, wp4 := (*[16]byte)(rp6[x:x+16]), (*[16]byte)(rp5[x:x+16]), (*[16]byte)(rp4[x:x+16])
-			wq4, wq5, wq6 := (*[16]byte)(rq4[x:x+16]), (*[16]byte)(rq5[x:x+16]), (*[16]byte)(rq6[x:x+16])
-			lpf16U8Wd16(wp6, wp5, wp4, wp3, wp2, wp1, wp0, wq0, wq1, wq2, wq3, wq4, wq5, wq6, eV, iV, hV, m4, sbNibbleMask(vm1), sbNibbleMask(vm2))
-		} else if vm1&15 != 0 {
+		wp1, wp0 := (*[16]byte)(rp1[x:x+16]), (*[16]byte)(rp0[x:x+16])
+		wq0, wq1 := (*[16]byte)(rq0[x:x+16]), (*[16]byte)(rq1[x:x+16])
+		if wd == 16 && vm2&15 != 0 {
+			lpf16U8Wd16((*[16]byte)(rp6[x:x+16]), (*[16]byte)(rp5[x:x+16]), (*[16]byte)(rp4[x:x+16]), (*[16]byte)(rp3[x:x+16]),
+				(*[16]byte)(rp2[x:x+16]), wp1, wp0, wq0, wq1, (*[16]byte)(rq2[x:x+16]), (*[16]byte)(rq3[x:x+16]),
+				(*[16]byte)(rq4[x:x+16]), (*[16]byte)(rq5[x:x+16]), (*[16]byte)(rq6[x:x+16]), eV, iV, hV, m4, sbNibbleMask(vm1), sbNibbleMask(vm2))
+		} else if wd >= 6 && vm1&15 != 0 {
 			if luma {
-				lpf8U8W[lpfW8, lpfRows](nil, 0, 0, wp3, wp2, wp1, wp0, wq0, wq1, wq2, wq3, eV, iV, hV, m4, sbNibbleMask(vm1))
+				lpf8U8W[lpfW8, lpfRows](nil, 0, 0, (*[16]byte)(rp3[x:x+16]), (*[16]byte)(rp2[x:x+16]), wp1, wp0, wq0, wq1, (*[16]byte)(rq2[x:x+16]), (*[16]byte)(rq3[x:x+16]), eV, iV, hV, m4, sbNibbleMask(vm1))
 			} else {
-				lpf8U8W[lpfW6, lpfRows](nil, 0, 0, nil, wp2, wp1, wp0, wq0, wq1, wq2, nil, eV, iV, hV, m4, sbNibbleMask(vm1))
+				lpf8U8W[lpfW6, lpfRows](nil, 0, 0, nil, (*[16]byte)(rp2[x:x+16]), wp1, wp0, wq0, wq1, (*[16]byte)(rq2[x:x+16]), nil, eV, iV, hV, m4, sbNibbleMask(vm1))
 			}
 		} else {
 			lpf8U8W[lpfW4, lpfRows](nil, 0, 0, nil, nil, wp1, wp0, wq0, wq1, nil, nil, eV, iV, hV, m4, archsimd.Mask8x16{})
@@ -1003,40 +1038,40 @@ func lpf8U8W[W lpfWidth, L lpfLayout](pix []byte, o, stride int, wp3, wp2, wp1, 
 			c1 := a0.ReshapeToUint16s().InterleaveHi(b0.ReshapeToUint16s()).ReshapeToUint32s().BitsToFloat32()
 			c2 := a1.ReshapeToUint16s().InterleaveLo(b1.ReshapeToUint16s()).ReshapeToUint32s().BitsToFloat32()
 			c3 := a1.ReshapeToUint16s().InterleaveHi(b1.ReshapeToUint16s()).ReshapeToUint32s().BitsToFloat32()
-			lpfPut32(w0, c0.GetElem(0))
-			lpfPut32(w1, c0.GetElem(1))
-			lpfPut32(w2, c0.GetElem(2))
-			lpfPut32(w3, c0.GetElem(3))
-			lpfPut32(w4, c1.GetElem(0))
-			lpfPut32(w5, c1.GetElem(1))
-			lpfPut32(w6, c1.GetElem(2))
-			lpfPut32(w7, c1.GetElem(3))
-			lpfPut32(w8, c2.GetElem(0))
-			lpfPut32(w9, c2.GetElem(1))
-			lpfPut32(w10, c2.GetElem(2))
-			lpfPut32(w11, c2.GetElem(3))
-			lpfPut32(w12, c3.GetElem(0))
-			lpfPut32(w13, c3.GetElem(1))
-			lpfPut32(w14, c3.GetElem(2))
-			lpfPut32(w15, c3.GetElem(3))
+			*(*[4]byte)(w0[2:6]) = lpfB4(c0.GetElem(0))
+			*(*[4]byte)(w1[2:6]) = lpfB4(c0.GetElem(1))
+			*(*[4]byte)(w2[2:6]) = lpfB4(c0.GetElem(2))
+			*(*[4]byte)(w3[2:6]) = lpfB4(c0.GetElem(3))
+			*(*[4]byte)(w4[2:6]) = lpfB4(c1.GetElem(0))
+			*(*[4]byte)(w5[2:6]) = lpfB4(c1.GetElem(1))
+			*(*[4]byte)(w6[2:6]) = lpfB4(c1.GetElem(2))
+			*(*[4]byte)(w7[2:6]) = lpfB4(c1.GetElem(3))
+			*(*[4]byte)(w8[2:6]) = lpfB4(c2.GetElem(0))
+			*(*[4]byte)(w9[2:6]) = lpfB4(c2.GetElem(1))
+			*(*[4]byte)(w10[2:6]) = lpfB4(c2.GetElem(2))
+			*(*[4]byte)(w11[2:6]) = lpfB4(c2.GetElem(3))
+			*(*[4]byte)(w12[2:6]) = lpfB4(c3.GetElem(0))
+			*(*[4]byte)(w13[2:6]) = lpfB4(c3.GetElem(1))
+			*(*[4]byte)(w14[2:6]) = lpfB4(c3.GetElem(2))
+			*(*[4]byte)(w15[2:6]) = lpfB4(c3.GetElem(3))
 		} else {
 			t0, t1, t2, t3, t4, t5, t6, t7 := lpfTranspose8x8Pairs(p3, o2, o1, o0, n0, n1, n2, q3)
-			lpfPut64(w0, t0.ReshapeToUint64s().BitsToFloat64().GetElem(0))
-			lpfPut64(w1, t1.ReshapeToUint64s().BitsToFloat64().GetElem(0))
-			lpfPut64(w2, t2.ReshapeToUint64s().BitsToFloat64().GetElem(0))
-			lpfPut64(w3, t3.ReshapeToUint64s().BitsToFloat64().GetElem(0))
-			lpfPut64(w4, t4.ReshapeToUint64s().BitsToFloat64().GetElem(0))
-			lpfPut64(w5, t5.ReshapeToUint64s().BitsToFloat64().GetElem(0))
-			lpfPut64(w6, t6.ReshapeToUint64s().BitsToFloat64().GetElem(0))
-			lpfPut64(w7, t7.ReshapeToUint64s().BitsToFloat64().GetElem(0))
-			lpfPut64(w8, t0.ReshapeToUint64s().BitsToFloat64().GetElem(1))
-			lpfPut64(w9, t1.ReshapeToUint64s().BitsToFloat64().GetElem(1))
-			lpfPut64(w10, t2.ReshapeToUint64s().BitsToFloat64().GetElem(1))
-			lpfPut64(w11, t3.ReshapeToUint64s().BitsToFloat64().GetElem(1))
-			lpfPut64(w12, t4.ReshapeToUint64s().BitsToFloat64().GetElem(1))
-			lpfPut64(w13, t5.ReshapeToUint64s().BitsToFloat64().GetElem(1))
-			lpfPut64(w14, t6.ReshapeToUint64s().BitsToFloat64().GetElem(1))
-			lpfPut64(w15, t7.ReshapeToUint64s().BitsToFloat64().GetElem(1))
+			*(*[8]byte)(w0[0:8]) = lpfB8(t0.ReshapeToUint64s().BitsToFloat64().GetElem(0))
+			*(*[8]byte)(w1[0:8]) = lpfB8(t1.ReshapeToUint64s().BitsToFloat64().GetElem(0))
+			*(*[8]byte)(w2[0:8]) = lpfB8(t2.ReshapeToUint64s().BitsToFloat64().GetElem(0))
+			*(*[8]byte)(w3[0:8]) = lpfB8(t3.ReshapeToUint64s().BitsToFloat64().GetElem(0))
+			*(*[8]byte)(w4[0:8]) = lpfB8(t4.ReshapeToUint64s().BitsToFloat64().GetElem(0))
+			*(*[8]byte)(w5[0:8]) = lpfB8(t5.ReshapeToUint64s().BitsToFloat64().GetElem(0))
+			*(*[8]byte)(w6[0:8]) = lpfB8(t6.ReshapeToUint64s().BitsToFloat64().GetElem(0))
+			*(*[8]byte)(w7[0:8]) = lpfB8(t7.ReshapeToUint64s().BitsToFloat64().GetElem(0))
+			*(*[8]byte)(w8[0:8]) = lpfB8(t0.ReshapeToUint64s().BitsToFloat64().GetElem(1))
+			*(*[8]byte)(w9[0:8]) = lpfB8(t1.ReshapeToUint64s().BitsToFloat64().GetElem(1))
+			*(*[8]byte)(w10[0:8]) = lpfB8(t2.ReshapeToUint64s().BitsToFloat64().GetElem(1))
+			*(*[8]byte)(w11[0:8]) = lpfB8(t3.ReshapeToUint64s().BitsToFloat64().GetElem(1))
+			*(*[8]byte)(w12[0:8]) = lpfB8(t4.ReshapeToUint64s().BitsToFloat64().GetElem(1))
+			*(*[8]byte)(w13[0:8]) = lpfB8(t5.ReshapeToUint64s().BitsToFloat64().GetElem(1))
+			*(*[8]byte)(w14[0:8]) = lpfB8(t6.ReshapeToUint64s().BitsToFloat64().GetElem(1))
+			*(*[8]byte)(w15[0:8]) = lpfB8(t7.ReshapeToUint64s().BitsToFloat64().GetElem(1))
 		}
 	} else {
 		if wd >= 8 {
