@@ -17,9 +17,12 @@ import (
 	"unsafe"
 )
 
-// unsafe: the SAD kernels walk rows at k*stride inside blocks whose last
-// sample the sad*SIMD wrappers bounds-check up front; reslicing each row,
-// (*[16]uint8)(src[so+row*stride:]), measured +86% on BenchmarkSAD16x16.
+// unsafe: the single-reference SAD kernels walk rows at k*stride inside
+// blocks whose last sample the sad*SIMD wrappers bounds-check up front. Their
+// rows carry ~7 vector ops, so a checked window per row is a real loss: with
+// the best checked form (one compare per window) BenchmarkSAD16x16 measured
+// +31% cycles, SAD64x64 +25% and SAD8x8 +18%. The four-reference kernel
+// (sad16ColsX4) takes checked windows at no measured cost.
 
 // step advances a raw byte pointer by n bytes.
 func step(p unsafe.Pointer, n int) unsafe.Pointer { return unsafe.Add(p, n) }
@@ -140,20 +143,27 @@ func sad16ColsDualPtr(sp unsafe.Pointer, srcStride int, rp unsafe.Pointer, refSt
 	return sumU16(even) + sumU16(odd)
 }
 
-// sad16ColsX4Ptr is sad16ColsDualPtr for four references sharing one stride.
-// Each source row is loaded once and reused across the four candidates.
-func sad16ColsX4Ptr(sp, p0, p1, p2, p3 unsafe.Pointer, stride int, h int) (int, int, int, int) {
+// sad16ColsX4 is sad16ColsDualPtr for four references sharing one stride,
+// as bounds-checked row windows (this shape measured neutral against the
+// pointer form; the single-reference SAD rows did not, see the unsafe note
+// above). Each source row is loaded once and reused across the four
+// candidates. With stride and h checked against rowStrideMax and rowsMax,
+// each row window is one bounds check.
+func sad16ColsX4(src, ref0, ref1, ref2, ref3 []byte, stride int, h int) (int, int, int, int) {
+	if uint(stride) > rowStrideMax || uint(h) > rowsMax {
+		panic(errKernelArgs)
+	}
 	a0 := archsimd.BroadcastUint16x8(0)
 	a1 := archsimd.BroadcastUint16x8(0)
 	a2 := archsimd.BroadcastUint16x8(0)
 	a3 := archsimd.BroadcastUint16x8(0)
 	for row := 0; row < h; row++ {
 		o := row * stride
-		s := load16(step(sp, o))
-		a0 = absAcc16(a0, s, load16(step(p0, o)))
-		a1 = absAcc16(a1, s, load16(step(p1, o)))
-		a2 = absAcc16(a2, s, load16(step(p2, o)))
-		a3 = absAcc16(a3, s, load16(step(p3, o)))
+		s := archsimd.LoadUint8x16Array((*[16]uint8)(src[o : o+16]))
+		a0 = absAcc16(a0, s, archsimd.LoadUint8x16Array((*[16]uint8)(ref0[o:o+16])))
+		a1 = absAcc16(a1, s, archsimd.LoadUint8x16Array((*[16]uint8)(ref1[o:o+16])))
+		a2 = absAcc16(a2, s, archsimd.LoadUint8x16Array((*[16]uint8)(ref2[o:o+16])))
+		a3 = absAcc16(a3, s, archsimd.LoadUint8x16Array((*[16]uint8)(ref3[o:o+16])))
 	}
 	if h == 16 {
 		return int(a0.ReduceSum()), int(a1.ReduceSum()), int(a2.ReduceSum()), int(a3.ReduceSum())

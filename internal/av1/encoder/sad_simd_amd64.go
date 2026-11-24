@@ -92,20 +92,24 @@ func sad16ColsDualPtr(sp unsafe.Pointer, srcStride int, rp unsafe.Pointer, refSt
 	return sumU64(acc)
 }
 
-// sad16ColsX4Ptr is sad16ColsDualPtr for four references sharing one stride.
-// Each source row is loaded once and reused across the four candidates.
-func sad16ColsX4Ptr(sp, p0, p1, p2, p3 unsafe.Pointer, stride int, h int) (int, int, int, int) {
+// sad16ColsX4 is sad16ColsDualPtr for four references sharing one stride,
+// as bounds-checked row windows. With stride and h checked against
+// rowStrideMax and rowsMax, each row window is one bounds check.
+func sad16ColsX4(src, ref0, ref1, ref2, ref3 []byte, stride int, h int) (int, int, int, int) {
+	if uint(stride) > rowStrideMax || uint(h) > rowsMax {
+		panic(errKernelArgs)
+	}
 	a0 := archsimd.BroadcastUint64x2(0)
 	a1 := archsimd.BroadcastUint64x2(0)
 	a2 := archsimd.BroadcastUint64x2(0)
 	a3 := archsimd.BroadcastUint64x2(0)
 	for row := 0; row < h; row++ {
 		o := row * stride
-		s := load16(step(sp, o))
-		a0 = a0.Add(s.SumOf8AbsDiff(load16(step(p0, o))))
-		a1 = a1.Add(s.SumOf8AbsDiff(load16(step(p1, o))))
-		a2 = a2.Add(s.SumOf8AbsDiff(load16(step(p2, o))))
-		a3 = a3.Add(s.SumOf8AbsDiff(load16(step(p3, o))))
+		s := archsimd.LoadUint8x16Array((*[16]uint8)(src[o : o+16]))
+		a0 = a0.Add(s.SumOf8AbsDiff(archsimd.LoadUint8x16Array((*[16]uint8)(ref0[o : o+16]))))
+		a1 = a1.Add(s.SumOf8AbsDiff(archsimd.LoadUint8x16Array((*[16]uint8)(ref1[o : o+16]))))
+		a2 = a2.Add(s.SumOf8AbsDiff(archsimd.LoadUint8x16Array((*[16]uint8)(ref2[o : o+16]))))
+		a3 = a3.Add(s.SumOf8AbsDiff(archsimd.LoadUint8x16Array((*[16]uint8)(ref3[o : o+16]))))
 	}
 	return sumU64(a0), sumU64(a1), sumU64(a2), sumU64(a3)
 }
