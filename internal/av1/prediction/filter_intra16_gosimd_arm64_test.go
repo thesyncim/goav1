@@ -30,7 +30,7 @@ func filterIntra16SIMDEdges(width, height int, max int, seed uint32) IntraEdges 
 // filter-intra kernels, so the differential tests below exercise the production
 // dispatch target.
 func TestFilterIntraSIMDBinding(t *testing.T) {
-	assertDispatchTarget(t, "predictFilterIntra8Impl", predictFilterIntra8Impl, "predictFilterIntraBlockDirect8SIMD")
+	assertDispatchTarget(t, "predictFilterIntra8Impl", predictFilterIntra8Impl, "predictFilterIntraBlockDirect8TBL")
 	assertDispatchTarget(t, "predictFilterIntra16Impl", predictFilterIntra16Impl, "predictFilterIntraBlockDirect16SIMD")
 }
 

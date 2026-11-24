@@ -41,6 +41,6 @@ func init() {
 	dirRowInterp8Impl = dirRowInterp8SIMD
 	dirAboveRun8Impl = dirAboveRun8SIMD
 	dirLeftCol8Impl = dirLeftCol8SIMD
-	predictFilterIntra8Impl = predictFilterIntraBlockDirect8SIMD
+	predictFilterIntra8Impl = predictFilterIntraBlockDirect8TBL
 	predictFilterIntra16Impl = predictFilterIntraBlockDirect16SIMD
 }
