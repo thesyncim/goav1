@@ -44,6 +44,9 @@ func TestDCT64SparseUpToDate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A Windows checkout with core.autocrlf rewrites the file to CRLF; the
+	// generator (gofmt) always emits LF, so compare content, not line endings.
+	got = bytes.ReplaceAll(got, []byte("\r\n"), []byte("\n"))
 	if !bytes.Equal(got, want) {
 		t.Fatal("dct64_lanes4_sparse_gosimd.go is stale; regenerate it with tools/itxzero (header + Narrow/Wide x Low8/16/32, gofmt)")
 	}

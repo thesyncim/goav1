@@ -27,14 +27,14 @@ internal/av1/decoder/postfilter_parallel.go:*:*: make([]bool, bandCount) escapes
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]byte, need) escapes to heap
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]byte, need) escapes to heap in (*FrameWorkCDEFPostFilterU8BandBoundary).ensure:
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]byte, need) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]byte, need0) escapes to heap
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]byte, need0) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]byte, needC) escapes to heap
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]byte, needC) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]frameWorkParallelCDEFScratch, workers) escapes to heap
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]frameWorkParallelCDEFScratch, workers) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, 19008) escapes to heap
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, 19008) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
-internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, need0) escapes to heap
-internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, need0) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
-internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, needC) escapes to heap
-internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, needC) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
 internal/av1/decoder/postfilter_restoration_parallel.go:*:*: append(p.lr, make([]frameWorkParallelRestorationScratch, workers - len(p.lr))...) escapes to heap in (*FrameWorkPostFilterContext).applyLoopRestorationPostFilterParallel:
 internal/av1/decoder/postfilter_restoration_parallel.go:*:*: append(p.lr, make([]frameWorkParallelRestorationScratch, workers - len(p.lr))...) escapes to heap in (*FrameWorkPostFilterParallel).ensureRestorationScratch:
 internal/av1/decoder/postfilter_restoration_parallel.go:*:*: make([]int32, sgrLen) escapes to heap
