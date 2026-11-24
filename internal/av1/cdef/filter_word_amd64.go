@@ -88,7 +88,7 @@ func cdefWordFilter8(ctx *cdefSIMDCtx) {
 	// Counted by row pair: a step-2 counter keeps a second check per window.
 	for i := 0; i < height>>1; i++ {
 		r := 2 * i
-		w0, w1 := cdefRow(in, base+r*BStride), cdefRow(in, base+(r+1)*BStride)
+		w0, w1 := cdefRows2(in, base+r*BStride)
 		x := cdefWordLoad8W(w0, w1, cdefWinReach)
 		var sum archsimd.Int16x16
 		mx, mn := x, x
@@ -164,8 +164,7 @@ func cdefWordFilter4(ctx *cdefSIMDCtx) {
 	out16, out8, do, ds := ctx.outRows()
 	for i := 0; i < height>>2; i++ {
 		r := 4 * i
-		w0, w1 := cdefRow(in, base+r*BStride), cdefRow(in, base+(r+1)*BStride)
-		w2, w3 := cdefRow(in, base+(r+2)*BStride), cdefRow(in, base+(r+3)*BStride)
+		w0, w1, w2, w3 := cdefRows4(in, base+r*BStride)
 		x := cdefWordLoad4W(w0, w1, w2, w3, cdefWinReach)
 		var sum archsimd.Int16x16
 		mx, mn := x, x
