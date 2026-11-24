@@ -8,7 +8,10 @@ package loopfilter
 
 import (
 	"encoding/binary"
+	"math/bits"
 	"simd/archsimd"
+
+	"github.com/thesyncim/goav1/internal/unsafeutil"
 )
 
 // Plane rows are bounds-checked windows from 32-bit offsets, as in
@@ -64,14 +67,6 @@ func newAVX16K(bd8 uint) avx16K {
 		dmax:   archsimd.BroadcastInt16x16(int16(128<<bd8 - 1)),
 		maxPix: archsimd.BroadcastInt16x16(int16(256<<bd8 - 1)),
 	}
-}
-
-func avx16Ld(pix []byte, off int) archsimd.Uint16x16 {
-	return avxLd32(pix, off).ReshapeToUint16s()
-}
-
-func avx16St(pix []byte, off int, v archsimd.Uint16x16) {
-	avxSt32(pix, off, v.ReshapeToUint8s())
 }
 
 func avx16Absd(a, b archsimd.Uint16x16) archsimd.Uint16x16 {
@@ -328,10 +323,182 @@ func filterSBVertical16(pix []byte, off, stride, rowBytes int, bitDepth uint8, v
 	archsimd.ClearAVXUpperBits()
 }
 
+func avx16Ld(p *[32]byte) archsimd.Uint16x16 { return archsimd.LoadUint8x32Array(p).ReshapeToUint16s() }
+
+// avx16Horz16 filters the sixteen samples of the fourteen tap rows p6..q6 of
+// b (rows 0..13) at width 16 and stores the changed rows p5..q5.
+func avx16Horz16(k *avx16K, b unsafeutil.Block32[avxR14], eV, iV, hV, m4, mGt4, m16 archsimd.Uint16x16) {
+	var t [16]archsimd.Uint16x16
+	t[1] = avx16Ld(b.Row32(0))
+	t[2] = avx16Ld(b.Row32(1))
+	t[3] = avx16Ld(b.Row32(2))
+	t[4] = avx16Ld(b.Row32(3))
+	t[5] = avx16Ld(b.Row32(4))
+	t[6] = avx16Ld(b.Row32(5))
+	t[7] = avx16Ld(b.Row32(6))
+	t[8] = avx16Ld(b.Row32(7))
+	t[9] = avx16Ld(b.Row32(8))
+	t[10] = avx16Ld(b.Row32(9))
+	t[11] = avx16Ld(b.Row32(10))
+	t[12] = avx16Ld(b.Row32(11))
+	t[13] = avx16Ld(b.Row32(12))
+	t[14] = avx16Ld(b.Row32(13))
+	if !avx16Lpf16(k, &t, eV, iV, hV, m4, mGt4, m16) {
+		return
+	}
+	t[2].ReshapeToUint8s().StoreArray(b.Row32(1))
+	t[3].ReshapeToUint8s().StoreArray(b.Row32(2))
+	t[4].ReshapeToUint8s().StoreArray(b.Row32(3))
+	t[5].ReshapeToUint8s().StoreArray(b.Row32(4))
+	t[6].ReshapeToUint8s().StoreArray(b.Row32(5))
+	t[7].ReshapeToUint8s().StoreArray(b.Row32(6))
+	t[8].ReshapeToUint8s().StoreArray(b.Row32(7))
+	t[9].ReshapeToUint8s().StoreArray(b.Row32(8))
+	t[10].ReshapeToUint8s().StoreArray(b.Row32(9))
+	t[11].ReshapeToUint8s().StoreArray(b.Row32(10))
+	t[12].ReshapeToUint8s().StoreArray(b.Row32(11))
+	t[13].ReshapeToUint8s().StoreArray(b.Row32(12))
+}
+
+// avx16Horz8 is avx16Horz16 at width 8: the tap rows p3..q3 (rows 0..7), the
+// changed rows p2..q2 stored.
+func avx16Horz8(k *avx16K, b unsafeutil.Block32[avxR8], eV, iV, hV, m4, mGt4 archsimd.Uint16x16) {
+	o2, o1, o0, n0, n1, n2, _, ok := avx16Core[avxW8](k, avx16Ld(b.Row32(0)), avx16Ld(b.Row32(1)), avx16Ld(b.Row32(2)), avx16Ld(b.Row32(3)),
+		avx16Ld(b.Row32(4)), avx16Ld(b.Row32(5)), avx16Ld(b.Row32(6)), avx16Ld(b.Row32(7)), eV, iV, hV, m4, mGt4)
+	if !ok {
+		return
+	}
+	o2.ReshapeToUint8s().StoreArray(b.Row32(1))
+	o1.ReshapeToUint8s().StoreArray(b.Row32(2))
+	o0.ReshapeToUint8s().StoreArray(b.Row32(3))
+	n0.ReshapeToUint8s().StoreArray(b.Row32(4))
+	n1.ReshapeToUint8s().StoreArray(b.Row32(5))
+	n2.ReshapeToUint8s().StoreArray(b.Row32(6))
+}
+
+// avx16Horz6 is avx16Horz16 at width 6: the tap rows p2..q2 (rows 0..5), the
+// changed rows p1..q1 stored.
+func avx16Horz6(k *avx16K, b unsafeutil.Block32[avxR6], eV, iV, hV, m4, mGt4 archsimd.Uint16x16) {
+	p2, q2 := avx16Ld(b.Row32(0)), avx16Ld(b.Row32(5))
+	_, o1, o0, n0, n1, _, _, ok := avx16Core[avxW6](k, p2, p2, avx16Ld(b.Row32(1)), avx16Ld(b.Row32(2)), avx16Ld(b.Row32(3)), avx16Ld(b.Row32(4)), q2, q2, eV, iV, hV, m4, mGt4)
+	if !ok {
+		return
+	}
+	o1.ReshapeToUint8s().StoreArray(b.Row32(1))
+	o0.ReshapeToUint8s().StoreArray(b.Row32(2))
+	n0.ReshapeToUint8s().StoreArray(b.Row32(3))
+	n1.ReshapeToUint8s().StoreArray(b.Row32(4))
+}
+
+// avx16Horz4 is avx16Horz16 at width 4: the tap rows p1..q1 (rows 0..3), all
+// four stored.
+func avx16Horz4(k *avx16K, b unsafeutil.Block32[avxR4], eV, iV, hV, m4 archsimd.Uint16x16) {
+	p1, q1 := avx16Ld(b.Row32(0)), avx16Ld(b.Row32(3))
+	_, o1, o0, n0, n1, _, _, ok := avx16Core[avxW4](k, p1, p1, p1, avx16Ld(b.Row32(1)), avx16Ld(b.Row32(2)), q1, q1, q1, eV, iV, hV, m4, archsimd.Uint16x16{})
+	if !ok {
+		return
+	}
+	o1.ReshapeToUint8s().StoreArray(b.Row32(0))
+	o0.ReshapeToUint8s().StoreArray(b.Row32(1))
+	n0.ReshapeToUint8s().StoreArray(b.Row32(2))
+	n1.ReshapeToUint8s().StoreArray(b.Row32(3))
+}
+
+// avx16HorzGroup runs the width-wd kernel on the sixteen samples (32 bytes)
+// at byte column x of v, whose row rh is q0.
+func avx16HorzGroup(k *avx16K, v unsafeutil.Rows, rh, x, wd int, eV, iV, hV, m4, mGt4 archsimd.Uint16x16, n16 uint32) {
+	switch wd {
+	case 16:
+		avx16Horz16(k, unsafeutil.Block32At[avxR14](v, rh-7, x), eV, iV, hV, m4, mGt4, avx16Mask(n16))
+	case 8:
+		avx16Horz8(k, unsafeutil.Block32At[avxR8](v, rh-4, x), eV, iV, hV, m4, mGt4)
+	case 6:
+		avx16Horz6(k, unsafeutil.Block32At[avxR6](v, rh-3, x), eV, iV, hV, m4, mGt4)
+	default:
+		avx16Horz4(k, unsafeutil.Block32At[avxR4](v, rh-2, x), eV, iV, hV, m4)
+	}
+}
+
 // avx16SBHorizontal is dav1d lpf_v_sb_{y,uv}_16bpc: the horizontal edges of
-// one row of units, sixteen samples per kernel call. simd counts the groups
-// the vector kernel handled.
+// one row of units, sixteen samples (one vmask nibble) per kernel call. As in
+// avxSBHorizontal8, the call's tap rows and its two level rows are checked
+// once as views, and every group is a column of them; calls whose views do
+// not fit take the group-by-group edge driver. simd counts the groups the
+// vector kernel handled.
 func avx16SBHorizontal(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) (simd int) {
+	all := vm[0] | vm[1] | vm[2]
+	if all == 0 {
+		return 0
+	}
+	n := 32 * ((31-bits.LeadingZeros32(all))>>2 + 1)
+	if n <= rowBytes {
+		switch {
+		case vm[2] != 0:
+			simd = avx16HorzRows[avxW16](pix, off, stride, n, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+		case vm[1] != 0 && luma:
+			simd = avx16HorzRows[avxW8](pix, off, stride, n, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+		case vm[1] != 0:
+			simd = avx16HorzRows[avxW6](pix, off, stride, n, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+		default:
+			simd = avx16HorzRows[avxW4](pix, off, stride, n, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+		}
+		if simd >= 0 {
+			return simd
+		}
+	}
+	return avx16SBHorizontalEdge(pix, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+}
+
+// avx16HorzRows is avxHorzRows8 for 16-bit samples: one view of the call's
+// tap rows (n bytes each, 32 per group) and one of its two level rows (16
+// bytes per group); it returns -1, having filtered nothing, when a view
+// leaves its slice.
+func avx16HorzRows[W avxCallWidth](pix []byte, off, stride, n int, bitDepth uint8, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) (simd int) {
+	var wT W
+	rh := avxHalfRows(len(wT))
+	li, ls4 := 4*lvlOff, 4*lvlStride
+	if !unsafeutil.RowsFit(len(pix), off-rh*stride, stride, n, 2*rh) || !unsafeutil.RowsFit(len(lvl), li-ls4, ls4, n/2, 2) {
+		return -1
+	}
+	v := unsafeutil.NewRows(pix, off-rh*stride, stride, n, 2*rh)
+	lv := unsafeutil.NewRows(lvl, li-ls4, ls4, n/2, 2)
+	bd8 := uint(bitDepth - 8)
+	k := newAVX16K(bd8)
+	gt4All := vm[1] | vm[2]
+	all := vm[0] | gt4All
+	sel := avx16LevelSel(comp)
+	sharp0, sharp1 := uint64(lut.Sharp[0]), archsimd.BroadcastUint16x16(uint16(lut.Sharp[1]))
+	for x := 0; x+32 <= n; x += 32 {
+		sh := uint(x) / 8
+		nib := (all >> sh) & 0xf
+		if nib == 0 {
+			continue
+		}
+		nGt4 := (gt4All >> sh) & 0xf
+		n16 := (vm[2] >> sh) & 0xf
+		lb := unsafeutil.BlockAt[avxR2](lv, 0, x/2)
+		eV, iV, hV, m4, ok := avx16GroupLimits(avx16Both(archsimd.LoadUint8x16Array(lb.Row16(1))), avx16Both(archsimd.LoadUint8x16Array(lb.Row16(0))), sel, nib, sharp0, sharp1, bd8)
+		if !ok {
+			continue
+		}
+		simd++
+		switch {
+		case len(wT) == 16 && n16 != 0:
+			avx16Horz16(&k, unsafeutil.Block32At[avxR14](v, rh-7, x), eV, iV, hV, m4, avx16Mask(nGt4), avx16Mask(n16))
+		case len(wT) >= 6 && nGt4 != 0 && luma:
+			avx16Horz8(&k, unsafeutil.Block32At[avxR8](v, rh-4, x), eV, iV, hV, m4, avx16Mask(nGt4))
+		case len(wT) >= 6 && nGt4 != 0:
+			avx16Horz6(&k, unsafeutil.Block32At[avxR6](v, rh-3, x), eV, iV, hV, m4, avx16Mask(nGt4))
+		default:
+			avx16Horz4(&k, unsafeutil.Block32At[avxR4](v, rh-2, x), eV, iV, hV, m4)
+		}
+	}
+	return simd
+}
+
+// avx16SBHorizontalEdge is avx16SBHorizontal group by group, for calls that
+// reach the end of pix, the row or the level map.
+func avx16SBHorizontalEdge(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) (simd int) {
 	bd8 := uint(bitDepth - 8)
 	k := newAVX16K(bd8)
 	gt4All := vm[1] | vm[2]
@@ -349,11 +516,8 @@ func avx16SBHorizontal(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm
 		wd := avxSBWidth(nGt4, n16, luma)
 		u0 := lvlOff + 4*g
 		q0Off := off + 32*g
-		reach := 4
-		if wd == 16 {
-			reach = 7
-		}
-		if 32*g+32 > rowBytes || q0Off-reach*stride < 0 || q0Off+(reach-1)*stride+32 > len(pix) {
+		rh := avxHalfRows(wd)
+		if 32*g+32 > rowBytes || !unsafeutil.RowsFit(len(pix), q0Off-rh*stride, stride, 32, 2*rh) {
 			filterSBHorizontal16Scalar(pix, q0Off, stride, bitDepth, sbGroupSub4(vm, sh), luma, lvl, u0, lvlStride, comp, lut)
 			continue
 		}
@@ -363,123 +527,164 @@ func avx16SBHorizontal(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm
 			continue
 		}
 		simd++
-		mGt4 := avx16Mask(nGt4)
-		if wd == 16 {
-			var t [16]archsimd.Uint16x16
-			for j := 1; j < 15; j++ {
-				t[j] = avx16Ld(pix, q0Off+(j-8)*stride)
-			}
-			if avx16Lpf16(&k, &t, eV, iV, hV, m4, mGt4, avx16Mask(n16)) {
-				for j := 2; j < 14; j++ {
-					avx16St(pix, q0Off+(j-8)*stride, t[j])
-				}
-			}
-			continue
-		}
-		p1 := avx16Ld(pix, q0Off-2*stride)
-		p0 := avx16Ld(pix, q0Off-stride)
-		q0 := avx16Ld(pix, q0Off)
-		q1 := avx16Ld(pix, q0Off+stride)
-		switch wd {
-		case 8:
-			p3 := avx16Ld(pix, q0Off-4*stride)
-			p2 := avx16Ld(pix, q0Off-3*stride)
-			q2 := avx16Ld(pix, q0Off+2*stride)
-			q3 := avx16Ld(pix, q0Off+3*stride)
-			o2, o1, o0, n0, n1, n2, _, ok := avx16Core[avxW8](&k, p3, p2, p1, p0, q0, q1, q2, q3, eV, iV, hV, m4, mGt4)
-			if ok {
-				avx16St(pix, q0Off-3*stride, o2)
-				avx16St(pix, q0Off-2*stride, o1)
-				avx16St(pix, q0Off-stride, o0)
-				avx16St(pix, q0Off, n0)
-				avx16St(pix, q0Off+stride, n1)
-				avx16St(pix, q0Off+2*stride, n2)
-			}
-		case 6:
-			p2 := avx16Ld(pix, q0Off-3*stride)
-			q2 := avx16Ld(pix, q0Off+2*stride)
-			_, o1, o0, n0, n1, _, _, ok := avx16Core[avxW6](&k, p2, p2, p1, p0, q0, q1, q2, q2, eV, iV, hV, m4, mGt4)
-			if ok {
-				avx16St(pix, q0Off-2*stride, o1)
-				avx16St(pix, q0Off-stride, o0)
-				avx16St(pix, q0Off, n0)
-				avx16St(pix, q0Off+stride, n1)
-			}
-		default:
-			_, o1, o0, n0, n1, _, _, ok := avx16Core[avxW4](&k, p1, p1, p1, p0, q0, q1, q1, q1, eV, iV, hV, m4, mGt4)
-			if ok {
-				avx16St(pix, q0Off-2*stride, o1)
-				avx16St(pix, q0Off-stride, o0)
-				avx16St(pix, q0Off, n0)
-				avx16St(pix, q0Off+stride, n1)
-			}
-		}
+		avx16HorzGroup(&k, unsafeutil.NewRows(pix, q0Off-rh*stride, stride, 32, 2*rh), rh, 0, wd, eV, iV, hV, m4, avx16Mask(nGt4), n16)
 	}
 	return simd
 }
 
-// avx16Rows8 loads 8 rows of eight samples (sixteen bytes each, row r and r+8
-// sharing a register) from p and transposes them into tap vectors.
-func avx16Rows8(pix []byte, p, stride int) (t0, t1, t2, t3, t4, t5, t6, t7 archsimd.Uint8x32) {
-	s8 := 8 * stride
-	var y [8]archsimd.Uint8x32
-	r := p
-	for j := range y {
-		y[j] = avxRows2(pix, r, s8)
-		r += stride
-	}
-	return avxTransposeWords(y[0], y[1], y[2], y[3], y[4], y[5], y[6], y[7])
+// avx16Rows8 loads the eight-sample rows k of lo (rows 0..7) and hi (rows
+// 8..15), row k of hi sharing a register with row k of lo, and transposes
+// them into tap vectors.
+func avx16Rows8(lo, hi unsafeutil.Block[avxR8]) (t0, t1, t2, t3, t4, t5, t6, t7 archsimd.Uint8x32) {
+	return avxTransposeWords(avx16Rows2(lo, hi, 0), avx16Rows2(lo, hi, 1), avx16Rows2(lo, hi, 2), avx16Rows2(lo, hi, 3),
+		avx16Rows2(lo, hi, 4), avx16Rows2(lo, hi, 5), avx16Rows2(lo, hi, 6), avx16Rows2(lo, hi, 7))
 }
 
-// avx16StoreRows8 transposes tap vectors back to rows and stores them.
-func avx16StoreRows8(pix []byte, p, stride int, t0, t1, t2, t3, t4, t5, t6, t7 archsimd.Uint8x32) {
-	var y [8]archsimd.Uint8x32
-	y[0], y[1], y[2], y[3], y[4], y[5], y[6], y[7] = avxTransposeWords(t0, t1, t2, t3, t4, t5, t6, t7)
-	s8 := 8 * stride
-	r := p
-	for j := range y {
-		y[j].GetLo().StoreArray(avxRow16(pix, r))
-		y[j].GetHi().StoreArray(avxRow16(pix, r+s8))
-		r += stride
-	}
+func avx16Rows2(lo, hi unsafeutil.Block[avxR8], k int) archsimd.Uint8x32 {
+	return archsimd.Uint8x32{}.SetLo(archsimd.LoadUint8x16Array(lo.Row16(k))).SetHi(archsimd.LoadUint8x16Array(hi.Row16(k)))
+}
+
+// avx16StoreRows8 transposes tap vectors back to rows and stores them to lo
+// and hi.
+func avx16StoreRows8(lo, hi unsafeutil.Block[avxR8], t0, t1, t2, t3, t4, t5, t6, t7 archsimd.Uint8x32) {
+	y0, y1, y2, y3, y4, y5, y6, y7 := avxTransposeWords(t0, t1, t2, t3, t4, t5, t6, t7)
+	y0.GetLo().StoreArray(lo.Row16(0))
+	y0.GetHi().StoreArray(hi.Row16(0))
+	y1.GetLo().StoreArray(lo.Row16(1))
+	y1.GetHi().StoreArray(hi.Row16(1))
+	y2.GetLo().StoreArray(lo.Row16(2))
+	y2.GetHi().StoreArray(hi.Row16(2))
+	y3.GetLo().StoreArray(lo.Row16(3))
+	y3.GetHi().StoreArray(hi.Row16(3))
+	y4.GetLo().StoreArray(lo.Row16(4))
+	y4.GetHi().StoreArray(hi.Row16(4))
+	y5.GetLo().StoreArray(lo.Row16(5))
+	y5.GetHi().StoreArray(hi.Row16(5))
+	y6.GetLo().StoreArray(lo.Row16(6))
+	y6.GetHi().StoreArray(hi.Row16(6))
+	y7.GetLo().StoreArray(lo.Row16(7))
+	y7.GetHi().StoreArray(hi.Row16(7))
 }
 
 func u16v(x archsimd.Uint8x32) archsimd.Uint16x16 { return x.ReshapeToUint16s() }
 func u8v(x archsimd.Uint16x16) archsimd.Uint8x32  { return x.ReshapeToUint8s() }
 
 // avx16Vertical8 filters a vertical edge across sixteen rows for widths up to
-// 8: p3 is the byte offset of p3 on the first row (eight samples p3..q3 per
-// row are read and written).
-func avx16Vertical8[W avxWidth](k *avx16K, pix []byte, p3, stride int, eV, iV, hV, m4, mGt4 archsimd.Uint16x16) {
-	p := p3
-	t0, t1, t2, t3, t4, t5, t6, t7 := avx16Rows8(pix, p, stride)
+// 8: lo and hi are rows 0..7 and 8..15, eight samples p3..q3 each, read and
+// written.
+func avx16Vertical8[W avxWidth](k *avx16K, lo, hi unsafeutil.Block[avxR8], eV, iV, hV, m4, mGt4 archsimd.Uint16x16) {
+	t0, t1, t2, t3, t4, t5, t6, t7 := avx16Rows8(lo, hi)
 	o2, o1, o0, n0, n1, n2, _, ok := avx16Core[W](k, u16v(t0), u16v(t1), u16v(t2), u16v(t3), u16v(t4), u16v(t5), u16v(t6), u16v(t7), eV, iV, hV, m4, mGt4)
 	if !ok {
 		return
 	}
-	avx16StoreRows8(pix, p, stride, t0, u8v(o2), u8v(o1), u8v(o0), u8v(n0), u8v(n1), u8v(n2), t7)
+	avx16StoreRows8(lo, hi, t0, u8v(o2), u8v(o1), u8v(o0), u8v(n0), u8v(n1), u8v(n2), t7)
 }
 
-// avx16Vertical16 is the wd16 form: sixteen samples p7..q7 per row, p7 the
-// byte offset of p7 on the first row.
-func avx16Vertical16(k *avx16K, pix []byte, p7, stride int, eV, iV, hV, m4, mGt4, m16 archsimd.Uint16x16) {
-	p := p7
+// avx16Vertical16 is the wd16 form: sixteen samples p7..q7 per row, the
+// eight p7..p0 in lo/hi and the eight q0..q7 in lo2/hi2.
+func avx16Vertical16(k *avx16K, lo, hi, lo2, hi2 unsafeutil.Block[avxR8], eV, iV, hV, m4, mGt4, m16 archsimd.Uint16x16) {
 	var t [16]archsimd.Uint16x16
-	a0, a1, a2, a3, a4, a5, a6, a7 := avx16Rows8(pix, p, stride)
-	b0, b1, b2, b3, b4, b5, b6, b7 := avx16Rows8(pix, p+16, stride)
+	a0, a1, a2, a3, a4, a5, a6, a7 := avx16Rows8(lo, hi)
+	b0, b1, b2, b3, b4, b5, b6, b7 := avx16Rows8(lo2, hi2)
 	t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7] = u16v(a0), u16v(a1), u16v(a2), u16v(a3), u16v(a4), u16v(a5), u16v(a6), u16v(a7)
 	t[8], t[9], t[10], t[11], t[12], t[13], t[14], t[15] = u16v(b0), u16v(b1), u16v(b2), u16v(b3), u16v(b4), u16v(b5), u16v(b6), u16v(b7)
 	if !avx16Lpf16(k, &t, eV, iV, hV, m4, mGt4, m16) {
 		return
 	}
-	avx16StoreRows8(pix, p, stride, u8v(t[0]), u8v(t[1]), u8v(t[2]), u8v(t[3]), u8v(t[4]), u8v(t[5]), u8v(t[6]), u8v(t[7]))
-	avx16StoreRows8(pix, p+16, stride, u8v(t[8]), u8v(t[9]), u8v(t[10]), u8v(t[11]), u8v(t[12]), u8v(t[13]), u8v(t[14]), u8v(t[15]))
+	avx16StoreRows8(lo, hi, u8v(t[0]), u8v(t[1]), u8v(t[2]), u8v(t[3]), u8v(t[4]), u8v(t[5]), u8v(t[6]), u8v(t[7]))
+	avx16StoreRows8(lo2, hi2, u8v(t[8]), u8v(t[9]), u8v(t[10]), u8v(t[11]), u8v(t[12]), u8v(t[13]), u8v(t[14]), u8v(t[15]))
+}
+
+// avx16VertGroup runs the width-wd kernel on the sixteen rows of v from row
+// r, from byte column c (p7 at wd 16, else p3).
+func avx16VertGroup(k *avx16K, v unsafeutil.Rows, r, c, wd int, eV, iV, hV, m4, mGt4 archsimd.Uint16x16, n16 uint32) {
+	lo, hi := unsafeutil.BlockAt[avxR8](v, r, c), unsafeutil.BlockAt[avxR8](v, r+8, c)
+	switch wd {
+	case 16:
+		avx16Vertical16(k, lo, hi, unsafeutil.BlockAt[avxR8](v, r, c+16), unsafeutil.BlockAt[avxR8](v, r+8, c+16), eV, iV, hV, m4, mGt4, avx16Mask(n16))
+	case 8:
+		avx16Vertical8[avxW8](k, lo, hi, eV, iV, hV, m4, mGt4)
+	case 6:
+		avx16Vertical8[avxW6](k, lo, hi, eV, iV, hV, m4, mGt4)
+	default:
+		avx16Vertical8[avxW4](k, lo, hi, eV, iV, hV, m4, mGt4)
+	}
 }
 
 // avx16SBVertical is dav1d lpf_h_sb_{y,uv}_16bpc: the vertical edges of one
 // column of units, sixteen rows per kernel call, with arm64's footprint (p3..q3,
-// or p7..q7 at width 16).
+// or p7..q7 at width 16). One view of the call's rows and one of its
+// (l[-1], l[0]) level pairs replace the per-group checks; calls whose views do
+// not fit take the group-by-group edge driver.
 func avx16SBVertical(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) (simd int) {
+	gt4All := vm[1] | vm[2]
+	all := vm[0] | gt4All
+	if all == 0 {
+		return 0
+	}
+	hiG := (31 - bits.LeadingZeros32(all)) >> 2
+	reach := 8
+	if vm[2] != 0 {
+		reach = 16
+	}
+	if rowBytes < reach || !unsafeutil.RowsFit(len(pix), off-reach, stride, 2*reach, 16*hiG+16) || !unsafeutil.RowsFit(len(lvl), 4*lvlOff-4, 4*lvlStride, 8, 4*hiG+4) {
+		return avx16SBVerticalEdge(pix, off, stride, rowBytes, bitDepth, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
+	}
+	v := unsafeutil.NewRows(pix, off-reach, stride, 2*reach, 16*hiG+16)
+	lv := unsafeutil.NewRows(lvl, 4*lvlOff-4, 4*lvlStride, 8, 4*hiG+4)
+	c16, c8 := reach-16, reach-8 // p7 and p3 byte columns of the view
+	bd8 := uint(bitDepth - 8)
+	k := newAVX16K(bd8)
+	sel := avx16LevelSel(comp)
+	sharp0, sharp1 := uint64(lut.Sharp[0]), archsimd.BroadcastUint16x16(uint16(lut.Sharp[1]))
+	for g := 0; g <= hiG; g++ {
+		sh := 4 * uint(g)
+		nib := (all >> sh) & 0xf
+		if nib == 0 {
+			continue
+		}
+		nGt4 := (gt4All >> sh) & 0xf
+		n16 := (vm[2] >> sh) & 0xf
+		cur, prev := avx16LevelPairs(lv, 4*g)
+		eV, iV, hV, m4, ok := avx16GroupLimits(cur, prev, sel, nib, sharp0, sharp1, bd8)
+		if !ok {
+			continue
+		}
+		simd++
+		wd := avxSBWidth(nGt4, n16, luma)
+		c := c8
+		if wd == 16 {
+			c = c16
+		}
+		avx16VertGroup(&k, v, 16*g, c, wd, eV, iV, hV, m4, avx16Mask(nGt4), n16)
+	}
+	return simd
+}
+
+// avx16LevelPairs splits the four (l[-1], l[0]) cell pairs of rows r..r+3 of
+// lv (one per row) into the l[0] cells (cur) and the l[-1] cells (prev), each
+// in both 128-bit lanes.
+func avx16LevelPairs(lv unsafeutil.Rows, r int) (cur, prev archsimd.Uint8x32) {
+	lg := lv.Sub(r, 0, 8, 4)
+	le := binary.LittleEndian
+	var c, p [8]uint32
+	x := le.Uint64(lg.Row8(0, 0)[:])
+	c[0], p[0] = uint32(x>>32), uint32(x)
+	x = le.Uint64(lg.Row8(1, 0)[:])
+	c[1], p[1] = uint32(x>>32), uint32(x)
+	x = le.Uint64(lg.Row8(2, 0)[:])
+	c[2], p[2] = uint32(x>>32), uint32(x)
+	x = le.Uint64(lg.Row8(3, 0)[:])
+	c[3], p[3] = uint32(x>>32), uint32(x)
+	c[4], c[5], c[6], c[7] = c[0], c[1], c[2], c[3]
+	p[4], p[5], p[6], p[7] = p[0], p[1], p[2], p[3]
+	return archsimd.LoadUint32x8Array(&c).ReshapeToUint8s(), archsimd.LoadUint32x8Array(&p).ReshapeToUint8s()
+}
+
+// avx16SBVerticalEdge is avx16SBVertical group by group, for calls that
+// reach the end of pix, the row or the level map.
+func avx16SBVerticalEdge(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *SBLUT) (simd int) {
 	bd8 := uint(bitDepth - 8)
 	k := newAVX16K(bd8)
 	gt4All := vm[1] | vm[2]
@@ -497,12 +702,11 @@ func avx16SBVertical(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [
 		wd := avxSBWidth(nGt4, n16, luma)
 		u0 := lvlOff + 4*g*lvlStride
 		q0Off := off + 16*g*stride
-		lastRow := q0Off + 15*stride
 		reach := 8
 		if wd == 16 {
 			reach = 16
 		}
-		if rowBytes < reach || q0Off-reach < 0 || lastRow+reach > len(pix) {
+		if rowBytes < reach || !unsafeutil.RowsFit(len(pix), q0Off-reach, stride, 2*reach, 16) {
 			filterSBVertical16Scalar(pix, q0Off, stride, bitDepth, sbGroupSub4(vm, sh), luma, lvl, u0, lvlStride, comp, lut)
 			continue
 		}
@@ -512,17 +716,7 @@ func avx16SBVertical(pix []byte, off, stride, rowBytes int, bitDepth uint8, vm [
 			continue
 		}
 		simd++
-		mGt4 := avx16Mask(nGt4)
-		switch wd {
-		case 16:
-			avx16Vertical16(&k, pix, q0Off-16, stride, eV, iV, hV, m4, mGt4, avx16Mask(n16))
-		case 8:
-			avx16Vertical8[avxW8](&k, pix, q0Off-8, stride, eV, iV, hV, m4, mGt4)
-		case 6:
-			avx16Vertical8[avxW6](&k, pix, q0Off-8, stride, eV, iV, hV, m4, mGt4)
-		default:
-			avx16Vertical8[avxW4](&k, pix, q0Off-8, stride, eV, iV, hV, m4, mGt4)
-		}
+		avx16VertGroup(&k, unsafeutil.NewRows(pix, q0Off-reach, stride, 2*reach, 16), 0, 0, wd, eV, iV, hV, m4, avx16Mask(nGt4), n16)
 	}
 	return simd
 }
