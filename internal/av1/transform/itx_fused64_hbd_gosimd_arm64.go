@@ -22,7 +22,8 @@ import (
 // to the 16bpc prediction with the saturating add clipped to the bit depth.
 // A declined block is left untouched for the staged path.
 
-// itx64ColStripAddHBD is itx64ColStripAdd onto 16bpc samples.
+// itx64ColStripAddHBD runs the 64x64 column pass for columns c0..c0+7 from
+// tmp rows 0..inRows-1 and adds the result onto 16bpc samples.
 func itx64ColStripAddHBD(tmp *[32 * 64]int16, c0 int, inRows int, dst unsafe.Pointer, dstStride int, pred unsafe.Pointer, predStride int, maxV archsimd.Int16x8) {
 	var in [32]archsimd.Int16x8
 	for r := 0; r < inRows; r++ {
