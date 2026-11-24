@@ -192,7 +192,25 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 	} else if src, stride, ok = mc8SourceEdge(ref, refX, refY, w, h, subX != 0, subY != 0, &scratch.edge); !ok {
 		return false
 	}
-	mc8PutRun(dst.Pix[dOff:dOff+dExt], dst.Stride, src, stride, w, h, subX, subY, &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15], scratch)
+	// mc8PutRun written out: one call level less for the single-pass kernels.
+	d, ds := dst.Pix[dOff:dOff+dExt], dst.Stride
+	phx, phy := &mc8Phases[kx][subX&15], &mc8Phases[ky][subY&15]
+	if w == 4 {
+		mc8PutRun(d, ds, src, stride, w, h, subX, subY, phx, phy, scratch)
+		return true
+	}
+	switch {
+	case subX != 0 && subY != 0:
+		im := scratch.imHBD[:]
+		mc8H6ToI32(src, stride, w, h+5, phx, im, mc8PutH6ToI32Rnd)
+		mc8PutV6FromI32(im, w, h, phy, d, ds)
+	case subX != 0:
+		mc8PutH6(src, stride, w, h, phx, d, ds)
+	case w&15 == 0:
+		mc8PutV6W16(src, uint32(stride), w, h, phy, d, uint32(ds))
+	default:
+		mc8PutV6(src, stride, w, h, phy, d, ds)
+	}
 	return true
 }
 
