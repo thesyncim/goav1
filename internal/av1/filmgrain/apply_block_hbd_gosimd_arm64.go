@@ -345,7 +345,9 @@ func fgLumaBlockHBD(dst, src []uint16, grain []int16, scaling []uint8, table *[S
 
 // fgChromaBlockHBD is fgLumaBlockHBD for a chroma block.
 func fgChromaBlockHBD(dst, src, luma []uint16, grain []int16, scaling []uint8, table *[ScalingTableSize]uint8, params ChromaRowParams, shiftX, shiftY int, offsets [2][2]uint8, blockX, blockWidth, xStart, yStart int, k *fgConstsHBD) {
-	if blockWidth != LumaBlockSize>>shiftX {
+	// The kernel averages full luma pairs, so an odd-width edge block (whose
+	// last column has a single luma sample) takes the scalar path.
+	if blockWidth != LumaBlockSize>>shiftX || oddLumaEdge(params, blockX, blockWidth) {
 		applyChromaBlock(dst, src, luma, grain, scaling, params, shiftX, shiftY, offsets, blockX, blockWidth, xStart, yStart)
 		return
 	}

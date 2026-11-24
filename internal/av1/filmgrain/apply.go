@@ -41,6 +41,12 @@ type ChromaRowParams struct {
 	ClipToRestrictedRange bool
 	MatrixIdentity        bool
 	ChromaScalingFromLuma bool
+	// OddLumaWidth reports an odd luma plane width. With SubsamplingX the
+	// last chroma column then covers only luma sample w-1, and its scaling
+	// index averages that sample with itself rather than with the sample
+	// past the frame edge, as dav1d's apply_grain_row padding
+	// (luma[w] = luma[w-1]) and libaom's extend_even do.
+	OddLumaWidth bool
 
 	ChromaMult     uint8
 	ChromaLumaMult uint8
@@ -373,13 +379,22 @@ func gatherChromaScaleRow(scale []uint16, idxBuf []uint16, srcRow []uint16, luma
 	if params.ChromaScalingFromLuma {
 		lumaY := y << shiftY
 		lumaBase := lumaY*params.LumaStride + (xBase << shiftX)
+		// pairs is the number of columns whose luma average reads two
+		// samples; an odd-width edge column reads only its own sample.
+		pairs := n
+		if shiftX != 0 && oddLumaEdge(params, xBase, n) {
+			pairs = n - 1
+		}
 		switch bitDepth {
 		case 8:
 			if shiftX != 0 {
-				for x := 0; x < n; x++ {
+				for x := 0; x < pairs; x++ {
 					idx := lumaBase + (x << 1)
 					avg := (int(luma[idx]) + int(luma[idx+1]) + 1) >> 1
 					scale[x] = uint16(scaleLUT8(scaling, avg))
+				}
+				if pairs < n {
+					scale[pairs] = uint16(scaleLUT8(scaling, int(luma[lumaBase+(pairs<<1)])))
 				}
 			} else {
 				for x := 0; x < n; x++ {
@@ -389,9 +404,12 @@ func gatherChromaScaleRow(scale []uint16, idxBuf []uint16, srcRow []uint16, luma
 		case 10:
 			if shiftX != 0 {
 				idx := idxBuf[:n]
-				for x := 0; x < n; x++ {
+				for x := 0; x < pairs; x++ {
 					li := lumaBase + (x << 1)
 					idx[x] = uint16((int(luma[li]) + int(luma[li+1]) + 1) >> 1)
+				}
+				if pairs < n {
+					idx[pairs] = luma[lumaBase+(pairs<<1)]
 				}
 				buildScaleRow10(scale, idx, scaling)
 			} else {
@@ -399,10 +417,13 @@ func gatherChromaScaleRow(scale []uint16, idxBuf []uint16, srcRow []uint16, luma
 			}
 		case 12:
 			if shiftX != 0 {
-				for x := 0; x < n; x++ {
+				for x := 0; x < pairs; x++ {
 					idx := lumaBase + (x << 1)
 					avg := (int(luma[idx]) + int(luma[idx+1]) + 1) >> 1
 					scale[x] = uint16(scaleLUT12(scaling, avg))
+				}
+				if pairs < n {
+					scale[pairs] = uint16(scaleLUT12(scaling, int(luma[lumaBase+(pairs<<1)])))
 				}
 			} else {
 				for x := 0; x < n; x++ {
@@ -411,10 +432,13 @@ func gatherChromaScaleRow(scale []uint16, idxBuf []uint16, srcRow []uint16, luma
 			}
 		default:
 			if shiftX != 0 {
-				for x := 0; x < n; x++ {
+				for x := 0; x < pairs; x++ {
 					idx := lumaBase + (x << 1)
 					avg := (int(luma[idx]) + int(luma[idx+1]) + 1) >> 1
 					scale[x] = uint16(scaleLUT(scaling, avg, bitDepth))
+				}
+				if pairs < n {
+					scale[pairs] = uint16(scaleLUT(scaling, int(luma[lumaBase+(pairs<<1)]), bitDepth))
 				}
 			} else {
 				for x := 0; x < n; x++ {
@@ -479,7 +503,7 @@ func chromaScalingIndex(src uint16, luma []uint16, params ChromaRowParams, shift
 	lumaY := y << chromaSubsamplingShift(params.SubsamplingY)
 	lumaIndex := lumaY*params.LumaStride + lumaX
 	avg := int(luma[lumaIndex])
-	if shiftX != 0 {
+	if shiftX != 0 && !(params.OddLumaWidth && x == params.Width-1) {
 		avg = (avg + int(luma[lumaIndex+1]) + 1) >> 1
 	}
 	if params.ChromaScalingFromLuma {
@@ -560,7 +584,6 @@ func validateChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16,
 		params.Height <= 0 ||
 		params.Height > blockHeight ||
 		params.Stride < params.Width ||
-		params.LumaStride < ((params.Width-1)<<shiftX)+1+shiftX ||
 		params.Row < 0 ||
 		(params.BitDepth != 8 && params.BitDepth != 10 && params.BitDepth != 12) ||
 		params.ScalingShift < 8 ||
@@ -575,16 +598,7 @@ func validateChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16,
 	if !ok {
 		return ErrInvalidParams
 	}
-	lumaRows := ((params.Height - 1) << shiftY) + 1
-	lumaRowStride, ok := checkedMulNonNegative(lumaRows-1, params.LumaStride)
-	if !ok {
-		return ErrInvalidParams
-	}
-	lumaTail, ok := checkedAdd(((params.Width-1)<<shiftX)+1, shiftX)
-	if !ok {
-		return ErrInvalidParams
-	}
-	lumaNeed, ok := checkedAdd(lumaRowStride, lumaTail)
+	lumaNeed, ok := chromaRowLumaNeed(params, shiftX, shiftY)
 	if !ok {
 		return ErrInvalidParams
 	}
@@ -592,6 +606,38 @@ func validateChromaRow(dst []uint16, src []uint16, luma []uint16, grain []int16,
 		return ErrInvalidParams
 	}
 	return nil
+}
+
+// chromaRowLumaNeed returns the luma samples a chroma row band reads: up to
+// the last row's luma width, which is Width<<shiftX, one less when an odd
+// luma width leaves the last subsampled column a single sample.
+func chromaRowLumaNeed(params ChromaRowParams, shiftX int, shiftY int) (int, bool) {
+	if params.OddLumaWidth && shiftX == 0 {
+		return 0, false
+	}
+	lumaRows := ((params.Height - 1) << shiftY) + 1
+	lumaRowStride, ok := checkedMulNonNegative(lumaRows-1, params.LumaStride)
+	if !ok {
+		return 0, false
+	}
+	lumaWidth, ok := checkedMulNonNegative(params.Width, 1<<shiftX)
+	if !ok {
+		return 0, false
+	}
+	if params.OddLumaWidth {
+		lumaWidth--
+	}
+	if params.LumaStride < lumaWidth {
+		return 0, false
+	}
+	return checkedAdd(lumaRowStride, lumaWidth)
+}
+
+// oddLumaEdge reports whether the chroma run [xBase, xBase+n) of a
+// horizontally subsampled plane ends at an odd-width luma edge, so its last
+// column must not read the luma sample past the frame.
+func oddLumaEdge(params ChromaRowParams, xBase int, n int) bool {
+	return params.OddLumaWidth && xBase+n == params.Width
 }
 
 func checkedAdd(a int, b int) (int, bool) {

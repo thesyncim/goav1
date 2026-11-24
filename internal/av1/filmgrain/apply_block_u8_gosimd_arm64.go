@@ -346,7 +346,9 @@ func fgLumaBlockU8(dst, src []uint8, grain []int16, scaling []uint8, params Luma
 
 // fgChromaBlockU8 is fgLumaBlockU8 for a chroma block.
 func fgChromaBlockU8(dst, src, luma []uint8, grain []int16, scaling []uint8, params ChromaRowParams, shiftX, shiftY int, offsets [2][2]uint8, blockX, blockWidth, xStart, yStart int, k *fgConstsU8) {
-	if blockWidth != LumaBlockSize>>shiftX {
+	// The kernel averages full luma pairs, so an odd-width edge block (whose
+	// last column has a single luma sample) takes the scalar path.
+	if blockWidth != LumaBlockSize>>shiftX || oddLumaEdge(params, blockX, blockWidth) {
 		applyChromaBlockU8(dst, src, luma, grain, scaling, params, shiftX, shiftY, offsets, blockX, blockWidth, xStart, yStart)
 		return
 	}

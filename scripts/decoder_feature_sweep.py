@@ -219,6 +219,17 @@ case("film-grain-8", LD + ["--film-grain-test=8"])
 case("film-grain-15", LD + ["--film-grain-test=15"])
 case("film-grain-10bit", LD + ["--film-grain-test=3"], pix="yuv420p10le")
 case("film-grain-444", LD + ["--film-grain-test=5"], pix="yuv444p")
+# Odd frame sizes: the last subsampled chroma column covers one luma sample.
+# 127 wide ends on a full 16-column chroma block, 101 wide on a partial one.
+# The 4:2:0 and 4:2:2 grain parameters are ones whose output reads that column;
+# the 4:4:4 clips are controls with no subsampled column.
+case("film-grain-odd-127x97", LD + ["--film-grain-test=1"], w=127, h=97, limit=4)
+case("film-grain-odd-101x63", LD + ["--film-grain-test=4"], w=101, h=63, limit=4)
+case("film-grain-odd-10bit-127x97", LD + ["--film-grain-test=5"], w=127, h=97, pix="yuv420p10le", limit=4)
+case("film-grain-odd-422-127x97", LD + ["--film-grain-test=12"], w=127, h=97, pix="yuv422p", limit=4)
+case("film-grain-odd-422-10bit-101x63", LD + ["--film-grain-test=16"], w=101, h=63, pix="yuv422p10le", limit=4)
+case("film-grain-odd-444-127x97", LD + ["--film-grain-test=5"], w=127, h=97, pix="yuv444p", limit=4)
+case("film-grain-odd-444-10bit-101x63", LD + ["--film-grain-test=15"], w=101, h=63, pix="yuv444p10le", limit=4)
 case("denoise-grain", ["--denoise-noise-level=25"], limit=8)
 
 # Frame size tools.

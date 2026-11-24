@@ -798,6 +798,7 @@ func frameWorkFilmGrainChromaRowParams(plan FrameWorkFilmGrainPostFilterPlan, pl
 		ClipToRestrictedRange: plan.ClipToRestrictedRange,
 		MatrixIdentity:        plan.MatrixIdentity,
 		ChromaScalingFromLuma: params.ChromaScalingFromLuma,
+		OddLumaWidth:          plan.Format.SubsamplingX && plan.Format.Width&1 != 0,
 	}
 	if plane == filmgrain.ChromaPlaneCb {
 		out.ChromaMult = params.CbMult
