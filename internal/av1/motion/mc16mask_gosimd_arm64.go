@@ -72,15 +72,44 @@ func mc16BlendAvg(dst unsafe.Pointer, dstStride int, a, b unsafe.Pointer, w, h, 
 		}
 		return
 	}
+	avg := func(pa, pb, d unsafe.Pointer) {
+		va := archsimd.LoadUint16x8Array((*[8]uint16)(pa))
+		vb := archsimd.LoadUint16x8Array((*[8]uint16)(pb))
+		va.Average(vb).Sub(va.Xor(vb).And(one)).SubSaturated(bias).Shift(sh).Min(maxV).StoreArray((*[8]uint16)(d))
+	}
 	ro := w * 2
-	for r := 0; r < h; r++ {
-		pa := unsafe.Add(a, r*ro)
-		pb := unsafe.Add(b, r*ro)
-		d := unsafe.Add(dst, r*dstStride)
-		for c := 0; c < ro; c += 16 {
-			va := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(pa, c)))
-			vb := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(pb, c)))
-			va.Average(vb).Sub(va.Xor(vb).And(one)).SubSaturated(bias).Shift(sh).Min(maxV).StoreArray((*[8]uint16)(unsafe.Add(d, c)))
+	switch {
+	case w == 8:
+		// Two rows per step (dav1d avg_16bpc's w8 loop).
+		r := 0
+		for ; r+2 <= h; r += 2 {
+			o := r * 16
+			d := unsafe.Add(dst, r*dstStride)
+			avg(unsafe.Add(a, o), unsafe.Add(b, o), d)
+			avg(unsafe.Add(a, o+16), unsafe.Add(b, o+16), unsafe.Add(d, dstStride))
+		}
+		if r < h {
+			avg(unsafe.Add(a, r*16), unsafe.Add(b, r*16), unsafe.Add(dst, r*dstStride))
+		}
+	case w&15 == 0:
+		// Sixteen samples per step.
+		for r := 0; r < h; r++ {
+			pa := unsafe.Add(a, r*ro)
+			pb := unsafe.Add(b, r*ro)
+			d := unsafe.Add(dst, r*dstStride)
+			for c := 0; c < ro; c += 32 {
+				avg(unsafe.Add(pa, c), unsafe.Add(pb, c), unsafe.Add(d, c))
+				avg(unsafe.Add(pa, c+16), unsafe.Add(pb, c+16), unsafe.Add(d, c+16))
+			}
+		}
+	default:
+		for r := 0; r < h; r++ {
+			pa := unsafe.Add(a, r*ro)
+			pb := unsafe.Add(b, r*ro)
+			d := unsafe.Add(dst, r*dstStride)
+			for c := 0; c < ro; c += 16 {
+				avg(unsafe.Add(pa, c), unsafe.Add(pb, c), unsafe.Add(d, c))
+			}
 		}
 	}
 }

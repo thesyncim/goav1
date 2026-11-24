@@ -34,11 +34,10 @@ import (
 	"simd/archsimd"
 )
 
-// storeU16x8 writes the eight uint16 lanes of v to dst[0:16], little-endian.
+// storeU16x8 writes the eight uint16 lanes of v to dst[0:16], little-endian:
+// one vector store (the lanes are already in memory order on arm64).
 func storeU16x8(dst []byte, v archsimd.Int16x8) {
-	r := v.ToBits().ReshapeToUint64s()
-	binary.LittleEndian.PutUint64(dst, r.GetElem(0))
-	binary.LittleEndian.PutUint64(dst[8:], r.GetElem(1))
+	v.ToBits().ReshapeToUint8s().StoreArray((*[16]byte)(dst[:16]))
 }
 
 // paethW4SIMD is the 8-bit kernel for width 4 and even height. Lanes 0..3 hold
@@ -283,46 +282,47 @@ func paeth16SIMD(block planeBlock, above []uint16, left []uint16, aboveLeft uint
 	}
 }
 
-// smooth16Cols holds the per-column 16-bit SMOOTH constants for one 8-column
-// block: the weights (as int16 lanes) and the (256-wW)*rightPred products split
-// into the low and high four lanes.
+// smooth16Cols holds the per-column 16-bit SMOOTH terms of one 8-column
+// block as int32 lanes (low and high four columns): top - bottom, and the
+// column weight scaled by 2^7.
 type smooth16Cols struct {
-	wW    [8]archsimd.Int16x8
-	cwRLo [8]archsimd.Int32x4
-	cwRHi [8]archsimd.Int32x4
+	tmb [8][2]archsimd.Int32x4
+	ww  [8][2]archsimd.Int32x4
 }
 
-// smooth16SIMD is the 16-bit 2D SMOOTH kernel for width a multiple of 8. Each
-// product is at most 4095*255, so the arithmetic is done in int32 lanes.
+// smooth16SIMD is the 16-bit 2D SMOOTH kernel for width a multiple of 8, in
+// the factored form of the 8-bit kernels:
+//
+//	pred = (256*bottom + wH*(top - bottom) + 256*right + wW*(left - right) + 256) >> 9
+//
+// evaluated as int32 multiply-accumulates (MLA) with the constant terms in
+// the accumulator seed and every term scaled by 2^7, so the >> 9 is the high
+// halves of the int32 sums (one UZP2 for eight samples). The scaled sum is at
+// most 2^7 * (512*4095 + 256) < 2^31 and its partial sums are non-negative
+// combinations of the same bound, so the arithmetic is exact.
 func smooth16SIMD(block planeBlock, weightsW []uint16, weightsH []uint16, above []uint16, left []uint16, belowPred uint16, rightPred uint16) {
 	width, height := block.width, block.height
 	blocks := width / 8
-	rightV := archsimd.BroadcastInt32x4(int32(rightPred))
-	scale32 := archsimd.BroadcastInt32x4(smoothScale)
-	belowV := archsimd.BroadcastInt32x4(int32(belowPred))
-	round := archsimd.BroadcastInt32x4(256)
+	bottomV := archsimd.BroadcastInt16x8(int16(belowPred))
+	seed := archsimd.BroadcastInt32x4((256*int32(belowPred) + 256*int32(rightPred) + 256) << 7)
 	var cols smooth16Cols
 	for b := 0; b < blocks; b++ {
-		w := loadU16x8(weightsW[b*8:])
-		cols.wW[b] = w
-		cols.cwRLo[b] = scale32.Sub(w.ExtendLo4ToInt32()).Mul(rightV)
-		cols.cwRHi[b] = scale32.Sub(w.HiToLo().ExtendLo4ToInt32()).Mul(rightV)
+		d := loadU16x8(above[b*8:]).Sub(bottomV)
+		cols.tmb[b] = [2]archsimd.Int32x4{d.ExtendLo4ToInt32(), d.HiToLo().ExtendLo4ToInt32()}
+		w := loadU16x8(weightsW[b*8:]).ShiftAllLeft(7)
+		cols.ww[b] = [2]archsimd.Int32x4{w.ExtendLo4ToInt32(), w.HiToLo().ExtendLo4ToInt32()}
 	}
-	for row := 0; row < height; row++ {
-		wH := int16(weightsH[row])
-		wHV := archsimd.BroadcastInt16x8(wH)
-		cbH := scale32.Sub(archsimd.BroadcastInt32x4(int32(wH))).Mul(belowV)
-		lV := archsimd.BroadcastInt16x8(int16(left[row]))
+	weightsH, left = weightsH[:height], left[:height]
+	for row := range height {
+		wH := archsimd.BroadcastInt32x4(int32(weightsH[row]) << 7)
+		lmr := archsimd.BroadcastInt32x4(int32(left[row]) - int32(rightPred))
 		dst := block.pix[row*block.stride:][:width*2]
-		for b := 0; b < blocks; b++ {
-			aV := loadU16x8(above[b*8:])
-			vLo := wHV.MulWidenLo(aV).Add(cbH)
-			vHi := wHV.MulWidenLo(aV.HiToLo()).Add(cbH)
-			hLo := cols.wW[b].MulWidenLo(lV).Add(cols.cwRLo[b])
-			hHi := cols.wW[b].HiToLo().MulWidenLo(lV).Add(cols.cwRHi[b])
-			loOut := vLo.Add(hLo).Add(round).Shift(shr9I32)
-			hiOut := vHi.Add(hHi).Add(round).Shift(shr9I32)
-			storeU16x8(dst[b*16:], cflTruncateInt32PairToInt16(loOut, hiOut))
+		for b := range cols.tmb[:blocks] {
+			lo := cols.ww[b][0].MulAdd(lmr, seed)
+			hi := cols.ww[b][1].MulAdd(lmr, seed)
+			lo = cols.tmb[b][0].MulAdd(wH, lo)
+			hi = cols.tmb[b][1].MulAdd(wH, hi)
+			lo.ToBits().ReshapeToUint16s().ConcatOdd(hi.ToBits().ReshapeToUint16s()).ReshapeToUint8s().StoreArray((*[16]byte)(dst[b*16:]))
 		}
 	}
 }

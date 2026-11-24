@@ -22,7 +22,6 @@ var (
 	shr6I32  = archsimd.BroadcastInt32x4(-6)
 	shr31I32 = archsimd.BroadcastInt32x4(-31)
 	shr8I32  = archsimd.BroadcastInt32x4(-smoothShift1D)
-	shr9I32  = archsimd.BroadcastInt32x4(-smoothShiftFull)
 )
 
 // narrowU16ToU8 narrows eight uint16 lanes already in [0,255] to bytes (UQXTN).
