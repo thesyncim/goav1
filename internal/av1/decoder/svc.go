@@ -260,6 +260,16 @@ func (s *FrameWorkState) RunEventWithContextAndExternalReferencesWithPostPublish
 	s.sharedFrameContextGlobalSurface = globalSurface
 	defer s.clearSharedFrameContext()
 
+	// A new coded video sequence drops every reference. Here the reference
+	// slots hold caller-namespace surface IDs, so release them through
+	// releaser, as finishExternal does, before PlanEvent's reset would hand
+	// them to framePool as local indices.
+	if event != nil && event.NewCodedVideoSequence && releaser != nil {
+		if err := releaseExternalReferences(refs, releases, releaser); err != nil {
+			return FrameWorkEventResult{}, err
+		}
+	}
+
 	step, output, referenceCount, references, err := s.planEventWithExternalReferenceContext(refs, framePool, sequence, event, align, referenceSurfaces, referenceFrames, workers, spans, jobs, batches, releases, provider)
 	if err != nil {
 		return FrameWorkEventResult{}, err
@@ -278,6 +288,27 @@ func (s *FrameWorkState) RunEventWithContextAndExternalReferencesWithPostPublish
 		ReferenceCount: referenceCount,
 		Run:            run,
 	}, nil
+}
+
+// releaseExternalReferences clears every reference slot and hands the
+// surfaces they held to releaser. refs is updated only after the release
+// succeeds.
+func releaseExternalReferences(refs *SurfaceReferences, releases []int, releaser FrameSurfaceReleaser) error {
+	if refs == nil {
+		return ErrInvalidSurfaceReference
+	}
+	next := *refs
+	count, err := next.ReleaseAll(releases)
+	if err != nil {
+		return err
+	}
+	if count != 0 {
+		if err := releaser.ReleaseFrameSurfaces(releases[:count]); err != nil {
+			return err
+		}
+	}
+	*refs = next
+	return nil
 }
 
 func (s *FrameWorkState) clearSharedFrameContext() {
