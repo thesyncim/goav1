@@ -51,10 +51,10 @@ func originalRowGroupLevel(c int32, step, dcStep int32, ts uint8) int16 {
 // Models the frozen original two-pass result, including the SIMD int32
 // intermediate before the int64 widening products and its later DC correction.
 // The separate loop deliberately does not share the fused operation order.
-func originalRowGroupDiff(coeff []int32, n int, live uint8, q Quantizer, ts uint8) ([]int16, int64, int64) {
+func originalRowGroupDiff(coeff []int32, n int, live uint8, cols int, q Quantizer, ts uint8) ([]int16, int64, int64) {
 	levels := make([]int16, n*n)
 	for i, c := range coeff[:n*n] {
-		if live&(1<<uint((i%n)/4)) == 0 {
+		if live&(1<<uint((i%n)/4)) == 0 || i/n >= cols {
 			continue
 		}
 		step := q.AC
@@ -108,32 +108,43 @@ func TestQuantizeBRowGroupsDiffOriginalNumeric(t *testing.T) {
 						coeff[i] = rng.Int31n(65536) - 32768
 					case 2:
 						coeff[i] = int32((i%9)-4) * q.AC / 4
+					case 3:
+						// Around the zero bins: zbin-2..zbin+2 of both signs,
+						// mostly zero so the zero-bin early-out is taken.
+						_, acZ := ZeroBinB(q, ts)
+						if i%7 < 3 {
+							coeff[i] = (acZ + int32(i%5) - 2) * int32(1-2*(i%2))
+						}
 					}
 				}
 				before := append([]int32(nil), coeff...)
-				want, wantDiff, wantRate := originalRowGroupDiff(coeff, n, uint8(mask), q, ts)
+				want, wantDiff, wantRate := originalRowGroupDiff(coeff, n, uint8(mask), n, q, ts)
 				old := make([]int16, n*n)
 				oldNZ := QuantizeBRowGroupsTrusted(old, coeff, n, uint8(mask), q, ts)
 				if !reflect.DeepEqual(old, want) || oldNZ != (wantRate != 0) {
 					t.Fatalf("original quantizer mismatch n=%d mask=%x q=%+v ts=%d", n, mask, q, ts)
 				}
+				// The live-column bound: the full width, SVT's N2 and N4
+				// shapes and the DC column alone.
+				cols := []int{n, n / 2, max(n/4, 1), 1}[(mask+qi)%4]
+				want, wantDiff, wantRate = originalRowGroupDiff(coeff, n, uint8(mask), cols, q, ts)
 				got := make([]int16, n*n+8)
 				for i := range got {
 					got[i] = 0x5a5a
 				}
 				iscan := testISCAN(rng, n)
-				diff, rate, eob, handled := TryQuantizeBRowGroupsDiffTrusted(got, coeff, n, uint8(mask), q, ts, iscan)
-				wantHandled := quantizeBRowGroupsDiffImpl != nil && bits.Len32(uint32(q.AC))-1 >= int(ts)
+				diff, rate, eob, handled := TryQuantizeBRowGroupsDiffTrusted(got, coeff, n, uint8(mask), cols, testBParams(q, ts), iscan)
+				wantHandled := quantizeBRowGroupsDiffImpl != nil && bits.Len32(uint32(q.AC))-1 >= int(ts) && bits.Len32(uint32(q.DC))-1 >= int(ts)
 				if handled != wantHandled {
 					t.Fatalf("handled=%v want %v n=%d q=%+v ts=%d", handled, wantHandled, n, q, ts)
 				}
 				if handled {
 					handledCount++
 					if wantEOB := testEOB(want, iscan); eob != wantEOB {
-						t.Fatalf("n=%d mask=%x q=%+v ts=%d: eob %d want %d", n, mask, q, ts, eob, wantEOB)
+						t.Fatalf("n=%d mask=%x cols=%d q=%+v ts=%d: eob %d want %d", n, mask, cols, q, ts, eob, wantEOB)
 					}
 					if !reflect.DeepEqual(got[:n*n], want) || diff != wantDiff || rate != wantRate {
-						t.Fatalf("n=%d mask=%x q=%+v ts=%d: diff/rate=%d/%d want=%d/%d levelsEqual=%v", n, mask, q, ts, diff, rate, wantDiff, wantRate, reflect.DeepEqual(got[:n*n], want))
+						t.Fatalf("n=%d mask=%x cols=%d q=%+v ts=%d: diff/rate=%d/%d want=%d/%d levelsEqual=%v", n, mask, cols, q, ts, diff, rate, wantDiff, wantRate, reflect.DeepEqual(got[:n*n], want))
 					}
 				} else {
 					for _, v := range got[:n*n] {
@@ -160,9 +171,9 @@ func TestQuantizeBRowGroupsDiffOriginalNumeric(t *testing.T) {
 			var coeff [64]int32
 			var got [64]int16
 			coeff[0] = dc
-			want, wantDiff, wantRate := originalRowGroupDiff(coeff[:], 8, 3, q, 0)
+			want, wantDiff, wantRate := originalRowGroupDiff(coeff[:], 8, 3, 8, q, 0)
 			iscan := testISCAN(rand.New(rand.NewSource(int64(dc))), 8)
-			diff, rate, eob, handled := TryQuantizeBRowGroupsDiffTrusted(got[:], coeff[:], 8, 3, q, 0, iscan)
+			diff, rate, eob, handled := TryQuantizeBRowGroupsDiffTrusted(got[:], coeff[:], 8, 3, 8, testBParams(q, 0), iscan)
 			if handled {
 				handledCount++
 				if wantEOB := testEOB(want, iscan); eob != wantEOB {
@@ -189,7 +200,7 @@ func TestQuantizeBRowGroupsDiffDeclinesOverlapAndUnsupported(t *testing.T) {
 		}
 		levels := unsafe.Slice((*int16)(unsafe.Pointer(&backing[0])), 2*len(backing))
 		before := append([]int32(nil), backing...)
-		if _, _, _, handled := TryQuantizeBRowGroupsDiffTrusted(levels[offset:offset+64], backing[:64], n, 3, Quantizer{120, 140}, 0, make([]int16, 64)); handled {
+		if _, _, _, handled := TryQuantizeBRowGroupsDiffTrusted(levels[offset:offset+64], backing[:64], n, 3, n, testBParams(Quantizer{120, 140}, 0), make([]int16, 64)); handled {
 			t.Fatalf("overlap offset=%d accepted", offset)
 		}
 		if !reflect.DeepEqual(backing, before) {
@@ -214,7 +225,7 @@ func TestQuantizeBRowGroupsDiffDeclinesOverlapAndUnsupported(t *testing.T) {
 			qcoeff[i] = 123
 		}
 		before := append([]int16(nil), qcoeff...)
-		if _, _, _, handled := TryQuantizeBRowGroupsDiffTrusted(qcoeff, coeff, tc.n, 0xff, tc.q, tc.ts, make([]int16, 64)); handled {
+		if _, _, _, handled := TryQuantizeBRowGroupsDiffTrusted(qcoeff, coeff, tc.n, 0xff, tc.n, testBParams(tc.q, tc.ts), make([]int16, 64)); handled {
 			t.Fatalf("unsupported input accepted: %+v", tc)
 		}
 		if !reflect.DeepEqual(qcoeff, before) {
@@ -233,10 +244,37 @@ func TestQuantizeBRowGroupsDiffNoAllocation(t *testing.T) {
 	for i := range coeff {
 		coeff[i] = int32(i*17 - 5000)
 	}
+	var cache BParamsCache
 	if got := testing.AllocsPerRun(10, func() {
-		TryQuantizeBRowGroupsDiffTrusted(levels[:], coeff[:], 32, 0x55, Quantizer{120, 140}, 1, iscan[:])
+		TryQuantizeBRowGroupsDiffTrusted(levels[:], coeff[:], 32, 0x55, 8, cache.Get(Quantizer{120, 140}, 1), iscan[:])
 	}); got != 0 {
 		t.Fatalf("allocations=%v", got)
+	}
+}
+
+// testBParams builds a fresh BParams for q at ts.
+func testBParams(q Quantizer, ts uint8) *BParams {
+	p := new(BParams)
+	p.Set(q, ts)
+	return p
+}
+
+// TestBParamsCache checks that the cache returns the constants of the asked
+// quantizer and tx scale across more keys than it holds.
+func TestBParamsCache(t *testing.T) {
+	var c BParamsCache
+	keys := []Quantizer{{4, 4}, {120, 140}, {148, 147}, {1828, 4}, {4, 1828}, {29247, 29247}}
+	for round := range 3 {
+		for i, q := range keys {
+			for ts := range uint8(3) {
+				p := c.Get(q, (ts+uint8(round+i))%3)
+				var want BParams
+				want.Set(q, (ts+uint8(round+i))%3)
+				if *p != want {
+					t.Fatalf("q=%+v ts=%d: cached params differ", q, (ts+uint8(round+i))%3)
+				}
+			}
+		}
 	}
 }
 

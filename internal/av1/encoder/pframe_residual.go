@@ -2279,8 +2279,12 @@ func (st *lossyEncodeState) quantizeInterTXBStats(geo *txBlockGeometry, q quanti
 		st.keyRDOQQuantize(tran[:cn], qcoeff[:cn], geo.tx, q)
 		return st.accumulateInterTXBStats(geo, q, qcoeff)
 	}
-	if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
-		return false
+	// svt_aom_quantize_b over the contiguous coefficients with the cached
+	// constants; its end of block is not needed here.
+	if _, ok := quantize.TryQuantizeBBlockEOBTrusted(qcoeff[:cn], tran[:cn], cn, cn, st.quantB.Get(q, geo.txScale), rdoqGeometry(geo.tx, 0).iscan); !ok {
+		if err := quantize.QuantizeBlockScaledB(qcoeff[:cn], geo.coeffHeight, tran[:cn], geo.coeffHeight, geo.coeffWidth, geo.coeffHeight, q, geo.txScale); err != nil {
+			return false
+		}
 	}
 	return st.accumulateInterTXBStats(geo, q, qcoeff)
 }
@@ -2366,7 +2370,13 @@ func (st *lossyEncodeState) prepareInterTXBDecide(srcPlane, pred []byte, predStr
 	}
 	// Keep the quantizer's loaded coefficients and levels for the following
 	// skip-only statistics when the architecture can fuse the two passes.
-	if diff, rate, eob, handled := quantize.TryQuantizeBRowGroupsDiffTrusted(qcoeff[:geo.coeffCount], st.tranScratch[:geo.coeffCount], w, mask, q, geo.txScale, rdoqGeometry(geo.tx, 0).iscan); handled {
+	// Under N4_SHAPE only the low max(w/4, 1) columns can hold a coefficient
+	// (the 8x8 N4 kernel and svtPFN4Zero zero the rest).
+	cols := w
+	if st.pfN4 {
+		cols = max(w>>2, 1)
+	}
+	if diff, rate, eob, handled := quantize.TryQuantizeBRowGroupsDiffTrusted(qcoeff[:geo.coeffCount], st.tranScratch[:geo.coeffCount], w, mask, cols, st.quantB.Get(q, geo.txScale), rdoqGeometry(geo.tx, 0).iscan); handled {
 		st.rdDskip += st.svtTXDist(diff, geo.txScale)
 		st.rdRcode += rate
 		return eob

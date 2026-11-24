@@ -82,25 +82,43 @@ func quantizeBVectors(qcoeff []int16, coeff []int32, quant int32, round int32, z
 	sixteenV := archsimd.BroadcastInt32x4(-16)
 	shiftV := archsimd.BroadcastInt32x4(-int32(shift))
 	signShiftV := archsimd.BroadcastInt32x4(-31)
+	// svt_aom_quantize_b_neon's zero-bin test: a group whose magnitudes all
+	// lie below the zero bin (compared unsigned, so INT32_MIN passes as the
+	// scalar rule keeps it) stores zero levels and skips the quantizer.
+	zbinTest := uint32(zbin)
+	var zero16 archsimd.Int16x8
 	if iscan == nil {
 		for i := 0; i <= len(coeff)-8 && i <= len(q)-8; i += 8 {
 			c := (*[8]int32)(coeff[i:])
-			lo := quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[0:4])), quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
-			hi := quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[4:8])), quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
-			quantizePackInt16x8SIMD(lo, hi).StoreArray((*[8]int16)(q[i:]))
+			dst := (*[8]int16)(q[i:])
+			c0 := archsimd.LoadInt32x4Array((*[4]int32)(c[0:4]))
+			c1 := archsimd.LoadInt32x4Array((*[4]int32)(c[4:8]))
+			if c0.Abs().ToBits().Max(c1.Abs().ToBits()).ReduceMax() < zbinTest {
+				zero16.StoreArray(dst)
+				continue
+			}
+			lo := quantizeBLane4SIMD(c0, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+			hi := quantizeBLane4SIMD(c1, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+			quantizePackInt16x8SIMD(lo, hi).StoreArray(dst)
 		}
 		return 0
 	}
 	sc := iscan[:n]
 	one16 := archsimd.BroadcastInt16x8(1)
-	zero16 := archsimd.BroadcastInt16x8(0)
 	var eobAcc archsimd.Int16x8
 	for i := 0; i <= len(coeff)-8 && i <= len(q)-8 && i <= len(sc)-8; i += 8 {
 		c := (*[8]int32)(coeff[i:])
-		lo := quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[0:4])), quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
-		hi := quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[4:8])), quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+		dst := (*[8]int16)(q[i:])
+		c0 := archsimd.LoadInt32x4Array((*[4]int32)(c[0:4]))
+		c1 := archsimd.LoadInt32x4Array((*[4]int32)(c[4:8]))
+		if c0.Abs().ToBits().Max(c1.Abs().ToBits()).ReduceMax() < zbinTest {
+			zero16.StoreArray(dst)
+			continue
+		}
+		lo := quantizeBLane4SIMD(c0, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+		hi := quantizeBLane4SIMD(c1, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
 		levels := quantizePackInt16x8SIMD(lo, hi)
-		levels.StoreArray((*[8]int16)(q[i:]))
+		levels.StoreArray(dst)
 		pos1 := archsimd.LoadInt16x8Array((*[8]int16)(sc[i:])).Add(one16)
 		eobAcc = eobAcc.Max(pos1.Masked(levels.NotEqual(zero16)))
 	}
@@ -117,4 +135,70 @@ func quantizeBLane4SIMD(c, quant, round archsimd.Int32x4, zbinU, maxU archsimd.U
 	level := t.Add(tmp).Shift(shift).Min(maxV)
 	mask := c.Shift(signShift)
 	return level.Xor(mask).Sub(mask).Masked(keep)
+}
+
+// quantizeBBlockEOBTrustedSIMD is svt_aom_quantize_b_neon on count
+// contiguous coefficients with bp's prebuilt constants: eight coefficients
+// per group, the zero-bin test first, the DC constants in lane 0 of the
+// first group and the end of block kept per lane. The coefficients at or
+// past live are trusted to quantize to zero; they are stored as zero levels
+// without being read.
+func quantizeBBlockEOBTrustedSIMD(qcoeff []int16, coeff []int32, count, live int, bp *BParams, iscan []int16) (int, bool) {
+	if !bp.vector || count < 8 || count%8 != 0 || live < 8 || live > count || live%8 != 0 {
+		return 0, false
+	}
+	if len(qcoeff) < count || len(coeff) < count || len(iscan) < count {
+		return 0, false
+	}
+	cs, qs, ss := coeff[:count], qcoeff[:count], iscan[:count]
+	ln := &bp.lanes
+	quantV := archsimd.LoadInt32x4Array(&ln.quant)
+	roundV := archsimd.LoadInt32x4Array(&ln.round)
+	zbinU := archsimd.LoadInt32x4Array(&ln.zbin).ToBits()
+	maxV := archsimd.LoadInt32x4Array(&ln.max)
+	maxU := maxV.ToBits()
+	sixteenV := archsimd.LoadInt32x4Array(&ln.sixteen)
+	shiftV := archsimd.LoadInt32x4Array(&ln.shift)
+	signShiftV := archsimd.LoadInt32x4Array(&ln.signShift)
+	zbinTest := bp.acZbin
+	var zero16, eobAcc archsimd.Int16x8
+	// The first group carries DC in lane 0 and tests against the smaller of
+	// the two bins.
+	{
+		c := (*[8]int32)(cs[0:8])
+		c0 := archsimd.LoadInt32x4Array((*[4]int32)(c[0:4]))
+		c1 := archsimd.LoadInt32x4Array((*[4]int32)(c[4:8]))
+		if c0.Abs().ToBits().Max(c1.Abs().ToBits()).ReduceMax() < bp.minZbin {
+			zero16.StoreArray((*[8]int16)(qs[0:8]))
+		} else {
+			lo := quantizeBLane4SIMD(c0, archsimd.LoadInt32x4Array(&ln.dcQuant), archsimd.LoadInt32x4Array(&ln.dcRound),
+				archsimd.LoadInt32x4Array(&ln.dcZbin).ToBits(), maxU, maxV, sixteenV, archsimd.LoadInt32x4Array(&ln.dcShift), signShiftV)
+			hi := quantizeBLane4SIMD(c1, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+			levels := quantizePackInt16x8SIMD(lo, hi)
+			levels.StoreArray((*[8]int16)(qs[0:8]))
+			eobAcc = rowGroupEOBSIMD(eobAcc, levels, archsimd.LoadInt16x8Array((*[8]int16)(ss[0:8])), ln)
+		}
+	}
+	// The three live windows share one length, so one bound proves every
+	// access.
+	lc, lq, ls := cs[:live], qs[:live], ss[:live]
+	for i := 8; i <= len(lc)-8; i += 8 {
+		c := (*[8]int32)(lc[i:])
+		dst := (*[8]int16)(lq[i:])
+		c0 := archsimd.LoadInt32x4Array((*[4]int32)(c[0:4]))
+		c1 := archsimd.LoadInt32x4Array((*[4]int32)(c[4:8]))
+		if c0.Abs().ToBits().Max(c1.Abs().ToBits()).ReduceMax() < zbinTest {
+			zero16.StoreArray(dst)
+			continue
+		}
+		lo := quantizeBLane4SIMD(c0, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+		hi := quantizeBLane4SIMD(c1, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+		levels := quantizePackInt16x8SIMD(lo, hi)
+		levels.StoreArray(dst)
+		eobAcc = rowGroupEOBSIMD(eobAcc, levels, archsimd.LoadInt16x8Array((*[8]int16)(ls[i:])), ln)
+	}
+	for i := live; i <= len(qs)-8; i += 8 {
+		zero16.StoreArray((*[8]int16)(qs[i:]))
+	}
+	return int(eobAcc.ReduceMax()), true
 }

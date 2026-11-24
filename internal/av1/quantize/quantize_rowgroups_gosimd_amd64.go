@@ -137,9 +137,11 @@ func quantizeBRowGroupsAVX2(qcoeff []int16, coeff []int32, n int, live uint8, q 
 // on AVX2: the quantizer's loaded coefficients and levels feed the
 // skip-minus-code distortion and the coarse rate directly. The products
 // dq*(2c-dq) keep the NEON kernel's int32 operands and widen to int64 with
-// VPMULDQ on the even lanes and on the odd lanes shifted down.
-func quantizeBRowGroupsDiffAVX2(qcoeff []int16, coeff []int32, n int, live uint8, q Quantizer, txScale uint8, iscan []int16) (diff, rate int64, eob int, handled bool) {
-	if (n != 8 && n != 16 && n != 32) || txScale > 2 ||
+// VPMULDQ on the even lanes and on the odd lanes shifted down. The columns
+// at or past cols are stored as zero levels without being read.
+func quantizeBRowGroupsDiffAVX2(qcoeff []int16, coeff []int32, n int, live uint8, cols int, bp *BParams, iscan []int16) (diff, rate int64, eob int, handled bool) {
+	q, txScale := bp.q, bp.txScale
+	if !bp.vector || (n != 8 && n != 16 && n != 32) || txScale > 2 || cols < 1 || cols > n ||
 		q.AC <= 0 || q.DC <= 0 || q.AC >= 1<<16 || q.DC >= 1<<16 {
 		return 0, 0, 0, false
 	}
@@ -174,13 +176,14 @@ func quantizeBRowGroupsDiffAVX2(qcoeff []int16, coeff []int32, n int, live uint8
 	// The column-major pairs of four-row groups tile cs contiguously (off =
 	// col*n + 4*g steps by eight), so one linear walk with g wrapping at n/4
 	// visits them in order and the off <= len-8 form proves every access.
+	lim := cols * n
 	for off, g := 0, 0; off <= len(cs)-8 && off <= len(qs)-8; off, g = off+8, g+2 {
 		if 4*g >= n {
 			g = 0
 		}
 		pair := (live >> g) & 3
 		dst := (*[8]int16)(qs[off:])
-		if pair == 0 {
+		if pair == 0 || off >= lim {
 			zero16.StoreArray(dst)
 			continue
 		}

@@ -27,6 +27,7 @@ func BenchmarkAMD64QuantizeBRowGroups(b *testing.B) {
 			txScale = 1
 		}
 		live := uint8(1<<(n/4) - 1)
+		bp := testBParams(q, txScale)
 		for _, kind := range []string{"quant", "diff"} {
 			b.Run(fmt.Sprintf("%s/n=%d/impl=generic", kind, n), func(b *testing.B) {
 				for b.Loop() {
@@ -39,7 +40,7 @@ func BenchmarkAMD64QuantizeBRowGroups(b *testing.B) {
 				}
 				for b.Loop() {
 					if kind == "diff" {
-						quantizeBRowGroupsDiffAVX2(qcoeff, coeff, n, live, q, txScale, iscan)
+						quantizeBRowGroupsDiffAVX2(qcoeff, coeff, n, live, n, bp, iscan)
 					} else {
 						quantizeBRowGroupsAVX2(qcoeff, coeff, n, live, q, txScale)
 					}
