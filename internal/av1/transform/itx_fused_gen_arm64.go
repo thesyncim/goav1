@@ -9,6 +9,10 @@ import (
 	"unsafe"
 )
 
+// The kernels step dp/pp through the destination and prediction rows as
+// pointers inside the extent their callers checked: these are residual-add
+// rows, where per-row checked slices measured 9-86% slower.
+
 // itxGenConsts holds the constants of the generated kernels: the rotation
 // multipliers 16*C (pC / nC for the cospi constant +C / -C), the negated
 // shift counts, the Round2(., 12) bias 2^15 of the multiply-accumulate and

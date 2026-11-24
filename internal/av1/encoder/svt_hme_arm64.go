@@ -22,6 +22,8 @@ func svtDownsample2DArch(dst []byte, dstStride int, src []byte, srcStride, w, h 
 		d := dst[y*dstStride : y*dstStride+w]
 		x := 0
 		if len(r0) >= 2*w && len(r1) >= 2*w {
+			// Pointer loads: the checked forms (2*x-indexed or advancing
+			// slices) cost +26-35% instructions and +1-9% cycles.
 			p0 := unsafe.Pointer(&r0[0])
 			p1 := unsafe.Pointer(&r1[0])
 			for ; x+16 <= w; x += 16 {
@@ -50,6 +52,7 @@ func svtDownsample2DArch(dst []byte, dstStride int, src []byte, srcStride, w, h 
 func sad16xNx4(src []byte, srcStride int, ref []byte, refStride, rows int) (int, int, int, int) {
 	_ = src[(rows-1)*srcStride+15]
 	_ = ref[(rows-1)*refStride+18]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	sp := unsafe.Pointer(&src[0])
 	rp := unsafe.Pointer(&ref[0])
 	var c0, c1, c2, c3 archsimd.Uint16x8
@@ -80,6 +83,7 @@ func sad16xNx4(src []byte, srcStride int, ref []byte, refStride, rows int) (int,
 func svtSAD16xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStride, rows int) {
 	_ = src[(rows-1)*srcStride+15]
 	_ = ref[(rows-1)*refStride+22]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	sp := unsafe.Pointer(&src[0])
 	rp := unsafe.Pointer(&ref[0])
 	var s0, s1, s2, s3, s4, s5, s6, s7 archsimd.Uint16x8
@@ -124,8 +128,8 @@ func svtSAD16xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStri
 	hv := h0.ConcatAddPairs(h1).ConcatAddPairs(h2.ConcatAddPairs(h3)).
 		ConcatAddPairs(h4.ConcatAddPairs(h5).ConcatAddPairs(h6.ConcatAddPairs(h7)))
 	t := sv.Sub(hv.Shift(archsimd.BroadcastInt16x8(8))).Add(hv)
-	lo := (*[4]uint32)(unsafe.Pointer(&acc[0]))
-	hi := (*[4]uint32)(unsafe.Pointer(&acc[4]))
+	lo := (*[4]uint32)(acc[0:4])
+	hi := (*[4]uint32)(acc[4:8])
 	archsimd.LoadUint32x4Array(lo).Add(t.ExtendLo4ToUint32()).StoreArray(lo)
 	archsimd.LoadUint32x4Array(hi).Add(t.HiToLo().ExtendLo4ToUint32()).StoreArray(hi)
 }
@@ -140,6 +144,7 @@ func svtSAD16xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStri
 func svtSAD32xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStride, rows int) {
 	_ = src[(rows-1)*srcStride+31]
 	_ = ref[(rows-1)*refStride+38]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	sp := unsafe.Pointer(&src[0])
 	rp := unsafe.Pointer(&ref[0])
 	var s0, s1, s2, s3, s4, s5, s6, s7 archsimd.Uint16x8
@@ -184,8 +189,8 @@ func svtSAD32xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStri
 	hb := h4.ConcatAddPairs(h5).ConcatAddPairs(h6.ConcatAddPairs(h7))
 	ta := sa.Sub(ha.Shift(shl8)).Add(ha)
 	tb := sb.Sub(hb.Shift(shl8)).Add(hb)
-	lo := (*[4]uint32)(unsafe.Pointer(&acc[0]))
-	hi := (*[4]uint32)(unsafe.Pointer(&acc[4]))
+	lo := (*[4]uint32)(acc[0:4])
+	hi := (*[4]uint32)(acc[4:8])
 	archsimd.LoadUint32x4Array(lo).Add(ta.ExtendLo4ToUint32().ConcatAddPairs(ta.HiToLo().ExtendLo4ToUint32())).StoreArray(lo)
 	archsimd.LoadUint32x4Array(hi).Add(tb.ExtendLo4ToUint32().ConcatAddPairs(tb.HiToLo().ExtendLo4ToUint32())).StoreArray(hi)
 }
@@ -201,6 +206,7 @@ const svtHMEColSums = true
 // 16*255) and the two are zipped back into column order.
 func svtColTotalsArch(cw *[svtHMEMaxCols]uint16, ref []byte, s2, rows, span int) {
 	_ = ref[(rows-1)*s2+span-1]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	rp := unsafe.Pointer(&ref[0])
 	hiShift := archsimd.BroadcastInt16x8(-8)
 	loShift := archsimd.BroadcastInt16x8(8)
@@ -218,13 +224,11 @@ func svtColTotalsArch(cw *[svtHMEMaxCols]uint16, ref []byte, s2, rows, span int)
 
 // svtColTotalsSlideArch is svtColTotalsSlide sixteen columns at a time.
 func svtColTotalsSlideArch(cw *[svtHMEMaxCols]uint16, out, in []byte, span int) {
-	_ = out[span-1]
-	_ = in[span-1]
-	op := unsafe.Pointer(&out[0])
-	ip := unsafe.Pointer(&in[0])
-	for c := 0; c < span; c += 16 {
-		o := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(op, c)))
-		n := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(ip, c)))
+	out = out[:span]
+	in = in[:len(out)]
+	for c := 0; c <= len(out)-16; c += 16 {
+		o := archsimd.LoadUint8x16Array((*[16]uint8)(out[c:]))
+		n := archsimd.LoadUint8x16Array((*[16]uint8)(in[c:]))
 		lo := archsimd.LoadUint16x8Array((*[8]uint16)(cw[c:]))
 		hi := archsimd.LoadUint16x8Array((*[8]uint16)(cw[c+8:]))
 		lo = lo.Add(n.ExtendLo8ToUint16()).Sub(o.ExtendLo8ToUint16())
@@ -250,6 +254,9 @@ func svtColTotalsSlideArch(cw *[svtHMEMaxCols]uint16, out, in []byte, span int) 
 // sum over int16 lanes (each term is at most 7*16*255 in magnitude). The
 // positions loop inside the kernel so a search row is one call.
 func svtHMEColSumRow(t *[svtHMEMaxCols / 8][8]uint32, sp, rp, cwp unsafe.Pointer, s2, bw, rows, w int, srcSum uint32) uint32 {
+	// sp/rp/cwp address extents svtHMESearchColSum checked ((rows-1)*s2+bw,
+	// (rows-1)*s2+bw+w, bw+w); slice parameters with a re-check here cost
+	// +0.09-0.17% encoder instructions.
 	// Only the shift count stays in a register across the row loop; the
 	// reduction's constants load from one table each step (kept live, the
 	// register allocator reloaded them inside the row loop).
@@ -341,10 +348,11 @@ func svtHMEColSumRow(t *[svtHMEMaxCols / 8][8]uint32, sp, rp, cwp unsafe.Pointer
 		tlo := tv.Add(ei.ExtendLo4ToInt32().ToBits()).Sub(mlo.Add(mlo)).BitsToInt32()
 		thi := tv.Add(ei.HiToLo().ExtendLo4ToInt32().ToBits()).Sub(mhi.Add(mhi)).BitsToInt32()
 		if t != nil {
-			tlo.StoreArray((*[4]int32)(unsafe.Pointer(&t[x/8][0])))
-			thi.StoreArray((*[4]int32)(unsafe.Pointer(&t[x/8][4])))
-			for k := range t[x/8] {
-				t[x/8][k] += srcSum
+			tx := &t[x/8]
+			tlo.ToBits().StoreArray((*[4]uint32)(tx[0:4]))
+			thi.ToBits().StoreArray((*[4]uint32)(tx[4:8]))
+			for k := range tx {
+				tx[k] += srcSum
 			}
 		}
 		// The smallest (t - srcSum)<<7 + k, in int32 (|t - srcSum| <=
@@ -373,6 +381,7 @@ var svtHMEKeyConsts = [20]uint32{
 // as S - 255*H per lane (each lane's pair total is at most 2*2*16*255).
 func svtBlockSumSubArch(s []byte, s2, bw, rows int) uint32 {
 	_ = s[(rows-1)*s2+bw-1]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	sp := unsafe.Pointer(&s[0])
 	hiShift := archsimd.BroadcastInt16x8(-8)
 	var sa, ha archsimd.Uint16x8

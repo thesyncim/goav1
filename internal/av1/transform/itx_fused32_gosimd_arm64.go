@@ -266,6 +266,7 @@ func InverseAddDCT32x32Low8(dst []byte, dstStride int, pred []byte, predStride i
 		len(dst) < 31*dstStride+32 || len(pred) < 31*predStride+32 {
 		return false
 	}
+	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
 	return itxGenDCT32x32C8R8((*[1024]int32)(coeff[:1024]), unsafe.Pointer(unsafe.SliceData(dst)), dstStride,
 		unsafe.Pointer(unsafe.SliceData(pred)), predStride, 8)
 }

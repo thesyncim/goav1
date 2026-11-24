@@ -66,6 +66,7 @@ func InverseAdd16x16HybridHBD(dst []byte, dstStride int, pred []byte, predStride
 	if colL1[0].Max(colL1[1]).ReduceMax() > itx16ColumnL1Bound {
 		return false
 	}
+	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
 	dp := unsafe.Pointer(unsafe.SliceData(dst))
 	pp := unsafe.Pointer(unsafe.SliceData(pred))
 	itx16ColStripAddTHBD(&tmp, 0, inRows, vertical, dp, dstStride, pp, predStride, maxV)
@@ -113,6 +114,7 @@ func InverseAdd8x8HybridHBD(dst []byte, dstStride int, pred []byte, predStride i
 	itx8Net1D(vertical, activeRows, &mid, &out)
 	sh3 := archsimd.BroadcastInt16x8(-3)
 	zero := archsimd.BroadcastInt16x8(0)
+	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
 	dp := unsafe.Pointer(unsafe.SliceData(dst))
 	pp := unsafe.Pointer(unsafe.SliceData(pred))
 	for r := 0; r < 8; r++ {

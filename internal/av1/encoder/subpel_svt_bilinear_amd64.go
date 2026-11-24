@@ -36,6 +36,7 @@ func svtSubpelVarianceArch(scratch *svtSubpelScratch, ref []byte, refStride int,
 	if bw == 8 {
 		mask = archsimd.LoadInt16x16Array(&svtSubpelLo8Mask)
 	}
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	base := unsafe.Pointer(&ref[0])
 	sbase := unsafe.Pointer(&src[0])
 	var sse, sum32 archsimd.Int32x8

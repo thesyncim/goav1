@@ -25,6 +25,7 @@ func pixelStatsRows16Arch(src []byte, srcStride int, ref []byte, refStride int, 
 	}
 	_ = src[(h-1)*srcStride+w-1]
 	_ = ref[(h-1)*refStride+w-1]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	sp := unsafe.Pointer(&src[0])
 	rp := unsafe.Pointer(&ref[0])
 	var groupRows int

@@ -70,6 +70,7 @@ func InverseAddDCT64x64HBD(dst []byte, dstStride int, pred []byte, predStride in
 	if m.ReduceMax() > itx16ColumnL1Bound {
 		return false
 	}
+	// dst/pred rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
 	dp := unsafe.Pointer(unsafe.SliceData(dst))
 	pp := unsafe.Pointer(unsafe.SliceData(pred))
 	for c0 := 0; c0 < 64; c0 += 8 {

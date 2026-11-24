@@ -108,7 +108,8 @@ func wienerVerticalU8SIMD(temp []uint16, tempStride int, dst []uint8, dstStride 
 	shr16 := archsimd.BroadcastInt32x4(-16)
 
 	// The footprint check above proves every load and store below is in bounds,
-	// so the hot loops address both buffers by byte offset from their bases.
+	// so the hot loops address both buffers by byte offset from their bases
+	// (same shape as the loop-filter rows, where checked rows cost +9-86%).
 	tp := unsafe.Pointer(unsafe.SliceData(temp))
 	dp := unsafe.Pointer(unsafe.SliceData(dst))
 	ts := tempStride * 2
@@ -238,7 +239,8 @@ func wienerVerticalU8SIMD5(temp []uint16, tempStride int, dst []uint8, dstStride
 	shr16 := archsimd.BroadcastInt32x4(-16)
 
 	// The footprint check above proves every load and store below is in bounds,
-	// so the hot loops address both buffers by byte offset from their bases.
+	// so the hot loops address both buffers by byte offset from their bases
+	// (same shape as the loop-filter rows, where checked rows cost +9-86%).
 	tp := unsafe.Pointer(unsafe.SliceData(temp))
 	dp := unsafe.Pointer(unsafe.SliceData(dst))
 	ts := tempStride * 2

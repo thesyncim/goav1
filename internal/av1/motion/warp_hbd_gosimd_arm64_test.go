@@ -77,6 +77,42 @@ func TestWarpHorizontalHighBDGoSIMDMatchesScalar(t *testing.T) {
 	}
 }
 
+// TestWarpHorizontalHighBDGoSIMDOddStrideAndBase covers planes whose samples
+// are not 2-byte aligned: an odd stride, alone and with an odd base address.
+// The kernel loads samples as bytes, so these run the SIMD path (they used to
+// fall back to the scalar kernel) and must match it.
+func TestWarpHorizontalHighBDGoSIMDOddStrideAndBase(t *testing.T) {
+	rng := rand.New(rand.NewSource(0x0DD5))
+	const width, height, stride = 96, 96, 209
+	for _, bitDepth := range []uint8{10, 12} {
+		reduceBitsHoriz, _ := highBDRoundBits(bitDepth)
+		offsetBitsHoriz := int(bitDepth) + filterBits - 1
+		for _, oddBase := range []bool{false, true} {
+			pix := make([]byte, stride*height+1)
+			if oddBase {
+				pix = pix[1:]
+			}
+			ref := frame.Plane{Pix: pix, Stride: stride, Width: width, Height: height}
+			for y := 0; y < height; y++ {
+				for x := 0; x < width; x++ {
+					storeHighBDSample(ref, x, y, uint16(rng.Intn(1<<bitDepth)))
+				}
+			}
+			for _, ix4 := range []int{7, 30, width - 8} {
+				for _, iy4 := range []int{7, 41, height - 8} {
+					sx4, alpha, beta := rng.Intn(1<<16)-1<<15, rng.Intn(512)-256, rng.Intn(512)-256
+					var want, got warpTmp
+					wantSY := warpHorizontalHighBDResident(&want, ref, ix4, sx4, iy4, 777, alpha, beta, reduceBitsHoriz, offsetBitsHoriz)
+					gotSY := warpHorizontalHighBDResidentGoSIMD(&got, ref, ix4, sx4, iy4, 777, alpha, beta, reduceBitsHoriz, offsetBitsHoriz)
+					if gotSY != wantSY || got != want {
+						t.Fatalf("bd=%d oddBase=%v ix4=%d iy4=%d sx4=%d alpha=%d beta=%d: SIMD differs from scalar", bitDepth, oddBase, ix4, iy4, sx4, alpha, beta)
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestWarpHorizontalHighBDGoSIMDExtremesAndResidentBoundaries(t *testing.T) {
 	for _, bitDepth := range []uint8{10, 12} {
 		maxSample := uint16((1 << bitDepth) - 1)

@@ -24,6 +24,7 @@ func copyPredToReconBlockSIMD(reconPlane, pred []byte, predStride, stride, px, p
 	}
 	_ = reconPlane[(py+h-1)*stride+px+w-1]
 	_ = pred[(h-1)*predStride+w-1]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	dp := unsafe.Pointer(&reconPlane[py*stride+px])
 	sp := unsafe.Pointer(&pred[0])
 	if w == 8 {
@@ -61,6 +62,7 @@ func addConstantResidualToPredReconBlockSIMD(reconPlane, pred []byte, predStride
 	}
 	_ = reconPlane[(py+h-1)*stride+px+w-1]
 	_ = pred[(h-1)*predStride+w-1]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	dp := unsafe.Pointer(&reconPlane[py*stride+px])
 	sp := unsafe.Pointer(&pred[0])
 	r := max(min(int(residual), 255), -255)

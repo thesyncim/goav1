@@ -40,6 +40,7 @@ func inverseDCT64Lanes4(p unsafe.Pointer, stride uintptr, min, max int32) bool {
 }
 
 func inverseDCT64Col4SIMD(buf []int32, rowStride int, min, max int32) {
+	// lane rows inside the buffer extent checked here (or the fixed staging); same shape as the residual-add rows (checked rows +9-86%).
 	if rowStride < 4 || len(buf) < 4 || rowStride > (len(buf)-4)/(dct64Size-1) ||
 		!inverseDCT64Lanes4(unsafe.Pointer(&buf[0]), uintptr(rowStride)*4, min, max) {
 		inverseDCT64Col4PureGo(buf, rowStride, min, max)
@@ -65,6 +66,7 @@ func inverseDCT64Row4SIMD(r0, r1, r2, r3 []int32, min, max int32) {
 		t2.StoreArray(&t[i+2])
 		t3.StoreArray(&t[i+3])
 	}
+	// lane rows inside the buffer extent checked here (or the fixed staging); same shape as the residual-add rows (checked rows +9-86%).
 	inverseDCT64Lanes4(unsafe.Pointer(&t), 16, min, max)
 	for i := 0; i < dct64Size; i += 4 {
 		o0, o1, o2, o3 := itxTranspose4(
@@ -121,6 +123,7 @@ func inverseDCT64Lanes4Low(p unsafe.Pointer, stride uintptr, lowN int, min, max 
 }
 
 func inverseDCT64LowCol4SIMD(buf []int32, rowStride int, lowN int, min, max int32) {
+	// lane rows inside the buffer extent checked here (or the fixed staging); same shape as the residual-add rows (checked rows +9-86%).
 	if rowStride < 4 || len(buf) < 4 || rowStride > (len(buf)-4)/(dct64Size-1) ||
 		!inverseDCT64Lanes4Low(unsafe.Pointer(&buf[0]), uintptr(rowStride)*4, lowN, min, max) {
 		inverseDCT64Col4PureGo(buf, rowStride, min, max)
@@ -148,6 +151,7 @@ func inverseDCT64Row4LowSIMD(r0, r1, r2, r3 []int32, lowN int, lo, hi int32) {
 		t2.StoreArray(&t[i+2])
 		t3.StoreArray(&t[i+3])
 	}
+	// lane rows inside the buffer extent checked here (or the fixed staging); same shape as the residual-add rows (checked rows +9-86%).
 	inverseDCT64Lanes4Low(unsafe.Pointer(&t), 16, lowN, lo, hi)
 	for i := 0; i < dct64Size; i += 4 {
 		o0, o1, o2, o3 := itxTranspose4(

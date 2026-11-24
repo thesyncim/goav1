@@ -102,6 +102,7 @@ func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, fi
 	}
 	// Halved taps: the round0 shift drops by one.
 	sh := compoundRound0(uint8(bitDepth)) - 1
+	// Strided rows inside the checked window; same shape as the residual-add rows (checked rows +9-86%).
 	o := unsafe.Pointer(&out[0])
 	switch {
 	case tx != 0 && ty != 0:

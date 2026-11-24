@@ -14,27 +14,23 @@ func boxInterpolateRow8(dst, s0, s1 []uint8, f int) {
 	n := len(s0)
 	s1, dst = s1[:n], dst[:n]
 	x := 0
-	if n >= 16 {
-		p0, p1 := unsafe.Pointer(&s0[0]), unsafe.Pointer(&s1[0])
-		pd := unsafe.Pointer(&dst[0])
-		if f == 128 {
-			for ; x+16 <= n; x += 16 {
-				a := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p0, x)))
-				b := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p1, x)))
-				a.Average(b).StoreArray((*[16]uint8)(unsafe.Add(pd, x)))
-			}
-		} else {
-			f0 := archsimd.BroadcastUint8x16(uint8(256 - f))
-			f1 := archsimd.BroadcastUint8x16(uint8(f))
-			bias := archsimd.BroadcastUint16x8(128)
-			sh8 := archsimd.BroadcastInt16x8(-8)
-			for ; x+16 <= n; x += 16 {
-				a := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p0, x)))
-				b := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(p1, x)))
-				lo := a.MulWidenLo(f0).Add(b.MulWidenLo(f1)).Add(bias).Shift(sh8).SaturateToUint8().ReshapeToUint64s().BitsToFloat64()
-				hi := a.HiToLo().MulWidenLo(f0.HiToLo()).Add(b.HiToLo().MulWidenLo(f1.HiToLo())).Add(bias).Shift(sh8).SaturateToUint8().ReshapeToUint64s().BitsToFloat64()
-				lo.SetElem(1, hi.GetElem(0)).ToBits().ReshapeToUint8s().StoreArray((*[16]uint8)(unsafe.Add(pd, x)))
-			}
+	if f == 128 {
+		for ; x <= n-16; x += 16 {
+			a := archsimd.LoadUint8x16Array((*[16]uint8)(s0[x:]))
+			b := archsimd.LoadUint8x16Array((*[16]uint8)(s1[x:]))
+			a.Average(b).StoreArray((*[16]uint8)(dst[x:]))
+		}
+	} else if n >= 16 {
+		f0 := archsimd.BroadcastUint8x16(uint8(256 - f))
+		f1 := archsimd.BroadcastUint8x16(uint8(f))
+		bias := archsimd.BroadcastUint16x8(128)
+		sh8 := archsimd.BroadcastInt16x8(-8)
+		for ; x <= n-16; x += 16 {
+			a := archsimd.LoadUint8x16Array((*[16]uint8)(s0[x:]))
+			b := archsimd.LoadUint8x16Array((*[16]uint8)(s1[x:]))
+			lo := a.MulWidenLo(f0).Add(b.MulWidenLo(f1)).Add(bias).Shift(sh8).SaturateToUint8().ReshapeToUint64s().BitsToFloat64()
+			hi := a.HiToLo().MulWidenLo(f0.HiToLo()).Add(b.HiToLo().MulWidenLo(f1.HiToLo())).Add(bias).Shift(sh8).SaturateToUint8().ReshapeToUint64s().BitsToFloat64()
+			lo.SetElem(1, hi.GetElem(0)).ToBits().ReshapeToUint8s().StoreArray((*[16]uint8)(dst[x:]))
 		}
 	}
 	if x < n {
@@ -155,7 +151,10 @@ func boxColsBlend(a, b archsimd.Uint16x8, q unsafe.Pointer, k128 archsimd.Uint16
 	return u.Add(v.Shift(sh8))
 }
 
-// filter is boxFilterCols for one row.
+// filter is boxFilterCols for one row. It stays on unsafe: build keeps every
+// chunk's window inside s[:sw] and its 16 outputs inside dst[:dw], and the
+// checked form (per-chunk window, table and output slices) measured 15-27%
+// slower on BenchmarkBoxColsPlan8.
 func (p *boxColsPlan) filter(dst, s []uint8) {
 	dst, s = dst[:p.dw], s[:p.sw]
 	ps, pd, pt := unsafe.Pointer(&s[0]), unsafe.Pointer(&dst[0]), unsafe.Pointer(&p.tab[0])

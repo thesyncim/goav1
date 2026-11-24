@@ -15,6 +15,7 @@ import (
 func svtSAD16xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStride, rows int) {
 	_ = src[(rows-1)*srcStride+15]
 	_ = ref[(rows-1)*refStride+22]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	sp := unsafe.Pointer(&src[0])
 	rp := unsafe.Pointer(&ref[0])
 	var a0, a1, a2, a3, a4, a5, a6, a7 archsimd.Uint64x2

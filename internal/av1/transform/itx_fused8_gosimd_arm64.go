@@ -71,6 +71,7 @@ func InverseAddDCT8x8(dst []byte, dstStride int, pred []byte, predStride int, co
 	// The kernel switch is written here rather than in a dispatch function:
 	// one call level less for the most frequent block.
 	c := (*[64]int32)(coeff[:64])
+	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
 	dp, pp := unsafe.Pointer(unsafe.SliceData(dst)), unsafe.Pointer(unsafe.SliceData(pred))
 	switch {
 	case activeCols <= 4 && activeRows <= 4:

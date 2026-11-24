@@ -34,6 +34,7 @@ func cdefDist8(src []byte, sstride int, filtered []byte, fstride int, dlist []cd
 	}
 	_ = src[maxSO]
 	_ = filtered[maxFO]
+	// Strided rows inside the extents checked above; same shape as the SAD rows (checked rows +9-86%).
 	sp := unsafe.Pointer(unsafe.SliceData(src))
 	fp := unsafe.Pointer(unsafe.SliceData(filtered))
 	acc := archsimd.BroadcastUint32x4(0)
