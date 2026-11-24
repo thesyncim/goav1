@@ -1,29 +1,17 @@
 package encoder
 
-import (
-	"unsafe"
-
-	"github.com/thesyncim/goav1/internal/av1/dsp"
-)
+import "github.com/thesyncim/goav1/internal/av1/dsp"
 
 var addRawResidualToPredReconBlockImpl = addRawResidualToPredReconBlockPureGo
 
 // addRawResidualToPredReconBlock writes the prediction plus the rounded raw
 // inverse transform in one pass. Its caller supplies positive block dimensions,
 // fitting slices and strides at least w, with raw in separate scratch storage.
+// pred is either dst itself (same start and stride: each sample is read before
+// it is written) or disjoint from it; every encoder caller predicts into
+// scratch separate from the reconstruction plane.
 func addRawResidualToPredReconBlock(dst []byte, stride int, pred []byte, predStride int, raw []int32, w, h int) {
 	addRawResidualToPredReconBlockImpl(dst, stride, pred, predStride, raw, w, h)
-}
-
-// Exact in-place prediction is safe. Partial overlap must retain the original
-// complete prediction-copy pass before any residual is added: a row can still
-// read prediction bytes written by an earlier row of that copy.
-func rawPredReconNeedsCopy(dst []byte, stride int, pred []byte, predStride, w, h int) bool {
-	// Address comparison only (no access): Go has no safe overlap test.
-	d := uintptr(unsafe.Pointer(unsafe.SliceData(dst)))
-	p := uintptr(unsafe.Pointer(unsafe.SliceData(pred)))
-	return (d != p || stride != predStride) &&
-		d < p+uintptr((h-1)*predStride+w) && p < d+uintptr((h-1)*stride+w)
 }
 
 func addRawResidualToPredReconBlockCopied(dst []byte, stride int, pred []byte, predStride int, raw []int32, w, h int) {
@@ -33,10 +21,6 @@ func addRawResidualToPredReconBlockCopied(dst []byte, stride int, pred []byte, p
 
 func addRawResidualToPredReconBlockPureGo(dst []byte, stride int, pred []byte, predStride int, raw []int32, w, h int) {
 	if h <= 0 {
-		return
-	}
-	if rawPredReconNeedsCopy(dst, stride, pred, predStride, w, h) {
-		addRawResidualToPredReconBlockCopied(dst, stride, pred, predStride, raw, w, h)
 		return
 	}
 	for y := range h {

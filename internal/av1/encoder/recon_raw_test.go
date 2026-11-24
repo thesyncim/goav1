@@ -14,8 +14,8 @@ import (
 
 // rawPredReconOriginal retains the original complete copy followed by an
 // independent scalar expression of the DSP numeric contract. The copy kernel
-// itself is unchanged; its architecture-specific partial-overlap ordering is
-// part of the legacy behavior that the fused path must preserve.
+// itself is unchanged. pred is dst itself or disjoint from it (the
+// addRawResidualToPredReconBlock contract).
 func rawPredReconOriginal(dst []byte, stride int, pred []byte, predStride int, raw []int32, w, h int) {
 	copyPredToReconBlock(dst, pred, predStride, stride, 0, 0, w, h)
 	for y := 0; y < h; y++ {
@@ -89,10 +89,7 @@ func TestRawPredReconExactWindowsAndAliasing(t *testing.T) {
 				}{
 					{"disjoint", 16, 32 + span, stride, stride},
 					{"inplace", 16, 16, stride, stride},
-					{"forward", 17, 16, stride, stride},
-					{"backward", 16, 19, stride, stride},
-					{"crossrow", 16 + stride - 2, 16, stride, stride},
-					{"differentstride", 16, 16, w + 9, w + 4},
+					{"differentstride", 16, 32 + span, w + 9, w + 4},
 				} {
 					t.Run(fmt.Sprintf("%s/%dx%d/%s", kernel.name, w, h, layout.name), func(t *testing.T) {
 						dlen := (h-1)*layout.ds + w
@@ -111,7 +108,7 @@ func TestRawPredReconExactWindowsAndAliasing(t *testing.T) {
 						rawPredReconOriginal(want[layout.d:layout.d+dlen:layout.d+dlen], layout.ds, want[layout.p:layout.p+plen:layout.p+plen], layout.ps, raw, w, h)
 						kernel.fn(got[layout.d:layout.d+dlen:layout.d+dlen], layout.ds, got[layout.p:layout.p+plen:layout.p+plen], layout.ps, raw, w, h)
 						if !bytes.Equal(got, want) {
-							t.Fatal("output, padding, or overlapping prediction differs from original")
+							t.Fatal("output, padding, or in-place prediction differs from original")
 						}
 						if !slices.Equal(raw, beforeRaw) {
 							t.Fatal("raw input changed")

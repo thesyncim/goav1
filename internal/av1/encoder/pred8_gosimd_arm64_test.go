@@ -9,7 +9,6 @@ package encoder
 import (
 	"math/rand"
 	"testing"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/motion"
 )
@@ -103,8 +102,7 @@ func TestPred8VIMZeroOuterTapDispatch(t *testing.T) {
 					want := make([]byte, w*h)
 					wantSAD := pred8VIMScalarOracle(want, src, srcStride, im, w, w, h, k)
 					got := make([]byte, w*h)
-					gotSAD := pred8VIM(unsafe.Pointer(&got[0]), w, nil, 0,
-						unsafe.Pointer(&im[0]), w*2, w, h, k)
+					gotSAD := pred8VIM(got, w, nil, 0, im, w, w, h, k)
 					if gotSAD != 0 {
 						t.Fatalf("filter=%d phase=%d size=%dx%d pattern=%d: store SAD=%d", filter, phase, w, h, pattern, gotSAD)
 					}
@@ -115,8 +113,7 @@ func TestPred8VIMZeroOuterTapDispatch(t *testing.T) {
 					}
 
 					if w >= 16 {
-						gotSAD = pred8VIM(nil, 0, unsafe.Pointer(&src[0]), srcStride,
-							unsafe.Pointer(&im[0]), w*2, w, h, k)
+						gotSAD = pred8VIM(nil, 0, src, srcStride, im, w, w, h, k)
 						if gotSAD != wantSAD {
 							t.Fatalf("filter=%d phase=%d size=%dx%d pattern=%d: SAD=%d want %d", filter, phase, w, h, pattern, gotSAD, wantSAD)
 						}
@@ -142,7 +139,7 @@ func BenchmarkPred8VIMTapPaths(b *testing.B) {
 		b.ReportAllocs()
 		b.SetBytes(int64(w * h))
 		for b.Loop() {
-			pred8VIM(unsafe.Pointer(&dst[0]), w, nil, 0, unsafe.Pointer(&im[0]), w*2, w, h, k)
+			pred8VIM(dst, w, nil, 0, im, w, w, h, k)
 		}
 		pred8VIMBenchSink = dst[len(dst)-1]
 	}
@@ -199,7 +196,6 @@ func TestPred8VZeroOuterTapDispatch(t *testing.T) {
 		refStride := w + 25
 		ref := make([]byte, (h+7)*refStride)
 		refOffset := 3*refStride + 8
-		refPtr := unsafe.Pointer(&ref[refOffset])
 		for pattern := 0; pattern < 4; pattern++ {
 			switch pattern {
 			case 0:
@@ -232,7 +228,7 @@ func TestPred8VZeroOuterTapDispatch(t *testing.T) {
 					want := make([]byte, w*h)
 					wantSAD := pred8VScalarOracle(want, src, w, ref, refOffset, refStride, w, h, k)
 					got := make([]byte, w*h)
-					gotSAD := pred8V(unsafe.Pointer(&got[0]), w, nil, 0, refPtr, refStride, w, h, k)
+					gotSAD := pred8V(got, w, nil, 0, ref, refOffset, refStride, w, h, k)
 					if gotSAD != 0 {
 						t.Fatalf("filter=%d phase=%d size=%dx%d pattern=%d: store SAD=%d", filter, phase, w, h, pattern, gotSAD)
 					}
@@ -243,7 +239,7 @@ func TestPred8VZeroOuterTapDispatch(t *testing.T) {
 					}
 
 					if w%16 == 0 {
-						gotSAD = pred8V(nil, 0, unsafe.Pointer(&src[0]), w, refPtr, refStride, w, h, k)
+						gotSAD = pred8V(nil, 0, src, w, ref, refOffset, refStride, w, h, k)
 						if gotSAD != wantSAD {
 							t.Fatalf("filter=%d phase=%d size=%dx%d pattern=%d: SAD=%d want %d", filter, phase, w, h, pattern, gotSAD, wantSAD)
 						}
@@ -259,7 +255,6 @@ func TestPred8VZeroOuterTapDispatch(t *testing.T) {
 	ref := make([]byte, (h+7)*refStride)
 	_, _ = rng.Read(ref)
 	refOffset := 3*refStride + 8
-	refPtr := unsafe.Pointer(&ref[refOffset])
 	srcStride := w + srcPad
 	src := make([]byte, h*srcStride)
 	for i := range src {
@@ -278,7 +273,7 @@ func TestPred8VZeroOuterTapDispatch(t *testing.T) {
 			for i := range dst {
 				dst[i] = dstCanary
 			}
-			gotSAD := pred8V(unsafe.Pointer(&dst[0]), dstStride, nil, 0, refPtr, refStride, w, h, k)
+			gotSAD := pred8V(dst, dstStride, nil, 0, ref, refOffset, refStride, w, h, k)
 			if gotSAD != 0 {
 				t.Fatalf("padded filter=%d phase=%d: store SAD=%d", filter, phase, gotSAD)
 			}
@@ -294,7 +289,7 @@ func TestPred8VZeroOuterTapDispatch(t *testing.T) {
 					}
 				}
 			}
-			gotSAD = pred8V(nil, 0, unsafe.Pointer(&src[0]), srcStride, refPtr, refStride, w, h, k)
+			gotSAD = pred8V(nil, 0, src, srcStride, ref, refOffset, refStride, w, h, k)
 			if gotSAD != wantSAD {
 				t.Fatalf("padded filter=%d phase=%d: SAD=%d want %d", filter, phase, gotSAD, wantSAD)
 			}
@@ -327,7 +322,7 @@ func BenchmarkPred8VTapPaths(b *testing.B) {
 		for i := range ref {
 			ref[i] = byte((i*37 + i/refStride*17) % 256)
 		}
-		refPtr := unsafe.Pointer(&ref[3*refStride+8])
+		refOff := 3*refStride + 8
 		dst := make([]byte, shape.w*shape.h)
 		for _, kernel := range []struct {
 			name   string
@@ -342,7 +337,7 @@ func BenchmarkPred8VTapPaths(b *testing.B) {
 				b.ReportAllocs()
 				b.SetBytes(int64(shape.w * shape.h))
 				for b.Loop() {
-					pred8V(unsafe.Pointer(&dst[0]), shape.w, nil, 0, refPtr, refStride, shape.w, shape.h, k)
+					pred8V(dst, shape.w, nil, 0, ref, refOff, refStride, shape.w, shape.h, k)
 				}
 				pred8VBenchSink = dst[len(dst)-1]
 			})
@@ -416,7 +411,6 @@ func TestPred8IMZeroOuterTapDispatch(t *testing.T) {
 					}
 				}
 			}
-			refPtr := unsafe.Pointer(&ref[refOffset])
 			for filter := motion.InterpEightTapRegular; filter <= motion.InterpMultiTapSharp; filter++ {
 				for phase := range 16 {
 					k := &pred8Kernels[filter][phase]
@@ -432,7 +426,7 @@ func TestPred8IMZeroOuterTapDispatch(t *testing.T) {
 						want[i] = -1234
 					}
 					pred8IMScalarOracle(want, shape.imStride, ref, refOffset, refStride, shape.w, shape.rows, k)
-					pred8IM(unsafe.Pointer(&got[0]), shape.imStride*2, refPtr, refStride, shape.w, shape.rows, k)
+					pred8IM(got, shape.imStride, ref, refOffset, refStride, shape.w, shape.rows, k)
 					for y := 0; y < shape.rows; y++ {
 						for x := 0; x < shape.w; x++ {
 							if got[y*shape.imStride+x] != want[y*shape.imStride+x] {
@@ -468,7 +462,6 @@ func BenchmarkPred8IMTapPaths(b *testing.B) {
 		for i := range ref {
 			ref[i] = byte((i*37 + i/refStride*17) % 256)
 		}
-		refPtr := unsafe.Pointer(&ref[8])
 		im := make([]int16, (shape.rows-1)*shape.imStride+shape.w)
 		for _, kernel := range []struct {
 			name   string
@@ -483,7 +476,7 @@ func BenchmarkPred8IMTapPaths(b *testing.B) {
 				b.ReportAllocs()
 				b.SetBytes(int64(shape.w * shape.rows))
 				for b.Loop() {
-					pred8IM(unsafe.Pointer(&im[0]), shape.imStride*2, refPtr, refStride, shape.w, shape.rows, k)
+					pred8IM(im, shape.imStride, ref, 8, refStride, shape.w, shape.rows, k)
 				}
 				pred8IMBenchSink = byte(im[len(im)-1])
 			})
