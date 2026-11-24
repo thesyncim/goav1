@@ -394,6 +394,12 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 				captureDiagonalCornerToPending(req.ContextCarrier, rootColIndex+1, &scratch.Mode, req.SBSizeMIB)
 			}
 		}
+		// dav1d_decode_tile_sbrow: error out on symbol decoder overread once
+		// per superblock row, so damaged tile data fails the frame instead of
+		// decoding padding into later rows and frames.
+		if s.Reader.Overread() {
+			return stats, fmt.Errorf("superblock row %d: %w", miRow, ErrTileDataOverread)
+		}
 		if saveTmvs {
 			scratch.Refmvs.saveTmvs(req.CurrentMVFrame, &req.RefFrameSide, int32(miColStart>>1), int32(miColEnd>>1), int32(miRow>>1), int32((miRow+rootSize)>>1))
 			if req.MotionProgress != nil {

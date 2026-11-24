@@ -1598,14 +1598,14 @@ func publicDecoderResidualLowOverheadStream() []byte {
 	var stream []byte
 	stream = appendOBUForTest(stream, internalobu.TypeSequenceHeader, publicDecoderResidualSequenceHeaderPayload())
 	stream = appendOBUForTest(stream, internalobu.TypeFrameHeader, publicDecoderResidualFrameHeaderPayload())
-	stream = appendOBUForTest(stream, internalobu.TypeTileGroup, []byte{0x80})
+	stream = appendOBUForTest(stream, internalobu.TypeTileGroup, publicDecoderResidualTileData())
 	return stream
 }
 
 func publicDecoderResidualLowOverheadFrameStream() []byte {
 	var stream []byte
 	stream = appendOBUForTest(stream, internalobu.TypeFrameHeader, publicDecoderResidualFrameHeaderPayload())
-	stream = appendOBUForTest(stream, internalobu.TypeTileGroup, []byte{0x80})
+	stream = appendOBUForTest(stream, internalobu.TypeTileGroup, publicDecoderResidualTileData())
 	return stream
 }
 
@@ -1613,7 +1613,7 @@ func publicDecoderResidualRTPPayload() []byte {
 	elements := [...]RTPElement{
 		{Data: publicDecoderResidualRTPElement(internalobu.TypeSequenceHeader, publicDecoderResidualSequenceHeaderPayload())},
 		{Data: publicDecoderResidualRTPElement(internalobu.TypeFrameHeader, publicDecoderResidualFrameHeaderPayload())},
-		{Data: publicDecoderResidualRTPElement(internalobu.TypeTileGroup, []byte{0x80})},
+		{Data: publicDecoderResidualRTPElement(internalobu.TypeTileGroup, publicDecoderResidualTileData())},
 	}
 	payload := make([]byte, 128)
 	n, err := PutRTPPayload(payload, RTPAggregationHeader{
@@ -1661,7 +1661,7 @@ func publicDecoderResidualFragmentedRTPPayloads() [][]byte {
 	payloads = append(payloads, append([]byte(nil), packet[:n]...))
 
 	tile := [...]RTPElement{
-		{Data: publicDecoderResidualRTPElement(internalobu.TypeTileGroup, []byte{0x80})},
+		{Data: publicDecoderResidualRTPElement(internalobu.TypeTileGroup, publicDecoderResidualTileData())},
 	}
 	n, err = PutRTPPayload(packet[:], RTPAggregationHeader{ElementCount: 1}, tile[:])
 	if err != nil {
@@ -1695,7 +1695,7 @@ func publicDecoderResidualSequenceHeaderPayload() []byte {
 	w.writeBits(15, 8) // max_frame_width_minus_1
 	w.writeBits(15, 8) // max_frame_height_minus_1
 	w.writeBool(false) // use_128x128_superblock
-	w.writeBool(true)  // enable_filter_intra
+	w.writeBool(false) // enable_filter_intra
 	w.writeBool(true)  // enable_intra_edge_filter
 	w.writeBool(false) // enable_superres
 	w.writeBool(true)  // enable_cdef
@@ -1814,7 +1814,8 @@ func publicDecoderResidualWriteZeroSegmentationParams(w *publicDecoderResidualBi
 
 func publicDecoderResidualFrameHeaderPayload() []byte {
 	var w publicDecoderResidualBitWriter
-	w.writeBool(true)  // disable_cdf_update
+	w.writeBool(false) // disable_cdf_update
+	w.writeBool(false) // allow_screen_content_tools
 	w.writeBool(false) // render_and_frame_size_different
 	w.writeBool(false) // uniform_tile_spacing_flag
 	w.writeBits(0, 8)  // base_q_idx
@@ -1822,7 +1823,18 @@ func publicDecoderResidualFrameHeaderPayload() []byte {
 	w.writeBool(false) // using_qmatrix
 	w.writeBool(false) // segmentation_enabled
 	w.writeBool(false) // reduced_tx_set
-	return w.bytes()
+	return w.trailingBits()
+}
+
+// publicDecoderResidualTileData is a valid single-tile payload for the
+// 16x16 lossless monochrome still picture described by
+// publicDecoderResidualSequenceHeaderPayload and
+// publicDecoderResidualFrameHeaderPayload: one 16x16 DC-predicted block whose
+// residual carries two non-zero samples (flat 128 with Y[0][0]=140 and
+// Y[5][9]=120). It was produced by the encoder's lossless monochrome keyframe
+// tile writer, and dav1d and aomdec decode the resulting stream.
+func publicDecoderResidualTileData() []byte {
+	return []byte{0x0a, 0x1b, 0x59, 0x03, 0xa2, 0x4c, 0x8f, 0x24, 0x87, 0xdc, 0xb4, 0x19, 0x46, 0x81, 0xa4, 0x82, 0x4f, 0x21}
 }
 
 func publicDecoderResidualRunnerFrameEvent() internaldecoder.Event {
