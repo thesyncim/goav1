@@ -2,6 +2,7 @@ package entropy
 
 import (
 	"errors"
+	"math/bits"
 	"testing"
 	"unsafe"
 )
@@ -1083,6 +1084,129 @@ func BenchmarkReaderBoolStream(b *testing.B) {
 		for range benchSymbolsPerOp {
 			if _, err := r.ReadBoolQ15(CDFProbTop / 2); err != nil {
 				b.Fatal(err)
+			}
+		}
+	}
+}
+
+// dav1dMsac is dav1d's MsacContext bookkeeping (src/msac.c dav1d_msac_init,
+// ctx_refill, ctx_norm, dav1d_msac_decode_bool_c) over a 64-bit window, the
+// reference for TestReaderOverreadMatchesDav1dCnt.
+type dav1dMsac struct {
+	buf []byte
+	pos int
+	dif uint64
+	rng uint32
+	cnt int
+}
+
+func newDav1dMsac(buf []byte) *dav1dMsac {
+	s := &dav1dMsac{buf: buf, rng: 0x8000, cnt: -15}
+	s.refill()
+	return s
+}
+
+func (s *dav1dMsac) refill() {
+	c := 64 - s.cnt - 24
+	dif := s.dif
+	for {
+		if s.pos >= len(s.buf) {
+			dif |= ^(^uint64(0xff) << uint(c))
+			break
+		}
+		dif |= uint64(s.buf[s.pos]^0xff) << uint(c)
+		s.pos++
+		c -= 8
+		if c < 0 {
+			break
+		}
+	}
+	s.dif = dif
+	s.cnt = 64 - c - 24
+}
+
+func (s *dav1dMsac) norm(dif uint64, rng uint32) {
+	d := 15 ^ (31 ^ bits.LeadingZeros32(rng))
+	cnt := s.cnt
+	s.dif = dif << uint(d)
+	s.rng = rng << uint(d)
+	s.cnt = cnt - d
+	if uint(cnt) < uint(d) {
+		s.refill()
+	}
+}
+
+func (s *dav1dMsac) decodeBool(f uint32) uint8 {
+	r := s.rng
+	dif := s.dif
+	v := ((r>>8)*(f>>ecProbShift))>>(7-ecProbShift) + ecMinProb
+	vw := uint64(v) << 48
+	ret := dif >= vw
+	if ret {
+		dif -= vw
+		v = r - v
+	}
+	s.norm(dif, v)
+	if ret {
+		return 0
+	}
+	return 1
+}
+
+// overread is dav1d_decode_tile_sbrow's "error out on symbol decoder
+// overread" condition.
+func (s *dav1dMsac) overread() bool { return s.cnt <= -15 }
+
+// TestReaderOverreadMatchesDav1dCnt drives Reader and dav1d's msac over the
+// same symbols and checks that Overread fires exactly when dav1d's
+// msac.cnt <= -15 does, including tens of thousands of padding bits past the
+// end of the data (tellOffs once wrapped there and hid the overread).
+func TestReaderOverreadMatchesDav1dCnt(t *testing.T) {
+	rng := uint64(0x9e3779b97f4a7c15)
+	next := func() uint64 {
+		rng ^= rng << 13
+		rng ^= rng >> 7
+		rng ^= rng << 17
+		return rng
+	}
+	for _, n := range []int{0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 63, 64, 65, 500, 4096} {
+		for trial := range 8 {
+			buf := make([]byte, n)
+			for i := range buf {
+				buf[i] = byte(next())
+			}
+			r := NewReaderWithCDFUpdate(buf, true)
+			m := newDav1dMsac(buf)
+			same := true
+			for step := 0; step < 8*n+120000; step++ {
+				var prob uint16
+				switch next() % 4 {
+				case 0:
+					prob = CDFProbTop / 2
+				case 1:
+					prob = uint16(1 + next()%64)
+				case 2:
+					prob = uint16(CDFProbTop - 1 - next()%64)
+				default:
+					prob = uint16(1 + next()%(CDFProbTop-1))
+				}
+				got, err := r.ReadBoolQ15(prob)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := m.decodeBool(uint32(prob))
+				// The two windows pad past the end differently once the
+				// padding is far past dav1d's threshold; the symbols agree up
+				// to there.
+				if same && !m.overread() && got != want {
+					t.Fatalf("len=%d trial=%d step=%d: bit %d, dav1d %d", n, trial, step, got, want)
+				}
+				if got != want {
+					same = false
+				}
+				if r.Overread() != m.overread() {
+					t.Fatalf("len=%d trial=%d step=%d: Overread=%v, dav1d cnt=%d (BitsRead=%d)", n, trial, step, r.Overread(), m.cnt, r.BitsRead())
+				}
 			}
 		}
 	}

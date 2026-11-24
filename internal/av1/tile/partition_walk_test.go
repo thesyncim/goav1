@@ -337,3 +337,29 @@ func validBlockSize(size BlockSize) bool {
 	_, ok := size.Dimensions()
 	return ok
 }
+
+// TestWalkBlocksLayout422RejectsTallPartitions checks the port of dav1d
+// decode_sb's 4:2:2 checks: the partitions whose blocks are taller than wide
+// have no 4:2:2 chroma block size and fail the walk.
+func TestWalkBlocksLayout422RejectsTallPartitions(t *testing.T) {
+	for p := PartitionNone; p <= PartitionV4; p++ {
+		for _, layout422 := range []bool{false, true} {
+			script := []Partition{p}
+			if p == PartitionSplit {
+				script = append(script, PartitionNone, PartitionNone, PartitionNone, PartitionNone)
+			}
+			reader := scriptedPartitionReader{partitions: script}
+			var ctx PartitionContext
+			_, err := walkBlocks(&ctx, BlockWalkRequest{
+				Root:      BlockLevel64x64,
+				MIColEnd:  16,
+				MIRowEnd:  16,
+				Layout422: layout422,
+			}, reader.read, func(BlockVisit) error { return nil })
+			wantReject := layout422 && (p == PartitionV || p == PartitionV4 || p == PartitionTLeftSplit || p == PartitionTRightSplit)
+			if gotReject := errors.Is(err, ErrInvalid422Partition); gotReject != wantReject || (!wantReject && err != nil) {
+				t.Fatalf("partition=%d layout422=%v: err=%v want reject=%v", p, layout422, err, wantReject)
+			}
+		}
+	}
+}
