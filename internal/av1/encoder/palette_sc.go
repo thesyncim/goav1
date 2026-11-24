@@ -222,7 +222,6 @@ func (s *paletteSearch) paletteRDY(cand *paletteCand, data []int, nv int, centro
 	for i, v := range data {
 		cand.m[i] = lut[v]
 	}
-	cand.res.YMap = &cand.m
 	return true
 }
 
@@ -286,7 +285,7 @@ func (st *lossyEncodeState) keyframePalette(src SourceFrame420, block tile.Block
 		if err != nil {
 			continue
 		}
-		mapRate, err := tile.PaletteTokensCost(&st.intraCDFs, req, &c.res)
+		mapRate, err := tile.PaletteTokensCost(&st.intraCDFs, req, &c.res, &c.m)
 		if err != nil {
 			continue
 		}
@@ -328,7 +327,6 @@ func (st *lossyEncodeState) writeKeyframePalette(modeCtx *tile.BlockModeContext,
 	res := tile.PaletteModeResult{}
 	if pal != nil {
 		res = pal.res
-		res.YMap = nil
 	}
 	req := st.paletteRequest(block, mode)
 	req.ChromaMode = uvMode

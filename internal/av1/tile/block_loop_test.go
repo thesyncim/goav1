@@ -1528,13 +1528,13 @@ func TestDecodeBlockPredictionModePopulatesGlobalWarpForGlobalMVBlock(t *testing
 		t.Fatalf("motion mode=%d valid=%v want SIMPLE_TRANSLATION (1)", result.MotionMode, result.MotionModeValid)
 	}
 	if !result.GlobalWarpedMotionValid {
-		t.Fatalf("global warped motion not populated: %+v", result.Extras)
+		t.Fatalf("global warped motion not populated: slot %d", result.ExtrasSlot)
 	}
-	if result.Extras.GlobalWarpedMotion.Params.Type != parser.GlobalMotionRotZoom {
-		t.Fatalf("global warped motion type=%v want RotZoom", result.Extras.GlobalWarpedMotion.Params.Type)
+	if state.motionExtras[0].GlobalWarpedMotion.Params.Type != parser.GlobalMotionRotZoom {
+		t.Fatalf("global warped motion type=%v want RotZoom", state.motionExtras[0].GlobalWarpedMotion.Params.Type)
 	}
-	if result.Extras.GlobalWarpedMotion.Params.Matrix != global[ReferenceFrameLast].Matrix {
-		t.Fatalf("global warped motion matrix=%v want %v", result.Extras.GlobalWarpedMotion.Params.Matrix, global[ReferenceFrameLast].Matrix)
+	if state.motionExtras[0].GlobalWarpedMotion.Params.Matrix != global[ReferenceFrameLast].Matrix {
+		t.Fatalf("global warped motion matrix=%v want %v", state.motionExtras[0].GlobalWarpedMotion.Params.Matrix, global[ReferenceFrameLast].Matrix)
 	}
 	// alpha/beta/gamma/delta should equal the values produced by
 	// warpShearParams on the same matrix; this guards against accidental
@@ -1543,13 +1543,13 @@ func TestDecodeBlockPredictionModePopulatesGlobalWarpForGlobalMVBlock(t *testing
 	if !ok {
 		t.Fatalf("test setup matrix not shear-allowed; pick a different rotzoom")
 	}
-	if result.Extras.GlobalWarpedMotion.Alpha != expected.Alpha ||
-		result.Extras.GlobalWarpedMotion.Beta != expected.Beta ||
-		result.Extras.GlobalWarpedMotion.Gamma != expected.Gamma ||
-		result.Extras.GlobalWarpedMotion.Delta != expected.Delta {
+	if state.motionExtras[0].GlobalWarpedMotion.Alpha != expected.Alpha ||
+		state.motionExtras[0].GlobalWarpedMotion.Beta != expected.Beta ||
+		state.motionExtras[0].GlobalWarpedMotion.Gamma != expected.Gamma ||
+		state.motionExtras[0].GlobalWarpedMotion.Delta != expected.Delta {
 		t.Fatalf("shear params got alpha=%d beta=%d gamma=%d delta=%d want alpha=%d beta=%d gamma=%d delta=%d",
-			result.Extras.GlobalWarpedMotion.Alpha, result.Extras.GlobalWarpedMotion.Beta,
-			result.Extras.GlobalWarpedMotion.Gamma, result.Extras.GlobalWarpedMotion.Delta,
+			state.motionExtras[0].GlobalWarpedMotion.Alpha, state.motionExtras[0].GlobalWarpedMotion.Beta,
+			state.motionExtras[0].GlobalWarpedMotion.Gamma, state.motionExtras[0].GlobalWarpedMotion.Delta,
 			expected.Alpha, expected.Beta, expected.Gamma, expected.Delta)
 	}
 }
@@ -1624,7 +1624,7 @@ func TestDecodeBlockPredictionModeSkipsGlobalWarpForTranslationGM(t *testing.T) 
 		t.Fatalf("inter mode=%+v valid=%v want GLOBALMV", result.InterMode, result.InterModeValid)
 	}
 	if result.GlobalWarpedMotionValid {
-		t.Fatalf("global warped motion should not be populated for translational GM: %+v", result.Extras)
+		t.Fatalf("global warped motion should not be populated for translational GM: slot %d", result.ExtrasSlot)
 	}
 }
 
@@ -1699,7 +1699,7 @@ func TestDecodeBlockPredictionModeSkipsGlobalWarpForSmallBlock(t *testing.T) {
 		t.Fatalf("decodeBlockPredictionMode: %v", err)
 	}
 	if result.GlobalWarpedMotionValid {
-		t.Fatalf("global warped motion should not be populated for 4x4 block: %+v", result.Extras)
+		t.Fatalf("global warped motion should not be populated for 4x4 block: slot %d", result.ExtrasSlot)
 	}
 }
 

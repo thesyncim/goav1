@@ -223,31 +223,31 @@ func ceilLog2(n int) int {
 // WritePaletteTokens codes the luma color index map of res (palette_tokens):
 // the on-screen part of the block in wavefront order, the first index with
 // a uniform code and every other through its color-context CDF, the forward
-// of ReadPaletteTokens / readPaletteIndices. res.YMap holds the bw x bh map
-// at stride bw.
-func WritePaletteTokens(w *entropy.Writer, cdfs *IntraModeCDFs, req PaletteModeRequest, res *PaletteModeResult) error {
+// of ReadPaletteTokens / readPaletteIndices. yMap holds the bw x bh map at
+// stride bw.
+func WritePaletteTokens(w *entropy.Writer, cdfs *IntraModeCDFs, req PaletteModeRequest, res *PaletteModeResult, yMap *[MaxPalettePixels]uint8) error {
 	if w == nil {
 		return ErrInvalidDecodeState
 	}
 	s := paletteSink{w: w}
-	return writePaletteTokens(&s, cdfs, req, res)
+	return writePaletteTokens(&s, cdfs, req, res, yMap)
 }
 
 // PaletteTokensCost prices WritePaletteTokens.
-func PaletteTokensCost(cdfs *IntraModeCDFs, req PaletteModeRequest, res *PaletteModeResult) (uint32, error) {
+func PaletteTokensCost(cdfs *IntraModeCDFs, req PaletteModeRequest, res *PaletteModeResult, yMap *[MaxPalettePixels]uint8) (uint32, error) {
 	var c paletteSink
-	err := writePaletteTokens(&c, cdfs, req, res)
+	err := writePaletteTokens(&c, cdfs, req, res, yMap)
 	return c.cost, err
 }
 
-func writePaletteTokens(w *paletteSink, cdfs *IntraModeCDFs, req PaletteModeRequest, res *PaletteModeResult) error {
+func writePaletteTokens(w *paletteSink, cdfs *IntraModeCDFs, req PaletteModeRequest, res *PaletteModeResult, yMap *[MaxPalettePixels]uint8) error {
 	if cdfs == nil || res == nil || res.UVSize != 0 {
 		return ErrInvalidDecodeState
 	}
 	if res.YSize == 0 {
 		return nil
 	}
-	if res.YMap == nil {
+	if yMap == nil {
 		return ErrInvalidDecodeState
 	}
 	dims, ok := req.Size.Dimensions()
@@ -259,7 +259,7 @@ func writePaletteTokens(w *paletteSink, cdfs *IntraModeCDFs, req PaletteModeRequ
 	n := int(res.YSize)
 	stride := bw4 * 4
 	cols, rows := w4*4, h4*4
-	m := res.YMap[:]
+	m := yMap[:]
 	writeUniform(w, uint32(n), uint32(m[0]))
 	for i := 1; i < rows+cols-1; i++ {
 		start := max(i-rows+1, 0)

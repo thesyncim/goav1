@@ -261,9 +261,8 @@ func BenchmarkReconWavefrontEnsureStates(b *testing.B) {
 // testReplayDeferredSerial reconstructs every buffered block in decode order on
 // the controller's own reconstruction state.
 func (c *frameWorkTileResidualLoopController) testReplayDeferredSerial() error {
-	if err := c.scratch.finalizeDeferredPalettes(); err != nil {
-		return err
-	}
+	c.recon.payloads = c.scratch.deferredPayloads()
+	c.recon.batch.payloads = &c.recon.payloads
 	cur := frameWorkReconCursor{cbi: c.scratch.reconCBI, cf: c.scratch.cfArena}
 	for i := range c.scratch.reconVisits {
 		if err := c.recon.reconBDeferred(&c.scratch.reconVisits[i], &cur); err != nil {

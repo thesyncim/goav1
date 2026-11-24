@@ -39,7 +39,8 @@ type BlockLoopScratch struct {
 	CDEF      CDEFIndexContext
 	Coeff     BlockCoeffScratch
 	CoeffCtx  CoeffEntropyContext
-	Palette   PaletteModeScratch
+	// Palette is the single palette-map slot of DecodeState.Payloads.
+	Palette [1]PaletteModeScratch
 
 	// coef is the block's recon binding (bindCoefBlock).
 	coef CoefBlock
@@ -983,7 +984,7 @@ func decodeBlockLoopVisitWithCoeffControllerPtr[T BlockLoopCoeffController](s *D
 		if scratch.Refmvs.bound {
 			rt = &scratch.Refmvs
 		}
-		if err := s.decodeBlockPredictionModeInto(cdfs, ctx, req, block, prefix, segmentID, segment, &scratch.Palette, &visit.Prediction, intraOnlyContexts, rt); err != nil {
+		if err := s.decodeBlockPredictionModeInto(cdfs, ctx, req, block, prefix, segmentID, segment, &scratch.Palette[0], &visit.Prediction, intraOnlyContexts, rt); err != nil {
 			return nil, fmt.Errorf("decode prediction: %w", err)
 		}
 	}
@@ -1282,8 +1283,8 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 					// The refmvs path writes the cells in place, self cell
 					// included.
 					if rt != nil {
-						if rt.subChromaCells(ctx, block, req.Color.SubsamplingX, req.Color.SubsamplingY, filters, result.InterMotion.MV[0], refs.Ref0, &s.subChroma) {
-							result.SubChromaInter = &s.subChroma
+						if rt.subChromaCells(ctx, block, req.Color.SubsamplingX, req.Color.SubsamplingY, filters, result.InterMotion.MV[0], refs.Ref0, &s.subChroma[0]) {
+							result.SubChromaSlot = 1
 						}
 					} else if sub, ok := ctx.CollectSubChromaInterCells(block.Size, blockX4, blockY4, req.Color.SubsamplingX, req.Color.SubsamplingY, filters); ok {
 						// The grid fallback returns the cells for the caller
@@ -1293,8 +1294,8 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 						selfCell.MV = result.InterMotion.MV[0]
 						selfCell.Reference = refs.Ref0
 						selfCell.InterpFilters = filters
-						s.subChroma = sub
-						result.SubChromaInter = &s.subChroma
+						s.subChroma[0] = sub
+						result.SubChromaSlot = 1
 					}
 				}
 				// The inter-intra flag keeps the warp findSamples scan from

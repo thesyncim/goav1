@@ -757,72 +757,37 @@ func TestFrameWorkTileResidualControllerDefersCFLUntilChroma(t *testing.T) {
 	}
 }
 
-func TestFrameWorkDeferredPaletteArenaFinalizesAfterGrowth(t *testing.T) {
+func TestFrameWorkDeferredPaletteArenaCopiesAfterGrowth(t *testing.T) {
 	var scratch FrameWorkTileResidualScratch
 	scratch.paletteArena = make([]tile.PaletteModeScratch, 0, 1)
-
-	var firstMaps tile.PaletteModeScratch
-	firstMaps.Y[0] = 7
-	firstMaps.UV[0] = 9
-	var secondMaps tile.PaletteModeScratch
-	secondMaps.Y[0] = 11
-	secondMaps.UV[0] = 13
-
-	appendVisit := func(visit tile.BlockLoopVisit) {
-		visitIndex, slots := scratch.bufferDeferredVisit(&visit)
-		if err := scratch.rememberDeferredPalette(visitIndex, slots); err != nil {
-			t.Fatalf("remember deferred palette: %v", err)
-		}
+	src := make([]tile.PaletteModeScratch, 1)
+	scratch.fused = tile.BlockPayloads{Palette: src}
+	visit := tile.BlockLoopVisit{
+		Prediction: tile.BlockPredictionModeResult{
+			Valid: true,
+			Intra: true,
+			Palette: tile.PaletteModeResult{
+				YSize: 2, UVSize: 2, YMapSlot: 1, UVMapSlot: 1,
+			},
+		},
 	}
-	appendVisit(tile.BlockLoopVisit{
-		Prediction: tile.BlockPredictionModeResult{
-			Valid: true,
-			Intra: true,
-			Palette: tile.PaletteModeResult{
-				YSize:  2,
-				UVSize: 2,
-				YMap:   &firstMaps.Y,
-				UVMap:  &firstMaps.UV,
-			},
-		},
-	})
-	firstMaps.Y[0] = 99
-	firstMaps.UV[0] = 99
-	appendVisit(tile.BlockLoopVisit{
-		Prediction: tile.BlockPredictionModeResult{
-			Valid: true,
-			Intra: true,
-			Palette: tile.PaletteModeResult{
-				YSize:  2,
-				UVSize: 2,
-				YMap:   &secondMaps.Y,
-				UVMap:  &secondMaps.UV,
-			},
-		},
-	})
-	secondMaps.Y[0] = 99
-	secondMaps.UV[0] = 99
+	src[0].Y[0], src[0].UV[0] = 7, 9
+	scratch.bufferDeferredVisit(&visit)
+	src[0].Y[0], src[0].UV[0] = 11, 13
+	scratch.bufferDeferredVisit(&visit)
+	src[0].Y[0], src[0].UV[0] = 99, 99
 
+	pl := scratch.deferredPayloads()
+	want := [][2]uint8{{7, 9}, {11, 13}}
 	for i := range scratch.reconVisits {
-		pal := scratch.reconVisits[i].Prediction.Palette
-		if pal.YMap != nil || pal.UVMap != nil {
-			t.Fatalf("visit %d retained append-unstable palette pointers", i)
+		pal := &scratch.reconVisits[i].Prediction.Palette
+		y, uv := pl.PaletteYMap(pal), pl.PaletteUVMap(pal)
+		if y == nil || uv == nil {
+			t.Fatalf("visit %d: maps not copied", i)
 		}
-	}
-	if err := scratch.finalizeDeferredPalettes(); err != nil {
-		t.Fatal(err)
-	}
-	if got := scratch.reconVisits[0].Prediction.Palette.YMap[0]; got != 7 {
-		t.Fatalf("first Y map = %d, want 7", got)
-	}
-	if got := scratch.reconVisits[0].Prediction.Palette.UVMap[0]; got != 9 {
-		t.Fatalf("first UV map = %d, want 9", got)
-	}
-	if got := scratch.reconVisits[1].Prediction.Palette.YMap[0]; got != 11 {
-		t.Fatalf("second Y map = %d, want 11", got)
-	}
-	if got := scratch.reconVisits[1].Prediction.Palette.UVMap[0]; got != 13 {
-		t.Fatalf("second UV map = %d, want 13", got)
+		if y[0] != want[i][0] || uv[0] != want[i][1] {
+			t.Fatalf("visit %d: maps %d/%d, want %v", i, y[0], uv[0], want[i])
+		}
 	}
 }
 
@@ -1018,58 +983,53 @@ func overwriteFrameWorkCFLLuma(output *frame.Frame) {
 	}
 }
 
-// TestFrameWorkDeferredPaletteInstallIncremental covers the streamed
-// wavefront's use of the palette arena: bindings are installed a prefix at a
+// TestFrameWorkDeferredPaletteViewIncremental covers the streamed
+// wavefront's use of the palette arena: views are published a prefix at a
 // time while later blocks keep appending (and the arena keeps moving), and
-// every installed map must keep reading its own block's colours.
-func TestFrameWorkDeferredPaletteInstallIncremental(t *testing.T) {
+// every published map must keep reading its own block's colours.
+func TestFrameWorkDeferredPaletteViewIncremental(t *testing.T) {
 	var scratch FrameWorkTileResidualScratch
 	scratch.paletteArena = make([]tile.PaletteModeScratch, 0, 1)
-	var src tile.PaletteModeScratch
+	src := make([]tile.PaletteModeScratch, 1)
+	scratch.fused = tile.BlockPayloads{Palette: src}
 	appendVisit := func(v uint8) {
-		src.Y[0], src.UV[0] = v, v+1
-		visitIndex, slots := scratch.bufferDeferredVisit(&tile.BlockLoopVisit{
+		src[0].Y[0], src[0].UV[0] = v, v+1
+		scratch.bufferDeferredVisit(&tile.BlockLoopVisit{
 			Prediction: tile.BlockPredictionModeResult{
 				Valid: true,
 				Intra: true,
 				Palette: tile.PaletteModeResult{
-					YSize: 2, UVSize: 2, YMap: &src.Y, UVMap: &src.UV,
+					YSize: 2, UVSize: 2, YMapSlot: 1, UVMapSlot: 1,
 				},
 			},
 		})
-		if err := scratch.rememberDeferredPalette(visitIndex, slots); err != nil {
-			t.Fatal(err)
-		}
 	}
-	cursor := 0
+	type view struct {
+		visits []tile.BlockLoopVisit
+		pl     tile.BlockPayloads
+	}
+	var views []view
 	for round := 0; round < 6; round++ {
 		for k := 0; k < round+1; k++ {
 			appendVisit(uint8(2 * len(scratch.reconVisits)))
 		}
-		next, err := scratch.installDeferredPalettes(cursor)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if next != len(scratch.paletteBindings) {
-			t.Fatalf("cursor=%d, want %d", next, len(scratch.paletteBindings))
-		}
-		cursor = next
+		views = append(views, view{scratch.reconVisits, scratch.deferredPayloads()})
 	}
-	src.Y[0], src.UV[0] = 255, 255
-	for i := range scratch.reconVisits {
-		pal := scratch.reconVisits[i].Prediction.Palette
-		if pal.YMap == nil || pal.UVMap == nil {
-			t.Fatalf("visit %d: maps not installed", i)
+	src[0].Y[0], src[0].UV[0] = 255, 255
+	for _, v := range views {
+		for i := range v.visits {
+			pal := &v.visits[i].Prediction.Palette
+			y, uv := v.pl.PaletteYMap(pal), v.pl.PaletteUVMap(pal)
+			if y == nil || uv == nil {
+				t.Fatalf("visit %d: maps not copied", i)
+			}
+			if got, want := y[0], uint8(2*i); got != want {
+				t.Fatalf("visit %d: Y map = %d, want %d", i, got, want)
+			}
+			if got, want := uv[0], uint8(2*i+1); got != want {
+				t.Fatalf("visit %d: UV map = %d, want %d", i, got, want)
+			}
 		}
-		if got, want := pal.YMap[0], uint8(2*i); got != want {
-			t.Fatalf("visit %d: Y map = %d, want %d", i, got, want)
-		}
-		if got, want := pal.UVMap[0], uint8(2*i+1); got != want {
-			t.Fatalf("visit %d: UV map = %d, want %d", i, got, want)
-		}
-	}
-	if _, err := scratch.installDeferredPalettes(len(scratch.paletteBindings) + 1); err == nil {
-		t.Fatal("cursor past the bindings accepted")
 	}
 }
 

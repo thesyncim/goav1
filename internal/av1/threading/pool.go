@@ -287,6 +287,11 @@ type FrameWorkBatch struct {
 	// worker that reuses one cache across successive jobs stays byte-exact.
 	geomCache *frameWorkJobGeometryCache
 
+	// payloads resolves the out-of-line payload slots of the visits this
+	// batch value reconstructs: the decode state's single slots on the fused
+	// path, a lane's published arenas on the deferred one.
+	payloads *tile.BlockPayloads
+
 	// wavefrontLanes, when non-nil, is the pool's persistent lane group that
 	// runs the SB-row wavefront goroutines, so a frame does not spawn (and
 	// heap-allocate) fresh goroutines. The pool sets it together with

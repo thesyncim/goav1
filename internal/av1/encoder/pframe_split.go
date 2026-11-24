@@ -83,7 +83,7 @@ func recordPaletteOf(p tile.PaletteModeResult) recordPalette {
 	return recordPalette{ySize: p.YSize, uvSize: p.UVSize, yColors: p.YColors, uColors: p.UColors, vColors: p.VColors}
 }
 
-// result returns the palette with nil color maps.
+// result returns the palette with no color map slots.
 func (p *recordPalette) result() tile.PaletteModeResult {
 	return tile.PaletteModeResult{YSize: p.ySize, UVSize: p.uvSize, YColors: p.yColors, UColors: p.uColors, VColors: p.vColors}
 }

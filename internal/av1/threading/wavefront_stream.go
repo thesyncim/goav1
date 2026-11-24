@@ -15,26 +15,27 @@ import (
 // a palette visit's map pointers) is patched before its row is published. Every
 // element below a published length therefore stays valid and unchanged, even
 // when a later append moves the live slice to a new backing array: the snapshot
-// keeps reading the old one.
+// keeps reading the old one. The payload arenas the visits' slots name are
+// published the same way.
 type frameWorkReconView struct {
 	rowStart []int32
 	sbs      []frameWorkReconSB
 	visits   []tile.BlockLoopVisit
 	cbi      []frameWorkReconCBI
 	cfArena  []int32
+	payloads tile.BlockPayloads
 }
 
 // frameWorkReconSpanBuilder is the parse-side cursor that partitions the
 // buffered blocks into per-SB spans and SB rows as they arrive. Only the
 // parsing goroutine touches it.
 type frameWorkReconSpanBuilder struct {
-	miRowStart    int
-	miColStart    int
-	sbSizeMIB     int
-	rowCount      int
-	prevRow       int
-	prevCol       int
-	paletteCursor int
+	miRowStart int
+	miColStart int
+	sbSizeMIB  int
+	rowCount   int
+	prevRow    int
+	prevCol    int
 }
 
 func (wf *frameWorkReconWavefront) beginSpans(region FrameWorkJobRegion, sbSizeMIB int) {
@@ -280,17 +281,13 @@ func (c *frameWorkTileResidualLoopController) streamSuperblock(sb tile.BlockLoop
 
 func (c *frameWorkTileResidualLoopController) publishReconRows(rows int) error {
 	wf := c.scratch.wavefront
-	cursor, err := c.scratch.installDeferredPalettes(wf.build.paletteCursor)
-	if err != nil {
-		return err
-	}
-	wf.build.paletteCursor = cursor
 	wf.publishRows(rows, frameWorkReconView{
 		rowStart: wf.rowStart,
 		sbs:      wf.sbSpans,
 		visits:   c.scratch.reconVisits,
 		cbi:      c.scratch.reconCBI,
 		cfArena:  c.scratch.cfArena,
+		payloads: c.scratch.deferredPayloads(),
 	})
 	return nil
 }
