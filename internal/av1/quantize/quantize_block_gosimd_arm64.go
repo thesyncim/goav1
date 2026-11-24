@@ -2,10 +2,7 @@
 
 package quantize
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // quantizeFPVectors applies the av1_quantize_fp lane rule to coeff, writing
 // qcoeff, eight coefficients per iteration as two Int32x4 halves. len(coeff)
@@ -23,7 +20,7 @@ func quantizeFPVectors(qcoeff []int16, coeff []int32, quant int32, round int32, 
 	if n == 0 {
 		return
 	}
-	_ = qcoeff[n-1]
+	q := qcoeff[:n]
 	quantV := archsimd.BroadcastInt32x4(quant)
 	roundV := archsimd.BroadcastInt32x4(round)
 	deqV := archsimd.BroadcastInt32x4(dequant)
@@ -33,14 +30,13 @@ func quantizeFPVectors(qcoeff []int16, coeff []int32, quant int32, round int32, 
 	shlV := archsimd.BroadcastInt32x4(int32(1 + txScale))
 	shrV := archsimd.BroadcastInt32x4(-int32(16 - int(txScale)))
 	signShiftV := archsimd.BroadcastInt32x4(-31)
-	cp := unsafe.Pointer(&coeff[0])
-	qp := unsafe.Pointer(&qcoeff[0])
-	for i := 0; i < n; i += 8 {
-		c0 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(cp, 4*i)))
-		c1 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(cp, 4*i+16)))
-		lo := quantizeFPLane4SIMD(c0, quantV, roundV, deqV, maxV, shlV, shrV, signShiftV)
-		hi := quantizeFPLane4SIMD(c1, quantV, roundV, deqV, maxV, shlV, shrV, signShiftV)
-		quantizePackInt16x8SIMD(lo, hi).StoreArray((*[8]int16)(unsafe.Add(qp, 2*i)))
+	// The i <= len-8 form proves every 8-lane window in bounds, so the loop
+	// carries no bounds checks.
+	for i := 0; i <= len(coeff)-8 && i <= len(q)-8; i += 8 {
+		c := (*[8]int32)(coeff[i:])
+		lo := quantizeFPLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[0:4])), quantV, roundV, deqV, maxV, shlV, shrV, signShiftV)
+		hi := quantizeFPLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[4:8])), quantV, roundV, deqV, maxV, shlV, shrV, signShiftV)
+		quantizePackInt16x8SIMD(lo, hi).StoreArray((*[8]int16)(q[i:]))
 	}
 }
 
@@ -76,7 +72,7 @@ func quantizeBVectors(qcoeff []int16, coeff []int32, quant int32, round int32, z
 	if n == 0 {
 		return 0
 	}
-	_ = qcoeff[n-1]
+	q := qcoeff[:n]
 	quantV := archsimd.BroadcastInt32x4(quant)
 	roundV := archsimd.BroadcastInt32x4(round)
 	zbinU := archsimd.BroadcastInt32x4(zbin).ToBits()
@@ -86,30 +82,26 @@ func quantizeBVectors(qcoeff []int16, coeff []int32, quant int32, round int32, z
 	sixteenV := archsimd.BroadcastInt32x4(-16)
 	shiftV := archsimd.BroadcastInt32x4(-int32(shift))
 	signShiftV := archsimd.BroadcastInt32x4(-31)
-	cp := unsafe.Pointer(&coeff[0])
-	qp := unsafe.Pointer(&qcoeff[0])
 	if iscan == nil {
-		for i := 0; i < n; i += 8 {
-			c0 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(cp, 4*i)))
-			c1 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(cp, 4*i+16)))
-			lo := quantizeBLane4SIMD(c0, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
-			hi := quantizeBLane4SIMD(c1, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
-			quantizePackInt16x8SIMD(lo, hi).StoreArray((*[8]int16)(unsafe.Add(qp, 2*i)))
+		for i := 0; i <= len(coeff)-8 && i <= len(q)-8; i += 8 {
+			c := (*[8]int32)(coeff[i:])
+			lo := quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[0:4])), quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+			hi := quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[4:8])), quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+			quantizePackInt16x8SIMD(lo, hi).StoreArray((*[8]int16)(q[i:]))
 		}
 		return 0
 	}
-	sp := unsafe.Pointer(&iscan[:n][0])
+	sc := iscan[:n]
 	one16 := archsimd.BroadcastInt16x8(1)
 	zero16 := archsimd.BroadcastInt16x8(0)
 	var eobAcc archsimd.Int16x8
-	for i := 0; i < n; i += 8 {
-		c0 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(cp, 4*i)))
-		c1 := archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Add(cp, 4*i+16)))
-		lo := quantizeBLane4SIMD(c0, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
-		hi := quantizeBLane4SIMD(c1, quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+	for i := 0; i <= len(coeff)-8 && i <= len(q)-8 && i <= len(sc)-8; i += 8 {
+		c := (*[8]int32)(coeff[i:])
+		lo := quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[0:4])), quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
+		hi := quantizeBLane4SIMD(archsimd.LoadInt32x4Array((*[4]int32)(c[4:8])), quantV, roundV, zbinU, maxU, maxV, sixteenV, shiftV, signShiftV)
 		levels := quantizePackInt16x8SIMD(lo, hi)
-		levels.StoreArray((*[8]int16)(unsafe.Add(qp, 2*i)))
-		pos1 := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Add(sp, 2*i))).Add(one16)
+		levels.StoreArray((*[8]int16)(q[i:]))
+		pos1 := archsimd.LoadInt16x8Array((*[8]int16)(sc[i:])).Add(one16)
 		eobAcc = eobAcc.Max(pos1.Masked(levels.NotEqual(zero16)))
 	}
 	return int(eobAcc.ReduceMax())

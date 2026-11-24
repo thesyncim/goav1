@@ -74,15 +74,8 @@ internal/av1/motion/mc8mask_gosimd_arm64.go
 internal/av1/motion/mc8w4_gosimd_arm64.go
 internal/av1/motion/warp8_gosimd_arm64.go
 internal/av1/motion/warp_hbd_gosimd_arm64.go
-internal/av1/quantize/dequant_gosimd_amd64.go
-internal/av1/quantize/dequant_gosimd_arm64.go
-internal/av1/quantize/quantize_block_gosimd_amd64.go
-internal/av1/quantize/quantize_block_gosimd_arm64.go
 internal/av1/quantize/quantize_rowgroups_diff_gosimd_arm64.go
 internal/av1/quantize/quantize_rowgroups_gosimd_amd64.go
-internal/av1/quantize/quantize_rowgroups_gosimd_arm64.go
-internal/av1/restoration/selfguided_blend_gosimd_arm64.go
-internal/av1/restoration/selfguided_gosimd_amd64.go
 internal/av1/restoration/selfguided_rolling_gosimd_arm64.go
 internal/av1/restoration/wiener_gosimd_arm64.go
 internal/av1/restoration/wiener_horizontal_gosimd_arm64.go
@@ -99,7 +92,6 @@ internal/av1/tile/refmvs_tmvs.go
 internal/av1/tile/restoration_apply_u8.go
 internal/av1/tile/restoration_boundary.go
 internal/av1/transform/block.go
-internal/av1/transform/colpass_int16pipe_gosimd_arm64.go
 internal/av1/transform/dct2lane_gosimd_amd64.go
 internal/av1/transform/dct32_lanes4_adapters_gosimd.go
 internal/av1/transform/dct32_lanes4_gosimd.go

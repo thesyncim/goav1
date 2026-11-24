@@ -6,10 +6,7 @@
 
 package quantize
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // dequantColumnSIMD is the Go-native SIMD twin of dequantColumnPureGo on AVX2.
 // It processes eight coefficients per iteration in one Int32x8 register and
@@ -36,8 +33,9 @@ func dequantColumnSIMD(dst []int32, coeff []int16, scale int32, txScale uint8, d
 		// Immediate shift counts only (txScale is 0, 1 or 2): a variable
 		// ymm shift count is rematerialized with a legacy-SSE movq, which
 		// stalls on dirty upper state on Zen 3.
-		for i := 0; i < blocks8; i += 8 {
-			c := archsimd.LoadInt16x8Array((*[8]int16)(unsafe.Pointer(&coeff[i])))
+		cs, ds := coeff[:blocks8], dst[:blocks8]
+		for i := 0; i <= len(cs)-8 && i <= len(ds)-8; i += 8 {
+			c := archsimd.LoadInt16x8Array((*[8]int16)(cs[i:]))
 			x := c.ExtendToInt32()
 			sign := x.ShiftAllRight(31)
 			p := x.Abs().Mul(scaleV).And(maskV)
@@ -47,7 +45,7 @@ func dequantColumnSIMD(dst []int32, coeff []int16, scale int32, txScale uint8, d
 			case 2:
 				p = p.ShiftAllRight(2)
 			}
-			p.Xor(sign).Sub(sign).Min(hiV).Max(loV).StoreArray((*[8]int32)(unsafe.Pointer(&dst[i])))
+			p.Xor(sign).Sub(sign).Min(hiV).Max(loV).StoreArray((*[8]int32)(ds[i:]))
 		}
 		archsimd.ClearAVXUpperBits()
 	}

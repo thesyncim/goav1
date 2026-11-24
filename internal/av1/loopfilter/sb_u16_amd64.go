@@ -12,6 +12,10 @@ import (
 	"unsafe"
 )
 
+// unsafe: strided tap rows inside a window range-checked once per call; the
+// same shape as sb_u8_arm64.go, where the bounds-checked slice form measured
+// +20-61%.
+
 // This file ports dav1d's 16bpc AVX2 superblock deblock drivers and FILTER
 // macro (src/x86/loopfilter16_avx2.asm lpf_{v,h}_sb_{y,uv}_16bpc) to
 // archsimd. One kernel call covers sixteen uint16 samples, four 4x4 units (a
@@ -91,7 +95,7 @@ func avx16Sel(m, a, b archsimd.Uint16x16) archsimd.Uint16x16 {
 // flat filter took; ok is false when no lane passed the filter mask.
 func avx16Core[W avxWidth](k *avx16K, p3, p2, p1, p0, q0, q1, q2, q3, eV, iV, hV, m4, mGt4 archsimd.Uint16x16) (o2, o1, o0, n0, n1, n2, mFlat archsimd.Uint16x16, ok bool) {
 	var wdT W
-	wd := int(unsafe.Sizeof(wdT))
+	wd := len(wdT)
 	o2, o1, o0, n0, n1, n2 = p2, p1, p0, q0, q1, q2
 	maxd := avx16Absd(p1, p0).Max(avx16Absd(q1, q0))
 	t := maxd
