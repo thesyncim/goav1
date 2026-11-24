@@ -323,6 +323,7 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 			return stats, err
 		}
 	}
+	layout422 := !req.Color.MonoChrome && req.Color.SubsamplingX && !req.Color.SubsamplingY
 	for miRow := miRowStart; miRow < miRowEnd; miRow += rootSize {
 		if !intraOnlyContexts && keepLegacyMotion {
 			promotePendingDiagonalCarriers(req.ContextCarrier)
@@ -356,6 +357,7 @@ func decodeBlockLoopWithCoeffControllerPtr[T BlockLoopCoeffController](s *Decode
 				UseNeighborBounds:  true,
 				NeighborMIColStart: uint16(neighborMIColStart),
 				NeighborMIRowStart: uint16(neighborMIRowStart),
+				Layout422:          layout422,
 			}
 			if req.BeforeSuperblock != nil {
 				if err := req.BeforeSuperblock(BlockLoopSuperblockVisit{

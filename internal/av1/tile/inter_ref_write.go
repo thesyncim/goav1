@@ -25,7 +25,7 @@ func WriteIntraFlag(w *entropy.Writer, cdfs *IntraModeCDFs, ctx *BlockModeContex
 	}
 	if frameTypeIsInterOrSwitch(req.FrameType) {
 		if req.SegmentationEnabled && (req.Segment.RefFrame >= 0 || req.Segment.GlobalMV) {
-			implied := req.Segment.RefFrame == 0 && !req.Segment.GlobalMV
+			implied := req.Segment.RefFrame == 0
 			if intra != implied {
 				return ErrInvalidDecodeState
 			}

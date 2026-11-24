@@ -990,7 +990,10 @@ func (s *DecodeState) readIntraFlag(cdfs *IntraModeCDFs, ctx *BlockModeContext, 
 	}
 	if frameTypeIsInterOrSwitch(req.FrameType) {
 		if req.Segmentation.Enabled && (segment.RefFrame >= 0 || segment.GlobalMV) {
-			return IntraFlagResult{Intra: segment.RefFrame == 0 && !segment.GlobalMV}, nil
+			// dav1d decode_b: b->intra = !seg->ref. A segment reference of
+			// INTRA_FRAME makes the block intra even with GLOBALMV active
+			// (spec read_is_inter tests the reference feature first).
+			return IntraFlagResult{Intra: segment.RefFrame == 0}, nil
 		}
 		// dav1d decode_b: get_intra_ctx, then one adaptive bool.
 		context := envIntraCtx(ctx, int(block.X4)&(MaxBlockModeSlots-1), int(block.Y4)&(MaxBlockModeSlots-1), block.HaveTop, block.HaveLeft)
@@ -1023,7 +1026,7 @@ func (s *DecodeState) ReadIntraFlagResult(cdfs *IntraModeCDFs, ctx *BlockModeCon
 	}
 	if frameTypeIsInterOrSwitch(req.FrameType) {
 		if req.SegmentationEnabled && (req.Segment.RefFrame >= 0 || req.Segment.GlobalMV) {
-			return IntraFlagResult{Intra: req.Segment.RefFrame == 0 && !req.Segment.GlobalMV}, nil
+			return IntraFlagResult{Intra: req.Segment.RefFrame == 0}, nil
 		}
 		context, err := ctx.IntraContext(int(req.X4), int(req.Y4), req.HaveTop, req.HaveLeft)
 		if err != nil {

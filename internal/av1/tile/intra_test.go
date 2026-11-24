@@ -219,6 +219,19 @@ func TestReadIntraFlagSegmentAndIntrabcConditions(t *testing.T) {
 	if !intra {
 		t.Fatal("segment INTRA_FRAME should force intra")
 	}
+	// The reference feature wins over GLOBALMV (dav1d decode_b: b->intra =
+	// !seg->ref; spec read_is_inter).
+	intra, err = state.ReadIntraFlag(&cdfs, &ctx, IntraFlagRequest{
+		FrameType:           parser.FrameTypeInter,
+		SegmentationEnabled: true,
+		Segment:             parser.SegmentData{RefFrame: 0, GlobalMV: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !intra {
+		t.Fatal("segment INTRA_FRAME with GLOBALMV should force intra")
+	}
 	intra, err = state.ReadIntraFlag(&cdfs, &ctx, IntraFlagRequest{
 		FrameType:           parser.FrameTypeInter,
 		SegmentationEnabled: true,
