@@ -232,18 +232,48 @@ func mc8CopyFast(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, 
 }
 
 func mc8Copy(dst unsafe.Pointer, dstStride int, src unsafe.Pointer, srcStride int, w, h int) {
+	// Rows step their pointers (dav1d put_neon's post-incremented rows); the
+	// step after the last row is skipped so no pointer leaves the block.
 	switch {
-	case w&15 == 0:
-		for r := 0; r < h; r++ {
-			s := unsafe.Add(src, r*srcStride)
-			d := unsafe.Add(dst, r*dstStride)
-			for c := 0; c < w; c += 16 {
-				archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(s, c))).StoreArray((*[16]uint8)(unsafe.Add(d, c)))
+	case w == 16:
+		for {
+			archsimd.LoadUint8x16Array((*[16]uint8)(src)).StoreArray((*[16]uint8)(dst))
+			if h--; h == 0 {
+				return
 			}
+			src, dst = unsafe.Add(src, srcStride), unsafe.Add(dst, dstStride)
+		}
+	case w&31 == 0:
+		for {
+			for c := 0; c < w; c += 32 {
+				s, d := unsafe.Add(src, c), unsafe.Add(dst, c)
+				v0 := archsimd.LoadUint8x16Array((*[16]uint8)(s))
+				v1 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(s, 16)))
+				v0.StoreArray((*[16]uint8)(d))
+				v1.StoreArray((*[16]uint8)(unsafe.Add(d, 16)))
+			}
+			if h--; h == 0 {
+				return
+			}
+			src, dst = unsafe.Add(src, srcStride), unsafe.Add(dst, dstStride)
+		}
+	case w&15 == 0:
+		for {
+			for c := 0; c < w; c += 16 {
+				archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(src, c))).StoreArray((*[16]uint8)(unsafe.Add(dst, c)))
+			}
+			if h--; h == 0 {
+				return
+			}
+			src, dst = unsafe.Add(src, srcStride), unsafe.Add(dst, dstStride)
 		}
 	case w == 8:
-		for r := 0; r < h; r++ {
-			*(*uint64)(unsafe.Add(dst, r*dstStride)) = *(*uint64)(unsafe.Add(src, r*srcStride))
+		for {
+			*(*uint64)(dst) = *(*uint64)(src)
+			if h--; h == 0 {
+				return
+			}
+			src, dst = unsafe.Add(src, srcStride), unsafe.Add(dst, dstStride)
 		}
 	default:
 		for r := 0; r < h; r++ {
@@ -755,24 +785,37 @@ func mc8PrepV6(src unsafe.Pointer, srcStride, w, h int, ph *mc8Phase, out unsafe
 	}
 }
 
-// mc8PrepCopy is the prep copy: 16 * px + 6144.
+// mc8PrepCopy is the prep copy: 16 * px + 6144 (UMULL by 16, then the
+// offset), with the source and output pointers stepped per row as dav1d's
+// prep_neon does (never past the last row).
 func mc8PrepCopy(src unsafe.Pointer, srcStride, w, h int, out unsafe.Pointer) {
-	mul := archsimd.BroadcastUint16x8(16)
+	mul := archsimd.BroadcastUint8x16(16)
+	mulHi := mul.HiToLo()
 	off := archsimd.BroadcastUint16x8(6144)
-	ro := w * 2
-	for r := 0; r < h; r++ {
-		s := unsafe.Add(src, r*srcStride)
-		o := unsafe.Add(out, r*ro)
-		c := 0
-		for ; c+16 <= w; c += 16 {
-			a := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(s, c)))
-			a.ExtendLo8ToUint16().MulAdd(mul, off).StoreArray((*[8]uint16)(unsafe.Add(o, c*2)))
-			a.HiToLo().ExtendLo8ToUint16().MulAdd(mul, off).StoreArray((*[8]uint16)(unsafe.Add(o, c*2+16)))
+	if w == 8 {
+		for {
+			a := archsimd.LoadUint8x16Array((*[16]uint8)(src))
+			a.MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(out))
+			if h--; h == 0 {
+				return
+			}
+			src, out = unsafe.Add(src, srcStride), unsafe.Add(out, 16)
 		}
-		if c < w {
-			a := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(s, c)))
-			a.ExtendLo8ToUint16().MulAdd(mul, off).StoreArray((*[8]uint16)(unsafe.Add(o, c*2)))
+	}
+	for {
+		for c := 0; c < w; c += 16 {
+			a := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(src, c)))
+			o := unsafe.Add(out, 2*c)
+			a.MulWidenLo(mul).Add(off).StoreArray((*[8]uint16)(o))
+			if w-c == 8 {
+				break
+			}
+			a.HiToLo().MulWidenLo(mulHi).Add(off).StoreArray((*[8]uint16)(unsafe.Add(o, 16)))
 		}
+		if h--; h == 0 {
+			return
+		}
+		src, out = unsafe.Add(src, srcStride), unsafe.Add(out, 2*w)
 	}
 }
 
@@ -801,35 +844,45 @@ func mc8BlendAvgFast(dst *frame.Plane, a, b []uint16, dstX, dstY, w, h int) bool
 }
 
 func mc8BlendAvg(dst unsafe.Pointer, dstStride int, a, b unsafe.Pointer, w, h int) {
-	bias := archsimd.BroadcastInt16x8(-12272)
-	sh := archsimd.BroadcastInt16x8(-5)
+	// clamp((a + b - 12272) >> 5, 0, 255) in the shape of dav1d's add +
+	// sqrshrun pair: a saturating subtract clamps below at 0, a saturating
+	// << 3 clamps floor(u / 32) at 255 in each high byte, and UZP2 gathers
+	// those bytes. Pointers step per row, never past the last one.
+	bias := archsimd.BroadcastUint16x8(12272)
+	sh := archsimd.BroadcastInt16x8(3)
 	if w == 4 {
-		for r := 0; r < h; r += 2 {
-			o := r * 8
-			v := mc8L16(unsafe.Add(a, o)).Add(mc8L16(unsafe.Add(b, o))).Add(bias).Shift(sh)
-			x := v.SaturateToUint8().ReshapeToUint64s().GetElem(0)
-			d := unsafe.Add(dst, r*dstStride)
-			*(*uint32)(d) = uint32(x)
-			*(*uint32)(unsafe.Add(d, dstStride)) = uint32(x >> 32)
-		}
-		return
-	}
-	ro := w * 2
-	for r := 0; r < h; r++ {
-		pa := unsafe.Add(a, r*ro)
-		pb := unsafe.Add(b, r*ro)
-		d := unsafe.Add(dst, r*dstStride)
-		c := 0
-		for ; c+16 <= w; c += 16 {
-			v0 := mc8L16(unsafe.Add(pa, 2*c)).Add(mc8L16(unsafe.Add(pb, 2*c))).Add(bias).Shift(sh)
-			v1 := mc8L16(unsafe.Add(pa, 2*c+16)).Add(mc8L16(unsafe.Add(pb, 2*c+16))).Add(bias).Shift(sh)
-			mc8PackU8(v0, v1).StoreArray((*[16]uint8)(unsafe.Add(d, c)))
-		}
-		if c < w {
-			v := mc8L16(unsafe.Add(pa, 2*c)).Add(mc8L16(unsafe.Add(pb, 2*c))).Add(bias).Shift(sh)
-			*(*uint64)(unsafe.Add(d, c)) = v.SaturateToUint8().ReshapeToUint64s().GetElem(0)
+		for i := 0; ; i += 16 {
+			v := mc8L16U(unsafe.Add(a, i)).Add(mc8L16U(unsafe.Add(b, i))).SubSaturated(bias).ShiftSaturated(sh).ReshapeToUint8s()
+			x := v.ConcatOdd(v).ReshapeToUint64s().GetElem(0)
+			*(*uint32)(dst) = uint32(x)
+			*(*uint32)(unsafe.Add(dst, dstStride)) = uint32(x >> 32)
+			if h -= 2; h == 0 {
+				return
+			}
+			dst = unsafe.Add(dst, 2*dstStride)
 		}
 	}
+	i := 0
+	for d := 0; h > 0; h, d = h-1, d+dstStride {
+		for c := 0; c < w; c += 16 {
+			pa, pb := unsafe.Add(a, i), unsafe.Add(b, i)
+			if w-c == 8 {
+				v := mc8L16U(pa).Add(mc8L16U(pb)).SubSaturated(bias).ShiftSaturated(sh).ReshapeToUint8s()
+				*(*float64)(unsafe.Add(dst, d+c)) = v.ConcatOdd(v).ReshapeToUint64s().BitsToFloat64().GetElem(0)
+				i += 16
+				break
+			}
+			v0 := mc8L16U(pa).Add(mc8L16U(pb)).SubSaturated(bias).ShiftSaturated(sh).ReshapeToUint8s()
+			v1 := mc8L16U(unsafe.Add(pa, 16)).Add(mc8L16U(unsafe.Add(pb, 16))).SubSaturated(bias).ShiftSaturated(sh).ReshapeToUint8s()
+			v0.ConcatOdd(v1).StoreArray((*[16]uint8)(unsafe.Add(dst, d+c)))
+			i += 32
+		}
+	}
+}
+
+// mc8L16U loads eight uint16 lanes at p.
+func mc8L16U(p unsafe.Pointer) archsimd.Uint16x8 {
+	return archsimd.LoadUint16x8Array((*[8]uint16)(p))
 }
 
 // mc8L16 loads eight int16 lanes at p.

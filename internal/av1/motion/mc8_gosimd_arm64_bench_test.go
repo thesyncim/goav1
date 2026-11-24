@@ -23,13 +23,15 @@ func BenchmarkMC8Put(b *testing.B) {
 	for _, sz := range [][2]int{{8, 8}, {16, 16}, {32, 32}, {64, 64}} {
 		w, h := sz[0], sz[1]
 		dst := frame.Plane{Pix: make([]byte, 128*128), Stride: 128, Width: 128, Height: 128}
-		for _, mode := range []string{"hv", "h", "v"} {
+		for _, mode := range []string{"hv", "h", "v", "copy"} {
 			subX, subY := 5, 11
 			switch mode {
 			case "h":
 				subY = 0
 			case "v":
 				subX = 0
+			case "copy":
+				subX, subY = 0, 0
 			}
 			b.Run(fmt.Sprintf("%s_%dx%d", mode, w, h), func(b *testing.B) {
 				for b.Loop() {
