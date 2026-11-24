@@ -61,18 +61,6 @@ func ApplySelfguidedRestorationU8(src []uint8, srcStride int, srcOrigin int, dst
 	// dgd and each active filter plane are fully overwritten. The A/B
 	// producer writes every consumed coefficient; inactive filter terms have xq==0.
 
-	dgdOrigin := SGRProjBorderVert*dgdStride + SGRProjBorderHorz
-	extWidth := width + 2*SGRProjBorderHorz
-	for row := -SGRProjBorderVert; row < height+SGRProjBorderVert; row++ {
-		srcStart := srcOrigin + row*srcStride - SGRProjBorderHorz
-		dgdStart := dgdOrigin + row*dgdStride - SGRProjBorderHorz
-		srcRow := src[srcStart : srcStart+extWidth]
-		dgdRow := dgd[dgdStart : dgdStart+extWidth]
-		for col, sample := range srcRow {
-			dgdRow[col] = int32(sample)
-		}
-	}
-
 	params := SGRParameterTable[paramsIndex]
 	if params.Radius[0] == 0 && params.Radius[1] == 0 {
 		// Retain the old error state if a caller modifies the parameter table.
@@ -82,11 +70,24 @@ func ApplySelfguidedRestorationU8(src []uint8, srcStride int, srcOrigin int, dst
 		clearInt32s(bBuf)
 		return ErrInvalidRestoration
 	}
-	if params.Radius[0] > 0 {
-		selfguidedFastImpl(dgd, dgdOrigin, width, height, dgdStride, flt0, width, bitDepth, paramsIndex, 0, aBuf, bBuf, bufStride)
-	}
-	if params.Radius[1] > 0 {
-		selfguidedImpl(dgd, dgdOrigin, width, height, dgdStride, flt1, width, bitDepth, paramsIndex, 1, aBuf, bBuf, bufStride)
+	if !sgrU8Passes(src, srcStride, srcOrigin, width, height, params, flt0, flt1) {
+		dgdOrigin := SGRProjBorderVert*dgdStride + SGRProjBorderHorz
+		extWidth := width + 2*SGRProjBorderHorz
+		for row := -SGRProjBorderVert; row < height+SGRProjBorderVert; row++ {
+			srcStart := srcOrigin + row*srcStride - SGRProjBorderHorz
+			dgdStart := dgdOrigin + row*dgdStride - SGRProjBorderHorz
+			srcRow := src[srcStart : srcStart+extWidth]
+			dgdRow := dgd[dgdStart : dgdStart+extWidth]
+			for col, sample := range srcRow {
+				dgdRow[col] = int32(sample)
+			}
+		}
+		if params.Radius[0] > 0 {
+			selfguidedFastImpl(dgd, dgdOrigin, width, height, dgdStride, flt0, width, bitDepth, paramsIndex, 0, aBuf, bBuf, bufStride)
+		}
+		if params.Radius[1] > 0 {
+			selfguidedImpl(dgd, dgdOrigin, width, height, dgdStride, flt1, width, bitDepth, paramsIndex, 1, aBuf, bBuf, bufStride)
+		}
 	}
 
 	xq := DecodeSGRXQ(xqd, params)

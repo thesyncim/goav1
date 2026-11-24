@@ -1,6 +1,11 @@
 package threading
 
-import "github.com/thesyncim/goav1/internal/av1/tile"
+import (
+	"sync"
+	"sync/atomic"
+
+	"github.com/thesyncim/goav1/internal/av1/tile"
+)
 
 const (
 	frameWorkWedgeMasterSize = 64
@@ -98,6 +103,96 @@ func frameWorkBuildWedgeMask(mask []byte, stride int, size tile.BlockSize, wedge
 		return ErrInvalidBatch
 	}
 
+	src := frameWorkWedgeMaskTable(size, codebook, signFlip, width, height, wedgeIndex, wedgeSign)
+	if src == nil {
+		return ErrInvalidBatch
+	}
+	for row := range height {
+		copy(mask[row*stride:row*stride+width], src[row*width:row*width+width])
+	}
+	return nil
+}
+
+// frameWorkWedgeTableLen is the summed area of the nine wedge block sizes
+// (8x8, 16x16, 32x32, 8x16, 16x32, 8x32, 16x8, 32x16, 32x8).
+const frameWorkWedgeTableLen = 64 + 256 + 1024 + 128 + 512 + 256 + 128 + 512 + 256
+
+// frameWorkWedgeMasks holds every wedge mask (block size x index x sign) at
+// stride = block width, built once per block size on first use, as dav1d's
+// dav1d_init_ii_wedge_masks precomputes its tables instead of rebuilding a
+// mask per block.
+var frameWorkWedgeMasks struct {
+	mu    sync.Mutex
+	ready [9]atomic.Bool
+	bad   [9]bool
+	pix   [frameWorkWedgeTableLen * tile.MaxWedgeTypes * 2]byte
+}
+
+// frameWorkWedgeSlot maps a wedge block size to its table slot and the byte
+// offset of its masks in frameWorkWedgeMasks.pix.
+func frameWorkWedgeSlot(size tile.BlockSize) (slot int, base int, ok bool) {
+	const n = tile.MaxWedgeTypes * 2
+	switch size {
+	case tile.BlockSize8x8:
+		return 0, 0, true
+	case tile.BlockSize16x16:
+		return 1, 64 * n, true
+	case tile.BlockSize32x32:
+		return 2, (64 + 256) * n, true
+	case tile.BlockSize8x16:
+		return 3, (64 + 256 + 1024) * n, true
+	case tile.BlockSize16x32:
+		return 4, (64 + 256 + 1024 + 128) * n, true
+	case tile.BlockSize8x32:
+		return 5, (64 + 256 + 1024 + 128 + 512) * n, true
+	case tile.BlockSize16x8:
+		return 6, (64 + 256 + 1024 + 128 + 512 + 256) * n, true
+	case tile.BlockSize32x16:
+		return 7, (64 + 256 + 1024 + 128 + 512 + 256 + 128) * n, true
+	case tile.BlockSize32x8:
+		return 8, (64 + 256 + 1024 + 128 + 512 + 256 + 128 + 512) * n, true
+	}
+	return 0, 0, false
+}
+
+// frameWorkWedgeMaskTable returns the width x height mask for (wedgeIndex,
+// wedgeSign), building all 32 masks of the block size on first use.
+func frameWorkWedgeMaskTable(size tile.BlockSize, codebook *[tile.MaxWedgeTypes]frameWorkWedgeCode, signFlip *[tile.MaxWedgeTypes]byte, width, height int, wedgeIndex uint8, wedgeSign bool) []byte {
+	slot, base, ok := frameWorkWedgeSlot(size)
+	if !ok {
+		return nil
+	}
+	area := width * height
+	all := frameWorkWedgeMasks.pix[base : base+area*tile.MaxWedgeTypes*2]
+	if !frameWorkWedgeMasks.ready[slot].Load() {
+		frameWorkWedgeMasks.mu.Lock()
+		if !frameWorkWedgeMasks.ready[slot].Load() {
+			for idx := range tile.MaxWedgeTypes {
+				for sign := range 2 {
+					m := all[(idx*2+sign)*area : (idx*2+sign+1)*area]
+					if !frameWorkFillWedgeMask(m, codebook, signFlip, width, height, uint8(idx), sign != 0) {
+						frameWorkWedgeMasks.bad[slot] = true
+					}
+				}
+			}
+			frameWorkWedgeMasks.ready[slot].Store(true)
+		}
+		frameWorkWedgeMasks.mu.Unlock()
+	}
+	if frameWorkWedgeMasks.bad[slot] {
+		return nil
+	}
+	sign := 0
+	if wedgeSign {
+		sign = 1
+	}
+	i := int(wedgeIndex)*2 + sign
+	return all[i*area : (i+1)*area]
+}
+
+// frameWorkFillWedgeMask computes one wedge mask from the master templates
+// (libaom init_wedge_masks) at stride = width.
+func frameWorkFillWedgeMask(mask []byte, codebook *[tile.MaxWedgeTypes]frameWorkWedgeCode, signFlip *[tile.MaxWedgeTypes]byte, width, height int, wedgeIndex uint8, wedgeSign bool) bool {
 	code := codebook[wedgeIndex]
 	neg := int(signFlip[wedgeIndex])
 	if wedgeSign {
@@ -111,12 +206,12 @@ func frameWorkBuildWedgeMask(mask []byte, stride int, size tile.BlockSize, wedge
 		for col := range width {
 			sample, ok := frameWorkWedgeMasterSample(neg, code.direction, row0+row, col0+col)
 			if !ok {
-				return ErrInvalidBatch
+				return false
 			}
-			mask[row*stride+col] = sample
+			mask[row*width+col] = sample
 		}
 	}
-	return nil
+	return true
 }
 
 func frameWorkWedgeParams(size tile.BlockSize) (*[tile.MaxWedgeTypes]frameWorkWedgeCode, *[tile.MaxWedgeTypes]byte, bool) {
