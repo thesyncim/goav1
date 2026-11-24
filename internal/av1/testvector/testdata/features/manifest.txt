@@ -38,6 +38,13 @@ film-grain-10bit e349521034d22d3145a1bb8912591d6a 1
 film-grain-15 608153edba81baa31f165310e0c0cdb4 1
 film-grain-444 4657b6922fdce69c8f5f500592112aaa 0
 film-grain-8 08ebad7b4dceee5c29799ac56f431516 1
+film-grain-odd-101x63 b0e299fa704ad3959bc31fdae54e4bb2 1
+film-grain-odd-10bit-127x97 b8183561979d714a045e458875b93437 1
+film-grain-odd-127x97 9bf68e7c8ba045a5e1ffe6600a17edf5 1
+film-grain-odd-422-10bit-101x63 7dc76e4efade239f9bbac84d82bc566b 0
+film-grain-odd-422-127x97 a4a3c2d37b4282e118185e669f53e337 0
+film-grain-odd-444-10bit-101x63 470b3d53aeb8d3d3d4e080bbc1a68fbf 0
+film-grain-odd-444-127x97 f734040e940ba0fe0d3b207758ee3a83 0
 filter-intra-off 87c83ded95d07e0b5e980043cc9ea246 1
 flip-idtx-off 5ea9b739ed7de580efe0e428f3d31089 1
 frame-parallel 60b7151d281270a05c192c0dc3ebcf74 1

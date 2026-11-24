@@ -260,9 +260,17 @@ func gatherChromaScaleRowU8(scale []uint16, src []uint8, luma []uint8, scaling [
 	base := (y<<shiftY)*params.LumaStride + (xBase << shiftX)
 	if params.ChromaScalingFromLuma {
 		if shiftX != 0 {
-			for i := range scale {
+			// An odd-width edge column reads only its own luma sample.
+			pairs := len(scale)
+			if oddLumaEdge(params, xBase, pairs) {
+				pairs--
+			}
+			for i := range pairs {
 				j := base + (i << 1)
 				scale[i] = uint16(scaling[(int(luma[j])+int(luma[j+1])+1)>>1])
+			}
+			if pairs < len(scale) {
+				scale[pairs] = uint16(scaling[luma[base+(pairs<<1)]])
 			}
 		} else {
 			for i := range scale {
@@ -291,7 +299,7 @@ func applyChromaRowSampleU8(dst, src, luma []uint8, scaling []uint8, params Chro
 func chromaScalingIndexU8(src uint8, luma []uint8, params ChromaRowParams, shiftX, x, y int) int {
 	lumaIndex := (y<<chromaSubsamplingShift(params.SubsamplingY))*params.LumaStride + (x << shiftX)
 	avg := int(luma[lumaIndex])
-	if shiftX != 0 {
+	if shiftX != 0 && !(params.OddLumaWidth && x == params.Width-1) {
 		avg = (avg + int(luma[lumaIndex+1]) + 1) >> 1
 	}
 	if params.ChromaScalingFromLuma {
@@ -340,7 +348,6 @@ func validateChromaRowU8(dst []uint8, src []uint8, luma []uint8, grain []int16, 
 		params.Height <= 0 ||
 		params.Height > blockHeight ||
 		params.Stride < params.Width ||
-		params.LumaStride < ((params.Width-1)<<shiftX)+1+shiftX ||
 		params.Row < 0 ||
 		params.BitDepth != 8 ||
 		params.ScalingShift < 8 ||
@@ -355,16 +362,7 @@ func validateChromaRowU8(dst []uint8, src []uint8, luma []uint8, grain []int16, 
 	if !ok {
 		return ErrInvalidParams
 	}
-	lumaRows := ((params.Height - 1) << shiftY) + 1
-	lumaRowStride, ok := checkedMulNonNegative(lumaRows-1, params.LumaStride)
-	if !ok {
-		return ErrInvalidParams
-	}
-	lumaTail, ok := checkedAdd(((params.Width-1)<<shiftX)+1, shiftX)
-	if !ok {
-		return ErrInvalidParams
-	}
-	lumaNeed, ok := checkedAdd(lumaRowStride, lumaTail)
+	lumaNeed, ok := chromaRowLumaNeed(params, shiftX, shiftY)
 	if !ok {
 		return ErrInvalidParams
 	}
