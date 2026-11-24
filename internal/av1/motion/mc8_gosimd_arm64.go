@@ -8,6 +8,7 @@ package motion
 
 import (
 	"encoding/binary"
+	"errors"
 	"simd/archsimd"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
@@ -211,6 +212,8 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 		mc8PutV6FromI32(im, w, h, &mc8Phases[ky][subY], d, dst.Stride)
 	case subX != 0:
 		mc8PutH6(src, stride, w, h, &mc8Phases[kx][subX], d, dst.Stride)
+	case w&15 == 0:
+		mc8PutV6W16(src, uint32(stride), w, h, &mc8Phases[ky][subY], d, uint32(dst.Stride))
 	default:
 		mc8PutV6(src, stride, w, h, &mc8Phases[ky][subY], d, dst.Stride)
 	}
@@ -367,6 +370,35 @@ func mc8WI8(s []int32, o uint32) *[8]int32     { return (*[8]int32)(s[uint(o) : 
 // mc8WindowMax bounds the window slices handed to the kernels (see mc8W16).
 const mc8WindowMax = 1<<32 - 1
 
+// Limit-checked windows. A kernel computes lim = len(s)-N once and walks a
+// plain int offset; each window is then a sign test and one compare against
+// lim, which together prove the slice expression (0 <= o, o+N <= len(s)), so
+// no zero-extension or end-offset arithmetic is left per row.
+func mc8R8(s []byte, o, lim int) *[8]byte {
+	if o < 0 || o > lim {
+		panic(errMC8Window)
+	}
+	return (*[8]byte)(s[o : o+8])
+}
+
+func mc8R16(s []byte, o, lim int) *[16]byte {
+	if o < 0 || o > lim {
+		panic(errMC8Window)
+	}
+	return (*[16]byte)(s[o : o+16])
+}
+
+func mc8R24(s []byte, o, lim int) *[24]byte {
+	if o < 0 || o > lim {
+		panic(errMC8Window)
+	}
+	return (*[24]byte)(s[o : o+24])
+}
+
+// errMC8Window is the panic value of a window past its limit (a caller bug:
+// the entries validate every block footprint).
+var errMC8Window = errors.New("motion: kernel window out of range")
+
 // mc8PrepFast fills a w x h CONV_BUF (row stride w) with the dav1d-style prep
 // kernels. It returns false for shapes it does not cover.
 func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) bool {
@@ -420,6 +452,14 @@ func mc8LoadWiden(p *[16]uint8) (archsimd.Uint8x16, archsimd.Uint8x16) {
 	return a.ExtendLo8ToUint16().ReshapeToUint8s(), a.HiToLo().ExtendLo8ToUint16().ReshapeToUint8s()
 }
 
+// mc8LoadWiden3 is mc8LoadWiden passing o through, so a call written as
+// mc8LoadWiden3(mc8R16(s, o+st, lim), o+st) carries an instruction of its own
+// line (the add) and leaves no inline-mark NOP.
+func mc8LoadWiden3(p *[16]uint8, o int) (archsimd.Uint8x16, archsimd.Uint8x16, int) {
+	lo, hi := mc8LoadWiden(p)
+	return lo, hi, o
+}
+
 func mc8I16(x archsimd.Uint8x16) archsimd.Int16x8 {
 	return x.ReshapeToUint16s().BitsToInt16()
 }
@@ -445,7 +485,7 @@ func mc8H6ToI32(src []byte, srcStride, w, rows int, ph *mc8Phase, im []int32) {
 	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
 	rnd := archsimd.BroadcastInt16x8(2)
 	sh := archsimd.BroadcastInt16x8(-2)
-	ss := uint32(srcStride)
+	ss, sl := srcStride, len(src)-16
 	n := rows * 8
 	sum6 := func(lo, hi archsimd.Uint8x16) archsimd.Int16x8 {
 		sum := mc8I16(lo).MulAdd(c0, rnd)
@@ -456,25 +496,50 @@ func mc8H6ToI32(src []byte, srcStride, w, rows int, ph *mc8Phase, im []int32) {
 		sum = mc8I16(hi.ConcatShiftBytesRight(lo, 10)).MulAdd(c5, sum)
 		return sum.Shift(sh)
 	}
-	for c := 0; c < w; c += 8 {
+	c := 0
+	if w&15 == 0 {
+		// Two strips per pass: each row is one 24-byte window (one compare
+		// for sixteen outputs) whose two eight-column tap windows are
+		// constant sub-windows.
+		sl24 := len(src) - 24
+		for ; c < w; c += 16 {
+			st0 := im[c*rows : c*rows+n : c*rows+n]
+			st1 := im[(c+8)*rows : (c+8)*rows+n : (c+8)*rows+n]
+			so := c
+			for q := 0; q <= len(st0)-8 && q <= len(st1)-8; q += 8 {
+				win, so1 := mc8R24(src, so, sl24), so+ss
+				lo, hi := mc8LoadWiden((*[16]uint8)(win[0:16]))
+				lo1, hi1 := mc8LoadWiden((*[16]uint8)(win[8:24]))
+				sum, sum1 := sum6(lo, hi), sum6(lo1, hi1)
+				w0, w1 := (*[8]int32)(st0[q:q+8]), (*[8]int32)(st1[q:q+8])
+				sum.ExtendLo4ToInt32().StoreArray((*[4]int32)(w0[0:4]))
+				sum.HiToLo().ExtendLo4ToInt32().StoreArray((*[4]int32)(w0[4:8]))
+				sum1.ExtendLo4ToInt32().StoreArray((*[4]int32)(w1[0:4]))
+				sum1.HiToLo().ExtendLo4ToInt32().StoreArray((*[4]int32)(w1[4:8]))
+				so = so1
+			}
+		}
+		return
+	}
+	for ; c < w; c += 8 {
 		// Strip c/8 of the strip-major intermediate: its rows are contiguous
 		// eight-sample groups, so the stores below are proven in bounds.
 		st := im[c*rows : c*rows+n : c*rows+n]
-		so := uint32(c)
+		so := c
 		q := 0
 		for ; q <= len(st)-16; q += 16 {
-			lo, hi := mc8LoadWiden(mc8W16(src, so))
-			lo1, hi1 := mc8LoadWiden(mc8W16(src, so+ss))
+			lo, hi := mc8LoadWiden(mc8R16(src, so, sl))
+			lo1, hi1, so1 := mc8LoadWiden3(mc8R16(src, so+ss, sl), so+ss)
 			sum, sum1 := sum6(lo, hi), sum6(lo1, hi1)
 			win := (*[16]int32)(st[q : q+16])
 			sum.ExtendLo4ToInt32().StoreArray((*[4]int32)(win[0:4]))
 			sum.HiToLo().ExtendLo4ToInt32().StoreArray((*[4]int32)(win[4:8]))
 			sum1.ExtendLo4ToInt32().StoreArray((*[4]int32)(win[8:12]))
 			sum1.HiToLo().ExtendLo4ToInt32().StoreArray((*[4]int32)(win[12:16]))
-			so += 2 * ss
+			so = so1 + ss
 		}
 		if q <= len(st)-8 {
-			lo, hi := mc8LoadWiden(mc8W16(src, so))
+			lo, hi := mc8LoadWiden(mc8R16(src, so, sl))
 			sum := sum6(lo, hi)
 			win := (*[8]int32)(st[q : q+8])
 			sum.ExtendLo4ToInt32().StoreArray((*[4]int32)(win[0:4]))
@@ -840,26 +905,20 @@ func mc8PutV6(src []byte, srcStride, w, h int, ph *mc8Phase, dst []byte, dstStri
 	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
 	rnd := archsimd.BroadcastInt16x8(32)
 	sh := archsimd.BroadcastInt16x8(-6)
-	ss, ds := uint32(srcStride), uint32(dstStride)
-	if w&15 == 0 {
-		mc8PutV6W16(src, ss, w, h, c0, c1, c2, c3, c4, c5, dst, ds)
-		return
-	}
-	for c := uint32(0); c < uint32(w); c += 8 {
-		o := c
-		r0 := mc8LoadRow16(mc8W16(src, o))
-		r1 := mc8LoadRow16(mc8W16(src, o+ss))
-		r2 := mc8LoadRow16(mc8W16(src, o+2*ss))
-		r3 := mc8LoadRow16(mc8W16(src, o+3*ss))
-		o += 4 * ss
-		r4 := mc8LoadRow16(mc8W16(src, o))
+	ss, ds := srcStride, dstStride
+	sl, dl := len(src)-16, len(dst)-8
+	for c := 0; c < w; c += 8 {
+		r0, o := mc8LoadRow16(mc8R16(src, c, sl)), c+ss
+		r1, o := mc8LoadRow16(mc8R16(src, o, sl)), o+ss
+		r2, o := mc8LoadRow16(mc8R16(src, o, sl)), o+ss
+		r3, o := mc8LoadRow16(mc8R16(src, o, sl)), o+ss
+		r4 := mc8LoadRow16(mc8R16(src, o, sl))
 		d := c
 		r := 0
 		for ; r+2 <= h; r += 2 {
-			o += ss
-			r5 := mc8LoadRow16(mc8W16(src, o))
-			o += ss
-			r6 := mc8LoadRow16(mc8W16(src, o))
+			r5, o5 := mc8LoadRow16(mc8R16(src, o+ss, sl)), o+ss
+			r6, o6 := mc8LoadRow16(mc8R16(src, o5+ss, sl)), o5+ss
+			o = o6
 			a := r0.MulAdd(c0, rnd)
 			b := r1.MulAdd(c0, rnd)
 			a = r1.MulAdd(c1, a)
@@ -872,20 +931,21 @@ func mc8PutV6(src []byte, srcStride, w, h int, ph *mc8Phase, dst []byte, dstStri
 			b = r5.MulAdd(c4, b)
 			a = r5.MulAdd(c5, a)
 			b = r6.MulAdd(c5, b)
-			binary.LittleEndian.PutUint64(mc8W8(dst, d)[:], mc8Lo64(a.Shift(sh).SaturateToUint8()))
-			binary.LittleEndian.PutUint64(mc8W8(dst, d+ds)[:], mc8Lo64(b.Shift(sh).SaturateToUint8()))
-			d += 2 * ds
+			binary.LittleEndian.PutUint64(mc8R8(dst, d, dl)[:], a.Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0))
+			d += ds
+			binary.LittleEndian.PutUint64(mc8R8(dst, d, dl)[:], b.Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0))
+			d += ds
 			r0, r1, r2, r3, r4 = r2, r3, r4, r5, r6
 		}
 		if r < h {
-			r5 := mc8LoadRow16(mc8W16(src, o+ss))
+			r5 := mc8LoadRow16(mc8R16(src, o+ss, sl))
 			a := r0.MulAdd(c0, rnd)
 			a = r1.MulAdd(c1, a)
 			a = r2.MulAdd(c2, a)
 			a = r3.MulAdd(c3, a)
 			a = r4.MulAdd(c4, a)
 			a = r5.MulAdd(c5, a)
-			binary.LittleEndian.PutUint64(mc8W8(dst, d)[:], mc8Lo64(a.Shift(sh).SaturateToUint8()))
+			binary.LittleEndian.PutUint64(mc8R8(dst, d, dl)[:], a.Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0))
 		}
 	}
 }
@@ -893,27 +953,38 @@ func mc8PutV6(src []byte, srcStride, w, h int, ph *mc8Phase, dst []byte, dstStri
 // mc8PutV6W16 is mc8PutV6 over 16-column strips (dav1d's w16 v path): each
 // source row is one 16-byte window widened to two halves, and each output
 // row one 16-byte store.
-func mc8PutV6W16(src []byte, ss uint32, w, h int, c0, c1, c2, c3, c4, c5 archsimd.Int16x8, dst []byte, ds uint32) {
+func mc8PutV6W16(src []byte, ss uint32, w, h int, ph *mc8Phase, dst []byte, ds uint32) {
+	c0 := archsimd.LoadInt16x8Array(&ph.h[0])
+	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
+	c2 := archsimd.LoadInt16x8Array(&ph.h[2])
+	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
+	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
+	c5 := archsimd.LoadInt16x8Array(&ph.h[5])
 	rnd := archsimd.BroadcastInt16x8(32)
 	sh := archsimd.BroadcastInt16x8(-6)
-	ld := func(o uint32) (archsimd.Int16x8, archsimd.Int16x8) {
-		a := archsimd.LoadUint8x16Array(mc8W16(src, o))
+	sl, dl := len(src)-16, len(dst)-16
+	sst, dst16 := int(ss), int(ds)
+	ld := func(o int) (archsimd.Int16x8, archsimd.Int16x8) {
+		a := archsimd.LoadUint8x16Array(mc8R16(src, o, sl))
 		return a.ExtendLo8ToUint16().BitsToInt16(), a.HiToLo().ExtendLo8ToUint16().BitsToInt16()
 	}
 	pack := func(lo, hi archsimd.Int16x8) archsimd.Uint8x16 {
 		return lo.Shift(sh).SaturateToUint8().ReshapeToUint64s().InterleaveLo(hi.Shift(sh).SaturateToUint8().ReshapeToUint64s()).ReshapeToUint8s()
 	}
-	for c := uint32(0); c < uint32(w); c += 16 {
+	for c := 0; c < w; c += 16 {
 		o := c
 		l0, h0 := ld(o)
-		l1, h1 := ld(o + ss)
-		l2, h2 := ld(o + 2*ss)
-		l3, h3 := ld(o + 3*ss)
-		o += 4 * ss
+		o += sst
+		l1, h1 := ld(o)
+		o += sst
+		l2, h2 := ld(o)
+		o += sst
+		l3, h3 := ld(o)
+		o += sst
 		l4, h4 := ld(o)
 		d := c
 		for r := 0; r < h; r++ {
-			o += ss
+			o += sst
 			l5, h5 := ld(o)
 			a := l0.MulAdd(c0, rnd)
 			b := h0.MulAdd(c0, rnd)
@@ -927,8 +998,8 @@ func mc8PutV6W16(src []byte, ss uint32, w, h int, c0, c1, c2, c3, c4, c5 archsim
 			b = h4.MulAdd(c4, b)
 			a = l5.MulAdd(c5, a)
 			b = h5.MulAdd(c5, b)
-			pack(a, b).StoreArray(mc8W16(dst, d))
-			d += ds
+			pack(a, b).StoreArray(mc8R16(dst, d, dl))
+			d += dst16
 			l0, h0, l1, h1, l2, h2, l3, h3, l4, h4 = l1, h1, l2, h2, l3, h3, l4, h4, l5, h5
 		}
 	}
