@@ -250,7 +250,7 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 		wantBlocks += wb
 
 		gotPlane := frame.Plane{Pix: append([]byte(nil), pix...), Stride: stride, Width: width, Height: height}
-		byteScratch := make([]uint16, stride*height)
+		byteScratch := make([]byte, CDEFU8LineScratchLen(width))
 		if tc.poisonInput {
 			for i := range input {
 				input[i] = 0xdeed
@@ -351,7 +351,7 @@ func cdefPlaneWalkU8Allocs(t *testing.T, tc cdefU8WalkCase) float64 {
 	for i := range plane.Pix {
 		plane.Pix[i] = byte(rnd.next(256))
 	}
-	byteScratch := make([]uint16, stride*height)
+	byteScratch := make([]byte, CDEFU8LineScratchLen(width))
 	input := make([]uint16, cdef.InputBufferSize)
 	dirGrid := make([]cdef.DirectionGrid, unitCount)
 	varGrid := make([]cdef.VarianceGrid, unitCount)

@@ -82,9 +82,10 @@ func TestFilmGrainDirectPublicationMatchesStaged(t *testing.T) {
 							t.Fatalf("reference plane %d modified", i)
 						}
 					}
+					// 10/12-bit planes have no direct []uint16 view and stage.
 					for _, samples := range [][]uint16{req.LumaSamples, req.ChromaSamples[0], req.ChromaSamples[1]} {
 						for _, v := range samples {
-							if v != 0xabad {
+							if bd == 8 && v != 0xabad {
 								t.Fatal("direct path used staging scratch")
 							}
 						}

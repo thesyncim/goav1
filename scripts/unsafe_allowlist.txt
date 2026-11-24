@@ -10,12 +10,6 @@ internal/av1/cdef/filter_u8_byte_amd64.go
 internal/av1/cdef/filter_u8_interior_simd_arm64.go
 internal/av1/cdef/filter_u8_secondary_byte_amd64.go
 internal/av1/cdef/filter_word_amd64.go
-internal/av1/decoder/postfilter_cdef_hbd_le.go
-internal/av1/decoder/postfilter_cdef_sparse.go
-internal/av1/decoder/postfilter_cdef_u8.go
-internal/av1/decoder/postfilter_filmgrain_direct.go
-internal/av1/decoder/postfilter_filmgrain_direct_le.go
-internal/av1/decoder/postfilter_sbrow.go
 internal/av1/dsp/plane_const_gosimd.go
 internal/av1/dsp/plane_gosimd.go
 internal/av1/dsp/plane_gosimd_arm64.go

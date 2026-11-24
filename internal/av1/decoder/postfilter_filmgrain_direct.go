@@ -1,8 +1,6 @@
 package decoder
 
 import (
-	"unsafe"
-
 	"github.com/thesyncim/goav1/internal/av1/filmgrain"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/threading"
@@ -82,19 +80,7 @@ func frameWorkFilmGrainDirectCompatible(dst, src *frame.Frame, plan FrameWorkFil
 	return true
 }
 
-// Addresses are used only for a conservative overlap comparison; no pointer
-// is reconstructed and no memory is accessed outside either live slice.
-func frameWorkFilmGrainBytesOverlap(a, b []byte) bool {
-	if len(a) == 0 || len(b) == 0 {
-		return false
-	}
-	ap := uintptr(unsafe.Pointer(unsafe.SliceData(a)))
-	bp := uintptr(unsafe.Pointer(unsafe.SliceData(b)))
-	if ap <= bp {
-		return bp-ap < uintptr(len(a))
-	}
-	return ap-bp < uintptr(len(b))
-}
+func frameWorkFilmGrainBytesOverlap(a, b []byte) bool { return frame.SlicesOverlap(a, b) }
 
 // frameWorkFilmGrainDirectPlanes are one picture's planes as sample slices,
 // with strides and widths in samples.

@@ -1,31 +1,21 @@
-//go:build 386 || amd64 || arm || arm64 || loong64 || mips64le || mipsle || ppc64le || riscv64 || wasm
-
 package decoder
 
 import (
-	"unsafe"
-
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 )
 
-// frameWorkCDEFHBDInPlaceAvailable is true only on architectures where the
-// frame package treats its 16-bit pixel bytes as native little-endian uint16s.
-// The generic-endian implementation keeps using the portable snapshot path.
-func frameWorkCDEFHBDInPlaceAvailable() bool { return true }
-
-// frameWorkCDEFHBDPlaneViewAvailable reports whether the snapshot-free path can
-// view this valid byte plane as native uint16 samples. Misaligned but otherwise
-// valid planes remain supported by the portable snapshot route.
+// frameWorkCDEFHBDPlaneViewAvailable reports whether the snapshot-free path
+// can filter this byte plane in place: a valid plane with an even byte stride.
 func frameWorkCDEFHBDPlaneViewAvailable(plane frame.Plane) bool {
-	_, _, err := frameWorkCDEFPlaneU16ViewLE(plane)
+	_, err := frameWorkCDEFPlaneHBDStride(plane)
 	return err == nil
 }
 
-func frameWorkApplyCDEFPlaneRowsHBD(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols, rows, rowStart, rowEnd int, dst frame.Plane, lineScratch []uint16, boundary FrameWorkCDEFPostFilterHBD16BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane, xDec, yDec, coeffShift int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
-	return frameWorkApplyCDEFPlaneRowsHBDLE(params, indexMap, skipMap, cols, rows, rowStart, rowEnd, dst, lineScratch, boundary, input, blockStorage, directions, variances, directionGrid, varianceGrid, plane, xDec, yDec, coeffShift, forceLumaDirections, unitMasks)
+func frameWorkApplyCDEFPlaneRowsHBD(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols, rows, rowStart, rowEnd int, dst frame.Plane, lineScratch []uint16, boundary FrameWorkCDEFPostFilterHBD16BandBoundary, input, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane, xDec, yDec, coeffShift int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
+	return frameWorkApplyCDEFPlaneRowsHBDLE(params, indexMap, skipMap, cols, rows, rowStart, rowEnd, dst, lineScratch, boundary, input, unitDst, blockStorage, directions, variances, directionGrid, varianceGrid, plane, xDec, yDec, coeffShift, forceLumaDirections, unitMasks)
 }
 
 // frameWorkApplyCDEFPlaneRowsHBDLE is the 10/12-bit in-place counterpart of
@@ -33,23 +23,25 @@ func frameWorkApplyCDEFPlaneRowsHBD(params parser.CDEFParams, indexMap FrameWork
 // a unit row is filtered, it backs up the two pre-filter rows needed by the
 // next row; before a unit is filtered, it backs up the pre-filter eight-column
 // left halo needed by the next unit. Top/bottom band boundaries are supplied
-// by the caller before any bands mutate the frame. The CDEF kernel writes to a
-// short-lived LE uint16 view of the byte plane, so skipped blocks remain in
-// place and need neither UnitDst prefill nor a store-back pass.
-func frameWorkApplyCDEFPlaneRowsHBDLE(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols, rows, rowStart, rowEnd int, dst frame.Plane, lineScratch []uint16, boundary FrameWorkCDEFPostFilterHBD16BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane, xDec, yDec, coeffShift int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
+// by the caller before any bands mutate the frame. Samples are decoded from
+// the little-endian byte plane into the tap buffer and backups; the CDEF
+// kernel writes a unit into unitDst and only the filtered blocks are encoded
+// back, so skipped blocks stay in place and need no UnitDst prefill.
+func frameWorkApplyCDEFPlaneRowsHBDLE(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols, rows, rowStart, rowEnd int, dst frame.Plane, lineScratch []uint16, boundary FrameWorkCDEFPostFilterHBD16BandBoundary, input, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane, xDec, yDec, coeffShift int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
 	var units uint32
 	var blocksTotal uint32
 	if coeffShift <= 0 || coeffShift > 4 || dst.Stride%2 != 0 {
 		return 0, 0, frame.ErrInvalidFormat
 	}
-	pixels, stride, err := frameWorkCDEFPlaneU16ViewLE(dst)
+	stride, err := frameWorkCDEFPlaneHBDStride(dst)
 	if err != nil {
 		return 0, 0, err
 	}
+	pix, strideB := dst.Pix, dst.Stride
 	width := dst.Width
 	height := dst.Height
 	if width <= 0 || height <= 0 || stride < width ||
-		(height-1)*stride+width > len(pixels) {
+		(height-1)*strideB+2*width > len(pix) {
 		return 0, 0, frame.ErrInvalidPlane
 	}
 	if rowEnd < 0 || rowEnd > rows {
@@ -61,7 +53,7 @@ func frameWorkApplyCDEFPlaneRowsHBDLE(params parser.CDEFParams, indexMap FrameWo
 		}
 		return 0, 0, threading.ErrInvalidBatch
 	}
-	if len(input) < cdef.InputBufferSize || len(lineScratch) < 4*width {
+	if len(input) < cdef.InputBufferSize || len(unitDst) < cdef.BlockSize*cdef.BStride || len(lineScratch) < 4*width {
 		return 0, 0, frame.ErrShortBuffer
 	}
 	if rowStart > 0 && len(boundary.Top[plane]) < cdef.VerticalBorder*width {
@@ -100,7 +92,7 @@ func frameWorkApplyCDEFPlaneRowsHBDLE(params parser.CDEFParams, indexMap FrameWo
 				if y < 0 || y >= height {
 					continue
 				}
-				copy(save[r*width:r*width+width], pixels[y*stride:y*stride+width])
+				frame.LoadSampleRows16Trusted(save[r*width:r*width+width], width, pix[y*strideB:], strideB, width, 1)
 			}
 		}
 		topBuf := lineBuf[((unitRow^1)&1)*2*width:]
@@ -162,7 +154,7 @@ func frameWorkApplyCDEFPlaneRowsHBDLE(params parser.CDEFParams, indexMap FrameWo
 			}
 			// The assembler writes sentinels to every uncovered ring cell itself;
 			// pre-filling the full ring here would write those cells twice.
-			if err := frameWorkAssembleCDEFInputHBDLE(input, pixels, stride, width, height, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
+			if err := frameWorkAssembleCDEFInputHBDLE(input, pix, strideB, width, height, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
 				return units, blocksTotal, err
 			}
 
@@ -170,29 +162,26 @@ func frameWorkApplyCDEFPlaneRowsHBDLE(params parser.CDEFParams, indexMap FrameWo
 			// overwrites the current unit in place.
 			nextUnitX := unitX + unitSizeX
 			if nextUnitX < width {
-				// Eight samples per row: a fixed-size move, not a memmove call.
-				for r := 0; r < unitH; r++ {
-					rowOff := (unitY+r)*stride + nextUnitX - cdef.HorizontalBorder
-					*(*[cdef.HorizontalBorder]uint16)(leftStorage[r*cdef.HorizontalBorder:]) = *(*[cdef.HorizontalBorder]uint16)(pixels[rowOff:])
-				}
+				frame.LoadSampleRows16Trusted(leftStorage[:], cdef.HorizontalBorder, pix[unitY*strideB+2*(nextUnitX-cdef.HorizontalBorder):], strideB, cdef.HorizontalBorder, unitH)
 			}
 			if cdefDebugUnit(plane, unitRow, unitCol) {
 				cdefDebugLogUnit(plane, unitRow, unitCol, packed, filterParams, *unitDirections, *unitVariances, input, len(blocks))
 			}
 
-			unitOrigin := unitY*stride + unitX
 			if needPrimaryDirection {
-				err = cdef.FilterFrameBlocksTrusted(pixels[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+				err = cdef.FilterFrameBlocksTrusted(unitDst, cdef.BStride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
 			} else {
-				err = cdef.FilterFrameBlocksTrustedNoPrimaryDirection(pixels[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+				err = cdef.FilterFrameBlocksTrustedNoPrimaryDirection(unitDst, cdef.BStride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
 			}
 			if err != nil {
 				return units, blocksTotal, err
 			}
 			if directionOnly {
+				// Zero strengths leave every sample as it is in the frame.
 				prevFiltered = false
 				continue
 			}
+			frameWorkStoreCDEFBlocksHBD(pix[unitY*strideB+2*unitX:], strideB, unitDst, blocks, blockWidth, blockHeight)
 			prevFiltered = true
 			units++
 			blocksTotal += uint32(len(blocks))
@@ -201,27 +190,39 @@ func frameWorkApplyCDEFPlaneRowsHBDLE(params parser.CDEFParams, indexMap FrameWo
 	return units, blocksTotal, nil
 }
 
-// frameWorkCDEFPlaneU16ViewLE returns a short-lived uint16 view of a validated
-// little-endian frame plane. The caller must retain plane.Pix and use the view
-// synchronously; it must not store the view in long-lived state.
-func frameWorkCDEFPlaneU16ViewLE(plane frame.Plane) ([]uint16, int, error) {
+// frameWorkCDEFPlaneHBDStride validates a 16-bit frame plane for the in-place
+// walk and returns its stride in samples.
+func frameWorkCDEFPlaneHBDStride(plane frame.Plane) (int, error) {
 	need, err := frame.SamplePlaneLen(plane, 2)
 	if err != nil || plane.Stride%2 != 0 || need <= 0 || need > int(^uint(0)>>1)/2 || len(plane.Pix) < need*2 {
-		return nil, 0, frame.ErrInvalidPlane
+		return 0, frame.ErrInvalidPlane
 	}
-	base := unsafe.SliceData(plane.Pix)
-	if base == nil || uintptr(unsafe.Pointer(base))%unsafe.Alignof(uint16(0)) != 0 {
-		return nil, 0, frame.ErrInvalidPlane
+	return plane.Stride / 2, nil
+}
+
+// frameWorkStoreCDEFBlocksHBD encodes the filtered blocks of a unit from
+// unitDst (stride cdef.BStride) into the little-endian plane bytes pix (the
+// unit's origin, stride strideB), one store per run of horizontally adjacent
+// blocks.
+func frameWorkStoreCDEFBlocksHBD(pix []byte, strideB int, unitDst []uint16, blocks []cdef.BlockPosition, blockWidth, blockHeight int) {
+	for i := 0; i < len(blocks); {
+		b := blocks[i]
+		n := 1
+		for i+n < len(blocks) && blocks[i+n].BY == b.BY && int(blocks[i+n].BX) == int(b.BX)+n {
+			n++
+		}
+		x, y := int(b.BX)*blockWidth, int(b.BY)*blockHeight
+		frame.StoreSampleRows16Trusted(pix[y*strideB+2*x:], strideB, unitDst[y*cdef.BStride+x:], cdef.BStride, n*blockWidth, blockHeight)
+		i += n
 	}
-	return unsafe.Slice((*uint16)(unsafe.Pointer(base)), need), plane.Stride / 2, nil
 }
 
 // frameWorkAssembleCDEFInputHBDLE builds the padded uint16 tap buffer from the
-// in-place little-endian frame plane and the same pre-filter backups as the
+// little-endian frame plane bytes (stride strideB) and the same pre-filter backups as the
 // 8-bit walk. Frame and crop edge extension intentionally mirrors
 // frameWorkCopyCDEFInput; the full aligned plane extent is passed as width and
 // height so allocated MI padding remains real input.
-func frameWorkAssembleCDEFInputHBDLE(input, pixels []uint16, stride, width, height int, topBuf, bottomBuf, leftBuf []uint16, leftFromBackup bool, unitRow, unitX, unitY, unitW, unitH int) error {
+func frameWorkAssembleCDEFInputHBDLE(input []uint16, pix []byte, strideB, width, height int, topBuf, bottomBuf, leftBuf []uint16, leftFromBackup bool, unitRow, unitX, unitY, unitW, unitH int) error {
 	fillW := unitW + 2*cdef.HorizontalBorder
 	fillH := unitH + 2*cdef.VerticalBorder
 	if unitW <= 0 || unitH <= 0 || fillW > cdef.BStride || !cdefInputRectFits(len(input), fillW, fillH) {
@@ -286,17 +287,12 @@ func frameWorkAssembleCDEFInputHBDLE(input, pixels []uint16, stride, width, heig
 			} else {
 				copy(input[dstOff:dstOff+leftW], leftBuf[row*cdef.HorizontalBorder:row*cdef.HorizontalBorder+leftW])
 			}
-			srcOff := (unitY+row)*stride + unitX
-			copy(input[dstOff+leftW:dstOff+leftW+midW], pixels[srcOff:srcOff+midW])
 		}
+		frame.LoadSampleRows16Trusted(input[midOffset+leftW:], cdef.BStride, pix[unitY*strideB+2*unitX:], strideB, midW, unitH)
 	} else {
 		// The left halo, when present, is the plane's own samples, contiguous
 		// with the unit's: one copy per row covers both.
-		for row := 0; row < unitH; row++ {
-			srcOff := (unitY+row)*stride + srcX0
-			dstOff := midOffset + row*cdef.BStride
-			copy(input[dstOff:dstOff+leftW+midW], pixels[srcOff:srcOff+leftW+midW])
-		}
+		frame.LoadSampleRows16Trusted(input[midOffset:], cdef.BStride, pix[unitY*strideB+2*srcX0:], strideB, leftW+midW, unitH)
 	}
 	if botRows := srcY1 - (unitY + unitH); botRows > 0 {
 		if bottomBuf != nil {
@@ -309,11 +305,7 @@ func frameWorkAssembleCDEFInputHBDLE(input, pixels []uint16, stride, width, heig
 				copy(input[dstOff:dstOff+copyW], bottomBuf[srcOff:srcOff+copyW])
 			}
 		} else {
-			for row := 0; row < botRows; row++ {
-				srcOff := (unitY+unitH+row)*stride + srcX0
-				dstOff := dstOffset + (unitY+unitH-srcY0+row)*cdef.BStride
-				copy(input[dstOff:dstOff+copyW], pixels[srcOff:srcOff+copyW])
-			}
+			frame.LoadSampleRows16Trusted(input[dstOffset+(unitY+unitH-srcY0)*cdef.BStride:], cdef.BStride, pix[(unitY+unitH)*strideB+2*srcX0:], strideB, copyW, botRows)
 		}
 	}
 	copyH := srcY1 - srcY0

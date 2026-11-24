@@ -1,8 +1,6 @@
 package decoder
 
 import (
-	"unsafe"
-
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
@@ -33,24 +31,11 @@ func frameWorkCDEFSparseStageRect(blocks []cdef.BlockPosition, w, h, bw, bh int)
 }
 
 // Preserve the original copy order for any caller-supplied source/scratch
-// overlap. Addresses are only compared; no pointer is reconstructed.
-func frameWorkCDEFSparseScratchIndependent(input []uint16, pix, lines, top, bottom []byte) bool {
-	view, ok := cdefByteScratchView(input, 2*len(input))
-	return ok && !frameWorkCDEFBytesOverlap(view, pix) &&
-		!frameWorkCDEFBytesOverlap(view, lines) &&
-		!frameWorkCDEFBytesOverlap(view, top) && !frameWorkCDEFBytesOverlap(view, bottom)
-}
-
-func frameWorkCDEFBytesOverlap(a, b []byte) bool {
-	if len(a) == 0 || len(b) == 0 {
-		return false
-	}
-	ap := uintptr(unsafe.Pointer(unsafe.SliceData(a)))
-	bp := uintptr(unsafe.Pointer(unsafe.SliceData(b)))
-	if ap <= bp {
-		return bp-ap < uintptr(len(a))
-	}
-	return ap-bp < uintptr(len(b))
+// overlap of the byte tap buffer (frame.SlicesOverlap compares addresses).
+func frameWorkCDEFSparseScratchIndependent(tap []byte, pix, lines, top, bottom []byte) bool {
+	return len(tap) > 0 && !frame.SlicesOverlap(tap, pix) &&
+		!frame.SlicesOverlap(tap, lines) &&
+		!frame.SlicesOverlap(tap, top) && !frame.SlicesOverlap(tap, bottom)
 }
 
 // The byte route already requires an entirely real two-pixel unit halo.
