@@ -92,13 +92,22 @@ func svtSAD16xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStri
 	// USHL by a hoisted -8: stock archsimd lowers ShiftAllRight to a
 	// per-use DUP + USHL rather than USHR #8.
 	hiShift := archsimd.BroadcastInt16x8(-8)
-	for r := 0; r < rows; r++ {
+	// The source rows and the reference rows' 23-byte windows are grids,
+	// checked once; the loop bound proves each row.
+	// No rows add nothing to acc.
+	if rows < 1 {
+		return
+	}
+	if !unsafeutil.GridFit(len(src), 0, srcStride, 16, rows) || !unsafeutil.GridFit(len(ref), 0, refStride, 23, rows) {
+		panic(errKernelArgs)
+	}
+	gs, gr := unsafeutil.NewGrid(src, 0, srcStride, 16, rows), unsafeutil.NewGrid(ref, 0, refStride, 23, rows)
+	for r := 0; r < gs.Height(); r++ {
 		// Written out rather than through load16 / absDiffU8x16: each inlined
 		// helper call leaves an inline-mark NOP in the loop. One window per
 		// row: the eight reference loads sit at constant offsets inside it.
-		so, ro := r*srcStride, r*refStride
-		s := archsimd.LoadUint8x16Array((*[16]uint8)(src[so : so+16]))
-		p := (*[23]uint8)(ref[ro : ro+23])
+		s := archsimd.LoadUint8x16Array(unsafeutil.Row[[16]uint8](gs, r, 0))
+		p := unsafeutil.Row[[23]uint8](gr, r, 0)
 		q := archsimd.LoadUint8x16Array((*[16]uint8)(p[0:16]))
 		d := s.Max(q).Sub(s.Min(q)).ReshapeToUint16s()
 		s0, h0 = s0.Add(d), h0.Add(d.Shift(hiShift))
@@ -151,10 +160,19 @@ func svtSAD32xhx8(acc *[8]uint32, src []byte, srcStride int, ref []byte, refStri
 	var s0, s1, s2, s3, s4, s5, s6, s7 archsimd.Uint16x8
 	var h0, h1, h2, h3, h4, h5, h6, h7 archsimd.Uint16x8
 	hiShift := archsimd.BroadcastInt16x8(-8)
-	for r := 0; r < rows; r++ {
-		so, ro := r*srcStride, r*refStride
-		sw := (*[32]uint8)(src[so : so+32])
-		rw := (*[39]uint8)(ref[ro : ro+39])
+	// The source rows and the reference rows' 39-byte windows are grids,
+	// checked once; the loop bound proves each row.
+	// No rows add nothing to acc.
+	if rows < 1 {
+		return
+	}
+	if !unsafeutil.GridFit(len(src), 0, srcStride, 32, rows) || !unsafeutil.GridFit(len(ref), 0, refStride, 39, rows) {
+		panic(errKernelArgs)
+	}
+	gs, gr := unsafeutil.NewGrid(src, 0, srcStride, 32, rows), unsafeutil.NewGrid(ref, 0, refStride, 39, rows)
+	for r := 0; r < gs.Height(); r++ {
+		sw := unsafeutil.Row[[32]uint8](gs, r, 0)
+		rw := unsafeutil.Row[[39]uint8](gr, r, 0)
 		for c := 0; c < 32; c += 16 {
 			s := archsimd.LoadUint8x16Array((*[16]uint8)(sw[c : c+16]))
 			p := (*[23]uint8)(rw[c : c+23])
