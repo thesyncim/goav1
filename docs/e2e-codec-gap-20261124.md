@@ -5,8 +5,8 @@ Measured at `5ceb50f0` (main after #339) with official Go 1.27.4 and
 against dav1d 1.5.4 (Homebrew) and SVT-AV1 4.1.0 built from the vendored
 source (SHA-256 `b4d8c5ed...`). Every Go binary was built with
 `-pgo=cmd/qualitybench/default.pgo`. PRs #342 (itx dispatch, coefficient
-clears) and #343 (intra edge prep) were open at the time and are **not**
-included. This supersedes the [November 23 report](e2e-codec-gap-20261123.md).
+clears) and #343 (intra edge prep) landed after this measurement point and
+are **not** included. This supersedes the [November 23 report](e2e-codec-gap-20261123.md).
 
 Process-inclusive CLI runs under `/usr/bin/time -l`, with no shell wrapper
 (the command is the measured process), both decoders writing YUV to
@@ -149,7 +149,7 @@ count. Mcycles, Go / dav1d:
 | Stage | aomrt_crowdrun (8 tiles) | svtrtc_crowdrun (1 tile) |
 | --- | ---: | ---: |
 | parse chain: mode parse, block loop, coefficients, symbol decoder | 2302 / 1758 (+544) | 1760 / 1435 (+325) |
-| reconstruction glue (recon_b) | 464 / 105 (+359) | 385 / 137 (+249) |
+| reconstruction glue (recon_b; classifier split differs, see lever 2) | 464 / 105 (+359) | 385 / 137 (+249) |
 | motion compensation | 969 / 738 (+231) | 593 / 504 (+90) |
 | refmvs | 393 / 315 (+78) | 245 / 216 (+29) |
 | loop-filter masks | 367 / 292 (+75) | 0 / 0 |
@@ -270,21 +270,30 @@ loop codegen variants, eob-threshold itx dispatch, the int16 column pipe, MC
 codegen, the refmvs store variants, in-place CDEF staging and PGO
 regeneration.
 
-1. **Decoder parse chain: +544 / +325 Mcyc.** *Addressable.* This is
-   mode parse, the block loop, coefficients and the symbol decoder. The mode
-   side leads: `decodeBlockLoopVisitWithCoeffControllerPtr`,
-   `decodeBlockPredictionModeInto`, `txTreeReader.read`, `walkNode` and
-   `setBlockEdge`. The loop is still one generic instantiation, so it
-   makes indirect calls per block and per TXB through the coefficient
-   controller, and it carries an 880-byte block visit. dav1d's `decode_b`
-   writes one `Av1Block` and `BlockContext` per edge. The coefficient token
-   loop is not the lever: recorded variants there are within noise. This is
-   also the serial chain that bounds threaded decode of single-tile streams.
-2. **Decoder reconstruction glue: +359 / +249 Mcyc.** *Addressable.*
-   `reconBInter`, `reconCoefTree`, `ReconB` and `reconTXB` against dav1d's
-   `recon_b_inter`/`read_coef_tree`, which call `itxfm_add` and MC directly.
-   #343 covers the intra edge-prep part (+74 Mcyc intra on svtrtc). The
-   remaining inter path is about 0.3 G cycles on 8-tile 1080p.
+1. **Decoder parse chain: +544 / +325 Mcyc.** *Mostly ABI.* This is
+   mode parse, the block loop, coefficients and the symbol decoder. The
+   block loop no longer dispatches through a generic controller: as of
+   `60fabd1f` the tile controller has one method, `ReconB`, called once per
+   block (dav1d makes one `bd_fn.recon_b_*` call per block), the per-TXB
+   calls are direct calls on concrete types, and `BlockLoopVisit` is 232
+   bytes. The remaining mode-side gap is flat across
+   `decodeBlockPredictionModeInto`, the refmvs mode reads and the partition
+   walk, with no single leader, and is largely Go's call ABI (no
+   callee-saved registers). The coefficient token loop is not the lever
+   either: recorded variants there are within noise. This is also the serial
+   chain that bounds threaded decode of single-tile streams.
+2. **Decoder reconstruction glue: inter-prediction setup and intra edge
+   prep.** *Addressable.* The +359 / +249 in the stage table overstates it:
+   the two classifiers bucket differently (dav1d's `read_coef_tree` falls
+   under coefficients, and the goav1 side of similar comparisons has also
+   carried LF-mask building). On a matched set the TXB walk is about level:
+   `ReconB` + `reconCoefTree` + `reconTXB` + `addResidualInWindow` are about
+   233 Mcyc on `aomrt_crowdrun` against about 206 for dav1d's
+   `recon_b_inter` + `read_coef_tree`, and about 121 against 113 on
+   `svtrtc_crowdrun`. The real gaps are inter-prediction setup
+   (`reconBInter` + `interTarget*`, about 110 Mcyc against about 82 for
+   dav1d's `mc()` on `aomrt_crowdrun`) and intra edge prep (about 90 against
+   39 on `svtrtc_crowdrun`, which #343 addresses).
 3. **Encoder SAD, HME and variance: +445 and +184 Mcyc.** *Walled* (UABD,
    UDOT, UABAL, UADALP). SVT uses `*_neon_dotprod` (UABD + UDOT). goav1's
    SAD is at about 4 vector ops per 16 pixels per row against SVT's 2, after
@@ -331,9 +340,9 @@ regeneration.
     references in about 1,460 instructions, because Go has no callee-saved
     registers. The store-layout variants are recorded dead ends.
 
-In flight, not counted above: #342 (dav1d `itxfm_add` dispatch, inline
-coefficient clears; the inverse-transform rows, +40 / +74 Mcyc) and #343
-(intra edge prep and ipred kernels).
+Landed after the measurement point, so not counted above: #342 (dav1d
+`itxfm_add` dispatch, inline coefficient clears; the inverse-transform rows,
++40 / +74 Mcyc) and #343 (intra edge prep and ipred kernels).
 
 ## Reproduce
 
