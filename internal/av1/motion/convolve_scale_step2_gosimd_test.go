@@ -8,6 +8,7 @@ package motion
 
 import (
 	"bytes"
+	"fmt"
 	"math/rand"
 	"testing"
 
@@ -65,4 +66,34 @@ func TestConvolveScale2D8Step2MatchesScalar(t *testing.T) {
 		t.Fatalf("checked only %d cases", checked)
 	}
 	t.Logf("checked %d cases", checked)
+}
+
+// BenchmarkConvolveScale2D8Step2 measures the 2:1 phase-split scaled kernel.
+func BenchmarkConvolveScale2D8Step2(b *testing.B) {
+	rng := rand.New(rand.NewSource(2))
+	const refW, refH = 200, 180
+	ref := frame.Plane{Width: refW, Height: refH, Stride: refW + 16, Pix: make([]byte, (refW+16)*refH+64)}
+	for i := range ref.Pix {
+		ref.Pix[i] = byte(rng.Intn(256))
+	}
+	var im scaledIM
+	for _, w := range []int{8, 16, 32} {
+		xTable, _ := SubpelKernelTableFor(InterpEightTapRegular, w)
+		yTable, _ := SubpelKernelTableFor(InterpEightTapRegular, w)
+		startX := int64(20<<ScaleSubpelBits) + 37
+		startY := int64(20<<ScaleSubpelBits) + 91
+		imH, ok := scaledIMHeight(w, startY, scaledStep2Half)
+		if !ok {
+			b.Fatal("scaledIMHeight declined")
+		}
+		dst := frame.Plane{Width: w, Height: w, Stride: w, Pix: make([]byte, w*w)}
+		if !convolveScale2D8Step2GoSIMD(dst, ref, 0, 0, w, w, startX, startY, xTable, yTable, imH, &im) {
+			b.Fatal("convolveScale2D8Step2GoSIMD declined")
+		}
+		b.Run(fmt.Sprintf("%dx%d", w, w), func(b *testing.B) {
+			for b.Loop() {
+				convolveScale2D8Step2GoSIMD(dst, ref, 0, 0, w, w, startX, startY, xTable, yTable, imH, &im)
+			}
+		})
+	}
 }

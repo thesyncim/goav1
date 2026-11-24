@@ -19,7 +19,7 @@ import (
 // is bound once per frame beside the loop-filter record map.
 type FrameWorkLoopFilterMasks struct {
 	Masks      []lfmask.FilterMask
-	LevelCache [][4]uint8
+	LevelCache []uint8 // four level bytes per MI cell (lfmask.LevelCache)
 
 	Cols   int
 	Rows   int
@@ -145,16 +145,17 @@ func FrameWorkLoopFilterLevelCacheLen(cols, rows int) int {
 
 // frameWorkLoopFilterLevelCacheBind slices levelCache to the padded length
 // when it is long enough, else to the frame's cols*rows cells.
-func frameWorkLoopFilterLevelCacheBind(levelCache [][4]uint8, cols, rows int) [][4]uint8 {
-	if n := FrameWorkLoopFilterLevelCacheLen(cols, rows); len(levelCache) >= n {
-		return levelCache[:n]
+func frameWorkLoopFilterLevelCacheBind(levelCache []uint8, cols, rows int) []uint8 {
+	if n := FrameWorkLoopFilterLevelCacheLen(cols, rows); len(levelCache) >= 4*n {
+		return levelCache[:4*n]
 	}
-	return levelCache[:cols*rows]
+	return levelCache[:4*cols*rows]
 }
 
 // FrameWorkLoopFilterLevelCacheBind is frameWorkLoopFilterLevelCacheBind for
-// callers outside the package; levelCache must hold at least cols*rows cells.
-func FrameWorkLoopFilterLevelCacheBind(levelCache [][4]uint8, cols, rows int) [][4]uint8 {
+// callers outside the package; levelCache must hold at least cols*rows cells
+// (four bytes each).
+func FrameWorkLoopFilterLevelCacheBind(levelCache []uint8, cols, rows int) []uint8 {
 	return frameWorkLoopFilterLevelCacheBind(levelCache, cols, rows)
 }
 
@@ -166,16 +167,16 @@ func (h *FrameWorkLoopFilterMasks) Valid() bool {
 // BindLoopFilterMasks validates and slices caller-owned storage into this
 // frame's deblocking edge-mask handle, mirroring BindLoopFilterMap. masks holds
 // one FilterMask per 128x128 region (len >= FrameWorkLoopFilterMaskShape masks)
-// and levelCache one [4]uint8 per MI cell (len >= LoopFilterMapShape length).
+// and levelCache four bytes per MI cell (len >= 4 * LoopFilterMapShape length).
 // The returned handle is cleared so the decode block walk can OR this frame's
 // edges into reused storage; the loop filter applies them at post-filter time.
-func (b *FrameWorkBatch) BindLoopFilterMasks(masks []lfmask.FilterMask, levelCache [][4]uint8) (FrameWorkLoopFilterMasks, error) {
+func (b *FrameWorkBatch) BindLoopFilterMasks(masks []lfmask.FilterMask, levelCache []uint8) (FrameWorkLoopFilterMasks, error) {
 	cols, rows, length, err := b.LoopFilterMapShape()
 	if err != nil {
 		return FrameWorkLoopFilterMasks{}, err
 	}
 	sb128w, sb128h, maskCount := FrameWorkLoopFilterMaskShape(cols, rows)
-	if len(masks) < maskCount || len(levelCache) < length {
+	if len(masks) < maskCount || len(levelCache) < 4*length {
 		return FrameWorkLoopFilterMasks{}, ErrInvalidBatch
 	}
 	color := b.Sequence.ColorConfig

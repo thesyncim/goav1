@@ -6,14 +6,7 @@
 
 package loopfilter
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
-
-// unsafe: strided tap rows inside a window range-checked once per call; the
-// same shape as sb_u8_arm64.go, where the bounds-checked slice form measured
-// +20-61%.
+import "simd/archsimd"
 
 // lfSample is the sample width a Go-native SIMD deblocking kernel is
 // instantiated for: one byte per sample at 8-bit, two bytes at 10/12-bit.
@@ -21,10 +14,11 @@ type lfSample interface {
 	uint8 | uint16
 }
 
-// lfSize returns the byte width of one sample of type S.
+// lfSize returns the byte width of one sample of type S: the all-ones value
+// has a bit at position 8 only at two bytes. Each instantiation folds it to a
+// constant.
 func lfSize[S lfSample]() int {
-	var s S
-	return int(unsafe.Sizeof(s))
+	return 1 + int(uint16(^S(0))>>8&1)
 }
 
 // lfLoad loads eight consecutive samples starting at byte offset off as signed
@@ -50,14 +44,12 @@ func lfStore[S lfSample](pix []byte, off int, v archsimd.Int16x8) {
 
 // lfLoad16 loads eight 16-bit samples directly from the validated window.
 func lfLoad16(pix []byte, off int) archsimd.Int16x8 {
-	p := (*[16]uint8)(unsafe.Add(unsafe.Pointer(unsafe.SliceData(pix)), off))
-	return archsimd.LoadUint8x16Array(p).ReshapeToUint16s().BitsToInt16()
+	return archsimd.LoadUint8x16Array((*[16]uint8)(pix[off : off+16])).ReshapeToUint16s().BitsToInt16()
 }
 
 // lfStore16 writes eight 16-bit lanes to the validated window.
 func lfStore16(pix []byte, off int, v archsimd.Int16x8) {
-	p := (*[16]uint8)(unsafe.Add(unsafe.Pointer(unsafe.SliceData(pix)), off))
-	v.ToBits().ReshapeToUint8s().StoreArray(p)
+	v.ToBits().ReshapeToUint8s().StoreArray((*[16]uint8)(pix[off : off+16]))
 }
 
 // lfAbsDiffInt16x8 computes signed absolute difference in each 16-bit lane,

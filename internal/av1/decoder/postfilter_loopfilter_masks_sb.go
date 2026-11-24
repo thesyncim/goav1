@@ -195,7 +195,7 @@ func sb8LaneMask(n int) uint32 {
 
 // sbFilterVertical dispatches one superblock column to the 8-bit or the
 // high-bit-depth kernel.
-func sbFilterVertical(bps int, bitDepth uint8, pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *loopfilter.SBLUT) {
+func sbFilterVertical(bps int, bitDepth uint8, pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *loopfilter.SBLUT) {
 	if bps == 1 {
 		loopfilter.FilterSBVertical8(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 		return
@@ -205,7 +205,7 @@ func sbFilterVertical(bps int, bitDepth uint8, pix []byte, off, stride, rowBytes
 
 // sbFilterHorizontal dispatches one superblock row to the 8-bit or the
 // high-bit-depth kernel.
-func sbFilterHorizontal(bps int, bitDepth uint8, pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl [][4]uint8, lvlOff, lvlStride, comp int, lut *loopfilter.SBLUT) {
+func sbFilterHorizontal(bps int, bitDepth uint8, pix []byte, off, stride, rowBytes int, vm [3]uint32, luma bool, lvl []uint8, lvlOff, lvlStride, comp int, lut *loopfilter.SBLUT) {
 	if bps == 1 {
 		loopfilter.FilterSBHorizontal8(pix, off, stride, rowBytes, vm, luma, lvl, lvlOff, lvlStride, comp, lut)
 		return

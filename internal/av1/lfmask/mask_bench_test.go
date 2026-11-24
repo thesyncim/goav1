@@ -31,7 +31,7 @@ func BenchmarkBuilderCreateInter(b *testing.B) {
 			var builder Builder
 			var m FilterMask
 			stride := 64
-			lc := LevelCache{Cells: make([][4]uint8, stride*64), Stride: stride}
+			lc := LevelCache{Cells: make([]uint8, 4*(stride*64)), Stride: stride}
 			ay := make([]uint8, 64)
 			ly := make([]uint8, 32)
 			auv := make([]uint8, 32)

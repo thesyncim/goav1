@@ -6,9 +6,8 @@ set -eu
 #   - a //go:nocheckptr or //go:linkname directive appears anywhere;
 #   - a non-test file imports unsafe and is not listed in
 #     scripts/unsafe_allowlist.txt, or a listed file no longer imports it;
-#   - the allowlist names a file outside internal/unsafeutil without a
-#     "pending:" justification (the motion/loopfilter kernels still being
-#     moved), or any entry lacks a justification;
+#   - the allowlist names a file outside internal/unsafeutil, or an entry
+#     lacks a justification;
 #   - a _test.go file uses unsafe for anything but Sizeof, Alignof or
 #     Offsetof (struct-size pins);
 #   - any file outside internal/unsafeutil reaches raw memory through
@@ -43,7 +42,7 @@ if [ -n "$unjustified" ]; then
 	echo "$unjustified" >&2
 	status=1
 fi
-outside=$(printf '%s\n' "$entries" | grep -vE '^internal/unsafeutil/' | grep -vE '#[[:space:]]*pending:' || true)
+outside=$(printf '%s\n' "$entries" | grep -vE '^internal/unsafeutil/' || true)
 if [ -n "$outside" ]; then
 	echo "only internal/unsafeutil may import unsafe; move these sites behind it:" >&2
 	echo "$outside" >&2

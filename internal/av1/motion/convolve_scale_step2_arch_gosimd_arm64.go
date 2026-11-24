@@ -6,20 +6,17 @@
 
 package motion
 
-import (
-	"simd/archsimd"
-	"unsafe"
-)
+import "simd/archsimd"
 
 // scaledStep2HorizontalRow filters one source row into eight output columns
 // at a time for the 2:1 scaled convolve. Even lanes read bytes t+j and odd
 // lanes bytes t+j+odd of the load, so tap t interleaves the load shifted by t
 // with the load shifted by t+odd (EXT + ZIP1).
-func scaledStep2HorizontalRow(src unsafe.Pointer, w8 int, odd int, coef *[filterTaps]archsimd.Int16x8, row []int16) {
+func scaledStep2HorizontalRow(src []byte, w8 int, odd int, coef *[filterTaps]archsimd.Int16x8, row []int16) {
 	xRound := archsimd.BroadcastInt16x8(8194)
 	right2 := archsimd.BroadcastInt16x8(-2)
 	for x := 0; x < w8; x += 8 {
-		a := archsimd.LoadUint8x16((*[16]byte)(unsafe.Add(src, x/2))[:])
+		a := archsimd.LoadUint8x16Array((*[16]byte)(src[x/2 : x/2+16]))
 		s1 := a.ConcatShiftBytesRight(a, 1)
 		s2 := a.ConcatShiftBytesRight(a, 2)
 		s3 := a.ConcatShiftBytesRight(a, 3)

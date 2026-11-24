@@ -7,8 +7,8 @@
 package motion
 
 import (
+	"encoding/binary"
 	"simd/archsimd"
-	"unsafe"
 
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
@@ -44,48 +44,47 @@ func mc8BlendMaskFast(dst frame.Plane, a, b []uint16, dstX, dstY, w, h int, mask
 	if maskStride < mw || (mh-1)*maskStride+mw > len(mask) || (mh-1)*maskStride+mw+8 > cap(mask) {
 		return false
 	}
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	mc8BlendMask(unsafe.Pointer(&dst.Pix[off]), dst.Stride, unsafe.Pointer(&a[0]), unsafe.Pointer(&b[0]), w, h, unsafe.Pointer(&mask[0]), maskStride, subX)
+	if (h-1)*dst.Stride+w > mc8WindowMax || (mh-1)*maskStride+mw+8 > mc8WindowMax {
+		return false
+	}
+	mc8BlendMask(dst.Pix[off:off+(h-1)*dst.Stride+w], dst.Stride, a[:w*h], b[:w*h], w, h, mask[:(mh-1)*maskStride+mw+8], maskStride, subX)
 	return true
 }
 
-func mc8BlendMask(dst unsafe.Pointer, dstStride int, a, b unsafe.Pointer, w, h int, mask unsafe.Pointer, maskStride int, sub bool) {
+func mc8BlendMask(dst []byte, dstStride int, a, b []uint16, w, h int, mask []byte, maskStride int, sub bool) {
 	bias := archsimd.BroadcastUint32x4(392704 << 6)
 	m64 := archsimd.BroadcastUint16x8(64)
 	two := archsimd.BroadcastUint16x8(2)
 	right2 := archsimd.BroadcastInt16x8(-2)
 	six := archsimd.BroadcastInt16x8(6)
-	ro := w * 2
+	ws, ds, ms := uint32(w), uint32(dstStride), uint32(maskStride)
+	var ao, do, mo uint32
 	for r := 0; r < h; r++ {
-		pa := unsafe.Add(a, r*ro)
-		pb := unsafe.Add(b, r*ro)
-		d := unsafe.Add(dst, r*dstStride)
-		var mrow, mrow1 unsafe.Pointer
-		if sub {
-			mrow = unsafe.Add(mask, 2*r*maskStride)
-			mrow1 = unsafe.Add(mrow, maskStride)
-		} else {
-			mrow = unsafe.Add(mask, r*maskStride)
-		}
-		for c := 0; c < w; c += 8 {
+		for c := uint32(0); c < ws; c += 8 {
 			var m archsimd.Uint16x8
 			if sub {
-				v0 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(mrow, 2*c)))
-				v1 := archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(mrow1, 2*c)))
+				v0 := archsimd.LoadUint8x16Array(mc8W16(mask, mo+2*c))
+				v1 := archsimd.LoadUint8x16Array(mc8W16(mask, mo+ms+2*c))
 				lo := v0.ExtendLo8ToUint16().Add(v1.ExtendLo8ToUint16())
 				hi := v0.HiToLo().ExtendLo8ToUint16().Add(v1.HiToLo().ExtendLo8ToUint16())
 				m = lo.ConcatAddPairs(hi).Add(two).Shift(right2)
 			} else {
-				m = archsimd.LoadUint8x16Array((*[16]uint8)(unsafe.Add(mrow, c))).ExtendLo8ToUint16()
+				m = archsimd.LoadUint8x16Array(mc8W16(mask, mo+c)).ExtendLo8ToUint16()
 			}
-			ms := m.Shift(six)
+			msh := m.Shift(six)
 			mi := m64.Sub(m).Shift(six)
-			va := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(pa, 2*c)))
-			vb := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(pb, 2*c)))
-			lo := va.MulWidenLo(ms).Add(vb.MulWidenLo(mi)).Sub(bias)
-			hi := va.HiToLo().MulWidenLo(ms.HiToLo()).Add(vb.HiToLo().MulWidenLo(mi.HiToLo())).Sub(bias)
+			va := archsimd.LoadUint16x8Array(mc8WU8(a, ao+c))
+			vb := archsimd.LoadUint16x8Array(mc8WU8(b, ao+c))
+			lo := va.MulWidenLo(msh).Add(vb.MulWidenLo(mi)).Sub(bias)
+			hi := va.HiToLo().MulWidenLo(msh.HiToLo()).Add(vb.HiToLo().MulWidenLo(mi.HiToLo())).Sub(bias)
 			v := lo.ReshapeToUint16s().ConcatOdd(hi.ReshapeToUint16s()).BitsToInt16()
-			*(*uint64)(unsafe.Add(d, c)) = v.SaturateToUint8().ReshapeToUint64s().GetElem(0)
+			binary.LittleEndian.PutUint64(mc8W8(dst, do+c)[:], v.SaturateToUint8().ReshapeToUint64s().GetElem(0))
+		}
+		ao, do = ao+ws, do+ds
+		if sub {
+			mo += 2 * ms
+		} else {
+			mo += ms
 		}
 	}
 }
@@ -97,31 +96,32 @@ func mc8DiffWtdMaskFast(mask []byte, maskStride int, a, b []uint16, w, h int, in
 		maskStride < w || (h-1)*maskStride+w > len(mask) {
 		return false
 	}
-	// Strided rows inside the extents checked above; same shape as the residual-add rows (checked rows +9-86%).
-	mc8DiffWtdMask(unsafe.Pointer(&mask[0]), maskStride, unsafe.Pointer(&a[0]), unsafe.Pointer(&b[0]), w, h, invert)
+	if (h-1)*maskStride+w > mc8WindowMax {
+		return false
+	}
+	mc8DiffWtdMask(mask[:(h-1)*maskStride+w], maskStride, a[:w*h], b[:w*h], w, h, invert)
 	return true
 }
 
-func mc8DiffWtdMask(mask unsafe.Pointer, maskStride int, a, b unsafe.Pointer, w, h int, invert bool) {
+func mc8DiffWtdMask(mask []byte, maskStride int, a, b []uint16, w, h int, invert bool) {
 	right3 := archsimd.BroadcastInt16x8(-3)
 	right5 := archsimd.BroadcastInt16x8(-5)
 	one := archsimd.BroadcastUint16x8(1)
 	base := archsimd.BroadcastUint16x8(38)
 	maxM := archsimd.BroadcastUint16x8(64)
-	ro := w * 2
+	ws, ms := uint32(w), uint32(maskStride)
+	var ao, mo uint32
 	for r := 0; r < h; r++ {
-		pa := unsafe.Add(a, r*ro)
-		pb := unsafe.Add(b, r*ro)
-		mrow := unsafe.Add(mask, r*maskStride)
-		for c := 0; c < w; c += 8 {
-			va := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(pa, 2*c)))
-			vb := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Add(pb, 2*c)))
+		for c := uint32(0); c < ws; c += 8 {
+			va := archsimd.LoadUint16x8Array(mc8WU8(a, ao+c))
+			vb := archsimd.LoadUint16x8Array(mc8WU8(b, ao+c))
 			diff := va.Max(vb).Sub(va.Min(vb))
 			m := diff.Shift(right3).Add(one).Shift(right5).Add(base).Min(maxM)
 			if invert {
 				m = maxM.Sub(m)
 			}
-			*(*uint64)(unsafe.Add(mrow, c)) = m.TruncToUint8().ReshapeToUint64s().GetElem(0)
+			binary.LittleEndian.PutUint64(mc8W8(mask, mo+c)[:], m.TruncToUint8().ReshapeToUint64s().GetElem(0))
 		}
+		ao, mo = ao+ws, mo+ms
 	}
 }
