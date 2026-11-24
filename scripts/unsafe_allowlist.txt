@@ -76,8 +76,6 @@ internal/av1/motion/warp8_gosimd_arm64.go
 internal/av1/motion/warp_hbd_gosimd_arm64.go
 internal/av1/quantize/quantize_rowgroups_diff_gosimd_arm64.go
 internal/av1/quantize/quantize_rowgroups_gosimd_amd64.go
-internal/av1/restoration/selfguided_blend_gosimd_arm64.go
-internal/av1/restoration/selfguided_gosimd_amd64.go
 internal/av1/restoration/selfguided_rolling_gosimd_arm64.go
 internal/av1/restoration/wiener_gosimd_arm64.go
 internal/av1/restoration/wiener_horizontal_gosimd_arm64.go

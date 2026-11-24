@@ -35,11 +35,7 @@
 
 package restoration
 
-import (
-	"unsafe"
-
-	"simd/archsimd"
-)
+import "simd/archsimd"
 
 // init binds the winning Go-native SIMD high-bit-depth SGR blend under the
 // goexperiment.simd build. Measured-losing Wiener and 8-bit SGR candidates
@@ -98,12 +94,6 @@ func sgrProjectHalf(u, f0, f1 archsimd.Int32x4, c sgrConsts) archsimd.Int32x4 {
 	return v.Shift(c.shRnd)
 }
 
-// loadI32x4 is a bounds-check-free array-pointer load of four int32 at p[i];
-// callers guarantee i+4 <= len(p).
-func loadI32x4(p []int32, i int) archsimd.Int32x4 {
-	return archsimd.LoadInt32x4Array((*[4]int32)(unsafe.Pointer(&p[i])))
-}
-
 // sgrWeightedRowSIMD is the Go-native-SIMD high-bit-depth (uint16) final
 // projection row. The bulk runs 16 pixels per iteration (two 16-byte loads,
 // four Int32x4 projections, two 16-byte stores); a trailing 8-wide group and
@@ -128,22 +118,26 @@ func sgrWeightedRowSIMD(dst []uint16, src []uint16, f0 []int32, f1 []int32, xq0 
 	// u16 has no widen-with-shift op, so u = s<<RstBits is a register VSSHL after
 	// the UXTL/UXTL2 widen (uSh applies c.shRst).
 	uSh := func(v archsimd.Uint32x4) archsimd.Int32x4 { return v.ConvertToInt32().Shift(c.shRst) }
+	// dst, src, f0 and f1 share one length, so the i <= len-16 condition
+	// proves every window below and the loop carries no bounds checks.
 	i := 0
-	for ; i+16 <= width; i += 16 {
-		sv0 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&src[i])))
-		sv1 := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&src[i+8])))
-		r0 := sgrProjectHalf(uSh(sv0.ExtendLo4ToUint32()), loadI32x4(f0, i), loadI32x4(f1, i), c)
-		r1 := sgrProjectHalf(uSh(sv0.HiToLo().ExtendLo4ToUint32()), loadI32x4(f0, i+4), loadI32x4(f1, i+4), c)
-		r2 := sgrProjectHalf(uSh(sv1.ExtendLo4ToUint32()), loadI32x4(f0, i+8), loadI32x4(f1, i+8), c)
-		r3 := sgrProjectHalf(uSh(sv1.HiToLo().ExtendLo4ToUint32()), loadI32x4(f0, i+12), loadI32x4(f1, i+12), c)
-		narrow(r0, r1).StoreArray((*[8]uint16)(unsafe.Pointer(&dst[i])))
-		narrow(r2, r3).StoreArray((*[8]uint16)(unsafe.Pointer(&dst[i+8])))
+	for ; i <= len(dst)-16; i += 16 {
+		d, sv, a, b := (*[16]uint16)(dst[i:]), (*[16]uint16)(src[i:]), (*[16]int32)(f0[i:]), (*[16]int32)(f1[i:])
+		sv0 := archsimd.LoadUint16x8Array((*[8]uint16)(sv[0:8]))
+		sv1 := archsimd.LoadUint16x8Array((*[8]uint16)(sv[8:16]))
+		r0 := sgrProjectHalf(uSh(sv0.ExtendLo4ToUint32()), archsimd.LoadInt32x4Array((*[4]int32)(a[0:4])), archsimd.LoadInt32x4Array((*[4]int32)(b[0:4])), c)
+		r1 := sgrProjectHalf(uSh(sv0.HiToLo().ExtendLo4ToUint32()), archsimd.LoadInt32x4Array((*[4]int32)(a[4:8])), archsimd.LoadInt32x4Array((*[4]int32)(b[4:8])), c)
+		r2 := sgrProjectHalf(uSh(sv1.ExtendLo4ToUint32()), archsimd.LoadInt32x4Array((*[4]int32)(a[8:12])), archsimd.LoadInt32x4Array((*[4]int32)(b[8:12])), c)
+		r3 := sgrProjectHalf(uSh(sv1.HiToLo().ExtendLo4ToUint32()), archsimd.LoadInt32x4Array((*[4]int32)(a[12:16])), archsimd.LoadInt32x4Array((*[4]int32)(b[12:16])), c)
+		narrow(r0, r1).StoreArray((*[8]uint16)(d[0:8]))
+		narrow(r2, r3).StoreArray((*[8]uint16)(d[8:16]))
 	}
-	if i+8 <= width {
-		sv := archsimd.LoadUint16x8Array((*[8]uint16)(unsafe.Pointer(&src[i])))
-		rLo := sgrProjectHalf(uSh(sv.ExtendLo4ToUint32()), loadI32x4(f0, i), loadI32x4(f1, i), c)
-		rHi := sgrProjectHalf(uSh(sv.HiToLo().ExtendLo4ToUint32()), loadI32x4(f0, i+4), loadI32x4(f1, i+4), c)
-		narrow(rLo, rHi).StoreArray((*[8]uint16)(unsafe.Pointer(&dst[i])))
+	if i <= len(dst)-8 {
+		d, sv, a, b := (*[8]uint16)(dst[i:]), (*[8]uint16)(src[i:]), (*[8]int32)(f0[i:]), (*[8]int32)(f1[i:])
+		v := archsimd.LoadUint16x8Array(sv)
+		rLo := sgrProjectHalf(uSh(v.ExtendLo4ToUint32()), archsimd.LoadInt32x4Array((*[4]int32)(a[0:4])), archsimd.LoadInt32x4Array((*[4]int32)(b[0:4])), c)
+		rHi := sgrProjectHalf(uSh(v.HiToLo().ExtendLo4ToUint32()), archsimd.LoadInt32x4Array((*[4]int32)(a[4:8])), archsimd.LoadInt32x4Array((*[4]int32)(b[4:8])), c)
+		narrow(rLo, rHi).StoreArray(d)
 		i += 8
 	}
 	if i < width {
