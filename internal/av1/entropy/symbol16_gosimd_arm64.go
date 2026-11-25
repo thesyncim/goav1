@@ -68,8 +68,8 @@ func decodeSymbol16SIMD(values *[MaxSymbols + 1]uint16, last int, rng, coded uin
 	// (the whole range for symbol 0) and bound[n+1] the lower (0 past last).
 	var bound [MaxSymbols + 2]uint16
 	bound[0] = uint16(rng)
-	v0.Store(bound[1:9])
-	v1.Store(bound[9:17])
+	v0.StoreArray((*[8]uint16)(bound[1:9]))
+	v1.StoreArray((*[8]uint16)(bound[9:17]))
 	upper := uint32(bound[n])
 	lower := uint32(bound[n+1])
 
@@ -79,8 +79,8 @@ func decodeSymbol16SIMD(values *[MaxSymbols + 1]uint16, last int, rng, coded uin
 		top := archsimd.LoadUint16x8Array(&k.top)
 		values0 := adaptCDF8(c0, s0, k0, top, rate)
 		values1 := adaptCDF8(c1, s1, k1, top, rate)
-		values0.Store(values[0:8])
-		values1.Store(values[8:16])
+		values0.StoreArray((*[8]uint16)(values[0:8]))
+		values1.StoreArray((*[8]uint16)(values[8:16]))
 		if count < MaxCDFCount {
 			values[last+1] = count + 1
 		}
@@ -147,8 +147,8 @@ func updateCDFWide(values *[MaxSymbols + 1]uint16, symbols, symbol int) {
 	s1 := archsimd.LoadUint16x8Array((*[8]uint16)(up[8:16]))
 	k0 := archsimd.LoadUint16x8Array((*[8]uint16)(keep[0:8]))
 	k1 := archsimd.LoadUint16x8Array((*[8]uint16)(keep[8:16]))
-	adaptCDF8(c0, s0, k0, top, rate).Store(values[0:8])
-	adaptCDF8(c1, s1, k1, top, rate).Store(values[8:16])
+	adaptCDF8(c0, s0, k0, top, rate).StoreArray((*[8]uint16)(values[0:8]))
+	adaptCDF8(c1, s1, k1, top, rate).StoreArray((*[8]uint16)(values[8:16]))
 	if count < MaxCDFCount {
 		values[symbols] = count + 1
 	}

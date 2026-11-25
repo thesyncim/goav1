@@ -35,11 +35,11 @@ func init() {
 // staged through a zero-padded window, so loads never leave the slice.
 func u8Bytes16(pix []byte) archsimd.Uint8x16 {
 	if len(pix) >= 16 {
-		return archsimd.LoadUint8x16(pix[:16])
+		return archsimd.LoadUint8x16Array((*[16]uint8)(pix[:16]))
 	}
 	var w [16]byte
 	copy(w[:], pix)
-	return archsimd.LoadUint8x16(w[:])
+	return archsimd.LoadUint8x16Array(&w)
 }
 
 // u8Samples8 widens the first eight bytes at pix to int16 sample lanes.
@@ -80,7 +80,7 @@ func u8SumRowX(pix []byte, t *hbdTaps16, n int) (lo, hi archsimd.Int32x4) {
 		}
 		return lo, hi
 	}
-	a := archsimd.LoadUint8x16(pix[:16])
+	a := archsimd.LoadUint8x16Array((*[16]uint8)(pix[:16]))
 	b := archsimd.LoadUint8x16(pix[16:32])
 	lo, hi = hbdMAC8(lo, hi, a.ExtendLo8ToUint16().BitsToInt16(), t[0])
 	lo, hi = hbdMAC8(lo, hi, b.ConcatShiftBytesRight(a, 1).ExtendLo8ToUint16().BitsToInt16(), t[1])
@@ -138,7 +138,7 @@ func compoundCopy8Kernel(ctx *compoundCopyGoSIMDCtx) {
 			src := ctx.ref[y*ctx.refStr:]
 			out := ctx.out[y*width:]
 			for x := 0; x < width; x += 16 {
-				v := archsimd.LoadUint8x16(src[x : x+16])
+				v := archsimd.LoadUint8x16Array((*[16]uint8)(src[x : x+16]))
 				v.ExtendLo8ToUint16().ShiftAllLeft(compoundCopy8Shift).Add(off).Store(out[x : x+8])
 				v.ConcatShiftBytesRight(v, 8).ExtendLo8ToUint16().ShiftAllLeft(compoundCopy8Shift).Add(off).Store(out[x+8 : x+16])
 			}
@@ -474,8 +474,8 @@ func blendCompoundAvg8Kernel(ctx *compoundBlendGoSIMDCtx, roundOffset, roundBits
 		dst := ctx.dst[y*ctx.dstStr:]
 		x := 0
 		for ; x+8 <= width; x += 8 {
-			a := archsimd.LoadUint16x8(s0[x : x+8])
-			b := archsimd.LoadUint16x8(s1[x : x+8])
+			a := archsimd.LoadUint16x8Array((*[8]uint16)(s0[x : x+8]))
+			b := archsimd.LoadUint16x8Array((*[8]uint16)(s1[x : x+8]))
 			lo, hi := hbdBlendHalf(a, b, fwd, bck, roundOff, roundBits, zero, maxV)
 			hbdStoreU8x8(dst[x:], lo, hi)
 		}
@@ -483,7 +483,7 @@ func blendCompoundAvg8Kernel(ctx *compoundBlendGoSIMDCtx, roundOffset, roundBits
 			var a, b [8]uint16
 			copy(a[:4], s0[x:x+4])
 			copy(b[:4], s1[x:x+4])
-			lo, _ := hbdBlendHalf(archsimd.LoadUint16x8(a[:]), archsimd.LoadUint16x8(b[:]), fwd, bck, roundOff, roundBits, zero, maxV)
+			lo, _ := hbdBlendHalf(archsimd.LoadUint16x8Array(&a), archsimd.LoadUint16x8Array(&b), fwd, bck, roundOff, roundBits, zero, maxV)
 			hbdStoreU8x4(dst[x:], lo)
 		}
 	}
@@ -500,8 +500,8 @@ func blendCompoundAvg8Fast(ctx *compoundBlendGoSIMDCtx, roundOffset int) {
 		dst := ctx.dst[y*ctx.dstStr:]
 		for x := 0; x < ctx.width; x += 8 {
 			if x+8 <= ctx.width {
-				a := archsimd.LoadUint16x8(s0[x : x+8])
-				b := archsimd.LoadUint16x8(s1[x : x+8])
+				a := archsimd.LoadUint16x8Array((*[8]uint16)(s0[x : x+8]))
+				b := archsimd.LoadUint16x8Array((*[8]uint16)(s1[x : x+8]))
 				a0, a1 := u8WidenU16(a)
 				b0, b1 := u8WidenU16(b)
 				lo := u8MulAdd32(a0, fwd, b0.Mul(bck))
@@ -513,8 +513,8 @@ func blendCompoundAvg8Fast(ctx *compoundBlendGoSIMDCtx, roundOffset int) {
 				var aa, bb [8]uint16
 				copy(aa[:], s0[x:ctx.width])
 				copy(bb[:], s1[x:ctx.width])
-				a0, _ := u8WidenU16(archsimd.LoadUint16x8(aa[:]))
-				b0, _ := u8WidenU16(archsimd.LoadUint16x8(bb[:]))
+				a0, _ := u8WidenU16(archsimd.LoadUint16x8Array(&aa))
+				b0, _ := u8WidenU16(archsimd.LoadUint16x8Array(&bb))
 				lo := u8MulAdd32(a0, fwd, b0.Mul(bck))
 				lo = u8Right32(lo.Sub(bias), right8, 8)
 				u8PackSaturate32(lo, lo).StorePart(dst[x:ctx.width])
@@ -2003,7 +2003,7 @@ func convolveScale2D8Step2GoSIMD(dst frame.Plane, ref frame.Plane, dstX int, dst
 		for x := 0; x < 8; x += 2 {
 			c[x], c[x+1] = k0[t]/2, k1[t]/2
 		}
-		coef[t] = archsimd.LoadInt16x8(c[:])
+		coef[t] = archsimd.LoadInt16x8Array(&c)
 	}
 	im := imBuf[:]
 	// Each source row is a window of the extent checked above: the
@@ -2105,7 +2105,7 @@ func hbdBroadcastTaps32(k *[filterTaps]int16) hbdTaps32 {
 // pix as signed int16 lanes. HBD samples are at most 4095, so the bit pattern
 // is a non-negative int16.
 func hbdLoad8(pix []byte) archsimd.Int16x8 {
-	return archsimd.LoadUint8x16(pix[:16]).ReshapeToUint16s().BitsToInt16()
+	return archsimd.LoadUint8x16Array((*[16]uint8)(pix[:16])).ReshapeToUint16s().BitsToInt16()
 }
 
 // hbdLoad4Int32 reads exactly four uint16 samples, including at the end of a
@@ -2133,8 +2133,8 @@ func hbdSum8Int32(im []int32, step int, t *hbdTaps32, n int) (lo, hi archsimd.In
 	hi = lo
 	for k := range n {
 		row := im[k*step:]
-		lo = hbdMulAdd32(archsimd.LoadInt32x4(row[:4]), t[k], lo)
-		hi = hbdMulAdd32(archsimd.LoadInt32x4(row[4:8]), t[k], hi)
+		lo = hbdMulAdd32(archsimd.LoadInt32x4Array((*[4]int32)(row[:4])), t[k], lo)
+		hi = hbdMulAdd32(archsimd.LoadInt32x4Array((*[4]int32)(row[4:8])), t[k], hi)
 	}
 	return lo, hi
 }
@@ -2227,8 +2227,8 @@ func convolveXHighBDKernel(ctx *convolveHighBDGoSIMDCtx) {
 		for ; x+8 <= width; x += 8 {
 			var lo, hi archsimd.Int32x4
 			if x*2+31 < len(src) {
-				a := archsimd.LoadUint8x16(src[x*2 : x*2+16])
-				b := archsimd.LoadUint8x16(src[x*2+16 : x*2+32])
+				a := archsimd.LoadUint8x16Array((*[16]uint8)(src[x*2 : x*2+16]))
+				b := archsimd.LoadUint8x16Array((*[16]uint8)(src[x*2+16 : x*2+32]))
 				lo = zero
 				hi = zero
 				lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(a), taps[0])
@@ -2291,12 +2291,12 @@ func convolveYHighBDKernel(ctx *convolveHighBDGoSIMDCtx) {
 		c0, c1, c2, c3, c4, c5 := coeff[0], coeff[1], coeff[2], coeff[3], coeff[4], coeff[5]
 		for x := 0; x < width; x += 8 {
 			p := x * 2
-			r0l, r0h := hbdWidenU16(archsimd.LoadUint8x16(ref[p : p+16]).ReshapeToUint16s())
-			r1l, r1h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+refStr : p+refStr+16]).ReshapeToUint16s())
-			r2l, r2h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+2*refStr : p+2*refStr+16]).ReshapeToUint16s())
-			r3l, r3h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+3*refStr : p+3*refStr+16]).ReshapeToUint16s())
-			r4l, r4h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+4*refStr : p+4*refStr+16]).ReshapeToUint16s())
-			r5l, r5h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+5*refStr : p+5*refStr+16]).ReshapeToUint16s())
+			r0l, r0h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p : p+16])).ReshapeToUint16s())
+			r1l, r1h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+refStr : p+refStr+16])).ReshapeToUint16s())
+			r2l, r2h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+2*refStr : p+2*refStr+16])).ReshapeToUint16s())
+			r3l, r3h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+3*refStr : p+3*refStr+16])).ReshapeToUint16s())
+			r4l, r4h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+4*refStr : p+4*refStr+16])).ReshapeToUint16s())
+			r5l, r5h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+5*refStr : p+5*refStr+16])).ReshapeToUint16s())
 			for y := 0; y < height; y++ {
 				lo := hbdMulAdd32(r0l, c0, roundBias)
 				hi := hbdMulAdd32(r0h, c0, roundBias)
@@ -2320,7 +2320,7 @@ func convolveYHighBDKernel(ctx *convolveHighBDGoSIMDCtx) {
 					r3l, r3h = r4l, r4h
 					r4l, r4h = r5l, r5h
 					p += refStr
-					r5l, r5h = hbdWidenU16(archsimd.LoadUint8x16(ref[p+5*refStr : p+5*refStr+16]).ReshapeToUint16s())
+					r5l, r5h = hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+5*refStr : p+5*refStr+16])).ReshapeToUint16s())
 				}
 			}
 		}
@@ -2362,14 +2362,14 @@ func convolveYHighBD8TapSliding(ctx *convolveHighBDGoSIMDCtx, roundBias, roundSh
 	c4, c5, c6, c7 := coeff[4], coeff[5], coeff[6], coeff[7]
 	for x := 0; x < width; x += 8 {
 		p := x * 2
-		r0l, r0h := hbdWidenU16(archsimd.LoadUint8x16(ref[p : p+16]).ReshapeToUint16s())
-		r1l, r1h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+refStr : p+refStr+16]).ReshapeToUint16s())
-		r2l, r2h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+2*refStr : p+2*refStr+16]).ReshapeToUint16s())
-		r3l, r3h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+3*refStr : p+3*refStr+16]).ReshapeToUint16s())
-		r4l, r4h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+4*refStr : p+4*refStr+16]).ReshapeToUint16s())
-		r5l, r5h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+5*refStr : p+5*refStr+16]).ReshapeToUint16s())
-		r6l, r6h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+6*refStr : p+6*refStr+16]).ReshapeToUint16s())
-		r7l, r7h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+7*refStr : p+7*refStr+16]).ReshapeToUint16s())
+		r0l, r0h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p : p+16])).ReshapeToUint16s())
+		r1l, r1h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+refStr : p+refStr+16])).ReshapeToUint16s())
+		r2l, r2h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+2*refStr : p+2*refStr+16])).ReshapeToUint16s())
+		r3l, r3h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+3*refStr : p+3*refStr+16])).ReshapeToUint16s())
+		r4l, r4h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+4*refStr : p+4*refStr+16])).ReshapeToUint16s())
+		r5l, r5h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+5*refStr : p+5*refStr+16])).ReshapeToUint16s())
+		r6l, r6h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+6*refStr : p+6*refStr+16])).ReshapeToUint16s())
+		r7l, r7h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+7*refStr : p+7*refStr+16])).ReshapeToUint16s())
 		for y := 0; y < height; y++ {
 			lo := hbdMulAdd32(r0l, c0, roundBias)
 			hi := hbdMulAdd32(r0h, c0, roundBias)
@@ -2399,7 +2399,7 @@ func convolveYHighBD8TapSliding(ctx *convolveHighBDGoSIMDCtx, roundBias, roundSh
 				r5l, r5h = r6l, r6h
 				r6l, r6h = r7l, r7h
 				p += refStr
-				r7l, r7h = hbdWidenU16(archsimd.LoadUint8x16(ref[p+7*refStr : p+7*refStr+16]).ReshapeToUint16s())
+				r7l, r7h = hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+7*refStr : p+7*refStr+16])).ReshapeToUint16s())
 			}
 		}
 	}
@@ -2477,8 +2477,8 @@ func hbdHorizontalIM(ref []byte, refStr int, im []int32, imStr int, width, rows 
 		for ; x+8 <= width; x += 8 {
 			var lo, hi archsimd.Int32x4
 			if x*2+31 < len(src) {
-				a := archsimd.LoadUint8x16(src[x*2 : x*2+16])
-				b := archsimd.LoadUint8x16(src[x*2+16 : x*2+32])
+				a := archsimd.LoadUint8x16Array((*[16]uint8)(src[x*2 : x*2+16]))
+				b := archsimd.LoadUint8x16Array((*[16]uint8)(src[x*2+16 : x*2+32]))
 				lo = archsimd.BroadcastInt32x4(0)
 				hi = lo
 				lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(a), taps[0])
@@ -2623,7 +2623,7 @@ func compoundCopyHighBDKernel(ctx *compoundCopyGoSIMDCtx, shift int) {
 		src := ctx.ref[y*ctx.refStr:]
 		out := ctx.out[y*width:]
 		for x := 0; x < width; x += 8 {
-			s := archsimd.LoadUint8x16(src[x*2 : x*2+16]).ReshapeToUint16s()
+			s := archsimd.LoadUint8x16Array((*[16]uint8)(src[x*2 : x*2+16])).ReshapeToUint16s()
 			s.ShiftAllLeft(uint64(shift)).Add(off).Store(out[x : x+8])
 		}
 	}
@@ -2643,7 +2643,7 @@ func hbdSumRowX(pix []byte, t *hbdTaps16, n int) (lo, hi archsimd.Int32x4) {
 	if len(pix) < 32 {
 		return hbdSum8(pix, 2, t, n)
 	}
-	a := archsimd.LoadUint8x16(pix[:16])
+	a := archsimd.LoadUint8x16Array((*[16]uint8)(pix[:16]))
 	b := archsimd.LoadUint8x16(pix[16:32])
 	lo = archsimd.BroadcastInt32x4(0)
 	hi = lo
@@ -2690,8 +2690,8 @@ func compoundXHighBDKernel(ctx *compoundFilterGoSIMDCtx) {
 		for ; x+8 <= width; x += 8 {
 			var lo, hi archsimd.Int32x4
 			if x*2+31 < len(src) {
-				a := archsimd.LoadUint8x16(src[x*2 : x*2+16])
-				b := archsimd.LoadUint8x16(src[x*2+16 : x*2+32])
+				a := archsimd.LoadUint8x16Array((*[16]uint8)(src[x*2 : x*2+16]))
+				b := archsimd.LoadUint8x16Array((*[16]uint8)(src[x*2+16 : x*2+32]))
 				lo = zero
 				hi = zero
 				lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(a), taps[0])
@@ -2743,7 +2743,7 @@ func compoundXHighBD4TapW4(ctx *compoundFilterGoSIMDCtx) {
 		src := ref[y*refStr:]
 		var a archsimd.Uint8x16
 		if len(src) >= 16 {
-			a = archsimd.LoadUint8x16(src[:16])
+			a = archsimd.LoadUint8x16Array((*[16]uint8)(src[:16]))
 		} else {
 			var win [16]byte
 			copy(win[:14], src[:14])
@@ -2886,12 +2886,12 @@ func compoundYHighBD6TapSliding(ctx *compoundFilterGoSIMDCtx) {
 	c0, c1, c2, c3, c4, c5 := coeff[0], coeff[1], coeff[2], coeff[3], coeff[4], coeff[5]
 	for x := 0; x < width; x += 8 {
 		p := x * 2
-		r0l, r0h := hbdWidenU16(archsimd.LoadUint8x16(ref[p : p+16]).ReshapeToUint16s())
-		r1l, r1h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+refStr : p+refStr+16]).ReshapeToUint16s())
-		r2l, r2h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+2*refStr : p+2*refStr+16]).ReshapeToUint16s())
-		r3l, r3h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+3*refStr : p+3*refStr+16]).ReshapeToUint16s())
-		r4l, r4h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+4*refStr : p+4*refStr+16]).ReshapeToUint16s())
-		r5l, r5h := hbdWidenU16(archsimd.LoadUint8x16(ref[p+5*refStr : p+5*refStr+16]).ReshapeToUint16s())
+		r0l, r0h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p : p+16])).ReshapeToUint16s())
+		r1l, r1h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+refStr : p+refStr+16])).ReshapeToUint16s())
+		r2l, r2h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+2*refStr : p+2*refStr+16])).ReshapeToUint16s())
+		r3l, r3h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+3*refStr : p+3*refStr+16])).ReshapeToUint16s())
+		r4l, r4h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+4*refStr : p+4*refStr+16])).ReshapeToUint16s())
+		r5l, r5h := hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+5*refStr : p+5*refStr+16])).ReshapeToUint16s())
 		for y := 0; y < height; y++ {
 			lo := hbdMulAdd32(r0l, c0, roundBias)
 			hi := hbdMulAdd32(r0h, c0, roundBias)
@@ -2915,7 +2915,7 @@ func compoundYHighBD6TapSliding(ctx *compoundFilterGoSIMDCtx) {
 				r3l, r3h = r4l, r4h
 				r4l, r4h = r5l, r5h
 				p += refStr
-				r5l, r5h = hbdWidenU16(archsimd.LoadUint8x16(ref[p+5*refStr : p+5*refStr+16]).ReshapeToUint16s())
+				r5l, r5h = hbdWidenU16(archsimd.LoadUint8x16Array((*[16]uint8)(ref[p+5*refStr : p+5*refStr+16])).ReshapeToUint16s())
 			}
 		}
 	}
@@ -2943,8 +2943,8 @@ func blendCompoundAvgHighBDKernel(ctx *compoundBlendGoSIMDCtx, roundOffset, roun
 			dst := ctx.dst[y*ctx.dstStr:]
 			x := 0
 			for ; x+8 <= width; x += 8 {
-				a := archsimd.LoadUint16x8(s0[x : x+8])
-				b := archsimd.LoadUint16x8(s1[x : x+8])
+				a := archsimd.LoadUint16x8Array((*[8]uint16)(s0[x : x+8]))
+				b := archsimd.LoadUint16x8Array((*[8]uint16)(s1[x : x+8]))
 				pix := hbdShiftRightU16(hbdAverageU16(a, b).SubSaturated(threshold), shiftAmount, roundBits).Min(maxV)
 				pix.ReshapeToUint8s().Store(dst[x*2 : x*2+16])
 			}
@@ -2952,7 +2952,7 @@ func blendCompoundAvgHighBDKernel(ctx *compoundBlendGoSIMDCtx, roundOffset, roun
 				var a, b [8]uint16
 				copy(a[:4], s0[x:x+4])
 				copy(b[:4], s1[x:x+4])
-				pix := hbdShiftRightU16(hbdAverageU16(archsimd.LoadUint16x8(a[:]), archsimd.LoadUint16x8(b[:])).SubSaturated(threshold), shiftAmount, roundBits).Min(maxV)
+				pix := hbdShiftRightU16(hbdAverageU16(archsimd.LoadUint16x8Array(&a), archsimd.LoadUint16x8Array(&b)).SubSaturated(threshold), shiftAmount, roundBits).Min(maxV)
 				var bytes [16]byte
 				pix.ReshapeToUint8s().Store(bytes[:])
 				copy(dst[x*2:x*2+8], bytes[:8])
@@ -2972,8 +2972,8 @@ func blendCompoundAvgHighBDKernel(ctx *compoundBlendGoSIMDCtx, roundOffset, roun
 		dst := ctx.dst[y*ctx.dstStr:]
 		x := 0
 		for ; x+8 <= width; x += 8 {
-			a := archsimd.LoadUint16x8(s0[x : x+8])
-			b := archsimd.LoadUint16x8(s1[x : x+8])
+			a := archsimd.LoadUint16x8Array((*[8]uint16)(s0[x : x+8]))
+			b := archsimd.LoadUint16x8Array((*[8]uint16)(s1[x : x+8]))
 			lo, hi := hbdBlendHalf(a, b, fwd, bck, roundOff, roundBits, zero, maxV)
 			hbdStorePix8(dst[x*2:], lo, hi)
 		}
@@ -2981,7 +2981,7 @@ func blendCompoundAvgHighBDKernel(ctx *compoundBlendGoSIMDCtx, roundOffset, roun
 			var a, b [8]uint16
 			copy(a[:4], s0[x:x+4])
 			copy(b[:4], s1[x:x+4])
-			lo, _ := hbdBlendHalf(archsimd.LoadUint16x8(a[:]), archsimd.LoadUint16x8(b[:]), fwd, bck, roundOff, roundBits, zero, maxV)
+			lo, _ := hbdBlendHalf(archsimd.LoadUint16x8Array(&a), archsimd.LoadUint16x8Array(&b), fwd, bck, roundOff, roundBits, zero, maxV)
 			hbdStorePix4(dst[x*2:], lo)
 		}
 	}

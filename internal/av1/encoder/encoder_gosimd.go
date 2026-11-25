@@ -156,17 +156,13 @@ func levelsAllZeroSIMD(q []int16) bool {
 		return levelsAllZeroPureGo(q)
 	}
 	var a0, a1 archsimd.Int16x8
-	for i := 0; i < len(q); i += 16 {
-		a0 = a0.Or(archsimd.LoadInt16x8(q[i : i+8]))
-		a1 = a1.Or(archsimd.LoadInt16x8(q[i+8 : i+16]))
+	for i := 0; i <= len(q)-16; i += 16 {
+		w := (*[16]int16)(q[i:])
+		a0 = a0.Or(archsimd.LoadInt16x8Array((*[8]int16)(w[0:8])))
+		a1 = a1.Or(archsimd.LoadInt16x8Array((*[8]int16)(w[8:16])))
 	}
-	var lanes [8]int16
-	a0.Or(a1).StoreArray(&lanes)
-	var any int16
-	for _, v := range lanes {
-		any |= v
-	}
-	return any == 0
+	u := a0.Or(a1).ToBits().ReshapeToUint64s()
+	return u.GetElem(0)|u.GetElem(1) == 0
 }
 
 // rdoqEOBSIMD is rdoqEOBPureGo eight levels at a time: the non-zero lanes
@@ -180,9 +176,9 @@ func rdoqEOBSIMD(qcoeff []int16, iscan []int16) int {
 	zero := archsimd.BroadcastInt16x8(0)
 	one := archsimd.BroadcastInt16x8(1)
 	acc := zero
-	for i := 0; i < n; i += 8 {
-		q := archsimd.LoadInt16x8(qcoeff[i : i+8])
-		s := archsimd.LoadInt16x8(iscan[i : i+8])
+	for i := 0; i <= len(qcoeff)-8 && i <= len(iscan)-8; i += 8 {
+		q := archsimd.LoadInt16x8Array((*[8]int16)(qcoeff[i:]))
+		s := archsimd.LoadInt16x8Array((*[8]int16)(iscan[i:]))
 		acc = acc.Max(s.Add(one).Masked(q.NotEqual(zero)))
 	}
 	var lanes [8]int16
@@ -206,24 +202,29 @@ func rdStatsDiffSIMD(tran []int32, qcoeff []int16, count int, step int32, ts uin
 	rateAcc := archsimd.BroadcastInt32x4(0)
 	allZero = true
 	i := 0
-	for ; i+8 <= count; i += 8 {
-		q := archsimd.LoadInt16x8(qcoeff[i : i+8])
-		u := q.ToBits().ReshapeToUint64s()
-		if u.GetElem(0)|u.GetElem(1) == 0 {
-			continue
+	if count > 0 {
+		t := tran[:count]
+		qc := qcoeff[:count]
+		for ; i <= len(qc)-8 && i <= len(t)-8; i += 8 {
+			q := archsimd.LoadInt16x8Array((*[8]int16)(qc[i:]))
+			u := q.ToBits().ReshapeToUint64s()
+			if u.GetElem(0)|u.GetElem(1) == 0 {
+				continue
+			}
+			allZero = false
+			tw := (*[8]int32)(t[i:])
+			c0 := archsimd.LoadInt32x4Array((*[4]int32)(tw[0:4]))
+			c1 := archsimd.LoadInt32x4Array((*[4]int32)(tw[4:8]))
+			dq0 := q.ExtendLo4ToInt32().Mul(stepV).ShiftAllRight(tsU)
+			dq1 := hiInt16(q).ExtendLo4ToInt32().Mul(stepV).ShiftAllRight(tsU)
+			diffAcc = mulSumInt32(mulSumInt32(diffAcc, dq0, c0.Add(c0).Sub(dq0)), dq1, c1.Add(c1).Sub(dq1))
+			lo := q.Abs().ToBits().ExtendLo4ToUint32()
+			hiMag := hiInt16(q.Abs()).ToBits().ExtendLo4ToUint32()
+			nzLo := lo.Min(one).BitsToInt32()
+			nzHi := hiMag.Min(one).BitsToInt32()
+			rateAcc = rateAcc.Add(bitLenFloat32(lo)).Add(bitLenFloat32(hiMag)).
+				Add(nzLo.Add(nzLo)).Add(nzHi.Add(nzHi))
 		}
-		allZero = false
-		c0 := archsimd.LoadInt32x4(tran[i : i+4])
-		c1 := archsimd.LoadInt32x4(tran[i+4 : i+8])
-		dq0 := q.ExtendLo4ToInt32().Mul(stepV).ShiftAllRight(tsU)
-		dq1 := hiInt16(q).ExtendLo4ToInt32().Mul(stepV).ShiftAllRight(tsU)
-		diffAcc = mulSumInt32(mulSumInt32(diffAcc, dq0, c0.Add(c0).Sub(dq0)), dq1, c1.Add(c1).Sub(dq1))
-		lo := q.Abs().ToBits().ExtendLo4ToUint32()
-		hiMag := hiInt16(q.Abs()).ToBits().ExtendLo4ToUint32()
-		nzLo := lo.Min(one).BitsToInt32()
-		nzHi := hiMag.Min(one).BitsToInt32()
-		rateAcc = rateAcc.Add(bitLenFloat32(lo)).Add(bitLenFloat32(hiMag)).
-			Add(nzLo.Add(nzLo)).Add(nzHi.Add(nzHi))
 	}
 	var lanes int64
 	for ; i < count; i++ {
@@ -356,10 +357,10 @@ func residualBlockSIMD(dst []int16, srcPlane []byte, srcOff, stride int, pred []
 		drow := dst[r*w : r*w+w]
 		c := 0
 		for ; c+16 <= w; c += 16 {
-			a := archsimd.LoadUint8x16(srow[c : c+16])
-			b := archsimd.LoadUint8x16(prow[c : c+16])
-			a.ExtendLo8ToUint16().BitsToInt16().Sub(b.ExtendLo8ToUint16().BitsToInt16()).Store(drow[c : c+8])
-			widenHi8(a).BitsToInt16().Sub(widenHi8(b).BitsToInt16()).Store(drow[c+8 : c+16])
+			a := archsimd.LoadUint8x16Array((*[16]uint8)(srow[c : c+16]))
+			b := archsimd.LoadUint8x16Array((*[16]uint8)(prow[c : c+16]))
+			a.ExtendLo8ToUint16().BitsToInt16().Sub(b.ExtendLo8ToUint16().BitsToInt16()).StoreArray((*[8]int16)(drow[c : c+8]))
+			widenHi8(a).BitsToInt16().Sub(widenHi8(b).BitsToInt16()).StoreArray((*[8]int16)(drow[c+8 : c+16]))
 		}
 		for ; c < w; c++ {
 			drow[c] = int16(srow[c]) - int16(prow[c])
@@ -434,23 +435,28 @@ func rdStatsBlockSIMD(tran []int32, qcoeff []int16, count int, step int32, ts ui
 	orAcc := archsimd.BroadcastInt16x8(0)
 	rateAcc := archsimd.BroadcastInt32x4(0)
 	i := 0
-	for ; i+8 <= count; i += 8 {
-		c0 := archsimd.LoadInt32x4(tran[i : i+4])
-		c1 := archsimd.LoadInt32x4(tran[i+4 : i+8])
-		q := archsimd.LoadInt16x8(qcoeff[i : i+8])
-		skipAcc = sqSumInt32(sqSumInt32(skipAcc, c0), c1)
-		dq0 := q.ExtendLo4ToInt32().Mul(stepV).ShiftAllRight(tsU)
-		dq1 := hiInt16(q).ExtendLo4ToInt32().Mul(stepV).ShiftAllRight(tsU)
-		codeAcc = sqSumInt32(sqSumInt32(codeAcc, c0.Sub(dq0)), c1.Sub(dq1))
-		orAcc = orAcc.Or(q)
-		// |level| as unsigned 16-bit (|-32768| = 32768), split into 32-bit lanes.
-		mag := q.Abs().ToBits()
-		lo := mag.ExtendLo4ToUint32()
-		hiMag := hiInt16(q.Abs()).ToBits().ExtendLo4ToUint32()
-		nzLo := lo.Min(one).BitsToInt32()
-		nzHi := hiMag.Min(one).BitsToInt32()
-		rateAcc = rateAcc.Add(bitLenFloat32(lo)).Add(bitLenFloat32(hiMag)).
-			Add(nzLo.Add(nzLo)).Add(nzHi.Add(nzHi))
+	if count > 0 {
+		t := tran[:count]
+		qc := qcoeff[:count]
+		for ; i <= len(qc)-8 && i <= len(t)-8; i += 8 {
+			tw := (*[8]int32)(t[i:])
+			c0 := archsimd.LoadInt32x4Array((*[4]int32)(tw[0:4]))
+			c1 := archsimd.LoadInt32x4Array((*[4]int32)(tw[4:8]))
+			q := archsimd.LoadInt16x8Array((*[8]int16)(qc[i:]))
+			skipAcc = sqSumInt32(sqSumInt32(skipAcc, c0), c1)
+			dq0 := q.ExtendLo4ToInt32().Mul(stepV).ShiftAllRight(tsU)
+			dq1 := hiInt16(q).ExtendLo4ToInt32().Mul(stepV).ShiftAllRight(tsU)
+			codeAcc = sqSumInt32(sqSumInt32(codeAcc, c0.Sub(dq0)), c1.Sub(dq1))
+			orAcc = orAcc.Or(q)
+			// |level| as unsigned 16-bit (|-32768| = 32768), split into 32-bit lanes.
+			mag := q.Abs().ToBits()
+			lo := mag.ExtendLo4ToUint32()
+			hiMag := hiInt16(q.Abs()).ToBits().ExtendLo4ToUint32()
+			nzLo := lo.Min(one).BitsToInt32()
+			nzHi := hiMag.Min(one).BitsToInt32()
+			rateAcc = rateAcc.Add(bitLenFloat32(lo)).Add(bitLenFloat32(hiMag)).
+				Add(nzLo.Add(nzLo)).Add(nzHi.Add(nzHi))
+		}
 	}
 	var lanes int64
 	allZero = true

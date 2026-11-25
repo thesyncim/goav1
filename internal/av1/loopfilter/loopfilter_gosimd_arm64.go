@@ -1368,6 +1368,8 @@ func lpfAbsDiff(a, b archsimd.Uint8x16) archsimd.Uint8x16 {
 	return a.SubSaturated(b).Or(b.SubSaturated(a))
 }
 
+var lpfShR1 = [16]int8{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}
+
 func lpfAny(m archsimd.Mask8x16) bool {
 	b := m.ToInt8x16().ToBits().ReshapeToUint64s()
 	return b.GetElem(0)|b.GetElem(1) != 0
@@ -1399,7 +1401,7 @@ func lpf16U8Wd16(tv unsafeutil.Block[lpfR14], eV, iV, hV archsimd.Uint8x16, m4, 
 	tt := lpfAbsDiff(p2, p1).Max(lpfAbsDiff(q2, q1)).Max(lpfAbsDiff(p3, p2).Max(lpfAbsDiff(q3, q2)))
 	t := maxd.Max(tt.Masked(mGt4))
 	d00 := lpfAbsDiff(p0, q0)
-	sum := d00.AddSaturated(d00).AddSaturated(lpfAbsDiff(p1, q1).ShiftAllRight(1))
+	sum := d00.AddSaturated(d00).AddSaturated(lpfAbsDiff(p1, q1).Shift(archsimd.LoadInt8x16Array(&lpfShR1)))
 	fm := iV.GreaterEqual(t).And(eV.GreaterEqual(sum)).And(m4)
 	if !lpfAny(fm) {
 		return false
@@ -2260,7 +2262,7 @@ func lpf8U8Cols[W lpfWidth](tv unsafeutil.Block[lpfR16], eV, iV, hV archsimd.Uin
 		t = t.Max(tt.Masked(mGt4))
 	}
 	d00 := lpfAbsDiff(p0, q0)
-	sum := d00.AddSaturated(d00).AddSaturated(lpfAbsDiff(p1, q1).ShiftAllRight(1))
+	sum := d00.AddSaturated(d00).AddSaturated(lpfAbsDiff(p1, q1).Shift(archsimd.LoadInt8x16Array(&lpfShR1)))
 	fm := iV.GreaterEqual(t).And(eV.GreaterEqual(sum)).And(m4)
 	if !lpfAny(fm) {
 		return false
@@ -2404,7 +2406,7 @@ func lpf8U8Rows[W lpfWidth, R unsafeutil.BlockRows](tv unsafeutil.Block[R], eV, 
 		t = t.Max(tt.Masked(mGt4))
 	}
 	d00 := lpfAbsDiff(p0, q0)
-	sum := d00.AddSaturated(d00).AddSaturated(lpfAbsDiff(p1, q1).ShiftAllRight(1))
+	sum := d00.AddSaturated(d00).AddSaturated(lpfAbsDiff(p1, q1).Shift(archsimd.LoadInt8x16Array(&lpfShR1)))
 	fm := iV.GreaterEqual(t).And(eV.GreaterEqual(sum)).And(m4)
 	if !lpfAny(fm) {
 		return false

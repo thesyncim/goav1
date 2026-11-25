@@ -1552,18 +1552,18 @@ func filterUnitBlocksU8Byte(dst []byte, dstStride int, input []byte, inputOrigin
 // cdefByteLoad8x2Rows packs the 8 bytes at r0[off:] (low half) and r1[off:]
 // (high half). Callers bound off <= cdefByteMaxOff so BCE drops all checks.
 func cdefByteLoad8x2Rows(r0, r1 *[cdefByteWinRow]byte, off uint) archsimd.Uint8x16 {
-	a := archsimd.LoadUint8x16(r0[off : off+16]).ReshapeToUint64s()
-	b := archsimd.LoadUint8x16(r1[off : off+16]).ReshapeToUint64s()
+	a := archsimd.LoadUint8x16Array((*[16]uint8)(r0[off : off+16])).ReshapeToUint64s()
+	b := archsimd.LoadUint8x16Array((*[16]uint8)(r1[off : off+16])).ReshapeToUint64s()
 	return a.InterleaveLo(b).ReshapeToUint8s()
 }
 
 // cdefByteLoad4x4Rows packs the 4 bytes at r0..r3[off:] in row order.
 // Callers bound off <= cdefByteMaxOff so BCE drops all checks.
 func cdefByteLoad4x4Rows(r0, r1, r2, r3 *[cdefByteWinRow]byte, off uint) archsimd.Uint8x16 {
-	a := archsimd.LoadUint8x16(r0[off : off+16]).ReshapeToUint32s()
-	b := archsimd.LoadUint8x16(r1[off : off+16]).ReshapeToUint32s()
-	c := archsimd.LoadUint8x16(r2[off : off+16]).ReshapeToUint32s()
-	d := archsimd.LoadUint8x16(r3[off : off+16]).ReshapeToUint32s()
+	a := archsimd.LoadUint8x16Array((*[16]uint8)(r0[off : off+16])).ReshapeToUint32s()
+	b := archsimd.LoadUint8x16Array((*[16]uint8)(r1[off : off+16])).ReshapeToUint32s()
+	c := archsimd.LoadUint8x16Array((*[16]uint8)(r2[off : off+16])).ReshapeToUint32s()
+	d := archsimd.LoadUint8x16Array((*[16]uint8)(r3[off : off+16])).ReshapeToUint32s()
 	ab := a.InterleaveLo(b).ReshapeToUint64s()
 	cd := c.InterleaveLo(d).ReshapeToUint64s()
 	return ab.InterleaveLo(cd).ReshapeToUint8s()
