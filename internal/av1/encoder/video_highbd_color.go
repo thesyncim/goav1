@@ -57,6 +57,19 @@ type HighBitDepth420VideoEncoder struct {
 	tuScratch    []byte
 }
 
+// NewHighBitDepthVideoEncoderWithColor creates a streaming 10/12-bit AV1
+// color video encoder for native 4:2:0 (Profile0), 4:4:4 (Profile1), or
+// 4:2:2 / 12-bit (Profile2) streams.
+func NewHighBitDepthVideoEncoderWithColor(width, height int, profile Profile, color SequenceColorConfig, qIndex uint8) (*HighBitDepth420VideoEncoder, error) {
+	return newHighBitDepth420VideoEncoderWithColor(width, height, profile, color, qIndex)
+}
+
+// NewHighBitDepthVideoEncoderCBRWithColor creates a CBR streaming 10/12-bit
+// AV1 color video encoder for native 4:2:0, 4:2:2, or 4:4:4 streams.
+func NewHighBitDepthVideoEncoderCBRWithColor(width, height int, profile Profile, color SequenceColorConfig, rc RateControlConfig) (*HighBitDepth420VideoEncoder, error) {
+	return newHighBitDepth420VideoEncoderCBRWithColor(width, height, profile, color, rc)
+}
+
 func newHighBitDepth420VideoEncoderWithColor(width, height int, profile Profile, color SequenceColorConfig, qIndex uint8) (*HighBitDepth420VideoEncoder, error) {
 	if width < 16 || height < 16 || width%2 != 0 || height%2 != 0 {
 		return nil, fmt.Errorf("encoder: dimensions must be even and at least 16x16, got %dx%d", width, height)

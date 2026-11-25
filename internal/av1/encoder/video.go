@@ -499,6 +499,28 @@ func copyFrameInto(dst *SourceFrame420, src SourceFrame420) {
 	dst.Width, dst.Height = src.Width, src.Height
 }
 
+// SetColorConfig updates the color description fields signaled in the sequence
+// header (primaries, transfer characteristics, matrix coefficients, color
+// range, and chroma sample position). Bit depth and subsampling remain bound to
+// the encoder's sample format.
+func (e *VideoEncoder) SetColorConfig(color SequenceColorConfig) error {
+	if e == nil {
+		return fmt.Errorf("encoder: nil video encoder")
+	}
+	next := e.color
+	next.ColorDescriptionPresent = color.ColorDescriptionPresent
+	next.ColorPrimaries = color.ColorPrimaries
+	next.TransferCharacteristics = color.TransferCharacteristics
+	next.MatrixCoefficients = color.MatrixCoefficients
+	next.ColorRange = color.ColorRange
+	next.ChromaSamplePosition = color.ChromaSamplePosition
+	if err := validateSequenceColorConfig(videoColorProfile(next), next); err != nil {
+		return err
+	}
+	e.color = next
+	return nil
+}
+
 // SetTileColumns overrides the inter-frame tile column count (rounded down
 // to a power of two, clamped to the legal range for the frame size at encode
 // time). One column disables tile parallelism.
