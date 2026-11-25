@@ -25,6 +25,7 @@ import (
 	"fmt"
 
 	internalframe "github.com/thesyncim/goav1/internal/av1/frame"
+	internalobu "github.com/thesyncim/goav1/internal/av1/obu"
 
 	"github.com/thesyncim/goav1/internal/av1/encoder"
 )
@@ -184,6 +185,29 @@ func EncodeI400HighBitDepthLosslessKeyframe(frame I400HighBitDepthFrame) ([]byte
 		BitDepth: frame.BitDepth,
 	}
 	copy(recon.Y, frame.Y)
+	return tu, recon, nil
+}
+
+// EncodeI420LosslessKeyframe encodes one 8-bit 4:2:0 AV1 lossless keyframe.
+// The returned reconstruction aliases a fresh copy of frame planes because
+// lossless output reproduces the source bit-exactly.
+func EncodeI420LosslessKeyframe(frame I420Frame) ([]byte, I420Frame, error) {
+	if err := validateI420Frame(frame); err != nil {
+		return nil, I420Frame{}, err
+	}
+	tu, err := encoder.EncodeLossless420Keyframe(frame)
+	if err != nil {
+		return nil, I420Frame{}, err
+	}
+	recon := I420Frame{
+		Y:            append([]byte(nil), frame.Y...),
+		U:            append([]byte(nil), frame.U...),
+		V:            append([]byte(nil), frame.V...),
+		YStride:      frame.YStride,
+		ChromaStride: frame.ChromaStride,
+		Width:        frame.Width,
+		Height:       frame.Height,
+	}
 	return tu, recon, nil
 }
 
@@ -380,6 +404,26 @@ type VideoEncoderConfig struct {
 	// screen-content tools and speed settings; EncoderContentCamera and
 	// EncoderContentScreen force the choice.
 	Content EncoderContentHint
+
+	// KeyFrameInterval, when positive, automatically inserts a keyframe every
+	// KeyFrameInterval frames (in addition to frame 0 and any explicit forceKey).
+	// Zero disables periodic automatic keyframes.
+	KeyFrameInterval int
+
+	// Color, when non-nil, signals explicit AV1 sequence header color_config
+	// fields (primaries, transfer characteristics, matrix coefficients, color
+	// range, and chroma sample position) such as BT.709, BT.2020, PQ, or HLG.
+	Color *ColorInfo
+
+	// Metadata, when non-nil, emits CVS-level OBU_METADATA units (HDR CLL, HDR
+	// MDCV) on every keyframe temporal unit and any initial TU-level metadata
+	// (ITU-T T.35, Timecode). Call SetMetadata to update per-frame metadata.
+	Metadata *FrameMetadata
+
+	// Lossless, when true, encodes bit-exact 8-bit 4:2:0 lossless keyframes
+	// (qindex 0, WHT transform, no in-loop filtering). QIndex and TargetBitrate
+	// may be omitted when Lossless is true.
+	Lossless bool
 }
 
 // EncodedFrame is one encoded picture as a low-overhead temporal unit.
@@ -463,15 +507,52 @@ func (e *KeyframeEncoder) Close() error {
 type VideoEncoder struct {
 	enc           *encoder.VideoEncoder
 	yuv420Scratch I420Frame
+
+	lossless         bool
+	width, height    int
+	keyFrameInterval int
+	encodedFrames    int
+	cvsMeta          *FrameMetadata
+	tuMeta           *FrameMetadata
+	metaScratch      []byte
 }
 
 // NewVideoEncoder creates an encoder from cfg.
 func NewVideoEncoder(cfg VideoEncoderConfig) (*VideoEncoder, error) {
+	if cfg.KeyFrameInterval < 0 {
+		return nil, fmt.Errorf("goav1: KeyFrameInterval must be >= 0, got %d", cfg.KeyFrameInterval)
+	}
+	if cfg.Lossless {
+		if cfg.Width < 16 || cfg.Height < 16 || cfg.Width%8 != 0 || cfg.Height%8 != 0 {
+			return nil, fmt.Errorf("goav1: lossless encoder dimensions must be multiples of 8 and >= 16, got %dx%d", cfg.Width, cfg.Height)
+		}
+		v := &VideoEncoder{
+			lossless:         true,
+			width:            cfg.Width,
+			height:           cfg.Height,
+			keyFrameInterval: cfg.KeyFrameInterval,
+		}
+		if cfg.Metadata != nil {
+			m := *cfg.Metadata
+			v.cvsMeta = &m
+		}
+		return v, nil
+	}
 	enc, err := newVideoEncoder(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &VideoEncoder{enc: enc}, nil
+	v := &VideoEncoder{
+		enc:              enc,
+		width:            cfg.Width,
+		height:           cfg.Height,
+		keyFrameInterval: cfg.KeyFrameInterval,
+	}
+	if cfg.Metadata != nil {
+		m := *cfg.Metadata
+		v.cvsMeta = &m
+	}
+	return v, nil
 }
 
 func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
@@ -539,6 +620,23 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 		_ = enc.Close()
 		return nil, err
 	}
+	if cfg.Color != nil {
+		cc := encoder.SequenceColorConfig{
+			BitDepth:                8,
+			ColorDescriptionPresent: cfg.Color.Primaries != 0 || cfg.Color.TransferCharacteristics != 0 || cfg.Color.MatrixCoefficients != 0,
+			ColorPrimaries:          cfg.Color.Primaries,
+			TransferCharacteristics: cfg.Color.TransferCharacteristics,
+			MatrixCoefficients:      cfg.Color.MatrixCoefficients,
+			ColorRange:              cfg.Color.ColorRange,
+			SubsamplingX:            true,
+			SubsamplingY:            true,
+			ChromaSamplePosition:    cfg.Color.ChromaSamplePosition,
+		}
+		if err := enc.SetColorConfig(cc); err != nil {
+			_ = enc.Close()
+			return nil, err
+		}
+	}
 	// Every buffer, pool and per-coder scratch is sized now, so the first
 	// real frame pays no initialization latency and steady-state encoding
 	// allocates nothing.
@@ -583,26 +681,169 @@ func (e *VideoEncoder) SetEffortLevel(level int8) error {
 	return e.enc.SetEffortLevel(level)
 }
 
+// SetMetadata sets per-frame (temporal-unit scoped) metadata (ITU-T T.35,
+// Timecode) and/or updates CVS-level metadata (HDR CLL, HDR MDCV) to be
+// emitted in the next encoded temporal unit. Pass nil to clear per-frame
+// metadata.
+func (e *VideoEncoder) SetMetadata(meta *FrameMetadata) {
+	if e == nil {
+		return
+	}
+	if meta == nil {
+		e.tuMeta = nil
+		return
+	}
+	m := *meta
+	e.tuMeta = &m
+	if m.HasHDRCLL || m.HasHDRMDCV {
+		if e.cvsMeta == nil {
+			c := m
+			e.cvsMeta = &c
+		} else {
+			if m.HasHDRCLL {
+				e.cvsMeta.HasHDRCLL = true
+				e.cvsMeta.HDRCLL = m.HDRCLL
+			}
+			if m.HasHDRMDCV {
+				e.cvsMeta.HasHDRMDCV = true
+				e.cvsMeta.HDRMDCV = m.HDRMDCV
+			}
+		}
+	}
+}
+
 // Encode encodes one frame. forceKey restarts the stream with a keyframe.
 // The returned Data aliases an encoder-owned buffer that is reused by the
 // next Encode call - send or copy it before encoding the next frame, the
 // same lifetime the Reconstruction planes have.
 func (e *VideoEncoder) Encode(frame I420Frame, forceKey bool) (EncodedFrame, error) {
-	if e == nil || e.enc == nil {
+	if e == nil || (e.enc == nil && !e.lossless) {
 		return EncodedFrame{}, fmt.Errorf("goav1: VideoEncoder is not initialized")
 	}
 	if err := validateI420Frame(frame); err != nil {
 		return EncodedFrame{}, err
+	}
+	if e.keyFrameInterval > 0 && e.encodedFrames > 0 && e.encodedFrames%e.keyFrameInterval == 0 {
+		forceKey = true
+	}
+	if e.lossless {
+		tu, err := encoder.EncodeLossless420Keyframe(frame)
+		if err != nil {
+			return EncodedFrame{}, err
+		}
+		if e.cvsMeta != nil || e.tuMeta != nil {
+			tu, err = injectFrameMetadataOBUs(tu, true, e.cvsMeta, e.tuMeta, &e.metaScratch)
+			if err != nil {
+				return EncodedFrame{}, err
+			}
+			e.tuMeta = nil
+		}
+		e.encodedFrames++
+		return EncodedFrame{Data: tu, Keyframe: true, TemporalID: 0}, nil
 	}
 	tid := e.enc.TemporalID()
 	tu, key, err := e.enc.Encode(frame, forceKey)
 	if err != nil {
 		return EncodedFrame{}, err
 	}
+	if e.cvsMeta != nil || e.tuMeta != nil {
+		tu, err = injectFrameMetadataOBUs(tu, key, e.cvsMeta, e.tuMeta, &e.metaScratch)
+		if err != nil {
+			return EncodedFrame{}, err
+		}
+		e.tuMeta = nil
+	}
+	e.encodedFrames++
 	if key {
 		tid = 0
 	}
 	return EncodedFrame{Data: tu, Keyframe: key, TemporalID: tid}, nil
+}
+
+func injectFrameMetadataOBUs(tu []byte, isKey bool, cvsMeta *FrameMetadata, tuMeta *FrameMetadata, scratch *[]byte) ([]byte, error) {
+	var metas [8]internalobu.Metadata
+	n := 0
+	if isKey && cvsMeta != nil {
+		if cvsMeta.HasHDRCLL {
+			metas[n] = internalobu.Metadata{
+				Type: internalobu.MetadataTypeHDRCLL,
+				HDRCLL: internalobu.MetadataHDRCLL{
+					MaxCLL:  cvsMeta.HDRCLL.MaxCLL,
+					MaxFALL: cvsMeta.HDRCLL.MaxFALL,
+				},
+			}
+			n++
+		}
+		if cvsMeta.HasHDRMDCV {
+			metas[n] = internalobu.Metadata{
+				Type: internalobu.MetadataTypeHDRMDCV,
+				HDRMDCV: internalobu.MetadataHDRMDCV{
+					PrimaryChromaticityX:    cvsMeta.HDRMDCV.PrimaryChromaticityX,
+					PrimaryChromaticityY:    cvsMeta.HDRMDCV.PrimaryChromaticityY,
+					WhitePointChromaticityX: cvsMeta.HDRMDCV.WhitePointChromaticityX,
+					WhitePointChromaticityY: cvsMeta.HDRMDCV.WhitePointChromaticityY,
+					LuminanceMax:            cvsMeta.HDRMDCV.LuminanceMax,
+					LuminanceMin:            cvsMeta.HDRMDCV.LuminanceMin,
+				},
+			}
+			n++
+		}
+	}
+	activeTU := tuMeta
+	if activeTU == nil && isKey {
+		activeTU = cvsMeta
+	}
+	var extra []internalobu.Metadata
+	if activeTU != nil {
+		if activeTU.HasTimecode {
+			tc := internalobu.Metadata{
+				Type: internalobu.MetadataTypeTimecode,
+				Timecode: internalobu.MetadataTimecode{
+					CountingType:     activeTU.Timecode.CountingType,
+					FullTimestamp:    activeTU.Timecode.FullTimestamp,
+					Discontinuity:    activeTU.Timecode.Discontinuity,
+					CountDropped:     activeTU.Timecode.CountDropped,
+					NFrames:          activeTU.Timecode.NFrames,
+					Seconds:          activeTU.Timecode.Seconds,
+					Minutes:          activeTU.Timecode.Minutes,
+					Hours:            activeTU.Timecode.Hours,
+					TimeOffsetLength: activeTU.Timecode.TimeOffsetLength,
+					TimeOffsetValue:  activeTU.Timecode.TimeOffsetValue,
+				},
+			}
+			if n < len(metas) {
+				metas[n] = tc
+				n++
+			} else {
+				extra = append(extra, tc)
+			}
+		}
+		for _, t35 := range activeTU.ITUTT35 {
+			m := internalobu.Metadata{
+				Type: internalobu.MetadataTypeITUTT35,
+				ITUTT35: internalobu.MetadataITUTT35{
+					CountryCode:          t35.CountryCode,
+					CountryCodeExtension: t35.CountryCodeExtension,
+					HasCountryExtension:  t35.HasCountryExtension || t35.CountryCode == 0xff,
+					Payload:              t35.Payload,
+				},
+			}
+			if n < len(metas) {
+				metas[n] = m
+				n++
+			} else {
+				extra = append(extra, m)
+			}
+		}
+	}
+	if n == 0 && len(extra) == 0 {
+		return tu, nil
+	}
+	list := metas[:n]
+	if len(extra) > 0 {
+		list = append(append([]internalobu.Metadata(nil), list...), extra...)
+	}
+	return encoder.InjectLowOverheadMetadataOBUs(tu, list, scratch)
 }
 
 // EncodeI422 encodes one I422 frame after resampling chroma into the encoder's
@@ -2772,3 +3013,418 @@ func rtcEncoderConfigIsNativeI444(cfg EncoderConfig) bool {
 // (--rtc 1 --pred-struct 1, hierarchical_levels AUTO -> 2 for low-delay
 // CBR): three temporal layers.
 const defaultRealtimeTemporalLayers = 3
+
+// HighBitDepthVideoEncoderConfig configures a native 10-bit or 12-bit AV1
+// streaming video encoder (4:2:0, 4:2:2, or 4:4:4).
+type HighBitDepthVideoEncoderConfig struct {
+	Width, Height int
+	// BitDepth must be 10 or 12.
+	BitDepth uint8
+	// Subsampling selects chroma subsampling: 0 or 420 for 4:2:0, 422 for
+	// 4:2:2 (Profile 2), 444 for 4:4:4 (Profile 1 for 10-bit, Profile 2 for
+	// 12-bit).
+	Subsampling int
+
+	QIndex           uint8
+	TargetBitrate    int
+	Framerate        int
+	MinQIndex        uint8
+	MaxQIndex        uint8
+	TemporalLayers   int
+	TileColumns      int
+	MaxThreads       int
+	Speed            int8
+	GoldenInterval   int
+	KeyFrameInterval int
+	Content          EncoderContentHint
+	Color            *ColorInfo
+	Metadata         *FrameMetadata
+}
+
+// HighBitDepthVideoEncoder encodes a stream of native 10-bit or 12-bit AV1
+// color frames (4:2:0, 4:2:2, or 4:4:4) with optional HDR metadata and color
+// description signaling.
+type HighBitDepthVideoEncoder struct {
+	enc              *encoder.HighBitDepth420VideoEncoder
+	keyFrameInterval int
+	encodedFrames    int
+	cvsMeta          *FrameMetadata
+	tuMeta           *FrameMetadata
+	metaScratch      []byte
+}
+
+// NewHighBitDepthVideoEncoder creates a native 10/12-bit AV1 streaming encoder.
+func NewHighBitDepthVideoEncoder(cfg HighBitDepthVideoEncoderConfig) (*HighBitDepthVideoEncoder, error) {
+	if cfg.BitDepth != 10 && cfg.BitDepth != 12 {
+		return nil, fmt.Errorf("goav1: HighBitDepthVideoEncoder BitDepth must be 10 or 12, got %d", cfg.BitDepth)
+	}
+	if cfg.KeyFrameInterval < 0 {
+		return nil, fmt.Errorf("goav1: KeyFrameInterval must be >= 0, got %d", cfg.KeyFrameInterval)
+	}
+	sub := cfg.Subsampling
+	if sub == 0 {
+		sub = 420
+	}
+	var profile encoder.Profile
+	var subX, subY bool
+	switch sub {
+	case 420:
+		subX, subY = true, true
+		if cfg.BitDepth == 10 {
+			profile = encoder.Profile0
+		} else {
+			profile = encoder.Profile2
+		}
+	case 422:
+		subX, subY = true, false
+		profile = encoder.Profile2
+	case 444:
+		subX, subY = false, false
+		if cfg.BitDepth == 10 {
+			profile = encoder.Profile1
+		} else {
+			profile = encoder.Profile2
+		}
+	default:
+		return nil, fmt.Errorf("goav1: unsupported Subsampling %d (want 420, 422, or 444)", sub)
+	}
+	cc := encoder.SequenceColorConfig{
+		BitDepth:     cfg.BitDepth,
+		SubsamplingX: subX,
+		SubsamplingY: subY,
+	}
+	if cfg.Color != nil {
+		cc.ColorDescriptionPresent = cfg.Color.Primaries != 0 || cfg.Color.TransferCharacteristics != 0 || cfg.Color.MatrixCoefficients != 0
+		cc.ColorPrimaries = cfg.Color.Primaries
+		cc.TransferCharacteristics = cfg.Color.TransferCharacteristics
+		cc.MatrixCoefficients = cfg.Color.MatrixCoefficients
+		cc.ColorRange = cfg.Color.ColorRange
+		if sub == 420 {
+			cc.ChromaSamplePosition = cfg.Color.ChromaSamplePosition
+		}
+	}
+	var enc *encoder.HighBitDepth420VideoEncoder
+	var err error
+	if cfg.TargetBitrate > 0 {
+		rc := encoder.RateControlConfig{
+			TargetBitsPerSecond: cfg.TargetBitrate,
+			FramesPerSecond:     cfg.Framerate,
+			MinQIndex:           cfg.MinQIndex,
+			MaxQIndex:           cfg.MaxQIndex,
+		}
+		if rc.MinQIndex == 0 {
+			rc.MinQIndex = 16
+		}
+		if rc.MaxQIndex == 0 {
+			rc.MaxQIndex = 255
+		}
+		enc, err = encoder.NewHighBitDepthVideoEncoderCBRWithColor(cfg.Width, cfg.Height, profile, cc, rc)
+	} else {
+		if cfg.QIndex == 0 {
+			return nil, fmt.Errorf("goav1: HighBitDepthVideoEncoderConfig needs QIndex or TargetBitrate")
+		}
+		enc, err = encoder.NewHighBitDepthVideoEncoderWithColor(cfg.Width, cfg.Height, profile, cc, cfg.QIndex)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if cfg.TemporalLayers > 1 {
+		if err := enc.SetTemporalLayers(cfg.TemporalLayers); err != nil {
+			return nil, err
+		}
+	}
+	if cfg.MaxThreads > 0 {
+		enc.SetMaxThreads(cfg.MaxThreads)
+	} else if cfg.TileColumns > 0 {
+		enc.SetTileColumns(cfg.TileColumns)
+	}
+	if cfg.Speed != 0 {
+		if err := enc.SetEffortLevel(cfg.Speed); err != nil {
+			return nil, err
+		}
+	}
+	if cfg.GoldenInterval < 0 {
+		enc.SetGoldenInterval(0)
+	} else if cfg.GoldenInterval > 0 {
+		enc.SetGoldenInterval(cfg.GoldenInterval)
+	}
+	if err := enc.SetContentHint(cfg.Content); err != nil {
+		return nil, err
+	}
+	v := &HighBitDepthVideoEncoder{
+		enc:              enc,
+		keyFrameInterval: cfg.KeyFrameInterval,
+	}
+	if cfg.Metadata != nil {
+		m := *cfg.Metadata
+		v.cvsMeta = &m
+	}
+	return v, nil
+}
+
+// SetMetadata sets per-frame metadata (ITU-T T.35, Timecode) and/or updates
+// CVS-level HDR metadata (HDR CLL, HDR MDCV). Pass nil to clear per-frame
+// metadata.
+func (e *HighBitDepthVideoEncoder) SetMetadata(meta *FrameMetadata) {
+	if e == nil {
+		return
+	}
+	if meta == nil {
+		e.tuMeta = nil
+		return
+	}
+	m := *meta
+	e.tuMeta = &m
+	if m.HasHDRCLL || m.HasHDRMDCV {
+		if e.cvsMeta == nil {
+			c := m
+			e.cvsMeta = &c
+		} else {
+			if m.HasHDRCLL {
+				e.cvsMeta.HasHDRCLL = true
+				e.cvsMeta.HDRCLL = m.HDRCLL
+			}
+			if m.HasHDRMDCV {
+				e.cvsMeta.HasHDRMDCV = true
+				e.cvsMeta.HDRMDCV = m.HDRMDCV
+			}
+		}
+	}
+}
+
+// Encode encodes one 10/12-bit frame (4:2:0, 4:2:2, or 4:4:4 matching the
+// configured Subsampling).
+func (e *HighBitDepthVideoEncoder) Encode(frame I420HighBitDepthFrame, forceKey bool) (EncodedFrame, error) {
+	if e == nil || e.enc == nil {
+		return EncodedFrame{}, fmt.Errorf("goav1: HighBitDepthVideoEncoder is not initialized")
+	}
+	if e.keyFrameInterval > 0 && e.encodedFrames > 0 && e.encodedFrames%e.keyFrameInterval == 0 {
+		forceKey = true
+	}
+	tid := e.enc.TemporalID()
+	tu, key, err := e.enc.Encode(frame, forceKey)
+	if err != nil {
+		return EncodedFrame{}, err
+	}
+	if e.cvsMeta != nil || e.tuMeta != nil {
+		tu, err = injectFrameMetadataOBUs(tu, key, e.cvsMeta, e.tuMeta, &e.metaScratch)
+		if err != nil {
+			return EncodedFrame{}, err
+		}
+		e.tuMeta = nil
+	}
+	e.encodedFrames++
+	if key {
+		tid = 0
+	}
+	return EncodedFrame{Data: tu, Keyframe: key, TemporalID: tid}, nil
+}
+
+// MonochromeVideoEncoder encodes a stream of native 8-bit AV1 monochrome
+// frames.
+type MonochromeVideoEncoder struct {
+	enc              *encoder.MonochromeVideoEncoder
+	keyFrameInterval int
+	encodedFrames    int
+	cvsMeta          *FrameMetadata
+	tuMeta           *FrameMetadata
+	metaScratch      []byte
+}
+
+// NewMonochromeVideoEncoder creates a native 8-bit AV1 monochrome streaming
+// encoder.
+func NewMonochromeVideoEncoder(cfg VideoEncoderConfig) (*MonochromeVideoEncoder, error) {
+	if cfg.KeyFrameInterval < 0 {
+		return nil, fmt.Errorf("goav1: KeyFrameInterval must be >= 0, got %d", cfg.KeyFrameInterval)
+	}
+	var enc *encoder.MonochromeVideoEncoder
+	var err error
+	if cfg.TargetBitrate > 0 {
+		rc := encoder.RateControlConfig{
+			TargetBitsPerSecond: cfg.TargetBitrate,
+			FramesPerSecond:     cfg.Framerate,
+			MinQIndex:           cfg.MinQIndex,
+			MaxQIndex:           cfg.MaxQIndex,
+		}
+		if rc.MinQIndex == 0 {
+			rc.MinQIndex = 16
+		}
+		if rc.MaxQIndex == 0 {
+			rc.MaxQIndex = 255
+		}
+		enc, err = encoder.NewMonochromeVideoEncoderCBR(cfg.Width, cfg.Height, rc)
+	} else {
+		if cfg.QIndex == 0 {
+			return nil, fmt.Errorf("goav1: MonochromeVideoEncoder needs QIndex or TargetBitrate")
+		}
+		enc, err = encoder.NewMonochromeVideoEncoder(cfg.Width, cfg.Height, cfg.QIndex)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if cfg.TemporalLayers > 1 {
+		if err := enc.SetTemporalLayers(cfg.TemporalLayers); err != nil {
+			return nil, err
+		}
+	}
+	if cfg.MaxThreads > 0 {
+		enc.SetMaxThreads(cfg.MaxThreads)
+	} else if cfg.TileColumns > 0 {
+		enc.SetTileColumns(cfg.TileColumns)
+	}
+	if cfg.Speed != 0 {
+		if err := enc.SetEffortLevel(cfg.Speed); err != nil {
+			return nil, err
+		}
+	}
+	if cfg.GoldenInterval < 0 {
+		enc.SetGoldenInterval(0)
+	} else if cfg.GoldenInterval > 0 {
+		enc.SetGoldenInterval(cfg.GoldenInterval)
+	}
+	if err := enc.SetContentHint(cfg.Content); err != nil {
+		return nil, err
+	}
+	v := &MonochromeVideoEncoder{
+		enc:              enc,
+		keyFrameInterval: cfg.KeyFrameInterval,
+	}
+	if cfg.Metadata != nil {
+		m := *cfg.Metadata
+		v.cvsMeta = &m
+	}
+	return v, nil
+}
+
+// Encode encodes one 8-bit native monochrome frame.
+func (e *MonochromeVideoEncoder) Encode(frame I400Frame, forceKey bool) (EncodedFrame, error) {
+	if e == nil || e.enc == nil {
+		return EncodedFrame{}, fmt.Errorf("goav1: MonochromeVideoEncoder is not initialized")
+	}
+	if e.keyFrameInterval > 0 && e.encodedFrames > 0 && e.encodedFrames%e.keyFrameInterval == 0 {
+		forceKey = true
+	}
+	tid := e.enc.TemporalID()
+	tu, key, err := e.enc.Encode(encoder.SourceFrameMono(frame), forceKey)
+	if err != nil {
+		return EncodedFrame{}, err
+	}
+	if e.cvsMeta != nil || e.tuMeta != nil {
+		tu, err = injectFrameMetadataOBUs(tu, key, e.cvsMeta, e.tuMeta, &e.metaScratch)
+		if err != nil {
+			return EncodedFrame{}, err
+		}
+		e.tuMeta = nil
+	}
+	e.encodedFrames++
+	if key {
+		tid = 0
+	}
+	return EncodedFrame{Data: tu, Keyframe: key, TemporalID: tid}, nil
+}
+
+// HighBitDepthMonochromeVideoEncoder encodes a stream of native 10-bit or
+// 12-bit AV1 monochrome frames.
+type HighBitDepthMonochromeVideoEncoder struct {
+	enc              *encoder.HighBitDepthMonochromeVideoEncoder
+	keyFrameInterval int
+	encodedFrames    int
+	cvsMeta          *FrameMetadata
+	tuMeta           *FrameMetadata
+	metaScratch      []byte
+}
+
+// NewHighBitDepthMonochromeVideoEncoder creates a native 10/12-bit AV1
+// monochrome streaming encoder.
+func NewHighBitDepthMonochromeVideoEncoder(cfg HighBitDepthVideoEncoderConfig) (*HighBitDepthMonochromeVideoEncoder, error) {
+	if cfg.BitDepth != 10 && cfg.BitDepth != 12 {
+		return nil, fmt.Errorf("goav1: HighBitDepthMonochromeVideoEncoder BitDepth must be 10 or 12, got %d", cfg.BitDepth)
+	}
+	if cfg.KeyFrameInterval < 0 {
+		return nil, fmt.Errorf("goav1: KeyFrameInterval must be >= 0, got %d", cfg.KeyFrameInterval)
+	}
+	var enc *encoder.HighBitDepthMonochromeVideoEncoder
+	var err error
+	if cfg.TargetBitrate > 0 {
+		rc := encoder.RateControlConfig{
+			TargetBitsPerSecond: cfg.TargetBitrate,
+			FramesPerSecond:     cfg.Framerate,
+			MinQIndex:           cfg.MinQIndex,
+			MaxQIndex:           cfg.MaxQIndex,
+		}
+		if rc.MinQIndex == 0 {
+			rc.MinQIndex = 16
+		}
+		if rc.MaxQIndex == 0 {
+			rc.MaxQIndex = 255
+		}
+		enc, err = encoder.NewHighBitDepthMonochromeVideoEncoderCBR(cfg.Width, cfg.Height, cfg.BitDepth, rc)
+	} else {
+		if cfg.QIndex == 0 {
+			return nil, fmt.Errorf("goav1: HighBitDepthMonochromeVideoEncoder needs QIndex or TargetBitrate")
+		}
+		enc, err = encoder.NewHighBitDepthMonochromeVideoEncoder(cfg.Width, cfg.Height, cfg.BitDepth, cfg.QIndex)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if cfg.TemporalLayers > 1 {
+		if err := enc.SetTemporalLayers(cfg.TemporalLayers); err != nil {
+			return nil, err
+		}
+	}
+	if cfg.MaxThreads > 0 {
+		enc.SetMaxThreads(cfg.MaxThreads)
+	} else if cfg.TileColumns > 0 {
+		enc.SetTileColumns(cfg.TileColumns)
+	}
+	if cfg.Speed != 0 {
+		if err := enc.SetEffortLevel(cfg.Speed); err != nil {
+			return nil, err
+		}
+	}
+	if cfg.GoldenInterval < 0 {
+		enc.SetGoldenInterval(0)
+	} else if cfg.GoldenInterval > 0 {
+		enc.SetGoldenInterval(cfg.GoldenInterval)
+	}
+	if err := enc.SetContentHint(cfg.Content); err != nil {
+		return nil, err
+	}
+	v := &HighBitDepthMonochromeVideoEncoder{
+		enc:              enc,
+		keyFrameInterval: cfg.KeyFrameInterval,
+	}
+	if cfg.Metadata != nil {
+		m := *cfg.Metadata
+		v.cvsMeta = &m
+	}
+	return v, nil
+}
+
+// Encode encodes one 10/12-bit native monochrome frame.
+func (e *HighBitDepthMonochromeVideoEncoder) Encode(frame I400HighBitDepthFrame, forceKey bool) (EncodedFrame, error) {
+	if e == nil || e.enc == nil {
+		return EncodedFrame{}, fmt.Errorf("goav1: HighBitDepthMonochromeVideoEncoder is not initialized")
+	}
+	if e.keyFrameInterval > 0 && e.encodedFrames > 0 && e.encodedFrames%e.keyFrameInterval == 0 {
+		forceKey = true
+	}
+	tid := e.enc.TemporalID()
+	tu, key, err := e.enc.Encode(encoder.SourceFrameMono16(frame), forceKey)
+	if err != nil {
+		return EncodedFrame{}, err
+	}
+	if e.cvsMeta != nil || e.tuMeta != nil {
+		tu, err = injectFrameMetadataOBUs(tu, key, e.cvsMeta, e.tuMeta, &e.metaScratch)
+		if err != nil {
+			return EncodedFrame{}, err
+		}
+		e.tuMeta = nil
+	}
+	e.encodedFrames++
+	if key {
+		tid = 0
+	}
+	return EncodedFrame{Data: tu, Keyframe: key, TemporalID: tid}, nil
+}

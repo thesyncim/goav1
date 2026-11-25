@@ -1264,3 +1264,281 @@ func censusScene(w, h int) I420Frame {
 	}
 	return I420Frame{Y: buf[:w*h], U: buf[w*h : w*h+w*h/4], V: buf[w*h+w*h/4:], YStride: w, ChromaStride: w / 2, Width: w, Height: h}
 }
+
+func TestEncoderColorAndMetadataRoundTrip(t *testing.T) {
+	const w, h = 128, 128
+	wantColor := ColorInfo{
+		Primaries:               9,  // BT.2020
+		TransferCharacteristics: 16, // SMPTE ST 2084 (PQ)
+		MatrixCoefficients:      9,  // BT.2020 NCL
+		ChromaSamplePosition:    2,  // Colocated
+		ColorRange:              true,
+	}
+	wantMeta := FrameMetadata{
+		HasHDRCLL:  true,
+		HDRCLL:     MetadataHDRCLL{MaxCLL: 1200, MaxFALL: 450},
+		HasHDRMDCV: true,
+		HDRMDCV: MetadataHDRMDCV{
+			PrimaryChromaticityX:    [3]uint16{35400, 8500, 6550},
+			PrimaryChromaticityY:    [3]uint16{14600, 39850, 2300},
+			WhitePointChromaticityX: 15635,
+			WhitePointChromaticityY: 16450,
+			LuminanceMax:            10000000,
+			LuminanceMin:            50,
+		},
+	}
+
+	enc, err := NewVideoEncoder(VideoEncoderConfig{
+		Width:            w,
+		Height:           h,
+		QIndex:           90,
+		KeyFrameInterval: 3,
+		Color:            &wantColor,
+		Metadata:         &wantMeta,
+	})
+	if err != nil {
+		t.Fatalf("NewVideoEncoder: %v", err)
+	}
+	defer enc.Close()
+
+	frames := censusFrames(t, w, h, 5)
+	var tus [][]byte
+	for i, f := range frames {
+		if i == 1 {
+			enc.SetMetadata(&FrameMetadata{
+				HasTimecode: true,
+				Timecode: MetadataTimecode{
+					CountingType:  1,
+					FullTimestamp: true,
+					NFrames:       24,
+					Seconds:       12,
+					Minutes:       34,
+					Hours:         1,
+				},
+				ITUTT35: []MetadataITUTT35{{
+					CountryCode: 0xb5,
+					Payload:     []byte("HDR10PLUS"),
+				}},
+			})
+		}
+		out, err := enc.Encode(f, false)
+		if err != nil {
+			t.Fatalf("Encode(%d): %v", i, err)
+		}
+		wantKey := i == 0 || i == 3
+		if out.Keyframe != wantKey {
+			t.Fatalf("frame %d: Keyframe=%v, want %v", i, out.Keyframe, wantKey)
+		}
+		tus = append(tus, append([]byte(nil), out.Data...))
+	}
+
+	dec, err := NewDecoder(tus)
+	if err != nil {
+		t.Fatalf("NewDecoder: %v", err)
+	}
+	defer dec.Close()
+
+	var decoded []DecodedFrame
+	for {
+		batch, ok, err := dec.DecodeNext()
+		if err != nil {
+			t.Fatalf("DecodeNext: %v", err)
+		}
+		if !ok {
+			break
+		}
+		for _, f := range batch {
+			decoded = append(decoded, copyDecodedFrame(f))
+		}
+	}
+	if len(decoded) != 5 {
+		t.Fatalf("decoded %d frames, want 5", len(decoded))
+	}
+	for i, f := range decoded {
+		if f.Color.Primaries != wantColor.Primaries ||
+			f.Color.TransferCharacteristics != wantColor.TransferCharacteristics ||
+			f.Color.MatrixCoefficients != wantColor.MatrixCoefficients ||
+			f.Color.ChromaSamplePosition != wantColor.ChromaSamplePosition ||
+			f.Color.ColorRange != wantColor.ColorRange {
+			t.Fatalf("frame %d color = %+v, want %+v", i, f.Color, wantColor)
+		}
+		if !f.Metadata.HasHDRCLL || f.Metadata.HDRCLL != wantMeta.HDRCLL {
+			t.Fatalf("frame %d HDRCLL = %+v (has=%v), want %+v", i, f.Metadata.HDRCLL, f.Metadata.HasHDRCLL, wantMeta.HDRCLL)
+		}
+		if !f.Metadata.HasHDRMDCV || f.Metadata.HDRMDCV != wantMeta.HDRMDCV {
+			t.Fatalf("frame %d HDRMDCV = %+v (has=%v), want %+v", i, f.Metadata.HDRMDCV, f.Metadata.HasHDRMDCV, wantMeta.HDRMDCV)
+		}
+	}
+	// Frame 1 carries TU-scoped timecode and ITU-T T.35.
+	if !decoded[1].Metadata.HasTimecode || decoded[1].Metadata.Timecode.Hours != 1 || decoded[1].Metadata.Timecode.Minutes != 34 || decoded[1].Metadata.Timecode.Seconds != 12 || decoded[1].Metadata.Timecode.NFrames != 24 {
+		t.Fatalf("frame 1 timecode = %+v (has=%v)", decoded[1].Metadata.Timecode, decoded[1].Metadata.HasTimecode)
+	}
+	if len(decoded[1].Metadata.ITUTT35) != 1 || string(decoded[1].Metadata.ITUTT35[0].Payload) != "HDR10PLUS" {
+		t.Fatalf("frame 1 ITUTT35 = %+v", decoded[1].Metadata.ITUTT35)
+	}
+	// Frame 2 must not inherit frame 1's TU-scoped metadata.
+	if decoded[2].Metadata.HasTimecode || len(decoded[2].Metadata.ITUTT35) != 0 {
+		t.Fatalf("frame 2 leaked TU metadata: %+v", decoded[2].Metadata)
+	}
+}
+
+func TestEncoderI420LosslessKeyframeAndStream(t *testing.T) {
+	const w, h = 64, 64
+	src := censusFrames(t, w, h, 2)
+
+	tu, recon, err := EncodeI420LosslessKeyframe(src[0])
+	if err != nil {
+		t.Fatalf("EncodeI420LosslessKeyframe: %v", err)
+	}
+	if !bytes.Equal(recon.Y, src[0].Y) || !bytes.Equal(recon.U, src[0].U) || !bytes.Equal(recon.V, src[0].V) {
+		t.Fatal("lossless recon does not match source")
+	}
+
+	enc, err := NewVideoEncoder(VideoEncoderConfig{Width: w, Height: h, Lossless: true})
+	if err != nil {
+		t.Fatalf("NewVideoEncoder(Lossless): %v", err)
+	}
+	defer enc.Close()
+
+	var tus [][]byte
+	tus = append(tus, tu)
+	for _, f := range src {
+		out, err := enc.Encode(f, false)
+		if err != nil {
+			t.Fatalf("lossless Encode: %v", err)
+		}
+		tus = append(tus, append([]byte(nil), out.Data...))
+	}
+
+	dec, err := NewDecoder(tus)
+	if err != nil {
+		t.Fatalf("NewDecoder(lossless): %v", err)
+	}
+	defer dec.Close()
+
+	want := []I420Frame{src[0], src[0], src[1]}
+	for i, wFrame := range want {
+		batch, ok, err := dec.DecodeNext()
+		if err != nil || !ok || len(batch) != 1 {
+			t.Fatalf("frame %d DecodeNext: len=%d ok=%v err=%v", i, len(batch), ok, err)
+		}
+		got := copyDecodedFrame(batch[0])
+		if !bytes.Equal(got.Y, wFrame.Y) || !bytes.Equal(got.U, wFrame.U) || !bytes.Equal(got.V, wFrame.V) {
+			t.Fatalf("lossless frame %d pixels differ from source", i)
+		}
+	}
+}
+
+func TestEncoderHighBitDepthAndMonochromeStreams(t *testing.T) {
+	const w, h = 64, 64
+
+	// 10-bit 4:2:0 HDR10 streaming encoder.
+	hdrEnc, err := NewHighBitDepthVideoEncoder(HighBitDepthVideoEncoderConfig{
+		Width:            w,
+		Height:           h,
+		BitDepth:         10,
+		Subsampling:      420,
+		QIndex:           90,
+		KeyFrameInterval: 2,
+		Color:            &ColorInfo{Primaries: 9, TransferCharacteristics: 16, MatrixCoefficients: 9},
+		Metadata:         &FrameMetadata{HasHDRCLL: true, HDRCLL: MetadataHDRCLL{MaxCLL: 1000, MaxFALL: 300}},
+	})
+	if err != nil {
+		t.Fatalf("NewHighBitDepthVideoEncoder(10-bit 420): %v", err)
+	}
+	var hdrTUs [][]byte
+	for i := range 3 {
+		f := I420HighBitDepthFrame{
+			Y: make([]uint16, w*h), U: make([]uint16, (w/2)*(h/2)), V: make([]uint16, (w/2)*(h/2)),
+			YStride: w, ChromaStride: w / 2, Width: w, Height: h, BitDepth: 10,
+		}
+		for j := range f.Y {
+			f.Y[j] = uint16((j*7 + i*31) % 1024)
+		}
+		for j := range f.U {
+			f.U[j], f.V[j] = 512, 512
+		}
+		out, err := hdrEnc.Encode(f, false)
+		if err != nil {
+			t.Fatalf("10-bit Encode(%d): %v", i, err)
+		}
+		hdrTUs = append(hdrTUs, append([]byte(nil), out.Data...))
+	}
+	dec, err := NewDecoder(hdrTUs)
+	if err != nil {
+		t.Fatalf("NewDecoder(10-bit HDR): %v", err)
+	}
+	batch, ok, err := dec.DecodeNext()
+	if err != nil || !ok || len(batch) != 1 {
+		t.Fatalf("10-bit DecodeNext: len=%d ok=%v err=%v", len(batch), ok, err)
+	}
+	got := copyDecodedFrame(batch[0])
+	dec.Close()
+	if got.BytesPerSample != 2 || got.Color.Primaries != 9 || !got.Metadata.HasHDRCLL || got.Metadata.HDRCLL.MaxCLL != 1000 {
+		t.Fatalf("10-bit HDR decode mismatch: bps=%d color=%+v meta=%+v", got.BytesPerSample, got.Color, got.Metadata)
+	}
+
+	// Native 8-bit monochrome streaming encoder.
+	monoEnc, err := NewMonochromeVideoEncoder(VideoEncoderConfig{Width: w, Height: h, QIndex: 90})
+	if err != nil {
+		t.Fatalf("NewMonochromeVideoEncoder: %v", err)
+	}
+	var monoTUs [][]byte
+	for i := range 2 {
+		f := I400Frame{Y: make([]byte, w*h), YStride: w, Width: w, Height: h}
+		for j := range f.Y {
+			f.Y[j] = byte((j*5 + i*19) % 256)
+		}
+		out, err := monoEnc.Encode(f, false)
+		if err != nil {
+			t.Fatalf("mono Encode(%d): %v", i, err)
+		}
+		monoTUs = append(monoTUs, append([]byte(nil), out.Data...))
+	}
+	monoDec, err := NewDecoder(monoTUs)
+	if err != nil {
+		t.Fatalf("NewDecoder(mono): %v", err)
+	}
+	mb, ok, err := monoDec.DecodeNext()
+	if err != nil || !ok || len(mb) != 1 {
+		t.Fatalf("mono DecodeNext: len=%d ok=%v err=%v", len(mb), ok, err)
+	}
+	mg := copyDecodedFrame(mb[0])
+	monoDec.Close()
+	if mg.ChromaWidth != 0 || mg.ChromaHeight != 0 || mg.U != nil || mg.V != nil {
+		t.Fatalf("expected monochrome frame, got chroma %dx%d", mg.ChromaWidth, mg.ChromaHeight)
+	}
+
+	// Native 10-bit monochrome streaming encoder.
+	mono10Enc, err := NewHighBitDepthMonochromeVideoEncoder(HighBitDepthVideoEncoderConfig{
+		Width: w, Height: h, BitDepth: 10, QIndex: 90,
+	})
+	if err != nil {
+		t.Fatalf("NewHighBitDepthMonochromeVideoEncoder: %v", err)
+	}
+	var mono10TUs [][]byte
+	for i := range 2 {
+		f := I400HighBitDepthFrame{Y: make([]uint16, w*h), YStride: w, Width: w, Height: h, BitDepth: 10}
+		for j := range f.Y {
+			f.Y[j] = uint16((j*9 + i*29) % 1024)
+		}
+		out, err := mono10Enc.Encode(f, false)
+		if err != nil {
+			t.Fatalf("mono10 Encode(%d): %v", i, err)
+		}
+		mono10TUs = append(mono10TUs, append([]byte(nil), out.Data...))
+	}
+	mono10Dec, err := NewDecoder(mono10TUs)
+	if err != nil {
+		t.Fatalf("NewDecoder(mono10): %v", err)
+	}
+	m10b, ok, err := mono10Dec.DecodeNext()
+	if err != nil || !ok || len(m10b) != 1 {
+		t.Fatalf("mono10 DecodeNext: len=%d ok=%v err=%v", len(m10b), ok, err)
+	}
+	m10g := copyDecodedFrame(m10b[0])
+	mono10Dec.Close()
+	if m10g.BytesPerSample != 2 || m10g.ChromaWidth != 0 {
+		t.Fatalf("expected 10-bit monochrome, got bps=%d chromaW=%d", m10g.BytesPerSample, m10g.ChromaWidth)
+	}
+}

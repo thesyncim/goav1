@@ -141,6 +141,206 @@ func EncodeLosslessHighBitDepthMonochromeKeyframe(src SourceFrameMono16) ([]byte
 	return out, nil
 }
 
+func validateSourceFrame420(src SourceFrame420) error {
+	if src.Width <= 0 || src.Height <= 0 || src.Width%8 != 0 || src.Height%8 != 0 {
+		return fmt.Errorf("encoder: frame dimensions must be positive multiples of 8, got %dx%d", src.Width, src.Height)
+	}
+	if src.YStride < src.Width {
+		return fmt.Errorf("encoder: 4:2:0 Y stride %d is smaller than width %d", src.YStride, src.Width)
+	}
+	cw, ch := src.Width/2, src.Height/2
+	if src.ChromaStride < cw {
+		return fmt.Errorf("encoder: 4:2:0 chroma stride %d is smaller than width %d", src.ChromaStride, cw)
+	}
+	needY, ok := checkedPlaneLength(src.Width, src.Height, src.YStride)
+	if !ok || len(src.Y) < needY {
+		return fmt.Errorf("encoder: 4:2:0 Y plane is too short")
+	}
+	needC, ok := checkedPlaneLength(cw, ch, src.ChromaStride)
+	if !ok || len(src.U) < needC || len(src.V) < needC {
+		return fmt.Errorf("encoder: 4:2:0 chroma plane is too short")
+	}
+	return nil
+}
+
+// EncodeLossless420Keyframe encodes src as one 8-bit 4:2:0 AV1 lossless
+// keyframe temporal unit. Reconstruction is bit-exact with src.
+func EncodeLossless420Keyframe(src SourceFrame420) ([]byte, error) {
+	if err := validateSourceFrame420(src); err != nil {
+		return nil, err
+	}
+	tilePayload, err := encodeLossless420KeyframeTile(src)
+	if err != nil {
+		return nil, fmt.Errorf("encode tile: %w", err)
+	}
+
+	seq := losslessKeyframeSequence(src.Width, src.Height)
+	header := losslessKeyframeHeaderForSequence(seq, src.Width, src.Height)
+
+	headerSize, err := LowOverheadCompleteIntraHeaderTemporalUnitSize(seq, header)
+	if err != nil {
+		return nil, fmt.Errorf("size header TU: %w", err)
+	}
+	groupSize, err := TileGroupPayloadSize(header.Tile, 0, 0, []TilePayload{{Data: tilePayload}})
+	if err != nil {
+		return nil, fmt.Errorf("size tile group: %w", err)
+	}
+	group := make([]byte, 0, groupSize)
+	group, err = AppendTileGroupPayload(group, header.Tile, 0, 0, []TilePayload{{Data: tilePayload}})
+	if err != nil {
+		return nil, fmt.Errorf("append tile group: %w", err)
+	}
+	groupOBU := OBU{Type: obu.TypeTileGroup, Payload: group}
+	groupOBUSize, err := LowOverheadOBUSize(groupOBU)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, headerSize+groupOBUSize)
+	out, err = AppendLowOverheadIntraFrameTemporalUnit(out, seq, header, groupOBU.Payload)
+	if err != nil {
+		return nil, fmt.Errorf("append header TU: %w", err)
+	}
+	return out, nil
+}
+
+func encodeLossless420KeyframeTile(src SourceFrame420) ([]byte, error) {
+	var partCDFs tile.PartitionCDFs
+	var modeCDFs tile.BlockModeCDFs
+	var intraCDFs tile.IntraModeCDFs
+	var coeffCDFs tile.CoeffCDFs
+	if err := partCDFs.InitDefault(); err != nil {
+		return nil, err
+	}
+	if err := modeCDFs.InitDefault(); err != nil {
+		return nil, err
+	}
+	if err := intraCDFs.InitDefault(); err != nil {
+		return nil, err
+	}
+	if err := coeffCDFs.InitDefault(0); err != nil {
+		return nil, err
+	}
+
+	scan := make([]int16, 16)
+	inverse := make([]int16, 16)
+	if err := transform.FillDefaultScan(scan, inverse, transform.Size{Width: 4, Height: 4}, transform.Class2D); err != nil {
+		return nil, err
+	}
+	scratchLen, err := tile.CoeffLevelsScratchLen(tile.TransformSize4x4)
+	if err != nil {
+		return nil, err
+	}
+	levels := make([]uint8, scratchLen)
+
+	w := entropy.NewWriter(make([]byte, 0, 1<<17))
+	miCols := uint16(src.Width / 4)
+	miRows := uint16(src.Height / 4)
+	const sbSizeMIB = 16
+	rootCols := (int(miCols) + sbSizeMIB - 1) / sbSizeMIB
+
+	var scratch tile.BlockLoopScratch
+	carrier := &tile.BlockLoopContextCarrier{
+		Above: make([]tile.BlockLoopRootAboveContext, rootCols),
+	}
+	walkReq := tile.BlockWalkRequest{
+		Root:     tile.BlockLevel64x64,
+		MIColEnd: miCols,
+		MIRowEnd: miRows,
+	}
+	decide := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
+		if haveRight && haveBottom {
+			return tile.PartitionNone, nil
+		}
+		return tile.PartitionSplit, nil
+	}
+	visit := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
+		return encodeLossless420KeyframeBlock(&w, src, block, &modeCDFs, &intraCDFs, &coeffCDFs, scratch, scan, levels)
+	}
+	if err := tile.WalkBlockLoopWrite(&w, &partCDFs, &scratch, carrier, walkReq, sbSizeMIB, decide, visit); err != nil {
+		return nil, err
+	}
+	return w.Finish()
+}
+
+func encodeLossless420KeyframeBlock(w *entropy.Writer, src SourceFrame420, block tile.BlockVisit,
+	modeCDFs *tile.BlockModeCDFs, intraCDFs *tile.IntraModeCDFs, coeffCDFs *tile.CoeffCDFs,
+	scratch *tile.BlockLoopScratch, scan []int16, levels []uint8) error {
+
+	dims, ok := block.Size.Dimensions()
+	if !ok || dims.W4 < 2 || dims.H4 < 2 {
+		return fmt.Errorf("encoder: unexpected block %+v", block)
+	}
+	color := parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}
+	modeCtx := &scratch.Mode
+	coeffCtx := &scratch.CoeffCtx
+
+	prefixReq := tile.BlockModeRequest{Size: block.Size, X4: block.X4, Y4: block.Y4}
+	if err := tile.WriteSkipTransform(w, modeCDFs, modeCtx, prefixReq, false, false); err != nil {
+		return fmt.Errorf("skip: %w", err)
+	}
+	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{}); err != nil {
+		return fmt.Errorf("mark prefix: %w", err)
+	}
+	if err := tile.WriteLumaIntraMode(w, intraCDFs, modeCtx, tile.LumaIntraModeRequest{
+		Size: block.Size, X4: block.X4, Y4: block.Y4,
+	}, tile.IntraModeDC); err != nil {
+		return fmt.Errorf("luma mode: %w", err)
+	}
+	cflAllowed, err := tile.ChromaIntraCFLAllowed(block.Size, color, true)
+	if err != nil {
+		return fmt.Errorf("cfl allowed: %w", err)
+	}
+	if err := tile.WriteChromaIntraMode(w, intraCDFs, tile.ChromaIntraModeRequest{
+		Size: block.Size, LumaMode: tile.IntraModeDC, CFLAllowed: cflAllowed,
+	}, tile.ChromaIntraModeDC, tile.CFLAlphaResult{}); err != nil {
+		return fmt.Errorf("chroma mode: %w", err)
+	}
+
+	lumaPX := int(block.MICol) * 4
+	lumaPY := int(block.MIRow) * 4
+	for ty := range int(block.VisibleH4) {
+		for tx := range int(block.VisibleW4) {
+			if err := encodeLosslessTXB(w, coeffCDFs, coeffCtx, tile.CoeffContextRequest{
+				Plane:      0,
+				PlaneBlock: block.Size,
+				Size:       tile.TransformSize4x4,
+				X4:         block.X4 + uint8(tx),
+				Y4:         block.Y4 + uint8(ty),
+			}, src.Y, src.YStride, lumaPX+tx*4, lumaPY+ty*4, scan, levels); err != nil {
+				return fmt.Errorf("luma txb (%d,%d): %w", tx, ty, err)
+			}
+		}
+	}
+	chromaBlock, err := tile.PlaneBlockSize(block.Size, color, 1)
+	if err != nil {
+		return fmt.Errorf("chroma plane block: %w", err)
+	}
+	chromaPX := lumaPX / 2
+	chromaPY := lumaPY / 2
+	chromaW4 := int(block.VisibleW4) / 2
+	chromaH4 := int(block.VisibleH4) / 2
+	for plane := 1; plane <= 2; plane++ {
+		data := src.U
+		if plane == 2 {
+			data = src.V
+		}
+		for ty := range chromaH4 {
+			for tx := range chromaW4 {
+				if err := encodeLosslessTXB(w, coeffCDFs, coeffCtx, tile.CoeffContextRequest{
+					Plane:      uint8(plane),
+					PlaneBlock: chromaBlock,
+					Size:       tile.TransformSize4x4,
+					X4:         block.X4/2 + uint8(tx),
+					Y4:         block.Y4/2 + uint8(ty),
+				}, data, src.ChromaStride, chromaPX+tx*4, chromaPY+ty*4, scan, levels); err != nil {
+					return fmt.Errorf("chroma %d txb (%d,%d): %w", plane, tx, ty, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // EncodeLosslessHighBitDepth420Keyframe encodes src as one native 10/12-bit
 // 4:2:0 AV1 lossless keyframe temporal unit.
 func EncodeLosslessHighBitDepth420Keyframe(src SourceFrame42016) ([]byte, error) {

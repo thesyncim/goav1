@@ -334,3 +334,182 @@ func lowOverheadOBUSizeUnchecked(unit OBU) int {
 	}
 	return headerLen + bitstream.LEB128Len(uint32(len(unit.Payload))) + len(unit.Payload)
 }
+
+// AppendLowOverheadMetadataOBU encodes meta as one AV1 low-overhead
+// OBU_METADATA (spec section 5.8 / 6.7) and appends it to dst, growing dst if
+// needed. Supports HDR_CLL, HDR_MDCV, ITUT_T35, and TIMECODE.
+func AppendLowOverheadMetadataOBU(dst []byte, meta obu.Metadata) ([]byte, error) {
+	var payload [128]byte
+	var p []byte
+	var leb [8]byte
+	ln, err := bitstream.PutLEB128(leb[:], uint32(meta.Type))
+	if err != nil {
+		return dst, err
+	}
+	switch meta.Type {
+	case obu.MetadataTypeHDRCLL:
+		p = payload[:0]
+		p = append(p, leb[:ln]...)
+		p = append(p,
+			byte(meta.HDRCLL.MaxCLL>>8), byte(meta.HDRCLL.MaxCLL),
+			byte(meta.HDRCLL.MaxFALL>>8), byte(meta.HDRCLL.MaxFALL),
+			0x80,
+		)
+	case obu.MetadataTypeHDRMDCV:
+		p = payload[:0]
+		p = append(p, leb[:ln]...)
+		for i := range 3 {
+			p = append(p,
+				byte(meta.HDRMDCV.PrimaryChromaticityX[i]>>8), byte(meta.HDRMDCV.PrimaryChromaticityX[i]),
+				byte(meta.HDRMDCV.PrimaryChromaticityY[i]>>8), byte(meta.HDRMDCV.PrimaryChromaticityY[i]),
+			)
+		}
+		p = append(p,
+			byte(meta.HDRMDCV.WhitePointChromaticityX>>8), byte(meta.HDRMDCV.WhitePointChromaticityX),
+			byte(meta.HDRMDCV.WhitePointChromaticityY>>8), byte(meta.HDRMDCV.WhitePointChromaticityY),
+			byte(meta.HDRMDCV.LuminanceMax>>24), byte(meta.HDRMDCV.LuminanceMax>>16),
+			byte(meta.HDRMDCV.LuminanceMax>>8), byte(meta.HDRMDCV.LuminanceMax),
+			byte(meta.HDRMDCV.LuminanceMin>>24), byte(meta.HDRMDCV.LuminanceMin>>16),
+			byte(meta.HDRMDCV.LuminanceMin>>8), byte(meta.HDRMDCV.LuminanceMin),
+			0x80,
+		)
+	case obu.MetadataTypeITUTT35:
+		need := ln + 1 + len(meta.ITUTT35.Payload) + 1
+		if meta.ITUTT35.CountryCode == 0xff {
+			need++
+		}
+		if need <= len(payload) {
+			p = payload[:0]
+		} else {
+			p = make([]byte, 0, need)
+		}
+		p = append(p, leb[:ln]...)
+		p = append(p, meta.ITUTT35.CountryCode)
+		if meta.ITUTT35.CountryCode == 0xff {
+			p = append(p, meta.ITUTT35.CountryCodeExtension)
+		}
+		p = append(p, meta.ITUTT35.Payload...)
+		p = append(p, 0x80)
+	case obu.MetadataTypeTimecode:
+		tc := meta.Timecode
+		if tc.CountingType >= 1<<5 || tc.NFrames >= 1<<9 || tc.TimeOffsetLength >= 1<<5 {
+			return dst, ErrInvalidFrame
+		}
+		copy(payload[:ln], leb[:ln])
+		bw := newBitWriter(payload[ln:])
+		if err := bw.writeBits(uint64(tc.CountingType), 5); err != nil {
+			return dst, err
+		}
+		if err := bw.writeBool(tc.FullTimestamp); err != nil {
+			return dst, err
+		}
+		if err := bw.writeBool(tc.Discontinuity); err != nil {
+			return dst, err
+		}
+		if err := bw.writeBool(tc.CountDropped); err != nil {
+			return dst, err
+		}
+		if err := bw.writeBits(uint64(tc.NFrames), 9); err != nil {
+			return dst, err
+		}
+		if tc.FullTimestamp {
+			if err := bw.writeBits(uint64(tc.Seconds&0x3f), 6); err != nil {
+				return dst, err
+			}
+			if err := bw.writeBits(uint64(tc.Minutes&0x3f), 6); err != nil {
+				return dst, err
+			}
+			if err := bw.writeBits(uint64(tc.Hours&0x1f), 5); err != nil {
+				return dst, err
+			}
+		} else {
+			hasSec := tc.HasSeconds || tc.Seconds != 0 || tc.HasMinutes || tc.Minutes != 0 || tc.HasHours || tc.Hours != 0
+			if err := bw.writeBool(hasSec); err != nil {
+				return dst, err
+			}
+			if hasSec {
+				if err := bw.writeBits(uint64(tc.Seconds&0x3f), 6); err != nil {
+					return dst, err
+				}
+				hasMin := tc.HasMinutes || tc.Minutes != 0 || tc.HasHours || tc.Hours != 0
+				if err := bw.writeBool(hasMin); err != nil {
+					return dst, err
+				}
+				if hasMin {
+					if err := bw.writeBits(uint64(tc.Minutes&0x3f), 6); err != nil {
+						return dst, err
+					}
+					hasHour := tc.HasHours || tc.Hours != 0
+					if err := bw.writeBool(hasHour); err != nil {
+						return dst, err
+					}
+					if hasHour {
+						if err := bw.writeBits(uint64(tc.Hours&0x1f), 5); err != nil {
+							return dst, err
+						}
+					}
+				}
+			}
+		}
+		if err := bw.writeBits(uint64(tc.TimeOffsetLength), 5); err != nil {
+			return dst, err
+		}
+		if tc.TimeOffsetLength > 0 {
+			if err := bw.writeBits(uint64(tc.TimeOffsetValue), tc.TimeOffsetLength); err != nil {
+				return dst, err
+			}
+		}
+		if err := bw.writeTrailingBits(); err != nil {
+			return dst, err
+		}
+		p = payload[:ln+bw.bytesWritten()]
+	default:
+		return dst, ErrInvalidFrame
+	}
+
+	unit := OBU{Type: obu.TypeMetadata, Payload: p}
+	need := lowOverheadOBUSizeUnchecked(unit)
+	if cap(dst)-len(dst) < need {
+		grown := make([]byte, len(dst), max(len(dst)+need, cap(dst)*2))
+		copy(grown, dst)
+		dst = grown
+	}
+	return AppendLowOverheadOBU(dst, unit)
+}
+
+// InjectLowOverheadMetadataOBUs inserts metas as OBU_METADATA units right after
+// any leading OBU_TEMPORAL_DELIMITER and OBU_SEQUENCE_HEADER in tu, reusing
+// *scratch. When len(metas) == 0, tu is returned unchanged with zero overhead.
+func InjectLowOverheadMetadataOBUs(tu []byte, metas []obu.Metadata, scratch *[]byte) ([]byte, error) {
+	if len(metas) == 0 {
+		return tu, nil
+	}
+	insertAt := 0
+	it := obu.NewLowOverheadIterator(tu)
+	for {
+		u, ok, err := it.Next()
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			break
+		}
+		if u.Header.Type == obu.TypeTemporalDelimiter || u.Header.Type == obu.TypeSequenceHeader {
+			insertAt += len(u.Raw)
+			continue
+		}
+		break
+	}
+	out := (*scratch)[:0]
+	out = append(out, tu[:insertAt]...)
+	for _, m := range metas {
+		var err error
+		out, err = AppendLowOverheadMetadataOBU(out, m)
+		if err != nil {
+			return nil, err
+		}
+	}
+	out = append(out, tu[insertAt:]...)
+	*scratch = out
+	return out, nil
+}
