@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 )
@@ -98,6 +99,10 @@ type VideoEncoder struct {
 	filmGrainPresent bool
 	filmGrain        FilmGrainParams
 	filmGrainSeed    uint16
+
+	// B-frame / hidden Alt-Ref reference slot ping-pong (past anchor vs future Alt-Ref).
+	bPastSlot   uint8
+	bFutureSlot uint8
 
 	temporalLayers int
 	t2Recon        SourceFrame420
@@ -891,6 +896,8 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 	e.lpd1KeyRefs(src.Width, src.Height)
 	e.haveKey = true
 	e.frameIndex = 1
+	e.bPastSlot = 0
+	e.bFutureSlot = 1
 	// A shown keyframe refreshes every slot with its context-update tile's
 	// frame-end CDFs (refresh_frame_context; tile zero runs on e.pc), so
 	// the following inter frames chain from them through primary_ref_frame
@@ -1901,6 +1908,184 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		e.sinceGoldenFresh = 0
 	}
 	return tu, nil
+}
+
+// EncodeBFrameMiniGOP encodes a lookahead group of 1..N frames using a hidden
+// Alt-Ref future anchor (frames[len-1]), bidirectional compound B-frames
+// (frames[0..len-2] predicting from past anchor LAST + future anchor GOLDEN),
+// and a show_existing_frame temporal unit displaying the Alt-Ref in order.
+// Requires an active keyframe/past anchor (e.haveKey == true).
+func (e *VideoEncoder) EncodeBFrameMiniGOP(frames []SourceFrame420) ([][]byte, error) {
+	if e == nil || !e.haveKey {
+		return nil, fmt.Errorf("encoder: B-frame mini-GOP requires an encoded keyframe first")
+	}
+	if len(frames) == 0 {
+		return nil, nil
+	}
+	if len(frames) == 1 {
+		tu, _, err := e.Encode(frames[0], false)
+		if err != nil {
+			return nil, err
+		}
+		return [][]byte{append([]byte(nil), tu...)}, nil
+	}
+	if err := e.joinFilter(); err != nil {
+		return nil, err
+	}
+	e.lazyCDEF.pending = false
+	e.dropRefPads()
+
+	pastSlot := e.bPastSlot
+	futureSlot := e.bFutureSlot
+	if pastSlot == futureSlot {
+		pastSlot, futureSlot = 0, 1
+	}
+
+	// Prepare padded copies if needed.
+	padIfNeeded := func(src SourceFrame420) SourceFrame420 {
+		if e.renderWidth != e.width || e.renderHeight != e.height || src.YStride != e.width ||
+			src.ChromaStride != chromaWidthForColor(e.width, e.parserColorConfig()) {
+			p := e.padSource(src)
+			var cp SourceFrame420
+			copyFrameInto(&cp, p)
+			return cp
+		}
+		return src
+	}
+
+	n := len(frames)
+	anchorSrc := padIfNeeded(frames[n-1])
+	color := e.parserColorConfig()
+	seq := e.sequenceHeader(e.width, e.height)
+	miCols := uint16(e.width / 4)
+
+	// 1. Encode hidden Alt-Ref frame (frames[n-1]) predicting from past anchor
+	//    (e.recon in pastSlot), refreshing futureSlot (ShowFrame=false, ShowableFrame=true).
+	altQ := e.rcInterQ(0, svtRefLast, e.frameIndex+n-1, e.width, e.height, e.svtScreen())
+	if altQ > 8 {
+		altQ -= 6 // finer anchor Q for B-frame reference quality
+	}
+	altHeader, altRefState := repeatPFrameHeader(e.width, e.height, altQ, 1<<futureSlot)
+	altHeader.References = &altRefState
+	altHeader.Prefix.ShowFrame = false
+	altHeader.Prefix.ShowableFrame = true
+	altHeader.Prefix.DisableCDFUpdate = false
+	altHeader.Tile.RefreshContext = false
+	altHeader.Size.RefFrameIdx = [7]uint8{pastSlot, pastSlot, pastSlot, pastSlot, pastSlot, pastSlot, pastSlot}
+	altHeader.TransformRef.ReferenceMode = ReferenceModeSingle
+	if interTransformMode(color, altQ) == TransformModeLargest {
+		altHeader.TransformRef.TransformMode = TransformModeLargest
+	}
+	altHeader.CDEF = CDEFParams{Damping: 3}
+	altHeader.LoopFilter = LoopFilterParams{Deltas: defaultLoopFilterDeltas()}
+	if e.renderWidth != e.width || e.renderHeight != e.height {
+		altHeader.Size.RenderWidth = uint32(e.renderWidth)
+		altHeader.Size.RenderHeight = uint32(e.renderHeight)
+		altHeader.Size.HaveRenderSize = true
+	}
+
+	var altRecon SourceFrame420
+	copyFrameInto(&altRecon, e.recon)
+	e.configureDecisionStats(1)
+	altTile, err := e.pc.encodeTileWithOptionsColor(anchorSrc, e.recon, nil, &altRecon, altQ, nil, parser.ReferenceModeSingle, altHeader.Prefix.ForceIntegerMV, altHeader.Prefix.AllowScreenContentTools, color, 0, miCols)
+	if err != nil {
+		return nil, fmt.Errorf("encode hidden alt-ref: %w", err)
+	}
+	e.collectDecisionStats(false, 1, false)
+	altGroup, err := AppendTileGroupPayload(make([]byte, 0, len(altTile)+8), altHeader.Tile, 0, 0, []TilePayload{{Data: altTile}})
+	if err != nil {
+		return nil, err
+	}
+	altHeaderBytes, err := interFrameOBUHeaderBytes(seq, altHeader)
+	if err != nil {
+		return nil, fmt.Errorf("alt-ref header bytes: %w", err)
+	}
+	altFrameOBU := make([]byte, 0, altHeaderBytes+len(altGroup)+16)
+	altFrameOBU, err = AppendLowOverheadInterFrameOBU(altFrameOBU, seq, altHeader, 0, 0, altGroup)
+	if err != nil {
+		return nil, fmt.Errorf("alt-ref frame OBU: %w", err)
+	}
+
+	// 2. Encode bidirectional B-frames frames[0..n-2] referencing BOTH pastSlot
+	//    (LAST = e.recon) and futureSlot (GOLDEN = altRecon) with ReferenceModeSelect.
+	tus := make([][]byte, 0, n)
+	var bRecon SourceFrame420
+	copyFrameInto(&bRecon, e.recon)
+	for i := 0; i < n-1; i++ {
+		bSrc := padIfNeeded(frames[i])
+		bQ := e.rcInterQ(2, svtRefLast, e.frameIndex+i, e.width, e.height, e.svtScreen())
+		bHeader, bRefState := repeatPFrameHeader(e.width, e.height, bQ, 0)
+		bHeader.References = &bRefState
+		bHeader.Prefix.ShowFrame = true
+		bHeader.Prefix.ShowableFrame = true
+		bHeader.Prefix.DisableCDFUpdate = false
+		bHeader.Tile.RefreshContext = false
+		bHeader.Size.RefFrameIdx = [7]uint8{pastSlot, pastSlot, pastSlot, futureSlot, pastSlot, pastSlot, pastSlot}
+		bHeader.TransformRef.ReferenceMode = ReferenceModeSelect
+		if interTransformMode(color, bQ) == TransformModeLargest {
+			bHeader.TransformRef.TransformMode = TransformModeLargest
+		}
+		bHeader.CDEF = CDEFParams{Damping: 3}
+		bHeader.LoopFilter = LoopFilterParams{Deltas: defaultLoopFilterDeltas()}
+		bHeader.FilmGrain = e.nextFilmGrainParams()
+		if e.renderWidth != e.width || e.renderHeight != e.height {
+			bHeader.Size.RenderWidth = uint32(e.renderWidth)
+			bHeader.Size.RenderHeight = uint32(e.renderHeight)
+			bHeader.Size.HaveRenderSize = true
+		}
+
+		e.configureDecisionStats(1)
+		bTile, err := e.pc.encodeTileWithOptionsColor(bSrc, e.recon, &altRecon, &bRecon, bQ, nil, parser.ReferenceModeSelect, bHeader.Prefix.ForceIntegerMV, bHeader.Prefix.AllowScreenContentTools, color, 0, miCols)
+		if err != nil {
+			return nil, fmt.Errorf("encode b-frame %d: %w", i, err)
+		}
+		e.collectDecisionStats(false, 1, false)
+		bGroup, err := AppendTileGroupPayload(make([]byte, 0, len(bTile)+8), bHeader.Tile, 0, 0, []TilePayload{{Data: bTile}})
+		if err != nil {
+			return nil, err
+		}
+		bHeaderBytes, err := interFrameOBUHeaderBytes(seq, bHeader)
+		if err != nil {
+			return nil, fmt.Errorf("b-frame %d header bytes: %w", i, err)
+		}
+		capHint := 2 + bHeaderBytes + len(bGroup) + 16
+		if i == 0 {
+			capHint += len(altFrameOBU)
+		}
+		tu := make([]byte, 0, capHint)
+		tu, err = AppendLowOverheadOBU(tu, OBU{Type: obu.TypeTemporalDelimiter})
+		if err != nil {
+			return nil, err
+		}
+		if i == 0 {
+			// Emit hidden Alt-Ref inside the first B-frame's temporal unit
+			// (standard AV1 §7.5 alt-ref + B-frame TU packing).
+			tu = append(tu, altFrameOBU...)
+		}
+		tu, err = AppendLowOverheadInterFrameOBU(tu, seq, bHeader, 0, 0, bGroup)
+		if err != nil {
+			return nil, err
+		}
+		tus = append(tus, tu)
+		e.rcUpdate(len(tu)*8, 2)
+	}
+
+	// 3. Emit show_existing_frame TU for the hidden Alt-Ref in display order.
+	showTU, err := AppendLowOverheadShowExistingFrameTU(nil, seq, futureSlot)
+	if err != nil {
+		return nil, fmt.Errorf("show_existing_frame: %w", err)
+	}
+	tus = append(tus, showTU)
+	e.rcUpdate(len(altFrameOBU)*8, 0)
+
+	// 4. Promote Alt-Ref (futureSlot) to become the next mini-GOP's past anchor.
+	copyFrameInto(&e.recon, altRecon)
+	e.lastRecon = e.recon
+	e.bPastSlot, e.bFutureSlot = futureSlot, pastSlot
+	e.frameIndex += n
+	e.haveCtx = false
+	e.haveCtxT1 = false
+	return tus, nil
 }
 
 // Recon returns the most recent frame's reconstruction (what a conformant
