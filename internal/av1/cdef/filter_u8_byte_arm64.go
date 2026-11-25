@@ -289,9 +289,7 @@ func cdefByteFilter8PriSec(ctx *cdefByteCtx) {
 	dstOff, dstStr := ctx.dstOff, ctx.dstStr
 	if ctx.height == 8 {
 		in := (*[cdefByteWin8x8]byte)(input[base : base+cdefByteWin8x8])
-		for row := 0; row < 8; row += 2 {
-			r0 := (*[cdefByteWinRow]byte)(in[row*BStride : row*BStride+cdefByteWinRow])
-			r1 := (*[cdefByteWinRow]byte)(in[(row+1)*BStride : (row+1)*BStride+cdefByteWinRow])
+		doStrip := func(r0, r1 *[cdefByteWinRow]byte, off int) {
 			x := cdefByteLoad8x2Rows(r0, r1, cdefByteCenter)
 			mn, mx := x, x
 			p, q := cdefByteLoad8x2Rows(r0, r1, p0p), cdefByteLoad8x2Rows(r0, r1, p0m)
@@ -316,10 +314,13 @@ func cdefByteFilter8PriSec(ctx *cdefByteCtx) {
 			mn, mx = mn.Min(p).Min(q), mx.Max(p).Max(q)
 			a, b = a.Add(cdefByteConstrain(p, x, secStr, secSh)), b.Add(cdefByteConstrain(q, x, secStr, secSh))
 			y := cdefByteFinish(x, a, b, four, bias).Min(mx).Max(mn).ReshapeToUint64s()
-			binary.LittleEndian.PutUint64(dst[dstOff:dstOff+8], y.GetElem(0))
-			binary.LittleEndian.PutUint64(dst[dstOff+dstStr:dstOff+dstStr+8], y.GetElem(1))
-			dstOff += 2 * dstStr
+			binary.LittleEndian.PutUint64(dst[off:off+8], y.GetElem(0))
+			binary.LittleEndian.PutUint64(dst[off+dstStr:off+dstStr+8], y.GetElem(1))
 		}
+		doStrip((*[cdefByteWinRow]byte)(in[0:cdefByteWinRow]), (*[cdefByteWinRow]byte)(in[BStride:BStride+cdefByteWinRow]), dstOff)
+		doStrip((*[cdefByteWinRow]byte)(in[2*BStride:2*BStride+cdefByteWinRow]), (*[cdefByteWinRow]byte)(in[3*BStride:3*BStride+cdefByteWinRow]), dstOff+2*dstStr)
+		doStrip((*[cdefByteWinRow]byte)(in[4*BStride:4*BStride+cdefByteWinRow]), (*[cdefByteWinRow]byte)(in[5*BStride:5*BStride+cdefByteWinRow]), dstOff+4*dstStr)
+		doStrip((*[cdefByteWinRow]byte)(in[6*BStride:6*BStride+cdefByteWinRow]), (*[cdefByteWinRow]byte)(in[7*BStride:7*BStride+cdefByteWinRow]), dstOff+6*dstStr)
 		return
 	}
 	for h := ctx.height; h > 0; h -= 2 {
@@ -374,19 +375,20 @@ func cdefByteFilter8Pri(ctx *cdefByteCtx) {
 	dstOff, dstStr := ctx.dstOff, ctx.dstStr
 	if ctx.height == 8 {
 		in := (*[cdefByteWin8x8]byte)(input[base : base+cdefByteWin8x8])
-		for row := 0; row < 8; row += 2 {
-			r0 := (*[cdefByteWinRow]byte)(in[row*BStride : row*BStride+cdefByteWinRow])
-			r1 := (*[cdefByteWinRow]byte)(in[(row+1)*BStride : (row+1)*BStride+cdefByteWinRow])
+		doStrip := func(r0, r1 *[cdefByteWinRow]byte, off int) {
 			x := cdefByteLoad8x2Rows(r0, r1, cdefByteCenter)
 			a := cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, p0p), x, priStr, priSh).MulAdd(tap0, neg1)
 			b := cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, p0m), x, priStr, priSh).Mul(tap0)
 			a = cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, p1p), x, priStr, priSh).MulAdd(tap1, a)
 			b = cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, p1m), x, priStr, priSh).MulAdd(tap1, b)
 			y := cdefByteFinish(x, a, b, four, bias).ReshapeToUint64s()
-			binary.LittleEndian.PutUint64(dst[dstOff:dstOff+8], y.GetElem(0))
-			binary.LittleEndian.PutUint64(dst[dstOff+dstStr:dstOff+dstStr+8], y.GetElem(1))
-			dstOff += 2 * dstStr
+			binary.LittleEndian.PutUint64(dst[off:off+8], y.GetElem(0))
+			binary.LittleEndian.PutUint64(dst[off+dstStr:off+dstStr+8], y.GetElem(1))
 		}
+		doStrip((*[cdefByteWinRow]byte)(in[0:cdefByteWinRow]), (*[cdefByteWinRow]byte)(in[BStride:BStride+cdefByteWinRow]), dstOff)
+		doStrip((*[cdefByteWinRow]byte)(in[2*BStride:2*BStride+cdefByteWinRow]), (*[cdefByteWinRow]byte)(in[3*BStride:3*BStride+cdefByteWinRow]), dstOff+2*dstStr)
+		doStrip((*[cdefByteWinRow]byte)(in[4*BStride:4*BStride+cdefByteWinRow]), (*[cdefByteWinRow]byte)(in[5*BStride:5*BStride+cdefByteWinRow]), dstOff+4*dstStr)
+		doStrip((*[cdefByteWinRow]byte)(in[6*BStride:6*BStride+cdefByteWinRow]), (*[cdefByteWinRow]byte)(in[7*BStride:7*BStride+cdefByteWinRow]), dstOff+6*dstStr)
 		return
 	}
 	for h := ctx.height; h > 0; h -= 2 {
@@ -425,9 +427,7 @@ func cdefByteFilter8Sec(ctx *cdefByteCtx) {
 	dstOff, dstStr := ctx.dstOff, ctx.dstStr
 	if ctx.height == 8 {
 		in := (*[cdefByteWin8x8]byte)(input[base : base+cdefByteWin8x8])
-		for row := 0; row < 8; row += 2 {
-			r0 := (*[cdefByteWinRow]byte)(in[row*BStride : row*BStride+cdefByteWinRow])
-			r1 := (*[cdefByteWinRow]byte)(in[(row+1)*BStride : (row+1)*BStride+cdefByteWinRow])
+		doStrip := func(r0, r1 *[cdefByteWinRow]byte, off int) {
 			x := cdefByteLoad8x2Rows(r0, r1, cdefByteCenter)
 			ka := cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, s0p), x, secStr, secSh).
 				Add(cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, s1p), x, secStr, secSh))
@@ -440,10 +440,13 @@ func cdefByteFilter8Sec(ctx *cdefByteCtx) {
 				Add(cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, s2m), x, secStr, secSh)).
 				Add(cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, s3m), x, secStr, secSh))
 			y := cdefByteFinish(x, a, b, four, bias).ReshapeToUint64s()
-			binary.LittleEndian.PutUint64(dst[dstOff:dstOff+8], y.GetElem(0))
-			binary.LittleEndian.PutUint64(dst[dstOff+dstStr:dstOff+dstStr+8], y.GetElem(1))
-			dstOff += 2 * dstStr
+			binary.LittleEndian.PutUint64(dst[off:off+8], y.GetElem(0))
+			binary.LittleEndian.PutUint64(dst[off+dstStr:off+dstStr+8], y.GetElem(1))
 		}
+		doStrip((*[cdefByteWinRow]byte)(in[0:cdefByteWinRow]), (*[cdefByteWinRow]byte)(in[BStride:BStride+cdefByteWinRow]), dstOff)
+		doStrip((*[cdefByteWinRow]byte)(in[2*BStride:2*BStride+cdefByteWinRow]), (*[cdefByteWinRow]byte)(in[3*BStride:3*BStride+cdefByteWinRow]), dstOff+2*dstStr)
+		doStrip((*[cdefByteWinRow]byte)(in[4*BStride:4*BStride+cdefByteWinRow]), (*[cdefByteWinRow]byte)(in[5*BStride:5*BStride+cdefByteWinRow]), dstOff+4*dstStr)
+		doStrip((*[cdefByteWinRow]byte)(in[6*BStride:6*BStride+cdefByteWinRow]), (*[cdefByteWinRow]byte)(in[7*BStride:7*BStride+cdefByteWinRow]), dstOff+6*dstStr)
 		return
 	}
 	for h := ctx.height; h > 0; h -= 2 {
@@ -549,6 +552,20 @@ func cdefByteFilter4Pri(ctx *cdefByteCtx) {
 	input, dst := ctx.input, ctx.dst
 	base := ctx.srcOff - cdefByteCenter
 	dstOff, dstStr := ctx.dstOff, ctx.dstStr
+	if ctx.height == 4 {
+		w := (*[cdefByteWin4]byte)(input[base : base+cdefByteWin4])
+		r0 := (*[cdefByteWinRow]byte)(w[0:cdefByteWinRow])
+		r1 := (*[cdefByteWinRow]byte)(w[BStride : BStride+cdefByteWinRow])
+		r2 := (*[cdefByteWinRow]byte)(w[2*BStride : 2*BStride+cdefByteWinRow])
+		r3 := (*[cdefByteWinRow]byte)(w[3*BStride : 3*BStride+cdefByteWinRow])
+		x := cdefByteLoad4x4Rows(r0, r1, r2, r3, cdefByteCenter)
+		a := cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, p0p), x, priStr, priSh).MulAdd(tap0, neg1)
+		b := cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, p0m), x, priStr, priSh).Mul(tap0)
+		a = cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, p1p), x, priStr, priSh).MulAdd(tap1, a)
+		b = cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, p1m), x, priStr, priSh).MulAdd(tap1, b)
+		cdefByteStore4x4(dst, dstOff, dstStr, cdefByteFinish(x, a, b, four, bias))
+		return
+	}
 	for h := ctx.height; h > 0; h -= 4 {
 		w := (*[cdefByteWin4]byte)(input[base : base+cdefByteWin4])
 		r0 := (*[cdefByteWinRow]byte)(w[0:cdefByteWinRow])
