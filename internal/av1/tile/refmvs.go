@@ -104,6 +104,13 @@ type refmvsFrame struct {
 
 	// gmType holds the frame's global motion type per reference (index ref-1).
 	gmType [7]parser.GlobalMotionType
+
+	// hasNonIdentityGM is true if any reference has non-identity global motion
+	// (so blockReferenceGlobalMVsForBlock cannot be skipped as zero).
+	hasNonIdentityGM bool
+	// hasWarpGM is true if any reference has global motion type > TRANSLATION
+	// (so isGlobalMVBlock can return true for global warp promotion).
+	hasWarpGM bool
 }
 
 const (
@@ -977,6 +984,13 @@ func bindRefmvsForLoop(rt *refmvsTile, req *BlockLoopRequest) bool {
 		d := refmvsPocDiff(req.OrderHintBits, req.CurrentOrderHint, req.ReferenceOrderHints[i])
 		frame.pocDiff[i] = int8(min(max(d, -31), 31))
 		frame.gmType[i] = req.GlobalMotionTypes[i]
+		p := &req.GlobalMotion[i]
+		if p.Type != parser.GlobalMotionIdentity || p.Matrix[2] != 1<<globalMotionWarpedModelPrecBits {
+			frame.hasNonIdentityGM = true
+		}
+		if req.GlobalMotionTypes[i] > parser.GlobalMotionTranslation {
+			frame.hasWarpGM = true
+		}
 	}
 	rt.bindFrame(frame, int32(req.FrameMICols)*4,
 		int32(req.Walk.MIColStart), int32(req.Walk.MIColEnd),

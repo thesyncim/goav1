@@ -270,14 +270,17 @@ func envFilterCtx(c *BlockModeContext, x4, y4 int, haveTop, haveLeft bool, comp 
 // (has_subpel_filter), the frame filter when it is not switchable, otherwise
 // one or (dual_filter) two switchable symbols with the get_filter_ctx
 // contexts. It returns the filters and the number of symbols read.
-func (s *DecodeState) readInterpFiltersRefmvs(cdfs *InterpFilterCDFs, c *BlockModeContext, req *BlockLoopRequest, block *BlockVisit, refs InterReferencesResult, mode InterModeResult, motionMode MotionMode, globalTypes [2]parser.GlobalMotionType, skipMode bool) (motion.InterpFilters, int, error) {
-	if skipMode || motionMode == MotionModeWarp || nonTransGlobalMotion(InterpFilterRequest{Size: block.Size, References: refs, Mode: mode, GlobalTypes: globalTypes}) {
-		filter, err := unswitchableMotionFilter(req.InterpolationFilter)
-		return motion.InterpFilters{X: filter, Y: filter}, 0, err
-	}
+func (s *DecodeState) readInterpFiltersRefmvs(cdfs *InterpFilterCDFs, c *BlockModeContext, req *BlockLoopRequest, block *BlockVisit, refs InterReferencesResult, mode InterModeResult, motionMode MotionMode, skipMode bool) (motion.InterpFilters, int, error) {
 	if req.InterpolationFilter != parser.InterpolationSwitchable {
 		filter, err := fixedMotionFilter(req.InterpolationFilter)
 		return motion.InterpFilters{X: filter, Y: filter}, 0, err
+	}
+	if skipMode || motionMode == MotionModeWarp {
+		return motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapRegular}, 0, nil
+	}
+	if ((!refs.Compound && mode.Mode == InterModeGlobalMV) || (refs.Compound && mode.CompoundMode == CompoundInterModeGlobalGlobal)) &&
+		nonTransGlobalMotion(InterpFilterRequest{Size: block.Size, References: refs, Mode: mode, GlobalTypes: blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes)}) {
+		return motion.InterpFilters{X: motion.InterpEightTapRegular, Y: motion.InterpEightTapRegular}, 0, nil
 	}
 	x4, y4 := int(block.X4), int(block.Y4)
 	ctxY := envFilterCtx(c, x4, y4, block.HaveTop, block.HaveLeft, refs.Compound, 0, refs.Ref0)

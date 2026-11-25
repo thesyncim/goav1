@@ -243,13 +243,21 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 			}
 		} else if kx == mc8KindBilinear && ky == mc8KindBilinear {
 			mc8PutHV2(sg, w, h, phx, phy, dg)
+		} else if ky >= mc8KindBilinear {
+			mc8PutHV6x4(sg, w, h, phx, phy, dg)
+		} else if phy.v[0][0]|phy.v[5][0] == 0 {
+			mc8PutHV6x4(sg, w, h, phx, phy, dg)
 		} else {
 			mc8PutHV6(sg, w, h, phx, phy, dg)
 		}
 	case subX != 0:
 		switch {
 		case w == 4:
-			mc8PutH6S4(sg, phx, dg)
+			if phx.h[0][0]|phx.h[5][0] == 0 {
+				mc8PutH4S4(sg, phx, dg)
+			} else {
+				mc8PutH6S4(sg, phx, dg)
+			}
 		case w == 8:
 			mc8PutH6S8(sg, phx, dg)
 		case w&15 == 0:
@@ -258,15 +266,19 @@ func Put8(dst *frame.Plane, ref *frame.Plane, dstX, dstY, refX, refY, w, h, filt
 			mc8PutH6Split(sg, phx, dg)
 		}
 	default:
-		switch {
-		case w == 4:
-			mc8PutV6S4(sg, phy, dg)
-		case w == 8:
-			mc8PutV6S8(sg, phy, dg)
-		case w&15 == 0:
-			mc8PutV6W16(sg, phy, dg)
-		default:
-			mc8PutV6Split(sg, phy, dg)
+		if phy.h[0][0]|phy.h[5][0] == 0 {
+			mc8PutV4(sg, w, h, phy, dg)
+		} else {
+			switch {
+			case w == 4:
+				mc8PutV6S4(sg, phy, dg)
+			case w == 8:
+				mc8PutV6S8(sg, phy, dg)
+			case w&15 == 0:
+				mc8PutV6W16(sg, phy, dg)
+			default:
+				mc8PutV6Split(sg, phy, dg)
+			}
 		}
 	}
 	return true
@@ -374,6 +386,9 @@ func Put8UV(dstU, dstV, refU, refV *frame.Plane, dstX, dstY, refX, refY, w, h, f
 		} else if kx == mc8KindBilinear && ky == mc8KindBilinear {
 			mc8PutHV2(su, w, h, phx, phy, du)
 			mc8PutHV2(sv, w, h, phx, phy, dv)
+		} else if ky >= mc8KindBilinear {
+			mc8PutHV6x4(su, w, h, phx, phy, du)
+			mc8PutHV6x4(sv, w, h, phx, phy, dv)
 		} else {
 			mc8PutHV6(su, w, h, phx, phy, du)
 			mc8PutHV6(sv, w, h, phx, phy, dv)
@@ -381,8 +396,13 @@ func Put8UV(dstU, dstV, refU, refV *frame.Plane, dstX, dstY, refX, refY, w, h, f
 	case subX != 0:
 		switch {
 		case w == 4:
-			mc8PutH6S4(su, phx, du)
-			mc8PutH6S4(sv, phx, dv)
+			if kx >= mc8KindBilinear {
+				mc8PutH4S4(su, phx, du)
+				mc8PutH4S4(sv, phx, dv)
+			} else {
+				mc8PutH6S4(su, phx, du)
+				mc8PutH6S4(sv, phx, dv)
+			}
 		case w == 8:
 			mc8PutH6S8(su, phx, du)
 			mc8PutH6S8(sv, phx, dv)
@@ -394,19 +414,24 @@ func Put8UV(dstU, dstV, refU, refV *frame.Plane, dstX, dstY, refX, refY, w, h, f
 			mc8PutH6Split(sv, phx, dv)
 		}
 	default:
-		switch {
-		case w == 4:
-			mc8PutV6S4(su, phy, du)
-			mc8PutV6S4(sv, phy, dv)
-		case w == 8:
-			mc8PutV6S8(su, phy, du)
-			mc8PutV6S8(sv, phy, dv)
-		case w&15 == 0:
-			mc8PutV6W16(su, phy, du)
-			mc8PutV6W16(sv, phy, dv)
-		default:
-			mc8PutV6Split(su, phy, du)
-			mc8PutV6Split(sv, phy, dv)
+		if ky >= mc8KindBilinear {
+			mc8PutV4(su, w, h, phy, du)
+			mc8PutV4(sv, w, h, phy, dv)
+		} else {
+			switch {
+			case w == 4:
+				mc8PutV6S4(su, phy, du)
+				mc8PutV6S4(sv, phy, dv)
+			case w == 8:
+				mc8PutV6S8(su, phy, du)
+				mc8PutV6S8(sv, phy, dv)
+			case w&15 == 0:
+				mc8PutV6W16(su, phy, du)
+				mc8PutV6W16(sv, phy, dv)
+			default:
+				mc8PutV6Split(su, phy, du)
+				mc8PutV6Split(sv, phy, dv)
+			}
 		}
 	}
 	return true
@@ -470,13 +495,19 @@ func mc8PutGrid(dg, sg unsafeutil.Grid[uint8], w, h, subX, subY int, phx, phy *m
 				mc8H6ToI32W4(sg, h+5, phx, im)
 				mc8PutV6FromI32W4(im, h, phy, dg)
 			}
+		} else if phy.v[0][0]|phy.v[5][0] == 0 {
+			mc8PutHV6x4(sg, w, h, phx, phy, dg)
 		} else {
 			mc8PutHV6(sg, w, h, phx, phy, dg)
 		}
 	case subX != 0:
 		switch {
 		case w == 4:
-			mc8PutH6S4(sg, phx, dg)
+			if phx.h[0][0]|phx.h[5][0] == 0 {
+				mc8PutH4S4(sg, phx, dg)
+			} else {
+				mc8PutH6S4(sg, phx, dg)
+			}
 		case w == 8:
 			mc8PutH6S8(sg, phx, dg)
 		case w&15 == 0:
@@ -485,15 +516,19 @@ func mc8PutGrid(dg, sg unsafeutil.Grid[uint8], w, h, subX, subY int, phx, phy *m
 			mc8PutH6Split(sg, phx, dg)
 		}
 	default:
-		switch {
-		case w == 4:
-			mc8PutV6S4(sg, phy, dg)
-		case w == 8:
-			mc8PutV6S8(sg, phy, dg)
-		case w&15 == 0:
-			mc8PutV6W16(sg, phy, dg)
-		default:
-			mc8PutV6Split(sg, phy, dg)
+		if phy.h[0][0]|phy.h[5][0] == 0 {
+			mc8PutV4(sg, w, h, phy, dg)
+		} else {
+			switch {
+			case w == 4:
+				mc8PutV6S4(sg, phy, dg)
+			case w == 8:
+				mc8PutV6S8(sg, phy, dg)
+			case w&15 == 0:
+				mc8PutV6W16(sg, phy, dg)
+			default:
+				mc8PutV6Split(sg, phy, dg)
+			}
 		}
 	}
 }
@@ -672,11 +707,24 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 	// mc8PrepGrid written out, as in Put8.
 	switch {
 	case subX != 0 && subY != 0:
-		im := scratch.im[:]
 		if w == 4 {
-			mc8H6ToI32W4(sg, h+5, &mc8Phases[kx][subX], im)
-			mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], out[:4*h], mc8PrepV6Rnd)
+			if kx >= mc8KindBilinear {
+				if ky >= mc8KindBilinear {
+					mc8PrepHV4x4W4(sg, h, &mc8Phases[kx][subX], &mc8Phases[ky][subY], out[:4*h])
+				} else {
+					mc8PrepHV4W4(sg, h, &mc8Phases[kx][subX], &mc8Phases[ky][subY], out[:4*h])
+				}
+			} else {
+				im := scratch.im[:]
+				mc8H6ToI32W4(sg, h+5, &mc8Phases[kx][subX], im)
+				mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], out[:4*h], mc8PrepV6Rnd)
+			}
+		} else if kx == mc8KindBilinear && ky == mc8KindBilinear {
+			mc8PrepHV2(sg, w, h, &mc8Phases[kx][subX], &mc8Phases[ky][subY], og)
+		} else if ky >= mc8KindBilinear {
+			mc8PrepHV6x4(sg, w, h, &mc8Phases[kx][subX], &mc8Phases[ky][subY], og)
 		} else {
+			im := scratch.im[:]
 			mc8H6ToI32(sg, w, h+5, &mc8Phases[kx][subX], im, 2)
 			mc8PrepV6FromI32S(im, w, h, &mc8Phases[ky][subY], og, mc8PrepV6Rnd)
 		}
@@ -684,7 +732,11 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 		ph := &mc8Phases[kx][subX]
 		switch {
 		case w == 4:
-			mc8PrepH6S4(sg, ph, og)
+			if kx >= mc8KindBilinear {
+				mc8PrepH4S4(sg, ph, og)
+			} else {
+				mc8PrepH6S4(sg, ph, og)
+			}
 		case w == 8:
 			mc8PrepH6S8(sg, ph, og)
 		case w&15 == 0:
@@ -694,15 +746,19 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 		}
 	case subY != 0:
 		ph := &mc8Phases[ky][subY]
-		switch {
-		case w == 4:
-			mc8PrepV6S4(sg, ph, og)
-		case w == 8:
-			mc8PrepV6S8(sg, ph, og)
-		case w&15 == 0:
-			mc8PrepV6W16(sg, ph, og)
-		default:
-			mc8PrepV6Split(sg, ph, og)
+		if ky >= mc8KindBilinear {
+			mc8PrepV4(sg, w, h, ph, og)
+		} else {
+			switch {
+			case w == 4:
+				mc8PrepV6S4(sg, ph, og)
+			case w == 8:
+				mc8PrepV6S8(sg, ph, og)
+			case w&15 == 0:
+				mc8PrepV6W16(sg, ph, og)
+			default:
+				mc8PrepV6Split(sg, ph, og)
+			}
 		}
 	default:
 		if w == 8 {

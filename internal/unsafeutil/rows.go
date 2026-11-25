@@ -172,3 +172,44 @@ func (b Block[R]) PutF64(k, c int, v float64) {
 	}
 	*(*float64)(unsafe.Add(unsafe.Add(b.p, uint(c)), uint(k)*b.stride)) = v
 }
+
+// BlockHalves splits a 16-row Block into its top 8 rows (0..7) and bottom 8
+// rows (8..15), so callers address both halves with row indices 0..7.
+//
+// Bounds proof: b was constructed by BlockAt for 16 rows of 16 bytes; rows
+// 0..7 and rows 8..15 are disjoint 8-row sub-ranges inside those 16 rows.
+func BlockHalves(b Block[[16]struct{}]) (Block[[8]struct{}], Block[[8]struct{}]) {
+	return Block[[8]struct{}]{p: b.p, stride: b.stride},
+		Block[[8]struct{}]{p: unsafe.Add(b.p, 8*b.stride), stride: b.stride}
+}
+
+// Block8 is Block with rows of eight bytes (e.g. vertical loop-filter level
+// pairs). Only Block8At makes a usable Block8.
+type Block8[R BlockRows] struct {
+	p      unsafe.Pointer
+	stride uint
+}
+
+// Block8At returns the Block8 of len(R) rows of eight bytes of v from row r,
+// column c. It panics unless those rows and columns lie inside v.
+//
+// Bounds proof: r and c are below 2^31, r+len(R) <= v.height keeps rows
+// r..r+len(R)-1 inside v, and c+8 <= v.width keeps columns c..c+7 inside it.
+func Block8At[R BlockRows](v Rows, r, c int) Block8[R] {
+	var n R
+	if uint(r)|uint(c) >= rowsDimMax || uint(r)+uint(len(n)) > v.height || uint(c)+8 > v.width {
+		panic(errRows)
+	}
+	return Block8[R]{p: unsafe.Add(v.p, uint(r)*v.stride+uint(c)), stride: v.stride}
+}
+
+// Row8 returns row k's eight bytes. It panics unless k < len(R).
+//
+// Bounds proof: row k is one of the rows Block8At checked.
+func (b Block8[R]) Row8(k int) *[8]byte {
+	var n R
+	if uint(k) >= uint(len(n)) {
+		panic(errRows)
+	}
+	return (*[8]byte)(unsafe.Add(b.p, uint(k)*b.stride))
+}

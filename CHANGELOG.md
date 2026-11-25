@@ -4,6 +4,23 @@ Release-level changes to goav1 are tracked here. Detailed progress logs,
 per-vector archaeology, and work-in-progress notes belong in commits, issues,
 or pull requests, not in long-lived markdown.
 
+## [v0.1.1] - 2026-11-25
+
+Pure-Go + `simd/archsimd` decoder performance release (-1.21B instructions / -3.2% on 1080p `aomrt_crowdrun` 1T, bringing 1T total wall time to 1.10× of `dav1d` and 8T cycles to 1.056× on Apple M4 Max, with 100% memory safety and bit-exact MD5 parity).
+
+### Decoder Optimizations (`arm64` & generic)
+- **Motion Compensation (`internal/av1/motion`)**:
+  - Added fused in-register 4-tap and bilinear compound `Prep8` kernels (`mc8PrepHV6x4`, `mc8PrepHV2`, `mc8PrepHV4x4W4`, `mc8PrepHV4W4`, `mc8PrepH4S4`, `mc8PrepV4`) and 4-tap `Put8` kernels (`mc8PutHV6x4`, `mc8PutH4S4`, `mc8PutV4`).
+  - Unrolled `mc8PutHV6`, `mc8PutHV6x4`, `mc8PutHV4x4W4`, `mc8PutHV4W4`, `mc8PrepHV4x4W4`, and `mc8PrepHV4W4` in 4-row `Grid.Sub` chunks, eliminating per-row bounds checks and `MADD` stride multiplies.
+- **Loop Filter (`internal/av1/loopfilter`, `internal/unsafeutil`)**:
+  - Added `unsafeutil.BlockHalves` and `unsafeutil.Block8`/`Block8At` to eliminate `MUL` row-address calculations in vertical loopfilter loads/stores and 16×16 transposes, and cut vertical level-pair bounds checks by 4×.
+  - Added nibble-skipping (`bits.TrailingZeros32`) in `filterSBVertical8` and `sbRowsU8`, and dropped redundant `.HiToLo()` ops on broadcast constants.
+- **CDEF (`internal/av1/cdef`, `internal/av1/decoder`)**:
+  - Unrolled `8×8` CDEF strips (`cdefByteFilter8Pri`/`8PriSec`/`8Sec`) and added straight-line `4×4` chroma paths (`cdefByteFilter4Pri`/`4PriSec`/`4Sec`), replaced the 96B per-block direction offset copy with a `*cdefByteDirOffs` pointer, and hoisted loop-invariant chroma dispatch.
+  - Computed sparse CDEF staging rects directly from the `uint64` unit mask (`frameWorkCDEFSparseStageRectFromMask`) with a static `frameWorkCDEFAllBlocks64` fast path.
+- **Tile & Reconstruction (`internal/av1/tile`, `internal/av1/threading`)**:
+  - Precomputed per-tile identity/warp global motion flags in `bindRefmvsForLoop`, fast-pathed non-switchable interpolation filters in `readInterpFiltersRefmvs`, guarded `ReadInterIntra`, and unrolled `reconCoefTree` non-recursively.
+
 ## [v0.1.0] - 2026-11-24
 
 First tagged release of `goav1` — a pure-Go AV1 decoder and realtime WebRTC AV1 encoder using Go 1.27 `simd/archsimd` with zero assembly and audited memory safety (`scripts/check_unsafe.sh`).

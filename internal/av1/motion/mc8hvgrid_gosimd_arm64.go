@@ -31,6 +31,366 @@ func mc8H4S(p *[16]uint8, c1, c2, c3, c4, rnd archsimd.Int16x8) archsimd.Int16x8
 	return hi.ConcatShiftBytesRight(lo, 8).ReshapeToUint16s().BitsToInt16().MulAdd(c4, s)
 }
 
+// mc8PutH4S4 is mc8PutH6S4 when the horizontal filter has at most 4 non-zero
+// taps (taps 1..4: regular4, smooth4, bilinear — the 99.9% case for w == 4).
+func mc8PutH4S4(s unsafeutil.Grid[uint8], ph *mc8Phase, o unsafeutil.Grid[uint8]) {
+	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
+	c2 := archsimd.LoadInt16x8Array(&ph.h[2])
+	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
+	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
+	rnd := archsimd.LoadInt16x8Array(&mc8Vec.rnd34)
+	sh := archsimd.LoadInt16x8Array(&mc8Vec.sh6)
+	h := o.Height()
+	r := 0
+	if h >= 8 {
+		for ; r+8 <= h; r += 8 {
+			if !s.Fits(r, 0, 16, 8) || !o.Fits(r, 0, 4, 8) {
+				return
+			}
+			sw, ow := s.Sub(r, 0, 16, 8), o.Sub(r, 0, 4, 8)
+			binary.LittleEndian.PutUint32(ow.Row4(0, 0)[:], uint32(mc8H4S(sw.Row16(0, 0), c1, c2, c3, c4, rnd).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+			binary.LittleEndian.PutUint32(ow.Row4(1, 0)[:], uint32(mc8H4S(sw.Row16(1, 0), c1, c2, c3, c4, rnd).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+			binary.LittleEndian.PutUint32(ow.Row4(2, 0)[:], uint32(mc8H4S(sw.Row16(2, 0), c1, c2, c3, c4, rnd).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+			binary.LittleEndian.PutUint32(ow.Row4(3, 0)[:], uint32(mc8H4S(sw.Row16(3, 0), c1, c2, c3, c4, rnd).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+			binary.LittleEndian.PutUint32(ow.Row4(4, 0)[:], uint32(mc8H4S(sw.Row16(4, 0), c1, c2, c3, c4, rnd).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+			binary.LittleEndian.PutUint32(ow.Row4(5, 0)[:], uint32(mc8H4S(sw.Row16(5, 0), c1, c2, c3, c4, rnd).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+			binary.LittleEndian.PutUint32(ow.Row4(6, 0)[:], uint32(mc8H4S(sw.Row16(6, 0), c1, c2, c3, c4, rnd).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+			binary.LittleEndian.PutUint32(ow.Row4(7, 0)[:], uint32(mc8H4S(sw.Row16(7, 0), c1, c2, c3, c4, rnd).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+		}
+	}
+	if r < h {
+		if r+4 <= h {
+			if !s.Fits(r, 0, 16, 4) || !o.Fits(r, 0, 4, 4) {
+				return
+			}
+			sw, ow := s.Sub(r, 0, 16, 4), o.Sub(r, 0, 4, 4)
+			binary.LittleEndian.PutUint32(ow.Row4(0, 0)[:], uint32(mc8H4S(sw.Row16(0, 0), c1, c2, c3, c4, rnd).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+			binary.LittleEndian.PutUint32(ow.Row4(1, 0)[:], uint32(mc8H4S(sw.Row16(1, 0), c1, c2, c3, c4, rnd).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+			binary.LittleEndian.PutUint32(ow.Row4(2, 0)[:], uint32(mc8H4S(sw.Row16(2, 0), c1, c2, c3, c4, rnd).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+			binary.LittleEndian.PutUint32(ow.Row4(3, 0)[:], uint32(mc8H4S(sw.Row16(3, 0), c1, c2, c3, c4, rnd).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+			r += 4
+		}
+		if r+2 <= h {
+			if !s.Fits(r, 0, 16, 2) || !o.Fits(r, 0, 4, 2) {
+				return
+			}
+			sw, ow := s.Sub(r, 0, 16, 2), o.Sub(r, 0, 4, 2)
+			binary.LittleEndian.PutUint32(ow.Row4(0, 0)[:], uint32(mc8H4S(sw.Row16(0, 0), c1, c2, c3, c4, rnd).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+			binary.LittleEndian.PutUint32(ow.Row4(1, 0)[:], uint32(mc8H4S(sw.Row16(1, 0), c1, c2, c3, c4, rnd).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+			r += 2
+		}
+		if r < h {
+			if !s.Fits(r, 0, 16, 1) || !o.Fits(r, 0, 4, 1) {
+				return
+			}
+			sw, ow := s.Sub(r, 0, 16, 1), o.Sub(r, 0, 4, 1)
+			binary.LittleEndian.PutUint32(ow.Row4(0, 0)[:], uint32(mc8H4S(sw.Row16(0, 0), c1, c2, c3, c4, rnd).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)))
+		}
+	}
+}
+
+// mc8PutV4 is the 1D vertical 4-tap put pass (taps 1..4: regular4, smooth4,
+// bilinear) for w == 4 or w multiple of 8: skips rows 0 and h+4 and drops the
+// zero outer taps.
+func mc8PutV4(sg unsafeutil.Grid[uint8], w, h int, ph *mc8Phase, dg unsafeutil.Grid[uint8]) {
+	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
+	c2 := archsimd.LoadInt16x8Array(&ph.h[2])
+	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
+	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
+	rnd := archsimd.LoadInt16x8Array(&mc8Vec.rnd32)
+	sh := archsimd.LoadInt16x8Array(&mc8Vec.sh6)
+	rows := h + 4
+	if w == 4 {
+		if !sg.Fits(0, 0, 16, rows) || !dg.Fits(0, 0, 4, h) {
+			return
+		}
+		s, d := sg.Sub(0, 0, 16, rows), dg.Sub(0, 0, 4, h)
+		r1 := archsimd.LoadUint8x16Array(s.Row16(1, 0)).ExtendLo8ToUint16().BitsToInt16()
+		r2 := archsimd.LoadUint8x16Array(s.Row16(2, 0)).ExtendLo8ToUint16().BitsToInt16()
+		r3 := archsimd.LoadUint8x16Array(s.Row16(3, 0)).ExtendLo8ToUint16().BitsToInt16()
+		for r := 0; r < h; r++ {
+			r4 := archsimd.LoadUint8x16Array(s.Row16(r+4, 0)).ExtendLo8ToUint16().BitsToInt16()
+			v := r4.MulAdd(c4, r3.MulAdd(c3, r2.MulAdd(c2, r1.MulAdd(c1, rnd)))).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)
+			binary.LittleEndian.PutUint32(d.Row4(r, 0)[:], uint32(v))
+			r1, r2, r3 = r2, r3, r4
+		}
+		return
+	}
+	for c := 0; c < w; c += 8 {
+		if !sg.Fits(0, c, 16, rows) || !dg.Fits(0, c, 8, h) {
+			return
+		}
+		s, d := sg.Sub(0, c, 16, rows), dg.Sub(0, c, 8, h)
+		r1 := archsimd.LoadUint8x16Array(s.Row16(1, 0)).ExtendLo8ToUint16().BitsToInt16()
+		r2 := archsimd.LoadUint8x16Array(s.Row16(2, 0)).ExtendLo8ToUint16().BitsToInt16()
+		r3 := archsimd.LoadUint8x16Array(s.Row16(3, 0)).ExtendLo8ToUint16().BitsToInt16()
+		for r := 0; r < h; r++ {
+			r4 := archsimd.LoadUint8x16Array(s.Row16(r+4, 0)).ExtendLo8ToUint16().BitsToInt16()
+			v := r4.MulAdd(c4, r3.MulAdd(c3, r2.MulAdd(c2, r1.MulAdd(c1, rnd)))).Shift(sh).SaturateToUint8().ReshapeToUint64s().GetElem(0)
+			binary.LittleEndian.PutUint64(d.Row8(r, 0)[:], v)
+			r1, r2, r3 = r2, r3, r4
+		}
+	}
+}
+
+// mc8PrepH4S4 is mc8PrepH6S4 when the horizontal filter has at most 4 non-zero
+// taps (taps 1..4: regular4, smooth4, bilinear — the 99.9% case for w == 4).
+func mc8PrepH4S4(s unsafeutil.Grid[uint8], ph *mc8Phase, o unsafeutil.Grid[uint16]) {
+	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
+	c2 := archsimd.LoadInt16x8Array(&ph.h[2])
+	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
+	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
+	rnd := archsimd.LoadInt16x8Array(&mc8Vec.prepRnd)
+	sh := archsimd.LoadInt16x8Array(&mc8Vec.sh2)
+	h := o.Height()
+	if !s.Fits(0, 0, 16, h) || !o.Fits(0, 0, 4, h) {
+		return
+	}
+	sw, ow := s.Sub(0, 0, 16, h), o.Sub(0, 0, 4, h)
+	for r := 0; r < h; r++ {
+		mc8Store4U16(ow.Row4(r, 0), mc8H4S(sw.Row16(r, 0), c1, c2, c3, c4, rnd).ToBits().Shift(sh).ReshapeToUint64s().GetElem(0))
+	}
+}
+
+// mc8PrepV4 is the 1D vertical 4-tap prep pass (taps 1..4) for w == 4 or w
+// multiple of 8: skips rows 0 and h+4 and drops the zero outer taps.
+func mc8PrepV4(sg unsafeutil.Grid[uint8], w, h int, ph *mc8Phase, og unsafeutil.Grid[uint16]) {
+	c1 := archsimd.LoadInt16x8Array(&ph.h[1])
+	c2 := archsimd.LoadInt16x8Array(&ph.h[2])
+	c3 := archsimd.LoadInt16x8Array(&ph.h[3])
+	c4 := archsimd.LoadInt16x8Array(&ph.h[4])
+	rnd := archsimd.LoadInt16x8Array(&mc8Vec.prepRnd)
+	sh := archsimd.LoadInt16x8Array(&mc8Vec.sh2)
+	rows := h + 4
+	if w == 4 {
+		if !sg.Fits(0, 0, 16, rows) || !og.Fits(0, 0, 4, h) {
+			return
+		}
+		s, o := sg.Sub(0, 0, 16, rows), og.Sub(0, 0, 4, h)
+		r1 := archsimd.LoadUint8x16Array(s.Row16(1, 0)).ExtendLo8ToUint16().BitsToInt16()
+		r2 := archsimd.LoadUint8x16Array(s.Row16(2, 0)).ExtendLo8ToUint16().BitsToInt16()
+		r3 := archsimd.LoadUint8x16Array(s.Row16(3, 0)).ExtendLo8ToUint16().BitsToInt16()
+		for r := 0; r < h; r++ {
+			r4 := archsimd.LoadUint8x16Array(s.Row16(r+4, 0)).ExtendLo8ToUint16().BitsToInt16()
+			mc8Store4U16(o.Row4(r, 0), r4.MulAdd(c4, r3.MulAdd(c3, r2.MulAdd(c2, r1.MulAdd(c1, rnd)))).ToBits().Shift(sh).ReshapeToUint64s().GetElem(0))
+			r1, r2, r3 = r2, r3, r4
+		}
+		return
+	}
+	for c := 0; c < w; c += 8 {
+		if !sg.Fits(0, c, 16, rows) || !og.Fits(0, c, 8, h) {
+			return
+		}
+		s, o := sg.Sub(0, c, 16, rows), og.Sub(0, c, 8, h)
+		r1 := archsimd.LoadUint8x16Array(s.Row16(1, 0)).ExtendLo8ToUint16().BitsToInt16()
+		r2 := archsimd.LoadUint8x16Array(s.Row16(2, 0)).ExtendLo8ToUint16().BitsToInt16()
+		r3 := archsimd.LoadUint8x16Array(s.Row16(3, 0)).ExtendLo8ToUint16().BitsToInt16()
+		for r := 0; r < h; r++ {
+			r4 := archsimd.LoadUint8x16Array(s.Row16(r+4, 0)).ExtendLo8ToUint16().BitsToInt16()
+			r4.MulAdd(c4, r3.MulAdd(c3, r2.MulAdd(c2, r1.MulAdd(c1, rnd)))).ToBits().Shift(sh).StoreArray(o.Row8(r, 0))
+			r1, r2, r3 = r2, r3, r4
+		}
+	}
+}
+
+// mc8PrepHV4x4W4 is the fused width-4 compound 2D pass when both horizontal
+// and vertical filters have at most 4 non-zero taps (taps 1..4).
+func mc8PrepHV4x4W4(sg unsafeutil.Grid[uint8], h int, phx, phy *mc8Phase, out []uint16) {
+	hc1 := archsimd.LoadInt16x8Array(&phx.h[1])
+	hc2 := archsimd.LoadInt16x8Array(&phx.h[2])
+	hc3 := archsimd.LoadInt16x8Array(&phx.h[3])
+	hc4 := archsimd.LoadInt16x8Array(&phx.h[4])
+	rnd := archsimd.BroadcastInt16x8(2)
+	sh := archsimd.LoadInt16x8Array(&mc8Vec.sh2)
+	vc1 := archsimd.LoadInt32x4Array(&phy.p[1])
+	vc2 := archsimd.LoadInt32x4Array(&phy.p[2])
+	vc3 := archsimd.LoadInt32x4Array(&phy.p[3])
+	vc4 := archsimd.LoadInt32x4Array(&phy.p[4])
+	vrnd := archsimd.BroadcastInt32x4(mc8PrepV6Rnd)
+	rows := h + 4
+	if !sg.Fits(0, 0, 16, rows) || len(out) < 4*h {
+		return
+	}
+	s := sg.Sub(0, 0, 16, rows)
+	ot := out[: 4*h : 4*h]
+	if !s.Fits(1, 0, 16, 3) {
+		return
+	}
+	hd := s.Sub(1, 0, 16, 3)
+	x1 := mc8H4S(hd.Row16(0, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	x2 := mc8H4S(hd.Row16(1, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	x3 := mc8H4S(hd.Row16(2, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	r := 0
+	for ; r+4 <= h; r += 4 {
+		if !s.Fits(r+4, 0, 16, 4) {
+			return
+		}
+		sw := s.Sub(r+4, 0, 16, 4)
+		x4 := mc8H4S(sw.Row16(0, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		x5 := mc8H4S(sw.Row16(1, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		a0 := x4.MulAdd(vc4, x3.MulAdd(vc3, x2.MulAdd(vc2, x1.MulAdd(vc1, vrnd))))
+		a1 := x5.MulAdd(vc4, x4.MulAdd(vc3, x3.MulAdd(vc2, x2.MulAdd(vc1, vrnd))))
+		a0.ToBits().ReshapeToUint16s().ConcatOdd(a1.ToBits().ReshapeToUint16s()).StoreArray((*[8]uint16)(ot[4*r : 4*r+8]))
+		x6 := mc8H4S(sw.Row16(2, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		x7 := mc8H4S(sw.Row16(3, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		a2 := x6.MulAdd(vc4, x5.MulAdd(vc3, x4.MulAdd(vc2, x3.MulAdd(vc1, vrnd))))
+		a3 := x7.MulAdd(vc4, x6.MulAdd(vc3, x5.MulAdd(vc2, x4.MulAdd(vc1, vrnd))))
+		a2.ToBits().ReshapeToUint16s().ConcatOdd(a3.ToBits().ReshapeToUint16s()).StoreArray((*[8]uint16)(ot[4*r+8 : 4*r+16]))
+		x1, x2, x3 = x5, x6, x7
+	}
+	for ; r+2 <= h; r += 2 {
+		x4 := mc8H4S(s.Row16(r+4, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		x5 := mc8H4S(s.Row16(r+5, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		a0 := x4.MulAdd(vc4, x3.MulAdd(vc3, x2.MulAdd(vc2, x1.MulAdd(vc1, vrnd))))
+		a1 := x5.MulAdd(vc4, x4.MulAdd(vc3, x3.MulAdd(vc2, x2.MulAdd(vc1, vrnd))))
+		a0.ToBits().ReshapeToUint16s().ConcatOdd(a1.ToBits().ReshapeToUint16s()).StoreArray((*[8]uint16)(ot[4*r : 4*r+8]))
+		x1, x2, x3 = x3, x4, x5
+	}
+	if r < h {
+		x4 := mc8H4S(s.Row16(r+4, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		a0 := x4.MulAdd(vc4, x3.MulAdd(vc3, x2.MulAdd(vc2, x1.MulAdd(vc1, vrnd))))
+		v := a0.ToBits().ReshapeToUint16s().ConcatOdd(a0.ToBits().ReshapeToUint16s()).ReshapeToUint64s().GetElem(0)
+		mc8Store4U16((*[4]uint16)(ot[4*r : 4*r+4]), v)
+	}
+}
+
+// mc8PrepHV4W4 is the fused width-4 compound 2D pass when the horizontal filter
+// has at most 4 non-zero taps (taps 1..4) and the vertical filter has 6 taps.
+func mc8PrepHV4W4(sg unsafeutil.Grid[uint8], h int, phx, phy *mc8Phase, out []uint16) {
+	hc1 := archsimd.LoadInt16x8Array(&phx.h[1])
+	hc2 := archsimd.LoadInt16x8Array(&phx.h[2])
+	hc3 := archsimd.LoadInt16x8Array(&phx.h[3])
+	hc4 := archsimd.LoadInt16x8Array(&phx.h[4])
+	rnd := archsimd.BroadcastInt16x8(2)
+	sh := archsimd.LoadInt16x8Array(&mc8Vec.sh2)
+	vc0 := archsimd.LoadInt32x4Array(&phy.p[0])
+	vc1 := archsimd.LoadInt32x4Array(&phy.p[1])
+	vc2 := archsimd.LoadInt32x4Array(&phy.p[2])
+	vc3 := archsimd.LoadInt32x4Array(&phy.p[3])
+	vc4 := archsimd.LoadInt32x4Array(&phy.p[4])
+	vc5 := archsimd.LoadInt32x4Array(&phy.p[5])
+	vrnd := archsimd.BroadcastInt32x4(mc8PrepV6Rnd)
+	rows := h + 5
+	if !sg.Fits(0, 0, 16, rows) || len(out) < 4*h {
+		return
+	}
+	s := sg.Sub(0, 0, 16, rows)
+	ot := out[: 4*h : 4*h]
+	if !s.Fits(0, 0, 16, 5) {
+		return
+	}
+	hd := s.Sub(0, 0, 16, 5)
+	x0 := mc8H4S(hd.Row16(0, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	x1 := mc8H4S(hd.Row16(1, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	x2 := mc8H4S(hd.Row16(2, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	x3 := mc8H4S(hd.Row16(3, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	x4 := mc8H4S(hd.Row16(4, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	r := 0
+	for ; r+4 <= h; r += 4 {
+		if !s.Fits(r+5, 0, 16, 4) {
+			return
+		}
+		sw := s.Sub(r+5, 0, 16, 4)
+		x5 := mc8H4S(sw.Row16(0, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		x6 := mc8H4S(sw.Row16(1, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		a0 := x5.MulAdd(vc5, x4.MulAdd(vc4, x3.MulAdd(vc3, x2.MulAdd(vc2, x1.MulAdd(vc1, x0.MulAdd(vc0, vrnd))))))
+		a1 := x6.MulAdd(vc5, x5.MulAdd(vc4, x4.MulAdd(vc3, x3.MulAdd(vc2, x2.MulAdd(vc1, x1.MulAdd(vc0, vrnd))))))
+		a0.ToBits().ReshapeToUint16s().ConcatOdd(a1.ToBits().ReshapeToUint16s()).StoreArray((*[8]uint16)(ot[4*r : 4*r+8]))
+		x7 := mc8H4S(sw.Row16(2, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		x8 := mc8H4S(sw.Row16(3, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		a2 := x7.MulAdd(vc5, x6.MulAdd(vc4, x5.MulAdd(vc3, x4.MulAdd(vc2, x3.MulAdd(vc1, x2.MulAdd(vc0, vrnd))))))
+		a3 := x8.MulAdd(vc5, x7.MulAdd(vc4, x6.MulAdd(vc3, x5.MulAdd(vc2, x4.MulAdd(vc1, x3.MulAdd(vc0, vrnd))))))
+		a2.ToBits().ReshapeToUint16s().ConcatOdd(a3.ToBits().ReshapeToUint16s()).StoreArray((*[8]uint16)(ot[4*r+8 : 4*r+16]))
+		x0, x1, x2, x3, x4 = x4, x5, x6, x7, x8
+	}
+	for ; r+2 <= h; r += 2 {
+		x5 := mc8H4S(s.Row16(r+5, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		x6 := mc8H4S(s.Row16(r+6, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		a0 := x5.MulAdd(vc5, x4.MulAdd(vc4, x3.MulAdd(vc3, x2.MulAdd(vc2, x1.MulAdd(vc1, x0.MulAdd(vc0, vrnd))))))
+		a1 := x6.MulAdd(vc5, x5.MulAdd(vc4, x4.MulAdd(vc3, x3.MulAdd(vc2, x2.MulAdd(vc1, x1.MulAdd(vc0, vrnd))))))
+		a0.ToBits().ReshapeToUint16s().ConcatOdd(a1.ToBits().ReshapeToUint16s()).StoreArray((*[8]uint16)(ot[4*r : 4*r+8]))
+		x0, x1, x2, x3, x4 = x2, x3, x4, x5, x6
+	}
+	if r < h {
+		x5 := mc8H4S(s.Row16(r+5, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		a0 := x5.MulAdd(vc5, x4.MulAdd(vc4, x3.MulAdd(vc3, x2.MulAdd(vc2, x1.MulAdd(vc1, x0.MulAdd(vc0, vrnd))))))
+		v := a0.ToBits().ReshapeToUint16s().ConcatOdd(a0.ToBits().ReshapeToUint16s()).ReshapeToUint64s().GetElem(0)
+		mc8Store4U16((*[4]uint16)(ot[4*r : 4*r+4]), v)
+	}
+}
+
+// mc8PrepHV2 is the fused 2-tap bilinear compound 2D pass over 8-column strips
+// (taps 2 and 3 of the 6-tap window on both axes), with no intermediate buffer.
+func mc8PrepHV2(sg unsafeutil.Grid[uint8], w, h int, phx, phy *mc8Phase, og unsafeutil.Grid[uint16]) {
+	hc2 := archsimd.LoadInt16x8Array(&phx.h[2])
+	hc3 := archsimd.LoadInt16x8Array(&phx.h[3])
+	rnd := archsimd.BroadcastInt16x8(2)
+	sh := archsimd.LoadInt16x8Array(&mc8Vec.sh2)
+	vc2 := archsimd.LoadInt32x4Array(&phy.p[2])
+	vc3 := archsimd.LoadInt32x4Array(&phy.p[3])
+	vrnd := archsimd.BroadcastInt32x4(mc8PrepV6Rnd)
+	rows := h + 4
+	for c := 0; c < w; c += 8 {
+		if !sg.Fits(0, c, 16, rows) || !og.Fits(0, c, 8, h) {
+			return
+		}
+		s, o := sg.Sub(0, c, 16, rows), og.Sub(0, c, 8, h)
+		a := archsimd.LoadUint8x16Array(s.Row16(2, 0))
+		lo, hi := a.ExtendLo8ToUint16().ReshapeToUint8s(), a.HiToLo().ExtendLo8ToUint16().ReshapeToUint8s()
+		h0 := hi.ConcatShiftBytesRight(lo, 6).ReshapeToUint16s().BitsToInt16().MulAdd(hc3, hi.ConcatShiftBytesRight(lo, 4).ReshapeToUint16s().BitsToInt16().MulAdd(hc2, rnd)).Shift(sh)
+		x0, y0 := h0.ExtendLo4ToInt32(), h0.HiToLo().ExtendLo4ToInt32()
+		for r := 0; r < h; r++ {
+			a = archsimd.LoadUint8x16Array(s.Row16(r+3, 0))
+			lo, hi = a.ExtendLo8ToUint16().ReshapeToUint8s(), a.HiToLo().ExtendLo8ToUint16().ReshapeToUint8s()
+			h1 := hi.ConcatShiftBytesRight(lo, 6).ReshapeToUint16s().BitsToInt16().MulAdd(hc3, hi.ConcatShiftBytesRight(lo, 4).ReshapeToUint16s().BitsToInt16().MulAdd(hc2, rnd)).Shift(sh)
+			x1, y1 := h1.ExtendLo4ToInt32(), h1.HiToLo().ExtendLo4ToInt32()
+			a0 := x1.MulAdd(vc3, x0.MulAdd(vc2, vrnd))
+			b0 := y1.MulAdd(vc3, y0.MulAdd(vc2, vrnd))
+			a0.ToBits().ReshapeToUint16s().ConcatOdd(b0.ToBits().ReshapeToUint16s()).StoreArray(o.Row8(r, 0))
+			x0, y0 = x1, y1
+		}
+	}
+}
+
+// mc8PrepHV6x4 is the fused compound 2D 6-tap H x 4-tap V pass over 8-column
+// strips directly in registers (23 NEON regs, zero spills, no intermediate buffer).
+func mc8PrepHV6x4(sg unsafeutil.Grid[uint8], w, h int, phx, phy *mc8Phase, og unsafeutil.Grid[uint16]) {
+	hc0 := archsimd.LoadInt16x8Array(&phx.h[0])
+	hc1 := archsimd.LoadInt16x8Array(&phx.h[1])
+	hc2 := archsimd.LoadInt16x8Array(&phx.h[2])
+	hc3 := archsimd.LoadInt16x8Array(&phx.h[3])
+	hc4 := archsimd.LoadInt16x8Array(&phx.h[4])
+	hc5 := archsimd.LoadInt16x8Array(&phx.h[5])
+	rnd := archsimd.BroadcastInt16x8(2)
+	sh := archsimd.LoadInt16x8Array(&mc8Vec.sh2)
+	vc1 := archsimd.LoadInt32x4Array(&phy.p[1])
+	vc2 := archsimd.LoadInt32x4Array(&phy.p[2])
+	vc3 := archsimd.LoadInt32x4Array(&phy.p[3])
+	vc4 := archsimd.LoadInt32x4Array(&phy.p[4])
+	vrnd := archsimd.BroadcastInt32x4(mc8PrepV6Rnd)
+	rows := h + 4
+	for c := 0; c < w; c += 8 {
+		if !sg.Fits(0, c, 16, rows) || !og.Fits(0, c, 8, h) {
+			return
+		}
+		s, o := sg.Sub(0, c, 16, rows), og.Sub(0, c, 8, h)
+		a := mc8H6S(s.Row16(1, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+		x1, y1 := a.ExtendLo4ToInt32(), a.HiToLo().ExtendLo4ToInt32()
+		a = mc8H6S(s.Row16(2, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+		x2, y2 := a.ExtendLo4ToInt32(), a.HiToLo().ExtendLo4ToInt32()
+		a = mc8H6S(s.Row16(3, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+		x3, y3 := a.ExtendLo4ToInt32(), a.HiToLo().ExtendLo4ToInt32()
+		for r := 0; r < h; r++ {
+			a4 := mc8H6S(s.Row16(r+4, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+			x4, y4 := a4.ExtendLo4ToInt32(), a4.HiToLo().ExtendLo4ToInt32()
+			p0 := x4.MulAdd(vc4, x3.MulAdd(vc3, x2.MulAdd(vc2, x1.MulAdd(vc1, vrnd))))
+			q0 := y4.MulAdd(vc4, y3.MulAdd(vc3, y2.MulAdd(vc2, y1.MulAdd(vc1, vrnd))))
+			p0.ToBits().ReshapeToUint16s().ConcatOdd(q0.ToBits().ReshapeToUint16s()).StoreArray(o.Row8(r, 0))
+			x1, y1, x2, y2, x3, y3 = x2, y2, x3, y3, x4, y4
+		}
+	}
+}
+
 // mc8PutHV4x4W4 is mc8PutHV4W4 when both horizontal and vertical filters have
 // at most 4 non-zero taps (taps 1..4): skips rows 0 and h+4 and drops the zero
 // outer vertical taps.
@@ -50,10 +410,35 @@ func mc8PutHV4x4W4(sg unsafeutil.Grid[uint8], h int, phx, phy *mc8Phase, dg unsa
 		return
 	}
 	s, d := sg.Sub(0, 0, 16, rows), dg.Sub(0, 0, 4, h)
-	x1 := mc8H4S(s.Row16(1, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
-	x2 := mc8H4S(s.Row16(2, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
-	x3 := mc8H4S(s.Row16(3, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	if !s.Fits(1, 0, 16, 3) {
+		return
+	}
+	hd := s.Sub(1, 0, 16, 3)
+	x1 := mc8H4S(hd.Row16(0, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	x2 := mc8H4S(hd.Row16(1, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	x3 := mc8H4S(hd.Row16(2, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
 	r := 0
+	for ; r+4 <= h; r += 4 {
+		if !s.Fits(r+4, 0, 16, 4) || !d.Fits(r, 0, 4, 4) {
+			return
+		}
+		sw, dw := s.Sub(r+4, 0, 16, 4), d.Sub(r, 0, 4, 4)
+		x4 := mc8H4S(sw.Row16(0, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		x5 := mc8H4S(sw.Row16(1, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		a0 := x4.MulAdd(vc4, x3.MulAdd(vc3, x2.MulAdd(vc2, x1.Mul(vc1))))
+		a1 := x5.MulAdd(vc4, x4.MulAdd(vc3, x3.MulAdd(vc2, x2.Mul(vc1))))
+		v0 := a0.ToBits().ReshapeToUint16s().ConcatOdd(a1.ToBits().ReshapeToUint16s()).BitsToInt16().SaturateToUint8().ReshapeToUint32s()
+		binary.LittleEndian.PutUint32(dw.Row4(0, 0)[:], v0.GetElem(0))
+		binary.LittleEndian.PutUint32(dw.Row4(1, 0)[:], v0.GetElem(1))
+		x6 := mc8H4S(sw.Row16(2, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		x7 := mc8H4S(sw.Row16(3, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		a2 := x6.MulAdd(vc4, x5.MulAdd(vc3, x4.MulAdd(vc2, x3.Mul(vc1))))
+		a3 := x7.MulAdd(vc4, x6.MulAdd(vc3, x5.MulAdd(vc2, x4.Mul(vc1))))
+		v1 := a2.ToBits().ReshapeToUint16s().ConcatOdd(a3.ToBits().ReshapeToUint16s()).BitsToInt16().SaturateToUint8().ReshapeToUint32s()
+		binary.LittleEndian.PutUint32(dw.Row4(2, 0)[:], v1.GetElem(0))
+		binary.LittleEndian.PutUint32(dw.Row4(3, 0)[:], v1.GetElem(1))
+		x1, x2, x3 = x5, x6, x7
+	}
 	for ; r+2 <= h; r += 2 {
 		x4 := mc8H4S(s.Row16(r+4, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
 		x5 := mc8H4S(s.Row16(r+5, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
@@ -93,12 +478,37 @@ func mc8PutHV4W4(sg unsafeutil.Grid[uint8], h int, phx, phy *mc8Phase, dg unsafe
 		return
 	}
 	s, d := sg.Sub(0, 0, 16, rows), dg.Sub(0, 0, 4, h)
-	x0 := mc8H4S(s.Row16(0, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
-	x1 := mc8H4S(s.Row16(1, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
-	x2 := mc8H4S(s.Row16(2, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
-	x3 := mc8H4S(s.Row16(3, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
-	x4 := mc8H4S(s.Row16(4, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	if !s.Fits(0, 0, 16, 5) {
+		return
+	}
+	hd := s.Sub(0, 0, 16, 5)
+	x0 := mc8H4S(hd.Row16(0, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	x1 := mc8H4S(hd.Row16(1, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	x2 := mc8H4S(hd.Row16(2, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	x3 := mc8H4S(hd.Row16(3, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+	x4 := mc8H4S(hd.Row16(4, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
 	r := 0
+	for ; r+4 <= h; r += 4 {
+		if !s.Fits(r+5, 0, 16, 4) || !d.Fits(r, 0, 4, 4) {
+			return
+		}
+		sw, dw := s.Sub(r+5, 0, 16, 4), d.Sub(r, 0, 4, 4)
+		x5 := mc8H4S(sw.Row16(0, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		x6 := mc8H4S(sw.Row16(1, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		a0 := x5.MulAdd(vc5, x4.MulAdd(vc4, x3.MulAdd(vc3, x2.MulAdd(vc2, x1.MulAdd(vc1, x0.Mul(vc0))))))
+		a1 := x6.MulAdd(vc5, x5.MulAdd(vc4, x4.MulAdd(vc3, x3.MulAdd(vc2, x2.MulAdd(vc1, x1.Mul(vc0))))))
+		v0 := a0.ToBits().ReshapeToUint16s().ConcatOdd(a1.ToBits().ReshapeToUint16s()).BitsToInt16().SaturateToUint8().ReshapeToUint32s()
+		binary.LittleEndian.PutUint32(dw.Row4(0, 0)[:], v0.GetElem(0))
+		binary.LittleEndian.PutUint32(dw.Row4(1, 0)[:], v0.GetElem(1))
+		x7 := mc8H4S(sw.Row16(2, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		x8 := mc8H4S(sw.Row16(3, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
+		a2 := x7.MulAdd(vc5, x6.MulAdd(vc4, x5.MulAdd(vc3, x4.MulAdd(vc2, x3.MulAdd(vc1, x2.Mul(vc0))))))
+		a3 := x8.MulAdd(vc5, x7.MulAdd(vc4, x6.MulAdd(vc3, x5.MulAdd(vc2, x4.MulAdd(vc1, x3.Mul(vc0))))))
+		v1 := a2.ToBits().ReshapeToUint16s().ConcatOdd(a3.ToBits().ReshapeToUint16s()).BitsToInt16().SaturateToUint8().ReshapeToUint32s()
+		binary.LittleEndian.PutUint32(dw.Row4(2, 0)[:], v1.GetElem(0))
+		binary.LittleEndian.PutUint32(dw.Row4(3, 0)[:], v1.GetElem(1))
+		x0, x1, x2, x3, x4 = x4, x5, x6, x7, x8
+	}
 	for ; r+2 <= h; r += 2 {
 		x5 := mc8H4S(s.Row16(r+5, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
 		x6 := mc8H4S(s.Row16(r+6, 0), hc1, hc2, hc3, hc4, rnd).Shift(sh).ExtendLo4ToInt32()
@@ -150,6 +560,96 @@ func mc8PutHV2(sg unsafeutil.Grid[uint8], w, h int, phx, phy *mc8Phase, dg unsaf
 	}
 }
 
+// mc8PutHV6x4 is mc8PutHV6 when the vertical filter has at most 4 non-zero
+// taps (taps 1..4, e.g. h == 4 regular4/smooth4/bilinear): skips rows 0 and
+// h+4 and drops the zero outer vertical taps.
+func mc8PutHV6x4(sg unsafeutil.Grid[uint8], w, h int, phx, phy *mc8Phase, dg unsafeutil.Grid[uint8]) {
+	hc0 := archsimd.LoadInt16x8Array(&phx.h[0])
+	hc1 := archsimd.LoadInt16x8Array(&phx.h[1])
+	hc2 := archsimd.LoadInt16x8Array(&phx.h[2])
+	hc3 := archsimd.LoadInt16x8Array(&phx.h[3])
+	hc4 := archsimd.LoadInt16x8Array(&phx.h[4])
+	hc5 := archsimd.LoadInt16x8Array(&phx.h[5])
+	rnd := archsimd.BroadcastInt16x8(mc8PutH6ToI32Rnd)
+	sh := archsimd.LoadInt16x8Array(&mc8Vec.sh2)
+	vc1 := archsimd.LoadInt32x4Array(&phy.v[1])
+	vc2 := archsimd.LoadInt32x4Array(&phy.v[2])
+	vc3 := archsimd.LoadInt32x4Array(&phy.v[3])
+	vc4 := archsimd.LoadInt32x4Array(&phy.v[4])
+	rows := h + 4
+	for c := 0; c < w; c += 8 {
+		if !sg.Fits(0, c, 16, rows) || !dg.Fits(0, c, 8, h) {
+			return
+		}
+		s, d := sg.Sub(0, c, 16, rows), dg.Sub(0, c, 8, h)
+		if !s.Fits(1, 0, 16, 3) {
+			return
+		}
+		hd := s.Sub(1, 0, 16, 3)
+		a := mc8H6S(hd.Row16(0, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+		x1, y1 := a.ExtendLo4ToInt32(), a.HiToLo().ExtendLo4ToInt32()
+		a = mc8H6S(hd.Row16(1, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+		x2, y2 := a.ExtendLo4ToInt32(), a.HiToLo().ExtendLo4ToInt32()
+		a = mc8H6S(hd.Row16(2, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+		x3, y3 := a.ExtendLo4ToInt32(), a.HiToLo().ExtendLo4ToInt32()
+		r := 0
+		for ; r+4 <= h; r += 4 {
+			if !s.Fits(r+4, 0, 16, 4) || !d.Fits(r, 0, 8, 4) {
+				return
+			}
+			sw, dw := s.Sub(r+4, 0, 16, 4), d.Sub(r, 0, 8, 4)
+			a4 := mc8H6S(sw.Row16(0, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+			x4, y4 := a4.ExtendLo4ToInt32(), a4.HiToLo().ExtendLo4ToInt32()
+			a5 := mc8H6S(sw.Row16(1, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+			x5, y5 := a5.ExtendLo4ToInt32(), a5.HiToLo().ExtendLo4ToInt32()
+			p0 := x4.MulAdd(vc4, x3.MulAdd(vc3, x2.MulAdd(vc2, x1.Mul(vc1))))
+			q0 := y4.MulAdd(vc4, y3.MulAdd(vc3, y2.MulAdd(vc2, y1.Mul(vc1))))
+			p1 := x5.MulAdd(vc4, x4.MulAdd(vc3, x3.MulAdd(vc2, x2.Mul(vc1))))
+			q1 := y5.MulAdd(vc4, y4.MulAdd(vc3, y3.MulAdd(vc2, y2.Mul(vc1))))
+			v0 := p0.ToBits().ReshapeToUint16s().ConcatOdd(q0.ToBits().ReshapeToUint16s()).BitsToInt16()
+			v1 := p1.ToBits().ReshapeToUint16s().ConcatOdd(q1.ToBits().ReshapeToUint16s()).BitsToInt16()
+			binary.LittleEndian.PutUint64(dw.Row8(0, 0)[:], mc8Lo64(v0.SaturateToUint8()))
+			binary.LittleEndian.PutUint64(dw.Row8(1, 0)[:], mc8Lo64(v1.SaturateToUint8()))
+			a6 := mc8H6S(sw.Row16(2, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+			x6, y6 := a6.ExtendLo4ToInt32(), a6.HiToLo().ExtendLo4ToInt32()
+			a7 := mc8H6S(sw.Row16(3, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+			x7, y7 := a7.ExtendLo4ToInt32(), a7.HiToLo().ExtendLo4ToInt32()
+			p2 := x6.MulAdd(vc4, x5.MulAdd(vc3, x4.MulAdd(vc2, x3.Mul(vc1))))
+			q2 := y6.MulAdd(vc4, y5.MulAdd(vc3, y4.MulAdd(vc2, y3.Mul(vc1))))
+			p3 := x7.MulAdd(vc4, x6.MulAdd(vc3, x5.MulAdd(vc2, x4.Mul(vc1))))
+			q3 := y7.MulAdd(vc4, y6.MulAdd(vc3, y5.MulAdd(vc2, y4.Mul(vc1))))
+			v2 := p2.ToBits().ReshapeToUint16s().ConcatOdd(q2.ToBits().ReshapeToUint16s()).BitsToInt16()
+			v3 := p3.ToBits().ReshapeToUint16s().ConcatOdd(q3.ToBits().ReshapeToUint16s()).BitsToInt16()
+			binary.LittleEndian.PutUint64(dw.Row8(2, 0)[:], mc8Lo64(v2.SaturateToUint8()))
+			binary.LittleEndian.PutUint64(dw.Row8(3, 0)[:], mc8Lo64(v3.SaturateToUint8()))
+			x1, y1, x2, y2, x3, y3 = x5, y5, x6, y6, x7, y7
+		}
+		for ; r+2 <= h; r += 2 {
+			a4 := mc8H6S(s.Row16(r+4, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+			x4, y4 := a4.ExtendLo4ToInt32(), a4.HiToLo().ExtendLo4ToInt32()
+			a5 := mc8H6S(s.Row16(r+5, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+			x5, y5 := a5.ExtendLo4ToInt32(), a5.HiToLo().ExtendLo4ToInt32()
+			p0 := x4.MulAdd(vc4, x3.MulAdd(vc3, x2.MulAdd(vc2, x1.Mul(vc1))))
+			q0 := y4.MulAdd(vc4, y3.MulAdd(vc3, y2.MulAdd(vc2, y1.Mul(vc1))))
+			p1 := x5.MulAdd(vc4, x4.MulAdd(vc3, x3.MulAdd(vc2, x2.Mul(vc1))))
+			q1 := y5.MulAdd(vc4, y4.MulAdd(vc3, y3.MulAdd(vc2, y2.Mul(vc1))))
+			v0 := p0.ToBits().ReshapeToUint16s().ConcatOdd(q0.ToBits().ReshapeToUint16s()).BitsToInt16()
+			v1 := p1.ToBits().ReshapeToUint16s().ConcatOdd(q1.ToBits().ReshapeToUint16s()).BitsToInt16()
+			binary.LittleEndian.PutUint64(d.Row8(r, 0)[:], mc8Lo64(v0.SaturateToUint8()))
+			binary.LittleEndian.PutUint64(d.Row8(r+1, 0)[:], mc8Lo64(v1.SaturateToUint8()))
+			x1, y1, x2, y2, x3, y3 = x3, y3, x4, y4, x5, y5
+		}
+		if r < h {
+			a4 := mc8H6S(s.Row16(r+4, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+			x4, y4 := a4.ExtendLo4ToInt32(), a4.HiToLo().ExtendLo4ToInt32()
+			p0 := x4.MulAdd(vc4, x3.MulAdd(vc3, x2.MulAdd(vc2, x1.Mul(vc1))))
+			q0 := y4.MulAdd(vc4, y3.MulAdd(vc3, y2.MulAdd(vc2, y1.Mul(vc1))))
+			v0 := p0.ToBits().ReshapeToUint16s().ConcatOdd(q0.ToBits().ReshapeToUint16s()).BitsToInt16()
+			binary.LittleEndian.PutUint64(d.Row8(r, 0)[:], mc8Lo64(v0.SaturateToUint8()))
+		}
+	}
+}
+
 // mc8PutHV6 is the fused put 2D six-tap horizontal+vertical pass over 8-column
 // strips directly in registers with no intermediate buffer.
 func mc8PutHV6(sg unsafeutil.Grid[uint8], w, h int, phx, phy *mc8Phase, dg unsafeutil.Grid[uint8]) {
@@ -173,17 +673,42 @@ func mc8PutHV6(sg unsafeutil.Grid[uint8], w, h int, phx, phy *mc8Phase, dg unsaf
 			return
 		}
 		s, d := sg.Sub(0, c, 16, rows), dg.Sub(0, c, 8, h)
-		a := mc8H6S(s.Row16(0, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+		if !s.Fits(0, 0, 16, 5) {
+			return
+		}
+		hd := s.Sub(0, 0, 16, 5)
+		a := mc8H6S(hd.Row16(0, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
 		x0, y0 := a.ExtendLo4ToInt32(), a.HiToLo().ExtendLo4ToInt32()
-		a = mc8H6S(s.Row16(1, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+		a = mc8H6S(hd.Row16(1, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
 		x1, y1 := a.ExtendLo4ToInt32(), a.HiToLo().ExtendLo4ToInt32()
-		a = mc8H6S(s.Row16(2, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+		a = mc8H6S(hd.Row16(2, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
 		x2, y2 := a.ExtendLo4ToInt32(), a.HiToLo().ExtendLo4ToInt32()
-		a = mc8H6S(s.Row16(3, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+		a = mc8H6S(hd.Row16(3, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
 		x3, y3 := a.ExtendLo4ToInt32(), a.HiToLo().ExtendLo4ToInt32()
-		a = mc8H6S(s.Row16(4, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+		a = mc8H6S(hd.Row16(4, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
 		x4, y4 := a.ExtendLo4ToInt32(), a.HiToLo().ExtendLo4ToInt32()
 		r := 0
+		for ; r+4 <= h; r += 4 {
+			if !s.Fits(r+5, 0, 16, 4) || !d.Fits(r, 0, 8, 4) {
+				return
+			}
+			sw, dw := s.Sub(r+5, 0, 16, 4), d.Sub(r, 0, 8, 4)
+			a5 := mc8H6S(sw.Row16(0, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+			x5, y5 := a5.ExtendLo4ToInt32(), a5.HiToLo().ExtendLo4ToInt32()
+			a6 := mc8H6S(sw.Row16(1, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+			x6, y6 := a6.ExtendLo4ToInt32(), a6.HiToLo().ExtendLo4ToInt32()
+			u0, u1 := mc8V6PutPair(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, vc0, vc1, vc2, vc3, vc4, vc5)
+			binary.LittleEndian.PutUint64(dw.Row8(0, 0)[:], u0)
+			binary.LittleEndian.PutUint64(dw.Row8(1, 0)[:], u1)
+			a7 := mc8H6S(sw.Row16(2, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+			x7, y7 := a7.ExtendLo4ToInt32(), a7.HiToLo().ExtendLo4ToInt32()
+			a8 := mc8H6S(sw.Row16(3, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
+			x8, y8 := a8.ExtendLo4ToInt32(), a8.HiToLo().ExtendLo4ToInt32()
+			u2, u3 := mc8V6PutPair(x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, x7, y7, x8, y8, vc0, vc1, vc2, vc3, vc4, vc5)
+			binary.LittleEndian.PutUint64(dw.Row8(2, 0)[:], u2)
+			binary.LittleEndian.PutUint64(dw.Row8(3, 0)[:], u3)
+			x0, y0, x1, y1, x2, y2, x3, y3, x4, y4 = x4, y4, x5, y5, x6, y6, x7, y7, x8, y8
+		}
 		for ; r+2 <= h; r += 2 {
 			a5 := mc8H6S(s.Row16(r+5, 0), hc0, hc1, hc2, hc3, hc4, hc5, rnd).Shift(sh)
 			x5, y5 := a5.ExtendLo4ToInt32(), a5.HiToLo().ExtendLo4ToInt32()

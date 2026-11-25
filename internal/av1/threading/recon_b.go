@@ -106,7 +106,8 @@ func (c *frameWorkTileResidualLoopController) ReconB(visit *tile.BlockLoopVisit,
 }
 
 // reconCoefTree is dav1d's read_coef_tree (src/recon_tmpl.c): it follows the
-// var-tx split masks down to the coded luma transform blocks.
+// var-tx split masks down to the coded luma transform blocks (depth 0 -> 1 -> 2
+// non-recursively to avoid recursive call frames).
 func (c *frameWorkTileResidualLoopController) reconCoefTree(visit *tile.BlockLoopVisit, b *tile.CoefBlock, dq *[3]tile.CoefDequant, size tile.TransformSize, depth int, xOff, yOff, x4, y4 int) error {
 	dims, ok := size.Dimensions()
 	if !ok {
@@ -115,34 +116,87 @@ func (c *frameWorkTileResidualLoopController) reconCoefTree(visit *tile.BlockLoo
 	txW, txH := int(dims.W4), int(dims.H4)
 	right, bottom := b.X4+b.W4, b.Y4+b.H4
 	split := &b.Tree.Split
-	if depth < 2 && yOff < 4 && split[depth]&(1<<(yOff*4+xOff)) != 0 && size > tile.TransformSize4x4 {
-		sub := dims.Sub
-		subDims, ok := sub.Dimensions()
-		if !ok {
-			return ErrInvalidBatch
-		}
-		txsw, txsh := int(subDims.W4), int(subDims.H4)
-		if err := c.reconCoefTree(visit, b, dq, sub, depth+1, xOff*2, yOff*2, x4, y4); err != nil {
+	if depth >= 2 || yOff >= 4 || split[depth]&(1<<(yOff*4+xOff)) == 0 || size <= tile.TransformSize4x4 {
+		return c.reconTXB(visit, b, dq, 0, size, x4, y4, min(txW, right-x4), min(txH, bottom-y4))
+	}
+	sub := dims.Sub
+	subDims, ok := sub.Dimensions()
+	if !ok {
+		return ErrInvalidBatch
+	}
+	txsw, txsh := int(subDims.W4), int(subDims.H4)
+	if depth == 1 || sub <= tile.TransformSize4x4 || split[1] == 0 {
+		if err := c.reconTXB(visit, b, dq, 0, sub, x4, y4, min(txsw, right-x4), min(txsh, bottom-y4)); err != nil {
 			return err
 		}
 		if txW >= txH && x4+txsw < right {
-			if err := c.reconCoefTree(visit, b, dq, sub, depth+1, xOff*2+1, yOff*2, x4+txsw, y4); err != nil {
+			if err := c.reconTXB(visit, b, dq, 0, sub, x4+txsw, y4, min(txsw, right-(x4+txsw)), min(txsh, bottom-y4)); err != nil {
 				return err
 			}
 		}
 		if txH >= txW && y4+txsh < bottom {
-			if err := c.reconCoefTree(visit, b, dq, sub, depth+1, xOff*2, yOff*2+1, x4, y4+txsh); err != nil {
+			if err := c.reconTXB(visit, b, dq, 0, sub, x4, y4+txsh, min(txsw, right-x4), min(txsh, bottom-(y4+txsh))); err != nil {
 				return err
 			}
 			if txW >= txH && x4+txsw < right {
-				if err := c.reconCoefTree(visit, b, dq, sub, depth+1, xOff*2+1, yOff*2+1, x4+txsw, y4+txsh); err != nil {
+				if err := c.reconTXB(visit, b, dq, 0, sub, x4+txsw, y4+txsh, min(txsw, right-(x4+txsw)), min(txsh, bottom-(y4+txsh))); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}
-	return c.reconTXB(visit, b, dq, 0, size, x4, y4, min(txW, right-x4), min(txH, bottom-y4))
+	if err := c.reconCoefTree1(visit, b, dq, sub, subDims, xOff*2, yOff*2, x4, y4, right, bottom); err != nil {
+		return err
+	}
+	if txW >= txH && x4+txsw < right {
+		if err := c.reconCoefTree1(visit, b, dq, sub, subDims, xOff*2+1, yOff*2, x4+txsw, y4, right, bottom); err != nil {
+			return err
+		}
+	}
+	if txH >= txW && y4+txsh < bottom {
+		if err := c.reconCoefTree1(visit, b, dq, sub, subDims, xOff*2, yOff*2+1, x4, y4+txsh, right, bottom); err != nil {
+			return err
+		}
+		if txW >= txH && x4+txsw < right {
+			if err := c.reconCoefTree1(visit, b, dq, sub, subDims, xOff*2+1, yOff*2+1, x4+txsw, y4+txsh, right, bottom); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (c *frameWorkTileResidualLoopController) reconCoefTree1(visit *tile.BlockLoopVisit, b *tile.CoefBlock, dq *[3]tile.CoefDequant, size tile.TransformSize, dims tile.TransformDimensions, xOff, yOff, x4, y4, right, bottom int) error {
+	txW, txH := int(dims.W4), int(dims.H4)
+	if yOff >= 4 || b.Tree.Split[1]&(1<<(yOff*4+xOff)) == 0 || size <= tile.TransformSize4x4 {
+		return c.reconTXB(visit, b, dq, 0, size, x4, y4, min(txW, right-x4), min(txH, bottom-y4))
+	}
+	sub := dims.Sub
+	subDims, ok := sub.Dimensions()
+	if !ok {
+		return ErrInvalidBatch
+	}
+	txsw, txsh := int(subDims.W4), int(subDims.H4)
+	if err := c.reconTXB(visit, b, dq, 0, sub, x4, y4, min(txsw, right-x4), min(txsh, bottom-y4)); err != nil {
+		return err
+	}
+	if txW >= txH && x4+txsw < right {
+		if err := c.reconTXB(visit, b, dq, 0, sub, x4+txsw, y4, min(txsw, right-(x4+txsw)), min(txsh, bottom-y4)); err != nil {
+			return err
+		}
+	}
+	if txH >= txW && y4+txsh < bottom {
+		if err := c.reconTXB(visit, b, dq, 0, sub, x4, y4+txsh, min(txsw, right-x4), min(txsh, bottom-(y4+txsh))); err != nil {
+			return err
+		}
+		if txW >= txH && x4+txsw < right {
+			if err := c.reconTXB(visit, b, dq, 0, sub, x4+txsw, y4+txsh, min(txsw, right-(x4+txsw)), min(txsh, bottom-(y4+txsh))); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // reconTXB is one transform block of recon_b_* / read_coef_blocks:
