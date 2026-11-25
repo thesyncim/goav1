@@ -65,6 +65,11 @@ type svtPD0SB struct {
 	part64 tile.Partition
 	part32 [4]tile.Partition
 	part16 [16]tile.Partition
+	// Cached full-pel LAST ME (sse, variance) for square PUs (64/32/16,
+	// svtMEBlockOffset indices 0..20), reused by subpel and MDS0.
+	sse   [21]uint32
+	vari  [21]uint32
+	stats uint32
 }
 
 // svtPD0PartitionRates is the frame-frozen partition_fac_bits subset VLPD0
@@ -153,6 +158,22 @@ func (st *lossyEncodeState) prepareSVTPD0(gridCols, gridRows int) {
 	for i := range st.pd0Grid[:need] {
 		st.pd0Grid[i].ready = false
 	}
+}
+
+// svtPD0Lookup returns the cached VLPD0 SB at (px, py) if already built.
+func (st *lossyEncodeState) svtPD0Lookup(px, py int) *svtPD0SB {
+	if st.pd0Cols <= 0 {
+		return nil
+	}
+	idx := (py/64)*st.pd0Cols + px/64
+	if idx < 0 || idx >= len(st.pd0Grid) {
+		return nil
+	}
+	sb := &st.pd0Grid[idx]
+	if !sb.ready {
+		return nil
+	}
+	return sb
 }
 
 // svtPD0ForSB returns the VLPD0 tree of the superblock at (px, py),
@@ -297,7 +318,7 @@ func (p *svtPD0Pass) pick(x, y, n int) (bool, int64) {
 		shape = partitionInvalid
 	}
 	if shape != partitionInvalid && bx+w <= frameW && by+h <= frameH {
-		dist := p.st.svtPD0BlockDist(p.src, p.ref, p.me, p.sbX, p.sbY, x, y, w, h)
+		dist := p.st.svtPD0BlockDist(p.sb, p.src, p.ref, p.me, p.sbX, p.sbY, x, y, w, h)
 		cost = depthRemovalRDCost(p.lambda, p.st.pd0Rates.none, dist)
 		valid = true
 		p.record(x, y, n, shape)
@@ -364,19 +385,23 @@ const partitionInvalid = tile.Partition(0xFF)
 // no ME the zero-vector backup is the candidate. Positions that leave the
 // frame read edge-replicated samples, the padding SVT's reference buffers
 // carry.
-func (st *lossyEncodeState) svtPD0BlockDist(src, ref SourceFrame420, me *realtimeSBMultiSizeME, sbX, sbY, x, y, w, h int) int64 {
+func (st *lossyEncodeState) svtPD0BlockDist(sb *svtPD0SB, src, ref SourceFrame420, me *realtimeSBMultiSizeME, sbX, sbY, x, y, w, h int) int64 {
 	dx, dy := 0, 0
+	pu := -1
 	if me != nil {
-		pu := svtMEBlockOffset(x, y, max(w, h))
-		x, y := me.mvAt(pu)
-		dx, dy = int(x), int(y)
+		pu = svtMEBlockOffset(x, y, max(w, h))
+		mx, my := me.mvAt(pu)
+		dx, dy = int(mx), int(my)
+	} else if w == h && w >= 16 {
+		pu = svtMEBlockOffset(x, y, w)
 	}
 	bx, by := sbX+x, sbY+y
 	rx, ry := bx+dx, by+dy
 	srcBlk := src.Y[by*src.YStride+bx:]
 	var sse uint32
 	var sum int32
-	if rx >= 0 && ry >= 0 && rx+w <= ref.Width && ry+h <= ref.Height {
+	inBounds := rx >= 0 && ry >= 0 && rx+w <= ref.Width && ry+h <= ref.Height
+	if inBounds {
 		sse, sum = svtPD0RectStats(srcBlk, src.YStride, ref.Y[ry*ref.YStride+rx:], ref.YStride, w, h)
 	} else if p := st.refPads.lookup(ref.Y, ref.Width, ref.Height); p != nil && rx >= -p.border && ry >= -p.border && rx+w <= ref.Width+p.border && ry+h <= ref.Height+p.border {
 		// SVT reads its padded reference picture directly; the padded copy
@@ -396,7 +421,13 @@ func (st *lossyEncodeState) svtPD0BlockDist(src, ref SourceFrame420, me *realtim
 	}
 	// svt_aom_variance{w}x{h}: sse - sum^2 / (w*h), the division a shift.
 	log2N := uint(bits.Len(uint(w*h)) - 1)
-	return int64(sse) - int64((int64(sum)*int64(sum))>>log2N)
+	vari := int64(sse) - int64((int64(sum)*int64(sum))>>log2N)
+	if sb != nil && inBounds && w == h && w >= 16 && uint(pu) < 21 {
+		sb.sse[pu] = sse
+		sb.vari[pu] = uint32(vari)
+		sb.stats |= 1 << uint(pu)
+	}
+	return vari
 }
 
 // svtPD0RectStats is the (sse, sum) pair of the w x h residual for the

@@ -1578,13 +1578,29 @@ func cdefByteConstrain(t, x, str archsimd.Uint8x16, sh archsimd.Int8x16) archsim
 	return pos.Min(lim).BitsToInt8().Sub(neg.Min(lim).BitsToInt8())
 }
 
+// cdefByteFinishConsts holds hoisted broadcast constants for cdefByteFinish.
+type cdefByteFinishConsts struct {
+	four, shL7, shR7, shR3 archsimd.Int8x16
+	bias                   archsimd.Uint8x16
+}
+
+func newCDEFByteFinishConsts() cdefByteFinishConsts {
+	return cdefByteFinishConsts{
+		four: archsimd.BroadcastInt8x16(4),
+		shL7: archsimd.BroadcastInt8x16(7),
+		shR7: archsimd.BroadcastInt8x16(-7),
+		shR3: archsimd.BroadcastInt8x16(-3),
+		bias: archsimd.BroadcastUint8x16(0x80),
+	}
+}
+
 // cdefByteFinish turns the two accumulators (a seeded with -1) into the
 // filtered pixels: x + ((8 + sum - (sum < 0)) >> 4) saturated to [0, 255].
-func cdefByteFinish(x archsimd.Uint8x16, a, b archsimd.Int8x16, four archsimd.Int8x16, bias archsimd.Uint8x16) archsimd.Uint8x16 {
+func cdefByteFinish(x archsimd.Uint8x16, a, b archsimd.Int8x16, k *cdefByteFinishConsts) archsimd.Uint8x16 {
 	r := a.Average(b)
-	h := r.Add(a.Xor(b).ShiftAllLeft(7).And(r).ShiftAllRight(7))
-	d := h.Add(four).ShiftAllRight(3)
-	return x.Xor(bias).BitsToInt8().AddSaturated(d).ToBits().Xor(bias)
+	h := r.Add(a.Xor(b).Shift(k.shL7).And(r).Shift(k.shR7))
+	d := h.Add(k.four).Shift(k.shR3)
+	return x.Xor(k.bias).BitsToInt8().AddSaturated(d).ToBits().Xor(k.bias)
 }
 
 func cdefByteFilter8PriSec(ctx *cdefByteCtx) {
@@ -1604,8 +1620,7 @@ func cdefByteFilter8PriSec(ctx *cdefByteCtx) {
 	priSh, secSh := ctx.priSh, ctx.secSh
 	tap0, tap1 := ctx.tap0, ctx.tap1
 	neg1 := archsimd.BroadcastInt8x16(-1)
-	four := archsimd.BroadcastInt8x16(4)
-	bias := archsimd.BroadcastUint8x16(0x80)
+	fk := newCDEFByteFinishConsts()
 	input, dst := ctx.input, ctx.dst
 	base := ctx.srcOff - cdefByteCenter
 	dstOff, dstStr := ctx.dstOff, ctx.dstStr
@@ -1639,7 +1654,7 @@ func cdefByteFilter8PriSec(ctx *cdefByteCtx) {
 			p, q = cdefByteLoad8x2Rows(r0, r1, s3p), cdefByteLoad8x2Rows(r0, r1, s3m)
 			mn, mx = mn.Min(p).Min(q), mx.Max(p).Max(q)
 			a, b = a.Add(cdefByteConstrain(p, x, secStr, secSh)), b.Add(cdefByteConstrain(q, x, secStr, secSh))
-			y := cdefByteFinish(x, a, b, four, bias).Min(mx).Max(mn).ReshapeToUint64s()
+			y := cdefByteFinish(x, a, b, &fk).Min(mx).Max(mn).ReshapeToUint64s()
 			binary.LittleEndian.PutUint64(db.Row8(2 * s)[:], y.GetElem(0))
 			binary.LittleEndian.PutUint64(db.Row8(2*s + 1)[:], y.GetElem(1))
 		}
@@ -1672,7 +1687,7 @@ func cdefByteFilter8PriSec(ctx *cdefByteCtx) {
 		p, q = cdefByteLoad8x2Rows(r0, r1, s3p), cdefByteLoad8x2Rows(r0, r1, s3m)
 		mn, mx = mn.Min(p).Min(q), mx.Max(p).Max(q)
 		a, b = a.Add(cdefByteConstrain(p, x, secStr, secSh)), b.Add(cdefByteConstrain(q, x, secStr, secSh))
-		y := cdefByteFinish(x, a, b, four, bias).Min(mx).Max(mn).ReshapeToUint64s()
+		y := cdefByteFinish(x, a, b, &fk).Min(mx).Max(mn).ReshapeToUint64s()
 		binary.LittleEndian.PutUint64(dst[dstOff:dstOff+8], y.GetElem(0))
 		binary.LittleEndian.PutUint64(dst[dstOff+dstStr:dstOff+dstStr+8], y.GetElem(1))
 		base += 2 * BStride
@@ -1690,8 +1705,7 @@ func cdefByteFilter8Pri(ctx *cdefByteCtx) {
 	priStr, priSh := ctx.priStr, ctx.priSh
 	tap0, tap1 := ctx.tap0, ctx.tap1
 	neg1 := archsimd.BroadcastInt8x16(-1)
-	four := archsimd.BroadcastInt8x16(4)
-	bias := archsimd.BroadcastUint8x16(0x80)
+	fk := newCDEFByteFinishConsts()
 	input, dst := ctx.input, ctx.dst
 	base := ctx.srcOff - cdefByteCenter
 	dstOff, dstStr := ctx.dstOff, ctx.dstStr
@@ -1707,7 +1721,7 @@ func cdefByteFilter8Pri(ctx *cdefByteCtx) {
 			b := cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, p0m), x, priStr, priSh).Mul(tap0)
 			a = cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, p1p), x, priStr, priSh).MulAdd(tap1, a)
 			b = cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, p1m), x, priStr, priSh).MulAdd(tap1, b)
-			y := cdefByteFinish(x, a, b, four, bias).ReshapeToUint64s()
+			y := cdefByteFinish(x, a, b, &fk).ReshapeToUint64s()
 			binary.LittleEndian.PutUint64(db.Row8(2 * s)[:], y.GetElem(0))
 			binary.LittleEndian.PutUint64(db.Row8(2*s + 1)[:], y.GetElem(1))
 		}
@@ -1722,7 +1736,7 @@ func cdefByteFilter8Pri(ctx *cdefByteCtx) {
 		b := cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, p0m), x, priStr, priSh).Mul(tap0)
 		a = cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, p1p), x, priStr, priSh).MulAdd(tap1, a)
 		b = cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, p1m), x, priStr, priSh).MulAdd(tap1, b)
-		y := cdefByteFinish(x, a, b, four, bias).ReshapeToUint64s()
+		y := cdefByteFinish(x, a, b, &fk).ReshapeToUint64s()
 		binary.LittleEndian.PutUint64(dst[dstOff:dstOff+8], y.GetElem(0))
 		binary.LittleEndian.PutUint64(dst[dstOff+dstStr:dstOff+dstStr+8], y.GetElem(1))
 		base += 2 * BStride
@@ -1742,8 +1756,7 @@ func cdefByteFilter8Sec(ctx *cdefByteCtx) {
 	}
 	secStr, secSh := ctx.secStr, ctx.secSh
 	neg1 := archsimd.BroadcastInt8x16(-1)
-	four := archsimd.BroadcastInt8x16(4)
-	bias := archsimd.BroadcastUint8x16(0x80)
+	fk := newCDEFByteFinishConsts()
 	input, dst := ctx.input, ctx.dst
 	base := ctx.srcOff - cdefByteCenter
 	dstOff, dstStr := ctx.dstOff, ctx.dstStr
@@ -1765,7 +1778,7 @@ func cdefByteFilter8Sec(ctx *cdefByteCtx) {
 			b := kb.Add(kb).
 				Add(cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, s2m), x, secStr, secSh)).
 				Add(cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, s3m), x, secStr, secSh))
-			y := cdefByteFinish(x, a, b, four, bias).ReshapeToUint64s()
+			y := cdefByteFinish(x, a, b, &fk).ReshapeToUint64s()
 			binary.LittleEndian.PutUint64(db.Row8(2 * s)[:], y.GetElem(0))
 			binary.LittleEndian.PutUint64(db.Row8(2*s + 1)[:], y.GetElem(1))
 		}
@@ -1786,7 +1799,7 @@ func cdefByteFilter8Sec(ctx *cdefByteCtx) {
 		b := kb.Add(kb).
 			Add(cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, s2m), x, secStr, secSh)).
 			Add(cdefByteConstrain(cdefByteLoad8x2Rows(r0, r1, s3m), x, secStr, secSh))
-		y := cdefByteFinish(x, a, b, four, bias).ReshapeToUint64s()
+		y := cdefByteFinish(x, a, b, &fk).ReshapeToUint64s()
 		binary.LittleEndian.PutUint64(dst[dstOff:dstOff+8], y.GetElem(0))
 		binary.LittleEndian.PutUint64(dst[dstOff+dstStr:dstOff+dstStr+8], y.GetElem(1))
 		base += 2 * BStride
@@ -1827,8 +1840,7 @@ func cdefByteFilter4PriSec(ctx *cdefByteCtx) {
 	priSh, secSh := ctx.priSh, ctx.secSh
 	tap0, tap1 := ctx.tap0, ctx.tap1
 	neg1 := archsimd.BroadcastInt8x16(-1)
-	four := archsimd.BroadcastInt8x16(4)
-	bias := archsimd.BroadcastUint8x16(0x80)
+	fk := newCDEFByteFinishConsts()
 	input, dst := ctx.input, ctx.dst
 	base := ctx.srcOff - cdefByteCenter
 	dstOff, dstStr := ctx.dstOff, ctx.dstStr
@@ -1861,7 +1873,7 @@ func cdefByteFilter4PriSec(ctx *cdefByteCtx) {
 		p, q = cdefByteLoad4x4Rows(r0, r1, r2, r3, s3p), cdefByteLoad4x4Rows(r0, r1, r2, r3, s3m)
 		mn, mx = mn.Min(p).Min(q), mx.Max(p).Max(q)
 		a, b = a.Add(cdefByteConstrain(p, x, secStr, secSh)), b.Add(cdefByteConstrain(q, x, secStr, secSh))
-		cdefByteStore4x4(dst, dstOff, dstStr, cdefByteFinish(x, a, b, four, bias).Min(mx).Max(mn))
+		cdefByteStore4x4(dst, dstOff, dstStr, cdefByteFinish(x, a, b, &fk).Min(mx).Max(mn))
 		return
 	}
 	for h := ctx.height; h > 0; h -= 4 {
@@ -1893,7 +1905,7 @@ func cdefByteFilter4PriSec(ctx *cdefByteCtx) {
 		p, q = cdefByteLoad4x4Rows(r0, r1, r2, r3, s3p), cdefByteLoad4x4Rows(r0, r1, r2, r3, s3m)
 		mn, mx = mn.Min(p).Min(q), mx.Max(p).Max(q)
 		a, b = a.Add(cdefByteConstrain(p, x, secStr, secSh)), b.Add(cdefByteConstrain(q, x, secStr, secSh))
-		cdefByteStore4x4(dst, dstOff, dstStr, cdefByteFinish(x, a, b, four, bias).Min(mx).Max(mn))
+		cdefByteStore4x4(dst, dstOff, dstStr, cdefByteFinish(x, a, b, &fk).Min(mx).Max(mn))
 		base += 4 * BStride
 		dstOff += 4 * dstStr
 	}
@@ -1909,8 +1921,7 @@ func cdefByteFilter4Pri(ctx *cdefByteCtx) {
 	priStr, priSh := ctx.priStr, ctx.priSh
 	tap0, tap1 := ctx.tap0, ctx.tap1
 	neg1 := archsimd.BroadcastInt8x16(-1)
-	four := archsimd.BroadcastInt8x16(4)
-	bias := archsimd.BroadcastUint8x16(0x80)
+	fk := newCDEFByteFinishConsts()
 	input, dst := ctx.input, ctx.dst
 	base := ctx.srcOff - cdefByteCenter
 	dstOff, dstStr := ctx.dstOff, ctx.dstStr
@@ -1925,7 +1936,7 @@ func cdefByteFilter4Pri(ctx *cdefByteCtx) {
 		b := cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, p0m), x, priStr, priSh).Mul(tap0)
 		a = cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, p1p), x, priStr, priSh).MulAdd(tap1, a)
 		b = cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, p1m), x, priStr, priSh).MulAdd(tap1, b)
-		cdefByteStore4x4(dst, dstOff, dstStr, cdefByteFinish(x, a, b, four, bias))
+		cdefByteStore4x4(dst, dstOff, dstStr, cdefByteFinish(x, a, b, &fk))
 		return
 	}
 	for h := ctx.height; h > 0; h -= 4 {
@@ -1939,7 +1950,7 @@ func cdefByteFilter4Pri(ctx *cdefByteCtx) {
 		b := cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, p0m), x, priStr, priSh).Mul(tap0)
 		a = cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, p1p), x, priStr, priSh).MulAdd(tap1, a)
 		b = cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, p1m), x, priStr, priSh).MulAdd(tap1, b)
-		cdefByteStore4x4(dst, dstOff, dstStr, cdefByteFinish(x, a, b, four, bias))
+		cdefByteStore4x4(dst, dstOff, dstStr, cdefByteFinish(x, a, b, &fk))
 		base += 4 * BStride
 		dstOff += 4 * dstStr
 	}
@@ -1957,8 +1968,7 @@ func cdefByteFilter4Sec(ctx *cdefByteCtx) {
 	}
 	secStr, secSh := ctx.secStr, ctx.secSh
 	neg1 := archsimd.BroadcastInt8x16(-1)
-	four := archsimd.BroadcastInt8x16(4)
-	bias := archsimd.BroadcastUint8x16(0x80)
+	fk := newCDEFByteFinishConsts()
 	input, dst := ctx.input, ctx.dst
 	base := ctx.srcOff - cdefByteCenter
 	dstOff, dstStr := ctx.dstOff, ctx.dstStr
@@ -1979,7 +1989,7 @@ func cdefByteFilter4Sec(ctx *cdefByteCtx) {
 		b := kb.Add(kb).
 			Add(cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, s2m), x, secStr, secSh)).
 			Add(cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, s3m), x, secStr, secSh))
-		cdefByteStore4x4(dst, dstOff, dstStr, cdefByteFinish(x, a, b, four, bias))
+		cdefByteStore4x4(dst, dstOff, dstStr, cdefByteFinish(x, a, b, &fk))
 		return
 	}
 	for h := ctx.height; h > 0; h -= 4 {
@@ -1999,7 +2009,7 @@ func cdefByteFilter4Sec(ctx *cdefByteCtx) {
 		b := kb.Add(kb).
 			Add(cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, s2m), x, secStr, secSh)).
 			Add(cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, s3m), x, secStr, secSh))
-		cdefByteStore4x4(dst, dstOff, dstStr, cdefByteFinish(x, a, b, four, bias))
+		cdefByteStore4x4(dst, dstOff, dstStr, cdefByteFinish(x, a, b, &fk))
 		base += 4 * BStride
 		dstOff += 4 * dstStr
 	}
@@ -2124,6 +2134,8 @@ func cdefFilterBlock8InteriorSIMD(ctx *cdefSIMDCtx) {
 	s2p, s2m, s3p, s3m := ctx.secTaps1()
 	in, base, height := ctx.rows()
 	_, out8, do, ds := ctx.outRows()
+	sh15 := archsimd.BroadcastInt16x8(-15)
+	sh4 := archsimd.BroadcastInt16x8(-4)
 	// Counted by row pair: a step-2 counter keeps a second check per window.
 	for i := 0; i < height>>1; i++ {
 		r := 2 * i
@@ -2191,8 +2203,8 @@ func cdefFilterBlock8InteriorSIMD(ctx *cdefSIMDCtx) {
 		sumH = sumH.Sub(xh.Mul(wtot))
 
 		// y = x + ((8 + sum - (sum<0)) >> 4), clamped to [min, max].
-		yL := xl.Add(sumL.Add(sumL.ShiftAllRight(15)).Add(eight).ShiftAllRight(4)).Max(nl).Min(ml)
-		yH := xh.Add(sumH.Add(sumH.ShiftAllRight(15)).Add(eight).ShiftAllRight(4)).Max(nh).Min(mh)
+		yL := xl.Add(sumL.Add(sumL.Shift(sh15)).Add(eight).Shift(sh4)).Max(nl).Min(ml)
+		yH := xh.Add(sumH.Add(sumH.Shift(sh15)).Add(eight).Shift(sh4)).Max(nh).Min(mh)
 		cdefPut8(out8, do+r*ds, yL.ToBits().TruncToUint8().ReshapeToUint64s().GetElem(0))
 		cdefPut8(out8, do+(r+1)*ds, yH.ToBits().TruncToUint8().ReshapeToUint64s().GetElem(0))
 	}
@@ -2255,7 +2267,11 @@ func cdefConstrainSecondaryByteSIMD(t, x, strength archsimd.Uint8x16, shift arch
 }
 
 func cdefRoundSecondaryByteSIMD(sum archsimd.Int8x16) archsimd.Int8x16 {
-	return sum.Add(sum.ShiftAllRight(7)).Add(archsimd.BroadcastInt8x16(8)).ShiftAllRight(4)
+	return cdefRoundSecondaryByteSIMDWith(sum, archsimd.BroadcastInt8x16(-7), archsimd.BroadcastInt8x16(8), archsimd.BroadcastInt8x16(-4))
+}
+
+func cdefRoundSecondaryByteSIMDWith(sum, sh7, eight, sh4 archsimd.Int8x16) archsimd.Int8x16 {
+	return sum.Add(sum.Shift(sh7)).Add(eight).Shift(sh4)
 }
 
 // The secondary-only taps sit at x+-1, x+-2 and y+-1, y+-2 of each output
@@ -2328,6 +2344,7 @@ func cdefSecPut32(b []byte, v uint32) {
 
 func cdefFilterSecondaryOnly16xSIMD(dst []byte, dstStride int, input []byte, so int, height int, strength archsimd.Uint8x16, shift archsimd.Int8x16) {
 	cdefSecWindowArgs(so, height, dstStride)
+	sh7, eight, sh4 := archsimd.BroadcastInt8x16(-7), archsimd.BroadcastInt8x16(8), archsimd.BroadcastInt8x16(-4)
 	base := so - cdefSecReach
 	for y := 0; y < height; y++ {
 		o := base + y*BStride
@@ -2345,7 +2362,7 @@ func cdefFilterSecondaryOnly16xSIMD(dst []byte, dstStride int, input []byte, so 
 			Add(cdefConstrainSecondaryByteSIMD(cdefSecLoad16(w, -2, 0), x, strength, shift)).
 			Add(cdefConstrainSecondaryByteSIMD(cdefSecLoad16(w, 0, 2), x, strength, shift)).
 			Add(cdefConstrainSecondaryByteSIMD(cdefSecLoad16(w, 0, -2), x, strength, shift))
-		pixels := x.Add(cdefRoundSecondaryByteSIMD(sum).ToBits())
+		pixels := x.Add(cdefRoundSecondaryByteSIMDWith(sum, sh7, eight, sh4).ToBits())
 		do := y * dstStride
 		pixels.StoreArray((*[16]uint8)(dst[do : do+16]))
 	}
@@ -2353,6 +2370,7 @@ func cdefFilterSecondaryOnly16xSIMD(dst []byte, dstStride int, input []byte, so 
 
 func cdefFilterSecondaryOnly8xSIMD(dst []byte, dstStride int, input []byte, so int, height int, strength archsimd.Uint8x16, shift archsimd.Int8x16) {
 	cdefSecWindowArgs(so, height, dstStride)
+	sh7, eight, sh4 := archsimd.BroadcastInt8x16(-7), archsimd.BroadcastInt8x16(8), archsimd.BroadcastInt8x16(-4)
 	base := so - cdefSecReach
 	// One iteration per row pair, counted by pair (a step-2 counter keeps a
 	// second check per window).
@@ -2373,7 +2391,7 @@ func cdefFilterSecondaryOnly8xSIMD(dst []byte, dstStride int, input []byte, so i
 			Add(cdefConstrainSecondaryByteSIMD(cdefSecLoad8x2(w, -2, 0), x, strength, shift)).
 			Add(cdefConstrainSecondaryByteSIMD(cdefSecLoad8x2(w, 0, 2), x, strength, shift)).
 			Add(cdefConstrainSecondaryByteSIMD(cdefSecLoad8x2(w, 0, -2), x, strength, shift))
-		packed := x.Add(cdefRoundSecondaryByteSIMD(sum).ToBits()).ReshapeToUint64s()
+		packed := x.Add(cdefRoundSecondaryByteSIMDWith(sum, sh7, eight, sh4).ToBits()).ReshapeToUint64s()
 		do := y * dstStride
 		cdefSecPut64(dst[do:do+8], packed.GetElem(0))
 		cdefSecPut64(dst[do+dstStride:do+dstStride+8], packed.GetElem(1))
@@ -2382,6 +2400,7 @@ func cdefFilterSecondaryOnly8xSIMD(dst []byte, dstStride int, input []byte, so i
 
 func cdefFilterSecondaryOnly4xSIMD(dst []byte, dstStride int, input []byte, so int, height int, strength archsimd.Uint8x16, shift archsimd.Int8x16) {
 	cdefSecWindowArgs(so, height, dstStride)
+	sh7, eight, sh4 := archsimd.BroadcastInt8x16(-7), archsimd.BroadcastInt8x16(8), archsimd.BroadcastInt8x16(-4)
 	base := so - cdefSecReach
 	for i := 0; i < height>>2; i++ {
 		y := 4 * i
@@ -2400,7 +2419,7 @@ func cdefFilterSecondaryOnly4xSIMD(dst []byte, dstStride int, input []byte, so i
 			Add(cdefConstrainSecondaryByteSIMD(cdefSecLoad4x4(w, -2, 0), x, strength, shift)).
 			Add(cdefConstrainSecondaryByteSIMD(cdefSecLoad4x4(w, 0, 2), x, strength, shift)).
 			Add(cdefConstrainSecondaryByteSIMD(cdefSecLoad4x4(w, 0, -2), x, strength, shift))
-		packed := x.Add(cdefRoundSecondaryByteSIMD(sum).ToBits()).ReshapeToUint32s()
+		packed := x.Add(cdefRoundSecondaryByteSIMDWith(sum, sh7, eight, sh4).ToBits()).ReshapeToUint32s()
 		do := y * dstStride
 		cdefSecPut32(dst[do:do+4], packed.GetElem(0))
 		cdefSecPut32(dst[do+dstStride:do+dstStride+4], packed.GetElem(1))

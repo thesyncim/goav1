@@ -84,10 +84,15 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	} else if meMV.Row&7 == 0 && meMV.Col&7 == 0 {
 		rx, ry := lumaPX+int(meMV.Col>>3), lumaPY+int(meMV.Row>>3)
 		if rx >= 0 && ry >= 0 && rx+bw <= src.Width && ry+bh <= src.Height {
-			sse, meVar := realtimeInterResidualSSEVariance(src.Y, refPlane[ry*refStride+rx:], src.YStride, refStride, lumaPX, lumaPY, bw, bh)
-			meSSE = sse
-			st.predStats.set(meMV, motion.RegularFilters, meSSE, meVar)
-			meDist = int64(meVar) << 4
+			if sse, meVar, ok := st.predStats.lookup(meMV, motion.RegularFilters); ok {
+				meSSE = sse
+				meDist = int64(meVar) << 4
+			} else {
+				sse, meVar := realtimeInterResidualSSEVariance(src.Y, refPlane[ry*refStride+rx:], src.YStride, refStride, lumaPX, lumaPY, bw, bh)
+				meSSE = sse
+				st.predStats.set(meMV, motion.RegularFilters, meSSE, meVar)
+				meDist = int64(meVar) << 4
+			}
 			meDirect = true
 		}
 	}

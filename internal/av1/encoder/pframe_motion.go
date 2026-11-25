@@ -76,7 +76,14 @@ func (st *lossyEncodeState) pblockSubpel(src SourceFrame420, refPlane []byte, re
 	if ctrls == nil || st.intraBordered || (ctrls.skipZeroMV && mv == (motion.Vector{})) {
 		return mv, fullSAD
 	}
+	savedStats := st.predStats
+	if !intoPredY {
+		st.predStats.valid = false
+	}
 	refined, besterr := st.svtSubpelSearch(src.Y, refPlane, src.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, refMV, ctrls, st.lpd1FullLambda(dec))
+	if !intoPredY {
+		st.predStats = savedStats
+	}
 	// md_me_dist: the smallest post-sub-pel cost over the references searched.
 	st.mdMEDist = min(st.mdMEDist, besterr)
 	if refined == mv {
@@ -151,6 +158,14 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 			mv = motion.Vector{Row: y * 8, Col: x * 8}
 		}
 		fullSAD = st.leafFullPelSAD(src, ref, lumaPX, lumaPY, bw, bh, mv)
+		if bw == bh && bw >= 16 {
+			if sb := st.svtPD0Lookup(lumaPX, lumaPY); sb != nil {
+				pu := svtMEBlockOffset(lumaPX&63, lumaPY&63, bw)
+				if sb.stats&(1<<uint(pu)) != 0 {
+					st.predStats.set(mv, motion.RegularFilters, sb.sse[pu], sb.vari[pu])
+				}
+			}
+		}
 		// read_refine_me_mvs_light_pd1: refine LAST's ME vector with the
 		// NEWMV predictor of LAST's MVP table as the MV cost reference.
 		if st.allowSubpelRefinement() {
@@ -230,6 +245,7 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 			mv, fullSAD = gmv, gsad
 			out.stack, out.stackOK = goldenStack, goldenStackOK
 			st.mePredY.valid = false
+			st.predStats.valid = false
 		}
 		if compound {
 			refs = tile.InterReferencesResult{
@@ -239,6 +255,7 @@ func (st *lossyEncodeState) pblockMotionSearch(src, ref SourceFrame420, golden *
 			}
 			out.stackOK = false
 			st.mePredY.valid = false
+			st.predStats.valid = false
 		}
 	}
 	out.mv, out.fullSAD = mv, fullSAD

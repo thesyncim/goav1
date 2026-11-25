@@ -208,6 +208,26 @@ func pixelStatsRows16Arch(src []byte, srcStride int, ref []byte, refStride int, 
 			sum32 = sum16.ExtendLo4ToUint32().BitsToInt32().Add(sum16.HiToLo().ExtendLo4ToUint32().BitsToInt32())
 			return uint32(sse0.Add(sse1).ReduceSum()), sum32.ReduceSum()
 		}
+		if w == 32 && h <= 32 {
+			var sum16 archsimd.Uint16x8
+			for r := 0; r < gsAll.Height(); r++ {
+				sw := gsAll.Row32(r, 0)
+				a0 := archsimd.LoadUint8x16Array((*[16]uint8)(sw[0:16]))
+				dl0 := a0.ExtendLo8ToUint16()
+				dh0 := a0.HiToLo().ExtendLo8ToUint16()
+				a1 := archsimd.LoadUint8x16Array((*[16]uint8)(sw[16:32]))
+				dl1 := a1.ExtendLo8ToUint16()
+				dh1 := a1.HiToLo().ExtendLo8ToUint16()
+				sum16 = sum16.Add(dl0.Add(dh0).Add(dl1.Add(dh1)))
+				sL0, sH0 := dl0.BitsToInt16(), dh0.BitsToInt16()
+				sL1, sH1 := dl1.BitsToInt16(), dh1.BitsToInt16()
+				sse0 = sse0.Add(sL0.MulWidenLo(sL0).Add(sH0.MulWidenLo(sH0)).Add(sL1.MulWidenLo(sL1).Add(sH1.MulWidenLo(sH1))))
+				sse1 = sse1.Add(sL0.HiToLo().MulWidenLo(sL0.HiToLo()).Add(sH0.HiToLo().MulWidenLo(sH0.HiToLo())).
+					Add(sL1.HiToLo().MulWidenLo(sL1.HiToLo()).Add(sH1.HiToLo().MulWidenLo(sH1.HiToLo()))))
+			}
+			sum32 = sum16.ExtendLo4ToUint32().BitsToInt32().Add(sum16.HiToLo().ExtendLo4ToUint32().BitsToInt32())
+			return uint32(sse0.Add(sse1).ReduceSum()), sum32.ReduceSum()
+		}
 		for r0 := 0; r0 < h; r0 += groupRows {
 			var sum16 archsimd.Uint16x8
 			n := min(groupRows, h-r0)

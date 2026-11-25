@@ -139,7 +139,12 @@ func (st *lossyEncodeState) svtSubpelSearch(src, refPlane []byte, stride, width,
 	best := startMV
 	fx, fy := px+int(startMV.Col>>3), py+int(startMV.Row>>3)
 	refBlock, refStride := svtRefWindow(scratch, refPlane, stride, width, height, fx, fy, bw, bh)
-	_, distortion := realtimeInterResidualSSEVariance(refBlock, srcBlock, refStride, stride, 0, 0, bw, bh)
+	centerSSE, distortion, ok := st.predStats.lookup(startMV, motion.RegularFilters)
+	if !ok {
+		centerSSE, distortion = realtimeInterResidualSSEVariance(refBlock, srcBlock, refStride, stride, 0, 0, bw, bh)
+		st.predStats.set(startMV, motion.RegularFilters, centerSSE, distortion)
+	}
+	_ = centerSSE
 	besterr := uint64(distortion) + svtMVCostOpt(best, refMV, epb)
 
 	// abs_th_mult early exit: (qp * besterr) < ((w * h) << 5) * abs_th_mult.

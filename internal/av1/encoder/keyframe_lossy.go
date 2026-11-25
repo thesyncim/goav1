@@ -1381,10 +1381,7 @@ func (st *lossyEncodeState) prepareIntraTXB(srcPlane []byte, stride int, px, py,
 	residual := &st.resScratch
 	residualBlockImpl(residual[:n], srcPlane, py*stride+px, stride, pred, w, w, h)
 	tran := &st.tranScratch
-	if levelsAllZero(residual[:n]) {
-		// Every transform maps a zero residual to zero coefficients.
-		clear(tran[:cn])
-	} else if err := st.forwardIntraTXB(tran[:], residual[:], cn, n, w, h); err != nil {
+	if err := st.forwardIntraTXB(tran[:], residual[:], cn, n, w, h); err != nil {
 		return geo, 0, err
 	}
 	if st.pfN4 {

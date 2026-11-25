@@ -96,12 +96,14 @@ type pframeSplitRecord struct {
 	blocks []pblockRecord
 	parts  []tile.Partition
 	coeffs []int16
+	eobs   []int16
 	// palMaps holds keyframe palette color index maps (keyframe_split.go).
 	palMaps []uint8
 
 	blockCur int
 	partCur  int
 	coeffCur int
+	eobCur   int
 }
 
 // reset clears the record for a new frame, reserving worst-case capacity for
@@ -139,9 +141,13 @@ func (rec *pframeSplitRecord) reset(tileMI4W, tileMI4H int, color parser.ColorCo
 	if cap(rec.coeffs) < maxCoeffs {
 		rec.coeffs = make([]int16, 0, maxCoeffs)
 	}
+	if maxEOBs := maxBlocks * 6; cap(rec.eobs) < maxEOBs {
+		rec.eobs = make([]int16, 0, maxEOBs)
+	}
 	rec.blocks = rec.blocks[:0]
 	rec.parts = rec.parts[:0]
 	rec.coeffs = rec.coeffs[:0]
+	rec.eobs = rec.eobs[:0]
 	rec.palMaps = rec.palMaps[:0]
 	rec.rewind()
 }
@@ -151,6 +157,7 @@ func (rec *pframeSplitRecord) rewind() {
 	rec.blockCur = 0
 	rec.partCur = 0
 	rec.coeffCur = 0
+	rec.eobCur = 0
 }
 
 func (rec *pframeSplitRecord) appendBlock() *pblockRecord {
@@ -319,11 +326,13 @@ func interTXBResult(qcoeff []int16, scan []int16, coeffCount int) tile.TXBDecode
 	return tile.TXBDecodeResult{EOB: uint16(eob)}
 }
 
+var zeroSplitCoeffs [1024]int16
+
 // reconRecordedTXB copies the prepared coefficients into the record arena and
 // reconstructs the block through the decoder-exact dequant/inverse path,
 // without emitting any symbols.
 func (st *lossyEncodeState) reconRecordedTXB(rec *pframeSplitRecord, reconPlane, pred []byte, predStride, stride, px, py, w, h int,
-	q quantize.Quantizer, qcoeff []int16, size tile.TransformSize, scan []int16, txType transform.Type) error {
+	q quantize.Quantizer, qcoeff []int16, size tile.TransformSize, scan []int16, txType transform.Type, eob int) error {
 	geo, err := txBlockGeometryForTransformSize(size)
 	if err != nil {
 		return err
@@ -332,8 +341,17 @@ func (st *lossyEncodeState) reconRecordedTXB(rec *pframeSplitRecord, reconPlane,
 		return tile.ErrInvalidDecodeState
 	}
 	qcoeff = qcoeff[:geo.coeffCount]
-	copy(rec.grabCoeffs(geo.coeffCount), qcoeff)
-	return st.reconInterTXBResult(reconPlane, pred, predStride, stride, px, py, w, h, q, qcoeff, geo, scan, txType, interTXBResult(qcoeff, scan, geo.coeffCount))
+	var res tile.TXBDecodeResult
+	if eob >= 0 {
+		res = tile.TXBDecodeResult{AllZero: eob == 0, EOB: uint16(eob)}
+	} else {
+		res = interTXBResult(qcoeff, scan, geo.coeffCount)
+	}
+	rec.eobs = append(rec.eobs, int16(res.EOB))
+	if !res.AllZero {
+		copy(rec.grabCoeffs(geo.coeffCount), qcoeff)
+	}
+	return st.reconInterTXBResult(reconPlane, pred, predStride, stride, px, py, w, h, q, qcoeff, geo, scan, txType, res)
 }
 
 // writeRecordedTXB emits one recorded TXB through the fused path's exact
@@ -347,11 +365,21 @@ func (st *lossyEncodeState) writeRecordedTXB(rec *pframeSplitRecord, w, h int, c
 	if !geo.matchesDimensions(w, h) {
 		return tile.ErrInvalidDecodeState
 	}
-	qcoeff, err := rec.nextCoeffs(geo.coeffCount)
-	if err != nil {
-		return err
+	if rec.eobCur >= len(rec.eobs) {
+		return fmt.Errorf("encoder: split replay ran past %d recorded eobs", len(rec.eobs))
 	}
-	_, err = st.emitInterTXBTyped(w, h, qcoeff, ctxReq, coeffCtx, scan, afterSkip, txType, tile.EOBUnknown)
+	eob := int(rec.eobs[rec.eobCur])
+	rec.eobCur++
+	var qcoeff []int16
+	if eob == 0 {
+		qcoeff = zeroSplitCoeffs[:geo.coeffCount]
+	} else {
+		qcoeff, err = rec.nextCoeffs(geo.coeffCount)
+		if err != nil {
+			return err
+		}
+	}
+	_, err = st.emitInterTXBTyped(w, h, qcoeff, ctxReq, coeffCtx, scan, afterSkip, txType, eob)
 	return err
 }
 
@@ -638,13 +666,13 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 		}
 		leafArea := txPlan.leafSize * txPlan.leafSize
 		if err := txPlan.ForEachLeaf(func(i, dx, dy int) error {
-			return st.reconRecordedTXB(rec, recon.Y, st.predYView[dy*st.predYStride+dx:], st.predYStride, src.YStride, lumaPX+dx, lumaPY+dy, txPlan.leafSize, txPlan.leafSize, st.yQuant, st.lumaQ2[i*leafArea:(i+1)*leafArea], txPlan.leafTX, childScan, transform.TypeDCTDCT)
+			return st.reconRecordedTXB(rec, recon.Y, st.predYView[dy*st.predYStride+dx:], st.predYStride, src.YStride, lumaPX+dx, lumaPY+dy, txPlan.leafSize, txPlan.leafSize, st.yQuant, st.lumaQ2[i*leafArea:(i+1)*leafArea], txPlan.leafTX, childScan, transform.TypeDCTDCT, st.emitLeafEOB(i))
 		}); err != nil {
 			return fmt.Errorf("luma realtime tx: %w", err)
 		}
 	} else {
 		lumaTX, lumaScan := st.interLumaTXAndScan(bw, bh)
-		if err := st.reconRecordedTXB(rec, recon.Y, st.predYView, st.predYStride, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh], lumaTX, lumaScan, txType); err != nil {
+		if err := st.reconRecordedTXB(rec, recon.Y, st.predYView, st.predYStride, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh], lumaTX, lumaScan, txType, st.emitEOB(0)); err != nil {
 			return fmt.Errorf("luma txb: %w", err)
 		}
 	}
@@ -664,7 +692,7 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 				rdata, pred, pStride, qc = recon.V, st.predVView, st.predVStride, st.vQ[:cbw*cbh]
 				q = st.vQuant
 			}
-			if err := st.reconRecordedTXB(rec, rdata, pred, pStride, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, q, qc, chromaTX, chromaScan, chromaTxType); err != nil {
+			if err := st.reconRecordedTXB(rec, rdata, pred, pStride, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, q, qc, chromaTX, chromaScan, chromaTxType, st.emitEOB(plane)); err != nil {
 				return fmt.Errorf("chroma %d txb: %w", plane, err)
 			}
 		}

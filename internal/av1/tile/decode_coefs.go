@@ -25,17 +25,20 @@ func init() {
 		} else if geo.txTall {
 			loCtx = 2
 		}
+		scan := coeffScanTable[size][transform.Class2D]
+		slh := log2Coef[geo.scanHeight] - 2
 		coefSizeTable[size] = entropy.CoefSize{
-			Scan:  coeffScanTable[size][transform.Class2D],
-			Size:  uint8(size),
-			W4:    dims.W4,
-			H4:    dims.H4,
-			Min:   dims.Min,
-			Max:   dims.Max,
-			Ctx:   geo.txCtx,
-			Slw:   log2Coef[geo.scanWidth] - 2,
-			Slh:   log2Coef[geo.scanHeight] - 2,
-			LoCtx: loCtx,
+			Scan:   scan,
+			Scan2D: entropy.BuildCoefScan2D(scan, slh, loCtx),
+			Size:   uint8(size),
+			W4:     dims.W4,
+			H4:     dims.H4,
+			Min:    dims.Min,
+			Max:    dims.Max,
+			Ctx:    geo.txCtx,
+			Slw:    log2Coef[geo.scanWidth] - 2,
+			Slh:    slh,
+			LoCtx:  loCtx,
 		}
 	}
 }

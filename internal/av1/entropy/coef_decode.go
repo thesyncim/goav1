@@ -42,6 +42,9 @@ const CoefSizes = 19
 // for one transform size, with the size's 2D scan (dav1d_scans).
 type CoefSize struct {
 	Scan []int16
+	// Scan2D packs per-scan-index (rc | baseCtx<<10 | hiCtxBase<<16) for 2D
+	// AC decoding (built once by BuildCoefScan2D).
+	Scan2D []uint32
 	// Size indexes CoefQMatrices.
 	Size uint8
 	// W4, H4 are t_dim->w and t_dim->h in 4-sample units; Min and Max are
@@ -751,7 +754,11 @@ func (r *Reader) DecodeCoefs(s *CoefState, plane uint, sz *CoefSize, cf *[1024]i
 				}
 				cf[rc] = int32(tok << 11)
 				levels[rc] = uint8(levelTok)
-				rc, dif, rng, cnt = c.coefAC2D(scan[:eob], stride, offsets, levels, cf, lo, hiCDF, rc, dif, rng, cnt) // ac
+				if len(sz.Scan2D) >= eob {
+					rc, dif, rng, cnt = c.coefAC2DPacked(sz.Scan2D[:eob], stride, levels, cf, lo, hiCDF, rc, dif, rng, cnt)
+				} else {
+					rc, dif, rng, cnt = c.coefAC2D(scan[:eob], stride, offsets, levels, cf, lo, hiCDF, rc, dif, rng, cnt) // ac
+				}
 				// dc
 				v := &lo[0].values
 				c0, c1, c2 := uint32(v[0]), uint32(v[1]), uint32(v[2])
@@ -979,6 +986,138 @@ func (r *Reader) DecodeCoefs(s *CoefState, plane uint, sz *CoefSize, cf *[1024]i
 	return eob, txtp, rows | cols<<8
 }
 
+// BuildCoefScan2D precomputes the packed 2D AC scan entries (rc in bits 0..9,
+// base low-context offset in bits 10..14, high-context base 7/14 in bits
+// 16..20) for a transform size's 2D scan.
+func BuildCoefScan2D(scan []int16, slh, loCtx uint8) []uint32 {
+	if loCtx >= 3 {
+		loCtx = 0
+	}
+	offsets := &coefLoCtxOffsets[loCtx]
+	shift := uint(slh + 2)
+	mask := (uint(1) << shift) - 1
+	out := make([]uint32, len(scan))
+	for i, s := range scan {
+		rc := uint(s) & 1023
+		x, y := rc>>shift, rc&mask
+		cx, cy := min(x, 4), min(y, 4)
+		baseCtx := uint32(offsets[cy][cx]) & 31
+		hiCtx := uint32(7)
+		if x|y > 1 {
+			hiCtx = 14
+		}
+		out[i] = uint32(rc) | baseCtx<<10 | hiCtx<<16
+	}
+	return out
+}
+
+// coefAC2DPacked is coefAC2D reading precomputed (rc, baseCtx, hiCtxBase) from
+// scan2D so the inner AC loop skips coordinate decoding, clamping, and the 2D
+// offset table lookup.
+func (c *Cursor) coefAC2DPacked(scan2D []uint32, stride uint, levels *[CoefLevelsLen]uint8, cf *[1024]int32, lo *[42]CDF, hi *[21]CDF, rc uint, dif uint64, rng uint32, cnt int32) (uint, uint64, uint32, int32) {
+	_ = levels[0]
+	_ = cf[0]
+	_ = lo[0]
+	stride &= 63
+	update := c.allowCDFUpdate
+	for i := len(scan2D) - 1; i > 0; i-- {
+		entry := uint(scan2D[i])
+		rcI := entry & 1023
+		mag := uint(levels[rcI+1]) + uint(levels[rcI+stride]) + uint(levels[rcI+stride+1])
+		hiMag := mag
+		mag += uint(levels[rcI+2]) + uint(levels[rcI+2*stride])
+		ctx := ((entry >> 10) & 31) + min((mag+64)>>7, 4)
+
+		values := &lo[ctx].values
+		rngHi := rng >> 8
+		coded := uint32(dif >> (ecWindow - 16))
+		upper := rng
+		c0 := values[0]
+		c1 := values[1]
+		c2 := values[2]
+		l0 := ((rngHi * uint32(c0>>ecProbShift)) >> (7 - ecProbShift)) + 3*ecMinProb
+		l1 := ((rngHi * uint32(c1>>ecProbShift)) >> (7 - ecProbShift)) + 2*ecMinProb
+		l2 := ((rngHi * uint32(c2>>ecProbShift)) >> (7 - ecProbShift)) + ecMinProb
+		lower := l0
+		tok := uint(0)
+		if coded < l0 {
+			upper, lower, tok = l0, l1, 1
+		}
+		if coded < l1 {
+			upper, lower, tok = l1, l2, 2
+		}
+		if coded < l2 {
+			upper, lower, tok = l2, 0, 3
+		}
+		if traceEntropyReads {
+			traceCDFRead(c0, 4, dif, rng, c.coefTell(cnt))
+		}
+		dif -= uint64(lower) << (ecWindow - 16)
+		rng = upper - lower
+		sh := normShift16(rng)
+		cnt -= sh
+		dif = ((dif + 1) << uint(sh)) - 1
+		rng <<= uint(sh)
+		if cnt < 0 {
+			dif, cnt = c.coefRefill(dif, cnt)
+		}
+		if tok == 0 {
+			if update {
+				count := values[4]
+				rate := uint(5 + (count >> 4))
+				c0u, c1u, c2u := uint(c0), uint(c1), uint(c2)
+				values[0] = uint16(c0u - c0u>>rate)
+				values[1] = uint16(c1u - c1u>>rate)
+				values[2] = uint16(c2u - c2u>>rate)
+				if count < MaxCDFCount {
+					values[4] = count + 1
+				}
+			}
+			continue
+		}
+		if update {
+			count := values[4]
+			rate := uint(5 + (count >> 4))
+			c0u, c1u, c2u := uint(c0), uint(c1), uint(c2)
+			n0 := c0u + (CDFProbTop-c0u)>>rate
+			n1 := c1u - c1u>>rate
+			n2 := c2u - c2u>>rate
+			if tok > 1 {
+				n1 = c1u + (CDFProbTop-c1u)>>rate
+			}
+			if tok > 2 {
+				n2 = c2u + (CDFProbTop-c2u)>>rate
+			}
+			values[0] = uint16(n0)
+			values[1] = uint16(n1)
+			values[2] = uint16(n2)
+			if count < MaxCDFCount {
+				values[4] = count + 1
+			}
+		}
+		if tok == 3 {
+			hiCtx := (entry >> 16) & 31
+			hiMag &= 63
+			if hiMag > 12 {
+				hiCtx += 6
+			} else {
+				hiCtx += (hiMag + 1) >> 1
+			}
+			var t uint
+			t, dif, rng, cnt = c.coefHiTok(&hi[hiCtx].values, update, dif, rng, cnt)
+			tok = 3 + t
+			levels[rcI] = uint8(tok + 3<<6)
+			cf[rcI] = int32(tok<<11 | rc)
+			rc = rcI
+		} else {
+			levels[rcI] = uint8(tok * 0x41)
+			cf[rcI] = int32(tok<<11 | rc)
+			rc = rcI
+		}
+	}
+	return rc, dif, rng, cnt
+}
+
 // coefAC2D is the AC loop of dav1d's DECODE_COEFS_CLASS(TX_CLASS_2D): scan[len
 // - 1] down to scan[1], with the range state passed in registers. levels holds
 // dav1d's packed level bytes (bits 0-5 token, 6-7 min(token, 3)) at rc with
@@ -1046,36 +1185,39 @@ func (c *Cursor) coefAC2D(scan []int16, stride uint, offsets *[5][5]uint8, level
 		if cnt < 0 {
 			dif, cnt = c.coefRefill(dif, cnt)
 		}
+		if tok == 0 {
+			if update {
+				count := values[4]
+				rate := uint(5 + (count >> 4))
+				c0u, c1u, c2u := uint(c0), uint(c1), uint(c2)
+				values[0] = uint16(c0u - c0u>>rate)
+				values[1] = uint16(c1u - c1u>>rate)
+				values[2] = uint16(c2u - c2u>>rate)
+				if count < MaxCDFCount {
+					values[4] = count + 1
+				}
+			}
+			continue
+		}
 		if update {
 			count := values[4]
 			rate := uint(5 + (count >> 4))
 			c0u, c1u, c2u := uint(c0), uint(c1), uint(c2)
-			if tok == 0 {
-				values[0] = uint16(c0u - c0u>>rate)
-				values[1] = uint16(c1u - c1u>>rate)
-				values[2] = uint16(c2u - c2u>>rate)
-			} else {
-				n0 := c0u + (CDFProbTop-c0u)>>rate
-				n1 := c1u - c1u>>rate
-				n2 := c2u - c2u>>rate
-				if tok > 1 {
-					n1 = c1u + (CDFProbTop-c1u)>>rate
-				}
-				if tok > 2 {
-					n2 = c2u + (CDFProbTop-c2u)>>rate
-				}
-				values[0] = uint16(n0)
-				values[1] = uint16(n1)
-				values[2] = uint16(n2)
+			n0 := c0u + (CDFProbTop-c0u)>>rate
+			n1 := c1u - c1u>>rate
+			n2 := c2u - c2u>>rate
+			if tok > 1 {
+				n1 = c1u + (CDFProbTop-c1u)>>rate
 			}
+			if tok > 2 {
+				n2 = c2u + (CDFProbTop-c2u)>>rate
+			}
+			values[0] = uint16(n0)
+			values[1] = uint16(n1)
+			values[2] = uint16(n2)
 			if count < MaxCDFCount {
-				count++
+				values[4] = count + 1
 			}
-			values[4] = count
-		}
-
-		if tok == 0 {
-			continue
 		}
 		if tok == 3 {
 			hiCtx := uint(7)
