@@ -337,7 +337,7 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	}
 	surfaceCount := internalparser.RefFrames + 1
 	if frameContexts > 1 {
-		surfaceCount += 2 * frameContexts
+		surfaceCount += frameContexts + 1
 	}
 	var useExternal bool
 	var outputFormat FrameFormat
