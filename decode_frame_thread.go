@@ -54,6 +54,7 @@ func decoderFrameContextCount(workers, maxFrameDelay int) int {
 // a different context while this one finishes.
 type decoderFrameContext struct {
 	event       internaldecoder.Event
+	meta        FrameMetadata
 	scratch     decoderFrameWorkResidualEventScratch
 	sideScratch decoderFrameWorkSideDataScratch
 	batch       decoderFrameWorkBatchResidualRunner
@@ -308,17 +309,22 @@ func (p *decoderFramePipeline) retire(fc *decoderFrameContext) {
 
 // output queues fc's output picture, if any, in the ready list.
 func (p *decoderFramePipeline) output(fc *decoderFrameContext) {
-	if fc.output != nil {
-		out, err := p.outputImage(fc)
-		fc.output = nil
-		if err != nil {
-			if p.err == nil {
-				p.err = err
-			}
-			return
-		}
-		p.ready = append(p.ready, out)
+	if fc.output == nil {
+		return
 	}
+	if fc.event.SuppressDisplay {
+		fc.output = nil
+		return
+	}
+	out, err := p.outputImage(fc)
+	fc.output = nil
+	if err != nil {
+		if p.err == nil {
+			p.err = err
+		}
+		return
+	}
+	p.ready = append(p.ready, out)
 }
 
 // decoderGrainOutput is one display picture film grain is applied into when
@@ -334,6 +340,7 @@ type decoderGrainOutput struct {
 // clean reference. Other frames are returned as is.
 func (p *decoderFramePipeline) outputImage(fc *decoderFrameContext) (*Frame, error) {
 	if !fc.event.FilmGrain.Apply {
+		populateFrameDisplayInfo(fc.output, fc.event.SequenceHeader, &fc.event, fc.meta)
 		return fc.output, nil
 	}
 	if p.grainUsed == len(p.grain) {
@@ -343,7 +350,11 @@ func (p *decoderFramePipeline) outputImage(fc *decoderFrameContext) (*Frame, err
 	}
 	g := p.grain[p.grainUsed]
 	p.grainUsed++
-	return decoderFrameWorkOutputFilmGrain(&fc.event, fc.step, fc.output, &g.runner)
+	out, err := decoderFrameWorkOutputFilmGrain(&fc.event, fc.step, fc.output, &g.runner)
+	if err == nil {
+		populateFrameDisplayInfo(out, fc.event.SequenceHeader, &fc.event, fc.meta)
+	}
+	return out, err
 }
 
 // outputSource maps a returned picture to the reconstructed surface behind
@@ -462,6 +473,7 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *internalde
 
 	fc.event = *src
 	fc.event.SequenceHeader = sequence
+	fc.meta = d.stream.ActiveMetadata()
 	// A tile group completing a frame whose header was deferred runs as the
 	// frame: its payload carries every tile, and its frame state is the
 	// header's.
@@ -645,6 +657,7 @@ func (p *decoderFramePipeline) showExisting(sequence SequenceHeader, src *intern
 
 	fc.event = *src
 	fc.event.SequenceHeader = sequence
+	fc.meta = d.stream.ActiveMetadata()
 	plan, err := d.state.ShowExistingFrameThreaded(&d.refs, &fc.event, &fc.ft)
 	if err != nil {
 		return internaldecoder.FrameWorkEventResult{}, err

@@ -59,6 +59,72 @@ type Plane struct {
 	Height int
 }
 
+// ColorInfo holds the AV1 sequence color_config() and frame render size
+// associated with a decoded picture.
+type ColorInfo struct {
+	Primaries               uint8
+	TransferCharacteristics uint8
+	MatrixCoefficients      uint8
+	ChromaSamplePosition    uint8
+	ColorRange              bool
+	RenderWidth             int
+	RenderHeight            int
+}
+
+// MetadataHDRCLL holds AV1 METADATA_TYPE_HDR_CLL (spec section 6.7.3).
+type MetadataHDRCLL struct {
+	MaxCLL  uint16
+	MaxFALL uint16
+}
+
+// MetadataHDRMDCV holds AV1 METADATA_TYPE_HDR_MDCV (spec section 6.7.4).
+type MetadataHDRMDCV struct {
+	PrimaryChromaticityX    [3]uint16
+	PrimaryChromaticityY    [3]uint16
+	WhitePointChromaticityX uint16
+	WhitePointChromaticityY uint16
+	LuminanceMax            uint32
+	LuminanceMin            uint32
+}
+
+// MetadataITUTT35 holds AV1 METADATA_TYPE_ITUT_T35 (spec section 6.7.2).
+type MetadataITUTT35 struct {
+	CountryCode          uint8
+	CountryCodeExtension uint8
+	HasCountryExtension  bool
+	Payload              []byte
+}
+
+// MetadataTimecode holds AV1 METADATA_TYPE_TIMECODE (spec section 6.7.6).
+type MetadataTimecode struct {
+	CountingType     uint8
+	FullTimestamp    bool
+	Discontinuity    bool
+	CountDropped     bool
+	NFrames          uint16
+	Seconds          uint8
+	Minutes          uint8
+	Hours            uint8
+	TimeOffsetLength uint8
+	TimeOffsetValue  uint32
+}
+
+// Metadata holds parsed AV1 OBU_METADATA payloads (spec section 5.8 / 6.7)
+// active for a decoded picture. HDRCLL, HDRMDCV, and ScalabilityModeIDC
+// persist across a coded video sequence; Timecode and ITUTT35 are scoped to
+// the temporal unit.
+type Metadata struct {
+	HasHDRCLL          bool
+	HDRCLL             MetadataHDRCLL
+	HasHDRMDCV         bool
+	HDRMDCV            MetadataHDRMDCV
+	HasTimecode        bool
+	Timecode           MetadataTimecode
+	HasScalability     bool
+	ScalabilityModeIDC uint8
+	ITUTT35            []MetadataITUTT35
+}
+
 type Frame struct {
 	Format Format
 	Layout Layout
@@ -66,6 +132,10 @@ type Frame struct {
 	Y Plane
 	U Plane
 	V Plane
+
+	Color     ColorInfo
+	Metadata  Metadata
+	Concealed bool
 }
 
 func RequiredSize(format Format) (Layout, error) {

@@ -90,6 +90,12 @@ type Decoder struct {
 	// fp is the frame-threading pipeline (dav1d n_fc > 1), or nil when frames
 	// decode one at a time.
 	fp *decoderFramePipeline
+
+	// Error concealment state (inactive and zero-alloc unless WithErrorConcealment(true)).
+	errorConcealment bool
+	concealFrame     Frame
+	concealBuf       []byte
+	hasConcealFrame  bool
 }
 
 // shownSurface names one tracked output surface and the pool that owns it.
@@ -113,9 +119,13 @@ const decoderMaxPayloadEvents = 64
 
 // decoderConfig holds resolved construction options.
 type decoderConfig struct {
-	workers        int
-	maxFrameDelay  int
-	frameSizeLimit int
+	workers          int
+	maxFrameDelay    int
+	frameSizeLimit   int
+	disableFilmGrain bool
+	operatingPoint   int
+	onlyHighestLayer bool
+	errorConcealment bool
 }
 
 // ErrDecoderFrameSizeLimit reports a stream that carries a frame larger than
@@ -124,6 +134,39 @@ var ErrDecoderFrameSizeLimit = errors.New("goav1: frame size exceeds the configu
 
 // Option configures a Decoder at construction time.
 type Option func(*decoderConfig)
+
+// WithFilmGrain controls whether AV1 film-grain synthesis is applied to output
+// frames that carry active film-grain parameters. The default is true. Setting
+// it to false skips film-grain synthesis (matching dav1d --filmgrain 0) without
+// affecting reference-frame reconstruction.
+func WithFilmGrain(enabled bool) Option {
+	return func(c *decoderConfig) { c.disableFilmGrain = !enabled }
+}
+
+// WithOperatingPoint selects the AV1 operating point index (0..31) per AV1
+// spec section 6.4.1 / 7.5. OBUs outside the chosen operating point's
+// operating_point_idc mask are skipped. The default is 0.
+func WithOperatingPoint(index int) Option {
+	return func(c *decoderConfig) { c.operatingPoint = index }
+}
+
+// WithAllLayers controls whether all spatial layers in the selected operating
+// point are emitted as display frames (true, the default) or only the highest
+// spatial layer in that operating point (false, matching dav1d --alllayers 0).
+func WithAllLayers(all bool) Option {
+	return func(c *decoderConfig) { c.onlyHighestLayer = !all }
+}
+
+// WithErrorConcealment enables decoder error concealment for resilient
+// playback over lossy or corrupted bitstreams. When enabled, corrupt OBUs,
+// truncated tile payloads, or missing-reference decode errors do not abort the
+// stream: any active partial frame is aborted cleanly, RTP fragment state is
+// reset if applicable, and the last successfully decoded frame is emitted with
+// Concealed=true (or the payload is skipped if no good frame has been decoded
+// yet) so decoding resumes on subsequent valid frames. Disabled by default.
+func WithErrorConcealment(enabled bool) Option {
+	return func(c *decoderConfig) { c.errorConcealment = enabled }
+}
 
 // WithWorkers sets the number of tile-worker goroutines the underlying runner
 // uses for intra-frame tile parallelism. It must be >= 1. The default is 1,
@@ -219,6 +262,9 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	if cfg.frameSizeLimit < 0 {
 		return nil, fmt.Errorf("goav1: frame size limit must be >= 0, got %d", cfg.frameSizeLimit)
 	}
+	if cfg.operatingPoint < 0 || cfg.operatingPoint >= 32 {
+		return nil, fmt.Errorf("goav1: operating point must be in [0, 31], got %d", cfg.operatingPoint)
+	}
 	if source.len() == 0 {
 		return nil, errors.New("goav1: no payloads to decode")
 	}
@@ -231,22 +277,33 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	// Probe the stream to learn how much scratch the runner will need and to
 	// bind the sequence/frame headers used to derive the pool format.
 	var probeStream internaldecoder.Stream
+	probeStream.SetDisableFilmGrain(cfg.disableFilmGrain)
+	probeStream.SetOperatingPoint(cfg.operatingPoint, !cfg.onlyHighestLayer)
 	probeEvents := make([]internaldecoder.Event, decoderMaxPayloadEvents)
 	probeSpans := make([]internalparser.TileSpan, internalparser.MaxTiles)
 	probeJobs := make([]internaltile.Job, internalparser.MaxTiles)
 	probeBatches := make([]internalthreading.Batch, internalparser.MaxTiles)
 	probePayload := source.makeProbeBuffer()
 
+	probeSource := source
+	if cfg.errorConcealment {
+		probeSource, err = filterValidPayloadsForConcealment(source, kind, cfg, probePayload)
+		if err != nil {
+			workerPool.Close()
+			return nil, err
+		}
+	}
+
 	var plan decoderFrameWorkResidualStreamPlan
 	switch kind {
 	case decoderPayloadLowOverhead:
 		plan, err = decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(
-			probeStream, source, cfg.workers, cfg.frameSizeLimit, probePayload,
+			probeStream, probeSource, cfg.workers, cfg.frameSizeLimit, probePayload,
 			probeEvents, probeSpans, probeJobs, probeBatches,
 		)
 	case decoderPayloadRTP:
 		plan, err = decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(
-			probeStream, source, cfg.workers, cfg.frameSizeLimit, probeEvents, probeSpans, probeJobs, probeBatches,
+			probeStream, probeSource, cfg.workers, cfg.frameSizeLimit, probeEvents, probeSpans, probeJobs, probeBatches,
 		)
 	default:
 		err = internaldecoder.ErrInvalidFrameWorkState
@@ -264,16 +321,18 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	// binds a slot at its own size and format (dav1d allocates every picture at
 	// its frame size and its sequence's bit depth, chroma layout and superblock
 	// size, so a new coded video sequence may change any of them).
-	format, err := decoderCodedPoolFormatFromSource(source, kind, 64, probePayload)
+	format, err := decoderCodedPoolFormatFromSource(probeSource, kind, 64, probePayload)
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: frame format from stream plan: %w", err)
 	}
 
 	// Frame threading keeps up to n_fc frames in flight beyond the reference
-	// set, each on its own surface.
+	// set, each on its own surface. Error concealment isolates each payload
+	// serially (tile workers still run in parallel) so a corrupt frame cannot
+	// cascade reference-progress errors into queued future frames.
 	frameContexts := 1
-	if kind == decoderPayloadLowOverhead {
+	if kind == decoderPayloadLowOverhead && !cfg.errorConcealment {
 		frameContexts = decoderFrameContextCount(cfg.workers, cfg.maxFrameDelay)
 	}
 	surfaceCount := internalparser.RefFrames + 1
@@ -284,9 +343,9 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	var outputFormat FrameFormat
 	switch kind {
 	case decoderPayloadLowOverhead:
-		useExternal, outputFormat, err = decoderExternalOutputFormatFromSource(source, 64, probePayload)
+		useExternal, outputFormat, err = decoderExternalOutputFormatFromSource(probeSource, 64, probePayload)
 	case decoderPayloadRTP:
-		useExternal, outputFormat, err = decoderExternalOutputFormatFromRTPSource(source, 64)
+		useExternal, outputFormat, err = decoderExternalOutputFormatFromRTPSource(probeSource, 64)
 	}
 	if err != nil {
 		workerPool.Close()
@@ -295,9 +354,9 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	var motionSize FrameSize
 	switch kind {
 	case decoderPayloadLowOverhead:
-		motionSize, err = decoderTemporalMotionScratchFrameSizeUpperBoundFromSource(source, probeEvents, probePayload)
+		motionSize, err = decoderTemporalMotionScratchFrameSizeUpperBoundFromSource(probeSource, probeEvents, probePayload)
 	case decoderPayloadRTP:
-		motionSize, err = decoderTemporalMotionScratchFrameSizeUpperBoundFromRTPSource(source)
+		motionSize, err = decoderTemporalMotionScratchFrameSizeUpperBoundFromRTPSource(probeSource)
 	}
 	if err != nil {
 		workerPool.Close()
@@ -306,9 +365,9 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	var postArena decoderFrameWorkPostFilterRequestScratchSize
 	switch kind {
 	case decoderPayloadLowOverhead:
-		postArena, err = decoderPostFilterScratchArenaUpperBoundFromSource(source, 64, workerPool, probeEvents, probePayload)
+		postArena, err = decoderPostFilterScratchArenaUpperBoundFromSource(probeSource, 64, workerPool, probeEvents, probePayload)
 	case decoderPayloadRTP:
-		postArena, err = decoderPostFilterScratchArenaUpperBoundFromRTPSource(source, 64, workerPool)
+		postArena, err = decoderPostFilterScratchArenaUpperBoundFromRTPSource(probeSource, 64, workerPool)
 	}
 	if err != nil {
 		workerPool.Close()
@@ -340,15 +399,18 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	}
 
 	d := &Decoder{
-		pool:          pool,
-		outputPool:    outputPool,
-		workerPool:    workerPool,
-		payloadKind:   kind,
-		payloadSource: source,
-		payloadBuf:    arena.takeBytes(source.payloadBufferLen()),
-		format:        format,
-		useExternal:   useExternal,
+		pool:             pool,
+		outputPool:       outputPool,
+		workerPool:       workerPool,
+		payloadKind:      kind,
+		payloadSource:    source,
+		payloadBuf:       arena.takeBytes(source.payloadBufferLen()),
+		format:           format,
+		useExternal:      useExternal,
+		errorConcealment: cfg.errorConcealment,
 	}
+	d.stream.SetDisableFilmGrain(cfg.disableFilmGrain)
+	d.stream.SetOperatingPoint(cfg.operatingPoint, !cfg.onlyHighestLayer)
 	internaldecoder.EnableOwnedTemporalMotionStorage(&d.state)
 	if d.useExternal {
 		d.external.outputPool = &d.outputPool
@@ -554,14 +616,21 @@ func (d *Decoder) DecodeNext() (frames []*Frame, ok bool, err error) {
 		err = internaldecoder.ErrInvalidFrameWorkState
 	}
 	if err != nil {
+		if d.errorConcealment {
+			return d.recoverAndConceal(), true, nil
+		}
 		return nil, false, fmt.Errorf("goav1: payload %d: %w", i, err)
 	}
 
 	out := d.visible[:0]
 	for _, f := range result.Run.Outputs {
 		if f != nil {
+			f.Concealed = false
 			out = append(out, f)
 		}
+	}
+	if d.errorConcealment && len(out) > 0 {
+		d.snapshotConcealFrame(out[len(out)-1])
 	}
 	d.visible = out
 	d.trackShownSurfaces(out)
@@ -645,17 +714,93 @@ func (d *Decoder) decodeExternalRTPPayload(payload []byte, afterLoss bool) (fram
 		err = d.runner.RunRTPPayloadIntoWithPostFilterRunner(&result, payload, postFilter)
 	}
 	if err != nil {
+		if d.errorConcealment {
+			return d.recoverAndConceal(), nil
+		}
 		return nil, fmt.Errorf("goav1: rtp payload: %w", err)
 	}
 	out := d.visible[:0]
 	for _, f := range result.Run.Outputs {
 		if f != nil {
+			f.Concealed = false
 			out = append(out, f)
 		}
+	}
+	if d.errorConcealment && len(out) > 0 {
+		d.snapshotConcealFrame(out[len(out)-1])
 	}
 	d.visible = out
 	d.trackShownSurfaces(out)
 	return out, nil
+}
+
+// recoverAndConceal cleans up partial frame-work state after a decode error and
+// returns a freeze-frame copy of the last successfully decoded picture marked
+// with Concealed=true (or an empty slice if no good picture has been decoded
+// yet).
+func (d *Decoder) recoverAndConceal() []*Frame {
+	internalthreading.InvalidateFrameWorkLoopFilterCompactState(&d.compactLF)
+	if d.state.Active() {
+		_ = d.state.Abort(&d.pool)
+	}
+	if d.payloadKind == decoderPayloadRTP {
+		_ = d.runner.ResetRTP()
+	}
+	if !d.hasConcealFrame {
+		d.visible = d.visible[:0]
+		return d.visible
+	}
+	d.concealFrame.Concealed = true
+	d.visibleOne[0] = &d.concealFrame
+	d.visible = d.visibleOne[:1]
+	return d.visible
+}
+
+// snapshotConcealFrame copies f's visible planes into d.concealFrame, reusing
+// d.concealBuf so subsequent good frames do not allocate.
+func (d *Decoder) snapshotConcealFrame(f *Frame) {
+	if f == nil {
+		return
+	}
+	bps := f.Layout.BytesPerSample
+	if bps < 1 {
+		bps = 1
+	}
+	yBytes := f.Y.Width * bps * f.Y.Height
+	uBytes := f.U.Width * bps * f.U.Height
+	vBytes := f.V.Width * bps * f.V.Height
+	total := yBytes + uBytes + vBytes
+	if cap(d.concealBuf) < total {
+		d.concealBuf = make([]byte, total)
+	}
+	buf := d.concealBuf[:total]
+	copyPackedPlane := func(dst []byte, p FramePlane) FramePlane {
+		if p.Width == 0 || p.Height == 0 || len(p.Pix) == 0 {
+			return FramePlane{}
+		}
+		rowBytes := p.Width * bps
+		for row := 0; row < p.Height; row++ {
+			off := row * p.Stride
+			copy(dst[row*rowBytes:(row+1)*rowBytes], p.Pix[off:off+rowBytes])
+		}
+		return FramePlane{
+			Pix:    dst[:rowBytes*p.Height],
+			Stride: rowBytes,
+			Width:  p.Width,
+			Height: p.Height,
+		}
+	}
+	d.concealFrame = Frame{
+		Format:    f.Format,
+		Layout:    f.Layout,
+		Y:         copyPackedPlane(buf[:yBytes], f.Y),
+		U:         copyPackedPlane(buf[yBytes:yBytes+uBytes], f.U),
+		V:         copyPackedPlane(buf[yBytes+uBytes:total], f.V),
+		Color:     f.Color,
+		Metadata:  f.Metadata,
+		Concealed: false,
+	}
+	d.hasConcealFrame = true
 }
 
 func (d *Decoder) postFilterRunner() internaldecoder.FrameWorkPostFilterRunner {
@@ -801,6 +946,7 @@ func (d *Decoder) Reset() error {
 	if err := d.runner.Reset(); err != nil {
 		return fmt.Errorf("goav1: runner reset: %w", err)
 	}
+	d.hasConcealFrame = false
 	d.next = 0
 	return nil
 }
@@ -876,6 +1022,9 @@ type DecodedFrame struct {
 	Y              []byte
 	U              []byte
 	V              []byte
+	Color          ColorInfo
+	Metadata       FrameMetadata
+	Concealed      bool
 }
 
 // copyDecodedFrame extracts the visible samples of an aliasing *Frame into an
@@ -883,6 +1032,17 @@ type DecodedFrame struct {
 // layout matches the canonical I420/I400 raw video the libaom goldens use.
 func copyDecodedFrame(f *Frame) DecodedFrame {
 	bps := f.Layout.BytesPerSample
+	meta := f.Metadata
+	if len(meta.ITUTT35) > 0 {
+		copied := make([]MetadataITUTT35, len(meta.ITUTT35))
+		for i, m := range meta.ITUTT35 {
+			if len(m.Payload) > 0 {
+				m.Payload = append([]byte(nil), m.Payload...)
+			}
+			copied[i] = m
+		}
+		meta.ITUTT35 = copied
+	}
 	df := DecodedFrame{
 		Width:          f.Y.Width,
 		Height:         f.Y.Height,
@@ -892,6 +1052,9 @@ func copyDecodedFrame(f *Frame) DecodedFrame {
 		Y:              copyPlane(f.Y, bps),
 		U:              copyPlane(f.U, bps),
 		V:              copyPlane(f.V, bps),
+		Color:          f.Color,
+		Metadata:       meta,
+		Concealed:      f.Concealed,
 	}
 	return df
 }

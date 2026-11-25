@@ -546,6 +546,7 @@ func (r *decoderFrameWorkResidualStreamRunner) runParsedEvents(count int, output
 		return decoderFrameWorkResidualEventsResult{}, ErrDecoderEventBufferTooSmall
 	}
 	eventRunner := r.EventRunner
+	eventRunner.activeMeta = r.Stream.ActiveMetadata()
 	if eventRunner.Outputs != nil {
 		if outputOffset < 0 || outputOffset > len(eventRunner.Outputs) {
 			return decoderFrameWorkResidualEventsResult{}, internalframe.ErrShortBuffer
