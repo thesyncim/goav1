@@ -186,6 +186,21 @@ bench-cross:
 bench-corpus:
 	GOAV1_BENCH_CORPUS=1 go test $(GOAV1_PGO_FLAGS) -tags goav1_oracle -run TestCrossDecoderCorpus ./internal/av1/testvector -v -count=1 -timeout 1800s
 
+# bench-e2e runs the fast, fair end-to-end decoder (vs dav1d & aomdec) and
+# encoder (vs SvtAv1EncApp & aomenc) benchmark with matched muxers, interleaved
+# runs, MD5 verification, and PSNR/SSIM quality checks.
+BENCH_E2E_FLAGS ?=
+bench-e2e:
+	python3 ./scripts/bench_e2e.py --suite quick $(BENCH_E2E_FLAGS)
+
+# bench-e2e-fast runs a rapid local iteration pass (2 runs, no warmup, 1 Mbps).
+bench-e2e-fast:
+	python3 ./scripts/bench_e2e.py --suite quick --fast $(BENCH_E2E_FLAGS)
+
+# bench-e2e-full runs the same fair benchmark over the full 42+5 stream corpus.
+bench-e2e-full:
+	python3 ./scripts/bench_e2e.py --suite full --runs 5 $(BENCH_E2E_FLAGS)
+
 # pgo-regenerate merges fresh one-thread decode and encode CPU profiles into
 # $(GOAV1_PGO_PROFILE). PGO_STREAMS lists the IVF streams to decode and
 # PGO_ENC_CLIP names a raw 8-bit I420 clip as path:WIDTHxHEIGHT. A/B the new

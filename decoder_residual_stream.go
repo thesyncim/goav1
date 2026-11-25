@@ -186,13 +186,17 @@ func (r *decoderFrameWorkResidualStreamRunner) ResetRTP() error {
 // nested residual event runner, then binds parser/RTP scratch and stream output
 // slots around it.
 func bindDecoderFrameWorkResidualStreamEventRunner(size decoderFrameWorkResidualStreamScratchSize, stream *internaldecoder.Stream, sequence SequenceHeader, event *internaldecoder.Event, runtime decoderFrameWorkResidualEventRuntime, scratch decoderFrameWorkResidualStreamScratch, batchRunner *decoderFrameWorkBatchResidualRunner) (decoderFrameWorkResidualStreamRunner, decoderFrameWorkSideData, error) {
+	return bindDecoderFrameWorkResidualStreamEventRunnerWith(size, stream, sequence, event, runtime, scratch, batchRunner, false)
+}
+
+func bindDecoderFrameWorkResidualStreamEventRunnerWith(size decoderFrameWorkResidualStreamScratchSize, stream *internaldecoder.Stream, sequence SequenceHeader, event *internaldecoder.Event, runtime decoderFrameWorkResidualEventRuntime, scratch decoderFrameWorkResidualStreamScratch, batchRunner *decoderFrameWorkBatchResidualRunner, maskOnlyLoopFilter bool) (decoderFrameWorkResidualStreamRunner, decoderFrameWorkSideData, error) {
 	if stream == nil {
 		return decoderFrameWorkResidualStreamRunner{}, decoderFrameWorkSideData{}, internaldecoder.ErrInvalidFrameWorkState
 	}
 	if err := decoderFrameWorkResidualStreamScratchErr(size, scratch); err != nil {
 		return decoderFrameWorkResidualStreamRunner{}, decoderFrameWorkSideData{}, err
 	}
-	eventRunner, side, err := bindDecoderFrameWorkResidualEventRunner(size.Event, sequence, event, runtime, scratch.Event, batchRunner)
+	eventRunner, side, err := bindDecoderFrameWorkResidualEventRunnerWith(size.Event, sequence, event, runtime, scratch.Event, batchRunner, maskOnlyLoopFilter)
 	if err != nil {
 		return decoderFrameWorkResidualStreamRunner{}, decoderFrameWorkSideData{}, err
 	}
@@ -206,7 +210,11 @@ func bindDecoderFrameWorkResidualStreamEventRunner(size decoderFrameWorkResidual
 // bindDecoderFrameWorkResidualStreamPlanRunner binds a complete residual stream
 // runner directly from a stream plan.
 func bindDecoderFrameWorkResidualStreamPlanRunner(plan decoderFrameWorkResidualStreamPlan, stream *internaldecoder.Stream, runtime decoderFrameWorkResidualEventRuntime, scratch decoderFrameWorkResidualStreamScratch, batchRunner *decoderFrameWorkBatchResidualRunner) (decoderFrameWorkResidualStreamRunner, decoderFrameWorkSideData, error) {
-	return bindDecoderFrameWorkResidualStreamEventRunner(plan.Size, stream, plan.Bind.Sequence, &plan.Bind.Event, runtime, scratch, batchRunner)
+	return bindDecoderFrameWorkResidualStreamEventRunnerWith(plan.Size, stream, plan.Bind.Sequence, &plan.Bind.Event, runtime, scratch, batchRunner, false)
+}
+
+func bindDecoderFrameWorkResidualStreamPlanRunnerWith(plan decoderFrameWorkResidualStreamPlan, stream *internaldecoder.Stream, runtime decoderFrameWorkResidualEventRuntime, scratch decoderFrameWorkResidualStreamScratch, batchRunner *decoderFrameWorkBatchResidualRunner, maskOnlyLoopFilter bool) (decoderFrameWorkResidualStreamRunner, decoderFrameWorkSideData, error) {
+	return bindDecoderFrameWorkResidualStreamEventRunnerWith(plan.Size, stream, plan.Bind.Sequence, &plan.Bind.Event, runtime, scratch, batchRunner, maskOnlyLoopFilter)
 }
 
 // bindDecoderFrameWorkResidualStreamRunner binds a stream runner from

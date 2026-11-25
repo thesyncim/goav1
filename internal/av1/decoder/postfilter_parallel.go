@@ -35,9 +35,10 @@ type FrameWorkPostFilterParallel struct {
 	// One or zero keeps the serial path.
 	Workers int
 
-	cdef   []frameWorkParallelCDEFScratch
-	cdefU8 []FrameWorkCDEFPostFilterU8BandBoundary
-	lr     []frameWorkParallelRestorationScratch
+	cdef    []frameWorkParallelCDEFScratch
+	cdefU8  []FrameWorkCDEFPostFilterU8BandBoundary
+	cdefHBD []FrameWorkCDEFPostFilterHBD16BandBoundary
+	lr      []frameWorkParallelRestorationScratch
 	// lfPlan holds each worker's level-cache populate counters.
 	lfPlan []FrameWorkLoopFilterPostFilterPlan
 
@@ -102,6 +103,8 @@ const (
 	frameWorkPostFilterStageCDEFSnapshot
 	frameWorkPostFilterStageCDEFU8
 	frameWorkPostFilterStageCDEFU8Ordered
+	frameWorkPostFilterStageCDEFHBD
+	frameWorkPostFilterStageCDEFHBDOrdered
 	frameWorkPostFilterStageLoopFilterPopulate
 	frameWorkPostFilterStageLoopFilterVertical
 	frameWorkPostFilterStageLoopFilterHorizontal
@@ -194,6 +197,10 @@ func (p *FrameWorkPostFilterParallel) RunRange(band, lo, hi int) error {
 		return p.runCDEFU8Range(job, band, lo, hi)
 	case frameWorkPostFilterStageCDEFU8Ordered:
 		return p.runCDEFU8Ordered(job, band)
+	case frameWorkPostFilterStageCDEFHBD:
+		return p.runCDEFHBDRange(job, band, lo, hi)
+	case frameWorkPostFilterStageCDEFHBDOrdered:
+		return p.runCDEFHBDOrdered(job, band)
 	case frameWorkPostFilterStageRestorationU8:
 		return p.runRestorationU8Range(&job.lr, band, lo, hi)
 	case frameWorkPostFilterStageFilmGrainU8:
@@ -289,6 +296,41 @@ func (p *FrameWorkPostFilterParallel) runCDEFU8Ordered(job *frameWorkPostFilterP
 	}
 }
 
+func (p *FrameWorkPostFilterParallel) runCDEFHBDRange(job *frameWorkPostFilterParallelJob, worker, lo, hi int) error {
+	var result FrameWorkCDEFPostFilterResult
+	for band := lo; band < hi; band++ {
+		rowStart := band * job.unitRowsPerBand
+		rowEnd := min(rowStart+job.unitRowsPerBand, job.rows)
+		request := job.request
+		request.SampleScratch = p.cdef[worker].line16
+		request.InputScratch = p.cdef[worker].input
+		bandResult, err := job.ctx.ApplyCDEFPostFilterUnitRowsHBD(request, p.cdefHBD[band], rowStart, rowEnd)
+		if err != nil {
+			return err
+		}
+		result.Units += bandResult.Units
+		result.Blocks += bandResult.Blocks
+		if bandResult.Planes > result.Planes {
+			result.Planes = bandResult.Planes
+		}
+	}
+	p.accumulateCDEFResult(worker, result)
+	return nil
+}
+
+func (p *FrameWorkPostFilterParallel) runCDEFHBDOrdered(job *frameWorkPostFilterParallelJob, worker int) error {
+	for {
+		band := int(p.rows.next.Add(1)) - 1
+		if band >= job.bands {
+			return nil
+		}
+		if err := p.runCDEFHBDRange(job, worker, band, band+1); err != nil {
+			return err
+		}
+		p.rows.finishBand(job, band)
+	}
+}
+
 // finishBand records band as filtered and publishes the rows of the new
 // finished prefix. The last band's rows are left to the final publish, after
 // the bottom padding is filled.
@@ -335,6 +377,7 @@ type frameWorkParallelCDEFScratch struct {
 	input   []uint16
 	unitDst []uint16
 	line    [3][]byte
+	line16  [3][]uint16
 	result  FrameWorkCDEFPostFilterResult
 }
 
@@ -350,7 +393,7 @@ func (p *FrameWorkPostFilterParallel) workers() int {
 // ensureCDEFScratch grows the per-worker CDEF scratch to the current worker
 // count and plane width. lineWidth is the luma plane width in samples; the U8
 // byte arena of each plane is CDEFU8LineScratchLen(plane width).
-func (p *FrameWorkPostFilterParallel) ensureCDEFScratch(workers, lumaWidth, chromaWidth int, wantU8 bool, bands int) {
+func (p *FrameWorkPostFilterParallel) ensureCDEFScratch(workers, lumaWidth, chromaWidth int, wantU8, wantHBD bool, bands int) {
 	if cap(p.cdef) < workers {
 		p.cdef = make([]frameWorkParallelCDEFScratch, workers)
 	}
@@ -360,11 +403,7 @@ func (p *FrameWorkPostFilterParallel) ensureCDEFScratch(workers, lumaWidth, chro
 		if len(s.input) < cdef.InputBufferSize {
 			s.input = make([]uint16, cdef.InputBufferSize)
 		}
-		if !wantU8 {
-			if len(s.unitDst) < cdef.InputBufferSize {
-				s.unitDst = make([]uint16, cdef.InputBufferSize)
-			}
-		} else {
+		if wantU8 {
 			need0 := CDEFU8LineScratchLen(lumaWidth)
 			needC := CDEFU8LineScratchLen(chromaWidth)
 			if len(s.line[0]) < need0 {
@@ -376,6 +415,22 @@ func (p *FrameWorkPostFilterParallel) ensureCDEFScratch(workers, lumaWidth, chro
 			if len(s.line[2]) < needC {
 				s.line[2] = make([]byte, needC)
 			}
+		} else if wantHBD {
+			need0 := 4 * lumaWidth
+			needC := 4 * chromaWidth
+			if len(s.line16[0]) < need0 {
+				s.line16[0] = make([]uint16, need0)
+			}
+			if len(s.line16[1]) < needC {
+				s.line16[1] = make([]uint16, needC)
+			}
+			if len(s.line16[2]) < needC {
+				s.line16[2] = make([]uint16, needC)
+			}
+		} else {
+			if len(s.unitDst) < cdef.InputBufferSize {
+				s.unitDst = make([]uint16, cdef.InputBufferSize)
+			}
 		}
 	}
 	if wantU8 {
@@ -386,6 +441,29 @@ func (p *FrameWorkPostFilterParallel) ensureCDEFScratch(workers, lumaWidth, chro
 		for i := range p.cdefU8 {
 			p.cdefU8[i].ensure(lumaWidth, chromaWidth)
 		}
+	} else if wantHBD {
+		if cap(p.cdefHBD) < bands {
+			p.cdefHBD = make([]FrameWorkCDEFPostFilterHBD16BandBoundary, bands)
+		}
+		p.cdefHBD = p.cdefHBD[:bands]
+		for i := range p.cdefHBD {
+			p.cdefHBD[i].ensure(lumaWidth, chromaWidth)
+		}
+	}
+}
+
+func (b *FrameWorkCDEFPostFilterHBD16BandBoundary) ensure(lumaWidth, chromaWidth int) {
+	widths := [3]int{lumaWidth, chromaWidth, chromaWidth}
+	for plane, w := range widths {
+		need := cdef.VerticalBorder * w
+		if cap(b.Top[plane]) < need {
+			b.Top[plane] = make([]uint16, need)
+		}
+		b.Top[plane] = b.Top[plane][:need]
+		if cap(b.Bottom[plane]) < need {
+			b.Bottom[plane] = make([]uint16, need)
+		}
+		b.Bottom[plane] = b.Bottom[plane][:need]
 	}
 }
 
@@ -445,9 +523,10 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterParallel(req FrameWork
 		return FrameWorkCDEFPostFilterResult{}, false, nil
 	}
 
-	// Decide whether the 8-bit in-place walk applies (matches applyCDEFPostFilterRows).
+	// Decide whether the 8-bit or 10/12-bit in-place walk applies.
 	coeffShift := int(ctx.Output.Format.BitDepth) - 8
 	useU8 := ctx.Output.Layout.BytesPerSample == 1 && coeffShift == 0
+	useHBD := !useU8 && ctx.cdefHBDPlanesAvailable()
 
 	pool, workers, err := ctx.Parallel.workerPool(ctx, workers)
 	if err != nil {
@@ -457,12 +536,57 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterParallel(req FrameWork
 		workers = bandCount
 	}
 	lumaWidth, chromaWidth := frameWorkCDEFParallelPlaneWidths(ctx)
-	ctx.Parallel.ensureCDEFScratch(workers, lumaWidth, chromaWidth, useU8, bandCount)
+	ctx.Parallel.ensureCDEFScratch(workers, lumaWidth, chromaWidth, useU8, useHBD, bandCount)
 
 	if useU8 {
 		return ctx.applyCDEFPostFilterParallelU8(req, unitRowsPerBand, rows, bandCount, workers, pool)
 	}
+	if useHBD {
+		return ctx.applyCDEFPostFilterParallelHBD(req, unitRowsPerBand, rows, bandCount, workers, pool)
+	}
 	return ctx.applyCDEFPostFilterParallelSnapshot(req, unitRowsPerBand, rows, bandCount, workers, pool)
+}
+
+// applyCDEFPostFilterParallelHBD is the 10/12-bit in-place parallel path: it
+// snapshots each band's two-row top/bottom halos, then filters disjoint bands
+// directly into the little-endian picture planes.
+func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterParallelHBD(req FrameWorkCDEFPostFilterRequest, unitRowsPerBand, rows, bandCount, workers int, pool *threading.Pool) (FrameWorkCDEFPostFilterResult, bool, error) {
+	for band := 0; band < bandCount; band++ {
+		rowStart := band * unitRowsPerBand
+		rowEnd := rowStart + unitRowsPerBand
+		if rowEnd > rows {
+			rowEnd = rows
+		}
+		if err := ctx.LoadCDEFPostFilterHBD16BandBoundary(&ctx.Parallel.cdefHBD[band], rowStart, rowEnd); err != nil {
+			return FrameWorkCDEFPostFilterResult{}, false, err
+		}
+	}
+	ctx.Parallel.resetCDEFResults(workers)
+	job := frameWorkPostFilterParallelJob{
+		stage:           frameWorkPostFilterStageCDEFHBD,
+		ctx:             *ctx,
+		request:         req,
+		unitRowsPerBand: unitRowsPerBand,
+		rows:            rows,
+		bands:           bandCount,
+	}
+	count := bandCount
+	if r := &ctx.Parallel.rows; r.progress != nil && ctx.cdefIsLastPixelStage() {
+		job.stage = frameWorkPostFilterStageCDEFHBDOrdered
+		r.next.Store(0)
+		r.prefix = 0
+		if cap(r.done) < bandCount {
+			r.done = make([]bool, bandCount)
+		}
+		r.done = r.done[:bandCount]
+		clear(r.done)
+		count = workers
+	}
+	err := ctx.Parallel.runRanges(pool, job, count, workers)
+	if err != nil {
+		return FrameWorkCDEFPostFilterResult{}, false, err
+	}
+	return ctx.Parallel.mergeCDEFResults(workers), true, nil
 }
 
 func frameWorkCDEFParallelPlaneWidths(ctx *FrameWorkPostFilterContext) (int, int) {

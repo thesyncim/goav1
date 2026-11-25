@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -51,18 +53,43 @@ func (d *decoder) Close() {
 // output frame's planes to dst in display order, and reports total bytes written
 // plus visible-frame count.
 func (d *decoder) Decode(dst io.Writer, quiet bool, log io.Writer) (int64, int, error) {
+	return d.DecodeMuxer(dst, "yuv", quiet, log)
+}
+
+// DecodeMuxer decodes all frames using the requested output muxer:
+//   - "yuv": buffered raw planar YUV output (matches dav1d --muxer yuv)
+//   - "null": discard decoded frames without copying planes (matches dav1d --muxer null)
+//   - "md5": write the lowercase hex stream MD5 plus newline (matches dav1d --muxer md5)
+func (d *decoder) DecodeMuxer(dst io.Writer, muxer string, quiet bool, log io.Writer) (int64, int, error) {
 	if d == nil || d.dec == nil {
 		return 0, 0, errors.New("decoder closed")
 	}
-	// dav1d's yuv muxer writes each plane row with fwrite through a buffered
-	// stdio stream (tools/output/yuv.c); buffer the same way so the rows reach
-	// the file in large writes instead of one write call per row.
-	buf := bufio.NewWriterSize(dst, decodeOutputBufferSize)
-	totalBytes, completed, err := d.decodeTo(buf, quiet, log)
-	if flushErr := buf.Flush(); err == nil && flushErr != nil {
-		err = fmt.Errorf("flush output: %w", flushErr)
+	switch muxer {
+	case "null":
+		return d.decodeTo(nil, quiet, log)
+	case "md5":
+		h := md5.New()
+		totalBytes, completed, err := d.decodeTo(h, quiet, log)
+		if err != nil {
+			return totalBytes, completed, err
+		}
+		if _, err := fmt.Fprintf(dst, "%s\n", hex.EncodeToString(h.Sum(nil))); err != nil {
+			return totalBytes, completed, fmt.Errorf("write md5: %w", err)
+		}
+		return totalBytes, completed, nil
+	case "yuv":
+		// dav1d's yuv muxer writes each plane row with fwrite through a buffered
+		// stdio stream (tools/output/yuv.c); buffer the same way so the rows reach
+		// the file in large writes instead of one write call per row.
+		buf := bufio.NewWriterSize(dst, decodeOutputBufferSize)
+		totalBytes, completed, err := d.decodeTo(buf, quiet, log)
+		if flushErr := buf.Flush(); err == nil && flushErr != nil {
+			err = fmt.Errorf("flush output: %w", flushErr)
+		}
+		return totalBytes, completed, err
+	default:
+		return 0, 0, fmt.Errorf("unknown muxer %q", muxer)
 	}
-	return totalBytes, completed, err
 }
 
 // decodeOutputBufferSize buffers non-contiguous row writes into large writes.
@@ -76,7 +103,10 @@ func (d *decoder) decodeTo(dst io.Writer, quiet bool, log io.Writer) (int64, int
 	var totalBytes int64
 	completed := 0
 	for i := 0; ; i++ {
-		start := time.Now()
+		var start time.Time
+		if !quiet {
+			start = time.Now()
+		}
 		frames, ok, err := d.dec.DecodeNext()
 		if err != nil {
 			return totalBytes, completed, fmt.Errorf("frame %d: %w", i, err)
@@ -84,20 +114,22 @@ func (d *decoder) decodeTo(dst io.Writer, quiet bool, log io.Writer) (int64, int
 		if !ok {
 			break
 		}
-		elapsed := time.Since(start)
 
 		for _, frame := range frames {
 			if frame == nil {
 				continue
 			}
-			n, err := writeYUVFrame(dst, frame)
-			if err != nil {
-				return totalBytes, completed, fmt.Errorf("frame %d write: %w", i, err)
+			if dst != nil {
+				n, err := writeYUVFrame(dst, frame)
+				if err != nil {
+					return totalBytes, completed, fmt.Errorf("frame %d write: %w", i, err)
+				}
+				totalBytes += n
 			}
-			totalBytes += n
 			completed++
 		}
 		if !quiet {
+			elapsed := time.Since(start)
 			fmt.Fprintf(log, "frame %d ms=%.3f outputs=%d completed_frames=%d\n",
 				i, float64(elapsed.Microseconds())/1000.0, len(frames), completed)
 		}

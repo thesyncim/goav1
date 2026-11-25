@@ -6,7 +6,11 @@
 
 package frame
 
-import "simd/archsimd"
+import (
+	"simd/archsimd"
+
+	"github.com/thesyncim/goav1/internal/unsafeutil"
+)
 
 // loadSampleRows16 copies width little-endian uint16 samples per row from the
 // byte plane src into the uint16 staging plane dst. On these little-endian
@@ -22,6 +26,47 @@ func loadSampleRows16(dst []uint16, dstStride int, src []byte, srcStride int, wi
 		return
 	}
 	rowBytes := width * 2
+	if width == 8 && height > 1 && dstStride >= 8 && srcStride >= 16 {
+		gd := unsafeutil.NewGrid(dst, 0, dstStride, 8, height)
+		gs := unsafeutil.NewGrid(src, 0, srcStride, 16, height)
+		for y := 0; y < gd.Height(); y++ {
+			archsimd.LoadUint8x16Array(gs.Row16(y, 0)).ReshapeToUint16s().StoreArray(gd.Row8(y, 0))
+		}
+		return
+	}
+	if width == 72 && height > 1 && dstStride >= 72 && srcStride >= 144 {
+		gd := unsafeutil.NewGrid(dst, 0, dstStride, 72, height)
+		gs := unsafeutil.NewGrid(src, 0, srcStride, 144, height)
+		for y := 0; y < gd.Height(); y++ {
+			archsimd.LoadUint8x16Array(gs.Row16(y, 0)).ReshapeToUint16s().StoreArray(gd.Row8(y, 0))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 16)).ReshapeToUint16s().StoreArray(gd.Row8(y, 8))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 32)).ReshapeToUint16s().StoreArray(gd.Row8(y, 16))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 48)).ReshapeToUint16s().StoreArray(gd.Row8(y, 24))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 64)).ReshapeToUint16s().StoreArray(gd.Row8(y, 32))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 80)).ReshapeToUint16s().StoreArray(gd.Row8(y, 40))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 96)).ReshapeToUint16s().StoreArray(gd.Row8(y, 48))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 112)).ReshapeToUint16s().StoreArray(gd.Row8(y, 56))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 128)).ReshapeToUint16s().StoreArray(gd.Row8(y, 64))
+		}
+		return
+	}
+	if width == 80 && height > 1 && dstStride >= 80 && srcStride >= 160 {
+		gd := unsafeutil.NewGrid(dst, 0, dstStride, 80, height)
+		gs := unsafeutil.NewGrid(src, 0, srcStride, 160, height)
+		for y := 0; y < gd.Height(); y++ {
+			archsimd.LoadUint8x16Array(gs.Row16(y, 0)).ReshapeToUint16s().StoreArray(gd.Row8(y, 0))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 16)).ReshapeToUint16s().StoreArray(gd.Row8(y, 8))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 32)).ReshapeToUint16s().StoreArray(gd.Row8(y, 16))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 48)).ReshapeToUint16s().StoreArray(gd.Row8(y, 24))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 64)).ReshapeToUint16s().StoreArray(gd.Row8(y, 32))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 80)).ReshapeToUint16s().StoreArray(gd.Row8(y, 40))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 96)).ReshapeToUint16s().StoreArray(gd.Row8(y, 48))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 112)).ReshapeToUint16s().StoreArray(gd.Row8(y, 56))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 128)).ReshapeToUint16s().StoreArray(gd.Row8(y, 64))
+			archsimd.LoadUint8x16Array(gs.Row16(y, 144)).ReshapeToUint16s().StoreArray(gd.Row8(y, 72))
+		}
+		return
+	}
 	srcOff := 0
 	dstOff := 0
 	for y := 0; y < height; y++ {

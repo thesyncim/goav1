@@ -146,6 +146,28 @@ func TestRunWritesStdoutWhenNoOutputFlag(t *testing.T) {
 	if got := stdout.Len(); got != expectedBytes {
 		t.Fatalf("stdout bytes=%d want %d", got, expectedBytes)
 	}
+
+	wantSum := md5.Sum(stdout.Bytes())
+	wantMD5 := hex.EncodeToString(wantSum[:])
+
+	var md5Out, md5Err bytes.Buffer
+	if err := run([]string{"-quiet", "-muxer", "md5", ivfPath}, &md5Out, &md5Err); err != nil {
+		t.Fatalf("muxer md5 err=%v\nstderr=%s", err, md5Err.String())
+	}
+	if got := strings.TrimSpace(md5Out.String()); got != wantMD5 {
+		t.Fatalf("muxer md5=%q want %q", got, wantMD5)
+	}
+
+	var nullOut, nullErr bytes.Buffer
+	if err := run([]string{"-quiet", "-muxer", "null", ivfPath}, &nullOut, &nullErr); err != nil {
+		t.Fatalf("muxer null err=%v\nstderr=%s", err, nullErr.String())
+	}
+	if nullOut.Len() != 0 {
+		t.Fatalf("muxer null wrote %d bytes, want 0", nullOut.Len())
+	}
+	if !strings.Contains(nullErr.String(), "decoded 2 frames") {
+		t.Fatalf("muxer null stderr missing decoded count: %q", nullErr.String())
+	}
 }
 
 // TestRunMissingInputReturnsError exercises the argv validation branch so

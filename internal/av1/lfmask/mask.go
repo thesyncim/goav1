@@ -423,29 +423,59 @@ func maskEdgesChroma(masks *[2][32][2][2]uint16, cby4, cbx4, cw4, ch4, skipInter
 	l = l[:ch4]
 
 	// left block edge
-	mask := uint32(1) << (uint(cby4) & 31)
 	col := &masks[0][cbx4&31]
-	for y := range l {
-		sidx := 0
-		if mask >= vmax {
-			sidx = 1
+	cby := cby4 & 31
+	if cby+ch4 <= int(vmask) {
+		smask := uint16(1) << uint(cby)
+		for y := range l {
+			col[min(twl4c, l[y])][0] |= smask
+			smask <<= 1
 		}
-		smask := uint16(mask >> ((uint(sidx) << vbits) & 31))
-		col[min(twl4c, l[y])][sidx] |= smask
-		mask <<= 1
+	} else if cby >= int(vmask) {
+		smask := uint16(1) << uint(cby-int(vmask))
+		for y := range l {
+			col[min(twl4c, l[y])][1] |= smask
+			smask <<= 1
+		}
+	} else {
+		mask := uint32(1) << uint(cby)
+		for y := range l {
+			sidx := 0
+			if mask >= vmax {
+				sidx = 1
+			}
+			smask := uint16(mask >> ((uint(sidx) << vbits) & 31))
+			col[min(twl4c, l[y])][sidx] |= smask
+			mask <<= 1
+		}
 	}
 
 	// top block edge
-	mask = uint32(1) << (uint(cbx4) & 31)
-	row := &masks[1][cby4&31]
-	for x := range a {
-		sidx := 0
-		if mask >= hmax {
-			sidx = 1
+	row := &masks[1][cby]
+	cbx := cbx4 & 31
+	if cbx+cw4 <= int(hmask) {
+		smask := uint16(1) << uint(cbx)
+		for x := range a {
+			row[min(thl4c, a[x])][0] |= smask
+			smask <<= 1
 		}
-		smask := uint16(mask >> ((uint(sidx) << hbits) & 31))
-		row[min(thl4c, a[x])][sidx] |= smask
-		mask <<= 1
+	} else if cbx >= int(hmask) {
+		smask := uint16(1) << uint(cbx-int(hmask))
+		for x := range a {
+			row[min(thl4c, a[x])][1] |= smask
+			smask <<= 1
+		}
+	} else {
+		mask := uint32(1) << uint(cbx)
+		for x := range a {
+			sidx := 0
+			if mask >= hmax {
+				sidx = 1
+			}
+			smask := uint16(mask >> ((uint(sidx) << hbits) & 31))
+			row[min(thl4c, a[x])][sidx] |= smask
+			mask <<= 1
+		}
 	}
 
 	if skipInter == 0 {

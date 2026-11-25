@@ -9,13 +9,16 @@
 package main
 
 import (
+	"bufio"
 	"encoding/binary"
 	"encoding/csv"
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"os"
+	"runtime"
 	"runtime/pprof"
 	"strconv"
 	"time"
@@ -143,6 +146,7 @@ func main() {
 	reconPath := flag.String("recon", "", "write the encoder reconstruction as raw I420 to this path")
 	noPSNR := flag.Bool("nopsnr", false, "skip the per-frame PSNR pass (for CPU measurement; score from -o instead)")
 	cpuProfile := flag.String("cpuprofile", "", "write a CPU profile of the encode loop to this path")
+	memProfile := flag.String("memprofile", "", "write a heap profile after encoding to this path")
 	threads := flag.Int("threads", 0, "encoder MaxThreads (0 = encoder default; >1 runs the inter-frame SB-row wavefront)")
 	content := flag.String("content", "auto", "screen-content mode: auto (detect on keyframes, SVT --scm 2), camera (--scm 0) or screen (--scm 1)")
 	flag.Parse()
@@ -238,34 +242,42 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	srcs := make([]goav1.I420Frame, nFrames)
+	cw, ch := w/2, h/2
+	frameLen := lumaPixels + 2*cw*ch
+	var inputReader *bufio.Reader
+	var streamBuf []byte
+	var streamFrame goav1.I420Frame
+	var synthBG []byte
 	if *input != "" {
-		raw, err := os.ReadFile(*input)
+		inFile, err := os.Open(*input)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		cw, ch := w/2, h/2
-		frameLen := lumaPixels + 2*cw*ch
-		expected := nFrames * frameLen
-		if len(raw) != expected {
-			fmt.Fprintf(os.Stderr, "input size=%d, want exact raw I420 size %d (%d frames)\n", len(raw), expected, nFrames)
+		defer inFile.Close()
+		info, err := inFile.Stat()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		for n := range nFrames {
-			base := n * frameLen
-			srcs[n] = goav1.I420Frame{
-				Y:       raw[base : base+lumaPixels],
-				U:       raw[base+lumaPixels : base+lumaPixels+cw*ch],
-				V:       raw[base+lumaPixels+cw*ch : base+frameLen],
-				YStride: w, ChromaStride: cw, Width: w, Height: h,
-			}
+		expected := int64(nFrames) * int64(frameLen)
+		if info.Size() < expected {
+			fmt.Fprintf(os.Stderr, "input size=%d, want at least %d (%d frames)\n", info.Size(), expected, nFrames)
+			os.Exit(1)
+		}
+		inputReader = bufio.NewReaderSize(inFile, 1<<20)
+		streamBuf = make([]byte, frameLen)
+		streamFrame = goav1.I420Frame{
+			Y:            streamBuf[:lumaPixels],
+			U:            streamBuf[lumaPixels : lumaPixels+cw*ch],
+			V:            streamBuf[lumaPixels+cw*ch : frameLen],
+			YStride:      w,
+			ChromaStride: cw,
+			Width:        w,
+			Height:       h,
 		}
 	} else {
-		bg := syntheticBackground(w, h)
-		for n := range nFrames {
-			srcs[n] = makeFrame(bg, n, w, h)
-		}
+		synthBG = syntheticBackground(w, h)
 	}
 	var csvFile *os.File
 	var csvWriter *csv.Writer
@@ -324,9 +336,19 @@ func main() {
 	layerMinPSNR := [8]float64{1e9, 1e9, 1e9, 1e9, 1e9, 1e9, 1e9, 1e9}
 	var encodeTime time.Duration
 	for n := range nFrames {
+		var src goav1.I420Frame
+		if inputReader != nil {
+			if _, err := io.ReadFull(inputReader, streamBuf); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			src = streamFrame
+		} else {
+			src = makeFrame(synthBG, n, w, h)
+		}
 		frameStart := time.Now()
 		forceKey := *keyInterval > 0 && n > 0 && n%*keyInterval == 0
-		out, err := enc.Encode(srcs[n], forceKey)
+		out, err := enc.Encode(src, forceKey)
 		frameElapsed := time.Since(frameStart)
 		encodeTime += frameElapsed
 		if err != nil {
@@ -342,7 +364,7 @@ func main() {
 		}
 		p := 0.0
 		if !*noPSNR {
-			p = psnr(srcs[n].Y, r.Y)
+			p = psnr(src.Y, r.Y)
 		}
 		if ivfFile != nil {
 			var fh [12]byte
@@ -406,6 +428,20 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+	}
+	if *memProfile != "" {
+		mf, err := os.Create(*memProfile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		runtime.GC()
+		if err := pprof.WriteHeapProfile(mf); err != nil {
+			mf.Close()
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		mf.Close()
 	}
 	// Only the encode calls count: the harness's own PSNR pass costs
 	// milliseconds per frame and external encoders do not pay it.

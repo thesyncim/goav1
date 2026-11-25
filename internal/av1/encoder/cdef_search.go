@@ -772,42 +772,89 @@ func (s *cdefFBScratch) copyFB(recon []byte, stride, fstride, w, h, step int) {
 
 // searchOneDual is svt_search_one_dual_c over the used strength range.
 func (s *cdefSearcher) searchOneDual(lev0, lev1 []int, nbStrengths int, sbCount, startGI, endGI int) uint64 {
+	if startGI >= endGI {
+		lev0[nbStrengths] = 0
+		lev1[nbStrengths] = 0
+		return uint64(1) << 63
+	}
+	if sbCount == 0 {
+		lev0[nbStrengths] = startGI
+		lev1[nbStrengths] = startGI
+		return 0
+	}
+	m0, m1 := s.sbMSE[0][:sbCount], s.sbMSE[1][:sbCount]
+	// With no prior strengths selected, min(m0[i][j]+m1[i][k], inf) separates
+	// into independent luma and chroma sums: O(sbCount * G) instead of O(sbCount * G^2).
+	if nbStrengths == 0 {
+		var sum0, sum1 [cdefTotalStrengths]uint64
+		for i := 0; i < sbCount; i++ {
+			m0i, m1i := m0[i], m1[i]
+			for j := startGI; j < endGI; j++ {
+				sum0[j] += m0i[j]
+				sum1[j] += m1i[j]
+			}
+		}
+		best0, bestID0 := sum0[startGI], startGI
+		best1, bestID1 := sum1[startGI], startGI
+		for j := startGI + 1; j < endGI; j++ {
+			if sum0[j] < best0 {
+				best0 = sum0[j]
+				bestID0 = j
+			}
+			if sum1[j] < best1 {
+				best1 = sum1[j]
+				bestID1 = j
+			}
+		}
+		lev0[0] = bestID0
+		lev1[0] = bestID1
+		return best0 + best1
+	}
+	// Accumulate savings = sum_i max(0, bestMSE_i - (m0[i][j] + m1[i][k])) in
+	// s.totMSE so that totMSE[j][k] = sumBest - savings[j][k]. Whenever
+	// m0[i][j] >= bestMSE_i, no chroma strength k can improve on bestMSE_i and
+	// the entire inner k loop is skipped.
 	for j := startGI; j < endGI; j++ {
 		clear(s.totMSE[j][startGI:endGI])
 	}
-	m0, m1 := s.sbMSE[0], s.sbMSE[1]
+	var sumBest uint64
 	for i := 0; i < sbCount; i++ {
-		bestMSE := uint64(1) << 63
-		for gi := 0; gi < nbStrengths; gi++ {
-			curr := m0[i][lev0[gi]] + m1[i][lev1[gi]]
-			if curr < bestMSE {
+		m0i, m1i := m0[i], m1[i]
+		bestMSE := m0i[lev0[0]] + m1i[lev1[0]]
+		for gi := 1; gi < nbStrengths; gi++ {
+			if curr := m0i[lev0[gi]] + m1i[lev1[gi]]; curr < bestMSE {
 				bestMSE = curr
 			}
 		}
+		sumBest += bestMSE
 		for j := startGI; j < endGI; j++ {
+			v0 := m0i[j]
+			if v0 >= bestMSE {
+				continue
+			}
+			rem := bestMSE - v0
+			savRow := &s.totMSE[j]
 			for k := startGI; k < endGI; k++ {
-				best := bestMSE
-				curr := m0[i][j] + m1[i][k]
-				if curr < best {
-					best = curr
+				if v1 := m1i[k]; v1 < rem {
+					savRow[k] += rem - v1
 				}
-				s.totMSE[j][k] += best
 			}
 		}
 	}
-	bestTot := uint64(1) << 63
-	bestID0, bestID1 := 0, 0
+	bestSav := s.totMSE[startGI][startGI]
+	bestID0, bestID1 := startGI, startGI
 	for j := startGI; j < endGI; j++ {
+		savRow := &s.totMSE[j]
 		for k := startGI; k < endGI; k++ {
-			if s.totMSE[j][k] < bestTot {
-				bestTot = s.totMSE[j][k]
+			if savRow[k] > bestSav {
+				bestSav = savRow[k]
 				bestID0, bestID1 = j, k
 			}
 		}
 	}
 	lev0[nbStrengths] = bestID0
 	lev1[nbStrengths] = bestID1
-	return bestTot
+	return sumBest - bestSav
 }
 
 // jointStrengthSearchDual is joint_strength_search_dual: the greedy pass

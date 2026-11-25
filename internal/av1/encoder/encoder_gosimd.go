@@ -10,6 +10,8 @@ import (
 	"encoding/binary"
 	"math/bits"
 	"simd/archsimd"
+
+	"github.com/thesyncim/goav1/internal/unsafeutil"
 )
 
 // bitLenFloat32 computes bits.Len32 for lanes below 2^24 through the float32
@@ -270,6 +272,9 @@ func init() {
 // bounds checks. Eight-wide rows pair two rows per vector; other widths are
 // scalar.
 func residualBlockSIMD(dst []int16, srcPlane []byte, srcOff, stride int, pred []byte, predStride, w, h int) {
+	if h <= 0 || w <= 0 {
+		return
+	}
 	switch w {
 	case 8:
 		if h&1 == 0 {
@@ -277,11 +282,35 @@ func residualBlockSIMD(dst []int16, srcPlane []byte, srcOff, stride int, pred []
 			return
 		}
 	case 16:
+		if unsafeutil.GridFit(len(dst), 0, 16, 16, h) &&
+			unsafeutil.GridFit(len(srcPlane), srcOff, stride, 16, h) &&
+			unsafeutil.GridFit(len(pred), 0, predStride, 16, h) {
+			gd := unsafeutil.NewGrid(dst, 0, 16, 16, h)
+			gs := unsafeutil.NewGrid(srcPlane, srcOff, stride, 16, h)
+			gp := unsafeutil.NewGrid(pred, 0, predStride, 16, h)
+			for r := 0; r < gd.Height(); r++ {
+				residualRow16(gd.Row16(r, 0), gs.Row16(r, 0), gp.Row16(r, 0))
+			}
+			return
+		}
 		for r := range h {
 			residualRow16((*[16]int16)(dst[r*16:]), (*[16]uint8)(srcPlane[srcOff+r*stride:]), (*[16]uint8)(pred[r*predStride:]))
 		}
 		return
 	case 32:
+		if unsafeutil.GridFit(len(dst), 0, 32, 32, h) &&
+			unsafeutil.GridFit(len(srcPlane), srcOff, stride, 32, h) &&
+			unsafeutil.GridFit(len(pred), 0, predStride, 32, h) {
+			gd := unsafeutil.NewGrid(dst, 0, 32, 32, h)
+			gs := unsafeutil.NewGrid(srcPlane, srcOff, stride, 32, h)
+			gp := unsafeutil.NewGrid(pred, 0, predStride, 32, h)
+			for r := 0; r < gd.Height(); r++ {
+				d, s, p := gd.Row32(r, 0), gs.Row32(r, 0), gp.Row32(r, 0)
+				residualRow16((*[16]int16)(d[:16]), (*[16]uint8)(s[:16]), (*[16]uint8)(p[:16]))
+				residualRow16((*[16]int16)(d[16:]), (*[16]uint8)(s[16:]), (*[16]uint8)(p[16:]))
+			}
+			return
+		}
 		for r := range h {
 			d := (*[32]int16)(dst[r*32:])
 			s := (*[32]uint8)(srcPlane[srcOff+r*stride:])
@@ -291,6 +320,21 @@ func residualBlockSIMD(dst []int16, srcPlane []byte, srcOff, stride int, pred []
 		}
 		return
 	case 64:
+		if unsafeutil.GridFit(len(dst), 0, 64, 64, h) &&
+			unsafeutil.GridFit(len(srcPlane), srcOff, stride, 64, h) &&
+			unsafeutil.GridFit(len(pred), 0, predStride, 64, h) {
+			gd := unsafeutil.NewGrid(dst, 0, 64, 64, h)
+			gs := unsafeutil.NewGrid(srcPlane, srcOff, stride, 64, h)
+			gp := unsafeutil.NewGrid(pred, 0, predStride, 64, h)
+			for r := 0; r < gd.Height(); r++ {
+				d, s, p := gd.Row64(r, 0), gs.Row64(r, 0), gp.Row64(r, 0)
+				residualRow16((*[16]int16)(d[:16]), (*[16]uint8)(s[:16]), (*[16]uint8)(p[:16]))
+				residualRow16((*[16]int16)(d[16:32]), (*[16]uint8)(s[16:32]), (*[16]uint8)(p[16:32]))
+				residualRow16((*[16]int16)(d[32:48]), (*[16]uint8)(s[32:48]), (*[16]uint8)(p[32:48]))
+				residualRow16((*[16]int16)(d[48:]), (*[16]uint8)(s[48:]), (*[16]uint8)(p[48:]))
+			}
+			return
+		}
 		for r := range h {
 			d := (*[64]int16)(dst[r*64:])
 			s := (*[64]uint8)(srcPlane[srcOff+r*stride:])
@@ -459,62 +503,45 @@ func copyPredToReconBlockSIMD(reconPlane, pred []byte, predStride, stride, px, p
 }
 
 // copyBlockRows copies the w x h block src (stride ss) to dst (stride ds), w a
-// multiple of 8: one loop per block width, each taking one bounds-checked
-// window per row pair and array (row 2i at w[:n], row 2i+1 at w[stride:]).
+// multiple of 8: one grid bounds check per call, then unchecked fixed-width row copies.
 func copyBlockRows(dst []byte, ds int, src []byte, ss, w, h int) {
+	if h <= 0 || w <= 0 {
+		return
+	}
 	if uint(ds) > rowStrideMax || uint(ss) > rowStrideMax || uint(w) > rowsMax || uint(h) > rowsMax {
 		panic(errKernelArgs)
 	}
+	if !unsafeutil.GridFit(len(dst), 0, ds, w, h) || !unsafeutil.GridFit(len(src), 0, ss, w, h) {
+		panic(errKernelArgs)
+	}
+	gd, gs := unsafeutil.NewGrid(dst, 0, ds, w, h), unsafeutil.NewGrid(src, 0, ss, w, h)
 	switch w {
 	case 8:
-		dn, sn := ds+8, ss+8
-		for i := 0; i < h/2; i++ {
-			do, so := 2*i*ds, 2*i*ss
-			dw, sw := dst[do:do+dn:do+dn], src[so:so+sn:so+sn]
-			*(*[8]byte)(dw) = *(*[8]byte)(sw)
-			*(*[8]byte)(dw[ds:]) = *(*[8]byte)(sw[ss:])
+		for r := 0; r < gd.Height(); r++ {
+			*gd.Row8(r, 0) = *gs.Row8(r, 0)
 		}
 	case 16:
-		dn, sn := ds+16, ss+16
-		for i := 0; i < h/2; i++ {
-			do, so := 2*i*ds, 2*i*ss
-			dw, sw := dst[do:do+dn:do+dn], src[so:so+sn:so+sn]
-			*(*[16]byte)(dw) = *(*[16]byte)(sw)
-			*(*[16]byte)(dw[ds:]) = *(*[16]byte)(sw[ss:])
+		for r := 0; r < gd.Height(); r++ {
+			*gd.Row16(r, 0) = *gs.Row16(r, 0)
 		}
 	case 32:
-		dn, sn := ds+32, ss+32
-		for i := 0; i < h/2; i++ {
-			do, so := 2*i*ds, 2*i*ss
-			dw, sw := dst[do:do+dn:do+dn], src[so:so+sn:so+sn]
-			*(*[32]byte)(dw) = *(*[32]byte)(sw)
-			*(*[32]byte)(dw[ds:]) = *(*[32]byte)(sw[ss:])
+		for r := 0; r < gd.Height(); r++ {
+			*gd.Row32(r, 0) = *gs.Row32(r, 0)
 		}
 	case 64:
-		dn, sn := ds+64, ss+64
-		for i := 0; i < h/2; i++ {
-			do, so := 2*i*ds, 2*i*ss
-			dw, sw := dst[do:do+dn:do+dn], src[so:so+sn:so+sn]
-			*(*[64]byte)(dw) = *(*[64]byte)(sw)
-			*(*[64]byte)(dw[ds:]) = *(*[64]byte)(sw[ss:])
+		for r := 0; r < gd.Height(); r++ {
+			*gd.Row64(r, 0) = *gs.Row64(r, 0)
 		}
 	default:
-		for y := range h {
-			d, s := dst[y*ds:y*ds+w], src[y*ss:y*ss+w]
-			d = d[:len(s)]
+		for r := 0; r < gd.Height(); r++ {
 			x := 0
-			for ; x+16 <= len(s); x += 16 {
-				*(*[16]byte)(d[x : x+16]) = *(*[16]byte)(s[x : x+16])
+			for ; x+16 <= w; x += 16 {
+				*gd.Row16(r, x) = *gs.Row16(r, x)
 			}
-			if x+8 <= len(s) {
-				*(*[8]byte)(d[x : x+8]) = *(*[8]byte)(s[x : x+8])
+			if x+8 <= w {
+				*gd.Row8(r, x) = *gs.Row8(r, x)
 			}
 		}
-		return
-	}
-	if h&1 != 0 {
-		y := h - 1
-		copy(dst[y*ds:y*ds+w], src[y*ss:y*ss+w])
 	}
 }
 

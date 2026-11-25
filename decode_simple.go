@@ -375,7 +375,8 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	}
 	if !useExternal {
 		// Non-external Decoder always binds LoopFilterMasks for deblocking, so
-		// edge-list LoopFilterEdges/Schedule scratch is unused.
+		// per-MI LoopFilterMap and edge-list LoopFilterEdges/Schedule scratch are unused.
+		plan.Size.Event.SideData.LoopFilterMap = 0
 		postArena.LoopFilterEdges = 0
 		postArena.LoopFilterSchedule = 0
 	}
@@ -473,8 +474,8 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 			PostPublisher: &d.external,
 		}
 	}
-	runner, _, err := bindDecoderFrameWorkResidualStreamPlanRunner(plan, &d.stream,
-		runtime, d.scratch, &d.batch)
+	runner, _, err := bindDecoderFrameWorkResidualStreamPlanRunnerWith(plan, &d.stream,
+		runtime, d.scratch, &d.batch, !d.useExternal)
 	if err != nil {
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: bind runner: %w", err)

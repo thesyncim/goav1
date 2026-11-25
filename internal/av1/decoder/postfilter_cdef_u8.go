@@ -567,17 +567,19 @@ func frameWorkAssembleCDEFInputU8(input []uint16, dst frame.Plane, topBuf []byte
 	if rowExtend {
 		rowCovEnd = fillH
 	}
-	for row := 0; row < fillH; row++ {
-		rowBuf := input[row*cdef.BStride:]
-		if row < rowCovStart || row >= rowCovEnd {
-			frameWorkFillCDEFInputSentinelRow(rowBuf, fillW)
-			continue
-		}
-		if xLo > 0 {
-			frameWorkFillCDEFInputSentinelRow(rowBuf, xLo)
-		}
-		if xHiEff < fillW {
-			frameWorkFillCDEFInputSentinelRow(rowBuf[xHiEff:], fillW-xHiEff)
+	if rowCovStart > 0 || rowCovEnd < fillH || xLo > 0 || xHiEff < fillW {
+		for row := 0; row < fillH; row++ {
+			rowBuf := input[row*cdef.BStride:]
+			if row < rowCovStart || row >= rowCovEnd {
+				frameWorkFillCDEFInputSentinelRow(rowBuf, fillW)
+				continue
+			}
+			if xLo > 0 {
+				frameWorkFillCDEFInputSentinelRow(rowBuf, xLo)
+			}
+			if xHiEff < fillW {
+				frameWorkFillCDEFInputSentinelRow(rowBuf[xHiEff:], fillW-xHiEff)
+			}
 		}
 	}
 

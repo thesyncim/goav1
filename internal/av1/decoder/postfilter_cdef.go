@@ -174,6 +174,55 @@ func (ctx *FrameWorkPostFilterContext) CDEFPostFilterScratchLen() (FrameWorkCDEF
 	return size, nil
 }
 
+// cdefInPlaceScratchLen sizes CDEF scratch for the in-place postfilter paths
+// (whole-frame serial, parallel banded, and row-pipelined). Unlike
+// CDEFPostFilterScratchLen, it does not reserve a full-frame uint16 snapshot
+// when 8-bit SampleBytes or 10/12-bit 4-row line buffers suffice.
+func (ctx *FrameWorkPostFilterContext) cdefInPlaceScratchLen() (FrameWorkCDEFPostFilterScratchSize, error) {
+	if !ctx.RemainingPostFilters().Has(FrameWorkPostFilterCDEF) {
+		return FrameWorkCDEFPostFilterScratchSize{}, nil
+	}
+	if ctx.Output == nil {
+		return FrameWorkCDEFPostFilterScratchSize{}, frame.ErrInvalidSlot
+	}
+	var size FrameWorkCDEFPostFilterScratchSize
+	coeffShift := int(ctx.Output.Format.BitDepth) - 8
+	u8InPlace := ctx.Output.Layout.BytesPerSample == 1 && coeffShift == 0
+	hbdInPlace := ctx.Output.Layout.BytesPerSample == 2 && coeffShift > 0 && coeffShift <= 4 && ctx.cdefHBDPlanesAvailable()
+	for plane := range 3 {
+		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
+		if !ok {
+			continue
+		}
+		xDec, yDec := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
+		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec, yDec, ctx.Output.Layout.BytesPerSample)
+		switch {
+		case u8InPlace:
+			size.SampleBytes[plane] = CDEFU8LineScratchLen(planeFrame.Width)
+		case hbdInPlace:
+			size.Samples[plane] = 4 * planeFrame.Width
+		default:
+			need, err := frame.SamplePlaneLen(planeFrame, ctx.Output.Layout.BytesPerSample)
+			if err != nil {
+				return FrameWorkCDEFPostFilterScratchSize{}, err
+			}
+			size.Samples[plane] = need
+		}
+	}
+	if !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF) {
+		cols, rows, err := frameWorkCDEFUnitGrid(ctx.Event.FrameSize)
+		if err != nil {
+			return FrameWorkCDEFPostFilterScratchSize{}, err
+		}
+		size.DirectionGrid = cols * rows
+		size.VarianceGrid = cols * rows
+	}
+	workers := ctx.postFilterWorkerCount()
+	size.Input = cdef.InputBufferSize * workers
+	size.UnitDst = cdef.InputBufferSize * workers
+	return size, nil
+}
+
 // ApplyCDEFPostFilter applies CDEF to ctx.Output. Loop filter must already be
 // inactive or marked complete with WithCompletedPostFilters.
 func (ctx *FrameWorkPostFilterContext) ApplyCDEFPostFilter(req FrameWorkCDEFPostFilterRequest) (FrameWorkCDEFPostFilterResult, error) {
@@ -602,13 +651,12 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEF
 		// view. Explicit snapshot/unit-row APIs and banded callers retain their
 		// immutable whole-plane snapshot contract.
 		if loadSamples && rowStart == 0 && rowEnd == rows &&
-			ctx.Output.Layout.BytesPerSample == 2 && frameWorkCDEFHBDPlaneViewAvailable(planeFrame) &&
-			len(req.UnitDstScratch) >= cdef.InputBufferSize {
+			ctx.Output.Layout.BytesPerSample == 2 && frameWorkCDEFHBDPlaneViewAvailable(planeFrame) {
 			lineNeed := 4 * planeFrame.Width
 			if len(req.SampleScratch[plane]) < lineNeed {
 				return FrameWorkCDEFPostFilterResult{}, frame.ErrShortBuffer
 			}
-			planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRowsHBD(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleScratch[plane][:lineNeed], FrameWorkCDEFPostFilterHBD16BandBoundary{}, req.InputScratch[:cdef.InputBufferSize], req.UnitDstScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, coeffShift, chromaFiltering, unitMasks)
+			planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRowsHBD(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleScratch[plane][:lineNeed], FrameWorkCDEFPostFilterHBD16BandBoundary{}, req.InputScratch[:cdef.InputBufferSize], nil, blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, coeffShift, chromaFiltering, unitMasks)
 			if err != nil {
 				return FrameWorkCDEFPostFilterResult{}, err
 			}
@@ -669,12 +717,17 @@ func (ctx *FrameWorkPostFilterContext) validateCDEFPostFilterRequest(req FrameWo
 	if chromaFiltering && (len(req.DirectionGrid) < unitCount || len(req.VarianceGrid) < unitCount) {
 		return frame.ErrShortBuffer
 	}
-	if len(req.InputScratch) < cdef.InputBufferSize || len(req.UnitDstScratch) < cdef.InputBufferSize {
-		return frame.ErrShortBuffer
-	}
 	coeffShift := int(ctx.Output.Format.BitDepth) - 8
 	if coeffShift < 0 || coeffShift > 4 {
 		return frame.ErrInvalidFormat
+	}
+	u8InPlace := ctx.Output.Layout.BytesPerSample == 1 && coeffShift == 0 && ctx.cdefU8LineScratchReady(req)
+	hbdInPlace := ctx.Output.Layout.BytesPerSample == 2 && coeffShift > 0 && coeffShift <= 4 && ctx.cdefHBDPlanesAvailable()
+	if len(req.InputScratch) < cdef.InputBufferSize {
+		return frame.ErrShortBuffer
+	}
+	if !u8InPlace && !hbdInPlace && len(req.UnitDstScratch) < cdef.InputBufferSize {
+		return frame.ErrShortBuffer
 	}
 	for plane := range 3 {
 		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
@@ -685,8 +738,17 @@ func (ctx *FrameWorkPostFilterContext) validateCDEFPostFilterRequest(req FrameWo
 		if !ok || !processPlane {
 			continue
 		}
+		if u8InPlace {
+			continue
+		}
 		xDec, yDec := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
 		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec, yDec, ctx.Output.Layout.BytesPerSample)
+		if hbdInPlace {
+			if len(req.SampleScratch[plane]) < 4*planeFrame.Width {
+				return frame.ErrShortBuffer
+			}
+			continue
+		}
 		need, err := frame.SamplePlaneLen(planeFrame, ctx.Output.Layout.BytesPerSample)
 		if err != nil {
 			return err

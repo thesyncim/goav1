@@ -176,8 +176,9 @@ type frameWorkRowPipe struct {
 	// hbd frames filter CDEF from the pre-CDEF snapshot in req.SampleScratch
 	// (the uint16 band walk), which the driver fills one unit row at a time:
 	// snap is each plane's bound snapshot and snapRows the rows loaded.
-	hbd      bool
-	snap     [3]frame.SamplePlane
+	hbd        bool
+	hbdInPlace bool
+	snap       [3]frame.SamplePlane
 	snapSrc  [3]frame.Plane
 	snapRows [3]int
 	snapOn   [3]bool
@@ -378,7 +379,10 @@ func (p *FrameWorkPostFilterParallel) rowPipeUnit(w, u int) {
 		request.InputScratch = p.cdef[w].input
 		var res FrameWorkCDEFPostFilterResult
 		var err error
-		if pp.hbd {
+		if pp.hbdInPlace {
+			request.SampleScratch = p.cdef[w].line16
+			res, err = pp.ctx.ApplyCDEFPostFilterUnitRowsHBD(request, p.cdefHBD[u], u, u+1)
+		} else if pp.hbd {
 			request.UnitDstScratch = p.cdef[w].unitDst
 			res, err = pp.ctx.applyCDEFPostFilterRows(request, u, u+1, false, nil)
 		} else {
@@ -515,6 +519,30 @@ func (ctx *FrameWorkPostFilterContext) loadCDEFRowBoundary(boundary *FrameWorkCD
 	return nil
 }
 
+func (ctx *FrameWorkPostFilterContext) loadCDEFHBDRowBoundary(boundary *FrameWorkCDEFPostFilterHBD16BandBoundary, u, rows int, top bool) error {
+	rowStart, rowEnd := 0, u+1
+	if top {
+		rowStart, rowEnd = u, rows
+	}
+	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
+	for plane := range 3 {
+		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
+		processPlane := frameWorkCDEFPlaneHasFiltering(ctx.Event.CDEF, plane)
+		if plane == 0 && !processPlane {
+			processPlane = chromaFiltering
+		}
+		if !ok || !processPlane {
+			continue
+		}
+		xDec, yDec := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
+		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec, yDec, ctx.Output.Layout.BytesPerSample)
+		if err := loadCDEFHBDBandBoundaryPlane(boundary, plane, planeFrame, rowStart, rowEnd, rows, yDec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // applyRowPipelinedPostFilters runs deblock, CDEF and loop restoration behind
 // reconstruction and publishes the rows they finish.
 func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWorkPostFilterRequest, remaining FrameWorkPostFilterStage, result *FrameWorkPostFilterResult) error {
@@ -602,11 +630,12 @@ func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWor
 		driver = max(1, p.Workers, pp.started)
 		workers = driver + 1
 		pp.hbd = out.Layout.BytesPerSample == 2
+		pp.hbdInPlace = pp.hbd && ctx.cdefHBDPlanesAvailable()
 		if cdefOn {
 			lumaWidth, chromaWidth := frameWorkCDEFParallelPlaneWidths(ctx)
-			p.ensureCDEFScratch(workers, lumaWidth, chromaWidth, !pp.hbd, unitRows)
+			p.ensureCDEFScratch(workers, lumaWidth, chromaWidth, !pp.hbd, pp.hbdInPlace, unitRows)
 			p.resetCDEFResults(workers)
-			if pp.hbd {
+			if pp.hbd && !pp.hbdInPlace {
 				if err := ctx.bindRowPipeCDEFSnapshot(req.CDEF); err != nil {
 					return err
 				}
@@ -636,7 +665,16 @@ func (ctx *FrameWorkPostFilterContext) applyRowPipelinedPostFilters(req FrameWor
 	// from them is saved.
 	dispatch := func(end int) error {
 		for u := next; u < end; u++ {
-			if cdefOn && pp.hbd {
+			if cdefOn && pp.hbdInPlace {
+				if err := ctx.loadCDEFHBDRowBoundary(&p.cdefHBD[u], u, unitRows, false); err != nil {
+					return err
+				}
+				if u+1 < unitRows {
+					if err := ctx.loadCDEFHBDRowBoundary(&p.cdefHBD[u+1], u+1, unitRows, true); err != nil {
+						return err
+					}
+				}
+			} else if cdefOn && pp.hbd {
 				if err := pp.loadSnapshotRows(u); err != nil {
 					return err
 				}

@@ -51,7 +51,53 @@ func (c *Cursor) DecodeVarTxTree(t *TxTree, from uint, bx4, by4, vw4, vh4 int, h
 	update := c.allowCDFUpdate
 	dif, rng, cnt := c.dif, uint32(c.rng), int32(c.cnt)
 	if vw4 <= tw4 && vh4 <= th4 {
-		dif, rng, cnt = c.txTree(t, update, from, 0, 0, 0, bx4, by4, haveTop, haveLeft, dif, rng, cnt)
+		txw, txh := d.Log2W, d.Log2H
+		split := uint(0)
+		if from > 0 {
+			cat := 2 * (4 - uint(d.Max))
+			a, l := uint(0), uint(0)
+			if haveTop && t.A[bx4&31] < txw {
+				a = 1
+			}
+			if haveLeft && t.L[by4&31] < txh {
+				l = 1
+			}
+			v := &t.CDF[cat][a+l].values
+			if traceEntropyReads {
+				traceCDFRead(v[0], 2, dif, rng, c.coefTell(cnt))
+			}
+			split, dif, rng = readBool(v, dif, rng)
+			dif, rng, cnt = coefNorm(dif, rng, cnt)
+			if cnt < 0 {
+				dif, cnt = c.coefRefill(dif, cnt)
+			}
+			if update {
+				updateCDF2(v, int(split))
+			}
+			t.Split[0] |= uint16(split)
+		}
+		if split != 0 && d.Max > 1 {
+			sub := uint(d.Sub)
+			sd := &TxDims[sub]
+			txsw, txsh := int(sd.W4), int(sd.H4)
+			dif, rng, cnt = c.txTree(t, update, sub, 1, 0, 0, bx4, by4, haveTop, haveLeft, dif, rng, cnt)
+			if txw >= txh && bx4+txsw < t.Right {
+				dif, rng, cnt = c.txTree(t, update, sub, 1, 1, 0, bx4+txsw, by4, haveTop, true, dif, rng, cnt)
+			}
+			if txh >= txw && by4+txsh < t.Bottom {
+				dif, rng, cnt = c.txTree(t, update, sub, 1, 0, 1, bx4, by4+txsh, true, haveLeft, dif, rng, cnt)
+				if txw >= txh && bx4+txsw < t.Right {
+					dif, rng, cnt = c.txTree(t, update, sub, 1, 1, 1, bx4+txsw, by4+txsh, true, true, dif, rng, cnt)
+				}
+			}
+		} else {
+			markW, markH := txw, txh
+			if split != 0 {
+				markW, markH = 0, 0
+			}
+			txCtxSet(t.A[bx4&31:], txw, markW)
+			txCtxSet(t.L[by4&31:], txh, markH)
+		}
 	} else {
 		for y, yOff := 0, 0; y < vh4; y, yOff = y+th4, yOff+1 {
 			ht := haveTop || y > 0

@@ -16,7 +16,7 @@ const (
 	// beyond the picture (PAD_VALUE-scale borders); chroma uses half.
 	refPadBorderLuma   = 80
 	refPadBorderChroma = refPadBorderLuma / 2
-	refPadCacheSize    = 4
+	refPadCacheSize    = 3
 )
 
 // refPadPlane is one padded plane: buf holds (w+2*border) x (h+2*border)

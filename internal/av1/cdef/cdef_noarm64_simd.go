@@ -22,3 +22,7 @@ func filterUnitBlocksU8(dst []byte, dstStride int, input []uint16, inputOrigin i
 func filterUnitBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, u unitFilterParams, trusted bool) error {
 	return filterUnitBlocksPureGo(dst, dstStride, input, inputOrigin, blocks, directions, variances, u, trusted)
 }
+
+func filterUnitBlocksU16LE(dst []byte, dstStrideB int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, u unitFilterParams) error {
+	return filterUnitBlocksU16LEPureGo(dst, dstStrideB, input, inputOrigin, blocks, directions, variances, u)
+}

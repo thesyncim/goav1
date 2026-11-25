@@ -12,14 +12,20 @@
 - **Memory-safe & GC-free on hot paths** — `unsafe` is strictly isolated in `internal/unsafeutil` (`scripts/check_unsafe.sh`), with **0 allocs/frame** in steady-state decode and encode.
 - **Bit-exact conformance** — strict MD5 parity against `dav1d --filmgrain 1` across 130+ AV1 feature vectors and real-content streams.
 
-## Performance (Apple M4 Max, `GOEXPERIMENT=simd`)
+## Performance (Apple M4 Max, `GOEXPERIMENT=simd`, PGO)
 
-| Workload | Metric | goav1 vs Reference | Steady-State Allocs |
-| --- | --- | --- | --- |
-| **Encoder** vs `SvtAv1EncApp` (720p 240f, preset 12 RTC CBR, 1T) | Wall / Cycles | **1.39×–1.82× faster** (up to **2.04× fewer cycles**) | **0 allocs/frame** |
-| **Encoder** vs `SvtAv1EncApp` (720p 240f, preset 12 RTC CBR, MT) | Wall / Cycles | **2.68× faster** (**1.52× fewer cycles**) | **0 allocs/frame** |
-| **Decoder** vs `dav1d` (5-stream 720p/1080p corpus, 1T) | Wall / Cycles | **1.13×** wall / **1.13×** cycles | **0 allocs/frame** |
-| **Decoder** vs `dav1d` (5-stream 720p/1080p corpus, 8T) | Wall / Cycles | **1.04×–1.11×** wall / **1.03×–1.06×** cycles (beats `dav1d` on `svtra_mtbike` at **0.83×**) | **0 allocs/frame** |
+Measured end-to-end via CLI binaries (`-pgo=cmd/qualitybench/default.pgo`) against `dav1d 1.5.4`, `libaom` (`aomdec` / `aomenc`), and `SvtAv1EncApp` with matched null output muxers, interleaved runs, bit-exact MD5 verification, and FFmpeg PSNR/SSIM scoring. Ratios are **goav1 / reference** (`< 1.00×` means goav1 is faster / uses fewer resources).
+
+| Workload | Reference | Wall | User CPU | Cycles | Notes & Quality |
+| --- | --- | ---: | ---: | ---: | --- |
+| **Decoder** (42-stream 360p–1080p corpus, 1T) | `dav1d 1.5.4` | **1.21×** | **1.21×** | **1.21×** | 1.07×–1.41× on realtime/SVT streams; 1.40×–2.03× on `aomenc --good` (warp/compound); **0 allocs/frame** |
+| **Decoder** (42-stream corpus, 8T) | `dav1d 1.5.4` | **1.14×** | — | — | Excl. 30-tile `goav1_crowdrun` outlier (**1.06×** incl. all 42); **0 allocs/frame** |
+| **Decoder** (7-stream 720p/1080p + 10-bit suite, 1T / 8T) | `aomdec` (libaom) | **0.74×** / **0.43×** | — | **0.75×** / **0.87×** | **1.35× faster** at 1T, **2.3× faster** at 8T; 100% MD5 parity |
+| **Encoder** (720p 240f RTC CBR, 500–2000k, 1T) | `SvtAv1EncApp` p12 RTC | **0.94×–0.99×** | **1.10×–1.14×** | **0.94×–0.99×** | Wall/total cycles include ~0.2s SVT kernel `mmap` init; user CPU is 10–14% behind SVT; **−4.0% PSNR-Y BD-rate** (goav1 better); **0 allocs/frame** |
+| **Encoder** (720p 240f RTC CBR, 500–2000k, MT) | `SvtAv1EncApp` p12 RTC | **0.50×–0.61×** | **1.21×–1.27×** | **1.08×–1.14×** | **1.6×–2.0× faster** wall time; **0 allocs/frame** |
+| **Encoder** (720p 240f RTC CBR, 500–2000k, 1T) | `aomenc` `--rt --cpu-used=10` | **0.44×–0.53×** | **0.46×–0.53×** | **0.46×–0.53×** | **1.9×–2.3× faster** than `aomenc`; `aomenc` achieves +1.5–2.3 dB higher PSNR-Y at matched bitrate |
+
+Reproduce locally with `make bench-e2e` (quick suite), `make bench-e2e-fast` (rapid iteration), or `make bench-e2e-full` (all 42 8-bit + 5 10-bit streams). See [docs/e2e-codec-gap-20261124.md](docs/e2e-codec-gap-20261124.md) for the full quiet-machine breakdown and per-stage profiles.
 
 ## AV1 Feature Parity
 

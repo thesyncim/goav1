@@ -53,7 +53,7 @@ func frameWorkApplyCDEFPlaneRowsHBDLE(params parser.CDEFParams, indexMap FrameWo
 		}
 		return 0, 0, threading.ErrInvalidBatch
 	}
-	if len(input) < cdef.InputBufferSize || len(unitDst) < cdef.BlockSize*cdef.BStride || len(lineScratch) < 4*width {
+	if len(input) < cdef.InputBufferSize || len(lineScratch) < 4*width {
 		return 0, 0, frame.ErrShortBuffer
 	}
 	if rowStart > 0 && len(boundary.Top[plane]) < cdef.VerticalBorder*width {
@@ -154,7 +154,8 @@ func frameWorkApplyCDEFPlaneRowsHBDLE(params parser.CDEFParams, indexMap FrameWo
 			}
 			// The assembler writes sentinels to every uncovered ring cell itself;
 			// pre-filling the full ring here would write those cells twice.
-			if err := frameWorkAssembleCDEFInputHBDLE(input, pix, strideB, width, height, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
+			noSentinels, err := frameWorkAssembleCDEFInputHBDLE(input, pix, strideB, width, height, topBuf, bottomBuf, leftStorage[:], prevFiltered, unitRow, unitX, unitY, unitW, unitH)
+			if err != nil {
 				return units, blocksTotal, err
 			}
 
@@ -168,10 +169,11 @@ func frameWorkApplyCDEFPlaneRowsHBDLE(params parser.CDEFParams, indexMap FrameWo
 				cdefDebugLogUnit(plane, unitRow, unitCol, packed, filterParams, *unitDirections, *unitVariances, input, len(blocks))
 			}
 
+			unitPix := pix[unitY*strideB+2*unitX:]
 			if needPrimaryDirection {
-				err = cdef.FilterFrameBlocksTrusted(unitDst, cdef.BStride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+				err = cdef.FilterFrameBlocksU16LETrusted(unitPix, strideB, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams, noSentinels)
 			} else {
-				err = cdef.FilterFrameBlocksTrustedNoPrimaryDirection(unitDst, cdef.BStride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+				err = cdef.FilterFrameBlocksU16LETrustedNoPrimaryDirection(unitPix, strideB, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams, noSentinels)
 			}
 			if err != nil {
 				return units, blocksTotal, err
@@ -181,7 +183,6 @@ func frameWorkApplyCDEFPlaneRowsHBDLE(params parser.CDEFParams, indexMap FrameWo
 				prevFiltered = false
 				continue
 			}
-			frameWorkStoreCDEFBlocksHBD(pix[unitY*strideB+2*unitX:], strideB, unitDst, blocks, blockWidth, blockHeight)
 			prevFiltered = true
 			units++
 			blocksTotal += uint32(len(blocks))
@@ -200,33 +201,16 @@ func frameWorkCDEFPlaneHBDStride(plane frame.Plane) (int, error) {
 	return plane.Stride / 2, nil
 }
 
-// frameWorkStoreCDEFBlocksHBD encodes the filtered blocks of a unit from
-// unitDst (stride cdef.BStride) into the little-endian plane bytes pix (the
-// unit's origin, stride strideB), one store per run of horizontally adjacent
-// blocks.
-func frameWorkStoreCDEFBlocksHBD(pix []byte, strideB int, unitDst []uint16, blocks []cdef.BlockPosition, blockWidth, blockHeight int) {
-	for i := 0; i < len(blocks); {
-		b := blocks[i]
-		n := 1
-		for i+n < len(blocks) && blocks[i+n].BY == b.BY && int(blocks[i+n].BX) == int(b.BX)+n {
-			n++
-		}
-		x, y := int(b.BX)*blockWidth, int(b.BY)*blockHeight
-		frame.StoreSampleRows16Trusted(pix[y*strideB+2*x:], strideB, unitDst[y*cdef.BStride+x:], cdef.BStride, n*blockWidth, blockHeight)
-		i += n
-	}
-}
-
 // frameWorkAssembleCDEFInputHBDLE builds the padded uint16 tap buffer from the
 // little-endian frame plane bytes (stride strideB) and the same pre-filter backups as the
 // 8-bit walk. Frame and crop edge extension intentionally mirrors
 // frameWorkCopyCDEFInput; the full aligned plane extent is passed as width and
 // height so allocated MI padding remains real input.
-func frameWorkAssembleCDEFInputHBDLE(input []uint16, pix []byte, strideB, width, height int, topBuf, bottomBuf, leftBuf []uint16, leftFromBackup bool, unitRow, unitX, unitY, unitW, unitH int) error {
+func frameWorkAssembleCDEFInputHBDLE(input []uint16, pix []byte, strideB, width, height int, topBuf, bottomBuf, leftBuf []uint16, leftFromBackup bool, unitRow, unitX, unitY, unitW, unitH int) (bool, error) {
 	fillW := unitW + 2*cdef.HorizontalBorder
 	fillH := unitH + 2*cdef.VerticalBorder
 	if unitW <= 0 || unitH <= 0 || fillW > cdef.BStride || !cdefInputRectFits(len(input), fillW, fillH) {
-		return threading.ErrInvalidBatch
+		return false, threading.ErrInvalidBatch
 	}
 	srcX0 := maxInt(unitX-cdef.HorizontalBorder, 0)
 	srcY0 := maxInt(unitY-cdef.VerticalBorder, 0)
@@ -246,17 +230,20 @@ func frameWorkAssembleCDEFInputHBDLE(input []uint16, pix []byte, strideB, width,
 	if rowExtend {
 		rowCovEnd = fillH
 	}
-	for row := 0; row < fillH; row++ {
-		rowBuf := input[row*cdef.BStride:]
-		if row < rowCovStart || row >= rowCovEnd {
-			frameWorkFillCDEFInputSentinelRow(rowBuf, fillW)
-			continue
-		}
-		if xLo > 0 {
-			frameWorkFillCDEFInputSentinelRow(rowBuf, xLo)
-		}
-		if xHiEff < fillW {
-			frameWorkFillCDEFInputSentinelRow(rowBuf[xHiEff:], fillW-xHiEff)
+	noSentinels := rowCovStart == 0 && rowCovEnd == fillH && xLo == 0 && xHiEff == fillW
+	if !noSentinels {
+		for row := 0; row < fillH; row++ {
+			rowBuf := input[row*cdef.BStride:]
+			if row < rowCovStart || row >= rowCovEnd {
+				frameWorkFillCDEFInputSentinelRow(rowBuf, fillW)
+				continue
+			}
+			if xLo > 0 {
+				frameWorkFillCDEFInputSentinelRow(rowBuf, xLo)
+			}
+			if xHiEff < fillW {
+				frameWorkFillCDEFInputSentinelRow(rowBuf[xHiEff:], fillW-xHiEff)
+			}
 		}
 	}
 	copyW := srcX1 - srcX0
@@ -264,7 +251,7 @@ func frameWorkAssembleCDEFInputHBDLE(input []uint16, pix []byte, strideB, width,
 		(srcY0-unitY)*cdef.BStride + (srcX0 - unitX)
 	if topRows := unitY - srcY0; topRows > 0 {
 		if unitRow == 0 || len(topBuf) < cdef.VerticalBorder*width {
-			return threading.ErrInvalidBatch
+			return false, threading.ErrInvalidBatch
 		}
 		for row := 0; row < topRows; row++ {
 			srcOff := row*width + srcX0
@@ -277,7 +264,7 @@ func frameWorkAssembleCDEFInputHBDLE(input []uint16, pix []byte, strideB, width,
 	midW := srcX1 - unitX
 	if leftW > 0 && leftFromBackup {
 		if len(leftBuf) < cdef.HorizontalBorder*unitH {
-			return threading.ErrInvalidBatch
+			return false, threading.ErrInvalidBatch
 		}
 		for row := 0; row < unitH; row++ {
 			dstOff := midOffset + row*cdef.BStride
@@ -297,7 +284,7 @@ func frameWorkAssembleCDEFInputHBDLE(input []uint16, pix []byte, strideB, width,
 	if botRows := srcY1 - (unitY + unitH); botRows > 0 {
 		if bottomBuf != nil {
 			if len(bottomBuf) < cdef.VerticalBorder*width {
-				return threading.ErrInvalidBatch
+				return false, threading.ErrInvalidBatch
 			}
 			for row := 0; row < botRows; row++ {
 				srcOff := row*width + srcX0
@@ -329,5 +316,213 @@ func frameWorkAssembleCDEFInputHBDLE(input []uint16, pix []byte, strideB, width,
 			}
 		}
 	}
+	return noSentinels, nil
+}
+
+// LoadCDEFPostFilterHBD16BandBoundary snapshots only the two top and two bottom
+// pre-CDEF rows an in-place 10/12-bit unit-row band needs across band seams.
+// It must run before any parallel ApplyCDEFPostFilterUnitRowsHBD calls.
+func (ctx *FrameWorkPostFilterContext) LoadCDEFPostFilterHBD16BandBoundary(boundary *FrameWorkCDEFPostFilterHBD16BandBoundary, rowStart, rowEnd int) error {
+	if boundary == nil {
+		return frame.ErrShortBuffer
+	}
+	remaining := ctx.RemainingPostFilters()
+	if remaining.Has(FrameWorkPostFilterLoopFilter) {
+		return ErrUnsupportedPostFilter
+	}
+	if !remaining.Has(FrameWorkPostFilterCDEF) {
+		return nil
+	}
+	if ctx.Output == nil {
+		return frame.ErrInvalidSlot
+	}
+	if !frameWorkCDEFHasFiltering(ctx.Event.CDEF, ctx.Output.Format.MonoChrome) {
+		return nil
+	}
+	coeffShift := int(ctx.Output.Format.BitDepth) - 8
+	if ctx.Output.Layout.BytesPerSample != 2 || coeffShift <= 0 || coeffShift > 4 {
+		return frame.ErrInvalidFormat
+	}
+	_, rows, err := frameWorkCDEFUnitGrid(ctx.Event.FrameSize)
+	if err != nil {
+		return err
+	}
+	if rowEnd < 0 || rowEnd > rows {
+		rowEnd = rows
+	}
+	if rowStart < 0 || rowStart >= rowEnd {
+		if rowStart == rowEnd {
+			return nil
+		}
+		return threading.ErrInvalidBatch
+	}
+	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
+	for plane := range 3 {
+		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
+		processPlane := frameWorkCDEFPlaneHasFiltering(ctx.Event.CDEF, plane)
+		if plane == 0 && !processPlane {
+			processPlane = chromaFiltering
+		}
+		if !ok || !processPlane {
+			continue
+		}
+		xDec, yDec := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
+		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec, yDec, ctx.Output.Layout.BytesPerSample)
+		if err := loadCDEFHBDBandBoundaryPlane(boundary, plane, planeFrame, rowStart, rowEnd, rows, yDec); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func loadCDEFHBDBandBoundaryPlane(boundary *FrameWorkCDEFPostFilterHBD16BandBoundary, plane int, planeFrame frame.Plane, rowStart, rowEnd, rows, yDec int) error {
+	width := planeFrame.Width
+	height := planeFrame.Height
+	strideB := planeFrame.Stride
+	if width <= 0 || height <= 0 || strideB%2 != 0 || strideB < 2*width ||
+		(height-1)*strideB+2*width > len(planeFrame.Pix) {
+		return frame.ErrInvalidPlane
+	}
+	need := cdef.VerticalBorder * width
+	if rowStart > 0 {
+		top := boundary.Top[plane]
+		if len(top) < need {
+			return frame.ErrShortBuffer
+		}
+		y0 := (rowStart*cdef.BlockSize)>>yDec - cdef.VerticalBorder
+		for r := 0; r < cdef.VerticalBorder; r++ {
+			y := y0 + r
+			if y < 0 || y >= height {
+				return frame.ErrInvalidPlane
+			}
+			frame.LoadSampleRows16Trusted(top[r*width:(r+1)*width], width, planeFrame.Pix[y*strideB:], strideB, width, 1)
+		}
+	}
+	if rowEnd < rows {
+		bottom := boundary.Bottom[plane]
+		if len(bottom) < need {
+			return frame.ErrShortBuffer
+		}
+		y0 := (rowEnd * cdef.BlockSize) >> yDec
+		for r := 0; r < cdef.VerticalBorder; r++ {
+			y := y0 + r
+			if y < 0 || y >= height {
+				return frame.ErrInvalidPlane
+			}
+			frame.LoadSampleRows16Trusted(bottom[r*width:(r+1)*width], width, planeFrame.Pix[y*strideB:], strideB, width, 1)
+		}
+	}
+	return nil
+}
+
+// ApplyCDEFPostFilterUnitRowsHBD applies a 10/12-bit unit-row band in place
+// directly to the little-endian picture planes using immutable boundary rows
+// loaded by LoadCDEFPostFilterHBD16BandBoundary.
+func (ctx *FrameWorkPostFilterContext) ApplyCDEFPostFilterUnitRowsHBD(req FrameWorkCDEFPostFilterRequest, boundary FrameWorkCDEFPostFilterHBD16BandBoundary, rowStart, rowEnd int) (FrameWorkCDEFPostFilterResult, error) {
+	remaining := ctx.RemainingPostFilters()
+	if remaining.Has(FrameWorkPostFilterLoopFilter) {
+		return FrameWorkCDEFPostFilterResult{}, ErrUnsupportedPostFilter
+	}
+	if !remaining.Has(FrameWorkPostFilterCDEF) {
+		return FrameWorkCDEFPostFilterResult{}, nil
+	}
+	if ctx.Output == nil {
+		return FrameWorkCDEFPostFilterResult{}, frame.ErrInvalidSlot
+	}
+	if !frameWorkCDEFHasFiltering(ctx.Event.CDEF, ctx.Output.Format.MonoChrome) {
+		return FrameWorkCDEFPostFilterResult{}, nil
+	}
+	cols, rows, err := frameWorkCDEFUnitGrid(ctx.Event.FrameSize)
+	if err != nil {
+		return FrameWorkCDEFPostFilterResult{}, err
+	}
+	if rowEnd < 0 || rowEnd > rows {
+		rowEnd = rows
+	}
+	if rowStart < 0 || rowStart >= rowEnd {
+		if rowStart == rowEnd {
+			return FrameWorkCDEFPostFilterResult{}, nil
+		}
+		return FrameWorkCDEFPostFilterResult{}, threading.ErrInvalidBatch
+	}
+	indexMap := req.IndexMap
+	if frameWorkCDEFIndexMapEmpty(indexMap) && ctx.CDEFIndexMap != nil {
+		indexMap = *ctx.CDEFIndexMap
+	}
+	if err := frameWorkValidateCDEFIndexMap(indexMap, cols, rows); err != nil {
+		return FrameWorkCDEFPostFilterResult{}, err
+	}
+	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
+	coeffShift := int(ctx.Output.Format.BitDepth) - 8
+	if ctx.Output.Layout.BytesPerSample != 2 || coeffShift <= 0 || coeffShift > 4 {
+		return FrameWorkCDEFPostFilterResult{}, frame.ErrInvalidFormat
+	}
+	if len(req.InputScratch) < cdef.InputBufferSize {
+		return FrameWorkCDEFPostFilterResult{}, frame.ErrShortBuffer
+	}
+	if chromaFiltering && (len(req.DirectionGrid) < cols*rows || len(req.VarianceGrid) < cols*rows) {
+		return FrameWorkCDEFPostFilterResult{}, frame.ErrShortBuffer
+	}
+	skipMap := ctx.LoopFilterMap
+	var result FrameWorkCDEFPostFilterResult
+	var directions cdef.DirectionGrid
+	var variances cdef.VarianceGrid
+	var blockStorage [cdef.NBlocks * cdef.NBlocks]cdef.BlockPosition
+	var unitMaskCache frameWorkCDEFUnitMaskCache
+	var unitMasks *frameWorkCDEFUnitMaskCache
+	if ctx.LoopFilterMasks.NoSkipUnitGrid(cols, rows) {
+		unitMaskCache.resetNoSkip(ctx.LoopFilterMasks, rowStart, cols)
+		unitMasks = &unitMaskCache
+	}
+	for plane := range 3 {
+		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
+		processPlane := frameWorkCDEFPlaneHasFiltering(ctx.Event.CDEF, plane)
+		if plane == 0 && !processPlane {
+			processPlane = chromaFiltering
+		}
+		if !ok || !processPlane {
+			continue
+		}
+		xDec, yDec := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
+		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec, yDec, ctx.Output.Layout.BytesPerSample)
+		lineNeed := 4 * planeFrame.Width
+		if len(req.SampleScratch[plane]) < lineNeed {
+			return FrameWorkCDEFPostFilterResult{}, frame.ErrShortBuffer
+		}
+		planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRowsHBD(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleScratch[plane][:lineNeed], boundary, req.InputScratch[:cdef.InputBufferSize], nil, blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec, yDec, coeffShift, chromaFiltering, unitMasks)
+		if err != nil {
+			return FrameWorkCDEFPostFilterResult{}, err
+		}
+		result.Units += planeUnits
+		result.Blocks += planeBlocks
+		result.Planes++
+	}
+	return result, nil
+}
+
+func (ctx *FrameWorkPostFilterContext) cdefHBDPlanesAvailable() bool {
+	if ctx.Output == nil || ctx.Output.Layout.BytesPerSample != 2 {
+		return false
+	}
+	coeffShift := int(ctx.Output.Format.BitDepth) - 8
+	if coeffShift <= 0 || coeffShift > 4 {
+		return false
+	}
+	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
+	for plane := range 3 {
+		planeFrame, ok := frameWorkCDEFPlane(*ctx.Output, plane)
+		processPlane := frameWorkCDEFPlaneHasFiltering(ctx.Event.CDEF, plane)
+		if plane == 0 && !processPlane {
+			processPlane = chromaFiltering
+		}
+		if !ok || !processPlane {
+			continue
+		}
+		xDec, yDec := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
+		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec, yDec, ctx.Output.Layout.BytesPerSample)
+		if !frameWorkCDEFHBDPlaneViewAvailable(planeFrame) {
+			return false
+		}
+	}
+	return true
 }

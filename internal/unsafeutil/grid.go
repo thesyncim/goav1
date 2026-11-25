@@ -10,7 +10,7 @@ import "unsafe"
 // value written through a Grid can become a pointer the garbage collector
 // would follow.
 type GridElem interface {
-	uint8 | uint16 | int32
+	uint8 | uint16 | int16 | int32
 }
 
 // GridRowArray is the fixed-size run of elements a Grid accessor returns:

@@ -486,15 +486,21 @@ func (r *Reader) DecodeCoefs(s *CoefState, plane uint, sz *CoefSize, cf *[1024]i
 	// does this block have any non-zero coefficients (get_skip_ctx)
 	sctx := uint(0)
 	bw4, bh4 := uint(s.BW4[chroma]), uint(s.BH4[chroma])
-	aLo, aHi := coefCtxWords(a, x4, w4)
-	lLo, lHi := coefCtxWords(l, y4, h4)
+	var aLo, aHi, lLo, lHi uint64
+	haveCtx := false
 	if chroma == 0 {
 		if bw4 != w4 || bh4 != h4 {
+			aLo, aHi = coefCtxWords(a, x4, w4)
+			lLo, lHi = coefCtxWords(l, y4, h4)
+			haveCtx = true
 			la := min(coefCtxOr(aLo, aHi)&coefCtxMask, 4)
 			ll := min(coefCtxOr(lLo, lHi)&coefCtxMask, 4)
 			sctx = uint(coefSkipCtxs[la][ll])
 		}
 	} else {
+		aLo, aHi = coefCtxWords(a, x4, w4)
+		lLo, lHi = coefCtxWords(l, y4, h4)
+		haveCtx = true
 		sctx = 7
 		if bw4*bh4 > w4*h4 {
 			sctx = 10
@@ -817,6 +823,10 @@ func (r *Reader) DecodeCoefs(s *CoefState, plane uint, sz *CoefSize, cf *[1024]i
 	dcSignLevel := uint8(0)
 	if dcTok != 0 {
 		// get_dc_sign_ctx
+		if !haveCtx {
+			aLo, aHi = coefCtxWords(a, x4, w4)
+			lLo, lHi = coefCtxWords(l, y4, h4)
+		}
 		ds := coefCtxSign(aLo, aHi) + coefCtxSign(lLo, lHi)
 		dctx := coefB2U(ds != 0) + coefB2U(ds > 0)
 		v := &cdfs.DCSign[chroma][dctx].values
@@ -857,51 +867,99 @@ func (r *Reader) DecodeCoefs(s *CoefState, plane uint, sz *CoefSize, cf *[1024]i
 	}
 	if rc != 0 {
 		acDQ := dq.AC
-		for {
-			// dav1d_msac_decode_bool_equi
-			split := ((rng >> 8) << 7) + ecMinProb
-			if traceEntropyReads {
-				traceBoolRead(CDFProbTop/2, dif, rng, c.coefTell(cnt))
-			}
-			var sign uint
-			sign, dif, rng = coefBool(dif, rng, split)
-			sh := uint(normShift16(rng)) & 3
-			cnt -= int32(sh)
-			dif = ((dif + 1) << sh) - 1
-			rng <<= sh
-			if cnt < 0 {
-				dif, cnt = c.coefRefill(dif, cnt)
-			}
+		rc &= 1023
+		if qm == nil && dqShift == 0 {
+			maxRow, maxCol := uint(0), uint(0)
+			for {
+				// dav1d_msac_decode_bool_equi: rng is in [32768, 65535], so after
+				// splitting at rng/2 +/- 4 the new rng is >= 16380 and needs either
+				// 1 shift (almost always) or 2 shifts.
+				split := ((rng >> 8) << 7) + ecMinProb
+				if traceEntropyReads {
+					traceBoolRead(CDFProbTop/2, dif, rng, c.coefTell(cnt))
+				}
+				var sign uint
+				sign, dif, rng = coefBool(dif, rng, split)
+				sh := uint(normShift16(rng)) & 3
+				cnt -= int32(sh)
+				dif = ((dif + 1) << sh) - 1
+				rng <<= sh
+				if cnt < 0 {
+					dif, cnt = c.coefRefill(dif, cnt)
+				}
 
-			rc &= 1023
-			rcTok := uint(uint32(cf[rc]))
-			f := acDQ
-			if qm != nil {
-				f = (f*uint32(qm[rc]) + 16) >> 5
-			}
-			var tok uint
-			var v uint32
-			if rcTok >= 15<<11 {
-				var g uint
-				g, dif, rng, cnt = c.coefGolomb(dif, rng, cnt)
-				tok = (g + 15) & 0xfffff
-				v = min(((f*uint32(tok))&0xffffff)>>dqShift, cfMax+uint32(sign))
-			} else {
-				tok = rcTok >> 11
-				v = (f * uint32(tok)) >> dqShift
-				if qm != nil {
-					v = min(v, cfMax+uint32(sign))
+				rcTok := uint(uint32(cf[rc]))
+				var tok uint
+				var v uint32
+				if rcTok >= 15<<11 {
+					var g uint
+					g, dif, rng, cnt = c.coefGolomb(dif, rng, cnt)
+					tok = (g + 15) & 0xfffff
+					v = min((acDQ*uint32(tok))&0xffffff, cfMax+uint32(sign))
+				} else {
+					tok = rcTok >> 11
+					v = acDQ * uint32(tok)
+				}
+				culLevel += tok
+				m := -int32(sign)
+				cf[rc] = (int32(v) ^ m) - m
+				maxRow = max(maxRow, rc&rowMask)
+				maxCol = max(maxCol, rc>>colShift)
+				rc = rcTok & 0x3ff
+				if rc == 0 {
+					break
 				}
 			}
-			culLevel += tok
-			m := -int32(sign)
-			cf[rc] = (int32(v) ^ m) - m
-			rows = max(rows, (rc&rowMask)+1)
-			cols = max(cols, (rc>>colShift)+1)
-			rc = rcTok & 0x3ff
-			if rc == 0 {
-				break
+			rows = max(rows, maxRow+1)
+			cols = max(cols, maxCol+1)
+		} else {
+			maxRow, maxCol := uint(0), uint(0)
+			for {
+				split := ((rng >> 8) << 7) + ecMinProb
+				if traceEntropyReads {
+					traceBoolRead(CDFProbTop/2, dif, rng, c.coefTell(cnt))
+				}
+				var sign uint
+				sign, dif, rng = coefBool(dif, rng, split)
+				sh := uint(normShift16(rng)) & 3
+				cnt -= int32(sh)
+				dif = ((dif + 1) << sh) - 1
+				rng <<= sh
+				if cnt < 0 {
+					dif, cnt = c.coefRefill(dif, cnt)
+				}
+
+				rcTok := uint(uint32(cf[rc]))
+				f := acDQ
+				if qm != nil {
+					f = (f*uint32(qm[rc]) + 16) >> 5
+				}
+				var tok uint
+				var v uint32
+				if rcTok >= 15<<11 {
+					var g uint
+					g, dif, rng, cnt = c.coefGolomb(dif, rng, cnt)
+					tok = (g + 15) & 0xfffff
+					v = min(((f*uint32(tok))&0xffffff)>>dqShift, cfMax+uint32(sign))
+				} else {
+					tok = rcTok >> 11
+					v = (f * uint32(tok)) >> dqShift
+					if qm != nil {
+						v = min(v, cfMax+uint32(sign))
+					}
+				}
+				culLevel += tok
+				m := -int32(sign)
+				cf[rc] = (int32(v) ^ m) - m
+				maxRow = max(maxRow, rc&rowMask)
+				maxCol = max(maxCol, rc>>colShift)
+				rc = rcTok & 0x3ff
+				if rc == 0 {
+					break
+				}
 			}
+			rows = max(rows, maxRow+1)
+			cols = max(cols, maxCol+1)
 		}
 	}
 	c.dif, c.rng, c.cnt = dif, uint16(rng), int16(cnt)
@@ -990,35 +1048,35 @@ func (c *Cursor) coefAC2D(scan []int16, stride uint, offsets *[5][5]uint8, level
 		}
 		if update {
 			count := values[4]
-			rate := uint(5 + ((count >> 4) & 3))
-			// update_cdf with both adaptations of each entry computed and
-			// the symbol selecting between them (dav1d's asm does the same
-			// with a lane mask).
+			rate := uint(5 + (count >> 4))
 			c0u, c1u, c2u := uint(c0), uint(c1), uint(c2)
-			n0 := c0u - c0u>>rate
-			n1 := c1u - c1u>>rate
-			n2 := c2u - c2u>>rate
-			u0 := c0u + (CDFProbTop-c0u)>>rate
-			u1 := c1u + (CDFProbTop-c1u)>>rate
-			u2 := c2u + (CDFProbTop-c2u)>>rate
-			if tok > 0 {
-				n0 = u0
+			if tok == 0 {
+				values[0] = uint16(c0u - c0u>>rate)
+				values[1] = uint16(c1u - c1u>>rate)
+				values[2] = uint16(c2u - c2u>>rate)
+			} else {
+				n0 := c0u + (CDFProbTop-c0u)>>rate
+				n1 := c1u - c1u>>rate
+				n2 := c2u - c2u>>rate
+				if tok > 1 {
+					n1 = c1u + (CDFProbTop-c1u)>>rate
+				}
+				if tok > 2 {
+					n2 = c2u + (CDFProbTop-c2u)>>rate
+				}
+				values[0] = uint16(n0)
+				values[1] = uint16(n1)
+				values[2] = uint16(n2)
 			}
-			if tok > 1 {
-				n1 = u1
-			}
-			if tok > 2 {
-				n2 = u2
-			}
-			values[0] = uint16(n0)
-			values[1] = uint16(n1)
-			values[2] = uint16(n2)
 			if count < MaxCDFCount {
 				count++
 			}
 			values[4] = count
 		}
 
+		if tok == 0 {
+			continue
+		}
 		if tok == 3 {
 			hiCtx := uint(7)
 			if x|y > 1 {
@@ -1037,15 +1095,9 @@ func (c *Cursor) coefAC2D(scan []int16, stride uint, offsets *[5][5]uint8, level
 			cf[rcI] = int32(tok<<11 | rc)
 			rc = rcI
 		} else {
-			// 0x1 for tok, 0x7ff as bitmask for rc, 0x41 for level_tok
-			t := uint32(tok) * 0x17ff41
-			levels[rcI] = uint8(t)
-			// tok ? (tok << 11) | rc : 0
-			t = (t >> 9) & (uint32(rc) + ^uint32(0x7ff))
-			if t != 0 {
-				rc = rcI
-			}
-			cf[rcI] = int32(t)
+			levels[rcI] = uint8(tok * 0x41)
+			cf[rcI] = int32(tok<<11 | rc)
+			rc = rcI
 		}
 	}
 	return rc, dif, rng, cnt
@@ -1117,10 +1169,24 @@ func (c *Cursor) coefAC1D(vert bool, shift, shift2, mask, eob, eobTok uint, leve
 		}
 		if update {
 			count := v[4]
-			rate := uint(5 + ((count >> 4) & 3))
-			v[0] = uint16(adaptCDFEntry(c0, rate, tok > 0))
-			v[1] = uint16(adaptCDFEntry(c1, rate, tok > 1))
-			v[2] = uint16(adaptCDFEntry(c2, rate, tok > 2))
+			rate := uint(5 + (count >> 4))
+			if tok == 0 {
+				v[0] = uint16(c0 - c0>>rate)
+				v[1] = uint16(c1 - c1>>rate)
+				v[2] = uint16(c2 - c2>>rate)
+			} else {
+				v[0] = uint16(c0 + (CDFProbTop-c0)>>rate)
+				if tok > 1 {
+					v[1] = uint16(c1 + (CDFProbTop-c1)>>rate)
+				} else {
+					v[1] = uint16(c1 - c1>>rate)
+				}
+				if tok > 2 {
+					v[2] = uint16(c2 + (CDFProbTop-c2)>>rate)
+				} else {
+					v[2] = uint16(c2 - c2>>rate)
+				}
+			}
 			if count < MaxCDFCount {
 				count++
 			}
@@ -1140,6 +1206,9 @@ func (c *Cursor) coefAC1D(vert bool, shift, shift2, mask, eob, eobTok uint, leve
 			}
 			break
 		}
+		if tok == 0 {
+			continue
+		}
 		if tok == 3 {
 			hiCtx := uint(7)
 			if y > 0 {
@@ -1158,13 +1227,9 @@ func (c *Cursor) coefAC1D(vert bool, shift, shift2, mask, eob, eobTok uint, leve
 			cf[rcI] = int32(tok<<11 | rc)
 			rc = rcI
 		} else {
-			t := uint32(tok) * 0x17ff41
-			levels[at] = uint8(t)
-			t = (t >> 9) & (uint32(rc) + ^uint32(0x7ff))
-			if t != 0 {
-				rc = rcI
-			}
-			cf[rcI] = int32(t)
+			levels[at] = uint8(tok * 0x41)
+			cf[rcI] = int32(tok<<11 | rc)
+			rc = rcI
 		}
 	}
 	return rc, dcTok, dif, rng, cnt

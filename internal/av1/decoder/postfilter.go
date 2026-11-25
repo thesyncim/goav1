@@ -469,7 +469,7 @@ func (ctx *FrameWorkPostFilterContext) SupportedPostFilterScratchLen(req FrameWo
 		size.LoopFilter = loopFilterSize
 	}
 	if remaining.Has(FrameWorkPostFilterCDEF) {
-		cdefSize, err := ctx.CDEFPostFilterScratchLen()
+		cdefSize, err := ctx.cdefInPlaceScratchLen()
 		if err != nil {
 			return FrameWorkPostFilterScratchSize{}, err
 		}
@@ -511,7 +511,7 @@ func (ctx *FrameWorkPostFilterContext) PreSuperResPostFilterScratchLen(req Frame
 		size.LoopFilter = loopFilterSize
 	}
 	if remaining.Has(FrameWorkPostFilterCDEF) {
-		cdefSize, err := ctx.CDEFPostFilterScratchLen()
+		cdefSize, err := ctx.cdefInPlaceScratchLen()
 		if err != nil {
 			return FrameWorkPostFilterScratchSize{}, err
 		}

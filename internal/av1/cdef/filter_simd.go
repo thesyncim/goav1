@@ -55,6 +55,7 @@ type cdefSIMDCtx struct {
 	enablePrimary   bool
 	enableSecondary bool
 	u8              bool
+	noSentinels     bool
 }
 
 // The kernels take each row's taps from one window of the tap buffer that

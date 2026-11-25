@@ -666,8 +666,6 @@ func searchBlocksU8SIMD(src []byte, srcStride int, input []uint16, inputOrigin i
 		maxBY = max(maxBY, int(b.BY))
 		maxBX = max(maxBX, int(b.BX))
 	}
-	// The origin and stride bounds also make each row window below one
-	// compare.
 	if inputOrigin < 2*BStride+2 || inputOrigin > 1<<24 || uint(srcStride) > 1<<20 ||
 		maxBY >= 8 || maxBX >= 8 || maxSrc >= len(src) ||
 		inputOrigin+(maxBY*8+7+2)*BStride+maxBX*8+7+2 >= len(input) {
@@ -680,8 +678,6 @@ func searchBlocksU8SIMD(src []byte, srcStride int, input []uint16, inputOrigin i
 	var st [MaxSearchTrials]cdefSearchTrialSIMD
 	var acc [MaxSearchTrials]archsimd.Int32x4
 	zero := archsimd.BroadcastInt16x8(0)
-	secTap0 := archsimd.BroadcastInt16x8(int16(cdefSecondaryTaps[0]))
-	secTap1 := archsimd.BroadcastInt16x8(int16(cdefSecondaryTaps[1]))
 	eight := archsimd.BroadcastInt16x8(8)
 	noSentinel := archsimd.BroadcastInt16x8(int16(^VeryLarge))
 	sar15 := cdefShiftCountOf(15)
@@ -734,8 +730,6 @@ func searchBlocksU8SIMD(src []byte, srcStride int, input []uint16, inputOrigin i
 		blockIn := inputOrigin + by*8*BStride + bx*8 - cdefWinReach
 		blockSrc := by*8*srcStride + bx*8
 		for i := 0; i < 8; i += rowStep {
-			// i & 7 is i (the loop keeps it in 0..7); the mask gives the row
-			// offsets a range the compiler can use with a variable step.
 			r := i & 7
 			wo, so := blockIn+r*BStride, blockSrc+r*srcStride
 			w := (*[cdefWin1]uint16)(input[wo : wo+cdefWin1])
@@ -795,15 +789,17 @@ func searchBlocksU8SIMD(src []byte, srcStride int, input []uint16, inputOrigin i
 				if s.secOn {
 					secStr, secSh := s.secStr, s.secSh
 					if s.secAtDir {
-						sum = sum.Add(cdefConstrain(s0, x, secStr, secSh).Add(cdefConstrain(s1, x, secStr, secSh)).
-							Add(cdefConstrain(s2, x, secStr, secSh)).Add(cdefConstrain(s3, x, secStr, secSh)).Mul(secTap0))
-						sum = sum.Add(cdefConstrain(s4, x, secStr, secSh).Add(cdefConstrain(s5, x, secStr, secSh)).
-							Add(cdefConstrain(s6, x, secStr, secSh)).Add(cdefConstrain(s7, x, secStr, secSh)).Mul(secTap1))
+						a := cdefConstrain(s0, x, secStr, secSh).Add(cdefConstrain(s1, x, secStr, secSh)).
+							Add(cdefConstrain(s2, x, secStr, secSh)).Add(cdefConstrain(s3, x, secStr, secSh))
+						b := cdefConstrain(s4, x, secStr, secSh).Add(cdefConstrain(s5, x, secStr, secSh)).
+							Add(cdefConstrain(s6, x, secStr, secSh)).Add(cdefConstrain(s7, x, secStr, secSh))
+						sum = sum.Add(a.Add(a).Add(b))
 					} else {
-						sum = sum.Add(cdefConstrain(u0, x, secStr, secSh).Add(cdefConstrain(u1, x, secStr, secSh)).
-							Add(cdefConstrain(u2, x, secStr, secSh)).Add(cdefConstrain(u3, x, secStr, secSh)).Mul(secTap0))
-						sum = sum.Add(cdefConstrain(u4, x, secStr, secSh).Add(cdefConstrain(u5, x, secStr, secSh)).
-							Add(cdefConstrain(u6, x, secStr, secSh)).Add(cdefConstrain(u7, x, secStr, secSh)).Mul(secTap1))
+						a := cdefConstrain(u0, x, secStr, secSh).Add(cdefConstrain(u1, x, secStr, secSh)).
+							Add(cdefConstrain(u2, x, secStr, secSh)).Add(cdefConstrain(u3, x, secStr, secSh))
+						b := cdefConstrain(u4, x, secStr, secSh).Add(cdefConstrain(u5, x, secStr, secSh)).
+							Add(cdefConstrain(u6, x, secStr, secSh)).Add(cdefConstrain(u7, x, secStr, secSh))
+						sum = sum.Add(a.Add(a).Add(b))
 					}
 				}
 				// y = x + ((8 + sum - (sum<0)) >> 4)
@@ -839,6 +835,388 @@ func cdefShrU16(v archsimd.Uint16x8, sh cdefShiftCount) archsimd.Uint16x8 {
 // build-tag binding instead of a func variable.
 func filterUnitBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, u unitFilterParams, trusted bool) error {
 	return filterUnitBlocksSIMD(dst, dstStride, input, inputOrigin, blocks, directions, variances, u, trusted)
+}
+
+// filterUnitBlocksU16LE writes filtered 10/12-bit samples straight into the
+// little-endian picture byte plane dst, skipping zero-strength blocks in place.
+func filterUnitBlocksU16LE(dst []byte, dstStrideB int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, u unitFilterParams) error {
+	if u.blockWidth != 8 && u.blockWidth != 4 {
+		return filterUnitBlocksU16LEPureGo(dst, dstStrideB, input, inputOrigin, blocks, directions, variances, u)
+	}
+	secondaryStrength := u.secondaryStrength
+	ctx := cdefSIMDCtx{
+		in:          input,
+		out8:        dst,
+		dstStr:      dstStrideB,
+		height:      u.blockHeight,
+		noSentinels: u.noSentinels,
+	}
+	ctx.setSecondary(secondaryStrength, u.damping)
+	strength := u.primaryStrength
+	if !u.lumaAdjust {
+		ctx.setPrimary(strength, u.damping, u.coeffShift)
+	}
+	for _, block := range blocks {
+		by := int(block.BY)
+		bx := int(block.BX)
+		if u.lumaAdjust {
+			strength = adjustStrength(u.primaryStrength, variances[by][bx])
+			ctx.setPrimary(strength, u.damping, u.coeffShift)
+		}
+		if strength == 0 && secondaryStrength == 0 {
+			continue
+		}
+		dir := 0
+		if u.primaryStrength != 0 {
+			dir = int(directions[by][bx])
+		}
+		ctx.setDirection(dir)
+		ctx.io = inputOrigin + ((by * BStride) << u.bhLog2) + (bx << u.bwLog2)
+		ctx.do = (by<<u.bhLog2)*dstStrideB + (bx<<u.bwLog2)*2
+		cdefFilterBlock16LE(&ctx, u.blockWidth)
+	}
+	return nil
+}
+
+func cdefFilterBlock16LE(ctx *cdefSIMDCtx, width int) {
+	if width == 8 {
+		switch {
+		case ctx.enablePrimary && ctx.enableSecondary:
+			if ctx.noSentinels {
+				cdefFilter8PriSec16LEInterior(ctx)
+			} else {
+				cdefFilter8PriSec16LE(ctx)
+			}
+		case ctx.enablePrimary:
+			cdefFilter8Pri16LE(ctx)
+		default:
+			cdefFilter8Sec16LE(ctx)
+		}
+		return
+	}
+	switch {
+	case ctx.enablePrimary && ctx.enableSecondary:
+		if ctx.noSentinels {
+			cdefFilter4PriSec16LEInterior(ctx)
+		} else {
+			cdefFilter4PriSec16LE(ctx)
+		}
+	case ctx.enablePrimary:
+		cdefFilter4Pri16LE(ctx)
+	default:
+		cdefFilter4Sec16LE(ctx)
+	}
+}
+
+func cdefFilter8PriSec16LEInterior(ctx *cdefSIMDCtx) {
+	priStr := archsimd.BroadcastInt16x8(int16(ctx.priStrength)).ToBits()
+	secStr := archsimd.BroadcastInt16x8(int16(ctx.secStrength)).ToBits()
+	priSh := cdefShiftCountOf(ctx.priShift)
+	secSh := cdefShiftCountOf(ctx.secShift)
+	priTap0 := archsimd.BroadcastInt16x8(int16(ctx.priTap0))
+	priTap1 := archsimd.BroadcastInt16x8(int16(ctx.priTap1))
+	eight := archsimd.BroadcastInt16x8(8)
+	sar15 := cdefShiftCountOf(15)
+	sar4 := cdefShiftCountOf(4)
+	p0p, p0m, p1p, p1m := ctx.priTaps()
+	s0p, s0m, s1p, s1m := ctx.secTaps0()
+	s2p, s2m, s3p, s3m := ctx.secTaps1()
+	in, base, height := ctx.rows()
+	_, out8, do, ds := ctx.outRows()
+	gd := unsafeutil.NewGrid(out8, do, ds, 16, height)
+	for r := 0; r < gd.Height(); r++ {
+		w := cdefRow(in, base+r*BStride)
+		x := cdefLdW1(w, cdefWinReach)
+		t0 := cdefLdW1(w, p0p)
+		t1 := cdefLdW1(w, p0m)
+		t2 := cdefLdW1(w, p1p)
+		t3 := cdefLdW1(w, p1m)
+		sum := cdefConstrain(t0, x, priStr, priSh).Add(cdefConstrain(t1, x, priStr, priSh)).Mul(priTap0).
+			Add(cdefConstrain(t2, x, priStr, priSh).Add(cdefConstrain(t3, x, priStr, priSh)).Mul(priTap1))
+		mx := t0.Max(t1).Max(t2.Max(t3))
+		mn := t0.Min(t1).Min(t2.Min(t3))
+		s0 := cdefLdW1(w, s0p)
+		s1 := cdefLdW1(w, s0m)
+		s2 := cdefLdW1(w, s1p)
+		s3 := cdefLdW1(w, s1m)
+		a := cdefConstrain(s0, x, secStr, secSh).Add(cdefConstrain(s1, x, secStr, secSh)).
+			Add(cdefConstrain(s2, x, secStr, secSh)).Add(cdefConstrain(s3, x, secStr, secSh))
+		mx1 := s0.Max(s1).Max(s2.Max(s3))
+		mn1 := s0.Min(s1).Min(s2.Min(s3))
+		s4 := cdefLdW1(w, s2p)
+		s5 := cdefLdW1(w, s2m)
+		s6 := cdefLdW1(w, s3p)
+		s7 := cdefLdW1(w, s3m)
+		b := cdefConstrain(s4, x, secStr, secSh).Add(cdefConstrain(s5, x, secStr, secSh)).
+			Add(cdefConstrain(s6, x, secStr, secSh)).Add(cdefConstrain(s7, x, secStr, secSh))
+		mx2 := s4.Max(s5).Max(s6.Max(s7))
+		mn2 := s4.Min(s5).Min(s6.Min(s7))
+		mx = mx.Max(x).Max(mx1.Max(mx2))
+		mn = mn.Min(x).Min(mn1.Min(mn2))
+		sum = sum.Add(a.Add(a).Add(b))
+		cdefFinish16(x, sum, eight, sar15, sar4).Max(mn).Min(mx).ToBits().ReshapeToUint8s().StoreArray(gd.Row16(r, 0))
+	}
+}
+
+func cdefFilter4PriSec16LEInterior(ctx *cdefSIMDCtx) {
+	priStr := archsimd.BroadcastInt16x8(int16(ctx.priStrength)).ToBits()
+	secStr := archsimd.BroadcastInt16x8(int16(ctx.secStrength)).ToBits()
+	priSh := cdefShiftCountOf(ctx.priShift)
+	secSh := cdefShiftCountOf(ctx.secShift)
+	priTap0 := archsimd.BroadcastInt16x8(int16(ctx.priTap0))
+	priTap1 := archsimd.BroadcastInt16x8(int16(ctx.priTap1))
+	eight := archsimd.BroadcastInt16x8(8)
+	sar15 := cdefShiftCountOf(15)
+	sar4 := cdefShiftCountOf(4)
+	p0p, p0m, p1p, p1m := ctx.priTaps()
+	s0p, s0m, s1p, s1m := ctx.secTaps0()
+	s2p, s2m, s3p, s3m := ctx.secTaps1()
+	in, base, height := ctx.rows()
+	_, out8, do, ds := ctx.outRows()
+	gd := unsafeutil.NewGrid(out8, do, ds, 8, height)
+	for i := 0; i < height>>1; i++ {
+		r := 2 * i
+		w0, w1 := cdefRows2(in, base+r*BStride)
+		x := cdefLdPair(w0, w1, cdefWinReach)
+		t0 := cdefLdPair(w0, w1, p0p)
+		t1 := cdefLdPair(w0, w1, p0m)
+		t2 := cdefLdPair(w0, w1, p1p)
+		t3 := cdefLdPair(w0, w1, p1m)
+		sum := cdefConstrain(t0, x, priStr, priSh).Add(cdefConstrain(t1, x, priStr, priSh)).Mul(priTap0).
+			Add(cdefConstrain(t2, x, priStr, priSh).Add(cdefConstrain(t3, x, priStr, priSh)).Mul(priTap1))
+		mx := t0.Max(t1).Max(t2.Max(t3))
+		mn := t0.Min(t1).Min(t2.Min(t3))
+		s0 := cdefLdPair(w0, w1, s0p)
+		s1 := cdefLdPair(w0, w1, s0m)
+		s2 := cdefLdPair(w0, w1, s1p)
+		s3 := cdefLdPair(w0, w1, s1m)
+		a := cdefConstrain(s0, x, secStr, secSh).Add(cdefConstrain(s1, x, secStr, secSh)).
+			Add(cdefConstrain(s2, x, secStr, secSh)).Add(cdefConstrain(s3, x, secStr, secSh))
+		mx1 := s0.Max(s1).Max(s2.Max(s3))
+		mn1 := s0.Min(s1).Min(s2.Min(s3))
+		s4 := cdefLdPair(w0, w1, s2p)
+		s5 := cdefLdPair(w0, w1, s2m)
+		s6 := cdefLdPair(w0, w1, s3p)
+		s7 := cdefLdPair(w0, w1, s3m)
+		b := cdefConstrain(s4, x, secStr, secSh).Add(cdefConstrain(s5, x, secStr, secSh)).
+			Add(cdefConstrain(s6, x, secStr, secSh)).Add(cdefConstrain(s7, x, secStr, secSh))
+		mx2 := s4.Max(s5).Max(s6.Max(s7))
+		mn2 := s4.Min(s5).Min(s6.Min(s7))
+		mx = mx.Max(x).Max(mx1.Max(mx2))
+		mn = mn.Min(x).Min(mn1.Min(mn2))
+		sum = sum.Add(a.Add(a).Add(b))
+		out := cdefFinish16(x, sum, eight, sar15, sar4).Max(mn).Min(mx).ToBits().ReshapeToUint64s()
+		binary.LittleEndian.PutUint64(gd.Row8(r, 0)[:], out.GetElem(0))
+		binary.LittleEndian.PutUint64(gd.Row8(r+1, 0)[:], out.GetElem(1))
+	}
+}
+
+func cdefFilter8PriSec16LE(ctx *cdefSIMDCtx) {
+	priStr := archsimd.BroadcastInt16x8(int16(ctx.priStrength)).ToBits()
+	secStr := archsimd.BroadcastInt16x8(int16(ctx.secStrength)).ToBits()
+	priSh := cdefShiftCountOf(ctx.priShift)
+	secSh := cdefShiftCountOf(ctx.secShift)
+	priTap0 := archsimd.BroadcastInt16x8(int16(ctx.priTap0))
+	priTap1 := archsimd.BroadcastInt16x8(int16(ctx.priTap1))
+	eight := archsimd.BroadcastInt16x8(8)
+	noSentinel := archsimd.BroadcastInt16x8(int16(^VeryLarge))
+	sar15 := cdefShiftCountOf(15)
+	sar4 := cdefShiftCountOf(4)
+	p0p, p0m, p1p, p1m := ctx.priTaps()
+	s0p, s0m, s1p, s1m := ctx.secTaps0()
+	s2p, s2m, s3p, s3m := ctx.secTaps1()
+	in, base, height := ctx.rows()
+	_, out8, do, ds := ctx.outRows()
+	gd := unsafeutil.NewGrid(out8, do, ds, 16, height)
+	for r := 0; r < gd.Height(); r++ {
+		w := cdefRow(in, base+r*BStride)
+		x := cdefLdW1(w, cdefWinReach)
+		t0 := cdefLdW1(w, p0p)
+		t1 := cdefLdW1(w, p0m)
+		t2 := cdefLdW1(w, p1p)
+		t3 := cdefLdW1(w, p1m)
+		sum := cdefConstrain(t0, x, priStr, priSh).Add(cdefConstrain(t1, x, priStr, priSh)).Mul(priTap0).
+			Add(cdefConstrain(t2, x, priStr, priSh).Add(cdefConstrain(t3, x, priStr, priSh)).Mul(priTap1))
+		mx := t0.And(noSentinel).Max(t1.And(noSentinel)).Max(t2.And(noSentinel).Max(t3.And(noSentinel)))
+		mn := t0.Min(t1).Min(t2.Min(t3))
+		s0 := cdefLdW1(w, s0p)
+		s1 := cdefLdW1(w, s0m)
+		s2 := cdefLdW1(w, s1p)
+		s3 := cdefLdW1(w, s1m)
+		a := cdefConstrain(s0, x, secStr, secSh).Add(cdefConstrain(s1, x, secStr, secSh)).
+			Add(cdefConstrain(s2, x, secStr, secSh)).Add(cdefConstrain(s3, x, secStr, secSh))
+		mx1 := s0.And(noSentinel).Max(s1.And(noSentinel)).Max(s2.And(noSentinel).Max(s3.And(noSentinel)))
+		mn1 := s0.Min(s1).Min(s2.Min(s3))
+		s4 := cdefLdW1(w, s2p)
+		s5 := cdefLdW1(w, s2m)
+		s6 := cdefLdW1(w, s3p)
+		s7 := cdefLdW1(w, s3m)
+		b := cdefConstrain(s4, x, secStr, secSh).Add(cdefConstrain(s5, x, secStr, secSh)).
+			Add(cdefConstrain(s6, x, secStr, secSh)).Add(cdefConstrain(s7, x, secStr, secSh))
+		mx2 := s4.And(noSentinel).Max(s5.And(noSentinel)).Max(s6.And(noSentinel).Max(s7.And(noSentinel)))
+		mn2 := s4.Min(s5).Min(s6.Min(s7))
+		mx = mx.Max(x).Max(mx1.Max(mx2))
+		mn = mn.Min(x).Min(mn1.Min(mn2))
+		sum = sum.Add(a.Add(a).Add(b))
+		cdefFinish16(x, sum, eight, sar15, sar4).Max(mn).Min(mx).ToBits().ReshapeToUint8s().StoreArray(gd.Row16(r, 0))
+	}
+}
+
+func cdefFilter8Pri16LE(ctx *cdefSIMDCtx) {
+	priStr := archsimd.BroadcastInt16x8(int16(ctx.priStrength)).ToBits()
+	priSh := cdefShiftCountOf(ctx.priShift)
+	priTap0 := archsimd.BroadcastInt16x8(int16(ctx.priTap0))
+	priTap1 := archsimd.BroadcastInt16x8(int16(ctx.priTap1))
+	eight := archsimd.BroadcastInt16x8(8)
+	sar15 := cdefShiftCountOf(15)
+	sar4 := cdefShiftCountOf(4)
+	p0p, p0m, p1p, p1m := ctx.priTaps()
+	in, base, height := ctx.rows()
+	_, out8, do, ds := ctx.outRows()
+	gd := unsafeutil.NewGrid(out8, do, ds, 16, height)
+	for r := 0; r < gd.Height(); r++ {
+		w := cdefRow(in, base+r*BStride)
+		x := cdefLdW1(w, cdefWinReach)
+		sum := cdefConstrain(cdefLdW1(w, p0p), x, priStr, priSh).
+			Add(cdefConstrain(cdefLdW1(w, p0m), x, priStr, priSh)).Mul(priTap0).
+			Add(cdefConstrain(cdefLdW1(w, p1p), x, priStr, priSh).
+				Add(cdefConstrain(cdefLdW1(w, p1m), x, priStr, priSh)).Mul(priTap1))
+		cdefFinish16(x, sum, eight, sar15, sar4).ToBits().ReshapeToUint8s().StoreArray(gd.Row16(r, 0))
+	}
+}
+
+func cdefFilter8Sec16LE(ctx *cdefSIMDCtx) {
+	secStr := archsimd.BroadcastInt16x8(int16(ctx.secStrength)).ToBits()
+	secSh := cdefShiftCountOf(ctx.secShift)
+	eight := archsimd.BroadcastInt16x8(8)
+	sar15 := cdefShiftCountOf(15)
+	sar4 := cdefShiftCountOf(4)
+	s0p, s0m, s1p, s1m := ctx.secTaps0()
+	s2p, s2m, s3p, s3m := ctx.secTaps1()
+	in, base, height := ctx.rows()
+	_, out8, do, ds := ctx.outRows()
+	gd := unsafeutil.NewGrid(out8, do, ds, 16, height)
+	for r := 0; r < gd.Height(); r++ {
+		w := cdefRow(in, base+r*BStride)
+		x := cdefLdW1(w, cdefWinReach)
+		a := cdefConstrain(cdefLdW1(w, s0p), x, secStr, secSh).
+			Add(cdefConstrain(cdefLdW1(w, s0m), x, secStr, secSh)).
+			Add(cdefConstrain(cdefLdW1(w, s1p), x, secStr, secSh)).
+			Add(cdefConstrain(cdefLdW1(w, s1m), x, secStr, secSh))
+		b := cdefConstrain(cdefLdW1(w, s2p), x, secStr, secSh).
+			Add(cdefConstrain(cdefLdW1(w, s2m), x, secStr, secSh)).
+			Add(cdefConstrain(cdefLdW1(w, s3p), x, secStr, secSh)).
+			Add(cdefConstrain(cdefLdW1(w, s3m), x, secStr, secSh))
+		cdefFinish16(x, a.Add(a).Add(b), eight, sar15, sar4).ToBits().ReshapeToUint8s().StoreArray(gd.Row16(r, 0))
+	}
+}
+
+func cdefFilter4PriSec16LE(ctx *cdefSIMDCtx) {
+	priStr := archsimd.BroadcastInt16x8(int16(ctx.priStrength)).ToBits()
+	secStr := archsimd.BroadcastInt16x8(int16(ctx.secStrength)).ToBits()
+	priSh := cdefShiftCountOf(ctx.priShift)
+	secSh := cdefShiftCountOf(ctx.secShift)
+	priTap0 := archsimd.BroadcastInt16x8(int16(ctx.priTap0))
+	priTap1 := archsimd.BroadcastInt16x8(int16(ctx.priTap1))
+	eight := archsimd.BroadcastInt16x8(8)
+	noSentinel := archsimd.BroadcastInt16x8(int16(^VeryLarge))
+	sar15 := cdefShiftCountOf(15)
+	sar4 := cdefShiftCountOf(4)
+	p0p, p0m, p1p, p1m := ctx.priTaps()
+	s0p, s0m, s1p, s1m := ctx.secTaps0()
+	s2p, s2m, s3p, s3m := ctx.secTaps1()
+	in, base, height := ctx.rows()
+	_, out8, do, ds := ctx.outRows()
+	gd := unsafeutil.NewGrid(out8, do, ds, 8, height)
+	for i := 0; i < height>>1; i++ {
+		r := 2 * i
+		w0, w1 := cdefRows2(in, base+r*BStride)
+		x := cdefLdPair(w0, w1, cdefWinReach)
+		t0 := cdefLdPair(w0, w1, p0p)
+		t1 := cdefLdPair(w0, w1, p0m)
+		t2 := cdefLdPair(w0, w1, p1p)
+		t3 := cdefLdPair(w0, w1, p1m)
+		sum := cdefConstrain(t0, x, priStr, priSh).Add(cdefConstrain(t1, x, priStr, priSh)).Mul(priTap0).
+			Add(cdefConstrain(t2, x, priStr, priSh).Add(cdefConstrain(t3, x, priStr, priSh)).Mul(priTap1))
+		mx := t0.And(noSentinel).Max(t1.And(noSentinel)).Max(t2.And(noSentinel).Max(t3.And(noSentinel)))
+		mn := t0.Min(t1).Min(t2.Min(t3))
+		s0 := cdefLdPair(w0, w1, s0p)
+		s1 := cdefLdPair(w0, w1, s0m)
+		s2 := cdefLdPair(w0, w1, s1p)
+		s3 := cdefLdPair(w0, w1, s1m)
+		a := cdefConstrain(s0, x, secStr, secSh).Add(cdefConstrain(s1, x, secStr, secSh)).
+			Add(cdefConstrain(s2, x, secStr, secSh)).Add(cdefConstrain(s3, x, secStr, secSh))
+		mx1 := s0.And(noSentinel).Max(s1.And(noSentinel)).Max(s2.And(noSentinel).Max(s3.And(noSentinel)))
+		mn1 := s0.Min(s1).Min(s2.Min(s3))
+		s4 := cdefLdPair(w0, w1, s2p)
+		s5 := cdefLdPair(w0, w1, s2m)
+		s6 := cdefLdPair(w0, w1, s3p)
+		s7 := cdefLdPair(w0, w1, s3m)
+		b := cdefConstrain(s4, x, secStr, secSh).Add(cdefConstrain(s5, x, secStr, secSh)).
+			Add(cdefConstrain(s6, x, secStr, secSh)).Add(cdefConstrain(s7, x, secStr, secSh))
+		mx2 := s4.And(noSentinel).Max(s5.And(noSentinel)).Max(s6.And(noSentinel).Max(s7.And(noSentinel)))
+		mn2 := s4.Min(s5).Min(s6.Min(s7))
+		mx = mx.Max(x).Max(mx1.Max(mx2))
+		mn = mn.Min(x).Min(mn1.Min(mn2))
+		out := cdefFinish16(x, sum.Add(a.Add(a).Add(b)), eight, sar15, sar4).Max(mn).Min(mx).ToBits().ReshapeToUint64s()
+		binary.LittleEndian.PutUint64(gd.Row8(r, 0)[:], out.GetElem(0))
+		binary.LittleEndian.PutUint64(gd.Row8(r+1, 0)[:], out.GetElem(1))
+	}
+}
+
+func cdefFilter4Pri16LE(ctx *cdefSIMDCtx) {
+	priStr := archsimd.BroadcastInt16x8(int16(ctx.priStrength)).ToBits()
+	priSh := cdefShiftCountOf(ctx.priShift)
+	priTap0 := archsimd.BroadcastInt16x8(int16(ctx.priTap0))
+	priTap1 := archsimd.BroadcastInt16x8(int16(ctx.priTap1))
+	eight := archsimd.BroadcastInt16x8(8)
+	sar15 := cdefShiftCountOf(15)
+	sar4 := cdefShiftCountOf(4)
+	p0p, p0m, p1p, p1m := ctx.priTaps()
+	in, base, height := ctx.rows()
+	_, out8, do, ds := ctx.outRows()
+	gd := unsafeutil.NewGrid(out8, do, ds, 8, height)
+	for i := 0; i < height>>1; i++ {
+		r := 2 * i
+		w0, w1 := cdefRows2(in, base+r*BStride)
+		x := cdefLdPair(w0, w1, cdefWinReach)
+		sum := cdefConstrain(cdefLdPair(w0, w1, p0p), x, priStr, priSh).
+			Add(cdefConstrain(cdefLdPair(w0, w1, p0m), x, priStr, priSh)).Mul(priTap0).
+			Add(cdefConstrain(cdefLdPair(w0, w1, p1p), x, priStr, priSh).
+				Add(cdefConstrain(cdefLdPair(w0, w1, p1m), x, priStr, priSh)).Mul(priTap1))
+		out := cdefFinish16(x, sum, eight, sar15, sar4).ToBits().ReshapeToUint64s()
+		binary.LittleEndian.PutUint64(gd.Row8(r, 0)[:], out.GetElem(0))
+		binary.LittleEndian.PutUint64(gd.Row8(r+1, 0)[:], out.GetElem(1))
+	}
+}
+
+func cdefFilter4Sec16LE(ctx *cdefSIMDCtx) {
+	secStr := archsimd.BroadcastInt16x8(int16(ctx.secStrength)).ToBits()
+	secSh := cdefShiftCountOf(ctx.secShift)
+	eight := archsimd.BroadcastInt16x8(8)
+	sar15 := cdefShiftCountOf(15)
+	sar4 := cdefShiftCountOf(4)
+	s0p, s0m, s1p, s1m := ctx.secTaps0()
+	s2p, s2m, s3p, s3m := ctx.secTaps1()
+	in, base, height := ctx.rows()
+	_, out8, do, ds := ctx.outRows()
+	gd := unsafeutil.NewGrid(out8, do, ds, 8, height)
+	for i := 0; i < height>>1; i++ {
+		r := 2 * i
+		w0, w1 := cdefRows2(in, base+r*BStride)
+		x := cdefLdPair(w0, w1, cdefWinReach)
+		a := cdefConstrain(cdefLdPair(w0, w1, s0p), x, secStr, secSh).
+			Add(cdefConstrain(cdefLdPair(w0, w1, s0m), x, secStr, secSh)).
+			Add(cdefConstrain(cdefLdPair(w0, w1, s1p), x, secStr, secSh)).
+			Add(cdefConstrain(cdefLdPair(w0, w1, s1m), x, secStr, secSh))
+		b := cdefConstrain(cdefLdPair(w0, w1, s2p), x, secStr, secSh).
+			Add(cdefConstrain(cdefLdPair(w0, w1, s2m), x, secStr, secSh)).
+			Add(cdefConstrain(cdefLdPair(w0, w1, s3p), x, secStr, secSh)).
+			Add(cdefConstrain(cdefLdPair(w0, w1, s3m), x, secStr, secSh))
+		out := cdefFinish16(x, a.Add(a).Add(b), eight, sar15, sar4).ToBits().ReshapeToUint64s()
+		binary.LittleEndian.PutUint64(gd.Row8(r, 0)[:], out.GetElem(0))
+		binary.LittleEndian.PutUint64(gd.Row8(r+1, 0)[:], out.GetElem(1))
+	}
 }
 
 // filterUnitBlocksSIMD mirrors dav1d's per-superblock cdef apply loop
@@ -1204,8 +1582,7 @@ func cdefByteConstrain(t, x, str archsimd.Uint8x16, sh archsimd.Int8x16) archsim
 // filtered pixels: x + ((8 + sum - (sum < 0)) >> 4) saturated to [0, 255].
 func cdefByteFinish(x archsimd.Uint8x16, a, b archsimd.Int8x16, four archsimd.Int8x16, bias archsimd.Uint8x16) archsimd.Uint8x16 {
 	r := a.Average(b)
-	odd := a.Xor(b).ShiftAllLeft(7).ShiftAllRight(7)
-	h := r.Add(odd.And(r.ShiftAllRight(7)))
+	h := r.Add(a.Xor(b).ShiftAllLeft(7).And(r).ShiftAllRight(7))
 	d := h.Add(four).ShiftAllRight(3)
 	return x.Xor(bias).BitsToInt8().AddSaturated(d).ToBits().Xor(bias)
 }

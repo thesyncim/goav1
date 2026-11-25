@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 
 	"github.com/thesyncim/goav1/internal/av1/tile"
+	"github.com/thesyncim/goav1/internal/unsafeutil"
 )
 
 // Builder owns the per-block transform-decomposition scratch so the mask-edge
@@ -229,10 +230,48 @@ func (b *Builder) CreateInter(m *FilterMask, lc LevelCache, lv Levels, bx, by, i
 // w x h rectangle of cells at (bx, by), dav1d_create_lf_mask_{intra,inter}'s
 // level_cache_ptr loops; each row is sliced once and unrolled 4 cells at a time.
 func (c LevelCache) fill(bx, by, w, h, comp int, l0, l1 uint8) {
+	if w <= 0 || h <= 0 {
+		return
+	}
 	v := uint16(l0) | uint16(l1)<<8
 	base := 4 * (by*c.Stride + bx)
 	strideBytes := 4 * c.Stride
 	rowBytes := 4 * w
+	if unsafeutil.GridFit(len(c.Cells), base, strideBytes, rowBytes, h) {
+		g := unsafeutil.NewGrid(c.Cells, base, strideBytes, rowBytes, h)
+		if comp&2 == 0 {
+			for y := 0; y < g.Height(); y++ {
+				x := 0
+				for ; x+16 <= rowBytes; x += 16 {
+					p := g.Row16(y, x)
+					binary.LittleEndian.PutUint16(p[0:2], v)
+					binary.LittleEndian.PutUint16(p[4:6], v)
+					binary.LittleEndian.PutUint16(p[8:10], v)
+					binary.LittleEndian.PutUint16(p[12:14], v)
+				}
+				for ; x+4 <= rowBytes; x += 4 {
+					p := g.Row4(y, x)
+					binary.LittleEndian.PutUint16(p[0:2], v)
+				}
+			}
+			return
+		}
+		for y := 0; y < g.Height(); y++ {
+			x := 0
+			for ; x+16 <= rowBytes; x += 16 {
+				p := g.Row16(y, x)
+				binary.LittleEndian.PutUint16(p[2:4], v)
+				binary.LittleEndian.PutUint16(p[6:8], v)
+				binary.LittleEndian.PutUint16(p[10:12], v)
+				binary.LittleEndian.PutUint16(p[14:16], v)
+			}
+			for ; x+4 <= rowBytes; x += 4 {
+				p := g.Row4(y, x)
+				binary.LittleEndian.PutUint16(p[2:4], v)
+			}
+		}
+		return
+	}
 	if comp&2 == 0 {
 		for y := 0; y < h; y++ {
 			row := c.Cells[base : base+rowBytes]

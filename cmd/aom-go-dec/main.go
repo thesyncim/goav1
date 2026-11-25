@@ -44,7 +44,8 @@ func main() {
 func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	fs := flag.NewFlagSet("aom-go-dec", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	out := fs.String("o", "", "write YUV output to this file (default: stdout)")
+	out := fs.String("o", "", "write output to this file (default: stdout)")
+	muxer := fs.String("muxer", "yuv", "output muxer: yuv, null, or md5 (matches dav1d --muxer)")
 	workers := fs.Int("workers", 0, "worker goroutine count (0 = one per CPU, 1 = single-threaded)")
 	frameDelay := fs.Int("framedelay", 0, "maximum frames in flight (dav1d --framedelay; 0 = auto, 1 = no frame threading)")
 	filmGrain := fs.Bool("filmgrain", true, "apply AV1 film-grain synthesis (dav1d --filmgrain)")
@@ -52,6 +53,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	conceal := fs.Bool("conceal", false, "enable decoder error concealment on corrupt payloads")
 	quiet := fs.Bool("quiet", false, "suppress per-frame timing on stderr")
 	cpuProfile := fs.String("cpuprofile", "", "write a CPU profile of the decode loop to this path")
+	memProfile := fs.String("memprofile", "", "write a heap profile before closing the decoder")
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "usage: aom-go-dec [-o out.yuv] [-workers N] [-framedelay N] [-quiet] [-cpuprofile out.pprof] input.ivf\n\n")
 		fs.PrintDefaults()
@@ -74,6 +76,12 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 		runtime.GOMAXPROCS(*workers)
 	}
 
+	switch *muxer {
+	case "yuv", "null", "md5":
+	default:
+		return fmt.Errorf("unknown -muxer %q: want yuv, null, or md5", *muxer)
+	}
+
 	inputPath := fs.Arg(0)
 	input, err := os.Open(inputPath)
 	if err != nil {
@@ -86,9 +94,12 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	}
 
 	var writer io.WriteCloser
-	if *out == "" {
+	switch {
+	case *muxer == "null":
+		writer = nopWriteCloser{io.Discard}
+	case *out == "":
 		writer = nopWriteCloser{stdout}
-	} else {
+	default:
 		f, ferr := os.Create(*out)
 		if ferr != nil {
 			return fmt.Errorf("open output %q: %w", *out, ferr)
@@ -120,11 +131,25 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	}
 
 	start := time.Now()
-	totalBytes, decoded, err := dec.Decode(writer, *quiet, stderr)
+	totalBytes, decoded, err := dec.DecodeMuxer(writer, *muxer, *quiet, stderr)
 	if err != nil {
 		return fmt.Errorf("decode: %w", err)
 	}
 	elapsed := time.Since(start)
+	if *memProfile != "" {
+		mf, merr := os.Create(*memProfile)
+		if merr != nil {
+			return fmt.Errorf("open mem profile %q: %w", *memProfile, merr)
+		}
+		runtime.GC()
+		if merr := pprof.WriteHeapProfile(mf); merr != nil {
+			mf.Close()
+			return fmt.Errorf("write mem profile: %w", merr)
+		}
+		if merr := mf.Close(); merr != nil {
+			return fmt.Errorf("close mem profile: %w", merr)
+		}
+	}
 
 	fps := float64(decoded) / elapsed.Seconds()
 	mbps := float64(info.Size()) / (1024 * 1024) / elapsed.Seconds()

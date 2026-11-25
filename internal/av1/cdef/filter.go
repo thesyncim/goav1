@@ -8,7 +8,10 @@
 
 package cdef
 
-import "math/bits"
+import (
+	"encoding/binary"
+	"math/bits"
+)
 
 type Plane uint8
 
@@ -237,6 +240,133 @@ func FilterFrameBlocksTrustedNoPrimaryDirection(dst []uint16, dstStride int, inp
 	return filterFrameBlocks(dst, dstStride, input, inputOrigin, blocks, directions, variances, params, true, false)
 }
 
+// FilterFrameBlocksU16LETrusted filters the listed blocks of a decoder-owned
+// 10/12-bit CDEF unit directly into the little-endian picture byte plane dst
+// (byte stride dstStrideB), skipping zero-strength blocks in place. When
+// noSentinels is true the caller guarantees no VeryLarge sentinel occupies the
+// unit's tap halo.
+func FilterFrameBlocksU16LETrusted(dst []byte, dstStrideB int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams, noSentinels bool) error {
+	return filterFrameBlocksU16LE(dst, dstStrideB, input, inputOrigin, blocks, directions, variances, params, true, noSentinels)
+}
+
+// FilterFrameBlocksU16LETrustedNoPrimaryDirection is FilterFrameBlocksU16LETrusted
+// when the plane's primary strength is zero and no luma direction is needed.
+func FilterFrameBlocksU16LETrustedNoPrimaryDirection(dst []byte, dstStrideB int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams, noSentinels bool) error {
+	return filterFrameBlocksU16LE(dst, dstStrideB, input, inputOrigin, blocks, directions, variances, params, false, noSentinels)
+}
+
+func filterFrameBlocksU16LE(dst []byte, dstStrideB int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams, deriveDirections, noSentinels bool) error {
+	if len(blocks) == 0 {
+		return nil
+	}
+	coeffShift := int(params.CoeffShift)
+	primaryStrength, ok := checkedShift(int(params.Level), coeffShift)
+	if !ok {
+		return ErrInvalidCDEF
+	}
+	secondaryStrength, ok := checkedShift(int(params.SecondaryStrength), coeffShift)
+	if !ok {
+		return ErrInvalidCDEF
+	}
+	damping := int(params.Damping) + coeffShift
+	if params.Plane != PlaneY {
+		damping--
+	}
+	if damping < 0 {
+		return ErrInvalidCDEF
+	}
+	xDec := int(params.XDec)
+	yDec := int(params.YDec)
+	bwLog2 := 3 - xDec
+	bhLog2 := 3 - yDec
+	blockWidth := 1 << bwLog2
+	blockHeight := 1 << bhLog2
+
+	if params.Plane == PlaneY && deriveDirections {
+		for i := 0; i < len(blocks); {
+			block := blocks[i]
+			by := int(block.BY)
+			bx := int(block.BX)
+			srcOrigin := inputOrigin + ((by * BStride) << bhLog2) + (bx << bwLog2)
+			nextOrigin := srcOrigin + blockWidth
+			if blockWidth == 8 && nextOrigin <= len(input) &&
+				i+1 < len(blocks) && blocks[i+1].BY == block.BY && blocks[i+1].BX == block.BX+1 {
+				dir1, variance1, dir2, variance2 := findDirectionDualUnchecked(input[srcOrigin:], input[nextOrigin:], BStride, coeffShift)
+				directions[by][bx] = uint8(dir1)
+				variances[by][bx] = variance1
+				directions[by][bx+1] = uint8(dir2)
+				variances[by][bx+1] = variance2
+				i += 2
+				continue
+			}
+			dir, variance := findDirectionUnchecked(input[srcOrigin:], BStride, coeffShift)
+			directions[by][bx] = uint8(dir)
+			variances[by][bx] = variance
+			i++
+		}
+	}
+	if deriveDirections && params.Plane == PlaneU && params.XDec != params.YDec {
+		if !convertChromaDirections(blocks, directions, xDec) {
+			return ErrInvalidCDEF
+		}
+	}
+	if primaryStrength == 0 && secondaryStrength == 0 {
+		return nil
+	}
+	return filterUnitBlocksU16LE(dst, dstStrideB, input, inputOrigin, blocks, directions, variances, unitFilterParams{
+		primaryStrength:   primaryStrength,
+		secondaryStrength: secondaryStrength,
+		damping:           damping,
+		coeffShift:        coeffShift,
+		bwLog2:            bwLog2,
+		bhLog2:            bhLog2,
+		blockWidth:        blockWidth,
+		blockHeight:       blockHeight,
+		lumaAdjust:        params.Plane == PlaneY && primaryStrength != 0,
+		noSentinels:       noSentinels,
+	})
+}
+
+func filterUnitBlocksU16LEPureGo(dst []byte, dstStrideB int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, u unitFilterParams) error {
+	var tmp [64]uint16
+	secondaryStrength := u.secondaryStrength
+	for _, block := range blocks {
+		by := int(block.BY)
+		bx := int(block.BX)
+		strength := u.primaryStrength
+		if u.lumaAdjust {
+			strength = adjustStrength(u.primaryStrength, variances[by][bx])
+		}
+		if strength == 0 && secondaryStrength == 0 {
+			continue
+		}
+		dir := 0
+		if u.primaryStrength != 0 {
+			dir = int(directions[by][bx])
+		}
+		srcOrigin := inputOrigin + ((by * BStride) << u.bhLog2) + (bx << u.bwLog2)
+		filterBlockImpl(tmp[:], u.blockWidth, 0, input, srcOrigin, BlockFilterParams{
+			PrimaryStrength:   uint8(strength),
+			SecondaryStrength: uint8(secondaryStrength),
+			Direction:         uint8(dir),
+			PrimaryDamping:    uint8(u.damping),
+			SecondaryDamping:  uint8(u.damping),
+			CoeffShift:        uint8(u.coeffShift),
+			Width:             uint8(u.blockWidth),
+			Height:            uint8(u.blockHeight),
+		})
+		dstOrigin := (by<<u.bhLog2)*dstStrideB + (bx<<u.bwLog2)*2
+		for r := 0; r < u.blockHeight; r++ {
+			row := dst[dstOrigin+r*dstStrideB:]
+			trow := tmp[r*u.blockWidth : (r+1)*u.blockWidth]
+			for c, v := range trow {
+				binary.LittleEndian.PutUint16(row[2*c:], v)
+			}
+		}
+	}
+	return nil
+}
+
 func filterFrameBlocks(dst []uint16, dstStride int, input []uint16, inputOrigin int, blocks []BlockPosition, directions *DirectionGrid, variances *VarianceGrid, params FrameFilterParams, trusted bool, deriveDirections bool) error {
 	if len(blocks) == 0 {
 		return nil
@@ -352,6 +482,7 @@ type unitFilterParams struct {
 	blockWidth        int
 	blockHeight       int
 	lumaAdjust        bool
+	noSentinels       bool
 }
 
 // filterUnitBlocksPureGo is the canonical per-unit block loop: it derives each

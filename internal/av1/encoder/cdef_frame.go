@@ -133,17 +133,16 @@ func (l *svtCDEFLogs) disarm(coders []*pframeCoder) {
 }
 
 // reserve sizes the logs for an nTiles-wide tiling of a width x height
-// picture at three entries per pixel of the tile, so a prewarmed encoder's
-// first frames record without growing them: a symbol averages a little
-// under one coded bit (a 192x128 keyframe at 2.5 bits per pixel logs 2.2
-// entries per pixel), and base-layer inter frames log far fewer.
+// picture at one entry per pixel (floored at 3*192*128 for small low-Q test
+// frames), so a prewarmed encoder's live frames record without growing while
+// avoiding multi-megabyte over-reservation on 720p/1080p streams.
 func (l *svtCDEFLogs) reserve(width, height, nTiles int) {
 	if len(l.logs) < nTiles {
 		next := make([]entropy.WriterLog, nTiles)
 		copy(next, l.logs)
 		l.logs = next
 	}
-	per := 3 * width * height / max(nTiles, 1)
+	per := max(3*192*128, width*height) / max(nTiles, 1)
 	for t := range l.logs {
 		l.logs[t].Reserve(per)
 	}
