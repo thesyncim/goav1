@@ -565,9 +565,15 @@ func sbRowsU8[W lpfWidth](pix []byte, off, stride, n int, vm0, vm1, vm2 uint32, 
 	v := unsafeutil.NewRows(pix, off-rh*stride, stride, n, 2*rh)
 	lv := unsafeutil.NewRows(lvl, li-ls4, ls4, n, 2)
 	ff := archsimd.LoadUint32x4Array(&sbLowByteLanes)
-	for x := 0; vm0 != 0 && x <= v.Width()-16; vm0, vm1, vm2, x = vm0>>4, vm1>>4, vm2>>4, x+16 {
+	maxX := v.Width() - 16
+	for x := 0; vm0 != 0 && x <= maxX; {
 		if vm0&15 == 0 {
-			continue
+			skip := bits.TrailingZeros32(vm0) >> 2
+			sh := uint(skip) << 2
+			vm0, vm1, vm2, x = vm0>>sh, vm1>>sh, vm2>>sh, x+skip<<4
+			if x > maxX {
+				break
+			}
 		}
 		// The level block is named at each load (no inline mark of its own).
 		cur := archsimd.LoadUint8x16Array(unsafeutil.BlockAt[lpfR2](lv, 0, x).Row16(1)).ReshapeToUint32s().And(ff)
@@ -577,6 +583,7 @@ func sbRowsU8[W lpfWidth](pix []byte, off, stride, n int, vm0, vm1, vm2 uint32, 
 		var lr, act archsimd.Uint8x16
 		var any bool
 		if lr, act, any = sbActive(cur, prev, vm0); !any {
+			vm0, vm1, vm2, x = vm0>>4, vm1>>4, vm2>>4, x+16
 			continue
 		}
 		if eV, iV, hV, m4 := sbLimitsOf(lr, act, lut); wd == 16 && vm2&15 != 0 {
@@ -590,6 +597,7 @@ func sbRowsU8[W lpfWidth](pix []byte, off, stride, n int, vm0, vm1, vm2 uint32, 
 		} else {
 			lpf8U8W[lpfW4, lpfRows](unsafeutil.BlockAt[lpfR4](v, rh-2, x), eV, iV, hV, m4, archsimd.Mask8x16{})
 		}
+		vm0, vm1, vm2, x = vm0>>4, vm1>>4, vm2>>4, x+16
 	}
 	return true
 }
@@ -637,21 +645,25 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 	v := unsafeutil.NewRows(pix, off-reach, stride, reach+12, 16*hiG+16)
 	lv := unsafeutil.NewRows(lvl, li-4, ls4, 8, 4*hiG+4)
 	c16, c8 := reach-8, reach-4 // p7 and p3 columns of the view
-	for g := 0; vm0 != 0; vm0, vm1, vm2, g = vm0>>4, vm1>>4, vm2>>4, g+1 {
+	for g := 0; vm0 != 0; {
 		if vm0&15 == 0 {
-			continue
+			skip := bits.TrailingZeros32(vm0) >> 2
+			sh := uint(skip) << 2
+			vm0, vm1, vm2, g = vm0>>sh, vm1>>sh, vm2>>sh, g+skip
 		}
 		// sbLevelsPairs written out, each helper on the line of an
 		// instruction of this function (no inline marks): the group's four
 		// (l[-1], l[0]) pairs go to two vectors through the array stores.
-		l0 := [2]uint64{binary.LittleEndian.Uint64(lv.Sub(4*g, 0, 8, 4).Row8(0, 0)[:]), binary.LittleEndian.Uint64(lv.Sub(4*g, 0, 8, 4).Row8(1, 0)[:])}
-		l1 := [2]uint64{binary.LittleEndian.Uint64(lv.Sub(4*g, 0, 8, 4).Row8(2, 0)[:]), binary.LittleEndian.Uint64(lv.Sub(4*g, 0, 8, 4).Row8(3, 0)[:])}
+		r4 := 4 * g
+		l0 := [2]uint64{binary.LittleEndian.Uint64(lv.Row8(r4, 0)[:]), binary.LittleEndian.Uint64(lv.Row8(r4+1, 0)[:])}
+		l1 := [2]uint64{binary.LittleEndian.Uint64(lv.Row8(r4+2, 0)[:]), binary.LittleEndian.Uint64(lv.Row8(r4+3, 0)[:])}
 		la := archsimd.LoadUint64x2Array(&l0).ReshapeToUint32s()
 		lb := archsimd.LoadUint64x2Array(&l1).ReshapeToUint32s()
 		ff := archsimd.LoadUint32x4Array(&sbLowByteLanes)
 		var lr, act archsimd.Uint8x16
 		var any bool
 		if lr, act, any = sbActive(la.ConcatOdd(lb).And(ff), la.ConcatEven(lb).And(ff), vm0); !any {
+			vm0, vm1, vm2, g = vm0>>4, vm1>>4, vm2>>4, g+1
 			continue
 		}
 		if eV, iV, hV, m4 := sbLimitsOf(lr, act, lut); vm2&15 != 0 {
@@ -663,6 +675,7 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 		} else {
 			lpfVertical16x8U8WideW[lpfW6](unsafeutil.BlockAt[lpfR16](v, 16*g, c8), eV, iV, hV, m4, sbNibbleMask(vm1))
 		}
+		vm0, vm1, vm2, g = vm0>>4, vm1>>4, vm2>>4, g+1
 	}
 }
 
@@ -910,14 +923,15 @@ func lpf8U8W[W lpfWidth, L lpfLayout, R unsafeutil.BlockRows](tv unsafeutil.Bloc
 	rh := wd / 2 // rows per side in the row layout
 	var p3, p2, p1, p0, q0, q1, q2, q3 archsimd.Uint8x16
 	if cols {
-		r0, r8 := archsimd.LoadUint8x16Array(tv.Row16(0)), archsimd.LoadUint8x16Array(tv.Row16(8))
-		r1, r9 := archsimd.LoadUint8x16Array(tv.Row16(1)), archsimd.LoadUint8x16Array(tv.Row16(9))
-		r2, r10 := archsimd.LoadUint8x16Array(tv.Row16(2)), archsimd.LoadUint8x16Array(tv.Row16(10))
-		r3, r11 := archsimd.LoadUint8x16Array(tv.Row16(3)), archsimd.LoadUint8x16Array(tv.Row16(11))
-		r4, r12 := archsimd.LoadUint8x16Array(tv.Row16(4)), archsimd.LoadUint8x16Array(tv.Row16(12))
-		r5, r13 := archsimd.LoadUint8x16Array(tv.Row16(5)), archsimd.LoadUint8x16Array(tv.Row16(13))
-		r6, r14 := archsimd.LoadUint8x16Array(tv.Row16(6)), archsimd.LoadUint8x16Array(tv.Row16(14))
-		r7, r15 := archsimd.LoadUint8x16Array(tv.Row16(7)), archsimd.LoadUint8x16Array(tv.Row16(15))
+		lo, hi := unsafeutil.BlockHalves(any(tv).(unsafeutil.Block[lpfR16]))
+		r0, r8 := archsimd.LoadUint8x16Array(lo.Row16(0)), archsimd.LoadUint8x16Array(hi.Row16(0))
+		r1, r9 := archsimd.LoadUint8x16Array(lo.Row16(1)), archsimd.LoadUint8x16Array(hi.Row16(1))
+		r2, r10 := archsimd.LoadUint8x16Array(lo.Row16(2)), archsimd.LoadUint8x16Array(hi.Row16(2))
+		r3, r11 := archsimd.LoadUint8x16Array(lo.Row16(3)), archsimd.LoadUint8x16Array(hi.Row16(3))
+		r4, r12 := archsimd.LoadUint8x16Array(lo.Row16(4)), archsimd.LoadUint8x16Array(hi.Row16(4))
+		r5, r13 := archsimd.LoadUint8x16Array(lo.Row16(5)), archsimd.LoadUint8x16Array(hi.Row16(5))
+		r6, r14 := archsimd.LoadUint8x16Array(lo.Row16(6)), archsimd.LoadUint8x16Array(hi.Row16(6))
+		r7, r15 := archsimd.LoadUint8x16Array(lo.Row16(7)), archsimd.LoadUint8x16Array(hi.Row16(7))
 		p3, p2, p1, p0, q0, q1, q2, q3 = lpfTranspose8x8Pairs(
 			r0.ReshapeToUint64s().InterleaveLo(r8.ReshapeToUint64s()).ReshapeToUint8s(), r1.ReshapeToUint64s().InterleaveLo(r9.ReshapeToUint64s()).ReshapeToUint8s(), r2.ReshapeToUint64s().InterleaveLo(r10.ReshapeToUint64s()).ReshapeToUint8s(), r3.ReshapeToUint64s().InterleaveLo(r11.ReshapeToUint64s()).ReshapeToUint8s(),
 			r4.ReshapeToUint64s().InterleaveLo(r12.ReshapeToUint64s()).ReshapeToUint8s(), r5.ReshapeToUint64s().InterleaveLo(r13.ReshapeToUint64s()).ReshapeToUint8s(), r6.ReshapeToUint64s().InterleaveLo(r14.ReshapeToUint64s()).ReshapeToUint8s(), r7.ReshapeToUint64s().InterleaveLo(r15.ReshapeToUint64s()).ReshapeToUint8s())

@@ -228,8 +228,14 @@ func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap Frame
 				continue
 			}
 			var blocks []cdef.BlockPosition
+			var unitMask uint64
 			if unitMasks != nil {
-				blocks = frameWorkCDEFBlockPositionsFromMask(blockStorage, unitMasks.mask(unitRow, unitCol), unitW, unitH, blockWidth, blockHeight)
+				unitMask = unitMasks.mask(unitRow, unitCol)
+				if unitMask == 0 {
+					prevFiltered = false
+					continue
+				}
+				blocks = frameWorkCDEFBlockPositionsFromMask(blockStorage, unitMask, unitW, unitH, blockWidth, blockHeight)
 			} else {
 				blocks = frameWorkCDEFBlockPositionsFiltered(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, unitRow, unitCol)
 			}
@@ -265,7 +271,11 @@ func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap Frame
 			}
 			var stageRect frameWorkCDEFStageRect
 			if sparseIndependent && !cdefDebugUnit(plane, unitRow, unitCol) && len(blocks) < (unitW/blockWidth)*(unitH/blockHeight) {
-				stageRect = frameWorkCDEFSparseStageRect(blocks, unitW, unitH, blockWidth, blockHeight)
+				if unitMasks != nil {
+					stageRect = frameWorkCDEFSparseStageRectFromMask(unitMask, unitW, unitH, blockWidth, blockHeight)
+				} else {
+					stageRect = frameWorkCDEFSparseStageRect(blocks, unitW, unitH, blockWidth, blockHeight)
+				}
 			}
 			curLeft := leftStorage[leftIdx][:]
 			nextLeft := leftStorage[leftIdx^1][:]

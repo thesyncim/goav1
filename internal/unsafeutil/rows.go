@@ -172,3 +172,13 @@ func (b Block[R]) PutF64(k, c int, v float64) {
 	}
 	*(*float64)(unsafe.Add(unsafe.Add(b.p, uint(c)), uint(k)*b.stride)) = v
 }
+
+// BlockHalves splits a 16-row Block into its top 8 rows (0..7) and bottom 8
+// rows (8..15), so callers address both halves with row indices 0..7.
+//
+// Bounds proof: b was constructed by BlockAt for 16 rows of 16 bytes; rows
+// 0..7 and rows 8..15 are disjoint 8-row sub-ranges inside those 16 rows.
+func BlockHalves(b Block[[16]struct{}]) (Block[[8]struct{}], Block[[8]struct{}]) {
+	return Block[[8]struct{}]{p: b.p, stride: b.stride},
+		Block[[8]struct{}]{p: unsafe.Add(b.p, 8*b.stride), stride: b.stride}
+}

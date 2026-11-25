@@ -1378,9 +1378,21 @@ func frameWorkCDEFUnitBlockList(storage []cdef.BlockPosition, unitW, unitH, bloc
 
 // frameWorkCDEFBlockPositionsFromMask is frameWorkCDEFBlockPositionsFiltered
 // driven by a precomputed unit filter mask: same blocks, same order.
+var frameWorkCDEFAllBlocks64 = func() (b [64]cdef.BlockPosition) {
+	for by := range 8 {
+		for bx := range 8 {
+			b[by*8+bx] = cdef.BlockPosition{BY: uint8(by), BX: uint8(bx)}
+		}
+	}
+	return b
+}()
+
 func frameWorkCDEFBlockPositionsFromMask(storage []cdef.BlockPosition, m uint64, unitW, unitH, blockW, blockH int) []cdef.BlockPosition {
 	cols := (unitW + blockW - 1) / blockW
 	rows := (unitH + blockH - 1) / blockH
+	if cols == 8 && rows == 8 && m == ^uint64(0) {
+		return frameWorkCDEFAllBlocks64[:]
+	}
 	colMask := uint64(1)<<uint(cols) - 1
 	out := storage[:0]
 	for by := 0; by < rows; by++ {
@@ -1392,6 +1404,42 @@ func frameWorkCDEFBlockPositionsFromMask(storage []cdef.BlockPosition, m uint64,
 		}
 	}
 	return out
+}
+
+func frameWorkCDEFSparseStageRectFromMask(m uint64, w, h, bw, bh int) frameWorkCDEFStageRect {
+	if m == 0 || w <= 0 || h <= 0 || w > 64 || h > 64 ||
+		(bw != 4 && bw != 8) || (bh != 4 && bh != 8) || w%bw != 0 || h%bh != 0 {
+		return frameWorkCDEFStageRect{}
+	}
+	cols := w / bw
+	rows := h / bh
+	if cols == 8 && rows == 8 {
+		if m == ^uint64(0) {
+			return frameWorkCDEFStageRect{}
+		}
+	} else {
+		rowMask := uint64(0)
+		colMask := uint64(1)<<uint(cols) - 1
+		for by := 0; by < rows; by++ {
+			rowMask |= colMask << uint(by*8)
+		}
+		m &= rowMask
+		if m == 0 {
+			return frameWorkCDEFStageRect{}
+		}
+	}
+	y0 := (bits.TrailingZeros64(m) >> 3) * bh
+	y1 := ((63 - bits.LeadingZeros64(m))>>3 + 1) * bh
+	t := m | (m >> 32)
+	t |= t >> 16
+	t |= t >> 8
+	colBits := uint8(t)
+	x0 := bits.TrailingZeros8(colBits) * bw
+	x1 := (8 - bits.LeadingZeros8(colBits)) * bw
+	if x1 > w || y1 > h || (x0 == 0 && y0 == 0 && x1 == w && y1 == h) {
+		return frameWorkCDEFStageRect{}
+	}
+	return frameWorkCDEFStageRect{uint8(x0), uint8(y0), uint8(x1), uint8(y1), true}
 }
 
 // frameWorkCDEFUnitFilterMask scans one 64x64 unit's MI records once and

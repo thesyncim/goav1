@@ -1075,21 +1075,23 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 		}
 		result.InterReferences = refs
 		result.InterReferencesValid = true
-		globalMVs := blockReferenceGlobalMVsForBlock(refs, &req.GlobalMVs, &req.GlobalMotion, req.AllowHighPrecisionMV, req.ForceIntegerMV, block)
-		globalMotionTypes := blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes)
+		var globalMVs [2]motion.Vector
+		if rt == nil || rt.frame.hasNonIdentityGM {
+			globalMVs = blockReferenceGlobalMVsForBlock(refs, &req.GlobalMVs, &req.GlobalMotion, req.AllowHighPrecisionMV, req.ForceIntegerMV, block)
+		}
 		if req.DecodeInterModes {
 			if rt != nil {
 				if err := s.decodeInterModeRefmvs(cdfs.InterMode, cdfs.MV, ctx, rt, req, block, refs, prefix.SkipMode, segment, globalMVs, result); err != nil {
 					return fmt.Errorf("decode inter mode: %w", err)
 				}
-			} else if err := s.decodeInterModeLegacy(*cdfs, ctx, req, *block, refs, prefix.SkipMode, *segment, globalMVs, globalMotionTypes, result); err != nil {
+			} else if err := s.decodeInterModeLegacy(*cdfs, ctx, req, *block, refs, prefix.SkipMode, *segment, globalMVs, blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes), result); err != nil {
 				return err
 			}
 			mode := result.InterMode
 			if req.DecodeMotionVectors {
 
 				motionMode := MotionModeTranslation
-				if req.DecodeInterIntra && !refs.Compound {
+				if req.DecodeInterIntra && req.EnableInterIntraCompound && !refs.Compound {
 					interIntra, err := s.ReadInterIntra(cdfs.Blend, InterIntraRequest{
 						Size:                     block.Size,
 						Mode:                     mode.Mode,
@@ -1186,34 +1188,34 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 					// underlying prediction path: the warp params are taken
 					// from the frame-level global motion array, not from the
 					// local OverlappableNeighbor projection.
-					if motionMode == MotionModeTranslation &&
-						!refs.Compound &&
-						refs.Ref0.Valid() &&
-						isGlobalMVBlock(mode, block.Size, blockReferenceGlobalMotionType(refs, req.GlobalMotionTypes)) &&
-						!blockReferenceScaled(refs, req.ScaledReferences) {
-						params := req.GlobalMotion[refs.Ref0]
-						if model, ok := warpShearParams(WarpedMotionModel{Params: params}); ok {
-							s.blockMotionExtras(result).GlobalWarpedMotion = model
-							result.GlobalWarpedMotionValid = true
-						}
-					}
-					// COMPOUND GLOBAL_GLOBALMV: libaom warps each reference
-					// independently via its own global motion params. Mirror the
-					// single-ref promotion above for both refs.
-					if motionMode == MotionModeTranslation &&
-						refs.Compound &&
-						!blockReferenceScaled(refs, req.ScaledReferences) {
-						for r := range 2 {
-							if !refs.At(r).Valid() {
-								continue
-							}
-							if !isGlobalMVBlock(mode, block.Size, req.GlobalMotionTypes[refs.At(r)]) {
-								continue
-							}
-							params := req.GlobalMotion[refs.At(r)]
+					if motionMode == MotionModeTranslation && (rt == nil || rt.frame.hasWarpGM) {
+						if !refs.Compound &&
+							refs.Ref0.Valid() &&
+							isGlobalMVBlock(mode, block.Size, blockReferenceGlobalMotionType(refs, req.GlobalMotionTypes)) &&
+							!blockReferenceScaled(refs, req.ScaledReferences) {
+							params := req.GlobalMotion[refs.Ref0]
 							if model, ok := warpShearParams(WarpedMotionModel{Params: params}); ok {
-								s.blockMotionExtras(result).GlobalWarpedMotionCompound[r] = model
-								result.GlobalWarpedMotionCompoundValid[r] = true
+								s.blockMotionExtras(result).GlobalWarpedMotion = model
+								result.GlobalWarpedMotionValid = true
+							}
+						}
+						// COMPOUND GLOBAL_GLOBALMV: libaom warps each reference
+						// independently via its own global motion params. Mirror the
+						// single-ref promotion above for both refs.
+						if refs.Compound &&
+							!blockReferenceScaled(refs, req.ScaledReferences) {
+							for r := range 2 {
+								if !refs.At(r).Valid() {
+									continue
+								}
+								if !isGlobalMVBlock(mode, block.Size, req.GlobalMotionTypes[refs.At(r)]) {
+									continue
+								}
+								params := req.GlobalMotion[refs.At(r)]
+								if model, ok := warpShearParams(WarpedMotionModel{Params: params}); ok {
+									s.blockMotionExtras(result).GlobalWarpedMotionCompound[r] = model
+									result.GlobalWarpedMotionCompoundValid[r] = true
+								}
 							}
 						}
 					}
@@ -1244,7 +1246,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 				var filters motion.InterpFilters
 				var filterReads int
 				if rt != nil {
-					filters, filterReads, err = s.readInterpFiltersRefmvs(cdfs.Interp, ctx, req, block, refs, mode, motionMode, globalMotionTypes, prefix.SkipMode)
+					filters, filterReads, err = s.readInterpFiltersRefmvs(cdfs.Interp, ctx, req, block, refs, mode, motionMode, prefix.SkipMode)
 				} else {
 					filters, filterReads, err = s.ReadInterpFilters(cdfs.Interp, ctx, InterpFilterRequest{
 						FrameFilter:      req.InterpolationFilter,
@@ -1253,7 +1255,7 @@ func (s *DecodeState) decodeBlockPredictionModeInto(cdfs *BlockLoopCDFs, ctx *Bl
 						References:       refs,
 						Mode:             mode,
 						MotionMode:       motionMode,
-						GlobalTypes:      globalMotionTypes,
+						GlobalTypes:      blockReferenceGlobalMotionTypes(refs, req.GlobalMotionTypes),
 						SkipMode:         prefix.SkipMode,
 						X4:               block.X4,
 						Y4:               block.Y4,
