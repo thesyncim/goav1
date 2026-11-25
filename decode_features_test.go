@@ -949,3 +949,247 @@ func TestDecoderOwnedIntraContextsPoisonAndHookFallback(t *testing.T) {
 		}
 	}
 }
+
+func buildTestMetadataOBU(metaType byte, body []byte) []byte {
+	payload := append([]byte{metaType}, body...)
+	// OBU_METADATA = type 5 -> header byte = (5 << 3) | 0x02 (has_size_field)
+	out := []byte{(5 << 3) | 0x02, byte(len(payload))}
+	return append(out, payload...)
+}
+
+func TestDecoderMetadataAndColorInfo(t *testing.T) {
+	const w, h = 64, 64
+	enc, err := NewVideoEncoder(VideoEncoderConfig{Width: w, Height: h, QIndex: 80})
+	if err != nil {
+		t.Fatalf("NewVideoEncoder: %v", err)
+	}
+	defer enc.Close()
+
+	src := I420Frame{
+		Y: make([]byte, w*h), U: make([]byte, (w/2)*(h/2)), V: make([]byte, (w/2)*(h/2)),
+		YStride: w, ChromaStride: w / 2, Width: w, Height: h,
+	}
+	out0, err := enc.Encode(src, true)
+	if err != nil {
+		t.Fatalf("Encode 0: %v", err)
+	}
+	tu0 := append([]byte(nil), out0.Data...)
+	out1, err := enc.Encode(src, false)
+	if err != nil {
+		t.Fatalf("Encode 1: %v", err)
+	}
+	tu1 := append([]byte(nil), out1.Data...)
+
+	// HDR CLL: max_cll=1000, max_fall=400, trailing 0x80
+	cllOBU := buildTestMetadataOBU(byte(obu.MetadataTypeHDRCLL), []byte{0x03, 0xe8, 0x01, 0x90, 0x80})
+	// ITU-T T.35: US (0xB5) + payload "HDR+" + trailing 0x80
+	t35OBU := buildTestMetadataOBU(byte(obu.MetadataTypeITUTT35), []byte{0xb5, 'H', 'D', 'R', '+', 0x80})
+
+	// Insert metadata OBUs before the frame inside TU 0 (after TD + SeqHdr).
+	tu0WithMeta := make([]byte, 0, len(tu0)+len(cllOBU)+len(t35OBU))
+	it := obu.NewLowOverheadIterator(tu0)
+	inserted := false
+	for {
+		u, ok, err := it.Next()
+		if err != nil {
+			t.Fatalf("iterate tu0: %v", err)
+		}
+		if !ok {
+			break
+		}
+		if !inserted && (u.Header.Type == obu.TypeFrame || u.Header.Type == obu.TypeFrameHeader) {
+			tu0WithMeta = append(tu0WithMeta, cllOBU...)
+			tu0WithMeta = append(tu0WithMeta, t35OBU...)
+			inserted = true
+		}
+		tu0WithMeta = append(tu0WithMeta, u.Raw...)
+	}
+
+	for _, workers := range []int{1, 2} {
+		dec, err := NewDecoder([][]byte{tu0WithMeta, tu1}, WithWorkers(workers))
+		if err != nil {
+			t.Fatalf("workers=%d NewDecoder: %v", workers, err)
+		}
+		var got []DecodedFrame
+		for {
+			frames, ok, err := dec.DecodeNext()
+			if err != nil {
+				dec.Close()
+				t.Fatalf("workers=%d DecodeNext: %v", workers, err)
+			}
+			if !ok {
+				break
+			}
+			for _, f := range frames {
+				got = append(got, copyDecodedFrame(f))
+			}
+		}
+		dec.Close()
+		if len(got) != 2 {
+			t.Fatalf("workers=%d got %d frames, want 2", workers, len(got))
+		}
+		// Frame 0 has HDRCLL, ITUTT35, and ColorInfo/RenderSize.
+		f0 := got[0]
+		if f0.Color.RenderWidth != w || f0.Color.RenderHeight != h {
+			t.Fatalf("workers=%d f0 render size = %dx%d, want %dx%d", workers, f0.Color.RenderWidth, f0.Color.RenderHeight, w, h)
+		}
+		if !f0.Metadata.HasHDRCLL || f0.Metadata.HDRCLL.MaxCLL != 1000 || f0.Metadata.HDRCLL.MaxFALL != 400 {
+			t.Fatalf("workers=%d f0 HDRCLL = %+v (has=%v), want 1000/400", workers, f0.Metadata.HDRCLL, f0.Metadata.HasHDRCLL)
+		}
+		if len(f0.Metadata.ITUTT35) != 1 || f0.Metadata.ITUTT35[0].CountryCode != 0xb5 || string(f0.Metadata.ITUTT35[0].Payload) != "HDR+" {
+			t.Fatalf("workers=%d f0 ITUTT35 = %+v", workers, f0.Metadata.ITUTT35)
+		}
+		// Frame 1 retains CVS-scoped HDRCLL, clears TU-scoped ITUTT35.
+		f1 := got[1]
+		if !f1.Metadata.HasHDRCLL || f1.Metadata.HDRCLL.MaxCLL != 1000 {
+			t.Fatalf("workers=%d f1 HDRCLL not persisted across CVS: %+v", workers, f1.Metadata)
+		}
+		if len(f1.Metadata.ITUTT35) != 0 {
+			t.Fatalf("workers=%d f1 ITUTT35 leaked across TU: %+v", workers, f1.Metadata.ITUTT35)
+		}
+	}
+}
+
+func TestDecoderOperatingPointValidation(t *testing.T) {
+	if _, err := NewDecoder([][]byte{{}}, WithOperatingPoint(-1)); err == nil {
+		t.Fatal("expected error for negative operating point")
+	}
+	if _, err := NewDecoder([][]byte{{}}, WithOperatingPoint(32)); err == nil {
+		t.Fatal("expected error for operating point >= 32")
+	}
+}
+
+func TestDecoderWithFilmGrainDisabled(t *testing.T) {
+	fgsPath := filepath.Join("testdata", "realcorpus", "streams", "svtra_oldtown_720p_crf35_p8_fgs8.ivf")
+	raw, err := os.ReadFile(fgsPath)
+	if err != nil {
+		t.Skipf("film-grain corpus clip not present: %v", err)
+	}
+	withFG, err := DecodeIVF(raw, WithWorkers(1), WithFilmGrain(true))
+	if err != nil {
+		t.Fatalf("DecodeIVF WithFilmGrain(true): %v", err)
+	}
+	noFG, err := DecodeIVF(raw, WithWorkers(1), WithFilmGrain(false))
+	if err != nil {
+		t.Fatalf("DecodeIVF WithFilmGrain(false): %v", err)
+	}
+	noFG8, err := DecodeIVF(raw, WithWorkers(8), WithFilmGrain(false))
+	if err != nil {
+		t.Fatalf("DecodeIVF w=8 WithFilmGrain(false): %v", err)
+	}
+	if len(withFG) == 0 || len(noFG) != len(withFG) || len(noFG8) != len(withFG) {
+		t.Fatalf("frame count mismatch: with=%d no=%d no8=%d", len(withFG), len(noFG), len(noFG8))
+	}
+	if bytes.Equal(withFG[0].Y, noFG[0].Y) {
+		t.Fatal("expected WithFilmGrain(false) to differ from WithFilmGrain(true) on film-grain stream")
+	}
+	for i := range noFG {
+		if !bytes.Equal(noFG[i].Y, noFG8[i].Y) || !bytes.Equal(noFG[i].U, noFG8[i].U) || !bytes.Equal(noFG[i].V, noFG8[i].V) {
+			t.Fatalf("frame %d: w=1 and w=8 WithFilmGrain(false) mismatch", i)
+		}
+	}
+}
+
+func TestDecoderErrorConcealment(t *testing.T) {
+	const w, h = 128, 128
+	enc, err := NewVideoEncoder(VideoEncoderConfig{Width: w, Height: h, QIndex: 90})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer enc.Close()
+
+	var clean [][]byte
+	for i := range 6 {
+		f := I420Frame{
+			Y: make([]byte, w*h), U: make([]byte, w/2*h/2), V: make([]byte, w/2*h/2),
+			YStride: w, ChromaStride: w / 2, Width: w, Height: h,
+		}
+		for j := range f.Y {
+			f.Y[j] = uint8(40 + (j*5+i*23)%160)
+		}
+		for j := range f.U {
+			f.U[j], f.V[j] = uint8(110+i*4), uint8(140-i*4)
+		}
+		out, err := enc.Encode(f, i == 0 || i == 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		clean = append(clean, append([]byte(nil), out.Data...))
+	}
+
+	decodeCopies := func(payloads [][]byte, opts ...Option) ([]DecodedFrame, error) {
+		dec, err := NewDecoder(payloads, opts...)
+		if err != nil {
+			return nil, err
+		}
+		defer dec.Close()
+		var out []DecodedFrame
+		for {
+			frames, ok, err := dec.DecodeNext()
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				break
+			}
+			for _, f := range frames {
+				out = append(out, copyDecodedFrame(f))
+			}
+		}
+		return out, nil
+	}
+
+	refFrames, err := decodeCopies(clean)
+	if err != nil || len(refFrames) != 6 {
+		t.Fatalf("clean decode: %d frames, err=%v", len(refFrames), err)
+	}
+
+	// Case 1: corrupt OBU bytes on frame 2 (between keyframes 0 and 3).
+	corruptOBU := append([][]byte(nil), clean...)
+	corruptOBU[2] = []byte{0xff, 0xff, 0xff, 0xff, 0x80, 0x01}
+
+	// Strict mode must reject the corrupt OBU stream.
+	if _, err := decodeCopies(corruptOBU); err == nil {
+		t.Fatal("strict mode accepted corrupt OBU payload")
+	}
+
+	// Concealment mode must freeze frame 1 at index 2 and recover cleanly at keyframe 3.
+	got, err := decodeCopies(corruptOBU, WithErrorConcealment(true))
+	if err != nil {
+		t.Fatalf("decodeCopies(corruptOBU, conceal): %v", err)
+	}
+	if len(got) != 6 {
+		t.Fatalf("corruptOBU frame count = %d, want 6", len(got))
+	}
+	if got[0].Concealed || got[1].Concealed {
+		t.Fatalf("frames 0..1 unexpectedly marked concealed")
+	}
+	if !got[2].Concealed {
+		t.Fatalf("frame 2 expected Concealed=true")
+	}
+	if !bytes.Equal(got[2].Y, got[1].Y) || !bytes.Equal(got[2].U, got[1].U) || !bytes.Equal(got[2].V, got[1].V) {
+		t.Fatalf("concealed frame 2 did not freeze last good frame 1")
+	}
+	if got[3].Concealed || got[4].Concealed || got[5].Concealed {
+		t.Fatalf("recovered frames 3..5 unexpectedly marked concealed")
+	}
+	if !bytes.Equal(got[3].Y, refFrames[3].Y) {
+		t.Fatalf("recovered keyframe 3 pixels differ from clean decode")
+	}
+
+	// Case 2: truncated tile payload on frame 2 (header intact, entropy truncated).
+	truncTile := append([][]byte(nil), clean...)
+	truncLen := len(clean[2]) / 2
+	if truncLen < 4 {
+		truncLen = 4
+	}
+	truncTile[2] = append([]byte(nil), clean[2][:truncLen]...)
+
+	got2, err := decodeCopies(truncTile, WithErrorConcealment(true))
+	if err != nil {
+		t.Fatalf("decodeCopies(truncTile, conceal): %v", err)
+	}
+	if len(got2) != 6 || !got2[2].Concealed || got2[3].Concealed {
+		t.Fatalf("truncTile unexpected concealment state: len=%d f2=%v f3=%v", len(got2), len(got2) > 2 && got2[2].Concealed, len(got2) > 3 && got2[3].Concealed)
+	}
+}

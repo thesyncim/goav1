@@ -1,6 +1,7 @@
 package decoder
 
 import (
+	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/obu"
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/rtp"
@@ -40,6 +41,9 @@ type Event struct {
 	NewCodedVideoSequence      bool
 	NewTemporalUnit            bool
 	OperatingParametersChanged bool
+	// SuppressDisplay marks spatial layers decoded for reference only under
+	// AllLayers=false.
+	SuppressDisplay bool
 
 	SequenceHeader      parser.SequenceHeader
 	FrameHeader         parser.FrameHeaderPrefix
@@ -131,10 +135,85 @@ type Stream struct {
 	// per-OBU allocations. It grows on demand and shrinks back to length zero
 	// after each parse so the slice header is reset between events.
 	tileListScratch []parser.TileListEntry
+
+	// Decoder options preserved across Reset.
+	disableFilmGrain bool
+	operatingPoint   int
+	onlyHighestLayer bool
+
+	// Active AV1 OBU_METADATA state: CVS-scoped (HDR CLL/MDCV, scalability)
+	// and temporal-unit-scoped (timecode, ITU-T T.35).
+	activeMeta frame.Metadata
 }
 
 func (s *Stream) Reset() {
-	*s = Stream{}
+	disableFG := s.disableFilmGrain
+	opPoint := s.operatingPoint
+	onlyHighest := s.onlyHighestLayer
+	*s = Stream{
+		disableFilmGrain: disableFG,
+		operatingPoint:   opPoint,
+		onlyHighestLayer: onlyHighest,
+	}
+}
+
+// SetDisableFilmGrain controls whether parsed film-grain synthesis flags are
+// suppressed on emitted events (matching dav1d --filmgrain 0 when true).
+func (s *Stream) SetDisableFilmGrain(disable bool) {
+	s.disableFilmGrain = disable
+}
+
+// SetOperatingPoint configures the AV1 operating point index (0..31) and
+// whether all spatial layers in that operating point are output (allLayers)
+// or only its highest spatial layer.
+func (s *Stream) SetOperatingPoint(op int, allLayers bool) {
+	if op < 0 {
+		op = 0
+	}
+	s.operatingPoint = op
+	s.onlyHighestLayer = !allLayers
+}
+
+// ActiveMetadata returns the AV1 OBU_METADATA state active for the current
+// temporal unit and coded video sequence.
+func (s *Stream) ActiveMetadata() frame.Metadata {
+	return s.activeMeta
+}
+
+// selectedOperatingPointIDC returns the active operating_point_idc mask per
+// AV1 spec section 6.4.1 (0 when operating point filtering is inactive).
+func (s *Stream) selectedOperatingPointIDC() uint16 {
+	if !s.haveSequence || s.sequence.OperatingPointsCount == 0 {
+		return 0
+	}
+	idx := s.operatingPoint
+	if idx < 0 || idx >= int(s.sequence.OperatingPointsCount) {
+		idx = 0
+	}
+	return s.sequence.OperatingPoints[idx].IDC
+}
+
+// ShouldSuppressDisplay reports whether a frame at spatialID should be decoded
+// for reference use only (not emitted as a display picture) under AllLayers=false.
+func (s *Stream) ShouldSuppressDisplay(spatialID uint8) bool {
+	if !s.onlyHighestLayer {
+		return false
+	}
+	idc := s.selectedOperatingPointIDC()
+	if idc == 0 {
+		return false
+	}
+	spatialMask := uint8(idc >> 8)
+	if spatialMask == 0 {
+		return false
+	}
+	highest := uint8(0)
+	for sid := uint8(0); sid < 4; sid++ {
+		if spatialMask&(1<<sid) != 0 {
+			highest = sid
+		}
+	}
+	return spatialID < highest
 }
 
 func (s *Stream) ResetRTP() {
@@ -276,6 +355,23 @@ func (s *Stream) PushUnitInto(event *Event, unit obu.Unit, newCodedVideoSequence
 		NewCodedVideoSequence: newCodedVideoSequence,
 	}
 
+	// AV1 spec section 7.5: drop OBUs outside the selected operating point's
+	// operating_point_idc temporal/spatial layer masks (sequence headers,
+	// temporal delimiters, and padding are never filtered).
+	if unit.Header.Extension &&
+		unit.Header.Type != obu.TypeSequenceHeader &&
+		unit.Header.Type != obu.TypeTemporalDelimiter &&
+		unit.Header.Type != obu.TypePadding {
+		if idc := s.selectedOperatingPointIDC(); idc != 0 {
+			inTemporal := (idc>>unit.Header.TemporalID)&1 != 0
+			inSpatial := (idc>>(unit.Header.SpatialID+8))&1 != 0
+			if !inTemporal || !inSpatial {
+				event.Kind = EventIgnored
+				return nil
+			}
+		}
+	}
+
 	switch unit.Header.Type {
 	case obu.TypeSequenceHeader:
 		seq, err := parser.ParseSequenceHeader(unit.Payload)
@@ -289,6 +385,7 @@ func (s *Stream) PushUnitInto(event *Event, unit obu.Unit, newCodedVideoSequence
 			event.NewCodedVideoSequence = true
 			s.clearPendingFrame()
 			s.references.Reset()
+			s.activeMeta = frame.Metadata{}
 		} else if s.sequence != seq {
 			event.OperatingParametersChanged = true
 		}
@@ -300,6 +397,9 @@ func (s *Stream) PushUnitInto(event *Event, unit obu.Unit, newCodedVideoSequence
 		event.Kind = EventTemporalDelimiter
 		event.NewTemporalUnit = true
 		s.clearPendingFrame()
+		s.activeMeta.HasTimecode = false
+		s.activeMeta.Timecode = frame.MetadataTimecode{}
+		s.activeMeta.ITUTT35 = s.activeMeta.ITUTT35[:0]
 		return nil
 
 	case obu.TypeRedundantFrameHeader:
@@ -402,7 +502,11 @@ func (s *Stream) PushUnitInto(event *Event, unit obu.Unit, newCodedVideoSequence
 			event.SkipMode = skipMode
 			event.FrameMode = frameMode
 			event.GlobalMotion = globalMotion
+			if s.disableFilmGrain {
+				filmGrain.Apply = false
+			}
 			event.FilmGrain = filmGrain
+			event.SuppressDisplay = s.ShouldSuppressDisplay(event.SpatialID)
 			event.ReferenceOrderHints = referenceOrderHints(frameSize, &s.references)
 			event.TileGroup = tileGroup
 			s.tileInfo = tileInfo
@@ -440,6 +544,50 @@ func (s *Stream) PushUnitInto(event *Event, unit obu.Unit, newCodedVideoSequence
 		meta, mErr := obu.ParseMetadata(unit.Payload)
 		event.Metadata = meta
 		event.MetadataErr = mErr
+		if mErr == nil {
+			switch meta.Type {
+			case obu.MetadataTypeHDRCLL:
+				s.activeMeta.HasHDRCLL = true
+				s.activeMeta.HDRCLL = frame.MetadataHDRCLL{
+					MaxCLL:  meta.HDRCLL.MaxCLL,
+					MaxFALL: meta.HDRCLL.MaxFALL,
+				}
+			case obu.MetadataTypeHDRMDCV:
+				s.activeMeta.HasHDRMDCV = true
+				s.activeMeta.HDRMDCV = frame.MetadataHDRMDCV{
+					PrimaryChromaticityX:    meta.HDRMDCV.PrimaryChromaticityX,
+					PrimaryChromaticityY:    meta.HDRMDCV.PrimaryChromaticityY,
+					WhitePointChromaticityX: meta.HDRMDCV.WhitePointChromaticityX,
+					WhitePointChromaticityY: meta.HDRMDCV.WhitePointChromaticityY,
+					LuminanceMax:            meta.HDRMDCV.LuminanceMax,
+					LuminanceMin:            meta.HDRMDCV.LuminanceMin,
+				}
+			case obu.MetadataTypeScalability:
+				s.activeMeta.HasScalability = true
+				s.activeMeta.ScalabilityModeIDC = meta.Scalability.ModeIDC
+			case obu.MetadataTypeTimecode:
+				s.activeMeta.HasTimecode = true
+				s.activeMeta.Timecode = frame.MetadataTimecode{
+					CountingType:     meta.Timecode.CountingType,
+					FullTimestamp:    meta.Timecode.FullTimestamp,
+					Discontinuity:    meta.Timecode.Discontinuity,
+					CountDropped:     meta.Timecode.CountDropped,
+					NFrames:          meta.Timecode.NFrames,
+					Seconds:          meta.Timecode.Seconds,
+					Minutes:          meta.Timecode.Minutes,
+					Hours:            meta.Timecode.Hours,
+					TimeOffsetLength: meta.Timecode.TimeOffsetLength,
+					TimeOffsetValue:  meta.Timecode.TimeOffsetValue,
+				}
+			case obu.MetadataTypeITUTT35:
+				s.activeMeta.ITUTT35 = append(s.activeMeta.ITUTT35, frame.MetadataITUTT35{
+					CountryCode:          meta.ITUTT35.CountryCode,
+					CountryCodeExtension: meta.ITUTT35.CountryCodeExtension,
+					HasCountryExtension:  meta.ITUTT35.HasCountryExtension,
+					Payload:              meta.ITUTT35.Payload,
+				})
+			}
+		}
 		return nil
 
 	case obu.TypeTileList:
@@ -568,7 +716,11 @@ func (s *Stream) acceptFrameHeader(event *Event) error {
 	event.SkipMode = skipMode
 	event.FrameMode = frameMode
 	event.GlobalMotion = globalMotion
+	if s.disableFilmGrain {
+		filmGrain.Apply = false
+	}
 	event.FilmGrain = filmGrain
+	event.SuppressDisplay = s.ShouldSuppressDisplay(event.SpatialID)
 	event.ReferenceOrderHints = referenceOrderHints(frameSize, &s.references)
 	s.tileInfo = tileInfo
 	s.nextTile = 0
@@ -645,7 +797,12 @@ func (s *Stream) acceptExistingFrame(event *Event) error {
 	event.ExistingFrame = ref
 	event.FrameSize = ref.Size
 	event.GlobalMotion = ref.GlobalMotion
-	event.FilmGrain = ref.FilmGrain
+	fg := ref.FilmGrain
+	if s.disableFilmGrain {
+		fg.Apply = false
+	}
+	event.FilmGrain = fg
+	event.SuppressDisplay = s.ShouldSuppressDisplay(event.SpatialID)
 
 	s.clearPendingFrame()
 
@@ -704,6 +861,7 @@ func (s *Stream) applyFrameState(event *Event) {
 	event.FrameMode = s.frame.FrameMode
 	event.GlobalMotion = s.frame.GlobalMotion
 	event.FilmGrain = s.frame.FilmGrain
+	event.SuppressDisplay = s.ShouldSuppressDisplay(event.SpatialID)
 	event.ReferenceOrderHints = s.frame.ReferenceOrderHints
 }
 

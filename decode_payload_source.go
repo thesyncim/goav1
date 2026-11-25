@@ -35,6 +35,71 @@ func newSliceDecoderPayloadSource(payloads [][]byte) decoderPayloadSource {
 	return decoderPayloadSource{payloads: payloads, maxPayload: maxPayload}
 }
 
+// filterValidPayloadsForConcealment builds a probe-only payload source that
+// skips payloads whose OBU/header parsing fails, so stream sizing succeeds even
+// when corrupt payloads appear in the stream. The original source is still
+// decoded in full so DecodeNext can conceal the corrupt payloads in place.
+func filterValidPayloadsForConcealment(source decoderPayloadSource, kind decoderPayloadKind, cfg decoderConfig, payloadBuf []byte) (decoderPayloadSource, error) {
+	var stream internaldecoder.Stream
+	stream.SetDisableFilmGrain(cfg.disableFilmGrain)
+	stream.SetOperatingPoint(cfg.operatingPoint, !cfg.onlyHighestLayer)
+	events := make([]internaldecoder.Event, decoderMaxPayloadEvents)
+	var valid [][]byte
+	var rtpBuf []byte
+	var rtpSpans []RTPObuSpan
+	rtpUsed := 0
+	if kind == decoderPayloadRTP {
+		total, err := source.totalPayloadLen()
+		if err != nil {
+			return decoderPayloadSource{}, err
+		}
+		rtpBuf = make([]byte, total)
+		rtpSpans = make([]RTPObuSpan, decoderMaxPayloadEvents)
+	}
+	err := source.forEachPayload(payloadBuf, func(payload []byte) error {
+		switch kind {
+		case decoderPayloadLowOverhead:
+			eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(payload)
+			if err != nil || eventCount > decoderMaxPayloadEvents {
+				return nil
+			}
+			probe := stream
+			if _, err := probe.PushLowOverhead(payload, events[:eventCount]); err != nil {
+				return nil
+			}
+			stream = probe
+		case decoderPayloadRTP:
+			plannedUsed, eventCount, err := stream.PushRTPPayloadSize(rtpUsed, payload)
+			if err != nil || plannedUsed > len(rtpBuf) || eventCount > decoderMaxPayloadEvents {
+				stream.ResetRTP()
+				rtpUsed = 0
+				return nil
+			}
+			probe := stream
+			actualUsed, _, err := probe.PushRTPPayload(rtpBuf[:plannedUsed], rtpUsed, rtpSpans[:eventCount], events[:eventCount], payload)
+			if err != nil {
+				stream.ResetRTP()
+				rtpUsed = 0
+				return nil
+			}
+			stream = probe
+			rtpUsed = actualUsed
+			if !stream.InRTPFragment() {
+				rtpUsed = 0
+			}
+		}
+		valid = append(valid, append([]byte(nil), payload...))
+		return nil
+	})
+	if err != nil {
+		return decoderPayloadSource{}, err
+	}
+	if len(valid) == 0 {
+		return decoderPayloadSource{}, errors.New("goav1: no valid payloads found for error concealment")
+	}
+	return newSliceDecoderPayloadSource(valid), nil
+}
+
 // NewDecoderFromIVFReaderAt indexes an IVF stream from r, builds a Decoder over
 // it, and returns the parsed IVF header. Unlike NewDecoderFromIVF, it does not
 // retain the full IVF file or copy every payload into memory; DecodeNext reads

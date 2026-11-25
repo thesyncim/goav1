@@ -13,6 +13,23 @@ type FrameLayout = internalframe.Layout
 // FramePlane identifies one plane (Y, U, or V) of a Frame.
 type FramePlane = internalframe.Plane
 
+// ColorInfo describes the color primaries, transfer characteristics, matrix
+// coefficients, range, chroma sample position, and render dimensions of a
+// decoded AV1 frame.
+type ColorInfo = internalframe.ColorInfo
+
+// FrameMetadata carries parsed AV1 OBU_METADATA payloads (HDR CLL, HDR MDCV,
+// ITU-T T.35, timecode, and scalability) active for a decoded frame.
+type FrameMetadata = internalframe.Metadata
+
+// AV1 metadata payload types (spec section 6.7).
+type (
+	MetadataHDRCLL   = internalframe.MetadataHDRCLL
+	MetadataHDRMDCV  = internalframe.MetadataHDRMDCV
+	MetadataITUTT35  = internalframe.MetadataITUTT35
+	MetadataTimecode = internalframe.MetadataTimecode
+)
+
 // Frame is a decoded AV1 picture stored in a caller-owned backing buffer.
 // Instances are produced by BindFrame and acquired from a FramePool.
 type Frame = internalframe.Frame

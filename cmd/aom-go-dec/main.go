@@ -47,6 +47,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	out := fs.String("o", "", "write YUV output to this file (default: stdout)")
 	workers := fs.Int("workers", 0, "worker goroutine count (0 = one per CPU, 1 = single-threaded)")
 	frameDelay := fs.Int("framedelay", 0, "maximum frames in flight (dav1d --framedelay; 0 = auto, 1 = no frame threading)")
+	filmGrain := fs.Bool("filmgrain", true, "apply AV1 film-grain synthesis (dav1d --filmgrain)")
+	opPoint := fs.Int("oppoint", 0, "AV1 operating point index 0..31 (dav1d --oppoint)")
+	conceal := fs.Bool("conceal", false, "enable decoder error concealment on corrupt payloads")
 	quiet := fs.Bool("quiet", false, "suppress per-frame timing on stderr")
 	cpuProfile := fs.String("cpuprofile", "", "write a CPU profile of the decode loop to this path")
 	fs.Usage = func() {
@@ -94,7 +97,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) error {
 	}
 	defer writer.Close()
 
-	dec, header, err := newDecoder(input, info.Size(), *workers, *frameDelay)
+	dec, header, err := newDecoder(input, info.Size(), *workers, *frameDelay, *filmGrain, *opPoint, *conceal)
 	if err != nil {
 		return fmt.Errorf("decoder bind: %w", err)
 	}

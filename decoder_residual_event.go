@@ -97,6 +97,8 @@ type decoderFrameWorkResidualEventRunner struct {
 	// pipeline and drains it before any other event; outputs then leave through
 	// the pipeline in submission order instead of Outputs.
 	fp *decoderFramePipeline
+
+	activeMeta FrameMetadata
 }
 
 // decoderFrameWorkResidualEventsResult summarizes a batch of parsed decoder
@@ -651,6 +653,7 @@ func (r decoderFrameWorkResidualEventRunner) runEvents(sequence SequenceHeader, 
 			result.ExecutedTileWork++
 		}
 		if decoderFrameWorkResidualResultOutputsFrame(&events[i], step) {
+			populateFrameDisplayInfo(step.Output, sequence, &events[i], r.activeMeta)
 			if r.fp != nil {
 				r.fp.ready = append(r.fp.ready, step.Output)
 			}
@@ -1258,8 +1261,25 @@ func decoderFrameWorkResidualRunnerStats(runner *decoderFrameWorkBatchResidualRu
 	return runner.TotalStats()
 }
 
+func populateFrameDisplayInfo(dst *Frame, seq SequenceHeader, event *internaldecoder.Event, meta FrameMetadata) {
+	if dst == nil || event == nil {
+		return
+	}
+	cc := seq.ColorConfig
+	dst.Color = ColorInfo{
+		Primaries:               cc.ColorPrimaries,
+		TransferCharacteristics: cc.TransferCharacteristics,
+		MatrixCoefficients:      cc.MatrixCoefficients,
+		ChromaSamplePosition:    cc.ChromaSamplePosition,
+		ColorRange:              cc.ColorRange,
+		RenderWidth:             int(event.FrameSize.RenderWidth),
+		RenderHeight:            int(event.FrameSize.RenderHeight),
+	}
+	dst.Metadata = meta
+}
+
 func decoderFrameWorkResidualResultOutputsFrame(event *internaldecoder.Event, result internaldecoder.FrameWorkEventResult) bool {
-	if result.Output == nil {
+	if result.Output == nil || event.SuppressDisplay {
 		return false
 	}
 	if result.Step.Kind == internaldecoder.FrameWorkStepShowExisting {
