@@ -1202,6 +1202,8 @@ func filterSBVertical16Edge(pix []byte, off, stride, rowBytes int, bitDepth uint
 // already in the low byte of each lane; I and E come from the LUT's sharp
 // vectors and the widened limits shift left by bitdepth_min_8 through one
 // count vector.
+var lpfShR4 = [16]int8{-4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4, -4}
+
 func sbLimits16(lv archsimd.Uint32x4, pair uint32, lut *SBLUT, bd8 int16) (eV, iV, hV archsimd.Uint16x8, m4 archsimd.Mask16x8, ok bool) {
 	one := archsimd.BroadcastUint8x16(1)
 	prev := lv.ReshapeToUint64s().InterleaveHi(lv.ReshapeToUint64s()).ReshapeToUint32s()
@@ -1213,7 +1215,7 @@ func sbLimits16(lv archsimd.Uint32x4, pair uint32, lut *SBLUT, bd8 int16) (eV, i
 	if h.GetElem(0)|h.GetElem(1) == 0 {
 		return
 	}
-	hB := lr.ShiftAllRight(4)
+	hB := lr.Shift(archsimd.LoadInt8x16Array(&lpfShR4))
 	iB := lr.Shift(archsimd.LoadInt8x16Array(&lut.SharpShift)).Min(archsimd.LoadUint8x16Array(&lut.SharpCap)).Max(one)
 	e := lr.Add(archsimd.BroadcastUint8x16(2))
 	eB := e.Add(e).Add(iB)
@@ -1846,8 +1848,8 @@ func sbActive(cur, prev archsimd.Uint32x4, nib uint32) (lr, act archsimd.Uint8x1
 
 // sbLimitsOf is sbLimits' second half: E, I and H from lr, and the wd >= 4
 // lane mask from act.
-func sbLimitsOf(lr, act archsimd.Uint8x16, lut *SBLUT) (eV, iV, hV archsimd.Uint8x16, m4 archsimd.Mask8x16) {
-	hV = lr.ShiftAllRight(4)
+func sbLimitsOf(lr, act archsimd.Uint8x16, lut *SBLUT, shR4 archsimd.Int8x16) (eV, iV, hV archsimd.Uint8x16, m4 archsimd.Mask8x16) {
+	hV = lr.Shift(shR4)
 	iV = lr.Shift(archsimd.LoadInt8x16Array(&lut.SharpShift)).Min(archsimd.LoadUint8x16Array(&lut.SharpCap)).Max(archsimd.BroadcastUint8x16(1))
 	e := lr.Add(archsimd.BroadcastUint8x16(2))
 	eV = e.Add(e).Add(iV)
@@ -1910,6 +1912,7 @@ func sbRowsU8[W lpfWidth](pix []byte, off, stride, n int, vm0, vm1, vm2 uint32, 
 	v := unsafeutil.NewRows(pix, off-rh*stride, stride, n, 2*rh)
 	lv := unsafeutil.NewRows(lvl, li-ls4, ls4, n, 2)
 	ff := archsimd.LoadUint32x4Array(&sbLowByteLanes)
+	shR4 := archsimd.LoadInt8x16Array(&lpfShR4)
 	maxX := v.Width() - 16
 	for x := 0; vm0 != 0 && x <= maxX; {
 		if vm0&15 == 0 {
@@ -1931,7 +1934,7 @@ func sbRowsU8[W lpfWidth](pix []byte, off, stride, n int, vm0, vm1, vm2 uint32, 
 			vm0, vm1, vm2, x = vm0>>4, vm1>>4, vm2>>4, x+16
 			continue
 		}
-		if eV, iV, hV, m4 := sbLimitsOf(lr, act, lut); wd == 16 && vm2&15 != 0 {
+		if eV, iV, hV, m4 := sbLimitsOf(lr, act, lut, shR4); wd == 16 && vm2&15 != 0 {
 			lpf16U8Wd16(unsafeutil.BlockAt[lpfR14](v, 0, x), eV, iV, hV, m4, sbNibbleMask(vm1), sbNibbleMask(vm2))
 		} else if wd >= 6 && vm1&15 != 0 {
 			if luma {
@@ -1990,6 +1993,7 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 	v := unsafeutil.NewRows(pix, off-reach, stride, reach+12, 16*hiG+16)
 	lv := unsafeutil.NewRows(lvl, li-4, ls4, 8, 4*hiG+4)
 	ff := archsimd.LoadUint32x4Array(&sbLowByteLanes)
+	shR4 := archsimd.LoadInt8x16Array(&lpfShR4)
 	c16, c8 := reach-8, reach-4 // p7 and p3 columns of the view
 	for g := 0; vm0 != 0; {
 		if vm0&15 == 0 {
@@ -2011,7 +2015,7 @@ func filterSBVertical8(pix []byte, off, stride, rowBytes int, vm [3]uint32, luma
 			vm0, vm1, vm2, g = vm0>>4, vm1>>4, vm2>>4, g+1
 			continue
 		}
-		if eV, iV, hV, m4 := sbLimitsOf(lr, act, lut); vm2&15 != 0 {
+		if eV, iV, hV, m4 := sbLimitsOf(lr, act, lut, shR4); vm2&15 != 0 {
 			lpfVertical16x16U8(unsafeutil.BlockAt[lpfR16](v, 16*g, c16), eV, iV, hV, m4, sbNibbleMask(vm1), sbNibbleMask(vm2))
 		} else if vm1&15 == 0 {
 			lpfVertical16x8U8WideW[lpfW4](unsafeutil.BlockAt[lpfR16](v, 16*g, c8), eV, iV, hV, m4, archsimd.Mask8x16{})

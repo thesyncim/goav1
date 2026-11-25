@@ -193,7 +193,7 @@ func sgrBlendRowSIMD(dst []int32, dgd []int32, aPrev []int32, aCur []int32, aNex
 				w6.MulAdd(sgrLane4(bn, 0), w7.MulAdd(sgrLane4(bn, 1), w8.Mul(sgrLane4(bn, 2))))))))))
 		d := sgrLane4(dgd[c:c+4:c+4], 0)
 		r := a.MulAdd(d, b).Add(biasV).Shift(shV)
-		r.Store(dst[c : c+4 : c+4])
+		r.StoreArray((*[4]int32)(dst[c : c+4]))
 	}
 }
 

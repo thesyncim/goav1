@@ -710,11 +710,13 @@ func (rt *refmvsTile) find(out *refmvsResult, ref refmvsRefPair, size BlockSize,
 		h8 := min((h4+1)>>1, 8)
 		for y := int32(0); y < h8; y += stepV {
 			for x := int32(0); x < w8; x += stepH {
-				var gctx *int32
-				if x|y == 0 {
-					gctx = &globalMVCtx
+				if e := &entries[rb+x]; e.Valid {
+					var gctx *int32
+					if x|y == 0 {
+						gctx = &globalMVCtx
+					}
+					rf.addTemporalCandidate(stack, &cnt, e, ref, gctx, &tgmv)
 				}
-				rf.addTemporalCandidate(stack, &cnt, &entries[rb+x], ref, gctx, &tgmv)
 			}
 			rb += stride * stepV
 		}
@@ -723,14 +725,20 @@ func (rt *refmvsTile) find(out *refmvsResult, ref refmvsRefPair, size BlockSize,
 			rb = rbi + bh8*stride
 			hasBottom := by8+bh8 < min(rt.tileRowEnd>>1, (by8&^7)+8)
 			if hasBottom && bx8-1 >= max(rt.tileColStart>>1, bx8&^7) {
-				rf.addTemporalCandidate(stack, &cnt, &entries[rb-1], ref, nil, nil)
+				if e := &entries[rb-1]; e.Valid {
+					rf.addTemporalCandidate(stack, &cnt, e, ref, nil, nil)
+				}
 			}
 			if bx8+bw8 < min(rt.tileColEnd>>1, (bx8&^7)+8) {
 				if hasBottom {
-					rf.addTemporalCandidate(stack, &cnt, &entries[rb+bw8], ref, nil, nil)
+					if e := &entries[rb+bw8]; e.Valid {
+						rf.addTemporalCandidate(stack, &cnt, e, ref, nil, nil)
+					}
 				}
 				if by8+bh8-1 < min(rt.tileRowEnd>>1, (by8&^7)+8) {
-					rf.addTemporalCandidate(stack, &cnt, &entries[rb+bw8-stride], ref, nil, nil)
+					if e := &entries[rb+bw8-stride]; e.Valid {
+						rf.addTemporalCandidate(stack, &cnt, e, ref, nil, nil)
+					}
 				}
 			}
 		}

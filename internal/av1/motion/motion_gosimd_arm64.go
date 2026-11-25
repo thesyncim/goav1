@@ -2801,14 +2801,115 @@ func mc8BlendAvgFast(dst *frame.Plane, a, b []uint16, dstX, dstY, w, h int) bool
 	}
 	off := dstY*dst.Stride + dstX
 	ext := (h-1)*dst.Stride + w
-	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || off+ext > len(dst.Pix) || ext > mc8WindowMax {
+	if dstX < 0 || dstY < 0 || dstX+w > dst.Width || !unsafeutil.GridFit(len(dst.Pix), off, dst.Stride, w, h) || ext > mc8WindowMax {
 		return false
 	}
-	mc8BlendAvg(dst.Pix[off:off+ext], dst.Stride, a[:w*h], b[:w*h], w, h)
+	mc8BlendAvg(unsafeutil.NewGrid(dst.Pix, off, dst.Stride, w, h), a[:w*h], b[:w*h], w, h)
 	return true
 }
 
-func mc8BlendAvg(dst []byte, dstStride int, a, b []uint16, w, h int) {
+func mc8BlendAvgCopyFast(dst, ref0, ref1 *frame.Plane, dstX, dstY, refX0, refY0, refX1, refY1, w, h int) bool {
+	if w != 4 && w&7 != 0 {
+		return false
+	}
+	dOff := dstY*dst.Stride + dstX
+	s0Off := refY0*ref0.Stride + refX0
+	s1Off := refY1*ref1.Stride + refX1
+	if !unsafeutil.GridFit(len(dst.Pix), dOff, dst.Stride, w, h) ||
+		!unsafeutil.GridFit(len(ref0.Pix), s0Off, ref0.Stride, w, h) ||
+		!unsafeutil.GridFit(len(ref1.Pix), s1Off, ref1.Stride, w, h) {
+		return false
+	}
+	dg := unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, w, h)
+	g0 := unsafeutil.NewGrid(ref0.Pix, s0Off, ref0.Stride, w, h)
+	g1 := unsafeutil.NewGrid(ref1.Pix, s1Off, ref1.Stride, w, h)
+	if !dg.Fits(0, 0, w, h) || !g0.Fits(0, 0, w, h) || !g1.Fits(0, 0, w, h) {
+		return false
+	}
+	// Exact rounding average without widening: (a + b + 1) >> 1 == (a | b) - ((a ^ b) >> 1).
+	switch {
+	case w == 4:
+		for r := range h {
+			a := binary.LittleEndian.Uint32(g0.Row4(r, 0)[:])
+			b := binary.LittleEndian.Uint32(g1.Row4(r, 0)[:])
+			binary.LittleEndian.PutUint32(dg.Row4(r, 0)[:], (a|b)-(((a^b)&0xfefefefe)>>1))
+		}
+	case w == 8:
+		for r := range h {
+			a := binary.LittleEndian.Uint64(g0.Row8(r, 0)[:])
+			b := binary.LittleEndian.Uint64(g1.Row8(r, 0)[:])
+			binary.LittleEndian.PutUint64(dg.Row8(r, 0)[:], (a|b)-(((a^b)&0xfefefefefefefefe)>>1))
+		}
+	case w&15 == 0:
+		shR1 := archsimd.BroadcastInt8x16(-1)
+		for r := range h {
+			for c := 0; c < w; c += 16 {
+				a := archsimd.LoadUint8x16Array(g0.Row16(r, c))
+				b := archsimd.LoadUint8x16Array(g1.Row16(r, c))
+				a.Or(b).Sub(a.Xor(b).Shift(shR1)).StoreArray(dg.Row16(r, c))
+			}
+		}
+	default: // w = 16k + 8
+		shR1 := archsimd.BroadcastInt8x16(-1)
+		for r := range h {
+			c := 0
+			for ; c+16 <= w; c += 16 {
+				a := archsimd.LoadUint8x16Array(g0.Row16(r, c))
+				b := archsimd.LoadUint8x16Array(g1.Row16(r, c))
+				a.Or(b).Sub(a.Xor(b).Shift(shR1)).StoreArray(dg.Row16(r, c))
+			}
+			a := binary.LittleEndian.Uint64(g0.Row8(r, c)[:])
+			b := binary.LittleEndian.Uint64(g1.Row8(r, c)[:])
+			binary.LittleEndian.PutUint64(dg.Row8(r, c)[:], (a|b)-(((a^b)&0xfefefefefefefefe)>>1))
+		}
+	}
+	return true
+}
+
+func mc8BlendDistWtdCopyFast(dst, ref0, ref1 *frame.Plane, dstX, dstY, refX0, refY0, refX1, refY1, w, h, fwd, bck int) bool {
+	if w != 8 && w&15 != 0 {
+		return false
+	}
+	dOff := dstY*dst.Stride + dstX
+	s0Off := refY0*ref0.Stride + refX0
+	s1Off := refY1*ref1.Stride + refX1
+	if !unsafeutil.GridFit(len(dst.Pix), dOff, dst.Stride, w, h) ||
+		!unsafeutil.GridFit(len(ref0.Pix), s0Off, ref0.Stride, w, h) ||
+		!unsafeutil.GridFit(len(ref1.Pix), s1Off, ref1.Stride, w, h) {
+		return false
+	}
+	dg := unsafeutil.NewGrid(dst.Pix, dOff, dst.Stride, w, h)
+	g0 := unsafeutil.NewGrid(ref0.Pix, s0Off, ref0.Stride, w, h)
+	g1 := unsafeutil.NewGrid(ref1.Pix, s1Off, ref1.Stride, w, h)
+	if !dg.Fits(0, 0, w, h) || !g0.Fits(0, 0, w, h) || !g1.Fits(0, 0, w, h) {
+		return false
+	}
+	fw := archsimd.BroadcastUint16x8(uint16(fwd))
+	bw := archsimd.BroadcastUint16x8(uint16(bck))
+	rnd := archsimd.BroadcastUint16x8(8)
+	shR4 := archsimd.BroadcastInt16x8(-4)
+	if w == 8 {
+		for r := range h {
+			a := archsimd.BroadcastUint64x2(binary.LittleEndian.Uint64(g0.Row8(r, 0)[:])).ReshapeToUint8s()
+			b := archsimd.BroadcastUint64x2(binary.LittleEndian.Uint64(g1.Row8(r, 0)[:])).ReshapeToUint8s()
+			v := a.ExtendLo8ToUint16().MulAdd(fw, rnd).Add(b.ExtendLo8ToUint16().Mul(bw)).Shift(shR4).TruncToUint8()
+			binary.LittleEndian.PutUint64(dg.Row8(r, 0)[:], v.ReshapeToUint64s().GetElem(0))
+		}
+		return true
+	}
+	for r := range h {
+		for c := 0; c < w; c += 16 {
+			a := archsimd.LoadUint8x16Array(g0.Row16(r, c))
+			b := archsimd.LoadUint8x16Array(g1.Row16(r, c))
+			lo := a.ExtendLo8ToUint16().MulAdd(fw, rnd).Add(b.ExtendLo8ToUint16().Mul(bw)).Shift(shR4).TruncToUint8()
+			hi := a.HiToLo().ExtendLo8ToUint16().MulAdd(fw, rnd).Add(b.HiToLo().ExtendLo8ToUint16().Mul(bw)).Shift(shR4).TruncToUint8()
+			lo.ReshapeToUint64s().InterleaveLo(hi.ReshapeToUint64s()).ReshapeToUint8s().StoreArray(dg.Row16(r, c))
+		}
+	}
+	return true
+}
+
+func mc8BlendAvg(dg unsafeutil.Grid[uint8], a, b []uint16, w, h int) {
 	// clamp((a + b - 12272) >> 5, 0, 255) in the shape of dav1d's add +
 	// sqrshrun pair: a saturating subtract clamps below at 0, a saturating
 	// << 3 clamps floor(u / 32) at 255 in each high byte, and UZP2 gathers
@@ -2818,59 +2919,56 @@ func mc8BlendAvg(dst []byte, dstStride int, a, b []uint16, w, h int) {
 	avg := func(pa, pb *[8]uint16) archsimd.Uint8x16 {
 		return archsimd.LoadUint16x8Array(pa).Add(archsimd.LoadUint16x8Array(pb)).SubSaturated(bias).ShiftSaturated(sh).ReshapeToUint8s()
 	}
-	// The predictors are contiguous: they are walked as one stream whose
-	// loop bound proves each window; only the destination rows are checked.
 	n := w * h
 	a, b = a[:n:n], b[:n:n]
-	ds := uint32(dstStride)
-	var d uint32
+	if !dg.Fits(0, 0, w, h) {
+		return
+	}
 	switch {
 	case w == 4:
-		for i := 0; i <= len(a)-8; i += 8 {
+		i := 0
+		for r := 0; r+2 <= h; r += 2 {
 			pa, pb := (*[8]uint16)(a[i:i+8]), (*[8]uint16)(b[i:i+8])
 			v := avg(pa, pb)
 			x := v.ConcatOdd(v).ReshapeToUint64s().GetElem(0)
-			binary.LittleEndian.PutUint32(mc8W4(dst, d)[:], uint32(x))
-			binary.LittleEndian.PutUint32(mc8W4(dst, d+ds)[:], uint32(x>>32))
-			d += 2 * ds
+			binary.LittleEndian.PutUint32(dg.Row4(r, 0)[:], uint32(x))
+			binary.LittleEndian.PutUint32(dg.Row4(r+1, 0)[:], uint32(x>>32))
+			i += 8
 		}
 	case w == 8:
-		for i := 0; i <= len(a)-8; i += 8 {
+		i := 0
+		for r := 0; r < h; r++ {
 			pa, pb := (*[8]uint16)(a[i:i+8]), (*[8]uint16)(b[i:i+8])
 			v := avg(pa, pb)
-			binary.LittleEndian.PutUint64(mc8W8(dst, d)[:], v.ConcatOdd(v).ReshapeToUint64s().GetElem(0))
-			d += ds
+			binary.LittleEndian.PutUint64(dg.Row8(r, 0)[:], v.ConcatOdd(v).ReshapeToUint64s().GetElem(0))
+			i += 8
 		}
 	case w&15 == 0:
-		ws := uint32(w)
-		var c uint32
-		for i := 0; i <= len(a)-16; i += 16 {
-			pa, pb := (*[16]uint16)(a[i:i+16]), (*[16]uint16)(b[i:i+16])
-			v0 := avg((*[8]uint16)(pa[0:8]), (*[8]uint16)(pb[0:8]))
-			v1 := avg((*[8]uint16)(pa[8:16]), (*[8]uint16)(pb[8:16]))
-			v0.ConcatOdd(v1).StoreArray(mc8W16(dst, d+c))
-			if c += 16; c == ws {
-				c, d = 0, d+ds
+		i := 0
+		for r := 0; r < h; r++ {
+			for c := 0; c < w; c += 16 {
+				pa, pb := (*[16]uint16)(a[i:i+16]), (*[16]uint16)(b[i:i+16])
+				v0 := avg((*[8]uint16)(pa[0:8]), (*[8]uint16)(pb[0:8]))
+				v1 := avg((*[8]uint16)(pa[8:16]), (*[8]uint16)(pb[8:16]))
+				v0.ConcatOdd(v1).StoreArray(dg.Row16(r, c))
+				i += 16
 			}
 		}
 	default: // w = 16k + 8
-		ws := uint32(w)
-		var c uint32
-		for i := 0; i <= len(a)-8; {
-			if ws-c == 8 {
-				pa, pb := (*[8]uint16)(a[i:i+8]), (*[8]uint16)(b[i:i+8])
-				v := avg(pa, pb)
-				binary.LittleEndian.PutUint64(mc8W8(dst, d+c)[:], v.ConcatOdd(v).ReshapeToUint64s().GetElem(0))
-				i += 8
-				c, d = 0, d+ds
-				continue
+		i := 0
+		for r := 0; r < h; r++ {
+			c := 0
+			for ; c+16 <= w; c += 16 {
+				pa, pb := (*[16]uint16)(a[i:i+16]), (*[16]uint16)(b[i:i+16])
+				v0 := avg((*[8]uint16)(pa[0:8]), (*[8]uint16)(pb[0:8]))
+				v1 := avg((*[8]uint16)(pa[8:16]), (*[8]uint16)(pb[8:16]))
+				v0.ConcatOdd(v1).StoreArray(dg.Row16(r, c))
+				i += 16
 			}
-			pa, pb := (*[16]uint16)(a[i:i+16]), (*[16]uint16)(b[i:i+16])
-			v0 := avg((*[8]uint16)(pa[0:8]), (*[8]uint16)(pb[0:8]))
-			v1 := avg((*[8]uint16)(pa[8:16]), (*[8]uint16)(pb[8:16]))
-			v0.ConcatOdd(v1).StoreArray(mc8W16(dst, d+c))
-			i += 16
-			c += 16
+			pa, pb := (*[8]uint16)(a[i:i+8]), (*[8]uint16)(b[i:i+8])
+			v := avg(pa, pb)
+			binary.LittleEndian.PutUint64(dg.Row8(r, c)[:], v.ConcatOdd(v).ReshapeToUint64s().GetElem(0))
+			i += 8
 		}
 	}
 }

@@ -766,7 +766,7 @@ func (ctx *FrameWorkPostFilterContext) applySupportedPostFiltersInPlace(req Fram
 	// samples that land past the cropped edge; without the replicated edge those
 	// reads would return the zero-filled padding instead of libaom's clamped
 	// edge pixel. It is a no-op for frames whose planes fill their allocation.
-	if ctx.Output != nil {
+	if ctx.Output != nil && ctx.Event.FrameSize.RefreshFrameFlags != 0 {
 		ctx.Output.ExtendBordersFrom(ctx.Parallel.extendedRows())
 	}
 	if frameWorkRemainingPostFilters(ctx).Has(FrameWorkPostFilterFilmGrain) {

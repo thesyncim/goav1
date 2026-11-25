@@ -77,8 +77,11 @@ func (f *ReferenceMVFrame) Init(miRows uint32, miCols uint32, entries []Referenc
 	f.Cols = cols
 	f.Stride = cols
 	f.Entries = entries[:need]
-	for i := range f.Entries {
-		f.Entries[i] = ReferenceMVEntry{Ref: ReferenceFrameNone}
+	if need > 0 {
+		f.Entries[0] = ReferenceMVEntry{Ref: ReferenceFrameNone}
+		for n := 1; n < need; n <<= 1 {
+			copy(f.Entries[n:], f.Entries[:n])
+		}
 	}
 	return nil
 }

@@ -250,7 +250,9 @@ func (b *FrameWorkBatch) retainTileResidualCDFStorage(index int, state *tile.Dec
 	} else if err := storage.ResetCDFCounts(); err != nil {
 		return err
 	}
-	copyCDFStorage(b.RetainedTileResidualCDFs, storage)
+	if b.RetainedTileResidualCDFs != storage {
+		copyCDFStorage(b.RetainedTileResidualCDFs, storage)
+	}
 	*b.RetainedTileResidualCDFsValid = true
 	if ft := b.FrameThread; ft != nil && ft.CDFOut != nil {
 		ft.CDFOut.Publish(FrameProgressDone)

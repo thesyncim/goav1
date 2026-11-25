@@ -1172,6 +1172,36 @@ func BlendAvg8(dst *frame.Plane, buf0 *CompoundConvBuf, buf1 *CompoundConvBuf, d
 	return mc8BlendAvgFast(dst, buf0.Data[:width*height], buf1.Data[:width*height], dstX, dstY, width, height)
 }
 
+// BlendAvgCopy8 computes the uniform compound average (a + b + 1) >> 1 of two
+// unfiltered 8-bit reference blocks directly into dst in a single pass,
+// bypassing both CONV_BUF intermediate copies when both MVs are integer-aligned
+// and wholly inside their reference planes.
+func BlendAvgCopy8(dst, ref0, ref1 *frame.Plane, dstX, dstY, refX0, refY0, refX1, refY1, width, height int) bool {
+	if dst == nil || ref0 == nil || ref1 == nil || width <= 0 || height <= 0 ||
+		dstX < 0 || dstY < 0 || dstX+width > dst.Width || dstY+height > dst.Height ||
+		refX0 < 0 || refY0 < 0 || refX0+width > ref0.Width || refY0+height > ref0.Height ||
+		refX1 < 0 || refY1 < 0 || refX1+width > ref1.Width || refY1+height > ref1.Height {
+		return false
+	}
+	return mc8BlendAvgCopyFast(dst, ref0, ref1, dstX, dstY, refX0, refY0, refX1, refY1, width, height)
+}
+
+// BlendDistWtdCopy8 computes the distance-weighted compound average
+// (ref0*fwd + ref1*bck + 8) >> 4 (fwd + bck == 16) of two unfiltered 8-bit
+// reference blocks directly into dst in a single pass.
+func BlendDistWtdCopy8(dst, ref0, ref1 *frame.Plane, dstX, dstY, refX0, refY0, refX1, refY1, width, height, fwd, bck int) bool {
+	if dst == nil || ref0 == nil || ref1 == nil || width <= 0 || height <= 0 || fwd+bck != 16 || fwd < 0 || bck < 0 ||
+		dstX < 0 || dstY < 0 || dstX+width > dst.Width || dstY+height > dst.Height ||
+		refX0 < 0 || refY0 < 0 || refX0+width > ref0.Width || refY0+height > ref0.Height ||
+		refX1 < 0 || refY1 < 0 || refX1+width > ref1.Width || refY1+height > ref1.Height {
+		return false
+	}
+	if fwd == 8 {
+		return mc8BlendAvgCopyFast(dst, ref0, ref1, dstX, dstY, refX0, refY0, refX1, refY1, width, height)
+	}
+	return mc8BlendDistWtdCopyFast(dst, ref0, ref1, dstX, dstY, refX0, refY0, refX1, refY1, width, height, fwd, bck)
+}
+
 // BlendCompoundAvg blends two CONV_BUF predictors with distance weights
 // (fwdOffset/bckOffset; both 8 for a plain average) and writes the final pixels
 // (av1_dist_wtd_convolve_* do_average branch).

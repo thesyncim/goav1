@@ -81,7 +81,7 @@ func u8SumRowX(pix []byte, t *hbdTaps16, n int) (lo, hi archsimd.Int32x4) {
 		return lo, hi
 	}
 	a := archsimd.LoadUint8x16Array((*[16]uint8)(pix[:16]))
-	b := archsimd.LoadUint8x16(pix[16:32])
+	b := archsimd.LoadUint8x16Array((*[16]uint8)(pix[16:32]))
 	lo, hi = hbdMAC8(lo, hi, a.ExtendLo8ToUint16().BitsToInt16(), t[0])
 	lo, hi = hbdMAC8(lo, hi, b.ConcatShiftBytesRight(a, 1).ExtendLo8ToUint16().BitsToInt16(), t[1])
 	lo, hi = hbdMAC8(lo, hi, b.ConcatShiftBytesRight(a, 2).ExtendLo8ToUint16().BitsToInt16(), t[2])
@@ -115,15 +115,15 @@ func u8HorizontalIM(ref []byte, refStr int, im []int32, imStr int, width, rows i
 			lo, hi := u8SumRowX(src[x:], taps, n)
 			lo = hbdRound(lo.Add(bias), compoundRound0Bits)
 			hi = hbdRound(hi.Add(bias), compoundRound0Bits)
-			lo.Store(row[x : x+4])
-			hi.Store(row[x+4 : x+8])
+			lo.StoreArray((*[4]int32)(row[x : x+4]))
+			hi.StoreArray((*[4]int32)(row[x+4 : x+8]))
 		}
 		if x < width {
 			var win [32]byte
 			copy(win[:], src[x:])
 			lo, _ := u8SumRowX(win[:], taps, n)
 			lo = hbdRound(lo.Add(bias), compoundRound0Bits)
-			lo.Store(row[x : x+4])
+			lo.StoreArray((*[4]int32)(row[x : x+4]))
 		}
 	}
 }
@@ -132,6 +132,7 @@ func u8HorizontalIM(ref []byte, refStr int, im []int32, imStr int, width, rows i
 // reference is uint16(s*16 + roundOffset), the low 16 bits of (s << 4) + off.
 func compoundCopy8Kernel(ctx *compoundCopyGoSIMDCtx) {
 	off := archsimd.BroadcastUint16x8(uint16(ctx.roundOffset))
+	sh4 := archsimd.BroadcastInt16x8(compoundCopy8Shift)
 	width, height := int(ctx.width), int(ctx.height)
 	if width%16 == 0 {
 		for y := range height {
@@ -139,8 +140,8 @@ func compoundCopy8Kernel(ctx *compoundCopyGoSIMDCtx) {
 			out := ctx.out[y*width:]
 			for x := 0; x < width; x += 16 {
 				v := archsimd.LoadUint8x16Array((*[16]uint8)(src[x : x+16]))
-				v.ExtendLo8ToUint16().ShiftAllLeft(compoundCopy8Shift).Add(off).Store(out[x : x+8])
-				v.ConcatShiftBytesRight(v, 8).ExtendLo8ToUint16().ShiftAllLeft(compoundCopy8Shift).Add(off).Store(out[x+8 : x+16])
+				v.ExtendLo8ToUint16().Shift(sh4).Add(off).StoreArray((*[8]uint16)(out[x : x+8]))
+				v.ConcatShiftBytesRight(v, 8).ExtendLo8ToUint16().Shift(sh4).Add(off).StoreArray((*[8]uint16)(out[x+8 : x+16]))
 			}
 		}
 		return
@@ -151,12 +152,12 @@ func compoundCopy8Kernel(ctx *compoundCopyGoSIMDCtx) {
 		x := 0
 		for ; x+8 <= width; x += 8 {
 			s := u8Bytes16(src[x:]).ExtendLo8ToUint16()
-			s.ShiftAllLeft(compoundCopy8Shift).Add(off).Store(out[x : x+8])
+			s.Shift(sh4).Add(off).StoreArray((*[8]uint16)(out[x : x+8]))
 		}
 		if x < width {
 			s := u8Bytes16(src[x:]).ExtendLo8ToUint16()
 			var t [8]uint16
-			s.ShiftAllLeft(compoundCopy8Shift).Add(off).Store(t[:])
+			s.Shift(sh4).Add(off).StoreArray(&t)
 			copy(out[x:width], t[:width-x])
 		}
 	}
@@ -208,13 +209,13 @@ func compoundX8HalfKernel(ctx *compoundFilterGoSIMDCtx, taps *hbdTaps16) {
 		out := ctx.out[y*width:]
 		x := 0
 		for ; x+8 <= width; x += 8 {
-			u8Right16(u8SumRowHalf(src[x:], taps, n).Add(round), right2, 2).ToBits().Add(off).Store(out[x : x+8])
+			u8Right16(u8SumRowHalf(src[x:], taps, n).Add(round), right2, 2).ToBits().Add(off).StoreArray((*[8]uint16)(out[x : x+8]))
 		}
 		if x < width {
 			var win [16]byte
 			copy(win[:], src[x:])
 			var tmp [8]uint16
-			u8Right16(u8SumRowHalf(win[:], taps, n).Add(round), right2, 2).ToBits().Add(off).Store(tmp[:])
+			u8Right16(u8SumRowHalf(win[:], taps, n).Add(round), right2, 2).ToBits().Add(off).StoreArray(&tmp)
 			copy(out[x:width], tmp[:width-x])
 		}
 	}
@@ -251,7 +252,7 @@ func compoundX8HalfResident(ctx *compoundFilterGoSIMDCtx) {
 				sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 6).ExtendLo8ToUint16().BitsToInt16(), c6, sum)
 				sum = u8HalfMAC(a.ConcatShiftBytesRight(a, 7).ExtendLo8ToUint16().BitsToInt16(), c7, sum)
 			}
-			u8Right16(sum, right2, 2).ToBits().Add(off).Store(out[x : x+8])
+			u8Right16(sum, right2, 2).ToBits().Add(off).StoreArray((*[8]uint16)(out[x : x+8]))
 		}
 	}
 }
@@ -305,7 +306,7 @@ func compoundY8HalfKernel(ctx *compoundFilterGoSIMDCtx, taps *hbdTaps16) {
 		out := ctx.out[y*width:]
 		x := 0
 		for ; x+8 <= width; x += 8 {
-			u8Right16(u8SumColHalf(src[x:], ctx.refStr, taps, n).Add(round), right2, 2).ToBits().Add(off).Store(out[x : x+8])
+			u8Right16(u8SumColHalf(src[x:], ctx.refStr, taps, n).Add(round), right2, 2).ToBits().Add(off).StoreArray((*[8]uint16)(out[x : x+8]))
 		}
 		if x < width {
 			var win [8 * 16]byte
@@ -313,7 +314,7 @@ func compoundY8HalfKernel(ctx *compoundFilterGoSIMDCtx, taps *hbdTaps16) {
 				copy(win[k*16:k*16+4], src[k*ctx.refStr+x:])
 			}
 			var tmp [8]uint16
-			u8Right16(u8SumColHalf(win[:], 16, taps, n).Add(round), right2, 2).ToBits().Add(off).Store(tmp[:])
+			u8Right16(u8SumColHalf(win[:], 16, taps, n).Add(round), right2, 2).ToBits().Add(off).StoreArray(&tmp)
 			copy(out[x:width], tmp[:width-x])
 		}
 	}
@@ -354,7 +355,7 @@ func compoundY8HalfResident(ctx *compoundFilterGoSIMDCtx) {
 				sum = u8HalfMAC(load(pos+6*step), c6, sum)
 				sum = u8HalfMAC(load(pos+7*step), c7, sum)
 			}
-			u8Right16(sum, right2, 2).ToBits().Add(off).Store(out[x : x+8])
+			u8Right16(sum, right2, 2).ToBits().Add(off).StoreArray((*[8]uint16)(out[x : x+8]))
 		}
 	}
 }
@@ -393,13 +394,13 @@ func compound2D8HalfKernel(ctx *compound2DGoSIMDCtx, im []int16, xTaps *hbdTaps1
 			row := im[y*maxBlockSize:]
 			x := 0
 			for ; x+8 <= ctx.width; x += 8 {
-				u8Right16(u8SumRowHalf(src[x:], xTaps, nx).Add(xRound), right2, 2).Store(row[x : x+8])
+				u8Right16(u8SumRowHalf(src[x:], xTaps, nx).Add(xRound), right2, 2).StoreArray((*[8]int16)(row[x : x+8]))
 			}
 			if x < ctx.width {
 				var win [16]byte
 				copy(win[:], src[x:])
 				var tmp [8]int16
-				u8Right16(u8SumRowHalf(win[:], xTaps, nx).Add(xRound), right2, 2).Store(tmp[:])
+				u8Right16(u8SumRowHalf(win[:], xTaps, nx).Add(xRound), right2, 2).StoreArray(&tmp)
 				copy(row[x:ctx.width], tmp[:ctx.width-x])
 			}
 		}
@@ -444,10 +445,10 @@ func compound2D8HalfKernel(ctx *compound2DGoSIMDCtx, im []int16, xTaps *hbdTaps1
 			}
 			packed := u8PackU16From32(u8Right32(lo, right7, compoundRound1Bits), u8Right32(hi, right7, compoundRound1Bits))
 			if x+8 <= ctx.width {
-				packed.Store(out[x : x+8])
+				packed.StoreArray((*[8]uint16)(out[x : x+8]))
 			} else {
 				var tmp [8]uint16
-				packed.Store(tmp[:])
+				packed.StoreArray(&tmp)
 				copy(out[x:ctx.width], tmp[:ctx.width-x])
 			}
 		}
@@ -2644,7 +2645,7 @@ func hbdSumRowX(pix []byte, t *hbdTaps16, n int) (lo, hi archsimd.Int32x4) {
 		return hbdSum8(pix, 2, t, n)
 	}
 	a := archsimd.LoadUint8x16Array((*[16]uint8)(pix[:16]))
-	b := archsimd.LoadUint8x16(pix[16:32])
+	b := archsimd.LoadUint8x16Array((*[16]uint8)(pix[16:32]))
 	lo = archsimd.BroadcastInt32x4(0)
 	hi = lo
 	lo, hi = hbdMAC8(lo, hi, hbdSamplesU8(a), t[0])

@@ -450,10 +450,18 @@ func (r *decoderFrameWorkBatchResidualRunner) RunPtr(batch *internaldecoder.Fram
 		return err
 	}
 	req.Tile.TransformMode = batch.TransformRef.TransformMode
-	if err := initDecoderFrameWorkTileResidualCDFStorage(*batch, &r.Storages[worker]); err != nil {
+	storage := &r.Storages[worker]
+	if len(batch.Jobs) == 1 && !batch.DisableCDFUpdate &&
+		batch.RetainedTileResidualCDFs != nil &&
+		batch.RetainedTileResidualCDFs != batch.InitialTileResidualCDFs {
+		if updates, uerr := batch.JobUpdatesFrameContext(0); uerr == nil && updates {
+			storage = batch.RetainedTileResidualCDFs
+		}
+	}
+	if err := initDecoderFrameWorkTileResidualCDFStorage(*batch, storage); err != nil {
 		return err
 	}
-	stats, err := decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch, &r.States[worker], &r.Storages[worker], &r.TileScratch[worker], req, r.compactState)
+	stats, err := decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch, &r.States[worker], storage, &r.TileScratch[worker], req, r.compactState)
 	r.Stats[worker] = stats
 	if err != nil {
 		return err

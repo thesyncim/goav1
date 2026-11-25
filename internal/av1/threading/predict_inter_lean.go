@@ -918,6 +918,20 @@ func (b *FrameWorkBatch) reconBInterPlanes(index int, l *frameWorkLeanInter, vis
 				goto next
 			}
 			if l.bps == 1 {
+				if (pred.CompoundBlend.Type == tile.CompoundTypeAverage || pred.CompoundBlend.Type == tile.CompoundTypeDistWtd) && b.Sequence.ColorConfig.BitDepth == 8 {
+					refX0, refY0, subX0, subY0 := motion.TranslationOrigin(px, py, mv[0], ssX, ssY)
+					refX1, refY1, subX1, subY1 := motion.TranslationOrigin(px, py, mv[1], ssX, ssY)
+					if subX0 == 0 && subY0 == 0 && subX1 == 0 && subY1 == 0 {
+						if pred.CompoundBlend.Type == tile.CompoundTypeAverage {
+							if motion.BlendAvgCopy8(out, ref0, ref1, px, py, refX0, refY0, refX1, refY1, w, h) {
+								goto next
+							}
+						} else if fwd, bck, ferr := b.frameWorkCompoundOffsets(pred.InterMotion.References, pred.CompoundBlend); ferr == nil &&
+							motion.BlendDistWtdCopy8(out, ref0, ref1, px, py, refX0, refY0, refX1, refY1, w, h, fwd, bck) {
+							goto next
+						}
+					}
+				}
 				if motion.PrepTranslation8(&scratch.Conv0, ref0, px, py, w, h, filterW, filterH, mv[0], ssX, ssY, filters, &scratch.Compound) != nil ||
 					motion.PrepTranslation8(&scratch.Conv1, ref1, px, py, w, h, filterW, filterH, mv[1], ssX, ssY, filters, &scratch.Compound) != nil {
 					return true, ErrInvalidBatch

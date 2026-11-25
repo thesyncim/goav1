@@ -1619,6 +1619,14 @@ func mc8BlendAvgFast(dst *frame.Plane, a, b []uint16, dstX, dstY, w, h int) bool
 	return true
 }
 
+func mc8BlendAvgCopyFast(dst, ref0, ref1 *frame.Plane, dstX, dstY, refX0, refY0, refX1, refY1, w, h int) bool {
+	return false
+}
+
+func mc8BlendDistWtdCopyFast(dst, ref0, ref1 *frame.Plane, dstX, dstY, refX0, refY0, refX1, refY1, w, h, fwd, bck int) bool {
+	return false
+}
+
 func mc8AvgSum(a, b []uint16, o int, bias archsimd.Int16x16) archsimd.Int16x16 {
 	x := archsimd.LoadUint16x16Array((*[16]uint16)(a[uint(o) : uint(o)+16]))
 	y := archsimd.LoadUint16x16Array((*[16]uint16)(b[uint(o) : uint(o)+16]))

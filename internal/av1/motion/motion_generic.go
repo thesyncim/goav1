@@ -64,6 +64,14 @@ func mc8BlendAvgFast(dst *frame.Plane, a, b []uint16, dstX, dstY, w, h int) bool
 	return false
 }
 
+func mc8BlendAvgCopyFast(dst, ref0, ref1 *frame.Plane, dstX, dstY, refX0, refY0, refX1, refY1, w, h int) bool {
+	return false
+}
+
+func mc8BlendDistWtdCopyFast(dst, ref0, ref1 *frame.Plane, dstX, dstY, refX0, refY0, refX1, refY1, w, h, fwd, bck int) bool {
+	return false
+}
+
 func mc16PrepFast(out []uint16, ref *frame.Plane, bitDepth, refX, refY, w, h, filterW, filterH, subX, subY int, filters InterpFilters, scratch *CompoundConvolveScratch) bool {
 	return false
 }

@@ -17,10 +17,10 @@ import (
 // bitLenFloat32 computes bits.Len32 for lanes below 2^24 through the float32
 // exponent: a value below 2^24 converts exactly, so its biased exponent is
 // 127 + floor(log2 v) for v >= 1, and 0 for v = 0 (which the max clamps to 0).
-func bitLenFloat32(v archsimd.Uint32x4) archsimd.Int32x4 {
+func bitLenFloat32(v archsimd.Uint32x4, sh23, c126, zero32 archsimd.Int32x4) archsimd.Int32x4 {
 	f := v.BitsToInt32().ConvertToFloat32()
-	exp := f.ToBits().ShiftAllRight(23).BitsToInt32()
-	return exp.Sub(archsimd.BroadcastInt32x4(126)).Max(archsimd.BroadcastInt32x4(0))
+	exp := f.ToBits().Shift(sh23).BitsToInt32()
+	return exp.Sub(c126).Max(zero32)
 }
 
 // pixelstats_gosimd.go hosts the Go-native SIMD pixel-domain statistics
@@ -196,7 +196,10 @@ func rdoqEOBSIMD(qcoeff []int16, iscan []int16) int {
 // rate lanes follow rdStatsBlockSIMD.
 func rdStatsDiffSIMD(tran []int32, qcoeff []int16, count int, step int32, ts uint8) (diff, rate int64, allZero bool) {
 	stepV := archsimd.BroadcastInt32x4(step)
-	tsU := uint64(ts)
+	tsV := archsimd.BroadcastInt32x4(-int32(ts))
+	sh23 := archsimd.BroadcastInt32x4(-23)
+	c126 := archsimd.BroadcastInt32x4(126)
+	zero32 := archsimd.Int32x4{}
 	one := archsimd.BroadcastUint32x4(1)
 	diffAcc := archsimd.BroadcastInt64x2(0)
 	rateAcc := archsimd.BroadcastInt32x4(0)
@@ -215,14 +218,15 @@ func rdStatsDiffSIMD(tran []int32, qcoeff []int16, count int, step int32, ts uin
 			tw := (*[8]int32)(t[i:])
 			c0 := archsimd.LoadInt32x4Array((*[4]int32)(tw[0:4]))
 			c1 := archsimd.LoadInt32x4Array((*[4]int32)(tw[4:8]))
-			dq0 := q.ExtendLo4ToInt32().Mul(stepV).ShiftAllRight(tsU)
-			dq1 := hiInt16(q).ExtendLo4ToInt32().Mul(stepV).ShiftAllRight(tsU)
+			dq0 := q.ExtendLo4ToInt32().Mul(stepV).Shift(tsV)
+			dq1 := hiInt16(q).ExtendLo4ToInt32().Mul(stepV).Shift(tsV)
 			diffAcc = mulSumInt32(mulSumInt32(diffAcc, dq0, c0.Add(c0).Sub(dq0)), dq1, c1.Add(c1).Sub(dq1))
-			lo := q.Abs().ToBits().ExtendLo4ToUint32()
-			hiMag := hiInt16(q.Abs()).ToBits().ExtendLo4ToUint32()
+			qAbs := q.Abs()
+			lo := qAbs.ToBits().ExtendLo4ToUint32()
+			hiMag := hiInt16(qAbs).ToBits().ExtendLo4ToUint32()
 			nzLo := lo.Min(one).BitsToInt32()
 			nzHi := hiMag.Min(one).BitsToInt32()
-			rateAcc = rateAcc.Add(bitLenFloat32(lo)).Add(bitLenFloat32(hiMag)).
+			rateAcc = rateAcc.Add(bitLenFloat32(lo, sh23, c126, zero32)).Add(bitLenFloat32(hiMag, sh23, c126, zero32)).
 				Add(nzLo.Add(nzLo)).Add(nzHi.Add(nzHi))
 		}
 	}
@@ -428,7 +432,10 @@ func residualRows8(dst []int16, src []byte, off, stride int, pred []byte, predSt
 // per lane is 2 + bits.Len16(|level|) for a non-zero level and 0 otherwise.
 func rdStatsBlockSIMD(tran []int32, qcoeff []int16, count int, step int32, ts uint8) (dskip, dcode int64, rate int64, allZero bool) {
 	stepV := archsimd.BroadcastInt32x4(step)
-	tsU := uint64(ts)
+	tsV := archsimd.BroadcastInt32x4(-int32(ts))
+	sh23 := archsimd.BroadcastInt32x4(-23)
+	c126 := archsimd.BroadcastInt32x4(126)
+	zero32 := archsimd.Int32x4{}
 	one := archsimd.BroadcastUint32x4(1)
 	skipAcc := archsimd.BroadcastInt64x2(0)
 	codeAcc := archsimd.BroadcastInt64x2(0)
@@ -444,17 +451,17 @@ func rdStatsBlockSIMD(tran []int32, qcoeff []int16, count int, step int32, ts ui
 			c1 := archsimd.LoadInt32x4Array((*[4]int32)(tw[4:8]))
 			q := archsimd.LoadInt16x8Array((*[8]int16)(qc[i:]))
 			skipAcc = sqSumInt32(sqSumInt32(skipAcc, c0), c1)
-			dq0 := q.ExtendLo4ToInt32().Mul(stepV).ShiftAllRight(tsU)
-			dq1 := hiInt16(q).ExtendLo4ToInt32().Mul(stepV).ShiftAllRight(tsU)
+			dq0 := q.ExtendLo4ToInt32().Mul(stepV).Shift(tsV)
+			dq1 := hiInt16(q).ExtendLo4ToInt32().Mul(stepV).Shift(tsV)
 			codeAcc = sqSumInt32(sqSumInt32(codeAcc, c0.Sub(dq0)), c1.Sub(dq1))
 			orAcc = orAcc.Or(q)
 			// |level| as unsigned 16-bit (|-32768| = 32768), split into 32-bit lanes.
-			mag := q.Abs().ToBits()
-			lo := mag.ExtendLo4ToUint32()
-			hiMag := hiInt16(q.Abs()).ToBits().ExtendLo4ToUint32()
+			qAbs := q.Abs()
+			lo := qAbs.ToBits().ExtendLo4ToUint32()
+			hiMag := hiInt16(qAbs).ToBits().ExtendLo4ToUint32()
 			nzLo := lo.Min(one).BitsToInt32()
 			nzHi := hiMag.Min(one).BitsToInt32()
-			rateAcc = rateAcc.Add(bitLenFloat32(lo)).Add(bitLenFloat32(hiMag)).
+			rateAcc = rateAcc.Add(bitLenFloat32(lo, sh23, c126, zero32)).Add(bitLenFloat32(hiMag, sh23, c126, zero32)).
 				Add(nzLo.Add(nzLo)).Add(nzHi.Add(nzHi))
 		}
 	}
