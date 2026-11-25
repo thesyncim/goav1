@@ -707,11 +707,24 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 	// mc8PrepGrid written out, as in Put8.
 	switch {
 	case subX != 0 && subY != 0:
-		im := scratch.im[:]
 		if w == 4 {
-			mc8H6ToI32W4(sg, h+5, &mc8Phases[kx][subX], im)
-			mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], out[:4*h], mc8PrepV6Rnd)
+			if kx >= mc8KindBilinear {
+				if ky >= mc8KindBilinear {
+					mc8PrepHV4x4W4(sg, h, &mc8Phases[kx][subX], &mc8Phases[ky][subY], out[:4*h])
+				} else {
+					mc8PrepHV4W4(sg, h, &mc8Phases[kx][subX], &mc8Phases[ky][subY], out[:4*h])
+				}
+			} else {
+				im := scratch.im[:]
+				mc8H6ToI32W4(sg, h+5, &mc8Phases[kx][subX], im)
+				mc8PrepV6FromI32W4(im, h, &mc8Phases[ky][subY], out[:4*h], mc8PrepV6Rnd)
+			}
+		} else if kx == mc8KindBilinear && ky == mc8KindBilinear {
+			mc8PrepHV2(sg, w, h, &mc8Phases[kx][subX], &mc8Phases[ky][subY], og)
+		} else if ky >= mc8KindBilinear {
+			mc8PrepHV6x4(sg, w, h, &mc8Phases[kx][subX], &mc8Phases[ky][subY], og)
 		} else {
+			im := scratch.im[:]
 			mc8H6ToI32(sg, w, h+5, &mc8Phases[kx][subX], im, 2)
 			mc8PrepV6FromI32S(im, w, h, &mc8Phases[ky][subY], og, mc8PrepV6Rnd)
 		}
@@ -719,7 +732,11 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 		ph := &mc8Phases[kx][subX]
 		switch {
 		case w == 4:
-			mc8PrepH6S4(sg, ph, og)
+			if kx >= mc8KindBilinear {
+				mc8PrepH4S4(sg, ph, og)
+			} else {
+				mc8PrepH6S4(sg, ph, og)
+			}
 		case w == 8:
 			mc8PrepH6S8(sg, ph, og)
 		case w&15 == 0:
@@ -729,15 +746,19 @@ func mc8PrepFast(out []uint16, ref *frame.Plane, refX, refY, w, h, filterW, filt
 		}
 	case subY != 0:
 		ph := &mc8Phases[ky][subY]
-		switch {
-		case w == 4:
-			mc8PrepV6S4(sg, ph, og)
-		case w == 8:
-			mc8PrepV6S8(sg, ph, og)
-		case w&15 == 0:
-			mc8PrepV6W16(sg, ph, og)
-		default:
-			mc8PrepV6Split(sg, ph, og)
+		if ky >= mc8KindBilinear {
+			mc8PrepV4(sg, w, h, ph, og)
+		} else {
+			switch {
+			case w == 4:
+				mc8PrepV6S4(sg, ph, og)
+			case w == 8:
+				mc8PrepV6S8(sg, ph, og)
+			case w&15 == 0:
+				mc8PrepV6W16(sg, ph, og)
+			default:
+				mc8PrepV6Split(sg, ph, og)
+			}
 		}
 	default:
 		if w == 8 {
