@@ -1542,3 +1542,83 @@ func TestEncoderHighBitDepthAndMonochromeStreams(t *testing.T) {
 		t.Fatalf("expected 10-bit monochrome, got bps=%d chromaW=%d", m10g.BytesPerSample, m10g.ChromaWidth)
 	}
 }
+
+func TestEncoderNative422And444AndRuntimeRateControl(t *testing.T) {
+	const w, h = 64, 64
+
+	// Native 8-bit 4:2:2 (Profile 2)
+	enc422, err := NewVideoEncoder(VideoEncoderConfig{Width: w, Height: h, QIndex: 90, Subsampling: 422})
+	if err != nil {
+		t.Fatalf("NewVideoEncoder(422): %v", err)
+	}
+	defer enc422.Close()
+	f422 := I422Frame{
+		Y: make([]byte, w*h), U: make([]byte, (w/2)*h), V: make([]byte, (w/2)*h),
+		YStride: w, ChromaStride: w / 2, Width: w, Height: h,
+	}
+	for i := range f422.Y {
+		f422.Y[i] = byte((i * 7) % 256)
+	}
+	for i := range f422.U {
+		f422.U[i], f422.V[i] = 110, 145
+	}
+	out422, err := enc422.EncodeI422(f422, true)
+	if err != nil {
+		t.Fatalf("EncodeI422: %v", err)
+	}
+	dec422, err := NewDecoder([][]byte{append([]byte(nil), out422.Data...)})
+	if err != nil {
+		t.Fatalf("NewDecoder(422): %v", err)
+	}
+	b422, ok, err := dec422.DecodeNext()
+	dec422.Close()
+	if err != nil || !ok || len(b422) != 1 || b422[0].U.Width != w/2 || b422[0].U.Height != h {
+		t.Fatalf("422 decode mismatch: ok=%v err=%v", ok, err)
+	}
+
+	// Native 8-bit 4:4:4 (Profile 1) + runtime SetQIndex / SetBitrate
+	enc444, err := NewVideoEncoder(VideoEncoderConfig{Width: w, Height: h, QIndex: 90, Subsampling: 444})
+	if err != nil {
+		t.Fatalf("NewVideoEncoder(444): %v", err)
+	}
+	defer enc444.Close()
+	f444 := I444Frame{
+		Y: make([]byte, w*h), U: make([]byte, w*h), V: make([]byte, w*h),
+		YStride: w, UStride: w, VStride: w, Width: w, Height: h,
+	}
+	for i := range f444.Y {
+		f444.Y[i], f444.U[i], f444.V[i] = byte((i*5)%256), 120, 136
+	}
+	var tus444 [][]byte
+	out0, err := enc444.EncodeI444(f444, true)
+	if err != nil {
+		t.Fatalf("EncodeI444(0): %v", err)
+	}
+	tus444 = append(tus444, append([]byte(nil), out0.Data...))
+	if err := enc444.SetQIndex(120); err != nil {
+		t.Fatalf("SetQIndex: %v", err)
+	}
+	out1, err := enc444.EncodeI444(f444, false)
+	if err != nil {
+		t.Fatalf("EncodeI444(1): %v", err)
+	}
+	tus444 = append(tus444, append([]byte(nil), out1.Data...))
+	if err := enc444.SetBitrate(500_000, 30); err != nil {
+		t.Fatalf("SetBitrate: %v", err)
+	}
+	out2, err := enc444.EncodeI444(f444, false)
+	if err != nil {
+		t.Fatalf("EncodeI444(2): %v", err)
+	}
+	tus444 = append(tus444, append([]byte(nil), out2.Data...))
+
+	dec444, err := NewDecoder(tus444)
+	if err != nil {
+		t.Fatalf("NewDecoder(444): %v", err)
+	}
+	defer dec444.Close()
+	b444, ok, err := dec444.DecodeNext()
+	if err != nil || !ok || len(b444) != 1 || b444[0].U.Width != w || b444[0].U.Height != h {
+		t.Fatalf("444 decode mismatch: ok=%v err=%v", ok, err)
+	}
+}

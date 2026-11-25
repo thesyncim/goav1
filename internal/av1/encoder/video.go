@@ -280,6 +280,12 @@ func NewVideoEncoder(width, height int, qIndex uint8) (*VideoEncoder, error) {
 	return newVideoEncoderWithColor(width, height, qIndex, defaultVideoColorConfig())
 }
 
+// NewVideoEncoderWithColor creates an 8-bit streaming encoder for native 4:2:0
+// (Profile0), 4:4:4 (Profile1), or 4:2:2 (Profile2) color configurations.
+func NewVideoEncoderWithColor(width, height int, qIndex uint8, color SequenceColorConfig) (*VideoEncoder, error) {
+	return newVideoEncoderWithColor(width, height, qIndex, color)
+}
+
 func newVideoEncoderWithColor(width, height int, qIndex uint8, color SequenceColorConfig) (*VideoEncoder, error) {
 	if width < 16 || height < 16 {
 		return nil, fmt.Errorf("encoder: dimensions must be at least 16x16, got %dx%d", width, height)
@@ -631,6 +637,12 @@ func tileColumnsLog2(cols int) uint8 {
 // working qindex after every frame from the bit-budget buffer.
 func NewVideoEncoderCBR(width, height int, rc RateControlConfig) (*VideoEncoder, error) {
 	return newVideoEncoderCBRWithColor(width, height, rc, defaultVideoColorConfig())
+}
+
+// NewVideoEncoderCBRWithColor creates an 8-bit CBR streaming encoder for native
+// 4:2:0 (Profile0), 4:4:4 (Profile1), or 4:2:2 (Profile2) color configurations.
+func NewVideoEncoderCBRWithColor(width, height int, rc RateControlConfig, color SequenceColorConfig) (*VideoEncoder, error) {
+	return newVideoEncoderCBRWithColor(width, height, rc, color)
 }
 
 // QIndex reports the working qindex the next frame will use.

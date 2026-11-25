@@ -159,11 +159,6 @@ func (a *cdefApplier) init(width, height int, cdefParams parser.CDEFParams) erro
 	if err != nil {
 		return err
 	}
-	for p := range a.samples {
-		if len(a.samples[p]) < size.Samples[p] {
-			a.samples[p] = make([]uint16, size.Samples[p])
-		}
-	}
 	if len(a.dirGrid) < size.DirectionGrid {
 		a.dirGrid = make([]cdefDirectionGrid, size.DirectionGrid)
 		a.varGrid = make([]cdefVarianceGrid, size.VarianceGrid)
@@ -306,6 +301,16 @@ func (a *cdefApplier) bindApplyContext(recon *SourceFrame420, cdefParams parser.
 		VarianceGrid:  a.varGrid,
 	}
 	if loadSnapshot {
+		size, err := a.jobCtx.CDEFPostFilterScratchLen()
+		if err != nil {
+			return false, err
+		}
+		for p := range a.samples {
+			if len(a.samples[p]) < size.Samples[p] {
+				a.samples[p] = make([]uint16, size.Samples[p])
+			}
+		}
+		a.jobReq.SampleScratch = a.samples
 		if err := a.jobCtx.LoadCDEFPostFilterSamples(a.jobReq); err != nil {
 			return false, err
 		}
@@ -365,9 +370,13 @@ func (a *cdefApplier) applySerial(recon *SourceFrame420, cdefParams parser.CDEFP
 	if err != nil || !active {
 		return err
 	}
+	if err := a.jobCtx.LoadCDEFPostFilterU8BandBoundary(&a.bandBound[0], 0, a.unitRows); err != nil {
+		return err
+	}
 	req := a.jobReq
+	req.SampleScratch = a.bandLine[0]
 	req.InputScratch = a.bandIn[0]
 	req.UnitDstScratch = a.bandUnit[0]
-	_, err = a.jobCtx.ApplyCDEFPostFilter(req)
+	_, err = a.jobCtx.ApplyCDEFPostFilterUnitRowsU8(req, a.bandBound[0], 0, a.unitRows)
 	return err
 }
