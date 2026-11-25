@@ -16,14 +16,14 @@
 
 Measured end-to-end via CLI binaries (`-pgo=cmd/qualitybench/default.pgo`) against `dav1d 1.5.4`, `libaom` (`aomdec` / `aomenc`), and `SvtAv1EncApp` with matched null output muxers, interleaved runs, bit-exact MD5 verification, and FFmpeg PSNR/SSIM scoring. Ratios are **goav1 / reference** (`< 1.00×` means goav1 is faster / uses fewer resources).
 
-| Workload | Reference | Wall | User CPU | Cycles | Notes & Quality |
+| Workload | Reference | Wall | Cycles | Instructions | Notes & Quality |
 | --- | --- | ---: | ---: | ---: | --- |
-| **Decoder** (42-stream 360p–1080p corpus, 1T) | `dav1d 1.5.4` | **1.21×** | **1.21×** | **1.21×** | 1.07×–1.41× on realtime/SVT streams; 1.40×–2.03× on `aomenc --good` (warp/compound); **0 allocs/frame** |
-| **Decoder** (42-stream corpus, 8T) | `dav1d 1.5.4` | **1.14×** | — | — | Excl. 30-tile `goav1_crowdrun` outlier (**1.06×** incl. all 42); **0 allocs/frame** |
-| **Decoder** (7-stream 720p/1080p + 10-bit suite, 1T / 8T) | `aomdec` (libaom) | **0.74×** / **0.43×** | — | **0.75×** / **0.87×** | **1.35× faster** at 1T, **2.3× faster** at 8T; 100% MD5 parity |
-| **Encoder** (720p 240f RTC CBR, 500–2000k, 1T) | `SvtAv1EncApp` p12 RTC | **0.94×–0.99×** | **1.10×–1.14×** | **0.94×–0.99×** | Wall/total cycles include ~0.2s SVT kernel `mmap` init; user CPU is 10–14% behind SVT; **−4.0% PSNR-Y BD-rate** (goav1 better); **0 allocs/frame** |
-| **Encoder** (720p 240f RTC CBR, 500–2000k, MT) | `SvtAv1EncApp` p12 RTC | **0.50×–0.61×** | **1.21×–1.27×** | **1.08×–1.14×** | **1.6×–2.0× faster** wall time; **0 allocs/frame** |
-| **Encoder** (720p 240f RTC CBR, 500–2000k, 1T) | `aomenc` `--rt --cpu-used=10` | **0.44×–0.53×** | **0.46×–0.53×** | **0.46×–0.53×** | **1.9×–2.3× faster** than `aomenc`; `aomenc` achieves +1.5–2.3 dB higher PSNR-Y at matched bitrate |
+| **Decoder** (7-stream quick suite, 1T) | `dav1d 1.5.4` | **1.12×–1.25×** | **1.17×–1.19×** | **1.49×** | Realtime/SVT 1.11×–1.21× wall (1.17× cyc); `aomgood` complex (warp/compound) 1.57×–1.65× cyc / 1.70×–2.37× ins; **0 allocs/frame** |
+| **Decoder** (7-stream quick suite, 8T) | `dav1d 1.5.4` | **1.14×–1.25×** | **1.12×** | **1.46×** | `svtrtc_crowdrun` 1.03× cyc, `svtrtc10_crowdrun` (10-bit 1080p) 1.13× cyc; **0 allocs/frame** |
+| **Decoder** (7-stream quick suite, 1T / 8T) | `aomdec` (libaom 3.15.2) | **0.72×–0.87×** / **0.37×** | — | — | Faster than `aomdec` at 1T (incl. `aomgood_parkjoy` at 0.97×) and **2.7× faster** at 8T; 100% MD5 parity |
+| **Encoder** (720p 240f RTC CBR 1000k, 1T) | `SvtAv1EncApp` v4.2.0 p12 RTC | **0.78×–0.87×** | **0.60×–0.63×** | **1.05×** | **0.89×–0.94× user CPU**, **+0.74 dB PSNR-Y** (40.80 vs 40.06 dB); 25.3G vs 24.0G ins; **0 allocs/frame** |
+| **Encoder** (720p 240f RTC CBR 1000k, MT) | `SvtAv1EncApp` v4.2.0 p12 RTC | **0.38×–0.40×** | **0.69×** | **1.18×** | **2.5× faster** wall time; **0 allocs/frame** |
+| **Encoder** (720p 240f RTC CBR 1000k, 1T / MT) | `aomenc` `--rt --cpu-used=10` | **0.55×** / **0.48×** | **0.48×** / **0.49×** | **0.50×** / **0.53×** | **1.8×–2.1× faster**, lower RSS (36.2M vs 41.1M at 1T); `aomenc` achieves +2.26 dB higher PSNR-Y at matched bitrate |
 
 Reproduce locally with `make bench-e2e` (quick suite), `make bench-e2e-fast` (rapid iteration), or `make bench-e2e-full` (all 42 8-bit + 5 10-bit streams). See [docs/e2e-codec-gap-20261124.md](docs/e2e-codec-gap-20261124.md) for the full quiet-machine breakdown and per-stage profiles.
 

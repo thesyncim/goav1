@@ -2841,22 +2841,20 @@ func mc8BlendAvgCopyFast(dst, ref0, ref1 *frame.Plane, dstX, dstY, refX0, refY0,
 			binary.LittleEndian.PutUint64(dg.Row8(r, 0)[:], (a|b)-(((a^b)&0xfefefefefefefefe)>>1))
 		}
 	case w&15 == 0:
-		shR1 := archsimd.BroadcastInt8x16(-1)
 		for r := range h {
 			for c := 0; c < w; c += 16 {
 				a := archsimd.LoadUint8x16Array(g0.Row16(r, c))
 				b := archsimd.LoadUint8x16Array(g1.Row16(r, c))
-				a.Or(b).Sub(a.Xor(b).Shift(shR1)).StoreArray(dg.Row16(r, c))
+				a.Average(b).StoreArray(dg.Row16(r, c))
 			}
 		}
 	default: // w = 16k + 8
-		shR1 := archsimd.BroadcastInt8x16(-1)
 		for r := range h {
 			c := 0
 			for ; c+16 <= w; c += 16 {
 				a := archsimd.LoadUint8x16Array(g0.Row16(r, c))
 				b := archsimd.LoadUint8x16Array(g1.Row16(r, c))
-				a.Or(b).Sub(a.Xor(b).Shift(shR1)).StoreArray(dg.Row16(r, c))
+				a.Average(b).StoreArray(dg.Row16(r, c))
 			}
 			a := binary.LittleEndian.Uint64(g0.Row8(r, c)[:])
 			b := binary.LittleEndian.Uint64(g1.Row8(r, c)[:])
@@ -4913,7 +4911,8 @@ type warpCompoundMid = [15 * 8]int16
 // (row r at out[r*stride:]). It reports false when the SIMD kernel does not
 // apply; the caller then runs the scalar block.
 func warpCompound8x8Dispatch(out []uint16, stride int, ref frame.Plane, ix4, sx4, iy4, sy4, alpha, beta, gamma, delta int) bool {
-	if !warpGoSIMDEnabled || !warpHorizResidentOffsInRange(sx4, alpha, beta) || !warpVertFullOffsInRange(sy4, gamma, delta) {
+	if !warpGoSIMDEnabled || !warpHorizResidentOffsInRange(sx4, alpha, beta) || !warpVertFullOffsInRange(sy4, gamma, delta) ||
+		!unsafeutil.GridFit(len(out), 0, stride, 8, 8) {
 		return false
 	}
 	var mid warpCompoundMid
@@ -4921,14 +4920,14 @@ func warpCompound8x8Dispatch(out []uint16, stride int, ref frame.Plane, ix4, sx4
 	// inside ref.Pix (it is loaded, never used); otherwise go through the edge
 	// copy, which reads the same samples.
 	base := (iy4-7)*ref.Stride + ix4 - 7
-	if iy4 >= 7 && iy4+7 < ref.Height && ix4 >= 7 && ix4+8 <= ref.Width && base+14*ref.Stride+16 <= len(ref.Pix) {
-		warpCompoundH8(&mid, &warp8FilterPadded, ref.Pix, base, ref.Stride, sx4, alpha, beta)
+	if iy4 >= 7 && iy4+7 < ref.Height && ix4 >= 7 && ix4+8 <= ref.Width && unsafeutil.GridFit(len(ref.Pix), base, ref.Stride, 16, 15) {
+		warpCompoundH8(&mid, &warp8FilterPadded, unsafeutil.NewGrid(ref.Pix, base, ref.Stride, 16, 15), sx4, alpha, beta)
 	} else {
 		var edge [15 * 16]byte
 		warpCompoundEmuEdge(&edge, ref, ix4, iy4)
-		warpCompoundH8(&mid, &warp8FilterPadded, edge[:], 0, 16, sx4, alpha, beta)
+		warpCompoundH8(&mid, &warp8FilterPadded, unsafeutil.NewGrid(edge[:], 0, 16, 16, 15), sx4, alpha, beta)
 	}
-	warpCompoundV8(out, stride, &mid, &warp8FilterPadded, sy4, gamma, delta)
+	warpCompoundV8(unsafeutil.NewGrid(out, 0, stride, 8, 8), &mid, &warp8FilterPadded, sy4, gamma, delta)
 	return true
 }
 
@@ -4952,19 +4951,40 @@ func warpCompoundEmuEdge(edge *[15 * 16]byte, ref frame.Plane, ix4, iy4 int) {
 }
 
 // warpCompoundH8 computes mid[k] = (sum(s*c) + 4) >> 3 for the 15 source rows
-// starting at src[base] with the samples centred by -128. Every warp filter
-// row sums to 128, so the centring removes 2^14 from the sum and the scalar's
-// 2^14 offset cancels it; the scalar's +4096 after the shift is added back in
-// the vertical accumulator.
-func warpCompoundH8(mid *warpCompoundMid, filters *[256][16]int8, src []byte, base, stride, sx4, alpha, beta int) {
+// in sg with the samples centred by -128. Every warp filter row sums to 128, so
+// the centring removes 2^14 from the sum and the scalar's 2^14 offset cancels
+// it; the scalar's +4096 after the shift is added back in the vertical
+// accumulator.
+func warpCompoundH8(mid *warpCompoundMid, filters *[256][16]int8, sg unsafeutil.Grid[uint8], sx4, alpha, beta int) {
+	if !sg.Fits(0, 0, 16, 15) {
+		return
+	}
 	centre := archsimd.BroadcastUint8x16(128)
 	round := archsimd.BroadcastInt16x8(4)
 	right := archsimd.BroadcastInt16x8(-3)
 	// The filter row is 64 + round2(sx, 10); the 64 rides in the phase.
 	sx := sx4 - 3*beta + 64<<10 + 512
+	if alpha == 0 {
+		for k := range 15 {
+			a := archsimd.LoadUint8x16Array(sg.Row16(k, 0)).Xor(centre)
+			f := archsimd.LoadInt8x16Array(&filters[(sx>>10)&255])
+			p0 := a.BitsToInt8().MulWidenLo(f)
+			p1 := a.ConcatShiftBytesRight(a, 1).BitsToInt8().MulWidenLo(f)
+			p2 := a.ConcatShiftBytesRight(a, 2).BitsToInt8().MulWidenLo(f)
+			p3 := a.ConcatShiftBytesRight(a, 3).BitsToInt8().MulWidenLo(f)
+			p4 := a.ConcatShiftBytesRight(a, 4).BitsToInt8().MulWidenLo(f)
+			p5 := a.ConcatShiftBytesRight(a, 5).BitsToInt8().MulWidenLo(f)
+			p6 := a.ConcatShiftBytesRight(a, 6).BitsToInt8().MulWidenLo(f)
+			p7 := a.ConcatShiftBytesRight(a, 7).BitsToInt8().MulWidenLo(f)
+			low := p0.ConcatAddPairs(p1).ConcatAddPairs(p2.ConcatAddPairs(p3))
+			high := p4.ConcatAddPairs(p5).ConcatAddPairs(p6.ConcatAddPairs(p7))
+			low.ConcatAddPairs(high).Add(round).Shift(right).StoreArray((*[8]int16)(mid[8*k : 8*k+8]))
+			sx += beta
+		}
+		return
+	}
 	for k := range 15 {
-		o := base + k*stride
-		a := archsimd.LoadUint8x16Array((*[16]uint8)(src[o : o+16])).Xor(centre)
+		a := archsimd.LoadUint8x16Array(sg.Row16(k, 0)).Xor(centre)
 		f0 := archsimd.LoadInt8x16Array(&filters[(sx>>10)&255])
 		f1 := archsimd.LoadInt8x16Array(&filters[((sx+alpha)>>10)&255])
 		f2 := archsimd.LoadInt8x16Array(&filters[((sx+2*alpha)>>10)&255])
@@ -4993,40 +5013,56 @@ func warpCompoundH8(mid *warpCompoundMid, filters *[256][16]int8, src []byte, ba
 // each filter row sums to 128. The eight column filters of a row are
 // transposed in registers into eight tap vectors. The filter table comes in
 // as a parameter so its address stays in a register across the row loop.
-func warpCompoundV8(out []uint16, stride int, mid *warpCompoundMid, filters *[256][16]int8, sy4, gamma, delta int) {
+func warpCompoundV8(og unsafeutil.Grid[uint16], mid *warpCompoundMid, filters *[256][16]int8, sy4, gamma, delta int) {
+	if !og.Fits(0, 0, 8, 8) {
+		return
+	}
 	const seed = 1<<(8+2*filterBits-compoundRound0Bits) + 4096*128 + 1<<(compoundRound1Bits-1)
 	bias := archsimd.BroadcastInt32x4(seed)
 	right := archsimd.BroadcastInt32x4(-compoundRound1Bits)
 	sy := sy4 + 64<<10 + 512
 	for row := range 8 {
-		f0 := archsimd.LoadInt8x16Array(&filters[(sy>>10)&255])
-		f1 := archsimd.LoadInt8x16Array(&filters[((sy+gamma)>>10)&255])
-		f2 := archsimd.LoadInt8x16Array(&filters[((sy+2*gamma)>>10)&255])
-		f3 := archsimd.LoadInt8x16Array(&filters[((sy+3*gamma)>>10)&255])
-		f4 := archsimd.LoadInt8x16Array(&filters[((sy+4*gamma)>>10)&255])
-		f5 := archsimd.LoadInt8x16Array(&filters[((sy+5*gamma)>>10)&255])
-		f6 := archsimd.LoadInt8x16Array(&filters[((sy+6*gamma)>>10)&255])
-		f7 := archsimd.LoadInt8x16Array(&filters[((sy+7*gamma)>>10)&255])
-		a01 := f0.InterleaveLo(f1).ToBits().ReshapeToUint16s()
-		a23 := f2.InterleaveLo(f3).ToBits().ReshapeToUint16s()
-		a45 := f4.InterleaveLo(f5).ToBits().ReshapeToUint16s()
-		a67 := f6.InterleaveLo(f7).ToBits().ReshapeToUint16s()
-		b03lo := a01.InterleaveLo(a23).ReshapeToUint32s()
-		b03hi := a01.InterleaveHi(a23).ReshapeToUint32s()
-		b47lo := a45.InterleaveLo(a67).ReshapeToUint32s()
-		b47hi := a45.InterleaveHi(a67).ReshapeToUint32s()
-		c01 := b03lo.InterleaveLo(b47lo).ReshapeToUint8s().BitsToInt8()
-		c23 := b03lo.InterleaveHi(b47lo).ReshapeToUint8s().BitsToInt8()
-		c45 := b03hi.InterleaveLo(b47hi).ReshapeToUint8s().BitsToInt8()
-		c67 := b03hi.InterleaveHi(b47hi).ReshapeToUint8s().BitsToInt8()
-		t0 := c01.ExtendLo8ToInt16()
-		t1 := c01.HiToLo().ExtendLo8ToInt16()
-		t2 := c23.ExtendLo8ToInt16()
-		t3 := c23.HiToLo().ExtendLo8ToInt16()
-		t4 := c45.ExtendLo8ToInt16()
-		t5 := c45.HiToLo().ExtendLo8ToInt16()
-		t6 := c67.ExtendLo8ToInt16()
-		t7 := c67.HiToLo().ExtendLo8ToInt16()
+		var t0, t1, t2, t3, t4, t5, t6, t7 archsimd.Int16x8
+		if gamma == 0 {
+			f := &filters[(sy>>10)&255]
+			t0 = archsimd.BroadcastInt16x8(int16(f[0]))
+			t1 = archsimd.BroadcastInt16x8(int16(f[1]))
+			t2 = archsimd.BroadcastInt16x8(int16(f[2]))
+			t3 = archsimd.BroadcastInt16x8(int16(f[3]))
+			t4 = archsimd.BroadcastInt16x8(int16(f[4]))
+			t5 = archsimd.BroadcastInt16x8(int16(f[5]))
+			t6 = archsimd.BroadcastInt16x8(int16(f[6]))
+			t7 = archsimd.BroadcastInt16x8(int16(f[7]))
+		} else {
+			f0 := archsimd.LoadInt8x16Array(&filters[(sy>>10)&255])
+			f1 := archsimd.LoadInt8x16Array(&filters[((sy+gamma)>>10)&255])
+			f2 := archsimd.LoadInt8x16Array(&filters[((sy+2*gamma)>>10)&255])
+			f3 := archsimd.LoadInt8x16Array(&filters[((sy+3*gamma)>>10)&255])
+			f4 := archsimd.LoadInt8x16Array(&filters[((sy+4*gamma)>>10)&255])
+			f5 := archsimd.LoadInt8x16Array(&filters[((sy+5*gamma)>>10)&255])
+			f6 := archsimd.LoadInt8x16Array(&filters[((sy+6*gamma)>>10)&255])
+			f7 := archsimd.LoadInt8x16Array(&filters[((sy+7*gamma)>>10)&255])
+			a01 := f0.InterleaveLo(f1).ToBits().ReshapeToUint16s()
+			a23 := f2.InterleaveLo(f3).ToBits().ReshapeToUint16s()
+			a45 := f4.InterleaveLo(f5).ToBits().ReshapeToUint16s()
+			a67 := f6.InterleaveLo(f7).ToBits().ReshapeToUint16s()
+			b03lo := a01.InterleaveLo(a23).ReshapeToUint32s()
+			b03hi := a01.InterleaveHi(a23).ReshapeToUint32s()
+			b47lo := a45.InterleaveLo(a67).ReshapeToUint32s()
+			b47hi := a45.InterleaveHi(a67).ReshapeToUint32s()
+			c01 := b03lo.InterleaveLo(b47lo).ReshapeToUint8s().BitsToInt8()
+			c23 := b03lo.InterleaveHi(b47lo).ReshapeToUint8s().BitsToInt8()
+			c45 := b03hi.InterleaveLo(b47hi).ReshapeToUint8s().BitsToInt8()
+			c67 := b03hi.InterleaveHi(b47hi).ReshapeToUint8s().BitsToInt8()
+			t0 = c01.ExtendLo8ToInt16()
+			t1 = c01.HiToLo().ExtendLo8ToInt16()
+			t2 = c23.ExtendLo8ToInt16()
+			t3 = c23.HiToLo().ExtendLo8ToInt16()
+			t4 = c45.ExtendLo8ToInt16()
+			t5 = c45.HiToLo().ExtendLo8ToInt16()
+			t6 = c67.ExtendLo8ToInt16()
+			t7 = c67.HiToLo().ExtendLo8ToInt16()
+		}
 		// The taps of output row r read mid rows r..r+7.
 		win := (*[64]int16)(mid[8*row : 8*row+64])
 		m0 := archsimd.LoadInt16x8Array((*[8]int16)(win[0:8]))
@@ -5043,10 +5079,9 @@ func warpCompoundV8(out []uint16, stride int, mid *warpCompoundMid, filters *[25
 			Add(m2.HiToLo().MulWidenLo(t2.HiToLo())).Add(m3.HiToLo().MulWidenLo(t3.HiToLo())).
 			Add(m4.HiToLo().MulWidenLo(t4.HiToLo())).Add(m5.HiToLo().MulWidenLo(t5.HiToLo())).
 			Add(m6.HiToLo().MulWidenLo(t6.HiToLo())).Add(m7.HiToLo().MulWidenLo(t7.HiToLo()))
-		n := lo.Shift(right).TruncToInt16().ToBits().ReshapeToUint64s().BitsToFloat64()
-		n = n.SetElem(1, hi.Shift(right).TruncToInt16().ToBits().ReshapeToUint64s().BitsToFloat64().GetElem(0))
-		o := row * stride
-		n.ToBits().ReshapeToUint16s().StoreArray((*[8]uint16)(out[o : o+8]))
+		lo.Shift(right).TruncToInt16().ToBits().ReshapeToUint64s().
+			InterleaveLo(hi.Shift(right).TruncToInt16().ToBits().ReshapeToUint64s()).
+			ReshapeToUint16s().StoreArray(og.Row8(row, 0))
 		sy += delta
 	}
 }
@@ -5302,12 +5337,12 @@ func warpPut8x8Dispatch(dst []byte, stride int, ref frame.Plane, ix4, sx4, iy4, 
 	}
 	var mid warpCompoundMid
 	base := (iy4-7)*ref.Stride + ix4 - 7
-	if iy4 >= 7 && iy4+7 < ref.Height && ix4 >= 7 && ix4+8 <= ref.Width && base+14*ref.Stride+16 <= len(ref.Pix) {
-		warpCompoundH8(&mid, &warp8FilterPadded, ref.Pix, base, ref.Stride, sx4, alpha, beta)
+	if iy4 >= 7 && iy4+7 < ref.Height && ix4 >= 7 && ix4+8 <= ref.Width && unsafeutil.GridFit(len(ref.Pix), base, ref.Stride, 16, 15) {
+		warpCompoundH8(&mid, &warp8FilterPadded, unsafeutil.NewGrid(ref.Pix, base, ref.Stride, 16, 15), sx4, alpha, beta)
 	} else {
 		var edge [15 * 16]byte
 		warpCompoundEmuEdge(&edge, ref, ix4, iy4)
-		warpCompoundH8(&mid, &warp8FilterPadded, edge[:], 0, 16, sx4, alpha, beta)
+		warpCompoundH8(&mid, &warp8FilterPadded, unsafeutil.NewGrid(edge[:], 0, 16, 16, 15), sx4, alpha, beta)
 	}
 	if gamma == 0 {
 		warpPutV8Gamma0(dst, stride, &mid, &warp8FilterPadded, sy4, delta)

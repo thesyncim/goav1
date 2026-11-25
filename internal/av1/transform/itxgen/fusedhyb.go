@@ -151,17 +151,18 @@ func (g *fgen) mulHi(x fv, m, b int) fv {
 // saturated to int16.
 func (g *fgen) mulShiftSat(x fv, m, b, s int) fv {
 	lo, hi := g.widen(x)
-	k, kb := g.tmp("k"), g.tmp("k")
+	k, kb, ks := g.tmp("k"), g.tmp("k"), g.tmp("k")
 	g.line("%s := %s", k, g.kraw(fmt.Sprintf("m%d", m), m))
 	g.line("%s := %s", kb, g.kraw(fmt.Sprintf("b%d", b), b))
+	g.line("%s := %s", ks, g.kraw(fmt.Sprintf("sh%d", s), -s))
 	n := g.tmp("r")
 	if g.half {
-		g.line("%s := %s.MulAdd(%s, %s).ShiftAllRight(%d).SaturateToInt16()", n, lo, k, kb, s)
+		g.line("%s := %s.MulAdd(%s, %s).Shift(%s).SaturateToInt16()", n, lo, k, kb, ks)
 		return fv{name: n}
 	}
 	f := g.tmp("f")
-	g.line("%s := %s.MulAdd(%s, %s).ShiftAllRight(%d).SaturateToInt16().ToBits().ReshapeToUint64s().BitsToFloat64()", f, lo, k, kb, s)
-	g.line("%s = %s.SetElem(1, %s.MulAdd(%s, %s).ShiftAllRight(%d).SaturateToInt16().ToBits().ReshapeToUint64s().BitsToFloat64().GetElem(0))", f, f, hi, k, kb, s)
+	g.line("%s := %s.MulAdd(%s, %s).Shift(%s).SaturateToInt16().ToBits().ReshapeToUint64s().BitsToFloat64()", f, lo, k, kb, ks)
+	g.line("%s = %s.SetElem(1, %s.MulAdd(%s, %s).Shift(%s).SaturateToInt16().ToBits().ReshapeToUint64s().BitsToFloat64().GetElem(0))", f, f, hi, k, kb, ks)
 	g.line("%s := %s.ToBits().ReshapeToUint16s().BitsToInt16()", n, f)
 	return fv{name: n}
 }

@@ -409,8 +409,8 @@ func (g *fgen) loadAs(v string, off, lanes int, rect2 bool) string {
 	half := func(o int) string {
 		x := fmt.Sprintf("archsimd.LoadInt32x4Array((*[4]int32)(c[%d:%d]))", o, o+4)
 		if rect2 {
-			x += fmt.Sprintf(".Max(%s).Min(%s).MulAdd(%s, %s).ShiftAllRight(8)",
-				g.kraw("rlo", -(1<<22)), g.kraw("rhi", 1<<22), g.kraw("r181", 181), g.kraw("r128", 128))
+			x += fmt.Sprintf(".Max(%s).Min(%s).MulAdd(%s, %s).Shift(%s)",
+				g.kraw("rlo", -(1<<22)), g.kraw("rhi", 1<<22), g.kraw("r181", 181), g.kraw("r128", 128), g.kraw("sh8", -8))
 		}
 		return x + ".SaturateToInt16()"
 	}
