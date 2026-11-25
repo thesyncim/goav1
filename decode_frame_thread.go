@@ -722,13 +722,15 @@ func (p *decoderFramePipeline) close() {
 func newDecoderFramePipeline(d *Decoder, n int, plan decoderFrameWorkResidualStreamPlan, postArena decoderFrameWorkPostFilterRequestScratchSize, surfaceCount int) (*decoderFramePipeline, error) {
 	var size decoderArenaSize
 	eventSize := plan.Size.Event
+	// Frame threading always deblocks via LoopFilterMasks (maskOnlyLoopFilter=true),
+	// so neither per-MI LoopFilterMap nor edge-list LoopFilterEdges/Schedule is used.
+	eventSize.SideData.LoopFilterMap = 0
+	postArena.LoopFilterEdges = 0
+	postArena.LoopFilterSchedule = 0
 	noSkip := decoderCompactNoSkipBytes(eventSize.SideData.CDEFIndexMap)
 	tileEdges := decoderLoopFilterTileEdgeBytes(eventSize.SideData.LoopFilterMasks)
 	for range n {
 		if err := size.addEvent(eventSize); err != nil {
-			return nil, err
-		}
-		if err := size.addSideData(eventSize.SideData); err != nil {
 			return nil, err
 		}
 		if err := size.addPostFilter(postArena); err != nil {
@@ -778,7 +780,7 @@ func newDecoderFramePipeline(d *Decoder, n int, plan decoderFrameWorkResidualStr
 	for i := range p.fcs {
 		fc := &p.fcs[i]
 		fc.scratch = newDecoderEventScratch(eventSize, &arena)
-		fc.sideScratch = newDecoderSideDataScratch(eventSize.SideData, &arena)
+		fc.sideScratch = fc.scratch.SideData
 		fc.lfNoSkip.Preseed(arena.takeBytes(noSkip))
 		fc.lfTileEdges.Preseed(arena.takeBytes(tileEdges))
 		fc.postFilter.size = postArena
@@ -790,7 +792,7 @@ func newDecoderFramePipeline(d *Decoder, n int, plan decoderFrameWorkResidualStr
 		rt.ReferenceFrames = fc.refFrames[:]
 		rt.Releases = fc.planReleases[:]
 		rt.SideData = &fc.sideData
-		bound, _, err := bindDecoderFrameWorkResidualEventRunner(eventSize, plan.Bind.Sequence, &plan.Bind.Event, rt, fc.scratch, &fc.batch)
+		bound, _, err := bindDecoderFrameWorkResidualEventRunnerWith(eventSize, plan.Bind.Sequence, &plan.Bind.Event, rt, fc.scratch, &fc.batch, true)
 		if err != nil {
 			return nil, err
 		}
