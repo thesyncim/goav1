@@ -637,6 +637,65 @@ func (d *Decoder) DecodeNext() (frames []*Frame, ok bool, err error) {
 	return out, true, nil
 }
 
+// DecodePayload decodes one caller-supplied low-overhead AV1 temporal unit
+// using a Decoder constructed by NewDecoder or NewDecoderFromIVF. It is
+// intended for live push-streaming receive loops (WebCodecs, WebSocket, QUIC,
+// pipe) that use the constructor payload(s) to size the reusable decode arenas.
+//
+// Returned frames have the same lifetime as DecodeNext. Do not call this on a
+// Decoder constructed from RTP payloads.
+func (d *Decoder) DecodePayload(payload []byte) (frames []*Frame, decodeErr error) {
+	defer func() {
+		if decodeErr != nil && d != nil {
+			internalthreading.InvalidateFrameWorkLoopFilterCompactState(&d.compactLF)
+		}
+	}()
+	if d == nil || d.payloadKind != decoderPayloadLowOverhead {
+		return nil, errors.New("goav1: decoder is not initialized for low-overhead payloads")
+	}
+	if d.closed {
+		return nil, errors.New("goav1: decoder closed")
+	}
+	d.releaseShownSurfaces()
+	if d.fp != nil {
+		p := d.fp
+		p.ready = p.ready[:0]
+		p.grainUsed = 0
+		var result decoderFrameWorkResidualStreamResult
+		if err := d.runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, d.postFilterRunner()); err != nil {
+			p.drain()
+			p.ready = p.ready[:0]
+			_ = p.takeErr()
+			return nil, fmt.Errorf("goav1: payload: %w", err)
+		}
+		if err := p.takeErr(); err != nil {
+			return nil, fmt.Errorf("goav1: payload: %w", err)
+		}
+		return d.publishFrameThreadedOutputs(), nil
+	}
+	var result decoderFrameWorkResidualStreamResult
+	err := d.runner.RunLowOverheadIntoWithPostFilterRunner(&result, payload, d.postFilterRunner())
+	if err != nil {
+		if d.errorConcealment {
+			return d.recoverAndConceal(), nil
+		}
+		return nil, fmt.Errorf("goav1: payload: %w", err)
+	}
+	out := d.visible[:0]
+	for _, f := range result.Run.Outputs {
+		if f != nil {
+			f.Concealed = false
+			out = append(out, f)
+		}
+	}
+	if d.errorConcealment && len(out) > 0 {
+		d.snapshotConcealFrame(out[len(out)-1])
+	}
+	d.visible = out
+	d.trackShownSurfaces(out)
+	return out, nil
+}
+
 // DecodeRTPPayload decodes one caller-supplied AV1 RTP payload body using an
 // RTP decoder constructed by NewDecoderFromRTPPayloads. It is intended for live
 // receive loops that use the constructor payloads only to size the reusable

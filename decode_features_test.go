@@ -1193,3 +1193,30 @@ func TestDecoderErrorConcealment(t *testing.T) {
 		t.Fatalf("truncTile unexpected concealment state: len=%d f2=%v f3=%v", len(got2), len(got2) > 2 && got2[2].Concealed, len(got2) > 3 && got2[3].Concealed)
 	}
 }
+
+func TestDecoderLivePushPayload(t *testing.T) {
+	const w, h = 128, 128
+	stream := encodeLimitTestStream(t, w, h, 4)
+
+	// Construct decoder seeded with only the first keyframe, then push all 4 TUs live.
+	dec, err := NewDecoder(stream[:1], WithErrorConcealment(true))
+	if err != nil {
+		t.Fatalf("NewDecoder: %v", err)
+	}
+	defer dec.Close()
+
+	for i, tu := range stream {
+		frames, err := dec.DecodePayload(tu)
+		if err != nil {
+			t.Fatalf("DecodePayload(%d): %v", i, err)
+		}
+		if len(frames) != 1 || frames[0].Concealed {
+			t.Fatalf("frame %d: len=%d concealed=%v", i, len(frames), len(frames) > 0 && frames[0].Concealed)
+		}
+	}
+	// Corrupt live payload must conceal cleanly without aborting.
+	concealed, err := dec.DecodePayload([]byte{0xff, 0xff, 0xff})
+	if err != nil || len(concealed) != 1 || !concealed[0].Concealed {
+		t.Fatalf("corrupt live DecodePayload: len=%d concealed=%v err=%v", len(concealed), len(concealed) > 0 && concealed[0].Concealed, err)
+	}
+}

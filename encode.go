@@ -424,6 +424,11 @@ type VideoEncoderConfig struct {
 	// (qindex 0, WHT transform, no in-loop filtering). QIndex and TargetBitrate
 	// may be omitted when Lossless is true.
 	Lossless bool
+
+	// Subsampling selects native chroma subsampling for 8-bit color encoding:
+	// 0 or 420 for 4:2:0 (Profile 0, default), 422 for native 4:2:2 (Profile 2),
+	// or 444 for native 4:4:4 (Profile 1).
+	Subsampling int
 }
 
 // EncodedFrame is one encoded picture as a low-overhead temporal unit.
@@ -509,6 +514,7 @@ type VideoEncoder struct {
 	yuv420Scratch I420Frame
 
 	lossless         bool
+	subsampling      int
 	width, height    int
 	keyFrameInterval int
 	encodedFrames    int
@@ -544,6 +550,7 @@ func NewVideoEncoder(cfg VideoEncoderConfig) (*VideoEncoder, error) {
 	}
 	v := &VideoEncoder{
 		enc:              enc,
+		subsampling:      cfg.Subsampling,
 		width:            cfg.Width,
 		height:           cfg.Height,
 		keyFrameInterval: cfg.KeyFrameInterval,
@@ -556,6 +563,37 @@ func NewVideoEncoder(cfg VideoEncoderConfig) (*VideoEncoder, error) {
 }
 
 func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
+	sub := cfg.Subsampling
+	if sub == 0 {
+		sub = 420
+	}
+	var subX, subY bool
+	switch sub {
+	case 420:
+		subX, subY = true, true
+	case 422:
+		subX, subY = true, false
+	case 444:
+		subX, subY = false, false
+	default:
+		return nil, fmt.Errorf("goav1: unsupported Subsampling %d (want 420, 422, or 444)", sub)
+	}
+	cc := encoder.SequenceColorConfig{
+		BitDepth:     8,
+		SubsamplingX: subX,
+		SubsamplingY: subY,
+	}
+	if cfg.Color != nil {
+		cc.ColorDescriptionPresent = cfg.Color.Primaries != 0 || cfg.Color.TransferCharacteristics != 0 || cfg.Color.MatrixCoefficients != 0
+		cc.ColorPrimaries = cfg.Color.Primaries
+		cc.TransferCharacteristics = cfg.Color.TransferCharacteristics
+		cc.MatrixCoefficients = cfg.Color.MatrixCoefficients
+		cc.ColorRange = cfg.Color.ColorRange
+		if sub == 420 {
+			cc.ChromaSamplePosition = cfg.Color.ChromaSamplePosition
+		}
+	}
+
 	var enc *encoder.VideoEncoder
 	var err error
 	if cfg.TargetBitrate > 0 {
@@ -574,12 +612,20 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 		if rc.MaxQIndex == 0 {
 			rc.MaxQIndex = 255
 		}
-		enc, err = encoder.NewVideoEncoderCBR(cfg.Width, cfg.Height, rc)
+		if sub == 420 && cfg.Color == nil {
+			enc, err = encoder.NewVideoEncoderCBR(cfg.Width, cfg.Height, rc)
+		} else {
+			enc, err = encoder.NewVideoEncoderCBRWithColor(cfg.Width, cfg.Height, rc, cc)
+		}
 	} else {
 		if cfg.QIndex == 0 {
 			return nil, fmt.Errorf("goav1: VideoEncoderConfig needs QIndex or TargetBitrate")
 		}
-		enc, err = encoder.NewVideoEncoder(cfg.Width, cfg.Height, cfg.QIndex)
+		if sub == 420 && cfg.Color == nil {
+			enc, err = encoder.NewVideoEncoder(cfg.Width, cfg.Height, cfg.QIndex)
+		} else {
+			enc, err = encoder.NewVideoEncoderWithColor(cfg.Width, cfg.Height, cfg.QIndex, cc)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -619,23 +665,6 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 	if err := enc.SetContentHint(cfg.Content); err != nil {
 		_ = enc.Close()
 		return nil, err
-	}
-	if cfg.Color != nil {
-		cc := encoder.SequenceColorConfig{
-			BitDepth:                8,
-			ColorDescriptionPresent: cfg.Color.Primaries != 0 || cfg.Color.TransferCharacteristics != 0 || cfg.Color.MatrixCoefficients != 0,
-			ColorPrimaries:          cfg.Color.Primaries,
-			TransferCharacteristics: cfg.Color.TransferCharacteristics,
-			MatrixCoefficients:      cfg.Color.MatrixCoefficients,
-			ColorRange:              cfg.Color.ColorRange,
-			SubsamplingX:            true,
-			SubsamplingY:            true,
-			ChromaSamplePosition:    cfg.Color.ChromaSamplePosition,
-		}
-		if err := enc.SetColorConfig(cc); err != nil {
-			_ = enc.Close()
-			return nil, err
-		}
 	}
 	// Every buffer, pool and per-coder scratch is sized now, so the first
 	// real frame pays no initialization latency and steady-state encoding
@@ -846,11 +875,41 @@ func injectFrameMetadataOBUs(tu []byte, isKey bool, cvsMeta *FrameMetadata, tuMe
 	return encoder.InjectLowOverheadMetadataOBUs(tu, list, scratch)
 }
 
-// EncodeI422 encodes one I422 frame after resampling chroma into the encoder's
-// reusable I420 scratch.
+// SetQIndex switches subsequent frames to fixed-quality encoding at qIndex
+// (1..255).
+func (e *VideoEncoder) SetQIndex(qIndex uint8) error {
+	if e == nil || e.enc == nil {
+		return fmt.Errorf("goav1: VideoEncoder is not initialized")
+	}
+	return e.enc.SetQIndex(qIndex)
+}
+
+// SetBitrate updates CBR rate control for subsequent frames.
+func (e *VideoEncoder) SetBitrate(targetBitrate, framerate int) error {
+	if e == nil || e.enc == nil {
+		return fmt.Errorf("goav1: VideoEncoder is not initialized")
+	}
+	return e.enc.SetRateControlConfig(encoder.RateControlConfig{
+		TargetBitsPerSecond: targetBitrate,
+		FramesPerSecond:     framerate,
+		MinQIndex:           16,
+		MaxQIndex:           255,
+	})
+}
+
+// EncodeI422 encodes one I422 frame. When VideoEncoder was configured with
+// Subsampling=422 it encodes native Profile-2 4:2:2 without resampling;
+// otherwise chroma is resampled to 4:2:0.
 func (e *VideoEncoder) EncodeI422(frame I422Frame, forceKey bool) (EncodedFrame, error) {
 	if e == nil || e.enc == nil {
 		return EncodedFrame{}, fmt.Errorf("goav1: VideoEncoder is not initialized")
+	}
+	if e.subsampling == 422 {
+		return e.encodeRawColor(I420Frame{
+			Y: frame.Y, U: frame.U, V: frame.V,
+			YStride: frame.YStride, ChromaStride: frame.ChromaStride,
+			Width: frame.Width, Height: frame.Height,
+		}, forceKey)
 	}
 	i420, err := i422ToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
@@ -859,17 +918,48 @@ func (e *VideoEncoder) EncodeI422(frame I422Frame, forceKey bool) (EncodedFrame,
 	return e.Encode(i420, forceKey)
 }
 
-// EncodeI444 encodes one I444 frame after resampling chroma into the encoder's
-// reusable I420 scratch.
+// EncodeI444 encodes one I444 frame. When VideoEncoder was configured with
+// Subsampling=444 (and UStride == VStride) it encodes native Profile-1 4:4:4
+// without resampling; otherwise chroma is resampled to 4:2:0.
 func (e *VideoEncoder) EncodeI444(frame I444Frame, forceKey bool) (EncodedFrame, error) {
 	if e == nil || e.enc == nil {
 		return EncodedFrame{}, fmt.Errorf("goav1: VideoEncoder is not initialized")
+	}
+	if e.subsampling == 444 && frame.UStride == frame.VStride {
+		return e.encodeRawColor(I420Frame{
+			Y: frame.Y, U: frame.U, V: frame.V,
+			YStride: frame.YStride, ChromaStride: frame.UStride,
+			Width: frame.Width, Height: frame.Height,
+		}, forceKey)
 	}
 	i420, err := i444ToI420Scratch(&e.yuv420Scratch, frame)
 	if err != nil {
 		return EncodedFrame{}, err
 	}
 	return e.Encode(i420, forceKey)
+}
+
+func (e *VideoEncoder) encodeRawColor(frame I420Frame, forceKey bool) (EncodedFrame, error) {
+	if e.keyFrameInterval > 0 && e.encodedFrames > 0 && e.encodedFrames%e.keyFrameInterval == 0 {
+		forceKey = true
+	}
+	tid := e.enc.TemporalID()
+	tu, key, err := e.enc.Encode(frame, forceKey)
+	if err != nil {
+		return EncodedFrame{}, err
+	}
+	if e.cvsMeta != nil || e.tuMeta != nil {
+		tu, err = injectFrameMetadataOBUs(tu, key, e.cvsMeta, e.tuMeta, &e.metaScratch)
+		if err != nil {
+			return EncodedFrame{}, err
+		}
+		e.tuMeta = nil
+	}
+	e.encodedFrames++
+	if key {
+		tid = 0
+	}
+	return EncodedFrame{Data: tu, Keyframe: key, TemporalID: tid}, nil
 }
 
 // EncodeI400 encodes one monochrome frame after filling neutral chroma into
