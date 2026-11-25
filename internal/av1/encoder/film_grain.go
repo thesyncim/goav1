@@ -279,3 +279,73 @@ func writeFilmGrainChromaParams(w *bitWriter, mult uint8, lumaMult uint8, offset
 	}
 	return w.writeBits(uint64(offset), 9)
 }
+
+// EstimateFilmGrainParams analyzes luma high-frequency texture/noise across
+// intensity bins in src and produces valid AV1 FilmGrainParams scaled by
+// strength (1..50, matching SVT-AV1 --film-grain N).
+func EstimateFilmGrainParams(src SourceFrame420, strength int) FilmGrainParams {
+	if strength <= 0 || src.Width < 4 || src.Height < 4 || len(src.Y) < src.Height*src.YStride {
+		return FilmGrainParams{}
+	}
+	if strength > 50 {
+		strength = 50
+	}
+	// Estimate local high-frequency noise via 2D discrete Laplacian across 6
+	// intensity buckets spanning [0, 255].
+	const numBins = 6
+	var binSum [numBins]uint64
+	var binCnt [numBins]uint64
+	for y := 1; y < src.Height-1; y += 2 {
+		row := y * src.YStride
+		above := (y - 1) * src.YStride
+		below := (y + 1) * src.YStride
+		for x := 1; x < src.Width-1; x += 2 {
+			c := int(src.Y[row+x])
+			lap := 4*c - int(src.Y[row+x-1]) - int(src.Y[row+x+1]) - int(src.Y[above+x]) - int(src.Y[below+x])
+			if lap < 0 {
+				lap = -lap
+			}
+			b := (c * numBins) >> 8
+			if b >= numBins {
+				b = numBins - 1
+			}
+			binSum[b] += uint64(lap)
+			binCnt[b]++
+		}
+	}
+	var yPts [MaxFilmGrainYPoints][2]uint8
+	baseScale := strength * 3 / 2
+	if baseScale < 4 {
+		baseScale = 4
+	}
+	for i := range numBins {
+		// Monotonically increasing luma control points in [0, 255].
+		lumaVal := uint8((i * 255) / (numBins - 1))
+		est := baseScale
+		if binCnt[i] > 0 {
+			avgLap := int(binSum[i] / binCnt[i])
+			// Blend measured high-frequency energy with requested strength.
+			est = (baseScale*2 + avgLap*strength/32) / 3
+		}
+		if est < 2 {
+			est = 2
+		}
+		if est > 64 {
+			est = 64
+		}
+		yPts[i] = [2]uint8{lumaVal, uint8(est)}
+	}
+	return FilmGrainParams{
+		Apply:                 true,
+		Update:                true,
+		Seed:                  7391,
+		ChromaScalingFromLuma: true,
+		NumYPoints:            numBins,
+		YPoints:               yPts,
+		ScalingShift:          8,
+		ARCoeffLag:            0,
+		ARCoeffShift:          6,
+		GrainScaleShift:       0,
+		Overlap:               true,
+	}
+}

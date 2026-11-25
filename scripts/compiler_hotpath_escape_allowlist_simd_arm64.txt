@@ -221,6 +221,7 @@ internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, 0, groupSize) escapes t
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, 0, groupSize) escapes to heap in encodeKeyframeFilteredTilesInto:
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap in EncodeMonochromeKeyframe:
+internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap in EncodeSuperResKeyframe:
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, 0, total + total / 2) escapes to heap
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, 0, total + total / 2) escapes to heap in encodeKeyframeFilteredTilesInto:
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, 0, total) escapes to heap
@@ -228,6 +229,8 @@ internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, 0, total) escapes to he
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, 262144) escapes to heap
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, 262144) escapes to heap in (*pframeCoder).encodeKeyframeTileWithColorOptions:
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, 262144) escapes to heap in (*pframeCoder).encodeMonochromeKeyframeTileWithOptions:
+internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, cw * ch) escapes to heap
+internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, cw * ch) escapes to heap in EncodeSuperResKeyframe:
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, len(src.U)) escapes to heap
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, len(src.U)) escapes to heap in encodeKeyframeFilteredTiles:
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, len(src.U)) escapes to heap in encodeKeyframeFilteredTilesInto:
@@ -238,6 +241,12 @@ internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, len(src.Y)) escapes to 
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, len(src.Y)) escapes to heap in EncodeMonochromeKeyframe:
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, len(src.Y)) escapes to heap in encodeKeyframeFilteredTiles:
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, len(src.Y)) escapes to heap in encodeKeyframeFilteredTilesInto:
+internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, padCodedW * src.Height) escapes to heap
+internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, padCodedW * src.Height) escapes to heap in EncodeSuperResKeyframe:
+internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, src.Width * src.Height) escapes to heap
+internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, src.Width * src.Height) escapes to heap in EncodeSuperResKeyframe:
+internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, src.Width / 2 * ch) escapes to heap
+internal/av1/encoder/keyframe_lossy.go:*:*: make([]byte, src.Width / 2 * ch) escapes to heap in EncodeSuperResKeyframe:
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]entropy.WriterLog, len(coders)) escapes to heap
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]entropy.WriterLog, len(coders)) escapes to heap in encodeKeyframeFilteredTilesInto:
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]error, nTiles) escapes to heap
@@ -249,8 +258,13 @@ internal/av1/encoder/keyframe_lossy.go:*:*: make([]svtPD0SB, need) escapes to he
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in (*pframeCoder).encodeKeyframeTileWithColorOptions:
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in (*pframeCoder).encodeMonochromeKeyframeTileWithOptions:
+internal/av1/encoder/keyframe_lossy.go:*:*: make([]uint16, dw * sh) escapes to heap
+internal/av1/encoder/keyframe_lossy.go:*:*: make([]uint16, dw * sh) escapes to heap in EncodeSuperResKeyframe.func2:
+internal/av1/encoder/keyframe_lossy.go:*:*: make([]uint16, sw * sh) escapes to heap
+internal/av1/encoder/keyframe_lossy.go:*:*: make([]uint16, sw * sh) escapes to heap in EncodeSuperResKeyframe.func2:
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]uint8, 0, lumaPix) escapes to heap
 internal/av1/encoder/keyframe_lossy.go:*:*: make([]uint8, 0, lumaPix) escapes to heap in (*pframeCoder).encodeKeyframeTileWithColorOptions:
+internal/av1/encoder/keyframe_lossy.go:*:*: moved to heap: codedRecon
 internal/av1/encoder/keyframe_lossy.go:*:*: moved to heap: pc
 internal/av1/encoder/keyframe_lossy.go:*:*: moved to heap: recon
 internal/av1/encoder/keyframe_lossy.go:*:*: moved to heap: req

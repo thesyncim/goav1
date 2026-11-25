@@ -70,6 +70,47 @@ func (e *VideoEncoder) armSVTRC(rc RateControlConfig) {
 	e.cr.reset()
 }
 
+// SetTwoPass configures 2-pass VBR rate control (pass=1 collects FirstPassStats;
+// pass=2 allocates frame Q from stats toward targetBitrate @ framerate).
+func (e *VideoEncoder) SetTwoPass(pass int, stats *FirstPassStats, targetBitrate, framerate int, minQ, maxQ uint8) error {
+	if e == nil {
+		return fmt.Errorf("encoder: nil video encoder")
+	}
+	switch pass {
+	case 0:
+		e.twoPass = twoPassState{}
+		return nil
+	case 1:
+		e.rcEnabled = false
+		e.crfEnabled = false
+		e.twoPass.initPass1()
+		return nil
+	case 2:
+		if stats == nil || len(stats.Frames) == 0 {
+			return fmt.Errorf("encoder: 2-pass pass=2 requires non-empty FirstPassStats")
+		}
+		if targetBitrate <= 0 || framerate <= 0 {
+			return fmt.Errorf("encoder: 2-pass pass=2 requires positive TargetBitrate and Framerate")
+		}
+		e.rcEnabled = false
+		e.crfEnabled = false
+		e.twoPass.initPass2(*stats, targetBitrate, framerate, minQ, maxQ)
+		return nil
+	default:
+		return fmt.Errorf("encoder: Pass must be 0, 1, or 2, got %d", pass)
+	}
+}
+
+// FirstPassStats returns the complexity statistics collected during pass 1.
+func (e *VideoEncoder) FirstPassStats() FirstPassStats {
+	if e == nil {
+		return FirstPassStats{}
+	}
+	out := e.twoPass.stats
+	out.Frames = append([]FirstPassFrameStats(nil), e.twoPass.stats.Frames...)
+	return out
+}
+
 // SetCRF switches future frames to Constant Rate Factor (CRF) encoding on the
 // standard AV1 1..63 quality scale (lower = higher quality). CRF adapts each
 // frame's quantizer from temporal layer hierarchy and HME motion/complexity.
@@ -144,6 +185,10 @@ func (e *VideoEncoder) svtRCHierLevels() int {
 // rcKeyQ picks a keyframe's qindex (the fixed q without rate control).
 func (e *VideoEncoder) rcKeyQ(width, height int, screen bool) uint8 {
 	e.svtCurOn = false
+	if e.twoPass.pass == 2 {
+		e.qIndex = e.twoPass.pickPass2Q(true)
+		return e.qIndex
+	}
 	if e.crfEnabled {
 		q := max(min(int(e.crfValue)*4-12, 255), 1)
 		e.qIndex = uint8(q)
@@ -173,6 +218,10 @@ func (e *VideoEncoder) rcKeyQ(width, height int, screen bool) uint8 {
 // ref names the reference slot the frame predicts from.
 func (e *VideoEncoder) rcInterQ(temporalID uint8, ref int, frameOffset int, width, height int, screen bool) uint8 {
 	e.svtCurOn = false
+	if e.twoPass.pass == 2 {
+		e.qIndex = e.twoPass.pickPass2Q(false)
+		return e.qIndex
+	}
 	if e.crfEnabled {
 		q := int(e.crfValue) * 4
 		switch temporalID {
@@ -228,6 +277,20 @@ func (e *VideoEncoder) rcInterQ(temporalID uint8, ref int, frameOffset int, widt
 // rcUpdate feeds the coded frame's size back (svt_av1_rc_postencode_update)
 // and records the picture in the reference slots it refreshed.
 func (e *VideoEncoder) rcUpdate(frameBits int, temporalID uint8) {
+	if e.twoPass.pass == 1 {
+		var cost uint64
+		if e.hme.fme.valid {
+			for _, d := range e.hme.fme.me8x8Dist {
+				cost += d
+			}
+		}
+		e.twoPass.recordPass1(e.frameIndex == 1, cost, frameBits/8)
+		return
+	}
+	if e.twoPass.pass == 2 {
+		e.twoPass.updatePass2(frameBits / 8)
+		return
+	}
 	if !e.rcEnabled || !e.svtCurOn {
 		return
 	}
