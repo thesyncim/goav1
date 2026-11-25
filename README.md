@@ -71,11 +71,17 @@ and `WithErrorConcealment`. See the executable [decoder examples](example_decode
 
 `VideoEncoder` encodes same-sized 8-bit 4:2:0, native 4:2:2 (Profile 2), or
 native 4:4:4 (Profile 1) streams, as well as bit-exact 8-bit lossless streams
-(`Lossless: true`). Set `QIndex` for fixed quality, or `TargetBitrate` and
-`Framerate` for CBR rate control, with optional `Color` description,
-`Metadata` (HDR CLL, HDR MDCV, ITU-T T.35, Timecode), `KeyFrameInterval`, and
-runtime `SetQIndex` / `SetBitrate`. For native 10/12-bit or monochrome streams,
-use `HighBitDepthVideoEncoder`, `MonochromeVideoEncoder`, or
+(`Lossless: true`). Rate control supports fixed quality (`QIndex`), Constant
+Rate Factor (`CRF`), 1-pass CBR and VBR (`TargetBitrate`, `Framerate`, `VBR`),
+and 2-pass VBR (`Pass: 1` / `Pass: 2`, `FirstPassStats`), plus lookahead
+B-frame / hidden Alt-Ref pyramids (`BFrames`, `EncodeBatch`, `Flush`),
+automatic film-grain modeling and signaling (`FilmGrainLevel`,
+`EstimateFilmGrainParams`, `SetFilmGrain`), horizontal Super-Resolution
+(`EncodeI420SuperResKeyframe`), in-loop Wiener Restoration
+(`EncodeI420LoopRestorationKeyframe`), `Color` description, `Metadata` (HDR
+CLL, HDR MDCV, ITU-T T.35, Timecode), `KeyFrameInterval`, and runtime
+`SetQIndex` / `SetBitrate`. For native 10/12-bit or monochrome streams, use
+`HighBitDepthVideoEncoder`, `MonochromeVideoEncoder`, or
 `HighBitDepthMonochromeVideoEncoder`.
 
 ~~~go
@@ -147,11 +153,13 @@ reusable `Decoder`, `VideoEncoder`, and `RTCEncoder` values when finished.
   `HighBitDepthMonochromeVideoEncoder`, `KeyframeEncoder`, `RTCEncoder`)
   targeting both realtime/WebRTC and general-purpose AV1 encoding — covering
   8/10/12-bit 4:2:0, 4:2:2, 4:4:4, monochrome, and bit-exact lossless
-  keyframes/streams, fixed-quality CQP and CBR rate control, temporal/spatial
-  SVC, screen-content palette coding, CDEF, loop filter, cyclic-refresh AQ,
-  color description & `OBU_METADATA` emission, and WebRTC dependency
-  descriptors (with VBR/CRF, B-frame/alt-ref lookahead pyramids, and loop
-  restoration search under active expansion).
+  keyframes/streams; CQP, CRF, 1-pass CBR/VBR, and 2-pass VBR rate control;
+  lookahead B-frame / hidden Alt-Ref pyramids (`EncodeBatch`/`Flush`);
+  temporal/spatial SVC; screen-content palette coding; horizontal
+  Super-Resolution; in-loop Wiener Restoration search & coding; Global Motion
+  translation estimation; automatic film-grain modeling & signaling; CDEF,
+  loop filter, and cyclic-refresh AQ; color description & `OBU_METADATA`
+  emission; and WebRTC dependency descriptors.
 - **Transport & Framing**: AV1 RTP payload packetization/depacketization, RFC
   8285 header extensions, RFC 4588 RTX, RTCP feedback (NACK, PLI, FIR, REMB,
   Transport-CC, AV1 layer refresh), packet sequencing, AV1 SDP capability

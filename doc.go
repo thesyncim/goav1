@@ -16,9 +16,14 @@
 // IVF files.
 //
 // Encoding: NewVideoEncoder encodes 8-bit 4:2:0, native 4:2:2 (Profile 2),
-// native 4:4:4 (Profile 1), and bit-exact lossless streams with fixed-quality
-// CQP or CBR rate control, ColorInfo and OBU_METADATA signaling, periodic
-// keyframes, and runtime SetQIndex/SetBitrate. NewHighBitDepthVideoEncoder,
+// native 4:4:4 (Profile 1), and bit-exact lossless streams with CQP, CRF,
+// 1-pass CBR/VBR, and 2-pass VBR rate control, lookahead B-frame / hidden
+// Alt-Ref pyramids (BFrames, EncodeBatch, Flush), automatic film-grain modeling
+// and signaling (FilmGrainLevel, EstimateFilmGrainParams, SetFilmGrain),
+// ColorInfo and OBU_METADATA signaling, periodic keyframes, and runtime
+// SetQIndex/SetBitrate. EncodeI420SuperResKeyframe and
+// EncodeI420LoopRestorationKeyframe provide horizontal Super-Resolution and
+// in-loop Wiener Restoration keyframes. NewHighBitDepthVideoEncoder,
 // NewMonochromeVideoEncoder, and NewHighBitDepthMonochromeVideoEncoder provide
 // native 10/12-bit and monochrome streaming encoders. NewRTCEncoderWithConfig
 // adds WebRTC temporal/spatial scalability and RTP dependency descriptors.
