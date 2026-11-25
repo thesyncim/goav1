@@ -189,7 +189,7 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 			sse, variance, ok = st.predStats.lookup(st.predYKey.mv, st.predYKey.filters)
 		}
 		if !ok {
-			sse, variance = realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
+			sse, variance = realtimeInterResidualSSEVariance(src.Y, st.predYView, src.YStride, st.predYStride, lumaPX, lumaPY, bw, bh)
 		}
 		// The TX detectors and the bypass read the MDS0 winner's
 		// regular-filter statistics (luma_fast_dist, full_dist = its vf sse),
@@ -230,18 +230,15 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 		st.svtDistShift = lightPath
 		st.setRDOQArm(0)
 		lumaZero := true
+		needClearLuma, needClearU, needClearV := false, false, false
 		if lumaBypass {
 			st.txbEOB[0] = 0
 			clear(st.leafEOB[:])
-			if txPlan.Variable() {
-				clear(st.lumaQ2[:bw*bh])
-			} else {
-				clear(st.lumaQ[:bw*bh])
-			}
+			needClearLuma = true
 		} else if txPlan.Variable() {
 			leafArea := txPlan.leafSize * txPlan.leafSize
 			if lerr := txPlan.ForEachLeaf(func(i, dx, dy int) error {
-				eob := st.prepareInterTXBDecide(src.Y, st.predY[dy*bw+dx:], bw, src.YStride, lumaPX+dx, lumaPY+dy, txPlan.leafSize, txPlan.leafSize, st.yQuant, st.lumaQ2[i*leafArea:(i+1)*leafArea])
+				eob := st.prepareInterTXBDecide(src.Y, st.predYView[dy*st.predYStride+dx:], st.predYStride, src.YStride, lumaPX+dx, lumaPY+dy, txPlan.leafSize, txPlan.leafSize, st.yQuant, st.lumaQ2[i*leafArea:(i+1)*leafArea])
 				st.leafEOB[i] = eob
 				if eob != 0 {
 					lumaZero = false
@@ -254,10 +251,10 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 			// The 8x8 TX-type trial (chooseInter8x8TXType) prices its
 			// alternatives against this block's absolute DCT distortion, so
 			// the luma terms stay complete here.
-			lumaZero = st.prepareInterTXB(src.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh])
+			lumaZero = st.prepareInterTXB(src.Y, st.predYView, st.predYStride, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh])
 			st.txbEOB[0] = zeroEOB(lumaZero)
 		} else {
-			st.txbEOB[0] = st.prepareInterTXBDecide(src.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh])
+			st.txbEOB[0] = st.prepareInterTXBDecide(src.Y, st.predYView, st.predYStride, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh])
 			lumaZero = st.txbEOB[0] == 0
 		}
 		if hasChroma {
@@ -292,15 +289,15 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 				}
 				if comp == lpd1ComponentChroma || comp == lpd1ComponentChromaCb {
 					st.pfN4 = n4U
-					st.txbEOB[1] = st.prepareInterTXBDecide(src.U, st.predU[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.uQuant, st.uQ[:cbw*cbh])
+					st.txbEOB[1] = st.prepareInterTXBDecide(src.U, st.predUView, st.predUStride, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.uQuant, st.uQ[:cbw*cbh])
 				} else {
-					clear(st.uQ[:cbw*cbh])
+					needClearU = true
 				}
 				if comp == lpd1ComponentChroma || comp == lpd1ComponentChromaCr {
 					st.pfN4 = n4V
-					st.txbEOB[2] = st.prepareInterTXBDecide(src.V, st.predV[:cbw*cbh], cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.vQuant, st.vQ[:cbw*cbh])
+					st.txbEOB[2] = st.prepareInterTXBDecide(src.V, st.predVView, st.predVStride, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, st.vQuant, st.vQ[:cbw*cbh])
 				} else {
-					clear(st.vQ[:cbw*cbh])
+					needClearV = true
 				}
 				st.pfN4 = false
 				skip = lumaZero && st.txbEOB[1] == 0 && st.txbEOB[2] == 0
@@ -309,6 +306,21 @@ func (st *lossyEncodeState) decideInterTXBlock(src, refPlanes SourceFrame420, de
 			}
 		} else {
 			skip = lumaZero
+		}
+		if !skip {
+			if needClearLuma {
+				if txPlan.Variable() {
+					clear(st.lumaQ2[:bw*bh])
+				} else {
+					clear(st.lumaQ[:bw*bh])
+				}
+			}
+			if needClearU {
+				clear(st.uQ[:cbw*cbh])
+			}
+			if needClearV {
+				clear(st.vQ[:cbw*cbh])
+			}
 		}
 		st.rdoqArm = 0
 		st.txbEOBLive = true
@@ -575,14 +587,14 @@ func (st *lossyEncodeState) lpd1ChromaComplexityPred(src SourceFrame420, lumaPX,
 	}
 	rows := cbh >> shift
 	step := 1 << shift
-	yDist := lpd1SampledSAD(src.Y, st.predY[:], lumaPY*src.YStride+lumaPX, 0, src.YStride, bw, cbw, rows, step)
+	yDist := lpd1SampledSAD(src.Y, st.predYView, lumaPY*src.YStride+lumaPX, 0, src.YStride, st.predYStride, cbw, rows, step)
 	srcOff := chromaPY*src.ChromaStride + chromaPX
 	cbDist, crDist := 0, 0
 	if cur == lpd1ComponentLuma || cur == lpd1ComponentChromaCr {
-		cbDist = lpd1SampledSAD(src.U, st.predU[:], srcOff, 0, src.ChromaStride, cbw, cbw, rows, step)
+		cbDist = lpd1SampledSAD(src.U, st.predUView, srcOff, 0, src.ChromaStride, st.predUStride, cbw, rows, step)
 	}
 	if cur == lpd1ComponentLuma || cur == lpd1ComponentChromaCb {
-		crDist = lpd1SampledSAD(src.V, st.predV[:], srcOff, 0, src.ChromaStride, cbw, cbw, rows, step)
+		crDist = lpd1SampledSAD(src.V, st.predVView, srcOff, 0, src.ChromaStride, st.predVStride, cbw, rows, step)
 	}
 	yDist <<= 1
 	switch {

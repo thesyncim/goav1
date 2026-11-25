@@ -334,9 +334,11 @@ func svtPickCDEFFromQP(qIndex uint8, intra bool) (y, uv uint8) {
 // cdefSearcher owns the frame-level CDEF search state (pcs->mse_seg,
 // skip_cdef_seg, cdef_dir_data) and per-block scratch, reused across frames.
 type cdefSearcher struct {
-	mse    [2][][cdefTotalStrengths]uint64
-	skipFB []bool
-	fbIdx  []uint8
+	mse     [2][][cdefTotalStrengths]uint64
+	skipFB  []bool
+	fbIdx   []uint8
+	dirGrid []cdef.DirectionGrid
+	varGrid []cdef.VarianceGrid
 
 	// cdefFBScratch is lane 0's (the calling goroutine's) scratch.
 	cdefFBScratch
@@ -393,8 +395,14 @@ func (s *cdefSearcher) bind(g cdefFrameGeometry) {
 			s.sbMSE[p] = make([]*[cdefTotalStrengths]uint64, n)
 		}
 	}
+	if cap(s.dirGrid) < n {
+		s.dirGrid = make([]cdef.DirectionGrid, n)
+		s.varGrid = make([]cdef.VarianceGrid, n)
+	}
 	s.skipFB = s.skipFB[:n]
 	s.fbIdx = s.fbIdx[:n]
+	s.dirGrid = s.dirGrid[:n]
+	s.varGrid = s.varGrid[:n]
 }
 
 // computeCDEFList is svt_sb_compute_cdef_list for a 64x64 filter block: the
@@ -504,8 +512,6 @@ type cdefFBScratch struct {
 	dlist  [cdefFB * cdefFB / 64]cdef.BlockPosition
 	trials [cdefTotalStrengths]cdef.SearchTrial
 	sse    [cdefTotalStrengths]uint64
-	dir    cdef.DirectionGrid
-	vari   cdef.VarianceGrid
 }
 
 // cdefSearchJob is the frame's search input, shared read-only by the lanes.
@@ -685,16 +691,16 @@ func (s *cdefSearcher) searchRow(sc *cdefFBScratch, fbr int) {
 			fstride := cdefFB >> dec
 			srcPlane := j.srcPlanes[pli][y0*j.srcStrides[pli]+x0:]
 			reconPlane := j.planes[pli][y0*j.strides[pli]+x0:]
+			dirGrid := &s.dirGrid[fb]
+			varGrid := &s.varGrid[fb]
 			if pli == 0 {
-				// svt_cdef_filter_fb's cdef_find_dir on the first luma trial
-				// with a nonzero strength; the grids then serve every luma and
-				// chroma trial of the block.
-				sc.copyFB(reconPlane, j.strides[pli], fstride, w, h, 1)
-				_ = cdef.FilterFrameBlocksU8Trusted(sc.tmp[:], fstride, nil, 0, dlist, &sc.dir, &sc.vari, cdef.FrameFilterParams{
+				// Direction search reads the pre-CDEF luma plane directly and
+				// saves the grids for every trial and for the frame apply pass.
+				_ = cdef.FilterFrameBlocksU8Trusted(reconPlane, j.strides[pli], nil, 0, dlist, dirGrid, varGrid, cdef.FrameFilterParams{
 					XDec: 0, YDec: 0, Plane: cdef.PlaneY, Damping: j.damping,
 				})
 			}
-			if pli == 0 && sc.searchLumaBatched(srcPlane, j.srcStrides[0], dlist, j.fsY[:total], j.damping, ss, &s.mse[0][fb]) {
+			if pli == 0 && sc.searchLumaBatched(srcPlane, j.srcStrides[0], dlist, dirGrid, varGrid, j.fsY[:total], j.damping, ss, &s.mse[0][fb]) {
 				continue
 			}
 			for gi := 0; gi < total; gi++ {
@@ -719,7 +725,7 @@ func (s *cdefSearcher) searchRow(sc *cdefFBScratch, fbr int) {
 					// svt_cdef_filter_fb with the subsampling factor: only the
 					// measured rows are copied and filtered.
 					sc.copyFB(reconPlane, j.strides[pli], fstride, w, h, ss)
-					_ = cdef.FilterBlocksU8SubsampledTrusted(sc.tmp[:], fstride, sc.in[:], cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, dlist, &sc.dir, &sc.vari, cdef.FrameFilterParams{
+					_ = cdef.FilterBlocksU8SubsampledTrusted(sc.tmp[:], fstride, sc.in[:], cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, dlist, dirGrid, varGrid, cdef.FrameFilterParams{
 						XDec: uint8(dec), YDec: uint8(dec), Plane: cdef.Plane(pli),
 						Level: pri, SecondaryStrength: sec, Damping: j.damping,
 					}, ss)
@@ -742,7 +748,7 @@ func (s *cdefSearcher) searchRow(sc *cdefFBScratch, fbr int) {
 // batched pass (cdef.SearchBlocksU8Trusted): per trial, the same
 // filter-then-measure sum the per-trial loop computes. It returns false when
 // the build has no batched kernel, in which case the caller runs that loop.
-func (s *cdefFBScratch) searchLumaBatched(srcPlane []byte, srcStride int, dlist []cdef.BlockPosition, fsY []int8, damping uint8, ss int, mse *[cdefTotalStrengths]uint64) bool {
+func (s *cdefFBScratch) searchLumaBatched(srcPlane []byte, srcStride int, dlist []cdef.BlockPosition, dir *cdef.DirectionGrid, vari *cdef.VarianceGrid, fsY []int8, damping uint8, ss int, mse *[cdefTotalStrengths]uint64) bool {
 	total := len(fsY)
 	trials := s.trials[:total]
 	for gi, packed := range fsY {
@@ -753,7 +759,7 @@ func (s *cdefFBScratch) searchLumaBatched(srcPlane []byte, srcStride int, dlist 
 		trials[gi] = cdef.SearchTrial{Primary: uint8(packed) / cdefSecStrengths, Secondary: sec}
 	}
 	if !cdef.SearchBlocksU8Trusted(srcPlane, srcStride, s.in[:], cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder,
-		dlist, &s.dir, &s.vari, int(damping), trials, ss, s.sse[:total]) {
+		dlist, dir, vari, int(damping), trials, ss, s.sse[:total]) {
 		return false
 	}
 	for gi := range fsY {

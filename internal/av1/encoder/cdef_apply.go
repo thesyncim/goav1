@@ -42,13 +42,14 @@ type cdefApplier struct {
 	nsMasks threading.FrameWorkLoopFilterMasks
 	idxRows int
 
-	samples   [3][]uint16
-	dirGrid   []cdefDirectionGrid
-	varGrid   []cdefVarianceGrid
-	bandIn    [][]uint16
-	bandUnit  [][]uint16
-	bandLine  [cdefApplyBands][3][]uint16
-	bandBound [cdefApplyBands]decoder.FrameWorkCDEFPostFilterU8BandBoundary
+	samples               [3][]uint16
+	dirGrid               []cdefDirectionGrid
+	varGrid               []cdefVarianceGrid
+	directionsPrecomputed bool
+	bandIn                [][]uint16
+	bandUnit              [][]uint16
+	bandBytes             [cdefApplyBands][3][]byte
+	bandBound             [cdefApplyBands]decoder.FrameWorkCDEFPostFilterU8BandBoundary
 	unitRows  int
 	seqHeader parser.SequenceHeader
 	frameSize parser.FrameSize
@@ -79,7 +80,7 @@ func (a *cdefApplier) startWorkers() {
 			defer a.wg.Done()
 			for j := range a.work {
 				band := a.jobReq
-				band.SampleScratch = a.bandLine[b]
+				band.SampleBytes = a.bandBytes[b]
 				band.InputScratch = a.bandIn[b]
 				band.UnitDstScratch = a.bandUnit[b]
 				_, a.errs[j.slot] = a.jobCtx.ApplyCDEFPostFilterUnitRowsU8(band, a.bandBound[j.slot], j.rowStart, j.rowEnd)
@@ -167,7 +168,8 @@ func (a *cdefApplier) init(width, height int, cdefParams parser.CDEFParams) erro
 		a.bandIn = make([][]uint16, cdefApplyBands)
 		a.bandUnit = make([][]uint16, cdefApplyBands)
 	}
-	planeWidths := [3]int{width, width / 2, width / 2}
+	alignedW := (width + 7) &^ 7
+	planeWidths := [3]int{alignedW, alignedW / 2, alignedW / 2}
 	for b := range a.bandIn {
 		if len(a.bandIn[b]) < size.Input {
 			a.bandIn[b] = make([]uint16, size.Input)
@@ -176,9 +178,9 @@ func (a *cdefApplier) init(width, height int, cdefParams parser.CDEFParams) erro
 			a.bandUnit[b] = make([]uint16, size.UnitDst)
 		}
 		for plane, planeWidth := range planeWidths {
-			lineNeed := 2 * planeWidth
-			if len(a.bandLine[b][plane]) < lineNeed {
-				a.bandLine[b][plane] = make([]uint16, lineNeed)
+			byteNeed := decoder.CDEFU8LineScratchLen(planeWidth)
+			if len(a.bandBytes[b][plane]) < byteNeed {
+				a.bandBytes[b][plane] = make([]byte, byteNeed)
 			}
 			boundaryNeed := cdef.VerticalBorder * planeWidth
 			if len(a.bandBound[b].Top[plane]) < boundaryNeed {
@@ -294,11 +296,14 @@ func (a *cdefApplier) bindApplyContext(recon *SourceFrame420, cdefParams parser.
 		a.jobCtx.LoopFilterMasks = &a.nsMasks
 	}
 	a.jobCtx = a.jobCtx.WithCompletedPostFilters(decoder.FrameWorkPostFilterLoopFilter)
+	precomputed := a.directionsPrecomputed
+	a.directionsPrecomputed = false
 	a.jobReq = decoder.FrameWorkCDEFPostFilterRequest{
-		IndexMap:      a.idxMap,
-		SampleScratch: a.samples,
-		DirectionGrid: a.dirGrid,
-		VarianceGrid:  a.varGrid,
+		IndexMap:              a.idxMap,
+		SampleScratch:         a.samples,
+		DirectionGrid:         a.dirGrid,
+		VarianceGrid:          a.varGrid,
+		DirectionsPrecomputed: precomputed,
 	}
 	if loadSnapshot {
 		size, err := a.jobCtx.CDEFPostFilterScratchLen()
@@ -374,9 +379,21 @@ func (a *cdefApplier) applySerial(recon *SourceFrame420, cdefParams parser.CDEFP
 		return err
 	}
 	req := a.jobReq
-	req.SampleScratch = a.bandLine[0]
+	req.SampleBytes = a.bandBytes[0]
 	req.InputScratch = a.bandIn[0]
 	req.UnitDstScratch = a.bandUnit[0]
 	_, err = a.jobCtx.ApplyCDEFPostFilterUnitRowsU8(req, a.bandBound[0], 0, a.unitRows)
 	return err
+}
+
+// takePrecomputedDirections swaps the searcher's freshly computed per-unit
+// direction/variance grids into the applier so the next apply skips luma
+// direction search without copying or aliasing the searcher's buffers.
+func (a *cdefApplier) takePrecomputedDirections(s *cdefSearcher) {
+	if s == nil || len(s.dirGrid) < a.idxCols*a.idxRows || len(s.varGrid) < a.idxCols*a.idxRows {
+		return
+	}
+	a.dirGrid, s.dirGrid = s.dirGrid, a.dirGrid
+	a.varGrid, s.varGrid = s.varGrid, a.varGrid
+	a.directionsPrecomputed = true
 }

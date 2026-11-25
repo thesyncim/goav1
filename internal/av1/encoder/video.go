@@ -1881,6 +1881,9 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		filtersOn = false
 		e.lazyCDEF = lazyCDEFPass{out: out, cdef: filterCDEF, idx: cdefIdx, pending: true}
 	}
+	if filtersOn && cdefPlan.search && svtRTCDeblockLevel(lfLevel) == 0 {
+		e.cdefApp.takePrecomputedDirections(&e.cdefSearch)
+	}
 	if filtersOn && !e.singleThread {
 		// The filters run behind the temporal-unit assembly and the next
 		// frame's source-only stages; everything reading the filtered

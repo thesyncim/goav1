@@ -329,15 +329,15 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 	}
 
 	var cdefIdx []uint8
+	var cdefSearcherRef *cdefSearcher
 	if cdefPlan.on {
-		var searcher *cdefSearcher
 		if tileOpts.stream != nil {
-			searcher = &tileOpts.stream.cdefSearch
+			cdefSearcherRef = &tileOpts.stream.cdefSearch
 		} else {
-			searcher = new(cdefSearcher)
+			cdefSearcherRef = new(cdefSearcher)
 		}
 		cdefPlan.lambda = svtCDEFFullLambda(qIndex, true, false, 150)
-		header.CDEF, cdefIdx = cdefPlan.decide(searcher, &src, recon, lfMap, qIndex)
+		header.CDEF, cdefIdx = cdefPlan.decide(cdefSearcherRef, &src, recon, lfMap, qIndex)
 		if cdefPlan.search {
 			err := logs.replay(payloads, coders, header.Tile, miCols, src.Height, cdefIdx, header.CDEF.Bits)
 			logs.disarm(coders)
@@ -368,6 +368,8 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 			if err := applyLF(recon, lfParams); err != nil {
 				return nil, SourceFrame420{}, fmt.Errorf("loop filter apply: %w", err)
 			}
+		} else if cdefPlan.search {
+			cdefApp.takePrecomputedDirections(cdefSearcherRef)
 		}
 		if err := applyCDEF(recon, cdefParserParams(header.CDEF), &lf.filtMap, cdefIdx); err != nil {
 			return nil, SourceFrame420{}, fmt.Errorf("cdef apply: %w", err)
@@ -581,6 +583,14 @@ type lossyEncodeState struct {
 	invScratch       []int32
 	afterSkipInter   func() error
 	afterSkipIntra   func() error
+	// Active inter prediction views (either st.predY/U/V or a zero-copy
+	// direct slice into an in-bounds integer-MV reference plane).
+	predYView   []byte
+	predUView   []byte
+	predVView   []byte
+	predYStride int
+	predUStride int
+	predVStride int
 	// The 16-bit reference planes of the motion-compensated prediction
 	// scratch (predY and its siblings below).
 	refY16Bytes    []byte

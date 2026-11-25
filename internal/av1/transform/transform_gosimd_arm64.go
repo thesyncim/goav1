@@ -17,10 +17,11 @@ import (
 // positive. Splitting the rounding bit from the shifted value avoids overflow
 // in x + (1 << (n-1)).
 func roundShiftNarrowInt32x4ToInt16x8(lo, hi archsimd.Int32x4, shift uint8) archsimd.Int16x8 {
-	shift64 := uint64(shift)
+	shN := archsimd.BroadcastInt32x4(-int32(shift))
+	shNm1 := archsimd.BroadcastInt32x4(-int32(shift - 1))
 	one := archsimd.BroadcastInt32x4(1)
-	lo16 := lo.ShiftAllRight(shift64).Add(lo.ShiftAllRight(shift64 - 1).And(one)).SaturateToInt16()
-	hi16 := hi.ShiftAllRight(shift64).Add(hi.ShiftAllRight(shift64 - 1).And(one)).SaturateToInt16()
+	lo16 := lo.Shift(shN).Add(lo.Shift(shNm1).And(one)).SaturateToInt16()
+	hi16 := hi.Shift(shN).Add(hi.Shift(shNm1).And(one)).SaturateToInt16()
 	return lo16.ToBits().ReshapeToUint64s().InterleaveLo(hi16.ToBits().ReshapeToUint64s()).ReshapeToUint16s().BitsToInt16()
 }
 
@@ -47,11 +48,12 @@ func subInt32x8Pair(x, y int32x8Pair) int32x8Pair {
 }
 
 func roundShiftInt32x8Pair(x int32x8Pair, shift uint8) int32x8Pair {
-	n := uint64(shift)
+	shN := archsimd.BroadcastInt32x4(-int32(shift))
+	shNm1 := archsimd.BroadcastInt32x4(-int32(shift - 1))
 	one := archsimd.BroadcastInt32x4(1)
 	return int32x8Pair{
-		lo: x.lo.ShiftAllRight(n).Add(x.lo.ShiftAllRight(n - 1).And(one)),
-		hi: x.hi.ShiftAllRight(n).Add(x.hi.ShiftAllRight(n - 1).And(one)),
+		lo: x.lo.Shift(shN).Add(x.lo.Shift(shNm1).And(one)),
+		hi: x.hi.Shift(shN).Add(x.hi.Shift(shNm1).And(one)),
 	}
 }
 
@@ -2554,8 +2556,9 @@ func adstInt64AsInt16(v archsimd.Int64x2) archsimd.Int16x8 {
 func idtxStoreInt16x8ToInt32(dst *[8]int32, v archsimd.Int16x8) {
 	// Scale after sign extension so every int16 residual preserves its full
 	// public value range before being promoted to the coefficient type.
-	lo := v.ExtendLo4ToInt32().ShiftAllLeft(3)
-	hi := v.HiToLo().ExtendLo4ToInt32().ShiftAllLeft(3)
+	sh3 := archsimd.BroadcastInt32x4(3)
+	lo := v.ExtendLo4ToInt32().Shift(sh3)
+	hi := v.HiToLo().ExtendLo4ToInt32().Shift(sh3)
 	lo.StoreArray((*[4]int32)(dst[0:4]))
 	hi.StoreArray((*[4]int32)(dst[4:8]))
 }
@@ -2659,6 +2662,7 @@ func stageTransposeClamp(scratch []int32, width int, coeff []int32, coeffStride 
 		k.preHi = archsimd.BroadcastInt32x4(1 << 22)
 		k.k181 = archsimd.BroadcastInt32x4(181)
 		k.r128 = archsimd.BroadcastInt32x4(128)
+		k.sh8 = archsimd.BroadcastInt32x4(-8)
 	}
 	if rows < 4 {
 		for c := 0; c < colsBlk; c += 4 {
@@ -2704,7 +2708,7 @@ func stageTransposeClamp(scratch []int32, width int, coeff []int32, coeffStride 
 
 // stageClampKernel holds the broadcast clamp (and rect2 scale) constants.
 type stageClampKernel struct {
-	lo, hi, preLo, preHi, k181, r128 archsimd.Int32x4
+	lo, hi, preLo, preHi, k181, r128, sh8 archsimd.Int32x4
 }
 
 // tile loads the 4x4 tile whose first column starts at coeff[base] (columns
@@ -2716,10 +2720,10 @@ func (k *stageClampKernel) tile(coeff []int32, base int, coeffStride int, rect2 
 	v2 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base+2*coeffStride:]))
 	v3 := archsimd.LoadInt32x4Array((*[4]int32)(coeff[base+3*coeffStride:]))
 	if rect2 {
-		v0 = v0.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).ShiftAllRight(8)
-		v1 = v1.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).ShiftAllRight(8)
-		v2 = v2.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).ShiftAllRight(8)
-		v3 = v3.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).ShiftAllRight(8)
+		v0 = v0.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).Shift(k.sh8)
+		v1 = v1.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).Shift(k.sh8)
+		v2 = v2.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).Shift(k.sh8)
+		v3 = v3.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).Shift(k.sh8)
 	}
 	v0 = v0.Max(k.lo).Min(k.hi)
 	v1 = v1.Max(k.lo).Min(k.hi)
@@ -6773,7 +6777,7 @@ const itxRect2Pre = 1 << 22
 
 // itxRect2Consts holds the broadcast constants of the rect2 narrowing load.
 type itxRect2Consts struct {
-	preLo, preHi, k181, r128 archsimd.Int32x4
+	preLo, preHi, k181, r128, sh8 archsimd.Int32x4
 }
 
 func newItxRect2Consts() itxRect2Consts {
@@ -6782,6 +6786,7 @@ func newItxRect2Consts() itxRect2Consts {
 		preHi: archsimd.BroadcastInt32x4(itxRect2Pre),
 		k181:  archsimd.BroadcastInt32x4(181),
 		r128:  archsimd.BroadcastInt32x4(128),
+		sh8:   archsimd.BroadcastInt32x4(-8),
 	}
 }
 
@@ -6791,11 +6796,9 @@ func newItxRect2Consts() itxRect2Consts {
 func itx16LoadNarrowRect2(p []int32, k *itxRect2Consts) archsimd.Int16x8 {
 	lo := archsimd.LoadInt32x4Array((*[4]int32)(p))
 	hi := archsimd.LoadInt32x4Array((*[4]int32)(p[4:]))
-	lo = lo.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).ShiftAllRight(8)
-	hi = hi.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).ShiftAllRight(8)
-	v := lo.SaturateToInt16().ToBits().ReshapeToUint64s().BitsToFloat64()
-	v = v.SetElem(1, hi.SaturateToInt16().ToBits().ReshapeToUint64s().BitsToFloat64().GetElem(0))
-	return v.ToBits().ReshapeToUint16s().BitsToInt16()
+	lo = lo.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).Shift(k.sh8)
+	hi = hi.Max(k.preLo).Min(k.preHi).MulAdd(k.k181, k.r128).Shift(k.sh8)
+	return lo.SaturateToInt16().ToBits().ReshapeToUint64s().InterleaveLo(hi.SaturateToInt16().ToBits().ReshapeToUint64s()).ReshapeToUint16s().BitsToInt16()
 }
 
 // itxRound2By1 is Round2(x, 1) on int16 lanes, (x >> 1) + (x & 1): exact and

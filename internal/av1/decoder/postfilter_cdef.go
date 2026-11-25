@@ -99,10 +99,11 @@ type FrameWorkCDEFPostFilterRequest struct {
 	// snapshot walk; banded and row-pipeline 8-bit applies require it.
 	SampleBytes    [3][]byte
 	DstScratch     [3][]uint16
-	DirectionGrid  []cdef.DirectionGrid
-	VarianceGrid   []cdef.VarianceGrid
-	InputScratch   []uint16
-	UnitDstScratch []uint16
+	DirectionGrid         []cdef.DirectionGrid
+	VarianceGrid          []cdef.VarianceGrid
+	DirectionsPrecomputed bool
+	InputScratch          []uint16
+	UnitDstScratch        []uint16
 }
 
 // FrameWorkCDEFPostFilterU8BandBoundary holds immutable pre-CDEF boundary rows
@@ -632,9 +633,9 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEF
 			var planeUnits, planeBlocks uint32
 			var err error
 			if len(req.SampleBytes[plane]) >= CDEFU8LineScratchLen(planeFrame.Width) {
-				planeUnits, planeBlocks, err = frameWorkApplyCDEFPlaneRowsU8(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleBytes[plane], boundary, req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, chromaFiltering, unitMasks)
+				planeUnits, planeBlocks, err = frameWorkApplyCDEFPlaneRowsU8Mode(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleBytes[plane], boundary, req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, chromaFiltering, req.DirectionsPrecomputed, unitMasks)
 			} else {
-				planeUnits, planeBlocks, err = frameWorkApplyCDEFPlaneRowsU8Packed(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleScratch[plane], boundary, req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, chromaFiltering, unitMasks)
+				planeUnits, planeBlocks, err = frameWorkApplyCDEFPlaneRowsU8Packed(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleScratch[plane], boundary, req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, chromaFiltering, req.DirectionsPrecomputed, unitMasks)
 			}
 			if err != nil {
 				return FrameWorkCDEFPostFilterResult{}, err
@@ -714,7 +715,7 @@ func (ctx *FrameWorkPostFilterContext) validateCDEFPostFilterRequest(req FrameWo
 	}
 	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
 	unitCount := cols * rows
-	if chromaFiltering && (len(req.DirectionGrid) < unitCount || len(req.VarianceGrid) < unitCount) {
+	if (chromaFiltering || req.DirectionsPrecomputed) && (len(req.DirectionGrid) < unitCount || len(req.VarianceGrid) < unitCount) {
 		return frame.ErrShortBuffer
 	}
 	coeffShift := int(ctx.Output.Format.BitDepth) - 8
@@ -786,7 +787,7 @@ func (ctx *FrameWorkPostFilterContext) validateCDEFPostFilterU8BandRequest(req F
 	}
 	chromaFiltering := !ctx.Output.Format.MonoChrome && frameWorkCDEFChromaHasFiltering(ctx.Event.CDEF)
 	unitCount := cols * rows
-	if chromaFiltering && (len(req.DirectionGrid) < unitCount || len(req.VarianceGrid) < unitCount) {
+	if (chromaFiltering || req.DirectionsPrecomputed) && (len(req.DirectionGrid) < unitCount || len(req.VarianceGrid) < unitCount) {
 		return frame.ErrShortBuffer
 	}
 	if len(req.InputScratch) < cdef.InputBufferSize {

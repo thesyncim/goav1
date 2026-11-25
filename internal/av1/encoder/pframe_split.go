@@ -466,6 +466,9 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 	}
 	// Light-PD1: every block REGULAR (see the fused path).
 	blockFilters := motion.InterpFilters{}
+	st.predYView, st.predYStride = st.predY[:bw*bh], bw
+	st.predUView, st.predUStride = st.predU[:cbw*cbh], cbw
+	st.predVView, st.predVStride = st.predV[:cbw*cbh], cbw
 	// Materialize the three plane predictions, identical to the fused path.
 	if refs.Compound {
 		if err := predictCompoundInto(st.predY[:bw*bh], ref.Y, ref.YStride, golden.Y, golden.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, compoundMV[0], compoundMV[1], false, false, &st.mc.compBuf0, &st.mc.compBuf1, &st.mc.compScratch); err != nil {
@@ -496,16 +499,35 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 			}
 		} else {
 			if !mds0PredictorMatchesCodedFilters(mds0PredRetained, mv, blockFilters) {
-				if err := st.predictLuma(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, blockFilters); err != nil {
+				if mv.Row&7 == 0 && mv.Col&7 == 0 {
+					rx, ry := lumaPX+int(mv.Col>>3), lumaPY+int(mv.Row>>3)
+					if rx >= 0 && ry >= 0 && rx+bw <= src.Width && ry+bh <= src.Height {
+						st.predYView, st.predYStride = refPlanes.Y[ry*refPlanes.YStride+rx:], refPlanes.YStride
+					} else if err := st.predictLuma(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, blockFilters); err != nil {
+						return fmt.Errorf("predict luma: %w", err)
+					}
+				} else if err := st.predictLuma(st.predY[:bw*bh], refPlanes.Y, refPlanes.YStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, mv, blockFilters); err != nil {
 					return fmt.Errorf("predict luma: %w", err)
 				}
 			}
 			if hasChroma {
-				if err := st.predictPlane(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters); err != nil {
-					return fmt.Errorf("predict u: %w", err)
+				directChroma := false
+				if st.color.SubsamplingX && st.color.SubsamplingY && mv.Row&15 == 0 && mv.Col&15 == 0 {
+					cx, cy := chromaPX+int(mv.Col>>4), chromaPY+int(mv.Row>>4)
+					if cx >= 0 && cy >= 0 && cx+cbw <= chromaWidth && cy+cbh <= chromaHeight {
+						off := cy*refPlanes.ChromaStride + cx
+						st.predUView, st.predUStride = refPlanes.U[off:], refPlanes.ChromaStride
+						st.predVView, st.predVStride = refPlanes.V[off:], refPlanes.ChromaStride
+						directChroma = true
+					}
 				}
-				if err := st.predictPlane(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters); err != nil {
-					return fmt.Errorf("predict v: %w", err)
+				if !directChroma {
+					if err := st.predictPlane(st.predU[:cbw*cbh], refPlanes.U, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters); err != nil {
+						return fmt.Errorf("predict u: %w", err)
+					}
+					if err := st.predictPlane(st.predV[:cbw*cbh], refPlanes.V, refPlanes.ChromaStride, chromaWidth, chromaHeight, chromaPX, chromaPY, cbw, cbh, mv, st.color.SubsamplingX, st.color.SubsamplingY, blockFilters); err != nil {
+						return fmt.Errorf("predict v: %w", err)
+					}
 				}
 			}
 		}
@@ -596,10 +618,10 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 
 	if skip {
 		// Reconstruction is the motion-compensated prediction.
-		copyPredScratch(recon.Y, st.predY[:bw*bh], src.YStride, lumaPX, lumaPY, bw, bh)
+		copyPredToReconBlock(recon.Y, st.predYView, st.predYStride, src.YStride, lumaPX, lumaPY, bw, bh)
 		if hasChroma {
-			copyPredScratch(recon.U, st.predU[:cbw*cbh], src.ChromaStride, chromaPX, chromaPY, cbw, cbh)
-			copyPredScratch(recon.V, st.predV[:cbw*cbh], src.ChromaStride, chromaPX, chromaPY, cbw, cbh)
+			copyPredToReconBlock(recon.U, st.predUView, st.predUStride, src.ChromaStride, chromaPX, chromaPY, cbw, cbh)
+			copyPredToReconBlock(recon.V, st.predVView, st.predVStride, src.ChromaStride, chromaPX, chromaPY, cbw, cbh)
 		}
 		if st.decisionStats != nil {
 			st.decisionStats.noteInterBlock(block.Size, true, false, refs, modeResult, transform.TypeDCTDCT)
@@ -616,13 +638,13 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 		}
 		leafArea := txPlan.leafSize * txPlan.leafSize
 		if err := txPlan.ForEachLeaf(func(i, dx, dy int) error {
-			return st.reconRecordedTXB(rec, recon.Y, st.predY[dy*bw+dx:], bw, src.YStride, lumaPX+dx, lumaPY+dy, txPlan.leafSize, txPlan.leafSize, st.yQuant, st.lumaQ2[i*leafArea:(i+1)*leafArea], txPlan.leafTX, childScan, transform.TypeDCTDCT)
+			return st.reconRecordedTXB(rec, recon.Y, st.predYView[dy*st.predYStride+dx:], st.predYStride, src.YStride, lumaPX+dx, lumaPY+dy, txPlan.leafSize, txPlan.leafSize, st.yQuant, st.lumaQ2[i*leafArea:(i+1)*leafArea], txPlan.leafTX, childScan, transform.TypeDCTDCT)
 		}); err != nil {
 			return fmt.Errorf("luma realtime tx: %w", err)
 		}
 	} else {
 		lumaTX, lumaScan := st.interLumaTXAndScan(bw, bh)
-		if err := st.reconRecordedTXB(rec, recon.Y, st.predY[:bw*bh], bw, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh], lumaTX, lumaScan, txType); err != nil {
+		if err := st.reconRecordedTXB(rec, recon.Y, st.predYView, st.predYStride, src.YStride, lumaPX, lumaPY, bw, bh, st.yQuant, st.lumaQ[:bw*bh], lumaTX, lumaScan, txType); err != nil {
 			return fmt.Errorf("luma txb: %w", err)
 		}
 	}
@@ -636,13 +658,13 @@ func (st *lossyEncodeState) decidePBlock(src, ref SourceFrame420, golden *Source
 			chromaTxType = txType
 		}
 		for plane := 1; plane <= 2; plane++ {
-			rdata, pred, qc := recon.U, st.predU[:cbw*cbh], st.uQ[:cbw*cbh]
+			rdata, pred, pStride, qc := recon.U, st.predUView, st.predUStride, st.uQ[:cbw*cbh]
 			q := st.uQuant
 			if plane == 2 {
-				rdata, pred, qc = recon.V, st.predV[:cbw*cbh], st.vQ[:cbw*cbh]
+				rdata, pred, pStride, qc = recon.V, st.predVView, st.predVStride, st.vQ[:cbw*cbh]
 				q = st.vQuant
 			}
-			if err := st.reconRecordedTXB(rec, rdata, pred, cbw, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, q, qc, chromaTX, chromaScan, chromaTxType); err != nil {
+			if err := st.reconRecordedTXB(rec, rdata, pred, pStride, src.ChromaStride, chromaPX, chromaPY, cbw, cbh, q, qc, chromaTX, chromaScan, chromaTxType); err != nil {
 				return fmt.Errorf("chroma %d txb: %w", plane, err)
 			}
 		}
