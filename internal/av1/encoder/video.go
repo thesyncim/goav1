@@ -32,6 +32,7 @@ type VideoEncoder struct {
 	rcEnabled      bool
 	crfEnabled     bool
 	crfValue       uint8
+	twoPass        twoPassState
 	rcTargetBits   int
 	rcFramesPerSec int
 	rcMinQ, rcMaxQ uint8

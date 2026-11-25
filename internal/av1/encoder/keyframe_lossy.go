@@ -11,6 +11,7 @@ import (
 	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/prediction"
 	"github.com/thesyncim/goav1/internal/av1/quantize"
+	"github.com/thesyncim/goav1/internal/av1/superres"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 	"github.com/thesyncim/goav1/internal/av1/tile"
 	"github.com/thesyncim/goav1/internal/av1/transform"
@@ -1943,4 +1944,177 @@ func levelsAllZeroPureGo(q []int16) bool {
 		a0 |= v
 	}
 	return a0|a1|a2|a3 == 0
+}
+
+// EncodeSuperResKeyframe encodes src as an 8-bit 4:2:0 keyframe with AV1
+// horizontal Super-Resolution (denom in 9..16, coded width =
+// (upscaledWidth*8 + denom/2)/denom). It downscales src horizontally, codes
+// the reduced-width keyframe with EnableSuperRes=true, and upscales the
+// reconstruction with the exact AV1 superres filter so the returned recon
+// matches conformant decoders bit-for-bit at full upscaled dimensions.
+func EncodeSuperResKeyframe(src SourceFrame420, qIndex uint8, denom uint8) ([]byte, SourceFrame420, error) {
+	if denom < 9 || denom > 16 {
+		return nil, SourceFrame420{}, fmt.Errorf("encoder: superres denom must be in [9, 16], got %d", denom)
+	}
+	if qIndex == 0 {
+		return nil, SourceFrame420{}, fmt.Errorf("encoder: superres keyframe requires non-zero qindex")
+	}
+	if src.Width < 16 || src.Height < 16 || src.Width%8 != 0 || src.Height%8 != 0 {
+		return nil, SourceFrame420{}, fmt.Errorf("encoder: superres keyframe dimensions must be multiples of 8 and >= 16, got %dx%d", src.Width, src.Height)
+	}
+	codedW := int(superResCodedWidthEncoder(uint32(src.Width), denom))
+	if codedW < 16 {
+		return nil, SourceFrame420{}, fmt.Errorf("encoder: superres coded width %d is too small", codedW)
+	}
+	padCodedW := (codedW + 7) &^ 7
+	cw := padCodedW / 2
+	ch := src.Height / 2
+	down := SourceFrame420{
+		Y:            make([]byte, padCodedW*src.Height),
+		U:            make([]byte, cw*ch),
+		V:            make([]byte, cw*ch),
+		YStride:      padCodedW,
+		ChromaStride: cw,
+		Width:        padCodedW,
+		Height:       src.Height,
+	}
+	downsamplePlaneHoriz := func(dst []byte, dstStride, dw, dh int, srcPix []byte, srcStride, sw int) {
+		for y := 0; y < dh; y++ {
+			srow := srcPix[y*srcStride : y*srcStride+sw]
+			drow := dst[y*dstStride : y*dstStride+dstStride]
+			for x := 0; x < dw; x++ {
+				sx0 := x * sw / dw
+				sx1 := (x + 1) * sw / dw
+				if sx1 <= sx0 {
+					sx1 = sx0 + 1
+				}
+				if sx1 > sw {
+					sx1 = sw
+				}
+				sum := 0
+				for sx := sx0; sx < sx1; sx++ {
+					sum += int(srow[sx])
+				}
+				drow[x] = uint8((sum + (sx1-sx0)/2) / (sx1 - sx0))
+			}
+			for x := dw; x < dstStride; x++ {
+				drow[x] = drow[dw-1]
+			}
+		}
+	}
+	downsamplePlaneHoriz(down.Y, padCodedW, codedW, src.Height, src.Y, src.YStride, src.Width)
+	codedCW := (codedW + 1) / 2
+	downsamplePlaneHoriz(down.U, cw, codedCW, ch, src.U, src.ChromaStride, src.Width/2)
+	downsamplePlaneHoriz(down.V, cw, codedCW, ch, src.V, src.ChromaStride, src.Width/2)
+
+	seq := losslessKeyframeSequence(src.Width, src.Height)
+	seq.EnableSuperRes = true
+	seq.EnableCDEF = false
+	header := lossyKeyframeHeaderForSequence(seq, src.Width, src.Height, qIndex)
+	header.Size.SuperResDenominator = denom
+	sbCols := uint16((codedW + 63) / 64)
+	sbRows := uint16((src.Height + 63) / 64)
+	tiles := TileInfo{
+		RefreshContext: true,
+		SBCols:         sbCols,
+		SBRows:         sbRows,
+		Cols:           1,
+		Rows:           1,
+		ColStartSB:     [MaxTileCols + 1]uint16{0, sbCols},
+		RowStartSB:     [MaxTileRows + 1]uint16{0, sbRows},
+	}
+	if derived, err := deriveEncoderTileInfo(seq, uint32(codedW), uint32(src.Height), tiles); err == nil {
+		tiles.MinLog2Cols = derived.MinLog2Cols
+		tiles.MaxLog2Cols = derived.MaxLog2Cols
+		tiles.MaxLog2Rows = derived.MaxLog2Rows
+		tiles.MinLog2Tiles = derived.MinLog2Tiles
+	}
+	header.Tile = tiles
+	header.LoopFilter = LoopFilterParams{Deltas: defaultLoopFilterDeltas()}
+	if keyTXSEnabled(header.Prefix.AllowScreenContentTools, parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}) {
+		header.TransformRef.TransformMode = TransformModeSwitchable
+	}
+
+	var pc pframeCoder
+	codedRecon := SourceFrame420{
+		Y:            make([]byte, padCodedW*src.Height),
+		U:            make([]byte, cw*ch),
+		V:            make([]byte, cw*ch),
+		YStride:      padCodedW,
+		ChromaStride: cw,
+		Width:        padCodedW,
+		Height:       src.Height,
+	}
+	tilePayload, err := pc.encodeKeyframeTileWithColorOptions(down, &codedRecon, qIndex, 0, uint16(padCodedW/4), nil, false, parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true})
+	if err != nil {
+		return nil, SourceFrame420{}, fmt.Errorf("encode superres tile: %w", err)
+	}
+
+	headerSize, err := LowOverheadCompleteIntraHeaderTemporalUnitSize(seq, header)
+	if err != nil {
+		return nil, SourceFrame420{}, fmt.Errorf("size superres header: %w", err)
+	}
+	payloads := []TilePayload{{Data: tilePayload}}
+	groupSize, err := TileGroupPayloadSize(header.Tile, 0, 0, payloads)
+	if err != nil {
+		return nil, SourceFrame420{}, fmt.Errorf("size superres tile group: %w", err)
+	}
+	group := make([]byte, 0, groupSize)
+	group, err = AppendTileGroupPayload(group, header.Tile, 0, 0, payloads)
+	if err != nil {
+		return nil, SourceFrame420{}, fmt.Errorf("append superres tile group: %w", err)
+	}
+	groupOBU := OBU{Type: obu.TypeTileGroup, Payload: group}
+	groupOBUSize, err := LowOverheadOBUSize(groupOBU)
+	if err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	tu := make([]byte, 0, headerSize+groupOBUSize)
+	tu, err = AppendLowOverheadIntraFrameTemporalUnit(tu, seq, header, groupOBU.Payload)
+	if err != nil {
+		return nil, SourceFrame420{}, fmt.Errorf("append superres TU: %w", err)
+	}
+
+	up := SourceFrame420{
+		Y:            make([]byte, src.Width*src.Height),
+		U:            make([]byte, (src.Width/2)*ch),
+		V:            make([]byte, (src.Width/2)*ch),
+		YStride:      src.Width,
+		ChromaStride: src.Width / 2,
+		Width:        src.Width,
+		Height:       src.Height,
+	}
+	upscalePlane := func(srcPix []byte, srcStride, sw, sh int, dstPix []byte, dstStride, dw int) error {
+		in16 := make([]uint16, sw*sh)
+		out16 := make([]uint16, dw*sh)
+		for y := 0; y < sh; y++ {
+			for x := 0; x < sw; x++ {
+				in16[y*sw+x] = uint16(srcPix[y*srcStride+x])
+			}
+		}
+		err := superres.UpscalePlaneCoded(
+			frame.SamplePlane{Pix: in16, Stride: sw, Width: sw, Height: sh},
+			frame.SamplePlane{Pix: out16, Stride: dw, Width: dw, Height: sh},
+			sw, 8,
+		)
+		if err != nil {
+			return err
+		}
+		for y := 0; y < sh; y++ {
+			for x := 0; x < dw; x++ {
+				dstPix[y*dstStride+x] = uint8(out16[y*dw+x])
+			}
+		}
+		return nil
+	}
+	if err := upscalePlane(codedRecon.Y, padCodedW, codedW, src.Height, up.Y, src.Width, src.Width); err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	if err := upscalePlane(codedRecon.U, cw, codedCW, ch, up.U, src.Width/2, src.Width/2); err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	if err := upscalePlane(codedRecon.V, cw, codedCW, ch, up.V, src.Width/2, src.Width/2); err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	return tu, up, nil
 }

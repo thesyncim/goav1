@@ -1,5 +1,7 @@
 package encoder
 
+import "math"
+
 // The realtime SVC controller in libaom carries cumulative temporal-layer
 // targets and framerate decimators in the layer context:
 //
@@ -255,4 +257,134 @@ func rateControlTemporalLayerQIndex(qs [WebRTCMaxTemporalLayers]uint8, minQ uint
 		q = int(maxQ)
 	}
 	return uint8(q)
+}
+
+// FirstPassFrameStats records per-frame complexity statistics collected during
+// pass 1 of a 2-pass VBR encode.
+type FirstPassFrameStats struct {
+	FrameIndex int
+	Keyframe   bool
+	InterCost  uint64
+	CodedBytes int
+}
+
+// FirstPassStats holds the full clip statistics produced by pass 1 and
+// consumed by pass 2 of 2-pass VBR rate control.
+type FirstPassStats struct {
+	Frames     []FirstPassFrameStats
+	TotalCost  float64
+	TotalBytes int64
+}
+
+type twoPassState struct {
+	pass           int // 0 = off, 1 = collect stats, 2 = allocate from stats
+	stats          FirstPassStats
+	targetTotalBit float64
+	spentBits      float64
+	plannedBits    float64
+	frameIdx       int
+	minQ, maxQ     uint8
+	baseQ          uint8
+}
+
+func (tp *twoPassState) initPass1() {
+	tp.pass = 1
+	tp.stats = FirstPassStats{}
+	tp.frameIdx = 0
+}
+
+func (tp *twoPassState) initPass2(stats FirstPassStats, targetBitrate, framerate int, minQ, maxQ uint8) {
+	tp.pass = 2
+	tp.stats = stats
+	tp.spentBits = 0
+	tp.plannedBits = 0
+	tp.frameIdx = 0
+	tp.minQ = minQ
+	tp.maxQ = maxQ
+	if tp.minQ == 0 {
+		tp.minQ = 16
+	}
+	if tp.maxQ == 0 {
+		tp.maxQ = 255
+	}
+	if len(stats.Frames) > 0 && framerate > 0 {
+		tp.targetTotalBit = float64(targetBitrate) * float64(len(stats.Frames)) / float64(framerate)
+	}
+	if stats.TotalCost <= 0 {
+		var tot float64
+		for _, f := range stats.Frames {
+			tot += twoPassFrameWeight(f)
+		}
+		tp.stats.TotalCost = tot
+	}
+	tp.baseQ = uint8((int(tp.minQ) + int(tp.maxQ)) / 2)
+}
+
+func twoPassFrameWeight(f FirstPassFrameStats) float64 {
+	c := float64(f.InterCost)
+	if c < 1 {
+		c = float64(max(f.CodedBytes, 1)) * 64
+	}
+	w := math.Sqrt(c)
+	if f.Keyframe {
+		w *= 1.8
+	}
+	return w
+}
+
+func (tp *twoPassState) recordPass1(key bool, interCost uint64, codedBytes int) {
+	if tp.pass != 1 {
+		return
+	}
+	st := FirstPassFrameStats{
+		FrameIndex: tp.frameIdx,
+		Keyframe:   key,
+		InterCost:  interCost,
+		CodedBytes: codedBytes,
+	}
+	tp.stats.Frames = append(tp.stats.Frames, st)
+	tp.stats.TotalCost += twoPassFrameWeight(st)
+	tp.stats.TotalBytes += int64(codedBytes)
+	tp.frameIdx++
+}
+
+func (tp *twoPassState) pickPass2Q(key bool) uint8 {
+	if tp.pass != 2 || len(tp.stats.Frames) == 0 || tp.stats.TotalCost <= 0 {
+		return tp.baseQ
+	}
+	idx := tp.frameIdx
+	if idx >= len(tp.stats.Frames) {
+		idx = len(tp.stats.Frames) - 1
+	}
+	w := twoPassFrameWeight(tp.stats.Frames[idx])
+	frameBudget := tp.targetTotalBit * (w / tp.stats.TotalCost)
+	tp.plannedBits += frameBudget
+	// Adjust Q proportionally to cumulative overspend/underspend vs planned curve.
+	ratio := 1.0
+	if tp.plannedBits > 0 && tp.spentBits > 0 {
+		ratio = tp.spentBits / tp.plannedBits
+	}
+	avgWeight := tp.stats.TotalCost / float64(len(tp.stats.Frames))
+	relComplexity := w / max(avgWeight, 1.0)
+	// Base Q around mid-range, shifted by cumulative rate error and local complexity.
+	q := float64(tp.baseQ) + 40.0*math.Log2(max(ratio, 0.25)) - 12.0*math.Log2(max(relComplexity, 0.25))
+	if key {
+		q -= 16
+	}
+	qi := int(math.Round(q))
+	if qi < int(tp.minQ) {
+		qi = int(tp.minQ)
+	}
+	if qi > int(tp.maxQ) {
+		qi = int(tp.maxQ)
+	}
+	return uint8(qi)
+}
+
+func (tp *twoPassState) updatePass2(codedBytes int) {
+	if tp.pass != 2 {
+		return
+	}
+	tp.spentBits += float64(codedBytes * 8)
+	tp.frameIdx++
 }

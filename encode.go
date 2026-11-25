@@ -39,6 +39,30 @@ type EncoderDecisionStats = encoder.EncoderDecisionStats
 // signaling emitted in encoded frame headers.
 type EncoderFilmGrainParams = encoder.FilmGrainParams
 
+// FirstPassFrameStats records per-frame complexity statistics from pass 1 of a
+// 2-pass VBR encode.
+type FirstPassFrameStats = encoder.FirstPassFrameStats
+
+// FirstPassStats holds the full clip statistics produced by pass 1 and consumed
+// by pass 2 of 2-pass VBR rate control.
+type FirstPassStats = encoder.FirstPassStats
+
+// EstimateFilmGrainParams estimates AV1 film-grain synthesis parameters from
+// source luma noise/texture at the requested strength (1..50).
+func EstimateFilmGrainParams(frame I420Frame, strength int) EncoderFilmGrainParams {
+	return encoder.EstimateFilmGrainParams(frame, strength)
+}
+
+// EncodeI420SuperResKeyframe encodes one 8-bit 4:2:0 keyframe with AV1
+// horizontal Super-Resolution (denom in 9..16) and returns the temporal unit
+// plus the bit-exact upscaled reconstruction.
+func EncodeI420SuperResKeyframe(frame I420Frame, qIndex uint8, denom uint8) ([]byte, I420Frame, error) {
+	if err := validateI420Frame(frame); err != nil {
+		return nil, I420Frame{}, err
+	}
+	return encoder.EncodeSuperResKeyframe(frame, qIndex, denom)
+}
+
 // I420HighBitDepthFrame is one 10/12-bit 4:2:0 picture. Y holds Width x Height
 // samples at YStride; U and V hold half-resolution chroma planes at
 // ChromaStride, in uint16 values whose high bits above BitDepth must be zero.
@@ -448,6 +472,19 @@ type VideoEncoderConfig struct {
 	// signaling in sequence and frame headers (auto-advancing the per-frame
 	// grain seed).
 	FilmGrain *EncoderFilmGrainParams
+
+	// FilmGrainLevel (1..50), when positive and FilmGrain is nil, automatically
+	// estimates AV1 film-grain parameters from each keyframe's source texture
+	// and signals them across the GOP (matching SVT-AV1 --film-grain N).
+	FilmGrainLevel int
+
+	// Pass configures 2-pass VBR encoding: 0 = single-pass (default),
+	// 1 = first pass (collects complexity stats returned by FirstPassStats()),
+	// 2 = second pass (allocates bits from FirstPassStats toward TargetBitrate).
+	Pass int
+
+	// FirstPassStats supplies the pass-1 statistics when Pass == 2.
+	FirstPassStats *FirstPassStats
 }
 
 // EncodedFrame is one encoded picture as a low-overhead temporal unit.
@@ -534,6 +571,7 @@ type VideoEncoder struct {
 
 	lossless         bool
 	subsampling      int
+	filmGrainLevel   int
 	width, height    int
 	keyFrameInterval int
 	encodedFrames    int
@@ -570,6 +608,7 @@ func NewVideoEncoder(cfg VideoEncoderConfig) (*VideoEncoder, error) {
 	v := &VideoEncoder{
 		enc:              enc,
 		subsampling:      cfg.Subsampling,
+		filmGrainLevel:   cfg.FilmGrainLevel,
 		width:            cfg.Width,
 		height:           cfg.Height,
 		keyFrameInterval: cfg.KeyFrameInterval,
@@ -615,7 +654,7 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 
 	var enc *encoder.VideoEncoder
 	var err error
-	if cfg.TargetBitrate > 0 {
+	if cfg.TargetBitrate > 0 && cfg.Pass == 0 {
 		rc := encoder.RateControlConfig{
 			TargetBitsPerSecond: cfg.TargetBitrate,
 			FramesPerSecond:     cfg.Framerate,
@@ -655,8 +694,11 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 			}
 			q = uint8(min(int(cfg.CRF)*4, 255))
 		}
+		if q == 0 && cfg.Pass > 0 {
+			q = 128
+		}
 		if q == 0 {
-			return nil, fmt.Errorf("goav1: VideoEncoderConfig needs QIndex, CRF, or TargetBitrate")
+			return nil, fmt.Errorf("goav1: VideoEncoderConfig needs QIndex, CRF, TargetBitrate, or Pass")
 		}
 		if sub == 420 && cfg.Color == nil {
 			enc, err = encoder.NewVideoEncoder(cfg.Width, cfg.Height, q)
@@ -714,6 +756,24 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 			_ = enc.Close()
 			return nil, err
 		}
+	} else if cfg.FilmGrainLevel > 0 {
+		// Pre-enable film_grain_params_present in the sequence header before
+		// Prewarm so the first keyframe can signal estimated grain parameters.
+		fg := encoder.FilmGrainParams{
+			Apply:                 true,
+			Update:                true,
+			Seed:                  7391,
+			ChromaScalingFromLuma: true,
+			NumYPoints:            2,
+			YPoints:               [encoder.MaxFilmGrainYPoints][2]uint8{{0, 8}, {255, 8}},
+			ScalingShift:          8,
+			ARCoeffShift:          6,
+			Overlap:               true,
+		}
+		if err := enc.SetFilmGrain(&fg); err != nil {
+			_ = enc.Close()
+			return nil, err
+		}
 	}
 	// Every buffer, pool and per-coder scratch is sized now, so the first
 	// real frame pays no initialization latency and steady-state encoding
@@ -721,6 +781,12 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 	if err := enc.Prewarm(); err != nil {
 		_ = enc.Close()
 		return nil, err
+	}
+	if cfg.Pass > 0 {
+		if err := enc.SetTwoPass(cfg.Pass, cfg.FirstPassStats, cfg.TargetBitrate, cfg.Framerate, cfg.MinQIndex, cfg.MaxQIndex); err != nil {
+			_ = enc.Close()
+			return nil, err
+		}
 	}
 	return enc, nil
 }
@@ -803,6 +869,12 @@ func (e *VideoEncoder) Encode(frame I420Frame, forceKey bool) (EncodedFrame, err
 	}
 	if e.keyFrameInterval > 0 && e.encodedFrames > 0 && e.encodedFrames%e.keyFrameInterval == 0 {
 		forceKey = true
+	}
+	if e.filmGrainLevel > 0 && (e.encodedFrames == 0 || forceKey) && !e.lossless {
+		fg := encoder.EstimateFilmGrainParams(frame, e.filmGrainLevel)
+		if fg.Apply {
+			_ = e.enc.SetFilmGrain(&fg)
+		}
 	}
 	if e.lossless {
 		tu, err := encoder.EncodeLossless420Keyframe(frame)
@@ -924,6 +996,14 @@ func injectFrameMetadataOBUs(tu []byte, isKey bool, cvsMeta *FrameMetadata, tuMe
 	return encoder.InjectLowOverheadMetadataOBUs(tu, list, scratch)
 }
 
+// FirstPassStats returns the complexity statistics collected during Pass=1.
+func (e *VideoEncoder) FirstPassStats() FirstPassStats {
+	if e == nil || e.enc == nil {
+		return FirstPassStats{}
+	}
+	return e.enc.FirstPassStats()
+}
+
 // SetCRF switches subsequent frames to Constant Rate Factor (1..63) encoding.
 func (e *VideoEncoder) SetCRF(crf uint8) error {
 	if e == nil || e.enc == nil {
@@ -1007,6 +1087,12 @@ func (e *VideoEncoder) EncodeI444(frame I444Frame, forceKey bool) (EncodedFrame,
 func (e *VideoEncoder) encodeRawColor(frame I420Frame, forceKey bool) (EncodedFrame, error) {
 	if e.keyFrameInterval > 0 && e.encodedFrames > 0 && e.encodedFrames%e.keyFrameInterval == 0 {
 		forceKey = true
+	}
+	if e.filmGrainLevel > 0 && (e.encodedFrames == 0 || forceKey) && !e.lossless {
+		fg := encoder.EstimateFilmGrainParams(frame, e.filmGrainLevel)
+		if fg.Apply {
+			_ = e.enc.SetFilmGrain(&fg)
+		}
 	}
 	tid := e.enc.TemporalID()
 	tu, key, err := e.enc.Encode(frame, forceKey)

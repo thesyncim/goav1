@@ -1718,3 +1718,84 @@ func TestEncoderCRFVBRAndFilmGrain(t *testing.T) {
 		}
 	}
 }
+
+func TestEncoderTwoPassFilmGrainLevelAndSuperRes(t *testing.T) {
+	const w, h = 128, 128
+	frames := censusFrames(t, w, h, 6)
+
+	// 1. 2-pass VBR encoding (Pass 1 stats -> Pass 2 rate allocation) + auto FilmGrainLevel.
+	p1, err := NewVideoEncoder(VideoEncoderConfig{
+		Width: w, Height: h, Pass: 1, KeyFrameInterval: 3,
+	})
+	if err != nil {
+		t.Fatalf("NewVideoEncoder(Pass=1): %v", err)
+	}
+	for i, f := range frames {
+		if _, err := p1.Encode(f, false); err != nil {
+			p1.Close()
+			t.Fatalf("Pass1 Encode(%d): %v", i, err)
+		}
+	}
+	stats := p1.FirstPassStats()
+	p1.Close()
+	if len(stats.Frames) != len(frames) || stats.TotalCost <= 0 || stats.TotalBytes <= 0 {
+		t.Fatalf("unexpected Pass1 stats: %+v", stats)
+	}
+
+	p2, err := NewVideoEncoder(VideoEncoderConfig{
+		Width:            w,
+		Height:           h,
+		Pass:             2,
+		FirstPassStats:   &stats,
+		TargetBitrate:    300_000,
+		Framerate:        30,
+		KeyFrameInterval: 3,
+		FilmGrainLevel:   12,
+	})
+	if err != nil {
+		t.Fatalf("NewVideoEncoder(Pass=2): %v", err)
+	}
+	defer p2.Close()
+	var p2TUs [][]byte
+	for i, f := range frames {
+		out, err := p2.Encode(f, false)
+		if err != nil {
+			t.Fatalf("Pass2 Encode(%d): %v", i, err)
+		}
+		p2TUs = append(p2TUs, append([]byte(nil), out.Data...))
+	}
+	dec2, err := NewDecoder(p2TUs, WithFilmGrain(true))
+	if err != nil {
+		t.Fatalf("NewDecoder(Pass2): %v", err)
+	}
+	defer dec2.Close()
+	for i := range frames {
+		b, ok, err := dec2.DecodeNext()
+		if err != nil || !ok || len(b) != 1 {
+			t.Fatalf("Pass2 DecodeNext(%d): len=%d ok=%v err=%v", i, len(b), ok, err)
+		}
+	}
+
+	// 2. SuperRes keyframe (denom=16 -> 1/2 coded width) bit-exact vs decoder recon!
+	srTU, srRecon, err := EncodeI420SuperResKeyframe(frames[0], 90, 16)
+	if err != nil {
+		t.Fatalf("EncodeI420SuperResKeyframe: %v", err)
+	}
+	decSR, err := NewDecoder([][]byte{srTU})
+	if err != nil {
+		t.Fatalf("NewDecoder(SuperRes): %v", err)
+	}
+	defer decSR.Close()
+	bSR, ok, err := decSR.DecodeNext()
+	if err != nil || !ok || len(bSR) != 1 {
+		t.Fatalf("SuperRes DecodeNext: len=%d ok=%v err=%v", len(bSR), ok, err)
+	}
+	gotSR := copyDecodedFrame(bSR[0])
+	if gotSR.Width != w || gotSR.Height != h {
+		t.Fatalf("SuperRes decoded dims = %dx%d, want %dx%d", gotSR.Width, gotSR.Height, w, h)
+	}
+	if !bytes.Equal(gotSR.Y, srRecon.Y) || !bytes.Equal(gotSR.U, srRecon.U) || !bytes.Equal(gotSR.V, srRecon.V) {
+		t.Fatalf("SuperRes decoded pixels differ from encoder upscaled recon: eqY=%v eqU=%v eqV=%v",
+			bytes.Equal(gotSR.Y, srRecon.Y), bytes.Equal(gotSR.U, srRecon.U), bytes.Equal(gotSR.V, srRecon.V))
+	}
+}
