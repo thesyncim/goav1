@@ -791,18 +791,33 @@ func mc8PrepEdge(out []uint16, ref *frame.Plane, refX, refY, w, h, subX, subY, k
 func mc8PrepGrid(out []uint16, og unsafeutil.Grid[uint16], sg unsafeutil.Grid[uint8], w, h, subX, subY int, phx, phy *mc8Phase, scratch *CompoundConvolveScratch) {
 	switch {
 	case subX != 0 && subY != 0:
-		im := scratch.im[:]
 		if w == 4 {
-			mc8H6ToI32W4(sg, h+5, phx, im)
-			mc8PrepV6FromI32W4(im, h, phy, out[:4*h], mc8PrepV6Rnd)
+			if phx.h[0][0]|phx.h[5][0] == 0 {
+				if phy.p[0][0]|phy.p[5][0] == 0 {
+					mc8PrepHV4x4W4(sg, h, phx, phy, out[:4*h])
+				} else {
+					mc8PrepHV4W4(sg, h, phx, phy, out[:4*h])
+				}
+			} else {
+				im := scratch.im[:]
+				mc8H6ToI32W4(sg, h+5, phx, im)
+				mc8PrepV6FromI32W4(im, h, phy, out[:4*h], mc8PrepV6Rnd)
+			}
+		} else if phy.p[0][0]|phy.p[5][0] == 0 {
+			mc8PrepHV6x4(sg, w, h, phx, phy, og)
 		} else {
+			im := scratch.im[:]
 			mc8H6ToI32(sg, w, h+5, phx, im, 2)
 			mc8PrepV6FromI32S(im, w, h, phy, og, mc8PrepV6Rnd)
 		}
 	case subX != 0:
 		switch {
 		case w == 4:
-			mc8PrepH6S4(sg, phx, og)
+			if phx.h[0][0]|phx.h[5][0] == 0 {
+				mc8PrepH4S4(sg, phx, og)
+			} else {
+				mc8PrepH6S4(sg, phx, og)
+			}
 		case w == 8:
 			mc8PrepH6S8(sg, phx, og)
 		case w&15 == 0:
@@ -811,15 +826,19 @@ func mc8PrepGrid(out []uint16, og unsafeutil.Grid[uint16], sg unsafeutil.Grid[ui
 			mc8PrepH6Split(sg, phx, og)
 		}
 	case subY != 0:
-		switch {
-		case w == 4:
-			mc8PrepV6S4(sg, phy, og)
-		case w == 8:
-			mc8PrepV6S8(sg, phy, og)
-		case w&15 == 0:
-			mc8PrepV6W16(sg, phy, og)
-		default:
-			mc8PrepV6Split(sg, phy, og)
+		if phy.h[0][0]|phy.h[5][0] == 0 {
+			mc8PrepV4(sg, w, h, phy, og)
+		} else {
+			switch {
+			case w == 4:
+				mc8PrepV6S4(sg, phy, og)
+			case w == 8:
+				mc8PrepV6S8(sg, phy, og)
+			case w&15 == 0:
+				mc8PrepV6W16(sg, phy, og)
+			default:
+				mc8PrepV6Split(sg, phy, og)
+			}
 		}
 	default:
 		if w == 8 {

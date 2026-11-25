@@ -27,7 +27,13 @@
 
 package cdef
 
-import "simd/archsimd"
+import (
+	"simd/archsimd"
+
+	"github.com/thesyncim/goav1/internal/unsafeutil"
+)
+
+var cdefDirBias128 = [8]int16{128, 128, 128, 128, 128, 128, 128, 128}
 
 var (
 	// Diagonal cost weights div[1..8] split lo (k=0..3) / hi (k=4..7).
@@ -271,23 +277,36 @@ func findDirectionU8SIMD(img []byte, stride int) (int, int32) {
 	if stride < 8 || stride > 1<<24 || len(img) < 7*stride+8 {
 		return findDirectionU8Scalar(img, stride)
 	}
-	bias := archsimd.BroadcastInt16x8(128)
+	bias := archsimd.LoadInt16x8Array(&cdefDirBias128)
 	var zero archsimd.Int16x8
-	s := img[:7*stride+8]
-	r0 := archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
-	s = s[stride:]
-	r1 := archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
-	s = s[stride:]
-	r2 := archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
-	s = s[stride:]
-	r3 := archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
-	s = s[stride:]
-	r4 := archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
-	s = s[stride:]
-	r5 := archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
-	s = s[stride:]
-	r6 := archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
-	r7 := archsimd.LoadUint8x16(s[stride-8 : stride+8]).HiToLo().ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+	var r0, r1, r2, r3, r4, r5, r6, r7 archsimd.Int16x8
+	if unsafeutil.RowsFit(len(img), 0, stride, 16, 8) {
+		b := unsafeutil.BlockAt[cdefR8](unsafeutil.NewRows(img, 0, stride, 16, 8), 0, 0)
+		r0 = archsimd.LoadUint8x16Array(b.Row16(0)).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+		r1 = archsimd.LoadUint8x16Array(b.Row16(1)).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+		r2 = archsimd.LoadUint8x16Array(b.Row16(2)).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+		r3 = archsimd.LoadUint8x16Array(b.Row16(3)).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+		r4 = archsimd.LoadUint8x16Array(b.Row16(4)).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+		r5 = archsimd.LoadUint8x16Array(b.Row16(5)).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+		r6 = archsimd.LoadUint8x16Array(b.Row16(6)).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+		r7 = archsimd.LoadUint8x16Array(b.Row16(7)).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+	} else {
+		s := img[:7*stride+8]
+		r0 = archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+		s = s[stride:]
+		r1 = archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+		s = s[stride:]
+		r2 = archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+		s = s[stride:]
+		r3 = archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+		s = s[stride:]
+		r4 = archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+		s = s[stride:]
+		r5 = archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+		s = s[stride:]
+		r6 = archsimd.LoadUint8x16(s[0:16]).ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+		r7 = archsimd.LoadUint8x16(s[stride-8 : stride+8]).HiToLo().ExtendLo8ToUint16().BitsToInt16().Sub(bias)
+	}
 
 	r01 := r0.Add(r1)
 	r23 := r2.Add(r3)

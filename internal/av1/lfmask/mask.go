@@ -117,31 +117,89 @@ func maskEdgesInter(masks *[2][32][3][2]uint16, by4, bx4, w4, h4, skip int, maxT
 		l = l[:h4]
 
 		// left block edge
-		mask := uint32(1) << uint(by4&31)
 		col := &masks[0][bx4&31]
-		for y := range l {
-			sidx := 0
-			if mask >= 0x10000 {
-				sidx = 1
+		y0 := by4 & 31
+		if twl4c == 0 {
+			t := uint64(1) << uint(y0)
+			span := uint32((t << uint(h4)) - t)
+			if m0 := uint16(span); m0 != 0 {
+				col[0][0] |= m0
 			}
-			smask := uint16(mask >> (uint(sidx<<4) & 31))
-			col[bmin(twl4c, l[y])][sidx] |= smask
-			l[y] = twl4c
-			mask <<= 1
+			if m1 := uint16(span >> 16); m1 != 0 {
+				col[0][1] |= m1
+			}
+			clear(l)
+		} else if y0+h4 <= 16 {
+			smask := uint16(1) << uint(y0)
+			for y := range l {
+				col[bmin(twl4c, l[y])][0] |= smask
+				l[y] = twl4c
+				smask <<= 1
+			}
+		} else if y0 >= 16 {
+			smask := uint16(1) << uint(y0-16)
+			for y := range l {
+				col[bmin(twl4c, l[y])][1] |= smask
+				l[y] = twl4c
+				smask <<= 1
+			}
+		} else {
+			mid := 16 - y0
+			smask := uint16(1) << uint(y0)
+			for y := 0; y < mid; y++ {
+				col[bmin(twl4c, l[y])][0] |= smask
+				l[y] = twl4c
+				smask <<= 1
+			}
+			smask = 1
+			for y := mid; y < len(l); y++ {
+				col[bmin(twl4c, l[y])][1] |= smask
+				l[y] = twl4c
+				smask <<= 1
+			}
 		}
 
 		// top block edge
-		mask = uint32(1) << uint(bx4&31)
 		row := &masks[1][by4&31]
-		for x := range a {
-			sidx := 0
-			if mask >= 0x10000 {
-				sidx = 1
+		x0 := bx4 & 31
+		if thl4c == 0 {
+			t := uint64(1) << uint(x0)
+			span := uint32((t << uint(w4)) - t)
+			if m0 := uint16(span); m0 != 0 {
+				row[0][0] |= m0
 			}
-			smask := uint16(mask >> (uint(sidx<<4) & 31))
-			row[bmin(thl4c, a[x])][sidx] |= smask
-			a[x] = thl4c
-			mask <<= 1
+			if m1 := uint16(span >> 16); m1 != 0 {
+				row[0][1] |= m1
+			}
+			clear(a)
+		} else if x0+w4 <= 16 {
+			smask := uint16(1) << uint(x0)
+			for x := range a {
+				row[bmin(thl4c, a[x])][0] |= smask
+				a[x] = thl4c
+				smask <<= 1
+			}
+		} else if x0 >= 16 {
+			smask := uint16(1) << uint(x0-16)
+			for x := range a {
+				row[bmin(thl4c, a[x])][1] |= smask
+				a[x] = thl4c
+				smask <<= 1
+			}
+		} else {
+			mid := 16 - x0
+			smask := uint16(1) << uint(x0)
+			for x := 0; x < mid; x++ {
+				row[bmin(thl4c, a[x])][0] |= smask
+				a[x] = thl4c
+				smask <<= 1
+			}
+			smask = 1
+			for x := mid; x < len(a); x++ {
+				row[bmin(thl4c, a[x])][1] |= smask
+				a[x] = thl4c
+				smask <<= 1
+			}
 		}
 
 		if skip == 0 {

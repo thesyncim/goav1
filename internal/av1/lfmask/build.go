@@ -227,19 +227,45 @@ func (b *Builder) CreateInter(m *FilterMask, lc LevelCache, lv Levels, bx, by, i
 
 // fill writes one block's two level bytes (components comp and comp+1) over a
 // w x h rectangle of cells at (bx, by), dav1d_create_lf_mask_{intra,inter}'s
-// level_cache_ptr loops; each row is sliced once.
+// level_cache_ptr loops; each row is sliced once and unrolled 4 cells at a time.
 func (c LevelCache) fill(bx, by, w, h, comp int, l0, l1 uint8) {
-	// dav1d's two adjacent byte stores, one 16-bit store per cell; comp is 0
-	// (Y) or 2 (U/V), and the other pair of the cell is left untouched.
 	v := uint16(l0) | uint16(l1)<<8
-	comp &= 2
 	base := 4 * (by*c.Stride + bx)
-	for y := 0; y < h; y++ {
-		row := c.Cells[base : base+4*w]
-		for x := 0; x <= len(row)-4; x += 4 {
-			cell := (*[4]uint8)(row[x : x+4])
-			binary.LittleEndian.PutUint16(cell[comp:comp+2], v)
+	strideBytes := 4 * c.Stride
+	rowBytes := 4 * w
+	if comp&2 == 0 {
+		for y := 0; y < h; y++ {
+			row := c.Cells[base : base+rowBytes]
+			x := 0
+			for ; x+16 <= len(row); x += 16 {
+				p := (*[16]uint8)(row[x : x+16])
+				binary.LittleEndian.PutUint16(p[0:2], v)
+				binary.LittleEndian.PutUint16(p[4:6], v)
+				binary.LittleEndian.PutUint16(p[8:10], v)
+				binary.LittleEndian.PutUint16(p[12:14], v)
+			}
+			for ; x+4 <= len(row); x += 4 {
+				p := (*[4]uint8)(row[x : x+4])
+				binary.LittleEndian.PutUint16(p[0:2], v)
+			}
+			base += strideBytes
 		}
-		base += 4 * c.Stride
+		return
+	}
+	for y := 0; y < h; y++ {
+		row := c.Cells[base : base+rowBytes]
+		x := 0
+		for ; x+16 <= len(row); x += 16 {
+			p := (*[16]uint8)(row[x : x+16])
+			binary.LittleEndian.PutUint16(p[2:4], v)
+			binary.LittleEndian.PutUint16(p[6:8], v)
+			binary.LittleEndian.PutUint16(p[10:12], v)
+			binary.LittleEndian.PutUint16(p[14:16], v)
+		}
+		for ; x+4 <= len(row); x += 4 {
+			p := (*[4]uint8)(row[x : x+4])
+			binary.LittleEndian.PutUint16(p[2:4], v)
+		}
+		base += strideBytes
 	}
 }
