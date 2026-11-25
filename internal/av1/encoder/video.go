@@ -924,8 +924,8 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 	if !videoColorSupportsInLoopFilters(color) {
 		header.CDEF = CDEFParams{}
 	}
-	// Depth removal stays off here (Phase 1 arms only the standard
-	// temporal-layer path in encodePReusing) so no stale level carries over.
+	// Depth removal stays off here (armed only in encodePReusing) so no stale
+	// level carries over.
 	e.pc.st.depthRemovalLevel = 0
 	e.pc.forceSplit = e.forceSplit
 	e.configurePCWavefront()

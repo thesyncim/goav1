@@ -1,7 +1,7 @@
 package encoder
 
 // pframe_depth_removal.go ports SVT-AV1's depth-removal signal chain for the
-// realtime P-frame partitioner (ENCODER_DEPTH_PLAN.md Phase 1):
+// realtime P-frame partitioner:
 //
 //   1. One shared full-pel sweep per 64x64 superblock over LAST's recon
 //      (open_loop_me_fullpel_search_sblock, Source/Lib/Codec/
@@ -261,10 +261,10 @@ func (me *realtimeSBMultiSizeME) sweepArea(src []byte, stride, srcBase int, ref 
 }
 
 // depthRemovalCtrls carries the per-level parameters of
-// set_depth_removal_level_controls (enc_mode_config.c:2979-3130). Phase 1
-// consumes the disallow_below_16x16 arms; Phase 2 the 32x32/64x64 cost
-// multipliers and dev_32x32_to_16x16_th. costMult4x4 (disallow_4x4) still
-// only rides along — goav1's realtime tree never goes below 8x8.
+// set_depth_removal_level_controls (enc_mode_config.c:2979-3130), covering the
+// disallow_below_16x16 arms, 32x32/64x64 cost multipliers, and
+// dev_32x32_to_16x16_th. costMult4x4 (disallow_4x4) rides along unused because
+// goav1's realtime tree stops at 8x8.
 type depthRemovalCtrls struct {
 	enabled     bool
 	costMult4x4 uint32

@@ -10,6 +10,20 @@ import (
 	"testing"
 )
 
+func dequantSIMDSupported() bool {
+	return archsimd.X86.AVX2()
+}
+
+func TestDequantColumnSIMDBinding(t *testing.T) {
+	if !dequantSIMDSupported() {
+		t.Skip("AVX2 not available")
+	}
+	got := runtime.FuncForPC(reflect.ValueOf(dequantColumnImpl).Pointer()).Name()
+	if !strings.Contains(got, "dequantColumnSIMD") {
+		t.Fatalf("dequantColumnImpl bound to %s, want dequantColumnSIMD", got)
+	}
+}
+
 func quantizeSIMDSupported() bool {
 	return archsimd.X86.AVX2()
 }

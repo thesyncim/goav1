@@ -32,7 +32,7 @@ import (
 //     lr_sbrow), with the last unit row also flushing any final short stripe.
 //
 // Every stage therefore reads exactly the pixels the whole-frame order gives
-// it, and the output is bit-identical. Phase 1 covers the serial 8-bit
+// it, and the output is bit-identical. This path covers the serial 8-bit
 // whole-frame chain (no pool lanes, no caller fan-out, no banding, no
 // super-res, saved restoration boundaries); every other frame keeps the
 // whole-frame stage order.

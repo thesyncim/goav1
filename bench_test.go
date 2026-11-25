@@ -1,14 +1,5 @@
 package goav1
 
-// End-to-end decoder throughput benchmarks. These exercise the public AV1
-// decoder API against the bundled libaom quantizer_00 IVF and report the
-// metrics production users care about: nanoseconds per frame, frames per
-// second, and decoded-bitstream throughput (MB/s).
-//
-// The benchmarks drive the public Decoder exactly as production callers do.
-// All scratch is sized when the Decoder is constructed and Reset rewinds it,
-// so the per-iteration hot path is expected to stay at zero allocations.
-
 import (
 	"os"
 	"path/filepath"
@@ -591,4 +582,95 @@ func metricDelta(after uint64, before uint64) float64 {
 		return float64(after - before)
 	}
 	return -float64(before - after)
+}
+
+// This existing inter fixture executes both SGR radii at 12-bit depth.
+func BenchmarkDecodeSGRHighBDProfileClip(b *testing.B) {
+	benchmarkDecodeHighLevelProfileClip(b, "internal/av1/testvector/testdata/profiles/profile2-422-12bit-inter-cdef-restoration-160x128.ivf", 8)
+}
+
+// The sidecars copy the independent libaom aomdec per-frame MD5s already
+// recorded in conformance/publicpath_test.go and testvector/profiles.
+// Each operation decodes all three frames through the exported Decoder API.
+func loadPublicPaletteClips(t testing.TB) []publicFullClip {
+	t.Helper()
+	var clips []publicFullClip
+	for _, item := range []struct{ name, file string }{
+		{"palette_8bit", "profile1-444-8bit-palette-64x64.ivf"},
+		{"palette_10bit", "profile1-444-10bit-palette-64x64.ivf"},
+		{"control_8bit", "profile1-444-8bit-64x64.ivf"},
+	} {
+		path := filepath.Join("internal", "av1", "testvector", "testdata", "profiles", item.file)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		oracle, err := loadPublicFullClipOracle(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		clips = append(clips, publicFullClip{name: item.name, data: data, oracle: oracle})
+	}
+	return clips
+}
+
+func TestPublicDecoderPaletteMD5(t *testing.T) {
+	for _, clip := range loadPublicPaletteClips(t) {
+		t.Run(clip.name, func(t *testing.T) {
+			dec, err := NewDecoderFromIVF(clip.data, WithWorkers(1))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer dec.Close()
+			for round := range 2 {
+				if round != 0 {
+					if err := dec.Reset(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				result, err := decodePublicFullClip(dec, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := comparePublicFullClipOracle(result, clip.oracle); err != nil {
+					t.Fatal(err)
+				}
+				t.Logf("round=%d frames=%d stream=%x frameMD5=%x", round, result.frames, result.streamMD5, result.frameMD5s)
+			}
+		})
+	}
+}
+
+func BenchmarkPublicDecoderPalette(b *testing.B) {
+	for _, clip := range loadPublicPaletteClips(b) {
+		b.Run(clip.name, func(b *testing.B) {
+			b.Run("warm_reset_decode", func(b *testing.B) {
+				dec, err := NewDecoderFromIVF(clip.data, WithWorkers(1))
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.Cleanup(dec.Close)
+				warmup, err := decodePublicFullClip(dec, true)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if err := comparePublicFullClipOracle(warmup, clip.oracle); err != nil {
+					b.Fatal(err)
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for b.Loop() {
+					result, err := decodePublicFullClipAfterReset(dec)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if result.frames != warmup.frames {
+						b.Fatalf("frames=%d want %d", result.frames, warmup.frames)
+					}
+					publicFullClipSampleSink += result.observed
+				}
+				b.ReportMetric(float64(warmup.frames), "frames/op")
+			})
+		})
+	}
 }
