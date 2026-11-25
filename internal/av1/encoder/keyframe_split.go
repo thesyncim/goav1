@@ -474,6 +474,13 @@ func (st *lossyEncodeState) writeKeyBlock(block tile.BlockVisit, scratch *tile.B
 	if err := modeCtx.Mark(block.Size, int(block.X4), int(block.Y4), tile.BlockModeResult{}); err != nil {
 		return fmt.Errorf("mark prefix: %w", err)
 	}
+	if st.allowIntrabc {
+		intrabcCDF, err := st.intraCDFs.IntrabcCDF()
+		if err != nil {
+			return fmt.Errorf("intrabc cdf: %w", err)
+		}
+		st.w.WriteCDF(intrabcCDF, 0)
+	}
 	mode := r.intraMode
 	if err := tile.WriteLumaIntraMode(st.w, &st.intraCDFs, modeCtx, tile.LumaIntraModeRequest{
 		Size: block.Size, X4: block.X4, Y4: block.Y4,

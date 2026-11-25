@@ -64,13 +64,23 @@ func EncodeI420SuperResKeyframe(frame I420Frame, qIndex uint8, denom uint8) ([]b
 }
 
 // EncodeI420LoopRestorationKeyframe encodes one 8-bit 4:2:0 keyframe with AV1
-// in-loop Wiener Restoration enabled on the luma plane and returns the temporal
-// unit plus the bit-exact restored reconstruction.
+// in-loop Switchable Restoration (Wiener + SGRProj) enabled on the luma plane
+// and returns the temporal unit plus the bit-exact restored reconstruction.
 func EncodeI420LoopRestorationKeyframe(frame I420Frame, qIndex uint8) ([]byte, I420Frame, error) {
 	if err := validateI420Frame(frame); err != nil {
 		return nil, I420Frame{}, err
 	}
 	return encoder.EncodeLoopRestorationKeyframe(frame, qIndex)
+}
+
+// EncodeI420IntraBCKeyframe encodes one 8-bit 4:2:0 screen-content keyframe
+// with AV1 Intra Block Copy (allow_intrabc=1) enabled and returns the temporal
+// unit plus the bit-exact reconstruction.
+func EncodeI420IntraBCKeyframe(frame I420Frame, qIndex uint8) ([]byte, I420Frame, error) {
+	if err := validateI420Frame(frame); err != nil {
+		return nil, I420Frame{}, err
+	}
+	return encoder.EncodeIntraBCKeyframe(frame, qIndex)
 }
 
 // I420HighBitDepthFrame is one 10/12-bit 4:2:0 picture. Y holds Width x Height
@@ -500,6 +510,18 @@ type VideoEncoderConfig struct {
 	// Alt-Ref pyramid with bidirectional compound inter prediction. Drive with
 	// EncodeBatch and call Flush at end-of-stream.
 	BFrames int
+
+	// EnableLoopRestoration enables AV1 Switchable Loop Restoration (Wiener +
+	// SGRProj) on keyframes produced by VideoEncoder.
+	EnableLoopRestoration bool
+
+	// SuperResDenominator, when in [9, 16], enables AV1 horizontal
+	// Super-Resolution on keyframes produced by VideoEncoder (0 or 8 disables).
+	SuperResDenominator uint8
+
+	// EnableGlobalMotion enables frame-level Global Motion translation
+	// estimation and signaling on inter P-frames.
+	EnableGlobalMotion bool
 }
 
 // EncodedFrame is one encoded picture as a low-overhead temporal unit.
@@ -767,6 +789,19 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 		enc.SetGoldenInterval(0)
 	} else if cfg.GoldenInterval > 0 {
 		enc.SetGoldenInterval(cfg.GoldenInterval)
+	}
+	if cfg.EnableLoopRestoration {
+		enc.SetEnableLoopRestoration(true)
+	}
+	if cfg.SuperResDenominator != 0 {
+		if cfg.SuperResDenominator < 8 || cfg.SuperResDenominator > 16 {
+			_ = enc.Close()
+			return nil, fmt.Errorf("goav1: SuperResDenominator must be 0 or in [8, 16], got %d", cfg.SuperResDenominator)
+		}
+		enc.SetSuperResDenominator(cfg.SuperResDenominator)
+	}
+	if cfg.EnableGlobalMotion {
+		enc.SetEnableGlobalMotion(true)
 	}
 	if err := enc.SetContentHint(cfg.Content); err != nil {
 		_ = enc.Close()
