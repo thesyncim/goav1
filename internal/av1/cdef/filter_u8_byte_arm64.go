@@ -502,6 +502,38 @@ func cdefByteFilter4PriSec(ctx *cdefByteCtx) {
 	input, dst := ctx.input, ctx.dst
 	base := ctx.srcOff - cdefByteCenter
 	dstOff, dstStr := ctx.dstOff, ctx.dstStr
+	if ctx.height == 4 {
+		w := (*[cdefByteWin4]byte)(input[base : base+cdefByteWin4])
+		r0 := (*[cdefByteWinRow]byte)(w[0:cdefByteWinRow])
+		r1 := (*[cdefByteWinRow]byte)(w[BStride : BStride+cdefByteWinRow])
+		r2 := (*[cdefByteWinRow]byte)(w[2*BStride : 2*BStride+cdefByteWinRow])
+		r3 := (*[cdefByteWinRow]byte)(w[3*BStride : 3*BStride+cdefByteWinRow])
+		x := cdefByteLoad4x4Rows(r0, r1, r2, r3, cdefByteCenter)
+		mn, mx := x, x
+		p, q := cdefByteLoad4x4Rows(r0, r1, r2, r3, p0p), cdefByteLoad4x4Rows(r0, r1, r2, r3, p0m)
+		mn, mx = mn.Min(p).Min(q), mx.Max(p).Max(q)
+		a := cdefByteConstrain(p, x, priStr, priSh).MulAdd(tap0, neg1)
+		b := cdefByteConstrain(q, x, priStr, priSh).Mul(tap0)
+		p, q = cdefByteLoad4x4Rows(r0, r1, r2, r3, p1p), cdefByteLoad4x4Rows(r0, r1, r2, r3, p1m)
+		mn, mx = mn.Min(p).Min(q), mx.Max(p).Max(q)
+		a = cdefByteConstrain(p, x, priStr, priSh).MulAdd(tap1, a)
+		b = cdefByteConstrain(q, x, priStr, priSh).MulAdd(tap1, b)
+		p, q = cdefByteLoad4x4Rows(r0, r1, r2, r3, s0p), cdefByteLoad4x4Rows(r0, r1, r2, r3, s0m)
+		mn, mx = mn.Min(p).Min(q), mx.Max(p).Max(q)
+		ka, kb := cdefByteConstrain(p, x, secStr, secSh), cdefByteConstrain(q, x, secStr, secSh)
+		p, q = cdefByteLoad4x4Rows(r0, r1, r2, r3, s1p), cdefByteLoad4x4Rows(r0, r1, r2, r3, s1m)
+		mn, mx = mn.Min(p).Min(q), mx.Max(p).Max(q)
+		ka, kb = ka.Add(cdefByteConstrain(p, x, secStr, secSh)), kb.Add(cdefByteConstrain(q, x, secStr, secSh))
+		a, b = a.Add(ka).Add(ka), b.Add(kb).Add(kb)
+		p, q = cdefByteLoad4x4Rows(r0, r1, r2, r3, s2p), cdefByteLoad4x4Rows(r0, r1, r2, r3, s2m)
+		mn, mx = mn.Min(p).Min(q), mx.Max(p).Max(q)
+		a, b = a.Add(cdefByteConstrain(p, x, secStr, secSh)), b.Add(cdefByteConstrain(q, x, secStr, secSh))
+		p, q = cdefByteLoad4x4Rows(r0, r1, r2, r3, s3p), cdefByteLoad4x4Rows(r0, r1, r2, r3, s3m)
+		mn, mx = mn.Min(p).Min(q), mx.Max(p).Max(q)
+		a, b = a.Add(cdefByteConstrain(p, x, secStr, secSh)), b.Add(cdefByteConstrain(q, x, secStr, secSh))
+		cdefByteStore4x4(dst, dstOff, dstStr, cdefByteFinish(x, a, b, four, bias).Min(mx).Max(mn))
+		return
+	}
 	for h := ctx.height; h > 0; h -= 4 {
 		w := (*[cdefByteWin4]byte)(input[base : base+cdefByteWin4])
 		r0 := (*[cdefByteWinRow]byte)(w[0:cdefByteWinRow])
@@ -600,6 +632,26 @@ func cdefByteFilter4Sec(ctx *cdefByteCtx) {
 	input, dst := ctx.input, ctx.dst
 	base := ctx.srcOff - cdefByteCenter
 	dstOff, dstStr := ctx.dstOff, ctx.dstStr
+	if ctx.height == 4 {
+		w := (*[cdefByteWin4]byte)(input[base : base+cdefByteWin4])
+		r0 := (*[cdefByteWinRow]byte)(w[0:cdefByteWinRow])
+		r1 := (*[cdefByteWinRow]byte)(w[BStride : BStride+cdefByteWinRow])
+		r2 := (*[cdefByteWinRow]byte)(w[2*BStride : 2*BStride+cdefByteWinRow])
+		r3 := (*[cdefByteWinRow]byte)(w[3*BStride : 3*BStride+cdefByteWinRow])
+		x := cdefByteLoad4x4Rows(r0, r1, r2, r3, cdefByteCenter)
+		ka := cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, s0p), x, secStr, secSh).
+			Add(cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, s1p), x, secStr, secSh))
+		kb := cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, s0m), x, secStr, secSh).
+			Add(cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, s1m), x, secStr, secSh))
+		a := ka.Add(ka).Add(neg1).
+			Add(cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, s2p), x, secStr, secSh)).
+			Add(cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, s3p), x, secStr, secSh))
+		b := kb.Add(kb).
+			Add(cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, s2m), x, secStr, secSh)).
+			Add(cdefByteConstrain(cdefByteLoad4x4Rows(r0, r1, r2, r3, s3m), x, secStr, secSh))
+		cdefByteStore4x4(dst, dstOff, dstStr, cdefByteFinish(x, a, b, four, bias))
+		return
+	}
 	for h := ctx.height; h > 0; h -= 4 {
 		w := (*[cdefByteWin4]byte)(input[base : base+cdefByteWin4])
 		r0 := (*[cdefByteWinRow]byte)(w[0:cdefByteWinRow])
