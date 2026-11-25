@@ -294,43 +294,6 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		}
 	}
 
-	var plan decoderFrameWorkResidualStreamPlan
-	switch kind {
-	case decoderPayloadLowOverhead:
-		plan, err = decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(
-			probeStream, probeSource, cfg.workers, cfg.frameSizeLimit, probePayload,
-			probeEvents, probeSpans, probeJobs, probeBatches,
-		)
-	case decoderPayloadRTP:
-		plan, err = decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(
-			probeStream, probeSource, cfg.workers, cfg.frameSizeLimit, probeEvents, probeSpans, probeJobs, probeBatches,
-		)
-	default:
-		err = internaldecoder.ErrInvalidFrameWorkState
-	}
-	if err != nil {
-		workerPool.Close()
-		return nil, fmt.Errorf("goav1: stream plan: %w", err)
-	}
-	if !plan.HasEvent() {
-		workerPool.Close()
-		return nil, errors.New("goav1: stream plan did not identify a bind event")
-	}
-
-	// Pool slots fit the largest coded frame layout in the stream; each frame
-	// binds a slot at its own size and format (dav1d allocates every picture at
-	// its frame size and its sequence's bit depth, chroma layout and superblock
-	// size, so a new coded video sequence may change any of them).
-	format, err := decoderCodedPoolFormatFromSource(probeSource, kind, 64, probePayload)
-	if err != nil {
-		workerPool.Close()
-		return nil, fmt.Errorf("goav1: frame format from stream plan: %w", err)
-	}
-
-	// Frame threading keeps up to n_fc frames in flight beyond the reference
-	// set, each on its own surface. Error concealment isolates each payload
-	// serially (tile workers still run in parallel) so a corrupt frame cannot
-	// cascade reference-progress errors into queued future frames.
 	frameContexts := 1
 	if kind == decoderPayloadLowOverhead && !cfg.errorConcealment {
 		frameContexts = decoderFrameContextCount(cfg.workers, cfg.maxFrameDelay)
@@ -339,39 +302,67 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 	if frameContexts > 1 {
 		surfaceCount += frameContexts + 1
 	}
-	var useExternal bool
-	var outputFormat FrameFormat
+
+	var (
+		plan         decoderFrameWorkResidualStreamPlan
+		format       FrameFormat
+		useExternal  bool
+		outputFormat FrameFormat
+		motionSize   FrameSize
+		postArena    decoderFrameWorkPostFilterRequestScratchSize
+	)
 	switch kind {
 	case decoderPayloadLowOverhead:
-		useExternal, outputFormat, err = decoderExternalOutputFormatFromSource(probeSource, 64, probePayload)
+		sameDefault := cfg.operatingPoint == 0 && !cfg.onlyHighestLayer && !cfg.disableFilmGrain
+		probed, perr := decoderProbeLowOverheadFromSource(
+			probeStream, sameDefault, probeSource, cfg.workers, cfg.frameSizeLimit, 64, workerPool,
+			probePayload, probeEvents, probeSpans, probeJobs, probeBatches,
+		)
+		if perr != nil {
+			workerPool.Close()
+			return nil, perr
+		}
+		plan = probed.plan
+		format = probed.format
+		useExternal = probed.useExternal
+		outputFormat = probed.outputFormat
+		motionSize = probed.motionSize
+		postArena = probed.postArena
 	case decoderPayloadRTP:
+		plan, err = decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(
+			probeStream, probeSource, cfg.workers, cfg.frameSizeLimit, probeEvents, probeSpans, probeJobs, probeBatches,
+		)
+		if err != nil {
+			workerPool.Close()
+			return nil, fmt.Errorf("goav1: stream plan: %w", err)
+		}
+		if !plan.HasEvent() {
+			workerPool.Close()
+			return nil, errors.New("goav1: stream plan did not identify a bind event")
+		}
+		format, err = decoderCodedPoolFormatFromSource(probeSource, kind, 64, probePayload)
+		if err != nil {
+			workerPool.Close()
+			return nil, fmt.Errorf("goav1: frame format from stream plan: %w", err)
+		}
 		useExternal, outputFormat, err = decoderExternalOutputFormatFromRTPSource(probeSource, 64)
-	}
-	if err != nil {
-		workerPool.Close()
-		return nil, fmt.Errorf("goav1: super-res output format: %w", err)
-	}
-	var motionSize FrameSize
-	switch kind {
-	case decoderPayloadLowOverhead:
-		motionSize, err = decoderTemporalMotionScratchFrameSizeUpperBoundFromSource(probeSource, probeEvents, probePayload)
-	case decoderPayloadRTP:
+		if err != nil {
+			workerPool.Close()
+			return nil, fmt.Errorf("goav1: super-res output format: %w", err)
+		}
 		motionSize, err = decoderTemporalMotionScratchFrameSizeUpperBoundFromRTPSource(probeSource)
-	}
-	if err != nil {
-		workerPool.Close()
-		return nil, fmt.Errorf("goav1: temporal motion scratch plan: %w", err)
-	}
-	var postArena decoderFrameWorkPostFilterRequestScratchSize
-	switch kind {
-	case decoderPayloadLowOverhead:
-		postArena, err = decoderPostFilterScratchArenaUpperBoundFromSource(probeSource, 64, workerPool, probeEvents, probePayload)
-	case decoderPayloadRTP:
+		if err != nil {
+			workerPool.Close()
+			return nil, fmt.Errorf("goav1: temporal motion scratch plan: %w", err)
+		}
 		postArena, err = decoderPostFilterScratchArenaUpperBoundFromRTPSource(probeSource, 64, workerPool)
-	}
-	if err != nil {
+		if err != nil {
+			workerPool.Close()
+			return nil, fmt.Errorf("goav1: postfilter scratch plan: %w", err)
+		}
+	default:
 		workerPool.Close()
-		return nil, fmt.Errorf("goav1: postfilter scratch plan: %w", err)
+		return nil, fmt.Errorf("goav1: stream plan: %w", internaldecoder.ErrInvalidFrameWorkState)
 	}
 	if !useExternal {
 		// Non-external Decoder always binds LoopFilterMasks for deblocking, so

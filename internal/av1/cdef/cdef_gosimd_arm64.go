@@ -374,7 +374,130 @@ func findDirectionU8SIMD(img []byte, stride int) (int, int32) {
 	return bestDir, (bestCost - opp) >> 10
 }
 
+func findDirectionFromRows(r0, r1, r2, r3, r4, r5, r6, r7 archsimd.Int16x8) (int, int32) {
+	var zero archsimd.Int16x8
+
+	r01 := r0.Add(r1)
+	r23 := r2.Add(r3)
+	r45 := r4.Add(r5)
+	r67 := r6.Add(r7)
+	c6 := cdefStraightCostFromVec(r01.Add(r23).Add(r45).Add(r67))
+
+	a01 := r0.ConcatAddPairs(r1)
+	a23 := r2.ConcatAddPairs(r3)
+	a45 := r4.ConcatAddPairs(r5)
+	a67 := r6.ConcatAddPairs(r7)
+	rowSums := a01.ConcatAddPairs(a23).ConcatAddPairs(a45.ConcatAddPairs(a67))
+	c2 := cdefStraightCostFromVec(rowSums)
+
+	diagRevTbl := archsimd.LoadUint8x16Array(&cdefDiagRevTbl)
+	wDiagLo := archsimd.LoadInt32x4Array(&cdefDivDiagLo)
+	wDiagHi := archsimd.LoadInt32x4Array(&cdefDivDiagHi)
+
+	p0lo := r0.Add(placeLo(r1, zero, 1)).
+		Add(placeLo(r2, zero, 2).Add(placeLo(r3, zero, 3))).
+		Add(placeLo(r4, zero, 4).Add(placeLo(r5, zero, 5)).
+			Add(placeLo(r6, zero, 6).Add(placeLo(r7, zero, 7))))
+	p0hi := placeHi(r1, zero, 1).Add(placeHi(r2, zero, 2)).
+		Add(placeHi(r3, zero, 3).Add(placeHi(r4, zero, 4))).
+		Add(placeHi(r5, zero, 5).Add(placeHi(r6, zero, 6)).Add(placeHi(r7, zero, 7)))
+	c0 := cdefDiagCostVec(p0lo, p0hi, diagRevTbl, wDiagLo, wDiagHi)
+
+	p4lo := r7.Add(placeLo(r6, zero, 1)).
+		Add(placeLo(r5, zero, 2).Add(placeLo(r4, zero, 3))).
+		Add(placeLo(r3, zero, 4).Add(placeLo(r2, zero, 5)).
+			Add(placeLo(r1, zero, 6).Add(placeLo(r0, zero, 7))))
+	p4hi := placeHi(r6, zero, 1).Add(placeHi(r5, zero, 2)).
+		Add(placeHi(r4, zero, 3).Add(placeHi(r3, zero, 4))).
+		Add(placeHi(r2, zero, 5).Add(placeHi(r1, zero, 6)).Add(placeHi(r0, zero, 7)))
+	c4 := cdefDiagCostVec(p4lo, p4hi, diagRevTbl, wDiagLo, wDiagHi)
+
+	oddRevTbl := archsimd.LoadUint8x16Array(&cdefOddRevTbl)
+	wOdd := archsimd.LoadInt32x4Array(&cdefDivOdd)
+
+	p7lo := r01.Add(placeLo(r23, zero, 1)).Add(placeLo(r45, zero, 2).Add(placeLo(r67, zero, 3)))
+	p7hi := placeHi(r23, zero, 1).Add(placeHi(r45, zero, 2)).Add(placeHi(r67, zero, 3))
+	c7 := cdefOddCostVec(p7lo, p7hi, oddRevTbl, wOdd)
+
+	p5lo := r67.Add(placeLo(r45, zero, 1)).Add(placeLo(r23, zero, 2).Add(placeLo(r01, zero, 3)))
+	p5hi := placeHi(r45, zero, 1).Add(placeHi(r23, zero, 2)).Add(placeHi(r01, zero, 3))
+	c5 := cdefOddCostVec(p5lo, p5hi, oddRevTbl, wOdd)
+
+	s04 := packLo64(a01, a45)
+	s15 := packHi64(a01, a45)
+	s26 := packLo64(a23, a67)
+	s37 := packHi64(a23, a67)
+	p1lo := s04.Add(placeLo(s15, zero, 1)).Add(placeLo(s26, zero, 2).Add(placeLo(s37, zero, 3)))
+	p1hi := placeHi(s15, zero, 1).Add(placeHi(s26, zero, 2)).Add(placeHi(s37, zero, 3))
+	c1 := cdefOddCostVec(p1lo, p1hi, oddRevTbl, wOdd)
+
+	s73 := packHi64(a67, a23)
+	s62 := packLo64(a67, a23)
+	s51 := packHi64(a45, a01)
+	s40 := packLo64(a45, a01)
+	p3lo := s73.Add(placeLo(s62, zero, 1)).Add(placeLo(s51, zero, 2).Add(placeLo(s40, zero, 3)))
+	p3hi := placeHi(s62, zero, 1).Add(placeHi(s51, zero, 2)).Add(placeHi(s40, zero, 3))
+	c3 := cdefOddCostVec(p3lo, p3hi, oddRevTbl, wOdd)
+
+	bestDir, bestCost, opp := 0, c0, c4
+	if c1 > bestCost {
+		bestDir, bestCost, opp = 1, c1, c5
+	}
+	if c2 > bestCost {
+		bestDir, bestCost, opp = 2, c2, c6
+	}
+	if c3 > bestCost {
+		bestDir, bestCost, opp = 3, c3, c7
+	}
+	if c4 > bestCost {
+		bestDir, bestCost, opp = 4, c4, c0
+	}
+	if c5 > bestCost {
+		bestDir, bestCost, opp = 5, c5, c1
+	}
+	if c6 > bestCost {
+		bestDir, bestCost, opp = 6, c6, c2
+	}
+	if c7 > bestCost {
+		bestDir, bestCost, opp = 7, c7, c3
+	}
+	return bestDir, (bestCost - opp) >> 10
+}
+
 func findDirectionDualU8SIMD(img1 []byte, img2 []byte, stride int) (int, int32, int, int32) {
+	if stride >= 16 && stride <= 1<<24 && len(img1) >= 8 && len(img2) >= 1 && &img1[8] == &img2[0] && unsafeutil.RowsFit(len(img1), 0, stride, 16, 8) {
+		bias := archsimd.LoadInt16x8Array(&cdefDirBias128)
+		b := unsafeutil.BlockAt[cdefR8](unsafeutil.NewRows(img1, 0, stride, 16, 8), 0, 0)
+		v0 := archsimd.LoadUint8x16Array(b.Row16(0))
+		v1 := archsimd.LoadUint8x16Array(b.Row16(1))
+		v2 := archsimd.LoadUint8x16Array(b.Row16(2))
+		v3 := archsimd.LoadUint8x16Array(b.Row16(3))
+		v4 := archsimd.LoadUint8x16Array(b.Row16(4))
+		v5 := archsimd.LoadUint8x16Array(b.Row16(5))
+		v6 := archsimd.LoadUint8x16Array(b.Row16(6))
+		v7 := archsimd.LoadUint8x16Array(b.Row16(7))
+		dir1, var1 := findDirectionFromRows(
+			v0.ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+			v1.ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+			v2.ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+			v3.ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+			v4.ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+			v5.ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+			v6.ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+			v7.ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+		)
+		dir2, var2 := findDirectionFromRows(
+			v0.HiToLo().ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+			v1.HiToLo().ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+			v2.HiToLo().ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+			v3.HiToLo().ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+			v4.HiToLo().ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+			v5.HiToLo().ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+			v6.HiToLo().ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+			v7.HiToLo().ExtendLo8ToUint16().BitsToInt16().Sub(bias),
+		)
+		return dir1, var1, dir2, var2
+	}
 	dir1, var1 := findDirectionU8SIMD(img1, stride)
 	dir2, var2 := findDirectionU8SIMD(img2, stride)
 	return dir1, var1, dir2, var2

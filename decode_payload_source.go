@@ -295,6 +295,140 @@ func (s decoderPayloadSource) forEachPayload(buf []byte, fn func([]byte) error) 
 	return nil
 }
 
+type decoderLowOverheadProbeResult struct {
+	plan         decoderFrameWorkResidualStreamPlan
+	format       FrameFormat
+	useExternal  bool
+	outputFormat FrameFormat
+	motionSize   FrameSize
+	postArena    decoderFrameWorkPostFilterRequestScratchSize
+}
+
+// decoderProbeLowOverheadFromSource fuses the five low-overhead stream-sizing
+// passes (stream plan, coded pool format, external output format, temporal
+// motion upper bound, and postfilter arena upper bound) into a single pass
+// over source, avoiding repeated file reads and OBU parses during decoder setup.
+func decoderProbeLowOverheadFromSource(
+	stream internaldecoder.Stream,
+	sameDefaultStream bool,
+	source decoderPayloadSource,
+	workers int,
+	frameSizeLimit int,
+	align int,
+	workerPool *internalthreading.Pool,
+	payloadBuf []byte,
+	events []internaldecoder.Event,
+	spans []internalparser.TileSpan,
+	jobs []internaltile.Job,
+	batches []internalthreading.Batch,
+) (decoderLowOverheadProbeResult, error) {
+	var res decoderLowOverheadProbeResult
+	var codedFormats []FrameFormat
+	var extFormats []FrameFormat
+	var upperScratch decoderUpperBoundScratch
+	var defaultStream internaldecoder.Stream
+	var defaultEvents []internaldecoder.Event
+	if !sameDefaultStream {
+		defaultEvents = make([]internaldecoder.Event, decoderMaxPayloadEvents)
+	}
+	outputs := 0
+	err := source.forEachPayload(payloadBuf, func(src []byte) error {
+		eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(src)
+		nextSize := decoderFrameWorkResidualStreamScratchSize{Events: eventCount}
+		res.plan.Size = res.plan.Size.Max(nextSize)
+		if err != nil {
+			return fmt.Errorf("goav1: stream plan: %w", err)
+		}
+		if len(events) < eventCount {
+			return fmt.Errorf("goav1: stream plan: %w", ErrDecoderEventBufferTooSmall)
+		}
+
+		sequence, _ := stream.SequenceHeader()
+		count, err := stream.PushLowOverhead(src, events[:eventCount])
+		if err != nil {
+			return fmt.Errorf("goav1: stream plan: %w", err)
+		}
+		if err := decoderCheckFrameSizeLimit(frameSizeLimit, events[:count]); err != nil {
+			return fmt.Errorf("goav1: stream plan: %w", err)
+		}
+		eventSize, err := decoderFrameWorkResidualEventsScratchLen(sequence, events[:count], workers, spans, jobs, batches)
+		if err != nil {
+			return fmt.Errorf("goav1: stream plan: %w", err)
+		}
+		nextBind := decoderFrameWorkResidualEventsBindPlan(sequence, events[:count])
+		if res.plan.Bind.prefer(nextBind) {
+			res.plan.Bind = nextBind
+		} else if !res.plan.Bind.HasEvent() {
+			res.plan.Bind.Sequence = nextBind.Sequence
+		}
+		nextSize.Event = eventSize
+		outputs += eventSize.Outputs
+		res.plan.Size = res.plan.Size.Max(nextSize)
+		res.plan.Size.Event.Outputs = outputs
+
+		metaEvents := events[:count]
+		metaSeq := sequence
+		if !sameDefaultStream {
+			metaSeq, _ = defaultStream.SequenceHeader()
+			mc, merr := defaultStream.PushLowOverhead(src, defaultEvents[:eventCount])
+			if merr != nil {
+				return fmt.Errorf("goav1: frame format from stream plan: %w", merr)
+			}
+			metaEvents = defaultEvents[:mc]
+		}
+		for i := range metaEvents {
+			ev := &metaEvents[i]
+			metaSeq = decoderFrameWorkResidualEventSequence(metaSeq, ev)
+			if !decoderFrameWorkResidualEventBindCandidate(ev) {
+				continue
+			}
+			cf, err := frameCodedFormatFromHeaders(metaSeq, ev.FrameSize, align)
+			if err != nil {
+				return fmt.Errorf("goav1: frame format from stream plan: %w", err)
+			}
+			codedFormats = decoderAddFrameFormat(codedFormats, cf)
+			if err := decoderAddExternalOutputFormat(&extFormats, metaSeq, ev, align); err != nil {
+				return fmt.Errorf("goav1: super-res output format: %w", err)
+			}
+			if !ev.FrameHeader.ShowExistingFrame {
+				if ev.FrameSize.CodedWidth > res.motionSize.CodedWidth {
+					res.motionSize.CodedWidth = ev.FrameSize.CodedWidth
+				}
+				if ev.FrameSize.Height > res.motionSize.Height {
+					res.motionSize.Height = ev.FrameSize.Height
+				}
+			}
+			pfSize, err := decoderPostFilterScratchSizeUpperBound(metaSeq, ev, align, workerPool, &upperScratch)
+			if err != nil {
+				return fmt.Errorf("goav1: postfilter scratch plan: %w", err)
+			}
+			res.postArena = res.postArena.Max(decoderExternalPostFilterScratchLen(pfSize))
+		}
+		return nil
+	})
+	if err != nil {
+		return decoderLowOverheadProbeResult{}, err
+	}
+	if !res.plan.HasEvent() {
+		return decoderLowOverheadProbeResult{}, errors.New("goav1: stream plan did not identify a bind event")
+	}
+	if len(codedFormats) == 0 {
+		return decoderLowOverheadProbeResult{}, fmt.Errorf("goav1: frame format from stream plan: %w", internalframe.ErrInvalidFormat)
+	}
+	res.format, err = decoderLargestFrameFormat(codedFormats)
+	if err != nil {
+		return decoderLowOverheadProbeResult{}, fmt.Errorf("goav1: frame format from stream plan: %w", err)
+	}
+	if len(extFormats) > 0 {
+		res.outputFormat, err = decoderLargestFrameFormat(extFormats)
+		if err != nil {
+			return decoderLowOverheadProbeResult{}, fmt.Errorf("goav1: super-res output format: %w", err)
+		}
+		res.useExternal = true
+	}
+	return res, nil
+}
+
 func decoderFrameWorkResidualLowOverheadStreamsPlanFromSource(stream internaldecoder.Stream, source decoderPayloadSource, workers int, frameSizeLimit int, payloadBuf []byte, events []internaldecoder.Event, spans []internalparser.TileSpan, jobs []internaltile.Job, batches []internalthreading.Batch) (decoderFrameWorkResidualStreamPlan, error) {
 	var plan decoderFrameWorkResidualStreamPlan
 	outputs := 0
@@ -397,18 +531,6 @@ func decoderFrameWorkResidualRTPPayloadsStreamPlanFromSource(stream internaldeco
 		return nil
 	})
 	return plan, err
-}
-
-func decoderExternalOutputFormatFromSource(source decoderPayloadSource, align int, payloadBuf []byte) (bool, FrameFormat, error) {
-	var formats []FrameFormat
-	err := decoderForEachLowOverheadEventFromSource(source, payloadBuf, func(sequence SequenceHeader, event *internaldecoder.Event) error {
-		return decoderAddExternalOutputFormat(&formats, sequence, event, align)
-	})
-	if err != nil || len(formats) == 0 {
-		return false, FrameFormat{}, err
-	}
-	format, err := decoderLargestFrameFormat(formats)
-	return err == nil, format, err
 }
 
 func decoderExternalOutputFormatFromRTPSource(source decoderPayloadSource, align int) (bool, FrameFormat, error) {
@@ -609,39 +731,6 @@ func decoderPostFilterScratchArenaUpperBoundFromRTPSource(source decoderPayloadS
 		return nil
 	})
 	return arena, err
-}
-
-func decoderTemporalMotionScratchFrameSizeUpperBoundFromSource(source decoderPayloadSource, events []internaldecoder.Event, payloadBuf []byte) (FrameSize, error) {
-	var stream internaldecoder.Stream
-	var maxSize FrameSize
-	err := source.forEachPayload(payloadBuf, func(payload []byte) error {
-		eventCount, err := decoderFrameWorkResidualLowOverheadEventLen(payload)
-		if err != nil {
-			return err
-		}
-		if len(events) < eventCount {
-			return ErrDecoderEventBufferTooSmall
-		}
-		count, err := stream.PushLowOverhead(payload, events[:eventCount])
-		if err != nil {
-			return err
-		}
-		for i := range count {
-			event := events[i]
-			if !decoderFrameWorkResidualEventBindCandidate(&event) ||
-				event.FrameHeader.ShowExistingFrame {
-				continue
-			}
-			if event.FrameSize.CodedWidth > maxSize.CodedWidth {
-				maxSize.CodedWidth = event.FrameSize.CodedWidth
-			}
-			if event.FrameSize.Height > maxSize.Height {
-				maxSize.Height = event.FrameSize.Height
-			}
-		}
-		return nil
-	})
-	return maxSize, err
 }
 
 func decoderTemporalMotionScratchFrameSizeUpperBoundFromRTPSource(source decoderPayloadSource) (FrameSize, error) {
