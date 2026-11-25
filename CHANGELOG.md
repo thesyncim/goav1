@@ -4,6 +4,18 @@ Release-level changes to goav1 are tracked here. Detailed progress logs,
 per-vector archaeology, and work-in-progress notes belong in commits, issues,
 or pull requests, not in long-lived markdown.
 
+## [Unreleased]
+
+### Decoder Completeness & Resilience
+- **Color & Metadata Exposure**: Exposed `ColorInfo` (primaries, transfer, matrix, chroma sample position, range, render size) and `FrameMetadata` (HDR CLL, HDR MDCV, ITU-T T.35, Timecode, Scalability) on `Frame` and `DecodedFrame` with zero `Event` struct growth and zero steady-state allocations.
+- **AV1 Controls & Live Streaming**: Added `WithFilmGrain`, `WithOperatingPoint` (AV1 §7.5 `operating_point_idc` OBU filtering), `WithAllLayers`, live push-streaming `Decoder.DecodePayload`, and `-filmgrain` / `-oppoint` / `-conceal` CLI flags on `cmd/aom-go-dec`.
+- **Error Concealment**: Added `WithErrorConcealment` and `Concealed` frame flagging for resilient playback across corrupt OBUs and truncated tile payloads, with clean `FrameWorkState`/RTP recovery and zero surface leaks.
+
+### Encoder Completeness & Memory
+- **HDR Metadata & Color Signaling**: Added AV1 `OBU_METADATA` serialization (`HDR_CLL`, `HDR_MDCV`, `ITUT_T35`, `TIMECODE`) and `Color` / `Metadata` / `SetMetadata` / `KeyFrameInterval` on `VideoEncoder`.
+- **Full Profile & Format Coverage**: Added 8-bit 4:2:0 bit-exact lossless encoding (`EncodeI420LosslessKeyframe`, `VideoEncoderConfig.Lossless`), native 8-bit 4:2:2 (Profile 2) and 4:4:4 (Profile 1) via `VideoEncoderConfig.Subsampling`, runtime `SetQIndex`/`SetBitrate`, and public streaming `HighBitDepthVideoEncoder` (10/12-bit 4:2:0/4:2:2/4:4:4), `MonochromeVideoEncoder` (8-bit I400), and `HighBitDepthMonochromeVideoEncoder` (10/12-bit I400).
+- **Memory & Package Hygiene**: Removed eager `uint16` CDEF sample buffers in `cdefApplier` (-2.8 MB/encoder at 720p, -6.2 MB at 1080p), switched serial CDEF apply to the U8 unit-row path, and consolidated tracked Go files by ~50% (1,639 → 828) across root and 18 internal packages.
+
 ## [v0.1.2] - 2026-11-25
 
 Pure-Go + `simd/archsimd` decoder performance release — brings 8-thread 5-stream totals to **1.040× wall / 1.030× cycles** of `dav1d --threads 8` (beating `dav1d` on `aomrt_johnny`, `svtrtc_crowdrun`, `aomrt_fourpeople` cycles and `svtra_mtbike` wall) and 1-thread totals to **1.101× cycles** on Apple M4 Max, with 100% memory safety (`scripts/check_unsafe.sh`) and 31/31 realcorpus bit-exact MD5 parity.

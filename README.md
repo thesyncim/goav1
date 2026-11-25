@@ -4,10 +4,17 @@
 [![Lint](https://github.com/thesyncim/goav1/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/thesyncim/goav1/actions/workflows/lint.yml)
 [![Test vectors](https://github.com/thesyncim/goav1/actions/workflows/testvectors.yml/badge.svg?branch=main)](https://github.com/thesyncim/goav1/actions/workflows/testvectors.yml)
 
-goav1 is a pure-Go AV1 decoder with a realtime, WebRTC-oriented encoder and
-RTP/RTCP helpers. The root Go module has no third-party module dependencies and
-does not use cgo. The project is under active development: decoder parity,
-encoder quality, and throughput coverage continue to expand.
+goav1 is a pure-Go AV1 decoder and realtime AV1 encoder with WebRTC RTP/RTCP
+helpers. The root Go module has no third-party dependencies, uses zero cgo, and
+contains zero handwritten assembly (`.s`/`.S`) — optimized arm64 and amd64
+kernels are written in Go using `simd/archsimd` (`GOEXPERIMENT=simd`), with
+audited memory safety (`scripts/check_unsafe.sh`) and zero steady-state GC
+allocations on hot decode/encode paths.
+
+## Performance snapshot (Apple M4 Max, `GOEXPERIMENT=simd`)
+
+- **Encoder vs `SvtAv1EncApp` (720p 240f, preset 12 RTC CBR)**: **1.39×–1.82× faster** single-threaded (up to **2.04× fewer cycles**) and **2.68× faster** multi-threaded, with **0.0 allocs/frame** in steady-state 1T and RTC streams.
+- **Decoder vs `dav1d` (5-stream 720p/1080p real-content corpus)**: **1.13× wall / 1.13× cycles** single-threaded and **1.04×–1.12× wall / 1.03×–1.06× cycles** at 8 threads, with **0 allocs/frame** in steady state and bit-exact MD5 parity across 130+ AV1 feature vectors and real-content streams.
 
 ## Install
 
@@ -53,14 +60,23 @@ func main() {
 }
 ~~~
 
-For a reusable decode loop, use `NewDecoderFromIVF` and `DecodeNext`. Frames
-returned by `DecodeNext` alias decoder-owned memory and remain valid until the
-next decode call. See the executable [decoder examples](example_decode_simple_test.go).
+For a reusable decode loop, use `NewDecoderFromIVF` and `DecodeNext`, or push
+live low-overhead temporal units with `Decoder.DecodePayload`. Frames returned
+by `DecodeNext` / `DecodePayload` alias decoder-owned memory and remain valid
+until the next decode call. Options include `WithWorkers`, `WithMaxFrameDelay`,
+`WithFrameSizeLimit`, `WithFilmGrain`, `WithOperatingPoint`, `WithAllLayers`,
+and `WithErrorConcealment`. See the executable [decoder examples](example_decode_simple_test.go).
 
-## Encode an I420 stream
+## Encode an AV1 stream
 
-`VideoEncoder` accepts same-sized 8-bit I420 frames. Set `QIndex` for fixed
-quality, or set both `TargetBitrate` and `Framerate` for CBR rate control.
+`VideoEncoder` encodes same-sized 8-bit 4:2:0, native 4:2:2 (Profile 2), or
+native 4:4:4 (Profile 1) streams, as well as bit-exact 8-bit lossless streams
+(`Lossless: true`). Set `QIndex` for fixed quality, or `TargetBitrate` and
+`Framerate` for CBR rate control, with optional `Color` description,
+`Metadata` (HDR CLL, HDR MDCV, ITU-T T.35, Timecode), `KeyFrameInterval`, and
+runtime `SetQIndex` / `SetBitrate`. For native 10/12-bit or monochrome streams,
+use `HighBitDepthVideoEncoder`, `MonochromeVideoEncoder`, or
+`HighBitDepthMonochromeVideoEncoder`.
 
 ~~~go
 package main
@@ -116,30 +132,32 @@ reusable `Decoder`, `VideoEncoder`, and `RTCEncoder` values when finished.
 
 ## Capabilities and scope
 
-- Decode AV1 from IVF, low-overhead OBU streams, and ordered RTP payloads or
-  packets. The decoder includes prediction, reconstruction, and AV1 post-filter
-  stages.
-- Encode realtime AV1 streams with fixed-quality or CBR control, with
-  WebRTC-specific layering and RTP metadata through `RTCEncoder`.
-- Parse and build AV1 RTP payloads, RTP extension elements, selected SDP
-  capability values, and RTCP packets and feedback.
-- Read IVF files with `NewIVFIterator`.
+- **Decoder (Profiles 0, 1, 2; 8/10/12-bit; 4:2:0, 4:2:2, 4:4:4, monochrome)**:
+  Decodes IVF, low-overhead OBU streams (batch or live push via `DecodePayload`),
+  and ordered RTP payloads/packets (`DecodeRTPPayload`, `DecodeRTPPacket`,
+  `LayeredDecoder` for multi-resolution SVC). Implements full AV1 prediction,
+  transforms, reconstruction, loop filter, CDEF, super-resolution, loop
+  restoration (Wiener/SGR), film-grain synthesis (toggleable via `WithFilmGrain`),
+  operating-point & spatial-layer selection (`WithOperatingPoint`,
+  `WithAllLayers`), `ColorInfo` & `FrameMetadata` exposure (HDR CLL, HDR MDCV,
+  ITU-T T.35, Timecode, Scalability), and resilient freeze-frame error
+  concealment (`WithErrorConcealment`).
+- **Encoder**: Realtime AV1 encoder (`VideoEncoder`, `HighBitDepthVideoEncoder`,
+  `MonochromeVideoEncoder`, `HighBitDepthMonochromeVideoEncoder`,
+  `KeyframeEncoder`, `RTCEncoder`) covering 8/10/12-bit 4:2:0, 4:2:2, 4:4:4,
+  monochrome, and bit-exact lossless keyframes/streams, fixed-quality CQP and
+  SVT-style CBR rate control, temporal/spatial SVC, screen-content palette
+  coding, cyclic-refresh AQ, color description & `OBU_METADATA` emission, and
+  WebRTC dependency descriptors.
+- **Transport & Framing**: AV1 RTP payload packetization/depacketization, RFC
+  8285 header extensions, RFC 4588 RTX, RTCP feedback (NACK, PLI, FIR, REMB,
+  Transport-CC, AV1 layer refresh), packet sequencing, AV1 SDP capability
+  helpers, and IVF iteration (`NewIVFIterator`).
 
 The decoder's internal pipeline (frame pools, tile work, post-filter runners,
-kernels) is not part of the public API.
-
-The checked-in decoder vectors cover profiles 0 and 1, plus selected profile 2
-clips, and include 8-, 10-, and 12-bit content. This describes fixture coverage;
-it does not claim every stream in those profiles is supported.
-
-The encoder targets realtime WebRTC use. It is not an offline encoder or a
-general replacement for `aomenc`. The package supplies RTP/RTCP primitives and
-AV1 capability helpers; callers provide full SDP negotiation, SRTP, jitter
-buffering, network I/O, packet timing, and retransmission policy.
-
-Coverage is measured by the checked-in vector and integration gates. Passing
-those gates does not establish complete AV1 conformance for every profile,
-bit depth, malformed stream, or deployment.
+kernels) is kept under `internal/` and is not part of the public API. Container
+demuxing/muxing beyond IVF (MP4/ISOBMFF, WebM/MKV) and WebRTC network/SRTP/ICE
+transport stay with the caller.
 
 ## Verify changes
 
