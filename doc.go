@@ -21,9 +21,9 @@
 // Alt-Ref pyramids (BFrames, EncodeBatch, Flush), automatic film-grain modeling
 // and signaling (FilmGrainLevel, EstimateFilmGrainParams, SetFilmGrain),
 // ColorInfo and OBU_METADATA signaling, periodic keyframes, and runtime
-// SetQIndex/SetBitrate. EncodeI420SuperResKeyframe and
-// EncodeI420LoopRestorationKeyframe provide horizontal Super-Resolution and
-// in-loop Wiener Restoration keyframes. NewHighBitDepthVideoEncoder,
+// SetQIndex/SetBitrate, plus EnableLoopRestoration (Switchable Wiener +
+// SGRProj), SuperResDenominator, EnableGlobalMotion, EncodeI420SuperResKeyframe,
+// EncodeI420LoopRestorationKeyframe, and EncodeI420IntraBCKeyframe. NewHighBitDepthVideoEncoder,
 // NewMonochromeVideoEncoder, and NewHighBitDepthMonochromeVideoEncoder provide
 // native 10/12-bit and monochrome streaming encoders. NewRTCEncoderWithConfig
 // adds WebRTC temporal/spatial scalability and RTP dependency descriptors.

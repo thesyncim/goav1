@@ -77,8 +77,11 @@ and 2-pass VBR (`Pass: 1` / `Pass: 2`, `FirstPassStats`), plus lookahead
 B-frame / hidden Alt-Ref pyramids (`BFrames`, `EncodeBatch`, `Flush`),
 automatic film-grain modeling and signaling (`FilmGrainLevel`,
 `EstimateFilmGrainParams`, `SetFilmGrain`), horizontal Super-Resolution
-(`EncodeI420SuperResKeyframe`), in-loop Wiener Restoration
-(`EncodeI420LoopRestorationKeyframe`), `Color` description, `Metadata` (HDR
+(`SuperResDenominator`, `EncodeI420SuperResKeyframe`), Switchable in-loop
+Restoration (`EnableLoopRestoration`, `EncodeI420LoopRestorationKeyframe` —
+Wiener + SGRProj), IntraBC screen-content keyframes
+(`EncodeI420IntraBCKeyframe`), Global Motion translation signaling
+(`EnableGlobalMotion`), `Color` description, `Metadata` (HDR
 CLL, HDR MDCV, ITU-T T.35, Timecode), `KeyFrameInterval`, and runtime
 `SetQIndex` / `SetBitrate`. For native 10/12-bit or monochrome streams, use
 `HighBitDepthVideoEncoder`, `MonochromeVideoEncoder`, or
