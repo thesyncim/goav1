@@ -4,6 +4,24 @@ Release-level changes to goav1 are tracked here. Detailed progress logs,
 per-vector archaeology, and work-in-progress notes belong in commits, issues,
 or pull requests, not in long-lived markdown.
 
+## [v0.1.2] - 2026-11-25
+
+Pure-Go + `simd/archsimd` decoder performance release — brings 8-thread 5-stream totals to **1.040× wall / 1.030× cycles** of `dav1d --threads 8` (beating `dav1d` on `aomrt_johnny`, `svtrtc_crowdrun`, `aomrt_fourpeople` cycles and `svtra_mtbike` wall) and 1-thread totals to **1.101× cycles** on Apple M4 Max, with 100% memory safety (`scripts/check_unsafe.sh`) and 31/31 realcorpus bit-exact MD5 parity.
+
+### Decoder Optimizations (`arm64` & generic)
+- **Loop Filter (`internal/av1/loopfilter`)**:
+  - Split `lpf8U8W` into `lpf8U8Cols` (true leaf function with zero `any(tv)` runtime type assertions and `BlockHalves` hoisted once) and `lpf8U8Rows`.
+  - Gated `p6..p4`/`q4..q6` loads and `lpfSpread3` in `lpf16U8Wd16` on `m16 & mFlat != 0`, replaced `BroadcastUint16x8(128)` with L1 table load `lpfBias128`, sequenced low/high halves in flat8/flat6 to cut NEON register pressure, and hoisted `sbLowByteLanes` out of `filterSBVertical8`'s loop.
+- **CDEF (`internal/av1/cdef`)**:
+  - Hoisted destination bounds checks in `8×8` (`unsafeutil.Block8At`) and `4×4` (`unsafeutil.Grid`) byte-lane kernels and replaced the 4× unrolled strip with a 4-iteration loop, cutting `cdefByteFilter8Pri`'s stack frame from 160 B to 16 B (zero pointer spills).
+  - Replaced `BroadcastInt16x8(128)` with L1 load `cdefDirBias128` and hoisted the 8 row loads in `findDirectionU8SIMD` via `unsafeutil.BlockAt`.
+- **Motion Compensation (`internal/av1/motion`)**:
+  - Added 4-row `Grid.Sub` unrolls for `mc8PutV4`, `mc8PrepH4S4`, `mc8PrepV4`, and `mc8PrepHV6x4`, and dispatched the 4-tap prep kernels in `mc8PrepGrid`.
+- **Loop-Filter Masks (`internal/av1/lfmask`)**:
+  - Unrolled `LevelCache.fill` 4 cells at a time with constant `comp` split; split `sidx` spans and fast-pathed `twl4c == 0` / `thl4c == 0` in `maskEdgesInter`.
+- **Entropy (`internal/av1/entropy`)**:
+  - Replaced per-TXB `% 3`, `% 5`, and `% 13` divisions in `DecodeCoefs` with range guards.
+
 ## [v0.1.1] - 2026-11-25
 
 Pure-Go + `simd/archsimd` decoder performance release (-1.21B instructions / -3.2% on 1080p `aomrt_crowdrun` 1T, bringing 1T total wall time to 1.10× of `dav1d` and 8T cycles to 1.056× on Apple M4 Max, with 100% memory safety and bit-exact MD5 parity).

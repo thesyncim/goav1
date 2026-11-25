@@ -473,10 +473,15 @@ func (r *Reader) DecodeCoefs(s *CoefState, plane uint, sz *CoefSize, cf *[1024]i
 	if plane != 0 {
 		chroma = 1
 	}
-	plane %= 3
+	if plane >= 3 {
+		plane = 0
+	}
 	a, l := &s.A[plane], &s.L[plane]
 	w4, h4 := uint(sz.W4), uint(sz.H4)
-	tctx := uint(sz.Ctx) % 5
+	tctx := uint(sz.Ctx)
+	if tctx >= 5 {
+		tctx = 0
+	}
 
 	// does this block have any non-zero coefficients (get_skip_ctx)
 	sctx := uint(0)
@@ -547,11 +552,15 @@ func (r *Reader) DecodeCoefs(s *CoefState, plane uint, sz *CoefSize, cf *[1024]i
 		var v *[MaxSymbols + 1]uint16
 		var n int
 		var set *[16]uint8
+		ym := s.YMode
+		if ym >= 13 {
+			ym = 0
+		}
 		switch {
 		case s.Intra && (s.Reduced || sq == 2):
-			v, n, set = &s.TxIntra[2][sq][s.YMode%13].values, 5, &coefTxtpIntra2
+			v, n, set = &s.TxIntra[2][sq][ym].values, 5, &coefTxtpIntra2
 		case s.Intra:
-			v, n, set = &s.TxIntra[1][sq][s.YMode%13].values, 7, &coefTxtpIntra1
+			v, n, set = &s.TxIntra[1][sq][ym].values, 7, &coefTxtpIntra1
 		case s.Reduced || sz.Max == 3:
 			v = &s.TxInter[3][sq].values
 		case sq == 2:
@@ -707,7 +716,11 @@ func (r *Reader) DecodeCoefs(s *CoefState, plane uint, sz *CoefSize, cf *[1024]i
 			eobTok := tok
 			switch class {
 			case coefClass2D:
-				offsets := &coefLoCtxOffsets[sz.LoCtx%3]
+				loCtx := sz.LoCtx
+				if loCtx >= 3 {
+					loCtx = 0
+				}
+				offsets := &coefLoCtxOffsets[loCtx]
 				scan := sz.Scan[:eob+1]
 				stride := uint(4<<slh) & 63
 				shift := slh + 2
