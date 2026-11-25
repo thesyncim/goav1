@@ -1622,3 +1622,99 @@ func TestEncoderNative422And444AndRuntimeRateControl(t *testing.T) {
 		t.Fatalf("444 decode mismatch: ok=%v err=%v", ok, err)
 	}
 }
+
+func TestEncoderCRFVBRAndFilmGrain(t *testing.T) {
+	const w, h = 128, 128
+	frames := censusFrames(t, w, h, 4)
+
+	// CRF + AV1 Film Grain Synthesis signaling round-trip.
+	fg := EncoderFilmGrainParams{
+		Apply:           true,
+		Update:          true,
+		Seed:            12345,
+		NumYPoints:      2,
+		YPoints:         [14][2]uint8{{0, 16}, {255, 16}},
+		ScalingShift:    8,
+		ARCoeffLag:      0,
+		ARCoeffShift:    6,
+		GrainScaleShift: 0,
+		Overlap:         true,
+	}
+	crfEnc, err := NewVideoEncoder(VideoEncoderConfig{
+		Width:     w,
+		Height:    h,
+		CRF:       28,
+		FilmGrain: &fg,
+	})
+	if err != nil {
+		t.Fatalf("NewVideoEncoder(CRF+FilmGrain): %v", err)
+	}
+	defer crfEnc.Close()
+
+	var crfTUs [][]byte
+	for i, f := range frames {
+		out, err := crfEnc.Encode(f, false)
+		if err != nil {
+			t.Fatalf("CRF Encode(%d): %v", i, err)
+		}
+		crfTUs = append(crfTUs, append([]byte(nil), out.Data...))
+	}
+
+	// Decode with film grain enabled vs disabled — they must both succeed and differ!
+	decOn, err := NewDecoder(crfTUs, WithFilmGrain(true))
+	if err != nil {
+		t.Fatalf("NewDecoder(fg=true): %v", err)
+	}
+	decOff, err := NewDecoder(crfTUs, WithFilmGrain(false))
+	if err != nil {
+		decOn.Close()
+		t.Fatalf("NewDecoder(fg=false): %v", err)
+	}
+	defer decOn.Close()
+	defer decOff.Close()
+
+	for i := range frames {
+		bOn, okOn, errOn := decOn.DecodeNext()
+		bOff, okOff, errOff := decOff.DecodeNext()
+		if errOn != nil || !okOn || len(bOn) != 1 || errOff != nil || !okOff || len(bOff) != 1 {
+			t.Fatalf("frame %d decode mismatch: on=(%d,%v,%v) off=(%d,%v,%v)", i, len(bOn), okOn, errOn, len(bOff), okOff, errOff)
+		}
+		cOn := copyDecodedFrame(bOn[0])
+		cOff := copyDecodedFrame(bOff[0])
+		if bytes.Equal(cOn.Y, cOff.Y) {
+			t.Fatalf("frame %d: film-grain output identical to film-grain-disabled output", i)
+		}
+	}
+
+	// VBR mode round-trip.
+	vbrEnc, err := NewVideoEncoder(VideoEncoderConfig{
+		Width:         w,
+		Height:        h,
+		TargetBitrate: 500_000,
+		Framerate:     30,
+		VBR:           true,
+	})
+	if err != nil {
+		t.Fatalf("NewVideoEncoder(VBR): %v", err)
+	}
+	defer vbrEnc.Close()
+	var vbrTUs [][]byte
+	for i, f := range frames {
+		out, err := vbrEnc.Encode(f, false)
+		if err != nil {
+			t.Fatalf("VBR Encode(%d): %v", i, err)
+		}
+		vbrTUs = append(vbrTUs, append([]byte(nil), out.Data...))
+	}
+	decVBR, err := NewDecoder(vbrTUs)
+	if err != nil {
+		t.Fatalf("NewDecoder(VBR): %v", err)
+	}
+	defer decVBR.Close()
+	for i := range frames {
+		b, ok, err := decVBR.DecodeNext()
+		if err != nil || !ok || len(b) != 1 {
+			t.Fatalf("VBR decode(%d): len=%d ok=%v err=%v", i, len(b), ok, err)
+		}
+	}
+}

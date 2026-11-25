@@ -55,6 +55,7 @@ func rateControlPerFrameBits(rc RateControlConfig) (int, error) {
 // and svt_av1_rc_init on every rate change (seq_param_changed).
 func (e *VideoEncoder) armSVTRC(rc RateControlConfig) {
 	e.rcEnabled = true
+	e.crfEnabled = false
 	e.rcTargetBits = rc.TargetBitsPerSecond
 	e.rcFramesPerSec = rc.FramesPerSecond
 	e.rcPerFrameBits, _ = rateControlPerFrameBits(rc)
@@ -69,6 +70,27 @@ func (e *VideoEncoder) armSVTRC(rc RateControlConfig) {
 	e.cr.reset()
 }
 
+// SetCRF switches future frames to Constant Rate Factor (CRF) encoding on the
+// standard AV1 1..63 quality scale (lower = higher quality). CRF adapts each
+// frame's quantizer from temporal layer hierarchy and HME motion/complexity.
+func (e *VideoEncoder) SetCRF(crf uint8) error {
+	if e == nil {
+		return fmt.Errorf("encoder: nil video encoder")
+	}
+	if crf == 0 || crf > 63 {
+		return fmt.Errorf("encoder: CRF must be in [1, 63], got %d", crf)
+	}
+	e.rcEnabled = false
+	e.crfEnabled = true
+	e.crfValue = crf
+	e.qIndex = uint8(min(int(crf)*4, 255))
+	e.rcTargetBits = 0
+	e.rcFramesPerSec = 0
+	e.rcPerFrameBits = 0
+	e.svtRC = svtRateControl{}
+	return nil
+}
+
 // SetQIndex switches future frames to fixed-quality encoding without
 // disturbing reference state.
 func (e *VideoEncoder) SetQIndex(qIndex uint8) error {
@@ -79,6 +101,7 @@ func (e *VideoEncoder) SetQIndex(qIndex uint8) error {
 		return fmt.Errorf("encoder: qindex must be non-zero")
 	}
 	e.rcEnabled = false
+	e.crfEnabled = false
 	e.qIndex = qIndex
 	e.rcTargetBits = 0
 	e.rcFramesPerSec = 0
@@ -121,6 +144,11 @@ func (e *VideoEncoder) svtRCHierLevels() int {
 // rcKeyQ picks a keyframe's qindex (the fixed q without rate control).
 func (e *VideoEncoder) rcKeyQ(width, height int, screen bool) uint8 {
 	e.svtCurOn = false
+	if e.crfEnabled {
+		q := max(min(int(e.crfValue)*4-12, 255), 1)
+		e.qIndex = uint8(q)
+		return e.qIndex
+	}
 	if !e.rcEnabled {
 		return e.qIndex
 	}
@@ -145,6 +173,33 @@ func (e *VideoEncoder) rcKeyQ(width, height int, screen bool) uint8 {
 // ref names the reference slot the frame predicts from.
 func (e *VideoEncoder) rcInterQ(temporalID uint8, ref int, frameOffset int, width, height int, screen bool) uint8 {
 	e.svtCurOn = false
+	if e.crfEnabled {
+		q := int(e.crfValue) * 4
+		switch temporalID {
+		case 1:
+			q += 10
+		case 2:
+			q += 20
+		}
+		if e.hme.fme.valid && len(e.hme.fme.me8x8Dist) > 0 {
+			var sum uint64
+			for _, d := range e.hme.fme.me8x8Dist {
+				sum += d
+			}
+			avg := sum / uint64(len(e.hme.fme.me8x8Dist))
+			switch {
+			case avg > 6000:
+				q += 12
+			case avg > 3000:
+				q += 6
+			case avg < 600:
+				q -= 8
+			}
+		}
+		q = max(min(q, 255), 1)
+		e.qIndex = uint8(q)
+		return e.qIndex
+	}
 	if !e.rcEnabled {
 		return e.qIndex
 	}

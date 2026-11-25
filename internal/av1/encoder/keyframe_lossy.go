@@ -371,6 +371,9 @@ func encodeKeyframeFilteredTilesInto(src SourceFrame420, qIndex uint8, lf *loopF
 			return nil, SourceFrame420{}, fmt.Errorf("cdef apply: %w", err)
 		}
 	}
+	if tileOpts.stream != nil {
+		header.FilmGrain = tileOpts.stream.nextFilmGrainParams()
+	}
 	headerSize, err := LowOverheadCompleteIntraHeaderTemporalUnitSize(seq, header)
 	if err != nil {
 		return nil, SourceFrame420{}, fmt.Errorf("size header TU: %w", err)
