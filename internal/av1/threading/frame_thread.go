@@ -28,7 +28,8 @@ const (
 // surface waits until the rows it reads are published (thread_task.c
 // check_tile, the lowest_px reference wait).
 type FrameProgress struct {
-	rows atomic.Int32
+	rows         atomic.Int32
+	waitersCount atomic.Int32
 
 	// waiters holds the parked Wait calls; a Publish wakes only the ones
 	// whose need it meets.
@@ -44,8 +45,11 @@ func (p *FrameProgress) Reset() {
 // Publish raises the published row count to rows (FrameProgressDone or
 // FrameProgressError end the frame) and wakes waiters.
 func (p *FrameProgress) Publish(rows int32) {
-	p.mu.Lock()
 	p.rows.Store(rows)
+	if p.waitersCount.Load() == 0 {
+		return
+	}
+	p.mu.Lock()
 	if rows == FrameProgressError {
 		p.waiters.WakeAll()
 	} else {
@@ -74,11 +78,13 @@ func (p *FrameProgress) Wait(need int32) bool {
 	if v := p.rows.Load(); v >= need || v == FrameProgressError {
 		return v != FrameProgressError
 	}
+	p.waitersCount.Add(1)
 	p.mu.Lock()
 	for {
 		v := p.rows.Load()
 		if v >= need || v == FrameProgressError {
 			p.mu.Unlock()
+			p.waitersCount.Add(-1)
 			return v != FrameProgressError
 		}
 		p.waiters.Park(&p.mu, 0, need)

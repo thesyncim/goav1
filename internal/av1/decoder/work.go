@@ -548,7 +548,7 @@ func (s *FrameWorkState) PreallocTemporalMotionScratchFrames(size parser.FrameSi
 	}
 	grids := parser.RefFrames + 1
 	if frameContexts > 1 {
-		grids += (1 + parser.InterRefsPerFrame) * min(frameContexts, FrameThreadMaxFrames)
+		grids += 2 * min(frameContexts, FrameThreadMaxFrames)
 	}
 	for i := range s.mvFrameBacking[:min(grids, frameWorkMVGrids)] {
 		if cap(s.mvFrameBacking[i]) < need {
