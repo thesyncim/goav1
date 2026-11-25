@@ -104,6 +104,11 @@ type VideoEncoder struct {
 	bPastSlot   uint8
 	bFutureSlot uint8
 
+	// General-purpose AV1 coding tool toggles.
+	enableLoopRestoration bool
+	superResDenom         uint8
+	enableGlobalMotion    bool
+
 	temporalLayers int
 	t2Recon        SourceFrame420
 	frameCtxT1     frameCDFs
@@ -467,7 +472,11 @@ func (e *VideoEncoder) sequenceHeader(width, height int) SequenceHeader {
 		seq.Profile = videoColorProfile(e.color)
 		seq.ColorConfig = e.color
 		seq.FilmGrainParamsPresent = e.filmGrainPresent
-		if !videoColorSupportsInLoopFilters(e.parserColorConfig()) {
+		seq.EnableRestoration = e.enableLoopRestoration
+		if e.superResDenom >= 9 && e.superResDenom <= 16 {
+			seq.EnableSuperRes = true
+		}
+		if !videoColorSupportsInLoopFilters(e.parserColorConfig()) || e.enableLoopRestoration || (e.superResDenom >= 9 && e.superResDenom <= 16) {
 			seq.EnableCDEF = false
 		}
 	}
@@ -520,6 +529,37 @@ func copyFrameInto(dst *SourceFrame420, src SourceFrame420) {
 
 // SetFilmGrain configures AV1 film-grain synthesis parameter signaling for
 // subsequent frames. Passing nil disables film grain signaling.
+// SetEnableLoopRestoration enables AV1 Switchable Loop Restoration (Wiener +
+// SGRProj) on keyframes produced by this encoder.
+func (e *VideoEncoder) SetEnableLoopRestoration(on bool) {
+	if e == nil {
+		return
+	}
+	e.enableLoopRestoration = on
+}
+
+// SetSuperResDenominator enables AV1 horizontal Super-Resolution (denom in
+// 9..16) on keyframes produced by this encoder. Zero or 8 disables SuperRes.
+func (e *VideoEncoder) SetSuperResDenominator(denom uint8) {
+	if e == nil {
+		return
+	}
+	if denom >= 9 && denom <= 16 {
+		e.superResDenom = denom
+	} else {
+		e.superResDenom = 0
+	}
+}
+
+// SetEnableGlobalMotion enables frame-level Global Motion translation
+// estimation and signaling on inter P-frames.
+func (e *VideoEncoder) SetEnableGlobalMotion(on bool) {
+	if e == nil {
+		return
+	}
+	e.enableGlobalMotion = on
+}
+
 func (e *VideoEncoder) SetFilmGrain(params *FilmGrainParams) error {
 	if e == nil {
 		return fmt.Errorf("encoder: nil video encoder")
@@ -877,15 +917,32 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 	keyQ := e.rcKeyQ(src.Width, src.Height, e.svtScreen())
 	// A single-tile keyframe decides on e.pc's SB-row wavefront.
 	e.configurePCWavefront()
-	tu, recon, err := encodeKeyframeFilteredTiles(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, nil, &e.cdefApp, e.keyframeTileColsLog2, keyframeTileOptions{
-		payloads:          e.payloads[:nTiles],
-		errs:              e.tileErrs[:nTiles],
-		groupScratch:      &e.tuGroup,
-		outScratch:        &e.tuScratch,
-		stream:            e,
-		sequenceMaxWidth:  maxWidth,
-		sequenceMaxHeight: maxHeight,
-	})
+	var (
+		tu    []byte
+		recon SourceFrame420
+		err   error
+	)
+	usedCustomKey := false
+	if videoColorIs420(e.parserColorConfig()) && e.renderWidth == e.width && e.renderHeight == e.height {
+		if e.superResDenom >= 9 && e.superResDenom <= 16 {
+			tu, recon, err = EncodeSuperResKeyframe(src, keyQ, e.superResDenom)
+			usedCustomKey = true
+		} else if e.enableLoopRestoration {
+			tu, recon, err = EncodeLoopRestorationKeyframe(src, keyQ)
+			usedCustomKey = true
+		}
+	}
+	if !usedCustomKey {
+		tu, recon, err = encodeKeyframeFilteredTiles(src, keyQ, &e.lf, e.renderWidth, e.renderHeight, &e.keyRecon, nil, &e.cdefApp, e.keyframeTileColsLog2, keyframeTileOptions{
+			payloads:          e.payloads[:nTiles],
+			errs:              e.tileErrs[:nTiles],
+			groupScratch:      &e.tuGroup,
+			outScratch:        &e.tuScratch,
+			stream:            e,
+			sequenceMaxWidth:  maxWidth,
+			sequenceMaxHeight: maxHeight,
+		})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -903,7 +960,7 @@ func (e *VideoEncoder) encodeKeyWithSequenceMax(src SourceFrame420, maxWidth, ma
 	// the following inter frames chain from them through primary_ref_frame
 	// LAST, as SVT-AV1's do, instead of restarting from defaults.
 	e.haveCtx, e.haveCtxT1 = false, false
-	if videoColorIs420(e.parserColorConfig()) {
+	if !usedCustomKey && videoColorIs420(e.parserColorConfig()) {
 		if err := e.saveKeyframeCDFs(keyQ); err != nil {
 			return nil, err
 		}
@@ -987,6 +1044,13 @@ func (e *VideoEncoder) encodeReferencePFrameWithSequenceMax(src SourceFrame420, 
 	}
 	e.refState = referenceStateForFrame(ref.Width, ref.Height)
 	header.References = &e.refState
+	if e.enableGlobalMotion && videoColorIs420(e.parserColorConfig()) && len(e.lastRecon.Y) > 0 {
+		if gm := EstimateGlobalMotionTranslation(src, e.lastRecon); gm.Type != GlobalMotionIdentity {
+			// Signal estimated frame translation on LAST2 (Ref[1]) so LAST (Ref[0])
+			// stays Identity for zero-MV GLOBALMV blocks while carrying the pan model.
+			header.GlobalMotion.Ref[1] = gm
+		}
+	}
 	if e.renderWidth != e.width || e.renderHeight != e.height {
 		header.Size.RenderWidth = uint32(e.renderWidth)
 		header.Size.RenderHeight = uint32(e.renderHeight)
@@ -1480,6 +1544,13 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		header.Size.HaveRenderSize = true
 	}
 	header.References = &e.refState
+	if e.enableGlobalMotion && videoColorIs420(e.parserColorConfig()) && len(e.lastRecon.Y) > 0 {
+		if gm := EstimateGlobalMotionTranslation(src, e.lastRecon); gm.Type != GlobalMotionIdentity {
+			// Signal estimated frame translation on LAST2 (Ref[1]) so LAST (Ref[0])
+			// stays Identity for zero-MV GLOBALMV blocks while carrying the pan model.
+			header.GlobalMotion.Ref[1] = gm
+		}
+	}
 	// In-loop deblocking: signal the q-derived filter levels and collect the
 	// per-MI records the frame-level pass needs; after the tiles finish the
 	// encoder runs the decoder's own loop filter over the reconstruction so
@@ -1490,7 +1561,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 	if filterSupported && !e.fastestRealtimeEffort() && src.Width*src.Height <= loopFilterMaxArea {
 		lfLevel = filterLevelFromQIndex(effQ, false)
 	}
-	if !filterSupported {
+	if !filterSupported || !seq.EnableCDEF {
 		header.CDEF = CDEFParams{}
 	}
 	// SVT-AV1 rtc CDEF (cdef_frame.go): the picture's cdef_search_level and

@@ -442,6 +442,7 @@ type keyframeTileRun struct {
 	qIndex                  uint8
 	color                   parser.ColorConfig
 	allowScreenContentTools bool
+	allowIntrabc            bool
 	tile                    TileInfo
 	miCols                  uint16
 	lfMap                   *threading.FrameWorkLoopFilterMap
@@ -645,6 +646,7 @@ type lossyEncodeState struct {
 	qIndex                  uint8
 	forceIntegerMV          bool
 	allowScreenContentTools bool
+	allowIntrabc            bool
 	effortLevel             int8
 	yQuant                  quantize.Quantizer
 	uQuant                  quantize.Quantizer
@@ -897,6 +899,7 @@ func (pc *pframeCoder) encodeKeyframeTileWithColorOptions(src SourceFrame420, re
 	st.qIndex = qIndex
 	st.forceIntegerMV = false
 	st.allowScreenContentTools = allowScreenContentTools
+	st.allowIntrabc = false
 	st.color = color
 	st.lfMap = lfMap
 	st.hme = nil
@@ -1084,6 +1087,7 @@ func (pc *pframeCoder) encodeMonochromeKeyframeTileWithOptions(src SourceFrameMo
 	st.qIndex = qIndex
 	st.forceIntegerMV = false
 	st.allowScreenContentTools = allowScreenContentTools
+	st.allowIntrabc = false
 	st.color = parser.ColorConfig{BitDepth: 8, MonoChrome: true, SubsamplingX: true, SubsamplingY: true}
 	st.lfMap = nil
 	st.hme = nil
@@ -2011,6 +2015,8 @@ func EncodeSuperResKeyframe(src SourceFrame420, qIndex uint8, denom uint8) ([]by
 	seq := losslessKeyframeSequence(src.Width, src.Height)
 	seq.EnableSuperRes = true
 	seq.EnableCDEF = false
+	seq.SeqForceScreenContentTools = SequenceSelectScreenContentTools
+	seq.SeqForceIntegerMV = SequenceSelectIntegerMV
 	header := lossyKeyframeHeaderForSequence(seq, src.Width, src.Height, qIndex)
 	header.Size.SuperResDenominator = denom
 	sbCols := uint16((codedW + 63) / 64)
@@ -2136,11 +2142,13 @@ func EncodeLoopRestorationKeyframe(src SourceFrame420, qIndex uint8) ([]byte, So
 	seq := losslessKeyframeSequence(src.Width, src.Height)
 	seq.EnableCDEF = false
 	seq.EnableRestoration = true
+	seq.SeqForceScreenContentTools = SequenceSelectScreenContentTools
+	seq.SeqForceIntegerMV = SequenceSelectIntegerMV
 
 	header := lossyKeyframeHeaderForSequence(seq, src.Width, src.Height, qIndex)
 	header.LoopFilter = LoopFilterParams{Deltas: defaultLoopFilterDeltas()}
 	header.Restoration = RestorationParams{
-		Type:           [3]RestorationType{RestorationWiener, RestorationNone, RestorationNone},
+		Type:           [3]RestorationType{RestorationSwitchable, RestorationNone, RestorationNone},
 		UnitSizeYLog2:  6,
 		UnitSizeUVLog2: 6,
 		UnitSizeY:      64,
@@ -2153,7 +2161,7 @@ func EncodeLoopRestorationKeyframe(src SourceFrame420, qIndex uint8) ([]byte, So
 
 	grid, err := tile.BuildRestorationPlaneGrid(
 		parser.RestorationParams{
-			Type:           [3]parser.RestorationType{parser.RestorationWiener, parser.RestorationNone, parser.RestorationNone},
+			Type:           [3]parser.RestorationType{parser.RestorationSwitchable, parser.RestorationNone, parser.RestorationNone},
 			UnitSizeYLog2:  6,
 			UnitSizeUVLog2: 6,
 			UnitSizeY:      64,
@@ -2292,20 +2300,78 @@ func EncodeLoopRestorationKeyframe(src SourceFrame420, qIndex uint8) ([]byte, So
 		return nil, SourceFrame420{}, err
 	}
 
+	// Build 3-pixel edge-clamped bordered recon once for both SGRProj search
+	// and exact post-filter application (both Wiener and SGRProj use 3-pixel borders).
+	const pad = av1restoration.WienerHalfwin
+	bStride := src.Width + 2*pad
+	bordered := make([]byte, bStride*(src.Height+2*pad))
+	for y := 0; y < src.Height+2*pad; y++ {
+		sy := y - pad
+		if sy < 0 {
+			sy = 0
+		} else if sy >= src.Height {
+			sy = src.Height - 1
+		}
+		drow := bordered[y*bStride:]
+		srow := recon.Y[sy*recon.YStride:]
+		for x := 0; x < pad; x++ {
+			drow[x] = srow[0]
+		}
+		copy(drow[pad:pad+src.Width], srow[:src.Width])
+		for x := 0; x < pad; x++ {
+			drow[pad+src.Width+x] = srow[src.Width-1]
+		}
+	}
+
 	// Decision pass produced the full pre-restoration recon. Search each
-	// restoration unit for a beneficial Wiener filter before entropy coding.
+	// restoration unit across Wiener and SGRProj (RestorationSwitchable).
+	var wienerScratch []uint16
+	var sgrScratch []int32
+	var sgrOut []byte
 	for i := range records {
 		rect := records[i].Rect
-		w := int(rect.X1 - rect.X0)
-		h := int(rect.Y1 - rect.Y0)
-		if info, ok := SearchWienerUnitU8(src.Y, recon.Y, src.YStride, src.Width, src.Height, int(rect.X0), int(rect.Y0), w, h); ok {
-			records[i].Unit = tile.RestorationUnit{
-				Type:   parser.RestorationWiener,
-				Wiener: info,
+		x0, y0 := int(rect.X0), int(rect.Y0)
+		w, h := int(rect.X1-rect.X0), int(rect.Y1-rect.Y0)
+		bestUnit := tile.RestorationUnit{Type: parser.RestorationNone}
+		var bestSSE uint64 = ^uint64(0)
+		if info, ok := SearchWienerUnitU8(src.Y, recon.Y, src.YStride, src.Width, src.Height, x0, y0, w, h); ok {
+			need, err := av1restoration.WienerScratchLen(w, h)
+			if err == nil {
+				if len(wienerScratch) < need {
+					wienerScratch = make([]uint16, need)
+				}
+				if len(sgrOut) < w*h {
+					sgrOut = make([]byte, w*h)
+				}
+				origin := (y0+pad)*bStride + (x0 + pad)
+				if av1restoration.ApplyWienerRestorationU8(bordered, bStride, origin, sgrOut, w, w, h, info, wienerScratch) == nil {
+					var sse uint64
+					for y := 0; y < h; y++ {
+						srow := src.Y[(y0+y)*src.YStride+x0:]
+						orow := sgrOut[y*w:]
+						for x := 0; x < w; x++ {
+							d := int(srow[x]) - int(orow[x])
+							sse += uint64(d * d)
+						}
+					}
+					bestSSE = sse
+					bestUnit = tile.RestorationUnit{Type: parser.RestorationWiener, Wiener: info}
+				}
 			}
-		} else {
-			records[i].Unit = tile.RestorationUnit{Type: parser.RestorationNone}
 		}
+		if sgrNeed, err := av1restoration.SelfguidedScratchLen(w, h); err == nil {
+			if len(sgrScratch) < sgrNeed {
+				sgrScratch = make([]int32, sgrNeed)
+			}
+			if len(sgrOut) < w*h {
+				sgrOut = make([]byte, w*h)
+			}
+			if sgrInfo, sgrSSE, ok := SearchSGRProjUnitU8(src.Y, bordered, src.YStride, bStride, x0, y0, w, h, sgrScratch, sgrOut); ok && sgrSSE < bestSSE {
+				bestSSE = sgrSSE
+				bestUnit = tile.RestorationUnit{Type: parser.RestorationSGRProj, SGRProj: sgrInfo}
+			}
+		}
+		records[i].Unit = bestUnit
 	}
 
 	var swCDF, wienerCDF, sgrCDF entropy.CDF
@@ -2323,7 +2389,7 @@ func EncodeLoopRestorationKeyframe(src SourceFrame420, qIndex uint8) ([]byte, So
 		for row := uRange.Row0; row < uRange.Row1; row++ {
 			for col := uRange.Col0; col < uRange.Col1; col++ {
 				idx := int(row)*int(grid.HorzUnits) + int(col)
-				if err := tile.WriteRestorationUnit(&pc.writer, parser.RestorationWiener, 0, &restRefs, restCDFs, records[idx].Unit); err != nil {
+				if err := tile.WriteRestorationUnit(&pc.writer, parser.RestorationSwitchable, 0, &restRefs, restCDFs, records[idx].Unit); err != nil {
 					return err
 				}
 			}
@@ -2346,46 +2412,36 @@ func EncodeLoopRestorationKeyframe(src SourceFrame420, qIndex uint8) ([]byte, So
 		return nil, SourceFrame420{}, err
 	}
 
-	// Apply exact AV1 Wiener restoration to recon.Y with 3-pixel edge-clamped
-	// frame borders so returned recon matches conformant decoders bit-for-bit.
-	const pad = av1restoration.WienerHalfwin
-	bStride := src.Width + 2*pad
-	bordered := make([]byte, bStride*(src.Height+2*pad))
-	for y := 0; y < src.Height+2*pad; y++ {
-		sy := y - pad
-		if sy < 0 {
-			sy = 0
-		} else if sy >= src.Height {
-			sy = src.Height - 1
-		}
-		drow := bordered[y*bStride:]
-		srow := recon.Y[sy*recon.YStride:]
-		for x := 0; x < pad; x++ {
-			drow[x] = srow[0]
-		}
-		copy(drow[pad:pad+src.Width], srow[:src.Width])
-		for x := 0; x < pad; x++ {
-			drow[pad+src.Width+x] = srow[src.Width-1]
-		}
-	}
-	var wienerScratch []uint16
+	// Apply exact AV1 Wiener or SGRProj restoration to recon.Y so returned
+	// recon matches conformant decoders bit-for-bit.
 	for i := range records {
-		if records[i].Unit.Type != parser.RestorationWiener {
-			continue
-		}
 		rect := records[i].Rect
 		x0, y0 := int(rect.X0), int(rect.Y0)
 		w, h := int(rect.X1-rect.X0), int(rect.Y1-rect.Y0)
-		need, err := av1restoration.WienerScratchLen(w, h)
-		if err != nil {
-			return nil, SourceFrame420{}, err
-		}
-		if len(wienerScratch) < need {
-			wienerScratch = make([]uint16, need)
-		}
 		origin := (y0+pad)*bStride + (x0 + pad)
-		if err := av1restoration.ApplyWienerRestorationU8(bordered, bStride, origin, recon.Y[y0*recon.YStride+x0:], recon.YStride, w, h, records[i].Unit.Wiener, wienerScratch); err != nil {
-			return nil, SourceFrame420{}, err
+		switch records[i].Unit.Type {
+		case parser.RestorationWiener:
+			need, err := av1restoration.WienerScratchLen(w, h)
+			if err != nil {
+				return nil, SourceFrame420{}, err
+			}
+			if len(wienerScratch) < need {
+				wienerScratch = make([]uint16, need)
+			}
+			if err := av1restoration.ApplyWienerRestorationU8(bordered, bStride, origin, recon.Y[y0*recon.YStride+x0:], recon.YStride, w, h, records[i].Unit.Wiener, wienerScratch); err != nil {
+				return nil, SourceFrame420{}, err
+			}
+		case parser.RestorationSGRProj:
+			need, err := av1restoration.SelfguidedScratchLen(w, h)
+			if err != nil {
+				return nil, SourceFrame420{}, err
+			}
+			if len(sgrScratch) < need {
+				sgrScratch = make([]int32, need)
+			}
+			if err := av1restoration.ApplySelfguidedRestorationU8(bordered, bStride, origin, recon.Y[y0*recon.YStride+x0:], recon.YStride, w, h, int(records[i].Unit.SGRProj.ParamsIndex), records[i].Unit.SGRProj.XQD, sgrScratch); err != nil {
+				return nil, SourceFrame420{}, err
+			}
 		}
 	}
 
@@ -2412,6 +2468,179 @@ func EncodeLoopRestorationKeyframe(src SourceFrame420, qIndex uint8) ([]byte, So
 	tu, err = AppendLowOverheadIntraFrameTemporalUnit(tu, seq, header, groupOBU.Payload)
 	if err != nil {
 		return nil, SourceFrame420{}, fmt.Errorf("append loop restoration TU: %w", err)
+	}
+	return tu, recon, nil
+}
+
+// EncodeIntraBCKeyframe encodes src as an 8-bit 4:2:0 screen-content keyframe
+// with AV1 Intra Block Copy (allow_intrabc=1, allow_screen_content_tools=1)
+// enabled, signaling use_intrabc per block and returning the temporal unit plus
+// bit-exact reconstruction.
+func EncodeIntraBCKeyframe(src SourceFrame420, qIndex uint8) ([]byte, SourceFrame420, error) {
+	if qIndex == 0 {
+		return nil, SourceFrame420{}, fmt.Errorf("encoder: intrabc keyframe requires non-zero qindex")
+	}
+	if src.Width < 16 || src.Height < 16 || src.Width%8 != 0 || src.Height%8 != 0 {
+		return nil, SourceFrame420{}, fmt.Errorf("encoder: intrabc keyframe dimensions must be multiples of 8 and >= 16, got %dx%d", src.Width, src.Height)
+	}
+	seq := losslessKeyframeSequence(src.Width, src.Height)
+	seq.SeqForceScreenContentTools = SequenceSelectScreenContentTools
+	seq.SeqForceIntegerMV = SequenceSelectIntegerMV
+	seq.EnableCDEF = false
+
+	header := lossyKeyframeHeaderForSequence(seq, src.Width, src.Height, qIndex)
+	header.Prefix.AllowScreenContentTools = true
+	header.Size.AllowIntrabc = true
+	header.LoopFilter = LoopFilterParams{
+		ModeRefDeltaEnabled: true,
+		ModeRefDeltaUpdate:  true,
+		Deltas:              defaultLoopFilterDeltas(),
+	}
+	header.CDEF = CDEFParams{}
+	header.Restoration = RestorationParams{}
+	header.Delta = DeltaParams{}
+
+	color := parser.ColorConfig{BitDepth: 8, SubsamplingX: true, SubsamplingY: true}
+	cw, ch := src.Width/2, src.Height/2
+	recon := SourceFrame420{
+		Y:            make([]byte, src.Width*src.Height),
+		U:            make([]byte, cw*ch),
+		V:            make([]byte, cw*ch),
+		YStride:      src.Width,
+		ChromaStride: cw,
+		Width:        src.Width,
+		Height:       src.Height,
+	}
+
+	var pc pframeCoder
+	if err := pc.partCDFs.InitDefault(); err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	st := &pc.st
+	st.qIndex = qIndex
+	st.forceIntegerMV = false
+	st.allowScreenContentTools = true
+	st.allowIntrabc = true
+	st.color = color
+	st.lfMap = nil
+	st.hme = nil
+	st.decisionStats = nil
+	if err := st.modeCDFs.InitDefault(); err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	if err := st.intraCDFs.InitDefault(); err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	if err := st.coeffCDFs.InitDefault(qIndex); err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	if err := st.txCDFs.InitDefault(); err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	if err := st.treeCDFs.InitDefault(); err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	st.keyTXSOn = false
+	st.transformMode = parser.TransformModeLargest
+	for plane, dst := range []*quantize.Quantizer{&st.yQuant, &st.uQuant, &st.vQuant} {
+		q, err := quantize.PlaneQuantizer(parser.QuantizationParams{}, qIndex, 8, quantize.Plane(plane))
+		if err != nil {
+			return nil, SourceFrame420{}, err
+		}
+		*dst = q
+	}
+	st.trialBlockLocal = false
+	if err := st.trialCDFs.InitDefault(qIndex); err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	dcq := float64(st.yQuant.DC)
+	st.rdMult = int64(dcq * dcq * (3.2 + 0.0015*dcq))
+	miCols := uint16(src.Width / 4)
+	miRows := uint16(src.Height / 4)
+	st.keyMIColEnd = uint32(miCols)
+	st.keyMIRowEnd = uint32(miRows)
+	st.keyVisW, st.keyVisH = src.Width, src.Height
+	if err := st.initScans(); err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	st.keyPD0On = false
+	pc.writerBuf = make([]byte, 1<<18)
+	pc.resetWriter()
+	st.w = &pc.writer
+
+	const sbSizeMIB = 16
+	rootCols := (int(miCols) + sbSizeMIB - 1) / sbSizeMIB
+	pc.carrier.Above = make([]tile.BlockLoopRootAboveContext, rootCols)
+	pc.carrier.Left = tile.BlockLoopRootLeftContext{}
+	walkReq := tile.BlockWalkRequest{
+		Root:       tile.BlockLevel64x64,
+		MIColStart: 0,
+		MIColEnd:   miCols,
+		MIRowEnd:   miRows,
+	}
+	pc.keyTrialPristine = st.trialCDFs
+	st.keyTrialPristine = &pc.keyTrialPristine
+	st.keyTrialDirty = 0
+	defer func() { st.keyTrialPristine = nil }()
+
+	rows := (int(miRows) + sbSizeMIB - 1) / sbSizeMIB
+	pc.splitRowRecs = make([]pframeSplitRecord, rows)
+	for r := range pc.splitRowRecs {
+		rowMI4H := min(int(miRows)-r*sbSizeMIB, sbSizeMIB)
+		pc.splitRowRecs[r].reset(int(miCols), rowMI4H, color)
+		pc.splitRowRecs[r].reservePalMaps(int(miCols) * 4 * rowMI4H * 4)
+	}
+	decideRecord := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
+		partition, err := st.keyDecidePartition(src, &recon, walkReq, level, miCol, miRow, haveRight, haveBottom)
+		if err == nil {
+			pc.splitRowRecs[int(miRow)/sbSizeMIB].appendPart(partition)
+		}
+		return partition, err
+	}
+	visitDecide := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
+		return st.decideKeyBlock(src, &recon, block, scratch, &pc.splitRowRecs[int(block.MIRow)/sbSizeMIB])
+	}
+	if err := tile.WalkBlockLoopDecide(&pc.scratch, &pc.carrier, walkReq, sbSizeMIB, decideRecord, visitDecide); err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	pc.resetCarrierEdges(rootCols)
+	decideReplay := func(level tile.BlockLevel, ctx int, miCol, miRow uint32, haveRight, haveBottom bool) (tile.Partition, error) {
+		return pc.splitRowRecs[int(miRow)/sbSizeMIB].nextPart()
+	}
+	visitWrite := func(block tile.BlockVisit, scratch *tile.BlockLoopScratch) error {
+		return st.writeKeyBlock(block, scratch, &pc.splitRowRecs[int(block.MIRow)/sbSizeMIB])
+	}
+	if err := tile.WalkBlockLoopWrite(&pc.writer, &pc.partCDFs, &pc.scratch, &pc.carrier, walkReq, sbSizeMIB, decideReplay, visitWrite); err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	tilePayload, err := pc.writer.Finish()
+	if err != nil {
+		return nil, SourceFrame420{}, err
+	}
+
+	headerSize, err := LowOverheadCompleteIntraHeaderTemporalUnitSize(seq, header)
+	if err != nil {
+		return nil, SourceFrame420{}, fmt.Errorf("size intrabc header: %w", err)
+	}
+	payloads := []TilePayload{{Data: tilePayload}}
+	groupSize, err := TileGroupPayloadSize(header.Tile, 0, 0, payloads)
+	if err != nil {
+		return nil, SourceFrame420{}, fmt.Errorf("size intrabc tile group: %w", err)
+	}
+	group := make([]byte, 0, groupSize)
+	group, err = AppendTileGroupPayload(group, header.Tile, 0, 0, payloads)
+	if err != nil {
+		return nil, SourceFrame420{}, fmt.Errorf("append intrabc tile group: %w", err)
+	}
+	groupOBU := OBU{Type: obu.TypeTileGroup, Payload: group}
+	groupOBUSize, err := LowOverheadOBUSize(groupOBU)
+	if err != nil {
+		return nil, SourceFrame420{}, err
+	}
+	tu := make([]byte, 0, headerSize+groupOBUSize)
+	tu, err = AppendLowOverheadIntraFrameTemporalUnit(tu, seq, header, groupOBU.Payload)
+	if err != nil {
+		return nil, SourceFrame420{}, fmt.Errorf("append intrabc TU: %w", err)
 	}
 	return tu, recon, nil
 }

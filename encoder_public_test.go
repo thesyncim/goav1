@@ -1891,3 +1891,92 @@ func TestEncoderLoopRestorationKeyframe(t *testing.T) {
 		}
 	}
 }
+
+func TestVideoEncoderStreamingTools(t *testing.T) {
+	const w, h = 128, 128
+	frames := censusFrames(t, w, h, 4)
+
+	cases := []struct {
+		name string
+		cfg  VideoEncoderConfig
+	}{
+		{
+			name: "loop_restoration_stream",
+			cfg:  VideoEncoderConfig{Width: w, Height: h, QIndex: 100, EnableLoopRestoration: true},
+		},
+		{
+			name: "superres_stream",
+			cfg:  VideoEncoderConfig{Width: w, Height: h, QIndex: 90, SuperResDenominator: 12},
+		},
+		{
+			name: "global_motion_stream",
+			cfg:  VideoEncoderConfig{Width: w, Height: h, QIndex: 90, EnableGlobalMotion: true},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			enc, err := NewVideoEncoder(tc.cfg)
+			if err != nil {
+				t.Fatalf("NewVideoEncoder: %v", err)
+			}
+			defer enc.Close()
+
+			var tus [][]byte
+			for i, f := range frames {
+				out, err := enc.Encode(f, i == 0)
+				if err != nil {
+					t.Fatalf("Encode(%d): %v", i, err)
+				}
+				tus = append(tus, append([]byte(nil), out.Data...))
+			}
+
+			dec, err := NewDecoder(tus)
+			if err != nil {
+				t.Fatalf("NewDecoder: %v", err)
+			}
+			defer dec.Close()
+
+			decoded := 0
+			for {
+				batch, ok, err := dec.DecodeNext()
+				if err != nil {
+					t.Fatalf("DecodeNext(%d): %v", decoded, err)
+				}
+				if !ok {
+					break
+				}
+				for _, f := range batch {
+					got := copyDecodedFrame(f)
+					if got.Width != w || got.Height != h {
+						t.Fatalf("frame %d dims=%dx%d want %dx%d", decoded, got.Width, got.Height, w, h)
+					}
+					decoded++
+				}
+			}
+			if decoded != len(frames) {
+				t.Fatalf("decoded %d frames, want %d", decoded, len(frames))
+			}
+		})
+	}
+
+	// Verify IntraBC screen-content keyframe bit-exact parity with Decoder.
+	ibcTU, ibcRecon, err := EncodeI420IntraBCKeyframe(frames[0], 80)
+	if err != nil {
+		t.Fatalf("EncodeI420IntraBCKeyframe: %v", err)
+	}
+	decIBC, err := NewDecoder([][]byte{ibcTU})
+	if err != nil {
+		t.Fatalf("NewDecoder(IntraBC): %v", err)
+	}
+	defer decIBC.Close()
+	batchIBC, ok, err := decIBC.DecodeNext()
+	if err != nil || !ok || len(batchIBC) != 1 {
+		t.Fatalf("IntraBC DecodeNext: len=%d ok=%v err=%v", len(batchIBC), ok, err)
+	}
+	gotIBC := copyDecodedFrame(batchIBC[0])
+	if !bytes.Equal(gotIBC.Y, ibcRecon.Y) || !bytes.Equal(gotIBC.U, ibcRecon.U) || !bytes.Equal(gotIBC.V, ibcRecon.V) {
+		t.Fatalf("IntraBC decoded pixels differ from encoder recon: eqY=%v eqU=%v eqV=%v",
+			bytes.Equal(gotIBC.Y, ibcRecon.Y), bytes.Equal(gotIBC.U, ibcRecon.U), bytes.Equal(gotIBC.V, ibcRecon.V))
+	}
+}

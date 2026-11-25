@@ -2,6 +2,7 @@ package encoder
 
 import (
 	av1restoration "github.com/thesyncim/goav1/internal/av1/restoration"
+	"github.com/thesyncim/goav1/internal/av1/tile"
 )
 
 const RestorationUnitMax = 256
@@ -206,4 +207,57 @@ func SearchWienerUnitU8(src, recon []byte, stride, frameW, frameH, x0, y0, w, h 
 		}
 	}
 	return best, found
+}
+
+// SearchSGRProjUnitU8 evaluates a curated set of AV1 Self-Guided Projection
+// (SGRProj) filter presets on the restoration unit [x0:x0+w, y0:y0+h] using
+// the exact decoder U8 SGR kernel, returning the lowest-SSE preset when it
+// improves on unfiltered recon.
+func SearchSGRProjUnitU8(src, bordered []byte, srcStride, bStride, x0, y0, w, h int, sgrScratch []int32, outScratch []byte) (tile.SGRProjInfo, uint64, bool) {
+	if w <= 0 || h <= 0 || len(outScratch) < w*h {
+		return tile.SGRProjInfo{}, 0, false
+	}
+	const pad = av1restoration.SGRProjBorderHorz
+	var baseSSE uint64
+	for y := 0; y < h; y++ {
+		srow := src[(y0+y)*srcStride+x0:]
+		rrow := bordered[(y0+y+pad)*bStride+x0+pad:]
+		for x := 0; x < w; x++ {
+			d := int(srow[x]) - int(rrow[x])
+			baseSSE += uint64(d * d)
+		}
+	}
+	if baseSSE == 0 {
+		return tile.SGRProjInfo{}, 0, false
+	}
+	presets := []tile.SGRProjInfo{
+		{ParamsIndex: 0, XQD: [2]int8{8, 24}},
+		{ParamsIndex: 2, XQD: [2]int8{16, 40}},
+		{ParamsIndex: 10, XQD: [2]int8{0, 48}},
+		{ParamsIndex: 14, XQD: [2]int8{24, 72}},
+	}
+	origin := (y0+pad)*bStride + (x0 + pad)
+	bestSSE := baseSSE
+	var best tile.SGRProjInfo
+	found := false
+	for _, cand := range presets {
+		if err := av1restoration.ApplySelfguidedRestorationU8(bordered, bStride, origin, outScratch, w, w, h, int(cand.ParamsIndex), cand.XQD, sgrScratch); err != nil {
+			continue
+		}
+		var sse uint64
+		for y := 0; y < h; y++ {
+			srow := src[(y0+y)*srcStride+x0:]
+			orow := outScratch[y*w:]
+			for x := 0; x < w; x++ {
+				d := int(srow[x]) - int(orow[x])
+				sse += uint64(d * d)
+			}
+		}
+		if sse+uint64(w*h) < bestSSE {
+			bestSSE = sse
+			best = cand
+			found = true
+		}
+	}
+	return best, bestSSE, found
 }
