@@ -277,7 +277,7 @@ func (r *decoderFrameWorkSupportedPostFilterScratchRunner) reusableScratchLen(ct
 		return internaldecoder.FrameWorkPostFilterScratchSize{}, ErrDecoderUnsupportedPostFilter
 	}
 	var size internaldecoder.FrameWorkPostFilterScratchSize
-	if remaining.Has(internaldecoder.FrameWorkPostFilterLoopFilter) {
+	if remaining.Has(internaldecoder.FrameWorkPostFilterLoopFilter) && (ctx.LoopFilterMasks == nil || !ctx.LoopFilterMasks.Valid()) {
 		_, _, length, err := decoderFrameWorkLoopFilterMapShape(ctx.Event.SequenceHeader, ctx.Event.FrameSize)
 		if err != nil {
 			return internaldecoder.FrameWorkPostFilterScratchSize{}, err
@@ -604,20 +604,17 @@ func bindDecoderFrameWorkSideDataWith(sequence SequenceHeader, size FrameSize, c
 	if err != nil {
 		return decoderFrameWorkSideData{}, err
 	}
+	buildMasks := !decoderFrameWorkPostFilterScratchTooShort(scratch.LoopFilterMasks, scratchSize.LoopFilterMasks) &&
+		!decoderFrameWorkPostFilterScratchTooShort(scratch.LoopFilterLevelCache, scratchSize.LoopFilterLevelCache)
+	needLoopFilterMap := compact == nil && !(maskOnlyLoopFilter && buildMasks)
 	if decoderFrameWorkPostFilterScratchTooShort(scratch.CDEFIndexMap, scratchSize.CDEFIndexMap) ||
 		decoderFrameWorkPostFilterScratchTooShort(scratch.CDEFReadMap, scratchSize.CDEFReadMap) ||
-		decoderFrameWorkPostFilterScratchTooShort(scratch.LoopFilterMap, scratchSize.LoopFilterMap) ||
+		(needLoopFilterMap && decoderFrameWorkPostFilterScratchTooShort(scratch.LoopFilterMap, scratchSize.LoopFilterMap)) ||
 		decoderFrameWorkPostFilterScratchTooShort(scratch.RestorationRecords, scratchSize.RestorationRecords) ||
 		decoderFrameWorkPostFilterScratchTooShort(scratch.RestorationBoundaryAbove, scratchSize.RestorationBoundaryAbove) ||
 		decoderFrameWorkPostFilterScratchTooShort(scratch.RestorationBoundaryBelow, scratchSize.RestorationBoundaryBelow) {
 		return decoderFrameWorkSideData{}, internalframe.ErrShortBuffer
 	}
-	// The deblocking edge masks are OPTIONAL: a caller that provides mask +
-	// level-cache scratch (the high-level Decoder does) gets the fast bitmask
-	// loop-filter apply; a low-level caller that leaves them nil keeps the
-	// byte-identical edge-list sweep. Only validate them when provided.
-	buildMasks := !decoderFrameWorkPostFilterScratchTooShort(scratch.LoopFilterMasks, scratchSize.LoopFilterMasks) &&
-		!decoderFrameWorkPostFilterScratchTooShort(scratch.LoopFilterLevelCache, scratchSize.LoopFilterLevelCache)
 	// Clear the CDEF index/read scratch before binding. The scratch is reused
 	// across frames, so it may still hold the previous frame's decoded cdef_idx
 	// values. bindDecoderFrameWorkCDEFIndexMap validates each marked entry

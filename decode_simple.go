@@ -373,6 +373,12 @@ func newDecoderFromPayloadSourceKind(source decoderPayloadSource, kind decoderPa
 		workerPool.Close()
 		return nil, fmt.Errorf("goav1: postfilter scratch plan: %w", err)
 	}
+	if !useExternal {
+		// Non-external Decoder always binds LoopFilterMasks for deblocking, so
+		// edge-list LoopFilterEdges/Schedule scratch is unused.
+		postArena.LoopFilterEdges = 0
+		postArena.LoopFilterSchedule = 0
+	}
 	arenaSize, err := decoderArenaSizeFor(format, outputFormat, useExternal, surfaceCount, plan.Size, postArena)
 	if err != nil {
 		workerPool.Close()
@@ -1150,10 +1156,11 @@ func newDecoderFramePool(format FrameFormat, count int, arena *decoderArena) (in
 // cmd/aom-go-dec and the conformance harness so the convenience path is the
 // same byte-exact path.
 func newDecoderStreamScratch(size decoderFrameWorkResidualStreamScratchSize, arena *decoderArena) decoderFrameWorkResidualStreamScratch {
+	event := newDecoderEventScratch(size.Event, arena)
 	return decoderFrameWorkResidualStreamScratch{
 		Events:    make([]internaldecoder.Event, size.Events),
-		Event:     newDecoderEventScratch(size.Event, arena),
-		SideData:  newDecoderSideDataScratch(size.Event.SideData, arena),
+		Event:     event,
+		SideData:  event.SideData,
 		Outputs:   make([]*Frame, size.Event.Outputs),
 		RTPBuffer: arena.takeBytes(size.RTPBuffer),
 		RTPSpans:  make([]RTPObuSpan, size.RTPSpans),
@@ -1296,10 +1303,7 @@ func (s *decoderArenaSize) addStream(size decoderFrameWorkResidualStreamScratchS
 	if err := s.addBytes(size.RTPBuffer); err != nil {
 		return err
 	}
-	if err := s.addEvent(size.Event); err != nil {
-		return err
-	}
-	return s.addSideData(size.Event.SideData)
+	return s.addEvent(size.Event)
 }
 
 func (s *decoderArenaSize) addEvent(size decoderFrameWorkResidualEventScratchSize) error {

@@ -296,6 +296,10 @@ func decoderFrameWorkResidualEventsBindPlan(sequence SequenceHeader, events []in
 // storage for the nested residual batch runner; the returned event runner keeps
 // a pointer to it.
 func bindDecoderFrameWorkResidualEventRunner(size decoderFrameWorkResidualEventScratchSize, sequence SequenceHeader, event *internaldecoder.Event, runtime decoderFrameWorkResidualEventRuntime, scratch decoderFrameWorkResidualEventScratch, batchRunner *decoderFrameWorkBatchResidualRunner) (decoderFrameWorkResidualEventRunner, decoderFrameWorkSideData, error) {
+	return bindDecoderFrameWorkResidualEventRunnerWith(size, sequence, event, runtime, scratch, batchRunner, false)
+}
+
+func bindDecoderFrameWorkResidualEventRunnerWith(size decoderFrameWorkResidualEventScratchSize, sequence SequenceHeader, event *internaldecoder.Event, runtime decoderFrameWorkResidualEventRuntime, scratch decoderFrameWorkResidualEventScratch, batchRunner *decoderFrameWorkBatchResidualRunner, maskOnlyLoopFilter bool) (decoderFrameWorkResidualEventRunner, decoderFrameWorkSideData, error) {
 	if size.Runner.Workers != 0 && batchRunner == nil {
 		return decoderFrameWorkResidualEventRunner{}, decoderFrameWorkSideData{}, internalthreading.ErrInvalidBatch
 	}
@@ -315,7 +319,7 @@ func bindDecoderFrameWorkResidualEventRunner(size decoderFrameWorkResidualEventS
 	var side decoderFrameWorkSideData
 	if decoderFrameWorkResidualEventNeedsSideData(event) {
 		var err error
-		side, err = bindDecoderFrameWorkResidualEventSideData(sequence, event, scratch.SideData)
+		side, err = bindDecoderFrameWorkSideDataWith(sequence, event.FrameSize, event.CDEF, event.Restoration, scratch.SideData, nil, nil, nil, maskOnlyLoopFilter)
 		if err != nil {
 			return decoderFrameWorkResidualEventRunner{}, decoderFrameWorkSideData{}, err
 		}
