@@ -140,6 +140,45 @@ func filterUnitBlocksU8Byte(dst []byte, dstStride int, input []byte, inputOrigin
 	isW8 := u.blockWidth == 8
 	hasPri := u.primaryStrength != 0
 
+	if !u.lumaAdjust {
+		if strength == 0 && sec == 0 {
+			return
+		}
+		var fn func(*cdefByteCtx)
+		if isW8 {
+			switch {
+			case strength != 0 && sec != 0:
+				fn = cdefByteFilter8PriSec
+			case strength != 0:
+				fn = cdefByteFilter8Pri
+			default:
+				fn = cdefByteFilter8Sec
+			}
+		} else {
+			switch {
+			case strength != 0 && sec != 0:
+				fn = cdefByteFilter4PriSec
+			case strength != 0:
+				fn = cdefByteFilter4Pri
+			default:
+				fn = cdefByteFilter4Sec
+			}
+		}
+		for _, block := range blocks {
+			by := int(block.BY)
+			bx := int(block.BX)
+			dir := 0
+			if hasPri {
+				dir = int(directions[by][bx]) & 7
+			}
+			ctx.srcOff = inputOrigin + ((by * BStride) << bhLog2) + (bx << bwLog2)
+			ctx.dstOff = (by<<bhLog2)*dstStride + (bx << bwLog2)
+			ctx.dir = &cdefByteDirTable[dir]
+			fn(&ctx)
+		}
+		return
+	}
+
 	for _, block := range blocks {
 		by := int(block.BY)
 		bx := int(block.BX)
