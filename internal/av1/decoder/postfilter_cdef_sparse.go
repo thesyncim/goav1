@@ -38,21 +38,27 @@ func frameWorkCDEFSparseScratchIndependent(tap []byte, pix, lines, top, bottom [
 		!frame.SlicesOverlap(tap, top) && !frame.SlicesOverlap(tap, bottom)
 }
 
-// The byte route already requires an entirely real two-pixel unit halo.
-// Leave its kernel, original validation, and fallback unchanged; copy only
-// the selected blocks' complete rectangle plus the same two-pixel halo.
+// Copy only the selected blocks' complete rectangle plus its two-pixel halo.
+// The rectangle's halo must lie strictly inside the plane (even when the
+// enclosing 64x64 unit touches a frame edge).
 func frameWorkAssembleCDEFSparseByteInputU8(input []byte, dst frame.Plane, top, bottom, left []byte, leftBackup bool, ux, uy, uw, uh int, rect frameWorkCDEFStageRect) bool {
 	const reach = 2
 	width, stride := dst.Width, dst.Stride
 	if !rect.active || rect.x0 >= rect.x1 || rect.y0 >= rect.y1 || int(rect.x1) > uw || int(rect.y1) > uh ||
-		uw <= 0 || uh <= 0 || ux < reach || uy < reach || ux+uw+reach > width || uy+uh+reach > dst.Height ||
+		uw <= 0 || uh <= 0 ||
+		ux+int(rect.x0) < reach || uy+int(rect.y0) < reach ||
+		ux+int(rect.x1)+reach > width || uy+int(rect.y1)+reach > dst.Height ||
 		uw+4 > cdef.BStride || stride < width || (dst.Height-1)*stride+width > len(dst.Pix) ||
-		cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder+(uh+1)*cdef.BStride+uw+2 > len(input) ||
-		len(top) < 2*width || bottom != nil && len(bottom) < 2*width || leftBackup && len(left) < cdef.HorizontalBorder*uh {
+		cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder+(uh+1)*cdef.BStride+uw+2 > len(input) {
 		return false
 	}
 	x0, x1 := int(rect.x0)-reach, int(rect.x1)+reach
 	y0, y1 := int(rect.y0)-reach, int(rect.y1)+reach
+	if (uy > 0 && len(top) < 2*width) ||
+		(bottom != nil && len(bottom) < 2*width) ||
+		(leftBackup && len(left) < cdef.HorizontalBorder*uh) {
+		return false
+	}
 	span := x1 - x0
 	const origin = cdef.VerticalBorder*cdef.BStride + cdef.HorizontalBorder
 	for y := y0; y < y1; y++ {

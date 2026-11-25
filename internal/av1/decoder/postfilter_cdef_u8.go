@@ -316,6 +316,71 @@ func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap Frame
 					}
 				}
 			}
+			// Border unit split: on frame-edge 64x64 units, most 8x8 blocks still
+			// have a complete in-plane 2-pixel halo and can use the fast byte-lane
+			// kernel, leaving only the frame-edge blocks on the widened uint16 path.
+			if sparseIndependent && cdef.U8ByteInteriorAvailable() && !cdefDebugUnit(plane, unitRow, unitCol) &&
+				filterParams.CoeffShift == 0 &&
+				(filterParams.SecondaryStrength == 0 || filterParams.SecondaryStrength == 1 || filterParams.SecondaryStrength == 2 || filterParams.SecondaryStrength == 4) &&
+				(blockWidth == 4 || blockWidth == 8) && (blockHeight == 4 || blockHeight == 8) &&
+				unitW > 0 && unitH > 0 && unitW%blockWidth == 0 && unitH%blockHeight == 0 && len(blocks) <= 64 &&
+				cdefInputRectFits(len(input), unitW+2*cdef.HorizontalBorder, unitH+2*cdef.VerticalBorder) {
+				const tapReach = 2
+				var intBuf, edgeBuf [64]cdef.BlockPosition
+				nInt, nEdge := 0, 0
+				for _, blk := range blocks {
+					bx0 := unitX + int(blk.BX)*blockWidth
+					by0 := unitY + int(blk.BY)*blockHeight
+					if bx0 >= tapReach && by0 >= tapReach && bx0+blockWidth+tapReach <= width && by0+blockHeight+tapReach <= height {
+						intBuf[nInt] = blk
+						nInt++
+					} else {
+						edgeBuf[nEdge] = blk
+						nEdge++
+					}
+				}
+				if nInt > 0 && (nEdge == 0 || nInt >= 8) {
+					intBlocks := intBuf[:nInt]
+					edgeBlocks := edgeBuf[:nEdge]
+					intRect := frameWorkCDEFSparseStageRect(intBlocks, unitW, unitH, blockWidth, blockHeight)
+					if intRect.active && frameWorkAssembleCDEFSparseByteInputU8(byteInput, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitX, unitY, unitW, unitH, intRect) {
+						edgeOK := true
+						if nEdge > 0 {
+							edgeRect := frameWorkCDEFSparseStageRect(edgeBlocks, unitW, unitH, blockWidth, blockHeight)
+							if !edgeRect.active || !frameWorkAssembleCDEFSparseInputU8(input, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitRow, unitX, unitY, unitW, unitH, edgeRect) {
+								if err := frameWorkAssembleCDEFInputU8(input, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
+									return units, blocksTotal, err
+								}
+							}
+						}
+						if edgeOK {
+							nextUnitX := unitX + unitSizeX
+							if nextUnitX < width {
+								copyCDEFLeftBackup(nextLeft, dst.Pix, unitY*stride+nextUnitX-cdef.HorizontalBorder, stride, unitH)
+							}
+							byteOrigin := cdef.VerticalBorder*cdef.BStride + cdef.HorizontalBorder
+							if cdef.FilterFrameBlocksU8ByteInteriorTrusted(dst.Pix[unitOrigin:], stride, byteInput, byteOrigin, unitW, unitH, intBlocks, unitDirections, unitVariances, filterParams, deriveDirections) {
+								if nEdge > 0 {
+									var filterErr error
+									if deriveDirections {
+										filterErr = cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, edgeBlocks, unitDirections, unitVariances, filterParams)
+									} else {
+										filterErr = cdef.FilterFrameBlocksU8TrustedNoPrimaryDirection(dst.Pix[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, edgeBlocks, unitDirections, unitVariances, filterParams)
+									}
+									if filterErr != nil {
+										return units, blocksTotal, filterErr
+									}
+								}
+								leftIdx ^= 1
+								prevFiltered = true
+								units++
+								blocksTotal += uint32(len(blocks))
+								continue
+							}
+						}
+					}
+				}
+			}
 			if !stageRect.active || !frameWorkAssembleCDEFSparseInputU8(input, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitRow, unitX, unitY, unitW, unitH, stageRect) {
 				if err := frameWorkAssembleCDEFInputU8(input, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
 					return units, blocksTotal, err

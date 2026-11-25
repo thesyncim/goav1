@@ -5021,7 +5021,17 @@ func warpCompoundV8(og unsafeutil.Grid[uint16], mid *warpCompoundMid, filters *[
 	bias := archsimd.BroadcastInt32x4(seed)
 	right := archsimd.BroadcastInt32x4(-compoundRound1Bits)
 	sy := sy4 + 64<<10 + 512
+	// Keep the 8-row sliding window of mid in registers across output rows
+	// (15 loads total instead of 64).
+	m0 := archsimd.LoadInt16x8Array((*[8]int16)(mid[0:8]))
+	m1 := archsimd.LoadInt16x8Array((*[8]int16)(mid[8:16]))
+	m2 := archsimd.LoadInt16x8Array((*[8]int16)(mid[16:24]))
+	m3 := archsimd.LoadInt16x8Array((*[8]int16)(mid[24:32]))
+	m4 := archsimd.LoadInt16x8Array((*[8]int16)(mid[32:40]))
+	m5 := archsimd.LoadInt16x8Array((*[8]int16)(mid[40:48]))
+	m6 := archsimd.LoadInt16x8Array((*[8]int16)(mid[48:56]))
 	for row := range 8 {
+		m7 := archsimd.LoadInt16x8Array((*[8]int16)(mid[8*row+56 : 8*row+64]))
 		var t0, t1, t2, t3, t4, t5, t6, t7 archsimd.Int16x8
 		if gamma == 0 {
 			f := &filters[(sy>>10)&255]
@@ -5063,25 +5073,16 @@ func warpCompoundV8(og unsafeutil.Grid[uint16], mid *warpCompoundMid, filters *[
 			t6 = c67.ExtendLo8ToInt16()
 			t7 = c67.HiToLo().ExtendLo8ToInt16()
 		}
-		// The taps of output row r read mid rows r..r+7.
-		win := (*[64]int16)(mid[8*row : 8*row+64])
-		m0 := archsimd.LoadInt16x8Array((*[8]int16)(win[0:8]))
-		m1 := archsimd.LoadInt16x8Array((*[8]int16)(win[8:16]))
-		m2 := archsimd.LoadInt16x8Array((*[8]int16)(win[16:24]))
-		m3 := archsimd.LoadInt16x8Array((*[8]int16)(win[24:32]))
-		m4 := archsimd.LoadInt16x8Array((*[8]int16)(win[32:40]))
-		m5 := archsimd.LoadInt16x8Array((*[8]int16)(win[40:48]))
-		m6 := archsimd.LoadInt16x8Array((*[8]int16)(win[48:56]))
-		m7 := archsimd.LoadInt16x8Array((*[8]int16)(win[56:64]))
-		lo := bias.Add(m0.MulWidenLo(t0)).Add(m1.MulWidenLo(t1)).Add(m2.MulWidenLo(t2)).Add(m3.MulWidenLo(t3)).
-			Add(m4.MulWidenLo(t4)).Add(m5.MulWidenLo(t5)).Add(m6.MulWidenLo(t6)).Add(m7.MulWidenLo(t7))
-		hi := bias.Add(m0.HiToLo().MulWidenLo(t0.HiToLo())).Add(m1.HiToLo().MulWidenLo(t1.HiToLo())).
-			Add(m2.HiToLo().MulWidenLo(t2.HiToLo())).Add(m3.HiToLo().MulWidenLo(t3.HiToLo())).
-			Add(m4.HiToLo().MulWidenLo(t4.HiToLo())).Add(m5.HiToLo().MulWidenLo(t5.HiToLo())).
-			Add(m6.HiToLo().MulWidenLo(t6.HiToLo())).Add(m7.HiToLo().MulWidenLo(t7.HiToLo()))
+		lo := bias.Add(m0.MulWidenLo(t0).Add(m1.MulWidenLo(t1)).Add(m2.MulWidenLo(t2).Add(m3.MulWidenLo(t3)))).
+			Add(m4.MulWidenLo(t4).Add(m5.MulWidenLo(t5)).Add(m6.MulWidenLo(t6).Add(m7.MulWidenLo(t7))))
+		hi := bias.Add(m0.HiToLo().MulWidenLo(t0.HiToLo()).Add(m1.HiToLo().MulWidenLo(t1.HiToLo())).
+			Add(m2.HiToLo().MulWidenLo(t2.HiToLo()).Add(m3.HiToLo().MulWidenLo(t3.HiToLo())))).
+			Add(m4.HiToLo().MulWidenLo(t4.HiToLo()).Add(m5.HiToLo().MulWidenLo(t5.HiToLo())).
+				Add(m6.HiToLo().MulWidenLo(t6.HiToLo()).Add(m7.HiToLo().MulWidenLo(t7.HiToLo()))))
 		lo.Shift(right).TruncToInt16().ToBits().ReshapeToUint64s().
 			InterleaveLo(hi.Shift(right).TruncToInt16().ToBits().ReshapeToUint64s()).
 			ReshapeToUint16s().StoreArray(og.Row8(row, 0))
+		m0, m1, m2, m3, m4, m5, m6 = m1, m2, m3, m4, m5, m6, m7
 		sy += delta
 	}
 }

@@ -708,14 +708,19 @@ func (rt *refmvsTile) find(out *refmvsResult, ref refmvsRefPair, size BlockSize,
 		}
 		w8 := min((w4+1)>>1, 8)
 		h8 := min((h4+1)>>1, 8)
-		for y := int32(0); y < h8; y += stepV {
+		if e := &entries[rb]; e.Valid {
+			rf.addTemporalCandidate(stack, &cnt, e, ref, &globalMVCtx, &tgmv)
+		}
+		for x := stepH; x < w8; x += stepH {
+			if e := &entries[rb+x]; e.Valid {
+				rf.addTemporalCandidate(stack, &cnt, e, ref, nil, nil)
+			}
+		}
+		rb += stride * stepV
+		for y := stepV; y < h8; y += stepV {
 			for x := int32(0); x < w8; x += stepH {
 				if e := &entries[rb+x]; e.Valid {
-					var gctx *int32
-					if x|y == 0 {
-						gctx = &globalMVCtx
-					}
-					rf.addTemporalCandidate(stack, &cnt, e, ref, gctx, &tgmv)
+					rf.addTemporalCandidate(stack, &cnt, e, ref, nil, nil)
 				}
 			}
 			rb += stride * stepV

@@ -304,59 +304,49 @@ func findDirectionU8SIMD(img []byte, stride int) (int, int32) {
 	wDiagLo := archsimd.LoadInt32x4Array(&cdefDivDiagLo)
 	wDiagHi := archsimd.LoadInt32x4Array(&cdefDivDiagHi)
 
-	p0lo := r0.
-		Add(placeLo(r1, zero, 1)).Add(placeLo(r2, zero, 2)).
-		Add(placeLo(r3, zero, 3)).Add(placeLo(r4, zero, 4)).
-		Add(placeLo(r5, zero, 5)).Add(placeLo(r6, zero, 6)).Add(placeLo(r7, zero, 7))
-	p0hi := placeHi(r1, zero, 1).
-		Add(placeHi(r2, zero, 2)).Add(placeHi(r3, zero, 3)).
-		Add(placeHi(r4, zero, 4)).Add(placeHi(r5, zero, 5)).
-		Add(placeHi(r6, zero, 6)).Add(placeHi(r7, zero, 7))
+	p0lo := r0.Add(placeLo(r1, zero, 1)).
+		Add(placeLo(r2, zero, 2).Add(placeLo(r3, zero, 3))).
+		Add(placeLo(r4, zero, 4).Add(placeLo(r5, zero, 5)).
+			Add(placeLo(r6, zero, 6).Add(placeLo(r7, zero, 7))))
+	p0hi := placeHi(r1, zero, 1).Add(placeHi(r2, zero, 2)).
+		Add(placeHi(r3, zero, 3).Add(placeHi(r4, zero, 4))).
+		Add(placeHi(r5, zero, 5).Add(placeHi(r6, zero, 6)).Add(placeHi(r7, zero, 7)))
 	c0 := cdefDiagCostVec(p0lo, p0hi, diagRevTbl, wDiagLo, wDiagHi)
 
-	p4lo := r7.
-		Add(placeLo(r6, zero, 1)).Add(placeLo(r5, zero, 2)).
-		Add(placeLo(r4, zero, 3)).Add(placeLo(r3, zero, 4)).
-		Add(placeLo(r2, zero, 5)).Add(placeLo(r1, zero, 6)).Add(placeLo(r0, zero, 7))
-	p4hi := placeHi(r6, zero, 1).
-		Add(placeHi(r5, zero, 2)).Add(placeHi(r4, zero, 3)).
-		Add(placeHi(r3, zero, 4)).Add(placeHi(r2, zero, 5)).
-		Add(placeHi(r1, zero, 6)).Add(placeHi(r0, zero, 7))
+	p4lo := r7.Add(placeLo(r6, zero, 1)).
+		Add(placeLo(r5, zero, 2).Add(placeLo(r4, zero, 3))).
+		Add(placeLo(r3, zero, 4).Add(placeLo(r2, zero, 5)).
+			Add(placeLo(r1, zero, 6).Add(placeLo(r0, zero, 7))))
+	p4hi := placeHi(r6, zero, 1).Add(placeHi(r5, zero, 2)).
+		Add(placeHi(r4, zero, 3).Add(placeHi(r3, zero, 4))).
+		Add(placeHi(r2, zero, 5).Add(placeHi(r1, zero, 6)).Add(placeHi(r0, zero, 7)))
 	c4 := cdefDiagCostVec(p4lo, p4hi, diagRevTbl, wDiagLo, wDiagHi)
 
 	oddRevTbl := archsimd.LoadUint8x16Array(&cdefOddRevTbl)
 	wOdd := archsimd.LoadInt32x4Array(&cdefDivOdd)
 
-	p7lo := r01.
-		Add(placeLo(r23, zero, 1)).Add(placeLo(r45, zero, 2)).Add(placeLo(r67, zero, 3))
-	p7hi := placeHi(r23, zero, 1).
-		Add(placeHi(r45, zero, 2)).Add(placeHi(r67, zero, 3))
+	p7lo := r01.Add(placeLo(r23, zero, 1)).Add(placeLo(r45, zero, 2).Add(placeLo(r67, zero, 3)))
+	p7hi := placeHi(r23, zero, 1).Add(placeHi(r45, zero, 2)).Add(placeHi(r67, zero, 3))
 	c7 := cdefOddCostVec(p7lo, p7hi, oddRevTbl, wOdd)
 
-	p5lo := r67.
-		Add(placeLo(r45, zero, 1)).Add(placeLo(r23, zero, 2)).Add(placeLo(r01, zero, 3))
-	p5hi := placeHi(r45, zero, 1).
-		Add(placeHi(r23, zero, 2)).Add(placeHi(r01, zero, 3))
+	p5lo := r67.Add(placeLo(r45, zero, 1)).Add(placeLo(r23, zero, 2).Add(placeLo(r01, zero, 3)))
+	p5hi := placeHi(r45, zero, 1).Add(placeHi(r23, zero, 2)).Add(placeHi(r01, zero, 3))
 	c5 := cdefOddCostVec(p5lo, p5hi, oddRevTbl, wOdd)
 
 	s04 := packLo64(a01, a45)
 	s15 := packHi64(a01, a45)
 	s26 := packLo64(a23, a67)
 	s37 := packHi64(a23, a67)
-	p1lo := s04.
-		Add(placeLo(s15, zero, 1)).Add(placeLo(s26, zero, 2)).Add(placeLo(s37, zero, 3))
-	p1hi := placeHi(s15, zero, 1).
-		Add(placeHi(s26, zero, 2)).Add(placeHi(s37, zero, 3))
+	p1lo := s04.Add(placeLo(s15, zero, 1)).Add(placeLo(s26, zero, 2).Add(placeLo(s37, zero, 3)))
+	p1hi := placeHi(s15, zero, 1).Add(placeHi(s26, zero, 2)).Add(placeHi(s37, zero, 3))
 	c1 := cdefOddCostVec(p1lo, p1hi, oddRevTbl, wOdd)
 
 	s73 := packHi64(a67, a23)
 	s62 := packLo64(a67, a23)
 	s51 := packHi64(a45, a01)
 	s40 := packLo64(a45, a01)
-	p3lo := s73.
-		Add(placeLo(s62, zero, 1)).Add(placeLo(s51, zero, 2)).Add(placeLo(s40, zero, 3))
-	p3hi := placeHi(s62, zero, 1).
-		Add(placeHi(s51, zero, 2)).Add(placeHi(s40, zero, 3))
+	p3lo := s73.Add(placeLo(s62, zero, 1)).Add(placeLo(s51, zero, 2).Add(placeLo(s40, zero, 3)))
+	p3hi := placeHi(s62, zero, 1).Add(placeHi(s51, zero, 2)).Add(placeHi(s40, zero, 3))
 	c3 := cdefOddCostVec(p3lo, p3hi, oddRevTbl, wOdd)
 
 	bestDir, bestCost, opp := 0, c0, c4

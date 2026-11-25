@@ -246,7 +246,7 @@ func (c *frameWorkTileResidualLoopController) reconTXB(visit *tile.BlockLoopVisi
 		eob, txtp, ext := rd.DecodeCoefs(st, uint(plane), sz, cf, &dq[plane], uint(x4), uint(y4), uint(visW), uint(visH), ytxtp)
 		r.Txtp = transform.Type(txtp)
 		if plane == 0 && m != nil {
-			tile.FillTxtpMap(m, x4, y4, tw4, th4, r.Txtp)
+			tile.FillTxtpMap(m, b.X4, b.Y4, x4, y4, tw4, th4, int(b.TxtpStepX), int(b.TxtpStepY), r.Txtp)
 		}
 		c.stats.TXBs++
 		if eob < 0 {

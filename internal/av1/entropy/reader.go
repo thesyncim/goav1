@@ -41,9 +41,9 @@ func readerTell(pos int, cnt int32, tellOffs int32) int {
 }
 
 func normShift16(rng uint32) int32 {
-	// AV1 range renormalization keeps rng in 1..65535, so a 16-bit CLZ is
-	// equivalent to 16-bits.Len32(rng) without the wider length calculation.
-	return int32(bits.LeadingZeros16(uint16(rng)))
+	// AV1 range renormalization keeps rng in 1..65535, so LeadingZeros32(rng)-16
+	// avoids the 16-bit zero-extension before CLZ on arm64.
+	return int32(bits.LeadingZeros32(rng) - 16)
 }
 
 // refillState extends dif with the AV1 range decoder's next bytes. It is the

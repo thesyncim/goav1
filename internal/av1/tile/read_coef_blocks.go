@@ -32,10 +32,13 @@ type CoefBlock struct {
 	X4, Y4, W4, H4     int
 	CX4, CY4, CW4, CH4 int
 	SSX, SSY           uint
-	HasChroma          bool
-	Intra              bool
-	Skip               bool
-	Lossless           bool
+	// TxtpStepX/TxtpStepY are the luma 4x4 strides between chroma TXB origins
+	// (uvW4<<SSX, uvH4<<SSY) when txtpMap is active.
+	TxtpStepX, TxtpStepY uint8
+	HasChroma            bool
+	Intra                bool
+	Skip                 bool
+	Lossless             bool
 }
 
 // CoefDequant is one plane's dav1d dq_tbl[0..1] together with cf_max and the
@@ -139,8 +142,6 @@ func (s *DecodeState) bindCoefBlock(cdfs *BlockLoopCDFs, scratch *BlockLoopScrat
 		}
 		e.YMode = uint8(lumaMode % intraModeCount)
 		e.UVTxtp = uint8(txtpFromUVMode[chromaMode%chromaIntraModeCount])
-	} else {
-		setPtr(&b.txtpMap, &scratch.Coeff.txtpMap)
 	}
 	b.Tree = *tree
 	b.X4, b.Y4 = int(block.X4), int(block.Y4)
@@ -153,6 +154,18 @@ func (s *DecodeState) bindCoefBlock(cdfs *BlockLoopCDFs, scratch *BlockLoopScrat
 	b.SSX = uint(boolToShift(req.Color.SubsamplingX))
 	b.SSY = uint(boolToShift(req.Color.SubsamplingY))
 	b.HasChroma = tree.HasUV && hasChromaForBlock(block.Size, b.X4, b.Y4, req.Color)
+	if !intra {
+		// Chroma only reads txtpMap for inter blocks when HasChroma, !lossless,
+		// and chroma TX size has Max < 4 (sizes >= 32 force DCT_DCT).
+		if b.HasChroma && !lossless && tree.UV.Valid() && coefSizeTable[tree.UV].Max < 4 {
+			setPtr(&b.txtpMap, &scratch.Coeff.txtpMap)
+			uvSz := &coefSizeTable[tree.UV]
+			b.TxtpStepX = uvSz.W4 << b.SSX
+			b.TxtpStepY = uvSz.H4 << b.SSY
+		} else {
+			setPtr(&b.txtpMap, nil)
+		}
+	}
 	if b.HasChroma {
 		planeBlock, err := PlaneBlockSize(block.Size, req.Color, 1)
 		if err != nil {
@@ -240,30 +253,25 @@ func CoefSizeOf(size TransformSize) (sz *entropy.CoefSize, ok bool) {
 	return &coefSizeTable[size], true
 }
 
-// FillTxtpMap is decode_coefs' dav1d_memset_pow2[t_dim->lw] of txtp into each
-// of the TXB's txtp_map rows: one store per row for widths up to 4, 8-byte
-// stores above. The caller has bounded x4+w4 and y4+h4.
-func FillTxtpMap(m *[MaxBlockModeSlots][MaxBlockModeSlots]transform.Type, x4, y4, w4, h4 int, t transform.Type) {
-	x := ctxSplat(uint8(t))
-	switch w4 {
-	case 1:
-		for y := y4; y < y4+h4; y++ {
-			m[y][x4] = t
-		}
-	case 2:
-		for y := y4; y < y4+h4; y++ {
-			ctxPut2(m[y][x4:], x)
-		}
-	case 4:
-		for y := y4; y < y4+h4; y++ {
-			ctxPut4(m[y][x4:], x)
-		}
-	default:
-		for y := y4; y < y4+h4; y++ {
-			row := m[y][x4:]
-			for i := 0; i < w4; i += 8 {
-				ctxPut8(row[i:], x)
-			}
+// FillTxtpMap writes t only to the chroma-TXB sample points inside
+// [x4, x4+w4) x [y4, y4+h4), which lie on the power-of-2 grid anchored at
+// (bx4, by4) with strides (stepX, stepY).
+func FillTxtpMap(m *[MaxBlockModeSlots][MaxBlockModeSlots]transform.Type, bx4, by4, x4, y4, w4, h4, stepX, stepY int, t transform.Type) {
+	gx := x4
+	if dx := (x4 - bx4) & (stepX - 1); dx != 0 {
+		gx += stepX - dx
+	}
+	if gx >= x4+w4 {
+		return
+	}
+	gy := y4
+	if dy := (y4 - by4) & (stepY - 1); dy != 0 {
+		gy += stepY - dy
+	}
+	for y := gy; y < y4+h4; y += stepY {
+		row := &m[y]
+		for x := gx; x < x4+w4; x += stepX {
+			row[x] = t
 		}
 	}
 }

@@ -1014,6 +1014,8 @@ func BuildCoefScan2D(scan []int16, slh, loCtx uint8) []uint32 {
 // coefAC2DPacked is coefAC2D reading precomputed (rc, baseCtx, hiCtxBase) from
 // scan2D so the inner AC loop skips coordinate decoding, clamping, and the 2D
 // offset table lookup.
+//
+//go:noinline
 func (c *Cursor) coefAC2DPacked(scan2D []uint32, stride uint, levels *[CoefLevelsLen]uint8, cf *[1024]int32, lo *[42]CDF, hi *[21]CDF, rc uint, dif uint64, rng uint32, cnt int32) (uint, uint64, uint32, int32) {
 	_ = levels[0]
 	_ = cf[0]
@@ -1054,17 +1056,17 @@ func (c *Cursor) coefAC2DPacked(scan2D []uint32, stride uint, levels *[CoefLevel
 		}
 		dif -= uint64(lower) << (ecWindow - 16)
 		rng = upper - lower
-		sh := normShift16(rng)
-		cnt -= sh
-		dif = ((dif + 1) << uint(sh)) - 1
-		rng <<= uint(sh)
+		sh := uint(bits.LeadingZeros32(rng)-16) & 15
+		cnt -= int32(sh)
+		dif = ((dif + 1) << sh) - 1
+		rng <<= sh
 		if cnt < 0 {
 			dif, cnt = c.coefRefill(dif, cnt)
 		}
 		if tok == 0 {
 			if update {
 				count := values[4]
-				rate := uint(5 + (count >> 4))
+				rate := 5 + uint((count>>4)&3)
 				c0u, c1u, c2u := uint(c0), uint(c1), uint(c2)
 				values[0] = uint16(c0u - c0u>>rate)
 				values[1] = uint16(c1u - c1u>>rate)
@@ -1077,16 +1079,18 @@ func (c *Cursor) coefAC2DPacked(scan2D []uint32, stride uint, levels *[CoefLevel
 		}
 		if update {
 			count := values[4]
-			rate := uint(5 + (count >> 4))
+			rate := 5 + uint((count>>4)&3)
 			c0u, c1u, c2u := uint(c0), uint(c1), uint(c2)
 			n0 := c0u + (CDFProbTop-c0u)>>rate
 			n1 := c1u - c1u>>rate
-			n2 := c2u - c2u>>rate
+			u1 := c1u + (CDFProbTop-c1u)>>rate
 			if tok > 1 {
-				n1 = c1u + (CDFProbTop-c1u)>>rate
+				n1 = u1
 			}
+			n2 := c2u - c2u>>rate
+			u2 := c2u + (CDFProbTop-c2u)>>rate
 			if tok > 2 {
-				n2 = c2u + (CDFProbTop-c2u)>>rate
+				n2 = u2
 			}
 			values[0] = uint16(n0)
 			values[1] = uint16(n1)
@@ -1178,17 +1182,17 @@ func (c *Cursor) coefAC2D(scan []int16, stride uint, offsets *[5][5]uint8, level
 		}
 		dif -= uint64(lower) << (ecWindow - 16)
 		rng = upper - lower
-		sh := normShift16(rng)
-		cnt -= sh
-		dif = ((dif + 1) << uint(sh)) - 1
-		rng <<= uint(sh)
+		sh := uint(bits.LeadingZeros32(rng)-16) & 15
+		cnt -= int32(sh)
+		dif = ((dif + 1) << sh) - 1
+		rng <<= sh
 		if cnt < 0 {
 			dif, cnt = c.coefRefill(dif, cnt)
 		}
 		if tok == 0 {
 			if update {
 				count := values[4]
-				rate := uint(5 + (count >> 4))
+				rate := 5 + uint((count>>4)&3)
 				c0u, c1u, c2u := uint(c0), uint(c1), uint(c2)
 				values[0] = uint16(c0u - c0u>>rate)
 				values[1] = uint16(c1u - c1u>>rate)
@@ -1201,16 +1205,18 @@ func (c *Cursor) coefAC2D(scan []int16, stride uint, offsets *[5][5]uint8, level
 		}
 		if update {
 			count := values[4]
-			rate := uint(5 + (count >> 4))
+			rate := 5 + uint((count>>4)&3)
 			c0u, c1u, c2u := uint(c0), uint(c1), uint(c2)
 			n0 := c0u + (CDFProbTop-c0u)>>rate
 			n1 := c1u - c1u>>rate
-			n2 := c2u - c2u>>rate
+			u1 := c1u + (CDFProbTop-c1u)>>rate
 			if tok > 1 {
-				n1 = c1u + (CDFProbTop-c1u)>>rate
+				n1 = u1
 			}
+			n2 := c2u - c2u>>rate
+			u2 := c2u + (CDFProbTop-c2u)>>rate
 			if tok > 2 {
-				n2 = c2u + (CDFProbTop-c2u)>>rate
+				n2 = u2
 			}
 			values[0] = uint16(n0)
 			values[1] = uint16(n1)
@@ -1311,7 +1317,7 @@ func (c *Cursor) coefAC1D(vert bool, shift, shift2, mask, eob, eobTok uint, leve
 		}
 		if update {
 			count := v[4]
-			rate := uint(5 + (count >> 4))
+			rate := uint(5 + ((count >> 4) & 3))
 			if tok == 0 {
 				v[0] = uint16(c0 - c0>>rate)
 				v[1] = uint16(c1 - c1>>rate)
