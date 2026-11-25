@@ -95,6 +95,8 @@ internal/av1/decoder/work.go:*:*: make(map[int]*sharedMotionFrame, 8) escapes to
 internal/av1/decoder/work.go:*:*: make(map[int]*sharedMotionFrame, 8) escapes to heap in (*FrameWorkState).publishSharedTemporalMotionFrame:
 internal/av1/decoder/work.go:*:*: new(sharedMotionFrame) escapes to heap
 internal/av1/decoder/work.go:*:*: new(sharedMotionFrame) escapes to heap in (*FrameWorkState).publishSharedTemporalMotionFrame:
+internal/av1/encoder/bitstream.go:*:*: make([]byte, len(dst), max(len(dst) + need, cap(dst) * 2)) escapes to heap
+internal/av1/encoder/bitstream.go:*:*: make([]byte, len(dst), max(len(dst) + need, cap(dst) * 2)) escapes to heap in AppendLowOverheadMetadataOBU:
 internal/av1/encoder/cdef_apply.go:*:*: func literal escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: func literal escapes to heap in (*cdefApplier).startWorkers:
 internal/av1/encoder/cdef_apply.go:*:*: make([][]uint16, 8) escapes to heap
@@ -112,7 +114,7 @@ internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, lineNeed) escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.Input) escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.Input) escapes to heap in (*cdefApplier).init:
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.Samples[p]) escapes to heap
-internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.Samples[p]) escapes to heap in (*cdefApplier).init:
+internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.Samples[p]) escapes to heap in (*cdefApplier).bindApplyContext:
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.UnitDst) escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.UnitDst) escapes to heap in (*cdefApplier).init:
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint8, length) escapes to heap
@@ -166,15 +168,19 @@ internal/av1/encoder/hme.go:*:*: make([]realtimeSBMultiSizeME, n) escapes to hea
 internal/av1/encoder/hme.go:*:*: make([]realtimeSBMultiSizeME, n) escapes to heap in (*hmeState).prepare:
 internal/av1/encoder/hme.go:*:*: make([]uint64, n) escapes to heap
 internal/av1/encoder/hme.go:*:*: make([]uint64, n) escapes to heap in (*hmeState).prepare:
+internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 131072) escapes to heap
+internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 131072) escapes to heap in encodeLossless420KeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 262144) escapes to heap
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 262144) escapes to heap in encodeLosslessHighBitDepth420KeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 262144) escapes to heap in encodeLosslessHighBitDepthMonochromeKeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 262144) escapes to heap in encodeLosslessMonochromeKeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap
+internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap in EncodeLossless420Keyframe:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap in EncodeLosslessHighBitDepth420Keyframe:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap in EncodeLosslessHighBitDepthMonochromeKeyframe:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap in EncodeLosslessMonochromeKeyframe:
 internal/av1/encoder/keyframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap
+internal/av1/encoder/keyframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in encodeLossless420KeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in encodeLosslessHighBitDepth420KeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in encodeLosslessHighBitDepthMonochromeKeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in encodeLosslessMonochromeKeyframeTile:

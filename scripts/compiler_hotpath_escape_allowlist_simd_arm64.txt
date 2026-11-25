@@ -95,6 +95,8 @@ internal/av1/decoder/work.go:*:*: make(map[int]*sharedMotionFrame, 8) escapes to
 internal/av1/decoder/work.go:*:*: make(map[int]*sharedMotionFrame, 8) escapes to heap in (*FrameWorkState).publishSharedTemporalMotionFrame:
 internal/av1/decoder/work.go:*:*: new(sharedMotionFrame) escapes to heap
 internal/av1/decoder/work.go:*:*: new(sharedMotionFrame) escapes to heap in (*FrameWorkState).publishSharedTemporalMotionFrame:
+internal/av1/encoder/bitstream.go:*:*: make([]byte, len(dst), max(len(dst) + need, cap(dst) * 2)) escapes to heap
+internal/av1/encoder/bitstream.go:*:*: make([]byte, len(dst), max(len(dst) + need, cap(dst) * 2)) escapes to heap in AppendLowOverheadMetadataOBU:
 internal/av1/encoder/cdef_apply.go:*:*: func literal escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: func literal escapes to heap in (*cdefApplier).startWorkers:
 internal/av1/encoder/cdef_apply.go:*:*: make([][]uint16, 8) escapes to heap
@@ -112,7 +114,7 @@ internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, lineNeed) escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.Input) escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.Input) escapes to heap in (*cdefApplier).init:
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.Samples[p]) escapes to heap
-internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.Samples[p]) escapes to heap in (*cdefApplier).init:
+internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.Samples[p]) escapes to heap in (*cdefApplier).bindApplyContext:
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.UnitDst) escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.UnitDst) escapes to heap in (*cdefApplier).init:
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint8, length) escapes to heap
@@ -158,6 +160,10 @@ internal/av1/encoder/cyclic_refresh.go:*:*: make([]int64, sbCnt) escapes to heap
 internal/av1/encoder/cyclic_refresh.go:*:*: make([]int64, sbCnt) escapes to heap in (*cyclicRefresh).plan:
 internal/av1/encoder/cyclic_refresh.go:*:*: make([]uint8, sbCnt) escapes to heap
 internal/av1/encoder/cyclic_refresh.go:*:*: make([]uint8, sbCnt) escapes to heap in (*cyclicRefresh).plan:
+internal/av1/encoder/encoder_gosimd_arm64.go:*:*: make([]boxColsPos, n) escapes to heap
+internal/av1/encoder/encoder_gosimd_arm64.go:*:*: make([]boxColsPos, n) escapes to heap in (*boxColsPlan).build:
+internal/av1/encoder/encoder_gosimd_arm64.go:*:*: make([]uint8, n * 192) escapes to heap
+internal/av1/encoder/encoder_gosimd_arm64.go:*:*: make([]uint8, n * 192) escapes to heap in (*boxColsPlan).build:
 internal/av1/encoder/hme.go:*:*: func literal escapes to heap
 internal/av1/encoder/hme.go:*:*: func literal escapes to heap in (*hmeState).startWorkers:
 internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap
@@ -166,15 +172,19 @@ internal/av1/encoder/hme.go:*:*: make([]realtimeSBMultiSizeME, n) escapes to hea
 internal/av1/encoder/hme.go:*:*: make([]realtimeSBMultiSizeME, n) escapes to heap in (*hmeState).prepare:
 internal/av1/encoder/hme.go:*:*: make([]uint64, n) escapes to heap
 internal/av1/encoder/hme.go:*:*: make([]uint64, n) escapes to heap in (*hmeState).prepare:
+internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 131072) escapes to heap
+internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 131072) escapes to heap in encodeLossless420KeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 262144) escapes to heap
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 262144) escapes to heap in encodeLosslessHighBitDepth420KeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 262144) escapes to heap in encodeLosslessHighBitDepthMonochromeKeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, 262144) escapes to heap in encodeLosslessMonochromeKeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap
+internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap in EncodeLossless420Keyframe:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap in EncodeLosslessHighBitDepth420Keyframe:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap in EncodeLosslessHighBitDepthMonochromeKeyframe:
 internal/av1/encoder/keyframe.go:*:*: make([]byte, 0, headerSize + groupOBUSize) escapes to heap in EncodeLosslessMonochromeKeyframe:
 internal/av1/encoder/keyframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap
+internal/av1/encoder/keyframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in encodeLossless420KeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in encodeLosslessHighBitDepth420KeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in encodeLosslessHighBitDepthMonochromeKeyframeTile:
 internal/av1/encoder/keyframe.go:*:*: make([]tile.BlockLoopRootAboveContext, rootCols) escapes to heap in encodeLosslessMonochromeKeyframeTile:
@@ -393,10 +403,6 @@ internal/av1/encoder/scale_box.go:*:*: make([]uint32, n) escapes to heap in scal
 internal/av1/encoder/scale_box.go:*:*: make([]uint32, n) escapes to heap in scalePlaneBoxAny[go.shape.uint8]:
 internal/av1/encoder/scale_box.go:*:*: make([]uint8, sw) escapes to heap
 internal/av1/encoder/scale_box.go:*:*: make([]uint8, sw) escapes to heap in scalePlaneBox8:
-internal/av1/encoder/scale_box_arm64.go:*:*: make([]boxColsPos, n) escapes to heap
-internal/av1/encoder/scale_box_arm64.go:*:*: make([]boxColsPos, n) escapes to heap in (*boxColsPlan).build:
-internal/av1/encoder/scale_box_arm64.go:*:*: make([]uint8, n * 192) escapes to heap
-internal/av1/encoder/scale_box_arm64.go:*:*: make([]uint8, n * 192) escapes to heap in (*boxColsPlan).build:
 internal/av1/encoder/subpel_cache.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/subpel_cache.go:*:*: new(subpelProbeCache) escapes to heap in (*lossyEncodeState).ensureSubpelProbeCache:
 internal/av1/encoder/subpel_svt.go:*:*: new(subpelProbeCache) escapes to heap
@@ -557,10 +563,10 @@ internal/av1/entropy/writer.go:*:*: make([]byte, grown) escapes to heap in (*Wri
 internal/av1/entropy/writer_log.go:*:*: make([]uint32, 0, n) escapes to heap
 internal/av1/entropy/writer_log.go:*:*: make([]uint32, 0, n) escapes to heap in (*WriterLog).Reserve:
 internal/av1/motion/compound.go:*:*: moved to heap: im
-internal/av1/motion/compound8_gosimd.go:*:*: new(compoundIM) escapes to heap
-internal/av1/motion/compound8_gosimd.go:*:*: new(compoundIM) escapes to heap in predictInterCompoundRef8ToConvBuf2DGoSIMD:
+internal/av1/motion/motion_gosimd.go:*:*: new(compoundIM) escapes to heap
+internal/av1/motion/motion_gosimd.go:*:*: new(compoundIM) escapes to heap in predictInterCompoundRef8ToConvBuf2DGoSIMD:
 internal/av1/motion/scale_scratch.go:*:*: new(scaledHighBDIM) escapes to heap
-internal/av1/motion/scale_scratch.go:*:*: new(scaledHighBDIM) escapes to heap in init.func1:
+internal/av1/motion/scale_scratch.go:*:*: new(scaledHighBDIM) escapes to heap in init.func2:
 internal/av1/threading/frame_thread.go:*:*: make([]FrameThreadMotionTile, maxTile + 1) escapes to heap
 internal/av1/threading/frame_thread.go:*:*: make([]FrameThreadMotionTile, maxTile + 1) escapes to heap in (*FrameThreadMotion).bindTiles:
 internal/av1/threading/frame_thread.go:*:*: make([]FrameWorkBatch, len(batches)) escapes to heap

@@ -4,12 +4,12 @@
 [![Lint](https://github.com/thesyncim/goav1/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/thesyncim/goav1/actions/workflows/lint.yml)
 [![Test vectors](https://github.com/thesyncim/goav1/actions/workflows/testvectors.yml/badge.svg?branch=main)](https://github.com/thesyncim/goav1/actions/workflows/testvectors.yml)
 
-goav1 is a pure-Go AV1 decoder and realtime AV1 encoder with WebRTC RTP/RTCP
-helpers. The root Go module has no third-party dependencies, uses zero cgo, and
-contains zero handwritten assembly (`.s`/`.S`) — optimized arm64 and amd64
-kernels are written in Go using `simd/archsimd` (`GOEXPERIMENT=simd`), with
-audited memory safety (`scripts/check_unsafe.sh`) and zero steady-state GC
-allocations on hot decode/encode paths.
+goav1 is a pure-Go AV1 decoder and encoder with WebRTC RTP/RTCP helpers. The
+root Go module has no third-party dependencies, uses zero cgo, and contains zero
+handwritten assembly (`.s`/`.S`) — optimized arm64 and amd64 kernels are written
+in Go using `simd/archsimd` (`GOEXPERIMENT=simd`), with audited memory safety
+(`scripts/check_unsafe.sh`) and zero steady-state GC allocations on hot
+decode/encode paths.
 
 ## Performance snapshot (Apple M4 Max, `GOEXPERIMENT=simd`)
 
@@ -142,13 +142,16 @@ reusable `Decoder`, `VideoEncoder`, and `RTCEncoder` values when finished.
   `WithAllLayers`), `ColorInfo` & `FrameMetadata` exposure (HDR CLL, HDR MDCV,
   ITU-T T.35, Timecode, Scalability), and resilient freeze-frame error
   concealment (`WithErrorConcealment`).
-- **Encoder**: Realtime AV1 encoder (`VideoEncoder`, `HighBitDepthVideoEncoder`,
-  `MonochromeVideoEncoder`, `HighBitDepthMonochromeVideoEncoder`,
-  `KeyframeEncoder`, `RTCEncoder`) covering 8/10/12-bit 4:2:0, 4:2:2, 4:4:4,
-  monochrome, and bit-exact lossless keyframes/streams, fixed-quality CQP and
-  SVT-style CBR rate control, temporal/spatial SVC, screen-content palette
-  coding, cyclic-refresh AQ, color description & `OBU_METADATA` emission, and
-  WebRTC dependency descriptors.
+- **Encoder**: Full pure-Go AV1 encoder (`VideoEncoder`,
+  `HighBitDepthVideoEncoder`, `MonochromeVideoEncoder`,
+  `HighBitDepthMonochromeVideoEncoder`, `KeyframeEncoder`, `RTCEncoder`)
+  targeting both realtime/WebRTC and general-purpose AV1 encoding — covering
+  8/10/12-bit 4:2:0, 4:2:2, 4:4:4, monochrome, and bit-exact lossless
+  keyframes/streams, fixed-quality CQP and CBR rate control, temporal/spatial
+  SVC, screen-content palette coding, CDEF, loop filter, cyclic-refresh AQ,
+  color description & `OBU_METADATA` emission, and WebRTC dependency
+  descriptors (with VBR/CRF, B-frame/alt-ref lookahead pyramids, and loop
+  restoration search under active expansion).
 - **Transport & Framing**: AV1 RTP payload packetization/depacketization, RFC
   8285 header extensions, RFC 4588 RTX, RTCP feedback (NACK, PLI, FIR, REMB,
   Transport-CC, AV1 layer refresh), packet sequencing, AV1 SDP capability
