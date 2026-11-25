@@ -1429,7 +1429,7 @@ func frameWorkCDEFSparseStageRectFromMask(m uint64, w, h, bw, bh int) frameWorkC
 		}
 	}
 	y0 := (bits.TrailingZeros64(m) >> 3) * bh
-	y1 := ((63 - bits.LeadingZeros64(m))>>3 + 1) * bh
+	y1 := ((63-bits.LeadingZeros64(m))>>3 + 1) * bh
 	t := m | (m >> 32)
 	t |= t >> 16
 	t |= t >> 8

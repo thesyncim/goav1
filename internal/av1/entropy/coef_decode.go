@@ -792,7 +792,7 @@ func (r *Reader) DecodeCoefs(s *CoefState, plane uint, sz *CoefSize, cf *[1024]i
 				if vert {
 					shift, shift2, mask = slw+2, slh+2, (4<<slw)-1
 					clearCols := min((4<<slw)+2, uint(eob)+3)
-				clearCoefLevels(levels, stride*clearCols)
+					clearCoefLevels(levels, stride*clearCols)
 				} else {
 					shift, shift2, mask = slh+2, 0, (4<<slh)-1
 					clearCoefLevels(levels, stride*((4<<slh)+2))
