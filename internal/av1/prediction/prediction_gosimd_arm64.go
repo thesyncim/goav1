@@ -533,6 +533,7 @@ func subsampleLuma8SIMD(outputQ3 []uint16, input []uint8, inputStride int, width
 			subsampleLuma8PureGo(outputQ3, input, inputStride, width, height, outW, outH, subX, subY)
 			return
 		}
+		sh1 := archsimd.BroadcastInt16x8(1)
 		for row := 0; row < height; row += 2 {
 			outBase := (row >> 1) * CFLBufLine
 			topBase := row * inputStride
@@ -541,7 +542,7 @@ func subsampleLuma8SIMD(outputQ3 []uint16, input []uint8, inputStride int, width
 				ic := oc << 1
 				top := archsimd.LoadUint8x16Array((*[16]uint8)(input[topBase+ic:]))
 				bot := archsimd.LoadUint8x16Array((*[16]uint8)(input[botBase+ic:]))
-				sum := cflPairSumUint8x16(top).Add(cflPairSumUint8x16(bot)).ShiftAllLeft(1)
+				sum := cflPairSumUint8x16(top).Add(cflPairSumUint8x16(bot)).Shift(sh1)
 				sum.StoreArray((*[8]uint16)(outputQ3[outBase+oc:]))
 			}
 		}
@@ -550,13 +551,14 @@ func subsampleLuma8SIMD(outputQ3 []uint16, input []uint8, inputStride int, width
 			subsampleLuma8PureGo(outputQ3, input, inputStride, width, height, outW, outH, subX, subY)
 			return
 		}
+		sh2 := archsimd.BroadcastInt16x8(2)
 		for row := 0; row < outH; row++ {
 			outBase := row * CFLBufLine
 			inBase := row * inputStride
 			for oc := 0; oc < outW; oc += 8 {
 				ic := oc << 1
 				v := archsimd.LoadUint8x16Array((*[16]uint8)(input[inBase+ic:]))
-				sum := cflPairSumUint8x16(v).ShiftAllLeft(2)
+				sum := cflPairSumUint8x16(v).Shift(sh2)
 				sum.StoreArray((*[8]uint16)(outputQ3[outBase+oc:]))
 			}
 		}
@@ -565,13 +567,14 @@ func subsampleLuma8SIMD(outputQ3 []uint16, input []uint8, inputStride int, width
 			subsampleLuma8PureGo(outputQ3, input, inputStride, width, height, outW, outH, subX, subY)
 			return
 		}
+		sh3 := archsimd.BroadcastInt16x8(3)
 		for row := 0; row < outH; row++ {
 			outBase := row * CFLBufLine
 			inBase := row * inputStride
 			for col := 0; col < outW; col += 16 {
 				v := archsimd.LoadUint8x16Array((*[16]uint8)(input[inBase+col:]))
-				v.ExtendLo8ToUint16().ShiftAllLeft(3).StoreArray((*[8]uint16)(outputQ3[outBase+col:]))
-				v.HiToLo().ExtendLo8ToUint16().ShiftAllLeft(3).StoreArray((*[8]uint16)(outputQ3[outBase+col+8:]))
+				v.ExtendLo8ToUint16().Shift(sh3).StoreArray((*[8]uint16)(outputQ3[outBase+col:]))
+				v.HiToLo().ExtendLo8ToUint16().Shift(sh3).StoreArray((*[8]uint16)(outputQ3[outBase+col+8:]))
 			}
 		}
 	}
@@ -584,6 +587,7 @@ func subsampleLuma16SIMD(outputQ3 []uint16, input []uint16, inputStride int, wid
 		if outW < 8 || outW%8 != 0 {
 			return subsampleLuma16PureGo(outputQ3, input, inputStride, width, height, outW, outH, subX, subY, max)
 		}
+		sh1 := archsimd.BroadcastInt16x8(1)
 		for row := 0; row < height; row += 2 {
 			outBase := (row >> 1) * CFLBufLine
 			topBase := row * inputStride
@@ -598,7 +602,7 @@ func subsampleLuma16SIMD(outputQ3 []uint16, input []uint16, inputStride int, wid
 					cflUint16AnyAbove(bot0, maxV) || cflUint16AnyAbove(bot1, maxV) {
 					return subsampleLuma16PureGo(outputQ3, input, inputStride, width, height, outW, outH, subX, subY, max)
 				}
-				sum := cflPairSumUint16x16(top0, top1).Add(cflPairSumUint16x16(bot0, bot1)).ShiftAllLeft(1)
+				sum := cflPairSumUint16x16(top0, top1).Add(cflPairSumUint16x16(bot0, bot1)).Shift(sh1)
 				sum.StoreArray((*[8]uint16)(outputQ3[outBase+oc:]))
 			}
 		}
@@ -606,6 +610,7 @@ func subsampleLuma16SIMD(outputQ3 []uint16, input []uint16, inputStride int, wid
 		if outW < 8 || outW%8 != 0 {
 			return subsampleLuma16PureGo(outputQ3, input, inputStride, width, height, outW, outH, subX, subY, max)
 		}
+		sh2 := archsimd.BroadcastInt16x8(2)
 		for row := 0; row < outH; row++ {
 			outBase := row * CFLBufLine
 			inBase := row * inputStride
@@ -616,7 +621,7 @@ func subsampleLuma16SIMD(outputQ3 []uint16, input []uint16, inputStride int, wid
 				if cflUint16AnyAbove(in0, maxV) || cflUint16AnyAbove(in1, maxV) {
 					return subsampleLuma16PureGo(outputQ3, input, inputStride, width, height, outW, outH, subX, subY, max)
 				}
-				sum := cflPairSumUint16x16(in0, in1).ShiftAllLeft(2)
+				sum := cflPairSumUint16x16(in0, in1).Shift(sh2)
 				sum.StoreArray((*[8]uint16)(outputQ3[outBase+oc:]))
 			}
 		}
@@ -624,6 +629,7 @@ func subsampleLuma16SIMD(outputQ3 []uint16, input []uint16, inputStride int, wid
 		if outW < 8 || outW%8 != 0 {
 			return subsampleLuma16PureGo(outputQ3, input, inputStride, width, height, outW, outH, subX, subY, max)
 		}
+		sh3 := archsimd.BroadcastInt16x8(3)
 		for row := 0; row < outH; row++ {
 			outBase := row * CFLBufLine
 			inBase := row * inputStride
@@ -632,7 +638,7 @@ func subsampleLuma16SIMD(outputQ3 []uint16, input []uint16, inputStride int, wid
 				if cflUint16AnyAbove(v, maxV) {
 					return subsampleLuma16PureGo(outputQ3, input, inputStride, width, height, outW, outH, subX, subY, max)
 				}
-				v.ShiftAllLeft(3).StoreArray((*[8]uint16)(outputQ3[outBase+col:]))
+				v.Shift(sh3).StoreArray((*[8]uint16)(outputQ3[outBase+col:]))
 			}
 		}
 	}

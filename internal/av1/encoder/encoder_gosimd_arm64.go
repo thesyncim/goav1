@@ -269,6 +269,49 @@ func pixelStatsRows16Arch(src []byte, srcStride int, ref []byte, refStride int, 
 				sse1 = sse1.Add(dl.HiToLo().MulWidenLo(dl.HiToLo()).Add(dh.HiToLo().MulWidenLo(dh.HiToLo())).
 					Add(el.HiToLo().MulWidenLo(el.HiToLo()).Add(eh.HiToLo().MulWidenLo(eh.HiToLo()))))
 			}
+		case 64:
+			for r := 0; r < gs.Height(); r++ {
+				sw, rw := gs.Row64(r, 0), gr.Row64(r, 0)
+				a := archsimd.LoadUint8x16Array((*[16]uint8)(sw[0:16]))
+				b := archsimd.LoadUint8x16Array((*[16]uint8)(rw[0:16]))
+				d := a.Sub(b)
+				m := b.Greater(a).ToInt8x16().ToBits()
+				dl := d.InterleaveLo(m).ReshapeToUint16s().BitsToInt16()
+				dh := d.InterleaveHi(m).ReshapeToUint16s().BitsToInt16()
+				sum16 = sum16.Add(dl.Add(dh))
+				sse0 = sse0.Add(dl.MulWidenLo(dl).Add(dh.MulWidenLo(dh)))
+				sse1 = sse1.Add(dl.HiToLo().MulWidenLo(dl.HiToLo()).Add(dh.HiToLo().MulWidenLo(dh.HiToLo())))
+
+				a = archsimd.LoadUint8x16Array((*[16]uint8)(sw[16:32]))
+				b = archsimd.LoadUint8x16Array((*[16]uint8)(rw[16:32]))
+				d = a.Sub(b)
+				m = b.Greater(a).ToInt8x16().ToBits()
+				dl = d.InterleaveLo(m).ReshapeToUint16s().BitsToInt16()
+				dh = d.InterleaveHi(m).ReshapeToUint16s().BitsToInt16()
+				sum16 = sum16.Add(dl.Add(dh))
+				sse0 = sse0.Add(dl.MulWidenLo(dl).Add(dh.MulWidenLo(dh)))
+				sse1 = sse1.Add(dl.HiToLo().MulWidenLo(dl.HiToLo()).Add(dh.HiToLo().MulWidenLo(dh.HiToLo())))
+
+				a = archsimd.LoadUint8x16Array((*[16]uint8)(sw[32:48]))
+				b = archsimd.LoadUint8x16Array((*[16]uint8)(rw[32:48]))
+				d = a.Sub(b)
+				m = b.Greater(a).ToInt8x16().ToBits()
+				dl = d.InterleaveLo(m).ReshapeToUint16s().BitsToInt16()
+				dh = d.InterleaveHi(m).ReshapeToUint16s().BitsToInt16()
+				sum16 = sum16.Add(dl.Add(dh))
+				sse0 = sse0.Add(dl.MulWidenLo(dl).Add(dh.MulWidenLo(dh)))
+				sse1 = sse1.Add(dl.HiToLo().MulWidenLo(dl.HiToLo()).Add(dh.HiToLo().MulWidenLo(dh.HiToLo())))
+
+				a = archsimd.LoadUint8x16Array((*[16]uint8)(sw[48:64]))
+				b = archsimd.LoadUint8x16Array((*[16]uint8)(rw[48:64]))
+				d = a.Sub(b)
+				m = b.Greater(a).ToInt8x16().ToBits()
+				dl = d.InterleaveLo(m).ReshapeToUint16s().BitsToInt16()
+				dh = d.InterleaveHi(m).ReshapeToUint16s().BitsToInt16()
+				sum16 = sum16.Add(dl.Add(dh))
+				sse0 = sse0.Add(dl.MulWidenLo(dl).Add(dh.MulWidenLo(dh)))
+				sse1 = sse1.Add(dl.HiToLo().MulWidenLo(dl.HiToLo()).Add(dh.HiToLo().MulWidenLo(dh.HiToLo())))
+			}
 		default:
 			for r := 0; r < gs.Height(); r++ {
 				for c := 0; c+16 <= w; c += 16 {

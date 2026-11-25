@@ -70,17 +70,36 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	predYValid := false
 	predYMV := motion.Vector{}
 	// The sub-pel search already left the refined vector's prediction in
-	// predY (pframe_motion.go).
+	// predY (pframe_motion.go). When predY is not pre-populated and meMV is
+	// an in-bounds integer MV, score it directly from refPlane without copying
+	// into predY unless it wins.
 	var perr error
-	if !st.mePredY.valid || st.mePredY.mv != meMV {
-		perr = st.predictLuma(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, motion.RegularFilters)
-	}
-	if perr == nil {
+	meDirect := false
+	if st.mePredY.valid && st.mePredY.mv == meMV {
 		predYValid, predYMV = true, meMV
 		sse, meVar := realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
 		meSSE = sse
 		st.predStats.set(meMV, motion.RegularFilters, meSSE, meVar)
 		meDist = int64(meVar) << 4
+	} else if meMV.Row&7 == 0 && meMV.Col&7 == 0 {
+		rx, ry := lumaPX+int(meMV.Col>>3), lumaPY+int(meMV.Row>>3)
+		if rx >= 0 && ry >= 0 && rx+bw <= src.Width && ry+bh <= src.Height {
+			sse, meVar := realtimeInterResidualSSEVariance(src.Y, refPlane[ry*refStride+rx:], src.YStride, refStride, lumaPX, lumaPY, bw, bh)
+			meSSE = sse
+			st.predStats.set(meMV, motion.RegularFilters, meSSE, meVar)
+			meDist = int64(meVar) << 4
+			meDirect = true
+		}
+	}
+	if meDist < 0 {
+		perr = st.predictLuma(st.predY[:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, meMV, motion.RegularFilters)
+		if perr == nil {
+			predYValid, predYMV = true, meMV
+			sse, meVar := realtimeInterResidualSSEVariance(src.Y, st.predY[:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
+			meSSE = sse
+			st.predStats.set(meMV, motion.RegularFilters, meSSE, meVar)
+			meDist = int64(meVar) << 4
+		}
 	}
 
 	var cands [mds0MaxCands]mds0Cand
@@ -164,18 +183,33 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 		if cand.mv == meMV {
 			dist = meDist
 			if dist >= 0 {
-				source = 1
+				if meDirect {
+					source = 2
+				} else {
+					source = 1
+				}
 				sses[i] = meSSE
 			}
 		}
 		if dist < 0 {
-			if perr := st.predictLuma(bufs[cur][:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, motion.RegularFilters); perr != nil {
-				dists[i] = -1
-				continue
+			if cand.mv.Row&7 == 0 && cand.mv.Col&7 == 0 {
+				rx, ry := lumaPX+int(cand.mv.Col>>3), lumaPY+int(cand.mv.Row>>3)
+				if rx >= 0 && ry >= 0 && rx+bw <= src.Width && ry+bh <= src.Height {
+					sse, variance := realtimeInterResidualSSEVariance(src.Y, refPlane[ry*refStride+rx:], src.YStride, refStride, lumaPX, lumaPY, bw, bh)
+					dist = int64(variance) << 4
+					sses[i] = sse
+					source = 2
+				}
 			}
-			sse, variance := realtimeInterResidualSSEVariance(src.Y, bufs[cur][:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
-			dist = int64(variance) << 4
-			sses[i] = sse
+			if dist < 0 {
+				if perr := st.predictLuma(bufs[cur][:bw*bh], refPlane, refStride, src.Width, src.Height, lumaPX, lumaPY, bw, bh, cand.mv, motion.RegularFilters); perr != nil {
+					dists[i] = -1
+					continue
+				}
+				sse, variance := realtimeInterResidualSSEVariance(src.Y, bufs[cur][:bw*bh], src.YStride, bw, lumaPX, lumaPY, bw, bh)
+				dist = int64(variance) << 4
+				sses[i] = sse
+			}
 		}
 		dists[i] = dist
 		// fast_loop_core_light_pd1: a candidate whose distortion alone,
@@ -213,6 +247,9 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 				// predict into the other buffer.
 				bestBuf = cur
 				cur ^= 1
+			} else if source == 2 {
+				// Direct in-bounds integer MV from refPlane; copy once if it wins.
+				bestBuf = -2
 			} else {
 				// The ME vector: predY still holds its pixels.
 				bestBuf = -1
@@ -227,6 +264,10 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 	}
 	if bestBuf >= 0 {
 		copy(st.predY[:bw*bh], bufs[bestBuf][:bw*bh])
+		predYValid, predYMV = true, bestMV
+	} else if bestBuf == -2 {
+		rx, ry := lumaPX+int(bestMV.Col>>3), lumaPY+int(bestMV.Row>>3)
+		copyBlockRows(st.predY[:bw*bh], bw, refPlane[ry*refStride+rx:], refStride, bw, bh)
 		predYValid, predYMV = true, bestMV
 	}
 	// The winner's regular-filter prediction statistics (dist is its

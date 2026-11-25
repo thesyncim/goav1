@@ -1699,12 +1699,14 @@ func forwardDCT4x4SIMDCore(coeff []int32, coeffStride int, residual []int16, res
 // strides 4, the encoder's layout): two eight-sample loads cover the four
 // residual rows, and the rows are stored at constant offsets.
 func forwardDCT4x4Packed(coeff *[16]int32, residual *[16]int16) {
+	shL2 := archsimd.BroadcastInt32x4(2)
+	shR13 := archsimd.BroadcastInt32x4(-13)
 	v01 := archsimd.LoadInt16x8Array((*[8]int16)(residual[0:8]))
 	v23 := archsimd.LoadInt16x8Array((*[8]int16)(residual[8:16]))
-	r0 := v01.ExtendLo4ToInt32().ShiftAllLeft(2)
-	r1 := v01.HiToLo().ExtendLo4ToInt32().ShiftAllLeft(2)
-	r2 := v23.ExtendLo4ToInt32().ShiftAllLeft(2)
-	r3 := v23.HiToLo().ExtendLo4ToInt32().ShiftAllLeft(2)
+	r0 := v01.ExtendLo4ToInt32().Shift(shL2)
+	r1 := v01.HiToLo().ExtendLo4ToInt32().Shift(shL2)
+	r2 := v23.ExtendLo4ToInt32().Shift(shL2)
+	r3 := v23.HiToLo().ExtendLo4ToInt32().Shift(shL2)
 
 	// Load the pre-broadcast fdct4 twiddles (single VLD1/FMOVQ each, straight
 	// from rodata; shared by both passes). This is far cheaper than
@@ -1727,10 +1729,10 @@ func forwardDCT4x4Packed(coeff *[16]int32, residual *[16]int16) {
 		s1 := r1.Add(r2)
 		s2 := r1.Sub(r2)
 		s3 := r0.Sub(r3)
-		c0 = s1.MulAdd(w32, s0.MulAdd(w32, round)).ShiftAllRight(13)
-		c2 = s0.MulAdd(w32, s1.MulAdd(wn32, round)).ShiftAllRight(13)
-		c1 = s3.MulAdd(w16, s2.MulAdd(w48, round)).ShiftAllRight(13)
-		c3 = s2.MulAdd(wn16, s3.MulAdd(w48, round)).ShiftAllRight(13)
+		c0 = s1.MulAdd(w32, s0.MulAdd(w32, round)).Shift(shR13)
+		c2 = s0.MulAdd(w32, s1.MulAdd(wn32, round)).Shift(shR13)
+		c1 = s3.MulAdd(w16, s2.MulAdd(w48, round)).Shift(shR13)
+		c3 = s2.MulAdd(wn16, s3.MulAdd(w48, round)).Shift(shR13)
 	}
 
 	// In-register 4x4 int32 transpose.
@@ -1750,10 +1752,10 @@ func forwardDCT4x4Packed(coeff *[16]int32, residual *[16]int16) {
 		s1 := t1.Add(t2)
 		s2 := t1.Sub(t2)
 		s3 := t0.Sub(t3)
-		o0 = s1.MulAdd(w32, s0.MulAdd(w32, round)).ShiftAllRight(13)
-		o2 = s0.MulAdd(w32, s1.MulAdd(wn32, round)).ShiftAllRight(13)
-		o1 = s3.MulAdd(w16, s2.MulAdd(w48, round)).ShiftAllRight(13)
-		o3 = s2.MulAdd(wn16, s3.MulAdd(w48, round)).ShiftAllRight(13)
+		o0 = s1.MulAdd(w32, s0.MulAdd(w32, round)).Shift(shR13)
+		o2 = s0.MulAdd(w32, s1.MulAdd(wn32, round)).Shift(shR13)
+		o1 = s3.MulAdd(w16, s2.MulAdd(w48, round)).Shift(shR13)
+		o3 = s2.MulAdd(wn16, s3.MulAdd(w48, round)).Shift(shR13)
 	}
 
 	o0.StoreArray((*[4]int32)(coeff[0:4]))
@@ -2171,10 +2173,11 @@ func fwdRowSkipRows(c []int32, n int, sums []archsimd.Int32x4, thr0, thr int32, 
 		return 0
 	}
 	zero := archsimd.BroadcastInt32x4(0)
+	c = c[:n*n]
 	for h := 0; h < n; h += 4 {
 		if mask&(1<<(h>>2)) == 0 {
 			for l := 0; l < n; l++ {
-				zero.Store(c[l*n+h:])
+				zero.StoreArray((*[4]int32)(c[l*n+h : l*n+h+4]))
 			}
 			continue
 		}
