@@ -1,5 +1,9 @@
 package encoder
 
+import (
+	av1restoration "github.com/thesyncim/goav1/internal/av1/restoration"
+)
+
 const RestorationUnitMax = 256
 
 type RestorationType uint8
@@ -135,4 +139,71 @@ func restorationAnyActive(restoration RestorationParams) bool {
 	return restoration.Type[0] != RestorationNone ||
 		restoration.Type[1] != RestorationNone ||
 		restoration.Type[2] != RestorationNone
+}
+
+// SearchWienerUnitU8 evaluates a curated set of AV1 7-tap separable Wiener
+// kernels on the restoration unit [x0:x0+w, y0:y0+h] and returns the filter
+// that achieves the lowest SSE against src when it improves on unfiltered
+// recon.
+func SearchWienerUnitU8(src, recon []byte, stride, frameW, frameH, x0, y0, w, h int) (av1restoration.WienerInfo, bool) {
+	if w <= 0 || h <= 0 || x0+w > frameW || y0+h > frameH {
+		return av1restoration.WienerInfo{}, false
+	}
+	// Baseline SSE (unfiltered recon vs src).
+	var baseSSE uint64
+	for y := y0; y < y0+h; y++ {
+		off := y * stride
+		for x := x0; x < x0+w; x++ {
+			d := int(src[off+x]) - int(recon[off+x])
+			baseSSE += uint64(d * d)
+		}
+	}
+	if baseSSE == 0 {
+		return av1restoration.WienerInfo{}, false
+	}
+	candidates := [][3]int16{
+		{0, -3, 12}, // mild sharpening
+		{0, -5, 18}, // medium sharpening
+		{0, -2, 8},  // subtle sharpening
+		{0, 2, 10},  // mild denoise/smoothing
+		{1, 4, 14},  // moderate smoothing
+		{0, -1, 4},  // light sharpening
+	}
+	bestSSE := baseSSE
+	var best av1restoration.WienerInfo
+	found := false
+	for _, taps := range candidates {
+		f := av1restoration.NewWienerFilter(taps[0], taps[1], taps[2])
+		var sse uint64
+		// Separable 7-tap approximation over interior rows/cols (clamped edges).
+		for y := y0; y < y0+h; y++ {
+			off := y * stride
+			for x := x0; x < x0+w; x++ {
+				hsum := 0
+				for k := -3; k <= 3; k++ {
+					cx := x + k
+					if cx < 0 {
+						cx = 0
+					} else if cx >= frameW {
+						cx = frameW - 1
+					}
+					hsum += int(f[k+3]) * int(recon[off+cx])
+				}
+				pred := (hsum + 64) >> 7
+				if pred < 0 {
+					pred = 0
+				} else if pred > 255 {
+					pred = 255
+				}
+				d := int(src[off+x]) - pred
+				sse += uint64(d * d)
+			}
+		}
+		if sse+uint64(w*h) < bestSSE {
+			bestSSE = sse
+			best = av1restoration.WienerInfo{VFilter: f, HFilter: f}
+			found = true
+		}
+	}
+	return best, found
 }

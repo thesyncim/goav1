@@ -1863,3 +1863,31 @@ func TestEncoderBFrameAltRefPyramid(t *testing.T) {
 		}
 	}
 }
+
+func TestEncoderLoopRestorationKeyframe(t *testing.T) {
+	for _, dims := range [][2]int{{128, 128}, {96, 80}} {
+		w, h := dims[0], dims[1]
+		frames := censusFrames(t, w, h, 1)
+		tu, recon, err := EncodeI420LoopRestorationKeyframe(frames[0], 110)
+		if err != nil {
+			t.Fatalf("EncodeI420LoopRestorationKeyframe(%dx%d): %v", w, h, err)
+		}
+		dec, err := NewDecoder([][]byte{tu})
+		if err != nil {
+			t.Fatalf("NewDecoder(%dx%d): %v", w, h, err)
+		}
+		batch, ok, err := dec.DecodeNext()
+		dec.Close()
+		if err != nil || !ok || len(batch) != 1 {
+			t.Fatalf("DecodeNext(%dx%d): len=%d ok=%v err=%v", w, h, len(batch), ok, err)
+		}
+		got := copyDecodedFrame(batch[0])
+		if got.Width != w || got.Height != h {
+			t.Fatalf("decoded dims=%dx%d, want %dx%d", got.Width, got.Height, w, h)
+		}
+		if !bytes.Equal(got.Y, recon.Y) || !bytes.Equal(got.U, recon.U) || !bytes.Equal(got.V, recon.V) {
+			t.Fatalf("LoopRestoration(%dx%d) decoded pixels differ from encoder recon: eqY=%v eqU=%v eqV=%v",
+				w, h, bytes.Equal(got.Y, recon.Y), bytes.Equal(got.U, recon.U), bytes.Equal(got.V, recon.V))
+		}
+	}
+}

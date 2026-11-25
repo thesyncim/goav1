@@ -133,6 +133,154 @@ func (s *DecodeState) ReadRestorationUnit(frameType parser.RestorationType, plan
 	}
 }
 
+// WriteRestorationUnit encodes one loop-restoration unit (exact inverse of
+// ReadRestorationUnit) and advances refs when a filter is coded.
+func WriteRestorationUnit(w *entropy.Writer, frameType parser.RestorationType, plane int, refs *RestorationReferences, cdfs RestorationCDFs, unit RestorationUnit) error {
+	if w == nil {
+		return ErrInvalidDecodeState
+	}
+	if frameType == parser.RestorationNone {
+		return nil
+	}
+	if plane < 0 || plane > 2 || refs == nil || !validRestorationReferences(*refs) {
+		return ErrInvalidDecodeState
+	}
+	switch frameType {
+	case parser.RestorationSwitchable:
+		if cdfs.Switchable == nil {
+			return ErrInvalidDecodeState
+		}
+		switch unit.Type {
+		case parser.RestorationNone:
+			w.WriteCDF(cdfs.Switchable, 0)
+			return nil
+		case parser.RestorationWiener:
+			w.WriteCDF(cdfs.Switchable, 1)
+			return writeWienerFilter(w, plane > 0, refs, unit.Wiener)
+		case parser.RestorationSGRProj:
+			w.WriteCDF(cdfs.Switchable, 2)
+			return writeSGRProjFilter(w, refs, unit.SGRProj)
+		default:
+			return ErrInvalidDecodeState
+		}
+	case parser.RestorationWiener:
+		if cdfs.Wiener == nil {
+			return ErrInvalidDecodeState
+		}
+		if unit.Type == parser.RestorationNone {
+			w.WriteCDF(cdfs.Wiener, 0)
+			return nil
+		}
+		if unit.Type != parser.RestorationWiener {
+			return ErrInvalidDecodeState
+		}
+		w.WriteCDF(cdfs.Wiener, 1)
+		return writeWienerFilter(w, plane > 0, refs, unit.Wiener)
+	case parser.RestorationSGRProj:
+		if cdfs.SGRProj == nil {
+			return ErrInvalidDecodeState
+		}
+		if unit.Type == parser.RestorationNone {
+			w.WriteCDF(cdfs.SGRProj, 0)
+			return nil
+		}
+		if unit.Type != parser.RestorationSGRProj {
+			return ErrInvalidDecodeState
+		}
+		w.WriteCDF(cdfs.SGRProj, 1)
+		return writeSGRProjFilter(w, refs, unit.SGRProj)
+	default:
+		return ErrInvalidDecodeState
+	}
+}
+
+func writeWienerFilter(w *entropy.Writer, chroma bool, refs *RestorationReferences, info av1restoration.WienerInfo) error {
+	if !chroma {
+		if err := writeWienerTap(w, av1restoration.WienerTap0Min, av1restoration.WienerTap0Max, wienerTap0SubexpK, refs.Wiener.VFilter[0], info.VFilter[0]); err != nil {
+			return err
+		}
+	}
+	if err := writeWienerTap(w, av1restoration.WienerTap1Min, av1restoration.WienerTap1Max, wienerTap1SubexpK, refs.Wiener.VFilter[1], info.VFilter[1]); err != nil {
+		return err
+	}
+	if err := writeWienerTap(w, av1restoration.WienerTap2Min, av1restoration.WienerTap2Max, wienerTap2SubexpK, refs.Wiener.VFilter[2], info.VFilter[2]); err != nil {
+		return err
+	}
+	if !chroma {
+		if err := writeWienerTap(w, av1restoration.WienerTap0Min, av1restoration.WienerTap0Max, wienerTap0SubexpK, refs.Wiener.HFilter[0], info.HFilter[0]); err != nil {
+			return err
+		}
+	}
+	if err := writeWienerTap(w, av1restoration.WienerTap1Min, av1restoration.WienerTap1Max, wienerTap1SubexpK, refs.Wiener.HFilter[1], info.HFilter[1]); err != nil {
+		return err
+	}
+	if err := writeWienerTap(w, av1restoration.WienerTap2Min, av1restoration.WienerTap2Max, wienerTap2SubexpK, refs.Wiener.HFilter[2], info.HFilter[2]); err != nil {
+		return err
+	}
+	v0, h0 := info.VFilter[0], info.HFilter[0]
+	if chroma {
+		v0, h0 = 0, 0
+	}
+	refs.Wiener = av1restoration.WienerInfo{
+		VFilter: av1restoration.NewWienerFilter(v0, info.VFilter[1], info.VFilter[2]),
+		HFilter: av1restoration.NewWienerFilter(h0, info.HFilter[1], info.HFilter[2]),
+	}
+	return nil
+}
+
+func writeWienerTap(w *entropy.Writer, minVal, maxVal int, k uint8, ref, val int16) error {
+	n := uint32(maxVal - minVal + 1)
+	refOff := int(ref) - minVal
+	valOff := int(val) - minVal
+	if refOff < 0 || refOff >= int(n) || valOff < 0 || valOff >= int(n) {
+		return ErrInvalidDecodeState
+	}
+	return w.WriteRefSubexp(n, k, uint32(refOff), uint32(valOff))
+}
+
+func writeSGRProjFilter(w *entropy.Writer, refs *RestorationReferences, info SGRProjInfo) error {
+	if info.ParamsIndex >= av1restoration.SGRProjParams {
+		return ErrInvalidDecodeState
+	}
+	w.WriteLiteral(uint32(info.ParamsIndex), 4)
+	params := av1restoration.SGRParameterTable[info.ParamsIndex]
+	stored := SGRProjInfo{ParamsIndex: info.ParamsIndex}
+	switch {
+	case params.Radius[0] == 0:
+		stored.XQD[0] = 0
+		if err := writeSGRProjXQD(w, av1restoration.SGRProjPrjMin1, av1restoration.SGRProjPrjMax1, int(refs.SGRProj.XQD[1]), int(info.XQD[1])); err != nil {
+			return err
+		}
+		stored.XQD[1] = info.XQD[1]
+	case params.Radius[1] == 0:
+		if err := writeSGRProjXQD(w, av1restoration.SGRProjPrjMin0, av1restoration.SGRProjPrjMax0, int(refs.SGRProj.XQD[0]), int(info.XQD[0])); err != nil {
+			return err
+		}
+		stored.XQD[0] = info.XQD[0]
+		stored.XQD[1] = int8(clampInt((1<<av1restoration.SGRProjPrjBits)-int(info.XQD[0]), av1restoration.SGRProjPrjMin1, av1restoration.SGRProjPrjMax1))
+	default:
+		if err := writeSGRProjXQD(w, av1restoration.SGRProjPrjMin0, av1restoration.SGRProjPrjMax0, int(refs.SGRProj.XQD[0]), int(info.XQD[0])); err != nil {
+			return err
+		}
+		if err := writeSGRProjXQD(w, av1restoration.SGRProjPrjMin1, av1restoration.SGRProjPrjMax1, int(refs.SGRProj.XQD[1]), int(info.XQD[1])); err != nil {
+			return err
+		}
+		stored.XQD = info.XQD
+	}
+	refs.SGRProj = stored
+	return nil
+}
+
+func writeSGRProjXQD(w *entropy.Writer, minVal, maxVal, ref, val int) error {
+	n := uint32(maxVal - minVal + 1)
+	refOff := ref - minVal
+	valOff := val - minVal
+	if refOff < 0 || refOff >= int(n) || valOff < 0 || valOff >= int(n) {
+		return ErrInvalidDecodeState
+	}
+	return w.WriteRefSubexp(n, av1restoration.SGRProjPrjSubexpK, uint32(refOff), uint32(valOff))
+}
+
 func readWienerFilter(r *entropy.Reader, chroma bool, refs *RestorationReferences) (av1restoration.WienerInfo, error) {
 	var v0 int16
 	var err error

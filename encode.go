@@ -63,6 +63,16 @@ func EncodeI420SuperResKeyframe(frame I420Frame, qIndex uint8, denom uint8) ([]b
 	return encoder.EncodeSuperResKeyframe(frame, qIndex, denom)
 }
 
+// EncodeI420LoopRestorationKeyframe encodes one 8-bit 4:2:0 keyframe with AV1
+// in-loop Wiener Restoration enabled on the luma plane and returns the temporal
+// unit plus the bit-exact restored reconstruction.
+func EncodeI420LoopRestorationKeyframe(frame I420Frame, qIndex uint8) ([]byte, I420Frame, error) {
+	if err := validateI420Frame(frame); err != nil {
+		return nil, I420Frame{}, err
+	}
+	return encoder.EncodeLoopRestorationKeyframe(frame, qIndex)
+}
+
 // I420HighBitDepthFrame is one 10/12-bit 4:2:0 picture. Y holds Width x Height
 // samples at YStride; U and V hold half-resolution chroma planes at
 // ChromaStride, in uint16 values whose high bits above BitDepth must be zero.

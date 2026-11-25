@@ -22,6 +22,13 @@ type BlockLoopWriteVisitor func(block BlockVisit, scratch *BlockLoopScratch) err
 // decoder's loop passes, so HaveTop/HaveLeft and all context derivation match
 // by construction.
 func WalkBlockLoopWrite(w *entropy.Writer, partCDFs *PartitionCDFs, scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, req BlockWalkRequest, sbSizeMIB uint8, decide PartitionDecider, visit BlockLoopWriteVisitor) error {
+	return WalkBlockLoopWriteWithBeforeSuperblock(w, partCDFs, scratch, carrier, req, sbSizeMIB, nil, decide, visit)
+}
+
+// WalkBlockLoopWriteWithBeforeSuperblock is WalkBlockLoopWrite with an optional
+// beforeSB hook invoked before each superblock's partition tree (used for
+// AV1 loop-restoration unit syntax, which precedes the superblock partition).
+func WalkBlockLoopWriteWithBeforeSuperblock(w *entropy.Writer, partCDFs *PartitionCDFs, scratch *BlockLoopScratch, carrier *BlockLoopContextCarrier, req BlockWalkRequest, sbSizeMIB uint8, beforeSB func(miCol, miRow uint32) error, decide PartitionDecider, visit BlockLoopWriteVisitor) error {
 	if w == nil || partCDFs == nil || scratch == nil || visit == nil {
 		return ErrInvalidDecodeState
 	}
@@ -55,6 +62,11 @@ func WalkBlockLoopWrite(w *entropy.Writer, partCDFs *PartitionCDFs, scratch *Blo
 		for miCol := miColStart; miCol < miColEnd; miCol += rootSize {
 			rootColIndex := int((miCol - miColStart) / rootSize)
 			w.LogSuperblock()
+			if beforeSB != nil {
+				if err := beforeSB(miCol, miRow); err != nil {
+					return err
+				}
+			}
 			if err := blockLoopLoadRootContextMotion(scratch, carrier, rootColIndex, miRow > neighborMIRowStart, miCol > neighborMIColStart, sbSizeMIB, keepMotion, miRow, miCol); err != nil {
 				return err
 			}
