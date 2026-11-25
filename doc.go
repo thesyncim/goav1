@@ -1,5 +1,5 @@
-// Package goav1 is a pure-Go AV1 decoder and realtime AV1 encoder with WebRTC
-// RTP/RTCP helpers, using Go SIMD (GOEXPERIMENT=simd) with zero cgo and zero
+// Package goav1 is a pure-Go AV1 decoder and encoder with WebRTC RTP/RTCP
+// helpers, using Go SIMD (GOEXPERIMENT=simd) with zero cgo and zero
 // handwritten assembly.
 //
 // Decoding: NewDecoder, NewDecoderFromIVF, NewDecoderFromIVFReaderAt, and the
