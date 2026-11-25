@@ -35,6 +35,10 @@ import (
 type I420Frame = encoder.SourceFrame420
 type EncoderDecisionStats = encoder.EncoderDecisionStats
 
+// EncoderFilmGrainParams configures AV1 film-grain synthesis parameter
+// signaling emitted in encoded frame headers.
+type EncoderFilmGrainParams = encoder.FilmGrainParams
+
 // I420HighBitDepthFrame is one 10/12-bit 4:2:0 picture. Y holds Width x Height
 // samples at YStride; U and V hold half-resolution chroma planes at
 // ChromaStride, in uint16 values whose high bits above BitDepth must be zero.
@@ -429,6 +433,21 @@ type VideoEncoderConfig struct {
 	// 0 or 420 for 4:2:0 (Profile 0, default), 422 for native 4:2:2 (Profile 2),
 	// or 444 for native 4:4:4 (Profile 1).
 	Subsampling int
+
+	// CRF, when in [1, 63], enables Constant Rate Factor mode on the standard
+	// AV1 quality scale (lower = higher quality), adapting frame quantizers
+	// across keyframes, temporal layers, and motion complexity.
+	CRF uint8
+
+	// VBR, when true with TargetBitrate > 0, configures a wider VBV leaky-bucket
+	// buffer (4000 ms max, 3000 ms initial/optimal unless explicitly set) so
+	// complex scenes borrow bits freely while simple scenes save bits.
+	VBR bool
+
+	// FilmGrain, when non-nil with Apply=true, enables AV1 film_grain_params
+	// signaling in sequence and frame headers (auto-advancing the per-frame
+	// grain seed).
+	FilmGrain *EncoderFilmGrainParams
 }
 
 // EncodedFrame is one encoded picture as a low-overhead temporal unit.
@@ -612,19 +631,43 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 		if rc.MaxQIndex == 0 {
 			rc.MaxQIndex = 255
 		}
+		if cfg.VBR {
+			if rc.BufferMaxMs == 0 {
+				rc.BufferMaxMs = 4000
+			}
+			if rc.BufferInitialMs == 0 {
+				rc.BufferInitialMs = 3000
+			}
+			if rc.BufferOptimalMs == 0 {
+				rc.BufferOptimalMs = 3000
+			}
+		}
 		if sub == 420 && cfg.Color == nil {
 			enc, err = encoder.NewVideoEncoderCBR(cfg.Width, cfg.Height, rc)
 		} else {
 			enc, err = encoder.NewVideoEncoderCBRWithColor(cfg.Width, cfg.Height, rc, cc)
 		}
 	} else {
-		if cfg.QIndex == 0 {
-			return nil, fmt.Errorf("goav1: VideoEncoderConfig needs QIndex or TargetBitrate")
+		q := cfg.QIndex
+		if cfg.CRF > 0 {
+			if cfg.CRF > 63 {
+				return nil, fmt.Errorf("goav1: CRF must be in [1, 63], got %d", cfg.CRF)
+			}
+			q = uint8(min(int(cfg.CRF)*4, 255))
+		}
+		if q == 0 {
+			return nil, fmt.Errorf("goav1: VideoEncoderConfig needs QIndex, CRF, or TargetBitrate")
 		}
 		if sub == 420 && cfg.Color == nil {
-			enc, err = encoder.NewVideoEncoder(cfg.Width, cfg.Height, cfg.QIndex)
+			enc, err = encoder.NewVideoEncoder(cfg.Width, cfg.Height, q)
 		} else {
-			enc, err = encoder.NewVideoEncoderWithColor(cfg.Width, cfg.Height, cfg.QIndex, cc)
+			enc, err = encoder.NewVideoEncoderWithColor(cfg.Width, cfg.Height, q, cc)
+		}
+		if err == nil && cfg.CRF > 0 {
+			if cerr := enc.SetCRF(cfg.CRF); cerr != nil {
+				_ = enc.Close()
+				return nil, cerr
+			}
 		}
 	}
 	if err != nil {
@@ -665,6 +708,12 @@ func newVideoEncoder(cfg VideoEncoderConfig) (*encoder.VideoEncoder, error) {
 	if err := enc.SetContentHint(cfg.Content); err != nil {
 		_ = enc.Close()
 		return nil, err
+	}
+	if cfg.FilmGrain != nil {
+		if err := enc.SetFilmGrain(cfg.FilmGrain); err != nil {
+			_ = enc.Close()
+			return nil, err
+		}
 	}
 	// Every buffer, pool and per-coder scratch is sized now, so the first
 	// real frame pays no initialization latency and steady-state encoding
@@ -873,6 +922,22 @@ func injectFrameMetadataOBUs(tu []byte, isKey bool, cvsMeta *FrameMetadata, tuMe
 		list = append(append([]internalobu.Metadata(nil), list...), extra...)
 	}
 	return encoder.InjectLowOverheadMetadataOBUs(tu, list, scratch)
+}
+
+// SetCRF switches subsequent frames to Constant Rate Factor (1..63) encoding.
+func (e *VideoEncoder) SetCRF(crf uint8) error {
+	if e == nil || e.enc == nil {
+		return fmt.Errorf("goav1: VideoEncoder is not initialized")
+	}
+	return e.enc.SetCRF(crf)
+}
+
+// SetFilmGrain updates AV1 film-grain synthesis signaling for subsequent frames.
+func (e *VideoEncoder) SetFilmGrain(params *EncoderFilmGrainParams) error {
+	if e == nil || e.enc == nil {
+		return fmt.Errorf("goav1: VideoEncoder is not initialized")
+	}
+	return e.enc.SetFilmGrain(params)
 }
 
 // SetQIndex switches subsequent frames to fixed-quality encoding at qIndex

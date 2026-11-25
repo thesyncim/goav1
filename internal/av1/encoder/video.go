@@ -30,6 +30,8 @@ type VideoEncoder struct {
 	haveKey                   bool
 
 	rcEnabled      bool
+	crfEnabled     bool
+	crfValue       uint8
 	rcTargetBits   int
 	rcFramesPerSec int
 	rcMinQ, rcMaxQ uint8
@@ -91,6 +93,10 @@ type VideoEncoder struct {
 	hme          hmeState
 	singleThread bool
 	effortLevel  int8
+
+	filmGrainPresent bool
+	filmGrain        FilmGrainParams
+	filmGrainSeed    uint16
 
 	temporalLayers int
 	t2Recon        SourceFrame420
@@ -454,6 +460,7 @@ func (e *VideoEncoder) sequenceHeader(width, height int) SequenceHeader {
 	if e != nil {
 		seq.Profile = videoColorProfile(e.color)
 		seq.ColorConfig = e.color
+		seq.FilmGrainParamsPresent = e.filmGrainPresent
 		if !videoColorSupportsInLoopFilters(e.parserColorConfig()) {
 			seq.EnableCDEF = false
 		}
@@ -503,6 +510,52 @@ func copyFrameInto(dst *SourceFrame420, src SourceFrame420) {
 	copy(dst.V, src.V)
 	dst.YStride, dst.ChromaStride = src.YStride, src.ChromaStride
 	dst.Width, dst.Height = src.Width, src.Height
+}
+
+// SetFilmGrain configures AV1 film-grain synthesis parameter signaling for
+// subsequent frames. Passing nil disables film grain signaling.
+func (e *VideoEncoder) SetFilmGrain(params *FilmGrainParams) error {
+	if e == nil {
+		return fmt.Errorf("encoder: nil video encoder")
+	}
+	if params == nil {
+		e.filmGrain = FilmGrainParams{}
+		return nil
+	}
+	fg := *params
+	if fg.Apply {
+		fg.Update = true
+		e.filmGrainPresent = true
+		if fg.Seed != 0 {
+			e.filmGrainSeed = fg.Seed
+		} else if e.filmGrainSeed == 0 {
+			e.filmGrainSeed = 7391
+		}
+	}
+	e.filmGrain = fg
+	return nil
+}
+
+func (e *VideoEncoder) nextFilmGrainParams() FilmGrainParams {
+	if e == nil || !e.filmGrainPresent || !e.filmGrain.Apply {
+		return FilmGrainParams{}
+	}
+	fg := e.filmGrain
+	fg.Update = true
+	if fg.Seed == 0 {
+		e.filmGrainSeed += 7391
+		if e.filmGrainSeed == 0 {
+			e.filmGrainSeed = 7391
+		}
+		fg.Seed = e.filmGrainSeed
+	} else {
+		fg.Seed = e.filmGrainSeed
+		e.filmGrainSeed += 7391
+		if e.filmGrainSeed == 0 {
+			e.filmGrainSeed = 7391
+		}
+	}
+	return fg
 }
 
 // SetColorConfig updates the color description fields signaled in the sequence
@@ -1769,6 +1822,7 @@ func (e *VideoEncoder) encodePReusing(src SourceFrame420, temporalID uint8) ([]b
 		e.filterPending = true
 		e.filterWork <- struct{}{}
 	}
+	header.FilmGrain = e.nextFilmGrainParams()
 	tu, err := assembleInterTU(seq, header, payloads, temporalID, &e.tuGroup, &e.tuScratch)
 	if err != nil {
 		return nil, err
