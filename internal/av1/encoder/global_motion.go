@@ -56,6 +56,93 @@ func DefaultGlobalMotionParams() GlobalMotionParams {
 	return params
 }
 
+// EstimateGlobalMotionTranslation estimates a frame-level integer translation
+// model (dx, dy) between src and ref via 16x16 block matching consensus.
+// Returns DefaultWarpedMotionParams() (Identity) when no strong global pan is
+// detected.
+func EstimateGlobalMotionTranslation(src, ref SourceFrame420) WarpedMotionParams {
+	if src.Width < 32 || src.Height < 32 || src.Width != ref.Width || src.Height != ref.Height {
+		return DefaultWarpedMotionParams()
+	}
+	const search = 8
+	var sumDX, sumDY, count int
+	var mvs [64][2]int
+	nMV := 0
+	stepX := max((src.Width-32)/8, 16)
+	stepY := max((src.Height-32)/8, 16)
+	for y := 16; y <= src.Height-32 && nMV < len(mvs); y += stepY {
+		for x := 16; x <= src.Width-32 && nMV < len(mvs); x += stepX {
+			bestSAD := int(1 << 30)
+			bestDX, bestDY := 0, 0
+			for dy := -search; dy <= search; dy += 2 {
+				for dx := -search; dx <= search; dx += 2 {
+					sad := 0
+					for r := 0; r < 16; r += 2 {
+						srow := src.Y[(y+r)*src.YStride+x:]
+						rrow := ref.Y[(y+dy+r)*ref.YStride+x+dx:]
+						for c := 0; c < 16; c += 2 {
+							d := int(srow[c]) - int(rrow[c])
+							if d < 0 {
+								d = -d
+							}
+							sad += d
+						}
+					}
+					if sad < bestSAD {
+						bestSAD = sad
+						bestDX, bestDY = dx, dy
+					}
+				}
+			}
+			mvs[nMV] = [2]int{bestDX, bestDY}
+			nMV++
+			sumDX += bestDX
+			sumDY += bestDY
+			count++
+		}
+	}
+	if count == 0 {
+		return DefaultWarpedMotionParams()
+	}
+	avgDX := (sumDX + count/2) / count
+	if sumDX < 0 {
+		avgDX = (sumDX - count/2) / count
+	}
+	avgDY := (sumDY + count/2) / count
+	if sumDY < 0 {
+		avgDY = (sumDY - count/2) / count
+	}
+	if avgDX == 0 && avgDY == 0 {
+		return DefaultWarpedMotionParams()
+	}
+	inliers := 0
+	for i := range nMV {
+		dx := mvs[i][0] - avgDX
+		dy := mvs[i][1] - avgDY
+		if dx < 0 {
+			dx = -dx
+		}
+		if dy < 0 {
+			dy = -dy
+		}
+		if dx <= 2 && dy <= 2 {
+			inliers++
+		}
+	}
+	if inliers*10 < nMV*6 {
+		return DefaultWarpedMotionParams()
+	}
+	return WarpedMotionParams{
+		Type: GlobalMotionTranslation,
+		Matrix: [6]int32{
+			int32(avgDY) << warpedModelPrecBits,
+			int32(avgDX) << warpedModelPrecBits,
+			1 << warpedModelPrecBits, 0,
+			0, 1 << warpedModelPrecBits,
+		},
+	}
+}
+
 func writeGlobalMotionParamsPayload(w *bitWriter, prefix FrameHeaderPrefix, size InterFrameSize, tiles parser.TileInfo, refs *parser.ReferenceState, params GlobalMotionParams) error {
 	if err := validateGlobalMotionParams(prefix, size, refs, params); err != nil {
 		return err

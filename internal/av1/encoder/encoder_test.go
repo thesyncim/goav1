@@ -5191,6 +5191,72 @@ func TestAppendGlobalMotionParamsPayloadTranslation(t *testing.T) {
 	}
 }
 
+func TestEstimateGlobalMotionTranslationRoundTrip(t *testing.T) {
+	const w, h = 128, 128
+	ref := SourceFrame420{
+		Y:            make([]byte, w*h),
+		U:            make([]byte, (w/2)*(h/2)),
+		V:            make([]byte, (w/2)*(h/2)),
+		YStride:      w,
+		ChromaStride: w / 2,
+		Width:        w,
+		Height:       h,
+	}
+	src := SourceFrame420{
+		Y:            make([]byte, w*h),
+		U:            make([]byte, (w/2)*(h/2)),
+		V:            make([]byte, (w/2)*(h/2)),
+		YStride:      w,
+		ChromaStride: w / 2,
+		Width:        w,
+		Height:       h,
+	}
+	// Textured reference and a pure global pan of (dx=4, dy=-2).
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			ref.Y[y*w+x] = byte((x*7 + y*13 + (x^y)*3) & 0xff)
+		}
+	}
+	const panDX, panDY = 4, -2
+	for y := 0; y < h; y++ {
+		ry := y + panDY
+		if ry < 0 {
+			ry = 0
+		} else if ry >= h {
+			ry = h - 1
+		}
+		for x := 0; x < w; x++ {
+			rx := x + panDX
+			if rx < 0 {
+				rx = 0
+			} else if rx >= w {
+				rx = w - 1
+			}
+			src.Y[y*w+x] = ref.Y[ry*w+rx]
+		}
+	}
+	gm := EstimateGlobalMotionTranslation(src, ref)
+	if gm.Type != GlobalMotionTranslation {
+		t.Fatalf("EstimateGlobalMotionTranslation type=%v want GlobalMotionTranslation", gm.Type)
+	}
+	if gm.Matrix[0] != int32(panDY)<<warpedModelPrecBits || gm.Matrix[1] != int32(panDX)<<warpedModelPrecBits {
+		t.Fatalf("EstimateGlobalMotionTranslation matrix=%v want dy=%d dx=%d", gm.Matrix, panDY, panDX)
+	}
+	// Verify the estimated model round-trips through AV1 global_motion_params().
+	prefix := FrameHeaderPrefix{FrameType: FrameHeaderTypeInter, PrimaryRefFrame: EncoderPrimaryRefNone}
+	size, refs := encoderGlobalMotionRefs()
+	params := DefaultGlobalMotionParams()
+	params.Ref[0] = gm
+	_, parsed := appendAndParseGlobalMotionParams(t, prefix, size, parser.TileInfo{AllowHighPrecisionMV: true}, &refs, params)
+	if parsed.Ref[0].Type != parser.GlobalMotionTranslation || parsed.Ref[0].Matrix != gm.Matrix {
+		t.Fatalf("parsed ref[0]=%+v want %+v", parsed.Ref[0], gm)
+	}
+	// Identical frames must return Identity.
+	if id := EstimateGlobalMotionTranslation(ref, ref); id.Type != GlobalMotionIdentity {
+		t.Fatalf("identical frames returned %+v, want Identity", id)
+	}
+}
+
 func TestAppendGlobalMotionParamsPayloadRotZoomAndAffine(t *testing.T) {
 	prefix := FrameHeaderPrefix{FrameType: FrameHeaderTypeInter, PrimaryRefFrame: EncoderPrimaryRefNone}
 	size, refs := encoderGlobalMotionRefs()

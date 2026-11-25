@@ -21741,6 +21741,124 @@ func initRestorationCDFs(tb testing.TB) RestorationCDFs {
 	return cdfs
 }
 
+func TestWriteRestorationUnitRoundTrip(t *testing.T) {
+	cases := []struct {
+		name      string
+		frameType parser.RestorationType
+		plane     int
+		units     []RestorationUnit
+	}{
+		{
+			name:      "switchable_luma_mixed",
+			frameType: parser.RestorationSwitchable,
+			plane:     0,
+			units: []RestorationUnit{
+				{Type: parser.RestorationNone},
+				{
+					Type: parser.RestorationWiener,
+					Wiener: av1restoration.WienerInfo{
+						VFilter: av1restoration.NewWienerFilter(1, -4, 15),
+						HFilter: av1restoration.NewWienerFilter(-2, 3, 20),
+					},
+				},
+				{
+					Type: parser.RestorationSGRProj,
+					SGRProj: SGRProjInfo{
+						ParamsIndex: 2,
+						XQD:         [2]int8{16, 40},
+					},
+				},
+				{
+					Type: parser.RestorationWiener,
+					Wiener: av1restoration.WienerInfo{
+						VFilter: av1restoration.NewWienerFilter(0, -2, 10),
+						HFilter: av1restoration.NewWienerFilter(0, -2, 10),
+					},
+				},
+			},
+		},
+		{
+			name:      "wiener_chroma",
+			frameType: parser.RestorationWiener,
+			plane:     1,
+			units: []RestorationUnit{
+				{
+					Type: parser.RestorationWiener,
+					Wiener: av1restoration.WienerInfo{
+						VFilter: av1restoration.NewWienerFilter(0, -3, 12),
+						HFilter: av1restoration.NewWienerFilter(0, 2, 8),
+					},
+				},
+				{Type: parser.RestorationNone},
+			},
+		},
+		{
+			name:      "sgrproj_radius0_and_radius1",
+			frameType: parser.RestorationSGRProj,
+			plane:     0,
+			units: []RestorationUnit{
+				{
+					Type:    parser.RestorationSGRProj,
+					SGRProj: SGRProjInfo{ParamsIndex: 10, XQD: [2]int8{0, 64}},
+				},
+				{
+					Type:    parser.RestorationSGRProj,
+					SGRProj: SGRProjInfo{ParamsIndex: 14, XQD: [2]int8{24, 95}},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var w entropy.Writer
+			w.Reset(make([]byte, 256))
+			encCDFs := initRestorationCDFs(t)
+			encRefs := DefaultRestorationReferences()
+			for i, u := range tc.units {
+				if err := WriteRestorationUnit(&w, tc.frameType, tc.plane, &encRefs, encCDFs, u); err != nil {
+					t.Fatalf("WriteRestorationUnit[%d]: %v", i, err)
+				}
+			}
+			payload, err := w.Finish()
+			if err != nil {
+				t.Fatalf("Finish: %v", err)
+			}
+
+			var state DecodeState
+			if err := state.Reset(payload, Job{Offset: 0, Size: uint32(len(payload))}, DecodeOptions{}); err != nil {
+				t.Fatalf("DecodeState.Reset: %v", err)
+			}
+			decCDFs := initRestorationCDFs(t)
+			decRefs := DefaultRestorationReferences()
+			for i, want := range tc.units {
+				got, err := state.ReadRestorationUnit(tc.frameType, tc.plane, &decRefs, decCDFs)
+				if err != nil {
+					t.Fatalf("ReadRestorationUnit[%d]: %v", i, err)
+				}
+				if got.Type != want.Type {
+					t.Fatalf("unit[%d].Type = %v, want %v", i, got.Type, want.Type)
+				}
+				if want.Type == parser.RestorationWiener && got.Wiener != want.Wiener {
+					t.Fatalf("unit[%d].Wiener = %+v, want %+v", i, got.Wiener, want.Wiener)
+				}
+				if want.Type == parser.RestorationSGRProj {
+					if got.SGRProj.ParamsIndex != want.SGRProj.ParamsIndex {
+						t.Fatalf("unit[%d].SGRProj.ParamsIndex = %d, want %d", i, got.SGRProj.ParamsIndex, want.SGRProj.ParamsIndex)
+					}
+					params := av1restoration.SGRParameterTable[want.SGRProj.ParamsIndex]
+					if params.Radius[0] != 0 && got.SGRProj.XQD[0] != want.SGRProj.XQD[0] {
+						t.Fatalf("unit[%d].SGRProj.XQD[0] = %d, want %d", i, got.SGRProj.XQD[0], want.SGRProj.XQD[0])
+					}
+					if params.Radius[1] != 0 && got.SGRProj.XQD[1] != want.SGRProj.XQD[1] {
+						t.Fatalf("unit[%d].SGRProj.XQD[1] = %d, want %d", i, got.SGRProj.XQD[1], want.SGRProj.XQD[1])
+					}
+				}
+			}
+		})
+	}
+}
+
 // TestCollectSubChromaInterCellsSkipsNonSub4 pins the negative case: blocks
 // whose width and height are both >= 8 (under chroma subsampling) never
 // trigger libaom's build_inter_predictors_sub8x8 chroma path. The helper

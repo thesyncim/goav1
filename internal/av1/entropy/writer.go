@@ -1193,6 +1193,79 @@ func (w *BitCounter) WriteLiteral(value uint32, n int) {
 	}
 }
 
+// WriteUniform codes v in [0, n) using AV1 uniform coding (inverse of ReadUniform).
+func (w *Writer) WriteUniform(n uint32, v uint32) error {
+	if n == 0 || v >= n {
+		return ErrInvalidRange
+	}
+	if n == 1 {
+		return nil
+	}
+	width := uint8(bits.Len32(n))
+	m := (uint64(1) << width) - uint64(n)
+	if uint64(v) < m {
+		w.WriteLiteral(v, int(width-1))
+		return nil
+	}
+	extra := uint64(v) - m
+	w.WriteLiteral(uint32(m+(extra>>1)), int(width-1))
+	w.WriteBit(int(extra & 1))
+	return nil
+}
+
+// WriteSubexp codes v in [0, n) using AV1 finite subexponential coding
+// (inverse of Reader.ReadSubexp).
+func (w *Writer) WriteSubexp(n uint32, k uint8, v uint32) error {
+	if n == 0 || v >= n || k > 31 {
+		return ErrInvalidRange
+	}
+	i := uint8(0)
+	mk := uint32(0)
+	for {
+		b := k
+		if i > 0 {
+			b = k + i - 1
+		}
+		a := uint32(1) << b
+		if n <= mk+3*a {
+			return w.WriteUniform(n-mk, v-mk)
+		}
+		if v < mk+a {
+			w.WriteBit(0)
+			w.WriteLiteral(v-mk, int(b))
+			return nil
+		}
+		w.WriteBit(1)
+		i++
+		mk += a
+	}
+}
+
+// WriteRefSubexp codes v in [0, n) recentered around ref (exact inverse of
+// Reader.ReadRefSubexp).
+func (w *Writer) WriteRefSubexp(n uint32, k uint8, ref uint32, v uint32) error {
+	if n == 0 || ref >= n || v >= n {
+		return ErrInvalidRange
+	}
+	var rec uint32
+	if (ref << 1) <= n {
+		rec = recenterNonNeg(ref, v)
+	} else {
+		rec = recenterNonNeg(n-1-ref, n-1-v)
+	}
+	return w.WriteSubexp(n, k, rec)
+}
+
+func recenterNonNeg(r, v uint32) uint32 {
+	if v > (r << 1) {
+		return v
+	}
+	if v >= r {
+		return (v - r) << 1
+	}
+	return ((r - v) << 1) - 1
+}
+
 // Finish flushes the minimum number of bits guaranteeing the coded symbols decode
 // correctly regardless of trailing bytes and returns the finalized bytes. Port of
 // od_ec_enc_done. The writer must not be used after Finish.
