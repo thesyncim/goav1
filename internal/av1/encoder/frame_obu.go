@@ -97,6 +97,41 @@ func AppendLowOverheadInterFrameOBU(dst []byte, seq SequenceHeader, header Inter
 	return appendFrameOBU(dst, headerBytes, group, temporalID, spatialID, &seq, nil, &header)
 }
 
+// AppendLowOverheadShowExistingFrameTU appends a temporal delimiter followed by
+// an OBU_FRAME_HEADER with show_existing_frame=1 displaying reference slot.
+func AppendLowOverheadShowExistingFrameTU(dst []byte, seq SequenceHeader, slot uint8) ([]byte, error) {
+	if slot >= encoderRefFrames {
+		return dst, ErrInvalidFrame
+	}
+	prefix := FrameHeaderPrefix{
+		ShowExistingFrame: true,
+		ExistingFrameIdx:  slot,
+		PrimaryRefFrame:   EncoderPrimaryRefNone,
+	}
+	var payload [16]byte
+	w := newBitWriter(payload[:])
+	if err := writeFrameHeaderPrefixPayload(&w, seq, prefix); err != nil {
+		return dst, err
+	}
+	if err := w.writeTrailingBits(); err != nil {
+		return dst, err
+	}
+	p := payload[:w.bytesWritten()]
+	td := OBU{Type: obu.TypeTemporalDelimiter}
+	fh := OBU{Type: obu.TypeFrameHeader, Payload: p}
+	need := lowOverheadOBUSizeUnchecked(td) + lowOverheadOBUSizeUnchecked(fh)
+	if cap(dst)-len(dst) < need {
+		grown := make([]byte, len(dst), max(len(dst)+need, cap(dst)*2))
+		copy(grown, dst)
+		dst = grown
+	}
+	out, err := AppendLowOverheadOBU(dst, td)
+	if err != nil {
+		return dst, err
+	}
+	return AppendLowOverheadOBU(out, fh)
+}
+
 // AppendLowOverheadIntraFrameTemporalUnit appends a temporal delimiter, the
 // sequence header and one intra OBU_FRAME carrying group.
 func AppendLowOverheadIntraFrameTemporalUnit(dst []byte, seq SequenceHeader, header IntraFrameHeaderParams, group []byte) ([]byte, error) {

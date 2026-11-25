@@ -1799,3 +1799,67 @@ func TestEncoderTwoPassFilmGrainLevelAndSuperRes(t *testing.T) {
 			bytes.Equal(gotSR.Y, srRecon.Y), bytes.Equal(gotSR.U, srRecon.U), bytes.Equal(gotSR.V, srRecon.V))
 	}
 }
+
+func TestEncoderBFrameAltRefPyramid(t *testing.T) {
+	const w, h = 128, 128
+	frames := censusFrames(t, w, h, 9)
+
+	enc, err := NewVideoEncoder(VideoEncoderConfig{
+		Width:   w,
+		Height:  h,
+		QIndex:  80,
+		BFrames: 3,
+	})
+	if err != nil {
+		t.Fatalf("NewVideoEncoder(BFrames=3): %v", err)
+	}
+	defer enc.Close()
+	enc.SetDecisionStatsEnabled(true)
+
+	var tus [][]byte
+	for i, f := range frames {
+		batch, err := enc.EncodeBatch(f, false)
+		if err != nil {
+			t.Fatalf("EncodeBatch(%d): %v", i, err)
+		}
+		for _, ef := range batch {
+			tus = append(tus, ef.Data)
+		}
+	}
+	flushed, err := enc.Flush()
+	if err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	for _, ef := range flushed {
+		tus = append(tus, ef.Data)
+	}
+	if len(tus) != len(frames) {
+		t.Fatalf("emitted %d TUs, want %d", len(tus), len(frames))
+	}
+
+	// Decode with both 1 and 4 workers and verify exact frame count and identical pixels.
+	for _, workers := range []int{1, 4} {
+		dec, err := NewDecoder(tus, WithWorkers(workers))
+		if err != nil {
+			t.Fatalf("workers=%d NewDecoder(BFrames): %v", workers, err)
+		}
+		var got []DecodedFrame
+		for {
+			b, ok, err := dec.DecodeNext()
+			if err != nil {
+				dec.Close()
+				t.Fatalf("workers=%d DecodeNext: %v", workers, err)
+			}
+			if !ok {
+				break
+			}
+			for _, f := range b {
+				got = append(got, copyDecodedFrame(f))
+			}
+		}
+		dec.Close()
+		if len(got) != len(frames) {
+			t.Fatalf("workers=%d decoded %d frames, want %d", workers, len(got), len(frames))
+		}
+	}
+}

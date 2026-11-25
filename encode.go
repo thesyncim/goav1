@@ -485,6 +485,11 @@ type VideoEncoderConfig struct {
 
 	// FirstPassStats supplies the pass-1 statistics when Pass == 2.
 	FirstPassStats *FirstPassStats
+
+	// BFrames (0..7), when positive, enables a lookahead B-frame / hidden
+	// Alt-Ref pyramid with bidirectional compound inter prediction. Drive with
+	// EncodeBatch and call Flush at end-of-stream.
+	BFrames int
 }
 
 // EncodedFrame is one encoded picture as a low-overhead temporal unit.
@@ -572,6 +577,8 @@ type VideoEncoder struct {
 	lossless         bool
 	subsampling      int
 	filmGrainLevel   int
+	bFrames          int
+	bQueue           []I420Frame
 	width, height    int
 	keyFrameInterval int
 	encodedFrames    int
@@ -584,6 +591,9 @@ type VideoEncoder struct {
 func NewVideoEncoder(cfg VideoEncoderConfig) (*VideoEncoder, error) {
 	if cfg.KeyFrameInterval < 0 {
 		return nil, fmt.Errorf("goav1: KeyFrameInterval must be >= 0, got %d", cfg.KeyFrameInterval)
+	}
+	if cfg.BFrames < 0 || cfg.BFrames > 7 {
+		return nil, fmt.Errorf("goav1: BFrames must be in [0, 7], got %d", cfg.BFrames)
 	}
 	if cfg.Lossless {
 		if cfg.Width < 16 || cfg.Height < 16 || cfg.Width%8 != 0 || cfg.Height%8 != 0 {
@@ -609,6 +619,7 @@ func NewVideoEncoder(cfg VideoEncoderConfig) (*VideoEncoder, error) {
 		enc:              enc,
 		subsampling:      cfg.Subsampling,
 		filmGrainLevel:   cfg.FilmGrainLevel,
+		bFrames:          cfg.BFrames,
 		width:            cfg.Width,
 		height:           cfg.Height,
 		keyFrameInterval: cfg.KeyFrameInterval,
@@ -1040,6 +1051,91 @@ func (e *VideoEncoder) SetBitrate(targetBitrate, framerate int) error {
 		MinQIndex:           16,
 		MaxQIndex:           255,
 	})
+}
+
+// EncodeBatch encodes one frame with optional B-frame / hidden Alt-Ref
+// lookahead (when VideoEncoderConfig.BFrames > 0). It returns zero or more
+// completed temporal units in display order; call Flush at end-of-stream to
+// drain any buffered lookahead frames. When BFrames == 0, it behaves like
+// Encode and returns one frame per call.
+func (e *VideoEncoder) EncodeBatch(frame I420Frame, forceKey bool) ([]EncodedFrame, error) {
+	if e == nil || (e.enc == nil && !e.lossless) {
+		return nil, fmt.Errorf("goav1: VideoEncoder is not initialized")
+	}
+	if e.bFrames == 0 || e.lossless {
+		out, err := e.Encode(frame, forceKey)
+		if err != nil {
+			return nil, err
+		}
+		out.Data = append([]byte(nil), out.Data...)
+		return []EncodedFrame{out}, nil
+	}
+	if err := validateI420Frame(frame); err != nil {
+		return nil, err
+	}
+	var results []EncodedFrame
+	isKey := e.encodedFrames == 0 || forceKey || (e.keyFrameInterval > 0 && (e.encodedFrames+len(e.bQueue))%e.keyFrameInterval == 0)
+	if isKey {
+		if len(e.bQueue) > 0 {
+			flushed, err := e.Flush()
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, flushed...)
+		}
+		out, err := e.Encode(frame, true)
+		if err != nil {
+			return nil, err
+		}
+		out.Data = append([]byte(nil), out.Data...)
+		results = append(results, out)
+		return results, nil
+	}
+	// Buffer a copy of frame for lookahead.
+	cp := I420Frame{
+		Y:            append([]byte(nil), frame.Y...),
+		U:            append([]byte(nil), frame.U...),
+		V:            append([]byte(nil), frame.V...),
+		YStride:      frame.YStride,
+		ChromaStride: frame.ChromaStride,
+		Width:        frame.Width,
+		Height:       frame.Height,
+	}
+	e.bQueue = append(e.bQueue, cp)
+	if len(e.bQueue) < e.bFrames+1 {
+		return nil, nil
+	}
+	return e.drainBQueue()
+}
+
+// Flush drains any buffered lookahead frames when VideoEncoderConfig.BFrames > 0.
+func (e *VideoEncoder) Flush() ([]EncodedFrame, error) {
+	if e == nil || len(e.bQueue) == 0 {
+		return nil, nil
+	}
+	return e.drainBQueue()
+}
+
+func (e *VideoEncoder) drainBQueue() ([]EncodedFrame, error) {
+	tus, err := e.enc.EncodeBFrameMiniGOP(e.bQueue)
+	if err != nil {
+		return nil, err
+	}
+	e.bQueue = e.bQueue[:0]
+	out := make([]EncodedFrame, len(tus))
+	for i, tu := range tus {
+		if e.cvsMeta != nil || e.tuMeta != nil {
+			tu, err = injectFrameMetadataOBUs(tu, false, e.cvsMeta, e.tuMeta, &e.metaScratch)
+			if err != nil {
+				return nil, err
+			}
+			tu = append([]byte(nil), tu...)
+			e.tuMeta = nil
+		}
+		out[i] = EncodedFrame{Data: tu}
+		e.encodedFrames++
+	}
+	return out, nil
 }
 
 // EncodeI422 encodes one I422 frame. When VideoEncoder was configured with

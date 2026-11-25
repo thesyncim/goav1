@@ -160,6 +160,8 @@ internal/av1/encoder/cyclic_refresh.go:*:*: make([]int64, sbCnt) escapes to heap
 internal/av1/encoder/cyclic_refresh.go:*:*: make([]int64, sbCnt) escapes to heap in (*cyclicRefresh).plan:
 internal/av1/encoder/cyclic_refresh.go:*:*: make([]uint8, sbCnt) escapes to heap
 internal/av1/encoder/cyclic_refresh.go:*:*: make([]uint8, sbCnt) escapes to heap in (*cyclicRefresh).plan:
+internal/av1/encoder/frame_obu.go:*:*: make([]byte, len(dst), max(len(dst) + need, cap(dst) * 2)) escapes to heap
+internal/av1/encoder/frame_obu.go:*:*: make([]byte, len(dst), max(len(dst) + need, cap(dst) * 2)) escapes to heap in AppendLowOverheadShowExistingFrameTU:
 internal/av1/encoder/hme.go:*:*: func literal escapes to heap
 internal/av1/encoder/hme.go:*:*: func literal escapes to heap in (*hmeState).startWorkers:
 internal/av1/encoder/hme.go:*:*: make([]byte, n) escapes to heap
@@ -428,8 +430,12 @@ internal/av1/encoder/video.go:*:*: make([]TilePayload, nTiles) escapes to heap
 internal/av1/encoder/video.go:*:*: make([]TilePayload, nTiles) escapes to heap in (*VideoEncoder).encodeKeyWithSequenceMax:
 internal/av1/encoder/video.go:*:*: make([]TilePayload, nTiles) escapes to heap in (*VideoEncoder).encodePReusing:
 internal/av1/encoder/video.go:*:*: make([]TilePayload, nTiles) escapes to heap in (*VideoEncoder).encodeReferencePFrameWithSequenceMax:
+internal/av1/encoder/video.go:*:*: make([][]byte, 0, n) escapes to heap
+internal/av1/encoder/video.go:*:*: make([][]byte, 0, n) escapes to heap in (*VideoEncoder).EncodeBFrameMiniGOP:
 internal/av1/encoder/video.go:*:*: make([]byte, 0, bound) escapes to heap
 internal/av1/encoder/video.go:*:*: make([]byte, 0, bound) escapes to heap in (*VideoEncoder).Prewarm:
+internal/av1/encoder/video.go:*:*: make([]byte, 0, capHint) escapes to heap
+internal/av1/encoder/video.go:*:*: make([]byte, 0, capHint) escapes to heap in (*VideoEncoder).EncodeBFrameMiniGOP:
 internal/av1/encoder/video.go:*:*: make([]byte, cw * ch) escapes to heap
 internal/av1/encoder/video.go:*:*: make([]byte, cw * ch) escapes to heap in (*VideoEncoder).Prewarm:
 internal/av1/encoder/video.go:*:*: make([]byte, cw * ch) escapes to heap in (*VideoEncoder).padSource:
@@ -458,6 +464,8 @@ internal/av1/encoder/video.go:*:*: make([]pframeCoder, nTiles) escapes to heap
 internal/av1/encoder/video.go:*:*: make([]pframeCoder, nTiles) escapes to heap in (*VideoEncoder).encodeKeyWithSequenceMax:
 internal/av1/encoder/video.go:*:*: make([]pframeCoder, nTiles) escapes to heap in (*VideoEncoder).encodePReusing:
 internal/av1/encoder/video.go:*:*: make([]pframeCoder, nTiles) escapes to heap in (*VideoEncoder).encodeReferencePFrameWithSequenceMax:
+internal/av1/encoder/video.go:*:*: moved to heap: altRecon
+internal/av1/encoder/video.go:*:*: moved to heap: bRecon
 internal/av1/encoder/video.go:*:*: new(lpd1Frame) escapes to heap
 internal/av1/encoder/video.go:*:*: new(lpd1Frame) escapes to heap in (*VideoEncoder).encodePReusing:
 internal/av1/encoder/video_highbd_color.go:*:*: make([]TilePayload, nTiles) escapes to heap
