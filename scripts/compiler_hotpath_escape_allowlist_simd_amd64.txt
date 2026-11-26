@@ -18,11 +18,14 @@ internal/av1/decoder/postfilter_loopfilter_pool.go:*:*: moved to heap: maxLevel
 internal/av1/decoder/postfilter_loopfilter_pool.go:*:*: moved to heap: planeApplied
 internal/av1/decoder/postfilter_loopfilter_pool.go:*:*: moved to heap: planeEdges
 internal/av1/decoder/postfilter_loopfilter_pool.go:*:*: moved to heap: planeMaxLevel
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]FrameWorkCDEFPostFilterHBD16BandBoundary, bands) escapes to heap
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]FrameWorkCDEFPostFilterHBD16BandBoundary, bands) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]FrameWorkCDEFPostFilterU8BandBoundary, bands) escapes to heap
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]FrameWorkCDEFPostFilterU8BandBoundary, bands) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]FrameWorkLoopFilterPostFilterPlan, workers) escapes to heap
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]FrameWorkLoopFilterPostFilterPlan, workers) escapes to heap in (*FrameWorkPostFilterContext).applyLoopFilterMaskBandsParallel:
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]bool, bandCount) escapes to heap
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]bool, bandCount) escapes to heap in (*FrameWorkPostFilterContext).applyCDEFPostFilterParallelHBD:
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]bool, bandCount) escapes to heap in (*FrameWorkPostFilterContext).applyCDEFPostFilterParallelU8:
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]byte, need) escapes to heap
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]byte, need) escapes to heap in (*FrameWorkCDEFPostFilterU8BandBoundary).ensure:
@@ -35,6 +38,13 @@ internal/av1/decoder/postfilter_parallel.go:*:*: make([]frameWorkParallelCDEFScr
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]frameWorkParallelCDEFScratch, workers) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, 19008) escapes to heap
 internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, 19008) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, need) escapes to heap
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, need) escapes to heap in (*FrameWorkCDEFPostFilterHBD16BandBoundary).ensure:
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, need) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, need0) escapes to heap
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, need0) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, needC) escapes to heap
+internal/av1/decoder/postfilter_parallel.go:*:*: make([]uint16, needC) escapes to heap in (*FrameWorkPostFilterParallel).ensureCDEFScratch:
 internal/av1/decoder/postfilter_restoration_parallel.go:*:*: append(p.lr, make([]frameWorkParallelRestorationScratch, workers - len(p.lr))...) escapes to heap in (*FrameWorkPostFilterContext).applyLoopRestorationPostFilterParallel:
 internal/av1/decoder/postfilter_restoration_parallel.go:*:*: append(p.lr, make([]frameWorkParallelRestorationScratch, workers - len(p.lr))...) escapes to heap in (*FrameWorkPostFilterParallel).ensureRestorationScratch:
 internal/av1/decoder/postfilter_restoration_parallel.go:*:*: make([]int32, sgrLen) escapes to heap
@@ -105,12 +115,12 @@ internal/av1/encoder/cdef_apply.go:*:*: make([]bool, length) escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: make([]bool, length) escapes to heap in (*cdefApplier).init:
 internal/av1/encoder/cdef_apply.go:*:*: make([]byte, boundaryNeed) escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: make([]byte, boundaryNeed) escapes to heap in (*cdefApplier).init:
+internal/av1/encoder/cdef_apply.go:*:*: make([]byte, byteNeed) escapes to heap
+internal/av1/encoder/cdef_apply.go:*:*: make([]byte, byteNeed) escapes to heap in (*cdefApplier).init:
 internal/av1/encoder/cdef_apply.go:*:*: make([]cdef.DirectionGrid, size.DirectionGrid) escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: make([]cdef.DirectionGrid, size.DirectionGrid) escapes to heap in (*cdefApplier).init:
 internal/av1/encoder/cdef_apply.go:*:*: make([]cdef.VarianceGrid, size.VarianceGrid) escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: make([]cdef.VarianceGrid, size.VarianceGrid) escapes to heap in (*cdefApplier).init:
-internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, lineNeed) escapes to heap
-internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, lineNeed) escapes to heap in (*cdefApplier).init:
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.Input) escapes to heap
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.Input) escapes to heap in (*cdefApplier).init:
 internal/av1/encoder/cdef_apply.go:*:*: make([]uint16, size.Samples[p]) escapes to heap
@@ -141,21 +151,20 @@ internal/av1/encoder/cdef_search.go:*:*: func literal escapes to heap
 internal/av1/encoder/cdef_search.go:*:*: func literal escapes to heap in (*cdefSearcher).startLanes:
 internal/av1/encoder/cdef_search.go:*:*: make([]*[64]uint64, n) escapes to heap
 internal/av1/encoder/cdef_search.go:*:*: make([]*[64]uint64, n) escapes to heap in (*cdefSearcher).bind:
-internal/av1/encoder/cdef_search.go:*:*: make([]*[64]uint64, n) escapes to heap in (*cdefSearcher).search:
 internal/av1/encoder/cdef_search.go:*:*: make([][64]uint64, n) escapes to heap
 internal/av1/encoder/cdef_search.go:*:*: make([][64]uint64, n) escapes to heap in (*cdefSearcher).bind:
-internal/av1/encoder/cdef_search.go:*:*: make([][64]uint64, n) escapes to heap in (*cdefSearcher).search:
 internal/av1/encoder/cdef_search.go:*:*: make([]bool, n) escapes to heap
 internal/av1/encoder/cdef_search.go:*:*: make([]bool, n) escapes to heap in (*cdefSearcher).bind:
-internal/av1/encoder/cdef_search.go:*:*: make([]bool, n) escapes to heap in (*cdefSearcher).search:
+internal/av1/encoder/cdef_search.go:*:*: make([]cdef.DirectionGrid, n) escapes to heap
+internal/av1/encoder/cdef_search.go:*:*: make([]cdef.DirectionGrid, n) escapes to heap in (*cdefSearcher).bind:
+internal/av1/encoder/cdef_search.go:*:*: make([]cdef.VarianceGrid, n) escapes to heap
+internal/av1/encoder/cdef_search.go:*:*: make([]cdef.VarianceGrid, n) escapes to heap in (*cdefSearcher).bind:
 internal/av1/encoder/cdef_search.go:*:*: make([]cdefFBScratch, n) escapes to heap
 internal/av1/encoder/cdef_search.go:*:*: make([]cdefFBScratch, n) escapes to heap in (*cdefSearcher).startLanes:
 internal/av1/encoder/cdef_search.go:*:*: make([]int, n) escapes to heap
 internal/av1/encoder/cdef_search.go:*:*: make([]int, n) escapes to heap in (*cdefSearcher).bind:
-internal/av1/encoder/cdef_search.go:*:*: make([]int, n) escapes to heap in (*cdefSearcher).search:
 internal/av1/encoder/cdef_search.go:*:*: make([]uint8, n) escapes to heap
 internal/av1/encoder/cdef_search.go:*:*: make([]uint8, n) escapes to heap in (*cdefSearcher).bind:
-internal/av1/encoder/cdef_search.go:*:*: make([]uint8, n) escapes to heap in (*cdefSearcher).search:
 internal/av1/encoder/cyclic_refresh.go:*:*: make([]int64, sbCnt) escapes to heap
 internal/av1/encoder/cyclic_refresh.go:*:*: make([]int64, sbCnt) escapes to heap in (*cyclicRefresh).plan:
 internal/av1/encoder/cyclic_refresh.go:*:*: make([]uint8, sbCnt) escapes to heap
@@ -387,6 +396,8 @@ internal/av1/encoder/pframe_residual.go:*:*: new(subpelProbeCache) escapes to he
 internal/av1/encoder/pframe_residual.go:*:*: new(subpelProbeCache) escapes to heap in (*pframeCoder).reset:
 internal/av1/encoder/pframe_split.go:*:*: make([]int16, 0, maxCoeffs) escapes to heap
 internal/av1/encoder/pframe_split.go:*:*: make([]int16, 0, maxCoeffs) escapes to heap in (*pframeSplitRecord).reset:
+internal/av1/encoder/pframe_split.go:*:*: make([]int16, 0, maxEOBs) escapes to heap
+internal/av1/encoder/pframe_split.go:*:*: make([]int16, 0, maxEOBs) escapes to heap in (*pframeSplitRecord).reset:
 internal/av1/encoder/pframe_split.go:*:*: make([]pblockRecord, 0, maxBlocks) escapes to heap
 internal/av1/encoder/pframe_split.go:*:*: make([]pblockRecord, 0, maxBlocks) escapes to heap in (*pframeSplitRecord).reset:
 internal/av1/encoder/pframe_split.go:*:*: make([]tile.Partition, 0, maxParts) escapes to heap
@@ -597,6 +608,8 @@ internal/av1/encoder/zeromv_skip.go:*:*: make([]bool, cols * rows) escapes to he
 internal/av1/encoder/zeromv_skip.go:*:*: make([]bool, cols * rows) escapes to heap in (*hmeState).classifySourceSAD:
 internal/av1/encoder/zeromv_skip.go:*:*: make([]uint8, cols * rows) escapes to heap
 internal/av1/encoder/zeromv_skip.go:*:*: make([]uint8, cols * rows) escapes to heap in (*hmeState).classifySourceSAD:
+internal/av1/entropy/coef_decode.go:*:*: make([]uint32, len(scan)) escapes to heap
+internal/av1/entropy/coef_decode.go:*:*: make([]uint32, len(scan)) escapes to heap in BuildCoefScan2D:
 internal/av1/entropy/writer.go:*:*: make([]byte, 0) escapes to heap
 internal/av1/entropy/writer.go:*:*: make([]byte, 0) escapes to heap in init:
 internal/av1/entropy/writer.go:*:*: make([]byte, grown) escapes to heap

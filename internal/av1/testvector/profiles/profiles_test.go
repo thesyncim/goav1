@@ -2468,6 +2468,7 @@ func postFilterScratchStorage(size decoder.FrameWorkPostFilterScratchSize) decod
 	}
 	for plane := 0; plane < 3; plane++ {
 		scratch.CDEFSamples[plane] = make([]uint16, maxInt(size.CDEF.Samples[plane], 0))
+		scratch.CDEFSampleBytes[plane] = make([]byte, maxInt(size.CDEF.SampleBytes[plane], 0))
 		scratch.CDEFDst[plane] = make([]uint16, maxInt(size.CDEF.Dst[plane], 0))
 		scratch.SuperResCoded[plane] = make([]uint16, maxInt(size.SuperRes.CodedSamples[plane], 0))
 		scratch.SuperResOutput[plane] = make([]uint16, maxInt(size.SuperRes.OutputSamples[plane], 0))

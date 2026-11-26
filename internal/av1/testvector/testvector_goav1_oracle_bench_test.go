@@ -1163,6 +1163,7 @@ func (s *corpusPostFilterScratch) bind(size decoder.FrameWorkPostFilterScratchSi
 		LoopFilterSchedule: s.scratch.LoopFilterSchedule[:libaomMaxInt(size.LoopFilter.Schedule, 0)],
 
 		CDEFSamples:       corpusUint16PlaneScratch(s.scratch.CDEFSamples, size.CDEF.Samples),
+		CDEFSampleBytes:   corpusBytePlaneScratch(s.scratch.CDEFSampleBytes, size.CDEF.SampleBytes),
 		CDEFDst:           corpusUint16PlaneScratch(s.scratch.CDEFDst, size.CDEF.Dst),
 		CDEFDirectionGrid: s.scratch.CDEFDirectionGrid[:libaomMaxInt(size.CDEF.DirectionGrid, 0)],
 		CDEFVarianceGrid:  s.scratch.CDEFVarianceGrid[:libaomMaxInt(size.CDEF.VarianceGrid, 0)],
@@ -1202,6 +1203,9 @@ func (s *corpusPostFilterScratch) ensure(size decoder.FrameWorkPostFilterScratch
 	for plane := 0; plane < 3; plane++ {
 		if len(s.scratch.CDEFSamples[plane]) < size.CDEF.Samples[plane] {
 			s.scratch.CDEFSamples[plane] = make([]uint16, size.CDEF.Samples[plane])
+		}
+		if len(s.scratch.CDEFSampleBytes[plane]) < size.CDEF.SampleBytes[plane] {
+			s.scratch.CDEFSampleBytes[plane] = make([]byte, size.CDEF.SampleBytes[plane])
 		}
 		if len(s.scratch.CDEFDst[plane]) < size.CDEF.Dst[plane] {
 			s.scratch.CDEFDst[plane] = make([]uint16, size.CDEF.Dst[plane])
@@ -1276,6 +1280,14 @@ func (s *corpusPostFilterScratch) ensure(size decoder.FrameWorkPostFilterScratch
 
 func corpusUint16PlaneScratch(scratch [3][]uint16, size [3]int) [3][]uint16 {
 	return [3][]uint16{
+		scratch[0][:libaomMaxInt(size[0], 0)],
+		scratch[1][:libaomMaxInt(size[1], 0)],
+		scratch[2][:libaomMaxInt(size[2], 0)],
+	}
+}
+
+func corpusBytePlaneScratch(scratch [3][]byte, size [3]int) [3][]byte {
+	return [3][]byte{
 		scratch[0][:libaomMaxInt(size[0], 0)],
 		scratch[1][:libaomMaxInt(size[1], 0)],
 		scratch[2][:libaomMaxInt(size[2], 0)],

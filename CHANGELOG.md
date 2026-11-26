@@ -6,6 +6,13 @@ or pull requests, not in long-lived markdown.
 
 ## [Unreleased]
 
+## [v0.2.4] - 2026-11-26
+
+CI & allocation-gate maintenance release on top of v0.2.3:
+- **Testvector CDEF Scratch (`internal/av1/testvector`)**: Allocated `CDEFSampleBytes` in `libaomPostFilterScratchStorage`, `postFilterScratchStorage`, and `corpusPostFilterScratch` so 8-bit in-place CDEF postfiltering binds byte line scratch cleanly across all libaom and profile dry-runs.
+- **Zero-Alloc 1080p Keyframe Logging (`internal/av1/encoder`)**: Increased `svtCDEFLogs.reserve` from 1.0 to 1.5 entries per pixel so high-detail 1080p keyframes (`BenchmarkStreamingKeyframe1080p`) record without growing (`0 B/op`, `0 allocs/op`).
+- **Compiler Escape Baselines (`scripts/`)**: Refreshed the scalar, `arm64` SIMD, and `amd64` SIMD hot-path escape allowlists to match the reviewed preallocation sites introduced in v0.2.1–v0.2.3.
+
 ## [v0.2.3] - 2026-11-26
 
 Pure-Go scalar (non-SIMD) decoder & encoder performance release — delivers **1.8×–2.2× faster** scalar decoding and **2.0×–4.1× faster** scalar encoding on Apple M4 Max with **0 steady-state GC allocations** (eliminating 4,884 allocs/op in 10-bit scalar CDEF), zero `unsafe` outside `internal/unsafeutil`, zero `GOEXPERIMENT=simd` regression, and bit-exact MD5 parity.

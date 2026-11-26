@@ -1213,6 +1213,7 @@ func libaomPostFilterScratchStorage(size decoder.FrameWorkPostFilterScratchSize)
 	}
 	for plane := 0; plane < 3; plane++ {
 		scratch.CDEFSamples[plane] = make([]uint16, libaomMaxInt(size.CDEF.Samples[plane], 0))
+		scratch.CDEFSampleBytes[plane] = make([]byte, libaomMaxInt(size.CDEF.SampleBytes[plane], 0))
 		scratch.CDEFDst[plane] = make([]uint16, libaomMaxInt(size.CDEF.Dst[plane], 0))
 		scratch.SuperResCoded[plane] = make([]uint16, libaomMaxInt(size.SuperRes.CodedSamples[plane], 0))
 		scratch.SuperResOutput[plane] = make([]uint16, libaomMaxInt(size.SuperRes.OutputSamples[plane], 0))
