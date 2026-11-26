@@ -1,5 +1,7 @@
 package encoder
 
+import "encoding/binary"
+
 // sad.go hosts the motion-search SAD kernel dispatch. sad8x8Impl computes the
 // sum of absolute differences of one 8x8 block; implementations may ignore
 // limit (it is an early-exit hint, not a contract), so callers must compare
@@ -420,33 +422,35 @@ func sad16x16DualPureGo(src []byte, srcStride int, ref []byte, refStride int) in
 }
 
 func sad32x32DualPureGo(src []byte, srcStride int, ref []byte, refStride int) int {
-	total := 0
+	var acc uint64
 	for r := range 32 {
-		srow := r * srcStride
-		rrow := r * refStride
-		for c := range 32 {
-			d := int(src[srow+c]) - int(ref[rrow+c])
-			if d < 0 {
-				d = -d
-			}
-			total += d
-		}
+		a := src[r*srcStride : r*srcStride+32]
+		b := ref[r*refStride : r*refStride+32]
+		acc += swarSAD8(binary.LittleEndian.Uint64(a[0:8]), binary.LittleEndian.Uint64(b[0:8])) +
+			swarSAD8(binary.LittleEndian.Uint64(a[8:16]), binary.LittleEndian.Uint64(b[8:16])) +
+			swarSAD8(binary.LittleEndian.Uint64(a[16:24]), binary.LittleEndian.Uint64(b[16:24])) +
+			swarSAD8(binary.LittleEndian.Uint64(a[24:32]), binary.LittleEndian.Uint64(b[24:32]))
 	}
-	return total
+	return int(swarReduce16(acc))
 }
 
 func sad64x64DualPureGo(src []byte, srcStride int, ref []byte, refStride int) int {
 	total := 0
-	for r := range 64 {
-		srow := r * srcStride
-		rrow := r * refStride
-		for c := range 64 {
-			d := int(src[srow+c]) - int(ref[rrow+c])
-			if d < 0 {
-				d = -d
-			}
-			total += d
+	for rBase := 0; rBase < 64; rBase += 16 {
+		var acc uint64
+		for r := rBase; r < rBase+16; r++ {
+			a := src[r*srcStride : r*srcStride+64]
+			b := ref[r*refStride : r*refStride+64]
+			acc += swarSAD8(binary.LittleEndian.Uint64(a[0:8]), binary.LittleEndian.Uint64(b[0:8])) +
+				swarSAD8(binary.LittleEndian.Uint64(a[8:16]), binary.LittleEndian.Uint64(b[8:16])) +
+				swarSAD8(binary.LittleEndian.Uint64(a[16:24]), binary.LittleEndian.Uint64(b[16:24])) +
+				swarSAD8(binary.LittleEndian.Uint64(a[24:32]), binary.LittleEndian.Uint64(b[24:32])) +
+				swarSAD8(binary.LittleEndian.Uint64(a[32:40]), binary.LittleEndian.Uint64(b[32:40])) +
+				swarSAD8(binary.LittleEndian.Uint64(a[40:48]), binary.LittleEndian.Uint64(b[40:48])) +
+				swarSAD8(binary.LittleEndian.Uint64(a[48:56]), binary.LittleEndian.Uint64(b[48:56])) +
+				swarSAD8(binary.LittleEndian.Uint64(a[56:64]), binary.LittleEndian.Uint64(b[56:64]))
 		}
+		total += int(swarReduce16(acc))
 	}
 	return total
 }

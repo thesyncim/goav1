@@ -69,10 +69,18 @@ var (
 // bitDepth=8 (round0 is always 3 for 8-bit input; see wienerRounds). The
 // 16-bit temp intermediate is unchanged.
 func wienerHorizontalU8(src []uint8, srcStride int, srcOrigin int, width int, height int, filter WienerFilter, round0 int, temp []uint16) {
+	if width <= 0 || height <= 0 {
+		return
+	}
 	const bitDepth = 8
 	limit := int32(1 << (bitDepth + 1 + WienerFilterBits - round0))
 	offset := int32(1 << (bitDepth + WienerFilterBits - 1))
 	maxClamp := limit - 1
+	r0Shift := uint(round0)
+	offsetRound := offset
+	if round0 > 0 {
+		offsetRound += int32(1 << (round0 - 1))
+	}
 	f0 := int32(filter[0])
 	f1 := int32(filter[1])
 	f2 := int32(filter[2])
@@ -80,18 +88,101 @@ func wienerHorizontalU8(src []uint8, srcStride int, srcOrigin int, width int, he
 	f4 := int32(filter[4])
 	f5 := int32(filter[5])
 	f6 := int32(filter[6])
+	f3c := f3 + (1 << WienerFilterBits)
+	symmetric := f0 == f6 && f1 == f5 && f2 == f4
+	fiveTap := symmetric && f0 == 0
+	maxU := uint32(maxClamp)
+
 	for row := -WienerHalfwin; row < height+WienerHalfwin; row++ {
 		dstRow := (row + WienerHalfwin) * width
 		srcStart := srcOrigin + row*srcStride - WienerHalfwin
 		srcRow := src[srcStart : srcStart+width+2*WienerHalfwin]
 		dstSlice := temp[dstRow : dstRow+width]
+		if fiveTap {
+			s1, s2, s3, s4 := int32(srcRow[1]), int32(srcRow[2]), int32(srcRow[3]), int32(srcRow[4])
+			col := 0
+			for ; col+3 < width; col += 4 {
+				s5 := int32(srcRow[col+5])
+				s6 := int32(srcRow[col+6])
+				s7 := int32(srcRow[col+7])
+				s8 := int32(srcRow[col+8])
+				v0 := (offsetRound + f1*(s1+s5) + f2*(s2+s4) + f3c*s3) >> r0Shift
+				v1 := (offsetRound + f1*(s2+s6) + f2*(s3+s5) + f3c*s4) >> r0Shift
+				v2 := (offsetRound + f1*(s3+s7) + f2*(s4+s6) + f3c*s5) >> r0Shift
+				v3 := (offsetRound + f1*(s4+s8) + f2*(s5+s7) + f3c*s6) >> r0Shift
+				if uint32(v0|v1|v2|v3) > maxU {
+					v0 = clampInt32(v0, 0, maxClamp)
+					v1 = clampInt32(v1, 0, maxClamp)
+					v2 = clampInt32(v2, 0, maxClamp)
+					v3 = clampInt32(v3, 0, maxClamp)
+				}
+				dstSlice[col] = uint16(v0)
+				dstSlice[col+1] = uint16(v1)
+				dstSlice[col+2] = uint16(v2)
+				dstSlice[col+3] = uint16(v3)
+				s1, s2, s3, s4 = s5, s6, s7, s8
+			}
+			for ; col < width; col++ {
+				s5 := int32(srcRow[col+5])
+				v := (offsetRound + f1*(s1+s5) + f2*(s2+s4) + f3c*s3) >> r0Shift
+				if uint32(v) > maxU {
+					if v < 0 {
+						v = 0
+					} else {
+						v = maxClamp
+					}
+				}
+				dstSlice[col] = uint16(v)
+				s1, s2, s3, s4 = s2, s3, s4, s5
+			}
+			continue
+		}
+		if symmetric {
+			s0, s1, s2, s3, s4, s5 := int32(srcRow[0]), int32(srcRow[1]), int32(srcRow[2]), int32(srcRow[3]), int32(srcRow[4]), int32(srcRow[5])
+			col := 0
+			for ; col+3 < width; col += 4 {
+				s6 := int32(srcRow[col+6])
+				s7 := int32(srcRow[col+7])
+				s8 := int32(srcRow[col+8])
+				s9 := int32(srcRow[col+9])
+				v0 := (offsetRound + f0*(s0+s6) + f1*(s1+s5) + f2*(s2+s4) + f3c*s3) >> r0Shift
+				v1 := (offsetRound + f0*(s1+s7) + f1*(s2+s6) + f2*(s3+s5) + f3c*s4) >> r0Shift
+				v2 := (offsetRound + f0*(s2+s8) + f1*(s3+s7) + f2*(s4+s6) + f3c*s5) >> r0Shift
+				v3 := (offsetRound + f0*(s3+s9) + f1*(s4+s8) + f2*(s5+s7) + f3c*s6) >> r0Shift
+				if uint32(v0|v1|v2|v3) > maxU {
+					v0 = clampInt32(v0, 0, maxClamp)
+					v1 = clampInt32(v1, 0, maxClamp)
+					v2 = clampInt32(v2, 0, maxClamp)
+					v3 = clampInt32(v3, 0, maxClamp)
+				}
+				dstSlice[col] = uint16(v0)
+				dstSlice[col+1] = uint16(v1)
+				dstSlice[col+2] = uint16(v2)
+				dstSlice[col+3] = uint16(v3)
+				s0, s1, s2, s3, s4, s5 = s4, s5, s6, s7, s8, s9
+			}
+			for ; col < width; col++ {
+				s6 := int32(srcRow[col+6])
+				v := (offsetRound + f0*(s0+s6) + f1*(s1+s5) + f2*(s2+s4) + f3c*s3) >> r0Shift
+				if uint32(v) > maxU {
+					if v < 0 {
+						v = 0
+					} else {
+						v = maxClamp
+					}
+				}
+				dstSlice[col] = uint16(v)
+				s0, s1, s2, s3, s4, s5 = s1, s2, s3, s4, s5, s6
+			}
+			continue
+		}
 		for col := range width {
 			w := srcRow[col : col+WienerWin : col+WienerWin]
 			s0, s1, s2, s3, s4, s5, s6 := w[0], w[1], w[2], w[3], w[4], w[5], w[6]
-			sum := int32(s3)<<WienerFilterBits + offset
-			sum += int32(s0)*f0 + int32(s1)*f1 + int32(s2)*f2 + int32(s3)*f3 +
+			sum := int32(s3)*f3c + offsetRound +
+				int32(s0)*f0 + int32(s1)*f1 + int32(s2)*f2 +
 				int32(s4)*f4 + int32(s5)*f5 + int32(s6)*f6
-			dstSlice[col] = uint16(clampInt32(roundPowerOfTwo(sum, round0), 0, maxClamp))
+			dstSlice[col] = uint16(clampInt32(sum>>r0Shift, 0, maxClamp))
 		}
 	}
 }
@@ -100,9 +191,16 @@ func wienerHorizontalU8(src []uint8, srcStride int, srcOrigin int, width int, he
 // (round1 is always 11 for 8-bit input). The final clamp bound max=255 equals
 // the uint8 value range, so the narrowing store is exact.
 func wienerVerticalU8(temp []uint16, tempStride int, dst []uint8, dstStride int, width int, height int, filter WienerFilter, round1 int) {
+	if width <= 0 || height <= 0 {
+		return
+	}
 	const bitDepth = 8
 	offset := int32(1 << (bitDepth + round1 - 1))
-	const maxI = int32(255)
+	r1Shift := uint(round1)
+	bias := -offset
+	if round1 > 0 {
+		bias += int32(1 << (round1 - 1))
+	}
 	f0 := int32(filter[0])
 	f1 := int32(filter[1])
 	f2 := int32(filter[2])
@@ -110,28 +208,87 @@ func wienerVerticalU8(temp []uint16, tempStride int, dst []uint8, dstStride int,
 	f4 := int32(filter[4])
 	f5 := int32(filter[5])
 	f6 := int32(filter[6])
+	f3c := f3 + (1 << WienerFilterBits)
+	symmetric := f0 == f6 && f1 == f5 && f2 == f4
+	fiveTap := symmetric && f0 == 0
+
 	for row := range height {
-		r0 := temp[(row+0)*tempStride : (row+0)*tempStride+width]
 		r1 := temp[(row+1)*tempStride : (row+1)*tempStride+width]
 		r2 := temp[(row+2)*tempStride : (row+2)*tempStride+width]
 		r3 := temp[(row+3)*tempStride : (row+3)*tempStride+width]
 		r4 := temp[(row+4)*tempStride : (row+4)*tempStride+width]
 		r5 := temp[(row+5)*tempStride : (row+5)*tempStride+width]
-		r6 := temp[(row+6)*tempStride : (row+6)*tempStride+width]
 		dstSlice := dst[row*dstStride : row*dstStride+width]
-		r1 = r1[:width]
-		r2 = r2[:width]
-		r3 = r3[:width]
-		r4 = r4[:width]
-		r5 = r5[:width]
-		r6 = r6[:width]
-		dstSlice = dstSlice[:width]
+		if fiveTap {
+			col := 0
+			for ; col+3 < width; col += 4 {
+				v0 := (bias + f1*(int32(r1[col])+int32(r5[col])) + f2*(int32(r2[col])+int32(r4[col])) + f3c*int32(r3[col])) >> r1Shift
+				v1 := (bias + f1*(int32(r1[col+1])+int32(r5[col+1])) + f2*(int32(r2[col+1])+int32(r4[col+1])) + f3c*int32(r3[col+1])) >> r1Shift
+				v2 := (bias + f1*(int32(r1[col+2])+int32(r5[col+2])) + f2*(int32(r2[col+2])+int32(r4[col+2])) + f3c*int32(r3[col+2])) >> r1Shift
+				v3 := (bias + f1*(int32(r1[col+3])+int32(r5[col+3])) + f2*(int32(r2[col+3])+int32(r4[col+3])) + f3c*int32(r3[col+3])) >> r1Shift
+				if uint32(v0|v1|v2|v3) > 255 {
+					v0 = clampInt32(v0, 0, 255)
+					v1 = clampInt32(v1, 0, 255)
+					v2 = clampInt32(v2, 0, 255)
+					v3 = clampInt32(v3, 0, 255)
+				}
+				dstSlice[col] = uint8(v0)
+				dstSlice[col+1] = uint8(v1)
+				dstSlice[col+2] = uint8(v2)
+				dstSlice[col+3] = uint8(v3)
+			}
+			for ; col < width; col++ {
+				v := (bias + f1*(int32(r1[col])+int32(r5[col])) + f2*(int32(r2[col])+int32(r4[col])) + f3c*int32(r3[col])) >> r1Shift
+				if uint32(v) > 255 {
+					if v < 0 {
+						v = 0
+					} else {
+						v = 255
+					}
+				}
+				dstSlice[col] = uint8(v)
+			}
+			continue
+		}
+		r0 := temp[(row+0)*tempStride : (row+0)*tempStride+width]
+		r6 := temp[(row+6)*tempStride : (row+6)*tempStride+width]
+		if symmetric {
+			col := 0
+			for ; col+3 < width; col += 4 {
+				v0 := (bias + f0*(int32(r0[col])+int32(r6[col])) + f1*(int32(r1[col])+int32(r5[col])) + f2*(int32(r2[col])+int32(r4[col])) + f3c*int32(r3[col])) >> r1Shift
+				v1 := (bias + f0*(int32(r0[col+1])+int32(r6[col+1])) + f1*(int32(r1[col+1])+int32(r5[col+1])) + f2*(int32(r2[col+1])+int32(r4[col+1])) + f3c*int32(r3[col+1])) >> r1Shift
+				v2 := (bias + f0*(int32(r0[col+2])+int32(r6[col+2])) + f1*(int32(r1[col+2])+int32(r5[col+2])) + f2*(int32(r2[col+2])+int32(r4[col+2])) + f3c*int32(r3[col+2])) >> r1Shift
+				v3 := (bias + f0*(int32(r0[col+3])+int32(r6[col+3])) + f1*(int32(r1[col+3])+int32(r5[col+3])) + f2*(int32(r2[col+3])+int32(r4[col+3])) + f3c*int32(r3[col+3])) >> r1Shift
+				if uint32(v0|v1|v2|v3) > 255 {
+					v0 = clampInt32(v0, 0, 255)
+					v1 = clampInt32(v1, 0, 255)
+					v2 = clampInt32(v2, 0, 255)
+					v3 = clampInt32(v3, 0, 255)
+				}
+				dstSlice[col] = uint8(v0)
+				dstSlice[col+1] = uint8(v1)
+				dstSlice[col+2] = uint8(v2)
+				dstSlice[col+3] = uint8(v3)
+			}
+			for ; col < width; col++ {
+				v := (bias + f0*(int32(r0[col])+int32(r6[col])) + f1*(int32(r1[col])+int32(r5[col])) + f2*(int32(r2[col])+int32(r4[col])) + f3c*int32(r3[col])) >> r1Shift
+				if uint32(v) > 255 {
+					if v < 0 {
+						v = 0
+					} else {
+						v = 255
+					}
+				}
+				dstSlice[col] = uint8(v)
+			}
+			continue
+		}
 		for col, c0 := range r0 {
 			c3 := int32(r3[col])
-			sum := c3<<WienerFilterBits - offset
-			sum += int32(c0)*f0 + int32(r1[col])*f1 + int32(r2[col])*f2 +
-				c3*f3 + int32(r4[col])*f4 + int32(r5[col])*f5 + int32(r6[col])*f6
-			dstSlice[col] = uint8(clampInt32(roundPowerOfTwo(sum, round1), 0, maxI))
+			sum := c3*f3c + bias +
+				int32(c0)*f0 + int32(r1[col])*f1 + int32(r2[col])*f2 +
+				int32(r4[col])*f4 + int32(r5[col])*f5 + int32(r6[col])*f6
+			dstSlice[col] = uint8(clampInt32(sum>>r1Shift, 0, 255))
 		}
 	}
 }

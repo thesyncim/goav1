@@ -13,7 +13,11 @@
 
 package motion
 
-import "github.com/thesyncim/goav1/internal/av1/frame"
+import (
+	"encoding/binary"
+
+	"github.com/thesyncim/goav1/internal/av1/frame"
+)
 
 const (
 	// libaom convolve.h: ROUND0_BITS / COMPOUND_ROUND1_BITS for the compound
@@ -221,12 +225,15 @@ func predictInterCompoundRefHighBDToConvBuf(out []uint16, ref frame.Plane, bitDe
 }
 
 func predictInterCompoundRefHighBDToConvBuf2DResident(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, round0 int, offsetBits int, bitDepth int, im *compoundIM) {
+	if width <= 0 || height <= 0 {
+		return
+	}
 	const imStride = maxBlockSize
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1
-	xBias := 1 << (bitDepth + filterBits - 1)
-	round0Bias := 1 << (round0 - 1)
+	r0Shift := uint(round0)
+	xBiasRound := (1 << (bitDepth + filterBits - 1)) + (1 << (round0 - 1))
 	stride := ref.Stride
 
 	xk0, xk1, xk2, xk3, xk4, xk5, xk6, xk7 := int(xKernel[0]), int(xKernel[1]), int(xKernel[2]), int(xKernel[3]), int(xKernel[4]), int(xKernel[5]), int(xKernel[6]), int(xKernel[7])
@@ -234,54 +241,134 @@ func predictInterCompoundRefHighBDToConvBuf2DResident(out []uint16, ref frame.Pl
 	for y := range imH {
 		base := (refY-foY+y)*stride + (refX-foX)*2
 		srcRow := ref.Pix[base : base+(width+filterTaps-1)*2]
-		imRow := im[y*imStride:]
+		imRow := im[y*imStride : y*imStride+width]
 		if xFourTap {
-			for x := range width {
+			s2 := int(binary.LittleEndian.Uint16(srcRow[4:6]))
+			s3 := int(binary.LittleEndian.Uint16(srcRow[6:8]))
+			s4 := int(binary.LittleEndian.Uint16(srcRow[8:10]))
+			x := 0
+			for ; x+3 < width; x += 4 {
 				o := x * 2
-				s2 := int(uint16(srcRow[o+4]) | uint16(srcRow[o+5])<<8)
-				s3 := int(uint16(srcRow[o+6]) | uint16(srcRow[o+7])<<8)
-				s4 := int(uint16(srcRow[o+8]) | uint16(srcRow[o+9])<<8)
-				s5 := int(uint16(srcRow[o+10]) | uint16(srcRow[o+11])<<8)
-				sum := xBias + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5
-				imRow[x] = int32((sum + round0Bias) >> round0)
+				s5 := int(binary.LittleEndian.Uint16(srcRow[o+10 : o+12]))
+				s6 := int(binary.LittleEndian.Uint16(srcRow[o+12 : o+14]))
+				s7 := int(binary.LittleEndian.Uint16(srcRow[o+14 : o+16]))
+				s8 := int(binary.LittleEndian.Uint16(srcRow[o+16 : o+18]))
+				imRow[x] = int32((xBiasRound + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5) >> r0Shift)
+				imRow[x+1] = int32((xBiasRound + xk2*s3 + xk3*s4 + xk4*s5 + xk5*s6) >> r0Shift)
+				imRow[x+2] = int32((xBiasRound + xk2*s4 + xk3*s5 + xk4*s6 + xk5*s7) >> r0Shift)
+				imRow[x+3] = int32((xBiasRound + xk2*s5 + xk3*s6 + xk4*s7 + xk5*s8) >> r0Shift)
+				s2, s3, s4 = s6, s7, s8
+			}
+			for ; x < width; x++ {
+				o := x * 2
+				s5 := int(binary.LittleEndian.Uint16(srcRow[o+10 : o+12]))
+				imRow[x] = int32((xBiasRound + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5) >> r0Shift)
+				s2, s3, s4 = s3, s4, s5
 			}
 			continue
 		}
-		for x := range width {
+		s0 := int(binary.LittleEndian.Uint16(srcRow[0:2]))
+		s1 := int(binary.LittleEndian.Uint16(srcRow[2:4]))
+		s2 := int(binary.LittleEndian.Uint16(srcRow[4:6]))
+		s3 := int(binary.LittleEndian.Uint16(srcRow[6:8]))
+		s4 := int(binary.LittleEndian.Uint16(srcRow[8:10]))
+		s5 := int(binary.LittleEndian.Uint16(srcRow[10:12]))
+		s6 := int(binary.LittleEndian.Uint16(srcRow[12:14]))
+		x := 0
+		for ; x+3 < width; x += 4 {
 			o := x * 2
-			s0 := int(uint16(srcRow[o]) | uint16(srcRow[o+1])<<8)
-			s1 := int(uint16(srcRow[o+2]) | uint16(srcRow[o+3])<<8)
-			s2 := int(uint16(srcRow[o+4]) | uint16(srcRow[o+5])<<8)
-			s3 := int(uint16(srcRow[o+6]) | uint16(srcRow[o+7])<<8)
-			s4 := int(uint16(srcRow[o+8]) | uint16(srcRow[o+9])<<8)
-			s5 := int(uint16(srcRow[o+10]) | uint16(srcRow[o+11])<<8)
-			s6 := int(uint16(srcRow[o+12]) | uint16(srcRow[o+13])<<8)
-			s7 := int(uint16(srcRow[o+14]) | uint16(srcRow[o+15])<<8)
-			sum := xBias + xk0*s0 + xk1*s1 + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5 + xk6*s6 + xk7*s7
-			imRow[x] = int32((sum + round0Bias) >> round0)
+			s7 := int(binary.LittleEndian.Uint16(srcRow[o+14 : o+16]))
+			s8 := int(binary.LittleEndian.Uint16(srcRow[o+16 : o+18]))
+			s9 := int(binary.LittleEndian.Uint16(srcRow[o+18 : o+20]))
+			s10 := int(binary.LittleEndian.Uint16(srcRow[o+20 : o+22]))
+			sum0 := xBiasRound + xk0*s0 + xk1*s1 + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5 + xk6*s6 + xk7*s7
+			sum1 := xBiasRound + xk0*s1 + xk1*s2 + xk2*s3 + xk3*s4 + xk4*s5 + xk5*s6 + xk6*s7 + xk7*s8
+			sum2 := xBiasRound + xk0*s2 + xk1*s3 + xk2*s4 + xk3*s5 + xk4*s6 + xk5*s7 + xk6*s8 + xk7*s9
+			sum3 := xBiasRound + xk0*s3 + xk1*s4 + xk2*s5 + xk3*s6 + xk4*s7 + xk5*s8 + xk6*s9 + xk7*s10
+			imRow[x] = int32(sum0 >> r0Shift)
+			imRow[x+1] = int32(sum1 >> r0Shift)
+			imRow[x+2] = int32(sum2 >> r0Shift)
+			imRow[x+3] = int32(sum3 >> r0Shift)
+			s0, s1, s2, s3, s4, s5, s6 = s4, s5, s6, s7, s8, s9, s10
+		}
+		for ; x < width; x++ {
+			o := x * 2
+			s7 := int(binary.LittleEndian.Uint16(srcRow[o+14 : o+16]))
+			sum := xBiasRound + xk0*s0 + xk1*s1 + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5 + xk6*s6 + xk7*s7
+			imRow[x] = int32(sum >> r0Shift)
+			s0, s1, s2, s3, s4, s5, s6 = s1, s2, s3, s4, s5, s6, s7
 		}
 	}
 
-	yBias := 1 << offsetBits
+	yBiasRound := (1 << offsetBits) + 64
 	yk0, yk1, yk2, yk3, yk4, yk5, yk6, yk7 := int(yKernel[0]), int(yKernel[1]), int(yKernel[2]), int(yKernel[3]), int(yKernel[4]), int(yKernel[5]), int(yKernel[6]), int(yKernel[7])
 	yFourTap := yk0 == 0 && yk1 == 0 && yk6 == 0 && yk7 == 0
+	ySixTap := !yFourTap && yk0 == 0 && yk7 == 0
 	for y := range height {
-		outRow := out[y*width:]
-		if yFourTap {
-			col := im[(y+2)*imStride : (y+6)*imStride+width]
-			for x := range width {
-				sum := yBias + yk2*int(col[x]) + yk3*int(col[x+imStride]) +
-					yk4*int(col[x+2*imStride]) + yk5*int(col[x+3*imStride])
-				outRow[x] = uint16(roundPowerOfTwo7(sum))
+		outRow := out[y*width : y*width+width]
+		if ySixTap {
+			r1 := im[(y+1)*imStride : (y+1)*imStride+width]
+			r2 := im[(y+2)*imStride : (y+2)*imStride+width]
+			r3 := im[(y+3)*imStride : (y+3)*imStride+width]
+			r4 := im[(y+4)*imStride : (y+4)*imStride+width]
+			r5 := im[(y+5)*imStride : (y+5)*imStride+width]
+			r6 := im[(y+6)*imStride : (y+6)*imStride+width]
+			x := 0
+			for ; x+3 < width; x += 4 {
+				outRow[x] = uint16((yBiasRound + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x])) >> 7)
+				outRow[x+1] = uint16((yBiasRound + yk1*int(r1[x+1]) + yk2*int(r2[x+1]) + yk3*int(r3[x+1]) + yk4*int(r4[x+1]) + yk5*int(r5[x+1]) + yk6*int(r6[x+1])) >> 7)
+				outRow[x+2] = uint16((yBiasRound + yk1*int(r1[x+2]) + yk2*int(r2[x+2]) + yk3*int(r3[x+2]) + yk4*int(r4[x+2]) + yk5*int(r5[x+2]) + yk6*int(r6[x+2])) >> 7)
+				outRow[x+3] = uint16((yBiasRound + yk1*int(r1[x+3]) + yk2*int(r2[x+3]) + yk3*int(r3[x+3]) + yk4*int(r4[x+3]) + yk5*int(r5[x+3]) + yk6*int(r6[x+3])) >> 7)
+			}
+			for ; x < width; x++ {
+				outRow[x] = uint16((yBiasRound + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x])) >> 7)
 			}
 			continue
 		}
-		col := im[y*imStride : (y+7)*imStride+width]
-		for x := range width {
-			sum := yBias + yk0*int(col[x]) + yk1*int(col[x+imStride]) + yk2*int(col[x+2*imStride]) +
-				yk3*int(col[x+3*imStride]) + yk4*int(col[x+4*imStride]) + yk5*int(col[x+5*imStride]) +
-				yk6*int(col[x+6*imStride]) + yk7*int(col[x+7*imStride])
-			outRow[x] = uint16(roundPowerOfTwo7(sum))
+		if yFourTap {
+			r2 := im[(y+2)*imStride : (y+2)*imStride+width]
+			r3 := im[(y+3)*imStride : (y+3)*imStride+width]
+			r4 := im[(y+4)*imStride : (y+4)*imStride+width]
+			r5 := im[(y+5)*imStride : (y+5)*imStride+width]
+			x := 0
+			for ; x+3 < width; x += 4 {
+				outRow[x] = uint16((yBiasRound + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x])) >> 7)
+				outRow[x+1] = uint16((yBiasRound + yk2*int(r2[x+1]) + yk3*int(r3[x+1]) + yk4*int(r4[x+1]) + yk5*int(r5[x+1])) >> 7)
+				outRow[x+2] = uint16((yBiasRound + yk2*int(r2[x+2]) + yk3*int(r3[x+2]) + yk4*int(r4[x+2]) + yk5*int(r5[x+2])) >> 7)
+				outRow[x+3] = uint16((yBiasRound + yk2*int(r2[x+3]) + yk3*int(r3[x+3]) + yk4*int(r4[x+3]) + yk5*int(r5[x+3])) >> 7)
+			}
+			for ; x < width; x++ {
+				outRow[x] = uint16((yBiasRound + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x])) >> 7)
+			}
+			continue
+		}
+		r0 := im[y*imStride : y*imStride+width]
+		r1 := im[(y+1)*imStride : (y+1)*imStride+width]
+		r2 := im[(y+2)*imStride : (y+2)*imStride+width]
+		r3 := im[(y+3)*imStride : (y+3)*imStride+width]
+		r4 := im[(y+4)*imStride : (y+4)*imStride+width]
+		r5 := im[(y+5)*imStride : (y+5)*imStride+width]
+		r6 := im[(y+6)*imStride : (y+6)*imStride+width]
+		r7 := im[(y+7)*imStride : (y+7)*imStride+width]
+		x := 0
+		for ; x+3 < width; x += 4 {
+			sum0 := yBiasRound + yk0*int(r0[x]) + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) +
+				yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x]) + yk7*int(r7[x])
+			sum1 := yBiasRound + yk0*int(r0[x+1]) + yk1*int(r1[x+1]) + yk2*int(r2[x+1]) + yk3*int(r3[x+1]) +
+				yk4*int(r4[x+1]) + yk5*int(r5[x+1]) + yk6*int(r6[x+1]) + yk7*int(r7[x+1])
+			sum2 := yBiasRound + yk0*int(r0[x+2]) + yk1*int(r1[x+2]) + yk2*int(r2[x+2]) + yk3*int(r3[x+2]) +
+				yk4*int(r4[x+2]) + yk5*int(r5[x+2]) + yk6*int(r6[x+2]) + yk7*int(r7[x+2])
+			sum3 := yBiasRound + yk0*int(r0[x+3]) + yk1*int(r1[x+3]) + yk2*int(r2[x+3]) + yk3*int(r3[x+3]) +
+				yk4*int(r4[x+3]) + yk5*int(r5[x+3]) + yk6*int(r6[x+3]) + yk7*int(r7[x+3])
+			outRow[x] = uint16(sum0 >> 7)
+			outRow[x+1] = uint16(sum1 >> 7)
+			outRow[x+2] = uint16(sum2 >> 7)
+			outRow[x+3] = uint16(sum3 >> 7)
+		}
+		for ; x < width; x++ {
+			sum := yBiasRound + yk0*int(r0[x]) + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) +
+				yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x]) + yk7*int(r7[x])
+			outRow[x] = uint16(sum >> 7)
 		}
 	}
 }
@@ -312,9 +399,11 @@ func predictInterCompoundRefHighBDToConvBuf2DClamped(out []uint16, ref frame.Pla
 }
 
 func predictInterCompoundRefHighBDToConvBufXResident(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
+	if width <= 0 || height <= 0 {
+		return
+	}
 	fo := filterTaps/2 - 1
-	bits := filterBits - compoundRound1Bits
-	scale := 1 << bits
+	r0Shift := uint(round0)
 	round0Bias := 1 << (round0 - 1)
 	stride := ref.Stride
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
@@ -323,31 +412,62 @@ func predictInterCompoundRefHighBDToConvBufXResident(out []uint16, ref frame.Pla
 	for y := range height {
 		base := (refY+y)*stride + firstTap*2
 		srcRow := ref.Pix[base : base+(width+filterTaps-1)*2]
-		outRow := out[y*width:]
+		outRow := out[y*width : y*width+width]
 		if fourTap {
-			for x := range width {
+			s2 := int(binary.LittleEndian.Uint16(srcRow[4:6]))
+			s3 := int(binary.LittleEndian.Uint16(srcRow[6:8]))
+			s4 := int(binary.LittleEndian.Uint16(srcRow[8:10]))
+			x := 0
+			for ; x+3 < width; x += 4 {
 				o := x * 2
-				s2 := int(uint16(srcRow[o+4]) | uint16(srcRow[o+5])<<8)
-				s3 := int(uint16(srcRow[o+6]) | uint16(srcRow[o+7])<<8)
-				s4 := int(uint16(srcRow[o+8]) | uint16(srcRow[o+9])<<8)
-				s5 := int(uint16(srcRow[o+10]) | uint16(srcRow[o+11])<<8)
-				res := ((k2*s2 + k3*s3 + k4*s4 + k5*s5 + round0Bias) >> round0) * scale
-				outRow[x] = uint16(res + roundOffset)
+				s5 := int(binary.LittleEndian.Uint16(srcRow[o+10 : o+12]))
+				s6 := int(binary.LittleEndian.Uint16(srcRow[o+12 : o+14]))
+				s7 := int(binary.LittleEndian.Uint16(srcRow[o+14 : o+16]))
+				s8 := int(binary.LittleEndian.Uint16(srcRow[o+16 : o+18]))
+				outRow[x] = uint16(((k2*s2 + k3*s3 + k4*s4 + k5*s5 + round0Bias) >> r0Shift) + roundOffset)
+				outRow[x+1] = uint16(((k2*s3 + k3*s4 + k4*s5 + k5*s6 + round0Bias) >> r0Shift) + roundOffset)
+				outRow[x+2] = uint16(((k2*s4 + k3*s5 + k4*s6 + k5*s7 + round0Bias) >> r0Shift) + roundOffset)
+				outRow[x+3] = uint16(((k2*s5 + k3*s6 + k4*s7 + k5*s8 + round0Bias) >> r0Shift) + roundOffset)
+				s2, s3, s4 = s6, s7, s8
+			}
+			for ; x < width; x++ {
+				o := x * 2
+				s5 := int(binary.LittleEndian.Uint16(srcRow[o+10 : o+12]))
+				outRow[x] = uint16(((k2*s2 + k3*s3 + k4*s4 + k5*s5 + round0Bias) >> r0Shift) + roundOffset)
+				s2, s3, s4 = s3, s4, s5
 			}
 			continue
 		}
-		for x := range width {
+		s0 := int(binary.LittleEndian.Uint16(srcRow[0:2]))
+		s1 := int(binary.LittleEndian.Uint16(srcRow[2:4]))
+		s2 := int(binary.LittleEndian.Uint16(srcRow[4:6]))
+		s3 := int(binary.LittleEndian.Uint16(srcRow[6:8]))
+		s4 := int(binary.LittleEndian.Uint16(srcRow[8:10]))
+		s5 := int(binary.LittleEndian.Uint16(srcRow[10:12]))
+		s6 := int(binary.LittleEndian.Uint16(srcRow[12:14]))
+		x := 0
+		for ; x+3 < width; x += 4 {
 			o := x * 2
-			s0 := int(uint16(srcRow[o]) | uint16(srcRow[o+1])<<8)
-			s1 := int(uint16(srcRow[o+2]) | uint16(srcRow[o+3])<<8)
-			s2 := int(uint16(srcRow[o+4]) | uint16(srcRow[o+5])<<8)
-			s3 := int(uint16(srcRow[o+6]) | uint16(srcRow[o+7])<<8)
-			s4 := int(uint16(srcRow[o+8]) | uint16(srcRow[o+9])<<8)
-			s5 := int(uint16(srcRow[o+10]) | uint16(srcRow[o+11])<<8)
-			s6 := int(uint16(srcRow[o+12]) | uint16(srcRow[o+13])<<8)
-			s7 := int(uint16(srcRow[o+14]) | uint16(srcRow[o+15])<<8)
-			sum := k0*s0 + k1*s1 + k2*s2 + k3*s3 + k4*s4 + k5*s5 + k6*s6 + k7*s7
-			outRow[x] = uint16(((sum+round0Bias)>>round0)*scale + roundOffset)
+			s7 := int(binary.LittleEndian.Uint16(srcRow[o+14 : o+16]))
+			s8 := int(binary.LittleEndian.Uint16(srcRow[o+16 : o+18]))
+			s9 := int(binary.LittleEndian.Uint16(srcRow[o+18 : o+20]))
+			s10 := int(binary.LittleEndian.Uint16(srcRow[o+20 : o+22]))
+			sum0 := k0*s0 + k1*s1 + k2*s2 + k3*s3 + k4*s4 + k5*s5 + k6*s6 + k7*s7 + round0Bias
+			sum1 := k0*s1 + k1*s2 + k2*s3 + k3*s4 + k4*s5 + k5*s6 + k6*s7 + k7*s8 + round0Bias
+			sum2 := k0*s2 + k1*s3 + k2*s4 + k3*s5 + k4*s6 + k5*s7 + k6*s8 + k7*s9 + round0Bias
+			sum3 := k0*s3 + k1*s4 + k2*s5 + k3*s6 + k4*s7 + k5*s8 + k6*s9 + k7*s10 + round0Bias
+			outRow[x] = uint16((sum0 >> r0Shift) + roundOffset)
+			outRow[x+1] = uint16((sum1 >> r0Shift) + roundOffset)
+			outRow[x+2] = uint16((sum2 >> r0Shift) + roundOffset)
+			outRow[x+3] = uint16((sum3 >> r0Shift) + roundOffset)
+			s0, s1, s2, s3, s4, s5, s6 = s4, s5, s6, s7, s8, s9, s10
+		}
+		for ; x < width; x++ {
+			o := x * 2
+			s7 := int(binary.LittleEndian.Uint16(srcRow[o+14 : o+16]))
+			sum := k0*s0 + k1*s1 + k2*s2 + k3*s3 + k4*s4 + k5*s5 + k6*s6 + k7*s7 + round0Bias
+			outRow[x] = uint16((sum >> r0Shift) + roundOffset)
+			s0, s1, s2, s3, s4, s5, s6 = s1, s2, s3, s4, s5, s6, s7
 		}
 	}
 }
@@ -570,53 +690,135 @@ func predictInterCompoundRef8ToConvBuf2DPureGo(out []uint16, ref frame.Plane, re
 }
 
 func predictInterCompoundRef8ToConvBuf2DWithIM(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, offsetBits int, im *compoundIM) {
+	if width <= 0 || height <= 0 {
+		return
+	}
 	const imStride = maxBlockSize
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1
-	xBias := 1 << (8 + filterBits - 1)
+	const xBiasRound = (1 << (8 + filterBits - 1)) + 4
 
 	xk0, xk1, xk2, xk3, xk4, xk5, xk6, xk7 := int(xKernel[0]), int(xKernel[1]), int(xKernel[2]), int(xKernel[3]), int(xKernel[4]), int(xKernel[5]), int(xKernel[6]), int(xKernel[7])
 	xFourTap := xk0 == 0 && xk1 == 0 && xk6 == 0 && xk7 == 0
+	xSixTapAlt := !xFourTap && xk0 == 0 && xk7 == 0 && xk1 >= 0 && xk2 <= 0 && xk3 >= 0 && xk4 >= 0 && xk5 <= 0 && xk6 >= 0 && (xk1+xk3+xk4+xk6) <= 255 && (-xk2-xk5) <= 255
 	firstTap := refX - foX
 	xLo, xHi := clampedXInterior(firstTap, filterTaps, ref.Width, width)
 	for y := range imH {
 		cy := clampInt(refY-foY+y, 0, ref.Height-1)
 		rowBase := cy * ref.Stride
-		imRow := im[y*imStride:]
-		if xFourTap {
+		imRow := im[y*imStride : y*imStride+width]
+		if xSixTapAlt {
+			const loMsk = 0x00FF00FF00FF00FF
+			pk1, pk3, pk4, pk6 := uint64(xk1), uint64(xk3), uint64(xk4), uint64(xk6)
+			nk2, nk5 := uint64(-xk2), uint64(-xk5)
 			for x := 0; x < xLo; x++ {
 				sx := firstTap + x
-				sum := xBias +
+				sum := xBiasRound +
+					xk1*int(loadSample8ClampedRow(ref, sx+1, rowBase)) +
 					xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
 					xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
 					xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
-					xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
-				imRow[x] = int32(roundPowerOfTwo3(sum))
+					xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
+					xk6*int(loadSample8ClampedRow(ref, sx+6, rowBase))
+				imRow[x] = int32(sum >> 3)
 			}
-			if xHi > xLo {
-				srcRow := ref.Pix[rowBase+firstTap+xLo:]
-				for x := xLo; x < xHi; x++ {
-					i := x - xLo
-					s := srcRow[i : i+filterTaps]
-					sum := xBias + xk2*int(s[2]) + xk3*int(s[3]) + xk4*int(s[4]) + xk5*int(s[5])
-					imRow[x] = int32(roundPowerOfTwo3(sum))
+			if n := xHi - xLo; n > 0 {
+				srcBase := rowBase + firstTap + xLo
+				srcRow := ref.Pix[srcBase : srcBase+n+filterTaps-1]
+				dstSpan := imRow[xLo:xHi]
+				i := 0
+				for ; i+7 < n; i += 8 {
+					w0 := binary.LittleEndian.Uint64(srcRow[i+1 : i+9])
+					w1 := binary.LittleEndian.Uint64(srcRow[i+6 : i+14])
+					e0 := w0 & loMsk
+					o0 := (w0 >> 8) & loMsk
+					o1 := w1 & loMsk
+					e1 := (w1 >> 8) & loMsk
+					t3 := (e0 >> 16) | ((e1 >> 16) << 48)
+					t4 := (o0 >> 16) | ((o1 >> 32) << 48)
+					t5 := (e0 >> 32) | ((e1 >> 16) << 32)
+
+					posE := pk1*e0 + pk3*t3 + pk4*t4 + pk6*o1
+					negE := nk2*o0 + nk5*t5
+					posO := pk1*o0 + pk3*t4 + pk4*t5 + pk6*e1
+					negO := nk2*t3 + nk5*o1
+
+					dstSpan[i] = int32((xBiasRound + int(uint16(posE)) - int(uint16(negE))) >> 3)
+					dstSpan[i+1] = int32((xBiasRound + int(uint16(posO)) - int(uint16(negO))) >> 3)
+					dstSpan[i+2] = int32((xBiasRound + int(uint16(posE>>16)) - int(uint16(negE>>16))) >> 3)
+					dstSpan[i+3] = int32((xBiasRound + int(uint16(posO>>16)) - int(uint16(negO>>16))) >> 3)
+					dstSpan[i+4] = int32((xBiasRound + int(uint16(posE>>32)) - int(uint16(negE>>32))) >> 3)
+					dstSpan[i+5] = int32((xBiasRound + int(uint16(posO>>32)) - int(uint16(negO>>32))) >> 3)
+					dstSpan[i+6] = int32((xBiasRound + int(uint16(posE>>48)) - int(uint16(negE>>48))) >> 3)
+					dstSpan[i+7] = int32((xBiasRound + int(uint16(posO>>48)) - int(uint16(negO>>48))) >> 3)
+				}
+				for ; i < n; i++ {
+					sum := xBiasRound + xk1*int(srcRow[i+1]) + xk2*int(srcRow[i+2]) + xk3*int(srcRow[i+3]) +
+						xk4*int(srcRow[i+4]) + xk5*int(srcRow[i+5]) + xk6*int(srcRow[i+6])
+					dstSpan[i] = int32(sum >> 3)
 				}
 			}
 			for x := xHi; x < width; x++ {
 				sx := firstTap + x
-				sum := xBias +
+				sum := xBiasRound +
+					xk1*int(loadSample8ClampedRow(ref, sx+1, rowBase)) +
+					xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+					xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+					xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+					xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
+					xk6*int(loadSample8ClampedRow(ref, sx+6, rowBase))
+				imRow[x] = int32(sum >> 3)
+			}
+			continue
+		}
+		if xFourTap {
+			for x := 0; x < xLo; x++ {
+				sx := firstTap + x
+				sum := xBiasRound +
 					xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
 					xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
 					xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
 					xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
-				imRow[x] = int32(roundPowerOfTwo3(sum))
+				imRow[x] = int32(sum >> 3)
+			}
+			if n := xHi - xLo; n > 0 {
+				srcBase := rowBase + firstTap + xLo
+				srcRow := ref.Pix[srcBase : srcBase+n+filterTaps-1]
+				dstSpan := imRow[xLo:xHi]
+				s2, s3, s4 := int(srcRow[2]), int(srcRow[3]), int(srcRow[4])
+				i := 0
+				for ; i+3 < n; i += 4 {
+					s5 := int(srcRow[i+5])
+					s6 := int(srcRow[i+6])
+					s7 := int(srcRow[i+7])
+					s8 := int(srcRow[i+8])
+					dstSpan[i] = int32((xBiasRound + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5) >> 3)
+					dstSpan[i+1] = int32((xBiasRound + xk2*s3 + xk3*s4 + xk4*s5 + xk5*s6) >> 3)
+					dstSpan[i+2] = int32((xBiasRound + xk2*s4 + xk3*s5 + xk4*s6 + xk5*s7) >> 3)
+					dstSpan[i+3] = int32((xBiasRound + xk2*s5 + xk3*s6 + xk4*s7 + xk5*s8) >> 3)
+					s2, s3, s4 = s6, s7, s8
+				}
+				for ; i < n; i++ {
+					s5 := int(srcRow[i+5])
+					dstSpan[i] = int32((xBiasRound + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5) >> 3)
+					s2, s3, s4 = s3, s4, s5
+				}
+			}
+			for x := xHi; x < width; x++ {
+				sx := firstTap + x
+				sum := xBiasRound +
+					xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+					xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+					xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+					xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
+				imRow[x] = int32(sum >> 3)
 			}
 			continue
 		}
 		for x := 0; x < xLo; x++ {
 			sx := firstTap + x
-			sum := xBias +
+			sum := xBiasRound +
 				xk0*int(loadSample8ClampedRow(ref, sx, rowBase)) +
 				xk1*int(loadSample8ClampedRow(ref, sx+1, rowBase)) +
 				xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
@@ -625,21 +827,39 @@ func predictInterCompoundRef8ToConvBuf2DWithIM(out []uint16, ref frame.Plane, re
 				xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
 				xk6*int(loadSample8ClampedRow(ref, sx+6, rowBase)) +
 				xk7*int(loadSample8ClampedRow(ref, sx+7, rowBase))
-			imRow[x] = int32(roundPowerOfTwo3(sum))
+			imRow[x] = int32(sum >> 3)
 		}
-		if xHi > xLo {
-			srcRow := ref.Pix[rowBase+firstTap+xLo:]
-			for x := xLo; x < xHi; x++ {
-				i := x - xLo
-				s := srcRow[i : i+filterTaps]
-				sum := xBias + xk0*int(s[0]) + xk1*int(s[1]) + xk2*int(s[2]) + xk3*int(s[3]) +
-					xk4*int(s[4]) + xk5*int(s[5]) + xk6*int(s[6]) + xk7*int(s[7])
-				imRow[x] = int32(roundPowerOfTwo3(sum))
+		if n := xHi - xLo; n > 0 {
+			srcBase := rowBase + firstTap + xLo
+			srcRow := ref.Pix[srcBase : srcBase+n+filterTaps-1]
+			dstSpan := imRow[xLo:xHi]
+			s0, s1, s2, s3, s4, s5, s6 := int(srcRow[0]), int(srcRow[1]), int(srcRow[2]), int(srcRow[3]), int(srcRow[4]), int(srcRow[5]), int(srcRow[6])
+			i := 0
+			for ; i+3 < n; i += 4 {
+				s7 := int(srcRow[i+7])
+				s8 := int(srcRow[i+8])
+				s9 := int(srcRow[i+9])
+				s10 := int(srcRow[i+10])
+				sum0 := xBiasRound + xk0*s0 + xk1*s1 + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5 + xk6*s6 + xk7*s7
+				sum1 := xBiasRound + xk0*s1 + xk1*s2 + xk2*s3 + xk3*s4 + xk4*s5 + xk5*s6 + xk6*s7 + xk7*s8
+				sum2 := xBiasRound + xk0*s2 + xk1*s3 + xk2*s4 + xk3*s5 + xk4*s6 + xk5*s7 + xk6*s8 + xk7*s9
+				sum3 := xBiasRound + xk0*s3 + xk1*s4 + xk2*s5 + xk3*s6 + xk4*s7 + xk5*s8 + xk6*s9 + xk7*s10
+				dstSpan[i] = int32(sum0 >> 3)
+				dstSpan[i+1] = int32(sum1 >> 3)
+				dstSpan[i+2] = int32(sum2 >> 3)
+				dstSpan[i+3] = int32(sum3 >> 3)
+				s0, s1, s2, s3, s4, s5, s6 = s4, s5, s6, s7, s8, s9, s10
+			}
+			for ; i < n; i++ {
+				s7 := int(srcRow[i+7])
+				sum := xBiasRound + xk0*s0 + xk1*s1 + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5 + xk6*s6 + xk7*s7
+				dstSpan[i] = int32(sum >> 3)
+				s0, s1, s2, s3, s4, s5, s6 = s1, s2, s3, s4, s5, s6, s7
 			}
 		}
 		for x := xHi; x < width; x++ {
 			sx := firstTap + x
-			sum := xBias +
+			sum := xBiasRound +
 				xk0*int(loadSample8ClampedRow(ref, sx, rowBase)) +
 				xk1*int(loadSample8ClampedRow(ref, sx+1, rowBase)) +
 				xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
@@ -648,30 +868,79 @@ func predictInterCompoundRef8ToConvBuf2DWithIM(out []uint16, ref frame.Plane, re
 				xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
 				xk6*int(loadSample8ClampedRow(ref, sx+6, rowBase)) +
 				xk7*int(loadSample8ClampedRow(ref, sx+7, rowBase))
-			imRow[x] = int32(roundPowerOfTwo3(sum))
+			imRow[x] = int32(sum >> 3)
 		}
 	}
 
-	yBias := 1 << offsetBits
+	yBiasRound := (1 << offsetBits) + 64
 	yk0, yk1, yk2, yk3, yk4, yk5, yk6, yk7 := int(yKernel[0]), int(yKernel[1]), int(yKernel[2]), int(yKernel[3]), int(yKernel[4]), int(yKernel[5]), int(yKernel[6]), int(yKernel[7])
 	yFourTap := yk0 == 0 && yk1 == 0 && yk6 == 0 && yk7 == 0
+	ySixTap := !yFourTap && yk0 == 0 && yk7 == 0
 	for y := range height {
-		outRow := out[y*width:]
-		if yFourTap {
-			col := im[(y+2)*imStride : (y+6)*imStride+width]
-			for x := range width {
-				sum := yBias + yk2*int(col[x]) + yk3*int(col[x+imStride]) +
-					yk4*int(col[x+2*imStride]) + yk5*int(col[x+3*imStride])
-				outRow[x] = uint16(roundPowerOfTwo7(sum))
+		outRow := out[y*width : y*width+width]
+		if ySixTap {
+			r1 := im[(y+1)*imStride : (y+1)*imStride+width]
+			r2 := im[(y+2)*imStride : (y+2)*imStride+width]
+			r3 := im[(y+3)*imStride : (y+3)*imStride+width]
+			r4 := im[(y+4)*imStride : (y+4)*imStride+width]
+			r5 := im[(y+5)*imStride : (y+5)*imStride+width]
+			r6 := im[(y+6)*imStride : (y+6)*imStride+width]
+			x := 0
+			for ; x+3 < width; x += 4 {
+				outRow[x] = uint16((yBiasRound + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x])) >> 7)
+				outRow[x+1] = uint16((yBiasRound + yk1*int(r1[x+1]) + yk2*int(r2[x+1]) + yk3*int(r3[x+1]) + yk4*int(r4[x+1]) + yk5*int(r5[x+1]) + yk6*int(r6[x+1])) >> 7)
+				outRow[x+2] = uint16((yBiasRound + yk1*int(r1[x+2]) + yk2*int(r2[x+2]) + yk3*int(r3[x+2]) + yk4*int(r4[x+2]) + yk5*int(r5[x+2]) + yk6*int(r6[x+2])) >> 7)
+				outRow[x+3] = uint16((yBiasRound + yk1*int(r1[x+3]) + yk2*int(r2[x+3]) + yk3*int(r3[x+3]) + yk4*int(r4[x+3]) + yk5*int(r5[x+3]) + yk6*int(r6[x+3])) >> 7)
+			}
+			for ; x < width; x++ {
+				outRow[x] = uint16((yBiasRound + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x])) >> 7)
 			}
 			continue
 		}
-		col := im[y*imStride : (y+7)*imStride+width]
-		for x := range width {
-			sum := yBias + yk0*int(col[x]) + yk1*int(col[x+imStride]) + yk2*int(col[x+2*imStride]) +
-				yk3*int(col[x+3*imStride]) + yk4*int(col[x+4*imStride]) + yk5*int(col[x+5*imStride]) +
-				yk6*int(col[x+6*imStride]) + yk7*int(col[x+7*imStride])
-			outRow[x] = uint16(roundPowerOfTwo7(sum))
+		if yFourTap {
+			r2 := im[(y+2)*imStride : (y+2)*imStride+width]
+			r3 := im[(y+3)*imStride : (y+3)*imStride+width]
+			r4 := im[(y+4)*imStride : (y+4)*imStride+width]
+			r5 := im[(y+5)*imStride : (y+5)*imStride+width]
+			x := 0
+			for ; x+3 < width; x += 4 {
+				outRow[x] = uint16((yBiasRound + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x])) >> 7)
+				outRow[x+1] = uint16((yBiasRound + yk2*int(r2[x+1]) + yk3*int(r3[x+1]) + yk4*int(r4[x+1]) + yk5*int(r5[x+1])) >> 7)
+				outRow[x+2] = uint16((yBiasRound + yk2*int(r2[x+2]) + yk3*int(r3[x+2]) + yk4*int(r4[x+2]) + yk5*int(r5[x+2])) >> 7)
+				outRow[x+3] = uint16((yBiasRound + yk2*int(r2[x+3]) + yk3*int(r3[x+3]) + yk4*int(r4[x+3]) + yk5*int(r5[x+3])) >> 7)
+			}
+			for ; x < width; x++ {
+				outRow[x] = uint16((yBiasRound + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x])) >> 7)
+			}
+			continue
+		}
+		r0 := im[y*imStride : y*imStride+width]
+		r1 := im[(y+1)*imStride : (y+1)*imStride+width]
+		r2 := im[(y+2)*imStride : (y+2)*imStride+width]
+		r3 := im[(y+3)*imStride : (y+3)*imStride+width]
+		r4 := im[(y+4)*imStride : (y+4)*imStride+width]
+		r5 := im[(y+5)*imStride : (y+5)*imStride+width]
+		r6 := im[(y+6)*imStride : (y+6)*imStride+width]
+		r7 := im[(y+7)*imStride : (y+7)*imStride+width]
+		x := 0
+		for ; x+3 < width; x += 4 {
+			sum0 := yBiasRound + yk0*int(r0[x]) + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) +
+				yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x]) + yk7*int(r7[x])
+			sum1 := yBiasRound + yk0*int(r0[x+1]) + yk1*int(r1[x+1]) + yk2*int(r2[x+1]) + yk3*int(r3[x+1]) +
+				yk4*int(r4[x+1]) + yk5*int(r5[x+1]) + yk6*int(r6[x+1]) + yk7*int(r7[x+1])
+			sum2 := yBiasRound + yk0*int(r0[x+2]) + yk1*int(r1[x+2]) + yk2*int(r2[x+2]) + yk3*int(r3[x+2]) +
+				yk4*int(r4[x+2]) + yk5*int(r5[x+2]) + yk6*int(r6[x+2]) + yk7*int(r7[x+2])
+			sum3 := yBiasRound + yk0*int(r0[x+3]) + yk1*int(r1[x+3]) + yk2*int(r2[x+3]) + yk3*int(r3[x+3]) +
+				yk4*int(r4[x+3]) + yk5*int(r5[x+3]) + yk6*int(r6[x+3]) + yk7*int(r7[x+3])
+			outRow[x] = uint16(sum0 >> 7)
+			outRow[x+1] = uint16(sum1 >> 7)
+			outRow[x+2] = uint16(sum2 >> 7)
+			outRow[x+3] = uint16(sum3 >> 7)
+		}
+		for ; x < width; x++ {
+			sum := yBiasRound + yk0*int(r0[x]) + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) +
+				yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x]) + yk7*int(r7[x])
+			outRow[x] = uint16(sum >> 7)
 		}
 	}
 }
@@ -691,6 +960,9 @@ func predictInterCompoundRef8ToConvBufXEmuEdge(out []uint16, ref frame.Plane, re
 }
 
 func predictInterCompoundRef8ToConvBufXPureGo(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, roundOffset int) {
+	if width <= 0 || height <= 0 {
+		return
+	}
 	fo := filterTaps/2 - 1
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
 	fourTap := k0 == 0 && k1 == 0 && k6 == 0 && k7 == 0
@@ -699,7 +971,7 @@ func predictInterCompoundRef8ToConvBufXPureGo(out []uint16, ref frame.Plane, ref
 	for y := range height {
 		cy := clampInt(refY+y, 0, ref.Height-1)
 		rowBase := cy * ref.Stride
-		outRow := out[y*width:]
+		outRow := out[y*width : y*width+width]
 		if fourTap {
 			for x := 0; x < xLo; x++ {
 				sx := firstTap + x
@@ -707,15 +979,29 @@ func predictInterCompoundRef8ToConvBufXPureGo(out []uint16, ref frame.Plane, ref
 					k3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
 					k4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
 					k5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
-				outRow[x] = uint16(roundPowerOfTwo3(sum) + roundOffset)
+				outRow[x] = uint16(((sum + 4) >> 3) + roundOffset)
 			}
-			if xHi > xLo {
-				srcRow := ref.Pix[rowBase+firstTap+xLo:]
-				for x := xLo; x < xHi; x++ {
-					i := x - xLo
-					s := srcRow[i : i+filterTaps]
-					sum := k2*int(s[2]) + k3*int(s[3]) + k4*int(s[4]) + k5*int(s[5])
-					outRow[x] = uint16(roundPowerOfTwo3(sum) + roundOffset)
+			if n := xHi - xLo; n > 0 {
+				srcBase := rowBase + firstTap + xLo
+				srcRow := ref.Pix[srcBase : srcBase+n+filterTaps-1]
+				dstSpan := outRow[xLo:xHi]
+				s2, s3, s4 := int(srcRow[2]), int(srcRow[3]), int(srcRow[4])
+				i := 0
+				for ; i+3 < n; i += 4 {
+					s5 := int(srcRow[i+5])
+					s6 := int(srcRow[i+6])
+					s7 := int(srcRow[i+7])
+					s8 := int(srcRow[i+8])
+					dstSpan[i] = uint16(((k2*s2 + k3*s3 + k4*s4 + k5*s5 + 4) >> 3) + roundOffset)
+					dstSpan[i+1] = uint16(((k2*s3 + k3*s4 + k4*s5 + k5*s6 + 4) >> 3) + roundOffset)
+					dstSpan[i+2] = uint16(((k2*s4 + k3*s5 + k4*s6 + k5*s7 + 4) >> 3) + roundOffset)
+					dstSpan[i+3] = uint16(((k2*s5 + k3*s6 + k4*s7 + k5*s8 + 4) >> 3) + roundOffset)
+					s2, s3, s4 = s6, s7, s8
+				}
+				for ; i < n; i++ {
+					s5 := int(srcRow[i+5])
+					dstSpan[i] = uint16(((k2*s2 + k3*s3 + k4*s4 + k5*s5 + 4) >> 3) + roundOffset)
+					s2, s3, s4 = s3, s4, s5
 				}
 			}
 			for x := xHi; x < width; x++ {
@@ -724,7 +1010,7 @@ func predictInterCompoundRef8ToConvBufXPureGo(out []uint16, ref frame.Plane, ref
 					k3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
 					k4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
 					k5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
-				outRow[x] = uint16(roundPowerOfTwo3(sum) + roundOffset)
+				outRow[x] = uint16(((sum + 4) >> 3) + roundOffset)
 			}
 			continue
 		}
@@ -738,16 +1024,34 @@ func predictInterCompoundRef8ToConvBufXPureGo(out []uint16, ref frame.Plane, ref
 				k5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
 				k6*int(loadSample8ClampedRow(ref, sx+6, rowBase)) +
 				k7*int(loadSample8ClampedRow(ref, sx+7, rowBase))
-			outRow[x] = uint16(roundPowerOfTwo3(sum) + roundOffset)
+			outRow[x] = uint16(((sum + 4) >> 3) + roundOffset)
 		}
-		if xHi > xLo {
-			srcRow := ref.Pix[rowBase+firstTap+xLo:]
-			for x := xLo; x < xHi; x++ {
-				i := x - xLo
-				s := srcRow[i : i+filterTaps]
-				sum := k0*int(s[0]) + k1*int(s[1]) + k2*int(s[2]) + k3*int(s[3]) +
-					k4*int(s[4]) + k5*int(s[5]) + k6*int(s[6]) + k7*int(s[7])
-				outRow[x] = uint16(roundPowerOfTwo3(sum) + roundOffset)
+		if n := xHi - xLo; n > 0 {
+			srcBase := rowBase + firstTap + xLo
+			srcRow := ref.Pix[srcBase : srcBase+n+filterTaps-1]
+			dstSpan := outRow[xLo:xHi]
+			s0, s1, s2, s3, s4, s5, s6 := int(srcRow[0]), int(srcRow[1]), int(srcRow[2]), int(srcRow[3]), int(srcRow[4]), int(srcRow[5]), int(srcRow[6])
+			i := 0
+			for ; i+3 < n; i += 4 {
+				s7 := int(srcRow[i+7])
+				s8 := int(srcRow[i+8])
+				s9 := int(srcRow[i+9])
+				s10 := int(srcRow[i+10])
+				sum0 := k0*s0 + k1*s1 + k2*s2 + k3*s3 + k4*s4 + k5*s5 + k6*s6 + k7*s7 + 4
+				sum1 := k0*s1 + k1*s2 + k2*s3 + k3*s4 + k4*s5 + k5*s6 + k6*s7 + k7*s8 + 4
+				sum2 := k0*s2 + k1*s3 + k2*s4 + k3*s5 + k4*s6 + k5*s7 + k6*s8 + k7*s9 + 4
+				sum3 := k0*s3 + k1*s4 + k2*s5 + k3*s6 + k4*s7 + k5*s8 + k6*s9 + k7*s10 + 4
+				dstSpan[i] = uint16((sum0 >> 3) + roundOffset)
+				dstSpan[i+1] = uint16((sum1 >> 3) + roundOffset)
+				dstSpan[i+2] = uint16((sum2 >> 3) + roundOffset)
+				dstSpan[i+3] = uint16((sum3 >> 3) + roundOffset)
+				s0, s1, s2, s3, s4, s5, s6 = s4, s5, s6, s7, s8, s9, s10
+			}
+			for ; i < n; i++ {
+				s7 := int(srcRow[i+7])
+				sum := k0*s0 + k1*s1 + k2*s2 + k3*s3 + k4*s4 + k5*s5 + k6*s6 + k7*s7 + 4
+				dstSpan[i] = uint16((sum >> 3) + roundOffset)
+				s0, s1, s2, s3, s4, s5, s6 = s1, s2, s3, s4, s5, s6, s7
 			}
 		}
 		for x := xHi; x < width; x++ {
@@ -760,7 +1064,7 @@ func predictInterCompoundRef8ToConvBufXPureGo(out []uint16, ref frame.Plane, ref
 				k5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
 				k6*int(loadSample8ClampedRow(ref, sx+6, rowBase)) +
 				k7*int(loadSample8ClampedRow(ref, sx+7, rowBase))
-			outRow[x] = uint16(roundPowerOfTwo3(sum) + roundOffset)
+			outRow[x] = uint16(((sum + 4) >> 3) + roundOffset)
 		}
 	}
 }
@@ -776,8 +1080,11 @@ func predictInterCompoundRef8ToConvBufYEmuEdge(out []uint16, ref frame.Plane, re
 }
 
 func predictInterCompoundRef8ToConvBufYPureGo(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, kernel [filterTaps]int16, round0 int, roundOffset int) {
+	if width <= 0 || height <= 0 {
+		return
+	}
 	fo := filterTaps/2 - 1
-	bits := filterBits - round0
+	bits := uint(filterBits - round0)
 	scale := 1 << bits
 	stride := ref.Stride
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
@@ -785,27 +1092,55 @@ func predictInterCompoundRef8ToConvBufYPureGo(out []uint16, ref frame.Plane, ref
 	xLo, xHi := clampedXInterior(refX, 1, ref.Width, width)
 	for y := range height {
 		sy := refY + y - fo
-		outRow := out[y*width:]
+		outRow := out[y*width : y*width+width]
 		yResident := sy >= 0 && sy+filterTaps-1 <= ref.Height-1
 		if yResident && xHi > xLo {
+			n := xHi - xLo
+			dstSpan := outRow[xLo:xHi]
+			base := sy*stride + refX + xLo
 			if fourTap {
-				col := ref.Pix[(sy+2)*stride+refX+xLo:]
-				for x := xLo; x < xHi; x++ {
-					i := x - xLo
-					sum := k2*int(col[i]) + k3*int(col[i+stride]) +
-						k4*int(col[i+2*stride]) + k5*int(col[i+3*stride])
-					res := sum * scale
-					outRow[x] = uint16(roundPowerOfTwo(res, compoundRound1Bits) + roundOffset)
+				r2 := ref.Pix[base+2*stride : base+2*stride+n]
+				r3 := ref.Pix[base+3*stride : base+3*stride+n]
+				r4 := ref.Pix[base+4*stride : base+4*stride+n]
+				r5 := ref.Pix[base+5*stride : base+5*stride+n]
+				i := 0
+				for ; i+3 < n; i += 4 {
+					s0 := k2*int(r2[i]) + k3*int(r3[i]) + k4*int(r4[i]) + k5*int(r5[i])
+					s1 := k2*int(r2[i+1]) + k3*int(r3[i+1]) + k4*int(r4[i+1]) + k5*int(r5[i+1])
+					s2 := k2*int(r2[i+2]) + k3*int(r3[i+2]) + k4*int(r4[i+2]) + k5*int(r5[i+2])
+					s3 := k2*int(r2[i+3]) + k3*int(r3[i+3]) + k4*int(r4[i+3]) + k5*int(r5[i+3])
+					dstSpan[i] = uint16(((s0<<bits + 64) >> 7) + roundOffset)
+					dstSpan[i+1] = uint16(((s1<<bits + 64) >> 7) + roundOffset)
+					dstSpan[i+2] = uint16(((s2<<bits + 64) >> 7) + roundOffset)
+					dstSpan[i+3] = uint16(((s3<<bits + 64) >> 7) + roundOffset)
+				}
+				for ; i < n; i++ {
+					s := k2*int(r2[i]) + k3*int(r3[i]) + k4*int(r4[i]) + k5*int(r5[i])
+					dstSpan[i] = uint16(((s<<bits + 64) >> 7) + roundOffset)
 				}
 			} else {
-				col := ref.Pix[sy*stride+refX+xLo:]
-				for x := xLo; x < xHi; x++ {
-					i := x - xLo
-					sum := k0*int(col[i]) + k1*int(col[i+stride]) + k2*int(col[i+2*stride]) +
-						k3*int(col[i+3*stride]) + k4*int(col[i+4*stride]) + k5*int(col[i+5*stride]) +
-						k6*int(col[i+6*stride]) + k7*int(col[i+7*stride])
-					res := sum * scale
-					outRow[x] = uint16(roundPowerOfTwo(res, compoundRound1Bits) + roundOffset)
+				r0 := ref.Pix[base : base+n]
+				r1 := ref.Pix[base+stride : base+stride+n]
+				r2 := ref.Pix[base+2*stride : base+2*stride+n]
+				r3 := ref.Pix[base+3*stride : base+3*stride+n]
+				r4 := ref.Pix[base+4*stride : base+4*stride+n]
+				r5 := ref.Pix[base+5*stride : base+5*stride+n]
+				r6 := ref.Pix[base+6*stride : base+6*stride+n]
+				r7 := ref.Pix[base+7*stride : base+7*stride+n]
+				i := 0
+				for ; i+3 < n; i += 4 {
+					s0 := k0*int(r0[i]) + k1*int(r1[i]) + k2*int(r2[i]) + k3*int(r3[i]) + k4*int(r4[i]) + k5*int(r5[i]) + k6*int(r6[i]) + k7*int(r7[i])
+					s1 := k0*int(r0[i+1]) + k1*int(r1[i+1]) + k2*int(r2[i+1]) + k3*int(r3[i+1]) + k4*int(r4[i+1]) + k5*int(r5[i+1]) + k6*int(r6[i+1]) + k7*int(r7[i+1])
+					s2 := k0*int(r0[i+2]) + k1*int(r1[i+2]) + k2*int(r2[i+2]) + k3*int(r3[i+2]) + k4*int(r4[i+2]) + k5*int(r5[i+2]) + k6*int(r6[i+2]) + k7*int(r7[i+2])
+					s3 := k0*int(r0[i+3]) + k1*int(r1[i+3]) + k2*int(r2[i+3]) + k3*int(r3[i+3]) + k4*int(r4[i+3]) + k5*int(r5[i+3]) + k6*int(r6[i+3]) + k7*int(r7[i+3])
+					dstSpan[i] = uint16(((s0<<bits + 64) >> 7) + roundOffset)
+					dstSpan[i+1] = uint16(((s1<<bits + 64) >> 7) + roundOffset)
+					dstSpan[i+2] = uint16(((s2<<bits + 64) >> 7) + roundOffset)
+					dstSpan[i+3] = uint16(((s3<<bits + 64) >> 7) + roundOffset)
+				}
+				for ; i < n; i++ {
+					s := k0*int(r0[i]) + k1*int(r1[i]) + k2*int(r2[i]) + k3*int(r3[i]) + k4*int(r4[i]) + k5*int(r5[i]) + k6*int(r6[i]) + k7*int(r7[i])
+					dstSpan[i] = uint16(((s<<bits + 64) >> 7) + roundOffset)
 				}
 			}
 			for x := 0; x < xLo; x++ {
@@ -846,26 +1181,36 @@ func compoundY8ClampedConvBufSample(ref frame.Plane, sx int, sy int, scale int, 
 var predictInterCompoundRef8ToConvBufCopyImpl = predictInterCompoundRef8ToConvBufCopyPureGo
 
 func predictInterCompoundRef8ToConvBufCopyPureGo(out []uint16, ref frame.Plane, refX int, refY int, width int, height int, round0 int, roundOffset int) {
-	bits := 2*filterBits - compoundRound1Bits - round0
-	scale := 1 << bits
+	if width <= 0 || height <= 0 {
+		return
+	}
+	bits := uint(2*filterBits - compoundRound1Bits - round0)
 	xLo, xHi := clampedXInterior(refX, 1, ref.Width, width)
 	for y := range height {
 		cy := clampInt(refY+y, 0, ref.Height-1)
 		rowBase := cy * ref.Stride
-		outRow := out[y*width:]
-		if xHi > xLo {
-			srcRow := ref.Pix[rowBase+refX+xLo:]
-			for x := xLo; x < xHi; x++ {
-				outRow[x] = uint16(int(srcRow[x-xLo])*scale + roundOffset)
+		outRow := out[y*width : y*width+width]
+		if n := xHi - xLo; n > 0 {
+			srcRow := ref.Pix[rowBase+refX+xLo : rowBase+refX+xHi]
+			dstSpan := outRow[xLo:xHi]
+			i := 0
+			for ; i+3 < n; i += 4 {
+				dstSpan[i] = uint16(int(srcRow[i])<<bits + roundOffset)
+				dstSpan[i+1] = uint16(int(srcRow[i+1])<<bits + roundOffset)
+				dstSpan[i+2] = uint16(int(srcRow[i+2])<<bits + roundOffset)
+				dstSpan[i+3] = uint16(int(srcRow[i+3])<<bits + roundOffset)
+			}
+			for ; i < n; i++ {
+				dstSpan[i] = uint16(int(srcRow[i])<<bits + roundOffset)
 			}
 		}
 		for x := 0; x < xLo; x++ {
 			sx := clampInt(refX+x, 0, ref.Width-1)
-			outRow[x] = uint16(int(ref.Pix[rowBase+sx])*scale + roundOffset)
+			outRow[x] = uint16(int(ref.Pix[rowBase+sx])<<bits + roundOffset)
 		}
 		for x := xHi; x < width; x++ {
 			sx := clampInt(refX+x, 0, ref.Width-1)
-			outRow[x] = uint16(int(ref.Pix[rowBase+sx])*scale + roundOffset)
+			outRow[x] = uint16(int(ref.Pix[rowBase+sx])<<bits + roundOffset)
 		}
 	}
 }
@@ -1348,27 +1693,103 @@ var blendCompoundAvg8Impl = blendCompoundAvg8PureGo
 var blendCompoundAvgHighBDImpl = blendCompoundAvgHighBD
 
 func blendCompoundAvg8PureGo(dst frame.Plane, src0 []uint16, src1 []uint16, dstX int, dstY int, width int, height int, fwdOffset int, bckOffset int, roundOffset int, roundBits int) {
+	if width <= 0 || height <= 0 {
+		return
+	}
+	postAdd := -roundOffset
+	rShift := uint(0)
+	if roundBits > 0 {
+		postAdd += 1 << (roundBits - 1)
+		rShift = uint(roundBits)
+	}
+	if fwdOffset == 8 && bckOffset == 8 {
+		for y := range height {
+			dstBase := (dstY+y)*dst.Stride + dstX
+			dstRow := dst.Pix[dstBase : dstBase+width]
+			srcOff := y * width
+			s0 := src0[srcOff : srcOff+width]
+			s1 := src1[srcOff : srcOff+width]
+			x := 0
+			for ; x+3 < width; x += 4 {
+				v0 := (((int(s0[x]) + int(s1[x])) >> 1) + postAdd) >> rShift
+				v1 := (((int(s0[x+1]) + int(s1[x+1])) >> 1) + postAdd) >> rShift
+				v2 := (((int(s0[x+2]) + int(s1[x+2])) >> 1) + postAdd) >> rShift
+				v3 := (((int(s0[x+3]) + int(s1[x+3])) >> 1) + postAdd) >> rShift
+				if uint(v0|v1|v2|v3) <= 255 {
+					dstRow[x] = byte(v0)
+					dstRow[x+1] = byte(v1)
+					dstRow[x+2] = byte(v2)
+					dstRow[x+3] = byte(v3)
+				} else {
+					dstRow[x] = clipPixel(v0)
+					dstRow[x+1] = clipPixel(v1)
+					dstRow[x+2] = clipPixel(v2)
+					dstRow[x+3] = clipPixel(v3)
+				}
+			}
+			for ; x < width; x++ {
+				dstRow[x] = clipPixel((((int(s0[x]) + int(s1[x])) >> 1) + postAdd) >> rShift)
+			}
+		}
+		return
+	}
 	for y := range height {
-		dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX:]
+		dstBase := (dstY+y)*dst.Stride + dstX
+		dstRow := dst.Pix[dstBase : dstBase+width]
 		srcOff := y * width
-		for x := range width {
-			i := srcOff + x
-			tmp := int(src0[i])*fwdOffset + int(src1[i])*bckOffset
-			tmp >>= 4 // DIST_PRECISION_BITS
-			tmp -= roundOffset
-			dstRow[x] = clipPixel(roundPowerOfTwo(tmp, roundBits))
+		s0 := src0[srcOff : srcOff+width]
+		s1 := src1[srcOff : srcOff+width]
+		x := 0
+		for ; x+3 < width; x += 4 {
+			v0 := (((int(s0[x])*fwdOffset + int(s1[x])*bckOffset) >> 4) + postAdd) >> rShift
+			v1 := (((int(s0[x+1])*fwdOffset + int(s1[x+1])*bckOffset) >> 4) + postAdd) >> rShift
+			v2 := (((int(s0[x+2])*fwdOffset + int(s1[x+2])*bckOffset) >> 4) + postAdd) >> rShift
+			v3 := (((int(s0[x+3])*fwdOffset + int(s1[x+3])*bckOffset) >> 4) + postAdd) >> rShift
+			if uint(v0|v1|v2|v3) <= 255 {
+				dstRow[x] = byte(v0)
+				dstRow[x+1] = byte(v1)
+				dstRow[x+2] = byte(v2)
+				dstRow[x+3] = byte(v3)
+			} else {
+				dstRow[x] = clipPixel(v0)
+				dstRow[x+1] = clipPixel(v1)
+				dstRow[x+2] = clipPixel(v2)
+				dstRow[x+3] = clipPixel(v3)
+			}
+		}
+		for ; x < width; x++ {
+			dstRow[x] = clipPixel((((int(s0[x])*fwdOffset + int(s1[x])*bckOffset) >> 4) + postAdd) >> rShift)
 		}
 	}
 }
 
 func blendCompoundAvgHighBD(dst frame.Plane, src0 []uint16, src1 []uint16, max uint16, dstX int, dstY int, width int, height int, fwdOffset int, bckOffset int, roundOffset int, roundBits int) {
+	if width <= 0 || height <= 0 {
+		return
+	}
+	postAdd := -roundOffset
+	rShift := uint(0)
+	if roundBits > 0 {
+		postAdd += 1 << (roundBits - 1)
+		rShift = uint(roundBits)
+	}
 	for y := range height {
-		for x := range width {
-			i := y*width + x
-			tmp := int(src0[i])*fwdOffset + int(src1[i])*bckOffset
-			tmp >>= 4 // DIST_PRECISION_BITS
-			tmp -= roundOffset
-			storeHighBDSample(dst, dstX+x, dstY+y, clipPixelHighBD(roundPowerOfTwo(tmp, roundBits), max))
+		dstBase := (dstY+y)*dst.Stride + dstX*2
+		dstRow := dst.Pix[dstBase : dstBase+width*2]
+		srcOff := y * width
+		s0 := src0[srcOff : srcOff+width]
+		s1 := src1[srcOff : srcOff+width]
+		x := 0
+		for ; x+3 < width; x += 4 {
+			o := x * 2
+			binary.LittleEndian.PutUint16(dstRow[o:o+2], clipPixelHighBD((((int(s0[x])*fwdOffset+int(s1[x])*bckOffset)>>4)+postAdd)>>rShift, max))
+			binary.LittleEndian.PutUint16(dstRow[o+2:o+4], clipPixelHighBD((((int(s0[x+1])*fwdOffset+int(s1[x+1])*bckOffset)>>4)+postAdd)>>rShift, max))
+			binary.LittleEndian.PutUint16(dstRow[o+4:o+6], clipPixelHighBD((((int(s0[x+2])*fwdOffset+int(s1[x+2])*bckOffset)>>4)+postAdd)>>rShift, max))
+			binary.LittleEndian.PutUint16(dstRow[o+6:o+8], clipPixelHighBD((((int(s0[x+3])*fwdOffset+int(s1[x+3])*bckOffset)>>4)+postAdd)>>rShift, max))
+		}
+		for ; x < width; x++ {
+			o := x * 2
+			binary.LittleEndian.PutUint16(dstRow[o:o+2], clipPixelHighBD((((int(s0[x])*fwdOffset+int(s1[x])*bckOffset)>>4)+postAdd)>>rShift, max))
 		}
 	}
 }

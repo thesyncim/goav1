@@ -2593,9 +2593,18 @@ func (s *coeffTrial8x8Snapshot) restoreUV(cdfs *tile.CoeffCDFs) {
 // residualBlockPureGo is the portable residual extraction.
 func residualBlockPureGo(dst []int16, srcPlane []byte, srcOff, stride int, pred []byte, predStride, w, h int) {
 	for r := range h {
-		row := srcOff + r*stride
-		for c := range w {
-			dst[r*w+c] = int16(srcPlane[row+c]) - int16(pred[r*predStride+c])
+		s := srcPlane[srcOff+r*stride : srcOff+r*stride+w]
+		p := pred[r*predStride : r*predStride+w]
+		d := dst[r*w : r*w+w]
+		c := 0
+		for ; c+3 < w; c += 4 {
+			d[c] = int16(s[c]) - int16(p[c])
+			d[c+1] = int16(s[c+1]) - int16(p[c+1])
+			d[c+2] = int16(s[c+2]) - int16(p[c+2])
+			d[c+3] = int16(s[c+3]) - int16(p[c+3])
+		}
+		for ; c < w; c++ {
+			d[c] = int16(s[c]) - int16(p[c])
 		}
 	}
 }

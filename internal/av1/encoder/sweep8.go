@@ -1,5 +1,7 @@
 package encoder
 
+import "encoding/binary"
+
 // sweepSearchPoint8 is open_loop_me_get_eight_search_point_results_block
 // (Source/Lib/Codec/motion_estimation.c) for the SUB_SAD sweep: the
 // superblock scored at the eight reference positions (mvX..mvX+7, mvY) in
@@ -85,29 +87,75 @@ func svtAllSAD8x8_16x16SubScalar(me *realtimeSBMultiSizeME, src, ref []byte, str
 // quadrant, sum doubled) updates (best[c], bestMV[c]) with strict '<', and
 // sad16[k] is the four quadrants' sum.
 func svtEightSAD8x8SubScalar(src, ref []byte, stride int, best *[4]uint32, bestMV *[4]uint32, mvX, mvY int, sad16 *[8]uint32) {
-	for k := range 8 {
-		var sum uint32
-		for c := range 4 {
-			xo, yo := (c&1)*8, (c>>1)*8
-			var s uint32
-			for r := 0; r < 8; r += 2 {
-				a := src[(yo+r)*stride+xo:]
-				b := ref[(yo+r)*stride+xo+k:]
-				for i := range 8 {
-					d := int(a[i]) - int(b[i])
-					if d < 0 {
-						d = -d
-					}
-					s += uint32(d)
-				}
-			}
-			s <<= 1
-			if s < best[c] {
-				best[c] = s
-				bestMV[c] = svtPackMV(mvX+k, mvY)
-			}
-			sum += s
+	const loMsk = 0x00FF00FF00FF00FF
+	var q0, q1, q2, q3 [8]uint64
+	for r := 0; r < 8; r += 2 {
+		// Top half (quadrants 0 and 1).
+		off := r * stride
+		a := src[off : off+16]
+		b := ref[off : off+23]
+		a0 := binary.LittleEndian.Uint64(a[0:8])
+		a1 := binary.LittleEndian.Uint64(a[8:16])
+		a0e, a0o := a0&loMsk, (a0>>8)&loMsk
+		a1e, a1o := a1&loMsk, (a1>>8)&loMsk
+		b0 := binary.LittleEndian.Uint64(b[0:8])
+		b1 := binary.LittleEndian.Uint64(b[8:16])
+		b2 := binary.LittleEndian.Uint64(b[15:23]) >> 8
+
+		q0[0] += swarSAD4(a0e, b0&loMsk) + swarSAD4(a0o, (b0>>8)&loMsk)
+		q1[0] += swarSAD4(a1e, b1&loMsk) + swarSAD4(a1o, (b1>>8)&loMsk)
+		for k := uint(1); k < 8; k++ {
+			sh := k * 8
+			w0 := (b0 >> sh) | (b1 << (64 - sh))
+			w1 := (b1 >> sh) | (b2 << (64 - sh))
+			q0[k] += swarSAD4(a0e, w0&loMsk) + swarSAD4(a0o, (w0>>8)&loMsk)
+			q1[k] += swarSAD4(a1e, w1&loMsk) + swarSAD4(a1o, (w1>>8)&loMsk)
 		}
-		sad16[k] = sum
+
+		// Bottom half (quadrants 2 and 3).
+		off = (r + 8) * stride
+		a = src[off : off+16]
+		b = ref[off : off+23]
+		a0 = binary.LittleEndian.Uint64(a[0:8])
+		a1 = binary.LittleEndian.Uint64(a[8:16])
+		a0e, a0o = a0&loMsk, (a0>>8)&loMsk
+		a1e, a1o = a1&loMsk, (a1>>8)&loMsk
+		b0 = binary.LittleEndian.Uint64(b[0:8])
+		b1 = binary.LittleEndian.Uint64(b[8:16])
+		b2 = binary.LittleEndian.Uint64(b[15:23]) >> 8
+
+		q2[0] += swarSAD4(a0e, b0&loMsk) + swarSAD4(a0o, (b0>>8)&loMsk)
+		q3[0] += swarSAD4(a1e, b1&loMsk) + swarSAD4(a1o, (b1>>8)&loMsk)
+		for k := uint(1); k < 8; k++ {
+			sh := k * 8
+			w0 := (b0 >> sh) | (b1 << (64 - sh))
+			w1 := (b1 >> sh) | (b2 << (64 - sh))
+			q2[k] += swarSAD4(a0e, w0&loMsk) + swarSAD4(a0o, (w0>>8)&loMsk)
+			q3[k] += swarSAD4(a1e, w1&loMsk) + swarSAD4(a1o, (w1>>8)&loMsk)
+		}
+	}
+	for k := range 8 {
+		mv := svtPackMV(mvX+k, mvY)
+		s0 := swarReduce16(q0[k]) << 1
+		if s0 < best[0] {
+			best[0] = s0
+			bestMV[0] = mv
+		}
+		s1 := swarReduce16(q1[k]) << 1
+		if s1 < best[1] {
+			best[1] = s1
+			bestMV[1] = mv
+		}
+		s2 := swarReduce16(q2[k]) << 1
+		if s2 < best[2] {
+			best[2] = s2
+			bestMV[2] = mv
+		}
+		s3 := swarReduce16(q3[k]) << 1
+		if s3 < best[3] {
+			best[3] = s3
+			bestMV[3] = mv
+		}
+		sad16[k] = s0 + s1 + s2 + s3
 	}
 }

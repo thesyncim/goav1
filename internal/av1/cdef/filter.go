@@ -86,15 +86,7 @@ func filterBlockPureGo(dst []uint16, dstStride int, dstOrigin int, input []uint1
 	width := int(params.Width)
 	height := int(params.Height)
 
-	enablePrimary := primaryStrength != 0
-	enableSecondary := secondaryStrength != 0
-	clippingRequired := enablePrimary && enableSecondary
 	priTaps := cdefPrimaryTaps[(primaryStrength>>coeffShift)&1]
-
-	// Hoist the per-call invariants out of the per-pixel loop: direction
-	// offsets, primary taps, and the constrain() shift amounts (which depend
-	// only on threshold/damping). This keeps the inner loop free of repeated
-	// table lookups and bits.Len calls.
 	pri0 := int(cdefDirections[direction+2][0])
 	pri1 := int(cdefDirections[direction+2][1])
 	sec0a := int(cdefDirections[direction+4][0])
@@ -103,65 +95,75 @@ func filterBlockPureGo(dst []uint16, dstStride int, dstOrigin int, input []uint1
 	sec1b := int(cdefDirections[direction][1])
 	priTap0 := int(priTaps[0])
 	priTap1 := int(priTaps[1])
-	secTap0 := int(cdefSecondaryTaps[0])
-	secTap1 := int(cdefSecondaryTaps[1])
-	priStrength := primaryStrength
-	secStrength := secondaryStrength
-	priShift := constrainShift(priStrength, primaryDamping)
-	secShift := constrainShift(secStrength, secondaryDamping)
+	priShift := constrainShift(primaryStrength, primaryDamping)
+	secShift := constrainShift(secondaryStrength, secondaryDamping)
 
-	for row := 0; row < height; row++ {
-		rowBase := inputOrigin + row*BStride
-		dstRow := dstOrigin + row*dstStride
-		for col := 0; col < width; col++ {
-			base := rowBase + col
-			sum := 0
-			x := int(input[base])
-			maxSample := x
-			minSample := x
-			if enablePrimary {
-				p0 := int(input[base+pri0])
-				p1 := int(input[base-pri0])
-				p2 := int(input[base+pri1])
-				p3 := int(input[base-pri1])
-				sum += priTap0 * constrainShifted(p0-x, priStrength, priShift)
-				sum += priTap0 * constrainShifted(p1-x, priStrength, priShift)
-				sum += priTap1 * constrainShifted(p2-x, priStrength, priShift)
-				sum += priTap1 * constrainShifted(p3-x, priStrength, priShift)
-				if clippingRequired {
-					maxSample = maxClip(maxSample, p0, p1, p2, p3)
-					minSample = min4(minSample, p0, p1, p2, p3)
-				}
+	switch {
+	case primaryStrength != 0 && secondaryStrength != 0:
+		const mask = VeryLarge - 1
+		for row := range height {
+			base := inputOrigin + row*BStride
+			d := dst[dstOrigin+row*dstStride : dstOrigin+row*dstStride+width]
+			c := input[base : base+width]
+			p0, p1 := input[base+pri0:base+pri0+width], input[base-pri0:base-pri0+width]
+			p2, p3 := input[base+pri1:base+pri1+width], input[base-pri1:base-pri1+width]
+			s0, s1 := input[base+sec0a:base+sec0a+width], input[base-sec0a:base-sec0a+width]
+			s2, s3 := input[base+sec1a:base+sec1a+width], input[base-sec1a:base-sec1a+width]
+			s4, s5 := input[base+sec0b:base+sec0b+width], input[base-sec0b:base-sec0b+width]
+			s6, s7 := input[base+sec1b:base+sec1b+width], input[base-sec1b:base-sec1b+width]
+			for i := range d {
+				x := int(c[i])
+				a0, a1, a2, a3 := int(p0[i]), int(p1[i]), int(p2[i]), int(p3[i])
+				b0, b1, b2, b3 := int(s0[i]), int(s1[i]), int(s2[i]), int(s3[i])
+				b4, b5, b6, b7 := int(s4[i]), int(s5[i]), int(s6[i]), int(s7[i])
+				sum := priTap0*(constrainU8(a0-x, primaryStrength, priShift)+constrainU8(a1-x, primaryStrength, priShift)) +
+					priTap1*(constrainU8(a2-x, primaryStrength, priShift)+constrainU8(a3-x, primaryStrength, priShift)) +
+					2*(constrainU8(b0-x, secondaryStrength, secShift)+constrainU8(b1-x, secondaryStrength, secShift)+
+						constrainU8(b2-x, secondaryStrength, secShift)+constrainU8(b3-x, secondaryStrength, secShift)) +
+					constrainU8(b4-x, secondaryStrength, secShift) + constrainU8(b5-x, secondaryStrength, secShift) +
+					constrainU8(b6-x, secondaryStrength, secShift) + constrainU8(b7-x, secondaryStrength, secShift)
+				hi := max(x, a0&mask, a1&mask, a2&mask, a3&mask, b0&mask, b1&mask, b2&mask, b3&mask,
+					b4&mask, b5&mask, b6&mask, b7&mask)
+				lo := min(x, a0, a1, a2, a3, b0, b1, b2, b3, b4, b5, b6, b7)
+				d[i] = uint16(min(max(cdefRound(x, sum), lo), hi))
 			}
-			if enableSecondary {
-				s0 := int(input[base+sec0a])
-				s1 := int(input[base-sec0a])
-				s2 := int(input[base+sec1a])
-				s3 := int(input[base-sec1a])
-				s4 := int(input[base+sec0b])
-				s5 := int(input[base-sec0b])
-				s6 := int(input[base+sec1b])
-				s7 := int(input[base-sec1b])
-				if clippingRequired {
-					maxSample = maxClip(maxSample, s0, s1, s2, s3)
-					maxSample = maxClip(maxSample, s4, s5, s6, s7)
-					minSample = min4(minSample, s0, s1, s2, s3)
-					minSample = min4(minSample, s4, s5, s6, s7)
-				}
-				sum += secTap0 * constrainShifted(s0-x, secStrength, secShift)
-				sum += secTap0 * constrainShifted(s1-x, secStrength, secShift)
-				sum += secTap0 * constrainShifted(s2-x, secStrength, secShift)
-				sum += secTap0 * constrainShifted(s3-x, secStrength, secShift)
-				sum += secTap1 * constrainShifted(s4-x, secStrength, secShift)
-				sum += secTap1 * constrainShifted(s5-x, secStrength, secShift)
-				sum += secTap1 * constrainShifted(s6-x, secStrength, secShift)
-				sum += secTap1 * constrainShifted(s7-x, secStrength, secShift)
+		}
+	case primaryStrength != 0:
+		for row := range height {
+			base := inputOrigin + row*BStride
+			d := dst[dstOrigin+row*dstStride : dstOrigin+row*dstStride+width]
+			c := input[base : base+width]
+			p0, p1 := input[base+pri0:base+pri0+width], input[base-pri0:base-pri0+width]
+			p2, p3 := input[base+pri1:base+pri1+width], input[base-pri1:base-pri1+width]
+			for i := range d {
+				x := int(c[i])
+				sum := priTap0*(constrainU8(int(p0[i])-x, primaryStrength, priShift)+constrainU8(int(p1[i])-x, primaryStrength, priShift)) +
+					priTap1*(constrainU8(int(p2[i])-x, primaryStrength, priShift)+constrainU8(int(p3[i])-x, primaryStrength, priShift))
+				d[i] = uint16(cdefRound(x, sum))
 			}
-			y := x + ((8 + sum - boolToInt(sum < 0)) >> 4)
-			if clippingRequired {
-				y = clampInt(y, minSample, maxSample)
+		}
+	case secondaryStrength != 0:
+		for row := range height {
+			base := inputOrigin + row*BStride
+			d := dst[dstOrigin+row*dstStride : dstOrigin+row*dstStride+width]
+			c := input[base : base+width]
+			s0, s1 := input[base+sec0a:base+sec0a+width], input[base-sec0a:base-sec0a+width]
+			s2, s3 := input[base+sec1a:base+sec1a+width], input[base-sec1a:base-sec1a+width]
+			s4, s5 := input[base+sec0b:base+sec0b+width], input[base-sec0b:base-sec0b+width]
+			s6, s7 := input[base+sec1b:base+sec1b+width], input[base-sec1b:base-sec1b+width]
+			for i := range d {
+				x := int(c[i])
+				sum := 2*(constrainU8(int(s0[i])-x, secondaryStrength, secShift)+constrainU8(int(s1[i])-x, secondaryStrength, secShift)+
+					constrainU8(int(s2[i])-x, secondaryStrength, secShift)+constrainU8(int(s3[i])-x, secondaryStrength, secShift)) +
+					constrainU8(int(s4[i])-x, secondaryStrength, secShift) + constrainU8(int(s5[i])-x, secondaryStrength, secShift) +
+					constrainU8(int(s6[i])-x, secondaryStrength, secShift) + constrainU8(int(s7[i])-x, secondaryStrength, secShift)
+				d[i] = uint16(cdefRound(x, sum))
 			}
-			dst[dstRow+col] = uint16(y)
+		}
+	default:
+		for row := range height {
+			d := dst[dstOrigin+row*dstStride : dstOrigin+row*dstStride+width]
+			copy(d, input[inputOrigin+row*BStride:inputOrigin+row*BStride+width])
 		}
 	}
 }
@@ -345,7 +347,8 @@ func filterUnitBlocksU16LEPureGo(dst []byte, dstStrideB int, input []uint16, inp
 			dir = int(directions[by][bx])
 		}
 		srcOrigin := inputOrigin + ((by * BStride) << u.bhLog2) + (bx << u.bwLog2)
-		filterBlockImpl(tmp[:], u.blockWidth, 0, input, srcOrigin, BlockFilterParams{
+		// Call filterBlockPureGo directly so tmp stays on the stack (no indirect-call escape).
+		filterBlockPureGo(tmp[:], u.blockWidth, 0, input, srcOrigin, BlockFilterParams{
 			PrimaryStrength:   uint8(strength),
 			SecondaryStrength: uint8(secondaryStrength),
 			Direction:         uint8(dir),

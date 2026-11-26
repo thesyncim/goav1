@@ -1,5 +1,7 @@
 package encoder
 
+import "encoding/binary"
+
 // svt_hme.go is SVT-AV1's hierarchical ME for one 64x64 superblock at
 // preset 12 rtc, the search center of the open-loop ME sweep
 // (pframe_depth_removal.go):
@@ -442,22 +444,96 @@ func (p *svtPyramid) copySlotFrom(q *svtPyramid, s int) {
 	p.slotSix[s].copyFrom(&q.slotSix[s])
 }
 
+// swarSAD4 returns 4 packed 16-bit lanes holding |x_i - y_i| for 4 unsigned
+// bytes packed in the low byte of each 16-bit lane (mask 0x00FF00FF00FF00FF).
+func swarSAD4(x, y uint64) uint64 {
+	const (
+		hiBit = 0x0100010001000100
+		loMsk = 0x00FF00FF00FF00FF
+	)
+	d := (x | hiBit) - y
+	neg := (^d & hiBit) >> 8
+	flip := (neg << 8) - neg
+	return ((d ^ flip) + neg) & loMsk
+}
+
+func swarSAD8(x, y uint64) uint64 {
+	const loMsk = 0x00FF00FF00FF00FF
+	return swarSAD4(x&loMsk, y&loMsk) + swarSAD4((x>>8)&loMsk, (y>>8)&loMsk)
+}
+
+func swarReduce16(acc uint64) uint32 {
+	return uint32(acc&0xFFFF) + uint32((acc>>16)&0xFFFF) + uint32((acc>>32)&0xFFFF) + uint32(acc>>48)
+}
+
 // svtSAD16xhx8Scalar is the reference definition of svtSAD16xhx8: the SADs
 // of the 16-wide, rows-tall source block against ref+0..ref+7.
 func svtSAD16xhx8Scalar(src []byte, srcStride int, ref []byte, refStride, rows int) [8]uint32 {
 	var out [8]uint32
-	for k := range out {
-		for r := 0; r < rows; r++ {
+	const loMsk = 0x00FF00FF00FF00FF
+	// Accumulate in chunks of up to 64 rows so 16-bit lanes (max 4*255 per row
+	// across 2x8 bytes = 1020/row -> 64*1020 = 65280 < 65535) never overflow.
+	for rBase := 0; rBase < rows; rBase += 64 {
+		rEnd := min(rBase+64, rows)
+		var acc0, acc1, acc2, acc3, acc4, acc5, acc6, acc7 uint64
+		for r := rBase; r < rEnd; r++ {
 			a := src[r*srcStride : r*srcStride+16]
-			b := ref[r*refStride+k : r*refStride+k+16]
-			for c := range a {
-				d := int(a[c]) - int(b[c])
-				if d < 0 {
-					d = -d
-				}
-				out[k] += uint32(d)
-			}
+			b := ref[r*refStride : r*refStride+23]
+			a0 := binary.LittleEndian.Uint64(a[0:8])
+			a1 := binary.LittleEndian.Uint64(a[8:16])
+			a0e, a0o := a0&loMsk, (a0>>8)&loMsk
+			a1e, a1o := a1&loMsk, (a1>>8)&loMsk
+
+			b0 := binary.LittleEndian.Uint64(b[0:8])
+			b1 := binary.LittleEndian.Uint64(b[8:16])
+			b2 := binary.LittleEndian.Uint64(b[15:23]) >> 8
+
+			acc0 += swarSAD4(a0e, b0&loMsk) + swarSAD4(a0o, (b0>>8)&loMsk) +
+				swarSAD4(a1e, b1&loMsk) + swarSAD4(a1o, (b1>>8)&loMsk)
+
+			w0 := (b0 >> 8) | (b1 << 56)
+			w1 := (b1 >> 8) | (b2 << 56)
+			acc1 += swarSAD4(a0e, w0&loMsk) + swarSAD4(a0o, (w0>>8)&loMsk) +
+				swarSAD4(a1e, w1&loMsk) + swarSAD4(a1o, (w1>>8)&loMsk)
+
+			w0 = (b0 >> 16) | (b1 << 48)
+			w1 = (b1 >> 16) | (b2 << 48)
+			acc2 += swarSAD4(a0e, w0&loMsk) + swarSAD4(a0o, (w0>>8)&loMsk) +
+				swarSAD4(a1e, w1&loMsk) + swarSAD4(a1o, (w1>>8)&loMsk)
+
+			w0 = (b0 >> 24) | (b1 << 40)
+			w1 = (b1 >> 24) | (b2 << 40)
+			acc3 += swarSAD4(a0e, w0&loMsk) + swarSAD4(a0o, (w0>>8)&loMsk) +
+				swarSAD4(a1e, w1&loMsk) + swarSAD4(a1o, (w1>>8)&loMsk)
+
+			w0 = (b0 >> 32) | (b1 << 32)
+			w1 = (b1 >> 32) | (b2 << 32)
+			acc4 += swarSAD4(a0e, w0&loMsk) + swarSAD4(a0o, (w0>>8)&loMsk) +
+				swarSAD4(a1e, w1&loMsk) + swarSAD4(a1o, (w1>>8)&loMsk)
+
+			w0 = (b0 >> 40) | (b1 << 24)
+			w1 = (b1 >> 40) | (b2 << 24)
+			acc5 += swarSAD4(a0e, w0&loMsk) + swarSAD4(a0o, (w0>>8)&loMsk) +
+				swarSAD4(a1e, w1&loMsk) + swarSAD4(a1o, (w1>>8)&loMsk)
+
+			w0 = (b0 >> 48) | (b1 << 16)
+			w1 = (b1 >> 48) | (b2 << 16)
+			acc6 += swarSAD4(a0e, w0&loMsk) + swarSAD4(a0o, (w0>>8)&loMsk) +
+				swarSAD4(a1e, w1&loMsk) + swarSAD4(a1o, (w1>>8)&loMsk)
+
+			w0 = (b0 >> 56) | (b1 << 8)
+			w1 = (b1 >> 56) | (b2 << 8)
+			acc7 += swarSAD4(a0e, w0&loMsk) + swarSAD4(a0o, (w0>>8)&loMsk) +
+				swarSAD4(a1e, w1&loMsk) + swarSAD4(a1o, (w1>>8)&loMsk)
 		}
+		out[0] += swarReduce16(acc0)
+		out[1] += swarReduce16(acc1)
+		out[2] += swarReduce16(acc2)
+		out[3] += swarReduce16(acc3)
+		out[4] += swarReduce16(acc4)
+		out[5] += swarReduce16(acc5)
+		out[6] += swarReduce16(acc6)
+		out[7] += swarReduce16(acc7)
 	}
 	return out
 }
