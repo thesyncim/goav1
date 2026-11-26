@@ -418,6 +418,14 @@ func pred8CopyRowsAVX2(dst []byte, dstStride int, ref []byte, refStride, w, h in
 	}
 }
 
+func encShrU32x4(v archsimd.Uint32x4, _ archsimd.Int32x4, shift uint64) archsimd.Uint32x4 {
+	return v.ShiftAllRight(shift)
+}
+
+func encSarI32x4(v archsimd.Int32x4, _ archsimd.Int32x4, shift uint64) archsimd.Int32x4 {
+	return v.ShiftAllRight(shift)
+}
+
 func init() {
 	// Keep the existing amd64 vector kernels until the separate-input fusion
 	// has native generated-code and timing coverage on that architecture.

@@ -179,9 +179,9 @@ type frameWorkRowPipe struct {
 	hbd        bool
 	hbdInPlace bool
 	snap       [3]frame.SamplePlane
-	snapSrc  [3]frame.Plane
-	snapRows [3]int
-	snapOn   [3]bool
+	snapSrc    [3]frame.Plane
+	snapRows   [3]int
+	snapOn     [3]bool
 
 	// Loop restoration: the plan, the decoded records and stripe boundary
 	// lines, each plane's data segment in a worker's band buffer, and the

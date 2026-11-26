@@ -50,10 +50,10 @@ type cdefApplier struct {
 	bandUnit              [][]uint16
 	bandBytes             [cdefApplyBands][3][]byte
 	bandBound             [cdefApplyBands]decoder.FrameWorkCDEFPostFilterU8BandBoundary
-	unitRows  int
-	seqHeader parser.SequenceHeader
-	frameSize parser.FrameSize
-	bound     bool
+	unitRows              int
+	seqHeader             parser.SequenceHeader
+	frameSize             parser.FrameSize
+	bound                 bool
 
 	// Persistent band workers reading their per-frame inputs from these
 	// fields, so the apply path spawns no goroutines and allocates nothing.

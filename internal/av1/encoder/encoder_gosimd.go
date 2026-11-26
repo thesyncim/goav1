@@ -19,7 +19,7 @@ import (
 // 127 + floor(log2 v) for v >= 1, and 0 for v = 0 (which the max clamps to 0).
 func bitLenFloat32(v archsimd.Uint32x4, sh23, c126, zero32 archsimd.Int32x4) archsimd.Int32x4 {
 	f := v.BitsToInt32().ConvertToFloat32()
-	exp := f.ToBits().Shift(sh23).BitsToInt32()
+	exp := encShrU32x4(f.ToBits(), sh23, 23).BitsToInt32()
 	return exp.Sub(c126).Max(zero32)
 }
 
@@ -218,8 +218,8 @@ func rdStatsDiffSIMD(tran []int32, qcoeff []int16, count int, step int32, ts uin
 			tw := (*[8]int32)(t[i:])
 			c0 := archsimd.LoadInt32x4Array((*[4]int32)(tw[0:4]))
 			c1 := archsimd.LoadInt32x4Array((*[4]int32)(tw[4:8]))
-			dq0 := q.ExtendLo4ToInt32().Mul(stepV).Shift(tsV)
-			dq1 := hiInt16(q).ExtendLo4ToInt32().Mul(stepV).Shift(tsV)
+			dq0 := encSarI32x4(q.ExtendLo4ToInt32().Mul(stepV), tsV, uint64(ts))
+			dq1 := encSarI32x4(hiInt16(q).ExtendLo4ToInt32().Mul(stepV), tsV, uint64(ts))
 			diffAcc = mulSumInt32(mulSumInt32(diffAcc, dq0, c0.Add(c0).Sub(dq0)), dq1, c1.Add(c1).Sub(dq1))
 			qAbs := q.Abs()
 			lo := qAbs.ToBits().ExtendLo4ToUint32()
@@ -451,8 +451,8 @@ func rdStatsBlockSIMD(tran []int32, qcoeff []int16, count int, step int32, ts ui
 			c1 := archsimd.LoadInt32x4Array((*[4]int32)(tw[4:8]))
 			q := archsimd.LoadInt16x8Array((*[8]int16)(qc[i:]))
 			skipAcc = sqSumInt32(sqSumInt32(skipAcc, c0), c1)
-			dq0 := q.ExtendLo4ToInt32().Mul(stepV).Shift(tsV)
-			dq1 := hiInt16(q).ExtendLo4ToInt32().Mul(stepV).Shift(tsV)
+			dq0 := encSarI32x4(q.ExtendLo4ToInt32().Mul(stepV), tsV, uint64(ts))
+			dq1 := encSarI32x4(hiInt16(q).ExtendLo4ToInt32().Mul(stepV), tsV, uint64(ts))
 			codeAcc = sqSumInt32(sqSumInt32(codeAcc, c0.Sub(dq0)), c1.Sub(dq1))
 			orAcc = orAcc.Or(q)
 			// |level| as unsigned 16-bit (|-32768| = 32768), split into 32-bit lanes.

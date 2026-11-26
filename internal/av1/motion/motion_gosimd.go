@@ -132,7 +132,6 @@ func u8HorizontalIM(ref []byte, refStr int, im []int32, imStr int, width, rows i
 // reference is uint16(s*16 + roundOffset), the low 16 bits of (s << 4) + off.
 func compoundCopy8Kernel(ctx *compoundCopyGoSIMDCtx) {
 	off := archsimd.BroadcastUint16x8(uint16(ctx.roundOffset))
-	sh4 := archsimd.BroadcastInt16x8(compoundCopy8Shift)
 	width, height := int(ctx.width), int(ctx.height)
 	if width%16 == 0 {
 		for y := range height {
@@ -140,8 +139,8 @@ func compoundCopy8Kernel(ctx *compoundCopyGoSIMDCtx) {
 			out := ctx.out[y*width:]
 			for x := 0; x < width; x += 16 {
 				v := archsimd.LoadUint8x16Array((*[16]uint8)(src[x : x+16]))
-				v.ExtendLo8ToUint16().Shift(sh4).Add(off).StoreArray((*[8]uint16)(out[x : x+8]))
-				v.ConcatShiftBytesRight(v, 8).ExtendLo8ToUint16().Shift(sh4).Add(off).StoreArray((*[8]uint16)(out[x+8 : x+16]))
+				v.ExtendLo8ToUint16().ShiftAllLeft(compoundCopy8Shift).Add(off).StoreArray((*[8]uint16)(out[x : x+8]))
+				v.ConcatShiftBytesRight(v, 8).ExtendLo8ToUint16().ShiftAllLeft(compoundCopy8Shift).Add(off).StoreArray((*[8]uint16)(out[x+8 : x+16]))
 			}
 		}
 		return
@@ -152,12 +151,12 @@ func compoundCopy8Kernel(ctx *compoundCopyGoSIMDCtx) {
 		x := 0
 		for ; x+8 <= width; x += 8 {
 			s := u8Bytes16(src[x:]).ExtendLo8ToUint16()
-			s.Shift(sh4).Add(off).StoreArray((*[8]uint16)(out[x : x+8]))
+			s.ShiftAllLeft(compoundCopy8Shift).Add(off).StoreArray((*[8]uint16)(out[x : x+8]))
 		}
 		if x < width {
 			s := u8Bytes16(src[x:]).ExtendLo8ToUint16()
 			var t [8]uint16
-			s.Shift(sh4).Add(off).StoreArray(&t)
+			s.ShiftAllLeft(compoundCopy8Shift).Add(off).StoreArray(&t)
 			copy(out[x:width], t[:width-x])
 		}
 	}

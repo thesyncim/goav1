@@ -3,6 +3,7 @@ package encoder
 import (
 	"github.com/thesyncim/goav1/internal/av1/motion"
 	"github.com/thesyncim/goav1/internal/av1/tile"
+	"github.com/thesyncim/goav1/internal/unsafeutil"
 )
 
 // pframe_mds0.go is the light-PD1 MDS0 inter candidate decision, ported from
@@ -272,7 +273,11 @@ func (st *lossyEncodeState) mds0PickInterMode(src SourceFrame420, refPlane []byt
 		predYValid, predYMV = true, bestMV
 	} else if bestBuf == -2 {
 		rx, ry := lumaPX+int(bestMV.Col>>3), lumaPY+int(bestMV.Row>>3)
-		copyBlockRows(st.predY[:bw*bh], bw, refPlane[ry*refStride+rx:], refStride, bw, bh)
+		if !unsafeutil.CopyRect(st.predY[:bw*bh], 0, bw, refPlane, ry*refStride+rx, refStride, bw, bh) {
+			for row := range bh {
+				copy(st.predY[row*bw:(row+1)*bw], refPlane[(ry+row)*refStride+rx:(ry+row)*refStride+rx+bw])
+			}
+		}
 		predYValid, predYMV = true, bestMV
 	}
 	// The winner's regular-filter prediction statistics (dist is its

@@ -97,8 +97,8 @@ type FrameWorkCDEFPostFilterRequest struct {
 	// two ping-pong pre-filter line pairs and the byte tap buffer
 	// (CDEFU8LineScratchLen). Whole-frame applies without it take the
 	// snapshot walk; banded and row-pipeline 8-bit applies require it.
-	SampleBytes    [3][]byte
-	DstScratch     [3][]uint16
+	SampleBytes           [3][]byte
+	DstScratch            [3][]uint16
 	DirectionGrid         []cdef.DirectionGrid
 	VarianceGrid          []cdef.VarianceGrid
 	DirectionsPrecomputed bool

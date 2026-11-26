@@ -1328,6 +1328,14 @@ func le32(b *[4]byte) uint32 {
 	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
 }
 
+func encShrU32x4(v archsimd.Uint32x4, negShift archsimd.Int32x4, _ uint64) archsimd.Uint32x4 {
+	return v.Shift(negShift)
+}
+
+func encSarI32x4(v archsimd.Int32x4, negShift archsimd.Int32x4, _ uint64) archsimd.Int32x4 {
+	return v.Shift(negShift)
+}
+
 // put32 stores v little-endian into b (one 4-byte store).
 func put32(b *[4]byte, v uint32) {
 	b[0], b[1], b[2], b[3] = byte(v), byte(v>>8), byte(v>>16), byte(v>>24)
