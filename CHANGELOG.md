@@ -6,6 +6,23 @@ or pull requests, not in long-lived markdown.
 
 ## [Unreleased]
 
+## [v0.2.1] - 2026-11-26
+
+Pure-Go + `simd/archsimd` decoder & encoder performance release on Apple M4 Max — drives 8-thread 7-stream decoder totals to **1.02× wall / 1.05× cycles** vs `dav1d 1.5.4` (**beating `dav1d` on 4/7 streams**: `aomrt_johnny` 0.95×, `svtra_mtbike` 0.97×, `svtrtc10_crowdrun` 10-bit 0.97×, `svtrtc_crowdrun` 0.99×; **3.3× faster** than `aomdec`), 1-thread decoder totals to **1.11× wall / 1.11× cycles**, and 1-thread encoder to beat `SvtAv1EncApp v4.2.0` p12 RTC on **every** metric (**0.78× wall**, **0.65× cycles**, **0.98× instructions**, **0.88× user CPU**, **+0.74 dB PSNR-Y**), with 100% `check_unsafe.sh` safety, 0 steady-state GC allocations, and bit-exact MD5 parity.
+
+### Decoder Performance
+- **Entropy (`internal/av1/entropy`)**: Precomputed packed 2D AC scan tables (`BuildCoefScan2D` / `coefAC2DPacked`), masked CDF adaptation shift counts to eliminate oversized-shift guards, made `tok > 1`/`tok > 2` CDF updates branchless (`CSEL`), isolated `coefAC2DPacked` (`//go:noinline`) to eliminate inner-loop stack spills, and switched `normShift16` to `bits.LeadingZeros32(rng) - 16`.
+- **CDEF (`internal/av1/cdef`, `internal/av1/decoder`)**: Added in-place 10-bit CDEF (1T + 8T, cutting 10-bit RSS), split frame-edge 64×64 8-bit units into byte-lane interior blocks and sparse uint16 edge blocks, balanced `findDirectionU8SIMD` diagonal accumulation trees, added contiguous 16-byte dual-block loading in `findDirectionDualU8SIMD`, and eliminated all remaining `ShiftAll` calls in arm64 CDEF kernels.
+- **Transforms, Motion & Tile (`internal/av1/transform`, `internal/av1/motion`, `internal/av1/tile`, `internal/av1/threading`)**: Eliminated 1,056 `ShiftAllRight` calls in `itxgen`, added 1-pass compound copy blends (`URHADD`) and 8-row register sliding window in `warpCompoundV8`, replaced dense `FillTxtpMap` writes with chroma-TXB-strided updates (skipping when chroma doesn't read `txtpMap`), peeled `(0, 0)` out of `refmvsTile.find`'s temporal loop, and added zero-copy CDF retain.
+- **Startup & Stream Probing (`goav1`)**: Fused the five low-overhead IVF stream-sizing passes into a single `decoderProbeLowOverheadFromSource` pass and refreshed `cmd/qualitybench/default.pgo`.
+
+### Encoder Performance
+- **Motion & Mode Search (`internal/av1/encoder`)**: Cached VLPD0 and subpel `(sse, variance)` stats in `st.predStats` for reuse across PD0 → subpel → MDS0, added zero-copy direct-ref inter prediction views (`predYView`/`predUView`/`predVView`) and integer-MV MDS0 variance, deferred `qcoeff` clearing until `!skip`, and recorded per-TXB `eobs` in `pframeSplitRecord` for MT encoding.
+- **SIMD & CDEF Search (`internal/av1/encoder`, `internal/av1/cdef`)**: Reused CDEF search directions in `cdefApplier` (`DirectionsPrecomputed`) and switched to byte `SampleBytes`, added `w == 16` / `w == 32` / `w == 64` zero-ref fast paths in `pixelStatsRows16Arch`, hoisted row pointers in `svtAllSAD8x8_16x16Sub`, and eliminated slice Load/Store checks and `ShiftAll` across arm64 encoder/transform kernels.
+
+### Benchmarking
+- Added fair, reproducible end-to-end benchmark harness (`scripts/bench_e2e.py`, `make bench-e2e`, `make bench-e2e-fast`, `make bench-e2e-full`) comparing `goav1` against `dav1d`, `libaom` (`aomdec`/`aomenc`), and `SvtAv1EncApp` with `/usr/bin/time -l`, interleaved runs, MD5 parity, and FFmpeg PSNR/SSIM scoring.
+
 ## [v0.2.0] - 2026-11-25
 
 Full general-purpose AV1 decoder and encoder release (Profiles 0/1/2, 8/10/12-bit, 4:2:0/4:2:2/4:4:4/monochrome, lossless, HDR, SVC, error concealment, CRF/VBR/2-pass, B-frame/Alt-Ref pyramids, Switchable Loop Restoration, SuperRes, Global Motion, IntraBC, Film Grain modeling/signaling, and WebRTC RTP/RTCP) — pure Go + `simd/archsimd`, zero cgo, zero assembly, zero steady-state GC allocations.
