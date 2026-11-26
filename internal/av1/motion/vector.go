@@ -9,6 +9,8 @@
 package motion
 
 import (
+	"encoding/binary"
+
 	"github.com/thesyncim/goav1/internal/av1/dsp"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 )
@@ -382,28 +384,61 @@ func copyPlaneBlockClamped(dst frame.Plane, ref frame.Plane, bytesPerSample int,
 }
 
 func convolveX8PureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+	if width <= 0 || height <= 0 {
+		return
+	}
 	fo := filterTaps/2 - 1
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
 	// 4-tap kernels (small blocks / bilinear) have zero end taps, so skip those MACs.
 	fourTap := k0 == 0 && k1 == 0 && k6 == 0 && k7 == 0
 	for y := range height {
-		srcRow := ref.Pix[(refY+y)*ref.Stride+refX-fo:]
-		dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX:]
+		srcBase := (refY+y)*ref.Stride + refX - fo
+		srcRow := ref.Pix[srcBase : srcBase+width+filterTaps-1]
+		dstBase := (dstY+y)*dst.Stride + dstX
+		dstRow := dst.Pix[dstBase : dstBase+width]
 		if fourTap {
-			for x := range width {
-				s := srcRow[x : x+filterTaps]
-				sum := k2*int(s[2]) + k3*int(s[3]) + k4*int(s[4]) + k5*int(s[5])
-				res := roundPowerOfTwo(sum, round0Bits)
-				dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, filterBits-round0Bits)))
+			s2, s3, s4 := int(srcRow[2]), int(srcRow[3]), int(srcRow[4])
+			x := 0
+			for ; x+3 < width; x += 4 {
+				s5 := int(srcRow[x+5])
+				s6 := int(srcRow[x+6])
+				s7 := int(srcRow[x+7])
+				s8 := int(srcRow[x+8])
+				dstRow[x] = clipPixel((((k2*s2 + k3*s3 + k4*s4 + k5*s5 + 4) >> 3) + 8) >> 4)
+				dstRow[x+1] = clipPixel((((k2*s3 + k3*s4 + k4*s5 + k5*s6 + 4) >> 3) + 8) >> 4)
+				dstRow[x+2] = clipPixel((((k2*s4 + k3*s5 + k4*s6 + k5*s7 + 4) >> 3) + 8) >> 4)
+				dstRow[x+3] = clipPixel((((k2*s5 + k3*s6 + k4*s7 + k5*s8 + 4) >> 3) + 8) >> 4)
+				s2, s3, s4 = s6, s7, s8
+			}
+			for ; x < width; x++ {
+				s5 := int(srcRow[x+5])
+				dstRow[x] = clipPixel((((k2*s2 + k3*s3 + k4*s4 + k5*s5 + 4) >> 3) + 8) >> 4)
+				s2, s3, s4 = s3, s4, s5
 			}
 			continue
 		}
-		for x := range width {
-			s := srcRow[x : x+filterTaps]
-			sum := k0*int(s[0]) + k1*int(s[1]) + k2*int(s[2]) + k3*int(s[3]) +
-				k4*int(s[4]) + k5*int(s[5]) + k6*int(s[6]) + k7*int(s[7])
-			res := roundPowerOfTwo(sum, round0Bits)
-			dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, filterBits-round0Bits)))
+		s0, s1, s2, s3, s4, s5, s6 := int(srcRow[0]), int(srcRow[1]), int(srcRow[2]), int(srcRow[3]), int(srcRow[4]), int(srcRow[5]), int(srcRow[6])
+		x := 0
+		for ; x+3 < width; x += 4 {
+			s7 := int(srcRow[x+7])
+			s8 := int(srcRow[x+8])
+			s9 := int(srcRow[x+9])
+			s10 := int(srcRow[x+10])
+			sum0 := k0*s0 + k1*s1 + k2*s2 + k3*s3 + k4*s4 + k5*s5 + k6*s6 + k7*s7
+			sum1 := k0*s1 + k1*s2 + k2*s3 + k3*s4 + k4*s5 + k5*s6 + k6*s7 + k7*s8
+			sum2 := k0*s2 + k1*s3 + k2*s4 + k3*s5 + k4*s6 + k5*s7 + k6*s8 + k7*s9
+			sum3 := k0*s3 + k1*s4 + k2*s5 + k3*s6 + k4*s7 + k5*s8 + k6*s9 + k7*s10
+			dstRow[x] = clipPixel((((sum0 + 4) >> 3) + 8) >> 4)
+			dstRow[x+1] = clipPixel((((sum1 + 4) >> 3) + 8) >> 4)
+			dstRow[x+2] = clipPixel((((sum2 + 4) >> 3) + 8) >> 4)
+			dstRow[x+3] = clipPixel((((sum3 + 4) >> 3) + 8) >> 4)
+			s0, s1, s2, s3, s4, s5, s6 = s4, s5, s6, s7, s8, s9, s10
+		}
+		for ; x < width; x++ {
+			s7 := int(srcRow[x+7])
+			sum := k0*s0 + k1*s1 + k2*s2 + k3*s3 + k4*s4 + k5*s5 + k6*s6 + k7*s7
+			dstRow[x] = clipPixel((((sum + 4) >> 3) + 8) >> 4)
+			s0, s1, s2, s3, s4, s5, s6 = s1, s2, s3, s4, s5, s6, s7
 		}
 	}
 }
@@ -490,29 +525,56 @@ func convolveX8ClampedPureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY in
 }
 
 func convolveY8PureGo(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+	if width <= 0 || height <= 0 {
+		return
+	}
 	fo := filterTaps/2 - 1
 	stride := ref.Stride
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
 	fourTap := k0 == 0 && k1 == 0 && k6 == 0 && k7 == 0
 	for y := range height {
-		base := (refY + y - fo) * stride
-		dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX:]
+		base := (refY+y-fo)*stride + refX
+		dstBase := (dstY+y)*dst.Stride + dstX
+		dstRow := dst.Pix[dstBase : dstBase+width]
 		if fourTap {
-			// Only taps 2..5 contribute; reslice that contiguous column window.
-			col := ref.Pix[base+2*stride+refX:]
-			for x := range width {
-				sum := k2*int(col[x]) + k3*int(col[x+stride]) +
-					k4*int(col[x+2*stride]) + k5*int(col[x+3*stride])
-				dstRow[x] = byte(clipPixel(roundPowerOfTwo(sum, filterBits)))
+			r2 := ref.Pix[base+2*stride : base+2*stride+width]
+			r3 := ref.Pix[base+3*stride : base+3*stride+width]
+			r4 := ref.Pix[base+4*stride : base+4*stride+width]
+			r5 := ref.Pix[base+5*stride : base+5*stride+width]
+			x := 0
+			for ; x+3 < width; x += 4 {
+				dstRow[x] = clipPixel((k2*int(r2[x]) + k3*int(r3[x]) + k4*int(r4[x]) + k5*int(r5[x]) + 64) >> 7)
+				dstRow[x+1] = clipPixel((k2*int(r2[x+1]) + k3*int(r3[x+1]) + k4*int(r4[x+1]) + k5*int(r5[x+1]) + 64) >> 7)
+				dstRow[x+2] = clipPixel((k2*int(r2[x+2]) + k3*int(r3[x+2]) + k4*int(r4[x+2]) + k5*int(r5[x+2]) + 64) >> 7)
+				dstRow[x+3] = clipPixel((k2*int(r2[x+3]) + k3*int(r3[x+3]) + k4*int(r4[x+3]) + k5*int(r5[x+3]) + 64) >> 7)
+			}
+			for ; x < width; x++ {
+				dstRow[x] = clipPixel((k2*int(r2[x]) + k3*int(r3[x]) + k4*int(r4[x]) + k5*int(r5[x]) + 64) >> 7)
 			}
 			continue
 		}
-		col := ref.Pix[base+refX:]
-		for x := range width {
-			sum := k0*int(col[x]) + k1*int(col[x+stride]) + k2*int(col[x+2*stride]) +
-				k3*int(col[x+3*stride]) + k4*int(col[x+4*stride]) + k5*int(col[x+5*stride]) +
-				k6*int(col[x+6*stride]) + k7*int(col[x+7*stride])
-			dstRow[x] = byte(clipPixel(roundPowerOfTwo(sum, filterBits)))
+		r0 := ref.Pix[base : base+width]
+		r1 := ref.Pix[base+stride : base+stride+width]
+		r2 := ref.Pix[base+2*stride : base+2*stride+width]
+		r3 := ref.Pix[base+3*stride : base+3*stride+width]
+		r4 := ref.Pix[base+4*stride : base+4*stride+width]
+		r5 := ref.Pix[base+5*stride : base+5*stride+width]
+		r6 := ref.Pix[base+6*stride : base+6*stride+width]
+		r7 := ref.Pix[base+7*stride : base+7*stride+width]
+		x := 0
+		for ; x+3 < width; x += 4 {
+			sum0 := k0*int(r0[x]) + k1*int(r1[x]) + k2*int(r2[x]) + k3*int(r3[x]) + k4*int(r4[x]) + k5*int(r5[x]) + k6*int(r6[x]) + k7*int(r7[x])
+			sum1 := k0*int(r0[x+1]) + k1*int(r1[x+1]) + k2*int(r2[x+1]) + k3*int(r3[x+1]) + k4*int(r4[x+1]) + k5*int(r5[x+1]) + k6*int(r6[x+1]) + k7*int(r7[x+1])
+			sum2 := k0*int(r0[x+2]) + k1*int(r1[x+2]) + k2*int(r2[x+2]) + k3*int(r3[x+2]) + k4*int(r4[x+2]) + k5*int(r5[x+2]) + k6*int(r6[x+2]) + k7*int(r7[x+2])
+			sum3 := k0*int(r0[x+3]) + k1*int(r1[x+3]) + k2*int(r2[x+3]) + k3*int(r3[x+3]) + k4*int(r4[x+3]) + k5*int(r5[x+3]) + k6*int(r6[x+3]) + k7*int(r7[x+3])
+			dstRow[x] = clipPixel((sum0 + 64) >> 7)
+			dstRow[x+1] = clipPixel((sum1 + 64) >> 7)
+			dstRow[x+2] = clipPixel((sum2 + 64) >> 7)
+			dstRow[x+3] = clipPixel((sum3 + 64) >> 7)
+		}
+		for ; x < width; x++ {
+			sum := k0*int(r0[x]) + k1*int(r1[x]) + k2*int(r2[x]) + k3*int(r3[x]) + k4*int(r4[x]) + k5*int(r5[x]) + k6*int(r6[x]) + k7*int(r7[x])
+			dstRow[x] = clipPixel((sum + 64) >> 7)
 		}
 	}
 }
@@ -616,61 +678,211 @@ func convolve2D8PureGoWithScratch(dst frame.Plane, ref frame.Plane, dstX int, ds
 }
 
 func convolve2D8PureGoWithIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, im *[(maxBlockSize + filterTaps - 1) * maxBlockSize]int16) {
+	if width <= 0 || height <= 0 {
+		return
+	}
 	const imStride = maxBlockSize
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1
-	const xBias = 1 << (8 + filterBits - 1)
+	const xBiasRound = (1 << (8 + filterBits - 1)) + (1 << (round0Bits - 1))
 
 	xk0, xk1, xk2, xk3, xk4, xk5, xk6, xk7 := int(xKernel[0]), int(xKernel[1]), int(xKernel[2]), int(xKernel[3]), int(xKernel[4]), int(xKernel[5]), int(xKernel[6]), int(xKernel[7])
 	xFourTap := xk0 == 0 && xk1 == 0 && xk6 == 0 && xk7 == 0
+	xSixTapAlt := !xFourTap && xk0 == 0 && xk7 == 0 && xk1 >= 0 && xk2 <= 0 && xk3 >= 0 && xk4 >= 0 && xk5 <= 0 && xk6 >= 0 && (xk1+xk3+xk4+xk6) <= 255 && (-xk2-xk5) <= 255
 	for y := range imH {
-		// Reslice the source row once per row: the tap window srcRow[x:x+filterTaps]
-		// has a statically-known length so the compiler drops the per-tap bounds
-		// check on the inner loads.
-		srcRow := ref.Pix[(refY-foY+y)*ref.Stride+refX-foX:]
-		imRow := im[y*imStride:]
-		if xFourTap {
-			for x := range width {
-				s := srcRow[x : x+filterTaps]
-				sum := xBias + xk2*int(s[2]) + xk3*int(s[3]) + xk4*int(s[4]) + xk5*int(s[5])
-				imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+		srcBase := (refY-foY+y)*ref.Stride + refX - foX
+		srcRow := ref.Pix[srcBase : srcBase+width+filterTaps-1]
+		imRow := im[y*imStride : y*imStride+width]
+		if xSixTapAlt {
+			const loMsk = 0x00FF00FF00FF00FF
+			pk1, pk3, pk4, pk6 := uint64(xk1), uint64(xk3), uint64(xk4), uint64(xk6)
+			nk2, nk5 := uint64(-xk2), uint64(-xk5)
+			x := 0
+			for ; x+7 < width; x += 8 {
+				w0 := binary.LittleEndian.Uint64(srcRow[x+1 : x+9])
+				w1 := binary.LittleEndian.Uint64(srcRow[x+6 : x+14])
+				e0 := w0 & loMsk
+				o0 := (w0 >> 8) & loMsk
+				o1 := w1 & loMsk
+				e1 := (w1 >> 8) & loMsk
+				t3 := (e0 >> 16) | ((e1 >> 16) << 48)
+				t4 := (o0 >> 16) | ((o1 >> 32) << 48)
+				t5 := (e0 >> 32) | ((e1 >> 16) << 32)
+
+				posE := pk1*e0 + pk3*t3 + pk4*t4 + pk6*o1
+				negE := nk2*o0 + nk5*t5
+				posO := pk1*o0 + pk3*t4 + pk4*t5 + pk6*e1
+				negO := nk2*t3 + nk5*o1
+
+				imRow[x] = int16((xBiasRound + int(uint16(posE)) - int(uint16(negE))) >> round0Bits)
+				imRow[x+1] = int16((xBiasRound + int(uint16(posO)) - int(uint16(negO))) >> round0Bits)
+				imRow[x+2] = int16((xBiasRound + int(uint16(posE>>16)) - int(uint16(negE>>16))) >> round0Bits)
+				imRow[x+3] = int16((xBiasRound + int(uint16(posO>>16)) - int(uint16(negO>>16))) >> round0Bits)
+				imRow[x+4] = int16((xBiasRound + int(uint16(posE>>32)) - int(uint16(negE>>32))) >> round0Bits)
+				imRow[x+5] = int16((xBiasRound + int(uint16(posO>>32)) - int(uint16(negO>>32))) >> round0Bits)
+				imRow[x+6] = int16((xBiasRound + int(uint16(posE>>48)) - int(uint16(negE>>48))) >> round0Bits)
+				imRow[x+7] = int16((xBiasRound + int(uint16(posO>>48)) - int(uint16(negO>>48))) >> round0Bits)
+			}
+			for ; x < width; x++ {
+				sum := xBiasRound + xk1*int(srcRow[x+1]) + xk2*int(srcRow[x+2]) + xk3*int(srcRow[x+3]) +
+					xk4*int(srcRow[x+4]) + xk5*int(srcRow[x+5]) + xk6*int(srcRow[x+6])
+				imRow[x] = int16(sum >> round0Bits)
 			}
 			continue
 		}
-		for x := range width {
-			s := srcRow[x : x+filterTaps]
-			sum := xBias + xk0*int(s[0]) + xk1*int(s[1]) + xk2*int(s[2]) + xk3*int(s[3]) +
-				xk4*int(s[4]) + xk5*int(s[5]) + xk6*int(s[6]) + xk7*int(s[7])
-			imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+		if xFourTap {
+			s2, s3, s4 := int(srcRow[2]), int(srcRow[3]), int(srcRow[4])
+			x := 0
+			for ; x+3 < width; x += 4 {
+				s5 := int(srcRow[x+5])
+				s6 := int(srcRow[x+6])
+				s7 := int(srcRow[x+7])
+				s8 := int(srcRow[x+8])
+				imRow[x] = int16((xBiasRound + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5) >> round0Bits)
+				imRow[x+1] = int16((xBiasRound + xk2*s3 + xk3*s4 + xk4*s5 + xk5*s6) >> round0Bits)
+				imRow[x+2] = int16((xBiasRound + xk2*s4 + xk3*s5 + xk4*s6 + xk5*s7) >> round0Bits)
+				imRow[x+3] = int16((xBiasRound + xk2*s5 + xk3*s6 + xk4*s7 + xk5*s8) >> round0Bits)
+				s2, s3, s4 = s6, s7, s8
+			}
+			for ; x < width; x++ {
+				s5 := int(srcRow[x+5])
+				imRow[x] = int16((xBiasRound + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5) >> round0Bits)
+				s2, s3, s4 = s3, s4, s5
+			}
+			continue
+		}
+		s0, s1, s2, s3, s4, s5, s6 := int(srcRow[0]), int(srcRow[1]), int(srcRow[2]), int(srcRow[3]), int(srcRow[4]), int(srcRow[5]), int(srcRow[6])
+		x := 0
+		for ; x+3 < width; x += 4 {
+			s7 := int(srcRow[x+7])
+			s8 := int(srcRow[x+8])
+			s9 := int(srcRow[x+9])
+			s10 := int(srcRow[x+10])
+			sum0 := xBiasRound + xk0*s0 + xk1*s1 + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5 + xk6*s6 + xk7*s7
+			sum1 := xBiasRound + xk0*s1 + xk1*s2 + xk2*s3 + xk3*s4 + xk4*s5 + xk5*s6 + xk6*s7 + xk7*s8
+			sum2 := xBiasRound + xk0*s2 + xk1*s3 + xk2*s4 + xk3*s5 + xk4*s6 + xk5*s7 + xk6*s8 + xk7*s9
+			sum3 := xBiasRound + xk0*s3 + xk1*s4 + xk2*s5 + xk3*s6 + xk4*s7 + xk5*s8 + xk6*s9 + xk7*s10
+			imRow[x] = int16(sum0 >> round0Bits)
+			imRow[x+1] = int16(sum1 >> round0Bits)
+			imRow[x+2] = int16(sum2 >> round0Bits)
+			imRow[x+3] = int16(sum3 >> round0Bits)
+			s0, s1, s2, s3, s4, s5, s6 = s4, s5, s6, s7, s8, s9, s10
+		}
+		for ; x < width; x++ {
+			s7 := int(srcRow[x+7])
+			sum := xBiasRound + xk0*s0 + xk1*s1 + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5 + xk6*s6 + xk7*s7
+			imRow[x] = int16(sum >> round0Bits)
+			s0, s1, s2, s3, s4, s5, s6 = s1, s2, s3, s4, s5, s6, s7
 		}
 	}
-	offsetBits := 8 + 2*filterBits - round0Bits
-	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
-	bits := 2*filterBits - round0Bits - round1Bits
-	yBias := 1 << offsetBits
+	const (
+		offsetBits  = 8 + 2*filterBits - round0Bits
+		roundOffset = (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
+		yBiasRound  = (1 << offsetBits) + (1 << (round1Bits - 1))
+	)
 
 	yk0, yk1, yk2, yk3, yk4, yk5, yk6, yk7 := int(yKernel[0]), int(yKernel[1]), int(yKernel[2]), int(yKernel[3]), int(yKernel[4]), int(yKernel[5]), int(yKernel[6]), int(yKernel[7])
 	yFourTap := yk0 == 0 && yk1 == 0 && yk6 == 0 && yk7 == 0
+	ySixTap := !yFourTap && yk0 == 0 && yk7 == 0
 	for y := range height {
-		dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX:]
-		if yFourTap {
-			col := im[(y+2)*imStride : (y+6)*imStride+width]
-			for x := range width {
-				sum := yBias + yk2*int(col[x]) + yk3*int(col[x+imStride]) +
-					yk4*int(col[x+2*imStride]) + yk5*int(col[x+3*imStride])
-				res := roundPowerOfTwo(sum, round1Bits) - roundOffset
-				dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+		dstBase := (dstY+y)*dst.Stride + dstX
+		dstRow := dst.Pix[dstBase : dstBase+width]
+		if ySixTap {
+			r1 := im[(y+1)*imStride : (y+1)*imStride+width]
+			r2 := im[(y+2)*imStride : (y+2)*imStride+width]
+			r3 := im[(y+3)*imStride : (y+3)*imStride+width]
+			r4 := im[(y+4)*imStride : (y+4)*imStride+width]
+			r5 := im[(y+5)*imStride : (y+5)*imStride+width]
+			r6 := im[(y+6)*imStride : (y+6)*imStride+width]
+			x := 0
+			for ; x+3 < width; x += 4 {
+				sum0 := yBiasRound + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x])
+				sum1 := yBiasRound + yk1*int(r1[x+1]) + yk2*int(r2[x+1]) + yk3*int(r3[x+1]) + yk4*int(r4[x+1]) + yk5*int(r5[x+1]) + yk6*int(r6[x+1])
+				sum2 := yBiasRound + yk1*int(r1[x+2]) + yk2*int(r2[x+2]) + yk3*int(r3[x+2]) + yk4*int(r4[x+2]) + yk5*int(r5[x+2]) + yk6*int(r6[x+2])
+				sum3 := yBiasRound + yk1*int(r1[x+3]) + yk2*int(r2[x+3]) + yk3*int(r3[x+3]) + yk4*int(r4[x+3]) + yk5*int(r5[x+3]) + yk6*int(r6[x+3])
+				v0 := (sum0 >> round1Bits) - roundOffset
+				v1 := (sum1 >> round1Bits) - roundOffset
+				v2 := (sum2 >> round1Bits) - roundOffset
+				v3 := (sum3 >> round1Bits) - roundOffset
+				if uint(v0|v1|v2|v3) <= 255 {
+					dstRow[x] = byte(v0)
+					dstRow[x+1] = byte(v1)
+					dstRow[x+2] = byte(v2)
+					dstRow[x+3] = byte(v3)
+				} else {
+					dstRow[x] = clipPixel(v0)
+					dstRow[x+1] = clipPixel(v1)
+					dstRow[x+2] = clipPixel(v2)
+					dstRow[x+3] = clipPixel(v3)
+				}
+			}
+			for ; x < width; x++ {
+				sum := yBiasRound + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x])
+				dstRow[x] = clipPixel((sum >> round1Bits) - roundOffset)
 			}
 			continue
 		}
-		col := im[y*imStride : (y+7)*imStride+width]
-		for x := range width {
-			sum := yBias + yk0*int(col[x]) + yk1*int(col[x+imStride]) + yk2*int(col[x+2*imStride]) +
-				yk3*int(col[x+3*imStride]) + yk4*int(col[x+4*imStride]) + yk5*int(col[x+5*imStride]) +
-				yk6*int(col[x+6*imStride]) + yk7*int(col[x+7*imStride])
-			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
-			dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+		if yFourTap {
+			r2 := im[(y+2)*imStride : (y+2)*imStride+width]
+			r3 := im[(y+3)*imStride : (y+3)*imStride+width]
+			r4 := im[(y+4)*imStride : (y+4)*imStride+width]
+			r5 := im[(y+5)*imStride : (y+5)*imStride+width]
+			x := 0
+			for ; x+3 < width; x += 4 {
+				sum0 := yBiasRound + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x])
+				sum1 := yBiasRound + yk2*int(r2[x+1]) + yk3*int(r3[x+1]) + yk4*int(r4[x+1]) + yk5*int(r5[x+1])
+				sum2 := yBiasRound + yk2*int(r2[x+2]) + yk3*int(r3[x+2]) + yk4*int(r4[x+2]) + yk5*int(r5[x+2])
+				sum3 := yBiasRound + yk2*int(r2[x+3]) + yk3*int(r3[x+3]) + yk4*int(r4[x+3]) + yk5*int(r5[x+3])
+				v0 := (sum0 >> round1Bits) - roundOffset
+				v1 := (sum1 >> round1Bits) - roundOffset
+				v2 := (sum2 >> round1Bits) - roundOffset
+				v3 := (sum3 >> round1Bits) - roundOffset
+				if uint(v0|v1|v2|v3) <= 255 {
+					dstRow[x] = byte(v0)
+					dstRow[x+1] = byte(v1)
+					dstRow[x+2] = byte(v2)
+					dstRow[x+3] = byte(v3)
+				} else {
+					dstRow[x] = clipPixel(v0)
+					dstRow[x+1] = clipPixel(v1)
+					dstRow[x+2] = clipPixel(v2)
+					dstRow[x+3] = clipPixel(v3)
+				}
+			}
+			for ; x < width; x++ {
+				sum := yBiasRound + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x])
+				dstRow[x] = clipPixel((sum >> round1Bits) - roundOffset)
+			}
+			continue
+		}
+		r0 := im[y*imStride : y*imStride+width]
+		r1 := im[(y+1)*imStride : (y+1)*imStride+width]
+		r2 := im[(y+2)*imStride : (y+2)*imStride+width]
+		r3 := im[(y+3)*imStride : (y+3)*imStride+width]
+		r4 := im[(y+4)*imStride : (y+4)*imStride+width]
+		r5 := im[(y+5)*imStride : (y+5)*imStride+width]
+		r6 := im[(y+6)*imStride : (y+6)*imStride+width]
+		r7 := im[(y+7)*imStride : (y+7)*imStride+width]
+		x := 0
+		for ; x+3 < width; x += 4 {
+			sum0 := yBiasRound + yk0*int(r0[x]) + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) +
+				yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x]) + yk7*int(r7[x])
+			sum1 := yBiasRound + yk0*int(r0[x+1]) + yk1*int(r1[x+1]) + yk2*int(r2[x+1]) + yk3*int(r3[x+1]) +
+				yk4*int(r4[x+1]) + yk5*int(r5[x+1]) + yk6*int(r6[x+1]) + yk7*int(r7[x+1])
+			sum2 := yBiasRound + yk0*int(r0[x+2]) + yk1*int(r1[x+2]) + yk2*int(r2[x+2]) + yk3*int(r3[x+2]) +
+				yk4*int(r4[x+2]) + yk5*int(r5[x+2]) + yk6*int(r6[x+2]) + yk7*int(r7[x+2])
+			sum3 := yBiasRound + yk0*int(r0[x+3]) + yk1*int(r1[x+3]) + yk2*int(r2[x+3]) + yk3*int(r3[x+3]) +
+				yk4*int(r4[x+3]) + yk5*int(r5[x+3]) + yk6*int(r6[x+3]) + yk7*int(r7[x+3])
+			dstRow[x] = clipPixel((sum0 >> round1Bits) - roundOffset)
+			dstRow[x+1] = clipPixel((sum1 >> round1Bits) - roundOffset)
+			dstRow[x+2] = clipPixel((sum2 >> round1Bits) - roundOffset)
+			dstRow[x+3] = clipPixel((sum3 >> round1Bits) - roundOffset)
+		}
+		for ; x < width; x++ {
+			sum := yBiasRound + yk0*int(r0[x]) + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) +
+				yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x]) + yk7*int(r7[x])
+			dstRow[x] = clipPixel((sum >> round1Bits) - roundOffset)
 		}
 	}
 }
@@ -757,55 +969,135 @@ func convolve2D8ClampedPureGoWithScratch(dst frame.Plane, ref frame.Plane, dstX 
 }
 
 func convolve2D8ClampedPureGoWithIM(dst frame.Plane, ref frame.Plane, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, im *[(maxBlockSize + filterTaps - 1) * maxBlockSize]int16) {
+	if width <= 0 || height <= 0 {
+		return
+	}
 	const imStride = maxBlockSize
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1
-	const xBias = 1 << (8 + filterBits - 1)
+	const xBiasRound = (1 << (8 + filterBits - 1)) + (1 << (round0Bits - 1))
 
 	xk0, xk1, xk2, xk3, xk4, xk5, xk6, xk7 := int(xKernel[0]), int(xKernel[1]), int(xKernel[2]), int(xKernel[3]), int(xKernel[4]), int(xKernel[5]), int(xKernel[6]), int(xKernel[7])
 	xFourTap := xk0 == 0 && xk1 == 0 && xk6 == 0 && xk7 == 0
+	xSixTapAlt := !xFourTap && xk0 == 0 && xk7 == 0 && xk1 >= 0 && xk2 <= 0 && xk3 >= 0 && xk4 >= 0 && xk5 <= 0 && xk6 >= 0 && (xk1+xk3+xk4+xk6) <= 255 && (-xk2-xk5) <= 255
 	firstTap := refX - foX
 	xLo, xHi := clampedXInterior(firstTap, filterTaps, ref.Width, width)
 	for y := range imH {
-		// The vertical coordinate is constant across the row, so clamp it once
-		// instead of re-clamping it on every tap load.
 		cy := clampInt(refY-foY+y, 0, ref.Height-1)
 		rowBase := cy * ref.Stride
-		imRow := im[y*imStride:]
-		if xFourTap {
+		imRow := im[y*imStride : y*imStride+width]
+		if xSixTapAlt {
+			const loMsk = 0x00FF00FF00FF00FF
+			pk1, pk3, pk4, pk6 := uint64(xk1), uint64(xk3), uint64(xk4), uint64(xk6)
+			nk2, nk5 := uint64(-xk2), uint64(-xk5)
 			for x := 0; x < xLo; x++ {
 				sx := firstTap + x
-				sum := xBias +
+				sum := xBiasRound +
+					xk1*int(loadSample8ClampedRow(ref, sx+1, rowBase)) +
 					xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
 					xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
 					xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
-					xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
-				imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+					xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
+					xk6*int(loadSample8ClampedRow(ref, sx+6, rowBase))
+				imRow[x] = int16(sum >> round0Bits)
 			}
-			if xHi > xLo {
-				srcRow := ref.Pix[rowBase+firstTap+xLo:]
-				for x := xLo; x < xHi; x++ {
-					i := x - xLo
-					s := srcRow[i : i+filterTaps]
-					sum := xBias + xk2*int(s[2]) + xk3*int(s[3]) + xk4*int(s[4]) + xk5*int(s[5])
-					imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+			if n := xHi - xLo; n > 0 {
+				srcBase := rowBase + firstTap + xLo
+				srcRow := ref.Pix[srcBase : srcBase+n+filterTaps-1]
+				dstSpan := imRow[xLo:xHi]
+				i := 0
+				for ; i+7 < n; i += 8 {
+					w0 := binary.LittleEndian.Uint64(srcRow[i+1 : i+9])
+					w1 := binary.LittleEndian.Uint64(srcRow[i+6 : i+14])
+					e0 := w0 & loMsk
+					o0 := (w0 >> 8) & loMsk
+					o1 := w1 & loMsk
+					e1 := (w1 >> 8) & loMsk
+					t3 := (e0 >> 16) | ((e1 >> 16) << 48)
+					t4 := (o0 >> 16) | ((o1 >> 32) << 48)
+					t5 := (e0 >> 32) | ((e1 >> 16) << 32)
+
+					posE := pk1*e0 + pk3*t3 + pk4*t4 + pk6*o1
+					negE := nk2*o0 + nk5*t5
+					posO := pk1*o0 + pk3*t4 + pk4*t5 + pk6*e1
+					negO := nk2*t3 + nk5*o1
+
+					dstSpan[i] = int16((xBiasRound + int(uint16(posE)) - int(uint16(negE))) >> round0Bits)
+					dstSpan[i+1] = int16((xBiasRound + int(uint16(posO)) - int(uint16(negO))) >> round0Bits)
+					dstSpan[i+2] = int16((xBiasRound + int(uint16(posE>>16)) - int(uint16(negE>>16))) >> round0Bits)
+					dstSpan[i+3] = int16((xBiasRound + int(uint16(posO>>16)) - int(uint16(negO>>16))) >> round0Bits)
+					dstSpan[i+4] = int16((xBiasRound + int(uint16(posE>>32)) - int(uint16(negE>>32))) >> round0Bits)
+					dstSpan[i+5] = int16((xBiasRound + int(uint16(posO>>32)) - int(uint16(negO>>32))) >> round0Bits)
+					dstSpan[i+6] = int16((xBiasRound + int(uint16(posE>>48)) - int(uint16(negE>>48))) >> round0Bits)
+					dstSpan[i+7] = int16((xBiasRound + int(uint16(posO>>48)) - int(uint16(negO>>48))) >> round0Bits)
+				}
+				for ; i < n; i++ {
+					sum := xBiasRound + xk1*int(srcRow[i+1]) + xk2*int(srcRow[i+2]) + xk3*int(srcRow[i+3]) +
+						xk4*int(srcRow[i+4]) + xk5*int(srcRow[i+5]) + xk6*int(srcRow[i+6])
+					dstSpan[i] = int16(sum >> round0Bits)
 				}
 			}
 			for x := xHi; x < width; x++ {
 				sx := firstTap + x
-				sum := xBias +
+				sum := xBiasRound +
+					xk1*int(loadSample8ClampedRow(ref, sx+1, rowBase)) +
+					xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+					xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+					xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+					xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
+					xk6*int(loadSample8ClampedRow(ref, sx+6, rowBase))
+				imRow[x] = int16(sum >> round0Bits)
+			}
+			continue
+		}
+		if xFourTap {
+			for x := 0; x < xLo; x++ {
+				sx := firstTap + x
+				sum := xBiasRound +
 					xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
 					xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
 					xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
 					xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
-				imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+				imRow[x] = int16(sum >> round0Bits)
+			}
+			if n := xHi - xLo; n > 0 {
+				srcBase := rowBase + firstTap + xLo
+				srcRow := ref.Pix[srcBase : srcBase+n+filterTaps-1]
+				dstSpan := imRow[xLo:xHi]
+				s2, s3, s4 := int(srcRow[2]), int(srcRow[3]), int(srcRow[4])
+				i := 0
+				for ; i+3 < n; i += 4 {
+					s5 := int(srcRow[i+5])
+					s6 := int(srcRow[i+6])
+					s7 := int(srcRow[i+7])
+					s8 := int(srcRow[i+8])
+					dstSpan[i] = int16((xBiasRound + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5) >> round0Bits)
+					dstSpan[i+1] = int16((xBiasRound + xk2*s3 + xk3*s4 + xk4*s5 + xk5*s6) >> round0Bits)
+					dstSpan[i+2] = int16((xBiasRound + xk2*s4 + xk3*s5 + xk4*s6 + xk5*s7) >> round0Bits)
+					dstSpan[i+3] = int16((xBiasRound + xk2*s5 + xk3*s6 + xk4*s7 + xk5*s8) >> round0Bits)
+					s2, s3, s4 = s6, s7, s8
+				}
+				for ; i < n; i++ {
+					s5 := int(srcRow[i+5])
+					dstSpan[i] = int16((xBiasRound + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5) >> round0Bits)
+					s2, s3, s4 = s3, s4, s5
+				}
+			}
+			for x := xHi; x < width; x++ {
+				sx := firstTap + x
+				sum := xBiasRound +
+					xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
+					xk3*int(loadSample8ClampedRow(ref, sx+3, rowBase)) +
+					xk4*int(loadSample8ClampedRow(ref, sx+4, rowBase)) +
+					xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase))
+				imRow[x] = int16(sum >> round0Bits)
 			}
 			continue
 		}
 		for x := 0; x < xLo; x++ {
 			sx := firstTap + x
-			sum := xBias +
+			sum := xBiasRound +
 				xk0*int(loadSample8ClampedRow(ref, sx, rowBase)) +
 				xk1*int(loadSample8ClampedRow(ref, sx+1, rowBase)) +
 				xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
@@ -814,21 +1106,34 @@ func convolve2D8ClampedPureGoWithIM(dst frame.Plane, ref frame.Plane, dstX int, 
 				xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
 				xk6*int(loadSample8ClampedRow(ref, sx+6, rowBase)) +
 				xk7*int(loadSample8ClampedRow(ref, sx+7, rowBase))
-			imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+			imRow[x] = int16(sum >> round0Bits)
 		}
-		if xHi > xLo {
-			srcRow := ref.Pix[rowBase+firstTap+xLo:]
-			for x := xLo; x < xHi; x++ {
-				i := x - xLo
-				s := srcRow[i : i+filterTaps]
-				sum := xBias + xk0*int(s[0]) + xk1*int(s[1]) + xk2*int(s[2]) + xk3*int(s[3]) +
-					xk4*int(s[4]) + xk5*int(s[5]) + xk6*int(s[6]) + xk7*int(s[7])
-				imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+		if n := xHi - xLo; n > 0 {
+			srcBase := rowBase + firstTap + xLo
+			srcRow := ref.Pix[srcBase : srcBase+n+filterTaps-1]
+			dstSpan := imRow[xLo:xHi]
+			s0, s1, s2, s3, s4, s5, s6 := int(srcRow[0]), int(srcRow[1]), int(srcRow[2]), int(srcRow[3]), int(srcRow[4]), int(srcRow[5]), int(srcRow[6])
+			i := 0
+			for ; i+3 < n; i += 4 {
+				s7 := int(srcRow[i+7])
+				s8 := int(srcRow[i+8])
+				s9 := int(srcRow[i+9])
+				s10 := int(srcRow[i+10])
+				dstSpan[i] = int16((xBiasRound + xk0*s0 + xk1*s1 + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5 + xk6*s6 + xk7*s7) >> round0Bits)
+				dstSpan[i+1] = int16((xBiasRound + xk0*s1 + xk1*s2 + xk2*s3 + xk3*s4 + xk4*s5 + xk5*s6 + xk6*s7 + xk7*s8) >> round0Bits)
+				dstSpan[i+2] = int16((xBiasRound + xk0*s2 + xk1*s3 + xk2*s4 + xk3*s5 + xk4*s6 + xk5*s7 + xk6*s8 + xk7*s9) >> round0Bits)
+				dstSpan[i+3] = int16((xBiasRound + xk0*s3 + xk1*s4 + xk2*s5 + xk3*s6 + xk4*s7 + xk5*s8 + xk6*s9 + xk7*s10) >> round0Bits)
+				s0, s1, s2, s3, s4, s5, s6 = s4, s5, s6, s7, s8, s9, s10
+			}
+			for ; i < n; i++ {
+				s7 := int(srcRow[i+7])
+				dstSpan[i] = int16((xBiasRound + xk0*s0 + xk1*s1 + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5 + xk6*s6 + xk7*s7) >> round0Bits)
+				s0, s1, s2, s3, s4, s5, s6 = s1, s2, s3, s4, s5, s6, s7
 			}
 		}
 		for x := xHi; x < width; x++ {
 			sx := firstTap + x
-			sum := xBias +
+			sum := xBiasRound +
 				xk0*int(loadSample8ClampedRow(ref, sx, rowBase)) +
 				xk1*int(loadSample8ClampedRow(ref, sx+1, rowBase)) +
 				xk2*int(loadSample8ClampedRow(ref, sx+2, rowBase)) +
@@ -837,35 +1142,111 @@ func convolve2D8ClampedPureGoWithIM(dst frame.Plane, ref frame.Plane, dstX int, 
 				xk5*int(loadSample8ClampedRow(ref, sx+5, rowBase)) +
 				xk6*int(loadSample8ClampedRow(ref, sx+6, rowBase)) +
 				xk7*int(loadSample8ClampedRow(ref, sx+7, rowBase))
-			imRow[x] = int16(roundPowerOfTwo(sum, round0Bits))
+			imRow[x] = int16(sum >> round0Bits)
 		}
 	}
-	offsetBits := 8 + 2*filterBits - round0Bits
-	roundOffset := (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
-	bits := 2*filterBits - round0Bits - round1Bits
-	yBias := 1 << offsetBits
+	const (
+		offsetBits  = 8 + 2*filterBits - round0Bits
+		roundOffset = (1 << (offsetBits - round1Bits)) + (1 << (offsetBits - round1Bits - 1))
+		yBiasRound  = (1 << offsetBits) + (1 << (round1Bits - 1))
+	)
 
 	yk0, yk1, yk2, yk3, yk4, yk5, yk6, yk7 := int(yKernel[0]), int(yKernel[1]), int(yKernel[2]), int(yKernel[3]), int(yKernel[4]), int(yKernel[5]), int(yKernel[6]), int(yKernel[7])
 	yFourTap := yk0 == 0 && yk1 == 0 && yk6 == 0 && yk7 == 0
+	ySixTap := !yFourTap && yk0 == 0 && yk7 == 0
 	for y := range height {
-		dstRow := dst.Pix[(dstY+y)*dst.Stride+dstX:]
-		if yFourTap {
-			col := im[(y+2)*imStride : (y+6)*imStride+width]
-			for x := range width {
-				sum := yBias + yk2*int(col[x]) + yk3*int(col[x+imStride]) +
-					yk4*int(col[x+2*imStride]) + yk5*int(col[x+3*imStride])
-				res := roundPowerOfTwo(sum, round1Bits) - roundOffset
-				dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+		dstBase := (dstY+y)*dst.Stride + dstX
+		dstRow := dst.Pix[dstBase : dstBase+width]
+		if ySixTap {
+			r1 := im[(y+1)*imStride : (y+1)*imStride+width]
+			r2 := im[(y+2)*imStride : (y+2)*imStride+width]
+			r3 := im[(y+3)*imStride : (y+3)*imStride+width]
+			r4 := im[(y+4)*imStride : (y+4)*imStride+width]
+			r5 := im[(y+5)*imStride : (y+5)*imStride+width]
+			r6 := im[(y+6)*imStride : (y+6)*imStride+width]
+			x := 0
+			for ; x+3 < width; x += 4 {
+				v0 := ((yBiasRound + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x])) >> round1Bits) - roundOffset
+				v1 := ((yBiasRound + yk1*int(r1[x+1]) + yk2*int(r2[x+1]) + yk3*int(r3[x+1]) + yk4*int(r4[x+1]) + yk5*int(r5[x+1]) + yk6*int(r6[x+1])) >> round1Bits) - roundOffset
+				v2 := ((yBiasRound + yk1*int(r1[x+2]) + yk2*int(r2[x+2]) + yk3*int(r3[x+2]) + yk4*int(r4[x+2]) + yk5*int(r5[x+2]) + yk6*int(r6[x+2])) >> round1Bits) - roundOffset
+				v3 := ((yBiasRound + yk1*int(r1[x+3]) + yk2*int(r2[x+3]) + yk3*int(r3[x+3]) + yk4*int(r4[x+3]) + yk5*int(r5[x+3]) + yk6*int(r6[x+3])) >> round1Bits) - roundOffset
+				if uint(v0|v1|v2|v3) <= 255 {
+					dstRow[x] = byte(v0)
+					dstRow[x+1] = byte(v1)
+					dstRow[x+2] = byte(v2)
+					dstRow[x+3] = byte(v3)
+				} else {
+					dstRow[x] = clipPixel(v0)
+					dstRow[x+1] = clipPixel(v1)
+					dstRow[x+2] = clipPixel(v2)
+					dstRow[x+3] = clipPixel(v3)
+				}
+			}
+			for ; x < width; x++ {
+				sum := yBiasRound + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x])
+				dstRow[x] = clipPixel((sum >> round1Bits) - roundOffset)
 			}
 			continue
 		}
-		col := im[y*imStride : (y+7)*imStride+width]
-		for x := range width {
-			sum := yBias + yk0*int(col[x]) + yk1*int(col[x+imStride]) + yk2*int(col[x+2*imStride]) +
-				yk3*int(col[x+3*imStride]) + yk4*int(col[x+4*imStride]) + yk5*int(col[x+5*imStride]) +
-				yk6*int(col[x+6*imStride]) + yk7*int(col[x+7*imStride])
-			res := roundPowerOfTwo(sum, round1Bits) - roundOffset
-			dstRow[x] = byte(clipPixel(roundPowerOfTwo(res, bits)))
+		if yFourTap {
+			r2 := im[(y+2)*imStride : (y+2)*imStride+width]
+			r3 := im[(y+3)*imStride : (y+3)*imStride+width]
+			r4 := im[(y+4)*imStride : (y+4)*imStride+width]
+			r5 := im[(y+5)*imStride : (y+5)*imStride+width]
+			x := 0
+			for ; x+3 < width; x += 4 {
+				v0 := ((yBiasRound + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x])) >> round1Bits) - roundOffset
+				v1 := ((yBiasRound + yk2*int(r2[x+1]) + yk3*int(r3[x+1]) + yk4*int(r4[x+1]) + yk5*int(r5[x+1])) >> round1Bits) - roundOffset
+				v2 := ((yBiasRound + yk2*int(r2[x+2]) + yk3*int(r3[x+2]) + yk4*int(r4[x+2]) + yk5*int(r5[x+2])) >> round1Bits) - roundOffset
+				v3 := ((yBiasRound + yk2*int(r2[x+3]) + yk3*int(r3[x+3]) + yk4*int(r4[x+3]) + yk5*int(r5[x+3])) >> round1Bits) - roundOffset
+				if uint(v0|v1|v2|v3) <= 255 {
+					dstRow[x] = byte(v0)
+					dstRow[x+1] = byte(v1)
+					dstRow[x+2] = byte(v2)
+					dstRow[x+3] = byte(v3)
+				} else {
+					dstRow[x] = clipPixel(v0)
+					dstRow[x+1] = clipPixel(v1)
+					dstRow[x+2] = clipPixel(v2)
+					dstRow[x+3] = clipPixel(v3)
+				}
+			}
+			for ; x < width; x++ {
+				sum := yBiasRound + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x])
+				dstRow[x] = clipPixel((sum >> round1Bits) - roundOffset)
+			}
+			continue
+		}
+		r0 := im[y*imStride : y*imStride+width]
+		r1 := im[(y+1)*imStride : (y+1)*imStride+width]
+		r2 := im[(y+2)*imStride : (y+2)*imStride+width]
+		r3 := im[(y+3)*imStride : (y+3)*imStride+width]
+		r4 := im[(y+4)*imStride : (y+4)*imStride+width]
+		r5 := im[(y+5)*imStride : (y+5)*imStride+width]
+		r6 := im[(y+6)*imStride : (y+6)*imStride+width]
+		r7 := im[(y+7)*imStride : (y+7)*imStride+width]
+		x := 0
+		for ; x+3 < width; x += 4 {
+			v0 := ((yBiasRound + yk0*int(r0[x]) + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x]) + yk7*int(r7[x])) >> round1Bits) - roundOffset
+			v1 := ((yBiasRound + yk0*int(r0[x+1]) + yk1*int(r1[x+1]) + yk2*int(r2[x+1]) + yk3*int(r3[x+1]) + yk4*int(r4[x+1]) + yk5*int(r5[x+1]) + yk6*int(r6[x+1]) + yk7*int(r7[x+1])) >> round1Bits) - roundOffset
+			v2 := ((yBiasRound + yk0*int(r0[x+2]) + yk1*int(r1[x+2]) + yk2*int(r2[x+2]) + yk3*int(r3[x+2]) + yk4*int(r4[x+2]) + yk5*int(r5[x+2]) + yk6*int(r6[x+2]) + yk7*int(r7[x+2])) >> round1Bits) - roundOffset
+			v3 := ((yBiasRound + yk0*int(r0[x+3]) + yk1*int(r1[x+3]) + yk2*int(r2[x+3]) + yk3*int(r3[x+3]) + yk4*int(r4[x+3]) + yk5*int(r5[x+3]) + yk6*int(r6[x+3]) + yk7*int(r7[x+3])) >> round1Bits) - roundOffset
+			if uint(v0|v1|v2|v3) <= 255 {
+				dstRow[x] = byte(v0)
+				dstRow[x+1] = byte(v1)
+				dstRow[x+2] = byte(v2)
+				dstRow[x+3] = byte(v3)
+			} else {
+				dstRow[x] = clipPixel(v0)
+				dstRow[x+1] = clipPixel(v1)
+				dstRow[x+2] = clipPixel(v2)
+				dstRow[x+3] = clipPixel(v3)
+			}
+		}
+		for ; x < width; x++ {
+			sum := yBiasRound + yk0*int(r0[x]) + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) +
+				yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x]) + yk7*int(r7[x])
+			dstRow[x] = clipPixel((sum >> round1Bits) - roundOffset)
 		}
 	}
 }
@@ -983,42 +1364,80 @@ func convolve2D8ClampedNarrowPureGo(dst frame.Plane, ref frame.Plane, dstX int, 
 }
 
 func convolveXHighBDPureGo(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, kernel [filterTaps]int16) {
+	if width <= 0 || height <= 0 {
+		return
+	}
 	fo := filterTaps/2 - 1
 	// av1_highbd_convolve_x_sr_c: round_0 then bits = FILTER_BITS - round_0.
 	// round_0 is bd-dependent (5 at bd == 12), matching get_conv_params_no_round.
 	round0, _ := highBDRoundBits(bitDepth)
 	bits := filterBits - round0
+	r0Bias := 1 << (round0 - 1)
+	r0Shift := uint(round0)
+	bBias := 1 << (bits - 1)
+	bShift := uint(bits)
 	k0, k1, k2, k3, k4, k5, k6, k7 := int(kernel[0]), int(kernel[1]), int(kernel[2]), int(kernel[3]), int(kernel[4]), int(kernel[5]), int(kernel[6]), int(kernel[7])
 	fourTap := k0 == 0 && k1 == 0 && k6 == 0 && k7 == 0
 	for y := range height {
 		base := (refY+y)*ref.Stride + (refX-fo)*2
 		srcRow := ref.Pix[base : base+(width+filterTaps-1)*2]
+		dstBase := (dstY+y)*dst.Stride + dstX*2
+		dstRow := dst.Pix[dstBase : dstBase+width*2]
 		if fourTap {
-			for x := range width {
+			s2 := int(binary.LittleEndian.Uint16(srcRow[4:6]))
+			s3 := int(binary.LittleEndian.Uint16(srcRow[6:8]))
+			s4 := int(binary.LittleEndian.Uint16(srcRow[8:10]))
+			x := 0
+			for ; x+3 < width; x += 4 {
 				o := x * 2
-				s2 := int(uint16(srcRow[o+4]) | uint16(srcRow[o+5])<<8)
-				s3 := int(uint16(srcRow[o+6]) | uint16(srcRow[o+7])<<8)
-				s4 := int(uint16(srcRow[o+8]) | uint16(srcRow[o+9])<<8)
-				s5 := int(uint16(srcRow[o+10]) | uint16(srcRow[o+11])<<8)
-				sum := k2*s2 + k3*s3 + k4*s4 + k5*s5
-				res := roundPowerOfTwo(sum, round0)
-				storeHighBDSample(dst, dstX+x, dstY+y, clipPixelHighBD(roundPowerOfTwo(res, bits), max))
+				s5 := int(binary.LittleEndian.Uint16(srcRow[o+10 : o+12]))
+				s6 := int(binary.LittleEndian.Uint16(srcRow[o+12 : o+14]))
+				s7 := int(binary.LittleEndian.Uint16(srcRow[o+14 : o+16]))
+				s8 := int(binary.LittleEndian.Uint16(srcRow[o+16 : o+18]))
+				binary.LittleEndian.PutUint16(dstRow[o:o+2], clipPixelHighBD((((k2*s2+k3*s3+k4*s4+k5*s5+r0Bias)>>r0Shift)+bBias)>>bShift, max))
+				binary.LittleEndian.PutUint16(dstRow[o+2:o+4], clipPixelHighBD((((k2*s3+k3*s4+k4*s5+k5*s6+r0Bias)>>r0Shift)+bBias)>>bShift, max))
+				binary.LittleEndian.PutUint16(dstRow[o+4:o+6], clipPixelHighBD((((k2*s4+k3*s5+k4*s6+k5*s7+r0Bias)>>r0Shift)+bBias)>>bShift, max))
+				binary.LittleEndian.PutUint16(dstRow[o+6:o+8], clipPixelHighBD((((k2*s5+k3*s6+k4*s7+k5*s8+r0Bias)>>r0Shift)+bBias)>>bShift, max))
+				s2, s3, s4 = s6, s7, s8
+			}
+			for ; x < width; x++ {
+				o := x * 2
+				s5 := int(binary.LittleEndian.Uint16(srcRow[o+10 : o+12]))
+				binary.LittleEndian.PutUint16(dstRow[o:o+2], clipPixelHighBD((((k2*s2+k3*s3+k4*s4+k5*s5+r0Bias)>>r0Shift)+bBias)>>bShift, max))
+				s2, s3, s4 = s3, s4, s5
 			}
 			continue
 		}
-		for x := range width {
+		s0 := int(binary.LittleEndian.Uint16(srcRow[0:2]))
+		s1 := int(binary.LittleEndian.Uint16(srcRow[2:4]))
+		s2 := int(binary.LittleEndian.Uint16(srcRow[4:6]))
+		s3 := int(binary.LittleEndian.Uint16(srcRow[6:8]))
+		s4 := int(binary.LittleEndian.Uint16(srcRow[8:10]))
+		s5 := int(binary.LittleEndian.Uint16(srcRow[10:12]))
+		s6 := int(binary.LittleEndian.Uint16(srcRow[12:14]))
+		x := 0
+		for ; x+3 < width; x += 4 {
 			o := x * 2
-			s0 := int(uint16(srcRow[o]) | uint16(srcRow[o+1])<<8)
-			s1 := int(uint16(srcRow[o+2]) | uint16(srcRow[o+3])<<8)
-			s2 := int(uint16(srcRow[o+4]) | uint16(srcRow[o+5])<<8)
-			s3 := int(uint16(srcRow[o+6]) | uint16(srcRow[o+7])<<8)
-			s4 := int(uint16(srcRow[o+8]) | uint16(srcRow[o+9])<<8)
-			s5 := int(uint16(srcRow[o+10]) | uint16(srcRow[o+11])<<8)
-			s6 := int(uint16(srcRow[o+12]) | uint16(srcRow[o+13])<<8)
-			s7 := int(uint16(srcRow[o+14]) | uint16(srcRow[o+15])<<8)
-			sum := k0*s0 + k1*s1 + k2*s2 + k3*s3 + k4*s4 + k5*s5 + k6*s6 + k7*s7
-			res := roundPowerOfTwo(sum, round0)
-			storeHighBDSample(dst, dstX+x, dstY+y, clipPixelHighBD(roundPowerOfTwo(res, bits), max))
+			s7 := int(binary.LittleEndian.Uint16(srcRow[o+14 : o+16]))
+			s8 := int(binary.LittleEndian.Uint16(srcRow[o+16 : o+18]))
+			s9 := int(binary.LittleEndian.Uint16(srcRow[o+18 : o+20]))
+			s10 := int(binary.LittleEndian.Uint16(srcRow[o+20 : o+22]))
+			sum0 := k0*s0 + k1*s1 + k2*s2 + k3*s3 + k4*s4 + k5*s5 + k6*s6 + k7*s7 + r0Bias
+			sum1 := k0*s1 + k1*s2 + k2*s3 + k3*s4 + k4*s5 + k5*s6 + k6*s7 + k7*s8 + r0Bias
+			sum2 := k0*s2 + k1*s3 + k2*s4 + k3*s5 + k4*s6 + k5*s7 + k6*s8 + k7*s9 + r0Bias
+			sum3 := k0*s3 + k1*s4 + k2*s5 + k3*s6 + k4*s7 + k5*s8 + k6*s9 + k7*s10 + r0Bias
+			binary.LittleEndian.PutUint16(dstRow[o:o+2], clipPixelHighBD(((sum0>>r0Shift)+bBias)>>bShift, max))
+			binary.LittleEndian.PutUint16(dstRow[o+2:o+4], clipPixelHighBD(((sum1>>r0Shift)+bBias)>>bShift, max))
+			binary.LittleEndian.PutUint16(dstRow[o+4:o+6], clipPixelHighBD(((sum2>>r0Shift)+bBias)>>bShift, max))
+			binary.LittleEndian.PutUint16(dstRow[o+6:o+8], clipPixelHighBD(((sum3>>r0Shift)+bBias)>>bShift, max))
+			s0, s1, s2, s3, s4, s5, s6 = s4, s5, s6, s7, s8, s9, s10
+		}
+		for ; x < width; x++ {
+			o := x * 2
+			s7 := int(binary.LittleEndian.Uint16(srcRow[o+14 : o+16]))
+			sum := k0*s0 + k1*s1 + k2*s2 + k3*s3 + k4*s4 + k5*s5 + k6*s6 + k7*s7 + r0Bias
+			binary.LittleEndian.PutUint16(dstRow[o:o+2], clipPixelHighBD(((sum>>r0Shift)+bBias)>>bShift, max))
+			s0, s1, s2, s3, s4, s5, s6 = s1, s2, s3, s4, s5, s6, s7
 		}
 	}
 }
@@ -1146,72 +1565,143 @@ func convolve2DHighBDPureGoWithScratch(dst frame.Plane, ref frame.Plane, bitDept
 }
 
 func convolve2DHighBDPureGoWithIM(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, refX int, refY int, width int, height int, xKernel [filterTaps]int16, yKernel [filterTaps]int16, im *[(maxBlockSize + filterTaps - 1) * maxBlockSize]int32) {
+	if width <= 0 || height <= 0 {
+		return
+	}
 	const imStride = maxBlockSize
 	foX := filterTaps/2 - 1
 	foY := filterTaps/2 - 1
 	imH := height + filterTaps - 1
 	round0, round1 := highBDRoundBits(bitDepth)
-	xBias := 1 << (int(bitDepth) + filterBits - 1)
+	r0Shift := uint(round0)
+	xBiasRound := (1 << (int(bitDepth) + filterBits - 1)) + (1 << (round0 - 1))
 
 	xk0, xk1, xk2, xk3, xk4, xk5, xk6, xk7 := int(xKernel[0]), int(xKernel[1]), int(xKernel[2]), int(xKernel[3]), int(xKernel[4]), int(xKernel[5]), int(xKernel[6]), int(xKernel[7])
 	xFourTap := xk0 == 0 && xk1 == 0 && xk6 == 0 && xk7 == 0
 	for y := range imH {
-		// Reslice the high-bit-depth source row (2 bytes/sample) so the per-tap
-		// loads index a length-known slice and drop bounds checks.
 		base := (refY-foY+y)*ref.Stride + (refX-foX)*2
 		srcRow := ref.Pix[base : base+(width+filterTaps-1)*2]
-		imRow := im[y*imStride:]
+		imRow := im[y*imStride : y*imStride+width]
 		if xFourTap {
-			for x := range width {
+			s2 := int(binary.LittleEndian.Uint16(srcRow[4:6]))
+			s3 := int(binary.LittleEndian.Uint16(srcRow[6:8]))
+			s4 := int(binary.LittleEndian.Uint16(srcRow[8:10]))
+			x := 0
+			for ; x+3 < width; x += 4 {
 				o := x * 2
-				s2 := int(uint16(srcRow[o+4]) | uint16(srcRow[o+5])<<8)
-				s3 := int(uint16(srcRow[o+6]) | uint16(srcRow[o+7])<<8)
-				s4 := int(uint16(srcRow[o+8]) | uint16(srcRow[o+9])<<8)
-				s5 := int(uint16(srcRow[o+10]) | uint16(srcRow[o+11])<<8)
-				sum := xBias + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5
-				imRow[x] = int32(roundPowerOfTwo(sum, round0))
+				s5 := int(binary.LittleEndian.Uint16(srcRow[o+10 : o+12]))
+				s6 := int(binary.LittleEndian.Uint16(srcRow[o+12 : o+14]))
+				s7 := int(binary.LittleEndian.Uint16(srcRow[o+14 : o+16]))
+				s8 := int(binary.LittleEndian.Uint16(srcRow[o+16 : o+18]))
+				imRow[x] = int32((xBiasRound + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5) >> r0Shift)
+				imRow[x+1] = int32((xBiasRound + xk2*s3 + xk3*s4 + xk4*s5 + xk5*s6) >> r0Shift)
+				imRow[x+2] = int32((xBiasRound + xk2*s4 + xk3*s5 + xk4*s6 + xk5*s7) >> r0Shift)
+				imRow[x+3] = int32((xBiasRound + xk2*s5 + xk3*s6 + xk4*s7 + xk5*s8) >> r0Shift)
+				s2, s3, s4 = s6, s7, s8
+			}
+			for ; x < width; x++ {
+				o := x * 2
+				s5 := int(binary.LittleEndian.Uint16(srcRow[o+10 : o+12]))
+				imRow[x] = int32((xBiasRound + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5) >> r0Shift)
+				s2, s3, s4 = s3, s4, s5
 			}
 			continue
 		}
-		for x := range width {
+		s0 := int(binary.LittleEndian.Uint16(srcRow[0:2]))
+		s1 := int(binary.LittleEndian.Uint16(srcRow[2:4]))
+		s2 := int(binary.LittleEndian.Uint16(srcRow[4:6]))
+		s3 := int(binary.LittleEndian.Uint16(srcRow[6:8]))
+		s4 := int(binary.LittleEndian.Uint16(srcRow[8:10]))
+		s5 := int(binary.LittleEndian.Uint16(srcRow[10:12]))
+		s6 := int(binary.LittleEndian.Uint16(srcRow[12:14]))
+		x := 0
+		for ; x+3 < width; x += 4 {
 			o := x * 2
-			s0 := int(uint16(srcRow[o]) | uint16(srcRow[o+1])<<8)
-			s1 := int(uint16(srcRow[o+2]) | uint16(srcRow[o+3])<<8)
-			s2 := int(uint16(srcRow[o+4]) | uint16(srcRow[o+5])<<8)
-			s3 := int(uint16(srcRow[o+6]) | uint16(srcRow[o+7])<<8)
-			s4 := int(uint16(srcRow[o+8]) | uint16(srcRow[o+9])<<8)
-			s5 := int(uint16(srcRow[o+10]) | uint16(srcRow[o+11])<<8)
-			s6 := int(uint16(srcRow[o+12]) | uint16(srcRow[o+13])<<8)
-			s7 := int(uint16(srcRow[o+14]) | uint16(srcRow[o+15])<<8)
-			sum := xBias + xk0*s0 + xk1*s1 + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5 + xk6*s6 + xk7*s7
-			imRow[x] = int32(roundPowerOfTwo(sum, round0))
+			s7 := int(binary.LittleEndian.Uint16(srcRow[o+14 : o+16]))
+			s8 := int(binary.LittleEndian.Uint16(srcRow[o+16 : o+18]))
+			s9 := int(binary.LittleEndian.Uint16(srcRow[o+18 : o+20]))
+			s10 := int(binary.LittleEndian.Uint16(srcRow[o+20 : o+22]))
+			sum0 := xBiasRound + xk0*s0 + xk1*s1 + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5 + xk6*s6 + xk7*s7
+			sum1 := xBiasRound + xk0*s1 + xk1*s2 + xk2*s3 + xk3*s4 + xk4*s5 + xk5*s6 + xk6*s7 + xk7*s8
+			sum2 := xBiasRound + xk0*s2 + xk1*s3 + xk2*s4 + xk3*s5 + xk4*s6 + xk5*s7 + xk6*s8 + xk7*s9
+			sum3 := xBiasRound + xk0*s3 + xk1*s4 + xk2*s5 + xk3*s6 + xk4*s7 + xk5*s8 + xk6*s9 + xk7*s10
+			imRow[x] = int32(sum0 >> r0Shift)
+			imRow[x+1] = int32(sum1 >> r0Shift)
+			imRow[x+2] = int32(sum2 >> r0Shift)
+			imRow[x+3] = int32(sum3 >> r0Shift)
+			s0, s1, s2, s3, s4, s5, s6 = s4, s5, s6, s7, s8, s9, s10
+		}
+		for ; x < width; x++ {
+			o := x * 2
+			s7 := int(binary.LittleEndian.Uint16(srcRow[o+14 : o+16]))
+			sum := xBiasRound + xk0*s0 + xk1*s1 + xk2*s2 + xk3*s3 + xk4*s4 + xk5*s5 + xk6*s6 + xk7*s7
+			imRow[x] = int32(sum >> r0Shift)
+			s0, s1, s2, s3, s4, s5, s6 = s1, s2, s3, s4, s5, s6, s7
 		}
 	}
 	offsetBits := int(bitDepth) + 2*filterBits - round0
 	roundOffset := (1 << (offsetBits - round1)) + (1 << (offsetBits - round1 - 1))
-	bits := 2*filterBits - round0 - round1
-	yBias := 1 << offsetBits
+	r1Shift := uint(round1)
+	yBiasRound := (1 << offsetBits) + (1 << (round1 - 1))
 
 	yk0, yk1, yk2, yk3, yk4, yk5, yk6, yk7 := int(yKernel[0]), int(yKernel[1]), int(yKernel[2]), int(yKernel[3]), int(yKernel[4]), int(yKernel[5]), int(yKernel[6]), int(yKernel[7])
 	yFourTap := yk0 == 0 && yk1 == 0 && yk6 == 0 && yk7 == 0
 	for y := range height {
+		dstBase := (dstY+y)*dst.Stride + dstX*2
+		dstRow := dst.Pix[dstBase : dstBase+width*2]
 		if yFourTap {
-			col := im[(y+2)*imStride : (y+6)*imStride+width]
-			for x := range width {
-				sum := yBias + yk2*int(col[x]) + yk3*int(col[x+imStride]) +
-					yk4*int(col[x+2*imStride]) + yk5*int(col[x+3*imStride])
-				res := roundPowerOfTwo(sum, round1) - roundOffset
-				storeHighBDSample(dst, dstX+x, dstY+y, clipPixelHighBD(roundPowerOfTwo(res, bits), max))
+			r2 := im[(y+2)*imStride : (y+2)*imStride+width]
+			r3 := im[(y+3)*imStride : (y+3)*imStride+width]
+			r4 := im[(y+4)*imStride : (y+4)*imStride+width]
+			r5 := im[(y+5)*imStride : (y+5)*imStride+width]
+			x := 0
+			for ; x+3 < width; x += 4 {
+				o := x * 2
+				sum0 := yBiasRound + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x])
+				sum1 := yBiasRound + yk2*int(r2[x+1]) + yk3*int(r3[x+1]) + yk4*int(r4[x+1]) + yk5*int(r5[x+1])
+				sum2 := yBiasRound + yk2*int(r2[x+2]) + yk3*int(r3[x+2]) + yk4*int(r4[x+2]) + yk5*int(r5[x+2])
+				sum3 := yBiasRound + yk2*int(r2[x+3]) + yk3*int(r3[x+3]) + yk4*int(r4[x+3]) + yk5*int(r5[x+3])
+				binary.LittleEndian.PutUint16(dstRow[o:o+2], clipPixelHighBD((sum0>>r1Shift)-roundOffset, max))
+				binary.LittleEndian.PutUint16(dstRow[o+2:o+4], clipPixelHighBD((sum1>>r1Shift)-roundOffset, max))
+				binary.LittleEndian.PutUint16(dstRow[o+4:o+6], clipPixelHighBD((sum2>>r1Shift)-roundOffset, max))
+				binary.LittleEndian.PutUint16(dstRow[o+6:o+8], clipPixelHighBD((sum3>>r1Shift)-roundOffset, max))
+			}
+			for ; x < width; x++ {
+				o := x * 2
+				sum := yBiasRound + yk2*int(r2[x]) + yk3*int(r3[x]) + yk4*int(r4[x]) + yk5*int(r5[x])
+				binary.LittleEndian.PutUint16(dstRow[o:o+2], clipPixelHighBD((sum>>r1Shift)-roundOffset, max))
 			}
 			continue
 		}
-		col := im[y*imStride : (y+7)*imStride+width]
-		for x := range width {
-			sum := yBias + yk0*int(col[x]) + yk1*int(col[x+imStride]) + yk2*int(col[x+2*imStride]) +
-				yk3*int(col[x+3*imStride]) + yk4*int(col[x+4*imStride]) + yk5*int(col[x+5*imStride]) +
-				yk6*int(col[x+6*imStride]) + yk7*int(col[x+7*imStride])
-			res := roundPowerOfTwo(sum, round1) - roundOffset
-			storeHighBDSample(dst, dstX+x, dstY+y, clipPixelHighBD(roundPowerOfTwo(res, bits), max))
+		r0 := im[y*imStride : y*imStride+width]
+		r1 := im[(y+1)*imStride : (y+1)*imStride+width]
+		r2 := im[(y+2)*imStride : (y+2)*imStride+width]
+		r3 := im[(y+3)*imStride : (y+3)*imStride+width]
+		r4 := im[(y+4)*imStride : (y+4)*imStride+width]
+		r5 := im[(y+5)*imStride : (y+5)*imStride+width]
+		r6 := im[(y+6)*imStride : (y+6)*imStride+width]
+		r7 := im[(y+7)*imStride : (y+7)*imStride+width]
+		x := 0
+		for ; x+3 < width; x += 4 {
+			o := x * 2
+			sum0 := yBiasRound + yk0*int(r0[x]) + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) +
+				yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x]) + yk7*int(r7[x])
+			sum1 := yBiasRound + yk0*int(r0[x+1]) + yk1*int(r1[x+1]) + yk2*int(r2[x+1]) + yk3*int(r3[x+1]) +
+				yk4*int(r4[x+1]) + yk5*int(r5[x+1]) + yk6*int(r6[x+1]) + yk7*int(r7[x+1])
+			sum2 := yBiasRound + yk0*int(r0[x+2]) + yk1*int(r1[x+2]) + yk2*int(r2[x+2]) + yk3*int(r3[x+2]) +
+				yk4*int(r4[x+2]) + yk5*int(r5[x+2]) + yk6*int(r6[x+2]) + yk7*int(r7[x+2])
+			sum3 := yBiasRound + yk0*int(r0[x+3]) + yk1*int(r1[x+3]) + yk2*int(r2[x+3]) + yk3*int(r3[x+3]) +
+				yk4*int(r4[x+3]) + yk5*int(r5[x+3]) + yk6*int(r6[x+3]) + yk7*int(r7[x+3])
+			binary.LittleEndian.PutUint16(dstRow[o:o+2], clipPixelHighBD((sum0>>r1Shift)-roundOffset, max))
+			binary.LittleEndian.PutUint16(dstRow[o+2:o+4], clipPixelHighBD((sum1>>r1Shift)-roundOffset, max))
+			binary.LittleEndian.PutUint16(dstRow[o+4:o+6], clipPixelHighBD((sum2>>r1Shift)-roundOffset, max))
+			binary.LittleEndian.PutUint16(dstRow[o+6:o+8], clipPixelHighBD((sum3>>r1Shift)-roundOffset, max))
+		}
+		for ; x < width; x++ {
+			o := x * 2
+			sum := yBiasRound + yk0*int(r0[x]) + yk1*int(r1[x]) + yk2*int(r2[x]) + yk3*int(r3[x]) +
+				yk4*int(r4[x]) + yk5*int(r5[x]) + yk6*int(r6[x]) + yk7*int(r7[x])
+			binary.LittleEndian.PutUint16(dstRow[o:o+2], clipPixelHighBD((sum>>r1Shift)-roundOffset, max))
 		}
 	}
 }
@@ -1408,20 +1898,20 @@ func roundPowerOfTwo(value int, bits int) int {
 }
 
 func clipPixel(v int) uint8 {
-	if v < 0 {
-		return 0
-	}
-	if v > 255 {
+	if uint(v) > 255 {
+		if v < 0 {
+			return 0
+		}
 		return 255
 	}
 	return uint8(v)
 }
 
 func clipPixelHighBD(v int, max uint16) uint16 {
-	if v < 0 {
-		return 0
-	}
-	if v > int(max) {
+	if uint(v) > uint(max) {
+		if v < 0 {
+			return 0
+		}
 		return max
 	}
 	return uint16(v)

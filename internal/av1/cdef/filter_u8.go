@@ -73,9 +73,7 @@ func filterBlockU8PureGo(dst []byte, dstStride int, dstOrigin int, input []uint1
 	case primaryStrength != 0 && secondaryStrength != 0:
 		plut, slut := cdefLUT(t.priStr, t.priShift), cdefLUT(t.secStr, t.secShift)
 		if plut != nil && slut != nil {
-			for row := 0; row < height; row++ {
-				filterRowU8PriSecLUT(dst[dstOrigin+row*dstStride:][:width], input, inputOrigin+row*BStride, &t, plut, slut)
-			}
+			filterBlockU8PriSecLUT(dst, dstStride, dstOrigin, input, inputOrigin, width, height, &t, plut, slut)
 			return
 		}
 		for row := 0; row < height; row++ {
@@ -83,9 +81,7 @@ func filterBlockU8PureGo(dst []byte, dstStride int, dstOrigin int, input []uint1
 		}
 	case primaryStrength != 0:
 		if lut := cdefLUT(t.priStr, t.priShift); lut != nil {
-			for row := 0; row < height; row++ {
-				filterRowU8PriLUT(dst[dstOrigin+row*dstStride:][:width], input, inputOrigin+row*BStride, &t, lut)
-			}
+			filterBlockU8PriLUT(dst, dstStride, dstOrigin, input, inputOrigin, width, height, &t, lut)
 			return
 		}
 		for row := 0; row < height; row++ {
@@ -93,9 +89,7 @@ func filterBlockU8PureGo(dst []byte, dstStride int, dstOrigin int, input []uint1
 		}
 	case secondaryStrength != 0:
 		if lut := cdefLUT(t.secStr, t.secShift); lut != nil {
-			for row := 0; row < height; row++ {
-				filterRowU8SecLUT(dst[dstOrigin+row*dstStride:][:width], input, inputOrigin+row*BStride, &t, lut)
-			}
+			filterBlockU8SecLUT(dst, dstStride, dstOrigin, input, inputOrigin, width, height, &t, lut)
 			return
 		}
 		for row := 0; row < height; row++ {

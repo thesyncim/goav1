@@ -4,7 +4,11 @@
 
 package dsp
 
-import "github.com/thesyncim/goav1/internal/av1/frame"
+import (
+	"encoding/binary"
+
+	"github.com/thesyncim/goav1/internal/av1/frame"
+)
 
 // CopyPlaneBlock copies a rectangular plane block from src to dst. The source
 // and destination use the same sample width.
@@ -139,38 +143,119 @@ func AddRawTransformPlaneBlockTrusted(dst []byte, dstStride int, bytesPerSample 
 }
 
 func addRawTransformPlaneBlockPureGo(block planeBlock, bytesPerSample int, max uint16, width int, raw []int32, rawStride int) {
+	if width <= 0 || block.height <= 0 {
+		return
+	}
 	switch bytesPerSample {
 	case 1:
 		maxInt := int(max)
+		maxU := uint(maxInt)
 		for row := 0; row < block.height; row++ {
 			line := block.pix[row*block.stride : row*block.stride+width : row*block.stride+width]
 			rawLine := raw[row*rawStride : row*rawStride+width : row*rawStride+width]
-			for col, sample := range line {
-				v := int(sample) + rawTransformResidual(rawLine[col])
-				if v < 0 {
-					v = 0
-				} else if v > maxInt {
-					v = maxInt
+			col := 0
+			for ; col+3 < width; col += 4 {
+				v0 := int(line[col]) + int((int64(rawLine[col])+8)>>4)
+				v1 := int(line[col+1]) + int((int64(rawLine[col+1])+8)>>4)
+				v2 := int(line[col+2]) + int((int64(rawLine[col+2])+8)>>4)
+				v3 := int(line[col+3]) + int((int64(rawLine[col+3])+8)>>4)
+				if uint(v0) > maxU {
+					if v0 < 0 {
+						v0 = 0
+					} else {
+						v0 = maxInt
+					}
+				}
+				if uint(v1) > maxU {
+					if v1 < 0 {
+						v1 = 0
+					} else {
+						v1 = maxInt
+					}
+				}
+				if uint(v2) > maxU {
+					if v2 < 0 {
+						v2 = 0
+					} else {
+						v2 = maxInt
+					}
+				}
+				if uint(v3) > maxU {
+					if v3 < 0 {
+						v3 = 0
+					} else {
+						v3 = maxInt
+					}
+				}
+				line[col] = byte(v0)
+				line[col+1] = byte(v1)
+				line[col+2] = byte(v2)
+				line[col+3] = byte(v3)
+			}
+			for ; col < width; col++ {
+				v := int(line[col]) + int((int64(rawLine[col])+8)>>4)
+				if uint(v) > maxU {
+					if v < 0 {
+						v = 0
+					} else {
+						v = maxInt
+					}
 				}
 				line[col] = byte(v)
 			}
 		}
 	case 2:
 		maxInt := int(max)
+		maxU := uint(maxInt)
 		rowBytes := width * 2
 		for row := 0; row < block.height; row++ {
 			line := block.pix[row*block.stride : row*block.stride+rowBytes : row*block.stride+rowBytes]
 			rawLine := raw[row*rawStride : row*rawStride+width : row*rawStride+width]
-			for col := 0; col < width; col++ {
+			col := 0
+			for ; col+3 < width; col += 4 {
 				i := col * 2
-				v := int(uint16(line[i])|uint16(line[i+1])<<8) + rawTransformResidual(rawLine[col])
-				if v < 0 {
-					v = 0
-				} else if v > maxInt {
-					v = maxInt
+				v0 := int(binary.LittleEndian.Uint16(line[i:i+2])) + rawTransformResidual(rawLine[col])
+				v1 := int(binary.LittleEndian.Uint16(line[i+2:i+4])) + rawTransformResidual(rawLine[col+1])
+				v2 := int(binary.LittleEndian.Uint16(line[i+4:i+6])) + rawTransformResidual(rawLine[col+2])
+				v3 := int(binary.LittleEndian.Uint16(line[i+6:i+8])) + rawTransformResidual(rawLine[col+3])
+				if uint(v0|v1|v2|v3) > maxU {
+					if v0 < 0 {
+						v0 = 0
+					} else if v0 > maxInt {
+						v0 = maxInt
+					}
+					if v1 < 0 {
+						v1 = 0
+					} else if v1 > maxInt {
+						v1 = maxInt
+					}
+					if v2 < 0 {
+						v2 = 0
+					} else if v2 > maxInt {
+						v2 = maxInt
+					}
+					if v3 < 0 {
+						v3 = 0
+					} else if v3 > maxInt {
+						v3 = maxInt
+					}
 				}
-				line[i] = byte(v)
-				line[i+1] = byte(v >> 8)
+				binary.LittleEndian.PutUint16(line[i:i+2], uint16(v0))
+				binary.LittleEndian.PutUint16(line[i+2:i+4], uint16(v1))
+				binary.LittleEndian.PutUint16(line[i+4:i+6], uint16(v2))
+				binary.LittleEndian.PutUint16(line[i+6:i+8], uint16(v3))
+			}
+			for ; col < width; col++ {
+				i := col * 2
+				v := int(binary.LittleEndian.Uint16(line[i:i+2])) + rawTransformResidual(rawLine[col])
+				if uint(v) > maxU {
+					if v < 0 {
+						v = 0
+					} else {
+						v = maxInt
+					}
+				}
+				binary.LittleEndian.PutUint16(line[i:i+2], uint16(v))
 			}
 		}
 	}

@@ -33,68 +33,120 @@ func cdefLUT(threshold int, shift int) *[512]int8 {
 	return &cdefConstrainLUT[threshold][min(shift, 8)]
 }
 
-// cdefLUTIndex maps a tap difference to its constrain-table slot.
-func cdefLUTIndex(diff int) int {
-	return (min(diff, 256) + 255) & 511
-}
-
-func filterRowU8SecLUT(d []byte, input []uint16, base int, t *cdefU8Taps, lut *[512]int8) {
-	n := len(d)
-	c := input[base:][:n]
-	s0, s1 := cdefTapRow(input, base, t.sec0, n), cdefTapRow(input, base, -t.sec0, n)
-	s2, s3 := cdefTapRow(input, base, t.sec2, n), cdefTapRow(input, base, -t.sec2, n)
-	s4, s5 := cdefTapRow(input, base, t.sec1, n), cdefTapRow(input, base, -t.sec1, n)
-	s6, s7 := cdefTapRow(input, base, t.sec3, n), cdefTapRow(input, base, -t.sec3, n)
-	for i := range d {
-		x := int(c[i])
-		sum := 2*(int(lut[cdefLUTIndex(int(s0[i])-x)])+int(lut[cdefLUTIndex(int(s1[i])-x)])+
-			int(lut[cdefLUTIndex(int(s2[i])-x)])+int(lut[cdefLUTIndex(int(s3[i])-x)])) +
-			int(lut[cdefLUTIndex(int(s4[i])-x)]) + int(lut[cdefLUTIndex(int(s5[i])-x)]) +
-			int(lut[cdefLUTIndex(int(s6[i])-x)]) + int(lut[cdefLUTIndex(int(s7[i])-x)])
-		d[i] = byte(cdefRound(x, sum))
+func filterBlockU8SecLUT(dst []byte, dstStride int, dstOrigin int, input []uint16, inputOrigin int, width int, height int, t *cdefU8Taps, lut *[512]int8) {
+	sec0, sec1, sec2, sec3 := t.sec0, t.sec1, t.sec2, t.sec3
+	for row := range height {
+		base := inputOrigin + row*BStride
+		d := dst[dstOrigin+row*dstStride : dstOrigin+row*dstStride+width]
+		c := input[base : base+width]
+		s0, s1 := input[base+sec0:base+sec0+width], input[base-sec0:base-sec0+width]
+		s2, s3 := input[base+sec2:base+sec2+width], input[base-sec2:base-sec2+width]
+		s4, s5 := input[base+sec1:base+sec1+width], input[base-sec1:base-sec1+width]
+		s6, s7 := input[base+sec3:base+sec3+width], input[base-sec3:base-sec3+width]
+		i := 0
+		for ; i+3 < width; i += 4 {
+			x0, x1, x2, x3 := int(c[i]), int(c[i+1]), int(c[i+2]), int(c[i+3])
+			b0, b1, b2, b3 := uint(255-x0), uint(255-x1), uint(255-x2), uint(255-x3)
+			sum0 := 2*(int(lut[min(uint(s0[i])+b0, 511)])+int(lut[min(uint(s1[i])+b0, 511)])+
+				int(lut[min(uint(s2[i])+b0, 511)])+int(lut[min(uint(s3[i])+b0, 511)])) +
+				int(lut[min(uint(s4[i])+b0, 511)]) + int(lut[min(uint(s5[i])+b0, 511)]) +
+				int(lut[min(uint(s6[i])+b0, 511)]) + int(lut[min(uint(s7[i])+b0, 511)])
+			sum1 := 2*(int(lut[min(uint(s0[i+1])+b1, 511)])+int(lut[min(uint(s1[i+1])+b1, 511)])+
+				int(lut[min(uint(s2[i+1])+b1, 511)])+int(lut[min(uint(s3[i+1])+b1, 511)])) +
+				int(lut[min(uint(s4[i+1])+b1, 511)]) + int(lut[min(uint(s5[i+1])+b1, 511)]) +
+				int(lut[min(uint(s6[i+1])+b1, 511)]) + int(lut[min(uint(s7[i+1])+b1, 511)])
+			sum2 := 2*(int(lut[min(uint(s0[i+2])+b2, 511)])+int(lut[min(uint(s1[i+2])+b2, 511)])+
+				int(lut[min(uint(s2[i+2])+b2, 511)])+int(lut[min(uint(s3[i+2])+b2, 511)])) +
+				int(lut[min(uint(s4[i+2])+b2, 511)]) + int(lut[min(uint(s5[i+2])+b2, 511)]) +
+				int(lut[min(uint(s6[i+2])+b2, 511)]) + int(lut[min(uint(s7[i+2])+b2, 511)])
+			sum3 := 2*(int(lut[min(uint(s0[i+3])+b3, 511)])+int(lut[min(uint(s1[i+3])+b3, 511)])+
+				int(lut[min(uint(s2[i+3])+b3, 511)])+int(lut[min(uint(s3[i+3])+b3, 511)])) +
+				int(lut[min(uint(s4[i+3])+b3, 511)]) + int(lut[min(uint(s5[i+3])+b3, 511)]) +
+				int(lut[min(uint(s6[i+3])+b3, 511)]) + int(lut[min(uint(s7[i+3])+b3, 511)])
+			d[i] = byte(cdefRound(x0, sum0))
+			d[i+1] = byte(cdefRound(x1, sum1))
+			d[i+2] = byte(cdefRound(x2, sum2))
+			d[i+3] = byte(cdefRound(x3, sum3))
+		}
+		for ; i < width; i++ {
+			x := int(c[i])
+			b := uint(255 - x)
+			sum := 2*(int(lut[min(uint(s0[i])+b, 511)])+int(lut[min(uint(s1[i])+b, 511)])+
+				int(lut[min(uint(s2[i])+b, 511)])+int(lut[min(uint(s3[i])+b, 511)])) +
+				int(lut[min(uint(s4[i])+b, 511)]) + int(lut[min(uint(s5[i])+b, 511)]) +
+				int(lut[min(uint(s6[i])+b, 511)]) + int(lut[min(uint(s7[i])+b, 511)])
+			d[i] = byte(cdefRound(x, sum))
+		}
 	}
 }
 
-func filterRowU8PriLUT(d []byte, input []uint16, base int, t *cdefU8Taps, lut *[512]int8) {
-	n := len(d)
-	c := input[base:][:n]
-	p0, p1 := cdefTapRow(input, base, t.pri0, n), cdefTapRow(input, base, -t.pri0, n)
-	p2, p3 := cdefTapRow(input, base, t.pri1, n), cdefTapRow(input, base, -t.pri1, n)
+func filterBlockU8PriLUT(dst []byte, dstStride int, dstOrigin int, input []uint16, inputOrigin int, width int, height int, t *cdefU8Taps, lut *[512]int8) {
+	pri0, pri1 := t.pri0, t.pri1
 	tap0, tap1 := t.priTap0, t.priTap1
-	for i := range d {
-		x := int(c[i])
-		sum := tap0*(int(lut[cdefLUTIndex(int(p0[i])-x)])+int(lut[cdefLUTIndex(int(p1[i])-x)])) +
-			tap1*(int(lut[cdefLUTIndex(int(p2[i])-x)])+int(lut[cdefLUTIndex(int(p3[i])-x)]))
-		d[i] = byte(cdefRound(x, sum))
+	for row := range height {
+		base := inputOrigin + row*BStride
+		d := dst[dstOrigin+row*dstStride : dstOrigin+row*dstStride+width]
+		c := input[base : base+width]
+		p0, p1 := input[base+pri0:base+pri0+width], input[base-pri0:base-pri0+width]
+		p2, p3 := input[base+pri1:base+pri1+width], input[base-pri1:base-pri1+width]
+		i := 0
+		for ; i+3 < width; i += 4 {
+			x0, x1, x2, x3 := int(c[i]), int(c[i+1]), int(c[i+2]), int(c[i+3])
+			b0, b1, b2, b3 := uint(255-x0), uint(255-x1), uint(255-x2), uint(255-x3)
+			sum0 := tap0*(int(lut[min(uint(p0[i])+b0, 511)])+int(lut[min(uint(p1[i])+b0, 511)])) +
+				tap1*(int(lut[min(uint(p2[i])+b0, 511)])+int(lut[min(uint(p3[i])+b0, 511)]))
+			sum1 := tap0*(int(lut[min(uint(p0[i+1])+b1, 511)])+int(lut[min(uint(p1[i+1])+b1, 511)])) +
+				tap1*(int(lut[min(uint(p2[i+1])+b1, 511)])+int(lut[min(uint(p3[i+1])+b1, 511)]))
+			sum2 := tap0*(int(lut[min(uint(p0[i+2])+b2, 511)])+int(lut[min(uint(p1[i+2])+b2, 511)])) +
+				tap1*(int(lut[min(uint(p2[i+2])+b2, 511)])+int(lut[min(uint(p3[i+2])+b2, 511)]))
+			sum3 := tap0*(int(lut[min(uint(p0[i+3])+b3, 511)])+int(lut[min(uint(p1[i+3])+b3, 511)])) +
+				tap1*(int(lut[min(uint(p2[i+3])+b3, 511)])+int(lut[min(uint(p3[i+3])+b3, 511)]))
+			d[i] = byte(cdefRound(x0, sum0))
+			d[i+1] = byte(cdefRound(x1, sum1))
+			d[i+2] = byte(cdefRound(x2, sum2))
+			d[i+3] = byte(cdefRound(x3, sum3))
+		}
+		for ; i < width; i++ {
+			x := int(c[i])
+			b := uint(255 - x)
+			sum := tap0*(int(lut[min(uint(p0[i])+b, 511)])+int(lut[min(uint(p1[i])+b, 511)])) +
+				tap1*(int(lut[min(uint(p2[i])+b, 511)])+int(lut[min(uint(p3[i])+b, 511)]))
+			d[i] = byte(cdefRound(x, sum))
+		}
 	}
 }
 
-// filterRowU8PriSecLUT is filterRowU8PriSec with table constrain.
-func filterRowU8PriSecLUT(d []byte, input []uint16, base int, t *cdefU8Taps, plut *[512]int8, slut *[512]int8) {
-	n := len(d)
-	c := input[base:][:n]
-	p0, p1 := cdefTapRow(input, base, t.pri0, n), cdefTapRow(input, base, -t.pri0, n)
-	p2, p3 := cdefTapRow(input, base, t.pri1, n), cdefTapRow(input, base, -t.pri1, n)
-	s0, s1 := cdefTapRow(input, base, t.sec0, n), cdefTapRow(input, base, -t.sec0, n)
-	s2, s3 := cdefTapRow(input, base, t.sec2, n), cdefTapRow(input, base, -t.sec2, n)
-	s4, s5 := cdefTapRow(input, base, t.sec1, n), cdefTapRow(input, base, -t.sec1, n)
-	s6, s7 := cdefTapRow(input, base, t.sec3, n), cdefTapRow(input, base, -t.sec3, n)
+func filterBlockU8PriSecLUT(dst []byte, dstStride int, dstOrigin int, input []uint16, inputOrigin int, width int, height int, t *cdefU8Taps, plut *[512]int8, slut *[512]int8) {
+	pri0, pri1 := t.pri0, t.pri1
+	sec0, sec1, sec2, sec3 := t.sec0, t.sec1, t.sec2, t.sec3
 	tap0, tap1 := t.priTap0, t.priTap1
 	const mask = VeryLarge - 1
-	for i := range d {
-		x := int(c[i])
-		a0, a1, a2, a3 := int(p0[i]), int(p1[i]), int(p2[i]), int(p3[i])
-		b0, b1, b2, b3 := int(s0[i]), int(s1[i]), int(s2[i]), int(s3[i])
-		b4, b5, b6, b7 := int(s4[i]), int(s5[i]), int(s6[i]), int(s7[i])
-		sum := tap0*(int(plut[cdefLUTIndex(a0-x)])+int(plut[cdefLUTIndex(a1-x)])) +
-			tap1*(int(plut[cdefLUTIndex(a2-x)])+int(plut[cdefLUTIndex(a3-x)])) +
-			2*(int(slut[cdefLUTIndex(b0-x)])+int(slut[cdefLUTIndex(b1-x)])+
-				int(slut[cdefLUTIndex(b2-x)])+int(slut[cdefLUTIndex(b3-x)])) +
-			int(slut[cdefLUTIndex(b4-x)]) + int(slut[cdefLUTIndex(b5-x)]) +
-			int(slut[cdefLUTIndex(b6-x)]) + int(slut[cdefLUTIndex(b7-x)])
-		hi := max(x, a0&mask, a1&mask, a2&mask, a3&mask, b0&mask, b1&mask, b2&mask, b3&mask,
-			b4&mask, b5&mask, b6&mask, b7&mask)
-		lo := min(x, a0, a1, a2, a3, b0, b1, b2, b3, b4, b5, b6, b7)
-		d[i] = byte(min(max(cdefRound(x, sum), lo), hi))
+	for row := range height {
+		base := inputOrigin + row*BStride
+		d := dst[dstOrigin+row*dstStride : dstOrigin+row*dstStride+width]
+		c := input[base : base+width]
+		p0, p1 := input[base+pri0:base+pri0+width], input[base-pri0:base-pri0+width]
+		p2, p3 := input[base+pri1:base+pri1+width], input[base-pri1:base-pri1+width]
+		s0, s1 := input[base+sec0:base+sec0+width], input[base-sec0:base-sec0+width]
+		s2, s3 := input[base+sec2:base+sec2+width], input[base-sec2:base-sec2+width]
+		s4, s5 := input[base+sec1:base+sec1+width], input[base-sec1:base-sec1+width]
+		s6, s7 := input[base+sec3:base+sec3+width], input[base-sec3:base-sec3+width]
+		for i := range d {
+			x := int(c[i])
+			b := uint(255 - x)
+			a0, a1, a2, a3 := int(p0[i]), int(p1[i]), int(p2[i]), int(p3[i])
+			b0, b1, b2, b3 := int(s0[i]), int(s1[i]), int(s2[i]), int(s3[i])
+			b4, b5, b6, b7 := int(s4[i]), int(s5[i]), int(s6[i]), int(s7[i])
+			sum := tap0*(int(plut[min(uint(a0)+b, 511)])+int(plut[min(uint(a1)+b, 511)])) +
+				tap1*(int(plut[min(uint(a2)+b, 511)])+int(plut[min(uint(a3)+b, 511)])) +
+				2*(int(slut[min(uint(b0)+b, 511)])+int(slut[min(uint(b1)+b, 511)])+
+					int(slut[min(uint(b2)+b, 511)])+int(slut[min(uint(b3)+b, 511)])) +
+				int(slut[min(uint(b4)+b, 511)]) + int(slut[min(uint(b5)+b, 511)]) +
+				int(slut[min(uint(b6)+b, 511)]) + int(slut[min(uint(b7)+b, 511)])
+			hi := max(x, a0&mask, a1&mask, a2&mask, a3&mask, b0&mask, b1&mask, b2&mask, b3&mask,
+				b4&mask, b5&mask, b6&mask, b7&mask)
+			lo := min(x, a0, a1, a2, a3, b0, b1, b2, b3, b4, b5, b6, b7)
+			d[i] = byte(min(max(cdefRound(x, sum), lo), hi))
+		}
 	}
 }

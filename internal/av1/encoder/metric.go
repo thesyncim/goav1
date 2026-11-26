@@ -60,10 +60,19 @@ func pixelStatsPureGo(src []byte, srcStride int, ref []byte, refStride int, w, h
 	total := 0
 	sumInt := 0
 	for r := range h {
-		srow := r * srcStride
-		rrow := r * refStride
-		for c := range w {
-			d := int(src[srow+c]) - int(ref[rrow+c])
+		a := src[r*srcStride : r*srcStride+w]
+		b := ref[r*refStride : r*refStride+w]
+		c := 0
+		for ; c+3 < w; c += 4 {
+			d0 := int(a[c]) - int(b[c])
+			d1 := int(a[c+1]) - int(b[c+1])
+			d2 := int(a[c+2]) - int(b[c+2])
+			d3 := int(a[c+3]) - int(b[c+3])
+			sumInt += d0 + d1 + d2 + d3
+			total += d0*d0 + d1*d1 + d2*d2 + d3*d3
+		}
+		for ; c < w; c++ {
+			d := int(a[c]) - int(b[c])
 			sumInt += d
 			total += d * d
 		}
