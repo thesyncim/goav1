@@ -6,6 +6,18 @@ or pull requests, not in long-lived markdown.
 
 ## [Unreleased]
 
+## [v0.2.3] - 2026-11-26
+
+Pure-Go scalar (non-SIMD) decoder & encoder performance release — delivers **1.8×–2.2× faster** scalar decoding and **2.0×–4.1× faster** scalar encoding on Apple M4 Max with **0 steady-state GC allocations** (eliminating 4,884 allocs/op in 10-bit scalar CDEF), zero `unsafe` outside `internal/unsafeutil`, zero `GOEXPERIMENT=simd` regression, and bit-exact MD5 parity.
+
+### Scalar Decoder Performance
+- **Motion Compensation (`internal/av1/motion`)**: Added 4×16-bit SWAR 6-tap horizontal convolution (`subpelFilters8`) in `convolve2D8PureGoWithIM`, `convolve2D8ClampedPureGoWithIM`, and `predictInterCompoundRef8ToConvBuf2DWithIM`; added 6-tap vertical fast paths, sliding register windows with 4-wide unrolling and BCE, `encoding/binary.LittleEndian` 16-bit loads/stores for 10/12-bit paths, and 4-pixel combined unsigned range checks (`uint(v0|v1|v2|v3) <= 255`).
+- **CDEF (`internal/av1/cdef`)**: Fixed heap escape of `var tmp [64]uint16` in `filterUnitBlocksU16LEPureGo` by calling `filterBlockPureGo` directly (4,884 allocs/op / 625 KB/op → **0 allocs/op** on 10-bit scalar decode), split `filterBlockPureGo` into branch-free mode loops with branchless `constrainU8`, fused `filterRowU8*LUT` into whole-block 4-wide `filterBlockU8*LUT` kernels, and rewrote `findDirectionU8Scalar` to batch 2 rows at a time in registers.
+- **Wiener Restoration, Loop Filter & DSP (`internal/av1/restoration`, `internal/av1/loopfilter`, `internal/av1/dsp`)**: Exploited Wiener filter symmetry and 5-tap fast paths with sliding register windows and 4-pixel fast clamps in `wienerHorizontalU8` / `wienerVerticalU8`; short-circuited `lpfUnit8` / `lpfUnit16` mask checks before outer tap loads with unsigned range checks and `binary.LittleEndian`; added 4-wide unrolling and BCE to `addRawTransformPlaneBlockPureGo`.
+
+### Scalar Encoder Performance
+- **SWAR SAD & Block Stats (`internal/av1/encoder`)**: Added branchless `uint64` SWAR SAD (`swarSAD4` / `swarSAD8`) in `svtSAD16xhx8Scalar`, `svtEightSAD8x8SubScalar`, `sad32x32DualPureGo`, and `sad64x64DualPureGo` (**4.08× faster** `RTCEncoder/L1T3`, **2.93× faster** `RTCEncoder/S3T3`, **2.02× faster** `KeyframeEncoder` in scalar mode), plus 4-wide unrolled BCE loops in `pixelStatsPureGo` and `residualBlockPureGo`.
+
 ## [v0.2.1] - 2026-11-26
 
 Pure-Go + `simd/archsimd` decoder & encoder performance release on Apple M4 Max — drives 8-thread 7-stream decoder totals to **1.02× wall / 1.05× cycles** vs `dav1d 1.5.4` (**beating `dav1d` on 4/7 streams**: `aomrt_johnny` 0.95×, `svtra_mtbike` 0.97×, `svtrtc10_crowdrun` 10-bit 0.97×, `svtrtc_crowdrun` 0.99×; **3.3× faster** than `aomdec`), 1-thread decoder totals to **1.11× wall / 1.11× cycles**, and 1-thread encoder to beat `SvtAv1EncApp v4.2.0` p12 RTC on **every** metric (**0.78× wall**, **0.65× cycles**, **0.98× instructions**, **0.88× user CPU**, **+0.74 dB PSNR-Y**), with 100% `check_unsafe.sh` safety, 0 steady-state GC allocations, and bit-exact MD5 parity.
