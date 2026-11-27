@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
+	"github.com/thesyncim/goav1/internal/av1/filmgrain"
 	"github.com/thesyncim/goav1/internal/av1/frame"
 	"github.com/thesyncim/goav1/internal/av1/loopfilter"
 	"github.com/thesyncim/goav1/internal/av1/threading"
@@ -30,11 +31,11 @@ import (
 //
 // Restoration is still applied serially (it lacks a row-range apply entry point
 // in the tile package).
+// FrameWorkPostFilterParallel owns the reusable worker scratch and progress
+// state for parallel post-filter fan-out. Pointer-bearing fields sit in a
+// leading run ending with fgU16 so its trailing 12 KiB scaling tables fall
+// outside GC ptrdata.
 type FrameWorkPostFilterParallel struct {
-	// Workers is the number of goroutines available to the post-filter fan-out.
-	// One or zero keeps the serial path.
-	Workers int
-
 	cdef    []frameWorkParallelCDEFScratch
 	cdefU8  []FrameWorkCDEFPostFilterU8BandBoundary
 	cdefHBD []FrameWorkCDEFPostFilterHBD16BandBoundary
@@ -42,25 +43,32 @@ type FrameWorkPostFilterParallel struct {
 	// lfPlan holds each worker's level-cache populate counters.
 	lfPlan []FrameWorkLoopFilterPostFilterPlan
 
-	ownedPool    *threading.Pool
-	ownedWorkers int
-	job          frameWorkPostFilterParallelJob
-
-	// fgU8 and fgU16 are the film-grain stripe stage's state (dav1d's
-	// ttd->delayed_fg), set up by prep before the stripes run.
-	fgU8  frameWorkFilmGrainRows[uint8]
-	fgU16 frameWorkFilmGrainRows[uint16]
-
-	// rows publishes the frame's finished luma rows while the post-filter
-	// runs (dav1d's per-sbrow sr_cur.progress[1]); see BindFrameProgress.
-	rows frameWorkPostFilterRowProgress
+	ownedPool *threading.Pool
 	// recon is the frame's reconstruction progress while its lanes may still
 	// run (see BindReconProgress).
 	recon *threading.FrameProgress
 	// parsed is the frame's entropy-pass progress (see BindParseProgress).
 	parsed *threading.FrameProgress
+
+	job frameWorkPostFilterParallelJob
+	// rows publishes the frame's finished luma rows while the post-filter
+	// runs (dav1d's per-sbrow sr_cur.progress[1]); see BindFrameProgress.
+	rows frameWorkPostFilterRowProgress
 	// pipe runs the row pipeline's CDEF unit rows.
 	pipe frameWorkRowPipe
+
+	// fgU8 and fgU16 are the film-grain stripe stage's state (dav1d's
+	// ttd->delayed_fg), set up by prep before the stripes run. fgTables holds
+	// the 10/12-bit scaling tables after all pointer-bearing fields so they
+	// stay outside GC ptrdata.
+	fgU8     frameWorkFilmGrainRows[uint8]
+	fgU16    frameWorkFilmGrainRows[uint16]
+	fgTables [3][filmgrain.ScalingTableSize]uint8
+
+	// Workers is the number of goroutines available to the post-filter fan-out.
+	// One or zero keeps the serial path.
+	Workers      int
+	ownedWorkers int
 }
 
 // frameWorkPostFilterRowProgress hands a frame-threaded surface's finished

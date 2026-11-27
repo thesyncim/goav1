@@ -17,28 +17,118 @@ import (
 
 // VideoEncoder encodes a stream of same-sized frames, either at a fixed base
 // qindex or under closed-loop CBR rate control.
+// VideoEncoder encodes a sequence of 4:2:0 frames into AV1 temporal units.
+//
+// Memory layout is GC-conscious: all pointer-bearing fields sit in the leading
+// block ending with pc (whose own pointers sit at its front and whose ~400 KiB
+// encode state and CDF tables trail), followed by the pointer-free frame CDFs,
+// rate-control state, and scalar configuration. leafPC is allocated lazily only
+// when throughput pipelining is enabled.
 type VideoEncoder struct {
-	width, height int // coded dimensions (multiples of 8)
-	// renderWidth/renderHeight are the caller-facing frame dimensions; when
-	// they differ from the coded size the source pads by edge replication
-	// and the headers signal them through render_size.
-	renderWidth, renderHeight int
-	color                     SequenceColorConfig
-	padded                    SourceFrame420
-	keyRecon                  SourceFrame420
-	qIndex                    uint8
-	recon                     SourceFrame420
-	haveKey                   bool
+	padded        SourceFrame420
+	keyRecon      SourceFrame420
+	recon         SourceFrame420
+	reconBufs     [2]SourceFrame420
+	t2Recon       SourceFrame420
+	t1Recon       SourceFrame420
+	lastRecon     SourceFrame420
+	golden        SourceFrame420
+	pipeHeldSrc   SourceFrame420
+	pipeSrcBuf    [2]SourceFrame420
+	pipeHeldRecon SourceFrame420
+	pipeLeafRecon SourceFrame420
 
-	rcEnabled      bool
-	crfEnabled     bool
-	crfValue       uint8
-	twoPass        twoPassState
-	rcTargetBits   int
-	rcFramesPerSec int
-	rcMinQ, rcMaxQ uint8
-	// rcPerFrameBits is avg_frame_bandwidth (target / frame rate).
-	rcPerFrameBits int
+	// Tile-column coders and steady-state temporal-unit scratch slices.
+	tilePCs       []pframeCoder
+	payloads      []TilePayload
+	tileErrs      []error
+	tuGroup       []byte
+	tuScratch     []byte
+	pipeHeldTU    []byte
+	leafPayloads  [1]TilePayload
+	leafTuGroup   []byte
+	leafTuScratch []byte
+
+	// Persistent worker channels and job descriptors.
+	tileWork   chan tileWorkRange
+	filterDone chan error
+	filterWork chan struct{}
+	filterErr  error
+	leafWork   chan struct{}
+	leafDone   chan error
+	// Light-PD1 per-SB statistics (pframe_lpd1_level.go): the picture being
+	// coded, the LAST and T1 references' published objects (swapped on
+	// refresh, like SVT's EbReferenceObject sb_* arrays), and the pipelined
+	// leaf's own picture object.
+	lpd1Cur, lpd1Last, lpd1T1, lpd1Leaf *lpd1Frame
+	// leafPC is the leaf-isolated overlap coder, allocated lazily on first
+	// throughput-pipelined leaf so non-pipelined encoders never retain ~450 KiB
+	// of unused coder state.
+	leafPC *pframeCoder
+
+	twoPass       twoPassState
+	wavefront     pframeWavefront
+	lf            loopFilterApplier
+	cdefApp       cdefApplier
+	cdefSearch    cdefSearcher
+	cdefLogs      svtCDEFLogs
+	refPad        refPadCache
+	lazyCDEF      lazyCDEFPass
+	hme           hmeState
+	leafWavefront pframeWavefront
+	leafHME       hmeState
+	leafLF        loopFilterApplier
+	leafCdefApp   cdefApplier
+	tileJobParams struct {
+		src, refRecon  SourceFrame420
+		golden         *SourceFrame420
+		out            *SourceFrame420
+		prevCtx        *frameCDFs
+		lfMap          *threading.FrameWorkLoopFilterMap
+		payloads       []TilePayload
+		errs           []error
+		effQ           uint8
+		referenceMode  parser.ReferenceMode
+		forceIntegerMV bool
+		allowScreen    bool
+		color          parser.ColorConfig
+		tile           TileInfo
+		miCols         uint16
+	}
+	filterParams struct {
+		out     *SourceFrame420
+		cdefIdx []uint8
+		lfLevel uint8
+		cdef    parser.CDEFParams
+		// parallelMasks is snapshotted on the dispatch goroutine (which is
+		// serialized with config mutation) so the detached filter worker never
+		// reads e.tileColsLog2, which SetConfig may mutate concurrently.
+		parallelMasks bool
+	}
+	leafJob struct {
+		src, refRecon SourceFrame420
+		prevCtx       *frameCDFs
+		tu            []byte
+		lpd1Ref       *lpd1Frame
+		cntZeroMV     int
+		cdefRef       svtCDEFRefStrengths
+		frameIndex    int
+	}
+
+	// pc sits last among pointer-bearing fields: its pointers lead it and its
+	// ~400 KiB of value scratch and CDFs trail, so GC stops scanning before
+	// that tail and before all pointer-free encoder state below.
+	pc pframeCoder
+
+	// Everything below is pointer-free and never scanned by GC.
+	// frameCtx chains the adapted symbol contexts across the base layer:
+	// each non-droppable frame names its predecessor through
+	// primary_ref_frame and starts from the saved state instead of the
+	// defaults. haveCtx arms after the first keyframe.
+	frameCtx    frameCDFs
+	frameCtxT1  frameCDFs
+	pipeLeafCtx frameCDFs
+
 	// svtRC is SVT-AV1's one-pass CBR rate control shared by every
 	// temporal layer (svt_rc.go); svtRef holds the reference slots' RC facts
 	// (base_q_idx, temporal layer, intra) for LAST and the L1T3 middle layer,
@@ -46,216 +136,85 @@ type VideoEncoder struct {
 	svtRC    svtRateControl
 	svtRef   [2]svtRCRef
 	svtCur   svtRCFrame
-	svtCurQ  uint8
 	svtCurCR svtCRStats
-	svtCurOn bool
 	// cr is the cyclic refresh state of CBR streams.
 	cr cyclicRefresh
 
-	pc        pframeCoder
-	reconBufs [2]SourceFrame420
-	reconIdx  int
-
-	// Tile-column parallelism: tileColsLog2 > 0 splits inter frames into
-	// uniform tile columns, each encoded by its own coder (independent CDFs
-	// and entropy stream per AV1 tile semantics) on its own goroutine.
-	tileColsLog2 uint8
-	// keyframeTileColsLog2 is the keyframe tile-column split; SetTileColumns
-	// sets it with tileColsLog2. Single-tile keyframes parallelize on the
-	// SB-row wavefront (keyframe_split.go), as inter frames do.
-	keyframeTileColsLog2 uint8
-	tilePCs              []pframeCoder
-
-	// forceSplit makes the P-frame coders run the decision/write split even
-	// when it cannot parallelize. Test-only: the byte-identity oracle uses it
-	// to compare the serial split against the fused walk. In production the
-	// split runs only when the SB-row wavefront will (>=2 lanes).
-	forceSplit bool
-
-	// wavefront runs the split pipeline's decision pass over SB rows with the
-	// top-right dependency (pframe_wavefront.go) on single-tile inter frames;
-	// wavefrontLanes is its worker budget (0 disables). Only e.pc — the
-	// single-tile coder — is wired to it: multi-tile frames parallelize
-	// across tile columns instead.
-	wavefront      pframeWavefront
-	wavefrontLanes int
-	lf             loopFilterApplier
-	cdefApp        cdefApplier
-	// cdefSearch is the SVT CDEF strength search state; cdefRefLast and
-	// cdefRefT1 are the signaled strengths of the LAST and middle-layer
-	// reference slots (the reference objects' ref_cdef_strengths).
-	cdefSearch  cdefSearcher
-	cdefRefLast svtCDEFRefStrengths
-	cdefRefT1   svtCDEFRefStrengths
-	cdefLogs    svtCDEFLogs
-	// refPad caches the padded reference copies (refpad.go).
-	refPad refPadCache
-	// lazyCDEF is the deferred CDEF pass of a non-reference picture.
-	lazyCDEF     lazyCDEFPass
-	hme          hmeState
-	singleThread bool
-	effortLevel  int8
-
-	filmGrainPresent bool
+	cdefRefLast      svtCDEFRefStrengths
+	cdefRefT1        svtCDEFRefStrengths
 	filmGrain        FilmGrainParams
-	filmGrainSeed    uint16
+	prevLFDeltas     LoopFilterDeltas
+	leafPrevLFDeltas LoopFilterDeltas
+	refState         parser.ReferenceState
+	leafRefState     parser.ReferenceState
+	scDet            svtSCDetector
+	decisionStats    EncoderDecisionStats
 
-	// B-frame / hidden Alt-Ref reference slot ping-pong (past anchor vs future Alt-Ref).
-	bPastSlot   uint8
-	bFutureSlot uint8
-
-	// General-purpose AV1 coding tool toggles.
-	enableLoopRestoration bool
-	superResDenom         uint8
-	enableGlobalMotion    bool
-
-	temporalLayers int
-	t2Recon        SourceFrame420
-	frameCtxT1     frameCDFs
-	haveCtxT1      bool
-	frameIndex     int
-	lastTemporalID uint8
-	t1Recon        SourceFrame420
-	lastRecon      SourceFrame420
-
-	// Steady-state scratch: per-frame slices and the temporal-unit buffers
-	// persist across frames so the encode path stays allocation-free. The
-	// returned temporal unit aliases tuScratch and stays valid until the
-	// next encode call.
-	payloads      []TilePayload
-	tileErrs      []error
-	tuGroup       []byte
-	tuScratch     []byte
-	tileWork      chan tileWorkRange
-	tileWait      sync.WaitGroup
-	tileWorkerWG  sync.WaitGroup // persistent helpers, separate from per-job completion
-	tileWorkers   int
-	tileJobParams struct {
-		src, refRecon  SourceFrame420
-		golden         *SourceFrame420
-		out            *SourceFrame420
-		effQ           uint8
-		prevCtx        *frameCDFs
-		referenceMode  parser.ReferenceMode
-		forceIntegerMV bool
-		allowScreen    bool
-		color          parser.ColorConfig
-		tile           TileInfo
-		miCols         uint16
-		lfMap          *threading.FrameWorkLoopFilterMap
-		payloads       []TilePayload
-		errs           []error
-	}
-
-	// The in-loop filters of a finished frame run concurrently with the
-	// next frame's source-only stages (padding and the coarse search);
-	// filterDone carries the pass result and joinFilter is the barrier
-	// every reader of the filtered reconstruction or the applier state
-	// crosses first.
-	filterDone     chan error
-	filterWork     chan struct{}
-	filterStarted  bool
+	tileWait       sync.WaitGroup
+	tileWorkerWG   sync.WaitGroup // persistent helpers, separate from per-job completion
 	filterWorkerWG sync.WaitGroup // persistent helper, separate from per-frame completion
-	filterPending  bool
-	filterErr      error
-	filterParams   struct {
-		out     *SourceFrame420
-		lfLevel uint8
-		cdef    parser.CDEFParams
-		cdefIdx []uint8
-		// parallelMasks is snapshotted on the dispatch goroutine (which is
-		// serialized with config mutation) so the detached filter worker never
-		// reads e.tileColsLog2, which SetConfig may mutate concurrently.
-		parallelMasks bool
-	}
+	leafWorkerWG   sync.WaitGroup // persistent helper, separate from per-frame completion
 
-	// frameCtx chains the adapted symbol contexts across the base layer:
-	// each non-droppable frame names its predecessor through
-	// primary_ref_frame and starts from the saved state instead of the
-	// defaults. haveCtx arms after the first keyframe.
-	frameCtx     frameCDFs
-	haveCtx      bool
-	prevLFDeltas LoopFilterDeltas
-
-	refState parser.ReferenceState
-
-	// Golden anchor: slot 1 holds an older high-quality reference refreshed
-	// every goldenEvery base-layer frames (0 disables block-level use). The
-	// encoder keeps its own copy for motion search. avgFrameLowMotion is
-	// libaom's rc.avg_frame_low_motion (percent of MI units coded as
-	// near-zero-motion LAST blocks, EMA-smoothed); low values pull golden
-	// refreshes forward per the one-pass realtime golden update.
-	golden            SourceFrame420
+	width, height int // coded dimensions (multiples of 8)
+	// renderWidth/renderHeight are the caller-facing frame dimensions; when
+	// they differ from the coded size the source pads by edge replication
+	// and the headers signal them through render_size.
+	renderWidth, renderHeight int
+	color                     SequenceColorConfig
+	rcTargetBits              int
+	rcFramesPerSec            int
+	// rcPerFrameBits is avg_frame_bandwidth (target / frame rate).
+	rcPerFrameBits    int
+	reconIdx          int
+	wavefrontLanes    int
+	temporalLayers    int
+	frameIndex        int
+	tileWorkers       int
 	goldenEvery       int
 	sinceGoldenFresh  int
 	avgFrameLowMotion int
-
-	// content is the screen_content_mode; sc is the sc_class of the last
-	// keyframe (perform_sc_detection), which every inter frame inherits.
-	content ContentHint
-	sc      svtSCClass
-	scDet   svtSCDetector
-
-	decisionStatsEnabled bool
-	decisionStats        EncoderDecisionStats
-
-	// Throughput pipelining (opt-in, default off). See video_pipeline.go: the
-	// EncodeThroughput/Drain surface buffers one source so a droppable L1T2 leaf
-	// can overlap the following base frame, trading +1 frame of latency for wall
-	// throughput. When pipeline is false the encoder is byte- and
-	// latency-identical to the historical serial path.
-	pipeline    bool
-	pipeHeld    bool
-	pipeHeldKey bool
-	pipeHeldTID uint8
-	pipeHeldSrc SourceFrame420
-	pipeSrcBuf  [2]SourceFrame420
-	pipeSrcIdx  int
-	// pipeHeldDone marks the held item as a precomputed base result (its state
-	// was already committed at overlap time); emit it and hold the next source.
-	pipeHeldDone  bool
-	pipeHeldTU    []byte
-	pipeHeldRecon SourceFrame420
-	pipeOverlaps  int
-
-	// Leaf-isolated overlap state: the buffered droppable leaf runs on this
-	// dedicated coder/HME/filter set (never the shared e.pc/e.hme/e.lf) so it
-	// can execute concurrently with the following base frame's serial
-	// encodePReusing on the caller goroutine.
-	leafPC           pframeCoder
-	leafWavefront    pframeWavefront
-	leafHME          hmeState
-	leafLF           loopFilterApplier
-	leafCdefApp      cdefApplier
-	leafRefState     parser.ReferenceState
-	leafPrevLFDeltas LoopFilterDeltas
-	leafPayloads     [1]TilePayload
-	leafTuGroup      []byte
-	leafTuScratch    []byte
-	pipeLeafRecon    SourceFrame420
-	pipeLeafCtx      frameCDFs
-	// Light-PD1 per-SB statistics (pframe_lpd1_level.go): the picture being
-	// coded, the LAST and T1 references' published objects (swapped on
-	// refresh, like SVT's EbReferenceObject sb_* arrays), and the pipelined
-	// leaf's own picture object.
-	lpd1Cur, lpd1Last, lpd1T1, lpd1Leaf *lpd1Frame
+	pipeSrcIdx        int
+	pipeOverlaps      int
 	// lpd1FrameBias corrects e.frameIndex for the pipelined base, coded
 	// before the counter advances past its leaf.
 	lpd1FrameBias int
-	// Persistent leaf worker (parked between frames; no per-frame closures).
-	leafWork     chan struct{}
-	leafDone     chan error
-	leafStarted  bool
-	leafWorkerWG sync.WaitGroup // persistent helper, separate from per-frame completion
-	leafJob      struct {
-		src, refRecon SourceFrame420
-		prevCtx       *frameCDFs
-		tu            []byte
-		cntZeroMV     int
-		lpd1Ref       *lpd1Frame
-		cdefRef       svtCDEFRefStrengths
-		frameIndex    int
-	}
+	content       ContentHint
+	sc            svtSCClass
+
+	filmGrainSeed uint16
+
+	qIndex               uint8
+	crfValue             uint8
+	rcMinQ, rcMaxQ       uint8
+	svtCurQ              uint8
+	tileColsLog2         uint8
+	keyframeTileColsLog2 uint8
+	bPastSlot            uint8
+	bFutureSlot          uint8
+	superResDenom        uint8
+	lastTemporalID       uint8
+	pipeHeldTID          uint8
+	effortLevel          int8
+
+	haveKey               bool
+	rcEnabled             bool
+	crfEnabled            bool
+	svtCurOn              bool
+	forceSplit            bool
+	singleThread          bool
+	filmGrainPresent      bool
+	enableLoopRestoration bool
+	enableGlobalMotion    bool
+	haveCtxT1             bool
+	haveCtx               bool
+	filterStarted         bool
+	filterPending         bool
+	decisionStatsEnabled  bool
+	pipeline              bool
+	pipeHeld              bool
+	pipeHeldKey           bool
+	pipeHeldDone          bool
+	leafStarted           bool
 }
 
 type tileWorkRange struct {

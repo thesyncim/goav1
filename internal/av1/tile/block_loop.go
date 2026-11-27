@@ -33,7 +33,18 @@ type BlockLoopCDFs struct {
 
 // BlockLoopScratch is per-superblock scratch for recursive partition and mode
 // context traversal.
+// BlockLoopScratch holds caller-owned per-tile scratch reused across superblock
+// context traversal.
+//
+// Pointer-bearing fields (coef, Refmvs) sit at the front so the garbage
+// collector's ptrdata prefix ends before the pointer-free context tables and
+// palette/edge scratch that follow.
 type BlockLoopScratch struct {
+	// coef is the block's recon binding (bindCoefBlock).
+	coef CoefBlock
+	// Refmvs is the tile's dav1d refmvs row storage (see refmvs.go).
+	Refmvs refmvsTile
+
 	Partition PartitionContext
 	Mode      BlockModeContext
 	CDEF      CDEFIndexContext
@@ -41,12 +52,6 @@ type BlockLoopScratch struct {
 	CoeffCtx  CoeffEntropyContext
 	// Palette is the single palette-map slot of DecodeState.Payloads.
 	Palette [1]PaletteModeScratch
-
-	// coef is the block's recon binding (bindCoefBlock).
-	coef CoefBlock
-
-	// Refmvs is the tile's dav1d refmvs row storage (see refmvs.go).
-	Refmvs refmvsTile
 
 	visit BlockLoopVisit
 
@@ -58,11 +63,13 @@ type BlockLoopScratch struct {
 // request walks more than one root block. Above must contain one slot per root
 // column in the request; Left carries the previous root in the current root row.
 // Keeping this carrier optional preserves the single-root zero-value path.
+//
+// Slices precede the pointer-free Left value so GC does not scan Left.
 type BlockLoopContextCarrier struct {
 	Above           []BlockLoopRootAboveContext
-	Left            BlockLoopRootLeftContext
 	Diagonal        []diagonalCornerSlot
 	PendingDiagonal []diagonalCornerSlot
+	Left            BlockLoopRootLeftContext
 }
 
 type diagonalCornerSlot struct {

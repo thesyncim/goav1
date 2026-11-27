@@ -262,22 +262,14 @@ func (b *FrameWorkBatch) retainTileResidualCDFStorage(index int, state *tile.Dec
 
 // FrameWorkTileResidualScratch is caller-owned state reused while decoding one
 // tile job's block loop and coefficient contexts.
+//
+// Memory layout is GC-conscious: all pointer-bearing fields sit in a leading
+// run ending with Loop (whose own pointers sit at its front), so the compiler
+// truncates ptrdata before Loop's pointer-free context tables and the large
+// pointer-free scratch arrays (Coeff, CoeffContext, CFL, cfSpare, coefBuf)
+// that trail the struct.
 type FrameWorkTileResidualScratch struct {
-	Loop         tile.BlockLoopScratch
-	LoopContext  tile.BlockLoopContextCarrier
-	Coeff        tile.BlockCoeffScratch
-	CoeffContext tile.CoeffEntropyContext
-	CFL          FrameWorkCFLPredictionScratch
-
-	controller       frameWorkTileResidualLoopController
 	beforeSuperblock tile.BlockLoopSuperblockVisitor
-	stats            FrameWorkTileResidualStats
-	geomCache        frameWorkJobGeometryCache
-
-	// lfMask carries the reusable decode-time loop-filter mask build state
-	// (dav1d decomp_tx scratch + carried above/left tx-context). It is reset
-	// once per job and holds capacity across jobs for zero steady-state allocs.
-	lfMask frameWorkLoopFilterMaskScratch
 
 	// reconVisits, reconCBI and cfArena are the frame-thread buffers of
 	// dav1d's two-pass decode (f->frame_thread.b, .cbi and .cf): the parse
@@ -294,16 +286,6 @@ type FrameWorkTileResidualScratch struct {
 	reconVisits []tile.BlockLoopVisit
 	reconCBI    []frameWorkReconCBI
 	cfArena     []int32
-	// cfOverflow reports that a TXB did not fit the job's cf reservation; it
-	// then decoded into cfSpare.
-	cfOverflow bool
-	cfSpare    [1024]int32
-	// cfDirty bounds the arena prefix earlier jobs may have left
-	// coefficients in, including the slot a failed decode_coefs wrote past
-	// the committed length.
-	cfDirty int
-	// coefBuf is the fused path's dav1d t->cf coefficient buffer.
-	coefBuf coefBuffer
 	// fused is the decode state's single-slot payloads for the current job:
 	// what a just-decoded visit's slots name.
 	fused tile.BlockPayloads
@@ -321,6 +303,35 @@ type FrameWorkTileResidualScratch struct {
 	// wavefront state embeds sync/atomic counters, which must not be copied). Its
 	// slices and per-goroutine state retain capacity across frames.
 	wavefront *frameWorkReconWavefront
+
+	controller  frameWorkTileResidualLoopController
+	LoopContext tile.BlockLoopContextCarrier
+	// lfMask carries the reusable decode-time loop-filter mask build state
+	// (dav1d decomp_tx scratch + carried above/left tx-context). It is reset
+	// once per job and holds capacity across jobs for zero steady-state allocs.
+	lfMask frameWorkLoopFilterMaskScratch
+	// Loop is placed last among pointer-bearing fields because its own pointer
+	// prefix is tiny and its large pointer-free context tables trail it.
+	Loop tile.BlockLoopScratch
+
+	// Everything below is pointer-free and never scanned by the GC.
+	Coeff        tile.BlockCoeffScratch
+	CoeffContext tile.CoeffEntropyContext
+	CFL          FrameWorkCFLPredictionScratch
+
+	stats     FrameWorkTileResidualStats
+	geomCache frameWorkJobGeometryCache
+
+	// cfOverflow reports that a TXB did not fit the job's cf reservation; it
+	// then decoded into cfSpare.
+	cfOverflow bool
+	cfSpare    [1024]int32
+	// cfDirty bounds the arena prefix earlier jobs may have left
+	// coefficients in, including the slot a failed decode_coefs wrote past
+	// the committed length.
+	cfDirty int
+	// coefBuf is the fused path's dav1d t->cf coefficient buffer.
+	coefBuf coefBuffer
 }
 
 // PreallocCallbackScratch primes reusable method-value callbacks used by the
@@ -364,7 +375,7 @@ type frameWorkReconWavefront struct {
 	build          frameWorkReconSpanBuilder
 	done           []atomic.Int32
 	states         []frameWorkReconState
-	predict        []FrameWorkPredictionScratch
+	predict        []*FrameWorkPredictionScratch
 	inter          []FrameWorkInterPredictionScratch
 	cfl            []FrameWorkCFLPredictionScratch
 	int32Arena     []int32
@@ -500,7 +511,12 @@ func (wf *frameWorkReconWavefront) ensureStates(workers int, c *frameWorkTileRes
 	}
 	if cap(wf.states) < workers {
 		wf.states = make([]frameWorkReconState, workers)
-		wf.predict = make([]FrameWorkPredictionScratch, workers)
+		// Allocate each prediction scratch separately so GC only scans the
+		// leading Inter pointer and skips every lane's pointer-free Intra tail.
+		wf.predict = make([]*FrameWorkPredictionScratch, workers)
+		for w := range workers {
+			wf.predict[w] = new(FrameWorkPredictionScratch)
+		}
 		wf.inter = make([]FrameWorkInterPredictionScratch, workers)
 		wf.cfl = make([]FrameWorkCFLPredictionScratch, workers)
 	}
@@ -532,7 +548,7 @@ func (wf *frameWorkReconWavefront) ensureStates(workers int, c *frameWorkTileRes
 		st.bindPrimedLumaReconGeometry()
 		st.localStats = FrameWorkTileResidualStats{}
 		st.stats = &st.localStats
-		st.predictionScratch = &wf.predict[w]
+		st.predictionScratch = wf.predict[w]
 		st.cflScratch = &wf.cfl[w]
 		st.int32Scratch = wf.workerInt32(w)
 		st.residualScratch = wf.workerResidual(w)
@@ -1344,17 +1360,28 @@ func (b *FrameWorkBatch) DecodeAndReconstructJobResidualsDefault(index int, stat
 }
 
 type frameWorkTileResidualLoopController struct {
-	batch   FrameWorkBatch
-	index   int
-	state   *tile.DecodeState
-	cdfs    FrameWorkTileResidualCDFs
-	scratch *FrameWorkTileResidualScratch
-	req     FrameWorkTileResidualRequest
-	stats   *FrameWorkTileResidualStats
-
+	batch                FrameWorkBatch
+	state                *tile.DecodeState
+	cdfs                 FrameWorkTileResidualCDFs
+	scratch              *FrameWorkTileResidualScratch
+	req                  FrameWorkTileResidualRequest
+	stats                *FrameWorkTileResidualStats
 	userBeforeSuperblock tile.BlockLoopSuperblockVisitor
 	restoration          FrameWorkTileRestorationRequest
-	readRestoration      bool
+	reconHot             *frameWorkReconState
+	// dq is the dav1d ts->dq[seg_id] (with cf_max and f->qm) ReconB resolved
+	// for the (qindex, segment) key dqKey; dqOK is false when that key has no
+	// valid quantizer.
+	dq [3]tile.CoefDequant
+	// recon holds the reconstruction state for the fused single-thread path and
+	// the serial deferred replay. The multi-worker wavefront uses its own
+	// per-goroutine states instead. It is wired to the controller's request
+	// scratch so the fused path pays no extra copy. Placed last among
+	// pointer-bearing fields so its pointer-free tail stays outside ptrdata.
+	recon frameWorkReconState
+
+	index           int
+	readRestoration bool
 
 	// deferReconstruction selects dav1d's two-pass frame-thread path: the
 	// parse buffers each block's visit, cbi entries and coefficients instead
@@ -1371,17 +1398,6 @@ type frameWorkTileResidualLoopController struct {
 	// tile's parse (startReconStream).
 	streaming bool
 
-	// recon holds the reconstruction state for the fused single-thread path and
-	// the serial deferred replay. The multi-worker wavefront uses its own
-	// per-goroutine states instead. It is wired to the controller's request
-	// scratch so the fused path pays no extra copy.
-	recon    frameWorkReconState
-	reconHot *frameWorkReconState
-
-	// dq is the dav1d ts->dq[seg_id] (with cf_max and f->qm) ReconB resolved
-	// for the (qindex, segment) key dqKey; dqOK is false when that key has no
-	// valid quantizer.
-	dq    [3]tile.CoefDequant
 	dqKey uint16
 	dqOK  bool
 }
@@ -1395,27 +1411,30 @@ type frameWorkTileResidualLoopController struct {
 // instance the controller owns. The batch carried here owns its own geomCache
 // pointer; reconstruction reads only that goroutine's scratch and that
 // goroutine's CFL fields.
+//
+// Pointer-bearing fields sit in the leading run so geom, localStats, and
+// cflVisit stay outside GC ptrdata.
 type frameWorkReconState struct {
 	batch             FrameWorkBatch
-	index             int
 	stats             *FrameWorkTileResidualStats
 	predictionScratch *FrameWorkPredictionScratch
 	cflScratch        *FrameWorkCFLPredictionScratch
 	int32Scratch      []int32
 	residualScratch   []int16
+	// payloads is a lane's view of the deferred payload arenas, refreshed
+	// from the published view per SB row; batch.payloads points at it.
+	payloads tile.BlockPayloads
 
+	index int
 	// geom is this goroutine's private job-geometry cache; batch.geomCache
 	// points at it on the wavefront path so the per-block memoization never
 	// races. localStats accumulates the goroutine's reconstruction counters,
 	// merged into the controller stats after the wavefront joins.
 	geom       frameWorkJobGeometryCache
 	localStats FrameWorkTileResidualStats
-	// payloads is a lane's view of the deferred payload arenas, refreshed
-	// from the published view per SB row; batch.payloads points at it.
-	payloads    tile.BlockPayloads
-	lumaReady   bool
-	chromaReady bool
 
+	lumaReady            bool
+	chromaReady          bool
 	pendingCFLPrediction bool
 	cflPredictionDone    bool
 	cflVisit             tile.BlockLoopVisit

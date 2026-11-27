@@ -129,9 +129,12 @@ func frameWorkConvolveScratch(scratch *FrameWorkInterPredictionScratch) *motion.
 // FrameWorkPredictionScratch groups caller-owned prediction scratch. Keeping it
 // separate from residual scratch lets callers that do not use built-in
 // prediction avoid carrying these buffers.
+//
+// Inter precedes Intra so GC ptrdata is a single pointer word rather than the
+// entire pointer-free intra scratch buffer.
 type FrameWorkPredictionScratch struct {
-	Intra FrameWorkIntraPredictionScratch
 	Inter *FrameWorkInterPredictionScratch
+	Intra FrameWorkIntraPredictionScratch
 }
 
 // PredictBlock writes prediction pixels for one decoded block-loop visit where

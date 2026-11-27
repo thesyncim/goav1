@@ -1789,7 +1789,27 @@ func TestCDEFSparseAliasesAndErrorsFrozen(t *testing.T) {
 				var blocks [64]cdef.BlockPosition
 				var dirs cdef.DirectionGrid
 				var vars cdef.VarianceGrid
-				apply := frameWorkApplyCDEFPlaneRowsU8
+				apply := func(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols, rows, rowStart, rowEnd int, dst frame.Plane, byteScratch []byte, boundary FrameWorkCDEFPostFilterU8BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane, xDec, yDec int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
+					var s cdefUnitScratch
+					w := cdefPlaneWalker{
+						skipMap:             skipMap,
+						input:               input,
+						directionGrid:       directionGrid,
+						varianceGrid:        varianceGrid,
+						indexMap:            indexMap,
+						dst:                 dst,
+						params:              params,
+						cols:                cols,
+						rows:                rows,
+						rowStart:            rowStart,
+						rowEnd:              rowEnd,
+						plane:               plane,
+						xDec:                xDec,
+						yDec:                yDec,
+						forceLumaDirections: forceLumaDirections,
+					}
+					return w.applyU8(byteScratch, boundary, &s, unitMasks)
+				}
 				if frozen {
 					apply = frameWorkApplyCDEFPlaneRowsU8FrozenSparse
 				}
@@ -3439,17 +3459,15 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 	wantVarGrid := make([]cdef.VarianceGrid, unitCount)
 	gotDirGrid := make([]cdef.DirectionGrid, unitCount)
 	gotVarGrid := make([]cdef.VarianceGrid, unitCount)
-	var wantDirs, gotDirs cdef.DirectionGrid
-	var wantVars, gotVars cdef.VarianceGrid
-	var blockStorage [cdef.NBlocks * cdef.NBlocks]cdef.BlockPosition
+	var wantScratch, gotScratch cdefUnitScratch
 	input := make([]uint16, cdef.InputBufferSize)
 	unitDst := make([]uint16, cdef.InputBufferSize)
 	for by := range cdef.NBlocks {
 		for bx := range cdef.NBlocks {
-			wantDirs[by][bx] = 5
-			gotDirs[by][bx] = 5
-			wantVars[by][bx] = 0x12345
-			gotVars[by][bx] = 0x12345
+			wantScratch.directions[by][bx] = 5
+			gotScratch.directions[by][bx] = 5
+			wantScratch.variances[by][bx] = 0x12345
+			gotScratch.variances[by][bx] = 0x12345
 		}
 	}
 	for i := range unitCount {
@@ -3495,7 +3513,25 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 		if err != nil {
 			t.Fatalf("snapshot load: %v", err)
 		}
-		wu, wb, err := frameWorkApplyCDEFPlaneRows(tc.params, indexMap, skipMap, cols, rows, 0, rows, src, wantPlane, 1, input, unitDst, blockStorage[:], &wantDirs, &wantVars, wantDirGrid, wantVarGrid, plane, xDec, yDec, 0, chromaFiltering, nil)
+		wantWalker := cdefPlaneWalker{
+			skipMap:             skipMap,
+			input:               input,
+			unitDst:             unitDst,
+			directionGrid:       wantDirGrid,
+			varianceGrid:        wantVarGrid,
+			indexMap:            indexMap,
+			dst:                 wantPlane,
+			params:              tc.params,
+			cols:                cols,
+			rows:                rows,
+			rowStart:            0,
+			rowEnd:              rows,
+			plane:               plane,
+			xDec:                xDec,
+			yDec:                yDec,
+			forceLumaDirections: chromaFiltering,
+		}
+		wu, wb, err := wantWalker.applySnapshot(src, 1, &wantScratch, nil)
 		if err != nil {
 			t.Fatalf("u16 walk: %v", err)
 		}
@@ -3509,7 +3545,24 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 				input[i] = 0xdeed
 			}
 		}
-		gu, gb, err := frameWorkApplyCDEFPlaneRowsU8(tc.params, indexMap, skipMap, cols, rows, 0, rows, gotPlane, byteScratch, FrameWorkCDEFPostFilterU8BandBoundary{}, input, blockStorage[:], &gotDirs, &gotVars, gotDirGrid, gotVarGrid, plane, xDec, yDec, chromaFiltering, nil)
+		gotWalker := cdefPlaneWalker{
+			skipMap:             skipMap,
+			input:               input,
+			directionGrid:       gotDirGrid,
+			varianceGrid:        gotVarGrid,
+			indexMap:            indexMap,
+			dst:                 gotPlane,
+			params:              tc.params,
+			cols:                cols,
+			rows:                rows,
+			rowStart:            0,
+			rowEnd:              rows,
+			plane:               plane,
+			xDec:                xDec,
+			yDec:                yDec,
+			forceLumaDirections: chromaFiltering,
+		}
+		gu, gb, err := gotWalker.applyU8(byteScratch, FrameWorkCDEFPostFilterU8BandBoundary{}, &gotScratch, nil)
 		if err != nil {
 			t.Fatalf("u8 walk: %v", err)
 		}
@@ -3537,8 +3590,8 @@ func runCDEFU8WalkDifferential(t *testing.T, tc cdefU8WalkCase) {
 	if tc.noPrimary {
 		for by := range cdef.NBlocks {
 			for bx := range cdef.NBlocks {
-				if gotDirs[by][bx] != 5 || gotVars[by][bx] != 0x12345 {
-					t.Fatalf("primary-zero luma changed standalone grids at (%d,%d): dir=%d variance=%d", bx, by, gotDirs[by][bx], gotVars[by][bx])
+				if gotScratch.directions[by][bx] != 5 || gotScratch.variances[by][bx] != 0x12345 {
+					t.Fatalf("primary-zero luma changed standalone grids at (%d,%d): dir=%d variance=%d", bx, by, gotScratch.directions[by][bx], gotScratch.variances[by][bx])
 				}
 			}
 		}
@@ -3608,9 +3661,6 @@ func cdefPlaneWalkU8Allocs(t *testing.T, tc cdefU8WalkCase) float64 {
 	input := make([]uint16, cdef.InputBufferSize)
 	dirGrid := make([]cdef.DirectionGrid, unitCount)
 	varGrid := make([]cdef.VarianceGrid, unitCount)
-	var dirs cdef.DirectionGrid
-	var vars cdef.VarianceGrid
-	var blockStorage [cdef.NBlocks * cdef.NBlocks]cdef.BlockPosition
 	var skipMap *FrameWorkLoopFilterMap
 	if len(tc.activeMasks) != 0 {
 		miCols, miRows := width/4, height/4
@@ -3624,8 +3674,23 @@ func cdefPlaneWalkU8Allocs(t *testing.T, tc cdefU8WalkCase) float64 {
 		}
 		skipMap = &FrameWorkLoopFilterMap{Records: records, Stride: uint16(miCols), Rows: uint16(miRows)}
 	}
+	var scratch cdefUnitScratch
 	return testing.AllocsPerRun(8, func() {
-		if _, _, err := frameWorkApplyCDEFPlaneRowsU8(tc.params, indexMap, skipMap, cols, rows, 0, rows, plane, byteScratch, FrameWorkCDEFPostFilterU8BandBoundary{}, input, blockStorage[:], &dirs, &vars, dirGrid, varGrid, 0, 0, 0, true, nil); err != nil {
+		walker := cdefPlaneWalker{
+			skipMap:             skipMap,
+			input:               input,
+			directionGrid:       dirGrid,
+			varianceGrid:        varGrid,
+			indexMap:            indexMap,
+			dst:                 plane,
+			params:              tc.params,
+			cols:                cols,
+			rows:                rows,
+			rowStart:            0,
+			rowEnd:              rows,
+			forceLumaDirections: true,
+		}
+		if _, _, err := walker.applyU8(byteScratch, FrameWorkCDEFPostFilterU8BandBoundary{}, &scratch, nil); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -19411,11 +19476,25 @@ func executeTestFrameWorkStep(step FrameWorkStep, pool *threading.Pool, jobs []t
 }
 
 func executeTestFrameWorkStepWithContext(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
-	return executeFrameWorkStepWithPayload(step, pool, output, references, nil, false, FrameWorkFrameContext{}, false, nil, nil, nil, frameWorkMotionFields{}, nil, nil, nil, nil, jobs, batches, fn)
+	return frameWorkPayloadDispatch{
+		output:     output,
+		references: references,
+		jobs:       jobs,
+		batches:    batches,
+		step:       step,
+	}.execute(pool, fn)
 }
 
 func executeTestFrameWorkStepWithPayload(step FrameWorkStep, pool *threading.Pool, output *frame.Frame, references []*frame.Frame, payload []byte, jobs []tile.Job, batches []threading.Batch, fn FrameWorkBatchFunc) (bool, error) {
-	return executeFrameWorkStepWithPayload(step, pool, output, references, payload, true, FrameWorkFrameContext{}, false, nil, nil, nil, frameWorkMotionFields{}, nil, nil, nil, nil, jobs, batches, fn)
+	return frameWorkPayloadDispatch{
+		output:          output,
+		references:      references,
+		payload:         payload,
+		jobs:            jobs,
+		batches:         batches,
+		step:            step,
+		validatePayload: true,
+	}.execute(pool, fn)
 }
 
 // testLoopFilterSideDataRunner binds caller-owned loop-filter map and edge-mask

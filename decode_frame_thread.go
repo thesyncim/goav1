@@ -52,66 +52,69 @@ func decoderFrameContextCount(workers, maxFrameDelay int) int {
 // (dav1d's Dav1dFrameContext): every buffer the frame's parse writes and its
 // reconstruction / post-filter tail still reads, so the next frame parses into
 // a different context while this one finishes.
+//
+// Pointer-bearing fields (channels, slices, interfaces, pointers, and
+// pointer-carrying sub-structs) precede the pointer-free value fields so GC
+// stops scanning before the trailing frame/header/level tables.
 type decoderFrameContext struct {
-	event       internaldecoder.Event
-	meta        FrameMetadata
-	scratch     decoderFrameWorkResidualEventScratch
-	sideScratch decoderFrameWorkSideDataScratch
-	batch       decoderFrameWorkBatchResidualRunner
-	sideData    decoderFrameWorkSideData
-
-	lfLevels    internalthreading.FrameWorkLoopFilterLevelTable
-	lfTileEdges internalthreading.FrameWorkLoopFilterTileEdges
-	lfNoSkip    internalthreading.FrameWorkLoopFilterNoSkip
-
-	postFilter   decoderFrameWorkReusableSupportedPostFilterRunner
-	postParallel internaldecoder.FrameWorkPostFilterParallel
-
-	refSurface   [internalparser.InterRefsPerFrame]int
-	refFrames    [internalparser.InterRefsPerFrame]*Frame
-	planReleases [internalparser.RefFrames]int
-
-	ft internaldecoder.FrameThreadFrame
-	// reconRows is the frame's reconstruction progress and parsed its
-	// entropy-pass progress, which the post-filter follows while they run.
-	reconRows internalthreading.FrameThreadReconRows
-	parsed    internalthreading.FrameProgress
-	// The post-filter goroutine runs ApplyPost from the frame's StartPost
-	// (dav1d queues the filter tasks with the tile tasks); postStarted is
-	// owned by the tail goroutine. Of the entropy pass and the post-filter,
-	// the one that returns last finishes the frame (finishFrame): ends counts
-	// the two returns, and parseErr / postErr carry each one's error to the
-	// other. Neither goroutine parks waiting for the other.
-	postStart   chan struct{}
-	postStarted bool
-	ends        atomic.Int32
-	parseErr    error
-	postErr     error
+	// Tail hand-off channels and errors.
+	start     chan struct{}
+	done      chan struct{}
+	postStart chan struct{}
+	parseErr  error
+	postErr   error
+	tailErr   error
 
 	// Entropy-pass inputs captured at submission; the context goroutine runs
 	// the pass after the submitting call returned.
 	payload    []byte
-	step       internaldecoder.FrameWorkStep
 	target     *Frame
+	output     *Frame
 	references []*Frame
-	show       bool
-	motion     internalthreading.FrameThreadMotion
+	refFrames  [internalparser.InterRefsPerFrame]*Frame
 	cdfWait    *internalthreading.FrameProgress
 	cdfOut     *internalthreading.FrameProgress
 	segWait    *internalthreading.FrameProgress
 	segOut     *internalthreading.FrameProgress
+	motion     internalthreading.FrameThreadMotion
 
-	// Tail hand-off. busy is owned by the decode goroutine; start and done
-	// order the tail goroutine's writes (output, tailErr) before the next read.
-	// existing marks a show_existing_frame output queued in the ring (dav1d's
+	// Per-frame scratch, runners, and progress state. postParallel sits last
+	// among pointer-bearing fields so its trailing film-grain scaling tables
+	// fall outside decoderFrameContext's GC ptrdata.
+	scratch      decoderFrameWorkResidualEventScratch
+	sideScratch  decoderFrameWorkSideDataScratch
+	batch        decoderFrameWorkBatchResidualRunner
+	sideData     decoderFrameWorkSideData
+	lfTileEdges  internalthreading.FrameWorkLoopFilterTileEdges
+	lfNoSkip     internalthreading.FrameWorkLoopFilterNoSkip
+	postFilter   decoderFrameWorkReusableSupportedPostFilterRunner
+	ft           internaldecoder.FrameThreadFrame
+	reconRows    internalthreading.FrameThreadReconRows
+	parsed       internalthreading.FrameProgress
+	postParallel internaldecoder.FrameWorkPostFilterParallel
+
+	// Pointer-free value state below; never scanned by GC.
+	event        internaldecoder.Event
+	meta         FrameMetadata
+	step         internaldecoder.FrameWorkStep
+	lfLevels     internalthreading.FrameWorkLoopFilterLevelTable
+	refSurface   [internalparser.InterRefsPerFrame]int
+	planReleases [internalparser.RefFrames]int
+
+	// Of the entropy pass and the post-filter, the one that returns last
+	// finishes the frame (finishFrame): ends counts the two returns, and
+	// parseErr / postErr carry each one's error to the other. Neither
+	// goroutine parks waiting for the other.
+	ends        atomic.Int32
+	surface     int
+	postStarted bool
+	show        bool
+	// busy is owned by the decode goroutine; start and done order the tail
+	// goroutine's writes (output, tailErr) before the next read. existing
+	// marks a show_existing_frame output queued in the ring (dav1d's
 	// out_delayed slot holding a reference picture): no tail runs for it.
 	busy     bool
 	existing bool
-	surface  int
-	output   *Frame
-	tailErr  error
-	start    chan struct{}
-	done     chan struct{}
 }
 
 // decoderFramePipeline is the frame-threading coordinator: dav1d's
@@ -121,8 +124,11 @@ type decoderFrameContext struct {
 // tail goroutine finishes reconstruction and post-filter. Outputs leave the
 // ring in submission order when a context is reused or drained.
 type decoderFramePipeline struct {
-	d        *Decoder
-	fcs      []decoderFrameContext
+	d *Decoder
+	// fcs holds each in-flight context as its own heap object so Go's GC
+	// truncates scanning at each context's ptrdata rather than scanning the
+	// pointer-free tails of elements [0, n-2] in a contiguous value slice.
+	fcs      []*decoderFrameContext
 	next     int
 	laneNeed int
 
@@ -410,8 +416,7 @@ func (p *decoderFramePipeline) resetReferences() error {
 // deferredRelease reports whether an in-flight frame will return surface to
 // the pool when it retires.
 func (p *decoderFramePipeline) deferredRelease(surface int) bool {
-	for i := range p.fcs {
-		fc := &p.fcs[i]
+	for _, fc := range p.fcs {
 		if !fc.busy {
 			continue
 		}
@@ -428,7 +433,7 @@ func (p *decoderFramePipeline) deferredRelease(surface int) bool {
 func (p *decoderFramePipeline) drain() {
 	n := len(p.fcs)
 	for k := 0; k < n; k++ {
-		p.retire(&p.fcs[(p.next+k)%n])
+		p.retire(p.fcs[(p.next+k)%n])
 	}
 }
 
@@ -437,7 +442,7 @@ func (p *decoderFramePipeline) drain() {
 func (p *decoderFramePipeline) retireOldest() bool {
 	n := len(p.fcs)
 	for k := 0; k < n; k++ {
-		fc := &p.fcs[(p.next+k)%n]
+		fc := p.fcs[(p.next+k)%n]
 		if fc.busy {
 			p.retire(fc)
 			return true
@@ -462,7 +467,7 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *internalde
 			}
 		}()
 	}
-	fc := &p.fcs[p.next]
+	fc := p.fcs[p.next]
 	p.next++
 	if p.next == len(p.fcs) {
 		p.next = 0
@@ -522,7 +527,7 @@ func (p *decoderFramePipeline) runFrame(sequence SequenceHeader, src *internalde
 	if !hasTile || tile.JobCount == 0 || step.Kind != internaldecoder.FrameWorkStepBegin {
 		return internaldecoder.FrameWorkEventResult{}, internaldecoder.ErrInvalidFrameWorkStep
 	}
-	if err := setDecoderFrameWorkBatchResidualRunnerSideData(&fc.batch, fc.sideData); err != nil {
+	if err := fc.batch.SetSideData(fc.sideData); err != nil {
 		return internaldecoder.FrameWorkEventResult{}, err
 	}
 	if err := setDecoderFrameWorkSideData(&d.state, fc.sideData); err != nil {
@@ -648,7 +653,7 @@ func (p *decoderFramePipeline) showExistingEligible(event *internaldecoder.Event
 // when it leaves, like any output.
 func (p *decoderFramePipeline) showExisting(sequence SequenceHeader, src *internaldecoder.Event) (internaldecoder.FrameWorkEventResult, error) {
 	d := p.d
-	fc := &p.fcs[p.next]
+	fc := p.fcs[p.next]
 	p.next++
 	if p.next == len(p.fcs) {
 		p.next = 0
@@ -747,7 +752,7 @@ func newDecoderFramePipeline(d *Decoder, n int, plan decoderFrameWorkResidualStr
 	workers := d.workerPool.WorkerCount()
 	p := &decoderFramePipeline{
 		d:        d,
-		fcs:      make([]decoderFrameContext, n),
+		fcs:      make([]*decoderFrameContext, n),
 		laneNeed: 2 * n * workers,
 		progress: make([]internalthreading.FrameProgress, surfaceCount),
 		ready:    make([]*Frame, 0, 2*(internalparser.RefFrames+n)),
@@ -778,7 +783,8 @@ func newDecoderFramePipeline(d *Decoder, n int, plan decoderFrameWorkResidualStr
 		WorkerPool: d.workerPool,
 	}
 	for i := range p.fcs {
-		fc := &p.fcs[i]
+		fc := new(decoderFrameContext)
+		p.fcs[i] = fc
 		fc.scratch = newDecoderEventScratch(eventSize, &arena)
 		fc.sideScratch = fc.scratch.SideData
 		fc.lfNoSkip.Preseed(arena.takeBytes(noSkip))

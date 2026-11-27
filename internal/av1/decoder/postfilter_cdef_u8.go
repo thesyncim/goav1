@@ -5,7 +5,6 @@ import (
 
 	"github.com/thesyncim/goav1/internal/av1/cdef"
 	"github.com/thesyncim/goav1/internal/av1/frame"
-	"github.com/thesyncim/goav1/internal/av1/parser"
 	"github.com/thesyncim/goav1/internal/av1/threading"
 )
 
@@ -87,24 +86,17 @@ func (l *cdefU8Lines) pair(off, n int) []byte {
 // packed: uint16 storage cannot alias the byte buffers).
 func (l *cdefU8Lines) lines() []byte { return l.bytes }
 
-// frameWorkApplyCDEFPlaneRowsU8 is the 8-bit in-place counterpart of
-// frameWorkApplyCDEFPlaneRows. dst is the MI-aligned plane view
-// (frameWorkCDEFAlignedPlane) of an 8-bit frame (stride in bytes, one byte
-// per sample); byteScratch is the caller's private sample scratch for the
-// plane, reused as the line-backup arena. Whole-frame callers pass
-// rowStart=0,rowEnd=rows and an empty boundary; banded callers pass immutable
-// boundary strips for any cross-band top/bottom halos.
-func frameWorkApplyCDEFPlaneRowsU8(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, dst frame.Plane, byteScratch []byte, boundary FrameWorkCDEFPostFilterU8BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
-	return frameWorkApplyCDEFPlaneRowsU8Mode(params, indexMap, skipMap, cols, rows, rowStart, rowEnd, dst, byteScratch, boundary, input, blockStorage, directions, variances, directionGrid, varianceGrid, plane, xDec, yDec, forceLumaDirections, false, unitMasks)
-}
-
-func frameWorkApplyCDEFPlaneRowsU8Mode(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, dst frame.Plane, byteScratch []byte, boundary FrameWorkCDEFPostFilterU8BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, forceLumaDirections bool, directionsPrecomputed bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
-	width := dst.Width
+// applyU8 filters w.dst in place using byteScratch as the ping-pong line-backup
+// and byte-tap arena. Whole-frame callers pass rowStart=0, rowEnd=rows and an
+// empty boundary; banded callers pass immutable boundary strips for cross-band
+// top/bottom halos.
+func (w cdefPlaneWalker) applyU8(byteScratch []byte, boundary FrameWorkCDEFPostFilterU8BandBoundary, scratch *cdefUnitScratch, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
+	width := w.dst.Width
 	if width <= 0 || len(byteScratch) < CDEFU8LineScratchLen(width) {
 		return 0, 0, threading.ErrInvalidBatch
 	}
 	lines := cdefU8Lines{bytes: byteScratch[:4*width]}
-	return frameWorkApplyCDEFPlaneRowsU8Lines(params, indexMap, skipMap, cols, rows, rowStart, rowEnd, dst, &lines, byteScratch[4*width:4*width+cdefU8TapBytes], boundary, input, blockStorage, directions, variances, directionGrid, varianceGrid, plane, xDec, yDec, forceLumaDirections, directionsPrecomputed, unitMasks)
+	return w.applyU8Lines(&lines, byteScratch[4*width:4*width+cdefU8TapBytes], boundary, scratch, unitMasks)
 }
 
 // frameWorkCDEFU8PackedLinesFit reports whether the packed-line walk can run
@@ -113,24 +105,24 @@ func frameWorkCDEFU8PackedLinesFit(lineScratch []uint16, width int) bool {
 	return width > 0 && width%2 == 0 && width <= cdefU8PackedMaxWidth && len(lineScratch) >= 2*width
 }
 
-// frameWorkApplyCDEFPlaneRowsU8Packed is frameWorkApplyCDEFPlaneRowsU8 for a
-// caller that provides only uint16 line scratch (2*width elements): the line
-// pairs are stored packed there, and the unpacked pair and the byte tap
-// buffer live on this frame.
-func frameWorkApplyCDEFPlaneRowsU8Packed(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, dst frame.Plane, lineScratch []uint16, boundary FrameWorkCDEFPostFilterU8BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, forceLumaDirections bool, directionsPrecomputed bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
-	width := dst.Width
+// applyU8Packed is applyU8 for callers that provide only uint16 line scratch
+// (2*width elements): the line pairs are stored packed there, and the unpacked
+// pair and byte tap buffer live on this stack frame.
+func (w cdefPlaneWalker) applyU8Packed(lineScratch []uint16, boundary FrameWorkCDEFPostFilterU8BandBoundary, scratch *cdefUnitScratch, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
+	width := w.dst.Width
 	if !frameWorkCDEFU8PackedLinesFit(lineScratch, width) {
 		return 0, 0, threading.ErrInvalidBatch
 	}
 	var top [cdef.VerticalBorder * cdefU8PackedMaxWidth]byte
 	var tap [cdefU8TapBytes]byte
 	lines := cdefU8Lines{packed: lineScratch[:2*width], top: top[:]}
-	return frameWorkApplyCDEFPlaneRowsU8Lines(params, indexMap, skipMap, cols, rows, rowStart, rowEnd, dst, &lines, tap[:], boundary, input, blockStorage, directions, variances, directionGrid, varianceGrid, plane, xDec, yDec, forceLumaDirections, directionsPrecomputed, unitMasks)
+	return w.applyU8Lines(&lines, tap[:], boundary, scratch, unitMasks)
 }
 
-func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, dst frame.Plane, lines *cdefU8Lines, byteInput []byte, boundary FrameWorkCDEFPostFilterU8BandBoundary, input []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, forceLumaDirections bool, directionsPrecomputed bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
+func (w cdefPlaneWalker) applyU8Lines(lines *cdefU8Lines, byteInput []byte, boundary FrameWorkCDEFPostFilterU8BandBoundary, scratch *cdefUnitScratch, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
 	var units uint32
 	var blocksTotal uint32
+	dst := w.dst
 	width := dst.Width
 	height := dst.Height
 	stride := dst.Stride
@@ -138,27 +130,22 @@ func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap Frame
 		(height-1)*stride+width > len(dst.Pix) {
 		return 0, 0, frame.ErrInvalidPlane
 	}
-	if rowEnd < 0 || rowEnd > rows {
-		rowEnd = rows
+	rowStart, rowEnd, empty, err := w.normalizeRowRange()
+	if err != nil || empty {
+		return 0, 0, err
 	}
-	if rowStart < 0 || rowStart >= rowEnd {
-		if rowStart == rowEnd {
-			return 0, 0, nil
-		}
-		return 0, 0, threading.ErrInvalidBatch
-	}
-	unitSizeX := cdef.BlockSize >> xDec
-	unitSizeY := cdef.BlockSize >> yDec
-	blockWidth := 8 >> xDec
-	blockHeight := 8 >> yDec
-	indexStride := int(indexMap.Stride)
+	unitSizeX := cdef.BlockSize >> w.xDec
+	unitSizeY := cdef.BlockSize >> w.yDec
+	blockWidth := 8 >> w.xDec
+	blockHeight := 8 >> w.yDec
+	cdefPlane := w.cdefPlane()
 
 	// Pre-filter backups (dav1d cdef_apply_tmpl.c): two ping-pong line
 	// buffers of 2 rows x plane width (backup2lines / cdef_line[tf]) carved
 	// from the sample scratch arena, and an 8-column x unit-height left
 	// backup (backup2x8 / lr_bak) on the stack.
 	if rowStart > 0 && !boundary.resume {
-		top := boundary.Top[plane]
+		top := boundary.Top[w.plane]
 		need := cdef.VerticalBorder * width
 		if len(top) < need {
 			return 0, 0, frame.ErrShortBuffer
@@ -167,8 +154,8 @@ func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap Frame
 		lines.put(topSlot, top[:need])
 	}
 	var bottomBoundary []byte
-	if rowEnd < rows && !boundary.resume {
-		bottomBoundary = boundary.Bottom[plane]
+	if rowEnd < w.rows && !boundary.resume {
+		bottomBoundary = boundary.Bottom[w.plane]
 		if len(bottomBoundary) < cdef.VerticalBorder*width {
 			return 0, 0, frame.ErrShortBuffer
 		}
@@ -177,15 +164,15 @@ func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap Frame
 	// Ping-pong two 8-column x unit-height left backups (dav1d lr_bak[2]) so
 	// taking the next unit's backup never overwrites the current unit's halo
 	// and never copies 512 bytes on the byte-interior fast path.
-	sparseIndependent := frameWorkCDEFSparseScratchIndependent(byteInput, dst.Pix, lines.lines(), boundary.Top[plane], bottomBoundary)
+	sparseIndependent := frameWorkCDEFSparseScratchIndependent(byteInput, dst.Pix, lines.lines(), boundary.Top[w.plane], bottomBoundary)
 	var leftStorage [2][cdef.HorizontalBorder * cdef.BlockSize]byte
 	leftIdx := 0
 
 	for unitRow := rowStart; unitRow < rowEnd; unitRow++ {
-		unitY := (unitRow * cdef.BlockSize) >> yDec
+		unitY := (unitRow * cdef.BlockSize) >> w.yDec
 		// Back up the 2 pre-filter rows the NEXT unit row reads as its top
 		// halo before any unit in this row overwrites them.
-		if unitRow+1 < rowEnd || (boundary.resume && unitRow+1 < rows) {
+		if unitRow+1 < rowEnd || (boundary.resume && unitRow+1 < w.rows) {
 			nextTopY := unitY + unitSizeY
 			save := (unitRow & 1) * 2 * width
 			for r := 0; r < cdef.VerticalBorder; r++ {
@@ -203,28 +190,16 @@ func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap Frame
 		}
 
 		prevFiltered := false
-		for unitCol := range cols {
-			mapOffset := unitRow*indexStride + unitCol
-			if !indexMap.Read[mapOffset] {
+		for unitCol := range w.cols {
+			packed, needPrimaryDirection, directionOnly, active, err := w.unitStrength(unitRow, unitCol)
+			if err != nil {
+				return units, blocksTotal, err
+			}
+			if !active {
 				prevFiltered = false
 				continue
 			}
-			strengthIndex := indexMap.Index[mapOffset]
-			if int(strengthIndex) >= int(params.StrengthCount) || int(strengthIndex) >= parser.MaxCDEFStrengths {
-				return units, blocksTotal, threading.ErrInvalidBatch
-			}
-			index := int(strengthIndex)
-			packed := params.YStrength[index]
-			if plane != 0 {
-				packed = params.UVStrength[index]
-			}
-			needPrimaryDirection := frameWorkCDEFPlaneNeedsPrimaryDirection(params, index, plane, forceLumaDirections)
-			directionOnly := plane == 0 && forceLumaDirections && packed == 0 && params.UVStrength[index]>>2 != 0
-			if packed == 0 && !directionOnly {
-				prevFiltered = false
-				continue
-			}
-			unitX := (unitCol * cdef.BlockSize) >> xDec
+			unitX := (unitCol * cdef.BlockSize) >> w.xDec
 			unitW := minInt(unitSizeX, width-unitX)
 			unitH := minInt(unitSizeY, height-unitY)
 			if unitW <= 0 || unitH <= 0 {
@@ -239,37 +214,25 @@ func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap Frame
 					prevFiltered = false
 					continue
 				}
-				blocks = frameWorkCDEFBlockPositionsFromMask(blockStorage, unitMask, unitW, unitH, blockWidth, blockHeight)
+				blocks = frameWorkCDEFBlockPositionsFromMask(scratch.blockStorage[:], unitMask, unitW, unitH, blockWidth, blockHeight)
 			} else {
-				blocks = frameWorkCDEFBlockPositionsFiltered(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, unitRow, unitCol)
+				blocks = frameWorkCDEFBlockPositionsFiltered(scratch.blockStorage[:], unitW, unitH, blockWidth, blockHeight, w.skipMap, unitRow, unitCol)
 			}
 			if len(blocks) == 0 {
 				prevFiltered = false
 				continue
 			}
-			unitIndex := unitRow*cols + unitCol
-			unitDirections := directions
-			unitVariances := variances
-			if unitIndex < len(directionGrid) && unitIndex < len(varianceGrid) {
-				unitDirections = &directionGrid[unitIndex]
-				unitVariances = &varianceGrid[unitIndex]
-			}
-			cdefPlane := cdef.PlaneY
-			if plane == 1 {
-				cdefPlane = cdef.PlaneU
-			} else if plane == 2 {
-				cdefPlane = cdef.PlaneV
-			}
-			filterParams, err := cdef.FrameFilterParamsFromStrength(cdefPlane, xDec, yDec, packed, int(params.Damping), 0)
+			unitDirections, unitVariances := w.unitDirVar(unitRow, unitCol, scratch)
+			filterParams, err := cdef.FrameFilterParamsFromStrength(cdefPlane, w.xDec, w.yDec, packed, int(w.params.Damping), 0)
 			if err != nil {
 				return units, blocksTotal, err
 			}
 			unitOrigin := unitY*stride + unitX
-			deriveDirections := needPrimaryDirection && !(directionsPrecomputed && plane == 0)
+			deriveDirections := needPrimaryDirection && !(w.directionsPrecomputed && w.plane == 0)
 			if directionOnly {
 				if deriveDirections {
 					// Directions come from the uint8 frame; no tap buffer needed.
-					if err := cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, input[:0], 0, blocks, unitDirections, unitVariances, filterParams); err != nil {
+					if err := cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, w.input[:0], 0, blocks, unitDirections, unitVariances, filterParams); err != nil {
 						return units, blocksTotal, err
 					}
 				}
@@ -277,7 +240,7 @@ func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap Frame
 				continue
 			}
 			var stageRect frameWorkCDEFStageRect
-			if sparseIndependent && !cdefDebugUnit(plane, unitRow, unitCol) && len(blocks) < (unitW/blockWidth)*(unitH/blockHeight) {
+			if sparseIndependent && !cdefDebugUnit(w.plane, unitRow, unitCol) && len(blocks) < (unitW/blockWidth)*(unitH/blockHeight) {
 				if unitMasks != nil {
 					stageRect = frameWorkCDEFSparseStageRectFromMask(unitMask, unitW, unitH, blockWidth, blockHeight)
 				} else {
@@ -286,8 +249,8 @@ func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap Frame
 			}
 			curLeft := leftStorage[leftIdx][:]
 			nextLeft := leftStorage[leftIdx^1][:]
-			secondaryOnlyByte := frameWorkCDEFCanUseSecondaryByteUnit(cdef.U8SecondaryOnlyByteInteriorAvailable(), deriveDirections, filterParams, unitX, unitY, unitW, unitH, width, height, blockWidth, blockHeight, cdefDebugUnit(plane, unitRow, unitCol))
-			if secondaryOnlyByte || frameWorkCDEFCanUseByteUnit(cdef.U8ByteInteriorAvailable(), filterParams, unitX, unitY, unitW, unitH, width, height, blockWidth, blockHeight, cdefDebugUnit(plane, unitRow, unitCol)) {
+			secondaryOnlyByte := frameWorkCDEFCanUseSecondaryByteUnit(cdef.U8SecondaryOnlyByteInteriorAvailable(), deriveDirections, filterParams, unitX, unitY, unitW, unitH, width, height, blockWidth, blockHeight, cdefDebugUnit(w.plane, unitRow, unitCol))
+			if secondaryOnlyByte || frameWorkCDEFCanUseByteUnit(cdef.U8ByteInteriorAvailable(), filterParams, unitX, unitY, unitW, unitH, width, height, blockWidth, blockHeight, cdefDebugUnit(w.plane, unitRow, unitCol)) {
 				assembled := false
 				if stageRect.active {
 					assembled = frameWorkAssembleCDEFSparseByteInputU8(byteInput, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitX, unitY, unitW, unitH, stageRect)
@@ -319,12 +282,12 @@ func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap Frame
 			// Border unit split: on frame-edge 64x64 units, most 8x8 blocks still
 			// have a complete in-plane 2-pixel halo and can use the fast byte-lane
 			// kernel, leaving only the frame-edge blocks on the widened uint16 path.
-			if sparseIndependent && cdef.U8ByteInteriorAvailable() && !cdefDebugUnit(plane, unitRow, unitCol) &&
+			if sparseIndependent && cdef.U8ByteInteriorAvailable() && !cdefDebugUnit(w.plane, unitRow, unitCol) &&
 				filterParams.CoeffShift == 0 &&
 				(filterParams.SecondaryStrength == 0 || filterParams.SecondaryStrength == 1 || filterParams.SecondaryStrength == 2 || filterParams.SecondaryStrength == 4) &&
 				(blockWidth == 4 || blockWidth == 8) && (blockHeight == 4 || blockHeight == 8) &&
 				unitW > 0 && unitH > 0 && unitW%blockWidth == 0 && unitH%blockHeight == 0 && len(blocks) <= 64 &&
-				cdefInputRectFits(len(input), unitW+2*cdef.HorizontalBorder, unitH+2*cdef.VerticalBorder) {
+				cdefInputRectFits(len(w.input), unitW+2*cdef.HorizontalBorder, unitH+2*cdef.VerticalBorder) {
 				const tapReach = 2
 				var intBuf, edgeBuf [64]cdef.BlockPosition
 				nInt, nEdge := 0, 0
@@ -347,8 +310,8 @@ func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap Frame
 						edgeOK := true
 						if nEdge > 0 {
 							edgeRect := frameWorkCDEFSparseStageRect(edgeBlocks, unitW, unitH, blockWidth, blockHeight)
-							if !edgeRect.active || !frameWorkAssembleCDEFSparseInputU8(input, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitRow, unitX, unitY, unitW, unitH, edgeRect) {
-								if err := frameWorkAssembleCDEFInputU8(input, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
+							if !edgeRect.active || !frameWorkAssembleCDEFSparseInputU8(w.input, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitRow, unitX, unitY, unitW, unitH, edgeRect) {
+								if err := frameWorkAssembleCDEFInputU8(w.input, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
 									return units, blocksTotal, err
 								}
 							}
@@ -363,9 +326,9 @@ func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap Frame
 								if nEdge > 0 {
 									var filterErr error
 									if deriveDirections {
-										filterErr = cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, edgeBlocks, unitDirections, unitVariances, filterParams)
+										filterErr = cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, w.input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, edgeBlocks, unitDirections, unitVariances, filterParams)
 									} else {
-										filterErr = cdef.FilterFrameBlocksU8TrustedNoPrimaryDirection(dst.Pix[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, edgeBlocks, unitDirections, unitVariances, filterParams)
+										filterErr = cdef.FilterFrameBlocksU8TrustedNoPrimaryDirection(dst.Pix[unitOrigin:], stride, w.input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, edgeBlocks, unitDirections, unitVariances, filterParams)
 									}
 									if filterErr != nil {
 										return units, blocksTotal, filterErr
@@ -381,8 +344,8 @@ func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap Frame
 					}
 				}
 			}
-			if !stageRect.active || !frameWorkAssembleCDEFSparseInputU8(input, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitRow, unitX, unitY, unitW, unitH, stageRect) {
-				if err := frameWorkAssembleCDEFInputU8(input, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
+			if !stageRect.active || !frameWorkAssembleCDEFSparseInputU8(w.input, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitRow, unitX, unitY, unitW, unitH, stageRect) {
+				if err := frameWorkAssembleCDEFInputU8(w.input, dst, topBuf, bottomBuf, curLeft, prevFiltered, unitRow, unitX, unitY, unitW, unitH); err != nil {
 					return units, blocksTotal, err
 				}
 			}
@@ -395,14 +358,14 @@ func frameWorkApplyCDEFPlaneRowsU8Lines(params parser.CDEFParams, indexMap Frame
 				copyCDEFLeftBackup(nextLeft, dst.Pix, unitY*stride+nextUnitX-cdef.HorizontalBorder, stride, unitH)
 			}
 			leftIdx ^= 1
-			if cdefDebugUnit(plane, unitRow, unitCol) {
-				cdefDebugLogUnit(plane, unitRow, unitCol, packed, filterParams, *unitDirections, *unitVariances, input, len(blocks))
+			if cdefDebugUnit(w.plane, unitRow, unitCol) {
+				cdefDebugLogUnit(w.plane, unitRow, unitCol, packed, filterParams, *unitDirections, *unitVariances, w.input, len(blocks))
 			}
 			var filterErr error
 			if deriveDirections {
-				filterErr = cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+				filterErr = cdef.FilterFrameBlocksU8Trusted(dst.Pix[unitOrigin:], stride, w.input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
 			} else {
-				filterErr = cdef.FilterFrameBlocksU8TrustedNoPrimaryDirection(dst.Pix[unitOrigin:], stride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+				filterErr = cdef.FilterFrameBlocksU8TrustedNoPrimaryDirection(dst.Pix[unitOrigin:], stride, w.input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
 			}
 			if filterErr != nil {
 				return units, blocksTotal, filterErr

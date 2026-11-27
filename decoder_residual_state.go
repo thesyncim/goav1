@@ -1,25 +1,18 @@
 package goav1
 
-// This file holds the caller-owned residual-decode state and the helpers
-// that drive coefficient decode, block reconstruction, and the per-batch
-// residual runner.
+// Caller-owned residual-decode scratch sizing, per-worker runner binding, and
+// tile residual execution.
 //
-// The helpers fall into these groups:
-//
-//   - decoderFrameWorkResidualMaxScratchLen / MaxFrameScratchLen /
-//     BatchResidualScratchLen / BatchResidualRunnerScratchLen: shape helpers
-//     that report the caller-owned scratch lengths required for per-job and
-//     per-batch residual processing.
-//   - initDecoderFrameWorkTileResidualCDFStorage /
-//     decoderFrameWorkTileResidualCDFsFromStorage: caller-owned CDF storage
-//     and binding.
-//   - initDecoderFrameWorkTileRestorationRequestReferences /
-//     decoderFrameWorkJobBlockLoopContextRootColumns /
-//     bindTileBlockLoopContextCarrier: per-job block-loop setup.
-//   - decoderFrameWorkBatchResidualRunner and its
-//     bindDecoderFrameWorkBatchResidualRunner, Run, SetSideData,
-//     ResetStats, TotalStats helpers: the bounded per-batch executor that
-//     ties the residual pipeline to the worker pool.
+// Invariants:
+//   - Scratch sizing (decoderFrameWorkBatchResidualRunnerScratchLen) computes
+//     worst-case per-worker and per-batch buffer lengths ahead of decode so
+//     steady-state frames perform zero heap allocations.
+//   - Each worker slot in decoderFrameWorkBatchResidualRunner owns an
+//     independent *FrameWorkTileResidualScratch heap object so Go's GC stops
+//     scanning at its leading pointer prefix rather than walking pointer-free
+//     context tables across a contiguous value slice.
+//   - RunPtr executes one worker's assigned tile range without copying the
+//     FrameWorkBatch value.
 
 import (
 	internaldecoder "github.com/thesyncim/goav1/internal/av1/decoder"
@@ -38,33 +31,6 @@ func decoderFrameWorkResidualMaxScratchLen(batch internaldecoder.FrameWorkBatch,
 		return 0, 0, err
 	}
 	return reconstructBlockMaxScratchLen(lossless)
-}
-
-// decoderFrameWorkTileResidualCDFsFromStorage returns the CDF view
-// bound from storage, ready to thread into a residual decode call.
-func decoderFrameWorkTileResidualCDFsFromStorage(storage *internalthreading.FrameWorkTileResidualCDFStorage) internalthreading.FrameWorkTileResidualCDFs {
-	return storage.CDFs()
-}
-
-// initDecoderFrameWorkTileResidualCDFStorage initializes storage from
-// the active frame's primary reference (or default CDFs when the frame
-// is keyframe / has no primary reference) using the batch context.
-func initDecoderFrameWorkTileResidualCDFStorage(batch internaldecoder.FrameWorkBatch, storage *internalthreading.FrameWorkTileResidualCDFStorage) error {
-	return batch.InitTileResidualCDFStorage(storage)
-}
-
-// initDecoderFrameWorkTileRestorationRequestReferences populates the
-// reference-frame pointers inside req so loop-restoration helpers can
-// dispatch through them without re-resolving the references.
-func initDecoderFrameWorkTileRestorationRequestReferences(req *internalthreading.FrameWorkTileRestorationRequest) error {
-	return req.InitReferences()
-}
-
-// decoderFrameWorkJobBlockLoopContextRootColumns reports the number of
-// root-column above-context entries one job's block-loop carrier needs
-// to track for its tile.
-func decoderFrameWorkJobBlockLoopContextRootColumns(batch internaldecoder.FrameWorkBatch, index int) (int, error) {
-	return batch.JobBlockLoopContextRootColumns(index)
 }
 
 // bindTileBlockLoopContextCarrier wraps a caller-owned above-context
@@ -166,10 +132,14 @@ type decoderFrameWorkBatchResidualRunnerScratchSize struct {
 
 // decoderFrameWorkBatchResidualRunnerScratch carries caller-owned storage for
 // bindDecoderFrameWorkBatchResidualRunner.
+//
+// TileScratch holds one pointer per worker so each FrameWorkTileResidualScratch
+// is its own heap object and GC stops scanning at its short pointer prefix
+// rather than scanning the pointer-free tails of elements [0, workers-2].
 type decoderFrameWorkBatchResidualRunnerScratch struct {
 	States                  []internaltile.DecodeState
 	Storages                []internalthreading.FrameWorkTileResidualCDFStorage
-	TileScratch             []internalthreading.FrameWorkTileResidualScratch
+	TileScratch             []*internalthreading.FrameWorkTileResidualScratch
 	RestorationRequests     []internalthreading.FrameWorkTileRestorationRequest
 	PredictionScratch       []internalthreading.FrameWorkPredictionScratch
 	InterPredictionScratch  []internalthreading.FrameWorkInterPredictionScratch
@@ -177,6 +147,19 @@ type decoderFrameWorkBatchResidualRunnerScratch struct {
 	Int32Scratch            []int32
 	ResidualScratch         []int16
 	LoopContextAboveScratch []internaltile.BlockLoopRootAboveContext
+}
+
+// newDecoderTileScratch allocates n independent FrameWorkTileResidualScratch
+// instances so each worker's pointer-free scratch arrays sit outside GC ptrdata.
+func newDecoderTileScratch(n int) []*internalthreading.FrameWorkTileResidualScratch {
+	if n <= 0 {
+		return nil
+	}
+	out := make([]*internalthreading.FrameWorkTileResidualScratch, n)
+	for i := range out {
+		out[i] = new(internalthreading.FrameWorkTileResidualScratch)
+	}
+	return out
 }
 
 // Max returns per-arena maximum lengths for reusable residual runner scratch.
@@ -204,7 +187,7 @@ type decoderFrameWorkBatchResidualRunner struct {
 
 	States                 []internaltile.DecodeState
 	Storages               []internalthreading.FrameWorkTileResidualCDFStorage
-	TileScratch            []internalthreading.FrameWorkTileResidualScratch
+	TileScratch            []*internalthreading.FrameWorkTileResidualScratch
 	RestorationRequests    []internalthreading.FrameWorkTileRestorationRequest
 	PredictionScratch      []internalthreading.FrameWorkPredictionScratch
 	InterPredictionScratch []internalthreading.FrameWorkInterPredictionScratch
@@ -350,7 +333,7 @@ func bindDecoderFrameWorkBatchResidualRunner(size decoderFrameWorkBatchResidualR
 	if size.Workers <= 0 {
 		return decoderFrameWorkBatchResidualRunner{}, internalthreading.ErrInvalidWorkerCount
 	}
-	if err := decoderFrameWorkBatchResidualRunnerScratchErr(size, scratch); err != nil {
+	if err := size.validate(scratch); err != nil {
 		return decoderFrameWorkBatchResidualRunner{}, err
 	}
 	var restorationRequests []internalthreading.FrameWorkTileRestorationRequest
@@ -361,6 +344,9 @@ func bindDecoderFrameWorkBatchResidualRunner(size decoderFrameWorkBatchResidualR
 	interScratch := scratch.InterPredictionScratch[:size.Workers]
 	tileScratch := scratch.TileScratch[:size.Workers]
 	for i := range predictionScratch {
+		if tileScratch[i] == nil {
+			return decoderFrameWorkBatchResidualRunner{}, internalframe.ErrShortBuffer
+		}
 		predictionScratch[i].Inter = &interScratch[i]
 		tileScratch[i].PreallocCallbackScratch()
 		tileScratch[i].PreallocLoopFilterMaskScratch(size.LoopFilterMaskCols)
@@ -382,7 +368,7 @@ func bindDecoderFrameWorkBatchResidualRunner(size decoderFrameWorkBatchResidualR
 	}, nil
 }
 
-func decoderFrameWorkBatchResidualRunnerScratchErr(size decoderFrameWorkBatchResidualRunnerScratchSize, scratch decoderFrameWorkBatchResidualRunnerScratch) error {
+func (size decoderFrameWorkBatchResidualRunnerScratchSize) validate(scratch decoderFrameWorkBatchResidualRunnerScratch) error {
 	if size.Workers == 0 {
 		return nil
 	}
@@ -458,10 +444,10 @@ func (r *decoderFrameWorkBatchResidualRunner) RunPtr(batch *internaldecoder.Fram
 			storage = batch.RetainedTileResidualCDFs
 		}
 	}
-	if err := initDecoderFrameWorkTileResidualCDFStorage(*batch, storage); err != nil {
+	if err := batch.InitTileResidualCDFStorage(storage); err != nil {
 		return err
 	}
-	stats, err := decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch, &r.States[worker], storage, &r.TileScratch[worker], req, r.compactState)
+	stats, err := decodeAndRetainDecoderFrameWorkBatchResidualsPtr(batch, &r.States[worker], storage, r.TileScratch[worker], req, r.compactState)
 	r.Stats[worker] = stats
 	if err != nil {
 		return err
@@ -501,7 +487,7 @@ func (r *decoderFrameWorkBatchResidualRunner) SetSideData(side decoderFrameWorkS
 		for i := range r.States {
 			req := &r.RestorationRequests[i]
 			req.Buffers = side.RestorationFrameBuffers
-			if err := initDecoderFrameWorkTileRestorationRequestReferences(req); err != nil {
+			if err := req.InitReferences(); err != nil {
 				return err
 			}
 		}
@@ -533,7 +519,7 @@ func (r *decoderFrameWorkBatchResidualRunner) setOwnedCompactSideData(side *deco
 		for i := range r.States {
 			req := &r.RestorationRequests[i]
 			req.Buffers = side.RestorationFrameBuffers
-			if err := initDecoderFrameWorkTileRestorationRequestReferences(req); err != nil {
+			if err := req.InitReferences(); err != nil {
 				return err
 			}
 		}
@@ -545,13 +531,6 @@ func (r *decoderFrameWorkBatchResidualRunner) setOwnedCompactSideData(side *deco
 	r.sideDataRestorationActive = side.RestorationFrameBuffers.Plan.Active
 	r.compactBoundSide = side
 	return nil
-}
-
-// setDecoderFrameWorkBatchResidualRunnerSideData is the function-style
-// alias for (*decoderFrameWorkBatchResidualRunner).SetSideData provided
-// for callers that prefer free functions.
-func setDecoderFrameWorkBatchResidualRunnerSideData(runner *decoderFrameWorkBatchResidualRunner, side decoderFrameWorkSideData) error {
-	return runner.SetSideData(side)
 }
 
 // ResetStats clears the per-worker statistics buckets so the next
@@ -583,7 +562,7 @@ func (r *decoderFrameWorkBatchResidualRunner) TotalStats() (internalthreading.Fr
 func decoderFrameWorkBatchResidualLoopContextAboveLen(batch internaldecoder.FrameWorkBatch) (int, error) {
 	maxRootColumns := 0
 	for i := range batch.Jobs {
-		rootColumns, err := decoderFrameWorkJobBlockLoopContextRootColumns(batch, i)
+		rootColumns, err := batch.JobBlockLoopContextRootColumns(i)
 		if err != nil {
 			return 0, err
 		}
@@ -662,9 +641,9 @@ func decodeAndRetainDecoderFrameWorkJobResidualsPtr(batch *internaldecoder.Frame
 	var stats internalthreading.FrameWorkTileResidualStats
 	var err error
 	if internalthreading.FrameWorkLoopFilterCompactStateActive(compact) {
-		stats, err = internalthreading.DecodeAndReconstructJobResidualsPtrOwned(batch, index, state, decoderFrameWorkTileResidualCDFsFromStorage(storage), scratch, req, compact)
+		stats, err = internalthreading.DecodeAndReconstructJobResidualsPtrOwned(batch, index, state, storage.CDFs(), scratch, req, compact)
 	} else {
-		stats, err = batch.DecodeAndReconstructJobResidualsPtr(index, state, decoderFrameWorkTileResidualCDFsFromStorage(storage), scratch, req)
+		stats, err = batch.DecodeAndReconstructJobResidualsPtr(index, state, storage.CDFs(), scratch, req)
 	}
 	if err != nil {
 		return stats, err

@@ -408,14 +408,14 @@ internal/av1/encoder/pframe_vlpd0.go:*:*: make([]svtPD0SB, need) escapes to heap
 internal/av1/encoder/pframe_vlpd0.go:*:*: make([]svtPD0SB, need) escapes to heap in (*lossyEncodeState).prepareSVTPD0:
 internal/av1/encoder/pframe_wavefront.go:*:*: func literal escapes to heap
 internal/av1/encoder/pframe_wavefront.go:*:*: func literal escapes to heap in (*pframeWavefront).ensureWorkers:
+internal/av1/encoder/pframe_wavefront.go:*:*: make([]*pframeDecideWorker, n) escapes to heap
+internal/av1/encoder/pframe_wavefront.go:*:*: make([]*pframeDecideWorker, n) escapes to heap in (*pframeWavefront).ensureWorkers:
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]atomic.Int32, rows) escapes to heap
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]atomic.Int32, rows) escapes to heap in (*pframeWavefront).ensureDone:
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]atomic.Int32, rows) escapes to heap in (*pframeWavefront).start:
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]atomic.Int32, rows) escapes to heap in (*pframeWavefront).startKey:
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]int32, len(src.invScratch)) escapes to heap
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]int32, len(src.invScratch)) escapes to heap in (*pframeDecideWorker).adopt:
-internal/av1/encoder/pframe_wavefront.go:*:*: make([]pframeDecideWorker, n) escapes to heap
-internal/av1/encoder/pframe_wavefront.go:*:*: make([]pframeDecideWorker, n) escapes to heap in (*pframeWavefront).ensureWorkers:
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]tile.BlockLoopRootAboveContext, tile.rootCols) escapes to heap
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]tile.BlockLoopRootAboveContext, tile.rootCols) escapes to heap in (*pframeWavefront).start:
 internal/av1/encoder/pframe_wavefront.go:*:*: make([]tile.BlockLoopRootAboveContext, tile.rootCols) escapes to heap in (*pframeWavefront).startKey:
@@ -430,6 +430,8 @@ internal/av1/encoder/pframe_wavefront.go:*:*: new(keyTXSScratch) escapes to heap
 internal/av1/encoder/pframe_wavefront.go:*:*: new(keyTXSScratch) escapes to heap in (*pframeDecideWorker).adopt:
 internal/av1/encoder/pframe_wavefront.go:*:*: new(lossyMCScratch) escapes to heap
 internal/av1/encoder/pframe_wavefront.go:*:*: new(lossyMCScratch) escapes to heap in (*pframeDecideWorker).adopt:
+internal/av1/encoder/pframe_wavefront.go:*:*: new(pframeDecideWorker) escapes to heap
+internal/av1/encoder/pframe_wavefront.go:*:*: new(pframeDecideWorker) escapes to heap in (*pframeWavefront).ensureWorkers:
 internal/av1/encoder/pframe_wavefront.go:*:*: new(subpelProbeCache) escapes to heap
 internal/av1/encoder/pframe_wavefront.go:*:*: new(subpelProbeCache) escapes to heap in (*pframeDecideWorker).adopt:
 internal/av1/encoder/pred8.go:*:*: new(subpelProbeCache) escapes to heap
@@ -587,6 +589,8 @@ internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.Y)) escapes to 
 internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.Y)) escapes to heap in (*VideoEncoder).computeLeafTU:
 internal/av1/encoder/video_pipeline.go:*:*: new(lpd1Frame) escapes to heap
 internal/av1/encoder/video_pipeline.go:*:*: new(lpd1Frame) escapes to heap in (*VideoEncoder).computeLeafTU:
+internal/av1/encoder/video_pipeline.go:*:*: new(pframeCoder) escapes to heap
+internal/av1/encoder/video_pipeline.go:*:*: new(pframeCoder) escapes to heap in (*VideoEncoder).computeLeafTU:
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, descriptorBytes) escapes to heap
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, descriptorBytes) escapes to heap in (*WebRTCStream).Prewarm:
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, layerSize) escapes to heap
@@ -641,12 +645,12 @@ internal/av1/threading/pool.go:*:*: func literal escapes to heap in (*Pool).wave
 internal/av1/threading/pool.go:*:*: func literal escapes to heap in NewPool:
 internal/av1/threading/pool.go:*:*: make([]poolWorker, workers) escapes to heap
 internal/av1/threading/pool.go:*:*: make([]poolWorker, workers) escapes to heap in NewPool:
+internal/av1/threading/tile_residual.go:*:*: make([]*FrameWorkPredictionScratch, workers) escapes to heap
+internal/av1/threading/tile_residual.go:*:*: make([]*FrameWorkPredictionScratch, workers) escapes to heap in (*frameWorkReconWavefront).ensureStates:
 internal/av1/threading/tile_residual.go:*:*: make([]FrameWorkCFLPredictionScratch, workers) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]FrameWorkCFLPredictionScratch, workers) escapes to heap in (*frameWorkReconWavefront).ensureStates:
 internal/av1/threading/tile_residual.go:*:*: make([]FrameWorkInterPredictionScratch, workers) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]FrameWorkInterPredictionScratch, workers) escapes to heap in (*frameWorkReconWavefront).ensureStates:
-internal/av1/threading/tile_residual.go:*:*: make([]FrameWorkPredictionScratch, workers) escapes to heap
-internal/av1/threading/tile_residual.go:*:*: make([]FrameWorkPredictionScratch, workers) escapes to heap in (*frameWorkReconWavefront).ensureStates:
 internal/av1/threading/tile_residual.go:*:*: make([]atomic.Int32, rowCount) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]atomic.Int32, rowCount) escapes to heap in (*frameWorkReconWavefront).ensureDone:
 internal/av1/threading/tile_residual.go:*:*: make([]frameWorkReconCBI, len(s.reconCBI), cbiNeed) escapes to heap
@@ -665,6 +669,8 @@ internal/av1/threading/tile_residual.go:*:*: make([]tile.refmvsBlock, tile.need)
 internal/av1/threading/tile_residual.go:*:*: make([]tile.refmvsBlock, tile.need) escapes to heap in (*FrameWorkTileResidualScratch).PreallocLoopFilterMaskScratch:
 internal/av1/threading/tile_residual.go:*:*: make([]uint8, cols) escapes to heap
 internal/av1/threading/tile_residual.go:*:*: make([]uint8, cols) escapes to heap in (*FrameWorkTileResidualScratch).PreallocLoopFilterMaskScratch:
+internal/av1/threading/tile_residual.go:*:*: new(FrameWorkPredictionScratch) escapes to heap
+internal/av1/threading/tile_residual.go:*:*: new(FrameWorkPredictionScratch) escapes to heap in (*frameWorkReconWavefront).ensureStates:
 internal/av1/threading/wavefront_stream.go:*:*: func literal escapes to heap in (*frameWorkReconWavefront).startLanes:
 internal/av1/threading/wavefront_stream.go:*:*: make([]atomic.Int32, rowCount) escapes to heap
 internal/av1/threading/wavefront_stream.go:*:*: make([]atomic.Int32, rowCount) escapes to heap in (*frameWorkTileResidualLoopController).startReconStream:

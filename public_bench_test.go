@@ -605,7 +605,7 @@ func BenchmarkPublicDecoderResidualBatchRunner(b *testing.B) {
 	runner, err := bindDecoderFrameWorkBatchResidualRunner(size, decoderFrameWorkBatchResidualRunnerScratch{
 		States:                  make([]internaltile.DecodeState, size.Workers),
 		Storages:                make([]internalthreading.FrameWorkTileResidualCDFStorage, size.Workers),
-		TileScratch:             make([]internalthreading.FrameWorkTileResidualScratch, size.Workers),
+		TileScratch:             newDecoderTileScratch(size.Workers),
 		RestorationRequests:     make([]internalthreading.FrameWorkTileRestorationRequest, size.RestorationRequests),
 		PredictionScratch:       make([]internalthreading.FrameWorkPredictionScratch, size.Workers),
 		InterPredictionScratch:  make([]internalthreading.FrameWorkInterPredictionScratch, size.Workers),

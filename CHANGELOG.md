@@ -6,6 +6,19 @@ or pull requests, not in long-lived markdown.
 
 ## [Unreleased]
 
+## [v0.2.5] - 2026-11-27
+
+Idiomatic Go refactoring, GC-invisibility, and runtime-style documentation pass on top of v0.2.4 — cuts encoder GC-scannable heap by **35%** (`0.65 MiB → 0.42 MiB`, saving ~450 KiB of unused `leafPC` state on non-pipelined encoders), eliminates high-arity procedural soup across decoder CDEF, loop-filter, and work dispatch, reduces hot BCE sites (`11,913 → 11,896`), and speeds up both 1080p encode (**15%–18%**) and decode (**4%–10%**) with **0 steady-state allocations** and bit-exact MD5 parity vs `dav1d`.
+
+### GC-Invisibility & Memory Layout
+- **Encoder (`internal/av1/encoder`)**: Reordered `VideoEncoder` so all pointer-bearing fields precede `pc` (truncating GC `ptrdata` before ~400 KiB of value scratch, CDFs, and rate-control state), lazily allocated `leafPC` only when throughput pipelining runs, and switched `pframeWavefront.workers` to `[]*pframeDecideWorker` so GC stops scanning at each lane's leading pointer prefix.
+- **Decoder & Tile/Threading (`goav1`, `internal/av1/decoder`, `internal/av1/threading`, `internal/av1/tile`)**: Grouped pointer-bearing prefixes across `BlockLoopScratch`, `BlockLoopContextCarrier`, `refmvsTile`, `refmvsFrame`, `refmvsMfmv`, `FrameWorkTileResidualScratch`, `frameWorkTileResidualLoopController`, `frameWorkReconState`, `frameWorkLoopFilterMaskScratch`, `FrameWorkPredictionScratch`, `decoderFrameContext`, and `FrameWorkPostFilterParallel`; moved 10/12-bit film-grain scaling tables out of `frameWorkFilmGrainRows[uint8]`; split `decoderFramePipeline.fcs`, `TileScratch`, and `frameWorkReconWavefront.predict` into pointer slices (`[]*T`) to prevent contiguous-slice GC scanning across worker tails.
+
+### Encapsulation & Idiomatic Go
+- **CDEF (`internal/av1/decoder`)**: Replaced seven 21–23 parameter plane-row walkers and the 14-parameter HBD input assembler with `cdefPlaneWalker` value-receiver methods (`applySnapshot`, `applyU8`, `applyU8Packed`, `applyU8Lines`, `applyHBD`, `assembleHBDInput`) and stack-local `cdefUnitScratch` (zero heap escapes).
+- **Loop Filter (`internal/av1/decoder`)**: Unified the 14–18 parameter luma and chroma edge-segment free functions into cohesive `loopFilterEdgeEmitter` value-receiver methods.
+- **Frame Work Dispatch & Root Decoder (`internal/av1/decoder`, `goav1`)**: Replaced the 17–19 parameter `executeFrameWorkStepWithPayload*` / `prepareFrameWorkStepWithPayload` functions with `(*FrameWorkState).payloadStepDispatch` and `frameWorkPayloadDispatch.{prepare,execute,executeRunner}`; removed redundant 1-line free-function aliases in `decoder_residual_state.go` in favor of direct method calls; refreshed the three compiler escape allowlists.
+
 ## [v0.2.4] - 2026-11-26
 
 CI & allocation-gate maintenance release on top of v0.2.3:

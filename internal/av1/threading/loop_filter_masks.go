@@ -213,10 +213,18 @@ func (h *FrameWorkLoopFilterMasks) region(bx, by int) *lfmask.FilterMask {
 // above/left edge-context arrays (t->a->tx_lpf_* / t->l.tx_lpf_*). aY/aUV span
 // the frame width (reset once at tile start, carried down superblock rows); lY
 // /lUV span one 128-region column (reset at each superblock-row change).
+//
+// All pointer-bearing fields sit in the leading run so the pointer-free
+// builder and level tables sit outside GC ptrdata.
 type frameWorkLoopFilterMaskScratch struct {
+	aY       []uint8
+	aUV      []uint8
+	lvlOwner *FrameWorkLoopFilterLevelTable
+	// edges/tileCol/tileRow route this job's tile-boundary context backups
+	// (dav1d tx_lpf_right_edge and per-tile-row above context).
+	edges *FrameWorkLoopFilterTileEdges
+
 	builder lfmask.Builder
-	aY      []uint8
-	aUV     []uint8
 	lY      [32]uint8
 	lUV     [32]uint8
 
@@ -227,12 +235,8 @@ type frameWorkLoopFilterMaskScratch struct {
 	// for delta_lf state lvlKey; reset invalidates it for each new frame.
 	lvlMem      lfmask.LFValues
 	lvlKey      uint32
-	lvlOwner    *FrameWorkLoopFilterLevelTable
 	lvlMemValid bool
 
-	// edges/tileCol/tileRow route this job's tile-boundary context backups
-	// (dav1d tx_lpf_right_edge and per-tile-row above context).
-	edges            *FrameWorkLoopFilterTileEdges
 	tileCol, tileRow int
 }
 

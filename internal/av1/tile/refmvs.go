@@ -78,8 +78,15 @@ type refmvsCandidate struct {
 }
 
 // refmvsFrame carries the per-frame state of dav1d's refmvs_frame consumed by
-// dav1d_refmvs_find.
+// dav1d_refmvs_find. Pointer-bearing fields (temporal, mfmv) sit first so the
+// GC pointer prefix ends immediately after mfmv.rpRef.
 type refmvsFrame struct {
+	temporal *TemporalMotionField
+	// mfmv is the temporal projection setup of dav1d_refmvs_init_frame; when
+	// projectTmvs is set the tile projects each superblock row into rpProj
+	// (load_tmvs) instead of reading a whole-frame temporal field.
+	mfmv refmvsMfmv
+
 	iw4, ih4 int32
 
 	// signBias and pocDiff are indexed by ref-1 (dav1d's rf->sign_bias and
@@ -91,13 +98,7 @@ type refmvsFrame struct {
 	// seeds the globalmv context; temporal reports whether projected temporal
 	// samples are available (dav1d's rf->use_ref_frame_mvs).
 	useRefFrameMVs bool
-	temporal       *TemporalMotionField
-
-	// mfmv is the temporal projection setup of dav1d_refmvs_init_frame; when
-	// projectTmvs is set the tile projects each superblock row into rpProj
-	// (load_tmvs) instead of reading a whole-frame temporal field.
-	projectTmvs bool
-	mfmv        refmvsMfmv
+	projectTmvs    bool
 
 	allowHighPrecisionMV bool
 	forceIntegerMV       bool
@@ -120,16 +121,22 @@ const (
 
 // refmvsTile is dav1d's refmvs_tile plus the tile-owned row storage that
 // dav1d keeps in refmvs_frame.r. rows holds offsets into buf (−1 for dav1d's
-// NULL rows).
+// NULL rows). Slices and frame sit first so rows and scalar geometry fall
+// outside the GC pointer prefix.
 type refmvsTile struct {
-	buf    []refmvsBlock
-	stride int32
-	rows   [refmvsRowTable]int32
+	buf []refmvsBlock
+	// rpProj is dav1d's rp_proj for this tile: 16 rows of projected
+	// temporal samples (8x8 units), rpStride entries per row.
+	rpProj []TemporalMotionEntry
+	frame  refmvsFrame
+
+	stride   int32
+	rpStride int32
+	rows     [refmvsRowTable]int32
 
 	tileColStart, tileColEnd int32
 	tileRowStart, tileRowEnd int32
 
-	frame refmvsFrame
 	bound bool
 	// tall marks rows bound to a frame-tall EncoderRefmvsRows store (one
 	// slab per superblock row, as dav1d's frame-thread buffer) instead of the
@@ -140,11 +147,6 @@ type refmvsTile struct {
 	// the first 4x4 block of an 8x8 split, used for the top-left cell of the
 	// sub8x8 chroma prediction.
 	tl4x4Filter motion.InterpFilters
-
-	// rpProj is dav1d's rp_proj for this tile: 16 rows of projected
-	// temporal samples (8x8 units), rpStride entries per row.
-	rpProj   []TemporalMotionEntry
-	rpStride int32
 }
 
 // bindFrame sizes the row storage for a frame of the given coded width (in

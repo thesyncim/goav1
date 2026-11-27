@@ -9,15 +9,19 @@ package tile
 const refmvsInvalidRef2Cur = -32
 
 // refmvsMfmv is the temporal-projection part of dav1d's refmvs_frame.
+// refmvsMfmv holds the per-frame temporal MV projection parameters (dav1d's
+// refmvs_frame mfmv_* fields). Pointer-bearing fields sit first so GC scans
+// only the rpRef prefix.
 type refmvsMfmv struct {
-	n       int32
-	ref     [3]uint8 // mfmv_ref, 0-based reference index
-	ref2cur [3]int32
-	ref2ref [3][7]int32
 	// rpRef holds the reference frames' saved MV_REF side data (dav1d's
 	// rp_ref): nil when the reference is intra-only, unavailable or of a
 	// different size.
 	rpRef [7]*ReferenceMVFrame
+
+	n       int32
+	ref     [3]uint8 // mfmv_ref, 0-based reference index
+	ref2cur [3]int32
+	ref2ref [3][7]int32
 	// iw8 and ih8 are the frame size in 8x8 units.
 	iw8, ih8 int32
 }

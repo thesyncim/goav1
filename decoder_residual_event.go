@@ -240,7 +240,7 @@ func (s decoderFrameWorkResidualEventScratch) Check(size decoderFrameWorkResidua
 	if decoderFrameWorkResidualStreamSideDataScratchTooShort(s.SideData, size.SideData) {
 		return internalframe.ErrShortBuffer
 	}
-	if err := decoderFrameWorkBatchResidualRunnerScratchErr(size.Runner, s.Runner); err != nil {
+	if err := size.Runner.validate(s.Runner); err != nil {
 		return err
 	}
 	return nil
@@ -810,7 +810,7 @@ func runDecoderFrameWorkEventWithSideRunner(req decoderFrameWorkResidualEventReq
 			}
 		} else {
 			if tile.JobCount != 0 {
-				if err := setDecoderFrameWorkBatchResidualRunnerSideData(req.Runner, *req.SideData); err != nil {
+				if err := req.Runner.SetSideData(*req.SideData); err != nil {
 					return internaldecoder.FrameWorkEventResult{}, err
 				}
 			}
@@ -1251,7 +1251,7 @@ func (r decoderFrameWorkResidualSideDataRunner) BindFrameWorkSideData(state *int
 		return r.BatchRunner.setOwnedCompactSideData(r.SideData)
 	}
 	if r.BatchRunner != nil {
-		if err := setDecoderFrameWorkBatchResidualRunnerSideData(r.BatchRunner, *r.SideData); err != nil {
+		if err := r.BatchRunner.SetSideData(*r.SideData); err != nil {
 			return err
 		}
 	}

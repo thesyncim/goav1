@@ -13463,7 +13463,8 @@ func TestVideoEncoderCloseWaitsForWavefrontWorkers(t *testing.T) {
 		t.Fatal(err)
 	}
 	enc.wavefront.ensureWorkers(3, &enc.pc)
-	enc.leafWavefront.ensureWorkers(2, &enc.leafPC)
+	enc.leafPC = new(pframeCoder)
+	enc.leafWavefront.ensureWorkers(2, enc.leafPC)
 	baseStarted := enc.wavefront.started
 	leafStarted := enc.leafWavefront.started
 	if baseStarted != 3 || leafStarted != 2 {

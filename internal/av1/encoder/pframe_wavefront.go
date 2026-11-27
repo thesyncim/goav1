@@ -109,7 +109,10 @@ func (w *pframeDecideWorker) adopt(src *lossyEncodeState) {
 // pframeWavefront owns the per-tile wavefront scheduling state and the parked
 // worker goroutines. Job parameters live in owner fields set per frame.
 type pframeWavefront struct {
-	workers  []pframeDecideWorker
+	// workers holds each lane as an independent heap object so Go's GC stops
+	// scanning each worker after its leading pointer run rather than scanning
+	// the ~300 KiB value scratch of lanes [0, n-2] in a contiguous slice.
+	workers  []*pframeDecideWorker
 	started  int
 	work     chan int
 	wg       sync.WaitGroup // per-frame jobs
@@ -226,22 +229,17 @@ func (wf *pframeWavefront) abort() {
 // calling goroutine never decides — it runs the trailing entropy pass).
 func (wf *pframeWavefront) ensureWorkers(n int, pc *pframeCoder) {
 	if cap(wf.workers) < n {
-		// Helpers are parked between frames when this runs, and they address
-		// lanes through wf.workers by index per job, so relocating the slice
-		// is safe — but the lanes' method-value callbacks bind the old
-		// element addresses and must be rebuilt against the new ones.
-		next := make([]pframeDecideWorker, n)
+		next := make([]*pframeDecideWorker, n)
 		copy(next, wf.workers)
 		wf.workers = next
-		for i := range wf.workers {
-			wf.workers[i].wf = nil
-			wf.workers[i].decideFn = nil
-			wf.workers[i].visitFn = nil
-		}
 	}
 	wf.workers = wf.workers[:n]
 	for i := range wf.workers {
-		w := &wf.workers[i]
+		w := wf.workers[i]
+		if w == nil {
+			w = new(pframeDecideWorker)
+			wf.workers[i] = w
+		}
 		if w.wf == nil {
 			w.wf = wf
 			w.decideFn = w.decidePartition
@@ -333,7 +331,7 @@ func (w *pframeDecideWorker) decideVisit(block tile.BlockVisit, scratch *tile.Bl
 // monotonically, so a claimed row's predecessor is always claimed and
 // progressing (row 0 never waits) — the wavefront cannot deadlock.
 func (wf *pframeWavefront) runWorker(idx int) {
-	w := &wf.workers[idx]
+	w := wf.workers[idx]
 	for {
 		if wf.aborted.Load() {
 			return
@@ -407,8 +405,7 @@ func (wf *pframeWavefront) start(pc *pframeCoder, n int, src, ref SourceFrame420
 		wf.done[r].Store(0)
 	}
 	wf.refmvsRows.Prepare(miCols, miRows)
-	for i := range wf.workers {
-		w := &wf.workers[i]
+	for _, w := range wf.workers {
 		w.err = nil
 		w.adopt(&pc.st)
 		w.st.bindRefmvsShared(&w.scratch, walkReq, miCols, miRows, &wf.refmvsRows)
@@ -434,8 +431,7 @@ func (wf *pframeWavefront) waitRowDecided(row int) error {
 func (wf *pframeWavefront) join(pc *pframeCoder) error {
 	wf.wg.Wait()
 	var firstErr error
-	for i := range wf.workers {
-		w := &wf.workers[i]
+	for _, w := range wf.workers {
 		if !wf.key {
 			w.st.unbindRefmvs(&w.scratch)
 		}
@@ -472,8 +468,7 @@ func (wf *pframeWavefront) startKey(pc *pframeCoder, n int, src SourceFrame420, 
 	for r := 0; r < rows; r++ {
 		wf.done[r].Store(0)
 	}
-	for i := range wf.workers {
-		w := &wf.workers[i]
+	for _, w := range wf.workers {
 		w.err = nil
 		w.adopt(&pc.st)
 	}

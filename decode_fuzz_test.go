@@ -359,7 +359,7 @@ func FuzzPublicDecoderFrameWorkBatchResidualRunnerSideData(f *testing.F) {
 			side.LoopFilterMap = internaldecoder.FrameWorkLoopFilterMap{Stride: 1, Rows: 1}
 		}
 
-		err = setDecoderFrameWorkBatchResidualRunnerSideData(&runner, side)
+		err = runner.SetSideData(side)
 		if activeRestoration && omitRestorationScratch {
 			if !errors.Is(err, internalframe.ErrShortBuffer) {
 				t.Fatalf("missing restoration requests err=%v want %v", err, internalframe.ErrShortBuffer)

@@ -333,6 +333,9 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 		header.PreviousLFDeltas = &e.leafPrevLFDeltas
 	}
 
+	if e.leafPC == nil {
+		e.leafPC = new(pframeCoder)
+	}
 	e.leafPC.effortLevel = e.effortLevel
 	e.leafPC.decisionStatsEnabled = e.decisionStatsEnabled
 	e.leafPC.st.hme = &e.leafHME

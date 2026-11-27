@@ -332,7 +332,25 @@ func (s *FrameWorkState) RunStepFrameThreaded(event *Event, step FrameWorkStep, 
 	frameContext := frameWorkFrameContext(event, ft.sequence)
 	initialCDFs := s.cdfEntry(ft.initialCDF)
 	retainedCDFs := s.cdfEntry(ft.retainedCDF)
-	prepared, err := prepareFrameWorkStepWithPayload(step, output, references, event.Unit.Payload, true, frameContext, event.FrameHeader.DisableCDFUpdate, initialCDFs, retainedCDFs, &ft.retainedValid, ft.motionFields(), cdefIndexMap, loopFilterMap, loopFilterMasks, restoration, jobs, batches)
+	prepared, err := frameWorkPayloadDispatch{
+		output:                        output,
+		references:                    references,
+		payload:                       event.Unit.Payload,
+		initialTileResidualCDFs:       initialCDFs,
+		retainedTileResidualCDFs:      retainedCDFs,
+		retainedTileResidualCDFsValid: &ft.retainedValid,
+		cdefIndexMap:                  cdefIndexMap,
+		loopFilterMap:                 loopFilterMap,
+		loopFilterMasks:               loopFilterMasks,
+		restorationFrameBuffers:       restoration,
+		jobs:                          jobs,
+		batches:                       batches,
+		motion:                        ft.motionFields(),
+		step:                          step,
+		frameContext:                  frameContext,
+		validatePayload:               true,
+		disableCDFUpdate:              event.FrameHeader.DisableCDFUpdate,
+	}.prepare()
 	if err != nil {
 		return err
 	}

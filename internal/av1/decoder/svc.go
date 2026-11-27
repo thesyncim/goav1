@@ -387,10 +387,8 @@ func (s *FrameWorkState) runStepExternalRefresh(refs *SurfaceReferences, framePo
 	if err != nil {
 		return FrameWorkStepResult{}, err
 	}
-	frameContext := frameWorkFrameContext(event, s.sequenceContext())
-	initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid := s.tileResidualCDFBindings()
-	cdefIndexMap, loopFilterMap, restorationFrameBuffers := s.postFilterSideData()
-	executed, err := executeFrameWorkStepWithPayloadRunner(step, workerPool, output, references, payload, true, frameContext, event.FrameHeader.DisableCDFUpdate, initialTileResidualCDFs, retainedTileResidualCDFs, retainedTileResidualCDFsValid, s.motionFields(), cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, jobs, batches, runner)
+	dispatch := s.payloadStepDispatch(event, step, output, references, payload, true, jobs, batches)
+	executed, err := dispatch.executeRunner(workerPool, runner)
 	if err != nil {
 		return FrameWorkStepResult{}, err
 	}
@@ -400,7 +398,7 @@ func (s *FrameWorkState) runStepExternalRefresh(refs *SurfaceReferences, framePo
 			return FrameWorkStepResult{ExecutedTileWork: executed}, err
 		}
 	}
-	if err := runFrameWorkPostFilterRunner(event, step, output, referenceCount, executed, cdefIndexMap, loopFilterMap, s.loopFilterMasksPtr(), restorationFrameBuffers, workerPool, post); err != nil {
+	if err := runFrameWorkPostFilterRunner(event, step, output, referenceCount, executed, dispatch.cdefIndexMap, dispatch.loopFilterMap, dispatch.loopFilterMasks, dispatch.restorationFrameBuffers, workerPool, post); err != nil {
 		return FrameWorkStepResult{ExecutedTileWork: executed}, err
 	}
 	publishedGlobalSurface, hasPublishedGlobalSurface := frameWorkPostFilterPublishedGlobalSurface(post, postPublisher)

@@ -98,16 +98,17 @@ type frameWorkFilmGrainDirectPlanes[T uint8 | uint16] struct {
 // luma rows and the chroma rows they cover) is independent, so stripes run
 // across workers in any order.
 type frameWorkFilmGrainRows[T uint8 | uint16] struct {
-	plan        FrameWorkFilmGrainPostFilterPlan
 	src, dst    frameWorkFilmGrainDirectPlanes[T]
-	luts        FrameWorkFilmGrainPostFilterScalingLUTs
 	lumaGrain   []int16
 	chromaGrain [2][]int16
-	rows        [3]int
-	stripes     int
-	// tables, for 10/12-bit planes, hold each plane's per-sample-value
-	// scaling (dav1d's 16bpc generate_scaling); unused at 8 bits.
-	tables [3][filmgrain.ScalingTableSize]uint8
+	// tables points at the 10/12-bit per-sample scaling tables (dav1d's 16bpc
+	// generate_scaling), nil at 8 bits so 8-bit paths carry zero dead table
+	// storage.
+	tables  *[3][filmgrain.ScalingTableSize]uint8
+	plan    FrameWorkFilmGrainPostFilterPlan
+	luts    FrameWorkFilmGrainPostFilterScalingLUTs
+	rows    [3]int
+	stripes int
 }
 
 // frameWorkApplyFilmGrainDirect binds the source and display planes at their
@@ -151,10 +152,12 @@ func frameWorkApplyFilmGrainDirect(ctx *FrameWorkPostFilterContext, output *fram
 	}
 	dst.stride, dst.width, dst.height = src.stride, src.width, src.height
 	if par != nil {
+		par.fgU16.tables = &par.fgTables
 		result, err := frameWorkApplyFilmGrainStripes(ctx, output, req, plan, &par.fgU16, src, dst, par, frameWorkPostFilterStageFilmGrainU16)
 		return result, true, err
 	}
-	var rows frameWorkFilmGrainRows[uint16]
+	var tables [3][filmgrain.ScalingTableSize]uint8
+	rows := frameWorkFilmGrainRows[uint16]{tables: &tables}
 	result, err := frameWorkApplyFilmGrainStripes(ctx, output, req, plan, &rows, src, dst, nil, frameWorkPostFilterStageNone)
 	return result, true, err
 }
@@ -180,6 +183,7 @@ func frameWorkApplyFilmGrainStripes[T uint8 | uint16](ctx *FrameWorkPostFilterCo
 	// Drop the frame's planes and grain so the stage state retains nothing.
 	rows.src, rows.dst = frameWorkFilmGrainDirectPlanes[T]{}, frameWorkFilmGrainDirectPlanes[T]{}
 	rows.lumaGrain, rows.chromaGrain = nil, [2][]int16{}
+	rows.tables = nil
 	if err != nil {
 		return FrameWorkFilmGrainPostFilterResult{}, err
 	}

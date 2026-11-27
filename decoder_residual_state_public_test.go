@@ -1517,7 +1517,7 @@ func publicDecoderBatchResidualRunnerScratch(size decoderFrameWorkBatchResidualR
 	return decoderFrameWorkBatchResidualRunnerScratch{
 		States:                  make([]internaltile.DecodeState, size.Workers+1),
 		Storages:                make([]internalthreading.FrameWorkTileResidualCDFStorage, size.Workers+1),
-		TileScratch:             make([]internalthreading.FrameWorkTileResidualScratch, size.Workers+1),
+		TileScratch:             newDecoderTileScratch(size.Workers + 1),
 		RestorationRequests:     make([]internalthreading.FrameWorkTileRestorationRequest, size.RestorationRequests+1),
 		PredictionScratch:       make([]internalthreading.FrameWorkPredictionScratch, size.Workers+1),
 		InterPredictionScratch:  make([]internalthreading.FrameWorkInterPredictionScratch, size.Workers+1),

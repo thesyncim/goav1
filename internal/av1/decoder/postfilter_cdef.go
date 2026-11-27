@@ -576,9 +576,7 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEF
 		((loadSamples && rowStart == 0 && rowEnd == rows && ctx.cdefU8LineScratchReady(req)) || (!loadSamples && u8Boundary != nil)) || (pipeline && ctx.Output.Layout.BytesPerSample == 1 && coeffShift == 0)
 
 	var result FrameWorkCDEFPostFilterResult
-	var directions cdef.DirectionGrid
-	var variances cdef.VarianceGrid
-	var blockStorage [cdef.NBlocks * cdef.NBlocks]cdef.BlockPosition
+	var scratch cdefUnitScratch
 	var unitMaskCache frameWorkCDEFUnitMaskCache
 	var unitMasks *frameWorkCDEFUnitMaskCache
 	compactUnitSource := useU8 && loadSamples && rowStart == 0 && rowEnd == rows && u8Boundary == nil || (useU8 && pipeline)
@@ -625,6 +623,25 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEF
 		// VeryLarge sentinel.
 		xDec0, yDec0 := frameWorkCDEFPlaneDecimation(ctx.Output.Format, plane)
 		planeFrame = frameWorkCDEFAlignedPlane(planeFrame, ctx.Event.FrameSize, xDec0, yDec0, ctx.Output.Layout.BytesPerSample)
+		walker := cdefPlaneWalker{
+			skipMap:               skipMap,
+			input:                 req.InputScratch[:cdef.InputBufferSize],
+			directionGrid:         req.DirectionGrid,
+			varianceGrid:          req.VarianceGrid,
+			indexMap:              indexMap,
+			dst:                   planeFrame,
+			params:                ctx.Event.CDEF,
+			cols:                  cols,
+			rows:                  rows,
+			rowStart:              rowStart,
+			rowEnd:                rowEnd,
+			plane:                 plane,
+			xDec:                  xDec0,
+			yDec:                  yDec0,
+			coeffShift:            coeffShift,
+			forceLumaDirections:   chromaFiltering,
+			directionsPrecomputed: req.DirectionsPrecomputed,
+		}
 		if useU8 {
 			boundary := FrameWorkCDEFPostFilterU8BandBoundary{}
 			if u8Boundary != nil {
@@ -633,9 +650,9 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEF
 			var planeUnits, planeBlocks uint32
 			var err error
 			if len(req.SampleBytes[plane]) >= CDEFU8LineScratchLen(planeFrame.Width) {
-				planeUnits, planeBlocks, err = frameWorkApplyCDEFPlaneRowsU8Mode(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleBytes[plane], boundary, req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, chromaFiltering, req.DirectionsPrecomputed, unitMasks)
+				planeUnits, planeBlocks, err = walker.applyU8(req.SampleBytes[plane], boundary, &scratch, unitMasks)
 			} else {
-				planeUnits, planeBlocks, err = frameWorkApplyCDEFPlaneRowsU8Packed(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleScratch[plane], boundary, req.InputScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, chromaFiltering, req.DirectionsPrecomputed, unitMasks)
+				planeUnits, planeBlocks, err = walker.applyU8Packed(req.SampleScratch[plane], boundary, &scratch, unitMasks)
 			}
 			if err != nil {
 				return FrameWorkCDEFPostFilterResult{}, err
@@ -657,7 +674,7 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEF
 			if len(req.SampleScratch[plane]) < lineNeed {
 				return FrameWorkCDEFPostFilterResult{}, frame.ErrShortBuffer
 			}
-			planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRowsHBD(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, planeFrame, req.SampleScratch[plane][:lineNeed], FrameWorkCDEFPostFilterHBD16BandBoundary{}, req.InputScratch[:cdef.InputBufferSize], nil, blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec0, yDec0, coeffShift, chromaFiltering, unitMasks)
+			planeUnits, planeBlocks, err := walker.applyHBD(req.SampleScratch[plane][:lineNeed], FrameWorkCDEFPostFilterHBD16BandBoundary{}, &scratch, unitMasks)
 			if err != nil {
 				return FrameWorkCDEFPostFilterResult{}, err
 			}
@@ -680,8 +697,8 @@ func (ctx *FrameWorkPostFilterContext) applyCDEFPostFilterRows(req FrameWorkCDEF
 				return FrameWorkCDEFPostFilterResult{}, err
 			}
 		}
-		xDec, yDec := xDec0, yDec0
-		planeUnits, planeBlocks, err := frameWorkApplyCDEFPlaneRows(ctx.Event.CDEF, indexMap, skipMap, cols, rows, rowStart, rowEnd, src, planeFrame, ctx.Output.Layout.BytesPerSample, req.InputScratch[:cdef.InputBufferSize], req.UnitDstScratch[:cdef.InputBufferSize], blockStorage[:], &directions, &variances, req.DirectionGrid, req.VarianceGrid, plane, xDec, yDec, coeffShift, chromaFiltering, unitMasks)
+		walker.unitDst = req.UnitDstScratch[:cdef.InputBufferSize]
+		planeUnits, planeBlocks, err := walker.applySnapshot(src, ctx.Output.Layout.BytesPerSample, &scratch, unitMasks)
 		if err != nil {
 			return FrameWorkCDEFPostFilterResult{}, err
 		}
@@ -839,101 +856,175 @@ func frameWorkCDEFIndexMapEmpty(indexMap FrameWorkCDEFIndexMap) bool {
 		len(indexMap.Index) == 0 && len(indexMap.Read) == 0
 }
 
-func frameWorkApplyCDEFPlaneRows(params parser.CDEFParams, indexMap FrameWorkCDEFIndexMap, skipMap *FrameWorkLoopFilterMap, cols int, rows int, rowStart int, rowEnd int, src frame.SamplePlane, dst frame.Plane, bytesPerSample int, input []uint16, unitDst []uint16, blockStorage []cdef.BlockPosition, directions *cdef.DirectionGrid, variances *cdef.VarianceGrid, directionGrid []cdef.DirectionGrid, varianceGrid []cdef.VarianceGrid, plane int, xDec int, yDec int, coeffShift int, forceLumaDirections bool, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
+// cdefUnitScratch holds the stack-allocated per-unit CDEF scratch shared across
+// planes. It is passed separately from cdefPlaneWalker so Go's field-insensitive
+// escape analysis on cdefPlaneWalker's caller-owned slices never forces these
+// stack arrays onto the heap.
+type cdefUnitScratch struct {
+	directions   cdef.DirectionGrid
+	variances    cdef.VarianceGrid
+	blockStorage [cdef.NBlocks * cdef.NBlocks]cdef.BlockPosition
+}
+
+// cdefPlaneWalker carries the per-plane CDEF walk configuration and caller-owned
+// buffers shared by the 8-bit in-place, 10/12-bit in-place, and snapshot-backed
+// unit-row walkers.
+//
+// Callers construct a walker on the stack (zero heap allocations) and invoke
+// applyU8, applyU8Packed, applyHBD, or applySnapshot. Pointer-bearing fields
+// sit in the leading block.
+type cdefPlaneWalker struct {
+	skipMap       *FrameWorkLoopFilterMap
+	input         []uint16
+	unitDst       []uint16
+	directionGrid []cdef.DirectionGrid
+	varianceGrid  []cdef.VarianceGrid
+	indexMap      FrameWorkCDEFIndexMap
+	dst           frame.Plane
+
+	params                parser.CDEFParams
+	cols, rows            int
+	rowStart, rowEnd      int
+	plane                 int
+	xDec, yDec            int
+	coeffShift            int
+	forceLumaDirections   bool
+	directionsPrecomputed bool
+}
+
+// normalizeRowRange clamps [rowStart, rowEnd) to [0, rows] and reports whether
+// the resulting range is empty (empty=true, err=nil) or invalid.
+func (w cdefPlaneWalker) normalizeRowRange() (rowStart, rowEnd int, empty bool, err error) {
+	rowStart, rowEnd = w.rowStart, w.rowEnd
+	if rowEnd < 0 || rowEnd > w.rows {
+		rowEnd = w.rows
+	}
+	if rowStart < 0 || rowStart >= rowEnd {
+		if rowStart == rowEnd {
+			return 0, 0, true, nil
+		}
+		return 0, 0, false, threading.ErrInvalidBatch
+	}
+	return rowStart, rowEnd, false, nil
+}
+
+// cdefPlane maps the 0/1/2 plane ordinal to cdef.Plane.
+func (w cdefPlaneWalker) cdefPlane() cdef.Plane {
+	switch w.plane {
+	case 1:
+		return cdef.PlaneU
+	case 2:
+		return cdef.PlaneV
+	default:
+		return cdef.PlaneY
+	}
+}
+
+// unitDirVar returns the direction and variance grids for unit (unitRow, unitCol),
+// preferring the frame-wide grids when present so chroma reuses luma directions.
+func (w cdefPlaneWalker) unitDirVar(unitRow, unitCol int, scratch *cdefUnitScratch) (*cdef.DirectionGrid, *cdef.VarianceGrid) {
+	unitIndex := unitRow*w.cols + unitCol
+	if unitIndex < len(w.directionGrid) && unitIndex < len(w.varianceGrid) {
+		return &w.directionGrid[unitIndex], &w.varianceGrid[unitIndex]
+	}
+	return &scratch.directions, &scratch.variances
+}
+
+// unitStrength resolves the CDEF strength entry for unit (unitRow, unitCol).
+// active is false when the unit has no CDEF index or zero effective strength
+// (and is not a luma direction-only unit needed by chroma).
+func (w cdefPlaneWalker) unitStrength(unitRow, unitCol int) (packed uint8, needPrimaryDirection, directionOnly, active bool, err error) {
+	mapOffset := unitRow*int(w.indexMap.Stride) + unitCol
+	if !w.indexMap.Read[mapOffset] {
+		return 0, false, false, false, nil
+	}
+	strengthIndex := w.indexMap.Index[mapOffset]
+	if int(strengthIndex) >= int(w.params.StrengthCount) || int(strengthIndex) >= parser.MaxCDEFStrengths {
+		return 0, false, false, false, threading.ErrInvalidBatch
+	}
+	index := int(strengthIndex)
+	packed = w.params.YStrength[index]
+	if w.plane != 0 {
+		packed = w.params.UVStrength[index]
+	}
+	needPrimaryDirection = frameWorkCDEFPlaneNeedsPrimaryDirection(w.params, index, w.plane, w.forceLumaDirections)
+	directionOnly = w.plane == 0 && w.forceLumaDirections && packed == 0 && w.params.UVStrength[index]>>2 != 0
+	if packed == 0 && !directionOnly {
+		return 0, false, false, false, nil
+	}
+	return packed, needPrimaryDirection, directionOnly, true, nil
+}
+
+// applySnapshot filters unit rows [w.rowStart, w.rowEnd) from an immutable
+// uint16 plane snapshot src into w.dst.
+func (w cdefPlaneWalker) applySnapshot(src frame.SamplePlane, bytesPerSample int, scratch *cdefUnitScratch, unitMasks *frameWorkCDEFUnitMaskCache) (uint32, uint32, error) {
 	var units uint32
 	var blocksTotal uint32
-	unitSizeX := cdef.BlockSize >> xDec
-	unitSizeY := cdef.BlockSize >> yDec
-	blockWidth := 8 >> xDec
-	blockHeight := 8 >> yDec
-	indexStride := int(indexMap.Stride)
-	for unitRow := rowStart; unitRow < rowEnd; unitRow++ {
-		for unitCol := range cols {
-			mapOffset := unitRow*indexStride + unitCol
-			if !indexMap.Read[mapOffset] {
+	unitSizeX := cdef.BlockSize >> w.xDec
+	unitSizeY := cdef.BlockSize >> w.yDec
+	blockWidth := 8 >> w.xDec
+	blockHeight := 8 >> w.yDec
+	cdefPlane := w.cdefPlane()
+	for unitRow := w.rowStart; unitRow < w.rowEnd; unitRow++ {
+		for unitCol := range w.cols {
+			packed, needPrimaryDirection, directionOnly, active, err := w.unitStrength(unitRow, unitCol)
+			if err != nil {
+				return units, blocksTotal, err
+			}
+			if !active {
 				continue
 			}
-			strengthIndex := indexMap.Index[mapOffset]
-			if int(strengthIndex) >= int(params.StrengthCount) || int(strengthIndex) >= parser.MaxCDEFStrengths {
-				return units, blocksTotal, threading.ErrInvalidBatch
-			}
-			index := int(strengthIndex)
-			packed := params.YStrength[index]
-			if plane != 0 {
-				packed = params.UVStrength[index]
-			}
-			needPrimaryDirection := frameWorkCDEFPlaneNeedsPrimaryDirection(params, index, plane, forceLumaDirections)
-			directionOnly := plane == 0 && forceLumaDirections && packed == 0 && params.UVStrength[index]>>2 != 0
-			if packed == 0 && !directionOnly {
-				continue
-			}
-			unitX := (unitCol * cdef.BlockSize) >> xDec
-			unitY := (unitRow * cdef.BlockSize) >> yDec
+			unitX := (unitCol * cdef.BlockSize) >> w.xDec
+			unitY := (unitRow * cdef.BlockSize) >> w.yDec
 			unitW := minInt(unitSizeX, src.Width-unitX)
 			unitH := minInt(unitSizeY, src.Height-unitY)
 			if unitW <= 0 || unitH <= 0 {
 				continue
 			}
-			blocks := frameWorkCDEFUnitBlockList(blockStorage, unitW, unitH, blockWidth, blockHeight, skipMap, unitMasks, unitRow, unitCol)
+			blocks := frameWorkCDEFUnitBlockList(scratch.blockStorage[:], unitW, unitH, blockWidth, blockHeight, w.skipMap, unitMasks, unitRow, unitCol)
 			if len(blocks) == 0 {
 				continue
 			}
-			if err := frameWorkFillCDEFInputSentinels(input, unitW, unitH); err != nil {
+			if err := frameWorkFillCDEFInputSentinels(w.input, unitW, unitH); err != nil {
 				return units, blocksTotal, err
 			}
-			if err := frameWorkCopyCDEFInput(input, src, unitX, unitY, unitW, unitH); err != nil {
+			if err := frameWorkCopyCDEFInput(w.input, src, unitX, unitY, unitW, unitH); err != nil {
 				return units, blocksTotal, err
 			}
-			unitIndex := unitRow*cols + unitCol
-			unitDirections := directions
-			unitVariances := variances
-			if unitIndex < len(directionGrid) && unitIndex < len(varianceGrid) {
-				unitDirections = &directionGrid[unitIndex]
-				unitVariances = &varianceGrid[unitIndex]
-			}
-			cdefPlane := cdef.PlaneY
-			if plane == 1 {
-				cdefPlane = cdef.PlaneU
-			} else if plane == 2 {
-				cdefPlane = cdef.PlaneV
-			}
-			filterParams, err := cdef.FrameFilterParamsFromStrength(cdefPlane, xDec, yDec, packed, int(params.Damping), coeffShift)
+			unitDirections, unitVariances := w.unitDirVar(unitRow, unitCol, scratch)
+			filterParams, err := cdef.FrameFilterParamsFromStrength(cdefPlane, w.xDec, w.yDec, packed, int(w.params.Damping), w.coeffShift)
 			if err != nil {
 				return units, blocksTotal, err
 			}
-			if cdefDebugUnit(plane, unitRow, unitCol) {
-				cdefDebugLogUnit(plane, unitRow, unitCol, packed, filterParams, *unitDirections, *unitVariances, input, len(blocks))
+			if cdefDebugUnit(w.plane, unitRow, unitCol) {
+				cdefDebugLogUnit(w.plane, unitRow, unitCol, packed, filterParams, *unitDirections, *unitVariances, w.input, len(blocks))
 			}
 			// When some 8x8 blocks within the unit are skip-transform, they are
 			// absent from blocks and FilterFrameBlocks will not write their
-			// positions in unitDst. If unitDst is zero or holds stale data from
-			// a previous unit, CopyRect16To16 would later copy those zeros over
-			// the valid reconstructed pixels in dst. Pre-fill unitDst with the
-			// source (reconstructed) pixels for the whole unit so that
-			// FilterFrameBlocks can overwrite the non-skip positions; skipped
-			// positions then already carry the correct values.
+			// positions in unitDst. Pre-fill unitDst with the source pixels so
+			// skipped positions retain their reconstructed values when stored.
 			blockCols := (unitW + blockWidth - 1) / blockWidth
 			blockRows := (unitH + blockHeight - 1) / blockHeight
 			if !directionOnly && len(blocks) < blockCols*blockRows {
 				srcOffset := unitY*src.Stride + unitX
-				if err := cdef.CopyRect16To16(unitDst, cdef.BStride, src.Pix[srcOffset:], src.Stride, unitW, unitH); err != nil {
+				if err := cdef.CopyRect16To16(w.unitDst, cdef.BStride, src.Pix[srcOffset:], src.Stride, unitW, unitH); err != nil {
 					return units, blocksTotal, err
 				}
 			}
 			var filterErr error
 			if needPrimaryDirection {
-				filterErr = cdef.FilterFrameBlocksTrusted(unitDst, cdef.BStride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+				filterErr = cdef.FilterFrameBlocksTrusted(w.unitDst, cdef.BStride, w.input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
 			} else {
-				filterErr = cdef.FilterFrameBlocksTrustedNoPrimaryDirection(unitDst, cdef.BStride, input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
+				filterErr = cdef.FilterFrameBlocksTrustedNoPrimaryDirection(w.unitDst, cdef.BStride, w.input, cdef.VerticalBorder*cdef.BStride+cdef.HorizontalBorder, blocks, unitDirections, unitVariances, filterParams)
 			}
 			if filterErr != nil {
 				return units, blocksTotal, filterErr
 			}
-			cdefDebugLogUnitDst(plane, unitRow, unitCol, unitDst)
+			cdefDebugLogUnitDst(w.plane, unitRow, unitCol, w.unitDst)
 			if directionOnly {
 				continue
 			}
-			if err := frameWorkStoreCDEFUnit(dst, bytesPerSample, unitX, unitY, unitW, unitH, unitDst); err != nil {
+			if err := frameWorkStoreCDEFUnit(w.dst, bytesPerSample, unitX, unitY, unitW, unitH, w.unitDst); err != nil {
 				return units, blocksTotal, err
 			}
 			units++
