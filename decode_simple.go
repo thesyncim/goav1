@@ -37,48 +37,22 @@ import (
 // (see WithWorkers) controls the decoder's internal parallelism (tiles, SB-row
 // reconstruction, post-filter bands and, with WithMaxFrameDelay, frame
 // threading), not concurrent use of the Decoder itself.
+//
+// Memory layout is GC-conscious: all pointer-bearing fields sit in the leading
+// block ending with postFilterParallel (whose trailing film-grain scaling
+// tables sit outside ptrdata), followed by pointer-free scalar and table state.
 type Decoder struct {
-	pool       internalframe.Pool
-	outputPool internalframe.Pool
 	workerPool *internalthreading.Pool
+	// fp is the frame-threading pipeline (dav1d n_fc > 1), or nil when frames
+	// decode one at a time.
+	fp *decoderFramePipeline
 
-	stream   internaldecoder.Stream
-	refs     internaldecoder.SurfaceReferences
-	state    internaldecoder.FrameWorkState
-	stats    internalthreading.FrameWorkTileResidualStats
-	sideData decoderFrameWorkSideData
-	batch    decoderFrameWorkBatchResidualRunner
-
-	compactLF     internalthreading.FrameWorkLoopFilterCompactState
-	lfLevels      internalthreading.FrameWorkLoopFilterLevelTable
-	lfTileEdges   internalthreading.FrameWorkLoopFilterTileEdges
-	lfNoSkip      internalthreading.FrameWorkLoopFilterNoSkip
 	compactNoSkip []byte
-
-	refSurface [internalparser.InterRefsPerFrame]int
-	refFrames  [internalparser.InterRefsPerFrame]*Frame
-	releases   [internalparser.RefFrames]int
-
-	scratch    decoderFrameWorkResidualStreamScratch
-	runner     decoderFrameWorkResidualStreamRunner
-	postFilter decoderFrameWorkReusableSupportedPostFilterRunner
-	external   decoderExternalPostFilterRunner
-
-	// postFilterParallel fans the post-filter chain's independent row bands out
-	// across the same worker count as tile decode. It is reused across frames so
-	// the parallel path stays allocation-free after warm-up.
-	postFilterParallel internaldecoder.FrameWorkPostFilterParallel
-
-	payloadKind   decoderPayloadKind
-	payloadSource decoderPayloadSource
 	payloadBuf    []byte
-	format        FrameFormat
-
-	next        int
-	closed      bool
-	useExternal bool
-	visible     []*Frame
-	visibleOne  [1]*Frame
+	concealBuf    []byte
+	visible       []*Frame
+	visibleOne    [1]*Frame
+	refFrames     [internalparser.InterRefsPerFrame]*Frame
 
 	// shownHeld tracks the pool surfaces behind the last returned batch.
 	// Frames that refresh no reference slot are owned by nothing once
@@ -87,14 +61,41 @@ type Decoder struct {
 	shownHeld    []shownSurface
 	shownHeldBuf [2 * (internalparser.RefFrames + 1)]shownSurface
 
-	// fp is the frame-threading pipeline (dav1d n_fc > 1), or nil when frames
-	// decode one at a time.
-	fp *decoderFramePipeline
+	pool          internalframe.Pool
+	outputPool    internalframe.Pool
+	stream        internaldecoder.Stream
+	refs          internaldecoder.SurfaceReferences
+	state         internaldecoder.FrameWorkState
+	sideData      decoderFrameWorkSideData
+	batch         decoderFrameWorkBatchResidualRunner
+	compactLF     internalthreading.FrameWorkLoopFilterCompactState
+	lfTileEdges   internalthreading.FrameWorkLoopFilterTileEdges
+	lfNoSkip      internalthreading.FrameWorkLoopFilterNoSkip
+	scratch       decoderFrameWorkResidualStreamScratch
+	runner        decoderFrameWorkResidualStreamRunner
+	postFilter    decoderFrameWorkReusableSupportedPostFilterRunner
+	external      decoderExternalPostFilterRunner
+	payloadSource decoderPayloadSource
+	concealFrame  Frame
 
-	// Error concealment state (inactive and zero-alloc unless WithErrorConcealment(true)).
+	// postFilterParallel fans the post-filter chain's independent row bands out
+	// across the same worker count as tile decode. Placed last among
+	// pointer-bearing fields so its trailing film-grain scaling tables and the
+	// pointer-free fields below fall outside GC ptrdata.
+	postFilterParallel internaldecoder.FrameWorkPostFilterParallel
+
+	// Everything below is pointer-free and never scanned by GC.
+	stats      internalthreading.FrameWorkTileResidualStats
+	lfLevels   internalthreading.FrameWorkLoopFilterLevelTable
+	refSurface [internalparser.InterRefsPerFrame]int
+	releases   [internalparser.RefFrames]int
+	format     FrameFormat
+
+	next             int
+	payloadKind      decoderPayloadKind
+	closed           bool
+	useExternal      bool
 	errorConcealment bool
-	concealFrame     Frame
-	concealBuf       []byte
 	hasConcealFrame  bool
 }
 

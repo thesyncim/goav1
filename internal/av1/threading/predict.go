@@ -4513,44 +4513,77 @@ func frameWorkPredictIntra8(dst *frame.Plane, x int, y int, w int, h int, visibl
 	return true, nil
 }
 
+// directionalEdgeBuilder constructs the above, left, and top-left reference
+// edge buffers consumed by AV1 directional intra prediction (zones 1, 2, 3).
+// Holding the block-invariant plane geometry keeps fillAbove, fillLeft, and
+// aboveLeft concise; value receivers keep everything on the stack.
+type directionalEdgeBuilder struct {
+	dst            frame.Plane
+	scratch        *FrameWorkIntraPredictionScratch
+	block          tile.BlockVisit
+	bytesPerSample int
+	x, y           int
+	width, height  int
+	visibleW       int
+	visibleH       int
+	bitDepth       uint8
+}
+
 func frameWorkDirectionalPredictionEdges(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, width int, height int, angle int, block tile.BlockVisit, scratch *FrameWorkIntraPredictionScratch, enableIntraEdgeFilter bool, smoothNeighbor bool, allowTopRight bool, allowBottomLeft bool, visibleW int, visibleH int) (prediction.DirectionalEdges, error) {
-	if scratch == nil || angle <= 0 || angle >= 270 {
+	b := directionalEdgeBuilder{
+		dst:            dst,
+		scratch:        scratch,
+		block:          block,
+		bytesPerSample: bytesPerSample,
+		x:              x,
+		y:              y,
+		width:          width,
+		height:         height,
+		visibleW:       visibleW,
+		visibleH:       visibleH,
+		bitDepth:       bitDepth,
+	}
+	return b.build(angle, enableIntraEdgeFilter, smoothNeighbor, allowTopRight, allowBottomLeft)
+}
+
+func (b directionalEdgeBuilder) build(angle int, enableIntraEdgeFilter, smoothNeighbor, allowTopRight, allowBottomLeft bool) (prediction.DirectionalEdges, error) {
+	if b.scratch == nil || angle <= 0 || angle >= 270 {
 		return prediction.DirectionalEdges{}, ErrInvalidBatch
 	}
 	edges := prediction.DirectionalEdges{
-		Above:       scratch.Above[:],
-		Left:        scratch.Left[:],
+		Above:       b.scratch.Above[:],
+		Left:        b.scratch.Left[:],
 		AboveOrigin: frameWorkDirectionalEdgeOrigin,
 		LeftOrigin:  frameWorkDirectionalEdgeOrigin,
 	}
 
 	switch {
 	case angle < 90:
-		if err := frameWorkFillDirectionalAbove(dst, bytesPerSample, bitDepth, x, y, 0, width+height-1, width, allowTopRight, block, scratch, visibleW); err != nil {
+		if err := b.fillAbove(0, b.width+b.height-1, allowTopRight); err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
 	case angle < 180:
-		if err := frameWorkFillDirectionalAbove(dst, bytesPerSample, bitDepth, x, y, -height, width+height, width, false, block, scratch, visibleW); err != nil {
+		if err := b.fillAbove(-b.height, b.width+b.height, false); err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
-		if err := frameWorkFillDirectionalLeft(dst, bytesPerSample, bitDepth, x, y, -width, width+height, height, false, block, scratch, visibleH); err != nil {
+		if err := b.fillLeft(-b.width, b.width+b.height, false); err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
 	default:
-		if err := frameWorkFillDirectionalLeft(dst, bytesPerSample, bitDepth, x, y, 0, width+height-1, height, allowBottomLeft, block, scratch, visibleH); err != nil {
+		if err := b.fillLeft(0, b.width+b.height-1, allowBottomLeft); err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
 	}
 	if angle != 90 && angle != 180 {
-		topLeft, err := frameWorkDirectionalAboveLeftSample(dst, bytesPerSample, bitDepth, x, y, block, visibleW, visibleH, width, height)
+		topLeft, err := b.aboveLeft()
 		if err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
-		scratch.Above[frameWorkDirectionalEdgeOrigin-1] = topLeft
-		scratch.Left[frameWorkDirectionalEdgeOrigin-1] = topLeft
+		b.scratch.Above[frameWorkDirectionalEdgeOrigin-1] = topLeft
+		b.scratch.Left[frameWorkDirectionalEdgeOrigin-1] = topLeft
 	}
 	if enableIntraEdgeFilter {
-		if err := frameWorkApplyDirectionalIntraEdgeFilterBounded(bitDepth, width, height, angle, block, smoothNeighbor, &edges, scratch, bytesPerSample == 1 && bitDepth == 8); err != nil {
+		if err := frameWorkApplyDirectionalIntraEdgeFilterBounded(b.bitDepth, b.width, b.height, angle, b.block, smoothNeighbor, &edges, b.scratch, b.bytesPerSample == 1 && b.bitDepth == 8); err != nil {
 			return prediction.DirectionalEdges{}, err
 		}
 	}
@@ -4641,68 +4674,78 @@ func frameWorkDirectionalEdgeFilterRangeFits(origin int, npx int) bool {
 // width / height are the directional-predictor primary extents (txwpx /
 // txhpx). When visibleW or visibleH is <= 0, the routine reverts to the
 // pre-edge-truncation behavior (no past-visible accounting).
-func frameWorkDirectionalAboveLeftSample(dst frame.Plane, bytesPerSample int, bitDepth uint8, x int, y int, block tile.BlockVisit, visibleW int, visibleH int, width int, height int) (uint16, error) {
-	if block.HaveTop && block.HaveLeft {
-		nTopPx := width
-		if visibleW > 0 {
-			nTopPx = max(visibleW-x, 0)
-			if nTopPx > width {
-				nTopPx = width
+func (b directionalEdgeBuilder) aboveLeft() (uint16, error) {
+	if b.block.HaveTop && b.block.HaveLeft {
+		nTopPx := b.width
+		if b.visibleW > 0 {
+			nTopPx = max(b.visibleW-b.x, 0)
+			if nTopPx > b.width {
+				nTopPx = b.width
 			}
 		}
-		nLeftPx := height
-		if visibleH > 0 {
-			nLeftPx = max(visibleH-y, 0)
-			if nLeftPx > height {
-				nLeftPx = height
+		nLeftPx := b.height
+		if b.visibleH > 0 {
+			nLeftPx = max(b.visibleH-b.y, 0)
+			if nLeftPx > b.height {
+				nLeftPx = b.height
 			}
 		}
 		switch {
 		case nTopPx > 0 && nLeftPx > 0:
-			sample, ok := frameWorkLoadSample(&dst, bytesPerSample, x-1, y-1)
+			sample, ok := frameWorkLoadSample(&b.dst, b.bytesPerSample, b.x-1, b.y-1)
 			if !ok {
 				return 0, ErrInvalidBatch
 			}
 			return sample, nil
 		case nTopPx > 0:
-			sample, ok := frameWorkLoadSample(&dst, bytesPerSample, x, y-1)
+			sample, ok := frameWorkLoadSample(&b.dst, b.bytesPerSample, b.x, b.y-1)
 			if !ok {
 				return 0, ErrInvalidBatch
 			}
 			return sample, nil
 		case nLeftPx > 0:
-			sample, ok := frameWorkLoadSample(&dst, bytesPerSample, x-1, y)
+			sample, ok := frameWorkLoadSample(&b.dst, b.bytesPerSample, b.x-1, b.y)
 			if !ok {
 				return 0, ErrInvalidBatch
 			}
 			return sample, nil
 		default:
-			sample, ok := frameWorkIntraBoundaryDefault(bitDepth, 0)
+			sample, ok := frameWorkIntraBoundaryDefault(b.bitDepth, 0)
 			if !ok {
 				return 0, ErrInvalidBatch
 			}
 			return sample, nil
 		}
 	}
-	if block.HaveTop {
-		sample, ok := frameWorkLoadSample(&dst, bytesPerSample, x, y-1)
+	if b.block.HaveTop {
+		sample, ok := frameWorkLoadSample(&b.dst, b.bytesPerSample, b.x, b.y-1)
 		if !ok {
 			return 0, ErrInvalidBatch
 		}
 		return sample, nil
 	}
-	if block.HaveLeft {
-		sample, ok := frameWorkLoadSample(&dst, bytesPerSample, x-1, y)
+	if b.block.HaveLeft {
+		sample, ok := frameWorkLoadSample(&b.dst, b.bytesPerSample, b.x-1, b.y)
 		if !ok {
 			return 0, ErrInvalidBatch
 		}
 		return sample, nil
 	}
-	sample, ok := frameWorkIntraBoundaryDefault(bitDepth, 0)
+	sample, ok := frameWorkIntraBoundaryDefault(b.bitDepth, 0)
 	if !ok {
 		return 0, ErrInvalidBatch
 	}
 	return sample, nil
+}
+
+// fillAbove fills the above directional-predictor edge, clamping real samples
+// to b.visibleW (when > 0) to mirror libaom's n_top_px / n_topright_px caps.
+func (b directionalEdgeBuilder) fillAbove(minIndex, maxIndex int, allowTopRight bool) error {
+	return frameWorkFillDirectionalAbove(b.dst, b.bytesPerSample, b.bitDepth, b.x, b.y, minIndex, maxIndex, b.width, allowTopRight, b.block, b.scratch, b.visibleW)
+}
+
+func (b directionalEdgeBuilder) fillLeft(minIndex, maxIndex int, allowBottomLeft bool) error {
+	return frameWorkFillDirectionalLeft(b.dst, b.bytesPerSample, b.bitDepth, b.x, b.y, minIndex, maxIndex, b.height, allowBottomLeft, b.block, b.scratch, b.visibleH)
 }
 
 // frameWorkFillDirectionalAbove fills the above directional-predictor edge.

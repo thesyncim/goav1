@@ -6,6 +6,16 @@ or pull requests, not in long-lived markdown.
 
 ## [Unreleased]
 
+## [v0.2.6] - 2026-11-27
+
+Further Go encapsulation and GC-invisibility pass on top of v0.2.5 — lowers encoder GC-scannable heap to **0.40 MiB** (down **38.5%** from v0.2.4's `0.65 MiB`), eliminates all unused throughput-pipeline leaf state from non-pipelined `VideoEncoder` instances, and collapses high-arity affine-warp and directional intra-edge helpers into cohesive value-receiver types.
+
+### GC-Invisibility & Encapsulation
+- **Encoder Leaf Pipeline (`internal/av1/encoder`)**: Encapsulated all 18 throughput-pipelined leaf fields (`pc`, `wavefront`, `hme`, `lf`, `cdefApp`, `ctx`, `refState`, `prevLFDeltas`, worker channels/job) into a lazily-allocated `videoEncoderLeaf` struct with `close()` and `applyFilters()` methods; non-pipelined encoders retain zero leaf state.
+- **Decoder Layout (`goav1`)**: Reordered `Decoder` so all pointer-bearing fields precede `postFilterParallel` (keeping its trailing 12 KiB film-grain scaling tables and all pointer-free scalar/table fields outside GC `ptrdata`).
+- **Affine Warp (`internal/av1/motion`)**: Replaced the duplicated 15–17 parameter `warpAffine8*` / `warpAffineHighBD*` free functions and duplicated validation with a stack-allocated `affineWarp` value type (`predict`, `apply8`, `applyHighBD`).
+- **Directional Intra Edges (`internal/av1/threading`)**: Encapsulated directional intra reference-edge construction into a stack-allocated `directionalEdgeBuilder` value type (`build`, `aboveLeft`, `fillAbove`, `fillLeft`) with zero heap escapes; refreshed the three compiler escape allowlists.
+
 ## [v0.2.5] - 2026-11-27
 
 Idiomatic Go refactoring, GC-invisibility, and runtime-style documentation pass on top of v0.2.4 — cuts encoder GC-scannable heap by **35%** (`0.65 MiB → 0.42 MiB`, saving ~450 KiB of unused `leafPC` state on non-pipelined encoders), eliminates high-arity procedural soup across decoder CDEF, loop-filter, and work dispatch, reduces hot BCE sites (`11,913 → 11,896`), and speeds up both 1080p encode (**15%–18%**) and decode (**4%–10%**) with **0 steady-state allocations** and bit-exact MD5 parity vs `dav1d`.

@@ -13463,16 +13463,16 @@ func TestVideoEncoderCloseWaitsForWavefrontWorkers(t *testing.T) {
 		t.Fatal(err)
 	}
 	enc.wavefront.ensureWorkers(3, &enc.pc)
-	enc.leafPC = new(pframeCoder)
-	enc.leafWavefront.ensureWorkers(2, enc.leafPC)
+	leaf := enc.ensureLeaf()
+	leaf.wavefront.ensureWorkers(2, &leaf.pc)
 	baseStarted := enc.wavefront.started
-	leafStarted := enc.leafWavefront.started
+	leafStarted := leaf.wavefront.started
 	if baseStarted != 3 || leafStarted != 2 {
 		t.Fatalf("wavefront helpers did not start: base=%d leaf=%d", baseStarted, leafStarted)
 	}
 	t.Cleanup(func() {
 		enc.wavefront.close()
-		enc.leafWavefront.close()
+		leaf.wavefront.close()
 	})
 
 	waitForHelpers := func(wg *sync.WaitGroup) <-chan struct{} {
@@ -13484,7 +13484,7 @@ func TestVideoEncoderCloseWaitsForWavefrontWorkers(t *testing.T) {
 		return done
 	}
 	baseDone := waitForHelpers(&enc.wavefront.workerWG)
-	leafDone := waitForHelpers(&enc.leafWavefront.workerWG)
+	leafDone := waitForHelpers(&leaf.wavefront.workerWG)
 	if err := enc.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -13495,7 +13495,7 @@ func TestVideoEncoderCloseWaitsForWavefrontWorkers(t *testing.T) {
 		started int
 	}{
 		{name: "base", done: baseDone, wf: &enc.wavefront, started: baseStarted},
-		{name: "leaf", done: leafDone, wf: &enc.leafWavefront, started: leafStarted},
+		{name: "leaf", done: leafDone, wf: &leaf.wavefront, started: leafStarted},
 	} {
 		select {
 		case <-pool.done:
@@ -13573,7 +13573,7 @@ func TestVideoEncoderCloseWaitsForOuterWorkers(t *testing.T) {
 			go func() {
 				enc.tileWorkerWG.Wait()
 				enc.filterWorkerWG.Wait()
-				enc.leafWorkerWG.Wait()
+				enc.leaf.workerWG.Wait()
 				close(helpersDone)
 			}()
 
@@ -13592,7 +13592,7 @@ func TestVideoEncoderCloseWaitsForOuterWorkers(t *testing.T) {
 			}
 			if enc.tileWork != nil || enc.tileWorkers != 0 ||
 				enc.filterWork != nil || enc.filterDone != nil || enc.filterStarted ||
-				enc.leafWork != nil || enc.leafDone != nil || enc.leafStarted {
+				enc.leaf.work != nil || enc.leaf.done != nil || enc.leaf.started {
 				t.Fatal("Close left outer worker state active")
 			}
 			if err := enc.Close(); err != nil {

@@ -2,9 +2,79 @@ package encoder
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/thesyncim/goav1/internal/av1/parser"
 )
+
+// videoEncoderLeaf owns the isolated overlap state for a throughput-pipelined
+// droppable L1T2 leaf (coder, wavefront, HME, in-loop filters, and parked
+// worker). VideoEncoder allocates it lazily on first pipelined leaf so
+// non-pipelined encoders pay zero memory or GC scan cost for it.
+//
+// Pointer-bearing fields lead the struct ending with pc so pc's ~400 KiB
+// value scratch/CDF tail and the pointer-free frame context stay outside GC
+// ptrdata.
+type videoEncoderLeaf struct {
+	work      chan struct{}
+	done      chan error
+	lpd1      *lpd1Frame
+	payloads  [1]TilePayload
+	tuGroup   []byte
+	tuScratch []byte
+	recon     SourceFrame420
+	wavefront pframeWavefront
+	hme       hmeState
+	lf        loopFilterApplier
+	cdefApp   cdefApplier
+	job       struct {
+		src, refRecon SourceFrame420
+		prevCtx       *frameCDFs
+		tu            []byte
+		lpd1Ref       *lpd1Frame
+		cntZeroMV     int
+		cdefRef       svtCDEFRefStrengths
+		frameIndex    int
+	}
+
+	// pc sits last among pointer-bearing fields so its ~400 KiB value tail
+	// and the pointer-free fields below are never scanned by GC.
+	pc pframeCoder
+
+	ctx          frameCDFs
+	refState     parser.ReferenceState
+	prevLFDeltas LoopFilterDeltas
+	workerWG     sync.WaitGroup
+	started      bool
+}
+
+// ensureLeaf returns e's isolated leaf pipeline state, allocating it once on
+// first use.
+func (e *VideoEncoder) ensureLeaf() *videoEncoderLeaf {
+	if e.leaf == nil {
+		e.leaf = new(videoEncoderLeaf)
+	}
+	return e.leaf
+}
+
+// close stops the parked leaf worker and releases all leaf sub-workers.
+func (l *videoEncoderLeaf) close() {
+	if l == nil {
+		return
+	}
+	if l.work != nil {
+		close(l.work)
+	}
+	l.workerWG.Wait()
+	l.work, l.done, l.started = nil, nil, false
+	l.job.src, l.job.refRecon = SourceFrame420{}, SourceFrame420{}
+	l.job.prevCtx, l.job.tu, l.job.lpd1Ref = nil, nil, nil
+	l.job.cntZeroMV = 0
+	l.wavefront.close()
+	l.lf.close()
+	l.cdefApp.close()
+	l.hme.close()
+}
 
 // video_pipeline.go is the opt-in throughput-pipelining surface. The default
 // low-delay realtime path (Encode/EncodeWithTemporalID) is untouched and stays
@@ -175,34 +245,35 @@ func (e *VideoEncoder) encodeOverlap(baseSrc SourceFrame420) (tu []byte, key boo
 	// Snapshot the leaf's read-only inputs before the base's encodePReusing
 	// mutates them: the base reference reconstruction (a stable double-buffer
 	// slot the base will not overwrite) and a copy of the base symbol context.
+	leaf := e.ensureLeaf()
 	refRecon := e.recon
 	var prevCtx *frameCDFs
 	if e.haveCtx {
-		e.pipeLeafCtx = e.frameCtx
-		prevCtx = &e.pipeLeafCtx
+		leaf.ctx = e.frameCtx
+		prevCtx = &leaf.ctx
 	}
 
 	e.startLeafWorker()
-	e.leafJob.src = leafSrc
-	e.leafJob.refRecon = refRecon
-	e.leafJob.prevCtx = prevCtx
-	e.leafJob.lpd1Ref = e.lpd1Last
-	e.leafJob.cdefRef = e.cdefRefLast
-	e.leafJob.frameIndex = e.frameIndex
-	e.leafWork <- struct{}{}
+	leaf.job.src = leafSrc
+	leaf.job.refRecon = refRecon
+	leaf.job.prevCtx = prevCtx
+	leaf.job.lpd1Ref = e.lpd1Last
+	leaf.job.cdefRef = e.cdefRefLast
+	leaf.job.frameIndex = e.frameIndex
+	leaf.work <- struct{}{}
 
 	e.lpd1FrameBias = 1
 	baseTU, berr := e.encodePReusing(baseSrc, 0)
 	e.lpd1FrameBias = 0
 
-	lerr := <-e.leafDone
+	lerr := <-leaf.done
 	if berr != nil {
 		return nil, false, false, berr
 	}
 	if lerr != nil {
 		return nil, false, false, lerr
 	}
-	leafTU := e.leafJob.tu
+	leafTU := leaf.job.tu
 
 	// Serial commit in coding order (leaf, then base). The base already
 	// committed its own e.* state inside encodePReusing; here we apply the
@@ -212,7 +283,7 @@ func (e *VideoEncoder) encodeOverlap(baseSrc SourceFrame420) (tu []byte, key boo
 	if e.decisionStatsEnabled {
 		e.decisionStats.Frames++
 		e.decisionStats.InterFrames++
-		e.decisionStats.add(e.leafPC.decisionStats)
+		e.decisionStats.add(leaf.pc.decisionStats)
 	}
 	e.frameIndex += 2
 	e.lastTemporalID = 0
@@ -221,7 +292,7 @@ func (e *VideoEncoder) encodeOverlap(baseSrc SourceFrame420) (tu []byte, key boo
 	e.pipeOverlaps++
 
 	// Emit the leaf now; buffer the base's finished result for the next call.
-	e.lastRecon = e.pipeLeafRecon
+	e.lastRecon = leaf.recon
 	e.pipeHeldRecon = e.recon
 	e.pipeHeldTU = baseTU
 	e.pipeHeldDone = true
@@ -229,46 +300,48 @@ func (e *VideoEncoder) encodeOverlap(baseSrc SourceFrame420) (tu []byte, key boo
 	return leafTU, false, true, nil
 }
 
-// runLeafHME runs the buffered leaf's frame ME on the isolated leafHME,
+// runLeafHME runs the buffered leaf's frame ME on the isolated leaf.hme,
 // referencing the previous base's source (e.hme's LAST slot), as the serial
 // chain does; the leaf is not a reference, so e.hme keeps its slots.
 func (e *VideoEncoder) runLeafHME(leafSrc SourceFrame420) {
+	leaf := e.ensureLeaf()
 	// The L1T2 leaf predicts from LAST (slot 0) and refreshes nothing.
 	r := &e.hme.refY[0]
-	l := &e.leafHME.refY[0]
+	l := &leaf.hme.refY[0]
 	l.valid = r.valid
 	if r.valid {
 		l.pl.copyFrom(&r.pl)
 	}
-	e.leafHME.svt.copySlotFrom(&e.hme.svt, 0)
+	leaf.hme.svt.copySlotFrom(&e.hme.svt, 0)
 	// The leaf shares the stream's sc_class and searches one picture back.
-	e.leafHME.ctrl = e.meControls(leafSrc.Width, leafSrc.Height)
-	e.leafHME.dist = 1
-	e.leafHME.runSerial(leafSrc, false, 0, -1)
+	leaf.hme.ctrl = e.meControls(leafSrc.Width, leafSrc.Height)
+	leaf.hme.dist = 1
+	leaf.hme.runSerial(leafSrc, false, 0, -1)
 }
 
 // startLeafWorker launches the persistent leaf-encode worker once. It parks on
-// leafWork between frames and reads its inputs from leafJob, mirroring the tile
-// and filter worker pattern so the steady state spawns no goroutines.
+// leaf.work between frames and reads its inputs from leaf.job, mirroring the
+// tile and filter worker pattern so the steady state spawns no goroutines.
 func (e *VideoEncoder) startLeafWorker() {
-	if e.leafStarted {
+	leaf := e.ensureLeaf()
+	if leaf.started {
 		return
 	}
 	work := make(chan struct{}, 1)
 	done := make(chan error, 1)
-	e.leafWork, e.leafDone = work, done
-	e.leafWorkerWG.Add(1)
+	leaf.work, leaf.done = work, done
+	leaf.workerWG.Add(1)
 	go func() {
-		defer e.leafWorkerWG.Done()
+		defer leaf.workerWG.Done()
 		for range work {
-			j := &e.leafJob
-			tu, cnt, err := e.computeLeafTU(j.src, j.refRecon, j.prevCtx)
+			j := &leaf.job
+			tu, cnt, err := e.computeLeafTU(leaf, j.src, j.refRecon, j.prevCtx)
 			j.tu = tu
 			j.cntZeroMV = cnt
 			done <- err
 		}
 	}()
-	e.leafStarted = true
+	leaf.started = true
 }
 
 // computeLeafTU codes one droppable L1T2 leaf entirely on the isolated leaf
@@ -277,7 +350,7 @@ func (e *VideoEncoder) startLeafWorker() {
 // encoder state, so it is safe to run concurrently with the base frame's
 // encodePReusing. Restricted to the overlap-eligible case (golden off,
 // single-tile, 8-bit 4:2:0, no padding).
-func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420, prevCtx *frameCDFs) ([]byte, int, error) {
+func (e *VideoEncoder) computeLeafTU(leaf *videoEncoderLeaf, src SourceFrame420, refRecon SourceFrame420, prevCtx *frameCDFs) ([]byte, int, error) {
 	color := e.parserColorConfig()
 	// Pipelining runs only without rate control (overlapEligible): SVT's
 	// shared controller needs each frame's feedback before the next q.
@@ -287,8 +360,8 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 	if interTransformMode(color, effQ) == TransformModeLargest {
 		header.TransformRef.TransformMode = TransformModeLargest
 	}
-	e.leafRefState = refState
-	header.References = &e.leafRefState
+	leaf.refState = refState
+	header.References = &leaf.refState
 	e.applyContentHintToFrameHeader(&header.Prefix)
 
 	lfLevel := uint8(0)
@@ -303,25 +376,25 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 	// content) takes the reference-derived filters, never a search
 	// (cdef_frame.go), from the base reference snapshotted with the job.
 	cdefPlan := planSVTCDEF(filterSupported && seq.EnableCDEF && !e.fastestRealtimeEffort() && src.Width*src.Height <= loopFilterMaxArea,
-		false, false, false, e.svtScreen(), e.leafJob.cdefRef, lpd1RefSkipPerc(e.leafJob.lpd1Ref))
+		false, false, false, e.svtScreen(), leaf.job.cdefRef, lpd1RefSkipPerc(leaf.job.lpd1Ref))
 	if cdefPlan.search {
 		return nil, 0, fmt.Errorf("encoder: pipelined leaf cannot run the CDEF search")
 	}
 	if lfLevel > 0 || cdefPlan.on {
-		if !e.leafLF.bound {
-			if err := e.leafLF.init(src.Width, src.Height); err != nil {
+		if !leaf.lf.bound {
+			if err := leaf.lf.init(src.Width, src.Height); err != nil {
 				return nil, 0, fmt.Errorf("leaf loop filter init: %w", err)
 			}
 		}
-		if err := e.leafLF.reset(); err != nil {
+		if err := leaf.lf.reset(); err != nil {
 			return nil, 0, fmt.Errorf("leaf loop filter reset: %w", err)
 		}
 		dlf := svtRTCDeblockLevel(lfLevel)
 		header.LoopFilter.LevelY = [2]uint8{dlf, dlf}
 		header.LoopFilter.LevelU = dlf
 		header.LoopFilter.LevelV = dlf
-		if !e.leafCdefApp.bound {
-			if err := e.leafCdefApp.init(src.Width, src.Height, cdefParserParams(header.CDEF)); err != nil {
+		if !leaf.cdefApp.bound {
+			if err := leaf.cdefApp.init(src.Width, src.Height, cdefParserParams(header.CDEF)); err != nil {
 				return nil, 0, fmt.Errorf("leaf cdef init: %w", err)
 			}
 		}
@@ -329,58 +402,55 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 	if prevCtx != nil {
 		header.Prefix.ErrorResilientMode = false
 		header.Prefix.PrimaryRefFrame = 0
-		e.leafPrevLFDeltas = defaultLoopFilterDeltas()
-		header.PreviousLFDeltas = &e.leafPrevLFDeltas
+		leaf.prevLFDeltas = defaultLoopFilterDeltas()
+		header.PreviousLFDeltas = &leaf.prevLFDeltas
 	}
 
-	if e.leafPC == nil {
-		e.leafPC = new(pframeCoder)
-	}
-	e.leafPC.effortLevel = e.effortLevel
-	e.leafPC.decisionStatsEnabled = e.decisionStatsEnabled
-	e.leafPC.st.hme = &e.leafHME
-	e.leafPC.st.mds0Level = 1
+	leaf.pc.effortLevel = e.effortLevel
+	leaf.pc.decisionStatsEnabled = e.decisionStatsEnabled
+	leaf.pc.st.hme = &leaf.hme
+	leaf.pc.st.mds0Level = 1
 	// Pipelined leaves mirror the serial droppable-leaf depth-removal config
 	// (video.go encodePReusing) so pipelining stays byte-identical.
-	e.leafPC.st.depthRemovalLevel = depthRemovalLevelForFrame(src.Width, src.Height, false)
-	e.leafPC.st.depthRemovalIsRef = false
+	leaf.pc.st.depthRemovalLevel = depthRemovalLevelForFrame(src.Width, src.Height, false)
+	leaf.pc.st.depthRemovalIsRef = false
 	// Droppable-leaf LPD1 TX shortcut controls, matching the serial leaf.
-	e.leafPC.st.setLPD1TxCtrls(true)
+	leaf.pc.st.setLPD1TxCtrls(true)
 	// Light-PD1 level setup of a droppable leaf (video.go encodePReusing),
 	// reading the base reference statistics snapshotted before the overlap.
-	leafSetup := lpd1PictureSetup{ref: e.leafJob.lpd1Ref, picLvl: lpd1PicLevel(false, false, e.svtScreen()), armed: true}
+	leafSetup := lpd1PictureSetup{ref: leaf.job.lpd1Ref, picLvl: lpd1PicLevel(false, false, e.svtScreen()), armed: true}
 	leafSetup.tlFactor = 180 // the L1T2 leaf is the highest layer
-	leafSetup.gfUpdate = e.leafJob.frameIndex%lpd1MaxGFInterval == 0
-	leafSetup.skipIntra = lpd1RefIntraPerc(e.leafJob.lpd1Ref) <= 50 // pcs->skip_intra of a non-reference picture
+	leafSetup.gfUpdate = leaf.job.frameIndex%lpd1MaxGFInterval == 0
+	leafSetup.skipIntra = lpd1RefIntraPerc(leaf.job.lpd1Ref) <= 50 // pcs->skip_intra of a non-reference picture
 	leafSetup.screen = e.svtScreen()
 	if videoColorIs420(color) {
-		if e.lpd1Leaf == nil {
-			e.lpd1Leaf = new(lpd1Frame)
+		if leaf.lpd1 == nil {
+			leaf.lpd1 = new(lpd1Frame)
 		}
-		e.lpd1Leaf.begin(src.Width, src.Height, &e.leafHME, effQ)
-		e.lpd1Leaf.poc = e.leafJob.frameIndex
-		leafSetup.cur = e.lpd1Leaf
+		leaf.lpd1.begin(src.Width, src.Height, &leaf.hme, effQ)
+		leaf.lpd1.poc = leaf.job.frameIndex
+		leafSetup.cur = leaf.lpd1
 	}
-	e.leafPC.st.lpd1Pending = leafSetup
-	e.leafPC.forceSplit = e.forceSplit
+	leaf.pc.st.lpd1Pending = leafSetup
+	leaf.pc.forceSplit = e.forceSplit
 	// Match the serial leaf's decision path so the bytes agree: when inter
 	// frames run the SB-row wavefront (SetMaxThreads>1), the serial leaf uses it
-	// too. The leaf gets its OWN wavefront workers (leafWavefront) so it never
+	// too. The leaf gets its OWN wavefront workers (leaf.wavefront) so it never
 	// collides with the base's e.wavefront running concurrently.
 	leafLanes := e.wavefrontLanes
 	if e.singleThread {
 		leafLanes = 0
 	}
-	e.leafPC.wavefront = &e.leafWavefront
-	e.leafPC.wavefrontLanes = leafLanes
-	e.leafPC.cdefLog = nil
+	leaf.pc.wavefront = &leaf.wavefront
+	leaf.pc.wavefrontLanes = leafLanes
+	leaf.pc.cdefLog = nil
 	if lfLevel > 0 || cdefPlan.on {
-		e.leafPC.st.lfMap = &e.leafLF.filtMap
+		leaf.pc.st.lfMap = &leaf.lf.filtMap
 	} else {
-		e.leafPC.st.lfMap = nil
+		leaf.pc.st.lfMap = nil
 	}
 
-	out := &e.pipeLeafRecon
+	out := &leaf.recon
 	if out.Y == nil || len(out.Y) != len(src.Y) || len(out.U) != len(src.U) || len(out.V) != len(src.V) {
 		*out = SourceFrame420{
 			Y:            make([]byte, len(src.Y)),
@@ -392,41 +462,41 @@ func (e *VideoEncoder) computeLeafTU(src SourceFrame420, refRecon SourceFrame420
 			Height:       src.Height,
 		}
 	}
-	data, err := e.leafPC.encodeTileWithOptionsColor(src, refRecon, nil, out, effQ, prevCtx, parser.ReferenceModeSingle, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, color, 0, uint16(src.Width/4))
+	data, err := leaf.pc.encodeTileWithOptionsColor(src, refRecon, nil, out, effQ, prevCtx, parser.ReferenceModeSingle, header.Prefix.ForceIntegerMV, header.Prefix.AllowScreenContentTools, color, 0, uint16(src.Width/4))
 	if err != nil {
 		return nil, 0, fmt.Errorf("encode leaf tile: %w", err)
 	}
-	e.leafPayloads[0] = TilePayload{Data: data}
+	leaf.payloads[0] = TilePayload{Data: data}
 	if cdefPlan.on {
-		header.CDEF, _ = cdefPlan.decide(nil, &src, out, &e.leafLF.filtMap, effQ)
+		header.CDEF, _ = cdefPlan.decide(nil, &src, out, &leaf.lf.filtMap, effQ)
 	}
 	if lfLevel > 0 || cdefPlan.on {
-		if err := e.applyLeafFilters(out, svtRTCDeblockLevel(lfLevel), cdefParserParams(header.CDEF)); err != nil {
+		if err := leaf.applyFilters(out, svtRTCDeblockLevel(lfLevel), cdefParserParams(header.CDEF)); err != nil {
 			return nil, 0, err
 		}
 	}
-	tu, err := assembleInterTU(seq, header, e.leafPayloads[:1], 1, &e.leafTuGroup, &e.leafTuScratch)
+	tu, err := assembleInterTU(seq, header, leaf.payloads[:1], 1, &leaf.tuGroup, &leaf.tuScratch)
 	if err != nil {
 		return nil, 0, err
 	}
-	return tu, e.leafPC.st.cntZeroMV, nil
+	return tu, leaf.pc.st.cntZeroMV, nil
 }
 
-// applyLeafFilters runs the leaf's in-loop deblocking and CDEF on the isolated
+// applyFilters runs the leaf's in-loop deblocking and CDEF on the isolated
 // leaf appliers (serial; the leaf reconstruction is never a reference in L1T2,
 // so this affects only Recon() output, not the emitted bytes).
-func (e *VideoEncoder) applyLeafFilters(out *SourceFrame420, lfLevel uint8, cdef parser.CDEFParams) error {
+func (l *videoEncoderLeaf) applyFilters(out *SourceFrame420, lfLevel uint8, cdef parser.CDEFParams) error {
 	lf := parser.LoopFilterParams{
 		LevelY: [2]uint8{lfLevel, lfLevel},
 		LevelU: lfLevel,
 		LevelV: lfLevel,
 	}
 	if lfLevel > 0 {
-		if err := e.leafLF.applySerialMasks(out, lf); err != nil {
+		if err := l.lf.applySerialMasks(out, lf); err != nil {
 			return fmt.Errorf("leaf loop filter apply: %w", err)
 		}
 	}
-	if err := e.leafCdefApp.applySerial(out, cdef, &e.leafLF.filtMap, nil); err != nil {
+	if err := l.cdefApp.applySerial(out, cdef, &l.lf.filtMap, nil); err != nil {
 		return fmt.Errorf("leaf cdef apply: %w", err)
 	}
 	return nil

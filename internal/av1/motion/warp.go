@@ -19,6 +19,65 @@ const (
 	warpedIntermediateColumns = 8
 )
 
+// affineWarp holds the validated plane views, sampling/write origins, and
+// local affine model parameters for one warped-motion prediction block.
+//
+// Methods take a value receiver so Go's escape analysis keeps the 15x8
+// intermediate filter buffer on the stack with zero heap allocations.
+type affineWarp struct {
+	dst, ref       frame.Plane
+	matX, matY     int
+	writeX, writeY int
+	width, height  int
+	matrix         [6]int32
+	alpha, beta    int
+	gamma, delta   int
+	ssX, ssY       int
+}
+
+func newAffineWarp(dst, ref frame.Plane, matX, matY, writeX, writeY, width, height int, matrix [6]int32, alpha, beta, gamma, delta int16, subsamplingX, subsamplingY bool) affineWarp {
+	ssX, ssY := 0, 0
+	if subsamplingX {
+		ssX = 1
+	}
+	if subsamplingY {
+		ssY = 1
+	}
+	return affineWarp{
+		dst: dst, ref: ref,
+		matX: matX, matY: matY,
+		writeX: writeX, writeY: writeY,
+		width: width, height: height,
+		matrix: matrix,
+		alpha:  int(alpha), beta: int(beta),
+		gamma: int(gamma), delta: int(delta),
+		ssX: ssX, ssY: ssY,
+	}
+}
+
+func (w affineWarp) predict(bytesPerSample int, bitDepth uint8) error {
+	if w.width <= 0 || w.height <= 0 || w.width > maxBlockSize || w.height > maxBlockSize {
+		return ErrInvalidMotion
+	}
+	if !planeRegionFits(w.dst, bytesPerSample, w.writeX, w.writeY, w.width, w.height) ||
+		!planeRegionFits(w.ref, bytesPerSample, 0, 0, w.ref.Width, w.ref.Height) {
+		return ErrInvalidMotion
+	}
+	if !bitDepthMatchesSampleWidth(bytesPerSample, bitDepth) {
+		return ErrInvalidMotion
+	}
+	if bytesPerSample == 1 {
+		w.apply8()
+		return nil
+	}
+	maxVal, ok := highBDMax(bitDepth)
+	if !ok {
+		return ErrInvalidMotion
+	}
+	w.applyHighBD(bitDepth, maxVal)
+	return nil
+}
+
 // PredictWarpedPlaneBlockBitDepth predicts a single-reference affine warped
 // block. The destination coordinates are absolute plane coordinates, matching
 // libaom's p_col/p_row convention.
@@ -26,34 +85,7 @@ const (
 // Accesses stay inside ref.Pix (taps outside the plane are edge-clamped,
 // never read) and inside the width x height block of the destination.
 func PredictWarpedPlaneBlockBitDepth(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, dstX int, dstY int, width int, height int, matrix [6]int32, alpha int16, beta int16, gamma int16, delta int16, subsamplingX bool, subsamplingY bool) error {
-	if width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
-		return ErrInvalidMotion
-	}
-	if !planeRegionFits(dst, bytesPerSample, dstX, dstY, width, height) ||
-		!planeRegionFits(ref, bytesPerSample, 0, 0, ref.Width, ref.Height) {
-		return ErrInvalidMotion
-	}
-	if !bitDepthMatchesSampleWidth(bytesPerSample, bitDepth) {
-		return ErrInvalidMotion
-	}
-	ssX := 0
-	if subsamplingX {
-		ssX = 1
-	}
-	ssY := 0
-	if subsamplingY {
-		ssY = 1
-	}
-	if bytesPerSample == 1 {
-		warpAffine8(dst, ref, dstX, dstY, width, height, matrix, int(alpha), int(beta), int(gamma), int(delta), ssX, ssY)
-		return nil
-	}
-	max, ok := highBDMax(bitDepth)
-	if !ok {
-		return ErrInvalidMotion
-	}
-	warpAffineHighBD(dst, ref, bitDepth, max, dstX, dstY, width, height, matrix, int(alpha), int(beta), int(gamma), int(delta), ssX, ssY)
-	return nil
+	return newAffineWarp(dst, ref, dstX, dstY, dstX, dstY, width, height, matrix, alpha, beta, gamma, delta, subsamplingX, subsamplingY).predict(bytesPerSample, bitDepth)
 }
 
 // PredictWarpedPlaneBlockToScratchBitDepth writes a warped block prediction into
@@ -62,77 +94,42 @@ func PredictWarpedPlaneBlockBitDepth(dst frame.Plane, ref frame.Plane, bytesPerS
 // but stages the result for masked blending (inter-intra / masked compound) rather
 // than writing in place. dst must be at least width x height.
 func PredictWarpedPlaneBlockToScratchBitDepth(dst frame.Plane, ref frame.Plane, bytesPerSample int, bitDepth uint8, matX int, matY int, width int, height int, matrix [6]int32, alpha int16, beta int16, gamma int16, delta int16, subsamplingX bool, subsamplingY bool) error {
-	if width <= 0 || height <= 0 || width > maxBlockSize || height > maxBlockSize {
-		return ErrInvalidMotion
-	}
-	if !planeRegionFits(dst, bytesPerSample, 0, 0, width, height) ||
-		!planeRegionFits(ref, bytesPerSample, 0, 0, ref.Width, ref.Height) {
-		return ErrInvalidMotion
-	}
-	if !bitDepthMatchesSampleWidth(bytesPerSample, bitDepth) {
-		return ErrInvalidMotion
-	}
-	ssX := 0
-	if subsamplingX {
-		ssX = 1
-	}
-	ssY := 0
-	if subsamplingY {
-		ssY = 1
-	}
-	if bytesPerSample == 1 {
-		warpAffine8Offset(dst, ref, matX, matY, 0, 0, width, height, matrix, int(alpha), int(beta), int(gamma), int(delta), ssX, ssY)
-		return nil
-	}
-	max, ok := highBDMax(bitDepth)
-	if !ok {
-		return ErrInvalidMotion
-	}
-	warpAffineHighBDOffset(dst, ref, bitDepth, max, matX, matY, 0, 0, width, height, matrix, int(alpha), int(beta), int(gamma), int(delta), ssX, ssY)
-	return nil
+	return newAffineWarp(dst, ref, matX, matY, 0, 0, width, height, matrix, alpha, beta, gamma, delta, subsamplingX, subsamplingY).predict(bytesPerSample, bitDepth)
 }
 
-func warpAffine8(dst frame.Plane, ref frame.Plane, dstX int, dstY int, width int, height int, matrix [6]int32, alpha int, beta int, gamma int, delta int, ssX int, ssY int) {
-	warpAffine8Offset(dst, ref, dstX, dstY, dstX, dstY, width, height, matrix, alpha, beta, gamma, delta, ssX, ssY)
-}
-
-// warpAffine8Offset is warpAffine8 with the destination write origin decoupled
-// from the affine sampling origin. The matrix is evaluated at absolute plane
-// coordinates (matX, matY) (libaom's p_col/p_row), while output samples are
-// written at (writeX, writeY) in dst. Passing writeX==matX, writeY==matY gives
-// the in-place behaviour used by full-frame warp prediction; the inter-intra
-// inter part passes writeX=writeY=0 to stage the warp in a block-sized scratch
-// plane while still sampling from the block's true frame position.
-func warpAffine8Offset(dst frame.Plane, ref frame.Plane, matX int, matY int, writeX int, writeY int, width int, height int, matrix [6]int32, alpha int, beta int, gamma int, delta int, ssX int, ssY int) {
+// apply8 runs 8-bit two-pass separable affine warp filtering over 8x8 tiles.
+// The affine model is evaluated at absolute plane coordinates (w.matX, w.matY)
+// while samples are stored at (w.writeX, w.writeY) in w.dst.
+func (w affineWarp) apply8() {
 	var tmp [warpedIntermediateRows * warpedIntermediateColumns]int32
 	const bd = 8
 	reduceBitsHoriz := round0Bits
 	reduceBitsVert := 2*filterBits - reduceBitsHoriz
 	offsetBitsHoriz := bd + filterBits - 1
 	offsetBitsVert := bd + 2*filterBits - reduceBitsHoriz
-	colShift := writeX - matX
-	rowShift := writeY - matY
-	for i := matY; i < matY+height; i += 8 {
-		for j := matX; j < matX+width; j += 8 {
-			if i+8 <= matY+height && j+8 <= matX+width {
-				ix4, sx4, iy4, sy4 := warpBlockOrigin(i, j, matrix, alpha, beta, gamma, delta, ssX, ssY)
-				o := (i+rowShift)*dst.Stride + j + colShift
-				if warpPut8x8Dispatch(dst.Pix[o:], dst.Stride, ref, ix4, sx4, iy4, sy4, alpha, beta, gamma, delta) {
+	colShift := w.writeX - w.matX
+	rowShift := w.writeY - w.matY
+	for i := w.matY; i < w.matY+w.height; i += 8 {
+		for j := w.matX; j < w.matX+w.width; j += 8 {
+			if i+8 <= w.matY+w.height && j+8 <= w.matX+w.width {
+				ix4, sx4, iy4, sy4 := warpBlockOrigin(i, j, w.matrix, w.alpha, w.beta, w.gamma, w.delta, w.ssX, w.ssY)
+				o := (i+rowShift)*w.dst.Stride + j + colShift
+				if warpPut8x8Dispatch(w.dst.Pix[o:], w.dst.Stride, w.ref, ix4, sx4, iy4, sy4, w.alpha, w.beta, w.gamma, w.delta) {
 					continue
 				}
 			}
-			baseSY := warpHorizontal8(&tmp, ref, i, j, matrix, alpha, beta, gamma, delta, ssX, ssY, reduceBitsHoriz, offsetBitsHoriz)
-			if i+8 <= matY+height && j+8 <= matX+width {
-				if gamma == 0 {
-					warpVertical8FullGamma0Dispatch(dst, &tmp, i, j, rowShift, colShift, baseSY, delta, reduceBitsVert, offsetBitsVert)
+			baseSY := warpHorizontal8(&tmp, w.ref, i, j, w.matrix, w.alpha, w.beta, w.gamma, w.delta, w.ssX, w.ssY, reduceBitsHoriz, offsetBitsHoriz)
+			if i+8 <= w.matY+w.height && j+8 <= w.matX+w.width {
+				if w.gamma == 0 {
+					warpVertical8FullGamma0Dispatch(w.dst, &tmp, i, j, rowShift, colShift, baseSY, w.delta, reduceBitsVert, offsetBitsVert)
 				} else {
-					warpVertical8FullDispatch(dst, &tmp, i, j, rowShift, colShift, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert)
+					warpVertical8FullDispatch(w.dst, &tmp, i, j, rowShift, colShift, baseSY, w.gamma, w.delta, reduceBitsVert, offsetBitsVert)
 				}
 				continue
 			}
-			for k := -4; k < minWarpInt(4, matY+height-i-4); k++ {
-				sy := baseSY + delta*(k+4)
-				for l := -4; l < minWarpInt(4, matX+width-j-4); l++ {
+			for k := -4; k < minWarpInt(4, w.matY+w.height-i-4); k++ {
+				sy := baseSY + w.delta*(k+4)
+				for l := -4; l < minWarpInt(4, w.matX+w.width-j-4); l++ {
 					offs := roundPowerOfTwo(sy, warpedDiffPrecBits) + warpedPixelPrecShifts
 					if offs < 0 || offs >= len(warpedFilter) {
 						continue
@@ -143,8 +140,8 @@ func warpAffine8Offset(dst frame.Plane, ref frame.Plane, matX int, matY int, wri
 						sum += int(coeffs[m]) * int(tmp[(k+m+4)*warpedIntermediateColumns+(l+4)])
 					}
 					sum = roundPowerOfTwo(sum, reduceBitsVert)
-					dst.Pix[(i+rowShift+k+4)*dst.Stride+j+colShift+l+4] = byte(clipPixel(sum - (1 << (bd - 1)) - (1 << bd)))
-					sy += gamma
+					w.dst.Pix[(i+rowShift+k+4)*w.dst.Stride+j+colShift+l+4] = byte(clipPixel(sum - (1 << (bd - 1)) - (1 << bd)))
+					sy += w.gamma
 				}
 			}
 		}
@@ -280,38 +277,31 @@ func warpHorizontal8Resident(tmp *[warpedIntermediateRows * warpedIntermediateCo
 	return sy4
 }
 
-func warpAffineHighBD(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, dstX int, dstY int, width int, height int, matrix [6]int32, alpha int, beta int, gamma int, delta int, ssX int, ssY int) {
-	warpAffineHighBDOffset(dst, ref, bitDepth, max, dstX, dstY, dstX, dstY, width, height, matrix, alpha, beta, gamma, delta, ssX, ssY)
-}
-
-// warpAffineHighBDOffset is warpAffineHighBD with the write origin decoupled
-// from the affine sampling origin (see warpAffine8Offset).
-func warpAffineHighBDOffset(dst frame.Plane, ref frame.Plane, bitDepth uint8, max uint16, matX int, matY int, writeX int, writeY int, width int, height int, matrix [6]int32, alpha int, beta int, gamma int, delta int, ssX int, ssY int) {
+// applyHighBD runs 10/12-bit two-pass separable affine warp filtering over 8x8
+// tiles (libaom av1_highbd_warp_affine_c).
+func (w affineWarp) applyHighBD(bitDepth uint8, maxVal uint16) {
 	var tmp [warpedIntermediateRows * warpedIntermediateColumns]int32
-	// av1_highbd_warp_affine_c (single prediction): reduce_bits_horiz =
-	// conv_params->round_0 and reduce_bits_vert = 2*FILTER_BITS -
-	// reduce_bits_horiz, where round_0 follows get_conv_params_no_round (3 for
-	// bd <= 10, 5 at bd == 12). highBDRoundBits returns exactly that round_0
-	// and the matching 2*FILTER_BITS - round_0 vertical reduce.
+	// reduce_bits_horiz = conv_params->round_0 (3 for bd <= 10, 5 at bd == 12)
+	// and reduce_bits_vert = 2*FILTER_BITS - reduce_bits_horiz.
 	reduceBitsHoriz, reduceBitsVert := highBDRoundBits(bitDepth)
 	offsetBitsHoriz := int(bitDepth) + filterBits - 1
 	offsetBitsVert := int(bitDepth) + 2*filterBits - reduceBitsHoriz
-	colShift := writeX - matX
-	rowShift := writeY - matY
-	for i := matY; i < matY+height; i += 8 {
-		for j := matX; j < matX+width; j += 8 {
-			baseSY := warpHorizontalHighBD(&tmp, ref, i, j, matrix, alpha, beta, gamma, delta, ssX, ssY, reduceBitsHoriz, offsetBitsHoriz)
-			if i+8 <= matY+height && j+8 <= matX+width {
-				if gamma == 0 {
-					warpVerticalHighBDFullGamma0Dispatch(dst, bitDepth, max, &tmp, i, j, rowShift, colShift, baseSY, delta, reduceBitsVert, offsetBitsVert)
+	colShift := w.writeX - w.matX
+	rowShift := w.writeY - w.matY
+	for i := w.matY; i < w.matY+w.height; i += 8 {
+		for j := w.matX; j < w.matX+w.width; j += 8 {
+			baseSY := warpHorizontalHighBD(&tmp, w.ref, i, j, w.matrix, w.alpha, w.beta, w.gamma, w.delta, w.ssX, w.ssY, reduceBitsHoriz, offsetBitsHoriz)
+			if i+8 <= w.matY+w.height && j+8 <= w.matX+w.width {
+				if w.gamma == 0 {
+					warpVerticalHighBDFullGamma0Dispatch(w.dst, bitDepth, maxVal, &tmp, i, j, rowShift, colShift, baseSY, w.delta, reduceBitsVert, offsetBitsVert)
 				} else {
-					warpVerticalHighBDFullDispatch(dst, bitDepth, max, &tmp, i, j, rowShift, colShift, baseSY, gamma, delta, reduceBitsVert, offsetBitsVert)
+					warpVerticalHighBDFullDispatch(w.dst, bitDepth, maxVal, &tmp, i, j, rowShift, colShift, baseSY, w.gamma, w.delta, reduceBitsVert, offsetBitsVert)
 				}
 				continue
 			}
-			for k := -4; k < minWarpInt(4, matY+height-i-4); k++ {
-				sy := baseSY + delta*(k+4)
-				for l := -4; l < minWarpInt(4, matX+width-j-4); l++ {
+			for k := -4; k < minWarpInt(4, w.matY+w.height-i-4); k++ {
+				sy := baseSY + w.delta*(k+4)
+				for l := -4; l < minWarpInt(4, w.matX+w.width-j-4); l++ {
 					offs := roundPowerOfTwo(sy, warpedDiffPrecBits) + warpedPixelPrecShifts
 					if offs < 0 || offs >= len(warpedFilter) {
 						continue
@@ -322,8 +312,8 @@ func warpAffineHighBDOffset(dst frame.Plane, ref frame.Plane, bitDepth uint8, ma
 						sum += int(coeffs[m]) * int(tmp[(k+m+4)*warpedIntermediateColumns+(l+4)])
 					}
 					sum = roundPowerOfTwo(sum, reduceBitsVert)
-					storeHighBDSample(dst, j+colShift+l+4, i+rowShift+k+4, clipPixelHighBD(sum-(1<<(bitDepth-1))-(1<<bitDepth), max))
-					sy += gamma
+					storeHighBDSample(w.dst, j+colShift+l+4, i+rowShift+k+4, clipPixelHighBD(sum-(1<<(bitDepth-1))-(1<<bitDepth), maxVal))
+					sy += w.gamma
 				}
 			}
 		}

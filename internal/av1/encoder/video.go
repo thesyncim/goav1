@@ -36,35 +36,28 @@ type VideoEncoder struct {
 	pipeHeldSrc   SourceFrame420
 	pipeSrcBuf    [2]SourceFrame420
 	pipeHeldRecon SourceFrame420
-	pipeLeafRecon SourceFrame420
 
 	// Tile-column coders and steady-state temporal-unit scratch slices.
-	tilePCs       []pframeCoder
-	payloads      []TilePayload
-	tileErrs      []error
-	tuGroup       []byte
-	tuScratch     []byte
-	pipeHeldTU    []byte
-	leafPayloads  [1]TilePayload
-	leafTuGroup   []byte
-	leafTuScratch []byte
+	tilePCs    []pframeCoder
+	payloads   []TilePayload
+	tileErrs   []error
+	tuGroup    []byte
+	tuScratch  []byte
+	pipeHeldTU []byte
 
 	// Persistent worker channels and job descriptors.
 	tileWork   chan tileWorkRange
 	filterDone chan error
 	filterWork chan struct{}
 	filterErr  error
-	leafWork   chan struct{}
-	leafDone   chan error
 	// Light-PD1 per-SB statistics (pframe_lpd1_level.go): the picture being
-	// coded, the LAST and T1 references' published objects (swapped on
-	// refresh, like SVT's EbReferenceObject sb_* arrays), and the pipelined
-	// leaf's own picture object.
-	lpd1Cur, lpd1Last, lpd1T1, lpd1Leaf *lpd1Frame
-	// leafPC is the leaf-isolated overlap coder, allocated lazily on first
-	// throughput-pipelined leaf so non-pipelined encoders never retain ~450 KiB
-	// of unused coder state.
-	leafPC *pframeCoder
+	// coded and the LAST / T1 references' published objects (swapped on
+	// refresh, like SVT's EbReferenceObject sb_* arrays).
+	lpd1Cur, lpd1Last, lpd1T1 *lpd1Frame
+	// leaf holds the isolated overlap state for opt-in throughput pipelining
+	// (video_pipeline.go), allocated lazily on first pipelined leaf so
+	// non-pipelined encoders retain zero leaf coder, HME, or filter state.
+	leaf *videoEncoderLeaf
 
 	twoPass       twoPassState
 	wavefront     pframeWavefront
@@ -75,10 +68,6 @@ type VideoEncoder struct {
 	refPad        refPadCache
 	lazyCDEF      lazyCDEFPass
 	hme           hmeState
-	leafWavefront pframeWavefront
-	leafHME       hmeState
-	leafLF        loopFilterApplier
-	leafCdefApp   cdefApplier
 	tileJobParams struct {
 		src, refRecon  SourceFrame420
 		golden         *SourceFrame420
@@ -105,15 +94,6 @@ type VideoEncoder struct {
 		// reads e.tileColsLog2, which SetConfig may mutate concurrently.
 		parallelMasks bool
 	}
-	leafJob struct {
-		src, refRecon SourceFrame420
-		prevCtx       *frameCDFs
-		tu            []byte
-		lpd1Ref       *lpd1Frame
-		cntZeroMV     int
-		cdefRef       svtCDEFRefStrengths
-		frameIndex    int
-	}
 
 	// pc sits last among pointer-bearing fields: its pointers lead it and its
 	// ~400 KiB of value scratch and CDFs trail, so GC stops scanning before
@@ -125,9 +105,8 @@ type VideoEncoder struct {
 	// each non-droppable frame names its predecessor through
 	// primary_ref_frame and starts from the saved state instead of the
 	// defaults. haveCtx arms after the first keyframe.
-	frameCtx    frameCDFs
-	frameCtxT1  frameCDFs
-	pipeLeafCtx frameCDFs
+	frameCtx   frameCDFs
+	frameCtxT1 frameCDFs
 
 	// svtRC is SVT-AV1's one-pass CBR rate control shared by every
 	// temporal layer (svt_rc.go); svtRef holds the reference slots' RC facts
@@ -140,20 +119,17 @@ type VideoEncoder struct {
 	// cr is the cyclic refresh state of CBR streams.
 	cr cyclicRefresh
 
-	cdefRefLast      svtCDEFRefStrengths
-	cdefRefT1        svtCDEFRefStrengths
-	filmGrain        FilmGrainParams
-	prevLFDeltas     LoopFilterDeltas
-	leafPrevLFDeltas LoopFilterDeltas
-	refState         parser.ReferenceState
-	leafRefState     parser.ReferenceState
-	scDet            svtSCDetector
-	decisionStats    EncoderDecisionStats
+	cdefRefLast   svtCDEFRefStrengths
+	cdefRefT1     svtCDEFRefStrengths
+	filmGrain     FilmGrainParams
+	prevLFDeltas  LoopFilterDeltas
+	refState      parser.ReferenceState
+	scDet         svtSCDetector
+	decisionStats EncoderDecisionStats
 
 	tileWait       sync.WaitGroup
 	tileWorkerWG   sync.WaitGroup // persistent helpers, separate from per-job completion
 	filterWorkerWG sync.WaitGroup // persistent helper, separate from per-frame completion
-	leafWorkerWG   sync.WaitGroup // persistent helper, separate from per-frame completion
 
 	width, height int // coded dimensions (multiples of 8)
 	// renderWidth/renderHeight are the caller-facing frame dimensions; when
@@ -214,7 +190,6 @@ type VideoEncoder struct {
 	pipeHeld              bool
 	pipeHeldKey           bool
 	pipeHeldDone          bool
-	leafStarted           bool
 }
 
 type tileWorkRange struct {
@@ -714,7 +689,7 @@ func (e *VideoEncoder) Close() error {
 		return nil
 	}
 	err := e.joinFilter()
-	tileWork, filterWork, leafWork := e.tileWork, e.filterWork, e.leafWork
+	tileWork, filterWork := e.tileWork, e.filterWork
 	if tileWork != nil {
 		e.tileWait.Wait()
 		close(tileWork)
@@ -722,33 +697,22 @@ func (e *VideoEncoder) Close() error {
 	if filterWork != nil {
 		close(filterWork)
 	}
-	if leafWork != nil {
-		close(leafWork)
-	}
 	e.tileWorkerWG.Wait()
 	e.filterWorkerWG.Wait()
-	e.leafWorkerWG.Wait()
 	e.tileWork, e.tileWorkers = nil, 0
 	e.filterWork, e.filterDone, e.filterStarted = nil, nil, false
 	e.filterPending = false
 	e.filterParams.out = nil
-	e.leafWork, e.leafDone, e.leafStarted = nil, nil, false
-	e.leafJob.src, e.leafJob.refRecon = SourceFrame420{}, SourceFrame420{}
-	e.leafJob.prevCtx, e.leafJob.tu = nil, nil
-	e.leafJob.cntZeroMV = 0
 	e.tileJobParams.src, e.tileJobParams.refRecon = SourceFrame420{}, SourceFrame420{}
 	e.tileJobParams.golden, e.tileJobParams.out = nil, nil
 	e.tileJobParams.prevCtx, e.tileJobParams.lfMap = nil, nil
 	e.tileJobParams.payloads, e.tileJobParams.errs = nil, nil
 	e.wavefront.close()
-	e.leafWavefront.close()
 	e.lf.close()
 	e.cdefApp.close()
 	e.cdefSearch.close()
 	e.hme.close()
-	e.leafLF.close()
-	e.leafCdefApp.close()
-	e.leafHME.close()
+	e.leaf.close()
 	return err
 }
 

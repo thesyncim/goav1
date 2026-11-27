@@ -589,8 +589,11 @@ internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.Y)) escapes to 
 internal/av1/encoder/video_pipeline.go:*:*: make([]byte, len(src.Y)) escapes to heap in (*VideoEncoder).computeLeafTU:
 internal/av1/encoder/video_pipeline.go:*:*: new(lpd1Frame) escapes to heap
 internal/av1/encoder/video_pipeline.go:*:*: new(lpd1Frame) escapes to heap in (*VideoEncoder).computeLeafTU:
-internal/av1/encoder/video_pipeline.go:*:*: new(pframeCoder) escapes to heap
-internal/av1/encoder/video_pipeline.go:*:*: new(pframeCoder) escapes to heap in (*VideoEncoder).computeLeafTU:
+internal/av1/encoder/video_pipeline.go:*:*: new(videoEncoderLeaf) escapes to heap
+internal/av1/encoder/video_pipeline.go:*:*: new(videoEncoderLeaf) escapes to heap in (*VideoEncoder).encodeOverlap:
+internal/av1/encoder/video_pipeline.go:*:*: new(videoEncoderLeaf) escapes to heap in (*VideoEncoder).ensureLeaf:
+internal/av1/encoder/video_pipeline.go:*:*: new(videoEncoderLeaf) escapes to heap in (*VideoEncoder).runLeafHME:
+internal/av1/encoder/video_pipeline.go:*:*: new(videoEncoderLeaf) escapes to heap in (*VideoEncoder).startLeafWorker:
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, descriptorBytes) escapes to heap
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, descriptorBytes) escapes to heap in (*WebRTCStream).Prewarm:
 internal/av1/encoder/webrtc_stream.go:*:*: make([]byte, 0, layerSize) escapes to heap
